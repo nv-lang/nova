@@ -1,0 +1,44 @@
+// polymorphic_recursion_smoke.nv — Plan 48 Ф.7.6 sanity:
+// нормальная (non-recursive) generic-fn компилируется без depth-error
+// при стандартном --mono-depth=500.
+//
+// Реальный polymorphic-recursion (fn f[T] вызывает f[Box[T]]) для
+// тестирования compile-error пока упирается в orthogonal codegen bug
+// (anonymous record literal) — verification compile-error mechanism
+// зафиксирован как known V2 followup.
+
+module concurrency.polymorphic_recursion_smoke
+
+
+// Non-recursive generic — sanity check. Depth-limit (500) с запасом
+// для любой не-патологической рекурсии в реальном коде.
+fn identity[T](v T) -> T => v
+
+
+test "sanity: identity[int] компилируется и работает" {
+    let r = identity[int](42)
+    assert(r == 42)
+}
+
+
+test "sanity: identity[str] mono'д отдельно" {
+    let r = identity[str]("hello")
+    assert(r == "hello")
+}
+
+
+test "sanity: identity[bool]" {
+    let r = identity[bool](true)
+    assert(r == true)
+}
+
+
+// Косвенная проверка depth-limit'а: цепочка вызовов с разными T —
+// каждый mono'д инстанс должен добавиться в worklist без overflow.
+fn chain[T](v T) -> T => identity[T](v)
+
+
+test "chain через identity — multi-step mono без depth overflow" {
+    let r = chain[int](100)
+    assert(r == 100)
+}

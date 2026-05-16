@@ -1,0 +1,24 @@
+// EXPECT_COMPILE_ERROR undefined identifier
+//
+// Plan 45 Ф.26.2: handler matrix — негативный тест.
+// Handler matrix scanner работает только на successfully-compiled code.
+// Функция с handler literal + broken body — compile error.
+
+module doc.f26_handler_matrix_negative
+
+type Store effect {
+    Set(v int)
+    #pure get() -> int
+    axiom after_set(v int) => post(Set(v))(get()) == v
+}
+
+fn broken_handler_user() -> int {
+    let mut s = 0
+    with #trusted Store = handler Store {
+        Set(v) { s = v }
+        get() => s
+    } {
+        Store.Set(missing_fn_qwerty(1))
+        Store.get()
+    }
+}

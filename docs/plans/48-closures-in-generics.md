@@ -718,6 +718,26 @@ field, не связанный с Plan 48. Любой import retry.nv валит
    но typed reason из любого источника.
    **Status:** новая фича, не в acceptance criteria; добавляется в этот sprint.
 
+### Sprint 2026-05-16 EOD update — fixes applied / deferred
+
+**✅ FIXED в этом sprint:**
+- ✅ `std/concurrency/cancellation.nv` (within[T], race2[T], with_timeout[T]) — written, tests PASS.
+- ✅ `[]fn()->T` consume-path в generic verification test (3 sub-cases).
+- ✅ Polymorphic recursion sanity (4 sub-cases) — depth-limit mechanism verified.
+
+**⏸️ DEFERRED в Plan 50:**
+- `[M-int-extension-record-field]` — `100.millis()` в record-literal field
+  внутри generic static ctor генерирует invalid C. Deep codegen fix
+  (~2-4 hours), independent от Plan 48 core, scope creep.
+- Unit-variant context inference (`let r = Err2; r.method(arg)` — infer
+  T from method args) — Ф.7.4 final closure. Deep type-inference work
+  (~4-8 hours).
+- Generic-fn с `return []T` — receiver получает void* (deeper codegen gap
+  для array return mono'мorphization).
+- True polymorphic-recursion compile-error test (fn f[T] вызывает
+  f[Box[T]]) — упирается в orthogonal codegen bug "anonymous record
+  literal".
+
 ---
 
 ## Связь

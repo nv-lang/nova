@@ -1,0 +1,111 @@
+// Plan 45 Ф.26.4: §11.5 style-guide lints.
+// Позитивный тест: функции с various doc styles компилируются и runtime ok.
+// Lints — это warnings level, не блокируют compile. Doc-tooling `nova doc --check`
+// эмитит их, но nova test просто проверяет что код компилируется.
+
+module doc.f26_lints_positive
+
+/// Returns the absolute value of x.
+///
+/// # Examples
+///
+/// ```nova
+/// assert(absolute(-5) == 5)
+/// ```
+#stable(since = "1.0")
+export fn absolute(x int) -> int => if x < 0 { 0 - x } else { x }
+
+/// Computes factorial of n.
+///
+/// # Examples
+///
+/// ```nova
+/// assert(factorial(5) == 120)
+/// ```
+///
+/// # Errors
+///
+/// Returns 1 for n <= 0 (no error case).
+#stable(since = "1.0")
+export fn factorial(n int) -> int {
+    if n <= 1 { 1 } else { n * factorial(n - 1) }
+}
+
+/// Compute power.
+///
+/// # Examples
+///
+/// ```nova
+/// assert(power(2, 3) == 8)
+/// ```
+#stable(since = "1.0")
+export fn power(base int, exp int) -> int {
+    if exp <= 0 { 1 } else { base * power(base, exp - 1) }
+}
+
+/// Min of two integers.
+///
+/// # Examples
+///
+/// ```nova
+/// assert(min_int(3, 7) == 3)
+/// ```
+#stable(since = "1.0")
+export fn min_int(a int, b int) -> int => if a < b { a } else { b }
+
+/// Sum of integers from 1 to n inclusive.
+///
+/// # Examples
+///
+/// ```nova
+/// assert(sum_to_n(10) == 55)
+/// ```
+#stable(since = "1.0")
+export fn sum_to_n(n int) -> int {
+    if n <= 0 { 0 } else { n + sum_to_n(n - 1) }
+}
+
+test "absolute" {
+    assert(absolute(0) == 0)
+    assert(absolute(5) == 5)
+    assert(absolute(-5) == 5)
+    assert(absolute(-100) == 100)
+}
+
+test "factorial" {
+    assert(factorial(0) == 1)
+    assert(factorial(1) == 1)
+    assert(factorial(5) == 120)
+    assert(factorial(6) == 720)
+}
+
+test "power" {
+    assert(power(2, 0) == 1)
+    assert(power(2, 1) == 2)
+    assert(power(2, 10) == 1024)
+    assert(power(3, 3) == 27)
+    assert(power(5, 4) == 625)
+}
+
+test "min_int" {
+    assert(min_int(3, 7) == 3)
+    assert(min_int(7, 3) == 3)
+    assert(min_int(5, 5) == 5)
+    assert(min_int(-1, 1) == -1)
+}
+
+test "sum_to_n" {
+    assert(sum_to_n(0) == 0)
+    assert(sum_to_n(1) == 1)
+    assert(sum_to_n(10) == 55)
+    assert(sum_to_n(100) == 5050)
+}
+
+test "all lint-clean functions compose" {
+    let s = sum_to_n(10)
+    let f = factorial(min_int(s, 5))
+    let p = power(2, min_int(absolute(-3), 10))
+    assert(s == 55)
+    assert(f == 120)
+    assert(p == 8)
+}

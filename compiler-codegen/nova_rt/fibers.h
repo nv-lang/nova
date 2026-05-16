@@ -514,9 +514,16 @@ typedef struct NovaCancelToken {
     /* Plan 49 Ф.1: typed reason — box'нутый T (caller-owned, переживает
      * scope). Для CancelToken[str] указывает на nova_str с сообщением
      * (default "cancelled" если cancel() без arg). NULL когда cancel()
-     * ещё не вызван. Ф.6 расширит до произвольного T через мономорфизацию. */
+     * ещё не вызван. */
     void*                     reason_ptr;
     nova_bool                 has_reason;        /* true ↔ cancel() уже сработал */
+    /* Plan 49 Ф.6 cross-type cascade: per-link converter B→A (NULL =
+     * same-type pass-through). Parallel array к linked[], same length.
+     * Lazy-allocated (NULL пока ни одного cross-type cascade'а).
+     * Converter signature: `void* (B-reason) → void* (A-reason boxed)` —
+     * codegen эмитит wrapper который unbox'ит B, вызывает A.from(b),
+     * box'ит A. */
+    void*                  (**linked_converters)(void*);
 } NovaCancelToken;
 
 /* Аллокация GC-managed токена. nova_alloc zero-инициализирует — все поля
@@ -574,11 +581,20 @@ static inline void nova_cancel_token_cancel_reason(NovaCancelToken* t, void* rea
         nova_sched_cancel_all_pending(t->bound_scope);
     }
     /* Каскад: отменяем все linked-токены (kill-switch composition).
-     * Plan 49 Ф.6 расширит каскад типизированной конвертацией через `From`;
-     * сейчас child получает тот же reason_ptr (same-type предположение). */
+     * Plan 49 Ф.6 cross-type: если для link есть converter — применяем
+     * `converter(reason_ptr)` чтобы child получил correctly-typed reason
+     * (B → A через `A.from(B)` wrapper'ом). NULL converter = same-type
+     * pass-through (existing behavior).
+     * Реализация безопасна даже когда linked_converters == NULL —
+     * проверка на каждой итерации (cross-type не активирован → array NULL). */
     for (int i = 0; i < t->linked_count; i++) {
         NovaCancelToken* other = t->linked[i];
-        if (other) nova_cancel_token_cancel_reason(other, reason_ptr);
+        if (!other) continue;
+        void* converted_reason = reason_ptr;
+        if (t->linked_converters && t->linked_converters[i] && reason_ptr) {
+            converted_reason = t->linked_converters[i](reason_ptr);
+        }
+        nova_cancel_token_cancel_reason(other, converted_reason);
     }
 }
 
@@ -615,8 +631,7 @@ static inline nova_bool nova_cancel_token_has_reason(NovaCancelToken* t) {
 
 /* Plan 49 Ф.1: typed-getter для CancelToken[str] — возвращает Option[str].
  * `reason_ptr` хранит box'нутый nova_str (caller-side boxed на cancel-site).
- * Codegen дергает эту функцию для `tok.reason()` когда T=str (default).
- * Ф.6 добавит per-T mono'д варианты (`nova_cancel_token_reason_<T>`). */
+ * Codegen дергает эту функцию для `tok.reason()` когда T=str (default). */
 static inline NovaOpt_nova_str nova_cancel_token_reason_str(NovaCancelToken* t) {
     NovaOpt_nova_str r;
     if (!t || !t->has_reason || t->reason_ptr == NULL) {
@@ -627,6 +642,18 @@ static inline NovaOpt_nova_str nova_cancel_token_reason_str(NovaCancelToken* t) 
     r.tag = NOVA_TAG_Option_Some;
     r.value = *(nova_str*)t->reason_ptr;
     return r;
+}
+
+/* Plan 49 Ф.6 P0 fix: raw void* reason getter для per-T un-box.
+ * Codegen для `tok.reason()` где T≠str эмитит ternary:
+ *   nova_cancel_token_has_reason(tok)
+ *     ? (NovaOpt_T){.tag=Some, .value=*(T*)nova_cancel_token_reason_raw(tok)}
+ *     : (NovaOpt_T){.tag=None}
+ * Возвращает NULL когда отмены не было или reason_ptr NULL —
+ * caller использует has_reason() как guard. */
+static inline void* nova_cancel_token_reason_raw(NovaCancelToken* t) {
+    if (!t || !t->has_reason) return NULL;
+    return t->reason_ptr;
 }
 
 /* Plan 49 Ф.1: helper — alloc copy of nova_str on GC heap so reason
@@ -669,12 +696,110 @@ static inline void nova_cancel_token_bind_cascade(NovaCancelToken* tok,
         }
         other->linked = grown;
         other->linked_cap = new_cap;
+        /* Также вырастить linked_converters parallel array (lazy alloc). */
+        if (other->linked_converters) {
+            void* (**grown_conv)(void*) = (void* (**)(void*))nova_alloc(
+                (size_t)new_cap * sizeof(void* (*)(void*)));
+            for (int i = 0; i < other->linked_count; i++) {
+                grown_conv[i] = other->linked_converters[i];
+            }
+            other->linked_converters = grown_conv;
+        }
     }
-    other->linked[other->linked_count++] = tok;
-    /* Если other уже отменён — пробрасываем немедленно. */
+    other->linked[other->linked_count] = tok;
+    /* same-type cascade: converter NULL. Parallel array NULL'ит entry
+     * автоматически если linked_converters NULL — иначе явный NULL. */
+    if (other->linked_converters) {
+        other->linked_converters[other->linked_count] = NULL;
+    }
+    other->linked_count++;
+    /* Если other уже отменён — пробрасываем немедленно (same-type). */
     if (other->cancel_requested) {
-        nova_cancel_token_cancel(tok);
+        nova_cancel_token_cancel_reason(tok, other->reason_ptr);
     }
+}
+
+/* Plan 49 Ф.6 cross-type cascade: `child.cancelled_by(parent)` где типы
+ * причин разные. `converter` — codegen-generated wrapper:
+ *   void* my_from_B_to_A(void* b_reason_ptr) {
+ *       B b = *(B*)b_reason_ptr;
+ *       A a = nova_fn_A_from_B(b);
+ *       A* boxed = (A*)nova_alloc(sizeof(A));
+ *       *boxed = a;
+ *       return (void*)boxed;
+ *   }
+ * При cancel parent — для этого link runtime применяет converter перед
+ * cancel(child). Безопасно даже если ни одного cross-type нет —
+ * linked_converters остаётся NULL (lazy). */
+static inline void nova_cancel_token_bind_cascade_typed(
+    NovaCancelToken* tok,
+    NovaCancelToken* other,
+    void* (*converter)(void*))
+{
+    if (!tok || !other) return;
+    /* Grow linked[] + linked_converters[] параллельно. */
+    if (other->linked_count >= other->linked_cap) {
+        int new_cap = other->linked_cap > 0 ? other->linked_cap * 2 : 4;
+        NovaCancelToken** grown = (NovaCancelToken**)nova_alloc(
+            (size_t)new_cap * sizeof(NovaCancelToken*));
+        for (int i = 0; i < other->linked_count; i++) {
+            grown[i] = other->linked[i];
+        }
+        other->linked = grown;
+        void* (**grown_conv)(void*) = (void* (**)(void*))nova_alloc(
+            (size_t)new_cap * sizeof(void* (*)(void*)));
+        for (int i = 0; i < other->linked_count; i++) {
+            grown_conv[i] = other->linked_converters
+                ? other->linked_converters[i] : NULL;
+        }
+        other->linked_converters = grown_conv;
+        other->linked_cap = new_cap;
+    } else if (!other->linked_converters) {
+        /* First cross-type link — lazy-alloc converter array, NULL-fill
+         * existing entries (those были same-type). */
+        void* (**conv)(void*) = (void* (**)(void*))nova_alloc(
+            (size_t)other->linked_cap * sizeof(void* (*)(void*)));
+        for (int i = 0; i < other->linked_count; i++) conv[i] = NULL;
+        other->linked_converters = conv;
+    }
+    other->linked[other->linked_count] = tok;
+    other->linked_converters[other->linked_count] = converter;
+    other->linked_count++;
+    /* Если other уже отменён — applied конвертер немедленно. */
+    if (other->cancel_requested) {
+        void* converted = other->reason_ptr;
+        if (converter && other->reason_ptr) {
+            converted = converter(other->reason_ptr);
+        }
+        nova_cancel_token_cancel_reason(tok, converted);
+    }
+}
+
+/* Plan 49 P3: `tok = tok1.merge(tok2)` — композиция токенов. Возвращает
+ * новый CancelToken который cancelled когда ЛЮБОЙ из источников cancelled.
+ * Реализация: создать new token, bind его cascade'м с tok1 И tok2.
+ * Любой из них при cancel() пробросит cancel на merged.
+ *
+ * Семантика first-cancel-wins для reason'а — тот источник кто отменился
+ * первым, его reason оказывается в merged.reason() (cancel_reason
+ * idempotent → second-cancel no-op).
+ *
+ * Превосходит индустрию:
+ *   - Go: context.WithCancel(parent) cascade parent → child, но НЕТ
+ *     general merge нескольких источников; нужно вручную select-loop.
+ *   - TS: AbortSignal.any([...]) — TC39 stage 3, но reason: any.
+ *   - Rust: tokio_util::sync::CancellationToken.child_token() — child
+ *     cancelled когда parent cancelled, но опять no general merge of N.
+ *
+ * Same-type only в V1 (merged: CancelToken[T] где T = T1 = T2).
+ * Cross-type merge — V2 (требует converter pair). */
+static inline NovaCancelToken* nova_cancel_token_merge2(
+    NovaCancelToken* a, NovaCancelToken* b)
+{
+    NovaCancelToken* merged = nova_cancel_token_new();
+    if (a) nova_cancel_token_bind_cascade(merged, a);
+    if (b) nova_cancel_token_bind_cascade(merged, b);
+    return merged;
 }
 
 /* Plan 44.5 Layer 5 fix: common base prefix for all generated SpawnCtx structs.

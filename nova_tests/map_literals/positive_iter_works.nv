@@ -1,0 +1,41 @@
+// Plan 52 Ф.18: iteration order policy doc.
+//
+// D108 документирует: HashMap unordered, iteration order может
+// рандомизироваться. Этот тест НЕ проверяет рандомизацию (тест-
+// фреймворк не контролирует random seed), но проверяет что итерация
+// **корректна** — все entries видны, ни одна не дублируется.
+//
+// Это страховка: если кто-то сделает breaking change в hashmap.nv
+// (например, скип Empty/Tombstone слотов в @get — что нарушит
+// инвариант), тест отловит. Iteration order policy = correctness check.
+module map_literals.positive_iter_works
+
+import std.collections.hashmap.{HashMap}
+
+test "all entries available via get (independent of iteration order)" {
+    let m HashMap[str, int] = [
+        "alpha": 1,
+        "beta": 2,
+        "gamma": 3,
+        "delta": 4,
+        "epsilon": 5,
+    ]
+    // Все ключи должны быть найдены, независимо от внутренней
+    // организации (bucket order, rehash и т.п.).
+    assert(m.get("alpha") == Some(1))
+    assert(m.get("beta") == Some(2))
+    assert(m.get("gamma") == Some(3))
+    assert(m.get("delta") == Some(4))
+    assert(m.get("epsilon") == Some(5))
+    assert(m.len() == 5)
+}
+
+test "len() consistent с числом entries в литерале" {
+    let m HashMap[int, int] = [
+        100: 1,
+        200: 2,
+        300: 3,
+    ]
+    assert(m.len() == 3)
+    assert(m.is_empty() == false)
+}

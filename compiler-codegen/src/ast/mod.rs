@@ -495,6 +495,14 @@ pub enum FnBody {
 pub enum TypeAttr {
     /// `#from_fields` — str-keyed map-тип для D55 map-coercion (D108 / Plan 52).
     FromFields,
+    /// Plan 52 Ф.23: `#from_pairs` — тип desugar'а map-литерала `[k: v]`.
+    /// Если expected type помечен `#from_pairs`, десугаринг вызывает
+    /// `ExpectedType.with_capacity(n)` + `insert_new(k, v)` per pair
+    /// вместо хардкода `HashMap`. Тип должен предоставить методы
+    /// `static with_capacity(int) -> Self` и `mut insert_new(K, V)`.
+    /// Stdlib HashMap имеет оба attribute. User-типы получают
+    /// расширяемость без модификации компилятора.
+    FromPairs,
 }
 
 #[derive(Debug, Clone)]
@@ -939,6 +947,12 @@ pub enum ExprKind {
         pairs: Vec<(Expr, Expr)>,
         inferred_key: Option<TypeRef>,
         inferred_value: Option<TypeRef>,
+        /// Plan 52 Ф.23: имя target-типа для desugar. Если type-checker
+        /// определил что expected type помечен `#from_pairs` —
+        /// записывает сюда полный path (e.g. `["HashMap"]` для stdlib,
+        /// `["MyMap"]` для user-типа). Десугаринг использует это вместо
+        /// хардкода `HashMap`. `None` → fallback на `HashMap` (legacy).
+        inferred_target_type: Option<Vec<String>>,
     },
     /// `{ field: value, ...spread, name }` — D17/D52/D60
     RecordLit {

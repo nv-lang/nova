@@ -793,12 +793,19 @@ impl Interpreter {
                 }
                 Ok(Flow::Value(Value::Tuple(vs)))
             }
-            // Plan 52 Ф.1: MapLit-заглушка. Реальная eval-логика
-            // (`with_capacity` + `@insert`, нормативный порядок) — Ф.5.
+            // Plan 52 Ф.20: invariant — MapLit ДОЛЖЕН быть устранён
+            // desugar pass'ом (compiler-codegen/src/desugar.rs::desugar_module)
+            // ДО входа в interp. Pipeline: parse → type-check → annotate
+            // → desugar → interp/codegen. Если сюда попал raw MapLit —
+            // это bug в pipeline wiring (забыли вызвать desugar_module),
+            // не user error. Сообщение явно указывает на compiler bug
+            // чтобы issue репортилось правильно.
             ExprKind::MapLit { .. } => {
                 Err(Diagnostic::new(
-                    "internal: map literal `[k: v]` reached interpreter without \
-                     desugaring (Plan 52 Ф.5 not yet wired)",
+                    "compiler bug: map literal `[k: v]` reached interpreter \
+                     без desugar pass — это нарушение pipeline invariant. \
+                     desugar_module() обязан быть вызван до interp/codegen. \
+                     Report issue: https://github.com/unitcraft/nova-lang/issues",
                     expr.span,
                 ))
             }

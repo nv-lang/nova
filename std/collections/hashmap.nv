@@ -46,7 +46,14 @@ type Slot[K, V]
 // Маркер honored компилятором по canonical identity
 // (`collections.hashmap.HashMap`), не по bare-имени — shadowing
 // локальным `HashMap` правило не ломает.
+//
+// `#from_pairs` (Plan 52 Ф.23 / D108) — помечает HashMap как target для
+// desugar'а map-литерала `[k: v]`. Compiler видит attribute → знает что
+// тип предоставляет статический `with_capacity(int) -> Self` и
+// `mut @insert_new(K, V)` для построения. User-типы могут получить
+// support литерала через `#from_pairs` без модификации компилятора.
 #from_fields
+#from_pairs
 export type HashMap[K Hashable, V] {
     // buckets — массив слотов. Длина — степень двойки (для битовой маски
     // вместо modulo — `idx & (len - 1)`).
@@ -188,6 +195,30 @@ export fn HashMap[K, V] mut @insert(key K, value V) -> Option[V] {
 }
 
 
+// HashMap.mut @insert_new(key, value) — fast-path вставка БЕЗ возврата
+// старого значения. Используется десугарингом map-литерала `[k: v, ...]`
+// (Plan 52 Ф.21) где гарантировано что мапа только что создана через
+// `with_capacity` → старого значения быть не может.
+//
+// Семантически идентично `@insert` но:
+// - не возвращает Option[V] — пропускает branch и allocation Option-обёртки
+// - НЕ проверяет Tombstone (после with_capacity все слоты Empty)
+// - НЕ вызывает @maybe_grow (with_capacity гарантирует n вставок без rehash)
+//
+// **Контракт:** вызывать ТОЛЬКО на мапе которая
+// (a) только что создана через `with_capacity(n)` где n ≥ итоговое count
+// (b) ещё не имеет вставок других ключей
+// Иначе — undefined behavior (дубликат не будет обнаружен, may overwrite).
+//
+// Это микро-оптимизация для literal-desugar. User-код должен использовать
+// обычный @insert.
+export fn HashMap[K, V] mut @insert_new(key K, value V) {
+    let idx = @find_slot(key)
+    @buckets[idx] = Occupied { key, value }
+    @count += 1
+}
+
+
 // HashMap.mut @remove(key) — удалить пару по ключу.
 //
 // Возвращает Some(value) если было удалено, None иначе.
@@ -221,6 +252,15 @@ export fn HashMap[K, V] mut @clear() {
     @count = 0
     @tombstones = 0
 }
+
+
+// Plan 52 Ф.24 deferred → Plan 52.1: HashMap.@clone() / @merge_from
+// для spread-pattern `[...defaults, k: v]`. Реализация требует
+// итерации по бакетам с pattern-match — упирается в codegen quirk
+// (anonymous record literal without spread support в pattern-position
+// в while-body). Workaround: использовать публичный API на user-side
+// с явным циклом через keys/values (когда они будут добавлены), либо
+// HashMap.from(array_of_pairs) для построения с нуля.
 
 
 // HashMap.@get_or_insert(key, default) — get с lazy default.

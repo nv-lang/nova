@@ -1,0 +1,24 @@
+// EXPECT_COMPILE_ERROR map literal
+//
+// Plan 52 Ф.23: canonical identity для `#from_pairs` — user-локальный
+// тип с attribute НЕ должен trust'иться для desugar'а `[k: v]`
+// (bootstrap safety; release через explicit registry → Plan 52.1).
+//
+// MapLitCtx.from_pairs_types собирается с canonical-check через
+// peer_files.path ('std/collections/'). User-локальный тип
+// `MyMap #from_pairs` НЕ попадает в set → desugar fallback'нет на
+// HashMap, что не совпадёт с expected type → CC-FAIL.
+//
+// Этот тест защищает от случайного релакса canonical-check (если
+// кто-то уберёт peer_files filter в MapLitCtx::build — user-локальный
+// тип неожиданно начнёт триггерить desugar через себя, что небезопасно
+// без полной валидации with_capacity/insert_new методов).
+module map_literals.negative_user_from_pairs_shadows
+
+#from_pairs
+type MyMap[K, V] { data int }
+
+fn main() -> () {
+    let m MyMap[int, str] = [1: "a", 2: "b"]
+    let _ = m
+}

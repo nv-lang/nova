@@ -494,6 +494,37 @@ fail-frame unwinding'у; Ф.4 явно тестирует defer+errdefer при 
 
 **Status:** обе фичи новые (не в original Ф.7); добавляются в этот sprint как demonstrative beyond Go/Rust/TS.
 
+### Sprint 2026-05-16 EOD update — fixes applied / deferred
+
+**✅ FIXED в этом sprint:**
+
+- ✅ **P0 silent UB `reason()` для T≠str** — закрыто per-T un-box (tracking
+  через `cancel_token_t_map: HashMap<var, T_c>`). Codegen эмитит ternary
+  с compound literal через `nova_cancel_token_reason_raw` + `NovaOpt_<T_c>`.
+  Backward-compat T=str fallback на `nova_cancel_token_reason_str`.
+  Test `cancel_reason_typed_test.nv` — 7 sub-cases для int/bool/str/None.
+
+- ✅ **Cross-type cascade через `From` (Ф.6 final)** — закрыто.
+  Runtime `linked_converters: void* (**)(void*)` parallel array к linked[]
+  (lazy-alloc). `nova_cancel_token_bind_cascade_typed(child, parent, conv)`
+  + cascade-cancel применяет converter перед cancel(child). Codegen
+  detect'ит cross-type через `cancel_token_t_map`, check'ает
+  `A: From[B]` в `from_targets`, генерирует converter wrapper (per-pair
+  dedup через `emitted_cancel_converters`). Без `From[B] for A` — compile
+  error с suggestion. Test `cancel_cross_type_cascade_test.nv` — 2 cases.
+
+- ✅ **`tok.merge(other)` композиция (beyond state-of-the-art)** —
+  закрыто. Runtime `nova_cancel_token_merge2` — new token cascade-bound
+  с обоими source tokens; первый cancel из них → cancel merged.
+  Превосходит Go (нет general merge of N) / TS AbortSignal.any (untyped
+  reason) / Rust (нет stdlib merge). Test `cancel_merge_test.nv` — 4 cases.
+
+**⏸️ DEFERRED в Plan 50:**
+
+- **Cancel-aware defer** (`cancel_defer { ... }`) — требует parser changes
+  (новое keyword) + scope discrimination в defer machinery. Tentative
+  feature, не критично для current acceptance.
+
 ---
 
 ## Связь
