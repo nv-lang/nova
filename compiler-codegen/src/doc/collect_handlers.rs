@@ -78,13 +78,78 @@ pub fn collect_handlers_with_source(tree: &mut DocTree, source: &str) {
     }
 }
 
-/// Workspace mode — без точных per-fn sources scan невозможен.
-/// MVP: noop (handlers остаются empty). Caller вызывает
-/// `collect_handlers_with_source` per-file если хочет workspace coverage.
-pub fn collect_handlers_workspace(_tree: &mut DocTree) {
-    // Plan 45.A: workspace-mode handler matrix требует per-file sources.
-    // Currently CLI workspace pipeline передаёт concatenated sources, но
-    // span'ы относительные к каждому файлу — нужен sources map. Out-of-scope.
+/// Plan 45 Ф.27.1 — workspace mode handler matrix.
+///
+/// Принимает sources Vec параллельно к `tree.modules` (same length, same order).
+/// Для каждого модуля используем его соответствующий source как pool для всех
+/// fn-items этого модуля. Один module → один source (правильно для file-modules;
+/// для folder-modules — concatenated source, но handler literals остаются
+/// findable текстуально).
+///
+/// **Why sources are per-module не per-file_id:** CLI workspace pipeline сейчас
+/// все modules с `file_id = 0` (parser не присваивает уникальные file_id).
+/// Therefore handler scanner sees `it.source_span.file_id == 0` для всего →
+/// мы matchим source по module index в DocTree.modules (который parallel к input
+/// modules order через collector::collect_workspace ordering).
+///
+/// **Caveat:** Modules в DocTree sorted by path (collector::collect_workspace:140
+/// `tree.modules.sort_by(|a, b| a.path.cmp(&b.path))`). Так что sources_by_path
+/// — корректный matcher.
+///
+/// **Resolution rules** те же что в single-file mode:
+/// - Full path `mod.path.Foo` → `mod.path::Foo` lookup.
+/// - Short name `Foo` → only если ровно один effect с этим именем.
+/// - Effects в других modules workspace тоже участвуют в matching.
+pub fn collect_handlers_workspace(tree: &mut DocTree, sources_by_module_path: &std::collections::BTreeMap<String, String>) {
+    let (by_full, by_short) = build_effect_index(tree);
+    if by_full.is_empty() {
+        return;
+    }
+    let mut collected: Vec<((usize, usize), HandlerRef)> = Vec::new();
+    for mi in 0..tree.modules.len() {
+        let module_path = tree.modules[mi].path.join(".");
+        let source = match sources_by_module_path.get(&module_path) {
+            Some(s) => s.as_str(),
+            None => continue, // no source for this module — skip
+        };
+        for ii in 0..tree.modules[mi].items.len() {
+            let it = &tree.modules[mi].items[ii];
+            if !matches!(it.kind, ItemKind::Fn(_)) {
+                continue;
+            }
+            let start = it.source_span.start;
+            let end = it.source_span.end;
+            if start >= source.len() || end > source.len() || start >= end {
+                continue;
+            }
+            let body = &source[start..end];
+            for handler_name in find_handler_literals(body) {
+                if let Some(target) = resolve_effect(&handler_name, &by_full, &by_short) {
+                    collected.push((target, HandlerRef {
+                        caller_item_id: it.id.clone(),
+                        kind: "inline".to_string(),
+                    }));
+                }
+            }
+        }
+    }
+    for ((mi, ii), href) in collected {
+        if let Some(m) = tree.modules.get_mut(mi) {
+            if let Some(it) = m.items.get_mut(ii) {
+                if let ItemKind::Effect { handlers, .. } = &mut it.kind {
+                    handlers.push(href);
+                }
+            }
+        }
+    }
+    for m in &mut tree.modules {
+        for it in &mut m.items {
+            if let ItemKind::Effect { handlers, .. } = &mut it.kind {
+                handlers.sort();
+                handlers.dedup();
+            }
+        }
+    }
 }
 
 fn build_effect_index(

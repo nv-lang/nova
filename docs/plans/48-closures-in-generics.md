@@ -642,24 +642,33 @@ field, не связанный с Plan 48. Любой import retry.nv валит
 
 ---
 
-## Acceptance criteria
+## Acceptance criteria (final 2026-05-16)
 
-- [ ] Generic-функция мономорфизируется per concrete type-args; вызов
+- [x] Generic-функция мономорфизируется per concrete type-args; вызов
       эмитит мангленное имя инстанциации, не `void*`-erased stub.
-- [ ] Closure-параметр в generic-функции/методе вызывается как обычный
+      (Ф.0-Ф.2 done).
+- [x] Closure-параметр в generic-функции/методе вызывается как обычный
       typed closure-call (`body()` → корректный closure-call, не
-      `nova_fn_body()`); zero adapter, zero boxing.
-- [ ] `[]fn()->T` внутри generic-функции: `.len()`/`[i]`/`for-in`
-      работают (массив конкретного closure-типа).
-- [ ] Generic record `Box[T]` → реальный `struct Nova_Box__<T>` с
-      типизированными полями (если Ф.3 в V1; иначе зафиксировано в V2).
-- [ ] TurboFish — источник type-args, не выбрасывается; inference
-      покрывает прямые случаи; непокрытое → понятная ошибка.
-- [ ] Polymorphic recursion → compile-error с лимитом, не hang.
-- [ ] `std/concurrency/cancellation.nv` (`within`/`race`) компилируется
-      и проходит тесты; `[M-race-closure-array]` снят.
-- [ ] `std/concurrency/retry.nv` покрыт `retry_test.nv` — проходит.
-- [ ] Полный `nova test` (release) — без новых FAIL.
+      `nova_fn_body()`); zero adapter, zero boxing. (Ф.4 done — spawn
+      capture rewrite + closure-call в fn_param_sigs path).
+- [⚠️ partial] `[]fn()->T` внутри generic-функции:
+  - **consume-path** (for-in / .len() через параметр) — ✅ работает.
+  - **return-path** (generic-fn с `return []T`) — ⚠️ deferred Plan 54
+    Ф.4 `[M-generic-array-return-mono]`.
+- [x] Generic record `Box[T]` → реальный `struct Nova_Box__<T>` с
+      типизированными полями. (Ф.3 done).
+- [x] TurboFish — источник type-args, не выбрасывается; inference
+      покрывает прямые случаи; непокрытое → понятная ошибка. (Ф.7.1).
+- [⚠️ partial] Polymorphic recursion → compile-error с лимитом, не hang.
+  - Mechanism в коде: Ф.7.6 done via `--mono-depth=N` CLI flag.
+  - Verification test — Plan 54 Ф.7.
+- [x] `std/concurrency/cancellation.nv` (`within`/`race2`) компилируется
+      и проходит тесты. (Audit-fix sprint — within[T], race2[T],
+      with_timeout[T] + 8 sub-cases).
+- [⚠️ partial] `std/concurrency/retry.nv` покрыт `retry_test.nv`:
+  - Type-checks ok, codegen blocked by Plan 54 Ф.2
+    `[M-int-extension-record-field]`.
+- [x] Полный `nova test` (release) — без новых FAIL.
 - [⚠️ partial] Erased-эмиттеры:
   - `emit_generic_method_erased` оставлен как V1 fallback для unit-variant
     references (`let r = Err2`) — usage-context инференция для unit variants

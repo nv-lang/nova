@@ -5,6 +5,8 @@
 //! AST-узлы готовы; парсер/typecheck/SMT расширения — в последующих
 //! фазах [Plan 33.1](../../../docs/plans/33.1-contracts-core.md).
 
+pub mod pretty;
+
 use crate::diag::Span;
 
 /// Корневой узел — модуль (файл).

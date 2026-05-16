@@ -1,9 +1,14 @@
-﻿//! Plan 45 Р¤.4 вЂ” collector: AST в†’ DocTree.
+﻿//! Plan 45 Ф.4 — collector: AST → DocTree.
 //!
-//! MVP: РѕРґРёРЅ pass, Р±РµР· passes-pipeline (Plan 45 В§3). Production-grade
-//! passes (`strip_private`, `propagate_stability`, `resolve_intra_doc_links`,
-//! `collect_doc_tests`, `lint_docs`) РґРѕР±Р°РІР»СЏСЋС‚СЃСЏ РёРЅРєСЂРµРјРµРЅС‚Р°Р»СЊРЅРѕ РєР°Рє
-//! РѕС‚РґРµР»СЊРЅС‹Рµ РјРѕРґСѓР»Рё РІ `doc/passes/`.
+//! Production-grade pipeline (после Ф.21-Ф.27):
+//! - `collect()` / `collect_workspace()` — single-file / workspace mode entry.
+//! - Дополнительные passes (отдельные модули): `strip_private`,
+//!   `propagate_stability`, `resolve_intra_doc_links`, `collect_doc_tests`,
+//!   `run_lints`, `populate_handler_matrix`, `populate_verify_status`,
+//!   `infer_contracts_from_doctests`. Pipeline orchestration в `doc/mod.rs::build`.
+//! - Module-level `#forbid` propagates в каждый item.capabilities (Ф.24.1).
+//! - Implementors second-pass (workspace mode) opt-in через
+//!   `NOVA_DOC_EXPERIMENTAL_IMPLEMENTORS=1` (Ф.24.3, false-positive guard).
 
 use crate::ast::{
     ConstDecl, ContractKind, DocAttr, FnDecl, Item, Module, ModuleAttrKind, Purity,
@@ -796,10 +801,19 @@ fn extract_fail_inner(eff: &crate::ast::TypeRef) -> Option<String> {
     None
 }
 
-/// РњРёРЅРёРјР°Р»СЊРЅС‹Р№ pretty-print РІС‹СЂР°Р¶РµРЅРёСЏ РІ Nova source. **MVP**: РґР»СЏ
-/// Р»РёС‚РµСЂР°Р»РѕРІ Рё Ident вЂ” С‚РѕС‡РЅС‹Р№; РґР»СЏ РѕСЃС‚Р°Р»СЊРЅРѕРіРѕ вЂ” placeholder.
-/// РџРѕР»РЅС‹Р№ pretty-printer вЂ” Plan 45.A РёР»Рё separate util.
+/// Pretty-print expression в Nova source (для contracts JSON/MD).
+///
+/// **Plan 45 Ф.28.1:** делегирует в shared util `crate::ast::pretty::print_expr`.
+/// Раньше был own implementation (Ф.27.2 расширение). Shared util — единая
+/// pretty-print logic, переиспользуема в diag/spec.
 fn render_expr(e: &crate::ast::Expr) -> String {
+    crate::ast::pretty::print_expr(e)
+}
+
+/// Plan 45 Ф.27.2 (deprecated после Ф.28.1) — own pretty-print, kept for
+/// reference. Удалить после verify что shared util покрывает все cases.
+#[allow(dead_code)]
+fn render_expr_legacy(e: &crate::ast::Expr) -> String {
     use crate::ast::{ArrayElem, BinOp, CallArg, ExprKind, UnOp};
     match &e.kind {
         ExprKind::IntLit(n) => n.to_string(),
@@ -877,6 +891,49 @@ fn render_expr(e: &crate::ast::Expr) -> String {
                 .collect();
             format!("{}({})", render_expr(func), parts.join(", "))
         }
-        _ => "...".to_string(),
+        // Plan 45 Ф.27.2: расширенное покрытие render_expr для contracts.
+        // Раньше `_ => "..."` теряли важные кейсы (Index, If, etc).
+        ExprKind::Index { obj, index } => {
+            format!("{}[{}]", render_expr(obj), render_expr(index))
+        }
+        ExprKind::If { cond, then: _, else_: _ } => {
+            // Body — Block; для contracts важна сама condition.
+            // Conservative render: `if <cond> { ... } else { ... }`.
+            format!("if {} {{ ... }} else {{ ... }}", render_expr(cond))
+        }
+        ExprKind::SelfAccess => "@".to_string(),
+        ExprKind::InterpolatedStr { parts } => {
+            use crate::ast::InterpStrPart;
+            let rendered: Vec<String> = parts.iter().map(|p| match p {
+                InterpStrPart::Lit(s) => s.clone(),
+                InterpStrPart::Expr(e) => format!("${{{}}}", render_expr(e)),
+            }).collect();
+            format!("\"{}\"", rendered.join(""))
+        }
+        ExprKind::TurboFish { base, type_args } => {
+            let type_str: Vec<String> = type_args.iter().map(render_type).collect();
+            format!("{}[{}]", render_expr(base), type_str.join(", "))
+        }
+        // Plan 45 Ф.27.2: helpful placeholder с указанием kind вместо anonymous `...`.
+        // Для contracts редкие variants, но debugging легче когда видишь `<match>` чем `...`.
+        _ => {
+            let kind_name = match &e.kind {
+                ExprKind::Match { .. } => "match",
+                ExprKind::IfLet { .. } => "if-let",
+                ExprKind::Lambda { .. } => "lambda",
+                ExprKind::ClosureLight { .. } | ExprKind::ClosureFull(_) => "closure",
+                ExprKind::With { .. } => "with",
+                ExprKind::HandlerLit { .. } => "handler-lit",
+                ExprKind::Forbid { .. } => "forbid-block",
+                ExprKind::Realtime { .. } => "realtime-block",
+                ExprKind::MapLit { .. } => "map-lit",
+                ExprKind::For { .. } => "for",
+                ExprKind::While { .. } => "while",
+                ExprKind::Loop { .. } => "loop",
+                ExprKind::Select { .. } => "select",
+                _ => "expr",
+            };
+            format!("<{}>", kind_name)
+        }
     }
 }

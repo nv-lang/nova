@@ -1,9 +1,15 @@
-//! Plan 45 Ф.6 — intra-doc-link resolver (best-effort MVP).
+//! Plan 45 Ф.6 — intra-doc-link resolver (production-grade after Ф.21.7+Ф.25.1).
 //!
 //! Распознаём ссылки формата `[Name]`, `[Name.method]`, `[mod.Name]`
 //! в doc-text'е (summary / description / sections). Игнорируем
 //! markdown links формата `[text](url)` (распознаются по `(` сразу
 //! после `]`).
+//!
+//! **Production capabilities:**
+//! - Cross-module resolution (Ф.21.7): workspace mode видит items из всех модулей.
+//! - Ambiguous-link warnings (Ф.25.1): collision short_name → DocWarning через
+//!   tree.warnings (раньше silent None).
+//! - Back-links (Ф.23.23): после resolve строится inverted map → DocItem.linked_from.
 //!
 //! Алгоритм:
 //! 1. Собираем все item-IDs из `tree.modules`.
