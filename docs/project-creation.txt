@@ -11893,3 +11893,80 @@ multivar contracts (sort3/median), hash table, segment tree, graph BFS, memory s
 - feat(verify): Plan 33.3 Ф.12 — инкрементальный кэш верификации
 - feat(verify): Plan 33.3 Ф.13 — #must_verify_module + #trusted + nova contracts
 - feat(verify): Plan 33.3 Ф.14 — Dafny-parity 20 примеров верификации
+
+## Шаг NNN+3. std/collections codegen fixes — hashmap+set+linkedlist (2026-05-16)
+
+Устранены 3 категории сбоев в std/collections (ветка mn-runtime) — 10 точечных
+правок в `compiler-codegen/src/codegen/emit_c.rs` + 2 строки в `std/collections/hashmap.nv`.
+
+### Исходные проблемы (до этой сессии, блокеры B1-B3 из simplifications.md)
+
+- **hashmap RUN-FAIL + CC-FAIL**: `with_capacity` вызывал `new_buckets()` без
+  подстановки type-аргументов → функция собиралась с `Nova_K_p` / `Nova_V_p`
+  вместо конкретных типов; в тесте `from` type-параметры не выводились из
+  литерала, создавая тот же эффект.
+- **set CC-FAIL**: `Set.contains` делегировал `@map.contains(...)` — внутри
+  `emit_monomorphized_method` тип receiver'а `Unit` не обрабатывался;
+  match-exhaustion вело к неверному C.
+- **linkedlist RUN-FAIL**: `pattern_bind_typed` находил erased-схему
+  `"LinkedList"` вместо моно-схемы `"LinkedList____nova_int"` → поле `t`
+  получало тип `void*`; `t.length()` на `void*` возвращало `NULL`; `1 + NULL`
+  через binary Add на `void*` давал `(0)` → length всегда 0.
+
+### Исправления
+
+**Fix 1 — hashmap TurboFish type-arg substitution (CC-FAIL)**
+В `infer_expr_c_type` для `Call` с явными type-аргументами турбо-fish:
+pre-populate `tuple_element_types` из `current_type_subst` чтобы аргументы
+вида `Nova_K_p` разрешались в конкретные типы при монорфизации.
+
+**Fix 2 — emit_monomorphized_method: tuple_element_types pre-populate**
+Перед emit тела метода заполнять `tuple_element_types` из `type_args` монорфизации
+чтобы вложенные calls (`new_buckets()`) генерировали правильный C-код.
+
+**Fix 3 — Pattern::Tuple в emit_for (Case 2)**
+Деструктуризация кортежа в `for (k, v) in map` внутри монорфизированного метода
+использовала неправильный `current_type_subst` → добавлен правильный propagation.
+
+**Fix 4 — hashmap.nv: явные type-params в тесте `from`**
+Тест `HashMap.from(...)` дописан с `[str, int]` — вывод типов из map-литерала
+не поддерживается в этой позиции; explicit type args обходят проблему.
+
+**Fix 5 — TypeRef::Unit в erased-type dispatch (set CC-FAIL)**
+`emit_monomorphized_method`: добавлена ветка `TypeRef::Unit` в match по типу
+receiver'а; drain args перед возвратом `OK(String)`.
+
+**Fix 6 — match result type upgrade (set)**
+При выборе типа результата match-expression с ветками разных типов (`void*` vs
+конкретный тип) — предпочитать конкретный тип над `void*`.
+
+**Fix 7 — pattern_bind_typed: mono-schema from scrutinee C-type**
+Вместо `find_variant` (берёт короткое имя) — определять `type_name` прямо из
+C-типа scrutinee (`Nova_LinkedList____nova_int*` → `LinkedList____nova_int`),
+обращаясь к `sum_schemas`. Fallback на `find_variant` если mono-схема не найдена.
+
+**Fix 8 — D46 BinOp::Add dispatch на Nova_T\***
+В `emit_binary`: для `Nova_T* + Nova_T*` вместо невалидного pointer arithmetic
+диспатчить в `T_method_plus(l, r)` (оператор `+` через перегрузку).
+
+**Fix 9 — void\* self-referential method dispatch**
+В emit_call для `obj_ty == "void*"`: если метод есть в `all_methods` для
+`current_receiver_type` — кастовать объект `((Nova_T*)ptr)` и вызывать метод.
+Иначе (настоящий void*) — возвращать `NULL` как раньше.
+
+**Fix 10 — infer_expr_c_type: void\* Member return type lookup**
+В `infer_expr_c_type` для Member/Call с объектом `void*`: если метод найден в
+`method_overloads[current_receiver_type]`, возвращать его `return_c_type`.
+
+### Результат
+
+- **std/collections: 10/10 PASS** (было 7/10)
+  hashmap 8/8, set 6/6, linkedlist 8/8 (все тесты)
+- **nova_tests: 397 PASS / 44 FAIL / 13 SKIP**
+  Все 44 FAIL — pre-existing: z3-backend тесты без `--features z3-backend`,
+  doc/fixtures без `fn main`, negative-тесты с изменёнными error messages.
+  Нет регрессий от этих правок.
+
+### Commits
+
+- fix(codegen): std/collections hashmap+set+linkedlist — 10 codegen фикса

@@ -5102,6 +5102,11 @@ impl CEmitter {
                 let mangled = Self::compute_generic_type_c_name(&base, &resolved);
                 Some(format!("{}*", mangled))
             }
+            crate::ast::TypeRef::Unit(_) => Some("nova_unit".to_string()),
+            crate::ast::TypeRef::Tuple(elems, _) if elems.is_empty() => {
+                // () zero-tuple is nova_unit, same as TypeRef::Unit.
+                Some("nova_unit".to_string())
+            }
             crate::ast::TypeRef::Tuple(elems, _) => {
                 // (A, B, ...) → erased as void* (tuple mono is not V1 scope).
                 // _NovaTupleN uses nova_int fields, can't hold nova_str directly.
@@ -5340,6 +5345,37 @@ impl CEmitter {
                 saved_fn_sigs.push((p.name.clone(), prev));
             }
         }
+        // Pre-populate tuple_element_types for array-of-tuple parameters in mono context.
+        // Enables `for (k, v) in pairs` to extract typed fields without losing the
+        // concrete K/V → nova_str/nova_int substitution stored in current_type_subst.
+        let mut saved_tuple_elem_keys: Vec<String> = Vec::new();
+        for p in &fn_decl.params {
+            if let crate::ast::TypeRef::Array(inner, _) = &p.ty {
+                if let crate::ast::TypeRef::Tuple(elems, _) = inner.as_ref() {
+                    if !elems.is_empty() {
+                        let field_tys: Vec<String> = elems.iter()
+                            .map(|e| {
+                                let c_ty = self.type_ref_to_c(e)
+                                    .unwrap_or_else(|_| "nova_int".to_string());
+                                // Mirror emit_tuple_lit boxing: struct types (nova_str, nova_unit,
+                                // _NovaTupleN, NovaOpt_*) are heap-allocated and stored as pointer.
+                                let needs_heap = c_ty.starts_with("_NovaTuple")
+                                    || c_ty.starts_with("NovaOpt_")
+                                    || c_ty == "nova_str"
+                                    || c_ty == "nova_unit";
+                                if needs_heap && !c_ty.ends_with('*') {
+                                    format!("{}*", c_ty)
+                                } else {
+                                    c_ty
+                                }
+                            })
+                            .collect();
+                        self.tuple_element_types.insert(p.name.clone(), field_tys);
+                        saved_tuple_elem_keys.push(p.name.clone());
+                    }
+                }
+            }
+        }
         // D109: Pre-populate array_element_types for pointer-stomped array fields of the
         // receiver type, so @buckets[idx] casts to the concrete element type.
         // (current_type_subst is already set, so type_ref_to_c resolves K/V correctly.)
@@ -5366,6 +5402,14 @@ impl CEmitter {
                     }
                 }
             }
+        }
+        // Drain any generic type instances enqueued during array_element_types setup above.
+        // Without this, sum_schemas / record_variant_field_types for types like
+        // Slot____nova_int__nova_unit are not yet populated when pattern_bind_typed
+        // runs during body emission — causing field-type lookups to fall back to the
+        // erased base type (e.g. "Slot") whose fields are typed void* (the erased form).
+        if !self.generic_type_worklist.borrow().is_empty() {
+            self.drain_generic_type_worklist()?;
         }
         // Set receiver type so @field and Self resolve correctly
         let saved_recv = std::mem::replace(&mut self.current_receiver_type, Some(recv_type.to_string()));
@@ -5479,6 +5523,9 @@ impl CEmitter {
         self.expected_record_type = saved_expected;
         for key in &saved_mono_array_elem_keys {
             self.array_element_types.remove(key);
+        }
+        for key in &saved_tuple_elem_keys {
+            self.tuple_element_types.remove(key);
         }
         self.flush_boxed_vars();
         self.indent -= 1;
@@ -7661,8 +7708,13 @@ impl CEmitter {
                     else if rty.starts_with("Nova_") && rty.ends_with('*') { Some(rty.clone()) }
                     else { None };
                 if let Some(sty) = sum_ty {
+                    let type_name_sum = sty.strip_prefix("Nova_").unwrap_or("").trim_end_matches('*').to_string();
+                    // D46 operator overloading: Nova_T* + Nova_T* → T_method_plus(l, r).
+                    if matches!(op, BinOp::Add) {
+                        return Ok(format!("{}_method_plus({}, {})", type_name_sum, l, r));
+                    }
                     if matches!(op, BinOp::Eq | BinOp::Neq) {
-                        let type_name = sty.strip_prefix("Nova_").unwrap_or("").trim_end_matches('*').to_string();
+                        let type_name = type_name_sum;
                         // Build equality: tags equal AND for each variant matching, all fields equal
                         // Simplified: tags equal AND bitwise memcmp of payload (works for int fields)
                         // Full: (l->tag == r->tag) && (l->tag != VarA || l->payload.A._0 == r->payload.A._0) && ...
@@ -9809,8 +9861,23 @@ impl CEmitter {
                 }
 
                 // 4b. If object type is void* (unknown generic stub), the method call is
-                //     undefined — emit NULL to prevent calls to undeclared functions.
+                //     usually undefined — emit NULL to prevent calls to undeclared functions.
+                // Exception: self-referential recursive call inside a sum-type method
+                // (e.g. t.length() inside LinkedList.length where t: void* holds a LinkedList*).
+                // In that case, cast void* to the current receiver type and dispatch erased.
                 if obj_ty == "void*" {
+                    let recv_ty_opt = self.current_receiver_type.clone();
+                    let method_str = method.to_string();
+                    let is_self_ref = recv_ty_opt.as_ref()
+                        .map(|rt| self.all_methods.contains(&(rt.clone(), method_str.clone())))
+                        .unwrap_or(false);
+                    if is_self_ref {
+                        let recv_ty = recv_ty_opt.unwrap();
+                        let obj_c = self.emit_expr(obj)?;
+                        let mut arg_strs = vec![format!("((Nova_{}*)({}))", recv_ty, obj_c)];
+                        for a in args { arg_strs.push(self.emit_expr(a.expr())?); }
+                        return Ok(format!("Nova_{}_method_{}({})", recv_ty, method_str, arg_strs.join(", ")));
+                    }
                     for a in args { let _ = self.emit_expr(a.expr())?; }
                     return Ok("NULL".into());
                 }
@@ -11149,7 +11216,54 @@ impl CEmitter {
             } else {
                 self.line(&format!("{} {} = {}->data[{}];", elem_ty, binding, arr_tmp, idx_tmp));
             }
-            self.var_types.insert(binding.clone(), elem_ty);
+            self.var_types.insert(binding.clone(), elem_ty.clone());
+            // Plan 48 Ф.8.2: tuple-pattern in array for-loop.
+            // `for (k, v) in pairs` where pairs is [](K, V) (array of tuples).
+            // Elements are stored as nova_int (pointer-stomped _NovaTupleN*).
+            // In a mono context, tuple_element_types[param_name] has the concrete
+            // field types (e.g. ["nova_str*", "nova_int"] for K=str, V=int).
+            if let Pattern::Tuple(parts, _) = pattern {
+                let arity = parts.len();
+                let field_tys_opt = if let ExprKind::Ident(n) = &iter.kind {
+                    self.tuple_element_types.get(n.as_str()).cloned()
+                } else {
+                    self.tuple_element_types.get(arr_expr.as_str()).cloned()
+                };
+                let tup_tmp = self.fresh_tmp();
+                // elem_ty == "nova_int" means the element is a heap-pointer to _NovaTupleN.
+                // Otherwise it's the tuple struct stored directly.
+                if elem_ty == "nova_int" {
+                    self.line(&format!("_NovaTuple{} {} = *(_NovaTuple{}*)(intptr_t){};",
+                        arity, tup_tmp, arity, binding));
+                } else {
+                    self.line(&format!("_NovaTuple{} {} = {};", arity, tup_tmp, binding));
+                }
+                for (i, p) in parts.iter().enumerate() {
+                    let fty = field_tys_opt.as_ref()
+                        .and_then(|v| v.get(i))
+                        .cloned()
+                        .unwrap_or_else(|| "nova_int".to_string());
+                    match p {
+                        Pattern::Ident { name, .. } => {
+                            if fty.ends_with('*') {
+                                // Field was heap-boxed (e.g. nova_str* → cast + deref)
+                                let base_ty = fty.trim_end_matches('*');
+                                self.line(&format!("{} {} = *(({}*)(intptr_t){}.f{});",
+                                    base_ty, name, base_ty, tup_tmp, i));
+                                self.var_types.insert(name.clone(), base_ty.to_string());
+                            } else {
+                                self.line(&format!("{} {} = ({})({}.f{});",
+                                    fty, name, fty, tup_tmp, i));
+                                self.var_types.insert(name.clone(), fty.clone());
+                            }
+                        }
+                        Pattern::Wildcard(_) => {
+                            self.line(&format!("(void)({}.f{});", tup_tmp, i));
+                        }
+                        _ => {}
+                    }
+                }
+            }
             // Plan 20 Ф.4/Ф.8: for-in-array body defer/errdefer integration.
             self.emit_loop_body_inline(body)?;
             self.indent -= 1;
@@ -11416,6 +11530,16 @@ impl CEmitter {
         }
         // Note: we intentionally don't inherit result_ty from current_fn_return_ty here,
         // because the match may be inside a for loop or other non-return context.
+        // Exception: "NovaOpt_nova_int" is the erased generic fallback (inner type unknown).
+        // When the fn return type is a more specific NovaOpt_*, upgrade to avoid
+        // struct-type mismatch when assigning NovaOpt_nova_unit to NovaOpt_nova_int.
+        if result_ty == "NovaOpt_nova_int" {
+            if let Some(fn_ret) = &self.current_fn_return_ty {
+                if fn_ret.starts_with("NovaOpt_") && fn_ret != "NovaOpt_nova_int" {
+                    result_ty = fn_ret.clone();
+                }
+            }
+        }
 
         self.line(&format!("{} {};", result_ty, result_tmp));
         self.var_types.insert(result_tmp.clone(), result_ty.clone());
@@ -12491,9 +12615,21 @@ impl CEmitter {
                         } else if is_opt {
                             scr_ty.clone()
                         } else {
-                            self.find_variant(&variant_name)
-                                .map(|(t, _)| t)
-                                .unwrap_or_default()
+                            // Prefer mono schema derived from scrutinee's concrete type
+                            // (e.g. Nova_LinkedList____nova_int* → LinkedList____nova_int)
+                            // over find_variant which may return the erased base schema.
+                            let scr_base = scr_ty
+                                .trim_start_matches("Nova_")
+                                .trim_end_matches('*')
+                                .trim()
+                                .to_string();
+                            if !scr_base.is_empty() && self.sum_schemas.contains_key(&scr_base) {
+                                scr_base
+                            } else {
+                                self.find_variant(&variant_name)
+                                    .map(|(t, _)| t)
+                                    .unwrap_or_default()
+                            }
                         };
 
                         // Check if scrutinee has a boxed inner Option type
@@ -14150,7 +14286,19 @@ impl CEmitter {
                         if let ExprKind::Ident(type_name) = &base.kind {
                             if self.generic_types.contains(type_name.as_str()) {
                                 let type_args_c: Vec<String> = type_args.iter()
-                                    .map(|tr| Self::simple_type_ref_to_c(tr))
+                                    .map(|tr| {
+                                        // In a monomorphized context, type params (K, V, etc.)
+                                        // are stored in current_type_subst as C-type strings.
+                                        // simple_type_ref_to_c is static and can't see them.
+                                        if let crate::ast::TypeRef::Named { path, generics, .. } = tr {
+                                            if generics.is_empty() && path.len() == 1 {
+                                                if let Some(c) = self.current_type_subst.get(&path[0]) {
+                                                    return c.clone();
+                                                }
+                                            }
+                                        }
+                                        Self::simple_type_ref_to_c(tr)
+                                    })
                                     .collect();
                                 let mangled = Self::compute_generic_type_c_name(type_name, &type_args_c);
                                 let concrete_type = format!("{}*", mangled);
@@ -14674,7 +14822,19 @@ impl CEmitter {
                         }
                     }
                     // If object is an unknown generic stub (void*), method result is also void*
+                    // Exception: self-referential call inside a sum-type method — look up
+                    // return type from current receiver's method_overloads.
                     if obj_ty == "void*" {
+                        if let Some(recv_ty) = &self.current_receiver_type {
+                            if self.all_methods.contains(&(recv_ty.clone(), method.to_string())) {
+                                let key = (recv_ty.clone(), method.to_string());
+                                if let Some(overloads) = self.method_overloads.get(&key) {
+                                    if let Some(sig) = overloads.iter().find(|s| s.is_instance) {
+                                        return sig.return_c_type.clone();
+                                    }
+                                }
+                            }
+                        }
                         return "void*".into();
                     }
                     // Effect dispatch: TypeName.method() → look up in effect_schemas
