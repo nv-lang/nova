@@ -14628,6 +14628,7 @@ impl CEmitter {
             "hash"        => Some("nova_str_hash"),
             "find"        => Some("nova_str_find"),
             "rfind"       => Some("nova_str_rfind"),
+            "len"         => Some("nova_str_char_len"),   // Plan 55 Ф.6: s.len() == s.char_len() (D26).
             "char_len"    => Some("nova_str_char_len"),
             "byte_len"    => Some("nova_str_byte_len"),
             "bytes"       => Some("nova_str_bytes"),

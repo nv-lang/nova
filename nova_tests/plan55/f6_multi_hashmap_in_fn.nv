@@ -1,0 +1,32 @@
+// Plan 55 Ф.6 — multi-instance HashMap в одной fn (упрощённый).
+// 2 HashMap'а с разными K,V в одной fn. До fix'а: instance leak в mono.
+
+module plan55.f6_multi_hashmap_in_fn
+
+import std.collections.hashmap.{HashMap}
+
+
+fn two_maps() -> int {
+    let m1 HashMap[str, int] = ["a": 1, "b": 2]
+    let m2 HashMap[int, int] = [10: 100, 20: 200]
+    m1.len() + m2.len()
+}
+
+
+test "2 разных HashMap[K, V] в одной fn — len() работает" {
+    let total = two_maps()
+    assert(total == 4)  // 2 + 2
+}
+
+
+fn three_simple_maps() -> int {
+    let m1 HashMap[str, int] = ["a": 1, "b": 2]
+    let m2 HashMap[str, int] = ["c": 3, "d": 4]
+    let m3 HashMap[str, int] = ["e": 5, "f": 6]
+    m1.len() + m2.len() + m3.len()
+}
+
+
+test "3 same-shape HashMap[str, int] в одной fn" {
+    assert(three_simple_maps() == 6)
+}
