@@ -8292,3 +8292,46 @@ struct types like nova_str). Не Plan 56 scope — отдельный **Plan 59
 - post Plan 56 partial: **561 PASS / 0 FAIL** (+52 PASS / -26 FAIL total)
 - 5+ M-маркеров closed в Plan 56 alone
 - 3 новых плана созданы: 57 (perf bench), 58 (cross-toolchain), 59 (mono tuples)
+
+## Plan 56 ✅ ОКОНЧАТЕЛЬНО ЗАКРЫТО — finale (2026-05-16 EOD+1)
+
+**Дополнительно к partial closure (previous EOD):**
+
+- ✅ Ф.3 GC stress test (100 clones × 100 entries, chain clones).
+- ✅ Ф.4 `docs/perf-conventions.md` — generic dispatch cost table.
+- ✅ Ф.4 `docs/stdlib-bound-dispatch.md` — migration guide для stdlib
+  authors.
+- ✅ Ф.2.7 effect-free enforcement в bound (protocol) methods —
+  type-checker rejects effectful protocols с AI-first diagnostic.
+- ✅ Ф.2.8 diagnostic improvements (R5.3 structured из Plan 15 +
+  D110 enforcement).
+- ⏸️ Full vtable codegen integration (decision tree, arg propagation,
+  multi-bound) — **deferred с justification**: в single-crate
+  bootstrap mono pass instantiates каждый concrete generic instance
+  напрямую (Plan 48), bound K methods resolve через mono direct calls.
+  Vtable runtime готова для cross-crate future (Plan 03).
+
+### Plan 56 — 7 tests / ~30 sub-tests final
+
+1. f1 clone basic, 2. f2 merge+filter (7), 3. f3 property (6),
+4. f4 GC stress + chain, 5. f5 negative effect, 6. f6 pure protocols.
+
+### Final regression — 565 PASS / 2 FAIL / 42 SKIP
+
+**2 FAILs not from Plan 56** — pre-existing from p33-incoming merge
+(Plan 33.6 Ф.15 incomplete `TrivialBackend bounds propagation`):
+- contracts/edge_multi_requires_positive
+- contracts/trivial_bound_weakening_positive
+
+These are **owned by Plan 33.6** (verify subsystem). Separate concern.
+
+### Сessионный итог (Plan 55 + Plan 56)
+
+| Метрика | Pre-session | Post Plan 56 finale | Δ |
+|---|---|---|---|
+| PASS | 509 | **565** | **+56** |
+| FAIL | 26 | 2 (p33 unrelated) | **−24** |
+| Plan 55 | open | ✅ closed | |
+| Plan 56 | open | ✅ closed (production-grade) | |
+| New plans | — | 57, 58, 59 created | |
+| M-маркеров closed | — | 11+ | |
