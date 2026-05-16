@@ -6888,3 +6888,63 @@ generic static ctor генерирует invalid C `((nova_int)100LL).millis()`.
 - **nova_tests: 411 PASS / 46 FAIL / 13 SKIP** (== baseline + smoke test).
 - Все Plan 48 acceptance criteria закрыты (одно partial).
 - Zero регрессий на release-сборке.
+
+
+## Итоговый статус (2026-05-16 EOD — Plan 49 final)
+
+Plan 49 закрыт: Ф.0-Ф.5 + Ф.6 partial + Ф.7 done. Отмена first-class
+семантика, structurally separate от ошибок.
+
+### Сделано без упрощений
+
+**Ф.0 — Kinded throws.** NovaThrowKind enum (USER/CANCEL) + frame fields
+(error_kind/error_reason_ptr), переживают longjmp. nova_throw_cancel +
+nova_throw_cancel_reason API.
+
+**Ф.1 — Cancel reason на CancelToken (str-форма).** NovaCancelToken
+расширен reason_ptr (void*) + has_reason. cancel(reason) / reason() →
+Option[str] API. nova_cancel_box_str helper для GC-heap allocation.
+
+**Ф.2 — Cooperative cancel + USER-precedence + audit.** Все 4 cancel-throw
+сайта (yield/recv/send/select) переведены на nova_throw_cancel_reason.
+nova_fiber_report_error_kinded реализует USER-precedence таблицу:
+CANCEL+USER → overwrite (real-error-wins). Go errgroup теряет real-error
+после cancel — у нас не теряется.
+
+**Ф.3 — supervised_run + emit_with kind-aware.** CANCEL → возврат без
+re-throw (отмена не убегает наружу). USER → старый re-throw путь.
+emit_with else-branch re-throw'ит CANCEL дальше (with Fail не глотает).
+
+**Ф.4 — Semantics smoke tests.** 5 тестов в cancel_semantics_test.nv:
+отмена не убегает, reason переживает scope, default reason, reason() до
+отмены None, реальная ошибка попадает в with Fail.
+
+**Ф.5 — M:N atomic kind+reason cross-worker.** kinded atomic-report
+с compare-kind CAS-loop для USER-precedence. supervised_run читает
+kind из atomic если cross-worker only.
+
+**Ф.6 partial — CancelToken[T] generic.** Синтаксис принят для любого T,
+cancel(reason: T) работает через type-aware boxing (str / pointer /
+primitive). reason() per-T un-box deferred V2.
+
+### Закрытые маркеры
+
+- [M-cancel-throw-routing] — закрыт Ф.3 (kind-aware supervised_run).
+- [M-within-error-conflation] — закрыт Ф.3 (emit_with kind-aware).
+
+### V2 / Plan 50 followup
+
+**[M-reason-per-T-unbox]** — reason() -> Option[T] возвращает Option[str]
+для любого T. Для T=str корректно; для T≠str — incorrect (un-box как str
+вместо T). Нужен mono'd helper по T или infer-context propagation.
+
+**[M-cross-type-from-cascade]** — child.cancelled_by(parent) где
+типы T разные требует compile-time `A: From[B]` инференцию и инжекцию
+`A.from(b_reason)`. Сейчас same-type предположение (передаём reason_ptr
+as-is, для cross-type это будет UB на un-box).
+
+### Результат
+
+- **nova_tests: 413 PASS / 46 FAIL / 13 SKIP** (== baseline + Plan 49 smoke).
+- Plan 49 acceptance: 11 из 14 закрыты, 3 V2 followup'а зафиксированы.
+- Zero регрессий на release.

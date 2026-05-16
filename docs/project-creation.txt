@@ -12040,3 +12040,92 @@ test. Никаких регрессий от Plan 48 финальных прав
   (mn-runtime 1c0b0e9a33a)
 - docs(48): Ф.7.4 partial — bare-variant mono done, erased fallback documented
   (main 1b42eeedd30)
+
+
+## Шаг NNN+5. Plan 49 — Cancellation semantics first-class (2026-05-16)
+
+Закрыты Ф.0–Ф.5 + Ф.6 partial + Ф.7. Отмена теперь structurally separate
+от ошибок: kinded throws, typed reason, USER-precedence, with-Fail не
+глотает CANCEL.
+
+### Ф.0 — NovaThrowKind + frame fields + nova_throw_cancel
+
+- effects.h: enum NOVA_THROW_USER (default) / NOVA_THROW_CANCEL.
+- NovaFailFrame расширен error_kind + error_reason_ptr (переживают longjmp).
+- nova_throw stamps USER (backward-compat); nova_throw_cancel + nova_throw_cancel_reason — новые API.
+- NOVA_CATCH_KIND / NOVA_CATCH_REASON макросы.
+
+### Ф.1 — cancel reason на CancelToken (str-форма)
+
+- NovaCancelToken: reason_ptr (void*-box) + has_reason поля.
+- nova_cancel_token_cancel_reason / _reason / _has_reason / _reason_str API.
+- nova_cancel_box_str helper для GC-heap allocation.
+- emit_c.rs: tok.cancel(reason) / tok.cancel() / tok.reason() dispatch
+  → Option[str] return type для tok.reason().
+
+### Ф.2 — cooperative cancel CANCEL+reason + USER-precedence + audit
+
+- NovaFiberQueue: first_error_kind/reason + cancel_reason_ptr поля.
+- nova_fiber_yield бросает kind=CANCEL с reason из scope.
+- channels.h: 3 cancel-throw сайта (recv/send/select) на nova_throw_cancel.
+- nova_cancel_token_bind/_cancel_reason пропагируют reason в scope.
+- nova_fiber_report_error_kinded — USER-precedence таблица: CANCEL+USER
+  → overwrite (USER win); first-USER-wins. Реальная ошибка не теряется
+  даже если cancel случился раньше (Go errgroup теряет — у нас нет).
+
+### Ф.3 — supervised_run + emit_with kind-aware
+
+- nova_supervised_run_impl: CANCEL → return без re-throw (отмена не
+  убегает); USER → re-throw (старый путь).
+- emit_with else-branch: if frame.error_kind == CANCEL → pop frames
+  + restore handlers + nova_throw_cancel_reason (re-throw к outer
+  supervised). USER → старая семантика (handler did its job).
+
+### Ф.4 — semantics smoke tests
+
+nova_tests/concurrency/cancel_semantics_test.nv:
+- Отмена не убегает из supervised(cancel:) без with Fail.
+- tok.cancel("deadline") → tok.reason() == Some("deadline").
+- tok.cancel() default reason "cancelled".
+- tok.reason() до отмены — None.
+- Реальная ошибка (throw 42) ловится внешним with Fail.
+
+### Ф.5 — M:N atomic kind+reason cross-worker
+
+- NovaFiberQueue: first_error_atomic_kind/reason добавлены рядом с
+  existing atomic msg pointer (release/acquire через msg pointer).
+- nova_fiber_report_atomic_kinded — CAS-loop с compare-kind: NULL
+  → write; CANCEL → USER overwrite через secondary CAS; иначе keep.
+- supervised_run reads kind из local или atomic при re-throw decision.
+- emit_c.rs (remote catch-branch): nova_fiber_report_atomic_kinded
+  вместо raw CAS.
+
+### Ф.6 partial — CancelToken[T] generic
+
+- CancelToken[T] синтаксис принят (default = CancelToken[str]).
+- nova_cancel_box_copy_raw(src, size) — generic memcpy в GC-heap.
+- emit_c.rs cancel(): type-aware boxing
+  - T=str → nova_cancel_box_str (existing).
+  - T=pointer → cast в void*.
+  - T=primitive/value-struct → compound literal `&((T){val})` + box_copy_raw.
+
+nova_tests/concurrency/cancel_token_generic_smoke.nv:
+- CancelToken default — backward-compat.
+- CancelToken[str] explicit annotation.
+- CancelToken[int] cancel(42) — i64 boxing.
+- CancelToken[bool] cancel(true) — bool boxing.
+
+V2 followup (Plan 50): reason() -> Option[T] per-T un-box;
+cross-type cascade через From-конвертацию.
+
+### Регрессия
+
+413 PASS / 46 FAIL (baseline 411 + 2 Plan 49 smoke tests, zero new fails).
+
+### Commits
+
+- feat(49): Ф.0-Ф.4 — kinded throws + cancel reason + USER-precedence
+  + smoke tests (mn-runtime 62bd0ca22a2)
+- feat(49): Ф.5 — M:N atomic kind+reason в cross-worker (835b154de3c)
+- feat(49): Ф.6 partial — CancelToken[T] typed cancel reason для T≠str
+  (9ccc6096d43)
