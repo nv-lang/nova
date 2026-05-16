@@ -122,6 +122,10 @@ pub fn verify_handlers(module: &Module) -> Vec<Diagnostic> {
                             binding_span,
                         ));
                     }
+                    VerifyResult::Warning(msg) => {
+                        // W2402 от verify — forwarding как warning.
+                        diagnostics.push(Diagnostic::new(msg, binding_span));
+                    }
                 }
                 continue;
             }
@@ -147,6 +151,9 @@ pub fn verify_handlers(module: &Module) -> Vec<Diagnostic> {
                     let _ = (reason, binding_span);
                 }
                 VerifyResult::EncodingFailed(_) => {}
+                VerifyResult::Warning(msg) => {
+                    diagnostics.push(Diagnostic::new(msg, binding_span));
+                }
             }
         }
         }
