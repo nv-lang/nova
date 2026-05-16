@@ -36,6 +36,7 @@ pub mod collect_handlers;
 pub mod render_html;
 pub mod query;
 pub mod json_parse;
+pub mod mcp;
 
 pub use doctree::{DocTree, DocModule, DocItem, ItemKind, Signature, Visibility};
 
