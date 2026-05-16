@@ -169,6 +169,10 @@
             "default": null,
             "keyword_only": false,
             "name": "p",
+            "structural_type": {
+              "kind": "named",
+              "name": "Point"
+            },
             "type": "Point",
             "variadic": false
           },
@@ -176,6 +180,10 @@
             "default": null,
             "keyword_only": false,
             "name": "dx",
+            "structural_type": {
+              "kind": "named",
+              "name": "int"
+            },
             "type": "int",
             "variadic": false
           },
@@ -183,6 +191,10 @@
             "default": null,
             "keyword_only": false,
             "name": "dy",
+            "structural_type": {
+              "kind": "named",
+              "name": "int"
+            },
             "type": "int",
             "variadic": false
           }
@@ -191,6 +203,10 @@
 
         ],
         "receiver": null,
+        "structural_type": {
+          "kind": "named",
+          "name": "Point"
+        },
         "return_type": "Point"
       }
     }

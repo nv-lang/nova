@@ -292,6 +292,9 @@ pub enum ItemKind {
     /// Protocol-декларация (D72).
     Protocol {
         methods: Vec<ProtocolMethodSig>,
+        /// Plan 45 Ф.23.16: types implementing this protocol (workspace scan).
+        /// Each entry is a stable type item_id. Empty in single-file mode.
+        implementors: Vec<String>,
     },
 }
 

@@ -207,6 +207,10 @@
               "default": null,
               "keyword_only": false,
               "name": "other",
+              "structural_type": {
+                "kind": "named",
+                "name": "Eq"
+              },
               "type": "Eq",
               "variadic": false
             }

@@ -110,6 +110,10 @@
             "default": null,
             "keyword_only": false,
             "name": "arr",
+            "structural_type": {
+              "kind": "array",
+              "elem": "int"
+            },
             "type": "[]int",
             "variadic": false
           },
@@ -117,6 +121,10 @@
             "default": null,
             "keyword_only": false,
             "name": "i",
+            "structural_type": {
+              "kind": "named",
+              "name": "int"
+            },
             "type": "int",
             "variadic": false
           }
@@ -125,6 +133,10 @@
 
         ],
         "receiver": null,
+        "structural_type": {
+          "kind": "named",
+          "name": "int"
+        },
         "return_type": "int"
       }
     }

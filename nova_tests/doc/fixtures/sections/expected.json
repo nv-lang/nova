@@ -108,6 +108,10 @@
             "default": null,
             "keyword_only": false,
             "name": "a",
+            "structural_type": {
+              "kind": "named",
+              "name": "int"
+            },
             "type": "int",
             "variadic": false
           },
@@ -115,6 +119,10 @@
             "default": null,
             "keyword_only": false,
             "name": "b",
+            "structural_type": {
+              "kind": "named",
+              "name": "int"
+            },
             "type": "int",
             "variadic": false
           }
@@ -123,6 +131,10 @@
 
         ],
         "receiver": null,
+        "structural_type": {
+          "kind": "named",
+          "name": "int"
+        },
         "return_type": "int"
       }
     }

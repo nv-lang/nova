@@ -138,6 +138,56 @@ pub fn collect_workspace(modules: &[Module]) -> DocTree {
     }
     // Deterministic order: по path.
     tree.modules.sort_by(|a, b| a.path.cmp(&b.path));
+
+    // Plan 45 Ф.23.16: populate Protocol.implementors via workspace scan.
+    // For each Protocol, find types that have methods matching all protocol method names.
+    // Collect: protocol_id → required method names.
+    let mut proto_methods: Vec<(String, std::collections::HashSet<String>)> = Vec::new();
+    for m in &tree.modules {
+        for it in &m.items {
+            if let ItemKind::Protocol { methods, .. } = &it.kind {
+                let names: std::collections::HashSet<String> =
+                    methods.iter().map(|m| m.name.clone()).collect();
+                if !names.is_empty() {
+                    proto_methods.push((it.id.clone(), names));
+                }
+            }
+        }
+    }
+    if !proto_methods.is_empty() {
+        // Collect type_name → set of method names (from Fn items with receiver).
+        // Method items have id of form "module::TypeName.method".
+        let mut type_methods: std::collections::HashMap<String, std::collections::HashSet<String>> =
+            std::collections::HashMap::new();
+        for m in &tree.modules {
+            for it in &m.items {
+                if let ItemKind::Fn(sig) = &it.kind {
+                    if let Some(recv) = &sig.receiver {
+                        let type_id = format!("{}::{}", m.path.join("."), recv.type_name);
+                        let method_name = it.id.rsplit('.').next().unwrap_or(&it.name).to_string();
+                        type_methods.entry(type_id).or_default().insert(method_name);
+                    }
+                }
+            }
+        }
+        // For each protocol, find types whose method set is a superset of required methods.
+        for m in &mut tree.modules {
+            for it in &mut m.items {
+                if let ItemKind::Protocol { implementors, .. } = &mut it.kind {
+                    if let Some((_, required)) = proto_methods.iter().find(|(id, _)| id == &it.id) {
+                        let mut found: Vec<String> = type_methods
+                            .iter()
+                            .filter(|(_, meths)| required.iter().all(|r| meths.contains(r)))
+                            .map(|(type_id, _)| type_id.clone())
+                            .collect();
+                        found.sort();
+                        *implementors = found;
+                    }
+                }
+            }
+        }
+    }
+
     tree
 }
 
@@ -351,7 +401,7 @@ fn collect_type(module_path: &[String], t: &TypeDecl) -> DocItem {
                         .unwrap_or_else(|| "()".to_string()),
                 })
                 .collect();
-            ItemKind::Protocol { methods: sigs }
+            ItemKind::Protocol { methods: sigs, implementors: Vec::new() }
         }
         TypeDeclKind::Newtype(inner_ty) => {
             ItemKind::Type(TypeDefinition::Newtype {

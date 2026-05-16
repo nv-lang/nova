@@ -239,10 +239,11 @@ fn write_item(w: &mut JsonWriter, it: &DocItem) {
                 }
             });
         }
-        ItemKind::Protocol { methods } => {
-            // Plan 45 Ф.22.4 / D107: `implementors` — placeholder []
-            // (требует workspace-scope scan; см. сноску Ф.22.4 в плане).
-            w.field_array("implementors", |_| {});
+        ItemKind::Protocol { methods, implementors } => {
+            // Plan 45 Ф.23.16: implementors populated in workspace mode.
+            w.field_array("implementors", |w| {
+                for imp in implementors { w.array_str(imp); }
+            });
             w.field_array("methods", |w| {
                 for m in methods {
                     w.array_object(|w| {
@@ -350,6 +351,8 @@ fn write_signature(w: &mut JsonWriter, sig: &Signature) {
         }),
         None => w.field_null_or_str("receiver", None),
     }
+    // Plan 45 Ф.23.22: structural return type.
+    write_structural_type(w, &sig.return_type);
     w.field_str("return_type", &sig.return_type);
 }
 
@@ -357,6 +360,8 @@ fn write_param(w: &mut JsonWriter, p: &Param) {
     w.field_null_or_str("default", p.default.as_deref());
     w.field_bool("keyword_only", p.keyword_only);
     w.field_str("name", &p.name);
+    // Plan 45 Ф.23.22: structural_type alongside source type string.
+    write_structural_type(w, &p.ty);
     w.field_str("type", &p.ty);
     w.field_bool("variadic", p.variadic);
 }
@@ -418,6 +423,50 @@ fn write_type_definition(w: &mut JsonWriter, def: &TypeDefinition) {
             w.field_str("inner_type", inner);
             w.field_str("kind", "newtype");
         }
+    }
+}
+
+/// Plan 45 Ф.23.22: parse a Nova type string into a structural JSON representation.
+/// Emitted alongside every `type` field for LLM consumption.
+/// Grammar (simplified): `[]T` = array, `?T` = optional, `(A, B)` = tuple,
+/// `fn(A) -> B` = function, `named` = named type.
+fn write_structural_type(w: &mut JsonWriter, ty: &str) {
+    let ty = ty.trim();
+    if ty.starts_with("[]") {
+        w.field_object("structural_type", |w| {
+            w.field_str("kind", "array");
+            // elem type as string — recursive structural would require alloc
+            w.field_str("elem", &ty[2..]);
+        });
+    } else if ty.starts_with('?') {
+        w.field_object("structural_type", |w| {
+            w.field_str("kind", "optional");
+            w.field_str("inner", &ty[1..]);
+        });
+    } else if ty.starts_with("fn(") || ty.starts_with("fn (") {
+        w.field_object("structural_type", |w| {
+            w.field_str("kind", "function");
+            w.field_str("source", ty);
+        });
+    } else if ty.starts_with('(') && ty.ends_with(')') {
+        w.field_object("structural_type", |w| {
+            w.field_str("kind", "tuple");
+            w.field_str("source", ty);
+        });
+    } else if ty == "()" {
+        w.field_object("structural_type", |w| {
+            w.field_str("kind", "unit");
+        });
+    } else {
+        w.field_object("structural_type", |w| {
+            // Strip generic params for the base name.
+            let base = ty.split('[').next().unwrap_or(ty);
+            w.field_str("kind", "named");
+            w.field_str("name", base);
+            if ty.contains('[') {
+                w.field_str("source", ty);
+            }
+        });
     }
 }
 

@@ -255,7 +255,7 @@ fn render_item(it: &DocItem, link_map: &std::collections::HashMap<String, String
             let _ = writeln!(out, "```");
             let _ = writeln!(out);
         }
-        ItemKind::Protocol { methods } => {
+        ItemKind::Protocol { methods, implementors } => {
             let _ = writeln!(out, "```nova");
             let _ = writeln!(out, "type {} protocol {{", it.name);
             for m in methods {
@@ -265,6 +265,15 @@ fn render_item(it: &DocItem, link_map: &std::collections::HashMap<String, String
             let _ = writeln!(out, "}}");
             let _ = writeln!(out, "```");
             let _ = writeln!(out);
+            // Plan 45 Ф.23.16: implementors section.
+            if !implementors.is_empty() {
+                let _ = writeln!(out, "#### Implementors");
+                let _ = writeln!(out);
+                for imp in implementors {
+                    let _ = writeln!(out, "- `{}`", imp);
+                }
+                let _ = writeln!(out);
+            }
         }
     }
     if let Some(s) = &it.summary {
