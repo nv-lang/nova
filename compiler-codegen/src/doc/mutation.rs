@@ -192,6 +192,82 @@ pub fn run_mutation_analysis_executed(
     MutationReport { mutants, total, killed, survived }
 }
 
+/// Plan 45 Ф.29.4 — workspace-mode mutation analysis (real-exec).
+///
+/// Аналог `run_mutation_analysis_executed` но для multi-module workspace.
+/// Принимает map `module_path → source` (одна запись per файл) —
+/// для каждого мутанта substitute mutated_expr в соответствующем file source.
+///
+/// **Key difference от single-file:**
+/// - `sources_by_module_path: BTreeMap<String, String>` вместо single &str.
+/// - Per-mutant lookup правильного source через `mutant.item_id.split("::").next()` →
+///   module_path → source.
+/// - Run doc-tests с мутированным source конкретного file.
+pub fn run_mutation_analysis_executed_workspace(
+    tree: &DocTree,
+    sources_by_module_path: &std::collections::BTreeMap<String, String>,
+) -> MutationReport {
+    let mut mutants = generate_mutants(tree);
+    evaluate_mutants_executed_workspace(tree, sources_by_module_path, &mut mutants);
+    let total = mutants.len();
+    let killed = mutants.iter().filter(|m| m.outcome == MutantOutcome::Killed).count();
+    let survived = mutants.iter().filter(|m| m.outcome == MutantOutcome::Survived).count();
+    MutationReport { mutants, total, killed, survived }
+}
+
+fn evaluate_mutants_executed_workspace(
+    tree: &DocTree,
+    sources_by_module_path: &std::collections::BTreeMap<String, String>,
+    mutants: &mut Vec<Mutant>,
+) {
+    // Найти doc-tests, group'нуть по item_id.
+    let mut tests_by_item: std::collections::BTreeMap<String, Vec<&DocTest>> =
+        std::collections::BTreeMap::new();
+    for dt in &tree.doc_tests {
+        if let Some(from) = &dt.from_id {
+            tests_by_item.entry(from.clone()).or_default().push(dt);
+        }
+    }
+
+    for mutant in mutants.iter_mut() {
+        let tests = match tests_by_item.get(&mutant.item_id) {
+            Some(t) if !t.is_empty() => t,
+            _ => { mutant.outcome = MutantOutcome::NoTests; continue; }
+        };
+
+        // Extract module_path из item_id: "mod.path::fn_name" → "mod.path".
+        let module_path = match mutant.item_id.split("::").next() {
+            Some(p) => p,
+            None => { mutant.outcome = MutantOutcome::NoTests; continue; }
+        };
+        let source = match sources_by_module_path.get(module_path) {
+            Some(s) => s.as_str(),
+            None => { mutant.outcome = MutantOutcome::NoTests; continue; }
+        };
+
+        let mutated_source = source.replacen(&mutant.original_expr, &mutant.mutated_expr, 1);
+        if mutated_source == *source {
+            mutant.outcome = MutantOutcome::NoTests;
+            continue;
+        }
+
+        let test_refs: Vec<crate::doc::doctree::DocTest> = tests.iter().map(|t| (*t).clone()).collect();
+        let summary = crate::doc::test_runner::run_doc_tests_with_source(
+            &test_refs,
+            Some(&mutated_source),
+        );
+
+        let has_failure = summary.results.iter().any(|r|
+            matches!(r.outcome, crate::doc::test_runner::DocTestOutcome::Failed(_))
+        );
+        mutant.outcome = if has_failure {
+            MutantOutcome::Killed
+        } else {
+            MutantOutcome::Survived
+        };
+    }
+}
+
 fn evaluate_mutants_executed(tree: &DocTree, source: &str, mutants: &mut Vec<Mutant>) {
     // Найти doc-tests один раз, group'нуть по item_id.
     let mut tests_by_item: std::collections::BTreeMap<String, Vec<&DocTest>> =
@@ -264,16 +340,36 @@ pub fn generate_mutants(tree: &DocTree) -> Vec<Mutant> {
                             outcome: MutantOutcome::NoTests,
                         });
                     }
-                    // Drop-requires mutant (только для requires).
-                    if kind == "requires" {
-                        out.push(Mutant {
-                            item_id: it.id.clone(),
-                            contract_kind: kind.to_string(),
-                            original_expr: contract.expr.clone(),
-                            mutated_expr: "true".to_string(),
-                            operator: "drop-requires".to_string(),
-                            outcome: MutantOutcome::NoTests,
-                        });
+                    // Drop mutants — заменяют predicate на `true` (vacuously satisfied).
+                    // Если test всё ещё проходит — contract является vacuous; killed
+                    // если test fail'ит (e.g., contract пропускает valid input в test).
+                    match kind {
+                        "requires" => {
+                            out.push(Mutant {
+                                item_id: it.id.clone(),
+                                contract_kind: kind.to_string(),
+                                original_expr: contract.expr.clone(),
+                                mutated_expr: "true".to_string(),
+                                operator: "drop-requires".to_string(),
+                                outcome: MutantOutcome::NoTests,
+                            });
+                        }
+                        "ensures" => {
+                            // Plan 45 Ф.29.3: drop-ensures mutator. Заменяет
+                            // postcondition на `true` — если test не имеет
+                            // post-call assertion, mutant survives (under-tested).
+                            // Если есть assert(result == ...) — killed (test catches
+                            // что postcondition реально нужно).
+                            out.push(Mutant {
+                                item_id: it.id.clone(),
+                                contract_kind: kind.to_string(),
+                                original_expr: contract.expr.clone(),
+                                mutated_expr: "true".to_string(),
+                                operator: "drop-ensures".to_string(),
+                                outcome: MutantOutcome::NoTests,
+                            });
+                        }
+                        _ => {}
                     }
                 }
             }

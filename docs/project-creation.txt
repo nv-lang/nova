@@ -13172,3 +13172,22 @@ fix. Zero regressions РѕС‚ Plan 54 items.
 - fix(plan54 Р¤.1): pattern-var-leak вЂ” var_types scope cleanup РІ emit_test
 - feat(plan54 Р¤.5 partial): nested-call inference caller-side
 - fix(plan54 Р¤.4): generic-array-return turbofish through infer
+
+=== Plan 45 Sprint Ф.29 — Cleanup sprint (2026-05-16) ===
+
+4 smaller items закрыты в одной сессии после Ф.28 completion.
+
+Ф.29.1 (ebd6138): Remove render_expr_legacy dead code, 127 LOC.
+Ф.29.2 (389e9c1): Precedence-aware parens — Nova precedence table + helpers.
+Ф.29.3 (d64eaa5): Drop-ensures mutator parallel to drop-requires.
+Ф.29.4 (286c6ad): Workspace mutation testing real-exec через sources_by_module_path.
+
+**Total после Ф.29:** 103 doc tests PASS (16 integration suites + 12 unit).
+
+Plan 45 + 45.A foundation + Ф.29 cleanups = formally closed.
+
+Что осталось (Ф.30+, отдельные sprints):
+- Ф.30: External crate-doc linking + incremental cache
+- Ф.31: HTML output + lunr search (main adoption blocker)
+- Ф.32: MCP server для AI/LLM real-time queries
+- Plan 45.B: Stdlib full doc-pass

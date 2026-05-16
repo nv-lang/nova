@@ -131,7 +131,7 @@
 
           ],
           "ensures": [
-            "(result >= 0)"
+            "result >= 0"
           ],
           "ensures_fail": [
 
@@ -219,8 +219,8 @@
 
           ],
           "ensures": [
-            "(result >= a)",
-            "(result >= b)"
+            "result >= a",
+            "result >= b"
           ],
           "ensures_fail": [
 

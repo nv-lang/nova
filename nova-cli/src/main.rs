@@ -1034,7 +1034,7 @@ fn cmd_doc(path: &Path, format: &str, json_schema: bool, include_private: bool, 
     if path.is_dir() {
         // Plan 45 Ф.25.4: mutate_contracts пока single-file only (workspace
         // mode требует cross-module test-runner integration — Ф.25.5).
-        return cmd_doc_workspace(path, format, include_private, run_doc_tests, check, coverage, jobs, strict);
+        return cmd_doc_workspace(path, format, include_private, run_doc_tests, check, coverage, jobs, strict, mutate_contracts, real_exec);
     }
     if !path.is_file() {
         bail!("file not found: {}", path.display());
@@ -1149,6 +1149,8 @@ fn cmd_doc_workspace(
     coverage: bool,
     jobs: usize,
     strict: bool,
+    mutate_contracts: bool,
+    real_exec: bool,
 ) -> Result<()> {
     let mut files: Vec<PathBuf> = Vec::new();
     walk_nv_files(dir, &mut files)?;
@@ -1255,6 +1257,15 @@ fn cmd_doc_workspace(
     }
     if check {
         return cmd_doc_check(&tree, format);
+    }
+    if mutate_contracts {
+        // Plan 45 Ф.29.4: workspace-mode mutation testing real-exec.
+        let report = if real_exec {
+            nova_codegen::doc::mutation::run_mutation_analysis_executed_workspace(&tree, &sources_by_module)
+        } else {
+            nova_codegen::doc::mutation::run_mutation_analysis(&tree)
+        };
+        return print_mutation_report(&report, format);
     }
     if run_doc_tests {
         // Plan 45 Ф.22.7: workspace doc-tests с crate-scope.
@@ -1402,10 +1413,6 @@ fn cmd_doc_check(tree: &nova_codegen::doc::DocTree, format: &str) -> Result<()> 
 }
 
 /// Plan 45 Ф.25.4 + Ф.28.2 — `nova doc --mutate-contracts [--real-exec]` mutation testing.
-///
-/// Если `source` Some — real-exec mode (Ф.28.2): substitute mutated_expr в source,
-/// run doc-tests, detect kills.
-/// Если None — text-heuristic mode (Ф.25.4): boundary literal + fn call detection.
 fn cmd_doc_mutate_contracts(
     tree: &nova_codegen::doc::DocTree,
     format: &str,
@@ -1415,6 +1422,14 @@ fn cmd_doc_mutate_contracts(
         Some(src) => nova_codegen::doc::mutation::run_mutation_analysis_executed(tree, src),
         None => nova_codegen::doc::mutation::run_mutation_analysis(tree),
     };
+    print_mutation_report(&report, format)
+}
+
+/// Plan 45 Ф.29.4 — shared mutation report printer (single-file + workspace).
+fn print_mutation_report(
+    report: &nova_codegen::doc::mutation::MutationReport,
+    format: &str,
+) -> Result<()> {
     if format == "json" {
         let mutants_str = report.mutants.iter()
             .map(|m| format!(
@@ -1446,7 +1461,6 @@ fn cmd_doc_mutate_contracts(
                 report.survived);
         }
     }
-    // Exit 1 если есть survived mutants (signal under-tested contracts).
     if report.survived > 0 {
         std::process::exit(1);
     }

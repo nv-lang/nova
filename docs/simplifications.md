@@ -7715,3 +7715,20 @@ Plan 54 â€” codegen follow-ups Ð¾Ñ‚ Plan 48/49 audit. Ð—Ð°ÐºÑ€Ñ‹Ñ‚Ð¾ 5 Ð¸Ð· 8 it
 
 - **[M-array-of-func-mono]** â€” `[]fn->T` type_ref_to_c.
 - **Ð¤.5b match-arm pattern inference** â€” pattern_inner_type helper.
+
+---
+
+## Plan 45 Sprint Ô.29 — Cleanups (2026-05-16)
+
+### Resolved (no longer simplifications):
+- render_expr_legacy dead code removed (Ô.29.1)
+- Always-parenthesized binary > precedence-aware (Ô.29.2)
+- drop-ensures mutator implemented (Ô.29.3)
+- Workspace mutation real-exec functional (Ô.29.4)
+
+### Remaining (Plan 45.A/45.B scope):
+- HTML output + lunr search (Ô.31)
+- MCP server (Ô.32)
+- Stdlib full doc-pass (Plan 45.B)
+- Parser-side #allow_transit (Plan 16)
+- Workspace handler matrix ÷åðåç FileRegistry (Plan 42)
