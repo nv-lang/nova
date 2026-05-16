@@ -1,4 +1,4 @@
-// EXPECT_COMPILE_ERROR передаётся только по имени
+// EXPECT_COMPILE_ERROR (D102)
 //
 // Plan 50 (D102 ревизия): правило keyword-only применяется к
 // static-методам (форма «конструктор»). `Box.make(7)` — `7` лёг

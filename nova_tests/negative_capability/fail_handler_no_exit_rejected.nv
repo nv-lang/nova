@@ -1,4 +1,4 @@
-// EXPECT_COMPILE_ERROR handler-method `Fail.fail` обрабатывает операцию с возвращаемым типом `Never`
+// EXPECT_COMPILE_ERROR Fail.fail
 //
 // D61 §1430-1434 (revised by Plan 20 Ф.8): handler-method для эффект-
 // операции с return type `Never` ОБЯЗАН закончиться через

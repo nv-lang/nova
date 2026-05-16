@@ -1,4 +1,4 @@
-// EXPECT_COMPILE_ERROR связан и trailing-формой, и именованным
+// EXPECT_COMPILE_ERROR (D102)
 //
 // Plan 46 (D102) Ф.3: trailing-форма (D43) связывает последний
 // функциональный параметр. Передать его И trailing-формой, И

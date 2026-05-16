@@ -1,4 +1,4 @@
-// EXPECT_COMPILE_ERROR передаётся только по имени
+// EXPECT_COMPILE_ERROR (D102)
 //
 // Plan 50 follow-up: при коллизии имён методов между типами keyword-only
 // диагностика обязана срабатывать. В Plan 46 `check_call_argbind`
