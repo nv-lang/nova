@@ -406,6 +406,31 @@ fn propagate_bounds(conjuncts: &[SmtTerm]) -> Vec<SmtTerm> {
         return conjuncts.to_vec();
     }
     conjuncts.iter().map(|c| {
+        // Ф.16.3 (Plan 33.6): strict-monotone constant multiply.
+        // `(>= (* L Var) goal)` где L > 0 и known lower(Var) * L >= goal → true.
+        let try_const_mul_check = |inner: &SmtTerm| -> Option<bool> {
+            if let SmtTerm::App(iop, iargs) = inner {
+                if iop != ">=" || iargs.len() != 2 { return None; }
+                let goal = match &iargs[1] { SmtTerm::IntLit(n) => *n, _ => return None };
+                // arg[0] должен быть (* L Var) или (* Var L).
+                if let SmtTerm::App(mop, margs) = &iargs[0] {
+                    if mop != "*" || margs.len() != 2 { return None; }
+                    let (l, v) = match (&margs[0], &margs[1]) {
+                        (SmtTerm::IntLit(l), SmtTerm::Var(v)) => (*l, v),
+                        (SmtTerm::Var(v), SmtTerm::IntLit(l)) => (*l, v),
+                        _ => return None,
+                    };
+                    if l > 0 {
+                        if let Some(known_low) = lower.get(v) {
+                            if known_low.saturating_mul(l) >= goal {
+                                return Some(true);
+                            }
+                        }
+                    }
+                }
+                None
+            } else { None }
+        };
         // Helper for inner check: bool result или None.
         let try_check = |inner: &SmtTerm| -> Option<bool> {
             if let SmtTerm::App(iop, iargs) = inner {
@@ -453,10 +478,17 @@ fn propagate_bounds(conjuncts: &[SmtTerm]) -> Vec<SmtTerm> {
         if let Some(b) = try_check(c) {
             return SmtTerm::BoolLit(b);
         }
+        // Ф.16.3: const-mul check.
+        if let Some(b) = try_const_mul_check(c) {
+            return SmtTerm::BoolLit(b);
+        }
         // (not <inequality>) — invert result.
         if let SmtTerm::App(op, args) = c {
             if op == "not" && args.len() == 1 {
                 if let Some(b) = try_check(&args[0]) {
+                    return SmtTerm::BoolLit(!b);
+                }
+                if let Some(b) = try_const_mul_check(&args[0]) {
                     return SmtTerm::BoolLit(!b);
                 }
             }
