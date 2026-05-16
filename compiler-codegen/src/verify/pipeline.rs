@@ -2150,8 +2150,13 @@ pub fn verify_module(module: &Module) -> ModuleVerifyReport {
     }
 
     // Plan 33.4 P0-1 (Р¤.9.7 V1): РІРµСЂРёС„РёРєР°С†РёСЏ `with #verify E = handler` bindings.
-    for diag in super::handler_exec::verify_handlers(module) {
+    // Ф.7.5 (Plan 33.6): verify_handlers возвращает (errors, warnings).
+    let (handler_errors, handler_warnings) = super::handler_exec::verify_handlers(module);
+    for diag in handler_errors {
         report.errors.push(diag);
+    }
+    for w in handler_warnings {
+        report.warnings.push(w);
     }
     if !report.errors.is_empty() {
         return report;

@@ -1,0 +1,23 @@
+// Ф.7.5 (Plan 33.6): static-axiom check Unknown под Trivial → W2402.
+// Под TrivialBackend нельзя доказать non-trivial axiom, должен эмиттиться W2402.
+// EXPECT_COMPILE_WARNING W2402
+
+module contracts.static_axiom_unknown_w2402
+
+type Counter effect {
+    #pure value() -> int
+    axiom non_negative() => value() >= 0
+}
+
+fn check() -> int
+{
+    42
+}
+
+test "static axiom Unknown → W2402" {
+    with #verify Counter = handler Counter {
+        value() => 1
+    } {
+        assert(check() == 42)
+    }
+}
