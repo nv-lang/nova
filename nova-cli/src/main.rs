@@ -2202,55 +2202,67 @@ fn cmd_build(
     let src = read_file(&path)?;
     let path_str = path.to_string_lossy();
 
-    // parse
-    let mut module = nova_codegen::parser::parse(&src)
-        .map_err(|d| anyhow!("{}", d.render(&src, &path_str)))?;
+    // parse — Plan 57.C.1 PerfTimer hooks
+    let mut module = {
+        let _t = nova_codegen::perf_timer::PerfTimer::new("parse");
+        nova_codegen::parser::parse(&src)
+            .map_err(|d| anyhow!("{}", d.render(&src, &path_str)))?
+    };
     check_module_path(&path, &module)?;
 
     // Plan 35 Ф.1 MVP: cross-file resolve через inline expansion.
-    // Walks `module.imports` recursively, парсит каждый imported .nv,
-    // merge'ит Item::Type и Item::Fn в текущий `module.items` ДО typecheck.
-    //
-    // Limitations (sub-plans 35.A-E):
-    //   - Нет visibility filter (is_export — informational, не enforced).
-    //   - Нет symbol mangling — collision error если user re-defines.
-    //   - Нет DCE — вся imported module emit'ится.
-    //   - Нет signature/body split — full re-typecheck merged AST.
-    //   - Wildcard `import X.*` не поддерживается (R25, sub-plan 35.A).
-    //
-    // Cycle detection: visited set по canonical path.
-    nova_codegen::imports::resolve_imports_inline(&path, &mut module, &repo, &paths.stdlib_dir)?;
+    {
+        let _t = nova_codegen::perf_timer::PerfTimer::new("imports-resolve");
+        nova_codegen::imports::resolve_imports_inline(&path, &mut module, &repo, &paths.stdlib_dir)?;
+    }
 
-    nova_codegen::types::check_module(&module).map_err(|errs| {
-        let msgs: Vec<String> = errs.iter()
-            .map(|d| d.render(&src, &path_str))
-            .collect();
-        anyhow!("{}", msgs.join("\n"))
-    })?;
-    nova_codegen::types::infer_effects(&mut module);
-    for w in nova_codegen::lints::lint_module(&module) {
-        let (line, col) = nova_codegen::diag::byte_to_line_col(&src, w.diag.span.start);
-        eprintln!("{} {}:{}:{}: {} [{}]", bold(&yellow("warning:")), path.display(), line, col, w.diag.message, w.rule);
+    {
+        let _t = nova_codegen::perf_timer::PerfTimer::new("type-check");
+        nova_codegen::types::check_module(&module).map_err(|errs| {
+            let msgs: Vec<String> = errs.iter()
+                .map(|d| d.render(&src, &path_str))
+                .collect();
+            anyhow!("{}", msgs.join("\n"))
+        })?;
+    }
+    {
+        let _t = nova_codegen::perf_timer::PerfTimer::new("effects-infer");
+        nova_codegen::types::infer_effects(&mut module);
+    }
+    {
+        let _t = nova_codegen::perf_timer::PerfTimer::new("lints");
+        for w in nova_codegen::lints::lint_module(&module) {
+            let (line, col) = nova_codegen::diag::byte_to_line_col(&src, w.diag.span.start);
+            eprintln!("{} {}:{}:{}: {} [{}]", bold(&yellow("warning:")), path.display(), line, col, w.diag.message, w.rule);
+        }
     }
 
     // Plan 52 Ф.4: десугаринг map-литералов `[k: v]` → block-expression.
-    // ПОСЛЕ lints (которые анализируют MapLit-узлы), ДО callnorm/codegen.
-    // Plan 52 Ф.7: аннотация inferred K/V для turbofish в десугаринге.
-    nova_codegen::types::annotate_map_literals(&mut module);
-    nova_codegen::desugar::desugar_module(&mut module);
-
-    // Plan 46 (D102) Ф.2: нормализация call-site — named args → positional
-    // + вставка defaults. После type-check, до codegen.
-    nova_codegen::callnorm::normalize_module(&mut module);
-
-    let mut emitter = nova_codegen::codegen::CEmitter::new();
-    emitter.set_source_for_annotations(src.clone());
-    if let Some(n) = mono_depth {
-        emitter.set_mono_depth_limit(n);
+    {
+        let _t = nova_codegen::perf_timer::PerfTimer::new("annotate-maps");
+        nova_codegen::types::annotate_map_literals(&mut module);
     }
-    let (c_code, warnings) = emitter
-        .emit_module(&module)
-        .map_err(|e| anyhow!("codegen error: {}", e))?;
+    {
+        let _t = nova_codegen::perf_timer::PerfTimer::new("desugar");
+        nova_codegen::desugar::desugar_module(&mut module);
+    }
+
+    // Plan 46 (D102) Ф.2: нормализация call-site — named args → positional.
+    {
+        let _t = nova_codegen::perf_timer::PerfTimer::new("callnorm");
+        nova_codegen::callnorm::normalize_module(&mut module);
+    }
+
+    let (c_code, warnings) = {
+        let _t = nova_codegen::perf_timer::PerfTimer::new("codegen");
+        let mut emitter = nova_codegen::codegen::CEmitter::new();
+        emitter.set_source_for_annotations(src.clone());
+        if let Some(n) = mono_depth {
+            emitter.set_mono_depth_limit(n);
+        }
+        emitter.emit_module(&module)
+            .map_err(|e| anyhow!("codegen error: {}", e))?
+    };
     for w in &warnings {
         eprintln!("{}", w);
     }
@@ -2311,7 +2323,10 @@ fn cmd_build(
         libuv: libuv.as_ref(),
         gc_kind: test_runner::GcKind::default(),
     };
-    test_runner::compile_c_to_exe(&tc, &build_opts, Duration::from_secs(timeout_secs))?;
+    {
+        let _t = nova_codegen::perf_timer::PerfTimer::new("c-compile");
+        test_runner::compile_c_to_exe(&tc, &build_opts, Duration::from_secs(timeout_secs))?;
+    }
 
     // move exe to final destination
     if let Some(parent) = final_exe.parent() {
