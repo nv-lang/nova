@@ -30,6 +30,34 @@
  * Used by nova_gc_alloc_count() and nova_gc_reset_stats(). */
 static size_t _alloc_count = 0;
 
+/* Plan 57.C.2: last GC pause длительность в наносекундах (monotonic timer
+ * wraps GC_gcollect). Updated в nova_gc_collect; consumers (bench, gc.last_pause_ns)
+ * читают через nova_gc_last_pause_ns(). */
+static uint64_t _last_pause_ns = 0;
+
+/* High-res timer для pause measurement. На Windows — QueryPerformanceCounter,
+ * на Linux/macOS — clock_gettime(CLOCK_MONOTONIC). */
+#if defined(_WIN32)
+#  define WIN32_LEAN_AND_MEAN
+#  include <windows.h>
+static uint64_t _now_ns(void) {
+    static LARGE_INTEGER freq = {0};
+    LARGE_INTEGER c;
+    if (freq.QuadPart == 0) QueryPerformanceFrequency(&freq);
+    QueryPerformanceCounter(&c);
+    uint64_t secs = (uint64_t)c.QuadPart / (uint64_t)freq.QuadPart;
+    uint64_t rem  = (uint64_t)c.QuadPart % (uint64_t)freq.QuadPart;
+    return secs * 1000000000ULL + rem * 1000000000ULL / (uint64_t)freq.QuadPart;
+}
+#else
+#  include <time.h>
+static uint64_t _now_ns(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint64_t)ts.tv_sec * 1000000000ULL + (uint64_t)ts.tv_nsec;
+}
+#endif
+
 void nova_gc_init(void) {
     /* Plan 44.2 Etap 1 wire-up fix (2026-05-12): Boehm/Docker hardening
      * before GC_INIT().
@@ -89,6 +117,12 @@ size_t nova_gc_free_count(void)  { return 0; /* conservative: GC freed count una
 size_t nova_gc_live_count(void)  { return _alloc_count; /* upper bound; GC may have freed some */ }
 void   nova_gc_reset_stats(void) { _alloc_count = 0; }
 
-/* Plan 32: introspection — under Boehm full GC support. */
-size_t nova_gc_heap_size(void) { return GC_get_heap_size(); }
-void   nova_gc_collect(void)   { GC_gcollect(); }
+/* Plan 32: introspection — under Boehm full GC support.
+ * Plan 57.C.2: nova_gc_collect timed; last_pause_ns updated. */
+size_t   nova_gc_heap_size(void) { return GC_get_heap_size(); }
+void     nova_gc_collect(void)   {
+    uint64_t t0 = _now_ns();
+    GC_gcollect();
+    _last_pause_ns = _now_ns() - t0;
+}
+uint64_t nova_gc_last_pause_ns(void) { return _last_pause_ns; }
