@@ -12211,6 +12211,33 @@ ecosystem (Creusot/Prusti/Kani/Flux/Aeneas). Найдено 5 P0 soundness gaps:
 - V4 закрыт в simplifications.md (запись отдельным коммитом).
 - Коммит: `7c8a4477962`.
 
+### Ф.7 — дополнительные positive/negative тесты по каждой фазе
+
+Покрытие Ф.7 расширено: для каждой подфазы есть positive (нет warning) и
+negative (есть warning или ошибка):
+
+- Ф.7.4: axiom_consistency_w2402_trivial (negative) +
+  axiom_consistency_no_axioms_positive (positive) — модуль без axioms не
+  получает W2402 (check_axiom_consistency пропускает effects без axiom block).
+  Коммит positive: `cb00321a4e1`.
+
+- Ф.7.5: static_axiom_unknown_w2402 (negative) +
+  static_axiom_no_axioms_positive (positive) — handler без axiom-check
+  не получает W2402 от verify_handlers.
+  Коммит positive: `bb83469f909`.
+
+- Ф.7.3: loop_decreases_w2402 (negative — `decreases match i { _ => i }`) +
+  loop_decreases_simple_positive (positive — `decreases i` encodable).
+  Коммит positive: `c11f0cddc79`.
+
+- Ф.7.2: v4_old_frame_positive + v4_old_arith_positive (positive multiple)
+  + v4_old_disproved_fail (negative, Z3-gated — `ensures result == old(x) + 1`
+  для body `x` ловится counterexample под Z3).
+  Коммит: `c2206cffc67`.
+
+**Итого тестов Ф.7:** 6 PASS positive + 3 PASS negative (warning) + 1 SKIP (Z3)
++ 19 f14_* SKIP (gating). Регрессия: 137 PASS / 35 SKIP / 1 pre-existing FAIL.
+
 === Plan 45 �.25 � nova tests (positive + negative) ===
 
 ����� �������� �.25 (4 ����) �������� nova-tests .nv ��� �������� �����
