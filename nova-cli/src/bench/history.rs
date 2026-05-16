@@ -230,6 +230,65 @@ mod tests {
     }
 }
 
+/// Plan 57.C.6: squash older history entries в single commit для
+/// retention policy. Keeps entries newer than `before_unix`; squashes
+/// older в один commit "squashed: N entries before YYYY-MM-DD".
+///
+/// Steps:
+/// 1. List entries; partition by timestamp_unix < before_unix.
+/// 2. Если 0 stale entries — early return success.
+/// 3. Create temp worktree at branch tip.
+/// 4. `git rm` stale entries; commit "squash" message.
+/// 5. Optional --push.
+pub fn squash(repo: &Path, branch: &str, before_unix: u64, push: bool,
+              remote: &str, dry_run: bool) -> Result<i32> {
+    let entries = list(repo, branch)?;
+    let (stale, kept): (Vec<_>, Vec<_>) = entries.into_iter()
+        .partition(|e| e.timestamp_unix < before_unix);
+    eprintln!("history-squash: {} stale, {} kept (threshold ts={})",
+        stale.len(), kept.len(), before_unix);
+    if stale.is_empty() {
+        eprintln!("history-squash: nothing to squash.");
+        return Ok(0);
+    }
+    if dry_run {
+        eprintln!("history-squash: dry-run — would remove:");
+        for e in &stale {
+            eprintln!("  {} (ts={})", e.filename, e.timestamp_unix);
+        }
+        return Ok(0);
+    }
+
+    let tmp_wt = std::env::temp_dir()
+        .join(format!("nova-bench-squash-{}", std::process::id()));
+    if tmp_wt.exists() {
+        let _ = git_in(repo, &["worktree", "remove", "--force",
+            &tmp_wt.to_string_lossy()]);
+        let _ = std::fs::remove_dir_all(&tmp_wt);
+    }
+    git_in(repo, &["worktree", "add", &tmp_wt.to_string_lossy(), branch])?;
+
+    for e in &stale {
+        let _ = git_in(&tmp_wt, &["rm", &e.filename]);
+    }
+    let msg = format!("squash: removed {} entries before ts={}",
+        stale.len(), before_unix);
+    let commit_res = git_in(&tmp_wt, &["-c", "user.name=nova-bench",
+                       "-c", "user.email=nova-bench@localhost",
+                       "commit", "-m", &msg]);
+    if commit_res.is_err() {
+        eprintln!("history-squash: commit failed — git output");
+    }
+    if push {
+        eprintln!("history-squash: pushing to {}", remote);
+        git_in(&tmp_wt, &["push", remote, branch])?;
+    }
+    git_in(repo, &["worktree", "remove", "--force",
+        &tmp_wt.to_string_lossy()])?;
+    eprintln!("history-squash: success ({} stale entries removed)", stale.len());
+    Ok(0)
+}
+
 /// Render brief summary of history-add command.
 pub fn explain() -> &'static str {
     "Appends a bench result JSON to an orphan git branch (default \
