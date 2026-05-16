@@ -1,0 +1,59 @@
+// int_extension_record_field_test.nv — Plan 54 Ф.2 verification.
+//
+// До Ф.2 fix'а: `100.method()` (int-extension) в record-literal field
+// эмитил invalid C `((nova_int)100LL).method()` (member-access on int).
+// После — proper Nova_int_method_<method> dispatch через method_overloads.
+
+module concurrency.int_extension_record_field_test
+
+
+// Local types — НЕ импортируем std.time.duration чтобы не блокироваться
+// на orthogonal codegen issue в Nova_Duration_method_into.
+
+type MyDuration {
+    nanos int
+}
+
+
+// Int extension method — наш test pattern.
+fn int @my_millis() -> MyDuration =>
+    { nanos: @ * 1_000_000 }
+
+
+fn int @my_seconds() -> MyDuration =>
+    { nanos: @ * 1_000_000_000 }
+
+
+type Config {
+    initial MyDuration
+    multiplier int
+}
+
+
+fn make_config() -> Config => {
+    initial: 100.my_millis(),    // Ф.2 critical pattern: ext method on int в record-literal field
+    multiplier: 2,
+}
+
+
+test "int extension method в record-literal field — generic context" {
+    let c = make_config()
+    assert(c.initial.nanos == 100_000_000)
+    assert(c.multiplier == 2)
+}
+
+
+test "разные int extension methods в record field" {
+    let c2 Config = {
+        initial: 2.my_seconds(),
+        multiplier: 5,
+    }
+    assert(c2.initial.nanos == 2_000_000_000)
+    assert(c2.multiplier == 5)
+}
+
+
+test "int extension method прямо в let-binding" {
+    let d = 500.my_millis()
+    assert(d.nanos == 500_000_000)
+}
