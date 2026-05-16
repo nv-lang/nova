@@ -105,3 +105,22 @@ pub fn try_prove_cached<B: SmtBackend + ?Sized>(
     }
     result
 }
+
+/// Ф.12.3 (Plan 33.6): try_prove через module-scoped thread-local cache.
+/// Не требует threading cache через signatures. Reset cache в начале
+/// `verify_module` через `reset_module_cache()`.
+pub fn try_prove_module_cached<B: SmtBackend + ?Sized>(
+    backend: &mut B,
+    goal: Formula,
+) -> SatResult {
+    use super::subsumption_cache::{module_cache_lookup, module_cache_insert, CachedSat};
+    if let Some(CachedSat::Unsat) = module_cache_lookup(&goal) {
+        return SatResult::Unsat(crate::verify::ir::UnsatCore::default());
+    }
+    let goal_for_cache = goal.clone();
+    let result = try_prove(backend, goal);
+    if matches!(result, SatResult::Unsat(_)) {
+        module_cache_insert(&goal_for_cache, CachedSat::Unsat);
+    }
+    result
+}
