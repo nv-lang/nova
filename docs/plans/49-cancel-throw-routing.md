@@ -464,6 +464,38 @@ fail-frame unwinding'у; Ф.4 явно тестирует defer+errdefer при 
 
 ---
 
+## Audit 2026-05-16 — production-revision: silent bugs + closing gaps
+
+**Findings от честного аудита после initial Plan 49 closure.** Записаны для исправления в этом sprint (см. ниже).
+
+### P0 — SILENT BUG
+
+**🐛 `reason()` для `CancelToken[T≠str]` — silent UB.**
+
+Тест-аудит подтвердил: `let tok CancelToken[int] = CancelToken.new(); tok.cancel(42); let r = tok.reason()` COMPILES и runs БЕЗ ошибки, но возвращает `Option[str]` со значением `(nova_str){.ptr=42(garbage)}`. Memory-corruption на любой str-операции.
+
+**Критическая безопасность** — нет ни compile-error, ни runtime-panic, прямой silent UB.
+
+**Fix:** per-T mono'd getter — codegen эмитит `nova_cancel_token_reason_<T_c>(tok)` который читает `(T*)reason_ptr` и возвращает `Option[T]`. Для T=str fallback на existing helper.
+
+### P1 — Cross-type cascade с From (Ф.6 final)
+
+**❌ `child:[A].cancelled_by(parent:[B])` где `A ≠ B` — UB.**
+
+Текущий каскад same-type only. Для разных T — un-box of `B` как `A` → silent UB.
+
+**Fix:** compile-time проверка `A: From[B]` (через existing D73/D77 `From` protocol) + инжекция `A.from(b_reason)` в каскад. Без `From[B] for A` — compile-error с suggestion.
+
+### P2 — Industry-comparison improvements
+
+**🚀 `tok1.merge(tok2)` композиция** — `merged` cancelled когда любой источник cancelled. Go context требует manual chain; AbortSignal.any() в TC39 stage 3 но без typed reason; у нас — `merged: CancelToken[T]` с reason от first-canceller.
+
+**🚀 Cancel-aware defer** (`cancel_defer { ... }`) — runs ТОЛЬКО на cancel-unwind. Эквивалент Rust Drop с разделением normal vs cancel.
+
+**Status:** обе фичи новые (не в original Ф.7); добавляются в этот sprint как demonstrative beyond Go/Rust/TS.
+
+---
+
 ## Связь
 
 - [Plan 47](47-supervised-cancel.md) — `supervised(cancel:)` +

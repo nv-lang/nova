@@ -670,6 +670,56 @@ field, не связанный с Plan 48. Любой import retry.nv валит
 
 ---
 
+## Audit 2026-05-16 — production-revision: что НЕ закрыто / silent bugs
+
+**Findings от честного аудита после initial Plan 48 closure:**
+
+### Acceptance gaps (closing in current session)
+
+1. **❌ `std/concurrency/cancellation.nv` (within[T], race[T]) НЕ написан.**
+   Plan 48 + Plan 47 acceptance оба ссылаются на этот файл как main use case.
+   Без него вся работа по closure-mono + spawn-fix остаётся «infrastructure only».
+   **Fix:** написать stdlib (within timeout / race first-wins) с поддержкой
+   `CancelToken[T]` reason.
+
+2. **⚠️ Polymorphic recursion compile-error — без verification теста.**
+   Механизм есть (mono_depth_limit + safety counter), но реальный тест
+   с recursive generic + low `--mono-depth=N` отсутствует.
+   **Fix:** написать тест `polymorphic_recursion_test.nv` который проверяет
+   что compile-error появляется с понятным сообщением (а не hang).
+
+3. **⚠️ `[]fn()->T` внутри generic-функции — verification теста нет.**
+   `.len()/[i]/for-in` на array of closures-T внутри mono'д body —
+   паттерн используется для `parallel for over closures`.
+   **Fix:** smoke test `fn_array_in_generic_test.nv`.
+
+4. **⚠️ Erased-эмиттеры partial closure.**
+   `emit_generic_method_erased` остался V1 fallback для unit-variant
+   references (`let r = Err2`). Закрытие требует usage-context inference.
+   **Fix:** Реализовать forward analysis (`let r = Err2; r.method(arg)` →
+   infer T from method arg) в этом sprint.
+
+### Pre-existing codegen bug блокирующий Plan 48 Ф.5
+
+5. **`[M-int-extension-record-field]` — invalid C для `100.millis()` в
+   record-literal field.**
+   Стало известно при попытке retry_test.nv. Codegen эмитит
+   `((nova_int)100LL).millis()` (member access на int), вместо
+   `nova_fn_int_method_millis(100LL)`. Любой import std/concurrency/retry.nv
+   валит C-build.
+   **Fix:** починить codegen для primitive-extension methods в record-literal
+   field context. После этого retry_test.nv становится тривиальным.
+
+### Industry-comparison improvements
+
+6. **Beyond state-of-the-art:** `tok = tok1.merge(tok2)` композиция —
+   результирующий токен cancelled когда любой из источников cancelled.
+   Эквивалент Go `merged := errgroup.WithCancel(parentCtx)` + manual chain,
+   но typed reason из любого источника.
+   **Status:** новая фича, не в acceptance criteria; добавляется в этот sprint.
+
+---
+
 ## Связь
 
 - [Plan 47](47-supervised-cancel.md) — Ф.5 (`within`/`race`) разблокируется
