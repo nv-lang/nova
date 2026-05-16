@@ -30,6 +30,7 @@
 | Р¤.26 Production hardening (audit-driven) | вњ… done | 4 РїСѓРЅРєС‚Р° вЂ” Newtype dead match arm (P0 D107 violation fix); handler matrix (Р¤.23.4 finally СЂРµР°Р»РёР·РѕРІР°РЅ); allow_transit capability placeholder (D63); 3 missing В§11.5 lints (summary-not-sentence, unknown-section, deprecated-overdue) |
 | Р¤.27 Audit closure (production polish) | вњ… done | 3 РїСѓРЅРєС‚Р° вЂ” workspace mode handler matrix functional (Р±С‹Р» noop); render_expr extended coverage (Index/If/SelfAccess/InterpolatedStr/TurboFish + `<kind>` fallback); stale MVP markers cleanup РІ 5 docstrings |
 | Р¤.28 Plan 45.A foundation | вњ… done | 3 РїСѓРЅРєС‚Р° вЂ” AST pretty-printer shared util (closes render_expr 100%); mutation testing real-exec (vs text-heuristic Р¤.25.4); **JSON Schema promote v1.0.0-rc1 в†’ v1.0.0 STABLE** (soak period closed) |
+| **Р¤.29 Cleanup sprint** (in-progress) | рџџЎ | 4 РїСѓРЅРєС‚Р° вЂ” remove `render_expr_legacy` dead code (Р¤.28.1 soak); precedence-aware parens (СѓР±СЂР°С‚СЊ redundant `()` РІ РїСЂРѕСЃС‚С‹С… binary); drop-ensures mutator (currently С‚РѕР»СЊРєРѕ drop-requires); workspace mutation testing real-exec (single-file в†’ multi-module) |
 
 ## Р¤.21 вЂ” Production hardening (2026-05-15, post-MVP audit)
 
@@ -2492,3 +2493,29 @@ Out-of-scope пїЅпїЅпїЅ пїЅ.28 (Plan 45.A round 2/3, пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ 
 - Stdlib full doc-pass (Plan 45.B)
 - Workspace handler matrix пїЅпїЅпїЅпїЅпїЅ FileRegistry (post Plan 42)
 - #allow_transit parser-side support (Plan 16 follow-up)
+
+---
+
+## Sprint Ф.29 — Cleanup sprint (in-progress, 2026-05-16)
+
+Closure smaller tech debt items найденных в "что осталось" сводке после Ф.28.
+Realistic за одну сессию (~4-6 часов). HTML output / MCP server / stdlib —
+multi-week scope, отдельные sprints (Ф.30+).
+
+| # | Что | Severity | Scope |
+|---|-----|----------|-------|
+| Ф.29.1 | Remove `collector::render_expr_legacy` dead code (Ф.28.1 soak finished) | L (cleanup) | ~50 LOC removal |
+| Ф.29.2 | Precedence-aware parens в `ast::pretty::print_expr` — убрать redundant `()` для same-precedence binary chains | L (cosmetic) | ~80 LOC + tests |
+| Ф.29.3 | Drop-ensures mutator — currently только `drop-requires` в Ф.25.4; add symmetric drop-ensures | M (mutation coverage) | ~30 LOC + tests |
+| Ф.29.4 | Workspace mutation testing real-exec — Ф.28.2 single-file only; extend to multi-module | M (consistency с Ф.27.1 workspace handler matrix) | ~150 LOC + tests |
+
+## Future sprints (out-of-scope для Ф.29)
+
+| Sprint | Что | ETA |
+|--------|-----|-----|
+| Ф.30 | External crate-doc linking + incremental cache (Plan 45.A small wins) | 1 сессия |
+| Ф.31 | HTML output + lunr search (Plan 45.A round 2 — главный adoption blocker) | 2-3 sessions |
+| Ф.32 | MCP server для AI/LLM real-time queries (Nova-unique, отдельный crate) | 2 sessions |
+| Plan 45.B | Stdlib full doc-pass (доку всю std/) | 2-3 weeks отдельно |
+| Plan 16 follow-up | Parser-side `#allow_transit` attribute | Plan 16 scope |
+| Plan 42 follow-up | Workspace handler matrix через FileRegistry (вместо sources_by_module_path) | Plan 42 scope |
