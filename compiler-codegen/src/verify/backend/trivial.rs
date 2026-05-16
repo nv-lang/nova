@@ -87,7 +87,11 @@ impl SmtBackend for TrivialBackend {
         };
 
         let simplified = simplify(&conjunction);
-        match &simplified {
+        // Ф.11.4 (Plan 33.6): transitivity propagation для equalities.
+        // Извлекаем все `(= a b)` из conjunction, строим class-substitution,
+        // применяем re-simplify. Это закрывает `requires a==b; requires b==c; ensures a==c`.
+        let propagated = propagate_equalities(&simplified);
+        match &propagated {
             SmtTerm::BoolLit(true) => {
                 // SAT — есть модель (trivial: все vars = 0/false).
                 SatResult::Sat(Model { bindings: HashMap::new() })
@@ -285,6 +289,86 @@ fn simplify_app(op: &str, args: &[SmtTerm]) -> SmtTerm {
 
         _ => SmtTerm::App(op.into(), args.to_vec()),
     }
+}
+
+/// Ф.11.4 (Plan 33.6): transitivity propagation для equalities в conjunction.
+///
+/// Алгоритм:
+/// 1. Извлечь все `(= a b)` из top-level `and(...)`.
+/// 2. Построить union-find классы.
+/// 3. Заменить во всех других conjuncts: каждый Var → representative класса.
+/// 4. Re-simplify.
+///
+/// Закрывает паттерн `a == b; b == c; ... a == c`.
+fn propagate_equalities(term: &SmtTerm) -> SmtTerm {
+    let conjuncts = match term {
+        SmtTerm::App(op, args) if op == "and" => args.clone(),
+        _ => vec![term.clone()],
+    };
+
+    // Step 1: collect equalities as (Var name → representative).
+    use std::collections::HashMap;
+    let mut parent: HashMap<String, String> = HashMap::new();
+    fn find(parent: &mut HashMap<String, String>, x: &str) -> String {
+        let p = parent.get(x).cloned().unwrap_or_else(|| x.to_string());
+        if p == x { return p; }
+        let root = find(parent, &p);
+        parent.insert(x.to_string(), root.clone());
+        root
+    }
+    for c in &conjuncts {
+        if let SmtTerm::App(op, args) = c {
+            if op == "=" && args.len() == 2 {
+                if let (SmtTerm::Var(a), SmtTerm::Var(b)) = (&args[0], &args[1]) {
+                    let ra = find(&mut parent, a);
+                    let rb = find(&mut parent, b);
+                    if ra != rb {
+                        // Choose alphabetically-smaller as representative
+                        // (deterministic, no ordering issue).
+                        let (root, child) = if ra < rb { (ra, rb) } else { (rb, ra) };
+                        parent.insert(child, root);
+                    }
+                }
+            }
+        }
+    }
+
+    if parent.is_empty() {
+        return term.clone();
+    }
+
+    // Step 2: substitute each Var → its representative in all conjuncts.
+    fn subst(t: &SmtTerm, parent: &mut HashMap<String, String>) -> SmtTerm {
+        match t {
+            SmtTerm::Var(n) => {
+                let root = find(parent, n);
+                if root != *n { SmtTerm::Var(root) } else { t.clone() }
+            }
+            SmtTerm::App(op, args) => SmtTerm::App(
+                op.clone(),
+                args.iter().map(|a| subst(a, parent)).collect(),
+            ),
+            SmtTerm::Forall(binders, patterns, body) => SmtTerm::Forall(
+                binders.clone(),
+                patterns.clone(),
+                Box::new(subst(body, parent)),
+            ),
+            _ => t.clone(),
+        }
+    }
+
+    let substituted: Vec<SmtTerm> = conjuncts.iter()
+        .map(|c| subst(c, &mut parent))
+        .collect();
+
+    // Step 3: re-simplify each conjunct + wrap.
+    let resimplified: Vec<SmtTerm> = substituted.iter().map(simplify).collect();
+    let result = if resimplified.len() == 1 {
+        resimplified.into_iter().next().unwrap()
+    } else {
+        SmtTerm::App("and".into(), resimplified)
+    };
+    simplify(&result)
 }
 
 #[cfg(test)]
