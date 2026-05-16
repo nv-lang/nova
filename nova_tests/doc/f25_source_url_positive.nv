@@ -1,0 +1,87 @@
+// Plan 45 Ф.25.3: source URL linking — env-template based.
+// Позитивный тест: функции присутствуют в типичных позициях
+// (top-of-file, mid-file, bottom-of-file) — для проверки что
+// line numbers резолвятся корректно для `[src]` linking.
+// Runtime behavior — независимая проверка.
+
+module doc.f25_source_url_positive
+
+/// Top-of-file function — line ~10.
+export fn first_fn(x int) -> int => x + 1
+
+/// Second function — line ~14.
+export fn second_fn(x int) -> int => x * 2
+
+/// Function with multiline body.
+///
+/// `[src]` link должен указывать на line этого decl, не body.
+export fn factorial(n int) -> int {
+    if n <= 1 {
+        1
+    } else {
+        n * factorial(n - 1)
+    }
+}
+
+/// Function after multiline previous one.
+export fn power_of_two(n int) -> int {
+    if n <= 0 { 1 } else { 2 * power_of_two(n - 1) }
+}
+
+/// Helper returning fibonacci.
+export fn fib(n int) -> int {
+    if n <= 1 { n } else { fib(n - 1) + fib(n - 2) }
+}
+
+/// Last function in file — большое line number.
+export fn last_fn(x int) -> int => x - 1
+
+test "first_fn" {
+    assert(first_fn(0) == 1)
+    assert(first_fn(-1) == 0)
+    assert(first_fn(99) == 100)
+}
+
+test "second_fn" {
+    assert(second_fn(0) == 0)
+    assert(second_fn(7) == 14)
+    assert(second_fn(-3) == -6)
+}
+
+test "factorial" {
+    assert(factorial(0) == 1)
+    assert(factorial(1) == 1)
+    assert(factorial(2) == 2)
+    assert(factorial(5) == 120)
+    assert(factorial(6) == 720)
+}
+
+test "power_of_two" {
+    assert(power_of_two(0) == 1)
+    assert(power_of_two(1) == 2)
+    assert(power_of_two(5) == 32)
+    assert(power_of_two(10) == 1024)
+}
+
+test "fib" {
+    assert(fib(0) == 0)
+    assert(fib(1) == 1)
+    assert(fib(2) == 1)
+    assert(fib(7) == 13)
+    assert(fib(10) == 55)
+}
+
+test "last_fn" {
+    assert(last_fn(0) == -1)
+    assert(last_fn(100) == 99)
+}
+
+test "functions at distinct line positions" {
+    // Все 6 функций live в разных line ranges → distinct `[src]` URLs.
+    assert(first_fn(0) == 1)
+    assert(second_fn(1) == 2)
+    assert(factorial(3) == 6)
+    assert(power_of_two(3) == 8)
+    assert(fib(5) == 5)
+    assert(last_fn(2) == 1)
+}

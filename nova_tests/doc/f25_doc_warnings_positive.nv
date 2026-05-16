@@ -1,0 +1,79 @@
+// Plan 45 Ф.25.1: silent failures → diagnostic warnings.
+// Позитивный тест: doc-warnings (malformed attrs, unknown attrs, unknown
+// doc-test modifiers) НЕ блокируют компиляцию. Они только diagnostic
+// signal для автора. Runtime behavior функций — корректный.
+
+module doc.f25_doc_warnings_positive
+
+/// Function with malformed #[deprecated] attr in description.
+///
+/// #[deprecated]
+/// Этот attr должен trigger warning, но компиляция продолжается.
+export fn legacy_add(a int, b int) -> int => a + b
+
+/// Function with unknown doc-attr in description.
+///
+/// #[future_compat_marker]
+/// Unknown attr → warning, компиляция продолжается.
+export fn future_proof(x int) -> int => x + 100
+
+/// Function with multiple problematic attrs.
+///
+/// #[deprecated]
+/// #[since]
+/// #[unknown_thing]
+/// Все три должны warning, runtime — ok.
+export fn problematic(n int) -> int {
+    let mut sum = 0
+    let mut i = 1
+    while i <= n {
+        sum = sum + i
+        i = i + 1
+    }
+    sum
+}
+
+/// Function with doc-test using unknown modifier.
+///
+/// # Examples
+///
+/// ```nova,future_mod
+/// let r = double(5)
+/// // future_mod — unknown modifier, должен дать warning.
+/// ```
+export fn double(x int) -> int => x * 2
+
+test "legacy_add runtime correct" {
+    assert(legacy_add(2, 3) == 5)
+    assert(legacy_add(0, 0) == 0)
+    assert(legacy_add(-1, 1) == 0)
+    assert(legacy_add(100, 200) == 300)
+}
+
+test "future_proof runtime correct" {
+    assert(future_proof(0) == 100)
+    assert(future_proof(5) == 105)
+    assert(future_proof(-50) == 50)
+}
+
+test "problematic — sum of 1..n" {
+    assert(problematic(0) == 0)
+    assert(problematic(1) == 1)
+    assert(problematic(3) == 6)
+    assert(problematic(5) == 15)
+    assert(problematic(10) == 55)
+}
+
+test "double runtime" {
+    assert(double(0) == 0)
+    assert(double(5) == 10)
+    assert(double(-3) == -6)
+    assert(double(100) == 200)
+}
+
+test "doc-warnings dont affect runtime" {
+    let a = legacy_add(future_proof(1), double(2))
+    assert(a == 105)
+    let b = problematic(double(3))
+    assert(b == 21)
+}

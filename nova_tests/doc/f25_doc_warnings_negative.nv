@@ -1,0 +1,15 @@
+// EXPECT_COMPILE_ERROR undefined identifier
+//
+// Plan 45 Ф.25.1: doc-warnings — негативный тест.
+// Doc-warnings из Ф.25 НЕ блокируют компиляцию. Поэтому для негативного
+// теста используем real compile error: undefined function в теле.
+// Малформированные attrs + unknown attrs только warning'и (Ф.25.1 design).
+
+module doc.f25_doc_warnings_negative
+
+/// Function with malformed attrs in doc AND broken body.
+///
+/// #[deprecated]
+/// #[unknown_compat]
+/// Attrs дают warnings, но настоящая compile error — в теле.
+fn doomed(x int) -> int => totally_undefined_helper_qwerty(x)

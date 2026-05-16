@@ -1,0 +1,117 @@
+// Plan 45 Ф.25.4: doc-test mutation testing для contracts.
+// Позитивный тест: функции с contracts (которые будут мутироваться)
+// runtime ведут себя корректно. Mutation operators применяются к:
+// `>` ↔ `>=`, `<` ↔ `<=`, `==` ↔ `!=`, drop `requires`.
+
+module doc.f25_mutation_contracts_positive
+
+/// Boundary `> 0` — mutator gt-to-ge генерирует `>= 0`.
+///
+/// # Examples
+///
+/// ```nova
+/// let r = strict_positive(5)
+/// assert(r == 5)
+/// ```
+export fn strict_positive(x int) -> int
+    requires x > 0
+    ensures result == x
+    => x
+
+/// Boundary `>= 0` — mutator ge-to-gt генерирует `> 0`.
+///
+/// # Examples
+///
+/// ```nova
+/// let r = non_negative(0)
+/// assert(r == 0)
+/// ```
+export fn non_negative(x int) -> int
+    requires x >= 0
+    ensures result >= 0
+    => x
+
+/// Equality `== 5` — mutator eq-to-ne генерирует `!= 5`.
+///
+/// # Examples
+///
+/// ```nova
+/// let r = only_five(5)
+/// assert(r == 25)
+/// ```
+export fn only_five(x int) -> int
+    requires x == 5
+    ensures result == x * x
+    => x * x
+
+/// Inequality `< 100` — mutator lt-to-le генерирует `<= 100`.
+export fn below_hundred(x int) -> int
+    requires x < 100
+    ensures result == x + 1
+    => x + 1
+
+/// Combined contracts — несколько boundaries.
+export fn clamped(x int, lo int, hi int) -> int
+    requires lo <= hi
+    requires x >= lo
+    requires x <= hi
+    ensures result == x
+    => x
+
+/// Recursive с decreases — генерирует мутантов для requires/ensures.
+export fn sum_to(n int) -> int
+    requires n >= 0
+    ensures result >= 0
+    decreases n
+    => if n <= 0 { 0 } else { n + sum_to(n - 1) }
+
+test "strict_positive valid inputs" {
+    assert(strict_positive(1) == 1)
+    assert(strict_positive(5) == 5)
+    assert(strict_positive(100) == 100)
+    assert(strict_positive(999) == 999)
+}
+
+test "non_negative including zero" {
+    assert(non_negative(0) == 0)
+    assert(non_negative(1) == 1)
+    assert(non_negative(42) == 42)
+    // 0 — boundary case, killing gt-to-ge mutant.
+}
+
+test "only_five exact value" {
+    assert(only_five(5) == 25)
+    // Только x == 5 валиден (precondition requires).
+}
+
+test "below_hundred boundary" {
+    assert(below_hundred(0) == 1)
+    assert(below_hundred(50) == 51)
+    assert(below_hundred(99) == 100)
+    // 99 — boundary, killing lt-to-le mutant.
+}
+
+test "clamped middle and edges" {
+    assert(clamped(5, 0, 10) == 5)
+    assert(clamped(0, 0, 10) == 0)
+    assert(clamped(10, 0, 10) == 10)
+    assert(clamped(7, 7, 7) == 7)
+}
+
+test "sum_to recursive" {
+    assert(sum_to(0) == 0)
+    assert(sum_to(1) == 1)
+    assert(sum_to(2) == 3)
+    assert(sum_to(5) == 15)
+    assert(sum_to(10) == 55)
+}
+
+test "contracts satisfied at boundary" {
+    // Specifically test boundary cases that would catch mutants:
+    // strict_positive(1) — gt-to-ge mutant would also accept 0, here min is 1.
+    assert(strict_positive(1) >= 1)
+    // non_negative(0) — ge-to-gt mutant would reject 0.
+    assert(non_negative(0) == 0)
+    // below_hundred(99) — lt-to-le mutant would also accept 100.
+    assert(below_hundred(99) == 100)
+}

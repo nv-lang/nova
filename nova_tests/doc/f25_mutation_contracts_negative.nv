@@ -1,0 +1,20 @@
+// EXPECT_COMPILE_ERROR undefined identifier
+//
+// Plan 45 Ф.25.4: mutation testing — негативный тест.
+// Mutation tooling работает с contracts, но не меняет compile semantics.
+// Функция с contracts + вызовом несуществующей fn — compile error.
+
+module doc.f25_mutation_contracts_negative
+
+/// Function с contracts to mutate, но broken body.
+///
+/// # Examples
+///
+/// ```nova
+/// let r = broken_with_contracts(5)
+/// assert(r == 5)
+/// ```
+fn broken_with_contracts(x int) -> int
+    requires x > 0
+    ensures result == x
+    => nonexistent_mutation_target_zzz(x)

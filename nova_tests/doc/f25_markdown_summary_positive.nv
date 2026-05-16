@@ -1,0 +1,100 @@
+// Plan 45 Ф.25.2: markdown-aware summary extraction.
+// Позитивный тест: функции с tricky markdown в summary
+// (URLs, decimals, abbreviations, fenced blocks, version strings)
+// корректно парсятся и runtime поведение нормальное.
+
+module doc.f25_markdown_summary_positive
+
+/// Computes 3.14 * radius squared for circle area.
+///
+/// Decimal `3.14` в summary не должен trigger sentence terminator.
+export fn circle_area_approx(radius int) -> int => 314 * radius * radius / 100
+
+/// Useful for collections, e.g. arrays and maps.
+///
+/// Abbreviation `e.g.` в summary не должна break extraction.
+export fn collection_helper(n int) -> int => n * 2
+
+/// See [docs](https://example.com/api.html) for more info.
+///
+/// URL с `.` внутри markdown link не должен break.
+export fn linked_fn(x int) -> int => x + 1
+
+/// Available since 1.0.0 of the library.
+///
+/// Version string `1.0.0` — три точки, не три предложения.
+export fn versioned(x int) -> int => x * 10
+
+/// Returns a copy, i.e. an independent value.
+///
+/// `i.e.` abbreviation handling.
+export fn copy_value(src int) -> int => src
+
+/// Source: https://example.org/path.html and more info.
+///
+/// Naked URL с `.html` — не terminator.
+export fn url_referenced(n int) -> int => n - 1
+
+/// Is this safe? Yes, always.
+///
+/// Question mark — valid terminator.
+export fn safe_op(x int) -> int => x
+
+/// Uses `format!` macro internally.
+///
+/// `!` внутри backticks (inline code) — не terminator.
+export fn formatted(n int) -> int => n + 1000
+
+test "circle_area_approx" {
+    assert(circle_area_approx(0) == 0)
+    assert(circle_area_approx(1) == 3)
+    assert(circle_area_approx(10) == 314)
+    assert(circle_area_approx(5) == 78)
+}
+
+test "collection_helper" {
+    assert(collection_helper(0) == 0)
+    assert(collection_helper(5) == 10)
+    assert(collection_helper(-3) == -6)
+}
+
+test "linked_fn" {
+    assert(linked_fn(0) == 1)
+    assert(linked_fn(100) == 101)
+    assert(linked_fn(-1) == 0)
+}
+
+test "versioned" {
+    assert(versioned(0) == 0)
+    assert(versioned(1) == 10)
+    assert(versioned(7) == 70)
+}
+
+test "copy_value" {
+    assert(copy_value(0) == 0)
+    assert(copy_value(42) == 42)
+    assert(copy_value(-100) == -100)
+}
+
+test "url_referenced" {
+    assert(url_referenced(1) == 0)
+    assert(url_referenced(100) == 99)
+}
+
+test "safe_op" {
+    assert(safe_op(0) == 0)
+    assert(safe_op(99) == 99)
+}
+
+test "formatted" {
+    assert(formatted(0) == 1000)
+    assert(formatted(5) == 1005)
+    assert(formatted(-100) == 900)
+}
+
+test "tricky markdown does not affect runtime composition" {
+    let r = circle_area_approx(2)
+    assert(r == 12)
+    let combined = collection_helper(linked_fn(versioned(1)))
+    assert(combined == 22)
+}
