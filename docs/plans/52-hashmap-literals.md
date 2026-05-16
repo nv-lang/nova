@@ -830,3 +830,194 @@ Plan §136 явно: «по canonical identity, не по bare-имени». Sha
 - [ ] `#from_fields` по canonical identity (user `HashMap` тип не triggers)
 - [ ] Полная регрессия `nova test` без новых FAIL
 - [ ] Каждая Ф.X — отдельный commit
+
+---
+
+## Ф.18-Ф.26 — Post-production-audit улучшения (2026-05-16)
+
+После production-аудита (сравнение с Go/Rust/TS) выявлены 9 областей где
+можно сделать лучше. Записываем в порядке возрастания инвазивности.
+
+### Порядок выполнения
+
+| # | Фаза | Что | Риск | LOC | Зависит от |
+|---|---|---|---|---|---|
+| 1 | Ф.18 | Iter-order policy в D108 | 0 | ~30 doc | — |
+| 2 | Ф.19 | Canonical identity для #from_fields | L | ~50 | — |
+| 3 | Ф.20 | Убрать interp Ф.5 stub | 0 | ~10 | — |
+| 4 | Ф.21 | @insert_new fast-path в литерале | L | ~30 | Ф.4 |
+| 5 | Ф.22 | DoS-resistant hash (SipHash + seed) | M | ~200 | — |
+| 6 | Ф.23 | FromPairs[K, V] протокол | M | ~150 | Ф.4 |
+| 7 | Ф.24 | Spread/merge `[...defaults, k:v]` | M | ~80 | Ф.4 |
+| 8 | Ф.25 | const map-literal (perfect-hash) | H | ~300 | Ф.22 |
+| 9 | Ф.26 | MIR/codegen-late lowering | H | ~500+ | — |
+
+**Ф.18-Ф.21** — компактные, безопасные, делаем сейчас.
+**Ф.22-Ф.24** — средний риск, делаем сейчас.
+**Ф.25-Ф.26** — большие архитектурные → выносим в отдельный план 52.1
+(Plan 52 это базовая фича; perfect-hash и MIR-lowering это уже про
+архитектуру компилятора и стоят отдельных design-документов).
+
+### Ф.18 — Iter-order policy в D108 (документация)
+
+**Проблема:** D108 §4754 фиксирует **insertion eval-order** литерала,
+но **не фиксирует iteration order** результирующей мапы. Go
+рандомизирует (catches reliance on order), Rust — per-instance random,
+TS — preserves insertion. Без policy users будут писать fragile tests
+которые сломаются при future swisstable-миграции.
+
+**Решение:** документировать в D108: **iteration order undefined,
+implementation may randomize** (Go-style — defensive). Если потребуется
+ordered map — отдельный `OrderedMap` через Ф.23 (FromPairs).
+
+**Acceptance:** D108 §4-новый параграф «Iteration order».
+
+### Ф.19 — Canonical identity для #from_fields
+
+**Проблема:** `types/mod.rs:5378` — `expected_is_from_fields()`
+сравнивает `path.last()` против set имён типов. План §136 требует
+canonical-identity сравнение. User-локальный `type HashMap[K,V] {...}`
+shadowing'нёт stdlib и accidentally triggers map-coercion.
+
+**Решение:** хранить в `from_fields_types` полный canonical path
+(`["std","collections","hashmap","HashMap"]`), сравнивать через resolver.
+
+**Acceptance:** negative-тест где user-локальный `type HashMap` без
+`#from_fields` — `{field: v}` НЕ coerce; positive — stdlib HashMap
+coerce.
+
+### Ф.20 — Убрать interp Ф.5 stub
+
+**Проблема:** `interp/mod.rs:798` — `ExprKind::MapLit` → throws
+"map literal reached interpreter without desugaring". Это safety-net
+который работает только если desugar pass прошёл; если в будущем
+кто-то вызовет interp до desugar (например, для eager-eval const
+expression) — silent crash.
+
+**Решение:** явно документировать invariant в комментарии + добавить
+debug_assert в pipeline entry point что desugar pass обязателен.
+
+**Acceptance:** interp/mod.rs:798 имеет точный комментарий «invariant:
+desugar pass должен пройти до interp; bug если сюда дошли».
+
+### Ф.21 — @insert_new fast-path в литерале
+
+**Проблема:** Десугаринг `[k:v, ...]` эмитит `_ = _m.@insert(k, v)`,
+который возвращает `Option[V]` (старое значение если ключ был). В
+литерале это **гарантированно None** — мы только что создали пустую
+мапу. Дискардим Option, но overhead на сравнение/branch остаётся.
+
+**Решение:** добавить `@insert_new(k, v) -> nova_unit` в stdlib (skip
+old-value branch); десугаринг эмитит `_m.@insert_new(k, v)` вместо
+`_ = _m.@insert(...)`. Микро-оптимизация для больших литералов (10k+
+pairs).
+
+**Acceptance:** контракт-тест `n=1000` литерал — codegen использует
+`@insert_new`; output идентичен.
+
+### Ф.22 — DoS-resistant hash (SipHash + per-table seed)
+
+**Проблема:** `Hashable.hash() -> u64` для primitives использует
+implementation-defined hash (`hashmap.nv` — простое умножение для int,
+FNV для str?). Это **collision-attack vulnerable** — attacker, контролирующий
+keys (HTTP request body → HashMap), может создать collision storm
+→ O(n²) deg для O(1) lookup. Rust решил это SipHash-1-3 с
+per-instance random seed; Go тоже использует AES-NI hash.
+
+**Решение:**
+1. Добавить `siphash13.h` / `siphash13.c` в `nova_rt/` (BSD-license, ~100 LOC pure C)
+2. В `nova_str.hash() -> u64` — использовать SipHash с seed
+3. Seed: per-process random init через `getrandom()` / `BCryptGenRandom`
+4. Документировать escape-hatch для бенчмарков (`#[deterministic_hash]`)
+5. Для int-keys — DoS не так критичен (можно атаковать только если есть
+   контроль над int values от user → редко), но для единообразия — тоже
+   SipHash на (int as bytes)
+
+**Acceptance:** unit-test с collision-attack строк (известные SipHash
+collision не работают для random seed); benchmark показывает <5%
+regression vs old hash.
+
+### Ф.23 — FromPairs[K, V] протокол
+
+**Проблема:** `[k:v]` хардкодит `HashMap.with_capacity`. BTreeMap,
+OrderedMap, user-типы (LinkedHashMap) не могут использовать литерал.
+Plan 52 §580 уже flagged как deferred.
+
+**Решение:**
+```nova
+protocol FromPairs[K, V] {
+    fn from_pairs(pairs: [(K, V)]) -> Self
+}
+```
+
+В `desugar.rs::build_map_block`:
+1. Прочитать expected type (как сейчас)
+2. Если expected реализует `FromPairs[K, V]` — десугарить в
+   `ExpectedType.from_pairs([(k1,v1), (k2,v2), ...])`
+3. Иначе fallback на текущую логику (`HashMap.with_capacity` хардкод)
+
+`HashMap` получает `impl FromPairs[K, V] { fn from_pairs(p) { ... } }`
+(impl эмитит with_capacity + insert цикл).
+
+**Acceptance:** test где user определяет `type MyMap[K,V] { ... }` +
+`impl FromPairs[K,V] for MyMap`, `let m MyMap[str,int] = ["a": 1]`
+работает.
+
+### Ф.24 — Spread/merge `[...defaults, k:v]`
+
+**Проблема:** Common pattern (config defaults + overrides). TS
+поддерживает (`{...d, x: 1}`), Rust `extend()`, Go вручную. Plan §332
+flagged deferred.
+
+**Решение:** Расширить parser `parse_map_lit_rest`:
+- `...expr` элемент = spread (тип должен быть `HashMap[K,V]` или
+  `[(K,V)]`-iterable)
+- Desugar: `[...m, k: v]` → `let _t = m.clone(); _t.@insert(k, v); _t`
+
+**Acceptance:** test `let m = [...base, "extra": 99]` — base
+unchanged, m содержит base+extra.
+
+### Ф.25 — const map-literal (perfect-hash) → Plan 52.1
+
+**Проблема:** Compile-time lookup tables (keyword sets, opcode tables)
+лучше через perfect-hash без runtime allocation. Rust `phf` crate
+делает это. Plan §324 deferred.
+
+**Решение (большое — отдельный план 52.1):**
+- AST `ExprKind::ConstMapLit` (compile-time evaluable keys/values)
+- Type-checker: всё const — generate perfect-hash table в codegen
+- Static C array `{key_hash, value}[N]` + binary search или `gperf`
+- Lazy-init НЕ нужен — embedded в const data segment
+
+**Defer rationale:** требует gperf-like infrastructure в codegen, не
+закрывается базовой реализацией.
+
+### Ф.26 — MIR/codegen-late lowering → Plan 52.1
+
+**Проблема:** AST-level desugar в `desugar.rs` баковывает `(4n+2)/3`
+арифметику и Tarjan-имена `_m0`/`_m1` прямо в AST. При swisstable-
+миграции или изменении load-factor — нужно править AST-emitter, а не
+backend. Rust ловерит `vec![]` в MIR — можно switch backing strategy
+per-target.
+
+**Решение (большое — отдельный план):**
+- Сохранять `ExprKind::MapLit` в AST через type-check (не desugarить рано)
+- Создать MIR-pass `lower_map_literals` в `compiler-codegen/src/mir.rs`
+  (новый модуль или extension существующего)
+- Backend (codegen + interp) консультируется с MIR
+- Перевести existing tests на новую инфраструктуру
+
+**Defer rationale:** требует MIR infrastructure в компиляторе, у нас
+сейчас direct-AST-to-C. Большая reorg, отдельный план.
+
+### Acceptance Ф.18-Ф.24
+- [ ] D108 содержит явный параграф об iteration order policy
+- [ ] `from_fields_types` хранит canonical path; negative-тест для shadowing
+- [ ] interp/mod.rs:798 — invariant документирован + debug_assert
+- [ ] `@insert_new` в stdlib + desugar использует его в литерале
+- [ ] SipHash-1-3 в `nova_rt/`; per-process random seed; unit-test против collision-attack
+- [ ] `FromPairs[K, V]` протокол; HashMap impl; user-type test
+- [ ] Spread `[...m, k: v]` парсится + desugar'ится; test
+- [ ] Ф.25 + Ф.26 вынесены в Plan 52.1 с design rationale
+- [ ] Полная регрессия `nova test` без новых FAIL
+- [ ] Каждая Ф.X — отдельный commit
