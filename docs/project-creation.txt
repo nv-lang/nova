@@ -12325,6 +12325,18 @@ negative (есть warning или ошибка):
 - Регрессия: 140 PASS / 39 SKIP (+2 Z3-gated).
 - Коммит: `aa9f598ff43`.
 
+### Ф.5.1 — In-memory subsumption cache infrastructure
+
+- Новый модуль `verify/subsumption_cache.rs` (~80 LOC):
+  - `SubsumptionCache` struct с `HashMap<u64, CachedSat>` + hits/misses counters.
+  - `canonical_hash(term)` — DefaultHasher от pretty-printed SmtTerm.
+  - lookup/insert/hit_rate API.
+- 2 unit tests PASS (cache_smoke + cache_different_terms).
+- Infrastructure готова. Actual wiring в `try_prove` — V2 (требует более
+  глубокой refactor backend API). MVP даёт reusable struct для cross-call.
+- Регрессия: 140 PASS / 39 SKIP (без изменений).
+- Коммит: `8bb3bc263b8`.
+
 === Plan 45 �.25 � nova tests (positive + negative) ===
 
 ����� �������� �.25 (4 ����) �������� nova-tests .nv ��� �������� �����
