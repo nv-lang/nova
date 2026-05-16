@@ -276,6 +276,11 @@ impl DesugarCtx {
         inferred_value: Option<TypeRef>,
         span: Span,
     ) -> ExprKind {
+        // Clone для Ф.16 typed-rebinding (см. ниже).
+        let kv_for_hint = match (&inferred_key, &inferred_value) {
+            (Some(k), Some(v)) => Some((k.clone(), v.clone())),
+            _ => None,
+        };
         let tmp = self.fresh_map_tmp();
         let n = pairs.len();
         let mut stmts: Vec<Stmt> = Vec::with_capacity(n + 1);
@@ -398,8 +403,35 @@ impl DesugarCtx {
             }));
         }
 
-        // trailing — `_mN` (результат block-expression).
-        let trailing = Expr::new(ExprKind::Ident(tmp), span);
+        // Plan 52 Ф.16: typed-rebinding для Block-trailing inference.
+        // Без этого `let m = [k:v]` (без аннотации) — codegen infer_expr_c_type
+        // на Block смотрит на trailing (Ident `_mN`), но var_types['_mN']
+        // ещё не записан в момент infer (вызывается ДО emit). Fallback
+        // даёт `nova_int` → `let m = _nv_tmp` пишется как nova_int → method
+        // calls идут через generic version → runtime fail. Workaround:
+        // если K/V известны (annotate_map_literals выдал turbofish-форму),
+        // добавляем явно-аннотированный rebind `let _mN_typed HashMap[K,V] = _mN`
+        // — это даёт let-stmt подсказку типа для outer-let.
+        let trailing_name = if let Some((k_ty, v_ty)) = kv_for_hint {
+            let typed = format!("{}_typed", tmp);
+            stmts.push(Stmt::Let(LetDecl {
+                mutable: false,
+                pattern: Pattern::Ident { name: typed.clone(), span },
+                ty: Some(TypeRef::Named {
+                    path: vec!["HashMap".to_string()],
+                    generics: vec![k_ty, v_ty],
+                    span,
+                }),
+                value: Expr::new(ExprKind::Ident(tmp), span),
+                span,
+                is_ghost: false,
+            }));
+            typed
+        } else {
+            tmp
+        };
+
+        let trailing = Expr::new(ExprKind::Ident(trailing_name), span);
 
         ExprKind::Block(Block {
             stmts,

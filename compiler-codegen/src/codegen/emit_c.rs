@@ -14297,8 +14297,33 @@ impl CEmitter {
                 UnOp::Neg => self.infer_expr_c_type(operand),
             },
             // Plan 08 Ф.4: Block — тип trailing expression.
+            // Plan 52 Ф.16: enhancement — если trailing это Ident, и в
+            // block.stmts есть `let <ident> [: T] = ...`, берём тип из
+            // `ty`-аннотации (если есть) или из value-expression. Это
+            // позволяет desugar'у map-литерала (без аннотации внешнего
+            // let) дать корректный type-hint для outer-let через
+            // typed-rebinding `let _mN_typed HashMap[K,V] = _mN; _mN_typed`.
             ExprKind::Block(b) => {
                 if let Some(t) = &b.trailing {
+                    // Если trailing — Ident, ищем последний let с тем же именем.
+                    if let ExprKind::Ident(name) = &t.kind {
+                        for s in b.stmts.iter().rev() {
+                            if let crate::ast::Stmt::Let(d) = s {
+                                if let crate::ast::Pattern::Ident { name: bn, .. } = &d.pattern {
+                                    if bn == name {
+                                        if let Some(ty) = &d.ty {
+                                            // Используем ty-аннотацию (Plan 52 Ф.16).
+                                            if let Ok(c) = self.type_ref_to_c(ty) {
+                                                return c;
+                                            }
+                                        }
+                                        // Fallback: infer из value-expr.
+                                        return self.infer_expr_c_type(&d.value);
+                                    }
+                                }
+                            }
+                        }
+                    }
                     self.infer_expr_c_type(t)
                 } else {
                     "nova_unit".into()
