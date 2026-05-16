@@ -401,8 +401,12 @@ fn collect_fn(module_path: &[String], f: &FnDecl, module_forbid: &[String]) -> D
         realtime: matches!(f.realtime_attr, RealtimeAttr::Realtime | RealtimeAttr::RealtimeNogc),
         realtime_nogc: matches!(f.realtime_attr, RealtimeAttr::RealtimeNogc),
         pure_fn: matches!(f.purity, Purity::Pure),
-        // Plan 45 Р¤.24.1: propagate module-level #forbid into each item.
+        // Plan 45 Ф.24.1: propagate module-level #forbid into each item.
         forbid: module_forbid.to_vec(),
+        // Plan 45 Ф.26.3 / D63: allow_transit пока всегда empty —
+        // parser не поддерживает `#allow_transit X` attribute. Schema-stable
+        // placeholder для будущего D63-completion (Plan 16/45 follow-up).
+        allow_transit: Vec::new(),
     };
     DocItem {
         id,
@@ -478,7 +482,9 @@ fn collect_type(module_path: &[String], t: &TypeDecl) -> DocItem {
             ItemKind::Type(TypeDefinition::Sum(sum_variants))
         }
         TypeDeclKind::Alias(ty) => ItemKind::Type(TypeDefinition::Alias(render_type(ty))),
-        TypeDeclKind::Newtype(ty) => ItemKind::Type(TypeDefinition::Alias(render_type(ty))),
+        // Plan 45 Ф.23.10 / D107: Newtype — отдельный variant (см. ниже после Protocol).
+        // ВНИМАНИЕ: предыдущая строка делала `Newtype → Alias` (MVP-stub до Ф.23.10).
+        // Этот arm удалён — теперь правильная ветка `TypeDeclKind::Newtype` ниже.
         TypeDeclKind::Effect(methods) => {
             // Plan 45 Р¤.22.4 / D107: axioms РЅР° СѓСЂРѕРІРЅРµ ItemKind::Effect,
             // РЅРµ per-method (axiom СЃСЃС‹Р»Р°РµС‚СЃСЏ РЅР° СЌС„С„РµРєС‚ С†РµР»РёРєРѕРј).
@@ -508,7 +514,9 @@ fn collect_type(module_path: &[String], t: &TypeDecl) -> DocItem {
                         .unwrap_or_else(|| "()".to_string()),
                 })
                 .collect();
-            ItemKind::Effect { methods: sigs, axioms }
+            // Plan 45 Ф.26.2: handlers populated post-collection в
+            // `collect_handlers` pass (workspace mode). Default empty.
+            ItemKind::Effect { methods: sigs, axioms, handlers: Vec::new() }
         }
         TypeDeclKind::Protocol(methods) => {
             let sigs = methods

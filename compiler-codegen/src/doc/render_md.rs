@@ -224,6 +224,8 @@ fn render_item(it: &DocItem, link_map: &std::collections::HashMap<String, String
         else if cap.realtime { badges.push("⏱ `realtime`".to_string()); }
         if cap.pure_fn { badges.push("🧊 `pure`".to_string()); }
         for f in &cap.forbid { badges.push(format!("🚫 `forbid({})`", f)); }
+        // Plan 45 Ф.26.3 / D63: allow_transit badges.
+        for e in &cap.allow_transit { badges.push(format!("📤 `allow_transit({})`", e)); }
         if !badges.is_empty() {
             let _ = writeln!(out, "{}", badges.join(" "));
             let _ = writeln!(out);
@@ -302,7 +304,7 @@ fn render_item(it: &DocItem, link_map: &std::collections::HashMap<String, String
             let _ = writeln!(out, "```");
             let _ = writeln!(out);
         }
-        ItemKind::Effect { methods, axioms } => {
+        ItemKind::Effect { methods, axioms, handlers } => {
             let _ = writeln!(out, "```nova");
             let _ = writeln!(out, "type {} effect {{", it.name);
             for m in methods {
@@ -315,6 +317,15 @@ fn render_item(it: &DocItem, link_map: &std::collections::HashMap<String, String
             let _ = writeln!(out, "}}");
             let _ = writeln!(out, "```");
             let _ = writeln!(out);
+            // Plan 45 Ф.26.2 / Ф.23.4: handler matrix section.
+            if !handlers.is_empty() {
+                let _ = writeln!(out, "#### Handlers");
+                let _ = writeln!(out);
+                for h in handlers {
+                    let _ = writeln!(out, "- `{}` ({})", h.caller_item_id, h.kind);
+                }
+                let _ = writeln!(out);
+            }
         }
         ItemKind::Protocol { methods, implementors } => {
             let _ = writeln!(out, "```nova");

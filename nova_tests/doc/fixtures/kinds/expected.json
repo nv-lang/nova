@@ -40,6 +40,9 @@
 
       ],
       "capabilities": {
+        "allow_transit": [
+
+        ],
         "forbid": [
 
         ],
@@ -72,8 +75,8 @@
       "stability": null,
       "summary": "Newtype над int.",
       "definition": {
-        "aliased_type": "int",
-        "kind": "alias"
+        "inner_type": "int",
+        "kind": "newtype"
       }
     },
     {
@@ -81,6 +84,9 @@
 
       ],
       "capabilities": {
+        "allow_transit": [
+
+        ],
         "forbid": [
 
         ],
@@ -135,6 +141,9 @@
 
       ],
       "capabilities": {
+        "allow_transit": [
+
+        ],
         "forbid": [
 
         ],
@@ -172,6 +181,9 @@
           "name": "non_negative"
         }
       ],
+      "handlers": [
+
+      ],
       "methods": [
         {
           "name": "next",
@@ -187,6 +199,9 @@
 
       ],
       "capabilities": {
+        "allow_transit": [
+
+        ],
         "forbid": [
 
         ],
@@ -246,6 +261,9 @@
 
       ],
       "capabilities": {
+        "allow_transit": [
+
+        ],
         "forbid": [
 
         ],

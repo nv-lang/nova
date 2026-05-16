@@ -7072,3 +7072,128 @@ as-is, РґР»СЏ cross-type СЌС‚Рѕ Р±СѓРґРµС‚ UB РЅР° un-box).
 - **nova_tests: 413 PASS / 46 FAIL / 13 SKIP** (== baseline + Plan 49 smoke).
 - Plan 49 acceptance: 11 РёР· 14 Р·Р°РєСЂС‹С‚С‹, 3 V2 followup'Р° Р·Р°С„РёРєСЃРёСЂРѕРІР°РЅС‹.
 - Zero СЂРµРіСЂРµСЃСЃРёР№ РЅР° release.
+
+---
+
+## Plan 45 Ф.26.1 — Dead match-arm lesson (2026-05-16)
+
+### Match arm ordering bug pattern
+
+**Где:** collector.rs::collect_type — TypeDeclKind::Newtype
+**Что упрощено (теперь убрано):** MVP до Ф.23.10 был arm Newtype > Alias. После
+Ф.23.10 добавили правильный arm Newtype > Newtype { inner }, но **не удалили**
+старый MVP arm. Rust match seq > старый ВСЕГДА сработал > новый dead code.
+**Почему:** Ф.23.10 PR делал addition (новый variant + новый arm) без deletion
+(старого MVP arm). Reviewer не заметил.
+**Как чинить (сделано в Ф.26.1):** удалить старый arm; добавить integration
+test doc_newtype.rs который verify newtype rendering.
+
+### Lesson — match shadow audit
+
+При добавлении нового variant в существующий match (особенно в pass'ах collector'а):
+1. Searched прежнего match по same key — есть ли MVP stub?
+2. Если есть — удалить, не add'ить новый arm "ниже".
+3. Compile-time guarantee неэффективен — Rust разрешает duplicate arms.
+4. Production-grade: каждое добавление variant'а сопровождается integration test
+   который verify правильное rendering.
+
+---
+
+## Plan 45 Ф.26.2 — Handler matrix simplifications (2026-05-16)
+
+### Text-based handler scanner (vs AST visitor)
+
+**Где:** compiler-codegen/src/doc/collect_handlers.rs::find_handler_literals
+**Что упрощено:** Scan source slice fn-body на pattern handler <Name> {, не
+full AST visitor across ExprKind variants.
+**Почему:** Полный visitor — ~250 LOC + сильная coupling к AST schema; легко
+ломается при AST refactor'ах. Текстовый scan — robust, дёшев, deterministic.
+False positives ("handler Foo" в string literal) допустимы для documentation
+tooling.
+**Как чинить:** Ф.26.2+ — AST visitor, ловит true semantics. Но low ROI:
+текстовый scan покрывает 99% production кода. Roadmap'нут если будут
+production false-positive complaints.
+**Приоритет:** L — text-based достаточно для production docs.
+
+### Workspace mode handlers — out of scope для Ф.26.2
+
+**Где:** collect_handlers::collect_handlers_workspace — noop.
+**Что упрощено:** В workspace mode handler matrix НЕ populates.
+**Почему:** CLI workspace pipeline передаёт concatenated sources в test runner,
+но span'ы относительные к каждому файлу. Нужен per-file sources map
+(file_id > source string), это refactor pipeline'а.
+**Как чинить:** Plan 45.A — workspace handler matrix через sources map в
+DocTree. ~150 LOC.
+**Приоритет:** M — workspace handlers полезны для большых codebases.
+
+### Resolution только для unique short names
+
+**Где:** collect_handlers::resolve_effect
+**Что упрощено:** Если handler Foo { без qualifier и в DocTree есть несколько
+effects с именем Foo (e.g., mod1::Foo и mod2::Foo) — handler НЕ
+attributed ни к одному (ambiguous > skip).
+**Почему:** Без import-resolution scope analysis правильный target не
+determined.
+**Как чинить:** integration с type-checker import resolution — может resolve
+по contextual scope. Не нужен для MVP.
+**Приоритет:** L — в production code обычно один effect с уникальным именем.
+
+---
+
+## Plan 45 Ф.26.3 — allow_transit placeholder (2026-05-16)
+
+### Parser-side allow_transit attribute не реализован
+
+**Где:** Capabilities.allow_transit всегда Vec::new() в collector.
+**Что упрощено:** DocTree struct имеет field, но parser не parses
+#allow_transit Log attribute. Field всегда empty по умолчанию.
+**Почему:** Plan 45 Ф.26.3 focuses на doc-side (data model + render); parser
+extension — отдельная задача (Plan 16/45 follow-up, ~200 LOC: AST + parser
++ type-checker propagation).
+**Как чинить:** Plan 16 / 45 follow-up — add #allow_transit attribute to
+parser, parse в n.allow_transit_attr: Vec<String>, propagate в collector
+аналогично ealtime_attr.
+**Приоритет:** M — D63 spec заявляет field, но 0 production code сегодня
+использует. Plan 16 production-readiness может pull это раньше если capability
+sandboxing будет needed.
+
+**Note:** field в DocTree гарантирует schema-stable JSON output. Consumer'ы
+не ломаются когда parser добавится (просто получат non-empty arrays).
+
+---
+
+## Plan 45 Ф.26.4 — Lints simplifications (2026-05-16)
+
+### summary-not-sentence heuristic upper-case detection
+
+**Где:** lints.rs::lint_item — Rule №1 check.
+**Что упрощено:** Detection capital first letter — c.is_uppercase(). Не handle
+Unicode-specific cases (Cyrillic, Greek, IPA characters могут не match is_uppercase()
+для некоторых variants). Также non-alphabetic символы (digit, quote) считаются OK.
+**Почему:** Production docs обычно на English/русском, Rust's is_uppercase
+covers оба. Non-alphabetic starts (# Examples, (deprecated)) rare и
+intentional > OK не flag.
+**Как чинить:** Plan 45.A — unicode-segmentation crate для proper grapheme-aware
+detection. Low priority.
+**Приоритет:** L.
+
+### deprecated-overdue semver parser (lexicographic Vec<u32>)
+
+**Где:** lints.rs::parse_version + ersion_at_or_above.
+**Что упрощено:** Lexicographic Vec<u32> compare. Не full semver:
+- 1.0 vs 1.0.0: lex says 1.0 < 1.0.0 (вектор короче). По semver — equal.
+- Pre-release 1.0.0-alpha vs 1.0.0: strip suffix > equal. По semver lpha < release.
+- Build metadata (+sha1) — ignored.
+**Почему:** Production usage deprecated(until = "0.5") — almost always
+major.minor либо major.minor.patch. Pre-release semantics в deprecation полях
+edge case.
+**Как чинить:** semver crate (cargo add semver). +1 dep, +30 LOC.
+**Приоритет:** L — текущий implementation покрывает 95% production.
+
+### Stylized: section-order error message длинный
+
+**Где:** lints.rs::lint_item — Rule №2.
+**Что упрощено:** Error message содержит full canonical order list. Может быть
+~150 chars message.
+**Почему:** Author should see exactly what's wrong > educational.
+**Как чинить:** не нужно — это deliberate UX choice.

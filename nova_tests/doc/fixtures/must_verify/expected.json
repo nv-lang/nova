@@ -49,6 +49,9 @@
 
       ],
       "capabilities": {
+        "allow_transit": [
+
+        ],
         "forbid": [
 
         ],
@@ -88,6 +91,9 @@
 
       ],
       "capabilities": {
+        "allow_transit": [
+
+        ],
         "forbid": [
 
         ],
@@ -173,6 +179,9 @@
 
       ],
       "capabilities": {
+        "allow_transit": [
+
+        ],
         "forbid": [
 
         ],

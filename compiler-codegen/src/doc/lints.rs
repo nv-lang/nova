@@ -54,6 +54,33 @@ fn lint_item(it: &DocItem, out: &mut Vec<DocLintViolation>) {
             });
         }
 
+        // Plan 45 Ф.26.4: Rule 1 (style-guide §11.5 №2) — summary-not-sentence.
+        // Summary должно быть полным грамматическим предложением: capital first letter +
+        // оканчивается на `.`, `!`, `?`.
+        let trimmed = s.trim();
+        if !trimmed.is_empty() {
+            let starts_with_capital = trimmed.chars().next()
+                .map(|c| c.is_uppercase() || !c.is_alphabetic()) // не alphabetic (digit/symbol) тоже OK
+                .unwrap_or(true);
+            let ends_with_terminator = trimmed.ends_with('.')
+                || trimmed.ends_with('!')
+                || trimmed.ends_with('?');
+            if !starts_with_capital || !ends_with_terminator {
+                let reason = if !starts_with_capital && !ends_with_terminator {
+                    "should start with capital letter AND end with `.`, `!`, or `?`"
+                } else if !starts_with_capital {
+                    "should start with capital letter"
+                } else {
+                    "should end with `.`, `!`, or `?`"
+                };
+                out.push(DocLintViolation {
+                    item_id: id.clone(),
+                    rule: "summary-not-sentence",
+                    message: format!("summary {} (style-guide §11.5 №1)", reason),
+                });
+            }
+        }
+
         // Rule 1: summary не в imperative mood (не начинается с глагола-инфинитива).
         // Эвристика: первое слово — known non-verb (The, A, An, This, Returns...).
         let first_word = s.split_whitespace().next().unwrap_or("");
@@ -63,6 +90,27 @@ fn lint_item(it: &DocItem, out: &mut Vec<DocLintViolation>) {
                 item_id: id.clone(),
                 rule: "imperative-mood",
                 message: format!("summary should start with an imperative verb, not '{}'", first_word),
+            });
+        }
+    }
+
+    // Plan 45 Ф.26.4 / §11.5 №2 — unknown-section.
+    // Canonical sections list — те же что в Rule 2 section-order ниже.
+    // Если в `it.sections` есть key не из этого списка — это unknown.
+    const CANONICAL_SECTIONS: &[&str] = &[
+        "examples", "errors", "panics", "safety", "effects",
+        "contracts", "since", "see also", "deprecated",
+    ];
+    for key in it.sections.keys() {
+        if !CANONICAL_SECTIONS.contains(&key.as_str()) {
+            out.push(DocLintViolation {
+                item_id: id.clone(),
+                rule: "unknown-section",
+                message: format!(
+                    "section `# {}` is not in canonical catalog (allowed: {})",
+                    key,
+                    CANONICAL_SECTIONS.join(", ")
+                ),
             });
         }
     }
@@ -88,6 +136,23 @@ fn lint_item(it: &DocItem, out: &mut Vec<DocLintViolation>) {
                 rule: "deprecated-incomplete",
                 message: "deprecated item missing both `since` version and deprecation note".to_string(),
             });
+        }
+        // Plan 45 Ф.26.4 / §11.5 №6 — deprecated-overdue.
+        // Если `#deprecated(until = "X.Y")` и текущая версия (env NOVA_VERSION или
+        // CARGO_PKG_VERSION) ≥ X.Y → lint error. Используется CI как gate перед release.
+        if let Some(until) = &dep.until {
+            let current = std::env::var("NOVA_VERSION").ok()
+                .unwrap_or_else(|| env!("CARGO_PKG_VERSION").to_string());
+            if version_at_or_above(&current, until) {
+                out.push(DocLintViolation {
+                    item_id: id.clone(),
+                    rule: "deprecated-overdue",
+                    message: format!(
+                        "deprecation `until = \"{}\"` reached (current = `{}`); item should be removed",
+                        until, current
+                    ),
+                });
+            }
         }
     }
 
@@ -129,5 +194,69 @@ fn lint_item(it: &DocItem, out: &mut Vec<DocLintViolation>) {
                 message: "description contains disallowed raw HTML tags (<script>, <iframe>, <style>)".to_string(),
             });
         }
+    }
+}
+
+/// Plan 45 Ф.26.4 — version comparison для `deprecated-overdue` lint.
+/// Semver-ish: split на `.`, parse как u32, compare lexicographically.
+/// Префикс `v` stripped (e.g., `v1.2.3` → `1.2.3`).
+/// Если parse fails — return false (conservative: не flag'аем как overdue).
+fn version_at_or_above(current: &str, until: &str) -> bool {
+    let cur = parse_version(current);
+    let unt = parse_version(until);
+    match (cur, unt) {
+        (Some(c), Some(u)) => c >= u,
+        _ => false,
+    }
+}
+
+fn parse_version(s: &str) -> Option<Vec<u32>> {
+    let s = s.trim().trim_start_matches('v');
+    // Take prefix up to first non-numeric/dot (e.g., `1.0.0-rc1` → `1.0.0`).
+    let prefix: String = s.chars()
+        .take_while(|c| c.is_ascii_digit() || *c == '.')
+        .collect();
+    let parts: Result<Vec<u32>, _> = prefix.split('.')
+        .filter(|p| !p.is_empty())
+        .map(|p| p.parse::<u32>())
+        .collect();
+    parts.ok().filter(|v| !v.is_empty())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn version_parse_basic() {
+        assert_eq!(parse_version("1.2.3"), Some(vec![1, 2, 3]));
+        assert_eq!(parse_version("v1.0"), Some(vec![1, 0]));
+        assert_eq!(parse_version("0.5.1-rc1"), Some(vec![0, 5, 1]));
+        assert_eq!(parse_version(""), None);
+        assert_eq!(parse_version("notaversion"), None);
+    }
+
+    #[test]
+    fn version_compare_basic() {
+        assert!(version_at_or_above("1.2.3", "1.2.3"));
+        assert!(version_at_or_above("1.2.4", "1.2.3"));
+        assert!(version_at_or_above("2.0.0", "1.99.99"));
+        assert!(!version_at_or_above("1.2.2", "1.2.3"));
+        assert!(!version_at_or_above("0.9.0", "1.0.0"));
+    }
+
+    #[test]
+    fn version_compare_different_lengths() {
+        // 1.0 vs 1.0.0: vec![1,0] < vec![1,0,0] lexicographically.
+        // Это разумно (1.0.0 — более specific, считается later release).
+        assert!(version_at_or_above("1.0.0", "1.0"));
+        assert!(!version_at_or_above("1.0", "1.0.0"));
+    }
+
+    #[test]
+    fn version_unparseable_returns_false() {
+        // Conservative: malformed input не flag'ит как overdue.
+        assert!(!version_at_or_above("garbage", "1.0.0"));
+        assert!(!version_at_or_above("1.0.0", "garbage"));
     }
 }

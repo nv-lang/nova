@@ -1052,6 +1052,8 @@ fn cmd_doc(path: &Path, format: &str, json_schema: bool, include_private: bool, 
     let _ = nova_codegen::types::check_module(&module);
     nova_codegen::types::infer_effects(&mut module);
     let mut tree = nova_codegen::doc::build(&module);
+    // Plan 45 Ф.26.2 / Ф.23.4: populate handler matrix (Effect.handlers).
+    nova_codegen::doc::populate_handler_matrix(&mut tree, &src);
     // Plan 45 Ф.22.3 / D107: source_root = parent dir файла, relative
     // от CWD (для portable/deterministic output across machines).
     tree.source_root = path.parent().map(|d| {

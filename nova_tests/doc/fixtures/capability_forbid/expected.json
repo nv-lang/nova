@@ -40,6 +40,9 @@
 
       ],
       "capabilities": {
+        "allow_transit": [
+
+        ],
         "forbid": [
           "Io"
         ],

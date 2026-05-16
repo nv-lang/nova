@@ -12560,3 +12560,154 @@ cross-type cascade С‡РµСЂРµР· From-РєРѕРЅРІРµСЂС‚Р°С†РёСЋ.
 - feat(49): Р¤.5 вЂ” M:N atomic kind+reason РІ cross-worker (835b154de3c)
 - feat(49): Р¤.6 partial вЂ” CancelToken[T] typed cancel reason РґР»СЏ Tв‰ str
   (9ccc6096d43)
+
+=== Plan 45 Ф.26.1 — Fix Newtype dead match arm (2026-05-16, P0 spec violation) ===
+
+Свежий аудит обнаружил **active production bug** в collector.rs:
+- Line 481: TypeDeclKind::Newtype(ty) => Alias(render_type(ty)) — MVP stub до Ф.23.10.
+- Line 538: TypeDeclKind::Newtype(inner_ty) => Newtype { inner } — правильный Ф.23.10 variant.
+- Rust match-семантика: первый arm всегда срабатывает > второй dead code.
+
+**Impact:** Любой 	ype Email str (newtype) рендерился в docs как kind: "alias",
+не как kind: "newtype". Это violation **D107 spec** + заявленного **Plan 45 Ф.23.10**.
+
+**Fix:** удалил dead first-arm (line 481). Теперь Newtype > правильный variant.
+
+**Test guard:** новый compiler-codegen/tests/doc_newtype.rs (3 tests):
+- 
+ewtype_renders_as_newtype_not_alias — verify kind="newtype" + inner_type field
+- lias_renders_as_alias — alias ещё корректен
+- 
+ewtype_and_alias_coexist_distinctly — оба distinct в same module
+
+**Golden fixture regen:** 
+ova_tests/doc/fixtures/kinds/expected.json — AccountId
+теперь {kind: "newtype", inner_type: "int"} вместо {kind: "alias", aliased_type: "int"}.
+
+**Lessons:**
+- Match-arm bugs не ловятся --check, не ловятся golden tests (golden REGEN'ils ошибку с
+  предыдущей ошибкой). Нужно proactive integration test.
+- При добавлении нового variant (Ф.23.10), компилятор НЕ предупреждает что старый arm
+  shadow'ит — это not exhaustive checking, а normal match ordering.
+
+=== Plan 45 Ф.26.2 — Handler matrix (Ф.23.4 finally реализован, 2026-05-16) ===
+
+План явно отмечал Ф.23.4 как ?? НЕ реализован (§19 «Сравнение»). Эта фаза
+закрывает обещание из плана §19.4 п.4: "handler matrix Effect > impls,
+unique edge vs Go/Rust/TS".
+
+**Что добавлено:**
+- HandlerRef { caller_item_id: String, kind: String } struct в doctree.rs
+- ItemKind::Effect.handlers: Vec<HandlerRef> field
+- compiler-codegen/src/doc/collect_handlers.rs — text-based scanner
+- populate_handler_matrix(tree, source) public API в doc/mod.rs
+- CLI wiring в single-file mode (cmd_doc)
+- JSON output: effect.handlers = [{caller_item_id, kind}]
+- MD section: #### Handlers под Effect declaration с bullet list callers
+
+**Дизайн — text-based scanner, не AST visitor:**
+- Полный AST visitor across all ExprKind variants — ~250 LOC + сильная coupling к
+  AST schema (которая отличается от моего первоначального угадывания).
+- Текстовый scan source slice fn-item (source[span.start..span.end]) на
+  pattern handler <Name> { — robust к AST refactor'ам, дёшев, deterministic.
+- Аналогично scraper.rs Ф.24.9 — рабочий precedent для simple implementations.
+- False positives (handler в string literal) допустимы для documentation.
+
+**Resolution:**
+- Full path mod.path.Foo > mod.path::Foo lookup.
+- Short name Foo > only если ровно один effect с этим именем (иначе skip).
+
+**Workspace mode:** Out-of-scope для Ф.26.2.
+- CLI workspace pipeline передаёт concatenated sources, но span'ы относительные
+  к каждому файлу. Production-grade нужен sources map.
+- Plan 45.A — workspace handler matrix через per-file source tracking.
+
+**Tests:**
+- 5 unit tests в collect_handlers.rs (inline handler, qualified path, ignore
+  substring, ignore без brace, multiple handlers)
+- 6 integration tests в compiler-codegen/tests/doc_handler_matrix.rs
+  (inline registered, empty array, multiple callers distinct, deterministic,
+  JSON render, MD section)
+- Golden fixture kinds/sample.nv regenerated с handlers: [] (нет handlers).
+
+**Total после Ф.26.2:** 68 doc integration tests PASS (10 suites).
+
+=== Plan 45 Ф.26.3 — allow_transit capability (D63 placeholder, 2026-05-16) ===
+
+D63 spec заявляет #allow_transit X, Y — escape hatch для forbid-sandbox
+(effects которые могут проходить сквозь orbid Io { ... } block). Plan 45
+Ф.23.3 implement'нул orbid + ealtime + pure, но allow_transit
+оказался не добавлен в Capabilities struct > JSON consumers не имели поле.
+
+**Что добавлено:**
+- Capabilities.allow_transit: Vec<String> field
+- JSON output: capabilities.allow_transit (alphabetically первое:  <  < p < )
+- MD badge: ?? \llow_transit(X)\` рядом с другими capability badges
+- Schema: использует dditionalProperties (нет separate Capabilities ),
+  field automatically allowed.
+
+**Honest limitation:** Parser **не поддерживает** #allow_transit attribute.
+Field в DocTree всегда empty по умолчанию. Это schema-stable placeholder для
+future parser-side implementation (Plan 16/45 follow-up).
+
+**Зачем добавлять field если parser не fills?**
+- JSON schema stable: consumers могут polling эту фичу не ломаясь
+- LLM может видеть что Nova capability model включает allow_transit semantically
+- Tests 	ests/doc_allow_transit.rs::manually_set_allow_transit_renders
+  demonstrate что render pipeline работает — нужна только parser extension
+
+**Tests:** 5 integration tests в 	ests/doc_allow_transit.rs:
+- field exists, default empty
+- JSON includes array
+- Alphabetical position (before forbid)
+- Manually-populated renders correctly
+- MD badge renders
+
+Total после Ф.26.3: 73 doc integration PASS (11 suites).
+
+=== Plan 45 Ф.26.4 — Дополнить §11.5 lints catalog (2026-05-16) ===
+
+Plan §11.5 заявил **10 lints** в catalog. Audit показал 8 уже реализованы;
+ещё 3 отсутствуют. Реализовал недостающие:
+
+**Добавлено в lints.rs:**
+
+1. **summary-not-sentence** (style-guide rule №1).
+   - Summary должно быть полным грамматическим предложением:
+     capital first letter + ends with . / ! / ?.
+   - Message указывает что именно не так (capital OR terminator OR both).
+
+2. **unknown-section** (style-guide rule №2).
+   - Если в it.sections есть key не из canonical catalog
+     (examples / errors / panics / safety / effects / contracts / since /
+     see also / deprecated) — warning.
+   - Helps catch typos типа # Exemple или non-standard sections.
+
+3. **deprecated-overdue** (style-guide rule №6).
+   - Если #deprecated(until = "X.Y") и текущая Nova version >= X.Y >
+     error: item должен быть удалён.
+   - Version source: NOVA_VERSION env var (CI-controlled) либо fallback
+     CARGO_PKG_VERSION (Nova compiler version).
+   - Semver-ish сравнение через ersion_at_or_above: parse digits-and-dots
+     префикс, lexicographic compare Vec<u32>. Conservative: malformed input
+     > false (не flag'ит).
+
+**Helper:** parse_version + ersion_at_or_above (private). Handles:
+- 1.0.0 > strips 
+- 1.0.0-rc1 > takes 1.0.0, ignores suffix
+- garbage > None > false (conservative)
+
+**Tests:** 4 new unit tests в doc::lints::tests:
+- ersion_parse_basic — basic parsing
+- ersion_compare_basic — semver compare
+- ersion_compare_different_lengths — 1.0 vs 1.0.0
+- ersion_unparseable_returns_false — conservative fallback
+
+**Total lints implemented:** 11 unique rules (был 8):
+- broken-link, missing-summary (в cmd_doc_check)
+- imperative-mood, section-order, markdown-subset, examples-missing,
+  deprecated-incomplete, public-missing-stability, summary-too-long
+  (в lints.rs §11.5)
+- **summary-not-sentence, unknown-section, deprecated-overdue** (новое Ф.26.4)
+
+Plan §11.5 catalog claim '10 lints' теперь **полностью покрыт** (11 implemented).
