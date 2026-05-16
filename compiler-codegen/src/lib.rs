@@ -15,6 +15,7 @@ pub mod lexer;
 pub mod lints;
 pub mod manifest;
 pub mod parser;
+pub mod perf_timer;
 pub mod test_runner;
 pub mod types;
 pub mod verify;
