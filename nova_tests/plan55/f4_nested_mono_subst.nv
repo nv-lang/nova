@@ -1,0 +1,24 @@
+// Plan 55 Ф.4 — nested mono subst (outer + inner generic, тот же T).
+// Verify: outer subst[T=int] остаётся виден при entry inner.
+
+module plan55.f4_nested_mono_subst
+
+
+fn inner[T](x T) -> T => x
+
+
+fn outer[T](x T) -> T {
+    let y = inner[T](x)
+    let z = inner[T](y)
+    z
+}
+
+
+test "nested outer/inner mono — int" {
+    assert(outer[int](10) == 10)
+}
+
+
+test "nested outer/inner mono — str" {
+    assert(outer[str]("nested") == "nested")
+}

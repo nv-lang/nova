@@ -1,0 +1,25 @@
+// Plan 55 Ф.4 — generic helper chain не корраптит mono-pass context.
+// A → B → C generic chain, каждый mono'd с разным subst, должен корректно
+// emit'иться. До fix'а: current_fn_return_ty leak'ал между level'ями.
+
+module plan55.f4_generic_helper_chain
+
+
+fn level_a[T](x T) -> T => level_b(x)
+fn level_b[T](x T) -> T => level_c(x)
+fn level_c[T](x T) -> T => x
+
+
+test "3-level generic chain T=int" {
+    assert(level_a[int](42) == 42)
+}
+
+
+test "3-level generic chain T=str" {
+    assert(level_a[str]("hello") == "hello")
+}
+
+
+test "3-level generic chain T=bool" {
+    assert(level_a[bool](true) == true)
+}

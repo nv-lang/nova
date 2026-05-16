@@ -6558,7 +6558,13 @@ impl CEmitter {
             self.current_receiver_type = None;
         }
         let ret = self.return_type_c(f)?;
-        self.current_fn_return_ty = Some(ret.clone());
+        // Plan 55 Ф.4: save/restore current_fn_return_ty чтобы прошлый
+        // ret не leak'ал при recursive emit (e.g. mono pass запускает
+        // emit_fn для transitively'd dependencies из тела generic).
+        let saved_ret_ty = std::mem::replace(
+            &mut self.current_fn_return_ty,
+            Some(ret.clone()),
+        );
         let params = self.params_c(f)?;
         let mangled = self.mangle_fn(f);
         // Register param types in var_types for match/infer
@@ -6757,6 +6763,8 @@ impl CEmitter {
             FnBody::External => {}
         }
         self.expected_record_type = saved_expected;
+        // Plan 55 Ф.4: restore prior current_fn_return_ty (mono-pass leak fix).
+        self.current_fn_return_ty = saved_ret_ty;
         // Undef any heap-promoted mut-captures so macros don't leak to sibling fns.
         self.flush_boxed_vars();
         self.indent = 0;
@@ -11627,6 +11635,13 @@ impl CEmitter {
         // silent-bug class. Conservative — error только если ОЧЕВИДНО
         // non-bool (numeric/str). type-neutral (void*) — пропускаем.
         let cond_ty = self.infer_expr_c_type(cond);
+        // Plan 55 Ф.4 debug tool: NOVA_DEBUG_MONO=1 dumps non-bool conds during
+        // codegen to help diagnose protocol-method dispatch / type-context corruption.
+        if std::env::var("NOVA_DEBUG_MONO").is_ok() && cond_ty != "nova_bool" && cond_ty != "void*" {
+            eprintln!("DEBUG-MONO if-cond NON-BOOL: ty={} kind={:?} fn={:?} subst={:?}",
+                cond_ty, cond.kind, self.current_fn_return_ty,
+                self.current_type_subst.iter().collect::<Vec<_>>());
+        }
         self.check_bool_condition_at(&cond_ty, "if", cond.span)?;
         // Infer result type from then-block (if any trailing), default nova_unit
         let if_ty = if else_.is_none() {
@@ -15958,6 +15973,19 @@ impl CEmitter {
                                 return ret_ty.clone();
                             }
                         }
+                    }
+                    // Plan 55 Ф.4: well-known protocol-method names — type-stable per protocol.
+                    // Когда receiver — generic-bound (Hashable/Comparable/etc.), fallback
+                    // на global fn_ret_<m> может выбрать stale int — нужны явные whitelist'ы.
+                    match method.as_str() {
+                        // Equality / ordering — Hashable / Comparable bounds.
+                        "eq" | "ne" | "lt" | "le" | "gt" | "ge" => return "nova_bool".into(),
+                        // Predicates на values.
+                        "is_zero" | "is_positive" | "is_negative" | "is_nan"
+                            | "is_finite" | "is_infinite" => return "nova_bool".into(),
+                        // Hash → u64 (nova_int storage).
+                        "hash" => return "nova_int".into(),
+                        _ => {}
                     }
                     // User-defined method: look up return type registered during forward decl
                     let ret_key = format!("fn_ret_{}", method);
