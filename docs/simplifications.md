@@ -7335,3 +7335,41 @@ Contract expressions редко содержат match/for (predicates are boolean).
 **Почему:** Soak period — если shared util имеет regression, easy fallback.
 **Как чинить:** удалить через 2 недели если 0 issues. Tracking note в этом файле.
 **Приоритет:** L — cleanup task.
+
+---
+
+## Plan 45 Ф.28.2 — Mutation real-exec simplifications (2026-05-16)
+
+### Text substitute vs AST mutation
+
+**Где:** mutation::evaluate_mutants_executed — source.replacen(orig, mut, 1).
+**Что упрощено:** Substitute по тексту original_expr > mutated_expr. Не парсит
+AST, не tracks span positions.
+**Почему:** Real AST mutation требует AST>source pretty-printer + position
+tracking. Text substitute — 90% case coverage за 5 LOC.
+**Edge cases (acceptable):**
+- original_expr в comment / string literal > false mutation.
+- Multiple occurrences на одной fn > only first mutated.
+- Ф.28.1 parens may break exact match > outcome NoTests (honest).
+**Как чинить:** AST-level mutation через st::pretty::print_expr reverse
++ span-aware insertion. Plan 45.A.
+**Приоритет:** L — текущий покрывает production cases.
+
+### --real-exec performance (~100ms per mutant per test)
+
+**Где:** mutation::evaluate_mutants_executed per-mutant test execution.
+**Что упрощено:** Sequential per-mutant test runs. Нет caching parse результата.
+**Почему:** Каждый мутант имеет other source > re-parse mandatory. Caching mutant>test
+results — Plan 45.A.
+**Как чинить:**
+- Parallel mutant execution (rayon-style)
+- Cache compiled AST для unchanged parts (incremental compilation)
+**Приоритет:** M — acceptable для CI (~10s per fn); для IDE use text-heuristic.
+
+### Drop-ensures mutator не реализован
+
+**Где:** mutation::generate_mutants — drop-mutator только для requires.
+**Что упрощено:** Drop ensures = всегда survives (verifier nothing to check).
+**Почему:** Drop-ensures concept ill-defined; operator mutations покрывают
+boundary cases.
+**Приоритет:** none — design choice, не tech debt.

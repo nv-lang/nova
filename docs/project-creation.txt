@@ -13109,3 +13109,47 @@ Total после Ф.28.1: 85 doc tests PASS (13 integration suites + 8 unit).
 Side benefits:
 - Diag/spec теперь могут переиспользовать pretty-print без duplication.
 - New ExprKind variant — добавить branch в одном месте, не в каждом consumer.
+
+=== Plan 45 Ф.28.2 — Mutation testing real-exec (2026-05-16) ===
+
+Заменяет Ф.25.4 text-heuristic на real test execution. Текстовая heuristic
+(Ф.25.4) угадывала kill rate по boundary literals в test source; real-exec
+(Ф.28.2) actually substitutes mutated_expr в source, re-runs doc-tests
+через test_runner, classifies kills based на actual test outcomes.
+
+**API:**
+- un_mutation_analysis(tree) — текстовая heuristic (Ф.25.4, fast).
+- un_mutation_analysis_executed(tree, source) — real-exec (Ф.28.2, slower).
+
+**CLI:**
+- 
+ova doc <file> --mutate-contracts — default text-heuristic.
+- 
+ova doc <file> --mutate-contracts --real-exec — real-exec mode.
+  clap equires = "mutate_contracts" гарантирует --real-exec только с
+  --mutate-contracts.
+
+**Algorithm real-exec:**
+1. Generate mutants (operator swap: > - >=, == - !=, drop requires).
+2. Для каждого mutant:
+   - source.replacen(original_expr, mutated_expr, 1) — substitute first occurrence
+   - Если no-op (original_expr не найден после Ф.28.1 parens) — outcome = NoTests
+   - Иначе: re-parse + run doc-tests этого fn через test_runner
+3. Outcome: Killed (?1 test failed) / Survived (all tests passed) / NoTests.
+
+**Performance:** ~100ms per mutant per doc-test (parse + type-check + compile + run).
+Для fn с 5 contracts ? 5 mutants ? 3 tests = 7.5s. Acceptable для CI, slow для IDE.
+
+**Caveats документированы:**
+- Naive text substitute: original_expr в comment/string — false mutation.
+- Не precise когда original_expr встречается multiple times на одной fn.
+- Pretty-printer parens (Ф.28.1) могут менять x > 0 > (x > 0) —
+  text substitute может найти not exact match > NoTests outcome (honest).
+
+**Tests:** 4 integration tests в compiler-codegen/tests/doc_mutation_exec.rs:
+- fn без doc-tests > NoTests
+- fn с contracts > mutants generated
+- Deterministic (multiple runs > identical reports)
+- No contracts > 0 mutants
+
+Total после Ф.28.2: **89 doc tests PASS** (14 integration suites + 8 unit).

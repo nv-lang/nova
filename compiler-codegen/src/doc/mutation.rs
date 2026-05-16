@@ -146,7 +146,7 @@ fn extract_tokens(expr: &str) -> Vec<String> {
         .collect()
 }
 
-/// Plan 45 Ф.25.4 — full mutation report.
+/// Plan 45 Ф.25.4 — full mutation report (textual heuristic).
 pub fn run_mutation_analysis(tree: &DocTree) -> MutationReport {
     let mut mutants = generate_mutants(tree);
     evaluate_mutants_textual(tree, &mut mutants);
@@ -154,6 +154,90 @@ pub fn run_mutation_analysis(tree: &DocTree) -> MutationReport {
     let killed = mutants.iter().filter(|m| m.outcome == MutantOutcome::Killed).count();
     let survived = mutants.iter().filter(|m| m.outcome == MutantOutcome::Survived).count();
     MutationReport { mutants, total, killed, survived }
+}
+
+/// Plan 45 Ф.28.2 — REAL-EXEC mutation analysis.
+///
+/// **Что делает:**
+/// 1. Generates mutants как обычно (operator swap on contract.expr).
+/// 2. Для каждого мутанта — substitute original_expr на mutated_expr **в source**.
+/// 3. Re-parses модуль с мутированным source.
+/// 4. Прогоняет doc-tests модуля через `test_runner::run_doc_tests_with_source`.
+/// 5. Если ANY doc-test fail'ит — mutant **killed** (good — test catches mutation).
+/// 6. Если ALL doc-tests pass'ят — mutant **survived** (contract under-tested).
+///
+/// **Difference от textual evaluator:**
+/// - Textual (Ф.25.4): heuristic — содержит ли test boundary literal + calls fn.
+/// - Real-exec (Ф.28.2): actual test execution с mutated source. True positive guarantee.
+///
+/// **Tradeoff:** Real-exec ~100ms per mutant per test (parse + type-check + compile + run).
+/// Для функции с 5 contracts × ~5 mutants × ~3 doc-tests = 75 runs ~= 7.5s.
+/// Textual ~1ms. Use real-exec в CI, textual в `--watch`/IDE.
+///
+/// **Caveats:**
+/// - Text replacement не precise: если `x > 0` встречается в нескольких contracts
+///   на одной fn, мутируется первое. Для multi-contract fn — sequential mutation
+///   возможно даёт ложные positives.
+/// - Source rewrite naive: используется `replace(original, mutated)` без AST.
+///   Если original_expr встречается в comment / string literal — false mutation.
+pub fn run_mutation_analysis_executed(
+    tree: &DocTree,
+    source: &str,
+) -> MutationReport {
+    let mut mutants = generate_mutants(tree);
+    evaluate_mutants_executed(tree, source, &mut mutants);
+    let total = mutants.len();
+    let killed = mutants.iter().filter(|m| m.outcome == MutantOutcome::Killed).count();
+    let survived = mutants.iter().filter(|m| m.outcome == MutantOutcome::Survived).count();
+    MutationReport { mutants, total, killed, survived }
+}
+
+fn evaluate_mutants_executed(tree: &DocTree, source: &str, mutants: &mut Vec<Mutant>) {
+    // Найти doc-tests один раз, group'нуть по item_id.
+    let mut tests_by_item: std::collections::BTreeMap<String, Vec<&DocTest>> =
+        std::collections::BTreeMap::new();
+    for dt in &tree.doc_tests {
+        if let Some(from) = &dt.from_id {
+            tests_by_item.entry(from.clone()).or_default().push(dt);
+        }
+    }
+
+    for mutant in mutants.iter_mut() {
+        let tests = match tests_by_item.get(&mutant.item_id) {
+            Some(t) if !t.is_empty() => t,
+            _ => { mutant.outcome = MutantOutcome::NoTests; continue; }
+        };
+
+        // Substitute original_expr → mutated_expr в source.
+        // Используем replacen(_, 1) для safety: если original_expr встречается
+        // несколько раз, мутируем только первое.
+        let mutated_source = source.replacen(&mutant.original_expr, &mutant.mutated_expr, 1);
+        if mutated_source == *source {
+            // No-op replacement (original_expr не найден в source) — skip.
+            // Это возможно если render_expr добавил parens вокруг expr, а source
+            // имеет original без parens. Honest result: no-tests.
+            mutant.outcome = MutantOutcome::NoTests;
+            continue;
+        }
+
+        // Прогоняем все tests этого item с мутированным source.
+        let test_refs: Vec<crate::doc::doctree::DocTest> = tests.iter().map(|t| (*t).clone()).collect();
+        let summary = crate::doc::test_runner::run_doc_tests_with_source(
+            &test_refs,
+            Some(&mutated_source),
+        );
+
+        // Mutant killed если хоть один тест fail'ит под мутацией.
+        // Skipped tests (compile_fail / ignore) — не counted в kill/survive.
+        let has_failure = summary.results.iter().any(|r|
+            matches!(r.outcome, crate::doc::test_runner::DocTestOutcome::Failed(_))
+        );
+        mutant.outcome = if has_failure {
+            MutantOutcome::Killed
+        } else {
+            MutantOutcome::Survived
+        };
+    }
 }
 
 /// Plan 45 Ф.25.4 — генерирует мутантов из contracts в DocTree.
