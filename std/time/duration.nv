@@ -66,7 +66,7 @@ export fn Duration @as_hours() => @nanos / 3_600_000_000_000
 export fn Duration @as_days() => @nanos / 86_400_000_000_000
 
 // Дробные конверсии (без потери точности на typical scales).
-export fn Duration @as_secs_f64() => (@nanos as f64) / 1_000_000_000.0
+export fn Duration @as_secs_f64() -> f64 => (@nanos as f64) / 1_000_000_000.0
 export fn Duration @as_millis_f64() => (@nanos as f64) / 1_000_000.0
 
 

@@ -1078,7 +1078,8 @@ impl CEmitter {
                     let return_c_type = match &f.return_type {
                         Some(t) => self.type_ref_to_c(t)
                             .unwrap_or_else(|_| "nova_int".into()),
-                        None => "nova_unit".into(),
+                        // Plan 55 Ф.3: infer return-type из body для free fn без annotation.
+                        None => self.return_type_c(f).unwrap_or_else(|_| "nova_unit".into()),
                     };
                     // Sentinel-key: пустая строка вместо receiver-type.
                     // Не конфликтует с user-types (имена ≠ пустой строке).
@@ -1165,6 +1166,7 @@ impl CEmitter {
                         })
                         .collect();
                     // Resolve return type. `Self` → recv.type_name.
+                    // Plan 55 Ф.3: если return-type не указан, infer из body.
                     let return_c_type = match &f.return_type {
                         Some(TypeRef::Named { path, .. }) if path.len() == 1 && path[0] == "Self" => {
                             self.receiver_c_type(&recv.type_name)
@@ -1174,7 +1176,7 @@ impl CEmitter {
                         }
                         Some(t) => self.type_ref_to_c(t)
                             .unwrap_or_else(|_| "nova_int".into()),
-                        None => "nova_unit".into(),
+                        None => self.return_type_c(f).unwrap_or_else(|_| "nova_unit".into()),
                     };
                     // For array extension methods, use the C-identifier form as the key so that
                     // call-site lookups (which derive the key from "NovaArray_nova_int*" → "NovaArray_nova_int")
@@ -2016,8 +2018,26 @@ impl CEmitter {
 
     fn return_type_c(&self, f: &FnDecl) -> Result<String, String> {
         match &f.return_type {
-            None => Ok("nova_unit".into()),
             Some(ty) => self.type_ref_to_c(ty),
+            // Plan 55 Ф.3: если return type не указан, infer из expression-body.
+            // `fn foo() => expr` и `fn foo() { ...; expr }` — оба должны брать тип
+            // из выражения. Раньше всегда возвращали nova_unit → CC-FAIL в callers
+            // ожидающих real type (e.g. str.from(d.@as_secs_f64()) внутри Duration).
+            None => {
+                let inferred = match &f.body {
+                    FnBody::Expr(e) => self.infer_expr_c_type(e),
+                    FnBody::Block(b) => b.trailing.as_ref()
+                        .map(|e| self.infer_expr_c_type(e))
+                        .unwrap_or_else(|| "nova_unit".into()),
+                    FnBody::External => "nova_unit".into(),
+                };
+                // Защита: void* / пустые → fallback unit.
+                if inferred.is_empty() || inferred == "void*" {
+                    Ok("nova_unit".into())
+                } else {
+                    Ok(inferred)
+                }
+            }
         }
     }
 
@@ -7507,7 +7527,14 @@ impl CEmitter {
             }
             Stmt::Expr(e) => {
                 let val = self.emit_expr(e)?;
-                self.line(&format!("{};", val));
+                // Plan 55 Ф.3: nova_unit — struct{}; `_tmp;` invalid C для struct.
+                // Cast в (void) даёт valid expression-statement и работает для всех типов.
+                let ty = self.infer_expr_c_type(e);
+                if ty == "nova_unit" || Self::is_struct_type(&ty) {
+                    self.line(&format!("(void)({});", val));
+                } else {
+                    self.line(&format!("{};", val));
+                }
             }
             Stmt::Assign { target, op, value, .. } => {
                 // Special case: array element assignment where elements are stored

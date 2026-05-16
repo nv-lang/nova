@@ -1,0 +1,55 @@
+// Plan 55 Ф.3 — generic @into() -> str работает для user-types через
+// inferred return type из `=> expr` body.
+//
+// До Ф.3 fix'а: `fn T @method() => expr` без `-> T` annotation давал
+// return type = nova_unit, потому что return_type_c fallback'ил на unit.
+// CC-FAIL: caller типизирует result как expected, mismatch с unit.
+//
+// После Ф.3: codegen infer'ит return type из body expression — Rust/Swift
+// паритет (там тоже implicit return).
+
+module plan55.f3_into_auto_derive_str
+
+
+type Color {
+    r u8
+    g u8
+    b u8
+}
+
+
+// Без `-> str` — codegen должен infer'ить из expression body.
+export fn Color @into() => "#" + str.from(@r) + "," + str.from(@g) + "," + str.from(@b)
+
+
+// Тривиально: `=> @nanos` инфирится как i64.
+type Stamp {
+    nanos i64
+}
+
+export fn Stamp @as_nanos() => @nanos
+
+
+// `=> @nanos == 0` инфирится как bool.
+export fn Stamp @is_zero() => @nanos == 0
+
+
+test "Color.@into() -> str инфирится автоматически" {
+    let c = Color { r: 1, g: 2, b: 3 }
+    let s = c.into()
+    assert(s == "#1,2,3")
+}
+
+
+test "Stamp.@as_nanos -> i64 инфирится из body" {
+    let s = Stamp { nanos: 42 }
+    assert(s.as_nanos() == 42)
+}
+
+
+test "Stamp.@is_zero -> bool инфирится из == выражения" {
+    let s_zero = Stamp { nanos: 0 }
+    let s_nz   = Stamp { nanos: 5 }
+    assert(s_zero.is_zero())
+    assert(!s_nz.is_zero())
+}

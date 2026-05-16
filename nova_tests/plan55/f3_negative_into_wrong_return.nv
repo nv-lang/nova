@@ -1,0 +1,18 @@
+// Plan 55 Ф.3 — negative: inferred return type — type mismatch на caller.
+// `@into() => 42` inferred как i64, но caller использует как str → CC type error.
+
+module plan55.f3_negative_into_wrong_return
+
+
+type Thing { x i64 }
+
+
+// `=> 42` инфирится как i64.
+export fn Thing @into() => 42
+
+
+// EXPECT_CC_ERROR incompatible
+fn use_as_str() {
+    let t = Thing { x: 1 }
+    let s str = t.into()    // expected str, returns i64 → CC type mismatch
+}
