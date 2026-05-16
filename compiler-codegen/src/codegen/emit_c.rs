@@ -12331,6 +12331,14 @@ impl CEmitter {
                         )),
                     };
                     self.var_types.insert(binding_name.clone(), ty.to_string());
+                    // Plan 53 Ф.6.3: propagate decl.mutable to each bind so
+                    // spawn-capture and assignment-rewrite decisions use the
+                    // correct mutability (was missing → silent gap).
+                    if decl.mutable {
+                        self.var_mutable.insert(binding_name.clone());
+                    } else {
+                        self.var_mutable.remove(&binding_name);
+                    }
                     self.line(&format!("{} {} = {}.{};", ty, binding_name, tmp, field.name));
                 }
                 return Ok(());
@@ -12362,7 +12370,68 @@ impl CEmitter {
         self.line(&format!("{} {} = {};", ty_c, tmp, val));
         // Делегируем биндинг полей в общий helper match-arm'ов.
         self.pattern_bind_typed(&decl.pattern, &tmp)?;
+        // Plan 53 Ф.6.3: propagate decl.mutable to all bound names from the
+        // pattern. Без этого `let mut { x, y } = p; spawn { use(x); }` ловит
+        // wrong capture-mode (by-value вместо by-ref) — `var_mutable` определяет
+        // spawn-capture decision (emit_c.rs:2526 — by_value = is_scalar && !is_mut).
+        let mut bound_names = Vec::new();
+        Self::collect_pattern_bind_names(&decl.pattern, &mut bound_names);
+        for name in bound_names {
+            if decl.mutable {
+                self.var_mutable.insert(name);
+            } else {
+                self.var_mutable.remove(&name);
+            }
+        }
         Ok(())
+    }
+
+    /// Plan 53 Ф.6.3: рекурсивно собирает все binding-имена из pattern.
+    /// Используется для propagation `decl.mutable` в record-destructure
+    /// (mirror того, что делает plain-let path: `var_mutable.insert/remove`).
+    fn collect_pattern_bind_names(pat: &Pattern, out: &mut Vec<String>) {
+        match pat {
+            Pattern::Ident { name, .. } => out.push(name.clone()),
+            Pattern::Wildcard(_) => {}
+            Pattern::Tuple(pats, _) => {
+                for p in pats {
+                    Self::collect_pattern_bind_names(p, out);
+                }
+            }
+            Pattern::Record { fields, .. } => {
+                for f in fields {
+                    match &f.pattern {
+                        None => out.push(f.name.clone()), // shorthand `{ x }` → bind x
+                        Some(sub) => Self::collect_pattern_bind_names(sub, out),
+                    }
+                }
+            }
+            Pattern::Binding { name, inner, .. } => {
+                out.push(name.clone());
+                Self::collect_pattern_bind_names(inner, out);
+            }
+            // Refutable patterns не должны доходить сюда (type-check ловит),
+            // но on best-effort собираем bind-имена из вложенных полей.
+            Pattern::Variant { kind, .. } => {
+                use crate::ast::VariantPatternKind;
+                if let VariantPatternKind::Tuple { patterns, .. } = kind {
+                    for p in patterns {
+                        Self::collect_pattern_bind_names(p, out);
+                    }
+                }
+            }
+            Pattern::Array { elems, .. } => {
+                use crate::ast::ArrayPatternElem;
+                for el in elems {
+                    match el {
+                        ArrayPatternElem::Item(p) => Self::collect_pattern_bind_names(p, out),
+                        ArrayPatternElem::RestBind(name) => out.push(name.clone()),
+                        ArrayPatternElem::Rest => {}
+                    }
+                }
+            }
+            Pattern::Literal(_, _) | Pattern::Or { .. } => {}
+        }
     }
 
     // ---- pattern helpers ----
