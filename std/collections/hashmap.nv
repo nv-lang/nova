@@ -267,6 +267,21 @@ export fn HashMap[K, V] @filter(pred fn(K, V) -> bool) -> HashMap[K, V] {
 }
 
 
+// Plan 56 deferred: @map_values[U] / @map_keys[K2] требуют method-level
+// generic params на generic type (HashMap[K,V].@method[U] — два уровня
+// generic). Plan 48 mono pass partial — sentinel registered, но body emit
+// fails. Полное закрытие — в Plan 60 (method-level generic mono).
+//
+// Workaround: write inline:
+//   let mut out HashMap[K, U] = []
+//   for i in 0..m.buckets.len {
+//       match m.buckets[i] {
+//           Occupied { key, value } => out.insert_new(key, f(value))
+//           _ => {}
+//       }
+//   }
+
+
 // HashMap.mut @remove(key) — удалить пару по ключу.
 //
 // Возвращает Some(value) если было удалено, None иначе.

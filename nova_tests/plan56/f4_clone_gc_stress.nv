@@ -1,0 +1,54 @@
+// Plan 56 Ф.3 — GC stress test для @clone().
+// 100 clones × 100 entries — heap bounded.
+
+module plan56.f4_clone_gc_stress
+
+import std.collections.hashmap.{HashMap}
+
+
+test "@clone × 100 итераций — heap bounded" {
+    let mut m HashMap[str, int] = []
+    for i in 0..100 {
+        m.insert(str.from(i), i)
+    }
+    let baseline_pre = gc.heap_size()
+    gc.collect()
+    let baseline_post = gc.heap_size()
+
+    // 100 clones — каждый создаёт ~100-entry HashMap copy.
+    for _ in 0..100 {
+        let _c = m.clone()
+    }
+
+    gc.collect()
+    let final_heap = gc.heap_size()
+
+    // Heap bounded — clones собраны GC. Threshold: 4x baseline (loose
+    // chunk allocator + Boehm overhead).
+    let upper = if baseline_post == 0 {
+        16 * 1024 * 1024   // malloc backend: heap_size() == 0 always
+    } else {
+        baseline_post * 4
+    }
+    assert(final_heap <= upper)
+}
+
+
+test "@clone deep iterations — clone of clone of clone..." {
+    let mut m HashMap[str, int] = []
+    for i in 0..50 {
+        m.insert(str.from(i), i * 2)
+    }
+    // Chain clones — каждый clone независим.
+    let c1 = m.clone()
+    let c2 = c1.clone()
+    let c3 = c2.clone()
+    let c4 = c3.clone()
+    assert(c1.len() == 50)
+    assert(c2.len() == 50)
+    assert(c3.len() == 50)
+    assert(c4.len() == 50)
+    // Все имеют те же values.
+    assert(c1.get("25") == Some(50))
+    assert(c4.get("25") == Some(50))
+}
