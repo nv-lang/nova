@@ -4160,8 +4160,14 @@ impl Parser {
         if i >= self.tokens.len() {
             return false;
         }
+        // Plan 52.2 Ф.1: пустой `{}` — это **пустой блок**, не пустой
+        // anonymous record (D55 §5 ревизия). Без этого parser'у удавалось
+        // создать `RecordLit { type_name: None, fields: [] }` который
+        // codegen не может обработать (нет struct-name для inference).
+        // Empty block — это valid `nova_unit` value, что и ожидается в
+        // позициях типа `_ => {}` (match-arm body), `if cond { } else ...`.
         if matches!(self.tokens[i].kind, TokenKind::RBrace) {
-            return true;
+            return false;
         }
         if matches!(self.tokens[i].kind, TokenKind::DotDotDot) {
             return true;
