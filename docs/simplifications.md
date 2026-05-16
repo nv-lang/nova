@@ -8179,3 +8179,18 @@ Remaining:
 - JSON parser minimal scope (no floats, no \uXXXX) — Plan 45.A round 3
 - MCP stdio only (no SSE/HTTP) — Plan 45.A round 3
 - MCP no hot-reload — Plan 45.A round 3
+
+---
+
+## Plan 45 Sprint Ф.33 simplifications (2026-05-16)
+
+### Resolved (no longer simplifications):
+- HTML syntax highlight через JS regex (Ф.31.5) > server-side через Nova lexer (Ф.33.1, accurate context-aware)
+- Manual coverage review > CI gate `--coverage-threshold N` (Ф.33.2)
+- Config через env vars only > nova.toml [doc] section (Ф.33.3)
+
+### Remaining (small):
+- TOML parser minimal subset (no arrays, no inline tables, no datetime).
+  Production deploy не нуждается в этих features для [doc] section.
+- AST highlighting NOT incremental (re-lex'ит каждый раз). Plan 45.A round 3.
+- nova.toml lookup только до 16 parent dirs (защита от infinite walk).
