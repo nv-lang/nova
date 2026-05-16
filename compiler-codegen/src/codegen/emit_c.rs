@@ -434,6 +434,18 @@ pub struct CEmitter {
     /// Default 500; overridable via CLI `--mono-depth=N` or env var
     /// `NOVA_MONO_DEPTH` (CLI wins). Guards against polymorphic recursion.
     mono_depth_limit: usize,
+    /// Plan 49 Ф.6 P0 fix: per-variable Nova-level CancelToken[T] tracking.
+    /// key = local variable name (`tok`), value = T's C-type (`nova_int`).
+    /// Populated при `let tok CancelToken[T] = ...` или `let tok = CancelToken[T].new()`.
+    /// Использовано emit_call для `tok.reason()` — emit'ит per-T un-box вместо
+    /// runtime-fixed `nova_cancel_token_reason_str` (которая молча возвращает
+    /// garbage для T≠str). Без entry — default str-form (backward compat).
+    cancel_token_t_map: HashMap<String, String>,
+    /// Plan 49 Ф.6 cross-type cascade: module-wide dedup для converter
+    /// wrappers (`_nova_cancel_conv_<A>_from_<B>`). lambda_impls очищается
+    /// между fn-bodies, поэтому single per-test contains-check НЕ ловит
+    /// re-emit между tests. Этот set tracks все уже emitted wrappers.
+    emitted_cancel_converters: HashSet<String>,
 }
 
 /// Plan 20 Ф.4: per-defer-stmt entry — tracks one `defer { ... }` or
@@ -584,6 +596,8 @@ impl CEmitter {
                 .and_then(|s| s.parse::<usize>().ok())
                 .filter(|n| *n > 0)
                 .unwrap_or(500),
+            cancel_token_t_map: HashMap::new(),
+            emitted_cancel_converters: HashSet::new(),
         }
     }
 
@@ -4934,6 +4948,26 @@ impl CEmitter {
             .replace('-', "_")
     }
 
+    /// Plan 49 Ф.6 cross-type cascade helper: C-type string → Nova type name
+    /// (для lookup в from_targets и user-friendly diagnostic messages).
+    /// "nova_int"  → "int"
+    /// "nova_str"  → "str"
+    /// "nova_bool" → "bool"
+    /// "Nova_Foo*" → "Foo"
+    /// (Generic mono'd names like "Nova_X____Y" остаются как есть.)
+    fn c_type_to_nova_name(c_ty: &str) -> String {
+        let trimmed = c_ty.trim_end_matches('*').trim();
+        match trimmed {
+            "nova_int"  => "int".to_string(),
+            "nova_str"  => "str".to_string(),
+            "nova_bool" => "bool".to_string(),
+            "nova_f64"  => "f64".to_string(),
+            "nova_f32"  => "f32".to_string(),
+            "nova_byte" => "byte".to_string(),
+            other => other.strip_prefix("Nova_").unwrap_or(other).to_string(),
+        }
+    }
+
     /// Plan 48 Ф.3: compute the mangled C name for a generic type instance.
     /// compute_generic_type_c_name("HashMap", ["nova_str", "nova_int"]) → "Nova_HashMap____nova_str__nova_int"
     fn compute_generic_type_c_name(base_name: &str, type_args_c: &[String]) -> String {
@@ -7070,6 +7104,19 @@ impl CEmitter {
                 // For pointer types: the emitted tmp expression already carries the type.
                 // Just declare the binding with the right type.
                 self.var_types.insert(binding.clone(), ty_c.clone());
+                // Plan 49 Ф.6 P0 fix: track CancelToken[T] T для per-T `reason()`
+                // un-box. Rebind ОЧИЩАЕТ предыдущую запись чтобы не утечь между
+                // function/test bodies (cancel_token_t_map не scope'd).
+                self.cancel_token_t_map.remove(&binding);
+                if let Some(crate::ast::TypeRef::Named { path, generics, .. }) = &decl.ty {
+                    if path.len() == 1 && path[0] == "CancelToken" {
+                        if let Some(t_ref) = generics.first() {
+                            if let Ok(t_c) = self.type_ref_to_c(t_ref) {
+                                self.cancel_token_t_map.insert(binding.clone(), t_c);
+                            }
+                        }
+                    }
+                }
                 // Track mutability so spawn-capture can decide copy-by-value vs by-ptr.
                 if decl.mutable {
                     self.var_mutable.insert(binding.clone());
@@ -9367,22 +9414,135 @@ impl CEmitter {
                                 return Ok(format!("nova_cancel_token_is_cancelled({})", obj_c));
                             }
                             "reason" => {
-                                // Plan 49 Ф.1: typed getter — Option[str] для
-                                // CancelToken[str] (default). Ф.6 расширит до
-                                // CancelToken[T] (mono-per-T helper).
+                                // Plan 49 Ф.6 P0 fix: per-T un-box когда
+                                // receiver — tracked CancelToken[T] переменная.
+                                // Без этого default str-getter возвращает
+                                // Option[str] с garbage content для T≠str
+                                // (silent UB).
+                                let t_c = if let ExprKind::Ident(name) = &obj.kind {
+                                    self.cancel_token_t_map.get(name).cloned()
+                                } else { None };
+                                if let Some(t_c) = t_c {
+                                    if t_c != "nova_str" {
+                                        // Per-T un-box через ternary + compound
+                                        // literal. NovaOpt_<T_c> существует для
+                                        // primitives (NOVA_ARRAY_DECL declares
+                                        // NovaArray_T + NovaOpt_T pair).
+                                        return Ok(format!(
+                                            "(nova_cancel_token_has_reason({tok}) \
+                                              ? (NovaOpt_{t}){{ .tag = NOVA_TAG_Option_Some, .value = *({t}*)nova_cancel_token_reason_raw({tok}) }} \
+                                              : (NovaOpt_{t}){{ .tag = NOVA_TAG_Option_None }})",
+                                            tok = obj_c, t = t_c
+                                        ));
+                                    }
+                                }
+                                // Default / fallback: T=str (или unknown — backward-compat).
                                 return Ok(format!(
                                     "nova_cancel_token_reason_str({})", obj_c));
+                            }
+                            "merge" => {
+                                // Plan 49 P3: `tok1.merge(tok2)` — композиция.
+                                // Возвращает новый CancelToken который cancel'ится
+                                // когда любой из источников cancel'ится. Same-T
+                                // в V1 (cross-T merge — V2 нужны converter pair).
+                                if let Some(other_arg) = args.first() {
+                                    let other_c = self.emit_expr(other_arg.expr())?;
+                                    return Ok(format!(
+                                        "nova_cancel_token_merge2({}, {})",
+                                        obj_c, other_c
+                                    ));
+                                }
                             }
                             "cancelled_by" => {
                                 // `child.cancelled_by(parent)` — направленный
                                 // каскад: parent.cancel() отменяет и child.
-                                // Имя несёт направление (отмена течёт вниз —
-                                // parent → child, не обратно).
-                                // C-функция — nova_cancel_token_bind_cascade
-                                // (cascade-bind; scope-binding это отдельный
-                                // nova_cancel_token_bind).
+                                // Plan 49 Ф.6 cross-type: если оба тока имеют
+                                // tracked T (cancel_token_t_map) И T различны,
+                                // требуется `A: From[B]` и codegen эмитит
+                                // converter wrapper + bind_cascade_typed.
+                                // Same-type или unknown → existing bind_cascade.
                                 if let Some(parent_arg) = args.first() {
                                     let parent_c = self.emit_expr(parent_arg.expr())?;
+                                    let child_t = if let ExprKind::Ident(n) = &obj.kind {
+                                        self.cancel_token_t_map.get(n).cloned()
+                                    } else { None };
+                                    let parent_t = if let ExprKind::Ident(n) = &parent_arg.expr().kind {
+                                        self.cancel_token_t_map.get(n).cloned()
+                                    } else { None };
+                                    if let (Some(a_c), Some(b_c)) = (child_t.clone(), parent_t.clone()) {
+                                        if a_c != b_c {
+                                            // Cross-type: compile-time check `A: From[B]`.
+                                            let a_nova = Self::c_type_to_nova_name(&a_c);
+                                            let b_nova = Self::c_type_to_nova_name(&b_c);
+                                            let from_ok = self.from_targets
+                                                .get(&a_nova)
+                                                .map(|vs| vs.iter().any(|v| v == &b_nova))
+                                                .unwrap_or(false);
+                                            if !from_ok {
+                                                return Err(format!(
+                                                    "cross-type cascade `CancelToken[{}].cancelled_by(CancelToken[{}])` \
+                                                     requires `{}.from({})` to be defined \
+                                                     (D73 `From` protocol); add `fn {}.from(v {}) -> Self` или \
+                                                     используйте same-type cascade",
+                                                    a_nova, b_nova, a_nova, b_nova, a_nova, b_nova
+                                                ));
+                                            }
+                                            // Generate converter wrapper в lambda_impls.
+                                            let conv_name = format!(
+                                                "_nova_cancel_conv_{}_from_{}",
+                                                Self::sanitize_c_for_ident(&a_c),
+                                                Self::sanitize_c_for_ident(&b_c)
+                                            );
+                                            // Module-wide dedup — emitted_cancel_converters
+                                            // в отличие от substring-check на lambda_impls
+                                            // которая очищается между fn-bodies.
+                                            if self.emitted_cancel_converters.insert(conv_name.clone()) {
+                                                // Wrapper-pattern зависит от того pointer
+                                                // или value B/A:
+                                                //   B value (nova_int/str/bool): unbox `*(B*)_b_ptr`.
+                                                //   B pointer (Nova_X*): cast `(B)_b_ptr`.
+                                                //   A pointer (Nova_X*): cast result `(void*)A_ptr`.
+                                                //   A value: heap-box.
+                                                // Static method name берётся из Nova type
+                                                // name (без Nova_ prefix и без *).
+                                                let b_is_ptr = b_c.ends_with('*');
+                                                let a_is_ptr = a_c.ends_with('*');
+                                                let unbox_b = if b_is_ptr {
+                                                    format!("({}){}_b_ptr", b_c, "")
+                                                } else {
+                                                    format!("*({}*)_b_ptr", b_c)
+                                                };
+                                                let a_short = a_nova.clone();  // Nova-level name для static dispatch
+                                                let call_from = format!("Nova_{}_static_from(b)", a_short);
+                                                let body = if a_is_ptr {
+                                                    format!(
+                                                        "    {b} b = {ub};\n    \
+                                                           return (void*){call};\n",
+                                                        b = b_c, ub = unbox_b, call = call_from)
+                                                } else {
+                                                    format!(
+                                                        "    {b} b = {ub};\n    \
+                                                           {a} a = {call};\n    \
+                                                           {a}* boxed = ({a}*)nova_alloc(sizeof({a}));\n    \
+                                                           *boxed = a;\n    \
+                                                           return (void*)boxed;\n",
+                                                        b = b_c, ub = unbox_b, a = a_c, call = call_from)
+                                                };
+                                                let wrapper = format!(
+                                                    "static void* {conv}(void* _b_ptr) {{\n{body}}}\n",
+                                                    conv = conv_name, body = body
+                                                );
+                                                self.lambda_forward_decls.push_str(
+                                                    &format!("static void* {}(void*);\n", conv_name));
+                                                self.lambda_impls.push_str(&wrapper);
+                                            }
+                                            return Ok(format!(
+                                                "(nova_cancel_token_bind_cascade_typed({}, {}, &{}), NOVA_UNIT)",
+                                                obj_c, parent_c, conv_name
+                                            ));
+                                        }
+                                    }
+                                    // Same-type / unknown — backward-compat.
                                     return Ok(format!(
                                         "(nova_cancel_token_bind_cascade({}, {}), NOVA_UNIT)",
                                         obj_c, parent_c
@@ -14995,13 +15155,24 @@ impl CEmitter {
                         }
                     }
                     // D75: instance methods on NovaCancelToken*.
-                    // Plan 49 Ф.1: reason() возвращает Option[str] —
-                    // NovaOpt_nova_str runtime тип.
+                    // Plan 49 Ф.1 + Ф.6 P0 fix: reason() возвращает Option[T]
+                    // где T определяется из cancel_token_t_map (если receiver —
+                    // tracked Ident). Backward-compat: Option[str] default.
                     if self.infer_expr_c_type(obj) == "NovaCancelToken*" {
                         match method.as_str() {
                             "is_cancelled" => return "nova_bool".into(),
                             "cancel" | "cancelled_by" => return "nova_unit".into(),
-                            "reason" => return "NovaOpt_nova_str".into(),
+                            "merge" => return "NovaCancelToken*".into(),
+                            "reason" => {
+                                if let ExprKind::Ident(name) = &obj.kind {
+                                    if let Some(t_c) = self.cancel_token_t_map.get(name) {
+                                        if t_c != "nova_str" {
+                                            return format!("NovaOpt_{}", t_c);
+                                        }
+                                    }
+                                }
+                                return "NovaOpt_nova_str".into();
+                            }
                             _ => {}
                         }
                     }

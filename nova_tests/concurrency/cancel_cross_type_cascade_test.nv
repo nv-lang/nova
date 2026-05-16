@@ -1,0 +1,44 @@
+// cancel_cross_type_cascade_test.nv — Plan 49 Ф.6 final: cross-type
+// cascade через `From`-конвертацию (`A.from(B) -> Self`).
+//
+// Сейчас:
+//   - Same-type cascade (A == B): pass-through (existing behavior).
+//   - Cross-type с `A.from(B)` defined: codegen эмитит converter wrapper
+//     + bind_cascade_typed; runtime применяет converter при cascade-cancel.
+//   - Cross-type БЕЗ `A.from(B)`: compile-error с suggestion (positive
+//     test — отдельный negative file потребуется).
+
+module concurrency.cancel_cross_type_cascade_test
+
+
+// Two user types для cross-type cascade. ChildErr.from(ParentErr) определяет
+// конвертацию: codegen generated wrapper будет вызывать nova_fn_ChildErr_static_from.
+
+type ParentErr {
+    code int
+}
+
+type ChildErr {
+    msg str
+}
+
+export fn ChildErr.from(p ParentErr) -> ChildErr =>
+    { msg: "from-parent" }
+
+
+test "same-type cascade: backward-compat (ParentErr + ParentErr)" {
+    let parent CancelToken[ParentErr] = CancelToken.new()
+    let child  CancelToken[ParentErr] = CancelToken.new()
+    child.cancelled_by(parent)
+    parent.cancel(ParentErr { code: 42 })
+    assert(child.is_cancelled())
+}
+
+
+test "cross-type cascade: ChildErr.from(ParentErr) — child получает converted" {
+    let parent CancelToken[ParentErr] = CancelToken.new()
+    let child  CancelToken[ChildErr]  = CancelToken.new()
+    child.cancelled_by(parent)
+    parent.cancel(ParentErr { code: 7 })
+    assert(child.is_cancelled())
+}

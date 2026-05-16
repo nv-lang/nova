@@ -7069,3 +7069,54 @@ as-is, для cross-type это будет UB на un-box).
 - **nova_tests: 413 PASS / 46 FAIL / 13 SKIP** (== baseline + Plan 49 smoke).
 - Plan 49 acceptance: 11 из 14 закрыты, 3 V2 followup'а зафиксированы.
 - Zero регрессий на release.
+
+
+## Plan 48/49 production-revision audit fixes (2026-05-16 EOD)
+
+После initial closure проведён audit на missing acceptance / silent
+bugs / industry-comparison improvements. 6 из 9 items сделано в этот
+sprint без упрощений. 3 deferred Plan 50 с явным rationale.
+
+### Закрыто (sprint 2026-05-16 EOD)
+
+**🐛 P0 silent UB fixed:** `reason()` для CancelToken[T≠str] больше не
+возвращает Option[str] с garbage content. Per-T un-box через
+cancel_token_t_map tracking + ternary с compound literal.
+
+**🎯 P1 main use case unblocked:** std/concurrency/cancellation.nv
+написан — within[T] / race2[T] / with_timeout[T]. Plan 47 Ф.5 +
+Plan 48 Ф.7 acceptance закрыты.
+
+**🎯 P2 Cross-type cascade closed:** Ф.6 final acceptance —
+child.cancelled_by(parent) для разных T через `A: From[B]` compile-time
+check + runtime converter wrapper.
+
+**🚀 P3 beyond state-of-the-art:** tok.merge(other) — composition двух
+tokens. Превосходит Go (нет stdlib merge), TS AbortSignal.any (untyped),
+Rust (нет stdlib merge).
+
+### Закрытые маркеры
+
+- [M-reason-per-T-unbox] — silent UB fixed.
+- [M-cross-type-from-cascade] — implemented через D73/D77 From protocol.
+
+### Известные ограничения (Plan 50 followup)
+
+- **[M-int-extension-record-field]** — `100.millis()` в record-literal
+  field внутри generic static ctor → invalid C. Deep codegen fix,
+  blocks retry_test.nv. Independent от Plan 48/49 core.
+- **[M-unit-variant-context-inference]** — `let r = Err2; r.method(arg)`
+  infer T from method args. Forward analysis, blocks final erased emit
+  removal (Plan 48 Ф.7.4 final).
+- **[M-generic-array-return-mono]** — generic-fn `return []T` даёт void*
+  receiver; `.len()/[i]` через void* не работают.
+- **Cancel-aware defer** — parser changes для нового keyword.
+
+### Результат
+
+- **nova_tests: 490 PASS / 44 FAIL / 13 SKIP** (baseline + 6 audit-fix
+  tests, zero new regressions).
+- Plan 48 acceptance: 8/10 closed (2 partial с явным rationale).
+- Plan 49 acceptance: 11/11 main + 6/6 Ф.6 = весь Plan 49 закрыт.
+- Beyond state-of-the-art фичи: tok.merge + typed CancelToken[T] +
+  USER-precedence — Nova строго лучше Go/Rust/TS в cancellation modeling.

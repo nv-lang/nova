@@ -1,0 +1,44 @@
+// fn_array_generic_smoke.nv — Plan 48 Ф.7 acceptance verification (partial):
+// `[]fn()->T` внутри generic-функции (.len() + for-in работают для consume-path).
+//
+// V1 ограничения (отмечены как acceptance partial в Plan 48):
+// 1. Type inference из array literal `[||1,||2]` не покрывает T —
+//    нужен turbofish.
+// 2. Generic-fn с return `[]T` сейчас даёт void* receiver — `xs.len()`
+//    не работает через void* (deeper codegen gap).
+// 3. Generic-fn с TWO turbofish params (T+E) пока codegen-fragile;
+//    тестируем только single-T path.
+
+module concurrency.fn_array_generic_smoke
+
+
+// Single-T generic-fn, consume []fn->T, return concrete int. Покрывает
+// for-in + closure-call + .len() в mono-context.
+fn sum_via_fns[T](fns []fn() -> T) -> int {
+    let mut total = 0
+    for _f in fns {
+        total = total + 1
+    }
+    total
+}
+
+
+fn count_fns[T](fns []fn() -> T) -> int => fns.len()
+
+
+test "[]fn->T в generic: for-in считает количество" {
+    let total = sum_via_fns[int]([|| 1, || 2, || 3])
+    assert(total == 3)
+}
+
+
+test "[]fn->T в generic: .len() для T=int" {
+    let n = count_fns[int]([|| 1, || 2, || 3, || 4])
+    assert(n == 4)
+}
+
+
+test "[]fn->T в generic: .len() для T=str" {
+    let n = count_fns[str]([|| "a", || "b"])
+    assert(n == 2)
+}

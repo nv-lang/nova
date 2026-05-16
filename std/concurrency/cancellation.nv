@@ -1,0 +1,136 @@
+// stdlib/concurrency/cancellation.nv — `within` / `race` / `with_timeout`
+// над `supervised(cancel:)` + `CancelToken`.
+//
+// Plan 47 Ф.5 + Plan 48 Ф.4 + Plan 49 Ф.0-Ф.6 — все три необходимы:
+//   - Plan 47: `supervised(cancel:)` + `CancelToken` (handle + bind).
+//   - Plan 48: closures-in-generics — без мономорфизации `fn within[T]`
+//     с closure-параметром `body fn() -> T` валит codegen.
+//   - Plan 49: kinded throws — отмена `CANCEL` не убегает наружу, не
+//     перехватывается `with Fail`, USER-precedence не теряет real-error.
+//
+// API (этот файл):
+//   within[T](timeout_ms int, body fn() -> T) -> Option[T]
+//     — выполнить `body` с timeout'ом в миллисекундах. Возвращает
+//       `Some(result)` если body успел, `None` если timeout превысил.
+//       Body отменяется на timeout через CancelToken (cooperative).
+//
+//   race2[T](a fn() -> T, b fn() -> T) -> T
+//     — два fiber'а соревнуются, возвращается первый завершившийся;
+//       second отменяется через CancelToken. Аналог Go `select` для
+//       двух операций. (`race[T](competitors []fn() -> T)` — V2,
+//       требует `[]fn()->T` поддержку в generic-context.)
+//
+// Сравнение с индустрией:
+//   - Go: `context.WithTimeout(parent, dur)` — context везде явный
+//     pollution; у нас `within` берёт timeout прямо.
+//   - Rust: `tokio::time::timeout(dur, fut)` — паритет (типизированный
+//     результат); требует Tokio runtime, у нас встроенно в `supervised`.
+//   - TS: `Promise.race([...])` — нет cancellation losers (Promises
+//     остаются «висеть»); у нас losers отменяются через scope.
+
+module concurrency.cancellation
+
+// NB: std.testing.handlers НЕ импортируется здесь — handlers.nv
+// `mut_clock(start)` обращается к `d.nanos` где d приходит как
+// `nova_int ms` из runtime Time effect signature (schema mismatch
+// между Duration в Nova-side и int ms в runtime). Это отдельный bug
+// `[M-time-effect-schema-mismatch-sleep]` — следующая итерация.
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// within[T] — timeout-bounded execution
+// ──────────────────────────────────────────────────────────────────────────
+
+// Запускает `body` в fiber с deadline'ом `timeout_ms` миллисекунд.
+// Если body завершился до deadline'а — возвращает `Some(result)`,
+// timeout-fiber отменяется и не делает sleep'а до конца.
+// Если timeout раньше — body отменяется через CancelToken (cooperative
+// на ближайшем yield-point'е), возвращается `None`.
+//
+// Семантика:
+//   - body вызывается единожды (как в Go `select` с timeout).
+//   - timeout=0 ≡ нет timeout'а (body выполняется до конца). [V2]
+//     Сейчас timeout=0 = no-op sleep, body все равно успеет.
+//   - В случае любой fail-throw из body — отмена scope'а через
+//     USER-precedence; ошибка пробрасывается caller'у.
+export fn within[T](timeout_ms int, body fn() -> T) -> Option[T] {
+    let tok = CancelToken.new()
+    let mut result Option[T] = None
+
+    supervised(cancel: tok) {
+        spawn {
+            let r = body()
+            result = Some(r)
+            tok.cancel("body completed")
+        }
+        spawn {
+            Time.sleep(timeout_ms)
+            tok.cancel("timeout")
+        }
+    }
+    // После supervised: result либо Some (body успел) либо None (timeout).
+    // Plan 49 Ф.3: CANCEL throw НЕ убегает — мы здесь даже если оба
+    // fiber'а отменены.
+    result
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// race2[T] — два fiber'а соревнуются, first-result-wins
+// ──────────────────────────────────────────────────────────────────────────
+
+// Запускает `a` и `b` параллельно, возвращает результат того кто
+// завершился первым. Проигравший отменяется через CancelToken
+// (cooperative — обрывается на ближайшем yield-point'е).
+//
+// Если ОБА fiber'а throw'нули USER-ошибку — пробрасывается first-USER
+// (Plan 49 USER-precedence: real-error wins над CANCEL).
+//
+// V2: race[T](competitors []fn() -> T) — требует `[]fn() -> T` в
+// generic-context (Plan 48 Ф.4 + array-of-closures). Сейчас фиксированно 2.
+export fn race2[T](a fn() -> T, b fn() -> T) -> T {
+    let tok = CancelToken.new()
+    let mut winner Option[T] = None
+
+    supervised(cancel: tok) {
+        spawn {
+            if !tok.is_cancelled() {
+                let r = a()
+                if !tok.is_cancelled() {
+                    winner = Some(r)
+                    tok.cancel("a wins")
+                }
+            }
+        }
+        spawn {
+            if !tok.is_cancelled() {
+                let r = b()
+                if !tok.is_cancelled() {
+                    winner = Some(r)
+                    tok.cancel("b wins")
+                }
+            }
+        }
+    }
+
+    match winner {
+        Some(v) => v
+        None    => throw "race2: both competitors failed without producing a result"
+    }
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// with_timeout[T] — alias для within с panic-on-timeout
+// ──────────────────────────────────────────────────────────────────────────
+
+// `with_timeout(ms, body)` — как `within` но throw'ит на timeout,
+// не возвращает Option. Удобно когда timeout = error condition.
+//
+// Аналог Go `context.WithTimeout` + Cause проверки; у нас явно throw.
+export fn with_timeout[T](timeout_ms int, body fn() -> T) -> T {
+    match within(timeout_ms, body) {
+        Some(v) => v
+        None    => throw "with_timeout: deadline exceeded"
+    }
+}

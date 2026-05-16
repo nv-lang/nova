@@ -1,0 +1,53 @@
+// cancel_merge_test.nv — Plan 49 P3 (beyond state-of-the-art):
+// `tok = tok1.merge(tok2)` — composed cancel-token.
+//
+// Превосходит Go (нет merge нескольких contexts напрямую),
+// TS AbortSignal.any() (есть, но reason: any), Rust (нет stdlib merge).
+
+module concurrency.cancel_merge_test
+
+
+test "merge: cancel первого источника отменяет merged" {
+    let t1 = CancelToken.new()
+    let t2 = CancelToken.new()
+    let merged = t1.merge(t2)
+    assert(!merged.is_cancelled())
+    t1.cancel("via t1")
+    assert(merged.is_cancelled())
+}
+
+
+test "merge: cancel второго источника отменяет merged" {
+    let t1 = CancelToken.new()
+    let t2 = CancelToken.new()
+    let merged = t1.merge(t2)
+    t2.cancel("via t2")
+    assert(merged.is_cancelled())
+}
+
+
+test "merge: оба cancel - first-wins (idempotent)" {
+    let t1 = CancelToken.new()
+    let t2 = CancelToken.new()
+    let merged = t1.merge(t2)
+    t1.cancel("first")
+    t2.cancel("second-ignored")
+    // merged.reason() — first reason, second идемпотентно игнорируется
+    assert(merged.is_cancelled())
+    let r = merged.reason()
+    let got = match r {
+        Some(s) => s
+        None    => ""
+    }
+    assert(got == "first")
+}
+
+
+test "merge: оба uncancelled - merged тоже uncancelled" {
+    let t1 = CancelToken.new()
+    let t2 = CancelToken.new()
+    let merged = t1.merge(t2)
+    assert(!merged.is_cancelled())
+    assert(!t1.is_cancelled())
+    assert(!t2.is_cancelled())
+}
