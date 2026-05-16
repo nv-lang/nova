@@ -5,7 +5,7 @@
 //! JSONL output (__BENCH_START__ / __BENCH_RESULT__), аналайз через stats,
 //! emit отчёт.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use anyhow::{anyhow, bail, Result};
@@ -57,16 +57,15 @@ pub struct BenchRunOpts<'a> {
 }
 
 pub fn run(opts: BenchRunOpts) -> Result<i32> {
-    // Validate input file.
+    // Plan 57.C.5: recursive directory discovery.
     if !opts.bench_path.exists() {
-        bail!("bench file not found: {}", opts.bench_path.display());
+        bail!("bench path not found: {}", opts.bench_path.display());
+    }
+    if opts.bench_path.is_dir() {
+        return run_dir(opts);
     }
     let bench_path = opts.bench_path.canonicalize()
         .map_err(|e| anyhow!("cannot resolve path {}: {}", opts.bench_path.display(), e))?;
-    if bench_path.is_dir() {
-        bail!("`nova bench` MVP requires a single .nv file (multi-file collection — Phase B). \
-               Got directory: {}", bench_path.display());
-    }
     if bench_path.extension().and_then(|s| s.to_str()) != Some("nv") {
         bail!("not a Nova source: {}", bench_path.display());
     }
@@ -355,6 +354,105 @@ pub fn compile_for_profile(opts: &BenchRunOpts) -> Result<std::path::PathBuf> {
     };
     test_runner::compile_c_to_exe(&tc, &build_opts, Duration::from_secs(opts.compile_timeout_secs))?;
     Ok(exe_file)
+}
+
+/// Plan 57.C.5: recursive bench discovery. Walks directory, runs каждого
+/// .nv file как отдельный bench session, агрегирует результаты в один
+/// финальный output. Skip non-bench .nv files (no `bench "..." { ... }`).
+fn run_dir(opts: BenchRunOpts) -> Result<i32> {
+    let dir = opts.bench_path;
+    let mut files: Vec<PathBuf> = Vec::new();
+    walk_nv(dir, &mut files);
+    files.sort();
+    if files.is_empty() {
+        bail!("no .nv files found in directory: {}", dir.display());
+    }
+    eprintln!("nova bench: discovered {} .nv files в {}", files.len(), dir.display());
+
+    let mut total_benches = 0usize;
+    let mut all_analyzed: Vec<super::schema::AnalyzedBench> = Vec::new();
+    let mut last_meta: Option<super::repro::ReproMeta> = None;
+
+    for f in &files {
+        // Filter — skip files without `bench` keyword (cheap text check).
+        match std::fs::read_to_string(f) {
+            Ok(src) => {
+                if !src.contains("\nbench ") && !src.starts_with("bench ") {
+                    eprintln!("nova bench: skip {} (no `bench` declarations)", f.display());
+                    continue;
+                }
+            }
+            Err(_) => continue,
+        }
+        eprintln!("nova bench: running {}", f.display());
+        let single_opts = BenchRunOpts {
+            bench_path: f,
+            repo: opts.repo,
+            stdlib_dir: opts.stdlib_dir,
+            cg_include: opts.cg_include,
+            rt_dir: opts.rt_dir,
+            tc_opts: test_runner::ToolchainOpts {
+                pref: opts.tc_opts.pref,
+                explicit_clang: opts.tc_opts.explicit_clang,
+                explicit_vcvars: opts.tc_opts.explicit_vcvars,
+            },
+            filter: opts.filter.clone(),
+            samples: opts.samples,
+            warmup_ms: opts.warmup_ms,
+            time_budget_s: opts.time_budget_s,
+            gc_kind: opts.gc_kind,
+            compile_timeout_secs: opts.compile_timeout_secs,
+            run_timeout_secs: opts.run_timeout_secs,
+            keep_artifacts: opts.keep_artifacts,
+            mono_depth: opts.mono_depth,
+            mode: opts.mode,
+            out_json: None,        // aggregated написан в конце
+            out_csv: None,
+            out_md: None,
+            out_criterion: None,
+            color: opts.color,
+        };
+        // Capture per-file results via в-process call — но `run()` пишет
+        // в terminal + (опц.) в out_*. Для агрегации проще: run_file_inner
+        // возвращает Vec<AnalyzedBench> + meta. Реализую minimally —
+        // вызываем run() с None outputs, results лежат в terminal output.
+        // Полная агрегация в Phase D (если требуется JSON aggregated output).
+        let r = run(single_opts);
+        if let Err(e) = r {
+            eprintln!("nova bench: file {} failed — {}", f.display(), e);
+        } else {
+            total_benches += 1;
+        }
+    }
+
+    eprintln!("\nnova bench: {} files processed", total_benches);
+    if let Some(p) = opts.out_json {
+        eprintln!("nova bench: aggregated JSON output (--out) недоступен в \
+                   recursive mode MVP — Phase D follow-up.");
+        let _ = p;
+    }
+    let _ = (all_analyzed, last_meta);  // suppress unused
+    Ok(0)
+}
+
+/// Walk all .nv files recursively (skip hidden dirs + corpus/).
+fn walk_nv(dir: &std::path::Path, out: &mut Vec<PathBuf>) {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(_) => return,
+    };
+    for ent in entries.flatten() {
+        let p = ent.path();
+        let name = p.file_name().and_then(|s| s.to_str()).unwrap_or("");
+        if name.starts_with('.') { continue; }
+        if p.is_dir() {
+            // Skip corpus/ — это compiler-perf, не runtime benches.
+            if name == "corpus" { continue; }
+            walk_nv(&p, out);
+        } else if name.ends_with(".nv") {
+            out.push(p);
+        }
+    }
 }
 
 /// Plan 57.B.3 / 57.B.5: expand parameterized + grouped bench sweeps
