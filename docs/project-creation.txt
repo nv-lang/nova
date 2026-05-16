@@ -12329,3 +12329,75 @@ message-pattern drift). **0 регрессий от Plan 52**, +5 PASS.
 - fix(52): Ф.16 — type-inference без аннотации `let m = [k:v]`
 - test(52): Ф.17 — #from_fields canonical identity negative test
 - refactor(53): Ф.6.4 — Channel.new dedup via record schema (-45 LOC)
+
+==============================================================================
+2026-05-16 — Plan 52 Ф.17 + Plan 53 Ф.6.4 (post-compact) ✅
+==============================================================================
+
+## Что сделано
+
+### Plan 52 Ф.17 — `#from_fields` canonical identity (negative)
+
+`nova_tests/map_literals/negative_no_from_fields.nv`:
+user-локальный тип `MyContainer` БЕЗ `#from_fields` attribute НЕ
+триггерит D55 map-coercion для `{field: v}`. Проверяет что
+`from_fields_types` HashSet строго следует attribute marker, а не
+bare-name match — даже если имя пользовательского типа совпадало бы
+со stdlib `HashMap`, без attribute правило не применяется.
+
+Counterpart positive: `positive_user_from_fields.nv` — stdlib HashMap
+(с `#from_fields`) корректно coercит `{a: 1, b: 2}` через map-path.
+
+### Plan 53 Ф.6.4 — Channel.new dedup
+
+`emit_record_destructure` имел 57-LOC special-case для Channel.new,
+дублирующий plain-record path. Plan §97-100 запрещает дубль-логику.
+
+**Fix:** регистрация `Nova_ChannelPair` schema в module-init рядом с
+`Error` / `RuntimeError` — built-in C-runtime типы, которые user-кода
+не объявляет, но codegen должен знать. `is_value_type(Nova_ChannelPair)`
+уже возвращал true → accessor `.` в общем pattern_bind_typed.
+
+После регистрации общий path в emit_record_destructure корректно
+обрабатывает `let { tx, rx } = Channel.new(cap)` без special-case.
+Чистый дифф: -57 LOC (special-case удалён) / +9 (schema-init).
+
+### Plan 53 Ф.6.2 / Ф.6.6 → 53.1 (deferred)
+
+Вынесены в Plan 53.1 после реальной оценки сложности:
+- **Ф.6.6** (unknown field diag): требует `BoundCtx.record_decls`
+  registry + arbitrary RHS type-inference + Levenshtein helper.
+  Real LOC ~150, не ~40 как оценивалось.
+- **Ф.6.2** (structured Suggestion): требует stmt-span refactor в
+  `walk_stmt` (сейчас в let-pattern не пробрасывается span containing
+  stmt для replacement-range). User-facing impact минимальный.
+
+### Sync `main` ↔ `plan-52`
+
+23 коммита plan-52 vs 61 коммит main (Plan 33.6 + другие). Rebase
+plan-52 onto main — один conflict в docs/project-creation.txt
+(HEAD = сессии Plan 33.6, incoming = Plan 52 session log) — резолв
+объединением без потерь.
+
+## Acceptance-тесты сессии (5 файлов, все PASS через release nova)
+
+| Тест | Тип | Что проверяет |
+|---|---|---|
+| `map_literals/negative_no_from_fields.nv` | NEG | Ф.17: тип без #from_fields → no coercion |
+| `map_literals/positive_user_from_fields.nv` | POS | Ф.17 counterpart: stdlib HashMap coerce works |
+| `syntax/let_destructure_channel_dedup.nv` | POS | Ф.6.4: 3 теста — send+recv, renaming, _-discard |
+| `syntax/let_destructure_record.nv` | POS | Ф.6.5: regression — round-trip через destructured |
+| `syntax/let_destructure_mutable.nv` | POS | Ф.6.3: regression — mut destructure + spawn |
+
+## Регрессия
+
+433 PASS / 41 FAIL — baseline без изменений. Все 41 FAIL — это
+pre-existing mojibake в diagnostic strings + doc fixture link issues
++ contract-tests без SMT.
+
+### Commits
+
+- test(52): Ф.17 — #from_fields canonical identity negative test
+- refactor(53): Ф.6.4 — Channel.new dedup via record schema
+- docs(52,53): final — Ф.17/Ф.6.4 + 53.1 deferred (Ф.6.2/6.6)
+- test(52,53): acceptance-тесты сессии (Ф.17 positive + Ф.6.4 regress)
