@@ -1,0 +1,52 @@
+// Plan 45 Ф.23.15: stability attrs (stable/unstable/experimental) парсятся.
+// Позитивный тест: функции с stability attrs работают корректно в runtime.
+// MD renderer показывает feature/note поля (tested via cargo doc tests).
+
+module doc.f23_stability_positive
+
+/// Stable public API.
+#stable(since = "1.0")
+export fn stable_fn(x int) -> int => x + 1
+
+/// Unstable — may change.
+#unstable(feature = "simd_ops")
+export fn unstable_fn(x int) -> int => x * 3
+
+/// Experimental — preview quality.
+#experimental(note = "may change before 1.0")
+export fn experimental_fn(x int) -> int => x - 1
+
+/// Stable since early.
+#stable(since = "0.1")
+export fn very_stable(x int, y int) -> int => x + y
+
+test "stable fn works" {
+    assert(stable_fn(5) == 6)
+    assert(stable_fn(0) == 1)
+    assert(stable_fn(-1) == 0)
+}
+
+test "unstable fn works" {
+    assert(unstable_fn(4) == 12)
+    assert(unstable_fn(0) == 0)
+    assert(unstable_fn(-2) == -6)
+}
+
+test "experimental fn works" {
+    assert(experimental_fn(5) == 4)
+    assert(experimental_fn(1) == 0)
+    assert(experimental_fn(-1) == -2)
+}
+
+test "very stable works" {
+    assert(very_stable(3, 4) == 7)
+    assert(very_stable(0, 0) == 0)
+    assert(very_stable(-1, 1) == 0)
+}
+
+test "all stability tiers produce correct results" {
+    let x = 10
+    assert(stable_fn(x) == 11)
+    assert(unstable_fn(x) == 30)
+    assert(experimental_fn(x) == 9)
+}

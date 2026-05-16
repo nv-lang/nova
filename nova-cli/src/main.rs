@@ -102,8 +102,9 @@ enum Cmd {
     /// MVP: one file at a time, output to stdout. Supported formats:
     /// `markdown` (default), `json` (D107 schema v1).
     Doc {
-        /// Path to a `.nv` file.
-        file: PathBuf,
+        /// Path to a `.nv` file or directory. Optional when `--json-schema` is used.
+        #[arg(num_args = 0..=1)]
+        file: Option<PathBuf>,
         /// Output format: `markdown` (default) or `json`.
         #[arg(long = "format", default_value = "markdown")]
         format: String,
@@ -1143,20 +1144,26 @@ fn walk_nv_files(dir: &Path, out: &mut Vec<PathBuf>) -> Result<()> {
 }
 
 /// Helper для check-mode (используется и single-file и workspace).
+/// Plan 45 Ф.23.12: теперь агрегирует все §11.5 lints.
 fn cmd_doc_check(tree: &nova_codegen::doc::DocTree) -> Result<()> {
     let mut issues: Vec<String> = Vec::new();
+    // Existing: broken links + missing summaries.
     for link in &tree.links {
         if link.target_id.is_none() {
             let from = link.from_id.as_deref().unwrap_or("<module>");
-            issues.push(format!("broken intra-doc-link [{}] in {}", link.text, from));
+            issues.push(format!("[broken-link] [{}] in {}", link.text, from));
         }
     }
     for m in &tree.modules {
         for it in &m.items {
             if it.visibility == nova_codegen::doc::Visibility::Export && it.summary.is_none() {
-                issues.push(format!("missing doc-summary on exported item `{}`", it.id));
+                issues.push(format!("[missing-summary] exported item `{}`", it.id));
             }
         }
+    }
+    // Plan 45 Ф.23.12: additional §11.5 lints.
+    for v in nova_codegen::doc::run_lints(tree) {
+        issues.push(format!("[{}] {}: {}", v.rule, v.item_id, v.message));
     }
     if issues.is_empty() {
         println!("doc-check: ok ({} item(s), {} link(s))",
@@ -1198,6 +1205,7 @@ fn cmd_doc_coverage(tree: &nova_codegen::doc::DocTree) -> Result<()> {
     use std::collections::BTreeMap;
     let mut total: BTreeMap<&str, usize> = BTreeMap::new();
     let mut documented: BTreeMap<&str, usize> = BTreeMap::new();
+    let mut with_examples: BTreeMap<&str, usize> = BTreeMap::new();
     for m in &tree.modules {
         for it in &m.items {
             let kind: &str = match &it.kind {
@@ -1211,10 +1219,17 @@ fn cmd_doc_coverage(tree: &nova_codegen::doc::DocTree) -> Result<()> {
             if it.summary.is_some() {
                 *documented.entry(kind).or_insert(0) += 1;
             }
+            // Plan 45 Ф.23.19: track items with Examples section or doc-tests.
+            let has_examples = it.sections.contains_key("examples")
+                || tree.doc_tests.iter().any(|t| t.from_id.as_deref() == Some(&it.id));
+            if has_examples {
+                *with_examples.entry(kind).or_insert(0) += 1;
+            }
         }
     }
     let total_items: usize = total.values().sum();
     let documented_items: usize = documented.values().sum();
+    let total_with_examples: usize = with_examples.values().sum();
     let total_links = tree.links.len();
     let broken_links = tree.links.iter().filter(|l| l.target_id.is_none()).count();
 
@@ -1222,9 +1237,13 @@ fn cmd_doc_coverage(tree: &nova_codegen::doc::DocTree) -> Result<()> {
     println!("  items: {}/{} documented ({:.1}%)",
         documented_items, total_items,
         if total_items == 0 { 100.0 } else { 100.0 * documented_items as f64 / total_items as f64 });
+    println!("  examples: {}/{} with examples ({:.1}%)",
+        total_with_examples, total_items,
+        if total_items == 0 { 100.0 } else { 100.0 * total_with_examples as f64 / total_items as f64 });
     for (kind, &total_n) in &total {
         let doc_n = documented.get(kind).copied().unwrap_or(0);
-        println!("    {}: {}/{}", kind, doc_n, total_n);
+        let ex_n = with_examples.get(kind).copied().unwrap_or(0);
+        println!("    {}: {}/{} documented, {}/{} with examples", kind, doc_n, total_n, ex_n, total_n);
     }
     println!("  links: {}/{} resolved ({} broken)",
         total_links - broken_links, total_links, broken_links);
@@ -1936,7 +1955,18 @@ fn main() -> ExitCode {
             &skip,
         ),
         Cmd::Run { file } => cmd_run(&file),
-        Cmd::Doc { file, format, json_schema, include_private, run_doc_tests, check, watch, coverage } => cmd_doc(&file, &format, json_schema, include_private, run_doc_tests, check, watch, coverage),
+        Cmd::Doc { file, format, json_schema, include_private, run_doc_tests, check, watch, coverage } => {
+            // Plan 45 Ф.23.17: --json-schema works without FILE argument.
+            if json_schema && file.is_none() {
+                println!("{}", nova_doc_embedded_schema());
+                return ExitCode::SUCCESS;
+            }
+            let path = file.as_deref().unwrap_or_else(|| {
+                eprintln!("error: FILE argument required (unless --json-schema)");
+                std::process::exit(1);
+            });
+            cmd_doc(path, &format, json_schema, include_private, run_doc_tests, check, watch, coverage)
+        }
         Cmd::Build { file, output, mode, toolchain, vcvars, clang, timeout, keep_artifacts } => cmd_build(
             &file,
             output.as_deref(),

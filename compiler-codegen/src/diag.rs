@@ -219,6 +219,8 @@ impl Diagnostic {
         let (src, path) = resolver.resolve(&self.span);
         let (line, col) = byte_to_line_col(src, self.span.start);
         let mut out = format!("{}:{}:{}: error: {}", path, line, col, self.message);
+        // Plan 45 Ф.23.18: source-snippet with caret highlighting.
+        append_snippet(&mut out, src, &self.span, line, col);
         self.render_extras(&mut out, &resolver);
         out
     }
@@ -300,6 +302,20 @@ impl std::error::Error for Diagnostic {}
 
 /// Преобразует byte offset в (line, col), 1-based. Используется
 /// рендерингом диагностики.
+/// Plan 45 Ф.23.18: append source-line + caret (`^^^^`) to diagnostic output.
+fn append_snippet(out: &mut String, source: &str, span: &Span, line: usize, col: usize) {
+    // Extract the source line.
+    let line_text = source.lines().nth(line.saturating_sub(1)).unwrap_or("");
+    // Compute caret width: span length in chars, minimum 1.
+    let span_len = if span.end > span.start { span.end - span.start } else { 1 };
+    let caret_width = span_len.min(line_text.len().saturating_sub(col.saturating_sub(1))).max(1);
+    let indent = col.saturating_sub(1);
+    out.push('\n');
+    out.push_str(&format!("{} | {}", line, line_text));
+    out.push('\n');
+    out.push_str(&format!("  | {}{}", " ".repeat(indent), "^".repeat(caret_width)));
+}
+
 pub fn byte_to_line_col(source: &str, offset: usize) -> (usize, usize) {
     let mut line = 1;
     let mut col = 1;

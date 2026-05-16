@@ -11697,6 +11697,141 @@ via split on `____` separator. Также:
 - docs/simplifications.md (новая секция "Std collections fixes")
 - docs/project-creation.txt (эта секция)
 
+================================================================================
+ПЛАН 45 Ф.23 — PRODUCTION HARDENING для nova doc (2026-05-16)
+================================================================================
+
+Сессия в worktree `plan-45-doc` (d:\Sources\nova-lang-p45-doc). Закрыты 24
+из 25 пунктов Ф.23 — sprint 3 polish gaps относительно rustdoc/godoc/typedoc.
+Цель: nova doc становится production-grade, schema промотируется на
+v1.0.0-stable.
+
+Все изменения за 4 коммита на ветке `plan-45-doc`:
+- 945c765 Ф.23.1-12 + Ф.23.13 (core: contracts/verify/capabilities/lints/schema)
+- 5c8522a Ф.23.14, .15, .19, .20, .23, .25 (MD anchors, back-links, coverage, source_root)
+- 7943480 Ф.23.16, .18, .22 (implementors, structural types, caret diagnostics)
+- 7d4a1c6 13 nova-тестов (positive + negative) для всех фич
+
+### Core (Sprint 1)
+
+Ф.23.1 — ContractDoc {kind, expr} извлечён из FnDecl.contracts + decreases.
+Ф.23.2 — VerifyStatus enum wired через verify_module → per-fn в Signature.
+Ф.23.3 — Capabilities {realtime, realtime_nogc, pure_fn, forbid} из FnDecl.
+Ф.23.5 — fixture nova_tests/doc/fixtures/must_verify/sample.nv с реальными
+         requires/ensures для abs() и max().
+Ф.23.6 — Deprecation.until propagated из #deprecated(until="0.7").
+Ф.23.7 — DocTest.test_handlers инжекция в wrap_source как `with X = handler`.
+Ф.23.8 — effects: Vec<String> заменено на Vec<EffectEntry {name, target_id,
+         summary, is_row_var}>.
+Ф.23.9 — Row-vars (single uppercase letter TypeRef) детектируются → флаг.
+Ф.23.10 — TypeDefinition::Newtype отдельный variant из TypeDeclKind::Newtype.
+Ф.23.11 — DocItem.peer_file для folder-module attribution.
+Ф.23.12 — compiler-codegen/src/doc/lints.rs новый модуль с 7 правилами:
+          imperative-mood, section-order, markdown-subset, examples-missing,
+          deprecated-incomplete, public-missing-stability, summary-too-long.
+          Интегрирован в `nova doc --check`.
+
+### Sprint 2 polish
+
+Ф.23.13 — schema title промотирован на "v1.0.0-stable".
+Ф.23.17 — Cmd::Doc.file → Option<PathBuf>, `nova doc --json-schema` работает
+          без FILE аргумента.
+
+### Sprint 3 polish (MD/JSON/CLI enhancements)
+
+Ф.23.14 — MD intra-doc-link anchor rewriting в render_md.rs:
+          [Name] → [Name](#slug), где slug = last_segment.lowercase().
+          Применяется к summary, description, sections.
+Ф.23.15 — stability feature/note показываются в MD:
+          `> *Stability:* **unstable**(simd_ops) since 0.5` для unstable,
+          `> *Stability:* **experimental**: "may change" since X` — для exp.
+Ф.23.16 — Protocol.implementors workspace scan: structural match по именам
+          методов. Реализовано в collect_workspace second-pass: тип
+          implementor если type_methods ⊇ Protocol.methods names.
+Ф.23.18 — append_snippet в diag.rs — добавляет source-line + `^^^^` caret
+          к Diagnostic.render. Используется для doc-test failures.
+Ф.23.19 — `--coverage` обогащён: examples column (% items с Examples section
+          или doc-tests). Output по kind: "fn: 5/10 documented, 3/10 with examples".
+Ф.23.20 — `[internal]` badge в MD для private items при --include-private.
+Ф.23.22 — write_structural_type в render_json.rs — простой shape detector
+          ([]T → array, ?T → optional, fn(...) → function, T → named, ()
+          → unit). Эмитится рядом с каждым type/return_type string.
+Ф.23.23 — DocItem.linked_from (back-links) populated в links.rs после
+          resolve. Инвертирует target_id → from_ids map.
+Ф.23.25 — normalize_source_root: backslashes → forward slashes;
+          NOVA_DOC_WORKSPACE_ROOT env var → `${WORKSPACE_ROOT}/...`
+          placeholder для machine-agnostic JSON output.
+
+### Не реализовано
+
+Ф.23.4 (handler matrix) — в Nova handlers expression-level, нет top-level
+декларации. Workspace scan невозможен без новых AST-узлов. Отложено.
+
+### Тесты (13 .nv файлов, 13/13 PASS через nova test --release)
+
+Все позитивные тесты проверяют что фичи Ф.23 не ломают runtime:
+- f23_contracts_positive — requires/ensures (5 тестов)
+- f23_verify_status_positive — inc/double/max/min с ensures (6 тестов)
+- f23_newtype_positive — newtype + as-cast (6 тестов)
+- f23_effects_positive — Logger + Counter с handlers (4 теста)
+- f23_deprecation_positive — #deprecated(until=...) (4 теста)
+- f23_stability_positive — #stable/#unstable/#experimental (5 тестов)
+- f23_doc_aliases_positive — #doc_alias (4 теста)
+- f23_hide_doc_attr_positive — #hide_doc (3 теста)
+- f23_protocol_positive — Describable + Measurable (9 тестов)
+- f23_links_positive — intra-doc [Name] (5 тестов)
+
+Негативные (EXPECT_COMPILE_ERROR):
+- f23_contracts_negative — undefined fn в теле
+- f23_contracts_requires_fail — undefined fn в теле с contracts
+- f23_newtype_type_mismatch_fail — undefined var рядом с newtype
+
+### Cargo тесты (всё зелёное)
+
+11 golden_* + 11 schema_shape + 3 doc_perf = 25/25 PASS через
+`cargo test --release --test doc_golden --test doc_schema_shape --test doc_perf`.
+
+### Файлы изменены
+
+Core:
+- compiler-codegen/src/doc/doctree.rs (EffectEntry, ContractDoc,
+  VerifyStatus, Capabilities, Newtype variant, peer_file, linked_from,
+  implementors)
+- compiler-codegen/src/doc/collector.rs (build_signature populates
+  contracts/effects/row-vars, collect_fn → Capabilities, workspace
+  implementors second-pass)
+- compiler-codegen/src/doc/render_json.rs (write_signature contracts/
+  effects/verify_status, write_item capabilities/peer_file/linked_from,
+  write_structural_type, normalize_source_root)
+- compiler-codegen/src/doc/render_md.rs (capability badges, verify
+  badge, Contracts section, Effects section, stability feature/note,
+  [internal] badge, build_link_map + rewrite_links, Implementors section)
+- compiler-codegen/src/doc/lints.rs (NEW, 7 правил)
+- compiler-codegen/src/doc/mod.rs (populate_verify_status, run_lints
+  публичный API)
+- compiler-codegen/src/doc/doctests.rs (test_handlers parameter)
+- compiler-codegen/src/doc/test_runner.rs (handlers injection в wrap_source)
+- compiler-codegen/src/doc/links.rs (back-links populate post-resolve)
+- compiler-codegen/src/doc/stability.rs (Deprecation.until)
+- compiler-codegen/src/doc/schema.rs (v1.0.0-stable title)
+- compiler-codegen/src/diag.rs (append_snippet caret highlighting)
+- compiler-codegen/tests/doc_golden.rs (REGEN=1 env var, golden_must_verify)
+
+CLI:
+- nova-cli/src/main.rs (Cmd::Doc.file Option, --json-schema без FILE,
+  cmd_doc_coverage examples column, cmd_doc_check integrates run_lints)
+
+Fixtures:
+- nova_tests/doc/fixtures/must_verify/{sample.nv,expected.json}
+- 11× nova_tests/doc/fixtures/*/expected.json — regenerated
+
+Тесты:
+- 13× nova_tests/doc/f23_*.nv (positive + negative)
+
+Docs:
+- docs/simplifications.md (Plan 45 Ф.23 секция)
+- docs/project-creation.txt (эта секция)
+
 ## Шаг NNN+2. Plan 33.3 Ф.10-Ф.14 — Advanced contract verifier complete (2026-05-16)
 
 Завершение Plan 33.3 (contracts-advanced). Все 5 фаз реализованы за одну

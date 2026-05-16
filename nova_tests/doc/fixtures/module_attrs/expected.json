@@ -38,6 +38,14 @@
       "aliases": [
 
       ],
+      "capabilities": {
+        "forbid": [
+
+        ],
+        "pure_fn": false,
+        "realtime": false,
+        "realtime_nogc": false
+      },
       "deprecation": null,
       "description": null,
       "doc_attrs": [
@@ -53,7 +61,8 @@
       },
       "source": {
         "file_id": 0,
-        "line": 15
+        "line": 15,
+        "peer_file": null
       },
       "stability": {
         "feature": null,
@@ -64,13 +73,22 @@
       "summary": "Экспериментальная функция — overrides module-stable.",
       "signature": {
         "contracts": {
+          "decreases": [
+
+          ],
           "ensures": [
+
+          ],
+          "ensures_fail": [
 
           ],
           "requires": [
 
           ],
-          "verify_status": "UNVERIFIED"
+          "verify_status": {
+            "counterexample": null,
+            "status": "not_attempted"
+          }
         },
         "effects": [
 
@@ -83,6 +101,10 @@
             "default": null,
             "keyword_only": false,
             "name": "x",
+            "structural_type": {
+              "kind": "named",
+              "name": "int"
+            },
             "type": "int",
             "variadic": false
           }
@@ -91,6 +113,10 @@
 
         ],
         "receiver": null,
+        "structural_type": {
+          "kind": "named",
+          "name": "int"
+        },
         "return_type": "int"
       }
     },
@@ -98,6 +124,14 @@
       "aliases": [
 
       ],
+      "capabilities": {
+        "forbid": [
+
+        ],
+        "pure_fn": false,
+        "realtime": false,
+        "realtime_nogc": false
+      },
       "deprecation": null,
       "description": null,
       "doc_attrs": [
@@ -113,7 +147,8 @@
       },
       "source": {
         "file_id": 0,
-        "line": 11
+        "line": 11,
+        "peer_file": null
       },
       "stability": {
         "feature": null,
@@ -124,13 +159,22 @@
       "summary": "Функция без собственного stability — наследует module-stable.",
       "signature": {
         "contracts": {
+          "decreases": [
+
+          ],
           "ensures": [
+
+          ],
+          "ensures_fail": [
 
           ],
           "requires": [
 
           ],
-          "verify_status": "UNVERIFIED"
+          "verify_status": {
+            "counterexample": null,
+            "status": "not_attempted"
+          }
         },
         "effects": [
 
@@ -143,6 +187,10 @@
             "default": null,
             "keyword_only": false,
             "name": "x",
+            "structural_type": {
+              "kind": "named",
+              "name": "int"
+            },
             "type": "int",
             "variadic": false
           }
@@ -151,6 +199,10 @@
 
         ],
         "receiver": null,
+        "structural_type": {
+          "kind": "named",
+          "name": "int"
+        },
         "return_type": "int"
       }
     }

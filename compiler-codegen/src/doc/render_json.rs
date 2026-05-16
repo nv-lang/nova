@@ -46,11 +46,13 @@ pub fn render_with_source(tree: &DocTree, source: Option<&str>) -> String {
         "nova_version",
         env!("CARGO_PKG_VERSION"),
     );
-    // Ф.22.3 / D107: `source_root` — абсолютный path к исходнику /
-    // workspace root. Опускается если None (e.g., из library API
-    // вызова без path context).
+    // Ф.22.3 / D107: `source_root` — path к исходнику / workspace root.
+    // Plan 45 Ф.23.25: normalize to forward slashes for cross-platform
+    // portability. If NOVA_DOC_WORKSPACE_ROOT env var is set, make relative
+    // to it using ${WORKSPACE_ROOT}/... placeholder.
     if let Some(root) = &tree.source_root {
-        w.field_str("source_root", root);
+        let normalized = normalize_source_root(root);
+        w.field_str("source_root", &normalized);
     }
     w.field_array("doc_tests", |w| {
         for t in &tree.doc_tests {
@@ -141,17 +143,28 @@ fn write_module(w: &mut JsonWriter, m: &DocModule) {
 }
 
 fn write_item(w: &mut JsonWriter, it: &DocItem) {
-    // alphabetical key order: aliases < deprecation < description < doc_attrs < doc_test_handlers < id
+    // alphabetical key order
     w.field_array("aliases", |w| {
         for a in &it.aliases {
             w.array_str(a);
         }
+    });
+    // Plan 45 Ф.23.3 / D63/D64: capabilities
+    w.field_object("capabilities", |w| {
+        w.field_array("forbid", |w| {
+            for f in &it.capabilities.forbid { w.array_str(f); }
+        });
+        w.field_bool("pure_fn", it.capabilities.pure_fn);
+        w.field_bool("realtime", it.capabilities.realtime);
+        w.field_bool("realtime_nogc", it.capabilities.realtime_nogc);
     });
     match &it.deprecation {
         None => w.field_null_or_str("deprecation", None),
         Some(d) => w.field_object("deprecation", |w| {
             w.field_str("note", &d.note);
             w.field_null_or_str("since", d.since.as_deref());
+            // Plan 45 Ф.23.6 / D105: until field
+            w.field_null_or_str("until", d.until.as_deref());
         }),
     }
     w.field_null_or_str("description", it.description.as_deref());
@@ -159,6 +172,12 @@ fn write_item(w: &mut JsonWriter, it: &DocItem) {
     w.field_null_or_str("doc_test_handlers", it.doc_test_handlers.as_deref());
     w.field_str("id", &it.id);
     w.field_str("kind", item_kind_str(&it.kind));
+    // Plan 45 Ф.23.23: back-links — IDs that link to this item.
+    if !it.linked_from.is_empty() {
+        w.field_array("linked_from", |w| {
+            for id in &it.linked_from { w.array_str(id); }
+        });
+    }
     w.field_str("module_path", &it.module_path.join("."));
     w.field_str("name", &it.name);
     w.field_object("sections", |w| {
@@ -170,6 +189,8 @@ fn write_item(w: &mut JsonWriter, it: &DocItem) {
         let span = it.source_span;
         w.field_u32("file_id", span.file_id);
         w.field_u32("line", w.line_of(span.start));
+        // Plan 45 Ф.23.11: peer_file attribution (folder-module mode).
+        w.field_null_or_str("peer_file", it.peer_file.as_deref());
     });
     match &it.stability {
         None => w.field_null_or_str("stability", None),
@@ -218,10 +239,11 @@ fn write_item(w: &mut JsonWriter, it: &DocItem) {
                 }
             });
         }
-        ItemKind::Protocol { methods } => {
-            // Plan 45 Ф.22.4 / D107: `implementors` — placeholder []
-            // (требует workspace-scope scan; см. сноску Ф.22.4 в плане).
-            w.field_array("implementors", |_| {});
+        ItemKind::Protocol { methods, implementors } => {
+            // Plan 45 Ф.23.16: implementors populated in workspace mode.
+            w.field_array("implementors", |w| {
+                for imp in implementors { w.array_str(imp); }
+            });
             w.field_array("methods", |w| {
                 for m in methods {
                     w.array_object(|w| {
@@ -240,15 +262,60 @@ fn write_item(w: &mut JsonWriter, it: &DocItem) {
 }
 
 fn write_signature(w: &mut JsonWriter, sig: &Signature) {
+    // Plan 45 Ф.23.1 / D24/D106: contracts из AST (requires/ensures/ensures_fail/decreases).
+    // Plan 45 Ф.23.2 / D106: verify_status per-function.
     w.field_object("contracts", |w| {
-        // MVP: empty contracts (Plan 33 SMT verify результаты — Ф.3+).
-        w.field_array("ensures", |_| {});
-        w.field_array("requires", |_| {});
-        w.field_str("verify_status", "UNVERIFIED");
+        let decreases: Vec<&ContractDoc> = sig.contracts.iter()
+            .filter(|c| c.kind == "decreases").collect();
+        let ensures: Vec<&ContractDoc> = sig.contracts.iter()
+            .filter(|c| c.kind == "ensures").collect();
+        let ensures_fail: Vec<&ContractDoc> = sig.contracts.iter()
+            .filter(|c| c.kind == "ensures_fail").collect();
+        let requires: Vec<&ContractDoc> = sig.contracts.iter()
+            .filter(|c| c.kind == "requires").collect();
+        w.field_array("decreases", |w| {
+            for c in &decreases { w.array_str(&c.expr); }
+        });
+        w.field_array("ensures", |w| {
+            for c in &ensures { w.array_str(&c.expr); }
+        });
+        w.field_array("ensures_fail", |w| {
+            for c in &ensures_fail { w.array_str(&c.expr); }
+        });
+        w.field_array("requires", |w| {
+            for c in &requires { w.array_str(&c.expr); }
+        });
+        // verify_status: {status: "...", counterexample: "..." | null}
+        w.field_object("verify_status", |w| {
+            match &sig.verify_status {
+                VerifyStatus::NotAttempted => {
+                    w.field_null_or_str("counterexample", None);
+                    w.field_str("status", "not_attempted");
+                }
+                VerifyStatus::Proven => {
+                    w.field_null_or_str("counterexample", None);
+                    w.field_str("status", "proven");
+                }
+                VerifyStatus::HasCounterexample(msg) => {
+                    w.field_str("counterexample", msg);
+                    w.field_str("status", "has_counterexample");
+                }
+                VerifyStatus::Timeout => {
+                    w.field_null_or_str("counterexample", None);
+                    w.field_str("status", "timeout");
+                }
+            }
+        });
     });
+    // Plan 45 Ф.23.8: structured effect entries.
     w.field_array("effects", |w| {
         for e in &sig.effects {
-            w.array_str(e);
+            w.array_object(|w| {
+                w.field_bool("is_row_var", e.is_row_var);
+                w.field_str("name", &e.name);
+                w.field_null_or_str("summary", e.summary.as_deref());
+                w.field_null_or_str("target_id", e.target_id.as_deref());
+            });
         }
     });
     w.field_array("generics", |w| {
@@ -284,6 +351,8 @@ fn write_signature(w: &mut JsonWriter, sig: &Signature) {
         }),
         None => w.field_null_or_str("receiver", None),
     }
+    // Plan 45 Ф.23.22: structural return type.
+    write_structural_type(w, &sig.return_type);
     w.field_str("return_type", &sig.return_type);
 }
 
@@ -291,6 +360,8 @@ fn write_param(w: &mut JsonWriter, p: &Param) {
     w.field_null_or_str("default", p.default.as_deref());
     w.field_bool("keyword_only", p.keyword_only);
     w.field_str("name", &p.name);
+    // Plan 45 Ф.23.22: structural_type alongside source type string.
+    write_structural_type(w, &p.ty);
     w.field_str("type", &p.ty);
     w.field_bool("variadic", p.variadic);
 }
@@ -348,6 +419,54 @@ fn write_type_definition(w: &mut JsonWriter, def: &TypeDefinition) {
             w.field_str("aliased_type", ty);
             w.field_str("kind", "alias");
         }
+        TypeDefinition::Newtype { inner } => {
+            w.field_str("inner_type", inner);
+            w.field_str("kind", "newtype");
+        }
+    }
+}
+
+/// Plan 45 Ф.23.22: parse a Nova type string into a structural JSON representation.
+/// Emitted alongside every `type` field for LLM consumption.
+/// Grammar (simplified): `[]T` = array, `?T` = optional, `(A, B)` = tuple,
+/// `fn(A) -> B` = function, `named` = named type.
+fn write_structural_type(w: &mut JsonWriter, ty: &str) {
+    let ty = ty.trim();
+    if ty.starts_with("[]") {
+        w.field_object("structural_type", |w| {
+            w.field_str("kind", "array");
+            // elem type as string — recursive structural would require alloc
+            w.field_str("elem", &ty[2..]);
+        });
+    } else if ty.starts_with('?') {
+        w.field_object("structural_type", |w| {
+            w.field_str("kind", "optional");
+            w.field_str("inner", &ty[1..]);
+        });
+    } else if ty.starts_with("fn(") || ty.starts_with("fn (") {
+        w.field_object("structural_type", |w| {
+            w.field_str("kind", "function");
+            w.field_str("source", ty);
+        });
+    } else if ty.starts_with('(') && ty.ends_with(')') {
+        w.field_object("structural_type", |w| {
+            w.field_str("kind", "tuple");
+            w.field_str("source", ty);
+        });
+    } else if ty == "()" {
+        w.field_object("structural_type", |w| {
+            w.field_str("kind", "unit");
+        });
+    } else {
+        w.field_object("structural_type", |w| {
+            // Strip generic params for the base name.
+            let base = ty.split('[').next().unwrap_or(ty);
+            w.field_str("kind", "named");
+            w.field_str("name", base);
+            if ty.contains('[') {
+                w.field_str("source", ty);
+            }
+        });
     }
 }
 
@@ -497,6 +616,27 @@ impl<'src> JsonWriter<'src> {
 /// - `SOURCE_DATE_EPOCH=<seconds>` → конвертируем в простой ISO-8601-
 ///   подобный формат `YYYY-MM-DDTHH:MM:SSZ`;
 /// - иначе → `None` (deterministic by default).
+/// Plan 45 Ф.23.25: normalize source_root path for cross-platform portability.
+/// - Backslashes → forward slashes.
+/// - If NOVA_DOC_WORKSPACE_ROOT env var is set and root starts with that prefix,
+///   replaces prefix with `${WORKSPACE_ROOT}` for machine-agnostic output.
+fn normalize_source_root(root: &str) -> String {
+    let normalized = root.replace('\\', "/");
+    if let Ok(ws_root) = std::env::var("NOVA_DOC_WORKSPACE_ROOT") {
+        let ws_norm = ws_root.replace('\\', "/");
+        if !ws_norm.is_empty() {
+            if normalized == ws_norm {
+                return "${WORKSPACE_ROOT}".to_string();
+            }
+            let prefix_slash = format!("{}/", ws_norm);
+            if let Some(rest) = normalized.strip_prefix(&prefix_slash) {
+                return format!("${{WORKSPACE_ROOT}}/{}", rest);
+            }
+        }
+    }
+    normalized
+}
+
 fn generated_at_value() -> Option<String> {
     if let Ok(ts) = std::env::var("NOVA_DOC_GENERATED_AT") {
         if !ts.is_empty() {

@@ -88,7 +88,7 @@ fn run_one(t: &DocTest, original_source: Option<&str>) -> DocTestOutcome {
     if modifiers.contains(&DocTestModifier::Ignore) {
         return DocTestOutcome::Skipped("ignore modifier".to_string());
     }
-    let synthetic = wrap_source(&t.full_source, original_source);
+    let synthetic = wrap_source(&t.full_source, original_source, t.test_handlers.as_deref());
     // 1. Parse.
     let parse_result = crate::parser::parse(&synthetic);
     let compile_fail = modifiers.contains(&DocTestModifier::CompileFail);
@@ -192,9 +192,14 @@ fn run_one(t: &DocTest, original_source: Option<&str>) -> DocTestOutcome {
 ///
 /// **Fallback** (None): synthetic `module __doctest__` без scope (для
 /// unit-тестов и backward-compat).
-fn wrap_source(test_source: &str, original_source: Option<&str>) -> String {
+/// Plan 45 Ф.23.7 / D106: wrap doc-test source. If `handlers` is set —
+/// wraps `fn main` body in `with <handler>` block.
+fn wrap_source(test_source: &str, original_source: Option<&str>, handlers: Option<&str>) -> String {
     let test_part = if has_top_level_decl(test_source) {
         test_source.to_string()
+    } else if let Some(h) = handlers {
+        // Injet `with <handler>` around body.
+        format!("fn main() -> () => {{\n    with {} = {} {{\n{}\n    }}\n}}", h, h, test_source)
     } else {
         format!("fn main() -> () => {{\n{}\n}}", test_source)
     };

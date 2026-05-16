@@ -34,7 +34,7 @@ pub fn collect_doc_tests(tree: &mut DocTree) {
             .into_iter()
             .flatten()
         {
-            extract_from_text(text, None, &m.path.join("."), &mut counter, &mut found);
+            extract_from_text(text, None, &m.path.join("."), &mut counter, None, &mut found);
         }
         for it in &m.items {
             let mut texts: Vec<&str> = Vec::new();
@@ -49,6 +49,7 @@ pub fn collect_doc_tests(tree: &mut DocTree) {
                     Some(it.id.clone()),
                     &m.path.join("."),
                     &mut counter,
+                    it.doc_test_handlers.as_deref(),
                     &mut found,
                 );
             }
@@ -68,6 +69,7 @@ fn extract_from_text(
     from_id: Option<String>,
     module_path: &str,
     counter: &mut u32,
+    test_handlers: Option<&str>,
     out: &mut Vec<DocTest>,
 ) {
     let mut lines = text.lines().peekable();
@@ -116,6 +118,7 @@ fn extract_from_text(
             modifiers,
             visible_source: visible.trim_end_matches('\n').to_string(),
             full_source: full.trim_end_matches('\n').to_string(),
+            test_handlers: test_handlers.map(|s| s.to_string()),
         });
     }
 }

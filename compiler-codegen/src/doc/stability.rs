@@ -59,12 +59,13 @@ fn derive_for_item(it: &mut DocItem) {
     // 2. Deprecation — приоритет: inline-attr > # Deprecated section.
     if let Some(note) = attrs.deprecated {
         let since = attrs.since.clone();
-        it.deprecation = Some(Deprecation { note, since });
+        it.deprecation = Some(Deprecation { note, since, until: None });
     } else if let Some(dep_text) = it.sections.get("deprecated") {
         let since = extract_since_from_note(dep_text);
         it.deprecation = Some(Deprecation {
             note: dep_text.clone(),
             since,
+            until: None,
         });
     }
 

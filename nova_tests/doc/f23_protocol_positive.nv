@@ -1,0 +1,83 @@
+// Plan 45 Ф.23.16: Protocol + implementors.
+// Позитивный тест: protocol объявляется, типы реализуют его методы.
+// Doc pipeline (cargo) найдёт implementors при workspace scan.
+// Синтаксис protocol: без `fn` в body; методы: `fn Type @method()`.
+
+module doc.f23_protocol_positive
+
+/// Describable protocol — types with string description.
+export type Describable protocol {
+    describe() -> str
+}
+
+/// Measurable protocol — types with a size measure.
+export type Measurable protocol {
+    size() -> int
+}
+
+/// Box type — implements both protocols.
+export type Box { width int; height int }
+
+export fn Box @describe() -> str {
+    if @width > @height { return "wide" }
+    if @height > @width { return "tall" }
+    "square"
+}
+
+export fn Box @size() -> int => @width * @height
+
+/// Circle — implements Describable and Measurable.
+export type Circle { radius int }
+
+export fn Circle @size() -> int => @radius * @radius
+
+export fn Circle @describe() -> str {
+    if @radius > 10 { return "large" }
+    if @radius > 5 { return "medium" }
+    "small"
+}
+
+test "box describe wide" {
+    let b = Box { width:10; height:5 }
+    assert(b.describe() == "wide")
+}
+
+test "box describe tall" {
+    let b = Box { width:3; height:8 }
+    assert(b.describe() == "tall")
+}
+
+test "box describe square" {
+    let b = Box { width:4; height:4 }
+    assert(b.describe() == "square")
+}
+
+test "box size" {
+    let b = Box { width:3; height:4 }
+    assert(b.size() == 12)
+}
+
+test "box size zero" {
+    let b = Box { width:0; height:5 }
+    assert(b.size() == 0)
+}
+
+test "circle size" {
+    let c = Circle { radius:5 }
+    assert(c.size() == 25)
+}
+
+test "circle describe small" {
+    let c = Circle { radius:3 }
+    assert(c.describe() == "small")
+}
+
+test "circle describe medium" {
+    let c = Circle { radius:7 }
+    assert(c.describe() == "medium")
+}
+
+test "circle describe large" {
+    let c = Circle { radius:15 }
+    assert(c.describe() == "large")
+}
