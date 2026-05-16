@@ -163,6 +163,12 @@ fn simplify_app(op: &str, args: &[SmtTerm]) -> SmtTerm {
             (SmtTerm::IntLit(0), _) | (_, SmtTerm::IntLit(0)) => SmtTerm::IntLit(0),
             (SmtTerm::IntLit(1), b) => b.clone(),
             (a, SmtTerm::IntLit(1)) => a.clone(),
+            // Ф.9.4 (Plan 33.6): commutativity для *.
+            (a, b) if !matches!(a, SmtTerm::IntLit(_)) && !matches!(b, SmtTerm::IntLit(_)) => {
+                let mut sorted = vec![a.clone(), b.clone()];
+                sorted.sort_by_key(|t| t.pretty());
+                SmtTerm::App("*".into(), sorted)
+            }
             _ => SmtTerm::App(op.into(), args.to_vec()),
         },
         "/" if args.len() == 2 => match (&args[0], &args[1]) {
@@ -182,6 +188,13 @@ fn simplify_app(op: &str, args: &[SmtTerm]) -> SmtTerm {
                 (SmtTerm::IntLit(a), SmtTerm::IntLit(b)) => SmtTerm::BoolLit(a == b),
                 (SmtTerm::BoolLit(a), SmtTerm::BoolLit(b)) => SmtTerm::BoolLit(a == b),
                 (SmtTerm::StrLit(a), SmtTerm::StrLit(b)) => SmtTerm::BoolLit(a == b),
+                // Ф.9.4 (Plan 33.6): commutativity для = (для лучшего matching).
+                (a, b) if !matches!(a, SmtTerm::IntLit(_) | SmtTerm::BoolLit(_) | SmtTerm::StrLit(_))
+                       && !matches!(b, SmtTerm::IntLit(_) | SmtTerm::BoolLit(_) | SmtTerm::StrLit(_)) => {
+                    let mut sorted = vec![a.clone(), b.clone()];
+                    sorted.sort_by_key(|t| t.pretty());
+                    SmtTerm::App("=".into(), sorted)
+                }
                 _ => SmtTerm::App(op.into(), args.to_vec()),
             }
         }

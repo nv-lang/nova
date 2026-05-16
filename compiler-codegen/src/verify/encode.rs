@@ -273,8 +273,11 @@ pub fn encode_expr_with_ctx(e: &Expr, ctx: &EncodeCtx) -> Result<SmtTerm, Encodi
 
         ExprKind::UnitLit => Ok(SmtTerm::Var("_unit".into())),
 
-        // Member access (record fields) — uninterpreted в 33.1.
-        // Кодируем как UF: `field_x(obj)`.
+        // Member access (record fields) — uninterpreted UF.
+        // Ф.9.2 (Plan 33.6): naming сейчас `_field_<name>` без типа в имени.
+        // V1 ограничение: если один field используется в разных типах (Bool/Int)
+        // в одной формуле, Z3 auto-declare'ит с первым встретившимся sort →
+        // sort mismatch на втором. KNOWN LIMITATION (V2: type-aware naming).
         ExprKind::Member { obj, name } => {
             let obj_t = encode_expr_with_ctx(obj, ctx)?;
             Ok(SmtTerm::App(format!("_field_{}", name), vec![obj_t]))
@@ -437,6 +440,20 @@ pub fn encode_expr_with_ctx(e: &Expr, ctx: &EncodeCtx) -> Result<SmtTerm, Encodi
                 "interrupt/forbid/realtime в контракте не поддерживается".into()))
         }
 
+        // Ф.9.1 (Plan 33.6): specific catch-alls с actionable suggestion.
+        ExprKind::Detach(_) => Err(EncodingError::Unsupported(
+            "`detach { ... }` (concurrency primitive) в контракте не поддерживается; \
+             контракты должны быть pure expressions без spawn/detach".into())),
+        ExprKind::Throw(_) => Err(EncodingError::Unsupported(
+            "`throw expr` (error-throw) в контракте не поддерживается; \
+             используйте `requires` для предусловий вместо throw в expression".into())),
+        ExprKind::MapLit { .. } => Err(EncodingError::Unsupported(
+            "map-литерал `[k:v]` в контракте не поддерживается SMT-encoder'ом; \
+             используйте `forall` quantifier или вынесите проверку в #pure fn".into())),
+        ExprKind::TaggedTemplate { .. } => Err(EncodingError::Unsupported(
+            "tagged template `tag\"...\"` в контракте не поддерживается; \
+             контракт должен быть pure boolean expression".into())),
+
         // Прочие конструкции — generic fallback с названием.
         _ => Err(EncodingError::Unsupported(
             "данная конструкция не поддерживается в SMT-encoder'е контрактов; \
@@ -462,11 +479,35 @@ pub fn collect_triggers(body: &SmtTerm, bound_var: &str) -> Vec<Vec<SmtTerm>> {
     let mut found: Vec<SmtTerm> = Vec::new();
     collect_trigger_apps(body, bound_var, &mut found);
     if found.is_empty() {
-        vec![]
-    } else {
-        // Каждый найденный App — отдельный single-term pattern.
-        found.into_iter().map(|t| vec![t]).collect()
+        return vec![];
     }
+    // Ф.9.7 (Plan 33.6): trigger ranking — score by (depth, ops count),
+    // меньше = лучше (avoid matching loops). Top-3.
+    let mut scored: Vec<(usize, SmtTerm)> = found.into_iter()
+        .map(|t| (trigger_score(&t), t))
+        .collect();
+    scored.sort_by_key(|(s, _)| *s);
+    scored.truncate(3);
+    scored.into_iter().map(|(_, t)| vec![t]).collect()
+}
+
+/// Ф.9.7: score = depth * 10 + ops count. Меньше = better trigger.
+fn trigger_score(t: &SmtTerm) -> usize {
+    fn depth(t: &SmtTerm) -> usize {
+        match t {
+            SmtTerm::App(_, args) => 1 + args.iter().map(depth).max().unwrap_or(0),
+            SmtTerm::Forall(_, _, body) => 1 + depth(body),
+            _ => 0,
+        }
+    }
+    fn ops(t: &SmtTerm) -> usize {
+        match t {
+            SmtTerm::App(_, args) => 1 + args.iter().map(ops).sum::<usize>(),
+            SmtTerm::Forall(_, _, body) => 1 + ops(body),
+            _ => 0,
+        }
+    }
+    depth(t) * 10 + ops(t)
 }
 
 /// Рекурсивный walker для collect_triggers.

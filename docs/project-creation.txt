@@ -12350,6 +12350,80 @@ negative (есть warning или ошибка):
 **Итого Ф.8 + Ф.3 + Ф.5 + Ф.6 спринт (после Ф.7):** 9 коммитов code + 9 docs
 + 9 discussion-log. 141 PASS / 39 SKIP / 1 pre-existing FAIL.
 
+## Ф.9 — GA gate closeout (автономный спринт после Ф.8)
+
+### Ф.9.1 — encode_expr 4 catch-alls → explicit messages
+
+- `encode.rs:441` catch-all → 4 explicit branches: Detach, Throw (expr-pos),
+  MapLit, TaggedTemplate. Каждый с specific suggestion.
+- Test: e2401_maplit_in_ensures_fail.
+- Регрессия: 142 PASS (+1).
+- Коммит: `ccecb3317a3`.
+
+### Ф.9.2 — Member field UF (deferred V2)
+
+- Known limitation: один `obj.field` в Bool/Int контекстах → Z3 sort mismatch.
+- Документировано в коде как KNOWN LIMITATION (V2: type-aware naming).
+- Коммит: `42c8bcc2b00` (doc-only).
+
+### Ф.9.3 — try_prove_cached API (partial)
+
+- Новый helper `backend::try_prove_cached(backend, goal, cache)` в `backend/mod.rs`.
+- Cache lookup перед check_sat → return Unsat если hit; insert если Unsat.
+- Sat/Unknown НЕ кэшируются (зависят от context-assertions).
+- Threading через всю pipeline (через signatures) — deferred V2.
+- Коммит: `3cba91fa5e9`.
+
+### Ф.9.4 — TrivialBackend full commutativity (+, *, =)
+
+- `trivial.rs::simplify_app` для `*` и `=` добавлена sort-by-pretty
+  commutativity normalization (как для `+` в Ф.6.3).
+- Test: trivial_mul_commutativity_positive — `result == b * a; body: a * b`.
+- Регрессия: 143 PASS (+1).
+- Transitivity + congruence — V2 (требует context-aware simplification).
+- Коммит: `e5dca9b97b7`.
+
+### Ф.9.5 — Witness extraction V2 (deferred V2)
+
+- Требует SmtBackend trait extension: `get_model_witness(var)`.
+- Risk: invasive backend refactor. Placeholder test `witness_exists_positive`
+  (Ф.3.2) уже есть; production work выделен в Plan 33.7 R&D scope.
+
+### Ф.9.6 — apply lemma auto-inference (deferred V2)
+
+- Требует parser change (`apply X` без скобок) + verify unification.
+- Risk: break existing apply tests. Defer.
+
+### Ф.9.7 — trigger pattern ranking (top-3)
+
+- `encode.rs::collect_triggers` теперь scores triggers через `depth*10 + ops`.
+- Sort ascending, truncate top-3. Раньше all triggers без cut — Z3 instantiations
+  exploded на больших формулах.
+- Регрессия: 143 PASS / 39 SKIP (без изменений — improvement perf, не correctness).
+- Коммит: `d4266742a6f`.
+
+### Ф.9.8 — variance Liskov (deferred V2)
+
+- Требует per-clause Liskov refactor с position-aware diag. Risk to break Liskov tests.
+
+### Ф.9.9 — V2/V3 positive tests
+
+- `v2_nested_loops_positive`: outer+inner while с invariants+decreases.
+- `v3_scc_purity_chain_positive`: 3 #pure fns calling each other (SCC).
+- Регрессия: 145 PASS (+2) / 39 SKIP.
+- Коммит: `48c5559c3ec`.
+
+### Ф.9.10 — handler post V2 branching (deferred V2)
+
+- Требует symbolic exec через if/match в handler body — major design effort.
+- Defer как Plan 33.6 R&D.
+
+**Итого Ф.9:** 5 закрыто (Ф.9.1, 9.4, 9.7, 9.9 + 9.3 partial API). 5 deferred V2
+с risk-justification. **145 PASS / 39 SKIP / 1 pre-existing FAIL.**
+
+**Plan 33.6 status:** beta-production gate ✅ achieved. GA-production gate
+~80% (deferred items имеют clean V2 scope). **Готово к Plan 33.7 (vertical scaling).**
+
 === Plan 45 �.25 � nova tests (positive + negative) ===
 
 ����� �������� �.25 (4 ����) �������� nova-tests .nv ��� �������� �����
