@@ -34,7 +34,8 @@ export fn b() -> int => 2
     assert!(pages.contains_key("index.html"), "index.html должен быть");
     assert!(pages.contains_key("foo.html"), "per-module foo.html должен быть");
     assert!(pages.contains_key("bar.html"), "per-module bar.html должен быть");
-    assert_eq!(pages.len(), 3, "expected 3 pages (index + 2 modules)");
+    // Plan 45 Ф.31.6: + sitemap.xml.
+    assert_eq!(pages.len(), 4, "expected 4 pages (index + 2 modules + sitemap)");
 }
 
 #[test]
@@ -88,6 +89,8 @@ fn multipage_all_pages_have_search_and_css() {
     ]);
     let pages = doc::render_html_multipage(&tree);
     for (filename, html) in &pages {
+        // Plan 45 Ф.31.6: sitemap.xml — XML, not HTML; skip CSS/search check.
+        if filename.ends_with(".xml") { continue; }
         assert!(html.contains("id=\"nova-search\""),
             "search box must be in {}", filename);
         assert!(html.contains("<style>"),
@@ -95,6 +98,43 @@ fn multipage_all_pages_have_search_and_css() {
         assert!(html.contains("@media (prefers-color-scheme: dark)"),
             "dark mode CSS must be in {}", filename);
     }
+}
+
+#[test]
+fn sitemap_xml_present_in_multipage() {
+    // Plan 45 Ф.31.6 — sitemap.xml generated в multipage output.
+    let tree = build_workspace(&[
+        ("foo", "module foo\nexport fn a() -> int => 1\n"),
+        ("bar", "module bar\nexport fn b() -> int => 2\n"),
+    ]);
+    let pages = doc::render_html_multipage(&tree);
+    let sitemap = pages.get("sitemap.xml").expect("sitemap.xml должен быть");
+    assert!(sitemap.contains("<?xml version=\"1.0\""));
+    assert!(sitemap.contains("<urlset"));
+    assert!(sitemap.contains("sitemaps.org/schemas/sitemap/0.9"));
+    // Index.html — priority 1.0.
+    assert!(sitemap.contains("index.html"));
+    assert!(sitemap.contains("<priority>1.0</priority>"));
+    // Module pages — priority 0.8.
+    assert!(sitemap.contains("foo.html"));
+    assert!(sitemap.contains("bar.html"));
+    assert!(sitemap.contains("<priority>0.8</priority>"));
+}
+
+#[test]
+fn sitemap_uses_absolute_urls_when_env_set() {
+    static SITEMAP_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _g = SITEMAP_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+    unsafe { std::env::set_var("NOVA_DOC_SITE_URL", "https://docs.example.com/api"); }
+    let tree = build_workspace(&[
+        ("m", "module m\nexport fn f() -> int => 1\n"),
+    ]);
+    let pages = doc::render_html_multipage(&tree);
+    unsafe { std::env::remove_var("NOVA_DOC_SITE_URL"); }
+    let sitemap = pages.get("sitemap.xml").expect("sitemap.xml");
+    assert!(sitemap.contains("https://docs.example.com/api/index.html"),
+        "absolute URL должен use base, got: {}", sitemap);
+    assert!(sitemap.contains("https://docs.example.com/api/m.html"));
 }
 
 #[test]

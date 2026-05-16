@@ -41,6 +41,9 @@ pub fn render(tree: &DocTree) -> String {
 /// Возвращает map `filename → html_content`:
 /// - `index.html` — overview всех modules с links на per-module pages.
 /// - `<module.path>.html` — per-module page (один module = один file).
+/// - Plan 45 Ф.31.6: `sitemap.xml` — site map для SEO/crawlers (если
+///   `NOVA_DOC_SITE_URL` env задан — emit'ит absolute URLs; иначе
+///   relative paths — useful для local browsing).
 ///
 /// Каждая page содержит свою sidebar (с links на все modules через
 /// `<page>.html#anchor`), embedded CSS+JS (одинаковый везде для simplicity).
@@ -70,7 +73,49 @@ pub fn render_multipage(tree: &DocTree) -> std::collections::BTreeMap<String, St
         pages.insert(filename, render_module_page(tree, m, &item_pages));
     }
 
+    // Plan 45 Ф.31.6: sitemap.xml.
+    pages.insert("sitemap.xml".to_string(), render_sitemap(tree));
+
     pages
+}
+
+/// Plan 45 Ф.31.6 — sitemap.xml generation.
+///
+/// Standard sitemaps.org/0.9 format. Emits entries для:
+/// - index.html (priority 1.0)
+/// - per-module pages (priority 0.8)
+///
+/// Base URL берётся из `NOVA_DOC_SITE_URL` env var (e.g.
+/// `https://docs.nova-lang.org/api`). Если не задан — emit relative paths
+/// (useful для local file:// browsing или CI artifact preview).
+fn render_sitemap(tree: &DocTree) -> String {
+    let base = std::env::var("NOVA_DOC_SITE_URL").ok()
+        .filter(|s| !s.is_empty())
+        .map(|s| s.trim_end_matches('/').to_string())
+        .unwrap_or_default();
+    let url = |relative: &str| -> String {
+        if base.is_empty() {
+            relative.to_string()
+        } else {
+            format!("{}/{}", base, relative)
+        }
+    };
+    let mut out = String::with_capacity(1024);
+    out.push_str("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
+    out.push_str("<urlset xmlns=\"http://www.sitemaps.org/schemas/sitemap/0.9\">\n");
+    // index.html — priority 1.0.
+    let _ = writeln!(out,
+        "  <url><loc>{}</loc><priority>1.0</priority></url>",
+        html_escape(&url("index.html")));
+    // Per-module — priority 0.8.
+    for m in &tree.modules {
+        let filename = module_filename(&m.path);
+        let _ = writeln!(out,
+            "  <url><loc>{}</loc><priority>0.8</priority></url>",
+            html_escape(&url(&filename)));
+    }
+    out.push_str("</urlset>\n");
+    out
 }
 
 /// Plan 45 Ф.31.4 — index.html (workspace overview).
