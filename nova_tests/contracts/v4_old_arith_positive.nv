@@ -1,0 +1,32 @@
+// Ф.7.2 positive (Plan 33.6 / V4): `old(x)` в арифметических выражениях.
+// Frame axiom `_old_x == x` для non-modifies params + Z3-стyle reasoning
+// доказывают результат через TrivialBackend (когда выражение тривиально reflexive).
+
+module contracts.v4_old_arith_positive
+
+// `old(x) + old(y)` reduces to `x + y` под frame axiom.
+fn add_arith(x int, y int) -> int
+    ensures result == old(x) + old(y)
+{
+    x + y
+}
+
+// Constant offset.
+fn add_three(x int) -> int
+    ensures result == old(x) + 3
+{
+    x + 3
+}
+
+// Multiple `old(...)` refs to one param.
+fn double_via_old(x int) -> int
+    ensures result == old(x) + old(x)
+{
+    x + x
+}
+
+test "v4 old arithmetic positive" {
+    assert(add_arith(10, 20) == 30)
+    assert(add_three(7) == 10)
+    assert(double_via_old(15) == 30)
+}

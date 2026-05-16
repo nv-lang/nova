@@ -1,0 +1,17 @@
+// Ф.7.2 negative (Plan 33.6 / V4): ensures `result == old(x) + 1` для body `x` —
+// false для всех x → Z3/TrivialBackend ловит counterexample.
+// EXPECT_RUNTIME_PANIC ensures
+// REQUIRES_SMT_BACKEND z3
+// (Под TrivialBackend это Unknown → runtime check ловит при первом вызове.)
+
+module contracts.v4_old_disproved_fail
+
+fn lying(x int) -> int
+    ensures result == old(x) + 1
+{
+    x
+}
+
+test "lying fn → ensures violated at runtime" {
+    let _ = lying(5)
+}
