@@ -561,8 +561,9 @@ impl<'a> BoundCtx<'a> {
                     }
                 }
             }
-            ExprKind::MapLit { pairs, .. } => {
-                for (k, v) in pairs {
+            ExprKind::MapLit { elems, .. } => {
+                let pairs = crate::ast::MapElem::cloned_pairs(&elems);
+                for (k, v) in pairs.iter() {
                     self.walk_expr(k, scope, errors);
                     self.walk_expr(v, scope, errors);
                 }
@@ -1567,8 +1568,9 @@ impl<'a> CapabilityCtx<'a> {
                     }
                 }
             }
-            ExprKind::MapLit { pairs, .. } => {
-                for (k, v) in pairs {
+            ExprKind::MapLit { elems, .. } => {
+                let pairs = crate::ast::MapElem::cloned_pairs(&elems);
+                for (k, v) in pairs.iter() {
                     self.walk_expr(k, state, errors);
                     self.walk_expr(v, state, errors);
                 }
@@ -2373,8 +2375,9 @@ impl NameResCtx {
                     }
                 }
             }
-            ExprKind::MapLit { pairs, .. } => {
-                for (k, v) in pairs {
+            ExprKind::MapLit { elems, .. } => {
+                let pairs = crate::ast::MapElem::cloned_pairs(&elems);
+                for (k, v) in pairs.iter() {
                     self.walk_expr(k, file_id, scope, errors);
                     self.walk_expr(v, file_id, scope, errors);
                 }
@@ -3624,8 +3627,9 @@ fn walk_expr_for_handler_lits(e: &Expr, never_ops: &HashSet<(String, String)>, e
                 }
             }
         }
-        ExprKind::MapLit { pairs, .. } => {
-            for (k, v) in pairs {
+        ExprKind::MapLit { elems, .. } => {
+                let pairs = crate::ast::MapElem::cloned_pairs(&elems);
+            for (k, v) in pairs.iter() {
                 walk_expr_for_handler_lits(k, never_ops, errors);
                 walk_expr_for_handler_lits(v, never_ops, errors);
             }
@@ -5157,14 +5161,21 @@ impl MapLitCtx {
     /// протаскивая expected туда, где он известен (let / arg-позиции).
     fn walk_expr(&self, e: &Expr, expected: Option<&TypeRef>, errors: &mut Vec<Diagnostic>) {
         match &e.kind {
-            ExprKind::MapLit { pairs, .. } => {
-                self.check_map_lit(e, pairs, expected, errors);
+            ExprKind::MapLit { elems, .. } => {
+                let pairs = crate::ast::MapElem::cloned_pairs(&elems);
+                self.check_map_lit(e, &pairs, expected, errors);
                 // Рекурсия в ключи/значения — без expected (key/value
                 // expected-types выводятся внутри check_map_lit; для
                 // вложенных литералов глубокий проход — будущее расширение).
-                for (k, v) in pairs {
+                for (k, v) in pairs.iter() {
                     self.walk_expr(k, None, errors);
                     self.walk_expr(v, None, errors);
+                }
+                // Plan 55 followup: рекурсия в spread expressions.
+                for me in elems.iter() {
+                    if let crate::ast::MapElem::Spread(se) = me {
+                        self.walk_expr(se, expected, errors);
+                    }
                 }
             }
             ExprKind::ArrayLit(elems) => {
@@ -5920,14 +5931,28 @@ impl MapLitAnnotator {
         // Plan 52.3 Ф.1: empty `[]` в позиции #from_pairs-типа конвертим
         // в empty MapLit. Codegen ArrayLit пустой → array (CC-FAIL для
         // HashMap-target). MapLit пустой → with_capacity(0) — пустая мапа.
+        // Plan 55 followup (spread): `[...spread]` (только spreads, без
+        // pairs) тоже может быть **либо** array **либо** map — disambiguate
+        // через expected type. Если expected is #from_pairs → conv в MapLit.
         if let ExprKind::ArrayLit(elems) = &e.kind {
-            if elems.is_empty() {
+            let all_spread = !elems.is_empty()
+                && elems.iter().all(|el| matches!(el, ArrayElem::Spread(_)));
+            let is_empty = elems.is_empty();
+            if is_empty || all_spread {
                 if let Some(exp) = expected {
                     if self.ctx.expected_is_from_pairs(exp) {
-                        // Конвертим в empty MapLit. annotate ниже заполнит
-                        // inferred_key/value/target_type из expected.
+                        // Конвертим: spreads (если есть) move'аются в MapElem.
+                        // annotate ниже заполнит inferred_key/value/target_type.
+                        let new_elems: Vec<MapElem> = if is_empty {
+                            Vec::new()
+                        } else {
+                            elems.iter().map(|el| match el {
+                                ArrayElem::Spread(s) => MapElem::Spread(s.clone()),
+                                ArrayElem::Item(_) => unreachable!("all_spread guard"),
+                            }).collect()
+                        };
                         e.kind = ExprKind::MapLit {
-                            pairs: Vec::new(),
+                            elems: new_elems,
                             inferred_key: None,
                             inferred_value: None,
                             inferred_target_type: None,
@@ -5939,11 +5964,12 @@ impl MapLitAnnotator {
 
         // 1. На MapLit — заполнить inferred_key/value/target_type (до спуска).
         if let ExprKind::MapLit {
-            pairs,
+            elems,
             inferred_key,
             inferred_value,
             inferred_target_type,
         } = &mut e.kind {
+            let pairs = crate::ast::MapElem::cloned_pairs(elems);
             let (exp_k, exp_v) = extract_hashmap_kv(expected);
             *inferred_key = infer_unified_type(
                 pairs.iter().map(|(k, _)| k),
@@ -5978,10 +6004,15 @@ impl MapLitAnnotator {
         }
         // 2. Спуск в под-выражения с propagation expected-type где известен.
         match &mut e.kind {
-            ExprKind::MapLit { pairs, .. } => {
-                for (k, v) in pairs.iter_mut() {
-                    self.walk_expr(k, None);
-                    self.walk_expr(v, None);
+            ExprKind::MapLit { elems, .. } => {
+                for me in elems.iter_mut() {
+                    match me {
+                        crate::ast::MapElem::Pair(k, v) => {
+                            self.walk_expr(k, None);
+                            self.walk_expr(v, None);
+                        }
+                        crate::ast::MapElem::Spread(e) => self.walk_expr(e, None),
+                    }
                 }
             }
             ExprKind::ArrayLit(elems) => {

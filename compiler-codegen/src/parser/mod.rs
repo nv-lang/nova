@@ -4308,11 +4308,59 @@ impl Parser {
             return Ok(Expr::new(ExprKind::ArrayLit(Vec::new()), start.merge(end)));
         }
 
-        // Первый элемент: `...spread` → всегда array (spread не может
-        // стоять слева от `:`). Иначе парсим первое выражение и смотрим
-        // на следующий токен — `:` означает map-литерал.
+        // Первый элемент: `...spread`. Spread может быть **либо** в array
+        // (`[...arr1, x, ...arr2]`), **либо** в map (`[...defaults, k:v]`).
+        // Plan 55 followup (D108 spread): lookahead на second элемент чтобы
+        // определить mode:
+        // - `...spread` потом `, expr :` → map literal с map-spread.
+        // - `...spread` потом `, expr ,` / `, expr ]` / `, ...spread` → array.
+        // Edge cases: одиночный `[...spread]` — рассматривается как array
+        // (legacy default, более частый use case).
         if self.eat(&TokenKind::DotDotDot).is_some() {
             let v = self.parse_expr()?;
+            // Lookahead: после `, <expr> :` → map mode.
+            if self.peek().kind == TokenKind::Comma {
+                // Snapshot saved-position для potential rollback. Используем
+                // peek_at для non-destructive lookahead.
+                // Skip newlines после comma логически — но peek_at не делает
+                // skip; используем sliding scan через peek_at.
+                let mut i = 1usize; // skip comma at offset 0
+                // Skip newlines tokens (TokenKind::Newline).
+                while matches!(self.peek_at(i).kind, TokenKind::Newline) { i += 1; }
+                // Если следующий не-newline токен — `...` → array (still).
+                // Иначе парсим expression и проверяем `:`. Чтобы не парсить
+                // дважды — scan на наличие `:` до `,`/`]` на верхнем уровне.
+                // Bootstrap: используем простой scan с depth counter.
+                // Inline scan на верхнем уровне `[...]` — ищем `:` до `,`/`]`.
+                // Depth counter для nested brackets/parens/braces.
+                let mut depth = 0i32;
+                let mut is_map = false;
+                let mut j = i;
+                loop {
+                    let t = &self.peek_at(j).kind;
+                    match t {
+                        TokenKind::LParen | TokenKind::LBracket | TokenKind::LBrace => depth += 1,
+                        TokenKind::RParen | TokenKind::RBrace => {
+                            if depth == 0 { break; }
+                            depth -= 1;
+                        }
+                        TokenKind::RBracket => {
+                            if depth == 0 { break; }
+                            depth -= 1;
+                        }
+                        TokenKind::Comma if depth == 0 => break,
+                        TokenKind::Colon if depth == 0 => { is_map = true; break; }
+                        TokenKind::Eof => break,
+                        _ => {}
+                    }
+                    j += 1;
+                    if j > i + 256 { break; } // safety — limit lookahead.
+                }
+                if is_map {
+                    // Map mode: convert уже распарсенный spread в MapElem.
+                    return self.parse_map_lit_rest(start, vec![MapElem::Spread(v)]);
+                }
+            }
             return self.parse_array_lit_rest(start, vec![ArrayElem::Spread(v)]);
         }
         let first = self.parse_expr()?;
@@ -4320,7 +4368,7 @@ impl Parser {
             self.bump(); // :
             self.skip_newlines();
             let first_val = self.parse_expr()?;
-            return self.parse_map_lit_rest(start, vec![(first, first_val)]);
+            return self.parse_map_lit_rest(start, vec![MapElem::Pair(first, first_val)]);
         }
         // Array-литерал: первый элемент уже распарсен.
         self.parse_array_lit_rest(start, vec![ArrayElem::Item(first)])
@@ -4383,7 +4431,7 @@ impl Parser {
     fn parse_map_lit_rest(
         &mut self,
         start: Span,
-        mut pairs: Vec<(Expr, Expr)>,
+        mut elems: Vec<MapElem>,
     ) -> Result<Expr, Diagnostic> {
         loop {
             self.skip_newlines();
@@ -4404,29 +4452,26 @@ impl Parser {
             if matches!(self.peek().kind, TokenKind::RBracket) {
                 break; // trailing comma
             }
-            // `...spread` в map-литерале — пока не поддержан (D60-spread для
-            // мап — отдельная фича, за scope Plan 52).
-            if matches!(self.peek().kind, TokenKind::DotDotDot) {
-                let span = self.peek().span;
-                return Err(Diagnostic::new(
-                    "spread `...` in map literals is not supported in bootstrap \
-                     — merge maps explicitly via `@insert`",
-                    span,
-                ));
+            // Plan 55 followup (D108-spread): `...m` в map-литерале —
+            // spread другой map. Должен быть совместимого типа.
+            if self.eat(&TokenKind::DotDotDot).is_some() {
+                let v = self.parse_expr()?;
+                elems.push(MapElem::Spread(v));
+                continue;
             }
             let k = self.parse_expr()?;
             // Смешение форм: `[k: v, x]` — после map-пары элемент без `:`.
             if !matches!(self.peek().kind, TokenKind::Colon) {
                 return Err(Diagnostic::new(
                     "cannot mix map and array syntax in `[...]` — every entry of a \
-                     map literal must be `key: value`",
+                     map literal must be `key: value` (или `...map-spread`)",
                     k.span,
                 ));
             }
             self.bump(); // :
             self.skip_newlines();
             let v = self.parse_expr()?;
-            pairs.push((k, v));
+            elems.push(MapElem::Pair(k, v));
         }
         let end = self.expect(&TokenKind::RBracket)?.span;
         // Plan 52 Ф.7: inferred_key/value заполняются type-checker'ом
@@ -4435,7 +4480,7 @@ impl Parser {
         // type-info, оставляет None.
         Ok(Expr::new(
             ExprKind::MapLit {
-                pairs,
+                elems,
                 inferred_key: None,
                 inferred_value: None,
                 inferred_target_type: None,

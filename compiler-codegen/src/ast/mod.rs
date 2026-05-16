@@ -946,7 +946,10 @@ pub enum ExprKind {
     /// generic-метод-резолюции. Парсер заполняет `None`, type-checker —
     /// `Some(_)` если K/V определены однозначно.
     MapLit {
-        pairs: Vec<(Expr, Expr)>,
+        /// Plan 55 Ф.* (followup): mixed pairs + spreads. Раньше было
+        /// `Vec<(Expr, Expr)>` (только пары); теперь spreads `...m`
+        /// перемежаются с парами `k: v` в любом порядке.
+        elems: Vec<MapElem>,
         inferred_key: Option<TypeRef>,
         inferred_value: Option<TypeRef>,
         /// Plan 52 Ф.23: имя target-типа для desugar. Если type-checker
@@ -1236,6 +1239,36 @@ pub enum ArrayElem {
     Item(Expr),
     /// `...expr` spread (D60)
     Spread(Expr),
+}
+
+/// Plan 55 followup (D108-spread): элемент map-литерала.
+/// `[k: v]` — пара ключ-значение. `[...m]` — spread другой map.
+/// Mixed: `[...defaults, "x": 1, ...overrides]` — последовательно
+/// applies в порядке (later overrides earlier для duplicate keys).
+#[derive(Debug, Clone)]
+pub enum MapElem {
+    /// Обычная пара `k: v`.
+    Pair(Expr, Expr),
+    /// `...expr` — spread другой map того же типа. expr должен
+    /// иметь тип совместимый с inferred K, V литерала.
+    Spread(Expr),
+}
+
+impl MapElem {
+    /// Возвращает clone'd Vec<(Expr, Expr)> только pairs — для type-check /
+    /// lint callers которые работают только с известными парами k:v.
+    /// Spreads пропускаются (их type-check / lints — отдельной passes).
+    pub fn cloned_pairs(elems: &[MapElem]) -> Vec<(Expr, Expr)> {
+        elems.iter().filter_map(|e| match e {
+            MapElem::Pair(k, v) => Some((k.clone(), v.clone())),
+            MapElem::Spread(_) => None,
+        }).collect()
+    }
+
+    /// True если есть хотя бы один Spread элемент.
+    pub fn has_spread(elems: &[MapElem]) -> bool {
+        elems.iter().any(|e| matches!(e, MapElem::Spread(_)))
+    }
 }
 
 /// Plan 14 Ф.6 (D69): аргумент вызова. Зеркально к `ArrayElem`.

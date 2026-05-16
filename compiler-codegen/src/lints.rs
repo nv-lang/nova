@@ -87,12 +87,14 @@ fn walk_stmt_lints(s: &Stmt, out: &mut Vec<LintWarning>) {
 /// Plan 52 Ф.2: рекурсивный обход выражения. На каждом `MapLit` запускает
 /// map-литерал lints; рекурсивно спускается во все под-выражения.
 fn walk_expr_lints(e: &Expr, out: &mut Vec<LintWarning>) {
-    if let ExprKind::MapLit { pairs, .. } = &e.kind {
-        check_map_literal_lints(pairs, out);
+    if let ExprKind::MapLit { elems, .. } = &e.kind {
+        let pairs = crate::ast::MapElem::cloned_pairs(&elems);
+        check_map_literal_lints(&pairs, out);
     }
     match &e.kind {
-        ExprKind::MapLit { pairs, .. } => {
-            for (k, v) in pairs {
+        ExprKind::MapLit { elems, .. } => {
+                let pairs = crate::ast::MapElem::cloned_pairs(&elems);
+            for (k, v) in pairs.iter() {
                 walk_expr_lints(k, out);
                 walk_expr_lints(v, out);
             }
@@ -260,7 +262,7 @@ fn walk_expr_lints(e: &Expr, out: &mut Vec<LintWarning>) {
 ///   `NaN != NaN`, поэтому вставленный ключ невозможно найти обратно.
 fn check_map_literal_lints(pairs: &[(Expr, Expr)], out: &mut Vec<LintWarning>) {
     // NaN-key: ключ это Path(["f64", "NAN"]) или Path(["f32", "NAN"]).
-    for (k, _) in pairs {
+    for (k, _) in pairs.iter() {
         if let ExprKind::Path(parts) = &k.kind {
             if parts.len() == 2
                 && (parts[0] == "f64" || parts[0] == "f32")

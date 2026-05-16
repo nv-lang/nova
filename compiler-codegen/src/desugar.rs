@@ -126,21 +126,21 @@ impl DesugarCtx {
         self.desugar_children(e);
         // 2. Замена самого узла, если это MapLit.
         if matches!(&e.kind, ExprKind::MapLit { .. }) {
-            // take pairs + inferred K/V из узла, заменяя его на UnitLit-
+            // take elems + inferred K/V из узла, заменяя его на UnitLit-
             // заглушку, затем строим Block и кладём обратно.
             let span = e.span;
-            let (pairs, inferred_key, inferred_value, inferred_target_type) =
+            let (elems, inferred_key, inferred_value, inferred_target_type) =
                 match std::mem::replace(&mut e.kind, ExprKind::UnitLit) {
                     ExprKind::MapLit {
-                        pairs,
+                        elems,
                         inferred_key,
                         inferred_value,
                         inferred_target_type,
-                    } => (pairs, inferred_key, inferred_value, inferred_target_type),
+                    } => (elems, inferred_key, inferred_value, inferred_target_type),
                     _ => unreachable!(),
                 };
             e.kind = self.build_map_block(
-                pairs, inferred_key, inferred_value, inferred_target_type, span);
+                elems, inferred_key, inferred_value, inferred_target_type, span);
         }
         // Plan 52 Ф.10: D55 map-coercion для `{field: v}`. Когда
         // annotate_map_literals установил `inferred_map_v: Some(V)` —
@@ -271,7 +271,7 @@ impl DesugarCtx {
     /// до десугаринга если контекст не даёт K/V.
     fn build_map_block(
         &mut self,
-        pairs: Vec<(Expr, Expr)>,
+        elems: Vec<MapElem>,
         inferred_key: Option<TypeRef>,
         inferred_value: Option<TypeRef>,
         inferred_target_type: Option<Vec<String>>,
@@ -292,8 +292,16 @@ impl DesugarCtx {
         };
         let target_for_hint = target_type_name.clone();
         let tmp = self.fresh_map_tmp();
-        let n = pairs.len();
-        let mut stmts: Vec<Stmt> = Vec::with_capacity(n + 1);
+        // Plan 55 followup: estimate capacity = pairs count + spread sizes.
+        // Spread sizes неизвестны statically — используем pairs count как
+        // baseline, HashMap.@maybe_grow расширит при overflow. Можно
+        // улучшить через runtime estimate (sum of spread.len()), но это
+        // micro-opt; correctness не affected.
+        let pairs_count = elems.iter().filter(|e| matches!(e, MapElem::Pair(..))).count();
+        let spread_count = elems.iter().filter(|e| matches!(e, MapElem::Spread(_))).count();
+        // Initial cap = pairs (известно) + 8 на spread (heuristic).
+        let n = pairs_count + spread_count * 8;
+        let mut stmts: Vec<Stmt> = Vec::with_capacity(elems.len() + 1);
 
         // Callee: `<TargetType>.with_capacity` (Path) или
         // `<TargetType>[K, V].with_capacity` (TurboFish + Member).
@@ -364,48 +372,170 @@ impl DesugarCtx {
         //   let _kN = <key-expr>;     ← evaluated first
         //   let _vN = <value-expr>;   ← evaluated second
         //   let _ = _mN.insert(_kN, _vN);
-        for (idx, (k, v)) in pairs.into_iter().enumerate() {
-            let k_tmp = format!("{}_k{}", tmp, idx);
-            let v_tmp = format!("{}_v{}", tmp, idx);
-            stmts.push(Stmt::Let(LetDecl {
-                mutable: false,
-                pattern: Pattern::Ident { name: k_tmp.clone(), span },
-                ty: None,
-                value: k,
-                span,
-                is_ghost: false,
-            }));
-            stmts.push(Stmt::Let(LetDecl {
-                mutable: false,
-                pattern: Pattern::Ident { name: v_tmp.clone(), span },
-                ty: None,
-                value: v,
-                span,
-                is_ghost: false,
-            }));
-            // Plan 52 Ф.21: используем `insert_new` (нет возврата Option) —
-            // мапа только что создана через with_capacity, дубликатов
-            // ключей быть не может (дубликаты compile-time const ловятся
-            // dup-key lint'ом). См. std/collections/hashmap.nv::@insert_new.
-            let insert_call = Expr::new(
-                ExprKind::Call {
-                    func: Box::new(Expr::new(
-                        ExprKind::Member {
-                            obj: Box::new(Expr::new(ExprKind::Ident(tmp.clone()), span)),
-                            name: "insert_new".to_string(),
+        //
+        // Plan 55 followup (spread): MapElem::Spread(e) → for-loop
+        // через elements входной map'ы:
+        //   for _entry in (e).entries() { _mN.insert(_entry.0, _entry.1); }
+        // (Bootstrap: используем _mN.insert т.к. spread может добавить
+        // duplicate keys — insert_new недопустимо.)
+        let mut has_spreads_any = false;
+        for (idx, me) in elems.into_iter().enumerate() {
+            match me {
+                MapElem::Pair(k, v) => {
+                    let k_tmp = format!("{}_k{}", tmp, idx);
+                    let v_tmp = format!("{}_v{}", tmp, idx);
+                    stmts.push(Stmt::Let(LetDecl {
+                        mutable: false,
+                        pattern: Pattern::Ident { name: k_tmp.clone(), span },
+                        ty: None,
+                        value: k,
+                        span,
+                        is_ghost: false,
+                    }));
+                    stmts.push(Stmt::Let(LetDecl {
+                        mutable: false,
+                        pattern: Pattern::Ident { name: v_tmp.clone(), span },
+                        ty: None,
+                        value: v,
+                        span,
+                        is_ghost: false,
+                    }));
+                    // Plan 52 Ф.21: insert_new — мапа только что создана.
+                    // Plan 55 followup: если уже был spread выше, ключ мог
+                    // быть уже добавлен через spread → используем insert
+                    // (override semantics), не insert_new.
+                    let method = if has_spreads_any { "insert" } else { "insert_new" };
+                    let insert_call = Expr::new(
+                        ExprKind::Call {
+                            func: Box::new(Expr::new(
+                                ExprKind::Member {
+                                    obj: Box::new(Expr::new(ExprKind::Ident(tmp.clone()), span)),
+                                    name: method.to_string(),
+                                },
+                                span,
+                            )),
+                            args: vec![
+                                CallArg::Item(Expr::new(ExprKind::Ident(k_tmp), span)),
+                                CallArg::Item(Expr::new(ExprKind::Ident(v_tmp), span)),
+                            ],
+                            trailing: None,
                         },
                         span,
-                    )),
-                    args: vec![
-                        CallArg::Item(Expr::new(ExprKind::Ident(k_tmp), span)),
-                        CallArg::Item(Expr::new(ExprKind::Ident(v_tmp), span)),
-                    ],
-                    trailing: None,
-                },
-                span,
-            );
-            stmts.push(Stmt::Expr(insert_call));
+                    );
+                    stmts.push(Stmt::Expr(insert_call));
+                }
+                MapElem::Spread(src_map) => {
+                    has_spreads_any = true;
+                    // Desugar: spread `[...src]` → итерация через keys() + get()
+                    // вместо iter() + tuple destructure. Tuple element type
+                    // inference для mono'd HashMapIter — orthogonal issue
+                    // (выйдет за scope spread feature). Через keys() мы получаем
+                    // K напрямую, get(k) даёт Option[V] — оба известных типа.
+                    //
+                    //   let _src = <spread-expr>;
+                    //   for _k in _src.keys() {
+                    //       let _v = _src.get(_k).unwrap()
+                    //       _mN.insert(_k, _v)
+                    //   }
+                    let src_tmp = format!("{}_spr{}", tmp, idx);
+                    stmts.push(Stmt::Let(LetDecl {
+                        mutable: false,
+                        pattern: Pattern::Ident { name: src_tmp.clone(), span },
+                        ty: None,
+                        value: src_map,
+                        span,
+                        is_ghost: false,
+                    }));
+                    let k_name = format!("{}_sk{}", tmp, idx);
+                    let v_name = format!("{}_sv{}", tmp, idx);
+                    let keys_call = Expr::new(
+                        ExprKind::Call {
+                            func: Box::new(Expr::new(
+                                ExprKind::Member {
+                                    obj: Box::new(Expr::new(ExprKind::Ident(src_tmp.clone()), span)),
+                                    name: "keys".to_string(),
+                                },
+                                span,
+                            )),
+                            args: vec![],
+                            trailing: None,
+                        },
+                        span,
+                    );
+                    // let _v = _src.get(_k).unwrap()
+                    let get_call = Expr::new(
+                        ExprKind::Call {
+                            func: Box::new(Expr::new(
+                                ExprKind::Member {
+                                    obj: Box::new(Expr::new(ExprKind::Ident(src_tmp.clone()), span)),
+                                    name: "get".to_string(),
+                                },
+                                span,
+                            )),
+                            args: vec![CallArg::Item(Expr::new(ExprKind::Ident(k_name.clone()), span))],
+                            trailing: None,
+                        },
+                        span,
+                    );
+                    let unwrap_call = Expr::new(
+                        ExprKind::Call {
+                            func: Box::new(Expr::new(
+                                ExprKind::Member {
+                                    obj: Box::new(get_call),
+                                    name: "unwrap".to_string(),
+                                },
+                                span,
+                            )),
+                            args: vec![],
+                            trailing: None,
+                        },
+                        span,
+                    );
+                    let v_let = Stmt::Let(LetDecl {
+                        mutable: false,
+                        pattern: Pattern::Ident { name: v_name.clone(), span },
+                        ty: None,
+                        value: unwrap_call,
+                        span,
+                        is_ghost: false,
+                    });
+                    let insert_in_loop = Expr::new(
+                        ExprKind::Call {
+                            func: Box::new(Expr::new(
+                                ExprKind::Member {
+                                    obj: Box::new(Expr::new(ExprKind::Ident(tmp.clone()), span)),
+                                    name: "insert".to_string(),
+                                },
+                                span,
+                            )),
+                            args: vec![
+                                CallArg::Item(Expr::new(ExprKind::Ident(k_name.clone()), span)),
+                                CallArg::Item(Expr::new(ExprKind::Ident(v_name), span)),
+                            ],
+                            trailing: None,
+                        },
+                        span,
+                    );
+                    let for_body = Block {
+                        stmts: vec![v_let, Stmt::Expr(insert_in_loop)],
+                        trailing: None,
+                        span,
+                    };
+                    let for_expr = Expr::new(
+                        ExprKind::For {
+                            pattern: Pattern::Ident { name: k_name, span },
+                            iter: Box::new(keys_call),
+                            body: for_body,
+                            invariants: vec![],
+                            decreases: None,
+                        },
+                        span,
+                    );
+                    stmts.push(Stmt::Expr(for_expr));
+                }
+            }
         }
+        let _ = pairs_count; let _ = spread_count;
 
         // Plan 52 Ф.16: typed-rebinding для Block-trailing inference.
         // Без этого `let m = [k:v]` (без аннотации) — codegen infer_expr_c_type
@@ -448,10 +578,15 @@ impl DesugarCtx {
     /// `e` — это делает `desugar_expr`).
     fn desugar_children(&mut self, e: &mut Expr) {
         match &mut e.kind {
-            ExprKind::MapLit { pairs, .. } => {
-                for (k, v) in pairs.iter_mut() {
-                    self.desugar_expr(k);
-                    self.desugar_expr(v);
+            ExprKind::MapLit { elems, .. } => {
+                for me in elems.iter_mut() {
+                    match me {
+                        MapElem::Pair(k, v) => {
+                            self.desugar_expr(k);
+                            self.desugar_expr(v);
+                        }
+                        MapElem::Spread(e) => self.desugar_expr(e),
+                    }
                 }
             }
             ExprKind::ArrayLit(elems) => {

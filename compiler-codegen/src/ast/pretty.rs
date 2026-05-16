@@ -68,7 +68,8 @@ fn write_expr(out: &mut String, e: &Expr) {
             }
             out.push(']');
         }
-        ExprKind::MapLit { pairs, .. } => {
+        ExprKind::MapLit { elems, .. } => {
+                let pairs = crate::ast::MapElem::cloned_pairs(&elems);
             out.push('[');
             for (i, (k, v)) in pairs.iter().enumerate() {
                 if i > 0 { out.push_str(", "); }

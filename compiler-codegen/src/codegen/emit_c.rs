@@ -3670,10 +3670,17 @@ impl CEmitter {
                     }
                 }
             }
-            ExprKind::MapLit { pairs, .. } => {
-                for (k, v) in pairs {
-                    Self::collect_idents_expr(k, out);
-                    Self::collect_idents_expr(v, out);
+            ExprKind::MapLit { elems, .. } => {
+                for me in elems {
+                    match me {
+                        crate::ast::MapElem::Pair(k, v) => {
+                            Self::collect_idents_expr(k, out);
+                            Self::collect_idents_expr(v, out);
+                        }
+                        crate::ast::MapElem::Spread(e) => {
+                            Self::collect_idents_expr(e, out);
+                        }
+                    }
                 }
             }
             ExprKind::RecordLit { fields, .. } => {
