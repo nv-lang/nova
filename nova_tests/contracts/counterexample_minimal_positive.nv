@@ -1,0 +1,13 @@
+// Ф.3.1 (Plan 33.6): counterexample minimisation — fn с 6 параметрами,
+// ensures нарушен по 2 → counterexample показывает все 6 bindings (params first).
+// REQUIRES_SMT_BACKEND z3
+// EXPECT_COMPILE_ERROR counterexample
+
+module contracts.counterexample_minimal_positive
+
+#verify
+fn many_params(a int, b int, c int, d int, e int, f int) -> int
+    ensures result == a + b
+{
+    a + c
+}

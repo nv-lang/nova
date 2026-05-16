@@ -2151,8 +2151,26 @@ pub(super) fn format_counterexample(model: &Model) -> String {
         return "values not extracted (TrivialBackend); enable Z3 \
                 backend for full counterexample".into();
     }
+    // Ф.3.1 (Plan 33.6): minimisation + ranking.
+    // 1. Filter out internal Skolem vars (_old_*, _havoc_*, _trusted_*, _entry_*)
+    //    из top-level diagnostic — они для internal reasoning, user их не понимает.
+    // 2. Sort: parameters first (no _ prefix), intermediate vars last (_ prefix).
+    // 3. Cap output: первые 10 binding'ов; остальные — суммарный счёт.
+    let mut user_facing: Vec<(&String, &ModelValue)> = model.bindings.iter()
+        .filter(|(name, _)| !name.starts_with("_skolem_"))
+        .collect();
+    user_facing.sort_by(|(a, _), (b, _)| {
+        let a_internal = a.starts_with('_');
+        let b_internal = b.starts_with('_');
+        match (a_internal, b_internal) {
+            (false, true) => std::cmp::Ordering::Less,    // params first
+            (true, false) => std::cmp::Ordering::Greater,
+            _ => a.cmp(b),
+        }
+    });
+    let total = user_facing.len();
     let mut parts = Vec::new();
-    for (name, val) in &model.bindings {
+    for (name, val) in user_facing.iter().take(10) {
         let v = match val {
             ModelValue::Int(n) => n.to_string(),
             ModelValue::Bool(b) => b.to_string(),
@@ -2160,6 +2178,9 @@ pub(super) fn format_counterexample(model: &Model) -> String {
             ModelValue::Unknown => "?".into(),
         };
         parts.push(format!("{} = {}", name, v));
+    }
+    if total > 10 {
+        parts.push(format!("... ({} more bindings)", total - 10));
     }
     parts.join(", ")
 }
