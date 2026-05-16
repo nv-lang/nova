@@ -32,6 +32,7 @@ pub mod render_md;
 pub mod render_json;
 pub mod scraper;
 pub mod mutation;
+pub mod collect_handlers;
 
 pub use doctree::{DocTree, DocModule, DocItem, ItemKind, Signature, Visibility};
 
@@ -114,6 +115,13 @@ pub fn render_json(tree: &DocTree) -> String {
 /// Plan 45 Ф.9 — DocTree → JSON с source text для точной line-info.
 pub fn render_json_with_source(tree: &DocTree, source: &str) -> String {
     render_json::render_with_source(tree, Some(source))
+}
+
+/// Plan 45 Ф.26.2 / Ф.23.4: populate handler matrix для effect items
+/// (scan source на `handler <Effect> { ... }` literal'ы).
+/// Single-file mode: вызывается из CLI после build() с известным source.
+pub fn populate_handler_matrix(tree: &mut DocTree, source: &str) {
+    collect_handlers::collect_handlers_with_source(tree, source);
 }
 
 /// Plan 45 Ф.23.12: run style-guide lints, return violations.

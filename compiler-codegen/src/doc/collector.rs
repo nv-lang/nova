@@ -510,7 +510,9 @@ fn collect_type(module_path: &[String], t: &TypeDecl) -> DocItem {
                         .unwrap_or_else(|| "()".to_string()),
                 })
                 .collect();
-            ItemKind::Effect { methods: sigs, axioms }
+            // Plan 45 Ф.26.2: handlers populated post-collection в
+            // `collect_handlers` pass (workspace mode). Default empty.
+            ItemKind::Effect { methods: sigs, axioms, handlers: Vec::new() }
         }
         TypeDeclKind::Protocol(methods) => {
             let sigs = methods

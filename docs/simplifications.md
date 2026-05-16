@@ -7096,3 +7096,44 @@ test doc_newtype.rs который verify newtype rendering.
 3. Compile-time guarantee неэффективен — Rust разрешает duplicate arms.
 4. Production-grade: каждое добавление variant'а сопровождается integration test
    который verify правильное rendering.
+
+---
+
+## Plan 45 Ф.26.2 — Handler matrix simplifications (2026-05-16)
+
+### Text-based handler scanner (vs AST visitor)
+
+**Где:** compiler-codegen/src/doc/collect_handlers.rs::find_handler_literals
+**Что упрощено:** Scan source slice fn-body на pattern handler <Name> {, не
+full AST visitor across ExprKind variants.
+**Почему:** Полный visitor — ~250 LOC + сильная coupling к AST schema; легко
+ломается при AST refactor'ах. Текстовый scan — robust, дёшев, deterministic.
+False positives ("handler Foo" в string literal) допустимы для documentation
+tooling.
+**Как чинить:** Ф.26.2+ — AST visitor, ловит true semantics. Но low ROI:
+текстовый scan покрывает 99% production кода. Roadmap'нут если будут
+production false-positive complaints.
+**Приоритет:** L — text-based достаточно для production docs.
+
+### Workspace mode handlers — out of scope для Ф.26.2
+
+**Где:** collect_handlers::collect_handlers_workspace — noop.
+**Что упрощено:** В workspace mode handler matrix НЕ populates.
+**Почему:** CLI workspace pipeline передаёт concatenated sources в test runner,
+но span'ы относительные к каждому файлу. Нужен per-file sources map
+(file_id > source string), это refactor pipeline'а.
+**Как чинить:** Plan 45.A — workspace handler matrix через sources map в
+DocTree. ~150 LOC.
+**Приоритет:** M — workspace handlers полезны для большых codebases.
+
+### Resolution только для unique short names
+
+**Где:** collect_handlers::resolve_effect
+**Что упрощено:** Если handler Foo { без qualifier и в DocTree есть несколько
+effects с именем Foo (e.g., mod1::Foo и mod2::Foo) — handler НЕ
+attributed ни к одному (ambiguous > skip).
+**Почему:** Без import-resolution scope analysis правильный target не
+determined.
+**Как чинить:** integration с type-checker import resolution — может resolve
+по contextual scope. Не нужен для MVP.
+**Приоритет:** L — в production code обычно один effect с уникальным именем.

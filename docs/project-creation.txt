@@ -12589,3 +12589,45 @@ ova_tests/doc/fixtures/kinds/expected.json — AccountId
   предыдущей ошибкой). Нужно proactive integration test.
 - При добавлении нового variant (Ф.23.10), компилятор НЕ предупреждает что старый arm
   shadow'ит — это not exhaustive checking, а normal match ordering.
+
+=== Plan 45 Ф.26.2 — Handler matrix (Ф.23.4 finally реализован, 2026-05-16) ===
+
+План явно отмечал Ф.23.4 как ?? НЕ реализован (§19 «Сравнение»). Эта фаза
+закрывает обещание из плана §19.4 п.4: "handler matrix Effect > impls,
+unique edge vs Go/Rust/TS".
+
+**Что добавлено:**
+- HandlerRef { caller_item_id: String, kind: String } struct в doctree.rs
+- ItemKind::Effect.handlers: Vec<HandlerRef> field
+- compiler-codegen/src/doc/collect_handlers.rs — text-based scanner
+- populate_handler_matrix(tree, source) public API в doc/mod.rs
+- CLI wiring в single-file mode (cmd_doc)
+- JSON output: effect.handlers = [{caller_item_id, kind}]
+- MD section: #### Handlers под Effect declaration с bullet list callers
+
+**Дизайн — text-based scanner, не AST visitor:**
+- Полный AST visitor across all ExprKind variants — ~250 LOC + сильная coupling к
+  AST schema (которая отличается от моего первоначального угадывания).
+- Текстовый scan source slice fn-item (source[span.start..span.end]) на
+  pattern handler <Name> { — robust к AST refactor'ам, дёшев, deterministic.
+- Аналогично scraper.rs Ф.24.9 — рабочий precedent для simple implementations.
+- False positives (handler в string literal) допустимы для documentation.
+
+**Resolution:**
+- Full path mod.path.Foo > mod.path::Foo lookup.
+- Short name Foo > only если ровно один effect с этим именем (иначе skip).
+
+**Workspace mode:** Out-of-scope для Ф.26.2.
+- CLI workspace pipeline передаёт concatenated sources, но span'ы относительные
+  к каждому файлу. Production-grade нужен sources map.
+- Plan 45.A — workspace handler matrix через per-file source tracking.
+
+**Tests:**
+- 5 unit tests в collect_handlers.rs (inline handler, qualified path, ignore
+  substring, ignore без brace, multiple handlers)
+- 6 integration tests в compiler-codegen/tests/doc_handler_matrix.rs
+  (inline registered, empty array, multiple callers distinct, deterministic,
+  JSON render, MD section)
+- Golden fixture kinds/sample.nv regenerated с handlers: [] (нет handlers).
+
+**Total после Ф.26.2:** 68 doc integration tests PASS (10 suites).

@@ -280,13 +280,22 @@ fn write_item(w: &mut JsonWriter, it: &DocItem) {
             w.field_str("type", ty);
             w.field_str("value", value);
         }
-        ItemKind::Effect { methods, axioms } => {
+        ItemKind::Effect { methods, axioms, handlers } => {
             // Plan 45 Ф.22.4 / D107: axioms эффекта (D24) — alphabetical.
             w.field_array("axioms", |w| {
                 for ax in axioms {
                     w.array_object(|w| {
                         w.field_str("formula", &ax.formula);
                         w.field_str("name", &ax.name);
+                    });
+                }
+            });
+            // Plan 45 Ф.26.2 / Ф.23.4: handler matrix — alphabetical перед methods.
+            w.field_array("handlers", |w| {
+                for h in handlers {
+                    w.array_object(|w| {
+                        w.field_str("caller_item_id", &h.caller_item_id);
+                        w.field_str("kind", &h.kind);
                     });
                 }
             });

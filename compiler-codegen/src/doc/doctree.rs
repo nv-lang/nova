@@ -386,6 +386,11 @@ pub enum ItemKind {
         /// Plan 45 Ф.22.4 / D107: axioms эффекта (по D24). Пустой Vec
         /// если нет axioms (большинство эффектов).
         axioms: Vec<EffectAxiomDoc>,
+        /// Plan 45 Ф.26.2 / Ф.23.4 / §19.4: handler matrix. Workspace pass
+        /// сканирует все fn bodies на `handler <ThisEffect> { ... }` literal'ы
+        /// и собирает callers. Sorted by (caller_item_id, handler_kind).
+        /// Empty в single-file mode (caller'ы могут быть в других модулях).
+        handlers: Vec<HandlerRef>,
     },
     /// Protocol-декларация (D72).
     Protocol {
@@ -546,6 +551,21 @@ pub struct EffectAxiomDoc {
     pub name: String,
     /// Строка-формула, рендерёная как Nova source (best-effort).
     pub formula: String,
+}
+
+/// Plan 45 Ф.26.2 / Ф.23.4: ссылка на use-site эффекта в виде
+/// `handler <Effect> { ... }` literal'а. Workspace pass находит все
+/// такие literal'ы и регистрирует их в `ItemKind::Effect.handlers`.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct HandlerRef {
+    /// Stable ID функции, в чьём body найден handler literal.
+    /// Format: `<module_path>::<fn_name>` или
+    /// `<module_path>::<TypeName>.<method>`.
+    pub caller_item_id: String,
+    /// `inline` — `handler X { ops... }` прямо в `with`-block.
+    /// `bound` — `let h = handler X { ... }` + `with x = h { ... }`.
+    /// MVP: всегда `"inline"` — bound handlers требуют data-flow.
+    pub kind: String,
 }
 
 #[derive(Debug, Clone)]
