@@ -5436,6 +5436,7 @@ impl Parser {
                 Ok(StmtOrExpr::Stmt(Stmt::Assume { expr, span }))
             }
             // Plan 33.5 Ф.4.1: `apply lemma_name(args)` — активация lemma.
+            // Ф.13.1 (Plan 33.6): `apply lemma_name` (без скобок) — auto-inference из scope.
             // Контекстуальный keyword: `apply` не резервируем глобально.
             TokenKind::Ident(ref n) if n == "apply" => {
                 self.bump();
@@ -5446,16 +5447,22 @@ impl Parser {
                         self.peek().span,
                     )),
                 };
-                // args — обязательный список в скобках, может быть пустым.
-                self.expect(&TokenKind::LParen)?;
+                // Ф.13.1: args скобки опциональны. `apply lemma` без `(...)` →
+                // empty args → verify-side auto-inference.
                 let mut args = Vec::new();
-                while !matches!(self.peek().kind, TokenKind::RParen) {
-                    args.push(self.parse_expr()?);
-                    if !matches!(self.peek().kind, TokenKind::RParen) {
-                        self.expect(&TokenKind::Comma)?;
+                let end = if matches!(self.peek().kind, TokenKind::LParen) {
+                    self.bump(); // (
+                    while !matches!(self.peek().kind, TokenKind::RParen) {
+                        args.push(self.parse_expr()?);
+                        if !matches!(self.peek().kind, TokenKind::RParen) {
+                            self.expect(&TokenKind::Comma)?;
+                        }
                     }
-                }
-                let end = self.expect(&TokenKind::RParen)?.span;
+                    self.expect(&TokenKind::RParen)?.span
+                } else {
+                    // Без скобок — auto-mode, span до имени.
+                    self.tokens[self.pos.saturating_sub(1)].span
+                };
                 let span = start.merge(end);
                 Ok(StmtOrExpr::Stmt(Stmt::Apply { lemma: name, args, span }))
             }
