@@ -13803,3 +13803,48 @@ features implemented � production-grade test coverage.
 
 200+ doc tests PASS (26+ suites + 75+ unit). Plan 45 close ~99%.
 Remaining: Plan 45.B full stdlib doc-pass (weeks).
+
+=== Plan 45 Sprint Ф.35 — stdlib doc-pass + runtime/codegen fixes (2026-05-17) ===
+
+Ф.35.1-4: stdlib doc-pass — 4 файла, ~120 items, 100% coverage:
+- std/time/duration.nv: 87/87, 19 with examples. Duration + Timestamp +
+  Time effect + extensions на int/f64 + measure/deadline_in.
+- std/collections/vec.nv: 7/7, 7 with examples. map/filter/fold/any/all/first/last.
+- std/encoding/json.nv: 23/23, 4 with examples. JsonValue + parse + into + pretty.
+- std/path/path.nv: 6/6, 6 with examples. join/parent/basename/extension/is_absolute/normalize.
+
+`#stable(since = "0.1")` на каждом export item. Doc-comments по конвенции
+`/// summary` + опциональный `# Examples` блок.
+
+Discovered + fixed во время Ф.35.4:
+
+1. StringBuilder.into() — consuming flag в C runtime (b->consumed = 1)
+   + check_live assert на каждом mutating method'е. После into() любой
+   append → runtime panic. Это уже было в string_builder.h, но не было
+   non-consuming read-методов. Добавлены 4 метода:
+   - @starts_with(str) / @ends_with(str) — non-consuming memcmp prefix/suffix.
+   - @is_empty() — O(1) status.
+   - @peek() — str-snapshot буфера (caveat: invalidates после append-realloc).
+
+2. Path.join (variadic `...parts []str`) — дважды broken:
+   a) старый код имел `buf.into().ends_with("/")` в condition (consumed-then-append
+      = panic). Старый автор пометил dead branch, но забыл удалить.
+   b) даже после fix'а тесты падали потому что `Path.join(["a","b","c"])`
+      semantic-wise это передача ОДНОГО array в variadic-position (а не spread).
+      Правильная форма — `Path.join("a","b","c")` или `Path.join(...arr)`.
+
+3. КОРНЕВОЙ codegen-баг: variadic call для НЕ-int element types.
+   emit_array_lit infer'ил element type только из ArrayElem::Item.
+   Spread-only массивы (typical для variadic-routing с `...arr`) fall'ались
+   на nova_int → push'или nova_str struct as int → struct corruption.
+   Fix: добавлен второй find_map для Spread случая, элемент type выводится
+   из NovaArray_<T>* spread-выражения.
+
+4. Path.normalize — `stack.pop()` в if-statement без `let _ =` триггерил
+   отдельный codegen-баг (if-expr с unit-vs-Option ветками в statement-position).
+   Workaround: явное `let _ = stack.pop()`. Compiler-fix отложен.
+
+Commits: 414b9bf (SB methods), c10adcc (variadic fix), c55f824 (path.nv),
+925463 (Ф.35 roadmap), 78c195b (stdlib doc-pass), 0380260 (plan update).
+
+Plan 45 close ~99.5%. Все user-facing features production-grade.
