@@ -1,0 +1,14 @@
+// Ф.1.2 (Plan 33.6): #unverified + unsupported contract → W2401 warning, не error.
+// Программист явно отказался от SMT → компилируется, тест проходит.
+
+module contracts.w2401_unverified_tuple_positive
+
+#unverified
+fn tuple_contract(x int) -> int
+    requires (x, 0).0 >= 0
+=> x
+
+test "unverified fn с tuple contract компилируется" {
+    assert(tuple_contract(5) == 5)
+    assert(tuple_contract(0) == 0)
+}

@@ -1,0 +1,10 @@
+// EXPECT_COMPILE_ERROR ghost variable `g` cannot be read in non-ghost code
+//
+// Ф.1.1 (Plan 33.6): ghost var в арифметическом выражении runtime context → error.
+
+module contracts.ghost_in_arith_fail
+
+fn bad_arith(x int) -> int {
+    ghost let g = x + 10
+    x + g  // g в runtime арифметике → error
+}

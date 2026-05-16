@@ -1,0 +1,10 @@
+// EXPECT_COMPILE_ERROR E2401
+//
+// Ф.1.2 (Plan 33.6): tuple expression в ensures без #unverified → E2401.
+// SMT encoder не поддерживает tuple literals в contract expressions.
+
+module contracts.e2401_ensures_tuple_fail
+
+fn returns_pair(x int) -> int
+    ensures (result, result + 1).0 >= 0
+=> x

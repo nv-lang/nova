@@ -1,0 +1,10 @@
+// EXPECT_COMPILE_ERROR E2401
+//
+// Ф.1.2 (Plan 33.6): Default mode (без #verify/#unverified) + unsupported contract → E2401 + hint.
+// Hint должен предложить #unverified или #pure helper.
+
+module contracts.e2401_default_mode_hint_fail
+
+fn plain_fn(x int) -> int
+    requires (x, 0).0 > 0
+=> x

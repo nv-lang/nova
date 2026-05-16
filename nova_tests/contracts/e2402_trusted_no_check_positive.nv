@@ -1,0 +1,31 @@
+// Ф.1.3 (Plan 33.6): #trusted handler — никакой верификации, любой body OK.
+// Branching, FFI, сложная логика — всё разрешено с #trusted.
+
+module contracts.e2402_trusted_no_check_positive
+
+type Log effect {
+    Write(msg int)
+    #pure last() -> int
+    axiom after_write(v) => post(Write(v))(last()) == v
+}
+
+test "#trusted handler с complex body компилируется без ошибок" {
+    let mut buf = 0
+    with #trusted Log = handler Log {
+        Write(msg) {
+            if msg > 0 {
+                buf = msg
+            } else if msg < -100 {
+                buf = -100
+            } else {
+                buf = 0
+            }
+        }
+        last() => buf
+    } {
+        Log.Write(42)
+        assert(Log.last() == 42)
+        Log.Write(-200)
+        assert(Log.last() == -100)
+    }
+}
