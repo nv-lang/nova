@@ -7137,3 +7137,25 @@ determined.
 **Как чинить:** integration с type-checker import resolution — может resolve
 по contextual scope. Не нужен для MVP.
 **Приоритет:** L — в production code обычно один effect с уникальным именем.
+
+---
+
+## Plan 45 Ф.26.3 — allow_transit placeholder (2026-05-16)
+
+### Parser-side allow_transit attribute не реализован
+
+**Где:** Capabilities.allow_transit всегда Vec::new() в collector.
+**Что упрощено:** DocTree struct имеет field, но parser не parses
+#allow_transit Log attribute. Field всегда empty по умолчанию.
+**Почему:** Plan 45 Ф.26.3 focuses на doc-side (data model + render); parser
+extension — отдельная задача (Plan 16/45 follow-up, ~200 LOC: AST + parser
++ type-checker propagation).
+**Как чинить:** Plan 16 / 45 follow-up — add #allow_transit attribute to
+parser, parse в n.allow_transit_attr: Vec<String>, propagate в collector
+аналогично ealtime_attr.
+**Приоритет:** M — D63 spec заявляет field, но 0 production code сегодня
+использует. Plan 16 production-readiness может pull это раньше если capability
+sandboxing будет needed.
+
+**Note:** field в DocTree гарантирует schema-stable JSON output. Consumer'ы
+не ломаются когда parser добавится (просто получат non-empty arrays).

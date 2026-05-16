@@ -49,6 +49,9 @@
 
       ],
       "capabilities": {
+        "allow_transit": [
+
+        ],
         "forbid": [
 
         ],

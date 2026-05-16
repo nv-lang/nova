@@ -194,8 +194,13 @@ fn write_item(w: &mut JsonWriter, it: &DocItem) {
             w.array_str(a);
         }
     });
-    // Plan 45 Ф.23.3 / D63/D64: capabilities
+    // Plan 45 Ф.23.3 / D63/D64: capabilities — alphabetical:
+    // allow_transit (a) < forbid (f) < pure_fn (p) < realtime (r) < realtime_nogc (rn).
     w.field_object("capabilities", |w| {
+        // Plan 45 Ф.26.3 / D63: allow_transit (escape hatches из forbid-блока).
+        w.field_array("allow_transit", |w| {
+            for e in &it.capabilities.allow_transit { w.array_str(e); }
+        });
         w.field_array("forbid", |w| {
             for f in &it.capabilities.forbid { w.array_str(f); }
         });

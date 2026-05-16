@@ -314,6 +314,12 @@ pub struct Capabilities {
     pub pure_fn: bool,
     /// Module-level `#forbid X, Y` — запрещённые effects (из module attrs).
     pub forbid: Vec<String>,
+    /// Plan 45 Ф.26.3 / D63: `#allow_transit X, Y` — effects которые могут
+    /// проходить **сквозь** `forbid`-sandbox (capability escape hatches).
+    /// Например `forbid Io { ...code... } #allow_transit Log` — Log
+    /// эффект разрешён даже внутри `forbid Io` блока.
+    /// Empty Vec по умолчанию.
+    pub allow_transit: Vec<String>,
 }
 
 /// Plan 45 Ф.3 / D105: deprecation marker.

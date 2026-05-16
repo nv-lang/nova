@@ -401,8 +401,12 @@ fn collect_fn(module_path: &[String], f: &FnDecl, module_forbid: &[String]) -> D
         realtime: matches!(f.realtime_attr, RealtimeAttr::Realtime | RealtimeAttr::RealtimeNogc),
         realtime_nogc: matches!(f.realtime_attr, RealtimeAttr::RealtimeNogc),
         pure_fn: matches!(f.purity, Purity::Pure),
-        // Plan 45 Р¤.24.1: propagate module-level #forbid into each item.
+        // Plan 45 Ф.24.1: propagate module-level #forbid into each item.
         forbid: module_forbid.to_vec(),
+        // Plan 45 Ф.26.3 / D63: allow_transit пока всегда empty —
+        // parser не поддерживает `#allow_transit X` attribute. Schema-stable
+        // placeholder для будущего D63-completion (Plan 16/45 follow-up).
+        allow_transit: Vec::new(),
     };
     DocItem {
         id,

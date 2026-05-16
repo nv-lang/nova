@@ -12631,3 +12631,36 @@ unique edge vs Go/Rust/TS".
 - Golden fixture kinds/sample.nv regenerated с handlers: [] (нет handlers).
 
 **Total после Ф.26.2:** 68 doc integration tests PASS (10 suites).
+
+=== Plan 45 Ф.26.3 — allow_transit capability (D63 placeholder, 2026-05-16) ===
+
+D63 spec заявляет #allow_transit X, Y — escape hatch для forbid-sandbox
+(effects которые могут проходить сквозь orbid Io { ... } block). Plan 45
+Ф.23.3 implement'нул orbid + ealtime + pure, но allow_transit
+оказался не добавлен в Capabilities struct > JSON consumers не имели поле.
+
+**Что добавлено:**
+- Capabilities.allow_transit: Vec<String> field
+- JSON output: capabilities.allow_transit (alphabetically первое:  <  < p < )
+- MD badge: ?? \llow_transit(X)\` рядом с другими capability badges
+- Schema: использует dditionalProperties (нет separate Capabilities ),
+  field automatically allowed.
+
+**Honest limitation:** Parser **не поддерживает** #allow_transit attribute.
+Field в DocTree всегда empty по умолчанию. Это schema-stable placeholder для
+future parser-side implementation (Plan 16/45 follow-up).
+
+**Зачем добавлять field если parser не fills?**
+- JSON schema stable: consumers могут polling эту фичу не ломаясь
+- LLM может видеть что Nova capability model включает allow_transit semantically
+- Tests 	ests/doc_allow_transit.rs::manually_set_allow_transit_renders
+  demonstrate что render pipeline работает — нужна только parser extension
+
+**Tests:** 5 integration tests в 	ests/doc_allow_transit.rs:
+- field exists, default empty
+- JSON includes array
+- Alphabetical position (before forbid)
+- Manually-populated renders correctly
+- MD badge renders
+
+Total после Ф.26.3: 73 doc integration PASS (11 suites).

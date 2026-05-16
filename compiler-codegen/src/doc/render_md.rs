@@ -224,6 +224,8 @@ fn render_item(it: &DocItem, link_map: &std::collections::HashMap<String, String
         else if cap.realtime { badges.push("⏱ `realtime`".to_string()); }
         if cap.pure_fn { badges.push("🧊 `pure`".to_string()); }
         for f in &cap.forbid { badges.push(format!("🚫 `forbid({})`", f)); }
+        // Plan 45 Ф.26.3 / D63: allow_transit badges.
+        for e in &cap.allow_transit { badges.push(format!("📤 `allow_transit({})`", e)); }
         if !badges.is_empty() {
             let _ = writeln!(out, "{}", badges.join(" "));
             let _ = writeln!(out);
