@@ -12627,3 +12627,147 @@ cross-type cascade через From-конвертацию.
 - feat(49): Ф.5 — M:N atomic kind+reason в cross-worker (835b154de3c)
 - feat(49): Ф.6 partial — CancelToken[T] typed cancel reason для T≠str
   (9ccc6096d43)
+
+==============================================================================
+2026-05-16 — Plan 52 Ф.18-Ф.24 (post-audit production hardening) ✅
+==============================================================================
+
+## Что сделано
+
+После аудита Plan 52 (сравнение с Go/Rust/TS) выявлено 9 областей
+улучшения. Реализовано 6 за сессию, 3 вынесены в Plan 52.1
+(architectural/deferred).
+
+### Ф.18 — Iteration order policy в D108
+
+Документировано: HashMap unordered (Go/Rust-style); iteration order
+не специфицирован и может рандомизироваться. Без policy users писали
+fragile тесты которые ломаются при swisstable-миграции. Escape-hatch
+— OrderedMap (через FromPairs протокол, Plan 52.1).
+
+### Ф.19 — Canonical identity для #from_fields
+
+Закрывает M-52-from-fields-canonical. До этого from_fields_types
+собирался по bare-name из всех types в module.items (после inline
+import-resolve). User-локальный 'type HashMap #from_fields' shadow'нул
+бы stdlib и accidentally получил map-coercion.
+
+Fix: в MapLitCtx::build проходим peer_files, собираем canonical-stdlib
+type-names (peer.path содержит '/std/collections/'). Только canonical
+типы попадают в from_fields_types. User-локальный тип с тем же именем
+получает CODEGEN-FAIL вместо silent wrong-codegen.
+
+Test: negative_user_shadows_hashmap.nv.
+
+### Ф.20 — Interp/codegen MapLit stub → invariant doc
+
+До этого сообщение об ошибке говорило 'Plan 52 Ф.5/Ф.4 not yet wired',
+устарело после Ф.4/Ф.5. Изменено на 'compiler bug: pipeline invariant
+violation' с явным указанием что desugar_module обязателен + link на
+issues. Actionable error для developer'а который случайно сломал pipeline.
+
+### Ф.21 — @insert_new fast-path
+
+До этого @insert возвращал Option[V] (старое значение); в литерале
+гарантировано None т.к. мапа только что создана через with_capacity.
+Дискардили через 'let _ = ...' но overhead на Option-allocation +
+branch оставался.
+
+Добавлен @insert_new (skip allocation + branch, skip Tombstone check,
+skip @maybe_grow). Контракт: вызывать только на мапе только что
+созданной через with_capacity. desugar.rs переключён на @insert_new
+для литералов.
+
+### Ф.22 — DoS-resistant hash через SipHash-1-3 + per-process seed
+
+Major prod gap: до этого Nova использовал FNV-1a без seed —
+vulnerable к hash-flooding атакам. Attacker контролирующий keys
+(HTTP request body → HashMap) мог precompute collision'ы offline
+→ O(n²) deg.
+
+Решение (как в Rust HashMap, Python dict, Ruby Hash, Perl):
+- SipHash-1-3 (Jean-Philippe Aumasson, public domain) ~80 LOC чистого C
+- Per-process random seed через BCryptGenRandom (Windows),
+  getrandom() (Linux/macOS), time-based fallback для других
+- Lazy thread-safe init (nova_hash_seed_ensure_init) на entry
+  в каждый hash-helper; hot path после init — single cmp/branch
+
+bool_hash оставлен identity (2-value space, DoS не релевантен).
+
+Test: positive_siphash_smoke.nv — anagram collision attack pattern
+корректно различаются.
+
+Performance: SipHash-1-3 ~10ns/8bytes vs FNV ~3ns/8bytes — collision
+resistance критичнее для prod.
+
+### Ф.23 — #from_pairs attribute для расширяемости [k:v] desugar
+
+До этого десугаринг [k: v] хардкодил HashMap.with_capacity — BTreeMap,
+OrderedMap, user-типы не могли использовать литерал.
+
+Решение: декларативный attribute #from_pairs на target-типе. Compiler
+видит attribute → знает что тип предоставляет with_capacity(int) -> Self
++ mut @insert_new(K, V), и десугарит литерал через эти методы.
+
+Реализация: TypeAttr::FromPairs, parser, AST MapLit.inferred_target_type,
+MapLitCtx.from_pairs_types с canonical-identity check, annotate
+прописывает path в inferred_target_type, desugar использует target вместо
+хардкода HashMap. stdlib HashMap получает оба attribute.
+
+User-локальный тип с #from_pairs пока ограничен canonical-check
+(только stdlib HashMap) — release через explicit registry Plan 52.1.
+
+Spec D108 updated.
+
+### Ф.24 — Spread `[...defaults, k:v]` → Plan 52.1 (deferred)
+
+Попытка реализации (через HashMap.@clone() + @merge_from() в stdlib)
+показала pre-existing codegen quirk: pattern-match Occupied { key,
+value } в позиции expression-body of while-loop падает с 'anonymous
+record literal without spread'.
+
+Workaround существует (HashMap.from(array_of_pairs)). Vынесено в
+Plan 52.1 — реализация тривиальна (~50 LOC) после фикса codegen
+quirk в Plan 48 followup.
+
+### Ф.25-26 → Plan 52.1 (architectural)
+
+- Ф.25 const map-literal (perfect-hash): требует gperf-like
+  infrastructure ~300 LOC
+- Ф.26 MIR/codegen-late lowering: требует новой MIR-module
+  ~500+ LOC; перед v1.0
+
+Вынесены в docs/plans/52.1-hashmap-literals-advanced.md.
+
+## Files
+
+| Файл | Что |
+|---|---|
+| spec/decisions/03-syntax.md D108 | iter-order policy + #from_pairs note |
+| compiler-codegen/src/types/mod.rs | from_fields canonical + from_pairs set + inferred_target_type |
+| compiler-codegen/src/ast/mod.rs | TypeAttr::FromPairs + MapLit.inferred_target_type |
+| compiler-codegen/src/parser/mod.rs | #from_pairs attribute parsing |
+| compiler-codegen/src/desugar.rs | @insert_new + target_type variable |
+| compiler-codegen/src/interp/mod.rs | invariant doc |
+| compiler-codegen/src/codegen/emit_c.rs | invariant doc |
+| compiler-codegen/nova_rt/nova_rt.h | SipHash-1-3 inline + lazy seed init |
+| compiler-codegen/nova_rt/runtime.c | seed init via BCryptGenRandom/getrandom |
+| std/collections/hashmap.nv | #from_pairs + @insert_new |
+| nova_tests/map_literals/negative_user_shadows_hashmap.nv | Ф.19 |
+| nova_tests/map_literals/positive_siphash_smoke.nv | Ф.22 |
+| docs/plans/52.1-hashmap-literals-advanced.md | Plan 52.1 deferred items |
+
+## Регрессия
+
+21 map_literals тестов PASS, 0 regressions vs prev session.
+
+### Commits
+
+- docs(52): post-audit план Ф.18-Ф.26 — 9 областей улучшения
+- spec(D108): Ф.18 — iteration order policy для map-литерала
+- fix(52): Ф.19 — canonical identity для #from_fields через peer_files
+- fix(52): Ф.20 — interp/codegen MapLit stub → pipeline invariant doc
+- perf(52): Ф.21 — @insert_new fast-path в map-литерале
+- feat(52): Ф.22 — DoS-resistant hash через SipHash-1-3 + per-process seed
+- feat(52): Ф.23 — #from_pairs attribute для расширяемости [k:v] desugar
+- docs(52): Ф.24 → Plan 52.1 (deferred — codegen quirk pattern in while-body)
