@@ -131,16 +131,52 @@ export fn Duration.from_secs_f64(s f64) -> Self =>
 // Конверсия обратно в числа
 // ──────────────────────────────────────────────────────────────────────────
 
+/// Total duration in nanoseconds (raw underlying value).
+#stable(since = "0.1")
 export fn Duration @as_nanos() => @nanos
+
+/// Total duration in microseconds (truncating division — sub-μs nanoseconds dropped).
+#stable(since = "0.1")
 export fn Duration @as_micros() => @nanos / 1_000
+
+/// Total duration in milliseconds (truncating — sub-ms nanoseconds dropped).
+///
+/// # Examples
+/// ```nova
+/// assert(Duration.from_secs(2).as_millis() == 2000)
+/// ```
+#stable(since = "0.1")
 export fn Duration @as_millis() => @nanos / 1_000_000
+
+/// Total duration in whole seconds (truncating).
+#stable(since = "0.1")
 export fn Duration @as_secs() => @nanos / 1_000_000_000
+
+/// Total duration in whole minutes (truncating).
+#stable(since = "0.1")
 export fn Duration @as_mins() => @nanos / 60_000_000_000
+
+/// Total duration in whole hours (truncating).
+#stable(since = "0.1")
 export fn Duration @as_hours() => @nanos / 3_600_000_000_000
+
+/// Total duration in whole days (truncating).
+#stable(since = "0.1")
 export fn Duration @as_days() => @nanos / 86_400_000_000_000
 
-// Дробные конверсии (без потери точности на typical scales).
+/// Total duration as fractional seconds (`f64`).
+///
+/// Preserves sub-second precision (unlike [`as_secs`] which truncates).
+///
+/// # Examples
+/// ```nova
+/// assert(Duration.from_millis(1500).as_secs_f64() == 1.5)
+/// ```
+#stable(since = "0.1")
 export fn Duration @as_secs_f64() -> f64 => (@nanos as f64) / 1_000_000_000.0
+
+/// Total duration as fractional milliseconds (`f64`).
+#stable(since = "0.1")
 export fn Duration @as_millis_f64() => (@nanos as f64) / 1_000_000.0
 
 
@@ -148,8 +184,18 @@ export fn Duration @as_millis_f64() => (@nanos as f64) / 1_000_000.0
 // Predicates
 // ──────────────────────────────────────────────────────────────────────────
 
+/// True если duration равна нулю (`nanos == 0`).
+#stable(since = "0.1")
 export fn Duration @is_zero() => @nanos == 0
+
+/// True если duration отрицательная (`nanos < 0`).
+///
+/// Используется для проверки что `ts2 - ts1` дало "в прошлом" result.
+#stable(since = "0.1")
 export fn Duration @is_negative() => @nanos < 0
+
+/// True если duration строго положительная (`nanos > 0`).
+#stable(since = "0.1")
 export fn Duration @is_positive() => @nanos > 0
 
 
@@ -157,7 +203,11 @@ export fn Duration @is_positive() => @nanos > 0
 // Decomposition — разложение на компоненты (для display / форматирования)
 // ──────────────────────────────────────────────────────────────────────────
 
-// "1h 30m 45s" → 1 час, 30 минут, 45 секунд (без дробных)
+/// Decomposed duration components — для форматирования "1h 30m 45s".
+///
+/// Always non-negative (для signed durations см. `Duration.is_negative()`
+/// + это разложение модуля).
+#stable(since = "0.1")
 export type DurationParts {
     readonly days int
     readonly hours int
@@ -168,6 +218,20 @@ export type DurationParts {
     readonly nanos int
 }
 
+/// Decompose Duration на компоненты (days, hours, ..., nanos).
+///
+/// Sign discarded — все поля non-negative. Для signed display комбинируй с
+/// [`is_negative`].
+///
+/// # Examples
+/// ```nova
+/// let d = Duration.from_secs(3661)  // 1h 1min 1s
+/// let p = d.parts()
+/// assert(p.hours == 1)
+/// assert(p.minutes == 1)
+/// assert(p.seconds == 1)
+/// ```
+#stable(since = "0.1")
 export fn Duration @parts() -> DurationParts {
     let total = if @nanos < 0 { -@nanos } else { @nanos }
     let days = (total / 86_400_000_000_000) as int
@@ -190,40 +254,71 @@ export fn Duration @parts() -> DurationParts {
 // Арифметика (D46)
 // ──────────────────────────────────────────────────────────────────────────
 
+/// Сложение durations (operator `+`).
+///
+/// # Examples
+/// ```nova
+/// assert(1.hour() + 30.minutes() == 90.minutes())
+/// ```
+#stable(since = "0.1")
 export fn Duration @plus(other Duration) -> Duration =>
     { nanos: @nanos + other.nanos }
 
+/// Вычитание durations (operator `-`). Может дать negative result.
+#stable(since = "0.1")
 export fn Duration @minus(other Duration) -> Duration =>
     { nanos: @nanos - other.nanos }
 
+/// Унарный минус (operator `-`). Эквивалент `0 - self`.
+#stable(since = "0.1")
 export fn Duration @neg() -> Duration =>
     { nanos: -@nanos }
 
-// Скалярное умножение/деление: Duration * int / Duration / int.
+/// Scalar multiplication by integer (`Duration * i64`).
+#stable(since = "0.1")
 export fn Duration @times(n i64) -> Duration =>
     { nanos: @nanos * n }
 
+/// Scalar multiplication by float (`Duration * f64`).
+///
+/// Truncation на cast `f64 → i64` — для финансовых расчётов считай в i64
+/// nanoseconds вручную чтобы избежать FP-rounding.
+#stable(since = "0.1")
 export fn Duration @times(n f64) -> Duration =>
     { nanos: ((@nanos as f64) * n) as i64 }
 
+/// Integer division (`Duration / i64`). Truncating.
+#stable(since = "0.1")
 export fn Duration @div(n i64) -> Duration =>
     { nanos: @nanos / n }
 
+/// Float division (`Duration / f64`).
+#stable(since = "0.1")
 export fn Duration @div(n f64) -> Duration =>
     { nanos: ((@nanos as f64) / n) as i64 }
 
-// Деление двух Durations — даёт ratio (без единицы).
+/// Ratio between two durations — dimensionless `f64`.
+///
+/// # Examples
+/// ```nova
+/// assert(30.seconds().ratio(1.minute()) == 0.5)
+/// ```
+#stable(since = "0.1")
 export fn Duration @ratio(other Duration) -> f64 =>
     (@nanos as f64) / (other.nanos as f64)
 
-// Абсолютное значение
+/// Абсолютное значение duration (отбрасывает sign).
+#stable(since = "0.1")
 export fn Duration @abs() -> Duration =>
     if @nanos < 0 { { nanos: -@nanos } } else { @ }
 
-// Min / Max
+/// Минимум двух durations.
+#stable(since = "0.1")
 export fn Duration @min(other Duration) -> Duration =>
     if @nanos < other.nanos { @ } else { other }
 
+/// Максимум двух durations.
+#stable(since = "0.1")
 export fn Duration @max(other Duration) -> Duration =>
     if @nanos > other.nanos { @ } else { other }
 
@@ -232,10 +327,24 @@ export fn Duration @max(other Duration) -> Duration =>
 // Сравнение (D46) — `!=` выводится из `@eq`
 // ──────────────────────────────────────────────────────────────────────────
 
+/// Equality (`==`). Two durations равны iff их `nanos` совпадают.
+#stable(since = "0.1")
 export fn Duration @eq(other Duration) => @nanos == other.nanos
+
+/// Less-than (`<`).
+#stable(since = "0.1")
 export fn Duration @lt(other Duration) => @nanos < other.nanos
+
+/// Less-than-or-equal (`<=`).
+#stable(since = "0.1")
 export fn Duration @le(other Duration) => @nanos <= other.nanos
+
+/// Greater-than (`>`).
+#stable(since = "0.1")
 export fn Duration @gt(other Duration) => @nanos > other.nanos
+
+/// Greater-than-or-equal (`>=`).
+#stable(since = "0.1")
 export fn Duration @ge(other Duration) => @nanos >= other.nanos
 
 
@@ -243,7 +352,17 @@ export fn Duration @ge(other Duration) => @nanos >= other.nanos
 // Display (D73 Into[str])
 // ──────────────────────────────────────────────────────────────────────────
 
-// Auto-scale: 500ns / 150μs / 42ms / 2.5s / 5min / 2h / 3d
+/// `Into[str]` conversion — auto-scale короткая запись.
+///
+/// Выбирает unit по величине: 500ns / 150μs / 42ms / 2.5s / 5min / 2h / 3d.
+/// Для развёрнутого формата используй [`into_human`].
+///
+/// # Examples
+/// ```nova
+/// assert(500.nanos().into() == "500ns")
+/// assert(2.hours().into() == "2h")
+/// ```
+#stable(since = "0.1")
 export fn Duration @into() -> str {
     let n = @nanos
     let abs = if n < 0 { -n } else { n }
@@ -266,8 +385,18 @@ export fn Duration @into() -> str {
     }
 }
 
-// Полная декомпозиция: "1d 2h 30min 45s 100ms"
-// Опускает нулевые компоненты слева и справа.
+/// Human-readable форматирование с декомпозицией на компоненты.
+///
+/// Формат: `"1d 2h 30min 45s"`. Опускает leading zero-components
+/// (i.e. `"30min 45s"` не `"0d 0h 30min 45s"`), но trailing zeros
+/// сохраняет если хоть один старший компонент непустой.
+///
+/// # Examples
+/// ```nova
+/// let d = 1.day() + 2.hours() + 30.minutes()
+/// assert(d.into_human().contains("1d"))
+/// ```
+#stable(since = "0.1")
 export fn Duration @into_human() -> str {
     if @is_zero() { return "0s" }
 
@@ -291,61 +420,132 @@ export fn Duration @into_human() -> str {
 // Timestamp — момент во времени (Unix epoch)
 // ──────────────────────────────────────────────────────────────────────────
 
-// Хранится в наносекундах от Unix epoch (1970-01-01 UTC).
-// signed i64 — диапазон ±292 года около 1970, до ~2262 включительно.
+/// Timestamp — момент во времени в Unix epoch nanoseconds.
+///
+/// Stored как signed `i64` относительно 1970-01-01 UTC. Range покрывает
+/// ±292 years (т.е. до ~2262 включительно). Для дат за пределами этого
+/// окна используй BigDate (Plan 45.C).
+///
+/// # Examples
+/// ```nova
+/// let t = Timestamp.from_unix_secs(1_700_000_000)
+/// assert(t.as_unix_secs() == 1_700_000_000)
+/// ```
+#stable(since = "0.1")
 export type Timestamp {
     readonly nanos i64
 }
 
+/// Unix epoch — 1970-01-01 00:00:00 UTC.
+#stable(since = "0.1")
 export const EPOCH Timestamp = { nanos: 0 }
 
+/// Construct Timestamp from Unix epoch seconds.
+#stable(since = "0.1")
 export fn Timestamp.from_unix_secs(s i64) -> Self =>
     { nanos: s * 1_000_000_000 }
 
+/// Construct Timestamp from Unix epoch milliseconds.
+#stable(since = "0.1")
 export fn Timestamp.from_unix_millis(ms i64) -> Self =>
     { nanos: ms * 1_000_000 }
 
+/// Construct Timestamp from Unix epoch nanoseconds (raw value).
+#stable(since = "0.1")
 export fn Timestamp.from_unix_nanos(n i64) -> Self =>
     { nanos: n }
 
 
-// Конверсия обратно
+/// Unix epoch seconds (truncating). Negative для timestamps до 1970.
+#stable(since = "0.1")
 export fn Timestamp @as_unix_secs() => @nanos / 1_000_000_000
+
+/// Unix epoch milliseconds (truncating).
+#stable(since = "0.1")
 export fn Timestamp @as_unix_millis() => @nanos / 1_000_000
+
+/// Unix epoch nanoseconds (raw `i64`).
+#stable(since = "0.1")
 export fn Timestamp @as_unix_nanos() => @nanos
 
 
-// Арифметика timestamp ↔ duration
-//   ts + duration → ts (deadline, expiry)
-//   ts - duration → ts (откатиться назад)
-//   ts2 - ts1 → duration (elapsed time)
+/// `Timestamp + Duration → Timestamp` — сдвинуть момент вперёд (deadline, expiry).
+///
+/// # Examples
+/// ```nova
+/// let start = Timestamp.from_unix_secs(1000)
+/// let deadline = start + 30.seconds()
+/// assert(deadline.as_unix_secs() == 1030)
+/// ```
+#stable(since = "0.1")
 export fn Timestamp @plus(d Duration) -> Timestamp =>
     { nanos: @nanos + d.nanos }
 
+/// `Timestamp - Duration → Timestamp` — сдвинуть момент назад.
+#stable(since = "0.1")
 export fn Timestamp @minus(d Duration) -> Timestamp =>
     { nanos: @nanos - d.nanos }
 
-// Different overload: ts - ts → duration (D46)
+/// `Timestamp - Timestamp → Duration` — elapsed time между двумя моментами.
+///
+/// Signed: если `self < other`, result отрицательный.
+///
+/// # Examples
+/// ```nova
+/// let t1 = Timestamp.from_unix_secs(1000)
+/// let t2 = Timestamp.from_unix_secs(1042)
+/// assert((t2 - t1) == 42.seconds())
+/// ```
+#stable(since = "0.1")
 export fn Timestamp @minus(other Timestamp) -> Duration =>
     { nanos: @nanos - other.nanos }
 
 
-// Comparison
+/// Equality (`==`). Точное сравнение по `nanos`.
+#stable(since = "0.1")
 export fn Timestamp @eq(other Timestamp) => @nanos == other.nanos
+
+/// Less-than (`<`) — `self` раньше чем `other`.
+#stable(since = "0.1")
 export fn Timestamp @lt(other Timestamp) => @nanos < other.nanos
+
+/// Less-than-or-equal (`<=`).
+#stable(since = "0.1")
 export fn Timestamp @le(other Timestamp) => @nanos <= other.nanos
+
+/// Greater-than (`>`) — `self` позже чем `other`.
+#stable(since = "0.1")
 export fn Timestamp @gt(other Timestamp) => @nanos > other.nanos
+
+/// Greater-than-or-equal (`>=`).
+#stable(since = "0.1")
 export fn Timestamp @ge(other Timestamp) => @nanos >= other.nanos
 
-// Прошёл ли deadline (now > self)
+/// True если `self` уже в прошлом относительно текущего `Time.now()`.
+///
+/// Использует ambient `Time` effect — детерминирован в тестах под
+/// `with Time = th.fixed_ms(...)`.
+///
+/// # Examples
+/// ```nova
+/// with Time = th.fixed_ms(10_000) {
+///     let deadline = Timestamp.from_unix_secs(5)
+///     assert(deadline.is_past())
+/// }
+/// ```
+#stable(since = "0.1")
 export fn Timestamp @is_past() Time -> bool =>
     Time.now().gt(@)
 
-// Сколько осталось до deadline (положительная если в будущем)
+/// Сколько остаётся до момента `self`. Положительная если в будущем,
+/// отрицательная если в прошлом.
+#stable(since = "0.1")
 export fn Timestamp @time_until() Time -> Duration =>
     @minus(Time.now())
 
-// Сколько прошло с момента (положительная если в прошлом)
+/// Сколько прошло с момента `self`. Положительная если в прошлом,
+/// отрицательная если в будущем.
+#stable(since = "0.1")
 export fn Timestamp @elapsed() Time -> Duration =>
     Time.now().minus(@)
 
@@ -372,20 +572,66 @@ export fn Timestamp @elapsed() Time -> Duration =>
 // Extension-методы на int — синтаксис 2.seconds()
 // ──────────────────────────────────────────────────────────────────────────
 
+/// Extension: `N.nanos()` → Duration. Эквивалент `Duration.from_nanos(N)`.
+///
+/// # Examples
+/// ```nova
+/// assert(500.nanos() == Duration.from_nanos(500))
+/// ```
+#stable(since = "0.1")
 export fn int @nanos() -> Duration => Duration.from_nanos(@)
+
+/// Extension: `N.micros()` → Duration.
+#stable(since = "0.1")
 export fn int @micros() -> Duration => Duration.from_micros(@)
+
+/// Extension: `N.millis()` → Duration.
+#stable(since = "0.1")
 export fn int @millis() -> Duration => Duration.from_millis(@)
+
+/// Extension: `N.seconds()` → Duration. Главный читаемый синтаксис: `30.seconds()`.
+///
+/// # Examples
+/// ```nova
+/// assert(30.seconds() == Duration.from_secs(30))
+/// ```
+#stable(since = "0.1")
 export fn int @seconds() -> Duration => Duration.from_secs(@)
+
+/// Extension: `N.minutes()` → Duration.
+#stable(since = "0.1")
 export fn int @minutes() -> Duration => Duration.from_mins(@)
+
+/// Extension: `N.hours()` → Duration.
+#stable(since = "0.1")
 export fn int @hours() -> Duration => Duration.from_hours(@)
+
+/// Extension: `N.days()` → Duration.
+#stable(since = "0.1")
 export fn int @days() -> Duration => Duration.from_days(@)
+
+/// Extension: `N.weeks()` → Duration (7 days per week).
+#stable(since = "0.1")
 export fn int @weeks() -> Duration => Duration.from_weeks(@)
 
-// Singular-алиасы для значения 1.
+/// Singular alias: `1.second()` — читается лучше чем `1.seconds()`.
+#stable(since = "0.1")
 export fn int @second() -> Duration => Duration.from_secs(@)
+
+/// Singular alias: `1.minute()`.
+#stable(since = "0.1")
 export fn int @minute() -> Duration => Duration.from_mins(@)
+
+/// Singular alias: `1.hour()`.
+#stable(since = "0.1")
 export fn int @hour() -> Duration => Duration.from_hours(@)
+
+/// Singular alias: `1.day()`.
+#stable(since = "0.1")
 export fn int @day() -> Duration => Duration.from_days(@)
+
+/// Singular alias: `1.week()`.
+#stable(since = "0.1")
 export fn int @week() -> Duration => Duration.from_weeks(@)
 
 
@@ -393,24 +639,43 @@ export fn int @week() -> Duration => Duration.from_weeks(@)
 // Extension-методы на f64
 // ──────────────────────────────────────────────────────────────────────────
 
+/// Extension: `X.nanos()` для `f64` — truncates до `i64`.
+#stable(since = "0.1")
 export fn f64 @nanos() -> Duration =>
     Duration.from_nanos(@ as i64)
 
+/// Extension: `X.micros()` для `f64`. Allows `1.5.micros()` = 1500ns.
+#stable(since = "0.1")
 export fn f64 @micros() -> Duration =>
     Duration.from_nanos((@ * 1_000.0) as i64)
 
+/// Extension: `X.millis()` для `f64`. Allows `0.5.millis()` = 500_000ns.
+#stable(since = "0.1")
 export fn f64 @millis() -> Duration =>
     Duration.from_nanos((@ * 1_000_000.0) as i64)
 
+/// Extension: `X.seconds()` для `f64`. Главный fractional API: `0.5.seconds()`.
+///
+/// # Examples
+/// ```nova
+/// assert(0.5.seconds() == 500.millis())
+/// ```
+#stable(since = "0.1")
 export fn f64 @seconds() -> Duration =>
     Duration.from_secs_f64(@)
 
+/// Extension: `X.minutes()` для `f64`. Allows `1.5.minutes()` = 90s.
+#stable(since = "0.1")
 export fn f64 @minutes() -> Duration =>
     Duration.from_secs_f64(@ * 60.0)
 
+/// Extension: `X.hours()` для `f64`. Allows `0.25.hours()` = 15min.
+#stable(since = "0.1")
 export fn f64 @hours() -> Duration =>
     Duration.from_secs_f64(@ * 3_600.0)
 
+/// Extension: `X.days()` для `f64`.
+#stable(since = "0.1")
 export fn f64 @days() -> Duration =>
     Duration.from_secs_f64(@ * 86_400.0)
 
@@ -419,7 +684,21 @@ export fn f64 @days() -> Duration =>
 // Утилиты — структурные шаблоны
 // ──────────────────────────────────────────────────────────────────────────
 
-// Засечь время выполнения action и вернуть его длительность.
+/// Измерить длительность исполнения `action` и вернуть `(результат, elapsed)`.
+///
+/// Использует ambient `Time` effect — в тестах под `fixed_ms` всегда вернёт
+/// elapsed = 0 (clock не движется). Для реальных бенчмарков используется
+/// в production где `Time` provided runtime'ом.
+///
+/// # Examples
+/// ```nova
+/// with Time = th.fixed_ms(1000) {
+///     let (result, elapsed) = measure(|| 42)
+///     assert(result == 42)
+///     assert(elapsed == Duration.ZERO)
+/// }
+/// ```
+#stable(since = "0.1")
 export fn measure[T](action fn() -> T) Time -> (T, Duration) {
     let start = Time.now()
     let result = action()
@@ -427,7 +706,10 @@ export fn measure[T](action fn() -> T) Time -> (T, Duration) {
     (result, elapsed)
 }
 
-// Дедлайн через Duration — обёртка над Time.now() + Duration.
+/// Compute дедлайн `now() + d` с использованием ambient `Time`.
+///
+/// Convenience-обёртка чтобы не писать `Time.now() + 5.seconds()` каждый раз.
+#stable(since = "0.1")
 export fn deadline_in(d Duration) Time -> Timestamp =>
     Time.now() + d
 
