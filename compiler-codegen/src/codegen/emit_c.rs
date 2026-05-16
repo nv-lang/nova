@@ -9295,15 +9295,32 @@ impl CEmitter {
                         let obj_c = self.emit_expr(obj)?;
                         match method.as_str() {
                             "cancel" => {
-                                // Plan 49 Ф.1: optional reason argument.
-                                // Без аргументов — default "cancelled" str.
-                                // Box'им через nova_cancel_box_str чтобы reason
-                                // пережил scope.
+                                // Plan 49 Ф.1 + Ф.6: optional reason argument.
+                                // Type-aware boxing:
+                                //   T=str           → nova_cancel_box_str (existing).
+                                //   T=pointer       → cast напрямую в void* (передаём ptr).
+                                //   T=primitive/struct value
+                                //                   → compound literal + memcpy через
+                                //                     nova_cancel_box_copy_raw.
+                                // Без аргументов — default "cancelled" str (T=str default).
                                 if let Some(reason_arg) = args.first() {
                                     let reason_c = self.emit_expr(reason_arg.expr())?;
+                                    let arg_ty = self.infer_expr_c_type(reason_arg.expr());
+                                    let boxed = if arg_ty == "nova_str" {
+                                        format!("nova_cancel_box_str({})", reason_c)
+                                    } else if arg_ty.ends_with('*') {
+                                        // Pointer types (record/sum/array) — pass as-is.
+                                        format!("(void*)({})", reason_c)
+                                    } else {
+                                        // Primitive/value-struct — compound literal + box.
+                                        format!(
+                                            "nova_cancel_box_copy_raw(&(({}){{ {} }}), (int64_t)sizeof({}))",
+                                            arg_ty, reason_c, arg_ty
+                                        )
+                                    };
                                     return Ok(format!(
-                                        "(nova_cancel_token_cancel_reason({}, nova_cancel_box_str({})), NOVA_UNIT)",
-                                        obj_c, reason_c
+                                        "(nova_cancel_token_cancel_reason({}, {}), NOVA_UNIT)",
+                                        obj_c, boxed
                                     ));
                                 }
                                 return Ok(format!(

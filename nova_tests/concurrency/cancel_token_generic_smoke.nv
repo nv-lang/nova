@@ -1,0 +1,34 @@
+// cancel_token_generic_smoke.nv — Plan 49 Ф.6: CancelToken[T] generic.
+//
+// V1 (этот тест): cancel(reason: T) с typed boxing для T=str/int/pointer.
+// V2: reason() -> Option[T] per-T (нужна mono'д helper или infer-context).
+
+module concurrency.cancel_token_generic_smoke
+
+test "CancelToken default — backward compatible" {
+    let tok = CancelToken.new()
+    assert(!tok.is_cancelled())
+    tok.cancel("hello")
+    assert(tok.is_cancelled())
+}
+
+test "CancelToken[str] explicit — equivalent to default" {
+    let tok CancelToken[str] = CancelToken.new()
+    tok.cancel("explicit")
+    assert(tok.is_cancelled())
+}
+
+test "CancelToken[int] typed reason — i64 boxing" {
+    let tok CancelToken[int] = CancelToken.new()
+    tok.cancel(42)
+    assert(tok.is_cancelled())
+    // NB: reason() для CancelToken[int] возвращает Option[str] в V1
+    // (per-T un-box deferred V2). Ф.6 acceptance первого этапа — что
+    // cancel() с non-str T компилируется и работает на runtime-уровне.
+}
+
+test "CancelToken[bool] typed reason — bool boxing" {
+    let tok CancelToken[bool] = CancelToken.new()
+    tok.cancel(true)
+    assert(tok.is_cancelled())
+}

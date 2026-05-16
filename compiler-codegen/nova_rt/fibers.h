@@ -630,16 +630,24 @@ static inline NovaOpt_nova_str nova_cancel_token_reason_str(NovaCancelToken* t) 
 }
 
 /* Plan 49 Ф.1: helper — alloc copy of nova_str on GC heap so reason
- * outlives the caller's stack frame. Used by codegen for `tok.cancel(reason)`:
- *   void* boxed = nova_cancel_box_str(reason);
- *   nova_cancel_token_cancel_reason(tok, boxed);
- *
- * NB: имя префиксировано `nova_cancel_` чтобы не конфликтовать с
- * string_builder.h:nova_box_str (другая семантика — box для Result/Ok). */
+ * outlives the caller's stack frame. Used by codegen для `tok.cancel(reason)`
+ * когда T=str (default CancelToken). */
 static inline void* nova_cancel_box_str(nova_str s) {
     nova_str* boxed = (nova_str*)nova_alloc(sizeof(nova_str));
     *boxed = s;
     return (void*)boxed;
+}
+
+/* Plan 49 Ф.6: generic box для CancelToken[T] где T ≠ str — memcpy
+ * произвольного size'а в GC-heap, возврат void*. Codegen эмитит
+ * через compound literal: `nova_cancel_box_copy_raw(&((T){val}), sizeof(T))`.
+ * Per-T un-box на стороне reason()-getter'а (см. emit_c.rs). */
+static inline void* nova_cancel_box_copy_raw(const void* src, int64_t size) {
+    void* boxed = nova_alloc((size_t)size);
+    if (src && size > 0) {
+        memcpy(boxed, src, (size_t)size);
+    }
+    return boxed;
 }
 
 /* Направленный каскад: Nova-уровень `child.cancelled_by(parent)` — когда
