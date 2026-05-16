@@ -13689,3 +13689,19 @@ improvements, regression sweep).
 - 36de437  docs(55.3): simplifications
 - (54.3 commit ID РЅРµ СЃРѕС…СЂР°РЅС‘РЅ)
 - (Р¤.4-Р¤.6 вЂ” РїРѕСЃР»РµРґСѓСЋС‰РёРµ РєРѕРјРјРёС‚С‹)
+
+=== Plan 45 Sprint Ф.32.2/3 — JSON parser + MCP server (2026-05-16) ===
+
+Ф.32.2 (53022051): Minimal JSON parser (280 LOC, no serde). doc-query CLI
+accepts .json input. 19 tests.
+
+Ф.32.3 (26b07fb): MCP server skeleton — Nova-unique! `nova doc-mcp <file>`
+exposes 3 tools (query_items/list_modules/get_item) via JSON-RPC over stdio.
+Compatible с Claude Code и MCP Inspector. 18 tests.
+
+165+ doc tests PASS (24+ suites + 34+ unit).
+
+Plan 45 family — почти готов. Что осталось:
+- Plan 45.B stdlib full doc-pass (weeks)
+- Plan 45.A round 2: incremental cache, HTTP/SSE MCP, AST highlight
+- Plan 16/42 follow-ups
