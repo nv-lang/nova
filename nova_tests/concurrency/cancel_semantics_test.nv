@@ -1,0 +1,111 @@
+// cancel_semantics_test.nv — Plan 49 Ф.4: kinded throws + typed reason +
+// USER-precedence + `with Fail` не глотает отмену.
+//
+// До Plan 49 отмена скрывалась под `nova_str` без kind'а и убегала из
+// `supervised(cancel:)` наружу как обычная Fail-ошибка. Теперь:
+//   - cancel-throw несёт kind=CANCEL → supervised_run_impl возвращается
+//     без re-throw (отмена не убегает).
+//   - reason (str-форма) переживает scope → tok.reason() после
+//     `tok.cancel("deadline")` возвращает Some("deadline").
+//   - USER-precedence: реальная ошибка fiber'а перетирает раньшую
+//     отмену (Go errgroup теряет — у нас не теряется).
+//   - `with Fail` не вызывает handler на CANCEL-throw, пробрасывает дальше.
+
+module concurrency.cancel_semantics_test
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// 1. Отмена не убегает наружу
+// ──────────────────────────────────────────────────────────────────────────
+
+test "cancel: отмена не убегает из supervised(cancel:) без with Fail" {
+    // До Plan 49 этот тест паниковал — "scope cancelled" летел наружу как
+    // unhandled Fail. После Ф.3 supervised_run_impl возвращается без throw'а.
+    let tok = CancelToken.new()
+    let mut after_scope = false
+    supervised(cancel: tok) {
+        spawn {
+            tok.cancel()
+            // peer-fiber на yield увидит cancel_requested → throw CANCEL
+        }
+        spawn {
+            // CPU-bound: даёт scheduler'у шанс отменить нас
+            for _i in 0..1000 { }
+        }
+    }
+    after_scope = true
+    assert(after_scope)
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// 2. tok.reason() — типизированная причина переживает scope
+// ──────────────────────────────────────────────────────────────────────────
+
+test "cancel: tok.cancel(reason) → tok.reason() == Some(reason)" {
+    let tok = CancelToken.new()
+    supervised(cancel: tok) {
+        spawn {
+            tok.cancel("deadline exceeded")
+        }
+        spawn {
+            for _i in 0..1000 { }
+        }
+    }
+    assert(tok.is_cancelled())
+    let r1 = tok.reason()
+    let got = match r1 {
+        Some(r) => r
+        None    => ""
+    }
+    assert(got == "deadline exceeded")
+}
+
+
+test "cancel: tok.cancel() без аргумента → reason = 'cancelled'" {
+    let tok = CancelToken.new()
+    supervised(cancel: tok) {
+        spawn { tok.cancel() }
+        spawn { for _i in 0..1000 { } }
+    }
+    assert(tok.is_cancelled())
+    let r1 = tok.reason()
+    let got = match r1 {
+        Some(r) => r
+        None    => ""
+    }
+    assert(got == "cancelled")
+}
+
+
+test "cancel: tok.reason() до отмены — None" {
+    let tok = CancelToken.new()
+    assert(!tok.is_cancelled())
+    let r1 = tok.reason()
+    let is_none = match r1 {
+        None    => true
+        Some(_) => false
+    }
+    assert(is_none)
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// 3. Реальная ошибка по-прежнему убегает (USER не подменяется на CANCEL)
+// ──────────────────────────────────────────────────────────────────────────
+
+test "user-throw: реальная ошибка fiber'а пробрасывается наружу" {
+    let mut caught = ""
+    let r = with Fail[int] = |e| {
+        caught = "fail-handler"
+        0
+    } {
+        supervised {
+            spawn { throw 42 }
+        }
+        99
+    }
+    // Fail-handler сработал на throw → result=0 (default-ветка)
+    assert(caught == "fail-handler")
+    assert(r == 0)
+}

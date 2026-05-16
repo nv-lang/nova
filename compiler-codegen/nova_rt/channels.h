@@ -422,11 +422,15 @@ static inline NovaOpt_nova_int nova_chan_reader_recv(Nova_ChanReader* rx) {
     nova_mutex_lock(&st->mu);
 
     /* If cancel_scope cancelled us, throw. cancelled flag was set by
-     * stop_cb without acquiring the lock; we observe it now. */
+     * stop_cb without acquiring the lock; we observe it now.
+     * Plan 49 Ф.2: kind=CANCEL + reason из scope (если bound token дал её),
+     * чтобы supervised_run различил отмену от реальной ошибки. */
     if (sc->cancel_requested) {
         if (w->channel) _nova_waiter_unlink_locked(w);
         nova_mutex_unlock(&st->mu);
-        nova_throw(nova_str_from_cstr("scope cancelled"));
+        nova_throw_cancel_reason(
+            nova_str_from_cstr("scope cancelled"),
+            sc->cancel_reason_ptr);
     }
 
     /* Plan 44.1 R8-6: wake helper writes в recv_val (раньше через send_val). */
@@ -585,10 +589,14 @@ static inline nova_bool nova_chan_writer_send(Nova_ChanWriter* tx, nova_int v) {
 
     nova_mutex_lock(&st->mu);
 
+    /* Plan 49 Ф.2: kind=CANCEL + reason — отмена не должна re-throw'иться
+     * как Fail в supervised_run. */
     if (sc->cancel_requested) {
         if (w->channel) _nova_waiter_unlink_locked(w);
         nova_mutex_unlock(&st->mu);
-        nova_throw(nova_str_from_cstr("scope cancelled"));
+        nova_throw_cancel_reason(
+            nova_str_from_cstr("scope cancelled"),
+            sc->cancel_reason_ptr);
     }
 
     /* fired=1 means recv-side / close picked us up. If close — return false. */
@@ -1016,8 +1024,11 @@ static inline void nova_select_park(SelectCtx* ctx) {
         nova_mutex_unlock(&st->mu);
     }
 
+    /* Plan 49 Ф.2: kind=CANCEL (select-сайт). */
     if (scope->cancel_requested) {
-        nova_throw(nova_str_from_cstr("scope cancelled"));
+        nova_throw_cancel_reason(
+            nova_str_from_cstr("scope cancelled"),
+            scope->cancel_reason_ptr);
     }
 
     /* Identify the winning arm. First check fired flags (a producer's wake

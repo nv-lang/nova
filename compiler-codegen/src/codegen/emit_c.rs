@@ -2100,11 +2100,37 @@ impl CEmitter {
         self.line("}");
 
         // Close fail-frame outer if we opened it
-        if fframe.is_some() {
+        if let Some(ff) = &fframe {
             self.indent -= 1;
             self.line("} else {");
             self.indent += 1;
-            // Fail path: handler already ran; result is unit/zero.
+            // Plan 49 Ф.3: kind-aware re-dispatch.
+            // CANCEL throw НЕ обработан этим Fail-handler'ом (отмена
+            // структурна, не ошибка) — re-throw нагору с тем же reason.
+            // Pop fail-frame ПЕРЕД re-throw чтобы next-outer-frame
+            // получил throw, не наш собственный (защита от двойного unwind,
+            // см. Plan 49 Риск R3).
+            self.line(&format!("if ({ff}.error_kind == NOVA_THROW_CANCEL) {{",
+                ff = ff));
+            self.indent += 1;
+            self.line("nova_fail_pop();");
+            // Также pop interrupt frame чтобы инвариант stack discipline
+            // сохранился (open/close симметрично с normal path).
+            self.line("nova_interrupt_pop();");
+            // Restore handlers — отмена не должна оставить scope handlers
+            // активным; emit_with normal-path делает то же ниже.
+            for (effect_name, prev_var) in saves.iter().rev() {
+                self.line(&format!("_nova_handler_{eff} = {prev};",
+                    eff = effect_name, prev = prev_var));
+            }
+            self.line(&format!(
+                "nova_throw_cancel_reason({ff}.error_msg, {ff}.error_reason_ptr);",
+                ff = ff));
+            self.indent -= 1;
+            self.line("}");
+            // USER path: handler already ran; result is unit/zero. (Existing
+            // semantics: D65 Fail-handler сам decide'ит результат через
+            // interrupt v ИЛИ throw; если throw — мы здесь, результат default).
             match category {
                 WithResultCategory::IntLike | WithResultCategory::UnitVoid => {
                     self.line(&format!("{} = ((nova_int)0LL);", result_tmp));
@@ -2781,8 +2807,9 @@ impl CEmitter {
         self.line("} else {");
         self.indent += 1;
         // Plan 44.5 Layer 5: error reporting — remote vs local.
-        // Remote (parent_scope != NULL, worker'е): atomic CAS на parent.first_error_atomic.
-        // Local (parent_scope == NULL): old path через scope arrays.
+        // Plan 49 Ф.2: kinded — пробрасываем _ff.error_kind / error_reason_ptr.
+        // Local path: USER-precedence через nova_fiber_report_error_kinded.
+        // Remote path: M:N atomic — Ф.5 расширит CAS-петлю для compare-kind.
         self.line("if (_c->_nova_parent_scope) {");
         self.indent += 1;
         self.line("const void* _exp = NULL;");
@@ -2791,7 +2818,7 @@ impl CEmitter {
         self.indent -= 1;
         self.line("} else {");
         self.indent += 1;
-        self.line("nova_fiber_report_error(_ff.error_msg.ptr);");
+        self.line("nova_fiber_report_error_kinded(_ff.error_msg.ptr, _ff.error_kind, _ff.error_reason_ptr);");
         self.indent -= 1;
         self.line("}");
         self.indent -= 1;
@@ -9261,17 +9288,38 @@ impl CEmitter {
                     }
                 }
                 // D75 (revised, Plan 47): built-in methods on NovaCancelToken*.
+                // Plan 49 Ф.1: `cancel(reason)` принимает optional str reason;
+                // `reason() -> Option[str]` возвращает причину отмены.
                 {
                     let obj_ty = self.infer_expr_c_type(obj);
                     if obj_ty == "NovaCancelToken*" {
                         let obj_c = self.emit_expr(obj)?;
                         match method.as_str() {
                             "cancel" => {
+                                // Plan 49 Ф.1: optional reason argument.
+                                // Без аргументов — default "cancelled" str.
+                                // Box'им через nova_cancel_box_str чтобы reason
+                                // пережил scope.
+                                if let Some(reason_arg) = args.first() {
+                                    let reason_c = self.emit_expr(reason_arg.expr())?;
+                                    return Ok(format!(
+                                        "(nova_cancel_token_cancel_reason({}, nova_cancel_box_str({})), NOVA_UNIT)",
+                                        obj_c, reason_c
+                                    ));
+                                }
                                 return Ok(format!(
-                                    "(nova_cancel_token_cancel({}), NOVA_UNIT)", obj_c));
+                                    "(nova_cancel_token_cancel_reason({}, nova_cancel_box_str((nova_str){{.ptr=\"cancelled\",.len=9}})), NOVA_UNIT)",
+                                    obj_c));
                             }
                             "is_cancelled" => {
                                 return Ok(format!("nova_cancel_token_is_cancelled({})", obj_c));
+                            }
+                            "reason" => {
+                                // Plan 49 Ф.1: typed getter — Option[str] для
+                                // CancelToken[str] (default). Ф.6 расширит до
+                                // CancelToken[T] (mono-per-T helper).
+                                return Ok(format!(
+                                    "nova_cancel_token_reason_str({})", obj_c));
                             }
                             "cancelled_by" => {
                                 // `child.cancelled_by(parent)` — направленный
@@ -14793,10 +14841,13 @@ impl CEmitter {
                         }
                     }
                     // D75: instance methods on NovaCancelToken*.
+                    // Plan 49 Ф.1: reason() возвращает Option[str] —
+                    // NovaOpt_nova_str runtime тип.
                     if self.infer_expr_c_type(obj) == "NovaCancelToken*" {
                         match method.as_str() {
                             "is_cancelled" => return "nova_bool".into(),
                             "cancel" | "cancelled_by" => return "nova_unit".into(),
+                            "reason" => return "NovaOpt_nova_str".into(),
                             _ => {}
                         }
                     }
