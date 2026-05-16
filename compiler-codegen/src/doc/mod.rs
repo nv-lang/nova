@@ -153,6 +153,7 @@ fn populate_verify_status(tree: &mut DocTree, module: &Module) {
                     VerifyResult::Unknown(_) | VerifyResult::EncodingFailed(_) => {
                         proven_all = false;
                     }
+                    VerifyResult::Warning(_) => {} // W2402 — не влияет на proven status
                 }
             }
             let status = if results.is_empty() {

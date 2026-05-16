@@ -32,6 +32,9 @@ pub struct EncodeCtx<'a> {
     pub pure_views: &'a HashMap<String, PureViewSig>,
     /// Plan 33.4 D.0.2: реестр `#pure` fn-ов модуля. Ключ — fn name.
     pub pure_fns: &'a HashMap<String, PureFnInfo>,
+    /// Ф.4.2 (Plan 33.6): реестр `#trusted external fn`. Ключ — fn name.
+    /// При встрече вызова → UF application; ensures инжектируются как axioms.
+    pub trusted_fns: &'a HashMap<String, TrustedFnInfo>,
     /// Plan 33.3 Ф.11: типы переменных (params + let bindings).
     /// Нужны для dispatch `+` → `fp.add` vs Int `+` при FP аргументах.
     pub var_sorts: HashMap<String, SortRef>,
@@ -65,6 +68,21 @@ pub struct PureViewSig {
     pub param_sorts: Vec<SortRef>,
 }
 
+/// Ф.4.2 (Plan 33.6): информация о `#trusted external fn` для SMT axiom injection.
+#[derive(Debug, Clone)]
+pub struct TrustedFnInfo {
+    pub param_names: Vec<String>,
+    pub param_sorts: Vec<SortRef>,
+    pub return_sort: SortRef,
+    /// ensures-контракты (encoded); инжектируются как forall axiom в caller scope.
+    pub ensures_exprs: Vec<crate::ast::Expr>,
+}
+
+/// SMT UF name для trusted external fn: `_trusted_<name>`.
+pub fn trusted_fn_uf_name(fn_name: &str) -> String {
+    format!("_trusted_{}", fn_name)
+}
+
 impl<'a> EncodeCtx<'a> {
     /// Empty context — pure_view-ы не известны (старые тесты + bootstrap).
     pub fn empty() -> EncodeCtx<'static> {
@@ -72,9 +90,11 @@ impl<'a> EncodeCtx<'a> {
         // Используется только для backward-compat encode_expr.
         static EMPTY_VIEWS: std::sync::OnceLock<HashMap<String, PureViewSig>> = std::sync::OnceLock::new();
         static EMPTY_FNS: std::sync::OnceLock<HashMap<String, PureFnInfo>> = std::sync::OnceLock::new();
+        static EMPTY_TRUSTED: std::sync::OnceLock<HashMap<String, TrustedFnInfo>> = std::sync::OnceLock::new();
         let views = EMPTY_VIEWS.get_or_init(HashMap::new);
         let fns = EMPTY_FNS.get_or_init(HashMap::new);
-        EncodeCtx { pure_views: views, pure_fns: fns, var_sorts: HashMap::new() }
+        let trusted = EMPTY_TRUSTED.get_or_init(HashMap::new);
+        EncodeCtx { pure_views: views, pure_fns: fns, trusted_fns: trusted, var_sorts: HashMap::new() }
     }
 }
 
@@ -163,6 +183,26 @@ pub fn encode_expr_with_ctx(e: &Expr, ctx: &EncodeCtx) -> Result<SmtTerm, Encodi
                             let uf = pure_fn_uf_name(name);
                             return Ok(SmtTerm::App(uf, encoded_args));
                         }
+                    }
+                }
+            }
+            // Ф.4.2 (Plan 33.6): #trusted external fn → UF application.
+            // ensures-аксиомы инжектируются в pipeline (не здесь — нет доступа к backend).
+            if trailing.is_none() {
+                if let ExprKind::Ident(name) = &func.kind {
+                    if let Some(info) = ctx.trusted_fns.get(name) {
+                        if args.len() != info.param_sorts.len() {
+                            return Err(EncodingError::Unsupported(format!(
+                                "trusted fn `{}` arity mismatch: expected {}, got {}",
+                                name, info.param_sorts.len(), args.len()
+                            )));
+                        }
+                        let mut encoded_args = Vec::with_capacity(args.len());
+                        for a in args {
+                            encoded_args.push(encode_expr_with_ctx(a.expr(), ctx)?);
+                        }
+                        let uf = trusted_fn_uf_name(name);
+                        return Ok(SmtTerm::App(uf, encoded_args));
                     }
                 }
             }
@@ -282,9 +322,126 @@ pub fn encode_expr_with_ctx(e: &Expr, ctx: &EncodeCtx) -> Result<SmtTerm, Encodi
             Ok(SmtTerm::not(inner))
         }
 
-        _ => Err(EncodingError::Unsupported(format!(
-            "expression kind not supported in contract encoder (33.1)"
-        ))),
+        // Path — qualified name (Module.Const, Effect.op). Encode как Var.
+        ExprKind::Path(parts) => Ok(SmtTerm::Var(parts.join("::"))),
+
+        // CharLit — unicode codepoint, encode как int literal.
+        ExprKind::CharLit(n) => Ok(SmtTerm::IntLit(*n as i64)),
+
+        // Block с единственным trailing-выражением — делегируем в trailing.
+        // Если есть statements (побочные эффекты) — unsupported.
+        ExprKind::Block(block) => {
+            if !block.stmts.is_empty() {
+                return Err(EncodingError::Unsupported(
+                    "block с statements в контракте не поддерживается; \
+                     используйте чистое выражение или вынесите логику в #pure fn".into()));
+            }
+            match &block.trailing {
+                Some(e) => encode_expr_with_ctx(e, ctx),
+                None => Err(EncodingError::Unsupported(
+                    "пустой block в контракте не поддерживается".into())),
+            }
+        }
+
+        // Tuple literal — SMT не имеет product-type по умолчанию.
+        ExprKind::TupleLit(_) => Err(EncodingError::Unsupported(
+            "tuple-литерал в контракте не поддерживается SMT-encoder'ом; \
+             используйте отдельные переменные или #unverified".into())),
+
+        // Match — ветвление без статической структуры; используйте if/else.
+        ExprKind::Match { .. } => Err(EncodingError::Unsupported(
+            "match-выражение в контракте не поддерживается; \
+             используйте if/else или вынесите логику в #pure fn".into())),
+
+        // IfLet — комбинация pattern и ветвления.
+        ExprKind::IfLet { .. } => Err(EncodingError::Unsupported(
+            "if let в контракте не поддерживается; используйте if/else".into())),
+
+        // Lambda / closure — анонимные функции не кодируются в SMT.
+        ExprKind::Lambda { .. } | ExprKind::ClosureLight { .. } | ExprKind::ClosureFull(_) => {
+            Err(EncodingError::Unsupported(
+                "лямбда/closure в контракте не поддерживается; \
+                 вынесите логику в именованную #pure fn".into()))
+        }
+
+        // Index (arr[i]) — массивы не поддерживаются в V1 encoder'е.
+        ExprKind::Index { .. } => Err(EncodingError::Unsupported(
+            "индексирование (arr[i]) в контракте не поддерживается в V1; \
+             используйте #pure fn для абстракции доступа".into())),
+
+        // RecordLit / ArrayLit — составные литералы без SMT-аналогов.
+        ExprKind::RecordLit { type_name, .. } => {
+            let name = type_name.as_ref()
+                .map(|p| p.join("."))
+                .unwrap_or_else(|| "анонимный record".into());
+            Err(EncodingError::Unsupported(format!(
+                "record-литерал `{}` в контракте не поддерживается; \
+                 используйте #pure fn возвращающую нужное поле", name)))
+        }
+        ExprKind::ArrayLit(_) => Err(EncodingError::Unsupported(
+            "array-литерал в контракте не поддерживается; \
+             используйте forall-квантор или #pure fn".into())),
+
+        // Try (?) / Bang (!!) / Coalesce (??) — error-propagation в контрактах бессмысленна.
+        ExprKind::Try(_) => Err(EncodingError::Unsupported(
+            "оператор `?` в контракте не поддерживается; \
+             контракты должны быть чистыми выражениями".into())),
+        ExprKind::Bang(_) => Err(EncodingError::Unsupported(
+            "оператор `!!` в контракте не поддерживается; \
+             контракты должны быть чистыми выражениями".into())),
+        ExprKind::Coalesce(_, _) => Err(EncodingError::Unsupported(
+            "оператор `??` в контракте не поддерживается; \
+             используйте if/else или #pure fn".into())),
+
+        // As (type cast) / Is (type check) — типовые операции вне SMT.
+        ExprKind::As(_, ty) => Err(EncodingError::Unsupported(format!(
+            "type cast `as {:?}` в контракте не поддерживается; \
+             используйте #pure fn для конвертации", ty))),
+        ExprKind::Is(_, ty) => Err(EncodingError::Unsupported(format!(
+            "type check `is {:?}` в контракте не поддерживается; \
+             используйте discriminant через #pure fn", ty))),
+
+        // SelfAccess (@field) — нет контекста receiver'а в SMT.
+        ExprKind::SelfAccess => Err(EncodingError::Unsupported(
+            "`@field` (self-access) в контракте не поддерживается; \
+             передавайте поля явным параметром в #pure fn".into())),
+
+        // InterpolatedStr — строковая интерполяция вне SMT.
+        ExprKind::InterpolatedStr { .. } => Err(EncodingError::Unsupported(
+            "интерполированная строка в контракте не поддерживается".into())),
+
+        // TurboFish — generic-instantiation. Delegate к base если возможно.
+        ExprKind::TurboFish { base, .. } => encode_expr_with_ctx(base, ctx),
+
+        // Range — lo..hi как выражение вне forall/exists контекста.
+        ExprKind::Range { .. } => Err(EncodingError::Unsupported(
+            "range-выражение в контракте разрешено только внутри forall/exists квантора".into())),
+
+        // Loops, spawn, with, handlers — control-flow недопустим в контрактах.
+        ExprKind::For { .. } | ExprKind::While { .. } | ExprKind::WhileLet { .. }
+        | ExprKind::Loop { .. } | ExprKind::ParallelFor { .. } => {
+            Err(EncodingError::Unsupported(
+                "цикл в контракте не поддерживается; \
+                 используйте forall-квантор для итерационных свойств".into()))
+        }
+        ExprKind::Spawn(_) | ExprKind::Supervised { .. } | ExprKind::Select { .. } => {
+            Err(EncodingError::Unsupported(
+                "concurrency-конструкция в контракте не поддерживается".into()))
+        }
+        ExprKind::With { .. } | ExprKind::HandlerLit { .. } => {
+            Err(EncodingError::Unsupported(
+                "with/handler в контракте не поддерживается".into()))
+        }
+        ExprKind::Interrupt(_) | ExprKind::Forbid { .. } | ExprKind::Realtime { .. } => {
+            Err(EncodingError::Unsupported(
+                "interrupt/forbid/realtime в контракте не поддерживается".into()))
+        }
+
+        // Прочие конструкции — generic fallback с названием.
+        _ => Err(EncodingError::Unsupported(
+            "данная конструкция не поддерживается в SMT-encoder'е контрактов; \
+             используйте только int/bool/str/forall/exists/if/pure-fn-call".into()
+        )),
     }
 }
 

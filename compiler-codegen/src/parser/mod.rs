@@ -460,7 +460,8 @@ impl Parser {
             let is_cfg = matches!(&next_kind, Some(TokenKind::Ident(name)) if name == "cfg");
             let is_doc = matches!(&next_kind, Some(TokenKind::Ident(name)) if name == "doc");
             let is_must_verify_module = matches!(&next_kind, Some(TokenKind::Ident(name)) if name == "must_verify_module");
-            if !is_forbid && !is_cfg && !is_doc && !is_must_verify_module {
+            let is_proof_budget = matches!(&next_kind, Some(TokenKind::Ident(name)) if name == "proof_budget");
+            if !is_forbid && !is_cfg && !is_doc && !is_must_verify_module && !is_proof_budget {
                 break; // not a module-level attribute
             }
             let attr_start = self.peek().span;
@@ -473,6 +474,55 @@ impl Parser {
                 let attr_end = self.tokens[self.pos.saturating_sub(1)].span;
                 module_attrs.push(ModuleAttr {
                     kind: ModuleAttrKind::MustVerifyModule,
+                    effects: Vec::new(),
+                    span: attr_start.merge(attr_end),
+                });
+                continue;
+            }
+
+            if is_proof_budget {
+                // Ф.3.4 (Plan 33.6): `#proof_budget(timeout_ms=N, vc_count_max=M)`.
+                self.bump(); // proof_budget
+                let mut timeout_ms: Option<u32> = None;
+                let mut vc_count_max: Option<u32> = None;
+                if matches!(self.peek().kind, TokenKind::LParen) {
+                    self.bump(); // (
+                    loop {
+                        if matches!(self.peek().kind, TokenKind::RParen) { break; }
+                        let (key, key_span) = self.parse_ident()?;
+                        if !matches!(self.peek().kind, TokenKind::Eq) {
+                            return Err(Diagnostic::new(
+                                "`#proof_budget` key must be followed by `=`", key_span));
+                        }
+                        self.bump(); // =
+                        let val_span = self.peek().span;
+                        let val = if let TokenKind::Int(n) = self.peek().kind {
+                            let v = n as u32;
+                            self.bump();
+                            v
+                        } else {
+                            return Err(Diagnostic::new(
+                                "`#proof_budget` value must be integer literal", val_span));
+                        };
+                        match key.as_str() {
+                            "timeout_ms" => timeout_ms = Some(val),
+                            "vc_count_max" => vc_count_max = Some(val),
+                            _ => return Err(Diagnostic::new(
+                                format!("unknown `#proof_budget` key `{}`; \
+                                         expected `timeout_ms` or `vc_count_max`", key),
+                                key_span)),
+                        }
+                        if matches!(self.peek().kind, TokenKind::Comma) { self.bump(); }
+                    }
+                    if !matches!(self.peek().kind, TokenKind::RParen) {
+                        return Err(Diagnostic::new("expected `)` to close `#proof_budget(...)`", self.peek().span));
+                    }
+                    self.bump(); // )
+                }
+                self.expect_newline_or_eof()?;
+                let attr_end = self.tokens[self.pos.saturating_sub(1)].span;
+                module_attrs.push(ModuleAttr {
+                    kind: ModuleAttrKind::ProofBudget { timeout_ms, vc_count_max },
                     effects: Vec::new(),
                     span: attr_start.merge(attr_end),
                 });

@@ -1,0 +1,10 @@
+// Ф.6.1 (Plan 33.6): оператор ? в контракте → E2401.
+// EXPECT_COMPILE_ERROR E2401
+
+module contracts.e2401_try_in_requires_fail
+
+fn parse(x int) -> int
+    requires (x > 0)?
+{
+    x
+}

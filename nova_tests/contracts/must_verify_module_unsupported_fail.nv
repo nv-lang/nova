@@ -1,0 +1,11 @@
+// Ф.4.1 (Plan 33.6): #must_verify_module + контракт с неподдерживаемой конструкцией → E2401.
+// EXPECT_COMPILE_ERROR E2401
+
+#must_verify_module
+module contracts.must_verify_module_unsupported_fail
+
+fn build(x int) -> int
+    ensures (x, x + 1).0 == x
+{
+    x
+}

@@ -1,0 +1,10 @@
+// Ф.6.1 (Plan 33.6): match в ensures → E2401 (explicit unsupported message).
+// EXPECT_COMPILE_ERROR E2401
+
+module contracts.e2401_match_in_ensures_fail
+
+fn classify(x int) -> int
+    ensures match x { _ => 0 } == 0
+{
+    x
+}

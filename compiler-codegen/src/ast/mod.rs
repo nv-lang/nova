@@ -129,6 +129,9 @@ pub enum ModuleAttrKind {
     /// Plan 33.3 Ф.13: `#must_verify_module` — все функции модуля
     /// автоматически получают MustVerify. Любой unproven контракт → compile error.
     MustVerifyModule,
+    /// Ф.3.4 (Plan 33.6): `#proof_budget(timeout_ms=N, vc_count_max=M)` —
+    /// module-level бюджет верификации. Переопределяется per-fn `#verify_timeout`.
+    ProofBudget { timeout_ms: Option<u32>, vc_count_max: Option<u32> },
 }
 
 /// Plan 42.12 Ф.2 + Plan 42.14 Ф.1: cfg predicate.

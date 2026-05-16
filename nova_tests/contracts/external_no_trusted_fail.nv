@@ -1,0 +1,7 @@
+// Ф.4.2 (Plan 33.6): external fn с контрактами без #trusted → compile error.
+// EXPECT_COMPILE_ERROR cannot have contracts
+
+module contracts.external_no_trusted_fail
+
+external fn libc_strlen(s str) -> int
+    ensures result >= 0

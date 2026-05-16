@@ -14,7 +14,7 @@ use super::encode;
 use super::backend::try_prove;
 use super::pipeline::{
     VerificationPipeline, VerifyResult, AxiomInfo,
-    collect_pure_views, collect_pure_fns, encode_axiom, infer_binder_sorts,
+    collect_pure_views, collect_pure_fns, collect_trusted_fns, encode_axiom, infer_binder_sorts,
     format_counterexample, unknown_to_diag_message, substitute_old, type_to_sort,
     infer_pure_fns_scc,
 };
@@ -122,6 +122,10 @@ pub fn verify_handlers(module: &Module) -> Vec<Diagnostic> {
                             binding_span,
                         ));
                     }
+                    VerifyResult::Warning(msg) => {
+                        // W2402 от verify — forwarding как warning.
+                        diagnostics.push(Diagnostic::new(msg, binding_span));
+                    }
                 }
                 continue;
             }
@@ -147,6 +151,9 @@ pub fn verify_handlers(module: &Module) -> Vec<Diagnostic> {
                     let _ = (reason, binding_span);
                 }
                 VerifyResult::EncodingFailed(_) => {}
+                VerifyResult::Warning(msg) => {
+                    diagnostics.push(Diagnostic::new(msg, binding_span));
+                }
             }
         }
         }
@@ -202,9 +209,10 @@ fn verify_liskov_method(
 ) -> Vec<Diagnostic> {
     let mut diagnostics = Vec::new();
     let pure_fns = collect_pure_fns(module, inferred_pure);
+    let trusted_fns = collect_trusted_fns(module);
     let var_sorts: std::collections::HashMap<String, SortRef> = effect_params.iter()
         .map(|p| (p.name.clone(), type_to_sort(&p.ty))).collect();
-    let ctx = super::encode::EncodeCtx { pure_views, pure_fns: &pure_fns, var_sorts };
+    let ctx = super::encode::EncodeCtx { pure_views, pure_fns: &pure_fns, trusted_fns: &trusted_fns, var_sorts };
     let mut backend = pipeline.create_backend();
 
     for (op_name, sig) in pure_views {
@@ -288,7 +296,8 @@ fn verify_static_axiom_with_handler(
     inferred_pure: &std::collections::HashSet<String>,
 ) -> VerifyResult {
     let pure_fns = collect_pure_fns(module, inferred_pure);
-    let ctx = super::encode::EncodeCtx { pure_views, pure_fns: &pure_fns, var_sorts: std::collections::HashMap::new() };
+    let trusted_fns = collect_trusted_fns(module);
+    let ctx = super::encode::EncodeCtx { pure_views, pure_fns: &pure_fns, trusted_fns: &trusted_fns, var_sorts: std::collections::HashMap::new() };
 
     let mut backend = pipeline.create_backend();
 
@@ -558,7 +567,8 @@ fn verify_post_axiom_with_handler(
     };
 
     let pure_fns = collect_pure_fns(module, inferred_pure);
-    let ctx = super::encode::EncodeCtx { pure_views, pure_fns: &pure_fns, var_sorts: std::collections::HashMap::new() };
+    let trusted_fns = collect_trusted_fns(module);
+    let ctx = super::encode::EncodeCtx { pure_views, pure_fns: &pure_fns, trusted_fns: &trusted_fns, var_sorts: std::collections::HashMap::new() };
     let mut backend = pipeline.create_backend();
 
     for (op_name, sig) in pure_views {

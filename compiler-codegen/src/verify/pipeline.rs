@@ -1,16 +1,16 @@
-//! Plan 33.1 Р¤.3: Verification pipeline.
+﻿//! Plan 33.1 Р¤.3: Verification pipeline.
 //!
 //! РђР»РіРѕСЂРёС‚Рј РґР»СЏ РєР°Р¶РґРѕР№ С„СѓРЅРєС†РёРё СЃ РєРѕРЅС‚СЂР°РєС‚Р°РјРё:
 //!
 //! 1. Encode РїР°СЂР°РјРµС‚СЂС‹ РєР°Рє Var-С‹ (SMT-IR).
-//! 2. Encode `requires` в†’ assertions РІ backend.
+//! 2. Encode `requires` в†' assertions РІ backend.
 //! 3. Encode body: РґР»СЏ straight-line `=> expr` body = symbolic value,
-//!    РєРѕС‚РѕСЂРѕРµ Р·Р°РјРµРЅСЏРµС‚ `result` РІ ensures. Р”Р»СЏ block-body СЃ trailing вЂ”
+//!    РєРѕС‚РѕСЂРѕРµ Р·Р°РјРµРЅСЏРµС‚ `result` РІ ensures. Р"Р»СЏ block-body СЃ trailing вЂ"
 //!    С‚Рѕ Р¶Рµ СЃР°РјРѕРµ.
-//! 4. Р”Р»СЏ РєР°Р¶РґРѕРіРѕ `ensures Q`:
-//!    - Substitute `result` в†’ encoded_body_value РІ Q.
-//!    - try_prove(Q): unsat в†’ proven; sat в†’ counterexample; unknown в†’ fallback.
-//! 5. Р РµР·СѓР»СЊС‚Р°С‚ per-fn в†’ Р°РіСЂРµРіРёСЂСѓРµС‚СЃСЏ РІ pipeline-level diagnostics.
+//! 4. Р"Р»СЏ РєР°Р¶РґРѕРіРѕ `ensures Q`:
+//!    - Substitute `result` в†' encoded_body_value РІ Q.
+//!    - try_prove(Q): unsat в†' proven; sat в†' counterexample; unknown в†' fallback.
+//! 5. Р РµР·СѓР»СЊС‚Р°С‚ per-fn в†' Р°РіСЂРµРіРёСЂСѓРµС‚СЃСЏ РІ pipeline-level diagnostics.
 //!
 //! Plan 33.1 РѕРіСЂР°РЅРёС‡РµРЅРёСЏ:
 //! - Body РґРѕР»Р¶РµРЅ Р±С‹С‚СЊ encodable (СЃРј. encode.rs `Unsupported` case'С‹).
@@ -31,20 +31,22 @@ pub enum VerifyResult {
     Proven,
     /// РљРѕРЅС‚СЂ-РїСЂРёРјРµСЂ (С„РѕСЂРјСѓР»Р° РѕРїСЂРѕРІРµСЂР¶РµРЅР°).
     Disproved(Model, String),
-    /// SMT РЅРµ СЃРїСЂР°РІРёР»СЃСЏ вЂ” fallback to runtime.
+    /// SMT РЅРµ СЃРїСЂР°РІРёР»СЃСЏ вЂ" fallback to runtime.
     Unknown(String),
     /// Encoder РЅРµ СЃРјРѕРі РїРѕСЃС‚СЂРѕРёС‚СЊ SMT-IR (fall back to runtime).
     EncodingFailed(String),
+    /// Ф.6.2 (Plan 33.6): не-ошибка, пользователь должен знать [W2402].
+    Warning(String),
 }
 
-/// Р’С‹Р±РѕСЂ SMT backend'Р°.
+/// Р'С‹Р±РѕСЂ SMT backend'Р°.
 ///
 /// Plan 33 Z3 milestone (V1 closure): РґРѕР±Р°РІР»РµРЅ `Z3`. РџРѕ СѓРјРѕР»С‡Р°РЅРёСЋ
 /// `Trivial` (backward-compat + no external deps). Switch:
 /// - CLI flag (nova check/test/compile): `--smt-backend=z3`.
 /// - Env var: `NOVA_SMT_BACKEND=z3`.
 ///
-/// Р•СЃР»Рё feature `z3-backend` РЅРµ compiled-in, `Z3` С‚РµСЂСЏРµС‚ СЃРјС‹СЃР» вЂ”
+/// Р•СЃР»Рё feature `z3-backend` РЅРµ compiled-in, `Z3` С‚РµСЂСЏРµС‚ СЃРјС‹СЃР» вЂ"
 /// `create_backend` РїР°РґР°РµС‚ РѕР±СЂР°С‚РЅРѕ РЅР° trivial СЃ stderr-warning.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BackendChoice {
@@ -72,7 +74,7 @@ impl BackendChoice {
 }
 
 pub struct VerificationPipeline {
-    timeout_ms: u32,
+    pub timeout_ms: u32,
     backend: BackendChoice,
 }
 
@@ -103,7 +105,7 @@ impl VerificationPipeline {
                 }
                 #[cfg(not(feature = "z3-backend"))]
                 {
-                    // User-friendly fallback (РЅРѕ РЅРµ silent вЂ” РїРёС€РµРј РІ stderr).
+                    // User-friendly fallback (РЅРѕ РЅРµ silent вЂ" РїРёС€РµРј РІ stderr).
                     eprintln!(
                         "warning: --smt-backend=z3 requested, but binary built without \
                          `--features z3-backend`; falling back to trivial backend. \
@@ -131,24 +133,25 @@ impl VerificationPipeline {
         let mut backend = self.create_backend();
 
         // Plan 33.3 Р¤.9: СЂРµРµСЃС‚СЂ pure_view-ops РјРѕРґСѓР»СЏ. РСЃРїРѕР»СЊР·СѓРµС‚СЃСЏ
-        // encoder'РѕРј РґР»СЏ РїРµСЂРµРІРѕРґР° `balance(id)` в†’ UF `_view_Db_balance(id)`.
+        // encoder'РѕРј РґР»СЏ РїРµСЂРµРІРѕРґР° `balance(id)` в†' UF `_view_Db_balance(id)`.
         let pure_views = collect_pure_views(module);
         let mut pure_fns = collect_pure_fns(module, inferred_pure);
-        // Р¤.3: РїСЂРё РєРѕРґРёСЂРѕРІР°РЅРёРё С‚РµР»Р° С‚РµРєСѓС‰РµР№ fn СѓР±РёСЂР°РµРј РµС‘ body_expr РёР· РєРѕРЅС‚РµРєСЃС‚Р°,
+        // Р¤.3: РїСЂРё РєРѕРґРёСЂРѕРІР°РЅРёРё С‚РµР»Р° С‚РµРєСѓС‰РµР№ fn СѓР±РёСЂР°РµРј РµС' body_expr РёР· РєРѕРЅС‚РµРєСЃС‚Р°,
         // С‡С‚РѕР±С‹ encoder РЅРµ РїС‹С‚Р°Р»СЃСЏ РёРЅР»Р°Р№РЅРёС‚СЊ СЂРµРєСѓСЂСЃРёРІРЅС‹Р№ РІС‹Р·РѕРІ: factorial(n-1)
-        // СЃРѕРґРµСЂР¶РёС‚ factorial в†’ body в†’ factorial(n-1) в†’ в€ћ.
-        // UF-Р°РїРїР»РёРєР°С†РёСЏ (_pure_factorial(n-1)) РѕСЃС‚Р°С‘С‚СЃСЏ вЂ” РґР»СЏ soundness
+        // СЃРѕРґРµСЂР¶РёС‚ factorial в†' body в†' factorial(n-1) в†' в€ћ.
+        // UF-Р°РїРїР»РёРєР°С†РёСЏ (_pure_factorial(n-1)) РѕСЃС‚Р°С'С‚СЃСЏ вЂ" РґР»СЏ soundness
         // РґРѕСЃС‚Р°С‚РѕС‡РЅРѕ С‚РµР»Р°-Р°РєСЃРёРѕРјС‹ (body axiom), РєРѕС‚РѕСЂСѓСЋ Z3 instantiates РїРѕ trigger.
         if let Some(entry) = pure_fns.get_mut(&fd.name) {
             entry.body_expr = None;
         }
         let var_sorts: std::collections::HashMap<String, SortRef> = fd.params.iter()
             .map(|p| (p.name.clone(), type_to_sort(&p.ty))).collect();
-        let ctx = super::encode::EncodeCtx { pure_views: &pure_views, pure_fns: &pure_fns, var_sorts };
+        let trusted_fns = collect_trusted_fns(module);
+        let ctx = super::encode::EncodeCtx { pure_views: &pure_views, pure_fns: &pure_fns, trusted_fns: &trusted_fns, var_sorts };
 
         // Plan 33.3 Р¤.9: pre-declare РІСЃРµ pure_view UFs РІ backend'Рµ.
-        // Р‘РµР· СЌС‚РѕРіРѕ Z3 auto-declare'РёС‚ UF СЃ Int sorts РїРѕ СѓРјРѕР»С‡Р°РЅРёСЋ;
-        // pre-decl РґР°С‘С‚ РїСЂР°РІРёР»СЊРЅС‹Рµ sorts РёР· effect-СЃРёРіРЅР°С‚СѓСЂС‹ (РІР°Р¶РЅРѕ РґР»СЏ
+        // Р'РµР· СЌС‚РѕРіРѕ Z3 auto-declare'РёС‚ UF СЃ Int sorts РїРѕ СѓРјРѕР»С‡Р°РЅРёСЋ;
+        // pre-decl РґР°С'С‚ РїСЂР°РІРёР»СЊРЅС‹Рµ sorts РёР· effect-СЃРёРіРЅР°С‚СѓСЂС‹ (РІР°Р¶РЅРѕ РґР»СЏ
         // soundness РєРѕРіРґР° args РЅРµ int'РѕРІС‹Рµ).
         for (op_name, sig) in &pure_views {
             let uf = super::encode::pure_view_uf_name(&sig.effect_name, op_name);
@@ -186,6 +189,43 @@ impl VerificationPipeline {
                     backend.assert(Assertion {
                         formula: axiom,
                         label: Some(format!("pure_fn_body@{}", pfd.name)),
+                    });
+                }
+            }
+        }
+
+        // Ф.4.2 (Plan 33.6): declare UFs для #trusted external fn + inject ensures axioms.
+        // ensures(params, result) → (forall (params result) (=> true ensures)).
+        // "result" — специальная переменная, обозначает возвращаемое значение UF.
+        for (fn_name, info) in &trusted_fns {
+            let uf = encode::trusted_fn_uf_name(fn_name);
+            backend.declare_function(&uf, &info.param_sorts, info.return_sort.clone());
+            // Build axiom: forall params, result. ensures_expr
+            // Substitution: "result" → uf(params) в ensures.
+            let param_vars: Vec<SmtTerm> = info.param_names.iter()
+                .map(|n| SmtTerm::Var(n.clone())).collect();
+            let uf_app = SmtTerm::App(uf.clone(), param_vars);
+            let result_var = "_trusted_result".to_string();
+            // Binders: params + _trusted_result
+            let mut binders: Vec<(String, SortRef)> = info.param_names.iter()
+                .zip(info.param_sorts.iter())
+                .map(|(n, s)| (n.clone(), s.clone()))
+                .collect();
+            binders.push((result_var.clone(), info.return_sort.clone()));
+            // Substitute "result" → _trusted_result in ensures, then assert forall
+            let result_binding = SmtTerm::eq(SmtTerm::Var(result_var.clone()), uf_app);
+            for ensures_expr in &info.ensures_exprs {
+                // Encode ensures with result → _trusted_result substitution in ctx.
+                let mut ctx_with_result = ctx.clone();
+                ctx_with_result.var_sorts.insert(result_var.clone(), info.return_sort.clone());
+                if let Ok(ensures_term) = encode::encode_expr_with_ctx(ensures_expr, &ctx_with_result) {
+                    // Replace "result" var with _trusted_result in encoded term.
+                    let ensures_subst = ensures_term.substitute("result", &SmtTerm::Var(result_var.clone()));
+                    let body = SmtTerm::App("and".into(), vec![result_binding.clone(), ensures_subst]);
+                    let axiom = SmtTerm::Forall(binders.clone(), vec![], Box::new(body));
+                    backend.assert(Assertion {
+                        formula: axiom,
+                        label: Some(format!("trusted_fn_ensures@{}", fn_name)),
                     });
                 }
             }
@@ -239,7 +279,7 @@ impl VerificationPipeline {
             }
         }
 
-        // D.1.2: frame axiom вЂ” РґР»СЏ РєР°Р¶РґРѕРіРѕ param NOT РІ modifies-СЃРїРёСЃРєРµ
+        // D.1.2: frame axiom вЂ" РґР»СЏ РєР°Р¶РґРѕРіРѕ param NOT РІ modifies-СЃРїРёСЃРєРµ
         // assert _old_<x> == <x> (frame: Р·РЅР°С‡РµРЅРёРµ РЅРµ РёР·РјРµРЅРёР»РѕСЃСЊ).
         // Р­С‚Рѕ РїРѕР·РІРѕР»СЏРµС‚ Z3 reasoning'РѕРІР°С‚СЊ РЅР°Рґ `old(x)` РІ ensures:
         // РµСЃР»Рё x РЅРµ РІ modifies, С‚Рѕ old(x) == x С‚СЂРёРІРёР°Р»СЊРЅРѕ РІ pre-state.
@@ -309,7 +349,7 @@ impl VerificationPipeline {
         // 3. Encode body value. РўРѕР»СЊРєРѕ РґР»СЏ `=> expr` С„РѕСЂРј
         // (block-bodies СЃ trailing-only С‚РѕР¶Рµ OK).
         // Ф.4.1: блок, содержащий только ghost `apply`-стейтменты, тоже считается
-        // trailing-only — apply стираются в runtime, не влияют на значение body.
+        // trailing-only -- apply стираются в runtime, не влияют на значение body.
         let body_val = match &fd.body {
             FnBody::Expr(e) => encode::encode_expr_with_ctx(e, &ctx).ok(),
             FnBody::Block(b) if block_has_only_ghost_stmts(b) => {
@@ -338,20 +378,20 @@ impl VerificationPipeline {
                     continue;
                 }
             };
-            // Substitute result в†’ body_val (РµСЃР»Рё РµСЃС‚СЊ).
+            // Substitute result в†' body_val (РµСЃР»Рё РµСЃС‚СЊ).
             let goal = if let Some(bv) = &body_val {
                 encoded.substitute("result", bv)
             } else {
-                // Body РЅРµ encoded в†’ fallback.
+                // Body РЅРµ encoded в†' fallback.
                 results.push((c.span, VerifyResult::EncodingFailed(
                     "function body not encodable (use runtime check)".into())));
                 continue;
             };
-            // РўР°РєР¶Рµ РїРѕРґРјРµРЅРёРј `old(x)` в†’ Р·РЅР°С‡РµРЅРёРµ `x` РЅР° entry-state.
-            // Р’ 33.1 РЅРµС‚ mut params в†’ СЃС‚Р°СЂС‹Рµ Р·РЅР°С‡РµРЅРёСЏ = С‚РµРєСѓС‰РёРµ Р·РЅР°С‡РµРЅРёСЏ.
+            // РўР°РєР¶Рµ РїРѕРґРјРµРЅРёРј `old(x)` в†' Р·РЅР°С‡РµРЅРёРµ `x` РЅР° entry-state.
+            // Р' 33.1 РЅРµС‚ mut params в†' СЃС‚Р°СЂС‹Рµ Р·РЅР°С‡РµРЅРёСЏ = С‚РµРєСѓС‰РёРµ Р·РЅР°С‡РµРЅРёСЏ.
             let goal = substitute_old(&goal);
 
-            // try_prove(goal). `&mut *backend` С‡С‚РѕР±С‹ coerce Box<dyn> в†’ &mut dyn.
+            // try_prove(goal). `&mut *backend` С‡С‚РѕР±С‹ coerce Box<dyn> в†' &mut dyn.
             match try_prove(&mut *backend, goal) {
                 SatResult::Unsat(_) => results.push((c.span, VerifyResult::Proven)),
                 SatResult::Sat(model) => {
@@ -359,7 +399,7 @@ impl VerificationPipeline {
                     results.push((c.span, VerifyResult::Disproved(model, cex)));
                 }
                 SatResult::Unknown(reason) => {
-                    // Plan 33.3 Р¤.9.10: AI-friendly diagnostic вЂ” РєР°С‚РµРіРѕСЂРёР·РёСЂСѓРµРј
+                    // Plan 33.3 Р¤.9.10: AI-friendly diagnostic вЂ" РєР°С‚РµРіРѕСЂРёР·РёСЂСѓРµРј
                     // reason + suggestions.
                     let msg = unknown_to_diag_message(reason);
                     results.push((c.span, VerifyResult::Unknown(msg)));
@@ -370,7 +410,7 @@ impl VerificationPipeline {
         // D.1.5: verify ensures_fail clauses (Fail-path postconditions).
         // РњРѕРґРµР»СЊ (V1, conservative): РІРµСЂРёС„РёС†РёСЂСѓРµРј ensures_fail РЅРµР·Р°РІРёСЃРёРјРѕ,
         // РёСЃРїРѕР»СЊР·СѓСЏ С‚Рµ Р¶Рµ params + requires-assertions (entry state).
-        // `result` РЅРµРґРѕСЃС‚СѓРїРµРЅ; `old(x)` в†’ x (entry-state, РЅРµС‚ РјСѓС‚Р°Р±РµР»СЊРЅС‹С… params).
+        // `result` РЅРµРґРѕСЃС‚СѓРїРµРЅ; `old(x)` в†' x (entry-state, РЅРµС‚ РјСѓС‚Р°Р±РµР»СЊРЅС‹С… params).
         for c in &fd.contracts {
             if !matches!(c.kind, ContractKind::EnsuresFail) { continue; }
             if requires_failed {
@@ -387,7 +427,7 @@ impl VerificationPipeline {
                     continue;
                 }
             };
-            // `old(x)` в†’ x (entry-state, params РЅРµРёР·РјРµРЅРЅС‹ РІ V1).
+            // `old(x)` в†' x (entry-state, params РЅРµРёР·РјРµРЅРЅС‹ РІ V1).
             let goal = substitute_old(&encoded);
             match try_prove(&mut *backend, goal) {
                 SatResult::Unsat(_) => results.push((c.span, VerifyResult::Proven)),
@@ -463,10 +503,10 @@ impl VerificationPipeline {
         }
 
         // Plan 33.4 D.0.3: verify loop invariants at entry.
-        // Р”Р»СЏ РєР°Р¶РґРѕРіРѕ С†РёРєР»Р° СЃ `invariant <expr>` РІ С‚РµР»Рµ fn:
+        // Р"Р»СЏ РєР°Р¶РґРѕРіРѕ С†РёРєР»Р° СЃ `invariant <expr>` РІ С‚РµР»Рµ fn:
         // РїС‹С‚Р°РµРјСЃСЏ РґРѕРєР°Р·Р°С‚СЊ С‡С‚Рѕ invariant РІС‹РїРѕР»РЅСЏРµС‚СЃСЏ РїСЂРё РІС…РѕРґРµ РІ С„СѓРЅРєС†РёСЋ
-        // (РїСЂРё СѓСЃР»РѕРІРёРё requires). Р­С‚Рѕ partial check вЂ” РЅРµ РґРѕРєР°Р·С‹РІР°РµС‚
-        // preservation (РїРѕР»РЅС‹Р№ havoc-based encoding вЂ” V2).
+        // (РїСЂРё СѓСЃР»РѕРІРёРё requires). Р­С‚Рѕ partial check вЂ" РЅРµ РґРѕРєР°Р·С‹РІР°РµС‚
+        // preservation (РїРѕР»РЅС‹Р№ havoc-based encoding вЂ" V2).
         let loop_invs = collect_loop_invariants_in_body(&fd.body);
         for (inv_span, inv_expr) in loop_invs {
             match encode::encode_expr_with_ctx(&inv_expr, &ctx) {
@@ -484,24 +524,34 @@ impl VerificationPipeline {
                         }
                     }
                 }
-                Err(_) => {
-                    // Invariant РЅРµ encodable (e.g. СЃРѕРґРµСЂР¶РёС‚ РІС‹Р·РѕРІС‹) вЂ” silent skip.
-                    // Runtime check (inject_loop_invariants) РїРѕРєСЂС‹РІР°РµС‚ СЌС‚РѕС‚ СЃР»СѓС‡Р°Р№.
+                Err(e) => {
+                    // Ф.6.2 (Plan 33.6): loop invariant не encodable -- W2402.
+                    // Runtime check (inject_loop_invariants) покрывает runtime часть,
+                    // но пользователь должен знать что SMT не проверил invariant.
+                    let reason_str = match &e {
+                        super::encode::EncodingError::Unsupported(s) => s.clone(),
+                    };
+                    let msg = format!(
+                        "loop invariant не удалось закодировать в SMT [W2402]: {}.\n  \
+                         Runtime-proверка активна, SMT-доказательство пропущено.\n  \
+                         Упростите invariant или используйте только int/bool/pure-fn.",
+                        reason_str);
+                    results.push((inv_span, VerifyResult::Warning(msg)));
                 }
             }
         }
 
-        // Р¤.2 (Plan 33.5): Loop invariant preservation via havoc-based encoding.
+        // Ф.2 (Plan 33.5): Loop invariant preservation via havoc-based encoding.
         //
         // РђР»РіРѕСЂРёС‚Рј (Dafny/Verus standard):
         // 1. РЎРѕР±СЂР°С‚СЊ РІСЃРµ while-loops СЃ invariants РІ С‚РµР»Рµ fn.
-        // 2. Р”Р»СЏ РєР°Р¶РґРѕРіРѕ С†РёРєР»Р°:
-        //    a. Havoc: РґР»СЏ РєР°Р¶РґРѕР№ mutable var РІ С‚РµР»Рµ С†РёРєР»Р° вЂ” fresh SMT var
+        // 2. Р"Р»СЏ РєР°Р¶РґРѕРіРѕ С†РёРєР»Р°:
+        //    a. Havoc: РґР»СЏ РєР°Р¶РґРѕР№ mutable var РІ С‚РµР»Рµ С†РёРєР»Р° вЂ" fresh SMT var
         //       (СЃРёРјРІРѕР»РёС‡РµСЃРєРѕРµ СЃРѕСЃС‚РѕСЏРЅРёРµ РїРѕСЃР»Рµ N РёС‚РµСЂР°С†РёР№).
         //    b. Assume invariant РЅР° havoc'd state + assume loop cond true.
         //    c. Symbolic exec body (V1: straight-line assignments only).
         //    d. Assert invariant РїРѕСЃР»Рµ body (РЅР° post-state).
-        //    e. UNSAT в†’ invariant preserved; SAT в†’ counterexample.
+        //    e. UNSAT в†' invariant preserved; SAT в†' counterexample.
         let loop_pres = collect_loop_preservation_targets(&fd.body);
         for lp in loop_pres {
             let res = verify_loop_preservation(&lp, &ctx, &mut *backend);
@@ -511,9 +561,9 @@ impl VerificationPipeline {
         // Р¤.1.3 (Plan 33.5): verify loop decreases.
         // V1 scope: simple `while <cond> decreases <m> { ... }` РіРґРµ body
         // СЃРѕРґРµСЂР¶РёС‚ РїСЂСЏРјРѕРµ decrement `var = var - 1` РёР»Рё `var = var + 1`
-        // (РІ Р·Р°РІРёСЃРёРјРѕСЃС‚Рё РѕС‚ СѓР±С‹РІР°РЅРёСЏ РёР»Рё РІРѕР·СЂР°СЃС‚Р°РЅРёСЏ). Р”РѕРєР°Р·С‹РІР°РµРј:
+        // (РІ Р·Р°РІРёСЃРёРјРѕСЃС‚Рё РѕС‚ СѓР±С‹РІР°РЅРёСЏ РёР»Рё РІРѕР·СЂР°СЃС‚Р°РЅРёСЏ). Р"РѕРєР°Р·С‹РІР°РµРј:
         //   1. dec_pre >= 0 (non-negative РїСЂРё РІС…РѕРґРµ, РїРѕРґ requires).
-        //   2. Р’ РєР°Р¶РґРѕР№ РёС‚РµСЂР°С†РёРё dec_post < dec_pre
+        //   2. Р' РєР°Р¶РґРѕР№ РёС‚РµСЂР°С†РёРё dec_post < dec_pre
         //      (РёСЃРїРѕР»СЊР·СѓРµС‚ assignment-analysis: over-approx `var_post = var_pre - 1`).
         let loop_decs = collect_loop_decreases_in_body(&fd.body);
         for (dec_span, dec_expr, body_assignments) in loop_decs {
@@ -534,11 +584,11 @@ impl VerificationPipeline {
                         SatResult::Unknown(_) => {} // fall through to decrease check
                     }
                     // РџСЂРѕРІРµСЂСЏРµРј С‡С‚Рѕ РјРµСЂР° СѓР±С‹РІР°РµС‚: РґР»СЏ РєР°Р¶РґРѕРіРѕ counter-assignment
-                    // `var = var - k` в†’ dec_post = dec_pre[var в†’ var - k] < dec_pre.
+                    // `var = var - k` в†' dec_post = dec_pre[var в†' var - k] < dec_pre.
                     // V1: С‚РѕР»СЊРєРѕ РѕРґРЅРѕ scalar decreases expression.
-                    // Р•СЃР»Рё РІ body РЅР°Р№РґРµРЅРѕ РїСЂРѕСЃС‚РѕРµ decrement в†’ encode РєР°Рє fresh var.
+                    // Р•СЃР»Рё РІ body РЅР°Р№РґРµРЅРѕ РїСЂРѕСЃС‚РѕРµ decrement в†' encode РєР°Рє fresh var.
                     for (var_name, delta) in &body_assignments {
-                        // dec_post: substitute var в†’ (var - delta) РІ dec_expr.
+                        // dec_post: substitute var в†' (var - delta) РІ dec_expr.
                         let var_minus_delta = SmtTerm::App(
                             "-".into(),
                             vec![SmtTerm::Var(var_name.clone()), SmtTerm::IntLit(*delta)],
@@ -562,7 +612,7 @@ impl VerificationPipeline {
                         }
                     }
                 }
-                Err(_) => {} // dec РЅРµ encodable вЂ” skip (РЅРµ Р»РѕРјР°РµРј СЃСѓС‰РµСЃС‚РІСѓСЋС‰РёРµ С‚РµСЃС‚С‹)
+                Err(_) => {} // dec РЅРµ encodable вЂ" skip (РЅРµ Р»РѕРјР°РµРј СЃСѓС‰РµСЃС‚РІСѓСЋС‰РёРµ С‚РµСЃС‚С‹)
             }
         }
 
@@ -590,7 +640,8 @@ impl VerificationPipeline {
         let pure_fns = collect_pure_fns(module, inferred_pure);
         let var_sorts: std::collections::HashMap<String, SortRef> = ld.params.iter()
             .map(|p| (p.name.clone(), type_to_sort(&p.ty))).collect();
-        let ctx = super::encode::EncodeCtx { pure_views: &pure_views, pure_fns: &pure_fns, var_sorts };
+        let trusted_fns = collect_trusted_fns(module);
+        let ctx = super::encode::EncodeCtx { pure_views: &pure_views, pure_fns: &pure_fns, trusted_fns: &trusted_fns, var_sorts };
 
         // Pre-declare pure_view UFs.
         for (op_name, sig) in &pure_views {
@@ -623,7 +674,7 @@ impl VerificationPipeline {
             }
         }
 
-        // Encode body value (лемма — это доказательство, body = proof term).
+        // Encode body value (лемма -- это доказательство, body = proof term).
         let body_val = match &ld.body {
             FnBody::Expr(e) => encode::encode_expr_with_ctx(e, &ctx).ok(),
             FnBody::Block(b) if block_has_only_ghost_stmts(b) => {
@@ -701,8 +752,8 @@ pub(super) fn collect_pure_views(module: &Module) -> std::collections::HashMap<S
 }
 
 /// Plan 33.4 D.0.2: СЃРѕР±СЂР°С‚СЊ РІСЃРµ #pure fn'С‹ РјРѕРґСѓР»СЏ РІ СЂРµРµСЃС‚СЂ РґР»СЏ encoder'Р°.
-/// `inferred_pure` вЂ” РїСЂРµРґРІР°СЂРёС‚РµР»СЊРЅРѕ РІС‹С‡РёСЃР»РµРЅРЅС‹Р№ СЂРµР·СѓР»СЊС‚Р°С‚ SCC inference
-/// (РїРµСЂРµРґР°С‘С‚СЃСЏ СЃРЅР°СЂСѓР¶Рё С‡С‚РѕР±С‹ РЅРµ РїРµСЂРµСЃС‡РёС‚С‹РІР°С‚СЊ РЅР° РєР°Р¶РґСѓСЋ С„СѓРЅРєС†РёСЋ).
+/// `inferred_pure` вЂ" РїСЂРµРґРІР°СЂРёС‚РµР»СЊРЅРѕ РІС‹С‡РёСЃР»РµРЅРЅС‹Р№ СЂРµР·СѓР»СЊС‚Р°С‚ SCC inference
+/// (РїРµСЂРµРґР°С'С‚СЃСЏ СЃРЅР°СЂСѓР¶Рё С‡С‚РѕР±С‹ РЅРµ РїРµСЂРµСЃС‡РёС‚С‹РІР°С‚СЊ РЅР° РєР°Р¶РґСѓСЋ С„СѓРЅРєС†РёСЋ).
 pub(super) fn collect_pure_fns(
     module: &Module,
     inferred_pure: &std::collections::HashSet<String>,
@@ -734,21 +785,43 @@ pub(super) fn collect_pure_fns(
     out
 }
 
+/// Ф.4.2 (Plan 33.6): собрать все `#trusted external fn` модуля в реестр для encoder'а.
+pub(super) fn collect_trusted_fns(module: &Module) -> std::collections::HashMap<String, encode::TrustedFnInfo> {
+    let mut out = std::collections::HashMap::new();
+    for item in &module.items {
+        let Item::Fn(fd) = item else { continue };
+        if !fd.is_trusted || !fd.is_external { continue; }
+        let param_sorts = fd.params.iter().map(|p| type_to_sort(&p.ty)).collect();
+        let return_sort = fd.return_type.as_ref().map(type_to_sort).unwrap_or(SortRef::Int);
+        let ensures_exprs: Vec<_> = fd.contracts.iter()
+            .filter(|c| matches!(c.kind, ContractKind::Ensures))
+            .map(|c| c.expr.clone())
+            .collect();
+        out.insert(fd.name.clone(), encode::TrustedFnInfo {
+            param_names: fd.params.iter().map(|p| p.name.clone()).collect(),
+            param_sorts,
+            return_sort,
+            ensures_exprs,
+        });
+    }
+    out
+}
+
 /// Р¤.3 (Plan 33.5): Tarjan SCC + purity inference.
 ///
 /// РђР»РіРѕСЂРёС‚Рј:
-/// 1. РџРѕСЃС‚СЂРѕРёС‚СЊ call-graph: РґР»СЏ РєР°Р¶РґРѕР№ Fn вЂ” РЅР°Р±РѕСЂ РІС‹Р·С‹РІР°РµРјС‹С… РёРјС‘РЅ (РёР· body).
-/// 2. Р—Р°РїСѓСЃС‚РёС‚СЊ Tarjan SCC.
-/// 3. Topological order SCCs. Р”Р»СЏ РєР°Р¶РґРѕР№ SCC:
+/// 1. РџРѕСЃС‚СЂРѕРёС‚СЊ call-graph: РґР»СЏ РєР°Р¶РґРѕР№ Fn вЂ" РЅР°Р±РѕСЂ РІС‹Р·С‹РІР°РµРјС‹С… РёРјС'РЅ (РёР· body).
+/// 2. Р--Р°РїСѓСЃС‚РёС‚СЊ Tarjan SCC.
+/// 3. Topological order SCCs. Р"Р»СЏ РєР°Р¶РґРѕР№ SCC:
 ///    - Р•СЃР»Рё РІСЃРµ fn РІ SCC pure-eligible (РЅРµС‚ effects, РЅРµС‚ `with`, РЅРµС‚ IO,
-///      РІСЃРµ РІС‹Р·РѕРІС‹ вЂ” С‚РѕР»СЊРєРѕ Рє СѓР¶Рµ-proven-pure РёР»Рё Рє fn С‚РѕР№ Р¶Рµ SCC) в†’
+///      РІСЃРµ РІС‹Р·РѕРІС‹ вЂ" С‚РѕР»СЊРєРѕ Рє СѓР¶Рµ-proven-pure РёР»Рё Рє fn С‚РѕР№ Р¶Рµ SCC) в†'
 ///      РїРѕРјРµС‚РёС‚СЊ РєР°Рє inferred-pure.
-/// 4. РЇРІРЅРѕ `@effectful` fn в†’ non-pure (РїРµСЂРµРѕРїСЂРµРґРµР»СЏРµС‚ inference).
+/// 4. РЇРІРЅРѕ `@effectful` fn в†' non-pure (РїРµСЂРµРѕРїСЂРµРґРµР»СЏРµС‚ inference).
 ///
 /// Pure-eligibility (V1):
 /// - FnBody::Expr РёР»Рё РїСЂРѕСЃС‚РѕР№ block Р±РµР· `with`/`interrupt`/IO-stmts.
 /// - РЎРёРіРЅР°С‚СѓСЂР°: РЅРµС‚ implicit effects РїР°СЂР°РјРµС‚СЂРѕРІ (РЅРµС‚ `with E` handlers).
-/// - Р’СЃРµ РІС‹Р·РѕРІС‹ РІ body в†’ Рє already-pure РёР»Рё Рє fn С‚РѕР№ Р¶Рµ SCC.
+/// - Р'СЃРµ РІС‹Р·РѕРІС‹ РІ body в†' Рє already-pure РёР»Рё Рє fn С‚РѕР№ Р¶Рµ SCC.
 /// - РќРµС‚ РІС‹Р·РѕРІРѕРІ Рє external fn (FnBody::External).
 pub fn infer_pure_fns_scc(module: &Module) -> std::collections::HashSet<String> {
     use std::collections::{HashMap, HashSet};
@@ -764,7 +837,7 @@ pub fn infer_pure_fns_scc(module: &Module) -> std::collections::HashSet<String> 
         fn_purity_explicit.insert(fd.name.clone(), fd.purity);
     }
 
-    // call-graph: fn_name в†’ set of called fn_names (within module).
+    // call-graph: fn_name в†' set of called fn_names (within module).
     let mut call_graph: HashMap<String, HashSet<String>> = HashMap::new();
     for name in &fn_names {
         let body = fn_body_map[name];
@@ -775,13 +848,13 @@ pub fn infer_pure_fns_scc(module: &Module) -> std::collections::HashSet<String> 
     // РЁР°Рі 2: Tarjan SCC (iterative, С‡С‚РѕР±С‹ РЅРµ СѓРїРёСЂР°С‚СЊСЃСЏ РІ stack overflow).
     let sccs = tarjan_scc(&fn_names, &call_graph);
 
-    // РЁР°Рі 3: topological order в†’ РѕРїСЂРµРґРµР»СЏРµРј pure SCCs.
-    // sccs СѓР¶Рµ РІ РѕР±СЂР°С‚РЅРѕРј С‚РѕРїРѕР»РѕРіРёС‡РµСЃРєРѕРј РїРѕСЂСЏРґРєРµ (Tarjan РІС‹РґР°С‘С‚ SCC РІ
+    // РЁР°Рі 3: topological order в†' РѕРїСЂРµРґРµР»СЏРµРј pure SCCs.
+    // sccs СѓР¶Рµ РІ РѕР±СЂР°С‚РЅРѕРј С‚РѕРїРѕР»РѕРіРёС‡РµСЃРєРѕРј РїРѕСЂСЏРґРєРµ (Tarjan РІС‹РґР°С'С‚ SCC РІ
     // reverse topological order РІ СЃС‚Р°РЅРґР°СЂС‚РЅРѕР№ СЂРµР°Р»РёР·Р°С†РёРё).
     // РС‚РµСЂРёСЂСѓРµРј РѕС‚ С…РІРѕСЃС‚Р° Рє РіРѕР»РѕРІРµ С‡С‚РѕР±С‹ РёРґС‚Рё РѕС‚ Р»РёСЃС‚СЊРµРІ Рє РєРѕСЂРЅСЏРј.
     let mut proven_pure: HashSet<String> = HashSet::new();
 
-    // РЎРЅР°С‡Р°Р»Р° РґРѕР±Р°РІРёРј СЏРІРЅРѕ Effectful'РЅС‹Рµ вЂ” РѕРЅРё non-pure РЅР°РІСЃРµРіРґР°.
+    // РЎРЅР°С‡Р°Р»Р° РґРѕР±Р°РІРёРј СЏРІРЅРѕ Effectful'РЅС‹Рµ вЂ" РѕРЅРё non-pure РЅР°РІСЃРµРіРґР°.
     let explicitly_effectful: HashSet<String> = fn_purity_explicit.iter()
         .filter_map(|(name, p)| if matches!(p, Purity::Effectful) { Some(name.clone()) } else { None })
         .collect();
@@ -789,11 +862,11 @@ pub fn infer_pure_fns_scc(module: &Module) -> std::collections::HashSet<String> 
     for scc in &sccs {
         // РџСЂРѕРІРµСЂСЏРµРј pure-eligibility РІСЃРµР№ SCC.
         let eligible = scc.iter().all(|name| {
-            // РЇРІРЅРѕ Effectful в†’ non-pure.
+            // РЇРІРЅРѕ Effectful в†' non-pure.
             if explicitly_effectful.contains(name) { return false; }
-            // External body в†’ non-pure.
+            // External body в†' non-pure.
             if matches!(fn_body_map.get(name), Some(FnBody::External)) { return false; }
-            // Р’СЃРµ РІС‹Р·РѕРІС‹ вЂ” РёР»Рё Рє proven_pure, РёР»Рё Рє fn РІ СЌС‚РѕР№ SCC.
+            // Р'СЃРµ РІС‹Р·РѕРІС‹ вЂ" РёР»Рё Рє proven_pure, РёР»Рё Рє fn РІ СЌС‚РѕР№ SCC.
             let empty_calls = HashSet::new();
             let calls = call_graph.get(name).unwrap_or(&empty_calls);
             let scc_set: HashSet<&String> = scc.iter().collect();
@@ -814,7 +887,7 @@ pub fn infer_pure_fns_scc(module: &Module) -> std::collections::HashSet<String> 
     proven_pure
 }
 
-/// Tarjan iterative SCC. Р’РѕР·РІСЂР°С‰Р°РµС‚ SCCs РІ РѕР±СЂР°С‚РЅРѕРј С‚РѕРїРѕР»РѕРіРёС‡РµСЃРєРѕРј РїРѕСЂСЏРґРєРµ.
+/// Tarjan iterative SCC. Р'РѕР·РІСЂР°С‰Р°РµС‚ SCCs РІ РѕР±СЂР°С‚РЅРѕРј С‚РѕРїРѕР»РѕРіРёС‡РµСЃРєРѕРј РїРѕСЂСЏРґРєРµ.
 fn tarjan_scc(
     nodes: &[String],
     graph: &std::collections::HashMap<String, std::collections::HashSet<String>>,
@@ -923,11 +996,11 @@ fn stmt_has_effects(s: &Stmt) -> bool {
 
 fn expr_has_effects(e: &Expr) -> bool {
     match &e.kind {
-        // with-blocks в†’ effectful.
+        // with-blocks в†' effectful.
         ExprKind::With { .. } => true,
-        // Interrupt в†’ effectful.
+        // Interrupt в†' effectful.
         ExprKind::Interrupt(_) => true,
-        // Spawn/Supervised в†’ effectful.
+        // Spawn/Supervised в†' effectful.
         ExprKind::Spawn(_) | ExprKind::Supervised { .. } => true,
         // Recurse structurally.
         ExprKind::Binary { left, right, .. } => expr_has_effects(left) || expr_has_effects(right),
@@ -1043,7 +1116,7 @@ fn collect_fn_calls_in_expr(e: &Expr, known: &[String], out: &mut std::collectio
 }
 
 /// Plan 33.4 D.0.4: РЅР°Р№С‚Рё РІСЃРµ СЃР°РјРѕ-СЂРµРєСѓСЂСЃРёРІРЅС‹Рµ РІС‹Р·РѕРІС‹ РІ С‚РµР»Рµ С„СѓРЅРєС†РёРё.
-/// Р’РѕР·РІСЂР°С‰Р°РµС‚ Vec<(call_span, Vec<arg_expr>)>.
+/// Р'РѕР·РІСЂР°С‰Р°РµС‚ Vec<(call_span, Vec<arg_expr>)>.
 fn find_recursive_calls_in_body(body: &FnBody, fn_name: &str) -> Vec<(Span, Vec<Expr>)> {
     let mut results = Vec::new();
     match body {
@@ -1206,7 +1279,7 @@ fn collect_calc_in_block(b: &Block, out: &mut Vec<(Vec<CalcStep>, Span)>) {
     }
 }
 
-/// Ф.4.1: блок "ghost-only" — все стейтменты ghost (`apply`).
+/// Ф.4.1: блок "ghost-only" -- все стейтменты ghost (`apply`).
 /// Такой блок при верификации трактуется как trailing-only (apply стираются).
 fn block_has_only_ghost_stmts(b: &Block) -> bool {
     b.stmts.iter().all(|s| matches!(s, Stmt::Apply { .. } | Stmt::Calc { .. }))
@@ -1261,7 +1334,7 @@ fn collect_apply_in_expr(e: &Expr, out: &mut Vec<(String, Vec<Expr>, Span)>) {
 }
 
 /// Ф.4.1: найти лемму в модуле и вернуть её ensures-клаузы как
-/// Vec<(param_names, ensures_expr)>. None — лемма не найдена.
+/// Vec<(param_names, ensures_expr)>. None -- лемма не найдена.
 fn find_lemma_ensures(module: &Module, name: &str) -> Option<Vec<(Vec<String>, Expr)>> {
     for item in &module.items {
         let Item::Lemma(ld) = item else { continue };
@@ -1276,8 +1349,8 @@ fn find_lemma_ensures(module: &Module, name: &str) -> Option<Vec<(Vec<String>, E
     None
 }
 
-/// Plan 33.4 D.0.3: СЃРѕР±СЂР°С‚СЊ РІСЃРµ loop invariant’С‹ РёР· С‚РµР»Р° С„СѓРЅРєС†РёРё.
-/// Р’РѕР·РІСЂР°С‰Р°РµС‚ Vec<(Span, Expr)> вЂ” span С†РёРєР»Р° + invariant expression.
+/// Plan 33.4 D.0.3: СЃРѕР±СЂР°С‚СЊ РІСЃРµ loop invariant'С‹ РёР· С‚РµР»Р° С„СѓРЅРєС†РёРё.
+/// Р'РѕР·РІСЂР°С‰Р°РµС‚ Vec<(Span, Expr)> вЂ" span С†РёРєР»Р° + invariant expression.
 fn collect_loop_invariants_in_body(body: &FnBody) -> Vec<(Span, Expr)> {
     let mut out = Vec::new();
     match body {
@@ -1353,12 +1426,12 @@ fn collect_loop_invariants_in_expr(e: &Expr, out: &mut Vec<(Span, Expr)>) {
 
 /// Р¤.1.3 (Plan 33.5): СЃРѕР±СЂР°С‚СЊ РІСЃРµ `decreases` claus'С‹ РёР· С†РёРєР»РѕРІ.
 ///
-/// Р’РѕР·РІСЂР°С‰Р°РµС‚ Vec<(Span, decreases_expr, assignments)> РіРґРµ:
-/// - `decreases_expr` вЂ” РІС‹СЂР°Р¶РµРЅРёРµ РјРµСЂС‹ (РґРѕР»Р¶РЅРѕ СѓР±С‹РІР°С‚СЊ).
-/// - `assignments` вЂ” Vec<(var_name, delta)> вЂ” РѕР±РЅР°СЂСѓР¶РµРЅРЅС‹Рµ `var = var В± delta`
+/// Р'РѕР·РІСЂР°С‰Р°РµС‚ Vec<(Span, decreases_expr, assignments)> РіРґРµ:
+/// - `decreases_expr` вЂ" РІС‹СЂР°Р¶РµРЅРёРµ РјРµСЂС‹ (РґРѕР»Р¶РЅРѕ СѓР±С‹РІР°С‚СЊ).
+/// - `assignments` вЂ" Vec<(var_name, delta)> вЂ" РѕР±РЅР°СЂСѓР¶РµРЅРЅС‹Рµ `var = var В± delta`
 ///   РІ С‚РµР»Рµ С†РёРєР»Р° (V1: over-approximate, С‚РѕР»СЊРєРѕ straight-line assignment stmts).
 ///   `delta > 0` РѕР·РЅР°С‡Р°РµС‚ `var = var - delta` (РјРµСЂР° var СѓР±С‹РІР°РµС‚),
-///   `delta < 0` вЂ” `var = var + delta` (РјРµСЂР° СЂР°СЃС‚С‘С‚, delta negative в†’ decrement positive).
+///   `delta < 0` вЂ" `var = var + delta` (РјРµСЂР° СЂР°СЃС‚С'С‚, delta negative в†' decrement positive).
 fn collect_loop_decreases_in_body(body: &FnBody) -> Vec<(Span, Expr, Vec<(String, i64)>)> {
     let mut out = Vec::new();
     match body {
@@ -1420,22 +1493,22 @@ fn collect_loop_decreases_in_expr(e: &Expr, out: &mut Vec<(Span, Expr, Vec<(Stri
 /// V1: РёР·РІР»РµС‡СЊ РїСЂРѕСЃС‚С‹Рµ counter-decrement assignments РёР· С‚РµР»Р° С†РёРєР»Р°.
 ///
 /// РџР°С‚С‚РµСЂРЅС‹:
-/// - `x = x - k` (AssignOp::Assign + BinOp::Sub) в†’ delta = k
-/// - `x -= k`    (AssignOp::Sub)                  в†’ delta = k
-/// - `x = x + k` where k < 0 в†’ delta = -k (СЂРµРґРєРёР№)
-/// Р’РѕР·РІСЂР°С‰Р°РµРј (var_name, delta) РіРґРµ delta > 0 РѕР·РЅР°С‡Р°РµС‚ СѓР±С‹РІР°РЅРёРµ РјРµСЂС‹.
+/// - `x = x - k` (AssignOp::Assign + BinOp::Sub) в†' delta = k
+/// - `x -= k`    (AssignOp::Sub)                  в†' delta = k
+/// - `x = x + k` where k < 0 в†' delta = -k (СЂРµРґРєРёР№)
+/// Р'РѕР·РІСЂР°С‰Р°РµРј (var_name, delta) РіРґРµ delta > 0 РѕР·РЅР°С‡Р°РµС‚ СѓР±С‹РІР°РЅРёРµ РјРµСЂС‹.
 fn extract_counter_assignments(body: &Block) -> Vec<(String, i64)> {
     let mut result = Vec::new();
     for s in &body.stmts {
         let Stmt::Assign { target, op: assign_op, value, .. } = s else { continue };
         let ExprKind::Ident(var_name) = &target.kind else { continue };
         let delta: i64 = match assign_op {
-            // x -= k  в†’  delta = k (positive means decreasing)
+            // x -= k  в†'  delta = k (positive means decreasing)
             AssignOp::Sub => {
                 let ExprKind::IntLit(k) = &value.kind else { continue };
                 *k
             }
-            // x += k  в†’  delta = -k  (positive k в†’ increasing, negative delta = skip)
+            // x += k  в†'  delta = -k  (positive k в†' increasing, negative delta = skip)
             AssignOp::Add => {
                 let ExprKind::IntLit(k) = &value.kind else { continue };
                 -*k
@@ -1553,7 +1626,7 @@ fn extract_body_assignments(body: &Block) -> Vec<(String, Expr)> {
         let ExprKind::Ident(var_name) = &target.kind else { continue };
         let synthetic_value: Expr = match assign_op {
             AssignOp::Assign => value.clone(),
-            // x += k  в†’  synthetic: x + k
+            // x += k  в†'  synthetic: x + k
             AssignOp::Add => Expr {
                 kind: ExprKind::Binary {
                     left: Box::new(target.clone()),
@@ -1562,7 +1635,7 @@ fn extract_body_assignments(body: &Block) -> Vec<(String, Expr)> {
                 },
                 span: value.span,
             },
-            // x -= k  в†’  synthetic: x - k
+            // x -= k  в†'  synthetic: x - k
             AssignOp::Sub => Expr {
                 kind: ExprKind::Binary {
                     left: Box::new(target.clone()),
@@ -1571,7 +1644,7 @@ fn extract_body_assignments(body: &Block) -> Vec<(String, Expr)> {
                 },
                 span: value.span,
             },
-            _ => continue, // Mul/Div вЂ” skip in V1
+            _ => continue, // Mul/Div вЂ" skip in V1
         };
         result.push((var_name.clone(), synthetic_value));
     }
@@ -1581,13 +1654,13 @@ fn extract_body_assignments(body: &Block) -> Vec<(String, Expr)> {
 /// Р¤.2: verify invariant preservation РґР»СЏ РѕРґРЅРѕРіРѕ С†РёРєР»Р°.
 ///
 /// РђР»РіРѕСЂРёС‚Рј:
-/// 1. Р”Р»СЏ РєР°Р¶РґРѕР№ havoc var вЂ” declare fresh `_havoc_<var>` РІ backend.
+/// 1. Р"Р»СЏ РєР°Р¶РґРѕР№ havoc var вЂ" declare fresh `_havoc_<var>` РІ backend.
 /// 2. push() scope.
-/// 3. Assume invariants РЅР° havoc state (substitute var в†’ _havoc_var).
+/// 3. Assume invariants РЅР° havoc state (substitute var в†' _havoc_var).
 /// 4. Assume cond РЅР° havoc state (РµСЃР»Рё РµСЃС‚СЊ).
-/// 5. Encode body assignments: РґР»СЏ РєР°Р¶РґРѕРіРѕ `var = rhs` в†’ compute `rhs` РЅР° havoc state.
-/// 6. Assert invariants РЅР° post state (substitute var в†’ post_val).
-/// 7. check_sat (goal = negation of invariant в†’ UNSAT = preserved).
+/// 5. Encode body assignments: РґР»СЏ РєР°Р¶РґРѕРіРѕ `var = rhs` в†' compute `rhs` РЅР° havoc state.
+/// 6. Assert invariants РЅР° post state (substitute var в†' post_val).
+/// 7. check_sat (goal = negation of invariant в†' UNSAT = preserved).
 /// 8. pop() scope.
 fn verify_loop_preservation(
     lp: &LoopPreservationTarget,
@@ -1629,7 +1702,7 @@ fn verify_loop_preservation(
                 });
             }
             Err(_) => {
-                // Invariant non-encodable в†’ skip preservation for this loop.
+                // Invariant non-encodable в†' skip preservation for this loop.
                 backend.pop();
                 return results;
             }
@@ -1654,7 +1727,7 @@ fn verify_loop_preservation(
                 post_map.insert(var.clone(), rhs_havoc);
             }
             Err(_) => {
-                // Cannot encode rhs в†’ fall back, no preservation check.
+                // Cannot encode rhs в†' fall back, no preservation check.
                 backend.pop();
                 return results;
             }
@@ -1700,7 +1773,7 @@ fn verify_loop_preservation(
                     }
                 }
             }
-            Err(_) => {} // non-encodable invariant в†’ skip
+            Err(_) => {} // non-encodable invariant в†' skip
         }
     }
 
@@ -1740,11 +1813,11 @@ fn collect_axioms(module: &Module) -> Vec<AxiomInfo<'_>> {
 
 /// Plan 33.3 Р¤.9: encode axiom РІ SMT-Forall.
 ///
-/// Р‘РёРЅРґРµСЂС‹ РїСЂРёРѕР±СЂРµС‚Р°СЋС‚ sort РёР· РџР•Р Р’РћР“Рћ pure_view-РІС‹Р·РѕРІР° РІ С„РѕСЂРјСѓР»Рµ,
+/// Р'РёРЅРґРµСЂС‹ РїСЂРёРѕР±СЂРµС‚Р°СЋС‚ sort РёР· РџР•Р Р'РћР"Рћ pure_view-РІС‹Р·РѕРІР° РІ С„РѕСЂРјСѓР»Рµ,
 /// РіРґРµ РѕРЅРё РёСЃРїРѕР»СЊР·СѓСЋС‚СЃСЏ РєР°Рє Р°СЂРіСѓРјРµРЅС‚. Р­С‚Рѕ СЌРІСЂРёСЃС‚РёРєР° V1; СЏРІРЅС‹Рµ type
-/// ascriptions РІ binders вЂ” future work.
-/// РљРѕРЅРІРµСЂС‚РёСЂСѓРµС‚ TypeRef РІ SortRef РґР»СЏ SMT (V1: int/bool/str в†’ СЃРѕРѕС‚РІРµС‚СЃС‚РІСѓСЋС‰РёР№ sort,
-/// РѕСЃС‚Р°Р»СЊРЅРѕРµ в†’ Int РєР°Рє fallback).
+/// ascriptions РІ binders вЂ" future work.
+/// РљРѕРЅРІРµСЂС‚РёСЂСѓРµС‚ TypeRef РІ SortRef РґР»СЏ SMT (V1: int/bool/str в†' СЃРѕРѕС‚РІРµС‚СЃС‚РІСѓСЋС‰РёР№ sort,
+/// РѕСЃС‚Р°Р»СЊРЅРѕРµ в†' Int РєР°Рє fallback).
 fn type_ref_to_sort(ty: &crate::ast::TypeRef) -> SortRef {
     if let crate::ast::TypeRef::Named { path, .. } = ty {
         if let Some(name) = path.last() {
@@ -1763,28 +1836,30 @@ pub(super) fn encode_axiom(
     ax: &AxiomInfo,
     pure_views: &std::collections::HashMap<String, super::encode::PureViewSig>,
 ) -> Option<SmtTerm> {
-    // Generic axioms вЂ” V2; РїРѕРєР° РЅРµ РїРѕРґРґРµСЂР¶РёРІР°СЋС‚СЃСЏ РІ SMT encoding.
+    // Generic axioms вЂ" V2; РїРѕРєР° РЅРµ РїРѕРґРґРµСЂР¶РёРІР°СЋС‚СЃСЏ РІ SMT encoding.
     if ax.is_generic {
         return None;
     }
     // Plan 33.4 P1-5: binders С‡РµСЂРµР· BinderDef.
     let binder_names: Vec<String> = ax.binders.iter().map(|bd| bd.name.clone()).collect();
     let mut binder_sorts: std::collections::HashMap<String, SortRef> = std::collections::HashMap::new();
-    // Р•СЃР»Рё Сѓ binder СЏРІРЅС‹Р№ С‚РёРї (Typed) вЂ” РёСЃРїРѕР»СЊР·СѓРµРј РµРіРѕ; Generic/Untyped вЂ” РІС‹РІРѕРґРёРј РёР· usage.
+    // Р•СЃР»Рё Сѓ binder СЏРІРЅС‹Р№ С‚РёРї (Typed) вЂ" РёСЃРїРѕР»СЊР·СѓРµРј РµРіРѕ; Generic/Untyped вЂ" РІС‹РІРѕРґРёРј РёР· usage.
     for bd in ax.binders {
         if let crate::ast::BinderType::Typed(ty) = &bd.kind {
             let sort = type_ref_to_sort(ty);
             binder_sorts.insert(bd.name.clone(), sort);
         }
-        // Generic Рё Untyped вЂ” РѕСЃС‚Р°РІР»СЏРµРј РґР»СЏ infer_binder_sorts.
+        // Generic Рё Untyped вЂ" РѕСЃС‚Р°РІР»СЏРµРј РґР»СЏ infer_binder_sorts.
     }
     infer_binder_sorts(ax.formula, &binder_names, pure_views, &mut binder_sorts);
     // Encode body.
     static EMPTY_FNS: std::sync::OnceLock<std::collections::HashMap<String, super::encode::PureFnInfo>> = std::sync::OnceLock::new();
+    static EMPTY_TRUSTED: std::sync::OnceLock<std::collections::HashMap<String, super::encode::TrustedFnInfo>> = std::sync::OnceLock::new();
     let empty_fns = EMPTY_FNS.get_or_init(std::collections::HashMap::new);
-    let ctx = super::encode::EncodeCtx { pure_views, pure_fns: empty_fns, var_sorts: std::collections::HashMap::new() };
+    let empty_trusted = EMPTY_TRUSTED.get_or_init(std::collections::HashMap::new);
+    let ctx = super::encode::EncodeCtx { pure_views, pure_fns: empty_fns, trusted_fns: empty_trusted, var_sorts: std::collections::HashMap::new() };
     let body = super::encode::encode_expr_with_ctx(ax.formula, &ctx).ok()?;
-    // Build binders Vec вЂ” СЏРІРЅС‹Р№ РёР»Рё inferred sort, default Int.
+    // Build binders Vec вЂ" СЏРІРЅС‹Р№ РёР»Рё inferred sort, default Int.
     let binders: Vec<(String, SortRef)> = binder_names.iter()
         .map(|n| (n.clone(), binder_sorts.remove(n).unwrap_or(SortRef::Int)))
         .collect();
@@ -1857,21 +1932,21 @@ impl Default for VerificationPipeline {
 
 /// Plan 33.3 Р¤.9.5: РїСЂРѕРІРµСЂРєР° consistency axiom'РѕРІ РјРѕРґСѓР»СЏ.
 ///
-/// Р”Р»СЏ РєР°Р¶РґРѕРіРѕ СЌС„С„РµРєС‚Р° СЃ axioms СЃРѕР·РґР°С‘С‚СЃСЏ РёР·РѕР»РёСЂРѕРІР°РЅРЅС‹Р№ backend, РІ РЅС‘Рј
+/// Р"Р»СЏ РєР°Р¶РґРѕРіРѕ СЌС„С„РµРєС‚Р° СЃ axioms СЃРѕР·РґР°С'С‚СЃСЏ РёР·РѕР»РёСЂРѕРІР°РЅРЅС‹Р№ backend, РІ РЅС'Рј
 /// РѕР±СЉСЏРІР»СЏСЋС‚СЃСЏ РІСЃРµ pure_view UFs СЌС„С„РµРєС‚Р°, asserted РІСЃРµ axioms, Р·Р°С‚РµРј
-/// `check_sat`. Р•СЃР»Рё UNSAT вЂ” axioms together implication False в†’
+/// `check_sat`. Р•СЃР»Рё UNSAT вЂ" axioms together implication False в†'
 /// **compile error** В«axioms inconsistentВ».
 ///
-/// SAT РёР»Рё Unknown вЂ” OK. TrivialBackend РІСЃРµРіРґР° РґР°С‘С‚ Unknown РґР»СЏ
+/// SAT РёР»Рё Unknown вЂ" OK. TrivialBackend РІСЃРµРіРґР° РґР°С'С‚ Unknown РґР»СЏ
 /// quantified-axioms (РЅРµС‚ reasoning'Р° РЅР°Рґ Forall), С‡С‚Рѕ С‚СЂР°РєС‚СѓРµС‚СЃСЏ РєР°Рє
-/// В«РЅРµ РґРѕРєР°Р·Р°РЅРѕ inconsistentВ» вЂ” silent fallback.
+/// В«РЅРµ РґРѕРєР°Р·Р°РЅРѕ inconsistentВ» вЂ" silent fallback.
 ///
-/// Р’РѕР·РІСЂР°С‰Р°РµС‚ diagnostic'Рё (РїСѓСЃС‚РѕР№ Vec РµСЃР»Рё РІСЃС‘ consistent).
+/// Р'РѕР·РІСЂР°С‰Р°РµС‚ diagnostic'Рё (РїСѓСЃС‚РѕР№ Vec РµСЃР»Рё РІСЃС' consistent).
 pub fn check_axiom_consistency(module: &Module) -> Vec<Diagnostic> {
     let mut diagnostics = Vec::new();
     let pure_views = collect_pure_views(module);
 
-    // Р“СЂСѓРїРїРёСЂСѓРµРј axioms РїРѕ effect-name.
+    // Р"СЂСѓРїРїРёСЂСѓРµРј axioms РїРѕ effect-name.
     let mut axioms_by_effect: std::collections::HashMap<String, Vec<(&crate::ast::TypeDecl, Vec<&crate::ast::EffectAxiom>)>>
         = std::collections::HashMap::new();
     for item in &module.items {
@@ -1889,9 +1964,9 @@ pub fn check_axiom_consistency(module: &Module) -> Vec<Diagnostic> {
         for (td, axiom_refs) in effect_group {
             let mut backend = pipeline.create_backend();
 
-            // Pre-declare Р’РЎР• pure_view UFs РјРѕРґСѓР»СЏ (РјРѕРіСѓС‚ СЃСЃС‹Р»Р°С‚СЊСЃСЏ cross-effect
-            // РІ С„РѕСЂРјСѓР»Р°С… вЂ” V1 РѕРіСЂР°РЅРёС‡РёРІР°РµС‚ one-effect-axioms, РЅРѕ Р±РµР·РѕРїР°СЃРЅРµРµ
-            // pre-decl'РёС‚СЊ РІСЃС‘).
+            // Pre-declare Р'РЎР• pure_view UFs РјРѕРґСѓР»СЏ (РјРѕРіСѓС‚ СЃСЃС‹Р»Р°С‚СЊСЃСЏ cross-effect
+            // РІ С„РѕСЂРјСѓР»Р°С… вЂ" V1 РѕРіСЂР°РЅРёС‡РёРІР°РµС‚ one-effect-axioms, РЅРѕ Р±РµР·РѕРїР°СЃРЅРµРµ
+            // pre-decl'РёС‚СЊ РІСЃС').
             for (op_name, sig) in &pure_views {
                 let uf = super::encode::pure_view_uf_name(&sig.effect_name, op_name);
                 backend.declare_function(&uf, &sig.param_sorts, sig.return_sort.clone());
@@ -1916,10 +1991,10 @@ pub fn check_axiom_consistency(module: &Module) -> Vec<Diagnostic> {
                 }
             }
 
-            // Р•СЃР»Рё РЅРё РѕРґРёРЅ axiom РЅРµ encoded вЂ” РЅРµС‡РµРіРѕ РїСЂРѕРІРµСЂСЏС‚СЊ.
+            // Р•СЃР»Рё РЅРё РѕРґРёРЅ axiom РЅРµ encoded вЂ" РЅРµС‡РµРіРѕ РїСЂРѕРІРµСЂСЏС‚СЊ.
             if !some_encoded { continue; }
 
-            // check_sat. Unsat в†’ inconsistent.
+            // check_sat. Unsat в†' inconsistent.
             match backend.check_sat() {
                 SatResult::Unsat(_) => {
                     diagnostics.push(Diagnostic::new(
@@ -1938,8 +2013,8 @@ pub fn check_axiom_consistency(module: &Module) -> Vec<Diagnostic> {
                     ));
                 }
                 _ => {
-                    // SAT РёР»Рё Unknown вЂ” axioms consistent (РёР»Рё TrivialBackend
-                    // РЅРµ reasoning'СѓРµС‚ вЂ” silent OK).
+                    // SAT РёР»Рё Unknown вЂ" axioms consistent (РёР»Рё TrivialBackend
+                    // РЅРµ reasoning'СѓРµС‚ вЂ" silent OK).
                 }
             }
         }
@@ -2013,7 +2088,7 @@ pub(super) fn unknown_to_diag_message(reason: UnknownReason) -> String {
                      theory (LIA/EUF/arrays) or mark `#unverified`.", s)
         }
         UnknownReason::BackendError(s) => {
-            format!("SMT backend internal error: {}. This is a bug — please report.", s)
+            format!("SMT backend internal error: {}. This is a bug -- please report.", s)
         }
         UnknownReason::NotAttempted(s) => {
             format!("{}\n  AI-friendly hint: contract is beyond TrivialBackend \
@@ -2024,11 +2099,11 @@ pub(super) fn unknown_to_diag_message(reason: UnknownReason) -> String {
     }
 }
 
-/// Entry-point: РїСЂРѕРІРµСЂРёС‚СЊ РІСЃРµ С„СѓРЅРєС†РёРё РјРѕРґСѓР»СЏ. Р—Р°РїРѕР»РЅСЏРµС‚ diagnostics
+/// Entry-point: РїСЂРѕРІРµСЂРёС‚СЊ РІСЃРµ С„СѓРЅРєС†РёРё РјРѕРґСѓР»СЏ. Р--Р°РїРѕР»РЅСЏРµС‚ diagnostics
 /// СЃ warning'Р°РјРё/errors СЃРѕРіР»Р°СЃРЅРѕ verify_mode.
 ///
-/// РўР°РєР¶Рµ РІРѕР·РІСЂР°С‰Р°РµС‚ map `(fn_name в†’ set of proven contract span)`,
-/// РєРѕС‚РѕСЂР°СЏ РёСЃРїРѕР»СЊР·СѓРµС‚СЃСЏ codegen'РѕРј РґР»СЏ **zero-cost release** вЂ”
+/// РўР°РєР¶Рµ РІРѕР·РІСЂР°С‰Р°РµС‚ map `(fn_name в†' set of proven contract span)`,
+/// РєРѕС‚РѕСЂР°СЏ РёСЃРїРѕР»СЊР·СѓРµС‚СЃСЏ codegen'РѕРј РґР»СЏ **zero-cost release** вЂ"
 /// proven РєРѕРЅС‚СЂР°РєС‚С‹ РЅРµ emit'СЏС‚СЃСЏ РІ release СЃР±РѕСЂРєРµ.
 pub fn verify_module(module: &Module) -> ModuleVerifyReport {
     let pipeline = VerificationPipeline::new();
@@ -2038,7 +2113,7 @@ pub fn verify_module(module: &Module) -> ModuleVerifyReport {
     let mut report = ModuleVerifyReport::default();
 
     // Plan 33.3 Р¤.9.5: РїСЂРѕРІРµСЂРєР° consistency axiom'РѕРІ РґРѕ per-fn verify.
-    // Р•СЃР»Рё axioms СЌС„С„РµРєС‚Р° inconsistent (Z3 в†’ UNSAT) в†’ compile-error,
+    // Р•СЃР»Рё axioms СЌС„С„РµРєС‚Р° inconsistent (Z3 в†' UNSAT) в†' compile-error,
     // skip РІСЃРµС… РѕСЃС‚Р°Р»СЊРЅС‹С… verify'РµРІ (Р»СЋР±Р°СЏ formula С‚СЂРёРІРёР°Р»СЊРЅРѕ РґРѕРєР°Р·СѓРµРјР°
     // РїРѕРґ inconsistent assumptions).
     let inconsistency_errors = check_axiom_consistency(module);
@@ -2062,16 +2137,35 @@ pub fn verify_module(module: &Module) -> ModuleVerifyReport {
     // СЂРµРєСѓСЂСЃРёРІРЅС‹Р№ РѕР±С…РѕРґ AST РЅР° РєР°Р¶РґСѓСЋ С„СѓРЅРєС†РёСЋ (overhead + СЂРёСЃРє stack overflow).
     let inferred_pure = infer_pure_fns_scc(module);
 
-    // Plan 33.3 Ф.13: #must_verify_module — все функции MustVerify.
+    // Plan 33.3 Ф.13: #must_verify_module -- все функции MustVerify.
     let module_strict = module.attrs.iter().any(|a| matches!(a.kind, ModuleAttrKind::MustVerifyModule));
+
+    // Ф.3.4 (Plan 33.6): #proof_budget module-level.
+    let (module_timeout_ms, module_vc_count_max) = module.attrs.iter()
+        .find_map(|a| if let ModuleAttrKind::ProofBudget { timeout_ms, vc_count_max } = &a.kind {
+            Some((*timeout_ms, *vc_count_max))
+        } else { None })
+        .unwrap_or((None, None));
+    let mut module_vc_used: u32 = 0;
 
     for item in &module.items {
         if let Item::Fn(fd) = item {
             if fd.contracts.is_empty() { continue; }
-            // Plan 33.3 Ф.13: #trusted external fn — контракты axioms, SMT-verify пропускается.
+            // Plan 33.3 Ф.13: #trusted external fn -- контракты axioms, SMT-verify пропускается.
             if fd.is_trusted && fd.is_external { continue; }
-            // Skip Fail-functions вЂ” ContractCtx СѓР¶Рµ РІС‹РґР°Р» error.
-            // Mut-РїР°СЂР°РјРµС‚СЂС‹ в†’ РїСЂРѕРїСѓСЃС‚РёС‚СЊ (33.2). РЎРµР№С‡Р°СЃ РґРµС‚РµРєС‚РёРј С‡РµСЂРµР·
+            // Ф.4.1 (Plan 33.6): #unverified fn внутри #must_verify_module → conflict error.
+            if module_strict && matches!(fd.verify_mode, VerifyMode::Unverified) {
+                let span = fd.contracts.first().map(|c| c.span).unwrap_or(fd.span);
+                let msg = format!(
+                    "fn '{}' помечена `#unverified` внутри `#must_verify_module` [E2403]: \
+                     нельзя отказаться от верификации в strict-модуле. \
+                     Уберите `#unverified` или перенесите fn в другой модуль.",
+                    fd.name);
+                report.errors.push(Diagnostic::new(msg, span));
+                continue;
+            }
+            // Skip Fail-functions вЂ" ContractCtx СѓР¶Рµ РІС‹РґР°Р» error.
+            // Mut-РїР°СЂР°РјРµС‚СЂС‹ в†' РїСЂРѕРїСѓСЃС‚РёС‚СЊ (33.2). РЎРµР№С‡Р°СЃ РґРµС‚РµРєС‚РёРј С‡РµСЂРµР·
             // РѕС‚СЃСѓС‚СЃС‚РІРёРµ РІ С‚РёРїР°С….
             let contracts_repr: String = fd.contracts.iter().map(|c| format!("{c:?}")).collect::<Vec<_>>().join("|");
             let body_repr = format!("{:?}", fd.body);
@@ -2080,9 +2174,34 @@ pub fn verify_module(module: &Module) -> ModuleVerifyReport {
                 for c in &fd.contracts { if matches!(c.kind, ContractKind::Ensures) { report.proven.push((fd.name.clone(), c.span)); } }
                 continue;
             }
-                        let effective_mode = if module_strict && matches!(fd.verify_mode, VerifyMode::Default) { VerifyMode::MustVerify } else { fd.verify_mode };
+            let effective_mode = if module_strict && matches!(fd.verify_mode, VerifyMode::Default) { VerifyMode::MustVerify } else { fd.verify_mode };
+            // Ф.3.4: per-fn timeout = fn-level override > module budget > pipeline default.
+            let fn_timeout_ms = fd.verify_timeout_ms
+                .map(|ms| ms as u32)
+                .or(module_timeout_ms)
+                .unwrap_or(pipeline.timeout_ms);
+            // Ф.3.4: vc_count_max budget check.
+            if let Some(max_vc) = module_vc_count_max {
+                let fn_vc_count = fd.contracts.len() as u32;
+                if module_vc_used + fn_vc_count > max_vc {
+                    let span = fd.contracts.first().map(|c| c.span).unwrap_or(fd.span);
+                    let msg = format!(
+                        "fn '{}': #proof_budget vc_count_max={} превышен \
+                         (использовано {}, попытка добавить {}) [BudgetExceeded]; \
+                         увеличьте vc_count_max или вынесите fn в другой модуль.",
+                        fd.name, max_vc, module_vc_used, fn_vc_count);
+                    report.errors.push(Diagnostic::new(msg, span));
+                    continue;
+                }
+                module_vc_used += fn_vc_count;
+            }
 let t0 = std::time::Instant::now();
-            let results = pipeline.verify_fn(module, fd, &inferred_pure);
+            // Ф.3.4: если timeout отличается от default — создаём временный pipeline.
+            let results = if fn_timeout_ms != pipeline.timeout_ms {
+                VerificationPipeline::with_timeout(fn_timeout_ms).verify_fn(module, fd, &inferred_pure)
+            } else {
+                pipeline.verify_fn(module, fd, &inferred_pure)
+            };
             let elapsed_ms = t0.elapsed().as_millis() as u64;
             for (span, vr) in results {
                 match vr {
@@ -2091,7 +2210,7 @@ let t0 = std::time::Instant::now();
                     }
                     VerifyResult::Disproved(_, cex) => {
                         // Plan 33.3 Р¤.9.10: AI-friendly format.
-                        // Р’РєР»СЋС‡Р°РµС‚: fn name, counterexample values (РёР»Рё hint),
+                        // Р'РєР»СЋС‡Р°РµС‚: fn name, counterexample values (РёР»Рё hint),
                         // suggestions РґР»СЏ РёСЃРїСЂР°РІР»РµРЅРёСЏ.
                         let msg = format!(
                             "contract violation in `{}`:\n  counterexample: {}\n  \
@@ -2108,7 +2227,7 @@ let t0 = std::time::Instant::now();
                         }
                     }
                     VerifyResult::Unknown(reason) => {
-                        // РџРѕ D24 / Plan 33.1: default вЂ” runtime fallback РІ debug,
+                        // РџРѕ D24 / Plan 33.1: default вЂ" runtime fallback РІ debug,
                         // РІ release РєРѕРЅС‚СЂР°РєС‚ СЃС‚РёСЂР°РµС‚СЃСЏ СЃ warning (РёР»Рё error РµСЃР»Рё
                         // `#verify`).
                         match effective_mode {
@@ -2122,16 +2241,26 @@ let t0 = std::time::Instant::now();
                                 report.errors.push(Diagnostic::new(msg, span));
                             }
                             _ => {
-                                // Default + Unverified вЂ” silently runtime-fallback.
-                                // (РќРµ РїСѓС€РёРј warning С‡С‚РѕР±С‹ РЅРµ Р·Р°СЃРѕСЂСЏС‚СЊ output вЂ”
-                                // РІ Р±РѕР»СЊС€РёРЅСЃС‚РІРµ СЃР»СѓС‡Р°РµРІ trivial backend NotAttempted.)
+                                // Ф.6.2 (Plan 33.6): Default + Unverified mode.
+                                // NotAttempted (TrivialBackend не пробовал) -- silent: это нормально.
+                                // Остальные причины (Timeout, NonLinear, UnsupportedTheory,
+                                // BackendError) -- W2402: реальная проблема, пользователь должен знать.
+                                if !reason.contains("NotAttempted") {
+                                    let msg = format!(
+                                        "fn '{}': SMT-верификация не завершена [W2402]: {}\n  \
+                                         Если это ожидаемо -- пометьте `#unverified` \
+                                         для явного подтверждения.",
+                                        fd.name, reason);
+                                    report.warnings.push(Diagnostic::new(msg, span));
+                                }
+                                // NotAttempted → silent (TrivialBackend нормально не пробует сложные)
                             }
                         }
                     }
                     VerifyResult::EncodingFailed(reason) => {
                         // Ф.1.2 (Plan 33.6): EncodingFailed без #unverified -> compile error E2401.
                         // С #unverified -> warning W2401 (осознанный отказ от SMT).
-                        // "body not encodable" — TrivialBackend limitation, не E2401 (оставляем silent).
+                        // "body not encodable" -- TrivialBackend limitation, не E2401 (оставляем silent).
                         // E2401 только если контракт (requires/ensures expr) не encodable,
                         // не когда body не encodable (TrivialBackend limitation).
                         let is_contract_unsupported = reason.starts_with("[CONTRACT_UNSUPPORTED]");
@@ -2154,14 +2283,30 @@ let t0 = std::time::Instant::now();
                                     fd.name);
                                 report.warnings.push(Diagnostic::new(msg, span));
                             }
-                            _ => {} // body limitation или MustVerify с body limitation — silent fallback
+                            VerifyMode::MustVerify => {
+                                // Ф.6.2: MustVerify + body limitation (не CONTRACT_UNSUPPORTED).
+                                // Тело fn не encodable (control flow, FFI, etc.) -- W2402.
+                                // Пользователь ожидал верификацию, должен знать что body пропущен.
+                                let msg = format!(
+                                    "fn '{}' помечена `#verify`: тело fn содержит конструкцию \
+                                     не поддерживаемую SMT-encoder'ом тела [W2402]: {}\n  \
+                                     Верификация контракта возможна только если тело прямолинейно. \
+                                     Используйте `#trusted` если верификация тела не нужна.",
+                                    fd.name, display_reason);
+                                report.warnings.push(Diagnostic::new(msg, span));
+                            }
+                            _ => {} // Default/Unverified + body limitation -- silent (TrivialBackend норм.)
                         }
+                    }
+                    VerifyResult::Warning(msg) => {
+                        // Ф.6.2 (Plan 33.6): W2402 от verify_fn (loop invariant не encodable, etc.)
+                        report.warnings.push(Diagnostic::new(msg, span));
                     }
                 }
             }
         }
         // Ф.4.1: верифицируем все леммы модуля.
-        // Лемма — это proven proof term: failure = hard error (always MustVerify).
+        // Лемма -- это proven proof term: failure = hard error (always MustVerify).
         if let Item::Lemma(ld) = item {
             if ld.contracts.is_empty() { continue; }
             let results = pipeline.verify_lemma(module, ld, &inferred_pure);
@@ -2173,7 +2318,7 @@ let t0 = std::time::Instant::now();
                     VerifyResult::Disproved(_, cex) => {
                         report.errors.push(Diagnostic::new(
                             format!("lemma `{}` не доказана:\n  counterexample: {}\n  \
-                                     Лемма должна быть доказуема — проверьте requires/ensures/body.",
+                                     Лемма должна быть доказуема -- проверьте requires/ensures/body.",
                                 ld.name, cex),
                             span));
                     }
@@ -2191,6 +2336,9 @@ let t0 = std::time::Instant::now();
                                 ld.name, reason),
                             span));
                     }
+                    VerifyResult::Warning(msg) => {
+                        report.warnings.push(Diagnostic::new(msg, span));
+                    }
                 }
             }
         }
@@ -2198,15 +2346,17 @@ let t0 = std::time::Instant::now();
     report
 }
 
-/// Aggregated РѕС‚С‡С’С‚ РїРѕ РІРµСЂРёС„РёРєР°С†РёРё РјРѕРґСѓР»СЏ.
+/// Aggregated РѕС‚С‡С'С‚ РїРѕ РІРµСЂРёС„РёРєР°С†РёРё РјРѕРґСѓР»СЏ.
 #[derive(Debug, Default)]
 pub struct ModuleVerifyReport {
-    /// Р”РѕРєР°Р·Р°РЅРЅС‹Рµ РєРѕРЅС‚СЂР°РєС‚С‹ вЂ” `(fn_name, span)`. РСЃРїРѕР»СЊР·СѓСЋС‚СЃСЏ codegen'РѕРј
+    /// Р"РѕРєР°Р·Р°РЅРЅС‹Рµ РєРѕРЅС‚СЂР°РєС‚С‹ вЂ" `(fn_name, span)`. РСЃРїРѕР»СЊР·СѓСЋС‚СЃСЏ codegen'РѕРј
     /// РІ release-СЃР±РѕСЂРєРµ РґР»СЏ СЃС‚РёСЂР°РЅРёСЏ runtime-check'Р°.
     pub proven: Vec<(String, Span)>,
-    /// Errors вЂ” РІС‹РґР°СЋС‚СЃСЏ РїРѕСЃР»Рµ verify (РЅР°РїСЂРёРјРµСЂ `#verify` failed).
+    /// Errors вЂ" РІС‹РґР°СЋС‚СЃСЏ РїРѕСЃР»Рµ verify (РЅР°РїСЂРёРјРµСЂ `#verify` failed).
     pub errors: Vec<Diagnostic>,
-    /// Warnings вЂ” counterexamples РґР»СЏ РєРѕРЅС‚СЂР°РєС‚РѕРІ Р±РµР· `#verify`.
+    /// Warnings вЂ" counterexamples РґР»СЏ РєРѕРЅС‚СЂР°РєС‚РѕРІ Р±РµР· `#verify`.
     pub warnings: Vec<Diagnostic>,
 }
+
+
 

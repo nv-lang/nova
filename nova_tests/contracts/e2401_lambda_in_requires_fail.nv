@@ -1,0 +1,10 @@
+// Ф.6.1 (Plan 33.6): lambda в requires → E2401.
+// EXPECT_COMPILE_ERROR E2401
+
+module contracts.e2401_lambda_in_requires_fail
+
+fn apply(x int) -> int
+    requires (|v| v > 0)(x)
+{
+    x
+}
