@@ -1,0 +1,11 @@
+// EXPECT_COMPILE_ERROR ghost variable `x` cannot be read in non-ghost code
+//
+// Ф.1.1 (Plan 33.6): ghost-var нельзя передавать в обычную функцию (println).
+// Ghost erasure: x не эмитируется в C-output → нельзя использовать как runtime аргумент.
+
+module contracts.ghost_pass_to_fn_fail
+
+fn bad_println(v int) {
+    ghost let x = v * 2
+    println(x)  // ghost в аргументе non-ghost call → error
+}

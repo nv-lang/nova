@@ -1,0 +1,12 @@
+// EXPECT_COMPILE_ERROR ghost variable `ghost_val` cannot be read in non-ghost code
+//
+// Ф.1.1 (Plan 33.6): ghost-var используется в обычном let — runtime context.
+// Это soundness guard: если ghost erasure нарушается, этот тест падает.
+
+module contracts.ghost_runtime_use_fail
+
+fn bad(x int) -> int {
+    ghost let ghost_val = x * 3
+    let y = ghost_val + 1   // ghost в правой части non-ghost let → error
+    y
+}

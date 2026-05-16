@@ -1,0 +1,22 @@
+// Ф.1.1 (Plan 33.6): ghost-var доступен в loop invariant — spec-позиция.
+
+module contracts.ghost_in_invariant_positive
+
+fn sum_loop(n int) -> int {
+    ghost let target = n * (n + 1) / 2
+    let mut s = 0
+    let mut i = 0
+    while i <= n
+        invariant s + (n - i) * (n - i + 1) / 2 == target || n <= 0
+    {
+        s = s + i
+        i = i + 1
+    }
+    s
+}
+
+test "ghost в invariant разрешён" {
+    assert(sum_loop(0) == 0)
+    assert(sum_loop(3) == 6)
+    assert(sum_loop(5) == 15)
+}

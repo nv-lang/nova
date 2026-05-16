@@ -1,0 +1,15 @@
+// Ф.1.1 (Plan 33.6): ghost-var доступен в assert_static — spec-позиция.
+// Ghost erasure: x не эмитируется в C; assert_static — spec-only тоже не эмитируется.
+
+module contracts.ghost_in_assert_positive
+
+fn check_ghost_assert(v int) -> int {
+    ghost let x = v + 1
+    assert_static x > 0 || v <= -1  // ghost в assert_static — OK
+    v
+}
+
+test "ghost в assert_static разрешён" {
+    assert(check_ghost_assert(5) == 5)
+    assert(check_ghost_assert(0) == 0)
+}
