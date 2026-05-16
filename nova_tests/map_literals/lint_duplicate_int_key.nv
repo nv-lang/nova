@@ -1,0 +1,13 @@
+// EXPECT_COMPILE_WARNING duplicate key
+//
+// Plan 52 Ф.12 (D108 dup-key): два compile-time константных int-ключа
+// → lint warning. Last-wins семантика, но silent overwrite — обычный bug.
+// Паритет go vet / tsc.
+module map_literals.lint_duplicate_int_key
+
+import std.collections.hashmap.{HashMap}
+
+fn main() -> () {
+    let m HashMap[int, str] = [1: "first", 1: "second"]
+    let _ = m
+}

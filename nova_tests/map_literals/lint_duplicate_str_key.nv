@@ -1,0 +1,11 @@
+// EXPECT_COMPILE_WARNING duplicate key
+//
+// Plan 52 Ф.12 (D108 dup-key): дубликат str-ключа → lint warning.
+module map_literals.lint_duplicate_str_key
+
+import std.collections.hashmap.{HashMap}
+
+fn main() -> () {
+    let m HashMap[str, int] = ["a": 1, "b": 2, "a": 3]
+    let _ = m
+}

@@ -1,0 +1,14 @@
+// EXPECT_COMPILE_WARNING `f64.NAN` as map key
+//
+// Plan 52 Ф.12 (D108 NaN-footgun): float-литерал NAN в ключевой позиции
+// → lint warning. IEEE 754: NaN != NaN, поэтому inserted ключ невозможно
+// найти обратно. Rust решает радикально (`f64: !Hash`), Go/TS — docs only.
+// Nova — compile-time warning + позволяет (для редких случаев).
+module map_literals.lint_nan_key
+
+import std.collections.hashmap.{HashMap}
+
+fn main() -> () {
+    let m HashMap[f64, str] = [f64.NAN: "lost"]
+    let _ = m
+}

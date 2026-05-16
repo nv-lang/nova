@@ -171,6 +171,11 @@ pub enum ExpectMarker {
     Stdout(String),
     /// stderr содержит pattern (любой exit code).
     Stderr(String),
+    /// Plan 52 Ф.9: lint warning (от `lints::lint_module`) содержит
+    /// pattern. Allows asserting NaN-key, duplicate-map-key, и других
+    /// lint выдач, которые не error'ятся и не leak'ятся в stdout/stderr.
+    /// Multi-pattern (как Stdout/Stderr) — несколько маркеров OK.
+    CompileWarning(String),
 }
 
 /// Парсит D89 EXPECT-маркеры из первых 30 строк.
@@ -213,6 +218,12 @@ pub fn parse_expect(src: &str) -> Vec<ExpectMarker> {
         } else if let Some(rest) = body.strip_prefix("EXPECT_STDERR") {
             let arg = rest.trim();
             (!arg.is_empty()).then(|| ExpectMarker::Stderr(arg.to_string()))
+        } else if let Some(rest) = body.strip_prefix("EXPECT_COMPILE_WARNING") {
+            // Plan 52 Ф.9: multi-pattern (like Stdout/Stderr) — несколько
+            // EXPECT_COMPILE_WARNING могут coexist (например NaN + dup-key
+            // в одном литерале).
+            let arg = rest.trim();
+            (!arg.is_empty()).then(|| ExpectMarker::CompileWarning(arg.to_string()))
         } else {
             None
         };
@@ -226,8 +237,9 @@ pub fn parse_expect(src: &str) -> Vec<ExpectMarker> {
                 ExpectMarker::CcError(_)      => found.iter().any(|m| matches!(m, ExpectMarker::CcError(_))),
                 ExpectMarker::RuntimePanic(_) => found.iter().any(|m| matches!(m, ExpectMarker::RuntimePanic(_))),
                 ExpectMarker::ExitCode(_)     => found.iter().any(|m| matches!(m, ExpectMarker::ExitCode(_))),
-                // STDOUT and STDERR allow multiple patterns.
-                ExpectMarker::Stdout(_) | ExpectMarker::Stderr(_) => false,
+                // STDOUT, STDERR, COMPILE_WARNING allow multiple patterns.
+                ExpectMarker::Stdout(_) | ExpectMarker::Stderr(_)
+                | ExpectMarker::CompileWarning(_) => false,
             };
             if is_dup {
                 eprintln!(
@@ -1244,6 +1256,8 @@ pub enum ExpectMismatch {
     WrongStdout { expected_pat: String, got: String },
     /// `EXPECT_STDERR <pat>` не найден.
     WrongStderr { expected_pat: String, got: String },
+    /// Plan 52 Ф.9: `EXPECT_COMPILE_WARNING <pat>` не найден среди lints.
+    WrongCompileWarning { expected_pat: String, got: String },
 }
 
 impl Outcome {
@@ -1298,6 +1312,7 @@ impl Outcome {
                     ExpectMismatch::WrongExit { .. } => "NEG-WRONG-EXIT",
                     ExpectMismatch::WrongStdout { .. } => "NEG-WRONG-STDOUT",
                     ExpectMismatch::WrongStderr { .. } => "NEG-WRONG-STDERR",
+                    ExpectMismatch::WrongCompileWarning { .. } => "NEG-WRONG-WARN",
                 },
             },
         }
@@ -1366,6 +1381,11 @@ impl ExpectMismatch {
             ExpectMismatch::WrongCcMsg { expected_pat, got } => {
                 let snippet: String = got.chars().take(120).collect();
                 format!("expected CC error pattern '{}' not found in: {}", expected_pat, snippet)
+            }
+            ExpectMismatch::WrongCompileWarning { expected_pat, got } => {
+                let snippet: String = got.chars().take(120).collect();
+                format!("expected compile warning pattern '{}' not found in lint output: {}",
+                    expected_pat, snippet)
             }
         }
     }
@@ -1495,6 +1515,9 @@ pub fn run_one(opts: &TestBuildOpts) -> Outcome {
     let find_exit_code     = || expect.iter().find_map(|m| if let ExpectMarker::ExitCode(n)     = m { Some(*n) } else { None });
     let find_stdout        = || expect.iter().filter_map(|m| if let ExpectMarker::Stdout(p)     = m { Some(p.as_str()) } else { None }).collect::<Vec<_>>();
     let find_stderr        = || expect.iter().filter_map(|m| if let ExpectMarker::Stderr(p)     = m { Some(p.as_str()) } else { None }).collect::<Vec<_>>();
+    // Plan 52 Ф.9: multi-pattern EXPECT_COMPILE_WARNING для NaN/dup-key
+    // и других lint-warning сверок.
+    let find_compile_warnings = || expect.iter().filter_map(|m| if let ExpectMarker::CompileWarning(p) = m { Some(p.as_str()) } else { None }).collect::<Vec<_>>();
 
     // Helper: build a Pass outcome with optional verbose capture.
     // codegen_warnings_str is prepended to err (if non-empty) so warnings appear
@@ -1525,12 +1548,18 @@ pub fn run_one(opts: &TestBuildOpts) -> Outcome {
     };
 
     // Step 1: codegen.
-    // codegen_to_c returns Ok(warnings) on success, Err(msg) on compile error.
-    // Warnings are lint messages (e.g. anonymous-embed override) that belong in
-    // captured_stderr rather than leaking to the terminal.
+    // codegen_to_c returns Ok((codegen_warns, lint_warns)) on success,
+    // Err(msg) on compile error. codegen_warnings — lints от CEmitter
+    // (anonymous-embed override etc); lint_warnings — от lints::lint_module
+    // (Plan 52 Ф.9: NaN-key, duplicate-map-key, и др. для
+    // EXPECT_COMPILE_WARNING сверки).
     let codegen_result = codegen_to_c(opts.nv_file, &src);
     let codegen_warnings: Vec<String> = match &codegen_result {
-        Ok(ws) => ws.clone(),
+        Ok((ws, _)) => ws.clone(),
+        Err(_) => vec![],
+    };
+    let lint_warnings: Vec<String> = match &codegen_result {
+        Ok((_, ls)) => ls.clone(),
         Err(_) => vec![],
     };
     let cg_warn_str: String = codegen_warnings.join("\n");
@@ -1567,6 +1596,42 @@ pub fn run_one(opts: &TestBuildOpts) -> Outcome {
             stage: Stage::Codegen { error: msg },
             elapsed: start.elapsed(),
         };
+    }
+
+    // Plan 52 Ф.9: EXPECT_COMPILE_WARNING — все ожидаемые pattern'ы должны
+    // присутствовать среди lint-warnings (lints::lint_module). Проверяется
+    // ПОСЛЕ codegen succeed (т.е. compile errors не было) и ДО CC/run.
+    // Если ВСЕ warning'и найдены — early return Pass (lint-only тест, без
+    // запуска runtime). Если есть хоть один pending warning — продолжаем
+    // обычный flow (тест может комбинировать WARNING + RUNTIME_PANIC).
+    let expected_warnings = find_compile_warnings();
+    if !expected_warnings.is_empty() {
+        let all_lints_str = lint_warnings.join("\n");
+        for pat in &expected_warnings {
+            if !all_lints_str.contains(*pat) {
+                return Outcome::Fail {
+                    stage: Stage::Expectation {
+                        mismatch: ExpectMismatch::WrongCompileWarning {
+                            expected_pat: pat.to_string(),
+                            got: all_lints_str.clone(),
+                        },
+                    },
+                    elapsed: start.elapsed(),
+                };
+            }
+        }
+        // Если других expectation'ов нет (CC/PANIC/STDOUT/EXIT) — это
+        // pure lint-test, можно early-return Pass без CC+run.
+        let has_other_expectations = expect.iter().any(|m| matches!(m,
+            ExpectMarker::CcError(_) | ExpectMarker::RuntimePanic(_)
+            | ExpectMarker::ExitCode(_) | ExpectMarker::Stdout(_)
+            | ExpectMarker::Stderr(_)));
+        if !has_other_expectations {
+            return make_pass_with_cg_warn(
+                format!("(warning: {})", expected_warnings.len()),
+                start.elapsed(),
+                None, None, &cg_warn_str);
+        }
     }
 
     let c_file = opts.nv_file.with_extension("c");
@@ -1952,7 +2017,11 @@ fn is_folder_module_peer(path: &Path) -> bool {
     decls.iter().all(|d| d == first)
 }
 
-fn codegen_to_c(path: &Path, src: &str) -> Result<Vec<String>, String> {
+/// Plan 52 Ф.9: возвращает `(codegen_warnings, lint_warnings)` — последние
+/// используются для `EXPECT_COMPILE_WARNING` сверки. Lints вызываются
+/// после type-check, ДО desugar — иначе MapLit/RecordLit-узлы уже
+/// заменены на Block'и, и lint check_map_literal_lints не сработает.
+fn codegen_to_c(path: &Path, src: &str) -> Result<(Vec<String>, Vec<String>), String> {
     let mut module = parser::parse(src).map_err(|d| d.render(src, &path.to_string_lossy()))?;
     // Plan 42 D29 rev-3: detect — is this file a peer of folder-module?
     // Folder-module = parent dir содержит >1 .nv files, и все они
@@ -1982,6 +2051,13 @@ fn codegen_to_c(path: &Path, src: &str) -> Result<Vec<String>, String> {
             .collect::<Vec<_>>()
             .join("\n")
     })?;
+    // Plan 52 Ф.9: lints — ПОСЛЕ check_module (типы validated), ДО
+    // desugar (lints видят MapLit-узлы). Возвращаются caller'у для
+    // EXPECT_COMPILE_WARNING сверки.
+    let lint_warnings: Vec<String> = crate::lints::lint_module(&module)
+        .iter()
+        .map(|w| w.diag.render(src, &path.to_string_lossy()))
+        .collect();
     // Plan 52 Ф.4: десугаринг map-литералов `[k: v]` → block-expression.
     // ПОСЛЕ type-check, ДО infer_effects/callnorm/codegen — codegen видит
     // обычные method-call'ы (with_capacity / insert).
@@ -2008,7 +2084,7 @@ fn codegen_to_c(path: &Path, src: &str) -> Result<Vec<String>, String> {
             e
         )
     })?;
-    Ok(warnings)
+    Ok((warnings, lint_warnings))
 }
 
 // ---------- test-all: walk + summary ----------
