@@ -1,0 +1,11 @@
+// Ф.21.2 (Plan 33.6): contradictory ensures — `result == 5` и `result == 7` одновременно.
+// EXPECT_COMPILE_ERROR E2404
+
+module contracts.contradictory_ensures_fail
+
+fn impossible(x int) -> int
+    ensures result == 5
+    ensures result == 7
+{
+    x
+}

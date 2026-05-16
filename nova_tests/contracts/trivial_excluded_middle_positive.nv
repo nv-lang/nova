@@ -1,0 +1,16 @@
+// Ф.21.1 (Plan 33.6): boolean excluded middle/contradiction в TrivialBackend.
+// `(X ∨ ¬X) = true`, `(X ∧ ¬X) = false`.
+
+module contracts.trivial_excluded_middle_positive
+
+#verify
+fn either_branch(c bool) -> bool
+    ensures result == true
+{
+    c || !c
+}
+
+test "excluded middle trivial" {
+    assert(either_branch(true) == true)
+    assert(either_branch(false) == true)
+}
