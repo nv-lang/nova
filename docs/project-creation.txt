@@ -12560,3 +12560,32 @@ cross-type cascade С‡РµСЂРµР· From-РєРѕРЅРІРµСЂС‚Р°С†РёСЋ.
 - feat(49): Р¤.5 вЂ” M:N atomic kind+reason РІ cross-worker (835b154de3c)
 - feat(49): Р¤.6 partial вЂ” CancelToken[T] typed cancel reason РґР»СЏ Tв‰ str
   (9ccc6096d43)
+
+=== Plan 45 Ф.26.1 — Fix Newtype dead match arm (2026-05-16, P0 spec violation) ===
+
+Свежий аудит обнаружил **active production bug** в collector.rs:
+- Line 481: TypeDeclKind::Newtype(ty) => Alias(render_type(ty)) — MVP stub до Ф.23.10.
+- Line 538: TypeDeclKind::Newtype(inner_ty) => Newtype { inner } — правильный Ф.23.10 variant.
+- Rust match-семантика: первый arm всегда срабатывает > второй dead code.
+
+**Impact:** Любой 	ype Email str (newtype) рендерился в docs как kind: "alias",
+не как kind: "newtype". Это violation **D107 spec** + заявленного **Plan 45 Ф.23.10**.
+
+**Fix:** удалил dead first-arm (line 481). Теперь Newtype > правильный variant.
+
+**Test guard:** новый compiler-codegen/tests/doc_newtype.rs (3 tests):
+- 
+ewtype_renders_as_newtype_not_alias — verify kind="newtype" + inner_type field
+- lias_renders_as_alias — alias ещё корректен
+- 
+ewtype_and_alias_coexist_distinctly — оба distinct в same module
+
+**Golden fixture regen:** 
+ova_tests/doc/fixtures/kinds/expected.json — AccountId
+теперь {kind: "newtype", inner_type: "int"} вместо {kind: "alias", aliased_type: "int"}.
+
+**Lessons:**
+- Match-arm bugs не ловятся --check, не ловятся golden tests (golden REGEN'ils ошибку с
+  предыдущей ошибкой). Нужно proactive integration test.
+- При добавлении нового variant (Ф.23.10), компилятор НЕ предупреждает что старый arm
+  shadow'ит — это not exhaustive checking, а normal match ordering.

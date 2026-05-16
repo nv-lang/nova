@@ -478,7 +478,9 @@ fn collect_type(module_path: &[String], t: &TypeDecl) -> DocItem {
             ItemKind::Type(TypeDefinition::Sum(sum_variants))
         }
         TypeDeclKind::Alias(ty) => ItemKind::Type(TypeDefinition::Alias(render_type(ty))),
-        TypeDeclKind::Newtype(ty) => ItemKind::Type(TypeDefinition::Alias(render_type(ty))),
+        // Plan 45 Ф.23.10 / D107: Newtype — отдельный variant (см. ниже после Protocol).
+        // ВНИМАНИЕ: предыдущая строка делала `Newtype → Alias` (MVP-stub до Ф.23.10).
+        // Этот arm удалён — теперь правильная ветка `TypeDeclKind::Newtype` ниже.
         TypeDeclKind::Effect(methods) => {
             // Plan 45 Р¤.22.4 / D107: axioms РЅР° СѓСЂРѕРІРЅРµ ItemKind::Effect,
             // РЅРµ per-method (axiom СЃСЃС‹Р»Р°РµС‚СЃСЏ РЅР° СЌС„С„РµРєС‚ С†РµР»РёРєРѕРј).

@@ -72,8 +72,8 @@
       "stability": null,
       "summary": "Newtype над int.",
       "definition": {
-        "aliased_type": "int",
-        "kind": "alias"
+        "inner_type": "int",
+        "kind": "newtype"
       }
     },
     {

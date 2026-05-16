@@ -7072,3 +7072,27 @@ as-is, РґР»СЏ cross-type СЌС‚Рѕ Р±СѓРґРµС‚ UB РЅР° un-box).
 - **nova_tests: 413 PASS / 46 FAIL / 13 SKIP** (== baseline + Plan 49 smoke).
 - Plan 49 acceptance: 11 РёР· 14 Р·Р°РєСЂС‹С‚С‹, 3 V2 followup'Р° Р·Р°С„РёРєСЃРёСЂРѕРІР°РЅС‹.
 - Zero СЂРµРіСЂРµСЃСЃРёР№ РЅР° release.
+
+---
+
+## Plan 45 Ф.26.1 — Dead match-arm lesson (2026-05-16)
+
+### Match arm ordering bug pattern
+
+**Где:** collector.rs::collect_type — TypeDeclKind::Newtype
+**Что упрощено (теперь убрано):** MVP до Ф.23.10 был arm Newtype > Alias. После
+Ф.23.10 добавили правильный arm Newtype > Newtype { inner }, но **не удалили**
+старый MVP arm. Rust match seq > старый ВСЕГДА сработал > новый dead code.
+**Почему:** Ф.23.10 PR делал addition (новый variant + новый arm) без deletion
+(старого MVP arm). Reviewer не заметил.
+**Как чинить (сделано в Ф.26.1):** удалить старый arm; добавить integration
+test doc_newtype.rs который verify newtype rendering.
+
+### Lesson — match shadow audit
+
+При добавлении нового variant в существующий match (особенно в pass'ах collector'а):
+1. Searched прежнего match по same key — есть ли MVP stub?
+2. Если есть — удалить, не add'ить новый arm "ниже".
+3. Compile-time guarantee неэффективен — Rust разрешает duplicate arms.
+4. Production-grade: каждое добавление variant'а сопровождается integration test
+   который verify правильное rendering.
