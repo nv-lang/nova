@@ -2,6 +2,7 @@
 #define NOVA_RT_ALLOC_H
 
 #include <stddef.h>
+#include <stdint.h>
 
 /* GC interface — единственная точка контакта кодогенератора с памятью.
  * Реализация в alloc.c. Для смены GC — меняется только alloc.c.
@@ -31,9 +32,13 @@ void   nova_gc_reset_stats(void);
 
 /* Plan 32: GC introspection API exposed to Nova via std.runtime.gc.
  * nova_gc_heap_size  : текущий размер heap в bytes (0 под malloc — honest sentinel)
- * nova_gc_collect    : принудительный сбор (no-op под malloc) */
-size_t nova_gc_heap_size(void);
-void   nova_gc_collect(void);
+ * nova_gc_collect    : принудительный сбор (no-op под malloc)
+ * nova_gc_last_pause_ns : Plan 57.C.2 — длительность последнего collect-цикла
+ *                          в наносекундах (0 под malloc; under Boehm — измеряется
+ *                          через monotonic timer вокруг GC_gcollect). */
+size_t   nova_gc_heap_size(void);
+void     nova_gc_collect(void);
+uint64_t nova_gc_last_pause_ns(void);
 
 /* Plan 44.2 Этап 3: fiber arena introspection — std.runtime.fibers.
  *

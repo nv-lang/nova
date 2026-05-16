@@ -10789,6 +10789,11 @@ impl CEmitter {
                             "reset_stats" if args.is_empty() => {
                                 return Ok("(nova_gc_reset_stats(), (nova_int)0LL)".to_string());
                             }
+                            // Plan 57.C.2: gc.last_pause_ns() — длительность
+                            // последнего collect-цикла (под malloc = 0).
+                            "last_pause_ns" if args.is_empty() => {
+                                return Ok("((nova_int)nova_gc_last_pause_ns())".to_string());
+                            }
                             _ => {}
                         }
                     }
