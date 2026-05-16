@@ -1,0 +1,19 @@
+// Plan 52.2 Ф.2: const map-literal с generic-типом.
+// Закрывает M-52-const-map-literal — pre-existing codegen ordering bug.
+//
+// До фикса: const-decl с generic-типом (HashMap[K,V]) эмитился ДО
+// mono pass → C-compiler не знает Nova_HashMap____nova_str__nova_int.
+// Fix: forward-declare mono'd struct-name перед const-decl emit.
+module map_literals.positive_const_map
+
+import std.collections.hashmap.{HashMap}
+
+const KEYWORDS HashMap[str, int] = ["if": 1, "else": 2, "while": 3]
+
+test "const map работает" {
+    assert(KEYWORDS.len() == 3)
+    assert(KEYWORDS.get("if") == Some(1))
+    assert(KEYWORDS.get("else") == Some(2))
+    assert(KEYWORDS.get("while") == Some(3))
+    assert(KEYWORDS.get("nonexistent") == None)
+}

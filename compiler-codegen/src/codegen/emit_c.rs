@@ -996,6 +996,24 @@ impl CEmitter {
             }
         }
 
+        // Plan 52.2 Ф.2: forward-declare mono'd struct types для
+        // const-decls с generic-типом. Без этого `const X HashMap[K,V] = [...]`
+        // эмитится с typeref'ом `Nova_HashMap____K__V*` ДО mono pass,
+        // и C-compiler не знает такого type-name.
+        //
+        // Mono pass позже эмитит полное `struct Nova_HashMap____K__V {...}`
+        // — forward-declare через `typedef struct X X;` достаточно для
+        // pointer-type использования в const-decl (правда compile-time
+        // init не работает, lazy init через nova_const_X() — pointer
+        // OK через forward-decl).
+        for item in &module.items {
+            if let Item::Const(c) = item {
+                if let Some(ty) = &c.ty {
+                    self.forward_declare_generic_type(ty);
+                }
+            }
+        }
+
         // 1b. Const declarations (after types, before fn forward decls)
         for item in &module.items {
             if let Item::Const(c) = item {
@@ -3806,6 +3824,39 @@ impl CEmitter {
     }
 
     // ---- type declarations ----
+
+    /// Plan 52.2 Ф.2: forward-declare mono'd struct-type для использования
+    /// в const-decl до того как mono pass эмитит full struct definition.
+    ///
+    /// Для `HashMap[str, int]` эмитит:
+    /// ```c
+    /// typedef struct Nova_HashMap____nova_str__nova_int Nova_HashMap____nova_str__nova_int;
+    /// ```
+    ///
+    /// Это даёт C-compiler'у знать имя struct (opaque), достаточно для
+    /// pointer-type declaration в const-decl. Полная struct-definition
+    /// эмитится позже через mono pass; pointer-type работает с opaque
+    /// forward-decl.
+    fn forward_declare_generic_type(&mut self, ty: &TypeRef) {
+        let TypeRef::Named { path, generics, .. } = ty else { return; };
+        if generics.is_empty() { return; }
+        // Только для record/sum-типов (не primitive Option/Array)
+        let base_name = path.join("_");
+        if matches!(base_name.as_str(),
+            "Option" | "Array" | "int" | "str" | "bool" | "f64" | "f32"
+            | "i32" | "i64" | "u32" | "u64" | "i8" | "i16" | "u8" | "u16"
+            | "byte" | "char") {
+            return;
+        }
+        // Вычислить C-имена type-args
+        let type_args_c: Vec<String> = generics.iter()
+            .filter_map(|g| self.type_ref_to_c(g).ok())
+            .collect();
+        if type_args_c.len() != generics.len() { return; }
+        let mono_name = Self::compute_generic_type_c_name(&base_name, &type_args_c);
+        // Forward-declare через typedef. Idempotent если повторно вызван.
+        self.line(&format!("typedef struct {0} {0};", mono_name));
+    }
 
     fn emit_type_decl(&mut self, t: &TypeDecl) -> Result<(), String> {
         // Plan 48 Ф.3: generic types are emitted in erased form (void* for type-param fields)
@@ -10815,6 +10866,32 @@ impl CEmitter {
                         let v = self.emit_expr(arg.expr())?;
                         return Ok(format!("nova_int_from_f64_bits({})", v));
                     }
+                }
+                // Plan 52.2 Ф.2: parts[0] это lazy const → это instance
+                // method call на const-value, не static-method-call.
+                // Конвертим Path(["KEYWORDS", "get"]) в Member { Ident("KEYWORDS"), "get" }
+                // и делегируем в обычный method-call emit.
+                if parts.len() == 2 && self.lazy_consts.contains(&parts[0]) {
+                    let new_obj = Expr {
+                        kind: ExprKind::Ident(parts[0].clone()),
+                        span: func.span,
+                    };
+                    let new_func = Expr {
+                        kind: ExprKind::Member {
+                            obj: Box::new(new_obj),
+                            name: parts[1].clone(),
+                        },
+                        span: func.span,
+                    };
+                    let new_call = Expr {
+                        kind: ExprKind::Call {
+                            func: Box::new(new_func),
+                            args: args.to_vec(),
+                            trailing: None,
+                        },
+                        span: func.span,
+                    };
+                    return self.emit_expr(&new_call);
                 }
                 // Plan 08 Ф.2: T.from(v) — infallible конверсии.
                 // bool → str / char → str / f64 → str.

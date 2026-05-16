@@ -254,26 +254,20 @@ export fn HashMap[K, V] mut @clear() {
 }
 
 
-// Plan 52.1 Ф.1: HashMap.@clone() / @merge_from — DEFERRED.
+// Plan 52.2 Ф.1: HashMap.@clone() / @merge_from — partially implemented.
 //
-// Реализация требует pattern-match по Slot variants в helper-методе
-// (отдельный от @insert / @get где это работает). Попытки через
-// match-arm-block и if let в expression position внутри while-body
-// падают с 'anonymous record literal without spread' — codegen quirk
-// при mono-pass для generic helper-методов sum-типа.
+// Empty {} parser fix (52.2 Ф.1) разблокировал match-arm-block в
+// helper-methods, НО второй слой проблемы остался: generic helper
+// HashMap[K, V] @clone() при mono pass для конкретных K, V даёт
+// codegen-fail (`if condition must be bool, got nova_int` —
+// span ложится в недоступную область generated code).
 //
-// Это **не Plan 52 регрессия** — pre-existing baseline codegen issue.
-// Тест-case: `match { Occupied { key, value } => insert_new(k, v) }`
-// внутри helper-method даёт codegen-fail, хотя такой же синтаксис
-// в @get и @insert работает (через специальный fn-body emit path).
+// Это **отдельная** mono-pass issue для generic helper-methods —
+// нужен отдельный план (Plan 48 followup для mono'rphization
+// stdlib helpers с generic Self).
 //
-// Reproducer: см. discussion-log. Plan 48 followup (mono-pass для
-// generic helpers с pattern-match) — открывает дорогу Ф.1 spread.
-// После фикса — расскомментировать helpers ниже + parser change для
-// `[...expr, k:v]` (~30 LOC) + desugar (~20 LOC).
-//
-// Workaround в bootstrap: `HashMap.from(array_of_pairs)` для построения,
-// явный @insert цикл для merge.
+// Workaround для spread в bootstrap: `HashMap.from(array_of_pairs)`
+// либо явный цикл insert на user-side.
 
 
 // HashMap.@get_or_insert(key, default) — get с lazy default.
