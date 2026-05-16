@@ -9,6 +9,7 @@
 
 module collections.lru
 
+import std.collections.hashmap.{HashMap}
 
 // Используем массив для упорядочивания (head = most recent, tail = LRU)
 // и HashMap для O(1) lookup. Простая реализация для bootstrap; production
@@ -126,5 +127,5 @@ test "update existing key" {
     cache.put("a", 1)
     cache.put("a", 99)
     assert(cache.get("a") == Some(99))
-    assert(cache.len == 1)
+    assert(cache.len() == 1)
 }

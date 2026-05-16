@@ -1,0 +1,6 @@
+#forbid Io
+
+module nova_tests.doc.fixtures.capability_forbid.sample
+
+/// Compute sum.
+export fn add(a int, b int) -> int => a + b

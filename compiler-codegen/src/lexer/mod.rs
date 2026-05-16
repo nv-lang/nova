@@ -13,7 +13,7 @@
 
 mod token;
 
-pub use token::{Token, TokenKind};
+pub use token::{DocCommentKind, Token, TokenKind};
 
 use crate::diag::{Diagnostic, FileId, Span, MAIN_FILE_ID};
 
@@ -55,7 +55,15 @@ impl<'a> Lexer<'a> {
     pub fn lex(&mut self) -> Result<Vec<Token>, Diagnostic> {
         let mut out = Vec::new();
         loop {
-            self.skip_trivia();
+            // Plan 45 / D104: пропускаем whitespace + не-doc комментарии.
+            // Если встретили doc-comment (`///` или `//!`) — собираем
+            // подряд идущие строки того же kind'а в один токен и
+            // возвращаем; основной цикл продолжается со следующего
+            // символа.
+            if let Some(doc) = self.scan_trivia_and_doc()? {
+                out.push(doc);
+                continue;
+            }
             if self.pos >= self.bytes.len() {
                 let span = self.span(self.pos, self.pos);
                 out.push(Token::new(TokenKind::Eof, span));
@@ -276,25 +284,199 @@ impl<'a> Lexer<'a> {
     }
 
     /// Пропускает пробелы (но НЕ newline — он значимый, D49) и комментарии.
-    fn skip_trivia(&mut self) {
+    /// Plan 45 / D104: пропускает whitespace и non-doc line-комментарии;
+    /// при встрече doc-comment (`///` или `//!`) собирает все подряд
+    /// идущие строки того же kind'а в один токен.
+    ///
+    /// Возвращает:
+    /// - `Ok(Some(doc_token))` — если был обнаружен doc-comment;
+    /// - `Ok(None)` — если только пропустил trivia и упёрся в обычный
+    ///   токен или EOF.
+    ///
+    /// Классификация (после `//`):
+    /// - `//!` → Inner doc-comment.
+    /// - `///` (ровно 3 слэша, четвёртый не слэш) → Outer doc-comment.
+    /// - `////` (4+ слэша) → обычный line-комментарий (mirrors rustdoc,
+    ///   предотвращает случайное doc-promotion для idiomatic
+    ///   `//// SECTION` разделителей).
+    /// - `//` + что угодно ещё → обычный line-комментарий.
+    fn scan_trivia_and_doc(&mut self) -> Result<Option<Token>, Diagnostic> {
         loop {
             let Some(&b) = self.bytes.get(self.pos) else {
-                return;
+                return Ok(None);
             };
             match b {
                 b' ' | b'\t' | b'\r' => self.pos += 1,
                 b'/' if self.peek_at(1) == Some(b'/') => {
-                    // line comment
-                    while let Some(&b) = self.bytes.get(self.pos) {
-                        if b == b'\n' {
-                            break;
+                    // Классифицируем форму после `//`.
+                    match (self.peek_at(2), self.peek_at(3)) {
+                        (Some(b'!'), _) => {
+                            return Ok(Some(self.lex_doc_comment(DocCommentKind::Inner)?));
                         }
-                        self.pos += 1;
+                        (Some(b'/'), Some(b'/')) => {
+                            // `////` (4+) — обычный line-комментарий.
+                            self.skip_line_comment();
+                        }
+                        (Some(b'/'), _) => {
+                            // `///` ровно 3 — Outer doc-comment.
+                            return Ok(Some(self.lex_doc_comment(DocCommentKind::Outer)?));
+                        }
+                        _ => {
+                            // `//` + что угодно ещё — обычный комментарий.
+                            self.skip_line_comment();
+                        }
                     }
                 }
-                _ => return,
+                _ => return Ok(None),
             }
         }
+    }
+
+    /// Пропускает остаток строки (от текущей позиции до `\n` или EOF).
+    /// Символ `\n` НЕ потребляется — он будет токенизирован как Newline.
+    fn skip_line_comment(&mut self) {
+        while let Some(&b) = self.bytes.get(self.pos) {
+            if b == b'\n' {
+                break;
+            }
+            self.pos += 1;
+        }
+    }
+
+    /// Plan 45 / D104: лексирует одну или несколько подряд идущих
+    /// doc-line того же `kind`'а в один `TokenKind::DocComment`.
+    ///
+    /// Каждая строка:
+    /// 1. Потребляется префикс (`///` или `//!`).
+    /// 2. Снимается одна опциональная ведущая пробел-позиция (rustdoc-
+    ///    convention: `/// text` → `text`).
+    /// 3. Захватывается остаток строки до `\n` (или EOF).
+    /// 4. Если следующая строка (после `\n`) начинается с того же
+    ///    префикса (с возможным leading whitespace) — продолжаем
+    ///    собирать. Иначе — block завершён.
+    ///
+    /// Для Outer (`///`): продолжение `///` валидно, `////` — нет
+    /// (это уже обычный комментарий, doc-block прерывается).
+    /// Для Inner (`//!`): продолжение только `//!`; `////` коллизии нет.
+    ///
+    /// После сбора всех строк применяется indentation stripping:
+    /// находим common leading whitespace по всем НЕ-пустым строкам и
+    /// убираем его единообразно. Это нормализует индентацию markdown.
+    ///
+    /// Возвращаемый span покрывает все строки doc-блока от начала
+    /// первого `///`/`//!` до конца последнего line content (без
+    /// trailing `\n`).
+    fn lex_doc_comment(&mut self, kind: DocCommentKind) -> Result<Token, Diagnostic> {
+        let block_start = self.pos;
+        let prefix_bytes: &[u8] = match kind {
+            DocCommentKind::Outer => b"///",
+            DocCommentKind::Inner => b"//!",
+        };
+        let mut lines: Vec<String> = Vec::new();
+        // Конец span'а — позиция конца последней захваченной строки.
+        // Цикл гарантированно выполнит ≥ 1 итерацию (нас вызвали
+        // когда позиция стоит на префиксе).
+        let mut block_end: usize;
+
+        loop {
+            // Инвариант: self.pos указывает на первый байт префикса.
+            debug_assert_eq!(
+                &self.bytes[self.pos..self.pos + 3],
+                prefix_bytes,
+                "lex_doc_comment должна вызываться только когда позиция на префиксе"
+            );
+            self.pos += 3;
+
+            // Опциональный одиночный ведущий пробел.
+            if self.peek_at(0) == Some(b' ') {
+                self.pos += 1;
+            }
+
+            // Захватываем содержимое строки до \n или EOF.
+            let line_start = self.pos;
+            while let Some(&b) = self.bytes.get(self.pos) {
+                if b == b'\n' {
+                    break;
+                }
+                self.pos += 1;
+            }
+            let line_end_pos = self.pos;
+            block_end = line_end_pos;
+
+            // Извлекаем текст. Конвертация: исходник UTF-8 (Lexer'ом
+            // гарантировано), но защитимся явной проверкой.
+            let raw = std::str::from_utf8(&self.bytes[line_start..line_end_pos])
+                .map_err(|_| {
+                    Diagnostic::new(
+                        "non-UTF-8 byte sequence inside doc-comment",
+                        self.span(line_start, line_end_pos),
+                    )
+                })?;
+            // CRLF-tolerance: уже на уровне skip_trivia мы съели `\r`
+            // как часть whitespace, но внутри line content `\r` могут
+            // остаться (если файл с CRLF). Снимаем trailing `\r`.
+            let line = raw.trim_end_matches('\r').to_string();
+            lines.push(line);
+
+            // Потребляем `\n`, если есть.
+            if self.peek_at(0) == Some(b'\n') {
+                self.pos += 1;
+            }
+
+            // Проверяем, есть ли продолжение того же kind'а. На следующей
+            // строке допустим leading whitespace (пробелы/табы), затем
+            // должен идти ровно тот же префикс (для Outer — `///` но не
+            // `////`; для Inner — `//!`).
+            let mut peek_pos = self.pos;
+            while let Some(&b) = self.bytes.get(peek_pos) {
+                if b == b' ' || b == b'\t' {
+                    peek_pos += 1;
+                } else {
+                    break;
+                }
+            }
+            let has_prefix = self.bytes.get(peek_pos..peek_pos + 3) == Some(prefix_bytes);
+            // Для Outer: после `///` следующий байт не должен быть `/`
+            // (иначе это `////` — не doc).
+            let is_overrun = match kind {
+                DocCommentKind::Outer => self.bytes.get(peek_pos + 3) == Some(&b'/'),
+                // Для Inner `//!` коллизии с `////` нет; `//!` уникальный.
+                DocCommentKind::Inner => false,
+            };
+            if has_prefix && !is_overrun {
+                self.pos = peek_pos;
+                continue;
+            }
+            break;
+        }
+
+        // Indentation stripping: общий leading whitespace по всем
+        // непустым строкам — снимается единообразно.
+        let common_indent = lines
+            .iter()
+            .filter(|l| !l.trim().is_empty())
+            .map(|l| l.bytes().take_while(|&b| b == b' ').count())
+            .min()
+            .unwrap_or(0);
+        let content = if common_indent > 0 {
+            lines
+                .iter()
+                .map(|l| {
+                    let leading = l.bytes().take_while(|&b| b == b' ').count();
+                    let cut = leading.min(common_indent);
+                    l[cut..].to_string()
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
+        } else {
+            lines.join("\n")
+        };
+
+        let span = self.span(block_start, block_end);
+        Ok(Token::new(
+            TokenKind::DocComment { kind, content },
+            span,
+        ))
     }
 
     fn lex_number(&mut self, start: usize) -> Result<Token, Diagnostic> {
@@ -453,7 +635,7 @@ impl<'a> Lexer<'a> {
             "errdefer" => TokenKind::KwErrDefer,
             "select" => TokenKind::KwSelect,
             "lemma" => TokenKind::KwLemma,
-            "apply" => TokenKind::KwApply,
+            // "apply" — контекстуальный keyword (не резервируем глобально, чтобы не ломать идентификаторы)
             _ => TokenKind::Ident(text.to_string()),
         };
         Ok(Token::new(kind, span))
@@ -760,4 +942,206 @@ pub fn lex(src: &str) -> Result<Vec<Token>, Diagnostic> {
 /// Все Span'ы tokens получат указанный file_id.
 pub fn lex_with_file_id(src: &str, file_id: FileId) -> Result<Vec<Token>, Diagnostic> {
     Lexer::new_with_file_id(src, file_id).lex()
+}
+
+#[cfg(test)]
+mod doc_comment_tests {
+    //! Plan 45 / D104 unit-tests для лексера doc-comment'ов.
+    //!
+    //! Покрывает: распознавание `///` / `//!` / `////` (последний —
+    //! НЕ doc); merging подряд идущих doc-line того же kind'а;
+    //! indentation stripping; tolerance CRLF; разделение блоков
+    //! не-doc-токеном между ними; tolerance к leading whitespace
+    //! перед префиксом на continuation-строках.
+    use super::*;
+    use crate::diag::MAIN_FILE_ID;
+    use crate::lexer::token::DocCommentKind;
+    use crate::lexer::TokenKind;
+    fn doc_tokens(src: &str) -> Vec<(DocCommentKind, String)> {
+        Lexer::new_with_file_id(src, MAIN_FILE_ID)
+            .lex()
+            .expect("lex must succeed for valid input")
+            .into_iter()
+            .filter_map(|t| match t.kind {
+                TokenKind::DocComment { kind, content } => Some((kind, content)),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn outer_single_line() {
+        let docs = doc_tokens("/// summary\nfn f() {}\n");
+        assert_eq!(docs.len(), 1);
+        assert_eq!(docs[0].0, DocCommentKind::Outer);
+        assert_eq!(docs[0].1, "summary");
+    }
+
+    #[test]
+    fn outer_multi_line_merged() {
+        let docs = doc_tokens("/// first\n/// second\n/// third\nfn f() {}\n");
+        assert_eq!(docs.len(), 1);
+        assert_eq!(docs[0].0, DocCommentKind::Outer);
+        assert_eq!(docs[0].1, "first\nsecond\nthird");
+    }
+
+    #[test]
+    fn outer_empty_line_in_middle() {
+        // Пустая doc-строка (`///` без содержимого) → пустая строка в content.
+        let docs = doc_tokens("/// para1\n///\n/// para2\nfn f() {}\n");
+        assert_eq!(docs[0].1, "para1\n\npara2");
+    }
+
+    #[test]
+    fn inner_single_line() {
+        let docs = doc_tokens("//! module summary\nmodule x\n");
+        assert_eq!(docs.len(), 1);
+        assert_eq!(docs[0].0, DocCommentKind::Inner);
+        assert_eq!(docs[0].1, "module summary");
+    }
+
+    #[test]
+    fn inner_multi_line_merged() {
+        let docs = doc_tokens("//! first\n//! second\nmodule x\n");
+        assert_eq!(docs.len(), 1);
+        assert_eq!(docs[0].0, DocCommentKind::Inner);
+        assert_eq!(docs[0].1, "first\nsecond");
+    }
+
+    #[test]
+    fn four_slashes_is_not_doc() {
+        // `////` — обычный комментарий, doc-token не эмитится.
+        let docs = doc_tokens("//// section divider\nfn f() {}\n");
+        assert_eq!(docs.len(), 0);
+    }
+
+    #[test]
+    fn outer_followed_by_four_slashes_terminates_block() {
+        // `///` block + `////` (обычный комментарий) — `///` block содержит
+        // только первую строку; `////` пропускается как обычный.
+        let docs = doc_tokens("/// real doc\n//// not doc\nfn f() {}\n");
+        assert_eq!(docs.len(), 1);
+        assert_eq!(docs[0].1, "real doc");
+    }
+
+    #[test]
+    fn plain_double_slash_is_not_doc() {
+        let docs = doc_tokens("// just a comment\nfn f() {}\n");
+        assert_eq!(docs.len(), 0);
+    }
+
+    #[test]
+    fn one_optional_leading_space_stripped() {
+        // `/// text` → "text"; `///text` → "text"; `///  text` → " text"
+        // (только ОДИН ведущий пробел снимается префикс-обработкой).
+        let docs = doc_tokens("/// one\n///two\n///  three\nfn f() {}\n");
+        assert_eq!(docs[0].1, "one\ntwo\n three");
+    }
+
+    #[test]
+    fn indentation_stripping_uniform() {
+        // Common leading whitespace ПОСЛЕ префикс-strip убирается
+        // одинаково. Здесь у всех строк один общий пробельный
+        // префикс — он снят, относительная индентация внутреннего
+        // содержимого сохраняется.
+        // Внутри content до stripping: "    indented\n  middle\n      deep"
+        // common_indent по non-empty = 2 (вторая строка) → итог:
+        // "  indented\nmiddle\n    deep"
+        let docs = doc_tokens("///     indented\n///   middle\n///       deep\nfn f() {}\n");
+        assert_eq!(docs[0].1, "  indented\nmiddle\n    deep");
+    }
+
+    #[test]
+    fn crlf_line_endings_tolerated() {
+        // CRLF в исходнике — `\r` снимается перед merging.
+        let docs = doc_tokens("/// first\r\n/// second\r\nfn f() {}\r\n");
+        assert_eq!(docs[0].1, "first\nsecond");
+    }
+
+    #[test]
+    fn separate_outer_blocks_by_blank_line() {
+        // Blank line между двумя doc-блоками → два отдельных токена.
+        let docs = doc_tokens("/// first block\n\n/// second block\nfn f() {}\n");
+        assert_eq!(docs.len(), 2);
+        assert_eq!(docs[0].1, "first block");
+        assert_eq!(docs[1].1, "second block");
+    }
+
+    #[test]
+    fn separate_outer_blocks_by_code() {
+        // Между двумя doc-блоками — фактическая декларация.
+        let docs = doc_tokens("/// for_f\nfn f() {}\n\n/// for_g\nfn g() {}\n");
+        assert_eq!(docs.len(), 2);
+        assert_eq!(docs[0].1, "for_f");
+        assert_eq!(docs[1].1, "for_g");
+    }
+
+    #[test]
+    fn outer_then_inner_distinct_kinds() {
+        // Outer и Inner не сливаются — это разные kind'ы.
+        let docs = doc_tokens("/// outer\n//! inner\nmodule x\n");
+        assert_eq!(docs.len(), 2);
+        assert_eq!(docs[0].0, DocCommentKind::Outer);
+        assert_eq!(docs[0].1, "outer");
+        assert_eq!(docs[1].0, DocCommentKind::Inner);
+        assert_eq!(docs[1].1, "inner");
+    }
+
+    #[test]
+    fn leading_whitespace_before_continuation_prefix() {
+        // На continuation-строке допустим leading whitespace перед `///`.
+        // Тест с табом + пробелами.
+        let docs = doc_tokens("    /// first\n    /// second\n    fn f() {}\n");
+        assert_eq!(docs.len(), 1);
+        assert_eq!(docs[0].1, "first\nsecond");
+    }
+
+    #[test]
+    fn doc_at_eof_without_trailing_newline() {
+        // Doc-comment в самом конце файла без `\n` — корректно
+        // токенизируется (без panic'а).
+        let docs = doc_tokens("/// end-of-file doc");
+        assert_eq!(docs.len(), 1);
+        assert_eq!(docs[0].1, "end-of-file doc");
+    }
+
+    #[test]
+    fn empty_doc_line_only() {
+        // Пустой `///` без содержимого — content = "".
+        let docs = doc_tokens("///\nfn f() {}\n");
+        assert_eq!(docs.len(), 1);
+        assert_eq!(docs[0].1, "");
+    }
+
+    #[test]
+    fn nova_code_block_in_doc_content_preserved() {
+        // Внутри doc-content — markdown / nova code-block; лексер
+        // оставляет содержимое как сырой текст (markdown парсит
+        // collector).
+        let src = "/// Example:\n///\n/// ```nova\n/// let x = 1\n/// ```\nfn f() {}\n";
+        let docs = doc_tokens(src);
+        assert_eq!(docs.len(), 1);
+        assert_eq!(docs[0].1, "Example:\n\n```nova\nlet x = 1\n```");
+    }
+
+    #[test]
+    fn outer_attaches_to_next_item_via_token_stream() {
+        // Doc-токен идёт перед `KwFn` — проверяем что в стриме идут оба
+        // в правильном порядке.
+        let toks: Vec<TokenKind> = Lexer::new("/// fn-doc\nfn f() {}\n")
+            .lex()
+            .unwrap()
+            .into_iter()
+            .map(|t| t.kind)
+            .collect();
+        let doc_idx = toks
+            .iter()
+            .position(|t| matches!(t, TokenKind::DocComment { .. }))
+            .expect("doc must be in stream");
+        let fn_idx = toks
+            .iter()
+            .position(|t| matches!(t, TokenKind::KwFn))
+            .expect("fn keyword must be in stream");
+        assert!(doc_idx < fn_idx, "doc-comment must precede `fn` in stream");
+    }
 }

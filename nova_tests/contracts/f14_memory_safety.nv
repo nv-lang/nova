@@ -1,0 +1,62 @@
+// Plan 33.3 Ф.14: Dafny-parity test 20 — Memory safety bounds.
+// Аналог array bounds checking в Dafny.
+
+module contracts.f14_memory_safety
+
+// Bounds check: индекс в диапазоне [0, len).
+#verify
+fn bounds_check(idx int, len int) -> bool
+    requires len > 0
+    ensures result == (idx >= 0 && idx < len)
+{
+    idx >= 0 && idx < len
+}
+
+// Slice bounds: [lo, hi) ⊆ [0, len).
+#verify
+fn slice_valid(lo int, hi int, len int) -> bool
+    requires len >= 0
+    ensures result == (lo >= 0 && hi <= len && lo <= hi)
+{
+    lo >= 0 && hi <= len && lo <= hi
+}
+
+// Allocation: size > 0, aligned.
+#verify
+fn alloc_valid(size int, align int) -> bool
+    requires size > 0 && align > 0 && size % align == 0
+    ensures result == true
+{
+    size > 0 && size % align == 0
+}
+
+// Pointer arithmetic: ptr + offset в пределах [base, base+len).
+#verify
+fn ptr_in_range(base int, ptr int, offset int, len int) -> bool
+    requires len > 0 && ptr >= base && ptr < base + len
+    requires offset >= 0 && ptr + offset < base + len
+    ensures result == true
+{
+    ptr + offset >= base && ptr + offset < base + len
+}
+
+// Два буфера не перекрываются: [a, a+la) ∩ [b, b+lb) = ∅.
+#verify
+fn no_overlap(a int, la int, b int, lb int) -> bool
+    requires la > 0 && lb > 0
+    requires a + la <= b || b + lb <= a
+    ensures result == true
+{
+    a + la <= b || b + lb <= a
+}
+
+test "f14 memory safety" {
+    assert(bounds_check(3, 10) == true)
+    assert(bounds_check(10, 10) == false)
+    assert(bounds_check(-1, 10) == false)
+    assert(slice_valid(2, 7, 10) == true)
+    assert(slice_valid(2, 11, 10) == false)
+    assert(alloc_valid(16, 8) == true)
+    assert(ptr_in_range(100, 104, 3, 10) == true)
+    assert(no_overlap(0, 5, 10, 5) == true)
+}

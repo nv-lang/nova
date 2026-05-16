@@ -142,7 +142,9 @@ impl VerificationPipeline {
         if let Some(entry) = pure_fns.get_mut(&fd.name) {
             entry.body_expr = None;
         }
-        let ctx = super::encode::EncodeCtx { pure_views: &pure_views, pure_fns: &pure_fns };
+        let var_sorts: std::collections::HashMap<String, SortRef> = fd.params.iter()
+            .map(|p| (p.name.clone(), type_to_sort(&p.ty))).collect();
+        let ctx = super::encode::EncodeCtx { pure_views: &pure_views, pure_fns: &pure_fns, var_sorts };
 
         // Plan 33.3 Р¤.9: pre-declare РІСЃРµ pure_view UFs РІ backend'Рµ.
         // Р‘РµР· СЌС‚РѕРіРѕ Z3 auto-declare'РёС‚ UF СЃ Int sorts РїРѕ СѓРјРѕР»С‡Р°РЅРёСЋ;
@@ -586,7 +588,9 @@ impl VerificationPipeline {
         let mut backend = self.create_backend();
         let pure_views = collect_pure_views(module);
         let pure_fns = collect_pure_fns(module, inferred_pure);
-        let ctx = super::encode::EncodeCtx { pure_views: &pure_views, pure_fns: &pure_fns };
+        let var_sorts: std::collections::HashMap<String, SortRef> = ld.params.iter()
+            .map(|p| (p.name.clone(), type_to_sort(&p.ty))).collect();
+        let ctx = super::encode::EncodeCtx { pure_views: &pure_views, pure_fns: &pure_fns, var_sorts };
 
         // Pre-declare pure_view UFs.
         for (op_name, sig) in &pure_views {
@@ -1778,7 +1782,7 @@ pub(super) fn encode_axiom(
     // Encode body.
     static EMPTY_FNS: std::sync::OnceLock<std::collections::HashMap<String, super::encode::PureFnInfo>> = std::sync::OnceLock::new();
     let empty_fns = EMPTY_FNS.get_or_init(std::collections::HashMap::new);
-    let ctx = super::encode::EncodeCtx { pure_views, pure_fns: empty_fns };
+    let ctx = super::encode::EncodeCtx { pure_views, pure_fns: empty_fns, var_sorts: std::collections::HashMap::new() };
     let body = super::encode::encode_expr_with_ctx(ax.formula, &ctx).ok()?;
     // Build binders Vec вЂ” СЏРІРЅС‹Р№ РёР»Рё inferred sort, default Int.
     let binders: Vec<(String, SortRef)> = binder_names.iter()
@@ -1964,6 +1968,8 @@ pub(super) fn type_to_sort(ty: &TypeRef) -> SortRef {
             "int" | "i32" | "i64" | "money" | "nat" => SortRef::Int,
             "bool" => SortRef::Bool,
             "str" => SortRef::Str,
+            "f32" => SortRef::F32,
+            "f64" => SortRef::F64,
             other => SortRef::Named(other.into()),
         },
         _ => SortRef::Named("opaque".into()),
@@ -2026,6 +2032,9 @@ pub(super) fn unknown_to_diag_message(reason: UnknownReason) -> String {
 /// proven РєРѕРЅС‚СЂР°РєС‚С‹ РЅРµ emit'СЏС‚СЃСЏ РІ release СЃР±РѕСЂРєРµ.
 pub fn verify_module(module: &Module) -> ModuleVerifyReport {
     let pipeline = VerificationPipeline::new();
+    let cache_dir = std::env::var("NOVA_CACHE_DIR").map(std::path::PathBuf::from).unwrap_or_else(|_| std::env::current_dir().unwrap_or_default().join("target"));
+    let cache = super::cache::ContractCache::new(&cache_dir);
+    let module_name = module.name.join(".");
     let mut report = ModuleVerifyReport::default();
 
     // Plan 33.3 Р¤.9.5: РїСЂРѕРІРµСЂРєР° consistency axiom'РѕРІ РґРѕ per-fn verify.
@@ -2053,13 +2062,28 @@ pub fn verify_module(module: &Module) -> ModuleVerifyReport {
     // СЂРµРєСѓСЂСЃРёРІРЅС‹Р№ РѕР±С…РѕРґ AST РЅР° РєР°Р¶РґСѓСЋ С„СѓРЅРєС†РёСЋ (overhead + СЂРёСЃРє stack overflow).
     let inferred_pure = infer_pure_fns_scc(module);
 
+    // Plan 33.3 Ф.13: #must_verify_module — все функции MustVerify.
+    let module_strict = module.attrs.iter().any(|a| matches!(a.kind, ModuleAttrKind::MustVerifyModule));
+
     for item in &module.items {
         if let Item::Fn(fd) = item {
             if fd.contracts.is_empty() { continue; }
+            // Plan 33.3 Ф.13: #trusted external fn — контракты axioms, SMT-verify пропускается.
+            if fd.is_trusted && fd.is_external { continue; }
             // Skip Fail-functions вЂ” ContractCtx СѓР¶Рµ РІС‹РґР°Р» error.
             // Mut-РїР°СЂР°РјРµС‚СЂС‹ в†’ РїСЂРѕРїСѓСЃС‚РёС‚СЊ (33.2). РЎРµР№С‡Р°СЃ РґРµС‚РµРєС‚РёРј С‡РµСЂРµР·
             // РѕС‚СЃСѓС‚СЃС‚РІРёРµ РІ С‚РёРїР°С….
+            let contracts_repr: String = fd.contracts.iter().map(|c| format!("{c:?}")).collect::<Vec<_>>().join("|");
+            let body_repr = format!("{:?}", fd.body);
+            let ck = super::cache::cache_key(&module_name, &fd.name, &contracts_repr, &body_repr);
+            if let Some(super::cache::CachedResult::Proven) = cache.lookup(ck) {
+                for c in &fd.contracts { if matches!(c.kind, ContractKind::Ensures) { report.proven.push((fd.name.clone(), c.span)); } }
+                continue;
+            }
+                        let effective_mode = if module_strict && matches!(fd.verify_mode, VerifyMode::Default) { VerifyMode::MustVerify } else { fd.verify_mode };
+let t0 = std::time::Instant::now();
             let results = pipeline.verify_fn(module, fd, &inferred_pure);
+            let elapsed_ms = t0.elapsed().as_millis() as u64;
             for (span, vr) in results {
                 match vr {
                     VerifyResult::Proven => {
@@ -2076,7 +2100,7 @@ pub fn verify_module(module: &Module) -> ModuleVerifyReport {
                              3. Weaken `ensures` to actual behavior;\n    \
                              4. Mark `#unverified` if intentional disprove",
                             fd.name, cex);
-                        match fd.verify_mode {
+                        match effective_mode {
                             VerifyMode::MustVerify => report.errors.push(
                                 Diagnostic::new(msg, span)),
                             _ => report.warnings.push(
@@ -2087,7 +2111,7 @@ pub fn verify_module(module: &Module) -> ModuleVerifyReport {
                         // РџРѕ D24 / Plan 33.1: default вЂ” runtime fallback РІ debug,
                         // РІ release РєРѕРЅС‚СЂР°РєС‚ СЃС‚РёСЂР°РµС‚СЃСЏ СЃ warning (РёР»Рё error РµСЃР»Рё
                         // `#verify`).
-                        match fd.verify_mode {
+                        match effective_mode {
                             VerifyMode::MustVerify => {
                                 // Plan 33.3 Р¤.9.10: AI-friendly format СЃ
                                 // РєР°С‚РµРіРѕСЂРёР·РёСЂРѕРІР°РЅРЅС‹Рј reason + suggestions

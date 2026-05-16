@@ -202,7 +202,9 @@ fn verify_liskov_method(
 ) -> Vec<Diagnostic> {
     let mut diagnostics = Vec::new();
     let pure_fns = collect_pure_fns(module, inferred_pure);
-    let ctx = super::encode::EncodeCtx { pure_views, pure_fns: &pure_fns };
+    let var_sorts: std::collections::HashMap<String, SortRef> = effect_params.iter()
+        .map(|p| (p.name.clone(), type_to_sort(&p.ty))).collect();
+    let ctx = super::encode::EncodeCtx { pure_views, pure_fns: &pure_fns, var_sorts };
     let mut backend = pipeline.create_backend();
 
     for (op_name, sig) in pure_views {
@@ -286,7 +288,7 @@ fn verify_static_axiom_with_handler(
     inferred_pure: &std::collections::HashSet<String>,
 ) -> VerifyResult {
     let pure_fns = collect_pure_fns(module, inferred_pure);
-    let ctx = super::encode::EncodeCtx { pure_views, pure_fns: &pure_fns };
+    let ctx = super::encode::EncodeCtx { pure_views, pure_fns: &pure_fns, var_sorts: std::collections::HashMap::new() };
 
     let mut backend = pipeline.create_backend();
 
@@ -556,7 +558,7 @@ fn verify_post_axiom_with_handler(
     };
 
     let pure_fns = collect_pure_fns(module, inferred_pure);
-    let ctx = super::encode::EncodeCtx { pure_views, pure_fns: &pure_fns };
+    let ctx = super::encode::EncodeCtx { pure_views, pure_fns: &pure_fns, var_sorts: std::collections::HashMap::new() };
     let mut backend = pipeline.create_backend();
 
     for (op_name, sig) in pure_views {

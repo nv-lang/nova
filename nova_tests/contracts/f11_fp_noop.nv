@@ -1,0 +1,15 @@
+// FP noop test
+// REQUIRES_SMT_BACKEND z3
+
+module contracts.f11_fp_noop
+
+#verify
+fn id_f64(x f64) -> f64
+    ensures true
+{
+    x
+}
+
+test "f11 fp noop" {
+    assert(id_f64(1.0) == 1.0)
+}

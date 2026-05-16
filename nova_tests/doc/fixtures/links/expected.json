@@ -1,0 +1,214 @@
+{
+  "format_version": 1,
+  "nova_version": "0.1.0",
+  "doc_tests": [
+
+  ],
+  "links": [
+    {
+      "from_id": null,
+      "target_id": "nova_tests.doc.fixtures.links.sample::Point",
+      "text": "Point"
+    },
+    {
+      "from_id": null,
+      "target_id": "nova_tests.doc.fixtures.links.sample::translate",
+      "text": "translate"
+    },
+    {
+      "from_id": null,
+      "target_id": null,
+      "text": "unknown_link"
+    },
+    {
+      "from_id": "nova_tests.doc.fixtures.links.sample::Point",
+      "target_id": "nova_tests.doc.fixtures.links.sample::translate",
+      "text": "translate"
+    },
+    {
+      "from_id": "nova_tests.doc.fixtures.links.sample::translate",
+      "target_id": "nova_tests.doc.fixtures.links.sample::Point",
+      "text": "Point"
+    }
+  ],
+  "modules": [
+    {
+      "deprecation": null,
+      "doc_attrs": [
+
+      ],
+      "kind": "file",
+      "name": "sample",
+      "path": "nova_tests.doc.fixtures.links.sample",
+      "peers": [
+
+      ],
+      "source": {
+        "file_id": 0,
+        "line": 1
+      },
+      "stability": null,
+      "summary": "Plan 45 Ф.6: fixture для intra-doc-links.",
+      "description": "См. [Point] для двумерных координат, [translate] для трансляции,\nи [unknown_link] чтобы убедиться, что broken-link обрабатывается."
+    }
+  ],
+  "items": [
+    {
+      "aliases": [
+
+      ],
+      "capabilities": {
+        "forbid": [
+
+        ],
+        "pure_fn": false,
+        "realtime": false,
+        "realtime_nogc": false
+      },
+      "deprecation": null,
+      "description": "Используется в [translate].",
+      "doc_attrs": [
+
+      ],
+      "doc_test_handlers": null,
+      "id": "nova_tests.doc.fixtures.links.sample::Point",
+      "kind": "type",
+      "linked_from": [
+        "nova_tests.doc.fixtures.links.sample::translate"
+      ],
+      "module_path": "nova_tests.doc.fixtures.links.sample",
+      "name": "Point",
+      "sections": {
+
+      },
+      "source": {
+        "file_id": 0,
+        "line": 11,
+        "peer_file": null
+      },
+      "stability": null,
+      "summary": "Двумерная точка.",
+      "definition": {
+        "fields": [
+          {
+            "mutable": false,
+            "name": "x",
+            "type": "int"
+          },
+          {
+            "mutable": false,
+            "name": "y",
+            "type": "int"
+          }
+        ],
+        "kind": "record"
+      }
+    },
+    {
+      "aliases": [
+
+      ],
+      "capabilities": {
+        "forbid": [
+
+        ],
+        "pure_fn": false,
+        "realtime": false,
+        "realtime_nogc": false
+      },
+      "deprecation": null,
+      "description": null,
+      "doc_attrs": [
+
+      ],
+      "doc_test_handlers": null,
+      "id": "nova_tests.doc.fixtures.links.sample::translate",
+      "kind": "fn",
+      "linked_from": [
+        "nova_tests.doc.fixtures.links.sample::Point"
+      ],
+      "module_path": "nova_tests.doc.fixtures.links.sample",
+      "name": "translate",
+      "sections": {
+
+      },
+      "source": {
+        "file_id": 0,
+        "line": 17,
+        "peer_file": null
+      },
+      "stability": null,
+      "summary": "Сдвигает [Point] на dx/dy.",
+      "signature": {
+        "contracts": {
+          "decreases": [
+
+          ],
+          "ensures": [
+
+          ],
+          "ensures_fail": [
+
+          ],
+          "requires": [
+
+          ],
+          "verify_status": {
+            "counterexample": null,
+            "status": "not_attempted"
+          }
+        },
+        "effects": [
+
+        ],
+        "generics": [
+
+        ],
+        "params": [
+          {
+            "default": null,
+            "keyword_only": false,
+            "name": "p",
+            "structural_type": {
+              "kind": "named",
+              "name": "Point"
+            },
+            "type": "Point",
+            "variadic": false
+          },
+          {
+            "default": null,
+            "keyword_only": false,
+            "name": "dx",
+            "structural_type": {
+              "kind": "named",
+              "name": "int"
+            },
+            "type": "int",
+            "variadic": false
+          },
+          {
+            "default": null,
+            "keyword_only": false,
+            "name": "dy",
+            "structural_type": {
+              "kind": "named",
+              "name": "int"
+            },
+            "type": "int",
+            "variadic": false
+          }
+        ],
+        "raises": [
+
+        ],
+        "receiver": null,
+        "structural_type": {
+          "kind": "named",
+          "name": "Point"
+        },
+        "return_type": "Point"
+      }
+    }
+  ]
+}

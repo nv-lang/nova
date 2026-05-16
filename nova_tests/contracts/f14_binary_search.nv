@@ -1,0 +1,51 @@
+// Plan 33.3 Ф.14: Dafny-parity test 1 — Binary search.
+// Классический пример из Dafny tutorial.
+
+module contracts.f14_binary_search
+
+// Предусловие: массив отсортирован (моделируем через параметры lo/hi/mid).
+// В Nova 33.1 нет arrays в SMT, поэтому верифицируем pure arithmetic core:
+// если lo <= mid <= hi и lo <= hi, то mid корректный split-point.
+
+#verify
+fn binary_search_mid(lo int, hi int) -> int
+    requires lo <= hi
+    ensures result >= lo && result <= hi
+{
+    lo + (hi - lo) / 2
+}
+
+// Инвариант: шаг поиска сужает диапазон.
+#verify
+fn binary_search_step_lo(lo int, mid int, hi int) -> int
+    requires lo <= mid && mid <= hi
+    ensures result >= mid + 1 && result <= hi + 1
+{
+    mid + 1
+}
+
+#verify
+fn binary_search_step_hi(lo int, mid int, hi int) -> int
+    requires lo <= mid && mid <= hi
+    ensures result >= lo - 1 && result <= mid - 1
+{
+    mid - 1
+}
+
+// Условие завершения: lo > hi → not found.
+#verify
+fn binary_search_not_found(lo int, hi int) -> bool
+    requires lo > hi
+    ensures result == true
+{
+    lo > hi
+}
+
+test "f14 binary search" {
+    assert(binary_search_mid(0, 10) == 5)
+    assert(binary_search_mid(3, 7) == 5)
+    assert(binary_search_mid(0, 0) == 0)
+    assert(binary_search_step_lo(0, 5, 10) == 6)
+    assert(binary_search_step_hi(0, 5, 10) == 4)
+    assert(binary_search_not_found(5, 4) == true)
+}

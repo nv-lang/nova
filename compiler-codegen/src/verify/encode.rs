@@ -31,9 +31,10 @@ pub enum EncodingError {
 pub struct EncodeCtx<'a> {
     pub pure_views: &'a HashMap<String, PureViewSig>,
     /// Plan 33.4 D.0.2: реестр `#pure` fn-ов модуля. Ключ — fn name.
-    /// Используется для кодирования `is_positive(n)` в контракте →
-    /// UF `_pure_fn_is_positive(n)` в SMT.
     pub pure_fns: &'a HashMap<String, PureFnInfo>,
+    /// Plan 33.3 Ф.11: типы переменных (params + let bindings).
+    /// Нужны для dispatch `+` → `fp.add` vs Int `+` при FP аргументах.
+    pub var_sorts: HashMap<String, SortRef>,
 }
 
 /// Signature of a `#pure` fn for SMT encoding (Plan 33.4 D.0.2).
@@ -73,7 +74,7 @@ impl<'a> EncodeCtx<'a> {
         static EMPTY_FNS: std::sync::OnceLock<HashMap<String, PureFnInfo>> = std::sync::OnceLock::new();
         let views = EMPTY_VIEWS.get_or_init(HashMap::new);
         let fns = EMPTY_FNS.get_or_init(HashMap::new);
-        EncodeCtx { pure_views: views, pure_fns: fns }
+        EncodeCtx { pure_views: views, pure_fns: fns, var_sorts: HashMap::new() }
     }
 }
 
@@ -94,6 +95,8 @@ pub fn encode_expr_with_ctx(e: &Expr, ctx: &EncodeCtx) -> Result<SmtTerm, Encodi
         ExprKind::IntLit(n) => Ok(SmtTerm::IntLit(*n)),
         ExprKind::BoolLit(b) => Ok(SmtTerm::BoolLit(*b)),
         ExprKind::StrLit(s) => Ok(SmtTerm::StrLit(s.clone())),
+        // Plan 33.3 Ф.11: float literals → FP sort.
+        ExprKind::FloatLit(v) => Ok(SmtTerm::F64Lit(v.to_bits())),
         ExprKind::Ident(n) => Ok(SmtTerm::Var(n.clone())),
 
         // `old(e)` — magic call. Encoder подменяет на fresh var `_old_<encoded>`.
@@ -172,14 +175,24 @@ pub fn encode_expr_with_ctx(e: &Expr, ctx: &EncodeCtx) -> Result<SmtTerm, Encodi
         ExprKind::Binary { op, left, right } => {
             let l = encode_expr_with_ctx(left, ctx)?;
             let r = encode_expr_with_ctx(right, ctx)?;
-            let op_str = bin_op_to_smt(*op)?;
-            Ok(SmtTerm::App(op_str.into(), vec![l, r]))
+            // Plan 33.3 Ф.11: если хотя бы один операнд — FP literal или
+            // переменная FP-типа, используем fp.* операторы.
+            let is_fp = is_fp_term(&l, ctx) || is_fp_term(&r, ctx);
+            if is_fp {
+                let fp_op = bin_op_to_fp_smt(*op)?;
+                Ok(SmtTerm::App(fp_op.into(), vec![l, r]))
+            } else {
+                let op_str = bin_op_to_smt(*op)?;
+                Ok(SmtTerm::App(op_str.into(), vec![l, r]))
+            }
         }
 
         ExprKind::Unary { op, operand } => {
             let v = encode_expr_with_ctx(operand, ctx)?;
+            let is_fp = is_fp_term(&v, ctx);
             match op {
                 UnOp::Not => Ok(SmtTerm::App("not".into(), vec![v])),
+                UnOp::Neg if is_fp => Ok(SmtTerm::App("fp.neg".into(), vec![v])),
                 UnOp::Neg => Ok(SmtTerm::App("-".into(),
                     vec![SmtTerm::IntLit(0), v])),
             }
@@ -211,10 +224,10 @@ pub fn encode_expr_with_ctx(e: &Expr, ctx: &EncodeCtx) -> Result<SmtTerm, Encodi
                 None => return Err(EncodingError::Unsupported(
                     "if without else not supported".into())),
             };
-            // ite via or+and: (cond ∧ then) ∨ (¬cond ∧ else)
-            Ok(SmtTerm::or(vec![
-                SmtTerm::and(vec![cond_term.clone(), then_term]),
-                SmtTerm::and(vec![SmtTerm::not(cond_term), else_term]),
+            // Настоящий SMT ITE — корректен для arithmetic и bool terms.
+            // or+and encoding терял информацию при arithmetic (Z3 не видел
+            // что ite(c, a, b) >= a когда a >= b).
+            Ok(SmtTerm::App("ite".into(), vec![cond_term, then_term, else_term
             ]))
         }
 
@@ -338,6 +351,46 @@ fn extract_range(e: &Expr) -> Result<(&Expr, &Expr), EncodingError> {
         _ => Err(EncodingError::Unsupported(
             "quantifier range must be lo..hi expression".into())),
     }
+}
+
+/// Plan 33.3 Ф.11: определяем по SmtTerm — является ли он FP типом.
+/// Проверяем: F64Lit/F32Lit literals, или Var чей sort FP в ctx.
+fn is_fp_term(t: &SmtTerm, ctx: &EncodeCtx) -> bool {
+    match t {
+        SmtTerm::F32Lit(_) | SmtTerm::F64Lit(_) => true,
+        SmtTerm::Var(name) => matches!(
+            ctx.var_sorts.get(name),
+            Some(SortRef::F32) | Some(SortRef::F64)
+        ),
+        // App returns FP если первый аргумент FP (для arithmetic chains).
+        SmtTerm::App(op, args) if matches!(op.as_str(), "fp.add" | "fp.sub" | "fp.mul" | "fp.div" | "fp.abs" | "fp.neg" | "fp.sqrt") => {
+            !args.is_empty()
+        }
+        _ => false,
+    }
+}
+
+/// Plan 33.3 Ф.11: BinOp → FP SMT operator.
+fn bin_op_to_fp_smt(op: BinOp) -> Result<&'static str, EncodingError> {
+    Ok(match op {
+        BinOp::Add => "fp.add",
+        BinOp::Sub => "fp.sub",
+        BinOp::Mul => "fp.mul",
+        BinOp::Div => "fp.div",
+        BinOp::Eq  => "fp.eq",
+        BinOp::Neq => "!=",  // fp.neq через not(fp.eq) — Z3 не имеет fp.neq напрямую
+        BinOp::Lt  => "fp.lt",
+        BinOp::Le  => "fp.leq",
+        BinOp::Gt  => "fp.gt",
+        BinOp::Ge  => "fp.geq",
+        // Logical ops — всегда Bool, не FP-specific.
+        BinOp::And => "and",
+        BinOp::Or  => "or",
+        BinOp::Implies => "=>",
+        BinOp::Iff => "<=>",
+        _ => return Err(EncodingError::Unsupported(
+            format!("FP binary op {:?} not supported in SMT encoding", op))),
+    })
 }
 
 fn bin_op_to_smt(op: BinOp) -> Result<&'static str, EncodingError> {

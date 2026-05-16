@@ -1,0 +1,66 @@
+// Plan 33.3 Ф.11 acceptance test: IEEE 754 FP variable support + string equality.
+// REQUIRES_SMT_BACKEND z3
+//
+// Цель: подтвердить что Z3 backend корректно обрабатывает:
+// 1. Функции с f64 параметрами (declare_var с FP sort).
+// 2. FP literal'ы в контрактах (F64Lit → Z3 FP numeral).
+// 3. FP comparisons в requires/ensures (fp.geq и т.п.).
+// 4. String equality в ensures (str sort).
+//
+// NaN/infinity исключены из контрактов — это by-design для MVP:
+// полные FP теоремы требуют явного !fp.is_nan(x) в requires.
+
+module contracts.f11_fp_strings_z3
+
+// Тест 1: FP переменная объявляется и используется в контракте.
+// ensures 1.0 > 0.0 — константа, Z3 доказывает тривиально.
+#verify
+fn fp_const_pos() -> f64
+    ensures result > 0.0
+{
+    1.0
+}
+
+// Тест 2: FP literal 0.0 в ensures.
+#verify
+fn fp_zero() -> f64
+    ensures result == 0.0
+{
+    0.0
+}
+
+// Тест 3: String equality reflexive (Z3 Seq theory).
+#verify
+fn str_eq_reflexive(s str) -> bool
+    ensures result == true
+{
+    s == s
+}
+
+// Тест 4: Int clamp (FP context — backend обрабатывает оба типа в модуле).
+#verify
+fn clamp_int(x int, lo int, hi int) -> int
+    requires lo <= hi
+    ensures result >= lo && result <= hi
+{
+    if x < lo { lo } else if x > hi { hi } else { x }
+}
+
+// Тест 5: FP параметр в requires — Z3 принимает fp.geq constraint.
+#verify
+fn fp_pos_param(x f64) -> f64
+    requires x > 0.0
+    ensures result > 0.0
+{
+    x
+}
+
+test "f11 fp and strings z3" {
+    assert(fp_const_pos() == 1.0)
+    assert(fp_zero() == 0.0)
+    assert(str_eq_reflexive("hello") == true)
+    assert(clamp_int(10, 0, 5) == 5)
+    assert(clamp_int(-1, 0, 5) == 0)
+    assert(clamp_int(3, 0, 5) == 3)
+    assert(fp_pos_param(2.5) == 2.5)
+}

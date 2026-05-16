@@ -1,0 +1,47 @@
+// Тест D109 + Plan 48 Ф.8: HashMap[str, int] и HashMap[int, int].
+// Проверяет что str.hash()/int.hash() и str.eq()/int.eq() работают
+// как primitive built-in методы через prim_builtin_method dispatch.
+
+module modules.hashmap_basic
+
+import std.collections.hashmap.{HashMap}
+
+test "HashMap[str, int] insert and get" {
+    let mut m = HashMap[str, int].new()
+    m.insert("alice", 1)
+    m.insert("bob", 2)
+    assert(m.len() == 2)
+    assert(m.get("alice") == Some(1))
+    assert(m.get("bob") == Some(2))
+    assert(m.get("charlie") == None)
+}
+
+test "HashMap[str, int] overwrite returns old" {
+    let mut m = HashMap[str, int].new()
+    assert(m.insert("x", 10) == None)
+    assert(m.insert("x", 20) == Some(10))
+    assert(m.get("x") == Some(20))
+    assert(m.len() == 1)
+}
+
+test "HashMap[int, int] insert and get" {
+    let mut m = HashMap[int, int].new()
+    m.insert(1, 100)
+    m.insert(2, 200)
+    m.insert(3, 300)
+    assert(m.len() == 3)
+    assert(m.get(1) == Some(100))
+    assert(m.get(2) == Some(200))
+    assert(m.get(42) == None)
+}
+
+test "HashMap[int, int] rehash on growth" {
+    let mut m = HashMap[int, int].with_capacity(4)
+    for i in 0..50 {
+        m.insert(i, i * 2)
+    }
+    assert(m.len() == 50)
+    for i in 0..50 {
+        assert(m.get(i) == Some(i * 2))
+    }
+}

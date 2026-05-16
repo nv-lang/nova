@@ -1,0 +1,260 @@
+{
+  "format_version": 1,
+  "nova_version": "0.1.0",
+  "doc_tests": [
+
+  ],
+  "links": [
+
+  ],
+  "modules": [
+    {
+      "deprecation": null,
+      "doc_attrs": [
+
+      ],
+      "kind": "file",
+      "name": "sample",
+      "path": "nova_tests.doc.fixtures.kinds.sample",
+      "peers": [
+
+      ],
+      "source": {
+        "file_id": 0,
+        "line": 1
+      },
+      "stability": null,
+      "summary": "Plan 45 / D107: fixture для Sum / Effect / Protocol / Alias items.",
+      "description": null
+    }
+  ],
+  "items": [
+    {
+      "aliases": [
+
+      ],
+      "capabilities": {
+        "forbid": [
+
+        ],
+        "pure_fn": false,
+        "realtime": false,
+        "realtime_nogc": false
+      },
+      "deprecation": null,
+      "description": null,
+      "doc_attrs": [
+
+      ],
+      "doc_test_handlers": null,
+      "id": "nova_tests.doc.fixtures.kinds.sample::AccountId",
+      "kind": "type",
+      "module_path": "nova_tests.doc.fixtures.kinds.sample",
+      "name": "AccountId",
+      "sections": {
+
+      },
+      "source": {
+        "file_id": 0,
+        "line": 23,
+        "peer_file": null
+      },
+      "stability": null,
+      "summary": "Newtype над int.",
+      "definition": {
+        "aliased_type": "int",
+        "kind": "alias"
+      }
+    },
+    {
+      "aliases": [
+
+      ],
+      "capabilities": {
+        "forbid": [
+
+        ],
+        "pure_fn": false,
+        "realtime": false,
+        "realtime_nogc": false
+      },
+      "deprecation": null,
+      "description": null,
+      "doc_attrs": [
+
+      ],
+      "doc_test_handlers": null,
+      "id": "nova_tests.doc.fixtures.kinds.sample::Color",
+      "kind": "type",
+      "module_path": "nova_tests.doc.fixtures.kinds.sample",
+      "name": "Color",
+      "sections": {
+
+      },
+      "source": {
+        "file_id": 0,
+        "line": 6,
+        "peer_file": null
+      },
+      "stability": null,
+      "summary": "Sum-тип с unit-вариантами.",
+      "definition": {
+        "kind": "sum",
+        "variants": [
+          {
+            "name": "Red",
+            "payload_kind": "unit"
+          },
+          {
+            "name": "Green",
+            "payload_kind": "unit"
+          },
+          {
+            "name": "Blue",
+            "payload_kind": "unit"
+          }
+        ]
+      }
+    },
+    {
+      "aliases": [
+
+      ],
+      "capabilities": {
+        "forbid": [
+
+        ],
+        "pure_fn": false,
+        "realtime": false,
+        "realtime_nogc": false
+      },
+      "deprecation": null,
+      "description": null,
+      "doc_attrs": [
+
+      ],
+      "doc_test_handlers": null,
+      "id": "nova_tests.doc.fixtures.kinds.sample::Counter",
+      "kind": "effect",
+      "module_path": "nova_tests.doc.fixtures.kinds.sample",
+      "name": "Counter",
+      "sections": {
+
+      },
+      "source": {
+        "file_id": 0,
+        "line": 9,
+        "peer_file": null
+      },
+      "stability": null,
+      "summary": "Counter — простой effect с axiom.",
+      "axioms": [
+        {
+          "formula": "x >= 0",
+          "name": "non_negative"
+        }
+      ],
+      "methods": [
+        {
+          "name": "next",
+          "params": [
+
+          ],
+          "return_type": "int"
+        }
+      ]
+    },
+    {
+      "aliases": [
+
+      ],
+      "capabilities": {
+        "forbid": [
+
+        ],
+        "pure_fn": false,
+        "realtime": false,
+        "realtime_nogc": false
+      },
+      "deprecation": null,
+      "description": null,
+      "doc_attrs": [
+
+      ],
+      "doc_test_handlers": null,
+      "id": "nova_tests.doc.fixtures.kinds.sample::Eq",
+      "kind": "protocol",
+      "module_path": "nova_tests.doc.fixtures.kinds.sample",
+      "name": "Eq",
+      "sections": {
+
+      },
+      "source": {
+        "file_id": 0,
+        "line": 15,
+        "peer_file": null
+      },
+      "stability": null,
+      "summary": "Eq — protocol.",
+      "implementors": [
+
+      ],
+      "methods": [
+        {
+          "name": "equals",
+          "params": [
+            {
+              "default": null,
+              "keyword_only": false,
+              "name": "other",
+              "structural_type": {
+                "kind": "named",
+                "name": "Eq"
+              },
+              "type": "Eq",
+              "variadic": false
+            }
+          ],
+          "return_type": "bool"
+        }
+      ]
+    },
+    {
+      "aliases": [
+
+      ],
+      "capabilities": {
+        "forbid": [
+
+        ],
+        "pure_fn": false,
+        "realtime": false,
+        "realtime_nogc": false
+      },
+      "deprecation": null,
+      "description": null,
+      "doc_attrs": [
+
+      ],
+      "doc_test_handlers": null,
+      "id": "nova_tests.doc.fixtures.kinds.sample::Pixels",
+      "kind": "type",
+      "module_path": "nova_tests.doc.fixtures.kinds.sample",
+      "name": "Pixels",
+      "sections": {
+
+      },
+      "source": {
+        "file_id": 0,
+        "line": 20,
+        "peer_file": null
+      },
+      "stability": null,
+      "summary": "Alias над int — semantic clarity.",
+      "definition": {
+        "aliased_type": "int",
+        "kind": "alias"
+      }
+    }
+  ]
+}

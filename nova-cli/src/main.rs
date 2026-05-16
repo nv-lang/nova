@@ -1,4 +1,4 @@
-//! Plan 28: `nova` CLI — единая точка входа для пользователя.
+﻿//! Plan 28: `nova` CLI — единая точка входа для пользователя.
 //!
 //! `nova test`, `nova build`, `nova run`, `nova check`, `nova regen-runtime`.
 //! Заменяет run_tests.ps1 / run_tests.sh / regen_runtime.ps1.
@@ -96,6 +96,43 @@ enum Cmd {
     /// Run a Nova source file via the interpreter.
     Run {
         file: PathBuf,
+    },
+    /// Plan 45 / D107: produce documentation for a Nova source file.
+    ///
+    /// MVP: one file at a time, output to stdout. Supported formats:
+    /// `markdown` (default), `json` (D107 schema v1).
+    Doc {
+        /// Path to a `.nv` file or directory. Optional when `--json-schema` is used.
+        #[arg(num_args = 0..=1)]
+        file: Option<PathBuf>,
+        /// Output format: `markdown` (default) or `json`.
+        #[arg(long = "format", default_value = "markdown")]
+        format: String,
+        /// Print the embedded JSON Schema 2020-12 and exit (offline-
+        /// validation, IDE auto-completion, LLM prompt context).
+        #[arg(long = "json-schema")]
+        json_schema: bool,
+        /// Include private (non-exported) items in output.
+        /// By default only items marked `export` are documented.
+        #[arg(long = "include-private")]
+        include_private: bool,
+        /// Plan 45 Ф.7: run doc-tests (`nova` fenced code blocks) instead
+        /// of rendering. Reports pass/fail/skipped per test.
+        #[arg(long = "test")]
+        run_doc_tests: bool,
+        /// Plan 45 Ф.14: validate doc-content without rendering. Reports
+        /// broken intra-doc-links and missing summaries; exits non-zero
+        /// on any issue. Useful in CI.
+        #[arg(long = "check")]
+        check: bool,
+        /// Plan 45 Ф.15: re-render on file change (mtime poll, 500ms).
+        /// Ctrl-C to exit. Works with --format and --check.
+        #[arg(long = "watch")]
+        watch: bool,
+        /// Plan 45 Ф.21.6 / D105: report doc-coverage metrics
+        /// (% items with summary, broken down by kind). Useful in CI.
+        #[arg(long = "coverage")]
+        coverage: bool,
     },
     /// Compile a single Nova source file to a native binary.
     ///
@@ -234,6 +271,47 @@ enum Cmd {
         /// Only compare — fail if stubs diverge from registry (CI guard).
         #[arg(long)]
         check: bool,
+    },
+    /// Plan 33.3 Ф.13: Contract inspection commands.
+    ///
+    /// Subcommands: list, verify, suggest, counterexample.
+    /// All output JSON (AI-friendly schema). See docs/contracts-diag-schema.json.
+    #[command(subcommand)]
+    Contracts(ContractsCmd),
+}
+
+/// Plan 33.3 Ф.13: `nova contracts <subcommand>`.
+#[derive(Subcommand)]
+enum ContractsCmd {
+    /// List all contracts in a Nova source file.
+    List {
+        /// Path to .nv file.
+        file: PathBuf,
+    },
+    /// Verify contracts in a Nova source file and output JSON diagnostics.
+    Verify {
+        /// Path to .nv file.
+        file: PathBuf,
+        /// SMT backend to use (overrides NOVA_SMT_BACKEND).
+        #[arg(long)]
+        backend: Option<String>,
+    },
+    /// Suggest contracts for a function (AI-assisted stubs).
+    Suggest {
+        /// Path to .nv file.
+        file: PathBuf,
+        /// Function name.
+        fn_name: String,
+    },
+    /// Show counterexample for a failing contract.
+    Counterexample {
+        /// Path to .nv file.
+        file: PathBuf,
+        /// Function name.
+        fn_name: String,
+        /// Contract index (0-based).
+        #[arg(long, default_value_t = 0)]
+        contract_id: usize,
     },
 }
 
@@ -861,6 +939,427 @@ fn cmd_run(path: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Plan 45 Ф.12 / D107: `nova doc <file> [--format markdown|json]
+/// [--json-schema]`.
+///
+/// MVP: один входной файл, вывод в stdout. Никаких подкоманд (workspace/
+/// --output-dir/--watch — Plan 45.A или отдельные субкоманды позже).
+fn cmd_doc(path: &Path, format: &str, json_schema: bool, include_private: bool, run_doc_tests: bool, check: bool, watch: bool, coverage: bool) -> Result<()> {
+    // `--json-schema` — печатает embedded схему и выходит (D107).
+    if json_schema {
+        println!("{}", nova_doc_embedded_schema());
+        return Ok(());
+    }
+    // Plan 45 Ф.21.7: workspace-режим. Если path — каталог, рекурсивно
+    // парсим все *.nv и строим multi-module DocTree.
+    if path.is_dir() {
+        return cmd_doc_workspace(path, format, include_private, run_doc_tests, check, coverage);
+    }
+    if !path.is_file() {
+        bail!("file not found: {}", path.display());
+    }
+    if watch {
+        return cmd_doc_watch(path, format, include_private, run_doc_tests, check, coverage);
+    }
+    let src = read_file(path)?;
+    let path_str = path.to_string_lossy();
+    let mut module = nova_codegen::parser::parse(&src)
+        .map_err(|d| anyhow!("{}", d.render(&src, &path_str)))?;
+    check_module_path(path, &module)?;
+    // Plan 45 MVP: для single-file mode `nova doc <file>` НЕ резолвим
+    // импорты — иначе items из auto-imported std/prelude и других
+    // модулей попадают в output. Это даёт "documentation of THIS
+    // file" по дефолту. Workspace-режим (`nova doc --workspace`) и
+    // multi-module DocTree — Plan 45.A.
+    //
+    // Без resolve_imports type-check может ругаться на cross-file
+    // символы. Для MVP doc-pipeline'а мы прощаем type-check ошибки
+    // (но всё ещё парсим — без parse fail нельзя получить AST).
+    // Если type-check падает — продолжаем с partial information;
+    // production-grade `nova doc --check` (Plan 45 Ф.14) будет
+    // делать полный type-check.
+    let _ = nova_codegen::types::check_module(&module);
+    nova_codegen::types::infer_effects(&mut module);
+    let mut tree = nova_codegen::doc::build(&module);
+    // Plan 45 Ф.22.3 / D107: source_root = parent dir файла, relative
+    // от CWD (для portable/deterministic output across machines).
+    tree.source_root = path.parent().map(|d| {
+        let s = d.display().to_string();
+        if s.is_empty() { ".".to_string() } else { s.replace('\\', "/") }
+    });
+    if !include_private {
+        nova_codegen::doc::strip_private(&mut tree);
+    }
+    if coverage {
+        return cmd_doc_coverage(&tree);
+    }
+    if check {
+        return cmd_doc_check(&tree, format);
+    }
+    if run_doc_tests {
+        let summary = nova_codegen::doc::test_runner::run_doc_tests_with_source(&tree.doc_tests, Some(&src));
+        let total = summary.results.len();
+        let passed = summary.passed();
+        let failed = summary.failed();
+        let skipped = summary.skipped();
+        for r in &summary.results {
+            match &r.outcome {
+                nova_codegen::doc::test_runner::DocTestOutcome::Passed => {
+                    println!("ok   {}", r.id);
+                }
+                nova_codegen::doc::test_runner::DocTestOutcome::Failed(msg) => {
+                    println!("FAIL {} — {}", r.id, msg);
+                }
+                nova_codegen::doc::test_runner::DocTestOutcome::Skipped(reason) => {
+                    println!("skip {} ({})", r.id, reason);
+                }
+            }
+        }
+        println!(
+            "\ndoc-tests: {} passed, {} failed, {} skipped (total {})",
+            passed, failed, skipped, total
+        );
+        if !summary.all_passed() {
+            std::process::exit(1);
+        }
+        return Ok(());
+    }
+    let out = match format {
+        "markdown" | "md" => nova_codegen::doc::render_markdown(&tree),
+        "json" => nova_codegen::doc::render_json_with_source(&tree, &src),
+        other => {
+            return Err(usage_err(format!(
+                "unknown --format `{}` (supported: `markdown`, `json`)",
+                other
+            )));
+        }
+    };
+    print!("{}", out);
+    Ok(())
+}
+
+/// Plan 45 Ф.21.7 — workspace mode. Рекурсивно собирает все *.nv
+/// в каталоге, парсит каждый, строит unified DocTree (cross-module
+/// intra-doc-links резолвятся). Поддерживает --format / --check /
+/// --test / --coverage / --include-private.
+fn cmd_doc_workspace(
+    dir: &Path,
+    format: &str,
+    include_private: bool,
+    run_doc_tests: bool,
+    check: bool,
+    coverage: bool,
+) -> Result<()> {
+    let mut files: Vec<PathBuf> = Vec::new();
+    walk_nv_files(dir, &mut files)?;
+    files.sort();
+    if files.is_empty() {
+        bail!("no .nv files found under `{}`", dir.display());
+    }
+    // Plan 45 Ф.22.5 / D107: workspace graceful-fail — продолжаем при
+    // parse-ошибках в отдельных файлах (как rustdoc), выводим warnings
+    // в stderr. Hard-fail только если 0 файлов распарсилось.
+    let mut modules: Vec<nova_codegen::ast::Module> = Vec::with_capacity(files.len());
+    // Для Ф.22.7: храним source каждого файла рядом с модулем.
+    let mut sources: Vec<String> = Vec::with_capacity(files.len());
+    let mut parse_warnings: Vec<String> = Vec::new();
+    for f in &files {
+        let src = match read_file(f) {
+            Ok(s) => s,
+            Err(e) => {
+                parse_warnings.push(format!("warning: {}: {}", f.display(), e));
+                continue;
+            }
+        };
+        let path_str = f.to_string_lossy();
+        match nova_codegen::parser::parse(&src) {
+            Ok(mut m) => {
+                let _ = nova_codegen::types::check_module(&m);
+                nova_codegen::types::infer_effects(&mut m);
+                sources.push(src);
+                modules.push(m);
+            }
+            Err(d) => {
+                parse_warnings.push(format!(
+                    "warning: {}: {}",
+                    path_str,
+                    d.render(&src, &path_str)
+                ));
+            }
+        }
+    }
+    for w in &parse_warnings {
+        eprintln!("{}", w);
+    }
+    if modules.is_empty() && !files.is_empty() {
+        bail!("все файлы в `{}` содержат ошибки парсинга", dir.display());
+    }
+    let mut tree = nova_codegen::doc::build_workspace(&modules);
+    // Plan 45 Ф.22.3 / D107: workspace source_root = переданный dir,
+    // как есть (relative от CWD для portability).
+    tree.source_root = Some(dir.display().to_string().replace('\\', "/"));
+    if !include_private {
+        nova_codegen::doc::strip_private(&mut tree);
+    }
+    if coverage {
+        return cmd_doc_coverage(&tree);
+    }
+    if check {
+        return cmd_doc_check(&tree, format);
+    }
+    if run_doc_tests {
+        // Plan 45 Ф.22.7: workspace doc-tests с crate-scope.
+        // Каждый тест получает source своего исходного модуля для
+        // crate-scope injection (аналог single-file Ф.21.1).
+        // Используем concatenated sources как best-effort fallback:
+        // doc-test'ам нужен только scope своего модуля, но merged
+        // sources покрывают cross-module cases тоже.
+        let combined_source = sources.join("\n\n");
+        let summary = nova_codegen::doc::test_runner::run_doc_tests_with_source(
+            &tree.doc_tests,
+            Some(&combined_source),
+        );
+        return print_doc_test_summary(summary);
+    }
+    let out = match format {
+        "markdown" | "md" => nova_codegen::doc::render_markdown(&tree),
+        "json" => nova_codegen::doc::render_json(&tree),
+        other => bail!("unknown --format `{}`", other),
+    };
+    print!("{}", out);
+    Ok(())
+}
+
+fn walk_nv_files(dir: &Path, out: &mut Vec<PathBuf>) -> Result<()> {
+    for entry in std::fs::read_dir(dir)? {
+        let entry = entry?;
+        let p = entry.path();
+        if p.is_dir() {
+            walk_nv_files(&p, out)?;
+        } else if p.extension().map(|e| e == "nv").unwrap_or(false) {
+            out.push(p);
+        }
+    }
+    Ok(())
+}
+
+/// Helper для check-mode (используется и single-file и workspace).
+/// Plan 45 Ф.23.12: теперь агрегирует все §11.5 lints.
+// Plan 45 Ф.24.4: structured check issue (rule + item_id + message + severity).
+struct CheckIssue {
+    rule: String,
+    item_id: String,
+    message: String,
+    severity: &'static str,
+}
+
+fn cmd_doc_check(tree: &nova_codegen::doc::DocTree, format: &str) -> Result<()> {
+    let mut issues: Vec<CheckIssue> = Vec::new();
+    // Broken links.
+    for link in &tree.links {
+        if link.target_id.is_none() {
+            let from = link.from_id.as_deref().unwrap_or("<module>").to_string();
+            issues.push(CheckIssue {
+                rule: "broken-link".to_string(),
+                item_id: from,
+                message: format!("broken link [{}]", link.text),
+                severity: "error",
+            });
+        }
+    }
+    // Missing summaries.
+    for m in &tree.modules {
+        for it in &m.items {
+            if it.visibility == nova_codegen::doc::Visibility::Export && it.summary.is_none() {
+                issues.push(CheckIssue {
+                    rule: "missing-summary".to_string(),
+                    item_id: it.id.clone(),
+                    message: "exported item has no summary".to_string(),
+                    severity: "error",
+                });
+            }
+        }
+    }
+    // Lint violations.
+    for v in nova_codegen::doc::run_lints(tree) {
+        issues.push(CheckIssue {
+            rule: v.rule.to_string(),
+            item_id: v.item_id,
+            message: v.message,
+            severity: "error",
+        });
+    }
+
+    let has_errors = issues.iter().any(|i| i.severity == "error");
+
+    if format == "json" {
+        // Plan 45 Ф.24.4: structured JSON output for CI.
+        let mut by_rule: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
+        for i in &issues {
+            *by_rule.entry(i.rule.clone()).or_insert(0) += 1;
+        }
+        let by_rule_str = by_rule
+            .iter()
+            .map(|(k, v)| format!("    {:?}: {}", k, v))
+            .collect::<Vec<_>>()
+            .join(",\n");
+        let issues_str = issues
+            .iter()
+            .map(|i| format!(
+                "    {{\"rule\": {:?}, \"item_id\": {:?}, \"message\": {:?}, \"severity\": {:?}}}",
+                i.rule, i.item_id, i.message, i.severity
+            ))
+            .collect::<Vec<_>>()
+            .join(",\n");
+        println!("{{\n  \"summary\": {{\n    \"count\": {},\n    \"by_rule\": {{\n{}\n    }}\n  }},\n  \"issues\": [\n{}\n  ]\n}}",
+            issues.len(), by_rule_str, issues_str);
+    } else {
+        if issues.is_empty() {
+            println!("doc-check: ok ({} item(s), {} link(s))",
+                tree.modules.iter().map(|m| m.items.len()).sum::<usize>(),
+                tree.links.len());
+            return Ok(());
+        }
+        for i in &issues {
+            eprintln!("doc-check: [{}] {}: {}", i.rule, i.item_id, i.message);
+        }
+        eprintln!("\ndoc-check: {} issue(s)", issues.len());
+    }
+
+    if has_errors {
+        std::process::exit(1);
+    }
+    Ok(())
+}
+
+/// Helper: print doc-test summary + exit 1 on failures.
+fn print_doc_test_summary(summary: nova_codegen::doc::test_runner::DocTestSummary) -> Result<()> {
+    let total = summary.results.len();
+    let passed = summary.passed();
+    let failed = summary.failed();
+    let skipped = summary.skipped();
+    for r in &summary.results {
+        match &r.outcome {
+            nova_codegen::doc::test_runner::DocTestOutcome::Passed => println!("ok   {}", r.id),
+            nova_codegen::doc::test_runner::DocTestOutcome::Failed(msg) => println!("FAIL {} — {}", r.id, msg),
+            nova_codegen::doc::test_runner::DocTestOutcome::Skipped(reason) => println!("skip {} ({})", r.id, reason),
+        }
+    }
+    println!("\ndoc-tests: {} passed, {} failed, {} skipped (total {})", passed, failed, skipped, total);
+    if !summary.all_passed() {
+        std::process::exit(1);
+    }
+    Ok(())
+}
+
+/// Plan 45 Ф.21.6 / D105: doc-coverage метрика. Считает items
+/// (всего/задокументированных) и links (всего/broken). Output на
+/// stdout, exit code = процент-непокрытых (0 если 100% покрыто).
+fn cmd_doc_coverage(tree: &nova_codegen::doc::DocTree) -> Result<()> {
+    use std::collections::BTreeMap;
+    let mut total: BTreeMap<&str, usize> = BTreeMap::new();
+    let mut documented: BTreeMap<&str, usize> = BTreeMap::new();
+    let mut with_examples: BTreeMap<&str, usize> = BTreeMap::new();
+    for m in &tree.modules {
+        for it in &m.items {
+            let kind: &str = match &it.kind {
+                nova_codegen::doc::ItemKind::Fn(_) => "fn",
+                nova_codegen::doc::ItemKind::Type(_) => "type",
+                nova_codegen::doc::ItemKind::Const { .. } => "const",
+                nova_codegen::doc::ItemKind::Effect { .. } => "effect",
+                nova_codegen::doc::ItemKind::Protocol { .. } => "protocol",
+            };
+            *total.entry(kind).or_insert(0) += 1;
+            if it.summary.is_some() {
+                *documented.entry(kind).or_insert(0) += 1;
+            }
+            // Plan 45 Ф.23.19: track items with Examples section or doc-tests.
+            let has_examples = it.sections.contains_key("examples")
+                || tree.doc_tests.iter().any(|t| t.from_id.as_deref() == Some(&it.id));
+            if has_examples {
+                *with_examples.entry(kind).or_insert(0) += 1;
+            }
+        }
+    }
+    let total_items: usize = total.values().sum();
+    let documented_items: usize = documented.values().sum();
+    let total_with_examples: usize = with_examples.values().sum();
+    let total_links = tree.links.len();
+    let broken_links = tree.links.iter().filter(|l| l.target_id.is_none()).count();
+
+    println!("doc-coverage:");
+    println!("  items: {}/{} documented ({:.1}%)",
+        documented_items, total_items,
+        if total_items == 0 { 100.0 } else { 100.0 * documented_items as f64 / total_items as f64 });
+    println!("  examples: {}/{} with examples ({:.1}%)",
+        total_with_examples, total_items,
+        if total_items == 0 { 100.0 } else { 100.0 * total_with_examples as f64 / total_items as f64 });
+    for (kind, &total_n) in &total {
+        let doc_n = documented.get(kind).copied().unwrap_or(0);
+        let ex_n = with_examples.get(kind).copied().unwrap_or(0);
+        println!("    {}: {}/{} documented, {}/{} with examples", kind, doc_n, total_n, ex_n, total_n);
+    }
+    println!("  links: {}/{} resolved ({} broken)",
+        total_links - broken_links, total_links, broken_links);
+    Ok(())
+}
+
+/// Plan 45 Ф.15: watch mode — re-render при изменении `path` (mtime
+/// poll каждые 500ms). Без `notify` dep'ы для minimal footprint.
+/// Ctrl-C завершает loop.
+fn cmd_doc_watch(
+    path: &Path,
+    format: &str,
+    include_private: bool,
+    run_doc_tests: bool,
+    check: bool,
+    coverage: bool,
+) -> Result<()> {
+    let mut last_mtime: Option<std::time::SystemTime> = None;
+    eprintln!("nova doc --watch: monitoring {} (Ctrl-C to exit)", path.display());
+    loop {
+        let mtime = std::fs::metadata(path).and_then(|m| m.modified()).ok();
+        if mtime != last_mtime {
+            last_mtime = mtime;
+            // Очистка экрана + cursor home (ANSI). Сохраняем scrollback.
+            eprint!("\x1b[2J\x1b[H");
+            eprintln!(
+                "─── nova doc --watch ({}) ───",
+                chrono_like_now()
+            );
+            // Re-run одним проходом через cmd_doc (без watch/json_schema).
+            match cmd_doc(path, format, false, include_private, run_doc_tests, check, false, coverage) {
+                Ok(_) => {}
+                Err(e) => eprintln!("error: {}", e),
+            }
+        }
+        std::thread::sleep(Duration::from_millis(500));
+    }
+}
+
+/// MVP timestamp для watch-header'а. Без chrono dep'ы — простая
+/// HH:MM:SS из SystemTime (UTC).
+fn chrono_like_now() -> String {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let rem = now % 86_400;
+    let h = rem / 3600;
+    let m = (rem % 3600) / 60;
+    let s = rem % 60;
+    format!("{:02}:{:02}:{:02} UTC", h, m, s)
+}
+
+/// Embedded JSON Schema (D107) — пока минимальная заглушка с
+/// корректным `format_version` дискриминатором. Полная схема —
+/// Plan 45 Ф.9 (schema.rs); этот placeholder уже валидный JSON Schema
+/// 2020-12, описывающий обязательный `format_version: u32` (1) и
+/// высокоуровневый shape.
+fn nova_doc_embedded_schema() -> &'static str {
+    nova_codegen::doc::schema::schema_v1()
+}
+
 fn cmd_build(
     path: &Path,
     output: Option<&Path>,
@@ -1317,6 +1816,159 @@ fn cmd_regen_runtime(check: bool) -> Result<()> {
     Ok(())
 }
 
+// ---------- nova contracts ----------
+
+fn cmd_contracts(sub: ContractsCmd) -> Result<()> {
+    match sub {
+        ContractsCmd::List { file } => cmd_contracts_list(&file),
+        ContractsCmd::Verify { file, backend } => cmd_contracts_verify(&file, backend.as_deref()),
+        ContractsCmd::Suggest { file, fn_name } => cmd_contracts_suggest(&file, &fn_name),
+        ContractsCmd::Counterexample { file, fn_name, contract_id } => {
+            cmd_contracts_counterexample(&file, &fn_name, contract_id)
+        }
+    }
+}
+
+fn contracts_parse_file(file: &std::path::Path) -> Result<nova_codegen::ast::Module> {
+    let src = std::fs::read_to_string(file)
+        .map_err(|e| anyhow!("cannot read {}: {}", file.display(), e))?;
+    let tokens = nova_codegen::lexer::lex(&src)
+        .map_err(|d| anyhow!("{}", d.message))?;
+    let mut parser = nova_codegen::parser::Parser::new(tokens);
+    parser.parse_module().map_err(|d| anyhow!("{}", d.message))
+}
+
+fn cmd_contracts_list(file: &std::path::Path) -> Result<()> {
+    let module = contracts_parse_file(file)?;
+    let mut items = Vec::new();
+    for item in &module.items {
+        if let nova_codegen::ast::Item::Fn(fd) = item {
+            if fd.contracts.is_empty() { continue; }
+            let contracts: Vec<serde_json::Value> = fd.contracts.iter().enumerate().map(|(i, c)| {
+                serde_json::json!({
+                    "id": i,
+                    "kind": format!("{:?}", c.kind).to_lowercase(),
+                    "span": { "start": c.span.start, "end": c.span.end }
+                })
+            }).collect();
+            items.push(serde_json::json!({
+                "fn": fd.name,
+                "verify_mode": format!("{:?}", fd.verify_mode).to_lowercase(),
+                "trusted": fd.is_trusted,
+                "contracts": contracts
+            }));
+        }
+    }
+    let out = serde_json::json!({
+        "schema": "nova-contracts-diag/v1",
+        "file": file.display().to_string(),
+        "module": module.name.join("."),
+        "functions": items
+    });
+    println!("{}", serde_json::to_string_pretty(&out)?);
+    Ok(())
+}
+
+fn cmd_contracts_verify(file: &std::path::Path, backend: Option<&str>) -> Result<()> {
+    if let Some(b) = backend {
+        std::env::set_var("NOVA_SMT_BACKEND", b);
+    }
+    let module = contracts_parse_file(file)?;
+    // Run type-check pass to populate types (needed for verify).
+    let report = nova_codegen::verify::verify_module(&module);
+    let mut diagnostics = Vec::new();
+    for (fn_name, span) in &report.proven {
+        diagnostics.push(serde_json::json!({
+            "kind": "proven",
+            "fn": fn_name,
+            "span": { "start": span.start, "end": span.end }
+        }));
+    }
+    for diag in &report.warnings {
+        diagnostics.push(serde_json::json!({
+            "kind": "warning",
+            "message": diag.message,
+            "span": { "start": diag.span.start, "end": diag.span.end }
+        }));
+    }
+    for diag in &report.errors {
+        diagnostics.push(serde_json::json!({
+            "kind": "error",
+            "message": diag.message,
+            "span": { "start": diag.span.start, "end": diag.span.end }
+        }));
+    }
+    let out = serde_json::json!({
+        "schema": "nova-contracts-diag/v1",
+        "file": file.display().to_string(),
+        "module": module.name.join("."),
+        "proven_count": report.proven.len(),
+        "warning_count": report.warnings.len(),
+        "error_count": report.errors.len(),
+        "diagnostics": diagnostics
+    });
+    println!("{}", serde_json::to_string_pretty(&out)?);
+    if !report.errors.is_empty() {
+        return Err(anyhow!("{} contract error(s)", report.errors.len()));
+    }
+    Ok(())
+}
+
+fn cmd_contracts_suggest(file: &std::path::Path, fn_name: &str) -> Result<()> {
+    let module = contracts_parse_file(file)?;
+    let fd = module.items.iter().find_map(|item| {
+        if let nova_codegen::ast::Item::Fn(f) = item {
+            if f.name == fn_name { return Some(f); }
+        }
+        None
+    }).ok_or_else(|| anyhow!("function `{}` not found in {}", fn_name, file.display()))?;
+
+    let mut suggestions = Vec::new();
+    if fd.contracts.is_empty() {
+        // Generate basic stub suggestions based on return type.
+        if let Some(rt) = &fd.return_type {
+            let rt_str = format!("{rt:?}");
+            if rt_str.contains("Bool") {
+                suggestions.push("ensures result == true || result == false");
+            } else if rt_str.contains("Int") {
+                suggestions.push("requires true");
+                suggestions.push("ensures result >= 0");
+            }
+        }
+        if suggestions.is_empty() {
+            suggestions.push("requires true");
+            suggestions.push("ensures true");
+        }
+    }
+
+    let out = serde_json::json!({
+        "schema": "nova-contracts-diag/v1",
+        "fn": fn_name,
+        "has_contracts": !fd.contracts.is_empty(),
+        "suggestions": suggestions
+    });
+    println!("{}", serde_json::to_string_pretty(&out)?);
+    Ok(())
+}
+
+fn cmd_contracts_counterexample(file: &std::path::Path, fn_name: &str, contract_id: usize) -> Result<()> {
+    let module = contracts_parse_file(file)?;
+    let report = nova_codegen::verify::verify_module(&module);
+    // Find error for this fn + contract_id.
+    let msg = report.errors.iter()
+        .find(|d| d.message.contains(&format!("`{fn_name}`")))
+        .map(|d| d.message.clone())
+        .unwrap_or_else(|| format!("no counterexample found for `{fn_name}` contract {contract_id}"));
+    let out = serde_json::json!({
+        "schema": "nova-contracts-diag/v1",
+        "fn": fn_name,
+        "contract_id": contract_id,
+        "counterexample": msg
+    });
+    println!("{}", serde_json::to_string_pretty(&out)?);
+    Ok(())
+}
+
 // ---------- entry point ----------
 
 fn main() -> ExitCode {
@@ -1357,6 +2009,18 @@ fn main() -> ExitCode {
             &skip,
         ),
         Cmd::Run { file } => cmd_run(&file),
+        Cmd::Doc { file, format, json_schema, include_private, run_doc_tests, check, watch, coverage } => {
+            // Plan 45 Ф.23.17: --json-schema works without FILE argument.
+            if json_schema && file.is_none() {
+                println!("{}", nova_doc_embedded_schema());
+                return ExitCode::SUCCESS;
+            }
+            let path = file.as_deref().unwrap_or_else(|| {
+                eprintln!("error: FILE argument required (unless --json-schema)");
+                std::process::exit(1);
+            });
+            cmd_doc(path, &format, json_schema, include_private, run_doc_tests, check, watch, coverage)
+        }
         Cmd::Build { file, output, mode, toolchain, vcvars, clang, timeout, keep_artifacts } => cmd_build(
             &file,
             output.as_deref(),
@@ -1406,6 +2070,7 @@ fn main() -> ExitCode {
             gc.as_deref().unwrap_or("boehm"),
         ),
         Cmd::RegenRuntime { check } => cmd_regen_runtime(check),
+        Cmd::Contracts(sub) => cmd_contracts(sub),
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,

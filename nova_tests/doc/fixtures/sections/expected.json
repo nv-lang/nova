@@ -1,0 +1,142 @@
+{
+  "format_version": 1,
+  "nova_version": "0.1.0",
+  "doc_tests": [
+    {
+      "from_id": "nova_tests.doc.fixtures.sections.sample::divide",
+      "full_source": "assert(divide(10, 3) == 6)",
+      "id": "nova_tests.doc.fixtures.sections.sample::doc_test_1",
+      "index": 1,
+      "modifiers": [
+
+      ],
+      "visible_source": "assert(divide(10, 3) == 6)"
+    }
+  ],
+  "links": [
+
+  ],
+  "modules": [
+    {
+      "deprecation": null,
+      "doc_attrs": [
+
+      ],
+      "kind": "file",
+      "name": "sample",
+      "path": "nova_tests.doc.fixtures.sections.sample",
+      "peers": [
+
+      ],
+      "source": {
+        "file_id": 0,
+        "line": 1
+      },
+      "stability": null,
+      "summary": "Plan 45 / D107: fixture для проверки section parsing (style-guide §11.5).",
+      "description": null
+    }
+  ],
+  "items": [
+    {
+      "aliases": [
+
+      ],
+      "capabilities": {
+        "forbid": [
+
+        ],
+        "pure_fn": false,
+        "realtime": false,
+        "realtime_nogc": false
+      },
+      "deprecation": null,
+      "description": "Длинное описание: возвращает целочисленный quotient. Для нулевого\n`b` функция возвращает ошибку через effect-row.",
+      "doc_attrs": [
+
+      ],
+      "doc_test_handlers": null,
+      "id": "nova_tests.doc.fixtures.sections.sample::divide",
+      "kind": "fn",
+      "module_path": "nova_tests.doc.fixtures.sections.sample",
+      "name": "divide",
+      "sections": {
+        "errors": "Возвращает `DivisionByZero`, если `b == 0`.",
+        "examples": "```nova\nassert(divide(10, 3) == 6)\n```",
+        "panics": "Никогда не паникует.",
+        "since": "0.1.0"
+      },
+      "source": {
+        "file_id": 0,
+        "line": 27,
+        "peer_file": null
+      },
+      "stability": {
+        "feature": null,
+        "note": null,
+        "since": "0.1.0",
+        "tier": "unstable"
+      },
+      "summary": "Делит `a` на `b`.",
+      "signature": {
+        "contracts": {
+          "decreases": [
+
+          ],
+          "ensures": [
+
+          ],
+          "ensures_fail": [
+
+          ],
+          "requires": [
+
+          ],
+          "verify_status": {
+            "counterexample": null,
+            "status": "not_attempted"
+          }
+        },
+        "effects": [
+
+        ],
+        "generics": [
+
+        ],
+        "params": [
+          {
+            "default": null,
+            "keyword_only": false,
+            "name": "a",
+            "structural_type": {
+              "kind": "named",
+              "name": "int"
+            },
+            "type": "int",
+            "variadic": false
+          },
+          {
+            "default": null,
+            "keyword_only": false,
+            "name": "b",
+            "structural_type": {
+              "kind": "named",
+              "name": "int"
+            },
+            "type": "int",
+            "variadic": false
+          }
+        ],
+        "raises": [
+
+        ],
+        "receiver": null,
+        "structural_type": {
+          "kind": "named",
+          "name": "int"
+        },
+        "return_type": "int"
+      }
+    }
+  ]
+}

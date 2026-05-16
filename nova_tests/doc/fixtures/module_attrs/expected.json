@@ -1,0 +1,210 @@
+{
+  "format_version": 1,
+  "nova_version": "0.1.0",
+  "doc_tests": [
+
+  ],
+  "links": [
+
+  ],
+  "modules": [
+    {
+      "deprecation": null,
+      "doc_attrs": [
+
+      ],
+      "kind": "file",
+      "name": "sample",
+      "path": "nova_tests.doc.fixtures.module_attrs.sample",
+      "peers": [
+
+      ],
+      "source": {
+        "file_id": 0,
+        "line": 1
+      },
+      "stability": {
+        "feature": null,
+        "note": null,
+        "since": "1.0.0",
+        "tier": "stable"
+      },
+      "summary": "Ф.22.1 — модуль с module-level doc-attrs.",
+      "description": "Проверяет: `#stable` / `#deprecated` на уровне модуля,\npropagation stability → items без явного override."
+    }
+  ],
+  "items": [
+    {
+      "aliases": [
+
+      ],
+      "capabilities": {
+        "forbid": [
+
+        ],
+        "pure_fn": false,
+        "realtime": false,
+        "realtime_nogc": false
+      },
+      "deprecation": null,
+      "description": null,
+      "doc_attrs": [
+
+      ],
+      "doc_test_handlers": null,
+      "id": "nova_tests.doc.fixtures.module_attrs.sample::bar",
+      "kind": "fn",
+      "module_path": "nova_tests.doc.fixtures.module_attrs.sample",
+      "name": "bar",
+      "sections": {
+
+      },
+      "source": {
+        "file_id": 0,
+        "line": 15,
+        "peer_file": null
+      },
+      "stability": {
+        "feature": null,
+        "note": "may change",
+        "since": null,
+        "tier": "experimental"
+      },
+      "summary": "Экспериментальная функция — overrides module-stable.",
+      "signature": {
+        "contracts": {
+          "decreases": [
+
+          ],
+          "ensures": [
+
+          ],
+          "ensures_fail": [
+
+          ],
+          "requires": [
+
+          ],
+          "verify_status": {
+            "counterexample": null,
+            "status": "not_attempted"
+          }
+        },
+        "effects": [
+
+        ],
+        "generics": [
+
+        ],
+        "params": [
+          {
+            "default": null,
+            "keyword_only": false,
+            "name": "x",
+            "structural_type": {
+              "kind": "named",
+              "name": "int"
+            },
+            "type": "int",
+            "variadic": false
+          }
+        ],
+        "raises": [
+
+        ],
+        "receiver": null,
+        "structural_type": {
+          "kind": "named",
+          "name": "int"
+        },
+        "return_type": "int"
+      }
+    },
+    {
+      "aliases": [
+
+      ],
+      "capabilities": {
+        "forbid": [
+
+        ],
+        "pure_fn": false,
+        "realtime": false,
+        "realtime_nogc": false
+      },
+      "deprecation": null,
+      "description": null,
+      "doc_attrs": [
+
+      ],
+      "doc_test_handlers": null,
+      "id": "nova_tests.doc.fixtures.module_attrs.sample::foo",
+      "kind": "fn",
+      "module_path": "nova_tests.doc.fixtures.module_attrs.sample",
+      "name": "foo",
+      "sections": {
+
+      },
+      "source": {
+        "file_id": 0,
+        "line": 11,
+        "peer_file": null
+      },
+      "stability": {
+        "feature": null,
+        "note": null,
+        "since": "1.0.0",
+        "tier": "stable"
+      },
+      "summary": "Функция без собственного stability — наследует module-stable.",
+      "signature": {
+        "contracts": {
+          "decreases": [
+
+          ],
+          "ensures": [
+
+          ],
+          "ensures_fail": [
+
+          ],
+          "requires": [
+
+          ],
+          "verify_status": {
+            "counterexample": null,
+            "status": "not_attempted"
+          }
+        },
+        "effects": [
+
+        ],
+        "generics": [
+
+        ],
+        "params": [
+          {
+            "default": null,
+            "keyword_only": false,
+            "name": "x",
+            "structural_type": {
+              "kind": "named",
+              "name": "int"
+            },
+            "type": "int",
+            "variadic": false
+          }
+        ],
+        "raises": [
+
+        ],
+        "receiver": null,
+        "structural_type": {
+          "kind": "named",
+          "name": "int"
+        },
+        "return_type": "int"
+      }
+    }
+  ]
+}

@@ -1,0 +1,753 @@
+//! Plan 45 Ф.4 — collector: AST → DocTree.
+//!
+//! MVP: один pass, без passes-pipeline (Plan 45 §3). Production-grade
+//! passes (`strip_private`, `propagate_stability`, `resolve_intra_doc_links`,
+//! `collect_doc_tests`, `lint_docs`) добавляются инкрементально как
+//! отдельные модули в `doc/passes/`.
+
+use crate::ast::{
+    ConstDecl, ContractKind, DocAttr, FnDecl, Item, Module, ModuleAttrKind, Purity,
+    RealtimeAttr, TypeDecl, TypeDeclKind,
+};
+use crate::doc::doctree::*;
+
+/// Plan 45 Ф.3 / D105: распарсенные doc-attrs → структурированные
+/// поля DocItem. Возвращается tuple для пер-call site применения.
+struct ExtractedDocAttrs {
+    deprecation: Option<Deprecation>,
+    stability: Option<Stability>,
+    aliases: Vec<String>,
+    hide_doc: bool,
+    summary_override: Option<String>,
+    doc_test_handlers: Option<String>,
+}
+
+fn extract_doc_attrs(attrs: &[DocAttr]) -> ExtractedDocAttrs {
+    let mut deprecation: Option<Deprecation> = None;
+    let mut aliases: Vec<String> = Vec::new();
+    let mut hide_doc = false;
+    let mut summary_override: Option<String> = None;
+    let mut doc_test_handlers: Option<String> = None;
+
+    // Pass 1: собрать explicit `#since(...)` (order-independent с tier'ом).
+    let mut explicit_since: Option<String> = None;
+    for a in attrs {
+        if let DocAttr::Since(v) = a {
+            explicit_since = Some(v.clone());
+        }
+    }
+
+    // Pass 2: tier + остальные атрибуты.
+    let mut tier: Option<StabilityTier> = None;
+    let mut tier_since: Option<String> = None;
+    let mut tier_feature: Option<String> = None;
+    let mut tier_note: Option<String> = None;
+    for a in attrs {
+        match a {
+            DocAttr::Deprecated { since, note, until } => {
+                deprecation = Some(Deprecation {
+                    note: note.clone().unwrap_or_default(),
+                    since: since.clone().or_else(|| explicit_since.clone()),
+                    until: until.clone(),
+                });
+            }
+            DocAttr::Since(_) => {}
+            DocAttr::Stable { since } => {
+                tier = Some(StabilityTier::Stable);
+                tier_since = since.clone().or_else(|| explicit_since.clone());
+            }
+            DocAttr::Unstable { feature } => {
+                tier = Some(StabilityTier::Unstable);
+                tier_since = explicit_since.clone();
+                tier_feature = feature.clone();
+            }
+            DocAttr::Experimental { note } => {
+                tier = Some(StabilityTier::Experimental);
+                tier_since = explicit_since.clone();
+                tier_note = note.clone();
+            }
+            DocAttr::HideDoc => hide_doc = true,
+            DocAttr::DocAlias(xs) => aliases.extend(xs.iter().cloned()),
+            DocAttr::DocInline | DocAttr::DocNoInline => {}
+            DocAttr::DocSummary(s) => summary_override = Some(s.clone()),
+            DocAttr::DocSection(_) => {}
+            DocAttr::DocTestHandlers(p) => doc_test_handlers = Some(p.clone()),
+        }
+    }
+    let stability = match tier {
+        Some(t) => Some(Stability {
+            tier: t,
+            since: tier_since,
+            feature: tier_feature,
+            note: tier_note,
+        }),
+        None => explicit_since.as_ref().map(|v| Stability {
+            tier: if is_post_1_0_version(v) {
+                StabilityTier::Stable
+            } else {
+                StabilityTier::Unstable
+            },
+            since: Some(v.clone()),
+            feature: None,
+            note: None,
+        }),
+    };
+    aliases.sort();
+    aliases.dedup();
+    ExtractedDocAttrs {
+        deprecation,
+        stability,
+        aliases,
+        hide_doc,
+        summary_override,
+        doc_test_handlers,
+    }
+}
+
+fn is_post_1_0_version(v: &str) -> bool {
+    let v = v.trim().trim_start_matches('v');
+    let major = v.split('.').next().unwrap_or("0");
+    matches!(major.parse::<u32>(), Ok(n) if n >= 1)
+}
+
+/// Plan 45 Ф.4 — построить `DocTree` из парсенного, type-checked `Module`.
+///
+/// Поведение MVP:
+/// - Один module → один `DocModule`.
+/// - Items: `Fn` / `Type` / `Const` собираются. `Effect` / `Protocol`
+///   через `TypeDeclKind::Effect` / `TypeDeclKind::Protocol`.
+/// - Visibility: `is_export = true` → `Export`, иначе `Private`.
+///   По дефолту filter — Export-only; flag `--include-private` (Plan 45
+///   Ф.12) переключает (на collector-уровне всё собирается; filter — в
+///   renderer'е).
+/// - Module summary: из `module.doc` (`//!` inner) + любых `#doc "..."`
+///   module-attr (D101).
+pub fn collect(module: &Module) -> DocTree {
+    let mut tree = DocTree::new();
+    tree.modules.push(collect_one(module));
+    tree
+}
+
+/// Plan 45 Ф.21.7: workspace mode — собрать многомодульный DocTree.
+/// Modules уже type-checked + effects-inferred caller'ом. Порядок modules
+/// в tree.modules — сортируется по `path` для детерминизма.
+pub fn collect_workspace(modules: &[Module]) -> DocTree {
+    let mut tree = DocTree::new();
+    for m in modules {
+        tree.modules.push(collect_one(m));
+    }
+    // Deterministic order: по path.
+    tree.modules.sort_by(|a, b| a.path.cmp(&b.path));
+
+    // Plan 45 Ф.24.3: implementors only when opt-in (structural matching has false-positives).
+    // Populate only when NOVA_DOC_EXPERIMENTAL_IMPLEMENTORS=1.
+    let experimental_implementors = std::env::var("NOVA_DOC_EXPERIMENTAL_IMPLEMENTORS")
+        .map(|v| v == "1")
+        .unwrap_or(false);
+
+    if experimental_implementors {
+        // Plan 45 Ф.24.2: use BTreeMap/BTreeSet for deterministic iteration order.
+        let mut proto_methods: Vec<(String, std::collections::BTreeSet<String>)> = Vec::new();
+        for m in &tree.modules {
+            for it in &m.items {
+                if let ItemKind::Protocol { methods, .. } = &it.kind {
+                    let names: std::collections::BTreeSet<String> =
+                        methods.iter().map(|m| m.name.clone()).collect();
+                    if !names.is_empty() {
+                        proto_methods.push((it.id.clone(), names));
+                    }
+                }
+            }
+        }
+        if !proto_methods.is_empty() {
+            let mut type_methods: std::collections::BTreeMap<String, std::collections::BTreeSet<String>> =
+                std::collections::BTreeMap::new();
+            for m in &tree.modules {
+                for it in &m.items {
+                    if let ItemKind::Fn(sig) = &it.kind {
+                        if let Some(recv) = &sig.receiver {
+                            let type_id = format!("{}::{}", m.path.join("."), recv.type_name);
+                            let method_name = it.id.rsplit('.').next().unwrap_or(&it.name).to_string();
+                            type_methods.entry(type_id).or_default().insert(method_name);
+                        }
+                    }
+                }
+            }
+            for m in &mut tree.modules {
+                for it in &mut m.items {
+                    if let ItemKind::Protocol { implementors, .. } = &mut it.kind {
+                        if let Some((_, required)) = proto_methods.iter().find(|(id, _)| id == &it.id) {
+                            let found: Vec<String> = type_methods
+                                .iter()
+                                .filter(|(_, meths)| required.iter().all(|r| meths.contains(r)))
+                                .map(|(type_id, _)| type_id.clone())
+                                .collect();
+                            // already sorted (BTreeMap iteration is ordered)
+                            *implementors = found;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    tree
+}
+
+/// Helper: один Module → DocModule.
+fn collect_one(module: &Module) -> DocModule {
+    let module_path = module.name.clone();
+    // Module-level documentation: концат `//!` (inner doc) + все
+    // `#doc "..."` module-attr строки.
+    let mut module_doc_parts: Vec<String> = Vec::new();
+    for attr in &module.attrs {
+        if let ModuleAttrKind::Doc(s) = &attr.kind {
+            module_doc_parts.push(s.clone());
+        }
+    }
+    if let Some(inner) = &module.doc {
+        module_doc_parts.push(inner.content.clone());
+    }
+    let module_doc_content = if module_doc_parts.is_empty() {
+        String::new()
+    } else {
+        module_doc_parts.join("\n\n")
+    };
+    let (module_summary, module_description) =
+        crate::doc::markdown::extract_summary(&module_doc_content);
+
+    // Plan 45 Ф.24.1: extract module-level #forbid effects to propagate into items.
+    let mut module_forbid: Vec<String> = Vec::new();
+    for attr in &module.attrs {
+        if let ModuleAttrKind::Forbid = &attr.kind {
+            for eff in &attr.effects {
+                if !module_forbid.contains(eff) {
+                    module_forbid.push(eff.clone());
+                }
+            }
+        }
+    }
+    module_forbid.sort();
+
+    let mut items: Vec<DocItem> = Vec::new();
+    for item in &module.items {
+        match item {
+            Item::Fn(f) => items.push(collect_fn(&module_path, f, &module_forbid)),
+            Item::Type(t) => items.push(collect_type(&module_path, t)),
+            Item::Const(c) => items.push(collect_const(&module_path, c)),
+            Item::Let(_) | Item::Test(_) | Item::Lemma(_) => {}
+        }
+    }
+    items.sort_by(|a, b| a.id.cmp(&b.id));
+
+    let module_name = module_path.last().cloned().unwrap_or_default();
+    let kind = if module.peer_files.len() > 1 {
+        ModuleKind::Folder
+    } else {
+        ModuleKind::File
+    };
+    let peers: Vec<String> = module
+        .peer_files
+        .iter()
+        .filter_map(|pf| pf.path.file_name().map(|s| s.to_string_lossy().into_owned()))
+        .collect();
+
+    // Plan 45 Ф.22.1 / D105: module-level doc-attrs.
+    let mod_attrs = extract_doc_attrs(&module.doc_attrs);
+
+    DocModule {
+        path: module_path,
+        name: module_name,
+        kind,
+        peers,
+        summary: module_summary,
+        description: module_description,
+        deprecation: mod_attrs.deprecation,
+        stability: mod_attrs.stability,
+        hide_doc: mod_attrs.hide_doc,
+        items,
+        source_span: module.span,
+    }
+}
+
+fn collect_fn(module_path: &[String], f: &FnDecl, module_forbid: &[String]) -> DocItem {
+    let module_str = module_path.join(".");
+    let id = match &f.receiver {
+        Some(r) => format!("{}::{}.{}", module_str, r.type_name, f.name),
+        None => format!("{}::{}", module_str, f.name),
+    };
+    let (summary_auto, description, sections) = crate::doc::doctree::split_doc(&f.doc);
+    let visibility = if f.is_export {
+        Visibility::Export
+    } else {
+        Visibility::Private
+    };
+    let signature = build_signature(f);
+    let attrs = extract_doc_attrs(&f.doc_attrs);
+    let summary = attrs.summary_override.clone().or(summary_auto);
+    let capabilities = Capabilities {
+        realtime: matches!(f.realtime_attr, RealtimeAttr::Realtime | RealtimeAttr::RealtimeNogc),
+        realtime_nogc: matches!(f.realtime_attr, RealtimeAttr::RealtimeNogc),
+        pure_fn: matches!(f.purity, Purity::Pure),
+        // Plan 45 Ф.24.1: propagate module-level #forbid into each item.
+        forbid: module_forbid.to_vec(),
+    };
+    DocItem {
+        id,
+        module_path: module_path.to_vec(),
+        name: f.name.clone(),
+        visibility,
+        summary,
+        description,
+        sections,
+        deprecation: attrs.deprecation,
+        stability: attrs.stability,
+        aliases: attrs.aliases,
+        hide_doc: attrs.hide_doc,
+        doc_test_handlers: attrs.doc_test_handlers,
+        capabilities,
+        kind: ItemKind::Fn(signature),
+        source_span: f.span,
+        peer_file: None,
+        linked_from: Vec::new(),
+    }
+}
+
+fn collect_type(module_path: &[String], t: &TypeDecl) -> DocItem {
+    let module_str = module_path.join(".");
+    let id = format!("{}::{}", module_str, t.name);
+    let (summary_auto, description, sections) = crate::doc::doctree::split_doc(&t.doc);
+    let visibility = if t.is_export {
+        Visibility::Export
+    } else {
+        Visibility::Private
+    };
+    let attrs = extract_doc_attrs(&t.doc_attrs);
+    let summary = attrs.summary_override.clone().or(summary_auto);
+    let kind = match &t.kind {
+        TypeDeclKind::Record(fields) => {
+            let record_fields = fields
+                .iter()
+                .map(|f| RecordField {
+                    name: f.name.clone(),
+                    ty: render_type(&f.ty),
+                    mutable: f.mutable,
+                })
+                .collect();
+            ItemKind::Type(TypeDefinition::Record(record_fields))
+        }
+        TypeDeclKind::Sum(variants) => {
+            let sum_variants = variants
+                .iter()
+                .map(|v| SumVariant {
+                    name: v.name.clone(),
+                    payload: match &v.kind {
+                        crate::ast::SumVariantKind::Unit => VariantPayload::Unit,
+                        crate::ast::SumVariantKind::Tuple(ts) => VariantPayload::Tuple(
+                            ts.iter().map(render_type).collect(),
+                        ),
+                        crate::ast::SumVariantKind::Record(fs) => {
+                            VariantPayload::Record(
+                                fs.iter()
+                                    .map(|f| RecordField {
+                                        name: f.name.clone(),
+                                        ty: render_type(&f.ty),
+                                        mutable: f.mutable,
+                                    })
+                                    .collect(),
+                            )
+                        }
+                    },
+                })
+                .collect();
+            ItemKind::Type(TypeDefinition::Sum(sum_variants))
+        }
+        TypeDeclKind::Alias(ty) => ItemKind::Type(TypeDefinition::Alias(render_type(ty))),
+        TypeDeclKind::Newtype(ty) => ItemKind::Type(TypeDefinition::Alias(render_type(ty))),
+        TypeDeclKind::Effect(methods) => {
+            // Plan 45 Ф.22.4 / D107: axioms на уровне ItemKind::Effect,
+            // не per-method (axiom ссылается на эффект целиком).
+            let axioms: Vec<EffectAxiomDoc> = t.axioms.iter().map(|ax| EffectAxiomDoc {
+                name: ax.name.clone(),
+                formula: render_expr(&ax.formula),
+            }).collect();
+            let sigs = methods
+                .iter()
+                .map(|m| EffectMethodSig {
+                    name: m.name.clone(),
+                    params: m
+                        .params
+                        .iter()
+                        .map(|p| Param {
+                            name: p.name.clone(),
+                            ty: render_type(&p.ty),
+                            default: p.default.as_ref().map(render_expr),
+                            variadic: p.is_variadic,
+                            keyword_only: p.default.is_some(),
+                        })
+                        .collect(),
+                    return_type: m
+                        .return_type
+                        .as_ref()
+                        .map(render_type)
+                        .unwrap_or_else(|| "()".to_string()),
+                })
+                .collect();
+            ItemKind::Effect { methods: sigs, axioms }
+        }
+        TypeDeclKind::Protocol(methods) => {
+            let sigs = methods
+                .iter()
+                .map(|m| ProtocolMethodSig {
+                    name: m.name.clone(),
+                    params: m
+                        .params
+                        .iter()
+                        .map(|p| Param {
+                            name: p.name.clone(),
+                            ty: render_type(&p.ty),
+                            default: p.default.as_ref().map(render_expr),
+                            variadic: p.is_variadic,
+                            keyword_only: p.default.is_some(),
+                        })
+                        .collect(),
+                    return_type: m
+                        .return_type
+                        .as_ref()
+                        .map(render_type)
+                        .unwrap_or_else(|| "()".to_string()),
+                })
+                .collect();
+            ItemKind::Protocol { methods: sigs, implementors: Vec::new() }
+        }
+        TypeDeclKind::Newtype(inner_ty) => {
+            ItemKind::Type(TypeDefinition::Newtype {
+                inner: render_type(inner_ty),
+            })
+        }
+    };
+    DocItem {
+        id,
+        module_path: module_path.to_vec(),
+        name: t.name.clone(),
+        visibility,
+        summary,
+        description,
+        sections,
+        deprecation: attrs.deprecation,
+        stability: attrs.stability,
+        aliases: attrs.aliases,
+        hide_doc: attrs.hide_doc,
+        doc_test_handlers: attrs.doc_test_handlers,
+        capabilities: Capabilities::default(),
+        kind,
+        source_span: t.span,
+        peer_file: None,
+        linked_from: Vec::new(),
+    }
+}
+
+fn collect_const(module_path: &[String], c: &ConstDecl) -> DocItem {
+    let module_str = module_path.join(".");
+    let id = format!("{}::{}", module_str, c.name);
+    let (summary_auto, description, sections) = crate::doc::doctree::split_doc(&c.doc);
+    let visibility = if c.is_export {
+        Visibility::Export
+    } else {
+        Visibility::Private
+    };
+    let attrs = extract_doc_attrs(&c.doc_attrs);
+    let summary = attrs.summary_override.clone().or(summary_auto);
+    let ty = c
+        .ty
+        .as_ref()
+        .map(render_type)
+        .unwrap_or_else(|| "_".to_string());
+    DocItem {
+        id,
+        module_path: module_path.to_vec(),
+        name: c.name.clone(),
+        visibility,
+        summary,
+        description,
+        sections,
+        deprecation: attrs.deprecation,
+        stability: attrs.stability,
+        aliases: attrs.aliases,
+        hide_doc: attrs.hide_doc,
+        doc_test_handlers: attrs.doc_test_handlers,
+        capabilities: Capabilities::default(),
+        kind: ItemKind::Const {
+            ty,
+            value: render_expr(&c.value),
+        },
+        source_span: c.span,
+        peer_file: None,
+        linked_from: Vec::new(),
+    }
+}
+
+fn build_signature(f: &FnDecl) -> Signature {
+    let receiver = f.receiver.as_ref().map(|r| Receiver {
+        type_name: r.type_name.clone(),
+        kind: match r.kind {
+            crate::ast::ReceiverKind::Instance => ReceiverKind::Instance,
+            crate::ast::ReceiverKind::Static => ReceiverKind::Static,
+        },
+        mutable: r.mutable,
+    });
+    let generics = f
+        .generics
+        .iter()
+        .map(|g| GenericParam {
+            name: g.name.clone(),
+            bound: g.bound.as_ref().map(render_type),
+            default: g.default.as_ref().map(render_type),
+        })
+        .collect();
+    let params = f
+        .params
+        .iter()
+        .map(|p| Param {
+            name: p.name.clone(),
+            ty: render_type(&p.ty),
+            default: p.default.as_ref().map(render_expr),
+            variadic: p.is_variadic,
+            keyword_only: p.default.is_some(),
+        })
+        .collect();
+    let return_type = f
+        .return_type
+        .as_ref()
+        .map(render_type)
+        .unwrap_or_else(|| "()".to_string());
+    // Effect-row: structured entries для Ф.23.8/23.9.
+    let mut effects: Vec<EffectEntry> = f.effects.iter().map(|eff| {
+        // Plan 45 Ф.23.9: row-variables — single uppercase letter без generics.
+        let is_row_var = if let crate::ast::TypeRef::Named { path, generics, .. } = eff {
+            path.len() == 1 && generics.is_empty()
+                && path[0].len() == 1
+                && path[0].chars().next().map_or(false, |c| c.is_uppercase())
+        } else {
+            false
+        };
+        let name = if is_row_var {
+            if let crate::ast::TypeRef::Named { path, .. } = eff {
+                format!("({})", path[0])
+            } else {
+                render_effect(eff)
+            }
+        } else {
+            render_effect(eff)
+        };
+        EffectEntry {
+            name,
+            target_id: None,
+            summary: None,
+            is_row_var,
+        }
+    }).collect();
+    effects.sort_by(|a, b| a.name.cmp(&b.name));
+    effects.dedup_by(|a, b| a.name == b.name);
+    // Raises: вытащить из `Fail[X]` в effect-row.
+    let mut raises: Vec<String> = Vec::new();
+    for eff in &f.effects {
+        if let Some(inner) = extract_fail_inner(eff) {
+            raises.push(inner);
+        }
+    }
+    raises.sort();
+    raises.dedup();
+    // Plan 45 Ф.23.1 / D24/D106: contracts из AST.
+    let mut contracts: Vec<ContractDoc> = Vec::new();
+    for c in &f.contracts {
+        let kind = match c.kind {
+            ContractKind::Requires => "requires",
+            ContractKind::Ensures => "ensures",
+            ContractKind::EnsuresFail => "ensures_fail",
+        };
+        contracts.push(ContractDoc {
+            kind: kind.to_string(),
+            expr: render_expr(&c.expr),
+        });
+    }
+    if let Some(dec) = &f.decreases {
+        contracts.push(ContractDoc {
+            kind: "decreases".to_string(),
+            expr: render_expr(dec),
+        });
+    }
+    Signature {
+        receiver,
+        generics,
+        params,
+        return_type,
+        effects,
+        raises,
+        contracts,
+        verify_status: VerifyStatus::NotAttempted,
+    }
+}
+
+/// Минимальный pretty-print TypeRef в Nova source. **MVP-простой** —
+/// для популярных форм; сложные случаи могут округляться (best-effort
+/// строковое представление).
+/// Plan 45 Ф.24.6: public re-export of render_type for use in render_json.
+pub fn render_type_for_doc(ty: &crate::ast::TypeRef) -> String {
+    render_type(ty)
+}
+
+fn render_type(ty: &crate::ast::TypeRef) -> String {
+    use crate::ast::TypeRef;
+    match ty {
+        TypeRef::Named { path, generics, .. } => {
+            let base = path.join(".");
+            if generics.is_empty() {
+                base
+            } else {
+                let g = generics
+                    .iter()
+                    .map(render_type)
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!("{}[{}]", base, g)
+            }
+        }
+        TypeRef::Array(inner, _) => format!("[]{}", render_type(inner)),
+        TypeRef::FixedArray(len, elem, _) => format!("[{}]{}", len, render_type(elem)),
+        TypeRef::Tuple(elems, _) => {
+            let inner = elems
+                .iter()
+                .map(render_type)
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("({})", inner)
+        }
+        TypeRef::Func {
+            params,
+            effects,
+            return_type,
+            ..
+        } => {
+            let p = params
+                .iter()
+                .map(render_type)
+                .collect::<Vec<_>>()
+                .join(", ");
+            let eff = if effects.is_empty() {
+                String::new()
+            } else {
+                let es = effects.iter().map(render_type).collect::<Vec<_>>().join(" ");
+                format!(" {}", es)
+            };
+            let r = return_type
+                .as_ref()
+                .map(|t| render_type(t))
+                .unwrap_or_else(|| "()".to_string());
+            format!("fn({}){} -> {}", p, eff, r)
+        }
+        TypeRef::Unit(_) => "()".to_string(),
+    }
+}
+
+/// Effect — это `TypeRef` (обычно `Named`). Render через `render_type`.
+fn render_effect(eff: &crate::ast::TypeRef) -> String {
+    render_type(eff)
+}
+
+/// Извлечь имя `X` из effect-row элемента `Fail[X]` (для `raises`-списка).
+/// Возвращает `None`, если элемент не `Fail[...]`.
+fn extract_fail_inner(eff: &crate::ast::TypeRef) -> Option<String> {
+    use crate::ast::TypeRef;
+    if let TypeRef::Named { path, generics, .. } = eff {
+        if path.len() == 1 && path[0] == "Fail" && !generics.is_empty() {
+            return Some(render_type(&generics[0]));
+        }
+    }
+    None
+}
+
+/// Минимальный pretty-print выражения в Nova source. **MVP**: для
+/// литералов и Ident — точный; для остального — placeholder.
+/// Полный pretty-printer — Plan 45.A или separate util.
+fn render_expr(e: &crate::ast::Expr) -> String {
+    use crate::ast::{ArrayElem, BinOp, CallArg, ExprKind, UnOp};
+    match &e.kind {
+        ExprKind::IntLit(n) => n.to_string(),
+        ExprKind::FloatLit(f) => f.to_string(),
+        ExprKind::BoolLit(b) => b.to_string(),
+        ExprKind::StrLit(s) => format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\"")),
+        ExprKind::CharLit(c) => format!("'{}'", char::from_u32(*c).unwrap_or('?')),
+        ExprKind::UnitLit => "()".to_string(),
+        ExprKind::Ident(name) => name.clone(),
+        ExprKind::Path(parts) => parts.join("."),
+        ExprKind::ArrayLit(elems) => {
+            let parts: Vec<String> = elems
+                .iter()
+                .map(|el| match el {
+                    ArrayElem::Item(x) => render_expr(x),
+                    ArrayElem::Spread(x) => format!("...{}", render_expr(x)),
+                })
+                .collect();
+            format!("[{}]", parts.join(", "))
+        }
+        ExprKind::TupleLit(xs) => {
+            let parts: Vec<String> = xs.iter().map(render_expr).collect();
+            format!("({})", parts.join(", "))
+        }
+        ExprKind::RecordLit { type_name, fields } => {
+            let head = type_name
+                .as_ref()
+                .map(|p| format!("{} ", p.join(".")))
+                .unwrap_or_default();
+            let parts: Vec<String> = fields
+                .iter()
+                .map(|f| {
+                    if f.is_spread {
+                        format!("...{}", f.value.as_ref().map(render_expr).unwrap_or_default())
+                    } else {
+                        match &f.value {
+                            Some(v) => format!("{}: {}", f.name, render_expr(v)),
+                            None => f.name.clone(),
+                        }
+                    }
+                })
+                .collect();
+            format!("{}{{ {} }}", head, parts.join(", "))
+        }
+        ExprKind::Member { obj, name } => format!("{}.{}", render_expr(obj), name),
+        ExprKind::Unary { op, operand } => {
+            let sym = match op {
+                UnOp::Neg => "-",
+                UnOp::Not => "!",
+            };
+            format!("{}{}", sym, render_expr(operand))
+        }
+        ExprKind::Binary { op, left, right } => {
+            let sym = match op {
+                BinOp::Add => "+", BinOp::Sub => "-", BinOp::Mul => "*",
+                BinOp::Div => "/", BinOp::Mod => "%",
+                BinOp::Eq => "==", BinOp::Neq => "!=",
+                BinOp::Lt => "<", BinOp::Le => "<=",
+                BinOp::Gt => ">", BinOp::Ge => ">=",
+                BinOp::And => "&&", BinOp::Or => "||",
+                BinOp::Implies => "==>", BinOp::Iff => "<==>",
+                BinOp::BitAnd => "&", BinOp::BitOr => "|", BinOp::BitXor => "^",
+                BinOp::Shl => "<<", BinOp::Shr => ">>",
+            };
+            format!("{} {} {}", render_expr(left), sym, render_expr(right))
+        }
+        ExprKind::Call { func, args, .. } => {
+            let parts: Vec<String> = args
+                .iter()
+                .map(|a| match a {
+                    CallArg::Item(x) => render_expr(x),
+                    CallArg::Spread(x) => format!("...{}", render_expr(x)),
+                    CallArg::Named { name, value } => format!("{}: {}", name, render_expr(value)),
+                })
+                .collect();
+            format!("{}({})", render_expr(func), parts.join(", "))
+        }
+        _ => "...".to_string(),
+    }
+}

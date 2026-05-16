@@ -1,0 +1,471 @@
+{
+  "format_version": 1,
+  "nova_version": "0.1.0",
+  "doc_tests": [
+
+  ],
+  "links": [
+
+  ],
+  "modules": [
+    {
+      "deprecation": null,
+      "doc_attrs": [
+
+      ],
+      "kind": "file",
+      "name": "sample",
+      "path": "nova_tests.doc.fixtures.real_attrs.sample",
+      "peers": [
+
+      ],
+      "source": {
+        "file_id": 0,
+        "line": 1
+      },
+      "stability": null,
+      "summary": "Plan 45 Ф.21.3 / D105 — real doc-attrs через parser.",
+      "description": "Демонстрирует все 8 атрибутов D105:\n- `#deprecated(since=..., note=..., until=?)`\n- `#since(\"X\")` или `#since(version=\"X\")`\n- `#stable[(since=...)]`\n- `#unstable(feature=...)`\n- `#experimental(note=...)`\n- `#hide_doc`\n- `#doc_alias(\"a\", \"b\", ...)`\n- `#doc(inline)` / `#doc(no_inline)` / `#doc(summary=...)` /\n  `#doc(section=...)` / `#doc(test_handlers=...)`"
+    }
+  ],
+  "items": [
+    {
+      "aliases": [
+        "plus",
+        "sum"
+      ],
+      "capabilities": {
+        "forbid": [
+
+        ],
+        "pure_fn": false,
+        "realtime": false,
+        "realtime_nogc": false
+      },
+      "deprecation": null,
+      "description": null,
+      "doc_attrs": [
+
+      ],
+      "doc_test_handlers": null,
+      "id": "nova_tests.doc.fixtures.real_attrs.sample::add",
+      "kind": "fn",
+      "module_path": "nova_tests.doc.fixtures.real_attrs.sample",
+      "name": "add",
+      "sections": {
+
+      },
+      "source": {
+        "file_id": 0,
+        "line": 23,
+        "peer_file": null
+      },
+      "stability": {
+        "feature": null,
+        "note": null,
+        "since": "1.0.0",
+        "tier": "stable"
+      },
+      "summary": "Стабильное API.",
+      "signature": {
+        "contracts": {
+          "decreases": [
+
+          ],
+          "ensures": [
+
+          ],
+          "ensures_fail": [
+
+          ],
+          "requires": [
+
+          ],
+          "verify_status": {
+            "counterexample": null,
+            "status": "not_attempted"
+          }
+        },
+        "effects": [
+
+        ],
+        "generics": [
+
+        ],
+        "params": [
+          {
+            "default": null,
+            "keyword_only": false,
+            "name": "a",
+            "structural_type": {
+              "kind": "named",
+              "name": "int"
+            },
+            "type": "int",
+            "variadic": false
+          },
+          {
+            "default": null,
+            "keyword_only": false,
+            "name": "b",
+            "structural_type": {
+              "kind": "named",
+              "name": "int"
+            },
+            "type": "int",
+            "variadic": false
+          }
+        ],
+        "raises": [
+
+        ],
+        "receiver": null,
+        "structural_type": {
+          "kind": "named",
+          "name": "int"
+        },
+        "return_type": "int"
+      }
+    },
+    {
+      "aliases": [
+
+      ],
+      "capabilities": {
+        "forbid": [
+
+        ],
+        "pure_fn": false,
+        "realtime": false,
+        "realtime_nogc": false
+      },
+      "deprecation": null,
+      "description": null,
+      "doc_attrs": [
+
+      ],
+      "doc_test_handlers": null,
+      "id": "nova_tests.doc.fixtures.real_attrs.sample::maybe_add",
+      "kind": "fn",
+      "module_path": "nova_tests.doc.fixtures.real_attrs.sample",
+      "name": "maybe_add",
+      "sections": {
+
+      },
+      "source": {
+        "file_id": 0,
+        "line": 28,
+        "peer_file": null
+      },
+      "stability": {
+        "feature": null,
+        "note": "may change in 0.5",
+        "since": "0.3.0",
+        "tier": "experimental"
+      },
+      "summary": "Экспериментальная.",
+      "signature": {
+        "contracts": {
+          "decreases": [
+
+          ],
+          "ensures": [
+
+          ],
+          "ensures_fail": [
+
+          ],
+          "requires": [
+
+          ],
+          "verify_status": {
+            "counterexample": null,
+            "status": "not_attempted"
+          }
+        },
+        "effects": [
+
+        ],
+        "generics": [
+
+        ],
+        "params": [
+          {
+            "default": null,
+            "keyword_only": false,
+            "name": "a",
+            "structural_type": {
+              "kind": "named",
+              "name": "int"
+            },
+            "type": "int",
+            "variadic": false
+          },
+          {
+            "default": null,
+            "keyword_only": false,
+            "name": "b",
+            "structural_type": {
+              "kind": "named",
+              "name": "int"
+            },
+            "type": "int",
+            "variadic": false
+          }
+        ],
+        "raises": [
+
+        ],
+        "receiver": null,
+        "structural_type": {
+          "kind": "named",
+          "name": "int"
+        },
+        "return_type": "int"
+      }
+    },
+    {
+      "aliases": [
+
+      ],
+      "capabilities": {
+        "forbid": [
+
+        ],
+        "pure_fn": false,
+        "realtime": false,
+        "realtime_nogc": false
+      },
+      "deprecation": null,
+      "description": null,
+      "doc_attrs": [
+
+      ],
+      "doc_test_handlers": null,
+      "id": "nova_tests.doc.fixtures.real_attrs.sample::override_demo",
+      "kind": "fn",
+      "module_path": "nova_tests.doc.fixtures.real_attrs.sample",
+      "name": "override_demo",
+      "sections": {
+
+      },
+      "source": {
+        "file_id": 0,
+        "line": 36,
+        "peer_file": null
+      },
+      "stability": null,
+      "summary": "Computed override summary",
+      "signature": {
+        "contracts": {
+          "decreases": [
+
+          ],
+          "ensures": [
+
+          ],
+          "ensures_fail": [
+
+          ],
+          "requires": [
+
+          ],
+          "verify_status": {
+            "counterexample": null,
+            "status": "not_attempted"
+          }
+        },
+        "effects": [
+
+        ],
+        "generics": [
+
+        ],
+        "params": [
+
+        ],
+        "raises": [
+
+        ],
+        "receiver": null,
+        "structural_type": {
+          "kind": "named",
+          "name": "int"
+        },
+        "return_type": "int"
+      }
+    },
+    {
+      "aliases": [
+
+      ],
+      "capabilities": {
+        "forbid": [
+
+        ],
+        "pure_fn": false,
+        "realtime": false,
+        "realtime_nogc": false
+      },
+      "deprecation": {
+        "note": "use [add] instead",
+        "since": "0.4.0",
+        "until": null
+      },
+      "description": null,
+      "doc_attrs": [
+
+      ],
+      "doc_test_handlers": null,
+      "id": "nova_tests.doc.fixtures.real_attrs.sample::plus",
+      "kind": "fn",
+      "module_path": "nova_tests.doc.fixtures.real_attrs.sample",
+      "name": "plus",
+      "sections": {
+
+      },
+      "source": {
+        "file_id": 0,
+        "line": 18,
+        "peer_file": null
+      },
+      "stability": null,
+      "summary": "Старая функция сложения.",
+      "signature": {
+        "contracts": {
+          "decreases": [
+
+          ],
+          "ensures": [
+
+          ],
+          "ensures_fail": [
+
+          ],
+          "requires": [
+
+          ],
+          "verify_status": {
+            "counterexample": null,
+            "status": "not_attempted"
+          }
+        },
+        "effects": [
+
+        ],
+        "generics": [
+
+        ],
+        "params": [
+          {
+            "default": null,
+            "keyword_only": false,
+            "name": "a",
+            "structural_type": {
+              "kind": "named",
+              "name": "int"
+            },
+            "type": "int",
+            "variadic": false
+          },
+          {
+            "default": null,
+            "keyword_only": false,
+            "name": "b",
+            "structural_type": {
+              "kind": "named",
+              "name": "int"
+            },
+            "type": "int",
+            "variadic": false
+          }
+        ],
+        "raises": [
+
+        ],
+        "receiver": null,
+        "structural_type": {
+          "kind": "named",
+          "name": "int"
+        },
+        "return_type": "int"
+      }
+    },
+    {
+      "aliases": [
+
+      ],
+      "capabilities": {
+        "forbid": [
+
+        ],
+        "pure_fn": false,
+        "realtime": false,
+        "realtime_nogc": false
+      },
+      "deprecation": null,
+      "description": null,
+      "doc_attrs": [
+
+      ],
+      "doc_test_handlers": null,
+      "id": "nova_tests.doc.fixtures.real_attrs.sample::select_channel",
+      "kind": "fn",
+      "module_path": "nova_tests.doc.fixtures.real_attrs.sample",
+      "name": "select_channel",
+      "sections": {
+
+      },
+      "source": {
+        "file_id": 0,
+        "line": 40,
+        "peer_file": null
+      },
+      "stability": {
+        "feature": "channel_select",
+        "note": null,
+        "since": null,
+        "tier": "unstable"
+      },
+      "summary": "Unstable feature-gated API.",
+      "signature": {
+        "contracts": {
+          "decreases": [
+
+          ],
+          "ensures": [
+
+          ],
+          "ensures_fail": [
+
+          ],
+          "requires": [
+
+          ],
+          "verify_status": {
+            "counterexample": null,
+            "status": "not_attempted"
+          }
+        },
+        "effects": [
+
+        ],
+        "generics": [
+
+        ],
+        "params": [
+
+        ],
+        "raises": [
+
+        ],
+        "receiver": null,
+        "structural_type": {
+          "kind": "named",
+          "name": "int"
+        },
+        "return_type": "int"
+      }
+    }
+  ]
+}

@@ -54,6 +54,9 @@ export fn str @plus(other str) -> str => @concat(other)
 // Равенство по контенту (memcmp). O(min). Также вызывается оператором ==.
 export external fn str @eq(other str) -> bool
 
+// FNV-1a хеш по байтам строки. Используется в std.collections.HashMap.
+export external fn str @hash() -> u64
+
 // Lexicographic less-than (byte-wise). Также вызывается оператором `<`.
 export external fn str @lt(other str) -> bool
 

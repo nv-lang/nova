@@ -1,0 +1,58 @@
+// Plan 33.3 Ф.14: Dafny-parity test 2 — Sorting invariants.
+// Арифметические инварианты, аналог Dafny quicksort/mergesort lemmas.
+
+module contracts.f14_sorting_invariants
+
+// Если a <= b и b <= c, то a <= c (transitivity — lemma в Dafny).
+#verify
+fn transitivity(a int, b int, c int) -> bool
+    requires a <= b && b <= c
+    ensures result == true
+{
+    a <= c
+}
+
+// min корректен.
+#verify
+fn min_correct(a int, b int) -> int
+    ensures result <= a && result <= b
+    ensures result == a || result == b
+{
+    if a <= b { a } else { b }
+}
+
+// max корректен.
+#verify
+fn max_correct(a int, b int) -> int
+    ensures result >= a && result >= b
+    ensures result == a || result == b
+{
+    if a >= b { a } else { b }
+}
+
+// Partition invariant: pivot >= lo, pivot <= hi (valid split).
+#verify
+fn partition_bounds(lo int, hi int, pivot int) -> bool
+    requires lo <= pivot && pivot <= hi
+    ensures result == true
+{
+    lo <= pivot && pivot <= hi
+}
+
+// Swap не меняет сумму.
+#verify
+fn swap_sum(a int, b int) -> int
+    ensures result == a + b
+{
+    b + a
+}
+
+test "f14 sorting invariants" {
+    assert(transitivity(1, 3, 5) == true)
+    assert(min_correct(3, 7) == 3)
+    assert(min_correct(7, 3) == 3)
+    assert(max_correct(3, 7) == 7)
+    assert(max_correct(7, 3) == 7)
+    assert(partition_bounds(0, 10, 5) == true)
+    assert(swap_sum(3, 7) == 10)
+}

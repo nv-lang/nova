@@ -1,0 +1,29 @@
+//! Plan 45 Ф.3: fixture для stability / deprecation / since.
+
+module nova_tests.doc.fixtures.stability.sample
+
+/// Сложить два числа.
+///
+/// # Deprecated
+///
+/// Use `add` instead.
+///
+/// # Since
+///
+/// 0.1.0
+export fn plus(a int, b int) -> int => a + b
+
+/// Стабильное API.
+///
+/// # Since
+///
+/// 1.0.0
+export fn add(a int, b int) -> int => a + b
+
+/// Экспериментальная функция.
+///
+/// #[experimental]
+/// #[since("0.3.0")]
+///
+/// Описание (не attr).
+export fn maybe_add(a int, b int) -> int => a + b

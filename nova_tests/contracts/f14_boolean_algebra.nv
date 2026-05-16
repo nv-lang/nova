@@ -1,0 +1,88 @@
+// Plan 33.3 Ф.14: Dafny-parity test 9 — Boolean algebra lemmas.
+// Законы де Моргана, идемпотентность, дистрибутивность.
+
+module contracts.f14_boolean_algebra
+
+// De Morgan: !(a && b) == !a || !b.
+#verify
+fn demorgan_and(a bool, b bool) -> bool
+    ensures result == true
+{
+    !(a && b) == (!a || !b)
+}
+
+// De Morgan: !(a || b) == !a && !b.
+#verify
+fn demorgan_or(a bool, b bool) -> bool
+    ensures result == true
+{
+    !(a || b) == (!a && !b)
+}
+
+// Идемпотентность AND.
+#verify
+fn idem_and(a bool) -> bool
+    ensures result == true
+{
+    (a && a) == a
+}
+
+// Идемпотентность OR.
+#verify
+fn idem_or(a bool) -> bool
+    ensures result == true
+{
+    (a || a) == a
+}
+
+// Коммутативность AND.
+#verify
+fn comm_and(a bool, b bool) -> bool
+    ensures result == true
+{
+    (a && b) == (b && a)
+}
+
+// Коммутативность OR.
+#verify
+fn comm_or(a bool, b bool) -> bool
+    ensures result == true
+{
+    (a || b) == (b || a)
+}
+
+// Двойное отрицание.
+#verify
+fn double_neg(a bool) -> bool
+    ensures result == true
+{
+    !!a == a
+}
+
+// Excluded middle.
+#verify
+fn excluded_middle(a bool) -> bool
+    ensures result == true
+{
+    a || !a
+}
+
+// Contradiction.
+#verify
+fn contradiction(a bool) -> bool
+    ensures result == false
+{
+    a && !a
+}
+
+test "f14 boolean algebra" {
+    assert(demorgan_and(true, false) == true)
+    assert(demorgan_or(true, false) == true)
+    assert(idem_and(true) == true)
+    assert(idem_or(false) == true)
+    assert(comm_and(true, false) == true)
+    assert(comm_or(true, false) == true)
+    assert(double_neg(true) == true)
+    assert(excluded_middle(true) == true)
+    assert(contradiction(true) == false)
+}

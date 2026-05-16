@@ -1,0 +1,12 @@
+// EXPECT_COMPILE_ERROR undefined identifier
+//
+// Plan 45 Ф.23.1: contracts syntax — ensures с missing `result` keyword.
+// В Nova `ensures` работает через `result` binding. Вызов несуществующей
+// функции в теле — type error.
+
+module doc.f23_contracts_negative
+
+fn bad_body(x int) -> int
+    requires x > 0
+    ensures result > 0
+    => undefined_function_xyz(x)

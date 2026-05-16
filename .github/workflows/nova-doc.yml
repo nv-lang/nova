@@ -1,0 +1,90 @@
+name: nova-doc
+
+# Plan 45 Ф.17 — CI integration для `nova doc`.
+#
+# Запускает на каждом PR:
+#   1. `nova doc <file> --check` — broken intra-doc-links и
+#      missing summaries (exit 1 на любое issue).
+#   2. `nova doc <file> --test` — doc-tests из ```nova fenced blocks.
+#
+# Reproducible: `SOURCE_DATE_EPOCH` фиксирует `generated_at`.
+
+on:
+  pull_request:
+    paths:
+      - "**/*.nv"
+      - "compiler-codegen/src/doc/**"
+      - "nova-cli/src/main.rs"
+      - ".github/workflows/nova-doc.yml"
+  push:
+    branches: [main]
+
+env:
+  SOURCE_DATE_EPOCH: 1700000000
+
+jobs:
+  doc-check:
+    name: doc --check (broken links, missing summaries)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build nova-cli (release)
+        run: cargo build --release --manifest-path nova-cli/Cargo.toml
+      - name: Run nova doc --check (clean fixtures only)
+        run: |
+          set -e
+          # Только clean fixtures (без intentional broken links).
+          for f in \
+            nova_tests/doc/fixtures/basic/sample.nv \
+            nova_tests/doc/fixtures/sections/sample.nv \
+            nova_tests/doc/fixtures/kinds/sample.nv \
+            nova_tests/doc/fixtures/stability/sample.nv \
+          ; do
+            echo "::group::check $f"
+            ./nova-cli/target/release/nova doc "$f" --check
+            echo "::endgroup::"
+          done
+
+      - name: Verify --check detects broken links
+        run: |
+          set +e
+          ./nova-cli/target/release/nova doc nova_tests/doc/fixtures/links/sample.nv --check
+          exitcode=$?
+          if [ $exitcode -eq 0 ]; then
+            echo "::error::expected --check to fail on links fixture (unknown_link)"
+            exit 1
+          fi
+          echo "ok: --check correctly exited with $exitcode"
+
+  doc-tests:
+    name: doc --test (run extracted doc-tests)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build nova-cli (release)
+        run: cargo build --release --manifest-path nova-cli/Cargo.toml
+      - name: Run nova doc --test on fixtures
+        shell: bash
+        run: |
+          set -e
+          shopt -s globstar
+          # `**` без globstar матчит только один уровень — Ф.21.6 fix.
+          for f in nova_tests/doc/fixtures/**/sample.nv; do
+            echo "::group::test $f"
+            ./nova-cli/target/release/nova doc "$f" --test
+            echo "::endgroup::"
+          done
+
+  doc-tests-unit:
+    name: doc-module unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: "Run cargo test doc::"
+        run: "cargo test --release --manifest-path compiler-codegen/Cargo.toml --lib doc::"
+      - name: "Run cargo test --test doc_golden"
+        run: "cargo test --release --manifest-path compiler-codegen/Cargo.toml --test doc_golden"
+      - name: "Run cargo test --test doc_schema_shape (Ф.21.5)"
+        run: "cargo test --release --manifest-path compiler-codegen/Cargo.toml --test doc_schema_shape"
+      - name: "Run cargo test --test doc_perf (Ф.21.9)"
+        run: "cargo test --release --manifest-path compiler-codegen/Cargo.toml --test doc_perf"

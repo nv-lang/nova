@@ -16,6 +16,10 @@ pub struct Module {
     /// Plan 42 Sub-plan 42.A: module-level attributes (`#forbid X, Y`).
     /// `#requires` отвергнут — нарушает AI-first explicit principle.
     pub attrs: Vec<ModuleAttr>,
+    /// Plan 45 Ф.22.1 / D105: module-level doc-attrs
+    /// (`#stable`/`#unstable`/`#experimental`/`#deprecated`/`#hide_doc`/etc.).
+    /// Семантически: tier propagates на items module'а без явного override.
+    pub doc_attrs: Vec<DocAttr>,
     pub span: Span,
     /// Plan 42 Sub-plan 42.4 (шаг 1, 2026-05-14): per-peer attribution.
     ///
@@ -34,6 +38,11 @@ pub struct Module {
     /// Имя `peer_files` (а не `files`) — чтобы не конфликтовать со
     /// смежным `diag::SourceFile` и явно отражать терминологию Plan 42 spec.
     pub peer_files: Vec<PeerFile>,
+    /// Plan 45 / D104: inner doc-comment модуля (`//!`), если присутствует.
+    /// Допустим только в начале файла (после `module X` и `import`-ов,
+    /// до первого item'а). Объединяется с `#doc "..."` module-attr
+    /// (D101) на этапе collector'а (Plan 45 Ф.4).
+    pub doc: Option<DocBlock>,
 }
 
 /// Plan 42 Sub-plan 42.4 (шаг 1, 2026-05-14): per-peer source attribution.
@@ -76,6 +85,22 @@ pub struct PeerFile {
     pub is_entry_module: bool,
 }
 
+/// Plan 45 / D104: блок doc-comment'ов, привязанный к item'у или
+/// модулю. Это последовательность одного или нескольких подряд
+/// идущих `///` (outer) либо `//!` (inner) комментариев, склеенных
+/// лексером (см. `lexer::TokenKind::DocComment`).
+///
+/// `kind` — указывает, outer это (привязан к следующей декларации) или
+/// inner (привязан к окружающему модулю). `content` — сырой текст,
+/// markdown НЕ парсится на уровне AST; парсинг markdown +
+/// section-extraction — отдельный pass (`doc::passes::derive_sections`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct DocBlock {
+    pub kind: crate::lexer::DocCommentKind,
+    pub content: String,
+    pub span: Span,
+}
+
 /// Plan 42 Sub-plan 42.A: module-level attribute.
 #[derive(Debug, Clone)]
 pub struct ModuleAttr {
@@ -101,6 +126,9 @@ pub enum ModuleAttrKind {
     /// module purpose прямо в peer-файле без CLI invoke.
     /// Consumer: Plan 45 (nova doc).
     Doc(String),
+    /// Plan 33.3 Ф.13: `#must_verify_module` — все функции модуля
+    /// автоматически получают MustVerify. Любой unproven контракт → compile error.
+    MustVerifyModule,
 }
 
 /// Plan 42.12 Ф.2 + Plan 42.14 Ф.1: cfg predicate.
@@ -175,9 +203,51 @@ pub struct LemmaDecl {
     pub span: Span,
 }
 
+/// Plan 45 Ф.3 / D105: doc-атрибуты (`#deprecated(...)`, `#since(...)`,
+/// `#stable`, `#unstable(feature=...)`, `#experimental(note=...)`,
+/// `#hide_doc`, `#doc_alias("a","b")`, `#doc(summary=...)`,
+/// `#doc(inline)` / `#doc(no_inline)`, `#doc(section="Name")`).
+#[derive(Debug, Clone)]
+pub enum DocAttr {
+    /// `#deprecated(since = "X", note = "...", until = "Y"?)`.
+    Deprecated {
+        since: Option<String>,
+        note: Option<String>,
+        until: Option<String>,
+    },
+    /// `#since("X.Y")` или `#since(version = "X.Y")`.
+    Since(String),
+    /// `#stable` или `#stable(since = "X.Y")`.
+    Stable { since: Option<String> },
+    /// `#unstable(feature = "name")`.
+    Unstable { feature: Option<String> },
+    /// `#experimental(note = "...")`.
+    Experimental { note: Option<String> },
+    /// `#hide_doc` — exported, но скрыт из nova doc output.
+    HideDoc,
+    /// `#doc_alias("name", "name", ...)` — alternative names для search.
+    DocAlias(Vec<String>),
+    /// `#doc(inline)` — re-export рендерится inline (default same-package).
+    DocInline,
+    /// `#doc(no_inline)` — re-export рендерится только ссылкой.
+    DocNoInline,
+    /// `#doc(summary = "...")` — override первого-предложения summary.
+    DocSummary(String),
+    /// `#doc(section = "Name")` — custom section grouping.
+    DocSection(String),
+    /// `#doc(test_handlers = "path.to.handlers")`.
+    DocTestHandlers(String),
+}
+
 /// Функция: и свободная, и метод (через `receiver`).
 #[derive(Debug, Clone)]
 pub struct FnDecl {
+    /// Plan 45 / D104: doc-comment, прикреплённый парсером (один или
+    /// несколько подряд идущих `///` непосредственно перед `fn`).
+    /// `None` — у функции нет doc-comment'а.
+    pub doc: Option<DocBlock>,
+    /// Plan 45 Ф.3 / D105: doc-атрибуты, собранные парсером.
+    pub doc_attrs: Vec<DocAttr>,
     pub is_export: bool,
     /// D82: external fn — реализована в nova_rt/*.h. Body отсутствует
     /// (FnBody::External). Только в std.runtime.* whitelisted.
@@ -226,6 +296,9 @@ pub struct FnDecl {
     /// Реальная purity выводится в Ф.2 через SCC по call-graph;
     /// если выведенная не соответствует объявленной — compile error.
     pub purity: Purity,
+    /// Plan 33.3 Ф.13: `#trusted` external fn — контракты становятся axioms
+    /// (без SMT-доказательства). Допустим только для `external fn`.
+    pub is_trusted: bool,
 }
 
 /// Plan 33.1 (D24): один контракт-clause функции.
@@ -406,6 +479,10 @@ pub enum FnBody {
 
 #[derive(Debug, Clone)]
 pub struct TypeDecl {
+    /// Plan 45 / D104: doc-comment перед `type`.
+    pub doc: Option<DocBlock>,
+    /// Plan 45 Ф.3 / D105: doc-атрибуты.
+    pub doc_attrs: Vec<DocAttr>,
     pub is_export: bool,
     pub name: String,
     /// Plan 15 (D72): `[K Hashable, V]` — имена + optional bounds.
@@ -601,6 +678,10 @@ pub struct LetDecl {
 
 #[derive(Debug, Clone)]
 pub struct ConstDecl {
+    /// Plan 45 / D104: doc-comment перед `const`.
+    pub doc: Option<DocBlock>,
+    /// Plan 45 Ф.3 / D105: doc-атрибуты.
+    pub doc_attrs: Vec<DocAttr>,
     pub is_export: bool,
     pub name: String,
     pub ty: Option<TypeRef>,

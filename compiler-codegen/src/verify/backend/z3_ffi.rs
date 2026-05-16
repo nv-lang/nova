@@ -173,6 +173,10 @@ extern "C" {
         range: Z3_sort,
     ) -> Z3_func_decl;
 
+    // If-then-else: ite(cond: Bool, then: T, else: T) -> T.
+    // Правильное ITE для arithmetic — не теряет информацию как or+and encoding.
+    pub fn Z3_mk_ite(c: Z3_context, t1: Z3_ast, t2: Z3_ast, t3: Z3_ast) -> Z3_ast;
+
     // Z3_mk_app: применить func_decl к аргументам, получая term.
     pub fn Z3_mk_app(
         c: Z3_context,
@@ -180,4 +184,80 @@ extern "C" {
         num_args: c_uint,
         args: *const Z3_ast,
     ) -> Z3_ast;
+
+    // ─── Floating-point (IEEE 754) ────────────────────────────────────────
+    // Sorts.
+    pub fn Z3_mk_fpa_sort_32(c: Z3_context) -> Z3_sort;  // f32 = (fp 8 24)
+    pub fn Z3_mk_fpa_sort_64(c: Z3_context) -> Z3_sort;  // f64 = (fp 11 53)
+
+    // Rounding mode sort (нужен для arithmetic ops).
+    pub fn Z3_mk_fpa_rounding_mode_sort(c: Z3_context) -> Z3_sort;
+    // Rounding modes.
+    pub fn Z3_mk_fpa_round_nearest_ties_to_even(c: Z3_context) -> Z3_ast; // RNE
+    pub fn Z3_mk_fpa_round_toward_zero(c: Z3_context) -> Z3_ast;          // RTZ
+
+    // Numerals.
+    pub fn Z3_mk_fpa_numeral_double(c: Z3_context, v: f64, ty: Z3_sort) -> Z3_ast;
+    pub fn Z3_mk_fpa_numeral_float(c: Z3_context, v: f32, ty: Z3_sort) -> Z3_ast;
+
+    // Arithmetic (все принимают rounding_mode + два fp аргумента).
+    pub fn Z3_mk_fpa_add(c: Z3_context, rm: Z3_ast, t1: Z3_ast, t2: Z3_ast) -> Z3_ast;
+    pub fn Z3_mk_fpa_sub(c: Z3_context, rm: Z3_ast, t1: Z3_ast, t2: Z3_ast) -> Z3_ast;
+    pub fn Z3_mk_fpa_mul(c: Z3_context, rm: Z3_ast, t1: Z3_ast, t2: Z3_ast) -> Z3_ast;
+    pub fn Z3_mk_fpa_div(c: Z3_context, rm: Z3_ast, t1: Z3_ast, t2: Z3_ast) -> Z3_ast;
+    pub fn Z3_mk_fpa_abs(c: Z3_context, t: Z3_ast) -> Z3_ast;
+    pub fn Z3_mk_fpa_neg(c: Z3_context, t: Z3_ast) -> Z3_ast;
+    pub fn Z3_mk_fpa_sqrt(c: Z3_context, rm: Z3_ast, t: Z3_ast) -> Z3_ast;
+
+    // Comparisons (все Bool).
+    pub fn Z3_mk_fpa_eq(c: Z3_context, t1: Z3_ast, t2: Z3_ast) -> Z3_ast;
+    pub fn Z3_mk_fpa_lt(c: Z3_context, t1: Z3_ast, t2: Z3_ast) -> Z3_ast;
+    pub fn Z3_mk_fpa_leq(c: Z3_context, t1: Z3_ast, t2: Z3_ast) -> Z3_ast;
+    pub fn Z3_mk_fpa_gt(c: Z3_context, t1: Z3_ast, t2: Z3_ast) -> Z3_ast;
+    pub fn Z3_mk_fpa_geq(c: Z3_context, t1: Z3_ast, t2: Z3_ast) -> Z3_ast;
+
+    // Predicates.
+    pub fn Z3_mk_fpa_is_nan(c: Z3_context, t: Z3_ast) -> Z3_ast;
+    pub fn Z3_mk_fpa_is_infinite(c: Z3_context, t: Z3_ast) -> Z3_ast;
+    pub fn Z3_mk_fpa_is_positive(c: Z3_context, t: Z3_ast) -> Z3_ast;
+    pub fn Z3_mk_fpa_is_negative(c: Z3_context, t: Z3_ast) -> Z3_ast;
+    pub fn Z3_mk_fpa_is_zero(c: Z3_context, t: Z3_ast) -> Z3_ast;
+
+    // Conversion fp → fp (для cast f32↔f64).
+    pub fn Z3_mk_fpa_to_fp_float(
+        c: Z3_context, rm: Z3_ast, t: Z3_ast, s: Z3_sort,
+    ) -> Z3_ast;
+    // Conversion Int → fp.
+    pub fn Z3_mk_fpa_to_fp_signed(
+        c: Z3_context, rm: Z3_ast, t: Z3_ast, s: Z3_sort,
+    ) -> Z3_ast;
+
+    // ─── Strings / Sequences (Z3 Seq theory) ──────────────────────────────
+    pub fn Z3_mk_seq_sort(c: Z3_context, s: Z3_sort) -> Z3_sort;
+
+    // String операции.
+    pub fn Z3_mk_seq_length(c: Z3_context, s: Z3_ast) -> Z3_ast;
+    pub fn Z3_mk_seq_concat(c: Z3_context, n: c_uint, args: *const Z3_ast) -> Z3_ast;
+    pub fn Z3_mk_seq_contains(c: Z3_context, container: Z3_ast, containee: Z3_ast) -> Z3_ast;
+    pub fn Z3_mk_seq_prefix(c: Z3_context, prefix: Z3_ast, s: Z3_ast) -> Z3_ast;
+    pub fn Z3_mk_seq_suffix(c: Z3_context, suffix: Z3_ast, s: Z3_ast) -> Z3_ast;
+    pub fn Z3_mk_seq_extract(c: Z3_context, s: Z3_ast, offset: Z3_ast, length: Z3_ast) -> Z3_ast;
+    pub fn Z3_mk_seq_index(c: Z3_context, s: Z3_ast, substr: Z3_ast, offset: Z3_ast) -> Z3_ast;
+    pub fn Z3_mk_seq_unit(c: Z3_context, elem: Z3_ast) -> Z3_ast;
+    pub fn Z3_mk_seq_empty(c: Z3_context, s: Z3_sort) -> Z3_ast;
+
+    // Error handler: перехватывает Z3 API ошибки (sort mismatch, etc.)
+    // вместо abort(). Тип callback: fn(ctx, error_code).
+    // error_code — Z3_error_code enum (see z3_api.h), нас интересует
+    // только сам факт ошибки.
+    pub fn Z3_set_error_handler(
+        c: Z3_context,
+        h: Option<unsafe extern "C" fn(c: Z3_context, e: c_int)>,
+    );
+
+    // Получить текущий error code контекста.
+    pub fn Z3_get_error_code(c: Z3_context) -> c_int;
+
+    // Сбросить error code.
+    pub fn Z3_reset_error_code(c: Z3_context);
 }

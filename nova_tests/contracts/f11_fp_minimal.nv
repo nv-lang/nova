@@ -1,0 +1,15 @@
+// Minimal FP test - only ensures on constant
+// REQUIRES_SMT_BACKEND z3
+
+module contracts.f11_fp_minimal
+
+#verify
+fn always_true_f64(x f64) -> bool
+    ensures result == true
+{
+    true
+}
+
+test "f11 fp minimal" {
+    assert(always_true_f64(1.0) == true)
+}

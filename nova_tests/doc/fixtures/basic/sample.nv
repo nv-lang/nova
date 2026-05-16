@@ -1,0 +1,28 @@
+//! Plan 45 / D104: smoke-test fixture для `nova doc`.
+//!
+//! Этот модуль содержит образцы для всех item kind'ов, проверяя
+//! что collector + renderer'ы рендерят их корректно.
+
+module nova_tests.doc.fixtures.basic.sample
+
+/// Возвращает абсолютное значение `x`.
+///
+/// Пример:
+///
+/// ```nova
+/// assert(abs(-5) == 5)
+/// ```
+export fn abs(x int) -> int =>
+    if x < 0 { 0 - x } else { x }
+
+/// Двухмерная точка.
+export type Point {
+    x int
+    y int
+}
+
+/// Максимальный размер буфера в байтах.
+export const MAX_BUF int = 4096
+
+// Внутренняя функция — не должна появиться в output без --include-private.
+fn internal_helper(x int) -> int => x + 1
