@@ -1,0 +1,35 @@
+// fn_array_collect_test.nv — Plan 54 Ф.4 verification.
+// Generic-fn возвращающая `[]T` (для plain T) теперь даёт правильный
+// `NovaArray_<T_c>*` receiver, не void*.
+//
+// `[]fn->T` return — отдельный orthogonal issue (Array-of-Func
+// mono'rphization), не входит в Ф.4 scope.
+
+module concurrency.fn_array_collect_test
+
+
+// Simple identity-like generic — return []T от []T input.
+fn copy[T](xs []T) -> []T {
+    let mut out []T = []
+    for x in xs {
+        out.push(x)
+    }
+    out
+}
+
+
+test "copy[int]: return []int правильно типизировано" {
+    let xs = copy[int]([1, 2, 3])
+    assert(xs.len() == 3)
+    assert(xs[0] == 1)
+    assert(xs[1] == 2)
+    assert(xs[2] == 3)
+}
+
+
+test "copy[str]: return []str правильно типизировано" {
+    let xs = copy[str](["a", "b"])
+    assert(xs.len() == 2)
+    assert(xs[0] == "a")
+    assert(xs[1] == "b")
+}

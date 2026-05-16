@@ -14861,7 +14861,14 @@ impl CEmitter {
                 format!("NovaVtable_{}*", effect_name.join("_"))
             }
             ExprKind::Call { func, args, .. } => {
-                // D38 turbofish прозрачен для inference — unwrap base.
+                // D38 turbofish прозрачен для inference — но extract type_args
+                // ПЕРЕД unwrap чтобы Plan 54 Ф.4 return-type inference (для
+                // generic-fn возвращающей []T) могла использовать turbofish
+                // как Source 1.
+                let turbofish_args: Vec<crate::ast::TypeRef> =
+                    if let ExprKind::TurboFish { type_args, .. } = &func.kind {
+                        type_args.clone()
+                    } else { vec![] };
                 let func = func.unwrap_turbofish();
                 // D109: TurboFish member call on generic type, e.g. HashMap[str,int].new().
                 // func = Member { obj: TurboFish(Ident("HashMap"), [str,int]), name: "new" }.
@@ -15110,6 +15117,18 @@ impl CEmitter {
                                 let mut subst: Vec<(String, Option<String>)> = fn_decl.generics.iter()
                                     .map(|g| (g.name.clone(), None))
                                     .collect();
+                                // Plan 54 Ф.4 Source 1: turbofish args (наибольший
+                                // приоритет). Без этого `collect_all[int]([...])` —
+                                // T=int lost при inference → return-type void*.
+                                for (i, tr) in turbofish_args.iter().enumerate() {
+                                    if i < subst.len() {
+                                        if let Ok(c_ty) = self.type_ref_to_c(tr) {
+                                            if !c_ty.is_empty() && c_ty != "void*" {
+                                                subst[i].1 = Some(c_ty);
+                                            }
+                                        }
+                                    }
+                                }
                                 for (param, arg) in fn_decl.params.iter().zip(args.iter()) {
                                     let arg_c = self.infer_expr_c_type(arg.expr());
                                     Self::infer_type_param_binding(&param.ty, &arg_c, &mut subst);
