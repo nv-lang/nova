@@ -443,8 +443,30 @@ impl VerificationPipeline {
             // Р' 33.1 РЅРµС‚ mut params в†' СЃС‚Р°СЂС‹Рµ Р·РЅР°С‡РµРЅРёСЏ = С‚РµРєСѓС‰РёРµ Р·РЅР°С‡РµРЅРёСЏ.
             let goal = substitute_old(&goal);
 
+            // Ф.16.1 (Plan 33.6): если ensures содержит `exists`, используем
+            // try_prove_with_witness для extract witness в info-note.
+            let exists_var = find_exists_var(&c.expr);
+            let proof_result = if let Some(var_name) = &exists_var {
+                let (proof, witness) = super::backend::try_prove_with_witness(
+                    &mut *backend, goal, var_name);
+                if let (SatResult::Unsat(_), Some(w)) = (&proof, &witness) {
+                    let w_str = match w {
+                        ModelValue::Int(n) => n.to_string(),
+                        ModelValue::Bool(b) => b.to_string(),
+                        ModelValue::Str(s) => format!("\"{}\"", s),
+                        ModelValue::Unknown => "?".into(),
+                    };
+                    // Emit info-note как Warning (информационный, не error).
+                    results.push((c.span, VerifyResult::Warning(format!(
+                        "proven via witness: {} = {} [info]",
+                        var_name, w_str))));
+                }
+                proof
+            } else {
+                try_prove(&mut *backend, goal)
+            };
             // try_prove(goal). `&mut *backend` С‡С‚РѕР±С‹ coerce Box<dyn> в†' &mut dyn.
-            match try_prove(&mut *backend, goal) {
+            match proof_result {
                 SatResult::Unsat(_) => results.push((c.span, VerifyResult::Proven)),
                 SatResult::Sat(model) => {
                     let cex = format_counterexample(&model);
@@ -2174,6 +2196,36 @@ pub fn check_axiom_consistency(module: &Module) -> (Vec<Diagnostic>, Vec<Diagnos
 /// API compat, но больше не делает unsound подстановку `_old_x → x`.
 pub(super) fn substitute_old(t: &SmtTerm) -> SmtTerm {
     t.clone()
+}
+
+/// Ф.16.1 (Plan 33.6): найти первую `exists`-var в AST-expression.
+/// Используется для witness extraction в proven ensures.
+pub(super) fn find_exists_var(e: &crate::ast::Expr) -> Option<String> {
+    use crate::ast::ExprKind::*;
+    match &e.kind {
+        Exists { var, .. } => Some(var.clone()),
+        Binary { left, right, .. } => {
+            find_exists_var(left).or_else(|| find_exists_var(right))
+        }
+        Unary { operand, .. } => find_exists_var(operand),
+        Call { func, args, .. } => {
+            find_exists_var(func).or_else(|| {
+                args.iter().find_map(|a| find_exists_var(a.expr()))
+            })
+        }
+        If { cond, then, else_ } => {
+            find_exists_var(cond)
+                .or_else(|| then.trailing.as_ref().and_then(|t| find_exists_var(t)))
+                .or_else(|| match else_ {
+                    Some(crate::ast::ElseBranch::Block(b)) => {
+                        b.trailing.as_ref().and_then(|t| find_exists_var(t))
+                    }
+                    Some(crate::ast::ElseBranch::If(e2)) => find_exists_var(e2),
+                    None => None,
+                })
+        }
+        _ => None,
+    }
 }
 
 pub(super) fn type_to_sort(ty: &TypeRef) -> SortRef {
