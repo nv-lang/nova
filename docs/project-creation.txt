@@ -12337,6 +12337,19 @@ negative (есть warning или ошибка):
 - Регрессия: 140 PASS / 39 SKIP (без изменений).
 - Коммит: `8bb3bc263b8`.
 
+### Ф.6.3 — TrivialBackend commutativity normalization
+
+- `backend/trivial.rs::simplify_app` для `+`: если оба arg не литерал, сортирует
+  args по pretty-print order. Это позволяет proven `a + b == b + a` тривиально.
+- До Ф.6.3 порядок аргументов сохранялся, и Trivial не reasonал commutativity.
+- Test: trivial_commutativity_positive — `ensures result == b + a; body: a + b`
+  → PASS под Trivial.
+- Регрессия: 141 PASS (+1) / 39 SKIP.
+- Коммит: `eb0f72b15d6`.
+
+**Итого Ф.8 + Ф.3 + Ф.5 + Ф.6 спринт (после Ф.7):** 9 коммитов code + 9 docs
++ 9 discussion-log. 141 PASS / 39 SKIP / 1 pre-existing FAIL.
+
 === Plan 45 �.25 � nova tests (positive + negative) ===
 
 ����� �������� �.25 (4 ����) �������� nova-tests .nv ��� �������� �����
