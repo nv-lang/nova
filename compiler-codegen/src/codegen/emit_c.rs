@@ -12431,11 +12431,43 @@ impl CEmitter {
                 }
                 vec![]
             }
-            // For Tuple / Record / Array — would need tuple_element_types /
-            // record_schemas lookup which is path-dependent. Bootstrap covers
-            // 95% case (Option/Result/User sum-types via Variant above).
-            // Extension point — add as needed when concrete bug surfaces.
-            Pattern::Tuple(..) | Pattern::Record { .. } | Pattern::Array { .. } => vec![],
+            // Plan 55 Ф.6 followup: Pattern::Record для record-form variant
+            // (e.g. `Slot.Occupied { key: k, value: v }`). Lookup field types
+            // через record_variant_field_types map. Поддерживает mono'd
+            // instances (key включает mono suffix).
+            Pattern::Record { type_path, fields, .. } => {
+                let mut out = vec![];
+                // sum_name из scr_ty: trim Nova_/* и split на mono parts.
+                let sum_name_full = scr_ty.trim_end_matches('*').trim()
+                    .strip_prefix("Nova_").unwrap_or("").to_string();
+                // mono'd sum: "Slot____nova_str__nova_int" → base "Slot".
+                let sum_base = sum_name_full.split("____").next().unwrap_or("").to_string();
+                let variant_name = type_path.as_ref()
+                    .and_then(|p| p.last().cloned())
+                    .unwrap_or_default();
+                if !variant_name.is_empty() && !sum_base.is_empty() {
+                    for f in fields {
+                        // Try mono'd key first, then base.
+                        let key_mono = format!("{}::{}::{}", sum_name_full, variant_name, f.name);
+                        let key_base = format!("{}::{}::{}", sum_base, variant_name, f.name);
+                        let field_c = this.record_variant_field_types.get(&key_mono)
+                            .or_else(|| this.record_variant_field_types.get(&key_base))
+                            .cloned();
+                        if let Some(field_c) = field_c {
+                            // `field: pat` — recurse pat; `field` shorthand — bind directly.
+                            let inner_pat = f.pattern.clone()
+                                .unwrap_or_else(|| Pattern::Ident { name: f.name.clone(), span: f.span });
+                            out.extend(Self::collect_pattern_inner_bindings(&inner_pat, &field_c, this));
+                        } else if f.pattern.is_none() {
+                            // Shorthand field без type info — bind как scr_ty (fallback).
+                            out.push((f.name.clone(), scr_ty.to_string()));
+                        }
+                    }
+                }
+                out
+            }
+            // Tuple / Array — без bindings extraction (bootstrap covers main cases).
+            Pattern::Tuple(..) | Pattern::Array { .. } => vec![],
         }
     }
 

@@ -1,0 +1,36 @@
+// Plan 55 Ф.6 followup — full multi-instance HashMap with .get() + match.
+// Verify: Pattern::Record extraction (Slot.Occupied { value }) корректно
+// типизирует match arms для каждого mono'd instance.
+
+module plan55.f6_full_multi_instance_get
+
+import std.collections.hashmap.{HashMap}
+
+
+fn three_instance_get() -> int {
+    let m1 HashMap[str, int] = ["a": 1, "b": 2]
+    let m2 HashMap[int, str] = [1: "one", 2: "two"]
+    let m3 HashMap[int, int] = [10: 100, 20: 200]
+
+    let n1 = match m1.get("a") {
+        Some(v) => v
+        None    => 0
+    }
+    let s2 = match m2.get(1) {
+        Some(s) => s
+        None    => "missing"
+    }
+    let n3 = match m3.get(20) {
+        Some(v) => v
+        None    => 0
+    }
+
+    n1 + n3 + s2.len()
+}
+
+
+test "3 HashMap[K, V] с .get() + match — multi-instance no leak" {
+    let total = three_instance_get()
+    // n1=1, n3=200, s2="one" (len=3)
+    assert(total == 204)
+}
