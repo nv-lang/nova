@@ -13960,3 +13960,77 @@ Backlog (Phase C): runtime CPU instr per-sample, heap sampler thread
 - 9f9a3abda67 feat(57.B.3) parameterized sweeps
 - 80bb1591c37 feat(57.B.4) CPU instructions
 - f790fd1234a feat(57.B.5) group/case sub-benchmarks
+
+
+================================================================================
+Session: Plan 57.C — Runtime integration phase (2026-05-17)
+================================================================================
+
+Worktree: nova-lang-p57 (branch plan-57)
+Дополнено к 57.A + 57.B closure (предыдущие sessions).
+
+Plan 57.C — Runtime integration (8 sub-tasks, 8 commits):
+
+  57.C.1 (commit 4744b170150) — PerfTimer hooks в compiler.
+  compiler-codegen/src/perf_timer.rs: RAII guard, OnceLock<bool>
+  env probe. CLI cmd_build оборачивает 10 passes (parse, imports-
+  resolve, type-check, effects-infer, lints, annotate-maps, desugar,
+  callnorm, codegen, c-compile). NOVA_PERF_TIMER=1 emits markers.
+
+  57.C.2 (commit 37c0a360cd6) — gc.last_pause_ns API extension.
+  alloc.h decl, alloc_boehm.c monotonic timer wraps GC_gcollect
+  (QPC/clock_gettime cross-platform), alloc.c/alloc_rc.c stubs.
+  std/runtime/gc.nv external fn + emit_c.rs dispatch. Plan 32 ext.
+
+  57.C.3 (commit a933355d065) — heap sampler thread.
+  bench.h: uv_thread_create background loop, NOVA_BENCH_HEAP_SAMPLE_MS,
+  __HEAP_SAMPLE__ <ns> <bytes> marker. CLI stderr parallel reader
+  parses → histogram (min/median/max KB).
+
+  57.C.4 (commit ce5e694395f) — CPU instructions per-sample.
+  bench.h Linux block: perf_event_open syscall, ioctl reset/enable/
+  disable/read. emit_bench добавляет counter wraps вокруг batch.
+  JSON v1 extended: "cpu_instructions" array + "cpu_instructions_median".
+
+  57.C.5 (commit ed481691217) — recursive bench directory discovery.
+  run_dir() + walk_nv (skip hidden + corpus/). Per-file pre-filter
+  `bench ` keyword. Errors logged but не abort suite.
+
+  57.C.6 (commit 198ffa452a4) — history-squash retention.
+  parse_date_to_unix (Howard Hinnant inverse), squash() temp worktree
+  + git rm stale + commit. Yearly squash recommended.
+
+  57.C.7 (commit 8fac1d1edd9) — bench DSL lint warnings.
+  4 rules: bench-sleep-in-measure, bench-io-in-measure,
+  bench-empty-measure, bench-opaque-literal. Implemented в lints.rs
+  walker; CLI bench/run.rs теперь вызывает lints в pipeline.
+
+  57.C.8 (commit 94c54561b8c) — nova bench corpus subcommand.
+  measure_file subprocess `nova build` с NOVA_PERF_TIMER=1 +
+  parse_perf_line. Terminal table или JSON output. Reveals что
+  c-compile dominates 99%+ для small programs.
+
+Verification:
+- 44/44 unit tests bench:: pass (43 → 44 = +1 fmt_ns_scales).
+- 562/562 nova test PASS (zero regressions).
+- E2E smoke verified per sub-task:
+  - PerfTimer: NOVA_PERF_TIMER=1 emits 10 __PERF__ markers per build.
+  - gc_pause.nv compiles + runs (gc.last_pause_ns под malloc = 0).
+  - long_run.nv с NOVA_BENCH_HEAP_SAMPLE_MS=5 → 33 samples за 5s.
+  - cpu-instr-check graceful "not available" на Windows.
+  - bench/micro/ recursive → 9 files discovered + processed.
+  - history-squash dry-run shows would-be removed.
+  - lint_test.nv triggers println + opaque-literal warnings.
+  - bench corpus 01_hello.nv → 10 passes, c-compile=99.3% of total.
+
+Plan 57 — completely closed across MVP + A + B + C.
+20 commits в plan-57 branch.
+
+Phase D backlog (открыто для будущих сессий):
+- Aggregated JSON output для recursive bench mode.
+- Time.sleep namespace contextual-keyword detection (sleep lint
+  catches только Time.method-form; namespace dispatch требует
+  builtins knowledge parser-side).
+- HTML dashboard для compiler-perf (отдельно от runtime dashboard).
+- CI matrix per-runner baseline storage (multiple bench-history
+  branches per machine).

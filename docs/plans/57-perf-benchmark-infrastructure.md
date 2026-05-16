@@ -456,16 +456,22 @@ Sub-items (каждый — отдельный commit):
 - [x] `bench "x" { group "g" { case "c" { ... } } }` parse + emit + 4-entry
       output (composite names `x/g/c`).
 
-### **Plan 57.C** — runtime integration, in progress 2026-05-17
+### **Plan 57.C** — ✅ ALL CLOSED 2026-05-17
 
-- [ ] PerfTimer hooks в compiler (8 passes) + `NOVA_PERF_TIMER=1`.
-- [ ] `gc.last_pause_ns()` API extension (Plan 32 ext).
-- [ ] Heap sampler thread + `nova bench --profile heap` real output.
-- [ ] CPU instructions per-sample runtime (Linux only).
-- [ ] Recursive `nova bench run <dir>` discovery.
-- [ ] `nova bench history-squash --before-date YYYY-MM-DD`.
-- [ ] Bench DSL lint warnings (sleep/println/empty/opaque-on-const).
-- [ ] `nova bench corpus <file> --breakdown`.
+- [x] PerfTimer hooks в compiler (10 passes) + `NOVA_PERF_TIMER=1` env.
+- [x] `gc.last_pause_ns()` API extension (Plan 32 ext) — alloc.c +
+      alloc_boehm.c (monotonic timer wraps GC_gcollect) + alloc_rc.c stub.
+- [x] Heap sampler thread + CLI stderr parser → histogram min/median/max.
+- [x] CPU instructions per-sample runtime (Linux only via
+      `perf_event_open`, ioctl reset/enable/disable/read).
+- [x] Recursive `nova bench run <dir>` discovery (skip `corpus/`,
+      hidden dirs; cheap text pre-filter `bench ` keyword).
+- [x] `nova bench history-squash --before-date YYYY-MM-DD` retention
+      policy + `--dry-run` preview.
+- [x] Bench DSL lint warnings: bench-sleep-in-measure,
+      bench-io-in-measure, bench-empty-measure, bench-opaque-literal.
+- [x] `nova bench corpus <file> [--json] [--mode] [--toolchain]` —
+      per-pass compile-time breakdown.
 
 ---
 
@@ -562,3 +568,16 @@ Sub-items (каждый — отдельный commit):
   Plan 57 — **completely closed** across MVP / 57.A / 57.B. Backlog —
   только runtime-side integration deferred (CPU instr per-sample, heap
   sampler thread, gc.last_pause_ns — Phase C TBD).
+- **2026-05-17 Phase C closed**: 8 sub-tasks shipped (1 commit per
+  sub-task), 44 unit tests pass, 562/562 regression:
+  - 57.C.1 PerfTimer hooks `4744b170150`
+  - 57.C.2 gc.last_pause_ns `37c0a360cd6`
+  - 57.C.3 heap sampler thread `a933355d065`
+  - 57.C.4 CPU instructions runtime (Linux) `ce5e694395f`
+  - 57.C.5 recursive bench discovery `ed481691217`
+  - 57.C.6 history-squash retention `198ffa452a4`
+  - 57.C.7 bench DSL lint warnings `8fac1d1edd9`
+  - 57.C.8 nova bench corpus subcommand `94c54561b8c`
+  Plan 57 — **MVP + A + B + C fully closed** (20 commits total в
+  worktree plan-57). Backlog → Phase D: aggregated JSON output для
+  recursive mode, sleep contextual-keyword detection.
