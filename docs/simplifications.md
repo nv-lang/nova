@@ -8121,3 +8121,48 @@ Remaining:
 
 Audit подтверждает: Plan 55 Ф.4 invariant'ы (save/restore через
 `mem::replace`) выполняются across весь codegen.
+
+## Plan 55 ✅ ОКОНЧАТЕЛЬНО ЗАКРЫТ — финальный EOD (2026-05-16)
+
+**Session totals:**
+- **557 PASS / 0 FAIL / 40 SKIP** (release, Clang/Windows). Все 26
+  pre-session FAIL'ов закрыты, 49 новых PASS (новые тесты + 24 ранее
+  failing теперь passing).
+- ~38 commits (feat + fix + docs + spec + tests).
+- 19+ новых tests в `nova_tests/plan55/`.
+- **10 M-маркеров closed:**
+  - [M-array-of-func-mono] (Ф.1)
+  - [Ф.5b match-arm pattern_inner_type] (Ф.2)
+  - [Nova_Duration_method_into / inferred-return-type] (Ф.3)
+  - [M-mono-pass-corruption] (Ф.4)
+  - [M-52-type-inference-no-annotation] (Ф.5 auto via Ф.4)
+  - [M-52-multi-instance-hashmap-collision] (Ф.6)
+  - [M-mono-record-pattern-inner-bindings] (Ф.6 followup)
+  - 11 NEG-WRONG-MSG (Ф.7 ASCII anchors)
+  - 1 NEG-WRONG-PANIC (Ф.7 decreases counter limit fix)
+  - 14 doc/fixtures CC-FAIL (Ф.8 fixture exclude)
+
+**Deferred (с clear targeting):**
+- `[M-erased-generic-method-dispatch]` → **Plan 56** (vtable architecture).
+- `[M-time-handler-sleep-mismatch]` → **Plan 56** (semantic evolution).
+- `[M-src-russian-mojibake]` → **Plan 56** (manual rewrite Russian strings).
+- `[M-52-spread-not-supported]` → partial (infrastructure ready, codegen
+  ждёт Plan 56 mono tuple element fix).
+- Perf bench ±5% → **Plan 57** (perf benchmark infrastructure).
+- Cross-toolchain MSVC + GCC → **Plan 58** (cross-toolchain matrix).
+- `nova run` interp parity → когда interpreter подтянется.
+
+**Spec sync:**
+- D45 (inferred return type) — Реализация секция.
+- D108 (map literal) — Spread в map-литерале + Mono invariants.
+
+**Audit:**
+- save/restore `current_fn_return_ty` / `current_type_subst` — CLEAN
+  (все save'ы паирные, 0 leak'ов).
+
+**Что нового в codegen (для future reference):**
+- `NovaArray_void_p` typedef для closure arrays.
+- `NOVA_DEBUG_MONO=1` env-var debug tool.
+- `collect_pattern_inner_bindings` helper (recursive Option/Result/User/Record).
+- `is_fixture_dir()` convention для test discovery.
+- `MapElem` enum для mixed pairs+spreads.
