@@ -1453,8 +1453,32 @@ impl CEmitter {
             let mut idx = 0usize;
             for item in &module.items {
                 if let Item::Bench(b) = item {
-                    self.emit_bench(b, idx)?;
-                    idx += 1;
+                    // Plan 57.B.3: parameterized sweep — emit одну entry
+                    // на каждый param value, с let-binding prepended.
+                    if let Some(p) = &b.params {
+                        for v in &p.values {
+                            let suffix_name = format!("{}/p={}", b.name, v);
+                            let mut prepended_setup = vec![
+                                Self::synth_int_let(&p.var_name, *v, p.span),
+                            ];
+                            for s in &b.setup {
+                                prepended_setup.push(s.clone());
+                            }
+                            let cloned = BenchDecl {
+                                name: suffix_name,
+                                setup: prepended_setup,
+                                measure_body: b.measure_body.clone(),
+                                teardown: b.teardown.clone(),
+                                params: None,
+                                span: b.span,
+                            };
+                            self.emit_bench(&cloned, idx)?;
+                            idx += 1;
+                        }
+                    } else {
+                        self.emit_bench(b, idx)?;
+                        idx += 1;
+                    }
                 }
             }
         }
@@ -1574,6 +1598,23 @@ impl CEmitter {
     }
 
     /// Mangle a test name and append a numeric suffix to guarantee uniqueness.
+    /// Plan 57.B.3: synthesize `let <name> = <value>;` Stmt для prepending
+    /// param-substitution в setup.
+    fn synth_int_let(name: &str, value: i64, span: crate::diag::Span) -> Stmt {
+        let int_lit = Expr {
+            kind: ExprKind::IntLit(value),
+            span,
+        };
+        Stmt::Let(LetDecl {
+            mutable: false,
+            pattern: Pattern::Ident { name: name.to_string(), span },
+            ty: None,
+            value: int_lit,
+            span,
+            is_ghost: false,
+        })
+    }
+
     fn mangle_test_name_indexed(name: &str, index: usize) -> String {
         let base: String = name.chars()
             .map(|c| if c.is_ascii_alphanumeric() || c == '_' { c } else { '_' })
@@ -7205,23 +7246,38 @@ impl CEmitter {
         let tests: Vec<&TestDecl> = module.items.iter().filter_map(|i| {
             if let Item::Test(t) = i { Some(t) } else { None }
         }).collect();
+        // Plan 57.B.3: expand parameterized sweeps в plain entries.
+        // Каждый bench с params=Some даёт N entries с suffix `/p=<value>`.
+        let mut benches_expanded: Vec<(String, &BenchDecl)> = Vec::new();
+        for it in &module.items {
+            if let Item::Bench(b) = it {
+                if let Some(p) = &b.params {
+                    for v in &p.values {
+                        benches_expanded.push((format!("{}/p={}", b.name, v), b));
+                    }
+                } else {
+                    benches_expanded.push((b.name.clone(), b));
+                }
+            }
+        }
         let benches: Vec<&BenchDecl> = module.items.iter().filter_map(|i| {
             if let Item::Bench(b) = i { Some(b) } else { None }
         }).collect();
+        let _ = benches;  // (kept для legacy ref'ов)
 
         // Plan 57: bench-mode main — приоритет над test-runner main.
         // Игнорируем test-items, эмитим bench runner который последовательно
         // вызывает все nova_bench_main_<idx>().
-        if self.bench_mode && !benches.is_empty() && !has_main {
+        if self.bench_mode && !benches_expanded.is_empty() && !has_main {
             self.line("static nova_unit nova_fn_main_impl(void) {");
             self.indent += 1;
-            self.line(&format!("int _nova_benches_total = {};", benches.len()));
+            self.line(&format!("int _nova_benches_total = {};", benches_expanded.len()));
             // Bench filter via NOVA_BENCH_FILTER env: comma-separated substrings.
             self.line("const char* _bench_filter = getenv(\"NOVA_BENCH_FILTER\");");
             self.line("fprintf(stderr, \"Running %d benches...\\n\", _nova_benches_total);");
-            for (idx, b) in benches.iter().enumerate() {
-                let safe = Self::mangle_test_name_indexed(&b.name, idx);
-                let escaped = Self::escape_c_str(&b.name);
+            for (idx, (effective_name, _bd)) in benches_expanded.iter().enumerate() {
+                let safe = Self::mangle_test_name_indexed(effective_name, idx);
+                let escaped = Self::escape_c_str(effective_name);
                 self.line("{");
                 self.indent += 1;
                 self.line(&format!("const char* _bench_name = \"{}\";", escaped));

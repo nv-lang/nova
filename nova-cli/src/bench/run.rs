@@ -81,6 +81,11 @@ pub fn run(opts: BenchRunOpts) -> Result<i32> {
     nova_codegen::imports::resolve_imports_inline(
         &bench_path, &mut module, opts.repo, opts.stdlib_dir,
     )?;
+    // Plan 57.B.3: expand parameterized bench sweeps ДО type-check.
+    // `bench "name" (n in [10,100]) { ... }` → 2 separate BenchDecl entries
+    // с `let n = <value>;` prepended к setup, так что name-resolution видит
+    // `n` как regular let.
+    expand_bench_sweeps(&mut module);
     nova_codegen::types::check_module(&module).map_err(|errs| {
         let msgs: Vec<String> = errs.iter()
             .map(|d| d.render(&src, &path_str))
@@ -265,6 +270,7 @@ pub fn compile_for_profile(opts: &BenchRunOpts) -> Result<std::path::PathBuf> {
     nova_codegen::imports::resolve_imports_inline(
         &bench_path, &mut module, opts.repo, opts.stdlib_dir,
     )?;
+    expand_bench_sweeps(&mut module);
     nova_codegen::types::check_module(&module).map_err(|errs| {
         let msgs: Vec<String> = errs.iter()
             .map(|d| d.render(&src, &path_str))
@@ -315,6 +321,51 @@ pub fn compile_for_profile(opts: &BenchRunOpts) -> Result<std::path::PathBuf> {
     };
     test_runner::compile_c_to_exe(&tc, &build_opts, Duration::from_secs(opts.compile_timeout_secs))?;
     Ok(exe_file)
+}
+
+/// Plan 57.B.3: expand parameterized bench sweeps в N separate BenchDecl
+/// entries — runs ДО type-check для name-resolution validity.
+pub fn expand_bench_sweeps(module: &mut nova_codegen::ast::Module) {
+    use nova_codegen::ast::{Item, BenchDecl, Stmt, LetDecl, Expr, ExprKind, Pattern};
+    let mut new_items = Vec::with_capacity(module.items.len());
+    for it in module.items.drain(..) {
+        match it {
+            Item::Bench(b) if b.params.is_some() => {
+                let params = b.params.unwrap();
+                for v in &params.values {
+                    let int_lit = Expr {
+                        kind: ExprKind::IntLit(*v),
+                        span: params.span,
+                    };
+                    let let_stmt = Stmt::Let(LetDecl {
+                        mutable: false,
+                        pattern: Pattern::Ident {
+                            name: params.var_name.clone(),
+                            span: params.span,
+                        },
+                        ty: None,
+                        value: int_lit,
+                        span: params.span,
+                        is_ghost: false,
+                    });
+                    let mut new_setup = vec![let_stmt];
+                    for s in &b.setup {
+                        new_setup.push(s.clone());
+                    }
+                    new_items.push(Item::Bench(BenchDecl {
+                        name: format!("{}/p={}", b.name, v),
+                        setup: new_setup,
+                        measure_body: b.measure_body.clone(),
+                        teardown: b.teardown.clone(),
+                        params: None,
+                        span: b.span,
+                    }));
+                }
+            }
+            other => new_items.push(other),
+        }
+    }
+    module.items = new_items;
 }
 
 /// Deterministic content-free hash for tmp-dir naming. Не cryptographic.
