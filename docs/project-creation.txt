@@ -12754,6 +12754,32 @@ dead lemma diagnostic. Reasonable LIA subset без Z3.
 
 **Plan 33.6 итог за 20 спринтов:** TrivialBackend полный + ite + integer ops.
 
+## Ф.21 — boolean logic + contradictory ensures
+
+### Ф.21.1 — excluded middle / contradiction
+
+- `simplify_app` для `and`/`or`: detect если args содержат X и (not X) →
+  `(X ∧ ¬X) = false`, `(X ∨ ¬X) = true`.
+- Test: trivial_excluded_middle_positive.
+- Коммит: `8693b6392a0`.
+
+### Ф.21.2 — contradictory ensures detection (E2404)
+
+- `verify_module`: для each fn собрать literal-eq ensures (`result == IntLit`).
+  Если 2+ с разными литералами → E2404 «contradictory ensures, fn никогда
+  не пройдёт verify».
+- Test: contradictory_ensures_fail (EXPECT_COMPILE_ERROR E2404).
+- Коммит: `22973cafc91`.
+
+### Ф.21.3 — comparison normalization (defer)
+
+- High regression risk изменения canonical form bounds — defer.
+
+**Итого Ф.21:** 2 closed. **165 PASS (+2) / 42 SKIP / 0 FAIL.**
+
+**Plan 33.6 итог за 21 спринт:** TrivialBackend + boolean logic excluded middle
++ contradictory ensures E2404.
+
 === Plan 45 �.25 � nova tests (positive + negative) ===
 
 ����� �������� �.25 (4 ����) �������� nova-tests .nv ��� �������� �����
