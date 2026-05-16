@@ -75,3 +75,23 @@ pub fn try_prove<B: SmtBackend + ?Sized>(backend: &mut B, goal: Formula) -> SatR
     backend.pop();
     result
 }
+
+/// Ф.9.3 (Plan 33.6): try_prove с subsumption cache lookup.
+/// Cache key — canonical hash от goal. Только Unsat (Proven) кэшируется —
+/// Sat/Unknown зависят от context-assertions, не reproducible.
+pub fn try_prove_cached<B: SmtBackend + ?Sized>(
+    backend: &mut B,
+    goal: Formula,
+    cache: &mut super::subsumption_cache::SubsumptionCache,
+) -> SatResult {
+    use super::subsumption_cache::CachedSat;
+    if let Some(CachedSat::Unsat) = cache.lookup(&goal) {
+        return SatResult::Unsat(crate::verify::ir::UnsatCore::default());
+    }
+    let goal_for_cache = goal.clone();
+    let result = try_prove(backend, goal);
+    if matches!(result, SatResult::Unsat(_)) {
+        cache.insert(&goal_for_cache, CachedSat::Unsat);
+    }
+    result
+}
