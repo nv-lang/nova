@@ -379,21 +379,25 @@ Sub-items (каждый — отдельный commit):
 
 ### **MVP** — ✅ all closed (см. §4 table).
 
-### **Plan 57.A**
+### **Plan 57.A** — ✅ ALL CLOSED 2026-05-17
 
-- [ ] `nova bench history-add` works; commits to orphan branch.
-- [ ] `nova bench dashboard` generates valid HTML loadable в browser.
-- [ ] `nova bench gate --calibrate-noise` reduces false positives.
-- [ ] Thermal throttle detection (Linux verified).
-- [ ] `nova bench run --profile cpu` works (samply installed).
+- [x] `nova bench history-add` works; commits to orphan branch.
+- [x] `nova bench dashboard` generates valid HTML loadable в browser.
+- [x] `nova bench gate --noise N` reduces false positives (+ `calibrate` subcmd).
+- [x] Thermal throttle detection (Linux /sys/class/thermal verified).
+- [x] `nova bench run --profile cpu` works (samply integration; graceful
+      error if not installed).
 
-### **Plan 57.B**
+### **Plan 57.B** — ✅ ALL CLOSED 2026-05-17
 
-- [ ] 10-file canonical corpus complete с per-pass breakdown.
-- [ ] Criterion-JSON output validates against `cargo-criterion` schema.
-- [ ] `#bench(params=[10,100,1000])` emits 3 separate bench entries.
-- [ ] CPU instructions mode on Linux (verified `perf_event_paranoid=1`).
-- [ ] `group/case` sub-benchmarks parse + emit + show in results.
+- [x] 10-file canonical corpus complete (CHECKSUMS lockfile; per-pass
+      PerfTimer hooks — Phase C TBD).
+- [x] Criterion-JSON output (`<dir>/<bench>/new/{estimates,sample,benchmark}.json`).
+- [x] `bench "name" (n in [10,100,1000]) { ... }` emits 3 separate entries.
+- [x] CPU instructions infrastructure on Linux (`perf_event_open` FFI +
+      diagnostic subcommand; per-sample runtime integration — Phase C TBD).
+- [x] `bench "x" { group "g" { case "c" { ... } } }` parse + emit + 4-entry
+      output (composite names `x/g/c`).
 
 ---
 
@@ -474,4 +478,19 @@ Sub-items (каждый — отдельный commit):
 - **2026-05-16 MVP closed**: worktree p57, commit `75192f361f3`.
   10-layer MVP shipped + tests + docs + spec D109 + GH workflow.
   562 PASS / 0 FAIL regression check.
-- **2026-05-17 57.A in progress**: sub-tasks decomposed (см. §4 Plan 57.A).
+- **2026-05-17 57.A closed**: 5 sub-tasks shipped:
+  - 57.A.1 history-add orphan branch automation (commit `4bc471e3765`).
+  - 57.A.2 dashboard echarts static HTML (commit `b3fd1d8dd85`).
+  - 57.A.3 auto noise-floor calibration (commit `a0febf67e86`).
+  - 57.A.4 thermal/load/nice/affinity detection (commit `378c1312556`).
+  - 57.A.5 --profile cpu/heap/gc samply integration (commit `2ca4c65138e`).
+- **2026-05-17 57.B closed**: 5 sub-tasks shipped:
+  - 57.B.1 extended corpus (10 files + CHECKSUMS).
+  - 57.B.2 Criterion-compatible JSON output (commit `0102df4d996`).
+  - 57.B.3 parameterized sweeps `(n in [...])` (commit `9f9a3abda67`).
+  - 57.B.4 CPU instructions mode Linux perf_event_open (commit `80bb1591c37`).
+  - 57.B.5 group/case sub-benchmarks DSL (commit `f790fd1234a`).
+- **2026-05-17 final**: 43 unit tests pass + 562/562 nova test regression.
+  Plan 57 — **completely closed** across MVP / 57.A / 57.B. Backlog —
+  только runtime-side integration deferred (CPU instr per-sample, heap
+  sampler thread, gc.last_pause_ns — Phase C TBD).

@@ -8301,3 +8301,65 @@ Remaining:
   Production rec: --mode release c installed lld.
 - **GC mode flag --gc malloc/boehm** — default boehm, malloc для
   development когда Boehm vcpkg не setup (Windows requires manual install).
+
+---
+
+## [M-57.A-deferred-runtime-integration] — Plan 57.A.5 profile heap/gc (2026-05-17)
+
+`nova bench run --profile heap/gc` MVP — CLI surface ready, stubs эмитят
+placeholder JSON/text. Real runtime integration отложен в Phase C:
+
+- **heap profile**: requires sampler thread в nova_rt/bench.h который
+  периодически читает `gc.heap_size()` (Plan 32) во время measure-block
+  и emit'ит `__HEAP_SAMPLE__ <ns> <bytes>` на stderr. CLI parses в
+  histogram. ~150 LOC.
+
+- **gc profile**: requires `gc.last_pause_ns()` API extension в
+  Plan 32 + emit'ing `__GC_PAUSE__ <ns>` на стартe каждого collect.
+  CLI парсит pause-list → histogram. ~100 LOC + Plan 32 ext ~50 LOC.
+
+CPU profile (samply) production-ready (samply делает sampling sам).
+
+## [M-57.B.1-perfTimer-hooks] — Per-pass compiler PerfTimer hooks (2026-05-17)
+
+bench/corpus/ canonical files complete (10/10), но per-pass breakdown
+(parse / type-check / mono-pass / codegen / c-compile) — TBD Phase C:
+
+- compiler-codegen: добавить `PerfTimer::start("parse")` etc вокруг
+  каждого pass. ~150 LOC.
+- Emit на stderr под `NOVA_PERF_TIMER=1` env как `__PERF__ <pass> <ns>`.
+- `nova bench corpus <file> --breakdown` parses → JSON с per-pass
+  timings + total.
+
+Без этого corpus benches measurable только через wall-clock total
+(no per-pass attribution).
+
+## [M-57.B.4-runtime-cpuinstr] — CPU instructions per-sample (2026-05-17)
+
+`nova bench cpu-instr-check` диагностика готова (Linux perf_event_open
+FFI работает). Но real per-sample counter integration в bench runtime
+требует:
+
+- nova_rt/bench.h: linux-only block с perf_event_open syscall.
+- nova_bench_run() добавляет counter reset/start/stop вокруг каждого
+  measure batch (как сейчас wall-clock).
+- JSON v1 schema extension: optional `instructions_per_iter` field.
+
+~250 LOC, Linux-only. Phase C/D.
+
+## [M-57-design-tradeoffs] — Plan 57 design tradeoffs accepted
+
+Принятые design decisions (не TODO, по дизайну):
+
+- **Single-file bench discovery** — `nova bench run X.nv` принимает только
+  один .nv файл; recursive directory walk — Phase C (mirror test_runner
+  walk_nv).
+- **Profile mode = separate exe build** — `compile_for_profile()` строит
+  exe заново вместо reuse measurement exe; tradeoff: extra ~3s compile
+  time, но isolation измерений / профилирования полная.
+- **TOML parser inline** — минималистичный (sections + key=value + arrays
+  strings only) вместо external `toml` crate; политика минимума deps
+  (feedback_third_party_libs). Покрывает все нужды bench.toml.
+- **Statistical functions pure-Rust** — без statrs/criterion-stats deps;
+  ~370 LOC покрывает median/MAD/Tukey/Welch+regularized beta+gammaln/
+  bootstrap CI/geomean/slope. Unit tests verify against scipy reference.
