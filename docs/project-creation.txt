@@ -12317,3 +12317,15 @@ message-pattern drift). **0 регрессий от Plan 52**, +5 PASS.
 - fix(52): post-rebase compat — Lemma/Apply/Calc/Forall/Exists + Ф.7 negative
 - feat(52): Ф.7 — positive-suite + production fix turbofish desugar
 - docs(52): Ф.8 — project-creation + simplifications + plan status
+- docs(52,53): post-audit production hardening phases (Ф.6/Ф.9-17)
+- fix(53): Ф.6.1 — mojibake fix в refutable-pattern diagnostics
+- fix(53): Ф.6.3 — decl.mutable propagation в record-destructure
+- test(53): Ф.6.5 — Channel.new round-trip через destructured handles
+- feat(52): Ф.9 + Ф.12 — EXPECT_COMPILE_WARNING infra + NaN/dup-key tests
+- feat(52): Ф.10 — positive-тесты {field:v} map-coercion + production desugar
+- test(52): Ф.11 — flagship JsonValue с sum+map-coercion композицией
+- fix(52): Ф.13 — observable eval-order через explicit temp-bindings
+- test(52): Ф.14 + Ф.15 — with_capacity boundary + nested hygiene
+- fix(52): Ф.16 — type-inference без аннотации `let m = [k:v]`
+- test(52): Ф.17 — #from_fields canonical identity negative test
+- refactor(53): Ф.6.4 — Channel.new dedup via record schema (-45 LOC)
