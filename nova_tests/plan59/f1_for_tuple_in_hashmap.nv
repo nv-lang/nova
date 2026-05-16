@@ -1,0 +1,40 @@
+// Plan 59 Phase 2 — идиоматический `for (k, v) in hashmap` через
+// mono'd tuple structs. Без upcoming Plan 59 это failed CC из-за
+// _NovaTuple2 int slots не fit'я в nova_str.
+
+module plan59.f1_for_tuple_in_hashmap
+
+import std.collections.hashmap.{HashMap}
+
+
+test "for (k, v) in HashMap[str, int]" {
+    let m HashMap[str, int] = ["a": 1, "b": 2, "c": 3]
+    let mut sum = 0
+    for (_k, v) in m {
+        sum = sum + v
+    }
+    assert(sum == 6)
+}
+
+
+test "for (k, v) in HashMap[int, str]" {
+    let m HashMap[int, str] = [1: "one", 2: "two"]
+    let mut count = 0
+    for (k, _v) in m {
+        count = count + k
+    }
+    assert(count == 3)
+}
+
+
+test "for (k, v) — collect both" {
+    let m HashMap[str, int] = ["x": 10, "y": 20]
+    let mut found_x = false
+    let mut found_y = false
+    for (k, v) in m {
+        if k == "x" && v == 10 { found_x = true }
+        if k == "y" && v == 20 { found_y = true }
+    }
+    assert(found_x)
+    assert(found_y)
+}

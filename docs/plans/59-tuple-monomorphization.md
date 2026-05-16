@@ -182,3 +182,49 @@ workarounds (direct field access на private state).
   bootstrap.
 - **Variadic tuples** (`(T...)`) — отдельный план.
 - **Named tuple fields** (`(name: str, age: int)`) — это record-territory.
+
+---
+
+## Working environment & autonomous start (2026-05-17 EOD+1)
+
+> **Working directory:** `d:\Sources\nova-lang`
+> **Branch:** `main`
+> **Build:** release (`cargo build --release`).
+> **Tests:** `nova-cli/target/release/nova test` (без `--jobs N`).
+> **Commits:** без AI-trailer'ов.
+
+### Pre-start baseline
+
+- **568 PASS / 0 FAIL / 42 SKIP** — clean baseline (post Plan 55 +
+  Plan 56 + Plan 33.6 Ф.15.2 bonus fix).
+- Plan 55 ✅, Plan 56 ✅ закрыты.
+
+### Autonomous start
+
+User explicitly: "продолжай работать по плану сам по всем оставшимся
+пунктам без упрощений как для прода". Plan 59 — наиболее impactful
+из deferred (P1, unlocks idiomatic `for (k, v) in coll`).
+
+---
+
+## Working environment & autonomous progress log
+
+> **Working directory:** `d:\Sources\nova-lang`
+> **Branch:** `main`
+> **Build:** release (`cargo build --release` — обязательно per memory
+> `feedback_release_builds`).
+> **Tests:** `nova-cli/target/release/nova test` (без `--jobs N` per
+> `feedback_no_jobs_flag`).
+> **Commits:** без AI-trailer'ов per `feedback_commit_trailer`.
+
+### Pre-start baseline (2026-05-17 EOD)
+
+- **568 PASS / 0 FAIL / 42 SKIP** — clean baseline.
+- Plan 55 ✅, Plan 56 ✅ закрыты в предыдущей session.
+- Plan 33.6 Ф.15.2 bonus fix — apply_bounds_propagation standalone.
+
+### Autonomous start
+
+User explicitly requested: "продолжай работать по плану сам по всем
+оставшимся пунктам без упрощений как для прода". Plan 59 — наиболее
+impactful из deferred (P1, unlocks idiomatic `for (k, v) in coll`).

@@ -386,6 +386,12 @@ pub struct CEmitter {
     /// `Nova_X*` (не sanitized "Nova_X_p"). Без map'a `t_from_scr` =
     /// strip("NovaOpt_") даёт sanitized, что breaks pointer types.
     novaopt_value_types: std::cell::RefCell<std::collections::HashMap<String, String>>,
+    /// Plan 59: registry mono'd tuple types. Каждая Vec<String> — element
+    /// C types для конкретной mono'd tuple (e.g. `["nova_str", "nova_int"]`
+    /// для `(str, int)`). При emit_module — выводим struct typedef для
+    /// каждой registered tuple. Used by `apply_type_subst_to_ref` для
+    /// Tuple case, и codegen для TupleLit / destructure.
+    mono_tuple_instances: std::cell::RefCell<std::collections::HashSet<Vec<String>>>,
     /// Accumulated lint warnings from codegen (e.g. anonymous-embed override).
     /// Returned from emit_module instead of printed directly to stderr,
     /// so test runner can route them to captured_stderr rather than leaking
@@ -596,6 +602,7 @@ impl CEmitter {
                 }
                 std::cell::RefCell::new(m)
             },
+            mono_tuple_instances: std::cell::RefCell::new(std::collections::HashSet::new()),
             defer_scopes: Vec::new(),
             defer_block_counter: 0,
             var_boxed: HashMap::new(),
@@ -1543,6 +1550,25 @@ impl CEmitter {
         // Plan 48: splice monomorphized fn forward declarations
         let mono_fwd = self.mono_fwd_decls.clone();
         self.out = self.out.replace("/*__MONO_FWD_DECLS__*/", &mono_fwd);
+        // Plan 59: splice mono'd tuple struct typedefs.
+        // Layout: typedef struct { T1 f0; T2 f1; ...; } _NovaTuple____<T1>__<T2>__...;
+        // Ordered alphabetically для determinism (HashSet itter order не stable).
+        let mut tuple_instances: Vec<Vec<String>> = self.mono_tuple_instances
+            .borrow().iter().cloned().collect();
+        tuple_instances.sort();
+        let mut tuple_decls = String::new();
+        if !tuple_instances.is_empty() {
+            tuple_decls.push_str("/* Plan 59: mono'd tuple typedefs — real element types, no int-slot erasure. */\n");
+            for inst in &tuple_instances {
+                let mangled = Self::compute_mono_tuple_c_name(inst);
+                let fields: String = inst.iter().enumerate()
+                    .map(|(i, c)| format!("{} f{}; ", c, i))
+                    .collect();
+                tuple_decls.push_str(&format!(
+                    "typedef struct {{ {}}} {};\n", fields, mangled));
+            }
+        }
+        self.out = self.out.replace("/*__MONO_TUPLE_TYPEDEFS__*/", &tuple_decls);
         Ok((self.out, self.warnings))
     }
 
@@ -1605,6 +1631,11 @@ impl CEmitter {
             let fields: String = (0..n).map(|i| format!("nova_int f{};", i)).collect::<Vec<_>>().join(" ");
             self.line(&format!("typedef struct {{ {} }} _NovaTuple{};", fields, n));
         }
+        // Plan 59: mono'd tuple struct typedefs — splice marker; replaced
+        // в finalize. Layout: typedef struct { T1 f0; T2 f1; ... }
+        // _NovaTuple____<T1>__<T2>__...;. Real types (e.g. nova_str, не
+        // nova_int slot) — fit структуры >8 байт.
+        self.line("/*__MONO_TUPLE_TYPEDEFS__*/");
         self.line("");
         // Plan 36 followup: forward decls user types ДО NovaOpt typedef'ов.
         // Иначе `NovaOpt_Nova_Range_p { Nova_Range* value; }` падает с
@@ -2009,8 +2040,40 @@ impl CEmitter {
                 Ok("NovaArray_nova_int*".into())
             }
             TypeRef::Tuple(elems, _) => {
+                // Plan 59: try mono'd tuple struct. Compute element C types
+                // через type_ref_to_c (которая использует current_type_subst
+                // для substitution). Если все elements resolved к concrete
+                // C types (не type-param placeholders) → use mono'd struct.
+                // Иначе fallback на legacy _NovaTupleN (nova_int slots).
                 let n = elems.len();
-                Ok(format!("_NovaTuple{}", n))
+                let mut elem_cs: Vec<String> = Vec::with_capacity(n);
+                let mut all_concrete = true;
+                for e in elems {
+                    match self.type_ref_to_c(e) {
+                        Ok(c) => {
+                            // Filter out type-param placeholders (Nova_K* etc).
+                            let trimmed = c.trim_end_matches('*').trim();
+                            if let Some(name) = trimmed.strip_prefix("Nova_") {
+                                let is_concrete = self.record_schemas.contains_key(name)
+                                    || self.sum_schemas.contains_key(name)
+                                    || self.generic_types.contains(name)
+                                    || c.contains("____");  // mono'd instance
+                                if !is_concrete {
+                                    all_concrete = false;
+                                    break;
+                                }
+                            }
+                            elem_cs.push(c);
+                        }
+                        Err(_) => { all_concrete = false; break; }
+                    }
+                }
+                if all_concrete && !elem_cs.is_empty() {
+                    let mangled = self.register_mono_tuple(&elem_cs);
+                    Ok(mangled)
+                } else {
+                    Ok(format!("_NovaTuple{}", n))
+                }
             }
             TypeRef::Func { .. } => {
                 // Function type — use a void pointer as opaque representation
@@ -5141,6 +5204,58 @@ impl CEmitter {
         format!("Nova_{}____{}", base_name, args)
     }
 
+    /// Plan 59: compute mono'd tuple struct C name.
+    /// `(nova_str, nova_int)` → `_NovaTuple____nova_str__nova_int`.
+    /// `(Nova_X*, nova_int)` → `_NovaTuple____Nova_X_p__nova_int` (sanitized).
+    /// Empty tuple → unreachable (Tuple(elems) where elems.is_empty() === Unit).
+    pub fn compute_mono_tuple_c_name(elem_c_tys: &[String]) -> String {
+        let args: String = elem_c_tys.iter()
+            .map(|c_ty| Self::sanitize_c_for_ident(c_ty))
+            .collect::<Vec<_>>()
+            .join("__");
+        format!("_NovaTuple____{}", args)
+    }
+
+    /// Plan 59: register mono'd tuple для emit при finalize. Returns the
+    /// mono'd C struct name (e.g. "_NovaTuple____nova_str__nova_int").
+    /// Safe to call multiple times — deduplicated через HashSet.
+    fn register_mono_tuple(&self, elem_c_tys: &[String]) -> String {
+        let key: Vec<String> = elem_c_tys.to_vec();
+        self.mono_tuple_instances.borrow_mut().insert(key);
+        Self::compute_mono_tuple_c_name(elem_c_tys)
+    }
+
+    /// Plan 59: walk TypeRef recursively, register mono'd tuples encountered
+    /// (после применения subst). Returns true если any tuple registered.
+    /// Used после `apply_type_subst_to_ref` returns Some(...) — caller knows
+    /// resolved type's full tuple structure and registers descendants.
+    fn register_tuples_in_typeref(&self, ty: &crate::ast::TypeRef, subst: &[(String, Option<String>)]) {
+        use crate::ast::TypeRef;
+        match ty {
+            TypeRef::Tuple(elems, _) if !elems.is_empty() => {
+                let mut elem_cs: Vec<String> = Vec::with_capacity(elems.len());
+                for e in elems {
+                    if let Some(c) = Self::apply_type_subst_to_ref(e, subst) {
+                        elem_cs.push(c);
+                        // Recurse into nested types — tuple of tuples,
+                        // Option[(T, U)], Array of tuples, etc.
+                        self.register_tuples_in_typeref(e, subst);
+                    } else {
+                        return; // Cannot fully resolve — abort registration.
+                    }
+                }
+                self.register_mono_tuple(&elem_cs);
+            }
+            TypeRef::Array(inner, _) => self.register_tuples_in_typeref(inner, subst),
+            TypeRef::Named { generics, .. } => {
+                for g in generics {
+                    self.register_tuples_in_typeref(g, subst);
+                }
+            }
+            _ => {}
+        }
+    }
+
     /// Plan 48: compute the monomorphized C name.
     /// compute_mono_name("nova_fn_within", [("T","nova_int")]) → "nova_fn_within____nova_int"
     fn compute_mono_name(base_c_name: &str, type_subst: &[(String, String)]) -> String {
@@ -5581,10 +5696,18 @@ impl CEmitter {
                 Some("nova_unit".to_string())
             }
             crate::ast::TypeRef::Tuple(elems, _) => {
-                // (A, B, ...) → erased as void* (tuple mono is not V1 scope).
-                // _NovaTupleN uses nova_int fields, can't hold nova_str directly.
-                let _ = elems;
-                None
+                // Plan 59: mono'd tuple struct. Compute element C types via
+                // recursive subst, then mangled struct name. Returns struct
+                // value type (без `*`) — stored direct в NovaOpt_<...>.value
+                // and other containers без heap boxing.
+                // Caller responsible для registering struct emit via
+                // mono_tuple_instances (use `register_tuples_in_typeref` helper).
+                let mut elem_cs: Vec<String> = Vec::with_capacity(elems.len());
+                for e in elems {
+                    let c = Self::apply_type_subst_to_ref(e, subst)?;
+                    elem_cs.push(c);
+                }
+                Some(Self::compute_mono_tuple_c_name(&elem_cs))
             }
             _ => None,
         }
@@ -8681,17 +8804,42 @@ impl CEmitter {
             }
 
             ExprKind::TupleLit(elems) => {
-                // Tuple literals: use pre-declared _NovaTupleN typedef (file-scope).
-                // All fields are nova_int, but we track element types so field access
-                // `pair.0` can cast back to the original type when it's a pointer.
-                // For nested tuple or struct elements, heap-allocate and store pointer as nova_int.
+                // Plan 59: prefer mono'd `_NovaTuple____<T1>__<T2>__...` struct
+                // когда все element types concrete (not generic placeholders).
+                // Real type storage — no nova_int slot erasure, no heap boxing
+                // для struct elements (nova_str fits directly).
+                // Legacy fallback на `_NovaTupleN` — для erased generic contexts.
                 let n = elems.len();
-                let struct_name = format!("_NovaTuple{}", n);
-                let mut vals: Vec<String> = Vec::new();
-                let mut elem_types: Vec<String> = Vec::new();
+                let mut emitted_vals: Vec<String> = Vec::new();
+                let mut emitted_types: Vec<String> = Vec::new();
+                let mut all_concrete = true;
                 for e in elems {
                     let ety = self.infer_expr_c_type(e);
                     let v = self.emit_expr(e)?;
+                    emitted_vals.push(v);
+                    emitted_types.push(ety.clone());
+                    // "void*" or empty type — too erased для mono.
+                    if ety.is_empty() || ety == "void*" {
+                        all_concrete = false;
+                    }
+                }
+                if all_concrete && !emitted_types.is_empty() {
+                    let mangled = self.register_mono_tuple(&emitted_types);
+                    let tmp = self.fresh_tmp();
+                    self.line(&format!("{} {};", mangled, tmp));
+                    for (i, v) in emitted_vals.iter().enumerate() {
+                        self.line(&format!("{}.f{} = {};", tmp, i, v));
+                    }
+                    return Ok(tmp);
+                }
+                // Legacy fallback _NovaTupleN.
+                let struct_name = format!("_NovaTuple{}", n);
+                let mut vals: Vec<String> = Vec::new();
+                let mut elem_types: Vec<String> = Vec::new();
+                for (i, e) in elems.iter().enumerate() {
+                    let ety = emitted_types[i].clone();
+                    let v = emitted_vals[i].clone();
+                    let _ = e;
                     // If element is a struct type, heap-allocate it and store pointer as nova_int
                     let needs_heap = ety.starts_with("_NovaTuple") || ety.starts_with("NovaOpt_")
                         || ety == "nova_str" || ety == "nova_unit";
@@ -12244,8 +12392,29 @@ impl CEmitter {
                                 &mono_call_name,
                                 &iter_struct,
                             );
-                            method_decl.return_type.as_ref()
-                                .and_then(|rt| Self::apply_type_subst_to_ref(rt, &subst_opt))
+                            // Plan 59: register mono'd tuples в return type
+                            // (tuple structs).
+                            if let Some(rt) = method_decl.return_type.as_ref() {
+                                self.register_tuples_in_typeref(rt, &subst_opt);
+                            }
+                            let raw = method_decl.return_type.as_ref()
+                                .and_then(|rt| Self::apply_type_subst_to_ref(rt, &subst_opt));
+                            // Plan 59: register NovaOpt typedef для mono'd tuple
+                            // payload (e.g. NovaOpt__NovaTuple____nova_str__nova_int).
+                            if let (Some(ref opt_ty), Some(rt)) = (raw.as_ref(), method_decl.return_type.as_ref()) {
+                                if let Some(inner) = opt_ty.strip_prefix("NovaOpt_") {
+                                    let sanitized = inner.to_string();
+                                    if let crate::ast::TypeRef::Named { path, generics, .. } = rt {
+                                        if path.last().map(|s| s.as_str()) == Some("Option")
+                                            && generics.len() == 1 {
+                                            if let Some(real_c) = Self::apply_type_subst_to_ref(&generics[0], &subst_opt) {
+                                                self.register_novaopt_decl(&sanitized, &real_c);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            raw
                         } else { None }
                     } else { None }
                 } else { None };
@@ -12318,6 +12487,9 @@ impl CEmitter {
                                             _ => None,
                                         };
                                         if let Some(tys) = elem_tys_opt {
+                                            // Plan 59: register mono'd tuple struct
+                                            // для emit + use в destructure.
+                                            self.register_mono_tuple(&tys);
                                             self.tuple_element_types.insert(binding.clone(), tys);
                                         }
                                     }
@@ -12325,7 +12497,21 @@ impl CEmitter {
                             }
                         }
                     }
-                    if elem_c_ty == format!("_NovaTuple{}", arity) {
+                    // Plan 59: prefer mono'd tuple struct если tuple element types
+                    // known AND contains non-trivial types (struct values like
+                    // nova_str которые не fit'ят в nova_int slots). Tuple stored
+                    // в NovaOpt_<mono_tuple_struct>.value напрямую — no boxing.
+                    let mono_tuple_struct: Option<String> = self.tuple_element_types
+                        .get(binding.as_str())
+                        .cloned()
+                        .map(|tys| Self::compute_mono_tuple_c_name(&tys));
+                    if let Some(ref mono_struct) = mono_tuple_struct {
+                        // opt_c_ty should be NovaOpt_<sanitized(mono_struct)>.
+                        // .value — direct mono'd tuple struct, no cast.
+                        self.line(&format!(
+                            "{} {} = {}.value;",
+                            mono_struct, binding, opt_tmp));
+                    } else if elem_c_ty == format!("_NovaTuple{}", arity) {
                         // Plan 14 Ф.1: NovaOpt_<_NovaTuple_N> хранит tuple
                         // как value напрямую (struct в struct). Direct
                         // copy через `_NovaTupleN binding = opt.value;`.
@@ -15331,7 +15517,26 @@ impl CEmitter {
             ExprKind::StrLit(_) => "nova_str".into(),
             ExprKind::InterpolatedStr { .. } => "nova_str".into(),
             ExprKind::UnitLit => "nova_unit".into(),
-            ExprKind::TupleLit(elems) => format!("_NovaTuple{}", elems.len()),
+            ExprKind::TupleLit(elems) => {
+                // Plan 59: prefer mono'd tuple struct если все element types
+                // concrete. Параллель с emit_expr::TupleLit decision.
+                let mut elem_cs: Vec<String> = Vec::with_capacity(elems.len());
+                let mut all_concrete = true;
+                for e in elems {
+                    let ety = self.infer_expr_c_type(e);
+                    if ety.is_empty() || ety == "void*" {
+                        all_concrete = false;
+                        break;
+                    }
+                    elem_cs.push(ety);
+                }
+                if all_concrete && !elem_cs.is_empty() {
+                    self.register_mono_tuple(&elem_cs);
+                    Self::compute_mono_tuple_c_name(&elem_cs)
+                } else {
+                    format!("_NovaTuple{}", elems.len())
+                }
+            }
             ExprKind::Binary { op, left, right } => match op {
                 BinOp::Eq | BinOp::Neq | BinOp::Lt | BinOp::Le
                 | BinOp::Gt | BinOp::Ge | BinOp::And | BinOp::Or
