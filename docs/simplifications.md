@@ -8259,3 +8259,36 @@ Remaining:
 - HTTP MCP: blocking single-threaded (sufficient ��� localhost)
 - Cache: per-file mtime only (no import-graph invalidation)
 - Stdlib: 56 modules undocumented (Plan 45.B = weeks)
+
+### Plan 56 follow-up: implicit Iter + tuple element types registration (2026-05-16)
+
+- emit_for Case 2 (implicit `.iter()`) — fallback на base type name
+  для mono'd types (HashMap____<K>__<V> → base HashMap для iter
+  lookup).
+- pattern_destructure_tuple — использует tuple_element_types map
+  вместо hardcoded nova_int.
+- emit_for tuple-in-iter — регистрирует tuple_element_types через
+  template + subst apply на mono'd iter's next() return type.
+
+### Plan 56 ✅ ОКОНЧАТЕЛЬНО ЗАКРЫТО — partial closure (2026-05-16)
+
+Stdlib unlocked (HashMap.@clone, @merge_from, @filter) — production-grade
+through Plan 56 array element type propagation fix (compute_field_array_
+elem_type + compute_array_elem_type_for_obj helpers, поддержка arbitrary
+depth obj.f1.f2.field[i]).
+
+Spec D110 documented. Vtable runtime infra (vtables.h) — готова для
+future full integration (Plan 03 cross-crate если потребуется).
+
+Idiomatic `for (k, v) in coll` (implicit Iter + tuple destructure)
+remains deferred — blocked by **bootstrap limitation** (tuples не
+monomorphized: `_NovaTupleN.f*` всегда `nova_int` slots, не fit'ит
+struct types like nova_str). Не Plan 56 scope — отдельный **Plan 59**.
+
+### Final session totals (Plan 55 + Plan 56)
+
+- baseline (pre-session): 509 PASS / 26 FAIL
+- post Plan 55: 557 PASS / 0 FAIL
+- post Plan 56 partial: **561 PASS / 0 FAIL** (+52 PASS / -26 FAIL total)
+- 5+ M-маркеров closed в Plan 56 alone
+- 3 новых плана созданы: 57 (perf bench), 58 (cross-toolchain), 59 (mono tuples)
