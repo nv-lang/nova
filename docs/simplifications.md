@@ -7758,3 +7758,58 @@ Plan 54 вЂ” codegen follow-ups РѕС‚ Plan 48/49 audit. Р—Р°РєСЂС‹С‚Рѕ 5 РёР· 8 it
 - Invalidate dependent modules когда impact'нутый file changed (требует import-graph).
 
 **Приоритет:** L — current performance acceptable; cache необходим только для very-large workspaces.
+
+---
+
+## Plan 45 Ф.30+Ф.31.1 simplifications (2026-05-16)
+
+### HTML output single-page (без multi-page split)
+
+**Где:** compiler-codegen/src/doc/render_html.rs::render.
+**Что упрощено:** Все modules в одном HTML file (с sidebar навигацией).
+Не разделяется на отдельные file-per-module (как rustdoc).
+**Почему:** MVP scope. Single-page достаточен для small-medium workspace.
+**Как чинить:** Ф.31.4 — multi-page output (один HTML per module).
+**Приоритет:** M — для large workspace (1000+ items) single-page становится
+heavy. Acceptable до тех пор.
+
+### HTML без JavaScript / search
+
+**Где:** ender_html.rs — pure HTML5 + CSS3.
+**Что упрощено:** No client-side search (lunr.js or similar). User должен
+использовать browser Ctrl-F для full-text search или 
+ova doc --format json | jq ....
+**Почему:** Search index требует additional dependency (lunr ~30KB) + JSON
+index file + JS runtime. MVP scope close.
+**Как чинить:** Ф.31.2 — generate search-index.json + bundle lunr.js (~600 LOC + tests).
+**Приоритет:** M — search — adoption-critical для discovering APIs.
+
+### HTML без dark mode toggle
+
+**Где:** ender_html.rs::EMBEDDED_CSS.
+**Что упрощено:** Только light theme (single CSS block).
+**Почему:** Theme switcher требует JS + state persistence + CSS variables.
+**Как чинить:** Ф.31.3 — CSS variables + media query prefers-color-scheme
+(no JS needed для system-default).
+**Приоритет:** L — dark mode nice-to-have, не блокирующее.
+
+### Intra-doc link rewrite через text substitute
+
+**Где:** ender_html.rs::rewrite_and_escape.
+**Что упрощено:** После HTML-escape делаем eplace(&lbrack;text&rbrack;,
+<a href...>...)). Не parses markdown structure.
+**Почему:** Markdown в doc-comments simple (mostly plain text с inline links).
+Full markdown parse требует pulldown-cmark или custom parser — ~300 LOC.
+**Как чинить:** Использовать markdown::split_sections + write CommonMark-aware
+escape/link rewriter.
+**Приоритет:** L — current works для 95% production cases.
+
+### External crate-doc URL template простой replace
+
+**Где:** links.rs::resolve_external_url.
+**Что упрощено:** 	emplate.replace("{path}", ...) — single placeholder.
+Не parameterized templates с multiple values, не URL encoding.
+**Почему:** YAGNI — текущий enough для typical cases.
+**Как чинить:** добавить {module}, {name}, {kind} placeholders когда
+нужно. URL encoding через urlencoding crate.
+**Приоритет:** L.

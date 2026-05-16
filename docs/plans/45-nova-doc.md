@@ -33,7 +33,7 @@
 | Ф.29 Cleanup sprint | ✅ done | 4 пункта — remove `render_expr_legacy` dead code (Ф.28.1 soak); precedence-aware parens (убрать redundant `()` в простых binary); drop-ensures mutator (currently только drop-requires); workspace mutation testing real-exec (single-file → multi-module) |
 | Ф.30.1 External crate-doc linking | ✅ done | `NOVA_DOC_EXTERN_LINKS` env (prefix=template;...) → JSON `links[].target_url` + MD external href |
 | Ф.30.2 Incremental cache | ⏳ deferred Plan 45.A round 2 | Mtime-based AST cache для `--watch` mode. Требует deep refactor watch loop + Module serialization story. Honest scope ~500 LOC + complex test infrastructure — отдельный sprint. Текущий `--watch` re-parses всё каждый mtime tick (~6ms для 50-module workspace = acceptable для interactive editing). |
-| **Ф.31.1 HTML output MVP** (in-progress) | 🟡 | Single-page HTML render (index.html + per-module sections); minimal CSS (light theme); без lunr search (Ф.31.2 follow-up) |
+| Ф.31.1 HTML output MVP | ✅ done | Single-page HTML render (index.html + per-module sections); embedded CSS (light theme, ~50 lines); XSS-safe (html_escape); badges (stability/deprecation/capability); ~370 LOC + 8 integration tests + 2 unit. Без lunr search (Ф.31.2 follow-up). |
 
 ## Ф.21 — Production hardening (2026-05-15, post-MVP audit)
 

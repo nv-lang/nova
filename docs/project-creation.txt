@@ -13191,3 +13191,50 @@ Plan 45 + 45.A foundation + Ф.29 cleanups = formally closed.
 - Ф.31: HTML output + lunr search (main adoption blocker)
 - Ф.32: MCP server для AI/LLM real-time queries
 - Plan 45.B: Stdlib full doc-pass
+
+=== Plan 45 Sprint Ф.30+Ф.31.1 — External links + HTML MVP (2026-05-16) ===
+
+3 items в одной сессии (после Ф.29 closure):
+
+**Ф.30.1 (a166019):** External crate-doc linking via env var.
+- New: NOVA_DOC_EXTERN_LINKS env var с format prefix=template;prefix=template
+- Example: std=https://docs.nova-lang.org/std/{path};myorg=https://myorg.dev/{path}
+- Resolution: если [std.io.println] не найдена в workspace и std есть в map —
+  emit 	arget_url: "https://docs.nova-lang.org/std/io.println".
+- JSON links[].target_url: Option<String> (alphabetical after target_id).
+- MD: [std.io.println](https://docs.nova-lang.org/std/io.println) (external link).
+- 6 integration tests serialized через ENV_MUTEX.
+
+**Ф.30.2 (81d71918):** Incremental cache — DEFERRED to Plan 45.A round 2.
+- Honest decision документирован в simplifications.md.
+- Real cache требует Module serialization + invalidation graph (~500 LOC + complex).
+- Current --watch re-parses всё каждый mtime tick (~6ms для 50-module workspace).
+- Acceptable performance для interactive editing — speedup критичен только
+  для very-large workspaces (1000+ files).
+
+**Ф.31.1 (1d430d8):** HTML output MVP — main adoption blocker closure.
+- Single-page HTML render с embedded CSS (~50 lines, light theme).
+- Layout: <nav class="sidebar"> (module index) + <main> (per-module sections).
+- Per-item: badges (stability/deprecation/capability) + <pre><code> signature
+  + summary + description + sections в canonical order.
+- XSS-safe: html_escape для всех user content (verified via test
+  html_escapes_user_content_xss_safe — <script>alert(1)</script> > escaped).
+- Intra-doc links rewritten к <a href="#anchor"> (или external URL если Ф.30.1).
+- CLI: 
+ova doc <file> --format html (also workspace mode).
+- 8 integration tests + 2 unit tests.
+
+**Что осталось из Plan 45 family:**
+- Ф.31.2 — lunr.js search index (для HTML search functionality)
+- Ф.31.3 — dark mode toggle
+- Ф.31.4 — multi-page output (один module = один file)
+- Ф.32 — MCP server для AI/LLM real-time queries
+- Plan 45.B — stdlib full doc-pass (~2-3 weeks)
+- Plan 16 follow-up — parser-side #allow_transit
+- Plan 42 follow-up — workspace handler matrix через FileRegistry
+- Plan 45.A round 2 — incremental cache (deferred Ф.30.2)
+
+**Plan 45 + 45.A foundation + Ф.29 cleanups + Ф.30 small wins + Ф.31.1 HTML MVP = closed.**
+
+HTML output теперь существует — Nova doc может producee реальный web-viewable
+output. Search и multi-page polish — Ф.31.2+ scope.
