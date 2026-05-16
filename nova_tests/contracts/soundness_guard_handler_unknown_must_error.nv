@@ -1,0 +1,25 @@
+// EXPECT_COMPILE_ERROR E2402
+//
+// Ф.1.4 soundness regression guard (Plan 33.6):
+// Handler с branching под #verify → E2402.
+// Если silent-skip вернётся — этот тест упадёт.
+
+module contracts.soundness_guard_handler_unknown_must_error
+
+type Store effect {
+    Set(v int)
+    #pure get() -> int
+    axiom after_set(v) => post(Set(v))(get()) == v
+}
+
+test "handler branching под #verify должен давать E2402" {
+    let mut s = 0
+    with #verify Store = handler Store {
+        Set(v) {
+            if v > 0 { s = v }  // branching — V1 не поддерживает
+        }
+        get() => s
+    } {
+        Store.Set(5)
+    }
+}

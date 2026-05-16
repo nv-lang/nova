@@ -1,0 +1,17 @@
+// Ф.1.1 (Plan 33.6): ghost-var доступен внутри другого ghost let — spec-позиция.
+// Цепочка ghost привязок: каждая следующая читает предыдущую — OK.
+
+module contracts.ghost_in_ghost_block_positive
+
+fn ghost_chain(x int) -> int {
+    ghost let a = x + 1
+    ghost let b = a * 2   // ghost читает ghost — OK
+    ghost let c = b + a   // OK
+    assert_static c > 0 || x <= -1
+    x
+}
+
+test "цепочка ghost let — OK" {
+    assert(ghost_chain(1) == 1)
+    assert(ghost_chain(10) == 10)
+}

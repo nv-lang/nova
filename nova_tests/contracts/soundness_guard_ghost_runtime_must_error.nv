@@ -1,0 +1,12 @@
+// EXPECT_COMPILE_ERROR ghost variable `g` cannot be read in non-ghost code
+//
+// Ф.1.4 soundness regression guard (Plan 33.6):
+// Ghost-var в runtime context → compile error.
+// Если ghost erasure сломается — этот тест упадёт.
+
+module contracts.soundness_guard_ghost_runtime_must_error
+
+fn bad_ghost_use(x int) -> int {
+    ghost let g = x * 2
+    g + 1  // ghost в non-ghost trailing expr → error
+}

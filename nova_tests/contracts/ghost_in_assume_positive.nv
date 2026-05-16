@@ -1,0 +1,14 @@
+// Ф.1.1 (Plan 33.6): ghost var в assume — spec position, OK.
+
+module contracts.ghost_in_assume_positive
+
+fn with_assume(x int) -> int {
+    ghost let g = x * 2
+    assume(g >= 0)  // assume — spec position, ghost OK
+    if x >= 0 { x } else { -x }
+}
+
+test "ghost в assume компилируется" {
+    assert(with_assume(4) == 4)
+    assert(with_assume(-2) == 2)
+}

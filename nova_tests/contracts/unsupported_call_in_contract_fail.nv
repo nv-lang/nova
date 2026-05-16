@@ -1,0 +1,11 @@
+// EXPECT_COMPILE_ERROR E2401
+//
+// Ф.1.2 (Plan 33.6): контракт с конструкцией не поддерживаемой SMT-encoder'ом,
+// без #unverified → compile error E2401.
+// Tuple literal в contract → encoder не поддерживает.
+
+module contracts.unsupported_call_in_contract_fail
+
+fn bad_contract(x int) -> int
+    requires (x, x + 1).0 > 0
+=> x

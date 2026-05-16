@@ -1,0 +1,11 @@
+// EXPECT_COMPILE_ERROR E2401
+//
+// Ф.1.4 soundness regression guard (Plan 33.6):
+// Контракт с неподдерживаемым expression без #unverified → E2401.
+// Если silent-fallback вернётся — этот тест упадёт.
+
+module contracts.soundness_guard_unsupported_must_error
+
+fn needs_encode(x int) -> int
+    requires (x, x + 1).0 >= 0
+=> x

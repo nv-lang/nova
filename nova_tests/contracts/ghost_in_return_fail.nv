@@ -1,0 +1,11 @@
+// EXPECT_COMPILE_ERROR ghost variable `g` cannot be read in non-ghost code
+//
+// Ф.1.1 (Plan 33.6): ghost var в trailing expr (return value) → error.
+// Trailing expr — runtime context, не spec.
+
+module contracts.ghost_in_return_fail
+
+fn bad_return(x int) -> int {
+    ghost let g = x + 1
+    g  // trailing expr = return value → runtime context → error
+}

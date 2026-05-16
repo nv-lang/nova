@@ -1,0 +1,21 @@
+// Ф.2.1 (Plan 33.6): handler_exec.rs выделен — verify_handlers вызывается корректно.
+// Тест проверяет что handler verification работает после рефакторинга.
+
+module contracts.handler_exec_split_positive
+
+type Store effect {
+    Set(v int)
+    #pure get() -> int
+    axiom after_set(v) => post(Set(v))(get()) == v
+}
+
+test "handler verification после handler_exec.rs split работает" {
+    let mut s = 0
+    with #trusted Store = handler Store {
+        Set(v) { s = v }
+        get() => s
+    } {
+        Store.Set(7)
+        assert(Store.get() == 7)
+    }
+}

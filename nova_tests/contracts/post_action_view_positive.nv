@@ -1,6 +1,8 @@
+// REQUIRES_SMT_BACKEND z3
 // Plan 33.5 Ф.6: post(Action)(view) symbolic exec V2.
 // Верификация аксиомы post(SetBalance(id, x))(balance(id)) == x.
 // Handler: SetBalance assigns store = amount; balance reads store.
+// TrivialBackend не может доказать x==x после symbolic rewrite — нужен Z3.
 
 module nova_tests.contracts.post_action_view_positive
 

@@ -4557,19 +4557,17 @@ Sub-plans 35.A-E:
 - **Приоритет:** M — без mut params в 33.1/33.2 это noop;
   обязательно для 33.2 SMT verify + 33.3.
 
-### [V5] Ghost state эмитится в codegen в debug (не «никогда»)
-- **Где:** `parser::parse_let_decl` (is_ghost field) + codegen.
-- **Что упрощено:** `ghost let x = ...` сейчас компилируется как
-  обычный `let` (значение вычисляется и хранится в runtime).
-  Dafny semantics — ghost никогда не emit'ится, даже в debug.
-- **Почему:** Реализация ghost-aware codegen требует filter'а
-  на каждом Stmt + проверки что non-ghost code не reads ghost
-  vars. Big change в emit_c.rs.
-- **Как чинить:** Plan 36 production hardening: ghost-elimination
-  pass в codegen + type-check rule «non-ghost code cannot read
-  ghost vars».
-- **Приоритет:** L — runtime overhead на пустом месте, но не
-  unsoundness. Plan 33.3 описывает это как требование Dafny-parity.
+### [ЗАКР 2026-05-16] Ghost erasure + ghost soundness — [V5]
+- **Закрыто (Plan 33.6 Ф.1.1, 2026-05-16, commit 85956feb):**
+  * `emit_c.rs:5841` — `if decl.is_ghost { return Ok(()); }` — ghost let никогда не
+    эмитится в C, даже в debug.
+  * `types/mod.rs:4667` — `check_ghost_usage` — compile error если ghost var используется
+    в non-ghost context (println, let RHS, арифметика).
+  * Ghost в spec-position (assert_static, assume, invariant, requires/ensures) — OK.
+  * Ghost chain (ghost reads ghost) — OK.
+  * Тесты: 5 новых тестов — 3 positive (assert_static, invariant, ghost chain),
+    2 negative (pass to println, runtime use).
+- **Дата закрытия:** 2026-05-16
 
 ### [ЗАКР 2026-05-14] pure_view + axiom + #verify/#trusted gate — [V6]
 - **Закрыто (Plan 33.3 Ф.9.1-9.6, 2026-05-14):**
@@ -4631,6 +4629,41 @@ Sub-plans 35.A-E:
   bit manipulation, intervals, pure functions, multivar, hash table,
   segment tree, graph BFS, memory safety. 115 PASS 0 FAIL.
   «Dafny-parity».
+
+### [V18] Z3 не default в CI — только TrivialBackend
+- **Где:** `compiler-codegen/src/verify/pipeline.rs`, `nova-cli/Cargo.toml`.
+- **Что упрощено:** Z3 backend (`--features z3-backend`) не включён в
+  стандартный `cargo test` / `nova test`. CI проверяет только TrivialBackend.
+  Z3 тесты запускаются вручную: `$env:NOVA_SMT_BACKEND="z3"` + `--features z3-backend`.
+- **Почему:** Z3 — нативная зависимость, требует vcpkg/cmake; добавляет ~30 сек
+  к каждому CI прогону. Большинство тестов не требуют полного SMT.
+- **Как чинить:** Plan 33.7 CI matrix: отдельный job `test-z3` с z3-backend
+  feature flag. Возможно через GitHub Actions `matrix.include`.
+- **Приоритет:** M — soundness пропусков нет (TrivialBackend честно Unknown),
+  но z3-specific тесты могут регрессировать незамеченно.
+
+### [V19] EncodingError::Unsupported не покрывает field/method/pattern
+- **Где:** `compiler-codegen/src/verify/encode.rs`, функция `encode_expr`.
+- **Что упрощено:** `EncodingError::Unsupported` генерируется для tuple expressions
+  и неизвестных ExprKind'ов, но field access (`obj.field`), method calls на non-pure
+  receivers, и pattern match в contract expressions дают `_ =>` fallback без
+  явного Unsupported — они молча становятся TrivialBackend limitation, а не E2401.
+- **Почему:** Каждый ExprKind требует отдельного case в encode_expr с явной
+  проверкой purity/encodability. Не было сделано при первоначальной реализации.
+- **Как чинить:** Plan 33.6 Ф.2.x: добавить exhaustive match в encode_expr,
+  каждый неподдерживаемый случай → `Err(EncodingError::Unsupported(...))`.
+- **Приоритет:** H — потенциальный soundness gap: контракт с field access может
+  silently skip вместо E2401.
+
+### [ЗАКР 2026-05-16] pipeline.rs монолит — handler code в отдельный модуль [Ф.2.1]
+- **Закрыто (Plan 33.6 Ф.2.1, 2026-05-16, commit ddc11f2e):**
+  * `compiler-codegen/src/verify/handler_exec.rs` — 689 строк handler verification:
+    `verify_handlers`, `verify_post_axiom_with_handler`, `verify_static_axiom_with_handler`,
+    `verify_liskov_method`, symbolic exec V2 helpers, collect_verify_bindings_*.
+  * `pipeline.rs`: 2952 → 2188 строк (было > 2700, цель выполнена).
+  * `verify/mod.rs`: `pub mod handler_exec` + реэкспорт `verify_handlers`.
+  * Вспомогательные функции — `pub(super)` для доступа между модулями.
+- **Дата закрытия:** 2026-05-16
 
 ### [ЗАКР 2026-05-15] `#verify` handler gate — P0-1 V1 — [V12]
 - **Закрыто (Plan 33.4 P0-1, 2026-05-15):**
@@ -6834,20 +6867,3 @@ mono-схему в `sum_schemas`. Fallback на `find_variant` при отсут
 
 - **std/collections: 10/10 PASS**
 - **nova_tests: 397 PASS / 44 FAIL / 13 SKIP**
-
-## Plan 45 Ф.24 simplifications (2026-05-16)
-
-- **#doc_inline parsing**: doc-attrs before `export import` required skip_newlines() after
-  parse_doc_attrs() in parse_module loop — without it, newline token broke lookahead.
-- **doc_semver_diff race**: parallel test threads writing to same old.json/new.json temp files
-  → fixed by per-thread dirs (pid + thread_id in path).
-- **ItemKind::ReExport**: re-exports are first-class DocItems in JSON (kind="reexport"),
-  not just links. Renderers decide inline vs link based on doc_inline field.
-- **infer_contracts**: textual assert() extraction sufficient for documentation purposes
-  (false positives = string literal match acceptable). No full parse needed.
-- **effect_matrix/realtime_matrix**: auto-derived from existing DocItem fields, zero AST cost.
-  Enables jq queries without knowledge of signature structure.
-- **scrape-examples word boundary**: verified `name(` check via prev-byte non-ident is
-  sufficient; `.foo(` correctly excluded by prev byte `.` being non-ident... wait, `.` is
-  non-ident so it would match. But method calls on external types are not in our DocItems
-  anyway, so false positives from `obj.foo(` are harmless.

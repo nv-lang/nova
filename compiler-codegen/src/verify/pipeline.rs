@@ -1,4 +1,4 @@
-﻿//! Plan 33.1 Р¤.3: Verification pipeline.
+//! Plan 33.1 Р¤.3: Verification pipeline.
 //!
 //! РђР»РіРѕСЂРёС‚Рј РґР»СЏ РєР°Р¶РґРѕР№ С„СѓРЅРєС†РёРё СЃ РєРѕРЅС‚СЂР°РєС‚Р°РјРё:
 //!
@@ -93,7 +93,7 @@ impl VerificationPipeline {
 
     /// РЎРѕР·РґР°С‚СЊ backend instance СЃРѕРіР»Р°СЃРЅРѕ РІС‹Р±РѕСЂСѓ. Falls back to trivial
     /// СЃ warning'РѕРј РµСЃР»Рё z3 РЅРµ compiled-in.
-    fn create_backend(&self) -> Box<dyn SmtBackend> {
+    pub(super) fn create_backend(&self) -> Box<dyn SmtBackend> {
         match self.backend {
             BackendChoice::Trivial => Box::new(TrivialBackend::new()),
             BackendChoice::Z3 => {
@@ -217,8 +217,10 @@ impl VerificationPipeline {
             }
         }
 
-        // 2. Encode requires в†’ assertions.
+        // 2. Encode requires -> assertions.
+        // Ф.1.2: если requires не encodable -> EncodingFailed для этого requires.
         let mut requires_failed = false;
+        let mut req_failures: Vec<(Span, VerifyResult)> = Vec::new();
         for c in &fd.contracts {
             if matches!(c.kind, ContractKind::Requires) {
                 match encode::encode_expr_with_ctx(&c.expr, &ctx) {
@@ -226,10 +228,11 @@ impl VerificationPipeline {
                         formula: t,
                         label: Some(format!("requires@{}", c.span.start)),
                     }),
-                    Err(_) => {
-                        // Р•СЃР»Рё requires РЅРµ encoded вЂ” РјС‹ РЅРµ РјРѕР¶РµРј РїСЂРѕРІРµСЂРёС‚СЊ
-                        // РЅРёРєР°РєРѕР№ ensures (РєРѕРЅС‚РµРєСЃС‚ РЅРµРїРѕР»РѕРЅ). Р’СЃРµ ensures в†’
-                        // EncodingFailed.
+                    Err(super::encode::EncodingError::Unsupported(msg)) => {
+                        // Ф.1.2: requires не encodable -> EncodingFailed с маркером E2401.
+                        // Префикс "[CONTRACT_UNSUPPORTED]" отличает от "body not encodable".
+                        req_failures.push((c.span, VerifyResult::EncodingFailed(
+                            format!("[CONTRACT_UNSUPPORTED] {}", msg))));
                         requires_failed = true;
                     }
                 }
@@ -316,7 +319,9 @@ impl VerificationPipeline {
         };
 
         // 4. Verify each ensures.
+        // Ф.1.2: включаем failures от requires encoding.
         let mut results = calc_step_results; // Ф.4.2: calc шаги добавляются первыми
+        results.extend(req_failures);
         for c in &fd.contracts {
             if !matches!(c.kind, ContractKind::Ensures) { continue; }
             if requires_failed {
@@ -327,7 +332,9 @@ impl VerificationPipeline {
             let encoded = match encode::encode_expr_with_ctx(&c.expr, &ctx) {
                 Ok(t) => t,
                 Err(super::encode::EncodingError::Unsupported(msg)) => {
-                    results.push((c.span, VerifyResult::EncodingFailed(msg)));
+                    // Ф.1.2: contract expr не encodable -> E2401 маркер.
+                    results.push((c.span, VerifyResult::EncodingFailed(
+                        format!("[CONTRACT_UNSUPPORTED] {}", msg))));
                     continue;
                 }
             };
@@ -374,7 +381,9 @@ impl VerificationPipeline {
             let encoded = match encode::encode_expr_with_ctx(&c.expr, &ctx) {
                 Ok(t) => t,
                 Err(super::encode::EncodingError::Unsupported(msg)) => {
-                    results.push((c.span, VerifyResult::EncodingFailed(msg)));
+                    // Ф.1.2: contract expr не encodable -> E2401 маркер.
+                    results.push((c.span, VerifyResult::EncodingFailed(
+                        format!("[CONTRACT_UNSUPPORTED] {}", msg))));
                     continue;
                 }
             };
@@ -635,7 +644,9 @@ impl VerificationPipeline {
             let encoded = match encode::encode_expr_with_ctx(&c.expr, &ctx) {
                 Ok(t) => t,
                 Err(super::encode::EncodingError::Unsupported(msg)) => {
-                    results.push((c.span, VerifyResult::EncodingFailed(msg)));
+                    // Ф.1.2: contract expr не encodable -> E2401 маркер.
+                    results.push((c.span, VerifyResult::EncodingFailed(
+                        format!("[CONTRACT_UNSUPPORTED] {}", msg))));
                     continue;
                 }
             };
@@ -665,7 +676,7 @@ impl VerificationPipeline {
 }
 
 /// Plan 33.3 Р¤.9: СЃРѕР±СЂР°С‚СЊ РІСЃРµ pure_view'С‹ РјРѕРґСѓР»СЏ РІ СЂРµРµСЃС‚СЂ.
-fn collect_pure_views(module: &Module) -> std::collections::HashMap<String, super::encode::PureViewSig> {
+pub(super) fn collect_pure_views(module: &Module) -> std::collections::HashMap<String, super::encode::PureViewSig> {
     use super::encode::PureViewSig;
     let mut out = std::collections::HashMap::new();
     for item in &module.items {
@@ -692,7 +703,7 @@ fn collect_pure_views(module: &Module) -> std::collections::HashMap<String, supe
 /// Plan 33.4 D.0.2: СЃРѕР±СЂР°С‚СЊ РІСЃРµ #pure fn'С‹ РјРѕРґСѓР»СЏ РІ СЂРµРµСЃС‚СЂ РґР»СЏ encoder'Р°.
 /// `inferred_pure` вЂ” РїСЂРµРґРІР°СЂРёС‚РµР»СЊРЅРѕ РІС‹С‡РёСЃР»РµРЅРЅС‹Р№ СЂРµР·СѓР»СЊС‚Р°С‚ SCC inference
 /// (РїРµСЂРµРґР°С‘С‚СЃСЏ СЃРЅР°СЂСѓР¶Рё С‡С‚РѕР±С‹ РЅРµ РїРµСЂРµСЃС‡РёС‚С‹РІР°С‚СЊ РЅР° РєР°Р¶РґСѓСЋ С„СѓРЅРєС†РёСЋ).
-fn collect_pure_fns(
+pub(super) fn collect_pure_fns(
     module: &Module,
     inferred_pure: &std::collections::HashSet<String>,
 ) -> std::collections::HashMap<String, encode::PureFnInfo> {
@@ -1700,14 +1711,12 @@ fn verify_loop_preservation(
 }
 
 /// Plan 33.3 Р¤.9 / Plan 33.4 P1-5: РјРµС‚Р°РґР°РЅРЅС‹Рµ РѕРґРЅРѕРіРѕ axiom'Р° СЃ СЂРµРµСЃС‚СЂР°РјРё РґР»СЏ encoding.
-struct AxiomInfo<'a> {
-    effect_name: String,
-    axiom_name: String,
-    /// Plan 33.4 P1-5: binders С‡РµСЂРµР· BinderDef (СЂР°Р·Р»РёС‡Р°РµРј Untyped/Typed/Generic).
-    binders: &'a [crate::ast::BinderDef],
-    formula: &'a crate::ast::Expr,
-    /// Generic params (V2 вЂ” СЃРµР№С‡Р°СЃ С‚РѕР»СЊРєРѕ РґР»СЏ РїСЂРѕРІРµСЂРєРё РЅР°Р»РёС‡РёСЏ).
-    is_generic: bool,
+pub(super) struct AxiomInfo<'a> {
+    pub(super) effect_name: String,
+    pub(super) axiom_name: String,
+    pub(super) binders: &'a [crate::ast::BinderDef],
+    pub(super) formula: &'a crate::ast::Expr,
+    pub(super) is_generic: bool,
 }
 
 /// Plan 33.3 Р¤.9: СЃРѕР±СЂР°С‚СЊ РІСЃРµ axiom'С‹ РјРѕРґСѓР»СЏ.
@@ -1750,7 +1759,7 @@ fn type_ref_to_sort(ty: &crate::ast::TypeRef) -> SortRef {
     SortRef::Int
 }
 
-fn encode_axiom(
+pub(super) fn encode_axiom(
     ax: &AxiomInfo,
     pure_views: &std::collections::HashMap<String, super::encode::PureViewSig>,
 ) -> Option<SmtTerm> {
@@ -1788,7 +1797,7 @@ fn encode_axiom(
 
 /// Walks `formula` Рё РґР»СЏ РєР°Р¶РґРѕР№ СЃСЃС‹Р»РєРё РЅР° binder РІ pure_view-arg
 /// Р·Р°РїРёСЃС‹РІР°РµС‚ sort РїР°СЂР°РјРµС‚СЂР° РІ `out`.
-fn infer_binder_sorts(
+pub(super) fn infer_binder_sorts(
     e: &crate::ast::Expr,
     binders: &[String],
     pure_views: &std::collections::HashMap<String, super::encode::PureViewSig>,
@@ -1939,11 +1948,10 @@ pub fn check_axiom_consistency(module: &Module) -> Vec<Diagnostic> {
     diagnostics
 }
 
-/// Substitute `_old_<x>` в†’ `<x>` (33.1: no mut, snapshot trivial).
-fn substitute_old(t: &SmtTerm) -> SmtTerm {
+/// Substitute `_old_<x>` → `<x>` (33.1: no mut, snapshot trivial).
+pub(super) fn substitute_old(t: &SmtTerm) -> SmtTerm {
     match t {
         SmtTerm::Var(n) if n.starts_with("_old_") => {
-            // strip `_old_` prefix
             SmtTerm::Var(n.strip_prefix("_old_").unwrap().to_string())
         }
         SmtTerm::App(op, args) => SmtTerm::App(
@@ -1954,7 +1962,7 @@ fn substitute_old(t: &SmtTerm) -> SmtTerm {
     }
 }
 
-fn type_to_sort(ty: &TypeRef) -> SortRef {
+pub(super) fn type_to_sort(ty: &TypeRef) -> SortRef {
     match ty {
         TypeRef::Named { path, .. } if path.len() == 1 => match path[0].as_str() {
             "int" | "i32" | "i64" | "money" | "nat" => SortRef::Int,
@@ -1968,13 +1976,10 @@ fn type_to_sort(ty: &TypeRef) -> SortRef {
     }
 }
 
-fn format_counterexample(model: &Model) -> String {
+pub(super) fn format_counterexample(model: &Model) -> String {
     if model.bindings.is_empty() {
-        // Plan 33.3 Р¤.9.10: AI-friendly hint РєРѕРіРґР° РјРѕРґРµР»СЊ РїСѓСЃС‚Р°
-        // (TrivialBackend С‡Р°СЃС‚Рѕ СЌС‚Сѓ РґРѕСЂРѕРіСѓ вЂ” РєРѕРЅРєСЂРµС‚РЅС‹Рµ Р·РЅР°С‡РµРЅРёСЏ РЅРµ
-        // РІС‹С‡РёСЃР»СЏРµС‚, С‚РѕР»СЊРєРѕ symbolic disprove).
         return "values not extracted (TrivialBackend); enable Z3 \
-                backend РґР»СЏ full counterexample".into();
+                backend for full counterexample".into();
     }
     let mut parts = Vec::new();
     for (name, val) in &model.bindings {
@@ -1989,775 +1994,33 @@ fn format_counterexample(model: &Model) -> String {
     parts.join(", ")
 }
 
-/// Plan 33.3 Р¤.9.10: AI-friendly hint РїСЂРё unknown verify-result.
-/// РљР°С‚РµРіРѕСЂРёР·РёСЂСѓРµС‚ РїСЂРёС‡РёРЅСѓ (timeout, nonlinear, unsupported theory) +
-/// РїСЂРµРґР»Р°РіР°РµС‚ actions.
-fn unknown_to_diag_message(reason: UnknownReason) -> String {
+pub(super) fn unknown_to_diag_message(reason: UnknownReason) -> String {
     match reason {
         UnknownReason::Timeout => {
             "SMT solver hit timeout. \
              Suggestions: (1) simplify the contract into smaller steps via \
              intermediate `assert_static`; (2) increase `#verify_timeout(N)`; \
-             (3) mark `#unverified` if РїСЂРѕРІРµСЂРєР° intentionally СЃР»РѕР¶РЅР°.".into()
+             (3) mark `#unverified` if verification is intentionally complex.".into()
         }
         UnknownReason::NonLinearArithmetic => {
             "non-linear arithmetic in contract (e.g. `x * y`, `x / y`). \
              Trivial backend supports only LIA; Z3 backend can handle non-linear \
-             С‡РµСЂРµР· NIA. Suggestions: (1) rewrite РІ linear form С‡РµСЂРµР· intermediate \
-             variables; (2) wait РґР»СЏ Z3 backend; (3) `#unverified`.".into()
+             via NIA. Suggestions: (1) rewrite in linear form via intermediate \
+             variables; (2) wait for Z3 backend; (3) `#unverified`.".into()
         }
         UnknownReason::UnsupportedTheory(s) => {
-            format!("unsupported SMT theory: {}. Suggestion: rewrite РІ supported \
-                     theory (LIA/EUF/arrays) РёР»Рё mark `#unverified`.", s)
+            format!("unsupported SMT theory: {}. Suggestion: rewrite in supported \
+                     theory (LIA/EUF/arrays) or mark `#unverified`.", s)
         }
         UnknownReason::BackendError(s) => {
-            format!("SMT backend internal error: {}. Р­С‚Рѕ bug вЂ” please report.", s)
+            format!("SMT backend internal error: {}. This is a bug — please report.", s)
         }
         UnknownReason::NotAttempted(s) => {
-            format!("{}\n  AI-friendly hint: РєРѕРЅС‚СЂР°РєС‚ Р·Р° РїСЂРµРґРµР»Р°РјРё TrivialBackend \
-                     capabilities (С‚РѕР»СЊРєРѕ reflexive ensures, constant folding, \
-                     impl-shortcuts). Add intermediate `assert_static`, РёР»Рё \
-                     mark `#unverified`, РёР»Рё wait РґР»СЏ Z3 backend.", s)
+            format!("{}\n  AI-friendly hint: contract is beyond TrivialBackend \
+                     capabilities (only reflexive ensures, constant folding, \
+                     impl-shortcuts). Add intermediate `assert_static`, or \
+                     mark `#unverified`, or wait for Z3 backend.", s)
         }
-    }
-}
-
-/// Plan 33.4 P0-1 (Р¤.9.7 V1): РІРµСЂРёС„РёРєР°С†РёСЏ `with #verify E = handler` bindings.
-///
-/// V1 scope:
-/// - РўРѕР»СЊРєРѕ СЃС‚Р°С‚РёС‡РµСЃРєРёРµ axiom'С‹ (Р±РµР· `post(Action)` вЂ” С‚Рµ С‚СЂРµР±СѓСЋС‚ V2 symbolic exec).
-/// - Р”Р»СЏ СЃС‚Р°С‚РёС‡РµСЃРєРёС… axioms: РєРѕРґРёСЂСѓРµРј pure_view impl handler'Р° РєР°Рє UF СЃ body-axiom,
-///   Р·Р°С‚РµРј РїС‹С‚Р°РµРјСЃСЏ РґРѕРєР°Р·Р°С‚СЊ axiom С„РѕСЂРјСѓР»Сѓ РІ СЌС‚РѕРј РєРѕРЅС‚РµРєСЃС‚Рµ.
-/// - Р”Р»СЏ `post(...)` axioms: С‡РµСЃС‚РЅРѕ РІС‹РґР°С‘Рј Unknown("post-axiom verification requires V2").
-///
-/// Р’РѕР·РІСЂР°С‰Р°РµС‚ СЃРїРёСЃРѕРє РґРёР°РіРЅРѕСЃС‚РёРє (РѕС€РёР±РєРё РµСЃР»Рё `#verify` РЅРµ СЃРјРѕРі РґРѕРєР°Р·Р°С‚СЊ).
-pub fn verify_handlers(module: &Module) -> Vec<Diagnostic> {
-    let mut diagnostics = Vec::new();
-    let pure_views = collect_pure_views(module);
-
-    // РЎРѕР±РёСЂР°РµРј axioms РїРѕ effect-name РґР»СЏ Р±С‹СЃС‚СЂРѕРіРѕ lookup.
-    let mut axioms_by_effect: std::collections::HashMap<String, &[crate::ast::EffectAxiom]>
-        = std::collections::HashMap::new();
-    for item in &module.items {
-        let Item::Type(td) = item else { continue };
-        if !matches!(td.kind, TypeDeclKind::Effect(_)) { continue }
-        if !td.axioms.is_empty() {
-            axioms_by_effect.insert(td.name.clone(), &td.axioms);
-        }
-    }
-    // Не делаем early-return по axioms_by_effect.is_empty():
-    // verify_bindings могут содержать handler'ы с Liskov-контрактами (Ф.5.2),
-    // которые нужно проверить независимо от наличия axiom-аннотаций на эффектах.
-
-    // РЎРѕР±РёСЂР°РµРј РІСЃРµ `with #verify E = handler` bindings РёР· РІСЃРµС… С„СѓРЅРєС†РёР№/С‚РµСЃС‚РѕРІ.
-    let mut verify_bindings: Vec<(String, Span, &crate::ast::Expr)> = Vec::new(); // (effect_name, binding_span, handler_expr)
-    for item in &module.items {
-        match item {
-            Item::Fn(fd) => match &fd.body {
-                FnBody::Block(b) => collect_verify_bindings_block(b, &mut verify_bindings),
-                FnBody::Expr(e) => collect_verify_bindings_expr(e, &mut verify_bindings),
-                FnBody::External => {}
-            }
-            Item::Test(t) => collect_verify_bindings_block(&t.body, &mut verify_bindings),
-            _ => {}
-        }
-    }
-
-    let pipeline = VerificationPipeline::new();
-    // Р¤.3: РІС‹С‡РёСЃР»СЏРµРј РѕРґРёРЅ СЂР°Р· РґР»СЏ РІСЃРµРіРѕ verify_handlers РїСЂРѕС…РѕРґР°.
-    let inferred_pure = infer_pure_fns_scc(module);
-
-    for (effect_name, binding_span, handler_expr) in verify_bindings {
-
-        // РР·РІР»РµРєР°РµРј HandlerLit methods.
-        let methods = match &handler_expr.kind {
-            ExprKind::HandlerLit { methods, .. } => methods,
-            _ => continue, // non-literal handler вЂ” V2
-        };
-
-        if let Some(axioms) = axioms_by_effect.get(&effect_name) {
-        for ax in axioms.iter() {
-            let ax_info = AxiomInfo {
-                effect_name: effect_name.clone(),
-                axiom_name: ax.name.clone(),
-                binders: &ax.binders,
-                formula: &ax.formula,
-                is_generic: !ax.generics.is_empty(),
-            };
-
-            // Ф.6: если axiom содержит `post(` — используем symbolic exec V2.
-            if axiom_formula_has_post(&ax.formula) {
-                let result = verify_post_axiom_with_handler(
-                    &pipeline, &ax_info, &pure_views, methods, &effect_name, module, &inferred_pure,
-                );
-                match result {
-                    VerifyResult::Proven => {
-                        // post-axiom verified via symbolic execution.
-                    }
-                    VerifyResult::Disproved(_, cex) => {
-                        diagnostics.push(Diagnostic::new(
-                            format!(
-                                concat!(
-                                    "#verify handler for effect {}: ",
-                                    "post-axiom {} is NOT satisfied.
-  ",
-                                    "counterexample: {}
-  ",
-                                    "suggestion: fix handler action or view."
-                                ),
-                                effect_name, ax.name, cex,
-                            ),
-                            binding_span,
-                        ));
-                    }
-                    VerifyResult::Unknown(_reason) => {
-                        // Cannot verify this post-axiom - silent skip (not an error).
-                        let _ = _reason;
-                    }
-                    VerifyResult::EncodingFailed(_) => {
-                        // Encoding failed — silent skip.
-                    }
-                }
-                continue;
-            }
-
-            // Static axiom: РїСЂРѕР±СѓРµРј РґРѕРєР°Р·Р°С‚СЊ СЃ СѓС‡С‘С‚РѕРј pure_view impl handler'Р°.
-            let result = verify_static_axiom_with_handler(
-                &pipeline, &ax_info, &pure_views, methods, &effect_name, module, &inferred_pure,
-            );
-
-            match result {
-                VerifyResult::Proven => {
-                    // РћС‚Р»РёС‡РЅРѕ вЂ” axiom РґРѕРєР°Р·Р°РЅ С‡РµСЂРµР· handler body.
-                }
-                VerifyResult::Disproved(_, cex) => {
-                    diagnostics.push(Diagnostic::new(
-                        format!(
-                            "`#verify` handler for effect `{}`: axiom `{}` is NOT satisfied.\n  \
-                             counterexample: {}\n  \
-                             suggestion: fix handler's pure_view implementation or weaken axiom.",
-                            effect_name, ax.name, cex,
-                        ),
-                        binding_span,
-                    ));
-                }
-                VerifyResult::Unknown(reason) => {
-                    // Unknown вЂ” handler body analysis РІРЅРµ V1 scope.
-                    // РќРµ error: С‡РµСЃС‚РЅРѕ СЃРѕРѕР±С‰Р°РµРј С‡С‚Рѕ V1 РЅРµ РјРѕР¶РµС‚ РїСЂРѕРІРµСЂРёС‚СЊ.
-                    // Р§С‚РѕР±С‹ #verify РЅРµ Р±С‹Р»Рѕ С‚РёС…РёРј вЂ” РґРѕР±Р°РІР»СЏРµРј as warning
-                    // (С‡РµСЂРµР· warnings field report'Р°, РєРѕС‚РѕСЂС‹Р№ caller РґРѕР±Р°РІРёС‚).
-                    // Р”Р»СЏ РїСЂРѕСЃС‚РѕС‚С‹: РїСѓС€РёРј РєР°Рє error С‚РѕР»СЊРєРѕ РµСЃР»Рё axiom РЅРµ trivial
-                    // вЂ” РЅРѕ V1 РЅРµ distinguishes, РїРѕСЌС‚РѕРјСѓ: silent Unknown.
-                    let _ = (reason, binding_span);
-                }
-                VerifyResult::EncodingFailed(_) => {
-                    // Axiom РЅРµ encodable вЂ” silent skip.
-                }
-            }
-        }
-        }
-
-        // Ф.5.2: Liskov-верификация — handler.m реализует effect.m.contracts.
-        // Для каждого метода в handler: если effect-метод имеет contracts,
-        // проверяем что impl удовлетворяет ensures при requires.
-        let effect_methods_with_contracts = collect_effect_method_contracts(module, &effect_name);
-        for (em_name, em_params, em_contracts) in &effect_methods_with_contracts {
-            if em_contracts.is_empty() { continue; }
-            // Найти реализацию в handler.
-            let Some(handler_method) = methods.iter().find(|m| m.name == *em_name) else { continue };
-            // Попытаться верифицировать.
-            let diags = verify_liskov_method(
-                &pipeline, em_name, em_params, em_contracts,
-                handler_method, &pure_views, module, &inferred_pure,
-                binding_span,
-            );
-            diagnostics.extend(diags);
-        }
-    }
-
-    diagnostics
-}
-
-/// Ф.5.2: собрать effect-методы с контрактами для данного effect-типа.
-/// Возвращает Vec<(method_name, params, contracts)>.
-fn collect_effect_method_contracts(
-    module: &Module,
-    effect_name: &str,
-) -> Vec<(String, Vec<Param>, Vec<Contract>)> {
-    for item in &module.items {
-        let Item::Type(td) = item else { continue };
-        if td.name != effect_name { continue; }
-        let TypeDeclKind::Effect(methods) = &td.kind else { continue };
-        return methods.iter()
-            .filter(|m| !m.contracts.is_empty())
-            .map(|m| (m.name.clone(), m.params.clone(), m.contracts.clone()))
-            .collect();
-    }
-    Vec::new()
-}
-
-/// Ф.5.2: Liskov-верификация одного handler-метода.
-///
-/// Алгоритм (V1 scope — только expr/block-trailing body):
-/// 1. Declare effect-метода параметры как SMT vars.
-/// 2. Assert effect.m.requires.
-/// 3. Encode handler body (expr или trailing).
-/// 4. Для каждого effect.m.ensures: substitute result → body, try_prove.
-fn verify_liskov_method(
-    pipeline: &VerificationPipeline,
-    method_name: &str,
-    effect_params: &[Param],
-    effect_contracts: &[Contract],
-    handler_method: &crate::ast::HandlerMethod,
-    pure_views: &std::collections::HashMap<String, super::encode::PureViewSig>,
-    module: &Module,
-    inferred_pure: &std::collections::HashSet<String>,
-    binding_span: Span,
-) -> Vec<Diagnostic> {
-    let mut diagnostics = Vec::new();
-    let pure_fns = collect_pure_fns(module, inferred_pure);
-    let var_sorts: std::collections::HashMap<String, SortRef> = effect_params.iter()
-        .map(|p| (p.name.clone(), type_to_sort(&p.ty))).collect();
-    let ctx = super::encode::EncodeCtx { pure_views, pure_fns: &pure_fns, var_sorts };
-    let mut backend = pipeline.create_backend();
-
-    // Pre-declare pure_view UFs и pure_fn UFs.
-    for (op_name, sig) in pure_views {
-        let uf = super::encode::pure_view_uf_name(&sig.effect_name, op_name);
-        backend.declare_function(&uf, &sig.param_sorts, sig.return_sort.clone());
-    }
-    for (fn_name, info) in &pure_fns {
-        let uf = super::encode::pure_fn_uf_name(fn_name);
-        backend.declare_function(&uf, &info.param_sorts, info.return_sort.clone());
-    }
-
-    // Declare effect-параметры (как в verify_fn).
-    for p in effect_params {
-        backend.declare_var(&p.name, type_to_sort(&p.ty));
-    }
-
-    // Assert requires.
-    let mut requires_failed = false;
-    for c in effect_contracts {
-        if !matches!(c.kind, ContractKind::Requires) { continue; }
-        match encode::encode_expr_with_ctx(&c.expr, &ctx) {
-            Ok(t) => backend.assert(Assertion {
-                formula: t,
-                label: Some(format!("liskov_requires@{}", c.span.start)),
-            }),
-            Err(_) => { requires_failed = true; }
-        }
-    }
-
-    // Encode handler body.
-    let body_val = match &handler_method.body {
-        crate::ast::HandlerMethodBody::Expr(e) => encode::encode_expr_with_ctx(e, &ctx).ok(),
-        crate::ast::HandlerMethodBody::Block(b) if b.stmts.is_empty() => {
-            b.trailing.as_ref().and_then(|e| encode::encode_expr_with_ctx(e, &ctx).ok())
-        }
-        _ => None,
-    };
-
-    // Verify each ensures clause.
-    for c in effect_contracts {
-        if !matches!(c.kind, ContractKind::Ensures) { continue; }
-        if requires_failed {
-            // Тихий skip — requires не encodable, не можем проверить.
-            continue;
-        }
-        let encoded = match encode::encode_expr_with_ctx(&c.expr, &ctx) {
-            Ok(t) => t,
-            Err(_) => continue, // Not encodable — skip.
-        };
-        let goal = if let Some(bv) = &body_val {
-            encoded.substitute("result", bv)
-        } else {
-            // Body не encodable — silent skip (V1 ограничение).
-            continue;
-        };
-        let goal = substitute_old(&goal);
-        match try_prove(&mut *backend, goal) {
-            SatResult::Unsat(_) => {
-                // Proven — Liskov выполнен для этого ensures.
-            }
-            SatResult::Sat(model) => {
-                let cex = format_counterexample(&model);
-                diagnostics.push(Diagnostic::new(
-                    format!(
-                        "`#verify` handler method `{}` нарушает контракт эффекта:\n  \
-                         counterexample: {}\n  \
-                         Liskov: handler.{} должен удовлетворять ensures эффекта при его requires.",
-                        method_name, cex, method_name,
-                    ),
-                    binding_span,
-                ));
-            }
-            SatResult::Unknown(_) => {
-                // Unknown — silent skip (V1, не ошибка).
-            }
-        }
-    }
-
-    diagnostics
-}
-
-/// РџСЂРѕРІРµСЂРёС‚СЊ РѕРґРёРЅ СЃС‚Р°С‚РёС‡РµСЃРєРёР№ axiom СЃ СѓС‡С’С‚РѕРј pure_view impl handler’Р°.
-///
-/// РђР»РіРѕСЂРёС‚Рј:
-/// 1. РЎРѕР·РґР°С‚СЊ fresh backend.
-/// 2. Declare pure_view UFs РјРѕРґСѓР»СЏ.
-/// 3. Р”Р»СЏ РєР°Р¶РґРѕРіРѕ pure_view РјРµС‚РѕРґР° handler'Р°: РµСЃР»Рё body encodable в†’
-///    assert `forall params. _view_E_name(params) == handler_method_body`.
-/// 4. Encode axiom formula РєР°Рє Forall-assertion.
-/// 5. try_prove(axiom).
-fn verify_static_axiom_with_handler(
-    pipeline: &VerificationPipeline,
-    ax: &AxiomInfo,
-    pure_views: &std::collections::HashMap<String, super::encode::PureViewSig>,
-    methods: &[crate::ast::HandlerMethod],
-    effect_name: &str,
-    module: &Module,
-    inferred_pure: &std::collections::HashSet<String>,
-) -> VerifyResult {
-    let pure_fns = collect_pure_fns(module, inferred_pure);
-    let ctx = super::encode::EncodeCtx { pure_views, pure_fns: &pure_fns, var_sorts: std::collections::HashMap::new() };
-
-    let mut backend = pipeline.create_backend();
-
-    // Pre-declare РІСЃРµ pure_view UFs.
-    for (op_name, sig) in pure_views {
-        let uf = super::encode::pure_view_uf_name(&sig.effect_name, op_name);
-        backend.declare_function(&uf, &sig.param_sorts, sig.return_sort.clone());
-    }
-
-    // Р”Р»СЏ РєР°Р¶РґРѕРіРѕ pure_view РјРµС‚РѕРґР° СЌС‚РѕРіРѕ handler'Р°: emit body axiom.
-    // Р­С‚Рѕ РїРѕР·РІРѕР»СЏРµС‚ SMT Р·РЅР°С‚СЊ С‡С‚Рѕ `_view_E_name(params) == handler_body_expr`.
-    for method in methods {
-        let Some(sig) = pure_views.get(&method.name) else { continue };
-        if sig.effect_name != effect_name { continue }
-
-        // РР·РІР»РµРєР°РµРј body: С‚РѕР»СЊРєРѕ `=> expr` С„РѕСЂРјР° РІ V1.
-        let body_expr = match &method.body {
-            crate::ast::HandlerMethodBody::Expr(e) => e,
-            crate::ast::HandlerMethodBody::Block(_) => continue, // block-body вЂ” V2
-        };
-
-        // Encode body. РџРµСЂРµРјРµРЅРЅС‹Рµ вЂ” РёРјРµРЅР° param'РѕРІ РјРµС‚РѕРґР°.
-        if let Ok(body_term) = encode::encode_expr_with_ctx(body_expr, &ctx) {
-            // РџР°СЂР°РјРµС‚СЂС‹ РјРµС‚РѕРґР°.
-            let param_names: Vec<String> = method.params.iter()
-                .map(|p| p.name.clone())
-                .collect();
-            let param_args: Vec<SmtTerm> = param_names.iter()
-                .map(|n| SmtTerm::Var(n.clone()))
-                .collect();
-
-            let uf_name = super::encode::pure_view_uf_name(effect_name, &method.name);
-            let uf_app = SmtTerm::App(uf_name, param_args);
-            let eq_body = SmtTerm::eq(uf_app, body_term);
-
-            let binders: Vec<(String, SortRef)> = param_names.iter()
-                .zip(sig.param_sorts.iter())
-                .map(|(n, s)| (n.clone(), s.clone()))
-                .collect();
-            let handler_axiom = if binders.is_empty() {
-                eq_body
-            } else {
-                SmtTerm::Forall(binders, vec![], Box::new(eq_body))
-            };
-
-            backend.assert(Assertion {
-                formula: handler_axiom,
-                label: Some(format!("handler_body@{}.{}", effect_name, method.name)),
-            });
-        }
-    }
-
-    // Encode axiom formula.
-    let Some(ax_formula) = encode_axiom(ax, pure_views) else {
-        return VerifyResult::Unknown("axiom not encodable (generic or unsupported)".into());
-    };
-
-    // try_prove(axiom_formula).
-    match try_prove(&mut *backend, ax_formula) {
-        SatResult::Unsat(_) => VerifyResult::Proven,
-        SatResult::Sat(model) => {
-            let cex = format_counterexample(&model);
-            VerifyResult::Disproved(model, cex)
-        }
-        SatResult::Unknown(reason) => {
-            VerifyResult::Unknown(unknown_to_diag_message(reason))
-        }
-    }
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Ф.6: post(Action(args))(view(args)) symbolic exec V2
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// Substitute all occurrences of `name` (as `ExprKind::Ident`) with
-/// `replacement` in the given expression tree (AST-level substitution).
-fn subst_ident_in_expr(
-    expr: &crate::ast::Expr,
-    name: &str,
-    replacement: &crate::ast::Expr,
-) -> crate::ast::Expr {
-    use crate::ast::ExprKind::*;
-    let new_kind = match &expr.kind {
-        Ident(n) if n == name => return replacement.clone(),
-        Binary { op, left, right } => Binary {
-            op: op.clone(),
-            left: Box::new(subst_ident_in_expr(left, name, replacement)),
-            right: Box::new(subst_ident_in_expr(right, name, replacement)),
-        },
-        Unary { op, operand } => Unary {
-            op: op.clone(),
-            operand: Box::new(subst_ident_in_expr(operand, name, replacement)),
-        },
-        Call { func, args, trailing } => Call {
-            func: Box::new(subst_ident_in_expr(func, name, replacement)),
-            args: args.iter().map(|a| subst_call_arg(a, name, replacement)).collect(),
-            trailing: trailing.clone(),
-        },
-        Member { obj, name: field } => Member {
-            obj: Box::new(subst_ident_in_expr(obj, name, replacement)),
-            name: field.clone(),
-        },
-        Index { obj, index } => Index {
-            obj: Box::new(subst_ident_in_expr(obj, name, replacement)),
-            index: Box::new(subst_ident_in_expr(index, name, replacement)),
-        },
-        // Everything else (literals, other idents, etc.) — clone as-is.
-        _ => return expr.clone(),
-    };
-    crate::ast::Expr { kind: new_kind, span: expr.span }
-}
-
-fn subst_call_arg(
-    arg: &crate::ast::CallArg,
-    name: &str,
-    replacement: &crate::ast::Expr,
-) -> crate::ast::CallArg {
-    match arg {
-        crate::ast::CallArg::Item(e) =>
-            crate::ast::CallArg::Item(subst_ident_in_expr(e, name, replacement)),
-        crate::ast::CallArg::Spread(e) =>
-            crate::ast::CallArg::Spread(subst_ident_in_expr(e, name, replacement)),
-        crate::ast::CallArg::Named { name: n, value } =>
-            crate::ast::CallArg::Named {
-                name: n.clone(),
-                value: subst_ident_in_expr(value, name, replacement),
-            },
-    }
-}
-
-/// Extract `(var_name, value_expr)` pairs from simple `Assign` stmts in block.
-/// Only `target = value` where target is a bare Ident. Other stmts are ignored.
-fn extract_block_assignments(block: &crate::ast::Block) -> Vec<(String, crate::ast::Expr)> {
-    let mut result = Vec::new();
-    for stmt in &block.stmts {
-        if let crate::ast::Stmt::Assign { target, value, .. } = stmt {
-            if let crate::ast::ExprKind::Ident(var) = &target.kind {
-                result.push((var.clone(), value.clone()));
-            }
-        }
-    }
-    result
-}
-
-/// Parse `post(ActionCall)(viewCall)` from a `Call` expression.
-/// Returns `(action_func_name, action_args, view_func_name, view_args)` or None.
-fn parse_post_call(
-    expr: &crate::ast::Expr,
-) -> Option<(String, Vec<crate::ast::Expr>, String, Vec<crate::ast::Expr>)> {
-    use crate::ast::ExprKind::*;
-    // Outer: post_with_action(view_args)
-    let Call { func: outer_func, args: view_args, .. } = &expr.kind else { return None };
-    // Inner func: post(action_call) — this is the "curried" result
-    let Call { func: post_ident, args: action_wrap_args, .. } = &outer_func.kind else { return None };
-    // post_ident must be Ident("post")
-    let Ident(post_name) = &post_ident.kind else { return None };
-    if post_name != "post" { return None; }
-    // action_wrap_args must be exactly 1
-    if action_wrap_args.len() != 1 { return None; }
-    let action_call_expr = action_wrap_args[0].expr();
-    // action_call_expr: ActionName(a1..an)
-    let Call { func: action_func, args: action_args, .. } = &action_call_expr.kind else { return None };
-    let Ident(action_name) = &action_func.kind else { return None };
-    // view_args: ViewName(v1..vn)
-    if view_args.len() != 1 { return None; }
-    let view_call_expr = view_args[0].expr();
-    let Call { func: view_func, args: view_args2, .. } = &view_call_expr.kind else { return None };
-    let Ident(view_name) = &view_func.kind else { return None };
-
-    Some((
-        action_name.clone(),
-        action_args.iter().map(|a| a.expr().clone()).collect(),
-        view_name.clone(),
-        view_args2.iter().map(|a| a.expr().clone()).collect(),
-    ))
-}
-
-/// Rewrite all `post(ActionCall)(viewCall)` subterms in `formula` by symbolic
-/// execution using handler `methods`. Returns `Some(rewritten)` if at least one
-/// post-term was rewritten and all encountered post-terms were handled.
-/// Returns `None` if a post-term was found but could not be decoded/handled.
-fn rewrite_post_in_expr(
-    formula: &crate::ast::Expr,
-    methods: &[crate::ast::HandlerMethod],
-) -> Result<(crate::ast::Expr, bool), String> {
-    use crate::ast::ExprKind::*;
-
-    // Try to rewrite this node as a post(...)(...) call.
-    if let Some((action_name, action_args, view_name, view_args)) = parse_post_call(formula) {
-        // Find action handler method (must have Block body).
-        let action_method = methods.iter().find(|m| m.name == action_name)
-            .ok_or_else(|| format!("handler method `{}` not found", action_name))?;
-        let action_block = match &action_method.body {
-            crate::ast::HandlerMethodBody::Block(b) => b,
-            crate::ast::HandlerMethodBody::Expr(_) =>
-                return Err(format!("action `{}` has Expr body, expected Block", action_name)),
-        };
-
-        // Find view handler method (must have Expr body).
-        let view_method = methods.iter().find(|m| m.name == view_name)
-            .ok_or_else(|| format!("handler method `{}` not found", view_name))?;
-        let view_expr = match &view_method.body {
-            crate::ast::HandlerMethodBody::Expr(e) => e.clone(),
-            crate::ast::HandlerMethodBody::Block(_) =>
-                return Err(format!("view `{}` has Block body, expected Expr", view_name)),
-        };
-
-        // Extract assignments from action block.
-        let assignments = extract_block_assignments(action_block);
-
-        // Apply assignments to view body (symbolic execution).
-        let mut result_expr = view_expr;
-        for (var, new_val) in &assignments {
-            result_expr = subst_ident_in_expr(&result_expr, var, new_val);
-        }
-
-        // Substitute action params → axiom action args.
-        let action_params: Vec<String> = action_method.params.iter()
-            .map(|p| p.name.clone()).collect();
-        for (param, arg_expr) in action_params.iter().zip(action_args.iter()) {
-            result_expr = subst_ident_in_expr(&result_expr, param, arg_expr);
-        }
-
-        // Substitute view params → axiom view args.
-        let view_params: Vec<String> = view_method.params.iter()
-            .map(|p| p.name.clone()).collect();
-        for (param, arg_expr) in view_params.iter().zip(view_args.iter()) {
-            result_expr = subst_ident_in_expr(&result_expr, param, arg_expr);
-        }
-
-        return Ok((result_expr, true));
-    }
-
-    // Recurse into sub-expressions.
-    let mut changed = false;
-    let new_kind = match &formula.kind {
-        Binary { op, left, right } => {
-            let (l, cl) = rewrite_post_in_expr(left, methods)?;
-            let (r, cr) = rewrite_post_in_expr(right, methods)?;
-            changed = cl || cr;
-            Binary { op: op.clone(), left: Box::new(l), right: Box::new(r) }
-        }
-        Unary { op, operand } => {
-            let (o, c) = rewrite_post_in_expr(operand, methods)?;
-            changed = c;
-            Unary { op: op.clone(), operand: Box::new(o) }
-        }
-        Call { func, args, trailing } => {
-            let (f, cf) = rewrite_post_in_expr(func, methods)?;
-            let mut new_args = Vec::with_capacity(args.len());
-            let mut ca = false;
-            for arg in args {
-                let (e, c) = rewrite_post_in_expr(arg.expr(), methods)?;
-                ca = ca || c;
-                new_args.push(match arg {
-                    crate::ast::CallArg::Item(_) => crate::ast::CallArg::Item(e),
-                    crate::ast::CallArg::Spread(_) => crate::ast::CallArg::Spread(e),
-                    crate::ast::CallArg::Named { name, .. } =>
-                        crate::ast::CallArg::Named { name: name.clone(), value: e },
-                });
-            }
-            changed = cf || ca;
-            Call { func: Box::new(f), args: new_args, trailing: trailing.clone() }
-        }
-        _ => return Ok((formula.clone(), false)),
-    };
-
-    Ok((crate::ast::Expr { kind: new_kind, span: formula.span }, changed))
-}
-
-/// Ф.6: verify a post-axiom using symbolic execution of the handler body.
-fn verify_post_axiom_with_handler(
-    pipeline: &VerificationPipeline,
-    ax: &AxiomInfo,
-    pure_views: &std::collections::HashMap<String, super::encode::PureViewSig>,
-    methods: &[crate::ast::HandlerMethod],
-    effect_name: &str,
-    module: &Module,
-    inferred_pure: &std::collections::HashSet<String>,
-) -> VerifyResult {
-    // Step 1: symbolically rewrite post(...) subterms.
-    let rewritten_formula = match rewrite_post_in_expr(ax.formula, methods) {
-        Ok((expr, true)) => expr,
-        Ok((_, false)) => {
-            // No post term found (shouldn't happen since caller checked).
-            return VerifyResult::Unknown(
-                "post-axiom: no post(...) term found during rewrite".into(),
-            );
-        }
-        Err(reason) => {
-            return VerifyResult::Unknown(format!(
-                "post-axiom `{}`: symbolic rewrite not applicable — {}", ax.axiom_name, reason
-            ));
-        }
-    };
-
-    // Step 2: encode and prove the rewritten formula.
-    let ax_rewritten = AxiomInfo {
-        effect_name: ax.effect_name.clone(),
-        axiom_name: ax.axiom_name.clone(),
-        binders: ax.binders,
-        formula: &rewritten_formula,
-        is_generic: ax.is_generic,
-    };
-
-    let pure_fns = collect_pure_fns(module, inferred_pure);
-    let ctx = super::encode::EncodeCtx { pure_views, pure_fns: &pure_fns, var_sorts: std::collections::HashMap::new() };
-    let mut backend = pipeline.create_backend();
-
-    // Pre-declare pure_view UFs.
-    for (op_name, sig) in pure_views {
-        let uf = super::encode::pure_view_uf_name(&sig.effect_name, op_name);
-        backend.declare_function(&uf, &sig.param_sorts, sig.return_sort.clone());
-    }
-
-    let Some(ax_formula) = encode_axiom(&ax_rewritten, pure_views) else {
-        // Fallback: try direct encoding without UF machinery.
-        let binder_names: Vec<String> = ax.binders.iter().map(|bd| bd.name.clone()).collect();
-        let body = match super::encode::encode_expr_with_ctx(&rewritten_formula, &ctx) {
-            Ok(t) => t,
-            Err(e) => return VerifyResult::EncodingFailed(format!("{:?}", e)),
-        };
-        let mut binder_sorts: std::collections::HashMap<String, SortRef> = Default::default();
-        infer_binder_sorts(&rewritten_formula, &binder_names, pure_views, &mut binder_sorts);
-        let binders: Vec<(String, SortRef)> = binder_names.iter()
-            .map(|n| (n.clone(), binder_sorts.remove(n).unwrap_or(SortRef::Int)))
-            .collect();
-        let formula_term = if binders.is_empty() {
-            body
-        } else {
-            SmtTerm::Forall(binders, vec![], Box::new(body))
-        };
-        return match try_prove(&mut *backend, formula_term) {
-            SatResult::Unsat(_) => VerifyResult::Proven,
-            SatResult::Sat(model) => {
-                let cex = format_counterexample(&model);
-                VerifyResult::Disproved(model, cex)
-            }
-            SatResult::Unknown(reason) => VerifyResult::Unknown(unknown_to_diag_message(reason)),
-        };
-    };
-
-    match try_prove(&mut *backend, ax_formula) {
-        SatResult::Unsat(_) => VerifyResult::Proven,
-        SatResult::Sat(model) => {
-            let cex = format_counterexample(&model);
-            VerifyResult::Disproved(model, cex)
-        }
-        SatResult::Unknown(reason) => VerifyResult::Unknown(unknown_to_diag_message(reason)),
-    }
-}
-
-/// РџСЂРѕРІРµСЂСЏРµС‚, СЃРѕРґРµСЂР¶РёС‚ Р»Рё С„РѕСЂРјСѓР»Р° axiom'Р° РІС‹Р·РѕРІ `post(...)`.
-/// V1: РїСЂРѕСЃС‚Р°СЏ AST-РїСЂРѕРІРµСЂРєР° РЅР° РЅР°Р»РёС‡РёРµ Ident "post" РІ call position.
-fn axiom_formula_has_post(e: &crate::ast::Expr) -> bool {
-    use crate::ast::ExprKind::*;
-    match &e.kind {
-        Call { func, args, .. } => {
-            if let Ident(name) = &func.kind {
-                if name == "post" { return true; }
-            }
-            // post РјРѕР¶РµС‚ Р±С‹С‚СЊ РІР»РѕР¶РµРЅ
-            if axiom_formula_has_post(func) { return true; }
-            args.iter().any(|a| axiom_formula_has_post(a.expr()))
-        }
-        Binary { left, right, .. } => {
-            axiom_formula_has_post(left) || axiom_formula_has_post(right)
-        }
-        Unary { operand, .. } => axiom_formula_has_post(operand),
-        If { cond, then, else_ } => {
-            if axiom_formula_has_post(cond) { return true; }
-            if let Some(t) = &then.trailing { if axiom_formula_has_post(t) { return true; } }
-            match else_ {
-                Some(crate::ast::ElseBranch::Block(b)) => {
-                    if let Some(t) = &b.trailing { axiom_formula_has_post(t) } else { false }
-                }
-                Some(crate::ast::ElseBranch::If(ie)) => axiom_formula_has_post(ie),
-                None => false,
-            }
-        }
-        _ => false,
-    }
-}
-
-/// Collect РІСЃРµС… `with #verify E = handler` bindings РёР· block.
-fn collect_verify_bindings_block<'a>(
-    b: &'a crate::ast::Block,
-    out: &mut Vec<(String, Span, &'a crate::ast::Expr)>,
-) {
-    for s in &b.stmts {
-        match s {
-            Stmt::Expr(e) => collect_verify_bindings_expr(e, out),
-            Stmt::Let(ld) => collect_verify_bindings_expr(&ld.value, out),
-            Stmt::Assign { value, .. } => collect_verify_bindings_expr(value, out),
-            _ => {}
-        }
-    }
-    if let Some(t) = &b.trailing { collect_verify_bindings_expr(t, out); }
-}
-
-fn collect_verify_bindings_expr<'a>(
-    e: &'a crate::ast::Expr,
-    out: &mut Vec<(String, Span, &'a crate::ast::Expr)>,
-) {
-    use crate::ast::ExprKind::*;
-    match &e.kind {
-        With { bindings, body } => {
-            for b in bindings {
-                if !matches!(b.verification, HandlerVerification::Verify) { continue }
-                let eff_name = match &b.effect {
-                    TypeRef::Named { path, .. } => path.last().cloned().unwrap_or_default(),
-                    _ => String::new(),
-                };
-                if eff_name.is_empty() { continue }
-                out.push((eff_name, b.span, &b.handler));
-            }
-            collect_verify_bindings_block(body, out);
-        }
-        Block(b) => collect_verify_bindings_block(b, out),
-        If { cond, then, else_ } => {
-            collect_verify_bindings_expr(cond, out);
-            collect_verify_bindings_block(then, out);
-            match else_ {
-                Some(crate::ast::ElseBranch::Block(b)) => collect_verify_bindings_block(b, out),
-                Some(crate::ast::ElseBranch::If(ie)) => collect_verify_bindings_expr(ie, out),
-                None => {}
-            }
-        }
-        Call { func, args, .. } => {
-            collect_verify_bindings_expr(func, out);
-            for a in args { collect_verify_bindings_expr(a.expr(), out); }
-        }
-        Binary { left, right, .. } => {
-            collect_verify_bindings_expr(left, out);
-            collect_verify_bindings_expr(right, out);
-        }
-        _ => {}
     }
 }
 
@@ -2788,7 +2051,7 @@ pub fn verify_module(module: &Module) -> ModuleVerifyReport {
     }
 
     // Plan 33.4 P0-1 (Р¤.9.7 V1): РІРµСЂРёС„РёРєР°С†РёСЏ `with #verify E = handler` bindings.
-    for diag in verify_handlers(module) {
+    for diag in super::handler_exec::verify_handlers(module) {
         report.errors.push(diag);
     }
     if !report.errors.is_empty() {
@@ -2866,14 +2129,32 @@ let t0 = std::time::Instant::now();
                         }
                     }
                     VerifyResult::EncodingFailed(reason) => {
-                        // РђРЅР°Р»РѕРіРёС‡РЅРѕ Unknown.
-                        if matches!(effective_mode, VerifyMode::MustVerify) {
-                            let msg = format!(
-                                "`#verify` failed for `{}`:\n  encoder cannot represent contract: {}\n  \
-                                 hint: Plan 33.1 encoder РїРѕРґРґРµСЂР¶РёРІР°РµС‚ С‚РѕР»СЊРєРѕ int/bool/str/record/binary-ops/if/old. \
-                                 Sum types / arrays / quantifiers вЂ” Р¶РґСѓС‚ Z3 backend.",
-                                fd.name, reason);
-                            report.errors.push(Diagnostic::new(msg, span));
+                        // Ф.1.2 (Plan 33.6): EncodingFailed без #unverified -> compile error E2401.
+                        // С #unverified -> warning W2401 (осознанный отказ от SMT).
+                        // "body not encodable" — TrivialBackend limitation, не E2401 (оставляем silent).
+                        // E2401 только если контракт (requires/ensures expr) не encodable,
+                        // не когда body не encodable (TrivialBackend limitation).
+                        let is_contract_unsupported = reason.starts_with("[CONTRACT_UNSUPPORTED]");
+                        let display_reason = reason.trim_start_matches("[CONTRACT_UNSUPPORTED] ");
+                        match fd.verify_mode {
+                            VerifyMode::MustVerify | VerifyMode::Default if is_contract_unsupported => {
+                                let extra = if matches!(fd.verify_mode, VerifyMode::Default) {
+                                    " hint: пометьте fn как #unverified для runtime-fallback,\
+                                     или вынесите логику в #pure helper."
+                                } else { "" };
+                                let msg = format!(
+                                    "контракт fn '{}' содержит конструкцию \
+                                     не поддерживаемую SMT-encoder'ом [E2401]: {}. {}",
+                                    fd.name, display_reason, extra);
+                                report.errors.push(Diagnostic::new(msg, span));
+                            }
+                            VerifyMode::Unverified => {
+                                let msg = format!(
+                                    "fn '{}' помечена #unverified: SMT verification пропущен [W2401]",
+                                    fd.name);
+                                report.warnings.push(Diagnostic::new(msg, span));
+                            }
+                            _ => {} // body limitation или MustVerify с body limitation — silent fallback
                         }
                     }
                 }

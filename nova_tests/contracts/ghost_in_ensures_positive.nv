@@ -1,0 +1,16 @@
+// Ф.1.1 (Plan 33.6): ghost var в ensures — spec position, OK.
+
+module contracts.ghost_in_ensures_positive
+
+#verify
+fn abs_with_ghost(x int) -> int
+    ensures result >= 0
+{
+    ghost let _witness = x
+    if x >= 0 { x } else { -x }
+}
+
+test "ghost в ensures не мешает компиляции" {
+    assert(abs_with_ghost(5) == 5)
+    assert(abs_with_ghost(-3) == 3)
+}
