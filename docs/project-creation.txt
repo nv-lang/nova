@@ -12266,6 +12266,17 @@ negative (есть warning или ошибка):
 - Регрессия: 140 PASS (+1) / 35 SKIP.
 - Коммит: `1d9f0a08f38`.
 
+### Ф.8.3 — Per-solver Z3 params вместо global timeout
+
+- `backend/z3.rs:101` раньше `Z3_global_param_set("timeout", ...)` — глобальный,
+  при нескольких Z3Backend::new(N) (для `#proof_budget` per-fn) последний выигрывал.
+  Race-condition risk для будущего parallel verify (Ф.5.1).
+- Теперь: `Z3_mk_params + Z3_params_set_uint("timeout", N) + Z3_solver_set_params(solver)`
+  — per-solver param, изолирован.
+- z3-backend компилируется (`cargo check --features z3-backend` PASS).
+- Регрессия: 140 PASS / 35 SKIP (no change, Z3 не активен в release без feature).
+- Коммит: `ac0012e949c`.
+
 === Plan 45 �.25 � nova tests (positive + negative) ===
 
 ����� �������� �.25 (4 ����) �������� nova-tests .nv ��� �������� �����
