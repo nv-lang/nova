@@ -12303,6 +12303,16 @@ negative (есть warning или ошибка):
 - Регрессия: 140 PASS / 37 SKIP (+1).
 - Коммит: `06e7423867a`.
 
+### Ф.3.2 — witness extraction (partial, V2 deferred)
+
+- Existing exists encoding (`not forall ... not P`) корректно reasons, но
+  concrete witness не extract'ается в diagnostic. Полная extraction требует
+  Z3_get_model + Skolem decl walking — отдельный рефакторинг encoding.
+- Placeholder test: witness_exists_positive (Z3-gated).
+- V2 work: добавить `extract_witness(model, exists_var)` в z3.rs;
+  passing-side proven message «proven by witness: x = 5».
+- Коммит: `d207648816b` (test placeholder).
+
 === Plan 45 �.25 � nova tests (positive + negative) ===
 
 ����� �������� �.25 (4 ����) �������� nova-tests .nv ��� �������� �����
