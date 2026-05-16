@@ -1,0 +1,18 @@
+// Ф.3.6 (Plan 33.6): calc proof step fails → pretty-print previous/expected.
+// step 2 (x*2 != x*3) — должно показать «calc proof step 2 failed».
+// REQUIRES_SMT_BACKEND z3
+// EXPECT_COMPILE_ERROR calc proof step 2 failed
+
+module contracts.calc_pinpoint_step_fail
+
+#verify
+fn bad_calc(x int) -> int
+    ensures result == x
+{
+    calc {
+        x;
+        == x;
+        == x * 3;
+    }
+    x
+}

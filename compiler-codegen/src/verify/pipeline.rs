@@ -1280,13 +1280,33 @@ fn verify_calc_stmts_in_body(
                     results.push((step_b.span, VerifyResult::Proven));
                 }
                 SatResult::Sat(model) => {
+                    // Ф.3.6 (Plan 33.6): pinpoint failing calc step с pretty-print
+                    // previous/expected expressions.
                     let cex = format_counterexample(&model);
-                    results.push((step_b.span, VerifyResult::Disproved(model,
-                        format!("calc step {} {} {} failed: {}", i, smt_op, i + 1, cex))));
+                    let prev_pretty = enc_a.pretty();
+                    let expected_pretty = enc_b.pretty();
+                    let rel_human = match rel {
+                        crate::ast::CalcRel::Eq => "==",
+                        crate::ast::CalcRel::Lt => "<",
+                        crate::ast::CalcRel::Le => "<=",
+                        crate::ast::CalcRel::Gt => ">",
+                        crate::ast::CalcRel::Ge => ">=",
+                    };
+                    let msg = format!(
+                        "calc proof step {} failed:\n  \
+                         previous (step {}): {}\n  \
+                         expected ({} step {}): {}\n  \
+                         cannot prove: {} {} {}\n  \
+                         counterexample: {}",
+                        i + 1, i, prev_pretty,
+                        rel_human, i + 1, expected_pretty,
+                        prev_pretty, rel_human, expected_pretty,
+                        cex);
+                    results.push((step_b.span, VerifyResult::Disproved(model, msg)));
                 }
                 SatResult::Unknown(reason) => {
                     results.push((step_b.span, VerifyResult::Unknown(
-                        format!("calc step: {}", unknown_to_diag_message(reason)))));
+                        format!("calc step {}→{}: {}", i, i + 1, unknown_to_diag_message(reason)))));
                 }
             }
         }
