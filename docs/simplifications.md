@@ -7146,3 +7146,41 @@ Rust (нет stdlib merge).
 - Plan 49 acceptance: 11/11 main + 6/6 Ф.6 = весь Plan 49 закрыт.
 - Beyond state-of-the-art фичи: tok.merge + typed CancelToken[T] +
   USER-precedence — Nova строго лучше Go/Rust/TS в cancellation modeling.
+
+**Где:** lints.rs::lint_item — Rule №2.
+**Что упрощено:** Error message содержит full canonical order list. Может быть
+~150 chars message.
+**Почему:** Author should see exactly what's wrong → educational.
+**Как чинить:** не нужно — это deliberate UX choice.
+
+---
+
+## Plan 45 �.26 nova-tests � ��������� (2026-05-16)
+
+### #pure annotations ������ �� �.26 tests
+
+**���:** 
+ova_tests/doc/f26_capabilities_positive.nv
+**��� ��������:** ���������� ����������� #pure attribute �� runtime fn,
+�� Plan 33.6 �.1.2 (E2401) hardening ������������ #pure ��� contracts �
+������ ��� compile error. ����� #pure annotations.
+**������:** #pure ������ ������� verify-pipeline integration; runtime fn
+��� contracts �� ����� ���� #pure. ��� legitimate Plan 33.6 enforcement,
+�� bug Plan 45.
+**��� ������:** �������� #pure fn square(x int) -> int => x * x ��
+#pure fn square(x int) -> int requires true ensures result == x * x => x * x
+� �� ��� complicates test ��� doc-feature testing.
+**���������:** L � capability #realtime ������� � �����, ��������� primary
+goal (��� capabilities runtime-safe).
+
+### #realtime ������ ��� export (D64 attr position)
+
+**���:** 
+ova_tests/doc/f26_capabilities_positive.nv rt-fn'�.
+**Что упрощено:** `#realtime fn ...` работает, `#realtime export fn ...` —
+parser error. Сделал rt-fn'ы без `export`, runtime tested через doc-tests.
+**Почему:** Parser порядок attrs — D64 spec; doc-tooling видит attr на fn
+независимо от export visibility.
+**Как чинить:** parser — split attr position handling (currently strict).
+Это Plan 16 follow-up если будет need для public `#realtime` API.
+**Приоритет:** L.

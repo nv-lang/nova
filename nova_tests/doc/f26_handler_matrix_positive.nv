@@ -1,0 +1,99 @@
+// Plan 45 Ф.26.2 / Ф.23.4: Handler matrix (Effect → callers).
+// Позитивный тест: функции с `handler Effect { ... }` literals компилируются
+// и runtime работает корректно. Doc-pipeline scan'ит handler literals и
+// populate'ит Effect.handlers — это проверяется cargo integration tests.
+// Здесь — runtime correctness handlers.
+
+module doc.f26_handler_matrix_positive
+
+/// Counter effect — simple state.
+export type Counter effect {
+    incr()
+    #pure get() -> int
+    axiom non_negative(_x int) => true
+}
+
+/// Logger effect — collect strings.
+export type Logger effect {
+    log(msg str)
+    #pure last() -> str
+}
+
+/// Function — single handler usage.
+export fn count_to(n int) -> int {
+    let mut c = 0
+    with #trusted Counter = handler Counter {
+        incr() { c = c + 1 }
+        get() => c
+    } {
+        let mut i = 0
+        while i < n {
+            Counter.incr()
+            i = i + 1
+        }
+        Counter.get()
+    }
+}
+
+/// Function — multiple distinct handlers (two-handler scenario).
+export fn count_and_log(n int) -> int {
+    let mut c = 0
+    let mut last_msg = ""
+    with #trusted Counter = handler Counter {
+        incr() { c = c + 1 }
+        get() => c
+    } {
+        with #trusted Logger = handler Logger {
+            log(msg) { last_msg = msg }
+            last() => last_msg
+        } {
+            let mut i = 0
+            while i < n {
+                Counter.incr()
+                Logger.log("tick")
+                i = i + 1
+            }
+            Counter.get()
+        }
+    }
+}
+
+/// Helper — reuses Counter handler in second caller.
+export fn count_twice(n int) -> int {
+    let mut c = 0
+    with #trusted Counter = handler Counter {
+        incr() { c = c + 1 }
+        get() => c
+    } {
+        Counter.incr()
+        Counter.incr()
+    }
+    count_to(n)
+}
+
+test "count_to basic" {
+    assert(count_to(0) == 0)
+    assert(count_to(1) == 1)
+    assert(count_to(5) == 5)
+    assert(count_to(10) == 10)
+}
+
+test "count_and_log basic" {
+    assert(count_and_log(0) == 0)
+    assert(count_and_log(1) == 1)
+    assert(count_and_log(3) == 3)
+}
+
+test "count_twice — second call independent" {
+    // First handler isolates c=0; count_to does its own.
+    assert(count_twice(5) == 5)
+    assert(count_twice(0) == 0)
+}
+
+test "handler isolation per with-block" {
+    // Two separate with-blocks → each has own state.
+    let r1 = count_to(3)
+    let r2 = count_to(7)
+    assert(r1 == 3)
+    assert(r2 == 7)
+}
