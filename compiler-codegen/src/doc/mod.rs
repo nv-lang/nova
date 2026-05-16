@@ -39,6 +39,7 @@ pub mod json_parse;
 pub mod mcp;
 pub mod highlight;
 pub mod config;
+pub mod watch_cache;
 
 pub use doctree::{DocTree, DocModule, DocItem, ItemKind, Signature, Visibility};
 
