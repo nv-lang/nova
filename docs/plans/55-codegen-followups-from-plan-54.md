@@ -811,3 +811,137 @@ instance** проблем:
     (workaround "split tests" в map_literals/)
 - **Plan 54** — Ф.1/Ф.2/Ф.3 — direct followup от Plan 54 EOD findings.
 - **D73** `From`/`Into` protocols — Ф.3 касается Into auto-derive path.
+
+---
+
+## Ф.7 — Baseline NEG-* cleanup (production-grade, 2026-05-16 EOD+1)
+
+### Контекст
+
+После закрытия Ф.1-Ф.6 + 3 followup'ов в baseline остаются **12 NEG-***
+тестов: expectation drift между текущим diagnostic message от компилятора
+и pattern в `// EXPECT_COMPILE_ERROR <pattern>` / `// EXPECT_RUNTIME_PANIC
+<pattern>` маркере теста.
+
+| Test | Тип | Expected pattern |
+|---|---|---|
+| `negative_capability/p50_method_name_collision` | NEG-WRONG-MSG | 'передаётся только по имени' |
+| `negative_capability/p50_positional_default_single` | NEG-WRONG-MSG | 'передаётся только по имени' |
+| `negative_capability/p50_positional_default_static_method` | NEG-WRONG-MSG | 'передаётся только по имени' |
+| `negative_capability/p50_positional_default_instance_method` | NEG-WRONG-MSG | 'передаётся только по имени' |
+| `negative_capability/p50_positional_default_with_trailing` | NEG-WRONG-MSG | 'передаётся только по имени' |
+| `negative_capability/p50_positional_default_generic` | NEG-WRONG-MSG | 'передаётся только по имени' |
+| `negative_capability/p50_positional_default_among_many` | NEG-WRONG-MSG | 'передаётся только по имени' |
+| `negative_capability/p50_multiple_positional_defaults` | NEG-WRONG-MSG | 'передаётся только по имени' |
+| `negative_capability/p50_positional_default_static_method` | NEG-WRONG-MSG | 'передаётся только по имени' |
+| `negative_capability/fail_handler_no_exit_rejected` | NEG-WRONG-MSG | 'handler-method `Fail.fail` обрабатывает...' |
+| `negative_capability/np_trailing_double_bind` | NEG-WRONG-MSG | 'связан и trailing-формой, и именованным' |
+| `expected_runtime/contracts_decreases_recursion_fail` | NEG-WRONG-PANIC | 'decreases recursion depth exceeded 10000' |
+
+### Production-grade approach (НЕ простой find/replace)
+
+**Каждый тест аудитится индивидуально:**
+
+1. Прогнать test, capture **actual** diagnostic message.
+2. **Quality assessment:** actual vs expected — кто лучше?
+   - `better` (newer message более ясный/точный) → update test expected.
+   - `same intent, different wording` → update test expected.
+   - `worse / regression` (newer message потерял information) → fix diagnostic в codegen.
+   - `missing diagnostic entirely` (test rejects, но без proper message) → add diagnostic в codegen.
+3. **Spec compliance check:** актуальное сообщение matches spec
+   (Plan 36 R7 quality bar: error → file:line + suggestion + hint).
+4. **AI-friendliness:** error message должен вести LLM/human к
+   user-actionable fix.
+5. **Если изменяем codegen** — добавить **новый** positive test
+   проверяющий что message содержит ключевые слова (regression guard).
+6. **Commit per logical group** (p50_* как один commit, остальные
+   индивидуально).
+
+### Acceptance
+
+- [ ] 12 NEG-* tests pass — actual diagnostic matches expected pattern.
+- [ ] Каждый fix аудит'ed: либо diagnostic улучшен, либо expected
+      обновлён с rationale в commit message.
+- [ ] Spec sync если diagnostic меняется в codegen.
+- [ ] Regression: full `nova test` без новых FAIL.
+- [ ] `docs/simplifications.md` — закрывающие записи.
+
+### Estimate
+
+~50-150 LOC. Risk low (test updates) с возможными codegen improvements.
+
+---
+
+## Ф.8 — Baseline doc/fixtures cleanup (после Ф.7)
+
+### Контекст
+
+14 doc/fixtures/* sample-файлов в `nova_tests/doc/fixtures/` —
+**фикстуры для Plan 45 `nova doc`**, не настоящие тесты. Test runner
+подбирает их по правилу discovery, build пытается компилировать
+(требуется `main`) → CC-FAIL `undefined symbol: nova_fn_main_impl`.
+
+| Fail | Cause |
+|---|---|
+| `doc/fixtures/basic/sample` | No main fn (doc fixture) |
+| `doc/fixtures/capability_forbid/sample` | No main fn |
+| `doc/fixtures/doctests/sample` | No main fn |
+| `doc/fixtures/expect_output/sample` | No main fn |
+| `doc/fixtures/kinds/sample` | No main fn |
+| `doc/fixtures/links/sample` | No main fn |
+| `doc/fixtures/must_verify/sample` | No main fn |
+| `doc/fixtures/module_attrs/sample` | No main fn |
+| `doc/fixtures/orphan/sample` | No main fn |
+| `doc/fixtures/real_attrs/sample` | No main fn |
+| `doc/fixtures/sections/sample` | No main fn |
+| `doc/fixtures/should_panic/sample` | No main fn |
+| `doc/fixtures/stability/sample` | No main fn |
+| `doc/fixtures/reexport/sample` | CODEGEN-FAIL: cross-file import |
+
+### Решение
+
+**Production-grade**: test_runner должен **исключать** доп-fixtures
+из discovery. Опции:
+
+A. **Marker file** — добавить `_fixture.toml` или `.fixture` маркер в
+   каждом каталоге; test_runner skip'ит каталоги с маркером.
+B. **Module-attribute** — `#fixture` атрибут перед `module` decl;
+   test_runner skip'ит модули с этим attr.
+C. **Naming convention** — каталоги внутри `*/fixtures/` skip'ятся
+   автоматически. Простейшее.
+D. **Explicit опция в nova.toml** — `[testing] exclude = ["doc/fixtures/**"]`.
+
+Recommend: **C + D combo** — С автоматический skip для convention,
+D explicit override.
+
+### Acceptance
+
+- [ ] 14 doc/fixtures tests skipped (не FAIL).
+- [ ] Plan 45 doc-pipeline всё ещё может load эти fixtures как
+      doc-input (не tests).
+- [ ] `docs/test-conventions.md` обновлён.
+
+### Estimate
+
+~30-50 LOC test_runner.rs + config. Risk low.
+
+---
+
+## Ф.9 — Followup tracking (после Ф.7+Ф.8)
+
+После Ф.7+Ф.8 baseline должен быть **0 FAIL'ов** (все 25 закрыты или
+skipped). Оставшиеся deferred → Plan 56+:
+
+- `[M-erased-generic-method-dispatch]` — vtable dispatch для bound K
+  methods. Разблокирует `HashMap.@clone()`, `HashMap.@merge_from()`,
+  `HashMap.@filter()`. ~3-5 dev-days архитектурной работы.
+- `[M-time-handler-sleep-mismatch]` — `Time.sleep(int)` →
+  `Time.sleep(Duration)` semantic evolution. Stdlib-wide migration:
+  effect schema + 20+ callsites + runtime impl. ~1-2 dev-days.
+- Прочие pre-existing M-маркеры (Plan 52.1, 52.3, ...) — самостоятельные
+  followup'ы в собственных планах.
+
+### Acceptance Ф.9
+
+- [ ] Plan 56 создан с указанными scope items.
+- [ ] Plan 55 README статус обновлён → **ЗАКРЫТО** окончательно.
