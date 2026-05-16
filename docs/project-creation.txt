@@ -12255,6 +12255,17 @@ negative (есть warning или ошибка):
 - Регрессия: 139 PASS (+1) / 35 SKIP.
 - Коммит: `be561f0ddfd`.
 
+### Ф.8.2 — verify_lemma requires encoding fail → E2401
+
+- `pipeline.rs:691` раньше `Err(_) => { requires_failed = true; }` — silent.
+  Лемма становилась vacuously proven (Z3 без requires-контекста доказывает что угодно).
+- Теперь: encoding fail → push в `req_failures` как
+  EncodingFailed("[CONTRACT_UNSUPPORTED] lemma requires: ...").
+- caller (`verify_module`) распознаёт `[CONTRACT_UNSUPPORTED]` префикс → E2401.
+- Test: lemma_requires_e2401_fail (`requires match x { _ => true }` → E2401).
+- Регрессия: 140 PASS (+1) / 35 SKIP.
+- Коммит: `1d9f0a08f38`.
+
 === Plan 45 �.25 � nova tests (positive + negative) ===
 
 ����� �������� �.25 (4 ����) �������� nova-tests .nv ��� �������� �����
