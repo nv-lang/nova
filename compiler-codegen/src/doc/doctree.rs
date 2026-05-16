@@ -216,6 +216,10 @@ pub struct DocItem {
     /// Plan 45 Ф.23.23: back-links — IDs items, которые ссылаются на этот
     /// item через intra-doc-link. Заполняется `resolve_intra_doc_links` pass'ом.
     pub linked_from: Vec<String>,
+    /// Plan 45 Ф.24.9: scraped call-site examples from workspace source files.
+    /// Each entry: (file_path_display, line_number_1based, source_snippet).
+    /// Empty when `--scrape-examples` was not requested or no call-sites found.
+    pub scraped_examples: Vec<ScrapedExample>,
     /// Plan 45 Ф.24.11: if this item is a re-export (`export import X.{Foo}`),
     /// this holds the canonical source path (e.g. `"other.module::Foo"`).
     /// None for items defined in this module.
@@ -224,6 +228,17 @@ pub struct DocItem {
     /// `true` → inline the target item's content here (rustdoc `#[doc(inline)]` equivalent).
     /// `false` → render as a "Re-exported from ..." link (default for cross-module re-exports).
     pub doc_inline: bool,
+}
+
+/// Plan 45 Ф.24.9: one scraped call-site example.
+#[derive(Debug, Clone)]
+pub struct ScrapedExample {
+    /// Display path of the source file (relative to workspace root if available).
+    pub file: String,
+    /// 1-based line number of the call expression.
+    pub line: u32,
+    /// Source snippet: the call-expression line (trimmed) + up to 2 lines of context.
+    pub snippet: String,
 }
 
 /// Plan 45 Ф.23.3 / D63/D64: capability annotations на item.

@@ -186,6 +186,16 @@ fn write_item(w: &mut JsonWriter, it: &DocItem) {
     w.field_str("name", &it.name);
     // Plan 45 Ф.24.11: re-export source path (only present for re-exported items).
     w.field_null_or_str("reexport_from", it.reexport_from.as_deref());
+    // Plan 45 Ф.24.9: scraped call-site examples (empty array when not scraped).
+    w.field_array("scraped_examples", |w| {
+        for ex in &it.scraped_examples {
+            w.array_object(|w| {
+                w.field_str("file", &ex.file);
+                w.field_u32("line", ex.line);
+                w.field_str("snippet", &ex.snippet);
+            });
+        }
+    });
     w.field_object("sections", |w| {
         for (key, val) in &it.sections {
             w.field_str(key, val);

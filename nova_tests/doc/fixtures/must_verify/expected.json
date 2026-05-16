@@ -61,6 +61,9 @@
       "module_path": "nova_tests.doc.fixtures.must_verify.sample",
       "name": "ZERO",
       "reexport_from": null,
+      "scraped_examples": [
+
+      ],
       "sections": {
 
       },
@@ -97,6 +100,9 @@
       "module_path": "nova_tests.doc.fixtures.must_verify.sample",
       "name": "abs",
       "reexport_from": null,
+      "scraped_examples": [
+
+      ],
       "sections": {
 
       },
@@ -179,6 +185,9 @@
       "module_path": "nova_tests.doc.fixtures.must_verify.sample",
       "name": "max",
       "reexport_from": null,
+      "scraped_examples": [
+
+      ],
       "sections": {
 
       },

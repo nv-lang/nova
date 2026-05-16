@@ -1,9 +1,9 @@
-//! Plan 45 Ф.4 — collector: AST → DocTree.
+﻿//! Plan 45 Р¤.4 вЂ” collector: AST в†’ DocTree.
 //!
-//! MVP: один pass, без passes-pipeline (Plan 45 §3). Production-grade
+//! MVP: РѕРґРёРЅ pass, Р±РµР· passes-pipeline (Plan 45 В§3). Production-grade
 //! passes (`strip_private`, `propagate_stability`, `resolve_intra_doc_links`,
-//! `collect_doc_tests`, `lint_docs`) добавляются инкрементально как
-//! отдельные модули в `doc/passes/`.
+//! `collect_doc_tests`, `lint_docs`) РґРѕР±Р°РІР»СЏСЋС‚СЃСЏ РёРЅРєСЂРµРјРµРЅС‚Р°Р»СЊРЅРѕ РєР°Рє
+//! РѕС‚РґРµР»СЊРЅС‹Рµ РјРѕРґСѓР»Рё РІ `doc/passes/`.
 
 use crate::ast::{
     ConstDecl, ContractKind, DocAttr, FnDecl, Item, Module, ModuleAttrKind, Purity,
@@ -11,8 +11,8 @@ use crate::ast::{
 };
 use crate::doc::doctree::*;
 
-/// Plan 45 Ф.3 / D105: распарсенные doc-attrs → структурированные
-/// поля DocItem. Возвращается tuple для пер-call site применения.
+/// Plan 45 Р¤.3 / D105: СЂР°СЃРїР°СЂСЃРµРЅРЅС‹Рµ doc-attrs в†’ СЃС‚СЂСѓРєС‚СѓСЂРёСЂРѕРІР°РЅРЅС‹Рµ
+/// РїРѕР»СЏ DocItem. Р’РѕР·РІСЂР°С‰Р°РµС‚СЃСЏ tuple РґР»СЏ РїРµСЂ-call site РїСЂРёРјРµРЅРµРЅРёСЏ.
 struct ExtractedDocAttrs {
     deprecation: Option<Deprecation>,
     stability: Option<Stability>,
@@ -29,7 +29,7 @@ fn extract_doc_attrs(attrs: &[DocAttr]) -> ExtractedDocAttrs {
     let mut summary_override: Option<String> = None;
     let mut doc_test_handlers: Option<String> = None;
 
-    // Pass 1: собрать explicit `#since(...)` (order-independent с tier'ом).
+    // Pass 1: СЃРѕР±СЂР°С‚СЊ explicit `#since(...)` (order-independent СЃ tier'РѕРј).
     let mut explicit_since: Option<String> = None;
     for a in attrs {
         if let DocAttr::Since(v) = a {
@@ -37,7 +37,7 @@ fn extract_doc_attrs(attrs: &[DocAttr]) -> ExtractedDocAttrs {
         }
     }
 
-    // Pass 2: tier + остальные атрибуты.
+    // Pass 2: tier + РѕСЃС‚Р°Р»СЊРЅС‹Рµ Р°С‚СЂРёР±СѓС‚С‹.
     let mut tier: Option<StabilityTier> = None;
     let mut tier_since: Option<String> = None;
     let mut tier_feature: Option<String> = None;
@@ -110,17 +110,17 @@ fn is_post_1_0_version(v: &str) -> bool {
     matches!(major.parse::<u32>(), Ok(n) if n >= 1)
 }
 
-/// Plan 45 Ф.4 — построить `DocTree` из парсенного, type-checked `Module`.
+/// Plan 45 Р¤.4 вЂ” РїРѕСЃС‚СЂРѕРёС‚СЊ `DocTree` РёР· РїР°СЂСЃРµРЅРЅРѕРіРѕ, type-checked `Module`.
 ///
-/// Поведение MVP:
-/// - Один module → один `DocModule`.
-/// - Items: `Fn` / `Type` / `Const` собираются. `Effect` / `Protocol`
-///   через `TypeDeclKind::Effect` / `TypeDeclKind::Protocol`.
-/// - Visibility: `is_export = true` → `Export`, иначе `Private`.
-///   По дефолту filter — Export-only; flag `--include-private` (Plan 45
-///   Ф.12) переключает (на collector-уровне всё собирается; filter — в
-///   renderer'е).
-/// - Module summary: из `module.doc` (`//!` inner) + любых `#doc "..."`
+/// РџРѕРІРµРґРµРЅРёРµ MVP:
+/// - РћРґРёРЅ module в†’ РѕРґРёРЅ `DocModule`.
+/// - Items: `Fn` / `Type` / `Const` СЃРѕР±РёСЂР°СЋС‚СЃСЏ. `Effect` / `Protocol`
+///   С‡РµСЂРµР· `TypeDeclKind::Effect` / `TypeDeclKind::Protocol`.
+/// - Visibility: `is_export = true` в†’ `Export`, РёРЅР°С‡Рµ `Private`.
+///   РџРѕ РґРµС„РѕР»С‚Сѓ filter вЂ” Export-only; flag `--include-private` (Plan 45
+///   Р¤.12) РїРµСЂРµРєР»СЋС‡Р°РµС‚ (РЅР° collector-СѓСЂРѕРІРЅРµ РІСЃС‘ СЃРѕР±РёСЂР°РµС‚СЃСЏ; filter вЂ” РІ
+///   renderer'Рµ).
+/// - Module summary: РёР· `module.doc` (`//!` inner) + Р»СЋР±С‹С… `#doc "..."`
 ///   module-attr (D101).
 pub fn collect(module: &Module) -> DocTree {
     let mut tree = DocTree::new();
@@ -128,25 +128,25 @@ pub fn collect(module: &Module) -> DocTree {
     tree
 }
 
-/// Plan 45 Ф.21.7: workspace mode — собрать многомодульный DocTree.
-/// Modules уже type-checked + effects-inferred caller'ом. Порядок modules
-/// в tree.modules — сортируется по `path` для детерминизма.
+/// Plan 45 Р¤.21.7: workspace mode вЂ” СЃРѕР±СЂР°С‚СЊ РјРЅРѕРіРѕРјРѕРґСѓР»СЊРЅС‹Р№ DocTree.
+/// Modules СѓР¶Рµ type-checked + effects-inferred caller'РѕРј. РџРѕСЂСЏРґРѕРє modules
+/// РІ tree.modules вЂ” СЃРѕСЂС‚РёСЂСѓРµС‚СЃСЏ РїРѕ `path` РґР»СЏ РґРµС‚РµСЂРјРёРЅРёР·РјР°.
 pub fn collect_workspace(modules: &[Module]) -> DocTree {
     let mut tree = DocTree::new();
     for m in modules {
         tree.modules.push(collect_one(m));
     }
-    // Deterministic order: по path.
+    // Deterministic order: РїРѕ path.
     tree.modules.sort_by(|a, b| a.path.cmp(&b.path));
 
-    // Plan 45 Ф.24.3: implementors only when opt-in (structural matching has false-positives).
+    // Plan 45 Р¤.24.3: implementors only when opt-in (structural matching has false-positives).
     // Populate only when NOVA_DOC_EXPERIMENTAL_IMPLEMENTORS=1.
     let experimental_implementors = std::env::var("NOVA_DOC_EXPERIMENTAL_IMPLEMENTORS")
         .map(|v| v == "1")
         .unwrap_or(false);
 
     if experimental_implementors {
-        // Plan 45 Ф.24.2: use BTreeMap/BTreeSet for deterministic iteration order.
+        // Plan 45 Р¤.24.2: use BTreeMap/BTreeSet for deterministic iteration order.
         let mut proto_methods: Vec<(String, std::collections::BTreeSet<String>)> = Vec::new();
         for m in &tree.modules {
             for it in &m.items {
@@ -194,11 +194,11 @@ pub fn collect_workspace(modules: &[Module]) -> DocTree {
     tree
 }
 
-/// Helper: один Module → DocModule.
+/// Helper: РѕРґРёРЅ Module в†’ DocModule.
 fn collect_one(module: &Module) -> DocModule {
     let module_path = module.name.clone();
-    // Module-level documentation: концат `//!` (inner doc) + все
-    // `#doc "..."` module-attr строки.
+    // Module-level documentation: РєРѕРЅС†Р°С‚ `//!` (inner doc) + РІСЃРµ
+    // `#doc "..."` module-attr СЃС‚СЂРѕРєРё.
     let mut module_doc_parts: Vec<String> = Vec::new();
     for attr in &module.attrs {
         if let ModuleAttrKind::Doc(s) = &attr.kind {
@@ -216,7 +216,7 @@ fn collect_one(module: &Module) -> DocModule {
     let (module_summary, module_description) =
         crate::doc::markdown::extract_summary(&module_doc_content);
 
-    // Plan 45 Ф.24.1: extract module-level #forbid effects to propagate into items.
+    // Plan 45 Р¤.24.1: extract module-level #forbid effects to propagate into items.
     let mut module_forbid: Vec<String> = Vec::new();
     for attr in &module.attrs {
         if let ModuleAttrKind::Forbid = &attr.kind {
@@ -238,9 +238,9 @@ fn collect_one(module: &Module) -> DocModule {
             Item::Let(_) | Item::Test(_) | Item::Lemma(_) => {}
         }
     }
-    // Plan 45 Ф.24.11: collect re-exported items (`export import X.{Foo}`) as DocItems.
-    // `#doc_inline` → doc_inline=true (render inline), `#doc_no_inline` → false (render as link).
-    // Default: doc_inline=false (show "Re-exported from …" link, like rustdoc default).
+    // Plan 45 Р¤.24.11: collect re-exported items (`export import X.{Foo}`) as DocItems.
+    // `#doc_inline` в†’ doc_inline=true (render inline), `#doc_no_inline` в†’ false (render as link).
+    // Default: doc_inline=false (show "Re-exported from вЂ¦" link, like rustdoc default).
     for imp in &module.imports {
         if !imp.is_export {
             continue;
@@ -277,10 +277,11 @@ fn collect_one(module: &Module) -> DocModule {
                     linked_from: Vec::new(),
                     reexport_from: Some(reexport_from),
                     doc_inline: effective_inline,
+                    scraped_examples: Vec::new(),
                 });
             }
         } else {
-            // Whole-module re-export: `export import X` — emit a module-level re-export marker.
+            // Whole-module re-export: `export import X` вЂ” emit a module-level re-export marker.
             let local_name = imp.alias.as_ref().unwrap_or(imp.path.last().unwrap_or(&String::new())).clone();
             let reexport_from = source_module.clone();
             let id = format!("{}::{}", module_path.join("."), local_name);
@@ -304,6 +305,7 @@ fn collect_one(module: &Module) -> DocModule {
                 linked_from: Vec::new(),
                 reexport_from: Some(reexport_from),
                 doc_inline: effective_inline,
+                scraped_examples: Vec::new(),
             });
         }
     }
@@ -321,7 +323,7 @@ fn collect_one(module: &Module) -> DocModule {
         .filter_map(|pf| pf.path.file_name().map(|s| s.to_string_lossy().into_owned()))
         .collect();
 
-    // Plan 45 Ф.22.1 / D105: module-level doc-attrs.
+    // Plan 45 Р¤.22.1 / D105: module-level doc-attrs.
     let mod_attrs = extract_doc_attrs(&module.doc_attrs);
 
     DocModule {
@@ -358,7 +360,7 @@ fn collect_fn(module_path: &[String], f: &FnDecl, module_forbid: &[String]) -> D
         realtime: matches!(f.realtime_attr, RealtimeAttr::Realtime | RealtimeAttr::RealtimeNogc),
         realtime_nogc: matches!(f.realtime_attr, RealtimeAttr::RealtimeNogc),
         pure_fn: matches!(f.purity, Purity::Pure),
-        // Plan 45 Ф.24.1: propagate module-level #forbid into each item.
+        // Plan 45 Р¤.24.1: propagate module-level #forbid into each item.
         forbid: module_forbid.to_vec(),
     };
     DocItem {
@@ -381,6 +383,7 @@ fn collect_fn(module_path: &[String], f: &FnDecl, module_forbid: &[String]) -> D
         linked_from: Vec::new(),
         reexport_from: None,
         doc_inline: false,
+        scraped_examples: Vec::new(),
     }
 }
 
@@ -436,8 +439,8 @@ fn collect_type(module_path: &[String], t: &TypeDecl) -> DocItem {
         TypeDeclKind::Alias(ty) => ItemKind::Type(TypeDefinition::Alias(render_type(ty))),
         TypeDeclKind::Newtype(ty) => ItemKind::Type(TypeDefinition::Alias(render_type(ty))),
         TypeDeclKind::Effect(methods) => {
-            // Plan 45 Ф.22.4 / D107: axioms на уровне ItemKind::Effect,
-            // не per-method (axiom ссылается на эффект целиком).
+            // Plan 45 Р¤.22.4 / D107: axioms РЅР° СѓСЂРѕРІРЅРµ ItemKind::Effect,
+            // РЅРµ per-method (axiom СЃСЃС‹Р»Р°РµС‚СЃСЏ РЅР° СЌС„С„РµРєС‚ С†РµР»РёРєРѕРј).
             let axioms: Vec<EffectAxiomDoc> = t.axioms.iter().map(|ax| EffectAxiomDoc {
                 name: ax.name.clone(),
                 formula: render_expr(&ax.formula),
@@ -517,6 +520,7 @@ fn collect_type(module_path: &[String], t: &TypeDecl) -> DocItem {
         linked_from: Vec::new(),
         reexport_from: None,
         doc_inline: false,
+        scraped_examples: Vec::new(),
     }
 }
 
@@ -559,6 +563,7 @@ fn collect_const(module_path: &[String], c: &ConstDecl) -> DocItem {
         linked_from: Vec::new(),
         reexport_from: None,
         doc_inline: false,
+        scraped_examples: Vec::new(),
     }
 }
 
@@ -596,9 +601,9 @@ fn build_signature(f: &FnDecl) -> Signature {
         .as_ref()
         .map(render_type)
         .unwrap_or_else(|| "()".to_string());
-    // Effect-row: structured entries для Ф.23.8/23.9.
+    // Effect-row: structured entries РґР»СЏ Р¤.23.8/23.9.
     let mut effects: Vec<EffectEntry> = f.effects.iter().map(|eff| {
-        // Plan 45 Ф.23.9: row-variables — single uppercase letter без generics.
+        // Plan 45 Р¤.23.9: row-variables вЂ” single uppercase letter Р±РµР· generics.
         let is_row_var = if let crate::ast::TypeRef::Named { path, generics, .. } = eff {
             path.len() == 1 && generics.is_empty()
                 && path[0].len() == 1
@@ -624,7 +629,7 @@ fn build_signature(f: &FnDecl) -> Signature {
     }).collect();
     effects.sort_by(|a, b| a.name.cmp(&b.name));
     effects.dedup_by(|a, b| a.name == b.name);
-    // Raises: вытащить из `Fail[X]` в effect-row.
+    // Raises: РІС‹С‚Р°С‰РёС‚СЊ РёР· `Fail[X]` РІ effect-row.
     let mut raises: Vec<String> = Vec::new();
     for eff in &f.effects {
         if let Some(inner) = extract_fail_inner(eff) {
@@ -633,7 +638,7 @@ fn build_signature(f: &FnDecl) -> Signature {
     }
     raises.sort();
     raises.dedup();
-    // Plan 45 Ф.23.1 / D24/D106: contracts из AST.
+    // Plan 45 Р¤.23.1 / D24/D106: contracts РёР· AST.
     let mut contracts: Vec<ContractDoc> = Vec::new();
     for c in &f.contracts {
         let kind = match c.kind {
@@ -664,10 +669,10 @@ fn build_signature(f: &FnDecl) -> Signature {
     }
 }
 
-/// Минимальный pretty-print TypeRef в Nova source. **MVP-простой** —
-/// для популярных форм; сложные случаи могут округляться (best-effort
-/// строковое представление).
-/// Plan 45 Ф.24.6: public re-export of render_type for use in render_json.
+/// РњРёРЅРёРјР°Р»СЊРЅС‹Р№ pretty-print TypeRef РІ Nova source. **MVP-РїСЂРѕСЃС‚РѕР№** вЂ”
+/// РґР»СЏ РїРѕРїСѓР»СЏСЂРЅС‹С… С„РѕСЂРј; СЃР»РѕР¶РЅС‹Рµ СЃР»СѓС‡Р°Рё РјРѕРіСѓС‚ РѕРєСЂСѓРіР»СЏС‚СЊСЃСЏ (best-effort
+/// СЃС‚СЂРѕРєРѕРІРѕРµ РїСЂРµРґСЃС‚Р°РІР»РµРЅРёРµ).
+/// Plan 45 Р¤.24.6: public re-export of render_type for use in render_json.
 pub fn render_type_for_doc(ty: &crate::ast::TypeRef) -> String {
     render_type(ty)
 }
@@ -725,13 +730,13 @@ fn render_type(ty: &crate::ast::TypeRef) -> String {
     }
 }
 
-/// Effect — это `TypeRef` (обычно `Named`). Render через `render_type`.
+/// Effect вЂ” СЌС‚Рѕ `TypeRef` (РѕР±С‹С‡РЅРѕ `Named`). Render С‡РµСЂРµР· `render_type`.
 fn render_effect(eff: &crate::ast::TypeRef) -> String {
     render_type(eff)
 }
 
-/// Извлечь имя `X` из effect-row элемента `Fail[X]` (для `raises`-списка).
-/// Возвращает `None`, если элемент не `Fail[...]`.
+/// РР·РІР»РµС‡СЊ РёРјСЏ `X` РёР· effect-row СЌР»РµРјРµРЅС‚Р° `Fail[X]` (РґР»СЏ `raises`-СЃРїРёСЃРєР°).
+/// Р’РѕР·РІСЂР°С‰Р°РµС‚ `None`, РµСЃР»Рё СЌР»РµРјРµРЅС‚ РЅРµ `Fail[...]`.
 fn extract_fail_inner(eff: &crate::ast::TypeRef) -> Option<String> {
     use crate::ast::TypeRef;
     if let TypeRef::Named { path, generics, .. } = eff {
@@ -742,9 +747,9 @@ fn extract_fail_inner(eff: &crate::ast::TypeRef) -> Option<String> {
     None
 }
 
-/// Минимальный pretty-print выражения в Nova source. **MVP**: для
-/// литералов и Ident — точный; для остального — placeholder.
-/// Полный pretty-printer — Plan 45.A или separate util.
+/// РњРёРЅРёРјР°Р»СЊРЅС‹Р№ pretty-print РІС‹СЂР°Р¶РµРЅРёСЏ РІ Nova source. **MVP**: РґР»СЏ
+/// Р»РёС‚РµСЂР°Р»РѕРІ Рё Ident вЂ” С‚РѕС‡РЅС‹Р№; РґР»СЏ РѕСЃС‚Р°Р»СЊРЅРѕРіРѕ вЂ” placeholder.
+/// РџРѕР»РЅС‹Р№ pretty-printer вЂ” Plan 45.A РёР»Рё separate util.
 fn render_expr(e: &crate::ast::Expr) -> String {
     use crate::ast::{ArrayElem, BinOp, CallArg, ExprKind, UnOp};
     match &e.kind {

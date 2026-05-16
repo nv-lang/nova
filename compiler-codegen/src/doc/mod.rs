@@ -30,6 +30,7 @@ pub mod stability;
 pub mod test_runner;
 pub mod render_md;
 pub mod render_json;
+pub mod scraper;
 
 pub use doctree::{DocTree, DocModule, DocItem, ItemKind, Signature, Visibility};
 

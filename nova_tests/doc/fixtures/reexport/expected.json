@@ -53,6 +53,9 @@
       "module_path": "nova_tests.doc.fixtures.reexport.sample",
       "name": "helper",
       "reexport_from": "nova_tests.doc.fixtures.reexport.other::helper",
+      "scraped_examples": [
+
+      ],
       "sections": {
 
       },
@@ -88,6 +91,9 @@
       "module_path": "nova_tests.doc.fixtures.reexport.sample",
       "name": "helper_two",
       "reexport_from": "nova_tests.doc.fixtures.reexport.other::helper_two",
+      "scraped_examples": [
+
+      ],
       "sections": {
 
       },
@@ -122,6 +128,9 @@
       "module_path": "nova_tests.doc.fixtures.reexport.sample",
       "name": "square",
       "reexport_from": null,
+      "scraped_examples": [
+
+      ],
       "sections": {
 
       },

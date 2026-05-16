@@ -71,6 +71,9 @@
       "module_path": "nova_tests.doc.fixtures.should_panic.sample",
       "name": "get",
       "reexport_from": null,
+      "scraped_examples": [
+
+      ],
       "sections": {
         "examples": "Нормальный доступ:\n\n```nova\nlet arr = [10, 20, 30]\nassert(arr[1] == 20)\n```\n\nДоступ за границы → panic (ожидаемое поведение):\n\n```nova,should_panic\nlet arr = [1, 2, 3]\nlet _ = arr[99]\n```"
       },

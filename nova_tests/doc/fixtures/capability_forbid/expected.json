@@ -52,6 +52,9 @@
       "module_path": "nova_tests.doc.fixtures.capability_forbid.sample",
       "name": "add",
       "reexport_from": null,
+      "scraped_examples": [
+
+      ],
       "sections": {
 
       },

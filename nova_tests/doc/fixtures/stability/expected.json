@@ -52,6 +52,9 @@
       "module_path": "nova_tests.doc.fixtures.stability.sample",
       "name": "add",
       "reexport_from": null,
+      "scraped_examples": [
+
+      ],
       "sections": {
         "since": "1.0.0"
       },
@@ -150,6 +153,9 @@
       "module_path": "nova_tests.doc.fixtures.stability.sample",
       "name": "maybe_add",
       "reexport_from": null,
+      "scraped_examples": [
+
+      ],
       "sections": {
 
       },
@@ -252,6 +258,9 @@
       "module_path": "nova_tests.doc.fixtures.stability.sample",
       "name": "plus",
       "reexport_from": null,
+      "scraped_examples": [
+
+      ],
       "sections": {
         "deprecated": "Use `add` instead.",
         "since": "0.1.0"

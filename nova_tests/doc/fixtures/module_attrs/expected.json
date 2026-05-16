@@ -57,6 +57,9 @@
       "module_path": "nova_tests.doc.fixtures.module_attrs.sample",
       "name": "bar",
       "reexport_from": null,
+      "scraped_examples": [
+
+      ],
       "sections": {
 
       },
@@ -144,6 +147,9 @@
       "module_path": "nova_tests.doc.fixtures.module_attrs.sample",
       "name": "foo",
       "reexport_from": null,
+      "scraped_examples": [
+
+      ],
       "sections": {
 
       },
