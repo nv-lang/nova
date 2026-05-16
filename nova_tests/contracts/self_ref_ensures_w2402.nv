@@ -1,0 +1,10 @@
+// Ф.19.2 (Plan 33.6): self-referential ensures `result == result` → W2402.
+// EXPECT_COMPILE_WARNING W2402
+
+module contracts.self_ref_ensures_w2402
+
+fn identity(x int) -> int
+    ensures result == result
+{
+    x
+}

@@ -2617,6 +2617,38 @@ let t0 = std::time::Instant::now();
             }
         }
     }
+    // Ф.19.2 + Ф.19.3 (Plan 33.6): detection trivial/redundant contracts.
+    for item in &module.items {
+        if let Item::Fn(fd) = item {
+            for c in &fd.contracts {
+                match c.kind {
+                    ContractKind::Requires => {
+                        // Ф.19.3: `requires true` — no-op.
+                        if matches!(c.expr.kind, ExprKind::BoolLit(true)) {
+                            report.warnings.push(Diagnostic::new(
+                                format!("fn `{}`: `requires true` тривиально true [W2402]: \
+                                         удалите — это no-op.", fd.name),
+                                c.span));
+                        }
+                    }
+                    ContractKind::Ensures => {
+                        // Ф.19.2: `ensures x == x` (left структурно == right) → trivial reflexive.
+                        if let ExprKind::Binary { op: BinOp::Eq, left, right } = &c.expr.kind {
+                            if format!("{:?}", left.kind) == format!("{:?}", right.kind) {
+                                report.warnings.push(Diagnostic::new(
+                                    format!("fn `{}`: self-referential ensures [W2402]: \
+                                             `expr == expr` тривиально true и не несёт смысла. \
+                                             Возможно, опечатка — проверьте намерение.",
+                                        fd.name),
+                                    c.span));
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
     report
 }
 
