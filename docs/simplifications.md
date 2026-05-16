@@ -7680,3 +7680,27 @@ source). Tests verify structural shape, пїЅпїЅ byte-for-byte match.
 **РџРѕС‡РµРјСѓ:** Schema С‡Р°СЃС‚Рѕ РјРµРЅСЏРµС‚СЃСЏ (additions); separate fixture С‚СЂРµР±РѕРІР°Р» Р±С‹
 РїРѕСЃС‚РѕСЏРЅРЅРѕРіРѕ regen. Structural validation РґРѕСЃС‚Р°С‚РѕС‡РµРЅ.
 **РџСЂРёРѕСЂРёС‚РµС‚:** none.
+
+---
+
+## Plan 45 Sprint Ф.29 — Cleanups (2026-05-16)
+
+### Resolved (no longer simplifications):
+
+- **render_expr_legacy dead code** (Ф.29.1) — removed.
+- **Always-parenthesized binary** (Ф.28.1 > Ф.29.2) — precedence-aware теперь.
+- **drop-ensures missing** (Ф.25.4 > Ф.29.3) — implemented.
+- **Workspace mutation only text-heuristic** (Ф.28.2 > Ф.29.4) — real-exec done.
+
+### Remaining (Plan 45.A/45.B scope):
+
+- HTML output + lunr search (Ф.31)
+- MCP server (Ф.32, отдельный crate)
+- Theme/dark-mode
+- External crate-doc linking
+- Incremental cache
+- Stdlib full doc-pass (Plan 45.B)
+- Parser-side #allow_transit (Plan 16 follow-up)
+- Workspace handler matrix через FileRegistry (Plan 42 follow-up)
+- Mutation testing: precedence-aware text substitute может miss экспрессии
+  с modified spacing (low priority — real-exec и так покрывает critical cases)

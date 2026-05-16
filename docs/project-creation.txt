@@ -13101,3 +13101,51 @@ Plan 48/49 total sub-cases: 50 в†’ **75 sub-cases**.
 test additions. Р‘Р°Р·РѕРІС‹Р№ 46 FAIL вЂ” pre-existing baseline (Plan 33.3 verify
 tests С‚СЂРµР±СѓСЋС‚ Z3 backend, std/collections/hashmap.nv `#from_pairs`
 attribute issue РѕС‚ Plan 52, doc/fixtures sample files Р±РµР· `fn main`).
+
+=== Plan 45 Sprint Ф.29 — Cleanup sprint (2026-05-16) ===
+
+4 smaller items закрыты в одной сессии после Ф.28 completion.
+
+Ф.29.1: Remove render_expr_legacy dead code (commit ebd6138).
+- 127 LOC removal в collector.rs. Ф.28.1 soak finished — shared util
+  st::pretty::print_expr полностью covers. Replaced на 2-line comment.
+
+Ф.29.2: Precedence-aware parens в ast::pretty (commit 389e9c1).
+- Раньше каждое binary expression обёрнуто в () для safety.
+- Теперь — Nova precedence table (Mul/Div=12, Add/Sub=11, ..., Iff=1) +
+  helpers needs_paren_left/right с left-assoc default.
+- Examples:
+  - x > 0 (был (x > 0)) — без parens
+  -  + b * c (был (a + (b * c))) — * higher prec > no inner parens
+  - (a + b) * c — + lower than * > нужны parens
+  -  - b - c (left-assoc) — без parens на left
+  -  - (b - c) (right side same prec) — parens нужны
+- 6 новых unit tests + regen golden fixtures.
+
+Ф.29.3: Drop-ensures mutator (commit d64eaa5).
+- Раньше только drop-requires (Ф.25.4 limitation).
+- Теперь symmetric: ensures-contract > drop-ensures mutant с
+  mutated_expr = "true".
+- 2 новых integration tests: drop-ensures generated, fn с обоими contracts
+  получает оба drop mutants.
+
+Ф.29.4: Workspace mutation testing real-exec (commit 286c6ad).
+- Раньше Ф.28.2 single-file only. Workspace-mode mutate_contracts падал
+  в text-heuristic.
+- New API un_mutation_analysis_executed_workspace(tree, sources_by_module_path).
+- Resolution: item_id.split("::").next() > module_path > source.
+- CLI: cmd_doc_workspace принимает mutate_contracts + real_exec параметры,
+  call'ит workspace API когда нужно.
+- Shared helper print_mutation_report (refactored из cmd_doc_mutate_contracts).
+- 5 integration tests: no-contracts/no-doctests/per-module resolution/
+  deterministic/unknown-module > NoTests (no panic).
+
+**Total после Sprint Ф.29:** 103 doc tests PASS (16 integration suites + 12 unit).
+
+**Plan 45 + 45.A foundation + Ф.29 cleanups = closed.**
+
+Что осталось (Ф.30+, отдельные sprints):
+- Ф.30: External crate-doc linking + incremental cache (Plan 45.A small wins)
+- Ф.31: HTML output + lunr search (Plan 45.A round 2 — main adoption blocker)
+- Ф.32: MCP server для AI/LLM real-time queries
+- Plan 45.B: Stdlib full doc-pass (отдельный effort)
