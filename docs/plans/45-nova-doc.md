@@ -27,6 +27,9 @@
 | Р¤.23 Hardening round 3 (Nova-unique) | вњ… done | 25 РїСѓРЅРєС‚РѕРІ вЂ” contracts/verify_status/capabilities/handler-matrix/must_verify/lints/schema v1.0.0-rc1/MD anchors/back-links/implementors/structural types/caret diagnostics/coverage/peer_file/newtype |
 | Р¤.24 Production hardening Sprint A+B+C | вњ… done | 18 РїСѓРЅРєС‚РѕРІ вЂ” forbid propagation, BTreeMap determinism, implementors guard, --check json, multi-line caret, structural-via-parser, schema rc1, expect_output, scrape-examples, semver-diff, doc_inline, workspace-parallelism, verify-badges, jq-queries, effect-matrix, realtime-matrix, infer-contracts |
 | Р¤.25 Diagnostics & integrations hardening | вњ… done | 4 РїСѓРЅРєС‚Р° вЂ” silent failures в†’ DocWarning + `--strict`; markdown-aware summary extractor (fenced blocks, URLs, abbreviations, decimals); source URL linking (`NOVA_DOC_SOURCE_URL_TEMPLATE` env в†’ JSON `source.url` + MD `[src]` link); doc-test mutation testing РґР»СЏ contracts (`--mutate-contracts`, Nova-unique) |
+| Р¤.26 Production hardening (audit-driven) | вњ… done | 4 РїСѓРЅРєС‚Р° вЂ” Newtype dead match arm (P0 D107 violation fix); handler matrix (Р¤.23.4 finally СЂРµР°Р»РёР·РѕРІР°РЅ); allow_transit capability placeholder (D63); 3 missing В§11.5 lints (summary-not-sentence, unknown-section, deprecated-overdue) |
+| Р¤.27 Audit closure (production polish) | вњ… done | 3 РїСѓРЅРєС‚Р° вЂ” workspace mode handler matrix functional (Р±С‹Р» noop); render_expr extended coverage (Index/If/SelfAccess/InterpolatedStr/TurboFish + `<kind>` fallback); stale MVP markers cleanup РІ 5 docstrings |
+| **Р¤.28 Plan 45.A foundation** (next sprint) | рџџЎ РІ СЂР°Р±РѕС‚Рµ | 3 РїСѓРЅРєС‚Р° вЂ” AST pretty-printer shared util (closes render_expr 100%); mutation testing real-exec (vs text-heuristic Р¤.25.4); JSON Schema v1.0.0-rc1 в†’ v1.0.0 promote (soak period closed) |
 
 ## Р¤.21 вЂ” Production hardening (2026-05-15, post-MVP audit)
 
@@ -2458,3 +2461,34 @@ issues, Reddit r/rust, Hacker News.
 - [Plan 28 вЂ” nova CLI](28-nova-cli.md): infrastructure РґР»СЏ subcommand.
 - [Plan 03 вЂ” package ecosystem](03-package-ecosystem-roadmap.md): future
   versioned doc hosting.
+
+---
+
+## Sprint Ф.27 — Audit-closure (2026-05-16, post-Ф.26 audit)
+
+После Ф.26 запустил свежий audit план vs реализация (2 parallel Explore agents:
+tech-debt + competitive analysis). Audit обнаружил 3 P1/P2 issues которые
+заявлены done в плане но реально partial / deferred. Sprint Ф.27 закрыл их.
+
+| # | Issue | Severity | Status |
+|---|-------|----------|--------|
+| Ф.27.1 | Workspace mode handler matrix был noop (deferred Plan 45.A в комментарии) | P1 (Nova-unique feature broken для real workspace кода) | done — populate_handler_matrix_workspace API + 4 cross-file tests |
+| Ф.27.2 | render_expr placeholder для complex contract expressions | P2 (contracts incomplete) | done — branches для Index/If/SelfAccess/InterpolatedStr/TurboFish |
+| Ф.27.3 | Stale MVP markers в 5 docstrings | P3 | done — updated links/collector/doctree/render_md docstrings |
+
+## Sprint Ф.28 — Plan 45.A foundation (in-progress)
+
+| # | Что | Scope | Зависимости |
+|---|-----|-------|-------------|
+| Ф.28.1 | AST pretty-printer shared util в ast::pretty — закрывает render_expr 100% | ~300 LOC | Independent |
+| Ф.28.2 | Mutation testing real-exec — заменяет text-heuristic Ф.25.4 на real test_runner | ~400 LOC | Ф.25.4 |
+| Ф.28.3 | Schema v1.0.0-rc1 > v1.0.0 promote (soak closed) | ~30 LOC | Ф.24.5 |
+
+Out-of-scope для Ф.28 (Plan 45.A round 2/3, отдельные sprints):
+- HTML output + lunr search (~600 LOC)
+- Theme/dark-mode
+- External crate-doc linking
+- MCP server для AI/LLM queries
+- Stdlib full doc-pass (Plan 45.B)
+- Workspace handler matrix через FileRegistry (post Plan 42)
+- #allow_transit parser-side support (Plan 16 follow-up)
