@@ -193,6 +193,120 @@ fn verify_status_str(s: &VerifyStatus) -> &'static str {
     }
 }
 
+/// Plan 45 Ф.32.2 — execute query directly на parsed JSON doc output
+/// (без DocTree reconstruction). Используется когда input — pre-generated
+/// `nova doc --format json` file.
+///
+/// Schema: top-level object с `items` array. Каждый item — object с
+/// `id`, `name`, `module_path`, `kind`, `summary`, `signature`, `capabilities`,
+/// `stability`, `deprecation` (fields см. D107).
+pub fn execute_json(json: &super::json_parse::JsonValue, q: &Query) -> Vec<QueryResult> {
+    let mut out = Vec::new();
+    let items = match json.get("items").and_then(|v| v.as_array()) {
+        Some(arr) => arr,
+        None => return out,
+    };
+    for item in items {
+        if !item_matches_json(item, q) { continue; }
+        let id = item.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        let name = item.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        let module_path = item.get("module_path").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        let kind = item.get("kind").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        let summary = item.get("summary")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        out.push(QueryResult { item_id: id, name, kind, module_path, summary });
+    }
+    out.sort_by(|a, b| a.item_id.cmp(&b.item_id));
+    out
+}
+
+fn item_matches_json(item: &super::json_parse::JsonValue, q: &Query) -> bool {
+    // kind filter.
+    if let Some(want_kind) = &q.kind {
+        let actual = item.get("kind").and_then(|v| v.as_str()).unwrap_or("");
+        if actual != want_kind.as_str() { return false; }
+    }
+    // name substring.
+    if let Some(name_q) = &q.name_substring {
+        let name = item.get("name").and_then(|v| v.as_str()).unwrap_or("");
+        if !name.to_lowercase().contains(name_q) { return false; }
+    }
+    // module filters.
+    let module_path = item.get("module_path").and_then(|v| v.as_str()).unwrap_or("");
+    if let Some(p) = &q.module_exact {
+        if module_path != p.as_str() { return false; }
+    }
+    if let Some(p) = &q.module_prefix {
+        if !module_path.starts_with(p.as_str()) { return false; }
+    }
+    // capability filter.
+    if let Some(cap_filter) = &q.capability {
+        let cap = match item.get("capabilities") {
+            Some(c) => c,
+            None => return false,
+        };
+        if !capability_matches_json(cap, cap_filter) { return false; }
+    }
+    // effect filter (signature.effects[].name).
+    if let Some(eff) = &q.effect_substring {
+        let sig = item.get("signature");
+        let effects = sig.and_then(|s| s.get("effects")).and_then(|v| v.as_array());
+        let has = effects.map(|arr| arr.iter().any(|e| {
+            e.get("name").and_then(|n| n.as_str()).map(|n| n.contains(eff.as_str())).unwrap_or(false)
+        })).unwrap_or(false);
+        if !has { return false; }
+    }
+    // has-contracts.
+    if let Some(want) = q.has_contracts {
+        let sig = item.get("signature");
+        let contracts = sig.and_then(|s| s.get("contracts")).and_then(|v| v.as_array());
+        let has = contracts.map(|arr| !arr.is_empty()).unwrap_or(false);
+        if has != want { return false; }
+    }
+    // verified.
+    if let Some(want) = &q.verified {
+        let status = item.get("signature")
+            .and_then(|s| s.get("verify_status"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("not-attempted");
+        if status != want.as_str() { return false; }
+    }
+    // stability tier.
+    if let Some(want) = &q.stability {
+        let tier = item.get("stability")
+            .and_then(|s| s.get("tier"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        if tier != want.as_str() { return false; }
+    }
+    // deprecated.
+    if let Some(want) = q.deprecated {
+        let is_dep = item.get("deprecation")
+            .map(|v| !v.is_null())
+            .unwrap_or(false);
+        if is_dep != want { return false; }
+    }
+    true
+}
+
+fn capability_matches_json(cap: &super::json_parse::JsonValue, filter: &str) -> bool {
+    if let Some(eff) = filter.strip_prefix("forbid:") {
+        let arr = cap.get("forbid").and_then(|v| v.as_array());
+        return arr.map(|a| a.iter().any(|v| v.as_str() == Some(eff))).unwrap_or(false);
+    }
+    if let Some(eff) = filter.strip_prefix("allow_transit:") {
+        let arr = cap.get("allow_transit").and_then(|v| v.as_array());
+        return arr.map(|a| a.iter().any(|v| v.as_str() == Some(eff))).unwrap_or(false);
+    }
+    match filter {
+        "pure" => cap.get("pure_fn").and_then(|v| v.as_bool()).unwrap_or(false),
+        "realtime" => cap.get("realtime").and_then(|v| v.as_bool()).unwrap_or(false),
+        "realtime_nogc" => cap.get("realtime_nogc").and_then(|v| v.as_bool()).unwrap_or(false),
+        _ => false,
+    }
+}
+
 /// Plan 45 Ф.32.1 — render QueryResult'ы как compact JSON array.
 pub fn render_results_json(results: &[QueryResult]) -> String {
     let mut out = String::with_capacity(256);

@@ -1469,23 +1469,17 @@ fn cmd_doc_mutate_contracts(
     print_mutation_report(&report, format)
 }
 
-/// Plan 45 Ф.32.1 — query JSON doc output via DSL.
+/// Plan 45 Ф.32.1 + Ф.32.2 — query doc output via DSL.
 ///
-/// Реализация: parse nova doc JSON в DocTree, выполнить query, print results.
-/// Это требует deserialize JSON → DocTree. Мы не имеем serde, поэтому
-/// **MVP подход**: re-parse исходник если path указывает на .nv файл,
-/// иначе assume JSON file и parse subset нужный для query (items array
-/// + кеу fields).
-///
-/// MVP скоп: принимает .nv source file path (не JSON). Re-parses через
-/// nova_codegen::doc::build, потом query. Это упрощение honest documented
-/// — proper JSON parsing — Ф.32.2 (когда добавим serde dep или write parser).
+/// Accepts both:
+/// - `.nv` source: re-parses + builds DocTree + queries (slower, fresh data).
+/// - `.json` file: parses pre-generated `nova doc --format json` output
+///   via custom JSON parser, executes query на parsed items array (fast,
+///   no Nova compilation needed).
 fn cmd_doc_query(path: &Path, query_str: &str) -> Result<()> {
     let q = nova_codegen::doc::query::parse_query(query_str)
         .map_err(|e| anyhow!("query parse error: {}", e))?;
 
-    // Если path — .nv source — parse + build DocTree.
-    // Если path — .json — пока bail с hint на Ф.32.2 roadmap.
     let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
     if ext == "nv" {
         let src = read_file(path)?;
@@ -1499,9 +1493,15 @@ fn cmd_doc_query(path: &Path, query_str: &str) -> Result<()> {
         print!("{}", nova_codegen::doc::query::render_results_json(&results));
         Ok(())
     } else if ext == "json" {
-        bail!("JSON input parsing — Plan 45 Ф.32.2 roadmap. Use .nv source file для now: `nova doc-query <file.nv> '<query>'`");
+        // Plan 45 Ф.32.2: parse pre-generated JSON, query directly on items array.
+        let content = read_file(path)?;
+        let json = nova_codegen::doc::json_parse::parse(&content)
+            .map_err(|e| anyhow!("JSON parse error in {}: {}", path.display(), e))?;
+        let results = nova_codegen::doc::query::execute_json(&json, &q);
+        print!("{}", nova_codegen::doc::query::render_results_json(&results));
+        Ok(())
     } else {
-        bail!("unknown file extension `{}` — expected .nv (or .json — Ф.32.2)", ext);
+        bail!("unknown file extension `{}` — expected .nv or .json", ext);
     }
 }
 

@@ -35,6 +35,7 @@ pub mod mutation;
 pub mod collect_handlers;
 pub mod render_html;
 pub mod query;
+pub mod json_parse;
 
 pub use doctree::{DocTree, DocModule, DocItem, ItemKind, Signature, Visibility};
 
