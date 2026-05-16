@@ -1,0 +1,22 @@
+// Ф.1.2 (Plan 33.6): #unverified fn с non-encodable body → warning, не error.
+// Loop body не encodable, но #unverified → осознанный отказ от SMT.
+
+module contracts.unverified_attribute_positive
+
+#unverified
+fn loop_with_ensures(n int) -> int
+    ensures result >= 0
+{
+    let mut s = 0
+    let mut i = 0
+    while i <= n {
+        s = s + i
+        i = i + 1
+    }
+    s
+}
+
+test "unverified fn с loop body компилируется и работает" {
+    assert(loop_with_ensures(5) == 15)
+    assert(loop_with_ensures(0) == 0)
+}

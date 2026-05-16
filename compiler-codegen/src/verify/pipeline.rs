@@ -215,8 +215,10 @@ impl VerificationPipeline {
             }
         }
 
-        // 2. Encode requires в†’ assertions.
+        // 2. Encode requires -> assertions.
+        // Ф.1.2: если requires не encodable -> EncodingFailed для этого requires.
         let mut requires_failed = false;
+        let mut req_failures: Vec<(Span, VerifyResult)> = Vec::new();
         for c in &fd.contracts {
             if matches!(c.kind, ContractKind::Requires) {
                 match encode::encode_expr_with_ctx(&c.expr, &ctx) {
@@ -224,10 +226,11 @@ impl VerificationPipeline {
                         formula: t,
                         label: Some(format!("requires@{}", c.span.start)),
                     }),
-                    Err(_) => {
-                        // Р•СЃР»Рё requires РЅРµ encoded вЂ” РјС‹ РЅРµ РјРѕР¶РµРј РїСЂРѕРІРµСЂРёС‚СЊ
-                        // РЅРёРєР°РєРѕР№ ensures (РєРѕРЅС‚РµРєСЃС‚ РЅРµРїРѕР»РѕРЅ). Р’СЃРµ ensures в†’
-                        // EncodingFailed.
+                    Err(super::encode::EncodingError::Unsupported(msg)) => {
+                        // Ф.1.2: requires не encodable -> EncodingFailed с маркером E2401.
+                        // Префикс "[CONTRACT_UNSUPPORTED]" отличает от "body not encodable".
+                        req_failures.push((c.span, VerifyResult::EncodingFailed(
+                            format!("[CONTRACT_UNSUPPORTED] {}", msg))));
                         requires_failed = true;
                     }
                 }
@@ -314,7 +317,9 @@ impl VerificationPipeline {
         };
 
         // 4. Verify each ensures.
+        // Ф.1.2: включаем failures от requires encoding.
         let mut results = calc_step_results; // Ф.4.2: calc шаги добавляются первыми
+        results.extend(req_failures);
         for c in &fd.contracts {
             if !matches!(c.kind, ContractKind::Ensures) { continue; }
             if requires_failed {
@@ -325,7 +330,9 @@ impl VerificationPipeline {
             let encoded = match encode::encode_expr_with_ctx(&c.expr, &ctx) {
                 Ok(t) => t,
                 Err(super::encode::EncodingError::Unsupported(msg)) => {
-                    results.push((c.span, VerifyResult::EncodingFailed(msg)));
+                    // Ф.1.2: contract expr не encodable -> E2401 маркер.
+                    results.push((c.span, VerifyResult::EncodingFailed(
+                        format!("[CONTRACT_UNSUPPORTED] {}", msg))));
                     continue;
                 }
             };
@@ -372,7 +379,9 @@ impl VerificationPipeline {
             let encoded = match encode::encode_expr_with_ctx(&c.expr, &ctx) {
                 Ok(t) => t,
                 Err(super::encode::EncodingError::Unsupported(msg)) => {
-                    results.push((c.span, VerifyResult::EncodingFailed(msg)));
+                    // Ф.1.2: contract expr не encodable -> E2401 маркер.
+                    results.push((c.span, VerifyResult::EncodingFailed(
+                        format!("[CONTRACT_UNSUPPORTED] {}", msg))));
                     continue;
                 }
             };
@@ -631,7 +640,9 @@ impl VerificationPipeline {
             let encoded = match encode::encode_expr_with_ctx(&c.expr, &ctx) {
                 Ok(t) => t,
                 Err(super::encode::EncodingError::Unsupported(msg)) => {
-                    results.push((c.span, VerifyResult::EncodingFailed(msg)));
+                    // Ф.1.2: contract expr не encodable -> E2401 маркер.
+                    results.push((c.span, VerifyResult::EncodingFailed(
+                        format!("[CONTRACT_UNSUPPORTED] {}", msg))));
                     continue;
                 }
             };
@@ -2840,14 +2851,32 @@ pub fn verify_module(module: &Module) -> ModuleVerifyReport {
                         }
                     }
                     VerifyResult::EncodingFailed(reason) => {
-                        // РђРЅР°Р»РѕРіРёС‡РЅРѕ Unknown.
-                        if matches!(fd.verify_mode, VerifyMode::MustVerify) {
-                            let msg = format!(
-                                "`#verify` failed for `{}`:\n  encoder cannot represent contract: {}\n  \
-                                 hint: Plan 33.1 encoder РїРѕРґРґРµСЂР¶РёРІР°РµС‚ С‚РѕР»СЊРєРѕ int/bool/str/record/binary-ops/if/old. \
-                                 Sum types / arrays / quantifiers вЂ” Р¶РґСѓС‚ Z3 backend.",
-                                fd.name, reason);
-                            report.errors.push(Diagnostic::new(msg, span));
+                        // Ф.1.2 (Plan 33.6): EncodingFailed без #unverified -> compile error E2401.
+                        // С #unverified -> warning W2401 (осознанный отказ от SMT).
+                        // "body not encodable" — TrivialBackend limitation, не E2401 (оставляем silent).
+                        // E2401 только если контракт (requires/ensures expr) не encodable,
+                        // не когда body не encodable (TrivialBackend limitation).
+                        let is_contract_unsupported = reason.starts_with("[CONTRACT_UNSUPPORTED]");
+                        let display_reason = reason.trim_start_matches("[CONTRACT_UNSUPPORTED] ");
+                        match fd.verify_mode {
+                            VerifyMode::MustVerify | VerifyMode::Default if is_contract_unsupported => {
+                                let extra = if matches!(fd.verify_mode, VerifyMode::Default) {
+                                    " hint: пометьте fn как #unverified для runtime-fallback,\
+                                     или вынесите логику в #pure helper."
+                                } else { "" };
+                                let msg = format!(
+                                    "контракт fn '{}' содержит конструкцию \
+                                     не поддерживаемую SMT-encoder'ом [E2401]: {}. {}",
+                                    fd.name, display_reason, extra);
+                                report.errors.push(Diagnostic::new(msg, span));
+                            }
+                            VerifyMode::Unverified => {
+                                let msg = format!(
+                                    "fn '{}' помечена #unverified: SMT verification пропущен [W2401]",
+                                    fd.name);
+                                report.warnings.push(Diagnostic::new(msg, span));
+                            }
+                            _ => {} // body limitation или MustVerify с body limitation — silent fallback
                         }
                     }
                 }
