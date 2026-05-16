@@ -1,0 +1,23 @@
+// EXPECT_CC_ERROR no member named
+//
+// Plan 52 Ф.17 (D55 marker recognition): user-локальный тип БЕЗ
+// `#from_fields` НЕ должен триггерить map-coercion для `{field: v}`.
+// Это защищает от false-positives: даже если у локального типа имя
+// совпадает с stdlib-типом (`HashMap`), без attribute правило не
+// применяется.
+//
+// Здесь `MyContainer` без attribute — `{a: 1, b: 2}` пытается
+// coerce'нуться обычной record-coercion (D55 §2): поля литерала
+// должны совпадать с полями типа. `MyContainer` имеет `data int` —
+// нет полей `a`/`b` → compile error.
+//
+// Если бы Ф.17 был broken (всё что выглядит как map-coercion
+// проходит) — тест PASS'ил бы с silent wrong-codegen.
+module map_literals.negative_no_from_fields
+
+type MyContainer[K, V] { data int }
+
+fn main() -> () {
+    let m MyContainer[str, int] = { a: 1, b: 2 }
+    let _ = m
+}
