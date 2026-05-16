@@ -343,10 +343,34 @@ impl DesugarCtx {
             is_ghost: false,
         }));
 
-        // Для каждой пары: `let _ = _mN.insert(k, v)`
-        // `@insert` в AST — это Member-метод `.insert` (receiver-prefix `@`
-        // снимается на парсинге; вызов идёт как обычный method-call).
-        for (k, v) in pairs {
+        // Plan 52 Ф.13 production-fix: explicit temp-bindings для
+        // гарантированного нормативного eval-order (D108 §4748:
+        // k1, v1, k2, v2 слева-направо). Без temp'ов C function-call
+        // evaluates args в неопределённом порядке (clang делает
+        // right-to-left) → реальный observable порядок был v1, k1, v2, k2.
+        // Каждая пара десугарится в:
+        //   let _kN = <key-expr>;     ← evaluated first
+        //   let _vN = <value-expr>;   ← evaluated second
+        //   let _ = _mN.insert(_kN, _vN);
+        for (idx, (k, v)) in pairs.into_iter().enumerate() {
+            let k_tmp = format!("{}_k{}", tmp, idx);
+            let v_tmp = format!("{}_v{}", tmp, idx);
+            stmts.push(Stmt::Let(LetDecl {
+                mutable: false,
+                pattern: Pattern::Ident { name: k_tmp.clone(), span },
+                ty: None,
+                value: k,
+                span,
+                is_ghost: false,
+            }));
+            stmts.push(Stmt::Let(LetDecl {
+                mutable: false,
+                pattern: Pattern::Ident { name: v_tmp.clone(), span },
+                ty: None,
+                value: v,
+                span,
+                is_ghost: false,
+            }));
             let insert_call = Expr::new(
                 ExprKind::Call {
                     func: Box::new(Expr::new(
@@ -356,7 +380,10 @@ impl DesugarCtx {
                         },
                         span,
                     )),
-                    args: vec![CallArg::Item(k), CallArg::Item(v)],
+                    args: vec![
+                        CallArg::Item(Expr::new(ExprKind::Ident(k_tmp), span)),
+                        CallArg::Item(Expr::new(ExprKind::Ident(v_tmp), span)),
+                    ],
                     trailing: None,
                 },
                 span,

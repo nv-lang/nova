@@ -1,0 +1,34 @@
+// EXPECT_STDOUT k1|v1|k2|v2|k3|v3
+//
+// Plan 52 Ф.13 (D108 §4748): observable порядок вычисления map-литерала
+// — нормативно зафиксирован `k1, v1, k2, v2, ...` (слева-направо, ключ
+// перед значением). Это улучшение над Go, spec которого оставляет
+// порядок неспецифицированным.
+//
+// Без observable-теста через side-effects fixation в spec — пустая
+// гарантия (acceptance §630). Используем print-сайд-эффекты в
+// функциях record_key/record_val для фиксации actual sequence;
+// stdout-pattern проверяет точный порядок.
+module map_literals.positive_eval_order
+
+import std.collections.hashmap.{HashMap}
+
+fn rec_k(label str) -> str {
+    print(label)
+    print("|")
+    label
+}
+
+fn rec_v(label str) -> int {
+    print(label)
+    print("|")
+    0
+}
+
+fn main() -> () {
+    let _m HashMap[str, int] = [
+        rec_k("k1"): rec_v("v1"),
+        rec_k("k2"): rec_v("v2"),
+        rec_k("k3"): rec_v("v3"),
+    ]
+}
