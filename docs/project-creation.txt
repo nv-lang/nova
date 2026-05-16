@@ -12238,6 +12238,23 @@ negative (есть warning или ошибка):
 **Итого тестов Ф.7:** 6 PASS positive + 3 PASS negative (warning) + 1 SKIP (Z3)
 + 19 f14_* SKIP (gating). Регрессия: 137 PASS / 35 SKIP / 1 pre-existing FAIL.
 
+### Ф.8.1 — Liskov 4 silent fallbacks → W2402
+
+После Ф.7-аудита нашлись ещё 4 silent skip-locations в `handler_exec.rs:246-295`
+(verify_liskov_method) — тот же паттерн что Ф.7.5, но в Liskov path:
+- requires encoding fail → silent (флаг requires_failed)
+- ensures encoding fail → silent continue
+- body_val None → silent continue
+- SatResult::Unknown → silent
+
+Изменения:
+- `verify_liskov_method` сигнатура `Vec<Diagnostic>` → `(errors, warnings)`.
+- 4 silent skips → push W2402 warnings.
+- `verify_handlers` extend warnings из Liskov.
+- Test: liskov_unknown_w2402 (match в ensures → encoding fail → W2402).
+- Регрессия: 139 PASS (+1) / 35 SKIP.
+- Коммит: `be561f0ddfd`.
+
 === Plan 45 �.25 � nova tests (positive + negative) ===
 
 ����� �������� �.25 (4 ����) �������� nova-tests .nv ��� �������� �����
