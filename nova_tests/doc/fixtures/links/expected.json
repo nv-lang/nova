@@ -57,6 +57,14 @@
       "aliases": [
 
       ],
+      "capabilities": {
+        "forbid": [
+
+        ],
+        "pure_fn": false,
+        "realtime": false,
+        "realtime_nogc": false
+      },
       "deprecation": null,
       "description": "Используется в [translate].",
       "doc_attrs": [
@@ -72,7 +80,8 @@
       },
       "source": {
         "file_id": 0,
-        "line": 11
+        "line": 11,
+        "peer_file": null
       },
       "stability": null,
       "summary": "Двумерная точка.",
@@ -96,6 +105,14 @@
       "aliases": [
 
       ],
+      "capabilities": {
+        "forbid": [
+
+        ],
+        "pure_fn": false,
+        "realtime": false,
+        "realtime_nogc": false
+      },
       "deprecation": null,
       "description": null,
       "doc_attrs": [
@@ -111,19 +128,29 @@
       },
       "source": {
         "file_id": 0,
-        "line": 17
+        "line": 17,
+        "peer_file": null
       },
       "stability": null,
       "summary": "Сдвигает [Point] на dx/dy.",
       "signature": {
         "contracts": {
+          "decreases": [
+
+          ],
           "ensures": [
+
+          ],
+          "ensures_fail": [
 
           ],
           "requires": [
 
           ],
-          "verify_status": "UNVERIFIED"
+          "verify_status": {
+            "counterexample": null,
+            "status": "not_attempted"
+          }
         },
         "effects": [
 

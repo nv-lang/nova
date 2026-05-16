@@ -6,7 +6,8 @@
 //! отдельные модули в `doc/passes/`.
 
 use crate::ast::{
-    ConstDecl, DocAttr, FnDecl, Item, Module, ModuleAttrKind, TypeDecl, TypeDeclKind,
+    ConstDecl, ContractKind, DocAttr, FnDecl, Item, Module, ModuleAttrKind, Purity,
+    RealtimeAttr, TypeDecl, TypeDeclKind,
 };
 use crate::doc::doctree::*;
 
@@ -43,10 +44,11 @@ fn extract_doc_attrs(attrs: &[DocAttr]) -> ExtractedDocAttrs {
     let mut tier_note: Option<String> = None;
     for a in attrs {
         match a {
-            DocAttr::Deprecated { since, note, until: _ } => {
+            DocAttr::Deprecated { since, note, until } => {
                 deprecation = Some(Deprecation {
                     note: note.clone().unwrap_or_default(),
                     since: since.clone().or_else(|| explicit_since.clone()),
+                    until: until.clone(),
                 });
             }
             DocAttr::Since(_) => {}
@@ -217,6 +219,12 @@ fn collect_fn(module_path: &[String], f: &FnDecl) -> DocItem {
     let signature = build_signature(f);
     let attrs = extract_doc_attrs(&f.doc_attrs);
     let summary = attrs.summary_override.clone().or(summary_auto);
+    let capabilities = Capabilities {
+        realtime: matches!(f.realtime_attr, RealtimeAttr::Realtime | RealtimeAttr::RealtimeNogc),
+        realtime_nogc: matches!(f.realtime_attr, RealtimeAttr::RealtimeNogc),
+        pure_fn: matches!(f.purity, Purity::Pure),
+        forbid: Vec::new(),
+    };
     DocItem {
         id,
         module_path: module_path.to_vec(),
@@ -230,8 +238,10 @@ fn collect_fn(module_path: &[String], f: &FnDecl) -> DocItem {
         aliases: attrs.aliases,
         hide_doc: attrs.hide_doc,
         doc_test_handlers: attrs.doc_test_handlers,
+        capabilities,
         kind: ItemKind::Fn(signature),
         source_span: f.span,
+        peer_file: None,
     }
 }
 
@@ -342,6 +352,11 @@ fn collect_type(module_path: &[String], t: &TypeDecl) -> DocItem {
                 .collect();
             ItemKind::Protocol { methods: sigs }
         }
+        TypeDeclKind::Newtype(inner_ty) => {
+            ItemKind::Type(TypeDefinition::Newtype {
+                inner: render_type(inner_ty),
+            })
+        }
     };
     DocItem {
         id,
@@ -356,8 +371,10 @@ fn collect_type(module_path: &[String], t: &TypeDecl) -> DocItem {
         aliases: attrs.aliases,
         hide_doc: attrs.hide_doc,
         doc_test_handlers: attrs.doc_test_handlers,
+        capabilities: Capabilities::default(),
         kind,
         source_span: t.span,
+        peer_file: None,
     }
 }
 
@@ -390,11 +407,13 @@ fn collect_const(module_path: &[String], c: &ConstDecl) -> DocItem {
         aliases: attrs.aliases,
         hide_doc: attrs.hide_doc,
         doc_test_handlers: attrs.doc_test_handlers,
+        capabilities: Capabilities::default(),
         kind: ItemKind::Const {
             ty,
             value: render_expr(&c.value),
         },
         source_span: c.span,
+        peer_file: None,
     }
 }
 
@@ -432,11 +451,34 @@ fn build_signature(f: &FnDecl) -> Signature {
         .as_ref()
         .map(render_type)
         .unwrap_or_else(|| "()".to_string());
-    // Effect-row: rendered as alphabetical-sorted set для детерминизма.
-    let mut effects: Vec<String> =
-        f.effects.iter().map(render_effect).collect();
-    effects.sort();
-    effects.dedup();
+    // Effect-row: structured entries для Ф.23.8/23.9.
+    let mut effects: Vec<EffectEntry> = f.effects.iter().map(|eff| {
+        // Plan 45 Ф.23.9: row-variables — single uppercase letter без generics.
+        let is_row_var = if let crate::ast::TypeRef::Named { path, generics, .. } = eff {
+            path.len() == 1 && generics.is_empty()
+                && path[0].len() == 1
+                && path[0].chars().next().map_or(false, |c| c.is_uppercase())
+        } else {
+            false
+        };
+        let name = if is_row_var {
+            if let crate::ast::TypeRef::Named { path, .. } = eff {
+                format!("({})", path[0])
+            } else {
+                render_effect(eff)
+            }
+        } else {
+            render_effect(eff)
+        };
+        EffectEntry {
+            name,
+            target_id: None,
+            summary: None,
+            is_row_var,
+        }
+    }).collect();
+    effects.sort_by(|a, b| a.name.cmp(&b.name));
+    effects.dedup_by(|a, b| a.name == b.name);
     // Raises: вытащить из `Fail[X]` в effect-row.
     let mut raises: Vec<String> = Vec::new();
     for eff in &f.effects {
@@ -446,6 +488,25 @@ fn build_signature(f: &FnDecl) -> Signature {
     }
     raises.sort();
     raises.dedup();
+    // Plan 45 Ф.23.1 / D24/D106: contracts из AST.
+    let mut contracts: Vec<ContractDoc> = Vec::new();
+    for c in &f.contracts {
+        let kind = match c.kind {
+            ContractKind::Requires => "requires",
+            ContractKind::Ensures => "ensures",
+            ContractKind::EnsuresFail => "ensures_fail",
+        };
+        contracts.push(ContractDoc {
+            kind: kind.to_string(),
+            expr: render_expr(&c.expr),
+        });
+    }
+    if let Some(dec) = &f.decreases {
+        contracts.push(ContractDoc {
+            kind: "decreases".to_string(),
+            expr: render_expr(dec),
+        });
+    }
     Signature {
         receiver,
         generics,
@@ -453,6 +514,8 @@ fn build_signature(f: &FnDecl) -> Signature {
         return_type,
         effects,
         raises,
+        contracts,
+        verify_status: VerifyStatus::NotAttempted,
     }
 }
 

@@ -2,7 +2,16 @@
   "format_version": 1,
   "nova_version": "0.1.0",
   "doc_tests": [
-
+    {
+      "from_id": "nova_tests.doc.fixtures.must_verify.sample::abs",
+      "full_source": "let x = abs(-3)\nassert(x >= 0)",
+      "id": "nova_tests.doc.fixtures.must_verify.sample::doc_test_1",
+      "index": 1,
+      "modifiers": [
+        "must_verify"
+      ],
+      "visible_source": "let x = abs(-3)\nassert(x >= 0)"
+    }
   ],
   "links": [
 
@@ -15,7 +24,7 @@
       ],
       "kind": "file",
       "name": "sample",
-      "path": "nova_tests.doc.fixtures.stability.sample",
+      "path": "nova_tests.doc.fixtures.must_verify.sample",
       "peers": [
 
       ],
@@ -24,8 +33,8 @@
         "line": 1
       },
       "stability": null,
-      "summary": "Plan 45 Ф.3: fixture для stability / deprecation / since.",
-      "description": null
+      "summary": "Plan 45 Ф.23.5: must_verify fixture — документирует функции с реальными\ncontracts (requires/ensures).",
+      "description": "Проверяет что doc pipeline извлекает\ncontracts в Signature и populate verify_status."
     }
   ],
   "items": [
@@ -47,42 +56,72 @@
 
       ],
       "doc_test_handlers": null,
-      "id": "nova_tests.doc.fixtures.stability.sample::add",
-      "kind": "fn",
-      "module_path": "nova_tests.doc.fixtures.stability.sample",
-      "name": "add",
+      "id": "nova_tests.doc.fixtures.must_verify.sample::ZERO",
+      "kind": "const",
+      "module_path": "nova_tests.doc.fixtures.must_verify.sample",
+      "name": "ZERO",
       "sections": {
-        "since": "1.0.0"
+
       },
       "source": {
         "file_id": 0,
-        "line": 21,
+        "line": 30,
         "peer_file": null
       },
-      "stability": {
-        "feature": null,
-        "note": null,
-        "since": "1.0.0",
-        "tier": "stable"
+      "stability": null,
+      "summary": "Константа для boundary checks.",
+      "type": "int",
+      "value": "0"
+    },
+    {
+      "aliases": [
+
+      ],
+      "capabilities": {
+        "forbid": [
+
+        ],
+        "pure_fn": false,
+        "realtime": false,
+        "realtime_nogc": false
       },
-      "summary": "Стабильное API.",
+      "deprecation": null,
+      "description": "Гарантии: результат всегда неотрицателен.\n\n```nova,must_verify\nlet x = abs(-3)\nassert(x >= 0)\n```",
+      "doc_attrs": [
+
+      ],
+      "doc_test_handlers": null,
+      "id": "nova_tests.doc.fixtures.must_verify.sample::abs",
+      "kind": "fn",
+      "module_path": "nova_tests.doc.fixtures.must_verify.sample",
+      "name": "abs",
+      "sections": {
+
+      },
+      "source": {
+        "file_id": 0,
+        "line": 15,
+        "peer_file": null
+      },
+      "stability": null,
+      "summary": "Вычисляет абсолютное значение целого числа.",
       "signature": {
         "contracts": {
           "decreases": [
 
           ],
           "ensures": [
-
+            "result >= 0"
           ],
           "ensures_fail": [
 
           ],
           "requires": [
-
+            "true"
           ],
           "verify_status": {
             "counterexample": null,
-            "status": "not_attempted"
+            "status": "timeout"
           }
         },
         "effects": [
@@ -95,14 +134,7 @@
           {
             "default": null,
             "keyword_only": false,
-            "name": "a",
-            "type": "int",
-            "variadic": false
-          },
-          {
-            "default": null,
-            "keyword_only": false,
-            "name": "b",
+            "name": "x",
             "type": "int",
             "variadic": false
           }
@@ -127,137 +159,43 @@
         "realtime_nogc": false
       },
       "deprecation": null,
-      "description": "Описание (не attr).",
+      "description": "Постусловия: результат не меньше обоих аргументов.",
       "doc_attrs": [
 
       ],
       "doc_test_handlers": null,
-      "id": "nova_tests.doc.fixtures.stability.sample::maybe_add",
+      "id": "nova_tests.doc.fixtures.must_verify.sample::max",
       "kind": "fn",
-      "module_path": "nova_tests.doc.fixtures.stability.sample",
-      "name": "maybe_add",
+      "module_path": "nova_tests.doc.fixtures.must_verify.sample",
+      "name": "max",
       "sections": {
 
       },
       "source": {
         "file_id": 0,
-        "line": 29,
+        "line": 23,
         "peer_file": null
       },
-      "stability": {
-        "feature": null,
-        "note": null,
-        "since": "0.3.0",
-        "tier": "experimental"
-      },
-      "summary": "Экспериментальная функция.",
+      "stability": null,
+      "summary": "Возвращает максимум двух чисел.",
       "signature": {
         "contracts": {
           "decreases": [
 
           ],
           "ensures": [
-
+            "result >= a",
+            "result >= b"
           ],
           "ensures_fail": [
 
           ],
           "requires": [
-
+            "true"
           ],
           "verify_status": {
             "counterexample": null,
-            "status": "not_attempted"
-          }
-        },
-        "effects": [
-
-        ],
-        "generics": [
-
-        ],
-        "params": [
-          {
-            "default": null,
-            "keyword_only": false,
-            "name": "a",
-            "type": "int",
-            "variadic": false
-          },
-          {
-            "default": null,
-            "keyword_only": false,
-            "name": "b",
-            "type": "int",
-            "variadic": false
-          }
-        ],
-        "raises": [
-
-        ],
-        "receiver": null,
-        "return_type": "int"
-      }
-    },
-    {
-      "aliases": [
-
-      ],
-      "capabilities": {
-        "forbid": [
-
-        ],
-        "pure_fn": false,
-        "realtime": false,
-        "realtime_nogc": false
-      },
-      "deprecation": {
-        "note": "Use `add` instead.",
-        "since": null,
-        "until": null
-      },
-      "description": null,
-      "doc_attrs": [
-
-      ],
-      "doc_test_handlers": null,
-      "id": "nova_tests.doc.fixtures.stability.sample::plus",
-      "kind": "fn",
-      "module_path": "nova_tests.doc.fixtures.stability.sample",
-      "name": "plus",
-      "sections": {
-        "deprecated": "Use `add` instead.",
-        "since": "0.1.0"
-      },
-      "source": {
-        "file_id": 0,
-        "line": 14,
-        "peer_file": null
-      },
-      "stability": {
-        "feature": null,
-        "note": null,
-        "since": "0.1.0",
-        "tier": "unstable"
-      },
-      "summary": "Сложить два числа.",
-      "signature": {
-        "contracts": {
-          "decreases": [
-
-          ],
-          "ensures": [
-
-          ],
-          "ensures_fail": [
-
-          ],
-          "requires": [
-
-          ],
-          "verify_status": {
-            "counterexample": null,
-            "status": "not_attempted"
+            "status": "timeout"
           }
         },
         "effects": [

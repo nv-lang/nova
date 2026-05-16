@@ -102,8 +102,9 @@ enum Cmd {
     /// MVP: one file at a time, output to stdout. Supported formats:
     /// `markdown` (default), `json` (D107 schema v1).
     Doc {
-        /// Path to a `.nv` file.
-        file: PathBuf,
+        /// Path to a `.nv` file or directory. Optional when `--json-schema` is used.
+        #[arg(num_args = 0..=1)]
+        file: Option<PathBuf>,
         /// Output format: `markdown` (default) or `json`.
         #[arg(long = "format", default_value = "markdown")]
         format: String,
@@ -1102,20 +1103,26 @@ fn walk_nv_files(dir: &Path, out: &mut Vec<PathBuf>) -> Result<()> {
 }
 
 /// Helper для check-mode (используется и single-file и workspace).
+/// Plan 45 Ф.23.12: теперь агрегирует все §11.5 lints.
 fn cmd_doc_check(tree: &nova_codegen::doc::DocTree) -> Result<()> {
     let mut issues: Vec<String> = Vec::new();
+    // Existing: broken links + missing summaries.
     for link in &tree.links {
         if link.target_id.is_none() {
             let from = link.from_id.as_deref().unwrap_or("<module>");
-            issues.push(format!("broken intra-doc-link [{}] in {}", link.text, from));
+            issues.push(format!("[broken-link] [{}] in {}", link.text, from));
         }
     }
     for m in &tree.modules {
         for it in &m.items {
             if it.visibility == nova_codegen::doc::Visibility::Export && it.summary.is_none() {
-                issues.push(format!("missing doc-summary on exported item `{}`", it.id));
+                issues.push(format!("[missing-summary] exported item `{}`", it.id));
             }
         }
+    }
+    // Plan 45 Ф.23.12: additional §11.5 lints.
+    for v in nova_codegen::doc::run_lints(tree) {
+        issues.push(format!("[{}] {}: {}", v.rule, v.item_id, v.message));
     }
     if issues.is_empty() {
         println!("doc-check: ok ({} item(s), {} link(s))",
@@ -1742,7 +1749,18 @@ fn main() -> ExitCode {
             &skip,
         ),
         Cmd::Run { file } => cmd_run(&file),
-        Cmd::Doc { file, format, json_schema, include_private, run_doc_tests, check, watch, coverage } => cmd_doc(&file, &format, json_schema, include_private, run_doc_tests, check, watch, coverage),
+        Cmd::Doc { file, format, json_schema, include_private, run_doc_tests, check, watch, coverage } => {
+            // Plan 45 Ф.23.17: --json-schema works without FILE argument.
+            if json_schema && file.is_none() {
+                println!("{}", nova_doc_embedded_schema());
+                return ExitCode::SUCCESS;
+            }
+            let path = file.as_deref().unwrap_or_else(|| {
+                eprintln!("error: FILE argument required (unless --json-schema)");
+                std::process::exit(1);
+            });
+            cmd_doc(path, &format, json_schema, include_private, run_doc_tests, check, watch, coverage)
+        }
         Cmd::Build { file, output, mode, toolchain, vcvars, clang, timeout, keep_artifacts } => cmd_build(
             &file,
             output.as_deref(),

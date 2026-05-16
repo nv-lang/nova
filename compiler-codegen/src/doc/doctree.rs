@@ -74,6 +74,9 @@ pub struct DocTest {
     pub visible_source: String,
     /// Full source — то что компилируется (включая hidden `# ` boilerplate).
     pub full_source: String,
+    /// Plan 45 Ф.23.7 / D106: `#doc(test_handlers = "path")` — handler-path
+    /// для инжекции `with <handler>` в wrap_source. Наследуется от item.
+    pub test_handlers: Option<String>,
 }
 
 /// Plan 45 Ф.7: doc-test modifier. По D104.
@@ -193,10 +196,28 @@ pub struct DocItem {
     /// Plan 45 Ф.3 / D105: `#doc(test_handlers = "path")` — handler-path
     /// для doc-test'ов. Сохраняется для будущего runner-integration.
     pub doc_test_handlers: Option<String>,
+    /// Plan 45 Ф.23.3 / D63/D64: capability annotations (realtime, pure).
+    pub capabilities: Capabilities,
     /// Kind-discriminator + специфичные поля.
     pub kind: ItemKind,
     /// Span декларации в исходнике — для "View Source".
     pub source_span: Span,
+    /// Plan 45 Ф.23.11: peer-file attribution — имя файла (basename)
+    /// откуда пришёл item (в folder-module режиме). None в single-file.
+    pub peer_file: Option<String>,
+}
+
+/// Plan 45 Ф.23.3 / D63/D64: capability annotations на item.
+#[derive(Debug, Clone, Default)]
+pub struct Capabilities {
+    /// `@realtime` или `@realtime nogc` — функция гарантирует realtime-safe execution.
+    pub realtime: bool,
+    /// `@realtime nogc` — дополнительно без GC.
+    pub realtime_nogc: bool,
+    /// `@pure` / выведенная `Pure` — функция без side effects.
+    pub pure_fn: bool,
+    /// Module-level `#forbid X, Y` — запрещённые effects (из module attrs).
+    pub forbid: Vec<String>,
 }
 
 /// Plan 45 Ф.3 / D105: deprecation marker.
@@ -206,6 +227,8 @@ pub struct Deprecation {
     pub note: String,
     /// Optional `since` version если упомянута в note или явно.
     pub since: Option<String>,
+    /// Plan 45 Ф.23.6 / D105: `until` version — планируемое удаление.
+    pub until: Option<String>,
 }
 
 /// Plan 45 Ф.3 / D105: stability tier.
@@ -269,6 +292,53 @@ pub enum ItemKind {
     },
 }
 
+/// Plan 45 Ф.23.8 / D62: структурная запись effect'а в signature.
+#[derive(Debug, Clone)]
+pub struct EffectEntry {
+    /// Rendered name (e.g. "Fs", "Fail[IoError]", "(E)" for row-var).
+    pub name: String,
+    /// Stable target_id если effect задокументирован как DocItem.
+    /// `None` если row-var или неизвестный effect.
+    pub target_id: Option<String>,
+    /// Summary из DocItem если доступен (workspace mode). Иначе None.
+    pub summary: Option<String>,
+    /// true если это row-variable, а не конкретный effect.
+    pub is_row_var: bool,
+}
+
+/// Plan 45 Ф.23.1 / D24/D106: один contract-clause функции в doc-output.
+#[derive(Debug, Clone)]
+pub struct ContractDoc {
+    /// "requires" | "ensures" | "ensures_fail" | "decreases"
+    pub kind: String,
+    /// Выражение-контракт, рендерёное как Nova source.
+    pub expr: String,
+}
+
+/// Plan 45 Ф.23.2 / D106: статус SMT-верификации функции.
+#[derive(Debug, Clone)]
+pub enum VerifyStatus {
+    /// Верификация не запускалась (функция без контрактов или `@unverified`).
+    NotAttempted,
+    /// Все контракты доказаны SMT-solver'ом.
+    Proven,
+    /// Solver нашёл контрпример. Содержит краткое описание.
+    HasCounterexample(String),
+    /// Solver вышел по таймауту.
+    Timeout,
+}
+
+impl VerifyStatus {
+    pub fn as_str(&self) -> &str {
+        match self {
+            VerifyStatus::NotAttempted => "not_attempted",
+            VerifyStatus::Proven => "proven",
+            VerifyStatus::HasCounterexample(_) => "has_counterexample",
+            VerifyStatus::Timeout => "timeout",
+        }
+    }
+}
+
 /// Сигнатура функции/метода (D107 §«Signature shape»).
 ///
 /// Типы рендерятся как Nova source (`String`), не как структурные AST.
@@ -284,9 +354,15 @@ pub struct Signature {
     /// Return type, рендерёный как Nova source.
     pub return_type: String,
     /// Effect-row: список effect-имён (alphabetical для детерминизма).
-    pub effects: Vec<String>,
+    /// Plan 45 Ф.23.8: structured entries с target_id для cross-linking.
+    pub effects: Vec<EffectEntry>,
     /// `Fail[X]`-варианты, извлечённые из effect-row.
     pub raises: Vec<String>,
+    /// Plan 45 Ф.23.1 / D24/D106: контракты функции
+    /// (requires/ensures/ensures_fail/decreases).
+    pub contracts: Vec<ContractDoc>,
+    /// Plan 45 Ф.23.2 / D106: статус SMT-верификации.
+    pub verify_status: VerifyStatus,
 }
 
 #[derive(Debug, Clone)]
@@ -331,6 +407,11 @@ pub enum TypeDefinition {
     Sum(Vec<SumVariant>),
     /// `type Alias = T` (D85 type-aliases).
     Alias(String),
+    /// Plan 45 Ф.23.10 / D107: `type Email = newtype str` — newtype wrapper.
+    Newtype {
+        /// Внутренний тип, рендерёный как Nova source.
+        inner: String,
+    },
 }
 
 #[derive(Debug, Clone)]

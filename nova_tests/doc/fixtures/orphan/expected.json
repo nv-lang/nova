@@ -33,6 +33,14 @@
       "aliases": [
 
       ],
+      "capabilities": {
+        "forbid": [
+
+        ],
+        "pure_fn": false,
+        "realtime": false,
+        "realtime_nogc": false
+      },
       "deprecation": null,
       "description": null,
       "doc_attrs": [
@@ -48,19 +56,29 @@
       },
       "source": {
         "file_id": 0,
-        "line": 9
+        "line": 9,
+        "peer_file": null
       },
       "stability": null,
       "summary": "А этот относится к нормальной fn'е — без warning.",
       "signature": {
         "contracts": {
+          "decreases": [
+
+          ],
           "ensures": [
+
+          ],
+          "ensures_fail": [
 
           ],
           "requires": [
 
           ],
-          "verify_status": "UNVERIFIED"
+          "verify_status": {
+            "counterexample": null,
+            "status": "not_attempted"
+          }
         },
         "effects": [
 

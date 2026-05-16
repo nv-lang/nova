@@ -85,8 +85,9 @@ fn render_item(it: &DocItem, out: &mut String) {
     let _ = writeln!(out, "### `{}`", it.name);
     let _ = writeln!(out);
     if let Some(d) = &it.deprecation {
-        let since = d.since.as_deref().map(|s| format!(" (since {})", s)).unwrap_or_default();
-        let _ = writeln!(out, "> **DEPRECATED{}**: {}", since, d.note);
+        let since = d.since.as_deref().map(|s| format!(" since {}", s)).unwrap_or_default();
+        let until = d.until.as_deref().map(|u| format!(" (until {})", u)).unwrap_or_default();
+        let _ = writeln!(out, "> **DEPRECATED{}{}**: {}", since, until, d.note);
         let _ = writeln!(out);
     }
     if let Some(s) = &it.stability {
@@ -100,6 +101,19 @@ fn render_item(it: &DocItem, out: &mut String) {
         let _ = writeln!(out, "*Also known as:* {}", it.aliases.iter().map(|a| format!("`{}`", a)).collect::<Vec<_>>().join(", "));
         let _ = writeln!(out);
     }
+    // Plan 45 Ф.23.3: capability badges над signature.
+    {
+        let cap = &it.capabilities;
+        let mut badges: Vec<String> = Vec::new();
+        if cap.realtime_nogc { badges.push("⏱ `realtime nogc`".to_string()); }
+        else if cap.realtime { badges.push("⏱ `realtime`".to_string()); }
+        if cap.pure_fn { badges.push("🧊 `pure`".to_string()); }
+        for f in &cap.forbid { badges.push(format!("🚫 `forbid({})`", f)); }
+        if !badges.is_empty() {
+            let _ = writeln!(out, "{}", badges.join(" "));
+            let _ = writeln!(out);
+        }
+    }
     // Signature / definition / value.
     match &it.kind {
         ItemKind::Fn(sig) => {
@@ -107,6 +121,42 @@ fn render_item(it: &DocItem, out: &mut String) {
             let _ = writeln!(out, "{}", render_fn_signature(&it.name, sig));
             let _ = writeln!(out, "```");
             let _ = writeln!(out);
+            // Plan 45 Ф.23.2: verify_status badge.
+            let badge = match &sig.verify_status {
+                VerifyStatus::Proven => Some("✅ **proven**"),
+                VerifyStatus::HasCounterexample(_) => Some("❌ **counterexample**"),
+                VerifyStatus::Timeout => Some("⏱ **verify timeout**"),
+                VerifyStatus::NotAttempted => None,
+            };
+            if let Some(b) = badge {
+                let _ = writeln!(out, "> {}", b);
+                let _ = writeln!(out);
+            }
+            // Plan 45 Ф.23.1: Contracts section.
+            if !sig.contracts.is_empty() {
+                let _ = writeln!(out, "#### Contracts");
+                let _ = writeln!(out);
+                for c in &sig.contracts {
+                    let _ = writeln!(out, "- `{}` {}", c.kind, c.expr);
+                }
+                let _ = writeln!(out);
+            }
+            // Plan 45 Ф.23.8: Effects auto-section.
+            let non_fail_effects: Vec<_> = sig.effects.iter()
+                .filter(|e| !e.name.starts_with("Fail["))
+                .collect();
+            if !non_fail_effects.is_empty() {
+                let _ = writeln!(out, "#### Effects");
+                let _ = writeln!(out);
+                for e in &non_fail_effects {
+                    if e.is_row_var {
+                        let _ = writeln!(out, "- {} *(effect row-variable)*", e.name);
+                    } else {
+                        let _ = writeln!(out, "- `{}`", e.name);
+                    }
+                }
+                let _ = writeln!(out);
+            }
         }
         ItemKind::Type(def) => {
             let _ = writeln!(out, "```nova");
@@ -207,7 +257,8 @@ fn render_fn_signature(name: &str, sig: &Signature) -> String {
     let params = sig.params.iter().map(render_param).collect::<Vec<_>>().join(", ");
     let _ = write!(s, "({})", params);
     if !sig.effects.is_empty() {
-        let _ = write!(s, " {}", sig.effects.join(" "));
+        let effect_names: Vec<&str> = sig.effects.iter().map(|e| e.name.as_str()).collect();
+        let _ = write!(s, " {}", effect_names.join(" "));
     }
     let _ = write!(s, " -> {}", sig.return_type);
     s
@@ -251,6 +302,9 @@ fn render_type_definition(name: &str, def: &TypeDefinition) -> String {
         }
         TypeDefinition::Alias(ty) => {
             let _ = write!(s, "type {} = {}", name, ty);
+        }
+        TypeDefinition::Newtype { inner } => {
+            let _ = write!(s, "type {} = newtype {}", name, inner);
         }
     }
     s

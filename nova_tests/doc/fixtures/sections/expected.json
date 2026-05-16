@@ -42,6 +42,14 @@
       "aliases": [
 
       ],
+      "capabilities": {
+        "forbid": [
+
+        ],
+        "pure_fn": false,
+        "realtime": false,
+        "realtime_nogc": false
+      },
       "deprecation": null,
       "description": "Длинное описание: возвращает целочисленный quotient. Для нулевого\n`b` функция возвращает ошибку через effect-row.",
       "doc_attrs": [
@@ -60,7 +68,8 @@
       },
       "source": {
         "file_id": 0,
-        "line": 27
+        "line": 27,
+        "peer_file": null
       },
       "stability": {
         "feature": null,
@@ -71,13 +80,22 @@
       "summary": "Делит `a` на `b`.",
       "signature": {
         "contracts": {
+          "decreases": [
+
+          ],
           "ensures": [
+
+          ],
+          "ensures_fail": [
 
           ],
           "requires": [
 
           ],
-          "verify_status": "UNVERIFIED"
+          "verify_status": {
+            "counterexample": null,
+            "status": "not_attempted"
+          }
         },
         "effects": [
 

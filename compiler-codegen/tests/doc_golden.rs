@@ -29,8 +29,19 @@ fn run_one(fixture_name: &str) {
     let expected_path = dir.join("expected.json");
     let src = std::fs::read_to_string(&src_path)
         .unwrap_or_else(|e| panic!("read {}: {}", src_path.display(), e));
-    let expected = std::fs::read_to_string(&expected_path)
-        .unwrap_or_else(|e| panic!("read {}: {}", expected_path.display(), e));
+
+    let regen = std::env::var("REGEN").is_ok();
+
+    if !regen && !expected_path.exists() {
+        panic!("expected.json missing for fixture `{}`. Run with REGEN=1 to generate.", fixture_name);
+    }
+
+    let expected = if regen {
+        String::new()
+    } else {
+        std::fs::read_to_string(&expected_path)
+            .unwrap_or_else(|e| panic!("read {}: {}", expected_path.display(), e))
+    };
 
     let mut module = nova_codegen::parser::parse(&src)
         .unwrap_or_else(|d| panic!("parse {}: {}", src_path.display(), d.message));
@@ -44,6 +55,13 @@ fn run_one(fixture_name: &str) {
     // ломать тест на Linux CI).
     let actual_norm = actual.replace("\r\n", "\n");
     let expected_norm = expected.replace("\r\n", "\n");
+
+    if regen {
+        std::fs::write(&expected_path, actual.as_bytes())
+            .unwrap_or_else(|e| panic!("write {}: {}", expected_path.display(), e));
+        eprintln!("REGEN: wrote {}", expected_path.display());
+        return;
+    }
 
     if actual_norm != expected_norm {
         // Print compact diff hint.
@@ -63,8 +81,8 @@ fn run_one(fixture_name: &str) {
             }
         }
         panic!(
-            "fixture `{}`: JSON output drift. Regenerate with `nova doc {}/sample.nv --format json > {}/expected.json` if intentional.",
-            fixture_name, fixture_name, fixture_name
+            "fixture `{}`: JSON output drift. Run tests with REGEN=1 to regenerate if intentional.",
+            fixture_name
         );
     }
 }
@@ -117,4 +135,9 @@ fn golden_module_attrs() {
 #[test]
 fn golden_should_panic() {
     run_one("should_panic");
+}
+
+#[test]
+fn golden_must_verify() {
+    run_one("must_verify");
 }

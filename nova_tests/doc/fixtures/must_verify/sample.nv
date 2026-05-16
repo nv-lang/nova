@@ -1,0 +1,30 @@
+//! Plan 45 Ф.23.5: must_verify fixture — документирует функции с реальными
+//! contracts (requires/ensures). Проверяет что doc pipeline извлекает
+//! contracts в Signature и populate verify_status.
+
+module nova_tests.doc.fixtures.must_verify.sample
+
+/// Вычисляет абсолютное значение целого числа.
+///
+/// Гарантии: результат всегда неотрицателен.
+///
+/// ```nova,must_verify
+/// let x = abs(-3)
+/// assert(x >= 0)
+/// ```
+export fn abs(x int) -> int
+    requires true
+    ensures result >= 0
+    => if x < 0 { 0 - x } else { x }
+
+/// Возвращает максимум двух чисел.
+///
+/// Постусловия: результат не меньше обоих аргументов.
+export fn max(a int, b int) -> int
+    requires true
+    ensures result >= a
+    ensures result >= b
+    => if a >= b { a } else { b }
+
+/// Константа для boundary checks.
+export const ZERO int = 0

@@ -141,17 +141,28 @@ fn write_module(w: &mut JsonWriter, m: &DocModule) {
 }
 
 fn write_item(w: &mut JsonWriter, it: &DocItem) {
-    // alphabetical key order: aliases < deprecation < description < doc_attrs < doc_test_handlers < id
+    // alphabetical key order
     w.field_array("aliases", |w| {
         for a in &it.aliases {
             w.array_str(a);
         }
+    });
+    // Plan 45 Ф.23.3 / D63/D64: capabilities
+    w.field_object("capabilities", |w| {
+        w.field_array("forbid", |w| {
+            for f in &it.capabilities.forbid { w.array_str(f); }
+        });
+        w.field_bool("pure_fn", it.capabilities.pure_fn);
+        w.field_bool("realtime", it.capabilities.realtime);
+        w.field_bool("realtime_nogc", it.capabilities.realtime_nogc);
     });
     match &it.deprecation {
         None => w.field_null_or_str("deprecation", None),
         Some(d) => w.field_object("deprecation", |w| {
             w.field_str("note", &d.note);
             w.field_null_or_str("since", d.since.as_deref());
+            // Plan 45 Ф.23.6 / D105: until field
+            w.field_null_or_str("until", d.until.as_deref());
         }),
     }
     w.field_null_or_str("description", it.description.as_deref());
@@ -170,6 +181,8 @@ fn write_item(w: &mut JsonWriter, it: &DocItem) {
         let span = it.source_span;
         w.field_u32("file_id", span.file_id);
         w.field_u32("line", w.line_of(span.start));
+        // Plan 45 Ф.23.11: peer_file attribution (folder-module mode).
+        w.field_null_or_str("peer_file", it.peer_file.as_deref());
     });
     match &it.stability {
         None => w.field_null_or_str("stability", None),
@@ -240,15 +253,60 @@ fn write_item(w: &mut JsonWriter, it: &DocItem) {
 }
 
 fn write_signature(w: &mut JsonWriter, sig: &Signature) {
+    // Plan 45 Ф.23.1 / D24/D106: contracts из AST (requires/ensures/ensures_fail/decreases).
+    // Plan 45 Ф.23.2 / D106: verify_status per-function.
     w.field_object("contracts", |w| {
-        // MVP: empty contracts (Plan 33 SMT verify результаты — Ф.3+).
-        w.field_array("ensures", |_| {});
-        w.field_array("requires", |_| {});
-        w.field_str("verify_status", "UNVERIFIED");
+        let decreases: Vec<&ContractDoc> = sig.contracts.iter()
+            .filter(|c| c.kind == "decreases").collect();
+        let ensures: Vec<&ContractDoc> = sig.contracts.iter()
+            .filter(|c| c.kind == "ensures").collect();
+        let ensures_fail: Vec<&ContractDoc> = sig.contracts.iter()
+            .filter(|c| c.kind == "ensures_fail").collect();
+        let requires: Vec<&ContractDoc> = sig.contracts.iter()
+            .filter(|c| c.kind == "requires").collect();
+        w.field_array("decreases", |w| {
+            for c in &decreases { w.array_str(&c.expr); }
+        });
+        w.field_array("ensures", |w| {
+            for c in &ensures { w.array_str(&c.expr); }
+        });
+        w.field_array("ensures_fail", |w| {
+            for c in &ensures_fail { w.array_str(&c.expr); }
+        });
+        w.field_array("requires", |w| {
+            for c in &requires { w.array_str(&c.expr); }
+        });
+        // verify_status: {status: "...", counterexample: "..." | null}
+        w.field_object("verify_status", |w| {
+            match &sig.verify_status {
+                VerifyStatus::NotAttempted => {
+                    w.field_null_or_str("counterexample", None);
+                    w.field_str("status", "not_attempted");
+                }
+                VerifyStatus::Proven => {
+                    w.field_null_or_str("counterexample", None);
+                    w.field_str("status", "proven");
+                }
+                VerifyStatus::HasCounterexample(msg) => {
+                    w.field_str("counterexample", msg);
+                    w.field_str("status", "has_counterexample");
+                }
+                VerifyStatus::Timeout => {
+                    w.field_null_or_str("counterexample", None);
+                    w.field_str("status", "timeout");
+                }
+            }
+        });
     });
+    // Plan 45 Ф.23.8: structured effect entries.
     w.field_array("effects", |w| {
         for e in &sig.effects {
-            w.array_str(e);
+            w.array_object(|w| {
+                w.field_bool("is_row_var", e.is_row_var);
+                w.field_str("name", &e.name);
+                w.field_null_or_str("summary", e.summary.as_deref());
+                w.field_null_or_str("target_id", e.target_id.as_deref());
+            });
         }
     });
     w.field_array("generics", |w| {
@@ -347,6 +405,10 @@ fn write_type_definition(w: &mut JsonWriter, def: &TypeDefinition) {
         TypeDefinition::Alias(ty) => {
             w.field_str("aliased_type", ty);
             w.field_str("kind", "alias");
+        }
+        TypeDefinition::Newtype { inner } => {
+            w.field_str("inner_type", inner);
+            w.field_str("kind", "newtype");
         }
     }
 }

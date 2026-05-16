@@ -24,6 +24,7 @@ pub mod collector;
 pub mod markdown;
 pub mod links;
 pub mod doctests;
+pub mod lints;
 pub mod schema;
 pub mod stability;
 pub mod test_runner;
@@ -52,6 +53,8 @@ pub fn build(module: &Module) -> DocTree {
     links::resolve_intra_doc_links(&mut tree);
     doctests::collect_doc_tests(&mut tree);
     stability::propagate_stability(&mut tree);
+    // Plan 45 Ф.23.2 / D106: verify_status per-fn wired through Plan 33.
+    populate_verify_status(&mut tree, module);
     tree
 }
 
@@ -64,6 +67,7 @@ pub fn build_workspace(modules: &[Module]) -> DocTree {
     links::resolve_intra_doc_links(&mut tree);
     doctests::collect_doc_tests(&mut tree);
     stability::propagate_stability(&mut tree);
+    // In workspace mode — no single Module available; verify_status stays NotAttempted.
     tree
 }
 
@@ -99,4 +103,74 @@ pub fn render_json(tree: &DocTree) -> String {
 /// Plan 45 Ф.9 — DocTree → JSON с source text для точной line-info.
 pub fn render_json_with_source(tree: &DocTree, source: &str) -> String {
     render_json::render_with_source(tree, Some(source))
+}
+
+/// Plan 45 Ф.23.12: run style-guide lints, return violations.
+pub fn run_lints(tree: &DocTree) -> Vec<lints::DocLintViolation> {
+    lints::run_lints(tree)
+}
+
+/// Plan 45 Ф.23.2 / D106: populate verify_status для fn items с contracts.
+/// Запускает Plan 33 verify pipeline и обновляет Signature.verify_status.
+fn populate_verify_status(tree: &mut DocTree, module: &Module) {
+    use crate::ast::Item;
+    use crate::verify::pipeline::{VerifyResult, VerificationPipeline};
+    use crate::doc::doctree::VerifyStatus;
+
+    // Collect per-fn verify results: fn_name → VerifyStatus.
+    let pipeline = VerificationPipeline::new();
+    let inferred_pure = crate::verify::pipeline::infer_pure_fns_scc(module);
+    let mut fn_status: std::collections::HashMap<String, VerifyStatus> =
+        std::collections::HashMap::new();
+
+    for item in &module.items {
+        if let Item::Fn(fd) = item {
+            if fd.contracts.is_empty() {
+                continue;
+            }
+            let results = pipeline.verify_fn(module, fd, &inferred_pure);
+            let mut proven_all = true;
+            let mut counterexample: Option<String> = None;
+            for (_span, vr) in &results {
+                match vr {
+                    VerifyResult::Proven => {}
+                    VerifyResult::Disproved(_model, msg) => {
+                        proven_all = false;
+                        counterexample = Some(msg.clone());
+                        break;
+                    }
+                    VerifyResult::Unknown(_) | VerifyResult::EncodingFailed(_) => {
+                        proven_all = false;
+                    }
+                }
+            }
+            let status = if results.is_empty() {
+                VerifyStatus::NotAttempted
+            } else if let Some(ce) = counterexample {
+                VerifyStatus::HasCounterexample(ce)
+            } else if proven_all {
+                VerifyStatus::Proven
+            } else {
+                VerifyStatus::Timeout
+            };
+            fn_status.insert(fd.name.clone(), status);
+        }
+    }
+
+    // Populate tree.
+    for m in &mut tree.modules {
+        for it in &mut m.items {
+            if let doctree::ItemKind::Fn(sig) = &mut it.kind {
+                if !sig.contracts.is_empty() {
+                    // Match by fn name (last segment of item ID after '::').
+                    let fn_name = it.id.rsplit("::").next().unwrap_or(&it.id);
+                    // Method IDs have form "module::Type.method" — strip type prefix.
+                    let fn_name = fn_name.rsplit('.').next().unwrap_or(fn_name);
+                    if let Some(status) = fn_status.remove(fn_name) {
+                        sig.verify_status = status;
+                    }
+                }
+            }
+        }
+    }
 }
