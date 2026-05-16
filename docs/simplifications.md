@@ -6687,9 +6687,73 @@ emit'ит raw C pointer arithmetic. Workaround — явный `.plus()` вызо
 Парсер принимает `f(args) { |params| body }` несмотря на D43-запрет
 closure-light в trailing-position. Должен отвергать с диагностикой.
 
-### Out of scope этой сессии
+### Out of scope этой сессии (2026-05-15)
 
 - `apply` reserved keyword conflict в parser (basics/functions,
   generics/mono_basic, p48_mono_method)
 - 8× doc/fixtures/*/sample CC-FAIL (missing main, infra setup gap)
 - str.hash() в stdlib (документировано как pre-existing в Plan 48 Ф.5)
+
+---
+
+## Итоговый статус (2026-05-16 EOD)
+
+### Решено (commit 2577ea40e8e)
+
+Блокеры B1–B3 закрыты. 10 правок в `emit_c.rs` + 2 строки в `hashmap.nv`.
+
+#### B1: Mono dispatch для nested generic calls → FIXED
+
+**Проблема:** `emit_monomorphized_method` не прокидывал `type_subst` в
+рекурсивные `emit_call` для вложенных методов + `infer_expr_c_type` для
+TurboFish не разрешал `Nova_K_p` → конкретный тип.
+
+**Фиксы:**
+- TurboFish: pre-populate `tuple_element_types` из `current_type_subst` перед
+  mono-emit.
+- `tuple_element_types` pre-populate из `type_args` до emit тела метода.
+- `Pattern::Tuple` в `emit_for` Case 2 — правильный subst propagation.
+- `hashmap.nv` тест `from`: добавлены явные `[str, int]` type-параметры.
+
+#### B2: Mono'd sum-type field extraction → FIXED
+
+**Проблема:** `pattern_bind_typed` → `find_variant("Cons")` → erased
+`"LinkedList"` (короткое имя) → поля `["void*", "void*"]` → `t: void*`.
+
+**Фикс:** Определять `type_name` из C-типа scrutinee напрямую
+(`Nova_LinkedList____nova_int*` → `LinkedList____nova_int`), смотреть
+mono-схему в `sum_schemas`. Fallback на `find_variant` при отсутствии mono-схемы.
+
+#### B3: Operator overload на generic'е → FIXED
+
+**Проблема:** `a + b` для `Nova_LinkedList____nova_int* + Nova_LinkedList____nova_int*`
+генерировал raw C pointer arithmetic → CC-FAIL.
+
+**Фикс:** В `emit_binary`: при `BinOp::Add` и типах `Nova_T*` / `Nova_T*`
+диспатчить в `T_method_plus(l, r)` (D46 operator overloading).
+
+#### Дополнительные фиксы (выявлены в процессе)
+
+- **TypeRef::Unit в erased-dispatch** (set CC-FAIL): добавлена ветка match +
+  drain args перед возвратом.
+- **match result type upgrade**: конкретный тип предпочитается над `void*`.
+- **void\* self-referential method dispatch**: внутри sum-type метода `t.length()`
+  где `t: void*` → кастовать к `current_receiver_type` и вызывать метод.
+- **infer_expr_c_type void\* Member**: возвращать `return_c_type` из
+  `method_overloads[current_receiver_type]` вместо `void*`.
+
+### Активные ограничения (не блокируют)
+
+**B4: D43 enforcement в parser** — `f(args) { |params| body }` принимается
+несмотря на D43-запрет closure-light в trailing-position. Не влияет на std.
+
+**Pre-existing failures (44 шт., не регрессии):**
+- Z3-backend тесты требуют `--features z3-backend` при сборке.
+- `doc/fixtures/*/sample` CC-FAIL: нет `fn main`, инфра-проблема.
+- Negative-тесты: error messages изменились, ожидаемые строки устарели.
+- `apply` reserved keyword в parser: 3 теста basics/generics.
+
+### Текущий статус
+
+- **std/collections: 10/10 PASS**
+- **nova_tests: 397 PASS / 44 FAIL / 13 SKIP**
