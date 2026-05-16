@@ -877,6 +877,49 @@ fn render_expr(e: &crate::ast::Expr) -> String {
                 .collect();
             format!("{}({})", render_expr(func), parts.join(", "))
         }
-        _ => "...".to_string(),
+        // Plan 45 Ф.27.2: расширенное покрытие render_expr для contracts.
+        // Раньше `_ => "..."` теряли важные кейсы (Index, If, etc).
+        ExprKind::Index { obj, index } => {
+            format!("{}[{}]", render_expr(obj), render_expr(index))
+        }
+        ExprKind::If { cond, then: _, else_: _ } => {
+            // Body — Block; для contracts важна сама condition.
+            // Conservative render: `if <cond> { ... } else { ... }`.
+            format!("if {} {{ ... }} else {{ ... }}", render_expr(cond))
+        }
+        ExprKind::SelfAccess => "@".to_string(),
+        ExprKind::InterpolatedStr { parts } => {
+            use crate::ast::InterpStrPart;
+            let rendered: Vec<String> = parts.iter().map(|p| match p {
+                InterpStrPart::Lit(s) => s.clone(),
+                InterpStrPart::Expr(e) => format!("${{{}}}", render_expr(e)),
+            }).collect();
+            format!("\"{}\"", rendered.join(""))
+        }
+        ExprKind::TurboFish { base, type_args } => {
+            let type_str: Vec<String> = type_args.iter().map(render_type).collect();
+            format!("{}[{}]", render_expr(base), type_str.join(", "))
+        }
+        // Plan 45 Ф.27.2: helpful placeholder с указанием kind вместо anonymous `...`.
+        // Для contracts редкие variants, но debugging легче когда видишь `<match>` чем `...`.
+        _ => {
+            let kind_name = match &e.kind {
+                ExprKind::Match { .. } => "match",
+                ExprKind::IfLet { .. } => "if-let",
+                ExprKind::Lambda { .. } => "lambda",
+                ExprKind::ClosureLight { .. } | ExprKind::ClosureFull(_) => "closure",
+                ExprKind::With { .. } => "with",
+                ExprKind::HandlerLit { .. } => "handler-lit",
+                ExprKind::Forbid { .. } => "forbid-block",
+                ExprKind::Realtime { .. } => "realtime-block",
+                ExprKind::MapLit { .. } => "map-lit",
+                ExprKind::For { .. } => "for",
+                ExprKind::While { .. } => "while",
+                ExprKind::Loop { .. } => "loop",
+                ExprKind::Select { .. } => "select",
+                _ => "expr",
+            };
+            format!("<{}>", kind_name)
+        }
     }
 }

@@ -7244,3 +7244,31 @@ string. Handler scanner работает по concatenated, item span'ы остаются valid.
 сохранён в Item.peer_file. Concatenated source — natural fit для span lookup.
 **Как чинить:** не нужно — concatenation сохраняет handler-scan semantics.
 **Приоритет:** none — это правильное design choice.
+
+---
+
+## Plan 45 Ф.27.2 — render_expr simplifications (2026-05-16)
+
+### If body conservative render
+
+**Где:** collector.rs::render_expr — If { cond, then, else_ } arm.
+**Что упрощено:** Body branches рендерятся как { ... } (без content),
+condition — корректно через render_expr recursion.
+**Почему:** If с body в contract — редкость (обычно condition ? a : b стиль
+через if a > b { a } else { b } в ensures). Body content rare значимая для
+verification (ensures сами по себе boolean condition).
+**Как чинить:** добавить ender_block(b) который рекурсивно render'ит
+last expression block'а. ~30 LOC. Низкий приоритет.
+**Приоритет:** L.
+
+### Match/closure/lambda/with/forbid/realtime — kind name fallback
+
+**Где:** collector.rs::render_expr — _ => arm.
+**Что упрощено:** Сложные expressions (match, closure, with-block, forbid-block)
+рендерятся как <match> / <closure> / <with> placeholder instead of full source.
+**Почему:** Full pretty-printer для всех ExprKind variants — ~200 LOC,
+duplicates AST pretty-printer (Plan 45.A roadmap'нут).
+**Как чинить:** добавить st::pretty::print_expr(e) -> String shared util,
+переиспользовать в doc + diag + diagnostics. Plan 45.A.
+**Приоритет:** L — contracts redko используют complex expressions; explicit
+<kind> placeholder помогает diagnose limitation.

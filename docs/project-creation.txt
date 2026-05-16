@@ -13022,3 +13022,31 @@ pipeline сейчас не присваивает уникальные file_id parser'у Ч все modules
 
 **Closes** P1 blocker найденный аудитом: handler matrix теперь functional
 дл€ real workspace кода.
+
+=== Plan 45 ‘.27.2 Ч render_expr расширенное покрытие (2026-05-16) ===
+
+Audit обнаружил что ender_expr имеет _ => "..." fallback Ч complex
+expressions в contracts (x + 1 > old(x)) могли render'итьс€ как ... > old(x)
+если first part complex. Ёто incomplete contract documentation в JSON/MD output.
+
+**Fix:**
+- ƒобавлены explicit branches дл€ common variants:
+  - Index { obj, index } Ч rr[i] корректно
+  - If { cond, then, else_ } Ч if <cond> { ... } else { ... } (body conservative)
+  - SelfAccess Ч @ (current Nova self)
+  - InterpolatedStr Ч "hello \" interpolation parts
+  - TurboFish { base, type_args } Ч Vec[int].with_capacity(n)
+- Fallback теперь Ч helpful kind name (<match>, <closure>, <with>, etc)
+  вместо anonymous .... ѕомогает debugging "почему contract incomplete".
+
+**Tests:** 6 integration tests в compiler-codegen/tests/doc_render_expr.rs:
+- Binary expression (x > 0) corectness
+- Arithmetic (esult == x + 1)
+- Function call (pos(y))
+- Combined predicate с && Ч обе sides preserved
+- Negation !pos(y)
+- Regression: no ... в simple contracts
+
+**AST naming caveat:** Nova AST имеет If { cond, then, else_ }, не
+If { cond, then_branch, else_branch }. “акже нет MethodCall/Cast/Await/
+Resume/Yield как top-level ExprKind variants (вместо них Call с method-receiver).
