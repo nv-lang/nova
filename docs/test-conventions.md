@@ -445,3 +445,56 @@ Nova ближе к Rust/Swift/Go — comment-маркер на уровне test
 - [compiler-codegen/src/test_runner.rs](../compiler-codegen/src/test_runner.rs) — runner implementation.
 - [nova_tests/negative_capability/](../nova_tests/negative_capability/) — примеры `EXPECT_COMPILE_ERROR`.
 - [nova_tests/expected_runtime/](../nova_tests/expected_runtime/) — примеры остальных трёх маркеров.
+
+
+---
+
+## Fixture directories (Plan 55 Ф.8, 2026-05-16)
+
+Не каждый `.nv` файл в `nova_tests/` — это runnable test. Иногда нужны
+**input fixtures** для tooling (Plan 45 `nova doc` ingestion samples,
+intermediate doc-pipeline data). Такие файлы:
+- часто **не имеют** `main`/`test "..."` блоков;
+- не должны компилироваться как standalone tests (CC-FAIL `undefined
+  symbol: nova_fn_main_impl`);
+- доступны через explicit `nova check <path>` или integration tests
+  (cargo tests).
+
+### Convention
+
+`nova test` (test discovery walker) **исключает**:
+
+1. **Любую директорию с именем `fixtures`** — стандартная конвенция
+   (параллель с Rust `tests/data/`, Python `fixtures/`).
+2. **Любую директорию с sentinel-файлом `_fixture.toml`** — explicit
+   override для случаев когда имя `fixtures` нельзя/нежелательно.
+
+```
+nova_tests/
+├── doc/
+│   ├── f24_*_positive.nv         ← обычные tests, run'аются
+│   └── fixtures/                 ← skipped (по имени)
+│       ├── basic/sample.nv
+│       └── ...
+└── plan42/
+    └── custom_data/              ← обычная папка, run'ается
+        └── _fixture.toml         ← теперь skipped (через sentinel)
+```
+
+### Доступ к fixtures извне
+
+- **Type-check:** `nova check nova_tests/doc/fixtures/basic/sample.nv`
+  работает напрямую (path-based, не через discovery).
+- **Plan 45 `nova doc`:** ingestion pipeline принимает explicit paths.
+- **Integration tests:** cargo tests в `compiler-codegen/tests/`
+  могут load fixtures как Rust string includes.
+
+### Параллель с другими языками
+
+| Язык | Convention |
+|---|---|
+| **Rust** | `tests/data/`, `tests/fixtures/` (cargo test игнорирует sub-dirs без `mod` декларации) |
+| **Python** | `fixtures/` (pytest skips если нет `test_*.py` или `*_test.py`) |
+| **Go** | `testdata/` (стандартный exclude в go test) |
+| **JS/TS** | `__fixtures__/`, `fixtures/` |
+| **Nova** | `fixtures/` ИЛИ `_fixture.toml` sentinel |

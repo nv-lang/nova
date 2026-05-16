@@ -2850,10 +2850,38 @@ fn random_seed() -> u64 {
         .unwrap_or(1)
 }
 
+/// Plan 55 Ф.8: detect fixture directory — should be **excluded** from
+/// test discovery. Fixtures = .nv files used as **input** для tooling
+/// (e.g. `nova doc` ingestion samples in `nova_tests/doc/fixtures/`), не
+/// настоящие tests (часто без `main`, без `test "..."` блоков).
+///
+/// Convention (production-grade, parity Rust `tests/data/`, Python `fixtures/`):
+/// 1. Directory имя literally `"fixtures"` → skip recursively.
+/// 2. Sentinel file `_fixture.toml` в каталоге → skip (explicit override).
+///
+/// Эти tests доступны через explicit `nova check <path>` или Plan 45
+/// `nova doc` pipeline.
+pub fn is_fixture_dir(dir: &Path) -> bool {
+    // Convention: directory имя == "fixtures".
+    if dir.file_name().and_then(|s| s.to_str()) == Some("fixtures") {
+        return true;
+    }
+    // Explicit sentinel.
+    if dir.join("_fixture.toml").is_file() {
+        return true;
+    }
+    false
+}
+
 /// Рекурсивный обход директории, возвращает все .nv файлы.
 /// Plan 36: pub — используется в `nova check <dir>` flow.
+/// Plan 55 Ф.8: skip fixture directories per `is_fixture_dir` convention.
 pub fn walk_nv(root: &Path, out: &mut Vec<PathBuf>) -> Result<()> {
     if !root.is_dir() {
+        return Ok(());
+    }
+    // Plan 55 Ф.8: skip fixtures directories entirely (no recursion).
+    if is_fixture_dir(root) {
         return Ok(());
     }
     let entries = std::fs::read_dir(root)
@@ -2898,6 +2926,9 @@ pub fn walk_nv(root: &Path, out: &mut Vec<PathBuf>) -> Result<()> {
         }
     }
     // Sub-dirs recursive (могут быть other modules / sub-modules).
+    // Plan 55 Ф.8: fixture sub-dirs skip'аются через is_fixture_dir check
+    // в самом walk_nv (defensive: можно skip здесь чтобы избежать syscalls,
+    // но centralized check внутри walk_nv — единственная точка истины).
     for sub in sub_dirs {
         walk_nv(&sub, out)?;
     }
