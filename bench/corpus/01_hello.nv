@@ -1,0 +1,6 @@
+// Plan 57 corpus 01: minimum compile-time.
+// Measures baseline parse + emit + C-compile overhead.
+
+fn main() Io -> () {
+    println("hello")
+}

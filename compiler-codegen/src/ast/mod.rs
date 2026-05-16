@@ -187,6 +187,11 @@ pub enum Item {
     Let(LetDecl),
     Const(ConstDecl),
     Test(TestDecl),
+    /// Plan 57: `bench "name" { ... measure { ... } ... }` —
+    /// benchmark declaration. Только discoverable под `nova bench`,
+    /// игнорируется в `nova test`/`nova build`. Body содержит setup
+    /// + один `measure { ... }` блок.
+    Bench(BenchDecl),
     /// Plan 33.5 Ф.4.1: `lemma` — proven proof term.
     /// Тело SMT-верифицируется (unknown == fail), не emit'ится в runtime.
     /// Может применяться через `apply lemma_name(args)` в телах функций.
@@ -726,6 +731,26 @@ pub struct ConstDecl {
 pub struct TestDecl {
     pub name: String,
     pub body: Block,
+    pub span: Span,
+}
+
+/// Plan 57: benchmark declaration.
+///
+/// `bench "name" { setup_stmts; measure { measured_body } teardown_stmts }`
+///
+/// - `setup` — statements ДО `measure` блока (не measured, выполняются 1 раз).
+/// - `measure_body` — измеряемый блок; bench runner вызывает его в адаптивном
+///   sampling loop (warmup → calibration → N samples).
+/// - `teardown` — statements ПОСЛЕ `measure` блока (не measured, 1 раз).
+///
+/// Парсер требует **ровно один** `measure { ... }` блок в body —
+/// иначе диагностика.
+#[derive(Debug, Clone)]
+pub struct BenchDecl {
+    pub name: String,
+    pub setup: Vec<Stmt>,
+    pub measure_body: Block,
+    pub teardown: Vec<Stmt>,
     pub span: Span,
 }
 

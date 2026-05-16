@@ -1,0 +1,94 @@
+// std/bench.nv — Plan 57 benchmark DSL prelude.
+//
+// **NOT auto-gen.** Этот модуль документирует hard-coded namespace `bench.*`
+// dispatched в codegen (как `gc.*` из std/runtime/gc.nv).
+//
+// `bench` — uniqueness: **lowercase namespace** (не type) для consistency с
+// прецедентами в других языках:
+//   - Rust:   `criterion::black_box(...)`
+//   - Go:     `b.SetBytes(...)`, `b.ResetTimer()`, `b.N`
+//   - Swift:  `XCTMeasure.measure { ... }`
+//
+// Видимость: prelude в `bench { ... }` блоках. Технически доступен и из
+// обычных функций — `bench.opaque(v)` работает как identity (black-box
+// barrier), `bench.iterations()` вне measure-блока возвращает 0.
+//
+// Использование внутри bench DSL:
+//
+//   bench "parse 1k lines" {
+//       let src = generate_source(1000)
+//       measure {
+//           bench.opaque(parse(src))
+//       }
+//   }
+//
+//   bench "hashmap insert N=10k" {
+//       let mut m = HashMap[int, int].new()
+//       measure {
+//           let n = bench.iterations()
+//           for i in 0..n { m.insert(i, i) }
+//           bench.elements(n)
+//       }
+//   }
+//
+//   bench "read buffer 4096 bytes" {
+//       let buf = make_buffer(4096)
+//       measure {
+//           process(bench.opaque(buf))
+//           bench.bytes(4096)  // → throughput per-second в JSON output
+//       }
+//   }
+//
+// ──────────────────────────────────────────────────────────────────────────
+// Источник истины для type-checker'а и codegen.
+// ──────────────────────────────────────────────────────────────────────────
+//
+// Эти `external fn` объявления — **source of truth** для type-checker'а.
+// Codegen имеет parallel hardcoded match на `name == "bench"` в emit_c.rs
+// — они должны быть синхронизированы вручную (как с `gc.*` в Plan 32).
+
+module bench
+
+
+// ─── bench namespace ────────────────────────────────────────────────────
+
+// Black-box barrier: предотвращает elimination операции компилятором
+// (Criterion `hint::black_box`, Go `runtime.KeepAlive`).
+// Эмитится в C как inline-asm `+r` constraint (GCC/Clang) или
+// `_ReadWriteBarrier()` + volatile (MSVC). Zero machine-code overhead.
+// Generic over T — codegen инстанциирует per-type через NOVA_BENCH_OPAQUE_PRIM.
+export external fn bench.opaque[T](v T) -> T
+
+// Текущий iters_per_sample (число итераций measure-блока в одном sample).
+// Adaptive sampling computes это автоматически в calibration phase:
+//   iters_per_sample = max(1, target_sample_ns / single_iter_ns)
+// Полезен для manual batch-loops: `for i in 0..bench.iterations() { ... }`.
+// Вне measure-блока — возвращает 0.
+export external fn bench.iterations() -> int
+
+// Reset sample timer к текущему моменту. Используется когда часть
+// measure-блока — setup-код (allocation, init) который не должен входить
+// в timing window. Аналог Go `b.ResetTimer()`.
+export external fn bench.reset_timer() -> ()
+
+// Throughput annotation: bytes processed per single iteration.
+// CLI вычисляет MB/s = bytes / median_ns_per_iter * 1e9. Аналог
+// Go `b.SetBytes(n)` / Criterion `Throughput::Bytes(n)`.
+export external fn bench.bytes(n int) -> ()
+
+// Throughput annotation: elements processed per single iteration.
+// CLI вычисляет elem/s = n / median_ns_per_iter * 1e9. Аналог
+// Criterion `Throughput::Elements(n)`.
+export external fn bench.elements(n int) -> ()
+
+// Snapshot текущего alloc count (Plan 32 GC introspection bridge).
+// Returns int — total allocations since program start (монотонный).
+// CLI считает per-iter alloc count = (post - pre) / total_iters.
+export external fn bench.allocs() -> int
+
+// High-resolution timer в наносекундах (libuv `uv_hrtime` под NOVA_USE_LIBUV,
+// иначе platform-native QueryPerformanceCounter / mach_absolute_time /
+// clock_gettime(CLOCK_MONOTONIC_RAW)).
+// Назначение — manual timing patterns; адаптивный sampling использует
+// internally same primitive.
+export external fn bench.now_ns() -> int

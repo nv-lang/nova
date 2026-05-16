@@ -48,6 +48,7 @@
 | D102 | 03-syntax.md | Named parameters — `f(x: 1, y: 2)` синтаксис вызова |
 | D103 | 06-concurrency.md | Preemption — cooperative yield-points в fiber tight loops |
 | D108 | 03-syntax.md | Map-literal `[k: v]` синтаксис + map-coercion (D55 rev) |
+| D109 | 09-tooling.md | Benchmark DSL — `bench "..." { measure { ... } }` + `bench.*` namespace |
 
 ## История
 

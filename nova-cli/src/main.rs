@@ -15,6 +15,8 @@ use std::time::Duration;
 
 use nova_codegen::test_runner;
 
+mod bench;
+
 // ---------- Plan 36 R7: structured CLI error types ----------
 
 /// Plan 36 R7: usage error — bad flag, path not found, wrong extension,
@@ -380,6 +382,96 @@ enum Cmd {
     /// All output JSON (AI-friendly schema). See docs/contracts-diag-schema.json.
     #[command(subcommand)]
     Contracts(ContractsCmd),
+    /// Plan 57: Benchmark commands.
+    ///
+    /// Subcommands: run, diff, gate.
+    /// Runs `bench "..." { measure { ... } }` declarations с Criterion-style
+    /// adaptive sampling, statistical analysis (median/MAD/Welch's t-test),
+    /// JSON v1 schema output, reproducibility metadata.
+    #[command(subcommand)]
+    Bench(BenchCmd),
+}
+
+/// Plan 57: `nova bench <subcommand>`.
+#[derive(Subcommand)]
+enum BenchCmd {
+    /// Run benchmarks in a .nv file. Compiles в release-mode, запускает,
+    /// собирает samples, выводит таблицу + опционально JSON/CSV/markdown.
+    Run {
+        /// Path to a .nv file containing `bench "..." { ... }` declarations.
+        file: PathBuf,
+        /// Substring filter — comma-separated bench-name fragments.
+        #[arg(long, value_name = "PATTERN")]
+        filter: Option<String>,
+        /// Override sample count (default 100).
+        #[arg(long)]
+        samples: Option<u64>,
+        /// Override warmup duration in ms (default 500).
+        #[arg(long = "warmup-ms")]
+        warmup_ms: Option<u64>,
+        /// Override per-bench time budget in seconds (default 10).
+        #[arg(long = "time-budget")]
+        time_budget_s: Option<u64>,
+        /// GC backend (malloc|boehm). Default boehm (Plan 27).
+        #[arg(long, default_value = "boehm")]
+        gc: String,
+        /// Build mode (release|dev). Release is preferred for bench
+        /// (5-20× faster + stable timings); dev is fallback когда
+        /// release-mode требует lld (linux LTO). Default: release.
+        #[arg(long, default_value = "release")]
+        mode: String,
+        /// Toolchain (auto|clang|msvc|gcc).
+        #[arg(long, default_value = "auto")]
+        toolchain: String,
+        /// Path to vcvars64.bat (Windows MSVC).
+        #[arg(long)]
+        vcvars: Option<PathBuf>,
+        /// Explicit clang path.
+        #[arg(long)]
+        clang: Option<PathBuf>,
+        /// Compile timeout in seconds.
+        #[arg(long, default_value_t = 120)]
+        compile_timeout: u64,
+        /// Bench process run timeout in seconds.
+        #[arg(long, default_value_t = 600)]
+        run_timeout: u64,
+        /// Keep intermediate .c / .exe artifacts in tmp dir (debug).
+        #[arg(long)]
+        keep_artifacts: bool,
+        /// Override mono instantiation depth limit.
+        #[arg(long, value_name = "N")]
+        mono_depth: Option<usize>,
+        /// Write JSON v1 result to file.
+        #[arg(long = "out")]
+        out_json: Option<PathBuf>,
+        /// Write CSV result to file.
+        #[arg(long = "out-csv")]
+        out_csv: Option<PathBuf>,
+        /// Write markdown result to file (для PR comment).
+        #[arg(long = "out-md")]
+        out_md: Option<PathBuf>,
+    },
+    /// Compare two bench JSON results. Outputs Welch's t-test p-values
+    /// + geomean delta + reproducibility check.
+    Diff {
+        /// Baseline JSON (older / reference).
+        baseline: PathBuf,
+        /// New JSON (recent / candidate).
+        new: PathBuf,
+        /// Output format (terminal|markdown|json).
+        #[arg(long, default_value = "terminal")]
+        format: String,
+    },
+    /// CI gate — apply thresholds from bench.toml. Exit 0 = pass, 1 = regress.
+    Gate {
+        /// Baseline JSON.
+        baseline: PathBuf,
+        /// New JSON.
+        new: PathBuf,
+        /// Path to bench.toml (default: ./bench.toml).
+        #[arg(long)]
+        config: Option<PathBuf>,
+    },
 }
 
 /// Plan 33.3 Ф.13: `nova contracts <subcommand>`.
@@ -2483,6 +2575,80 @@ fn cmd_contracts(sub: ContractsCmd) -> Result<()> {
     }
 }
 
+// ─────────────────────────────────────────────────────────────────────────
+// Plan 57: `nova bench` command group.
+// ─────────────────────────────────────────────────────────────────────────
+
+fn cmd_bench(sub: BenchCmd) -> Result<()> {
+    match sub {
+        BenchCmd::Run { file, filter, samples, warmup_ms, time_budget_s,
+                        gc, mode, toolchain, vcvars, clang, compile_timeout, run_timeout,
+                        keep_artifacts, mono_depth, out_json, out_csv, out_md } => {
+            let repo = find_repo_root()?;
+            let paths = resolve_paths(&repo);
+            let pref = test_runner::ToolchainPref::parse(&toolchain)?;
+            let gc_kind = test_runner::GcKind::parse(&gc)?;
+            let mode_enum = test_runner::Mode::parse(&mode)?;
+            let tc_opts = test_runner::ToolchainOpts {
+                pref,
+                explicit_clang: clang.as_deref(),
+                explicit_vcvars: vcvars.as_deref(),
+            };
+            let color = should_use_color();
+            let opts = bench::run::BenchRunOpts {
+                bench_path: &file,
+                repo: &repo,
+                stdlib_dir: &paths.stdlib_dir,
+                cg_include: &paths.cg_include,
+                rt_dir: &paths.rt_dir,
+                tc_opts,
+                filter,
+                samples,
+                warmup_ms,
+                time_budget_s,
+                gc_kind,
+                compile_timeout_secs: compile_timeout,
+                run_timeout_secs: run_timeout,
+                keep_artifacts,
+                mono_depth,
+                mode: mode_enum,
+                out_json: out_json.as_deref(),
+                out_csv: out_csv.as_deref(),
+                out_md: out_md.as_deref(),
+                color,
+            };
+            let exit = bench::run::run(opts)?;
+            if exit != 0 {
+                std::process::exit(exit);
+            }
+            Ok(())
+        }
+        BenchCmd::Diff { baseline, new, format } => {
+            let fmt = bench::diff::DiffFormat::parse(&format)?;
+            let exit = bench::diff::compare(&baseline, &new, fmt)?;
+            if exit != 0 { std::process::exit(exit); }
+            Ok(())
+        }
+        BenchCmd::Gate { baseline, new, config } => {
+            let exit = bench::gate::run(&baseline, &new, config.as_deref())?;
+            if exit != 0 { std::process::exit(exit); }
+            Ok(())
+        }
+    }
+}
+
+/// True if terminal output should be colorized. Mirrors existing color
+/// detection — see ColorMode in main(). For bench subcommands мы вызываем
+/// эту утилиту до сложного command dispatch parsing.
+fn should_use_color() -> bool {
+    if std::env::var("NO_COLOR").is_ok() { return false; }
+    if let Ok(v) = std::env::var("CI") { if !v.is_empty() { return false; } }
+    if let Ok(v) = std::env::var("TERM") { if v == "dumb" { return false; } }
+    // Pessimistic — на Windows ConPTY часто работает, но безопаснее false.
+    std::env::var("CLICOLOR_FORCE").map(|v| !v.is_empty()).unwrap_or(false)
+        || std::io::IsTerminal::is_terminal(&std::io::stdout())
+}
+
 fn contracts_parse_file(file: &std::path::Path) -> Result<nova_codegen::ast::Module> {
     let src = std::fs::read_to_string(file)
         .map_err(|e| anyhow!("cannot read {}: {}", file.display(), e))?;
@@ -2736,6 +2902,7 @@ fn main() -> ExitCode {
         ),
         Cmd::RegenRuntime { check } => cmd_regen_runtime(check),
         Cmd::Contracts(sub) => cmd_contracts(sub),
+        Cmd::Bench(sub) => cmd_bench(sub),
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,

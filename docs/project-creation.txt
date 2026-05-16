@@ -13775,3 +13775,85 @@ Plan 45 family � ����� �����. ��� ��������:
 
 ����� 14 sessions (�.25 > �.33) Plan 45 close on ~98%. ��� user-facing
 features implemented � production-grade test coverage.
+
+
+================================================================================
+Session: Plan 57 MVP — Performance Benchmark Infrastructure (2026-05-16)
+================================================================================
+
+Worktree: nova-lang-p57 (branch plan-57)
+
+Что сделано:
+
+1. DSL: contextual `bench`/`measure` keywords (parser.rs); AST `BenchDecl`
+   с setup/measure_body/teardown полями; visitor coverage в callnorm,
+   desugar, doc/collector, imports, lints, types (5 mod-level matches).
+
+2. Codegen: `emit_bench()` эмитит inline-sampled C-функцию с adaptive
+   sampling (warmup → calibration → 100 samples); `emit_main_wrapper`
+   bench-mode генерирует bench main с NOVA_BENCH_FILTER env support;
+   `bench.*` namespace dispatch (8 builtins) рядом с `gc.*`/`fibers.*`.
+
+3. Runtime: nova_rt/bench.h header-only (uv_hrtime / QueryPerformanceCounter /
+   mach_absolute_time / clock_gettime CLOCK_MONOTONIC_RAW); NOVA_BENCH_OPAQUE_*
+   macros (GCC/Clang inline-asm "+r"; MSVC volatile + _ReadWriteBarrier);
+   NovaBenchState TLS struct (iters_per_sample, throughput_bytes/elements,
+   timer_start_ns, alloc deltas).
+
+4. std/bench.nv — type-checker source-of-truth (7 external fn declarations).
+
+5. CLI: nova-cli/src/bench/ модуль из 7 файлов:
+   - stats.rs (median/MAD/Tukey outliers/bootstrap CI/slope+R²/Welch's
+     t-test через regularized beta inline gammaln, pure Rust ~370 LOC).
+   - schema.rs (JSON v1 schema + parse_line + AnalyzedBench).
+   - repro.rs (CPU model/governor/turbo/build_mode detection + env warnings).
+   - config.rs (минимальный TOML parser inline + glob matcher).
+   - report.rs (terminal/CSV/markdown formatters + duration formatter).
+   - run.rs (BenchRunOpts orchestrator: parse → typecheck → emit → compile
+     → exec → parse JSONL → analyze → output).
+   - diff.rs (compute_diff с Welch's t-test + geomean across suite).
+   - gate.rs (per-bench bench.toml thresholds + significance check).
+
+6. CLI subcommands: `nova bench run/diff/gate` через nested Subcommand
+   enum (как Contracts). Patches main.rs dispatch.
+
+7. bench/micro/ — 4 файла smoke benches (hello, hashmap, arith, strings, gc).
+
+8. bench/corpus/ — canonical compiler perf corpus (01_hello, 02_arith_loop,
+   10_massive_match). Полный 10-file corpus TBD (Plan 57.A integration).
+
+9. bench.toml — пример CI gate config с per-bench strict/exempt overrides.
+
+10. .github/workflows/bench-regression.yml — always-on PR gate с baseline
+    fetch from `bench-history` orphan branch + diff comment + gate exit.
+
+11. docs/perf-conventions.md — pragmatic guide (machine setup recipes
+    Linux/Windows/macOS + bench writing + sampling protocol explained).
+
+12. spec/decisions/09-tooling.md — D109 spec (DSL grammar + adaptive
+    sampling protocol + rejected alternatives + cross-refs).
+
+13. docs/plans/README.md — Plan 57 строка обновлена с "MVP ЗАКРЫТ".
+
+Acceptance:
+- E2E pipeline работает: nova bench run → JSON v1 → diff → gate.
+- 32/32 unit tests bench:: pass (stats, schema, repro, config, diff, gate, report).
+- Live demo: bench/micro/hello.nv даёт median+MAD+throughput для "noop"
+  (1ns) и "int add tight loop" (34µs, 145 Melem/s).
+- diff детектит -39.6% improvement с p=0.002 (Welch's t-test).
+- gate проходит (no regressions detected).
+
+Не закрыто (TBD):
+- Plan 57.A: HTML dashboard (echarts), profile integration (samply
+  flame graphs), historical orphan-branch automation, auto noise-floor
+  calibration.
+- Plan 57.B: CPU instructions mode (perf_event_open), Criterion-JSON
+  interop, parameterized sweeps (#bench attribute form).
+- Bench DSL type-checker validation: require exactly one measure block —
+  enforced в parser (ok), но lints для Time.sleep/Io.println внутри
+  measure — TBD.
+- Full canonical corpus (10 файлов вместо 3).
+- Compiler PerfTimer hooks для per-pass breakdown (Plan 57.A integration).
+
+Worktree commit план: один коммит "feat(57): MVP Plan 57 — production-
+grade benchmark infrastructure" после полного regression check.
