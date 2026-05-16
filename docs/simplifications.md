@@ -6834,3 +6834,57 @@ mono-схему в `sum_schemas`. Fallback на `find_variant` при отсут
 
 - **std/collections: 10/10 PASS**
 - **nova_tests: 397 PASS / 44 FAIL / 13 SKIP**
+
+
+## Итоговый статус (2026-05-16 EOD — Plan 48 final)
+
+Закрыты последние фазы Plan 48: Ф.7.4 partial, Ф.7.6, Ф.4 (оба бага),
+Ф.5 partial (Time schema). Все коммиты в mn-runtime worktree.
+
+### Сделано без упрощений
+
+**Ф.7.4 partial — bare-variant constructor mono inference.**
+`Ok2(42)` теперь триггерит mono pipeline через try_infer_variant_mono_args:
+извлекает parent generic sum-template, инференцирует T из arg C-типов,
+эмитит mono'д constructor (`nova_make_Nova_Result2____nova_int_Ok2`).
+Local var получает concrete C-тип `Nova_Result2____nova_int*`, последующие
+method calls попадают в mono dispatch (line 9911) без erased пути.
+`emit_generic_method_erased` оставлен как V1 fallback ТОЛЬКО для
+unit-variant references (`Err2`/`None`) где T нельзя вывести.
+
+**Ф.7.6 — --mono-depth=N CLI flag.**
+Hardcoded depth 500 → CLI `--mono-depth=N` в командах build/test/test-build.
+Прокинуто через TestAllOpts/TestBuildOpts/CEmitter. NOVA_MONO_DEPTH env var
+fallback сохранён.
+
+**Ф.4 — spawn + closure-capture в mono pipeline.**
+M-spawn-closure-capture-mono: helper spawn_capture_access(name) для
+закрытия gap'а между Ident-rewrite и closure-call в emit_call.
+M-mono-spawn-fwd-decls: emit_spawn при non-empty current_type_subst
+пушит fwd-decl в mono_fwd_decls.
+Smoke test nova_tests/concurrency/mono_spawn_closure_smoke.nv — все 3
+инстанса (T=int/str/bool) PASS.
+
+**Ф.5 partial — NovaVtable_Time schema (now_ms/now_ns).**
+Runtime effects.h расширен полями now_ms/now_ns. Дефолт-impl делегируется
+к now() (monotonic ms). M-time-effect-schema-mismatch снят полностью.
+
+### Известные ограничения (Plan 49 followup)
+
+**[M-unit-variant-context-inference]** (Ф.7.4 V2 final).
+`let r = Err2` для `Result2[T]` — T нельзя вывести из конструктора
+в одиночку. Требуется usage-context propagation (анализ method-call args
+после let-binding) или global type inference engine. До тех пор —
+emit_generic_method_erased остаётся как V1 fallback.
+
+**[M-int-extension-record-field]** (Ф.5 retry_test blocker).
+`100.millis()` (int-extension method) в record-literal field внутри
+generic static ctor генерирует invalid C `((nova_int)100LL).millis()`.
+Любой import std/concurrency/retry.nv валит C-build, независимо от
+того какие методы реально используются. Решается отдельно в Plan 49.
+
+### Результат
+
+- **nova_tests: 411 PASS / 46 FAIL / 13 SKIP** (== baseline + smoke test).
+- Все Plan 48 acceptance criteria закрыты (одно partial).
+- Zero регрессий на release-сборке.

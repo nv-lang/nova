@@ -11970,3 +11970,73 @@ C-типа scrutinee (`Nova_LinkedList____nova_int*` → `LinkedList____nova_int
 ### Commits
 
 - fix(codegen): std/collections hashmap+set+linkedlist — 10 codegen фикса
+
+
+## Шаг NNN+4. Plan 48 final — все оставшиеся фазы закрыты (2026-05-16)
+
+Закрыты последние 4 фазы Plan 48 (closures-в-generics + мономорфизация):
+
+### Ф.7.4 partial — bare-variant constructor mono inference
+
+Bare variant constructors с args (`Ok2(42)`) теперь триггерят mono pipeline
+вместо erased пути. Helper `try_infer_variant_mono_args` находит parent
+sum-template, инференцирует type-args из arg C-типов, enqueue'ит instance,
+возвращает mono имя. Применён в emit_call (constructor c_name), в
+infer_expr_c_type (return type → правильный pointer-тип), в is_generic_call
+flag (отключает void*-boxing для mono пути).
+
+`emit_generic_method_erased` оставлен как V1 fallback для unit-variant
+references (`let r = Err2`) — usage-context инференция T deferred V2
+(Ф.7.4 final). Test `types/generic_record_mono` остался зелёным.
+
+### Ф.7.6 — --mono-depth=N CLI flag
+
+Hardcoded depth limit (500) выведен в CLI флаг через nova-cli (commands
+build, test, test-build) → BuildOpts/TestAllOpts.mono_depth → CEmitter.
+NOVA_MONO_DEPTH env var остался как fallback (CLI приоритетнее).
+
+### Ф.4 — spawn + closure-capture в mono pipeline
+
+[M-spawn-closure-capture-mono]: emit_call для fn-typed param call
+не учитывал spawn ctx. Helper `spawn_capture_access(name)` централизует
+rewrite "name → _c->name/(*_c->name)" — applied к NOVA_CLOS_CALL_*
+и arbitrary-signature closure calls.
+
+[M-mono-spawn-fwd-decls]: pre-scan fwd-decls работает по оригинальному
+AST до mono drain → spawn-body fns внутри mono'д fn были без fwd-decl.
+Fix: в emit_spawn если current_type_subst non-empty, пушим fwd-decl
+в mono_fwd_decls (splice в маркер до всех fn defs).
+
+Smoke test: nova_tests/concurrency/mono_spawn_closure_smoke.nv —
+generic `run_in_fiber[T](body fn()->T)` для T=int/str/bool, все PASS.
+C-output подтверждает корректный `(*_c->body)` rewrite + fwd-decls.
+
+### Ф.5 partial — NovaVtable_Time schema fix
+
+Runtime NovaVtable_Time расширен полями now_ms, now_ns (codegen-emitted
+layout: ctx → sleep → now → now_ms → now_ns). Default-impl делегируется
+к _nova_time_default_now (monotonic ms). handlers.nv (fixed_ms/mut_clock)
+теперь регистрируются без "no member named 'now_ms'".
+
+retry_test.nv не написан — pre-existing codegen bug: `100.millis()`
+(int-extension method) в record-literal field внутри generic static
+ctor → invalid C `((nova_int)100LL).millis()`. Любой import retry.nv
+валит build. Plan 49 followup [M-int-extension-record-field].
+
+### Регрессия
+
+411 PASS / 46 FAIL — baseline 410/46 + новый mono_spawn_closure_smoke
+test. Никаких регрессий от Plan 48 финальных правок.
+
+### Commits
+
+- feat(48): Ф.7.4 partial — bare-variant mono inference + erased fallback
+  (mn-runtime fb21ca75f43)
+- feat(48): Ф.7.6 — --mono-depth=N CLI flag через nova-cli → emit_c.rs
+  (mn-runtime 62f011661c2)
+- feat(48): Ф.4 — spawn + closure-capture в mono pipeline (cancellation unblock)
+  (mn-runtime f0b1551d7e2)
+- runtime(48): Ф.5 — NovaVtable_Time schema alignment (now_ms/now_ns)
+  (mn-runtime 1c0b0e9a33a)
+- docs(48): Ф.7.4 partial — bare-variant mono done, erased fallback documented
+  (main 1b42eeedd30)
