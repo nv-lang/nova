@@ -14439,6 +14439,76 @@ Plan 57 — completely closed across all 5 фаз (MVP + A + B + C + D + E).
 Plan 57 backlog: empty. Все production extensions либо implemented,
 либо design-sketched. Future work — pick up sketches when ROI shows.
 
+Plan 57.F — Sketches → implementation (2026-05-17):
+
+Все 4 deferred E-sketches теперь production code (~1100 LOC + 113 LOC
+e2e tests, без новых Rust crate-зависимостей).
+
+F.1 (commit 098948f5ca7) — SSH distributed bench coordination:
+- nova-cli/src/bench/remote.rs (340 LOC): RemoteConfig + minimal TOML
+  parser ([remote.NAME] sections), validation требуемых fields.
+- ssh_base_args (BatchMode=yes, accept-new), ping() via ssh+echo pong,
+  run_bench() via ssh + git checkout + nova bench run + scp gather.
+- run_distributed() — std::thread::spawn per host, parallel exec.
+- nova bench remote {list,ping,run} CLI subcommands.
+- Exit code 2 если any remote failed; success summary всегда printed.
+- 4 unit tests.
+
+F.2 (commit c3eae50bf92) — AI regression interpretation (--explain):
+- nova-cli/src/bench/ai.rs (430 LOC): AiConfig (env + ~/.nova-ai.toml
+  override), PromptBuilder (XML-tagged structured prompt: <bench_diff_
+  table>, <git_diff>, <git_commits>, <additional_note>).
+- Anthropic + OpenAI providers через system curl (no Rust HTTP/TLS
+  dep; rate-limit retry с exponential backoff).
+- nova bench diff --explain CLI flag; --ai-dry-run печатает request
+  body без API call (cost estimation); --ai-max-tokens override.
+- Privacy guard: --explain opt-in + first-use warning к stderr.
+- SHA auto-detect from JSON metadata.compiler.nova_sha; CLI overrides
+  --baseline-sha / --new-sha.
+- bench/diff.rs: extracted load_pair() + LoadedDiff для AI reuse.
+- Terminal + markdown renderers.
+- 5 unit tests (включая dry-run secret-leak prevention).
+
+F.3 (commit 600375fb81f) — Memory bandwidth measurement (Linux):
+- nova-cli/src/bench/membw.rs (330 LOC): MembwSource enum (LlcMiss
+  Estimate / IntelImc / AmdDfBwmon), ImcEvent для probed PMU events.
+- Linux module: PerfEventAttr mirror, LlcMissCounter (PERF_COUNT_HW_
+  CACHE_MISSES open/reset/start/stop/read/drop), probe_imc_events
+  (parses /sys/devices/uncore_imc_*/events/cas_count_read+write event
+  string "event=0xNN,umask=0xMM"), probe_amd_df (Zen 3+ DF BwMon).
+- measure_bandwidth() — RAII wrapper, returns bytes ≈ misses × 64-byte
+  cache line.
+- Cross-platform stubs: non-Linux returns Err / false.
+- nova bench membw-check CLI — diagnose availability, list PMU events,
+  run 10MB memset test и report bandwidth.
+- 4 unit tests.
+
+F.4 (commit c83c0b50644) — Extended test coverage (+22 e2e asserts):
+- Section 16 — bench remote: list table, missing-config exit non-zero,
+  unknown-name exit non-zero, incomplete TOML filtered + reported.
+- Section 17 — bench diff --explain --ai-dry-run: missing API key
+  error, dry-run prints prompt без API call, provider switchable
+  via NOVA_AI_PROVIDER, baseline/new SHA в prompt note.
+- Section 18 — bench membw-check: OS/LLC-miss/MBM lines, cross-
+  platform graceful (non-Linux stub OR Linux test section).
+- E2E summary: 65 PASS / 0 FAIL (Windows release).
+
+Test coverage (cumulative Phase F):
+- 59 unit tests (включая 13 new для remote::/ai::/membw::).
+- 65 e2e asserts (вырост с 43 → 65 за счёт F.4).
+- 11 .nv tests без изменений (Phase F не вводит DSL изменений).
+
+Plan 57 — completely closed across all 6 фаз (MVP + A + B + C + D +
+E + F). 42+ commits в plan-57 branch. Все 4 deferred sketches → impl.
+Никаких new Rust deps: curl/ssh/scp используются как system binaries
+(Windows 10+ /macOS /Linux все ship их default), MBM через raw libc
+syscall FFI (как Plan 57.B.4 cpu_instr).
+
+Production-grade: пишем lighter weight чем Criterion (нет async deps,
+нет регексов), но supports superset функций — distributed runs (нет
+ни в Criterion, ни в Go testing.B, ни в tinybench), AI explain (нет
+нигде), memory bandwidth (Criterion+Go: нет, только perf отдельно).
+
 === Plan 60 — Size-accessor uniformity (.len/.capacity/.is_empty method-only) (2026-05-17) ===
 
 Ф.0-Ф.6 закрыты в worktree nova-lang-p60 (branch plan-60); merged → main.
