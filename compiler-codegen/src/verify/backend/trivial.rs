@@ -279,10 +279,28 @@ fn simplify_app(op: &str, args: &[SmtTerm]) -> SmtTerm {
                     }
                 }
             }
-            match filtered.len() {
+            // Ф.27.2 (Plan 33.6): absorption `X ∧ (X ∨ Y) = X`.
+            // Если есть X и есть (or X Y) → keep только X.
+            let mut absorbed: Vec<SmtTerm> = Vec::new();
+            for t in &filtered {
+                let mut absorbed_by_t = false;
+                if let SmtTerm::App(op2, a2) = t {
+                    if op2 == "or" {
+                        // Если any of a2 уже в filtered (отдельно), это term absorbs by it.
+                        for arg in a2 {
+                            if filtered.iter().any(|f| f != t && f == arg) {
+                                absorbed_by_t = true;
+                                break;
+                            }
+                        }
+                    }
+                }
+                if !absorbed_by_t { absorbed.push(t.clone()); }
+            }
+            match absorbed.len() {
                 0 => SmtTerm::BoolLit(true),
-                1 => filtered.into_iter().next().unwrap(),
-                _ => SmtTerm::App("and".into(), filtered),
+                1 => absorbed.into_iter().next().unwrap(),
+                _ => SmtTerm::App("and".into(), absorbed),
             }
         }
         "or" => {
@@ -306,10 +324,26 @@ fn simplify_app(op: &str, args: &[SmtTerm]) -> SmtTerm {
                     }
                 }
             }
-            match filtered.len() {
+            // Ф.27.2 (Plan 33.6): absorption `X ∨ (X ∧ Y) = X`.
+            let mut absorbed: Vec<SmtTerm> = Vec::new();
+            for t in &filtered {
+                let mut absorbed_by_t = false;
+                if let SmtTerm::App(op2, a2) = t {
+                    if op2 == "and" {
+                        for arg in a2 {
+                            if filtered.iter().any(|f| f != t && f == arg) {
+                                absorbed_by_t = true;
+                                break;
+                            }
+                        }
+                    }
+                }
+                if !absorbed_by_t { absorbed.push(t.clone()); }
+            }
+            match absorbed.len() {
                 0 => SmtTerm::BoolLit(false),
-                1 => filtered.into_iter().next().unwrap(),
-                _ => SmtTerm::App("or".into(), filtered),
+                1 => absorbed.into_iter().next().unwrap(),
+                _ => SmtTerm::App("or".into(), absorbed),
             }
         }
         "=>" if args.len() == 2 => {

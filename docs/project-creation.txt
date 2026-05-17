@@ -12646,6 +12646,32 @@ TrivialBackend string len.
 
 **Plan 33.6 итог за 26 спринтов:** полный modulus reasoning + axiom lints.
 
+## Ф.27 — verify noop + absorption + effect no-axioms
+
+### Ф.27.1 — `#verify` fn без contracts → W2402
+
+- pipeline.rs: `verify_mode == MustVerify && contracts.is_empty()` → W2402.
+- Test: verify_no_contracts_w2402.
+- Коммит: `9ccce387d8f`.
+
+### Ф.27.2 — Boolean absorption laws
+
+- trivial.rs: `X ∧ (X ∨ Y) = X`, `X ∨ (X ∧ Y) = X` в simplify_app для and/or.
+- Test: trivial_absorption_positive.
+- Коммит: `9ccce387d8f`.
+
+### Ф.27.3 — effect с #pure но без axioms → W2402
+
+- pipeline.rs: для each Effect — если has #pure methods но `td.axioms.is_empty()`
+  → W2402.
+- Test: effect_no_axioms_w2402.
+- Коммит: `9ccce387d8f`.
+
+**Итого Ф.27:** 3 closed. **179 PASS / 44 SKIP / 1 pre-existing FAIL.**
+
+**Plan 33.6 итог за 27 спринтов:** complete contract+effect lint catalog
++ absorption laws.
+
 === Plan 45 �.25 � nova tests (positive + negative) ===
 
 ����� �������� �.25 (4 ����) �������� nova-tests .nv ��� �������� �����
