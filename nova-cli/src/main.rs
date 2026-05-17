@@ -532,6 +532,35 @@ enum BenchCmd {
     /// counter. Other OS: prints stub message.
     #[command(name = "membw-check")]
     MembwCheck,
+    /// Plan 57.H.2: Hyperfine-style cross-binary timing — wall-clock
+    /// measurement of arbitrary external commands. Output schema-compatible
+    /// с `nova bench diff` (per-binary entry в JSON v1).
+    ///
+    /// Example:
+    ///   nova bench hyperfine \
+    ///     "old=./nova-old build large.nv" \
+    ///     "new=./nova-new build large.nv" \
+    ///     --samples 10 --warmup 2 --out result.json
+    Hyperfine {
+        /// Specs: each "name=binary args..." или просто "binary args...".
+        #[arg(required = true, num_args = 1..)]
+        specs: Vec<String>,
+        /// Warmup runs (discarded). Default 3.
+        #[arg(long, default_value_t = 3)]
+        warmup: u32,
+        /// Sample runs (kept). Default 10.
+        #[arg(long, default_value_t = 10)]
+        samples: u32,
+        /// Per-command timeout seconds. Default 300 (5 min).
+        #[arg(long = "timeout", default_value_t = 300)]
+        timeout_secs: u64,
+        /// Optional cwd для commands.
+        #[arg(long = "workdir")]
+        workdir: Option<PathBuf>,
+        /// JSON output path (default: print to stdout).
+        #[arg(long = "out")]
+        out: Option<PathBuf>,
+    },
     /// Plan 57.D.4: Print recommended history branch name based on
     /// NOVA_BENCH_RUNNER_ID env (multi-runner CI matrix support).
     /// Returns `bench-history` если env не set, иначе `bench-history-<id>`.
@@ -3139,6 +3168,32 @@ fn cmd_bench(sub: BenchCmd) -> Result<()> {
             } else {
                 println!("\n  Note: memory bandwidth is Linux-only \
                           (perf_event_open + sysfs uncore_imc).");
+            }
+            Ok(())
+        }
+        BenchCmd::Hyperfine { specs, warmup, samples, timeout_secs, workdir, out } => {
+            let mut parsed_specs = Vec::with_capacity(specs.len());
+            for s in &specs {
+                parsed_specs.push(bench::hyperfine::HyperfineSpec::parse(s)?);
+            }
+            let opts = bench::hyperfine::HyperfineOpts {
+                specs: parsed_specs,
+                warmup_runs: warmup,
+                samples,
+                timeout_secs,
+                workdir,
+            };
+            let benches = bench::hyperfine::run(opts)?;
+            // Always print terminal table.
+            let sampling = bench::repro::SamplingMeta {
+                warmup_ns: 0, target_ns: 0,
+                samples: samples as u64, time_budget_ns: 0,
+            };
+            let meta = bench::repro::collect("hyperfine", sampling);
+            print!("{}", bench::report::terminal_report(&meta, &benches, should_use_color()));
+            if let Some(p) = out {
+                bench::hyperfine::write_json(&benches, &p)?;
+                eprintln!("wrote JSON to {}", p.display());
             }
             Ok(())
         }
