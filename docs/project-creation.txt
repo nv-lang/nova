@@ -14234,3 +14234,148 @@ Plan 57 backlog: empty. Phase E (если потребуется) — TBD future
 - AI-driven regression interpretation.
 - Memory bandwidth measurement integration.
 - Statistical anomaly auto-detection (changepoint analysis).
+
+
+## Session: Plan 59 production-grade finale — 6 фаз закрыты (2026-05-17)
+
+Контекст: Plan 59 (mono'd tuple structs) был закрыт Phases 1-4 ранее
+(commit 5b9f317452e), но full regression выявил 9 регрессий из-за
+ordering/type-mismatch проблем + nested-mangle collision. Sessions
+довела до production-grade закрытия со всеми acceptance criteria.
+
+Working directory: d:\Sources\nova-lang (branch main).
+
+### Commit d73a892f27b — fix(59): 9 регрессий → 0 (6 codegen fixes)
+
+Регрессии от 5b9f317452e:
+1. modules/json_ast, plan34/inline_xoshiro — `unknown type name 'Nova_X'`
+   потому что mono tuple typedef эмитился ДО user-type fwd decls.
+2. basics/tuples, syntax/match_advanced, syntax/pattern_matching —
+   nested tuple typedef ссылался на не-emitted inner typedef
+   (alphabetical sort недостаточен).
+3. syntax/for_iter_tuple, syntax/for_iter_typed — emit_for на
+   `_NovaTuple____...` elem-type выбрасывал "непонятный elem-type"
+   (только generic iter path обрабатывал mono'd).
+4. basics/tuples (nested) — `let (x, y) = make_pair(...)` использовал
+   hardcoded `_NovaTuple{N}` (legacy), но fn возвращает mono'd.
+5. syntax/closure_mut_capture_escape — closure-tuple
+   `nova_int`↔`void_p` struct copy fail (closures stored как nova_int
+   slot, но return tuple type декларирует void_p).
+6. types/arrays — tuple_element_types не propagate'ились для mono'd
+   path, `pair.0` infer'ился как nova_int вместо NovaArray*.
+
+Fixes (в emit_c.rs, +164/-26):
+- Preamble: `__USER_TYPE_FWD_DECLS__` теперь ДО `__MONO_TUPLE_TYPEDEFS__`.
+- Topo sort tuple typedef'ов (B emit'ится перед A если A.elem == B).
+- emit_for: branch для `_NovaTuple____` elem-type + parse mangled
+  для populate tuple_element_types.
+- let_destructure general case: infer_expr_c_type(value) для actual
+  struct type RHS, parse mono'd на elem types.
+- emit_tuple_return_stash helper — field-wise copy с cast'ом при
+  mono'd tuple type mismatch (closure return path).
+- TupleLit mono path: register tuple_element_types + var_types
+  для tmp variable.
+
+Validation: full regression 580 PASS / 2 FAIL (vs 568 baseline,
+net +12). Оставшиеся 2 W2402 contract'а — не Plan 59 scope.
+
+### Commit b38874fa9a9 — test(59): 8 regression guards + bonus fix
+
+8 новых тестов f2-f9 в nova_tests/plan59/ (positive + negative-cc)
+по одному на каждый из 6 fixes + 2 negatives. Каждый — целевой
+regression guard.
+
+Bonus codegen fix (f2 выявил): let-destructure general case теперь
+сначала смотрит в tuple_element_types registry для Ident RHS.
+Mangled-name split-by-`__` парсер ломался на nested mono'd
+(`_NovaTuple_____NovaTuple____...`).
+
+### Commit aa07fa0d545 — feat(59 Phase 5): length-prefixed mangle
+
+Root-cause fix для [M-tuple-mangle-nested-collision]:
+
+**Старая схема** `_NovaTuple____<T1>__<T2>__...` (4-underscore prefix,
+2-underscore separator) — когда element сам `_NovaTuple____...`,
+внутренние `____` collide с outer separator → split-by-`__` ломается.
+Workaround b38874fa9a9 (registry lookup) закрыл symptom, не root cause.
+
+**Новая схема (Itanium ABI / Rust v0 mangle analog)** — length-prefixed:
+  `_NovaTuple_<arity>_<L1>_<T1>_<L2>_<T2>_..._<LN>_<TN>`
+где `<Ln>` decimal byte length следующего sanitized element.
+
+Примеры:
+- `(int, int)` → `_NovaTuple_2_8_nova_int_8_nova_int`
+- `((int,int), int)` outer →
+  `_NovaTuple_2_34__NovaTuple_2_8_nova_int_8_nova_int_8_nova_int`
+  (L1=34 — точно столько брать как T1, никакого split-ambiguity)
+
+Distinguishable от legacy `_NovaTupleN` по `_` после `NovaTuple`.
+Registry-lookup workaround удалён — parser теперь точен для любой
+глубины nesting.
+
+Изменения в emit_c.rs (+140/-55):
+- compute_mono_tuple_c_name — переписан на length-prefix.
+- parse_mono_tuple_elements — unambiguous parser.
+- take_digits — helper.
+- 4 callsite'а: emit_for, emit_tuple_return_stash, let_destructure,
+  needs_tuple_field_copy.
+
+Test: f10_deeply_nested_tuple_mangle.nv (4-уровневое nested +
+let-destructure + mixed types).
+
+Validation: full regression **594 PASS / 0 FAIL / 42 SKIP** —
+net +26 unlocked vs 568 pre-Plan-59 baseline.
+
+### Commit 1d71db1ade5 — test(59 Phase 5): regression guards для mangle
+
+4 теста f11-f14: pointer elements (Foo_p в mangle), diverse element
+types (varying lengths), 5-level nested (mangle name 150+ chars),
+out-of-bounds tuple field (negative-cc).
+
+### Commit 3155be6253b — feat(59 Phase 6): match-pattern variant + tuple
+
+Gap обнаруженный написанием тестов: `match Some((k, v))` для
+heterogeneous `Option[(str, int)]` падал CC-FAIL — inner Tuple
+destructure binds k, v как nova_int default вместо actual element
+types.
+
+Root cause: pattern_destructure_tuple lookup'ит
+tuple_element_types[scr], но для variant-payload access
+(`_nv_scr.value`) ключ не зарегистрирован. Variant pattern handler
+знал payload type, но не propagate'ил mono'd tuple element types
+в registry для inner Tuple recursion.
+
+Fix: в pattern_bind_typed для Pattern::Variant: при recurse'е в inner
+Pattern, если payload type starts_with `"_NovaTuple_"` — parse
+elements через parse_mono_tuple_elements + register в
+tuple_element_types для access string. Покрывает обе branches:
+- Option Some: t_from_scr path (NovaOpt typed payload).
+- User sum-type: sum_schemas path (variant-field types).
+
+Tests f15-f18: tuple as fn parameter, tuple as record field, tuple
+in Option (homogeneous + heterogeneous), destructure non-tuple
+(negative-cc).
+
+**Out-of-scope deferred**: Result[(T1, T2), E] не работает — Result
+generics полностью erased (`Nova_Result*` payload — nova_int slot),
+требует sum-type mono pass (≈Plan 56 vtable scope расширенный на
+variants). Документировано как [M-result-erased-no-mono] — отдельный
+план.
+
+### Final state
+
+`docs/plans/59-tuple-monomorphization.md` — 6 фаз ✅:
+- Phase 1: mono'd struct generation
+- Phase 2: for (k, v) для любых K, V
+- Phase 3: HashMap stdlib usable в user code (stdlib internal removal
+  deferred как [M-stdlib-iter-in-generic-method-body])
+- Phase 4: spec D111
+- Phase 5: length-prefixed mangle
+- Phase 6: match-pattern variant + mono'd tuple payload
+
+`nova_tests/plan59/` — **18 PASS / 0 FAIL** (14 positive + 4 negative).
+
+Deferred follow-ups (вне Plan 59 scope):
+- [M-stdlib-iter-in-generic-method-body] — stdlib idiomatic removal
+  cascades в @clone, нужна диагностика mono pass state isolation.
+- [M-result-erased-no-mono] — Result generics не monomorphized.
