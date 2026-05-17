@@ -1,0 +1,22 @@
+// Ф.26.1 (Plan 33.6): TrivialBackend modulus upper bound — `x % 10 < 10`.
+
+module contracts.trivial_modulus_upper_positive
+
+#verify
+fn mod_upper(x int) -> int
+    ensures result < 10
+{
+    x % 10
+}
+
+#verify
+fn mod_upper_le(x int) -> int
+    ensures result <= 9
+{
+    x % 10
+}
+
+test "modulus upper trivial" {
+    assert(mod_upper(25) == 5)
+    assert(mod_upper_le(15) == 5)
+}
