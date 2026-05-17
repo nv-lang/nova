@@ -22,20 +22,32 @@ import std.testing.handlers as th
 // Policy types
 // ──────────────────────────────────────────────────────────────────────────
 
+/// Backoff strategy для retry-логики.
+///
+/// `Fixed` — постоянная пауза. `Exponential` — растущая (initial × multiplier^n,
+/// capped на max_delay). `Linear` — initial + increment × n, capped аналогично.
+#stable(since = "0.1")
 export type Backoff
-    | Fixed { delay Duration }                          // одинаковая пауза
+    | Fixed { delay Duration }
     | Exponential { initial Duration, multiplier f64, max_delay Duration }
     | Linear { initial Duration, increment Duration, max_delay Duration }
 
 
+/// Jitter — рандомизация delay'я для избежания thundering-herd.
+///
+/// `NoJitter` — exact base delay. `FullJitter` — uniform 0..base.
+/// `EqualJitter` — base/2 + random(0..base/2).
+#stable(since = "0.1")
 export type Jitter
     | NoJitter
-    | FullJitter                                         // 0..delay (random uniform)
-    | EqualJitter                                        // delay/2 + random(0..delay/2)
+    | FullJitter
+    | EqualJitter
 
 
+/// Retry policy: max_attempts (включая первую попытку) + backoff + jitter.
+#stable(since = "0.1")
 export type RetryPolicy {
-    readonly max_attempts int                            // включая первую попытку
+    readonly max_attempts int
     readonly backoff Backoff
     readonly jitter Jitter
 }
@@ -45,7 +57,10 @@ export type RetryPolicy {
 // Constructors
 // ──────────────────────────────────────────────────────────────────────────
 
-// Exponential backoff: 100ms, 200ms, 400ms, 800ms, 1600ms ...
+/// Exponential backoff с full-jitter: 100ms, 200ms, 400ms, ... (cap 30s).
+///
+/// Sensible default для большинства transient failures (network / db).
+#stable(since = "0.1")
 export fn RetryPolicy.exponential(max_attempts int) -> Self =>
     {
         max_attempts,
@@ -57,7 +72,8 @@ export fn RetryPolicy.exponential(max_attempts int) -> Self =>
         jitter: FullJitter,
     }
 
-// Fixed delay (for cases когда мы знаем точный период)
+/// Fixed delay — для cases когда точный период известен (rate limiter и т.п.).
+#stable(since = "0.1")
 export fn RetryPolicy.fixed(max_attempts int, delay Duration) -> Self =>
     {
         max_attempts,
@@ -65,7 +81,8 @@ export fn RetryPolicy.fixed(max_attempts int, delay Duration) -> Self =>
         jitter: NoJitter,
     }
 
-// Custom — любой backoff + jitter
+/// Custom — explicit backoff + jitter.
+#stable(since = "0.1")
 export fn RetryPolicy.custom(max_attempts int, backoff Backoff, jitter Jitter) -> Self =>
     { max_attempts, backoff, jitter }
 
@@ -76,6 +93,17 @@ export fn RetryPolicy.custom(max_attempts int, backoff Backoff, jitter Jitter) -
 
 // Запускает body, на Fail[E] делает retry по policy. Если все попытки
 // исчерпаны — пробрасывает последний throw.
+/// Execute `body` с retry-логикой по policy. На каждом Fail[E] — sleep + retry.
+/// После исчерпания `max_attempts` — пробрасывает последний throw.
+///
+/// Использует Time и Random effects — детерминирован под `th.fixed_ms` + `th.seeded`.
+///
+/// # Examples
+/// ```nova
+/// let policy = RetryPolicy.exponential(5)
+/// let result = policy.execute(|| http_get("https://api.example.com"))
+/// ```
+#stable(since = "0.1")
 export fn RetryPolicy @execute[T, E](body fn() Fail[E] -> T) Time Random Fail[E] -> T {
     let mut attempt = 0
     let mut result Option[T] = None
