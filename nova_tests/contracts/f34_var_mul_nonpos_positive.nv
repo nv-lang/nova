@@ -1,0 +1,28 @@
+// Ф.34.2 (Plan 33.6): TrivialBackend VarA * VarB <= 0 для mixed signs.
+// `requires a >= 0; requires b <= 0; ensures (a * b) <= 0`.
+
+module contracts.f34_var_mul_nonpos_positive
+
+#verify
+fn pos_times_neg(a int, b int) -> int
+    requires a >= 0
+    requires b <= 0
+    ensures result <= 0
+{
+    a * b
+}
+
+// Симметрично.
+#verify
+fn neg_times_pos(a int, b int) -> int
+    requires a <= 0
+    requires b >= 0
+    ensures result <= 0
+{
+    a * b
+}
+
+test "var mul nonpos" {
+    assert(pos_times_neg(5, -3) == -15)
+    assert(neg_times_pos(-4, 2) == -8)
+}

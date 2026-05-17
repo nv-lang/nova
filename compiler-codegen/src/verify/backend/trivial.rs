@@ -682,6 +682,8 @@ fn propagate_bounds(conjuncts: &[SmtTerm]) -> Vec<SmtTerm> {
         // Ф.33.2 (Plan 33.6): VarA * VarB non-negative.
         // `(>= (* VarA VarB) goal)` где goal <= 0 и lower(A) >= 0 и lower(B) >= 0 → true.
         // Также `>` paritет: effective_goal = goal+1.
+        // Ф.34.2 (Plan 33.6): дополнительно случай both upper <= 0 (отрицательное×отрицательное)
+        // — product тоже >= 0.
         let try_var_mul_nonneg = |inner: &SmtTerm| -> Option<bool> {
             if let SmtTerm::App(iop, iargs) = inner {
                 if (iop != ">=" && iop != ">") || iargs.len() != 2 { return None; }
@@ -691,8 +693,45 @@ fn propagate_bounds(conjuncts: &[SmtTerm]) -> Vec<SmtTerm> {
                 if let SmtTerm::App(mop, margs) = &iargs[0] {
                     if mop != "*" || margs.len() != 2 { return None; }
                     if let (SmtTerm::Var(a), SmtTerm::Var(b)) = (&margs[0], &margs[1]) {
+                        // Both non-negative.
                         if let (Some(la), Some(lb)) = (lower.get(a), lower.get(b)) {
                             if *la >= 0 && *lb >= 0 {
+                                return Some(true);
+                            }
+                        }
+                        // Ф.34.2: Both non-positive (negative × negative ≥ 0).
+                        if let (Some(ua), Some(ub)) = (upper.get(a), upper.get(b)) {
+                            if *ua <= 0 && *ub <= 0 {
+                                return Some(true);
+                            }
+                        }
+                    }
+                }
+                None
+            } else { None }
+        };
+        // Ф.34.2 (Plan 33.6): VarA * VarB non-positive.
+        // `(<= (* VarA VarB) goal)` где goal >= 0 и (lower(A) >= 0 && upper(B) <= 0)
+        // OR (upper(A) <= 0 && lower(B) >= 0) → product <= 0 → true.
+        // Также `<` strict: effective_goal = goal-1.
+        let try_var_mul_nonpos = |inner: &SmtTerm| -> Option<bool> {
+            if let SmtTerm::App(iop, iargs) = inner {
+                if (iop != "<=" && iop != "<") || iargs.len() != 2 { return None; }
+                let goal = match &iargs[1] { SmtTerm::IntLit(n) => *n, _ => return None };
+                let effective_goal = if iop == "<" { goal.saturating_sub(1) } else { goal };
+                if effective_goal < 0 { return None; }
+                if let SmtTerm::App(mop, margs) = &iargs[0] {
+                    if mop != "*" || margs.len() != 2 { return None; }
+                    if let (SmtTerm::Var(a), SmtTerm::Var(b)) = (&margs[0], &margs[1]) {
+                        // A non-neg, B non-pos.
+                        if let (Some(la), Some(ub)) = (lower.get(a), upper.get(b)) {
+                            if *la >= 0 && *ub <= 0 {
+                                return Some(true);
+                            }
+                        }
+                        // A non-pos, B non-neg.
+                        if let (Some(ua), Some(lb)) = (upper.get(a), lower.get(b)) {
+                            if *ua <= 0 && *lb >= 0 {
                                 return Some(true);
                             }
                         }
@@ -834,6 +873,10 @@ fn propagate_bounds(conjuncts: &[SmtTerm]) -> Vec<SmtTerm> {
         if let Some(b) = try_var_mul_nonneg(c) {
             return SmtTerm::BoolLit(b);
         }
+        // Ф.34.2: var-mul non-positive check.
+        if let Some(b) = try_var_mul_nonpos(c) {
+            return SmtTerm::BoolLit(b);
+        }
         // Ф.17.2: addition check.
         if let Some(b) = try_addition_check(c) {
             return SmtTerm::BoolLit(b);
@@ -868,6 +911,9 @@ fn propagate_bounds(conjuncts: &[SmtTerm]) -> Vec<SmtTerm> {
                     return SmtTerm::BoolLit(!b);
                 }
                 if let Some(b) = try_var_mul_nonneg(&args[0]) {
+                    return SmtTerm::BoolLit(!b);
+                }
+                if let Some(b) = try_var_mul_nonpos(&args[0]) {
                     return SmtTerm::BoolLit(!b);
                 }
                 if let Some(b) = try_addition_check(&args[0]) {
