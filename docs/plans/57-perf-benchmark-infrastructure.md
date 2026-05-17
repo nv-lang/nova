@@ -556,14 +556,14 @@ Sub-items (каждый — отдельный commit):
 - [x] `bench "x" { group "g" { case "c" { ... } } }` parse + emit + 4-entry
       output (composite names `x/g/c`).
 
-### **Plan 57.E** — production extensions, in progress 2026-05-17
+### **Plan 57.E** — ✅ ALL CLOSED 2026-05-17 (3 impl + 3 design-sketch)
 
-- [ ] HTML dashboard drill-down (histogram + outliers + comparison).
-- [ ] PELT changepoint anomaly auto-detection.
-- [ ] E2E shell tests для CLI subcommands.
-- [skip] Distributed bench coordination — design-sketch only (external infra).
-- [skip] AI-driven regression interpretation — design-sketch only (external API).
-- [skip] Memory bandwidth measurement — design-sketch only (hardware/privilege-gated).
+- [x] HTML dashboard drill-down (histogram + Tukey fences + sidebar + comparison).
+- [x] PELT changepoint anomaly auto-detection (`nova bench history-anomalies`).
+- [x] E2E shell tests для CLI subcommands (25 asserts, 11 sections).
+- [sketched] Distributed bench coordination — `docs/plans/57.E.2-distributed-bench-sketch.md`.
+- [sketched] AI-driven regression interpretation — `docs/plans/57.E.3-ai-regression-interpretation-sketch.md`.
+- [sketched] Memory bandwidth measurement — `docs/plans/57.E.4-memory-bandwidth-sketch.md`.
 
 ### **Plan 57.D** — ✅ ALL CLOSED 2026-05-17
 
@@ -714,3 +714,14 @@ Sub-items (каждый — отдельный commit):
   44 unit tests pass. Regression: 562/0 pre-merge baseline; после
   merge main подтянулись 5 unrelated plan56/* HashMap clone/merge
   failures (Plan 56 partial closure, не от Phase D работы).
+- **2026-05-17 plan57 test suite**: 11 .nv tests (4 positive + 7
+  negative). `nova test --filter plan57` → 11 PASS / 0 FAIL.
+- **2026-05-17 Phase E closed**: 3 sub-tasks impl + 3 design-sketches.
+  - 57.E.1 dashboard drill-down (histogram + sidebar + comparison)
+    `b3c4a1778da`
+  - 57.E.5 PELT changepoint anomaly detection `01137b3be46`
+  - 57.E.6 e2e shell tests (25/25 PASS) `b0e7b4ce01d`
+  - 57.E.2/3/4 deferred design-sketches в `docs/plans/57.E.X-*.md`.
+  Plan 57 — **ALL 5 phases COMPLETE** (38+ commits в plan-57).
+  47 unit tests pass (44 bench:: + 3 anomaly::). 11 .nv tests + 25
+  e2e asserts.
