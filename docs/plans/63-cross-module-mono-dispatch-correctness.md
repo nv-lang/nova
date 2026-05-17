@@ -173,12 +173,19 @@ Tests (permanent regression guards):
 - `nova_tests/plan63/cm_box_use.nv` + `nova_tests/plan63/cm_box/lib.nv`
   — cross-module folder-module factory case.
 
-**Remaining edge case (NOT Fix C scope):** generic method с method-level
-type param `[U]` (e.g. `Wrapper[T] @map[U](f fn(T) -> U) -> Wrapper[U]`)
-— mono'd только по receiver T, U остаётся `Nova_U_p` placeholder. Это
-**Plan 48 Ф.7 method-param mono** territory (extends per-receiver mono
-на per-method-typearg). Не блокирует Plan 63 closure — это полностью
-отдельная feature.
+**Remaining edge case (NOT Fix C scope):** ✅ **RESOLVED 2026-05-17 EOD via
+Plan 48 method-param mono extension** (branch `plan-48-mpm`).
+
+Generic method с method-level type param `[U]` (e.g.
+`Wrapper[T] @map[U](f fn(T) -> U) -> Wrapper[U]`) ранее mono'lся только
+по receiver T, U оставался `Nova_U_p` placeholder. Implementation
+extends `infer_mono_method_ret_with_args` + emit_call path 5b с
+bidirectional inference из closure-typed args (см. Plan 48 doc).
+
+Tests (permanent regression guards):
+- `nova_tests/plan48_mpm/repro_wrapper_map.nv` — minimal int→int + int→str.
+- `nova_tests/plan48_mpm/f1_method_param_mono.nv` — 5 sub-tests:
+  chained map, cross-type chains, identity, isolated str→int.
 
 ### Fix D: Typeargs-aware overload dispatch ✅ implicitly DONE
 
