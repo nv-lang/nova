@@ -1,0 +1,47 @@
+module plan11_followup.f12_variadic_str_array_positive
+
+// Sprint F.36 / commit c10adcc: variadic call для не-int element types
+// (str/bool/f64/byte/struct ptrs). Pre-fix emit_array_lit infer'ил element
+// type только из Item, для Spread-only массивов fallback на nova_int →
+// `nova_str` struct push'илось через cast в int → corruption.
+//
+// Эти тесты verify оба варианта (positional + spread) для variadic str-fn.
+
+export fn join_strings(...parts []str) -> str {
+    let mut buf = StringBuilder.new()
+    let mut first = true
+    for p in parts {
+        if !first { buf.append(",") }
+        buf.append(p)
+        first = false
+    }
+    buf.into()
+}
+
+test "variadic str: positional args" {
+    let result = join_strings("a", "b", "c")
+    assert(result == "a,b,c")
+}
+
+test "variadic str: spread из array" {
+    let arr []str = ["x", "y", "z"]
+    let result = join_strings(...arr)
+    assert(result == "x,y,z")
+}
+
+test "variadic str: mixed positional + spread" {
+    let middle []str = ["b", "c"]
+    let result = join_strings("a", ...middle, "d")
+    assert(result == "a,b,c,d")
+}
+
+test "variadic str: single positional arg" {
+    let result = join_strings("solo")
+    assert(result == "solo")
+}
+
+test "variadic str: empty spread" {
+    let empty []str = []
+    let result = join_strings(...empty)
+    assert(result == "")
+}
