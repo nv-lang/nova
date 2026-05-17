@@ -136,53 +136,74 @@ fn check_bench_stmt(s: &Stmt, bench_name: &str, out: &mut Vec<LintWarning>) {
 fn check_bench_expr(e: &Expr, bench_name: &str, out: &mut Vec<LintWarning>) {
     use crate::ast::{ExprKind, ElseBranch};
     match &e.kind {
-        // Method call = Call where func — Member.
+        // Method call OR namespace dispatch — два вида:
+        //   1. Call { func: Member { obj, name } } — obj.method() style.
+        //   2. Call { func: Path([...]) } — Type.method() / Namespace.fn().
         ExprKind::Call { func, args, .. } => {
-            if let ExprKind::Member { obj, name: method } = &func.kind {
-                if let ExprKind::Ident(n) = &obj.kind {
-                    if n == "Time" && (method == "sleep" || method == "sleep_ms"
-                                    || method == "sleep_ns") {
-                        out.push(LintWarning {
-                            rule: "bench-sleep-in-measure",
-                            diag: crate::diag::Diagnostic::new(
-                                format!("bench \"{}\": `Time.{}` inside `measure` block — \
-                                         sleep dominates timing noise; consider exempt в bench.toml \
-                                         или move в setup", bench_name, method),
-                                e.span,
-                            ),
-                        });
+            // Plan 57.D.2: sleep-lint contextual detection.
+            // Heuristic: method ∈ {sleep, sleep_ms, sleep_ns} likely refers
+            // к Time effect dispatch — match regardless of obj-name.
+            // Также cover Path-form (Time.sleep parsed как Path(["Time","sleep"])).
+            let extract_method = |func_kind: &ExprKind| -> Option<(String, String)> {
+                match func_kind {
+                    ExprKind::Member { obj, name } => {
+                        let obj_label = match &obj.kind {
+                            ExprKind::Ident(n) => n.clone(),
+                            _ => "_".to_string(),
+                        };
+                        Some((obj_label, name.clone()))
                     }
-                    if n == "Io" && (method == "println" || method == "print"
+                    ExprKind::Path(segs) if segs.len() >= 2 => {
+                        Some((segs[..segs.len()-1].join("."),
+                              segs[segs.len()-1].clone()))
+                    }
+                    _ => None,
+                }
+            };
+            if let Some((recv, method)) = extract_method(&func.kind) {
+                let is_sleep_method = method == "sleep" || method == "sleep_ms"
+                                   || method == "sleep_ns";
+                if is_sleep_method {
+                    out.push(LintWarning {
+                        rule: "bench-sleep-in-measure",
+                        diag: crate::diag::Diagnostic::new(
+                            format!("bench \"{}\": `{}.{}(...)` inside `measure` block — \
+                                     sleep dominates timing noise; consider exempt в bench.toml \
+                                     или move в setup", bench_name, recv, method),
+                            e.span,
+                        ),
+                    });
+                }
+                if recv == "Io" && (method == "println" || method == "print"
                                   || method == "eprintln") {
+                    out.push(LintWarning {
+                        rule: "bench-io-in-measure",
+                        diag: crate::diag::Diagnostic::new(
+                            format!("bench \"{}\": `Io.{}` inside `measure` block — \
+                                     I/O latency dominates; results unreliable",
+                                bench_name, method),
+                            e.span,
+                        ),
+                    });
+                }
+                if recv == "bench" && method == "opaque" && args.len() == 1 {
+                    let arg = args[0].expr();
+                    if matches!(&arg.kind,
+                        ExprKind::IntLit(_) | ExprKind::FloatLit(_)
+                        | ExprKind::StrLit(_) | ExprKind::BoolLit(_)) {
                         out.push(LintWarning {
-                            rule: "bench-io-in-measure",
+                            rule: "bench-opaque-literal",
                             diag: crate::diag::Diagnostic::new(
-                                format!("bench \"{}\": `Io.{}` inside `measure` block — \
-                                         I/O latency dominates; results unreliable",
-                                    bench_name, method),
+                                format!("bench \"{}\": `bench.opaque(<literal>)` — \
+                                         barrier no-op на constant literals; opaque нужен только \
+                                         для derived values", bench_name),
                                 e.span,
                             ),
                         });
-                    }
-                    if n == "bench" && method == "opaque" && args.len() == 1 {
-                        let arg = args[0].expr();
-                        if matches!(&arg.kind,
-                            ExprKind::IntLit(_) | ExprKind::FloatLit(_)
-                            | ExprKind::StrLit(_) | ExprKind::BoolLit(_)) {
-                            out.push(LintWarning {
-                                rule: "bench-opaque-literal",
-                                diag: crate::diag::Diagnostic::new(
-                                    format!("bench \"{}\": `bench.opaque(<literal>)` — \
-                                             barrier no-op на constant literals; opaque нужен только \
-                                             для derived values", bench_name),
-                                    e.span,
-                                ),
-                            });
-                        }
                     }
                 }
             }
-            // Free `println(...)` / `print(...)` calls.
+            // Free `println(...)` / `print(...)` / `sleep(...)` calls.
             if let ExprKind::Ident(n) = &func.kind {
                 if n == "println" || n == "print" || n == "eprintln" {
                     out.push(LintWarning {
@@ -190,6 +211,19 @@ fn check_bench_expr(e: &Expr, bench_name: &str, out: &mut Vec<LintWarning>) {
                         diag: crate::diag::Diagnostic::new(
                             format!("bench \"{}\": `{}` inside `measure` block — \
                                      I/O latency dominates measurement", bench_name, n),
+                            e.span,
+                        ),
+                    });
+                }
+                // Plan 57.D.2: bare sleep / sleep_ms / sleep_ns тоже warn —
+                // могут быть resolved-to-Time-effect dispatch.
+                if n == "sleep" || n == "sleep_ms" || n == "sleep_ns" {
+                    out.push(LintWarning {
+                        rule: "bench-sleep-in-measure",
+                        diag: crate::diag::Diagnostic::new(
+                            format!("bench \"{}\": `{}` inside `measure` block — \
+                                     sleep dominates timing noise; move в setup или \
+                                     exempt в bench.toml", bench_name, n),
                             e.span,
                         ),
                     });
