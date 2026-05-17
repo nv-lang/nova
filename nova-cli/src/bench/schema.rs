@@ -114,9 +114,12 @@ pub fn analyzed_to_json(a: &AnalyzedBench) -> Value {
             "ci95_hi_ns": st.ci95_hi,
             "outliers_low": st.outliers_low,
             "outliers_high": st.outliers_high,
+            "drift_slope_ns_per_sample": st.drift_slope_ns_per_sample,
+            "drift_r_squared": st.drift_r_squared,
         }
     });
-    let m = obj.as_object_mut().unwrap();
+    let m = obj.as_object_mut()
+        .expect("invariant: json!({...}) constructs Value::Object");
     if let Some(b) = a.raw.throughput_bytes {
         m.insert("throughput_bytes".to_string(), json!(b));
         if let Some(bps) = a.throughput_bytes_per_sec() {

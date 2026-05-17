@@ -463,6 +463,10 @@ enum BenchCmd {
         /// CPU = wraps samply (must be installed via `cargo install samply`).
         #[arg(long = "profile", value_names = ["MODE", "OUT"], num_args = 2)]
         profile: Option<Vec<String>>,
+        /// Plan 57.G.4: ASCII histogram per bench after the table
+        /// (Unicode block chars, 40 buckets, M=median + [ ] Tukey fences).
+        #[arg(long)]
+        histogram: bool,
     },
     /// Compare two bench JSON results. Outputs Welch's t-test p-values
     /// + geomean delta + reproducibility check.
@@ -2859,7 +2863,7 @@ fn cmd_bench(sub: BenchCmd) -> Result<()> {
         BenchCmd::Run { file, filter, samples, warmup_ms, time_budget_s,
                         gc, mode, toolchain, vcvars, clang, compile_timeout, run_timeout,
                         keep_artifacts, mono_depth, out_json, out_csv, out_md,
-                        out_criterion, profile } => {
+                        out_criterion, profile, histogram } => {
             let repo = find_repo_root()?;
             let paths = resolve_paths(&repo);
             let pref = test_runner::ToolchainPref::parse(&toolchain)?;
@@ -2893,6 +2897,7 @@ fn cmd_bench(sub: BenchCmd) -> Result<()> {
                 out_md: out_md.as_deref(),
                 out_criterion: out_criterion.as_deref(),
                 color,
+                histogram,
             };
             // Plan 57.A.5: profile mode — отдельный run после measurement.
             if let Some(prof_args) = profile.as_ref() {
