@@ -8975,58 +8975,90 @@ infra dovolно для CI gating через `membw-check` exit code.
 
 ---
 
-## [M-plan-61-cross-effect-throw] — interrupt-frame stack mismatch (2026-05-17)
+## [M-plan-61-cross-effect-throw] — RESOLVED 2026-05-17 EOD (followup #1)
 
-**Deferred, не simplification.** Plan 61 hybrid typed-throw architecture
-закрывает 2 из 3 Silent UB. Cross-effect throw в handler-arm
-(`with Fail[A] = |e| throw B {...}`) частично работает (compile OK,
-typed payload reaches outer handler), но **interrupt-frame stack
-mismatch при unwinding** не resolved.
+Закрыто архитектурным fix в Plan 61 followup session.
 
-**Root cause:** outer handler `interrupt v` longjmp идёт к ближайшему
-_nova_interrupt_top = inner with-block (был pushed last). inner
-resolves в `v`, не outer. Type/slot mismatch.
+Approach:
+- NovaVtable_Fail / NovaVtable_Fail_any extended `owner_iframe` field —
+  pointer на with-block's NovaInterruptFrame.
+- New TLS slot `_nova_current_handler_iframe`. Set'тся в Nova_Fail_fail /
+  nova_throw_typed / per-E dispatchers ПЕРЕД invoke handler-arm body;
+  restored ПОСЛЕ (либо reset NULL внутри nova_interrupt перед longjmp).
+- NovaInterruptFrame теперь имеет `kind` (NOVA_IFRAME_WITHBLOCK |
+  NOVA_IFRAME_DEFER_SCOPE). emit_with pushes WITHBLOCK; defer-codegen
+  pushes DEFER_SCOPE через `nova_interrupt_push_defer`.
+- nova_interrupt / nova_interrupt_ptr routing:
+  * Если owner == top → use top (single with-block normal path).
+  * Если owner ≠ top И intermediate DEFER_SCOPE frame есть → use top
+    (defer cleanup intercepts, propagates через re-issue).
+  * Если owner ≠ top И только WITHBLOCK frames между → pop intermediate
+    + jump к owner directly (cross-effect routing).
 
-**Fix требует архитектурного refactor:** tag interrupt-frames эффектом
-+ longjmp выбирать correct frame. Это **Plan 11 followup territory** —
-Plan 11 already noted issue (line 791-814 «Open issue: cross-effect
-throw в handler arm»). Plan 61 fixes typed payload preservation;
-full cross-effect dispatch — separate plan.
+repro_cross_effect_throw.nv: PASS.
 
-repro_cross_effect_throw.nv.deferred — marker, ждёт Plan 11 followup.
+## [M-plan-61-stdlib-workaround-migration] — RESOLVED 2026-05-17 EOD (followup #2)
 
-## [M-plan-61-stdlib-workaround-migration]
+Закрыто после resolution cross-effect throw bug:
+- `std/data/semver_range.nv` `parse_version` — мигрирован на idiomatic
+  D65 правило 3 form (`with Fail[A] = |_e| throw NewErr {...}`).
+- `std/concurrency/retry.nv` `interrupt Err(e)` — оставлено как
+  **legitimate Result-wrap** (capture для last_error в loop, не
+  workaround). Inline comment объясняет почему.
+- `std/concurrency/http.nv` / `std/concurrency/audit.nv`
+  `interrupt to_http_error(e)` — legitimate **convert-to-Response**
+  patterns (handler arm returns success-shaped value, не error rethrow).
+  Не cross-effect throw, не workaround.
 
-**Deferred.** Plan 61 Ф.7 — переписать ~15 мест в std/data/semver_range,
-std/concurrency/retry, std/concurrency/http etc. с
-`with Fail[E] = |e| interrupt Err(e)` на idiomatic D65 правило 3 form
-(`with Fail[E] = |e| throw NewErr {...}`).
+Plan 61 stdlib migration scope полностью покрыт.
 
-Эти места используют `interrupt Err(e)` именно для **обхода cross-
-effect throw bug** (см. M-plan-61-cross-effect-throw). Migration требует
-resolving cross-effect — blocked на Plan 11 followup.
+## [M-plan-61-generic-result-erased] — RESOLVED 2026-05-17 EOD (followup #3)
 
-Plan 61 закрыт без stdlib migration; backward compat через legacy
-string-slot path.
+Закрыто через extension Nova_Result struct.
 
-## [M-plan-61-generic-result-erased] — Result hardcoded на (int, str)
+Approach:
+- `Nova_Result` struct extended fields `err_typed_payload: void*` +
+  `err_typed_type_id: NovaTypeId` (array.h).
+- Constructor `nova_make_Result_Err_typed(payload, tid)` для custom Err.
+- emit_call `Err(custom_value)` (где value_ty ≠ nova_str) — эмитит
+  typed constructor с heap-box value + tid; emit_call `Err(string)`
+  — legacy `nova_make_Result_Err`.
+- `expr!!` codegen для `Nova_Result*` — dispatch по `err_typed_type_id`:
+  если NOT NONE → `nova_throw_typed(diag, payload, tid)`; else legacy
+  `Nova_Fail_fail(payload.Err._0)` (nova_str path).
 
-**Deferred.** `expr!!` для `Result[T, CustomErr]` с user-defined Err
-не работает: bootstrap-stage Result hardcoded на `(Ok int, Err nova_str)`
-(spec D26 §354-357). Plan 61 Ф.4 закрыл nova_throw_value placeholder,
-но full typed Err работает только для `Result[T, str]`.
+Result: `Result[T, CustomErr]!!` carries typed payload до handler arm.
+Backward compat: existing `Result[T, str]` через legacy path.
 
-Real fix: **Plan 14/56 generic Result mono** — после этого Plan 61
-codegen перейдёт на nova_throw_typed для Result!!.
+f3_typed_result_err.nv: PASS.
 
-## [M-plan-61-per-e-mono-deferred]
+**Future polish (не блокер):** full per-(T, E) `NovaResult_<T>_<E>`
+mono struct (вместо hybrid через extended payload) — extension Plan
+14/56 на sum-types. Hybrid даёт equivalent semantics для bootstrap.
 
-**Deferred decision.** Plan 61 v2 plan заявлял per-E TLS slots
-(`_nova_handler_Fail_<E>`) + per-E vtable. Реализация payload-in-frame
-через single legacy slot + typed cast в handler arm даёт **equivalent
-semantics** при меньшей complexity (нет per-E slot allocations, нет
-worklist hookup, нет dispatcher generation).
+## [M-plan-61-per-e-mono] — RESOLVED 2026-05-17 EOD (followup #4)
 
-Perf: handler arm = pointer deref + cast vs per-E vtable = indirect
-call. Разница ~1-2 ns на throw — pas-imeyer для error path. Если когда-
-нибудь perf-bench покажет overhead — вернуться. Не блокер.
+Закрыто через preamble splice `/*__PER_E_FAIL_DECLS__*/` + dual-install
+adapter wrapper.
+
+Approach:
+- При встрече `Fail[E]` (binding) или `throw expr: E` (где E ≠ primitive
+  ≠ nova_str) — register E в `per_e_fail_types: HashSet<String>`.
+- Per-E preamble splice: для каждого registered E эмитятся
+  `typedef NovaVtable_Fail_<E_mangled>` (typed `(void*, E*)` signature),
+  TLS slot `_nova_handler_Fail_<E_mangled>`, fast-path
+  `_nova_throw_typed_<E>(E* payload)` dispatcher (prefer per-E slot,
+  fallback к erased `nova_throw_typed` preserves payload в fail-frame).
+- emit_with **dual-install** для `with Fail[E] = ...`:
+  * legacy `_nova_handler_Fail = handler_val` (current path).
+  * per-E `_nova_handler_Fail_<E> = vtable_via_adapter`. Adapter —
+    file-scope extern fn that sets typed payload в fail-frame,
+    delegates к legacy handler с diagnostic msg. Adapter unique name
+    через `tmp_counter` (НЕ `handler_counter` — последний sync'нут с
+    pre-scan forward decls).
+- emit_throw для concrete E type → emit per-E throw entry call.
+  Primitives (`throw 42` Fail[int]) → erased path с `NOVA_TID_<prim>`
+  (per-E slot не allocated).
+
+Result: per-E fast-path direct dispatch когда possible; correct
+fallback chain для catch-all и legacy string-based Fail.

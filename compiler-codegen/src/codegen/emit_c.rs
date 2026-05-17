@@ -508,6 +508,16 @@ pub struct CEmitter {
     /// корректной dispatch precedence (per-E typed → erased → unwind).
     /// Ф.3 будет расширять для per-E mono'd dispatch.
     fail_e_map: HashMap<String, String>,
+
+    /// Plan 61 followup #4: per-E typed Fail dispatch — set of E types
+    /// (C-mangled names) used as Fail[E]. Populated через emit_with /
+    /// emit_throw scan. В preamble splice эмиттится per-E vtable typedef
+    /// + TLS slot + `_nova_throw_typed_<E>(E* payload)` fast-path dispatcher.
+    ///
+    /// Production-grade complement к payload-in-frame hybrid: per-E direct
+    /// call (vs indirect через erased + cast). Backward compat: legacy
+    /// `_nova_handler_Fail` (string slot) тоже install'тся (dual-install).
+    per_e_fail_types: HashSet<String>,
 }
 
 /// Plan 20 Ф.4: per-defer-stmt entry — tracks one `defer { ... }` or
@@ -681,7 +691,96 @@ impl CEmitter {
             type_id_registry: HashMap::new(),
             next_type_id: 17,
             fail_e_map: HashMap::new(),
+            per_e_fail_types: HashSet::new(),
         }
+    }
+
+    /// Plan 61 followup #4: register an E type для per-E Fail dispatch.
+    /// Triggered by emit_with (Fail[E] binding) и emit_throw (typed payload).
+    /// Idempotent. После register'ации, preamble splice эмитит per-E
+    /// infrastructure для этого E.
+    fn register_fail_e_type(&mut self, e_c: &str) {
+        if e_c == "nova_str" || e_c == "void*" || e_c.is_empty() {
+            return; /* legacy string или unknown — никакого per-E */
+        }
+        // Plan 61 followup #4: skip primitives — per-E dispatch только для
+        // user-defined types. Throw для primitives (`throw 42` Fail[int])
+        // идёт через erased nova_throw_typed (which использует NOVA_TID_nova_int
+        // not NOVA_TID_USER_*).
+        if Self::primitive_type_id(e_c).is_some() {
+            return;
+        }
+        // Auto-register TypeId если ещё нет.
+        let _ = self.typeid_macro_for(e_c);
+        self.per_e_fail_types.insert(e_c.to_string());
+    }
+
+    /// Plan 61 followup #4: consistent mangling для per-E identifiers
+    /// (vtable / TLS slot / throw entry / adapter). Mirrors typeid_macro_for
+    /// чтобы NOVA_TID_USER_<X> matched name.
+    fn per_e_mangle(c_type: &str) -> String {
+        let base = c_type.trim_end_matches('*').trim();
+        let base_unwrapped = base.strip_prefix("Nova_").unwrap_or(base);
+        Self::sanitize_c_for_ident(base_unwrapped)
+    }
+
+    /// Plan 61 followup #4: helper для emit per-E vtable + TLS slot +
+    /// dispatcher для each registered E. Вызывается в finalize.
+    fn render_per_e_fail_decls(&self) -> String {
+        if self.per_e_fail_types.is_empty() {
+            return String::new();
+        }
+        let mut out = String::new();
+        out.push_str("/* Plan 61 followup #4: per-E Fail dispatch infrastructure.\n");
+        out.push_str(" * Per-(E) vtable + TLS slot + fast-path throw entry. Backward compat:\n");
+        out.push_str(" * legacy _nova_handler_Fail (nova_str) тоже install'тся в emit_with через\n");
+        out.push_str(" * adapter wrapper — current handler arm body unchanged. */\n");
+        let mut entries: Vec<&String> = self.per_e_fail_types.iter().collect();
+        entries.sort();
+        for e_c in &entries {
+            let mangled = Self::per_e_mangle(e_c);
+            let e_arg: String = if e_c.ends_with('*') { (**e_c).clone() } else { format!("{}*", e_c) };
+            // Используем line-by-line push_str чтобы избежать invalid
+            // escape sequences (`\<spaces>` в Rust string literal).
+            out.push_str(&format!("typedef struct NovaVtable_Fail_{m} {{\n", m = mangled));
+            out.push_str("    void* ctx;\n");
+            out.push_str(&format!("    nova_unit (*fail)(void* ctx, {ea} err);\n", ea = e_arg));
+            out.push_str(&format!("    struct NovaVtable_Fail_{m}* prev;\n", m = mangled));
+            out.push_str("    struct NovaInterruptFrame* owner_iframe;\n");
+            out.push_str(&format!("}} NovaVtable_Fail_{m};\n", m = mangled));
+            out.push_str("#ifdef _MSC_VER\n");
+            out.push_str(&format!(
+                "__declspec(thread) static NovaVtable_Fail_{m}* _nova_handler_Fail_{m} = NULL;\n",
+                m = mangled
+            ));
+            out.push_str("#else\n");
+            out.push_str(&format!(
+                "static __thread NovaVtable_Fail_{m}* _nova_handler_Fail_{m} = NULL;\n",
+                m = mangled
+            ));
+            out.push_str("#endif\n");
+            out.push_str("/* Per-E throw entry: prefer per-E slot, fallback на erased nova_throw_typed. */\n");
+            out.push_str(&format!(
+                "static inline nova_unit _nova_throw_typed_{m}({ea} payload) {{\n",
+                m = mangled, ea = e_arg
+            ));
+            out.push_str(&format!("    if (_nova_handler_Fail_{m}) {{\n", m = mangled));
+            out.push_str(&format!("        NovaVtable_Fail_{m}* current = _nova_handler_Fail_{m};\n",
+                m = mangled));
+            out.push_str("        NovaInterruptFrame* saved_if = _nova_current_handler_iframe;\n");
+            out.push_str(&format!("        _nova_handler_Fail_{m} = current->prev;\n", m = mangled));
+            out.push_str("        _nova_current_handler_iframe = current->owner_iframe;\n");
+            out.push_str("        current->fail(current->ctx, payload);\n");
+            out.push_str(&format!("        _nova_handler_Fail_{m} = current;\n", m = mangled));
+            out.push_str("        _nova_current_handler_iframe = saved_if;\n");
+            out.push_str("    }\n");
+            out.push_str("    /* Fallback к erased path (preserves typed payload в fail-frame). */\n");
+            out.push_str("    return nova_throw_typed(\n");
+            out.push_str(&format!("        nova_str_from_cstr(\"<{m}>\"),\n", m = mangled));
+            out.push_str(&format!("        (void*)payload, NOVA_TID_USER_{m});\n", m = mangled));
+            out.push_str("}\n\n");
+        }
+        out
     }
 
     /// Plan 61 Ф.1: Register a TypeId for a user-defined type name.
@@ -1813,6 +1912,10 @@ impl CEmitter {
         }
         self.out = self.out.replace("/*__TYPEID_DEFINES__*/", &tid_defines);
 
+        // Plan 61 followup #4: per-E Fail dispatch splice.
+        let per_e_decls = self.render_per_e_fail_decls();
+        self.out = self.out.replace("/*__PER_E_FAIL_DECLS__*/", &per_e_decls);
+
         Ok((self.out, self.warnings))
     }
 
@@ -2125,6 +2228,10 @@ impl CEmitter {
         // (`__TYPEID_DEFINES__` секция). Per-type `#define NOVA_TID_USER_<X> N`
         // эмитятся для каждого type, встреченного в throw / handler / any.
         self.line("/*__TYPEID_DEFINES__*/");
+        // Plan 61 followup #4: per-E Fail dispatch — splice marker. Замещён
+        // в finalize per-E vtable + TLS slot + throw entry для each registered
+        // E type (через `per_e_fail_types`).
+        self.line("/*__PER_E_FAIL_DECLS__*/");
         // Plan 59: mono'd tuple struct typedefs — splice marker; replaced
         // в finalize. Layout: typedef struct { T1 f0; T2 f1; ... }
         // _NovaTuple____<T1>__<T2>__...;. Real types (e.g. nova_str, не
@@ -2614,7 +2721,9 @@ impl CEmitter {
     // ---- effect with/handler ----
 
     fn emit_with(&mut self, bindings: &[WithBinding], body: &Block) -> Result<String, String> {
-        let mut saves: Vec<(String, String)> = Vec::new(); // (effect_name, prev_var)
+        // (effect_name, prev_var, handler_val) — handler_val нужен в Ф.61 followup #1
+        // для attach owner_iframe (cross-effect throw routing).
+        let mut saves: Vec<(String, String, String)> = Vec::new();
         let mut has_fail = false;
 
         for binding in bindings {
@@ -2655,7 +2764,103 @@ impl CEmitter {
                 "_nova_handler_{eff} = {hv};",
                 eff = effect_name, hv = handler_val
             ));
-            saves.push((effect_name, prev_var));
+
+            // Plan 61 followup #4: dual-install в per-E slot для `with Fail[E]`.
+            // Adapter fn (file-scope static) wraps legacy handler — sets
+            // typed payload в fail-frame, delegates к legacy handler с
+            // diagnostic msg. Это даёт per-E fast-path dispatch без
+            // refactor emit_handler_lit (handler arm body unchanged —
+            // typed `e` access via fail_e_map → payload-in-frame).
+            if effect_name == "Fail" {
+                let e_c_opt = if let TypeRef::Named { generics, .. } = &binding.effect {
+                    generics.first().and_then(|g| self.type_ref_to_c(g).ok())
+                } else { None };
+                if let Some(e_c) = e_c_opt {
+                    // Plan 61 followup #4: skip primitives — для них per-E
+                    // не делается (см. register_fail_e_type). Бы install
+                    // adapter с undefined NovaVtable_Fail_<primitive>.
+                    let is_primitive = Self::primitive_type_id(&e_c).is_some();
+                    if e_c != "nova_str" && !e_c.is_empty() && e_c != "void*" && !is_primitive {
+                        self.register_fail_e_type(&e_c);
+                        let mangled_e = Self::per_e_mangle(&e_c);
+                        let e_arg = if e_c.ends_with('*') { e_c.clone() } else { format!("{}*", e_c) };
+                        // Emit adapter fn (deferred file-scope). Используем
+                        // tmp_counter для uniqueness, НЕ handler_counter —
+                        // последний sync'нут с pre-scan forward decls, его
+                        // bumping ломает emit_handler_lit numbering.
+                        let adapter_id = format!(
+                            "_per_e_adapter_{}_{}",
+                            self.tmp_counter, mangled_e
+                        );
+                        self.tmp_counter += 1;
+                        // Forward decl ДО use-site (extern linkage — block
+                        // scope не разрешает `static`). Definition в
+                        // deferred_impls тоже без `static` (unique name per
+                        // handler_counter — name collision impossible).
+                        self.line(&format!(
+                            "extern nova_unit {ad}(void* ctx, {ea} err);",
+                            ad = adapter_id, ea = e_arg
+                        ));
+                        let _ = writeln!(self.deferred_impls,
+                            "nova_unit {ad}(void* ctx, {ea} err) {{",
+                            ad = adapter_id, ea = e_arg);
+                        let _ = writeln!(self.deferred_impls,
+                            "    if (_nova_fail_top) {{");
+                        let _ = writeln!(self.deferred_impls,
+                            "        _nova_fail_top->error_user_payload = (void*)err;");
+                        let _ = writeln!(self.deferred_impls,
+                            "        _nova_fail_top->error_user_type_id = NOVA_TID_USER_{m};",
+                            m = mangled_e);
+                        let _ = writeln!(self.deferred_impls, "    }}");
+                        let _ = writeln!(self.deferred_impls,
+                            "    NovaVtable_Fail* legacy = (NovaVtable_Fail*)ctx;");
+                        let _ = writeln!(self.deferred_impls,
+                            "    return legacy->fail(legacy->ctx, nova_str_from_cstr(\"<typed-{m}>\"));",
+                            m = mangled_e);
+                        let _ = writeln!(self.deferred_impls, "}}");
+                        let _ = writeln!(self.deferred_impls);
+                        // Allocate per-E vtable + dual-install в per-E slot.
+                        let per_e_vt_var = self.fresh_tmp();
+                        let per_e_prev_var = self.fresh_tmp();
+                        self.line(&format!(
+                            "NovaVtable_Fail_{m}* {vt} = (NovaVtable_Fail_{m}*)nova_alloc(sizeof(NovaVtable_Fail_{m}));",
+                            m = mangled_e, vt = per_e_vt_var
+                        ));
+                        self.line(&format!(
+                            "{vt}->ctx = (void*){hv};",
+                            vt = per_e_vt_var, hv = handler_val
+                        ));
+                        self.line(&format!(
+                            "{vt}->fail = {ad};",
+                            vt = per_e_vt_var, ad = adapter_id
+                        ));
+                        self.line(&format!(
+                            "NovaVtable_Fail_{m}* {prev} = _nova_handler_Fail_{m};",
+                            m = mangled_e, prev = per_e_prev_var
+                        ));
+                        self.line(&format!(
+                            "{vt}->prev = {prev};",
+                            vt = per_e_vt_var, prev = per_e_prev_var
+                        ));
+                        self.line(&format!(
+                            "{vt}->owner_iframe = NULL;  /* set after iframe alloc */",
+                            vt = per_e_vt_var
+                        ));
+                        self.line(&format!(
+                            "_nova_handler_Fail_{m} = {vt};",
+                            m = mangled_e, vt = per_e_vt_var
+                        ));
+                        // Push в saves с special effect_name `Fail_<E>` для
+                        // restore. handler_val содержит per-E vtable.
+                        saves.push((
+                            format!("Fail_{}", mangled_e),
+                            per_e_prev_var,
+                            per_e_vt_var,
+                        ));
+                    }
+                }
+            }
+            saves.push((effect_name, prev_var, handler_val));
         }
 
         // For `with Fail = ... { body }`: install a fail-frame around body so
@@ -2705,6 +2910,23 @@ impl CEmitter {
         };
         self.line(&format!("{} {};", result_decl_ty, result_tmp));
         self.line(&format!("nova_interrupt_push(&{});", iframe));
+
+        // Plan 61 followup #1: attach owner_iframe для Fail-shaped handlers,
+        // чтобы handler-arm `interrupt v` resolve'тся в OUR with-block, не в
+        // _nova_interrupt_top (который может быть inner nested with-block при
+        // cross-effect throw). См. nova_interrupt() в effects.c — он сначала
+        // смотрит _nova_current_handler_iframe set'нутый dispatcher'ом.
+        //
+        // Plan 61 followup #4: same для per-E vtables (`Fail_<E_mangled>`
+        // entries — dual-install per Fail[E] binding).
+        for (effect_name, _prev_var, handler_val) in &saves {
+            if effect_name == "Fail" || effect_name.starts_with("Fail_") {
+                self.line(&format!(
+                    "{hv}->owner_iframe = &{iframe};",
+                    hv = handler_val, iframe = iframe
+                ));
+            }
+        }
 
         // If we have fail-frame, wrap interrupt-setjmp inside fail-setjmp.
         if let Some(ff) = &fframe {
@@ -2796,7 +3018,9 @@ impl CEmitter {
             self.line("nova_interrupt_pop();");
             // Restore handlers — отмена не должна оставить scope handlers
             // активным; emit_with normal-path делает то же ниже.
-            for (effect_name, prev_var) in saves.iter().rev() {
+            for (effect_name, prev_var, _hv) in saves.iter().rev() {
+                // Plan 61 followup #4: per-E slot имя — `_nova_handler_Fail_<E>`,
+                // saves хранит key `Fail_<E_mangled>` именно с этим суффиксом.
                 self.line(&format!("_nova_handler_{eff} = {prev};",
                     eff = effect_name, prev = prev_var));
             }
@@ -2825,7 +3049,7 @@ impl CEmitter {
         }
 
         // Restore handlers (regardless of path)
-        for (effect_name, prev_var) in saves.iter().rev() {
+        for (effect_name, prev_var, _hv) in saves.iter().rev() {
             self.line(&format!("_nova_handler_{eff} = {prev};",
                 eff = effect_name, prev = prev_var));
         }
@@ -3064,6 +3288,10 @@ impl CEmitter {
         // prev в runtime.
         if eff == "Fail" {
             self.line(&format!("{vt}->prev = NULL;", vt = vtable_var));
+            // Plan 61 followup #1: owner_iframe initialized в NULL; emit_with
+            // перезапишет (`{hv}->owner_iframe = &iframe`) после iframe
+            // allocation. handler-arm `interrupt v` использует этот frame.
+            self.line(&format!("{vt}->owner_iframe = NULL;", vt = vtable_var));
         }
 
         // ---- Emit forward declarations into deferred_impls (file scope) ----
@@ -8243,7 +8471,10 @@ impl CEmitter {
         let intframe_popped_var = format!("_defer_{}_if_popped", block_id);
         self.line(&format!("int {} = 0;", intframe_popped_var));
         self.line(&format!("NovaInterruptFrame {};", intframe_var));
-        self.line(&format!("nova_interrupt_push(&{});", intframe_var));
+        // Plan 61 followup #1: defer scopes использ kind=DEFER_SCOPE — это
+        // tells nova_interrupt route handler-arm interrupts через cleanup
+        // chain (vs cross-effect direct-jump к owner).
+        self.line(&format!("nova_interrupt_push_defer(&{});", intframe_var));
         self.line(&format!("if (setjmp({}.jmp) != 0) {{", intframe_var));
         self.indent += 1;
         // Interrupt path: invoke only `defer` (skip `errdefer` — handled exit).
@@ -8882,33 +9113,39 @@ impl CEmitter {
                 if val_ty == "nova_str" {
                     self.line(&format!("Nova_Fail_fail({});", val));
                 } else {
-                    // Typed payload path.
-                    let tid_macro = self.typeid_macro_for(&val_ty);
-                    // Diagnostic message — typeid name (для unhandled abort
-                    // и string-slot fallback). Real payload передаётся
-                    // отдельно через `nova_throw_typed`.
+                    // Typed payload path. Plan 61 followup #4: prefer per-E
+                    // fast-path entry если concrete E type registered. Для
+                    // primitives (int/bool/etc) per-E не делается — erased
+                    // path через nova_throw_typed.
+                    let is_primitive = Self::primitive_type_id(&val_ty).is_some();
                     let payload_expr = if val_ty.ends_with('*') {
-                        // Already pointer — pass directly as void*.
-                        format!("(void*)({})", val)
+                        format!("({})", val)
                     } else {
-                        // Value type — heap-box и pass pointer. Codegen
-                        // компилирует это в `T* tmp = nova_alloc(sizeof(T));
-                        // *tmp = val;` inline. Для bootstrap — простой
-                        // compound-literal-style box через GC alloc.
                         let tmp = self.fresh_tmp();
                         self.line(&format!(
                             "{ty}* {tmp} = ({ty}*)nova_alloc(sizeof({ty}));",
                             ty = val_ty, tmp = tmp
                         ));
                         self.line(&format!("*{} = {};", tmp, val));
-                        format!("(void*)({})", tmp)
+                        format!("({})", tmp)
                     };
-                    self.line(&format!(
-                        "nova_throw_typed(nova_str_from_cstr(\"<{nm}>\"), {p}, {tid});",
-                        nm = val_ty.replace('*', ""),
-                        p = payload_expr,
-                        tid = tid_macro
-                    ));
+                    if is_primitive {
+                        // Erased path — primitive use existing NOVA_TID_<type>.
+                        let tid_macro = self.typeid_macro_for(&val_ty);
+                        self.line(&format!(
+                            "nova_throw_typed(nova_str_from_cstr(\"<{nm}>\"), (void*){p}, {tid});",
+                            nm = val_ty.replace('*', ""),
+                            p = payload_expr,
+                            tid = tid_macro
+                        ));
+                    } else {
+                        self.register_fail_e_type(&val_ty);
+                        let mangled_e = Self::per_e_mangle(&val_ty);
+                        self.line(&format!(
+                            "_nova_throw_typed_{m}({p});",
+                            m = mangled_e, p = payload_expr
+                        ));
+                    }
                 }
             }
             // D90 Plan 20 Ф.4: defer/errdefer codegen. Активация флага в
@@ -9941,20 +10178,41 @@ impl CEmitter {
                 } else if inner_ty == "Nova_Result*" {
                     // Result!!: на Err бросаем error value через Fail-эффект.
                     //
-                    // Plan 61 Ф.4: bootstrap Result hardcoded на (Ok int,
-                    // Err nova_str), поэтому Err payload — nova_str. Используем
-                    // string-based throw (= Nova_Fail_fail), который dispatch'тся
-                    // legacy путём. После Plan 14/56 generic Result mono'd —
-                    // Err получит real type, и здесь нужно будет emit
-                    // nova_throw_typed с payload.
+                    // Plan 61 followup #3: hybrid Err handling.
+                    //   - если err_typed_type_id != NOVA_TID_NONE → custom
+                    //     Err (Plan 61 fu#3 extended), emit nova_throw_typed
+                    //     с typed payload + tid.
+                    //   - else → legacy string Err через Nova_Fail_fail
+                    //     (bootstrap Result hardcoded на Err=nova_str).
                     //
-                    // Removed: nova_throw_value(v) placeholder macro
-                    // (effects.h:140). Эмитим Nova_Fail_fail напрямую.
+                    // После Plan 14/56 full Result mono — единственный путь
+                    // через nova_throw_typed с per-(T,E) struct.
                     self.line(&format!("Nova_Result* {} = {};", bang_tmp, val));
                     self.line(&format!(
-                        "if ({}->tag == NOVA_TAG_Result_Err) {{ Nova_Fail_fail({}->payload.Err._0); }}",
-                        bang_tmp, bang_tmp
+                        "if ({}->tag == NOVA_TAG_Result_Err) {{",
+                        bang_tmp
                     ));
+                    self.indent += 1;
+                    self.line(&format!(
+                        "if ({}->err_typed_type_id != NOVA_TID_NONE) {{",
+                        bang_tmp
+                    ));
+                    self.indent += 1;
+                    self.line(&format!(
+                        "nova_throw_typed({tmp}->payload.Err._0, {tmp}->err_typed_payload, {tmp}->err_typed_type_id);",
+                        tmp = bang_tmp
+                    ));
+                    self.indent -= 1;
+                    self.line("} else {");
+                    self.indent += 1;
+                    self.line(&format!(
+                        "Nova_Fail_fail({}->payload.Err._0);",
+                        bang_tmp
+                    ));
+                    self.indent -= 1;
+                    self.line("}");
+                    self.indent -= 1;
+                    self.line("}");
                     Ok(format!("({}->payload.Ok._0)", bang_tmp))
                 } else {
                     Ok(format!("({} /* !! */)", val))
@@ -10198,24 +10456,33 @@ impl CEmitter {
                 if val_ty == "nova_str" {
                     Ok(format!("(Nova_Fail_fail({}), (nova_int)0LL)", v))
                 } else {
-                    let tid_macro = self.typeid_macro_for(&val_ty);
+                    // Plan 61 followup #4: per-E fast path для user types;
+                    // erased path для primitives.
+                    let is_primitive = Self::primitive_type_id(&val_ty).is_some();
                     let payload_expr = if val_ty.ends_with('*') {
-                        format!("(void*)({})", v)
+                        format!("({})", v)
                     } else {
-                        // Heap-box value type — нельзя сделать inline в
-                        // comma-expression красиво; используем GNU
-                        // statement-expression ({ T* p = alloc; *p = v; p; }).
                         format!(
-                            "({{ {ty}* _p = ({ty}*)nova_alloc(sizeof({ty})); *_p = ({val}); (void*)_p; }})",
+                            "({{ {ty}* _p = ({ty}*)nova_alloc(sizeof({ty})); *_p = ({val}); _p; }})",
                             ty = val_ty, val = v
                         )
                     };
-                    Ok(format!(
-                        "(nova_throw_typed(nova_str_from_cstr(\"<{nm}>\"), {p}, {tid}), (nova_int)0LL)",
-                        nm = val_ty.replace('*', ""),
-                        p = payload_expr,
-                        tid = tid_macro
-                    ))
+                    if is_primitive {
+                        let tid_macro = self.typeid_macro_for(&val_ty);
+                        Ok(format!(
+                            "(nova_throw_typed(nova_str_from_cstr(\"<{nm}>\"), (void*){p}, {tid}), (nova_int)0LL)",
+                            nm = val_ty.replace('*', ""),
+                            p = payload_expr,
+                            tid = tid_macro
+                        ))
+                    } else {
+                        self.register_fail_e_type(&val_ty);
+                        let mangled_e = Self::per_e_mangle(&val_ty);
+                        Ok(format!(
+                            "(_nova_throw_typed_{m}({p}), (nova_int)0LL)",
+                            m = mangled_e, p = payload_expr
+                        ))
+                    }
                 }
             }
             ExprKind::Forbid { body, .. } => {
@@ -10797,6 +11064,33 @@ impl CEmitter {
         let func_c = match &func.kind {
             ExprKind::Ident(name) => {
                 if let Some((type_name, _)) = self.find_variant(name) {
+                    // Plan 61 followup #3: Result.Err(custom_value) — typed
+                    // path для не-nova_str argument. Bootstrap Result hardcoded
+                    // на (Ok int, Err nova_str), но typed Err payload теперь
+                    // живёт в Nova_Result.err_typed_payload + err_typed_type_id
+                    // (Plan 61 fu#3 extension). `!!` использует tid для dispatch.
+                    //
+                    // Detection: type_name=="Result", name=="Err", arg!=nova_str.
+                    if type_name == "Result" && name == "Err" && args.len() == 1 {
+                        let arg_ty = self.infer_expr_c_type(args[0].expr());
+                        if arg_ty != "nova_str" && arg_ty != "void*" {
+                            // Emit typed Err constructor. Box value, pass via tid.
+                            let arg_c = self.emit_expr(args[0].expr())?;
+                            let tid_macro = self.typeid_macro_for(&arg_ty);
+                            let payload_expr = if arg_ty.ends_with('*') {
+                                format!("(void*)({})", arg_c)
+                            } else {
+                                format!(
+                                    "({{ {ty}* _ep = ({ty}*)nova_alloc(sizeof({ty})); *_ep = ({val}); (void*)_ep; }})",
+                                    ty = arg_ty, val = arg_c
+                                )
+                            };
+                            return Ok(format!(
+                                "nova_make_Result_Err_typed({p}, {tid})",
+                                p = payload_expr, tid = tid_macro
+                            ));
+                        }
+                    }
                     // Plan 48 Ф.7.4 (partial): when the parent sum-type is
                     // generic and we can infer all type-args from the call args
                     // (e.g. `Ok2(42)` → Result2[nova_int]), route through the
