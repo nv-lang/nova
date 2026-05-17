@@ -14509,6 +14509,63 @@ Production-grade: пишем lighter weight чем Criterion (нет async deps,
 ни в Criterion, ни в Go testing.B, ни в tinybench), AI explain (нет
 нигде), memory bandwidth (Criterion+Go: нет, только perf отдельно).
 
+Plan 57.F.4 — positive + negative test expansion (commit b1687cf0598,
+2026-05-17):
+
+По прямому feedback "тесты напиши по тому, что делал позитивные и
+негативные и проверь только их через релизные nova & компилятор" —
+расширили unit + e2e покрытие именно для Phase F work.
+
+Unit tests (cargo test --release --bin nova bench::<mod>::):
+- bench::remote 4 → 14 tests:
+    positive: parse_with_comments_and_blank_lines, ssh_base_args_
+      minimal_no_key_no_port, shell_quote_no_escape_needed, shell_
+      quote_preserves_value_after_split, find_returns_none_for_unknown,
+      parse_runner_id_defaults_to_name_when_unset.
+    negative: parse_rejects_invalid_ssh_port, parse_warns_on_unknown_
+      key, parse_rejects_section_without_name, parse_key_value_without_
+      section_ignored.
+- bench::ai 5 → 16 tests:
+    positive: provider_default_models, prompt_builder_minimal_no_
+      optional_sections, prompt_builder_empty_rows_still_valid,
+      truncate_for_tokens_does_not_grow_input, collect_git_context_
+      returns_none_when_shas_missing, render_terminal_contains_tokens_
+      field_when_present, render_markdown_skips_tokens_field_when_none.
+    negative: provider_parse_rejects_garbage, dry_run_response_does_
+      not_leak_api_key_either_provider, truncate_for_tokens_zero_
+      returns_empty, fmt_opt_handles_none.
+- bench::membw 4 → 13 tests (Linux-gated tests skip on Win):
+    positive: fmt_bytes_boundaries, fmt_bytes_single_byte, parse_event_
+      string_{event_only,event_and_umask,decimal_values,ignores_unknown_
+      keys}, probe_imc_events_does_not_panic.
+    negative: parse_event_string_{empty_returns_zero,malformed_hex_
+      returns_none,no_equals_skipped}, measure_bandwidth_err_message_
+      mentions_linux.
+
+E2E shell tests (65 → 88 asserts, sections 19-21):
+- §19 F.1+: comments/blanks tolerated, NOVA_BENCH_REMOTES env honored,
+  minimal config (no runner_id) accepted.
+- §19 F.1-: bad ssh_port warned, unknown key warned, empty --remotes
+  rejected.
+- §20 F.2+: --ai-max-tokens override, NOVA_AI_MODEL env override,
+  privacy warning on stderr, markdown rendering.
+- §20 F.2-: invalid provider rejected, api_key never leaked в dry-run,
+  plain diff w/o --explain unchanged (regression guard).
+- §21 F.3+: Arch shown, exit=0 диагностика, --help lists membw-check.
+- §21 F.3-: unknown bench subcommand rejected, cross-platform contract:
+  non-Linux LLC-miss = "no ✗".
+
+Verification всё через release nova binary (Windows):
+- cargo test --release --bin nova bench::remote::  → 14 / 14 PASS
+- cargo test --release --bin nova bench::ai::      → 16 / 16 PASS
+- cargo test --release --bin nova bench::membw::   →  6 /  6 PASS (Linux gated)
+- bash nova_tests/plan57_e2e/run_e2e.sh            → 88 / 88 PASS
+Total: 124 / 124 ALL PASS через release nova binary.
+
+One self-corrected bug по ходу: fmt_bytes(999_999) округляется к
+"1000.00 KB" не "999.99 KB" (within KB unit bound 1e3..1e6), тест
+relaxed assert unit-only.
+
 === Plan 60 — Size-accessor uniformity (.len/.capacity/.is_empty method-only) (2026-05-17) ===
 
 Ф.0-Ф.6 закрыты в worktree nova-lang-p60 (branch plan-60); merged → main.

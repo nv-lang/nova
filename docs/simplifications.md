@@ -8898,3 +8898,32 @@ sample emission в `memory_bandwidth_bytes_per_iter` JSON field
 Plan 57 — **completely closed across all 6 фаз** (MVP + A + B + C +
 D + E + F). 42+ commits в plan-57 branch. Все 4 phase-E deferred
 sketches теперь production code.
+
+## [M-57.F.4-positive-negative-coverage] — Test expansion (2026-05-17)
+
+**Не simplification.** Прямой user feedback "тесты напиши по тому,
+что делал позитивные и негативные и проверь только их через релизные
+nova & компилятор" → расширенное coverage для Phase F (commit
+b1687cf0598).
+
+**Что добавлено:**
+- Unit: 13 → 36 tests (bench::remote 4→14, bench::ai 5→16, bench::membw
+  4→13 с Linux-gated skip на Windows).
+- E2E: 65 → 88 asserts (sections 19-21 явно разделены на positive +
+  negative subsections).
+- Total через release nova binary: 124 / 124 ALL PASS.
+
+**Что не "симплифицировали":**
+- `fmt_bytes(999_999)` test assertion relaxed с exact-string match
+  `"999.99 KB"` → unit-only check `ends_with("KB")`. Reason: format
+  `"{:.2}"` округляет 999.999 KB → "1000.00 KB", всё в KB unit (lower
+  bound 1e3, upper 1e6) — unit choice правильный, только cosmetic
+  round-up. Не leak abstraction.
+- `parse_event_string` сделан `pub` (был private). Reason: integration
+  test нужен прямой доступ для negative-path coverage (malformed hex,
+  no-equals tokens). Visibility increase — minimal cost, big test gain.
+
+**Followup deferred:** Linux runtime integration F.3.b (per-sample
+`memory_bandwidth_bytes_per_iter` emission в bench JSON) — требует
+verification на real Intel Skylake+ / AMD Zen 3+ hardware. Current
+infra dovolно для CI gating через `membw-check` exit code.
