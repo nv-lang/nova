@@ -22,11 +22,16 @@
 module encoding.ini
 
 
+/// Errors при парсинге INI.
+#stable(since = "0.1")
 export type ParseIniError
     | InvalidLine { line int, content str }
     | UnclosedSection { line int }
 
 
+/// Parse INI document → `HashMap[section, HashMap[key, value]]`. Keys в дефолтной
+/// (без секции) хранятся под ключом `""`.
+#stable(since = "0.1")
 export fn Ini.parse(s str) Fail[ParseIniError] -> HashMap[str, HashMap[str, str]] {
     let mut result = HashMap[str, HashMap[str, str]].new()
     result.insert("", HashMap[str, str].new())
@@ -81,6 +86,9 @@ export fn Ini.parse(s str) Fail[ParseIniError] -> HashMap[str, HashMap[str, str]
 
 
 // Сериализация обратно в INI.
+/// Encode `HashMap[section, HashMap[key, value]]` → INI string. Default section
+/// (key `""`) выводится без `[section]` header'а сверху.
+#stable(since = "0.1")
 export fn Ini.encode(data HashMap[str, HashMap[str, str]]) -> str {
     let mut buf = StringBuilder.with_capacity(256)
     // Сначала top-level ("")

@@ -34,10 +34,12 @@ module encoding.base64
 // Ошибки
 // ──────────────────────────────────────────────────────────────────────────
 
+/// Errors при decoding base64. Coverage: bad length, invalid char, bad padding.
+#stable(since = "0.1")
 export type Base64Error
-    | InvalidLength { actual int }              // не кратно 4 (для standard с padding)
-    | InvalidChar { position int, char char }   // символ не в alphabet
-    | InvalidPadding { position int }           // = в неположенном месте
+    | InvalidLength { actual int }
+    | InvalidChar { position int, char char }
+    | InvalidPadding { position int }
 
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -111,10 +113,14 @@ fn decode_char(c char) -> Option[u8] {
 // ──────────────────────────────────────────────────────────────────────────
 
 // Standard encoding с `=` padding.
+/// Standard base64 encoding (RFC 4648 § 4). Alphabet `A-Z a-z 0-9 + /` + padding `=`.
+#stable(since = "0.1")
 export fn Base64.encode(data []byte) -> str =>
     encode_with(data, encode_char_std, true)
 
 // URL-safe encoding без padding (как в JWT, OAuth tokens).
+/// URL-safe base64 encoding (RFC 4648 § 5). `+`→`-`, `/`→`_`, no padding.
+#stable(since = "0.1")
 export fn Base64.encode_url(data []byte) -> str =>
     encode_with(data, encode_char_url, false)
 
@@ -172,11 +178,13 @@ fn encode_with(data []byte, alphabet fn(u8) -> char, with_padding bool) -> str {
 // Decoding
 // ──────────────────────────────────────────────────────────────────────────
 
-// Decode standard (с обязательным `=` padding до кратности 4).
+/// Decode standard base64 (с обязательным `=` padding до multiple-of-4).
+#stable(since = "0.1")
 export fn Base64.decode(s str) Fail[Base64Error] -> []byte =>
     decode_with(s, true)
 
-// Decode URL-safe (padding опциональный).
+/// Decode URL-safe base64 (padding опциональный).
+#stable(since = "0.1")
 export fn Base64.decode_url(s str) Fail[Base64Error] -> []byte =>
     decode_with(s, false)
 
