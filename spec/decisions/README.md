@@ -14,14 +14,14 @@
 | # | Файл | Что внутри | D-решения |
 |---|---|---|---|
 | 01 | [01-philosophy.md](01-philosophy.md) | Цели, парадигма, AI-first | D1, D9, D10 |
-| 02 | [02-types.md](02-types.md) | Record, sum-type, protocol, generic, поля, bounds | D15, D17, D32, D36, D39, D42, D52, D53, D55, D66, D72 |
-| 03 | [03-syntax.md](03-syntax.md) | Объявления, литералы, операторы, методы, парсинг, defer/errdefer, атрибуты `#name`, default generics, select, named params, map-literal | D16, D19, D20, D22, D23, D27, D30, D33, D34, D35, D37, D38, D40, D43, D44, D45, D46, D48, D49, D54, D58, D59, D60, D69, D82, D83, D88, D90, D94, D96, D102, D108 |
-| 04 | [04-effects.md](04-effects.md) | Fail, Io, Db, handlers, with-блоки, interrupt, forbid, realtime, ?, `Handler[E, IRT]` | D2, D3, D4, D11, D12, D18, D25, D28, D31, D61, D62, D63, D64, D65, D67, D68, D85, D86, D87 |
+| 02 | [02-types.md](02-types.md) | Record, sum-type, protocol, generic, поля, bounds, ghost state, hybrid dispatch, tuple mono | D15, D17, D32, D36, D39, D42, D52, D53, D55, D66, D72, D110, D119, D122, D123 |
+| 03 | [03-syntax.md](03-syntax.md) | Объявления, литералы, операторы, методы, парсинг, defer/errdefer, атрибуты `#name`, default generics, select, named params, map-literal, doc-comments, size accessors | D16, D19, D20, D22, D23, D27, D30, D33, D34, D35, D37, D38, D40, D43, D44, D45, D46, D48, D49, D54, D58, D59, D60, D69, D82, D83, D88, D90, D94, D96, D102, D104, D108, D117 |
+| 04 | [04-effects.md](04-effects.md) | Fail, Io, Db, handlers, with-блоки, interrupt, forbid, realtime, ?, `Handler[E, IRT]`, contracts (#pure/axiom/trusted), axiom binder, Fail payload | D2, D3, D4, D11, D12, D18, D25, D28, D31, D61, D62, D63, D64, D65, D67, D68, D85, D86, D87, D115, D118, D120 |
 | 05 | [05-memory.md](05-memory.md) | Managed GC, escape analysis, regions | D6, D21 (cancelled) |
 | 06 | [06-concurrency.md](06-concurrency.md) | Fiber runtime, structured concurrency, spawn, detach, supervised(cancel:), channels (Channel revision capability-split), select, handler scoping, park/wake API, implicit main-scope, fiber stack allocation, work-stealing scheduler, preemption | D14, D50, D71, D75, D79, D80, D91, D92, D93, D97, D98, D103 |
 | 07 | [07-modules.md](07-modules.md) | Модули, импорты (включая селективный `import X.{A, B}` и `export import` re-export), видимость, package tooling, `_module.nv` | D5, D29, D47, D78, D100 |
-| 08 | [08-runtime.md](08-runtime.md) | Panic, capability, deployment, prelude, From/Into, TryFrom, math, Mem, assert | D7, D13, D26, D41, D70 (replaced → D73), D73, D74, D76, D77, D81 |
-| 09 | [09-tooling.md](09-tooling.md) | Тесты, контракты, форматирование, CLI, EXPECT-маркеры, conditional compilation, `#doc` | D24, D89, D95, D99, D101 |
+| 08 | [08-runtime.md](08-runtime.md) | Panic, capability, deployment, prelude, From/Into, TryFrom, math, Mem, assert, primitive built-ins (hash/eq/ord) | D7, D13, D26, D41, D70 (replaced → D73), D73, D74, D76, D77, D81, D109 |
+| 09 | [09-tooling.md](09-tooling.md) | Тесты, контракты, форматирование, CLI, EXPECT-маркеры, conditional compilation, `#doc`, doc-attrs, doc-tests, JSON schema, contracts verifier (assume/quantifiers/cache/Z3), bench DSL | D24, D89, D95, D99, D101, D105, D106, D107, D111, D112, D113, D114, D116, D121 |
 | 10 | [10-overloading.md](10-overloading.md) | Перегрузка функций и методов: четыре оси, резолв | D84 |
 
 ### Свежие D-решения (по нумерации)
@@ -47,8 +47,26 @@
 | D101 | 09-tooling.md | `#doc` атрибут — structured documentation comments |
 | D102 | 03-syntax.md | Named parameters — `f(x: 1, y: 2)` синтаксис вызова |
 | D103 | 06-concurrency.md | Preemption — cooperative yield-points в fiber tight loops |
+| D104 | 03-syntax.md | Синтаксис doc-comment'ов — `///` outer, `//!` inner |
+| D105 | 09-tooling.md | Doc-атрибуты — `#doc(section = "...", example = "...")` |
+| D106 | 09-tooling.md | Семантика doc-test'ов — `nova doc --test` |
+| D107 | 09-tooling.md | JSON output schema v1 — `nova doc --json` |
 | D108 | 03-syntax.md | Map-literal `[k: v]` синтаксис + map-coercion (D55 rev) |
-| D109 | 09-tooling.md | Benchmark DSL — `bench "..." { measure { ... } }` + `bench.*` namespace |
+| D109 | 08-runtime.md | Встроенные методы примитивных типов — hash, eq, ord |
+| D110 | 02-types.md | Ghost state — spec-only bindings для SMT-верификации |
+| D111 | 09-tooling.md | `assume` / `assert_static` / `#trusted` external |
+| D112 | 09-tooling.md | Bounded quantifiers (`forall`/`exists` по коллекции) |
+| D113 | 09-tooling.md | `#must_verify_module` — strict mode на модуле |
+| D114 | 09-tooling.md | SMT cache + parallel verification |
+| D115 | 04-effects.md | Axiom binder — `BinderType` enum вместо `Option<TypeRef>` |
+| D116 | 09-tooling.md | Z3 backend через собственные FFI-биндинги |
+| D117 | 03-syntax.md | Size-like accessors require call syntax (`.len()` vs `.len`) |
+| D118 | 04-effects.md | Typed `Fail[E]` codegen — payload preservation via fail-frame |
+| D119 | 02-types.md | Method-level type parameters в generic methods |
+| D120 | 04-effects.md | `#pure` views + axioms + `#verify`/`#trusted` handlers |
+| D121 | 09-tooling.md | Benchmark DSL — `bench "..." { measure { ... } }` + `bench.*` namespace |
+| D122 | 02-types.md | Hybrid dispatch для bound-K methods (vtable infra) |
+| D123 | 02-types.md | Tuple monomorphization — per-concrete-combo structs |
 
 ## История
 
