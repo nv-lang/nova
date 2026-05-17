@@ -1,0 +1,31 @@
+module nova_tests.plan61.repro_cross_effect_throw
+
+// Plan 61 Ф.0 repro: cross-effect throw в handler arm.
+// Закрывает Plan 11 open issue (see docs/plans/11-method-values-and-overload.md:791-814).
+//
+// Pattern: `with Fail[A] = |e| throw NewErr {...}` — handler-arm бросает B,
+// outer handler ловит B. Codegen должен resolve outer effect-context.
+
+export type ParseError | Bad
+export type HttpError | InvalidPath(str) | ServerErr
+
+fn lower_layer() Fail[ParseError] -> int {
+    throw Bad
+}
+
+fn upper_layer() Fail[HttpError] -> int {
+    with Fail[ParseError] = |_e| throw InvalidPath("lower fail") {
+        lower_layer()
+    }
+}
+
+test "cross-effect throw in handler arm" {
+    let reason = with Fail[HttpError] = |e| interrupt (match e {
+        InvalidPath(reason) => reason
+        ServerErr           => "server"
+    }) {
+        let _ = upper_layer()
+        "unreachable"
+    }
+    assert(reason == "lower fail", "outer handler should receive HttpError")
+}

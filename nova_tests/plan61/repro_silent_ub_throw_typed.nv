@@ -1,0 +1,28 @@
+module nova_tests.plan61.repro_silent_ub_throw_typed
+
+// Plan 61 Ф.0 repro: Silent UB #1 — throw user-error становится garbage.
+//
+// Текущий codegen (emit_c.rs:8503-8517): для не-nova_str value делает
+// `nova_int_to_str((nova_int)(val))` — кастует pointer к int и форматирует
+// как число. Handler получает строку типа "140726384521232".
+//
+// После Plan 61 Ф.3 (per-E specialization): handler arm видит typed
+// `e: ParseError`, может прочитать `e.detail`.
+
+export type ParseError | Bad(str) | EOF
+
+fn raise() Fail[ParseError] -> int {
+    throw Bad("expected digit")
+}
+
+test "throw ParseError carries typed payload" {
+    let result = with Fail[ParseError] = |e| interrupt (match e {
+        Bad(detail) => detail
+        EOF         => "eof"
+    }) {
+        let _ = raise()
+        "unreachable"
+    }
+    // До Plan 61 — silent garbage. После Plan 61 — passes.
+    assert(result == "expected digit", "handler should receive typed payload")
+}

@@ -94,8 +94,9 @@ void nova_interrupt_ptr(void* value) {
 __declspec(thread) NovaFailFrame*      _nova_fail_top      = NULL;
 __declspec(thread) NovaInterruptFrame* _nova_interrupt_top = NULL;
 __declspec(thread) NovaTestFrame*      _nova_test_frame    = NULL;
-__declspec(thread) NovaVtable_Fail*    _nova_handler_Fail  = NULL;  /* default NULL → Nova_Fail_fail falls back to nova_throw */
-__declspec(thread) NovaVtable_Time*    _nova_handler_Time  = NULL;  /* default NULL → context-sensitive yield (see fibers.h) */
+__declspec(thread) NovaVtable_Fail*     _nova_handler_Fail     = NULL;  /* default NULL → Nova_Fail_fail falls back to nova_throw */
+__declspec(thread) NovaVtable_Fail_any* _nova_handler_Fail_any = NULL;  /* Plan 61 Ф.2 typed erased slot */
+__declspec(thread) NovaVtable_Time*     _nova_handler_Time     = NULL;  /* default NULL → context-sensitive yield (see fibers.h) */
 __declspec(thread) NovaFiberQueue*     _nova_active_scope  = NULL;  /* active supervised scope for current thread */
 __declspec(thread) int                 _nova_active_slot   = -1;
 /* Plan 44.5 Layer 5 deferred-unlock: set by fiber in park_with_unlock before
@@ -109,8 +110,9 @@ __declspec(thread) volatile int*       _nova_preempt_ptr   = NULL;  /* Plan 44.7
 __thread NovaFailFrame*      _nova_fail_top      = NULL;
 __thread NovaInterruptFrame* _nova_interrupt_top = NULL;
 __thread NovaTestFrame*      _nova_test_frame    = NULL;
-__thread NovaVtable_Fail*    _nova_handler_Fail  = NULL;
-__thread NovaVtable_Time*    _nova_handler_Time  = NULL;
+__thread NovaVtable_Fail*     _nova_handler_Fail     = NULL;
+__thread NovaVtable_Fail_any* _nova_handler_Fail_any = NULL;  /* Plan 61 Ф.2 */
+__thread NovaVtable_Time*     _nova_handler_Time     = NULL;
 __thread NovaFiberQueue*     _nova_active_scope  = NULL;
 __thread int                 _nova_active_slot   = -1;
 __thread void (*_nova_park_unlock_fn)(void*)  = NULL;

@@ -1,0 +1,25 @@
+module nova_tests.plan61.d65_rule_3_rethrow
+
+// Plan 61 / D65 правило 3: re-throw в handler-body skip'ает current frame
+// → outer handler ловит. Это и есть classic Plan 20 Ф.8 (4) prev-link swap,
+// расширенный Plan 61 на typed throws.
+
+export type AppError | Network | Internal
+
+fn op() Fail[AppError] -> int {
+    throw Network
+}
+
+test "re-throw в typed handler-arm → outer ловит" {
+    // Outer ловит, transforms tag to int.
+    let result = with Fail[AppError] = |e| interrupt (match e {
+        Network  => 1
+        Internal => 2
+    }) {
+        // Inner re-throws: классическая D65 правило 3.
+        with Fail[AppError] = |e| throw e {
+            op()
+        }
+    }
+    assert(result == 1, "outer должен получить Network re-thrown через inner")
+}
