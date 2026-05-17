@@ -126,14 +126,28 @@ pub fn cuts_to_changepoints(series: &[f64], cuts: &[usize]) -> Vec<Changepoint> 
     out
 }
 
-/// Compute reasonable default penalty (BIC-like): 4·log(n)·σ² где σ — std-dev.
-/// `2 log n` underfits, `4 log n` is conservative — preferred для CI noise.
+/// Compute reasonable default penalty using **robust** noise estimate.
+///
+/// Uses MAD (median absolute deviation) instead of std-dev — иначе на
+/// multi-regime series (e.g. real step change) variance overshoots и
+/// penalty preventит detection.
+///
+/// Formula: `2 · log(n) · σ_robust` where σ ≈ 1.4826·MAD.
+/// Constant `2 log n` — BIC-equivalent для linear cost.
 pub fn default_penalty(series: &[f64]) -> f64 {
     if series.len() < 2 { return 1.0; }
     let n = series.len() as f64;
-    let mean: f64 = series.iter().sum::<f64>() / n;
-    let var = series.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / (n - 1.0);
-    4.0 * n.ln() * var.max(1.0)
+    let mut sorted = series.to_vec();
+    sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    let median = sorted[sorted.len() / 2];
+    let mut devs: Vec<f64> = series.iter().map(|x| (x - median).abs()).collect();
+    devs.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    let mad = devs[devs.len() / 2];
+    // 1.4826 — Gaussian consistency factor (MAD → σ estimate).
+    let sigma = (mad * 1.4826).max(0.1);
+    // Penalty: balance segmentation complexity vs noise. 4·log(n)·σ —
+    // conservative для catching real shifts of >= ~σ magnitude.
+    4.0 * n.ln() * sigma
 }
 
 /// Scan history-branch для anomalies, return per-bench changepoints.
