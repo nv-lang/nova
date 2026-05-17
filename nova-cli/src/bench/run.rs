@@ -54,6 +54,8 @@ pub struct BenchRunOpts<'a> {
     pub out_criterion: Option<&'a Path>,
     /// Print colored terminal output (auto-detect via main if None).
     pub color: bool,
+    /// Plan 57.G.4 — render ASCII histogram per-bench after the table.
+    pub histogram: bool,
 }
 
 pub fn run(opts: BenchRunOpts) -> Result<i32> {
@@ -201,12 +203,39 @@ pub fn run(opts: BenchRunOpts) -> Result<i32> {
 
     let reader = BufReader::new(stdout);
     let mut raw_results: Vec<RawBenchResult> = Vec::new();
+    // Plan 57.G.5 — accumulate __BENCH_METRIC__ markers per *current*
+    // bench (между __BENCH_START__ <name> и __BENCH_RESULT__ {...}).
+    // Aggregate by (metric_name, unit) → samples vec.
+    let mut current_bench_name: Option<String> = None;
+    let mut pending_metrics: Vec<(String, i64, String)> = Vec::new();
     for line in reader.lines() {
         let line = line.map_err(|e| anyhow!("read bench stdout: {}", e))?;
         if let Some(r) = RawBenchResult::parse_line(&line) {
+            // Attach pending metrics (aggregated by name+unit) to this bench.
+            let mut groups: std::collections::BTreeMap<(String, String), Vec<i64>>
+                = std::collections::BTreeMap::new();
+            for (n, v, u) in pending_metrics.drain(..) {
+                groups.entry((n, u)).or_default().push(v);
+            }
+            let mut r = r;
+            r.custom_metrics = groups.into_iter()
+                .map(|((name, unit), samples)|
+                    super::schema::CustomMetric { name, unit, samples })
+                .collect();
             raw_results.push(r);
-        } else if line.starts_with("__BENCH_START__") {
-            eprintln!("{}", line.trim_start_matches("__BENCH_START__").trim());
+            current_bench_name = None;
+        } else if let Some(rest) = line.strip_prefix("__BENCH_START__") {
+            // Switch to new bench — discard pending metrics из предыдущего
+            // (на случай abort/crash без __BENCH_RESULT__).
+            pending_metrics.clear();
+            current_bench_name = Some(rest.trim().to_string());
+            eprintln!("{}", rest.trim());
+        } else if line.starts_with("__BENCH_METRIC__") {
+            if current_bench_name.is_some() {
+                if let Some((n, v, u)) = super::schema::parse_metric_line(&line) {
+                    pending_metrics.push((n, v, u));
+                }
+            }
         }
         // Other lines passed silently.
     }
@@ -246,6 +275,13 @@ pub fn run(opts: BenchRunOpts) -> Result<i32> {
 
     // Output.
     print!("{}", report::terminal_report(&meta, &benches, opts.color));
+    // Plan 57.G.4 — opt-in ASCII histogram per bench (--histogram flag).
+    if opts.histogram {
+        for b in &benches {
+            println!("\nDistribution: {}", b.raw.name);
+            print!("{}", report::ascii_histogram(b, 40));
+        }
+    }
     if let Some(p) = opts.out_json {
         let json = run_result_to_json(&meta, &benches);
         std::fs::write(p, serde_json::to_string_pretty(&json)?)
@@ -437,6 +473,7 @@ fn run_dir(opts: BenchRunOpts) -> Result<i32> {
             out_md: None,
             out_criterion: None,
             color: opts.color,
+            histogram: opts.histogram,
         };
         let r = run(single_opts);
         if let Err(e) = r {

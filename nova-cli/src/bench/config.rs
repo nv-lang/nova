@@ -139,8 +139,11 @@ impl BenchToml {
         };
 
         // Apply to top-level [gate] or per-bench [gate.strict.<name>].
+        // entry().or_insert_with(default) идиоматично + защищает на случай
+        // если parse() в будущем перестанет pre-inserting.
         let target: &mut GateConfig = if let Some(name) = strict_name {
-            self.strict_overrides.get_mut(name).unwrap()
+            self.strict_overrides.entry(name.to_string())
+                .or_insert_with(GateConfig::default)
         } else if section.len() == 1 && section[0] == "gate" {
             &mut self.gate
         } else if section.len() == 2 && section[0] == "gate" && section[1] == "exempt" {

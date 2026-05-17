@@ -30,6 +30,13 @@ pub struct SampleStats {
     pub ci95_hi: f64,     // bootstrap 95% CI for median (hi)
     pub outliers_low: usize,
     pub outliers_high: usize,
+    /// Plan 57.G.1 — drift detection: slope of (sample_index, raw_ns).
+    /// Useful signal for cache warmup leak, thermal drift across run.
+    /// Units: ns per sample-index step.
+    pub drift_slope_ns_per_sample: f64,
+    /// Plan 57.G.1 — R² of drift regression. Высокий R² + non-zero slope
+    /// → систематический drift; низкий R² → noise only.
+    pub drift_r_squared: f64,
 }
 
 /// Compute full statistical summary of a sample vector.
@@ -72,11 +79,16 @@ pub fn analyze(samples: &[f64]) -> SampleStats {
     // Bootstrap 95% CI for median.
     let (ci95_lo, ci95_hi) = bootstrap_median_ci(samples, 1000, 0.95);
 
+    // Plan 57.G.1 — drift slope of (sample_index, raw_ns).
+    let xs: Vec<f64> = (0..n).map(|i| i as f64).collect();
+    let (drift_slope_ns_per_sample, drift_r_squared) = slope_r_squared(&xs, samples);
+
     SampleStats {
         n, median, mad, mean, stddev,
         p25, p75, iqr, min, max,
         ci95_lo, ci95_hi,
         outliers_low, outliers_high,
+        drift_slope_ns_per_sample, drift_r_squared,
     }
 }
 

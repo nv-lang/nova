@@ -12006,6 +12006,15 @@ impl CEmitter {
                                 // Эспозит timer для advanced bench patterns.
                                 return Ok("((nova_int)nova_bench_now_ns())".to_string());
                             }
+                            // Plan 57.G.5 — Custom metric emission per sample.
+                            "metric" if args.len() == 3 => {
+                                let name_v = self.emit_expr(args[0].expr())?;
+                                let val_v  = self.emit_expr(args[1].expr())?;
+                                let unit_v = self.emit_expr(args[2].expr())?;
+                                return Ok(format!(
+                                    "(nova_bench_emit_metric({}, {}, {}), (nova_int)0LL)",
+                                    name_v, val_v, unit_v));
+                            }
                             _ => {}
                         }
                     }
