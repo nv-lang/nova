@@ -495,11 +495,18 @@ impl VerificationPipeline {
         }
 
         // D.1.5: verify ensures_fail clauses (Fail-path postconditions).
-        // РњРѕРґРµР»СЊ (V1, conservative): РІРµСЂРёС„РёС†РёСЂСѓРµРј ensures_fail РЅРµР·Р°РІРёСЃРёРјРѕ,
-        // РёСЃРїРѕР»СЊР·СѓСЏ С‚Рµ Р¶Рµ params + requires-assertions (entry state).
-        // `result` РЅРµРґРѕСЃС‚СѓРїРµРЅ; `old(x)` в†' x (entry-state, РЅРµС‚ РјСѓС‚Р°Р±РµР»СЊРЅС‹С… params).
+        // Модель (V1, conservative): верифицируем ensures_fail независимо,
+        // используя те же params + requires-assertions (entry state).
+        // `result` недоступен; `old(x)` → x (entry-state, нет мутабельных params).
+        // Ф.34.1 (Plan 33.6): если fn не имеет Fail в effects — ensures_fail
+        // unreachable, не верифицируем (W2402 эмитится в verify_module pass).
+        let has_fail_effect_local = fd.effects.iter().any(|e| {
+            matches!(e, crate::ast::TypeRef::Named { path, .. }
+                if path.len() == 1 && path[0] == "Fail")
+        });
         for c in &fd.contracts {
             if !matches!(c.kind, ContractKind::EnsuresFail) { continue; }
+            if !has_fail_effect_local { continue; } // Ф.34.1 skip — обработано lint'ом.
             if requires_failed {
                 results.push((c.span, VerifyResult::EncodingFailed(
                     "requires-context failed to encode".into())));
@@ -2775,6 +2782,26 @@ let t0 = std::time::Instant::now();
                         }
                     }
                     _ => {}
+                }
+            }
+            // Ф.34.1 (Plan 33.6): ensures_fail на fn без Fail effect → W2402.
+            // `ensures_fail` имеет смысл только если fn может бросить Fail.
+            // Если в effects нет Fail — ensures_fail unreachable, дезинформирует.
+            let has_fail_effect = fd.effects.iter().any(|e| {
+                matches!(e, crate::ast::TypeRef::Named { path, .. }
+                    if path.len() == 1 && path[0] == "Fail")
+            });
+            if !has_fail_effect {
+                for c in &fd.contracts {
+                    if matches!(c.kind, ContractKind::EnsuresFail) {
+                        report.warnings.push(Diagnostic::new(
+                            format!("fn `{}`: `ensures_fail` без `Fail` effect [W2402]:\n  \
+                                     эта fn не может бросить Fail (нет в signature effects),\n  \
+                                     значит ensures_fail unreachable. Добавьте `Fail` в effects\n  \
+                                     или удалите ensures_fail.",
+                                fd.name),
+                            c.span));
+                    }
                 }
             }
             // Ф.33.1 (Plan 33.6): fn c ensures идентичными requires → W2402.
