@@ -1,0 +1,22 @@
+// Ф.27.2 (Plan 33.6): boolean absorption `X ∧ (X ∨ Y) = X`.
+
+module contracts.trivial_absorption_positive
+
+#verify
+fn absorb_and(a bool, b bool) -> bool
+    ensures result == a
+{
+    a && (a || b)
+}
+
+#verify
+fn absorb_or(a bool, b bool) -> bool
+    ensures result == a
+{
+    a || (a && b)
+}
+
+test "absorption trivial" {
+    assert(absorb_and(true, false) == true)
+    assert(absorb_or(true, false) == true)
+}
