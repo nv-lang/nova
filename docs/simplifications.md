@@ -9091,6 +9091,28 @@ confusing, error-prone. Lint scanит module.items на Item::Fn с тем же
 (Ф.17.3), no-params suspicious (Ф.24.2), apply к undefined (Ф.31.1),
 arity mismatch (Ф.11.3), auto-inference fail (Ф.13.1).
 
+## [M-plan-33.6-Ф.33-fn-tautological-var-mul] (2026-05-18)
+
+Один fn lint (паритет с Ф.32.1 для lemma) + TrivialBackend rule на
+произведение неотрицательных переменных.
+
+**1. Fn tautological (ensures без result/old == requires).** Walker
+`refs_result_or_old` рекурсивно ищет references на `result` или
+`old(...)` в Expr. Если ensures pure (без таких refs) и равен какому-нибудь
+requires (через `print_expr` сравнение) — push W2402. Filter с
+`refs_result_or_old` критичен: `ensures result >= 0` про result осмыслен
+даже если есть `requires x >= 0`.
+
+**2. VarA * VarB non-negative.** `try_const_mul_check` обрабатывал только
+literal × Var. Новый `try_var_mul_nonneg` — для Var × Var с both lower >=0.
+Поддерживает strict `>`. Закрывает product_nonneg паттерн без Z3.
+
+**Регрессия:** 181 → 183 PASS (+2), 0 FAIL, 44 SKIP.
+
+**Что не закрывает (V3):** Var × Var с **mixed signs** (both upper <= 0
+→ product >= 0 тоже), Var × Var × Var (chained mul), и т.д. — это уже
+nonlinear LIA, требует Z3.
+
 ## [M-57.F.4-positive-negative-coverage] — Test expansion (2026-05-17)
 
 **Не simplification.** Прямой user feedback "тесты напиши по тому,
