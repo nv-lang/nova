@@ -281,6 +281,16 @@ pub struct CEmitter {
     /// Set during emit_call when boxing struct/tuple для nova_make_Result_Ok.
     /// Consumed by next Stmt::Let.
     pending_result_ok_inner_type: Option<String>,
+    /// Plan 63 Fix F+ [M-result-erased-no-mono] production-grade: per-fn registry
+    /// — fn_name → boxed Ok inner type (e.g. "_NovaTuple_2_8_nova_str_8_nova_int*").
+    /// Populated при emit_fn для fn'ов с return type Result[Tuple(concrete), E].
+    /// Lookup'ится в helper `try_get_result_ok_inner_type_for_expr` чтобы:
+    /// (a) propagate через function-call returns (let r = parse_kv(...)) —
+    ///     Fix F's pending mechanism не работает потому что boxing happens
+    ///     внутри callee scope, не виден caller'у;
+    /// (b) inline `match parse_kv(...) { Ok((k, v)) => ... }` — no let-binding,
+    ///     но scr_tmp получает payload type через helper.
+    fn_result_ok_inner_types: HashMap<String, String>,
     /// Set of array variable names that store boxed nova_str* (as nova_int).
     /// Index access on these arrays must dereference: *(nova_str*)(arr->data[i]).
     str_box_arrays: HashSet<String>,
@@ -574,6 +584,7 @@ impl CEmitter {
             pending_option_inner_type: None,
             result_ok_inner_types: HashMap::new(),
             pending_result_ok_inner_type: None,
+            fn_result_ok_inner_types: HashMap::new(),
             str_box_arrays: HashSet::new(),
             current_receiver_type: None,
             expected_record_type: None,
@@ -5612,6 +5623,83 @@ impl CEmitter {
         Some(elems)
     }
 
+    /// Plan 63 Fix F+ [M-result-erased-no-mono]: try to determine the boxed
+    /// inner C type для Result Ok payload of an expression. Production-grade
+    /// closure of Fix F's gap — supports propagation через function calls
+    /// (where boxing happens inside callee), not just direct boxing at let
+    /// scope. Returns Some("_NovaTuple_..._mono*") or struct-pointer string
+    /// when expr's static type is Result[T, E] with T such что it gets
+    /// boxed (Tuple, struct). None otherwise (legacy nova_int slot path).
+    fn try_get_result_ok_inner_type_for_expr(&self, expr: &crate::ast::Expr) -> Option<String> {
+        use crate::ast::ExprKind;
+        match &expr.kind {
+            ExprKind::Ident(name) => {
+                self.result_ok_inner_types.get(name.as_str()).cloned()
+            }
+            ExprKind::Call { func, .. } => {
+                let fn_c_name = Self::call_target_c_name(func);
+                self.fn_result_ok_inner_types.get(&fn_c_name).cloned()
+            }
+            ExprKind::Block(b) => {
+                b.trailing.as_ref().and_then(|t| self.try_get_result_ok_inner_type_for_expr(t))
+            }
+            _ => None,
+        }
+    }
+
+    /// Plan 63 Fix F+: get C-name of callee for fn_result_ok_inner_types lookup.
+    /// Mirrors `emit_call`'s callee name resolution для simple Ident/Path cases.
+    fn call_target_c_name(func: &crate::ast::Expr) -> String {
+        use crate::ast::ExprKind;
+        match &func.kind {
+            ExprKind::Ident(name) => format!("nova_fn_{}", name),
+            ExprKind::Path(parts) if !parts.is_empty() => {
+                // Method-style `Type.method` → "Nova_Type_method_<method>"
+                if parts.len() == 2 {
+                    format!("Nova_{}_method_{}", parts[0], parts[1])
+                } else {
+                    format!("nova_fn_{}", parts.join("_"))
+                }
+            }
+            _ => String::new(),
+        }
+    }
+
+    /// Plan 63 Fix F+: register fn's Result Ok payload boxed mono'd type
+    /// при emit_fn. Если return type — `Result[Tuple(<concrete>), E]` или
+    /// `Result[<user_struct>, E]` (boxed-as-pointer), populate
+    /// fn_result_ok_inner_types[fn_c_name] = "<mono_ty>*". Subsequent
+    /// `try_get_result_ok_inner_type_for_expr` для Call-к-этой-fn returns
+    /// Some(...) → пропускается в `result_ok_inner_types` для destructure.
+    fn register_fn_result_ok_inner_type(&mut self, fn_c_name: &str, ret_type: &crate::ast::TypeRef) {
+        use crate::ast::TypeRef;
+        if let TypeRef::Named { path, generics, .. } = ret_type {
+            let is_result = path.last().map(|s| s.as_str()) == Some("Result")
+                && generics.len() == 2;
+            if !is_result { return; }
+            let ok_ty = &generics[0];
+            // Resolve Tuple — все элементы concrete (no placeholders).
+            if let TypeRef::Tuple(elems, _) = ok_ty {
+                if elems.is_empty() { return; }
+                let mut elem_cs: Vec<String> = Vec::with_capacity(elems.len());
+                for e in elems {
+                    if let Some(c) = Self::apply_type_subst_to_ref(e, &[]) {
+                        elem_cs.push(c);
+                    } else {
+                        return; // unresolved
+                    }
+                }
+                let mono = Self::compute_mono_tuple_c_name(&elem_cs);
+                self.register_mono_tuple(&elem_cs);
+                self.fn_result_ok_inner_types
+                    .insert(fn_c_name.to_string(), format!("{}*", mono));
+            }
+            // (Struct user-types в Ok могут быть добавлены аналогично; Fix F
+            // pending mechanism уже handles direct cases, registry — для
+            // function-return propagation.)
+        }
+    }
+
     /// Plan 59 Phase 5: peel leading decimal digits.
     fn take_digits(s: &str) -> (&str, &str) {
         let split_at = s.bytes().take_while(|b| b.is_ascii_digit()).count();
@@ -7393,8 +7481,24 @@ impl CEmitter {
             &mut self.current_fn_return_ty,
             Some(ret.clone()),
         );
+        // Plan 63 Fix F+ [M-result-erased-no-mono]: pending_*_inner_type
+        // используют scope-leaking pattern (set при boxing, consume при
+        // next let). Если функция body содержит `Ok(...)` БЕЗ surrounding
+        // let-binding (e.g. fn parse_kv() -> Result[..] { if cond { Ok((..)) } }),
+        // pending leak'ает в caller'а: после emit_fn(parse_kv) pending
+        // содержит inner type из последнего Ok(...) → следующий
+        // `let r = parse_kv(...)` consumed бы это leaked значение вместо
+        // правильного типа. Save/restore pending на fn body boundary.
+        let saved_pending_result = self.pending_result_ok_inner_type.take();
+        let saved_pending_option = self.pending_option_inner_type.take();
         let params = self.params_c(f)?;
         let mangled = self.mangle_fn(f);
+        // Plan 63 Fix F+ [M-result-erased-no-mono]: register fn's Result Ok
+        // payload mono'd type. Enables call-site propagation (let r = parse_kv())
+        // и inline match без let-binding.
+        if let Some(rt) = &f.return_type {
+            self.register_fn_result_ok_inner_type(&mangled, rt);
+        }
         // Register param types in var_types for match/infer
         if let Some(recv) = &f.receiver {
             if matches!(recv.kind, ReceiverKind::Instance) {
@@ -7596,6 +7700,13 @@ impl CEmitter {
         self.expected_record_type = saved_expected;
         // Plan 55 Ф.4: restore prior current_fn_return_ty (mono-pass leak fix).
         self.current_fn_return_ty = saved_ret_ty;
+        // Plan 63 Fix F+ [M-result-erased-no-mono]: restore pending state.
+        // Discards любые leaked pending_* values из этого fn body (e.g. fn,
+        // которая делает `Ok((..))` или `Some(..)` без surrounding let).
+        // Без этого pending leak'ает в caller's let-binding и overwrites
+        // правильный тип из fn_result_ok_inner_types registry.
+        self.pending_result_ok_inner_type = saved_pending_result;
+        self.pending_option_inner_type = saved_pending_option;
         // Undef any heap-promoted mut-captures so macros don't leak to sibling fns.
         self.flush_boxed_vars();
         self.indent = 0;
@@ -8253,6 +8364,21 @@ impl CEmitter {
                 // Propagate array element type so xs[i].field can be correctly typed
                 if let Some(arr_elem_ty) = self.array_element_types.get(&val).cloned() {
                     self.array_element_types.insert(binding.clone(), arr_elem_ty);
+                }
+                // Plan 63 Fix F+ [M-result-erased-no-mono]: production-grade
+                // propagation. Если RHS — call к fn'у с зарегистрированным
+                // Result Ok boxed type (fn_result_ok_inner_types), register
+                // на binding. Pending mechanism Fix F не покрывает этот case
+                // потому что boxing happens внутри callee scope. Always
+                // overwrite — helper authoritative из fn signature (vs
+                // possibly-stale value from prior let binding с тем же name
+                // в sibling fn body — global maps не scope'ятся).
+                if let Some(inner) = self.try_get_result_ok_inner_type_for_expr(&decl.value) {
+                    self.result_ok_inner_types.insert(binding.clone(), inner);
+                } else {
+                    // RHS не Result/non-mono — снять стале запись (если
+                    // binding имя совпало с прежним let из другого fn).
+                    self.result_ok_inner_types.remove(&binding);
                 }
                 // Plan 55 Ф.1: track element closure-sig for local `[]fn(...) -> T` vars
                 // so `for f in xs { f() }` and `xs.push(|| ...)` work in non-param contexts.
@@ -9449,7 +9575,7 @@ impl CEmitter {
                 Err("compiler bug: map literal `[k: v]` reached codegen без \
                      desugar pass — нарушение pipeline invariant. \
                      desugar_module() обязан быть вызван до codegen. \
-                     Report issue: https://github.com/unitcraft/nova-lang/issues".into())
+                     Report issue: https://github.com/nv-lang/nova/issues".into())
             }
 
             ExprKind::TupleLit(elems) => {
@@ -13526,6 +13652,12 @@ impl CEmitter {
         }
         // Plan 63 Fix F: propagate Result Ok inner type info.
         if let Some(inner_ty) = self.result_ok_inner_types.get(scr.as_str()).cloned() {
+            self.result_ok_inner_types.insert(scr_tmp.clone(), inner_ty);
+        } else if let Some(inner_ty) = self.try_get_result_ok_inner_type_for_expr(scrutinee) {
+            // Plan 63 Fix F+ [M-result-erased-no-mono] production-grade:
+            // inline `match parse_kv(...) { Ok((k, v)) => ... }` — нет
+            // let-binding для пропускания через result_ok_inner_types[scr].
+            // Resolve через scrutinee expression directly (Call/If/Block).
             self.result_ok_inner_types.insert(scr_tmp.clone(), inner_ty);
         }
 
