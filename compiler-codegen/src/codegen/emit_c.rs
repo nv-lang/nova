@@ -16726,6 +16726,25 @@ impl CEmitter {
                                 }
                             }
                         }
+                        // Plan 63 Fix A: fallback на external_registry.by_key для
+                        // built-in типов (StringBuilder/WriteBuffer/etc.) которые
+                        // регистрируются через runtime stub'ы. Без этого
+                        // `sb.peek() -> str` инфер'ит в nova_int (fallback), что
+                        // ломает downstream type-check'и.
+                        if let Some(decls) = self.external_registry.by_key
+                            .get(&(rt.clone(), mn.clone()))
+                        {
+                            let matching: Vec<_> = decls.iter()
+                                .filter(|d| d.is_instance == want_inst)
+                                .collect();
+                            if let Some(decl) = matching.first() {
+                                if !decl.return_c_type.is_empty()
+                                    && decl.return_c_type != "void*"
+                                {
+                                    return decl.return_c_type.clone();
+                                }
+                            }
+                        }
                     }
                 }
                 // Infer return type for call expressions
