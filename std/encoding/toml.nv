@@ -21,6 +21,8 @@
 module encoding.toml
 
 
+/// TOML value variants (string/int/float/bool/array/table).
+#stable(since = "0.1")
 export type TomlValue
     | TomlStr(str)
     | TomlInt(i64)
@@ -29,6 +31,8 @@ export type TomlValue
     | TomlArray([]TomlValue)
     | TomlTable(HashMap[str, TomlValue])
 
+/// Errors при парсинге TOML.
+#stable(since = "0.1")
 export type ParseTomlError
     | UnexpectedChar { line int, col int, char char }
     | UnexpectedEof { line int }
@@ -66,6 +70,11 @@ fn TomlParser.new(s str) -> Self =>
 // Public API
 // ──────────────────────────────────────────────────────────────────────────
 
+/// Parse TOML document → `TomlValue.TomlTable(...)` root.
+///
+/// Поддержка: key=value, [section] / [a.b.c] tables, basic strings, ints,
+/// floats, booleans, arrays.
+#stable(since = "0.1")
 export fn Toml.parse(s str) Fail[ParseTomlError] -> TomlValue {
     let mut p = TomlParser.new(s)
     p.parse_document()

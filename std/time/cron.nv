@@ -29,6 +29,8 @@
 module time.cron
 
 
+/// Errors при парсинге cron-выражения.
+#stable(since = "0.1")
 export type ParseCronError
     | InvalidFieldCount { actual int }
     | InvalidValue { field str, value str }
@@ -41,6 +43,8 @@ type CronField {
 }
 
 
+/// Parsed cron expression — 5 fields (minute/hour/day-of-month/month/day-of-week).
+#stable(since = "0.1")
 export type CronExpr {
     minute     CronField
     hour       CronField
@@ -50,7 +54,8 @@ export type CronExpr {
 }
 
 
-// Время для match'а (обычно из Timestamp + decode).
+/// Time-point для cron matching. Обычно decode'нутый из Timestamp.
+#stable(since = "0.1")
 export type CronTime {
     minute    int             // 0..59
     hour      int             // 0..23
@@ -64,6 +69,15 @@ export type CronTime {
 // Парсинг
 // ──────────────────────────────────────────────────────────────────────────
 
+/// Parse cron expression в 5-field formate: `min hour dom month dow`.
+///
+/// Поддержка: `*`, `1,5,10` (list), `1-5` (range), `*/15` (step), `10-30/5` (range+step).
+///
+/// # Examples
+/// ```nova
+/// let cron = Cron.parse("*/15 9-17 * * 1-5")  // every 15 min, 9-17h, weekdays
+/// ```
+#stable(since = "0.1")
 export fn Cron.parse(expr str) Fail[ParseCronError] -> CronExpr {
     let fields = expr.trim().split(" ")
     // Удалить пустые (multiple spaces)
@@ -198,6 +212,8 @@ fn dedup_sort(xs []int) -> []int {
 // Matching
 // ──────────────────────────────────────────────────────────────────────────
 
+/// True если CronTime matches expression (все 5 fields совпадают).
+#stable(since = "0.1")
 export fn CronExpr @matches(t CronTime) -> bool =>
     field_contains(@minute, t.minute)
     && field_contains(@hour, t.hour)

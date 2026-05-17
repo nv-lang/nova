@@ -8,15 +8,24 @@
 module text.diff
 
 
+/// Diff operation на один элемент: Equal (одинаков), Insert (только в b), Delete (только в a).
+#stable(since = "0.1")
 export type DiffOp
-    | Equal(str)              // строка одинакова в обоих
-    | Insert(str)             // добавлена в b
-    | Delete(str)             // удалена из a
+    | Equal(str)
+    | Insert(str)
+    | Delete(str)
 
 
-// Простой algorithm: O(NM) через DP — Myers's algorithm в каноничной
-// форме сложнее, для bootstrap используем простую LCS-based diff.
-// Для практических случаев (CI snapshot tests) этого достаточно.
+/// Compute LCS-based diff между двумя `[]str`. O(NM) memory + time.
+///
+/// Используется для CI snapshot tests (rejected, accepted, etc.).
+///
+/// # Examples
+/// ```nova
+/// let ops = Diff.compute(["a", "c"], ["a", "b", "c"])
+/// // ops contains Insert("b") в середине
+/// ```
+#stable(since = "0.1")
 export fn Diff.compute(a []str, b []str) -> []DiffOp {
     // Вычисляем LCS таблицу
     let n = a.len
@@ -75,7 +84,8 @@ export fn Diff.compute(a []str, b []str) -> []DiffOp {
 }
 
 
-// Pretty-print: "+" для insert, "-" для delete, " " для equal
+/// Pretty-print: `+` для Insert, `-` для Delete, ` ` для Equal. Newline-separated.
+#stable(since = "0.1")
 export fn Diff.format(ops []DiffOp) -> str {
     let mut buf = StringBuilder.new()
     for op in ops {

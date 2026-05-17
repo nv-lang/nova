@@ -13,18 +13,20 @@
 module encoding.hex
 
 
+/// Errors при парсинге hex-строки.
+#stable(since = "0.1")
 export type ParseHexError
     | OddLength { actual int }
     | InvalidChar { position int, char char }
 
 
-// ──────────────────────────────────────────────────────────────────────────
-// Encoding
-// ──────────────────────────────────────────────────────────────────────────
-
+/// Encode bytes как lowercase hex (e.g. `[0xDE, 0xAD]` → `"dead"`).
+#stable(since = "0.1")
 export fn Hex.encode(data []byte) -> str =>
     encode_with(data, false)
 
+/// Encode bytes как uppercase hex (`"DEAD"`).
+#stable(since = "0.1")
 export fn Hex.encode_upper(data []byte) -> str =>
     encode_with(data, true)
 
@@ -62,6 +64,8 @@ fn digit(n u8, upper bool) -> char {
 // Decoding
 // ──────────────────────────────────────────────────────────────────────────
 
+/// Decode hex string в bytes. Case-insensitive. Throws `OddLength`/`InvalidChar`.
+#stable(since = "0.1")
 export fn Hex.decode(s str) Fail[ParseHexError] -> []byte {
     if s.len % 2 != 0 {
         throw OddLength { actual: s.len }
