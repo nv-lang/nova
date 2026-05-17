@@ -340,7 +340,7 @@ fn hex_value(c char, position int) Fail[ParseUuidError] -> u8 {
     } else if n >= 65 && n <= 70 {     // 'A'..'F'
         (n - 65 + 10) as u8
     } else {
-        throw InvalidHex { position: position }
+        throw InvalidHex { position }
     }
 }
 

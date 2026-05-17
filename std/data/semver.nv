@@ -233,10 +233,10 @@ fn parse_identifiers(s str, section str, strict_no_leading_zero bool) Fail[Parse
     let mut out []str = []
     for ident in raw {
         if ident.len() == 0 {
-            throw EmptyIdentifier { section: section }
+            throw EmptyIdentifier { section }
         }
         if !is_valid_identifier(ident) {
-            throw InvalidIdentifier { section: section, value: ident }
+            throw InvalidIdentifier { section, value: ident }
         }
         // Numeric identifier в pre — без leading zero.
         if strict_no_leading_zero && is_all_digits(ident) && ident.len() > 1 && ident.starts_with("0") {
