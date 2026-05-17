@@ -70,7 +70,7 @@ fn lookup(i u8) -> u32 => table_value(i)
 export fn crc32(data []byte) -> u32 {
     let mut crc u32 = 0xFFFFFFFF
     for byte in data {
-        let idx = ((crc ^ (byte as u32)) & 0xFF) as u8
+        let idx = (crc ^ (byte as u32)) as u8
         crc = lookup(idx) ^ (crc >> 8)
     }
     crc ^ 0xFFFFFFFF
@@ -93,7 +93,7 @@ export fn crc32_init() -> u32 => 0xFFFFFFFF
 export fn crc32_update(state u32, data []byte) -> u32 {
     let mut crc = state
     for byte in data {
-        let idx = ((crc ^ (byte as u32)) & 0xFF) as u8
+        let idx = (crc ^ (byte as u32)) as u8
         crc = lookup(idx) ^ (crc >> 8)
     }
     crc
