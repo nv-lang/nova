@@ -1,0 +1,46 @@
+// Positive (Phase 5): tuple с pointer-element types — exercises `_p`
+// суффикс sanitize_c_for_ident + length-prefixed encoding.
+// User record как pointer-stored → `Nova_Foo_p` в mangled name.
+// Тест гарантирует что parser handle'ит `_p` corectly: `Nova_Foo_p`
+// (length=10) → desanitize → `Nova_Foo*` round-trip.
+
+module plan59.f11_tuple_with_pointer_elements
+
+
+type Foo {
+    val int
+}
+
+
+type Bar {
+    label str
+}
+
+
+test "tuple of two pointer-typed records — _p suffix in mangle" {
+    let f = Foo { val: 100 }
+    let b = Bar { label: "hello" }
+    let pair = (f, b)
+    assert(pair.0.val == 100)
+    assert(pair.1.label == "hello")
+}
+
+
+test "triple pointer mix: (Foo, Bar, int)" {
+    let f = Foo { val: 7 }
+    let b = Bar { label: "x" }
+    let triple = (f, b, 42)
+    assert(triple.0.val == 7)
+    assert(triple.1.label == "x")
+    assert(triple.2 == 42)
+}
+
+
+test "tuple of pointer with destructure — round-trip parse" {
+    let f = Foo { val: 99 }
+    let b = Bar { label: "world" }
+    let pair = (f, b)
+    let (fp, bp) = pair
+    assert(fp.val == 99)
+    assert(bp.label == "world")
+}

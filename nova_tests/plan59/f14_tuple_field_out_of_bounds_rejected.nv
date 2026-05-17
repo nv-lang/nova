@@ -1,0 +1,16 @@
+// EXPECT_CC_ERROR
+//
+// Negative (Phase 5): out-of-bounds tuple field access — `pair.5` для
+// 2-tuple. Mono'd struct имеет ровно поля `f0..fN-1`, попытка обратиться
+// к `f5` reject'ится C compiler'ом ("no member named 'f5'"). Guard что
+// length-prefixed mangle не маскирует bounds-error (старый split-based
+// мог dropped indexing prematurely в edge cases).
+
+module plan59.f14_tuple_field_out_of_bounds_rejected
+
+
+test "access .5 of 2-tuple — should reject" {
+    let pair = (1, 2)
+    let bad = pair.5
+    assert(bad == 0)
+}
