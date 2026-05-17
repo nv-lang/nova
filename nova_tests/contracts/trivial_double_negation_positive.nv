@@ -1,0 +1,15 @@
+// Ф.28.2 (Plan 33.6): TrivialBackend double negation `0 - (0 - X)` → X.
+
+module contracts.trivial_double_negation_positive
+
+#verify
+fn dbl_neg(x int) -> int
+    ensures result == x
+{
+    0 - (0 - x)
+}
+
+test "double negation trivial" {
+    assert(dbl_neg(5) == 5)
+    assert(dbl_neg(-3) == -3)
+}
