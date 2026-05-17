@@ -18,45 +18,60 @@ module concurrency.rate_limiter
 import std.testing.handlers as th
 
 
+/// Token bucket rate limiter. `capacity` = max burst, `refill_per_sec` = sustained rate.
+///
+/// Использует Time effect → детерминирован в тестах под `th.fixed_ms(...)`.
+#stable(since = "0.1")
 export type TokenBucket {
     readonly capacity i64
     readonly refill_per_sec f64
-    mut tokens f64                       // текущее число tokens (может быть дробное)
-    mut last_refill Timestamp
+    mut _tokens f64           // internal: текущее число tokens (может быть дробное)
+    mut _last_refill Timestamp
 }
 
 
+/// Init TokenBucket. Стартует с full `capacity` tokens.
+///
+/// # Examples
+/// ```nova
+/// let mut bucket = TokenBucket.new(5, 1.0)  // 5 burst, 1 token/sec sustained
+/// assert(bucket.try_acquire())
+/// ```
+#stable(since = "0.1")
 export fn TokenBucket.new(capacity i64, refill_per_sec f64) Time -> Self =>
     {
         capacity,
         refill_per_sec,
-        tokens: capacity as f64,
-        last_refill: Time.now(),
+        _tokens: capacity as f64,
+        _last_refill: Time.now(),
     }
 
 
 // Refill bucket на основе прошедшего времени.
 fn TokenBucket mut @refill() Time -> () {
     let now = Time.now()
-    let elapsed = (now - @last_refill).as_secs_f64()
+    let elapsed = (now - @_last_refill).as_secs_f64()
     let to_add = elapsed * @refill_per_sec
-    @tokens = @tokens + to_add
-    if @tokens > (@capacity as f64) {
-        @tokens = @capacity as f64
+    @_tokens = @_tokens + to_add
+    if @_tokens > (@capacity as f64) {
+        @_tokens = @capacity as f64
     }
-    @last_refill = now
+    @_last_refill = now
 }
 
 
-// Попытаться забрать 1 token. true если получилось, false если bucket пуст.
+/// Try acquire 1 token. `true` если получилось, `false` если bucket пуст.
+#stable(since = "0.1")
 export fn TokenBucket mut @try_acquire() Time -> bool =>
     @try_acquire_n(1)
 
 
+/// Try acquire `n` tokens atomically (all-or-nothing).
+#stable(since = "0.1")
 export fn TokenBucket mut @try_acquire_n(n int) Time -> bool {
     @refill()
-    if @tokens >= (n as f64) {
-        @tokens = @tokens - (n as f64)
+    if @_tokens >= (n as f64) {
+        @_tokens = @_tokens - (n as f64)
         true
     } else {
         false
@@ -64,10 +79,11 @@ export fn TokenBucket mut @try_acquire_n(n int) Time -> bool {
 }
 
 
-// Сколько tokens сейчас доступно (с учётом refill'а).
+/// Current available tokens (refresh'нутый под current Time).
+#stable(since = "0.1")
 export fn TokenBucket mut @available() Time -> f64 {
     @refill()
-    @tokens
+    @_tokens
 }
 
 

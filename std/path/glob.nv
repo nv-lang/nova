@@ -14,7 +14,16 @@
 module path.glob
 
 
-// Matches a path against a glob pattern.
+/// Match path against glob pattern. POSIX-style:
+/// `*` (one segment), `**` (recursive), `?` (single char), `[abc]` / `[a-z]` / `[!abc]`.
+///
+/// # Examples
+/// ```nova
+/// assert(Glob.matches("*.nv", "hello.nv"))
+/// assert(Glob.matches("src/**/*.nv", "src/admin/audit.nv"))
+/// assert(!Glob.matches("*.nv", "src/hello.nv"))  // * не пересекает /
+/// ```
+#stable(since = "0.1")
 export fn Glob.matches(pattern str, path str) -> bool =>
     match_at(pattern, 0, path, 0)
 

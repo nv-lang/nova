@@ -242,6 +242,18 @@ fn simplify_app(op: &str, args: &[SmtTerm]) -> SmtTerm {
         "not" if args.len() == 1 => match &args[0] {
             SmtTerm::BoolLit(b) => SmtTerm::BoolLit(!b),
             SmtTerm::App(op2, a2) if op2 == "not" && a2.len() == 1 => a2[0].clone(),
+            // Ф.22.3 (Plan 33.6): De Morgan для and/or (2-arg).
+            // `not (and X Y)` → `or (not X) (not Y)`.
+            SmtTerm::App(op2, a2) if op2 == "and" && a2.len() == 2 => {
+                let nx = simplify_app("not", &[a2[0].clone()]);
+                let ny = simplify_app("not", &[a2[1].clone()]);
+                simplify_app("or", &[nx, ny])
+            }
+            SmtTerm::App(op2, a2) if op2 == "or" && a2.len() == 2 => {
+                let nx = simplify_app("not", &[a2[0].clone()]);
+                let ny = simplify_app("not", &[a2[1].clone()]);
+                simplify_app("and", &[nx, ny])
+            }
             _ => SmtTerm::App(op.into(), args.to_vec()),
         },
         "and" => {
@@ -488,6 +500,21 @@ fn propagate_bounds(conjuncts: &[SmtTerm]) -> Vec<SmtTerm> {
                 None
             } else { None }
         };
+        // Ф.25.2 (Plan 33.6): string/array length non-negative.
+        // `(>= (App "_field_len_int" [obj]) goal)` если goal <= 0 → true.
+        // Encoded form длины — UF `_field_len_int(obj)` через type-aware naming Ф.10.1.
+        let try_len_check = |inner: &SmtTerm| -> Option<bool> {
+            if let SmtTerm::App(iop, iargs) = inner {
+                if iop != ">=" || iargs.len() != 2 { return None; }
+                let goal = match &iargs[1] { SmtTerm::IntLit(n) => *n, _ => return None };
+                if let SmtTerm::App(lop, _) = &iargs[0] {
+                    if lop.starts_with("_field_len") && goal <= 0 {
+                        return Some(true);
+                    }
+                }
+                None
+            } else { None }
+        };
         // Ф.20.1 (Plan 33.6): division bounds. `(/ Var Lit)` где Lit > 0:
         // - если goal <= 0 и known lower(Var) >= 0 → result non-negative → true.
         // - integer division: result <= Var/Lit (всегда <= Var/Lit для positive).
@@ -669,6 +696,10 @@ fn propagate_bounds(conjuncts: &[SmtTerm]) -> Vec<SmtTerm> {
         if let Some(b) = try_division_check(c) {
             return SmtTerm::BoolLit(b);
         }
+        // Ф.25.2: string/array length check.
+        if let Some(b) = try_len_check(c) {
+            return SmtTerm::BoolLit(b);
+        }
         // Ф.17.1: negation check.
         if let Some(b) = try_negation_check(c) {
             return SmtTerm::BoolLit(b);
@@ -692,6 +723,9 @@ fn propagate_bounds(conjuncts: &[SmtTerm]) -> Vec<SmtTerm> {
                     return SmtTerm::BoolLit(!b);
                 }
                 if let Some(b) = try_division_check(&args[0]) {
+                    return SmtTerm::BoolLit(!b);
+                }
+                if let Some(b) = try_len_check(&args[0]) {
                     return SmtTerm::BoolLit(!b);
                 }
                 if let Some(b) = try_negation_check(&args[0]) {

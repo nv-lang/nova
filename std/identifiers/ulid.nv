@@ -41,14 +41,26 @@ import std.testing.handlers as th
 // Тип
 // ──────────────────────────────────────────────────────────────────────────
 
-// 128 бит как два u64 (так же как UUID).
-//   ts_part — старшие 48 бит (timestamp ms) + 16 бит random
-//   rand_part — 64 бита random
+/// ULID — 128-bit Universally Unique Lexicographically Sortable Identifier.
+///
+/// 48 bits timestamp ms (lexicographically sortable) + 80 bits random.
+/// Crockford's Base32 encoding (26 chars, без I/L/O/U — нет визуальной путаницы).
+/// Use cases: primary keys (B-tree friendly), distributed event IDs, файловые имена.
+///
+/// # Examples
+/// ```nova
+/// let u = Ulid.new()
+/// let s = u.into()              // 26-char Crockford Base32
+/// assert(s.len == 26)
+/// ```
+#stable(since = "0.1")
 export type Ulid {
-    readonly ts_part   u64
-    readonly rand_part u64
+    readonly ts_part   u64     // public: старшие 48 бит timestamp + 16 бит random
+    readonly rand_part u64     // public: 64 бита random
 }
 
+/// Errors при парсинге ULID-строки.
+#stable(since = "0.1")
 export type ParseUlidError
     | InvalidLength { actual int, expected int }
     | InvalidChar { position int, char char }
@@ -136,12 +148,13 @@ fn decode_char(c char) -> Option[u8] {
 // Генерация
 // ──────────────────────────────────────────────────────────────────────────
 
-// Создаёт новый ULID с текущим timestamp и случайной частью.
-//
-// Эффекты Time, Random — ambient. В тестах подменяются handler'ами:
-//   with Time = th.fixed_ms(...), Random = th.seeded(...) { Ulid.new() }
-//
-// Throws TimestampOverflow если ms >= 2^48 (~10889 AD).
+/// Generate new ULID с текущим timestamp и random частью.
+///
+/// Использует Time + Random effects (ambient). В тестах детерминируется
+/// через `with Time = th.fixed_ms(...), Random = th.seeded(...)`.
+///
+/// Throws `TimestampOverflow` если ms ≥ 2^48 (~10889 AD).
+#stable(since = "0.1")
 export fn Ulid.new() Time Random Fail[ParseUlidError] -> Self {
     let ms = Time.now_ms()
     if ms >= 0x1000000000000 {                       // 2^48
@@ -162,7 +175,8 @@ export fn Ulid.new() Time Random Fail[ParseUlidError] -> Self {
 // Геттеры
 // ──────────────────────────────────────────────────────────────────────────
 
-// Извлекает timestamp ms из ts_part (старшие 48 бит).
+/// Extract Unix timestamp ms из ULID (старшие 48 бит ts_part).
+#stable(since = "0.1")
 export fn Ulid @timestamp_ms() -> u64 =>
     @ts_part >> 16
 
@@ -171,12 +185,14 @@ export fn Ulid @timestamp_ms() -> u64 =>
 // Сравнение (D46)
 // ──────────────────────────────────────────────────────────────────────────
 
-// Лексикографический порядок по timestamp, затем random.
-// Точно как сравнение строк-ULID'ов лексикографически — это и есть
-// главная фича.
+/// Equality (`==`) — structural по обеим частям.
+#stable(since = "0.1")
 export fn Ulid @eq(other Ulid) -> bool =>
     @ts_part == other.ts_part && @rand_part == other.rand_part
 
+/// Less-than (`<`) — лексикографический order по timestamp, затем random.
+/// Точно как сравнение строк-ULID'ов лексикографически — главная фича.
+#stable(since = "0.1")
 export fn Ulid @lt(other Ulid) -> bool {
     if @ts_part != other.ts_part {
         @ts_part < other.ts_part
@@ -185,8 +201,16 @@ export fn Ulid @lt(other Ulid) -> bool {
     }
 }
 
+/// Less-than-or-equal (`<=`).
+#stable(since = "0.1")
 export fn Ulid @le(other Ulid) -> bool => @lt(other) || @eq(other)
+
+/// Greater-than (`>`).
+#stable(since = "0.1")
 export fn Ulid @gt(other Ulid) -> bool => other.lt(@)
+
+/// Greater-than-or-equal (`>=`).
+#stable(since = "0.1")
 export fn Ulid @ge(other Ulid) -> bool => @gt(other) || @eq(other)
 
 
@@ -194,8 +218,14 @@ export fn Ulid @ge(other Ulid) -> bool => @gt(other) || @eq(other)
 // Сериализация (D73 Into[str])
 // ──────────────────────────────────────────────────────────────────────────
 
-// Возвращает 26-символьную Crockford-Base32 строку.
-// Round-trip: Ulid.from(u.into()) == u.
+/// `Into[str]` — 26-char Crockford Base32 string. Round-trip с `Ulid.from`.
+///
+/// # Examples
+/// ```nova
+/// let u = Ulid.new()
+/// assert(Ulid.from(u.into()) == u)
+/// ```
+#stable(since = "0.1")
 export fn Ulid @into() -> str {
     let mut buf = StringBuilder.with_capacity(26)
 
@@ -262,6 +292,9 @@ export fn Ulid @into() -> str {
 // Парсинг (D73 From[str])
 // ──────────────────────────────────────────────────────────────────────────
 
+/// `From[str]` — parse 26-char Crockford Base32 ULID. Case-insensitive.
+/// `I`/`L` → 1, `O` → 0 (Crockford ambiguity remap).
+#stable(since = "0.1")
 export fn Ulid.from(s str) Fail[ParseUlidError] -> Self {
     if s.len != 26 {
         throw InvalidLength { actual: s.len, expected: 26 }

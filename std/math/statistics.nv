@@ -23,15 +23,15 @@
 module math.statistics
 
 
+/// Errors при stats-расчётах (empty input, invalid percentile).
+#stable(since = "0.1")
 export type StatsError
     | EmptyInput
     | InvalidPercentile { value f64 }
 
 
-// ──────────────────────────────────────────────────────────────────────────
-// One-shot
-// ──────────────────────────────────────────────────────────────────────────
-
+/// Arithmetic mean. Throws `EmptyInput` для empty array.
+#stable(since = "0.1")
 export fn Stats.mean(xs []f64) Fail[StatsError] -> f64 {
     if xs.len == 0 { throw EmptyInput }
     let mut sum = 0.0
@@ -39,7 +39,8 @@ export fn Stats.mean(xs []f64) Fail[StatsError] -> f64 {
     sum / (xs.len as f64)
 }
 
-// Sum of squared differences от среднего.
+/// Sample variance (denominator n-1). Throws `EmptyInput`.
+#stable(since = "0.1")
 export fn Stats.variance(xs []f64) Fail[StatsError] -> f64 {
     if xs.len == 0 { throw EmptyInput }
     if xs.len == 1 { return 0.0 }
@@ -52,10 +53,13 @@ export fn Stats.variance(xs []f64) Fail[StatsError] -> f64 {
     sum_sq / ((xs.len - 1) as f64)        // sample variance (n-1)
 }
 
+/// Standard deviation = √variance.
+#stable(since = "0.1")
 export fn Stats.stddev(xs []f64) Fail[StatsError] -> f64 =>
     Stats.variance(xs).sqrt()
 
-// Median требует отсортированных данных.
+/// Median (50th percentile). Sorts copy of xs внутри.
+#stable(since = "0.1")
 export fn Stats.median(xs []f64) Fail[StatsError] -> f64 {
     if xs.len == 0 { throw EmptyInput }
     let sorted = sort_copy(xs)
@@ -67,7 +71,8 @@ export fn Stats.median(xs []f64) Fail[StatsError] -> f64 {
     }
 }
 
-// Percentile p ∈ [0, 100]. Linear interpolation между ближайшими.
+/// Percentile p ∈ [0, 100] с linear interpolation. Throws `InvalidPercentile` если out of range.
+#stable(since = "0.1")
 export fn Stats.percentile(xs []f64, p f64) Fail[StatsError] -> f64 {
     if xs.len == 0 { throw EmptyInput }
     if p < 0.0 || p > 100.0 { throw InvalidPercentile { value: p } }
@@ -85,6 +90,8 @@ export fn Stats.percentile(xs []f64, p f64) Fail[StatsError] -> f64 {
     }
 }
 
+/// Min и max за один pass — `(lo, hi)` tuple.
+#stable(since = "0.1")
 export fn Stats.min_max(xs []f64) Fail[StatsError] -> (f64, f64) {
     if xs.len == 0 { throw EmptyInput }
     let mut lo = xs[0]
@@ -96,6 +103,8 @@ export fn Stats.min_max(xs []f64) Fail[StatsError] -> (f64, f64) {
     (lo, hi)
 }
 
+/// Sum of f64-values. Empty input → 0.0 (no throw).
+#stable(since = "0.1")
 export fn Stats.sum(xs []f64) -> f64 {
     let mut s = 0.0
     for x in xs { s = s + x }
@@ -128,6 +137,11 @@ fn sort_copy(xs []f64) -> []f64 {
 // потери точности. Стандартный алгоритм `sum/count - mean^2` страдает от
 // floating-point errors на больших числах.
 
+/// Streaming statistics accumulator (Welford's online algorithm).
+///
+/// Stable variance computation для длинных streams без FP precision loss.
+/// O(1) memory, O(1) per `add`.
+#stable(since = "0.1")
 export type StreamingStats {
     mut count i64
     mut mean_val f64
@@ -137,6 +151,8 @@ export type StreamingStats {
 }
 
 
+/// Init empty StreamingStats (Welford).
+#stable(since = "0.1")
 export fn Stats.streaming() -> StreamingStats =>
     {
         count: 0,
@@ -147,6 +163,8 @@ export fn Stats.streaming() -> StreamingStats =>
     }
 
 
+/// Add one value к accumulator. O(1).
+#stable(since = "0.1")
 export fn StreamingStats mut @add(x f64) -> () {
     @count += 1
     if @count == 1 {
@@ -163,26 +181,39 @@ export fn StreamingStats mut @add(x f64) -> () {
 }
 
 
+/// Count of values added.
+#stable(since = "0.1")
 export fn StreamingStats @count_value() -> i64 => @count
+
+/// Mean. Throws `EmptyInput` если ничего не added.
+#stable(since = "0.1")
 export fn StreamingStats @mean() Fail[StatsError] -> f64 {
     if @count == 0 { throw EmptyInput }
     @mean_val
 }
 
+/// Sample variance (Welford'овский). Throws `EmptyInput`.
+#stable(since = "0.1")
 export fn StreamingStats @variance() Fail[StatsError] -> f64 {
     if @count == 0 { throw EmptyInput }
     if @count == 1 { return 0.0 }
     @m2 / ((@count - 1) as f64)
 }
 
+/// Standard deviation (√variance).
+#stable(since = "0.1")
 export fn StreamingStats @stddev() Fail[StatsError] -> f64 =>
     @variance().sqrt()
 
+/// Min value seen. Throws `EmptyInput`.
+#stable(since = "0.1")
 export fn StreamingStats @min() Fail[StatsError] -> f64 {
     if @count == 0 { throw EmptyInput }
     @min_val
 }
 
+/// Max value seen. Throws `EmptyInput`.
+#stable(since = "0.1")
 export fn StreamingStats @max() Fail[StatsError] -> f64 {
     if @count == 0 { throw EmptyInput }
     @max_val

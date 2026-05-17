@@ -2615,6 +2615,15 @@ let t0 = std::time::Instant::now();
                         ld.name, ld.name),
                     ld.span));
             }
+            // Ф.24.2 (Plan 33.6): lemma без params — suspicious.
+            if ld.params.is_empty() {
+                report.warnings.push(Diagnostic::new(
+                    format!("lemma `{}` без параметров [W2402]:\n  \
+                             lemma без params обычно бесполезна — она доказывает constant\n  \
+                             statement который Z3 derive'ит сам. Возможно, забыли add params.",
+                        ld.name),
+                    ld.span));
+            }
         }
     }
     // Ф.19.2 + Ф.19.3 (Plan 33.6): detection trivial/redundant contracts.
@@ -2631,6 +2640,16 @@ let t0 = std::time::Instant::now();
                             report.warnings.push(Diagnostic::new(
                                 format!("fn `{}`: `requires true` тривиально true [W2402]: \
                                          удалите — это no-op.", fd.name),
+                                c.span));
+                        }
+                        // Ф.22.1 (Plan 33.6): `requires false` — vacuous fn.
+                        if matches!(c.expr.kind, ExprKind::BoolLit(false)) {
+                            report.warnings.push(Diagnostic::new(
+                                format!("fn `{}`: vacuous fn — `requires false` [W2402]:\n  \
+                                         эта fn никогда не может быть вызвана (precondition \
+                                         невыполним). Возможно, опечатка или TODO-stub. \
+                                         Используйте `panic` body вместо `requires false`.",
+                                    fd.name),
                                 c.span));
                         }
                     }
@@ -2682,9 +2701,256 @@ let t0 = std::time::Instant::now();
                         span));
                 }
             }
+            // Ф.22.2 (Plan 33.6): redundant requires — tightness check.
+            // Собрать lower bounds для каждой Var: (var → Vec<(literal, span)>).
+            let mut lower_bounds: std::collections::HashMap<String, Vec<(i64, Span)>> =
+                std::collections::HashMap::new();
+            let mut upper_bounds: std::collections::HashMap<String, Vec<(i64, Span)>> =
+                std::collections::HashMap::new();
+            for c in &fd.contracts {
+                if !matches!(c.kind, ContractKind::Requires) { continue; }
+                if let ExprKind::Binary { op, left, right } = &c.expr.kind {
+                    if let (ExprKind::Ident(name), ExprKind::IntLit(n)) =
+                        (&left.kind, &right.kind)
+                    {
+                        match op {
+                            BinOp::Ge => lower_bounds.entry(name.clone()).or_default().push((*n, c.span)),
+                            BinOp::Le => upper_bounds.entry(name.clone()).or_default().push((*n, c.span)),
+                            _ => {}
+                        }
+                    }
+                }
+            }
+            for (var, bounds) in &lower_bounds {
+                if bounds.len() < 2 { continue; }
+                let max_bound = bounds.iter().map(|(n, _)| *n).max().unwrap();
+                for (n, sp) in bounds {
+                    if *n < max_bound {
+                        report.warnings.push(Diagnostic::new(
+                            format!("fn `{}`: redundant `requires {} >= {}` [W2402]:\n  \
+                                     уже есть строжайшая `requires {} >= {}` — удалите эту.",
+                                fd.name, var, n, var, max_bound),
+                            *sp));
+                    }
+                }
+            }
+            for (var, bounds) in &upper_bounds {
+                if bounds.len() < 2 { continue; }
+                let min_bound = bounds.iter().map(|(n, _)| *n).min().unwrap();
+                for (n, sp) in bounds {
+                    if *n > min_bound {
+                        report.warnings.push(Diagnostic::new(
+                            format!("fn `{}`: redundant `requires {} <= {}` [W2402]:\n  \
+                                     уже есть строжайшая `requires {} <= {}` — удалите эту.",
+                                fd.name, var, n, var, min_bound),
+                            *sp));
+                    }
+                }
+            }
+            // Ф.23.1 (Plan 33.6): contradictory requires — max(lower) > min(upper) для одной Var.
+            for var in lower_bounds.keys() {
+                let max_low = lower_bounds.get(var).unwrap().iter()
+                    .map(|(n, _)| *n).max().unwrap();
+                if let Some(ub) = upper_bounds.get(var) {
+                    let min_up = ub.iter().map(|(n, _)| *n).min().unwrap();
+                    if max_low > min_up {
+                        let span = ub.iter().find(|(n, _)| *n == min_up).map(|(_, s)| *s)
+                            .unwrap_or(fd.span);
+                        report.errors.push(Diagnostic::new(
+                            format!("fn `{}`: contradictory requires для `{}` [E2405]:\n  \
+                                     `requires {} >= {}` и `requires {} <= {}` несовместимы.\n  \
+                                     fn никогда не может быть вызвана с валидными аргументами.",
+                                fd.name, var, var, max_low, var, min_up),
+                            span));
+                    }
+                }
+            }
+            // Ф.23.3 (Plan 33.6): unused param detection.
+            let mut used_names: std::collections::HashSet<String> =
+                std::collections::HashSet::new();
+            collect_used_idents_in_body(&fd.body, &mut used_names);
+            for p in &fd.params {
+                if p.name.starts_with('_') { continue; } // intentional skip
+                if !used_names.contains(&p.name) {
+                    report.warnings.push(Diagnostic::new(
+                        format!("fn `{}`: param `{}` не используется в теле [W2402]:\n  \
+                                 удалите или переименуйте в `_{}` для intentional skip.",
+                            fd.name, p.name, p.name),
+                        fd.span));
+                }
+            }
+            // Ф.25.1 (Plan 33.6): duplicate ensures/requires detection.
+            // Canonical form через простой кастомный walker (без spans).
+            fn canon_expr(e: &Expr) -> String {
+                match &e.kind {
+                    ExprKind::Ident(n) => format!("Ident({})", n),
+                    ExprKind::IntLit(n) => format!("Int({})", n),
+                    ExprKind::BoolLit(b) => format!("Bool({})", b),
+                    ExprKind::StrLit(s) => format!("Str({:?})", s),
+                    ExprKind::Binary { op, left, right } => {
+                        format!("Bin({:?},{},{})", op, canon_expr(left), canon_expr(right))
+                    }
+                    ExprKind::Unary { op, operand } => {
+                        format!("Un({:?},{})", op, canon_expr(operand))
+                    }
+                    ExprKind::Member { obj, name } => {
+                        format!("Mem({},{})", canon_expr(obj), name)
+                    }
+                    ExprKind::Call { func, args, .. } => {
+                        let a: Vec<String> = args.iter().map(|x| canon_expr(x.expr())).collect();
+                        format!("Call({},[{}])", canon_expr(func), a.join(","))
+                    }
+                    _ => format!("{:?}", e.kind),
+                }
+            }
+            let mut seen_keys: std::collections::HashMap<String, Vec<Span>> =
+                std::collections::HashMap::new();
+            for c in &fd.contracts {
+                let kind_str = match c.kind {
+                    ContractKind::Requires => "requires",
+                    ContractKind::Ensures => "ensures",
+                    ContractKind::EnsuresFail => "ensures_fail",
+                };
+                let key = format!("{}|{}", kind_str, canon_expr(&c.expr));
+                seen_keys.entry(key).or_default().push(c.span);
+            }
+            for (key, spans) in &seen_keys {
+                if spans.len() >= 2 {
+                    let kind_label = key.split('|').next().unwrap_or("contract");
+                    for sp in spans.iter().skip(1) {
+                        report.warnings.push(Diagnostic::new(
+                            format!("fn `{}`: duplicate `{}` clause [W2402]:\n  \
+                                     2+ idential `{}` — удалите дубликат.",
+                                fd.name, kind_label, kind_label),
+                            *sp));
+                    }
+                }
+            }
+            // Ф.24.1 (Plan 33.6): loop без invariant в fn с ensures — W2402 hint.
+            // Включаем для всех fn с contracts (не только #verify), потому что ensures
+            // часто требует loop preservation reasoning.
+            if !fd.contracts.is_empty() {
+                let mut loops_no_inv: Vec<Span> = Vec::new();
+                collect_loops_no_invariant(&fd.body, &mut loops_no_inv);
+                for sp in loops_no_inv {
+                    report.warnings.push(Diagnostic::new(
+                        format!("fn `{}`: loop без `invariant` clause [W2402]:\n  \
+                                 verify ограничен — добавьте `invariant <cond>` для proper\n  \
+                                 preservation reasoning. (loop с contracts без invariant\n  \
+                                 проходит проверку только через runtime fallback)",
+                            fd.name),
+                        sp));
+                }
+            }
         }
     }
     report
+}
+
+/// Ф.24.1: walker для сбора spans loops без invariants в body.
+fn collect_loops_no_invariant(body: &FnBody, out: &mut Vec<Span>) {
+    match body {
+        FnBody::Expr(e) => collect_loops_in_expr(e, out),
+        FnBody::Block(b) => {
+            for s in &b.stmts { collect_loops_in_stmt(s, out); }
+            if let Some(e) = &b.trailing { collect_loops_in_expr(e, out); }
+        }
+        FnBody::External => {}
+    }
+}
+
+fn collect_loops_in_stmt(s: &Stmt, out: &mut Vec<Span>) {
+    match s {
+        Stmt::Let(l) => collect_loops_in_expr(&l.value, out),
+        Stmt::Expr(e) => collect_loops_in_expr(e, out),
+        Stmt::Assign { value, .. } => collect_loops_in_expr(value, out),
+        _ => {}
+    }
+}
+
+fn collect_loops_in_expr(e: &Expr, out: &mut Vec<Span>) {
+    match &e.kind {
+        ExprKind::While { body, invariants, .. } => {
+            if invariants.is_empty() { out.push(e.span); }
+            for s in &body.stmts { collect_loops_in_stmt(s, out); }
+            if let Some(t) = &body.trailing { collect_loops_in_expr(t, out); }
+        }
+        ExprKind::For { body, invariants, .. } => {
+            if invariants.is_empty() { out.push(e.span); }
+            for s in &body.stmts { collect_loops_in_stmt(s, out); }
+            if let Some(t) = &body.trailing { collect_loops_in_expr(t, out); }
+        }
+        ExprKind::If { then, else_, .. } => {
+            for s in &then.stmts { collect_loops_in_stmt(s, out); }
+            if let Some(t) = &then.trailing { collect_loops_in_expr(t, out); }
+            if let Some(eb) = else_ {
+                match eb {
+                    ElseBranch::Block(b) => {
+                        for s in &b.stmts { collect_loops_in_stmt(s, out); }
+                        if let Some(t) = &b.trailing { collect_loops_in_expr(t, out); }
+                    }
+                    ElseBranch::If(e2) => collect_loops_in_expr(e2, out),
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Ф.23.3: walker для сбора всех используемых Ident в body.
+fn collect_used_idents_in_body(body: &FnBody, out: &mut std::collections::HashSet<String>) {
+    match body {
+        FnBody::Expr(e) => collect_used_idents_in_expr(e, out),
+        FnBody::Block(b) => {
+            for s in &b.stmts { collect_used_idents_in_stmt(s, out); }
+            if let Some(e) = &b.trailing { collect_used_idents_in_expr(e, out); }
+        }
+        FnBody::External => {}
+    }
+}
+
+fn collect_used_idents_in_stmt(s: &Stmt, out: &mut std::collections::HashSet<String>) {
+    match s {
+        Stmt::Let(l) => collect_used_idents_in_expr(&l.value, out),
+        Stmt::Expr(e) => collect_used_idents_in_expr(e, out),
+        Stmt::Assign { value, target, .. } => {
+            collect_used_idents_in_expr(value, out);
+            collect_used_idents_in_expr(target, out);
+        }
+        Stmt::Return { value: Some(v), .. } => collect_used_idents_in_expr(v, out),
+        _ => {}
+    }
+}
+
+fn collect_used_idents_in_expr(e: &Expr, out: &mut std::collections::HashSet<String>) {
+    match &e.kind {
+        ExprKind::Ident(n) => { out.insert(n.clone()); }
+        ExprKind::Binary { left, right, .. } => {
+            collect_used_idents_in_expr(left, out);
+            collect_used_idents_in_expr(right, out);
+        }
+        ExprKind::Unary { operand, .. } => collect_used_idents_in_expr(operand, out),
+        ExprKind::Call { func, args, .. } => {
+            collect_used_idents_in_expr(func, out);
+            for a in args { collect_used_idents_in_expr(a.expr(), out); }
+        }
+        ExprKind::If { cond, then, else_ } => {
+            collect_used_idents_in_expr(cond, out);
+            for s in &then.stmts { collect_used_idents_in_stmt(s, out); }
+            if let Some(t) = &then.trailing { collect_used_idents_in_expr(t, out); }
+            if let Some(eb) = else_ {
+                match eb {
+                    ElseBranch::Block(b) => {
+                        for s in &b.stmts { collect_used_idents_in_stmt(s, out); }
+                        if let Some(t) = &b.trailing { collect_used_idents_in_expr(t, out); }
+                    }
+                    ElseBranch::If(e2) => collect_used_idents_in_expr(e2, out),
+                }
+            }
+        }
+        ExprKind::Member { obj, .. } => collect_used_idents_in_expr(obj, out),
+        _ => {}
+    }
 }
 
 /// Aggregated РѕС‚С‡С'С‚ РїРѕ РІРµСЂРёС„РёРєР°С†РёРё РјРѕРґСѓР»СЏ.

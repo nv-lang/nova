@@ -50,35 +50,48 @@ import std.testing.handlers as th
 //   bytes[7]      = 8 бит random
 //   bytes[8]      = variant (старшие 2 бита) + 6 бит random
 //   bytes[9..16]  = 56 бит random
+/// UUID — 128-bit идентификатор (RFC 4122/9562). Два u64 (hi, lo).
+///
+/// Поддерживает v4 (random) и v7 (sortable timestamp). Также NIL и MAX.
+///
+/// # Examples
+/// ```nova
+/// with Random = th.seeded(42) {
+///     let u = Uuid.v4()
+///     assert(u.version() == V4)
+/// }
+/// ```
+#stable(since = "0.1")
 export type Uuid {
     readonly hi u64
     readonly lo u64
 }
 
-// Версия — старшие 4 бита 7-го байта (= bits 48..51 от начала).
+/// Версия UUID — старшие 4 бита 7-го байта (биты 48..51).
+#stable(since = "0.1")
 export type UuidVersion
     | V4                                // random
     | V7                                // sortable timestamp
     | Other(u8)                         // v1, v2, v3, v5, v6, v8
 
-// Ошибки парсинга
+/// Errors при парсинге UUID-строки.
+#stable(since = "0.1")
 export type ParseUuidError
     | InvalidLength { actual int, expected int }
     | InvalidHex { position int }
     | MissingDash { position int }
 
 
-// ──────────────────────────────────────────────────────────────────────────
-// Static-конструкторы
-// ──────────────────────────────────────────────────────────────────────────
-
-// Nil UUID — все нули. Корректный по RFC 4122 § 4.1.7.
+/// Nil UUID — все нули. Корректный по RFC 4122 § 4.1.7.
+#stable(since = "0.1")
 export const NIL Uuid = { hi: 0, lo: 0 }
 
-// Max UUID — все единицы. Используется в фильтрах "до конца".
+/// Max UUID — все единицы. Используется в фильтрах "до конца".
+#stable(since = "0.1")
 export const MAX Uuid = { hi: 0xFFFFFFFFFFFFFFFF, lo: 0xFFFFFFFFFFFFFFFF }
 
-// Прямой конструктор по двум u64 — для тестов и вычислений.
+/// Direct constructor по двум u64. Для тестов и вычислений.
+#stable(since = "0.1")
 export fn Uuid.new(hi u64, lo u64) -> Self =>
     { hi, lo }
 
@@ -87,12 +100,11 @@ export fn Uuid.new(hi u64, lo u64) -> Self =>
 // Версия 4 — random
 // ──────────────────────────────────────────────────────────────────────────
 
-// `Uuid.v4()` — генерирует 128 бит через Random handler, выставляет
-// version=4 и variant=10 (RFC 4122 layout).
-//
-// Эффект `Random` ambient — handler берётся из текущего скоупа.
-// В production — secure RNG; в тестах — `with Random = th.seeded(...)`
-// даёт детерминированный поток.
+/// `Uuid.v4()` — random UUID. Version=4, variant=10 (RFC 4122 layout).
+///
+/// Использует Random effect — в production secure RNG, в тестах
+/// `with Random = th.seeded(...)` детерминирован.
+#stable(since = "0.1")
 export fn Uuid.v4() Random -> Self {
     let raw_hi = Random.u64()
     let raw_lo = Random.u64()
@@ -113,15 +125,12 @@ export fn Uuid.v4() Random -> Self {
 // Версия 7 — sortable, timestamp-based
 // ──────────────────────────────────────────────────────────────────────────
 
-// `Uuid.v7()` — RFC 9562 layout:
-//   48 bits — Unix timestamp в миллисекундах (биты 0..47)
-//   4 bits  — version = 7 (биты 48..51)
-//   12 bits — random (биты 52..63 = младшие 12 бит hi)
-//   2 bits  — variant = 10 (биты 64..65)
-//   62 bits — random (биты 66..127)
-//
-// Сортируется лексикографически по времени создания → отлично для
-// primary keys в БД (B-tree friendly).
+/// `Uuid.v7()` — sortable timestamp-based (RFC 9562).
+///
+/// 48 bits timestamp ms + 4 bits version=7 + 12 bits random + 2 bits variant=10
+/// + 62 bits random. Лексикографически сортируется по времени создания —
+/// отлично для primary keys в БД (B-tree friendly).
+#stable(since = "0.1")
 export fn Uuid.v7() Time Random -> Self {
     let ms = Time.now_ms()                            // u64
 
@@ -143,8 +152,8 @@ export fn Uuid.v7() Time Random -> Self {
 // Геттеры
 // ──────────────────────────────────────────────────────────────────────────
 
-// Версия — биты 48..51 от MSB hi, то есть биты 12..15 младшего
-// порядка hi (после смещения на 16 младших бит).
+/// Extract UUID version (биты 48..51 от MSB hi). Returns V4/V7/Other(n).
+#stable(since = "0.1")
 export fn Uuid @version() -> UuidVersion {
     let v = ((@hi >> 12) & 0xF) as u8
     match v {
@@ -154,16 +163,19 @@ export fn Uuid @version() -> UuidVersion {
     }
 }
 
-// Variant: для RFC 4122 — старшие 2 бита 9-го байта = биты 62..63 от MSB lo.
+/// True если UUID имеет RFC 4122 variant (биты 62..63 lo == binary 10).
+#stable(since = "0.1")
 export fn Uuid @is_rfc4122() -> bool =>
-    ((@lo >> 62) & 0x3) == 0x2                          // 10 binary
+    ((@lo >> 62) & 0x3) == 0x2
 
-// Timestamp v7 — старшие 48 бит hi → миллисекунды.
-// Для не-v7 значение бессмысленно; caller проверяет version().
+/// Extract Unix timestamp ms из UUID v7 (старшие 48 бит hi).
+/// Для не-v7 значение бессмысленно — caller проверяет version() заранее.
+#stable(since = "0.1")
 export fn Uuid @timestamp_ms() -> u64 =>
     @hi >> 16
 
-// Nil-UUID check.
+/// True если это NIL UUID (все нули).
+#stable(since = "0.1")
 export fn Uuid @is_nil() -> bool =>
     @hi == 0 && @lo == 0
 
@@ -172,21 +184,31 @@ export fn Uuid @is_nil() -> bool =>
 // Сравнение и hash (D46)
 // ──────────────────────────────────────────────────────────────────────────
 
+/// Equality (`==`).
+#stable(since = "0.1")
 export fn Uuid @eq(other Uuid) -> bool =>
     @hi == other.hi && @lo == other.lo
 
-// Лексикографический порядок (по hi, потом lo) — естественен для
-// сортировки v7 по timestamp'у.
+/// Less-than (`<`) — лексикографический order. Естественен для v7 timestamp sorting.
+#stable(since = "0.1")
 export fn Uuid @lt(other Uuid) -> bool {
     if @hi != other.hi { @hi < other.hi } else { @lo < other.lo }
 }
 
+/// Less-than-or-equal (`<=`).
+#stable(since = "0.1")
 export fn Uuid @le(other Uuid) -> bool => @lt(other) || @eq(other)
+
+/// Greater-than (`>`).
+#stable(since = "0.1")
 export fn Uuid @gt(other Uuid) -> bool => other.lt(@)
+
+/// Greater-than-or-equal (`>=`).
+#stable(since = "0.1")
 export fn Uuid @ge(other Uuid) -> bool => @gt(other) || @eq(other)
 
-// Hash — XOR двух половин. Хорошее распределение для random-заполненного
-// UUID, не идеально для timestamp-зон в v7 (но и не плохо).
+/// Hash — XOR двух u64 половин. Подходит для HashMap key (Hashable protocol).
+#stable(since = "0.1")
 export fn Uuid @hash() -> u64 => @hi ^ @lo
 
 
@@ -194,10 +216,11 @@ export fn Uuid @hash() -> u64 => @hi ^ @lo
 // Сериализация (D73 Into[str])
 // ──────────────────────────────────────────────────────────────────────────
 
-// Стандартный формат "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" (36 символов).
-// 4-2-2-2-6 байт через дефисы, lowercase hex.
-//
-// Round-trip: Uuid.from(u.into()) == u для любой валидной Uuid.
+/// `Into[str]` — стандартный формат `xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx`
+/// (36 chars, lowercase hex, 4-2-2-2-6 байт через дефисы).
+///
+/// Round-trip с `Uuid.from`.
+#stable(since = "0.1")
 export fn Uuid @into() -> str {
     let mut buf = StringBuilder.with_capacity(36)
 
@@ -255,9 +278,9 @@ fn hex_digit(n u8) -> char {
 // Парсинг (D73 From[str] + D77 TryFrom)
 // ──────────────────────────────────────────────────────────────────────────
 
-// Принимает форму "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" (36 символов,
-// case-insensitive в hex-цифрах). Throws Fail[ParseUuidError] на любой
-// ошибке. По D67 `?` после этого вызова — ошибка.
+/// `From[str]` — parse standard 36-char UUID format. Case-insensitive.
+/// Throws `ParseUuidError` (InvalidLength/InvalidHex/MissingDash).
+#stable(since = "0.1")
 export fn Uuid.from(s str) Fail[ParseUuidError] -> Self {
     if s.len != 36 {
         throw InvalidLength { actual: s.len, expected: 36 }

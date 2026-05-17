@@ -1,0 +1,26 @@
+// Positive: fn returning tuple of closures. Closures хранятся как
+// `nova_int` slot, но return type — `_NovaTuple____void_p__void_p`.
+// Без field-wise copy struct assignment fails C type-check.
+
+module plan59.f6_closure_in_tuple_return
+
+
+fn make_pair() -> (fn() -> int, fn() -> int) {
+    let mut n = 0
+    let inc = || { n += 1; n }
+    let get = || n
+    (inc, get)
+}
+
+
+test "pair of closures — shared mut box via tuple return" {
+    let pair = make_pair()
+    let inc = pair.0
+    let get = pair.1
+    assert(get() == 0)
+    inc()
+    assert(get() == 1)
+    inc()
+    inc()
+    assert(get() == 3)
+}
