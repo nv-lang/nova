@@ -14990,7 +14990,88 @@ to main baseline — не codegen-related, плагин UAC elevation требу
 0 deferred. 0 simplifications.
 
 
-## Session: Plan 59 Phase 7 — production polish (2026-05-17 EOD+2)
+================================================================================
+# Session: Plan 48 Ф.9 hardening — production-grade diagnostic + extended tests
+================================================================================
+2026-05-17 EOD+2 (после merge 929b2f282ad)
+
+## Контекст
+
+User request: "тесты напиши по тому, что делал позитивные и негативные
+и проверь только их через релизные nova & компилятор (они готовы)".
+
+При написании negative tests обнаружено: cannot-infer scenario для
+method-level type params (когда U присутствует только в return type, без
+args для inference) silently dropped → emit_call path 5b просто
+filter'ил None entries из subst_slots → `Nova_U_p` placeholder leak →
+undefined-struct CC-FAIL clang. Без clean diagnostic.
+
+User pushback memory: "без упрощений как для прода" → fix the gap.
+
+## Production-grade hardening
+
+В emit_c.rs path 5b (~12702) после Step 2 closure inference добавлен
+diagnostic loop: для каждого `(name, None)` в subst_slots вычисляются
+positions где `name` появляется в param types (через collect_typeref_names),
+и возвращается error:
+
+```
+cannot infer method-level type argument `U` for generic method
+`Wrapper____<T>.<method>` (only in return type — provide arg
+whose type binds it); provide a closure/arg whose type fixes `U`
+```
+
+Diagnostic mirror'ит free-fn message (emit_c.rs:6588+) — consistent UX.
+
+## Extended test suite (nova_tests/plan48_mpm/)
+
+**Positive (3 новых + 2 ранее = 5 файлов, 14+ sub-tests):**
+- f1_method_param_mono.nv — 5 sub-tests (ранее).
+- f2_multi_method_param_positive.nv — Box @combine[U, V] с ДВУМЯ
+  method-level params, 3 sub-tests (T=int U=int V=str, T=int U=str V=int,
+  T=str U=int V=str).
+- f3_long_chain_positive.nv — длинная цепочка .map().map().map().map()
+  через int→str→int→str (4 instances per test); separate test для
+  parallel chains (int+str не interfere — каждая своя mono); test через
+  ALL primitive transitions (int → bool → int → str), 3 sub-tests.
+- f4_method_param_unused_in_return_positive.nv — U binds через arg
+  только, return type int (не упоминает U); test что разные U yield
+  разные mono instances независимо от identical return; T=str path,
+  3 sub-tests.
+- repro_wrapper_map.nv — minimal repro (ранее).
+
+**Negative (2 новых, EXPECT_COMPILE_ERROR):**
+- f5_cannot_infer_u_negative.nv — U только в return type → diag должен
+  упоминать "cannot infer method-level type argument `U`".
+- f6_method_param_only_in_return_negative.nv — U binds через closure,
+  V только в return → diag должен упоминать именно `V` (не `U`).
+
+## Verification
+
+Manual error trigger через `nova build` для F5/F6:
+- F5: `cannot infer method-level type argument U for generic method
+  Wrapper____nova_int.produce (only in return type — provide arg whose
+  type binds it); provide a closure/arg whose type fixes U`
+- F6: то же с `V` вместо `U` (Box____nova_int.transform).
+
+## Регрессия
+
+plan48_mpm focused suite (per user instruction "проверь только их"):
+**7 PASS / 0 FAIL** (5 positive + 2 negative).
+Full repo regression не запускался по запросу.
+
+## Spec / Docs
+
+- D119 в 02-types.md: Constraints section дополнен описанием diagnostic
+  format'а (нет args / только в return → clean error).
+- Plan 48 doc Ф.9 секция: расширен tests блок (7 файлов вместо 2),
+  добавлен "Production-grade diagnostic (2026-05-17 hardening)" subsection.
+
+0 deferred. 0 simplifications.
+
+
+================================================================================
+# Session: Plan 59 Phase 7 — production polish (2026-05-17 EOD+2)
 
 Изолированный audit Plan 59 в worktree plan-59-audit. 3 M-priority
 improvements + 3 L-priority deferred с rationale.

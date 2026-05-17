@@ -1,0 +1,37 @@
+module nova_tests.plan48_mpm.f3_long_chain_positive
+
+// Plan 48 Ф.9 / D119 positive: длинная цепочка .map().map().map().map()
+// с разными типами на каждом шаге → каждая step требует своей mono-instance.
+// Exercises infer_mono_method_ret_with_args для let-binding type inference:
+// let s = w.map(...) должен infer корректный Nova_Wrapper____<U>* тип,
+// иначе следующий .map в цепочке dispatch'нется на wrong receiver.
+
+export type Wrapper[T] { inner T }
+export fn Wrapper[T].of(v T) -> Wrapper[T] => { inner: v }
+export fn Wrapper[T] @map[U](f fn(T) -> U) -> Wrapper[U] {
+    Wrapper[U].of(f(@inner))
+}
+
+test "chain int→str→int→str→int" {
+    let w0 = Wrapper[int].of(3)
+    let w1 = w0.map(|x| str.from(x))   // int → str  "3"
+    let w2 = w1.map(|s| s.len())       // str → int   1
+    let w3 = w2.map(|x| str.from(x))   // int → str  "1"
+    let w4 = w3.map(|s| s.len())       // str → int   1
+    assert(w4.inner == 1, "chain ends с 1 (len of '1')")
+}
+
+test "chain through ALL primitive transitions" {
+    let w0 = Wrapper[int].of(42)
+    let w1 = w0.map(|x| x > 10)        // int → bool
+    let w2 = w1.map(|b| if b { 1 } else { 0 })  // bool → int
+    let w3 = w2.map(|x| str.from(x))             // int → str
+    assert(w3.inner == "1", "42 > 10 = true → 1 → '1'")
+}
+
+test "two parallel chains не interfere" {
+    let a = Wrapper[int].of(10).map(|x| x + 1)
+    let b = Wrapper[str].of("ab").map(|s| s + "c")
+    assert(a.inner == 11, "int chain")
+    assert(b.inner == "abc", "str chain (parallel mono instance не overwrote int)")
+}
