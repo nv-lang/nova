@@ -176,6 +176,16 @@ generic method body. Реальные кандидаты: leak в
 Workaround `for i in 0..@_buckets.len` в stdlib безопасен и
 производителен — не блокирует prod use.
 
+### ✅ ЗАКРЫТО (2026-05-17) Plan 63 Fix E + workaround removal
+
+Закрыто через Plan 63 Fix E (66113a8d2db, другой agent) — fix трёх
+взаимосвязанных bug'ов в emit_array_lit / emit_monomorphized_method /
+array_element_types tracking. После Fix E идиоматичный
+`for (k, v) in other` в generic method body работает без cascade.
+
+Workaround удалён в commit 36e215cce83 — HashMap.@merge_from/@filter
+теперь идиоматичны. plan56 6/6 PASS.
+
 ---
 
 ## Phase 6 — match-pattern variant + mono'd tuple payload (2026-05-17 EOD+2)
@@ -212,17 +222,25 @@ payload type starts_with("_NovaTuple_") (mono'd) — parse elements
 - [x] `Option[(int, int)]` (homogeneous) continues working.
 - [x] f17_tuple_in_option PASS (4 sub-tests с разными K, V).
 
-### Out-of-scope (Plan 63+)
+### Out-of-scope (Plan 63+) — ✅ ЗАКРЫТО (2026-05-17)
 
-**`Result[(T1, T2), E]`** не работает — Result generic типы НЕ
-monomorphized (всегда `Nova_Result*` erased, payload slot — `nova_int`).
-Это **отдельная** ограничение: mono pass для Result-как-sum-type, не
-для tuple. Требует архитектуры sum-type monomorphization (≈Plan 56
-vtable scope расширенный на variants). Documented как
-`[M-result-erased-no-mono]` — отдельный план, не блокер Plan 59.
+**`Result[(T1, T2), E]`** — изначально deferred как
+`[M-result-erased-no-mono]`. **Закрыто** через Plan 63 Fix F
+(2ae78c7ae8d, другой agent) + Plan 63 Fix F+ (ca677dd2147, эта session):
+- Fix F: `result_ok_inner_types` map + pending mechanism для let-bound
+  + homogeneous + direct boxing case.
+- Fix F+: per-fn registry `fn_result_ok_inner_types` + helper для
+  inline match + heterogeneous case через function-call propagation
+  + pending leak fix через save/restore на boundary fn body.
 
-User sum-types с tuple payload (`Custom { Ok((k, v)) }`) work
-если sum-type сам **не generic** (mono path не trigger'ится).
+Test: `nova_tests/plan59/f19_tuple_in_result.nv` (5 sub-tests:
+heterogeneous let+inline, homogeneous let+inline, Err branch).
+plan59: 19/19 PASS.
+
+Полный mono'd Result (NovaRes_<T>_<E> typedefs analogous к Option) —
+future scope, не нужен для observable use-cases.
+
+User sum-types с tuple payload работают если sum-type сам не generic.
 
 ---
 
