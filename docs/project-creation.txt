@@ -14885,6 +14885,59 @@ cargo test --release --lib verify::backend::trivial::tests: 6/6 PASS.
 - Закрывает 3 deferred items из 33.6 (Ф.18.2/Ф.21.3/Ф.25.3) с зауженным
   scope (bounds-based, не full LIA).
 
+
+# Plan 33.6 Ф.30 (2026-05-18): flatten and/or + strict `>` паритет
+
+Продолжение TrivialBackend refinement. Закрывает архитектурный gap (nested
+and/or не свернётся через filter loop) и паритет strict `>` для всех bound
+check helpers (раньше только `>=`, теперь оба).
+
+## Ф.30.1 — Flatten nested and/or в simplify_app
+
+В simplify_app для "and" и "or" добавлен flatten-step перед filter loop'ом:
+если any arg — App с тем же оператором, его inner args inline'ятся в
+outer flat list. Ассоциативность гарантирует семантическую эквивалентность.
+Эффект: dedup/filter/absorption/contradiction теперь видят все clauses,
+даже если они в nested structure (раньше блокировалось).
+
+Unit tests (3 новых в trivial.rs):
+- simplify_and_flatten_nested: (and true (and true true)) → true
+- simplify_and_flatten_preserves_vars: (and X (and Y Z)) → (and X Y Z), 3 args
+- simplify_or_flatten_nested: (or false (or false true)) → true
+
+## Ф.30.2 — Addition `>` strict
+
+try_addition_check принимал только `>=`. Расширен на `>`: effective_goal
+= goal + 1. Тот же pattern что Ф.29.4 для subtraction.
+Test: f30_addition_strict_positive (sum_strict_positive, shifted_strict).
+
+## Ф.30.3 — Const-mul `>` strict
+
+try_const_mul_check паритет с Ф.30.2. Покрывает `requires x >= 3;
+ensures (2*x) > 5`.
+Test: f30_const_mul_strict_positive (double_strict, triple_above_threshold).
+
+## Ф.30.4 — Negation `>` strict
+
+try_negation_check паритет. Покрывает `requires x <= -5; ensures (0-x) > 0`.
+Test: f30_negation_strict_positive.
+
+## Регрессия
+
+Перед Ф.30: 173 PASS / 0 FAIL / 44 SKIP contracts.
+После Ф.30: 176 PASS (+3) / 0 FAIL / 44 SKIP contracts.
+
+cargo test --lib verify::backend::trivial::tests: 9/9 PASS (+3 для flatten).
+
+## Acceptance
+
+- Все 4 strict-`>` helpers паритет с `>=`: addition, const-mul, negation,
+  subtraction (последний был в Ф.29.4).
+- Nested boolean connectives нормализуются.
+- Zero regression в existing 173 contract tests.
+- Не trogает encoder structure, не expand'ит EncodingError::Unsupported scope.
+
+
 ## Session: оба deferred follow-up'а Plan 59 закрыты (2026-05-17 EOD+1)
 
 После merge'а Plan 63 fixes от другого agent'а — обнаружено что оба
