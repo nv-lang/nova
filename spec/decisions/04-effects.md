@@ -1907,7 +1907,7 @@ let result = with Db = handler Db {
     }
 } {
     let rows = Db.query(some_q)
-    rows.len                       // body даёт int → W = int
+    rows.len()                       // body даёт int → W = int
 }
 // result: int
 ```

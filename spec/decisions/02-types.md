@@ -1916,8 +1916,8 @@ let s Set[int] = { map: HashMap[int, ()].new() }      // ✓
 let s Set[int] = { use: HashMap[int, ()].new() }       // ✗ use — keyword
 
 // доступ — имя поля
-fn Set[T] @len() => @map.len                          // ✓
-fn Set[T] @len() => @use.len                          // ✗ use — keyword
+fn Set[T] @len() => @map.len()                          // ✓
+fn Set[T] @len() => @use.len()                          // ✗ use — keyword
 ```
 
 #### Override метода

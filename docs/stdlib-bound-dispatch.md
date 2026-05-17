@@ -91,7 +91,7 @@ fn HashMap[K, V] @get(key K) -> Option[V] {
 // также работает в methods:
 fn HashMap[K, V] @clone() -> HashMap[K, V] {
     let mut copy = HashMap[K, V].with_capacity(@count)
-    for i in 0..@buckets.len {
+    for i in 0..@buckets.len() {
         match @buckets[i] {
             Occupied { key: k, value: v } => copy.insert_new(k, v)
             _ => {}

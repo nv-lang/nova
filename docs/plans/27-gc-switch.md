@@ -205,7 +205,7 @@ fn main() {
     while i < 100_000 {
         let s = make_str(i)
         // prevent trivial dead-code elimination: use len
-        assert(s.len > 0)
+        assert(s.len() > 0)
         i += 1
     }
     // Если мы здесь — не было OOM kill. Основная проверка.

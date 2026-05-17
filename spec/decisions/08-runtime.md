@@ -596,9 +596,9 @@ fn str @to_upper() -> str
 let s = "Привет:мир"           // 10 codepoints, 19 bytes
 let i = s.find(":").unwrap_or(0)  // i == 6 (codepoints)
 let key = s.slice(0, i)        // "Привет"
-let val = s.slice(i + 1, s.len)// "мир"
-assert(s.len == 10)            // codepoints
-assert(key.len == 6)
+let val = s.slice(i + 1, s.len())// "мир"
+assert(s.len() == 10)            // codepoints
+assert(key.len() == 6)
 ```
 
 **Почему codepoint-indexing (школа B) выбрана для Nova:**
@@ -2365,7 +2365,7 @@ fn divide(a int, b int) -> int {
 
 // Hot-path — release не платит за проверку
 fn fast_lookup(arr []int, idx int) -> int {
-    debug_assert(idx >= 0 && idx < arr.len)   // только в debug
+    debug_assert(idx >= 0 && idx < arr.len())   // только в debug
     arr[idx]                                    // unchecked в release
 }
 

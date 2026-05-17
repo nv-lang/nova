@@ -158,7 +158,7 @@ spec нет style-guide когда это **уместно**, а когда пи
 
 ### 4. Q-array-api — minimal canonical API
 
-**Текущее:** `[]T.len`, `.push`, `.pop`, `.get`, `.is_empty` —
+**Текущее:** `[]T.len()`, `.push`, `.pop`, `.get`, `.is_empty()` —
 встроены. `.first`/`.last`/`.contains`/`.iter`/`.map`/... — extension
 methods в `std/collections/vec.nv`. Нет правила что считается «частью
 языка», а что — стандартной библиотекой.
