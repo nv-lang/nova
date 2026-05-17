@@ -23,7 +23,7 @@
    type 'nova_int'`.
 
 **Real-world blockers (2026-05-12):**
-- `std/encoding/hex.nv` использует `(0..s.len).step_by(2)` — компиляция
+- `std/encoding/hex.nv` использует `(0..s.len()).step_by(2)` — компиляция
   падает на cross-file Range.
 - `std/crypto/{hmac,jwt,sha256,bcrypt}.nv` зависят от `WriteBuffer` —
   работают **только** через `ExternalRegistry` `include_str!` hack для

@@ -34,7 +34,7 @@ Acceptance — добавить новый method тремя правками (r
   возвращал **байты** (b->len поле), но D26 школа B требует codepoint
   count для **всех** текстовых типов (включая str и StringBuilder).
   Несоответствие сбивало пользователей: `StringBuilder.from('Я').len()`
-  возвращало 2 (байты), хотя `"Я".len` === 1 (codepoint). Исправлено:
+  возвращало 2 (байты), хотя `"Я".len()` === 1 (codepoint). Исправлено:
   - C-runtime `Nova_StringBuilder_method_len` теперь walk'ит UTF-8 lead
     bytes (O(n)), совпадает с `nova_str_char_len`.
   - Добавлен `@byte_len()` (O(1) — возвращает `b->len`) — паритет с str API.

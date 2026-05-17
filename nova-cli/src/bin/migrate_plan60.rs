@@ -501,8 +501,12 @@ fn rewrite_inline_md_code(s: &str) -> String {
                 }
             }
         }
-        out.push(bytes[i] as char);
-        i += 1;
+        // UTF-8-safe copy: `bytes[i] as char` cast'ит byte как Latin-1
+        // и ломает emoji (`✅` → `â`). Используем char-boundary lookup
+        // как в rewrite_markdown.
+        let ch_end = (1..=4).find(|&j| s.is_char_boundary(i + j)).unwrap_or(1);
+        out.push_str(&s[i..i + ch_end]);
+        i += ch_end;
     }
     out
 }
@@ -604,6 +608,23 @@ mod tests {
         assert_eq!(rewrite_inline_md_code("arr.cap"), "arr.capacity()");
         assert_eq!(rewrite_inline_md_code("arr.len()"), "arr.len()");
         assert_eq!(rewrite_inline_md_code("not a dot"), "not a dot");
+    }
+
+    #[test]
+    fn inline_md_utf8_preserves_emoji() {
+        // bug fix: bytes[i] as char ломал UTF-8 emoji.
+        assert_eq!(rewrite_inline_md_code("✅ proven"), "✅ proven");
+        assert_eq!(rewrite_inline_md_code("🚫 forbid arr.len"), "🚫 forbid arr.len()");
+        assert_eq!(rewrite_inline_md_code("⚠️ deprecated"), "⚠️ deprecated");
+        assert_eq!(rewrite_inline_md_code("🧪 experimental(arr.cap)"), "🧪 experimental(arr.capacity())");
+    }
+
+    #[test]
+    fn markdown_block_utf8_preserved() {
+        let md = "Some `✅ marker` and ```nova\nfn f(a []int) -> int { a.len + 0 }\n```\n";
+        let out = rewrite_markdown(md).unwrap().text;
+        assert!(out.contains("✅ marker"), "emoji preserved in inline code, got: {}", out);
+        assert!(out.contains("a.len()"), "code block migrated, got: {}", out);
     }
 
     #[test]

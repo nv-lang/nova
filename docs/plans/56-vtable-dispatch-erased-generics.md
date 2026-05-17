@@ -155,7 +155,7 @@ boxing penalty. **Лучше Go** — true mono per-type (вместо stencilin
 ```nova
 export fn HashMap[K, V] @clone() -> HashMap[K, V] {
     let mut copy = HashMap[K, V].with_capacity(@count)
-    for i in 0..@buckets.len {
+    for i in 0..@buckets.len() {
         match @buckets[i] {
             Occupied { key: k, value: v } => copy.insert_new(k, v)
             _ => {}
@@ -450,7 +450,7 @@ effect handlers)`.
 ```nova
 export fn HashMap[K, V] @clone() -> HashMap[K, V] {
     let mut copy = HashMap[K, V].with_capacity(@count)
-    for i in 0..@buckets.len {
+    for i in 0..@buckets.len() {
         match @buckets[i] {
             Occupied { key: k, value: v } => copy.insert_new(k, v)
             _ => {}
