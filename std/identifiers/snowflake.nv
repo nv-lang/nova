@@ -19,12 +19,41 @@ import std.testing.handlers as th
 const TWITTER_EPOCH_MS i64 = 1577836800000
 
 
+/// Ошибки генератора Snowflake ID.
+///
+/// - `InvalidMachineId` — `machine_id` вне диапазона `0..1023`
+/// - `ClockBackwards` — системное время откатилось назад
+#stable(since = "0.1")
 export type SnowflakeError
     | InvalidMachineId { value int }
     | ClockBackwards { now i64, last i64 }
 
 
-// Generator state — mutable, держится одним процессом / thread.
+/// Генератор Twitter Snowflake 64-bit ID.
+///
+/// Структура ID (64 бит):
+/// - 1 бит: всегда 0 (знаковый bit)
+/// - 41 бит: timestamp в ms с кастомной epoch (~69 лет)
+/// - 10 бит: machine_id (0..1023)
+/// - 12 бит: sequence в рамках одной ms (0..4095)
+///
+/// ID лексикографически упорядочены по времени.
+/// Использует `Time` effect — детерминизируется handler-подменой в тестах.
+///
+/// # Examples
+///
+/// ```nova
+/// let mut gen = SnowflakeGen.new(1)
+/// let id = gen.next()
+/// let parts = Snowflake.parse(id)
+/// assert(parts.machine_id == 1)
+/// ```
+///
+/// # See Also
+///
+/// - `[Ulid]` — альтернативный sortable random ID
+/// - `[Uuid]` — случайный UUID
+#stable(since = "0.1")
 export type SnowflakeGen {
     readonly machine_id i64                  // public config: 0..1023
     mut _last_ms i64                         // internal: ms прошлой генерации
@@ -32,6 +61,10 @@ export type SnowflakeGen {
 }
 
 
+/// Создать генератор для заданного `machine_id` (0..1023).
+///
+/// Бросает `InvalidMachineId` если `machine_id` вне диапазона.
+#stable(since = "0.1")
 export fn SnowflakeGen.new(machine_id int) Fail[SnowflakeError] -> Self {
     if machine_id < 0 || machine_id > 1023 {
         throw InvalidMachineId { value: machine_id }
@@ -44,8 +77,15 @@ export fn SnowflakeGen.new(machine_id int) Fail[SnowflakeError] -> Self {
 }
 
 
-// Генерирует следующий ID. Throws ClockBackwards если время «откатилось»
-// (защита от system clock corrections).
+/// Сгенерировать следующий уникальный ID.
+///
+/// Монотонный в рамках одной ms через sequence. Бросает `ClockBackwards`
+/// если системное время отошло назад.
+///
+/// # Effects
+///
+/// Использует `Time` effect для получения текущего времени.
+#stable(since = "0.1")
 export fn SnowflakeGen mut @next() Time Fail[SnowflakeError] -> i64 {
     let now = Time.now_ms() as i64
 
@@ -74,7 +114,8 @@ export fn SnowflakeGen mut @next() Time Fail[SnowflakeError] -> i64 {
 }
 
 
-// Парсинг ID обратно в компоненты — для debugging / introspection.
+/// Компоненты Snowflake ID после декодирования.
+#stable(since = "0.1")
 export type SnowflakeParts {
     readonly timestamp_ms i64           // Unix ms (с epoch)
     readonly machine_id int
@@ -82,6 +123,26 @@ export type SnowflakeParts {
 }
 
 
+/// Разобрать Snowflake ID на составляющие компоненты.
+///
+/// Обратная операция к `[SnowflakeGen.next]`. Возвращает timestamp в Unix ms,
+/// `machine_id` и `sequence` из битовой структуры ID.
+///
+/// # Examples
+///
+/// ```nova
+/// let mut gen = SnowflakeGen.new(42)
+/// let id = gen.next()
+/// let parts = Snowflake.parse(id)
+/// assert(parts.machine_id == 42)
+/// assert(parts.sequence == 0)
+/// ```
+///
+/// # See Also
+///
+/// - `[SnowflakeGen.next]` — генерация ID
+/// - `[SnowflakeParts]` — структура результата
+#stable(since = "0.1")
 export fn Snowflake.parse(id i64) -> SnowflakeParts {
     let sequence = (id & 0xFFF) as int
     let machine_id = ((id >> 12) & 0x3FF) as int

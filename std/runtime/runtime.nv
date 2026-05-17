@@ -30,33 +30,88 @@ module runtime.runtime
 
 // ─── runtime namespace ──────────────────────────────────────────
 
-// Initialize M:N runtime с N worker threads. n=0 → auto-detect через
-// `uv_available_parallelism()`. Idempotent — повторный вызов no-op.
-//
-// Effects: spawns N OS threads. Each worker имеет:
-//   - own libuv event loop;
-//   - own fiber scope (worker-local push queue);
-//   - own fiber arena (Plan 44.2 Linux/macOS — lazily init per thread).
+/// Инициализировать M:N runtime с `n` worker threads.
+///
+/// `n = 0` → auto-detect через `uv_available_parallelism()`. Idempotent —
+/// повторный вызов no-op если runtime уже запущен.
+///
+/// Каждый worker имеет:
+/// - собственный libuv event loop;
+/// - собственный fiber scope (worker-local push queue);
+/// - собственную fiber arena (Plan 44.2 Linux/macOS — lazily init per thread).
+///
+/// # Effects
+///
+/// Порождает `n` OS threads.
+///
+/// # See Also
+///
+/// - `[runtime.shutdown]` — остановить workers
+/// - `[runtime.worker_count]` — текущее число workers
+#stable(since = "0.1")
 export external fn runtime.init(n: int) -> ()
 
-// Graceful shutdown — signal stop, join workers, free resources.
-// После shutdown повторный init() стартует новые workers.
+/// Graceful shutdown M:N runtime.
+///
+/// Signal stop → join workers → free resources. После shutdown повторный
+/// `[runtime.init]` стартует новые workers.
+///
+/// # Effects
+///
+/// Блокирует до завершения всех worker threads.
+///
+/// # See Also
+///
+/// - `[runtime.init]` — запустить runtime
+/// - `[runtime.is_initialized]` — проверить состояние
+#stable(since = "0.1")
 export external fn runtime.shutdown() -> ()
 
-// Number of currently running workers. 0 если runtime не initialized.
+/// Число currently running worker threads.
+///
+/// Возвращает `0` если runtime не инициализирован.
+///
+/// # See Also
+///
+/// - `[runtime.init]` — запустить runtime
+/// - `[runtime.is_initialized]` — bool-проверка
+#stable(since = "0.1")
 export external fn runtime.worker_count() -> int
 
-// Whether M:N runtime is active. Used для conditional code paths
-// (например, в тестах что branched на single-thread vs M:N behavior).
+/// Проверить, активен ли M:N runtime.
+///
+/// Используется для conditional code paths в тестах, branched на
+/// single-thread vs M:N behavior.
+///
+/// # See Also
+///
+/// - `[runtime.init]` — запустить runtime
+/// - `[runtime.worker_count]` — число workers
+#stable(since = "0.1")
 export external fn runtime.is_initialized() -> bool
 
-// Current worker ID (0..n_workers-1) или -1 если вызвано из main thread.
-// Useful для diagnostic — на каком worker'е выполняется fiber.
+/// Current worker ID (0..n_workers-1).
+///
+/// Возвращает `-1` если вызвано из main thread (не из worker fiber).
+/// Полезно для diagnostic — на каком worker'е выполняется fiber.
+///
+/// # See Also
+///
+/// - `[runtime.worker_count]` — общее число workers
+#stable(since = "0.1")
 export external fn runtime.current_worker_id() -> int
 
-// Cooperative yield — suspend current fiber, allow other fibers to run.
-// Outside fiber context: no-op. Checks cancel_requested before yielding.
-// In M:N mode: fiber is re-queued to the worker deque; any worker may pick
-// it up next (work-stealing). Useful for CPU-bound loops to avoid starving
-// other fibers on the same worker.
+/// Кооперативный yield — suspend текущего fiber, дать run другим.
+///
+/// В single-thread режиме: эквивалентен resume scheduler'а.
+/// В M:N режиме: fiber ставится в deque воркера; любой worker может
+/// подобрать его следующим (work-stealing).
+///
+/// Outside fiber context: no-op. Проверяет `cancel_requested` перед yield.
+/// Полезно для CPU-bound циклов чтобы не starve другие fibers на том же worker'е.
+///
+/// # Effects
+///
+/// Выполняет cooperative context switch.
+#stable(since = "0.1")
 export external fn runtime.yield() -> ()
