@@ -5637,7 +5637,7 @@ impl CEmitter {
                 self.result_ok_inner_types.get(name.as_str()).cloned()
             }
             ExprKind::Call { func, .. } => {
-                let fn_c_name = Self::call_target_c_name(func);
+                let fn_c_name = self.call_target_c_name(func);
                 self.fn_result_ok_inner_types.get(&fn_c_name).cloned()
             }
             ExprKind::Block(b) => {
@@ -5648,17 +5648,36 @@ impl CEmitter {
     }
 
     /// Plan 63 Fix F+: get C-name of callee for fn_result_ok_inner_types lookup.
-    /// Mirrors `emit_call`'s callee name resolution для simple Ident/Path cases.
-    fn call_target_c_name(func: &crate::ast::Expr) -> String {
+    /// Mirrors `emit_call`'s callee name resolution для Ident/Path/Member cases.
+    fn call_target_c_name(&self, func: &crate::ast::Expr) -> String {
         use crate::ast::ExprKind;
         match &func.kind {
             ExprKind::Ident(name) => format!("nova_fn_{}", name),
             ExprKind::Path(parts) if !parts.is_empty() => {
-                // Method-style `Type.method` → "Nova_Type_method_<method>"
+                // Static-method-style `Type.method` → "Nova_Type_method_<method>"
+                // (Plan 11: instance methods all use _method_ mangling).
                 if parts.len() == 2 {
                     format!("Nova_{}_method_{}", parts[0], parts[1])
                 } else {
                     format!("nova_fn_{}", parts.join("_"))
+                }
+            }
+            ExprKind::Member { obj, name } => {
+                // Instance method-call `<obj>.method(...)` — receiver type
+                // resolves через var_types. Mangled name follows
+                // `Nova_<RecvType>_method_<name>` convention.
+                let obj_ty = match &obj.kind {
+                    ExprKind::Ident(n) => self.var_types.get(n.as_str()).cloned(),
+                    _ => None,
+                };
+                if let Some(ty) = obj_ty {
+                    // Strip leading "Nova_" prefix and trailing pointer/`*`.
+                    let core = ty.trim_end_matches('*')
+                        .trim_start_matches("Nova_")
+                        .to_string();
+                    format!("Nova_{}_method_{}", core, name)
+                } else {
+                    String::new()
                 }
             }
             _ => String::new(),

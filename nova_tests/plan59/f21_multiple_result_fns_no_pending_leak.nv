@@ -1,0 +1,82 @@
+// Positive (Fix F+ pending leak fix): несколько Result-returning fns
+// с **разными** mono'd tuple types в одной test fn — validates что
+// pending_result_ok_inner_type не leak'ает между fn body emit'ами.
+//
+// Без save/restore на boundary fn body emit:
+//   - parse_str() body emit ставит pending = str_int*
+//   - parse_int() body emit ставит pending = int_int*
+//   - parse_bool() body emit ставит pending = bool_int*
+//   - test body's `let r1 = parse_str(...)` consumed бы leaked
+//     bool_int* (последний) вместо правильного str_int* из registry.
+
+module plan59.f21_multiple_result_fns_no_pending_leak
+
+
+fn parse_str(s str) -> Result[(str, int), str] {
+    if s == "a" { Ok(("a", 1)) }
+    else { Err("bad") }
+}
+
+
+fn parse_int(s str) -> Result[(int, int), str] {
+    if s == "5" { Ok((5, 50)) }
+    else { Err("bad") }
+}
+
+
+fn parse_bool(s str) -> Result[(bool, int), str] {
+    if s == "t" { Ok((true, 1)) }
+    else { Err("bad") }
+}
+
+
+test "три Result-fns с разными mono types — каждая destructure правильно" {
+    let r1 = parse_str("a")
+    let r2 = parse_int("5")
+    let r3 = parse_bool("t")
+
+    let mut k1 str = ""
+    let mut v1 int = 0
+    match r1 {
+        Ok((k, v)) => { k1 = k; v1 = v }
+        Err(_) => assert(false)
+    }
+    assert(k1 == "a" && v1 == 1)
+
+    let mut k2 int = 0
+    let mut v2 int = 0
+    match r2 {
+        Ok((k, v)) => { k2 = k; v2 = v }
+        Err(_) => assert(false)
+    }
+    assert(k2 == 5 && v2 == 50)
+
+    let mut k3 = false
+    let mut v3 int = 0
+    match r3 {
+        Ok((k, v)) => { k3 = k; v3 = v }
+        Err(_) => assert(false)
+    }
+    assert(k3)
+    assert(v3 == 1)
+}
+
+
+test "пересекающиеся inline matches — pending не leak'ает между ними" {
+    let mut totals = 0
+
+    match parse_str("a") {
+        Ok((_, v)) => { totals = totals + v }
+        Err(_) => assert(false)
+    }
+    match parse_int("5") {
+        Ok((k, _)) => { totals = totals + k }
+        Err(_) => assert(false)
+    }
+    match parse_bool("t") {
+        Ok((_, v)) => { totals = totals + v }
+        Err(_) => assert(false)
+    }
+    // 1 + 5 + 1 = 7
+    assert(totals == 7)
+}

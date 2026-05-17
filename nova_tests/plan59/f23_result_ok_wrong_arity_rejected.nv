@@ -1,0 +1,25 @@
+// EXPECT_CC_ERROR
+//
+// Negative (Fix F+): попытка destructure Ok payload tuple с **wrong
+// arity** (Ok((a, b, c)) вместо Ok((a, b))). Mono'd tuple struct
+// `_NovaTuple_2_..._..._...` имеет ровно 2 поля, обращение к `f2`
+// → C compiler error "no member named 'f2'". Guard что Fix F+'s
+// proper-type tracking не маскирует bounds-error.
+
+module plan59.f23_result_ok_wrong_arity_rejected
+
+
+fn parse_2() -> Result[(int, int), str] {
+    Ok((1, 2))
+}
+
+
+test "destructure 2-tuple Ok как 3-tuple — should reject" {
+    let r = parse_2()
+    let mut sum int = 0
+    match r {
+        Ok((a, b, c)) => { sum = a + b + c }
+        Err(_) => assert(false)
+    }
+    assert(sum == 3)
+}
