@@ -323,6 +323,19 @@ impl VerificationPipeline {
         // Это даёт caller доступ к lemma.ensures как аксиоме SMT.
         let mut apply_warnings: Vec<(Span, VerifyResult)> = Vec::new();
         for (lemma_name, mut args, apply_span) in collect_apply_stmts_in_body(&fd.body) {
+            // Ф.31.1 (Plan 33.6): apply к несуществующей лемме → E2405 (был silent skip).
+            // Программист написал `apply foo(x)` но `lemma foo` не объявлена.
+            // Проверка: lemma либо есть с contracts, либо вообще нет в модуле.
+            let lemma_exists = module.items.iter().any(|item| {
+                matches!(item, Item::Lemma(ld) if ld.name == lemma_name)
+            });
+            if !lemma_exists {
+                apply_warnings.push((apply_span, VerifyResult::EncodingFailed(format!(
+                    "[CONTRACT_UNSUPPORTED] `apply {}` ссылается на несуществующую лемму [E2405]: \
+                     объявите `lemma {}(...) ensures ...` или удалите apply.",
+                    lemma_name, lemma_name))));
+                continue;
+            }
             if let Some(lemma_ensures) = find_lemma_ensures(module, &lemma_name) {
                 for (param_names, ensures_expr) in &lemma_ensures {
                     // Ф.13.1 (Plan 33.6): apply auto-inference. Если args.is_empty()
@@ -2621,6 +2634,21 @@ let t0 = std::time::Instant::now();
                     format!("lemma `{}` без параметров [W2402]:\n  \
                              lemma без params обычно бесполезна — она доказывает constant\n  \
                              statement который Z3 derive'ит сам. Возможно, забыли add params.",
+                        ld.name),
+                    ld.span));
+            }
+            // Ф.31.3 (Plan 33.6): lemma c `requires false` — vacuously true,
+            // но apply никогда не активирует precondition → лемма бесполезна.
+            // Detect: какой-либо contract.kind == Requires с body = BoolLit(false).
+            let has_false_requires = ld.contracts.iter().any(|c| {
+                matches!(c.kind, crate::ast::ContractKind::Requires)
+                    && matches!(c.expr.kind, ExprKind::BoolLit(false))
+            });
+            if has_false_requires {
+                report.warnings.push(Diagnostic::new(
+                    format!("lemma `{}` имеет `requires false` [W2402]:\n  \
+                             precondition `false` никогда не выполняется → `apply` бесполезен\n  \
+                             (никогда не активирует ensures). Удалите лемму или поправьте requires.",
                         ld.name),
                     ld.span));
             }

@@ -1,0 +1,15 @@
+// EXPECT_COMPILE_ERROR E2405
+//
+// Ф.31.1 (Plan 33.6): apply к несуществующей лемме → E2405.
+// Раньше silent skip — теперь explicit error.
+
+module contracts.f31_apply_undefined_lemma_fail
+
+#verify
+fn use_missing_lemma(n int) -> int
+    requires n >= 0
+    ensures result >= 0
+{
+    apply foo_undefined(n)
+    n
+}
