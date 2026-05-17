@@ -9018,6 +9018,31 @@ cargo test --lib verify::backend::trivial: 6/6 PASS.
 implementation. Что **не** покрывает: Var-Var без literal bounds, transitive
 chains через UF terms, mixed inequality patterns — это V3 graph reasoning.
 
+## [M-plan-33.6-Ф.30-trivial-flatten-strict] Strict `>` паритет + and/or flatten (2026-05-18)
+
+Архитектурный refinement TrivialBackend. Закрывает 2 gap'а:
+
+**1. Nested and/or не свернутся через filter.** `(and X (and Y Z))` после
+simplify_args оставался с 2 args — filter loop проходил по `(and Y Z)` как
+opaque element. Внутренние BoolLit'ы / contradictions / absorption не
+обнаруживались. Solution: flatten step в simplify_app перед filter (если
+arg — App с тем же оператором, inline). Pure associativity, нет потери
+семантики. Аналогично для `or`.
+
+**2. Strict `>` паритет с `>=`.** До Ф.29.4 все четыре bound check helpers
+(addition, subtraction, const-mul, negation) принимали только `>=`. Ф.29.4
+расширил subtraction; Ф.30.2/30.3/30.4 расширили остальные три. Pattern
+один: `if iop != ">=" && iop != ">" { return None; let effective_goal =
+if iop == ">" { goal + 1 } else { goal };`.
+
+**Регрессия:** 173 → 176 PASS (+3 новых f30 tests), 0 FAIL, 44 SKIP.
+cargo test --lib verify::backend::trivial: 9/9 PASS (+3 для flatten).
+
+**Не закрывает:** Var-Var arithmetic (a+b, a*b, a-b где обе Var нет literal
+bounds) — это V3 graph reasoning. Также: arbitrary depth nested
+boolean composition с absorption (Ф.30.1 закрывает плоский case через
+flat-step + existing absorption loop).
+
 ## [M-57.F.4-positive-negative-coverage] — Test expansion (2026-05-17)
 
 **Не simplification.** Прямой user feedback "тесты напиши по тому,
