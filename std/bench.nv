@@ -52,43 +52,36 @@ module bench
 
 // ─── bench namespace ────────────────────────────────────────────────────
 
-// Black-box barrier: предотвращает elimination операции компилятором
-// (Criterion `hint::black_box`, Go `runtime.KeepAlive`).
-// Эмитится в C как inline-asm `+r` constraint (GCC/Clang) или
-// `_ReadWriteBarrier()` + volatile (MSVC). Zero machine-code overhead.
-// Generic over T — codegen инстанциирует per-type через NOVA_BENCH_OPAQUE_PRIM.
+/// Black-box barrier — предотвращает dead-code elimination в benchmarks.
+/// Аналог Criterion `hint::black_box`, Go `runtime.KeepAlive`. Zero runtime cost.
+#stable(since = "0.1")
 export external fn bench.opaque[T](v T) -> T
 
-// Текущий iters_per_sample (число итераций measure-блока в одном sample).
-// Adaptive sampling computes это автоматически в calibration phase:
-//   iters_per_sample = max(1, target_sample_ns / single_iter_ns)
-// Полезен для manual batch-loops: `for i in 0..bench.iterations() { ... }`.
-// Вне measure-блока — возвращает 0.
+/// Current iters_per_sample (adaptive sampling). Для manual batch-loops
+/// `for i in 0..bench.iterations()`. Вне measure-блока → 0.
+#stable(since = "0.1")
 export external fn bench.iterations() -> int
 
-// Reset sample timer к текущему моменту. Используется когда часть
-// measure-блока — setup-код (allocation, init) который не должен входить
-// в timing window. Аналог Go `b.ResetTimer()`.
+/// Reset sample timer к current. Для excludeить setup-код из timing window.
+/// Аналог Go `b.ResetTimer()`.
+#stable(since = "0.1")
 export external fn bench.reset_timer() -> ()
 
-// Throughput annotation: bytes processed per single iteration.
-// CLI вычисляет MB/s = bytes / median_ns_per_iter * 1e9. Аналог
-// Go `b.SetBytes(n)` / Criterion `Throughput::Bytes(n)`.
+/// Throughput annotation: bytes per iter. CLI вычисляет MB/s. Аналог Go `b.SetBytes`.
+#stable(since = "0.1")
 export external fn bench.bytes(n int) -> ()
 
-// Throughput annotation: elements processed per single iteration.
-// CLI вычисляет elem/s = n / median_ns_per_iter * 1e9. Аналог
-// Criterion `Throughput::Elements(n)`.
+/// Throughput annotation: elements per iter. CLI вычисляет elem/s. Аналог
+/// Criterion `Throughput::Elements`.
+#stable(since = "0.1")
 export external fn bench.elements(n int) -> ()
 
-// Snapshot текущего alloc count (Plan 32 GC introspection bridge).
-// Returns int — total allocations since program start (монотонный).
-// CLI считает per-iter alloc count = (post - pre) / total_iters.
+/// Snapshot total allocs since program start. CLI считает per-iter
+/// alloc count = (post - pre) / total_iters.
+#stable(since = "0.1")
 export external fn bench.allocs() -> int
 
-// High-resolution timer в наносекундах (libuv `uv_hrtime` под NOVA_USE_LIBUV,
-// иначе platform-native QueryPerformanceCounter / mach_absolute_time /
-// clock_gettime(CLOCK_MONOTONIC_RAW)).
-// Назначение — manual timing patterns; адаптивный sampling использует
-// internally same primitive.
+/// High-resolution monotonic timer в ns. libuv `uv_hrtime` под NOVA_USE_LIBUV,
+/// иначе platform-native (QPC / mach_absolute_time / CLOCK_MONOTONIC_RAW).
+#stable(since = "0.1")
 export external fn bench.now_ns() -> int

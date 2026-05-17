@@ -12,12 +12,18 @@
 module crypto.sha1
 
 
+/// SHA-1 hash state (FIPS 180-4). **Insecure** для cryptographic signatures
+/// (collision attacks с 2017). OK для Git commit hashes, legacy compatibility.
+/// Используй [`Sha256`] для security.
+#stable(since = "0.1")
 export type Sha1 {
     mut h [5]u32
     mut buffer []byte
     mut total_len u64
 }
 
+/// Init SHA-1 state с FIPS 180-4 standard IVs.
+#stable(since = "0.1")
 export fn Sha1.new() -> Self =>
     {
         h: [0x67452301, 0xEFCDAB89, 0x98BADCFE, 0x10325476, 0xC3D2E1F0],
@@ -25,12 +31,16 @@ export fn Sha1.new() -> Self =>
         total_len: 0,
     }
 
+/// One-shot SHA-1 hash: bytes → 20-byte digest.
+#stable(since = "0.1")
 export fn Sha1.hash(data []byte) -> [20]byte {
     let mut state = Sha1.new()
     state.update(data)
     state.finalize()
 }
 
+/// One-shot SHA-1 hash в lowercase hex string.
+#stable(since = "0.1")
 export fn Sha1.hash_str(data []byte) -> str {
     let digest = Sha1.hash(data)
     let mut bytes []byte = []
@@ -38,6 +48,8 @@ export fn Sha1.hash_str(data []byte) -> str {
     Hex.encode(bytes)
 }
 
+/// Incremental update — feed bytes в state.
+#stable(since = "0.1")
 export fn Sha1 mut @update(data []byte) -> () {
     @total_len = @total_len + (data.len as u64)
     for b in data {
@@ -49,6 +61,8 @@ export fn Sha1 mut @update(data []byte) -> () {
     }
 }
 
+/// Finalize hash — add padding + length, return 20-byte digest.
+#stable(since = "0.1")
 export fn Sha1 mut @finalize() -> [20]byte {
     let total_bits = @total_len * 8
     @buffer.push(0x80)

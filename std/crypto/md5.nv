@@ -31,13 +31,16 @@ module crypto.md5
 // MD5 state
 // ──────────────────────────────────────────────────────────────────────────
 
+/// MD5 hash state (RFC 1321). **Insecure** для cryptographic integrity —
+/// используй [`Sha256`] для security. MD5 OK для checksum / Bloom filter hash.
+#stable(since = "0.1")
 export type Md5 {
-    mut a u32                          // state words
+    mut a u32                          // RFC 1321 state words
     mut b u32
     mut c u32
     mut d u32
     mut buffer []byte                   // pending input < 64 bytes
-    mut total_len u64                   // total bytes processed (для padding)
+    mut total_len u64                   // total bytes processed
 }
 
 
@@ -85,6 +88,8 @@ fn s_constant(i int) -> int {
 // API
 // ──────────────────────────────────────────────────────────────────────────
 
+/// Init MD5 state с RFC 1321 standard IVs.
+#stable(since = "0.1")
 export fn Md5.new() -> Self =>
     {
         a: 0x67452301,
@@ -95,14 +100,16 @@ export fn Md5.new() -> Self =>
         total_len: 0,
     }
 
-// Convenient one-shot.
+/// One-shot MD5 hash: bytes → 16-byte digest.
+#stable(since = "0.1")
 export fn Md5.hash(data []byte) -> [16]byte {
     let mut state = Md5.new()
     state.update(data)
     state.finalize()
 }
 
-// Hex-string helper.
+/// One-shot MD5 hash в lowercase hex string.
+#stable(since = "0.1")
 export fn Md5.hash_str(data []byte) -> str {
     let digest = Md5.hash(data)
     let mut bytes []byte = []
@@ -111,10 +118,8 @@ export fn Md5.hash_str(data []byte) -> str {
 }
 
 
-// ──────────────────────────────────────────────────────────────────────────
-// Incremental updates
-// ──────────────────────────────────────────────────────────────────────────
-
+/// Incremental update — feed bytes в state. Для streamed input.
+#stable(since = "0.1")
 export fn Md5 mut @update(data []byte) -> () {
     @total_len = @total_len + (data.len as u64)
 
@@ -128,6 +133,8 @@ export fn Md5 mut @update(data []byte) -> () {
     }
 }
 
+/// Finalize hash — add padding + length, return 16-byte digest. State invalid after.
+#stable(since = "0.1")
 export fn Md5 mut @finalize() -> [16]byte {
     // Padding: append 0x80, потом 0-bytes до длины ≡ 56 (mod 64),
     // потом 8 байт длины в битах (little-endian).
