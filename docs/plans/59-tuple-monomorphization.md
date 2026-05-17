@@ -129,6 +129,9 @@ struct elements broken.
 - [x] Phase 4 — spec D-block (D111 в `spec/decisions/02-types.md`).
 - [x] Phase 5 — length-prefixed mangle (aa07fa0d545); root-cause fix
       для nested tuple collision вместо workaround'а.
+- [x] Phase 6 — match-pattern variant + mono'd tuple payload
+      (Option Some((k, v)) heterogeneous). Result deferred — sum-type
+      mono — отдельный план (см. ниже Phase 6 section).
 - [x] Полный `nova test` — **594 PASS / 0 FAIL / 42 SKIP** после Phase 5
       (vs 568 pre-Plan-59 baseline — net **+26 unlocked**).
 - [x] **10 новых тестов** в `nova_tests/plan59/` (f1-f10): tuple lit,
@@ -172,6 +175,54 @@ generic method body. Реальные кандидаты: leak в
 
 Workaround `for i in 0..@_buckets.len` в stdlib безопасен и
 производителен — не блокирует prod use.
+
+---
+
+## Phase 6 — match-pattern variant + mono'd tuple payload (2026-05-17 EOD+2)
+
+### Контекст
+
+После Phase 5 обнаружен gap: `match Some((k, v)) { ... }` где
+`Some` payload — heterogeneous mono'd tuple `Option[(str, int)]`,
+не работал. Inner tuple-destructure после Variant pattern
+обращался к `_nv_scr.value.f0/f1` но bind'ил k, v как `nova_int`
+default → CC-FAIL при str element.
+
+### Root cause
+
+`pattern_destructure_tuple` lookup'ит `tuple_element_types[scr]`,
+но для variant-payload access (`scr_var.value`) ключ не был
+зарегистрирован. Variant pattern handler (Pattern::Variant в
+`pattern_bind_typed`) знает payload type (через `novaopt_value_types`
+для Option), но не propagate'ил mono'd tuple element types в
+registry для inner Tuple pattern.
+
+### Fix
+
+При recurse'е в inner Tuple pattern из Variant handler, если
+payload type starts_with("_NovaTuple_") (mono'd) — parse elements
+через `parse_mono_tuple_elements` + insert в `tuple_element_types`
+для access string. Это покрывает обе branches Variant handler:
+- Option Some: t_from_scr path (NovaOpt typed payload).
+- User sum-type Ok/custom: sum_schemas path (variant-field types).
+
+### Acceptance Phase 6
+
+- [x] `Option[(str, int)]` match Some((k, v)) destructure works.
+- [x] `Option[(int, int)]` (homogeneous) continues working.
+- [x] f17_tuple_in_option PASS (4 sub-tests с разными K, V).
+
+### Out-of-scope (Plan 63+)
+
+**`Result[(T1, T2), E]`** не работает — Result generic типы НЕ
+monomorphized (всегда `Nova_Result*` erased, payload slot — `nova_int`).
+Это **отдельная** ограничение: mono pass для Result-как-sum-type, не
+для tuple. Требует архитектуры sum-type monomorphization (≈Plan 56
+vtable scope расширенный на variants). Documented как
+`[M-result-erased-no-mono]` — отдельный план, не блокер Plan 59.
+
+User sum-types с tuple payload (`Custom { Ok((k, v)) }`) work
+если sum-type сам **не generic** (mono path не trigger'ится).
 
 ---
 

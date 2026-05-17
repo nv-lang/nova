@@ -1,0 +1,66 @@
+// Positive (gap-fill): tuple внутри Option payload. NovaOpt_<mono_tuple>
+// typedef + Some pattern destructure через mono'd struct fields.
+// Покрывает Phase 1 register_novaopt_decl для tuple payload'ов.
+//
+// NOTE: Result[(T1, T2), E] похоже не работает — Result variant payload
+// сейчас erased к nova_int, не propagate'ит mono'd tuple type. Это
+// предсуществующая limitation вне Plan 59 scope — separate followup.
+
+module plan59.f17_tuple_in_option
+
+
+fn find_pair(needle int) -> Option[(int, int)] {
+    if needle == 1 { Some((10, 100)) }
+    else if needle == 2 { Some((20, 200)) }
+    else { None }
+}
+
+
+fn find_kv(needle int) -> Option[(str, int)] {
+    if needle == 1 { Some(("one", 1)) }
+    else { None }
+}
+
+
+test "Option[(int, int)] — Some destructure" {
+    match find_pair(1) {
+        Some((k, v)) => {
+            assert(k == 10)
+            assert(v == 100)
+        }
+        None => assert(false)
+    }
+}
+
+
+test "Option[(int, int)] — None branch" {
+    match find_pair(99) {
+        Some(_) => assert(false)
+        None => assert(true)
+    }
+}
+
+
+test "Option[(str, int)] — heterogeneous payload destructure" {
+    match find_kv(1) {
+        Some((label, val)) => {
+            assert(label == "one")
+            assert(val == 1)
+        }
+        None => assert(false)
+    }
+}
+
+
+test "chained Option[(K, V)] — second call returns None" {
+    let first = find_pair(2)
+    let second = find_pair(99)
+    match first {
+        Some((a, b)) => assert(a == 20 && b == 200)
+        None => assert(false)
+    }
+    match second {
+        Some(_) => assert(false)
+        None => assert(true)
+    }
+}

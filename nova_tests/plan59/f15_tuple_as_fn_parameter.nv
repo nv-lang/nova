@@ -1,0 +1,45 @@
+// Positive (gap-fill): tuple **как fn parameter** (incoming, не return).
+// Mono'd struct по value передаётся через C calling convention.
+// Покрывает type-check + emit для tuple-typed params (раньше неявно
+// в f4 через return, теперь explicit как parameter).
+
+module plan59.f15_tuple_as_fn_parameter
+
+
+fn sum_pair(p (int, int)) -> int {
+    p.0 + p.1
+}
+
+
+fn label_value(pair (str, int)) -> str {
+    pair.0
+}
+
+
+fn nested_first(deep ((int, int), int)) -> int {
+    deep.0.0
+}
+
+
+test "tuple as fn arg — (int, int)" {
+    let result = sum_pair((3, 4))
+    assert(result == 7)
+}
+
+
+test "tuple as fn arg — heterogeneous (str, int)" {
+    let r = label_value(("answer", 42))
+    assert(r == "answer")
+}
+
+
+test "tuple as fn arg — nested mono'd struct" {
+    let r = nested_first(((10, 20), 30))
+    assert(r == 10)
+}
+
+
+test "tuple from variable passed to fn — мono'd struct copy" {
+    let p = (5, 6)
+    assert(sum_pair(p) == 11)
+}

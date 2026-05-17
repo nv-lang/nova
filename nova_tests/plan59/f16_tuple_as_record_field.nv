@@ -1,0 +1,45 @@
+// Positive (gap-fill): tuple как поле record'а. Mono'd struct
+// встраивается в user-type как value field. Покрывает register_tuples_in_typeref
+// для record field declarations + emit user-type fwd decls + mono tuple
+// typedefs preamble order (см. Phase 5 fix f3).
+
+module plan59.f16_tuple_as_record_field
+
+
+type Coord {
+    name str
+    point (int, int)
+}
+
+
+type Box {
+    label  str
+    bounds ((int, int), (int, int))   // top-left, bottom-right
+}
+
+
+test "tuple as record value field — (int, int)" {
+    let c = Coord { name: "origin", point: (0, 0) }
+    assert(c.name == "origin")
+    assert(c.point.0 == 0)
+    assert(c.point.1 == 0)
+}
+
+
+test "tuple field — non-zero values" {
+    let c = Coord { name: "diag", point: (5, 7) }
+    assert(c.point.0 == 5)
+    assert(c.point.1 == 7)
+}
+
+
+test "nested tuple as record field — 2-level" {
+    let b = Box {
+        label: "unit",
+        bounds: ((0, 0), (10, 20)),
+    }
+    assert(b.label == "unit")
+    assert(b.bounds.0.0 == 0)
+    assert(b.bounds.1.0 == 10)
+    assert(b.bounds.1.1 == 20)
+}
