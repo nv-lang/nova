@@ -395,6 +395,45 @@ Sub-items (каждый — отдельный commit):
 
 **Total 57.C estimate:** ~1600 LOC.
 
+### **Plan 57.D — Backlog closure — ~1-2 dev-days**
+
+Sub-items (каждый — отдельный commit):
+
+1. **57.D.1 — PerfTimer hooks для `nova test` pipeline.**
+   - Extend `compile_for_profile` style wraps к test_runner internals.
+   - `NOVA_PERF_TIMER=1 nova test` emits __PERF__ markers per-test
+     (parse/check/codegen aggregate).
+   - **LOC:** ~50.
+
+2. **57.D.2 — sleep-lint contextual effect-aware detection.**
+   - Current `bench-sleep-in-measure` ловит `Time.sleep(...)` как method
+     call. Если `Time` resolved как effect ident (handler context) —
+     match fails.
+   - Cover после name resolve: проверять что obj.kind == Ident("Time")
+     ИЛИ resolved-to-effect-named-Time.
+   - **LOC:** ~30.
+
+3. **57.D.3 — Aggregated JSON output для recursive bench mode.**
+   - `nova bench run <dir> --out file.json` сейчас warns "Phase D".
+   - Aggregate per-file RunResultParsed → single JSON с benches[]
+     across all files; preserve metadata.
+   - **LOC:** ~80.
+
+4. **57.D.4 — CI multi-runner baseline support.**
+   - Multiple `bench-history-<runner-id>` branches per machine.
+   - `nova bench history-add --branch bench-history-$RUNNER`.
+   - `nova bench dashboard --history-branch X` уже supports.
+   - Workflow YAML matrix template с per-runner branch.
+   - **LOC:** ~100.
+
+5. **57.D.5 — HTML compiler-perf dashboard для `nova bench corpus`.**
+   - Generate отдельный HTML report из corpus JSON (echarts stacked
+     bar per-pass time, per-file).
+   - `nova bench corpus <dir> --html out.html`.
+   - **LOC:** ~300.
+
+**Total 57.D estimate:** ~560 LOC.
+
 ### **Plan 57.B — Advanced — ~3-4 dev-days**
 
 Sub-items (каждый — отдельный commit):
@@ -455,6 +494,20 @@ Sub-items (каждый — отдельный commit):
       diagnostic subcommand; per-sample runtime integration — Phase C TBD).
 - [x] `bench "x" { group "g" { case "c" { ... } } }` parse + emit + 4-entry
       output (composite names `x/g/c`).
+
+### **Plan 57.D** — ✅ ALL CLOSED 2026-05-17
+
+- [x] PerfTimer hooks для `nova test` pipeline (aggregation mode
+      `NOVA_PERF_TIMER_AGGREGATE=1` + summary table).
+- [x] sleep-lint contextual effect-aware detection (`Time.sleep` Path-form
+      + bare `sleep(...)`).
+- [x] Aggregated JSON output для recursive bench mode (per-file →
+      merged JSON / CSV / MD / Criterion-compat).
+- [x] CI multi-runner baseline support (NOVA_BENCH_RUNNER_ID →
+      per-runner `bench-history-<id>` branches; `nova bench
+      runner-branch` helper; workflow matrix).
+- [x] HTML compiler-perf dashboard для `nova bench corpus`
+      (`--html out.html` echarts stacked bars).
 
 ### **Plan 57.C** — ✅ ALL CLOSED 2026-05-17
 
@@ -581,3 +634,13 @@ Sub-items (каждый — отдельный commit):
   Plan 57 — **MVP + A + B + C fully closed** (20 commits total в
   worktree plan-57). Backlog → Phase D: aggregated JSON output для
   recursive mode, sleep contextual-keyword detection.
+- **2026-05-17 Phase D closed**: 5 sub-tasks shipped (~530 LOC total):
+  - 57.D.1 PerfTimer aggregation для nova test `e9a77932ba0`
+  - 57.D.2 sleep-lint Path-form `b6dd5274510`
+  - 57.D.3 aggregated JSON для recursive bench mode `6ef7c2b3397`
+  - 57.D.4 multi-runner baseline support `9bdeff26ea8`
+  - 57.D.5 HTML compiler-perf dashboard `a5fe41de6a8`
+  Plan 57 — **MVP + A + B + C + D ALL closed** (28 commits в plan-57).
+  44 unit tests pass. Regression: 562/0 pre-merge baseline; после
+  merge main подтянулись 5 unrelated plan56/* HashMap clone/merge
+  failures (Plan 56 partial closure, не от Phase D работы).

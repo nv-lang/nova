@@ -14126,3 +14126,65 @@ Stdlib refactor:
 
 Plan 45 close — ~99.7%. Plan 45.B substantially advanced (~278 items
 total за всю Ф.35 + Ф.36 vs ~50 stdlib files initial target).
+
+Session: Plan 57.D — Backlog closure phase (2026-05-17)
+
+Worktree: nova-lang-p57 (branch plan-57)
+Дополнено к MVP + 57.A + 57.B + 57.C closure (предыдущие sessions).
+
+Plan 57.D — Backlog closure (5 sub-tasks, 5 commits):
+
+  57.D.1 (commit e9a77932ba0) — PerfTimer aggregation mode.
+  AGGREGATOR: Mutex<Option<HashMap<&str, Vec<u64>>>> shared state +
+  enable_aggregation() + dump_aggregated(). Activates под
+  NOVA_PERF_TIMER_AGGREGATE=1. test_runner.rs codegen_to_c обёрнут
+  в 10 PerfTimer wraps. cmd_test wires + dumps. E2E: nova test
+  --filter literals → imports-resolve 71%, type-check 13%.
+
+  57.D.2 (commit b6dd5274510) — sleep-lint Path-form detection.
+  Time.sleep парсится как Path(["Time","sleep"]), не Member.
+  extract_method helper handles both forms; bare sleep(...) calls
+  тоже warn. Unified Io/opaque-literal detection в same block.
+
+  57.D.3 (commit 6ef7c2b3397) — aggregated JSON/CSV/MD/Criterion
+  для recursive bench mode. nova bench run <dir> --out теперь
+  работает: per-file temp JSON paths → aggregate_json_files()
+  merge → unified output. metadata из первого file +
+  aggregated_from_directory marker. CSV/MD/Criterion outputs
+  через re-parse aggregated JSON.
+
+  57.D.4 (commit 9bdeff26ea8) — multi-runner baseline support.
+  bench::history::default_branch() reads NOVA_BENCH_RUNNER_ID env
+  → "bench-history-<sanitized-id>". nova bench runner-branch
+  helper. history-add/list/squash --branch default = "auto"
+  sentinel → resolve_history_branch() routes к default_branch().
+  CI workflow matrix: linux-amd-perf + linux-arm-perf +
+  gh-ubuntu-shared с per-runner artifact naming.
+
+  57.D.5 (commit a5fe41de6a8) — HTML compiler-perf dashboard.
+  bench::corpus::render_html() — echarts stacked bar chart
+  (x=file, y=ms, stack=pass) + DataZoom + detail table.
+  CLI: nova bench corpus <path> --html out.html --echarts-url URL.
+  ~140 LOC HTML template literal.
+
+Verification:
+- 44/44 bench:: unit tests pass.
+- Pre-merge baseline (commit c312f6789ef): 562 PASS / 0 FAIL / 41 SKIP.
+- Post-merge с main (commit 5964506277b — picked up Plan 56 + 59 tests):
+  570 PASS / 5 FAIL / 42 SKIP. **5 fails — НЕ от Phase D работы**:
+  plan56/{f1_hashmap_clone_basic, f2_hashmap_merge_filter,
+  f3_hashmap_clone_property, f4_clone_gc_stress} — pre-existing
+  Plan 56 partial-closure issues, добавлены в main коммитом
+  6657743c1b1 (vtable runtime infra). Plan 56 README отмечает
+  "partially closed; full vtable codegen integration future".
+
+Plan 57 — completely closed across all 4 фаз (MVP + A + B + C + D).
+28 commits в plan-57 branch:
+  - MVP (12) + 57.A (5) + 57.B (5) + 57.C (8) + 57.D (5) + closure docs.
+
+Plan 57 backlog: empty. Phase E (если потребуется) — TBD futures:
+- HTML dashboard interactivity (drill-down per-bench).
+- Distributed bench coordination (multi-machine).
+- AI-driven regression interpretation.
+- Memory bandwidth measurement integration.
+- Statistical anomaly auto-detection (changepoint analysis).

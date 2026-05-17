@@ -365,6 +365,10 @@ pub fn compile_for_profile(opts: &BenchRunOpts) -> Result<std::path::PathBuf> {
 /// Plan 57.C.5: recursive bench discovery. Walks directory, runs каждого
 /// .nv file как отдельный bench session, агрегирует результаты в один
 /// финальный output. Skip non-bench .nv files (no `bench "..." { ... }`).
+///
+/// Plan 57.D.3: aggregated JSON output — если `opts.out_json` set, каждый
+/// file пишет в temp JSON, потом merged в final aggregated JSON
+/// (per-file benches concatenated, metadata из первого file).
 fn run_dir(opts: BenchRunOpts) -> Result<i32> {
     let dir = opts.bench_path;
     let mut files: Vec<PathBuf> = Vec::new();
@@ -376,8 +380,16 @@ fn run_dir(opts: BenchRunOpts) -> Result<i32> {
     eprintln!("nova bench: discovered {} .nv files в {}", files.len(), dir.display());
 
     let mut total_benches = 0usize;
-    let mut all_analyzed: Vec<super::schema::AnalyzedBench> = Vec::new();
-    let mut last_meta: Option<super::repro::ReproMeta> = None;
+
+    // Plan 57.D.3: temp dir для per-file JSON aggregation.
+    let agg_tmp_dir = if opts.out_json.is_some() || opts.out_csv.is_some()
+                        || opts.out_md.is_some() || opts.out_criterion.is_some() {
+        let d = std::env::temp_dir()
+            .join(format!("nova-bench-agg-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&d);
+        Some(d)
+    } else { None };
+    let mut per_file_json_paths: Vec<PathBuf> = Vec::new();
 
     for f in &files {
         // Filter — skip files without `bench` keyword (cheap text check).
@@ -391,6 +403,14 @@ fn run_dir(opts: BenchRunOpts) -> Result<i32> {
             Err(_) => continue,
         }
         eprintln!("nova bench: running {}", f.display());
+
+        // Generate per-file temp JSON path если aggregation needed.
+        let per_file_json = agg_tmp_dir.as_ref().map(|d| {
+            let stem = f.file_stem().and_then(|s| s.to_str()).unwrap_or("bench");
+            d.join(format!("{}-{}.json", stem, per_file_json_paths.len()))
+        });
+        let per_file_json_ref = per_file_json.as_deref();
+
         let single_opts = BenchRunOpts {
             bench_path: f,
             repo: opts.repo,
@@ -412,33 +432,136 @@ fn run_dir(opts: BenchRunOpts) -> Result<i32> {
             keep_artifacts: opts.keep_artifacts,
             mono_depth: opts.mono_depth,
             mode: opts.mode,
-            out_json: None,        // aggregated написан в конце
+            out_json: per_file_json_ref,
             out_csv: None,
             out_md: None,
             out_criterion: None,
             color: opts.color,
         };
-        // Capture per-file results via в-process call — но `run()` пишет
-        // в terminal + (опц.) в out_*. Для агрегации проще: run_file_inner
-        // возвращает Vec<AnalyzedBench> + meta. Реализую minimally —
-        // вызываем run() с None outputs, results лежат в terminal output.
-        // Полная агрегация в Phase D (если требуется JSON aggregated output).
         let r = run(single_opts);
         if let Err(e) = r {
             eprintln!("nova bench: file {} failed — {}", f.display(), e);
         } else {
             total_benches += 1;
+            if let Some(p) = per_file_json {
+                if p.exists() { per_file_json_paths.push(p); }
+            }
         }
     }
 
     eprintln!("\nnova bench: {} files processed", total_benches);
-    if let Some(p) = opts.out_json {
-        eprintln!("nova bench: aggregated JSON output (--out) недоступен в \
-                   recursive mode MVP — Phase D follow-up.");
-        let _ = p;
+
+    // Plan 57.D.3: aggregate per-file JSON в один.
+    if let Some(out_path) = opts.out_json {
+        if per_file_json_paths.is_empty() {
+            eprintln!("nova bench: no per-file JSON outputs to aggregate.");
+        } else {
+            let agg = aggregate_json_files(&per_file_json_paths, dir)?;
+            std::fs::write(out_path, serde_json::to_string_pretty(&agg)?)
+                .map_err(|e| anyhow!("write aggregated JSON: {}", e))?;
+            eprintln!("nova bench: wrote aggregated JSON to {} ({} benches across {} files)",
+                out_path.display(),
+                agg.get("benches").and_then(|x| x.as_array()).map(|a| a.len()).unwrap_or(0),
+                per_file_json_paths.len());
+        }
     }
-    let _ = (all_analyzed, last_meta);  // suppress unused
+    if let Some(out_path) = opts.out_csv {
+        if !per_file_json_paths.is_empty() {
+            let agg = aggregate_json_files(&per_file_json_paths, dir)?;
+            let benches: Vec<super::schema::AnalyzedBench> =
+                super::schema::RunResultParsed::from_json(&agg)
+                    .map_err(|e| anyhow!("aggregate parse: {}", e))?
+                    .benches;
+            std::fs::write(out_path, super::report::csv_report(&benches))
+                .map_err(|e| anyhow!("write aggregated CSV: {}", e))?;
+            eprintln!("nova bench: wrote aggregated CSV to {} ({} benches)",
+                out_path.display(), benches.len());
+        }
+    }
+    if let Some(out_path) = opts.out_md {
+        if !per_file_json_paths.is_empty() {
+            let agg = aggregate_json_files(&per_file_json_paths, dir)?;
+            let parsed = super::schema::RunResultParsed::from_json(&agg)
+                .map_err(|e| anyhow!("aggregate parse: {}", e))?;
+            let mut md = String::new();
+            md.push_str(&format!("# Bench results — directory `{}`\n\n", dir.display()));
+            md.push_str("| Bench | median | MAD | mean | stddev | n | outliers |\n");
+            md.push_str("|---|---|---|---|---|---|---|\n");
+            for b in &parsed.benches {
+                let st = &b.stats_ns;
+                md.push_str(&format!("| {} | {} | {} | {} | {} | {} | {} |\n",
+                    b.raw.name,
+                    super::report::fmt_duration(st.median),
+                    super::report::fmt_duration(st.mad),
+                    super::report::fmt_duration(st.mean),
+                    super::report::fmt_duration(st.stddev),
+                    st.n,
+                    st.outliers_low + st.outliers_high));
+            }
+            std::fs::write(out_path, md)
+                .map_err(|e| anyhow!("write aggregated MD: {}", e))?;
+            eprintln!("nova bench: wrote aggregated markdown to {}", out_path.display());
+        }
+    }
+    if let Some(out_path) = opts.out_criterion {
+        if !per_file_json_paths.is_empty() {
+            let agg = aggregate_json_files(&per_file_json_paths, dir)?;
+            let benches: Vec<super::schema::AnalyzedBench> =
+                super::schema::RunResultParsed::from_json(&agg)
+                    .map_err(|e| anyhow!("aggregate parse: {}", e))?
+                    .benches;
+            let n = super::criterion_compat::write_all(out_path, &benches)?;
+            eprintln!("nova bench: wrote aggregated Criterion-compat layout to {} ({} benches)",
+                out_path.display(), n);
+        }
+    }
+
+    // Cleanup temp aggregation dir.
+    if let Some(d) = agg_tmp_dir {
+        if !opts.keep_artifacts {
+            let _ = std::fs::remove_dir_all(&d);
+        }
+    }
+
     Ok(0)
+}
+
+/// Plan 57.D.3: merge multiple per-file JSON results в один aggregated JSON.
+/// Metadata взята из первого file; benches concatenated. Format совместим
+/// с single-file output (`RunResultParsed::from_json` accepts).
+fn aggregate_json_files(paths: &[PathBuf], dir: &Path) -> Result<serde_json::Value> {
+    use serde_json::{json, Value};
+    let mut first_meta: Option<Value> = None;
+    let mut all_benches: Vec<Value> = Vec::new();
+    for p in paths {
+        let text = std::fs::read_to_string(p)
+            .map_err(|e| anyhow!("read {}: {}", p.display(), e))?;
+        let v: Value = serde_json::from_str(&text)
+            .map_err(|e| anyhow!("parse {}: {}", p.display(), e))?;
+        if first_meta.is_none() {
+            if let Some(m) = v.get("metadata") {
+                first_meta = Some(m.clone());
+            }
+        }
+        if let Some(arr) = v.get("benches").and_then(|x| x.as_array()) {
+            for b in arr {
+                all_benches.push(b.clone());
+            }
+        }
+    }
+    // Wrap первой метаданной в верхнеуровневый объект; добавляем
+    // aggregation marker (для downstream tooling).
+    let mut meta = first_meta.unwrap_or(json!({}));
+    if let Some(m) = meta.as_object_mut() {
+        m.insert("aggregated_from_directory".to_string(),
+            json!(dir.display().to_string()));
+        m.insert("aggregated_files_count".to_string(), json!(paths.len()));
+    }
+    Ok(json!({
+        "format_version": super::SCHEMA_VERSION,
+        "metadata": meta,
+        "benches": all_benches,
+    }))
 }
 
 /// Walk all .nv files recursively (skip hidden dirs + corpus/).
