@@ -1,0 +1,16 @@
+// Ф.28.3 (Plan 33.6): пустой effect (без methods и axioms) → W2402.
+// EXPECT_COMPILE_WARNING W2402
+
+module contracts.empty_effect_w2402
+
+type Useless effect {
+}
+
+fn noop() -> int
+{
+    0
+}
+
+test "empty effect" {
+    assert(noop() == 0)
+}
