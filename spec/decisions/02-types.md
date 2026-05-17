@@ -20,6 +20,9 @@
 | [D66](#d66-self-universal--ссылка-на-обобщающий-тип-в-методах-effects-protocols) | `Self` universal: ссылка на обобщающий тип в методах, effects, protocols | active |
 | [D72](#d72-generic-bounds-через-t-protocol--protocol-как-тип) | Generic bounds через `[T Protocol]` — protocol как тип | active |
 | [D110](#d110-ghost-state--spec-only-bindings) | Ghost state — spec-only bindings | active |
+| [D110](#d110-hybrid-dispatch-для-bound-k-methods) | Hybrid dispatch для bound-K methods | active |
+| [D111](#d111-tuple-monomorphization) | Tuple monomorphization | active |
+| [D119](#d119-method-level-type-parameters-в-generic-methods) | Method-level type parameters в generic methods | active |
 
 ---
 
@@ -3296,3 +3299,107 @@ elements).
   через implicit `.iter()`.
 - [Plan 48](../../docs/plans/48-closures-in-generics.md) —
   monomorphization infrastructure (mono pass).
+
+---
+
+## D119. Method-level type parameters в generic methods
+
+> **Status:** active (spec, 2026-05-17). Реализация — [Plan 48 Ф.9](../../docs/plans/48-closures-in-generics.md#-9--method-param-mono).
+> Закрывает частично [Q-generic-receiver-method](../open-questions.md#q-generic-receiver-method)
+> (для user-defined generic типов; built-in `[]T` остаётся V2).
+
+### Что
+
+Generic methods могут иметь **собственные type-параметры**, независимые
+от type-параметров receiver'а. Метод `Wrapper[T] @map[U](f fn(T) -> U) -> Wrapper[U]`
+имеет два уровня generics: receiver-level `T` и method-level `U`.
+Compiler через monomorphization создаёт **отдельную mono-instance**
+для каждой комбинации `(T, U)`.
+
+### Правило
+
+```nova
+export type Wrapper[T] { inner T }
+
+// Receiver-level T, method-level U.
+export fn Wrapper[T] @map[U](f fn(T) -> U) -> Wrapper[U] {
+    Wrapper[U].of(f(@inner))
+}
+
+// Call-site:
+let w = Wrapper[int].of(5)
+let a = w.map(|x| x * 2)              // (T=int, U=int) instance
+let s = w.map(|x| str.from(x))        // (T=int, U=str) instance
+let s2 = s.map(|x| x + "!")           // (T=str, U=str) instance
+```
+
+Compiler emits 3 distinct mono'd methods:
+- `Wrapper____nova_int_method_map____nova_int`
+- `Wrapper____nova_int_method_map____nova_str`
+- `Wrapper____nova_str_method_map____nova_str`
+
+**Параллель:** Rust `impl<T> Wrapper<T> { fn map<U>(self, f: impl Fn(T) -> U) -> Wrapper<U> }`
+— то же monomorphization per `(T, U)`. C++ `template<T> class Wrapper {
+template<U> Wrapper<U> map(...) }` — то же. Nova bootstrap теперь паритет.
+
+### Decision tree
+
+При codegen call'а `obj.method[U](args)`:
+
+1. **Receiver T** — резолвится из obj C-type (`Nova_Wrapper____<T>*` →
+   T = `<T>`). Существующая infrastructure (D72 + Plan 48 Ф.0).
+2. **Method-level U** — резолвится через **bidirectional inference**
+   из call args:
+   - Non-closure args: `infer_expr_c_type(arg)` → bind U через
+     `infer_type_param_binding`.
+   - Closure-typed args (`|x| body`): pre-populate closure-param types
+     с T-substituted C-types, recurse в body для return type → bind U.
+3. **Method C-name** включает обa уровней: `<TypeBase>____<T>_method_<m>____<U>`.
+
+### Constraints
+
+- **Method-level generics declared в `@method[U]`** — synтаксис как у
+  free-function generics (`fn name[U](...)`); receiver `[T]` parsed
+  отдельно.
+- **Closure args drive inference** — без explicit turbofish (`obj.map::<int>(...)`),
+  U inferенtsя из closure return type. Если нет args или U не появляется
+  в parameter types, compiler требует explicit type annotation
+  (диагностика D72-style).
+- **Per-(T, U) instances** — каждая уникальная пара получает свою mono'd
+  function. Worklist enrollment предотвращает дубликаты.
+- **Return type substitution** — `Wrapper[U]` в return type корректно
+  resolves в `Nova_Wrapper____<U>*` (не `Nova_U_p` placeholder).
+
+### Почему
+
+1. **Параллель Rust/C++** — индустриальный standard для generic methods.
+2. **Zero-cost** — каждая mono-instance это direct call, инлайнится,
+   no void* boxing/cast.
+3. **Composability** — `w.map(f).map(g).filter(p)` typical functional
+   chain работает без erasure penalty.
+4. **Был CC-FAIL** — без method-param mono `let m = w.map(|x| str.from(x))`
+   эмиттил `Nova_Wrapper____Nova_U_p* m = ...` (undefined struct, C-compile fail).
+
+### Что отвергнуто
+
+- **Method-level type-erasure (`void*` U)** — для bootstrap проще, но
+  ломает первый-class closures + breaks struct-typed U (record-value
+  не fit'ит в `void*` без heap-box). Equivalent проблема к Plan 48
+  receiver-level erasure отвергнутой в V1.
+- **Explicit-only U (`obj.map::<U>(...)` обязателен)** — verbose, не
+  matches industry standard. Inference из args — first-class.
+
+### Связь
+
+- [D72](#d72-generic-bounds-через-t-protocol--protocol-как-тип) —
+  generic bounds на type params; method-level U могут иметь bounds.
+- [D110](#d110-hybrid-dispatch-для-bound-k-methods) — hybrid dispatch
+  для protocol-bound type params; orthogonal к method-level vs receiver-level.
+- [D111](#d111-tuple-monomorphization) — tuple mono пользуется тем же
+  worklist infrastructure.
+- [Plan 48 Ф.9](../../docs/plans/48-closures-in-generics.md#-9--method-param-mono)
+  — реализация (emit_call path 5b + infer_mono_method_ret_with_args).
+- [Plan 63 Fix C](../../docs/plans/63-cross-module-mono-dispatch-correctness.md#fix-c-mono-enrollment-для-anonymous-record-literal-в-generic-return)
+  — remaining edge case Plan 63, закрытый этим D119.
+- [Q-generic-receiver-method](../open-questions.md#q-generic-receiver-method)
+  — частично закрыт (user generic типы); built-in `[]T @map[U]` V2.
