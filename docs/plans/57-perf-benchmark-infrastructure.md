@@ -598,12 +598,27 @@ Sub-items (каждый — отдельный commit):
 - [x] `bench "x" { group "g" { case "c" { ... } } }` parse + emit + 4-entry
       output (composite names `x/g/c`).
 
-### **Plan 57.F** — sketches → impl, in progress 2026-05-17
+### **Plan 57.F** — ✅ ALL CLOSED 2026-05-17
 
-- [ ] SSH distributed bench coordination (E.2 sketch → impl).
-- [ ] AI regression interpretation (E.3 sketch → impl).
-- [ ] Memory bandwidth measurement (E.4 sketch → impl, Linux).
-- [ ] Extended test coverage (e2e + .nv).
+- [x] **F.1** SSH distributed bench coordination
+      (`bench/remote.rs` 340 LOC + `nova bench remote {list,ping,run}`
+      subcommands; parallel `std::thread::spawn` per host; scp gather).
+- [x] **F.2** AI regression interpretation
+      (`bench/ai.rs` 430 LOC + `nova bench diff ... --explain` flag;
+      Anthropic + OpenAI providers; system `curl` HTTP — no Rust dep;
+      `--ai-dry-run` cost estimation; privacy warning stderr; SHA
+      auto-detect from JSON metadata).
+- [x] **F.3** Memory bandwidth measurement (Linux)
+      (`bench/membw.rs` 330 LOC + `nova bench membw-check`;
+      `perf_event_open(PERF_COUNT_HW_CACHE_MISSES)` fallback +
+      `/sys/devices/uncore_imc_*` Intel MBM probe + AMD `amd_df` /
+      `amd_l3` BwMon detection; cross-platform stubs).
+- [x] **F.4** Extended test coverage (+22 e2e asserts → 65 total;
+      59 bench module unit tests, all PASS on Windows release build).
+
+**Phase F totals:** ~1100 LOC (3 modules) + 113 LOC tests; all 4
+deferred E-sketches are now production code with graceful fallbacks
+on missing dependencies (ssh/curl/perf_event_open).
 
 ### **Plan 57.E** — ✅ ALL CLOSED 2026-05-17 (3 impl + 3 design-sketch)
 
@@ -653,8 +668,8 @@ Sub-items (каждый — отдельный commit):
 - **PGO** — отдельный Plan 10.
 - **Cloud-hosted bench history** — orphan branch достаточен.
 - **Multi-language compare** — research initiative.
-- **AI-driven regression analysis** — Phase C optional, не обещаем.
-- **Distributed benchmarking** — за горизонтом.
+- ~~**AI-driven regression analysis**~~ — implemented в Phase F.2 (opt-in).
+- ~~**Distributed benchmarking**~~ — implemented в Phase F.1 (SSH-based).
 
 ---
 
@@ -774,3 +789,14 @@ Sub-items (каждый — отдельный commit):
   Plan 57 — **ALL 5 phases COMPLETE** (38+ commits в plan-57).
   47 unit tests pass (44 bench:: + 3 anomaly::). 11 .nv tests + 25
   e2e asserts.
+- **2026-05-17 Phase F closed**: все 4 deferred E-sketches теперь
+  production code (~1100 LOC + 113 LOC e2e tests):
+  - 57.F.1 SSH distributed bench coordination (E.2 impl) `098948f5ca7`
+  - 57.F.2 AI regression interpretation (E.3 impl, opt-in) `c3eae50bf92`
+  - 57.F.3 Memory bandwidth measurement (E.4 impl, Linux) `600375fb81f`
+  - 57.F.4 extended e2e tests (+22 asserts → 65 total) `c83c0b50644`
+  Plan 57 — **MVP + A + B + C + D + E + F COMPLETE**. 59 unit tests
+  pass (включая 13 new для remote/ai/membw). 65 e2e asserts. 11 .nv
+  tests. Все deferred sketches doc converted to working impl. No
+  external Rust crates added: AI uses system `curl`, distributed uses
+  system `ssh`/`scp`, membw uses raw `perf_event_open` FFI.

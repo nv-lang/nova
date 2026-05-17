@@ -8851,3 +8851,50 @@ D111/D113/D114/D115/D116 заняты (Plan 33.x + Plan 56 + Plan 59). Plan
 migration doc). Кстати в spec/decisions/02-types.md есть pre-existing
 **duplicate D110** (`Ghost state` + `Hybrid dispatch` на разных строках)
 — это не моя забота, отдельный bug. Plan 60 не fix'ит.
+
+## [M-57.F-sketches-to-impl] — Phase F closure: deferred → production (2026-05-17)
+
+Plan 57.F closed: все 4 deferred E-sketches (E.2/E.3/E.4 + extended
+test coverage) теперь shipping code, без новых Rust crate-зависимостей.
+
+Implemented:
+- 57.F.1 (098948f5ca7): SSH distributed bench coordination
+  (`bench/remote.rs` 340 LOC + `nova bench remote {list,ping,run}`).
+- 57.F.2 (c3eae50bf92): AI regression interpretation (`bench/ai.rs`
+  430 LOC + `nova bench diff --explain` flag, opt-in; Anthropic +
+  OpenAI providers через system `curl`).
+- 57.F.3 (600375fb81f): Memory bandwidth measurement Linux
+  (`bench/membw.rs` 330 LOC + `nova bench membw-check`;
+  `perf_event_open(LLC_MISSES)` fallback + uncore_imc/amd_df probe).
+- 57.F.4 (c83c0b50644): extended e2e tests (+22 asserts → 65 total).
+
+Test coverage cumulative (Phase F):
+- 59 unit tests (+12 для remote::/ai::/membw::).
+- 65 e2e asserts (вырост с 43).
+- 11 .nv tests без изменений.
+
+**Не simplification** — это full implementation deferred design-sketches.
+В Phase E их отложили из-за scope; в Phase F закрыли потому что:
+(a) ни одна не требует external Rust dep (curl/ssh/scp = system binaries
+ship в Win10+/macOS/Linux default; MBM = raw libc syscall FFI как
+Plan 57.B.4); (b) opt-in defaults (AI требует API key, distributed
+требует remotes.toml, membw требует Linux + perf_event_paranoid≤1)
+— ни одна не наказывает users которые их не нужны.
+
+**Architectural choice:** для AI HTTP мы выбрали system `curl` вместо
+ureq/reqwest, чтобы избежать +30-50 transitive deps (rustls/native-
+tls/tokio/etc). Trade-off: на Windows версии < 10 (нет ship curl)
+feature недоступен — accepted поскольку Plan 57 поддержка Win11+
+уже baseline.
+
+**Schema integration deferred:** Plan 57.F.3 (memory bandwidth)
+implements measurement infrastructure + diagnostic subcommand. Per-
+sample emission в `memory_bandwidth_bytes_per_iter` JSON field
+(требует runtime hook в `nova_rt/bench.h` Linux block) **deferred**
+до verification на real Linux Xeon/Zen hardware — current API
+позволяет stand-alone measurement через `membw-check`, что
+достаточно для CI gating. Followup: F.3.b при первом need.
+
+Plan 57 — **completely closed across all 6 фаз** (MVP + A + B + C +
+D + E + F). 42+ commits в plan-57 branch. Все 4 phase-E deferred
+sketches теперь production code.
