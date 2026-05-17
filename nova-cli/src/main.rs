@@ -523,6 +523,11 @@ enum BenchCmd {
     /// Linux: tries perf_event_open + measures known loop. Other OS: stub.
     #[command(name = "cpu-instr-check")]
     CpuInstrCheck,
+    /// Plan 57.F.3: Diagnose memory bandwidth measurement availability.
+    /// Linux: probes /sys/devices/uncore_imc_* + tries LLC-miss perf
+    /// counter. Other OS: prints stub message.
+    #[command(name = "membw-check")]
+    MembwCheck,
     /// Plan 57.D.4: Print recommended history branch name based on
     /// NOVA_BENCH_RUNNER_ID env (multi-runner CI matrix support).
     /// Returns `bench-history` если env не set, иначе `bench-history-<id>`.
@@ -3088,6 +3093,47 @@ fn cmd_bench(sub: BenchCmd) -> Result<()> {
             } else {
                 println!("  Note: CPU instructions counter is Linux-only \
                           (uses perf_event_open syscall).");
+            }
+            Ok(())
+        }
+        BenchCmd::MembwCheck => {
+            println!("Memory bandwidth measurement availability:");
+            println!("  OS: {}", std::env::consts::OS);
+            println!("  Arch: {}", std::env::consts::ARCH);
+            let llc_avail = bench::membw::available();
+            let mbm_avail = bench::membw::available_mbm();
+            println!("  LLC-miss counter: {}",
+                if llc_avail { "yes ✓" } else { "no ✗" });
+            println!("  Uncore MBM events: {}",
+                if mbm_avail { "yes ✓" } else { "no ✗" });
+            let codes = bench::membw::mbm_event_codes();
+            if !codes.is_empty() {
+                println!("\n  Detected PMU events:");
+                for ev in &codes {
+                    println!("    {:<48}  type={}  config=0x{:x}",
+                        ev.name, ev.pmu_type, ev.config);
+                }
+            }
+            if llc_avail {
+                println!("\n  Test (10MB memset):");
+                // 10 MB allocation + write — forces LLC traffic.
+                let r = bench::membw::measure_bandwidth(|| {
+                    let mut v = vec![0u8; 10 * 1024 * 1024];
+                    for i in 0..v.len() { v[i] = (i & 0xff) as u8; }
+                    std::hint::black_box(&v);
+                });
+                match r {
+                    Ok(sample) => println!("    ≈ {} via {}",
+                        bench::membw::fmt_bytes(sample.bytes),
+                        sample.source.as_str()),
+                    Err(e) => println!("    Test failed: {}", e),
+                }
+            } else if cfg!(target_os = "linux") {
+                println!("\n  Hint: try `sudo sysctl -w kernel.perf_event_paranoid=1`");
+                println!("        для uncore_imc events может потребоваться CAP_PERFMON.");
+            } else {
+                println!("\n  Note: memory bandwidth is Linux-only \
+                          (perf_event_open + sysfs uncore_imc).");
             }
             Ok(())
         }
