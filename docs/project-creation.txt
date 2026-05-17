@@ -14621,3 +14621,65 @@ Acceptance:
 
 Production-grade: Rust паритет (+ explicit D-block enforcement что
 Rust не имеет; rustc не error если опредeлите публичное `len` field).
+
+
+# Plan 33.6 Ф.29 (2026-05-18): != bounds + Var-Var bounds + subtraction >
+
+Продолжение TrivialBackend `propagate_bounds` reasoning. Закрывает три
+deferred items (Ф.18.2, Ф.21.3 partial, Ф.25.3) одним спринтом за счёт
+common infrastructure (bounds-tracking через literal limits).
+
+## Ф.29.1 — != bounds check
+
+`requires x >= 1 ⊢ x != 0` — тривиально из lower(x)=1 > 0. TrivialBackend
+не reasons. В `try_check` (trivial.rs) добавлены symmetric arms
+`("!=", Var, IntLit)` и `("!=", IntLit, Var)`:
+- lower(v) > n → true
+- upper(v) < n → true
+- lower(v) == n && upper(v) == n → false (pinned)
+
+Test: f29_neq_bounds_positive (3 fn — positive lower, negative upper, pinned).
+
+## Ф.29.2 — Literal comparison normalization (documentation)
+
+Ф.21.3 был deferred с risk regression. Но literal-literal сравнения уже
+работают в `simplify_app` (IntLit OP IntLit → BoolLit для всех 6
+операторов). Тест f29_lit_comparison_positive документирует coverage.
+Non-literal Var-Var normalization остаётся V3.
+
+## Ф.29.3 — Var-Var bounds check
+
+`requires a >= 10; requires b <= 5 ⊢ a >= b` — частный случай Var-Var
+transitivity (Ф.18.2 был deferred целиком), но через bounds-tracking
+можно покрыть когда обе Var имеют literal bounds. В try_check добавлены
+4 arms: `>=, <=, >, <` для Var-Var с guard `a != b`:
+- (>= a b): lower(a) >= upper(b) → true; upper(a) < lower(b) → false
+- (<= a b): симметрично
+- (> a b):  lower(a) > upper(b) → true; upper(a) <= lower(b) → false
+- (< a b):  симметрично
+
+Test: f29_var_var_bounds_positive (3 fn — diff_nonneg, diff_positive,
+reverse_diff).
+
+## Ф.29.4 — Subtraction `>` (bonus)
+
+`try_subtraction_check` обрабатывал только `>=`. Добавлено `iop == ">"`:
+effective_goal = goal + 1, далее тот же check. Покрывает diff_positive.
+
+## Регрессия
+
+Перед Ф.29: 170 PASS / 0 FAIL / 44 SKIP contracts.
+После Ф.29:  173 PASS (+3) / 0 FAIL / 44 SKIP contracts.
+
+cargo test --release --lib verify::backend::trivial::tests: 6/6 PASS.
+
+## Acceptance
+
+- != бесплатно доказывается через bounds (без Z3) для positive/negative/pinned.
+- Var-Var inequality с literal bounds — TrivialBackend coverage.
+- Subtraction strict `>` теперь работает (не только `>=`).
+- Не trogает encoder structure (encode.rs не менялся), не expand'ит
+  EncodingError::Unsupported scope (regression hazard zero).
+- Закрывает 3 deferred items из 33.6 (Ф.18.2/Ф.21.3/Ф.25.3) с зауженным
+  scope (bounds-based, не full LIA).
+
