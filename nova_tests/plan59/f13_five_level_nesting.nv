@@ -1,0 +1,48 @@
+// Positive (Phase 5): 5-уровневое nested tuple — stress test для
+// length-prefix encoding. Под старой `_NovaTuple____<...>__<...>...`
+// схемой каждый уровень добавлял `____` collisions, parser ломался.
+// Phase 5: каждый level — explicit `<Lk>_<Tk>`, unambiguous до любой
+// глубины. Здесь mangled C name ~150+ chars.
+
+module plan59.f13_five_level_nesting
+
+
+test "5-level nested ((((( int ))))) с access на каждый уровень" {
+    // Level 1: int
+    // Level 2: (int, int)
+    // Level 3: ((int, int), int)
+    // Level 4: (((int, int), int), int)
+    // Level 5: ((((int, int), int), int), int)
+    let l5 = ((((1, 2), 3), 4), 5)
+
+    // Field access вглубь — каждый `.0` спускается на уровень.
+    assert(l5.1 == 5)
+    assert(l5.0.1 == 4)
+    assert(l5.0.0.1 == 3)
+    assert(l5.0.0.0.0 == 1)
+    assert(l5.0.0.0.1 == 2)
+}
+
+
+test "5-level destructure" {
+    let l5 = ((((10, 20), 30), 40), 50)
+    let (l4, x5) = l5
+    let (l3, x4) = l4
+    let (l2, x3) = l3
+    let (a, b) = l2
+    assert(a == 10)
+    assert(b == 20)
+    assert(x3 == 30)
+    assert(x4 == 40)
+    assert(x5 == 50)
+}
+
+
+test "5-level mixed branches: ((str, (int, bool)), (f64, byte))" {
+    let mixed = (("greet", (1, true)), (1.5, 7 as byte))
+    assert(mixed.0.0 == "greet")
+    assert(mixed.0.1.0 == 1)
+    assert(mixed.0.1.1)
+    assert(mixed.1.0 == 1.5)
+    assert(mixed.1.1 == (7 as byte))
+}
