@@ -1,0 +1,20 @@
+// EXPECT_COMPILE_WARNING large mono'd tuple
+//
+// Positive (Ф.7.3): sizeof warning trigger через **bytes** threshold
+// (не arity). 8 nova_str elements = 8*16 = 128 bytes (== threshold +
+// arity > 5). Edge-case test что estimator корректно sum'ит struct
+// types (nova_str = 16 bytes, не pointer-8).
+
+module plan59.f27_sizeof_warning_via_bytes_threshold
+
+
+fn make_str_octuple() -> (str, str, str, str, str, str, str, str) {
+    ("a", "b", "c", "d", "e", "f", "g", "h")
+}
+
+
+test "8 nova_str tuple — sizeof warning emitted" {
+    let t = make_str_octuple()
+    assert(t.0 == "a")
+    assert(t.7 == "h")
+}
