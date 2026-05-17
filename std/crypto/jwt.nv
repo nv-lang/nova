@@ -17,6 +17,8 @@ module crypto.jwt
 import std.testing.handlers as th
 
 
+/// Errors при JWT операциях.
+#stable(since = "0.1")
 export type JwtError
     | InvalidFormat
     | UnsupportedAlgorithm { alg str }
@@ -26,12 +28,11 @@ export type JwtError
     | DecodingFailed
 
 
-// ──────────────────────────────────────────────────────────────────────────
-// Encode
-// ──────────────────────────────────────────────────────────────────────────
-
-// Создаёт JWT с алгоритмом HS256.
-// `claims` — JsonValue (обычно Object с полями iss/sub/exp/...).
+/// Create JWT с алгоритмом HS256 (HMAC-SHA-256). `claims` — обычно `Object`
+/// с полями iss/sub/exp/iat/...
+///
+/// Format: `<header_b64>.<payload_b64>.<signature_b64>` (RFC 7519).
+#stable(since = "0.1")
 export fn Jwt.encode_hs256(secret []byte, claims JsonValue) -> str {
     let header = JsonValue.Object(make_header_hs256())
     let header_b64 = Base64.encode_url(header.into().bytes())
@@ -58,8 +59,9 @@ fn make_header_hs256() -> HashMap[str, JsonValue] {
 // Decode + Verify
 // ──────────────────────────────────────────────────────────────────────────
 
-// Verifies signature with given secret. Возвращает payload (claims).
-// Throws Fail[JwtError] если signature не совпадает или формат битый.
+/// Verify HS256 signature + return payload. **Не проверяет** exp/nbf — это
+/// делает `validate_hs256`. Throws `JwtError` (Invalid format/sig/alg).
+#stable(since = "0.1")
 export fn Jwt.decode_hs256(secret []byte, token str) Fail[JwtError] -> JsonValue {
     let parts = token.split(".")
     if parts.len != 3 { throw InvalidFormat }
@@ -114,8 +116,9 @@ export fn Jwt.decode_hs256(secret []byte, token str) Fail[JwtError] -> JsonValue
     }
 }
 
-// Полная валидация: signature + exp + nbf.
-// Использует Time effect для current time — детерминирован в тестах.
+/// Full JWT validation: signature + `exp` (expiration) + `nbf` (not-before).
+/// Использует Time effect — детерминирован в тестах через `th.fixed_ms(...)`.
+#stable(since = "0.1")
 export fn Jwt.validate_hs256(secret []byte, token str) Time Fail[JwtError] -> JsonValue {
     let claims = Jwt.decode_hs256(secret, token)
     let now_ms = Time.now_ms()
