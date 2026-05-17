@@ -427,3 +427,69 @@ _NovaTuple_<arity>_<L1>_<T1>_<L2>_<T2>_..._<LN>_<TN>
 
 ~60-100 LOC + 1 test. Risk **medium-low** — изолированная замена
 encoding с явным parser'ом + regression test guard.
+
+
+---
+
+## Phase 7 — Production polish (audit-driven, 2026-05-17 EOD+2)
+
+### Контекст
+
+После закрытия Phases 1-6 + 2 deferred follow-up'ов проведён audit
+production-grade completeness (изолированно в worktree plan-59-audit).
+Сравнение с Go/Rust/TS:
+- Nova паритет с Rust по zero-cost mono tuples.
+- Nova лучше TS (зеро runtime overhead vs erased Array).
+- Nova лучше Go (first-class tuples vs тупо multiple returns).
+- Nova отстаёт от Rust в: named tuple fields, subtyping, destructure
+  в fn params, full mono'd Result.
+
+User: "продолжай работать по плану сам по всем оставшимся пунктам
+без упрощений как для прода".
+
+### Ф.7.1 — Tuple arity mismatch diagnostics (M, ~30 LOC)
+
+Сейчас destructure `let (a, b, c) = some_2_tuple` падает с C compiler
+error "no member named 'f2'" — плохой UX. Pre-check в
+`pattern_destructure_tuple` для Pattern::Tuple — если pattern arity
+!= actual tuple arity, emit clear Nova-level diagnostic.
+
+### Ф.7.2 — Stdlib iter cleanup BTreeMap/HashSet (M, ~20 LOC)
+
+Аудит std/collections/*.nv на legacy `for i in 0..@_field.len()`
+workaround'ы, замена на идиоматичный `for x in @iter()` после
+Plan 63 Fix E.
+
+### Ф.7.3 — sizeof validation для больших tuples (M, ~40 LOC)
+
+Большой tuple (>5 elems, >128 bytes) может вызвать cache-line
+stuffing. Emit Plan 36 W-warning suggesting record/struct.
+
+### Ф.7.4 — Named tuple fields (L, ~150-200 LOC)
+
+`(name: T1, name: T2)` syntax → desugar в positional. Spec amend
+D27 / D111.
+
+### Ф.7.5 — Full mono'd Result NovaRes_<T>_<E> (L, ~300-400 LOC)
+
+Аналогично NovaOpt — register Result variants per (T, E) combo.
+
+### Ф.7.6 — Tuple subtyping / variance (L, ~200+ LOC)
+
+Design only — нет immediate use case для bootstrap.
+
+### Acceptance Phase 7
+
+- [ ] Ф.7.1: arity diagnostics + test PASS.
+- [ ] Ф.7.2: stdlib iter cleanup + regression 0 fail.
+- [ ] Ф.7.3: sizeof warning + test PASS.
+- [ ] Ф.7.4: named tuple fields parser+codegen+spec+test.
+- [ ] Ф.7.5: mono'd Result + spec + test.
+- [ ] Ф.7.6: tuple subtyping — design only.
+- [ ] Full regression — 0 регрессий.
+- [ ] simplifications.md + project-creation.txt + discussion-log updates.
+
+### Working environment
+
+Working dir: `d:\Sources\nova-lang\.claude\worktrees\plan-59-audit`
+(isolated worktree). Merge в main после complete acceptance.
