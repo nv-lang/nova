@@ -516,6 +516,14 @@ enum BenchCmd {
         /// JSON output (default: terminal table).
         #[arg(long)]
         json: bool,
+        /// Plan 57.D.5: HTML compiler-perf dashboard output path.
+        /// Generates echarts stacked bar chart per-file + detail table.
+        #[arg(long)]
+        html: Option<PathBuf>,
+        /// Custom echarts URL (для offline режима).
+        #[arg(long = "echarts-url",
+              default_value = "https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js")]
+        echarts_url: String,
         /// Build mode (release|dev).
         #[arg(long, default_value = "release")]
         mode: String,
@@ -2849,7 +2857,7 @@ fn cmd_bench(sub: BenchCmd) -> Result<()> {
             if exit != 0 { std::process::exit(exit); }
             Ok(())
         }
-        BenchCmd::Corpus { path, json, mode, toolchain, gc } => {
+        BenchCmd::Corpus { path, json, html, echarts_url, mode, toolchain, gc } => {
             // Discover nova-cli path (self).
             let self_exe = std::env::current_exe()
                 .map_err(|e| anyhow!("locate self: {}", e))?;
@@ -2872,6 +2880,11 @@ fn cmd_bench(sub: BenchCmd) -> Result<()> {
             if json {
                 let v = bench::corpus::render_json(&entries);
                 println!("{}", serde_json::to_string_pretty(&v)?);
+            } else if let Some(html_path) = html {
+                let h = bench::corpus::render_html(&entries, &echarts_url);
+                std::fs::write(&html_path, h)
+                    .map_err(|e| anyhow!("write HTML: {}", e))?;
+                eprintln!("nova bench corpus: wrote HTML to {}", html_path.display());
             } else {
                 print!("{}", bench::corpus::render_terminal(&entries));
             }
