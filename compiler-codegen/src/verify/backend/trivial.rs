@@ -263,8 +263,19 @@ fn simplify_app(op: &str, args: &[SmtTerm]) -> SmtTerm {
             _ => SmtTerm::App(op.into(), args.to_vec()),
         },
         "and" => {
-            let mut filtered: Vec<SmtTerm> = Vec::new();
+            // Ф.30.1 (Plan 33.6): flatten nested `(and X (and Y Z))` → `(and X Y Z)`.
+            // Associativity: позволяет filter/dedup увидеть все clauses.
+            let mut flat: Vec<SmtTerm> = Vec::new();
             for a in args {
+                match a {
+                    SmtTerm::App(op2, a2) if op2 == "and" => {
+                        for inner in a2 { flat.push(inner.clone()); }
+                    }
+                    _ => flat.push(a.clone()),
+                }
+            }
+            let mut filtered: Vec<SmtTerm> = Vec::new();
+            for a in &flat {
                 match a {
                     SmtTerm::BoolLit(true) => continue, // identity
                     SmtTerm::BoolLit(false) => return SmtTerm::BoolLit(false),
@@ -310,8 +321,18 @@ fn simplify_app(op: &str, args: &[SmtTerm]) -> SmtTerm {
             }
         }
         "or" => {
-            let mut filtered: Vec<SmtTerm> = Vec::new();
+            // Ф.30.1 (Plan 33.6): flatten nested `(or X (or Y Z))` → `(or X Y Z)`.
+            let mut flat: Vec<SmtTerm> = Vec::new();
             for a in args {
+                match a {
+                    SmtTerm::App(op2, a2) if op2 == "or" => {
+                        for inner in a2 { flat.push(inner.clone()); }
+                    }
+                    _ => flat.push(a.clone()),
+                }
+            }
+            let mut filtered: Vec<SmtTerm> = Vec::new();
+            for a in &flat {
                 match a {
                     SmtTerm::BoolLit(false) => continue, // identity
                     SmtTerm::BoolLit(true) => return SmtTerm::BoolLit(true),
@@ -513,16 +534,18 @@ fn propagate_bounds(conjuncts: &[SmtTerm]) -> Vec<SmtTerm> {
     conjuncts.iter().map(|c| {
         // Ф.17.2 (Plan 33.6): addition bounds propagation.
         // `(>= (+ Var1 Var2) goal)` где lower(Var1) + lower(Var2) >= goal → true.
+        // Ф.30.2: extended на `>` (strict) — effective_goal = goal + 1.
         let try_addition_check = |inner: &SmtTerm| -> Option<bool> {
             if let SmtTerm::App(iop, iargs) = inner {
-                if iop != ">=" || iargs.len() != 2 { return None; }
+                if (iop != ">=" && iop != ">") || iargs.len() != 2 { return None; }
                 let goal = match &iargs[1] { SmtTerm::IntLit(n) => *n, _ => return None };
+                let effective_goal = if iop == ">" { goal.saturating_add(1) } else { goal };
                 if let SmtTerm::App(aop, aargs) = &iargs[0] {
                     if aop != "+" || aargs.len() != 2 { return None; }
                     // Both args — Var.
                     if let (SmtTerm::Var(a), SmtTerm::Var(b)) = (&aargs[0], &aargs[1]) {
                         if let (Some(la), Some(lb)) = (lower.get(a), lower.get(b)) {
-                            if la.saturating_add(*lb) >= goal { return Some(true); }
+                            if la.saturating_add(*lb) >= effective_goal { return Some(true); }
                         }
                     }
                     // (+ Var IntLit) или (+ IntLit Var).
@@ -533,7 +556,7 @@ fn propagate_bounds(conjuncts: &[SmtTerm]) -> Vec<SmtTerm> {
                     };
                     if let (Some(v), Some(n)) = (var_opt, lit_opt) {
                         if let Some(known_low) = lower.get(v) {
-                            if known_low.saturating_add(n) >= goal { return Some(true); }
+                            if known_low.saturating_add(n) >= effective_goal { return Some(true); }
                         }
                     }
                 }
@@ -636,15 +659,17 @@ fn propagate_bounds(conjuncts: &[SmtTerm]) -> Vec<SmtTerm> {
         };
         // Ф.17.1 (Plan 33.6): negation monotone.
         // `(>= (- 0 Var) goal)` где known upper(Var) <= -goal → true.
+        // Ф.30.4: extended на `>` (strict).
         let try_negation_check = |inner: &SmtTerm| -> Option<bool> {
             if let SmtTerm::App(iop, iargs) = inner {
-                if iop != ">=" || iargs.len() != 2 { return None; }
+                if (iop != ">=" && iop != ">") || iargs.len() != 2 { return None; }
                 let goal = match &iargs[1] { SmtTerm::IntLit(n) => *n, _ => return None };
+                let effective_goal = if iop == ">" { goal.saturating_add(1) } else { goal };
                 if let SmtTerm::App(sop, sargs) = &iargs[0] {
                     if sop != "-" || sargs.len() != 2 { return None; }
                     if let (SmtTerm::IntLit(0), SmtTerm::Var(v)) = (&sargs[0], &sargs[1]) {
                         if let Some(known_up) = upper.get(v) {
-                            if known_up.saturating_neg() >= goal { return Some(true); }
+                            if known_up.saturating_neg() >= effective_goal { return Some(true); }
                         }
                     }
                 }
@@ -653,10 +678,12 @@ fn propagate_bounds(conjuncts: &[SmtTerm]) -> Vec<SmtTerm> {
         };
         // Ф.16.3 (Plan 33.6): strict-monotone constant multiply.
         // `(>= (* L Var) goal)` где L > 0 и known lower(Var) * L >= goal → true.
+        // Ф.30.3: extended на `>` (strict).
         let try_const_mul_check = |inner: &SmtTerm| -> Option<bool> {
             if let SmtTerm::App(iop, iargs) = inner {
-                if iop != ">=" || iargs.len() != 2 { return None; }
+                if (iop != ">=" && iop != ">") || iargs.len() != 2 { return None; }
                 let goal = match &iargs[1] { SmtTerm::IntLit(n) => *n, _ => return None };
+                let effective_goal = if iop == ">" { goal.saturating_add(1) } else { goal };
                 // arg[0] должен быть (* L Var) или (* Var L).
                 if let SmtTerm::App(mop, margs) = &iargs[0] {
                     if mop != "*" || margs.len() != 2 { return None; }
@@ -667,7 +694,7 @@ fn propagate_bounds(conjuncts: &[SmtTerm]) -> Vec<SmtTerm> {
                     };
                     if l > 0 {
                         if let Some(known_low) = lower.get(v) {
-                            if known_low.saturating_mul(l) >= goal {
+                            if known_low.saturating_mul(l) >= effective_goal {
                                 return Some(true);
                             }
                         }
@@ -883,5 +910,41 @@ mod tests {
         let goal = SmtTerm::eq(x.clone(), x);
         let res = super::super::try_prove(&mut b, goal);
         assert!(matches!(res, SatResult::Unsat(_)));
+    }
+
+    #[test]
+    fn simplify_and_flatten_nested() {
+        // Ф.30.1: (and X (and Y Z)) → (and X Y Z) → если все BoolLit(true) → true.
+        let t = SmtTerm::BoolLit(true);
+        let inner = SmtTerm::App("and".into(), vec![t.clone(), t.clone()]);
+        let outer = SmtTerm::App("and".into(), vec![t.clone(), inner]);
+        assert_eq!(simplify(&outer), SmtTerm::BoolLit(true));
+    }
+
+    #[test]
+    fn simplify_and_flatten_preserves_vars() {
+        // (and X (and Y Z)) с не-литералами → flatten + dedup → (and X Y Z).
+        let x = SmtTerm::Var("x".into());
+        let y = SmtTerm::Var("y".into());
+        let z = SmtTerm::Var("z".into());
+        let inner = SmtTerm::App("and".into(), vec![y.clone(), z.clone()]);
+        let outer = SmtTerm::App("and".into(), vec![x.clone(), inner]);
+        let result = simplify(&outer);
+        if let SmtTerm::App(op, args) = &result {
+            assert_eq!(op, "and");
+            assert_eq!(args.len(), 3);
+        } else {
+            panic!("expected App(and, ...), got {:?}", result);
+        }
+    }
+
+    #[test]
+    fn simplify_or_flatten_nested() {
+        // (or X (or Y Z)) с BoolLit(false) → flat → if any true → true.
+        let f = SmtTerm::BoolLit(false);
+        let t = SmtTerm::BoolLit(true);
+        let inner = SmtTerm::App("or".into(), vec![f.clone(), t]);
+        let outer = SmtTerm::App("or".into(), vec![f, inner]);
+        assert_eq!(simplify(&outer), SmtTerm::BoolLit(true));
     }
 }
