@@ -47,7 +47,7 @@ test "WriteBuffer: chained write_byte" {
     wb.write_byte(0x01).write_byte(0x02).write_byte(0x03)
     assert(wb.len() == 3)
     let bs = wb.into()
-    assert(bs.len == 3)
+    assert(bs.len() == 3)
     assert(bs[0] == 0x01)
     assert(bs[1] == 0x02)
     assert(bs[2] == 0x03)

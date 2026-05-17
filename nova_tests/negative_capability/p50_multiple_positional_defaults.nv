@@ -10,7 +10,7 @@ module negative_capability.p50_multiple_positional_defaults
 
 fn connect(host str, port int = 8080, flag bool = false) -> int {
     let f = if flag { 1 } else { 0 }
-    host.len + port + f
+    host.len() + port + f
 }
 
 test "multiple positional args on defaulted params rejected" {

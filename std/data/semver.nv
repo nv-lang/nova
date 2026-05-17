@@ -114,15 +114,15 @@ export fn Version @patch() => @patch
 
 /// True если version имеет pre-release identifier (e.g. "1.0.0-alpha.1").
 #stable(since = "0.1")
-export fn Version @is_prerelease() -> bool => @pre.len > 0
+export fn Version @is_prerelease() -> bool => @pre.len() > 0
 
 /// True если version имеет build metadata (e.g. "1.0.0+sha1234").
 #stable(since = "0.1")
-export fn Version @has_build() -> bool => @build.len > 0
+export fn Version @has_build() -> bool => @build.len() > 0
 
 /// True если stable release: не pre-release, major > 0.
 #stable(since = "0.1")
-export fn Version @is_stable() -> bool => @pre.len == 0 && @major > 0
+export fn Version @is_stable() -> bool => @pre.len() == 0 && @major > 0
 
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -150,7 +150,7 @@ export fn Version @is_stable() -> bool => @pre.len == 0 && @major > 0
 /// ```
 #stable(since = "0.1")
 export fn Version.from(s str) Fail[ParseVersionError] -> Self {
-    if s.len == 0 {
+    if s.len() == 0 {
         throw EmptyInput
     }
 
@@ -159,12 +159,12 @@ export fn Version.from(s str) Fail[ParseVersionError] -> Self {
     // Pre: после "-", но "-" может быть в build identifier'е, поэтому
     // обрабатываем сначала split по "+", потом по "-" в первой части.
     let (left, build_str) = match s.find("+") {
-        Some(i) => (s.slice(0, i), s.slice(i + 1, s.len))
+        Some(i) => (s.slice(0, i), s.slice(i + 1, s.len()))
         None    => (s, "")
     }
 
     let (core, pre_str) = match left.find("-") {
-        Some(i) => (left.slice(0, i), left.slice(i + 1, left.len))
+        Some(i) => (left.slice(0, i), left.slice(i + 1, left.len()))
         None    => (left, "")
     }
 
@@ -172,14 +172,14 @@ export fn Version.from(s str) Fail[ParseVersionError] -> Self {
     let (major, minor, patch) = parse_core(core)
 
     // Парсим pre identifiers.
-    let pre = if pre_str.len == 0 {
+    let pre = if pre_str.len() == 0 {
         []
     } else {
         parse_identifiers(pre_str, "pre-release", true)
     }
 
     // Парсим build identifiers.
-    let build = if build_str.len == 0 {
+    let build = if build_str.len() == 0 {
         []
     } else {
         parse_identifiers(build_str, "build", false)
@@ -192,13 +192,13 @@ export fn Version.from(s str) Fail[ParseVersionError] -> Self {
 // zero (кроме самого "0").
 fn parse_core(core str) Fail[ParseVersionError] -> (u64, u64, u64) {
     let parts = core.split(".")
-    if parts.len < 2 {
+    if parts.len() < 2 {
         throw MissingMinor
     }
-    if parts.len < 3 {
+    if parts.len() < 3 {
         throw MissingPatch
     }
-    if parts.len > 3 {
+    if parts.len() > 3 {
         throw InvalidComponent { component: "core", value: core }
     }
 
@@ -210,13 +210,13 @@ fn parse_core(core str) Fail[ParseVersionError] -> (u64, u64, u64) {
 
 // Числовой компонент: только цифры, без leading zero (кроме "0").
 fn parse_numeric_component(s str, name str) Fail[ParseVersionError] -> u64 {
-    if s.len == 0 {
+    if s.len() == 0 {
         throw InvalidComponent { component: name, value: s }
     }
     if !is_all_digits(s) {
         throw InvalidComponent { component: name, value: s }
     }
-    if s.len > 1 && s.starts_with("0") {
+    if s.len() > 1 && s.starts_with("0") {
         throw LeadingZero { component: name, value: s }
     }
     match u64.try_from(s) {
@@ -232,14 +232,14 @@ fn parse_identifiers(s str, section str, strict_no_leading_zero bool) Fail[Parse
     let raw = s.split(".")
     let mut out []str = []
     for ident in raw {
-        if ident.len == 0 {
+        if ident.len() == 0 {
             throw EmptyIdentifier { section: section }
         }
         if !is_valid_identifier(ident) {
             throw InvalidIdentifier { section: section, value: ident }
         }
         // Numeric identifier в pre — без leading zero.
-        if strict_no_leading_zero && is_all_digits(ident) && ident.len > 1 && ident.starts_with("0") {
+        if strict_no_leading_zero && is_all_digits(ident) && ident.len() > 1 && ident.starts_with("0") {
             throw LeadingZero { component: section, value: ident }
         }
         out.push(ident)
@@ -249,7 +249,7 @@ fn parse_identifiers(s str, section str, strict_no_leading_zero bool) Fail[Parse
 
 // Проверка: все символы — ASCII цифры.
 fn is_all_digits(s str) -> bool {
-    if s.len == 0 { return false }
+    if s.len() == 0 { return false }
     for c in s.chars() {
         if !is_ascii_digit(c) {
             return false
@@ -289,10 +289,10 @@ fn is_ascii_ident_char(c char) -> bool {
 #stable(since = "0.1")
 export fn Version @into() -> str {
     let mut s = str.from(@major) + "." + str.from(@minor) + "." + str.from(@patch)
-    if @pre.len > 0 {
+    if @pre.len() > 0 {
         s = s + "-" + join_dots(@pre)
     }
-    if @build.len > 0 {
+    if @build.len() > 0 {
         s = s + "+" + join_dots(@build)
     }
     s
@@ -343,8 +343,8 @@ export fn Version @lt(other Version) -> bool {
     if @patch != other.patch { return @patch < other.patch }
 
     // major.minor.patch равны → смотрим pre.
-    let a_has_pre = @pre.len > 0
-    let b_has_pre = other.pre.len > 0
+    let a_has_pre = @pre.len() > 0
+    let b_has_pre = other.pre.len() > 0
 
     if a_has_pre && !b_has_pre { return true }   // 1.0.0-alpha < 1.0.0
     if !a_has_pre && b_has_pre { return false }
@@ -356,7 +356,7 @@ export fn Version @lt(other Version) -> bool {
 
 // Покомпонентное pre-release сравнение (§ 11.4).
 fn pre_lt(a []str, b []str) -> bool {
-    let n = if a.len < b.len { a.len } else { b.len }
+    let n = if a.len() < b.len() { a.len() } else { b.len() }
     let mut i = 0
     while i < n {
         let result = compare_ident(a[i], b[i])
@@ -365,7 +365,7 @@ fn pre_lt(a []str, b []str) -> bool {
         i += 1
     }
     // Все общие компоненты равны — у кого меньше длина, тот меньше.
-    a.len < b.len
+    a.len() < b.len()
 }
 
 // Сравнение двух identifier'ов: возвращает -1, 0, или 1.
@@ -392,9 +392,9 @@ fn compare_ident(a str, b str) -> int {
 
 // Helper для @eq: массив строк структурно равен.
 fn pre_eq(a []str, b []str) -> bool {
-    if a.len != b.len { return false }
+    if a.len() != b.len() { return false }
     let mut i = 0
-    while i < a.len {
+    while i < a.len() {
         if a[i] != b[i] { return false }
         i += 1
     }
@@ -423,28 +423,28 @@ test "parse: простая версия" {
     assert(v.major == 1)
     assert(v.minor == 2)
     assert(v.patch == 3)
-    assert(v.pre.len == 0)
-    assert(v.build.len == 0)
+    assert(v.pre.len() == 0)
+    assert(v.build.len() == 0)
 }
 
 test "parse: pre-release" {
     let v = Version.from("1.0.0-alpha")
     assert(v.major == 1)
-    assert(v.pre.len == 1)
+    assert(v.pre.len() == 1)
     assert(v.pre[0] == "alpha")
     assert(v.is_prerelease())
 }
 
 test "parse: pre-release с компонентами" {
     let v = Version.from("1.0.0-alpha.1")
-    assert(v.pre.len == 2)
+    assert(v.pre.len() == 2)
     assert(v.pre[0] == "alpha")
     assert(v.pre[1] == "1")
 }
 
 test "parse: build metadata" {
     let v = Version.from("1.0.0+20130313144700")
-    assert(v.build.len == 1)
+    assert(v.build.len() == 1)
     assert(v.build[0] == "20130313144700")
     assert(v.has_build())
 }
@@ -452,7 +452,7 @@ test "parse: build metadata" {
 test "parse: pre + build" {
     let v = Version.from("1.0.0-beta+exp.sha.5114f85")
     assert(v.pre[0] == "beta")
-    assert(v.build.len == 3)
+    assert(v.build.len() == 3)
     assert(v.build[0] == "exp")
     assert(v.build[1] == "sha")
     assert(v.build[2] == "5114f85")
@@ -467,7 +467,7 @@ test "parse: большие числа" {
 
 test "parse: pre с цифрами и точками" {
     let v = Version.from("1.0.0-x.7.z.92")
-    assert(v.pre.len == 4)
+    assert(v.pre.len() == 4)
     assert(v.pre[3] == "92")
 }
 
@@ -609,7 +609,7 @@ test "compare: цепочка pre-release per semver.org example" {
         Version.from("1.0.0-rc.1"),
         Version.from("1.0.0"),
     ]
-    for i in 0..chain.len - 1 {
+    for i in 0..chain.len() - 1 {
         assert(chain[i].lt(chain[i + 1]))
     }
 }

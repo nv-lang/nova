@@ -37,7 +37,7 @@ test "bench: 50k str-аллокаций через interpolation" {
     let mut count = 0
     for i in 0..50_000 {
         let s = "item_${i}"
-        count = count + s.len
+        count = count + s.len()
     }
     // Все строки "item_N" имеют длину ≥ 6 — count > 300k
     assert(count > 300_000)

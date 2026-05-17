@@ -9206,25 +9206,26 @@ impl CEmitter {
                     return self.emit_method_value(obj, method_name);
                 }
                 let obj_ty = self.infer_expr_c_type(obj);
+                // Plan 60 / D117: size-accessor field-style access — error.
+                // Old paths были `s.len` / `arr.len` / `arr.is_empty` /
+                // `s.is_empty` / `arr.cap` — все теперь method-only.
+                // Diagnostic с fix-it hint (append `()` или rename `.cap`→`.capacity()`).
+                if (obj_ty == "nova_str" || obj_ty.starts_with("NovaArray_"))
+                    && matches!(name.as_str(), "len" | "is_empty" | "byte_len" | "cap" | "capacity")
+                {
+                    let suggested = if name == "cap" { "capacity" } else { name.as_str() };
+                    let hint_form = if name == "cap" {
+                        "rename to `.capacity()` (Rust/C++/Swift naming; D117)".to_string()
+                    } else {
+                        format!("append `()` — use `.{}()` method call", suggested)
+                    };
+                    return Err(format!(
+                        "[E_SIZE_ACCESSOR_FIELD] size-like accessor `{}` is method-only \
+                         (Plan 60 / D117); {}",
+                        name, hint_form
+                    ));
+                }
                 let o = self.emit_expr(obj)?;
-                // D26 (school B): s.len — длина в codepoint'ах, O(n).
-                // Для байтовой длины — s.byte_len() (см. str_method_to_rt).
-                if obj_ty == "nova_str" && name == "len" {
-                    return Ok(format!("nova_str_char_len({})", o));
-                }
-                // NovaArray_T*.len → arr->len (already nova_int/int64_t)
-                if obj_ty.starts_with("NovaArray_") && name == "len" {
-                    return Ok(format!("({}->len)", o));
-                }
-                // NovaArray_T*.is_empty → (arr->len == 0) — bool, D38 built-in.
-                if obj_ty.starts_with("NovaArray_") && name == "is_empty" {
-                    return Ok(format!("(({}->len) == 0)", o));
-                }
-                // nova_str.is_empty → (s.len == 0) — bool. D26: str.len в
-                // codepoint'ах (O(n)); is_empty можно проверить по byte_len O(1).
-                if obj_ty == "nova_str" && name == "is_empty" {
-                    return Ok(format!("(({}.len) == 0)", o));
-                }
                 // Tuple field access: t.0 → t.f0, t.1 → t.f1, etc.
                 if name.chars().all(|c| c.is_ascii_digit()) {
                     let idx: usize = name.parse().unwrap_or(0);
@@ -11467,6 +11468,26 @@ impl CEmitter {
                     let elem_ty = obj_ty.strip_prefix("NovaArray_").unwrap_or("nova_int")
                         .trim_end_matches('*').trim();
                     match method.as_str() {
+                        // Plan 60 / D117: size-accessor methods на []T —
+                        // zero-cost inline lowering, идентично legacy field-path
+                        // (emit_c.rs:9163-9170). Method-form единственно
+                        // легальная после Ф.3 atomic switch.
+                        "len" if args.is_empty() => {
+                            let obj_c = self.emit_expr(obj)?;
+                            return Ok(format!("({}->len)", obj_c));
+                        }
+                        // Plan 60 / D117: `capacity()`, не `cap()` —
+                        // консистентно с Rust/C++/Swift; D29 «явность над
+                        // краткостью». Go `cap()` отвергнут как builtin-fn,
+                        // не method.
+                        "capacity" if args.is_empty() => {
+                            let obj_c = self.emit_expr(obj)?;
+                            return Ok(format!("({}->cap)", obj_c));
+                        }
+                        "is_empty" if args.is_empty() => {
+                            let obj_c = self.emit_expr(obj)?;
+                            return Ok(format!("(({}->len) == 0)", obj_c));
+                        }
                         "get" => {
                             let obj_c = self.emit_expr(obj)?;
                             let mut arg_strs = vec![obj_c];
@@ -11585,6 +11606,13 @@ impl CEmitter {
                 }
                 // 3. String methods: `s.starts_with(...)` → `nova_str_starts_with(s, ...)`
                 if obj_ty == "nova_str" {
+                    // Plan 60 / D117: str.is_empty() — zero-cost inline O(1) via
+                    // byte_len (UTF-8: byte_len == 0 ⇔ codepoint count == 0).
+                    // Method-form единственно легальная после Ф.3 atomic switch.
+                    if method == "is_empty" && args.is_empty() {
+                        let obj_c = self.emit_expr(obj)?;
+                        return Ok(format!("(nova_str_byte_len({}) == 0)", obj_c));
+                    }
                     if let Some(rt_fn) = Self::str_method_to_rt(method) {
                         let obj_c = self.emit_expr(obj)?;
                         let mut arg_strs = vec![obj_c];
@@ -12714,8 +12742,11 @@ impl CEmitter {
             }
             ExprKind::Member { obj, name } => {
                 let obj_ty = self.infer_expr_c_type_str(obj);
-                // nova_str.len → nova_print_int
-                if obj_ty == "nova_str" && name == "len" {
+                // Plan 60 / D117: size-accessor field-style — больше не
+                // обрабатываем (emit_expr вернёт Err). Сохраняем dead-branch
+                // как защитную сетку: если когда-нибудь сюда попадёт —
+                // вернуть fallback printer (unreachable в normal flow).
+                if obj_ty == "nova_str" && matches!(name.as_str(), "len" | "is_empty" | "byte_len") {
                     return "nova_print_int";
                 }
                 // Determine object's struct type, then look up field type in schema
@@ -15989,10 +16020,11 @@ impl CEmitter {
         match method {
             "starts_with" | "ends_with" | "contains" | "eq"
             | "lt" | "le" | "gt" | "ge"
+            | "is_empty"  // Plan 60 / D117
                 => Some("nova_bool"),
             "to_upper" | "to_lower" | "trim" | "slice" | "concat"
                 => Some("nova_str"),
-            "char_len" | "byte_len" | "hash"
+            "len" | "char_len" | "byte_len" | "hash"
                 => Some("nova_int"),
             "find" | "rfind"
                 => Some("NovaOpt_nova_int"),
@@ -17375,6 +17407,9 @@ impl CEmitter {
                         return match method.as_str() {
                             "get" | "pop" => format!("NovaOpt_{}", elem_ty),
                             "push" => "nova_unit".into(),
+                            // Plan 60 / D117: size-accessor methods.
+                            "len" | "capacity" => "nova_int".into(),
+                            "is_empty" => "nova_bool".into(),
                             _ => "nova_int".into(),
                         };
                     }
@@ -17594,15 +17629,16 @@ impl CEmitter {
                     return "void*".into();
                 }
                 let obj_ty = self.infer_expr_c_type(obj);
-                if obj_ty == "nova_str" && name == "len" {
-                    return "nova_int".into();
-                }
-                if obj_ty.starts_with("NovaArray_") && name == "len" {
-                    return "nova_int".into();
-                }
-                // Plan 14 std-fix: D38 built-in `is_empty` для []T и str → bool.
-                if (obj_ty.starts_with("NovaArray_") || obj_ty == "nova_str") && name == "is_empty" {
-                    return "nova_bool".into();
+                // Plan 60 / D117: size-accessor field-style — больше не
+                // выводим тип в codegen-path. Field-access валится с
+                // E_SIZE_ACCESSOR_FIELD при попытке emit (см. emit_expr
+                // section "Plan 60 / D117"). Для type-inference fallback
+                // на "void*" — это никогда не должно срабатывать, так как
+                // emit_expr возвращает Err первым. Защитная сетка.
+                if (obj_ty == "nova_str" || obj_ty.starts_with("NovaArray_"))
+                    && matches!(name.as_str(), "len" | "is_empty" | "byte_len" | "cap" | "capacity")
+                {
+                    return "void*".into();
                 }
                 // Tuple field access: check element type registry first (works for void* too)
                 if name.chars().all(|c| c.is_ascii_digit()) {

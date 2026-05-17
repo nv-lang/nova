@@ -19,28 +19,28 @@ export type PriorityQueue[T Ord] {
 export fn PriorityQueue[T].new() -> Self =>
     { _items: [] }
 
-export fn PriorityQueue[T] @len() -> int => @_items.len
-export fn PriorityQueue[T] @is_empty() -> bool => @_items.len == 0
+export fn PriorityQueue[T] @len() -> int => @_items.len()
+export fn PriorityQueue[T] @is_empty() -> bool => @_items.len() == 0
 
 
 // Min element без удаления.
 export fn PriorityQueue[T] @peek() -> Option[T] {
-    if @_items.len == 0 { None } else { Some(@_items[0]) }
+    if @_items.len() == 0 { None } else { Some(@_items[0]) }
 }
 
 
 // Добавить элемент. O(log n).
 export fn PriorityQueue[T] mut @push(item T) -> () {
     @_items.push(item)
-    @sift_up(@_items.len - 1)
+    @sift_up(@_items.len() - 1)
 }
 
 
 // Удалить и вернуть min. O(log n).
 export fn PriorityQueue[T] mut @pop() -> Option[T] {
-    if @_items.len == 0 { return None }
+    if @_items.len() == 0 { return None }
     let top = @_items[0]
-    let last = @_items.len - 1
+    let last = @_items.len() - 1
     if last > 0 {
         @_items[0] = @_items[last]
     }
@@ -50,7 +50,7 @@ export fn PriorityQueue[T] mut @pop() -> Option[T] {
         new_items.push(@_items[i])
     }
     @_items = new_items
-    if @_items.len > 0 {
+    if @_items.len() > 0 {
         @sift_down(0)
     }
     Some(top)

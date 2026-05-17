@@ -43,7 +43,7 @@ export fn Ini.parse(s str) Fail[ParseIniError] -> HashMap[str, HashMap[str, str]
         let line = raw_line.trim()
 
         // Пропускаем пустые и комментарии
-        if line.len == 0 { continue }
+        if line.len() == 0 { continue }
         if line.starts_with("#") || line.starts_with(";") { continue }
 
         // Section header
@@ -51,7 +51,7 @@ export fn Ini.parse(s str) Fail[ParseIniError] -> HashMap[str, HashMap[str, str]
             if !line.ends_with("]") {
                 throw UnclosedSection { line: line_num }
             }
-            current_section = line.slice(1, line.len - 1).trim()
+            current_section = line.slice(1, line.len() - 1).trim()
             if !result.contains(current_section) {
                 result.insert(current_section, HashMap[str, str].new())
             }
@@ -63,9 +63,9 @@ export fn Ini.parse(s str) Fail[ParseIniError] -> HashMap[str, HashMap[str, str]
             None => throw InvalidLine { line: line_num, content: line }
             Some(i) => {
                 let key = line.slice(0, i).trim()
-                let value_raw = line.slice(i + 1, line.len).trim()
-                let value = if value_raw.starts_with("\"") && value_raw.ends_with("\"") && value_raw.len >= 2 {
-                    value_raw.slice(1, value_raw.len - 1)
+                let value_raw = line.slice(i + 1, line.len()).trim()
+                let value = if value_raw.starts_with("\"") && value_raw.ends_with("\"") && value_raw.len() >= 2 {
+                    value_raw.slice(1, value_raw.len() - 1)
                 } else {
                     value_raw
                 }

@@ -29,7 +29,7 @@ test "Mem.alloc_count() monotonically non-decreasing" {
     // Force at least one allocation: string concat.
     let s = "hello" + "world"
     let b = Mem.alloc_count()
-    let _ = s.len
+    let _ = s.len()
     assert(b >= a)
 }
 

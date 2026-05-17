@@ -6,11 +6,11 @@ module named_params.basic
 fn connect(host str, port int = 8080, tls bool = false) -> int {
     let p = port
     let t = if tls { 1 } else { 0 }
-    host.len + p + t
+    host.len() + p + t
 }
 
 // Default ссылается на предшествующий параметр (D102 правило 2).
-fn slice_len(xs []int, from int = 0, to int = xs.len) -> int =>
+fn slice_len(xs []int, from int = 0, to int = xs.len()) -> int =>
     to - from
 
 test "обязательный позиционно + дефолтные по имени" {
@@ -42,7 +42,7 @@ test "опущенный средний параметр через дефолт
 
 test "default ссылается на предшествующий параметр" {
     let arr = [10, 20, 30, 40, 50]
-    // from=0 (default), to=xs.len=5 (default ссылается на xs)
+    // from=0 (default), to=xs.len()=5 (default ссылается на xs)
     assert(slice_len(arr) == 5)
     // from=2 именованный, to=5 default
     assert(slice_len(arr, from: 2) == 3)

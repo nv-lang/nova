@@ -69,12 +69,12 @@ export fn Sql @concat(other Sql) -> Sql =>
 /// Concat many Sql фрагментов через separator. AND-chains: `concat_many(preds, " AND ")`.
 #stable(since = "0.1")
 export fn Sql.concat_many(parts []Sql, sep str) -> Sql {
-    if parts.len == 0 { return { template: "", args: [] } }
+    if parts.len() == 0 { return { template: "", args: [] } }
 
     let mut tpl = parts[0].template
     let mut args []SqlValue = [...parts[0].args]
     let mut i = 1
-    while i < parts.len {
+    while i < parts.len() {
         tpl = tpl + sep + parts[i].template
         args.extend(parts[i].args)
         i += 1
@@ -294,7 +294,7 @@ export fn SqlBuilder mut @where_eq(col str, value SqlValue) -> SqlBuilder {
 /// Add `AND col IN (?, ?, ...)` predicate. Empty `values` → `AND FALSE` (0 rows).
 #stable(since = "0.1")
 export fn SqlBuilder mut @where_in(col str, values []SqlValue) -> SqlBuilder {
-    if values.len == 0 {
+    if values.len() == 0 {
         // IN () — пустой набор. Чтобы запрос вернул 0 строк без
         // синтаксической ошибки, добавляем AND FALSE.
         @predicates.push({ template: "FALSE", args: [] })
@@ -302,7 +302,7 @@ export fn SqlBuilder mut @where_in(col str, values []SqlValue) -> SqlBuilder {
     }
     let mut placeholders = "?"
     let mut i = 1
-    while i < values.len { placeholders = placeholders + ", ?"; i += 1 }
+    while i < values.len() { placeholders = placeholders + ", ?"; i += 1 }
     @predicates.push({ template: "${col} IN (${placeholders})", args: values })
     @
 }
@@ -324,7 +324,7 @@ export fn SqlBuilder mut @set_suffix(s Sql) -> SqlBuilder {
 /// Build finальный Sql. Соединяет base + AND-predicates + suffix.
 #stable(since = "0.1")
 export fn SqlBuilder @build() -> Sql {
-    let body = if @predicates.len == 0 {
+    let body = if @predicates.len() == 0 {
         @base
     } else {
         let preds = Sql.concat_many(@predicates, " AND ")
@@ -345,7 +345,7 @@ test "sql tag builds template with placeholders" {
     let user_id = 42
     let q = sql`SELECT * FROM users WHERE id = ${user_id}`
     assert(q.template == "SELECT * FROM users WHERE id = ?")
-    assert(q.args.len == 1)
+    assert(q.args.len() == 1)
     match q.args[0] {
         I(n) => assert(n == 42)
         _    => assert(false)
@@ -357,7 +357,7 @@ test "sql tag with multiple args preserves order" {
     let age  = 30
     let q = sql`INSERT INTO users (name, age) VALUES (${name}, ${age})`
     assert(q.template == "INSERT INTO users (name, age) VALUES (?, ?)")
-    assert(q.args.len == 2)
+    assert(q.args.len() == 2)
     match q.args[0] {
         S(s) => assert(s == "alice")
         _    => assert(false)
@@ -371,7 +371,7 @@ test "sql tag with multiple args preserves order" {
 test "sql tag with no interpolation" {
     let q = sql`SELECT 1`
     assert(q.template == "SELECT 1")
-    assert(q.args.len == 0)
+    assert(q.args.len() == 0)
 }
 
 test "DbRow.get and DbRow.at" {
@@ -399,7 +399,7 @@ test "Sql.concat — fragments compose with args preserved" {
     let b Sql = { template: "AND name = ?", args: ["alice"] }
     let combined = a.concat(b)
     assert(combined.template == "SELECT * FROM users WHERE id = ? AND name = ?")
-    assert(combined.args.len == 2)
+    assert(combined.args.len() == 2)
 }
 
 test "Sql.builder — fluent WHERE composition" {
@@ -408,12 +408,12 @@ test "Sql.builder — fluent WHERE composition" {
     assert(q.template.contains("AND status = ?"))
     assert(q.template.contains("AND role IN (?, ?)"))
     assert(q.template.contains("ORDER BY created_at DESC LIMIT 10"))
-    assert(q.args.len == 3)
+    assert(q.args.len() == 3)
 }
 
 test "Sql.with_filter — handler-decorator use case" {
     let original = sql`SELECT * FROM users WHERE active = ${true}`
     let filtered = original.with_filter(sql`deleted_at IS NULL`)
     assert(filtered.template.contains("AND (deleted_at IS NULL)"))
-    assert(filtered.args.len == 1)                     // только original.args
+    assert(filtered.args.len() == 1)                     // только original.args
 }

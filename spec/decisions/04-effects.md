@@ -1847,7 +1847,7 @@ handler Db {
 
 ```nova
 let rows = Db.query(q)                       // получает результат query
-println(rows.len)                             // программа продолжается
+println(rows.len())                           // программа продолжается
 ```
 
 #### 6. `interrupt v` — досрочное завершение with-блока

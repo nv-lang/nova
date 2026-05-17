@@ -154,13 +154,13 @@ test "into() возвращает str с тем же контентом" {
     let mut sb = StringBuilder.new()
     sb.append("hello world")
     let s = sb.into()
-    assert(s.len == 11)
+    assert(s.len() == 11)
 }
 
 test "into() ASCII пустая строка" {
     let sb = StringBuilder.new()
     let s = sb.into()
-    assert(s.len == 0)
+    assert(s.len() == 0)
 }
 
 test "into() с Unicode codepoint'ами — паритет sb.len и s.len" {
@@ -172,7 +172,7 @@ test "into() с Unicode codepoint'ами — паритет sb.len и s.len" {
     let s = sb.into()
     // D26 школа B: s.len — codepoint count. Должно совпадать с sb.len()
     // ДО consume.
-    assert(s.len == 6)
+    assert(s.len() == 6)
 }
 
 
@@ -210,5 +210,5 @@ test "str + str через @plus — body delegating to @concat" {
     assert("foo" + "bar" == "foobar")
     let a = "Привет"
     let b = ", мир"
-    assert((a + b).len == 11)     // 6 + 5 codepoints
+    assert((a + b).len() == 11)     // 6 + 5 codepoints
 }

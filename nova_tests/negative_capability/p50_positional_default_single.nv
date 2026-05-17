@@ -7,7 +7,7 @@
 module negative_capability.p50_positional_default_single
 
 fn connect(host str, port int = 8080) -> int =>
-    host.len + port
+    host.len() + port
 
 test "positional arg on defaulted param rejected" {
     let _ = connect("localhost", 9000)

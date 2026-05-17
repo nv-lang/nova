@@ -152,7 +152,7 @@ export fn []T @last() -> Option[T] =>
 test "map preserves length and applies function" {
     let v []int = [1, 2, 3]
     let doubled = v.map(|x| x * 2)
-    assert(doubled.len == 3)
+    assert(doubled.len() == 3)
     assert(doubled.get(0) == Some(2))
     assert(doubled.get(2) == Some(6))
 }
@@ -160,7 +160,7 @@ test "map preserves length and applies function" {
 test "filter keeps matching elements" {
     let v []int = [1, 2, 3, 4, 5]
     let even = v.filter(|x| x % 2 == 0)
-    assert(even.len == 2)
+    assert(even.len() == 2)
     assert(even.get(0) == Some(2))
     assert(even.get(1) == Some(4))
 }

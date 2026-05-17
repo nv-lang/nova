@@ -47,14 +47,14 @@ export fn Path.join(...parts []str) -> str {
     let mut buf = StringBuilder.new()
     let mut first = true
     for part in parts {
-        if part.len == 0 { continue }
+        if part.len() == 0 { continue }
         // Между непустыми частями всегда вставляем "/"; для не-первой части,
         // которая сама начинается с "/", strip лидирующий — иначе вышло бы "//".
         // (Случай "/usr/" + "..." с trailing "/" не возникает в join'е — каждая
         // часть передаётся отдельной строкой без своего trailing slash.)
         if !first { buf.append('/') }
         let cleaned = if !first && part.starts_with("/") {
-            part.slice(1, part.len)
+            part.slice(1, part.len())
         } else {
             part
         }
@@ -77,8 +77,8 @@ export fn Path.join(...parts []str) -> str {
 /// ```
 #stable(since = "0.1")
 export fn Path.parent(p str) -> Option[str] {
-    if p.len == 0 || p == "/" { return None }
-    let trimmed = if p.ends_with("/") { p.slice(0, p.len - 1) } else { p }
+    if p.len() == 0 || p == "/" { return None }
+    let trimmed = if p.ends_with("/") { p.slice(0, p.len() - 1) } else { p }
     match find_last_slash(trimmed) {
         None => None
         Some(0) => Some("/")          // "/foo" → "/"
@@ -99,14 +99,14 @@ export fn Path.parent(p str) -> Option[str] {
 /// ```
 #stable(since = "0.1")
 export fn Path.basename(p str) -> str {
-    let trimmed = if p.ends_with("/") && p.len > 1 {
-        p.slice(0, p.len - 1)
+    let trimmed = if p.ends_with("/") && p.len() > 1 {
+        p.slice(0, p.len() - 1)
     } else {
         p
     }
     match find_last_slash(trimmed) {
         None    => trimmed
-        Some(i) => trimmed.slice(i + 1, trimmed.len)
+        Some(i) => trimmed.slice(i + 1, trimmed.len())
     }
 }
 
@@ -129,11 +129,11 @@ export fn Path.basename(p str) -> str {
 #stable(since = "0.1")
 export fn Path.extension(p str) -> Option[str] {
     let base = Path.basename(p)
-    if base.len == 0 || base == "." || base == ".." { return None }
+    if base.len() == 0 || base == "." || base == ".." { return None }
     match find_last_dot(base) {
         None    => None
         Some(0) => None    // dotfile (".bashrc") — без extension
-        Some(i) => Some(base.slice(i + 1, base.len))
+        Some(i) => Some(base.slice(i + 1, base.len()))
     }
 }
 
@@ -171,9 +171,9 @@ export fn Path.normalize(p str) -> str {
     let parts = p.split("/")
     let mut stack []str = []
     for part in parts {
-        if part.len == 0 || part == "." { continue }
+        if part.len() == 0 || part == "." { continue }
         if part == ".." {
-            if stack.len > 0 {
+            if stack.len() > 0 {
                 // pop() возвращает Option[str]; результат не нужен — явно отбрасываем
                 // (workaround compiler bug с разнотипными ветками if-expr в statement-position).
                 let _ = stack.pop()
@@ -194,13 +194,13 @@ export fn Path.normalize(p str) -> str {
         first = false
     }
     let result = buf.into()
-    if result.len == 0 { "." } else { result }
+    if result.len() == 0 { "." } else { result }
 }
 
 
 // Helpers
 fn find_last_slash(s str) -> Option[int] {
-    let mut i = s.len - 1
+    let mut i = s.len() - 1
     while i >= 0 {
         if s.char_at(i) == Some('/') { return Some(i) }
         i -= 1
@@ -209,7 +209,7 @@ fn find_last_slash(s str) -> Option[int] {
 }
 
 fn find_last_dot(s str) -> Option[int] {
-    let mut i = s.len - 1
+    let mut i = s.len() - 1
     while i >= 0 {
         if s.char_at(i) == Some('.') { return Some(i) }
         i -= 1

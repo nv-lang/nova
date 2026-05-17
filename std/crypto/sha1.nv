@@ -51,10 +51,10 @@ export fn Sha1.hash_str(data []byte) -> str {
 /// Incremental update — feed bytes в state.
 #stable(since = "0.1")
 export fn Sha1 mut @update(data []byte) -> () {
-    @total_len = @total_len + (data.len as u64)
+    @total_len = @total_len + (data.len() as u64)
     for b in data {
         @buffer.push(b)
-        if @buffer.len == 64 {
+        if @buffer.len() == 64 {
             @process_block(@buffer)
             @buffer = []
         }
@@ -66,7 +66,7 @@ export fn Sha1 mut @update(data []byte) -> () {
 export fn Sha1 mut @finalize() -> [20]byte {
     let total_bits = @total_len * 8
     @buffer.push(0x80)
-    while @buffer.len % 64 != 56 { @buffer.push(0x00) }
+    while @buffer.len() % 64 != 56 { @buffer.push(0x00) }
     let mut i = 7
     while i >= 0 {
         @buffer.push(((total_bits >> (i * 8)) & 0xFF) as byte)
@@ -74,7 +74,7 @@ export fn Sha1 mut @finalize() -> [20]byte {
     }
 
     let mut pos = 0
-    while pos < @buffer.len {
+    while pos < @buffer.len() {
         let mut block []byte = []
         for j in 0..64 { block.push(@buffer[pos + j]) }
         @process_block(block)

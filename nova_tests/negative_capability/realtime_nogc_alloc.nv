@@ -8,7 +8,7 @@ module negative_capability.realtime_nogc_alloc
 test "realtime nogc блокирует []int.new()" {
     let _ = realtime nogc {
         let xs = []int.new()
-        xs.len
+        xs.len()
     }
     assert(true)
 }
