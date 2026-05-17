@@ -29,7 +29,12 @@
         "file_id": 0,
         "line": 1
       },
-      "stability": null,
+      "stability": {
+        "feature": null,
+        "note": null,
+        "since": null,
+        "tier": "stable"
+      },
       "summary": "Plan 45 Ф.3: fixture для stability / deprecation / since.",
       "description": null
     }
@@ -65,11 +70,11 @@
 
       ],
       "sections": {
-        "since": "1.0.0"
+
       },
       "source": {
         "file_id": 0,
-        "line": 21,
+        "line": 17,
         "peer_file": null
       },
       "stability": {
@@ -173,7 +178,7 @@
       },
       "source": {
         "file_id": 0,
-        "line": 29,
+        "line": 25,
         "peer_file": null
       },
       "stability": {
@@ -260,7 +265,7 @@
       },
       "deprecation": {
         "note": "Use `add` instead.",
-        "since": null,
+        "since": "0.1.0",
         "until": null
       },
       "description": null,
@@ -277,19 +282,18 @@
 
       ],
       "sections": {
-        "deprecated": "Use `add` instead.",
-        "since": "0.1.0"
+
       },
       "source": {
         "file_id": 0,
-        "line": 14,
+        "line": 11,
         "peer_file": null
       },
       "stability": {
         "feature": null,
         "note": null,
-        "since": "0.1.0",
-        "tier": "unstable"
+        "since": null,
+        "tier": "stable"
       },
       "summary": "Сложить два числа.",
       "signature": {

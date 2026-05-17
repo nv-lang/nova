@@ -29,7 +29,12 @@
         "file_id": 0,
         "line": 1
       },
-      "stability": null,
+      "stability": {
+        "feature": null,
+        "note": null,
+        "since": null,
+        "tier": "stable"
+      },
       "summary": "Plan 45 / D107: fixture для Sum / Effect / Protocol / Alias items.",
       "description": null
     }
@@ -69,10 +74,15 @@
       },
       "source": {
         "file_id": 0,
-        "line": 23,
+        "line": 35,
         "peer_file": null
       },
-      "stability": null,
+      "stability": {
+        "feature": null,
+        "note": null,
+        "since": null,
+        "tier": "stable"
+      },
       "summary": "Newtype над int.",
       "definition": {
         "inner_type": "int",
@@ -113,10 +123,15 @@
       },
       "source": {
         "file_id": 0,
-        "line": 6,
+        "line": 10,
         "peer_file": null
       },
-      "stability": null,
+      "stability": {
+        "feature": null,
+        "note": null,
+        "since": null,
+        "tier": "stable"
+      },
       "summary": "Sum-тип с unit-вариантами.",
       "definition": {
         "kind": "sum",
@@ -170,10 +185,15 @@
       },
       "source": {
         "file_id": 0,
-        "line": 9,
+        "line": 15,
         "peer_file": null
       },
-      "stability": null,
+      "stability": {
+        "feature": null,
+        "note": null,
+        "since": null,
+        "tier": "stable"
+      },
       "summary": "Counter — простой effect с axiom.",
       "axioms": [
         {
@@ -228,10 +248,15 @@
       },
       "source": {
         "file_id": 0,
-        "line": 15,
+        "line": 23,
         "peer_file": null
       },
-      "stability": null,
+      "stability": {
+        "feature": null,
+        "note": null,
+        "since": null,
+        "tier": "stable"
+      },
       "summary": "Eq — protocol.",
       "implementors": [
 
@@ -290,10 +315,15 @@
       },
       "source": {
         "file_id": 0,
-        "line": 20,
+        "line": 30,
         "peer_file": null
       },
-      "stability": null,
+      "stability": {
+        "feature": null,
+        "note": null,
+        "since": null,
+        "tier": "stable"
+      },
       "summary": "Alias над int — semantic clarity.",
       "definition": {
         "aliased_type": "int",

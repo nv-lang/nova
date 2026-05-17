@@ -38,7 +38,12 @@
         "file_id": 0,
         "line": 1
       },
-      "stability": null,
+      "stability": {
+        "feature": null,
+        "note": null,
+        "since": null,
+        "tier": "stable"
+      },
       "summary": "Plan 45 / D107: fixture для проверки section parsing (style-guide §11.5).",
       "description": null
     }
@@ -77,17 +82,17 @@
         "errors": "Возвращает `DivisionByZero`, если `b == 0`.",
         "examples": "```nova\nassert(divide(10, 3) == 6)\n```",
         "panics": "Никогда не паникует.",
-        "since": "0.1.0"
+        "since": "0.1.0\n\n#stable"
       },
       "source": {
         "file_id": 0,
-        "line": 27,
+        "line": 31,
         "peer_file": null
       },
       "stability": {
         "feature": null,
         "note": null,
-        "since": "0.1.0",
+        "since": "0.1.0\n\n#stable",
         "tier": "unstable"
       },
       "summary": "Делит `a` на `b`.",
