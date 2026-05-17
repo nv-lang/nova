@@ -240,33 +240,23 @@ export fn HashMap[K, V] @clone() -> HashMap[K, V] {
 }
 
 
-// HashMap.@merge_from(other) — Plan 56.
-// Merge entries из other в self (override semantics).
-// Note: идиоматичный `for (k, v) in other` (implicit Iter D58 + tuple
-// destructure) **сейчас не работает** из-за bootstrap limitation —
-// tuples в Nova не monomorphized (_NovaTupleN.f* всегда nova_int slots,
-// не fit'ит struct types типа nova_str). Требует mono'd tuple support
-// (separate plan). Bootstrap workaround — direct field access на
-// ._buckets через Plan 56 array-element-type propagation fix.
+// HashMap.@merge_from(other) — Plan 56 + Plan 59 + Plan 63 Fix E idiomatic.
+// Merge entries из other в self (override semantics). Plan 59 mono'd
+// tuples + Plan 63 Fix E (mono'd tuple iter в generic method body) —
+// идиоматичный `for (k, v) in other` теперь работает в stdlib.
 export fn HashMap[K, V] mut @merge_from(other HashMap[K, V]) {
-    for i in 0..other._buckets.len() {
-        match other._buckets[i] {
-            Occupied { key: k, value: v } => @insert(k, v)
-            _ => {}
-        }
+    for (k, v) in other {
+        @insert(k, v)
     }
 }
 
 
-// HashMap.@filter(pred) — Plan 56.
+// HashMap.@filter(pred) — Plan 56 + Plan 59 + Plan 63 Fix E idiomatic.
 // Возвращает новый HashMap с парами для которых pred(k, v) == true.
 export fn HashMap[K, V] @filter(pred fn(K, V) -> bool) -> HashMap[K, V] {
     let mut out = HashMap[K, V].with_capacity(@_count)
-    for i in 0..@_buckets.len() {
-        match @_buckets[i] {
-            Occupied { key: k, value: v } => if pred(k, v) { out.insert_new(k, v) }
-            _ => {}
-        }
+    for (k, v) in @iter() {
+        if pred(k, v) { out.insert_new(k, v) }
     }
     out
 }
