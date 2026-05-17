@@ -1,0 +1,24 @@
+module plan11_followup.f5_self_literal_in_body_positive
+
+// Plan 11 Follow-up: `Self.method()` + factory pattern в non-generic type.
+//
+// NB: Generic version (Box[T]) triggers separate mono bug — Nova_T_p
+// placeholder leaks в generated C. Это **не Self bug**, это mono enrollment
+// для type-params в anonymous record literal context. Этот тест focus'нут
+// на Self.method() static dispatch на non-generic типе чтобы изолировать.
+
+export type IntBox {
+    v int
+}
+
+export fn IntBox.of(value int) -> Self =>
+    { v: value }
+
+export fn IntBox @clone() -> Self =>
+    Self.of(@v)
+
+test "Self.method() + factory pattern в non-generic типе" {
+    let b1 = IntBox.of(42)
+    let b2 = b1.clone()
+    assert(b2.v == 42)
+}

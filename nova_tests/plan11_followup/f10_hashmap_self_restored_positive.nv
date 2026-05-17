@@ -1,0 +1,31 @@
+module plan11_followup.f10_hashmap_self_restored_positive
+
+// Plan 11 Follow-up / Sprint Ф.36.1: HashMap.new + .with_capacity переписаны
+// с `-> Self`/`Self.X()` после compiler fix 57b2cb1. .from() оставлен с
+// explicit type (D73 overload dispatch ambiguity cross-module — separate fix).
+//
+// Этот test verifies Self-shorthand работает для .new() и .with_capacity()
+// (две главные factory functions).
+
+import std.collections.hashmap.{HashMap}
+
+test "HashMap.new() через Self → Self.with_capacity(16)" {
+    let m HashMap[str, int] = HashMap[str, int].new()
+    assert(m.len() == 0)
+    assert(m.is_empty())
+}
+
+test "HashMap.with_capacity(n) через Self return type" {
+    let m HashMap[str, int] = HashMap[str, int].with_capacity(32)
+    assert(m.len() == 0)
+}
+
+test "HashMap.new + insert + lookup roundtrip" {
+    let mut m HashMap[str, int] = HashMap[str, int].new()
+    m.insert("k1", 10)
+    m.insert("k2", 20)
+    assert(m.len() == 2)
+    assert(m.get("k1") == Some(10))
+    assert(m.get("k2") == Some(20))
+    assert(m.get("missing") == None)
+}
