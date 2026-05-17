@@ -1,0 +1,68 @@
+module plan11_followup.f11_stringbuilder_new_methods_positive
+
+// Sprint F.36 / commit 414b9bf: добавлены 4 non-consuming методы StringBuilder:
+// starts_with / ends_with / is_empty / peek. Раньше единственный способ
+// прочитать buffer был @into() — consuming. Это ломало Path.join (read-modify pattern).
+//
+// Эти тесты verify что все 4 метода работают корректно + не consume buffer.
+
+test "is_empty: true для свежего, false после append" {
+    let mut sb = StringBuilder.new()
+    assert(sb.is_empty())
+    sb.append("x")
+    assert(!sb.is_empty())
+}
+
+test "starts_with: matches префикс" {
+    let mut sb = StringBuilder.new()
+    sb.append("hello world")
+    assert(sb.starts_with("hello"))
+    assert(sb.starts_with(""))           // пустой префикс всегда true
+    assert(!sb.starts_with("world"))
+    assert(!sb.starts_with("HELLO"))     // case-sensitive
+}
+
+test "ends_with: matches суффикс" {
+    let mut sb = StringBuilder.new()
+    sb.append("hello world")
+    assert(sb.ends_with("world"))
+    assert(sb.ends_with(""))
+    assert(!sb.ends_with("hello"))
+    assert(!sb.ends_with("WORLD"))
+}
+
+test "non-consuming: append после starts_with/ends_with работает" {
+    let mut sb = StringBuilder.new()
+    sb.append("foo")
+    let _ = sb.starts_with("f")           // не consume
+    let _ = sb.ends_with("o")             // не consume
+    sb.append("/bar")                     // должен compile + run
+    assert(sb.ends_with("bar"))
+    let final = sb.into()                 // вот теперь consume
+    assert(final == "foo/bar")
+}
+
+test "peek: snapshot буфера, append после работает" {
+    let mut sb = StringBuilder.new()
+    sb.append("abc")
+    // Explicit type annotation: compiler не infer'ит return type peek() как str
+    // (fallback на nova_int). Type-inference improvement deferred.
+    let snap str = sb.peek()
+    assert(snap == "abc")
+    sb.append("def")                      // append после peek
+    assert(sb.into() == "abcdef")
+}
+
+test "Path.join pattern (real use case ends_with-based logic)" {
+    let mut buf = StringBuilder.new()
+    let parts []str = ["/usr", "local", "bin"]
+    let mut first = true
+    for part in parts {
+        if !first && !buf.ends_with("/") && !part.starts_with("/") {
+            buf.append('/')
+        }
+        buf.append(part)
+        first = false
+    }
+    assert(buf.into() == "/usr/local/bin")
+}

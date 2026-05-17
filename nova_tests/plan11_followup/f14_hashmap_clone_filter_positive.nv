@@ -1,0 +1,57 @@
+module plan11_followup.f14_hashmap_clone_filter_positive
+
+// Sprint F.36 / commit d5d2996: HashMap internal fields переименованы в
+// _prefix (_buckets/_count/_tombstones) для encapsulation. Plus clone/filter
+// тесты которые я ранее отложил.
+//
+// Эти tests verify что после privacy refactor методы работают correctly.
+
+import std.collections.hashmap.{HashMap}
+
+test "clone: deep copy не разделяет state с original" {
+    let mut original HashMap[str, int] = HashMap[str, int].new()
+    original.insert("a", 1)
+    original.insert("b", 2)
+    let copy = original.clone()
+    assert(copy.len() == 2)
+    assert(copy.get("a") == Some(1))
+    // Mutate original — copy не должен меняться
+    original.insert("c", 3)
+    assert(copy.len() == 2)
+    assert(copy.get("c") == None)
+    assert(original.len() == 3)
+}
+
+test "filter: подмножество по predicate" {
+    let mut m HashMap[str, int] = HashMap[str, int].new()
+    m.insert("a", 1)
+    m.insert("b", 2)
+    m.insert("c", 3)
+    m.insert("d", 4)
+    let evens = m.filter(|_, v| v % 2 == 0)
+    assert(evens.len() == 2)
+    assert(evens.get("b") == Some(2))
+    assert(evens.get("d") == Some(4))
+    assert(evens.get("a") == None)
+    assert(evens.get("c") == None)
+}
+
+test "filter: empty result когда никто не matches" {
+    let mut m HashMap[str, int] = HashMap[str, int].new()
+    m.insert("x", 1)
+    m.insert("y", 2)
+    let big = m.filter(|_, v| v > 100)
+    assert(big.len() == 0)
+    assert(big.is_empty())
+}
+
+test "clone после remove не keeps tombstone в copy" {
+    let mut m HashMap[str, int] = HashMap[str, int].new()
+    m.insert("a", 1)
+    m.insert("b", 2)
+    m.remove("a")
+    let copy = m.clone()
+    assert(copy.len() == 1)
+    assert(copy.get("a") == None)
+    assert(copy.get("b") == Some(2))
+}
