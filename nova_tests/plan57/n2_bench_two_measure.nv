@@ -1,0 +1,14 @@
+// Plan 57 MVP: bench с двумя measure блоками → compile error.
+// EXPECT_COMPILE_ERROR exactly one
+module plan57.n2_bench_two_measure
+
+bench "two-measures" {
+    measure {
+        bench.opaque(1)
+    }
+    measure {
+        bench.opaque(2)
+    }
+}
+
+test "stub" { assert(true) }

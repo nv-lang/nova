@@ -1,0 +1,43 @@
+// Plan 57.B.5: group/case sub-benchmarks DSL compiles.
+module plan57.p4_bench_groups_compiles
+
+bench "grouped" {
+    group "int" {
+        case "add" {
+            measure {
+                let mut acc = 0
+                let mut i = 0
+                while i < 100 {
+                    acc = bench.opaque(acc + i)
+                    i = i + 1
+                }
+            }
+        }
+        case "mul" {
+            measure {
+                let mut acc = 1
+                let mut i = 1
+                while i < 10 {
+                    acc = bench.opaque(acc * i)
+                    i = i + 1
+                }
+            }
+        }
+    }
+    group "f64" {
+        case "add" {
+            measure {
+                let mut acc f64 = 0.0
+                let mut i = 0
+                while i < 100 {
+                    acc = bench.opaque(acc + 1.5)
+                    i = i + 1
+                }
+            }
+        }
+    }
+}
+
+test "grouped bench co-exists с test" {
+    assert(true)
+}

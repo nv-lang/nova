@@ -1,0 +1,11 @@
+// Plan 57.C.7: println внутри measure → bench-io-in-measure warning.
+// EXPECT_COMPILE_WARNING I/O latency dominates
+module plan57.n7_io_in_measure_warning
+
+bench "with-println" {
+    measure {
+        println("inside measure — bad")
+    }
+}
+
+test "stub" { assert(true) }
