@@ -15119,6 +15119,45 @@ Test: f34_var_mul_neg_neg_positive, f34_var_mul_nonpos_positive.
 - ensures_fail на non-Fail fn не падает с verify-error, эмитит W2402.
 
 
+# Plan 33.6 Ф.35 (2026-05-18): addition/subtraction upper bound (<= / <)
+
+Паритет с lower-bound check helpers (>=/> уже есть Ф.17.2/Ф.18.1/Ф.29.4/
+Ф.30.2) для верхней границы. Add/sub bound × {lower, upper} × {strict,
+non-strict} — все 4 combinations теперь покрыты.
+
+## Ф.35.2 — Addition upper bound (<= (+ a b) goal)
+
+`requires x <= 5; requires y <= 5; ensures (x+y) <= 10` — тривиально
+из upper sum, но check не запускался. `try_addition_upper` проверяет
+`upper(a) + upper(b) <= effective_goal` (effective = goal-1 для <).
+Var+Var и Var+Lit cases.
+
+Test: f35_addition_upper_positive (sum_below_threshold, shifted_upper,
+sum_strict).
+
+## Ф.35.4 — Subtraction upper bound (<= (- a b) goal)
+
+`(a - b <= goal)` где `upper(a) - lower(b) <= goal` → true (максимум a
+минус минимум b). 3 case: Var-Var, Var-Lit, Lit-Var с правильным min/max
+выбором bound'а. Strict `<` через effective_goal.
+
+Test: f35_subtraction_upper_positive (diff_below_threshold, diff_strict).
+
+## Регрессия
+
+Перед Ф.35: 186 PASS / 0 FAIL / 44 SKIP contracts.
+После Ф.35: 188 PASS (+2) / 0 FAIL / 44 SKIP contracts.
+
+## Acceptance
+
+- Add/sub bound check helpers — полный 4-вариант coverage:
+  ```
+  addition:    lower (Ф.17.2 >=, Ф.30.2 >)   upper (Ф.35.2 <=, Ф.35.2 <)
+  subtraction: lower (Ф.18.1 >=, Ф.29.4 >)   upper (Ф.35.4 <=, Ф.35.4 <)
+  ```
+- Симметрия: всё через bounds-tracking, low-risk extensions.
+
+
 ## Session: оба deferred follow-up'а Plan 59 закрыты (2026-05-17 EOD+1)
 
 После merge'а Plan 63 fixes от другого agent'а — обнаружено что оба

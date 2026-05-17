@@ -9139,6 +9139,24 @@ negative² и mixed. Ф.34.2 закрыл оба case'а — TrivialBackend те
 полное покрытие Var-Var multiplication signs (положительный²,
 отрицательный², mixed).
 
+## [M-plan-33.6-Ф.35-add-sub-upper-bounds] (2026-05-18)
+
+Add/sub bound check helpers — полный 4-вариант coverage:
+- **addition lower** (Ф.17.2 `>=`, Ф.30.2 `>`)
+- **addition upper** (Ф.35.2 `<=`, Ф.35.2 `<`) ← новые
+- **subtraction lower** (Ф.18.1 `>=`, Ф.29.4 `>`)
+- **subtraction upper** (Ф.35.4 `<=`, Ф.35.4 `<`) ← новые
+
+Все 4 операции × 2 bound (lower/upper) × 2 strictness (strict/non-strict)
+теперь работают через bounds-tracking без Z3.
+
+**Регрессия:** 186 → 188 PASS (+2), 0 FAIL, 44 SKIP.
+
+**Что не закрывает (V3):** const-mul upper bound (`<= L*Var goal` где L>0),
+division upper bound, negation upper. Эти все требуют **negative goals**
+(или absolute value reasoning) — менее частые в практических контрактах.
+Если потребуется — добавлять по тому же шаблону.
+
 ## [M-57.F.4-positive-negative-coverage] — Test expansion (2026-05-17)
 
 **Не simplification.** Прямой user feedback "тесты напиши по тому,
