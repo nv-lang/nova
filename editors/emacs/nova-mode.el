@@ -3,7 +3,7 @@
 ;; Author: Nova Language project
 ;; Version: 0.1.0
 ;; Keywords: languages
-;; URL: https://github.com/nova-lang/nova-lang (TODO)
+;; URL: https://github.com/nv-lang/nova
 ;; License: MIT OR Apache-2.0
 ;; Package-Requires: ((emacs "26.1"))
 
