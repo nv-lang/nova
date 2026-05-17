@@ -1,0 +1,46 @@
+// Positive (Fix F+): Result[(K, V), E] возвращаемый из **method** (не
+// free fn). call_target_c_name helper должен правильно резолвить
+// method-style Path → Nova_<Type>_method_<name>. Регистрация
+// fn_result_ok_inner_types для methods тоже работает.
+
+module plan59.f20_result_method_with_tuple
+
+
+type Parser {
+    delim str
+}
+
+
+export fn Parser.new(d str) -> Parser => { delim: d }
+
+
+export fn Parser @split_kv(s str) -> Result[(str, int), str] {
+    if s == "x:1" { Ok(("x", 1)) }
+    else if s == "y:2" { Ok(("y", 2)) }
+    else { Err("no delim") }
+}
+
+
+test "method returning Result[(str, int), str] — instance call let-bound" {
+    let p = Parser.new(":")
+    let r = p.split_kv("x:1")
+    let mut k str = ""
+    let mut v int = 0
+    match r {
+        Ok((key, val)) => { k = key; v = val }
+        Err(_) => assert(false)
+    }
+    assert(k == "x")
+    assert(v == 1)
+}
+
+
+test "method returning Result[(str, int), str] — inline match" {
+    let p = Parser.new(":")
+    let mut k str = ""
+    match p.split_kv("y:2") {
+        Ok((key, _)) => { k = key }
+        Err(_) => assert(false)
+    }
+    assert(k == "y")
+}

@@ -15,7 +15,7 @@ module runtime.clone_semantics
 
 type Counter { mut value int }
 
-fn Counter @clone() -> Self => { value: @value }
+fn Counter @clone() -> Self => { @value }
 
 test "shallow @clone — примитивные поля независимы" {
     let mut a = Counter { value: 10 }
@@ -31,7 +31,7 @@ test "shallow @clone — примитивные поля независимы" {
 type Inner { mut x int }
 type Outer { inner Inner, label str }
 
-fn Outer @clone() -> Self => { inner: @inner, label: @label }
+fn Outer @clone() -> Self => { @inner, @label }
 
 test "shallow @clone — nested record share'ится по ссылке" {
     let nested = Inner { x: 1 }

@@ -32,6 +32,46 @@ int nova_in_fiber(void) {
  *
  * 3. **On main-flow** (no fiber): longjmp directly to with-frame. */
 void nova_interrupt(nova_int value) {
+    /* Plan 61 followup #1: handler-arm interrupt routing. Если активен
+     * handler-arm (set by Nova_Fail_fail / nova_throw_typed dispatchers),
+     * И owner НЕ в текущей _nova_interrupt_top chain (cross-effect throw —
+     * inner with-block pushed позже owner) → jump'аем напрямую в owner.
+     *
+     * Если owner IS в chain (single with-block — обычный case, ИЛИ defer
+     * frames pushed inside body) → fallback к default _nova_interrupt_top.
+     * Это позволяет defer cleanup frames intercept'нуть interrupt и
+     * propagate через интерс/re-issue (см. defer codegen pattern). */
+    /* Plan 61 followup #1: cross-effect routing — ТОЛЬКО на main-flow
+     * (НЕ в fiber context). Внутри coroutine longjmp к owner_iframe (что
+     * лежит на main's stack) — UB / STATUS_BAD_STACK. Cross-effect throw
+     * в fiber обрабатывается через scope.interrupt_pending mechanism
+     * (default path ниже). */
+    if (_nova_current_handler_iframe
+        && _nova_interrupt_top != _nova_current_handler_iframe
+        && !mco_running()) {
+        /* owner != top — walk chain. Если intermediate DEFER_SCOPE frames
+         * есть → fall through к top (defer cleanup → re-issue → propagate).
+         * Если только WITHBLOCK frames (nested with) → skip directly к owner. */
+        int has_defer_between = 0;
+        NovaInterruptFrame* p = _nova_interrupt_top;
+        while (p && p != _nova_current_handler_iframe) {
+            if (p->kind == NOVA_IFRAME_DEFER_SCOPE) {
+                has_defer_between = 1;
+                break;
+            }
+            p = p->prev;
+        }
+        if (!has_defer_between) {
+            while (_nova_interrupt_top && _nova_interrupt_top != _nova_current_handler_iframe) {
+                _nova_interrupt_top = _nova_interrupt_top->prev;
+            }
+            NovaInterruptFrame* f = _nova_current_handler_iframe;
+            _nova_current_handler_iframe = NULL;
+            f->value = value;
+            longjmp(f->jmp, 1);
+        }
+        /* else: fall through к default top (defer frames intercept). */
+    }
     if (_nova_interrupt_top) {
         /* Case 1 (fiber-local with) or case 3 (main-flow with) — both safe. */
         _nova_interrupt_top->value = value;
@@ -69,6 +109,31 @@ void nova_interrupt(nova_int value) {
  * Mutually-exclusive с nova_interrupt() per `with`-block instance:
  * codegen emits точно один вариант в зависимости от типа выражения. */
 void nova_interrupt_ptr(void* value) {
+    /* Plan 61 followup #1: см. nova_interrupt() rationale. */
+    /* Plan 61 followup #1: см. nova_interrupt() — skip cross-effect routing
+     * в fiber context (UB across coroutine boundary). */
+    if (_nova_current_handler_iframe
+        && _nova_interrupt_top != _nova_current_handler_iframe
+        && !mco_running()) {
+        int has_defer_between = 0;
+        NovaInterruptFrame* p = _nova_interrupt_top;
+        while (p && p != _nova_current_handler_iframe) {
+            if (p->kind == NOVA_IFRAME_DEFER_SCOPE) {
+                has_defer_between = 1;
+                break;
+            }
+            p = p->prev;
+        }
+        if (!has_defer_between) {
+            while (_nova_interrupt_top && _nova_interrupt_top != _nova_current_handler_iframe) {
+                _nova_interrupt_top = _nova_interrupt_top->prev;
+            }
+            NovaInterruptFrame* f = _nova_current_handler_iframe;
+            _nova_current_handler_iframe = NULL;
+            f->value_ptr = value;
+            longjmp(f->jmp, 1);
+        }
+    }
     if (_nova_interrupt_top) {
         _nova_interrupt_top->value_ptr = value;
         longjmp(_nova_interrupt_top->jmp, 1);
@@ -93,9 +158,12 @@ void nova_interrupt_ptr(void* value) {
 #ifdef _MSC_VER
 __declspec(thread) NovaFailFrame*      _nova_fail_top      = NULL;
 __declspec(thread) NovaInterruptFrame* _nova_interrupt_top = NULL;
+/* Plan 61 followup #1: cross-effect throw routing slot. */
+__declspec(thread) NovaInterruptFrame* _nova_current_handler_iframe = NULL;
 __declspec(thread) NovaTestFrame*      _nova_test_frame    = NULL;
-__declspec(thread) NovaVtable_Fail*    _nova_handler_Fail  = NULL;  /* default NULL → Nova_Fail_fail falls back to nova_throw */
-__declspec(thread) NovaVtable_Time*    _nova_handler_Time  = NULL;  /* default NULL → context-sensitive yield (see fibers.h) */
+__declspec(thread) NovaVtable_Fail*     _nova_handler_Fail     = NULL;  /* default NULL → Nova_Fail_fail falls back to nova_throw */
+__declspec(thread) NovaVtable_Fail_any* _nova_handler_Fail_any = NULL;  /* Plan 61 Ф.2 typed erased slot */
+__declspec(thread) NovaVtable_Time*     _nova_handler_Time     = NULL;  /* default NULL → context-sensitive yield (see fibers.h) */
 __declspec(thread) NovaFiberQueue*     _nova_active_scope  = NULL;  /* active supervised scope for current thread */
 __declspec(thread) int                 _nova_active_slot   = -1;
 /* Plan 44.5 Layer 5 deferred-unlock: set by fiber in park_with_unlock before
@@ -108,9 +176,11 @@ __declspec(thread) volatile int*       _nova_preempt_ptr   = NULL;  /* Plan 44.7
 #else
 __thread NovaFailFrame*      _nova_fail_top      = NULL;
 __thread NovaInterruptFrame* _nova_interrupt_top = NULL;
+__thread NovaInterruptFrame* _nova_current_handler_iframe = NULL;  /* Plan 61 fu#1 */
 __thread NovaTestFrame*      _nova_test_frame    = NULL;
-__thread NovaVtable_Fail*    _nova_handler_Fail  = NULL;
-__thread NovaVtable_Time*    _nova_handler_Time  = NULL;
+__thread NovaVtable_Fail*     _nova_handler_Fail     = NULL;
+__thread NovaVtable_Fail_any* _nova_handler_Fail_any = NULL;  /* Plan 61 Ф.2 */
+__thread NovaVtable_Time*     _nova_handler_Time     = NULL;
 __thread NovaFiberQueue*     _nova_active_scope  = NULL;
 __thread int                 _nova_active_slot   = -1;
 __thread void (*_nova_park_unlock_fn)(void*)  = NULL;

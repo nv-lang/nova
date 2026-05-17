@@ -46,7 +46,7 @@ export fn MyList @iter() -> MyListIter {
 
 
 export fn MyList.new(a int, b int, c int) -> MyList {
-    MyList { a: a, b: b, c: c }
+    MyList { a, b, c }
 }
 
 

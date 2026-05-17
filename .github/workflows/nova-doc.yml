@@ -28,6 +28,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - name: Install system deps
+        run: sudo apt-get install -y libgc-dev
       - name: Build nova-cli (release)
         run: cargo build --release --manifest-path nova-cli/Cargo.toml
       - name: Run nova doc --check (clean fixtures only)
@@ -61,6 +65,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - name: Install system deps
+        run: sudo apt-get install -y libgc-dev
       - name: Build nova-cli (release)
         run: cargo build --release --manifest-path nova-cli/Cargo.toml
       - name: Run nova doc --test on fixtures
@@ -80,6 +88,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - name: Install system deps
+        run: sudo apt-get install -y libgc-dev
       - name: "Run cargo test doc::"
         run: "cargo test --release --manifest-path compiler-codegen/Cargo.toml --lib doc::"
       - name: "Run cargo test --test doc_golden"

@@ -1,0 +1,24 @@
+// EXPECT_COMPILE_ERROR arity mismatch
+//
+// Negative (Fix F+ + Ф.7.1): попытка destructure Ok payload tuple с
+// **wrong arity** (Ok((a, b, c)) вместо Ok((a, b))). Mono'd tuple
+// struct `_NovaTuple_2_..._..._...` имеет ровно 2 поля. Plan 59 Ф.7.1
+// — Nova-level clear codegen error до C-emit'а.
+
+module plan59.f23_result_ok_wrong_arity_rejected
+
+
+fn parse_2() -> Result[(int, int), str] {
+    Ok((1, 2))
+}
+
+
+test "destructure 2-tuple Ok как 3-tuple — should reject" {
+    let r = parse_2()
+    let mut sum int = 0
+    match r {
+        Ok((a, b, c)) => { sum = a + b + c }
+        Err(_) => assert(false)
+    }
+    assert(sum == 3)
+}

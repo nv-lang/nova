@@ -552,6 +552,28 @@ static inline void nova_bench_set_throughput_elements(nova_int n) {
     _nova_bench_state.throughput_elements = (uint64_t)n;
 }
 
+/* Plan 57.G.5 — Custom metric per-sample emission.
+ * Emits marker line на stdout (data channel parsed by CLI alongside
+ * __BENCH_RESULT__). CLI groups by (name, unit) → custom_metrics[]
+ * field в JSON v1 с count/min/median/max/sum aggregates.
+ *
+ * Name + unit могут содержать spaces — для simplicity форматирую
+ * с TAB separators: "__BENCH_METRIC__\t<name>\t<value>\t<unit>\n"
+ * (TAB ASCII 0x09 не valid в Nova string literal без escape).
+ *
+ * `name` / `unit` — nova_str (struct { const char* ptr; size_t len; }).
+ * NULL ptr защищается ".ptr ? ... : "?"" fallback.
+ */
+static inline void nova_bench_emit_metric(nova_str name, nova_int value, nova_str unit) {
+    fprintf(stdout, "__BENCH_METRIC__\t%.*s\t%lld\t%.*s\n",
+        (int)(name.ptr ? name.len : 1),
+        name.ptr ? name.ptr : "?",
+        (long long)value,
+        (int)(unit.ptr ? unit.len : 0),
+        unit.ptr ? unit.ptr : "");
+    fflush(stdout);
+}
+
 #ifdef __cplusplus
 }
 #endif

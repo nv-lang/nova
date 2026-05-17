@@ -394,7 +394,7 @@ impl<'a> BoundCtx<'a> {
                                 format!(
                                     "bound method `{}.{}` has effects [{}] — bound methods must be pure \
                                      (rationale: vtable dispatch does not propagate effect handlers). \
-                                     Drop the effect row, or use handler-as-parameter instead of bound (D110, Plan 56).",
+                                     Drop the effect row, or use handler-as-parameter instead of bound (D122, Plan 56).",
                                     t.name, m.name, effect_names.join(", ")
                                 ),
                                 m.span,
@@ -2440,7 +2440,41 @@ impl NameResCtx {
             ExprKind::RecordLit { fields, .. } => {
                 for f in fields {
                     match &f.value {
-                        Some(v) => self.walk_expr(v, file_id, scope, errors),
+                        Some(v) => {
+                            // D52 §2 enforcement: redundant `{ name: name }` или
+                            // `{ field: @field }` запрещены (shorthand mandatory
+                            // когда имя поля совпадает с источником). Spec:
+                            // spec/decisions/02-types.md D52 §2.
+                            if !f.is_spread && !f.at_shorthand {
+                                use crate::ast::ExprKind as EK;
+                                let is_redundant_ident = matches!(&v.kind,
+                                    EK::Ident(n) if n == &f.name);
+                                let is_redundant_self_field = matches!(&v.kind,
+                                    EK::Member { obj, name }
+                                        if name == &f.name
+                                        && matches!(obj.kind, EK::SelfAccess));
+                                if is_redundant_ident {
+                                    errors.push(Diagnostic::new(
+                                        format!(
+                                            "избыточная форма поля `{name}: {name}` — \
+                                             D52 §2 требует shorthand `{name}` когда имя \
+                                             поля совпадает с источником",
+                                            name = f.name),
+                                        f.span,
+                                    ));
+                                } else if is_redundant_self_field {
+                                    errors.push(Diagnostic::new(
+                                        format!(
+                                            "избыточная форма поля `{name}: @{name}` — \
+                                             D52 §2 требует shorthand `@{name}` когда имя \
+                                             поля совпадает с self-полем",
+                                            name = f.name),
+                                        f.span,
+                                    ));
+                                }
+                            }
+                            self.walk_expr(v, file_id, scope, errors);
+                        }
                         None => {
                             // Shorthand `{ name }` (D52 field punning):
                             // `name` вЂ” СЌС‚Рѕ ident, РєРѕС‚РѕСЂС‹Р№ РґРѕР»Р¶РµРЅ Р±С‹С‚СЊ

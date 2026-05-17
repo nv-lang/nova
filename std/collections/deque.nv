@@ -15,27 +15,53 @@
 module collections.deque
 
 
-// Простая реализация: храним в []T, управляем индексами head/tail.
-// Bootstrap-уровень — без circular buffer оптимизаций (push_front
-// через unshift O(n)). Production-stdlib даст полноценный ringbuf.
+/// Двусторонняя очередь: push/pop с обоих концов в O(1) amortized.
+///
+/// Реализована на динамическом массиве. Текущая bootstrap-версия:
+/// `push_front` и `pop_front` — O(n) из-за сдвига элементов.
+/// Production-stdlib использует circular buffer для O(1) на всех операциях.
+///
+/// # Examples
+///
+/// ```nova
+/// let mut d = Deque[int].new()
+/// d.push_back(1)
+/// d.push_back(2)
+/// d.push_front(0)
+/// assert(d.pop_front() == Some(0))
+/// assert(d.pop_back() == Some(2))
+/// ```
+///
+/// # See Also
+///
+/// - `[Queue]` — однонаправленная FIFO очередь через два массива
+#stable(since = "0.1")
 export type Deque[T] {
     mut _items []T   // internal storage
 }
 
 
+/// Создать пустой `Deque`.
+#stable(since = "0.1")
 export fn Deque[T].new() -> Self => { _items: [] }
 
+/// Число элементов в deque.
+#stable(since = "0.1")
 export fn Deque[T] @len() -> int => @_items.len()
+
+/// Возвращает `true` если deque пуст.
+#stable(since = "0.1")
 export fn Deque[T] @is_empty() -> bool => @_items.len() == 0
 
 
-// O(1) amortized — append к концу
+/// Добавить элемент в конец. O(1) amortized.
+#stable(since = "0.1")
 export fn Deque[T] mut @push_back(x T) -> () {
     @_items.push(x)
 }
 
-// O(n) на bootstrap-реализации (нужно сдвинуть всё)
-// Production: O(1) через ring buffer.
+/// Добавить элемент в начало. O(n) в текущей реализации; O(1) в production.
+#stable(since = "0.1")
 export fn Deque[T] mut @push_front(x T) -> () {
     let mut new_items []T = [x]
     for it in @_items { new_items.push(it) }
@@ -43,7 +69,8 @@ export fn Deque[T] mut @push_front(x T) -> () {
 }
 
 
-// O(1)
+/// Удалить и вернуть последний элемент. O(1).
+#stable(since = "0.1")
 export fn Deque[T] mut @pop_back() -> Option[T] {
     if @_items.len() == 0 { return None }
     let last_idx = @_items.len() - 1
@@ -57,7 +84,8 @@ export fn Deque[T] mut @pop_back() -> Option[T] {
 }
 
 
-// O(n) на bootstrap (shift); O(1) в production через head pointer.
+/// Удалить и вернуть первый элемент. O(n) в текущей реализации; O(1) в production.
+#stable(since = "0.1")
 export fn Deque[T] mut @pop_front() -> Option[T] {
     if @_items.len() == 0 { return None }
     let value = @_items[0]
@@ -72,17 +100,21 @@ export fn Deque[T] mut @pop_front() -> Option[T] {
 }
 
 
-// Peek, без удаления
+/// Посмотреть первый элемент без удаления. `None` если deque пуст.
+#stable(since = "0.1")
 export fn Deque[T] @front() -> Option[T] {
     if @_items.len() == 0 { None } else { Some(@_items[0]) }
 }
 
+/// Посмотреть последний элемент без удаления. `None` если deque пуст.
+#stable(since = "0.1")
 export fn Deque[T] @back() -> Option[T] {
     if @_items.len() == 0 { None } else { Some(@_items[@_items.len() - 1]) }
 }
 
 
-// Random access
+/// Получить элемент по индексу. `None` если `i` вне диапазона.
+#stable(since = "0.1")
 export fn Deque[T] @get(i int) -> Option[T] {
     if i < 0 || i >= @_items.len() { None } else { Some(@_items[i]) }
 }

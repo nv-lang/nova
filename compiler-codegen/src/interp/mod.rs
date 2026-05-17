@@ -805,7 +805,7 @@ impl Interpreter {
                     "compiler bug: map literal `[k: v]` reached interpreter \
                      без desugar pass — это нарушение pipeline invariant. \
                      desugar_module() обязан быть вызван до interp/codegen. \
-                     Report issue: https://github.com/unitcraft/nova-lang/issues",
+                     Report issue: https://github.com/nv-lang/nova/issues",
                     expr.span,
                 ))
             }

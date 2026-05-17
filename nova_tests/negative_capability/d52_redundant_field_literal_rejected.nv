@@ -1,0 +1,22 @@
+// EXPECT_COMPILE_ERROR избыточная форма поля
+//
+// D52 §2 enforcement: `{ name: name }` запрещён, требуется shorthand
+// `{ name }` когда имя поля совпадает с источником.
+
+module negative_capability.d52_redundant_field_literal_rejected
+
+
+type Pair {
+    key int
+    value int
+}
+
+
+fn make_pair_redundant(key int, value int) -> Pair =>
+    { key: key, value: value }
+
+
+test "redundant { name: name } — should reject (D52 §2)" {
+    let p = make_pair_redundant(1, 2)
+    assert(p.key == 1)
+}
