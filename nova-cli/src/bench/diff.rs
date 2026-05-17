@@ -42,6 +42,26 @@ pub struct DiffRow {
 }
 
 pub fn compare(baseline_path: &Path, new_path: &Path, format: DiffFormat) -> Result<i32> {
+    let p = load_pair(baseline_path, new_path)?;
+    let (output, exit) = match format {
+        DiffFormat::Terminal => (terminal_format(&p.rows, &p.compat_warnings), 0),
+        DiffFormat::Markdown => (markdown_format(&p.rows, &p.compat_warnings), 0),
+        DiffFormat::Json => (json_format(&p.rows, &p.compat_warnings)?, 0),
+    };
+    print!("{}", output);
+    Ok(exit)
+}
+
+/// Loaded + analyzed diff pair (used by both `compare` and AI integration).
+pub struct LoadedDiff {
+    pub baseline: RunResultParsed,
+    pub new: RunResultParsed,
+    pub rows: Vec<DiffRow>,
+    pub compat_warnings: Vec<String>,
+}
+
+/// Public loader для callers нужны both rows + parsed metadata (e.g. AI).
+pub fn load_pair(baseline_path: &Path, new_path: &Path) -> Result<LoadedDiff> {
     let base_text = std::fs::read_to_string(baseline_path)
         .map_err(|e| anyhow!("read baseline {}: {}", baseline_path.display(), e))?;
     let new_text = std::fs::read_to_string(new_path)
@@ -54,17 +74,9 @@ pub fn compare(baseline_path: &Path, new_path: &Path, format: DiffFormat) -> Res
         .map_err(|e| anyhow!("baseline schema: {}", e))?;
     let new = RunResultParsed::from_json(&new_v)
         .map_err(|e| anyhow!("new schema: {}", e))?;
-
     let compat_warnings = baseline.metadata.compare_compatibility(&new.metadata);
     let rows = compute_diff(&baseline.benches, &new.benches);
-
-    let (output, exit) = match format {
-        DiffFormat::Terminal => (terminal_format(&rows, &compat_warnings), 0),
-        DiffFormat::Markdown => (markdown_format(&rows, &compat_warnings), 0),
-        DiffFormat::Json => (json_format(&rows, &compat_warnings)?, 0),
-    };
-    print!("{}", output);
-    Ok(exit)
+    Ok(LoadedDiff { baseline, new, rows, compat_warnings })
 }
 
 pub fn compute_diff(baseline: &[AnalyzedBench], new: &[AnalyzedBench]) -> Vec<DiffRow> {
