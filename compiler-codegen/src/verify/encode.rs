@@ -206,6 +206,23 @@ pub fn encode_expr_with_ctx(e: &Expr, ctx: &EncodeCtx) -> Result<SmtTerm, Encodi
                     }
                 }
             }
+            // Plan 60 D117 (size-accessor uniformity): zero-arg method calls
+            // `obj.len()` / `obj.cap()` / `obj.is_empty()` / `obj.byte_len()`
+            // encoded идентично legacy field-access (`obj.len` etc.) — тот же
+            // UF `_field_<name>_<sort>(obj)`, чтобы существующие axioms/lemmas
+            // продолжали работать после Plan 60 auto-migration.
+            if trailing.is_none() && args.is_empty() {
+                if let ExprKind::Member { obj, name } = &func.kind {
+                    if matches!(name.as_str(), "len" | "cap" | "byte_len" | "is_empty") {
+                        let obj_t = encode_expr_with_ctx(obj, ctx)?;
+                        let sort_hint = if name == "is_empty" { "bool" } else { "int" };
+                        return Ok(SmtTerm::App(
+                            format!("_field_{}_{}", name, sort_hint),
+                            vec![obj_t],
+                        ));
+                    }
+                }
+            }
             Err(EncodingError::Unsupported(format!(
                 "call expressions in contracts not yet supported in Plan 33.1 \
                  (Plan 33.2 composition with `#pure` functions)"
