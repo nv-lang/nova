@@ -11,6 +11,13 @@
 //! Реализация — pure std, без deps. Time via `std::time::Instant`.
 
 use std::time::Instant;
+use std::sync::Mutex;
+use std::collections::HashMap;
+
+/// Plan 57.D.1: Aggregation mode (NOVA_PERF_TIMER_AGGREGATE=1).
+/// Когда set, PerfTimer suppresses per-call emit и accumulates samples
+/// в shared mutable state. `dump_aggregated()` rendere'ит сводку.
+static AGGREGATOR: Mutex<Option<HashMap<String, Vec<u64>>>> = Mutex::new(None);
 
 /// RAII timer: при создании captures Instant::now(), при drop emits
 /// `__PERF__ <name> <ns>` на stderr (если NOVA_PERF_TIMER=1).
@@ -52,10 +59,76 @@ impl PerfTimer {
     }
 
     fn emit(&mut self) {
-        if !is_enabled() { return; }
-        let ns = self.start.elapsed().as_nanos();
-        eprintln!("__PERF__ {} {}", self.name, ns);
+        if !is_enabled() && !is_aggregating() { return; }
+        let ns = self.start.elapsed().as_nanos() as u64;
+        if is_aggregating() {
+            // Accumulate в shared aggregator вместо per-call emit.
+            let mut g = AGGREGATOR.lock().unwrap();
+            let map = g.get_or_insert_with(HashMap::new);
+            map.entry(self.name.to_string()).or_default().push(ns);
+        } else {
+            eprintln!("__PERF__ {} {}", self.name, ns);
+        }
     }
+}
+
+/// Plan 57.D.1: enable aggregation mode (e.g. `nova test`-side caller).
+pub fn enable_aggregation() {
+    let mut g = AGGREGATOR.lock().unwrap();
+    if g.is_none() { *g = Some(HashMap::new()); }
+}
+
+fn is_aggregating() -> bool {
+    if let Ok(g) = AGGREGATOR.try_lock() {
+        return g.is_some();
+    }
+    false
+}
+
+/// Plan 57.D.1: render aggregated summary table. Returns empty string
+/// если aggregation не enabled или нет samples. Sorted by total ns desc.
+pub fn dump_aggregated() -> String {
+    let g = AGGREGATOR.lock().unwrap();
+    let map = match g.as_ref() {
+        Some(m) if !m.is_empty() => m,
+        _ => return String::new(),
+    };
+    let mut rows: Vec<(&String, u64, u64, usize)> = map.iter()
+        .map(|(name, samples)| {
+            let total: u64 = samples.iter().sum();
+            let mut sorted = samples.clone();
+            sorted.sort();
+            let median = sorted[sorted.len() / 2];
+            (name, total, median, samples.len())
+        })
+        .collect();
+    rows.sort_by(|a, b| b.1.cmp(&a.1));
+    let grand_total: u64 = rows.iter().map(|(_, t, _, _)| t).sum();
+    let mut out = String::new();
+    use std::fmt::Write;
+    let _ = writeln!(out, "");
+    let _ = writeln!(out, "===== PerfTimer aggregated summary =====");
+    let _ = writeln!(out, "{:<20} {:>12} {:>12} {:>8} {:>7}",
+        "pass", "total", "median", "count", "share");
+    let _ = writeln!(out, "{}", "-".repeat(62));
+    for (name, total, median, count) in &rows {
+        let share = if grand_total > 0 {
+            (*total as f64 / grand_total as f64) * 100.0
+        } else { 0.0 };
+        let _ = writeln!(out, "{:<20} {:>12} {:>12} {:>8} {:>6.1}%",
+            name, fmt_ns(*total as f64), fmt_ns(*median as f64), count, share);
+    }
+    let _ = writeln!(out, "{}", "-".repeat(62));
+    let _ = writeln!(out, "{:<20} {:>12}", "grand total",
+        fmt_ns(grand_total as f64));
+    out
+}
+
+fn fmt_ns(ns: f64) -> String {
+    if ns < 1e3 { format!("{:.0} ns", ns) }
+    else if ns < 1e6 { format!("{:.1} µs", ns / 1e3) }
+    else if ns < 1e9 { format!("{:.1} ms", ns / 1e6) }
+    else { format!("{:.2} s", ns / 1e9) }
 }
 
 impl Drop for PerfTimer {
