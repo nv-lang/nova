@@ -30,7 +30,7 @@ test "Self в static-методе" {
 // === 2. Self в instance-методе record'а — для clone/builder ===
 
 fn Box @clone() -> Self {
-    Box { value: @value }
+    Box { @value }
 }
 
 fn Box @doubled() -> Self {
