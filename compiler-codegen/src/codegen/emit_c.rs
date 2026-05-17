@@ -14312,10 +14312,13 @@ impl CEmitter {
                             elem_c_ty, binding, opt_tmp));
                         if !self.tuple_element_types.contains_key(binding.as_str()) {
                             if let Some(elems) = Self::parse_mono_tuple_elements(&elem_c_ty) {
-                                if elems.len() == arity {
-                                    self.tuple_element_types
-                                        .insert(binding.clone(), elems);
-                                }
+                                // Ф.7.1: populate безусловно, даже при arity
+                                // mismatch — pattern_destructure_tuple ниже
+                                // делает arity check и emit'ит clear error.
+                                // Без registration arity check silent-fails
+                                // (lookup empty → no check).
+                                self.tuple_element_types
+                                    .insert(binding.clone(), elems);
                             }
                         }
                     } else {
