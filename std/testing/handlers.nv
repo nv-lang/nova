@@ -58,6 +58,9 @@ module testing.handlers
 // codegen генерирует NovaVtable_Random + thread-local handler при первом
 // `type Random effect` декларации, и все импортирующие модули видят
 // определение через инлайн-import (resolve_imports_inline).
+/// Random effect — ambient PRNG. Replace в тестах через `with Random = th.seeded(...)`
+/// для детерминированности.
+#stable(since = "0.1")
 export type Random effect {
     u64() -> u64                        // 64 случайных бита
     bytes(n int) -> []byte              // массовая генерация
@@ -100,10 +103,16 @@ fn rotl64(x u64, k int) -> u64 =>
     (x << k) | (x >> (64 - k))
 
 
-// Возвращает Random handler с xoshiro256++ детерминированной
-// последовательностью. Тот же `seed` всегда даёт ту же sequence.
-//
-// Работает для seed=0 (splitmix64 гарантирует non-zero state).
+/// xoshiro256++ Random handler, детерминированный по `seed`. Same seed → same sequence.
+/// Works for seed=0 (splitmix64 гарантирует non-zero state).
+///
+/// # Examples
+/// ```nova
+/// with Random = th.seeded(42) {
+///     let u = Uuid.v4()  // deterministic
+/// }
+/// ```
+#stable(since = "0.1")
 export fn seeded(seed u64) -> Handler[Random] {
     // Расширяем 64-bit seed → 4×u64 state через splitmix64.
     let mut z = seed
@@ -165,9 +174,9 @@ export fn seeded(seed u64) -> Handler[Random] {
 // ──────────────────────────────────────────────────────────────────────────
 
 
-// `fixed_ms` — Time зафиксирован на одном моменте. `sleep(d)` no-op.
-// Используется когда тест не зависит от продвижения времени (uuid v7,
-// jwt expiration с уже-прошедшим/будущим временем).
+/// `Time` handler с fixed timestamp. `sleep(d)` — no-op. Для тестов где
+/// продвижение времени не нужно (uuid v7, jwt exp checks).
+#stable(since = "0.1")
 export fn fixed_ms(ms u64) -> Handler[Time] {
     handler Time {
         now_ms() => ms
@@ -178,13 +187,11 @@ export fn fixed_ms(ms u64) -> Handler[Time] {
 }
 
 
-// `mut_clock` — mutable virtual clock. `sleep(d)` продвигает время на d.
-// Используется в rate_limiter/retry/cron тестах где нужна точная имитация
-// прошедшего времени без реальных задержек.
-//
-// Семантика sleep: добавляет d.nanos / 1_000_000 миллисекунд к current_ms.
-// Sub-millisecond durations округляются вниз (floor) — для production
-// тестов это OK, durations всегда ≥ 1ms.
+/// `Time` handler с virtual mutable clock. `sleep(d)` продвигает время на d (no real wait).
+/// Для rate_limiter/retry/cron тестов — точная имитация прошедшего времени.
+///
+/// Sub-ms durations округляются floor.
+#stable(since = "0.1")
 export fn mut_clock(start_ms u64) -> Handler[Time] {
     let mut current_ms = start_ms
     handler Time {

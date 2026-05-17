@@ -34,12 +34,17 @@ import std.testing.handlers as th
 // Конфигурация
 // ──────────────────────────────────────────────────────────────────────────
 
+/// Property-based test config. Defaults: 100 cases, 1000 shrink steps, seed=0
+/// (use ambient Random handler).
+#stable(since = "0.1")
 export type PropertyConfig {
-    readonly num_tests int               // сколько случаев генерировать (default 100)
-    readonly max_shrink_steps int        // лимит итераций shrinking (default 1000)
-    readonly seed u64                    // 0 = use Random handler из контекста
+    readonly num_tests int
+    readonly max_shrink_steps int
+    readonly seed u64
 }
 
+/// Default PropertyConfig (100 cases, 1000 shrink, seed=0).
+#stable(since = "0.1")
 export fn PropertyConfig.default() -> PropertyConfig =>
     {
         num_tests: 100,
@@ -48,32 +53,30 @@ export fn PropertyConfig.default() -> PropertyConfig =>
     }
 
 
-// ──────────────────────────────────────────────────────────────────────────
-// Failures
-// ──────────────────────────────────────────────────────────────────────────
-
-// Бросается из assert_prop при неуспешном условии. Runner ловит и
-// начинает shrinking.
+/// Throw'нутое из `assert_prop` при failure. Runner catches + начинает shrinking.
+#stable(since = "0.1")
 export type PropertyFailed {
     readonly message str
-    // Стек контекста — какие input'ы привели к падению. Заполняется
-    // runner'ом, не пользователем.
     readonly context str
 }
 
+/// Create PropertyFailed с message. Context заполняется runner'ом.
+#stable(since = "0.1")
 export fn PropertyFailed.new(msg str) -> PropertyFailed =>
     { message: msg, context: "" }
 
 
-// Замена обычному assert(...) в property-тесте. Бросает Fail вместо
-// panic — это даёт runner'у возможность ловить и шринкать. Для
-// тестов где shrinking не нужен — пиши обычный assert(cond).
+/// Property-test assertion. Throws PropertyFailed на false — runner ловит +
+/// шринкает (vs. обычный `assert(...)` который panics без shrinking).
+#stable(since = "0.1")
 export fn assert_prop(cond bool) Fail[PropertyFailed] -> () {
     if !cond {
         throw PropertyFailed.new("property predicate failed")
     }
 }
 
+/// Like `assert_prop` но с custom message.
+#stable(since = "0.1")
 export fn assert_prop_msg(cond bool, msg str) Fail[PropertyFailed] -> () {
     if !cond {
         throw PropertyFailed.new(msg)
@@ -81,19 +84,11 @@ export fn assert_prop_msg(cond bool, msg str) Fail[PropertyFailed] -> () {
 }
 
 
-// ──────────────────────────────────────────────────────────────────────────
-// Generator protocol
-// ──────────────────────────────────────────────────────────────────────────
-
-// Generator[T] — структурный протокол для генерации значений.
-//
-// generate(rng_seed) -> T              чисто функция от seed → значение
-// shrink(value)      -> Iter[T]        итератор «меньших» вариантов для бисекции
-//
-// Реализаторы — обычные record'ы или модули. Используют Random
-// эффект через standard handler.
-// NB: bootstrap-parser принимает effect/protocol методы без `@`-префикса.
-// (Spec D35 описывает `@method` для instance, но protocol-form проще.)
+/// Generator[T] structural protocol — для property-based testing.
+///
+/// `generate()` — pure-функция от ambient Random → значение `T`.
+/// `shrink(v)` — итератор «меньших» вариантов для бисекции при failure.
+#stable(since = "0.1")
 export type Generator[T] protocol {
     generate() Random -> T
     shrink(value T) -> Iter[T]
@@ -104,26 +99,33 @@ export type Generator[T] protocol {
 // Встроенные генераторы для примитивов
 // ──────────────────────────────────────────────────────────────────────────
 
-// IntGen — равномерный int в диапазоне [min, max].
-// Shrinking: к 0 и в сторону min/max границ.
+/// Uniform int generator в диапазоне `[min, max]`. Shrinks к 0 / границам.
+#stable(since = "0.1")
 export type IntGen {
     readonly min int
     readonly max int
 }
 
+/// Create IntGen с custom range.
+#stable(since = "0.1")
 export fn IntGen.new(min int, max int) -> IntGen =>
     { min, max }
 
-// Default int generator — диапазон [-1000, 1000], типичный для тестов.
+/// Default IntGen — `[-1000, 1000]` (типичный для tests).
+#stable(since = "0.1")
 export fn IntGen.default() -> IntGen =>
     IntGen.new(-1000, 1000)
 
+/// Generate uniform int в `[min, max]`.
+#stable(since = "0.1")
 export fn IntGen @generate() Random -> int {
     let range = @max - @min + 1
     let raw = (Random.u64() as int)
     @min + (raw.abs() % range)
 }
 
+/// Shrink int — towards 0, half, value±1.
+#stable(since = "0.1")
 export fn IntGen @shrink(value int) -> Iter[int] {
     // Шринкаем к 0 — стандартная стратегия для интов
     let mut steps []int = []
@@ -140,15 +142,21 @@ export fn IntGen @shrink(value int) -> Iter[int] {
 }
 
 
-// BoolGen — true/false 50/50.
-// Shrinking: к false (минимально интересный вариант).
+/// Bool generator: 50/50 true/false. Shrinks к false.
+#stable(since = "0.1")
 export type BoolGen { }
 
+/// Create BoolGen (no params).
+#stable(since = "0.1")
 export fn BoolGen.new() -> BoolGen => { }
 
+/// Generate random bool (50/50).
+#stable(since = "0.1")
 export fn BoolGen @generate() Random -> bool =>
     Random.u64() & 1 == 1
 
+/// Shrink bool — `true` → `false`, `false` → ничего.
+#stable(since = "0.1")
 export fn BoolGen @shrink(value bool) -> Iter[bool] {
     let mut steps []bool = []
     if value { steps.push(false) }
@@ -156,18 +164,24 @@ export fn BoolGen @shrink(value bool) -> Iter[bool] {
 }
 
 
-// StrGen — случайная строка из печатных ASCII символов длиной [0, max_len].
-// Shrinking: к пустой строке и к более коротким префиксам.
+/// Str generator — печатные ASCII длиной `[0, max_len]`. Shrinks к "" / коротким префиксам.
+#stable(since = "0.1")
 export type StrGen {
     readonly max_len int
 }
 
+/// Create StrGen с custom max length.
+#stable(since = "0.1")
 export fn StrGen.new(max_len int) -> StrGen =>
     { max_len }
 
+/// Default StrGen — max 64 chars.
+#stable(since = "0.1")
 export fn StrGen.default() -> StrGen =>
     StrGen.new(64)
 
+/// Generate random ASCII string `[0..max_len]`.
+#stable(since = "0.1")
 export fn StrGen @generate() Random -> str {
     let len = (Random.u64() as int).abs() % (@max_len + 1)
     let mut buf = StringBuilder.new()
@@ -184,6 +198,8 @@ export fn StrGen @generate() Random -> str {
     buf.into()
 }
 
+/// Shrink string — "" / половина / на 1 короче.
+#stable(since = "0.1")
 export fn StrGen @shrink(value str) -> Iter[str] {
     let mut steps []str = []
     let len = value.len
@@ -196,22 +212,28 @@ export fn StrGen @shrink(value str) -> Iter[str] {
 }
 
 
-// ArrayGen[T] — массив элементов длиной [0, max_len], каждый элемент
-// генерится переданным elem-генератором.
-// Shrinking: к пустому массиву и к меньшим массивам.
+/// Array generator — `[]T` длиной `[0, max_len]`. Каждый элемент через `elem` generator.
+/// Shrinks к пустому массиву / меньшим.
+#stable(since = "0.1")
 export type ArrayGen[T] {
     readonly elem Generator[T]
     readonly max_len int
 }
 
+/// Create ArrayGen с custom elem generator + max length.
+#stable(since = "0.1")
 export fn ArrayGen[T].new(elem Generator[T], max_len int) -> ArrayGen[T] => {
     ArrayGen[T] { elem, max_len }
 }
 
+/// Default ArrayGen — max 32 elements.
+#stable(since = "0.1")
 export fn ArrayGen[T].default(elem Generator[T]) -> ArrayGen[T] => {
     ArrayGen[T].new(elem, 32)
 }
 
+/// Generate random `[]T` длиной `[0, max_len]` (каждый elem через nested generator).
+#stable(since = "0.1")
 export fn ArrayGen[T] @generate() Random -> []T {
     let len = (Random.u64() as int).abs() % (@max_len + 1)
     let mut result []T = []
@@ -221,6 +243,8 @@ export fn ArrayGen[T] @generate() Random -> []T {
     result
 }
 
+/// Shrink array — empty / halves / без последнего.
+#stable(since = "0.1")
 export fn ArrayGen[T] @shrink(value []T) -> Iter[[]T] {
     let mut steps [][]T = []
     let len = value.len
@@ -304,19 +328,28 @@ fn shrink_loop[T](gen Generator[T],
 
 // Главный API: прогнать property-test.
 //
-// Если все num_tests case'а проходят — функция возвращает unit.
-// Если хотя бы один падает — runner делает shrinking и бросает
-// PropertyFailed с минимальным failing input в context.
-//
-// Использует Random эффект из контекста — для детерминизма в CI
-// оборачивай в `with Random = th.seeded(seed) { property(...) }`.
+/// Run property test — `num_tests` cases через generator + body. На failure —
+/// shrinking → throw `PropertyFailed` с minimal example.
+///
+/// Использует Random ambient → детерминирован под `with Random = th.seeded(...)`.
+///
+/// # Examples
+/// ```nova
+/// with Random = th.seeded(42) {
+///     property(IntGen.default(), |n| {
+///         assert_prop(n + 0 == n)
+///     })
+/// }
+/// ```
+#stable(since = "0.1")
 export fn property[T](gen Generator[T],
                       body fn(T) Fail[PropertyFailed] -> ()) Random Fail[PropertyFailed] -> () {
     property_with(gen, body, PropertyConfig.default())
 }
 
 
-// Расширенная версия с явной конфигурацией.
+/// Like `property` но с custom `PropertyConfig` (num_tests/shrink_steps/seed).
+#stable(since = "0.1")
 export fn property_with[T](gen Generator[T],
                             body fn(T) Fail[PropertyFailed] -> (),
                             cfg PropertyConfig) Random Fail[PropertyFailed] -> () {

@@ -28,8 +28,10 @@ module crypto.bcrypt
 import std.testing.handlers as th
 
 
+/// Errors при bcrypt операциях.
+#stable(since = "0.1")
 export type BcryptError
-    | InvalidCost { value int }                  // cost вне [4, 31]
+    | InvalidCost { value int }
     | InvalidHash { reason str }
     | PasswordTooLong { length int, max int }
 
@@ -56,8 +58,16 @@ const SALT_LEN int = 16          // 16 random bytes → 22 base64 chars
 // Public API
 // ──────────────────────────────────────────────────────────────────────────
 
-// Создаёт hash для password с указанным cost factor.
-// Эффект Random — для генерации salt. В тестах подменяется.
+/// Hash password с cost factor (2^cost rounds, 10 = 1024 rounds default).
+/// Format `$2b$<cost>$<salt><hash>`. Random effect — для salt.
+///
+/// # Examples
+/// ```nova
+/// with Random = th.seeded(42) {
+///     let h = Bcrypt.hash("secret", 10)
+/// }
+/// ```
+#stable(since = "0.1")
 export fn Bcrypt.hash(password str, cost int) Random Fail[BcryptError] -> str {
     if cost < MIN_COST || cost > MAX_COST {
         throw InvalidCost { value: cost }
@@ -75,8 +85,9 @@ export fn Bcrypt.hash(password str, cost int) Random Fail[BcryptError] -> str {
 }
 
 
-// Проверяет password против hash. Constant-time для security.
-// Возвращает false на любой malformed input — не throws.
+/// Verify password против bcrypt hash. **Constant-time** для security.
+/// Returns `false` на любой malformed input (нет throw).
+#stable(since = "0.1")
 export fn Bcrypt.verify(password str, hash_str str) -> bool {
     // Parse format
     let parts = hash_str.split("$")
