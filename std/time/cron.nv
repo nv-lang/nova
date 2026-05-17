@@ -83,10 +83,10 @@ export fn Cron.parse(expr str) Fail[ParseCronError] -> CronExpr {
     // Удалить пустые (multiple spaces)
     let mut clean []str = []
     for f in fields {
-        if f.len > 0 { clean.push(f) }
+        if f.len() > 0 { clean.push(f) }
     }
-    if clean.len != 5 {
-        throw InvalidFieldCount { actual: clean.len }
+    if clean.len() != 5 {
+        throw InvalidFieldCount { actual: clean.len() }
     }
 
     {
@@ -113,7 +113,7 @@ fn parse_field(s str, name str, min int, max int) Fail[ParseCronError] -> CronFi
     // Step: "*/15", "10-30/5"
     if s.contains("/") {
         let parts = s.split("/")
-        if parts.len != 2 {
+        if parts.len() != 2 {
             throw InvalidValue { field: name, value: s }
         }
         let step = parse_int_in(parts[1], name, min, max)
@@ -172,7 +172,7 @@ fn parse_int_in(s str, name str, min int, max int) Fail[ParseCronError] -> int {
 
 fn parse_range(s str, name str, min int, max int) Fail[ParseCronError] -> (int, int) {
     let parts = s.split("-")
-    if parts.len != 2 {
+    if parts.len() != 2 {
         throw InvalidValue { field: name, value: s }
     }
     let lo = parse_int_in(parts[0], name, min, max)
@@ -185,7 +185,7 @@ fn parse_range(s str, name str, min int, max int) Fail[ParseCronError] -> (int, 
 
 
 fn dedup_sort(xs []int) -> []int {
-    if xs.len == 0 { return xs }
+    if xs.len() == 0 { return xs }
     // Простая сортировка bubble + dedup для bootstrap
     let mut sorted = xs
     let n = sorted.len
@@ -200,7 +200,7 @@ fn dedup_sort(xs []int) -> []int {
     }
     let mut out []int = []
     for v in sorted {
-        if out.len == 0 || out[out.len - 1] != v {
+        if out.len() == 0 || out[out.len() - 1] != v {
             out.push(v)
         }
     }

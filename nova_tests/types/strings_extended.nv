@@ -14,7 +14,7 @@ fn classify(cmd str) -> int => match cmd {
 test "escape \\n newline" {
     let nl = "line1\nline2"
     assert(nl.contains("\n"))
-    assert(nl.len > 10)
+    assert(nl.len() > 10)
 }
 
 test "escape \\t tab" {
@@ -34,7 +34,7 @@ test "escape backslash" {
 
 test "пустая строка" {
     let s = ""
-    assert(s.len == 0)
+    assert(s.len() == 0)
     assert(s == "")
     assert(s + "x" == "x")
 }
@@ -42,7 +42,7 @@ test "пустая строка" {
 test "Unicode chars (Cyrillic)" {
     let cyr = "привет"
     // bootstrap: len = chars().count() — число code points, не байтов
-    assert(cyr.len == 6)
+    assert(cyr.len() == 6)
 }
 
 test "Unicode mixed ASCII + Cyrillic" {
@@ -69,12 +69,12 @@ test "concat последовательно" {
     let a = "1"
     let b = a + "2" + "3" + "4" + "5"
     assert(b == "12345")
-    assert(b.len == 5)
+    assert(b.len() == 5)
 }
 
 test "длинная строка" {
     let big = "the quick brown fox jumps over the lazy dog"
-    assert(big.len > 30)
+    assert(big.len() > 30)
     assert(big.starts_with("the"))
     assert(big.ends_with("dog"))
     assert(big.contains("brown"))

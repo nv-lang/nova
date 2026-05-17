@@ -121,12 +121,12 @@ export fn Md5.hash_str(data []byte) -> str {
 /// Incremental update — feed bytes в state. Для streamed input.
 #stable(since = "0.1")
 export fn Md5 mut @update(data []byte) -> () {
-    @total_len = @total_len + (data.len as u64)
+    @total_len = @total_len + (data.len() as u64)
 
     // Прибавляем к buffer и обрабатываем полные 64-байтные блоки.
     for b in data {
         @buffer.push(b)
-        if @buffer.len == 64 {
+        if @buffer.len() == 64 {
             @process_block(@buffer)
             @buffer = []
         }
@@ -141,7 +141,7 @@ export fn Md5 mut @finalize() -> [16]byte {
     let total_bits = @total_len * 8
 
     @buffer.push(0x80)
-    while @buffer.len % 64 != 56 {
+    while @buffer.len() % 64 != 56 {
         @buffer.push(0x00)
     }
     // 8 байт длины в битах LE
@@ -151,7 +151,7 @@ export fn Md5 mut @finalize() -> [16]byte {
 
     // Process remaining blocks.
     let mut pos = 0
-    while pos < @buffer.len {
+    while pos < @buffer.len() {
         let mut block []byte = []
         for j in 0..64 { block.push(@buffer[pos + j]) }
         @process_block(block)

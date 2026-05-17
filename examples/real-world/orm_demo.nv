@@ -142,7 +142,7 @@ export fn Repo[T] @list_all() Db Fail[RepoError] -> []T =>
 // list_with — выполнить произвольный SELECT, парсить каждую строку.
 export fn Repo[T] @list_with(q Sql) Db Fail[RepoError] -> []T {
     let rows = Db.query(q)
-    let mut out []T = []T.with_capacity(rows.len)
+    let mut out []T = []T.with_capacity(rows.len())
     for r in rows {
         out.push(@from_row(r))
     }
@@ -156,7 +156,7 @@ export fn Repo[T] @list_with(q Sql) Db Fail[RepoError] -> []T {
 // DEFAULT/SERIAL.
 export fn Repo[T] @insert(value T) Db Fail[RepoError] -> u64 {
     let cols = @to_columns(value)
-    if cols.len == 0 { throw Inconsistent("empty INSERT") }
+    if cols.len() == 0 { throw Inconsistent("empty INSERT") }
 
     // Собираем имена и значения отдельно. Имена — статические идентификаторы
     // (не пользовательский ввод), значения — параметры.
@@ -179,7 +179,7 @@ export fn Repo[T] @insert(value T) Db Fail[RepoError] -> u64 {
 // колонки из to_columns. Возвращает true если запись была.
 export fn Repo[T] @update(value T) Db Fail[RepoError] -> bool {
     let cols = @to_columns(value)
-    if cols.len == 0 { throw Inconsistent("empty UPDATE") }
+    if cols.len() == 0 { throw Inconsistent("empty UPDATE") }
 
     let assigns = cols.map(|c| "${c.name} = ?").join(", ")
     let mut args []SqlValue = cols.map(|c| c.value)
@@ -228,7 +228,7 @@ export fn Repo[T] @delete(id u64) Db Fail[RepoError] -> bool {
 // один SQL `WHERE user_id IN (...)` вместо N отдельных find_by_id'ов.
 export fn Repo[T] @bulk_load[K](fk_col str, keys []K, key_to_sql fn(K) -> SqlValue)
     Db Fail[RepoError] -> []T {
-    if keys.len == 0 { return [] }
+    if keys.len() == 0 { return [] }
 
     let sql_keys []SqlValue = keys.map(key_to_sql)
     let q = Sql.builder(sql`SELECT * FROM ${@table} WHERE 1 = 1`)
@@ -333,7 +333,7 @@ export fn Repo[T] @fetch_page(after Option[u64], size int)
     }
     let items = @list_with(q)
 
-    if items.len > size {
+    if items.len() > size {
         // size + 1 строка — есть следующая. Обрезаем хвост.
         let trimmed = items.slice(0, size)
         let last_id = @id_of(trimmed[size - 1])
@@ -532,7 +532,7 @@ fn in_memory_db_handler(storage mut HashMap[u64, DbRow]) -> Handler[Db] => handl
             // INSERT — возвращаем фиктивный id (реальный handler выдал бы
             // следующий sequence). Тесты, которые проверяют конкретный id
             // после insert, должны использовать другой handler.
-            let new_id = (storage.len + 1) as u64
+            let new_id = (storage.len() + 1) as u64
             [{ columns: ["id"], values: [I(new_id as i64)] }]
         } else {
             // SELECT FROM <table> — все записи.
@@ -556,7 +556,7 @@ fn in_memory_db_handler(storage mut HashMap[u64, DbRow]) -> Handler[Db] => handl
             }
         } else {
             // UPDATE — последний arg обычно id.
-            let id = match q.args[q.args.len - 1] {
+            let id = match q.args[q.args.len() - 1] {
                 I(n) => n as u64
                 _    => 0
             }
@@ -610,7 +610,7 @@ test "Query fluent builder — where_eq + limit + fetch_all" {
             .where_eq("name", S("alice"))
             .limit(10)
             .fetch_all()
-        assert active.len >= 1
+        assert active.len() >= 1
     }
 }
 
@@ -637,7 +637,7 @@ test "bulk_load — anti-N+1 для списка id'ов" {
             [1 as UserId, 2 as UserId, 3 as UserId],
             |uid| I(uid as i64),
         )
-        assert users.len == 3
+        assert users.len() == 3
     }
 }
 
@@ -715,6 +715,6 @@ test "Page pagination — cursor + has_next" {
         //  LIMIT.) Тест демонстрирует API; точные значения зависят от
         //  handler'а.
         let page = users_repo().fetch_page(None, 2)
-        assert page.items.len <= 2 || page.next_cursor != None
+        assert page.items.len() <= 2 || page.next_cursor != None
     }
 }

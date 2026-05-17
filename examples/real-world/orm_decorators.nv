@@ -223,7 +223,7 @@ test "soft-delete: SELECT augmented with deleted_at IS NULL" {
         Db.query(sql`SELECT * FROM users WHERE id = ${1}`)
     }
 
-    assert log.len == 1
+    assert log.len() == 1
     assert log[0].template.contains("deleted_at IS NULL")
 }
 
@@ -234,7 +234,7 @@ test "soft-delete: DELETE rewritten as UPDATE deleted_at" {
         Db.exec(sql`DELETE FROM users WHERE id = ${1}`)
     }
 
-    assert log.len == 1
+    assert log.len() == 1
     assert log[0].template.starts_with("UPDATE")
     assert log[0].template.contains("SET deleted_at = NOW()")
 }
@@ -251,8 +251,8 @@ test "read-replica: SELECT идёт на replica, exec — на primary" {
         Db.exec(sql`UPDATE users SET name = ${"alice"} WHERE id = ${1}`)
     }
 
-    assert primary_log.len == 1                    // только UPDATE
-    assert replica_log.len == 1                    // только SELECT
+    assert primary_log.len() == 1                    // только UPDATE
+    assert replica_log.len() == 1                    // только SELECT
     assert primary_log[0].template.starts_with("UPDATE")
     assert replica_log[0].template.starts_with("SELECT")
 }
@@ -272,8 +272,8 @@ test "read-replica: внутри transaction всё на primary" {
         })
     }
 
-    assert primary_log.len == 2                    // SELECT + UPDATE
-    assert replica_log.len == 0                    // ничего на replica
+    assert primary_log.len() == 2                    // SELECT + UPDATE
+    assert replica_log.len() == 0                    // ничего на replica
 }
 
 test "audit: каждый exec пишется в detach-задачу" {
@@ -320,10 +320,10 @@ test "compose: soft-delete + audit + read-replica" {
         }
     }
 
-    assert replica_log.len == 1
+    assert replica_log.len() == 1
     assert replica_log[0].template.contains("deleted_at IS NULL")
 
-    assert primary_log.len == 1
+    assert primary_log.len() == 1
     assert primary_log[0].template.starts_with("UPDATE")  // DELETE → UPDATE
     assert primary_log[0].template.contains("SET deleted_at = NOW()")
 

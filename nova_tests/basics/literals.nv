@@ -44,14 +44,14 @@ test "float exponent" {
 test "string literal" {
     let s = "hello"
     assert(s == "hello")
-    assert(s.len == 5)
+    assert(s.len() == 5)
 }
 
 test "string escapes" {
     let nl = "a\nb"
-    assert(nl.len == 3)
+    assert(nl.len() == 3)
     let tab = "x\ty"
-    assert(tab.len == 3)
+    assert(tab.len() == 3)
     let q = "he said \"hi\""
     assert(q.contains("\""))
     let bs = "back\\slash"

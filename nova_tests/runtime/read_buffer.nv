@@ -99,7 +99,7 @@ test "multi-value round-trip" {
     wb.write_u16_be(0xAABB)
     wb.write_byte(0xCC)
     let bs = wb.into()
-    assert(bs.len == 7)
+    assert(bs.len() == 7)
 
     let mut rb = ReadBuffer.from(bs)
     assert(rb.read_u32_be() == 0x11223344)
@@ -153,7 +153,7 @@ test "f64 round-trip read_f64_le через Fail-form" {
     let mut wb = WriteBuffer.new()
     wb.write_f64_le(3.14159)
     let bs = wb.into()
-    assert(bs.len == 8)
+    assert(bs.len() == 8)
     let mut rb = ReadBuffer.from(bs)
     let d = rb.read_f64_le()
     // IEEE 754 bit-perfect round-trip → точное равенство.
@@ -197,7 +197,7 @@ test "read_bytes — slice copy" {
     let bs = wb.into()
     let mut rb = ReadBuffer.from(bs)
     let chunk = rb.read_bytes(3)
-    assert(chunk.len == 3)
+    assert(chunk.len() == 3)
     assert(chunk[0] == 0x01)
     assert(chunk[2] == 0x03)
     assert(rb.remaining() == 1)
@@ -217,7 +217,7 @@ test "remaining_bytes после частичного чтения" {
     let mut rb = ReadBuffer.from(bs)
     let _ = rb.read_byte()           // потребили 1
     let rest = rb.remaining_bytes()
-    assert(rest.len == 2)
+    assert(rest.len() == 2)
     assert(rest[0] == 0x22)
     assert(rest[1] == 0x33)
 }

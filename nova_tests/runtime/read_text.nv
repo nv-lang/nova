@@ -34,7 +34,7 @@ test "read_char Cyrillic (2 bytes UTF-8)" {
     let mut wb = WriteBuffer.new()
     wb.write_char('П')
     let bs = wb.into()
-    assert(bs.len == 2)            // 2 байта
+    assert(bs.len() == 2)            // 2 байта
     let mut rb = ReadBuffer.from(bs)
     let c = rb.read_char()
     assert(c == 'П')
@@ -46,7 +46,7 @@ test "read_char emoji (4 bytes UTF-8)" {
     let mut wb = WriteBuffer.new()
     wb.write_char('😀')
     let bs = wb.into()
-    assert(bs.len == 4)
+    assert(bs.len() == 4)
     let mut rb = ReadBuffer.from(bs)
     let c = rb.read_char()
     assert(c == '😀')
@@ -59,7 +59,7 @@ test "read_char advances by codepoint width, not byte" {
     wb.write_char('П')   // 2 bytes
     wb.write_char('B')   // 1 byte
     let bs = wb.into()
-    assert(bs.len == 4)            // 1+2+1
+    assert(bs.len() == 4)            // 1+2+1
     let mut rb = ReadBuffer.from(bs)
 
     let c1 = rb.read_char()

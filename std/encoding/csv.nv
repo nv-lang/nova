@@ -22,7 +22,7 @@ export fn Csv.parse(input str) Fail[ParseCsvError] -> [][]str {
     let mut line = 1
 
     let mut i = 0
-    while i < input.len {
+    while i < input.len() {
         let c = match input.char_at(i) { Some(ch) => ch, None => return records }
 
         if in_quote {
@@ -71,7 +71,7 @@ export fn Csv.parse(input str) Fail[ParseCsvError] -> [][]str {
     }
 
     // Финальная запись (если последняя строка без \n)
-    if current_field.len() > 0 || current_record.len > 0 {
+    if current_field.len() > 0 || current_record.len() > 0 {
         current_record.push(current_field.into())
         records.push(current_record)
     }
@@ -84,7 +84,7 @@ export fn Csv.parse(input str) Fail[ParseCsvError] -> [][]str {
 /// Encode `[][]str` обратно в CSV string. Auto-quote fields с `,`/`"`/`\n`.
 #stable(since = "0.1")
 export fn Csv.encode(records [][]str) -> str {
-    let mut buf = StringBuilder.with_capacity(records.len * 64)
+    let mut buf = StringBuilder.with_capacity(records.len() * 64)
     for record in records {
         let mut first = true
         for field in record {
@@ -124,7 +124,7 @@ fn needs_quoting(field str) -> bool {
 
 test "parse: простой CSV" {
     let r = Csv.parse("a,b,c\n1,2,3\n")
-    assert(r.len == 2)
+    assert(r.len() == 2)
     assert(r[0] == ["a", "b", "c"])
     assert(r[1] == ["1", "2", "3"])
 }

@@ -61,7 +61,7 @@ test "write_u32_le 0xDEADBEEF — LE byte order" {
     let arr = wb.into()
     // LE: lowest byte first → EF AD DE (Wait! 0xDEADBEEF = DE AD BE EF)
     // LE order: EF BE AD DE.
-    assert(arr.len == 4)
+    assert(arr.len() == 4)
     assert(arr[0] == 0xEF)
     assert(arr[1] == 0xBE)
     assert(arr[2] == 0xAD)
@@ -73,7 +73,7 @@ test "write_u32_be 0xDEADBEEF — BE byte order" {
     wb.write_u32_be(0xDEADBEEF)
     let arr = wb.into()
     // BE: most-significant first → DE AD BE EF
-    assert(arr.len == 4)
+    assert(arr.len() == 4)
     assert(arr[0] == 0xDE)
     assert(arr[1] == 0xAD)
     assert(arr[2] == 0xBE)
@@ -98,7 +98,7 @@ test "write_u64_le 8 bytes" {
     let mut wb = WriteBuffer.new()
     wb.write_u64_le(0x0102030405060708)
     let arr = wb.into()
-    assert(arr.len == 8)
+    assert(arr.len() == 8)
     assert(arr[0] == 0x08)
     assert(arr[7] == 0x01)
 }
@@ -107,7 +107,7 @@ test "write_u64_be 8 bytes" {
     let mut wb = WriteBuffer.new()
     wb.write_u64_be(0x0102030405060708)
     let arr = wb.into()
-    assert(arr.len == 8)
+    assert(arr.len() == 8)
     assert(arr[0] == 0x01)
     assert(arr[7] == 0x08)
 }
@@ -163,7 +163,7 @@ test "clone независим" {
 test "into() пустой буфер" {
     let wb = WriteBuffer.new()
     let arr = wb.into()
-    assert(arr.len == 0)
+    assert(arr.len() == 0)
 }
 
 test "into() возвращает все накопленные bytes" {
@@ -172,7 +172,7 @@ test "into() возвращает все накопленные bytes" {
     wb.write_byte(0x22)
     wb.write_byte(0x33)
     let arr = wb.into()
-    assert(arr.len == 3)
+    assert(arr.len() == 3)
     assert(arr[0] == 0x11)
     assert(arr[1] == 0x22)
     assert(arr[2] == 0x33)
@@ -187,7 +187,7 @@ test "write_str — UTF-8 bytes напрямую" {
     let mut wb = WriteBuffer.new()
     wb.write_str("AB")
     let arr = wb.into()
-    assert(arr.len == 2)
+    assert(arr.len() == 2)
     assert(arr[0] == 65)        // 'A'
     assert(arr[1] == 66)        // 'B'
 }
@@ -196,7 +196,7 @@ test "write_char ASCII — 1 byte" {
     let mut wb = WriteBuffer.new()
     wb.write_char('A')
     let arr = wb.into()
-    assert(arr.len == 1)
+    assert(arr.len() == 1)
     assert(arr[0] == 65)
 }
 
@@ -204,7 +204,7 @@ test "write_char Cyrillic — 2 bytes UTF-8" {
     let mut wb = WriteBuffer.new()
     wb.write_char('Я')          // U+042F → D0 AF
     let arr = wb.into()
-    assert(arr.len == 2)
+    assert(arr.len() == 2)
     assert(arr[0] == 0xD0)
     assert(arr[1] == 0xAF)
 }
@@ -215,7 +215,7 @@ test "write_char + write_str + write_byte mixed" {
     wb.write_str("BC")          // 2 bytes
     wb.write_byte(0x44)         // 1 byte
     let arr = wb.into()
-    assert(arr.len == 4)
+    assert(arr.len() == 4)
     assert(arr[0] == 65)        // 'A'
     assert(arr[1] == 66)        // 'B'
     assert(arr[2] == 67)        // 'C'
@@ -237,7 +237,7 @@ test "write_zero — добавлено в builtins.nv без правки codeg
     wb.write_zero(3)            // append 3 нулей
     wb.write_byte(0xAA)
     let arr = wb.into()
-    assert(arr.len == 5)
+    assert(arr.len() == 5)
     assert(arr[0] == 0xFF)
     assert(arr[1] == 0)
     assert(arr[2] == 0)

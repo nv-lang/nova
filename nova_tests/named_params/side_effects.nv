@@ -27,7 +27,7 @@ test "переставленные named: side-effects в source-order" {
     // sink = [7, 8, 9] — порядок ЗАПИСИ аргументов (source-order).
     let r = combine(third: rec(sink, 7), second: rec(sink, 8), first: rec(sink, 9))
     assert(r == 987)
-    assert(sink.len == 3)
+    assert(sink.len() == 3)
     assert(sink[0] == 7)
     assert(sink[1] == 8)
     assert(sink[2] == 9)

@@ -6,7 +6,7 @@
 module negative_capability.np_unknown_named
 
 fn greet(name str) -> int =>
-    name.len
+    name.len()
 
 test "unknown named arg rejected" {
     // У `greet` нет параметра `nonexistent`.

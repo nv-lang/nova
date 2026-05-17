@@ -282,8 +282,8 @@ fn hex_digit(n u8) -> char {
 /// Throws `ParseUuidError` (InvalidLength/InvalidHex/MissingDash).
 #stable(since = "0.1")
 export fn Uuid.from(s str) Fail[ParseUuidError] -> Self {
-    if s.len != 36 {
-        throw InvalidLength { actual: s.len, expected: 36 }
+    if s.len() != 36 {
+        throw InvalidLength { actual: s.len(), expected: 36 }
     }
 
     // Дефисы на позициях 8, 13, 18, 23.

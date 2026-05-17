@@ -10,6 +10,13 @@ publish = false
 name = "nova"
 path = "src/main.rs"
 
+[[bin]]
+name = "migrate_plan60"
+path = "src/bin/migrate_plan60.rs"
+# Plan 60 Ф.2: один-раз migration tool .len → .len() для всего corpus'а
+# (std / nova_tests / examples / .md). Удаляется после Plan 60 closure
+# (или сохраняется как reference для future similar migrations).
+
 [features]
 # Plan 33 V1: forward z3-backend во вложенный nova_codegen.
 # Build: `cargo build --release --features z3-backend` из nova-cli/.

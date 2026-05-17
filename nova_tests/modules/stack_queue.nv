@@ -17,16 +17,16 @@ fn Stack[T] @pop() -> Option[T] {
     @items.pop()
 }
 
-fn Stack[T] @len() -> int => @items.len
+fn Stack[T] @len() -> int => @items.len()
 
 fn Stack[T] @peek() -> Option[T] {
-    if @items.len == 0 {
+    if @items.len() == 0 {
         return None
     }
-    Some(@items[@items.len - 1])
+    Some(@items[@items.len() - 1])
 }
 
-fn Stack[T] @is_empty() -> bool => @items.len == 0
+fn Stack[T] @is_empty() -> bool => @items.len() == 0
 
 test "stack push and len" {
     let s Stack[int] = { items: [] }
@@ -116,5 +116,5 @@ test "стек реверсирует массив (через known size)" {
     }
     assert(r[0] == 5)
     assert(r[4] == 1)
-    assert(r.len == 5)
+    assert(r.len() == 5)
 }

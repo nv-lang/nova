@@ -10,7 +10,7 @@ type Buf { items []int }
 fn Buf.new() -> Self => { items: [] }
 
 // Два overload'а — по типу аргумента.
-fn Buf mut @push(n int) -> int => @items.len
+fn Buf mut @push(n int) -> int => @items.len()
 fn Buf mut @push(b bool) -> int => if b { 1 } else { 0 }
 
 test "Ф.5: bound method value disambiguation through as-fn" {

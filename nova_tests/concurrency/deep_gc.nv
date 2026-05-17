@@ -262,13 +262,13 @@ test "GC: record survives two spawns (pipeline)" {
 
 test "GC: array len grows correctly" {
     let arr = [10, 20, 30, 40, 50]
-    assert(arr.len == 5)
+    assert(arr.len() == 5)
 }
 
 test "GC: array spread creates correct length" {
     let a = [1, 2, 3]
     let b = [0, ...a, 4, 5, 6]
-    assert(b.len == 7)
+    assert(b.len() == 7)
 }
 
 test "GC: array .get returns Some/None correctly" {

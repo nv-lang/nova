@@ -192,9 +192,9 @@ fn client_ip(headers Headers, remote_addr str) -> str =>
 // Если тело не JSON или пустое — пишем {}.
 // Если тело длиннее порога — обрезаем и ставим маркер.
 fn sanitize_payload(raw []u8) -> Json =>
-    if raw.len == 0 {
+    if raw.len() == 0 {
         json`{}`
-    } else if raw.len > MAX_AUDIT_PAYLOAD_BYTES {
+    } else if raw.len() > MAX_AUDIT_PAYLOAD_BYTES {
         json`{"_truncated": true}`
     } else {
         match Json.parse(raw) {
@@ -440,7 +440,7 @@ test "audit middleware: пишет запись для успешного POST" 
         mw(Request.post("/users/42/ban", json`{"reason": "spam"}`))
 
         let rows = Db.query(sql`SELECT action, target_kind, target_id FROM admin_audit_log`)
-        assert rows.len == 1
+        assert rows.len() == 1
         assert rows[0].get_str("action")      == "users.ban"
         assert rows[0].get_str("target_kind") == "user"
         assert rows[0].get_str("target_id")   == "42"
@@ -460,6 +460,6 @@ test "audit middleware: НЕ пишет для 4xx" {
         mw(Request.delete("/users/42", []))
 
         let rows = Db.query(sql`SELECT * FROM admin_audit_log`)
-        assert rows.len == 0
+        assert rows.len() == 0
     }
 }

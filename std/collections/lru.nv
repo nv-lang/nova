@@ -54,13 +54,13 @@ export fn Lru[K, V] mut @put(k K, v V) -> () {
         return ()
     }
 
-    if @_order.len >= @capacity {
+    if @_order.len() >= @capacity {
         // Evict LRU (last element)
-        let evicted = @_order[@_order.len - 1]
+        let evicted = @_order[@_order.len() - 1]
         @_store.remove(evicted)
         // Удаляем последний элемент из order
         let mut new_order []K = []
-        for i in 0..@_order.len - 1 {
+        for i in 0..@_order.len() - 1 {
             new_order.push(@_order[i])
         }
         @_order = new_order

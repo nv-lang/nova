@@ -354,14 +354,14 @@ export fn Complex.from(s str) Fail[ParseComplexError] -> Self {
 // None если разделителя нет (значит чисто-мнимое).
 fn split_re_im(body str) -> Option[(str, str)] {
     let mut i = 1                              // пропускаем знак re если есть
-    while i < body.len {
+    while i < body.len() {
         let c = body.char_at(i)
         if c == '+' || c == '-' {
             // Не часть экспоненты `1e-5`?
             let prev = body.char_at(i - 1)
             if prev != 'e' && prev != 'E' {
                 let re_s = body.slice(0, i)
-                let im_s = body.slice(i, body.len)
+                let im_s = body.slice(i, body.len())
                 return Some((re_s, im_s))
             }
         }

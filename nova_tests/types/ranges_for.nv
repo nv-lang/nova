@@ -58,7 +58,7 @@ test "for collects via array.push" {
     for i in 1..6 {
         squares.push(i * i)
     }
-    assert(squares.len == 5)
+    assert(squares.len() == 5)
     assert(squares[0] == 1)
     assert(squares[4] == 25)
 }
