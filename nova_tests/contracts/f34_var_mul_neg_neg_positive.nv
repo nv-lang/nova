@@ -1,0 +1,18 @@
+// Ф.34.2 (Plan 33.6): TrivialBackend VarA * VarB non-negative для both <= 0.
+// `requires a <= 0; requires b <= 0; ensures (a * b) >= 0` — отрицательное × отрицательное.
+
+module contracts.f34_var_mul_neg_neg_positive
+
+#verify
+fn neg_times_neg(a int, b int) -> int
+    requires a <= 0
+    requires b <= 0
+    ensures result >= 0
+{
+    a * b
+}
+
+test "var mul neg neg non-neg" {
+    assert(neg_times_neg(-3, -4) == 12)
+    assert(neg_times_neg(0, -5) == 0)
+}

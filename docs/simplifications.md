@@ -9109,9 +9109,35 @@ literal × Var. Новый `try_var_mul_nonneg` — для Var × Var с both lo
 
 **Регрессия:** 181 → 183 PASS (+2), 0 FAIL, 44 SKIP.
 
-**Что не закрывает (V3):** Var × Var с **mixed signs** (both upper <= 0
-→ product >= 0 тоже), Var × Var × Var (chained mul), и т.д. — это уже
-nonlinear LIA, требует Z3.
+**Что не закрывает (V3):** Var × Var × Var (chained mul), Var × const с
+unknown sign, и т.д. — это уже nonlinear LIA, требует Z3. **Ф.34.2
+закрывает mixed signs** (см. ниже).
+
+## [M-plan-33.6-Ф.34-ensures-fail-and-var-mul-signs] (2026-05-18)
+
+Semantic lint (ensures_fail на non-Fail fn) + полное покрытие Var-Var
+multiplication signs в TrivialBackend.
+
+**1. ensures_fail без Fail effect.** `fn safe() -> int ensures_fail false`
+без Fail в effects — ensures_fail unreachable. Двухчастное fix:
+W2402 в verify_module + skip-verify в verify_fn (continue если
+has_fail_effect_local == false). Без skip — старый verify path выдавал
+error на пустом контексте.
+
+**2. Var-Var multiplication complete sign coverage.** Ф.33.2 покрыл
+positive × positive. Ф.34.2 расширяет:
+- both upper <= 0 (negative × negative) → product >= 0
+- mixed signs (positive × negative or vice versa) → product <= 0
+
+Realised through extended try_var_mul_nonneg + new try_var_mul_nonpos.
+Integration в check chain + not-invert section.
+
+**Регрессия:** 183 → 186 PASS (+3), 0 FAIL, 44 SKIP.
+
+**Что закрывает в comparison с Ф.33.2 notes:** Ф.33.2 не покрывал
+negative² и mixed. Ф.34.2 закрыл оба case'а — TrivialBackend теперь
+полное покрытие Var-Var multiplication signs (положительный²,
+отрицательный², mixed).
 
 ## [M-57.F.4-positive-negative-coverage] — Test expansion (2026-05-17)
 
