@@ -1,47 +1,103 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-# Plan 65: `ChanReader.close_after(Duration)` — миграция `Time.after`
+# Plan 65: `ChanReader.close_after(Duration)` — timer-channel API parity с Go/Rust/TS
 
-> **Создан:** 2026-05-18. **Статус:** proposed, не начат.
-> **Приоритет:** P1 (исправление спека/API drift; блокер для future
-> Channel-based timer API: `tick_every`, `close_at`).
-> **Трудоёмкость:** ~5 dev-days.
+> **Создан:** 2026-05-18. **Ревизия v2:** 2026-05-18 (industry-parity audit
+> vs Go `time.*` + Rust `tokio::time::*` + TS `setTimeout`/Tokio Sleep;
+> добавлены cancel, deadline, mock-time, drop, observability, timer-wheel).
+> **Статус:** proposed, не начат.
+> **Приоритет:** P1 (исправление API drift + capability semantics + bringing
+> timer-channel API на уровень Go/Tokio).
+> **Трудоёмкость:** ~9-11 dev-days (с v2 расширениями; MVP в Ф.0-Ф.9 за 5 дней,
+> production hardening Ф.10-Ф.14 ещё 4-6).
 
 ---
 
 ## Зачем
 
-Текущий API `Time.after(ms i64) -> ChanReader[()]` нарушает три инварианта:
+Текущий `Time.after(ms i64) -> ChanReader[()]` имеет три ортогональных
+дефекта + не доходит до уровня production-grade timer-API в Go/Tokio.
 
-1. **Domain vs return type mismatch.** Функция живёт в `Time`, но
-   возвращает только read-capability канала. Discovery плохой: чтобы
-   найти «как сделать канал с таймером», надо сначала угадать что искать
-   надо в `Time`, а не в `Channel`/`ChanReader`.
+### Дефекты текущего API
 
-2. **Нет type safety на длительности.** `Time.after(1000)` — это 1 сек
-   или 1000 микросекунд? Bare int не несёт единицу измерения.
-   `Duration.from_secs(1)` явный — `Time.after` его не принимает.
-   Дублируется паттерн ms-как-int (был в Plan 22 Time.sleep до Duration
-   migration; тут эта симплификация осталась).
+1. **Domain vs return type mismatch.** Функция в `Time`, возвращает
+   только read-capability канала. Discovery плохой: чтобы найти
+   «как сделать канал с таймером», надо угадать что искать в `Time`.
 
-3. **Semantic mismatch с capability-split D91.** Получение
-   `ChanReader[()]` через `Time.<X>` подразумевает что Time владеет
-   также `ChanWriter` (который остался у runtime). Это нарушает
-   ментальную модель D91: namespace = capability, которую получает
-   caller.
+2. **Нет type safety.** `Time.after(1000)` — 1 сек или 1000 мкс? Bare
+   int. `Duration.from_secs(1)` уже есть, но `Time.after` его не берёт.
 
-**Real impact:**
-- 16 call sites в `nova_tests/concurrency/*` (7 файлов) с raw int ms —
-  все они риск ошибки timeline (мс vs сек).
-- spec D94 examples используют bare int — учит неправильному паттерну.
-- Плотно использован в `select`-based timeout pattern (главный use case).
+3. **Capability mismatch с D91.** Получение `ChanReader[()]` через
+   `Time.X` неявно подразумевает что Time владеет также `ChanWriter`
+   (на самом деле — runtime). Нарушает D91 ментальную модель.
 
-**Что уже сделано** (контекст):
-- D91 capability-split реализован (Plan 21).
-- Duration API готов: `from_secs/from_millis/from_nanos/from_secs_f64/...`
-  (std/time/duration.nv).
-- libuv timer infrastructure готов (Plan 22, Plan 44.1 Ф.2 timer cleanup).
-- Plan 60 показал production-grade pattern atomic migration tool +
-  spec sync (D117 size-accessor uniformity).
+### Gaps относительно industry (что ДОЛЖНО быть, но нет)
+
+4. **Нет explicit cancel.** Go `Timer.Stop()`, TS `clearTimeout(id)`,
+   Tokio `drop(sleep)`. Сейчас нельзя отменить `Time.after` до срабатывания
+   — таймер живёт до тика (или GC + libuv close). **Resource leak risk**
+   в long-running workloads с jitter retry / opportunistic timeouts.
+
+5. **Нет absolute deadline.** Tokio `sleep_until(Instant)`, Go
+   `time.Until(deadline)` + `time.After(...)`. Без него jittered retries
+   / scheduled tasks с фиксированным deadline'ом — clunky.
+
+6. **Нет интеграции с D75 CancelToken.** Nova-specific преимущество:
+   `supervised(cancel: tok)` уже есть. Timer должен наследовать cancel
+   от parent scope автоматически. Сейчас не наследует — изоляция.
+
+7. **Нет mockable time в тестах.** Tokio `pause()/advance(d)`, Jest
+   `useFakeTimers()`. Nova имеет `Time` effect для мока часов
+   (`with Time = mock { ... }`), но `Time.after` его **игнорирует**
+   (идёт прямо в libuv). **Тесты с timing flaky** или требуют real sleep.
+
+8. **Нет observability.** Tokio `tokio-console` показывает in-flight
+   timers; Go expvar/runtime stats. Сейчас нет способа узнать сколько
+   таймеров живёт + не leak'аем ли.
+
+9. **Нет timer-wheel оптимизации.** Каждый `Time.after` = новый libuv
+   `uv_timer_t` handle. На сотнях коротких таймеров (HTTP timeouts,
+   retry budgets) — significant overhead vs Tokio's TimerEntry wheel
+   или Go's runtime/timer heap.
+
+### Real impact
+
+- **16 call sites** в `nova_tests/concurrency/*` (7 файлов) — все используют
+  bare int ms.
+- **5+ упоминаний в spec D94** — учит неправильному паттерну.
+- **`Time` effect mock не работает** для select-timeout тестов — нужен
+  real sleep (flaky CI).
+- **Plan 44.1 Ф.2 B7** уже добавил `on_select_lost` callback для cleanup
+  не-winning arm; это **partial cancel**, но user-facing API нет.
+
+---
+
+## Industry parity table
+
+| Capability | Go | Rust (tokio) | TS (Node) | Nova v1 (Time.after) | Nova v2 (Plan 65) |
+|---|---|---|---|---|---|
+| **One-shot timer-channel** | `time.After(d)` `<-chan time.Time` | `tokio::time::sleep(d).await` (Future) | `setTimeout(fn, ms)` | `Time.after(ms)` | `ChanReader.close_after(Duration)` |
+| **Type-safe Duration** | `time.Duration` (typed) | `Duration` (typed) | ❌ number (ms) | ❌ int (ms) | ✅ `Duration` ⭐ |
+| **Cancel before fire** | `timer.Stop() bool` | drop the Future / `Sleep::reset` | `clearTimeout(id)` | ❌ нет | ✅ `tok.cancel()` через D75 ⭐ |
+| **Absolute deadline** | `time.Until(t)` + `After` | `sleep_until(Instant)` | manual `setTimeout(fn, t - Date.now())` | ❌ | ✅ `ChanReader.close_at(Instant)` (Ф.12) |
+| **Periodic ticker** | `time.NewTicker(d)` + `.C` | `interval(d).tick()` | `setInterval(fn, ms)` | ❌ | ⚠️ `ChanReader.tick_every(Duration)` (Ф.13 sketch, MVP в Plan 66) |
+| **Missed-tick policy** | drop (channel cap=1) | `MissedTickBehavior::{Burst,Delay,Skip}` | drop | n/a | follow Tokio: enum в `tick_every` (Plan 66) |
+| **Mockable time в тестах** | manual (interface) | `tokio::time::pause()/advance(d)` | `jest.useFakeTimers()` | ❌ (Time effect ignored) | ✅ `with Time = mock { ... }` интегрирован (Ф.10) ⭐ |
+| **Resource leak detection** | `runtime.NumGoroutine()` + profiling | `tokio-console` in-flight timers | `process._getActiveResources()` | ❌ | ✅ `NOVA_TIMER_METRICS=1` + bench-history (Ф.11) |
+| **Timer wheel optimization** | runtime/timer heap (4-min) | TimerEntry wheel + bucket | libuv heap | libuv per-timer | ⚠️ libuv (Ф.0); wheel опционально (Plan 66) ✦ |
+| **Drop semantics (GC)** | runtime cleanup | tokio handles via Drop | inspector tracks | unclear | ✅ explicit reader-drop → close libuv handle (Ф.2) |
+| **Sub-ms precision** | ns native | ns native | ms only | ms input only | ns input, ms granularity (libuv); honest-doc (Ф.2) |
+| **Cancel propagation в select** | manual `<-done` arm | `select! { _ = sleep => ..., _ = cancel => ... }` | `Promise.race([timer, abortPromise])` | ❌ | ✅ `tok.cancel()` будит ВСЕ pending waiters (D75 + Plan 44.1) ⭐ |
+| **Spawn-aware** (timer тикает в worker, не в parent) | yes (goroutines) | yes (tokio runtime) | event loop | yes (libuv per-loop) | yes — preserved (Ф.8 cross-toolchain test) |
+
+**⭐** = Nova-улучшение vs baseline (typed Duration, native CancelToken,
+mockable through effect).
+**✦** = parity gap, осознанный defer (libuv heap → wheel требует
+self-host runtime, Plan 66+).
+
+**Итог parity:** Plan 65 v2 закрывает Nova up to Tokio-уровня по 11/13
+capabilities; на 12-м (timer wheel) — осознанный gap с roadmap. На 4
+capabilities Nova объективно лучше (Duration type-safety, CancelToken
+integration, Time-effect mock, select cancel propagation).
 
 ---
 
@@ -49,18 +105,18 @@
 
 | Слой | Где | Что |
 |---|---|---|
-| Spec | `spec/decisions/06-concurrency.md` D94 + 5+ упоминаний | `Time.after(d)` примеры |
+| Spec | `spec/decisions/06-concurrency.md` D94 + 5 упоминаний | `Time.after(d)` примеры с bare int |
 | Compiler schema | `emit_c.rs:1042-1046` | `time_schema.insert("after", ([i64], "Nova_ChanReader*"))` |
 | Codegen type inference | `emit_c.rs:18195-18198` | Member-call `Time.after` → `Nova_ChanReader*` |
-| Runtime | `nova_rt.h` / channel impl | `nova_time_after_ms(int64)` extern |
+| Runtime | `nova_rt.c` / channel impl | `nova_time_after_ms(int64)` — libuv `uv_timer_t` per call |
 | Tests | 7 файлов в `nova_tests/concurrency/` | 16 call sites с ms-int literals |
-| Plan doc | Plan 31 Ф.5, Plan 44.1 Ф.2 B7 | Historical reference |
+| Plan doc | Plan 31 Ф.5, Plan 44.1 Ф.2 B7 | Historical reference, partial cleanup |
 
 ---
 
-## Архитектурное решение
+## Архитектурные решения
 
-### AD1. New API: `ChanReader.close_after(Duration) -> ChanReader[()]`
+### AD1. New API: `ChanReader.close_after(d Duration) -> ChanReader[()]`
 
 ```nova
 let t = ChanReader.close_after(Duration.from_secs(1))
@@ -70,187 +126,348 @@ select {
 }
 ```
 
-**Свойства:**
-- Namespace `ChanReader` = capability возврата (D91 consistency).
-- Метод `close_after` описывает **механизм** (канал закроется через d),
-  совпадает с pattern `None = t.recv() =>` в select arm.
-- Параметр `Duration` — type-safe, unit-explicit.
+Namespace = capability возврата (D91). Метод описывает **механизм**
+(канал закроется через d) — pattern-matches с `None = t.recv()` armом
+в select.
 
-### AD2. Старый `Time.after` удаляется (clean break)
+### AD2. Atomic clean break (Time.after удаляется)
 
-Bootstrap convention (precedent: Plan 60, Plan 47 D75 revision): API
-переименовывается atomically, старое имя удаляется в том же sweep'е.
-Diagnostic с structured fix-it suggestion ловит legacy code.
+Bootstrap convention (Plan 60 size-accessor, Plan 47 D75 revision):
+API переименовывается atomically. Diagnostic с machine-applicable
+suggestion ловит legacy code. Нет deprecated alias (избегаем drift).
 
-**Почему не deprecated alias.** Поддерживать оба варианта = два path в
-codegen + risk drift + confusion в documentation. Bootstrap 0.x — нет
-backward-compat обязательств.
+### AD3. Duration → ns в API, ms в runtime (с honest-doc)
 
-### AD3. Duration → ns в runtime, не ms
-
-Existing runtime `nova_time_after_ms(int64)` принимает миллисекунды.
-Это **симплификация** — теряется sub-ms precision (для bench, retry,
-fine-grained scheduling).
-
-**Решение:** новая runtime fn `nova_chan_reader_close_after_ns(int64)`,
-принимает nanos. Внутри libuv timer всё равно работает на ms (libuv
-ограничение), но **округление вверх** документировано и происходит в
-одной точке (runtime), не в каждом call site.
+User передаёт `Duration` (ns precision). Runtime конвертит в ms
+(libuv ограничение). Sub-ms округляется **вверх** к 1ms (не вниз к 0).
 
 ```c
-// nova_rt.c
 Nova_ChanReader* nova_chan_reader_close_after_ns(int64_t nanos) {
-    // libuv ограничение: ms granularity → округление вверх
-    uint64_t ms = (nanos + 999999) / 1000000;
-    if (ms == 0 && nanos > 0) ms = 1;  // sub-ms → 1ms minimum
-    return nova_libuv_timer_close_after(ms);
+    if (nanos < 0) {
+        nova_panic("ChanReader.close_after: negative duration: %lld ns", (long long)nanos);
+    }
+    if (nanos == 0) {
+        return nova_chan_reader_already_closed();  // fast-path, no timer alloc
+    }
+    int64_t ms = (nanos + 999999) / 1000000;
+    return nova_libuv_timer_close_after_ms(ms);
 }
 ```
 
-**Audit-finding to fix in plan:** sub-ms duration в текущем `Time.after`
-silently округляется до 0, что = «сработать сразу же». Это bug, не
-feature.
+### AD4. Codegen: Duration unpacking inline (zero-alloc)
 
-### AD4. Codegen: Duration unpacking inline
+`Duration` — record `{ nanos i64 }`. Для `ChanReader.close_after(d)`
+codegen эмитит `nova_chan_reader_close_after_ns(d.nanos)` — прямой
+field access, без intermediate copy.
 
-`Duration` — record `{ nanos i64 }`. Codegen для `ChanReader.close_after(d)`
-эмитит:
+**Const-folding optimization (Ф.8):** literal `Duration.from_secs(1)`
+→ compile-time const `1_000_000_000LL` → emit `nova_chan_reader_close_after_ns(1000000000LL)`. Plan 60 mono pipeline уже умеет это для
+similar constants.
 
-```c
-nova_chan_reader_close_after_ns(d.nanos)
+### AD5. Cancel через D75 CancelToken (Nova-unique advantage)
+
+Go: `timer.Stop()` явный API на Timer object.
+Tokio: `drop(future)` cancel'ит implicitly.
+Nova: **integrate с existing D75 CancelToken** — timer наследует cancel
+от родительского `supervised(cancel: tok)` scope.
+
+```nova
+let tok = CancelToken.new()
+supervised(cancel: tok) {
+    spawn fn() => {
+        let t = ChanReader.close_after(Duration.from_secs(60))  // long timeout
+        select {
+            Some(v) = rx.recv() => process(v)
+            None    = t.recv()  => log_timeout()
+        }
+        // если tok.cancel() из другого fiber'а:
+        //   `t` (libuv timer) ОТМЕНЁН, recv'ы пробуждены, runtime cleanup;
+        //   pre-existing D75 cancel-propagation работает.
+    }
+}
+
+// elsewhere:
+tok.cancel()  // → libuv timer закрывается без firing, no leak
 ```
 
-(без allocation промежуточной структуры; field-access прямой).
+**Реализация:** `ChanReader.close_after` регистрирует timer как
+**cancel-aware resource** в current scope's `CancelToken` (если есть).
+Plan 47 Ф.6 уже добавил cancel-resource hooks для channels — переиспользуем.
 
-**Edge case:** literal `Duration.from_secs(1)` constant-folded → emit
-hard-coded `nova_chan_reader_close_after_ns(1000000000LL)`. Optimization
-в Plan 65 Ф.8 (perf-sanity).
+### AD6. Mockable time через Time effect (тестируемость)
 
-### AD5. Negative-test scope (production-grade)
+Существующий `Time` effect (см. Plan 34 Ф.7 + Plan 22) умеет mock'ать
+часы:
 
-| Test | EXPECT marker | Что проверяет |
+```nova
+with Time = Test.mock_clock(start_ms: 1000) {
+    let t = ChanReader.close_after(Duration.from_secs(5))
+    Time.advance(Duration.from_secs(4))  // virtual time
+    assert(t.is_closed() == false)
+    Time.advance(Duration.from_secs(2))  // total +6s
+    assert(t.is_closed() == true)
+}
+```
+
+**Реализация:** runtime `nova_chan_reader_close_after_ns` проверяет
+**effect-handler-bound** `Time` — если есть mock-handler, использует
+virtual deadline + manual `Time.advance` triggering вместо libuv timer.
+Real-clock path = default (если effect не bound).
+
+Это закрывает **gap vs Tokio `pause()/advance(d)`**. AI-friendly: тесты
+становятся deterministic.
+
+### AD7. Drop / GC semantics — explicit cleanup
+
+Когда `ChanReader[()]` GC-collect'ится (no live references), его
+libuv timer **должен** быть закрыт без firing — иначе resource leak.
+
+**Реализация:** `Nova_ChanReader` имеет finalizer (Boehm `GC_REGISTER_FINALIZER`),
+который вызывает `uv_close(&timer)` на pending timer. Plan 27
+(Boehm GC switch) уже обеспечивает finalizer infrastructure.
+
+**Acceptance test:** spawn 10_000 `ChanReader.close_after(Duration.from_secs(60))`
+без recv'ов, force GC, проверить что in-flight timer count ↓ к 0.
+
+### AD8. Resource leak observability — `NOVA_TIMER_METRICS=1`
+
+Env var включает per-process counter:
+
+```
+$ NOVA_TIMER_METRICS=1 nova test
+...
+NOVA TIMER STATS:
+  alloc_total:       1234
+  alloc_active:      0       (leak if > 0 after main exits)
+  fired:             1200
+  cancelled:         34       (via CancelToken or finalizer)
+  longest_pending:   125 ms
+```
+
+Counters экспортируются в `nova bench` history (Plan 57) для
+regression detection: «alloc_active > 0 после теста» → automatic flag.
+
+### AD9. Timer-wheel — осознанный defer
+
+libuv per-timer handle = ~120 bytes + 1 syscall per timer. Для idiomatic
+loads (10-100 concurrent timers) — приемлемо. Для **HTTP-server с
+10_000+ short timeouts** (per-request) — нужна timer-wheel.
+
+**Решение:** в Plan 65 — libuv (single source path). В **Plan 66** —
+custom timer-wheel (Tokio-style hierarchical bucketing) с runtime
+benchmark gate: switch если concurrent timer count > N (config).
+
+Документировано в honest-defer; bench `timer_alloc_throughput` (Ф.11)
+запишет baseline для будущего сравнения.
+
+### AD10. select-internals compatibility — no special-case
+
+`ChanReader[()]` создаваемый через `close_after` — обычный ChanReader,
+никакой special-case в select runtime. `Plan 44.1 Ф.2 B7 on_select_lost`
+callback продолжает работать (cancel non-winning arm timer).
+
+**Acceptance test:** `select_timer_stress.nv` (500 iter) passes
+unchanged.
+
+### AD11. Migration tool — token-aware с edge cases
+
+| Pattern | Transform | Edge case handling |
 |---|---|---|
-| `f1_close_after_int_neg.nv` | `EXPECT_COMPILE_ERROR` | `ChanReader.close_after(1000)` — int не Duration |
-| `f2_time_after_removed.nv` | `EXPECT_COMPILE_ERROR` | `Time.after(1000)` — removed |
-| `f3_negative_duration.nv` | `EXPECT_RUNTIME_PANIC` | `Duration.from_secs(-1)` → close_after — panic «negative duration» |
-| `f4_zero_duration.nv` | (positive) | `Duration.from_nanos(0)` → канал готов immediate (recv returns None ASAP) |
-| `f5_sub_ms_precision.nv` | (positive) | `Duration.from_nanos(500_000)` (0.5ms) → округляется к 1ms, не к 0 |
-| `f6_huge_duration.nv` | `EXPECT_COMPILE_ERROR` или runtime warn | `Duration.from_days(10_000)` overflow check |
+| `Time.after(<INT_LIT>)` | `ChanReader.close_after(Duration.from_millis(<INT_LIT>))` | straight rewrite |
+| `Time.after(<FLOAT_LIT>)` | `ChanReader.close_after(Duration.from_secs_f64(<FLOAT_LIT>))` | float → secs |
+| `Time.after(<EXPR>)` non-literal | emit `// MIGRATE_MANUAL: Plan 65` + leave call | manual review (CI gate fails) |
+| `Time.after` в string literal | **skip** (lexer aware) | regex would corrupt strings |
+| `Time.after` в `//` или `///` comment | **skip** | preserve documentation/history notes |
+| `Time.after` в `#cfg`-skipped block | **rewrite** | cfg-resolved AST, all code paths |
+| `Time.after` в doc-test code block | **rewrite** | doc-tests compile (Plan 45 Ф.7) |
 
-### AD6. Migration tool — атомарный, idempotent
+**Idempotency:** повторный запуск на migrated file = no-op.
 
-Rust binary `nova-cli/src/bin/migrate_plan65.rs` (паттерн Plan 60
-`migrate_plan60.rs`):
+**Dry-run mode:** `migrate_plan65 --dry-run` печатает planned changes
+без записи; exit 0 если no changes, 2 если есть changes, 1 если есть
+manual markers.
 
-- **Token-aware**: парсит .nv с lexer (не regex по тексту), чтобы не
-  ломать строки/комментарии содержащие `Time.after`.
-- **Транформации**:
-  - `Time.after(<INT_LIT>)` → `ChanReader.close_after(Duration.from_millis(<INT_LIT>))`
-  - `Time.after(<FLOAT_LIT>)` → `ChanReader.close_after(Duration.from_secs_f64(<FLOAT_LIT>))`
-  - `Time.after(<EXPR>)` (non-literal) → emit marker comment
-    `// MIGRATE_MANUAL: Plan 65 — wrap in Duration.from_millis(<EXPR>)`
-- **Idempotent**: повторный запуск на уже-мигрированном файле — no-op.
-- **Dry-run mode** (`--dry-run`): print planned changes без записи.
-- **Exit code 1** если manual markers остались — CI gate.
+### AD12. Spec stability — `#stable(since)` bump policy
+
+Новый API объявляется `#stable(since = "0.6")`. Поскольку Plan 65
+переименовывает существующий публичный API (хоть и bootstrap), это
+**breaking change**. Bump к 0.6 — конвенция: minor для breaking
+до 1.0.
 
 ---
 
-## Requirements
+## Requirements (R1-R32)
 
-### Core API (MVP)
+### Core API (MVP, Ф.0-Ф.9)
 
 **R1.** `ChanReader.close_after(d Duration) -> ChanReader[()]` доступен
-как static constructor на типе `ChanReader`. Может быть вызван без
-import (через prelude расширение если ChanReader там есть, иначе через
+без import (через prelude — если `ChanReader` там; иначе через
 `std/concurrency/channel`).
 
-**R2.** Принимает только `Duration`. `ChanReader.close_after(1000)`
-(int literal) → compile error с suggestion «use `Duration.from_millis(1000)`».
+**R2.** Принимает только `Duration`. Bare int → compile error +
+machine-applicable fix-it suggestion.
 
-**R3.** Семантика: канал closing **по истечении** d (не «через d или
-позже» — guaranteed monotonic deadline). recv() вернёт `None` единожды
-(стандартное закрытие); повторный recv → `None` (idempotent на closed).
+**R3.** Канал closing **по истечении** d (monotonic deadline). recv()
+вернёт `None` единожды; повторный recv → `None` (idempotent).
 
-**R4.** Negative Duration → panic «`ChanReader.close_after: negative duration`»
-с указанием call site. Не silent zero-out.
+**R4.** Negative Duration → panic с указанием call site + actual value.
 
-**R5.** Zero Duration (`Duration.from_nanos(0)`) → канал closed
-**immediately** (next recv returns None без yield). NOT panic — это
-valid degenerate case для fast-path testing.
+**R5.** Zero Duration → канал closed immediately (next recv returns
+None без yield). Fast-path: no libuv timer allocation.
 
-**R6.** Sub-ms duration → округление вверх к 1ms (libuv ограничение,
-не lying-zero). Документировано в `///` doc-comment.
+**R6.** Sub-ms duration → округление вверх к 1ms (libuv limit).
+Документировано в `///` `# Performance`.
 
 ### Compiler
 
-**R7.** Type-checker: registration `ChanReader.close_after` через
-external_registry (как Channel.new, etc.).
+**R7.** `ChanReader.close_after` через external_registry (паттерн
+`Channel.new`). Type-checker accept'ит только Duration.
 
 **R8.** Codegen `emit_c.rs`:
-   - `infer_expr_c_type` case: `ChanReader.close_after(...)` → `Nova_ChanReader*`
-   - Method dispatch lowering: emit `nova_chan_reader_close_after_ns(d.nanos)`
+   - `infer_expr_c_type`: `ChanReader.close_after(...)` → `Nova_ChanReader*`
+   - Method dispatch lowering: `nova_chan_reader_close_after_ns(d.nanos)`
+   - Const-folding для literal Duration (Ф.8)
 
-**R9.** `Time.after(...)` диагностика: structured `Diagnostic` с
-`SuggestedFix` (Plan 36 R7 infrastructure). Машино-applicable: caller
-видит точную замену.
+**R9.** `Time.after(...)` диагностика E5101 с `SuggestedFix` (Plan 36
+R7 structured diagnostic format):
 
 ```
-error[E5101]: `Time.after` was removed in Plan 65
-  --> nova_tests/concurrency/select_test.nv:194:33
-   |
+error[E5101]: `Time.after` was removed in Plan 65 (D94 revision)
+  --> select_test.nv:194:33
 194|     Some(_) = Time.after(50) => { branch = 2 }
-   |               ^^^^^^^^^^^^^^^ use `ChanReader.close_after(Duration)` instead
-   |
+   |               ^^^^^^^^^^^^^^^ use `ChanReader.close_after(Duration)`
    = note: `Time.after(ms)` accepted raw integers — no unit safety.
    = note: `ChanReader.close_after(Duration)` is the capability-split
-           replacement (D91, D94 revision).
+           replacement (D91 + D94 revision via Plan 65).
 help: replace with `ChanReader.close_after(Duration.from_millis(50))`
-  --> nova_tests/concurrency/select_test.nv:194:33
-   |
 194|     Some(_) = ChanReader.close_after(Duration.from_millis(50)) => { branch = 2 }
-   |
 ```
 
 ### Runtime
 
-**R10.** New extern: `nova_chan_reader_close_after_ns(int64_t nanos) -> Nova_ChanReader*`.
+**R10.** Extern: `nova_chan_reader_close_after_ns(int64 nanos) -> Nova_ChanReader*`.
 
-**R11.** Existing `nova_time_after_ms` — переименовать в
-`nova_internal_chan_close_after_ms` (internal helper); вызывается из
-`nova_chan_reader_close_after_ns` после ns→ms conversion. Не доступен
-из user code.
+**R11.** Existing `nova_time_after_ms` → renamed `nova_internal_chan_close_after_ms`
+(internal helper; не доступен из user code).
 
-**R12.** Timer cleanup contract preserved (Plan 44.1 Ф.2 B7): non-winning
-arm в select cancel'ит pending timer. Existing `on_select_lost` callback
-remains.
+**R12.** Timer cleanup contract preserved (Plan 44.1 Ф.2 B7):
+non-winning arm в select cancel'ит pending timer. Existing
+`on_select_lost` callback remains.
+
+**R13.** Finalizer-based cleanup (AD7): GC of unreferenced ChanReader
+с pending timer → `uv_close()` без firing.
+
+### CancelToken integration (AD5)
+
+**R14.** `ChanReader.close_after` регистрирует timer в текущем
+`CancelToken` scope (если bound). При `tok.cancel()`:
+   - libuv timer закрывается без firing
+   - все pending recv-waiters пробуждаются с None
+   - cleanup atomic с другими cancellable resources
+
+**R15.** Если нет cancel-scope — timer работает как сейчас (без
+cancel-aware regsitration). Backwards-compat для top-level main.
+
+### Time-effect mock (AD6)
+
+**R16.** Runtime проверяет наличие `Time` effect-handler в current
+fiber's effect-stack. Если есть mock handler — uses virtual clock:
+   - `Time.now()` возвращает virtual ms
+   - `Time.advance(Duration)` triggers due timers
+   - Никаких libuv calls (deterministic, fast tests)
+
+**R17.** Real-clock path = default (effect unbound). Production code
+не платит за mock-check overhead (single load + branch-predictable).
+
+### Negative-test scope (production-grade)
+
+**R18.** `nova_tests/plan65/`:
+   - `f1_close_after_int_neg.nv` — `EXPECT_COMPILE_ERROR`: bare int
+     argument с проверкой что diagnostic содержит structured suggestion
+   - `f2_time_after_removed.nv` — `EXPECT_COMPILE_ERROR`: legacy
+     `Time.after` с проверкой E5101 + fix-it
+   - `f3_negative_duration.nv` — `EXPECT_RUNTIME_PANIC` «negative duration»
+   - `f4_zero_duration.nv` — positive: канал готов immediately
+   - `f5_sub_ms_precision.nv` — positive: 500_000 ns → ≥ 1ms
+     wait (verified via Time.now() pre/post)
+   - `f6_huge_duration.nv` — overflow: `Duration.from_days(10_000)`
+     → handle (либо compile-error либо runtime warn, не silent UB)
+   - `f7_cancel_via_token.nv` — positive: `tok.cancel()` отменяет timer
+     до срабатывания; assert no leak (NOVA_TIMER_METRICS)
+   - `f8_mock_time_advance.nv` — positive: mock `Time` effect +
+     `Time.advance(...)` deterministic firing
+   - `f9_drop_no_leak.nv` — positive: 1000 ChanReader.close_after без
+     recv, force GC, assert in-flight = 0
+   - `f10_select_cancel_propagation.nv` — positive: `select` с close_after,
+     parent scope cancel'ит → recv возвращает None
+   - `f11_concurrent_timer_alloc.nv` — stress: 1000 concurrent
+     close_after из разных fibers, no contention crash, all fire/cancel correctly
 
 ### Migration
 
-**R13.** Migration tool processes std/, nova_tests/, examples/.
-Spec/ — manual (D94 amendments в Ф.6).
+**R19.** Migration tool processes std/, nova_tests/, examples/.
+Spec/ — manual в Ф.6.
 
-**R14.** Post-migration verification:
+**R20.** Post-migration:
    - `grep -rn "Time\.after" std/ nova_tests/ examples/` → 0 hits
-   - `nova test` → 0 regressions (baseline same as pre-migration)
+   - `nova test` → 0 regressions
+
+**R21.** Migration tool **idempotent** (re-run = no diff).
+**Dry-run mode** + exit code 1 если manual markers.
 
 ### Documentation
 
-**R15.** `///` doc-comments на `ChanReader.close_after`:
+**R22.** `///` doc-comments на `ChanReader.close_after`:
    - One-line summary
-   - `# Examples` block с select-pattern
+   - `# Examples` block с select-pattern + CancelToken integration
    - `# Errors` block: negative Duration panic
-   - `# Performance` note: libuv timer ms-granularity rounding
+   - `# Performance` note: libuv ms-granularity rounding +
+     timer-wheel deferred
+   - `# Testing` note: mock через `Time` effect
    - `#stable(since = "0.6")` badge
 
-**R16.** doc-test через `nova doc --test` (Plan 45 Ф.7):
+**R23.** doc-test через `nova doc --test`:
    - Positive: select с close_after, recv возвращает None после d
-   - Negative compile: bare int → diagnostic
+   - Cancel test: tok.cancel() → timer cancelled, no firing
+   - Mock test: Time.advance deterministic
 
-### Cross-toolchain
+### Observability
 
-**R17.** Build + test pass на Clang/MSVC/GCC (Plan 58 matrix). Critical:
-runtime ns→ms conversion uses portable arithmetic (no compiler-specific
-int128, etc.).
+**R24.** `NOVA_TIMER_METRICS=1` env var → counters exposed в:
+   - `Time.timer_stats() -> TimerStats { alloc_total, alloc_active, fired, cancelled, longest_pending_ms }`
+   - bench output (auto-snapshot per bench)
+   - process-end summary (если env set)
+
+**R25.** Counter `alloc_active > 0` после `main()` exit → log warning
+«possible timer leak» с stack frames первых 10 leaked.
+
+### Cross-toolchain (Plan 58 matrix)
+
+**R26.** Build + test pass на Clang/MSVC/GCC. Critical: ns→ms conversion
+uses portable arithmetic (int64, нет int128/compiler intrinsics).
+
+**R27.** Bench `timer_alloc_throughput` (Plan 57) на каждом backend —
+baseline для Plan 66 wheel сравнения.
+
+### Compatibility
+
+**R28.** Select internals unchanged (AD10) — `select_timer_stress.nv`
+500-iter PASS unchanged.
+
+**R29.** `Channel.new(cap)` / `ChanWriter.send` / `ChanReader.recv`
+API не trogается.
+
+**R30.** Plan 44.1 timer cleanup contract preserved (Ф.2 B7
+`on_select_lost`).
+
+### Spec / Project docs
+
+**R31.** D94 amendment с «Эволюция» note + new examples.
+
+**R32.** `docs/simplifications.md`:
+   - mark `[M-time-after-bare-int]` RESOLVED
+   - add `[M-libuv-ms-granularity]` honest-note
+   - add `[M-timer-wheel-deferred]` roadmap → Plan 66
 
 ---
 
@@ -258,264 +475,342 @@ int128, etc.).
 
 ### Ф.0 — Audit baseline (½ day)
 
-- [ ] `nova test` baseline на main — fix exact PASS/FAIL count.
-- [ ] `grep -rn "Time\.after" --include="*.nv" std/ nova_tests/ examples/`
-      — записать список (expected ~16 в 7 файлах).
-- [ ] `grep -rn "Time\.after" --include="*.md" spec/ docs/` — записать
-      манually-edit list.
-- [ ] Audit runtime extern: confirm `nova_time_after_ms` signature
-      (в `nova_rt.h` или `channel.c`).
-- [ ] Confirm `Duration` API completeness (нужны: from_secs / from_millis /
-      from_micros / from_nanos / from_secs_f64).
-- [ ] Document baseline в `docs/plans/65-artifacts/baseline-2026-05-XX.md`.
+- [ ] `nova test` baseline на main — exact PASS/FAIL count.
+- [ ] `grep -rn "Time\.after"` в std/, nova_tests/, examples/, spec/,
+      docs/plans/.
+- [ ] Audit runtime extern `nova_time_after_ms` (signature, callers).
+- [ ] Confirm `Duration` API completeness (R-table выше).
+- [ ] Confirm Boehm GC finalizer infra (Plan 27 verification).
+- [ ] Confirm `Time` effect mock infra (Plan 34 Ф.7 verification).
+- [ ] Confirm CancelToken cancel-aware resource hook (Plan 47 Ф.6
+      reuse path).
+- [ ] Записать baseline в `docs/plans/65-artifacts/baseline-2026-05-XX.md`.
 
-**Acceptance:** baseline.md с counts + file list.
+**Acceptance:** baseline.md с counts + file list + infra readiness check.
 
 ### Ф.1 — Compiler registration (1 day)
 
 - [ ] Add `ChanReader.close_after(d Duration) -> Nova_ChanReader*` в
-      `external_registry.rs` (или эквивалент). Pattern: copy `Channel.new`
-      registration, adapt for static method on `ChanReader`.
-- [ ] `infer_expr_c_type`: add Member case `ChanReader.close_after` →
+      `external_registry.rs`. Pattern: copy `Channel.new`, adapt.
+- [ ] `infer_expr_c_type`: Member case `ChanReader.close_after` →
       `Nova_ChanReader*`.
-- [ ] Verify type-checker accepts new call site (smoke test:
-      `let _ = ChanReader.close_after(Duration.from_secs(1))`).
-- [ ] **Не** удалять Time.after registration yet — будет в Ф.5 atomic switch.
+- [ ] **Не** удалять Time.after — atomic switch в Ф.6.
 
 **Acceptance:** new API type-checks; smoke test compiles.
 
-### Ф.2 — Runtime layer (½ day)
+### Ф.2 — Runtime layer + drop semantics (1 day)
 
-- [ ] Implement `nova_chan_reader_close_after_ns(int64_t)` в runtime
-      (`compiler-codegen/c-runtime/channel.c` или эквивалент). Конвертация
-      ns→ms с round-up + sub-ms minimum 1ms.
-- [ ] Rename internal `nova_time_after_ms` → `nova_internal_chan_close_after_ms`
-      (signal что это helper, не user-facing API).
-- [ ] Codegen emit: `ChanReader.close_after(d)` → C call
-      `nova_chan_reader_close_after_ns(d.nanos)`.
-- [ ] Negative Duration check: `nanos < 0` → panic «`ChanReader.close_after: negative duration: -N ns`».
-- [ ] Zero Duration: immediate-close branch (без libuv timer alloc).
-- [ ] Unit-test runtime функцию в isolation (sub-ms, zero, negative,
-      large values).
+- [ ] Implement `nova_chan_reader_close_after_ns(int64_t)` в
+      `channel.c`:
+   - Negative → panic
+   - Zero → already-closed reader (no timer alloc)
+   - Sub-ms → round-up
+- [ ] Rename internal `nova_time_after_ms` → `nova_internal_chan_close_after_ms`.
+- [ ] **Finalizer registration** (R13): `GC_REGISTER_FINALIZER` на
+      Nova_ChanReader с pending timer; finalizer вызывает `uv_close()`
+      idempotently.
+- [ ] Codegen emit: `ChanReader.close_after(d)` → `nova_chan_reader_close_after_ns(d.nanos)`.
+- [ ] Unit-test runtime: 4 corner cases (neg/zero/sub-ms/normal) +
+      finalizer-no-leak.
 
-**Acceptance:** runtime функция handles 4 corner cases (negative/zero/
-sub-ms/normal); existing select_timer_* тесты PASS под new runtime
-после Ф.5.
+**Acceptance:** runtime handles все cases; finalizer test PASS.
 
 ### Ф.3 — Negative-test fixtures (½ day)
 
-- [ ] `nova_tests/plan65/f1_close_after_int_neg.nv` — `EXPECT_COMPILE_ERROR`
-      with structured suggestion match.
-- [ ] `nova_tests/plan65/f3_negative_duration.nv` — `EXPECT_RUNTIME_PANIC`
-      «negative duration» substring.
-- [ ] `nova_tests/plan65/f4_zero_duration.nv` — positive: канал closed
-      immediately, recv returns None в same fiber tick.
-- [ ] `nova_tests/plan65/f5_sub_ms_precision.nv` — positive: 500_000 ns
-      округляется к 1ms (verified via Time.now() pre/post recv).
-- [ ] `nova_tests/plan65/f6_huge_duration.nv` — verify either compile
-      error или runtime overflow handle (depends on libuv timer max).
+- [ ] `nova_tests/plan65/f1` — `f6` тесты (R18 первая часть).
 
-**Acceptance:** 5 tests PASS под new API.
+**Acceptance:** 6 tests PASS под new API.
 
 ### Ф.4 — Migration tool (1 day)
 
-- [ ] Implement `nova-cli/src/bin/migrate_plan65.rs`:
-   - Use existing lexer от nova-codegen (token-aware).
-   - Transform rules (R-table выше).
-   - Dry-run mode + exit code 1 если manual markers.
-- [ ] Test migration tool на specific files:
-   - `nova_tests/concurrency/select_test.nv` (3 simple int literals).
-   - `nova_tests/concurrency/plan40_channel_hardening.nv` (4 calls incl.
-     potentially computed).
-- [ ] Idempotency test: run twice — no diff between runs.
+- [ ] `nova-cli/src/bin/migrate_plan65.rs`:
+   - Use nova-codegen lexer (token-aware per AD11)
+   - Transform rules table выше
+   - Dry-run mode + exit code semantics
+- [ ] Test на specific files (3 simple + 1 with computed expression).
+- [ ] Idempotency test: run twice → no diff.
 - [ ] Bin registered в `nova-cli/Cargo.toml`.
 
-**Acceptance:** tool migrates 16/16 call sites; idempotent.
+**Acceptance:** tool migrates 16/16 call sites; idempotent; CI dry-run gate.
 
 ### Ф.5 — Atomic switch (½ day)
 
-- [ ] Run migration tool на std/ + nova_tests/ + examples/ (single
-      commit для migration).
-- [ ] Remove `Time.after` registration из compiler `time_schema`.
-- [ ] Remove infer_expr_c_type case для `Time.after`.
-- [ ] Add type-checker diagnostic для `Time.after(...)` с suggested fix
-      (R9 format).
+- [ ] Run migration tool на std/ + nova_tests/ + examples/.
+- [ ] Remove `Time.after` registration из compiler.
+- [ ] Remove infer_expr_c_type case для Time.after.
+- [ ] Add type-checker E5101 diagnostic с suggested fix (R9 format).
 - [ ] `nova test` → 0 regressions vs Ф.0 baseline.
-- [ ] Verify `grep -rn "Time\.after"` в migrated файлах = 0.
 
-**Acceptance:** baseline test count preserved; legacy diagnostic ловит
-любой residual call site.
+**Acceptance:** baseline preserved; legacy diagnostic ловит residual.
 
 ### Ф.6 — Spec sync (½ day)
 
-- [ ] `spec/decisions/06-concurrency.md` D94:
-   - Replace 4 inline examples `Time.after(...)` → `ChanReader.close_after(Duration.from_*)`.
-   - Add new sub-section «### Эволюция»: «2026-05-XX (Plan 65): renamed
-     `Time.after(ms)` → `ChanReader.close_after(Duration)`. Rationale:
-     D91 capability semantics + Duration type-safety.»
-   - Update D94 TOC line (line 18) с новой формулировкой.
-- [ ] `spec/decisions/06-concurrency.md` other sections (line 1318, 1338,
-      2701-2713 etc.) — same migration.
-- [ ] Update D-block timestamp note.
-- [ ] Cross-check `docs/plans/31-channel-select.md`, `44.1-channel-hardening.md`
-      — add «**Note (Plan 65):** historical reference; current API is
-      `ChanReader.close_after(Duration)`.» (не переписывать plan-doc — это
-      historical record).
-- [ ] Update `spec/decisions/README.md` index если D94 entry text менялся.
+- [ ] D94 amend: 4 inline examples → new API.
+- [ ] D94 «Эволюция» sub-section: Plan 65 rationale + date.
+- [ ] D94 TOC line update.
+- [ ] Other concurrency.md sections (line 1318, 1338, 2701-2713).
+- [ ] Plan 31 / Plan 44.1 docs — add historical reference note.
+- [ ] `spec/decisions/README.md` index sync.
 
-**Acceptance:** spec examples все используют new API; эволюция
-documented; нет dangling reference на `Time.after`.
+**Acceptance:** spec примеры все new API; «Эволюция» documented; нет
+dangling `Time.after` references.
 
 ### Ф.7 — Stdlib documentation (½ day)
 
-- [ ] Найти где `ChanReader` definition (std/concurrency/channel.nv?).
-      Add `export fn ChanReader.close_after(d Duration) -> Self`
-      stub-declaration с full doc-comment (даже если registration в
-      compiler) — для discoverability через nova doc.
-- [ ] `///` doc-comment:
+- [ ] `///` doc-comments (R22 шаблон).
+- [ ] doc-test embedded (Plan 45 Ф.7).
+- [ ] `nova doc --check std/` — no warnings.
 
-```nova
-/// Создаёт `ChanReader[()]`, который закрывается через указанную длительность.
-///
-/// Используется в `select` как timeout-arm: `None = t.recv() => { ... }`
-/// сработает после истечения `d`.
-///
-/// # Examples
-///
-/// ```nova
-/// let t = ChanReader.close_after(Duration.from_secs(1))
-/// select {
-///     Some(v) = rx.recv() => process(v)
-///     None    = t.recv()  => log_timeout()
-/// }
-/// ```
-///
-/// # Errors
-///
-/// Panics if `d` is negative.
-///
-/// # Performance
-///
-/// Internally backed by libuv timer (1ms granularity). Sub-millisecond
-/// durations round up to 1ms. Use `Duration.from_nanos(0)` for
-/// immediate close (no timer allocation).
-///
-/// # Связь
-///
-/// - [D91](../../spec/decisions/06-concurrency.md#d91) — capability-split.
-/// - [D94](../../spec/decisions/06-concurrency.md#d94) — select syntax.
-#stable(since = "0.6")
-export fn ChanReader.close_after(d Duration) -> Self
-```
+**Acceptance:** doc-test PASS; nova doc renders clean.
 
-- [ ] doc-test (Plan 45 Ф.7): execute embedded example, verify behaviour.
-- [ ] Run `nova doc --check std/` — no broken links.
+### Ф.8 — Const-folding + cross-toolchain (½ day)
 
-**Acceptance:** doc-test PASS; `nova doc` renders без warnings.
+- [ ] Codegen optimization: literal `Duration.from_secs(N)` →
+      compile-time const `N * 1_000_000_000LL`.
+- [ ] Cross-toolchain matrix (Plan 58): Clang/MSVC/GCC build + test.
+- [ ] Perf-sanity: `select_timer_stress` 500-iter на всех backend.
 
-### Ф.8 — Cross-toolchain + perf-sanity (½ day)
+**Acceptance:** все toolchain PASS; const-fold verified in generated C.
 
-- [ ] Build matrix: Clang/MSVC/GCC (Plan 58 infrastructure).
-- [ ] Run `nova test` на каждом backend — preserve baseline.
-- [ ] Perf-sanity: `select_timer_stress.nv` (500 iter) на MSVC + Clang
-      — no leak, no перформанс-регрессия > 5% vs baseline.
-- [ ] Bench (Plan 57): `bench "close_after_alloc" { measure { let _ = ChanReader.close_after(Duration.from_millis(10)) } }` — записать в history. Не gate (нет prior baseline для close_after specifically), просто snapshot.
+### Ф.9 — Project docs MVP (½ day)
 
-**Acceptance:** все toolchain PASS; perf snapshot recorded.
-
-### Ф.9 — Project docs + cleanup (½ day)
-
-- [ ] `docs/project-creation.txt`: add 2026-05-XX entry: «Plan 65 closed».
+- [ ] `docs/project-creation.txt`: 2026-05-XX entry Plan 65 MVP closed.
 - [ ] `docs/simplifications.md`:
-   - Mark `[M-time-after-bare-int]` (если был) как RESOLVED.
-   - Add `[M-libuv-ms-granularity]` honest-note: sub-ms rounded up, не
-     true ns precision.
-- [ ] Bench-history sync (`bench history-add` если есть baseline change).
+   - `[M-time-after-bare-int]` RESOLVED
+   - `[M-libuv-ms-granularity]` honest-defer note
+   - `[M-timer-wheel-deferred]` → Plan 66 roadmap
+- [ ] Plans README row Plan 65 update.
 
-**Acceptance:** project-creation.txt updated; simplifications.md
-honest о ms granularity tradeoff.
+**Acceptance:** MVP scope (Ф.0-Ф.9) complete; ready для production hardening.
+
+---
+
+### **Production hardening phases (Ф.10-Ф.14) — выводят API на Tokio-уровень**
+
+### Ф.10 — CancelToken integration + Time-effect mock (1.5 days)
+
+- [ ] **Cancel hook (AD5):** при call `close_after` в supervised scope —
+      зарегистрировать timer в `CancelToken.resources` list. Cancel
+      handler закрывает libuv timer.
+- [ ] Test: `f7_cancel_via_token.nv` (R18) — verify no leak post-cancel
+      (NOVA_TIMER_METRICS check).
+- [ ] **Mock time (AD6):** runtime check current fiber's Time-effect
+      handler; if mock-bound, use virtual deadline + manual advance
+      trigger вместо libuv.
+- [ ] Test: `f8_mock_time_advance.nv` (R18) — deterministic firing.
+- [ ] Test: `f10_select_cancel_propagation.nv` — full integration.
+- [ ] Stdlib doc update: `# Cancellation` + `# Testing` sections.
+- [ ] Migration of 1-2 existing flaky timing tests на mock-Time pattern.
+
+**Acceptance:** 3 tests PASS; flaky timing tests stabilized.
+
+### Ф.11 — Observability (1 day)
+
+- [ ] Implement counters в runtime (R24): alloc_total / alloc_active /
+      fired / cancelled / longest_pending_ms.
+- [ ] `NOVA_TIMER_METRICS=1` env: enable + dump at process exit.
+- [ ] `Time.timer_stats() -> TimerStats` API в stdlib.
+- [ ] Bench-history integration: per-bench snapshot.
+- [ ] Leak warning: `alloc_active > 0` post-main → log first 10 leak
+      sources (best-effort stack capture).
+- [ ] Bench `timer_alloc_throughput` (1000 timers, alloc+fire) — record
+      baseline для Plan 66 wheel comparison.
+
+**Acceptance:** metrics work; bench recorded; leak warning fires on
+synthetic leak test.
+
+### Ф.12 — `ChanReader.close_at(Instant)` — absolute deadline API (1 day)
+
+- [ ] Add `ChanReader.close_at(deadline Instant) -> ChanReader[()]` —
+      Tokio `sleep_until` parity, Go `time.Until(t) + After` shortcut.
+- [ ] Runtime: convert `deadline - Time.now()` → ns → call `close_after_ns`.
+- [ ] Edge cases:
+   - past deadline (`deadline < now`) → already-closed reader, no leak
+   - future deadline overflow ns → use ms fallback
+- [ ] Tests: positive (5s in future) + negative (1s in past, immediate
+      close) + edge (now exactly).
+- [ ] Stdlib doc update.
+
+**Acceptance:** `close_at` works; 3 tests PASS; documented.
+
+### Ф.13 — `ChanReader.tick_every(Duration)` API sketch + namespace squat (½ day)
+
+- [ ] **Не реализуем** в Plan 65 — это full periodic semantic (drop
+      vs queue, MissedTickBehavior, jitter). Отдельный Plan 66.
+- [ ] **Зарезервировать имя** в stdlib с `#unstable` + body вызывающим
+      `panic("not implemented; see Plan 66")`. Цель: предотвратить
+      collision с user code если кто-то определит `ChanReader.tick_every`
+      в external crate.
+- [ ] Spec D-block stub в spec/decisions/06-concurrency.md (D124?).
+- [ ] Plan 66 outline создаётся отдельным commit'ом.
+
+**Acceptance:** namespace зарезервирован; Plan 66 outlined.
+
+### Ф.14 — Stress + concurrent timer alloc + final audit (1 day)
+
+- [ ] `f11_concurrent_timer_alloc.nv` (R18): 1000 concurrent close_after
+      из 10 fibers — TSan/ASan/UBSan clean под Linux Docker (Plan 44.1
+      infra).
+- [ ] Perf: alloc throughput vs Plan 22 sleep baseline (no regression
+      > 5%).
+- [ ] Cross-toolchain repeat + Linux validation.
+- [ ] **Final audit pass** (Plan 60 паттерн): 25-point checklist:
+   - API parity с table в этом плане
+   - All `Time.after` references gone (грeп)
+   - `Duration` всегда required (compile error на bare int)
+   - CancelToken hook verified (leak test)
+   - Mock-time deterministic (flake-free 100-run)
+   - Drop finalizer no-leak (10k synthetic GC test)
+   - Metrics counters correct (alloc==fired+cancelled+leaked)
+   - Const-fold verified (codegen output inspected)
+   - Cross-toolchain все backend
+   - Stress 1000 timers no crash
+   - select_timer_stress 500-iter unchanged
+   - spec D94 fully migrated
+   - doc-tests PASS
+   - migration tool idempotent
+   - dry-run mode works
+   - E5101 diagnostic readable + actionable
+   - Plan 66 namespace reserved
+   - Project docs synced
+   - Plans README updated
+   - Bench history baseline recorded
+   - Honest-defers documented в simplifications.md
+   - Backward-compat nothing else touched
+   - Plan-doc эволюция section
+   - No new Rust crate deps
+   - Self-host migration ready (no internal hardcodes)
+
+**Acceptance:** все 25 пунктов ✅ → Plan 65 production-grade closed.
 
 ---
 
 ## Acceptance criteria (production-grade)
 
+### MVP gates (Ф.0-Ф.9)
+
 - [ ] `grep -rn "Time\.after" std/ nova_tests/ examples/` → **0 hits**
-      (после Ф.5).
-- [ ] `grep -rn "Time\.after" spec/ docs/plans/` — только в historical
-      эволюция notes (D94 «Эволюция» section + Plan 31/44.1 historical
-      reference markers).
-- [ ] `ChanReader.close_after(Duration)` accepts только Duration —
-      `EXPECT_COMPILE_ERROR` test для bare int passes.
-- [ ] `Time.after(...)` → structured diagnostic с machine-applicable
-      suggestion (R9 format).
-- [ ] `nova test` (release) — 0 regressions vs Ф.0 baseline (562 PASS /
-      0 FAIL preservation **as of plan creation date**; adjusted к
-      current baseline at execution time).
-- [ ] Cross-toolchain: PASS на Clang (default), MSVC, GCC.
-- [ ] D94 spec amended; примеры new API; «Эволюция» note.
-- [ ] doc-test (`nova doc --test std/concurrency/`) PASS для close_after.
-- [ ] Plan 65 migration tool idempotent (re-run = no diff).
+- [ ] `grep -rn "Time\.after" spec/ docs/plans/` — только historical
+      эволюция notes
+- [ ] `ChanReader.close_after(Duration)` enforces type (compile error
+      на bare int)
+- [ ] E5101 diagnostic + machine-applicable fix-it works
+- [ ] `nova test` (release) — 0 regressions vs Ф.0 baseline
+- [ ] Cross-toolchain: PASS на Clang / MSVC / GCC
+- [ ] D94 spec amended; «Эволюция» note
+- [ ] doc-test PASS
+- [ ] Migration tool idempotent
+
+### Production hardening gates (Ф.10-Ф.14)
+
+- [ ] **CancelToken integration**: f7+f10 tests PASS; no leak post-cancel
+- [ ] **Mock time**: f8 test deterministic; 100-run flake-free
+- [ ] **Drop semantics**: f9 test (10k timers GC) — alloc_active → 0
+- [ ] **Concurrent stress**: f11 (1000 timers, 10 fibers) — TSan/ASan
+      clean Linux
+- [ ] **Observability**: NOVA_TIMER_METRICS env works; leak warning
+      fires correctly
+- [ ] **`close_at`**: 3 tests PASS; past-deadline handled gracefully
+- [ ] **Tick namespace squatted**: stub + Plan 66 outline
+- [ ] **25-point final audit**: все ✅
+
+### Industry parity gates
+
+- [ ] **Type safety** (vs TS): ✅ Duration required, no bare ms.
+- [ ] **Cancel** (vs Go `Timer.Stop`): ✅ через CancelToken.
+- [ ] **Absolute deadline** (vs Tokio `sleep_until`): ✅ `close_at`.
+- [ ] **Mock time** (vs Tokio `pause`): ✅ Time-effect handler.
+- [ ] **Drop** (vs Tokio Future drop): ✅ finalizer + finalize test.
+- [ ] **Observability** (vs `tokio-console`): ✅ NOVA_TIMER_METRICS.
+- [ ] **Stress under concurrency** (vs Go runtime): ✅ TSan-clean 1k.
+- [ ] **Cancel propagation в select** (vs Tokio select!): ✅ inherited.
+- [ ] **Timer wheel** (vs Tokio TimerEntry): ⚠️ Plan 66 roadmap (honest).
 
 ---
 
 ## Open questions
 
-1. **`ChanReader.close_at(Timestamp)` — добавлять сразу?**
-   - Use case: «timeout at absolute deadline» (вместо «через d»).
-   - Symmetric с Tokio's `sleep_until(Instant)`.
-   - **Решение:** deferred в Plan 65+1 (separate plan). Plan 65 scope —
-     только rename existing.
+1. **`#unstable` keyword exists?** Если нет — Ф.13 namespace squat
+   через `#doc(unstable = true)` + body panic. Проверить в Ф.0.
 
-2. **`ChanReader.tick_every(Duration)` — periodic timer?**
-   - Use case: heartbeat, periodic check.
-   - Go's `time.Tick`.
-   - **Решение:** deferred. Не conflicts с Plan 65, отдельная фича.
+2. **Boehm GC finalizer ordering guarantee?** Если finalizer order не
+   deterministic, `uv_close` может race с libuv event loop teardown.
+   Decision: register finalizer **только** для pending timers; closed
+   timer skips registration. Confirm в Ф.2.
 
-3. **Stdlib re-export через prelude?**
-   - `ChanReader` уже доступен (D91). Метод `close_after` discoverable
-     через `ChanReader.<tab>`.
-   - **Решение:** stdlib только; no prelude pollution (Plan 62 territory).
+3. **Mock-time mixed с real-time fibers?** Если один fiber bound к
+   mock Time, другой — нет, как себя ведут shared channels? Decision:
+   per-fiber effect-handler scope (existing D-block) — корректно
+   изолированы. Verify в Ф.10.
 
-4. **Backward-compat alias?**
-   - Bootstrap convention (Plan 60, Plan 47) — clean break.
-   - **Решение:** no alias. Diagnostic ловит legacy.
+4. **`close_at(Instant)` vs `Time.now() + Duration`?** Идиоматичность.
+   Decision: оба valid; `close_at` для absolute, `close_after` для
+   relative. Document в `# Examples`.
+
+5. **`NOVA_TIMER_METRICS` overhead?** Disabled-path = 1 branch.
+   Enabled = atomic counter increment per alloc/fire/cancel. Bench в
+   Ф.11 запишет overhead — если > 1% при disabled, fix.
 
 ---
 
 ## Что НЕ делает (out of scope)
 
-- Не добавляет new timer primitives (`close_at`, `tick_every`).
-- Не меняет underlying libuv-based runtime (ms granularity preserved).
-- Не реализует true ns precision (HW limitation; honest-defer).
-- Не trogает Time.sleep / Time.now / других `Time` methods — только
-  `Time.after`.
-- Не trogает `Channel.new`/`ChanWriter.send` API.
+- Periodic ticker `tick_every` — sketch only (Ф.13), full impl Plan 66
+- Timer wheel optimization — Plan 66
+- Other `Time` methods (sleep, now) — preserved as-is
+- `Channel.new` / `ChanWriter.send` API — не trogает
+- HTTP-server-specific timeout semantics (Plan 64 Ф.1)
 
 ---
 
 ## Связь
 
+- **[D75](../../spec/decisions/06-concurrency.md#d75)** —
+  `supervised(cancel:)` + CancelToken. Plan 65 hooks into D75
+  для timer cancel.
 - **[D91](../../spec/decisions/06-concurrency.md#d91)** — capability-split
-  ChanReader / ChanWriter. Plan 65 — natural extension D91 на static
-  constructors.
+  ChanReader/ChanWriter. Plan 65 — natural extension on static constructors.
 - **[D94](../../spec/decisions/06-concurrency.md#d94)** — select syntax.
   Plan 65 amends examples (механизм select unchanged).
-- **[Plan 31](31-channel-select.md)** — original select implementation
-  (Time.after Ф.5). Historical reference.
-- **[Plan 44.1 Ф.2 B7](44.1-channel-hardening.md)** — timer cleanup
-  contract. Preserved.
 - **[Plan 22](22-sleep-libuv-integration.md)** — libuv timer infra.
   Reused.
-- **[Plan 60](60-len-access-uniformity.md)** — precedent для atomic
-  migration tool + diagnostic-driven rename.
-- **[std/time/duration.nv](../../std/time/duration.nv)** — Duration API.
-- **[Plan 45 Ф.7](45-nova-doc.md)** — doc-tests infrastructure (для R16).
+- **[Plan 27](27-gc-switch.md)** — Boehm GC. Finalizer infra reused (AD7).
+- **[Plan 31](31-channel-select.md)** — original select impl
+  (Time.after Ф.5). Historical reference + select-internals preserved.
+- **[Plan 34 Ф.7](34-stdlib-typecheck-and-compile-fix.md)** — mock_clock
+  effect infra. Reused для Ф.10 mock-time.
+- **[Plan 44.1 Ф.2 B7](44.1-channel-hardening.md)** — timer cleanup
+  contract. Preserved (R30).
+- **[Plan 45 Ф.7](45-nova-doc.md)** — doc-tests infrastructure (R23).
+- **[Plan 47 Ф.6](47-supervised-cancel.md)** — cancel-aware resource
+  hook. Reused for AD5.
+- **[Plan 57](57-perf-benchmark-infrastructure.md)** — bench history
+  для timer_alloc_throughput baseline (R27, Ф.11).
 - **[Plan 58](58-cross-toolchain-msvc-verification.md)** — cross-toolchain
-  matrix (для R17).
+  matrix (R26, Ф.8).
+- **[Plan 60](60-len-access-uniformity.md)** — atomic migration tool
+  precedent (AD2, AD11). Final-audit checklist pattern (Ф.14).
+- **[Plan 66](66-timer-wheel-and-tick-every.md)** — *future plan*:
+  periodic ticker `tick_every` + custom timer-wheel runtime.
+  Outline created в Plan 65 Ф.13.
+- **[std/time/duration.nv](../../std/time/duration.nv)** — Duration API.
 
 ---
 
 ## Эволюция плана
 
-- **2026-05-18 created**: исходный план, P1, 5 dev-days, 10 фаз
-  production-grade без симплификаций.
+- **2026-05-18 v1**: исходный план, 10 фаз (Ф.0-Ф.9), 5 dev-days. MVP
+  scope: rename + Duration + atomic switch + spec sync.
+- **2026-05-18 v2**: industry-parity audit vs Go/Rust/TS обнаружил 6
+  production-grade gaps:
+  - cancel (Go Timer.Stop)
+  - absolute deadline (Tokio sleep_until)
+  - mockable time (Tokio pause)
+  - drop semantics (Tokio Future drop / Go GC)
+  - observability (tokio-console)
+  - timer-wheel (Tokio TimerEntry)
+  Added 5 production hardening phases (Ф.10-Ф.14), ~5 extra dev-days.
+  Total ~9-11 dev-days. 4 capabilities Nova оказываются объективно
+  лучше baseline (typed Duration, native CancelToken, Time-effect mock,
+  select cancel propagation). 1 gap осознанно defer'ится в Plan 66
+  (timer-wheel).
