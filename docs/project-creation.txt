@@ -14621,3 +14621,73 @@ Acceptance:
 
 Production-grade: Rust паритет (+ explicit D-block enforcement что
 Rust не имеет; rustc не error если опредeлите публичное `len` field).
+
+
+## Session: оба deferred follow-up'а Plan 59 закрыты (2026-05-17 EOD+1)
+
+После merge'а Plan 63 fixes от другого agent'а — обнаружено что оба
+ранее-deferred follow-up'а Plan 59 закрыты:
+
+### [M-stdlib-iter-in-generic-method-body] ✅ ЗАКРЫТО
+
+Plan 63 Fix E (commit 66113a8d2db, другой agent) — root-cause fix трёх
+взаимосвязанных bug'ов в codegen state management для array-of-tuple
+boxed-storage в generic method body. После Fix E идиоматичный
+`for (k, v) in other` в generic method body работает без cascade.
+
+Workaround в HashMap.@merge_from/@filter удалён в commit 36e215cce83
+этой session. plan56 6/6 PASS, plan59 19/19 PASS.
+
+### [M-result-erased-no-mono] ✅ ЗАКРЫТО
+
+Plan 63 Fix F base (commit 2ae78c7ae8d, другой agent) — targeted fix
+для homogeneous let-bound Result[(T, T), E] через result_ok_inner_types
++ pending_result_ok_inner_type mechanism.
+
+Plan 63 Fix F+ production-grade extension (commit ca677dd2147, эта
+session) — закрыл оставшиеся case'ы:
+- Heterogeneous Result[(str, int), E] (Fix F всегда unboxed как
+  default int_int).
+- Inline `match parse_kv(...) { Ok((k, v)) => ... }` без let-binding
+  (Fix F's pending mechanism требовал let).
+
+Дизайн Fix F+:
+1. Registry per fn signature: fn_result_ok_inner_types map
+   (fn_c_name → boxed mono'd Ok payload type). Populated в emit_fn
+   при сканировании return type на Result[Tuple(<concrete>), E].
+2. Helper try_get_result_ok_inner_type_for_expr(expr) — Ident
+   (var lookup) / Call (callee registry) / Block (trailing) paths.
+3. Stmt::Let propagation через helper — overrides stale entries.
+4. emit_match propagation через helper когда inline call.
+5. Pending leak fix: save/restore pending_result_ok_inner_type
+   + pending_option_inner_type на boundary fn body emit. Internal
+   `Ok((..))` в fn без surrounding let больше не leak'ает в
+   caller's let-binding.
+
+Test: nova_tests/plan59/f19_tuple_in_result.nv (5 sub-tests). PASS 5/5.
+
+### Validation после обоих fixes
+
+- nova test nova_tests/plan59/ → 19/19 PASS.
+- nova test nova_tests/plan56/ → 6/6 PASS.
+- Full regression: 653 PASS / 2 FAIL (2 fail — Windows UAC os 740
+  в plan11_followup, env-issue не codegen).
+
+### Commits (5 в основном репе)
+
+1. ca677dd2147 fix(codegen): Plan 63 Fix F+ production-grade closure.
+2. 36e215cce83 refactor(stdlib): HashMap idiomatic for-tuple-in-iter.
+3. 099d74bcfc4 test(59 Phase 6+): f19_tuple_in_result 5 sub-tests.
+4. 64dca48c842 docs(59,63): mark обоих M-маркеров ЗАКРЫТО.
+5. (этот) docs(project-creation): session log.
+
+### Out-of-scope (future, не блокеры)
+
+Полный mono'd Result (NovaRes_<T>_<E> typedefs per concrete combo
+analogous к Option) — ≈ Plan 56 vtable scope расширенный на variants.
+Fix F+ покрывает все наблюдаемые use-cases без системного refactor'а.
+
+### Plan 59 финальное состояние
+
+Все 6 фаз + оба deferred follow-up'а полностью закрыты.
+plan59/ — 19 тестов (f1-f19), все PASS.
