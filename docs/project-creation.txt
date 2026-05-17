@@ -12622,6 +12622,30 @@ Diagnostic categories: E2401-E2405, W2401-W2402.
 **Plan 33.6 итог за 25 спринтов:** complete contract lint catalog + dup detection +
 TrivialBackend string len.
 
+## Ф.26 — modulus upper + axiom no-binders
+
+### Ф.26.1 — modulus upper bound
+
+- trivial.rs: `try_modulus_check` расширен `<`/`<=` для `(% Var Lit)` где Lit > 0.
+  `(< x%k goal)` где goal >= divisor → true.
+- Test: trivial_modulus_upper_positive.
+- Коммит: `76620037a5c`.
+
+### Ф.26.2 — trusted-vacuous (deferred)
+
+- Parser-level blocking trusted+external+requires earlier. Defer.
+
+### Ф.26.3 — axiom без binders W2402
+
+- pipeline.rs: для каждого Effect.axiom — если `binders.is_empty()` И
+  formula == `BoolLit(true)` → W2402 vacuous.
+- Test: axiom_no_binders_w2402.
+- Коммит: `76620037a5c`.
+
+**Итого Ф.26:** 2 closed. **174 PASS (+2) / 42 SKIP / 1 pre-existing FAIL.**
+
+**Plan 33.6 итог за 26 спринтов:** полный modulus reasoning + axiom lints.
+
 === Plan 45 �.25 � nova tests (positive + negative) ===
 
 ����� �������� �.25 (4 ����) �������� nova-tests .nv ��� �������� �����

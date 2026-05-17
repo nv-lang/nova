@@ -1,0 +1,18 @@
+// Ф.26.3 (Plan 33.6): axiom без binders + `=> true` → W2402 vacuous.
+// EXPECT_COMPILE_WARNING W2402
+
+module contracts.axiom_no_binders_w2402
+
+type Trivial effect {
+    #pure check() -> bool
+    axiom trivial_truth() => true
+}
+
+fn use_it() -> bool
+{
+    true
+}
+
+test "axiom no binders" {
+    assert(use_it() == true)
+}
