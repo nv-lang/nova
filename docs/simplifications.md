@@ -9067,6 +9067,30 @@ addition / subtraction / const-mul / negation / division × {`>=`, `>`}.
 loop encoding fallback) — нужен отдельный аудит. Также: apply к лемме с
 неправильной типизацией args (type-check на apply args сейчас weak).
 
+## [M-plan-33.6-Ф.32-lemma-lints-tautological-collision] (2026-05-18)
+
+Два дополнительных lemma lint'а в verify_module pass — закрывают типичные
+ошибки которые программист делает при написании лемм.
+
+**1. Tautological lemma (ensures == requires).** `lemma foo(x) requires
+x >= 0 ensures x >= 0` — лемма не добавляет новой информации (precondition
+уже истинна, ensures дублирует). Detect через `print_expr` нормализацию
+(set requires-prints, проверка всех ensures в нём). `format!("{:?}", e)`
+не работал — Span'ы вкладываются в args, ломают сравнение для текстуально
+одинаковых exprs. `ast::pretty::print_expr` — proper syntactic equality.
+
+**2. Lemma-fn name collision.** `lemma foo` + `fn foo` в одном модуле —
+`apply foo(x)` ссылается на лemmu, `foo(x)` — на функцию. Mostly
+confusing, error-prone. Lint scanит module.items на Item::Fn с тем же
+именем что Item::Lemma.
+
+**Регрессия:** 179 → 181 PASS (+2), 0 FAIL, 44 SKIP.
+
+**Lemma lint catalog complete** после Ф.32: vacuous precondition
+(Ф.31.3), tautological (Ф.32.1), name collision (Ф.32.2), dead lemma
+(Ф.17.3), no-params suspicious (Ф.24.2), apply к undefined (Ф.31.1),
+arity mismatch (Ф.11.3), auto-inference fail (Ф.13.1).
+
 ## [M-57.F.4-positive-negative-coverage] — Test expansion (2026-05-17)
 
 **Не simplification.** Прямой user feedback "тесты напиши по тому,
