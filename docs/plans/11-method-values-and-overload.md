@@ -757,11 +757,33 @@ static Nova_Self Nova_LinkedList_method_reverse(...) { ... }   // unknown type
 с explicit type (история показала что Self.X() ломал mono dispatch ещё до
 моего fix'а, и осторожнее оставить пока).
 
-### Open issues (sub-bugs не покрытые fix'ом)
+### Open issues
 
-- **Sum-type `-> Self` body resolution**: `match @ { Empty => Empty, Full(v) => Full(v) }`
-  где `-> Self` — match-arm body infer возвращает "Nova_Self" вместо concrete.
-  Пример в `/tmp/repro_self_a.nv` (CC-FAIL "assigning to nova_unit from void").
-  Это отдельный path в expression-type inferral для variant constructors.
+Изначально считал что есть sub-bug «sum-type `-> Self` body resolution» (на
+основе CC-FAIL repro_self_a.nv). При повторном analysis оказалось — это
+**не Self related**. Минимальный repro без assert-in-match-arm passing:
 
-Status: **главный bug закрыт**. Sub-bug (sum-type body) deferred — рарели used pattern.
+```nova
+export fn Box[T] @swap_empty() -> Self => Empty
+let e = b.swap_empty()              // Nova_Box____nova_int* (✓)
+let is_empty = match e {            // OK
+    Empty   => true
+    Full(_) => false
+}
+assert(is_empty)                    // ОК
+```
+
+Падает только если `assert()` стоит **внутри** match arm body:
+
+```nova
+match e {
+    Empty   => assert(true)         // ❌ codegen emit _nv_match = nova_assert(...)
+    Full(_) => assert(false)        //    nova_assert C-func returns void, не nova_unit
+}
+```
+
+**Это отдельный codegen bug** про assert-in-expression-position (match arm
+infers unit type, emit `_nv = nova_assert(...)`, но nova_assert returns void).
+Не Self, не trackится в этом plan'е. Может быть отдельным follow-up'ом.
+
+Status: **Self bug полностью закрыт**. Все 5 known scenarios pass.
