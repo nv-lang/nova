@@ -118,17 +118,60 @@ struct elements broken.
 
 ## Acceptance criteria
 
-- [ ] Phase 1 — mono'd `_NovaTuple____<...>` struct generation работает.
-- [ ] Phase 2 — `for (k, v) in coll` для **любых** K, V (включая
-      struct types like nova_str + user records) работает.
-- [ ] Phase 3 — HashMap stdlib usable через идиоматический iter syntax.
-      Direct `.buckets` access → optional implementation detail (можно
-      убрать workaround в @merge_from/@filter).
-- [ ] Phase 4 — spec D-block.
-- [ ] Полный `nova test` (release) — **0 регрессий** vs Plan 56 baseline.
-- [ ] **~10 новых тестов** в `nova_tests/plan59/` (tuple lit, destructure
-      в let, destructure в for, tuple as fn param/return, mixed K/V types,
-      tuple of tuples, tuple of records).
+- [x] Phase 1 — mono'd struct generation работает (commit 5b9f317452e).
+- [x] Phase 2 — `for (k, v) in coll` для **любых** K, V (включая
+      `nova_str` и user records) работает в user-code (f1, f7, f10 PASS).
+- [x] Phase 3 — HashMap stdlib **usable** через идиоматический iter syntax
+      из user-кода (validated [`f1_for_tuple_in_hashmap.nv`](../../nova_tests/plan59/f1_for_tuple_in_hashmap.nv)).
+      Direct `.buckets` workaround в `@merge_from`/`@filter` оставлен —
+      см. [`[M-stdlib-iter-in-generic-method-body]`](#m-stdlib-iter-in-generic-method-body)
+      ниже (отдельный followup, не блокер Plan 59).
+- [x] Phase 4 — spec D-block (D111 в `spec/decisions/02-types.md`).
+- [x] Phase 5 — length-prefixed mangle (aa07fa0d545); root-cause fix
+      для nested tuple collision вместо workaround'а.
+- [x] Полный `nova test` — **594 PASS / 0 FAIL / 42 SKIP** после Phase 5
+      (vs 568 pre-Plan-59 baseline — net **+26 unlocked**).
+- [x] **10 новых тестов** в `nova_tests/plan59/` (f1-f10): tuple lit,
+      destructure в let, destructure в for, tuple as fn param/return,
+      mixed types, tuple of tuples (до 4 уровней), tuple of arrays,
+      tuple of user records, closure-in-tuple, custom iter.
+
+---
+
+## [M-stdlib-iter-in-generic-method-body] — deferred followup
+
+### Симптом
+
+Замена workaround'а `for i in 0..@_buckets.len { match @_buckets[i] {...}}`
+на идиоматичный `for (k, v) in other` в **generic method body**
+(`HashMap[K, V] mut @merge_from(other HashMap[K, V])`) при mono'd
+HashMap[str, int] вызывает CC-FAIL в неизменённом `@clone` и других
+методах. Cascade — encoding/dispatch issue в mono'd path.
+
+### Hypothesis
+
+В erased generic body, `for (k, v) in other` требует мono'd
+`HashMapIter[K, V]` + tuple destructure. Mono pass registers
+HashMapIter instance, который затем conflict'ит с другими мono'd
+методами того же HashMap[K, V] — возможно `var_types`/`current_type_subst`
+state leak между mono'd method bodies.
+
+### Что подтверждено в Plan 59
+
+- User-code иdiomatic `for (k, v) in m` где m уже concrete HashMap[K, V]
+  — **работает** (f1, f7, f10 PASS).
+- Stdlib internal idiomatic, где iter call происходит в generic method
+  body — нет (cascading CC-FAIL).
+
+### Scope (отдельный план / Plan 60+)
+
+Diagnose mono-pass state isolation для `for-tuple-in-iter` внутри
+generic method body. Реальные кандидаты: leak в
+`tuple_element_types`/`var_types`/`current_type_subst` при rotation
+между sibling method bodies одного и того же типа.
+
+Workaround `for i in 0..@_buckets.len` в stdlib безопасен и
+производителен — не блокирует prod use.
 
 ---
 
