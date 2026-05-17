@@ -1,0 +1,37 @@
+// Ф.29.1 (Plan 33.6): TrivialBackend != bounds check.
+// `requires x >= 1` ⊢ `ensures result != 0` через lower(x)=1 > 0.
+// `requires y <= -1` ⊢ `ensures result != 0` через upper(y)=-1 < 0.
+// `requires z >= 3; requires z <= 3` ⊢ `ensures result != 5` — pinned z=3, 3 != 5.
+
+module contracts.f29_neq_bounds_positive
+
+#verify
+fn nonzero_positive(x int) -> int
+    requires x >= 1
+    ensures result != 0
+{
+    x
+}
+
+#verify
+fn nonzero_negative(y int) -> int
+    requires y <= -1
+    ensures result != 0
+{
+    y
+}
+
+#verify
+fn pinned_neq_other(z int) -> int
+    requires z >= 3
+    requires z <= 3
+    ensures result != 5
+{
+    z
+}
+
+test "neq bounds trivial" {
+    assert(nonzero_positive(5) == 5)
+    assert(nonzero_negative(-3) == -3)
+    assert(pinned_neq_other(3) == 3)
+}
