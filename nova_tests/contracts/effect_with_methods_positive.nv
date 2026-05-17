@@ -1,0 +1,16 @@
+// Ф.28.3 positive (Plan 33.6): effect с methods → no W2402 empty.
+
+module contracts.effect_with_methods_positive
+
+type Logger effect {
+    log(msg str)
+}
+
+fn use_logger() -> int
+{
+    42
+}
+
+test "effect with methods no W2402" {
+    assert(use_logger() == 42)
+}

@@ -1,0 +1,21 @@
+// Ф.28.1 positive (Plan 33.6): разные apply (разные args или разные lemma) → no W2402.
+
+module contracts.different_apply_no_dup_positive
+
+lemma helper(x int)
+    ensures result == x
+=> x
+
+#verify
+fn use_different(x int) -> int
+    requires x >= 0
+    ensures result == x
+{
+    apply helper(x)
+    apply helper(x + 0)
+    x
+}
+
+test "different apply no dup" {
+    assert(use_different(5) == 5)
+}
