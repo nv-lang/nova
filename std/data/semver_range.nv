@@ -128,6 +128,9 @@ fn parse_one_comparator(s str) Fail[ParseRangeError] -> []Comparator {
 
 fn parse_version(s str) Fail[ParseRangeError] -> Version {
     // Используем std.semver.Version.from, преобразуем ParseVersionError в наш.
+    // NB: idiomatic `with Fail[A] = |e| throw B {...}` (handler-rethrow) сейчас
+    // ломает codegen (cross-effect throw в handler arm emit'ит wrong type cast).
+    // Pre-existing bug — pending separate fix.
     let r = with Fail[ParseVersionError] = |e| interrupt Err(e) {
         Ok(Version.from(s))
     }

@@ -788,6 +788,31 @@ ignored (no harm), в expression position — proper assignment.
 
 Verified: repro_self_a.nv + все touched stdlib — PASS.
 
+### Open issue: cross-effect throw в handler arm (discovered 2026-05-17)
+
+Idiomatic Nova pattern для rethrow одной ошибки в другую:
+```nova
+with Fail[OldErr] = |e| throw NewErr { ... } {
+    return operation_that_may_throw_olderr()
+}
+```
+
+**Сейчас ломает codegen** — C error «passing Nova_OldErr* to Nova_NewErr* parameter».
+Compiler emit'ит handler call с wrong type cast.
+
+Воспроизведено: `/tmp/test_handler_rethrow.nv` (CC-FAIL).
+
+**Workaround (применён в std/data/semver_range.nv)**: Ok/Err wrapping вокруг
+operation + outer match:
+```nova
+let r = with Fail[OldErr] = |e| interrupt Err(e) {
+    Ok(operation())
+}
+match r { Ok(v) => v, Err(_) => throw NewErr { ... } }
+```
+
+Status: **открыт**, deferred — отдельный fix в effect-handler codegen.
+
 ### Status
 
 **Self bug полностью закрыт.** Все scenarios pass:
