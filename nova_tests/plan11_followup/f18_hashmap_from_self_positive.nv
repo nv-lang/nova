@@ -1,0 +1,39 @@
+module plan11_followup.f18_hashmap_from_self_positive
+
+// Plan 63 Bug D / Fix D regression test:
+// `HashMap[K, V].from(pairs)` с `-> Self` return type должен dispatch'иться
+// в HashMap.from, а НЕ в str.from / WriteBuffer.from / StringBuilder.from.
+// Раньше через method_receivers (single-key, last-wins) выбирался
+// неправильный receiver.
+
+import std.collections.hashmap.{HashMap}
+
+test "HashMap.from с turbofish + Self" {
+    let pairs [](str, int) = [("a", 1), ("b", 2), ("c", 3)]
+    let m HashMap[str, int] = HashMap[str, int].from(pairs)
+    assert(m.len() == 3)
+    assert(m.get("a") == Some(1))
+    assert(m.get("b") == Some(2))
+    assert(m.get("c") == Some(3))
+}
+
+test "HashMap.from + Self, immediate inline literal" {
+    let m HashMap[str, int] = HashMap[str, int].from([("x", 100), ("y", 200)])
+    assert(m.len() == 2)
+    assert(m.get("x") == Some(100))
+    assert(m.get("y") == Some(200))
+}
+
+test "HashMap.from empty pairs" {
+    let pairs [](str, int) = []
+    let m HashMap[str, int] = HashMap[str, int].from(pairs)
+    assert(m.is_empty())
+    assert(m.len() == 0)
+}
+
+test "HashMap.from duplicate keys — last wins" {
+    let pairs [](str, int) = [("k", 1), ("k", 2), ("k", 3)]
+    let m HashMap[str, int] = HashMap[str, int].from(pairs)
+    assert(m.len() == 1)
+    assert(m.get("k") == Some(3))
+}
