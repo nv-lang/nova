@@ -394,7 +394,7 @@ impl<'a> BoundCtx<'a> {
                                 format!(
                                     "bound method `{}.{}` has effects [{}] — bound methods must be pure \
                                      (rationale: vtable dispatch does not propagate effect handlers). \
-                                     Drop the effect row, or use handler-as-parameter instead of bound (D110, Plan 56).",
+                                     Drop the effect row, or use handler-as-parameter instead of bound (D122, Plan 56).",
                                     t.name, m.name, effect_names.join(", ")
                                 ),
                                 m.span,

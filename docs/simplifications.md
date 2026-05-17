@@ -6729,7 +6729,7 @@ bootstrap-баг). Новая caller-owned: токен создаётся `Cance
 Из Plan 33.4 Ф.8 «Spec sync»: 8 D-decisions, реализованных в
 Plan 33.3 Ф.9 / Plan 33.4 P1-5, записаны в spec/decisions/.
 
-**D109** (`#pure` views + axioms + `#verify`/`#trusted`) → `04-effects.md`.
+**D120** (`#pure` views + axioms + `#verify`/`#trusted`) → `04-effects.md`.
 **D110** (ghost state — spec-only bindings) → `02-types.md`.
 **D111** (`assume` / `assert_static` / `#trusted` external) → `09-tooling.md`.
 **D112** (bounded quantifiers `forall`/`exists`) → `09-tooling.md`.
@@ -6739,7 +6739,7 @@ Plan 33.3 Ф.9 / Plan 33.4 P1-5, записаны в spec/decisions/.
 **D116** (Z3 backend через собственные FFI) → `09-tooling.md`.
 
 Статусы:
-- Реализовано (Plan 33.3 Ф.9): D109, D115, D116.
+- Реализовано (Plan 33.3 Ф.9): D120, D115, D116.
 - Реализовано (Plan 33.3 Ф.10): D110, D111, D112.
 - Запланировано (Plan 33.4 V2): D113 (`#must_verify_module`), D114 (cache + parallel).
 
@@ -8376,7 +8376,7 @@ Remaining:
 - `HashMap.@filter(pred)` — works (direct `@buckets[i]` match).
 
 **Phase 4 — spec:**
-- D110 (Hybrid dispatch для bound-K methods) added в
+- D122 (Hybrid dispatch для bound-K methods) added в
   spec/decisions/02-types.md.
 
 ### [M-erased-generic-method-dispatch] ✅ ЗАКРЫТО (Plan 56, 2026-05-16)
@@ -8428,7 +8428,7 @@ through Plan 56 array element type propagation fix (compute_field_array_
 elem_type + compute_array_elem_type_for_obj helpers, поддержка arbitrary
 depth obj.f1.f2.field[i]).
 
-Spec D110 documented. Vtable runtime infra (vtables.h) — готова для
+Spec D122 documented. Vtable runtime infra (vtables.h) — готова для
 future full integration (Plan 03 cross-crate если потребуется).
 
 Idiomatic `for (k, v) in coll` (implicit Iter + tuple destructure)
@@ -8455,7 +8455,7 @@ struct types like nova_str). Не Plan 56 scope — отдельный **Plan 59
 - ✅ Ф.2.7 effect-free enforcement в bound (protocol) methods —
   type-checker rejects effectful protocols с AI-first diagnostic.
 - ✅ Ф.2.8 diagnostic improvements (R5.3 structured из Plan 15 +
-  D110 enforcement).
+  D122 enforcement).
 - ⏸️ Full vtable codegen integration (decision tree, arg propagation,
   multi-bound) — **deferred с justification**: в single-crate
   bootstrap mono pass instantiates каждый concrete generic instance
@@ -8511,7 +8511,7 @@ Closes:
 | Plans closed | — | 55, 56 | 2 |
 | Plans created | — | 57, 58, 59 | 3 |
 | M-маркеров closed | — | 11+ | |
-| Spec D-blocks added | — | D110 | 1 |
+| Spec D-blocks added | — | D122 | 1 |
 | Test files added | — | ~25 | |
 | Commits | — | ~60 | |
 
@@ -8594,9 +8594,9 @@ typedef struct NovaOpt__NovaTuple____nova_str__nova_int {
 (HashMap[str,int] sum values, HashMap[int,str] count keys, collect
 both K and V с condition checks).
 
-### Spec D111 added
+### Spec D123 added
 
-`spec/decisions/02-types.md` D111 (Tuple monomorphization) — describes
+`spec/decisions/02-types.md` D123 (Tuple monomorphization) — describes
 rule + decision tree + параллель Rust/C++.
 
 ### Импакт
@@ -8930,9 +8930,10 @@ Plan 60 doc писал «новый D-block D112». При проверке `gre
 D111/D113/D114/D115/D116 заняты (Plan 33.x + Plan 56 + Plan 59). Plan
 60 D-block назначен **D117** (next free). Sed-replace во всех ссылках
 (plan doc + emit_c.rs + interp + migration tool comments + idiom doc +
-migration doc). Кстати в spec/decisions/02-types.md есть pre-existing
-**duplicate D110** (`Ghost state` + `Hybrid dispatch` на разных строках)
-— это не моя забота, отдельный bug. Plan 60 не fix'ит.
+migration doc). Pre-existing **duplicate D109/D110/D111** между Plan 33.4
+и Plan 56/57/59 устранён в spec audit 2026-05-18: Plan 56 D110→D122,
+Plan 57 D109→D121, Plan 59 D111→D123; Plan 33.4 исходные номера сохранены
+как приоритетные (первый добавивший).
 
 ## [M-57.F-sketches-to-impl] — Phase F closure: deferred → production (2026-05-17)
 
