@@ -1,0 +1,43 @@
+// Ф.29.3 (Plan 33.6): TrivialBackend Var-Var bounds check через propagate_bounds.
+// `requires a >= 10; requires b <= 5` ⊢ `ensures result >= 0` (a-b >= 10-5 = 5 >= 0).
+// Дополнительно: `ensures result > 0` тоже тривиально (5 > 0).
+
+module contracts.f29_var_var_bounds_positive
+
+// Проверяем что a-b >= 0 при a>=10, b<=5 (через subtraction check: lower(a)-upper(b)=5>=0).
+#verify
+fn diff_nonneg(a int, b int) -> int
+    requires a >= 10
+    requires b <= 5
+    ensures result >= 0
+{
+    a - b
+}
+
+// a >= b: lower(a)=10 >= upper(b)=5 → true через Var-Var bounds.
+// Кодируется как ensures через return int и сравнение с bound.
+// Используем subtraction: a - b >= 0 (см. выше) плюс ensures result > 0 (diff >= 5).
+#verify
+fn diff_positive(a int, b int) -> int
+    requires a >= 10
+    requires b <= 5
+    ensures result > 0
+{
+    a - b
+}
+
+// x <= 3, y >= 7 → y - x >= 4 (lower(y)-upper(x) = 7-3 = 4 >= 1 → ensures result >= 1).
+#verify
+fn reverse_diff(x int, y int) -> int
+    requires x <= 3
+    requires y >= 7
+    ensures result >= 1
+{
+    y - x
+}
+
+test "var-var bounds trivial" {
+    assert(diff_nonneg(10, 5) == 5)
+    assert(diff_positive(15, 2) == 13)
+    assert(reverse_diff(1, 8) == 7)
+}
