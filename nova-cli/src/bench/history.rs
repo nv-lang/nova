@@ -289,6 +289,22 @@ pub fn squash(repo: &Path, branch: &str, before_unix: u64, push: bool,
     Ok(0)
 }
 
+/// Plan 57.D.4: default branch name. If `NOVA_BENCH_RUNNER_ID` env set —
+/// returns `bench-history-<runner_id>` (multi-runner CI matrix support).
+/// Иначе — `bench-history`.
+pub fn default_branch() -> String {
+    if let Ok(runner) = std::env::var("NOVA_BENCH_RUNNER_ID") {
+        if !runner.is_empty() {
+            // Sanitize runner_id для valid git ref name.
+            let safe: String = runner.chars()
+                .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '-' })
+                .collect();
+            return format!("bench-history-{}", safe);
+        }
+    }
+    "bench-history".to_string()
+}
+
 /// Render brief summary of history-add command.
 pub fn explain() -> &'static str {
     "Appends a bench result JSON to an orphan git branch (default \

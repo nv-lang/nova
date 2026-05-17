@@ -36,10 +36,25 @@ on:
 
 jobs:
   bench:
-    # Use self-hosted runner для stable measurements. Fall back to
-    # ubuntu-latest для smoke (но gate ослаблен — см. bench.toml).
-    runs-on: ${{ vars.BENCH_RUNNER || 'ubuntu-latest' }}
+    # Plan 57.D.4: matrix per-runner — каждый runner пишет в свою
+    # branch `bench-history-<runner-id>` чтобы избежать interference
+    # между machines с different CPU/clock/governor.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Self-hosted dedicated runners (production reliable):
+          - runner: [self-hosted, linux, perf-x86]
+            runner_id: linux-amd-perf
+          - runner: [self-hosted, linux, perf-arm]
+            runner_id: linux-arm-perf
+          # GitHub-hosted shared (noise-prone fallback):
+          - runner: ubuntu-latest
+            runner_id: gh-ubuntu-shared
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
+    env:
+      NOVA_BENCH_RUNNER_ID: ${{ matrix.runner_id }}
 
     steps:
       - uses: actions/checkout@v4
@@ -68,14 +83,17 @@ jobs:
           cd nova-cli
           cargo build --release
 
-      - name: Fetch baseline from bench-history branch
+      - name: Fetch baseline from per-runner history branch
         id: fetch-baseline
         continue-on-error: true
         run: |
-          git fetch origin bench-history:bench-history 2>&1 || \
-            echo "no bench-history branch yet — first run will become baseline"
-          if git rev-parse --verify bench-history >/dev/null 2>&1; then
-            git show bench-history:main-baseline.json > baseline.json 2>&1 || \
+          # Plan 57.D.4: per-runner branch (NOVA_BENCH_RUNNER_ID-aware).
+          BRANCH=$(./nova-cli/target/release/nova bench runner-branch)
+          echo "history branch: $BRANCH"
+          git fetch origin "$BRANCH:$BRANCH" 2>&1 || \
+            echo "no $BRANCH branch yet — first run будет baseline"
+          if git rev-parse --verify "$BRANCH" >/dev/null 2>&1; then
+            git show "$BRANCH:main-baseline.json" > baseline.json 2>&1 || \
               echo "no main-baseline.json in branch"
             test -f baseline.json && echo "baseline_found=true" >> $GITHUB_OUTPUT || \
               echo "baseline_found=false" >> $GITHUB_OUTPUT
@@ -115,7 +133,7 @@ jobs:
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: bench-results-${{ github.run_id }}
+          name: bench-results-${{ matrix.runner_id }}-${{ github.run_id }}
           path: |
             new.json
             diff.md
