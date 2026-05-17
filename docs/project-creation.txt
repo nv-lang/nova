@@ -12573,6 +12573,29 @@ dead lemma diagnostic. Reasonable LIA subset без Z3.
 **Plan 33.6 итог за 23 спринта:** полное complement contract lints.
 Diagnostic categories: E2401-E2405, W2401-W2402.
 
+## Ф.24 — loop invariant + lemma params hints
+
+### Ф.24.1 — loop без invariant → W2402
+
+- pipeline.rs: walker `collect_loops_no_invariant` (FnBody/Stmt/Expr/If/While/For).
+- В fn с contracts loop без `invariant` → W2402 hint «verify ограничен».
+- Test: loop_no_invariant_w2402.
+- Коммит: `d22410ffd9f`.
+
+### Ф.24.2 — lemma без params → W2402
+
+- pipeline.rs: проверка `ld.params.is_empty()` в loop по Item::Lemma.
+- Test: lemma_no_params_w2402.
+- Коммит: `d22410ffd9f`.
+
+### Ф.24.3 — reflexive ineq (already works)
+
+- `simplify_app` для `<`/`<=`/`>`/`>=` уже имеет `(a, b) if a == b` check.
+
+**Итого Ф.24:** 3 closed. **170 PASS (+2) / 42 SKIP / 1 pre-existing FAIL.**
+
+**Plan 33.6 итог за 24 спринта:** полный contract lint catalog + AST walkers.
+
 === Plan 45 �.25 � nova tests (positive + negative) ===
 
 ����� �������� �.25 (4 ����) �������� nova-tests .nv ��� �������� �����
