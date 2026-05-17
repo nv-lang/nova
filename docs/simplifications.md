@@ -8972,3 +8972,61 @@ b1687cf0598).
 `memory_bandwidth_bytes_per_iter` emission в bench JSON) — требует
 verification на real Intel Skylake+ / AMD Zen 3+ hardware. Current
 infra dovolно для CI gating через `membw-check` exit code.
+
+---
+
+## [M-plan-61-cross-effect-throw] — interrupt-frame stack mismatch (2026-05-17)
+
+**Deferred, не simplification.** Plan 61 hybrid typed-throw architecture
+закрывает 2 из 3 Silent UB. Cross-effect throw в handler-arm
+(`with Fail[A] = |e| throw B {...}`) частично работает (compile OK,
+typed payload reaches outer handler), но **interrupt-frame stack
+mismatch при unwinding** не resolved.
+
+**Root cause:** outer handler `interrupt v` longjmp идёт к ближайшему
+_nova_interrupt_top = inner with-block (был pushed last). inner
+resolves в `v`, не outer. Type/slot mismatch.
+
+**Fix требует архитектурного refactor:** tag interrupt-frames эффектом
++ longjmp выбирать correct frame. Это **Plan 11 followup territory** —
+Plan 11 already noted issue (line 791-814 «Open issue: cross-effect
+throw в handler arm»). Plan 61 fixes typed payload preservation;
+full cross-effect dispatch — separate plan.
+
+repro_cross_effect_throw.nv.deferred — marker, ждёт Plan 11 followup.
+
+## [M-plan-61-stdlib-workaround-migration]
+
+**Deferred.** Plan 61 Ф.7 — переписать ~15 мест в std/data/semver_range,
+std/concurrency/retry, std/concurrency/http etc. с
+`with Fail[E] = |e| interrupt Err(e)` на idiomatic D65 правило 3 form
+(`with Fail[E] = |e| throw NewErr {...}`).
+
+Эти места используют `interrupt Err(e)` именно для **обхода cross-
+effect throw bug** (см. M-plan-61-cross-effect-throw). Migration требует
+resolving cross-effect — blocked на Plan 11 followup.
+
+Plan 61 закрыт без stdlib migration; backward compat через legacy
+string-slot path.
+
+## [M-plan-61-generic-result-erased] — Result hardcoded на (int, str)
+
+**Deferred.** `expr!!` для `Result[T, CustomErr]` с user-defined Err
+не работает: bootstrap-stage Result hardcoded на `(Ok int, Err nova_str)`
+(spec D26 §354-357). Plan 61 Ф.4 закрыл nova_throw_value placeholder,
+но full typed Err работает только для `Result[T, str]`.
+
+Real fix: **Plan 14/56 generic Result mono** — после этого Plan 61
+codegen перейдёт на nova_throw_typed для Result!!.
+
+## [M-plan-61-per-e-mono-deferred]
+
+**Deferred decision.** Plan 61 v2 plan заявлял per-E TLS slots
+(`_nova_handler_Fail_<E>`) + per-E vtable. Реализация payload-in-frame
+через single legacy slot + typed cast в handler arm даёт **equivalent
+semantics** при меньшей complexity (нет per-E slot allocations, нет
+worklist hookup, нет dispatcher generation).
+
+Perf: handler arm = pointer deref + cast vs per-E vtable = indirect
+call. Разница ~1-2 ns на throw — pas-imeyer для error path. Если когда-
+нибудь perf-bench покажет overhead — вернуться. Не блокер.
