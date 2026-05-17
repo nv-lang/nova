@@ -8982,6 +8982,42 @@ Plan 57 — **completely closed across all 6 фаз** (MVP + A + B + C +
 D + E + F). 42+ commits в plan-57 branch. Все 4 phase-E deferred
 sketches теперь production code.
 
+## [M-plan-33.6-Ф.29-trivial-bounds-extensions] Ф.18.2/Ф.21.3/Ф.25.3 — ЗАКРЫТЫ через bounds tracking (2026-05-18)
+
+Три deferred V3 items из Plan 33.6 закрыты Ф.29 одним спринтом через
+existing bounds-tracking infrastructure (без graph reasoning / без
+canonical form changes).
+
+**Ф.25.3 != propagation (deferred V3 → закрыт).** Был отложен из-за risk
+регрессии в `propagate_equalities`. Closure через `try_check`: добавлены
+symmetric arms `("!=", Var, IntLit)` / `("!=", IntLit, Var)` с тремя
+правилами (lower > n / upper < n / pinned). Изоляция от UnionFind path
+устраняет регрессионный hazard.
+
+**Ф.18.2 comparison transitivity Var-Var (deferred V3 → partially закрыт).**
+Полный transitivity требует graph reasoning (V3). Но **specialised case**
+когда обе Var имеют literal bounds — покрыт через 4 arms (`>=, <=, >, <`)
+в try_check. Не trogает encoder / canonical form — добавляется только в
+propagate_bounds reasoning. Full transitivity без literal bounds остаётся
+V3.
+
+**Ф.21.3 comparison norm (deferred V3 → partially закрыт).** Изменение
+canonical form всё ещё risk. Но **literal-literal сравнения** уже работают
+в simplify_app (IntLit OP IntLit → BoolLit для всех 6 операторов). Ф.29.2
+документирует existing coverage. Non-literal Var-Var canonical form
+остаётся V3.
+
+**Bonus Ф.29.4:** `try_subtraction_check` extended на `>` (strict). Был
+только `>=` — теперь оба через effective_goal+1. Никаких других changes.
+
+**Регрессия:** 170 → 173 PASS (+3 новых f29 tests), 0 FAIL, 44 SKIP.
+cargo test --lib verify::backend::trivial: 6/6 PASS.
+
+**Pattern:** низкорисковые targeted extensions через bounds-tracking
+(literal-driven reasoning) могут закрывать deferred items без full LIA
+implementation. Что **не** покрывает: Var-Var без literal bounds, transitive
+chains через UF terms, mixed inequality patterns — это V3 graph reasoning.
+
 ## [M-57.F.4-positive-negative-coverage] — Test expansion (2026-05-17)
 
 **Не simplification.** Прямой user feedback "тесты напиши по тому,
