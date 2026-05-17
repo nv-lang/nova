@@ -1,7 +1,7 @@
 " Vim syntax file for Nova
 " Language:    Nova
 " Maintainer:  Nova Language project
-" URL:         https://github.com/nova-lang/nova-lang (TODO)
+" URL:         https://github.com/nv-lang/nova
 " License:     MIT OR Apache-2.0
 "
 " Synchronized with editors/vscode/syntaxes/nova.tmLanguage.json
