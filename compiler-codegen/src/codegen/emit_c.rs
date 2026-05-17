@@ -5549,11 +5549,9 @@ impl CEmitter {
             .replace('-', "_")
     }
 
-    /// Plan 59: partial inverse of `sanitize_c_for_ident` для restore tuple
-    /// element C type из mangled name (`_NovaTuple____<elem>__<elem>__...`).
-    /// Только handles common element type idents (`nova_int`, `Nova_Foo_p`,
-    /// `NovaArray_<T>_p`) — nested mono'd tuples с inner `____` не
-    /// recoverable из этой mangle scheme. Caller обязан validate.
+    /// Plan 59: partial inverse of `sanitize_c_for_ident` — restores `*`
+    /// from `_p` suffix. Idempotent для не-pointer types (`nova_int`).
+    /// Используется при decode'е element types из length-prefixed mangle.
     fn desanitize_c_from_ident(s: &str) -> String {
         if let Some(stem) = s.strip_suffix("_p") {
             format!("{}*", stem)
@@ -5562,13 +5560,60 @@ impl CEmitter {
         }
     }
 
+    /// Plan 59 Phase 5: parse mono'd tuple mangled name → element C types.
+    /// Length-prefixed format: `_NovaTuple_<arity>_<L1>_<T1>_<L2>_<T2>...`
+    /// — каждое `<Ln>` десятичная длина следующего element name. Это
+    /// unambiguous для **любой** глубины nesting (раньше split-by-`__`
+    /// ломался когда element сам — `_NovaTuple____...`).
+    /// Returns None если name не валидный mono'd tuple format (legacy
+    /// `_NovaTupleN` тоже не matches — distinguishable по `_` после
+    /// `NovaTuple`).
+    fn parse_mono_tuple_elements(mangled: &str) -> Option<Vec<String>> {
+        let rest = mangled.strip_prefix("_NovaTuple_")?;
+        // Arity prefix.
+        let (arity_str, after_arity) = Self::take_digits(rest);
+        if arity_str.is_empty() {
+            return None;
+        }
+        let arity: usize = arity_str.parse().ok()?;
+        let mut cursor = after_arity;
+        let mut elems: Vec<String> = Vec::with_capacity(arity);
+        for _ in 0..arity {
+            cursor = cursor.strip_prefix('_')?;
+            let (len_str, after_len) = Self::take_digits(cursor);
+            if len_str.is_empty() {
+                return None;
+            }
+            let len: usize = len_str.parse().ok()?;
+            let body = after_len.strip_prefix('_')?;
+            if body.len() < len {
+                return None;
+            }
+            let raw_elem = &body[..len];
+            elems.push(Self::desanitize_c_from_ident(raw_elem));
+            cursor = &body[len..];
+        }
+        if !cursor.is_empty() {
+            return None;
+        }
+        Some(elems)
+    }
+
+    /// Plan 59 Phase 5: peel leading decimal digits.
+    fn take_digits(s: &str) -> (&str, &str) {
+        let split_at = s.bytes().take_while(|b| b.is_ascii_digit()).count();
+        (&s[..split_at], &s[split_at..])
+    }
+
     /// Plan 59: detect mono'd tuple return-type mismatch. Returns true if
-    /// `ret_ty` and `actual_ty` are both `_NovaTuple____...` mangled names
-    /// but different (e.g. element types disagree). Such struct-to-struct
+    /// `ret_ty` and `actual_ty` are both mono'd `_NovaTuple_<arity>_...`
+    /// names but different (element types disagree). Such struct-to-struct
     /// assignment fails C type-check; caller emits field-wise copy instead.
+    /// `_NovaTuple_` prefix (с `_`) различает new mono'd format от legacy
+    /// `_NovaTuple1`/`_NovaTuple2`/... (без `_`).
     fn needs_tuple_field_copy(ret_ty: &str, actual_ty: &str) -> bool {
-        ret_ty.starts_with("_NovaTuple____")
-            && actual_ty.starts_with("_NovaTuple____")
+        ret_ty.starts_with("_NovaTuple_")
+            && actual_ty.starts_with("_NovaTuple_")
             && ret_ty != actual_ty
     }
 
@@ -5582,11 +5627,7 @@ impl CEmitter {
             self.line(&format!("{} {} = {};", ret_ty, tmp, val));
             return;
         }
-        if let Some(rest) = ret_ty.strip_prefix("_NovaTuple____") {
-            let elem_tys: Vec<String> = rest.split("__")
-                .filter(|s| !s.is_empty())
-                .map(|s| Self::desanitize_c_from_ident(s))
-                .collect();
+        if let Some(elem_tys) = Self::parse_mono_tuple_elements(ret_ty) {
             self.line(&format!("{} {};", ret_ty, tmp));
             for (i, ety) in elem_tys.iter().enumerate() {
                 self.line(&format!("{}.f{} = ({}){}.f{};", tmp, i, ety, val, i));
@@ -5629,16 +5670,29 @@ impl CEmitter {
         format!("Nova_{}____{}", base_name, args)
     }
 
-    /// Plan 59: compute mono'd tuple struct C name.
-    /// `(nova_str, nova_int)` → `_NovaTuple____nova_str__nova_int`.
-    /// `(Nova_X*, nova_int)` → `_NovaTuple____Nova_X_p__nova_int` (sanitized).
+    /// Plan 59 Phase 5: compute mono'd tuple struct C name.
+    /// **Length-prefixed encoding** (Itanium ABI analog): self-describing
+    /// для любой глубины nesting, parseable без ambiguity.
+    /// Format: `_NovaTuple_<arity>_<L1>_<T1>_<L2>_<T2>_..._<LN>_<TN>`
+    /// — где `<Ln>` decimal byte length следующего sanitized element.
+    /// Примеры:
+    ///   `(nova_str, nova_int)` → `_NovaTuple_2_8_nova_str_8_nova_int`
+    ///   `(Nova_X*, nova_int)`  → `_NovaTuple_2_10_Nova_X_p_8_nova_int`
+    ///   `((int,int), int)` →
+    ///     `_NovaTuple_2_33__NovaTuple_2_8_nova_int_8_nova_int_8_nova_int`
+    /// Distinguishable от legacy `_NovaTupleN` по `_` после `NovaTuple`.
     /// Empty tuple → unreachable (Tuple(elems) where elems.is_empty() === Unit).
     pub fn compute_mono_tuple_c_name(elem_c_tys: &[String]) -> String {
-        let args: String = elem_c_tys.iter()
-            .map(|c_ty| Self::sanitize_c_for_ident(c_ty))
-            .collect::<Vec<_>>()
-            .join("__");
-        format!("_NovaTuple____{}", args)
+        let mut out = String::from("_NovaTuple_");
+        out.push_str(&elem_c_tys.len().to_string());
+        for c_ty in elem_c_tys {
+            let sanitized = Self::sanitize_c_for_ident(c_ty);
+            out.push('_');
+            out.push_str(&sanitized.len().to_string());
+            out.push('_');
+            out.push_str(&sanitized);
+        }
+        out
     }
 
     /// Plan 59: register mono'd tuple для emit при finalize. Returns the
@@ -13228,21 +13282,18 @@ impl CEmitter {
                         self.line(&format!(
                             "_NovaTuple{} {} = ({}.value == NULL) ? (_NovaTuple{}){{0}} : *({}.value);",
                             arity, binding, opt_tmp, arity, opt_tmp));
-                    } else if elem_c_ty.starts_with("_NovaTuple____") {
+                    } else if elem_c_ty.starts_with("_NovaTuple_") {
                         // Plan 59: mono'd tuple stored as value в
                         // NovaOpt_<mono>.value. Direct copy + populate
                         // tuple_element_types если ещё не populated (для
                         // non-generic iter, where mono_return_ty path не
-                        // triggered registration).
+                        // triggered registration). Phase 5 length-prefixed
+                        // parser handles любой nesting depth.
                         self.line(&format!(
                             "{} {} = {}.value;",
                             elem_c_ty, binding, opt_tmp));
                         if !self.tuple_element_types.contains_key(binding.as_str()) {
-                            if let Some(rest) = elem_c_ty.strip_prefix("_NovaTuple____") {
-                                let elems: Vec<String> = rest.split("__")
-                                    .filter(|s| !s.is_empty())
-                                    .map(|s| Self::desanitize_c_from_ident(s))
-                                    .collect();
+                            if let Some(elems) = Self::parse_mono_tuple_elements(&elem_c_ty) {
                                 if elems.len() == arity {
                                     self.tuple_element_types
                                         .insert(binding.clone(), elems);
@@ -14223,35 +14274,14 @@ impl CEmitter {
                 // hardcoded `_NovaTupleN` ломало mono'd return values).
                 let n = pats.len();
                 let inferred = self.infer_expr_c_type(value);
-                // Try registry-based lookup first (handles nested tuples
-                // где mangled-name parsing breaks из-за `____` collisions).
-                let registry_elems: Option<Vec<String>> = match &value.kind {
-                    crate::ast::ExprKind::Ident(name) => {
-                        self.tuple_element_types.get(name.as_str()).cloned()
-                    }
-                    _ => None,
-                };
+                // Plan 59 Phase 5: length-prefixed mangle — parse точен для
+                // any nesting depth. Registry-lookup workaround удалён
+                // (был needed когда split-by-`__` ломался на nested).
                 let (struct_name, elem_tys): (String, Vec<String>) =
-                    if let Some(elems) = registry_elems
-                        .filter(|e| e.len() == n && inferred.starts_with("_NovaTuple____"))
+                    if let Some(elems) = Self::parse_mono_tuple_elements(&inferred)
+                        .filter(|e| e.len() == n)
                     {
                         (inferred.clone(), elems)
-                    } else if inferred.starts_with("_NovaTuple____") {
-                        // Mangled-name parse fallback (works для flat tuple,
-                        // breaks для nested mono'd tuples — registry lookup
-                        // above covers тот случай).
-                        let elems: Vec<String> = inferred
-                            .strip_prefix("_NovaTuple____")
-                            .map(|rest| rest.split("__")
-                                .filter(|s| !s.is_empty())
-                                .map(|s| Self::desanitize_c_from_ident(s))
-                                .collect())
-                            .unwrap_or_default();
-                        if elems.len() == n {
-                            (inferred.clone(), elems)
-                        } else {
-                            (format!("_NovaTuple{}", n), vec!["nova_int".to_string(); n])
-                        }
                     } else {
                         (format!("_NovaTuple{}", n), vec!["nova_int".to_string(); n])
                     };

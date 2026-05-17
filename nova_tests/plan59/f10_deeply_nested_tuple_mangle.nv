@@ -1,0 +1,52 @@
+// Positive: 4-уровневое nested tuple — regression guard для
+// [M-tuple-mangle-nested-collision]. Раньше split-by-`__` парсер
+// mangled name'а ломался когда element сам — `_NovaTuple____` (4
+// underscores collide с 2-underscore separator). Phase 5 length-prefixed
+// mangle решает это properly.
+
+module plan59.f10_deeply_nested_tuple_mangle
+
+
+// 4 уровня: tuple of tuple of tuple of tuple. Каждый — mono'd struct.
+// Old mangle: `_NovaTuple_________NovaTuple_______NovaTuple_____NovaTuple____nova_int__nova_int...`
+// — split("__") даёт мусор.
+// New mangle: `_NovaTuple_2_<len>__NovaTuple_2_<len>_..._8_nova_int_8_nova_int`
+// — каждый element имеет explicit byte length, parser reads precisely.
+
+fn make_deep() -> ((((int, int), int), int), int) {
+    ((((1, 2), 3), 4), 5)
+}
+
+
+test "4-level nested tuple — length-prefixed mangle parses correctly" {
+    let deep = make_deep()
+    // Access всех уровней:
+    assert(deep.1 == 5)
+    assert(deep.0.1 == 4)
+    assert(deep.0.0.1 == 3)
+    assert(deep.0.0.0.0 == 1)
+    assert(deep.0.0.0.1 == 2)
+}
+
+
+test "let-destructure 3-level nested" {
+    let triple = (((1, 2), (3, 4)), (5, 6))
+    let (left, right) = triple
+    let (ll, lr) = left
+    assert(ll.0 == 1)
+    assert(ll.1 == 2)
+    assert(lr.0 == 3)
+    assert(lr.1 == 4)
+    assert(right.0 == 5)
+    assert(right.1 == 6)
+}
+
+
+// Mixed element types на разных уровнях — guards что length-prefix
+// корректно обрабатывает heterogeneous nesting.
+test "mixed nested: (str, (int, bool))" {
+    let pair = ("label", (42, true))
+    assert(pair.0 == "label")
+    assert(pair.1.0 == 42)
+    assert(pair.1.1)
+}
