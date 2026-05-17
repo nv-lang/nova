@@ -1,0 +1,15 @@
+module plan11_followup.f9_assert_failure_negative
+
+// Plan 11 Follow-up — negative: assert на false (в expression position)
+// должен **runtime fail** (test framework ловит как FAIL). Это smoke-test
+// что comma-operator wrap не подавляет actual failure propagation.
+
+// EXPECT_RUNTIME_PANIC false
+
+test "assert в match arm должен fail когда cond false" {
+    let n = 0
+    match n {
+        0 => assert(false)         // ← должен fail здесь
+        _ => assert(true)
+    }
+}
