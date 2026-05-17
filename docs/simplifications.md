@@ -8750,3 +8750,31 @@ Plan 57 закрыт целиком (MVP+A+B+C+D). Дальнейшие enhancem
   historical time-series (PELT / BCP algorithms). ~250 LOC.
 
 Это не obligatory — Plan 57 production-grade без них.
+
+---
+
+## [M-57.E-production-extensions] — Phase E closure (2026-05-17)
+
+Plan 57.E closed: 3 implemented + 3 deferred с design-sketches:
+
+Implemented:
+- 57.E.1 (b3c4a1778da): dashboard drill-down (histogram + Tukey fences
+  + stats sidebar + comparison view).
+- 57.E.5 (01137b3be46): PELT changepoint anomaly detection
+  (`nova bench history-anomalies`).
+- 57.E.6 (b0e7b4ce01d): e2e shell tests (25/25 PASS).
+
+Deferred (design-sketches в docs/plans/57.E.X-*.md — production-ready
+для pick-up):
+- 57.E.2: distributed bench coordination (SSH-based, ~500 LOC).
+- 57.E.3: AI-driven regression interpretation (~300 LOC + API costs).
+- 57.E.4: memory bandwidth measurement (Intel MBM Linux-only, ~200 LOC).
+
+Plan 57 — completely closed across all 5 фаз (MVP+A+B+C+D+E).
+38+ commits. Test coverage:
+- 47 unit tests (44 bench:: + 3 anomaly::).
+- 11 .nv tests (plan57/).
+- 25 e2e shell asserts (plan57_e2e/run_e2e.sh).
+
+Backlog: empty. Любые future enhancements — отдельные планы или
+pick-up из E.2/E.3/E.4 sketches.

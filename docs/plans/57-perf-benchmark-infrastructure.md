@@ -434,6 +434,67 @@ Sub-items (каждый — отдельный commit):
 
 **Total 57.D estimate:** ~560 LOC.
 
+### **Plan 57.E — Production extensions — ~3-4 dev-days**
+
+Sub-items (каждый — отдельный commit):
+
+1. **57.E.1 — HTML dashboard drill-down interactivity.**
+   - Existing per-bench HTML pages — base. Расширить с:
+     - Histogram of raw samples (echarts histogram).
+     - Outliers highlighted (Tukey ±1.5·IQR markers).
+     - Stats sidebar: median/MAD/CI95/slope/R².
+     - Comparison view ("vs latest commit", "vs 30 days ago") если history
+       has multiple entries.
+   - **LOC:** ~250 (extend bench/dashboard.rs).
+
+2. **57.E.2 — Distributed bench coordination (design sketch).**
+   - SSH-based remote bench orchestrator: `nova bench remote run user@host:repo
+     <args>` запускает bench через SSH + fetches result JSON.
+   - Aggregation: gather results from N hosts → unified dashboard.
+   - **Status:** design-sketch in plan + simplifications [M-57.E.2]
+     для future implementation. Не реализуется в этой phase — требует
+     external infra (SSH key management, remote runner setup).
+   - **LOC если impl:** ~500.
+
+3. **57.E.3 — AI-driven regression interpretation (design sketch).**
+   - LLM consumer JSON diff → natural-language summary с suggestion
+     "likely cause: mono-pass change в commit X" или "noise spike,
+     re-run".
+   - **Status:** design-sketch. Требует external API integration
+     (Anthropic / OpenAI) с pricing implications.
+   - **LOC если impl:** ~300 (prompt + parse + display).
+
+4. **57.E.4 — Memory bandwidth measurement (design sketch, Linux-only).**
+   - Intel MBM (Memory Bandwidth Monitoring) через `perf_event` (PERF_TYPE_RAW
+     с CHAS umask). AMD analogue через QoS.
+   - Linux-only, требует root or CAP_PERFMON, kernel CONFIG_X86_INTEL_RDT.
+   - **Status:** design-sketch. Hardware-dependent + privilege-gated.
+   - **LOC если impl:** ~200.
+
+5. **57.E.5 — Statistical changepoint anomaly auto-detection.**
+   - Apply PELT (Pruned Exact Linear Time, Killick 2012) к historical
+     time-series median per bench.
+   - Identifies regimes (multiple stable means) + change-points where
+     means shift significantly.
+   - Output: `nova bench history-anomalies --branch X` printing
+     changepoint list с before/after stats и approx commit-time.
+   - **LOC:** ~250 (PELT algorithm + CLI).
+
+6. **57.E.6 — E2E shell tests для CLI subcommands.**
+   - PowerShell + bash test scripts covering:
+     - `nova bench run/diff/gate`
+     - `nova bench history-add/list/squash`
+     - `nova bench dashboard` (HTML output validation)
+     - `nova bench calibrate`
+     - `nova bench corpus --json/--html`
+     - `nova bench runner-branch` + auto-resolve.
+     - `nova bench cpu-instr-check`
+   - Stored в `nova_tests/plan57_e2e/`.
+   - **LOC:** ~300 shell scripts + helper validation.
+
+**Total 57.E implementation estimate:** ~800 LOC (E.1+E.5+E.6 only;
+E.2/E.3/E.4 design-sketched, not implemented).
+
 ### **Plan 57.B — Advanced — ~3-4 dev-days**
 
 Sub-items (каждый — отдельный commit):
@@ -494,6 +555,15 @@ Sub-items (каждый — отдельный commit):
       diagnostic subcommand; per-sample runtime integration — Phase C TBD).
 - [x] `bench "x" { group "g" { case "c" { ... } } }` parse + emit + 4-entry
       output (composite names `x/g/c`).
+
+### **Plan 57.E** — ✅ ALL CLOSED 2026-05-17 (3 impl + 3 design-sketch)
+
+- [x] HTML dashboard drill-down (histogram + Tukey fences + sidebar + comparison).
+- [x] PELT changepoint anomaly auto-detection (`nova bench history-anomalies`).
+- [x] E2E shell tests для CLI subcommands (25 asserts, 11 sections).
+- [sketched] Distributed bench coordination — `docs/plans/57.E.2-distributed-bench-sketch.md`.
+- [sketched] AI-driven regression interpretation — `docs/plans/57.E.3-ai-regression-interpretation-sketch.md`.
+- [sketched] Memory bandwidth measurement — `docs/plans/57.E.4-memory-bandwidth-sketch.md`.
 
 ### **Plan 57.D** — ✅ ALL CLOSED 2026-05-17
 
@@ -644,3 +714,14 @@ Sub-items (каждый — отдельный commit):
   44 unit tests pass. Regression: 562/0 pre-merge baseline; после
   merge main подтянулись 5 unrelated plan56/* HashMap clone/merge
   failures (Plan 56 partial closure, не от Phase D работы).
+- **2026-05-17 plan57 test suite**: 11 .nv tests (4 positive + 7
+  negative). `nova test --filter plan57` → 11 PASS / 0 FAIL.
+- **2026-05-17 Phase E closed**: 3 sub-tasks impl + 3 design-sketches.
+  - 57.E.1 dashboard drill-down (histogram + sidebar + comparison)
+    `b3c4a1778da`
+  - 57.E.5 PELT changepoint anomaly detection `01137b3be46`
+  - 57.E.6 e2e shell tests (25/25 PASS) `b0e7b4ce01d`
+  - 57.E.2/3/4 deferred design-sketches в `docs/plans/57.E.X-*.md`.
+  Plan 57 — **ALL 5 phases COMPLETE** (38+ commits в plan-57).
+  47 unit tests pass (44 bench:: + 3 anomaly::). 11 .nv tests + 25
+  e2e asserts.

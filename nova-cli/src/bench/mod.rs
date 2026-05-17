@@ -26,6 +26,7 @@ pub mod profile;
 pub mod criterion_compat;
 pub mod cpu_instr;
 pub mod corpus;
+pub mod anomaly;
 
 pub use stats::SampleStats;
 pub use schema::{RawBenchResult, AnalyzedBench, RunResultParsed, run_result_to_json, SCHEMA_VERSION};
