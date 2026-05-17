@@ -1,0 +1,17 @@
+// Ф.26.3 positive (Plan 33.6): axiom с binders → не vacuous, no W2402.
+
+module contracts.axiom_with_binders_positive
+
+type Counter effect {
+    #pure value() -> int
+    axiom non_neg() => value() >= 0
+}
+
+fn use_counter() -> int
+{
+    42
+}
+
+test "axiom with binders no W2402" {
+    assert(use_counter() == 42)
+}

@@ -1,0 +1,15 @@
+// Ф.25.1 positive (Plan 33.6): разные ensures → no duplicate W2402.
+
+module contracts.different_ensures_no_dup_positive
+
+fn pair(x int) -> int
+    requires x >= 0
+    ensures result >= 0
+    ensures result == x
+{
+    x
+}
+
+test "different ensures no dup" {
+    assert(pair(5) == 5)
+}

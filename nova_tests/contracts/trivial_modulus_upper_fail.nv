@@ -1,0 +1,13 @@
+// Ф.26.1 negative (Plan 33.6): `ensures result > 100` для `x % 10` — не trivially proven.
+// Trivial backend знает `< 10`, но не `> 100`. Без #verify default — runtime fallback.
+// REQUIRES_SMT_BACKEND z3
+// EXPECT_COMPILE_ERROR `#verify` failed
+
+module contracts.trivial_modulus_upper_fail
+
+#verify
+fn mod_upper_bad(x int) -> int
+    ensures result > 100
+{
+    x % 10
+}
