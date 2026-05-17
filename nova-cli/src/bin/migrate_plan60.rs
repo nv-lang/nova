@@ -1,7 +1,7 @@
 //! Plan 60 Ф.2: lexer-based migration tool — переписывает field-style
 //! size-accessors в method-form для всего corpus'а.
 //!
-//! Rewrite rules (D112):
+//! Rewrite rules (D117):
 //!   `expr.len`        → `expr.len()`
 //!   `expr.is_empty`   → `expr.is_empty()`
 //!   `expr.byte_len`   → `expr.byte_len()`
@@ -388,7 +388,7 @@ fn find_matching_open(
 
 /// Map accessor name → target name (with rename for `cap` → `capacity`).
 /// Returns Some(target) iff this is a size-like accessor that should be
-/// method-form per D112.
+/// method-form per D117.
 fn classify_accessor(name: &str) -> Option<&'static str> {
     match name {
         "len" => Some("len"),

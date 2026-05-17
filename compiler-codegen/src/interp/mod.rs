@@ -1525,14 +1525,14 @@ impl Interpreter {
                 .get(name)
                 .cloned()
                 .ok_or_else(|| Diagnostic::new(format!("no field `{}`", name), span)),
-            // Plan 60 / D112: size-accessor field-access — error с fix-it hint.
+            // Plan 60 / D117: size-accessor field-access — error с fix-it hint.
             // Method-call form работает через try_native_method (stdlib.rs).
             Value::Array(_) | Value::Str(_) if matches!(name, "len" | "is_empty" | "byte_len" | "cap" | "capacity") => {
                 let suggested = if name == "cap" { "capacity" } else { name };
                 Err(Diagnostic::new(
                     format!(
                         "[E_SIZE_ACCESSOR_FIELD] size-like accessor `{}` is method-only \
-                         (Plan 60 / D112) — use `.{}()`",
+                         (Plan 60 / D117) — use `.{}()`",
                         name, suggested
                     ),
                     span,

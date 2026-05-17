@@ -9153,7 +9153,7 @@ impl CEmitter {
                     return self.emit_method_value(obj, method_name);
                 }
                 let obj_ty = self.infer_expr_c_type(obj);
-                // Plan 60 / D112: size-accessor field-style access — error.
+                // Plan 60 / D117: size-accessor field-style access — error.
                 // Old paths были `s.len` / `arr.len` / `arr.is_empty` /
                 // `s.is_empty` / `arr.cap` — все теперь method-only.
                 // Diagnostic с fix-it hint (append `()` или rename `.cap`→`.capacity()`).
@@ -9162,13 +9162,13 @@ impl CEmitter {
                 {
                     let suggested = if name == "cap" { "capacity" } else { name.as_str() };
                     let hint_form = if name == "cap" {
-                        "rename to `.capacity()` (Rust/C++/Swift naming; D112)".to_string()
+                        "rename to `.capacity()` (Rust/C++/Swift naming; D117)".to_string()
                     } else {
                         format!("append `()` — use `.{}()` method call", suggested)
                     };
                     return Err(format!(
                         "[E_SIZE_ACCESSOR_FIELD] size-like accessor `{}` is method-only \
-                         (Plan 60 / D112); {}",
+                         (Plan 60 / D117); {}",
                         name, hint_form
                     ));
                 }
@@ -11415,7 +11415,7 @@ impl CEmitter {
                     let elem_ty = obj_ty.strip_prefix("NovaArray_").unwrap_or("nova_int")
                         .trim_end_matches('*').trim();
                     match method.as_str() {
-                        // Plan 60 / D112: size-accessor methods на []T —
+                        // Plan 60 / D117: size-accessor methods на []T —
                         // zero-cost inline lowering, идентично legacy field-path
                         // (emit_c.rs:9163-9170). Method-form единственно
                         // легальная после Ф.3 atomic switch.
@@ -11423,7 +11423,7 @@ impl CEmitter {
                             let obj_c = self.emit_expr(obj)?;
                             return Ok(format!("({}->len)", obj_c));
                         }
-                        // Plan 60 / D112: `capacity()`, не `cap()` —
+                        // Plan 60 / D117: `capacity()`, не `cap()` —
                         // консистентно с Rust/C++/Swift; D29 «явность над
                         // краткостью». Go `cap()` отвергнут как builtin-fn,
                         // не method.
@@ -11553,7 +11553,7 @@ impl CEmitter {
                 }
                 // 3. String methods: `s.starts_with(...)` → `nova_str_starts_with(s, ...)`
                 if obj_ty == "nova_str" {
-                    // Plan 60 / D112: str.is_empty() — zero-cost inline O(1) via
+                    // Plan 60 / D117: str.is_empty() — zero-cost inline O(1) via
                     // byte_len (UTF-8: byte_len == 0 ⇔ codepoint count == 0).
                     // Method-form единственно легальная после Ф.3 atomic switch.
                     if method == "is_empty" && args.is_empty() {
@@ -12683,7 +12683,7 @@ impl CEmitter {
             }
             ExprKind::Member { obj, name } => {
                 let obj_ty = self.infer_expr_c_type_str(obj);
-                // Plan 60 / D112: size-accessor field-style — больше не
+                // Plan 60 / D117: size-accessor field-style — больше не
                 // обрабатываем (emit_expr вернёт Err). Сохраняем dead-branch
                 // как защитную сетку: если когда-нибудь сюда попадёт —
                 // вернуть fallback printer (unreachable в normal flow).
@@ -15907,7 +15907,7 @@ impl CEmitter {
         match method {
             "starts_with" | "ends_with" | "contains" | "eq"
             | "lt" | "le" | "gt" | "ge"
-            | "is_empty"  // Plan 60 / D112
+            | "is_empty"  // Plan 60 / D117
                 => Some("nova_bool"),
             "to_upper" | "to_lower" | "trim" | "slice" | "concat"
                 => Some("nova_str"),
@@ -17260,7 +17260,7 @@ impl CEmitter {
                         return match method.as_str() {
                             "get" | "pop" => format!("NovaOpt_{}", elem_ty),
                             "push" => "nova_unit".into(),
-                            // Plan 60 / D112: size-accessor methods.
+                            // Plan 60 / D117: size-accessor methods.
                             "len" | "capacity" => "nova_int".into(),
                             "is_empty" => "nova_bool".into(),
                             _ => "nova_int".into(),
@@ -17482,10 +17482,10 @@ impl CEmitter {
                     return "void*".into();
                 }
                 let obj_ty = self.infer_expr_c_type(obj);
-                // Plan 60 / D112: size-accessor field-style — больше не
+                // Plan 60 / D117: size-accessor field-style — больше не
                 // выводим тип в codegen-path. Field-access валится с
                 // E_SIZE_ACCESSOR_FIELD при попытке emit (см. emit_expr
-                // section "Plan 60 / D112"). Для type-inference fallback
+                // section "Plan 60 / D117"). Для type-inference fallback
                 // на "void*" — это никогда не должно срабатывать, так как
                 // emit_expr возвращает Err первым. Защитная сетка.
                 if (obj_ty == "nova_str" || obj_ty.starts_with("NovaArray_"))
