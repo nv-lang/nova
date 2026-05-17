@@ -8724,3 +8724,57 @@ Plan 57 закрыт целиком (MVP+A+B+C+D). Дальнейшие enhancem
   historical time-series (PELT / BCP algorithms). ~250 LOC.
 
 Это не obligatory — Plan 57 production-grade без них.
+
+---
+
+## [M-plan-60-method-value-refinement] — Plan 60 Ф.4 deferred (2026-05-17)
+
+**Deferred, не simplification.** План v2 предлагал тонкое разграничение
+arg-position error vs non-arg warning + whitelist для legitimate
+`fns.map(.len)` cases. Реальность: текущий E_SIZE_ACCESSOR_FIELD
+diagnostic универсальный и точный — message всегда корректен
+(«size-like accessor X is method-only; append () или rename .cap →
+.capacity()»). Whitelist для method-value-в-arg-position не нужен
+сейчас — `let f = arr.@len` (с явным `@`-prefix) уже работает как
+bound method value (D-block Plan 11). Refinement (различение «expected
+fn() -> int» vs «expected int» в arg-position для better error
+message) — корректное место в **Plan 37** (typecheck semantic parity),
+куда уже планируется перенести size-accessor enforcement из codegen в
+type-checker. Plan 60 Ф.4 merged в Ф.3 без потери качества.
+
+## [M-plan-60-md-non-auto-migration] — manual migration .md (2026-05-17)
+
+Auto-migration tool применил .nv (std/+nova_tests/+examples/) — 404
+rewrites зачётно. Для .md (docs/+spec/) применение было НЕ-полным:
+meta-разделы spec'а описывают **обе** формы (`.len` vs `.len()` —
+правило, что одна форма запрещена), tool бы их сломал. Manually
+amended ключевые spec D-blocks (D26 в 08-runtime, built-in API table
+в 03-syntax, examples в 02-types/04-effects). Полная migration
+остальных .md occurrences (~140 hits в docs/plans/* и spec/decisions/*
+которые цитируют код в pre-Plan-60 form) — **по мере правки этих
+файлов в естественной работе**. Не блокер acceptance — это
+historical context, не canonical API reference.
+
+## [M-plan-60-cap-rename-to-capacity] — API breaking decision (2026-05-17)
+
+Plan 60 v1 заявлял `.cap()` сохранение. После пользовательской консультации
+(2026-05-17) принято решение rename `.cap` → `.capacity()` в Nova API:
+Rust/C++/Swift parity, D29 «явность над краткостью», AI mental mapping.
+Go использует `cap()` builtin, но как top-level fn (отвергается там же,
+где `len()` builtin). Внутреннее C-поле `cap` сохранено (не trickle-down
+rename) — это implementation detail. Migration tool делает rename +
+parens append одной операцией; legacy diagnostic подсказывает rename.
+Один use-site в std/collections/hashmap.nv:145 (`@_buckets.cap` →
+`@_buckets.capacity()`). Breaking change для (когда появятся) внешних
+пользователей — handled через clear diagnostic + migration doc.
+
+## [M-plan-60-D-block-numbering-D117] — D112 был занят (2026-05-17)
+
+Plan 60 doc писал «новый D-block D112». При проверке `grep ^## D112`
+обнаружено: D112 уже занят bounded quantifiers (Plan 33). Также D110/
+D111/D113/D114/D115/D116 заняты (Plan 33.x + Plan 56 + Plan 59). Plan
+60 D-block назначен **D117** (next free). Sed-replace во всех ссылках
+(plan doc + emit_c.rs + interp + migration tool comments + idiom doc +
+migration doc). Кстати в spec/decisions/02-types.md есть pre-existing
+**duplicate D110** (`Ghost state` + `Hybrid dispatch` на разных строках)
+— это не моя забота, отдельный bug. Plan 60 не fix'ит.
