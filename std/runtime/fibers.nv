@@ -44,34 +44,67 @@ module runtime.fibers
 
 // ─── fibers namespace ───────────────────────────────────────────────────
 
-// Bytes reserved через `mmap` для per-thread fiber arena (Linux/macOS).
-// Под Windows всегда 0 — arena не активна (calloc-путь).
+/// Байты, зарезервированные через `mmap` для per-thread fiber arena (Linux/macOS).
+///
+/// Отражает общий virtual address space выделенный для fiber stacks.
+/// Под Windows всегда `0` — arena не активна, stacks идут через calloc-путь.
+///
+/// # See Also
+///
+/// - `[fibers.slot_count]` — число slot'ов
+/// - `[fibers.compact]` — принудительное возвращение physical pages
+#stable(since = "0.1")
 export external fn fibers.virtual_reserved() -> int
 
-// Общее количество slot'ов в arena (slot = 1 fiber stack).
-// 4096 × 2MB = 8GB virtual reserved per thread на Linux/macOS.
-// Под Windows возвращает 0.
+/// Общее количество slot'ов в fiber arena (slot = 1 fiber stack).
+///
+/// На Linux/macOS: 4096 × 2MB = 8GB virtual reserved per thread (lazily committed).
+/// Под Windows возвращает `0`.
+///
+/// # See Also
+///
+/// - `[fibers.slots_active]` — сколько из них сейчас занято
+/// - `[fibers.high_water]` — пиковое значение
+#stable(since = "0.1")
 export external fn fibers.slot_count() -> int
 
-// Количество currently-allocated slot'ов (active fibers). Slot'ы
-// освобождаются после fiber termination и могут быть переиспользованы.
-// Под Windows возвращает 0.
+/// Количество currently-allocated slot'ов (активные fibers).
+///
+/// Slot'ы освобождаются после fiber termination и могут быть переиспользованы.
+/// Если `slots_active` близко к `slot_count` — workload приближается к лимиту арены.
+/// Под Windows возвращает `0`.
+///
+/// # See Also
+///
+/// - `[fibers.high_water]` — peak concurrent slots
+#stable(since = "0.1")
 export external fn fibers.slots_active() -> int
 
-// Peak concurrent slot count с момента старта. Полезно для capacity-
-// planning: если high_water близок к slot_count → workload приближается
-// к лимиту арены. Под Windows возвращает 0.
+/// Peak concurrent slot count с момента старта процесса.
+///
+/// Полезно для capacity-planning: если `high_water` близок к `slot_count` —
+/// workload временно приближался к лимиту арены. Под Windows возвращает `0`.
+///
+/// # See Also
+///
+/// - `[fibers.slot_count]` — общая ёмкость арены
+/// - `[fibers.slots_active]` — текущее значение
+#stable(since = "0.1")
 export external fn fibers.high_water() -> int
 
-// Plan 44.2 P41-3 (R8): explicit decay flush. Возвращает physical pages
-// всех currently-free arena slots обратно ОС одним батчем (MADV_DONTNEED
-// на каждый contiguous run free slots). Для long-running workloads без
-// natural idle — например server где постоянно есть N active fibers и
-// peak время от времени поднимается выше.
-//
-// Auto-decay: реализация делает то же самое самостоятельно когда
-// `slots_active == 0` (idle threshold). Manual `fibers.compact()` нужен
-// если такого idle window нет.
-//
-// Под Windows: no-op (arena off).
+/// Принудительно вернуть physical pages всех свободных slot'ов ОС.
+///
+/// Выполняет `MADV_DONTNEED` на каждый contiguous run свободных slot'ов.
+/// Полезно для long-running workloads без natural idle window, где
+/// arena не достигает автоматического decay threshold.
+///
+/// Auto-decay: рантайм делает это автоматически при `slots_active == 0`.
+/// Вызывать вручную только если такого idle window нет.
+///
+/// Под Windows: no-op (arena отсутствует).
+///
+/// # Effects
+///
+/// Системный вызов `madvise`/`MADV_DONTNEED` на Linux/macOS.
+#stable(since = "0.1")
 export external fn fibers.compact() -> ()

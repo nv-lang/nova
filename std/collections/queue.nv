@@ -19,9 +19,26 @@ module collections.queue
 // Тип
 // ──────────────────────────────────────────────────────────────────────────
 
-// Два массива — один для входа, один для выхода. push кладёт в `in`,
-// pop забирает с конца `out`. Когда `out` пуст, переливаем `in` в
-// `out` в обратном порядке.
+/// FIFO-очередь через два массива с O(1) amortized push/pop.
+///
+/// Алгоритм: `push` кладёт в inbox, `pop` берёт из outbox.
+/// Когда outbox пуст — inbox переливается в outbox в обратном порядке (O(n), но O(1) amortized).
+///
+/// # Examples
+///
+/// ```nova
+/// let mut q = Queue[int].new()
+/// q.push(1)
+/// q.push(2)
+/// q.push(3)
+/// assert(q.pop() == Some(1))
+/// assert(q.pop() == Some(2))
+/// ```
+///
+/// # See Also
+///
+/// - `[Deque]` — двусторонняя очередь
+#stable(since = "0.1")
 export type Queue[T] {
     mut _inbox  []T   // internal: входная сторона FIFO
     mut _outbox []T   // internal: выходная сторона FIFO (reversed in)
@@ -32,9 +49,13 @@ export type Queue[T] {
 // Конструкторы
 // ──────────────────────────────────────────────────────────────────────────
 
+/// Создать пустую очередь.
+#stable(since = "0.1")
 export fn Queue[T].new() -> Self =>
     { _inbox: [], _outbox: [] }
 
+/// Создать пустую очередь с pre-allocated ёмкостью `cap`.
+#stable(since = "0.1")
 export fn Queue[T].with_capacity(cap int) -> Self =>
     { _inbox: []T.with_capacity(cap), _outbox: []T.with_capacity(cap) }
 
@@ -43,9 +64,13 @@ export fn Queue[T].with_capacity(cap int) -> Self =>
 // Базовые операции
 // ──────────────────────────────────────────────────────────────────────────
 
+/// Число элементов в очереди.
+#stable(since = "0.1")
 export fn Queue[T] @len() -> int =>
     @_inbox.len() + @_outbox.len()
 
+/// Возвращает `true` если очередь пуста.
+#stable(since = "0.1")
 export fn Queue[T] @is_empty() -> bool =>
     @_inbox.is_empty() && @_outbox.is_empty()
 
@@ -54,15 +79,22 @@ export fn Queue[T] @is_empty() -> bool =>
 // FIFO-операции
 // ──────────────────────────────────────────────────────────────────────────
 
-// Положить в очередь — всегда в `in`. O(1) амортизированно.
+/// Добавить элемент в конец очереди. O(1).
+#stable(since = "0.1")
 export fn Queue[T] mut @push(item T) -> () =>
     @_inbox.push(item)
 
-// Забрать из очереди (FIFO). Если `out` пуст — перелить `in` в
-// обратном порядке. O(1) амортизированно.
-//
-// D55: Some/None в return-position сохранены явно — match-arms с
-// unit-альтернативой, [Q-style-coercion](../spec/open-questions.md).
+/// Извлечь элемент из начала очереди (FIFO). O(1) amortized.
+///
+/// # Examples
+///
+/// ```nova
+/// let mut q = Queue[str].new()
+/// q.push("first")
+/// q.push("second")
+/// assert(q.pop() == Some("first"))
+/// ```
+#stable(since = "0.1")
 export fn Queue[T] mut @pop() -> Option[T] {
     if @_outbox.is_empty() {
         // Перелить `in` в `out` в обратном порядке.
@@ -76,7 +108,8 @@ export fn Queue[T] mut @pop() -> Option[T] {
     @_outbox.pop()
 }
 
-// Просмотреть голову без удаления.
+/// Посмотреть первый элемент без удаления. `None` если пусто.
+#stable(since = "0.1")
 export fn Queue[T] @peek() -> Option[T] {
     if !@_outbox.is_empty() {
         // Голова outbox — последний элемент (pop забирает с конца).
@@ -90,6 +123,8 @@ export fn Queue[T] @peek() -> Option[T] {
     }
 }
 
+/// Очистить очередь.
+#stable(since = "0.1")
 export fn Queue[T] mut @clear() -> () {
     @_inbox.clear()
     @_outbox.clear()

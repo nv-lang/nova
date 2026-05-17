@@ -11,9 +11,25 @@ module collections.lru
 
 import std.collections.hashmap.{HashMap}
 
-// Используем массив для упорядочивания (head = most recent, tail = LRU)
-// и HashMap для O(1) lookup. Простая реализация для bootstrap; production
-// использует doubly-linked list для O(1) move-to-front.
+/// LRU (Least Recently Used) кэш с фиксированной ёмкостью.
+///
+/// При достижении `capacity` автоматически вытесняет наименее
+/// недавно использованный элемент. `get` обновляет recency.
+///
+/// Bootstrap-реализация: O(n) на `get`/`put` из-за array-based ordering.
+/// Production-stdlib использует doubly-linked list для O(1).
+///
+/// # Examples
+///
+/// ```nova
+/// let mut cache = Lru[str, int].new(2)
+/// cache.put("a", 1)
+/// cache.put("b", 2)
+/// cache.put("c", 3)   // вытесняет "a" (LRU)
+/// assert(cache.get("a") == None)
+/// assert(cache.get("b") == Some(2))
+/// ```
+#stable(since = "0.1")
 export type Lru[K Hashable, V] {
     readonly capacity int        // public config
     mut _order []K               // internal: index 0 = most recent
@@ -21,6 +37,8 @@ export type Lru[K Hashable, V] {
 }
 
 
+/// Создать пустой LRU кэш с заданной ёмкостью.
+#stable(since = "0.1")
 export fn Lru[K, V].new(capacity int) -> Self =>
     {
         capacity,
@@ -29,12 +47,21 @@ export fn Lru[K, V].new(capacity int) -> Self =>
     }
 
 
+/// Число элементов в кэше.
+#stable(since = "0.1")
 export fn Lru[K, V] @len() -> int => @_store.len()
+
+/// Возвращает `true` если кэш пуст.
+#stable(since = "0.1")
 export fn Lru[K, V] @is_empty() -> bool => @_store.len() == 0
+
+/// Проверить наличие ключа без обновления recency.
+#stable(since = "0.1")
 export fn Lru[K, V] @contains(k K) -> bool => @_store.contains(k)
 
 
-// O(n) в простой реализации из-за поиска в order.
+/// Получить значение по ключу и обновить recency (move-to-front).
+#stable(since = "0.1")
 export fn Lru[K, V] mut @get(k K) -> Option[V] {
     match @_store.get(k) {
         None => None
@@ -47,6 +74,8 @@ export fn Lru[K, V] mut @get(k K) -> Option[V] {
 }
 
 
+/// Вставить или обновить пару. Если кэш полон — вытесняет LRU элемент.
+#stable(since = "0.1")
 export fn Lru[K, V] mut @put(k K, v V) -> () {
     if @_store.contains(k) {
         @_store.insert(k, v)
