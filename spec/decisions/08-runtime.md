@@ -434,6 +434,21 @@ type ReadBufferError
 `f32`, `f64`, `str`, `bool`, `char`, `()`, `byte`) — встроены в язык,
 не stdlib, но упомянуты для полноты.
 
+**Size-accessor методы для built-in `[]T` и `str`** (Plan 60 / [D117](03-syntax.md#d117-size-like-accessors-require-call-syntax)):
+
+```nova
+fn []T @len() -> int                // O(1), zero-cost lowering arr->len
+fn []T @capacity() -> int           // O(1), zero-cost lowering arr->cap
+fn []T @is_empty() -> bool          // O(1), len() == 0
+fn str @len() -> int                // O(n) — codepoint count (UTF-8 walk)
+fn str @byte_len() -> int           // O(1) — байтов
+fn str @is_empty() -> bool          // O(1) — byte_len() == 0
+```
+
+Field-access form (`arr.len`, `s.byte_len`, etc.) запрещён в
+user-language — D117 enforce'ит method-only. Internal C-поля
+`arr->len` / `arr->cap` сохраняются как implementation detail.
+
 **Built-in opaque-типы для аккумуляции** (`StringBuilder`,
 `WriteBuffer`, `ReadBuffer`) — расширяют примитивы D26. Полный API
 описан в `std/runtime/string_builder.nv`, `std/runtime/write_buffer.nv`,
