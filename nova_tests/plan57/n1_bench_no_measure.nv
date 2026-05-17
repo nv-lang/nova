@@ -1,0 +1,10 @@
+// Plan 57 MVP: bench без `measure { ... }` блока → compile error.
+// EXPECT_COMPILE_ERROR measure
+module plan57.n1_bench_no_measure
+
+bench "no-measure-block" {
+    let x = 1
+    bench.opaque(x)
+}
+
+test "stub" { assert(true) }

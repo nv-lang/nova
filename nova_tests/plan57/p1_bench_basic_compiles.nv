@@ -1,0 +1,19 @@
+// Plan 57 MVP: bench "name" { measure { ... } } compiles cleanly.
+module plan57.p1_bench_basic_compiles
+
+bench "smoke-noop" {
+    measure {
+        bench.opaque(42)
+    }
+}
+
+bench "smoke-with-setup" {
+    let x = 10
+    measure {
+        bench.opaque(x + 1)
+    }
+}
+
+test "bench items co-exist с test items в одном файле" {
+    assert(1 + 1 == 2)
+}

@@ -1,0 +1,11 @@
+// Plan 57.B.3: bench-sweep с пустым values list → compile error.
+// EXPECT_COMPILE_ERROR empty
+module plan57.n3_sweep_empty_values
+
+bench "empty-sweep" (n in []) {
+    measure {
+        bench.opaque(n)
+    }
+}
+
+test "stub" { assert(true) }
