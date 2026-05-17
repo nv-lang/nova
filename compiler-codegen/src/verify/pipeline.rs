@@ -2615,6 +2615,15 @@ let t0 = std::time::Instant::now();
                         ld.name, ld.name),
                     ld.span));
             }
+            // Ф.24.2 (Plan 33.6): lemma без params — suspicious.
+            if ld.params.is_empty() {
+                report.warnings.push(Diagnostic::new(
+                    format!("lemma `{}` без параметров [W2402]:\n  \
+                             lemma без params обычно бесполезна — она доказывает constant\n  \
+                             statement который Z3 derive'ит сам. Возможно, забыли add params.",
+                        ld.name),
+                    ld.span));
+            }
         }
     }
     // Ф.19.2 + Ф.19.3 (Plan 33.6): detection trivial/redundant contracts.
@@ -2770,9 +2779,75 @@ let t0 = std::time::Instant::now();
                         fd.span));
                 }
             }
+            // Ф.24.1 (Plan 33.6): loop без invariant в fn с ensures — W2402 hint.
+            // Включаем для всех fn с contracts (не только #verify), потому что ensures
+            // часто требует loop preservation reasoning.
+            if !fd.contracts.is_empty() {
+                let mut loops_no_inv: Vec<Span> = Vec::new();
+                collect_loops_no_invariant(&fd.body, &mut loops_no_inv);
+                for sp in loops_no_inv {
+                    report.warnings.push(Diagnostic::new(
+                        format!("fn `{}`: loop без `invariant` clause [W2402]:\n  \
+                                 verify ограничен — добавьте `invariant <cond>` для proper\n  \
+                                 preservation reasoning. (loop с contracts без invariant\n  \
+                                 проходит проверку только через runtime fallback)",
+                            fd.name),
+                        sp));
+                }
+            }
         }
     }
     report
+}
+
+/// Ф.24.1: walker для сбора spans loops без invariants в body.
+fn collect_loops_no_invariant(body: &FnBody, out: &mut Vec<Span>) {
+    match body {
+        FnBody::Expr(e) => collect_loops_in_expr(e, out),
+        FnBody::Block(b) => {
+            for s in &b.stmts { collect_loops_in_stmt(s, out); }
+            if let Some(e) = &b.trailing { collect_loops_in_expr(e, out); }
+        }
+        FnBody::External => {}
+    }
+}
+
+fn collect_loops_in_stmt(s: &Stmt, out: &mut Vec<Span>) {
+    match s {
+        Stmt::Let(l) => collect_loops_in_expr(&l.value, out),
+        Stmt::Expr(e) => collect_loops_in_expr(e, out),
+        Stmt::Assign { value, .. } => collect_loops_in_expr(value, out),
+        _ => {}
+    }
+}
+
+fn collect_loops_in_expr(e: &Expr, out: &mut Vec<Span>) {
+    match &e.kind {
+        ExprKind::While { body, invariants, .. } => {
+            if invariants.is_empty() { out.push(e.span); }
+            for s in &body.stmts { collect_loops_in_stmt(s, out); }
+            if let Some(t) = &body.trailing { collect_loops_in_expr(t, out); }
+        }
+        ExprKind::For { body, invariants, .. } => {
+            if invariants.is_empty() { out.push(e.span); }
+            for s in &body.stmts { collect_loops_in_stmt(s, out); }
+            if let Some(t) = &body.trailing { collect_loops_in_expr(t, out); }
+        }
+        ExprKind::If { then, else_, .. } => {
+            for s in &then.stmts { collect_loops_in_stmt(s, out); }
+            if let Some(t) = &then.trailing { collect_loops_in_expr(t, out); }
+            if let Some(eb) = else_ {
+                match eb {
+                    ElseBranch::Block(b) => {
+                        for s in &b.stmts { collect_loops_in_stmt(s, out); }
+                        if let Some(t) = &b.trailing { collect_loops_in_expr(t, out); }
+                    }
+                    ElseBranch::If(e2) => collect_loops_in_expr(e2, out),
+                }
+            }
+        }
+        _ => {}
+    }
 }
 
 /// Ф.23.3: walker для сбора всех используемых Ident в body.
