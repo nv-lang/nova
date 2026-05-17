@@ -1,0 +1,73 @@
+module nova_tests.plan63.f1_anonymous_record_factory
+
+// Plan 63 Fix C: regression guard для anonymous record literal в generic
+// fn return position. Coverage:
+//   - single-field Box[T].of
+//   - multi-field Pair[A, B].make
+//   - heterogeneous Holder[T] с T-field + concrete-type field
+//   - nested generic Box[Box[T]]
+//   - computed-field record literal
+//   - intermediate-helper pattern (factory вызывает factory)
+//
+// До Plan 63 (proposed) предполагалось что Box[T].of emit'тся как
+// `Nova_Box____Nova_T_p* m = ...` (placeholder leak). После Plan 59 +
+// existing mono pipeline всё работает корректно. Tests служат
+// permanent regression guards.
+
+export type Box[T] { v T }
+
+export fn Box[T].of(value T) -> Box[T] => { v: value }
+
+// Intermediate helper: factory calls factory.
+export fn Box[T].twin(v1 T, v2 T) -> Box[T] {
+    if v1 == v2 { Box[T].of(v1) } else { Box[T].of(v2) }
+}
+
+export type Pair[A, B] { first A; second B }
+
+export fn Pair[A, B].make(a A, b B) -> Pair[A, B] => { first: a, second: b }
+
+export type Holder[T] { value T; count int }
+
+export fn Holder[T].new_with(v T, n int) -> Holder[T] => { value: v, count: n }
+
+test "Box[int].of — simplest case" {
+    let m = Box[int].of(42)
+    assert(m.v == 42, "single-field int")
+}
+
+test "Box[str].of — str type-arg" {
+    let s = Box[str].of("hi")
+    assert(s.v == "hi", "single-field str")
+}
+
+test "Pair[int, str].make — multi-field, heterogeneous" {
+    let p = Pair[int, str].make(7, "seven")
+    assert(p.first == 7, "first field")
+    assert(p.second == "seven", "second field")
+}
+
+test "Holder[str].new_with — T-field + concrete-type field" {
+    let h = Holder[str].new_with("name", 99)
+    assert(h.value == "name", "T-typed value")
+    assert(h.count == 99, "concrete int count")
+}
+
+test "Box[Box[int]].of — nested generic" {
+    let inner = Box[int].of(42)
+    let outer = Box[Box[int]].of(inner)
+    assert(outer.v.v == 42, "nested unwrap")
+}
+
+test "Box.twin — factory-calls-factory" {
+    let a = Box[int].twin(5, 5)
+    assert(a.v == 5, "same args")
+    let b = Box[int].twin(1, 2)
+    assert(b.v == 2, "different args")
+}
+
+test "computed field в record literal" {
+    let h = Holder[int].new_with(10 + 5, 100 / 4)
+    assert(h.value == 15, "computed value")
+    assert(h.count == 25, "computed count")
+}
