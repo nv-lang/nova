@@ -3229,38 +3229,68 @@ Codegen (Plan 56 Ф.1 + Ф.2):
 
 ## D111. Tuple monomorphization
 
-> **Status:** active (spec). Реализация — [Plan 59](../../docs/plans/59-tuple-monomorphization.md).
+> **Status:** active (spec, 2026-05-17 EOD+2 — Phase 7 production polish
+> applied). Реализация — [Plan 59](../../docs/plans/59-tuple-monomorphization.md)
+> (6 phases + Phase 7).
 
 ### Что
 
 Tuple типы `(T1, T2, ..., TN)` monomorphized — для каждой concrete
 комбинации element types compiler generate'ит отдельную struct
-`_NovaTuple____<T1>__<T2>__...` с **real** field types (не nova_int
-slot erasure).
+с **real** field types (не nova_int slot erasure).
+
+### Mangle scheme (Plan 59 Phase 5, length-prefixed)
+
+**Itanium ABI / Rust v0 mangle analog** — unambiguous для любой
+глубины nesting:
+
+```
+_NovaTuple_<arity>_<L1>_<T1>_<L2>_<T2>_..._<LN>_<TN>
+```
+
+где `<Ln>` — десятичная byte length sanitized name `<Tn>`. Parser
+читает length, берёт точно столько chars, переходит к следующему.
+Самоописательный, никаких ambiguity даже для tuple-of-tuples.
+
+**Примеры:**
+- `(int, int)` → `_NovaTuple_2_8_nova_int_8_nova_int`
+- `(str, int)` → `_NovaTuple_2_8_nova_str_8_nova_int`
+- `((int, int), int)` outer →
+  `_NovaTuple_2_34__NovaTuple_2_8_nova_int_8_nova_int_8_nova_int`
+  (L1=34 — точно столько chars как T1)
+
+Distinguishable от legacy `_NovaTupleN` (e.g. `_NovaTuple2`) по `_`
+после `NovaTuple`.
 
 ### Правило
 
 ```nova
 let p (str, int) = ("a", 1)
-//                   ^^^^^^^ generates _NovaTuple____nova_str__nova_int
+//                   ^^^^^^^ generates _NovaTuple_2_8_nova_str_8_nova_int
 //                   { nova_str f0; nova_int f1; }
 
 for (k, v) in hashmap {
 //   ^^^^^^^^^^^^^^^^ implicit Iter (D58) + tuple destructure через
-//                    mono'd struct (k: nova_str, v: nova_int direct field access)
+//                    mono'd struct (k: nova_str, v: nova_int direct
+//                    field access)
+}
+
+match some_kv {
+    Some((k, v)) => ...
+//       ^^^^^^^ Plan 59 Phase 6 — variant payload mono'd tuple,
+//               heterogeneous types работают (str + int)
 }
 ```
 
 **Параллель:** Rust `(T1, T2)` mono'd per concrete instantiation,
 zero-cost. C++ `std::tuple<T1, T2>` template — то же. Nova bootstrap
-теперь паритет (vs предыдущий int-slot erasure breaking struct
-elements).
+паритет (vs предыдущий int-slot erasure breaking struct elements).
 
 ### Decision tree
 
 При codegen tuple type:
 1. **All elements concrete** (resolved via current_type_subst,
-   no type-param placeholders) → use mono'd `_NovaTuple____<...>`
+   no type-param placeholders) → use mono'd `_NovaTuple_<arity>_<L1>_<T1>...`
    struct. Zero erasure cost.
 2. **Erased context** (one or more element types unresolved) →
    fallback legacy `_NovaTupleN` (nova_int slot) с runtime cast.
@@ -3272,9 +3302,44 @@ elements).
   (`.f0`, `.f1`) на mono'd struct.
 - **Tuple destructure** (`let (a, b) = ...`) — direct binding, no cast.
 - **Nested tuples** (`((int, str), bool)`) — recursive mono'd (inner
-  tuple registered first).
+  tuple registered first; length-prefix encoding handles нестинг
+  любой глубины — validated 5-level tests).
+- **Tuple в variant payload** (`Option[(K, V)]`, `Result[(K, V), E]`) —
+  match destructure `Some((k, v))` / `Ok((k, v))` propagate mono'd
+  element types через registry (Phase 6 + Plan 63 Fix F+).
 - **Tuple in collections** (`HashMap[K, V]` returns `Option[(K, V)]` from
   `iter().next()`) — mono'd через template + subst at iter mono pass.
+
+### Diagnostics (Plan 59 Phase 7.1)
+
+- **Arity mismatch** — destructure pattern имеющий разное число
+  элементов чем actual tuple, reject'ится **Nova-level** clear
+  error (file:line + hint) до C-emit'а. Покрывает 3 sites:
+  let-destructure, for-pattern, match-variant inner Tuple.
+  Раньше упирался в нечитаемый "no member named 'fN'" C error.
+
+### Lint warnings (Plan 59 Phase 7.3)
+
+- **Large tuple warning** — mono'd tuple с >5 элементов **OR** >128
+  bytes estimated size emit'ит W-warning suggesting record type
+  (clarity + stable ABI). Estimate sums known element sizes:
+  pointers=8, nova_str=16, scalars per type. Threshold выбран
+  эмпирически — typical cache line 64 bytes, 2× giving safe margin.
+
+### Stdlib idiom (Plan 59 Phase 7.2)
+
+После Plan 63 Fix E (mono'd tuple iter в generic method body
+работает) — stdlib коллекции используют **идиоматичный**
+`for (k, v) in self` / `for (k, v) in @iter()` вместо
+direct-field workaround'ов. HashMap.@clone/@merge_from/@filter все
+idiomatic.
+
+### Field literal style (related, D52 §2)
+
+Record literal для tuple struct полей (`{ end, idx: 0 }` для
+`{end int, idx int}` где `end` — variable в scope) — **shorthand
+обязателен** при совпадении имени поля с источником (`{ end: end }`
+запрещено, см. [D52 §2](#d52-объявление-типов-revised-newtype-alias-sum-через-leading-)).
 
 ### Почему
 
@@ -3283,22 +3348,37 @@ elements).
 2. **Zero-cost** — direct field access, no intptr_t cast, no heap
    alloc для tuple value.
 3. **Параллель Rust/C++** — индустриальный standard для tuples.
+4. **Diagnostics quality** — Plan 36 R7 bar (file:line + hint).
+5. **Self-describing mangle** — length-prefix encoding debug'абельно,
+   ABI-tools (debuggers) могут decode.
 
-### Что отвергнуто
+### Что отвергнуто (deferred с rationale)
 
 - **Universal tuple type** (all elements `any`) — type-erased, runtime
   type-tag overhead, breaks AOT zero-cost goal.
-- **Tuple subtyping** (`(int, str) <: (any, any)`) — overkill для
-  bootstrap; не нужен в practice.
+- **Named tuple fields** (`(x: T1, y: T2)`) — collision с record
+  literal `{x:1, y:2}` syntax; mixed named+positional behaviour
+  открытый вопрос; type-equivalence `(x:int, y:int) ≡ (int, int)`?
+  Defer до dedicated plan с design pre-discussion (Plan 64).
+- **Tuple subtyping** (`(int, str) <: (any, any)`) — требует variance
+  system в type-checker; нет immediate use case в bootstrap.
+- **Full mono'd Result** (`NovaRes_<T>_<E>` typedefs analogous Option)
+  — Plan 63 Fix F+ targeted boxed-pointer tracking покрывает все
+  observable cases без full sum-type mono refactor. Defer до Plan 65.
 
 ### Связь
 
 - [D27](03-syntax.md#d27-синтаксис-массивов-t-префикс-nt-фиксированные)
   — tuple литерал синтаксис.
+- [D52 §2](#d52-объявление-типов-revised-newtype-alias-sum-через-leading-)
+  — field shorthand mandatory.
 - [D58 Iter protocol] — `for (k, v) in coll` использует mono'd tuple
   через implicit `.iter()`.
 - [Plan 48](../../docs/plans/48-closures-in-generics.md) —
   monomorphization infrastructure (mono pass).
+- [Plan 63](../../docs/plans/63-cross-module-mono-dispatch-correctness.md)
+  — Fix E (mono'd iter в generic method body) + Fix F/F+ (Result
+  Ok payload tuple unboxing).
 
 ---
 
