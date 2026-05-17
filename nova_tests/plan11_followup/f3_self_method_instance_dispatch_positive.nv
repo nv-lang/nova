@@ -1,0 +1,20 @@
+module plan11_followup.f3_self_method_instance_dispatch_positive
+
+// Plan 11 Follow-up: Self.method() внутри instance method (с @self)
+// должен резолвиться к статическому method того же type'а.
+
+export type Wrapper[T] {
+    v T
+}
+
+export fn Wrapper[T].new(v T) -> Self =>
+    { v }
+
+export fn Wrapper[T] @make_sibling(v T) -> Self =>
+    Self.new(v)
+
+test "Self.method() в instance method generic типа работает" {
+    let original = Wrapper[int].new(1)
+    let sibling = original.make_sibling(42)
+    assert(sibling.v == 42)
+}

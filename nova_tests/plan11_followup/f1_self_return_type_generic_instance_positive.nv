@@ -1,0 +1,20 @@
+module plan11_followup.f1_self_return_type_generic_instance_positive
+
+// Plan 11 Follow-up (commit 57b2cb1): `-> Self` в generic instance method
+// должно резолвиться в concrete mono'd type, не emit'ить Nova_Self.
+
+export type Box[T]
+    | Empty
+    | Full(T)
+
+export fn Box[T] @swap_empty() -> Self => Empty
+
+test "Self в return type generic instance method резолвится" {
+    let b Box[int] = Full(42)
+    let e = b.swap_empty()
+    let is_empty = match e {
+        Empty   => true
+        Full(_) => false
+    }
+    assert(is_empty)
+}

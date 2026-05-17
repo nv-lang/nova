@@ -1,0 +1,12 @@
+module plan11_followup.f6_self_outside_receiver_negative
+
+// EXPECT_COMPILE_ERROR Self
+//
+// Plan 11 Follow-up — negative: Self в return type free function (без receiver)
+// должен быть rejected на type-check. Free fn'ы не имеют enclosing recv → Self
+// нерезолвибельно.
+
+export fn standalone() -> Self {
+    let x = 42
+    x
+}
