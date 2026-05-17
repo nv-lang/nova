@@ -29,6 +29,49 @@ pub struct RawBenchResult {
     pub allocs_total: Option<i64>,
     /// Plan 57.C.4: per-sample CPU instructions / iter (Linux only).
     pub cpu_instructions: Vec<u64>,
+    /// Plan 57.G.5: per-bench custom metrics collected from
+    /// `__BENCH_METRIC__` markers between __BENCH_START__ and
+    /// __BENCH_RESULT__. Aggregated by (name, unit) tuple key.
+    pub custom_metrics: Vec<CustomMetric>,
+}
+
+/// Plan 57.G.5 — custom user-defined metric (closes gap vs Go
+/// `b.ReportMetric`). Each `bench.metric(name, value, unit)` call
+/// emits one sample value; CLI aggregates за весь bench-run.
+#[derive(Debug, Clone)]
+pub struct CustomMetric {
+    pub name: String,
+    pub unit: String,
+    pub samples: Vec<i64>,
+}
+
+impl CustomMetric {
+    pub fn count(&self) -> usize { self.samples.len() }
+    pub fn min(&self) -> Option<i64> { self.samples.iter().min().copied() }
+    pub fn max(&self) -> Option<i64> { self.samples.iter().max().copied() }
+    pub fn sum(&self) -> i64        { self.samples.iter().sum() }
+    pub fn median(&self) -> Option<f64> {
+        if self.samples.is_empty() { return None; }
+        let mut s = self.samples.clone();
+        s.sort();
+        let n = s.len();
+        Some(if n % 2 == 1 { s[n / 2] as f64 }
+             else { (s[n / 2 - 1] as f64 + s[n / 2] as f64) / 2.0 })
+    }
+}
+
+/// Plan 57.G.5: parse a `__BENCH_METRIC__\t<name>\t<value>\t<unit>` line.
+/// Returns Some((name, value, unit)) если distinct marker, иначе None.
+pub fn parse_metric_line(line: &str) -> Option<(String, i64, String)> {
+    let body = line.strip_prefix("__BENCH_METRIC__")?;
+    let parts: Vec<&str> = body.split('\t').collect();
+    // body starts с TAB, so parts[0] = "", parts[1] = name, [2] = value, [3] = unit.
+    if parts.len() < 4 { return None; }
+    let name = parts[1].to_string();
+    let value: i64 = parts[2].trim().parse().ok()?;
+    // Trailing unit may have newline; trim.
+    let unit = parts[3].trim_end_matches(['\r', '\n']).to_string();
+    Some((name, value, unit))
 }
 
 impl RawBenchResult {
@@ -55,6 +98,7 @@ impl RawBenchResult {
             name, iters_per_sample, samples_count, raw_ns,
             throughput_bytes, throughput_elements,
             allocs_per_iter, allocs_total, cpu_instructions,
+            custom_metrics: Vec::new(),
         })
     }
 }
@@ -145,6 +189,22 @@ pub fn analyzed_to_json(a: &AnalyzedBench) -> Value {
         let median_instr = sorted[sorted.len() / 2];
         m.insert("cpu_instructions_median".to_string(), json!(median_instr));
     }
+    // Plan 57.G.5 — custom metrics aggregate per (name, unit).
+    if !a.raw.custom_metrics.is_empty() {
+        let arr: Vec<Value> = a.raw.custom_metrics.iter().map(|cm| {
+            json!({
+                "name": cm.name,
+                "unit": cm.unit,
+                "count": cm.count(),
+                "min": cm.min(),
+                "max": cm.max(),
+                "sum": cm.sum(),
+                "median": cm.median(),
+                "samples": cm.samples,
+            })
+        }).collect();
+        m.insert("custom_metrics".to_string(), json!(arr));
+    }
     obj
 }
 
@@ -203,10 +263,22 @@ impl RunResultParsed {
                 .and_then(|x| x.as_array())
                 .map(|arr| arr.iter().filter_map(|y| y.as_u64()).collect())
                 .unwrap_or_default();
+            // Plan 57.G.5 — custom_metrics reconstruct (samples array stored).
+            let custom_metrics: Vec<CustomMetric> = b.get("custom_metrics")
+                .and_then(|x| x.as_array())
+                .map(|arr| arr.iter().filter_map(|m| {
+                    let name = m.get("name")?.as_str()?.to_string();
+                    let unit = m.get("unit")?.as_str().unwrap_or("").to_string();
+                    let samples = m.get("samples")?.as_array()?.iter()
+                        .filter_map(|v| v.as_i64()).collect();
+                    Some(CustomMetric { name, unit, samples })
+                }).collect())
+                .unwrap_or_default();
             let raw = RawBenchResult {
                 name, iters_per_sample, samples_count, raw_ns,
                 throughput_bytes, throughput_elements,
                 allocs_per_iter, allocs_total, cpu_instructions,
+                custom_metrics,
             };
             if let Some(a) = AnalyzedBench::from_raw(raw) {
                 benches.push(a);
@@ -244,5 +316,81 @@ mod tests {
     fn reject_non_bench_line() {
         assert!(RawBenchResult::parse_line("Hello world").is_none());
         assert!(RawBenchResult::parse_line("__BENCH_START__ \"foo\"").is_none());
+    }
+
+    // Plan 57.G.5 — custom metric parsing + aggregation tests.
+
+    #[test]
+    fn parse_metric_line_basic() {
+        let line = "__BENCH_METRIC__\tcache_hits\t42\tcount";
+        let (n, v, u) = parse_metric_line(line).unwrap();
+        assert_eq!(n, "cache_hits");
+        assert_eq!(v, 42);
+        assert_eq!(u, "count");
+    }
+
+    #[test]
+    fn parse_metric_line_empty_unit() {
+        let line = "__BENCH_METRIC__\tlock_wait\t100\t";
+        let (n, v, u) = parse_metric_line(line).unwrap();
+        assert_eq!(n, "lock_wait");
+        assert_eq!(v, 100);
+        assert_eq!(u, "");
+    }
+
+    #[test]
+    fn parse_metric_line_negative_value() {
+        let line = "__BENCH_METRIC__\tdelta\t-7\tunits";
+        let (n, v, _) = parse_metric_line(line).unwrap();
+        assert_eq!(n, "delta");
+        assert_eq!(v, -7);
+    }
+
+    #[test]
+    fn parse_metric_line_rejects_other_markers() {
+        assert!(parse_metric_line("__BENCH_RESULT__ {...}").is_none());
+        assert!(parse_metric_line("__BENCH_START__ foo").is_none());
+        assert!(parse_metric_line("plain text").is_none());
+    }
+
+    #[test]
+    fn parse_metric_line_rejects_non_int_value() {
+        let line = "__BENCH_METRIC__\tx\thello\tunit";
+        assert!(parse_metric_line(line).is_none());
+    }
+
+    #[test]
+    fn custom_metric_aggregates() {
+        let cm = CustomMetric {
+            name: "x".to_string(),
+            unit: "ms".to_string(),
+            samples: vec![10, 20, 30, 40, 50],
+        };
+        assert_eq!(cm.count(), 5);
+        assert_eq!(cm.min(), Some(10));
+        assert_eq!(cm.max(), Some(50));
+        assert_eq!(cm.sum(), 150);
+        assert_eq!(cm.median(), Some(30.0));
+    }
+
+    #[test]
+    fn custom_metric_median_even_count() {
+        let cm = CustomMetric {
+            name: "x".to_string(), unit: "".to_string(),
+            samples: vec![10, 20, 30, 40],
+        };
+        assert_eq!(cm.median(), Some(25.0));  // (20+30)/2
+    }
+
+    #[test]
+    fn custom_metric_empty_returns_none() {
+        let cm = CustomMetric {
+            name: "x".to_string(), unit: "".to_string(),
+            samples: vec![],
+        };
+        assert_eq!(cm.count(), 0);
+        assert_eq!(cm.min(), None);
+        assert_eq!(cm.max(), None);
+        assert_eq!(cm.median(), None);
     }
 }

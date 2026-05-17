@@ -615,6 +615,46 @@ case "$(uname -s)" in
         ;;
 esac
 
+# ── 22. Plan 57.G.5 — bench.metric custom metrics ──────────────────
+
+echo "=== 22. bench.metric custom metrics (Plan 57.G.5) ==="
+# 22.P.1 — custom metric emit + aggregate в JSON.
+# Helper для file-based grep (избегает MSYS issues с огромными
+# multi-line variables, см. предыдущие fails при $(cat huge.json)).
+assert_file_grep() {
+    local file="$1" pattern="$2" label="$3"
+    if grep -q "$pattern" "$file" 2>/dev/null; then
+        echo "  PASS: $label"
+        PASS=$((PASS+1))
+    else
+        echo "  FAIL: $label (pattern '$pattern' not found in $file)"
+        FAIL=$((FAIL+1))
+    fi
+}
+METRIC_JSON="$TMP_DIR/metric.json"
+"$NOVA_BIN" bench run bench/micro/custom_metric.nv \
+    --gc malloc --mode dev --samples 5 --warmup-ms 30 --time-budget 2 \
+    --out "$METRIC_JSON" >"$TMP_DIR/metric.log" 2>&1
+assert_file_exists "$METRIC_JSON" "G.5: bench run with custom metrics → JSON"
+assert_file_grep "$METRIC_JSON" 'custom_metrics' "G.5: JSON has custom_metrics field"
+assert_file_grep "$METRIC_JSON" 'cache_hits'     "G.5: cache_hits metric present"
+assert_file_grep "$METRIC_JSON" 'processed'      "G.5: processed metric present"
+assert_file_grep "$METRIC_JSON" '"unit": "count"' "G.5: unit=count tracked"
+assert_file_grep "$METRIC_JSON" '"unit": "items"' "G.5: unit=items tracked"
+
+# 22.P.2 — drift fields appear (G.1 verification).
+assert_file_grep "$METRIC_JSON" 'drift_slope_ns_per_sample' "G.1: drift_slope_ns_per_sample emitted"
+assert_file_grep "$METRIC_JSON" 'drift_r_squared'           "G.1: drift_r_squared emitted"
+
+# 22.P.3 — --histogram flag prints distribution. Reuse custom_metric.nv
+# (already compiled in section 22.P.1; avoid recompile lld-link conflict
+# на hello_bench.exe which other sections use).
+hist_out=$("$NOVA_BIN" bench run bench/micro/custom_metric.nv \
+    --gc malloc --mode dev --samples 5 --warmup-ms 30 --time-budget 2 \
+    --histogram 2>&1)
+assert_contains "$hist_out" "histogram" "G.4: --histogram prints distribution"
+assert_contains "$hist_out" "M=median"  "G.4: histogram has median marker"
+
 # ── Summary ──────────────────────────────────────────────────────────────
 
 echo ""

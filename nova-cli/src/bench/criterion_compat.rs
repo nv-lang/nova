@@ -151,6 +151,7 @@ mod tests {
             allocs_per_iter: None,
             allocs_total: None,
             cpu_instructions: Vec::new(),
+            custom_metrics: Vec::new(),
         };
         let bench = AnalyzedBench::from_raw(raw).unwrap();
         let tmp = std::env::temp_dir().join("nova-crit-test");
