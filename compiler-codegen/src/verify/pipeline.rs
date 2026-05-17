@@ -2860,6 +2860,36 @@ let t0 = std::time::Instant::now();
             }
         }
     }
+    // Ф.27.1 (Plan 33.6): `#verify` fn без contracts — noop.
+    for item in &module.items {
+        if let Item::Fn(fd) = item {
+            if matches!(fd.verify_mode, VerifyMode::MustVerify) && fd.contracts.is_empty() {
+                report.warnings.push(Diagnostic::new(
+                    format!("fn `{}` помечена `#verify` но не имеет contracts [W2402]:\n  \
+                             `#verify` без requires/ensures — noop. Удалите `#verify`\n  \
+                             или добавьте contracts.",
+                        fd.name),
+                    fd.span));
+            }
+        }
+    }
+    // Ф.27.3 (Plan 33.6): effect с #pure methods, но без axioms — suggest.
+    for item in &module.items {
+        if let Item::Type(td) = item {
+            if let TypeDeclKind::Effect(methods) = &td.kind {
+                let has_pure_view = methods.iter()
+                    .any(|m| matches!(m.kind, EffectOpKind::PureView));
+                if has_pure_view && td.axioms.is_empty() {
+                    report.warnings.push(Diagnostic::new(
+                        format!("effect `{}` имеет #pure methods но не имеет axioms [W2402]:\n  \
+                                 handler нельзя verify относительно behavior без axiom.\n  \
+                                 Добавьте `axiom <name>(...) => <pure-formula>`.",
+                            td.name),
+                        td.span));
+                }
+            }
+        }
+    }
     report
 }
 
