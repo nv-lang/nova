@@ -9062,3 +9062,59 @@ Approach:
 
 Result: per-E fast-path direct dispatch когда possible; correct
 fallback chain для catch-all и legacy string-based Fail.
+
+## [M-57.G+H-audit-driven-improvements] — Phase G+H closure (2026-05-17)
+
+**Не simplification.** Audit-driven Phase G (5 small) + Phase H (3
+larger) — все 8 production gaps closed как полноценный impl.
+
+Trade-offs не упрощённые но задокументированные:
+
+**G.1 drift slope semantic:** Изначально audit предложил Criterion-style
+slope (time vs iters across multiple batch sizes), но наша adaptive
+sampling использует fixed iters_per_sample. Adapted к sample-index
+drift detection (slope of raw_ns vs sample-index 0..n). Полезный signal
+для cache warmup leak и thermal drift, но не Criterion-equivalent.
+Зафиксировано в SampleStats как `drift_slope_ns_per_sample` (не
+`slope_ns_per_iter` — чтобы не путать с Criterion's slope).
+
+**G.3 errno decoder Linux-only by design.** errno mapping актуален
+только для perf_event_open paths (cpu_instr + membw). Module marked
+с `#[allow(dead_code)]` чтобы non-Linux build не warning'ит. Followup
+если будет нужен: подобный декодер для general POSIX errors.
+
+**G.5 per-call semantic bench.metric.** Каждый `bench.metric()` call
+emits ONE sample. С iters_per_sample=N и samples_count=S → N*S total
+metric calls. User-facing doc в std/bench.nv явно объясняет это и
+рекомендует pattern для per-sample-end metric (call после inner loop).
+
+**H.2 hyperfine spec parser heuristic.** "name=path" detection: name
+token не должен содержать ['/', '\\', ' ']. Тонкий edge case "/usr/bin/env
+VAR=1" — first `=` found, но `s[..eq]` contains '/' → не treated as
+name. Документировано unit test'ом `parse_path_with_equals_in_args_does_
+not_treat_as_name`.
+
+**H.3 valgrind subprocess только.** Не FFI к libvalgrind — добавляло
+бы 50MB+ deps + portability headache. Subprocess + parse callgrind.out
+text проще, deterministic, portable где valgrind есть (Linux + macOS).
+Cost: extra fork/exec — acceptable для single-shot deterministic
+measurement use case.
+
+**E2E flakiness mitigation:** Windows lld-link locking (.exe file
+mapped в page cache после crash/exit). Fixed sections 22 и 23 to
+reuse existing compiled .nv files where possible (custom_metric.nv
+для histogram test). Underlying race condition не fix'абельна на
+наш side — это Windows MSVC + AV behavior; tmp dirs unique via
+nova-bench-<hash> already.
+
+**Schema version stays v1** для всех новых JSON fields (drift, custom
+metrics, per-group geomeans). Backward-compatible additive — старые
+parsers просто игнорируют unknown fields. Никаких schema bumps.
+
+Verification (release nova binary, Windows):
+- 113 unit tests + 110 e2e asserts ALL PASS.
+- Все 8 audit gaps закрыты.
+- Zero new Rust crate deps добавлено.
+
+Plan 57 — **completely closed across all 8 phases** (MVP/A/B/C/D/E/F/
+G/H). ~3700 LOC implementation cumulative.
