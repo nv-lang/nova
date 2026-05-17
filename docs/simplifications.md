@@ -8652,3 +8652,30 @@ Plan 57.C closed все 8 sub-tasks. Closures:
   branches per machine (bench-history-{runner_id}). ~100 LOC.
 - **PerfTimer для test runner** — extend wraps к `nova test` pipeline.
   ~50 LOC.
+
+---
+
+## [M-57.D-backlog-closure] — Phase D closure (2026-05-17)
+
+Plan 57.D closed все 5 sub-tasks (5 commits):
+- 57.D.1 PerfTimer aggregation для nova test (NOVA_PERF_TIMER_AGGREGATE=1).
+- 57.D.2 sleep-lint Path-form detection (Time.sleep как Path не Member).
+- 57.D.3 aggregated JSON/CSV/MD/Criterion-compat для recursive bench.
+- 57.D.4 multi-runner baselines (NOVA_BENCH_RUNNER_ID → per-runner branch).
+- 57.D.5 HTML compiler-perf dashboard (echarts stacked bar).
+
+### Phase E backlog (открыто, не обязательно)
+
+Plan 57 закрыт целиком (MVP+A+B+C+D). Дальнейшие enhancements TBD:
+- **HTML dashboard interactivity** — drill-down per-bench detail view
+  from compiler-perf overview. ~200 LOC.
+- **Distributed bench coordination** — multi-machine bench orchestrator
+  с centralized aggregation. ~500 LOC.
+- **AI-driven regression interpretation** — LLM summarizes diff +
+  suggests likely cause. External integration.
+- **Memory bandwidth measurement** — Intel MBM / AMD QoS API. Linux-only,
+  perf_event extension. ~150 LOC.
+- **Statistical anomaly auto-detection** — changepoint analysis для
+  historical time-series (PELT / BCP algorithms). ~250 LOC.
+
+Это не obligatory — Plan 57 production-grade без них.
