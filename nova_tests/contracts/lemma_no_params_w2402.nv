@@ -1,0 +1,8 @@
+// Ф.24.2 (Plan 33.6): lemma без params — W2402 «suspicious».
+// EXPECT_COMPILE_WARNING W2402
+
+module contracts.lemma_no_params_w2402
+
+lemma trivial_truth()
+    ensures true
+=> 0

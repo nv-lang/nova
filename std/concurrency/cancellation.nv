@@ -53,6 +53,20 @@ module concurrency.cancellation
 //     Сейчас timeout=0 = no-op sleep, body все равно успеет.
 //   - В случае любой fail-throw из body — отмена scope'а через
 //     USER-precedence; ошибка пробрасывается caller'у.
+/// Run `body` с deadline'ом `timeout_ms` ms. `Some(result)` если успел, `None` если timeout.
+///
+/// Body отменяется через CancelToken (cooperative — ловит на ближайшем yield-point'е).
+/// При user-throw из body ошибка пробрасывается caller'у (USER-precedence).
+///
+/// # Examples
+/// ```nova
+/// let r = within(1000, || compute_heavy())
+/// match r {
+///     Some(v) => println("got: " + str.from(v))
+///     None    => println("timed out")
+/// }
+/// ```
+#stable(since = "0.1")
 export fn within[T](timeout_ms int, body fn() -> T) -> Option[T] {
     let tok = CancelToken.new()
     let mut result Option[T] = None
@@ -88,6 +102,14 @@ export fn within[T](timeout_ms int, body fn() -> T) -> Option[T] {
 //
 // V2: race[T](competitors []fn() -> T) — требует `[]fn() -> T` в
 // generic-context (Plan 48 Ф.4 + array-of-closures). Сейчас фиксированно 2.
+/// Race two competitors — return result от первого завершившегося. Loser отменяется.
+///
+/// Если оба user-throw'ят — first-USER пробрасывается (Plan 49 USER-precedence).
+/// Если оба завершились без result'а (rare) — throws "race2: both failed".
+///
+/// V2: `race[T](competitors []fn() -> T)` — отложено до array-of-closures
+/// support в generic context (Plan 48 Ф.4).
+#stable(since = "0.1")
 export fn race2[T](a fn() -> T, b fn() -> T) -> T {
     let tok = CancelToken.new()
     let mut winner Option[T] = None
@@ -128,6 +150,9 @@ export fn race2[T](a fn() -> T, b fn() -> T) -> T {
 // не возвращает Option. Удобно когда timeout = error condition.
 //
 // Аналог Go `context.WithTimeout` + Cause проверки; у нас явно throw.
+/// Same как [`within`] но throws `"with_timeout: deadline exceeded"` на timeout
+/// вместо `None`. Удобно когда timeout = error condition (как Go context.WithTimeout).
+#stable(since = "0.1")
 export fn with_timeout[T](timeout_ms int, body fn() -> T) -> T {
     match within(timeout_ms, body) {
         Some(v) => v

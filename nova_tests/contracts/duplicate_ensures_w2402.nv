@@ -1,0 +1,11 @@
+// Ф.25.1 (Plan 33.6): duplicate ensures detection → W2402.
+// EXPECT_COMPILE_WARNING W2402
+
+module contracts.duplicate_ensures_w2402
+
+fn identity(x int) -> int
+    ensures result == x
+    ensures result == x
+{
+    x
+}

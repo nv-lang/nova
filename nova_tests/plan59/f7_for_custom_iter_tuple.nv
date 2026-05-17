@@ -1,0 +1,52 @@
+// Positive: custom (non-generic) iterator с @next() -> Option[(K, V)].
+// Раньше emit_for на mono'd `_NovaTuple____...` elem-type выбрасывал
+// "for-in tuple-pattern: непонятный elem-type". Сейчас direct value-copy
+// + восстановление tuple_element_types из mangled name.
+
+module plan59.f7_for_custom_iter_tuple
+
+
+type Counter {
+    end       int
+    mut idx   int
+}
+
+
+export fn Counter mut @next() -> Option[(int, int)] {
+    if @idx >= @end {
+        None
+    } else {
+        let pair = (@idx, @idx * 100)
+        @idx = @idx + 1
+        Some(pair)
+    }
+}
+
+
+export fn Counter.new(end int) -> Counter {
+    Counter { end: end, idx: 0 }
+}
+
+
+test "for (i, v) in custom iter — tuple destructure works" {
+    let mut sum_i = 0
+    let mut sum_v = 0
+    for (i, v) in Counter.new(5) {
+        sum_i = sum_i + i
+        sum_v = sum_v + v
+    }
+    // i: 0+1+2+3+4 = 10
+    // v: 0+100+200+300+400 = 1000
+    assert(sum_i == 10)
+    assert(sum_v == 1000)
+}
+
+
+test "for (_, v) in custom iter — wildcard k" {
+    let mut total = 0
+    for (_, v) in Counter.new(3) {
+        total = total + v
+    }
+    // 0+100+200 = 300
+    assert(total == 300)
+}

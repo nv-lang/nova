@@ -1,0 +1,20 @@
+// EXPECT_CC_ERROR
+//
+// Negative: tuple-pattern arity не совпадает с RHS tuple arity.
+// Type-check сейчас пропускает, C reject'ит по struct field count —
+// guard что error НЕ silently absorbed (мог бы при legacy `_NovaTuple{N}`
+// fallback'е с erased int slots).
+
+module plan59.f8_tuple_destructure_wrong_arity_rejected
+
+
+fn make_triple() -> (int, int, int) {
+    (1, 2, 3)
+}
+
+
+test "destructure 3-tuple as 2-tuple — should reject" {
+    let (a, b) = make_triple()
+    assert(a == 1)
+    assert(b == 2)
+}

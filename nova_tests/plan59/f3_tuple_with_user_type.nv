@@ -1,0 +1,29 @@
+// Positive: tuple содержащий user record type как pointer элемент.
+// Требует preamble order: USER_TYPE_FWD_DECLS до MONO_TUPLE_TYPEDEFS,
+// чтобы `_NovaTuple____Nova_Point_p__nova_int` мог сослаться на Nova_Point*.
+
+module plan59.f3_tuple_with_user_type
+
+
+type Point {
+    x int
+    y int
+}
+
+
+test "tuple of (user_record, int) — typedef ordering" {
+    let p = Point { x: 10, y: 20 }
+    let pair = (p, 100)
+    assert(pair.0.x == 10)
+    assert(pair.0.y == 20)
+    assert(pair.1 == 100)
+}
+
+
+test "tuple of (str, user_record) — mixed" {
+    let p = Point { x: 1, y: 2 }
+    let pair = ("label", p)
+    assert(pair.0 == "label")
+    assert(pair.1.x == 1)
+    assert(pair.1.y == 2)
+}

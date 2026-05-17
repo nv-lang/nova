@@ -1,0 +1,19 @@
+// Ф.25.2 (Plan 33.6): string length non-negative — `s.len() >= 0` всегда true.
+
+module contracts.trivial_string_len_positive
+
+type Wrapper {
+    data str,
+}
+
+#verify
+fn data_len(w Wrapper) -> int
+    ensures result >= 0
+{
+    w.data.len()
+}
+
+test "string len non-negative" {
+    let w = Wrapper { data: "hello" }
+    assert(data_len(w) == 5)
+}
