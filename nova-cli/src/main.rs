@@ -474,6 +474,26 @@ enum BenchCmd {
         /// Output format (terminal|markdown|json).
         #[arg(long, default_value = "terminal")]
         format: String,
+        /// Plan 57.F.2: AI regression interpretation. Opt-in — sends
+        /// diff + git context к LLM (NOVA_AI_API_KEY required).
+        #[arg(long)]
+        explain: bool,
+        /// Override AI config path (default: ~/.nova-ai.toml).
+        #[arg(long = "ai-config")]
+        ai_config: Option<PathBuf>,
+        /// Override max tokens (default: 4000).
+        #[arg(long = "ai-max-tokens")]
+        ai_max_tokens: Option<u32>,
+        /// AI dry-run: print would-be request body без API call.
+        #[arg(long = "ai-dry-run")]
+        ai_dry_run: bool,
+        /// Baseline git SHA (для diff context). Auto-detected from
+        /// JSON metadata если возможно.
+        #[arg(long = "baseline-sha")]
+        baseline_sha: Option<String>,
+        /// New git SHA (для diff context). Auto-detected from JSON.
+        #[arg(long = "new-sha")]
+        new_sha: Option<String>,
     },
     /// CI gate — apply thresholds from bench.toml. Exit 0 = pass, 1 = regress.
     Gate {
@@ -2896,10 +2916,64 @@ fn cmd_bench(sub: BenchCmd) -> Result<()> {
             }
             Ok(())
         }
-        BenchCmd::Diff { baseline, new, format } => {
+        BenchCmd::Diff { baseline, new, format, explain, ai_config,
+                          ai_max_tokens, ai_dry_run, baseline_sha, new_sha } => {
             let fmt = bench::diff::DiffFormat::parse(&format)?;
-            let exit = bench::diff::compare(&baseline, &new, fmt)?;
-            if exit != 0 { std::process::exit(exit); }
+            if !explain && !ai_dry_run {
+                let exit = bench::diff::compare(&baseline, &new, fmt)?;
+                if exit != 0 { std::process::exit(exit); }
+                return Ok(());
+            }
+            // Plan 57.F.2: --explain branch — load pair, print regular
+            // diff, then AI section.
+            let loaded = bench::diff::load_pair(&baseline, &new)?;
+            // Print regular diff output (so --explain doesn't suppress).
+            let regular = match fmt {
+                bench::diff::DiffFormat::Terminal =>
+                    bench::diff::terminal_format(&loaded.rows, &loaded.compat_warnings),
+                bench::diff::DiffFormat::Markdown =>
+                    bench::diff::markdown_format(&loaded.rows, &loaded.compat_warnings),
+                bench::diff::DiffFormat::Json =>
+                    bench::diff::json_format(&loaded.rows, &loaded.compat_warnings)?,
+            };
+            print!("{}", regular);
+            // Privacy warning (first-use; ignore returned status).
+            eprintln!("\nai: --explain sends diff + git context к external LLM API. \
+                Set NOVA_AI_NO_WARN=1 to suppress.");
+            let cfg = bench::ai::AiConfig::load(ai_config.as_deref(), ai_max_tokens)?;
+            // Resolve SHAs: CLI flag → JSON meta.
+            let base_sha = baseline_sha.or_else(||
+                loaded.baseline.metadata.compiler.nova_sha.clone());
+            let new_sha_resolved = new_sha.or_else(||
+                loaded.new.metadata.compiler.nova_sha.clone());
+            let repo = find_repo_root().ok();
+            let (git_diff, git_commits) = if let Some(r) = repo.as_ref() {
+                if cfg.include_git_diff || cfg.include_commits {
+                    bench::ai::collect_git_context(r,
+                        base_sha.as_deref(), new_sha_resolved.as_deref(),
+                        cfg.max_commits)
+                } else { (None, None) }
+            } else { (None, None) };
+            let final_diff = if cfg.include_git_diff { git_diff } else { None };
+            let final_commits = if cfg.include_commits { git_commits } else { None };
+            let note = match (&base_sha, &new_sha_resolved) {
+                (Some(b), Some(n)) => Some(format!("baseline sha: {}; new sha: {}", b, n)),
+                _ => None,
+            };
+            let pb = bench::ai::PromptBuilder {
+                diff_rows: &loaded.rows,
+                git_diff: final_diff,
+                git_commits: final_commits,
+                note: note.as_deref(),
+            };
+            let prompt = pb.build();
+            let response = bench::ai::call_api(&cfg, &prompt, ai_dry_run)?;
+            let out = match fmt {
+                bench::diff::DiffFormat::Markdown =>
+                    bench::ai::render_markdown(&response),
+                _ => bench::ai::render_terminal(&response),
+            };
+            print!("{}", out);
             Ok(())
         }
         BenchCmd::Gate { baseline, new, config, noise } => {
