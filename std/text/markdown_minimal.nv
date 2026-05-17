@@ -24,6 +24,20 @@
 module text.markdown_minimal
 
 
+/// Convert minimal CommonMark subset → HTML.
+///
+/// Поддерживает: headings (`#`), paragraphs, `*italic*`, `**bold**`,
+/// `` `code` ``, `[text](url)`, ``` ``` ``` блоки, `-` bullet lists.
+///
+/// Не поддерживает: numbered lists, tables, reference links, HTML passthrough,
+/// images, footnotes, blockquotes. Достаточно для README/changelogs.
+///
+/// # Examples
+/// ```nova
+/// let html = Markdown.to_html("# Title\n\n**bold** text")
+/// assert(html.contains("<h1>Title</h1>"))
+/// ```
+#stable(since = "0.1")
 export fn Markdown.to_html(md str) -> str {
     let mut buf = StringBuilder.with_capacity(md.len * 2)
     let lines = md.split("\n")
