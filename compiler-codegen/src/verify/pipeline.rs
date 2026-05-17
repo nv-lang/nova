@@ -2779,6 +2779,53 @@ let t0 = std::time::Instant::now();
                         fd.span));
                 }
             }
+            // Ф.25.1 (Plan 33.6): duplicate ensures/requires detection.
+            // Canonical form через простой кастомный walker (без spans).
+            fn canon_expr(e: &Expr) -> String {
+                match &e.kind {
+                    ExprKind::Ident(n) => format!("Ident({})", n),
+                    ExprKind::IntLit(n) => format!("Int({})", n),
+                    ExprKind::BoolLit(b) => format!("Bool({})", b),
+                    ExprKind::StrLit(s) => format!("Str({:?})", s),
+                    ExprKind::Binary { op, left, right } => {
+                        format!("Bin({:?},{},{})", op, canon_expr(left), canon_expr(right))
+                    }
+                    ExprKind::Unary { op, operand } => {
+                        format!("Un({:?},{})", op, canon_expr(operand))
+                    }
+                    ExprKind::Member { obj, name } => {
+                        format!("Mem({},{})", canon_expr(obj), name)
+                    }
+                    ExprKind::Call { func, args, .. } => {
+                        let a: Vec<String> = args.iter().map(|x| canon_expr(x.expr())).collect();
+                        format!("Call({},[{}])", canon_expr(func), a.join(","))
+                    }
+                    _ => format!("{:?}", e.kind),
+                }
+            }
+            let mut seen_keys: std::collections::HashMap<String, Vec<Span>> =
+                std::collections::HashMap::new();
+            for c in &fd.contracts {
+                let kind_str = match c.kind {
+                    ContractKind::Requires => "requires",
+                    ContractKind::Ensures => "ensures",
+                    ContractKind::EnsuresFail => "ensures_fail",
+                };
+                let key = format!("{}|{}", kind_str, canon_expr(&c.expr));
+                seen_keys.entry(key).or_default().push(c.span);
+            }
+            for (key, spans) in &seen_keys {
+                if spans.len() >= 2 {
+                    let kind_label = key.split('|').next().unwrap_or("contract");
+                    for sp in spans.iter().skip(1) {
+                        report.warnings.push(Diagnostic::new(
+                            format!("fn `{}`: duplicate `{}` clause [W2402]:\n  \
+                                     2+ idential `{}` — удалите дубликат.",
+                                fd.name, kind_label, kind_label),
+                            *sp));
+                    }
+                }
+            }
             // Ф.24.1 (Plan 33.6): loop без invariant в fn с ensures — W2402 hint.
             // Включаем для всех fn с contracts (не только #verify), потому что ensures
             // часто требует loop preservation reasoning.
