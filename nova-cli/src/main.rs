@@ -2605,8 +2605,23 @@ fn cmd_test(
         mono_depth,
     };
 
+    // Plan 57.D.1: optionally aggregate PerfTimer markers across all
+    // tests. Activated по NOVA_PERF_TIMER_AGGREGATE=1 — suppress
+    // per-test __PERF__ markers и emit aggregated table в конце.
+    let aggregate = std::env::var("NOVA_PERF_TIMER_AGGREGATE")
+        .map(|v| v == "1" || v == "true" || v == "yes")
+        .unwrap_or(false);
+    if aggregate {
+        nova_codegen::perf_timer::enable_aggregation();
+    }
+
     let summary = test_runner::run_all(opts)?;
     test_runner::print_summary(&summary, format);
+
+    if aggregate {
+        let table = nova_codegen::perf_timer::dump_aggregated();
+        if !table.is_empty() { eprintln!("{}", table); }
+    }
 
     if summary.fail > 0 {
         Err(anyhow!("{} test(s) failed", summary.fail))

@@ -2029,7 +2029,12 @@ fn is_folder_module_peer(path: &Path) -> bool {
 /// Plan 48 Ф.7.6: `mono_depth` — optional CLI override для
 /// CEmitter.mono_depth_limit (None = default из env var или 500).
 fn codegen_to_c(path: &Path, src: &str, mono_depth: Option<usize>) -> Result<(Vec<String>, Vec<String>), String> {
-    let mut module = parser::parse(src).map_err(|d| d.render(src, &path.to_string_lossy()))?;
+    // Plan 57.D.1: PerfTimer wraps вокруг каждого pass. Markers эмитятся
+    // если NOVA_PERF_TIMER=1, accumulated если NOVA_PERF_TIMER_AGGREGATE=1.
+    let mut module = {
+        let _t = crate::perf_timer::PerfTimer::new("parse");
+        parser::parse(src).map_err(|d| d.render(src, &path.to_string_lossy()))?
+    };
     // Plan 42 D29 rev-3: detect — is this file a peer of folder-module?
     // Folder-module = parent dir содержит >1 .nv files, и все они
     // объявляют тот же `module X`. Если да — manifest check использует
@@ -2047,50 +2052,66 @@ fn codegen_to_c(path: &Path, src: &str, mono_depth: Option<usize>) -> Result<(Ve
     // безусловно (resolver сам auto-добавит prelude если файл существует).
     if let Some(repo) = find_repo_root_from(path) {
         let stdlib_dir = repo.join("std");
+        let _t = crate::perf_timer::PerfTimer::new("imports-resolve");
         // Plan 42 правило F: test mode = include `*_test.nv` peers.
         crate::imports::resolve_imports_inline_ex(path, &mut module, &repo, &stdlib_dir, true)
             .map_err(|e| format!("import resolution: {}", e))?;
     }
 
-    types::check_module(&module).map_err(|errs| {
-        errs.iter()
-            .map(|d| d.render(src, &path.to_string_lossy()))
-            .collect::<Vec<_>>()
-            .join("\n")
-    })?;
+    {
+        let _t = crate::perf_timer::PerfTimer::new("type-check");
+        types::check_module(&module).map_err(|errs| {
+            errs.iter()
+                .map(|d| d.render(src, &path.to_string_lossy()))
+                .collect::<Vec<_>>()
+                .join("\n")
+        })?;
+    }
     // Plan 52 Ф.9: lints — ПОСЛЕ check_module (типы validated), ДО
     // desugar (lints видят MapLit-узлы). Возвращаются caller'у для
     // EXPECT_COMPILE_WARNING сверки.
-    let mut lint_warnings: Vec<String> = crate::lints::lint_module(&module)
-        .iter()
-        .map(|w| w.diag.render(src, &path.to_string_lossy()))
-        .collect();
+    let mut lint_warnings: Vec<String> = {
+        let _t = crate::perf_timer::PerfTimer::new("lints");
+        crate::lints::lint_module(&module)
+            .iter()
+            .map(|w| w.diag.render(src, &path.to_string_lossy()))
+            .collect()
+    };
     // Ф.7.4 (Plan 33.6): verify-warnings (W2401/W2402) тоже dispatch'им в lint stream.
-    let verify_report = crate::verify::verify_module(&module);
-    for w in &verify_report.warnings {
-        lint_warnings.push(w.render(src, &path.to_string_lossy()));
+    {
+        let _t = crate::perf_timer::PerfTimer::new("verify");
+        let verify_report = crate::verify::verify_module(&module);
+        for w in &verify_report.warnings {
+            lint_warnings.push(w.render(src, &path.to_string_lossy()));
+        }
     }
-    // Plan 52 Ф.4: десугаринг map-литералов `[k: v]` → block-expression.
-    // ПОСЛЕ type-check, ДО infer_effects/callnorm/codegen — codegen видит
-    // обычные method-call'ы (with_capacity / insert).
-    // Plan 52 Ф.7: предварительная аннотация MapLit-узлов inferred K/V —
-    // для генерации turbofish в десугаринге.
-    types::annotate_map_literals(&mut module);
-    crate::desugar::desugar_module(&mut module);
-    types::infer_effects(&mut module);
-
-    // Plan 46 (D102) Ф.2: нормализация call-site — named args → positional
-    // + вставка defaults. После type-check (binding validated), до codegen.
-    crate::callnorm::normalize_module(&mut module);
-
-    let mut emitter = CEmitter::new();
-    emitter.set_source_for_annotations(src.to_string());
-    if let Some(n) = mono_depth {
-        emitter.set_mono_depth_limit(n);
+    {
+        let _t = crate::perf_timer::PerfTimer::new("annotate-maps");
+        types::annotate_map_literals(&mut module);
     }
-    let (c_code, warnings) = emitter
-        .emit_module(&module)
-        .map_err(|e| format!("codegen error: {}", e))?;
+    {
+        let _t = crate::perf_timer::PerfTimer::new("desugar");
+        crate::desugar::desugar_module(&mut module);
+    }
+    {
+        let _t = crate::perf_timer::PerfTimer::new("effects-infer");
+        types::infer_effects(&mut module);
+    }
+    {
+        let _t = crate::perf_timer::PerfTimer::new("callnorm");
+        crate::callnorm::normalize_module(&mut module);
+    }
+
+    let (c_code, warnings) = {
+        let _t = crate::perf_timer::PerfTimer::new("codegen");
+        let mut emitter = CEmitter::new();
+        emitter.set_source_for_annotations(src.to_string());
+        if let Some(n) = mono_depth {
+            emitter.set_mono_depth_limit(n);
+        }
+        emitter.emit_module(&module)
+            .map_err(|e| format!("codegen error: {}", e))?
+    };
     let out_path = path.with_extension("c");
     std::fs::write(&out_path, &c_code).map_err(|e| {
         format!(
