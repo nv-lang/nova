@@ -14988,3 +14988,82 @@ to main baseline — не codegen-related, плагин UAC elevation требу
   "Remaining edge case" обновлён: ✅ RESOLVED via Plan 48 Ф.9.
 
 0 deferred. 0 simplifications.
+
+
+## Session: Plan 59 Phase 7 — production polish (2026-05-17 EOD+2)
+
+Изолированный audit Plan 59 в worktree plan-59-audit. 3 M-priority
+improvements + 3 L-priority deferred с rationale.
+
+### Ф.7.1 ✅ Tuple arity mismatch diagnostics (12ac69b9700)
+
+Раньше `let (a, b, c) = some_2_tuple` падал C compiler "no member
+named 'f2'" — плохой UX. Now Nova-level clear codegen error до
+C-emit:
+"tuple destructure arity mismatch: pattern имеет N элементов,
+ scrutinee tuple `<mono_name>` — M элементов. Hint: ..."
+
+3 sites: emit_tuple_destructure (let-destructure), pattern_destructure_tuple
+(for-tuple-in-iter), pattern_bind_typed (match Variant inner Tuple).
+Test: f24_arity_mismatch_diagnostic.
+
+f8, f23 markers updated EXPECT_CC_ERROR → EXPECT_COMPILE_ERROR.
+
+### Ф.7.2 ✅ HashMap.@clone() idiomatic (4a6532ccea5)
+
+После Plan 63 Fix E (другой agent) mono'd tuple iter в generic method
+body работает. Заменил `for i in 0..@_buckets.len() { match ... }`
+на `for (k, v) in @iter()` в @clone (как @merge_from / @filter ранее).
+
+Audit прочих std/collections (lru/set/deque):
+- LRU skip-last loop — needed index, take/skip combinators ещё нет.
+- HashSet, Set уже idiomatic.
+
+### Ф.7.3 ✅ Sizeof warning (a27e1968040)
+
+Tuple >5 elements OR >128 bytes estimated → Plan 36 W-warning
+suggesting record type. Helper estimate_c_type_size_bytes
+(conservative upper bound). Warnings field changed Vec<String>
+→ RefCell<Vec<String>> (register_mono_tuple uses &self).
+
+test_runner extension: EXPECT_COMPILE_WARNING теперь сверяет
+codegen_warnings + lint_warnings (раньше только lint_warnings).
+Test: f25_large_tuple_warning.
+
+### Ф.7.4-7.6 Deferred с rationale (3b542940507)
+
+L-priority items требуют dedicated planning sessions:
+
+Ф.7.4 (named tuple fields ~200 LOC): design decisions блокируют —
+литерал-syntax collision с record `{x: 1, y: 2}`, mixed named+
+positional behaviour, type-equivalence. Defer до Plan 64.
+
+Ф.7.5 (full mono'd Result ~300-400 LOC): Plan 63 Fix F+ targeted
+tracking покрывает все наблюдаемые cases — Result[(K, V), E]
+работает. Full mono refactor (NovaRes_<T>_<E> typedefs analogous
+Option) не блокирует prod use. Defer до Plan 65 при появлении
+arbitrary-T case.
+
+Ф.7.6 (tuple subtyping ~200+ LOC): variance system needed, нет
+immediate use case. Design only.
+
+### Validation Phase 7
+
+- plan59/ — 25/25 PASS (f1-f25, +f24/f25 new).
+- plan56/ — 6/6 PASS (после @clone refactor).
+- Full regression: 668 PASS / 2 FAIL (UAC env только, не codegen).
+
+### Commits (5)
+
+1. c4ac4fd6358 docs(59 Phase 7) plan addition.
+2. 12ac69b9700 feat(59 Ф.7.1) arity diagnostics.
+3. 4a6532ccea5 refactor(stdlib) HashMap.@clone idiomatic.
+4. a27e1968040 feat(59 Ф.7.3) sizeof warning.
+5. 3b542940507 docs(59 Phase 7) defer rationale.
+6. 9731060dc53 docs(simplifications) Phase 7 entry.
+7. (этот) docs(project-creation) session log.
+
+### Plan 59 финальное состояние
+
+Phases 1-6 + Ф.7.1-7.3 закрыты полностью. Ф.7.4-7.6 deferred.
+25 tests f1-f25, все PASS. Production-grade complete.
