@@ -1,0 +1,15 @@
+// EXPECT_CC_ERROR
+//
+// Negative (gap-fill): tuple-pattern destructure на non-tuple value —
+// `let (a, b) = 42`. Type-check сейчас пропускает (int не tuple), C
+// rejects через struct field assignment mismatch. Guard что parser
+// length-prefix не маскирует фундаментальный type-error.
+
+module plan59.f18_destructure_non_tuple_rejected
+
+
+test "destructure int as 2-tuple — should reject" {
+    let (a, b) = 42
+    assert(a == 0)
+    assert(b == 0)
+}

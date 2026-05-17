@@ -14870,6 +14870,17 @@ impl CEmitter {
                                 } else if let Some(t) = t_from_scr {
                                     // Plan 14 Ф.1: typed payload — bind с
                                     // реальным T вместо nova_int.
+                                    // Plan 59 Phase 6: если payload — mono'd
+                                    // tuple, register tuple_element_types для
+                                    // access path чтобы inner Pattern::Tuple
+                                    // destructure (Some((k, v))) знал field
+                                    // types (иначе default nova_int → CC-FAIL
+                                    // на heterogeneous Option[(str, int)]).
+                                    if t.starts_with("_NovaTuple_") {
+                                        if let Some(elems) = Self::parse_mono_tuple_elements(&t) {
+                                            self.tuple_element_types.insert(raw.clone(), elems);
+                                        }
+                                    }
                                     (raw, t, false)
                                 } else {
                                     (raw, "nova_int".into(), false)
@@ -14896,6 +14907,15 @@ impl CEmitter {
                                 if sub_is_opt_variant {
                                     (format!("((NovaOpt_nova_int*)({}))", raw), "NovaOpt_nova_int*".into(), true)
                                 } else {
+                                    // Plan 59 Phase 6: variant payload (Result.Ok,
+                                    // user sum-type) тоже может быть mono'd tuple
+                                    // — register tuple_element_types для access
+                                    // path. Параллель с Option branch выше.
+                                    if ft.starts_with("_NovaTuple_") {
+                                        if let Some(elems) = Self::parse_mono_tuple_elements(&ft) {
+                                            self.tuple_element_types.insert(raw.clone(), elems);
+                                        }
+                                    }
                                     (raw, ft, false)
                                 }
                             };
