@@ -1,0 +1,21 @@
+// EXPECT_COMPILE_ERROR cannot infer method-level type argument `V`
+//
+// Plan 48 Ф.9 / D119 negative variation: один method-level param выводится
+// (`U` из closure), второй (`V`) появляется ТОЛЬКО в return type —
+// все равно должен fail с clean diagnostic, упоминая именно `V`.
+
+module nova_tests.plan48_mpm.f6_method_param_only_in_return_negative
+
+export type Box[T] { v T }
+export fn Box[T].of(x T) -> Box[T] => { v: x }
+
+// U binds через closure return, V — только в return type (uninferrable).
+export fn Box[T] @transform[U, V](f fn(T) -> U) -> Box[V] {
+    Box[V].of(@v)
+}
+
+test "U binds, V does not" {
+    let b = Box[int].of(5)
+    let r = b.transform(|x| str.from(x))
+    assert(true, "never reaches — compile fails on V")
+}

@@ -4918,6 +4918,19 @@ type Iter[T] protocol {
 
 ## Q-generic-receiver-method. `fn []T @method[U](...)` — generic methods на slice
 
+> ✅ **ЧАСТИЧНО ЗАКРЫТО (2026-05-17)** для **user-defined generic типов**
+> через [D119](decisions/02-types.md#d119-method-level-type-parameters-в-generic-methods)
+> + [Plan 48 Ф.9](../docs/plans/48-closures-in-generics.md#-9--method-param-mono).
+>
+> Generic method с method-level type-param теперь работает на user
+> generic types: `Wrapper[T] @map[U](f fn(T) -> U) -> Wrapper[U]` —
+> compiler emit'ит mono'd instance per (T, U) pair, bidirectional
+> inference из closure-typed args, return type корректно substituted.
+>
+> Остаётся **OPEN** для **built-in `[]T`** (slice receiver) — требует
+> отдельной parser-side работы (`[]T` в receiver position).
+> Q-array-api всё ещё open.
+
 **Контекст.** std/collections/vec.nv хочет writing extension methods
 на встроенный `[]T`:
 
@@ -4928,23 +4941,26 @@ export fn []T @filter(pred fn(T) -> bool) -> []T { ... }
 
 Bootstrap не парсит `[]T` как receiver type. Это требует:
 1. Парсер: `[]T` в receiver position — type с inferred type-parameter.
-2. Codegen: генерация специализированных функций (или void*-erasure)
-   для каждой комбинации `(T, U)`.
+2. Codegen: ✅ **DONE** (D119) — generation специализированных функций
+   для каждой комбинации `(T, U)` через mono pass.
 
 **Варианты:**
-1. **Полная поддержка generic methods на built-in типах.** Сложно —
-   требует refined type system (D72 bounds + per-type instantiation).
+1. **Полная поддержка generic methods на built-in типах.** Codegen ✅ готов
+   (D119). Остался parser-side работа: `[]T` в receiver position.
 2. **Free functions с TYpe parameters.** `fn map[T, U](xs []T, f fn(T) -> U) -> []U`.
    Просто, но теряется method-syntax (`xs.map(f)`).
 3. **Prelude-методы только.** Compiler знает фиксированный набор
    `[]T.map/.filter/.fold` и т.п., user не расширяет. Простой
    bootstrap-уровень.
 
-**Предложение:** **3** на bootstrap, **1** на production. Q-array-api
-(уже открыт) формализует prelude-список методов на `[]T`.
+**Предложение:** **3** на bootstrap (text status), **1** на production
+(codegen уже готов через D119 — нужен только parser pass для `[]T`
+receiver). User generic types — уже работают.
 
 **Связь:** [D27](decisions/03-syntax.md#d27), [D35](decisions/03-syntax.md#d35),
-[D72](decisions/02-types.md#d72), Q-array-api.
+[D72](decisions/02-types.md#d72),
+[D119](decisions/02-types.md#d119-method-level-type-parameters-в-generic-methods),
+Q-array-api.
 
 ---
 

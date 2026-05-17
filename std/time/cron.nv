@@ -132,7 +132,7 @@ fn parse_field(s str, name str, min int, max int) Fail[ParseCronError] -> CronFi
             values.push(v)
             v += step
         }
-        return { values: values }
+        return { values }
     }
 
     // Range: "1-5"
@@ -141,7 +141,7 @@ fn parse_field(s str, name str, min int, max int) Fail[ParseCronError] -> CronFi
         let mut values []int = []
         let mut v = lo
         while v <= hi { values.push(v); v += 1 }
-        return { values: values }
+        return { values }
     }
 
     // Wildcard: "*"
@@ -149,7 +149,7 @@ fn parse_field(s str, name str, min int, max int) Fail[ParseCronError] -> CronFi
         let mut values []int = []
         let mut v = min
         while v <= max { values.push(v); v += 1 }
-        return { values: values }
+        return { values }
     }
 
     // Single value

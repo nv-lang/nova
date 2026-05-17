@@ -1,5 +1,6 @@
 use crate::ast::*;
 use crate::diag::Span;
+use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write as FmtWrite;
 
@@ -182,6 +183,17 @@ pub struct CEmitter {
     current_spawn_capture_by_value: Option<HashSet<String>>,
     /// Maps variable name → C type string (best-effort)
     var_types: HashMap<String, String>,
+    /// Plan 48 method-param mono (Plan 63 followup, 2026-05-17): per-name override
+    /// for closure param types, consulted by `infer_expr_c_type` Ident arm BEFORE
+    /// `var_types`. Needed because `infer_mono_method_ret_with_args` takes `&self`
+    /// (it's called from `infer_expr_c_type(&self)`), so we cannot mutate
+    /// `var_types` directly. The caller fills/clears the RefCell around its
+    /// `infer_expr_c_type(closure_body)` call.
+    closure_param_type_overrides: RefCell<HashMap<String, String>>,
+    /// Plan 48 method-param mono (Plan 63 followup, 2026-05-17): per-name override
+    /// for type-param substitution (e.g. `T → nova_int`), consulted by
+    /// `type_ref_to_c` BEFORE `current_type_subst`. Same `&self` reason as above.
+    type_subst_overrides: RefCell<HashMap<String, String>>,
     /// Names of variables declared as `let mut` (mutable) — used by spawn-capture
     /// to decide between copy-by-value (immutable scalar) and capture-by-pointer.
     var_mutable: HashSet<String>,
@@ -281,6 +293,16 @@ pub struct CEmitter {
     /// Set during emit_call when boxing struct/tuple для nova_make_Result_Ok.
     /// Consumed by next Stmt::Let.
     pending_result_ok_inner_type: Option<String>,
+    /// Plan 63 Fix F+ [M-result-erased-no-mono] production-grade: per-fn registry
+    /// — fn_name → boxed Ok inner type (e.g. "_NovaTuple_2_8_nova_str_8_nova_int*").
+    /// Populated при emit_fn для fn'ов с return type Result[Tuple(concrete), E].
+    /// Lookup'ится в helper `try_get_result_ok_inner_type_for_expr` чтобы:
+    /// (a) propagate через function-call returns (let r = parse_kv(...)) —
+    ///     Fix F's pending mechanism не работает потому что boxing happens
+    ///     внутри callee scope, не виден caller'у;
+    /// (b) inline `match parse_kv(...) { Ok((k, v)) => ... }` — no let-binding,
+    ///     но scr_tmp получает payload type через helper.
+    fn_result_ok_inner_types: HashMap<String, String>,
     /// Set of array variable names that store boxed nova_str* (as nova_int).
     /// Index access on these arrays must dereference: *(nova_str*)(arr->data[i]).
     str_box_arrays: HashSet<String>,
@@ -403,7 +425,7 @@ pub struct CEmitter {
     /// Returned from emit_module instead of printed directly to stderr,
     /// so test runner can route them to captured_stderr rather than leaking
     /// to the terminal.
-    warnings: Vec<String>,
+    warnings: std::cell::RefCell<Vec<String>>,
     /// Plan 20 Ф.4: stack of active defer/errdefer scopes during emission.
     /// Each block that contains a `defer`/`errdefer` stmt pushes a `DeferScope`
     /// on entry and pops on exit. `Stmt::Return`/`Break`/`Continue` walk the
@@ -480,6 +502,34 @@ pub struct CEmitter {
     /// обычного main или test runner. test items в этом режиме игнорируются.
     /// Активируется set_bench_mode(true) из nova-cli `nova bench`.
     bench_mode: bool,
+
+    /// Plan 61 Ф.1: TypeId registry. `type-name-mangled` → `NovaTypeId`.
+    /// Populated по мере встречи user-types в throw/handler-arm/any-cast
+    /// контекстах. Эмитятся как `#define NOVA_TID_<mangled> N` в preamble
+    /// (см. `emit_typeid_defines`).
+    ///
+    /// Ключ — sanitized C-name (без `*`, без `Nova_`-префикса; обычно
+    /// nova-side type name, e.g. `ParseError`, `Result_nova_int_nova_str`).
+    /// Значение — monotonic ID starting from NOVA_TID_USER_BASE (17).
+    type_id_registry: HashMap<String, u32>,
+    /// Plan 61 Ф.1: next free TID (counter); starts at USER_BASE.
+    next_type_id: u32,
+
+    /// Plan 61 Ф.2: per-handler-binding `with Fail[E] = |e| ...` mapping
+    /// from binding-var-name to E's C-type. Используется emit_throw для
+    /// корректной dispatch precedence (per-E typed → erased → unwind).
+    /// Ф.3 будет расширять для per-E mono'd dispatch.
+    fail_e_map: HashMap<String, String>,
+
+    /// Plan 61 followup #4: per-E typed Fail dispatch — set of E types
+    /// (C-mangled names) used as Fail[E]. Populated через emit_with /
+    /// emit_throw scan. В preamble splice эмиттится per-E vtable typedef
+    /// + TLS slot + `_nova_throw_typed_<E>(E* payload)` fast-path dispatcher.
+    ///
+    /// Production-grade complement к payload-in-frame hybrid: per-E direct
+    /// call (vs indirect через erased + cast). Backward compat: legacy
+    /// `_nova_handler_Fail` (string slot) тоже install'тся (dual-install).
+    per_e_fail_types: HashSet<String>,
 }
 
 /// Plan 20 Ф.4: per-defer-stmt entry — tracks one `defer { ... }` or
@@ -546,6 +596,8 @@ impl CEmitter {
             current_spawn_captures: None,
             current_spawn_capture_by_value: None,
             var_types: HashMap::new(),
+            closure_param_type_overrides: RefCell::new(HashMap::new()),
+            type_subst_overrides: RefCell::new(HashMap::new()),
             var_mutable: HashSet::new(),
             record_schemas: HashMap::new(),
             sum_schemas: HashMap::new(),
@@ -574,6 +626,7 @@ impl CEmitter {
             pending_option_inner_type: None,
             result_ok_inner_types: HashMap::new(),
             pending_result_ok_inner_type: None,
+            fn_result_ok_inner_types: HashMap::new(),
             str_box_arrays: HashSet::new(),
             current_receiver_type: None,
             expected_record_type: None,
@@ -624,7 +677,7 @@ impl CEmitter {
             defer_scopes: Vec::new(),
             defer_block_counter: 0,
             var_boxed: HashMap::new(),
-            warnings: Vec::new(),
+            warnings: std::cell::RefCell::new(Vec::new()),
             mono_fn_decls: HashMap::new(),
             mono_method_decls: HashMap::new(),
             self_method_decls: HashMap::new(),
@@ -647,7 +700,148 @@ impl CEmitter {
             cancel_token_t_map: HashMap::new(),
             emitted_cancel_converters: HashSet::new(),
             bench_mode: false,
+            /* Plan 61 Ф.1: TypeId registry; starts at USER_BASE = 17
+             * (1..16 reserved для primitives). */
+            type_id_registry: HashMap::new(),
+            next_type_id: 17,
+            fail_e_map: HashMap::new(),
+            per_e_fail_types: HashSet::new(),
         }
+    }
+
+    /// Plan 61 followup #4: register an E type для per-E Fail dispatch.
+    /// Triggered by emit_with (Fail[E] binding) и emit_throw (typed payload).
+    /// Idempotent. После register'ации, preamble splice эмитит per-E
+    /// infrastructure для этого E.
+    fn register_fail_e_type(&mut self, e_c: &str) {
+        if e_c == "nova_str" || e_c == "void*" || e_c.is_empty() {
+            return; /* legacy string или unknown — никакого per-E */
+        }
+        // Plan 61 followup #4: skip primitives — per-E dispatch только для
+        // user-defined types. Throw для primitives (`throw 42` Fail[int])
+        // идёт через erased nova_throw_typed (which использует NOVA_TID_nova_int
+        // not NOVA_TID_USER_*).
+        if Self::primitive_type_id(e_c).is_some() {
+            return;
+        }
+        // Auto-register TypeId если ещё нет.
+        let _ = self.typeid_macro_for(e_c);
+        self.per_e_fail_types.insert(e_c.to_string());
+    }
+
+    /// Plan 61 followup #4: consistent mangling для per-E identifiers
+    /// (vtable / TLS slot / throw entry / adapter). Mirrors typeid_macro_for
+    /// чтобы NOVA_TID_USER_<X> matched name.
+    fn per_e_mangle(c_type: &str) -> String {
+        let base = c_type.trim_end_matches('*').trim();
+        let base_unwrapped = base.strip_prefix("Nova_").unwrap_or(base);
+        Self::sanitize_c_for_ident(base_unwrapped)
+    }
+
+    /// Plan 61 followup #4: helper для emit per-E vtable + TLS slot +
+    /// dispatcher для each registered E. Вызывается в finalize.
+    fn render_per_e_fail_decls(&self) -> String {
+        if self.per_e_fail_types.is_empty() {
+            return String::new();
+        }
+        let mut out = String::new();
+        out.push_str("/* Plan 61 followup #4: per-E Fail dispatch infrastructure.\n");
+        out.push_str(" * Per-(E) vtable + TLS slot + fast-path throw entry. Backward compat:\n");
+        out.push_str(" * legacy _nova_handler_Fail (nova_str) тоже install'тся в emit_with через\n");
+        out.push_str(" * adapter wrapper — current handler arm body unchanged. */\n");
+        let mut entries: Vec<&String> = self.per_e_fail_types.iter().collect();
+        entries.sort();
+        for e_c in &entries {
+            let mangled = Self::per_e_mangle(e_c);
+            let e_arg: String = if e_c.ends_with('*') { (**e_c).clone() } else { format!("{}*", e_c) };
+            // Используем line-by-line push_str чтобы избежать invalid
+            // escape sequences (`\<spaces>` в Rust string literal).
+            out.push_str(&format!("typedef struct NovaVtable_Fail_{m} {{\n", m = mangled));
+            out.push_str("    void* ctx;\n");
+            out.push_str(&format!("    nova_unit (*fail)(void* ctx, {ea} err);\n", ea = e_arg));
+            out.push_str(&format!("    struct NovaVtable_Fail_{m}* prev;\n", m = mangled));
+            out.push_str("    struct NovaInterruptFrame* owner_iframe;\n");
+            out.push_str(&format!("}} NovaVtable_Fail_{m};\n", m = mangled));
+            out.push_str("#ifdef _MSC_VER\n");
+            out.push_str(&format!(
+                "__declspec(thread) static NovaVtable_Fail_{m}* _nova_handler_Fail_{m} = NULL;\n",
+                m = mangled
+            ));
+            out.push_str("#else\n");
+            out.push_str(&format!(
+                "static __thread NovaVtable_Fail_{m}* _nova_handler_Fail_{m} = NULL;\n",
+                m = mangled
+            ));
+            out.push_str("#endif\n");
+            out.push_str("/* Per-E throw entry: prefer per-E slot, fallback на erased nova_throw_typed. */\n");
+            out.push_str(&format!(
+                "static inline nova_unit _nova_throw_typed_{m}({ea} payload) {{\n",
+                m = mangled, ea = e_arg
+            ));
+            out.push_str(&format!("    if (_nova_handler_Fail_{m}) {{\n", m = mangled));
+            out.push_str(&format!("        NovaVtable_Fail_{m}* current = _nova_handler_Fail_{m};\n",
+                m = mangled));
+            out.push_str("        NovaInterruptFrame* saved_if = _nova_current_handler_iframe;\n");
+            out.push_str(&format!("        _nova_handler_Fail_{m} = current->prev;\n", m = mangled));
+            out.push_str("        _nova_current_handler_iframe = current->owner_iframe;\n");
+            out.push_str("        current->fail(current->ctx, payload);\n");
+            out.push_str(&format!("        _nova_handler_Fail_{m} = current;\n", m = mangled));
+            out.push_str("        _nova_current_handler_iframe = saved_if;\n");
+            out.push_str("    }\n");
+            out.push_str("    /* Fallback к erased path (preserves typed payload в fail-frame). */\n");
+            out.push_str("    return nova_throw_typed(\n");
+            out.push_str(&format!("        nova_str_from_cstr(\"<{m}>\"),\n", m = mangled));
+            out.push_str(&format!("        (void*)payload, NOVA_TID_USER_{m});\n", m = mangled));
+            out.push_str("}\n\n");
+        }
+        out
+    }
+
+    /// Plan 61 Ф.1: Register a TypeId for a user-defined type name.
+    /// Returns the assigned monotonic NovaTypeId (>= NOVA_TID_USER_BASE = 17).
+    /// Idempotent: повторный вызов с тем же name возвращает existing ID.
+    ///
+    /// Primitive типы (nova_int, nova_str, nova_bool, etc.) имеют reserved
+    /// IDs 1..7 и НЕ должны передаваться сюда — для них используется
+    /// `primitive_type_id` lookup helper.
+    fn register_type_id(&mut self, name: &str) -> u32 {
+        if let Some(&id) = self.type_id_registry.get(name) {
+            return id;
+        }
+        let id = self.next_type_id;
+        self.next_type_id += 1;
+        self.type_id_registry.insert(name.to_string(), id);
+        id
+    }
+
+    /// Plan 61 Ф.1: TypeId для известного primitive C-type, или None если
+    /// не primitive (caller должен `register_type_id`).
+    fn primitive_type_id(c_type: &str) -> Option<u32> {
+        match c_type.trim_end_matches('*').trim() {
+            "nova_int"  => Some(1),
+            "nova_str"  => Some(2),
+            "nova_bool" => Some(3),
+            "nova_f64"  => Some(4),
+            "nova_f32"  => Some(5),
+            "nova_byte" => Some(6),
+            "nova_unit" => Some(7),
+            _ => None,
+        }
+    }
+
+    /// Plan 61 Ф.2: получить NOVA_TID_<name> identifier для given C-type.
+    /// Для primitives — fixed; для user-types — auto-register.
+    /// Возвращает `(macro_name, sanitized_name)` для embed в emitted C.
+    fn typeid_macro_for(&mut self, c_type: &str) -> String {
+        let base = c_type.trim_end_matches('*').trim();
+        if Self::primitive_type_id(base).is_some() {
+            return format!("NOVA_TID_{}", base);
+        }
+        // Unwrap Nova_ prefix для cleaner macro name
+        let nova_name = base.strip_prefix("Nova_").unwrap_or(base);
+        let sanitized = Self::sanitize_c_for_ident(nova_name);
+        self.register_type_id(&sanitized);
+        format!("NOVA_TID_USER_{}", sanitized)
     }
 
     /// Plan 57: enable bench-mode. Activated by `nova bench` CLI.
@@ -1693,7 +1887,50 @@ impl CEmitter {
             }
         }
         self.out = self.out.replace("/*__MONO_TUPLE_TYPEDEFS__*/", &tuple_decls);
-        Ok((self.out, self.warnings))
+
+        // Plan 61 Ф.1: splice TypeId defines + overriding nova_typeid_to_name.
+        // Каждый registered user-type получает `#define NOVA_TID_USER_<X> N`;
+        // также emit'тся overriding `nova_typeid_to_name` switch для diagnostic.
+        // Если registry пустой — emit'тся только пустой replacement (weak fallback
+        // в typeid.c обеспечивает linkage).
+        let mut tid_defines = String::new();
+        if !self.type_id_registry.is_empty() {
+            tid_defines.push_str("/* Plan 61 Ф.1: per-type NovaTypeId constants. */\n");
+            // Stable order по ID для deterministic emit.
+            let mut entries: Vec<(&String, &u32)> = self.type_id_registry.iter().collect();
+            entries.sort_by_key(|&(_, id)| *id);
+            for (name, id) in &entries {
+                tid_defines.push_str(&format!(
+                    "#define NOVA_TID_USER_{} ((NovaTypeId){})\n", name, id
+                ));
+            }
+            // Overriding nova_typeid_to_name implementation. Weak в typeid.c
+            // covers basic primitives; здесь добавляем user-types branches.
+            // Тестировать что only-strong-symbol overriding работает на всех
+            // toolchains (Clang/MSVC/GCC) — Ф.8 cross-toolchain gate.
+            // Bootstrap: эмитим как static helper used только в diagnostic
+            // path (`nova: unhandled typed Fail`), не overrides weak — это
+            // меньше platform-specific risk.
+            tid_defines.push_str("\n/* Diagnostic helper для user-types (called from Plan 61\n");
+            tid_defines.push_str(" * unhandled-fail path; static, не overrides typeid.c weak). */\n");
+            tid_defines.push_str("static inline const char* nova_typeid_user_name(NovaTypeId tid) {\n");
+            tid_defines.push_str("    switch (tid) {\n");
+            for (name, _) in &entries {
+                tid_defines.push_str(&format!(
+                    "        case NOVA_TID_USER_{}: return \"{}\";\n", name, name
+                ));
+            }
+            tid_defines.push_str("        default: return nova_typeid_to_name(tid);\n");
+            tid_defines.push_str("    }\n");
+            tid_defines.push_str("}\n");
+        }
+        self.out = self.out.replace("/*__TYPEID_DEFINES__*/", &tid_defines);
+
+        // Plan 61 followup #4: per-E Fail dispatch splice.
+        let per_e_decls = self.render_per_e_fail_decls();
+        self.out = self.out.replace("/*__PER_E_FAIL_DECLS__*/", &per_e_decls);
+
+        Ok((self.out, self.warnings.into_inner()))
     }
 
     /// Mangle a test name and append a numeric suffix to guarantee uniqueness.
@@ -2001,6 +2238,14 @@ impl CEmitter {
         // Решение: pre-pass forward-decl всех user types через отдельный
         // marker, splice'ится в emit_module finalize.
         self.line("/*__USER_TYPE_FWD_DECLS__*/");
+        // Plan 61 Ф.1: TypeId defines splice marker — replaced в finalize
+        // (`__TYPEID_DEFINES__` секция). Per-type `#define NOVA_TID_USER_<X> N`
+        // эмитятся для каждого type, встреченного в throw / handler / any.
+        self.line("/*__TYPEID_DEFINES__*/");
+        // Plan 61 followup #4: per-E Fail dispatch — splice marker. Замещён
+        // в finalize per-E vtable + TLS slot + throw entry для each registered
+        // E type (через `per_e_fail_types`).
+        self.line("/*__PER_E_FAIL_DECLS__*/");
         // Plan 59: mono'd tuple struct typedefs — splice marker; replaced
         // в finalize. Layout: typedef struct { T1 f0; T2 f1; ... }
         // _NovaTuple____<T1>__<T2>__...;. Real types (e.g. nova_str, не
@@ -2232,6 +2477,12 @@ impl CEmitter {
         if let TypeRef::Named { path, generics, .. } = ty {
             if generics.is_empty() {
                 let name = path.join("_");
+                // Plan 48 method-param mono (Plan 63 followup): per-call override
+                // (set by `infer_mono_method_ret_with_args` when resolving closure
+                // body types against method-level type-param subst).
+                if let Some(concrete) = self.type_subst_overrides.borrow().get(&name) {
+                    return Ok(concrete.clone());
+                }
                 if let Some(concrete) = self.current_type_subst.get(&name) {
                     return Ok(concrete.clone());
                 }
@@ -2490,7 +2741,9 @@ impl CEmitter {
     // ---- effect with/handler ----
 
     fn emit_with(&mut self, bindings: &[WithBinding], body: &Block) -> Result<String, String> {
-        let mut saves: Vec<(String, String)> = Vec::new(); // (effect_name, prev_var)
+        // (effect_name, prev_var, handler_val) — handler_val нужен в Ф.61 followup #1
+        // для attach owner_iframe (cross-effect throw routing).
+        let mut saves: Vec<(String, String, String)> = Vec::new();
         let mut has_fail = false;
 
         for binding in bindings {
@@ -2531,7 +2784,103 @@ impl CEmitter {
                 "_nova_handler_{eff} = {hv};",
                 eff = effect_name, hv = handler_val
             ));
-            saves.push((effect_name, prev_var));
+
+            // Plan 61 followup #4: dual-install в per-E slot для `with Fail[E]`.
+            // Adapter fn (file-scope static) wraps legacy handler — sets
+            // typed payload в fail-frame, delegates к legacy handler с
+            // diagnostic msg. Это даёт per-E fast-path dispatch без
+            // refactor emit_handler_lit (handler arm body unchanged —
+            // typed `e` access via fail_e_map → payload-in-frame).
+            if effect_name == "Fail" {
+                let e_c_opt = if let TypeRef::Named { generics, .. } = &binding.effect {
+                    generics.first().and_then(|g| self.type_ref_to_c(g).ok())
+                } else { None };
+                if let Some(e_c) = e_c_opt {
+                    // Plan 61 followup #4: skip primitives — для них per-E
+                    // не делается (см. register_fail_e_type). Бы install
+                    // adapter с undefined NovaVtable_Fail_<primitive>.
+                    let is_primitive = Self::primitive_type_id(&e_c).is_some();
+                    if e_c != "nova_str" && !e_c.is_empty() && e_c != "void*" && !is_primitive {
+                        self.register_fail_e_type(&e_c);
+                        let mangled_e = Self::per_e_mangle(&e_c);
+                        let e_arg = if e_c.ends_with('*') { e_c.clone() } else { format!("{}*", e_c) };
+                        // Emit adapter fn (deferred file-scope). Используем
+                        // tmp_counter для uniqueness, НЕ handler_counter —
+                        // последний sync'нут с pre-scan forward decls, его
+                        // bumping ломает emit_handler_lit numbering.
+                        let adapter_id = format!(
+                            "_per_e_adapter_{}_{}",
+                            self.tmp_counter, mangled_e
+                        );
+                        self.tmp_counter += 1;
+                        // Forward decl ДО use-site (extern linkage — block
+                        // scope не разрешает `static`). Definition в
+                        // deferred_impls тоже без `static` (unique name per
+                        // handler_counter — name collision impossible).
+                        self.line(&format!(
+                            "extern nova_unit {ad}(void* ctx, {ea} err);",
+                            ad = adapter_id, ea = e_arg
+                        ));
+                        let _ = writeln!(self.deferred_impls,
+                            "nova_unit {ad}(void* ctx, {ea} err) {{",
+                            ad = adapter_id, ea = e_arg);
+                        let _ = writeln!(self.deferred_impls,
+                            "    if (_nova_fail_top) {{");
+                        let _ = writeln!(self.deferred_impls,
+                            "        _nova_fail_top->error_user_payload = (void*)err;");
+                        let _ = writeln!(self.deferred_impls,
+                            "        _nova_fail_top->error_user_type_id = NOVA_TID_USER_{m};",
+                            m = mangled_e);
+                        let _ = writeln!(self.deferred_impls, "    }}");
+                        let _ = writeln!(self.deferred_impls,
+                            "    NovaVtable_Fail* legacy = (NovaVtable_Fail*)ctx;");
+                        let _ = writeln!(self.deferred_impls,
+                            "    return legacy->fail(legacy->ctx, nova_str_from_cstr(\"<typed-{m}>\"));",
+                            m = mangled_e);
+                        let _ = writeln!(self.deferred_impls, "}}");
+                        let _ = writeln!(self.deferred_impls);
+                        // Allocate per-E vtable + dual-install в per-E slot.
+                        let per_e_vt_var = self.fresh_tmp();
+                        let per_e_prev_var = self.fresh_tmp();
+                        self.line(&format!(
+                            "NovaVtable_Fail_{m}* {vt} = (NovaVtable_Fail_{m}*)nova_alloc(sizeof(NovaVtable_Fail_{m}));",
+                            m = mangled_e, vt = per_e_vt_var
+                        ));
+                        self.line(&format!(
+                            "{vt}->ctx = (void*){hv};",
+                            vt = per_e_vt_var, hv = handler_val
+                        ));
+                        self.line(&format!(
+                            "{vt}->fail = {ad};",
+                            vt = per_e_vt_var, ad = adapter_id
+                        ));
+                        self.line(&format!(
+                            "NovaVtable_Fail_{m}* {prev} = _nova_handler_Fail_{m};",
+                            m = mangled_e, prev = per_e_prev_var
+                        ));
+                        self.line(&format!(
+                            "{vt}->prev = {prev};",
+                            vt = per_e_vt_var, prev = per_e_prev_var
+                        ));
+                        self.line(&format!(
+                            "{vt}->owner_iframe = NULL;  /* set after iframe alloc */",
+                            vt = per_e_vt_var
+                        ));
+                        self.line(&format!(
+                            "_nova_handler_Fail_{m} = {vt};",
+                            m = mangled_e, vt = per_e_vt_var
+                        ));
+                        // Push в saves с special effect_name `Fail_<E>` для
+                        // restore. handler_val содержит per-E vtable.
+                        saves.push((
+                            format!("Fail_{}", mangled_e),
+                            per_e_prev_var,
+                            per_e_vt_var,
+                        ));
+                    }
+                }
+            }
+            saves.push((effect_name, prev_var, handler_val));
         }
 
         // For `with Fail = ... { body }`: install a fail-frame around body so
@@ -2581,6 +2930,23 @@ impl CEmitter {
         };
         self.line(&format!("{} {};", result_decl_ty, result_tmp));
         self.line(&format!("nova_interrupt_push(&{});", iframe));
+
+        // Plan 61 followup #1: attach owner_iframe для Fail-shaped handlers,
+        // чтобы handler-arm `interrupt v` resolve'тся в OUR with-block, не в
+        // _nova_interrupt_top (который может быть inner nested with-block при
+        // cross-effect throw). См. nova_interrupt() в effects.c — он сначала
+        // смотрит _nova_current_handler_iframe set'нутый dispatcher'ом.
+        //
+        // Plan 61 followup #4: same для per-E vtables (`Fail_<E_mangled>`
+        // entries — dual-install per Fail[E] binding).
+        for (effect_name, _prev_var, handler_val) in &saves {
+            if effect_name == "Fail" || effect_name.starts_with("Fail_") {
+                self.line(&format!(
+                    "{hv}->owner_iframe = &{iframe};",
+                    hv = handler_val, iframe = iframe
+                ));
+            }
+        }
 
         // If we have fail-frame, wrap interrupt-setjmp inside fail-setjmp.
         if let Some(ff) = &fframe {
@@ -2672,7 +3038,9 @@ impl CEmitter {
             self.line("nova_interrupt_pop();");
             // Restore handlers — отмена не должна оставить scope handlers
             // активным; emit_with normal-path делает то же ниже.
-            for (effect_name, prev_var) in saves.iter().rev() {
+            for (effect_name, prev_var, _hv) in saves.iter().rev() {
+                // Plan 61 followup #4: per-E slot имя — `_nova_handler_Fail_<E>`,
+                // saves хранит key `Fail_<E_mangled>` именно с этим суффиксом.
                 self.line(&format!("_nova_handler_{eff} = {prev};",
                     eff = effect_name, prev = prev_var));
             }
@@ -2701,7 +3069,7 @@ impl CEmitter {
         }
 
         // Restore handlers (regardless of path)
-        for (effect_name, prev_var) in saves.iter().rev() {
+        for (effect_name, prev_var, _hv) in saves.iter().rev() {
             self.line(&format!("_nova_handler_{eff} = {prev};",
                 eff = effect_name, prev = prev_var));
         }
@@ -2736,6 +3104,17 @@ impl CEmitter {
         };
         let eff_key = effect_path.join("_");
 
+        // Plan 61 Ф.3: typed Fail[E] inference. Если effect = Fail[E] (path
+        // = ["Fail"], generics = [E]), inject E как inferred annotation для
+        // первого handler-arm param. Это позволяет писать `with Fail[E] =
+        // |e| ...` без явного `|e: E|` — компилятор infer'ит из effect type.
+        let fail_e_inferred_ty: Option<crate::ast::TypeRef> =
+            if effect_path.as_slice() == ["Fail"] {
+                if let TypeRef::Named { generics, .. } = effect {
+                    generics.first().cloned()
+                } else { None }
+            } else { None };
+
         // Извлекаем params и body в форме HandlerMethod.
         let (handler_params, handler_body): (
             Vec<HandlerMethodParam>,
@@ -2744,9 +3123,12 @@ impl CEmitter {
             ExprKind::ClosureLight { params, body } => {
                 let p: Vec<HandlerMethodParam> = params
                     .iter()
-                    .map(|cp| HandlerMethodParam {
+                    .enumerate()
+                    .map(|(idx, cp)| HandlerMethodParam {
                         name: cp.name.clone(),
-                        ty: None,
+                        // Plan 61 Ф.3: inject inferred E annotation для
+                        // первого param если Fail[E].
+                        ty: if idx == 0 { fail_e_inferred_ty.clone() } else { None },
                         span: cp.span,
                     })
                     .collect();
@@ -2926,6 +3308,10 @@ impl CEmitter {
         // prev в runtime.
         if eff == "Fail" {
             self.line(&format!("{vt}->prev = NULL;", vt = vtable_var));
+            // Plan 61 followup #1: owner_iframe initialized в NULL; emit_with
+            // перезапишет (`{hv}->owner_iframe = &iframe`) после iframe
+            // allocation. handler-arm `interrupt v` использует этот frame.
+            self.line(&format!("{vt}->owner_iframe = NULL;", vt = vtable_var));
         }
 
         // ---- Emit forward declarations into deferred_impls (file scope) ----
@@ -2985,6 +3371,37 @@ impl CEmitter {
             let saved_params: Vec<(String, Option<String>)> = method_param_types.iter()
                 .map(|(n, t)| (n.clone(), self.var_types.insert(n.clone(), t.clone())))
                 .collect();
+
+            // Plan 61 Ф.3: typed Fail[E] handler-arm population. Если effect
+            // is Fail и handler-arm param has explicit annotation `e: E` где
+            // E ≠ nova_str (resolved C-type), populate fail_e_map для всех
+            // Ident'ов name → resolve через typed payload в fail-frame.
+            //
+            // Detection: m.params[i].ty (typed via ClosureFull) — explicit
+            // annotation. Schema-resolved type для Fail всегда "nova_str"
+            // (hardcoded в effects.h NovaVtable_Fail). User annotation
+            // отменяет schema — это intent typed handling.
+            let mut saved_fail_e_entries: Vec<(String, Option<String>)> = Vec::new();
+            if eff == "Fail" {
+                for (i, p) in m.params.iter().enumerate() {
+                    if let Some(annotated_ty) = &p.ty {
+                        if let Ok(annot_c) = self.type_ref_to_c(annotated_ty) {
+                            if annot_c != "nova_str" {
+                                // Register typed binding.
+                                let pname = p.name.clone();
+                                let prev = self.fail_e_map.insert(
+                                    pname.clone(), annot_c.clone());
+                                saved_fail_e_entries.push((pname.clone(), prev));
+                                // Также update var_types для infer_expr_c_type
+                                // (метод-param сейчас зарегистрирован как
+                                // nova_str из schema; перерегистрируем как E_c).
+                                self.var_types.insert(pname, annot_c);
+                                let _ = i; /* подавляем clippy */
+                            }
+                        }
+                    }
+                }
+            }
 
             // Unpack context: expose captured variables so body code can use them directly
             self.line(&format!("{ctx}* _c = ({ctx}*)_ctx;", ctx = ctx_struct));
@@ -3057,6 +3474,13 @@ impl CEmitter {
                 match prev {
                     Some(old) => { self.var_types.insert(name, old); }
                     None => { self.var_types.remove(&name); }
+                }
+            }
+            // Plan 61 Ф.3: restore fail_e_map после handler body emit.
+            for (name, prev) in saved_fail_e_entries {
+                match prev {
+                    Some(old) => { self.fail_e_map.insert(name, old); }
+                    None      => { self.fail_e_map.remove(&name); }
                 }
             }
 
@@ -4704,7 +5128,7 @@ impl CEmitter {
                     // (anonymous embed не даёт имени). Накапливаем в warnings
                     // (не eprintln!) — test runner направит в captured_stderr.
                     if embeds.iter().any(|(_, _, anon)| *anon) {
-                        self.warnings.push(format!(
+                        self.warnings.borrow_mut().push(format!(
                             "warning: type `{}` overrides delegated method `{}({})`; \
                              anonymous embed has no name for explicit base-call — \
                              possible infinite recursion",
@@ -5612,6 +6036,102 @@ impl CEmitter {
         Some(elems)
     }
 
+    /// Plan 63 Fix F+ [M-result-erased-no-mono]: try to determine the boxed
+    /// inner C type для Result Ok payload of an expression. Production-grade
+    /// closure of Fix F's gap — supports propagation через function calls
+    /// (where boxing happens inside callee), not just direct boxing at let
+    /// scope. Returns Some("_NovaTuple_..._mono*") or struct-pointer string
+    /// when expr's static type is Result[T, E] with T such что it gets
+    /// boxed (Tuple, struct). None otherwise (legacy nova_int slot path).
+    fn try_get_result_ok_inner_type_for_expr(&self, expr: &crate::ast::Expr) -> Option<String> {
+        use crate::ast::ExprKind;
+        match &expr.kind {
+            ExprKind::Ident(name) => {
+                self.result_ok_inner_types.get(name.as_str()).cloned()
+            }
+            ExprKind::Call { func, .. } => {
+                let fn_c_name = self.call_target_c_name(func);
+                self.fn_result_ok_inner_types.get(&fn_c_name).cloned()
+            }
+            ExprKind::Block(b) => {
+                b.trailing.as_ref().and_then(|t| self.try_get_result_ok_inner_type_for_expr(t))
+            }
+            _ => None,
+        }
+    }
+
+    /// Plan 63 Fix F+: get C-name of callee for fn_result_ok_inner_types lookup.
+    /// Mirrors `emit_call`'s callee name resolution для Ident/Path/Member cases.
+    fn call_target_c_name(&self, func: &crate::ast::Expr) -> String {
+        use crate::ast::ExprKind;
+        match &func.kind {
+            ExprKind::Ident(name) => format!("nova_fn_{}", name),
+            ExprKind::Path(parts) if !parts.is_empty() => {
+                // Static-method-style `Type.method` → "Nova_Type_method_<method>"
+                // (Plan 11: instance methods all use _method_ mangling).
+                if parts.len() == 2 {
+                    format!("Nova_{}_method_{}", parts[0], parts[1])
+                } else {
+                    format!("nova_fn_{}", parts.join("_"))
+                }
+            }
+            ExprKind::Member { obj, name } => {
+                // Instance method-call `<obj>.method(...)` — receiver type
+                // resolves через var_types. Mangled name follows
+                // `Nova_<RecvType>_method_<name>` convention.
+                let obj_ty = match &obj.kind {
+                    ExprKind::Ident(n) => self.var_types.get(n.as_str()).cloned(),
+                    _ => None,
+                };
+                if let Some(ty) = obj_ty {
+                    // Strip leading "Nova_" prefix and trailing pointer/`*`.
+                    let core = ty.trim_end_matches('*')
+                        .trim_start_matches("Nova_")
+                        .to_string();
+                    format!("Nova_{}_method_{}", core, name)
+                } else {
+                    String::new()
+                }
+            }
+            _ => String::new(),
+        }
+    }
+
+    /// Plan 63 Fix F+: register fn's Result Ok payload boxed mono'd type
+    /// при emit_fn. Если return type — `Result[Tuple(<concrete>), E]` или
+    /// `Result[<user_struct>, E]` (boxed-as-pointer), populate
+    /// fn_result_ok_inner_types[fn_c_name] = "<mono_ty>*". Subsequent
+    /// `try_get_result_ok_inner_type_for_expr` для Call-к-этой-fn returns
+    /// Some(...) → пропускается в `result_ok_inner_types` для destructure.
+    fn register_fn_result_ok_inner_type(&mut self, fn_c_name: &str, ret_type: &crate::ast::TypeRef) {
+        use crate::ast::TypeRef;
+        if let TypeRef::Named { path, generics, .. } = ret_type {
+            let is_result = path.last().map(|s| s.as_str()) == Some("Result")
+                && generics.len() == 2;
+            if !is_result { return; }
+            let ok_ty = &generics[0];
+            // Resolve Tuple — все элементы concrete (no placeholders).
+            if let TypeRef::Tuple(elems, _) = ok_ty {
+                if elems.is_empty() { return; }
+                let mut elem_cs: Vec<String> = Vec::with_capacity(elems.len());
+                for e in elems {
+                    if let Some(c) = Self::apply_type_subst_to_ref(e, &[]) {
+                        elem_cs.push(c);
+                    } else {
+                        return; // unresolved
+                    }
+                }
+                let mono = Self::compute_mono_tuple_c_name(&elem_cs);
+                self.register_mono_tuple(&elem_cs);
+                self.fn_result_ok_inner_types
+                    .insert(fn_c_name.to_string(), format!("{}*", mono));
+            }
+            // (Struct user-types в Ok могут быть добавлены аналогично; Fix F
+            // pending mechanism уже handles direct cases, registry — для
+            // function-return propagation.)
+        }
+    }
+
     /// Plan 59 Phase 5: peel leading decimal digits.
     fn take_digits(s: &str) -> (&str, &str) {
         let split_at = s.bytes().take_while(|b| b.is_ascii_digit()).count();
@@ -5713,8 +6233,61 @@ impl CEmitter {
     /// Safe to call multiple times — deduplicated через HashSet.
     fn register_mono_tuple(&self, elem_c_tys: &[String]) -> String {
         let key: Vec<String> = elem_c_tys.to_vec();
-        self.mono_tuple_instances.borrow_mut().insert(key);
+        let inserted = self.mono_tuple_instances.borrow_mut().insert(key);
+        // Plan 59 Ф.7.3: sizeof estimation — warning для big tuples (>5
+        // elements OR >128 bytes estimated). Warns пользователя что
+        // record-тип может быть более clear/efficient + предупреждает
+        // cache-line stuffing. Estimate-only — actual struct sizes
+        // depend на C alignment, conservative upper bound.
+        if inserted {
+            let mut est_bytes: usize = 0;
+            for c_ty in elem_c_tys {
+                est_bytes += Self::estimate_c_type_size_bytes(c_ty);
+            }
+            let too_many = elem_c_tys.len() > 5;
+            let too_big = est_bytes > 128;
+            if too_many || too_big {
+                let mangled = Self::compute_mono_tuple_c_name(elem_c_tys);
+                self.warnings.borrow_mut().push(format!(
+                    "warning: large mono'd tuple `{}` ({} элементов, ~{} bytes) — \
+                     consider using record type для clarity и stable ABI; \
+                     big tuples могут вызвать cache-line stuffing.",
+                    mangled, elem_c_tys.len(), est_bytes));
+            }
+        }
         Self::compute_mono_tuple_c_name(elem_c_tys)
+    }
+
+    /// Plan 59 Ф.7.3: estimate sizeof for a C type string — conservative
+    /// upper bound для sizeof warning'а. Pointer types = 8 (x64). Scalar
+    /// types known sizes. Mono'd nested types recursive sum + alignment
+    /// padding (8-byte aligned). Unknown types default 8.
+    fn estimate_c_type_size_bytes(c_ty: &str) -> usize {
+        // Pointer types — 8 bytes (x64).
+        if c_ty.ends_with('*') || c_ty.ends_with("_p") {
+            return 8;
+        }
+        match c_ty {
+            "nova_int" | "nova_f64" | "uint64_t" | "int64_t" => 8,
+            "nova_str" => 16, // struct { ptr, len }
+            "nova_bool" | "nova_byte" | "uint8_t" | "int8_t" => 1,
+            "nova_f32" | "uint32_t" | "int32_t" => 4,
+            "uint16_t" | "int16_t" => 2,
+            "nova_unit" => 1,
+            other if other.starts_with("_NovaTuple_") => {
+                // Recurse через parse_mono_tuple_elements
+                if let Some(elems) = Self::parse_mono_tuple_elements(other) {
+                    let mut total: usize = 0;
+                    for e in &elems {
+                        total += Self::estimate_c_type_size_bytes(e);
+                    }
+                    total
+                } else {
+                    8 // unknown nested format
+                }
+            }
+            _ => 8, // unknown user struct — conservative
+        }
     }
 
     /// Plan 59: walk TypeRef recursively, register mono'd tuples encountered
@@ -7393,8 +7966,24 @@ impl CEmitter {
             &mut self.current_fn_return_ty,
             Some(ret.clone()),
         );
+        // Plan 63 Fix F+ [M-result-erased-no-mono]: pending_*_inner_type
+        // используют scope-leaking pattern (set при boxing, consume при
+        // next let). Если функция body содержит `Ok(...)` БЕЗ surrounding
+        // let-binding (e.g. fn parse_kv() -> Result[..] { if cond { Ok((..)) } }),
+        // pending leak'ает в caller'а: после emit_fn(parse_kv) pending
+        // содержит inner type из последнего Ok(...) → следующий
+        // `let r = parse_kv(...)` consumed бы это leaked значение вместо
+        // правильного типа. Save/restore pending на fn body boundary.
+        let saved_pending_result = self.pending_result_ok_inner_type.take();
+        let saved_pending_option = self.pending_option_inner_type.take();
         let params = self.params_c(f)?;
         let mangled = self.mangle_fn(f);
+        // Plan 63 Fix F+ [M-result-erased-no-mono]: register fn's Result Ok
+        // payload mono'd type. Enables call-site propagation (let r = parse_kv())
+        // и inline match без let-binding.
+        if let Some(rt) = &f.return_type {
+            self.register_fn_result_ok_inner_type(&mangled, rt);
+        }
         // Register param types in var_types for match/infer
         if let Some(recv) = &f.receiver {
             if matches!(recv.kind, ReceiverKind::Instance) {
@@ -7596,6 +8185,13 @@ impl CEmitter {
         self.expected_record_type = saved_expected;
         // Plan 55 Ф.4: restore prior current_fn_return_ty (mono-pass leak fix).
         self.current_fn_return_ty = saved_ret_ty;
+        // Plan 63 Fix F+ [M-result-erased-no-mono]: restore pending state.
+        // Discards любые leaked pending_* values из этого fn body (e.g. fn,
+        // которая делает `Ok((..))` или `Some(..)` без surrounding let).
+        // Без этого pending leak'ает в caller's let-binding и overwrites
+        // правильный тип из fn_result_ok_inner_types registry.
+        self.pending_result_ok_inner_type = saved_pending_result;
+        self.pending_option_inner_type = saved_pending_option;
         // Undef any heap-promoted mut-captures so macros don't leak to sibling fns.
         self.flush_boxed_vars();
         self.indent = 0;
@@ -7948,7 +8544,10 @@ impl CEmitter {
         let intframe_popped_var = format!("_defer_{}_if_popped", block_id);
         self.line(&format!("int {} = 0;", intframe_popped_var));
         self.line(&format!("NovaInterruptFrame {};", intframe_var));
-        self.line(&format!("nova_interrupt_push(&{});", intframe_var));
+        // Plan 61 followup #1: defer scopes использ kind=DEFER_SCOPE — это
+        // tells nova_interrupt route handler-arm interrupts через cleanup
+        // chain (vs cross-effect direct-jump к owner).
+        self.line(&format!("nova_interrupt_push_defer(&{});", intframe_var));
         self.line(&format!("if (setjmp({}.jmp) != 0) {{", intframe_var));
         self.indent += 1;
         // Interrupt path: invoke only `defer` (skip `errdefer` — handled exit).
@@ -8254,6 +8853,21 @@ impl CEmitter {
                 if let Some(arr_elem_ty) = self.array_element_types.get(&val).cloned() {
                     self.array_element_types.insert(binding.clone(), arr_elem_ty);
                 }
+                // Plan 63 Fix F+ [M-result-erased-no-mono]: production-grade
+                // propagation. Если RHS — call к fn'у с зарегистрированным
+                // Result Ok boxed type (fn_result_ok_inner_types), register
+                // на binding. Pending mechanism Fix F не покрывает этот case
+                // потому что boxing happens внутри callee scope. Always
+                // overwrite — helper authoritative из fn signature (vs
+                // possibly-stale value from prior let binding с тем же name
+                // в sibling fn body — global maps не scope'ятся).
+                if let Some(inner) = self.try_get_result_ok_inner_type_for_expr(&decl.value) {
+                    self.result_ok_inner_types.insert(binding.clone(), inner);
+                } else {
+                    // RHS не Result/non-mono — снять стале запись (если
+                    // binding имя совпало с прежним let из другого fn).
+                    self.result_ok_inner_types.remove(&binding);
+                }
                 // Plan 55 Ф.1: track element closure-sig for local `[]fn(...) -> T` vars
                 // so `for f in xs { f() }` and `xs.push(|| ...)` work in non-param contexts.
                 if let Some(crate::ast::TypeRef::Array(inner, _)) = &decl.ty {
@@ -8558,18 +9172,53 @@ impl CEmitter {
                 self.line("continue;");
             }
             Stmt::Throw { value, .. } => {
-                // `throw expr` desugars to `Fail.fail(expr)` — operation of the
-                // built-in `Fail` effect (D25/D62/D65). Compiler dispatches via
-                // _nova_handler_Fail. Default handler calls nova_throw, which
-                // longjmp's to the nearest setjmp-frame (test_frame or spawn-
-                // entry frame). User can install handler-lambda via
-                // `with Fail = (msg) => ... { body }` (D31).
+                // `throw expr` — Fail.fail(expr). D25/D62/D65.
+                //
+                // Plan 61 Ф.2: typed dispatch.
+                //   - nova_str payload   → legacy `Nova_Fail_fail(msg)` (string-slot).
+                //   - typed payload (record/sum) → `nova_throw_typed(msg_repr,
+                //     payload, NOVA_TID_<E>)` — fall through по precedence:
+                //     per-E typed slot (Ф.3) → erased Fail[any] slot → legacy
+                //     string slot → unwind с typed payload preserved в
+                //     fail-frame.
                 let val_ty = self.infer_expr_c_type(value);
                 let val = self.emit_expr(value)?;
                 if val_ty == "nova_str" {
                     self.line(&format!("Nova_Fail_fail({});", val));
                 } else {
-                    self.line(&format!("Nova_Fail_fail(nova_int_to_str((nova_int)({})));", val));
+                    // Typed payload path. Plan 61 followup #4: prefer per-E
+                    // fast-path entry если concrete E type registered. Для
+                    // primitives (int/bool/etc) per-E не делается — erased
+                    // path через nova_throw_typed.
+                    let is_primitive = Self::primitive_type_id(&val_ty).is_some();
+                    let payload_expr = if val_ty.ends_with('*') {
+                        format!("({})", val)
+                    } else {
+                        let tmp = self.fresh_tmp();
+                        self.line(&format!(
+                            "{ty}* {tmp} = ({ty}*)nova_alloc(sizeof({ty}));",
+                            ty = val_ty, tmp = tmp
+                        ));
+                        self.line(&format!("*{} = {};", tmp, val));
+                        format!("({})", tmp)
+                    };
+                    if is_primitive {
+                        // Erased path — primitive use existing NOVA_TID_<type>.
+                        let tid_macro = self.typeid_macro_for(&val_ty);
+                        self.line(&format!(
+                            "nova_throw_typed(nova_str_from_cstr(\"<{nm}>\"), (void*){p}, {tid});",
+                            nm = val_ty.replace('*', ""),
+                            p = payload_expr,
+                            tid = tid_macro
+                        ));
+                    } else {
+                        self.register_fail_e_type(&val_ty);
+                        let mangled_e = Self::per_e_mangle(&val_ty);
+                        self.line(&format!(
+                            "_nova_throw_typed_{m}({p});",
+                            m = mangled_e, p = payload_expr
+                        ));
+                    }
                 }
             }
             // D90 Plan 20 Ф.4: defer/errdefer codegen. Активация флага в
@@ -8780,6 +9429,30 @@ impl CEmitter {
             }
 
             ExprKind::Ident(name) => {
+                // Plan 61 Ф.3: typed Fail[E] handler-arm parameter — name
+                // resolves через fail-frame typed payload, не как обычная
+                // переменная. См. emit_handler_lit Plan 61 Ф.3 populator.
+                //
+                // ВАЖНО: handler-arm с `|e: E|` annotation (e ≠ nova_str)
+                // получает E-typed view через cast'нутый deref payload.
+                // Field-access потом работает естественно: `e.detail` →
+                // `(*(E*)payload).detail`.
+                if let Some(e_c_type) = self.fail_e_map.get(name).cloned() {
+                    if e_c_type.ends_with('*') {
+                        // Pointer-typed E (sum/record): payload уже holds
+                        // pointer-to-instance. Cast directly.
+                        return Ok(format!(
+                            "(({})_nova_fail_top->error_user_payload)",
+                            e_c_type
+                        ));
+                    } else {
+                        // Value-type E: payload — pointer to heap-boxed value.
+                        return Ok(format!(
+                            "(*(({}*)_nova_fail_top->error_user_payload))",
+                            e_c_type
+                        ));
+                    }
+                }
                 // Unit variants (e.g. `Red` from `type Color | Red | Green`) are
                 // not function calls in Nova but need `nova_make_Color_Red()` in C.
                 if let Some((type_name, fields)) = self.find_variant(name) {
@@ -9449,7 +10122,7 @@ impl CEmitter {
                 Err("compiler bug: map literal `[k: v]` reached codegen без \
                      desugar pass — нарушение pipeline invariant. \
                      desugar_module() обязан быть вызван до codegen. \
-                     Report issue: https://github.com/unitcraft/nova-lang/issues".into())
+                     Report issue: https://github.com/nv-lang/nova/issues".into())
             }
 
             ExprKind::TupleLit(elems) => {
@@ -9576,13 +10249,43 @@ impl CEmitter {
                     ));
                     Ok(format!("({}.value)", bang_tmp))
                 } else if inner_ty == "Nova_Result*" {
-                    // Result!!: на Err бросаем error value через
-                    // generic nova_throw.
+                    // Result!!: на Err бросаем error value через Fail-эффект.
+                    //
+                    // Plan 61 followup #3: hybrid Err handling.
+                    //   - если err_typed_type_id != NOVA_TID_NONE → custom
+                    //     Err (Plan 61 fu#3 extended), emit nova_throw_typed
+                    //     с typed payload + tid.
+                    //   - else → legacy string Err через Nova_Fail_fail
+                    //     (bootstrap Result hardcoded на Err=nova_str).
+                    //
+                    // После Plan 14/56 full Result mono — единственный путь
+                    // через nova_throw_typed с per-(T,E) struct.
                     self.line(&format!("Nova_Result* {} = {};", bang_tmp, val));
                     self.line(&format!(
-                        "if ({}->tag == NOVA_TAG_Result_Err) {{ nova_throw_value({}->payload.Err._0); }}",
-                        bang_tmp, bang_tmp
+                        "if ({}->tag == NOVA_TAG_Result_Err) {{",
+                        bang_tmp
                     ));
+                    self.indent += 1;
+                    self.line(&format!(
+                        "if ({}->err_typed_type_id != NOVA_TID_NONE) {{",
+                        bang_tmp
+                    ));
+                    self.indent += 1;
+                    self.line(&format!(
+                        "nova_throw_typed({tmp}->payload.Err._0, {tmp}->err_typed_payload, {tmp}->err_typed_type_id);",
+                        tmp = bang_tmp
+                    ));
+                    self.indent -= 1;
+                    self.line("} else {");
+                    self.indent += 1;
+                    self.line(&format!(
+                        "Nova_Fail_fail({}->payload.Err._0);",
+                        bang_tmp
+                    ));
+                    self.indent -= 1;
+                    self.line("}");
+                    self.indent -= 1;
+                    self.line("}");
                     Ok(format!("({}->payload.Ok._0)", bang_tmp))
                 } else {
                     Ok(format!("({} /* !! */)", val))
@@ -9814,23 +10517,46 @@ impl CEmitter {
             }
             ExprKind::Throw(value) => {
                 // D25/D65/D85: throw в expression-position. Тип Never —
-                // control никогда не вернётся. Эмитируем effect-call
-                // Nova_Fail_fail через comma-expression
-                // `(Nova_Fail_fail(v), (nova_int)0LL)` — dummy nova_int нужного
-                // типа для совместимости с C-каст'ами в caller'е.
+                // control никогда не вернётся. Эмитируем effect-call через
+                // comma-expression `(call(...), dummy)`. См. Stmt::Throw для
+                // detail на typed/string dispatch.
                 //
-                // **Важно:** comma-expression, не statement+dummy через
-                // self.line() — потому что statement+dummy ломает short-circuit
-                // семантику родительских конструкций (?? coalesce → тернарник
-                // `cond ? value : RHS`; conditional expression). С statement
-                // throw выполнялся бы eagerly, **до** проверки cond.
-                // Comma-expression — inline expression, выполняется только
-                // когда родитель реально evaluates это выражение.
-                //
-                // Закрывает Q-throw-comma (тот же паттерн что для nv_panic /
+                // Plan 61 Ф.2: typed throw (не nova_str) → nova_throw_typed.
+                // Закрывает Q-throw-comma (тот же паттерн что nv_panic /
                 // nv_exit — см. special-case в emit_call).
+                let val_ty = self.infer_expr_c_type(value);
                 let v = self.emit_expr(value)?;
-                Ok(format!("(Nova_Fail_fail({}), (nova_int)0LL)", v))
+                if val_ty == "nova_str" {
+                    Ok(format!("(Nova_Fail_fail({}), (nova_int)0LL)", v))
+                } else {
+                    // Plan 61 followup #4: per-E fast path для user types;
+                    // erased path для primitives.
+                    let is_primitive = Self::primitive_type_id(&val_ty).is_some();
+                    let payload_expr = if val_ty.ends_with('*') {
+                        format!("({})", v)
+                    } else {
+                        format!(
+                            "({{ {ty}* _p = ({ty}*)nova_alloc(sizeof({ty})); *_p = ({val}); _p; }})",
+                            ty = val_ty, val = v
+                        )
+                    };
+                    if is_primitive {
+                        let tid_macro = self.typeid_macro_for(&val_ty);
+                        Ok(format!(
+                            "(nova_throw_typed(nova_str_from_cstr(\"<{nm}>\"), (void*){p}, {tid}), (nova_int)0LL)",
+                            nm = val_ty.replace('*', ""),
+                            p = payload_expr,
+                            tid = tid_macro
+                        ))
+                    } else {
+                        self.register_fail_e_type(&val_ty);
+                        let mangled_e = Self::per_e_mangle(&val_ty);
+                        Ok(format!(
+                            "(_nova_throw_typed_{m}({p}), (nova_int)0LL)",
+                            m = mangled_e, p = payload_expr
+                        ))
+                    }
+                }
             }
             ExprKind::Forbid { body, .. } => {
                 // forbid X { body } — in bootstrap, emit body as plain block (no runtime check)
@@ -10411,6 +11137,33 @@ impl CEmitter {
         let func_c = match &func.kind {
             ExprKind::Ident(name) => {
                 if let Some((type_name, _)) = self.find_variant(name) {
+                    // Plan 61 followup #3: Result.Err(custom_value) — typed
+                    // path для не-nova_str argument. Bootstrap Result hardcoded
+                    // на (Ok int, Err nova_str), но typed Err payload теперь
+                    // живёт в Nova_Result.err_typed_payload + err_typed_type_id
+                    // (Plan 61 fu#3 extension). `!!` использует tid для dispatch.
+                    //
+                    // Detection: type_name=="Result", name=="Err", arg!=nova_str.
+                    if type_name == "Result" && name == "Err" && args.len() == 1 {
+                        let arg_ty = self.infer_expr_c_type(args[0].expr());
+                        if arg_ty != "nova_str" && arg_ty != "void*" {
+                            // Emit typed Err constructor. Box value, pass via tid.
+                            let arg_c = self.emit_expr(args[0].expr())?;
+                            let tid_macro = self.typeid_macro_for(&arg_ty);
+                            let payload_expr = if arg_ty.ends_with('*') {
+                                format!("(void*)({})", arg_c)
+                            } else {
+                                format!(
+                                    "({{ {ty}* _ep = ({ty}*)nova_alloc(sizeof({ty})); *_ep = ({val}); (void*)_ep; }})",
+                                    ty = arg_ty, val = arg_c
+                                )
+                            };
+                            return Ok(format!(
+                                "nova_make_Result_Err_typed({p}, {tid})",
+                                p = payload_expr, tid = tid_macro
+                            ));
+                        }
+                    }
                     // Plan 48 Ф.7.4 (partial): when the parent sum-type is
                     // generic and we can infer all type-args from the call args
                     // (e.g. `Ok2(42)` → Result2[nova_int]), route through the
@@ -11253,6 +12006,15 @@ impl CEmitter {
                                 // Эспозит timer для advanced bench patterns.
                                 return Ok("((nova_int)nova_bench_now_ns())".to_string());
                             }
+                            // Plan 57.G.5 — Custom metric emission per sample.
+                            "metric" if args.len() == 3 => {
+                                let name_v = self.emit_expr(args[0].expr())?;
+                                let val_v  = self.emit_expr(args[1].expr())?;
+                                let unit_v = self.emit_expr(args[2].expr())?;
+                                return Ok(format!(
+                                    "(nova_bench_emit_metric({}, {}, {}), (nova_int)0LL)",
+                                    name_v, val_v, unit_v));
+                            }
                             _ => {}
                         }
                     }
@@ -11871,17 +12633,137 @@ impl CEmitter {
                         if let Some(fn_decl) = method_decl {
                             let tmpl_opt = self.generic_type_templates.get(&base_name).cloned();
                             if let Some(tmpl) = tmpl_opt {
-                                let type_subst: Vec<(String, String)> = tmpl.generics.iter()
+                                let mut type_subst: Vec<(String, String)> = tmpl.generics.iter()
                                     .zip(type_args_c.iter())
                                     .map(|(g, c)| (g.name.clone(), c.clone()))
                                     .collect();
+                                // Plan 48 method-param mono (Plan 63 followup, 2026-05-17 EOD):
+                                // method может иметь собственные type params (`@map[U]`).
+                                // Resolve U из call-site args + closure return types.
+                                //
+                                // Step 1: resolve_mono_type_args для non-closure args.
+                                // Step 2: для ClosureLight args paired с Func params —
+                                // pre-infer closure return type с typed var_types для
+                                // params (substituted через current_type_subst). Без этого
+                                // x: T в `|x| ...` defaults к nova_int и method-level U
+                                // не resolved.
+                                let method_extra_subst: Vec<(String, String)> =
+                                    if !fn_decl.generics.is_empty() {
+                                        let saved_outer = std::mem::replace(
+                                            &mut self.current_type_subst,
+                                            type_subst.iter().cloned().collect(),
+                                        );
+                                        // Type-param slots, initially None.
+                                        let mut subst_slots: Vec<(String, Option<String>)> =
+                                            fn_decl.generics.iter()
+                                                .map(|g| (g.name.clone(), None))
+                                                .collect();
+                                        // Step 1: non-closure args через standard inference.
+                                        for (param, arg) in fn_decl.params.iter().zip(args.iter()) {
+                                            let is_closure = matches!(arg.expr().kind,
+                                                ExprKind::ClosureLight { .. } | ExprKind::ClosureFull(_));
+                                            if !is_closure {
+                                                let arg_c = self.infer_expr_c_type(arg.expr());
+                                                Self::infer_type_param_binding(&param.ty, &arg_c, &mut subst_slots);
+                                            }
+                                        }
+                                        // Step 2: ClosureLight args с typed param context.
+                                        for (param, arg) in fn_decl.params.iter().zip(args.iter()) {
+                                            let (fp, ret_ty_ref) =
+                                                if let crate::ast::TypeRef::Func { params: fp, return_type: Some(rt), .. } = &param.ty {
+                                                    (fp.clone(), rt.clone())
+                                                } else { continue };
+                                            let (closure_params, body_expr) = match &arg.expr().kind {
+                                                ExprKind::ClosureLight { params, body } => {
+                                                    let body_e = match body {
+                                                        crate::ast::ClosureBody::Expr(e) => (**e).clone(),
+                                                        crate::ast::ClosureBody::Block(b) => Expr::new(
+                                                            ExprKind::Block(b.clone()), b.span,
+                                                        ),
+                                                    };
+                                                    (params.clone(), body_e)
+                                                }
+                                                _ => continue,
+                                            };
+                                            // Tmp var_types: bind closure params to substituted fn-param types.
+                                            let inner_ptys: Vec<String> = fp.iter()
+                                                .map(|t| self.type_ref_to_c(t).unwrap_or_else(|_| "nova_int".into()))
+                                                .collect();
+                                            let saved_var_types: Vec<(String, Option<String>)> =
+                                                closure_params.iter().zip(inner_ptys.iter())
+                                                .map(|(cp, c_ty)| (cp.name.clone(),
+                                                    self.var_types.insert(cp.name.clone(), c_ty.clone())))
+                                                .collect();
+                                            let closure_ret_c = self.infer_expr_c_type(&body_expr);
+                                            // Restore var_types.
+                                            for (name, prev) in saved_var_types {
+                                                match prev {
+                                                    Some(old) => { self.var_types.insert(name, old); }
+                                                    None => { self.var_types.remove(&name); }
+                                                }
+                                            }
+                                            if !closure_ret_c.is_empty() && closure_ret_c != "void*" {
+                                                Self::infer_type_param_binding(
+                                                    &ret_ty_ref, &closure_ret_c, &mut subst_slots);
+                                            }
+                                        }
+                                        self.current_type_subst = saved_outer;
+                                        // Plan 48 Ф.9 / D119: diagnose any unresolved
+                                        // method-level type params after inference. Без
+                                        // этого они silently dropped → Nova_U_p leak в
+                                        // emitted C (`Nova_Wrapper____Nova_U_p*` undefined).
+                                        for (name, resolved) in &subst_slots {
+                                            if resolved.is_none() {
+                                                let positions: Vec<String> = fn_decl.params.iter()
+                                                    .enumerate()
+                                                    .filter_map(|(i, p)| {
+                                                        let mut names = std::collections::HashSet::new();
+                                                        Self::collect_typeref_names(&p.ty, &mut names,
+                                                            &mut std::collections::HashSet::new());
+                                                        if names.contains(name) {
+                                                            Some(format!("param `{}` (#{i})", p.name))
+                                                        } else { None }
+                                                    })
+                                                    .collect();
+                                                let where_used = if positions.is_empty() {
+                                                    " (only in return type — provide arg whose type binds it)".to_string()
+                                                } else {
+                                                    format!(" — appears in {}", positions.join(", "))
+                                                };
+                                                return Err(format!(
+                                                    "cannot infer method-level type argument `{name}` for generic method `{}.{}`{}; \
+                                                     provide a closure/arg whose type fixes `{name}`",
+                                                    rt_trimmed, method, where_used
+                                                ));
+                                            }
+                                        }
+                                        subst_slots.into_iter()
+                                            .filter_map(|(n, c)| c.map(|c| (n, c)))
+                                            .filter(|(_, c)| !c.is_empty() && c != "void*")
+                                            .collect()
+                                    } else { Vec::new() };
+                                let has_method_subst = !method_extra_subst.is_empty();
+                                for entry in method_extra_subst {
+                                    type_subst.push(entry);
+                                }
                                 let is_instance = matches!(
                                     fn_decl.receiver.as_ref().map(|r| &r.kind),
                                     Some(crate::ast::ReceiverKind::Instance));
-                                let method_c_name = if is_instance {
+                                let base_method_name = if is_instance {
                                     format!("{}_method_{}", rt_trimmed, method)
                                 } else {
                                     format!("{}_static_{}", rt_trimmed, method)
+                                };
+                                // Append method-level type-args suffix к method_c_name если
+                                // их > 0. Receiver-args уже в rt_trimmed (через mangled).
+                                let method_c_name = if has_method_subst {
+                                    let method_only_subst: Vec<(String, String)> = type_subst.iter()
+                                        .skip(tmpl.generics.len())
+                                        .cloned()
+                                        .collect();
+                                    Self::compute_mono_name(&base_method_name, &method_only_subst)
+                                } else {
+                                    base_method_name
                                 };
                                 // Apply subst to param types for fn_param_sigs (closure params)
                                 let saved_subst = std::mem::replace(
@@ -11898,8 +12780,30 @@ impl CEmitter {
                                             .map(|t| self.type_ref_to_c(t).unwrap_or_else(|_| "nova_unit".into()))
                                             .unwrap_or_else(|| "nova_unit".into());
                                         let prev_sig = self.fn_param_sigs.insert(
-                                            param_decl.name.clone(), (inner_ptys, inner_ret));
-                                        let v = self.emit_expr(a.expr())?;
+                                            param_decl.name.clone(), (inner_ptys.clone(), inner_ret.clone()));
+                                        // Plan 48 method-param mono (Plan 63 fu, 2026-05-17 EOD):
+                                        // bidirectional inference для closure-light arg —
+                                        // pass substituted param types через context_param_tys,
+                                        // чтобы `|x| ...` infer'ил x: T из call-site mono'd subst.
+                                        // Без этого x default'тся на nova_int → CC-FAIL для
+                                        // str-typed chains.
+                                        let v = if let ExprKind::ClosureLight { params, body } = &a.expr().kind {
+                                            let legacy_params: Vec<LambdaParam> = params.iter()
+                                                .map(|p| LambdaParam { name: p.name.clone(), ty: None, span: p.span })
+                                                .collect();
+                                            let body_expr: Expr = match body {
+                                                crate::ast::ClosureBody::Expr(e) => (**e).clone(),
+                                                crate::ast::ClosureBody::Block(b) => Expr::new(
+                                                    ExprKind::Block(b.clone()), b.span,
+                                                ),
+                                            };
+                                            let ctx: Vec<(String, String)> = inner_ptys.iter()
+                                                .map(|t| (t.clone(), String::new()))
+                                                .collect();
+                                            self.emit_lambda(&legacy_params, &body_expr, Some(&ctx), None)?
+                                        } else {
+                                            self.emit_expr(a.expr())?
+                                        };
                                         match prev_sig {
                                             Some(old) => { self.fn_param_sigs.insert(param_decl.name.clone(), old); }
                                             None => { self.fn_param_sigs.remove(&param_decl.name); }
@@ -13417,10 +14321,13 @@ impl CEmitter {
                             elem_c_ty, binding, opt_tmp));
                         if !self.tuple_element_types.contains_key(binding.as_str()) {
                             if let Some(elems) = Self::parse_mono_tuple_elements(&elem_c_ty) {
-                                if elems.len() == arity {
-                                    self.tuple_element_types
-                                        .insert(binding.clone(), elems);
-                                }
+                                // Ф.7.1: populate безусловно, даже при arity
+                                // mismatch — pattern_destructure_tuple ниже
+                                // делает arity check и emit'ит clear error.
+                                // Без registration arity check silent-fails
+                                // (lookup empty → no check).
+                                self.tuple_element_types
+                                    .insert(binding.clone(), elems);
                             }
                         }
                     } else {
@@ -13526,6 +14433,12 @@ impl CEmitter {
         }
         // Plan 63 Fix F: propagate Result Ok inner type info.
         if let Some(inner_ty) = self.result_ok_inner_types.get(scr.as_str()).cloned() {
+            self.result_ok_inner_types.insert(scr_tmp.clone(), inner_ty);
+        } else if let Some(inner_ty) = self.try_get_result_ok_inner_type_for_expr(scrutinee) {
+            // Plan 63 Fix F+ [M-result-erased-no-mono] production-grade:
+            // inline `match parse_kv(...) { Ok((k, v)) => ... }` — нет
+            // let-binding для пропускания через result_ok_inner_types[scr].
+            // Resolve через scrutinee expression directly (Call/If/Block).
             self.result_ok_inner_types.insert(scr_tmp.clone(), inner_ty);
         }
 
@@ -14404,6 +15317,20 @@ impl CEmitter {
                 // Plan 59 Phase 5: length-prefixed mangle — parse точен для
                 // any nesting depth. Registry-lookup workaround удалён
                 // (был needed когда split-by-`__` ломался на nested).
+                // Plan 59 Ф.7.1: arity diagnostic — если parse возвращает
+                // Some(elems) с **разным** arity, это user error (pattern
+                // arity != tuple arity). Без этого check'а silent fallback
+                // на legacy `_NovaTuple{n}` → wrong type → cryptic CC error
+                // "no member 'fN'". Emit clear Nova-level diagnostic.
+                if let Some(parsed) = Self::parse_mono_tuple_elements(&inferred) {
+                    if parsed.len() != n {
+                        return Err(format!(
+                            "tuple destructure arity mismatch: pattern имеет {} \
+                             элементов, scrutinee tuple `{}` — {} элементов. \
+                             Hint: pattern должен совпадать по arity с tuple-типом.",
+                            n, inferred, parsed.len()));
+                    }
+                }
                 let (struct_name, elem_tys): (String, Vec<String>) =
                     if let Some(elems) = Self::parse_mono_tuple_elements(&inferred)
                         .filter(|e| e.len() == n)
@@ -14677,6 +15604,25 @@ impl CEmitter {
             // (e.g. для `for (k, v) in coll.iter()` где coll — generic mono'd).
             // Без этого все tuple binds получают default `nova_int`.
             let elem_tys = self.tuple_element_types.get(scr_tmp).cloned();
+            // Plan 59 Ф.7.1: arity diagnostic — если pattern arity != actual
+            // tuple arity (lookup tuple_element_types or var_types mono'd
+            // name parse), emit clear Nova-level error до C-emit'а который
+            // даёт нечитаемый "no member 'fN'" message.
+            let actual_arity = elem_tys.as_ref().map(|v| v.len()).or_else(|| {
+                self.var_types.get(scr_tmp)
+                    .and_then(|ty| Self::parse_mono_tuple_elements(ty))
+                    .map(|v| v.len())
+            });
+            if let Some(expected) = actual_arity {
+                if parts.len() != expected {
+                    return Err(format!(
+                        "tuple destructure arity mismatch: pattern имеет {} элементов, \
+                         scrutinee tuple — {} элементов. \
+                         Hint: добавьте/уберите элементы в pattern, чтобы \
+                         совпадало с tuple-типом.",
+                        parts.len(), expected));
+                }
+            }
             for (i, p) in parts.iter().enumerate() {
                 let field = format!("{}{}f{}", scr_tmp, accessor, i);
                 let elem_ty = elem_tys.as_ref()
@@ -15117,6 +16063,24 @@ impl CEmitter {
                 }
             }
             Pattern::Tuple(pats, _) => {
+                // Plan 59 Ф.7.1: arity diagnostic для pattern_bind_typed —
+                // match `Some((a, b, c))` на 2-tuple должен дать clear
+                // Nova error до C-compile failure.
+                let elem_tys_known = self.tuple_element_types.get(scr).cloned();
+                let actual_arity = elem_tys_known.as_ref().map(|v| v.len()).or_else(|| {
+                    self.var_types.get(scr)
+                        .and_then(|ty| Self::parse_mono_tuple_elements(ty))
+                        .map(|v| v.len())
+                });
+                if let Some(expected) = actual_arity {
+                    if pats.len() != expected {
+                        return Err(format!(
+                            "tuple destructure arity mismatch: pattern имеет {} элементов, \
+                             scrutinee tuple — {} элементов. \
+                             Hint: pattern должен совпадать по arity с tuple-типом.",
+                            pats.len(), expected));
+                    }
+                }
                 for (i, p) in pats.iter().enumerate() {
                     match p {
                         Pattern::Wildcard(_) | Pattern::Literal(..) => {}
@@ -15981,7 +16945,23 @@ impl CEmitter {
     /// Если `obj_ty = "Nova_X____A__B*"`, извлекаем base = "X",
     /// type_args = ["A", "B"], находим метод в generic_type_methods["X"],
     /// применяем apply_type_subst_to_ref с подстановкой generics→type_args.
-    fn infer_mono_method_ret(&self, obj_ty: &str, method: &str) -> Option<String> {
+    #[allow(dead_code)]
+    fn infer_mono_method_ret(&mut self, obj_ty: &str, method: &str) -> Option<String> {
+        self.infer_mono_method_ret_with_args(obj_ty, method, &[])
+    }
+
+    /// Plan 48 method-param mono (Plan 63 followup, 2026-05-17 EOD): variant
+    /// `infer_mono_method_ret` that takes call args чтобы resolve method-level
+    /// type params (`@map[U]` где U inferred из closure return type).
+    ///
+    /// Closure-param overrides set'тся через RefCell `closure_param_type_overrides`
+    /// (через &self) — infer_expr_c_type reads его first для Ident lookup.
+    fn infer_mono_method_ret_with_args(
+        &self,
+        obj_ty: &str,
+        method: &str,
+        args: &[crate::ast::CallArg],
+    ) -> Option<String> {
         // Формат: "Nova_X____A__B*" или без суффикса "*"
         let stripped = obj_ty.strip_prefix("Nova_")?.trim_end_matches('*');
         // Должно содержать "____" — разделитель base от type args
@@ -15993,16 +16973,97 @@ impl CEmitter {
             .filter(|s| !s.is_empty())
             .map(|s| s.to_string())
             .collect();
-        let template = self.generic_type_templates.get(base_name)?;
-        let methods = self.generic_type_methods.get(base_name)?;
-        let fd = methods.iter().find(|m| m.name == method)?;
-        let ret_ref = fd.return_type.as_ref()?;
-        // Строим подстановку: generic_param_name → concrete_c_type
-        let subst: Vec<(String, Option<String>)> = template.generics.iter()
+        let template = self.generic_type_templates.get(base_name)?.clone();
+        let methods = self.generic_type_methods.get(base_name)?.clone();
+        let fd = methods.iter().find(|m| m.name == method)?.clone();
+        let ret_ref = fd.return_type.as_ref()?.clone();
+        // Строим подстановку: receiver generic_param_name → concrete_c_type.
+        let mut subst: Vec<(String, Option<String>)> = template.generics.iter()
             .zip(type_args.iter())
             .map(|(g, c)| (g.name.clone(), Some(c.clone())))
             .collect();
-        let ret_c = Self::apply_type_subst_to_ref(ret_ref, &subst)?;
+        // Plan 48 method-param mono (Plan 63 followup): добавляем method-level
+        // generics из call-site inference. Mirrors emit_call path 5b Step 2
+        // (typed closure-param var_types pre-population) — needed so
+        // `|x| x + "!"` (где x: T=str) infer'ит return str (а не nova_int default).
+        //
+        // Этот метод — `&self`, поэтому мы НЕ мутируем var_types/current_type_subst
+        // напрямую. Вместо этого используем `closure_param_type_overrides` и
+        // `type_subst_overrides` RefCell'ы, которые `infer_expr_c_type` и
+        // `type_ref_to_c` consult'ят first.
+        if !fd.generics.is_empty() && !args.is_empty() {
+            // Receiver-level subst для type_ref_to_c (T → concrete C-type).
+            let receiver_subst_map: HashMap<String, String> = template.generics.iter()
+                .zip(type_args.iter())
+                .map(|(g, c)| (g.name.clone(), c.clone()))
+                .collect();
+            // Snapshot prior overrides и install receiver subst.
+            let saved_type_subst = self.type_subst_overrides.replace(receiver_subst_map);
+            // Add method-level slots в subst (Vec) — для apply_type_subst_to_ref в конце.
+            for g in &fd.generics {
+                if !subst.iter().any(|(n, _)| n == &g.name) {
+                    subst.push((g.name.clone(), None));
+                }
+            }
+            // Step 1: non-closure args — обычный type inference.
+            for (param, arg) in fd.params.iter().zip(args.iter()) {
+                let is_closure = matches!(arg.expr().kind,
+                    ExprKind::ClosureLight { .. } | ExprKind::ClosureFull(_));
+                if !is_closure {
+                    let arg_c = self.infer_expr_c_type(arg.expr());
+                    Self::infer_type_param_binding(&param.ty, &arg_c, &mut subst);
+                }
+            }
+            // Step 2: ClosureLight — bind params в RefCell override, recurse в body.
+            for (param, arg) in fd.params.iter().zip(args.iter()) {
+                let (fp, ret_ty_ref) = if let crate::ast::TypeRef::Func {
+                    params: fp, return_type: Some(rt), ..
+                } = &param.ty {
+                    (fp.clone(), (**rt).clone())
+                } else { continue };
+                let (closure_params, body_expr) = match &arg.expr().kind {
+                    ExprKind::ClosureLight { params, body } => {
+                        let body_e = match body {
+                            crate::ast::ClosureBody::Expr(e) => (**e).clone(),
+                            crate::ast::ClosureBody::Block(b) => Expr::new(
+                                ExprKind::Block(b.clone()), b.span,
+                            ),
+                        };
+                        (params.clone(), body_e)
+                    }
+                    _ => continue,
+                };
+                // type_ref_to_c теперь уже видит receiver subst — fp типы (`fn(T)→U`)
+                // resolve'ятся правильно для T (U остаётся как Nova_U_p placeholder).
+                let inner_ptys: Vec<String> = fp.iter()
+                    .map(|t| self.type_ref_to_c(t).unwrap_or_else(|_| "nova_int".into()))
+                    .collect();
+                // Save prior closure overrides, install fresh for these param names.
+                let mut overrides = self.closure_param_type_overrides.borrow_mut();
+                let saved: Vec<(String, Option<String>)> =
+                    closure_params.iter().zip(inner_ptys.iter())
+                        .map(|(cp, c_ty)| (cp.name.clone(),
+                            overrides.insert(cp.name.clone(), c_ty.clone())))
+                        .collect();
+                drop(overrides); // release borrow перед infer_expr_c_type recursion
+                let closure_ret_c = self.infer_expr_c_type(&body_expr);
+                // Restore prior overrides.
+                let mut overrides = self.closure_param_type_overrides.borrow_mut();
+                for (name, prev) in saved {
+                    match prev {
+                        Some(old) => { overrides.insert(name, old); }
+                        None => { overrides.remove(&name); }
+                    }
+                }
+                drop(overrides);
+                if !closure_ret_c.is_empty() && closure_ret_c != "void*" {
+                    Self::infer_type_param_binding(&ret_ty_ref, &closure_ret_c, &mut subst);
+                }
+            }
+            // Restore prior type subst overrides.
+            self.type_subst_overrides.replace(saved_type_subst);
+        }
+        let ret_c = Self::apply_type_subst_to_ref(&ret_ref, &subst)?;
         // Если return type совпадает с самим типом (Self), используем mono тип
         if ret_c == format!("Nova_{}*", base_name) {
             // Возвращается Self → нужен конкретный mono тип
@@ -16647,6 +17708,11 @@ impl CEmitter {
                 "nova_int".into()
             }
             ExprKind::Ident(name) => {
+                // Plan 48 method-param mono: closure-param override (set by
+                // `infer_mono_method_ret_with_args` before recursing into closure body).
+                if let Some(ty) = self.closure_param_type_overrides.borrow().get(name) {
+                    return ty.clone();
+                }
                 if let Some(ty) = self.var_types.get(name) {
                     return ty.clone();
                 }
@@ -17086,7 +18152,11 @@ impl CEmitter {
                     // с подстановкой type-аргументов. Это исправляет случаи вроде
                     // `let s = p.swap()` где p: Pair[int,str] — без этого
                     // fn_ret_swap = "void*" (erased) и поля s потом неверно typed.
-                    if let Some(ret) = self.infer_mono_method_ret(&obj_ty, method) {
+                    //
+                    // Plan 48 method-param mono (Plan 63 followup): передаём args
+                    // чтобы resolve method-level type params (`@map[U]` → U из
+                    // closure return type).
+                    if let Some(ret) = self.infer_mono_method_ret_with_args(&obj_ty, method, args) {
                         return ret;
                     }
                     // Plan 14 std-fix: built-in str методы (starts_with/ends_with/

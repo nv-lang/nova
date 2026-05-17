@@ -122,6 +122,39 @@ pub fn compute_diff(baseline: &[AnalyzedBench], new: &[AnalyzedBench]) -> Vec<Di
     rows
 }
 
+/// Plan 57.H.1 — derive group key from bench name (first slash-segment).
+/// `hashmap/insert/n=10` → `hashmap`; `noop` → `noop` (own group).
+/// `hashmap/insert/n=10/case=hot` → `hashmap`.
+/// Returns None если ровно один name без slash (degenerate single-bench
+/// suite — no useful per-group line).
+pub fn group_key(name: &str) -> &str {
+    name.split('/').next().unwrap_or(name)
+}
+
+/// Plan 57.H.1 — compute per-group geomean from rows.
+/// Returns sorted Vec<(group_name, geomean_pct, sample_count)>; пустой
+/// если только 1 group (degenerate — общий geomean уже отображается).
+pub fn per_group_geomeans(rows: &[DiffRow]) -> Vec<(String, f64, usize)> {
+    use std::collections::BTreeMap;
+    let mut groups: BTreeMap<String, Vec<f64>> = BTreeMap::new();
+    for r in rows {
+        if let Some(d) = r.delta_pct {
+            groups.entry(group_key(&r.name).to_string())
+                .or_default()
+                .push(1.0 + d / 100.0);
+        }
+    }
+    if groups.len() <= 1 {
+        return Vec::new();  // только один group → suite geomean достаточен
+    }
+    groups.into_iter()
+        .map(|(g, ratios)| {
+            let pct = (geomean(&ratios) - 1.0) * 100.0;
+            (g, pct, ratios.len())
+        })
+        .collect()
+}
+
 pub fn terminal_format(rows: &[DiffRow], compat: &[String]) -> String {
     let mut out = String::new();
     let _ = writeln!(out, "name                       baseline        new             delta       p-value");
@@ -152,6 +185,17 @@ pub fn terminal_format(rows: &[DiffRow], compat: &[String]) -> String {
         let pct = (g - 1.0) * 100.0;
         let _ = writeln!(out, "                                          geomean delta: {}{:.1}%",
             if pct >= 0.0 { "+" } else { "" }, pct);
+    }
+    // Plan 57.H.1 — per-group geomean (benchstat-style).
+    let groups = per_group_geomeans(rows);
+    if !groups.is_empty() {
+        let _ = writeln!(out, "");
+        let _ = writeln!(out, "Per-group geomean (group = first '/'-segment of bench name):");
+        for (g, pct, n) in &groups {
+            let sign = if *pct >= 0.0 { "+" } else { "" };
+            let _ = writeln!(out, "  {:<24} {:>6}{:.1}%  ({} benches)",
+                truncate(g, 24), sign, pct, n);
+        }
     }
     let _ = writeln!(out, "");
     let _ = writeln!(out, "Legend: *** p<0.001  ** p<0.01  * p<0.05");
@@ -200,6 +244,17 @@ pub fn markdown_format(rows: &[DiffRow], compat: &[String]) -> String {
         let _ = writeln!(out, "\n**Geomean delta: {}{:.1}%**",
             if pct >= 0.0 { "+" } else { "" }, pct);
     }
+    // Plan 57.H.1 — per-group geomean table.
+    let groups = per_group_geomeans(rows);
+    if !groups.is_empty() {
+        let _ = writeln!(out, "\n### Per-group geomean\n");
+        let _ = writeln!(out, "| Group | Delta | N benches |");
+        let _ = writeln!(out, "|---|---|---|");
+        for (g, pct, n) in &groups {
+            let sign = if *pct >= 0.0 { "+" } else { "" };
+            let _ = writeln!(out, "| {} | {}{:.1}% | {} |", g, sign, pct, n);
+        }
+    }
     if !compat.is_empty() {
         let _ = writeln!(out, "\n### ⚠️ Compatibility warnings");
         for w in compat {
@@ -225,10 +280,18 @@ pub fn json_format(rows: &[DiffRow], compat: &[String]) -> Result<String> {
         if let Some(d) = r.delta_pct { ratios.push(1.0 + d / 100.0); }
     }
     let g = if !ratios.is_empty() { geomean(&ratios) } else { 1.0 };
+    // Plan 57.H.1 — per-group geomeans in JSON output.
+    let groups = per_group_geomeans(rows);
+    let groups_json: Vec<_> = groups.iter().map(|(name, pct, n)| json!({
+        "group": name,
+        "geomean_delta_pct": pct,
+        "n_benches": n,
+    })).collect();
     let out = json!({
         "rows": rows_json,
         "geomean_ratio": g,
         "geomean_delta_pct": (g - 1.0) * 100.0,
+        "per_group_geomeans": groups_json,
         "compatibility_warnings": compat,
     });
     Ok(serde_json::to_string_pretty(&out)? + "\n")
@@ -254,6 +317,7 @@ mod tests {
             allocs_per_iter: None,
             allocs_total: None,
             cpu_instructions: Vec::new(),
+            custom_metrics: Vec::new(),
         };
         AnalyzedBench::from_raw(raw).unwrap()
     }
@@ -291,5 +355,78 @@ mod tests {
         let bar = rows.iter().find(|r| r.name == "bar").unwrap();
         assert!(bar.new_median_ns.is_none());
         assert!(bar.delta_pct.is_none());
+    }
+
+    // ── Plan 57.H.1 — multi-group geomean tests ────────────────────
+
+    #[test]
+    fn group_key_first_segment() {
+        assert_eq!(group_key("hashmap/insert/n=10"), "hashmap");
+        assert_eq!(group_key("noop"),                  "noop");
+        assert_eq!(group_key("a/b/c"),                 "a");
+        assert_eq!(group_key(""),                      "");
+    }
+
+    #[test]
+    fn per_group_geomeans_skips_single_group() {
+        // Все benches в одной группе → empty Vec (suite geomean уже есть).
+        let b = vec![mk("foo", vec![100; 5]), mk("bar", vec![200; 5])];
+        let n = vec![mk("foo", vec![110; 5]), mk("bar", vec![220; 5])];
+        let rows = compute_diff(&b, &n);
+        let groups = per_group_geomeans(&rows);
+        // "foo" + "bar" — different group_keys, so 2 groups.
+        assert_eq!(groups.len(), 2);
+    }
+
+    #[test]
+    fn per_group_geomeans_two_groups() {
+        // hashmap/* и vec/* — два разных groups.
+        let b = vec![
+            mk("hashmap/insert", vec![100; 5]),
+            mk("hashmap/lookup", vec![50; 5]),
+            mk("vec/push",       vec![10; 5]),
+            mk("vec/pop",        vec![10; 5]),
+        ];
+        let n = vec![
+            mk("hashmap/insert", vec![110; 5]),  // +10%
+            mk("hashmap/lookup", vec![55; 5]),   // +10%
+            mk("vec/push",       vec![10; 5]),   //  0%
+            mk("vec/pop",        vec![10; 5]),   //  0%
+        ];
+        let rows = compute_diff(&b, &n);
+        let groups = per_group_geomeans(&rows);
+        assert_eq!(groups.len(), 2);
+        let hm = groups.iter().find(|(g, _, _)| g == "hashmap").unwrap();
+        let v  = groups.iter().find(|(g, _, _)| g == "vec").unwrap();
+        assert!((hm.1 - 10.0).abs() < 0.1, "hashmap group ≈ +10%, got {}", hm.1);
+        assert!(v.1.abs() < 0.1, "vec group ≈ 0%, got {}", v.1);
+        assert_eq!(hm.2, 2);
+        assert_eq!(v.2, 2);
+    }
+
+    #[test]
+    fn per_group_geomeans_sorted_alphabetically() {
+        let b = vec![
+            mk("zebra/x", vec![100; 5]),
+            mk("apple/y", vec![100; 5]),
+        ];
+        let n = b.clone();
+        let rows = compute_diff(&b, &n);
+        let groups = per_group_geomeans(&rows);
+        assert_eq!(groups.len(), 2);
+        // BTreeMap iteration is sorted; apple должен быть first.
+        assert_eq!(groups[0].0, "apple");
+        assert_eq!(groups[1].0, "zebra");
+    }
+
+    #[test]
+    fn per_group_geomeans_skips_unmatched_rows() {
+        // bar отсутствует в new → delta_pct = None → не входит в geomean.
+        let b = vec![mk("g1/foo", vec![100; 5]), mk("g1/bar", vec![100; 5])];
+        let n = vec![mk("g1/foo", vec![110; 5])];
+        let rows = compute_diff(&b, &n);
+        let groups = per_group_geomeans(&rows);
+        // только один group (g1), single-group → пустой результат.
+        assert_eq!(groups.len(), 0);
     }
 }

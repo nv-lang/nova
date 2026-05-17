@@ -13,84 +13,202 @@ module runtime.sync
 
 // ─── AtomicInt ───────────────────────────────────────────────────
 
-// Create a new AtomicInt with initial value v.
+/// Lock-free атомарный целочисленный счётчик.
+///
+/// Использует acquire/release ordering для всех операций.
+/// Ширина соответствует `nova_int` (platform word size).
+///
+/// # Examples
+///
+/// ```nova
+/// let counter = AtomicInt.new(0)
+/// counter.fetch_add(1)
+/// assert(counter.load() == 1)
+/// ```
+///
+/// # See Also
+///
+/// - `[AtomicBool]` — атомарный boolean
+/// - `[Mutex]` — fiber-aware mutex для non-atomic критических секций
+#stable(since = "0.1")
 export external fn AtomicInt.new(v int) -> Self
 
-// Load current value (acquire ordering).
+/// Загрузить текущее значение (acquire ordering).
+#stable(since = "0.1")
 export external fn AtomicInt @load() -> int
 
-// Store new value (release ordering).
+/// Записать новое значение (release ordering).
+#stable(since = "0.1")
 export external fn AtomicInt mut @store(v int)
 
-// Atomically add delta, return previous value (acq_rel).
+/// Атомарно добавить `delta`, вернуть предыдущее значение (acq_rel).
+#stable(since = "0.1")
 export external fn AtomicInt mut @fetch_add(delta int) -> int
 
-// Atomically subtract delta, return previous value (acq_rel).
+/// Атомарно вычесть `delta`, вернуть предыдущее значение (acq_rel).
+#stable(since = "0.1")
 export external fn AtomicInt mut @fetch_sub(delta int) -> int
 
-// CAS: if value == expected, store desired. Returns true on success.
+/// Compare-and-swap: если значение == `expected`, записать `desired`.
+///
+/// Возвращает `true` при успехе. Использует acq_rel ordering.
+#stable(since = "0.1")
 export external fn AtomicInt mut @compare_exchange(expected int, desired int) -> bool
 
 // ─── AtomicBool ──────────────────────────────────────────────────
 
-// Create a new AtomicBool with initial value v.
+/// Lock-free атомарный булев флаг.
+///
+/// `swap()` полезен для one-shot ownership паттерна:
+/// `if !flag.swap(true) { /* только первый caller выполняет */ }`.
+///
+/// # See Also
+///
+/// - `[AtomicInt]` — атомарный integer
+/// - `[Once]` — barrier для exactly-once execution
+#stable(since = "0.1")
 export external fn AtomicBool.new(v bool) -> Self
 
-// Load current value (acquire ordering).
+/// Загрузить текущее значение (acquire ordering).
+#stable(since = "0.1")
 export external fn AtomicBool @load() -> bool
 
-// Store new value (release ordering).
+/// Записать новое значение (release ordering).
+#stable(since = "0.1")
 export external fn AtomicBool mut @store(v bool)
 
-// CAS: if value == expected, store desired. Returns true on success.
+/// Compare-and-swap: если значение == `expected`, записать `desired`.
+///
+/// Возвращает `true` при успехе. Использует acq_rel ordering.
+#stable(since = "0.1")
 export external fn AtomicBool mut @compare_exchange(expected bool, desired bool) -> bool
 
-// Atomically set to v, return previous value (acq_rel).
-// Useful for one-shot ownership: if !flag.swap(true) { /* first */ }.
+/// Атомарно установить `v`, вернуть предыдущее значение (acq_rel).
+///
+/// Полезен для one-shot ownership: `if !flag.swap(true) { /* first */ }`.
+#stable(since = "0.1")
 export external fn AtomicBool mut @swap(v bool) -> bool
 
 // ─── Mutex ───────────────────────────────────────────────────────
 
-// Create a new unlocked Mutex.
+/// Fair FIFO fiber-aware mutex.
+///
+/// Park/wake через `nova_sched` — заблокированный fiber не потребляет CPU.
+/// NOT reentrant: повторный `lock()` из того же fiber'а приведёт к deadlock.
+///
+/// # Examples
+///
+/// ```nova
+/// let mu = Mutex.new()
+/// mu.lock()
+/// // critical section
+/// mu.unlock()
+/// ```
+///
+/// # See Also
+///
+/// - `[WaitGroup]` — ожидание завершения нескольких fiber'ов
+/// - `[Once]` — exactly-once execution barrier
+#stable(since = "0.1")
 export external fn Mutex.new() -> Self
 
-// Acquire the mutex. Parks the calling fiber until the lock is available.
-// NOT reentrant: calling lock() twice from the same fiber deadlocks.
+/// Захватить mutex. Паркует вызывающий fiber до освобождения.
+///
+/// NOT reentrant — повторный вызов из того же fiber'а deadlock.
+#stable(since = "0.1")
 export external fn Mutex mut @lock()
 
-// Release the mutex. Wakes the next waiting fiber if any.
-// Must be called only when the mutex is locked.
+/// Освободить mutex. Будит следующий ожидающий fiber, если есть.
+///
+/// Должен вызываться только когда mutex захвачен данным fiber'ом.
+#stable(since = "0.1")
 export external fn Mutex mut @unlock()
 
-// Try to acquire without blocking. Returns true if acquired.
+/// Попытаться захватить mutex без блокировки.
+///
+/// Возвращает `true` если lock успешно захвачен, `false` если занят.
+#stable(since = "0.1")
 export external fn Mutex mut @try_lock() -> bool
 
 // ─── WaitGroup ───────────────────────────────────────────────────
 
-// Create a new WaitGroup with counter 0.
+/// Counter-based rendezvous — ожидание завершения группы fiber'ов.
+///
+/// Паттерн использования: `add(n)` перед spawn, `done()` в каждом fiber'е,
+/// `wait()` в координирующем fiber'е.
+///
+/// # Examples
+///
+/// ```nova
+/// let wg = WaitGroup.new()
+/// wg.add(3)
+/// spawn { work1(); wg.done() }
+/// spawn { work2(); wg.done() }
+/// spawn { work3(); wg.done() }
+/// wg.wait()
+/// ```
+///
+/// # See Also
+///
+/// - `[Mutex]` — взаимное исключение
+/// - `[Once]` — exactly-once barrier
+#stable(since = "0.1")
 export external fn WaitGroup.new() -> Self
 
-// Increment the counter by delta. Call before spawning workers.
+/// Увеличить счётчик на `delta`. Вызывать перед spawn'ом workers.
+#stable(since = "0.1")
 export external fn WaitGroup mut @add(delta int)
 
-// Decrement the counter by 1. Wakes all wait() callers when counter reaches 0.
-// Must not be called more times than add() in total.
+/// Уменьшить счётчик на 1. Будит все `wait()` если счётчик достиг 0.
+///
+/// Не должен вызываться больше раз, чем суммарно было передано в `add()`.
+#stable(since = "0.1")
 export external fn WaitGroup mut @done()
 
-// Park the calling fiber until the counter reaches 0.
+/// Парковать вызывающий fiber до достижения счётчиком нуля.
+#stable(since = "0.1")
 export external fn WaitGroup @wait()
 
 // ─── Once ────────────────────────────────────────────────────────
 
-// Create a new Once (initial state: not yet executed).
+/// Exactly-once execution barrier.
+///
+/// Гарантирует, что тело выполнится ровно один раз, даже при конкурентном
+/// вызове из множества fiber'ов. Остальные fiber'ы паркуются до завершения.
+///
+/// Паттерн использования:
+/// ```nova
+/// let init = Once.new()
+/// // в нескольких fiber'ах:
+/// if init.run() {
+///     // этот блок выполнит только один fiber
+///     setup()
+///     init.done()
+/// }
+/// // после done() — все разблокированы
+/// ```
+///
+/// Контракт: если `run()` вернул `true`, `done()` ДОЛЖЕН быть вызван ровно раз.
+///
+/// # See Also
+///
+/// - `[AtomicBool]` — для simpler one-shot без парковки
+/// - `[Mutex]` — для repeatable критических секций
+#stable(since = "0.1")
 export external fn Once.new() -> Self
 
-// Transition to running state. Returns true if THIS fiber should execute
-// the once-body. Returns false immediately if already done, or parks until
-// done() is called if another fiber is currently running.
-// Contract: if run() returns true, done() MUST be called exactly once.
+/// Попытаться начать выполнение once-тела.
+///
+/// Возвращает `true` если данный fiber должен выполнить once-тело.
+/// Возвращает `false` немедленно если already done, или паркует caller
+/// до вызова `done()` если другой fiber сейчас выполняет тело.
+///
+/// Контракт: если вернул `true` — `done()` ДОЛЖЕН быть вызван ровно раз.
+#stable(since = "0.1")
 export external fn Once mut @run() -> bool
 
-// Mark the once-body as complete. Wakes all parked callers of run().
-// Must be called exactly once, by the fiber whose run() returned true.
+/// Отметить once-тело как завершённое. Будит всех заблокированных в `run()`.
+///
+/// Должен вызываться ровно один раз тем fiber'ом, чей `run()` вернул `true`.
+#stable(since = "0.1")
 export external fn Once mut @done()

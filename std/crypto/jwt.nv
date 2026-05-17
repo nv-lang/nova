@@ -88,7 +88,7 @@ export fn Jwt.decode_hs256(secret []byte, token str) Fail[JwtError] -> JsonValue
         None => throw InvalidFormat
     }
     if alg != "HS256" {
-        throw UnsupportedAlgorithm { alg: alg }
+        throw UnsupportedAlgorithm { alg }
     }
 
     // Verify signature

@@ -29,7 +29,7 @@ type StepRangeIter {
 }
 
 fn Range @step_by(step int) -> StepRangeIter {
-    StepRangeIter { end: @end, step, cur: @start }
+    StepRangeIter { @end, step, cur: @start }
 }
 
 fn StepRangeIter mut @next() -> Option[int] {

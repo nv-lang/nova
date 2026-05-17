@@ -77,7 +77,7 @@ export fn RetryPolicy.exponential(max_attempts int) -> Self =>
 export fn RetryPolicy.fixed(max_attempts int, delay Duration) -> Self =>
     {
         max_attempts,
-        backoff: Fixed { delay: delay },
+        backoff: Fixed { delay },
         jitter: NoJitter,
     }
 
@@ -110,6 +110,11 @@ export fn RetryPolicy @execute[T, E](body fn() Fail[E] -> T) Time Random Fail[E]
     let mut last_error Option[E] = None
 
     while attempt < @max_attempts && result == None {
+        // NB: `interrupt Err(e)` здесь — **намеренный** Result-wrap pattern,
+        // не workaround. Нужен для capture'а `e` в caller-side match для
+        // last_error tracking (retry policy решает на основе последней error).
+        // Plan 61 followup #1 cross-effect rethrow к этому случаю не применим:
+        // мы не **forward'аем** error, мы **сохраняем** его в loop state.
         let r = with Fail[E] = |e| interrupt Err(e) {
             Ok(body())
         }

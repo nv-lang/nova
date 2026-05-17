@@ -1,0 +1,20 @@
+// EXPECT_COMPILE_WARNING large mono'd tuple
+//
+// Positive-via-warning (Ф.7.3): tuple с >5 elements или >128 bytes
+// estimated должен trigger Plan 36 W-warning suggesting record-type
+// для clarity и stable ABI. Большие tuples могут вызвать cache-line
+// stuffing.
+
+module plan59.f25_large_tuple_warning
+
+
+fn make_huge() -> (int, int, int, int, int, int, int) {
+    (1, 2, 3, 4, 5, 6, 7)
+}
+
+
+test "7-element tuple — warning + compile success" {
+    let t = make_huge()
+    assert(t.0 == 1)
+    assert(t.6 == 7)
+}

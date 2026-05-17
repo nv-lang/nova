@@ -24,6 +24,18 @@ module collections.hashmap
 // Типы
 // ──────────────────────────────────────────────────────────────────────────
 
+/// Structural protocol: тип `K` удовлетворяет если имеет `hash() -> u64`.
+///
+/// Используется как bound в `HashMap[K Hashable, V]`.
+///
+/// # Examples
+///
+/// ```nova
+/// // str и int удовлетворяют Hashable автоматически (prelude).
+/// let m = HashMap[str, int].new()
+/// m.insert("key", 42)
+/// ```
+#stable(since = "0.1")
 export type Hashable protocol {
     hash() -> u64
 }
@@ -40,18 +52,31 @@ type Slot[K, V]
     | Tombstone
     | Occupied { key K, value V }
 
-// `#from_fields` (Plan 52 / D55) — помечает HashMap как str-keyed
-// map-тип, в который анонимный record-литерал `{field: v}` коэрсится
-// через D55 map-coercion (имена полей становятся строковыми ключами).
-// Маркер honored компилятором по canonical identity
-// (`collections.hashmap.HashMap`), не по bare-имени — shadowing
-// локальным `HashMap` правило не ломает.
-//
-// `#from_pairs` (Plan 52 Ф.23 / D108) — помечает HashMap как target для
-// desugar'а map-литерала `[k: v]`. Compiler видит attribute → знает что
-// тип предоставляет статический `with_capacity(int) -> Self` и
-// `mut @insert_new(K, V)` для построения. User-типы могут получить
-// support литерала через `#from_pairs` без модификации компилятора.
+/// Hash map с открытой адресацией и линейным пробированием.
+///
+/// Требует `K: Hashable` — структурный bound на `hash() -> u64`.
+/// Автоматически растёт при достижении `load_factor` (по умолчанию 0.75).
+///
+/// `map-literal` синтаксис `[k: v, ...]` десугарируется в `HashMap` через
+/// атрибут `#from_pairs` (D108). Record-literal `{field: val}` коэрсируется
+/// в `HashMap[str, V]` через `#from_fields` (D55).
+///
+/// # Examples
+///
+/// ```nova
+/// let mut m = HashMap[str, int].new()
+/// m.insert("alice", 1)
+/// m.insert("bob", 2)
+/// assert(m.get("alice") == Some(1))
+/// assert(m.len() == 2)
+/// ```
+///
+/// # See Also
+///
+/// - `[HashMap.with_capacity]` — создать с предварительной ёмкостью
+/// - `[HashMap.from]` — из массива пар
+/// - `[Set]` — множество поверх HashMap
+#stable(since = "0.1")
 #from_fields
 #from_pairs
 export type HashMap[K Hashable, V] {
@@ -79,35 +104,32 @@ export type HashMap[K Hashable, V] {
 // Constructor / static
 // ──────────────────────────────────────────────────────────────────────────
 
-// HashMap.new() — пустая мапа с дефолтной capacity (16).
-// NB: explicit type вместо Self — Self в .new()/.with_capacity()/.from()
-// ухудшает cross-module D73 overload dispatch (compiler выбирает
-// str.from / StringBuilder.from вместо HashMap.from). Отложено до fix
-// dispatch resolution (Plan 11 followup territory).
+/// Создать пустой `HashMap` с начальной ёмкостью 16.
+///
+/// # Examples
+///
+/// ```nova
+/// let mut m = HashMap[str, int].new()
+/// assert(m.is_empty())
+/// ```
+#stable(since = "0.1")
 export fn HashMap[K, V].new() -> HashMap[K, V] =>
     HashMap[K, V].with_capacity(16)
 
 
-// HashMap.with_capacity(n) — пустая мапа, в которую можно вставить `n`
-// элементов **без единого rehash**.
-//
-// Контракт (Plan 52 Ф.6): аргумент — entry-count, не bucket-count. Это
-// совместимо с Rust `HashMap::with_capacity(n)` и нужно для десугаринга
-// map-литерала `[k: v]` (D108) — `with_capacity(N)` + `N` × `@insert`
-// гарантированно не вызывает rehash.
-//
-// Почему `ceil(4n/3)`. `@maybe_grow` триггерит rehash когда
-// `used >= threshold`, где `threshold = floor(cap * load_factor)` и
-// `load_factor = 0.75`. Чтобы `n` вставок прошли без rehash, нужно
-// `threshold >= n`, т.е. `floor(cap * 3/4) >= n`. Так как `cap` —
-// степень двойки ≥ 4, `cap` делится на 4, поэтому `cap * 3/4` целое и
-// условие сводится к `cap >= ceil(4n/3)`. `ceil(4n/3) = (4n + 2) / 3`
-// при целочисленном делении. Затем округляем вверх до степени двойки.
-//
-// Прежняя реализация трактовала аргумент как bucket-count: для n = 4,
-// 7, 8, 13, ... `next_pow2(n)` давал `threshold < n` → `n`-я вставка
-// вызывала rehash (нарушение контракта). Цена нового расчёта — чуть
-// больше бакетов; correctness гарантирована.
+/// Создать пустой `HashMap`, рассчитанный на `min_capacity` элементов без rehash.
+///
+/// Аргумент — количество записей (entry-count), не bucket-count.
+/// Гарантирует что `min_capacity` вставок пройдут без единого rehash.
+///
+/// # Examples
+///
+/// ```nova
+/// let mut m = HashMap[str, int].with_capacity(100)
+/// for i in 0..100 { m.insert("k" + str.from(i), i) }
+/// assert(m.len() == 100)
+/// ```
+#stable(since = "0.1")
 export fn HashMap[K, V].with_capacity(min_capacity int) -> HashMap[K, V] {
     // ceil(4 * min_capacity / 3) — entry-count → требуемый минимум бакетов.
     let needed = if min_capacity < 4 { 4 } else { (min_capacity * 4 + 2) / 3 }
@@ -122,11 +144,16 @@ export fn HashMap[K, V].with_capacity(min_capacity int) -> HashMap[K, V] {
 }
 
 
-// HashMap.from(pairs) — построить мапу из массива пар.
-//
-// Пример:
-//   let m = HashMap.from([("a", 1), ("b", 2)])
-// Plan 60 / D117: pairs.len → pairs.len() (size-accessor method-only).
+/// Построить `HashMap` из массива пар `(key, value)`.
+///
+/// # Examples
+///
+/// ```nova
+/// let m = HashMap[str, int].from([("a", 1), ("b", 2)])
+/// assert(m.get("a") == Some(1))
+/// assert(m.len() == 2)
+/// ```
+#stable(since = "0.1")
 export fn HashMap[K, V].from(pairs [](K, V)) -> Self {
     let mut m = Self.with_capacity(pairs.len() * 2)
     for (k, v) in pairs {
@@ -140,19 +167,30 @@ export fn HashMap[K, V].from(pairs [](K, V)) -> Self {
 // Методы инстанса
 // ──────────────────────────────────────────────────────────────────────────
 
-// HashMap.@len() — число valid элементов (не считая tombstones).
+/// Число элементов в map (не считая tombstone-слотов).
+#stable(since = "0.1")
 export fn HashMap[K, V] @len() -> int => @_count
 
-// HashMap.@is_empty() — true если len == 0.
+/// Возвращает `true` если map пуст.
+#stable(since = "0.1")
 export fn HashMap[K, V] @is_empty() -> bool => @_count == 0
 
-// HashMap.@capacity() — общая ёмкость buckets массива.
+/// Общая ёмкость внутреннего массива bucket'ов.
+#stable(since = "0.1")
 export fn HashMap[K, V] @capacity() -> int => @_buckets.len()
 
 
-// HashMap.@get(key) — найти значение по ключу.
-//
-// Возвращает Some(value), если ключ найден; None иначе.
+/// Найти значение по ключу. Возвращает `Some(value)` или `None`.
+///
+/// # Examples
+///
+/// ```nova
+/// let mut m = HashMap[str, int].new()
+/// m.insert("x", 10)
+/// assert(m.get("x") == Some(10))
+/// assert(m.get("y") == None)
+/// ```
+#stable(since = "0.1")
 export fn HashMap[K, V] @get(key K) -> Option[V] {
     let idx = @find_slot(key)
     match @_buckets[idx] {
@@ -162,17 +200,25 @@ export fn HashMap[K, V] @get(key K) -> Option[V] {
 }
 
 
-// HashMap.@contains(key) — проверка наличия ключа.
+/// Проверить наличие ключа без извлечения значения.
+#stable(since = "0.1")
 export fn HashMap[K, V] @contains(key K) -> bool =>
     if let Some(_) = @get(key) { true } else { false }
 
 
-// HashMap.mut @insert(key, value) — вставить пару.
-//
-// Если ключ уже есть, перезаписывает значение и возвращает Some(old).
-// Иначе вставляет и возвращает None.
-//
-// Может вызвать rehash при достижении load_factor.
+/// Вставить пару `(key, value)`.
+///
+/// Если ключ уже существует — перезаписывает и возвращает `Some(old_value)`.
+/// Иначе вставляет и возвращает `None`. Может вызвать rehash.
+///
+/// # Examples
+///
+/// ```nova
+/// let mut m = HashMap[str, int].new()
+/// assert(m.insert("a", 1) == None)
+/// assert(m.insert("a", 2) == Some(1))
+/// ```
+#stable(since = "0.1")
 export fn HashMap[K, V] mut @insert(key K, value V) -> Option[V] {
     @maybe_grow()
 
@@ -200,23 +246,19 @@ export fn HashMap[K, V] mut @insert(key K, value V) -> Option[V] {
 }
 
 
-// HashMap.mut @insert_new(key, value) — fast-path вставка БЕЗ возврата
-// старого значения. Используется десугарингом map-литерала `[k: v, ...]`
-// (Plan 52 Ф.21) где гарантировано что мапа только что создана через
-// `with_capacity` → старого значения быть не может.
-//
-// Семантически идентично `@insert` но:
-// - не возвращает Option[V] — пропускает branch и allocation Option-обёртки
-// - НЕ проверяет Tombstone (после with_capacity все слоты Empty)
-// - НЕ вызывает @maybe_grow (with_capacity гарантирует n вставок без rehash)
-//
-// **Контракт:** вызывать ТОЛЬКО на мапе которая
-// (a) только что создана через `with_capacity(n)` где n ≥ итоговое count
-// (b) ещё не имеет вставок других ключей
-// Иначе — undefined behavior (дубликат не будет обнаружен, may overwrite).
-//
-// Это микро-оптимизация для literal-desugar. User-код должен использовать
-// обычный @insert.
+/// Fast-path вставка без проверки дубликатов — только для map-literal desugar.
+///
+/// Используется компилятором при десугаринге `[k: v, ...]` (D108).
+/// Вызывать только на свежей мапе после `with_capacity(n)` где `n ≥` итоговый count.
+///
+/// # Contracts
+///
+/// ```nova,must_verify
+/// // requires: map создан через with_capacity(n), n >= итоговый count
+/// // requires: key не присутствует в map
+/// // ensures: @len() == old(@len()) + 1
+/// ```
+#stable(since = "0.1")
 export fn HashMap[K, V] mut @insert_new(key K, value V) {
     let idx = @find_slot(key)
     @_buckets[idx] = Occupied { key, value }
@@ -224,49 +266,58 @@ export fn HashMap[K, V] mut @insert_new(key K, value V) {
 }
 
 
-// HashMap.@clone() — Plan 56.
-// Производит копию через iteration + insert_new. Каждый concrete instance
-// HashMap[K, V] получает mono'd @clone — bound K methods resolve через
-// mono path. Erased generic body stub'ится (caller-side mono drives).
+/// Создать независимую глубокую копию map.
+///
+/// # Examples
+///
+/// ```nova
+/// let m = HashMap[str, int].from([("a", 1)])
+/// let m2 = m.clone()
+/// assert(m2.get("a") == Some(1))
+/// ```
+#stable(since = "0.1")
 export fn HashMap[K, V] @clone() -> HashMap[K, V] {
     let mut copy = HashMap[K, V].with_capacity(@_count)
-    for i in 0..@_buckets.len() {
-        match @_buckets[i] {
-            Occupied { key: k, value: v } => copy.insert_new(k, v)
-            _ => {}
-        }
+    for (k, v) in @iter() {
+        copy.insert_new(k, v)
     }
     copy
 }
 
 
-// HashMap.@merge_from(other) — Plan 56.
-// Merge entries из other в self (override semantics).
-// Note: идиоматичный `for (k, v) in other` (implicit Iter D58 + tuple
-// destructure) **сейчас не работает** из-за bootstrap limitation —
-// tuples в Nova не monomorphized (_NovaTupleN.f* всегда nova_int slots,
-// не fit'ит struct types типа nova_str). Требует mono'd tuple support
-// (separate plan). Bootstrap workaround — direct field access на
-// ._buckets через Plan 56 array-element-type propagation fix.
+/// Слить все пары из `other` в `self` (override semantics: existing keys перезаписываются).
+///
+/// # Examples
+///
+/// ```nova
+/// let mut a = HashMap[str, int].from([("x", 1)])
+/// let b = HashMap[str, int].from([("x", 99), ("y", 2)])
+/// a.merge_from(b)
+/// assert(a.get("x") == Some(99))
+/// assert(a.get("y") == Some(2))
+/// ```
+#stable(since = "0.1")
 export fn HashMap[K, V] mut @merge_from(other HashMap[K, V]) {
-    for i in 0..other._buckets.len() {
-        match other._buckets[i] {
-            Occupied { key: k, value: v } => @insert(k, v)
-            _ => {}
-        }
+    for (k, v) in other {
+        @insert(k, v)
     }
 }
 
 
-// HashMap.@filter(pred) — Plan 56.
-// Возвращает новый HashMap с парами для которых pred(k, v) == true.
+/// Вернуть новый `HashMap` из пар, для которых `pred(k, v)` возвращает `true`.
+///
+/// # Examples
+///
+/// ```nova
+/// let m = HashMap[str, int].from([("a", 1), ("b", 2), ("c", 3)])
+/// let big = m.filter(|_, v| v > 1)
+/// assert(big.len() == 2)
+/// ```
+#stable(since = "0.1")
 export fn HashMap[K, V] @filter(pred fn(K, V) -> bool) -> HashMap[K, V] {
     let mut out = HashMap[K, V].with_capacity(@_count)
-    for i in 0..@_buckets.len() {
-        match @_buckets[i] {
-            Occupied { key: k, value: v } => if pred(k, v) { out.insert_new(k, v) }
-            _ => {}
-        }
+    for (k, v) in @iter() {
+        if pred(k, v) { out.insert_new(k, v) }
     }
     out
 }
@@ -287,14 +338,18 @@ export fn HashMap[K, V] @filter(pred fn(K, V) -> bool) -> HashMap[K, V] {
 //   }
 
 
-// HashMap.mut @remove(key) — удалить пару по ключу.
-//
-// Возвращает Some(value) если было удалено, None иначе.
-//
-// Не уменьшает size массива — оставляет Tombstone. Это нужно для
-// корректности probing'а: если probe-цепочка пересекает удалённый
-// слот, нельзя его сделать Empty (иначе lookup пропустит элементы
-// дальше по цепочке).
+/// Удалить пару по ключу. Возвращает `Some(value)` если ключ был, иначе `None`.
+///
+/// Оставляет tombstone-слот — внутренний массив не уменьшается.
+///
+/// # Examples
+///
+/// ```nova
+/// let mut m = HashMap[str, int].from([("a", 1)])
+/// assert(m.remove("a") == Some(1))
+/// assert(m.remove("a") == None)
+/// ```
+#stable(since = "0.1")
 export fn HashMap[K, V] mut @remove(key K) -> Option[V] {
     let idx = @find_slot(key)
     match @_buckets[idx] {
@@ -309,10 +364,8 @@ export fn HashMap[K, V] mut @remove(key K) -> Option[V] {
 }
 
 
-// HashMap.mut @clear() — освободить все слоты.
-//
-// Не освобождает массив (просто заполняет Empty), чтобы не
-// аллоцировать заново при следующем insert.
+/// Удалить все элементы. Не освобождает внутренний массив (capacity сохраняется).
+#stable(since = "0.1")
 export fn HashMap[K, V] mut @clear() {
     for i in 0..@_buckets.len() {
         @_buckets[i] = Empty
@@ -340,12 +393,17 @@ export fn HashMap[K, V] mut @clear() {
 // Workaround в bootstrap: HashMap.from(array_of_pairs).
 
 
-// HashMap.@get_or_insert(key, default) — get с lazy default.
-//
-// Если ключ есть — возвращает Some/Ok. Иначе вставляет default()
-// и возвращает его.
-//
-// Полезный паттерн для счётчиков: `m.get_or_insert(key, || 0) + 1`.
+/// Вернуть значение по ключу, или вставить `fallback()` и вернуть его.
+///
+/// # Examples
+///
+/// ```nova
+/// let mut counts = HashMap[str, int].new()
+/// let prev = counts.get_or_insert("foo", || 0)
+/// counts.insert("foo", prev + 1)
+/// assert(counts.get("foo") == Some(1))
+/// ```
+#stable(since = "0.1")
 export fn HashMap[K, V] mut @get_or_insert(key K, fallback fn() -> V) -> V {
     if let Some(v) = @get(key) {
         return v
@@ -367,8 +425,17 @@ type HashMapIter[K, V] {
     pos int
 }
 
-// HashMap.@iter() — итератор по парам (k, v) в произвольном порядке.
-// D55: имя HashMapIter[K, V] выводится из `-> HashMapIter[K, V]`.
+/// Итератор по парам `(key, value)` в произвольном порядке.
+///
+/// # Examples
+///
+/// ```nova
+/// let m = HashMap[str, int].from([("a", 1), ("b", 2)])
+/// for (k, v) in m.iter() {
+///     assert(v > 0)
+/// }
+/// ```
+#stable(since = "0.1")
 export fn HashMap[K, V] @iter() -> HashMapIter[K, V] =>
     { map: @, pos: 0 }
 
@@ -387,8 +454,8 @@ export fn HashMapIter[K, V] mut @next() -> Option[(K, V)] {
 }
 
 
-// HashMap.@keys() — итератор только по ключам.
-// D55: имя KeysIter[K, V] выводится из `-> KeysIter[K, V]`.
+/// Итератор только по ключам в произвольном порядке.
+#stable(since = "0.1")
 export fn HashMap[K, V] @keys() -> KeysIter[K, V] =>
     { inner: @iter() }
 
@@ -401,8 +468,8 @@ export fn KeysIter[K, V] mut @next() -> Option[K] =>
     }
 
 
-// HashMap.@values() — итератор только по значениям.
-// D55: имя ValuesIter[K, V] выводится из `-> ValuesIter[K, V]`.
+/// Итератор только по значениям в произвольном порядке.
+#stable(since = "0.1")
 export fn HashMap[K, V] @values() -> ValuesIter[K, V] =>
     { inner: @iter() }
 

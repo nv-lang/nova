@@ -1,9 +1,9 @@
-// EXPECT_CC_ERROR
+// EXPECT_COMPILE_ERROR arity mismatch
 //
 // Negative: tuple-pattern arity не совпадает с RHS tuple arity.
-// Type-check сейчас пропускает, C reject'ит по struct field count —
-// guard что error НЕ silently absorbed (мог бы при legacy `_NovaTuple{N}`
-// fallback'е с erased int slots).
+// Plan 59 Ф.7.1 — Nova-level clear diagnostic до C-emit. Раньше
+// EXPECT_CC_ERROR через C compiler error "no member 'fN'", теперь
+// production-grade UX: codegen error message с file:line + hint.
 
 module plan59.f8_tuple_destructure_wrong_arity_rejected
 

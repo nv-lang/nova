@@ -1374,6 +1374,12 @@ pub struct RecordLitField {
     /// Spread `...expr` — D60. Если `is_spread = true`, то `name` = ""
     /// и `value = Some(expr)`.
     pub is_spread: bool,
+    /// D52 §2 `@field`-shorthand marker: parser desugar'ит `{ @name }`
+    /// в AST `RecordLitField { name, value: Some(Member { obj: SelfAccess,
+    /// name }) }` — identical к explicit `{ name: @name }`. Flag различает
+    /// shorthand vs explicit, чтобы D52 §2 enforcement не false-positive'ил
+    /// на parser-generated `@field` shorthand.
+    pub at_shorthand: bool,
     pub span: Span,
 }
 

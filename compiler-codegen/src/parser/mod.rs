@@ -4476,6 +4476,7 @@ impl Parser {
                     name: String::new(),
                     value: Some(v.clone()),
                     is_spread: true,
+                    at_shorthand: false,
                     span: v.span,
                 });
             } else {
@@ -4494,6 +4495,7 @@ impl Parser {
                         name,
                         value: Some(value),
                         is_spread: false,
+                        at_shorthand: true,
                         span: at_span.merge(name_span),
                     });
                 } else {
@@ -4505,6 +4507,7 @@ impl Parser {
                             name,
                             value: Some(v),
                             is_spread: false,
+                            at_shorthand: false,
                             span,
                         });
                     } else {
@@ -4513,6 +4516,7 @@ impl Parser {
                             name,
                             value: None,
                             is_spread: false,
+                            at_shorthand: false,
                             span: name_span,
                         });
                     }

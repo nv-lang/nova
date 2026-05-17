@@ -126,7 +126,7 @@ struct elements broken.
       Direct `.buckets` workaround в `@merge_from`/`@filter` оставлен —
       см. [`[M-stdlib-iter-in-generic-method-body]`](#m-stdlib-iter-in-generic-method-body)
       ниже (отдельный followup, не блокер Plan 59).
-- [x] Phase 4 — spec D-block (D111 в `spec/decisions/02-types.md`).
+- [x] Phase 4 — spec D-block (D123 в `spec/decisions/02-types.md`).
 - [x] Phase 5 — length-prefixed mangle (aa07fa0d545); root-cause fix
       для nested tuple collision вместо workaround'а.
 - [x] Phase 6 — match-pattern variant + mono'd tuple payload
@@ -176,6 +176,16 @@ generic method body. Реальные кандидаты: leak в
 Workaround `for i in 0..@_buckets.len` в stdlib безопасен и
 производителен — не блокирует prod use.
 
+### ✅ ЗАКРЫТО (2026-05-17) Plan 63 Fix E + workaround removal
+
+Закрыто через Plan 63 Fix E (66113a8d2db, другой agent) — fix трёх
+взаимосвязанных bug'ов в emit_array_lit / emit_monomorphized_method /
+array_element_types tracking. После Fix E идиоматичный
+`for (k, v) in other` в generic method body работает без cascade.
+
+Workaround удалён в commit 36e215cce83 — HashMap.@merge_from/@filter
+теперь идиоматичны. plan56 6/6 PASS.
+
 ---
 
 ## Phase 6 — match-pattern variant + mono'd tuple payload (2026-05-17 EOD+2)
@@ -212,17 +222,25 @@ payload type starts_with("_NovaTuple_") (mono'd) — parse elements
 - [x] `Option[(int, int)]` (homogeneous) continues working.
 - [x] f17_tuple_in_option PASS (4 sub-tests с разными K, V).
 
-### Out-of-scope (Plan 63+)
+### Out-of-scope (Plan 63+) — ✅ ЗАКРЫТО (2026-05-17)
 
-**`Result[(T1, T2), E]`** не работает — Result generic типы НЕ
-monomorphized (всегда `Nova_Result*` erased, payload slot — `nova_int`).
-Это **отдельная** ограничение: mono pass для Result-как-sum-type, не
-для tuple. Требует архитектуры sum-type monomorphization (≈Plan 56
-vtable scope расширенный на variants). Documented как
-`[M-result-erased-no-mono]` — отдельный план, не блокер Plan 59.
+**`Result[(T1, T2), E]`** — изначально deferred как
+`[M-result-erased-no-mono]`. **Закрыто** через Plan 63 Fix F
+(2ae78c7ae8d, другой agent) + Plan 63 Fix F+ (ca677dd2147, эта session):
+- Fix F: `result_ok_inner_types` map + pending mechanism для let-bound
+  + homogeneous + direct boxing case.
+- Fix F+: per-fn registry `fn_result_ok_inner_types` + helper для
+  inline match + heterogeneous case через function-call propagation
+  + pending leak fix через save/restore на boundary fn body.
 
-User sum-types с tuple payload (`Custom { Ok((k, v)) }`) work
-если sum-type сам **не generic** (mono path не trigger'ится).
+Test: `nova_tests/plan59/f19_tuple_in_result.nv` (5 sub-tests:
+heterogeneous let+inline, homogeneous let+inline, Err branch).
+plan59: 19/19 PASS.
+
+Полный mono'd Result (NovaRes_<T>_<E> typedefs analogous к Option) —
+future scope, не нужен для observable use-cases.
+
+User sum-types с tuple payload работают если sum-type сам не generic.
 
 ---
 
@@ -409,3 +427,123 @@ _NovaTuple_<arity>_<L1>_<T1>_<L2>_<T2>_..._<LN>_<TN>
 
 ~60-100 LOC + 1 test. Risk **medium-low** — изолированная замена
 encoding с явным parser'ом + regression test guard.
+
+
+---
+
+## Phase 7 — Production polish (audit-driven, 2026-05-17 EOD+2)
+
+### Контекст
+
+После закрытия Phases 1-6 + 2 deferred follow-up'ов проведён audit
+production-grade completeness (изолированно в worktree plan-59-audit).
+Сравнение с Go/Rust/TS:
+- Nova паритет с Rust по zero-cost mono tuples.
+- Nova лучше TS (зеро runtime overhead vs erased Array).
+- Nova лучше Go (first-class tuples vs тупо multiple returns).
+- Nova отстаёт от Rust в: named tuple fields, subtyping, destructure
+  в fn params, full mono'd Result.
+
+User: "продолжай работать по плану сам по всем оставшимся пунктам
+без упрощений как для прода".
+
+### Ф.7.1 — Tuple arity mismatch diagnostics (M, ~30 LOC)
+
+Сейчас destructure `let (a, b, c) = some_2_tuple` падает с C compiler
+error "no member named 'f2'" — плохой UX. Pre-check в
+`pattern_destructure_tuple` для Pattern::Tuple — если pattern arity
+!= actual tuple arity, emit clear Nova-level diagnostic.
+
+### Ф.7.2 — Stdlib iter cleanup BTreeMap/HashSet (M, ~20 LOC)
+
+Аудит std/collections/*.nv на legacy `for i in 0..@_field.len()`
+workaround'ы, замена на идиоматичный `for x in @iter()` после
+Plan 63 Fix E.
+
+### Ф.7.3 — sizeof validation для больших tuples (M, ~40 LOC)
+
+Большой tuple (>5 elems, >128 bytes) может вызвать cache-line
+stuffing. Emit Plan 36 W-warning suggesting record/struct.
+
+### Ф.7.4 — Named tuple fields (L, ~150-200 LOC)
+
+`(name: T1, name: T2)` syntax → desugar в positional. Spec amend
+D27 / D123.
+
+### Ф.7.5 — Full mono'd Result NovaRes_<T>_<E> (L, ~300-400 LOC)
+
+Аналогично NovaOpt — register Result variants per (T, E) combo.
+
+### Ф.7.6 — Tuple subtyping / variance (L, ~200+ LOC)
+
+Design only — нет immediate use case для bootstrap.
+
+### Acceptance Phase 7
+
+- [ ] Ф.7.1: arity diagnostics + test PASS.
+- [ ] Ф.7.2: stdlib iter cleanup + regression 0 fail.
+- [ ] Ф.7.3: sizeof warning + test PASS.
+- [ ] Ф.7.4: named tuple fields parser+codegen+spec+test.
+- [ ] Ф.7.5: mono'd Result + spec + test.
+- [ ] Ф.7.6: tuple subtyping — design only.
+- [ ] Full regression — 0 регрессий.
+- [ ] simplifications.md + project-creation.txt + discussion-log updates.
+
+### Working environment
+
+Working dir: `d:\Sources\nova-lang\.claude\worktrees\plan-59-audit`
+(isolated worktree). Merge в main после complete acceptance.
+
+
+---
+
+## Ф.7.4-7.6 — Deferred до dedicated planning sessions (2026-05-17 EOD+2)
+
+### Rationale: L-priority items требуют design decisions
+
+После закрытия M-priority items (Ф.7.1-7.3) re-assessed L-priority items:
+
+**Ф.7.4 Named tuple fields** (~200 LOC + design):
+- Parser/AST extension straightforward (~50 LOC).
+- Open design questions:
+  - Литерал syntax: `(x: 1, y: 2)` collides с record literal `{x: 1, y: 2}`.
+    Nova должен явно differentiate.
+  - Mixed named+positional `(x: 1, 2)` — allow? Rust не позволяет.
+  - Type-equivalence: `(x: int, y: int)` ≡ `(int, int)` или separate?
+- Decisions impact spec (D27, D123) + may need extra D-block.
+- **Defer:** требует dedicated plan (Plan 64?) с design pre-discussion.
+
+**Ф.7.5 Full mono'd Result** (~300-400 LOC):
+- Plan 63 Fix F+ (ca677dd2147) уже покрывает наблюдаемые cases через
+  targeted boxed-pointer tracking — все 4 case'а Result[(T, U), E]
+  работают (5 sub-tests в f19).
+- Full mono refactor (NovaRes_<T>_<E> typedefs analogous Option):
+  - Расширение sum-type mono infrastructure.
+  - Migration всех Result usage в stdlib + tests.
+  - **Не блокирует prod use** — Fix F+ покрытие достаточно.
+- **Defer:** Plan 65? только когда появится use case с arbitrary T
+  в Result Ok payload (не tuple/struct).
+
+**Ф.7.6 Tuple subtyping / variance** (~200+ LOC):
+- Требует variance system в type-checker (covariance/contravariance).
+- Нет immediate use case в bootstrap; structural typing Nova не имеет.
+- **Design only**, не реализуется до появления requirements.
+
+### Что закрыто Phase 7
+
+- [x] Ф.7.1: tuple arity mismatch diagnostics (commit 12ac69b9700).
+- [x] Ф.7.2: stdlib HashMap.@clone() idiomatic (commit 4a6532ccea5).
+- [x] Ф.7.3: sizeof warning для больших tuples (commit a27e1968040).
+- [-] Ф.7.4: named tuple fields — deferred до dedicated plan.
+- [-] Ф.7.5: full mono'd Result — deferred (Fix F+ покрывает наблюдаемое).
+- [-] Ф.7.6: tuple subtyping — design only, не реализуется без use case.
+
+### Plan 59 финальное состояние
+
+- 7 phases: 6 закрыты полностью, Phase 7 — M-priority items закрыты,
+  L-priority deferred с rationale.
+- 25 regression tests (f1-f25) в nova_tests/plan59/, все PASS.
+- 2 dependent M-markers закрыты (Plan 63 Fix E + Fix F + Fix F+).
+- spec D123 + D-block amendments.
+
+**Validation:** `nova test plan59/` → 25 PASS / 0 FAIL.

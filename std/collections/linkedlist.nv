@@ -18,9 +18,29 @@ module collections.linkedlist
 // Тип
 // ──────────────────────────────────────────────────────────────────────────
 
-// Recursive sum — Cons держит ссылку на следующий элемент.
-// Managed GC ([D6](../spec/decisions/05-memory.md#d6)) автоматически
-// освобождает узлы при недостижимости.
+/// Односвязный список через рекурсивный sum-type (ML-стиль).
+///
+/// Структурно: `Empty | Cons(head, tail)`. Память управляется GC — узлы
+/// освобождаются автоматически при недостижимости.
+///
+/// Для большинства задач `[]T` эффективнее. `LinkedList` — каноническая
+/// иллюстрация sum-recursion и pattern matching в Nova.
+///
+/// # Examples
+///
+/// ```nova
+/// let l = LinkedList[int].from_array([1, 2, 3])
+/// assert(l.head() == Some(1))
+/// assert(l.length() == 3)
+/// let doubled = l.map(|x| x * 2)
+/// assert(doubled.head() == Some(2))
+/// ```
+///
+/// # See Also
+///
+/// - `[Deque]` — двусторонняя очередь на массиве
+/// - `[Queue]` — FIFO очередь через два массива
+#stable(since = "0.1")
 export type LinkedList[T]
     | Empty
     | Cons(T, LinkedList[T])
@@ -30,11 +50,19 @@ export type LinkedList[T]
 // Конструкторы
 // ──────────────────────────────────────────────────────────────────────────
 
-// Пустой список — литерал Empty.
-// `-> LinkedList[T]` опускаем — тип очевиден из тела (D45).
+/// Создать пустой список.
+#stable(since = "0.1")
 export fn LinkedList[T].new() => Empty
 
-// Из массива — fold справа налево.
+/// Построить список из массива. Порядок сохраняется.
+///
+/// # Examples
+///
+/// ```nova
+/// let l = LinkedList[int].from_array([1, 2, 3])
+/// assert(l.head() == Some(1))
+/// ```
+#stable(since = "0.1")
 export fn LinkedList[T].from_array(xs []T) -> Self {
     let mut acc LinkedList[T] = Empty
     let mut i = xs.len() - 1
@@ -45,6 +73,8 @@ export fn LinkedList[T].from_array(xs []T) -> Self {
     acc
 }
 
+/// Построить список из итератора. Порядок сохраняется.
+#stable(since = "0.1")
 export fn LinkedList[T].from_iter(it Iter[T]) -> Self {
     // Prepend каждый элемент → получаем обратный список (O(1) на шаг).
     // Затем reverse — суммарно O(n), без вспомогательного массива.
@@ -60,28 +90,32 @@ export fn LinkedList[T].from_iter(it Iter[T]) -> Self {
 // Базовые операции
 // ──────────────────────────────────────────────────────────────────────────
 
-// Длина — O(n) по природе списка.
+/// Длина списка. O(n).
+#stable(since = "0.1")
 export fn LinkedList[T] @length() -> int =>
     match @ {
         Empty       => 0
         Cons(_, t)  => 1 + t.length()
     }
 
+/// Возвращает `true` если список пуст.
+#stable(since = "0.1")
 export fn LinkedList[T] @is_empty() -> bool =>
     match @ {
         Empty    => true
         Cons(..) => false                // partial: все поля игнорируются
     }
 
-// Голова — первый элемент или None.
-// D55: `Some(h)` и `None` явно — match-arms с unit-альтернативой.
+/// Первый элемент или `None` для пустого списка.
+#stable(since = "0.1")
 export fn LinkedList[T] @head() -> Option[T] =>
     match @ {
         Empty       => None
         Cons(h, _)  => Some(h)
     }
 
-// Хвост — список без головы. Empty для Empty.
+/// Список без первого элемента. Возвращает `Empty` для пустого списка.
+#stable(since = "0.1")
 export fn LinkedList[T] @tail() -> Self =>
     match @ {
         Empty       => Empty
@@ -93,14 +127,15 @@ export fn LinkedList[T] @tail() -> Self =>
 // Конструкция
 // ──────────────────────────────────────────────────────────────────────────
 
-// Префиксное добавление — O(1), конструирует новый Cons.
-// Имя метода `prepend` — convention; в OCaml/Haskell это `::` или `cons`.
+/// Добавить элемент в начало списка. O(1).
+#stable(since = "0.1")
 export fn LinkedList[T] @prepend(x T) -> Self =>
     Cons(x, @)
 
-// Суффиксное добавление — O(n), нужно пройти весь список.
-// В рекурсивных списках суффикс дороже префикса; для частых append
-// используйте `[]T`.
+/// Добавить элемент в конец списка. O(n).
+///
+/// Для частых append предпочтительнее использовать `[]T`.
+#stable(since = "0.1")
 export fn LinkedList[T] @append(x T) -> Self =>
     match @ {
         Empty       => Cons(x, Empty)
@@ -112,7 +147,8 @@ export fn LinkedList[T] @append(x T) -> Self =>
 // Операции трансформации
 // ──────────────────────────────────────────────────────────────────────────
 
-// Reverse — O(n) с одним проходом через accumulator.
+/// Обратить порядок элементов. O(n) через accumulator без рекурсии.
+#stable(since = "0.1")
 export fn LinkedList[T] @reverse() -> Self {
     let mut acc = Empty
     let mut cur = @
@@ -129,14 +165,16 @@ export fn LinkedList[T] @reverse() -> Self {
     acc
 }
 
-// map — generic U на методе (D42 Модель B).
+/// Применить функцию к каждому элементу, вернуть новый список. O(n).
+#stable(since = "0.1")
 export fn LinkedList[T] @map[U](f fn(T) -> U) -> LinkedList[U] =>
     match @ {
         Empty       => Empty
         Cons(h, t)  => Cons(f(h), t.map(f))
     }
 
-// filter.
+/// Вернуть список из элементов, для которых `pred` возвращает `true`. O(n).
+#stable(since = "0.1")
 export fn LinkedList[T] @filter(pred fn(T) -> bool) -> Self =>
     match @ {
         Empty       => Empty
@@ -144,7 +182,15 @@ export fn LinkedList[T] @filter(pred fn(T) -> bool) -> Self =>
                        else        { t.filter(pred) }
     }
 
-// fold left — свёртка слева направо.
+/// Свернуть список слева направо через `f(acc, elem)`. O(n).
+///
+/// # Examples
+///
+/// ```nova
+/// let l = LinkedList[int].from_array([1, 2, 3, 4])
+/// assert(l.fold(0, |acc, x| acc + x) == 10)
+/// ```
+#stable(since = "0.1")
 export fn LinkedList[T] @fold[Acc](init Acc, f fn(Acc, T) -> Acc) -> Acc =>
     match @ {
         Empty       => init
@@ -156,7 +202,8 @@ export fn LinkedList[T] @fold[Acc](init Acc, f fn(Acc, T) -> Acc) -> Acc =>
 // Конкатенация — operator overloading (D46)
 // ──────────────────────────────────────────────────────────────────────────
 
-// `a + b` — конкатенация. O(len(a)).
+/// Конкатенация `a + b`. O(len(a)).
+#stable(since = "0.1")
 export fn LinkedList[T] @plus(other Self) -> Self =>
     match @ {
         Empty       => other

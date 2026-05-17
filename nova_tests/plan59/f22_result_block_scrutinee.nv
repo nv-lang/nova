@@ -1,0 +1,27 @@
+// Positive (Fix F+): block expression как match scrutinee.
+// `match { ...; call(...) } { Ok((k, v)) => ... }` — helper должен
+// recurse в Block.trailing для propagation.
+
+module plan59.f22_result_block_scrutinee
+
+
+fn parse_pair(s str) -> Result[(str, int), str] {
+    if s == "p:1" { Ok(("p", 1)) }
+    else { Err("bad") }
+}
+
+
+test "match Block { trailing call } { Ok((k, v)) => ... }" {
+    let prefix = "p"
+    let mut k str = ""
+    let mut v int = 0
+    match {
+        let composed = prefix + ":1"
+        parse_pair(composed)
+    } {
+        Ok((key, val)) => { k = key; v = val }
+        Err(_) => assert(false)
+    }
+    assert(k == "p")
+    assert(v == 1)
+}

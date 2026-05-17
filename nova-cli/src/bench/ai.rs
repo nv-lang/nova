@@ -490,4 +490,143 @@ mod tests {
         assert!(r.text.contains("DRY RUN"));
         assert_eq!(r.provider, "openai");
     }
+
+    // ── F.4 additional positive tests ───────────────────────────────
+
+    #[test]
+    fn provider_default_models() {
+        assert_eq!(Provider::Anthropic.default_model(), "claude-opus-4-7");
+        assert_eq!(Provider::OpenAi.default_model(),    "gpt-4o-mini");
+    }
+
+    #[test]
+    fn prompt_builder_minimal_no_optional_sections() {
+        // Только diff_rows — no git diff, no commits, no note.
+        let rows = vec![DiffRow {
+            name: "x".to_string(),
+            baseline_median_ns: Some(50.0),
+            new_median_ns: Some(50.0),
+            delta_pct: Some(0.0),
+            p_value: Some(0.5),
+            n_baseline: 10,
+            n_new: 10,
+        }];
+        let pb = PromptBuilder {
+            diff_rows: &rows,
+            git_diff: None,
+            git_commits: None,
+            note: None,
+        };
+        let p = pb.build();
+        // Diff table должна присутствовать всегда.
+        assert!(p.contains("<bench_diff_table>"));
+        assert!(p.contains("x"));
+        // Optional tags NOT present.
+        assert!(!p.contains("<git_diff>"));
+        assert!(!p.contains("<git_commits>"));
+        assert!(!p.contains("<additional_note>"));
+    }
+
+    #[test]
+    fn prompt_builder_empty_rows_still_valid() {
+        let pb = PromptBuilder {
+            diff_rows: &[],
+            git_diff: None, git_commits: None, note: None,
+        };
+        let p = pb.build();
+        // Header row (column names) present even if 0 data rows.
+        assert!(p.contains("baseline_ns"));
+        assert!(p.contains("delta_pct"));
+    }
+
+    #[test]
+    fn truncate_for_tokens_does_not_grow_input() {
+        let s = "short\n";
+        let out = truncate_for_tokens(s, 10_000);
+        assert_eq!(out, s);  // ниже limit → identical.
+    }
+
+    #[test]
+    fn collect_git_context_returns_none_when_shas_missing() {
+        let tmp = std::env::temp_dir();
+        let (d, c) = collect_git_context(&tmp, None, Some("abc"), 5);
+        assert!(d.is_none() && c.is_none());
+        let (d, c) = collect_git_context(&tmp, Some("abc"), None, 5);
+        assert!(d.is_none() && c.is_none());
+        let (d, c) = collect_git_context(&tmp, Some(""), Some(""), 5);
+        assert!(d.is_none() && c.is_none());
+    }
+
+    #[test]
+    fn render_terminal_contains_tokens_field_when_present() {
+        let r = AiResponse {
+            text: "body text".to_string(),
+            tokens_used: Some(1234),
+            model: "M".to_string(),
+            provider: "P".to_string(),
+        };
+        let s = render_terminal(&r);
+        assert!(s.contains("body text"));
+        assert!(s.contains("Tokens: 1234"));
+        assert!(s.contains("AI interpretation"));
+    }
+
+    #[test]
+    fn render_markdown_skips_tokens_field_when_none() {
+        let r = AiResponse {
+            text: "x".to_string(),
+            tokens_used: None,
+            model: "m".to_string(),
+            provider: "p".to_string(),
+        };
+        let s = render_markdown(&r);
+        assert!(s.contains("## AI interpretation"));
+        assert!(!s.contains("Tokens:"));
+    }
+
+    // ── F.4 additional negative tests ───────────────────────────────
+
+    #[test]
+    fn provider_parse_rejects_garbage() {
+        assert!(Provider::parse("").is_err());
+        assert!(Provider::parse("anthropicx").is_err());
+        assert!(Provider::parse("foo bar").is_err());
+    }
+
+    #[test]
+    fn dry_run_response_does_not_leak_api_key_either_provider() {
+        for prov in [Provider::Anthropic, Provider::OpenAi] {
+            let cfg = AiConfig {
+                provider: prov,
+                model: "m".to_string(),
+                api_key: "sk-VERY-SECRET-DO-NOT-LEAK".to_string(),
+                max_tokens: 10,
+                include_git_diff: false,
+                include_commits: false,
+                max_commits: 0,
+            };
+            let r = call_api(&cfg, "p", true).unwrap();
+            assert!(!r.text.contains("VERY-SECRET"),
+                "dry-run output leaked api_key: {}", r.text);
+        }
+    }
+
+    #[test]
+    fn truncate_for_tokens_zero_returns_empty() {
+        // max=0 boundary: no lines fit → empty.
+        let out = truncate_for_tokens("a\nb\nc\n", 0);
+        assert_eq!(out, "");
+    }
+
+    #[test]
+    fn fmt_opt_handles_none() {
+        // Smoke: helpers should produce "-" placeholder для None.
+        assert_eq!(fmt_opt(&None),         "-");
+        assert_eq!(fmt_opt_pct(&None),     "-");
+        assert_eq!(fmt_opt_p(&None),       "-");
+        // Some values: formatted.
+        assert_eq!(fmt_opt(&Some(1.5)),    "1.5");
+        assert!(fmt_opt_pct(&Some(1.5)).starts_with("+1.50"));
+        assert_eq!(fmt_opt_p(&Some(0.001)),"0.0010");
+    }
 }
