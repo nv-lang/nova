@@ -85,3 +85,24 @@ export external fn bench.allocs() -> int
 /// иначе platform-native (QPC / mach_absolute_time / CLOCK_MONOTONIC_RAW).
 #stable(since = "0.1")
 export external fn bench.now_ns() -> int
+
+/// Plan 57.G.5 — Custom metric value. Каждый вызов emits ONE sample;
+/// CLI aggregates все calls per-bench → JSON `custom_metrics[]` field
+/// с count/min/max/sum/median.
+///
+/// `name` — короткий identifier (e.g. "cache_hits", "lock_contention_ms"),
+/// `value` — int значение, `unit` — short text suffix для display.
+/// Use case: domain metrics не covered built-in (throughput/allocs/
+/// cpu_instr); closes biggest gap vs Go `b.ReportMetric`.
+///
+/// Тонкость: вызывается inside `measure {}` body → один call на iteration.
+/// При iters_per_sample=100, samples_count=30 → 3000 metric samples total.
+/// Для per-sample-end metric: call после внутреннего loop:
+///   measure {
+///       let n = bench.iterations()
+///       let mut hits = 0
+///       for i in 0..n { hits = hits + workload(i) }
+///       bench.metric("hits_per_sample", hits, "count")  // 1 call/sample
+///   }
+#stable(since = "0.1")
+export external fn bench.metric(name str, value int, unit str) -> ()

@@ -36,6 +36,65 @@ pub fn fmt_throughput_elem(eps: f64) -> String {
     else { format!("{:.1} Gelem/s", eps / 1e9) }
 }
 
+/// Plan 57.G.4 — ASCII histogram of raw_ns sample distribution.
+/// 20 buckets, normalized к max-count via Unicode block chars `▁▂▃▄▅▆▇█`.
+/// Median + Tukey fences marked via column annotations.
+///
+/// Полезно for quick distribution shape inspection without HTML dashboard
+/// (mitata / hyperfine style).
+pub fn ascii_histogram(b: &AnalyzedBench, width: usize) -> String {
+    let st = &b.stats_ns;
+    let raw = &b.raw.raw_ns;
+    if raw.is_empty() {
+        return String::from("  (no samples)\n");
+    }
+    let n_bins = width.max(8);
+    let min_v = *raw.iter().min().expect("invariant: non-empty checked above") as f64;
+    let max_v = *raw.iter().max().expect("invariant: non-empty checked above") as f64;
+    let bin_width = if max_v > min_v { (max_v - min_v) / n_bins as f64 } else { 1.0 };
+    let mut counts = vec![0usize; n_bins];
+    for &v in raw {
+        let v_f = v as f64;
+        let idx = if bin_width > 0.0 {
+            (((v_f - min_v) / bin_width) as usize).min(n_bins - 1)
+        } else { 0 };
+        counts[idx] += 1;
+    }
+    let max_count = *counts.iter().max().unwrap_or(&1).max(&1);
+    // Unicode 1/8th blocks for 8-level resolution.
+    const BLOCKS: &[char] = &['\u{2581}', '\u{2582}', '\u{2583}', '\u{2584}',
+                              '\u{2585}', '\u{2586}', '\u{2587}', '\u{2588}'];
+    let mut bars = String::with_capacity(n_bins * 4);
+    for &c in &counts {
+        if c == 0 { bars.push(' '); continue; }
+        // Map count к [0..8) — saturate top.
+        let frac = (c as f64) / (max_count as f64);
+        let lv = ((frac * BLOCKS.len() as f64) as usize)
+            .min(BLOCKS.len() - 1);
+        bars.push(BLOCKS[lv]);
+    }
+    // Index columns для median + Tukey fences.
+    let bin_of = |v: f64| -> usize {
+        if bin_width > 0.0 {
+            (((v - min_v) / bin_width) as usize).min(n_bins - 1)
+        } else { 0 }
+    };
+    let mut markers = vec![' '; n_bins];
+    let lo_fence = st.p25 - 1.5 * st.iqr;
+    let hi_fence = st.p75 + 1.5 * st.iqr;
+    if lo_fence >= min_v { markers[bin_of(lo_fence)] = '['; }
+    if hi_fence <= max_v { markers[bin_of(hi_fence)] = ']'; }
+    markers[bin_of(st.median)] = 'M';
+
+    let mut out = String::new();
+    let _ = writeln!(out, "  histogram ({} buckets, max count = {}):", n_bins, max_count);
+    let _ = writeln!(out, "    {}", bars);
+    let _ = writeln!(out, "    {}", markers.iter().collect::<String>());
+    let _ = writeln!(out, "    {} … {}  (M=median, [ ]=Tukey fences)",
+        fmt_duration(min_v), fmt_duration(max_v));
+    out
+}
+
 /// Terminal table — coloured if `color` is true.
 /// Uses simple ASCII border characters; respects color through ANSI escape.
 pub fn terminal_report(meta: &ReproMeta, benches: &[AnalyzedBench], color: bool) -> String {

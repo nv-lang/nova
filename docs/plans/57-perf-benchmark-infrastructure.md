@@ -620,6 +620,127 @@ Sub-items (каждый — отдельный commit):
 deferred E-sketches are now production code with graceful fallbacks
 on missing dependencies (ssh/curl/perf_event_open).
 
+### **Plan 57.G — Audit-driven small batch — 2026-05-17**
+
+After complete Phase F closure, a structured audit (cross-codebase
+search for stubs/TODO + comparison with Criterion / Go testing.B /
+tinybench / mitata) outlined low-hanging fruit. Phase G batches
+all small (~10-100 LOC) improvements; Phase H — larger.
+
+Audit findings on production-grade aspects:
+- 0 TODOs/FIXMEs/unimplemented! в bench/* modules.
+- 0 `#[ignore]` tests; 1 conditional skip in cpu_instr.rs (graceful).
+- Resource cleanup audit: all fd/threads/malloc have explicit Drop.
+- 3 `unwrap()` sites where invariant would be self-documenting via
+  `expect("...")` или `entry().or_insert_with()` idiom.
+- `slope_ns_per_iter + r_squared` computed in stats.rs **но не emit'ятся**
+  в JSON v1 output (Criterion does).
+- `errno`-only error messages в perf_event_open / membw paths.
+- ASCII histogram absent in terminal output (mitata-style).
+
+Sub-items (commits independent):
+
+1. **57.G.1 — Schema completeness: slope + R² в JSON.**
+   - `bench/schema.rs::analyzed_to_json`: serialize `stats.slope_ns_per_iter`
+     + `stats.r_squared` (already in `AnalyzedBench`).
+   - Schema version stays v1 (backward-compatible field addition).
+   - **LOC:** ~15.
+
+2. **57.G.2 — Defensive unwraps → expect/idiomatic.**
+   - `schema.rs:119`: `obj.as_object_mut().unwrap()` → `expect("invariant: json!({}) builds object")`.
+   - `config.rs:143`: `get_mut(name).unwrap()` → `entry(name).or_insert_with()`.
+   - `dashboard.rs:324-325`: `min/max().unwrap()` → match-arm-protected.
+   - **LOC:** ~10.
+
+3. **57.G.3 — errno decoder для perf_event_open paths.**
+   - New `bench/errno.rs`: maps EACCES/EPERM/ENOENT/ENOSYS к actionable
+     текст (CAP_PERFMON hints, kernel version check).
+   - Wires в `cpu_instr.rs::InstrCounter::new` + `membw.rs::LlcMissCounter::new`.
+   - **LOC:** ~80.
+
+4. **57.G.4 — ASCII histogram в terminal output.**
+   - `bench/report.rs::terminal_histogram`: 20-bucket binning of raw_ns,
+     blocks `█▇▆▅...` rendering, indicates median + Tukey fences.
+   - Opt-in via `--histogram` flag в `bench run`.
+   - **LOC:** ~120.
+
+5. **57.G.5 — Custom metrics: `bench.metric(name, value, unit)`.**
+   - DSL: new builtin `bench.metric[T](name str, value T, unit str)`.
+   - Codegen: emit `__BENCH_METRIC__ <name> <value> <unit>` markers.
+   - CLI parses → JSON `custom_metrics[]` field per sample.
+   - Closes biggest gap vs Go `b.ReportMetric`.
+   - **LOC:** ~200.
+
+**Total 57.G estimate:** ~425 LOC + tests.
+
+### **Plan 57.H — Cross-binary + cross-platform — 2026-05-17**
+
+Larger items from audit; each may take ~1 day.
+
+Sub-items:
+
+1. **57.H.1 — Multi-group geomean (benchstat-style).**
+   - `bench/diff.rs`: detect group prefix (`hashmap/insert/*`,
+     `hashmap/lookup/*`) → per-group geomean lines in addition to suite.
+   - **LOC:** ~80.
+
+2. **57.H.2 — `nova bench hyperfine <binary> <binary>` cross-binary.**
+   - New subcommand: time arbitrary external commands (compiler self-host,
+     comparing two nova versions).
+   - Subprocess wrapper с warmup + median + Welch's t-test.
+   - JSON output совместимый с `bench diff`.
+   - **LOC:** ~250.
+
+3. **57.H.3 — Cross-platform CPU instructions via valgrind callgrind.**
+   - For macOS/Linux where `perf_event_open` is gated, fallback к
+     `valgrind --tool=callgrind` subprocess.
+   - Parses `Ir` (instructions) from `callgrind.out.<pid>` output.
+   - Determinism guarantee equivalent to iai-callgrind на Rust.
+   - **LOC:** ~200.
+
+**Total 57.H estimate:** ~530 LOC + tests.
+
+### **Plan 57.G** — ✅ ALL CLOSED 2026-05-17 (audit-driven small batch)
+
+- [x] **G.1** Drift slope + R² emitted в JSON v1
+      (`drift_slope_ns_per_sample` + `drift_r_squared` поля в SampleStats;
+      computed from raw_ns vs sample-index regression — detects cache
+      warmup leak, thermal drift across run). `3abacb6943a`
+- [x] **G.2** 3 defensive unwraps → expect/idiomatic
+      (`schema.rs:119` invariant-doc expect; `config.rs:143`
+      `entry().or_insert_with()`; `dashboard.rs:324-325` invariant-doc).
+- [x] **G.3** errno decoder для perf_event_open paths
+      (`bench/errno.rs` 80 LOC, maps EPERM/ENOENT/EACCES/EBUSY/EINVAL/
+      EMFILE/ENOSYS к actionable hints + 6 unit tests).
+- [x] **G.4** ASCII histogram в terminal output
+      (Unicode block chars ▁▂▃▄▅▆▇█, 20-40 bins, M=median + [ ] Tukey
+      fences, `--histogram` opt-in flag).
+- [x] **G.5** `bench.metric(name, value, unit)` custom metrics DSL
+      (closes biggest gap vs Go `b.ReportMetric`; aggregated per-bench
+      с count/min/max/sum/median в JSON `custom_metrics[]` field).
+      `3e52b19b2fb`
+
+**Phase G totals:** ~525 LOC + tests; 96 unit + 98 e2e asserts всё PASS.
+
+### **Plan 57.H** — ✅ ALL CLOSED 2026-05-17 (cross-binary + cross-platform)
+
+- [x] **H.1** Multi-group geomean (benchstat-style per-group lines based
+      on bench name `group/subname` prefix; `group_key()` +
+      `per_group_geomeans()` + terminal/markdown/JSON renderers + 5
+      unit tests). `e5426de07dc`
+- [x] **H.2** `nova bench hyperfine "name=binary args..." [...]` —
+      cross-binary wall-clock timing (`bench/hyperfine.rs` 210 LOC +
+      6 unit tests; warmup + samples + timeout + workdir; JSON output
+      совместим с `bench diff`). `21e1d026471`
+- [x] **H.3** Cross-platform CPU instructions via valgrind callgrind
+      subprocess (`bench/callgrind.rs` 210 LOC + 6 unit tests;
+      `nova bench callgrind <binary> [--cache-sim] [--out]` +
+      `callgrind-check` diagnostic; works на Linux + macOS; Windows
+      → "use perf_event_open или WSL" hint). `21e5d2567b5`
+
+**Phase H totals:** ~600 LOC + tests; section 23 +13 e2e asserts →
+110 / 110 ALL PASS.
+
 ### **Plan 57.E** — ✅ ALL CLOSED 2026-05-17 (3 impl + 3 design-sketch)
 
 - [x] HTML dashboard drill-down (histogram + Tukey fences + sidebar + comparison).
@@ -800,3 +921,17 @@ on missing dependencies (ssh/curl/perf_event_open).
   tests. Все deferred sketches doc converted to working impl. No
   external Rust crates added: AI uses system `curl`, distributed uses
   system `ssh`/`scp`, membw uses raw `perf_event_open` FFI.
+- **2026-05-17 Phase G + H closed (audit-driven)**: после Phase F
+  cross-codebase audit (TODO/FIXME scan + Criterion/testing.B/tinybench
+  comparison) outlined 8 production-grade improvements; все 8
+  implemented в Phase G (5 small) + H (3 larger).
+  - 57.G.1 drift slope + R² emitted в JSON (+ G.2-G.4) `3abacb6943a`
+  - 57.G.5 bench.metric custom metrics DSL `3e52b19b2fb`
+  - 57.H.1 multi-group geomean (benchstat-style) `e5426de07dc`
+  - 57.H.2 nova bench hyperfine cross-binary `21e1d026471`
+  - 57.H.3 valgrind callgrind cross-platform CPU instr `21e5d2567b5`
+  Plan 57 — **MVP + A + B + C + D + E + F + G + H COMPLETE**. 113+
+  unit tests pass (incl. 17 new для diff/hyperfine/callgrind/errno).
+  110 e2e asserts. Все 8 audit gaps закрыты. Не добавлено ни одной
+  Rust crate dep: hyperfine uses std::process::Command, callgrind uses
+  system valgrind subprocess, errno decoder без libc beyond raw_os_error.

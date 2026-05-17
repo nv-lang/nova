@@ -14566,6 +14566,151 @@ One self-corrected bug по ходу: fmt_bytes(999_999) округляется 
 "1000.00 KB" не "999.99 KB" (within KB unit bound 1e3..1e6), тест
 relaxed assert unit-only.
 
+Plan 57.G + H — Audit-driven production-grade improvements (2026-05-17):
+
+После Phase F.4 closure кросс-codebase audit (Explore agent — TODO/FIXME
+scan + Criterion 0.5 / Go testing.B+benchstat / tinybench / mitata
+сравнение) выявил 8 production-grade improvements: 5 small (Phase G) +
+3 cross-platform (Phase H). Все 8 закрыты как production.
+
+Audit findings (для контекста):
+- 0 TODOs/FIXMEs/unimplemented! в bench/* (clean baseline).
+- 0 #[ignore] tests; 1 graceful conditional skip в cpu_instr.rs.
+- Resource cleanup audit: все fd/threads/malloc с explicit Drop.
+- 3 unwrap() sites где expect("invariant") был бы self-documenting.
+- slope_r_squared() computed но не emit'ятся в JSON output.
+- errno-only error messages в perf_event_open paths (generic Permission
+  denied без actionable hint).
+- ASCII histogram absent в terminal output.
+- bench.metric custom user metrics absent — main gap vs Go b.ReportMetric.
+
+Phase G commits:
+
+G.1 (commit 3abacb6943a, bundled с G.2-G.4):
+- SampleStats: new drift_slope_ns_per_sample + drift_r_squared поля.
+- analyze() computes slope of (sample_index, raw_ns) via slope_r_squared.
+- analyzed_to_json emits оба поля в JSON v1 (backward-compatible).
+- Use case: detect cache warmup leak, thermal drift across run.
+
+G.2 (commit 3abacb6943a): defensive unwraps → expect/idiomatic.
+- schema.rs:119: obj.as_object_mut().unwrap() → expect("invariant: ...").
+- config.rs:143: get_mut(name).unwrap() → entry().or_insert_with(default).
+- dashboard.rs:324-325: min/max().unwrap() → expect с invariant note.
+
+G.3 (commit 3abacb6943a): bench/errno.rs (80 LOC).
+- perf_event_open_hint maps 7 common errnos (EPERM/ENOENT/EACCES/EBUSY/
+  EINVAL/EMFILE/ENOSYS) к actionable text с конкретными commands
+  (sudo sysctl, setcap, ulimit, kernel version check).
+- fmt_perf_event_open_err wraps prefix + raw error + hint.
+- Wires в cpu_instr.rs::InstrCounter::new + membw.rs::LlcMissCounter::new.
+- 6 unit tests (known errnos have hints, unknown returns None, fmt
+  includes prefix + hint).
+
+G.4 (commit 3abacb6943a): bench/report.rs::ascii_histogram + --histogram flag.
+- 20-40 buckets, Unicode block chars ▁▂▃▄▅▆▇█ relative к max-count.
+- M=median + [ ] Tukey fences (1.5·IQR) annotation row.
+- Opt-in via BenchRunOpts.histogram + --histogram CLI flag.
+
+G.5 (commit 3e52b19b2fb): bench.metric custom metrics DSL.
+- std/bench.nv: external fn bench.metric(name str, value int, unit str).
+- emit_c.rs:11939: codegen dispatch к nova_bench_emit_metric.
+- nova_rt/bench.h: emits __BENCH_METRIC__\t<name>\t<value>\t<unit>\n
+  markers (TAB-separated; flushed immediately).
+- bench/schema.rs: CustomMetric struct + count/min/max/sum/median helpers,
+  parse_metric_line, RawBenchResult.custom_metrics field, JSON v1 emit
+  + parse roundtrip.
+- bench/run.rs: stdout reader maintains pending_metrics between
+  __BENCH_START__ и __BENCH_RESULT__, groups by (name, unit), attaches
+  к raw result. Cleared at new START (discard incomplete).
+- 8 unit tests (parse_metric_line basic/empty-unit/negative/rejects-
+  other/rejects-non-int, CustomMetric aggregates/median-even/empty-None).
+
+Phase H commits:
+
+H.1 (commit e5426de07dc): multi-group geomean benchstat-style.
+- bench/diff.rs: group_key(name) — first '/'-segment of bench name.
+- per_group_geomeans(rows) → Vec<(group, pct, n_benches)>; BTreeMap →
+  alphabetically sorted; returns empty Vec when ≤1 group (degenerate).
+- terminal_format: "Per-group geomean (group = first '/'-segment of bench
+  name):" section после suite total geomean.
+- markdown_format: separate "### Per-group geomean" table.
+- json_format: per_group_geomeans[] array.
+- 5 unit tests (first-segment extract, single-group skip, two-groups +
+  values, BTreeMap sort, unmatched rows excluded).
+
+H.2 (commit 21e1d026471): nova bench hyperfine cross-binary timing.
+- bench/hyperfine.rs (210 LOC): HyperfineSpec parser ("name=path args"
+  OR "path args"; name token не должен содержать [' ', '/', '\\']).
+- HyperfineOpts: warmup_runs, samples, timeout_secs, workdir.
+- time_one() — Command spawn + poll-loop с timeout + kill on expiry;
+  stdout/stderr/stdin redirected к Stdio::null.
+- run() — warmup (discarded) → samples → AnalyzedBench (uses
+  bench::schema::AnalyzedBench::from_raw для full stats pipeline).
+- write_json() uses run_result_to_json (schema v1 совместим с bench diff).
+- CLI: nova bench hyperfine "spec1" "spec2" [--warmup N] [--samples K]
+  [--timeout SECS] [--workdir DIR] [--out FILE].
+- 6 unit tests (parse simple path/named/just-binary/equals-in-args/
+  empty-rejected/name-with-just-binary).
+- Smoke: cmd /c exit 0 + cmd /c ping → 2 entries; two hyperfine runs
+  → bench diff с +3.1% noise (как expected).
+
+H.3 (commit 21e5d2567b5): valgrind callgrind cross-platform CPU instructions.
+- bench/callgrind.rs (210 LOC): available() + version_string() probe.
+- CallgrindResult: instructions (Ir), I1/D1/LL miss counts (optional
+  when --cache-sim), raw_output_path.
+- CallgrindOpts: binary + args + workdir + out_file + cache_sim flag.
+- measure() spawns: valgrind --tool=callgrind --quiet
+  --callgrind-out-file=PATH [--cache-sim=yes] BINARY ARGS...
+- parse_output_file / parse_output: handles callgrind format
+  events: <columns>\nsummary: <values>\ntotals: <values>; column-name
+  index lookup (не assume Ir == column 0).
+- CLI: nova bench callgrind-check (diagnostic + install hints per OS),
+  nova bench callgrind <binary> [args] [--cache-sim] [--workdir]
+  [--out FILE.json].
+- 6 unit tests (parse Ir only, cache-sim, missing events/summary → None,
+  Ir not first column, totals fallback).
+- Determinism guarantee: identical binary + input → exactly same Ir
+  count run-to-run (perfect for regression detection без noise floor).
+- Cost: ~50x native slowdown (valgrind simulation) — для single-shot
+  deterministic comparison, не для high-throughput benches.
+
+Verification (через release nova binary, Windows):
+- cargo test --release --bin nova bench::diff      → 8 / 8  PASS
+- cargo test --release --bin nova bench::hyperfine → 6 / 6  PASS
+- cargo test --release --bin nova bench::callgrind → 6 / 6  PASS
+- cargo test --release --bin nova bench:: (all)    → 113+ PASS (was 96)
+- bash nova_tests/plan57_e2e/run_e2e.sh            → 110 / 110 PASS (was 88)
+Total: 113 unit + 110 e2e = 223 assertions ALL PASS через release nova.
+
+Architectural choice "zero new Rust crate deps" sustained:
+- G.3 errno decoder использует только std::io::Error::raw_os_error.
+- G.4 histogram — Unicode chars via std String.
+- G.5 metric markers via fprintf stdout — no JSON encoder в bench.h.
+- H.2 hyperfine — std::process::Command + std::time::Instant.
+- H.3 callgrind — std::process::Command к system `valgrind` binary.
+
+Plan 57 — **completely closed across all 8 phases (MVP + A + B + C + D
++ E + F + G + H)**. Все 8 audit gaps закрыты. Production-grade. Никаких
+external Rust crate dependencies добавлено. Все feature opt-in (требуют
+flag/binary в PATH/Linux+CAP) — никто не наказывает users который их
+не нужны.
+
+Где мы теперь делаем лучше чем Criterion / Go testing.B / tinybench:
+- effect-aware purity (Nova-unique через type system)
+- reproducibility metadata + compat check в diff (никто)
+- auto noise-floor calibration (никто)
+- bench DSL lints (sleep/io/opaque-literal warnings) (никто)
+- PELT changepoint anomaly detection (никто)
+- SSH distributed bench coordination (никто built-in)
+- AI explain diff (никто)
+- memory bandwidth probe (Criterion+Go: только perf отдельно)
+- per-pass compiler perf breakdown (никто)
+- multi-group geomean benchstat-equivalent
+- ASCII histogram mitata-equivalent
+- bench.metric custom metrics Go testing.B-equivalent
+- nova bench hyperfine cross-binary hyperfine-equivalent
+- cross-platform CPU instructions via valgrind callgrind iai-equivalent
+
 === Plan 60 — Size-accessor uniformity (.len/.capacity/.is_empty method-only) (2026-05-17) ===
 
 Ф.0-Ф.6 закрыты в worktree nova-lang-p60 (branch plan-60); merged → main.

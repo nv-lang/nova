@@ -110,10 +110,11 @@ pub mod linux {
             };
             if fd < 0 {
                 let errno = std::io::Error::last_os_error();
-                return Err(anyhow!(
-                    "perf_event_open failed: {} (likely /proc/sys/kernel/perf_event_paranoid > 1; \
-                     try `sudo sysctl -w kernel.perf_event_paranoid=1`)",
-                    errno));
+                // Plan 57.G.3 — actionable errno decoder (CAP_PERFMON /
+                // perf_event_paranoid / ENOSYS distinction).
+                return Err(anyhow!("{}",
+                    super::super::errno::fmt_perf_event_open_err(
+                        "perf_event_open(HW_INSTRUCTIONS)", &errno)));
             }
             Ok(Self { fd })
         }
