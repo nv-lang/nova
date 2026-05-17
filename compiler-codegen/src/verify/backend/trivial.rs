@@ -581,14 +581,17 @@ fn propagate_bounds(conjuncts: &[SmtTerm]) -> Vec<SmtTerm> {
         // Ф.20.1 (Plan 33.6): division bounds. `(/ Var Lit)` где Lit > 0:
         // - если goal <= 0 и known lower(Var) >= 0 → result non-negative → true.
         // - integer division: result <= Var/Lit (всегда <= Var/Lit для positive).
+        // Ф.31.2: extended на `>` strict — effective_goal = goal+1.
+        // `(> (/ Var Lit) -1)` где lower(Var) >= 0 → result >= 0 > -1 → true.
         let try_division_check = |inner: &SmtTerm| -> Option<bool> {
             if let SmtTerm::App(iop, iargs) = inner {
-                if iop != ">=" || iargs.len() != 2 { return None; }
+                if (iop != ">=" && iop != ">") || iargs.len() != 2 { return None; }
                 let goal = match &iargs[1] { SmtTerm::IntLit(n) => *n, _ => return None };
+                let effective_goal = if iop == ">" { goal.saturating_add(1) } else { goal };
                 if let SmtTerm::App(dop, dargs) = &iargs[0] {
                     if dop != "/" || dargs.len() != 2 { return None; }
                     if let (SmtTerm::Var(v), SmtTerm::IntLit(divisor)) = (&dargs[0], &dargs[1]) {
-                        if *divisor > 0 && goal <= 0 {
+                        if *divisor > 0 && effective_goal <= 0 {
                             if let Some(known_low) = lower.get(v) {
                                 if *known_low >= 0 {
                                     return Some(true);
