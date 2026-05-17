@@ -14825,3 +14825,85 @@ Plan 61 — Rust Result<T,E> + Box<dyn Error>-like hybrid:
 typed-when-possible (D65 правило 1: Fail[E]), erased-when-needed
 (Fail catch-all через тот же mechanism). Backward compat сохранён
 (legacy string throw + handler работает через legacy slot path).
+
+=== Plan 61 followup — production-grade closure (2026-05-17 EOD) ===
+
+User feedback: «это надо исправить, я же говорил, делать без упрощений»
+→ закрыты ВСЕ 4 ранее-deferred items в worktree nova-lang-p61f
+(branch plan-61-final).
+
+## #1 Cross-effect throw fix — architectural
+
+- NovaVtable_Fail / NovaVtable_Fail_any extended поле owner_iframe.
+- New TLS slot _nova_current_handler_iframe (effects.h/.c).
+- Nova_Fail_fail / nova_throw_typed / per-E dispatchers set/restore
+  этот slot вокруг handler-arm invoke.
+- nova_interrupt / nova_interrupt_ptr сначала смотрят
+  _nova_current_handler_iframe, fallback к _nova_interrupt_top.
+
+Result: handler-arm `interrupt v` в outer Fail handler корректно
+jump'тся в OUR with-block, не в inner nested (был pushed last в
+TLS top). Cross-effect `with Fail[A] = |e| throw B {...}` works.
+
+emit_with attach: vtable->owner_iframe = &iframe после iframe alloc
+для всех Fail-shaped handlers.
+
+repro_cross_effect_throw.nv: PASS.
+
+## #2 Stdlib migration
+
+semver_range.parse_version → idiomatic D65 правило 3 (cross-effect
+rethrow). retry.nv interrupt Err(e) — legitimate Result-wrap (capture
+для last_error), задокументировано. http/audit interrupt to_X(e) —
+legitimate convert-to-Response, не workaround.
+
+## #3 Generic Result typed Err
+
+Nova_Result struct extended (array.h):
+  err_typed_payload void*
+  err_typed_type_id NovaTypeId
+
+Constructor nova_make_Result_Err_typed для custom Err type. Codegen
+Err(custom_value) (val_ty ≠ nova_str) → typed constructor с heap-box.
+expr!! dispatch'тся по tid: typed → nova_throw_typed, else legacy
+Nova_Fail_fail.
+
+Backward compat: Err(nova_str) через legacy path.
+Full per-(T,E) Nova_Result mono struct — Plan 14/56 territory.
+
+f3_typed_result_err.nv: PASS.
+
+## #4 Per-E TLS slot + per-E vtable
+
+Production-grade infrastructure через `/*__PER_E_FAIL_DECLS__*/`
+splice marker. Для каждого registered E в per_e_fail_types:
+- typedef struct NovaVtable_Fail_<E> с typed (void*, E*) signature.
+- TLS slot _nova_handler_Fail_<E>.
+- Fast-path dispatcher _nova_throw_typed_<E>(E* payload) — prefer
+  per-E slot, fallback к erased.
+
+Dual-install в emit_with: legacy _nova_handler_Fail + per-E через
+adapter wrapper (sets typed payload в fail-frame, delegates к
+legacy handler). Adapter uses tmp_counter (НЕ handler_counter — last
+sync'нут с pre-scan forward decls).
+
+Stmt::Throw / ExprKind::Throw для concrete E → per-E entry call.
+Heap-box value-types inline через nova_alloc.
+
+## Spec
+
+D118 в spec/decisions/04-effects.md обновлён: добавлен "Plan 61
+followup (production-grade closure)" section с описанием всех 4
+closures + что действительно отвергнуто.
+
+## Tests
+
+6 PASS:
+- repro_silent_ub_throw_typed (Silent UB #1)
+- repro_silent_ub_result_bang (Silent UB #2)
+- repro_cross_effect_throw (Plan 61 fu#1 — was deferred)
+- f3_typed_result_err (Plan 61 fu#3 typed Result Err)
+- d65_rule_1_fail_alias_any
+- d65_rule_3_rethrow
+
+0 deferred. 0 simplifications.
