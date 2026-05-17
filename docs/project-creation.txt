@@ -14987,6 +14987,50 @@ Test: f31_lemma_requires_false_w2402 (EXPECT_COMPILE_WARNING W2402).
 - Все 176 предыдущих contract tests остаются PASS.
 
 
+# Plan 33.6 Ф.32 (2026-05-18): lemma tautological + lemma-fn collision
+
+Два дополнительных lemma lint'а через verify_module pass.
+
+## Ф.32.1 — Lemma c ensures идентичными requires → W2402
+
+`lemma foo(x) requires x >= 0 ensures x >= 0` — лемма не добавляет
+новой информации. apply делает SMT scope строго тот же, что без apply.
+Скорее всего программист скопировал requires и забыл изменить ensures.
+
+В verify_module lemma loop собираем requires/ensures expression'ы,
+нормализуем через `ast::pretty::print_expr` (игнорирует Span), если каждый
+ensures найден в множестве requires — push W2402.
+
+**Подход к сравнению:** debug `{:?}` не работал — Span'ы вкладываются
+рекурсивно в args, текстуально одинаковые exprs могут давать разные
+debug strings. `print_expr` — proper syntactic equality.
+
+Test: f32_lemma_tautological_w2402 (EXPECT_COMPILE_WARNING W2402).
+
+## Ф.32.2 — Lemma name collision с fn → W2402
+
+`lemma foo(x)` + `fn foo(x)` в одном модуле — apply ссылается на лемму,
+вызов foo(x) — на функцию. Confusing, потенциальный bug source.
+
+В verify_module lemma loop проверяем module.items на Item::Fn с тем же
+name — push W2402.
+
+Test: f32_lemma_fn_collision_w2402 (EXPECT_COMPILE_WARNING W2402).
+
+## Регрессия
+
+Перед Ф.32: 179 PASS / 0 FAIL / 44 SKIP contracts.
+После Ф.32: 181 PASS (+2) / 0 FAIL / 44 SKIP contracts.
+
+## Acceptance
+
+- Tautological lemma detect'ится через print_expr-based comparison.
+- Name collision lemma vs fn detect'ится через module.items scan.
+- Lemma lint catalog полный: vacuous precondition (Ф.31.3), tautological
+  (Ф.32.1), name collision (Ф.32.2), dead (Ф.17.3), no-params (Ф.24.2),
+  apply-undefined (Ф.31.1).
+
+
 ## Session: оба deferred follow-up'а Plan 59 закрыты (2026-05-17 EOD+1)
 
 После merge'а Plan 63 fixes от другого agent'а — обнаружено что оба
