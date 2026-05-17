@@ -192,13 +192,13 @@ export type Response {
 /// может читать Request-контекст и писать Response.
 ///
 /// #stable(since = "0.2")
-export type Handler alias fn(Request) Response
+export type HttpHandler alias fn(Request) Response
     uses Http
 
 /// Запустить HTTP-сервер на addr. Блокирует fiber (graceful shutdown через cancel).
 ///
 /// #stable(since = "0.2")
-export fn serve(addr str, handler Handler) !
+export fn serve(addr str, handler HttpHandler) !
     uses Net, Http
     requires addr.len() > 0
 ```
@@ -209,7 +209,7 @@ export fn serve(addr str, handler Handler) !
 |--------|---------------|-------------|----------------------|------|
 | Handler side-effects | не tracked | trait bounds (частично) | не tracked | ✅ `uses Db, Log` в сигнатуре |
 | Error propagation | panic / ResponseWriter | `Result<_, StatusCode>` | Promise rejection | `Fail[HttpError]` effect |
-| Middleware | `http.Handler` wrap | `tower::Layer` | fastify plugins | `fn(Handler) Handler uses Http` |
+| Middleware | `http.Handler` wrap | `tower::Layer` | fastify plugins | `fn(HttpHandler) HttpHandler uses Http` |
 | Concurrency model | goroutine/conn | tokio task/conn | libuv event loop | M:N fiber/conn (Plan 44) |
 | Backpressure | implicit channel | explicit bounds | implicit | explicit в M:N scheduler |
 | Static type checks on route params | ✗ | ✅ axum path extractor | ✗ | ✅ typed `PathParams` |
@@ -230,18 +230,18 @@ export type PathParams alias HashMap[str, str]
 /// Добавить route. Pattern: "/users/:id", "/files/*path", "/api/v1/".
 ///
 /// #stable(since = "0.2")
-export fn route(r Router, method Method, pattern str, handler Handler) Router
+export fn route(r Router, method Method, pattern str, handler HttpHandler) Router
 
 /// Собрать dispatch handler из таблицы routes.
 ///
 /// #stable(since = "0.2")
-export fn dispatch(r Router) Handler
+export fn dispatch(r Router) HttpHandler
     uses Http
 
 /// Middleware: применить к каждому request перед dispatch.
 ///
 /// #stable(since = "0.2")
-export fn use_middleware(r Router, mw fn(Handler) Handler) Router
+export fn use_middleware(r Router, mw fn(HttpHandler) HttpHandler) Router
 ```
 
 Паритет с Go `http.ServeMux` (1.22+, method+pattern routing) и Rust `axum::Router`.
@@ -256,7 +256,7 @@ export fn use_middleware(r Router, mw fn(Handler) Handler) Router
 /// Range requests: поддержка для Ф.3+.
 ///
 /// #stable(since = "0.2")
-export fn serve_dir(prefix str, dir str) Handler
+export fn serve_dir(prefix str, dir str) HttpHandler
     uses Http, Fs
 ```
 
