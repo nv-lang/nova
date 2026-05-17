@@ -1,0 +1,18 @@
+// Ф.31.3 (Plan 33.6): lemma c `requires false` → W2402 (vacuous precondition).
+// EXPECT_COMPILE_WARNING W2402
+
+module contracts.f31_lemma_requires_false_w2402
+
+lemma vacuous_lemma(x int)
+    requires false
+    ensures result == x
+=> x
+
+#verify
+fn caller(x int) -> int
+    requires x >= 0
+    ensures result >= 0
+{
+    apply vacuous_lemma(x)
+    x
+}
