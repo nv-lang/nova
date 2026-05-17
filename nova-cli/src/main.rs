@@ -541,6 +541,31 @@ enum BenchCmd {
     ///     "old=./nova-old build large.nv" \
     ///     "new=./nova-new build large.nv" \
     ///     --samples 10 --warmup 2 --out result.json
+    /// Plan 57.H.3: Run binary под Valgrind Callgrind, deterministic
+    /// CPU instructions count (cross-platform fallback к perf_event_open
+    /// Linux-only). Works на macOS + Linux with valgrind installed.
+    ///
+    /// Example:
+    ///   nova bench callgrind ./my-bench --gc malloc --cache-sim
+    Callgrind {
+        /// Executable path.
+        binary: PathBuf,
+        /// Args для executable.
+        #[arg(num_args = 0..)]
+        args: Vec<String>,
+        /// Enable cache simulation (I1/D1/LL miss counts). Slower.
+        #[arg(long = "cache-sim")]
+        cache_sim: bool,
+        /// Optional cwd для command.
+        #[arg(long = "workdir")]
+        workdir: Option<PathBuf>,
+        /// JSON output path для CallgrindResult.
+        #[arg(long = "out")]
+        out: Option<PathBuf>,
+    },
+    /// Plan 57.H.3: Check valgrind availability + version.
+    #[command(name = "callgrind-check")]
+    CallgrindCheck,
     Hyperfine {
         /// Specs: each "name=binary args..." или просто "binary args...".
         #[arg(required = true, num_args = 1..)]
@@ -3168,6 +3193,63 @@ fn cmd_bench(sub: BenchCmd) -> Result<()> {
             } else {
                 println!("\n  Note: memory bandwidth is Linux-only \
                           (perf_event_open + sysfs uncore_imc).");
+            }
+            Ok(())
+        }
+        BenchCmd::CallgrindCheck => {
+            println!("Valgrind Callgrind cross-platform CPU instructions (Plan 57.H.3):");
+            println!("  OS: {}", std::env::consts::OS);
+            let avail = bench::callgrind::available();
+            println!("  valgrind в PATH: {}",
+                if avail { "yes ✓" } else { "no ✗" });
+            if avail {
+                if let Some(v) = bench::callgrind::version_string() {
+                    println!("  Version: {}", v);
+                }
+            } else if cfg!(target_os = "linux") {
+                println!("  Install: sudo apt-get install valgrind  / dnf install valgrind");
+            } else if cfg!(target_os = "macos") {
+                println!("  Install: brew install --HEAD valgrind");
+            } else {
+                println!("  Note: Valgrind не supports Windows. Use perf_event_open path");
+                println!("        (Linux), или install WSL for valgrind на Windows.");
+            }
+            Ok(())
+        }
+        BenchCmd::Callgrind { binary, args, cache_sim, workdir, out } => {
+            let opts = bench::callgrind::CallgrindOpts {
+                binary: &binary,
+                args: &args,
+                workdir: workdir.as_deref(),
+                out_file: None,
+                cache_sim,
+            };
+            let r = bench::callgrind::measure(opts)?;
+            println!("callgrind {}:", binary.display());
+            println!("  Instructions (Ir): {}", r.instructions);
+            if let Some(v) = r.i1_misses {
+                println!("  I1 misses:         {}", v);
+            }
+            if let Some(v) = r.d1_misses {
+                println!("  D1 misses:         {}", v);
+            }
+            if let Some(v) = r.ll_misses {
+                println!("  LL misses:         {}", v);
+            }
+            println!("  Raw output: {}", r.raw_output_path.display());
+            if let Some(p) = out {
+                let json = serde_json::json!({
+                    "format_version": "1",
+                    "kind": "callgrind-result",
+                    "binary": binary.to_string_lossy(),
+                    "instructions": r.instructions,
+                    "i1_misses": r.i1_misses,
+                    "d1_misses": r.d1_misses,
+                    "ll_misses": r.ll_misses,
+                });
+                std::fs::write(&p, serde_json::to_string_pretty(&json)?)
+                    .map_err(|e| anyhow!("write JSON {}: {}", p.display(), e))?;
+                eprintln!("wrote callgrind JSON to {}", p.display());
             }
             Ok(())
         }

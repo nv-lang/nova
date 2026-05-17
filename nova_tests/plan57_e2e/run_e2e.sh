@@ -655,6 +655,110 @@ hist_out=$("$NOVA_BIN" bench run bench/micro/custom_metric.nv \
 assert_contains "$hist_out" "histogram" "G.4: --histogram prints distribution"
 assert_contains "$hist_out" "M=median"  "G.4: histogram has median marker"
 
+# ── 23. Plan 57.H.1/H.2/H.3 — multi-group geomean, hyperfine, callgrind ──
+
+echo "=== 23. H.1/H.2/H.3 (per-group geomean, hyperfine, callgrind-check) ==="
+
+# 23.H.1.P.1 — multi-group geomean: создаем 2-group baseline + new.
+H1_BASE="$TMP_DIR/h1-base.json"
+H1_NEW="$TMP_DIR/h1-new.json"
+cat > "$H1_BASE" <<JSONEOF
+{"format_version":"1","kind":"bench-result",
+ "metadata":{"hostname":"h","os":"linux","arch":"x86_64","cpu_model":"x","cpu_count":4,
+   "gc_mode":"malloc","compiler":{"nova_sha":"a","nova_version":"0.1","c_compiler":"clang"},
+   "build_mode":"release","timestamp_unix":1715000000,
+   "sampling":{"warmup_ns":100,"target_ns":100000000,"samples":30,"time_budget_ns":3000000000}},
+ "benches":[
+   {"name":"alpha/x","unit":"ns","raw_ns":[100,100,100,100,100],"iterations_per_sample":1,
+    "stats_ns":{"n":5,"mean":100,"median":100,"mad":0,"min":100,"max":100,"p95":100,"p99":100,"stdev":0,"outlier_count":0},
+    "ratios":{"normality_p":0.5,"cv_pct":0}},
+   {"name":"beta/y","unit":"ns","raw_ns":[50,50,50,50,50],"iterations_per_sample":1,
+    "stats_ns":{"n":5,"mean":50,"median":50,"mad":0,"min":50,"max":50,"p95":50,"p99":50,"stdev":0,"outlier_count":0},
+    "ratios":{"normality_p":0.5,"cv_pct":0}}
+ ]}
+JSONEOF
+cat > "$H1_NEW" <<JSONEOF
+{"format_version":"1","kind":"bench-result",
+ "metadata":{"hostname":"h","os":"linux","arch":"x86_64","cpu_model":"x","cpu_count":4,
+   "gc_mode":"malloc","compiler":{"nova_sha":"b","nova_version":"0.1","c_compiler":"clang"},
+   "build_mode":"release","timestamp_unix":1715100000,
+   "sampling":{"warmup_ns":100,"target_ns":100000000,"samples":30,"time_budget_ns":3000000000}},
+ "benches":[
+   {"name":"alpha/x","unit":"ns","raw_ns":[120,120,120,120,120],"iterations_per_sample":1,
+    "stats_ns":{"n":5,"mean":120,"median":120,"mad":0,"min":120,"max":120,"p95":120,"p99":120,"stdev":0,"outlier_count":0},
+    "ratios":{"normality_p":0.5,"cv_pct":0}},
+   {"name":"beta/y","unit":"ns","raw_ns":[50,50,50,50,50],"iterations_per_sample":1,
+    "stats_ns":{"n":5,"mean":50,"median":50,"mad":0,"min":50,"max":50,"p95":50,"p99":50,"stdev":0,"outlier_count":0},
+    "ratios":{"normality_p":0.5,"cv_pct":0}}
+ ]}
+JSONEOF
+h1_out=$("$NOVA_BIN" bench diff "$H1_BASE" "$H1_NEW" 2>&1)
+assert_contains "$h1_out" "Per-group geomean"  "H.1: per-group section header"
+assert_contains "$h1_out" "alpha"              "H.1: alpha group listed"
+assert_contains "$h1_out" "beta"               "H.1: beta group listed"
+assert_contains "$h1_out" "+20.0%"             "H.1: alpha group +20% computed"
+
+# 23.H.1.P.2 — single group → НЕТ per-group section.
+H1S_BASE="$TMP_DIR/h1s-base.json"
+cat > "$H1S_BASE" <<JSONEOF
+{"format_version":"1","kind":"bench-result",
+ "metadata":{"hostname":"h","os":"linux","arch":"x86_64","cpu_model":"x","cpu_count":4,
+   "gc_mode":"malloc","compiler":{"nova_sha":"a","nova_version":"0.1","c_compiler":"clang"},
+   "build_mode":"release","timestamp_unix":1715000000,
+   "sampling":{"warmup_ns":100,"target_ns":100000000,"samples":30,"time_budget_ns":3000000000}},
+ "benches":[
+   {"name":"only_one","unit":"ns","raw_ns":[100,100,100,100,100],"iterations_per_sample":1,
+    "stats_ns":{"n":5,"mean":100,"median":100,"mad":0,"min":100,"max":100,"p95":100,"p99":100,"stdev":0,"outlier_count":0},
+    "ratios":{"normality_p":0.5,"cv_pct":0}}
+ ]}
+JSONEOF
+h1s_out=$("$NOVA_BIN" bench diff "$H1S_BASE" "$H1S_BASE" 2>&1)
+if echo "$h1s_out" | grep -q "Per-group geomean"; then
+    echo "  FAIL: H.1: single-group should NOT print per-group section"
+    FAIL=$((FAIL+1))
+else
+    echo "  PASS: H.1: single-group suppresses per-group section"
+    PASS=$((PASS+1))
+fi
+
+# 23.H.2.P.1 — hyperfine с trivial command (cmd /c exit 0).
+H2_OUT="$TMP_DIR/h2.json"
+"$NOVA_BIN" bench hyperfine "trivial=cmd /c exit 0" \
+    --warmup 1 --samples 3 --out "$H2_OUT" >"$TMP_DIR/h2.log" 2>&1
+assert_file_exists "$H2_OUT" "H.2: hyperfine JSON written"
+assert_file_grep "$H2_OUT" 'trivial' "H.2: bench name in JSON"
+assert_file_grep "$H2_OUT" 'median_ns' "H.2: median_ns field present"
+
+# 23.H.2.N.1 — empty specs → usage error.
+h2ne_exit=0
+"$NOVA_BIN" bench hyperfine >"$TMP_DIR/h2ne.log" 2>&1 || h2ne_exit=$?
+if [ "$h2ne_exit" -ne 0 ]; then
+    echo "  PASS: H.2: no specs → non-zero exit ($h2ne_exit)"
+    PASS=$((PASS+1))
+else
+    echo "  FAIL: H.2: no specs should fail"
+    FAIL=$((FAIL+1))
+fi
+
+# 23.H.3.P.1 — callgrind-check shows OS + valgrind status.
+cc_out=$("$NOVA_BIN" bench callgrind-check 2>&1)
+assert_contains "$cc_out" "OS:"                              "H.3: callgrind-check shows OS"
+assert_contains "$cc_out" "valgrind"                         "H.3: mentions valgrind"
+# Cross-platform: either available OR install hint shown.
+case "$(uname -s)" in
+    Linux*) ;;
+    Darwin*) ;;
+    *)
+        if echo "$cc_out" | grep -q "Windows\|WSL"; then
+            echo "  PASS: H.3: non-Linux/macOS mentions Windows limitation"
+            PASS=$((PASS+1))
+        else
+            echo "  FAIL: H.3: non-Linux/macOS should mention Windows limitation"
+            FAIL=$((FAIL+1))
+        fi
+        ;;
+esac
+
 # ── Summary ──────────────────────────────────────────────────────────────
 
 echo ""

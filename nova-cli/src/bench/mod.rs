@@ -31,6 +31,7 @@ pub mod remote;
 pub mod ai;
 pub mod membw;
 pub mod hyperfine;
+pub mod callgrind;
 // Plan 57.G.3: errno decoder используется только из Linux-gated callers
 // (cpu_instr / membw). Allow dead_code на non-Linux чтобы избежать noise.
 #[allow(dead_code)]
