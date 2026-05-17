@@ -15924,13 +15924,28 @@ impl CEmitter {
         // 2. Method call: `obj.method(...)` или `Type.method(...)`.
         if self.suppress_variadic_routing { return None; }
         let recv_method: Option<(String, String)> = match &func.kind {
-            ExprKind::Path(parts) if parts.len() == 2 => {
-                Some((parts[0].clone(), parts[1].clone()))
+            ExprKind::Path(parts) if parts.len() >= 2 => {
+                // Plan 63 Fix B: для cross-module path'ов (`module.SubMod.Type.method`)
+                // берём последние 2 segment'а как (Type, method). Method_overloads
+                // ключаются по declared type name, не по полному path.
+                let n = parts.len();
+                Some((parts[n - 2].clone(), parts[n - 1].clone()))
             }
             ExprKind::Member { obj, name } => {
                 match &obj.kind {
                     ExprKind::Ident(n) if self.method_overloads.keys().any(|(t, _)| t == n) => {
                         Some((n.clone(), name.clone()))
+                    }
+                    // Plan 63 Fix B: nested Member chain `<alias>.Type.method`.
+                    // Парсер `p.Path.join` → Member{Member{Ident("p"), "Path"}, "join"}.
+                    // Для alias-import variadic flag lookup использует только последний
+                    // (Type, method) pair — alias prefix consumes namespace но не
+                    // меняет registered method signature.
+                    ExprKind::Member { obj: inner_obj, name: type_name }
+                        if matches!(&inner_obj.kind, ExprKind::Ident(_))
+                            && self.method_overloads.keys().any(|(t, _)| t == type_name) =>
+                    {
+                        Some((type_name.clone(), name.clone()))
                     }
                     _ => {
                         let obj_ty = self.infer_expr_c_type(obj);

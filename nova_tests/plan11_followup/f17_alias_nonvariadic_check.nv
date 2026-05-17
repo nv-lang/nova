@@ -1,0 +1,17 @@
+module plan11_followup.f17_alias_nonvariadic_check
+
+// Diagnostic: проверка что alias-import работает для НЕ variadic методов.
+// Если этот тест PASS — alias resolution в principle работает, проблема
+// специфична для variadic dispatch.
+
+import std.path.path as p
+
+test "non-variadic Path.normalize via alias" {
+    let r = p.Path.normalize("/a/b/../c")
+    assert(r == "/a/c")
+}
+
+test "non-variadic Path.is_absolute via alias" {
+    let r = p.Path.is_absolute("/abs")
+    assert(r)
+}
