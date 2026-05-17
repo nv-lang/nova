@@ -1,0 +1,13 @@
+// Ф.32.2 (Plan 33.6): lemma с тем же именем что и обычная fn → W2402 (collision).
+// EXPECT_COMPILE_WARNING W2402
+
+module contracts.f32_lemma_fn_collision_w2402
+
+lemma helper(x int)
+    requires x >= 0
+    ensures x + 1 > 0
+=> x + 1
+
+fn helper(x int) -> int {
+    x + 1
+}

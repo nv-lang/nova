@@ -2652,6 +2652,45 @@ let t0 = std::time::Instant::now();
                         ld.name),
                     ld.span));
             }
+            // Ф.32.1 (Plan 33.6): lemma c identical requires ↔ ensures (текстуально
+            // эквивалентные expression) — лемма не добавляет новой информации.
+            // `lemma foo(x) requires x >= 0 ensures x >= 0` → tautology.
+            let requires_exprs: Vec<&Expr> = ld.contracts.iter()
+                .filter(|c| matches!(c.kind, crate::ast::ContractKind::Requires))
+                .map(|c| &c.expr).collect();
+            let ensures_exprs: Vec<&Expr> = ld.contracts.iter()
+                .filter(|c| matches!(c.kind, crate::ast::ContractKind::Ensures))
+                .map(|c| &c.expr).collect();
+            // Если каждый ensures совпадает с каким-нибудь requires текстуально
+            // (через pretty-print, ignore Span) — лемма tautological.
+            use crate::ast::pretty::print_expr;
+            if !ensures_exprs.is_empty() && !requires_exprs.is_empty() {
+                let req_strs: std::collections::HashSet<String> =
+                    requires_exprs.iter().map(|e| print_expr(e)).collect();
+                let all_ensures_in_requires = ensures_exprs.iter()
+                    .all(|e| req_strs.contains(&print_expr(e)));
+                if all_ensures_in_requires {
+                    report.warnings.push(Diagnostic::new(
+                        format!("lemma `{}` имеет ensures идентичные requires [W2402]:\n  \
+                                 лемма не добавляет новой информации (tautological refinement).\n  \
+                                 Удалите или поменяйте ensures на содержательное утверждение.",
+                            ld.name),
+                        ld.span));
+                }
+            }
+            // Ф.32.2 (Plan 33.6): lemma name collision с обычной fn в том же модуле.
+            // Программист скорее всего ошибся (две декларации с одним именем).
+            let fn_collision = module.items.iter().any(|item| {
+                matches!(item, Item::Fn(fd) if fd.name == ld.name)
+            });
+            if fn_collision {
+                report.warnings.push(Diagnostic::new(
+                    format!("lemma `{}` имеет то же имя что обычная fn в модуле [W2402]:\n  \
+                             apply `{}(...)` будет ссылаться на лемму, fn-вызов — на функцию.\n  \
+                             Переименуйте один из них для clarity.",
+                        ld.name, ld.name),
+                    ld.span));
+            }
         }
         // Ф.26.3 (Plan 33.6): axiom без binders + `=> true` — vacuous.
         if let Item::Type(td) = item {
