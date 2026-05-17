@@ -2777,6 +2777,66 @@ let t0 = std::time::Instant::now();
                     _ => {}
                 }
             }
+            // Ф.33.1 (Plan 33.6): fn c ensures идентичными requires → W2402.
+            // Аналог Ф.32.1 для fn: если каждый ensures (без `result`/`old`)
+            // встречается как requires — fn tautologically refines (бесполезен).
+            // Skip если ensures упоминает `result` или `old(...)` — там может быть
+            // переименование, ensures осмысленный.
+            {
+                use crate::ast::pretty::print_expr;
+                // Walker: проверяет наличие Ident("result") или Call("old", ...) в Expr.
+                // Покрывает основные cases в contracts (Binary/Unary/Call/Ident).
+                // Для редких (Block/If/Match в contract'е) consvervatively вернёт false
+                // — это OK, потенциально ложный negative безопаснее false-positive warning.
+                fn refs_result_or_old(e: &Expr) -> bool {
+                    match &e.kind {
+                        ExprKind::Ident(n) => n == "result",
+                        ExprKind::Call { func, args, .. } => {
+                            if let ExprKind::Ident(n) = &func.kind {
+                                if n == "old" { return true; }
+                            }
+                            refs_result_or_old(func) || args.iter().any(|a| match a {
+                                crate::ast::CallArg::Item(e) | crate::ast::CallArg::Spread(e)
+                                    => refs_result_or_old(e),
+                                _ => false,
+                            })
+                        }
+                        ExprKind::Binary { left, right, .. } =>
+                            refs_result_or_old(left) || refs_result_or_old(right),
+                        ExprKind::Unary { operand, .. } => refs_result_or_old(operand),
+                        _ => false,
+                    }
+                }
+                let mut req_strs: std::collections::HashSet<String> =
+                    std::collections::HashSet::new();
+                let mut ensures_pure: Vec<&Contract> = Vec::new();
+                for c in &fd.contracts {
+                    match c.kind {
+                        ContractKind::Requires => {
+                            req_strs.insert(print_expr(&c.expr));
+                        }
+                        ContractKind::Ensures => {
+                            if !refs_result_or_old(&c.expr) {
+                                ensures_pure.push(c);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                if !ensures_pure.is_empty() && !req_strs.is_empty() {
+                    let all_tautological = ensures_pure.iter()
+                        .all(|c| req_strs.contains(&print_expr(&c.expr)));
+                    if all_tautological {
+                        let span = ensures_pure[0].span;
+                        report.warnings.push(Diagnostic::new(
+                            format!("fn `{}`: ensures (без result/old) идентичны requires [W2402]:\n  \
+                                     fn tautologically refines — ensures не несёт новой информации\n  \
+                                     callerу. Возможно, опечатка — ensures должен ссылаться на result.",
+                                fd.name),
+                            span));
+                    }
+                }
+            }
             // Ф.21.2: если 2+ ensures с разными литералами → contradictory error.
             if result_eq_lit.len() >= 2 {
                 let first_val = result_eq_lit[0].0;
