@@ -700,6 +700,47 @@ Sub-items:
 
 **Total 57.H estimate:** ~530 LOC + tests.
 
+### **Plan 57.G** — ✅ ALL CLOSED 2026-05-17 (audit-driven small batch)
+
+- [x] **G.1** Drift slope + R² emitted в JSON v1
+      (`drift_slope_ns_per_sample` + `drift_r_squared` поля в SampleStats;
+      computed from raw_ns vs sample-index regression — detects cache
+      warmup leak, thermal drift across run). `3abacb6943a`
+- [x] **G.2** 3 defensive unwraps → expect/idiomatic
+      (`schema.rs:119` invariant-doc expect; `config.rs:143`
+      `entry().or_insert_with()`; `dashboard.rs:324-325` invariant-doc).
+- [x] **G.3** errno decoder для perf_event_open paths
+      (`bench/errno.rs` 80 LOC, maps EPERM/ENOENT/EACCES/EBUSY/EINVAL/
+      EMFILE/ENOSYS к actionable hints + 6 unit tests).
+- [x] **G.4** ASCII histogram в terminal output
+      (Unicode block chars ▁▂▃▄▅▆▇█, 20-40 bins, M=median + [ ] Tukey
+      fences, `--histogram` opt-in flag).
+- [x] **G.5** `bench.metric(name, value, unit)` custom metrics DSL
+      (closes biggest gap vs Go `b.ReportMetric`; aggregated per-bench
+      с count/min/max/sum/median в JSON `custom_metrics[]` field).
+      `3e52b19b2fb`
+
+**Phase G totals:** ~525 LOC + tests; 96 unit + 98 e2e asserts всё PASS.
+
+### **Plan 57.H** — ✅ ALL CLOSED 2026-05-17 (cross-binary + cross-platform)
+
+- [x] **H.1** Multi-group geomean (benchstat-style per-group lines based
+      on bench name `group/subname` prefix; `group_key()` +
+      `per_group_geomeans()` + terminal/markdown/JSON renderers + 5
+      unit tests). `e5426de07dc`
+- [x] **H.2** `nova bench hyperfine "name=binary args..." [...]` —
+      cross-binary wall-clock timing (`bench/hyperfine.rs` 210 LOC +
+      6 unit tests; warmup + samples + timeout + workdir; JSON output
+      совместим с `bench diff`). `21e1d026471`
+- [x] **H.3** Cross-platform CPU instructions via valgrind callgrind
+      subprocess (`bench/callgrind.rs` 210 LOC + 6 unit tests;
+      `nova bench callgrind <binary> [--cache-sim] [--out]` +
+      `callgrind-check` diagnostic; works на Linux + macOS; Windows
+      → "use perf_event_open или WSL" hint). `21e5d2567b5`
+
+**Phase H totals:** ~600 LOC + tests; section 23 +13 e2e asserts →
+110 / 110 ALL PASS.
+
 ### **Plan 57.E** — ✅ ALL CLOSED 2026-05-17 (3 impl + 3 design-sketch)
 
 - [x] HTML dashboard drill-down (histogram + Tukey fences + sidebar + comparison).
@@ -880,3 +921,17 @@ Sub-items:
   tests. Все deferred sketches doc converted to working impl. No
   external Rust crates added: AI uses system `curl`, distributed uses
   system `ssh`/`scp`, membw uses raw `perf_event_open` FFI.
+- **2026-05-17 Phase G + H closed (audit-driven)**: после Phase F
+  cross-codebase audit (TODO/FIXME scan + Criterion/testing.B/tinybench
+  comparison) outlined 8 production-grade improvements; все 8
+  implemented в Phase G (5 small) + H (3 larger).
+  - 57.G.1 drift slope + R² emitted в JSON (+ G.2-G.4) `3abacb6943a`
+  - 57.G.5 bench.metric custom metrics DSL `3e52b19b2fb`
+  - 57.H.1 multi-group geomean (benchstat-style) `e5426de07dc`
+  - 57.H.2 nova bench hyperfine cross-binary `21e1d026471`
+  - 57.H.3 valgrind callgrind cross-platform CPU instr `21e5d2567b5`
+  Plan 57 — **MVP + A + B + C + D + E + F + G + H COMPLETE**. 113+
+  unit tests pass (incl. 17 new для diff/hyperfine/callgrind/errno).
+  110 e2e asserts. Все 8 audit gaps закрыты. Не добавлено ни одной
+  Rust crate dep: hyperfine uses std::process::Command, callgrind uses
+  system valgrind subprocess, errno decoder без libc beyond raw_os_error.
