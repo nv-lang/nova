@@ -14,6 +14,8 @@
 
 module std.prelude
 
-// Plan 35 sub-plan 35.A R27 marker: добавляю `PRELUDE_VERSION` константу
-// для verify в тестах что auto-import работает.
+/// Prelude version marker — verify в тестах что auto-import работает.
+/// Migration hardcoded prelude items (Option/Result/Some/None/Ok/Err/Error/
+/// Never/print/println/panic) → отдельный план: [docs/plans/62-prelude-hardcode-migration.md](../../docs/plans/62-prelude-hardcode-migration.md).
+#stable(since = "0.1")
 export const PRELUDE_VERSION int = 1

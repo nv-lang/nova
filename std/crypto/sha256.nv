@@ -31,6 +31,9 @@ module crypto.sha256
 // State
 // ──────────────────────────────────────────────────────────────────────────
 
+/// SHA-256 hash state (FIPS 180-4). **Secure** для cryptographic integrity,
+/// signatures, HMAC. Preferred over MD5/SHA-1 для new code.
+#stable(since = "0.1")
 export type Sha256 {
     mut h [8]u32                       // hash state H0..H7
     mut buffer []byte                   // pending < 64 bytes
@@ -79,6 +82,8 @@ fn k_constant(i int) -> u32 {
 // API
 // ──────────────────────────────────────────────────────────────────────────
 
+/// Init SHA-256 state с FIPS 180-4 standard IVs.
+#stable(since = "0.1")
 export fn Sha256.new() -> Self =>
     {
         h: initial_h(),
@@ -86,12 +91,16 @@ export fn Sha256.new() -> Self =>
         total_len: 0,
     }
 
+/// One-shot SHA-256 hash: bytes → 32-byte digest.
+#stable(since = "0.1")
 export fn Sha256.hash(data []byte) -> [32]byte {
     let mut state = Sha256.new()
     state.update(data)
     state.finalize()
 }
 
+/// One-shot SHA-256 hash в lowercase hex string (64 chars).
+#stable(since = "0.1")
 export fn Sha256.hash_str(data []byte) -> str {
     let digest = Sha256.hash(data)
     let mut bytes []byte = []
@@ -100,10 +109,8 @@ export fn Sha256.hash_str(data []byte) -> str {
 }
 
 
-// ──────────────────────────────────────────────────────────────────────────
-// Incremental
-// ──────────────────────────────────────────────────────────────────────────
-
+/// Incremental update — feed bytes в state.
+#stable(since = "0.1")
 export fn Sha256 mut @update(data []byte) -> () {
     @total_len = @total_len + (data.len as u64)
     for b in data {
@@ -115,6 +122,8 @@ export fn Sha256 mut @update(data []byte) -> () {
     }
 }
 
+/// Finalize hash — add padding + length, return 32-byte digest.
+#stable(since = "0.1")
 export fn Sha256 mut @finalize() -> [32]byte {
     let total_bits = @total_len * 8
 
