@@ -392,15 +392,17 @@ _NovaTuple_<arity>_<L1>_<T1>_<L2>_<T2>_..._<LN>_<TN>
 7. **simplifications.md** запись `[M-tuple-mangle-nested-collision]` ✅
    закрыт + d73a892f27b summary.
 
-### Acceptance Phase 5
+### Acceptance Phase 5 (закрыто aa07fa0d545)
 
-- [ ] Новый `compute_mono_tuple_c_name` length-prefixed.
-- [ ] `parse_mono_tuple_elements` unambiguous для любого nesting depth.
-- [ ] 8+ callsites обновлены, ни одного `_NovaTuple____` literal.
-- [ ] Registry-lookup workaround в let-destructure удалён.
-- [ ] `f10_deeply_nested_tuple_mangle.nv` PASS (4-уровневый).
-- [ ] Full regression `nova test` — 0 регрессий.
-- [ ] `docs/simplifications.md` — `[M-tuple-mangle-nested-collision]`
+- [x] Новый `compute_mono_tuple_c_name` length-prefixed.
+- [x] `parse_mono_tuple_elements` unambiguous для любого nesting depth.
+- [x] 8+ callsites обновлены, ни одного `_NovaTuple____` literal.
+- [x] Registry-lookup workaround в let-destructure удалён.
+- [x] `f10_deeply_nested_tuple_mangle.nv` PASS (4-уровневый) + f11-f14
+      (pointer elements, diverse types, 5-level nesting, out-of-bounds neg).
+- [x] Full regression `nova test` — 594 PASS / 0 FAIL после Phase 5
+      (vs 568 pre-Plan-59 baseline).
+- [x] `docs/simplifications.md` — `[M-tuple-mangle-nested-collision]`
       ✅ ЗАКРЫТО + Plan 59 fix d73a892f27b запись.
 
 ### Estimate
