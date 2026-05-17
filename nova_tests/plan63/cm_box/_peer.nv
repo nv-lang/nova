@@ -1,0 +1,7 @@
+module nova_tests.plan63.cm_box
+
+// Plan 42 folder-module heuristic — ≥2 peers нужны чтобы folder
+// trigger'нул folder-module mode (vs treated как individual test file).
+// This file — synthetic peer для activation.
+
+fn _unused_marker() -> int => 0
