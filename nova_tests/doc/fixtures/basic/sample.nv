@@ -2,26 +2,34 @@
 //!
 //! Этот модуль содержит образцы для всех item kind'ов, проверяя
 //! что collector + renderer'ы рендерят их корректно.
+//!
+//! #stable
 
 module nova_tests.doc.fixtures.basic.sample
 
 /// Возвращает абсолютное значение `x`.
 ///
-/// Пример:
+/// # Examples
 ///
 /// ```nova
 /// assert(abs(-5) == 5)
 /// ```
+///
+/// #stable
 export fn abs(x int) -> int =>
     if x < 0 { 0 - x } else { x }
 
 /// Двухмерная точка.
+///
+/// #stable
 export type Point {
     x int
     y int
 }
 
 /// Максимальный размер буфера в байтах.
+///
+/// #stable
 export const MAX_BUF int = 4096
 
 // Внутренняя функция — не должна появиться в output без --include-private.
