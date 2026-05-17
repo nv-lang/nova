@@ -15,6 +15,7 @@
 | [D113](#d113-must_verify_module--strict-mode-на-модуле) | `#must_verify_module` — strict mode на модуле |
 | [D114](#d114-smt-cache--parallel-verification) | SMT cache + parallel verification |
 | [D116](#d116-z3-backend-через-собственные-ffi-биндинги) | Z3 backend через собственные FFI-биндинги |
+| [D121](#d121-benchmark-dsl--bench---measure--) | Benchmark DSL — `bench "..." { measure { ... } }` + `bench.*` namespace |
 
 ---
 
@@ -1777,7 +1778,7 @@ Boehm GC). Собственные биндинги дают:
 
 ---
 
-## D109. Benchmark DSL — `bench "..." { measure { ... } }`
+## D121. Benchmark DSL — `bench "..." { measure { ... } }`
 
 ### Что
 

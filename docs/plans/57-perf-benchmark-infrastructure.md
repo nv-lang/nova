@@ -292,7 +292,7 @@ GC mode, compiler version.
 | L8 partial corpus (3/10 файлов) | ⚠️ partial |
 | L10 reproducibility metadata + env warnings | ⚠️ partial |
 | 12+ runtime micro-benches | ⚠️ 5 files (hello, hashmap, arith, strings, gc) |
-| Docs (`perf-conventions.md`) + D109 spec | ✅ |
+| Docs (`perf-conventions.md`) + D121 spec | ✅ |
 | 32 unit tests pass | ✅ |
 | GH Actions workflow always-on | ✅ |
 
@@ -847,7 +847,7 @@ Sub-items:
 
 ## 10. D-decisions
 
-- **D109** в `09-tooling.md` — Benchmark DSL (DSL grammar + sampling
+- **D121** в `09-tooling.md` — Benchmark DSL (DSL grammar + sampling
   protocol + rejected alternatives). Closed MVP.
 
 ---
@@ -858,7 +858,7 @@ Sub-items:
 - **2026-05-16 revised**: production-grade, 10-layer, MVP+57.A+57.B
   phasing, P1.
 - **2026-05-16 MVP closed**: worktree p57, commit `75192f361f3`.
-  10-layer MVP shipped + tests + docs + spec D109 + GH workflow.
+  10-layer MVP shipped + tests + docs + spec D121 + GH workflow.
   562 PASS / 0 FAIL regression check.
 - **2026-05-17 57.A closed**: 5 sub-tasks shipped:
   - 57.A.1 history-add orphan branch automation (commit `4bc471e3765`).

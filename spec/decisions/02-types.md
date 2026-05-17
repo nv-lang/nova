@@ -20,8 +20,8 @@
 | [D66](#d66-self-universal--ссылка-на-обобщающий-тип-в-методах-effects-protocols) | `Self` universal: ссылка на обобщающий тип в методах, effects, protocols | active |
 | [D72](#d72-generic-bounds-через-t-protocol--protocol-как-тип) | Generic bounds через `[T Protocol]` — protocol как тип | active |
 | [D110](#d110-ghost-state--spec-only-bindings) | Ghost state — spec-only bindings | active |
-| [D110](#d110-hybrid-dispatch-для-bound-k-methods) | Hybrid dispatch для bound-K methods | active |
-| [D111](#d111-tuple-monomorphization) | Tuple monomorphization | active |
+| [D122](#d122-hybrid-dispatch-для-bound-k-methods) | Hybrid dispatch для bound-K methods | active |
+| [D123](#d123-tuple-monomorphization) | Tuple monomorphization | active |
 | [D119](#d119-method-level-type-parameters-в-generic-methods) | Method-level type parameters в generic methods | active |
 
 ---
@@ -3177,7 +3177,7 @@ Ghost state позволяет писать контракты в термина
 
 ---
 
-## D110. Hybrid dispatch для bound-K methods
+## D122. Hybrid dispatch для bound-K methods
 
 > **Status:** active (spec). Реализация — [Plan 56](../../docs/plans/56-vtable-dispatch-erased-generics.md).
 
@@ -3234,7 +3234,7 @@ Codegen (Plan 56 Ф.1 + Ф.2):
 - [D24](#d24-контракты) — vtable lookups compatible с proven-contracts
   skip (no-op).
 
-## D111. Tuple monomorphization
+## D123. Tuple monomorphization
 
 > **Status:** active (spec, 2026-05-17 EOD+2 — Phase 7 production polish
 > applied). Реализация — [Plan 59](../../docs/plans/59-tuple-monomorphization.md)
@@ -3489,9 +3489,9 @@ template<U> Wrapper<U> map(...) }` — то же. Nova bootstrap теперь п
 
 - [D72](#d72-generic-bounds-через-t-protocol--protocol-как-тип) —
   generic bounds на type params; method-level U могут иметь bounds.
-- [D110](#d110-hybrid-dispatch-для-bound-k-methods) — hybrid dispatch
+- [D122](#d122-hybrid-dispatch-для-bound-k-methods) — hybrid dispatch
   для protocol-bound type params; orthogonal к method-level vs receiver-level.
-- [D111](#d111-tuple-monomorphization) — tuple mono пользуется тем же
+- [D123](#d123-tuple-monomorphization) — tuple mono пользуется тем же
   worklist infrastructure.
 - [Plan 48 Ф.9](../../docs/plans/48-closures-in-generics.md#-9--method-param-mono)
   — реализация (emit_call path 5b + infer_mono_method_ret_with_args).

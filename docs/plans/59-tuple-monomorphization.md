@@ -126,7 +126,7 @@ struct elements broken.
       Direct `.buckets` workaround в `@merge_from`/`@filter` оставлен —
       см. [`[M-stdlib-iter-in-generic-method-body]`](#m-stdlib-iter-in-generic-method-body)
       ниже (отдельный followup, не блокер Plan 59).
-- [x] Phase 4 — spec D-block (D111 в `spec/decisions/02-types.md`).
+- [x] Phase 4 — spec D-block (D123 в `spec/decisions/02-types.md`).
 - [x] Phase 5 — length-prefixed mangle (aa07fa0d545); root-cause fix
       для nested tuple collision вместо workaround'а.
 - [x] Phase 6 — match-pattern variant + mono'd tuple payload
@@ -468,7 +468,7 @@ stuffing. Emit Plan 36 W-warning suggesting record/struct.
 ### Ф.7.4 — Named tuple fields (L, ~150-200 LOC)
 
 `(name: T1, name: T2)` syntax → desugar в positional. Spec amend
-D27 / D111.
+D27 / D123.
 
 ### Ф.7.5 — Full mono'd Result NovaRes_<T>_<E> (L, ~300-400 LOC)
 
@@ -510,7 +510,7 @@ Working dir: `d:\Sources\nova-lang\.claude\worktrees\plan-59-audit`
     Nova должен явно differentiate.
   - Mixed named+positional `(x: 1, 2)` — allow? Rust не позволяет.
   - Type-equivalence: `(x: int, y: int)` ≡ `(int, int)` или separate?
-- Decisions impact spec (D27, D111) + may need extra D-block.
+- Decisions impact spec (D27, D123) + may need extra D-block.
 - **Defer:** требует dedicated plan (Plan 64?) с design pre-discussion.
 
 **Ф.7.5 Full mono'd Result** (~300-400 LOC):
@@ -544,6 +544,6 @@ Working dir: `d:\Sources\nova-lang\.claude\worktrees\plan-59-audit`
   L-priority deferred с rationale.
 - 25 regression tests (f1-f25) в nova_tests/plan59/, все PASS.
 - 2 dependent M-markers закрыты (Plan 63 Fix E + Fix F + Fix F+).
-- spec D111 + D-block amendments.
+- spec D123 + D-block amendments.
 
 **Validation:** `nova test plan59/` → 25 PASS / 0 FAIL.
