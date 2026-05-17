@@ -1,0 +1,10 @@
+module nova_tests.plan60.f4_is_empty_field_rejected
+
+// Plan 60 / D112: arr.is_empty без скобок → error.
+// EXPECT_COMPILE_ERROR E_SIZE_ACCESSOR_FIELD
+
+fn main() -> () {
+    let a []int = []
+    let b bool = a.is_empty   // ← should error
+    if b { println("yes") }
+}
