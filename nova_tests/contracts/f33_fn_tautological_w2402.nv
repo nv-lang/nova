@@ -1,0 +1,13 @@
+// Ф.33.1 (Plan 33.6): fn c ensures (без result/old) идентичными requires → W2402.
+// EXPECT_COMPILE_WARNING W2402
+
+module contracts.f33_fn_tautological_w2402
+
+// requires x >= 0; ensures x >= 0 (без result) — tautological refinement.
+#verify
+fn identity_check(x int) -> int
+    requires x >= 0
+    ensures x >= 0
+{
+    x
+}
