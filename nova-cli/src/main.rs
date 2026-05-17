@@ -520,6 +520,10 @@ enum BenchCmd {
         #[arg(long, default_value = "text")]
         format: String,
     },
+    /// Plan 57.F.1: SSH distributed bench coordination.
+    /// Subcommands: list (configured remotes), ping (health), run.
+    #[command(subcommand)]
+    Remote(BenchRemoteCmd),
     /// Plan 57.C.8: Measure per-pass compile time для corpus file(s).
     /// Wraps nova build с NOVA_PERF_TIMER=1; parses __PERF__ markers.
     Corpus {
@@ -608,6 +612,41 @@ enum BenchCmd {
         #[arg(long = "echarts-url",
               default_value = "https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js")]
         echarts_url: String,
+    },
+}
+
+/// Plan 57.F.1: `nova bench remote <subcommand>`.
+#[derive(Subcommand)]
+enum BenchRemoteCmd {
+    /// List configured remotes from ~/.nova-bench-remotes.toml.
+    List {
+        /// Override config path (default: ~/.nova-bench-remotes.toml or
+        /// $NOVA_BENCH_REMOTES env).
+        #[arg(long)]
+        config: Option<PathBuf>,
+    },
+    /// SSH health check для one remote.
+    Ping {
+        /// Remote name.
+        name: String,
+        #[arg(long)]
+        config: Option<PathBuf>,
+    },
+    /// Parallel bench run на N remotes; gather results в gather-into dir.
+    Run {
+        /// Bench .nv file path (relative to repo root on remote).
+        bench: PathBuf,
+        /// Comma-separated remote names (or "all").
+        #[arg(long, default_value = "all")]
+        remotes: String,
+        /// Output directory для per-remote JSON results.
+        #[arg(long = "gather-into", default_value = "remote-results")]
+        gather_into: PathBuf,
+        /// Optional git SHA to checkout перед бенчем.
+        #[arg(long)]
+        sha: Option<String>,
+        #[arg(long)]
+        config: Option<PathBuf>,
     },
 }
 
@@ -2906,6 +2945,7 @@ fn cmd_bench(sub: BenchCmd) -> Result<()> {
             println!("{}", bench::history::default_branch());
             Ok(())
         }
+        BenchCmd::Remote(sub) => cmd_bench_remote(sub),
         BenchCmd::HistoryAnomalies { branch, format } => {
             let repo = find_repo_root()?;
             let branch = resolve_history_branch(&branch);
@@ -3039,6 +3079,102 @@ fn cmd_bench(sub: BenchCmd) -> Result<()> {
             };
             let exit = bench::dashboard::generate(opts)?;
             if exit != 0 { std::process::exit(exit); }
+            Ok(())
+        }
+    }
+}
+
+/// Plan 57.F.1: `nova bench remote ...` dispatcher.
+fn cmd_bench_remote(sub: BenchRemoteCmd) -> Result<()> {
+    use bench::remote::{RemotesFile, RemoteConfig, run_distributed};
+
+    // Resolve config path with subcommand-provided override.
+    fn load(explicit: Option<&Path>) -> Result<RemotesFile> {
+        let path = RemotesFile::resolve_path(explicit)
+            .ok_or_else(|| anyhow!(
+                "cannot resolve remotes config path (set --config or \
+                 $NOVA_BENCH_REMOTES, or set $HOME/$USERPROFILE)"))?;
+        if !path.exists() {
+            bail!("remotes config not found at {} \
+                   (create it or pass --config)", path.display());
+        }
+        let f = RemotesFile::load_or_default(&path);
+        for err in &f.parse_errors {
+            eprintln!("warning: {}: {}", path.display(), err);
+        }
+        Ok(f)
+    }
+
+    match sub {
+        BenchRemoteCmd::List { config } => {
+            let f = load(config.as_deref())?;
+            if f.remotes.is_empty() {
+                println!("(no remotes configured)");
+                return Ok(());
+            }
+            println!("{:<20}  {:<30}  {:<12}  {:<6}  repo",
+                "name", "host", "user", "port");
+            println!("{:<20}  {:<30}  {:<12}  {:<6}  ----",
+                "----", "----", "----", "----");
+            for r in &f.remotes {
+                let port = r.ssh_port.map(|p| p.to_string())
+                    .unwrap_or_else(|| "22".to_string());
+                println!("{:<20}  {:<30}  {:<12}  {:<6}  {}",
+                    r.name, r.host, r.user, port, r.repo);
+            }
+            println!("\n{} remote(s)", f.remotes.len());
+            Ok(())
+        }
+        BenchRemoteCmd::Ping { name, config } => {
+            let f = load(config.as_deref())?;
+            let r = f.find(&name)
+                .ok_or_else(|| anyhow!("remote `{}` not found", name))?;
+            eprintln!("ping {} ({}@{}) ...", r.name, r.user, r.host);
+            r.ping()?;
+            println!("OK: {} reachable", r.name);
+            Ok(())
+        }
+        BenchRemoteCmd::Run { bench, remotes, gather_into, sha, config } => {
+            let f = load(config.as_deref())?;
+            if f.remotes.is_empty() {
+                bail!("no remotes configured — cannot run distributed");
+            }
+            // Resolve selector → list of &RemoteConfig.
+            let selected: Vec<&RemoteConfig> = if remotes == "all" {
+                f.remotes.iter().collect()
+            } else {
+                let mut out = Vec::new();
+                for name in remotes.split(',').map(|s| s.trim())
+                                            .filter(|s| !s.is_empty()) {
+                    let r = f.find(name)
+                        .ok_or_else(|| anyhow!("remote `{}` not found", name))?;
+                    out.push(r);
+                }
+                if out.is_empty() {
+                    bail!("--remotes resolved to empty set");
+                }
+                out
+            };
+            let bench_str = bench.to_string_lossy().to_string();
+            eprintln!("nova bench remote run: {} bench={} → {}",
+                selected.len(), bench_str, gather_into.display());
+            let results = run_distributed(&selected, sha.as_deref(),
+                &bench_str, &gather_into);
+            // Summary + non-zero exit if any failure.
+            let mut failures = 0;
+            println!("\nResults:");
+            for (name, res) in &results {
+                match res {
+                    Ok(path) => println!("  ✓ {:<20}  {}", name, path.display()),
+                    Err(e) => {
+                        println!("  ✗ {:<20}  ERROR: {}", name, e);
+                        failures += 1;
+                    }
+                }
+            }
+            println!("\n{}/{} succeeded",
+                results.len() - failures, results.len());
+            if failures > 0 { std::process::exit(2); }
             Ok(())
         }
     }
