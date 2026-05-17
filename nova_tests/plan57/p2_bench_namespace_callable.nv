@@ -1,0 +1,29 @@
+// Plan 57 MVP/57.C.2: bench.* namespace + gc.last_pause_ns callable.
+module plan57.p2_bench_namespace_callable
+
+test "bench.opaque identity на int" {
+    let v = bench.opaque(42)
+    assert(v == 42)
+}
+
+test "bench.opaque identity на bool" {
+    let b = bench.opaque(true)
+    assert(b == true)
+}
+
+test "bench.now_ns returns positive int" {
+    let t = bench.now_ns()
+    assert(t > 0)
+}
+
+test "bench.allocs returns int" {
+    let a = bench.allocs()
+    assert(a >= 0)
+}
+
+test "gc.last_pause_ns callable (Plan 57.C.2)" {
+    // Под malloc backend = 0, под boehm = monotonic timer wraps.
+    gc.collect()
+    let p = gc.last_pause_ns()
+    assert(p >= 0)
+}

@@ -1,0 +1,10 @@
+// Plan 57.B.5: group без cases → compile error.
+// EXPECT_COMPILE_ERROR at least one
+module plan57.n4_group_no_cases
+
+bench "empty-group" {
+    group "empty" {
+    }
+}
+
+test "stub" { assert(true) }

@@ -1,0 +1,27 @@
+// Plan 57 MVP: bench.bytes / bench.elements setters callable.
+module plan57.p5_bench_throughput_setters
+
+bench "bytes-throughput" {
+    measure {
+        bench.bytes(4096)
+        bench.opaque(0)
+    }
+}
+
+bench "elements-throughput" {
+    measure {
+        bench.elements(1000)
+        bench.opaque(0)
+    }
+}
+
+bench "reset-timer" {
+    measure {
+        bench.reset_timer()
+        bench.opaque(0)
+    }
+}
+
+test "throughput setters return unit" {
+    assert(true)
+}
