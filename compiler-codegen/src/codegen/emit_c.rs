@@ -1,5 +1,6 @@
 use crate::ast::*;
 use crate::diag::Span;
+use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write as FmtWrite;
 
@@ -182,6 +183,17 @@ pub struct CEmitter {
     current_spawn_capture_by_value: Option<HashSet<String>>,
     /// Maps variable name → C type string (best-effort)
     var_types: HashMap<String, String>,
+    /// Plan 48 method-param mono (Plan 63 followup, 2026-05-17): per-name override
+    /// for closure param types, consulted by `infer_expr_c_type` Ident arm BEFORE
+    /// `var_types`. Needed because `infer_mono_method_ret_with_args` takes `&self`
+    /// (it's called from `infer_expr_c_type(&self)`), so we cannot mutate
+    /// `var_types` directly. The caller fills/clears the RefCell around its
+    /// `infer_expr_c_type(closure_body)` call.
+    closure_param_type_overrides: RefCell<HashMap<String, String>>,
+    /// Plan 48 method-param mono (Plan 63 followup, 2026-05-17): per-name override
+    /// for type-param substitution (e.g. `T → nova_int`), consulted by
+    /// `type_ref_to_c` BEFORE `current_type_subst`. Same `&self` reason as above.
+    type_subst_overrides: RefCell<HashMap<String, String>>,
     /// Names of variables declared as `let mut` (mutable) — used by spawn-capture
     /// to decide between copy-by-value (immutable scalar) and capture-by-pointer.
     var_mutable: HashSet<String>,
@@ -584,6 +596,8 @@ impl CEmitter {
             current_spawn_captures: None,
             current_spawn_capture_by_value: None,
             var_types: HashMap::new(),
+            closure_param_type_overrides: RefCell::new(HashMap::new()),
+            type_subst_overrides: RefCell::new(HashMap::new()),
             var_mutable: HashSet::new(),
             record_schemas: HashMap::new(),
             sum_schemas: HashMap::new(),
@@ -2463,6 +2477,12 @@ impl CEmitter {
         if let TypeRef::Named { path, generics, .. } = ty {
             if generics.is_empty() {
                 let name = path.join("_");
+                // Plan 48 method-param mono (Plan 63 followup): per-call override
+                // (set by `infer_mono_method_ret_with_args` when resolving closure
+                // body types against method-level type-param subst).
+                if let Some(concrete) = self.type_subst_overrides.borrow().get(&name) {
+                    return Ok(concrete.clone());
+                }
                 if let Some(concrete) = self.current_type_subst.get(&name) {
                     return Ok(concrete.clone());
                 }
@@ -12551,17 +12571,108 @@ impl CEmitter {
                         if let Some(fn_decl) = method_decl {
                             let tmpl_opt = self.generic_type_templates.get(&base_name).cloned();
                             if let Some(tmpl) = tmpl_opt {
-                                let type_subst: Vec<(String, String)> = tmpl.generics.iter()
+                                let mut type_subst: Vec<(String, String)> = tmpl.generics.iter()
                                     .zip(type_args_c.iter())
                                     .map(|(g, c)| (g.name.clone(), c.clone()))
                                     .collect();
+                                // Plan 48 method-param mono (Plan 63 followup, 2026-05-17 EOD):
+                                // method может иметь собственные type params (`@map[U]`).
+                                // Resolve U из call-site args + closure return types.
+                                //
+                                // Step 1: resolve_mono_type_args для non-closure args.
+                                // Step 2: для ClosureLight args paired с Func params —
+                                // pre-infer closure return type с typed var_types для
+                                // params (substituted через current_type_subst). Без этого
+                                // x: T в `|x| ...` defaults к nova_int и method-level U
+                                // не resolved.
+                                let method_extra_subst: Vec<(String, String)> =
+                                    if !fn_decl.generics.is_empty() {
+                                        let saved_outer = std::mem::replace(
+                                            &mut self.current_type_subst,
+                                            type_subst.iter().cloned().collect(),
+                                        );
+                                        // Type-param slots, initially None.
+                                        let mut subst_slots: Vec<(String, Option<String>)> =
+                                            fn_decl.generics.iter()
+                                                .map(|g| (g.name.clone(), None))
+                                                .collect();
+                                        // Step 1: non-closure args через standard inference.
+                                        for (param, arg) in fn_decl.params.iter().zip(args.iter()) {
+                                            let is_closure = matches!(arg.expr().kind,
+                                                ExprKind::ClosureLight { .. } | ExprKind::ClosureFull(_));
+                                            if !is_closure {
+                                                let arg_c = self.infer_expr_c_type(arg.expr());
+                                                Self::infer_type_param_binding(&param.ty, &arg_c, &mut subst_slots);
+                                            }
+                                        }
+                                        // Step 2: ClosureLight args с typed param context.
+                                        for (param, arg) in fn_decl.params.iter().zip(args.iter()) {
+                                            let (fp, ret_ty_ref) =
+                                                if let crate::ast::TypeRef::Func { params: fp, return_type: Some(rt), .. } = &param.ty {
+                                                    (fp.clone(), rt.clone())
+                                                } else { continue };
+                                            let (closure_params, body_expr) = match &arg.expr().kind {
+                                                ExprKind::ClosureLight { params, body } => {
+                                                    let body_e = match body {
+                                                        crate::ast::ClosureBody::Expr(e) => (**e).clone(),
+                                                        crate::ast::ClosureBody::Block(b) => Expr::new(
+                                                            ExprKind::Block(b.clone()), b.span,
+                                                        ),
+                                                    };
+                                                    (params.clone(), body_e)
+                                                }
+                                                _ => continue,
+                                            };
+                                            // Tmp var_types: bind closure params to substituted fn-param types.
+                                            let inner_ptys: Vec<String> = fp.iter()
+                                                .map(|t| self.type_ref_to_c(t).unwrap_or_else(|_| "nova_int".into()))
+                                                .collect();
+                                            let saved_var_types: Vec<(String, Option<String>)> =
+                                                closure_params.iter().zip(inner_ptys.iter())
+                                                .map(|(cp, c_ty)| (cp.name.clone(),
+                                                    self.var_types.insert(cp.name.clone(), c_ty.clone())))
+                                                .collect();
+                                            let closure_ret_c = self.infer_expr_c_type(&body_expr);
+                                            // Restore var_types.
+                                            for (name, prev) in saved_var_types {
+                                                match prev {
+                                                    Some(old) => { self.var_types.insert(name, old); }
+                                                    None => { self.var_types.remove(&name); }
+                                                }
+                                            }
+                                            if !closure_ret_c.is_empty() && closure_ret_c != "void*" {
+                                                Self::infer_type_param_binding(
+                                                    &ret_ty_ref, &closure_ret_c, &mut subst_slots);
+                                            }
+                                        }
+                                        self.current_type_subst = saved_outer;
+                                        subst_slots.into_iter()
+                                            .filter_map(|(n, c)| c.map(|c| (n, c)))
+                                            .filter(|(_, c)| !c.is_empty() && c != "void*")
+                                            .collect()
+                                    } else { Vec::new() };
+                                let has_method_subst = !method_extra_subst.is_empty();
+                                for entry in method_extra_subst {
+                                    type_subst.push(entry);
+                                }
                                 let is_instance = matches!(
                                     fn_decl.receiver.as_ref().map(|r| &r.kind),
                                     Some(crate::ast::ReceiverKind::Instance));
-                                let method_c_name = if is_instance {
+                                let base_method_name = if is_instance {
                                     format!("{}_method_{}", rt_trimmed, method)
                                 } else {
                                     format!("{}_static_{}", rt_trimmed, method)
+                                };
+                                // Append method-level type-args suffix к method_c_name если
+                                // их > 0. Receiver-args уже в rt_trimmed (через mangled).
+                                let method_c_name = if has_method_subst {
+                                    let method_only_subst: Vec<(String, String)> = type_subst.iter()
+                                        .skip(tmpl.generics.len())
+                                        .cloned()
+                                        .collect();
+                                    Self::compute_mono_name(&base_method_name, &method_only_subst)
+                                } else {
+                                    base_method_name
                                 };
                                 // Apply subst to param types for fn_param_sigs (closure params)
                                 let saved_subst = std::mem::replace(
@@ -12578,8 +12689,30 @@ impl CEmitter {
                                             .map(|t| self.type_ref_to_c(t).unwrap_or_else(|_| "nova_unit".into()))
                                             .unwrap_or_else(|| "nova_unit".into());
                                         let prev_sig = self.fn_param_sigs.insert(
-                                            param_decl.name.clone(), (inner_ptys, inner_ret));
-                                        let v = self.emit_expr(a.expr())?;
+                                            param_decl.name.clone(), (inner_ptys.clone(), inner_ret.clone()));
+                                        // Plan 48 method-param mono (Plan 63 fu, 2026-05-17 EOD):
+                                        // bidirectional inference для closure-light arg —
+                                        // pass substituted param types через context_param_tys,
+                                        // чтобы `|x| ...` infer'ил x: T из call-site mono'd subst.
+                                        // Без этого x default'тся на nova_int → CC-FAIL для
+                                        // str-typed chains.
+                                        let v = if let ExprKind::ClosureLight { params, body } = &a.expr().kind {
+                                            let legacy_params: Vec<LambdaParam> = params.iter()
+                                                .map(|p| LambdaParam { name: p.name.clone(), ty: None, span: p.span })
+                                                .collect();
+                                            let body_expr: Expr = match body {
+                                                crate::ast::ClosureBody::Expr(e) => (**e).clone(),
+                                                crate::ast::ClosureBody::Block(b) => Expr::new(
+                                                    ExprKind::Block(b.clone()), b.span,
+                                                ),
+                                            };
+                                            let ctx: Vec<(String, String)> = inner_ptys.iter()
+                                                .map(|t| (t.clone(), String::new()))
+                                                .collect();
+                                            self.emit_lambda(&legacy_params, &body_expr, Some(&ctx), None)?
+                                        } else {
+                                            self.emit_expr(a.expr())?
+                                        };
                                         match prev_sig {
                                             Some(old) => { self.fn_param_sigs.insert(param_decl.name.clone(), old); }
                                             None => { self.fn_param_sigs.remove(&param_decl.name); }
@@ -16667,7 +16800,23 @@ impl CEmitter {
     /// Если `obj_ty = "Nova_X____A__B*"`, извлекаем base = "X",
     /// type_args = ["A", "B"], находим метод в generic_type_methods["X"],
     /// применяем apply_type_subst_to_ref с подстановкой generics→type_args.
-    fn infer_mono_method_ret(&self, obj_ty: &str, method: &str) -> Option<String> {
+    #[allow(dead_code)]
+    fn infer_mono_method_ret(&mut self, obj_ty: &str, method: &str) -> Option<String> {
+        self.infer_mono_method_ret_with_args(obj_ty, method, &[])
+    }
+
+    /// Plan 48 method-param mono (Plan 63 followup, 2026-05-17 EOD): variant
+    /// `infer_mono_method_ret` that takes call args чтобы resolve method-level
+    /// type params (`@map[U]` где U inferred из closure return type).
+    ///
+    /// Closure-param overrides set'тся через RefCell `closure_param_type_overrides`
+    /// (через &self) — infer_expr_c_type reads его first для Ident lookup.
+    fn infer_mono_method_ret_with_args(
+        &self,
+        obj_ty: &str,
+        method: &str,
+        args: &[crate::ast::CallArg],
+    ) -> Option<String> {
         // Формат: "Nova_X____A__B*" или без суффикса "*"
         let stripped = obj_ty.strip_prefix("Nova_")?.trim_end_matches('*');
         // Должно содержать "____" — разделитель base от type args
@@ -16679,16 +16828,97 @@ impl CEmitter {
             .filter(|s| !s.is_empty())
             .map(|s| s.to_string())
             .collect();
-        let template = self.generic_type_templates.get(base_name)?;
-        let methods = self.generic_type_methods.get(base_name)?;
-        let fd = methods.iter().find(|m| m.name == method)?;
-        let ret_ref = fd.return_type.as_ref()?;
-        // Строим подстановку: generic_param_name → concrete_c_type
-        let subst: Vec<(String, Option<String>)> = template.generics.iter()
+        let template = self.generic_type_templates.get(base_name)?.clone();
+        let methods = self.generic_type_methods.get(base_name)?.clone();
+        let fd = methods.iter().find(|m| m.name == method)?.clone();
+        let ret_ref = fd.return_type.as_ref()?.clone();
+        // Строим подстановку: receiver generic_param_name → concrete_c_type.
+        let mut subst: Vec<(String, Option<String>)> = template.generics.iter()
             .zip(type_args.iter())
             .map(|(g, c)| (g.name.clone(), Some(c.clone())))
             .collect();
-        let ret_c = Self::apply_type_subst_to_ref(ret_ref, &subst)?;
+        // Plan 48 method-param mono (Plan 63 followup): добавляем method-level
+        // generics из call-site inference. Mirrors emit_call path 5b Step 2
+        // (typed closure-param var_types pre-population) — needed so
+        // `|x| x + "!"` (где x: T=str) infer'ит return str (а не nova_int default).
+        //
+        // Этот метод — `&self`, поэтому мы НЕ мутируем var_types/current_type_subst
+        // напрямую. Вместо этого используем `closure_param_type_overrides` и
+        // `type_subst_overrides` RefCell'ы, которые `infer_expr_c_type` и
+        // `type_ref_to_c` consult'ят first.
+        if !fd.generics.is_empty() && !args.is_empty() {
+            // Receiver-level subst для type_ref_to_c (T → concrete C-type).
+            let receiver_subst_map: HashMap<String, String> = template.generics.iter()
+                .zip(type_args.iter())
+                .map(|(g, c)| (g.name.clone(), c.clone()))
+                .collect();
+            // Snapshot prior overrides и install receiver subst.
+            let saved_type_subst = self.type_subst_overrides.replace(receiver_subst_map);
+            // Add method-level slots в subst (Vec) — для apply_type_subst_to_ref в конце.
+            for g in &fd.generics {
+                if !subst.iter().any(|(n, _)| n == &g.name) {
+                    subst.push((g.name.clone(), None));
+                }
+            }
+            // Step 1: non-closure args — обычный type inference.
+            for (param, arg) in fd.params.iter().zip(args.iter()) {
+                let is_closure = matches!(arg.expr().kind,
+                    ExprKind::ClosureLight { .. } | ExprKind::ClosureFull(_));
+                if !is_closure {
+                    let arg_c = self.infer_expr_c_type(arg.expr());
+                    Self::infer_type_param_binding(&param.ty, &arg_c, &mut subst);
+                }
+            }
+            // Step 2: ClosureLight — bind params в RefCell override, recurse в body.
+            for (param, arg) in fd.params.iter().zip(args.iter()) {
+                let (fp, ret_ty_ref) = if let crate::ast::TypeRef::Func {
+                    params: fp, return_type: Some(rt), ..
+                } = &param.ty {
+                    (fp.clone(), (**rt).clone())
+                } else { continue };
+                let (closure_params, body_expr) = match &arg.expr().kind {
+                    ExprKind::ClosureLight { params, body } => {
+                        let body_e = match body {
+                            crate::ast::ClosureBody::Expr(e) => (**e).clone(),
+                            crate::ast::ClosureBody::Block(b) => Expr::new(
+                                ExprKind::Block(b.clone()), b.span,
+                            ),
+                        };
+                        (params.clone(), body_e)
+                    }
+                    _ => continue,
+                };
+                // type_ref_to_c теперь уже видит receiver subst — fp типы (`fn(T)→U`)
+                // resolve'ятся правильно для T (U остаётся как Nova_U_p placeholder).
+                let inner_ptys: Vec<String> = fp.iter()
+                    .map(|t| self.type_ref_to_c(t).unwrap_or_else(|_| "nova_int".into()))
+                    .collect();
+                // Save prior closure overrides, install fresh for these param names.
+                let mut overrides = self.closure_param_type_overrides.borrow_mut();
+                let saved: Vec<(String, Option<String>)> =
+                    closure_params.iter().zip(inner_ptys.iter())
+                        .map(|(cp, c_ty)| (cp.name.clone(),
+                            overrides.insert(cp.name.clone(), c_ty.clone())))
+                        .collect();
+                drop(overrides); // release borrow перед infer_expr_c_type recursion
+                let closure_ret_c = self.infer_expr_c_type(&body_expr);
+                // Restore prior overrides.
+                let mut overrides = self.closure_param_type_overrides.borrow_mut();
+                for (name, prev) in saved {
+                    match prev {
+                        Some(old) => { overrides.insert(name, old); }
+                        None => { overrides.remove(&name); }
+                    }
+                }
+                drop(overrides);
+                if !closure_ret_c.is_empty() && closure_ret_c != "void*" {
+                    Self::infer_type_param_binding(&ret_ty_ref, &closure_ret_c, &mut subst);
+                }
+            }
+            // Restore prior type subst overrides.
+            self.type_subst_overrides.replace(saved_type_subst);
+        }
+        let ret_c = Self::apply_type_subst_to_ref(&ret_ref, &subst)?;
         // Если return type совпадает с самим типом (Self), используем mono тип
         if ret_c == format!("Nova_{}*", base_name) {
             // Возвращается Self → нужен конкретный mono тип
@@ -17333,6 +17563,11 @@ impl CEmitter {
                 "nova_int".into()
             }
             ExprKind::Ident(name) => {
+                // Plan 48 method-param mono: closure-param override (set by
+                // `infer_mono_method_ret_with_args` before recursing into closure body).
+                if let Some(ty) = self.closure_param_type_overrides.borrow().get(name) {
+                    return ty.clone();
+                }
                 if let Some(ty) = self.var_types.get(name) {
                     return ty.clone();
                 }
@@ -17772,7 +18007,11 @@ impl CEmitter {
                     // с подстановкой type-аргументов. Это исправляет случаи вроде
                     // `let s = p.swap()` где p: Pair[int,str] — без этого
                     // fn_ret_swap = "void*" (erased) и поля s потом неверно typed.
-                    if let Some(ret) = self.infer_mono_method_ret(&obj_ty, method) {
+                    //
+                    // Plan 48 method-param mono (Plan 63 followup): передаём args
+                    // чтобы resolve method-level type params (`@map[U]` → U из
+                    // closure return type).
+                    if let Some(ret) = self.infer_mono_method_ret_with_args(&obj_ty, method, args) {
                         return ret;
                     }
                     // Plan 14 std-fix: built-in str методы (starts_with/ends_with/

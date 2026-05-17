@@ -9072,3 +9072,53 @@ Approach:
 
 Result: per-E fast-path direct dispatch когда possible; correct
 fallback chain для catch-all и legacy string-based Fail.
+
+## [M-plan-48-method-param-mono] — RESOLVED 2026-05-17 EOD+1 (Plan 63 followup)
+
+**Found during Plan 63 verification:** Generic method с собственным
+type param `[U]` (e.g. `Wrapper[T] @map[U](f fn(T) -> U) -> Wrapper[U]`)
+ранее mono'lся **только по receiver T**, U оставался `Nova_U_p`
+placeholder в return type:
+```c
+Nova_Wrapper____Nova_U_p* m = ...   // CC-FAIL (Nova_U_p undefined)
+```
+
+Это было documented в Plan 63 Fix C "Remaining edge case" как Plan 48
+territory. User pushback: "исправь, что нашёл без упрощений как для прода".
+
+**Approach (production-grade, no simplifications):**
+
+1. **emit_call path 5b extension:** bidirectional inference из call-site
+   closure-typed args. Pre-populate `var_types` с typed closure-param
+   C-types (resolve `fp[i]` через receiver subst), infer closure body
+   type → bind method-level `U`. Method C-name теперь включает both
+   levels: `Wrapper____<T>_method_map____<U>`.
+
+2. **infer_mono_method_ret_with_args:** new variant accepting call args,
+   mirrors path 5b. Used в `infer_expr_c_type` для let-binding type
+   inference (`let s2 = s.map(...)`).
+
+3. **&self compat via RefCell overrides:** так как `infer_expr_c_type` это
+   `&self`, мутирование `var_types`/`current_type_subst` невозможно.
+   Added two RefCell fields в CEmitter:
+   - `closure_param_type_overrides: RefCell<HashMap<String, String>>`
+   - `type_subst_overrides: RefCell<HashMap<String, String>>`
+
+   `infer_expr_c_type::Ident` arm + `type_ref_to_c` consult overrides
+   FIRST перед обычными maps. Caller set/restore вокруг recurs'ии в
+   closure body.
+
+**Result:** все 4 (T, U) combinations correctly mono'd
+(`Wrapper____nova_int_method_map____nova_int`, _int→_str, _str→_int,
+_str→_str), let-binding'и типизированы корректно, никаких
+`Nova_U_p`/`Nova_T_p` placeholder leaks.
+
+**Tests (permanent regression guards):**
+- `nova_tests/plan48_mpm/repro_wrapper_map.nv` — minimal repro.
+- `nova_tests/plan48_mpm/f1_method_param_mono.nv` — 5 sub-tests
+  (chained map, cross-type chain int→str→str, identity, isolated str→int).
+
+**Регрессия:** 668 PASS / 2 FAIL (2 RUN-FAIL == main baseline, Windows
+UAC os 740 — не codegen-related).
+
+**No simplifications.** Full method-param mono pipeline production-grade.

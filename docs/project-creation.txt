@@ -14907,3 +14907,84 @@ closures + что действительно отвергнуто.
 - d65_rule_3_rethrow
 
 0 deferred. 0 simplifications.
+
+================================================================================
+# Session: Plan 48 Ф.9 method-param mono (Plan 63 followup, 2026-05-17 EOD+1)
+================================================================================
+
+## Что починили
+
+Found during Plan 63 verification: generic method с собственным type
+param (`Wrapper[T] @map[U](f fn(T) -> U) -> Wrapper[U]`) mono'lся
+только по receiver T, U оставался `Nova_U_p` placeholder в return
+type → CC-FAIL: `Nova_Wrapper____Nova_U_p* m = ...`. Это было
+documented в Plan 63 как "Plan 48 territory, отдельная feature, не
+блокирует closure".
+
+User pushback: "исправь, что нашёл без упрощений как для прода".
+
+## Architectural fix
+
+Два interconnected change'а в `compiler-codegen/src/codegen/emit_c.rs`:
+
+### #1 emit_call path 5b (~12537)
+
+Bidirectional inference для closure-typed call args:
+- non-closure args: обычный `infer_expr_c_type` → bind T
+- closure args (`|x| body`): pre-populate `var_types` с typed
+  closure-param C-types (resolve fp[i] через receiver subst), затем
+  infer body type → bind method-level U.
+
+Method C-name теперь включает method-level type-args suffix:
+`Wrapper____<T>_method_map____<U>` (старая mangling была только
+`Wrapper____<T>_method_map`).
+
+### #2 infer_mono_method_ret_with_args (~16794)
+
+Новый variant `infer_mono_method_ret` принимающий call args, mirrors
+emit_call path 5b inference. Используется в `infer_expr_c_type` для
+let-binding type'а (`let s2 = s.map(...)` → должен infer `Nova_Wrapper____nova_str*`).
+
+Так как `infer_expr_c_type` это `&self`, мутирование `var_types` /
+`current_type_subst` невозможно. Решение — две RefCell поля в CEmitter:
+- `closure_param_type_overrides: RefCell<HashMap<String, String>>`
+- `type_subst_overrides: RefCell<HashMap<String, String>>`
+
+`infer_expr_c_type::Ident` arm и `type_ref_to_c` consult'ят RefCell
+overrides FIRST перед обычными maps. `infer_mono_method_ret_with_args`
+set/restore overrides вокруг recurs'ии в closure body.
+
+## C-output verification
+
+`nova_tests/plan48_mpm/f1_method_param_mono.c` — 4 distinct mono
+instances:
+  Wrapper____nova_int_method_map____nova_int
+  Wrapper____nova_int_method_map____nova_str
+  Wrapper____nova_str_method_map____nova_int
+  Wrapper____nova_str_method_map____nova_str
+
+Все `let s2 = s.map(...)` типизированы корректно (`Nova_Wrapper____nova_str*`),
+никаких `Nova_U_p`/`Nova_T_p` placeholder leaks.
+
+## Tests (permanent regression guards)
+
+- `nova_tests/plan48_mpm/repro_wrapper_map.nv` — minimal repro
+  (int→int + int→str).
+- `nova_tests/plan48_mpm/f1_method_param_mono.nv` — 5 production-grade
+  sub-tests: chained map, cross-type chain (int→str→str),
+  identity, isolated str→int (test isolation check).
+
+## Регрессия
+
+668 PASS / 2 FAIL (2 RUN-FAIL = Windows UAC os error 740, identical
+to main baseline — не codegen-related, плагин UAC elevation требует
+повышения прав для spawn'а .exe).
+
+## Spec / Docs
+
+- `docs/plans/48-closures-in-generics.md` — Ф.9 row в status table +
+  Шаг 6 секция с детальным описанием.
+- `docs/plans/63-cross-module-mono-dispatch-correctness.md` — Fix C
+  "Remaining edge case" обновлён: ✅ RESOLVED via Plan 48 Ф.9.
+
+0 deferred. 0 simplifications.
