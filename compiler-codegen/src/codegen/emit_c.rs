@@ -425,7 +425,7 @@ pub struct CEmitter {
     /// Returned from emit_module instead of printed directly to stderr,
     /// so test runner can route them to captured_stderr rather than leaking
     /// to the terminal.
-    warnings: Vec<String>,
+    warnings: std::cell::RefCell<Vec<String>>,
     /// Plan 20 Ф.4: stack of active defer/errdefer scopes during emission.
     /// Each block that contains a `defer`/`errdefer` stmt pushes a `DeferScope`
     /// on entry and pops on exit. `Stmt::Return`/`Break`/`Continue` walk the
@@ -677,7 +677,7 @@ impl CEmitter {
             defer_scopes: Vec::new(),
             defer_block_counter: 0,
             var_boxed: HashMap::new(),
-            warnings: Vec::new(),
+            warnings: std::cell::RefCell::new(Vec::new()),
             mono_fn_decls: HashMap::new(),
             mono_method_decls: HashMap::new(),
             self_method_decls: HashMap::new(),
@@ -1930,7 +1930,7 @@ impl CEmitter {
         let per_e_decls = self.render_per_e_fail_decls();
         self.out = self.out.replace("/*__PER_E_FAIL_DECLS__*/", &per_e_decls);
 
-        Ok((self.out, self.warnings))
+        Ok((self.out, self.warnings.into_inner()))
     }
 
     /// Mangle a test name and append a numeric suffix to guarantee uniqueness.
@@ -5128,7 +5128,7 @@ impl CEmitter {
                     // (anonymous embed не даёт имени). Накапливаем в warnings
                     // (не eprintln!) — test runner направит в captured_stderr.
                     if embeds.iter().any(|(_, _, anon)| *anon) {
-                        self.warnings.push(format!(
+                        self.warnings.borrow_mut().push(format!(
                             "warning: type `{}` overrides delegated method `{}({})`; \
                              anonymous embed has no name for explicit base-call — \
                              possible infinite recursion",
@@ -6233,8 +6233,61 @@ impl CEmitter {
     /// Safe to call multiple times — deduplicated через HashSet.
     fn register_mono_tuple(&self, elem_c_tys: &[String]) -> String {
         let key: Vec<String> = elem_c_tys.to_vec();
-        self.mono_tuple_instances.borrow_mut().insert(key);
+        let inserted = self.mono_tuple_instances.borrow_mut().insert(key);
+        // Plan 59 Ф.7.3: sizeof estimation — warning для big tuples (>5
+        // elements OR >128 bytes estimated). Warns пользователя что
+        // record-тип может быть более clear/efficient + предупреждает
+        // cache-line stuffing. Estimate-only — actual struct sizes
+        // depend на C alignment, conservative upper bound.
+        if inserted {
+            let mut est_bytes: usize = 0;
+            for c_ty in elem_c_tys {
+                est_bytes += Self::estimate_c_type_size_bytes(c_ty);
+            }
+            let too_many = elem_c_tys.len() > 5;
+            let too_big = est_bytes > 128;
+            if too_many || too_big {
+                let mangled = Self::compute_mono_tuple_c_name(elem_c_tys);
+                self.warnings.borrow_mut().push(format!(
+                    "warning: large mono'd tuple `{}` ({} элементов, ~{} bytes) — \
+                     consider using record type для clarity и stable ABI; \
+                     big tuples могут вызвать cache-line stuffing.",
+                    mangled, elem_c_tys.len(), est_bytes));
+            }
+        }
         Self::compute_mono_tuple_c_name(elem_c_tys)
+    }
+
+    /// Plan 59 Ф.7.3: estimate sizeof for a C type string — conservative
+    /// upper bound для sizeof warning'а. Pointer types = 8 (x64). Scalar
+    /// types known sizes. Mono'd nested types recursive sum + alignment
+    /// padding (8-byte aligned). Unknown types default 8.
+    fn estimate_c_type_size_bytes(c_ty: &str) -> usize {
+        // Pointer types — 8 bytes (x64).
+        if c_ty.ends_with('*') || c_ty.ends_with("_p") {
+            return 8;
+        }
+        match c_ty {
+            "nova_int" | "nova_f64" | "uint64_t" | "int64_t" => 8,
+            "nova_str" => 16, // struct { ptr, len }
+            "nova_bool" | "nova_byte" | "uint8_t" | "int8_t" => 1,
+            "nova_f32" | "uint32_t" | "int32_t" => 4,
+            "uint16_t" | "int16_t" => 2,
+            "nova_unit" => 1,
+            other if other.starts_with("_NovaTuple_") => {
+                // Recurse через parse_mono_tuple_elements
+                if let Some(elems) = Self::parse_mono_tuple_elements(other) {
+                    let mut total: usize = 0;
+                    for e in &elems {
+                        total += Self::estimate_c_type_size_bytes(e);
+                    }
+                    total
+                } else {
+                    8 // unknown nested format
+                }
+            }
+            _ => 8, // unknown user struct — conservative
+        }
     }
 
     /// Plan 59: walk TypeRef recursively, register mono'd tuples encountered
@@ -15223,6 +15276,20 @@ impl CEmitter {
                 // Plan 59 Phase 5: length-prefixed mangle — parse точен для
                 // any nesting depth. Registry-lookup workaround удалён
                 // (был needed когда split-by-`__` ломался на nested).
+                // Plan 59 Ф.7.1: arity diagnostic — если parse возвращает
+                // Some(elems) с **разным** arity, это user error (pattern
+                // arity != tuple arity). Без этого check'а silent fallback
+                // на legacy `_NovaTuple{n}` → wrong type → cryptic CC error
+                // "no member 'fN'". Emit clear Nova-level diagnostic.
+                if let Some(parsed) = Self::parse_mono_tuple_elements(&inferred) {
+                    if parsed.len() != n {
+                        return Err(format!(
+                            "tuple destructure arity mismatch: pattern имеет {} \
+                             элементов, scrutinee tuple `{}` — {} элементов. \
+                             Hint: pattern должен совпадать по arity с tuple-типом.",
+                            n, inferred, parsed.len()));
+                    }
+                }
                 let (struct_name, elem_tys): (String, Vec<String>) =
                     if let Some(elems) = Self::parse_mono_tuple_elements(&inferred)
                         .filter(|e| e.len() == n)
@@ -15496,6 +15563,25 @@ impl CEmitter {
             // (e.g. для `for (k, v) in coll.iter()` где coll — generic mono'd).
             // Без этого все tuple binds получают default `nova_int`.
             let elem_tys = self.tuple_element_types.get(scr_tmp).cloned();
+            // Plan 59 Ф.7.1: arity diagnostic — если pattern arity != actual
+            // tuple arity (lookup tuple_element_types or var_types mono'd
+            // name parse), emit clear Nova-level error до C-emit'а который
+            // даёт нечитаемый "no member 'fN'" message.
+            let actual_arity = elem_tys.as_ref().map(|v| v.len()).or_else(|| {
+                self.var_types.get(scr_tmp)
+                    .and_then(|ty| Self::parse_mono_tuple_elements(ty))
+                    .map(|v| v.len())
+            });
+            if let Some(expected) = actual_arity {
+                if parts.len() != expected {
+                    return Err(format!(
+                        "tuple destructure arity mismatch: pattern имеет {} элементов, \
+                         scrutinee tuple — {} элементов. \
+                         Hint: добавьте/уберите элементы в pattern, чтобы \
+                         совпадало с tuple-типом.",
+                        parts.len(), expected));
+                }
+            }
             for (i, p) in parts.iter().enumerate() {
                 let field = format!("{}{}f{}", scr_tmp, accessor, i);
                 let elem_ty = elem_tys.as_ref()
@@ -15936,6 +16022,24 @@ impl CEmitter {
                 }
             }
             Pattern::Tuple(pats, _) => {
+                // Plan 59 Ф.7.1: arity diagnostic для pattern_bind_typed —
+                // match `Some((a, b, c))` на 2-tuple должен дать clear
+                // Nova error до C-compile failure.
+                let elem_tys_known = self.tuple_element_types.get(scr).cloned();
+                let actual_arity = elem_tys_known.as_ref().map(|v| v.len()).or_else(|| {
+                    self.var_types.get(scr)
+                        .and_then(|ty| Self::parse_mono_tuple_elements(ty))
+                        .map(|v| v.len())
+                });
+                if let Some(expected) = actual_arity {
+                    if pats.len() != expected {
+                        return Err(format!(
+                            "tuple destructure arity mismatch: pattern имеет {} элементов, \
+                             scrutinee tuple — {} элементов. \
+                             Hint: pattern должен совпадать по arity с tuple-типом.",
+                            pats.len(), expected));
+                    }
+                }
                 for (i, p) in pats.iter().enumerate() {
                     match p {
                         Pattern::Wildcard(_) | Pattern::Literal(..) => {}

@@ -1617,7 +1617,13 @@ pub fn run_one(opts: &TestBuildOpts) -> Outcome {
     // обычный flow (тест может комбинировать WARNING + RUNTIME_PANIC).
     let expected_warnings = find_compile_warnings();
     if !expected_warnings.is_empty() {
-        let all_lints_str = lint_warnings.join("\n");
+        // Plan 59 Ф.7.3: codegen_warnings (e.g. sizeof warning для big
+        // mono'd tuples из register_mono_tuple) тоже учитываются для
+        // EXPECT_COMPILE_WARNING match'а — раньше только lint_warnings
+        // (lints::lint_module AST-based pass) были видны.
+        let mut combined = lint_warnings.clone();
+        combined.extend(codegen_warnings.iter().cloned());
+        let all_lints_str = combined.join("\n");
         for pat in &expected_warnings {
             if !all_lints_str.contains(*pat) {
                 return Outcome::Fail {

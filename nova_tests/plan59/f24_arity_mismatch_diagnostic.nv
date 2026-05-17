@@ -1,0 +1,19 @@
+// EXPECT_COMPILE_ERROR arity mismatch
+//
+// Positive-via-negative (Ф.7.1): tuple destructure pattern arity ≠
+// actual tuple arity → Nova-level clear diagnostic, не C compiler
+// "no member named 'fN'". Pre-check в pattern_destructure_tuple +
+// pattern_bind_typed.
+
+module plan59.f24_arity_mismatch_diagnostic
+
+
+fn make_pair() -> (int, int) {
+    (1, 2)
+}
+
+
+test "destructure 2-tuple as 3-tuple — clear arity error" {
+    let (a, b, c) = make_pair()
+    assert(a + b + c == 3)
+}
