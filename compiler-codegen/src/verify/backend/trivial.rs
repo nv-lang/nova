@@ -606,24 +606,26 @@ fn propagate_bounds(conjuncts: &[SmtTerm]) -> Vec<SmtTerm> {
         // `(>= (- IntLit Var) goal)` где N - upper(Var) >= goal → true.
         let try_subtraction_check = |inner: &SmtTerm| -> Option<bool> {
             if let SmtTerm::App(iop, iargs) = inner {
-                if iop != ">=" || iargs.len() != 2 { return None; }
+                if (iop != ">=" && iop != ">") || iargs.len() != 2 { return None; }
                 let goal = match &iargs[1] { SmtTerm::IntLit(n) => *n, _ => return None };
+                // Для `>` goal становится goal+1 (строгое неравенство → нестрогое).
+                let effective_goal = if iop == ">" { goal.saturating_add(1) } else { goal };
                 if let SmtTerm::App(sop, sargs) = &iargs[0] {
                     if sop != "-" || sargs.len() != 2 { return None; }
                     match (&sargs[0], &sargs[1]) {
                         (SmtTerm::Var(a), SmtTerm::Var(b)) => {
                             if let (Some(la), Some(ub)) = (lower.get(a), upper.get(b)) {
-                                if la.saturating_sub(*ub) >= goal { return Some(true); }
+                                if la.saturating_sub(*ub) >= effective_goal { return Some(true); }
                             }
                         }
                         (SmtTerm::Var(v), SmtTerm::IntLit(n)) => {
                             if let Some(known_low) = lower.get(v) {
-                                if known_low.saturating_sub(*n) >= goal { return Some(true); }
+                                if known_low.saturating_sub(*n) >= effective_goal { return Some(true); }
                             }
                         }
                         (SmtTerm::IntLit(n), SmtTerm::Var(v)) => {
                             if let Some(known_up) = upper.get(v) {
-                                if n.saturating_sub(*known_up) >= goal { return Some(true); }
+                                if n.saturating_sub(*known_up) >= effective_goal { return Some(true); }
                             }
                         }
                         _ => {}
@@ -709,6 +711,57 @@ fn propagate_bounds(conjuncts: &[SmtTerm]) -> Vec<SmtTerm> {
                             }
                             if let Some(known) = lower.get(v) {
                                 if *known > *n { return Some(true); }
+                            }
+                        }
+                        // Ф.29.3 (Plan 33.6): Var OP Var bounds check.
+                        // `(>= VarA VarB)` — если lower(A) >= upper(B) → true;
+                        //                    если upper(A) < lower(B) → false.
+                        // `(<= VarA VarB)` — симметрично.
+                        // `(> VarA VarB)`  — если lower(A) > upper(B) → true; upper(A) <= lower(B) → false.
+                        // `(< VarA VarB)`  — если upper(A) < lower(B) → true; lower(A) >= upper(B) → false.
+                        (">=", SmtTerm::Var(a), SmtTerm::Var(b)) if a != b => {
+                            if let (Some(la), Some(ub)) = (lower.get(a), upper.get(b)) {
+                                if *la >= *ub { return Some(true); }
+                            }
+                            if let (Some(ua), Some(lb)) = (upper.get(a), lower.get(b)) {
+                                if *ua < *lb { return Some(false); }
+                            }
+                        }
+                        ("<=", SmtTerm::Var(a), SmtTerm::Var(b)) if a != b => {
+                            if let (Some(ua), Some(lb)) = (upper.get(a), lower.get(b)) {
+                                if *ua <= *lb { return Some(true); }
+                            }
+                            if let (Some(la), Some(ub)) = (lower.get(a), upper.get(b)) {
+                                if *la > *ub { return Some(false); }
+                            }
+                        }
+                        (">", SmtTerm::Var(a), SmtTerm::Var(b)) if a != b => {
+                            if let (Some(la), Some(ub)) = (lower.get(a), upper.get(b)) {
+                                if *la > *ub { return Some(true); }
+                            }
+                            if let (Some(ua), Some(lb)) = (upper.get(a), lower.get(b)) {
+                                if *ua <= *lb { return Some(false); }
+                            }
+                        }
+                        ("<", SmtTerm::Var(a), SmtTerm::Var(b)) if a != b => {
+                            if let (Some(ua), Some(lb)) = (upper.get(a), lower.get(b)) {
+                                if *ua < *lb { return Some(true); }
+                            }
+                            if let (Some(la), Some(ub)) = (lower.get(a), upper.get(b)) {
+                                if *la >= *ub { return Some(false); }
+                            }
+                        }
+                        // Ф.29.1 (Plan 33.6): != bounds check.
+                        // `(!=  Var IntLit(n))` — если known lower > n или known upper < n → true;
+                        // если known lower == known upper == n → false (Var всегда == n).
+                        ("!=", SmtTerm::Var(v), SmtTerm::IntLit(n))
+                        | ("!=", SmtTerm::IntLit(n), SmtTerm::Var(v)) => {
+                            let lo = lower.get(v);
+                            let up = upper.get(v);
+                            if let Some(l) = lo { if *l > *n { return Some(true); } }
+                            if let Some(u) = up { if *u < *n { return Some(true); } }
+                            if let (Some(l), Some(u)) = (lo, up) {
+                                if *l == *n && *u == *n { return Some(false); }
                             }
                         }
                         _ => {}

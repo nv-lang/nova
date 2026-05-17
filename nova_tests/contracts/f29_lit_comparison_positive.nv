@@ -1,0 +1,28 @@
+// Ф.29.2 (Plan 33.6): literal comparison normalization документация.
+// simplify_app уже fold'ит IntLit OP IntLit → BoolLit.
+// Тест документирует что TrivialBackend доказывает contracts с constant folding.
+
+module contracts.f29_lit_comparison_positive
+
+// ensures с константой больше нижней bound → trivially proven через bounds.
+#verify
+fn const_bound(x int) -> int
+    requires x >= 5
+    ensures result >= 3
+{
+    x
+}
+
+// Subtraction: requires x >= 10; ensures x - 2 >= 5 (lower(x)-2 = 8 >= 5).
+#verify
+fn const_sub_bound(x int) -> int
+    requires x >= 10
+    ensures result >= 5
+{
+    x - 2
+}
+
+test "lit comparison folding" {
+    assert(const_bound(7) == 7)
+    assert(const_sub_bound(12) == 10)
+}
