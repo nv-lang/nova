@@ -9043,6 +9043,30 @@ bounds) — это V3 graph reasoning. Также: arbitrary depth nested
 boolean composition с absorption (Ф.30.1 закрывает плоский case через
 flat-step + existing absorption loop).
 
+## [M-plan-33.6-Ф.31-apply-undef-lemma-and-division-strict] (2026-05-18)
+
+Третий pipeline-level silent skip закрыт (apply к несуществующей лемме)
++ division `>` паритет + lemma vacuous-requires detection.
+
+**1. apply к несуществующей лемме = compile error.** Раньше: `apply foo(x)`
+если `lemma foo` не объявлена — silent skip (find_lemma_ensures возвращает
+None, branch не выполняется). Это soundness gap: программист думает что
+лемма применена, на деле — пропуск. Closure через E2405 в verify_fn loop
+(EncodingFailed с маркером [CONTRACT_UNSUPPORTED]).
+
+**2. Division `>` strict.** Bound check helpers пришли к полному паритету:
+addition / subtraction / const-mul / negation / division × {`>=`, `>`}.
+Один pattern везде (effective_goal = goal+1 для strict).
+
+**3. Lemma c `requires false` → W2402.** Vacuous precondition: apply
+никогда не активирует. Lint в verify_module.
+
+**Регрессия:** 176 → 179 PASS (+3 новых f31), 0 FAIL, 44 SKIP.
+
+**Что не закрывает:** silent skip в других branch'ах verify_fn (например
+loop encoding fallback) — нужен отдельный аудит. Также: apply к лемме с
+неправильной типизацией args (type-check на apply args сейчас weak).
+
 ## [M-57.F.4-positive-negative-coverage] — Test expansion (2026-05-17)
 
 **Не simplification.** Прямой user feedback "тесты напиши по тому,

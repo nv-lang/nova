@@ -14938,6 +14938,55 @@ cargo test --lib verify::backend::trivial::tests: 9/9 PASS (+3 для flatten).
 - Не trogает encoder structure, не expand'ит EncodingError::Unsupported scope.
 
 
+# Plan 33.6 Ф.31 (2026-05-18): apply-undef + division `>` + lemma-requires-false
+
+Закрывает третий silent skip pipeline-level (apply без leмы → silent
+сейчас → E2405) + division strict паритет + новый contract lint
+(vacuous precondition).
+
+## Ф.31.1 — apply к несуществующей лемме → E2405
+
+В verify_fn/apply loop: если `module.items` не содержит `Item::Lemma` с
+именем из `apply <name>(...)` — раньше silent skip (не выполнялся
+find_lemma_ensures branch). Теперь — EncodingFailed с маркером
+[CONTRACT_UNSUPPORTED] и E2405 кодом → compile error через emit
+diagnostic pipeline (Ф.8.2 infrastructure).
+
+Test: f31_apply_undefined_lemma_fail (EXPECT_COMPILE_ERROR E2405).
+
+## Ф.31.2 — Division `>` strict (паритет с Ф.30)
+
+try_division_check принимал только `>=`. Расширен на `>` через тот же
+pattern: effective_goal = goal+1 если iop == ">". Теперь все четыре
+bound check helpers (addition/subtraction/const-mul/negation/division)
+имеют полный strict паритет.
+
+Test: f31_division_strict_positive (div_strict_above_neg —
+`requires x >= 0; ensures (x/2) > -1`).
+
+## Ф.31.3 — Lemma c `requires false` → W2402
+
+`lemma foo() requires false ensures ...` — vacuous precondition: apply
+никогда не активирует ensures. Программист скорее всего ошибся. Добавлена
+проверка в verify_module: пройти все Item::Lemma, поискать contract
+с kind=Requires и body=BoolLit(false), эмитить W2402.
+
+Test: f31_lemma_requires_false_w2402 (EXPECT_COMPILE_WARNING W2402).
+
+## Регрессия
+
+Перед Ф.31: 176 PASS / 0 FAIL / 44 SKIP contracts.
+После Ф.31: 179 PASS (+3) / 0 FAIL / 44 SKIP contracts.
+
+## Acceptance
+
+- apply к несуществующей лемме = compile error (был silent skip).
+- division strict `>` теперь работает (паритет с `>=`).
+- vacuous lemma precondition detect'ится через W2402.
+- Не trogает encoder structure, не expand'ит Unsupported scope.
+- Все 176 предыдущих contract tests остаются PASS.
+
+
 ## Session: оба deferred follow-up'а Plan 59 закрыты (2026-05-17 EOD+1)
 
 После merge'а Plan 63 fixes от другого agent'а — обнаружено что оба
