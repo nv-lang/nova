@@ -45,9 +45,7 @@ test "non-consuming: append после starts_with/ends_with работает" {
 test "peek: snapshot буфера, append после работает" {
     let mut sb = StringBuilder.new()
     sb.append("abc")
-    // Explicit type annotation: compiler не infer'ит return type peek() как str
-    // (fallback на nova_int). Type-inference improvement deferred.
-    let snap str = sb.peek()
+    let snap = sb.peek()                  // Plan 63 Fix A: type inference works
     assert(snap == "abc")
     sb.append("def")                      // append после peek
     assert(sb.into() == "abcdef")
