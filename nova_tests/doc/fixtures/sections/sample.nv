@@ -1,4 +1,6 @@
 //! Plan 45 / D107: fixture для проверки section parsing (style-guide §11.5).
+//!
+//! #stable
 
 module nova_tests.doc.fixtures.sections.sample
 
@@ -24,5 +26,7 @@ module nova_tests.doc.fixtures.sections.sample
 /// # Since
 ///
 /// 0.1.0
+///
+/// #stable
 export fn divide(a int, b int) -> int =>
     a / b
