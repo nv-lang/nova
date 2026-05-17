@@ -503,6 +503,11 @@ enum BenchCmd {
     /// Linux: tries perf_event_open + measures known loop. Other OS: stub.
     #[command(name = "cpu-instr-check")]
     CpuInstrCheck,
+    /// Plan 57.D.4: Print recommended history branch name based on
+    /// NOVA_BENCH_RUNNER_ID env (multi-runner CI matrix support).
+    /// Returns `bench-history` если env не set, иначе `bench-history-<id>`.
+    #[command(name = "runner-branch")]
+    RunnerBranch,
     /// Plan 57.C.8: Measure per-pass compile time для corpus file(s).
     /// Wraps nova build с NOVA_PERF_TIMER=1; parses __PERF__ markers.
     Corpus {
@@ -527,7 +532,7 @@ enum BenchCmd {
         /// Result JSON to append (output of `nova bench run --out`).
         result: PathBuf,
         /// Orphan branch name (default: bench-history).
-        #[arg(long, default_value = "bench-history")]
+        #[arg(long, default_value = "auto")]
         branch: String,
         /// Push to remote after commit.
         #[arg(long)]
@@ -543,7 +548,7 @@ enum BenchCmd {
     #[command(name = "history-list")]
     HistoryList {
         /// Branch (default: bench-history).
-        #[arg(long, default_value = "bench-history")]
+        #[arg(long, default_value = "auto")]
         branch: String,
     },
     /// Plan 57.C.6: squash older history entries по retention policy.
@@ -554,7 +559,7 @@ enum BenchCmd {
         #[arg(long = "before-date")]
         before_date: String,
         /// Branch (default: bench-history).
-        #[arg(long, default_value = "bench-history")]
+        #[arg(long, default_value = "auto")]
         branch: String,
         /// Push to remote after squash.
         #[arg(long)]
@@ -571,7 +576,7 @@ enum BenchCmd {
     /// <out>/bench-<safe>.html per bench, plus <out>/data.json.
     Dashboard {
         /// History branch (default: bench-history).
-        #[arg(long = "history-branch", default_value = "bench-history")]
+        #[arg(long = "history-branch", default_value = "auto")]
         history_branch: String,
         /// Output directory (default: dashboard/).
         #[arg(long, default_value = "dashboard")]
@@ -2872,6 +2877,10 @@ fn cmd_bench(sub: BenchCmd) -> Result<()> {
             }
             Ok(())
         }
+        BenchCmd::RunnerBranch => {
+            println!("{}", bench::history::default_branch());
+            Ok(())
+        }
         BenchCmd::CpuInstrCheck => {
             println!("CPU instructions counter availability:");
             println!("  OS: {}", std::env::consts::OS);
@@ -2909,6 +2918,7 @@ fn cmd_bench(sub: BenchCmd) -> Result<()> {
         }
         BenchCmd::HistoryAdd { result, branch, push, remote, dry_run } => {
             let repo = find_repo_root()?;
+            let branch = resolve_history_branch(&branch);
             let opts = bench::history::HistoryAddOpts {
                 result_json: &result,
                 branch,
@@ -2923,6 +2933,7 @@ fn cmd_bench(sub: BenchCmd) -> Result<()> {
         }
         BenchCmd::HistorySquash { before_date, branch, push, remote, dry_run } => {
             let repo = find_repo_root()?;
+            let branch = resolve_history_branch(&branch);
             let before_unix = parse_date_to_unix(&before_date)?;
             let exit = bench::history::squash(&repo, &branch, before_unix,
                 push, &remote, dry_run)?;
@@ -2931,6 +2942,7 @@ fn cmd_bench(sub: BenchCmd) -> Result<()> {
         }
         BenchCmd::HistoryList { branch } => {
             let repo = find_repo_root()?;
+            let branch = resolve_history_branch(&branch);
             let entries = bench::history::list(&repo, &branch)?;
             if entries.is_empty() {
                 println!("(no entries in branch `{}`)", branch);
@@ -2946,6 +2958,7 @@ fn cmd_bench(sub: BenchCmd) -> Result<()> {
         }
         BenchCmd::Dashboard { history_branch, out, max_entries, echarts_url } => {
             let repo = find_repo_root()?;
+            let history_branch = resolve_history_branch(&history_branch);
             let opts = bench::dashboard::DashboardOpts {
                 repo: &repo,
                 history_branch,
@@ -2958,6 +2971,12 @@ fn cmd_bench(sub: BenchCmd) -> Result<()> {
             Ok(())
         }
     }
+}
+
+/// Plan 57.D.4: resolve "auto" → bench::history::default_branch()
+/// (NOVA_BENCH_RUNNER_ID-aware). Иначе return as-is.
+fn resolve_history_branch(s: &str) -> String {
+    if s == "auto" { bench::history::default_branch() } else { s.to_string() }
 }
 
 /// Plan 57.C.6: parse YYYY-MM-DD to unix timestamp (UTC midnight).
