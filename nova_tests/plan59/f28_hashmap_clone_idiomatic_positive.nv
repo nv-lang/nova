@@ -1,0 +1,45 @@
+// Positive (Ф.7.2): HashMap.@clone() через идиоматичный
+// `for (k, v) in @iter()` (после Plan 63 Fix E mono'd tuple iter
+// в generic method body работает). Validates что workaround removal
+// не regress'ит для разных K, V types.
+
+module plan59.f28_hashmap_clone_idiomatic_positive
+
+
+import std.collections.hashmap.{HashMap}
+
+
+test "HashMap[str, int] @clone() — idiomatic iter" {
+    let m HashMap[str, int] = ["a": 1, "b": 2, "c": 3]
+    let copy = m.clone()
+    assert(copy.len() == 3)
+    if let Some(v) = copy.get("a") { assert(v == 1) } else { assert(false) }
+    if let Some(v) = copy.get("b") { assert(v == 2) } else { assert(false) }
+    if let Some(v) = copy.get("c") { assert(v == 3) } else { assert(false) }
+}
+
+
+test "HashMap[int, str] @clone() — heterogeneous swap" {
+    let m HashMap[int, str] = [1: "one", 2: "two"]
+    let copy = m.clone()
+    assert(copy.len() == 2)
+    if let Some(s) = copy.get(1) { assert(s == "one") } else { assert(false) }
+    if let Some(s) = copy.get(2) { assert(s == "two") } else { assert(false) }
+}
+
+
+test "HashMap @clone() — empty map" {
+    let m HashMap[str, int] = HashMap[str, int].new()
+    let copy = m.clone()
+    assert(copy.len() == 0)
+    assert(copy.is_empty())
+}
+
+
+test "HashMap @clone() — mutate copy doesn't affect original" {
+    let mut m HashMap[str, int] = ["x": 100]
+    let mut copy = m.clone()
+    copy.insert("y", 200)
+    assert(m.len() == 1)
+    assert(copy.len() == 2)
+}
