@@ -31,6 +31,13 @@ const FNV1A_64_OFFSET u64 = 0xCBF29CE484222325
 const FNV1A_64_PRIME  u64 = 0x100000001B3
 
 
+/// FNV-1a 32-bit hash. Non-cryptographic. НЕ для passwords/integrity (см. SHA-256).
+///
+/// # Examples
+/// ```nova
+/// assert(Fnv.hash32("a".bytes()) == 0xE40C292C)
+/// ```
+#stable(since = "0.1")
 export fn Fnv.hash32(data []byte) -> u32 {
     let mut h = FNV1A_32_OFFSET
     for b in data {
@@ -41,6 +48,8 @@ export fn Fnv.hash32(data []byte) -> u32 {
 }
 
 
+/// FNV-1a 64-bit hash. Non-cryptographic, fast, low collision для small/medium inputs.
+#stable(since = "0.1")
 export fn Fnv.hash64(data []byte) -> u64 {
     let mut h = FNV1A_64_OFFSET
     for b in data {
@@ -51,33 +60,38 @@ export fn Fnv.hash64(data []byte) -> u64 {
 }
 
 
-// Convenience: hash строки в u64.
+/// Convenience: hash UTF-8 строки в u64.
+#stable(since = "0.1")
 export fn Fnv.hash_str(s str) -> u64 =>
     Fnv.hash64(s.bytes())
 
 
-// ──────────────────────────────────────────────────────────────────────────
-// Streaming API (для больших inputs / multiple chunks)
-// ──────────────────────────────────────────────────────────────────────────
-
+/// Streaming state для FNV-1a 64-bit (incremental updates).
+#stable(since = "0.1")
 export type Fnv64State {
-    mut h u64
+    mut _h u64    // internal accumulator
 }
 
 
+/// Init Fnv64State (offset basis по FNV spec).
+#stable(since = "0.1")
 export fn Fnv64.new() -> Fnv64State =>
-    { h: FNV1A_64_OFFSET }
+    { _h: FNV1A_64_OFFSET }
 
 
+/// Update state с очередным chunk байт.
+#stable(since = "0.1")
 export fn Fnv64State mut @update(data []byte) -> () {
     for b in data {
-        @h = @h ^ (b as u64)
-        @h = @h * FNV1A_64_PRIME
+        @_h = @_h ^ (b as u64)
+        @_h = @_h * FNV1A_64_PRIME
     }
 }
 
 
-export fn Fnv64State @finalize() -> u64 => @h
+/// Finalize — return final hash.
+#stable(since = "0.1")
+export fn Fnv64State @finalize() -> u64 => @_h
 
 
 // ──────────────────────────────────────────────────────────────────────────

@@ -56,11 +56,17 @@ fn lookup(i u8) -> u32 => table_value(i)
 // Public API
 // ──────────────────────────────────────────────────────────────────────────
 
-// Стандартный CRC-32 (IEEE 802.3) для последовательности байт.
-//
-// Использование:
-//   let checksum = crc32("hello world".bytes())
-//   assert(checksum == 0x0D4A1185)
+/// CRC-32 checksum (IEEE 802.3 polynomial) для последовательности байт.
+///
+/// Pure-функция: deterministic, no I/O. Use cases — file integrity,
+/// network frame check, ZIP/PNG/gzip.
+///
+/// # Examples
+/// ```nova
+/// let cs = crc32("123456789".bytes())
+/// assert(cs == 0xCBF43926)
+/// ```
+#stable(since = "0.1")
 export fn crc32(data []byte) -> u32 {
     let mut crc u32 = 0xFFFFFFFF
     for byte in data {
@@ -70,16 +76,20 @@ export fn crc32(data []byte) -> u32 {
     crc ^ 0xFFFFFFFF
 }
 
-// Incremental вариант: позволяет считать CRC от потока кусками.
-// `init` — обычно 0 (стартовое значение); финал требует XOR с 0xFFFFFFFF.
-//
-// Использование:
-//   let mut state = crc32_init()
-//   state = crc32_update(state, chunk1)
-//   state = crc32_update(state, chunk2)
-//   let final = crc32_finalize(state)
+/// Init incremental CRC-32 state — для streamed input.
+///
+/// # Examples
+/// ```nova
+/// let mut s = crc32_init()
+/// s = crc32_update(s, chunk1)
+/// s = crc32_update(s, chunk2)
+/// let final = crc32_finalize(s)
+/// ```
+#stable(since = "0.1")
 export fn crc32_init() -> u32 => 0xFFFFFFFF
 
+/// Update CRC-32 state с новыми bytes. Без финализации (нужен `crc32_finalize`).
+#stable(since = "0.1")
 export fn crc32_update(state u32, data []byte) -> u32 {
     let mut crc = state
     for byte in data {
@@ -89,6 +99,8 @@ export fn crc32_update(state u32, data []byte) -> u32 {
     crc
 }
 
+/// Финализирует CRC-32 state — XOR с 0xFFFFFFFF (IEEE 802.3 convention).
+#stable(since = "0.1")
 export fn crc32_finalize(state u32) -> u32 =>
     state ^ 0xFFFFFFFF
 
