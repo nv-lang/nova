@@ -33,19 +33,21 @@ module text.regex
 // AST после парсинга pattern'а
 // ──────────────────────────────────────────────────────────────────────────
 
+/// AST node после parsing'а regex pattern (internal — обычно не нужен напрямую).
+#stable(since = "0.1")
 export type RegexNode
-    | NEmpty                                           // пустой паттерн
-    | NLiteral(char)                                    // 'a'
-    | NAnyChar                                          // .
+    | NEmpty
+    | NLiteral(char)
+    | NAnyChar
     | NCharClass { chars []char, ranges [](char, char), negated bool }
-    | NConcat([]RegexNode)                              // ab
-    | NAlternate([]RegexNode)                           // a|b
-    | NStar(RegexNode)                                  // a*
-    | NPlus(RegexNode)                                  // a+
-    | NOptional(RegexNode)                              // a?
-    | NRepeat { node RegexNode, min int, max int }      // a{n,m}; max=-1 = unbounded
-    | NAnchorStart                                      // ^
-    | NAnchorEnd                                        // $
+    | NConcat([]RegexNode)
+    | NAlternate([]RegexNode)
+    | NStar(RegexNode)
+    | NPlus(RegexNode)
+    | NOptional(RegexNode)
+    | NRepeat { node RegexNode, min int, max int }
+    | NAnchorStart
+    | NAnchorEnd
 
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -59,27 +61,30 @@ export type RegexNode
 //
 // State хранится как индекс в []NfaState.
 
+/// NFA state — Thompson construction (internal). State хранится индексом в `[]NfaState`.
+#stable(since = "0.1")
 export type NfaState
-    | SMatch                                                  // accepting
-    | SChar { c char, out int }                                // потребляет ровно c
-    | SAnyChar { out int }                                     // потребляет любой кроме \n
+    | SMatch
+    | SChar { c char, out int }
+    | SAnyChar { out int }
     | SCharClass { chars []char, ranges [](char, char), negated bool, out int }
-    | SSplit { out1 int, out2 int }                            // ε-переход в оба
+    | SSplit { out1 int, out2 int }
     | SAnchorStart { out int }
     | SAnchorEnd { out int }
 
 
-// ──────────────────────────────────────────────────────────────────────────
-// Compiled regex
-// ──────────────────────────────────────────────────────────────────────────
-
+/// Compiled regex. RE2-style NFA simulation — O(n*m) guaranteed, нет catastrophic
+/// backtracking. Нет backreferences и lookbehind (math.требуют backtracking).
+#stable(since = "0.1")
 export type Regex {
     readonly states []NfaState
     readonly start int
-    readonly anchored_start bool       // pattern начинается с ^
+    readonly anchored_start bool
 }
 
 
+/// Errors при compile regex pattern.
+#stable(since = "0.1")
 export type CompileError
     | UnclosedGroup { position int }
     | UnclosedClass { position int }
@@ -447,6 +452,17 @@ fn Compiler mut @compile_node(node RegexNode, out_state int) -> int {
 // Public API
 // ──────────────────────────────────────────────────────────────────────────
 
+/// Compile regex pattern. Throws `CompileError` на синтаксических ошибках.
+///
+/// Поддержка: `.`, `[a-z]`, `[^abc]`, `\d \w \s \D \W \S`, `^`, `$`,
+/// `*`, `+`, `?`, `{n}`, `{n,m}`, `(...)`, `(?:...)`, `|`.
+///
+/// # Examples
+/// ```nova
+/// let re = Regex.compile("^[a-z]+$")
+/// assert(re.matches("hello"))
+/// ```
+#stable(since = "0.1")
 export fn Regex.compile(pattern str) Fail[CompileError] -> Self {
     let mut p = Parser.new(pattern)
     let ast = p.parse_pattern()
@@ -587,6 +603,8 @@ fn final_state(re Regex) -> int {
 
 
 // Полное соответствие?
+/// True если regex matches anywhere в text (substring match).
+#stable(since = "0.1")
 export fn Regex @matches(text str) -> bool {
     let r = try_match(@, text, 0)
     match r {
@@ -596,6 +614,8 @@ export fn Regex @matches(text str) -> bool {
 }
 
 // Найти первое вхождение, вернуть (start, end).
+/// Find first match — returns `Some((start, end))` byte-offsets, или `None`.
+#stable(since = "0.1")
 export fn Regex @find(text str) -> Option[(int, int)] {
     let mut start = 0
     if @anchored_start {
@@ -614,6 +634,8 @@ export fn Regex @find(text str) -> Option[(int, int)] {
     None
 }
 
+/// Find all non-overlapping matches — list of `(start, end)` tuples.
+#stable(since = "0.1")
 export fn Regex @find_all(text str) -> [](int, int) {
     let mut results [](int, int) = []
     let mut start = 0

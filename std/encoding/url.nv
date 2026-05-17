@@ -35,38 +35,45 @@ module encoding.url
 // Тип
 // ──────────────────────────────────────────────────────────────────────────
 
-// Структурное представление URL. Все компоненты, кроме `scheme` и
-// `path`, опциональны.
+/// URL structural representation (RFC 3986). Все compoненты кроме `scheme` и
+/// `path` — `Option`.
+///
+/// # Examples
+/// ```nova
+/// let u = Url.from("https://user:pass@example.com:8443/api?k=v#top")
+/// assert(u.scheme == "https")
+/// assert(u.host == Some("example.com"))
+/// ```
+#stable(since = "0.1")
 export type Url {
-    readonly scheme    str             // "http", "https", "ftp", ...
-    readonly user      Option[str]      // userinfo (без password)
-    readonly password  Option[str]      // часть userinfo, после ":"
-    readonly host      Option[str]      // хост или IP
-    readonly port      Option[int]      // 0..65535
-    readonly path      str              // "/api/users", может быть "" или "/"
-    readonly query     Option[str]      // raw query string (без "?")
-    readonly fragment  Option[str]      // raw fragment (без "#")
+    readonly scheme    str
+    readonly user      Option[str]
+    readonly password  Option[str]
+    readonly host      Option[str]
+    readonly port      Option[int]
+    readonly path      str
+    readonly query     Option[str]
+    readonly fragment  Option[str]
 }
 
 
-// ──────────────────────────────────────────────────────────────────────────
-// Ошибки
-// ──────────────────────────────────────────────────────────────────────────
-
+/// Errors при парсинге URL.
+#stable(since = "0.1")
 export type ParseUrlError
     | EmptyInput
-    | MissingScheme                              // нет ":" или схема пустая
-    | InvalidScheme { value str }                 // невалидные символы в схеме
-    | InvalidPort { value str }                    // не число или > 65535
-    | InvalidPercentEncoding { position int }      // %XX где XX не hex
+    | MissingScheme
+    | InvalidScheme { value str }
+    | InvalidPort { value str }
+    | InvalidPercentEncoding { position int }
 
 
 // ──────────────────────────────────────────────────────────────────────────
 // Парсинг (D73 From[str])
 // ──────────────────────────────────────────────────────────────────────────
 
-// Парсит URL по RFC 3986 generic syntax.
-// Throws Fail[ParseUrlError] на ошибке. По D67 `?` после нельзя.
+/// `From[str]` — parse URL по RFC 3986 generic syntax.
+/// Throws `ParseUrlError`. По D67 `?` после нельзя.
+#stable(since = "0.1")
 export fn Url.from(s str) Fail[ParseUrlError] -> Self {
     if s.len == 0 { throw EmptyInput }
 
@@ -218,6 +225,8 @@ fn is_scheme_char(c char) -> bool =>
 // Сериализация (D73 Into[str])
 // ──────────────────────────────────────────────────────────────────────────
 
+/// `Into[str]` — serialize Url обратно в string. Round-trip с `Url.from`.
+#stable(since = "0.1")
 export fn Url @into() -> str {
     let mut buf = StringBuilder.with_capacity(64)
     buf = buf + @scheme + ":"
@@ -284,6 +293,14 @@ export fn Url @into() -> str {
 // Кодирует строку для использования в query parameter.
 // Безопасные символы: ALPHA / DIGIT / "-" / "." / "_" / "~"
 // Всё остальное — `%XX` где XX — hex.
+/// Percent-encode query string value (RFC 3986 § 2.4). Alphanumeric + `-_.~` raw,
+/// остальное → `%XX`.
+///
+/// # Examples
+/// ```nova
+/// assert(Url.encode_query("a b&c") == "a%20b%26c")
+/// ```
+#stable(since = "0.1")
 export fn Url.encode_query(s str) -> str {
     let mut buf = StringBuilder.with_capacity(s.len * 2)    // worst case
     for c in s.chars() {
@@ -333,6 +350,8 @@ export fn Url.encode_query(s str) -> str {
 // Когда tuple-destructure infer будет fix'нут: реализация ниже
 // готова и не требует Buffer. До тех пор файл не компилируется
 // в принципе (фейлится в parse_url) — функционально idle.
+/// Percent-decode query string. Throws `InvalidPercentEncoding` если `%XX` malformed.
+#stable(since = "0.1")
 export fn Url.decode_query(s str) Fail[ParseUrlError] -> str {
     let mut buf = WriteBuffer.with_capacity(s.len)
     let mut i = 0

@@ -21,35 +21,48 @@ module data.semver_range
 import std.data.semver
 
 
-// AST для constraint'ов
+/// Один comparator в version requirement (`>=1.2.3`, `<2.0.0`, `=1.0.0`).
+#stable(since = "0.1")
 export type Comparator
-    | Eq(Version)             // =1.2.3 или 1.2.3
-    | Gt(Version)             // >1.2.3
-    | Ge(Version)             // >=1.2.3
-    | Lt(Version)             // <1.2.3
-    | Le(Version)             // <=1.2.3
+    | Eq(Version)
+    | Gt(Version)
+    | Ge(Version)
+    | Lt(Version)
+    | Le(Version)
 
-// AND-группа: все comparators должны matchить.
+/// AND-группа comparator'ов: все должны matchить (e.g. `>1.0.0 <2.0.0`).
+#stable(since = "0.1")
 export type ComparatorSet {
     comparators []Comparator
 }
 
-// OR-выражение: любая ComparatorSet matchит.
+/// Version requirement: OR-список AND-групп. Пустой sets + any_match=true → "*".
+///
+/// # Examples
+/// ```nova
+/// let req = VersionReq.parse("^1.2.3")  // >=1.2.3 <2.0.0
+/// assert(req.matches(Version.from("1.5.0")))
+/// ```
+#stable(since = "0.1")
 export type VersionReq {
-    sets []ComparatorSet     // пусто = match anything (*)
-    any_match bool           // true для "*"
+    sets []ComparatorSet
+    any_match bool
 }
 
+/// Errors при парсинге version requirement string.
+#stable(since = "0.1")
 export type ParseRangeError
     | EmptyInput
     | InvalidComparator { value str }
     | InvalidVersion { value str }
 
 
-// ──────────────────────────────────────────────────────────────────────────
-// Парсинг
-// ──────────────────────────────────────────────────────────────────────────
-
+/// Parse version requirement expression.
+///
+/// Syntax: `1.2.3` (exact), `^1.2.3` (compatible), `~1.2.3` (patch),
+/// `>=1.0.0` (lower bound), `>1.0.0 <2.0.0` (AND), `1.0.0 || 2.0.0` (OR),
+/// `*` (any).
+#stable(since = "0.1")
 export fn VersionReq.parse(s str) Fail[ParseRangeError] -> Self {
     let trimmed = s.trim()
     if trimmed.len == 0 { throw EmptyInput }
@@ -115,6 +128,9 @@ fn parse_one_comparator(s str) Fail[ParseRangeError] -> []Comparator {
 
 fn parse_version(s str) Fail[ParseRangeError] -> Version {
     // Используем std.semver.Version.from, преобразуем ParseVersionError в наш.
+    // NB: idiomatic `with Fail[A] = |e| throw B {...}` (handler-rethrow) сейчас
+    // ломает codegen (cross-effect throw в handler arm emit'ит wrong type cast).
+    // Pre-existing bug — pending separate fix.
     let r = with Fail[ParseVersionError] = |e| interrupt Err(e) {
         Ok(Version.from(s))
     }
@@ -129,6 +145,8 @@ fn parse_version(s str) Fail[ParseRangeError] -> Version {
 // Matching
 // ──────────────────────────────────────────────────────────────────────────
 
+/// True если `v` matchит requirement. Short-circuits на first matching OR-set.
+#stable(since = "0.1")
 export fn VersionReq @matches(v Version) -> bool {
     if @any_match { return true }
     for set in @sets {
