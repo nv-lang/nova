@@ -1,23 +1,35 @@
 //! Plan 45 / D107: fixture для Sum / Effect / Protocol / Alias items.
+//!
+//! #stable
 
 module nova_tests.doc.fixtures.kinds.sample
 
 /// Sum-тип с unit-вариантами.
+///
+/// #stable
 export type Color | Red | Green | Blue
 
 /// Counter — простой effect с axiom.
+///
+/// #stable
 export type Counter effect {
     next() -> int
     axiom non_negative(x int) => x >= 0
 }
 
 /// Eq — protocol.
+///
+/// #stable
 export type Eq protocol {
     equals(other Eq) -> bool
 }
 
 /// Alias над int — semantic clarity.
+///
+/// #stable
 export type Pixels alias int
 
 /// Newtype над int.
+///
+/// #stable
 export type AccountId int
