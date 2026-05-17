@@ -82,7 +82,7 @@ test "handler with multiple operations on same effect" {
         Echo.say("second")
         Echo.say("third")
     }
-    assert(log.len == 3)
+    assert(log.len() == 3)
     assert(log[0] == "first")
     assert(log[2] == "third")
 }

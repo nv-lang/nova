@@ -33,7 +33,7 @@ test "str + str — Unicode codepoint paritет" {
     let b = ", "          // 2 codepoints, 2 bytes
     let c = "мир"         // 3 codepoints, 6 bytes
     let s = a + b + c
-    assert(s.len == 11)             // 6 + 2 + 3 codepoints
+    assert(s.len() == 11)             // 6 + 2 + 3 codepoints
     assert(s.byte_len() == 20)      // 12 + 2 + 6 bytes
 }
 

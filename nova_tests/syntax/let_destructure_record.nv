@@ -59,7 +59,7 @@ test "одиночный eval RHS — порядок side-effects" {
     assert(tx == 100)
     assert(rx == 200)
     // p eval'нулся один раз; count.push выполнен ровно один раз.
-    assert(count.len == 1)
+    assert(count.len() == 1)
 }
 
 test "Channel.new use case" {

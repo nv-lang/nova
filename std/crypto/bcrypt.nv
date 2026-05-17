@@ -72,8 +72,8 @@ export fn Bcrypt.hash(password str, cost int) Random Fail[BcryptError] -> str {
     if cost < MIN_COST || cost > MAX_COST {
         throw InvalidCost { value: cost }
     }
-    if password.bytes().len > MAX_PASSWORD_LEN {
-        throw PasswordTooLong { length: password.bytes().len, max: MAX_PASSWORD_LEN }
+    if password.bytes().len() > MAX_PASSWORD_LEN {
+        throw PasswordTooLong { length: password.bytes().len(), max: MAX_PASSWORD_LEN }
     }
 
     let salt = Random.bytes(SALT_LEN)
@@ -92,7 +92,7 @@ export fn Bcrypt.verify(password str, hash_str str) -> bool {
     // Parse format
     let parts = hash_str.split("$")
     // ["", "2b", "<cost>", "<salt><hash>"]
-    if parts.len != 4 { return false }
+    if parts.len() != 4 { return false }
     if parts[1] != "2b" && parts[1] != "2a" && parts[1] != "2y" { return false }
 
     let cost = match int.try_from(parts[2]) {
@@ -101,12 +101,12 @@ export fn Bcrypt.verify(password str, hash_str str) -> bool {
     }
 
     let combined = parts[3]
-    if combined.len < 53 { return false }    // 22 salt + 31 hash
+    if combined.len() < 53 { return false }    // 22 salt + 31 hash
     let salt_b64 = combined.slice(0, 22)
-    let hash_b64 = combined.slice(22, combined.len)
+    let hash_b64 = combined.slice(22, combined.len())
 
     let salt = match bcrypt_base64_decode(salt_b64) {
-        Some(b) if b.len == SALT_LEN => b
+        Some(b) if b.len() == SALT_LEN => b
         _                             => return false
     }
     let expected_hash = match bcrypt_base64_decode(hash_b64) {
@@ -154,9 +154,9 @@ fn bcrypt_kdf(password []byte, salt []byte, cost int) -> []byte {
 
 
 fn constant_time_eq(a []byte, b []byte) -> bool {
-    if a.len != b.len { return false }
+    if a.len() != b.len() { return false }
     let mut diff = 0
-    for i in 0..a.len {
+    for i in 0..a.len() {
         diff = diff | ((a[i] as int) ^ (b[i] as int))
     }
     diff == 0
@@ -176,9 +176,9 @@ const BCRYPT_ALPHABET str = "./ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvw
 
 
 fn bcrypt_base64_encode(data []byte) -> str {
-    let mut buf = StringBuilder.with_capacity(data.len * 4 / 3 + 4)
+    let mut buf = StringBuilder.with_capacity(data.len() * 4 / 3 + 4)
     let mut i = 0
-    while i + 2 < data.len {
+    while i + 2 < data.len() {
         let b0 = data[i] as u32
         let b1 = data[i + 1] as u32
         let b2 = data[i + 2] as u32
@@ -189,7 +189,7 @@ fn bcrypt_base64_encode(data []byte) -> str {
         buf.append(alphabet_char((triple & 0x3F) as int))
         i += 3
     }
-    let remaining = data.len - i
+    let remaining = data.len() - i
     if remaining == 1 {
         let b0 = data[i] as u32
         buf.append(alphabet_char(((b0 >> 2) & 0x3F) as int))
@@ -212,7 +212,7 @@ fn alphabet_char(idx int) -> char =>
 fn bcrypt_base64_decode(s str) -> Option[[]byte] {
     let mut out []byte = []
     let mut i = 0
-    while i + 3 < s.len {
+    while i + 3 < s.len() {
         let c0 = bcrypt_decode_char(s.char_at(i))
         let c1 = bcrypt_decode_char(s.char_at(i + 1))
         let c2 = bcrypt_decode_char(s.char_at(i + 2))
@@ -229,7 +229,7 @@ fn bcrypt_base64_decode(s str) -> Option[[]byte] {
         i += 4
     }
     // Trailing
-    if i + 1 < s.len {
+    if i + 1 < s.len() {
         match (bcrypt_decode_char(s.char_at(i)), bcrypt_decode_char(s.char_at(i + 1))) {
             (Some(a), Some(b)) => out.push(((a << 2) | (b >> 4)) as byte)
             _ => return None

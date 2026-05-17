@@ -8778,3 +8778,76 @@ Plan 57 — completely closed across all 5 фаз (MVP+A+B+C+D+E).
 
 Backlog: empty. Любые future enhancements — отдельные планы или
 pick-up из E.2/E.3/E.4 sketches.
+
+## [M-plan-60-method-value-refinement] — Plan 60 Ф.4 deferred (2026-05-17)
+
+**Deferred, не simplification.** План v2 предлагал тонкое разграничение
+arg-position error vs non-arg warning + whitelist для legitimate
+`fns.map(.len)` cases. Реальность: текущий E_SIZE_ACCESSOR_FIELD
+diagnostic универсальный и точный — message всегда корректен
+(«size-like accessor X is method-only; append () или rename .cap →
+.capacity()»). Whitelist для method-value-в-arg-position не нужен
+сейчас — `let f = arr.@len` (с явным `@`-prefix) уже работает как
+bound method value (D-block Plan 11). Refinement (различение «expected
+fn() -> int» vs «expected int» в arg-position для better error
+message) — корректное место в **Plan 37** (typecheck semantic parity),
+куда уже планируется перенести size-accessor enforcement из codegen в
+type-checker. Plan 60 Ф.4 merged в Ф.3 без потери качества.
+
+## [M-plan-60-md-non-auto-migration] — manual migration .md (2026-05-17)
+
+Auto-migration tool применил .nv (std/+nova_tests/+examples/) — 404
+rewrites зачётно. Для .md (docs/+spec/) применение было НЕ-полным:
+meta-разделы spec'а описывают **обе** формы (`.len` vs `.len()` —
+правило, что одна форма запрещена), tool бы их сломал. Manually
+amended ключевые spec D-blocks (D26 в 08-runtime, built-in API table
+в 03-syntax, examples в 02-types/04-effects). Полная migration
+остальных .md occurrences (~140 hits в docs/plans/* и spec/decisions/*
+которые цитируют код в pre-Plan-60 form) — **по мере правки этих
+файлов в естественной работе**. Не блокер acceptance — это
+historical context, не canonical API reference.
+
+## [M-plan-60-cap-rename-to-capacity] — API breaking decision (2026-05-17)
+
+Plan 60 v1 заявлял `.cap()` сохранение. После пользовательской консультации
+(2026-05-17) принято решение rename `.cap` → `.capacity()` в Nova API:
+Rust/C++/Swift parity, D29 «явность над краткостью», AI mental mapping.
+Go использует `cap()` builtin, но как top-level fn (отвергается там же,
+где `len()` builtin). Внутреннее C-поле `cap` сохранено (не trickle-down
+rename) — это implementation detail. Migration tool делает rename +
+parens append одной операцией; legacy diagnostic подсказывает rename.
+Один use-site в std/collections/hashmap.nv:145 (`@_buckets.cap` →
+`@_buckets.capacity()`). Breaking change для (когда появятся) внешних
+пользователей — handled через clear diagnostic + migration doc.
+
+## [M-plan-60-internal-c-field-naming] — `arr->len/cap` оставлены (2026-05-17)
+
+**Deferred not simplification.** Внутренние C-runtime fields в struct
+`NovaArray_T { T* data; int64_t len; int64_t cap; }` сохранены с
+именами `len`/`cap` (не renamed на `_len`/`_capacity`). Пользователь
+Nova-language **не имеет** к ним доступа — `arr[i]` lowers в
+`arr->data[i]`, `arr.len()` — в `(arr->len)`. Field-name leak отсутствует.
+
+**Попытка rename отвергнута:** `len`/`cap` используются не только в
+array.h, но и каскадом в string_builder.h / write_buffer.h / read_buffer.h
+(`arr->len`, `src->len`, etc.) — full refactor требует touch 5+ runtime
+headers, переменные с именами `arr`, `src`, `b`, и т.д. Это **scope creep**
+за пределы Plan 60 (size-accessor uniformity на user-language level)
+и risk break Plan 27 GC interop / Plan 44 M:N runtime.
+
+**Followup task** (если когда-нибудь нужен): унифицировать C-runtime
+naming через **inline accessor functions** (`nova_array_len(a)`,
+`nova_array_capacity(a)`) instead of direct field-access — это устранит
+field-name dependency полностью, в одну сессию. Не блокер; не planned
+плана 60.
+
+## [M-plan-60-D-block-numbering-D117] — D112 был занят (2026-05-17)
+
+Plan 60 doc писал «новый D-block D112». При проверке `grep ^## D112`
+обнаружено: D112 уже занят bounded quantifiers (Plan 33). Также D110/
+D111/D113/D114/D115/D116 заняты (Plan 33.x + Plan 56 + Plan 59). Plan
+60 D-block назначен **D117** (next free). Sed-replace во всех ссылках
+(plan doc + emit_c.rs + interp + migration tool comments + idiom doc +
+migration doc). Кстати в spec/decisions/02-types.md есть pre-existing
+**duplicate D110** (`Ghost state` + `Hybrid dispatch` на разных строках)
+— это не моя забота, отдельный bug. Plan 60 не fix'ит.

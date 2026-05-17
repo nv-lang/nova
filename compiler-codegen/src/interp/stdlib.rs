@@ -231,6 +231,16 @@ pub fn try_native_method(
             require_args(method, args, 0, span)?;
             Ok(Some(Value::Int(arr.borrow().len() as i64)))
         }
+        // Plan 60 / D112: array size-accessor methods. `capacity()`,
+        // не `cap()` — консистентно с Rust/C++/Swift; D29 явность.
+        (Value::Array(arr), "capacity") => {
+            require_args(method, args, 0, span)?;
+            Ok(Some(Value::Int(arr.borrow().capacity() as i64)))
+        }
+        (Value::Array(arr), "is_empty") => {
+            require_args(method, args, 0, span)?;
+            Ok(Some(Value::Bool(arr.borrow().is_empty())))
+        }
         (Value::Array(arr), "push") => {
             require_args(method, args, 1, span)?;
             let v = eval_arg(interp, &args[0], env)?;
@@ -277,6 +287,16 @@ pub fn try_native_method(
         (Value::Str(s), "len") => {
             require_args(method, args, 0, span)?;
             Ok(Some(Value::Int(s.chars().count() as i64)))
+        }
+        // Plan 60 / D112: str size-accessor methods.
+        // byte_len уже могут быть в другой ветке — добавляем здесь для полноты.
+        (Value::Str(s), "byte_len") => {
+            require_args(method, args, 0, span)?;
+            Ok(Some(Value::Int(s.len() as i64)))
+        }
+        (Value::Str(s), "is_empty") => {
+            require_args(method, args, 0, span)?;
+            Ok(Some(Value::Bool(s.is_empty())))
         }
         (Value::Str(s), "starts_with") => {
             require_args(method, args, 1, span)?;

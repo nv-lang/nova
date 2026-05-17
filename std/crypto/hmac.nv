@@ -108,14 +108,14 @@ fn constant_time_eq(a [32]byte, b [32]byte) -> bool {
 fn normalize_key_sha256(key []byte) -> []byte {
     let mut block []byte = []byte.with_capacity(SHA256_BLOCK_SIZE)
 
-    if key.len > SHA256_BLOCK_SIZE {
+    if key.len() > SHA256_BLOCK_SIZE {
         let hashed = Sha256.hash(key)
         for i in 0..SHA256_OUTPUT_SIZE { block.push(hashed[i]) }
     } else {
         for b in key { block.push(b) }
     }
 
-    while block.len < SHA256_BLOCK_SIZE { block.push(0x00) }
+    while block.len() < SHA256_BLOCK_SIZE { block.push(0x00) }
     block
 }
 

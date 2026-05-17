@@ -191,5 +191,5 @@ test "str.from(char) Cyrillic (2-byte UTF-8)" {
     // 'П' = U+041F
     let s = str.from('П')
     // byte_len 2 (UTF-8: 0xD0 0x9F), char_len 1
-    assert(s.len == 1)
+    assert(s.len() == 1)
 }

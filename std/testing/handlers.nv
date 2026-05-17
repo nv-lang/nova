@@ -246,15 +246,15 @@ test "seeded(0) работает (splitmix64 init гарантирует non-zer
 
 test "seeded.bytes возвращает запрошенную длину" {
     let bs = with Random = seeded(0 as u64) { Random.bytes(16) }
-    assert(bs.len == 16)
+    assert(bs.len() == 16)
 }
 
 test "seeded.bytes — детерминизм между запусками" {
     let bs1 = with Random = seeded(99 as u64) { Random.bytes(32) }
     let bs2 = with Random = seeded(99 as u64) { Random.bytes(32) }
-    assert(bs1.len == bs2.len)
+    assert(bs1.len() == bs2.len())
     let mut all_eq = true
-    for i in 0..bs1.len {
+    for i in 0..bs1.len() {
         if bs1[i] != bs2[i] { all_eq = false }
     }
     assert(all_eq)
@@ -284,7 +284,7 @@ test "PRNG: uniform-byte distribution (no obvious bias)" {
     with Random = seeded(7 as u64) {
         let bs = Random.bytes(256)
         let mut buckets [8]int = [0, 0, 0, 0, 0, 0, 0, 0]
-        for i in 0..bs.len {
+        for i in 0..bs.len() {
             let b = bs[i] as int
             let bucket = b / 32                 // 0..7
             buckets[bucket] = buckets[bucket] + 1

@@ -1986,7 +1986,7 @@ type Set[T] {
 let s = Set[int].new()
 s.insert(item, ())          // ✓ через auto-proxy на HashMap.insert
 s.contains(item)            // ✓ через auto-proxy
-s.len                       // ✓ через auto-proxy
+s.len()                     // ✓ через auto-proxy (D117 method-only)
 ```
 
 `_` — это **wildcard**: программист **сознательно отказывается**

@@ -281,7 +281,7 @@ fn TomlParser mut @parse_bool() Fail[ParseTomlError] -> TomlValue {
 fn TomlParser mut @match_keyword(kw str) -> bool {
     let saved = @pos
     let mut i = 0
-    while i < kw.len {
+    while i < kw.len() {
         if @peek() != kw.char_at(i) {
             @pos = saved
             return false
@@ -408,7 +408,7 @@ fn TomlParser mut @ensure_path_exists(path []str, is_array bool) -> () {
 
 fn TomlParser mut @insert_at_current_path(key str, value TomlValue) -> () {
     // Если current_path пуст — инсертим в root.
-    if @current_path.len == 0 {
+    if @current_path.len() == 0 {
         @root.insert(key, value)
         return ()
     }
@@ -459,7 +459,7 @@ test "parse: array" {
     match v {
         TomlTable(t) => match t.get("ports") {
             Some(TomlArray(xs)) => {
-                assert(xs.len == 3)
+                assert(xs.len() == 3)
                 assert(xs[0] == TomlInt(80))
             }
             _ => assert(false)

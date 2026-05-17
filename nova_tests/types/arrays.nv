@@ -4,12 +4,12 @@ module types.arrays
 
 test "array literal and len" {
     let a = [1, 2, 3]
-    assert(a.len == 3)
+    assert(a.len() == 3)
 }
 
 test "empty array" {
     let a []int = []
-    assert(a.len == 0)
+    assert(a.len() == 0)
 }
 
 test "indexing" {
@@ -23,7 +23,7 @@ test "spread concat (D60)" {
     let a = [1, 2, 3]
     let b = [4, 5]
     let c = [...a, ...b]
-    assert(c.len == 5)
+    assert(c.len() == 5)
     assert(c[0] == 1)
     assert(c[4] == 5)
 }
@@ -31,7 +31,7 @@ test "spread concat (D60)" {
 test "spread with literals around" {
     let mid = [2, 3]
     let full = [1, ...mid, 4, 5]
-    assert(full.len == 5)
+    assert(full.len() == 5)
     assert(full[0] == 1)
     assert(full[1] == 2)
     assert(full[3] == 4)
@@ -42,14 +42,14 @@ test "multiple spreads" {
     let b = [2]
     let c = [3]
     let combined = [...a, ...b, ...c]
-    assert(combined.len == 3)
+    assert(combined.len() == 3)
     assert(combined[1] == 2)
 }
 
 test "spread copy is independent" {
     let a = [1, 2, 3]
     let b = [...a]
-    assert(b.len == 3)
+    assert(b.len() == 3)
     assert(b[0] == 1)
 }
 
@@ -57,7 +57,7 @@ test "push and len" {
     let a = [1, 2]
     a.push(3)
     a.push(4)
-    assert(a.len == 4)
+    assert(a.len() == 4)
     assert(a[3] == 4)
 }
 
@@ -65,7 +65,7 @@ test "pop returns Some/None" {
     let a = [10, 20, 30]
     let last = a.pop()
     assert(last == Some(30))
-    assert(a.len == 2)
+    assert(a.len() == 2)
 }
 
 test "pop empty returns None" {

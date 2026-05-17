@@ -31,7 +31,7 @@ export fn Hex.encode_upper(data []byte) -> str =>
     encode_with(data, true)
 
 fn encode_with(data []byte, upper bool) -> str {
-    let mut buf = StringBuilder.with_capacity(data.len * 2)
+    let mut buf = StringBuilder.with_capacity(data.len() * 2)
     for b in data {
         let hi = (b as int) / 16
         let lo = (b as int) % 16
@@ -67,11 +67,11 @@ fn digit(n u8, upper bool) -> char {
 /// Decode hex string в bytes. Case-insensitive. Throws `OddLength`/`InvalidChar`.
 #stable(since = "0.1")
 export fn Hex.decode(s str) Fail[ParseHexError] -> []byte {
-    if s.len % 2 != 0 {
-        throw OddLength { actual: s.len }
+    if s.len() % 2 != 0 {
+        throw OddLength { actual: s.len() }
     }
-    let mut out []byte = []byte.with_capacity(s.len / 2)
-    for i in (0..s.len).step_by(2) {
+    let mut out []byte = []byte.with_capacity(s.len() / 2)
+    for i in (0..s.len()).step_by(2) {
         let hi = digit_value(s, i)
         let lo = digit_value(s, i + 1)
         out.push(((hi * 16 + lo) & 0xFF) as byte)

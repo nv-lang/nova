@@ -21,7 +21,7 @@ fn main() {
     // 3. Массив со spread
     let nums = [1, 2, 3]
     let extended = [0, ...nums, 4, 5]
-    println("extended.len = ", extended.len)
+    println("extended.len = ", extended.len())
 
     // 4. Pattern matching на массиве (D59)
     let first = match extended {

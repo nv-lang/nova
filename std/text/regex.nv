@@ -123,7 +123,7 @@ fn Parser mut @parse_alternate() Fail[CompileError] -> RegexNode {
         @advance()
         alts.push(@parse_concat())
     }
-    if alts.len == 1 { alts[0] } else { NAlternate(alts) }
+    if alts.len() == 1 { alts[0] } else { NAlternate(alts) }
 }
 
 // concat := atom*
@@ -141,8 +141,8 @@ fn Parser mut @parse_concat() Fail[CompileError] -> RegexNode {
             }
         }
     }
-    if items.len == 0 { NEmpty }
-    else if items.len == 1 { items[0] }
+    if items.len() == 0 { NEmpty }
+    else if items.len() == 1 { items[0] }
     else { NConcat(items) }
 }
 
@@ -170,7 +170,7 @@ fn Parser mut @parse_braced_quantifier(atom RegexNode) Fail[CompileError] -> Reg
         }
     }
     let min_str = n_str.into()
-    if min_str.len == 0 { throw InvalidQuantifier { position: start } }
+    if min_str.len() == 0 { throw InvalidQuantifier { position: start } }
     let min = match int.try_from(min_str) {
         Ok(n)  => n
         Err(_) => throw InvalidQuantifier { position: start }
@@ -186,7 +186,7 @@ fn Parser mut @parse_braced_quantifier(atom RegexNode) Fail[CompileError] -> Reg
             }
         }
         let m = m_str.into()
-        if m.len == 0 { -1 }       // {n,} — unbounded
+        if m.len() == 0 { -1 }       // {n,} — unbounded
         else {
             match int.try_from(m) {
                 Ok(n)  => n
@@ -351,7 +351,7 @@ fn Compiler.new() -> Self => { states: [] }
 
 fn Compiler mut @add(s NfaState) -> int {
     @states.push(s)
-    @states.len - 1
+    @states.len() - 1
 }
 
 // Compile node → возвращает (start, [out_indices]) — outs нужно
@@ -378,7 +378,7 @@ fn Compiler mut @compile_node(node RegexNode, out_state int) -> int {
         NConcat(items) => {
             // Compile right-to-left так чтобы каждое item вело в start следующего
             let mut current = out_state
-            for i in (0..items.len).reverse() {
+            for i in (0..items.len()).reverse() {
                 current = @compile_node(items[i], current)
             }
             current
@@ -386,10 +386,10 @@ fn Compiler mut @compile_node(node RegexNode, out_state int) -> int {
 
         NAlternate(alts) => {
             // Для двух — простой Split; для N — n-1 Split-ов.
-            if alts.len == 1 { return @compile_node(alts[0], out_state) }
+            if alts.len() == 1 { return @compile_node(alts[0], out_state) }
             // Compile все ветви, объединяем через Split
-            let mut start = @compile_node(alts[alts.len - 1], out_state)
-            for i in (0..alts.len - 1).reverse() {
+            let mut start = @compile_node(alts[alts.len() - 1], out_state)
+            for i in (0..alts.len() - 1).reverse() {
                 let branch = @compile_node(alts[i], out_state)
                 start = @add(SSplit { out1: branch, out2: start })
             }
@@ -469,7 +469,7 @@ export fn Regex.compile(pattern str) Fail[CompileError] -> Self {
 
     // Detect anchored start
     let anchored = match ast {
-        NConcat(items) if items.len > 0 => match items[0] {
+        NConcat(items) if items.len() > 0 => match items[0] {
             NAnchorStart => true
             _            => false
         }
@@ -497,7 +497,7 @@ export fn Regex.compile(pattern str) Fail[CompileError] -> Self {
 // шагаем по character-edge'ам. ε-переходы expand'ятся в add_state().
 
 fn add_state(set mut []bool, states []NfaState, idx int, pos int, text str) -> () {
-    if idx < 0 || idx >= states.len { return () }
+    if idx < 0 || idx >= states.len() { return () }
     if set[idx] { return () }
     set[idx] = true
     match states[idx] {
@@ -511,7 +511,7 @@ fn add_state(set mut []bool, states []NfaState, idx int, pos int, text str) -> (
             }
         }
         SAnchorEnd { out } => {
-            if pos == text.len {
+            if pos == text.len() {
                 add_state(set, states, out, pos, text)
             }
         }
@@ -556,7 +556,7 @@ fn try_match(re Regex, text str, start_pos int) -> Option[int] {
     let mut last_match = if current[final_state(re)] { Some(start_pos) } else { None }
 
     let mut pos = start_pos
-    while pos < text.len {
+    while pos < text.len() {
         let c = match text.char_at(pos) { Some(ch) => ch, None => break }
 
         // Reset next
@@ -591,7 +591,7 @@ fn try_match(re Regex, text str, start_pos int) -> Option[int] {
 
 fn final_state(re Regex) -> int {
     let mut i = 0
-    while i < re.states.len {
+    while i < re.states.len() {
         match re.states[i] {
             SMatch => return i
             _      => ()
@@ -608,7 +608,7 @@ fn final_state(re Regex) -> int {
 export fn Regex @matches(text str) -> bool {
     let r = try_match(@, text, 0)
     match r {
-        Some(end) => end == text.len
+        Some(end) => end == text.len()
         None      => false
     }
 }
@@ -624,7 +624,7 @@ export fn Regex @find(text str) -> Option[(int, int)] {
             None      => return None
         }
     }
-    while start <= text.len {
+    while start <= text.len() {
         match try_match(@, text, start) {
             Some(end) => return Some((start, end))
             None      => ()
@@ -639,7 +639,7 @@ export fn Regex @find(text str) -> Option[(int, int)] {
 export fn Regex @find_all(text str) -> [](int, int) {
     let mut results [](int, int) = []
     let mut start = 0
-    while start <= text.len {
+    while start <= text.len() {
         match try_match(@, text, start) {
             Some(end) => {
                 results.push((start, end))
@@ -775,7 +775,7 @@ test "find inside text" {
 test "find_all" {
     let r = Regex.compile("\\d+")
     let matches = r.find_all("a1 b22 c333")
-    assert(matches.len == 3)
+    assert(matches.len() == 3)
 }
 
 test "no catastrophic backtracking — ключевое отличие от PCRE" {

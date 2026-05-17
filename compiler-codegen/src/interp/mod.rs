@@ -1525,8 +1525,19 @@ impl Interpreter {
                 .get(name)
                 .cloned()
                 .ok_or_else(|| Diagnostic::new(format!("no field `{}`", name), span)),
-            Value::Array(arr) if name == "len" => Ok(Value::Int(arr.borrow().len() as i64)),
-            Value::Str(s) if name == "len" => Ok(Value::Int(s.chars().count() as i64)),
+            // Plan 60 / D117: size-accessor field-access — error с fix-it hint.
+            // Method-call form работает через try_native_method (stdlib.rs).
+            Value::Array(_) | Value::Str(_) if matches!(name, "len" | "is_empty" | "byte_len" | "cap" | "capacity") => {
+                let suggested = if name == "cap" { "capacity" } else { name };
+                Err(Diagnostic::new(
+                    format!(
+                        "[E_SIZE_ACCESSOR_FIELD] size-like accessor `{}` is method-only \
+                         (Plan 60 / D117) — use `.{}()`",
+                        name, suggested
+                    ),
+                    span,
+                ))
+            }
             other => Err(Diagnostic::new(
                 format!("cannot access `.{}` on {}", name, other.type_name()),
                 span,

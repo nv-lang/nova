@@ -35,7 +35,7 @@ test "alias возвращается из функции" {
 
 test "alias использует методы базового типа" {
     let n Name = "world"
-    assert(n.len == 5)
+    assert(n.len() == 5)
     assert(n.starts_with("wor"))
 }
 

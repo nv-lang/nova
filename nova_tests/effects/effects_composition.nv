@@ -56,7 +56,7 @@ test "функция с двумя эффектами в сигнатуре (fla
         assert(a == 10)
         assert(b == 40)
     }
-    assert(entries.len == 2)
+    assert(entries.len() == 2)
     assert(count == 2)
 }
 

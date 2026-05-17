@@ -14235,7 +14235,6 @@ Plan 57 backlog: empty. Phase E (если потребуется) — TBD future
 - Memory bandwidth measurement integration.
 - Statistical anomaly auto-detection (changepoint analysis).
 
-
 ## Session: Plan 59 production-grade finale — 6 фаз закрыты (2026-05-17)
 
 Контекст: Plan 59 (mono'd tuple structs) был закрыт Phases 1-4 ранее
@@ -14439,3 +14438,116 @@ Plan 57 — completely closed across all 5 фаз (MVP + A + B + C + D + E).
 
 Plan 57 backlog: empty. Все production extensions либо implemented,
 либо design-sketched. Future work — pick up sketches when ROI shows.
+
+=== Plan 60 — Size-accessor uniformity (.len/.capacity/.is_empty method-only) (2026-05-17) ===
+
+Ф.0-Ф.6 закрыты в worktree nova-lang-p60 (branch plan-60); merged → main.
+Реализует D-block D117 (новый в spec/decisions/03-syntax.md) — все
+size-like accessors method-only, без field-syntax. Достигает Rust паритета;
+лучше Java (inconsistent), Go (top-level fn), TS/Swift (property).
+
+Ф.0 — baseline: 635 PASS / 5 FAIL / 44 SKIP main. 5 fails — known drift
+(2× w2402, 1× #verify, 2× UAC). Regex audit field-style: 262 .len
+(std .nv) + 104 (tests) + 27 (examples) + 33 (spec .md) + 57 (docs .md)
+= ~483 references; plus 1× cap (std hashmap.nv:145) + 4× is_empty
+(std queue.nv). Total scope ~520 occurrences.
+
+Ф.1 (commit e53c88c1ca5) — method-path lowering без удаления field-path
+(Phase A — safe). emit_c.rs «Array methods» section: arr.@len() →
+(arr->len), arr.@capacity() → (arr->cap), arr.@is_empty() →
+((arr->len) == 0); str.@is_empty() → (nova_str_byte_len(s) == 0)
+O(1). str_method_ret_type/array ret-type обновлены. Interp:
+Value::Array(arr).capacity()/is_empty(), Value::Str(s).byte_len()/
+is_empty() native methods. Smoke f1_methods_zero_cost.nv с UTF-8 +
+array + str edge cases — PASS.
+
+Naming decision: capacity() (не cap()). Rust/C++/Swift parity, D29
+явность; Go cap() отвергнут — это builtin-fn, не method. byte_len()
+оставлено — D26 spec'нуто, 31 usage, idiomatic singular.
+
+Ф.2 (commit e53c88c1ca5) — auto-migration tool: nova-cli/src/bin/
+migrate_plan60.rs. Lexer-based token-level rewriter (НЕ regex, НЕ
+AST-pretty-print). Preserves comments/whitespace/formatting через
+byte-copy между spans. Skip rules: already-method (.len(...)) и
+method-value (`=` перед chain AND expression boundary после Ident).
+Walk-chain handles obj.field.len, arr[i].len, f().len, @self.len.
+Rename .cap → .capacity() single-op. Markdown mode (extract ```nova
++ inline `code`). 12 unit tests PASS.
+
+Applied:
+- std/: 35 files, 278 rewrites
+- nova_tests/: 41 files, 116 rewrites
+- examples/: 5 files, 10 rewrites
+
+NOT applied: docs/ + spec/ — meta-описание про обе формы, tool
+сломал бы descriptions. Migration markdown'а — вручную в Ф.5.
+
+Regression после Ф.2: 635 PASS / 3 FAIL — те же 3 flaky (M:N + UAC).
+Zero regression Plan 60.
+
+Ф.3 (commit 94efacb6c3e) — atomic switch. emit_c.rs: field-access на
+size-accessor (str/[]T × len/is_empty/byte_len/cap/capacity) → Err
+"E_SIZE_ACCESSOR_FIELD" с fix-it hint (append (), для .cap — rename
+suggestion). type-inference + print-path branches переведены на
+fallback. interp/mod.rs аналогично через Diagnostic.
+
+Manual fix-up 4 files что migration tool conservatively skip'ал
+(`let _ = s.len`, `let mut c = prefix.len`, default param `to int =
+xs.len`):
+- nova_tests/gc/bounded_rate.nv
+- nova_tests/runtime/memory_growth.nv
+- nova_tests/named_params/{basic, variadic}.nv
+
+Plan 60 tests (6): f1 (zero-cost methods), f2-f5 (negative
+E_SIZE_ACCESSOR_FIELD для len/cap/is_empty/cap-legacy), f6
+(capacity method). 6/6 PASS.
+
+Регресс: 640 PASS / 3 FAIL — те же 3 flaky. +5 plan60 tests.
+Diagnostic корректно ловит field-access что migration tool пропустил.
+
+Ф.4 merged в Ф.3 — diagnostic универсальный, не нужно arg-position
+refinement (deferred to Plan 37 typecheck semantic parity).
+
+Ф.5 (commit 0d5ce0ff0ae) — spec sync. Создан D117 в
+spec/decisions/03-syntax.md (D112 уже занят bounded quantifiers
+Plan 33). Полная D-block спецификация: правило, diagnostic
+формат, table SOA (Rust/Go/TS/Swift/Java/Python/Nova), что
+отвергнуто, связи с D32/D26/D38/Plan 11/37/45/56.
+
+Amendments: 03-syntax.md (built-in []T API table + D30 acronyms +
+variadic example), 02-types.md (Set auto-proxy), 04-effects.md
+(Db.query example), 08-runtime.md (D26 prelude — добавлены
+size-accessor методы с O(1)/O(n) cost spec).
+
+Plan 60 doc D112 → D117 sed-replace во всех ссылках (plan doc +
+emit_c.rs + interp + migration tool comments).
+
+Новые docs:
+- docs/idioms/size-accessors.md — convention page (правило, API per
+  type, method-value, loop с индексом, legacy patterns, SOA сравнение).
+- docs/migration/plan-60.md — migration guide (TL;DR, diagnostic
+  example, auto-migration tool usage, manual fix-up edge cases).
+
+Ф.6 — cross-reference cleanup. Final field-access grep:
+- 0 настоящих field-accesses осталось в .nv (все hits — false
+  positives: 0..len local var, comments, string literals, plan60
+  negative test fixtures).
+- nova check std/: 7 FAIL — pre-existing (crypto array literal,
+  toml named-params, property hybrid dispatch). Подтверждено на
+  main baseline — те же 7 fail. Plan 60 не вносит check регрессий.
+
+Acceptance:
+- arr.len/.cap/.is_empty (field) → compile error E_SIZE_ACCESSOR_FIELD.
+- arr.len()/.capacity()/.is_empty() → zero-cost C-code (verified
+  через emitted .c grep — никаких helper-fn calls).
+- str.len()/.is_empty() works (codepoint + O(1) byte check).
+- Migration completeness: 0 real field-access в std/ + nova_tests/
+  + examples/.
+- Stability: 640 PASS / 3 FAIL (same baseline drift).
+- Diagnostic quality: hint includes fix snippet + rename suggestion
+  для .cap.
+- Spec parity: D117 принят, D38/D32/D26/D30/04-effects amended,
+  idiom + migration docs опубликованы.
+
+Production-grade: Rust паритет (+ explicit D-block enforcement что
+Rust не имеет; rustc не error если опредeлите публичное `len` field).
