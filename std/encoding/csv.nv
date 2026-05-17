@@ -67,7 +67,7 @@ export fn Csv.parse(input str) Fail[ParseCsvError] -> [][]str {
     }
 
     if in_quote {
-        throw UnterminatedQuote { line: line }
+        throw UnterminatedQuote { line }
     }
 
     // Финальная запись (если последняя строка без \n)

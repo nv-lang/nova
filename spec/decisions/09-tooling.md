@@ -15,6 +15,7 @@
 | [D113](#d113-must_verify_module--strict-mode-на-модуле) | `#must_verify_module` — strict mode на модуле |
 | [D114](#d114-smt-cache--parallel-verification) | SMT cache + parallel verification |
 | [D116](#d116-z3-backend-через-собственные-ffi-биндинги) | Z3 backend через собственные FFI-биндинги |
+| [D121](#d121-benchmark-dsl--bench---measure--) | Benchmark DSL — `bench "..." { measure { ... } }` + `bench.*` namespace |
 
 ---
 
@@ -1777,7 +1778,7 @@ Boehm GC). Собственные биндинги дают:
 
 ---
 
-## D109. Benchmark DSL — `bench "..." { measure { ... } }`
+## D121. Benchmark DSL — `bench "..." { measure { ... } }`
 
 ### Что
 
@@ -1841,6 +1842,7 @@ dispatched hardcoded в emit_c.rs):
 | `bench.elements(n)` | `(int) -> ()` | Throughput: elements/iter |
 | `bench.allocs()` | `() -> int` | Snapshot alloc count (Plan 32 bridge) |
 | `bench.now_ns()` | `() -> int` | Monotonic high-res timer |
+| `bench.metric(name, value, unit)` | `(str, int, str) -> ()` | Plan 57.G.5: custom metric per-call (aggregated count/min/max/sum/median в JSON `custom_metrics[]`); closes gap vs Go `b.ReportMetric` |
 
 ### Adaptive sampling protocol
 
@@ -1859,6 +1861,35 @@ Codegen эмитит для каждого `bench`-declaration entry point, ко
 CLI (`nova bench run`) parses JSONL, runs **statistical analysis**
 (median, MAD, mean, stddev, p25/p75, IQR, Tukey outliers, bootstrap 95%
 CI, slope+R²), и emits human/JSON/CSV/MD output.
+
+### Phase G/H additions (2026-05-17)
+
+**JSON v1 schema additions (backward-compatible):**
+- `stats.drift_slope_ns_per_sample` + `stats.drift_r_squared` (Plan
+  57.G.1) — regression slope of (sample_index, raw_ns); detects cache
+  warmup leak / thermal drift. Non-Criterion semantic — adapted к our
+  fixed iters_per_sample sampling strategy.
+- `custom_metrics[]` (Plan 57.G.5) — aggregated `bench.metric` samples
+  per (name, unit) с count/min/max/sum/median.
+- `per_group_geomeans[]` в `nova bench diff --format json` output
+  (Plan 57.H.1) — benchstat-style per-group breakdown derived from
+  first '/'-segment of bench name.
+
+**CLI additions:**
+- `nova bench run ... --histogram` (Plan 57.G.4) — Unicode block-char
+  histogram per bench after table (M=median + [ ] Tukey fences).
+- `nova bench hyperfine "name=binary args..." [...] --warmup N
+  --samples K` (Plan 57.H.2) — cross-binary wall-clock timing;
+  output совместим с `bench diff`.
+- `nova bench callgrind <binary> [args] [--cache-sim]
+  [--out FILE.json]` + `nova bench callgrind-check` (Plan 57.H.3) —
+  deterministic CPU instructions count через valgrind subprocess
+  (Linux + macOS; cross-platform fallback к Linux-only perf_event_open).
+
+**Error message decoder (Plan 57.G.3):** perf_event_open failures
+(cpu_instr + membw paths) map к actionable hints (EPERM/EACCES →
+`sudo sysctl -w kernel.perf_event_paranoid=1`; EMFILE → `ulimit -n`;
+ENOSYS → kernel CONFIG_PERF_EVENTS missing).
 
 ### Почему
 

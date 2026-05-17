@@ -1,0 +1,5 @@
+module nova_tests.plan63.cm_box
+
+export type Box[T] { v T }
+
+export fn Box[T].of(value T) -> Box[T] => { v: value }

@@ -13,7 +13,7 @@ fn mk(a int, b int) -> Pt => { x: a, y: b }
 fn Pt.origin() -> Self => { x: 0, y: 0 }
 // sum-coercion: тип литерала (`Circle`) ≠ return-тип (`Shape`) →
 // префикс нужен, правило «type once» не срабатывает.
-fn mk_circle(r int) -> Shape => Circle { r: r }
+fn mk_circle(r int) -> Shape => Circle { r }
 
 test "=>-body typeless record literal" {
     let p = mk(3, 4)

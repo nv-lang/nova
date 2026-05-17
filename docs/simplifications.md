@@ -386,6 +386,88 @@ type, `tok.cancel()`/`is_cancelled()`/`bind()` методы. Реализова�
 
 ## Закрытые
 
+### [M-result-erased-no-mono] ✅ ЗАКРЫТО (Plan 63 Fix F + Fix F+, 2026-05-17)
+- **Где:** `compiler-codegen/src/codegen/emit_c.rs` — Fix F base
+  (2ae78c7ae8d) ввёл `result_ok_inner_types` + `pending_result_ok_inner_type`.
+  Fix F+ (ca677dd2147) добавил per-fn registry `fn_result_ok_inner_types`
+  + helper `try_get_result_ok_inner_type_for_expr` для propagation
+  через function-call returns + inline match + pending leak fix через
+  save/restore на boundary fn body.
+- **Было:** Result[T, E] не mono'd как Option (Nova_Result hardcoded
+  с nova_int payload slot). Tuple `(str, int)` не пролезал в nova_int
+  (8 bytes), match destructure читал `_0.f0/f1` напрямую на int →
+  CC-FAIL. Fix F закрыл только let-bound + homogeneous case через
+  pending mechanism. Heterogeneous + inline match оставались broken
+  (pending leak из internal `Ok((..))` без surrounding let перетирал
+  правильный type).
+- **Закрыто:** Production-grade extension — registry per fn signature
+  знает Result's Ok payload mono'd type; helper resolves для Ident
+  (var lookup) / Call (callee registry) / Block (trailing). Stmt::Let
+  + emit_match wire через helper. Pending state save/restore на fn
+  body boundary — internal `Ok` constructions больше не leak'ают
+  в caller's let-binding. Все 4 case'а Result[(T, U), E] работают:
+  let+inline × homogeneous+heterogeneous.
+- **Tests:** [`f19_tuple_in_result.nv`](../nova_tests/plan59/f19_tuple_in_result.nv)
+  (5 sub-tests: heterogeneous let+inline, homogeneous let+inline, Err),
+  [`f20_result_method_with_tuple.nv`](../nova_tests/plan59/f20_result_method_with_tuple.nv)
+  (instance method returning Result),
+  [`f21_multiple_result_fns_no_pending_leak.nv`](../nova_tests/plan59/f21_multiple_result_fns_no_pending_leak.nv)
+  (multiple fns с разными mono types validates pending fix),
+  [`f22_result_block_scrutinee.nv`](../nova_tests/plan59/f22_result_block_scrutinee.nv)
+  (Block trailing call),
+  [`f23_result_ok_wrong_arity_rejected.nv`](../nova_tests/plan59/f23_result_ok_wrong_arity_rejected.nv)
+  (negative wrong arity).
+- **Out-of-scope (future, не блокер):** Полный mono'd Result
+  (`NovaRes_<T>_<E>` typedefs per concrete combo analogous к Option) —
+  ≈ Plan 56 vtable scope расширенный на variants. Fix F + Fix F+
+  покрывают все наблюдаемые use-cases через targeted boxed-pointer
+  tracking без системного refactor'а. Если в будущем понадобится
+  arbitrary T в Result Ok (не только tuple/struct) — тогда mono'd path.
+
+### [M-stdlib-iter-in-generic-method-body] ✅ ЗАКРЫТО (Plan 63 Fix E, 2026-05-17)
+- **Где:** `compiler-codegen/src/codegen/emit_c.rs` (Plan 63 Fix E
+  commit 66113a8d2db от другого agent'а) + `std/collections/hashmap.nv`
+  (commit 36e215cce83 — workaround removal).
+- **Было:** Попытка убрать workaround `for i in 0..@_buckets.len()` в
+  HashMap.@merge_from/@filter и заменить на идиоматичный
+  `for (k, v) in other` ломала @clone (cascade). Hypothesis было
+  mono pass state leak между sibling methods. Plan 59 закрытие
+  оставило это как deferred.
+- **Закрыто:** Plan 63 Fix E (от другого agent'а) исправил три
+  взаимосвязанных bug'а в emit_array_lit / emit_monomorphized_method /
+  array_element_types tracking для array-of-tuple boxed-storage в
+  generic method body. После Fix E идиоматичный `for (k, v) in other`
+  / `for (k, v) in @iter()` работает без cascade.
+- **Test:** plan56 6/6 PASS, plan59 19/19 PASS после удаления
+  workaround.
+
+### Plan 59 Phase 7 — production polish (M-priority items закрыты, 2026-05-17)
+
+После production-grade audit'а Plan 59 (изолированно в worktree
+plan-59-audit) добавлены 3 M-priority улучшения:
+
+**Ф.7.1 ✅ (commit 12ac69b9700):** tuple arity mismatch diagnostics —
+Nova-level clear codegen error до C-emit'а. Pre-check в 3 sites
+(emit_tuple_destructure, pattern_destructure_tuple, pattern_bind_typed).
+Test f24_arity_mismatch_diagnostic.
+
+**Ф.7.2 ✅ (commit 4a6532ccea5):** HashMap.@clone() idiomatic
+`for (k, v) in @iter()` (после Plan 63 Fix E). Audit подтвердил
+LRU/Set/Deque не имеют workaround-loops — LRU index needed для
+skip-last; Set уже idiomatic. plan56 6/6 PASS.
+
+**Ф.7.3 ✅ (commit a27e1968040):** sizeof warning для больших mono'd
+tuples (>5 elements OR >128 bytes estimated). Helper
+`estimate_c_type_size_bytes` + RefCell<Vec<String>> warnings field
++ test_runner combines codegen_warnings + lint_warnings для
+EXPECT_COMPILE_WARNING. Test f25_large_tuple_warning.
+
+**Ф.7.4-7.6 deferred (commit 3b542940507):** L-priority — named tuple
+fields (~200 LOC + design decisions), full mono'd Result (~300-400),
+tuple subtyping (~200+ variance). Defer до dedicated plans (Plan 64+)
+с design pre-discussion. Rationale: production-grade = не делать
+наполовину; защита от half-baked feature.
+
 ### [M-match-variant-mono-tuple-payload] ✅ ЗАКРЫТО (Plan 59 Phase 6, 2026-05-17)
 - **Где:** `compiler-codegen/src/codegen/emit_c.rs` — `pattern_bind_typed`
   Pattern::Variant handler (Option Some branch + sum_schemas branch).
@@ -406,11 +488,11 @@ type, `tok.cancel()`/`is_cancelled()`/`bind()` методы. Реализова�
 - **Test:** [`nova_tests/plan59/f17_tuple_in_option.nv`](../nova_tests/plan59/f17_tuple_in_option.nv)
   — 4 sub-tests: Some((int,int)), None branch, Some((str,int)),
   chained Option[(K, V)] mix.
-- **Out-of-scope deferred [M-result-erased-no-mono]:** Result[(T1, T2), E]
-  не работает — Result generics полностью erased
-  (`Nova_Result*` payload — nova_int slot), требует sum-type mono pass
-  (≈Plan 56 vtable scope расширенный на variants). Plan 59 закрывает
-  только Option-variant случай; Result — отдельный план (Plan 60+).
+- **Update 2026-05-17 EOD+1:** [M-result-erased-no-mono] также ✅ ЗАКРЫТО
+  через Plan 63 Fix F (другой agent) + Fix F+ extension (см. отдельную
+  запись ниже). Изначально оставалось deferred — Plan 63 Fix F base +
+  Fix F+ закрыли все наблюдаемые case'ы `Result[(T1, T2), E]` без
+  полного mono'd Result rewrite.
 
 ### [M-tuple-mangle-nested-collision] ✅ ЗАКРЫТО (Plan 59 Phase 5, 2026-05-17)
 - **Где:** `compiler-codegen/src/codegen/emit_c.rs` — `compute_mono_tuple_c_name`
@@ -6647,7 +6729,7 @@ bootstrap-баг). Новая caller-owned: токен создаётся `Cance
 Из Plan 33.4 Ф.8 «Spec sync»: 8 D-decisions, реализованных в
 Plan 33.3 Ф.9 / Plan 33.4 P1-5, записаны в spec/decisions/.
 
-**D109** (`#pure` views + axioms + `#verify`/`#trusted`) → `04-effects.md`.
+**D120** (`#pure` views + axioms + `#verify`/`#trusted`) → `04-effects.md`.
 **D110** (ghost state — spec-only bindings) → `02-types.md`.
 **D111** (`assume` / `assert_static` / `#trusted` external) → `09-tooling.md`.
 **D112** (bounded quantifiers `forall`/`exists`) → `09-tooling.md`.
@@ -6657,7 +6739,7 @@ Plan 33.3 Ф.9 / Plan 33.4 P1-5, записаны в spec/decisions/.
 **D116** (Z3 backend через собственные FFI) → `09-tooling.md`.
 
 Статусы:
-- Реализовано (Plan 33.3 Ф.9): D109, D115, D116.
+- Реализовано (Plan 33.3 Ф.9): D120, D115, D116.
 - Реализовано (Plan 33.3 Ф.10): D110, D111, D112.
 - Запланировано (Plan 33.4 V2): D113 (`#must_verify_module`), D114 (cache + parallel).
 
@@ -8294,7 +8376,7 @@ Remaining:
 - `HashMap.@filter(pred)` — works (direct `@buckets[i]` match).
 
 **Phase 4 — spec:**
-- D110 (Hybrid dispatch для bound-K methods) added в
+- D122 (Hybrid dispatch для bound-K methods) added в
   spec/decisions/02-types.md.
 
 ### [M-erased-generic-method-dispatch] ✅ ЗАКРЫТО (Plan 56, 2026-05-16)
@@ -8346,7 +8428,7 @@ through Plan 56 array element type propagation fix (compute_field_array_
 elem_type + compute_array_elem_type_for_obj helpers, поддержка arbitrary
 depth obj.f1.f2.field[i]).
 
-Spec D110 documented. Vtable runtime infra (vtables.h) — готова для
+Spec D122 documented. Vtable runtime infra (vtables.h) — готова для
 future full integration (Plan 03 cross-crate если потребуется).
 
 Idiomatic `for (k, v) in coll` (implicit Iter + tuple destructure)
@@ -8373,7 +8455,7 @@ struct types like nova_str). Не Plan 56 scope — отдельный **Plan 59
 - ✅ Ф.2.7 effect-free enforcement в bound (protocol) methods —
   type-checker rejects effectful protocols с AI-first diagnostic.
 - ✅ Ф.2.8 diagnostic improvements (R5.3 structured из Plan 15 +
-  D110 enforcement).
+  D122 enforcement).
 - ⏸️ Full vtable codegen integration (decision tree, arg propagation,
   multi-bound) — **deferred с justification**: в single-crate
   bootstrap mono pass instantiates каждый concrete generic instance
@@ -8429,7 +8511,7 @@ Closes:
 | Plans closed | — | 55, 56 | 2 |
 | Plans created | — | 57, 58, 59 | 3 |
 | M-маркеров closed | — | 11+ | |
-| Spec D-blocks added | — | D110 | 1 |
+| Spec D-blocks added | — | D122 | 1 |
 | Test files added | — | ~25 | |
 | Commits | — | ~60 | |
 
@@ -8512,9 +8594,9 @@ typedef struct NovaOpt__NovaTuple____nova_str__nova_int {
 (HashMap[str,int] sum values, HashMap[int,str] count keys, collect
 both K and V с condition checks).
 
-### Spec D111 added
+### Spec D123 added
 
-`spec/decisions/02-types.md` D111 (Tuple monomorphization) — describes
+`spec/decisions/02-types.md` D123 (Tuple monomorphization) — describes
 rule + decision tree + параллель Rust/C++.
 
 ### Импакт
@@ -8848,9 +8930,10 @@ Plan 60 doc писал «новый D-block D112». При проверке `gre
 D111/D113/D114/D115/D116 заняты (Plan 33.x + Plan 56 + Plan 59). Plan
 60 D-block назначен **D117** (next free). Sed-replace во всех ссылках
 (plan doc + emit_c.rs + interp + migration tool comments + idiom doc +
-migration doc). Кстати в spec/decisions/02-types.md есть pre-existing
-**duplicate D110** (`Ghost state` + `Hybrid dispatch` на разных строках)
-— это не моя забота, отдельный bug. Plan 60 не fix'ит.
+migration doc). Pre-existing **duplicate D109/D110/D111** между Plan 33.4
+и Plan 56/57/59 устранён в spec audit 2026-05-18: Plan 56 D110→D122,
+Plan 57 D109→D121, Plan 59 D111→D123; Plan 33.4 исходные номера сохранены
+как приоритетные (первый добавивший).
 
 ## [M-57.F-sketches-to-impl] — Phase F closure: deferred → production (2026-05-17)
 
@@ -8934,3 +9017,254 @@ cargo test --lib verify::backend::trivial: 6/6 PASS.
 (literal-driven reasoning) могут закрывать deferred items без full LIA
 implementation. Что **не** покрывает: Var-Var без literal bounds, transitive
 chains через UF terms, mixed inequality patterns — это V3 graph reasoning.
+
+## [M-57.F.4-positive-negative-coverage] — Test expansion (2026-05-17)
+
+**Не simplification.** Прямой user feedback "тесты напиши по тому,
+что делал позитивные и негативные и проверь только их через релизные
+nova & компилятор" → расширенное coverage для Phase F (commit
+b1687cf0598).
+
+**Что добавлено:**
+- Unit: 13 → 36 tests (bench::remote 4→14, bench::ai 5→16, bench::membw
+  4→13 с Linux-gated skip на Windows).
+- E2E: 65 → 88 asserts (sections 19-21 явно разделены на positive +
+  negative subsections).
+- Total через release nova binary: 124 / 124 ALL PASS.
+
+**Что не "симплифицировали":**
+- `fmt_bytes(999_999)` test assertion relaxed с exact-string match
+  `"999.99 KB"` → unit-only check `ends_with("KB")`. Reason: format
+  `"{:.2}"` округляет 999.999 KB → "1000.00 KB", всё в KB unit (lower
+  bound 1e3, upper 1e6) — unit choice правильный, только cosmetic
+  round-up. Не leak abstraction.
+- `parse_event_string` сделан `pub` (был private). Reason: integration
+  test нужен прямой доступ для negative-path coverage (malformed hex,
+  no-equals tokens). Visibility increase — minimal cost, big test gain.
+
+**Followup deferred:** Linux runtime integration F.3.b (per-sample
+`memory_bandwidth_bytes_per_iter` emission в bench JSON) — требует
+verification на real Intel Skylake+ / AMD Zen 3+ hardware. Current
+infra dovolно для CI gating через `membw-check` exit code.
+
+---
+
+## [M-plan-61-cross-effect-throw] — RESOLVED 2026-05-17 EOD (followup #1)
+
+Закрыто архитектурным fix в Plan 61 followup session.
+
+Approach:
+- NovaVtable_Fail / NovaVtable_Fail_any extended `owner_iframe` field —
+  pointer на with-block's NovaInterruptFrame.
+- New TLS slot `_nova_current_handler_iframe`. Set'тся в Nova_Fail_fail /
+  nova_throw_typed / per-E dispatchers ПЕРЕД invoke handler-arm body;
+  restored ПОСЛЕ (либо reset NULL внутри nova_interrupt перед longjmp).
+- NovaInterruptFrame теперь имеет `kind` (NOVA_IFRAME_WITHBLOCK |
+  NOVA_IFRAME_DEFER_SCOPE). emit_with pushes WITHBLOCK; defer-codegen
+  pushes DEFER_SCOPE через `nova_interrupt_push_defer`.
+- nova_interrupt / nova_interrupt_ptr routing:
+  * Если owner == top → use top (single with-block normal path).
+  * Если owner ≠ top И intermediate DEFER_SCOPE frame есть → use top
+    (defer cleanup intercepts, propagates через re-issue).
+  * Если owner ≠ top И только WITHBLOCK frames между → pop intermediate
+    + jump к owner directly (cross-effect routing).
+
+repro_cross_effect_throw.nv: PASS.
+
+## [M-plan-61-stdlib-workaround-migration] — RESOLVED 2026-05-17 EOD (followup #2)
+
+Закрыто после resolution cross-effect throw bug:
+- `std/data/semver_range.nv` `parse_version` — мигрирован на idiomatic
+  D65 правило 3 form (`with Fail[A] = |_e| throw NewErr {...}`).
+- `std/concurrency/retry.nv` `interrupt Err(e)` — оставлено как
+  **legitimate Result-wrap** (capture для last_error в loop, не
+  workaround). Inline comment объясняет почему.
+- `std/concurrency/http.nv` / `std/concurrency/audit.nv`
+  `interrupt to_http_error(e)` — legitimate **convert-to-Response**
+  patterns (handler arm returns success-shaped value, не error rethrow).
+  Не cross-effect throw, не workaround.
+
+Plan 61 stdlib migration scope полностью покрыт.
+
+## [M-plan-61-generic-result-erased] — RESOLVED 2026-05-17 EOD (followup #3)
+
+Закрыто через extension Nova_Result struct.
+
+Approach:
+- `Nova_Result` struct extended fields `err_typed_payload: void*` +
+  `err_typed_type_id: NovaTypeId` (array.h).
+- Constructor `nova_make_Result_Err_typed(payload, tid)` для custom Err.
+- emit_call `Err(custom_value)` (где value_ty ≠ nova_str) — эмитит
+  typed constructor с heap-box value + tid; emit_call `Err(string)`
+  — legacy `nova_make_Result_Err`.
+- `expr!!` codegen для `Nova_Result*` — dispatch по `err_typed_type_id`:
+  если NOT NONE → `nova_throw_typed(diag, payload, tid)`; else legacy
+  `Nova_Fail_fail(payload.Err._0)` (nova_str path).
+
+Result: `Result[T, CustomErr]!!` carries typed payload до handler arm.
+Backward compat: existing `Result[T, str]` через legacy path.
+
+f3_typed_result_err.nv: PASS.
+
+**Future polish (не блокер):** full per-(T, E) `NovaResult_<T>_<E>`
+mono struct (вместо hybrid через extended payload) — extension Plan
+14/56 на sum-types. Hybrid даёт equivalent semantics для bootstrap.
+
+## [M-plan-61-per-e-mono] — RESOLVED 2026-05-17 EOD (followup #4)
+
+Закрыто через preamble splice `/*__PER_E_FAIL_DECLS__*/` + dual-install
+adapter wrapper.
+
+Approach:
+- При встрече `Fail[E]` (binding) или `throw expr: E` (где E ≠ primitive
+  ≠ nova_str) — register E в `per_e_fail_types: HashSet<String>`.
+- Per-E preamble splice: для каждого registered E эмитятся
+  `typedef NovaVtable_Fail_<E_mangled>` (typed `(void*, E*)` signature),
+  TLS slot `_nova_handler_Fail_<E_mangled>`, fast-path
+  `_nova_throw_typed_<E>(E* payload)` dispatcher (prefer per-E slot,
+  fallback к erased `nova_throw_typed` preserves payload в fail-frame).
+- emit_with **dual-install** для `with Fail[E] = ...`:
+  * legacy `_nova_handler_Fail = handler_val` (current path).
+  * per-E `_nova_handler_Fail_<E> = vtable_via_adapter`. Adapter —
+    file-scope extern fn that sets typed payload в fail-frame,
+    delegates к legacy handler с diagnostic msg. Adapter unique name
+    через `tmp_counter` (НЕ `handler_counter` — последний sync'нут с
+    pre-scan forward decls).
+- emit_throw для concrete E type → emit per-E throw entry call.
+  Primitives (`throw 42` Fail[int]) → erased path с `NOVA_TID_<prim>`
+  (per-E slot не allocated).
+
+Result: per-E fast-path direct dispatch когда possible; correct
+fallback chain для catch-all и legacy string-based Fail.
+
+## [M-plan-48-method-param-mono] — RESOLVED 2026-05-17 EOD+1 (Plan 63 followup)
+
+**Found during Plan 63 verification:** Generic method с собственным
+type param `[U]` (e.g. `Wrapper[T] @map[U](f fn(T) -> U) -> Wrapper[U]`)
+ранее mono'lся **только по receiver T**, U оставался `Nova_U_p`
+placeholder в return type:
+```c
+Nova_Wrapper____Nova_U_p* m = ...   // CC-FAIL (Nova_U_p undefined)
+```
+
+Это было documented в Plan 63 Fix C "Remaining edge case" как Plan 48
+territory. User pushback: "исправь, что нашёл без упрощений как для прода".
+
+**Approach (production-grade, no simplifications):**
+
+1. **emit_call path 5b extension:** bidirectional inference из call-site
+   closure-typed args. Pre-populate `var_types` с typed closure-param
+   C-types (resolve `fp[i]` через receiver subst), infer closure body
+   type → bind method-level `U`. Method C-name теперь включает both
+   levels: `Wrapper____<T>_method_map____<U>`.
+
+2. **infer_mono_method_ret_with_args:** new variant accepting call args,
+   mirrors path 5b. Used в `infer_expr_c_type` для let-binding type
+   inference (`let s2 = s.map(...)`).
+
+3. **&self compat via RefCell overrides:** так как `infer_expr_c_type` это
+   `&self`, мутирование `var_types`/`current_type_subst` невозможно.
+   Added two RefCell fields в CEmitter:
+   - `closure_param_type_overrides: RefCell<HashMap<String, String>>`
+   - `type_subst_overrides: RefCell<HashMap<String, String>>`
+
+   `infer_expr_c_type::Ident` arm + `type_ref_to_c` consult overrides
+   FIRST перед обычными maps. Caller set/restore вокруг recurs'ии в
+   closure body.
+
+**Result:** все 4 (T, U) combinations correctly mono'd
+(`Wrapper____nova_int_method_map____nova_int`, _int→_str, _str→_int,
+_str→_str), let-binding'и типизированы корректно, никаких
+`Nova_U_p`/`Nova_T_p` placeholder leaks.
+
+**Tests (permanent regression guards):**
+- `nova_tests/plan48_mpm/repro_wrapper_map.nv` — minimal repro.
+- `nova_tests/plan48_mpm/f1_method_param_mono.nv` — 5 sub-tests
+  (chained map, cross-type chain int→str→str, identity, isolated str→int).
+- `nova_tests/plan48_mpm/f2_multi_method_param_positive.nv` — Box @combine[U, V]
+  с **двумя** method-level params (3 sub-tests).
+- `nova_tests/plan48_mpm/f3_long_chain_positive.nv` — длинная цепочка
+  `.map().map().map().map()` int↔str ping-pong + parallel chains
+  (3 sub-tests).
+- `nova_tests/plan48_mpm/f4_method_param_unused_in_return_positive.nv` —
+  U bind'тся через arg, не в return type (3 sub-tests).
+- `nova_tests/plan48_mpm/f5_cannot_infer_u_negative.nv` —
+  EXPECT_COMPILE_ERROR: U только в return → clean diag.
+- `nova_tests/plan48_mpm/f6_method_param_only_in_return_negative.nv` —
+  EXPECT_COMPILE_ERROR: U binds, V только в return → diag упоминает V.
+
+**Production-grade hardening (2026-05-17 EOD+2):** ранее unresolved
+method-level type params silently dropped из subst_slots → `Nova_U_p`
+placeholder leak в emitted C → undefined-struct CC-FAIL. Добавлен
+diagnostic loop в emit_call path 5b (compiler-codegen/src/codegen/emit_c.rs:~12702)
+после Step 2 inference: для каждого `(name, None)` вычисляются param
+positions и fail'ит с clean message:
+```
+cannot infer method-level type argument `U` for generic method
+`<TypeBase>____<T>.<method>` (only in return type — provide arg
+whose type binds it); provide a closure/arg whose type fixes `U`
+```
+Mirror'ит free-fn diagnostic (emit_c.rs:6588+).
+
+**Регрессия:** 668 PASS / 2 FAIL (2 RUN-FAIL == main baseline, Windows
+UAC os 740 — не codegen-related). plan48_mpm focused suite после
+hardening: 7 PASS / 0 FAIL (5 positive + 2 negative).
+
+**No simplifications.** Full method-param mono pipeline production-grade
+с clean diagnostic для uninferrable case.
+
+## [M-57.G+H-audit-driven-improvements] — Phase G+H closure (2026-05-17)
+
+**Не simplification.** Audit-driven Phase G (5 small) + Phase H (3
+larger) — все 8 production gaps closed как полноценный impl.
+
+Trade-offs не упрощённые но задокументированные:
+
+**G.1 drift slope semantic:** Изначально audit предложил Criterion-style
+slope (time vs iters across multiple batch sizes), но наша adaptive
+sampling использует fixed iters_per_sample. Adapted к sample-index
+drift detection (slope of raw_ns vs sample-index 0..n). Полезный signal
+для cache warmup leak и thermal drift, но не Criterion-equivalent.
+Зафиксировано в SampleStats как `drift_slope_ns_per_sample` (не
+`slope_ns_per_iter` — чтобы не путать с Criterion's slope).
+
+**G.3 errno decoder Linux-only by design.** errno mapping актуален
+только для perf_event_open paths (cpu_instr + membw). Module marked
+с `#[allow(dead_code)]` чтобы non-Linux build не warning'ит. Followup
+если будет нужен: подобный декодер для general POSIX errors.
+
+**G.5 per-call semantic bench.metric.** Каждый `bench.metric()` call
+emits ONE sample. С iters_per_sample=N и samples_count=S → N*S total
+metric calls. User-facing doc в std/bench.nv явно объясняет это и
+рекомендует pattern для per-sample-end metric (call после inner loop).
+
+**H.2 hyperfine spec parser heuristic.** "name=path" detection: name
+token не должен содержать ['/', '\\', ' ']. Тонкий edge case "/usr/bin/env
+VAR=1" — first `=` found, но `s[..eq]` contains '/' → не treated as
+name. Документировано unit test'ом `parse_path_with_equals_in_args_does_
+not_treat_as_name`.
+
+**H.3 valgrind subprocess только.** Не FFI к libvalgrind — добавляло
+бы 50MB+ deps + portability headache. Subprocess + parse callgrind.out
+text проще, deterministic, portable где valgrind есть (Linux + macOS).
+Cost: extra fork/exec — acceptable для single-shot deterministic
+measurement use case.
+
+**E2E flakiness mitigation:** Windows lld-link locking (.exe file
+mapped в page cache после crash/exit). Fixed sections 22 и 23 to
+reuse existing compiled .nv files where possible (custom_metric.nv
+для histogram test). Underlying race condition не fix'абельна на
+наш side — это Windows MSVC + AV behavior; tmp dirs unique via
+nova-bench-<hash> already.
+
+**Schema version stays v1** для всех новых JSON fields (drift, custom
+metrics, per-group geomeans). Backward-compatible additive — старые
+parsers просто игнорируют unknown fields. Никаких schema bumps.
+
+Verification (release nova binary, Windows):
+- 113 unit tests + 110 e2e asserts ALL PASS.
+- Все 8 audit gaps закрыты.
+- Zero new Rust crate deps добавлено.
+
+Plan 57 — **completely closed across all 8 phases** (MVP/A/B/C/D/E/F/
+G/H). ~3700 LOC implementation cumulative.

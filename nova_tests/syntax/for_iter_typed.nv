@@ -30,7 +30,7 @@ export fn ByteCounter mut @next() -> Option[byte] {
 
 
 export fn ByteCounter.new(end byte) -> ByteCounter {
-    ByteCounter { end: end, cur: 0 as byte }
+    ByteCounter { end, cur: 0 as byte }
 }
 
 
@@ -66,7 +66,7 @@ export fn BoolToggler mut @next() -> Option[bool] {
 
 
 export fn BoolToggler.new(end int) -> BoolToggler {
-    BoolToggler { end: end, cur: 0, on: true }
+    BoolToggler { end, cur: 0, on: true }
 }
 
 
@@ -101,7 +101,7 @@ export fn I32Seq mut @next() -> Option[i32] {
 
 
 export fn I32Seq.new(end int) -> I32Seq {
-    I32Seq { end: end, cur: 0 }
+    I32Seq { end, cur: 0 }
 }
 
 

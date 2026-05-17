@@ -111,7 +111,7 @@ fn first[T](xs []T) -> Option[T] => xs.get(0)
 ## Related
 
 - [D72](../spec/decisions/02-types.md#d72) — generic bounds (type-checker).
-- [D110](../spec/decisions/02-types.md#d110) — hybrid dispatch
+- [D122](../spec/decisions/02-types.md#d122) — hybrid dispatch
   (codegen runtime).
 - [Plan 56](plans/56-vtable-dispatch-erased-generics.md) — vtable infra.
 - [Plan 48](plans/48-closures-in-generics.md) — monomorphization.

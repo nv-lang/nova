@@ -696,7 +696,7 @@ test "clone stress — no leak" {
   unlocked **через direct field access** (используют Plan 56 array
   element type propagation: `compute_field_array_elem_type` +
   `compute_array_elem_type_for_obj` для произвольной глубины).
-- ✅ Ф.4 partial — D110 (Hybrid dispatch для bound-K methods) added
+- ✅ Ф.4 partial — D122 (Hybrid dispatch для bound-K methods) added
   в spec/decisions/02-types.md.
 - ✅ `[M-erased-generic-method-dispatch]` ЗАКРЫТО.
 
@@ -750,10 +750,10 @@ work begins autonomously per items above.
   authors (when to use bound, anti-patterns, bootstrap limitations,
   examples).
 - ✅ Ф.2.7 **effect-free enforcement** в bound (protocol) methods —
-  type-checker rejects protocols с effectful methods (D110, vtable
+  type-checker rejects protocols с effectful methods (D122, vtable
   rationale). Tests f5_negative_bound_effect + f6_pure_bound_protocols.
 - ✅ Ф.2.8 diagnostic improvements: AI-first structured diagnostic из
-  Plan 15 R5.3 covers missing bound; new D110 enforcement diagnostic
+  Plan 15 R5.3 covers missing bound; new D122 enforcement diagnostic
   с rationale + fix suggestion.
 
 ### Реально deferred (out of scope для bootstrap):
@@ -776,7 +776,7 @@ Vtable codegen integration требуется только для:
 - **`dyn Trait`-like** explicit dynamic dispatch (не Nova bootstrap goal).
 
 Vtable runtime infrastructure (Ф.1) — **готова**, ABI documented в
-spec D110. Когда cross-crate compilation потребует — codegen
+spec D122. Когда cross-crate compilation потребует — codegen
 integration straightforward (vtable struct already designed,
 primitive thunks already exist).
 

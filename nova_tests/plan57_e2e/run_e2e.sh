@@ -436,6 +436,329 @@ else
     PASS=$((PASS+1))
 fi
 
+# ── 19. F.1 extended (Plan 57.F.4 positive + negative) ──────────────
+
+echo "=== 19. F.1 extended (positive + negative) ==="
+
+# 19.P.1 — comments + blank lines in TOML are tolerated.
+CFG_COM="$TMP_DIR/remotes-comments.toml"
+cat > "$CFG_COM" <<TOMLEOF
+# top comment
+
+[remote.alpha]
+# inline section comment
+host = "alpha.example"  # trailing not currently stripped post '=' but key
+user = "ci"
+repo = "/srv/a"
+TOMLEOF
+com_out=$("$NOVA_BIN" bench remote list --config "$CFG_COM" 2>&1)
+assert_contains "$com_out" "alpha"     "F.1+: comments+blanks tolerated (alpha listed)"
+assert_contains "$com_out" "1 remote"  "F.1+: comments+blanks → 1 remote"
+
+# 19.P.2 — NOVA_BENCH_REMOTES env var resolves config path.
+env_out=$(NOVA_BENCH_REMOTES="$REMOTES_TOML" "$NOVA_BIN" bench remote list 2>&1)
+assert_contains "$env_out" "test-lin" "F.1+: NOVA_BENCH_REMOTES env-var honored"
+
+# 19.P.3 — runner_id defaults to remote name when not set.
+CFG_DEF="$TMP_DIR/remotes-default-rid.toml"
+cat > "$CFG_DEF" <<TOMLEOF
+[remote.foo]
+host = "h"
+user = "u"
+repo = "/r"
+TOMLEOF
+# list output shows name "foo"; runner_id not directly in list, but
+# parse-success is enough — verifying default by absence of any error.
+def_out=$("$NOVA_BIN" bench remote list --config "$CFG_DEF" 2>&1)
+assert_contains "$def_out" "foo"      "F.1+: minimal config (no runner_id) accepted"
+assert_contains "$def_out" "1 remote" "F.1+: minimal config → 1 remote"
+
+# 19.N.1 — invalid ssh_port reported, remote still parsed without it.
+CFG_BADPORT="$TMP_DIR/remotes-badport.toml"
+cat > "$CFG_BADPORT" <<TOMLEOF
+[remote.badport]
+host = "h"
+user = "u"
+repo = "/r"
+ssh_port = "abc"
+TOMLEOF
+bp_out=$("$NOVA_BIN" bench remote list --config "$CFG_BADPORT" 2>&1)
+assert_contains "$bp_out" "badport"       "F.1-: badport remote still listed"
+assert_contains "$bp_out" "invalid ssh_port" "F.1-: invalid ssh_port → warn"
+
+# 19.N.2 — unknown key reported as warning, remote still loaded.
+CFG_UNK="$TMP_DIR/remotes-unknown-key.toml"
+cat > "$CFG_UNK" <<TOMLEOF
+[remote.x]
+host = "h"
+user = "u"
+repo = "/r"
+weird_field = "value"
+TOMLEOF
+uk_out=$("$NOVA_BIN" bench remote list --config "$CFG_UNK" 2>&1)
+assert_contains "$uk_out" "x"            "F.1-: remote with unknown key still listed"
+assert_contains "$uk_out" "weird_field"  "F.1-: unknown-key warning surfaces"
+
+# 19.N.3 — remote run with empty --remotes string → clear error.
+empty_exit=0
+"$NOVA_BIN" bench remote run /tmp/no.nv --remotes "" \
+    --gather-into "$TMP_DIR/gather-empty" --config "$REMOTES_TOML" \
+    >"$TMP_DIR/r-empty.log" 2>&1 || empty_exit=$?
+if [ "$empty_exit" -ne 0 ]; then
+    echo "  PASS: F.1-: empty --remotes → non-zero exit ($empty_exit)"
+    PASS=$((PASS+1))
+else
+    echo "  FAIL: F.1-: empty --remotes should fail"
+    FAIL=$((FAIL+1))
+fi
+
+# ── 20. F.2 extended (Plan 57.F.4 positive + negative) ──────────────
+
+echo "=== 20. F.2 extended (positive + negative) ==="
+
+# 20.P.1 — --ai-max-tokens override respected (visible в dry-run body).
+mt_out=$(NOVA_AI_API_KEY=sk-fake "$NOVA_BIN" bench diff "$OUT_JSON" "$NEW_JSON" \
+    --ai-dry-run --ai-max-tokens 999 2>&1)
+assert_contains "$mt_out" "999"  "F.2+: --ai-max-tokens 999 in request body"
+
+# 20.P.2 — NOVA_AI_MODEL env-var override respected.
+mo_out=$(NOVA_AI_API_KEY=sk-fake NOVA_AI_MODEL=custom-model-x \
+    "$NOVA_BIN" bench diff "$OUT_JSON" "$NEW_JSON" --ai-dry-run 2>&1)
+assert_contains "$mo_out" "custom-model-x" "F.2+: NOVA_AI_MODEL env override"
+
+# 20.P.3 — privacy warning emitted to stderr (separately captured).
+NOVA_AI_API_KEY=sk-fake "$NOVA_BIN" bench diff "$OUT_JSON" "$NEW_JSON" \
+    --ai-dry-run >"$TMP_DIR/ai-stdout" 2>"$TMP_DIR/ai-stderr"
+priv_err=$(cat "$TMP_DIR/ai-stderr")
+assert_contains "$priv_err" "external LLM" "F.2+: privacy warning emitted on stderr"
+
+# 20.P.4 — markdown format → markdown headers in AI section.
+md_out=$(NOVA_AI_API_KEY=sk-fake "$NOVA_BIN" bench diff "$OUT_JSON" "$NEW_JSON" \
+    --ai-dry-run --format markdown 2>&1)
+assert_contains "$md_out" "## AI interpretation" "F.2+: markdown rendering used"
+
+# 20.N.1 — invalid NOVA_AI_PROVIDER → clear error.
+bp_exit=0
+NOVA_AI_API_KEY=sk-fake NOVA_AI_PROVIDER=mystery-provider \
+    "$NOVA_BIN" bench diff "$OUT_JSON" "$NEW_JSON" --ai-dry-run \
+    >"$TMP_DIR/ai-bp.log" 2>&1 || bp_exit=$?
+if [ "$bp_exit" -ne 0 ]; then
+    echo "  PASS: F.2-: invalid provider → non-zero exit"
+    PASS=$((PASS+1))
+else
+    echo "  FAIL: F.2-: invalid provider should fail"
+    FAIL=$((FAIL+1))
+fi
+bp_log=$(cat "$TMP_DIR/ai-bp.log")
+assert_contains "$bp_log" "unknown AI provider" "F.2-: invalid provider error text"
+
+# 20.N.2 — dry-run does NOT leak api_key в output.
+leak_out=$(NOVA_AI_API_KEY=sk-MUST-NOT-LEAK-DEADBEEF \
+    "$NOVA_BIN" bench diff "$OUT_JSON" "$NEW_JSON" --ai-dry-run 2>&1)
+if echo "$leak_out" | grep -q "MUST-NOT-LEAK"; then
+    echo "  FAIL: F.2-: api_key leaked в dry-run output!"
+    FAIL=$((FAIL+1))
+else
+    echo "  PASS: F.2-: dry-run does not leak api_key"
+    PASS=$((PASS+1))
+fi
+
+# 20.N.3 — diff без --explain works как раньше (regression guard).
+plain_diff=$("$NOVA_BIN" bench diff "$OUT_JSON" "$NEW_JSON" 2>&1)
+if echo "$plain_diff" | grep -q "AI interpretation"; then
+    echo "  FAIL: F.2-: plain diff should NOT have AI section"
+    FAIL=$((FAIL+1))
+else
+    echo "  PASS: F.2-: plain diff w/o --explain unchanged"
+    PASS=$((PASS+1))
+fi
+
+# ── 21. F.3 extended (Plan 57.F.4 positive + negative) ──────────────
+
+echo "=== 21. F.3 extended (positive + negative) ==="
+
+# 21.P.1 — membw-check всегда печатает Arch line.
+mw_out=$("$NOVA_BIN" bench membw-check 2>&1)
+assert_contains "$mw_out" "Arch:" "F.3+: membw-check shows Arch"
+
+# 21.P.2 — membw-check exit code = 0 на всех платформах (диагностика, не gate).
+mw_exit=0
+"$NOVA_BIN" bench membw-check >/dev/null 2>&1 || mw_exit=$?
+assert_eq "$mw_exit" "0" "F.3+: membw-check exit=0 (diagnostic не gate)"
+
+# 21.P.3 — `bench --help` listing включает membw-check.
+help_out=$("$NOVA_BIN" bench --help 2>&1)
+assert_contains "$help_out" "membw-check" "F.3+: subcommand exposed в --help"
+
+# 21.N.1 — нет non-existent subcommand under bench (proves CLI surface stable).
+ne_exit=0
+"$NOVA_BIN" bench membw-bogus-check >/dev/null 2>&1 || ne_exit=$?
+if [ "$ne_exit" -ne 0 ]; then
+    echo "  PASS: F.3-: unknown bench subcommand rejected"
+    PASS=$((PASS+1))
+else
+    echo "  FAIL: F.3-: unknown bench subcommand should reject"
+    FAIL=$((FAIL+1))
+fi
+
+# 21.N.2 — Cross-platform contract: на non-Linux LLC-miss обязан быть 'no ✗'.
+case "$(uname -s)" in
+    Linux*) ;;  # skip; на Linux может быть либо yes либо no.
+    *)
+        if echo "$mw_out" | grep -q "LLC-miss counter: no"; then
+            echo "  PASS: F.3-: non-Linux LLC-miss is 'no ✗' as expected"
+            PASS=$((PASS+1))
+        else
+            echo "  FAIL: F.3-: non-Linux должен сказать 'no ✗' для LLC-miss"
+            FAIL=$((FAIL+1))
+        fi
+        ;;
+esac
+
+# ── 22. Plan 57.G.5 — bench.metric custom metrics ──────────────────
+
+echo "=== 22. bench.metric custom metrics (Plan 57.G.5) ==="
+# 22.P.1 — custom metric emit + aggregate в JSON.
+# Helper для file-based grep (избегает MSYS issues с огромными
+# multi-line variables, см. предыдущие fails при $(cat huge.json)).
+assert_file_grep() {
+    local file="$1" pattern="$2" label="$3"
+    if grep -q "$pattern" "$file" 2>/dev/null; then
+        echo "  PASS: $label"
+        PASS=$((PASS+1))
+    else
+        echo "  FAIL: $label (pattern '$pattern' not found in $file)"
+        FAIL=$((FAIL+1))
+    fi
+}
+METRIC_JSON="$TMP_DIR/metric.json"
+"$NOVA_BIN" bench run bench/micro/custom_metric.nv \
+    --gc malloc --mode dev --samples 5 --warmup-ms 30 --time-budget 2 \
+    --out "$METRIC_JSON" >"$TMP_DIR/metric.log" 2>&1
+assert_file_exists "$METRIC_JSON" "G.5: bench run with custom metrics → JSON"
+assert_file_grep "$METRIC_JSON" 'custom_metrics' "G.5: JSON has custom_metrics field"
+assert_file_grep "$METRIC_JSON" 'cache_hits'     "G.5: cache_hits metric present"
+assert_file_grep "$METRIC_JSON" 'processed'      "G.5: processed metric present"
+assert_file_grep "$METRIC_JSON" '"unit": "count"' "G.5: unit=count tracked"
+assert_file_grep "$METRIC_JSON" '"unit": "items"' "G.5: unit=items tracked"
+
+# 22.P.2 — drift fields appear (G.1 verification).
+assert_file_grep "$METRIC_JSON" 'drift_slope_ns_per_sample' "G.1: drift_slope_ns_per_sample emitted"
+assert_file_grep "$METRIC_JSON" 'drift_r_squared'           "G.1: drift_r_squared emitted"
+
+# 22.P.3 — --histogram flag prints distribution. Reuse custom_metric.nv
+# (already compiled in section 22.P.1; avoid recompile lld-link conflict
+# на hello_bench.exe which other sections use).
+hist_out=$("$NOVA_BIN" bench run bench/micro/custom_metric.nv \
+    --gc malloc --mode dev --samples 5 --warmup-ms 30 --time-budget 2 \
+    --histogram 2>&1)
+assert_contains "$hist_out" "histogram" "G.4: --histogram prints distribution"
+assert_contains "$hist_out" "M=median"  "G.4: histogram has median marker"
+
+# ── 23. Plan 57.H.1/H.2/H.3 — multi-group geomean, hyperfine, callgrind ──
+
+echo "=== 23. H.1/H.2/H.3 (per-group geomean, hyperfine, callgrind-check) ==="
+
+# 23.H.1.P.1 — multi-group geomean: создаем 2-group baseline + new.
+H1_BASE="$TMP_DIR/h1-base.json"
+H1_NEW="$TMP_DIR/h1-new.json"
+cat > "$H1_BASE" <<JSONEOF
+{"format_version":"1","kind":"bench-result",
+ "metadata":{"hostname":"h","os":"linux","arch":"x86_64","cpu_model":"x","cpu_count":4,
+   "gc_mode":"malloc","compiler":{"nova_sha":"a","nova_version":"0.1","c_compiler":"clang"},
+   "build_mode":"release","timestamp_unix":1715000000,
+   "sampling":{"warmup_ns":100,"target_ns":100000000,"samples":30,"time_budget_ns":3000000000}},
+ "benches":[
+   {"name":"alpha/x","unit":"ns","raw_ns":[100,100,100,100,100],"iterations_per_sample":1,
+    "stats_ns":{"n":5,"mean":100,"median":100,"mad":0,"min":100,"max":100,"p95":100,"p99":100,"stdev":0,"outlier_count":0},
+    "ratios":{"normality_p":0.5,"cv_pct":0}},
+   {"name":"beta/y","unit":"ns","raw_ns":[50,50,50,50,50],"iterations_per_sample":1,
+    "stats_ns":{"n":5,"mean":50,"median":50,"mad":0,"min":50,"max":50,"p95":50,"p99":50,"stdev":0,"outlier_count":0},
+    "ratios":{"normality_p":0.5,"cv_pct":0}}
+ ]}
+JSONEOF
+cat > "$H1_NEW" <<JSONEOF
+{"format_version":"1","kind":"bench-result",
+ "metadata":{"hostname":"h","os":"linux","arch":"x86_64","cpu_model":"x","cpu_count":4,
+   "gc_mode":"malloc","compiler":{"nova_sha":"b","nova_version":"0.1","c_compiler":"clang"},
+   "build_mode":"release","timestamp_unix":1715100000,
+   "sampling":{"warmup_ns":100,"target_ns":100000000,"samples":30,"time_budget_ns":3000000000}},
+ "benches":[
+   {"name":"alpha/x","unit":"ns","raw_ns":[120,120,120,120,120],"iterations_per_sample":1,
+    "stats_ns":{"n":5,"mean":120,"median":120,"mad":0,"min":120,"max":120,"p95":120,"p99":120,"stdev":0,"outlier_count":0},
+    "ratios":{"normality_p":0.5,"cv_pct":0}},
+   {"name":"beta/y","unit":"ns","raw_ns":[50,50,50,50,50],"iterations_per_sample":1,
+    "stats_ns":{"n":5,"mean":50,"median":50,"mad":0,"min":50,"max":50,"p95":50,"p99":50,"stdev":0,"outlier_count":0},
+    "ratios":{"normality_p":0.5,"cv_pct":0}}
+ ]}
+JSONEOF
+h1_out=$("$NOVA_BIN" bench diff "$H1_BASE" "$H1_NEW" 2>&1)
+assert_contains "$h1_out" "Per-group geomean"  "H.1: per-group section header"
+assert_contains "$h1_out" "alpha"              "H.1: alpha group listed"
+assert_contains "$h1_out" "beta"               "H.1: beta group listed"
+assert_contains "$h1_out" "+20.0%"             "H.1: alpha group +20% computed"
+
+# 23.H.1.P.2 — single group → НЕТ per-group section.
+H1S_BASE="$TMP_DIR/h1s-base.json"
+cat > "$H1S_BASE" <<JSONEOF
+{"format_version":"1","kind":"bench-result",
+ "metadata":{"hostname":"h","os":"linux","arch":"x86_64","cpu_model":"x","cpu_count":4,
+   "gc_mode":"malloc","compiler":{"nova_sha":"a","nova_version":"0.1","c_compiler":"clang"},
+   "build_mode":"release","timestamp_unix":1715000000,
+   "sampling":{"warmup_ns":100,"target_ns":100000000,"samples":30,"time_budget_ns":3000000000}},
+ "benches":[
+   {"name":"only_one","unit":"ns","raw_ns":[100,100,100,100,100],"iterations_per_sample":1,
+    "stats_ns":{"n":5,"mean":100,"median":100,"mad":0,"min":100,"max":100,"p95":100,"p99":100,"stdev":0,"outlier_count":0},
+    "ratios":{"normality_p":0.5,"cv_pct":0}}
+ ]}
+JSONEOF
+h1s_out=$("$NOVA_BIN" bench diff "$H1S_BASE" "$H1S_BASE" 2>&1)
+if echo "$h1s_out" | grep -q "Per-group geomean"; then
+    echo "  FAIL: H.1: single-group should NOT print per-group section"
+    FAIL=$((FAIL+1))
+else
+    echo "  PASS: H.1: single-group suppresses per-group section"
+    PASS=$((PASS+1))
+fi
+
+# 23.H.2.P.1 — hyperfine с trivial command (cmd /c exit 0).
+H2_OUT="$TMP_DIR/h2.json"
+"$NOVA_BIN" bench hyperfine "trivial=cmd /c exit 0" \
+    --warmup 1 --samples 3 --out "$H2_OUT" >"$TMP_DIR/h2.log" 2>&1
+assert_file_exists "$H2_OUT" "H.2: hyperfine JSON written"
+assert_file_grep "$H2_OUT" 'trivial' "H.2: bench name in JSON"
+assert_file_grep "$H2_OUT" 'median_ns' "H.2: median_ns field present"
+
+# 23.H.2.N.1 — empty specs → usage error.
+h2ne_exit=0
+"$NOVA_BIN" bench hyperfine >"$TMP_DIR/h2ne.log" 2>&1 || h2ne_exit=$?
+if [ "$h2ne_exit" -ne 0 ]; then
+    echo "  PASS: H.2: no specs → non-zero exit ($h2ne_exit)"
+    PASS=$((PASS+1))
+else
+    echo "  FAIL: H.2: no specs should fail"
+    FAIL=$((FAIL+1))
+fi
+
+# 23.H.3.P.1 — callgrind-check shows OS + valgrind status.
+cc_out=$("$NOVA_BIN" bench callgrind-check 2>&1)
+assert_contains "$cc_out" "OS:"                              "H.3: callgrind-check shows OS"
+assert_contains "$cc_out" "valgrind"                         "H.3: mentions valgrind"
+# Cross-platform: either available OR install hint shown.
+case "$(uname -s)" in
+    Linux*) ;;
+    Darwin*) ;;
+    *)
+        if echo "$cc_out" | grep -q "Windows\|WSL"; then
+            echo "  PASS: H.3: non-Linux/macOS mentions Windows limitation"
+            PASS=$((PASS+1))
+        else
+            echo "  FAIL: H.3: non-Linux/macOS should mention Windows limitation"
+            FAIL=$((FAIL+1))
+        fi
+        ;;
+esac
+
 # ── Summary ──────────────────────────────────────────────────────────────
 
 echo ""

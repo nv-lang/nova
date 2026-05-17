@@ -113,22 +113,31 @@ export fn add(a int, b int) -> int => a + b
 
 `# Since >= 1.0` → `stability.tier = "stable"`, иначе `unstable`.
 
-**Через inline doc-attrs** (явный override):
+**Через doc-attrs** (D96 attribute syntax `#name(...)`, не Rust-style `#[...]`).
+Атрибут пишется отдельной строкой между doc-comment'ом и item'ом, не внутри `///`:
 
 ```nova
 /// Экспериментальное API.
-///
-/// #[experimental]
-/// #[since("0.3.0")]
-///
-/// Подробности ниже.
+#experimental(note = "may change in 0.5")
+#since("0.3.0")
 export fn experimental_api() -> int => 0
 ```
 
-Поддерживаемые attrs: `#[deprecated("note")]`, `#[since("version")]`,
-`#[stable]`, `#[unstable]`, `#[experimental]`.
+Поддерживаемые attrs (D105, см. `spec/decisions/09-tooling.md`):
 
-`#[deprecated]` приоритетнее, чем `# Deprecated` section.
+| Attr | Параметры |
+|---|---|
+| `#deprecated(since = "X", note = "...", until = "Y"?)` | `since`/`note` обязательны, `until` опционален |
+| `#since("X.Y")` или `#since(version = "X.Y")` | версия появления |
+| `#stable` или `#stable(since = "X.Y")` | stable API |
+| `#unstable(feature = "name")` | за named feature-флагом |
+| `#experimental(note = "..."?)` | proof-of-concept |
+| `#hide_doc` | item exported, но скрыт из `nova doc` |
+| `#doc_alias("alt", ...)` | search-aliases |
+| `#doc(inline)` / `#doc(no_inline)` | re-export rendering |
+| `#doc(summary = "...")` | override автосаммари |
+
+`#deprecated` приоритетнее, чем `# Deprecated` section.
 
 ## CLI flags
 

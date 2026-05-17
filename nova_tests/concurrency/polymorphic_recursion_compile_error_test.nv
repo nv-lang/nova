@@ -4,7 +4,7 @@
 // verification: polymorphic recursion → compile-error с лимитом, не hang.
 //
 // `fn deep_recurse[T](depth, v: T)` вызывает себя `deep_recurse(...,
-// Box2[T] { v: v })` — каждая instantiation T → Box2[T] увеличивает
+// Box2[T] { v })` — каждая instantiation T → Box2[T] увеличивает
 // тип-уровень. Mono pipeline должен поймать через mono_depth_limit
 // safety counter и выдать compile-error.
 
@@ -14,7 +14,7 @@ type Box2[T] { v T }
 
 fn deep_recurse[T](depth int, v T) -> int {
     if depth == 0 { return 0 }
-    let wrapped Box2[T] = { v: v }
+    let wrapped Box2[T] = { v }
     deep_recurse(depth - 1, wrapped) + 1
 }
 

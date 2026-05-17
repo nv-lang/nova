@@ -340,4 +340,152 @@ host = "x.example"
         assert!(args.iter().any(|a| a == "/k"));
         assert!(args.iter().any(|a| a == "u@h"));
     }
+
+    // ── F.4 additional positive tests ───────────────────────────────
+
+    #[test]
+    fn parse_with_comments_and_blank_lines() {
+        let input = r#"
+# top-level comment
+[remote.host1]
+# inline section comment
+
+host = "h1.example"  # trailing comment ignored
+user = "u1"
+repo = "/srv/n"
+"#;
+        let f = RemotesFile::parse(input);
+        assert!(f.parse_errors.is_empty(), "unexpected errors: {:?}", f.parse_errors);
+        assert_eq!(f.remotes.len(), 1);
+        let r = f.find("host1").unwrap();
+        assert_eq!(r.host, "h1.example");
+        assert_eq!(r.user, "u1");
+    }
+
+    #[test]
+    fn ssh_base_args_minimal_no_key_no_port() {
+        let r = RemoteConfig {
+            name: "m".to_string(), host: "h".to_string(), user: "u".to_string(),
+            repo: "/r".to_string(), runner_id: "m".to_string(),
+            ssh_key: None, ssh_port: None,
+        };
+        let args = r.ssh_base_args();
+        // -p / -i should NOT appear when None.
+        assert!(!args.iter().any(|a| a == "-p"), "args={:?}", args);
+        assert!(!args.iter().any(|a| a == "-i"), "args={:?}", args);
+        // user@host still present.
+        assert!(args.iter().any(|a| a == "u@h"));
+        // BatchMode flag always present (no interactive prompts).
+        assert!(args.iter().any(|a| a == "BatchMode=yes"));
+    }
+
+    #[test]
+    fn shell_quote_no_escape_needed() {
+        assert_eq!(shell_quote("abc123"),    "abc123");
+        assert_eq!(shell_quote("path/_-./file.json"), "path/_-./file.json");
+    }
+
+    #[test]
+    fn shell_quote_preserves_value_after_split() {
+        // After shell parse: 'a b' → "a b" (whole string passed as one arg).
+        let q = shell_quote("hello world");
+        assert!(q.starts_with('\''));
+        assert!(q.ends_with('\''));
+        assert!(q.contains("hello world"));
+    }
+
+    #[test]
+    fn find_returns_none_for_unknown() {
+        let f = RemotesFile { remotes: vec![RemoteConfig {
+            name: "x".to_string(), host: "h".to_string(), user: "u".to_string(),
+            repo: "/r".to_string(), runner_id: "x".to_string(),
+            ssh_key: None, ssh_port: None,
+        }], parse_errors: vec![] };
+        assert!(f.find("y").is_none());
+        assert!(f.find("x").is_some());
+    }
+
+    // ── F.4 additional negative tests ───────────────────────────────
+
+    #[test]
+    fn parse_rejects_invalid_ssh_port() {
+        let input = r#"
+[remote.bad]
+host = "h"
+user = "u"
+repo = "/r"
+ssh_port = "not-a-number"
+"#;
+        let f = RemotesFile::parse(input);
+        // Remote still loaded (other fields valid), но parse_error reported.
+        assert!(!f.parse_errors.is_empty(),
+            "expected parse_error для invalid ssh_port");
+        let r = f.find("bad").unwrap();
+        assert_eq!(r.ssh_port, None);  // не set из-за parse fail
+    }
+
+    #[test]
+    fn parse_warns_on_unknown_key() {
+        let input = r#"
+[remote.x]
+host = "h"
+user = "u"
+repo = "/r"
+weird_field = "value"
+"#;
+        let f = RemotesFile::parse(input);
+        assert_eq!(f.remotes.len(), 1);
+        assert!(f.parse_errors.iter().any(|e| e.contains("weird_field")),
+            "expected parse_error mentioning unknown key: {:?}",
+            f.parse_errors);
+    }
+
+    #[test]
+    fn parse_rejects_section_without_name() {
+        // [bogus] — не remote.NAME.
+        let input = r#"
+[bogus]
+host = "h"
+user = "u"
+repo = "/r"
+
+[remote.good]
+host = "h"
+user = "u"
+repo = "/r"
+"#;
+        let f = RemotesFile::parse(input);
+        // Only "good" should appear; "bogus" не recognized как remote.
+        assert_eq!(f.remotes.len(), 1);
+        assert_eq!(f.remotes[0].name, "good");
+    }
+
+    #[test]
+    fn parse_key_value_without_section_ignored() {
+        // K=V lines перед любой [section] silently dropped.
+        let input = r#"
+orphan = "value"
+host = "h"
+[remote.real]
+host = "h"
+user = "u"
+repo = "/r"
+"#;
+        let f = RemotesFile::parse(input);
+        assert_eq!(f.remotes.len(), 1);
+        assert_eq!(f.remotes[0].host, "h");  // не overwritten orphan.host
+    }
+
+    #[test]
+    fn parse_runner_id_defaults_to_name_when_unset() {
+        let input = r#"
+[remote.alpha]
+host = "h"
+user = "u"
+repo = "/r"
+"#;
+        let f = RemotesFile::parse(input);
+        let r = f.find("alpha").unwrap();
+        assert_eq!(r.runner_id, "alpha");
+    }
 }

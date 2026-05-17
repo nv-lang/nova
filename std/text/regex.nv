@@ -275,7 +275,7 @@ fn Parser mut @parse_char_class() Fail[CompileError] -> RegexNode {
             }
         }
     }
-    NCharClass { chars: chars, ranges: ranges, negated: negated }
+    NCharClass { chars, ranges, negated }
 }
 
 fn Parser mut @parse_group() Fail[CompileError] -> RegexNode {
@@ -371,7 +371,7 @@ fn Compiler mut @compile_node(node RegexNode, out_state int) -> int {
         NLiteral(c) => @add(SChar { c: c, out: out_state })
         NAnyChar    => @add(SAnyChar { out: out_state })
         NCharClass { chars, ranges, negated } =>
-            @add(SCharClass { chars: chars, ranges: ranges, negated: negated, out: out_state })
+            @add(SCharClass { chars, ranges, negated, out: out_state })
         NAnchorStart => @add(SAnchorStart { out: out_state })
         NAnchorEnd   => @add(SAnchorEnd { out: out_state })
 

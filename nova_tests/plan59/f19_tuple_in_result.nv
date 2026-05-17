@@ -1,0 +1,86 @@
+// Plan 63 Fix F+ [M-result-erased-no-mono] production-grade closure:
+// Result[(K, V), E] tuple-payload теперь работает для:
+// — let-bound result (Fix F base)
+// — inline `match call(...) { Ok((k, v)) => ... }` (Fix F+ extension)
+// — heterogeneous (str, int) (Fix F+ via fn_result_ok_inner_types)
+// — homogeneous (int, int)
+
+module plan59.f19_tuple_in_result
+
+
+fn parse_kv(s str) -> Result[(str, int), str] {
+    if s == "a=1" { Ok(("a", 1)) }
+    else if s == "b=2" { Ok(("b", 2)) }
+    else { Err("malformed") }
+}
+
+
+fn divmod(a int, b int) -> Result[(int, int), str] {
+    if b == 0 { Err("div by zero") }
+    else { Ok((a / b, a % b)) }
+}
+
+
+test "Result[(str, int), str] heterogeneous — let-bound" {
+    let r = parse_kv("b=2")
+    let mut got_k str = ""
+    let mut got_v int = 0
+    match r {
+        Ok((k, v)) => {
+            got_k = k
+            got_v = v
+        }
+        Err(_) => assert(false)
+    }
+    assert(got_k == "b")
+    assert(got_v == 2)
+}
+
+
+test "Result[(str, int), str] heterogeneous — inline match (no let)" {
+    let mut got_k str = ""
+    let mut got_v int = 0
+    match parse_kv("a=1") {
+        Ok((k, v)) => {
+            got_k = k
+            got_v = v
+        }
+        Err(_) => assert(false)
+    }
+    assert(got_k == "a")
+    assert(got_v == 1)
+}
+
+
+test "Result[(int, int), str] homogeneous — let-bound" {
+    let r = divmod(17, 5)
+    let mut q int = 0
+    let mut rem int = 0
+    match r {
+        Ok((quot, remn)) => {
+            q = quot
+            rem = remn
+        }
+        Err(_) => assert(false)
+    }
+    assert(q == 3)
+    assert(rem == 2)
+}
+
+
+test "Result[(int, int), str] homogeneous — inline match" {
+    let mut q int = 0
+    match divmod(20, 7) {
+        Ok((quot, _)) => { q = quot }
+        Err(_) => assert(false)
+    }
+    assert(q == 2)
+}
+
+
+test "Result Err branch — tuple payload не trigger'ит destructure" {
+    match parse_kv("garbage") {
+        Ok(_) => assert(false)
+        Err(msg) => assert(msg == "malformed")
+    }
+}
