@@ -1,0 +1,19 @@
+// EXPECT_CC_ERROR
+//
+// Negative: tuple element type mismatch — fn ожидает (int, int), вызывают
+// с (int, str). С mono'd tuples каждый element type конкретен в C, struct
+// type-incompatibility ловится C compiler'ом — legacy int-slot erasure
+// silently accepted (bit pattern reinterpreted), mono'd жёстко reject'ит.
+
+module plan59.f9_tuple_type_mismatch_rejected
+
+
+fn sum_pair(p (int, int)) -> int {
+    p.0 + p.1
+}
+
+
+test "pass (int, str) where (int, int) expected — should reject" {
+    let x = sum_pair((1, "two"))
+    assert(x == 3)
+}

@@ -1,0 +1,29 @@
+// Positive: `let (x, y) = fn_returning_tuple()` где fn возвращает
+// mono'd `_NovaTuple____<...>` (не legacy _NovaTupleN). Раньше
+// hardcoded `_NovaTuple{N}` в general-case destructure ломал тип.
+
+module plan59.f4_let_destructure_mono
+
+
+fn make_pair(a int, b int) -> (int, int) {
+    (a, b)
+}
+
+
+fn make_typed_pair() -> (str, int) {
+    ("answer", 42)
+}
+
+
+test "let destructure from fn returning (int, int)" {
+    let (x, y) = make_pair(7, 9)
+    assert(x == 7)
+    assert(y == 9)
+}
+
+
+test "let destructure from fn returning (str, int)" {
+    let (label, value) = make_typed_pair()
+    assert(label == "answer")
+    assert(value == 42)
+}
