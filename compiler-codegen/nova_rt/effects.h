@@ -194,20 +194,50 @@ static inline void nova_throw_str(nova_str msg) {
  *
  * Mutually-exclusive: только один путь активен в любой `with`-блок.
  * `value` и `value_ptr` независимые поля — codegen знает какое читать. */
+/* Plan 61 followup #1: iframe kind. WITHBLOCK = default (`with X = h { ... }`
+ * frame, terminal target для interrupt). DEFER_SCOPE = transparent frame
+ * pushed defer codegen — intercepts interrupt, runs cleanup, re-issues.
+ * Используется nova_interrupt для cross-effect throw routing: skip
+ * intermediate with-block frames до owner, BUT preserve defer frames в
+ * cleanup chain. */
+#define NOVA_IFRAME_WITHBLOCK    0
+#define NOVA_IFRAME_DEFER_SCOPE  1
+
 typedef struct NovaInterruptFrame {
     jmp_buf jmp;
     nova_int value;
     void*    value_ptr;        /* Plan 39 Issue A: non-int / non-bool результат */
+    int      kind;             /* Plan 61 fu#1: NOVA_IFRAME_* */
     struct NovaInterruptFrame* prev;
 } NovaInterruptFrame;
 
 #ifdef _MSC_VER
 __declspec(thread) extern NovaInterruptFrame* _nova_interrupt_top;
+/* Plan 61 followup #1: handler-arm interrupt context. Set ДО invoke
+ * handler-arm body в Nova_Fail_fail / nova_throw_typed; restored после.
+ * `interrupt v` в handler-arm body использует этот slot вместо
+ * _nova_interrupt_top — иначе cross-effect throw в handler-arm
+ * (outer Fail handler делает `interrupt v`) jump'тся в inner with-block
+ * вместо outer's. См. simplifications [M-plan-61-cross-effect-throw]
+ * resolution. */
+__declspec(thread) extern NovaInterruptFrame* _nova_current_handler_iframe;
 #else
 extern __thread NovaInterruptFrame* _nova_interrupt_top;
+extern __thread NovaInterruptFrame* _nova_current_handler_iframe;
 #endif
 
 static inline void nova_interrupt_push(NovaInterruptFrame* f) {
+    /* Default kind = WITHBLOCK. Caller can override (см.
+     * nova_interrupt_push_defer для defer scopes). */
+    f->kind = NOVA_IFRAME_WITHBLOCK;
+    f->prev = _nova_interrupt_top;
+    _nova_interrupt_top = f;
+}
+
+/* Plan 61 followup #1: defer-scope push — sets kind=DEFER_SCOPE так что
+ * nova_interrupt при cross-effect routing preserves defer cleanup chain. */
+static inline void nova_interrupt_push_defer(NovaInterruptFrame* f) {
+    f->kind = NOVA_IFRAME_DEFER_SCOPE;
     f->prev = _nova_interrupt_top;
     _nova_interrupt_top = f;
 }
@@ -410,7 +440,12 @@ static inline void nv_exit(nova_int code, nova_str msg) {
 typedef struct NovaVtable_Fail {
     void*                       ctx;
     nova_unit                  (*fail)(void* _ctx, nova_str msg);
-    struct NovaVtable_Fail*      prev;  /* outer handler, для D65 re-throw */
+    struct NovaVtable_Fail*      prev;          /* outer handler, для D65 re-throw */
+    /* Plan 61 followup #1: pointer to with-block's NovaInterruptFrame —
+     * для cross-effect throw. nova_interrupt в handler-arm body использует
+     * этот frame вместо _nova_interrupt_top. NULL для legacy handlers что
+     * не нуждаются. emit_with инициализирует через `vt->owner_iframe = &iframe`. */
+    struct NovaInterruptFrame*   owner_iframe;
 } NovaVtable_Fail;
 
 #ifdef _MSC_VER
@@ -433,11 +468,14 @@ extern __thread NovaVtable_Fail* _nova_handler_Fail;
 static inline nova_unit Nova_Fail_fail(nova_str msg) {
     if (_nova_handler_Fail) {
         NovaVtable_Fail* current = _nova_handler_Fail;
+        NovaInterruptFrame* saved_handler_iframe = _nova_current_handler_iframe;
         _nova_handler_Fail = current->prev;        /* swap для re-throw */
+        /* Plan 61 followup #1: handler-arm `interrupt v` использует этот
+         * slot вместо _nova_interrupt_top. Critical для cross-effect throw. */
+        _nova_current_handler_iframe = current->owner_iframe;
         current->fail(current->ctx, msg);
-        _nova_handler_Fail = current;              /* restore (если handler
-                                                       завершился normally
-                                                       без exit-control) */
+        _nova_handler_Fail = current;              /* restore handler chain */
+        _nova_current_handler_iframe = saved_handler_iframe;
         /* Handler returned — by D65 Fail-strict, fail() is `Never` from the
          * caller's perspective. Force unwind to the nearest fail-frame so
          * caller code after the throw doesn't execute. */
@@ -466,6 +504,9 @@ typedef struct NovaVtable_Fail_any {
     void*                            ctx;
     nova_unit                       (*fail)(void* _ctx, void* err, NovaTypeId tid);
     struct NovaVtable_Fail_any*       prev;
+    /* Plan 61 followup #1: same как у NovaVtable_Fail — для cross-effect
+     * throw interrupt routing. */
+    struct NovaInterruptFrame*        owner_iframe;
 } NovaVtable_Fail_any;
 
 #ifdef _MSC_VER
@@ -498,9 +539,12 @@ static inline nova_unit nova_throw_typed(nova_str msg_repr,
     /* Step 2: erased typed slot. */
     if (_nova_handler_Fail_any) {
         NovaVtable_Fail_any* current = _nova_handler_Fail_any;
+        NovaInterruptFrame* saved_iframe = _nova_current_handler_iframe;
         _nova_handler_Fail_any = current->prev;
+        _nova_current_handler_iframe = current->owner_iframe;  /* Plan 61 fu#1 */
         current->fail(current->ctx, payload, tid);
         _nova_handler_Fail_any = current;
+        _nova_current_handler_iframe = saved_iframe;
         /* Handler returned normally → Fail-strict (D65): force unwind. */
     }
     /* Step 3: legacy string slot — handler arm может быть typed (читает
@@ -508,9 +552,12 @@ static inline nova_unit nova_throw_typed(nova_str msg_repr,
      * payload уже в frame (выше). */
     if (_nova_handler_Fail) {
         NovaVtable_Fail* current = _nova_handler_Fail;
+        NovaInterruptFrame* saved_iframe = _nova_current_handler_iframe;
         _nova_handler_Fail = current->prev;
+        _nova_current_handler_iframe = current->owner_iframe;  /* Plan 61 fu#1 */
         current->fail(current->ctx, msg_repr);
         _nova_handler_Fail = current;
+        _nova_current_handler_iframe = saved_iframe;
     }
     /* Step 4: unwind. fail-frame уже заполнен наверху. */
     if (_nova_fail_top) {

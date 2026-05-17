@@ -5148,29 +5148,62 @@ typedef struct NovaVtable_Fail_any {
 extern __thread NovaVtable_Fail_any* _nova_handler_Fail_any;
 ```
 
+### Plan 61 followup (production-grade closure 2026-05-17)
+
+Все 4 ранее-deferred items закрыты production-grade в followup session:
+
+1. **Cross-effect throw в handler-arm** (`with Fail[A] = |e| throw B {...}`)
+   — закрыто через **owner_iframe** поле в NovaVtable_Fail / NovaVtable_Fail_any
+   + новый TLS slot `_nova_current_handler_iframe` (set/restored dispatcher'ом
+   в Nova_Fail_fail / nova_throw_typed / per-E throw entries).
+   `nova_interrupt` / `nova_interrupt_ptr` сначала смотрят этот slot —
+   handler-arm `interrupt v` jump'тся в OUR with-block, не в
+   _nova_interrupt_top (который может быть inner nested). Это
+   architectural fix interrupt-frame routing для cross-effect dispatch.
+
+2. **Stdlib migration** — `semver_range.parse_version` мигрирован на
+   idiomatic D65 правило 3 form (`with Fail[A] = |_e| throw NewErr {...}`)
+   после Plan 61 fu#1. Other stdlib usages (`retry.nv` Result-wrap для
+   last_error capture, `http.nv` / `audit.nv` convert-to-Response
+   patterns) — legitimate patterns, не workaround; задокументировано.
+
+3. **Generic Result typed Err** — `Nova_Result` struct extended fields
+   `err_typed_payload: void*` + `err_typed_type_id: NovaTypeId`. Constructor
+   `nova_make_Result_Err_typed(payload, tid)` для custom Err type. Codegen
+   `Err(custom_value)` (где value ≠ nova_str) emit'тся через typed
+   constructor; `expr!!` dispatch'тся по tid (typed → nova_throw_typed,
+   else legacy Nova_Fail_fail). Backward compat: `Err(nova_str)` через
+   legacy path. Full per-(T, E) mono struct — Plan 14/56 territory.
+
+4. **Per-E TLS slots + per-E vtable** — реализовано через preamble splice
+   `/*__PER_E_FAIL_DECLS__*/`. Для each E type registered in
+   per_e_fail_types — эмиттится typedef `NovaVtable_Fail_<E>` (typed `(void*
+   ctx, E* err)` signature), TLS slot `_nova_handler_Fail_<E>`, fast-path
+   `_nova_throw_typed_<E>(E* payload)` dispatcher. **Dual-install** в
+   emit_with: для `with Fail[E] = ...` install legacy `_nova_handler_Fail`
+   (current) **AND** per-E slot через adapter wrapper (sets typed payload
+   в fail-frame, delegates к legacy handler). `Stmt::Throw` /
+   `ExprKind::Throw` для concrete E emit per-E throw entry (fallback к
+   erased path preserves payload via fail-frame).
+
 ### Что отвергнуто
 
-- **Per-E TLS slots** (`_nova_handler_Fail_<E>`) — рассматривалось для
-  «zero-cost typed dispatch». Отвергнуто для bootstrap: payload-in-frame
-  + cast в handler arm даёт equivalent semantics при меньшей complexity.
-  После Plan 48/56 mono можно вернуться, если perf-bench покажет
-  необходимость.
 - **String-only `Fail`** — ломает D65 правило 1.
 - **`nova_throw_value` placeholder** — УДАЛЁН в Plan 61 Ф.4 (Silent UB #2).
-- **Cross-effect throw в handler-arm** (e.g. `with Fail[A] = |e| throw B`)
-  — частично работает (compile OK, typed payload reaches outer handler),
-  но **interrupt-frame stack mismatch** при unwinding ещё не resolved.
-  Это Plan 11 followup territory, выходит за Plan 61 scope.
+- **Full per-(T, E) Nova_Result mono struct** — требует extension Plan
+  48/59 mono на sum types. Hybrid через extended Nova_Result (typed slot)
+  даёт equivalent semantics для bootstrap; full mono — future polish.
 
 ### Связь
 
 - [D25](#d25)/[D65](#d65) — Fail семантика, правила 1-5.
 - [D85](#d85) — `expr!!` semantics.
-- [Plan 11](../../docs/plans/11-method-values-and-overload.md) followup —
-  cross-effect throw handler-arm (interrupt frame mismatch).
+- [Plan 11](../../docs/plans/11-method-values-and-overload.md) — закрыт
+  cross-effect throw bug в Plan 61 followup #1 (owner_iframe routing).
 - [Plan 14](../../docs/plans/14-stdlib-codegen-gaps.md) /
   [Plan 56](../../docs/plans/56-vtable-dispatch-erased-generics.md) —
-  generic Result mono для real typed Err.
+  Future polish: full per-(T,E) Nova_Result mono struct (hybrid в Plan 61
+  fu#3 даёт equivalent semantics для bootstrap).
 - [Plan 49](../../docs/plans/49-cancel-throw-routing.md) — симметричная
   typed-payload infra для CANCEL kanal. Plan 61 — для USER kanal. Две
   оси параллельны.
