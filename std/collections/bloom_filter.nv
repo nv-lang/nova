@@ -18,6 +18,27 @@
 module collections.bloom_filter
 
 
+/// Вероятностная структура данных для проверки принадлежности к множеству.
+///
+/// Гарантирует отсутствие false negatives — если `contains` вернул `false`,
+/// элемент точно не был вставлен. False positives возможны с вероятностью
+/// зависящей от параметров `bits_size` и `num_hashes`.
+///
+/// Используй `[BloomFilter.optimal]` для автоматического подбора параметров.
+///
+/// # Examples
+///
+/// ```nova
+/// let mut bf = BloomFilter.new(1024, 3)
+/// bf.insert("hello")
+/// assert(bf.contains("hello"))
+/// assert(!bf.contains("world"))  // вероятно false, но не гарантировано
+/// ```
+///
+/// # See Also
+///
+/// - `[BloomFilter.optimal]` — создать с target false-positive rate
+#stable(since = "0.1")
 export type BloomFilter {
     readonly bits_size int          // public config
     readonly num_hashes int         // public config (k)
@@ -25,9 +46,19 @@ export type BloomFilter {
 }
 
 
-// Создать filter с заданными параметрами.
-//   bits_size — количество битов (round up до байтов)
-//   num_hashes — k, число hash-функций
+/// Создать filter с явными параметрами.
+///
+/// - `bits_size` — количество битов (округляется вверх до байтов)
+/// - `num_hashes` — число hash-функций `k`
+///
+/// # Examples
+///
+/// ```nova
+/// let mut bf = BloomFilter.new(1024, 3)
+/// bf.insert("test")
+/// assert(bf.contains("test"))
+/// ```
+#stable(since = "0.1")
 export fn BloomFilter.new(bits_size int, num_hashes int) -> Self {
     let byte_size = (bits_size + 7) / 8
     let mut _bits []byte = []
@@ -40,8 +71,21 @@ export fn BloomFilter.new(bits_size int, num_hashes int) -> Self {
 }
 
 
-// Optimal-size constructor: для expected_n элементов и false-positive rate
-// false_pos_rate, вычисляет m и k.
+/// Создать filter с оптимальными параметрами для заданных `expected_n` элементов
+/// и целевого `false_pos_rate` (0.0–1.0).
+///
+/// Автоматически вычисляет `bits_size` и `num_hashes` по формулам:
+/// - `m = -n·ln(p) / ln(2)²`
+/// - `k = (m/n)·ln(2)`
+///
+/// # Examples
+///
+/// ```nova
+/// let mut bf = BloomFilter.optimal(1000, 0.01)  // 1000 items, 1% false-positive
+/// bf.insert("item")
+/// assert(bf.contains("item"))
+/// ```
+#stable(since = "0.1")
 export fn BloomFilter.optimal(expected_n int, false_pos_rate f64) -> Self {
     // m = -n * ln(p) / ln(2)^2
     let n = expected_n as f64
@@ -54,6 +98,8 @@ export fn BloomFilter.optimal(expected_n int, false_pos_rate f64) -> Self {
 }
 
 
+/// Добавить строку в filter. После этого `contains(s)` гарантированно вернёт `true`.
+#stable(since = "0.1")
 export fn BloomFilter mut @insert(s str) -> () {
     let h1 = hash1(s)
     let h2 = hash2(s)
@@ -65,6 +111,8 @@ export fn BloomFilter mut @insert(s str) -> () {
 }
 
 
+/// Проверить вероятное наличие строки. `false` — точно отсутствует. `true` — вероятно присутствует.
+#stable(since = "0.1")
 export fn BloomFilter @contains(s str) -> bool {
     let h1 = hash1(s)
     let h2 = hash2(s)

@@ -15,9 +15,30 @@ import std.collections.hashmap.{HashMap}
 // Тип
 // ──────────────────────────────────────────────────────────────────────────
 
-// `use map HashMap[T, ()]` через [D39](../spec/decisions/02-types.md#d39):
-// embed с прокси-методами. alias `map` обязателен (D39: имя поля
-// snake_case, default-имя по типу не вводится).
+/// Множество уникальных элементов поверх `HashMap[T, ()]`.
+///
+/// Поддерживает операции объединения (`|`), пересечения (`&`) и разности (`-`)
+/// через operator overloading (D46).
+///
+/// # Examples
+///
+/// ```nova
+/// let mut s = Set[int].new()
+/// assert(s.insert(1) == true)
+/// assert(s.insert(1) == false)  // дубликат
+/// assert(s.contains(1))
+///
+/// let a = Set[int].with_capacity(4)
+/// let b = Set[int].with_capacity(4)
+/// // a | b — объединение
+/// // a & b — пересечение
+/// // a - b — разность
+/// ```
+///
+/// # See Also
+///
+/// - `[HashMap]` — map с ключами и значениями
+#stable(since = "0.1")
 export type Set[T] {
     use map HashMap[T, ()]
 }
@@ -27,14 +48,18 @@ export type Set[T] {
 // Конструкторы
 // ──────────────────────────────────────────────────────────────────────────
 
-// D55: имя Set[T] из `-> Self`. В record-литерале — имя embed-поля `map`.
+/// Создать пустое множество.
+#stable(since = "0.1")
 export fn Set[T].new() -> Self =>
     { map: HashMap[T, ()].new() }
 
+/// Создать пустое множество с pre-allocated ёмкостью.
+#stable(since = "0.1")
 export fn Set[T].with_capacity(cap int) -> Self =>
     { map: HashMap[T, ()].with_capacity(cap) }
 
-// Из массива/итератора.
+/// Построить множество из итератора.
+#stable(since = "0.1")
 export fn Set[T].from_iter(it Iter[T]) -> Self {
     let mut s = Self.new()
     for x in it {
@@ -48,12 +73,16 @@ export fn Set[T].from_iter(it Iter[T]) -> Self {
 // Базовые операции
 // ──────────────────────────────────────────────────────────────────────────
 
-// Кол-во элементов — прокси через embed (D39).
+/// Число элементов в множестве.
+#stable(since = "0.1")
 export fn Set[T] @len() => @map.len()
 
+/// Возвращает `true` если множество пусто.
+#stable(since = "0.1")
 export fn Set[T] @is_empty() => @map.is_empty()
 
-// Содержит ли элемент. Прокси через embed.
+/// Проверить наличие элемента.
+#stable(since = "0.1")
 export fn Set[T] @contains(item T) -> bool => @map.contains(item)
 
 
@@ -61,20 +90,24 @@ export fn Set[T] @contains(item T) -> bool => @map.contains(item)
 // Мутирующие операции
 // ──────────────────────────────────────────────────────────────────────────
 
-// Вставить. Возвращает true, если элемент **новый** (раньше не было).
+/// Вставить элемент. Возвращает `true` если элемент новый, `false` если уже был.
+#stable(since = "0.1")
 export fn Set[T] mut @insert(item T) -> bool {
     if @map.contains(item) { return false }
     @map.insert(item, ())
     true
 }
 
-// Удалить. Возвращает true, если элемент был.
+/// Удалить элемент. Возвращает `true` если элемент был в множестве.
+#stable(since = "0.1")
 export fn Set[T] mut @remove(item T) -> bool =>
     match @map.remove(item) {
         Some(_) => true
         None    => false
     }
 
+/// Очистить множество.
+#stable(since = "0.1")
 export fn Set[T] mut @clear() -> () => @map.clear()
 
 
@@ -82,8 +115,8 @@ export fn Set[T] mut @clear() -> () => @map.clear()
 // Set-операции — operator overloading (D46)
 // ──────────────────────────────────────────────────────────────────────────
 
-// Объединение `a | b` — все элементы из обоих.
-// Имя метода фиксировано D46: `@or` ↔ `|`.
+/// Объединение `a | b` — все элементы из обоих множеств.
+#stable(since = "0.1")
 export fn Set[T] @or(other Set[T]) -> Self {
     let mut out = Self.new()
     for x in @map.keys() { out.insert(x) }
@@ -91,7 +124,8 @@ export fn Set[T] @or(other Set[T]) -> Self {
     out
 }
 
-// Пересечение `a & b` — общие элементы.
+/// Пересечение `a & b` — элементы присутствующие в обоих множествах.
+#stable(since = "0.1")
 export fn Set[T] @and(other Set[T]) -> Self {
     let mut out = Self.new()
     for x in @map.keys() {
@@ -100,7 +134,8 @@ export fn Set[T] @and(other Set[T]) -> Self {
     out
 }
 
-// Разность `a - b` — элементы a, которых нет в b.
+/// Разность `a - b` — элементы `a`, которых нет в `b`.
+#stable(since = "0.1")
 export fn Set[T] @minus(other Set[T]) -> Self {
     let mut out = Self.new()
     for x in @map.keys() {
@@ -114,7 +149,8 @@ export fn Set[T] @minus(other Set[T]) -> Self {
 // Итератор — прокси через embed
 // ──────────────────────────────────────────────────────────────────────────
 
-// Итератор по элементам. Прокси HashMap.keys().
+/// Итератор по элементам множества в произвольном порядке.
+#stable(since = "0.1")
 export fn Set[T] @iter() => @map.keys()
 
 

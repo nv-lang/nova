@@ -58,34 +58,76 @@ module runtime.gc
 
 // ─── gc namespace ───────────────────────────────────────────────────────
 
-// Размер heap в байтах. Под malloc backend всегда возвращает 0
-// (honest sentinel «backend не поддерживает introspection»). Под boehm
-// возвращает результат `GC_get_heap_size()`.
+/// Размер heap в байтах.
+///
+/// Под malloc backend всегда возвращает `0` (honest sentinel «backend не
+/// поддерживает introspection»). Под Boehm возвращает `GC_get_heap_size()`.
+///
+/// Тесты могут использовать `if gc.heap_size() == 0 { ... skip ... }`
+/// для differential-behaviour по backend.
+///
+/// # See Also
+///
+/// - `[gc.live_count]` — приблизительное число live-объектов
+/// - `[gc.alloc_count]` — монотонный счётчик аллокаций
+#stable(since = "0.1")
 export external fn gc.heap_size() -> int
 
-// Приблизительное число живых объектов. Под malloc это `alloc_count -
-// free_count` (free_count всегда 0 → растёт монотонно). Под boehm —
-// upper bound через `alloc_count` (real live count Boehm не экспонирует).
+/// Приблизительное число живых объектов.
+///
+/// Под malloc: `alloc_count - free_count` (free_count всегда 0 → значение
+/// растёт монотонно). Под Boehm: upper bound через `alloc_count`
+/// (Boehm не экспонирует реальный live count).
+///
+/// # See Also
+///
+/// - `[gc.alloc_count]` — монотонный счётчик
+/// - `[gc.collect]` — принудительный сбор
+#stable(since = "0.1")
 export external fn gc.live_count() -> int
 
-// Монотонный счётчик аллокаций с момента старта программы или
-// последнего `gc.reset_stats()`. Полезен для smoke-тестов «heap не
-// растёт за N итераций».
+/// Монотонный счётчик аллокаций с момента старта или `gc.reset_stats()`.
+///
+/// Полезен для smoke-тестов вида «heap не растёт за N итераций».
+/// Значение сбрасывается вызовом `[gc.reset_stats]`.
+///
+/// # Examples
+///
+/// ```nova
+/// gc.reset_stats()
+/// // ... some allocations ...
+/// assert(gc.alloc_count() > 0)
+/// ```
+#stable(since = "0.1")
 export external fn gc.alloc_count() -> int
 
-// Принудительный сбор. Под malloc — no-op. Под boehm — синхронный
-// full mark-sweep через `GC_gcollect()`. ВНИМАНИЕ: тяжёлая операция,
-// не использовать в hot path. Назначение — manual diagnostic API
-// или явная разгрузка перед blocking I/O.
+/// Принудительный сбор мусора.
+///
+/// Под malloc — no-op. Под Boehm — синхронный full mark-sweep через
+/// `GC_gcollect()`. ВНИМАНИЕ: тяжёлая операция, не использовать в hot path.
+/// Назначение — manual diagnostic или явная разгрузка перед blocking I/O.
+///
+/// # Effects
+///
+/// Под Boehm выполняет full mark-sweep GC-цикл.
+#stable(since = "0.1")
 export external fn gc.collect() -> ()
 
-// Сбрасывает счётчики (`alloc_count` → 0). Используется для
-// per-test isolation. GC stats самого Boehm не сбрасываются (Boehm
-// не поддерживает reset на runtime-уровне).
+/// Сбросить счётчики аллокаций (`alloc_count` → 0).
+///
+/// Используется для per-test isolation. GC stats самого Boehm не
+/// сбрасываются — Boehm не поддерживает reset на runtime-уровне.
+#stable(since = "0.1")
 export external fn gc.reset_stats() -> ()
 
-// Plan 57.C.2: длительность последнего collect-цикла в наносекундах.
-// Под malloc backend всегда 0 (нет collect-cycle). Под boehm —
-// измеряется monotonic timer'ом вокруг `GC_gcollect()`. Полезно для
-// `nova bench run --profile gc` consumer и для production observability.
+/// Длительность последнего GC-цикла в наносекундах.
+///
+/// Под malloc backend всегда `0` (нет collect-cycle). Под Boehm —
+/// измеряется monotonic timer'ом вокруг `GC_gcollect()`.
+/// Полезно для `nova bench run --profile gc` и production observability.
+///
+/// # See Also
+///
+/// - `[gc.collect]` — принудительный сбор
+#stable(since = "0.1")
 export external fn gc.last_pause_ns() -> int
