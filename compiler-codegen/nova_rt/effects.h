@@ -28,18 +28,18 @@
  * CANCEL = кооперативная отмена scope'а — не «убегает» наружу.
  * См. supervised_run + emit_with kind-aware dispatch (Ф.3). */
 typedef enum {
-    NOVA_THROW_USER   = 0,
-    NOVA_THROW_CANCEL = 1,
+    NOVA_THROW_USER       = 0,
+    NOVA_THROW_CANCEL     = 1,
+    NOVA_THROW_USER_TYPED = 2,  /* Plan 61 Ф.2: typed user throw payload */
 } NovaThrowKind;
 
 typedef struct NovaFailFrame {
     jmp_buf            jmp;
-    nova_str           error_msg;   /* payload on throw */
-    NovaThrowKind      error_kind;  /* Plan 49 Ф.0: USER (default) или CANCEL */
-    /* Plan 49 Ф.1: typed cancel reason. `error_reason_ptr` хранит box'нутый
-     * `T` (`void*`); для `CancelToken[str]` (default) указывает на `nova_str`.
-     * NULL когда reason нет (USER-throw без структурированного payload). */
-    void*              error_reason_ptr;
+    nova_str           error_msg;
+    NovaThrowKind      error_kind;
+    void*              error_reason_ptr;   /* Plan 49 typed cancel */
+    void*              error_user_payload; /* Plan 61 Ф.2 typed user payload */
+    NovaTypeId         error_user_type_id; /* Plan 61 Ф.2 NovaTypeId of payload */
     struct NovaFailFrame* prev;
 } NovaFailFrame;
 
@@ -140,9 +140,14 @@ static inline void nova_throw_str(nova_str msg) {
     nova_throw(msg);
 }
 
-/* Generic value throw: для bootstrap-stage Err(e) приведём к
- * placeholder-сообщению. Production-runtime заменит на typed throw. */
-#define nova_throw_value(v) nova_throw(nova_str_from_cstr("Result::Err"))
+/* Plan 61 Ф.4: nova_throw_value placeholder УДАЛЁН. Codegen Result!!
+ * теперь emit'тся либо как Nova_Fail_fail (bootstrap-erased Result где Err
+ * = nova_str), либо как nova_throw_typed (после Plan 14/56 generic Result
+ * mono'd). См. emit_c.rs ExprKind::Bang Nova_Result* branch.
+ *
+ * Если какой-то downstream код всё ещё ссылается на nova_throw_value —
+ * это bug, должен быть переписан на nova_throw_typed (typed) или
+ * Nova_Fail_fail (string). */
 
 /* `?` operator stub — in generated code:
  *   result = expr_that_might_throw();
@@ -438,6 +443,85 @@ static inline nova_unit Nova_Fail_fail(nova_str msg) {
          * caller code after the throw doesn't execute. */
     }
     nova_throw(msg);
+    return NOVA_UNIT;  /* unreachable */
+}
+
+/* ---- Plan 61 Ф.2: Fail[any] typed erased path ---- *
+ *
+ * Параллельная инфраструктура к string-based Nova_Fail_fail/_nova_handler_Fail.
+ *
+ * vtable carries `void* err + NovaTypeId tid` instead of nova_str. Handler arm
+ * для `with Fail = |e: any| ...` (без `[E]`, D65 правило 1) installs в этот
+ * slot вместо string-slot.
+ *
+ * Dispatch precedence (для `throw expr` codegen):
+ *   1. per-E typed slot (Plan 61 Ф.3 — будет добавлен следующей фазой)
+ *   2. erased typed slot (`_nova_handler_Fail_any`) — этот файл
+ *   3. legacy string slot (`_nova_handler_Fail`) — backward compat
+ *   4. unwind через nova_throw_typed → longjmp на fail-frame.
+ *
+ * D65 правило 3 re-throw — тот же mechanism: `prev` link swap во время
+ * handler-body invocation. */
+typedef struct NovaVtable_Fail_any {
+    void*                            ctx;
+    nova_unit                       (*fail)(void* _ctx, void* err, NovaTypeId tid);
+    struct NovaVtable_Fail_any*       prev;
+} NovaVtable_Fail_any;
+
+#ifdef _MSC_VER
+__declspec(thread) extern NovaVtable_Fail_any* _nova_handler_Fail_any;
+#else
+extern __thread NovaVtable_Fail_any* _nova_handler_Fail_any;
+#endif
+
+/* Plan 61 Ф.2: typed throw — фолдит на правильный slot по dispatch
+ * precedence. Codegen emits this для `throw expr` где expr type != nova_str
+ * И outer context — generic Fail или Fail[any] (Fail[E] per-E пойдёт через
+ * Ф.3 dispatcher). `payload` указывает на value (caller-allocated, обычно
+ * heap-boxed на throw-site), `tid` — compile-time NOVA_TID_<E>, `msg_repr`
+ * — fallback string-репрезентация для diagnostic и string-only handler. */
+static inline nova_unit nova_throw_typed(nova_str msg_repr,
+                                          void* payload,
+                                          NovaTypeId tid) {
+    /* Plan 61 Ф.3 fix: set fail-frame payload ДО любого handler dispatch.
+     * Handler arm (typed via fail_e_map) читает `e` через
+     * _nova_fail_top->error_user_payload — payload должен быть доступен
+     * к моменту invoke. Это OK даже без unwind: handler-arm body — это
+     * inline fn-call с captured pointer to fail-frame top. */
+    if (_nova_fail_top) {
+        _nova_fail_top->error_msg          = msg_repr;
+        _nova_fail_top->error_kind         = NOVA_THROW_USER_TYPED;
+        _nova_fail_top->error_reason_ptr   = NULL;
+        _nova_fail_top->error_user_payload = payload;
+        _nova_fail_top->error_user_type_id = tid;
+    }
+    /* Step 2: erased typed slot. */
+    if (_nova_handler_Fail_any) {
+        NovaVtable_Fail_any* current = _nova_handler_Fail_any;
+        _nova_handler_Fail_any = current->prev;
+        current->fail(current->ctx, payload, tid);
+        _nova_handler_Fail_any = current;
+        /* Handler returned normally → Fail-strict (D65): force unwind. */
+    }
+    /* Step 3: legacy string slot — handler arm может быть typed (читает
+     * payload через fail-frame) или string-based (читает msg). Оба работают:
+     * payload уже в frame (выше). */
+    if (_nova_handler_Fail) {
+        NovaVtable_Fail* current = _nova_handler_Fail;
+        _nova_handler_Fail = current->prev;
+        current->fail(current->ctx, msg_repr);
+        _nova_handler_Fail = current;
+    }
+    /* Step 4: unwind. fail-frame уже заполнен наверху. */
+    if (_nova_fail_top) {
+        longjmp(_nova_fail_top->jmp, 1);
+    }
+    /* No fail-frame at all — abort с diagnostic. */
+    fflush(stdout);
+    fprintf(stderr, "nova: unhandled typed Fail (%s): %.*s\n",
+        nova_typeid_to_name(tid),
+        (int)msg_repr.len, msg_repr.ptr);
+    abort();
     return NOVA_UNIT;  /* unreachable */
 }
 

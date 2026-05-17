@@ -301,6 +301,11 @@ static inline void nova_print_newline(void)     { putchar('\n'); }
 typedef struct { char _dummy; } nova_unit;
 #define NOVA_UNIT ((nova_unit){0})
 
+/* ---- Plan 61 Ф.1: TypeId runtime infrastructure ---- *
+ * Должен идти до effects.h — позже Plan 61 Ф.2 effects.h будет
+ * использовать NovaTypeId в Fail[any] erased path. */
+#include "typeid.h"
+
 /* ---- Arrays (Phase 6) ---- */
 #include "array.h"
 

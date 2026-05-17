@@ -14621,3 +14621,81 @@ Acceptance:
 
 Production-grade: Rust паритет (+ explicit D-block enforcement что
 Rust не имеет; rustc не error если опредeлите публичное `len` field).
+
+=== Plan 61 — Typed Fail[E] codegen (payload preservation) (2026-05-17) ===
+
+Ф.0-Ф.6 закрыты в worktree nova-lang-p61 (branch plan-61). Hybrid
+architecture: payload-in-frame + typed handler-arm inference. Закрывает
+2 из 3 Silent UB; cross-effect throw deferred как Plan 11 followup.
+
+Spec: D118 new в spec/decisions/04-effects.md, расширяет D25/D65/D85.
+
+Ф.0 baseline + 3 repro tests (Silent UB #1/#2/#3) — все CC-FAIL,
+confirmed UB наглядно на C-compile уровне.
+
+Ф.1 (TypeId runtime): nova_rt/typeid.h + typeid.c weak fallback +
+test_runner integration. Reserved IDs 1..16 для primitives,
+USER_BASE=17. compile-time register_type_id + emit
+`#define NOVA_TID_USER_<X> N` в preamble через __TYPEID_DEFINES__
+splice marker.
+
+Ф.2 (effects.h + typed dispatcher):
+- NovaFailFrame extended: error_user_payload void* + error_user_type_id
+  NovaTypeId. NovaThrowKind + USER_TYPED.
+- Параллельная NovaVtable_Fail_any + _nova_handler_Fail_any TLS.
+- nova_throw_typed(msg, payload, tid) — dispatch precedence:
+  payload-in-frame ДО dispatch (для handler arm access) → any-slot
+  → string-slot fallback → unwind.
+- Codegen Stmt::Throw + ExprKind::Throw: typed payload → nova_throw_typed
+  вместо silent int-cast. Heap-box value-types inline.
+
+Ф.3 (typed handler-arm inference):
+- desugar_handler_lambda: с Fail[E] = |e| ... — inject inferred
+  annotation e: E в первый param (без explicit syntax).
+- emit_handler_lit: при typed param annotation populate fail_e_map.
+- ExprKind::Ident path: если name в fail_e_map → emit
+  (E*)_nova_fail_top->error_user_payload. Pattern-match `match e {...}`
+  работает natural.
+
+Ф.4 (placeholder removal):
+- effects.h: nova_throw_value placeholder УДАЛЁН (был silent UB #2).
+- emit_c Result!!: Nova_Fail_fail(err_payload) для bootstrap-erased
+  Result. Generic Result mono — Plan 14/56 territory.
+
+Ф.5 (D65 verification): 4 PASS tests.
+- d65_rule_1_fail_alias_any: Fail без [E] catch-all для typed throw.
+- d65_rule_3_rethrow: typed re-throw skip'ает current, outer ловит.
+- repro_silent_ub_throw_typed: typed payload через handler arm.
+- repro_silent_ub_result_bang: Err payload не placeholder.
+
+Cross-effect throw repro deferred: handler-arm interrupt goes to
+nearest interrupt-top (inner with-block), не outer. Это
+Plan 11 followup architectural fix.
+
+Ф.6 spec D118: payload preservation, dispatch precedence, codegen
+representation, что отвергнуто (per-E slots, string-only, placeholder
+macro, cross-effect — все с rationale).
+
+Ф.7 stdlib migration deferred — workaround patterns используют
+interrupt Err(e) именно для обхода cross-effect issue.
+
+## Regression
+
+PASS: 654 / FAIL: 2 / SKIP: 44 — те же 2 plan11_followup UAC drift
+из baseline. +4 plan61 tests PASS. Zero non-plan61 регрессий.
+
+## Acceptance
+
+- Silent UB #1 (throw user-error garbage): закрыт.
+- Silent UB #2 (Result!! placeholder): закрыт.
+- Silent UB #3 (handler arm e: nova_str): закрыт через inference.
+- D65 правило 1: PASS. D65 правило 3: PASS.
+- nova_throw_value removed.
+- 0 regressions на 654-test suite.
+
+## Architectural notes
+
+Plan 61 — Rust Result<T,E> + Box<dyn Error>-like hybrid:
+typed-when-possible (D65 правило 1: Fail[E]), erased-when-needed
+(Fail catch-all через тот же mechanism). Backward compat сохранён
+(legacy string throw + handler работает через legacy slot path).

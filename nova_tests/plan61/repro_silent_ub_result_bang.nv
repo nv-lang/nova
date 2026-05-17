@@ -1,0 +1,27 @@
+module nova_tests.plan61.repro_silent_ub_result_bang
+
+// Plan 61 Ф.4 repro: Silent UB #2 — `expr!!` на Err бросает payload.
+//
+// До Plan 61: nova_throw_value placeholder macro в effects.h:140 всегда
+// бросал строку "Result::Err", игнорируя payload. После Plan 61 Ф.4
+// placeholder удалён → Result!! emit'тся как Nova_Fail_fail с реальным
+// payload (для bootstrap-erased Result где Err=nova_str — это string).
+//
+// NB: Полная generic mono (Result[T, CustomE]) — Plan 14/56 territory,
+// не Plan 61. Bootstrap-stage Result hardcoded на (Ok int, Err nova_str)
+// (см. spec/decisions/08-runtime.md#d26 Bootstrap-ограничения §354-357).
+
+fn try_connect() -> Result[int, str] {
+    Err("ConnFailed:127.0.0.1:5432")
+}
+
+test "result!! carries Err payload" {
+    let host = with Fail = |e| interrupt e {
+        let _ = try_connect()!!
+        "unreachable"
+    }
+    // До Plan 61 Ф.4 — `host == "Result::Err"` (placeholder garbage).
+    // После — `host == "ConnFailed:127.0.0.1:5432"` (real Err payload).
+    assert(host == "ConnFailed:127.0.0.1:5432",
+           "handler should receive Err payload (not placeholder string)")
+}
