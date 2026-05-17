@@ -495,13 +495,19 @@ Sub-items (каждый — отдельный commit):
 - [x] `bench "x" { group "g" { case "c" { ... } } }` parse + emit + 4-entry
       output (composite names `x/g/c`).
 
-### **Plan 57.D** — backlog closure, in progress 2026-05-17
+### **Plan 57.D** — ✅ ALL CLOSED 2026-05-17
 
-- [ ] PerfTimer hooks для `nova test` pipeline.
-- [ ] sleep-lint contextual effect-aware detection.
-- [ ] Aggregated JSON output для recursive bench mode.
-- [ ] CI multi-runner baseline support.
-- [ ] HTML compiler-perf dashboard для `nova bench corpus`.
+- [x] PerfTimer hooks для `nova test` pipeline (aggregation mode
+      `NOVA_PERF_TIMER_AGGREGATE=1` + summary table).
+- [x] sleep-lint contextual effect-aware detection (`Time.sleep` Path-form
+      + bare `sleep(...)`).
+- [x] Aggregated JSON output для recursive bench mode (per-file →
+      merged JSON / CSV / MD / Criterion-compat).
+- [x] CI multi-runner baseline support (NOVA_BENCH_RUNNER_ID →
+      per-runner `bench-history-<id>` branches; `nova bench
+      runner-branch` helper; workflow matrix).
+- [x] HTML compiler-perf dashboard для `nova bench corpus`
+      (`--html out.html` echarts stacked bars).
 
 ### **Plan 57.C** — ✅ ALL CLOSED 2026-05-17
 
@@ -628,3 +634,13 @@ Sub-items (каждый — отдельный commit):
   Plan 57 — **MVP + A + B + C fully closed** (20 commits total в
   worktree plan-57). Backlog → Phase D: aggregated JSON output для
   recursive mode, sleep contextual-keyword detection.
+- **2026-05-17 Phase D closed**: 5 sub-tasks shipped (~530 LOC total):
+  - 57.D.1 PerfTimer aggregation для nova test `e9a77932ba0`
+  - 57.D.2 sleep-lint Path-form `b6dd5274510`
+  - 57.D.3 aggregated JSON для recursive bench mode `6ef7c2b3397`
+  - 57.D.4 multi-runner baseline support `9bdeff26ea8`
+  - 57.D.5 HTML compiler-perf dashboard `a5fe41de6a8`
+  Plan 57 — **MVP + A + B + C + D ALL closed** (28 commits в plan-57).
+  44 unit tests pass. Regression: 562/0 pre-merge baseline; после
+  merge main подтянулись 5 unrelated plan56/* HashMap clone/merge
+  failures (Plan 56 partial closure, не от Phase D работы).
