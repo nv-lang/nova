@@ -311,6 +311,111 @@ fn render_bench_detail(
     let timestamps_json = serde_json::to_string(&timestamps).unwrap_or("[]".to_string());
     let medians_json = serde_json::to_string(&medians).unwrap_or("[]".to_string());
 
+    // Plan 57.E.1: latest bench для histogram + sidebar stats.
+    let latest_bench = runs.iter().rev()
+        .find_map(|(_, run)| run.benches.iter().find(|b| b.raw.name == name));
+
+    // Histogram: 30 bins по raw_ns latest run.
+    let histogram_json = if let Some(b) = latest_bench {
+        let raw = &b.raw.raw_ns;
+        if raw.is_empty() {
+            "{\"bins\":[],\"counts\":[]}".to_string()
+        } else {
+            let min_v = *raw.iter().min().unwrap() as f64;
+            let max_v = *raw.iter().max().unwrap() as f64;
+            let n_bins = 30usize;
+            let bin_width = if max_v > min_v { (max_v - min_v) / n_bins as f64 } else { 1.0 };
+            let mut counts = vec![0usize; n_bins];
+            let mut bin_centers = Vec::with_capacity(n_bins);
+            for i in 0..n_bins {
+                bin_centers.push(min_v + bin_width * (i as f64 + 0.5));
+            }
+            for &v in raw {
+                let v_f = v as f64;
+                let idx = if bin_width > 0.0 {
+                    (((v_f - min_v) / bin_width) as usize).min(n_bins - 1)
+                } else { 0 };
+                counts[idx] += 1;
+            }
+            // Tukey outlier fences для visualization.
+            let lo_fence = b.stats_ns.p25 - 1.5 * b.stats_ns.iqr;
+            let hi_fence = b.stats_ns.p75 + 1.5 * b.stats_ns.iqr;
+            serde_json::json!({
+                "bins": bin_centers,
+                "counts": counts,
+                "lo_fence": lo_fence,
+                "hi_fence": hi_fence,
+                "median": b.stats_ns.median,
+                "mean": b.stats_ns.mean,
+            }).to_string()
+        }
+    } else {
+        "{\"bins\":[],\"counts\":[]}".to_string()
+    };
+
+    // Plan 57.E.1: stats sidebar (latest values).
+    let stats_sidebar_html = if let Some(b) = latest_bench {
+        let st = &b.stats_ns;
+        format!(r#"<aside class="stats-sidebar">
+<h3>Latest stats</h3>
+<dl>
+<dt>median</dt><dd>{}</dd>
+<dt>MAD</dt><dd>{}</dd>
+<dt>mean</dt><dd>{}</dd>
+<dt>stddev</dt><dd>{}</dd>
+<dt>CI 95%</dt><dd>{} … {}</dd>
+<dt>range</dt><dd>{} … {}</dd>
+<dt>n</dt><dd>{}</dd>
+<dt>outliers</dt><dd>{} low / {} high</dd>
+</dl>
+</aside>"#,
+            fmt_ns_short(st.median),
+            fmt_ns_short(st.mad),
+            fmt_ns_short(st.mean),
+            fmt_ns_short(st.stddev),
+            fmt_ns_short(st.ci95_lo),
+            fmt_ns_short(st.ci95_hi),
+            fmt_ns_short(st.min),
+            fmt_ns_short(st.max),
+            st.n,
+            st.outliers_low,
+            st.outliers_high,
+        )
+    } else {
+        String::new()
+    };
+
+    // Plan 57.E.1: comparison view — latest vs oldest (если >1 runs).
+    let comparison_html = if runs.len() >= 2 {
+        let latest = runs.iter().rev()
+            .find_map(|(_, r)| r.benches.iter().find(|b| b.raw.name == name));
+        let oldest = runs.iter()
+            .find_map(|(_, r)| r.benches.iter().find(|b| b.raw.name == name));
+        if let (Some(l), Some(o)) = (latest, oldest) {
+            if !std::ptr::eq(l, o) {
+                let delta_pct = if o.stats_ns.median > 0.0 {
+                    (l.stats_ns.median - o.stats_ns.median) / o.stats_ns.median * 100.0
+                } else { 0.0 };
+                let color = if delta_pct.abs() < 5.0 { "#888" }
+                            else if delta_pct > 0.0 { "#d33" }
+                            else { "#393" };
+                format!(r#"<aside class="comparison">
+<h3>Latest vs oldest</h3>
+<p>oldest median: <code>{}</code></p>
+<p>latest median: <code>{}</code></p>
+<p style="color: {}; font-weight: bold;">delta: {:+.1}%</p>
+<p style="color: #999; font-size: 0.85em;">{} runs span</p>
+</aside>"#,
+                    fmt_ns_short(o.stats_ns.median),
+                    fmt_ns_short(l.stats_ns.median),
+                    color,
+                    delta_pct,
+                    runs.len(),
+                )
+            } else { String::new() }
+        } else { String::new() }
+    } else { String::new() };
+
     // Detail table: each run — median + mad + outliers + n.
     let mut rows = Vec::new();
     for (entry, run) in runs.iter().rev() {
@@ -346,12 +451,24 @@ header {{ border-bottom: 1px solid #ccc; padding-bottom: 1em;
          margin-bottom: 1em; }}
 h1 {{ margin: 0; font-size: 1.5em; font-family: SFMono-Regular, monospace; }}
 .back {{ display: inline-block; margin-bottom: 1em; color: #06c; }}
-#chart {{ width: 100%; height: 500px; border: 1px solid #ddd; }}
+.layout {{ display: grid; grid-template-columns: 1fr 280px; gap: 1.5em;
+           align-items: start; }}
+.charts {{ display: flex; flex-direction: column; gap: 1.5em; }}
+#trend-chart, #histogram-chart {{ width: 100%; height: 380px;
+                                    border: 1px solid #ddd; border-radius: 4px; }}
+.stats-sidebar, .comparison {{ background: #f8f8f8; padding: 1em;
+                                border-radius: 4px; font-size: 0.9em; }}
+.stats-sidebar dl, .comparison p {{ margin: 0; }}
+.stats-sidebar dt {{ font-weight: 600; color: #666;
+                       margin-top: 0.4em; font-size: 0.85em; }}
+.stats-sidebar dd {{ margin: 0; font-family: SFMono-Regular, monospace; }}
+.comparison {{ margin-top: 1em; }}
 table {{ width: 100%; border-collapse: collapse; margin-top: 2em; }}
 th, td {{ text-align: left; padding: 0.4em 0.8em;
           border-bottom: 1px solid #eee; }}
 th {{ background: #f4f4f4; }}
 code {{ font-family: SFMono-Regular, Consolas, monospace; }}
+section {{ margin-bottom: 2em; }}
 </style>
 </head>
 <body>
@@ -361,26 +478,47 @@ code {{ font-family: SFMono-Regular, Consolas, monospace; }}
 <div style="color: #666;">{n_points} data points</div>
 </header>
 
-<div id="chart"></div>
+<div class="layout">
+<div class="charts">
+<section>
+<h2 style="margin-top:0">Median trend over time</h2>
+<div id="trend-chart"></div>
+</section>
+<section>
+<h2>Latest run — sample distribution (Tukey fences marked)</h2>
+<div id="histogram-chart"></div>
+</section>
+</div>
+<div>
+{stats_sidebar_html}
+{comparison_html}
+</div>
+</div>
 
+<section>
+<h2>Run history</h2>
 <table>
 <thead><tr><th>Timestamp</th><th>SHA</th><th>median</th><th>MAD</th>
 <th>mean</th><th>n</th><th>outliers (lo/hi)</th></tr></thead>
 <tbody>{runs_table}</tbody>
 </table>
+</section>
 
 <script>
 const ts = {timestamps_json};
 const data = {medians_json};
+const hist = {histogram_json};
 const labels = ts.map(t => new Date(t*1000).toISOString().slice(5,16).replace('T',' '));
-const chart = echarts.init(document.getElementById('chart'));
-chart.setOption({{
+
+// Plan 57.E.1: trend chart (existing line chart).
+const trend = echarts.init(document.getElementById('trend-chart'));
+trend.setOption({{
     tooltip: {{ trigger: 'axis',
                 formatter: function(p) {{
                   return labels[p[0].dataIndex] + '<br>median: ' +
                          (p[0].value ? p[0].value.toFixed(1) + ' ns' : '—');
                 }} }},
-    grid: {{ left: '8%', right: '4%', bottom: '15%', top: 30 }},
+    grid: {{ left: '10%', right: '4%', bottom: '20%', top: 20 }},
     xAxis: {{ type: 'category', data: labels,
               axisLabel: {{ rotate: -35 }} }},
     yAxis: {{ type: 'value', name: 'median ns' }},
@@ -398,7 +536,41 @@ chart.setOption({{
         markLine: {{ data: [{{ type: 'average', name: 'avg' }}] }}
     }}]
 }});
-window.addEventListener('resize', () => chart.resize());
+
+// Plan 57.E.1: histogram of latest run's raw samples + Tukey fences.
+if (hist.bins && hist.bins.length > 0) {{
+    const hchart = echarts.init(document.getElementById('histogram-chart'));
+    const markLines = [];
+    if (hist.median !== undefined)
+        markLines.push({{ xAxis: hist.median, lineStyle: {{ color: '#06c', width: 2 }},
+                          label: {{ formatter: 'median', position: 'middle' }} }});
+    if (hist.mean !== undefined)
+        markLines.push({{ xAxis: hist.mean, lineStyle: {{ color: '#90a' }},
+                          label: {{ formatter: 'mean', position: 'middle' }} }});
+    if (hist.lo_fence !== undefined && hist.lo_fence > 0)
+        markLines.push({{ xAxis: hist.lo_fence, lineStyle: {{ color: '#c66', type: 'dashed' }},
+                          label: {{ formatter: 'lo fence' }} }});
+    if (hist.hi_fence !== undefined)
+        markLines.push({{ xAxis: hist.hi_fence, lineStyle: {{ color: '#c66', type: 'dashed' }},
+                          label: {{ formatter: 'hi fence' }} }});
+    hchart.setOption({{
+        tooltip: {{ trigger: 'axis',
+                    formatter: p => 'ns: ' + p[0].axisValue.toFixed(1) +
+                                    '<br>count: ' + p[0].value }},
+        grid: {{ left: '10%', right: '4%', bottom: '15%', top: 20 }},
+        xAxis: {{ type: 'value', name: 'ns', nameLocation: 'middle', nameGap: 30 }},
+        yAxis: {{ type: 'value', name: 'count' }},
+        series: [{{
+            type: 'bar',
+            data: hist.bins.map((b, i) => [b, hist.counts[i]]),
+            itemStyle: {{ color: '#5b8def' }},
+            markLine: {{ silent: false, data: markLines, symbol: 'none' }}
+        }}]
+    }});
+    window.addEventListener('resize', () => hchart.resize());
+}}
+
+window.addEventListener('resize', () => trend.resize());
 </script>
 </body>
 </html>"#,
@@ -408,6 +580,9 @@ window.addEventListener('resize', () => chart.resize());
         runs_table = runs_table,
         timestamps_json = timestamps_json,
         medians_json = medians_json,
+        histogram_json = histogram_json,
+        stats_sidebar_html = stats_sidebar_html,
+        comparison_html = comparison_html,
     )
 }
 
