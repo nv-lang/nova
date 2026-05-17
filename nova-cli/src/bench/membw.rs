@@ -176,10 +176,11 @@ pub mod linux {
                     0i32, -1i32, -1i32, 0u64) as RawFd
             };
             if fd < 0 {
-                return Err(anyhow!(
-                    "perf_event_open(LLC_MISSES) failed: {} (try `sudo \
-                     sysctl -w kernel.perf_event_paranoid=1`)",
-                    std::io::Error::last_os_error()));
+                let errno = std::io::Error::last_os_error();
+                // Plan 57.G.3 — actionable errno decoder.
+                return Err(anyhow!("{}",
+                    super::super::errno::fmt_perf_event_open_err(
+                        "perf_event_open(LLC_MISSES)", &errno)));
             }
             Ok(Self { fd })
         }

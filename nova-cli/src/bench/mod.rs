@@ -30,6 +30,7 @@ pub mod anomaly;
 pub mod remote;
 pub mod ai;
 pub mod membw;
+pub mod errno;
 
 pub use stats::SampleStats;
 pub use schema::{RawBenchResult, AnalyzedBench, RunResultParsed, run_result_to_json, SCHEMA_VERSION};

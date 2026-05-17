@@ -54,6 +54,8 @@ pub struct BenchRunOpts<'a> {
     pub out_criterion: Option<&'a Path>,
     /// Print colored terminal output (auto-detect via main if None).
     pub color: bool,
+    /// Plan 57.G.4 — render ASCII histogram per-bench after the table.
+    pub histogram: bool,
 }
 
 pub fn run(opts: BenchRunOpts) -> Result<i32> {
@@ -246,6 +248,13 @@ pub fn run(opts: BenchRunOpts) -> Result<i32> {
 
     // Output.
     print!("{}", report::terminal_report(&meta, &benches, opts.color));
+    // Plan 57.G.4 — opt-in ASCII histogram per bench (--histogram flag).
+    if opts.histogram {
+        for b in &benches {
+            println!("\nDistribution: {}", b.raw.name);
+            print!("{}", report::ascii_histogram(b, 40));
+        }
+    }
     if let Some(p) = opts.out_json {
         let json = run_result_to_json(&meta, &benches);
         std::fs::write(p, serde_json::to_string_pretty(&json)?)
@@ -437,6 +446,7 @@ fn run_dir(opts: BenchRunOpts) -> Result<i32> {
             out_md: None,
             out_criterion: None,
             color: opts.color,
+            histogram: opts.histogram,
         };
         let r = run(single_opts);
         if let Err(e) = r {

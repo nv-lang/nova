@@ -321,8 +321,12 @@ fn render_bench_detail(
         if raw.is_empty() {
             "{\"bins\":[],\"counts\":[]}".to_string()
         } else {
-            let min_v = *raw.iter().min().unwrap() as f64;
-            let max_v = *raw.iter().max().unwrap() as f64;
+            // Plan 57.G.2: invariant — raw не empty (проверено выше);
+            // expect() само-документирует это для будущих читателей.
+            let min_v = *raw.iter().min()
+                .expect("invariant: raw checked non-empty above") as f64;
+            let max_v = *raw.iter().max()
+                .expect("invariant: raw checked non-empty above") as f64;
             let n_bins = 30usize;
             let bin_width = if max_v > min_v { (max_v - min_v) / n_bins as f64 } else { 1.0 };
             let mut counts = vec![0usize; n_bins];
