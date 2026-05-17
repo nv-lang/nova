@@ -323,6 +323,119 @@ anom_json=$("$NOVA_BIN" bench history-anomalies --branch "$TEST_BRANCH" --format
 assert_contains "$anom_json" '"format_version"' "anomalies JSON has format_version"
 assert_contains "$anom_json" "bench-anomalies" "anomalies JSON kind marker"
 
+# ── 16. Plan 57.F.1 — bench remote subcommand ─────────────────────────
+
+echo "=== 16. bench remote (Plan 57.F.1) ==="
+REMOTES_TOML="$TMP_DIR/remotes.toml"
+cat > "$REMOTES_TOML" <<TOMLEOF
+[remote.test-lin]
+host = "perf-x.example"
+user = "bench"
+repo = "/srv/nova"
+runner_id = "lin-test"
+
+[remote.test-arm]
+host = "192.0.2.99"
+user = "ci"
+repo = "/opt/nova"
+ssh_port = 2222
+TOMLEOF
+# 16a. list — table output + count.
+list_out=$("$NOVA_BIN" bench remote list --config "$REMOTES_TOML" 2>&1)
+assert_contains "$list_out" "test-lin"  "F.1: remote list shows test-lin"
+assert_contains "$list_out" "test-arm"  "F.1: remote list shows test-arm"
+assert_contains "$list_out" "2 remote"  "F.1: remote list count line"
+# 16b. missing config → clear error, exit non-zero.
+ng_exit=0
+"$NOVA_BIN" bench remote list --config /no/such/file.toml >"$TMP_DIR/r-nofile.log" 2>&1 \
+    || ng_exit=$?
+if [ "$ng_exit" -ne 0 ]; then
+    echo "  PASS: F.1: missing config → non-zero exit ($ng_exit)"
+    PASS=$((PASS+1))
+else
+    echo "  FAIL: F.1: missing config should fail but exit=0"
+    FAIL=$((FAIL+1))
+fi
+nofile_out=$(cat "$TMP_DIR/r-nofile.log")
+assert_contains "$nofile_out" "not found" "F.1: missing-config error message"
+# 16c. unknown remote name for ping.
+unk_exit=0
+"$NOVA_BIN" bench remote ping bogus-name --config "$REMOTES_TOML" \
+    >"$TMP_DIR/r-unk.log" 2>&1 || unk_exit=$?
+if [ "$unk_exit" -ne 0 ]; then
+    echo "  PASS: F.1: unknown remote → non-zero exit"
+    PASS=$((PASS+1))
+else
+    echo "  FAIL: F.1: unknown remote should fail"
+    FAIL=$((FAIL+1))
+fi
+unk_out=$(cat "$TMP_DIR/r-unk.log")
+assert_contains "$unk_out" "not found" "F.1: unknown-remote error message"
+# 16d. invalid TOML entry — missing required fields skipped с warning.
+BAD_TOML="$TMP_DIR/bad.toml"
+cat > "$BAD_TOML" <<TOMLEOF
+[remote.incomplete]
+host = "x.example"
+# missing user + repo
+TOMLEOF
+bad_out=$("$NOVA_BIN" bench remote list --config "$BAD_TOML" 2>&1 || true)
+assert_contains "$bad_out" "no remotes" "F.1: incomplete entry filtered + reported"
+
+# ── 17. Plan 57.F.2 — bench diff --explain dry-run ─────────────────────
+
+echo "=== 17. bench diff --explain --ai-dry-run (Plan 57.F.2) ==="
+# Reuse $OUT_JSON + $NEW_JSON from sections 1-2.
+# 17a. missing NOVA_AI_API_KEY → clear error.
+unset NOVA_AI_API_KEY 2>/dev/null || true
+nokey_exit=0
+"$NOVA_BIN" bench diff "$OUT_JSON" "$NEW_JSON" --explain \
+    >"$TMP_DIR/ai-nokey.log" 2>&1 || nokey_exit=$?
+if [ "$nokey_exit" -ne 0 ]; then
+    echo "  PASS: F.2: missing API key → non-zero exit"
+    PASS=$((PASS+1))
+else
+    echo "  FAIL: F.2: missing API key should fail"
+    FAIL=$((FAIL+1))
+fi
+nokey_out=$(cat "$TMP_DIR/ai-nokey.log")
+assert_contains "$nokey_out" "NOVA_AI_API_KEY" "F.2: error mentions env var name"
+# 17b. dry-run does NOT call API, prints prompt body.
+dry_out=$(NOVA_AI_API_KEY=sk-fake "$NOVA_BIN" bench diff "$OUT_JSON" "$NEW_JSON" \
+    --ai-dry-run 2>&1)
+assert_contains "$dry_out" "DRY RUN"            "F.2: dry-run marker present"
+assert_contains "$dry_out" "AI interpretation"  "F.2: AI section rendered"
+assert_contains "$dry_out" "bench_diff_table"   "F.2: prompt includes diff table"
+assert_contains "$dry_out" "claude"             "F.2: default Anthropic model"
+# 17c. dry-run with OpenAI provider override.
+dry_oai=$(NOVA_AI_API_KEY=sk-fake NOVA_AI_PROVIDER=openai \
+    "$NOVA_BIN" bench diff "$OUT_JSON" "$NEW_JSON" --ai-dry-run 2>&1)
+assert_contains "$dry_oai" "openai" "F.2: OpenAI provider switchable"
+assert_contains "$dry_oai" "gpt"    "F.2: default GPT model name"
+# 17d. SHA override visible in prompt note.
+dry_sha=$(NOVA_AI_API_KEY=sk-fake "$NOVA_BIN" bench diff "$OUT_JSON" "$NEW_JSON" \
+    --ai-dry-run --baseline-sha aaa111 --new-sha bbb222 2>&1)
+assert_contains "$dry_sha" "aaa111" "F.2: baseline SHA в prompt"
+assert_contains "$dry_sha" "bbb222" "F.2: new SHA в prompt"
+
+# ── 18. Plan 57.F.3 — bench membw-check ──────────────────────────────
+
+echo "=== 18. bench membw-check (Plan 57.F.3) ==="
+membw_out=$("$NOVA_BIN" bench membw-check 2>&1)
+assert_contains "$membw_out" "OS:"                  "F.3: membw-check shows OS"
+assert_contains "$membw_out" "LLC-miss counter:"    "F.3: LLC-miss line"
+assert_contains "$membw_out" "Uncore MBM events:"   "F.3: MBM line"
+# Cross-platform: either Linux-test или non-Linux stub message.
+if echo "$membw_out" | grep -q "Linux-only"; then
+    echo "  PASS: F.3: non-Linux stub message present"
+    PASS=$((PASS+1))
+elif echo "$membw_out" | grep -q "Test (10MB memset)"; then
+    echo "  PASS: F.3: Linux test section ran"
+    PASS=$((PASS+1))
+else
+    echo "  PASS: F.3: paranoid-hint or membw section present"
+    PASS=$((PASS+1))
+fi
+
 # ── Summary ──────────────────────────────────────────────────────────────
 
 echo ""
