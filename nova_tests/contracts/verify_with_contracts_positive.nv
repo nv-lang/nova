@@ -1,0 +1,15 @@
+// Ф.27.1 positive (Plan 33.6): `#verify` с contracts → no W2402 noop.
+
+module contracts.verify_with_contracts_positive
+
+#verify
+fn checked(x int) -> int
+    requires x >= 0
+    ensures result >= 0
+{
+    x
+}
+
+test "verify with contracts no W2402" {
+    assert(checked(5) == 5)
+}
