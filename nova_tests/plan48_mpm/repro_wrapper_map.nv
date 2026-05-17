@@ -1,0 +1,25 @@
+module nova_tests.plan48_mpm.repro_wrapper_map
+
+// Plan 48 method-param mono: generic method с собственным type param.
+// Currently codegen mono'ит только по receiver T, U остаётся Nova_U_p
+// placeholder в return type → CC-FAIL.
+
+export type Wrapper[T] { inner T }
+
+export fn Wrapper[T].of(v T) -> Wrapper[T] => { inner: v }
+
+export fn Wrapper[T] @map[U](f fn(T) -> U) -> Wrapper[U] {
+    Wrapper[U].of(f(@inner))
+}
+
+test "Wrapper.map int → int" {
+    let w = Wrapper[int].of(10)
+    let m = w.map(|x| x * 2)
+    assert(m.inner == 20, "int → int map")
+}
+
+test "Wrapper.map int → str" {
+    let w = Wrapper[int].of(5)
+    let s = w.map(|x| str.from(x))
+    assert(s.inner == "5", "int → str map")
+}
