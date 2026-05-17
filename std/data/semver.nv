@@ -55,55 +55,73 @@ module data.semver
 // Семантически identifier бывает numeric (только цифры) или
 // alphanumeric. Различие важно для сравнения — храним как str,
 // при сравнении проверяем «numeric ли».
+
+/// SemVer version (semver.org 2.0.0). `MAJOR.MINOR.PATCH[-pre][+build]`.
+///
+/// `pre` — pre-release identifiers (`alpha.1` → `["alpha", "1"]`).
+/// `build` — build metadata (не учитывается при precedence).
+///
+/// # Examples
+/// ```nova
+/// let v = Version.from("1.2.3-alpha.1+exp.sha.5114f85")
+/// assert(v.major() == 1)
+/// assert(v.is_prerelease())
+/// ```
+#stable(since = "0.1")
 export type Version {
     readonly major u64
     readonly minor u64
     readonly patch u64
-    readonly pre   []str       // ["alpha", "1"] для "1.0.0-alpha.1"
-    readonly build []str       // ["exp", "sha", "5114f85"]
+    readonly pre   []str
+    readonly build []str
 }
 
 
-// ──────────────────────────────────────────────────────────────────────────
-// Ошибки
-// ──────────────────────────────────────────────────────────────────────────
-
-// Конвенция D30 — `Parse<TypeName>Error` с типом / доменом.
+/// Errors при парсинге semver-строки (D30 convention).
+#stable(since = "0.1")
 export type ParseVersionError
     | EmptyInput
-    | MissingMinor                        // "1" — нет .MINOR
-    | MissingPatch                        // "1.2" — нет .PATCH
+    | MissingMinor
+    | MissingPatch
     | LeadingZero { component str, value str }
     | InvalidComponent { component str, value str }
-    | EmptyIdentifier { section str }     // "1.0.0-" — pre с пустым id
+    | EmptyIdentifier { section str }
     | InvalidIdentifier { section str, value str }
 
 
-// ──────────────────────────────────────────────────────────────────────────
-// Static-конструкторы
-// ──────────────────────────────────────────────────────────────────────────
-
-// Простой конструктор без pre/build — частый случай.
+/// Simple constructor без pre/build. Самый частый случай.
+#stable(since = "0.1")
 export fn Version.new(major u64, minor u64, patch u64) -> Self =>
     { major, minor, patch, pre: [], build: [] }
 
-// Полный конструктор.
+/// Full constructor с pre-release и build metadata.
+#stable(since = "0.1")
 export fn Version.full(major u64, minor u64, patch u64, pre []str, build []str) -> Self =>
     { major, minor, patch, pre, build }
 
 
-// ──────────────────────────────────────────────────────────────────────────
-// Геттеры — типы очевидны (D45)
-// ──────────────────────────────────────────────────────────────────────────
-
+/// Major version number.
+#stable(since = "0.1")
 export fn Version @major() => @major
+
+/// Minor version number.
+#stable(since = "0.1")
 export fn Version @minor() => @minor
+
+/// Patch version number.
+#stable(since = "0.1")
 export fn Version @patch() => @patch
 
+/// True если version имеет pre-release identifier (e.g. "1.0.0-alpha.1").
+#stable(since = "0.1")
 export fn Version @is_prerelease() -> bool => @pre.len > 0
+
+/// True если version имеет build metadata (e.g. "1.0.0+sha1234").
+#stable(since = "0.1")
 export fn Version @has_build() -> bool => @build.len > 0
 
-// Stable = не pre-release, build metadata не учитывается.
+/// True если stable release: не pre-release, major > 0.
+#stable(since = "0.1")
 export fn Version @is_stable() -> bool => @pre.len == 0 && @major > 0
 
 
@@ -123,6 +141,14 @@ export fn Version @is_stable() -> bool => @pre.len == 0 && @major > 0
 //      leading-zero.
 //   3. Распарсить pre identifiers (split по ".", валидация alphanumeric).
 //   4. Распарсить build identifiers (split по ".", валидация).
+/// `From[str]` — parse semver.org §9-10 grammar. Throws ParseVersionError.
+///
+/// # Examples
+/// ```nova
+/// let v = Version.from("2.5.1")
+/// assert(v.major() == 2 && v.minor() == 5 && v.patch() == 1)
+/// ```
+#stable(since = "0.1")
 export fn Version.from(s str) Fail[ParseVersionError] -> Self {
     if s.len == 0 {
         throw EmptyInput
@@ -258,11 +284,9 @@ fn is_ascii_ident_char(c char) -> bool {
 // Сериализация (D73 Into[str])
 // ──────────────────────────────────────────────────────────────────────────
 
-// `Version @into() -> str` — round-trip с `Version.from`.
-// Round-trip property: `Version.from(v.into()).eq(v)` для любой
-// валидной Version.
-//
-// Формат: "MAJOR.MINOR.PATCH[-PRE][+BUILD]"
+/// `Into[str]` — формат `MAJOR.MINOR.PATCH[-PRE][+BUILD]`.
+/// Round-trip: `Version.from(v.into()).eq(v)` для валидной Version.
+#stable(since = "0.1")
 export fn Version @into() -> str {
     let mut s = str.from(@major) + "." + str.from(@minor) + "." + str.from(@patch)
     if @pre.len > 0 {
@@ -290,10 +314,9 @@ fn join_dots(parts []str) -> str {
 // Сравнение (semver.org § 11)
 // ──────────────────────────────────────────────────────────────────────────
 
-// Equality (D46): структурное равенство по всем компонентам.
-// Замечание: build metadata **не учитывается** в semver-сравнении,
-// но `@eq` оставляем структурным для consistency с record-типами.
-// Для semver-equality (без build) — отдельная функция `eq_precedence`.
+/// Strict equality (`==`) — structural по всем полям (включая build).
+/// Для semver-precedence equality (без build) используй [`eq_precedence`].
+#stable(since = "0.1")
 export fn Version @eq(other Version) -> bool =>
     @major == other.major
     && @minor == other.minor
@@ -301,19 +324,19 @@ export fn Version @eq(other Version) -> bool =>
     && pre_eq(@pre, other.pre)
     && pre_eq(@build, other.build)
 
-// `eq_precedence` — semver-equality: build metadata игнорируется.
+/// Semver-precedence equality — build metadata игнорируется (semver.org § 10).
+#stable(since = "0.1")
 export fn Version @eq_precedence(other Version) -> bool =>
     @major == other.major
     && @minor == other.minor
     && @patch == other.patch
     && pre_eq(@pre, other.pre)
 
-// Less-than per semver § 11. Алгоритм:
-//   1. Сравнить major, minor, patch (numeric).
-//   2. Если все равны:
-//      - не-pre > pre (1.0.0 > 1.0.0-anything)
-//      - оба pre: покомпонентное сравнение (numeric < alphanumeric,
-//        короче < длиннее при одинаковом префиксе).
+/// Less-than (`<`) per semver.org § 11 precedence:
+/// 1. major/minor/patch numeric compare;
+/// 2. не-pre > pre (1.0.0 > 1.0.0-anything);
+/// 3. покомпонентное сравнение pre (numeric < alphanumeric).
+#stable(since = "0.1")
 export fn Version @lt(other Version) -> bool {
     if @major != other.major { return @major < other.major }
     if @minor != other.minor { return @minor < other.minor }
@@ -378,10 +401,16 @@ fn pre_eq(a []str, b []str) -> bool {
     true
 }
 
-// `!=` выводится из `@eq`.
-// `<=`, `>`, `>=` через @le/@gt/@ge:
+/// Less-than-or-equal (`<=`) — precedence-based.
+#stable(since = "0.1")
 export fn Version @le(other Version) -> bool => @lt(other) || @eq_precedence(other)
+
+/// Greater-than (`>`) — precedence-based.
+#stable(since = "0.1")
 export fn Version @gt(other Version) -> bool => other.lt(@)
+
+/// Greater-than-or-equal (`>=`) — precedence-based.
+#stable(since = "0.1")
 export fn Version @ge(other Version) -> bool => @gt(other) || @eq_precedence(other)
 
 
