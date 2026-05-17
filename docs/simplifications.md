@@ -9144,8 +9144,34 @@ _str→_str), let-binding'и типизированы корректно, ник
 - `nova_tests/plan48_mpm/repro_wrapper_map.nv` — minimal repro.
 - `nova_tests/plan48_mpm/f1_method_param_mono.nv` — 5 sub-tests
   (chained map, cross-type chain int→str→str, identity, isolated str→int).
+- `nova_tests/plan48_mpm/f2_multi_method_param_positive.nv` — Box @combine[U, V]
+  с **двумя** method-level params (3 sub-tests).
+- `nova_tests/plan48_mpm/f3_long_chain_positive.nv` — длинная цепочка
+  `.map().map().map().map()` int↔str ping-pong + parallel chains
+  (3 sub-tests).
+- `nova_tests/plan48_mpm/f4_method_param_unused_in_return_positive.nv` —
+  U bind'тся через arg, не в return type (3 sub-tests).
+- `nova_tests/plan48_mpm/f5_cannot_infer_u_negative.nv` —
+  EXPECT_COMPILE_ERROR: U только в return → clean diag.
+- `nova_tests/plan48_mpm/f6_method_param_only_in_return_negative.nv` —
+  EXPECT_COMPILE_ERROR: U binds, V только в return → diag упоминает V.
+
+**Production-grade hardening (2026-05-17 EOD+2):** ранее unresolved
+method-level type params silently dropped из subst_slots → `Nova_U_p`
+placeholder leak в emitted C → undefined-struct CC-FAIL. Добавлен
+diagnostic loop в emit_call path 5b (compiler-codegen/src/codegen/emit_c.rs:~12702)
+после Step 2 inference: для каждого `(name, None)` вычисляются param
+positions и fail'ит с clean message:
+```
+cannot infer method-level type argument `U` for generic method
+`<TypeBase>____<T>.<method>` (only in return type — provide arg
+whose type binds it); provide a closure/arg whose type fixes `U`
+```
+Mirror'ит free-fn diagnostic (emit_c.rs:6588+).
 
 **Регрессия:** 668 PASS / 2 FAIL (2 RUN-FAIL == main baseline, Windows
-UAC os 740 — не codegen-related).
+UAC os 740 — не codegen-related). plan48_mpm focused suite после
+hardening: 7 PASS / 0 FAIL (5 positive + 2 negative).
 
-**No simplifications.** Full method-param mono pipeline production-grade.
+**No simplifications.** Full method-param mono pipeline production-grade
+с clean diagnostic для uninferrable case.

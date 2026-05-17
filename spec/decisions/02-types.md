@@ -3363,8 +3363,17 @@ template<U> Wrapper<U> map(...) }` — то же. Nova bootstrap теперь п
   отдельно.
 - **Closure args drive inference** — без explicit turbofish (`obj.map::<int>(...)`),
   U inferенtsя из closure return type. Если нет args или U не появляется
-  в parameter types, compiler требует explicit type annotation
-  (диагностика D72-style).
+  в parameter types, compiler emit'ит clean diagnostic:
+
+  ```
+  cannot infer method-level type argument `U` for generic method
+  `<TypeBase>____<T>.<method>` (only in return type — provide arg
+  whose type binds it); provide a closure/arg whose type fixes `U`
+  ```
+
+  (См. реализацию в `compiler-codegen/src/codegen/emit_c.rs` path 5b.)
+  Раньше unresolved method-level params silently dropped → `Nova_U_p`
+  placeholder leak в emitted C → undefined-struct CC-FAIL.
 - **Per-(T, U) instances** — каждая уникальная пара получает свою mono'd
   function. Worklist enrollment предотвращает дубликаты.
 - **Return type substitution** — `Wrapper[U]` в return type корректно

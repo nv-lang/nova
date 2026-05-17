@@ -12699,6 +12699,35 @@ impl CEmitter {
                                             }
                                         }
                                         self.current_type_subst = saved_outer;
+                                        // Plan 48 Ф.9 / D119: diagnose any unresolved
+                                        // method-level type params after inference. Без
+                                        // этого они silently dropped → Nova_U_p leak в
+                                        // emitted C (`Nova_Wrapper____Nova_U_p*` undefined).
+                                        for (name, resolved) in &subst_slots {
+                                            if resolved.is_none() {
+                                                let positions: Vec<String> = fn_decl.params.iter()
+                                                    .enumerate()
+                                                    .filter_map(|(i, p)| {
+                                                        let mut names = std::collections::HashSet::new();
+                                                        Self::collect_typeref_names(&p.ty, &mut names,
+                                                            &mut std::collections::HashSet::new());
+                                                        if names.contains(name) {
+                                                            Some(format!("param `{}` (#{i})", p.name))
+                                                        } else { None }
+                                                    })
+                                                    .collect();
+                                                let where_used = if positions.is_empty() {
+                                                    " (only in return type — provide arg whose type binds it)".to_string()
+                                                } else {
+                                                    format!(" — appears in {}", positions.join(", "))
+                                                };
+                                                return Err(format!(
+                                                    "cannot infer method-level type argument `{name}` for generic method `{}.{}`{}; \
+                                                     provide a closure/arg whose type fixes `{name}`",
+                                                    rt_trimmed, method, where_used
+                                                ));
+                                            }
+                                        }
                                         subst_slots.into_iter()
                                             .filter_map(|(n, c)| c.map(|c| (n, c)))
                                             .filter(|(_, c)| !c.is_empty() && c != "void*")

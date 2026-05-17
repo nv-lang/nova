@@ -1,0 +1,21 @@
+// EXPECT_COMPILE_ERROR cannot infer method-level type argument `U`
+//
+// Plan 48 Ф.9 / D119 negative: method-level type param `U` появляется
+// ТОЛЬКО в return type (никакого args не bind'ит его) → должен fail
+// с clean diagnostic, не silent CC-FAIL с Nova_U_p placeholder.
+
+module nova_tests.plan48_mpm.f5_cannot_infer_u_negative
+
+export type Wrapper[T] { inner T }
+export fn Wrapper[T].of(v T) -> Wrapper[T] => { inner: v }
+
+// U в return type, но нет args с U → uninferrable.
+export fn Wrapper[T] @produce[U]() -> Wrapper[U] {
+    Wrapper[U].of(@inner)
+}
+
+test "cannot infer U from no args" {
+    let w = Wrapper[int].of(5)
+    let r = w.produce()
+    assert(true, "never reaches — compile fails")
+}
