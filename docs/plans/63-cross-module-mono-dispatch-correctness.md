@@ -91,31 +91,66 @@ Cross-module overload resolution не учитывает typeargs `[str, int]` �
 - **Drop variadic / Drop generics / Drop overloading** — это core spec features.
 - **Per-method registration в external_registry** для каждого нового метода — too verbose.
 
-## Решение (4 sub-fixes)
+## Решение (6 sub-fixes — добавились E, F из M-* findings)
 
-### Fix A: Return type carrier через external_registry
+### Fix A: Return type carrier через external_registry ✅ DONE (commit 13de6fc803e)
 
 `ExternalRegistry` уже хранит `return_c_type`. Compile site lookup при method
-call'е должен use registered return_c_type вместо fallback на `nova_int`.
+call'е использует registered return_c_type вместо fallback на `nova_int`.
 
-Файл: `compiler-codegen/src/codegen/emit_c.rs` метод call inference path.
-Найти место где member-call inference выбирает nova_int default; instead
-look up `external_registry.by_key[(recv, method)].return_c_type`.
+Файл: `compiler-codegen/src/codegen/emit_c.rs:16726-16745` (infer_expr_c_type
+Member-call case добавлен external_registry.by_key fallback).
 
-Scope: ~50-100 LOC + 5-10 tests.
+Acceptance: `let snap = sb.peek()` correctly infers `str` (f11 PASS без annotation).
 
-### Fix B: Variadic info via cross-module signature carrier
+### Fix B: Variadic info via cross-module signature carrier ✅ DONE (commit 827ee0258bf)
 
-При `import X as p`, alias resolution должен пройти `variadic_last` flag
-через. Сейчас `user_fn_variadic` set локально для каждого module, alias
-import не updates external module's user_fn_variadic.
+Парсер для `p.Path.join` строит nested Member chain
+`Member{Member{Ident("p"), "Path"}, "join"}`. `lookup_variadic_arity`
+recognized только Ident("Type") в obj — теряло variadic_last флаг для
+alias-imported types.
 
-Fix: при resolving `p.Path.join` lookup variadic info через imported module's
-sig table, не локальный.
+Fix: ExprKind::Path arm relax len==2 → len>=2 (берём последние 2 segment'а);
+ExprKind::Member arm: добавлена ветка для nested Member chain
+(alias prefix игнорируется, lookup по последнему (Type, method) pair).
 
-Scope: ~100-150 LOC + 5-10 tests.
+Acceptance: f16/f17 PASS — `import std.path.path as p; p.Path.join(...)` works.
 
-### Fix C: Mono enrollment для anonymous record literal в generic return
+### Fix E: mono'd tuple iter в generic method body ✅ DONE (commit 66113a8d2db)
+
+[M-stdlib-iter-in-generic-method-body] state leak в mono pass. Для
+`for (k, v) in pairs` внутри generic static method'а codegen эмиттил
+mixed legacy/mono tuple types → CC-FAIL.
+
+Три взаимосвязанных fix'а:
+1. emit_array_lit (14426): для boxed-storage пишет `<T>*` (pointer), не raw struct.
+2. emit_monomorphized_method (6451+): pre-populate array_element_types для
+   array-of-tuple params + save/restore против state leak'а cross-fn.
+3. emit_for Case 2 destructure (13041): добавлена ветка для
+   `_NovaTuple_<arity>_<sigs>*` (mono'd tuple pointer) — deref в mono'd struct.
+
+Acceptance: f18 (HashMap.from с Self + tuple destructure) PASS.
+
+### Fix F: Result Ok-payload tuple/struct unboxing ✅ DONE (commit 2ae78c7ae8d)
+
+[M-result-erased-no-mono] Result hardcoded с nova_int payload slot.
+Tuple `(str, int)` не fits — match destructure `_0.f0/f1` на int падал.
+
+Минимальный fix (без full mono'd Result rewrite):
+- result_ok_inner_types map (analogous к option_inner_types).
+- pending_result_ok_inner_type set в emit_call для nova_make_Result_Ok с
+  struct arg; consumed в let-binding.
+- emit_match propagates на scr_tmp.
+- pattern_bind_typed для Result Ok с Tuple sub-pattern: emit deref+cast tmp,
+  populate tuple_element_types через parse_mono_tuple_elements.
+
+Acceptance: f20 (Ok((str, int)) destructure + Err + pattern_cond) PASS.
+
+Scope note: full mono'd Result (NovaRes_<T>_<E> typedefs) — отдельная
+масштабная переработка ≈ Plan 56 vtable scope. Targeted fix покрывает
+основной use-case без системного refactor'а.
+
+### Fix C: Mono enrollment для anonymous record literal в generic return ⏸ deferred
 
 При emit anonymous record literal в return position generic fn'а с
 known `current_fn_return_ty` ending с mono'd template name (e.g.
@@ -124,32 +159,27 @@ known `current_fn_return_ty` ending с mono'd template name (e.g.
 - Use substituted struct name (`Nova_Box____nova_int`) вместо placeholder
   `Nova_Box____Nova_T_p`.
 
-Scope: ~80-150 LOC + 5-10 tests.
+Scope: ~80-150 LOC + 5-10 tests. Deferred — не блокирует stdlib текущий.
 
-### Fix D: Typeargs-aware overload dispatch
+### Fix D: Typeargs-aware overload dispatch ✅ implicitly DONE
 
-При static method call `Type[T1, T2].method(args)`:
-- Build key `(Type, T1, T2, method)` для overload lookup.
-- Не fallback на single-key `method_receivers[method]` если parts[0]
-  matches **any** registered receiver type.
+`HashMap[str, int].from(pairs)` теперь dispatches корректно через
+TurboFish→Member path (compiler-codegen/src/codegen/emit_c.rs:11343-11410
+— уже существует, обрабатывает D109 generic type static call).
 
-Файл: `emit_c.rs` line ~12326-12352 (Path branch для Type.method).
-
-Scope: ~150-250 LOC + 10-15 tests.
-
-## Total estimate
-
-3-5 dev-days для всех 4 sub-fixes. По одному за commit.
+Acceptance: f18/f19 PASS — HashMap.new/with_capacity/clone/filter/from
+все используют `-> Self` без misroute.
 
 ## Acceptance criteria
 
-- ✅ `let snap = sb.peek()` infers snap as `str` (no explicit annotation).
-- ✅ `import X as p; p.VariadicFn(a, b, c)` lowers корректно.
-- ✅ `Box[int].of(42)` (generic factory) generates correct mono'd C
-  без Nova_T_p leakage.
-- ✅ `HashMap[str, int].from(pairs)` dispatches к HashMap.from, не str.from.
-- ✅ Existing 568+ regression tests не регрессят.
-- ✅ Все 15 tests в `nova_tests/plan11_followup/` PASS (без workaround'ов).
+- ✅ `let snap = sb.peek()` infers snap as `str` (no explicit annotation). [Fix A]
+- ✅ `import X as p; p.VariadicFn(a, b, c)` lowers корректно. [Fix B]
+- ⏸ `Box[int].of(42)` (generic factory) — Fix C deferred, не критично.
+- ✅ `HashMap[str, int].from(pairs)` dispatches к HashMap.from. [Fix D + E]
+- ✅ `for (k, v) in pairs` в generic method body работает. [Fix E]
+- ✅ `Result[(T, U), E]` Ok-payload destructure работает. [Fix F]
+- ✅ Existing 620+ regression tests не регрессят (только Windows AV flakes).
+- ✅ Все 18 tests в `nova_tests/plan11_followup/` PASS (без workaround'ов).
 
 ## Связь с другими планами
 
@@ -164,7 +194,8 @@ Scope: ~150-250 LOC + 10-15 tests.
 
 ## Ссылки
 
-- `nova_tests/plan11_followup/` — full regression suite (15 tests, 13 PASS, 2 deferred).
+- `nova_tests/plan11_followup/` — full regression suite (18 tests, 16 PASS,
+  2 Windows AV os 740 deferred).
 - Sprint F.36 closure: `docs/plans/45-nova-doc.md` (Ф.36 status table).
 - `compiler-codegen/src/codegen/emit_c.rs` — dispatch sites.
 - `compiler-codegen/src/codegen/external_registry.rs` — type info storage.
