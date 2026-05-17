@@ -5062,3 +5062,115 @@ Enum устраняет двусмысленность и позволяет SMT
 
 `compiler-codegen/src/ast/mod.rs`, `parser/mod.rs`, `types/mod.rs`,
 `verify/pipeline.rs` — механический рефактор (4 файла).
+
+---
+
+## D118. Typed `Fail[E]` codegen — payload preservation via fail-frame
+
+> **Status:** active (spec). Реализация — [Plan 61](../../docs/plans/61-typed-error-effect-codegen.md).
+> Расширяет [D25](#d25)/[D65](#d65)/[D85](#d85).
+
+### Что
+
+`throw expr` где `expr: T` (T ≠ `nova_str`, e.g. record/sum variant) —
+payload передаётся через `NovaFailFrame.error_user_payload` +
+`NovaFailFrame.error_user_type_id` (NovaTypeId). Handler-arm `|e: E|`
+читает payload как `(E*)payload` через transparent C cast.
+
+До Plan 61: codegen делал `Nova_Fail_fail(nova_int_to_str((nova_int)val))` —
+silent pointer-to-int pun. Handler получал garbage string. **Silent UB #1**
+закрыт Plan 61 Ф.2/Ф.3.
+
+### Правило
+
+1. **Throw lowering** (Stmt + Expr):
+   - `expr: nova_str` → legacy `Nova_Fail_fail(msg)`.
+   - `expr: T*` или value → `nova_throw_typed(msg_repr, payload, NOVA_TID_<T>)`.
+     Value-types heap-boxed inline (`nova_alloc(sizeof(T))` + copy).
+
+2. **Handler-arm typed binding:**
+   - `with Fail[E] = |e| body` — compiler infer'ит `e: E` из effect-type
+     (Plan 61 Ф.3 inference в `desugar_handler_lambda`).
+   - В body `Ident(e)` resolves через
+     `(E*)_nova_fail_top->error_user_payload` (pointer) или
+     `*(E*)_nova_fail_top->error_user_payload` (value).
+   - Pattern-match `match e { ... }` работает natural — field-access
+     проходит через typed cast.
+
+3. **Dispatch precedence** (`nova_throw_typed` в effects.h):
+   1. `_nova_handler_Fail_any` — erased typed slot (Fail ≡ Fail[any]
+      catch-all D65 правило 1). Если установлен, вызывается с
+      `(payload, tid)`.
+   2. `_nova_handler_Fail` — legacy string slot. Вызывается с `msg_repr`
+      (typeid name). Handler arm может typed (читает payload через
+      frame) или string (читает msg).
+   3. Unwind через fail-frame с typed payload preserved
+      (`error_user_payload` set'нут на step 0 — до dispatch).
+
+4. **D65 правило 3 (re-throw):** `_nova_handler_Fail = current->prev`
+   swap во время handler-body invocation — корректно работает с typed
+   throws потому что `nova_throw_typed` reuses тот же swap pattern.
+
+5. **`expr!!`:** codegen эмитит `Nova_Fail_fail(err_payload)` для
+   bootstrap-stage Result (hardcoded на `Err = nova_str`). После Plan 14/56
+   generic Result mono'd — Err получит real type, codegen перейдёт на
+   `nova_throw_typed`. Plan 61 Ф.4 removed `nova_throw_value` placeholder
+   macro — был **Silent UB #2** (silently замещал payload на строку
+   `"Result::Err"`).
+
+### Codegen representation
+
+```c
+/* NovaFailFrame extended (Plan 61 Ф.2): */
+typedef struct NovaFailFrame {
+    jmp_buf            jmp;
+    nova_str           error_msg;
+    NovaThrowKind      error_kind;          /* USER / CANCEL / USER_TYPED */
+    void*              error_reason_ptr;    /* Plan 49 typed cancel */
+    void*              error_user_payload;  /* Plan 61 typed user payload */
+    NovaTypeId         error_user_type_id;  /* Plan 61 type tag */
+    struct NovaFailFrame* prev;
+} NovaFailFrame;
+
+/* NovaTypeId (Plan 61 Ф.1, typeid.h): */
+typedef uint32_t NovaTypeId;
+/* Reserved 1..16 для primitives. User types — IDs from USER_BASE = 17
+ * через compile-time auto-register в codegen (splice'тся в preamble как
+ * #define NOVA_TID_USER_<X> N). */
+
+/* Erased typed slot (Plan 61 Ф.2): */
+typedef struct NovaVtable_Fail_any {
+    void*                            ctx;
+    nova_unit                       (*fail)(void* _ctx, void* err, NovaTypeId tid);
+    struct NovaVtable_Fail_any*       prev;
+} NovaVtable_Fail_any;
+
+extern __thread NovaVtable_Fail_any* _nova_handler_Fail_any;
+```
+
+### Что отвергнуто
+
+- **Per-E TLS slots** (`_nova_handler_Fail_<E>`) — рассматривалось для
+  «zero-cost typed dispatch». Отвергнуто для bootstrap: payload-in-frame
+  + cast в handler arm даёт equivalent semantics при меньшей complexity.
+  После Plan 48/56 mono можно вернуться, если perf-bench покажет
+  необходимость.
+- **String-only `Fail`** — ломает D65 правило 1.
+- **`nova_throw_value` placeholder** — УДАЛЁН в Plan 61 Ф.4 (Silent UB #2).
+- **Cross-effect throw в handler-arm** (e.g. `with Fail[A] = |e| throw B`)
+  — частично работает (compile OK, typed payload reaches outer handler),
+  но **interrupt-frame stack mismatch** при unwinding ещё не resolved.
+  Это Plan 11 followup territory, выходит за Plan 61 scope.
+
+### Связь
+
+- [D25](#d25)/[D65](#d65) — Fail семантика, правила 1-5.
+- [D85](#d85) — `expr!!` semantics.
+- [Plan 11](../../docs/plans/11-method-values-and-overload.md) followup —
+  cross-effect throw handler-arm (interrupt frame mismatch).
+- [Plan 14](../../docs/plans/14-stdlib-codegen-gaps.md) /
+  [Plan 56](../../docs/plans/56-vtable-dispatch-erased-generics.md) —
+  generic Result mono для real typed Err.
+- [Plan 49](../../docs/plans/49-cancel-throw-routing.md) — симметричная
+  typed-payload infra для CANCEL kanal. Plan 61 — для USER kanal. Две
+  оси параллельны.

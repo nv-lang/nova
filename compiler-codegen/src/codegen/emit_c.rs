@@ -490,6 +490,24 @@ pub struct CEmitter {
     /// обычного main или test runner. test items в этом режиме игнорируются.
     /// Активируется set_bench_mode(true) из nova-cli `nova bench`.
     bench_mode: bool,
+
+    /// Plan 61 Ф.1: TypeId registry. `type-name-mangled` → `NovaTypeId`.
+    /// Populated по мере встречи user-types в throw/handler-arm/any-cast
+    /// контекстах. Эмитятся как `#define NOVA_TID_<mangled> N` в preamble
+    /// (см. `emit_typeid_defines`).
+    ///
+    /// Ключ — sanitized C-name (без `*`, без `Nova_`-префикса; обычно
+    /// nova-side type name, e.g. `ParseError`, `Result_nova_int_nova_str`).
+    /// Значение — monotonic ID starting from NOVA_TID_USER_BASE (17).
+    type_id_registry: HashMap<String, u32>,
+    /// Plan 61 Ф.1: next free TID (counter); starts at USER_BASE.
+    next_type_id: u32,
+
+    /// Plan 61 Ф.2: per-handler-binding `with Fail[E] = |e| ...` mapping
+    /// from binding-var-name to E's C-type. Используется emit_throw для
+    /// корректной dispatch precedence (per-E typed → erased → unwind).
+    /// Ф.3 будет расширять для per-E mono'd dispatch.
+    fail_e_map: HashMap<String, String>,
 }
 
 /// Plan 20 Ф.4: per-defer-stmt entry — tracks one `defer { ... }` or
@@ -658,7 +676,59 @@ impl CEmitter {
             cancel_token_t_map: HashMap::new(),
             emitted_cancel_converters: HashSet::new(),
             bench_mode: false,
+            /* Plan 61 Ф.1: TypeId registry; starts at USER_BASE = 17
+             * (1..16 reserved для primitives). */
+            type_id_registry: HashMap::new(),
+            next_type_id: 17,
+            fail_e_map: HashMap::new(),
         }
+    }
+
+    /// Plan 61 Ф.1: Register a TypeId for a user-defined type name.
+    /// Returns the assigned monotonic NovaTypeId (>= NOVA_TID_USER_BASE = 17).
+    /// Idempotent: повторный вызов с тем же name возвращает existing ID.
+    ///
+    /// Primitive типы (nova_int, nova_str, nova_bool, etc.) имеют reserved
+    /// IDs 1..7 и НЕ должны передаваться сюда — для них используется
+    /// `primitive_type_id` lookup helper.
+    fn register_type_id(&mut self, name: &str) -> u32 {
+        if let Some(&id) = self.type_id_registry.get(name) {
+            return id;
+        }
+        let id = self.next_type_id;
+        self.next_type_id += 1;
+        self.type_id_registry.insert(name.to_string(), id);
+        id
+    }
+
+    /// Plan 61 Ф.1: TypeId для известного primitive C-type, или None если
+    /// не primitive (caller должен `register_type_id`).
+    fn primitive_type_id(c_type: &str) -> Option<u32> {
+        match c_type.trim_end_matches('*').trim() {
+            "nova_int"  => Some(1),
+            "nova_str"  => Some(2),
+            "nova_bool" => Some(3),
+            "nova_f64"  => Some(4),
+            "nova_f32"  => Some(5),
+            "nova_byte" => Some(6),
+            "nova_unit" => Some(7),
+            _ => None,
+        }
+    }
+
+    /// Plan 61 Ф.2: получить NOVA_TID_<name> identifier для given C-type.
+    /// Для primitives — fixed; для user-types — auto-register.
+    /// Возвращает `(macro_name, sanitized_name)` для embed в emitted C.
+    fn typeid_macro_for(&mut self, c_type: &str) -> String {
+        let base = c_type.trim_end_matches('*').trim();
+        if Self::primitive_type_id(base).is_some() {
+            return format!("NOVA_TID_{}", base);
+        }
+        // Unwrap Nova_ prefix для cleaner macro name
+        let nova_name = base.strip_prefix("Nova_").unwrap_or(base);
+        let sanitized = Self::sanitize_c_for_ident(nova_name);
+        self.register_type_id(&sanitized);
+        format!("NOVA_TID_USER_{}", sanitized)
     }
 
     /// Plan 57: enable bench-mode. Activated by `nova bench` CLI.
@@ -1704,6 +1774,45 @@ impl CEmitter {
             }
         }
         self.out = self.out.replace("/*__MONO_TUPLE_TYPEDEFS__*/", &tuple_decls);
+
+        // Plan 61 Ф.1: splice TypeId defines + overriding nova_typeid_to_name.
+        // Каждый registered user-type получает `#define NOVA_TID_USER_<X> N`;
+        // также emit'тся overriding `nova_typeid_to_name` switch для diagnostic.
+        // Если registry пустой — emit'тся только пустой replacement (weak fallback
+        // в typeid.c обеспечивает linkage).
+        let mut tid_defines = String::new();
+        if !self.type_id_registry.is_empty() {
+            tid_defines.push_str("/* Plan 61 Ф.1: per-type NovaTypeId constants. */\n");
+            // Stable order по ID для deterministic emit.
+            let mut entries: Vec<(&String, &u32)> = self.type_id_registry.iter().collect();
+            entries.sort_by_key(|&(_, id)| *id);
+            for (name, id) in &entries {
+                tid_defines.push_str(&format!(
+                    "#define NOVA_TID_USER_{} ((NovaTypeId){})\n", name, id
+                ));
+            }
+            // Overriding nova_typeid_to_name implementation. Weak в typeid.c
+            // covers basic primitives; здесь добавляем user-types branches.
+            // Тестировать что only-strong-symbol overriding работает на всех
+            // toolchains (Clang/MSVC/GCC) — Ф.8 cross-toolchain gate.
+            // Bootstrap: эмитим как static helper used только в diagnostic
+            // path (`nova: unhandled typed Fail`), не overrides weak — это
+            // меньше platform-specific risk.
+            tid_defines.push_str("\n/* Diagnostic helper для user-types (called from Plan 61\n");
+            tid_defines.push_str(" * unhandled-fail path; static, не overrides typeid.c weak). */\n");
+            tid_defines.push_str("static inline const char* nova_typeid_user_name(NovaTypeId tid) {\n");
+            tid_defines.push_str("    switch (tid) {\n");
+            for (name, _) in &entries {
+                tid_defines.push_str(&format!(
+                    "        case NOVA_TID_USER_{}: return \"{}\";\n", name, name
+                ));
+            }
+            tid_defines.push_str("        default: return nova_typeid_to_name(tid);\n");
+            tid_defines.push_str("    }\n");
+            tid_defines.push_str("}\n");
+        }
+        self.out = self.out.replace("/*__TYPEID_DEFINES__*/", &tid_defines);
+
         Ok((self.out, self.warnings))
     }
 
@@ -2012,6 +2121,10 @@ impl CEmitter {
         // Решение: pre-pass forward-decl всех user types через отдельный
         // marker, splice'ится в emit_module finalize.
         self.line("/*__USER_TYPE_FWD_DECLS__*/");
+        // Plan 61 Ф.1: TypeId defines splice marker — replaced в finalize
+        // (`__TYPEID_DEFINES__` секция). Per-type `#define NOVA_TID_USER_<X> N`
+        // эмитятся для каждого type, встреченного в throw / handler / any.
+        self.line("/*__TYPEID_DEFINES__*/");
         // Plan 59: mono'd tuple struct typedefs — splice marker; replaced
         // в finalize. Layout: typedef struct { T1 f0; T2 f1; ... }
         // _NovaTuple____<T1>__<T2>__...;. Real types (e.g. nova_str, не
@@ -2747,6 +2860,17 @@ impl CEmitter {
         };
         let eff_key = effect_path.join("_");
 
+        // Plan 61 Ф.3: typed Fail[E] inference. Если effect = Fail[E] (path
+        // = ["Fail"], generics = [E]), inject E как inferred annotation для
+        // первого handler-arm param. Это позволяет писать `with Fail[E] =
+        // |e| ...` без явного `|e: E|` — компилятор infer'ит из effect type.
+        let fail_e_inferred_ty: Option<crate::ast::TypeRef> =
+            if effect_path.as_slice() == ["Fail"] {
+                if let TypeRef::Named { generics, .. } = effect {
+                    generics.first().cloned()
+                } else { None }
+            } else { None };
+
         // Извлекаем params и body в форме HandlerMethod.
         let (handler_params, handler_body): (
             Vec<HandlerMethodParam>,
@@ -2755,9 +2879,12 @@ impl CEmitter {
             ExprKind::ClosureLight { params, body } => {
                 let p: Vec<HandlerMethodParam> = params
                     .iter()
-                    .map(|cp| HandlerMethodParam {
+                    .enumerate()
+                    .map(|(idx, cp)| HandlerMethodParam {
                         name: cp.name.clone(),
-                        ty: None,
+                        // Plan 61 Ф.3: inject inferred E annotation для
+                        // первого param если Fail[E].
+                        ty: if idx == 0 { fail_e_inferred_ty.clone() } else { None },
                         span: cp.span,
                     })
                     .collect();
@@ -2997,6 +3124,37 @@ impl CEmitter {
                 .map(|(n, t)| (n.clone(), self.var_types.insert(n.clone(), t.clone())))
                 .collect();
 
+            // Plan 61 Ф.3: typed Fail[E] handler-arm population. Если effect
+            // is Fail и handler-arm param has explicit annotation `e: E` где
+            // E ≠ nova_str (resolved C-type), populate fail_e_map для всех
+            // Ident'ов name → resolve через typed payload в fail-frame.
+            //
+            // Detection: m.params[i].ty (typed via ClosureFull) — explicit
+            // annotation. Schema-resolved type для Fail всегда "nova_str"
+            // (hardcoded в effects.h NovaVtable_Fail). User annotation
+            // отменяет schema — это intent typed handling.
+            let mut saved_fail_e_entries: Vec<(String, Option<String>)> = Vec::new();
+            if eff == "Fail" {
+                for (i, p) in m.params.iter().enumerate() {
+                    if let Some(annotated_ty) = &p.ty {
+                        if let Ok(annot_c) = self.type_ref_to_c(annotated_ty) {
+                            if annot_c != "nova_str" {
+                                // Register typed binding.
+                                let pname = p.name.clone();
+                                let prev = self.fail_e_map.insert(
+                                    pname.clone(), annot_c.clone());
+                                saved_fail_e_entries.push((pname.clone(), prev));
+                                // Также update var_types для infer_expr_c_type
+                                // (метод-param сейчас зарегистрирован как
+                                // nova_str из schema; перерегистрируем как E_c).
+                                self.var_types.insert(pname, annot_c);
+                                let _ = i; /* подавляем clippy */
+                            }
+                        }
+                    }
+                }
+            }
+
             // Unpack context: expose captured variables so body code can use them directly
             self.line(&format!("{ctx}* _c = ({ctx}*)_ctx;", ctx = ctx_struct));
             for (cap_name, cap_ty) in &all_captures {
@@ -3068,6 +3226,13 @@ impl CEmitter {
                 match prev {
                     Some(old) => { self.var_types.insert(name, old); }
                     None => { self.var_types.remove(&name); }
+                }
+            }
+            // Plan 61 Ф.3: restore fail_e_map после handler body emit.
+            for (name, prev) in saved_fail_e_entries {
+                match prev {
+                    Some(old) => { self.fail_e_map.insert(name, old); }
+                    None      => { self.fail_e_map.remove(&name); }
                 }
             }
 
@@ -8703,18 +8868,47 @@ impl CEmitter {
                 self.line("continue;");
             }
             Stmt::Throw { value, .. } => {
-                // `throw expr` desugars to `Fail.fail(expr)` — operation of the
-                // built-in `Fail` effect (D25/D62/D65). Compiler dispatches via
-                // _nova_handler_Fail. Default handler calls nova_throw, which
-                // longjmp's to the nearest setjmp-frame (test_frame or spawn-
-                // entry frame). User can install handler-lambda via
-                // `with Fail = (msg) => ... { body }` (D31).
+                // `throw expr` — Fail.fail(expr). D25/D62/D65.
+                //
+                // Plan 61 Ф.2: typed dispatch.
+                //   - nova_str payload   → legacy `Nova_Fail_fail(msg)` (string-slot).
+                //   - typed payload (record/sum) → `nova_throw_typed(msg_repr,
+                //     payload, NOVA_TID_<E>)` — fall through по precedence:
+                //     per-E typed slot (Ф.3) → erased Fail[any] slot → legacy
+                //     string slot → unwind с typed payload preserved в
+                //     fail-frame.
                 let val_ty = self.infer_expr_c_type(value);
                 let val = self.emit_expr(value)?;
                 if val_ty == "nova_str" {
                     self.line(&format!("Nova_Fail_fail({});", val));
                 } else {
-                    self.line(&format!("Nova_Fail_fail(nova_int_to_str((nova_int)({})));", val));
+                    // Typed payload path.
+                    let tid_macro = self.typeid_macro_for(&val_ty);
+                    // Diagnostic message — typeid name (для unhandled abort
+                    // и string-slot fallback). Real payload передаётся
+                    // отдельно через `nova_throw_typed`.
+                    let payload_expr = if val_ty.ends_with('*') {
+                        // Already pointer — pass directly as void*.
+                        format!("(void*)({})", val)
+                    } else {
+                        // Value type — heap-box и pass pointer. Codegen
+                        // компилирует это в `T* tmp = nova_alloc(sizeof(T));
+                        // *tmp = val;` inline. Для bootstrap — простой
+                        // compound-literal-style box через GC alloc.
+                        let tmp = self.fresh_tmp();
+                        self.line(&format!(
+                            "{ty}* {tmp} = ({ty}*)nova_alloc(sizeof({ty}));",
+                            ty = val_ty, tmp = tmp
+                        ));
+                        self.line(&format!("*{} = {};", tmp, val));
+                        format!("(void*)({})", tmp)
+                    };
+                    self.line(&format!(
+                        "nova_throw_typed(nova_str_from_cstr(\"<{nm}>\"), {p}, {tid});",
+                        nm = val_ty.replace('*', ""),
+                        p = payload_expr,
+                        tid = tid_macro
+                    ));
                 }
             }
             // D90 Plan 20 Ф.4: defer/errdefer codegen. Активация флага в
@@ -8925,6 +9119,30 @@ impl CEmitter {
             }
 
             ExprKind::Ident(name) => {
+                // Plan 61 Ф.3: typed Fail[E] handler-arm parameter — name
+                // resolves через fail-frame typed payload, не как обычная
+                // переменная. См. emit_handler_lit Plan 61 Ф.3 populator.
+                //
+                // ВАЖНО: handler-arm с `|e: E|` annotation (e ≠ nova_str)
+                // получает E-typed view через cast'нутый deref payload.
+                // Field-access потом работает естественно: `e.detail` →
+                // `(*(E*)payload).detail`.
+                if let Some(e_c_type) = self.fail_e_map.get(name).cloned() {
+                    if e_c_type.ends_with('*') {
+                        // Pointer-typed E (sum/record): payload уже holds
+                        // pointer-to-instance. Cast directly.
+                        return Ok(format!(
+                            "(({})_nova_fail_top->error_user_payload)",
+                            e_c_type
+                        ));
+                    } else {
+                        // Value-type E: payload — pointer to heap-boxed value.
+                        return Ok(format!(
+                            "(*(({}*)_nova_fail_top->error_user_payload))",
+                            e_c_type
+                        ));
+                    }
+                }
                 // Unit variants (e.g. `Red` from `type Color | Red | Green`) are
                 // not function calls in Nova but need `nova_make_Color_Red()` in C.
                 if let Some((type_name, fields)) = self.find_variant(name) {
@@ -9721,11 +9939,20 @@ impl CEmitter {
                     ));
                     Ok(format!("({}.value)", bang_tmp))
                 } else if inner_ty == "Nova_Result*" {
-                    // Result!!: на Err бросаем error value через
-                    // generic nova_throw.
+                    // Result!!: на Err бросаем error value через Fail-эффект.
+                    //
+                    // Plan 61 Ф.4: bootstrap Result hardcoded на (Ok int,
+                    // Err nova_str), поэтому Err payload — nova_str. Используем
+                    // string-based throw (= Nova_Fail_fail), который dispatch'тся
+                    // legacy путём. После Plan 14/56 generic Result mono'd —
+                    // Err получит real type, и здесь нужно будет emit
+                    // nova_throw_typed с payload.
+                    //
+                    // Removed: nova_throw_value(v) placeholder macro
+                    // (effects.h:140). Эмитим Nova_Fail_fail напрямую.
                     self.line(&format!("Nova_Result* {} = {};", bang_tmp, val));
                     self.line(&format!(
-                        "if ({}->tag == NOVA_TAG_Result_Err) {{ nova_throw_value({}->payload.Err._0); }}",
+                        "if ({}->tag == NOVA_TAG_Result_Err) {{ Nova_Fail_fail({}->payload.Err._0); }}",
                         bang_tmp, bang_tmp
                     ));
                     Ok(format!("({}->payload.Ok._0)", bang_tmp))
@@ -9959,23 +10186,37 @@ impl CEmitter {
             }
             ExprKind::Throw(value) => {
                 // D25/D65/D85: throw в expression-position. Тип Never —
-                // control никогда не вернётся. Эмитируем effect-call
-                // Nova_Fail_fail через comma-expression
-                // `(Nova_Fail_fail(v), (nova_int)0LL)` — dummy nova_int нужного
-                // типа для совместимости с C-каст'ами в caller'е.
+                // control никогда не вернётся. Эмитируем effect-call через
+                // comma-expression `(call(...), dummy)`. См. Stmt::Throw для
+                // detail на typed/string dispatch.
                 //
-                // **Важно:** comma-expression, не statement+dummy через
-                // self.line() — потому что statement+dummy ломает short-circuit
-                // семантику родительских конструкций (?? coalesce → тернарник
-                // `cond ? value : RHS`; conditional expression). С statement
-                // throw выполнялся бы eagerly, **до** проверки cond.
-                // Comma-expression — inline expression, выполняется только
-                // когда родитель реально evaluates это выражение.
-                //
-                // Закрывает Q-throw-comma (тот же паттерн что для nv_panic /
+                // Plan 61 Ф.2: typed throw (не nova_str) → nova_throw_typed.
+                // Закрывает Q-throw-comma (тот же паттерн что nv_panic /
                 // nv_exit — см. special-case в emit_call).
+                let val_ty = self.infer_expr_c_type(value);
                 let v = self.emit_expr(value)?;
-                Ok(format!("(Nova_Fail_fail({}), (nova_int)0LL)", v))
+                if val_ty == "nova_str" {
+                    Ok(format!("(Nova_Fail_fail({}), (nova_int)0LL)", v))
+                } else {
+                    let tid_macro = self.typeid_macro_for(&val_ty);
+                    let payload_expr = if val_ty.ends_with('*') {
+                        format!("(void*)({})", v)
+                    } else {
+                        // Heap-box value type — нельзя сделать inline в
+                        // comma-expression красиво; используем GNU
+                        // statement-expression ({ T* p = alloc; *p = v; p; }).
+                        format!(
+                            "({{ {ty}* _p = ({ty}*)nova_alloc(sizeof({ty})); *_p = ({val}); (void*)_p; }})",
+                            ty = val_ty, val = v
+                        )
+                    };
+                    Ok(format!(
+                        "(nova_throw_typed(nova_str_from_cstr(\"<{nm}>\"), {p}, {tid}), (nova_int)0LL)",
+                        nm = val_ty.replace('*', ""),
+                        p = payload_expr,
+                        tid = tid_macro
+                    ))
+                }
             }
             ExprKind::Forbid { body, .. } => {
                 // forbid X { body } — in bootstrap, emit body as plain block (no runtime check)
