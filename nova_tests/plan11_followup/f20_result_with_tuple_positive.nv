@@ -1,0 +1,63 @@
+module plan11_followup.f20_result_with_tuple_positive
+
+// Plan 63 Bug F / Fix F [M-result-erased-no-mono] regression test:
+// Result[(T, U), E] — Result с tuple внутри Ok. Раньше Nova_Result*
+// хранил payload в nova_int slot (8 bytes), tuple туда не пролезал.
+
+fn parse_pair(s str) -> Result[(str, int), str] {
+    if s == "ab,1" {
+        Ok(("ab", 1))
+    } else {
+        Err("bad input")
+    }
+}
+
+test "Result[(str, int), str] — Ok branch with tuple destructure" {
+    let r = parse_pair("ab,1")
+    let mut got_ok = false
+    let mut got_k str = ""
+    let mut got_v int = 0
+    match r {
+        Ok((k, v)) => {
+            got_ok = true
+            got_k = k
+            got_v = v
+        }
+        Err(_) => {}
+    }
+    assert(got_ok)
+    assert(got_k == "ab")
+    assert(got_v == 1)
+}
+
+test "Result[(str, int), str] — Err branch" {
+    let r = parse_pair("garbage")
+    let mut got_err = false
+    let mut got_msg str = ""
+    match r {
+        Ok(_) => {}
+        Err(msg) => {
+            got_err = true
+            got_msg = msg
+        }
+    }
+    assert(got_err)
+    assert(got_msg == "bad input")
+}
+
+test "Result[(str, int), str] — pattern_cond + bindings оба работают" {
+    let r1 = parse_pair("ab,1")
+    let r2 = parse_pair("xx")
+    let mut ok_count = 0
+    let mut err_count = 0
+    match r1 {
+        Ok(_) => { ok_count = ok_count + 1 }
+        Err(_) => { err_count = err_count + 1 }
+    }
+    match r2 {
+        Ok(_) => { ok_count = ok_count + 1 }
+        Err(_) => { err_count = err_count + 1 }
+    }
+    assert(ok_count == 1)
+    assert(err_count == 1)
+}

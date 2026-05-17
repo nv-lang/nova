@@ -274,6 +274,13 @@ pub struct CEmitter {
     /// Set during emit_call when boxing a struct for nova_make_Option_Some.
     /// Consumed by next Stmt::Let to annotate the bound variable's inner type.
     pending_option_inner_type: Option<String>,
+    /// Plan 63 Fix F [M-result-erased-no-mono]: Result Ok-payload boxed type tracking.
+    /// Maps Result variable name → boxed inner C type (e.g. "_NovaTuple_2_8_nova_str_8_nova_int*"
+    /// для Result[(str, int), E]). Used at destructure для proper unboxing tuple/struct args.
+    result_ok_inner_types: HashMap<String, String>,
+    /// Set during emit_call when boxing struct/tuple для nova_make_Result_Ok.
+    /// Consumed by next Stmt::Let.
+    pending_result_ok_inner_type: Option<String>,
     /// Set of array variable names that store boxed nova_str* (as nova_int).
     /// Index access on these arrays must dereference: *(nova_str*)(arr->data[i]).
     str_box_arrays: HashSet<String>,
@@ -565,6 +572,8 @@ impl CEmitter {
             array_element_types: HashMap::new(),
             option_inner_types: HashMap::new(),
             pending_option_inner_type: None,
+            result_ok_inner_types: HashMap::new(),
+            pending_result_ok_inner_type: None,
             str_box_arrays: HashSet::new(),
             current_receiver_type: None,
             expected_record_type: None,
@@ -6452,29 +6461,61 @@ impl CEmitter {
         // Enables `for (k, v) in pairs` to extract typed fields without losing the
         // concrete K/V → nova_str/nova_int substitution stored in current_type_subst.
         let mut saved_tuple_elem_keys: Vec<String> = Vec::new();
+        // Plan 63 Fix E: ALSO save/restore array_element_types для fn params, чтобы
+        // не подцепить leak'нувшую запись из caller'а (e.g. test fn body создал
+        // `let pairs = [...]` с array_element_types["pairs"], и static method
+        // тоже принимает param "pairs" — без save/restore for-loop читает
+        // caller'скую запись с неправильным storage type).
+        let mut saved_array_elem_for_params: Vec<(String, Option<String>)> = Vec::new();
         for p in &fn_decl.params {
             if let crate::ast::TypeRef::Array(inner, _) = &p.ty {
                 if let crate::ast::TypeRef::Tuple(elems, _) = inner.as_ref() {
                     if !elems.is_empty() {
+                        // Plan 63 Fix E: для mono'd tuple field types кладём raw
+                        // C type (без `*`). Mono'd tuple struct хранит values
+                        // напрямую (no pointer-stomping), так что destructure'у
+                        // нужны raw types для direct `.fN` access. Boxing-wrap
+                        // оставлен только для legacy _NovaTupleN path'ов где
+                        // mono не выходит концлуч концом (e.g. iter-method case).
+                        let tuple_c_for_mono_check = self.type_ref_to_c(inner)
+                            .unwrap_or_else(|_| String::new());
+                        let is_mono_tuple = tuple_c_for_mono_check.starts_with("_NovaTuple_");
                         let field_tys: Vec<String> = elems.iter()
                             .map(|e| {
                                 let c_ty = self.type_ref_to_c(e)
                                     .unwrap_or_else(|_| "nova_int".to_string());
-                                // Mirror emit_tuple_lit boxing: struct types (nova_str, nova_unit,
-                                // _NovaTupleN, NovaOpt_*) are heap-allocated and stored as pointer.
-                                let needs_heap = c_ty.starts_with("_NovaTuple")
-                                    || c_ty.starts_with("NovaOpt_")
-                                    || c_ty == "nova_str"
-                                    || c_ty == "nova_unit";
-                                if needs_heap && !c_ty.ends_with('*') {
-                                    format!("{}*", c_ty)
-                                } else {
+                                if is_mono_tuple {
                                     c_ty
+                                } else {
+                                    // Legacy _NovaTupleN path: fields boxed.
+                                    let needs_heap = c_ty.starts_with("_NovaTuple")
+                                        || c_ty.starts_with("NovaOpt_")
+                                        || c_ty == "nova_str"
+                                        || c_ty == "nova_unit";
+                                    if needs_heap && !c_ty.ends_with('*') {
+                                        format!("{}*", c_ty)
+                                    } else {
+                                        c_ty
+                                    }
                                 }
                             })
                             .collect();
                         self.tuple_element_types.insert(p.name.clone(), field_tys);
                         saved_tuple_elem_keys.push(p.name.clone());
+
+                        // Plan 63 Fix E: register array_element_types для param, чтобы
+                        // for-loop emit видел typed pointer storage `_NovaTuple_<mono>*`.
+                        // Без этого elem_ty fallback → "nova_int" (через arr_ty)
+                        // ИЛИ подхватывает leak'нувшую запись из caller'а.
+                        let tuple_c = self.type_ref_to_c(inner)
+                            .unwrap_or_else(|_| format!("_NovaTuple{}", elems.len()));
+                        let stored_ty = if !tuple_c.ends_with('*') {
+                            format!("{}*", tuple_c)
+                        } else {
+                            tuple_c
+                        };
+                        let prev = self.array_element_types.insert(p.name.clone(), stored_ty);
+                        saved_array_elem_for_params.push((p.name.clone(), prev));
                     }
                 }
             }
@@ -6634,6 +6675,14 @@ impl CEmitter {
         }
         for key in &saved_tuple_elem_keys {
             self.tuple_element_types.remove(key);
+        }
+        // Plan 63 Fix E: restore caller-scope array_element_types для params, чтобы
+        // не утекали наши mono'd substituted entries в outer fn body.
+        for (name, prev) in saved_array_elem_for_params {
+            match prev {
+                Some(old) => { self.array_element_types.insert(name, old); }
+                None => { self.array_element_types.remove(&name); }
+            }
         }
         self.flush_boxed_vars();
         self.indent -= 1;
@@ -8246,6 +8295,10 @@ impl CEmitter {
                 // Consume pending Option inner type (set when boxing a struct for nova_make_Option_Some)
                 if let Some(inner_ty) = self.pending_option_inner_type.take() {
                     self.option_inner_types.insert(binding.clone(), inner_ty);
+                }
+                // Plan 63 Fix F: consume pending Result Ok inner type (boxed tuple/struct).
+                if let Some(inner_ty) = self.pending_result_ok_inner_type.take() {
+                    self.result_ok_inner_types.insert(binding.clone(), inner_ty);
                 }
                 self.line(&format!("{} {} = {};", ty_c, binding, val));
                 // Plan 11 Ф.4: RHS — method value `obj.@method` или `Type.@method`.
@@ -12585,8 +12638,14 @@ impl CEmitter {
                 self.line(&format!("{}* {} = ({}*)nova_alloc(sizeof({}));", arg_ty, heap_tmp, arg_ty, arg_ty));
                 self.line(&format!("*{} = {};", heap_tmp, v));
                 arg_strs.push(format!("(nova_int)({})", heap_tmp));
-                // Record that the next variable bound will have an inner boxed type
-                self.pending_option_inner_type = Some(format!("{}*", arg_ty));
+                // Record that the next variable bound will have an inner boxed type.
+                // Plan 63 Fix F: separate Option vs Result tracking — destructure
+                // looks up different maps (option_inner_types vs result_ok_inner_types).
+                if func_c == "nova_make_Result_Ok" {
+                    self.pending_result_ok_inner_type = Some(format!("{}*", arg_ty));
+                } else {
+                    self.pending_option_inner_type = Some(format!("{}*", arg_ty));
+                }
             } else {
                 arg_strs.push(v);
             }
@@ -13047,8 +13106,16 @@ impl CEmitter {
                 };
                 let tup_tmp = self.fresh_tmp();
                 // elem_ty == "nova_int" means the element is a heap-pointer to _NovaTupleN.
-                // Otherwise it's the tuple struct stored directly.
-                if elem_ty == "nova_int" {
+                // Plan 63 Fix E: для mono'd tuple pointer (_NovaTuple_<arity>_<sigs>*) —
+                // deref в mono'd struct value, не в legacy _NovaTupleN. Это позволяет
+                // `for (k, v) in pairs` в generic method body корректно destructure
+                // typed tuples (без leaked entry из caller scope).
+                let is_mono_tuple_ptr = elem_ty.starts_with("_NovaTuple_")
+                    && elem_ty.ends_with('*');
+                if is_mono_tuple_ptr {
+                    let mono_ty = elem_ty.trim_end_matches('*');
+                    self.line(&format!("{} {} = *{};", mono_ty, tup_tmp, binding));
+                } else if elem_ty == "nova_int" {
                     self.line(&format!("_NovaTuple{} {} = *(_NovaTuple{}*)(intptr_t){};",
                         arity, tup_tmp, arity, binding));
                 } else {
@@ -13425,6 +13492,10 @@ impl CEmitter {
         // Propagate Option inner type info
         if let Some(inner_ty) = self.option_inner_types.get(scr.as_str()).cloned() {
             self.option_inner_types.insert(scr_tmp.clone(), inner_ty);
+        }
+        // Plan 63 Fix F: propagate Result Ok inner type info.
+        if let Some(inner_ty) = self.result_ok_inner_types.get(scr.as_str()).cloned() {
+            self.result_ok_inner_types.insert(scr_tmp.clone(), inner_ty);
         }
 
         // Result type: infer from arms (prefer non-trivial types), fall back to fn return type
@@ -14419,9 +14490,23 @@ impl CEmitter {
                 }
             }
         }
-        // Track the true element type if it's not nova_int (e.g. Nova_Box*)
+        // Track the true element type if it's not nova_int (e.g. Nova_Box*).
+        // Plan 63 Fix E: для boxed-storage (heap_alloc + pointer-stomp) кладём
+        // тип-указатель `<T>*`, не raw struct `<T>`. Без этого downstream
+        // for-loop emit'ает direct assignment вместо deref'а, что ломает
+        // mono'd tuple iteration в generic method bodies.
         if first_item_ty != "nova_int" && first_item_ty != elem_ty {
-            self.array_element_types.insert(tmp.clone(), first_item_ty);
+            let was_boxed = elem_ty == "nova_int"
+                && (first_item_ty.starts_with("_NovaTuple")
+                    || first_item_ty == "nova_str"
+                    || first_item_ty.starts_with("NovaOpt_"))
+                && !first_item_ty.ends_with('*');
+            let stored_ty = if was_boxed {
+                format!("{}*", first_item_ty)
+            } else {
+                first_item_ty
+            };
+            self.array_element_types.insert(tmp.clone(), stored_ty);
         }
         Ok(tmp)
     }
@@ -14903,8 +14988,36 @@ impl CEmitter {
                                     .unwrap_or_else(|| "nova_int".into());
                                 let raw = format!("{}->payload.{}._{}",
                                     scr, variant_name, i);
-                                // If sub-pattern is an Option variant, payload is a boxed pointer
-                                if sub_is_opt_variant {
+                                // Plan 63 Fix F [M-result-erased-no-mono]: Result Ok
+                                // payload может быть boxed tuple (e.g. Result[(K,V), E]).
+                                // sum_schemas даёт ft=nova_int (Result hardcoded), но
+                                // result_ok_inner_types tracking имеет реальный type.
+                                // Используем для proper unboxing когда sub-pattern Tuple.
+                                let result_ok_inner = if type_name == "Result"
+                                    && variant_name == "Ok"
+                                    && matches!(p, Pattern::Tuple(..)) {
+                                    self.result_ok_inner_types.get(scr).cloned()
+                                } else {
+                                    None
+                                };
+                                if let Some(inner_ty) = result_ok_inner {
+                                    // inner_ty вида "_NovaTuple_..._mono*" — emit deref
+                                    // в local tmp, populate tuple_element_types для recursive
+                                    // pattern_bind_typed (он читает tys[scr] для f0/f1 type'ов).
+                                    let deref_ty = inner_ty.trim_end_matches('*').to_string();
+                                    let tup_tmp = self.fresh_tmp();
+                                    self.line(&format!(
+                                        "{} {} = *({})(intptr_t)({});",
+                                        deref_ty, tup_tmp, inner_ty, raw
+                                    ));
+                                    if let Some(elems) = Self::parse_mono_tuple_elements(&deref_ty) {
+                                        self.tuple_element_types.insert(tup_tmp.clone(), elems);
+                                        tmp_registrations.push(tup_tmp.clone());
+                                    }
+                                    self.var_types.insert(tup_tmp.clone(), deref_ty.clone());
+                                    (tup_tmp, deref_ty, false)
+                                } else if sub_is_opt_variant {
+                                    // If sub-pattern is an Option variant, payload is a boxed pointer
                                     (format!("((NovaOpt_nova_int*)({}))", raw), "NovaOpt_nova_int*".into(), true)
                                 } else {
                                     // Plan 59 Phase 6: variant payload (Result.Ok,
@@ -15944,13 +16057,28 @@ impl CEmitter {
         // 2. Method call: `obj.method(...)` или `Type.method(...)`.
         if self.suppress_variadic_routing { return None; }
         let recv_method: Option<(String, String)> = match &func.kind {
-            ExprKind::Path(parts) if parts.len() == 2 => {
-                Some((parts[0].clone(), parts[1].clone()))
+            ExprKind::Path(parts) if parts.len() >= 2 => {
+                // Plan 63 Fix B: для cross-module path'ов (`module.SubMod.Type.method`)
+                // берём последние 2 segment'а как (Type, method). Method_overloads
+                // ключаются по declared type name, не по полному path.
+                let n = parts.len();
+                Some((parts[n - 2].clone(), parts[n - 1].clone()))
             }
             ExprKind::Member { obj, name } => {
                 match &obj.kind {
                     ExprKind::Ident(n) if self.method_overloads.keys().any(|(t, _)| t == n) => {
                         Some((n.clone(), name.clone()))
+                    }
+                    // Plan 63 Fix B: nested Member chain `<alias>.Type.method`.
+                    // Парсер `p.Path.join` → Member{Member{Ident("p"), "Path"}, "join"}.
+                    // Для alias-import variadic flag lookup использует только последний
+                    // (Type, method) pair — alias prefix consumes namespace но не
+                    // меняет registered method signature.
+                    ExprKind::Member { obj: inner_obj, name: type_name }
+                        if matches!(&inner_obj.kind, ExprKind::Ident(_))
+                            && self.method_overloads.keys().any(|(t, _)| t == type_name) =>
+                    {
+                        Some((type_name.clone(), name.clone()))
                     }
                     _ => {
                         let obj_ty = self.infer_expr_c_type(obj);
@@ -16743,6 +16871,25 @@ impl CEmitter {
                                             }
                                         }
                                     }
+                                }
+                            }
+                        }
+                        // Plan 63 Fix A: fallback на external_registry.by_key для
+                        // built-in типов (StringBuilder/WriteBuffer/etc.) которые
+                        // регистрируются через runtime stub'ы. Без этого
+                        // `sb.peek() -> str` инфер'ит в nova_int (fallback), что
+                        // ломает downstream type-check'и.
+                        if let Some(decls) = self.external_registry.by_key
+                            .get(&(rt.clone(), mn.clone()))
+                        {
+                            let matching: Vec<_> = decls.iter()
+                                .filter(|d| d.is_instance == want_inst)
+                                .collect();
+                            if let Some(decl) = matching.first() {
+                                if !decl.return_c_type.is_empty()
+                                    && decl.return_c_type != "void*"
+                                {
+                                    return decl.return_c_type.clone();
                                 }
                             }
                         }
