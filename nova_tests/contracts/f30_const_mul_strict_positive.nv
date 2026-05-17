@@ -1,0 +1,25 @@
+// Ф.30.3 (Plan 33.6): TrivialBackend const-mul `>` strict.
+// `requires x >= 3; ensures (2 * x) > 5 { 2 * x }` — 2*lower(x) = 6 > 5.
+
+module contracts.f30_const_mul_strict_positive
+
+#verify
+fn double_strict(x int) -> int
+    requires x >= 3
+    ensures result > 5
+{
+    2 * x
+}
+
+#verify
+fn triple_above_threshold(x int) -> int
+    requires x >= 4
+    ensures result > 10
+{
+    3 * x
+}
+
+test "const-mul strict positive" {
+    assert(double_strict(3) == 6)
+    assert(triple_above_threshold(5) == 15)
+}
