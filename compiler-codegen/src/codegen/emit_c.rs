@@ -2291,11 +2291,15 @@ impl CEmitter {
                     }
                     "Result" => Ok("Nova_Result*".into()),
                     "Self" => {
-                        // Self resolves to current receiver type
+                        // Self resolves to current receiver type.
+                        // Plan 11 Follow-up: hard-error если Self в non-receiver
+                        // context (free fn) — раньше эмитили "Nova_Self*"
+                        // fallback, что давало невнятную CC-FAIL «unknown type
+                        // name Nova_Self». Теперь error на type-check.
                         if let Some(recv) = &self.current_receiver_type {
                             Ok(format!("Nova_{}*", recv))
                         } else {
-                            Ok("Nova_Self*".into())
+                            Err("Self type used outside receiver context (free function or top-level expression). Self valid only внутри `fn Type[..].method(...)` или `fn Type[..] @method(...)`.".into())
                         }
                     }
                     "Handler" => {
@@ -12344,6 +12348,27 @@ impl CEmitter {
                                 return Ok(format!("Nova_{}_method_into({})", arg_type, v));
                             }
                         }
+                    }
+                    // Plan 11 Follow-up (2026-05-17): если parts[0] — известный
+                    // user-type (record / sum / generic template), emit explicit
+                    // `Nova_<Type>_static_<method>(args)` напрямую. Без этого
+                    // cross-module calls типа `HashMap[str, int].from(pairs)`
+                    // мисроутятся в `nova_fn_<...>` fallback и через legacy
+                    // method_receivers picks wrong overload (str.from / WriteBuffer.from).
+                    // Это «type-aware» branch: parts[0] точно тип — explicit dispatch.
+                    let parts0 = parts[0].as_str();
+                    let is_known_type = self.record_schemas.contains_key(parts0)
+                        || self.sum_schemas.contains_key(parts0)
+                        || self.generic_type_templates.contains_key(parts0)
+                        || self.generic_types.contains(parts0);
+                    if is_known_type {
+                        let mut arg_strs = Vec::new();
+                        for a in args { arg_strs.push(self.emit_expr(a.expr())?); }
+                        let safe = Self::sanitize_c_for_ident(parts0);
+                        return Ok(format!(
+                            "Nova_{}_static_{}({})",
+                            safe, method_name, arg_strs.join(", ")
+                        ));
                     }
                     format!("nova_fn_{}", parts.join("_"))
                 } else {

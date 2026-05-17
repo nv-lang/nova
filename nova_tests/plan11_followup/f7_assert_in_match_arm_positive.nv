@@ -1,0 +1,34 @@
+module plan11_followup.f7_assert_in_match_arm_positive
+
+// Plan 11 Follow-up (commit a37a4b9): `assert(cond)` в expression position
+// (match arm body) должен compile через comma-operator wrap
+// `(nova_assert(...), NOVA_UNIT)`. Pre-fix эмитил `_nv_match = nova_assert(...)`
+// что C error «assigning void to nova_unit».
+//
+// NB: используем non-generic sum-type (variant без payload). Generic sum-type
+// `Box[T]` triggers отдельный pre-existing bug (variant constructor mono).
+
+export type Color
+    | Red
+    | Green
+    | Blue(int)
+
+test "assert в match arm body — compiles + runs" {
+    let c Color = Red
+    match c {
+        Red     => assert(true)
+        Green   => assert(false)
+        Blue(_) => assert(false)
+    }
+}
+
+test "assert в обеих arm'ах match с side-effects" {
+    let mut entered = 0
+    let c Color = Blue(42)
+    match c {
+        Red     => { entered += 100; assert(false) }
+        Green   => { entered += 200; assert(false) }
+        Blue(v) => { entered += v;   assert(v == 42) }
+    }
+    assert(entered == 42)
+}

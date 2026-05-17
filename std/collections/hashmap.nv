@@ -80,8 +80,12 @@ export type HashMap[K Hashable, V] {
 // ──────────────────────────────────────────────────────────────────────────
 
 // HashMap.new() — пустая мапа с дефолтной capacity (16).
-export fn HashMap[K, V].new() -> Self =>
-    Self.with_capacity(16)
+// NB: explicit type вместо Self — Self в .new()/.with_capacity()/.from()
+// ухудшает cross-module D73 overload dispatch (compiler выбирает
+// str.from / StringBuilder.from вместо HashMap.from). Отложено до fix
+// dispatch resolution (Plan 11 followup territory).
+export fn HashMap[K, V].new() -> HashMap[K, V] =>
+    HashMap[K, V].with_capacity(16)
 
 
 // HashMap.with_capacity(n) — пустая мапа, в которую можно вставить `n`
@@ -104,11 +108,11 @@ export fn HashMap[K, V].new() -> Self =>
 // 7, 8, 13, ... `next_pow2(n)` давал `threshold < n` → `n`-я вставка
 // вызывала rehash (нарушение контракта). Цена нового расчёта — чуть
 // больше бакетов; correctness гарантирована.
-export fn HashMap[K, V].with_capacity(min_capacity int) -> Self {
+export fn HashMap[K, V].with_capacity(min_capacity int) -> HashMap[K, V] {
     // ceil(4 * min_capacity / 3) — entry-count → требуемый минимум бакетов.
     let needed = if min_capacity < 4 { 4 } else { (min_capacity * 4 + 2) / 3 }
     let cap = next_pow2(needed)
-    Self {
+    HashMap {
         _buckets: new_buckets[K, V](cap),
         _count: 0,
         _tombstones: 0,
@@ -122,8 +126,12 @@ export fn HashMap[K, V].with_capacity(min_capacity int) -> Self {
 //
 // Пример:
 //   let m = HashMap.from([("a", 1), ("b", 2)])
-export fn HashMap[K, V].from(pairs [](K, V)) -> Self {
-    let mut m = Self.with_capacity(pairs.len * 2)
+// NB: explicit `HashMap[K, V]` return type (не Self) — `Self` ухудшает D73
+// overload dispatch resolution для `.from`, compiler выбирает first matching
+// (например WriteBuffer.from). Revert на explicit type до compiler fix
+// (отдельная задача в Plan 11 followup territory).
+export fn HashMap[K, V].from(pairs [](K, V)) -> HashMap[K, V] {
+    let mut m = HashMap[K, V].with_capacity(pairs.len * 2)
     for (k, v) in pairs {
         m.insert(k, v)
     }
@@ -223,8 +231,8 @@ export fn HashMap[K, V] mut @insert_new(key K, value V) {
 // Производит копию через iteration + insert_new. Каждый concrete instance
 // HashMap[K, V] получает mono'd @clone — bound K methods resolve через
 // mono path. Erased generic body stub'ится (caller-side mono drives).
-export fn HashMap[K, V] @clone() -> Self {
-    let mut copy = Self.with_capacity(@_count)
+export fn HashMap[K, V] @clone() -> HashMap[K, V] {
+    let mut copy = HashMap[K, V].with_capacity(@_count)
     for i in 0..@_buckets.len {
         match @_buckets[i] {
             Occupied { key: k, value: v } => copy.insert_new(k, v)
@@ -255,8 +263,8 @@ export fn HashMap[K, V] mut @merge_from(other HashMap[K, V]) {
 
 // HashMap.@filter(pred) — Plan 56.
 // Возвращает новый HashMap с парами для которых pred(k, v) == true.
-export fn HashMap[K, V] @filter(pred fn(K, V) -> bool) -> Self {
-    let mut out = Self.with_capacity(@_count)
+export fn HashMap[K, V] @filter(pred fn(K, V) -> bool) -> HashMap[K, V] {
+    let mut out = HashMap[K, V].with_capacity(@_count)
     for i in 0..@_buckets.len {
         match @_buckets[i] {
             Occupied { key: k, value: v } => if pred(k, v) { out.insert_new(k, v) }
