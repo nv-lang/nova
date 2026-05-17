@@ -1,0 +1,11 @@
+// Ф.23.1 (Plan 33.6): contradictory requires — невозможный precondition.
+// EXPECT_COMPILE_ERROR E2405
+
+module contracts.contradictory_requires_fail
+
+fn impossible_pre(x int) -> int
+    requires x >= 10
+    requires x <= 5
+{
+    x
+}
