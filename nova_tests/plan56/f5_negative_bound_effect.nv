@@ -4,7 +4,7 @@
 module plan56.f5_negative_bound_effect
 
 
-// EXPECT_COMPILE_ERROR D110
+// EXPECT_COMPILE_ERROR D122
 type BadBound protocol {
     save() Io -> ()
 }
