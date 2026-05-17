@@ -224,17 +224,17 @@ export fn HashMap[K, V] mut @insert_new(key K, value V) {
 }
 
 
-// HashMap.@clone() — Plan 56.
-// Производит копию через iteration + insert_new. Каждый concrete instance
+// HashMap.@clone() — Plan 56 + Plan 59 Ф.7.2 idiomatic.
+// Производит копию через @iter() + insert_new. Каждый concrete instance
 // HashMap[K, V] получает mono'd @clone — bound K methods resolve через
 // mono path. Erased generic body stub'ится (caller-side mono drives).
+// Plan 59 Ф.7.2: replaced `for i in 0..@_buckets.len() { match ... }`
+// workaround на идиоматичный `for (k, v) in @iter()` (после Plan 63 Fix E
+// mono'd tuple iter в generic method body работает).
 export fn HashMap[K, V] @clone() -> HashMap[K, V] {
     let mut copy = HashMap[K, V].with_capacity(@_count)
-    for i in 0..@_buckets.len() {
-        match @_buckets[i] {
-            Occupied { key: k, value: v } => copy.insert_new(k, v)
-            _ => {}
-        }
+    for (k, v) in @iter() {
+        copy.insert_new(k, v)
     }
     copy
 }
