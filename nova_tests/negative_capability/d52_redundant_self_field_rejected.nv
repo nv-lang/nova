@@ -1,0 +1,23 @@
+// EXPECT_COMPILE_ERROR избыточная форма поля
+//
+// D52 §2 enforcement: `{ name: @name }` запрещён для self-field
+// shorthand — требуется `{ @name }`.
+
+module negative_capability.d52_redundant_self_field_rejected
+
+
+type Counter {
+    end int
+    cur int
+}
+
+
+export fn Counter @bad_clone() -> Counter =>
+    { end: @end, cur: @cur }
+
+
+test "redundant { name: @name } — should reject (D52 §2)" {
+    let c = Counter { end: 5, cur: 0 }
+    let copy = c.bad_clone()
+    assert(copy.end == 5)
+}

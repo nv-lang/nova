@@ -14,11 +14,11 @@ export type User {
 }
 
 export fn create_user(id int, name str) -> User =>
-    { id: id, name: name }
+    { id, name }
 
 // Использует helpers::compute_audit_id из соседнего peer'а — shared
 // namespace, no import нужен.
 export fn create_audited_user(id int, name str) -> User {
     let audit_id = compute_audit_id(id)
-    User { id: audit_id, name: name }
+    User { id: audit_id, name }
 }

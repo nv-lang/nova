@@ -31,7 +31,7 @@ export fn Counter mut @next() -> Option[int] {
 
 
 export fn Counter.new(end int) -> Counter {
-    Counter { end: end, cur: 0 }
+    Counter { end, cur: 0 }
 }
 
 

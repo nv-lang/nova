@@ -32,7 +32,7 @@ export fn EnumeratedCounter mut @next() -> Option[(int, int)] {
 
 
 export fn EnumeratedCounter.new(end int) -> EnumeratedCounter {
-    EnumeratedCounter { end: end, idx: 0 }
+    EnumeratedCounter { end, idx: 0 }
 }
 
 
