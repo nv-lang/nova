@@ -8609,3 +8609,49 @@ Plan 57.C closed все 8 sub-tasks. Closures:
   branches per machine (bench-history-{runner_id}). ~100 LOC.
 - **PerfTimer для test runner** — extend wraps к `nova test` pipeline.
   ~50 LOC.
+
+## 2026-05-17 — Plan 45 Sprint Ф.36 (autonomous massive push)
+
+### Что сделано
+- 6 batches Plan 45.B docs (~258 items): checksums, concurrency, identifiers,
+  math, glob, data, text, cron, encoding, sql, crypto, testing, bench, prelude.
+- HashMap restored with Self syntax после compiler fix'а.
+- 3 новых плана created: Plan 60 / 61 / 62.
+
+### Compiler bugs / refactor (этот sprint)
+**Fixed:**
+- Self resolution в generic methods (5 codegen paths) — commit 57b2cb1.
+- assert/debug_assert в expression position (comma-operator wrap) — a37a4b9.
+
+**Documented как known (отдельные plans):**
+- Plan 60: `.len` field vs `.len()` method inconsistency (POD vs encapsulated).
+  Quality-of-API, breaking change в built-ins.
+- Plan 61: typed-error effect codegen. `Fail[E]` теряет E typearg; handler arm
+  param e всегда nova_str; `Nova_Fail_fail` runtime hardcoded на nova_str msg.
+  Workaround (Ok/Err wrapping) used в stdlib.
+- Plan 62: migrate hardcoded prelude items (Option/Result/etc.) → std/prelude.nv.
+
+**Documented как pre-existing CC/RUN-FAIL'ы (не Plan 45 scope):**
+- md5.nv: `[0;16]` Rust-style array fill not supported в parser → blocks
+  doc-coverage для md5/sha1/sha256.
+- hashmap RUN-FAIL (1/9 tests).
+- json CODEGEN-FAIL: HashMap.contains() returns nova_int (mono context type
+  inference).
+- duration CC-FAIL: struct equality эмитит sum-type ->tag pattern.
+- range CC-FAIL: Option[StepRangeIter*] type assignment.
+- snowflake CC-FAIL: `th.fixed_ms(...)` import alias не lowers в module.func.
+
+### Design choices этой сессии
+- **Crypto state не префиксировать `_`** — algorithm-level fields по RFC
+  convention (Md5 a/b/c/d), не encapsulation. `_prefix` добавил бы noise.
+- **HashMap-equivalent для encapsulated state** — все internal mutable
+  fields → `_prefix` (done в d5d2996 предыдущая сессия + ae5dfaa эта).
+- **Build/test/encode pattern** в crypto уже единообразен: type State {} +
+  .new() + .hash(data) + .hash_str(data) + @update(bytes) + @finalize().
+  Каждый — 1-line summary doc.
+
+### Что отложено
+- ~3 stdlib модулей (что не успел в Ф.36): runtime stubs partial (`std/runtime/
+  gc.nv`, `std/runtime/fibers.nv`), некоторые `std/identifiers/snowflake.nv`
+  details. Pickup в следующих sprint'ах.
+- Compiler fixes Plan 60/61/62 — каждый scope недели, отдельные сессии.

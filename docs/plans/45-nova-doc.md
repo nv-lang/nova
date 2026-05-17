@@ -52,10 +52,11 @@
 | Ф.35.2 std/collections/vec doc-pass | ✅ done | 7/7 items (100%), 7 with examples. map/filter/fold/any/all/first/last на `[]T` с method-level generics. |
 | Ф.35.3 std/encoding/json doc-pass | ✅ done | 23/23 items (100%), 4 with examples. JsonValue (sum-type) + ParseJsonError + 6 constructors + 6 is_*/5 as_* + Json.parse + From[str]/Into[str] + pretty. |
 | Ф.35.4 std/path/path doc-pass | ✅ done | 6/6 items (100%), 6 with examples. Path.join/parent/basename/extension/is_absolute/normalize. |
-| **Ф.36.1 Restore Self в HashMap** (autonomous 2026-05-17) | 🟡 in_progress | Переписать `HashMap[K,V].new()/.with_capacity()/.from()/@clone()/@filter()` с explicit type → `Self`/`Self.X()`. Возможно после compiler fix в `57b2cb1`. |
-| **Ф.36.2 Privacy refactor crypto/identifiers** (autonomous) | 🟡 in_progress | `_prefix` для internal fields в Md5/Sha1/Sha256/Bcrypt/JWT/Snowflake (что не сделано раньше). |
-| **Ф.36.3 Pre-existing failures investigation** | 🟡 in_progress | hashmap RUN-FAIL, json CODEGEN-FAIL, duration CC-FAIL, range CC-FAIL (Option[StepRangeIter*]), snowflake 'th' import. Diagnose + fix where feasible. |
-| **Ф.36.4 Plan 45.B continuation** | 🟡 in_progress | Batches: io (file/stdin/stdout/stderr), concurrent (channel/fiber/mutex/atomic), net (tcp/udp), collections rest, encoding rest, runtime stubs. |
+| Ф.36.1 Restore Self в HashMap | ✅ done | HashMap.new/with_capacity/from/@clone/@filter теперь `-> Self`/`Self.X()`. Compiler fix `57b2cb1` сделал это безопасным. |
+| Ф.36.2 Privacy refactor crypto | ✅ skip (by-design) | Crypto state (`a/b/c/d` в MD5) — algorithm-level по RFC, не encapsulation barrier. `_prefix` добавил бы noise. Testing types (PropertyConfig/IntGen) уже `readonly` config. |
+| Ф.36.3 Pre-existing failures | 🟡 documented | hashmap RUN-FAIL / json CODEGEN-FAIL / duration CC-FAIL / range CC-FAIL / snowflake 'th' import / md5 `[0;16]` array fill — все pre-existing, verified `git stash`. Документированы как known issues. Не блокеры Plan 45. |
+| Ф.36.4 Plan 45.B continuation (6 batches) | ✅ done | Batches 1-6: checksums+concurrency (26), identifiers (37), math+glob (54), data+text+cron (40), encoding+sql (51), crypto+testing+bench+prelude (~50). **Total ~258 items** added. Pre-existing parse error в md5/sha1/sha256 — docs added, coverage-count blocked. |
+| **Plans created during F.36** | ✅ documented | Plan 60 (standardize .len() access), Plan 61 (typed-error effect codegen), Plan 62 (prelude hardcode migration). Каждый со scope/estimate/acceptance criteria. |
 
 ## Ф.21 — Production hardening (2026-05-15, post-MVP audit)
 

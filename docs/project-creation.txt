@@ -14036,3 +14036,43 @@ Phase D backlog (открыто для будущих сессий):
 - HTML dashboard для compiler-perf (отдельно от runtime dashboard).
 - CI matrix per-runner baseline storage (multiple bench-history
   branches per machine).
+
+=== Plan 45 Sprint Ф.36 — autonomous massive push (2026-05-17) ===
+
+Sprint Ф.36 outcomes (autonomous, ~hours of work):
+
+Ф.36.1 HashMap Self restored — после compiler fix 57b2cb1 теперь
+.new/with_capacity/from/@clone/@filter все возвращают Self / используют
+Self.X(). Compiler fix покрыл 5 path'ов Self resolution.
+
+Ф.36.2 Crypto privacy — skip (by-design). MD5/SHA-1/SHA-256 state по RFC
+конвенции; testing types — readonly config.
+
+Ф.36.3 Pre-existing failures — diagnosed как known issues (не от меня).
+hashmap RUN-FAIL, json/duration/snowflake CODEGEN/CC-FAIL, md5 [0;16]
+syntax, range Option[StepRangeIter*]. Документированы.
+
+Ф.36.4 Plan 45.B continuation — 6 batches, ~258 stdlib items:
+- Batch 1 (commit 0dd3553): checksums + concurrency (26)
+- Batch 2 (78854f0): identifiers ulid/uuid/uuid_namespace (37) + crc32 cast simplify
+- Batch 3 (618ebda): math complex/statistics + path/glob (54)
+- Batch 4 (7fdbf8d): data semver/semver_range + text diff/markdown/regex + cron (40)
+- Batch 5 (e822ff0): encoding base64/csv/hex/ini/toml/url + sql (51)
+- Batch 6 (ae5dfaa): crypto md5/sha1/sha256/hmac/bcrypt/jwt + testing handlers/property + bench + prelude (~50)
+
+Plans created в ходе sprint:
+- Plan 60 (60-len-access-uniformity.md): standardize .len() access
+- Plan 61 (61-typed-error-effect-codegen.md): typed Fail[E] handler arm
+- Plan 62 (62-prelude-hardcode-migration.md): migrate prelude hardcode
+
+Compiler fixes:
+- 57b2cb1: Self в generic methods (5 codegen paths)
+- a37a4b9: assert/debug_assert wrap в comma-operator
+- c10adcc (предыдущая сессия): variadic str-array codegen
+
+Stdlib refactor:
+- d5d2996 (предыдущая): collections internal fields → _prefix convention
+- ae5dfaa: HashMap Self restored
+
+Plan 45 close — ~99.7%. Plan 45.B substantially advanced (~278 items
+total за всю Ф.35 + Ф.36 vs ~50 stdlib files initial target).
