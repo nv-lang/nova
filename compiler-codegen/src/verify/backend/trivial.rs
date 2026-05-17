@@ -500,6 +500,21 @@ fn propagate_bounds(conjuncts: &[SmtTerm]) -> Vec<SmtTerm> {
                 None
             } else { None }
         };
+        // Ф.25.2 (Plan 33.6): string/array length non-negative.
+        // `(>= (App "_field_len_int" [obj]) goal)` если goal <= 0 → true.
+        // Encoded form длины — UF `_field_len_int(obj)` через type-aware naming Ф.10.1.
+        let try_len_check = |inner: &SmtTerm| -> Option<bool> {
+            if let SmtTerm::App(iop, iargs) = inner {
+                if iop != ">=" || iargs.len() != 2 { return None; }
+                let goal = match &iargs[1] { SmtTerm::IntLit(n) => *n, _ => return None };
+                if let SmtTerm::App(lop, _) = &iargs[0] {
+                    if lop.starts_with("_field_len") && goal <= 0 {
+                        return Some(true);
+                    }
+                }
+                None
+            } else { None }
+        };
         // Ф.20.1 (Plan 33.6): division bounds. `(/ Var Lit)` где Lit > 0:
         // - если goal <= 0 и known lower(Var) >= 0 → result non-negative → true.
         // - integer division: result <= Var/Lit (всегда <= Var/Lit для positive).
@@ -681,6 +696,10 @@ fn propagate_bounds(conjuncts: &[SmtTerm]) -> Vec<SmtTerm> {
         if let Some(b) = try_division_check(c) {
             return SmtTerm::BoolLit(b);
         }
+        // Ф.25.2: string/array length check.
+        if let Some(b) = try_len_check(c) {
+            return SmtTerm::BoolLit(b);
+        }
         // Ф.17.1: negation check.
         if let Some(b) = try_negation_check(c) {
             return SmtTerm::BoolLit(b);
@@ -704,6 +723,9 @@ fn propagate_bounds(conjuncts: &[SmtTerm]) -> Vec<SmtTerm> {
                     return SmtTerm::BoolLit(!b);
                 }
                 if let Some(b) = try_division_check(&args[0]) {
+                    return SmtTerm::BoolLit(!b);
+                }
+                if let Some(b) = try_len_check(&args[0]) {
                     return SmtTerm::BoolLit(!b);
                 }
                 if let Some(b) = try_negation_check(&args[0]) {
