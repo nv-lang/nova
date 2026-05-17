@@ -1,0 +1,23 @@
+// Positive: `let pair = ([1,2], [3,4])`, затем `pair.0[0]` —
+// tuple_element_types должен propagate в let-rebind, иначе
+// `pair.0` infers как nova_int и subscription fails в C.
+
+module plan59.f5_tuple_of_arrays
+
+
+test "tuple of arrays — field access keeps array typing" {
+    let pair = ([1, 2, 3], [10, 20, 30])
+    let left = pair.0
+    let right = pair.1
+    assert(left[0] == 1)
+    assert(left[2] == 3)
+    assert(right[0] == 10)
+    assert(right[2] == 30)
+}
+
+
+test "tuple of str arrays" {
+    let words = (["a", "b"], ["x", "y", "z"])
+    assert(words.0[1] == "b")
+    assert(words.1[2] == "z")
+}

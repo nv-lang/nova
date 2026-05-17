@@ -14223,8 +14223,23 @@ impl CEmitter {
                 // hardcoded `_NovaTupleN` ломало mono'd return values).
                 let n = pats.len();
                 let inferred = self.infer_expr_c_type(value);
+                // Try registry-based lookup first (handles nested tuples
+                // где mangled-name parsing breaks из-за `____` collisions).
+                let registry_elems: Option<Vec<String>> = match &value.kind {
+                    crate::ast::ExprKind::Ident(name) => {
+                        self.tuple_element_types.get(name.as_str()).cloned()
+                    }
+                    _ => None,
+                };
                 let (struct_name, elem_tys): (String, Vec<String>) =
-                    if inferred.starts_with("_NovaTuple____") {
+                    if let Some(elems) = registry_elems
+                        .filter(|e| e.len() == n && inferred.starts_with("_NovaTuple____"))
+                    {
+                        (inferred.clone(), elems)
+                    } else if inferred.starts_with("_NovaTuple____") {
+                        // Mangled-name parse fallback (works для flat tuple,
+                        // breaks для nested mono'd tuples — registry lookup
+                        // above covers тот случай).
                         let elems: Vec<String> = inferred
                             .strip_prefix("_NovaTuple____")
                             .map(|rest| rest.split("__")
