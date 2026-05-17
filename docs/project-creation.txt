@@ -12672,6 +12672,26 @@ TrivialBackend string len.
 **Plan 33.6 итог за 27 спринтов:** complete contract+effect lint catalog
 + absorption laws.
 
+## Ф.28 — duplicate apply + double neg + empty effect
+
+### Ф.28.1 — duplicate apply detection
+
+- pipeline.rs: collect_apply_stmts + dedup HashMap → W2402.
+- Test: duplicate_apply_w2402.
+
+### Ф.28.2 — TrivialBackend double negation
+
+- trivial.rs: `(- 0 (- 0 X))` → X в simplify_app.
+- Test: trivial_double_negation_positive.
+
+### Ф.28.3 — empty effect detection
+
+- pipeline.rs: effect с пустыми methods + axioms → W2402.
+- Test: empty_effect_w2402.
+
+**Итого Ф.28:** 3 closed. **182 PASS (+3) / 44 SKIP / 1 pre-existing FAIL.**
+Коммит: `be5b9839c27`.
+
 === Plan 45 �.25 � nova tests (positive + negative) ===
 
 ����� �������� �.25 (4 ����) �������� nova-tests .nv ��� �������� �����
