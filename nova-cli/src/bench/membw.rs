@@ -141,7 +141,8 @@ pub mod linux {
     /// Parse `event=0xNN,umask=0xMM,...` к packed u64 config.
     /// Encoding compatible с PMU format spec (format/event=0-7, format/umask=8-15).
     /// Simplified — handles event + umask only (sufficient для cas_count).
-    fn parse_event_string(s: &str) -> Option<u64> {
+    /// `pub` чтобы быть testable из integration tests.
+    pub fn parse_event_string(s: &str) -> Option<u64> {
         let mut event: u64 = 0;
         let mut umask: u64 = 0;
         for kv in s.split(',') {
@@ -329,14 +330,103 @@ mod tests {
         assert_eq!(fmt_bytes(3_500_000_000),"3.50 GB");
     }
 
+    // ── F.4 positive tests ──────────────────────────────────────────
+
+    #[test]
+    fn fmt_bytes_boundaries() {
+        // На границах между unit categories (must round-trip predictably).
+        assert_eq!(fmt_bytes(1_000),           "1.00 KB");
+        assert_eq!(fmt_bytes(1_000_000),       "1.00 MB");
+        assert_eq!(fmt_bytes(1_000_000_000),   "1.00 GB");
+        // Just below boundary — picks lower unit (рассчёт без округления
+        // на category-switch, e.g. 999_999 < 1e6 → KB). Округление
+        // {:.2} даёт "1000.00 KB" — accept either form.
+        let near_mb = fmt_bytes(999_999);
+        assert!(near_mb.ends_with("KB"),
+            "expected KB unit для 999_999, got {}", near_mb);
+        let near_gb = fmt_bytes(999_999_999);
+        assert!(near_gb.ends_with("MB"),
+            "expected MB unit для 999_999_999, got {}", near_gb);
+    }
+
+    #[test]
+    fn fmt_bytes_single_byte() {
+        assert_eq!(fmt_bytes(1), "1 B");
+        assert_eq!(fmt_bytes(42), "42 B");
+    }
+
     #[test]
     #[cfg(target_os = "linux")]
-    fn parse_event_string_basic() {
-        use super::linux as L;
-        // Verify через public façade — parse_event_string private, но
-        // probe вызывает её. Здесь test делается через probe results
-        // (если на CI Linux есть uncore_imc — verify shape).
-        let _ = L::probe_imc_events();  // smoke test: should not panic
+    fn parse_event_string_event_only() {
+        use super::linux::parse_event_string;
+        // event=0x04 → low byte = 0x04, umask byte = 0.
+        let r = parse_event_string("event=0x04").unwrap();
+        assert_eq!(r, 0x04);
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn parse_event_string_event_and_umask() {
+        use super::linux::parse_event_string;
+        // event=0x04,umask=0x03 → 0x04 | (0x03 << 8) = 0x304.
+        let r = parse_event_string("event=0x04,umask=0x03").unwrap();
+        assert_eq!(r, 0x304);
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn parse_event_string_decimal_values() {
+        use super::linux::parse_event_string;
+        // Without "0x" prefix → decimal interpretation.
+        let r = parse_event_string("event=4,umask=3").unwrap();
+        assert_eq!(r, 0x304);
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn parse_event_string_ignores_unknown_keys() {
+        use super::linux::parse_event_string;
+        // Unknown keys (e.g. edge, inv) silently ignored — matches kernel
+        // behaviour для simplified parser.
+        let r = parse_event_string("event=0x10,edge=1,inv=1,umask=0x20").unwrap();
+        assert_eq!(r, 0x10 | (0x20 << 8));
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn probe_imc_events_does_not_panic() {
+        use super::linux::probe_imc_events;
+        let _ = probe_imc_events();  // smoke test: should not panic
+    }
+
+    // ── F.4 negative tests ──────────────────────────────────────────
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn parse_event_string_empty_returns_zero() {
+        use super::linux::parse_event_string;
+        // Empty input → config = 0 (no keys matched, neither event/umask
+        // set). Still returns Some — каллер can check для usefulness.
+        let r = parse_event_string("");
+        assert_eq!(r, Some(0));
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn parse_event_string_malformed_hex_returns_none() {
+        use super::linux::parse_event_string;
+        // Invalid hex digit після "0x" → parsing fails, returns None.
+        let r = parse_event_string("event=0xZZ");
+        assert_eq!(r, None);
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn parse_event_string_no_equals_skipped() {
+        use super::linux::parse_event_string;
+        // Tokens без '=' silently skipped — но valid tokens still processed.
+        let r = parse_event_string("bogus,event=0x05,also_bogus").unwrap();
+        assert_eq!(r, 0x05);
     }
 
     #[test]
@@ -346,5 +436,13 @@ mod tests {
         assert!(!available_mbm());
         assert!(mbm_event_codes().is_empty());
         assert!(measure_bandwidth(|| {}).is_err());
+    }
+
+    #[test]
+    #[cfg(not(target_os = "linux"))]
+    fn measure_bandwidth_err_message_mentions_linux() {
+        let err = measure_bandwidth(|| {}).unwrap_err();
+        let msg = format!("{}", err);
+        assert!(msg.contains("Linux"), "err msg should mention Linux: {}", msg);
     }
 }
