@@ -35,7 +35,7 @@ export type LinkedList[T]
 export fn LinkedList[T].new() => Empty
 
 // Из массива — fold справа налево.
-export fn LinkedList[T].from_array(xs []T) -> LinkedList[T] {
+export fn LinkedList[T].from_array(xs []T) -> Self {
     let mut acc LinkedList[T] = Empty
     let mut i = xs.len - 1
     while i >= 0 {
@@ -45,7 +45,7 @@ export fn LinkedList[T].from_array(xs []T) -> LinkedList[T] {
     acc
 }
 
-export fn LinkedList[T].from_iter(it Iter[T]) -> LinkedList[T] {
+export fn LinkedList[T].from_iter(it Iter[T]) -> Self {
     // Prepend каждый элемент → получаем обратный список (O(1) на шаг).
     // Затем reverse — суммарно O(n), без вспомогательного массива.
     let mut acc LinkedList[T] = Empty
@@ -82,7 +82,7 @@ export fn LinkedList[T] @head() -> Option[T] =>
     }
 
 // Хвост — список без головы. Empty для Empty.
-export fn LinkedList[T] @tail() -> LinkedList[T] =>
+export fn LinkedList[T] @tail() -> Self =>
     match @ {
         Empty       => Empty
         Cons(_, t)  => t
@@ -95,13 +95,13 @@ export fn LinkedList[T] @tail() -> LinkedList[T] =>
 
 // Префиксное добавление — O(1), конструирует новый Cons.
 // Имя метода `prepend` — convention; в OCaml/Haskell это `::` или `cons`.
-export fn LinkedList[T] @prepend(x T) -> LinkedList[T] =>
+export fn LinkedList[T] @prepend(x T) -> Self =>
     Cons(x, @)
 
 // Суффиксное добавление — O(n), нужно пройти весь список.
 // В рекурсивных списках суффикс дороже префикса; для частых append
 // используйте `[]T`.
-export fn LinkedList[T] @append(x T) -> LinkedList[T] =>
+export fn LinkedList[T] @append(x T) -> Self =>
     match @ {
         Empty       => Cons(x, Empty)
         Cons(h, t)  => Cons(h, t.append(x))
@@ -113,7 +113,7 @@ export fn LinkedList[T] @append(x T) -> LinkedList[T] =>
 // ──────────────────────────────────────────────────────────────────────────
 
 // Reverse — O(n) с одним проходом через accumulator.
-export fn LinkedList[T] @reverse() -> LinkedList[T] {
+export fn LinkedList[T] @reverse() -> Self {
     let mut acc = Empty
     let mut cur = @
     let mut done = false
@@ -137,7 +137,7 @@ export fn LinkedList[T] @map[U](f fn(T) -> U) -> LinkedList[U] =>
     }
 
 // filter.
-export fn LinkedList[T] @filter(pred fn(T) -> bool) -> LinkedList[T] =>
+export fn LinkedList[T] @filter(pred fn(T) -> bool) -> Self =>
     match @ {
         Empty       => Empty
         Cons(h, t)  => if pred(h) { Cons(h, t.filter(pred)) }
@@ -157,7 +157,7 @@ export fn LinkedList[T] @fold[Acc](init Acc, f fn(Acc, T) -> Acc) -> Acc =>
 // ──────────────────────────────────────────────────────────────────────────
 
 // `a + b` — конкатенация. O(len(a)).
-export fn LinkedList[T] @plus(other LinkedList[T]) -> LinkedList[T] =>
+export fn LinkedList[T] @plus(other Self) -> Self =>
     match @ {
         Empty       => other
         Cons(h, t)  => Cons(h, t + other)

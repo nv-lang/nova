@@ -420,6 +420,10 @@ pub struct CEmitter {
     /// Plan 48: generic instance-method FnDecls for method monomorphization.
     /// Key = (receiver_type_name, method_name). Methods with own type params (e.g. @execute[T,E]).
     mono_method_decls: HashMap<(String, String), crate::ast::FnDecl>,
+    /// Plan 11 Follow-up: receiver-generic method FnDecls для Self.method() fast-path
+    /// (mono enrollment в Path/Member emit). Отдельная карта, чтобы не trigger
+    /// другие code paths которые observe mono_method_decls.
+    self_method_decls: HashMap<(String, String), crate::ast::FnDecl>,
     /// Plan 48: monomorphization worklist — (nova_fn_name, type_subst, mangled_c_name).
     mono_worklist: Vec<(String, Vec<(String, String)>, String)>,
     /// Plan 48: already-instantiated mangled names (for dedup).
@@ -614,6 +618,7 @@ impl CEmitter {
             warnings: Vec::new(),
             mono_fn_decls: HashMap::new(),
             mono_method_decls: HashMap::new(),
+            self_method_decls: HashMap::new(),
             mono_worklist: Vec::new(),
             mono_instantiated: HashSet::new(),
             current_type_subst: HashMap::new(),
@@ -4172,6 +4177,20 @@ impl CEmitter {
         if f.name == "main" {
             return Ok(());
         }
+        // Plan 11 Follow-up (2026-05-17): Methods на receiver-generic типах
+        // (e.g. `Container[T].new(...)`) регистрируем в **отдельной** карте
+        // self_method_decls для Self.method() fast-path (mono enrollment).
+        // Не reuse mono_method_decls — он наблюдается другими code paths и
+        // получает new entries → false-trigger других mono routing'ов
+        // (e.g. HashMap.contains misroute).
+        if let Some(recv) = &f.receiver {
+            if !recv.generics.is_empty() && !recv.type_name.starts_with("[]") {
+                self.self_method_decls.insert(
+                    (recv.type_name.clone(), f.name.clone()),
+                    f.clone(),
+                );
+            }
+        }
         // Plan 48: Generic free functions → store for monomorphization; no erased forward decl.
         if !f.generics.is_empty() && f.receiver.is_none() {
             self.mono_fn_decls.insert(f.name.clone(), f.clone());
@@ -4219,11 +4238,13 @@ impl CEmitter {
                 }).collect();
                 let is_instance = matches!(recv.kind, ReceiverKind::Instance);
                 let mangled = self.mangle_fn(f);
-                // Set receiver type so `Self` in return type resolves to
-                // `Nova_{RecvType}*` instead of the invalid `Nova_Self*`.
+                // Set receiver type so `Self` in return type AND param types
+                // resolves to `Nova_{RecvType}*` instead of `Nova_Self*`.
+                // Plan 11 Follow-up (2026-05-17): keep receiver set до конца
+                // forward decl emit (включая param iteration), иначе params типа
+                // `other Self` emit'ятся как `Nova_Self*`.
                 let prev_recv = self.current_receiver_type.replace(recv.type_name.clone());
                 let ret_c = self.erased_type_ref_c(&f.return_type, &type_params);
-                self.current_receiver_type = prev_recv;
                 let mut parts = if is_instance {
                     vec![format!("{} nova_self", self.receiver_c_type(&recv.type_name))]
                 } else {
@@ -4233,6 +4254,7 @@ impl CEmitter {
                     let p_c = self.erased_type_ref_c(&Some(p.ty.clone()), &type_params);
                     parts.push(format!("{} {}", p_c, p.name));
                 }
+                self.current_receiver_type = prev_recv;
                 let params_s = if parts.is_empty() { "void".into() } else { parts.join(", ") };
                 self.var_types.insert(format!("fn_ret_{}", f.name), ret_c.clone());
                 self.line(&format!("static {} {}({});", ret_c, mangled, params_s));
@@ -5362,10 +5384,11 @@ impl CEmitter {
             return self.emit_generic_static_method_stub(f);
         }
         let mangled = self.mangle_fn(f);
-        // Set receiver type so `Self` in return type resolves to the erased pointer.
+        // Plan 11 Follow-up (2026-05-17): keep current_receiver_type set до конца
+        // emit (включая param iteration), чтобы `Self` в param-position
+        // (e.g. `other Self`) тоже резолвилось правильно.
         let prev_recv = self.current_receiver_type.replace(recv.type_name.clone());
         let ret_c = self.erased_type_ref_c(&f.return_type, &type_params);
-        self.current_receiver_type = prev_recv;
         let recv_c = self.receiver_c_type(&recv.type_name);
         // Static methods don't get nova_self; instance methods do.
         let mut parts: Vec<String> = if is_instance {
@@ -5377,6 +5400,11 @@ impl CEmitter {
             let p_c = self.erased_type_ref_c(&Some(p.ty.clone()), &type_params);
             parts.push(format!("{} {}", p_c, p.name));
         }
+        // Plan 11 Follow-up (2026-05-17): НЕ восстанавливаем current_receiver_type
+        // здесь — оставляем set, чтобы body emit (включая var_types для params
+        // на line ~5089 и match-expr inferral'ы) видел правильный recv для Self.
+        // Restored в конце body emit (line ~5165: current_receiver_type = None).
+        let _ = prev_recv;
         let params_s = if parts.is_empty() { "void".into() } else { parts.join(", ") };
         // Plan 47: буферизуем тело — см. emit_generic_fn_erased (тот же баг:
         // spawn в generic-методе → ctx-typedef после использования).
@@ -6250,18 +6278,20 @@ impl CEmitter {
             if has_placeholder { return; }
         }
         self.mono_instantiated.insert(mono_name.to_string());
-        // Compute param and return C types with substitution applied
+        // Compute param and return C types with substitution applied.
+        // Plan 11 Follow-up (2026-05-17): current_receiver_type set BEFORE
+        // computing param_c_tys, чтобы `Self` в param-position (e.g.
+        // `other Self`) тоже резолвилось правильно. Раньше set только
+        // перед ret_c — params получали Nova_Self fallback.
         let saved_subst = std::mem::replace(
             &mut self.current_type_subst,
             type_subst.iter().cloned().collect(),
         );
+        let prev_recv_for_ret = self.current_receiver_type.replace(recv_type.to_string());
         let recv_c = self.receiver_c_type(recv_type);
         let param_c_tys: Vec<String> = fn_decl.params.iter()
             .map(|p| self.type_ref_to_c(&p.ty).unwrap_or_else(|_| "nova_int".into()))
             .collect();
-        // Set current_receiver_type before computing ret_c so that `Self` in
-        // the return type resolves to the concrete monomorphized type.
-        let prev_recv_for_ret = self.current_receiver_type.replace(recv_type.to_string());
         let ret_c = fn_decl.return_type.as_ref()
             .map(|t| self.type_ref_to_c(t).unwrap_or_else(|_| "nova_unit".into()))
             .unwrap_or_else(|| "nova_unit".into());
@@ -6303,17 +6333,21 @@ impl CEmitter {
             &mut self.current_type_subst,
             type_subst.iter().cloned().collect(),
         );
+        // Plan 11 Follow-up (2026-05-17): current_receiver_type set BEFORE
+        // computing param_c_tys + ret_c, чтобы `Self` в param/return position
+        // (e.g. `other Self`, `-> Self`) резолвилось в concrete mono'd type.
+        // Раньше set только перед ret_c — params получали Nova_Self fallback.
+        let prev_recv_for_emit = self.current_receiver_type.replace(recv_type.to_string());
         let recv_c = self.receiver_c_type(recv_type);
         let param_c_tys: Vec<String> = fn_decl.params.iter()
             .map(|p| self.type_ref_to_c(&p.ty).unwrap_or_else(|_| "nova_int".into()))
             .collect();
-        // Set current_receiver_type before computing ret_c so that `Self` in
-        // the return type resolves to the concrete monomorphized type.
-        let prev_recv_for_ret = self.current_receiver_type.replace(recv_type.to_string());
         let ret_c = fn_decl.return_type.as_ref()
             .map(|t| self.type_ref_to_c(t).unwrap_or_else(|_| "nova_unit".into()))
             .unwrap_or_else(|| "nova_unit".into());
-        self.current_receiver_type = prev_recv_for_ret;
+        // НЕ восстанавливаем здесь — оставляем set для body emit (var_types для
+        // params, match infers и пр.). Restore в самом конце вместе с saved_subst.
+        let _ = prev_recv_for_emit;
         // Plan 48 Ф.7.2: static-методы без nova_self.
         let is_instance = matches!(fn_decl.receiver.as_ref().map(|r| &r.kind),
             Some(crate::ast::ReceiverKind::Instance));
@@ -6557,6 +6591,9 @@ impl CEmitter {
         }
         self.out.push_str(&fn_body);
         self.current_type_subst = saved_subst;
+        // Plan 11 Follow-up: restore current_receiver_type теперь, когда body
+        // полностью emitted (включая все Self-resolution context'ы).
+        self.current_receiver_type = None;
         Ok(())
     }
 
@@ -10319,6 +10356,8 @@ impl CEmitter {
                 // Plan 11 Ф.4.5: D66 — `Self.method(...)` в expression
                 // position. obj=Ident("Self") в теле метода → Ident(<current>).
                 // Создаем local rebind, не мутируя обратно.
+                let self_substituted_member: bool = matches!(&obj.kind,
+                    ExprKind::Ident(n) if n == "Self");
                 let self_obj_storage;
                 let obj: &Expr = match &obj.kind {
                     ExprKind::Ident(n) if n == "Self" => {
@@ -10334,6 +10373,50 @@ impl CEmitter {
                     }
                     _ => obj,
                 };
+                // Plan 11 Follow-up (2026-05-17): Self.method(args) direct-emit
+                // fast path для Member-form (parses Self.X(args) как
+                // Member { obj: Ident("Self"), name: "X" }, не Path).
+                // Эмитим static dispatch Nova_<Recv>_static_<method>(args) +
+                // enroll mono'd version для recv типа Container____nova_int.
+                if self_substituted_member {
+                    if let ExprKind::Ident(recv_type) = &obj.kind {
+                        let recv_type = recv_type.clone();
+                        let method_name = method.clone();
+                        let mut arg_strs = Vec::new();
+                        for a in args { arg_strs.push(self.emit_expr(a.expr())?); }
+                        let safe_recv = Self::sanitize_c_for_ident(&recv_type);
+                        if let Some(idx) = recv_type.find("____") {
+                            let base_recv = &recv_type[..idx];
+                            let mono_args = &recv_type[idx + 4..];
+                            let key = (base_recv.to_string(), method_name.clone());
+                            if let Some(fn_decl) = self.self_method_decls.get(&key).cloned() {
+                                let mono_parts: Vec<String> = mono_args.split("__")
+                                    .map(|s| s.to_string()).collect();
+                                let recv_generics: Vec<String> = fn_decl.receiver.as_ref()
+                                    .map(|r| r.generics.iter().filter_map(|tr| {
+                                        if let crate::ast::TypeRef::Named { path, .. } = tr {
+                                            path.first().cloned()
+                                        } else { None }
+                                    }).collect())
+                                    .unwrap_or_default();
+                                if recv_generics.len() == mono_parts.len() {
+                                    let type_subst: Vec<(String, String)> = recv_generics.into_iter()
+                                        .zip(mono_parts.into_iter())
+                                        .collect();
+                                    let mono_name = format!(
+                                        "Nova_{}_static_{}", safe_recv, method_name);
+                                    let rt = recv_type.clone();
+                                    self.register_mono_method_instance(
+                                        &fn_decl, type_subst, &mono_name, &rt);
+                                }
+                            }
+                        }
+                        return Ok(format!(
+                            "Nova_{}_static_{}({})",
+                            safe_recv, method_name, arg_strs.join(", ")
+                        ));
+                    }
+                }
                 // Plan 14 Ф.4: если obj — record и `method` это fn-typed поле
                 // (записано в record_field_fn_sigs), эмитим closure-call
                 // через NOVA_CLOS_CALL_* macro.
@@ -11759,7 +11842,14 @@ impl CEmitter {
                 // `Self.method(args)` в теле метода резолвится в
                 // `<current_type>.method(args)`. Тот же current_receiver_type
                 // что используется для type-position (-> Self).
-                let parts: Vec<String> = if !parts.is_empty() && parts[0] == "Self" {
+                //
+                // Plan 11 Follow-up (2026-05-17): для generic types в mono'd
+                // context (T=int и т.п.) lookup по bare type name через
+                // method_overloads может не сработать; direct-emit static
+                // method dispatch гарантирует правильный mangled name +
+                // mono enrollment cascade'нется через subsequent emit_call'ы.
+                let self_substituted: bool = !parts.is_empty() && parts[0] == "Self";
+                let parts: Vec<String> = if self_substituted {
                     if let Some(recv) = &self.current_receiver_type {
                         let mut new_parts = parts.clone();
                         new_parts[0] = recv.clone();
@@ -11771,6 +11861,51 @@ impl CEmitter {
                     parts.clone()
                 };
                 let parts: &[String] = &parts;
+                // Self.method(args) direct-emit fast path:
+                // когда Self был substituted, и parts.len() == 2 — выдаём
+                // явный static-method вызов `Nova_<RecvType>_static_<method>(args)`
+                // + enroll mono'd version (если recv mono'd) чтобы body emitted.
+                if self_substituted && parts.len() == 2 {
+                    let recv_type = parts[0].clone();
+                    let method_name = parts[1].clone();
+                    let mut arg_strs = Vec::new();
+                    for a in args { arg_strs.push(self.emit_expr(a.expr())?); }
+                    let safe_recv = Self::sanitize_c_for_ident(&recv_type);
+                    // Mono enrollment: extract base type + type_subst из mono'd recv.
+                    // recv_type вида "Container____nova_int" → base="Container", subst=[("T","nova_int")].
+                    if let Some(idx) = recv_type.find("____") {
+                        let base_recv = &recv_type[..idx];
+                        let mono_args = &recv_type[idx + 4..];
+                        let key = (base_recv.to_string(), method_name.clone());
+                        if let Some(fn_decl) = self.self_method_decls.get(&key).cloned() {
+                            let mono_parts: Vec<String> = mono_args.split("__")
+                                .map(|s| s.to_string()).collect();
+                            let recv_generics: Vec<String> = fn_decl.receiver.as_ref()
+                                .map(|r| r.generics.iter().filter_map(|tr| {
+                                    if let crate::ast::TypeRef::Named { path, .. } = tr {
+                                        path.first().cloned()
+                                    } else { None }
+                                }).collect())
+                                .unwrap_or_default();
+                            if recv_generics.len() == mono_parts.len() {
+                                let type_subst: Vec<(String, String)> = recv_generics.into_iter()
+                                    .zip(mono_parts.into_iter())
+                                    .collect();
+                                // Mono name format должен matchить emit:
+                                // Nova_<MonoRecv>_static_<method> где MonoRecv=Container____nova_int.
+                                let mono_name = format!(
+                                    "Nova_{}_static_{}", safe_recv, method_name);
+                                let rt = recv_type.clone();
+                                self.register_mono_method_instance(
+                                    &fn_decl, type_subst, &mono_name, &rt);
+                            }
+                        }
+                    }
+                    return Ok(format!(
+                        "Nova_{}_static_{}({})",
+                        safe_recv, method_name, arg_strs.join(", ")
+                    ));
+                }
                 // D91 (Plan 21): Channel.new — Path-form.
                 if parts.len() == 2 && parts[0] == "Channel" && parts[1] == "new" {
                     if let Some(arg) = args.first() {

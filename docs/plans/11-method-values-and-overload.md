@@ -709,30 +709,59 @@ static Nova_Self Nova_LinkedList_method_reverse(...) { ... }   // unknown type
   потому что Self в return type **statically** заменяется на enclosing
   type instance, и литерал `{...}` инфер'ится.
 
-### Где ломается
+### Где ломалось (исправлено 2026-05-17)
 
-| Контекст | Status |
-|---|---|
-| Generic instance method `-> Self` | ❌ `Nova_Self` |
-| Generic instance method `-> Self { ... }` (Self literal) | ❌ undefined |
-| Generic static method `Self.method()` (call site) | ❌ linker undefined |
-| Generic instance method `Self.method()` (call site) | ❌ linker undefined |
+| Контекст | Pre-fix | Post-fix |
+|---|---|---|
+| Generic instance method `-> Self` | ❌ `Nova_Self` | ✅ resolves в `Nova_<recv>*` |
+| Generic instance method `Self.method()` (call site) | ❌ linker undefined | ✅ через self_method_decls + mono enrollment |
+| Generic static method `Self.method()` (call site) | ❌ linker undefined | ✅ same path |
+| Generic instance param `other Self` | ❌ `Nova_Self*` | ✅ resolves в `Nova_<recv>*` |
+| Generic instance method `-> Self { ... }` (Self literal) | ❌ undefined | ✅ literal `{...}` infers concrete type |
+| Generic sum-type instance method `-> Self` (returning variant) | ❌ pre-existing variant emit issue | 🟡 partial — see «Open issues» |
 
-### Workaround в stdlib (применён 2026-05-17)
+### Fix applied (commits 2026-05-17)
 
-Все методы generic-типов используют **explicit type** вместо `Self`:
+В `compiler-codegen/src/codegen/emit_c.rs`:
+
+1. **`emit_fn_forward_decl`** (line ~3893): `current_receiver_type` set
+   на recv.type_name **до param iteration** (не только до ret_c), чтобы
+   `Self` в param-position резолвился. Restore — после whole emit.
+
+2. **`emit_method_body` erased generic path** (line ~5037): `current_receiver_type`
+   set остаётся через весь body emit (var_types для params, match-infers).
+   Restore только в самом конце функции (line ~5165).
+
+3. **`emit_monomorphized_method`** (line ~5945): same — set BEFORE param_c_tys
+   compute, restore только в конце (через new `current_receiver_type = None`
+   add'нутый после fn_body emit).
+
+4. **`emit_call` для `ExprKind::Path` и `ExprKind::Member`** (lines ~11270, ~9870):
+   Self.method(args) fast-path — после substitution Self → recv.type_name,
+   эмитим direct `Nova_<safe_recv>_static_<method>(args)` + enroll mono'd
+   version через `register_mono_method_instance` (когда recv это mono'd
+   `Base____types` имя).
+
+5. **Новая карта `self_method_decls`** (HashMap[(String, String), FnDecl]):
+   регистрирует все receiver-generic methods для fast-path lookup'а. Отдельная
+   от `mono_method_decls` (которая observable другими code paths и регрессит
+   если расширить).
+
+### Workaround в stdlib (применён 2026-05-17, потом revert'нут после fix)
+
+Раньше (до fix'а) все методы generic-типов использовали **explicit type**:
 - `HashMap[K, V].new() -> HashMap[K, V] => HashMap[K, V].with_capacity(16)`
 - `LinkedList[T] @reverse() -> LinkedList[T]`
 
-### Proper fix (TODO)
+После fix'а — `-> Self` восстановлен в LinkedList. HashMap.new() оставлен
+с explicit type (история показала что Self.X() ломал mono dispatch ещё до
+моего fix'а, и осторожнее оставить пока).
 
-Codegen `Self` type resolution: при emit'е signature методов нужно
-substitute `Self` → enclosing-fn's receiver type (с generic params).
-Изменения в `compiler-codegen/src/codegen/emit_c.rs` — функция
-`type_ref_to_c` для `TypeRef::Named { path: ["Self"], ... }`.
+### Open issues (sub-bugs не покрытые fix'ом)
 
-Сейчас, видимо, `type_ref_to_c` для `Self` emit'ит `Nova_Self`
-буквально, не зная контекста. Нужен `recv_type` context (как в
-`external_registry::type_ref_to_c`).
+- **Sum-type `-> Self` body resolution**: `match @ { Empty => Empty, Full(v) => Full(v) }`
+  где `-> Self` — match-arm body infer возвращает "Nova_Self" вместо concrete.
+  Пример в `/tmp/repro_self_a.nv` (CC-FAIL "assigning to nova_unit from void").
+  Это отдельный path в expression-type inferral для variant constructors.
 
-Status: **открыт**, документирован как known issue.
+Status: **главный bug закрыт**. Sub-bug (sum-type body) deferred — рарели used pattern.
