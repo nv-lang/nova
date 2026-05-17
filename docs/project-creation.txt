@@ -15031,6 +15031,49 @@ Test: f32_lemma_fn_collision_w2402 (EXPECT_COMPILE_WARNING W2402).
   apply-undefined (Ф.31.1).
 
 
+# Plan 33.6 Ф.33 (2026-05-18): fn tautological + var-mul non-negative
+
+Один fn lint (паритет с Ф.32.1 для lemma) + TrivialBackend rule на
+произведение неотрицательных переменных.
+
+## Ф.33.1 — Fn с ensures (без result/old) идентичными requires → W2402
+
+`fn foo(x int) -> int requires x >= 0 ensures x >= 0 { x }` — ensures
+не несёт новой информации callerу. Программист скорее всего забыл
+написать `ensures result == x` или `ensures result >= 0`.
+
+Walker `refs_result_or_old` — рекурсивно ищет `Ident("result")` или
+`Call("old", ...)` в Binary/Unary/Call/Ident. Если все pure-ensures
+(без result/old refs) встречаются как requires (через `print_expr`
+текстуальное сравнение, ignore Span) — push W2402.
+
+Test: f33_fn_tautological_w2402 (EXPECT_COMPILE_WARNING W2402).
+
+## Ф.33.2 — TrivialBackend VarA * VarB non-negative
+
+`requires a >= 0; requires b >= 0; ensures (a * b) >= 0` — тривиально,
+но TrivialBackend не reasons произведение двух Var. `try_const_mul_check`
+обрабатывает только `L * Var`.
+
+Новый helper `try_var_mul_nonneg`: `(>= (* VarA VarB) goal)` где goal <= 0
+и lower(A) >= 0 и lower(B) >= 0 → true. Поддерживает strict `>` через
+effective_goal. Интегрирован в check chain после const_mul и в not-invert
+section.
+
+Test: f33_var_mul_nonneg_positive (product_nonneg, product_above_neg).
+
+## Регрессия
+
+Перед Ф.33: 181 PASS / 0 FAIL / 44 SKIP contracts.
+После Ф.33: 183 PASS (+2) / 0 FAIL / 44 SKIP contracts.
+
+## Acceptance
+
+- Tautological fn (ensures без result/old == requires) detect'ится.
+- Var-Var positive product тривиально доказывается без Z3.
+- Не trogает encoder structure / canonical form / existing tests.
+
+
 ## Session: оба deferred follow-up'а Plan 59 закрыты (2026-05-17 EOD+1)
 
 После merge'а Plan 63 fixes от другого agent'а — обнаружено что оба
