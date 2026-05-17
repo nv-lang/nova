@@ -473,20 +473,34 @@ API не trogается.
 
 ## Phases
 
-### Ф.0 — Audit baseline (½ day)
+### Ф.0 — Audit baseline (½ day) ✅ 2026-05-18
 
-- [ ] `nova test` baseline на main — exact PASS/FAIL count.
-- [ ] `grep -rn "Time\.after"` в std/, nova_tests/, examples/, spec/,
-      docs/plans/.
-- [ ] Audit runtime extern `nova_time_after_ms` (signature, callers).
-- [ ] Confirm `Duration` API completeness (R-table выше).
-- [ ] Confirm Boehm GC finalizer infra (Plan 27 verification).
-- [ ] Confirm `Time` effect mock infra (Plan 34 Ф.7 verification).
-- [ ] Confirm CancelToken cancel-aware resource hook (Plan 47 Ф.6
-      reuse path).
-- [ ] Записать baseline в `docs/plans/65-artifacts/baseline-2026-05-XX.md`.
+- [x] `nova test` baseline на main — **698 PASS / 0 FAIL / 44 SKIP**.
+- [x] `grep -rn "Time\.after"` в std/, nova_tests/, examples/, spec/,
+      docs/plans/ — 13 live call-sites in 7 test files, 12 spec refs,
+      9 plan-doc refs.
+- [x] Audit runtime extern — entry point is `Nova_Time_after(nova_int ms)`
+      inline в `channels.h:1133`; no separate `nova_time_after_ms` symbol.
+      Will be replaced by `nova_chan_reader_close_after_ns` directly in Ф.2
+      (no rename intermediate alias).
+- [x] Confirm `Duration` API completeness — all `from_*` methods present;
+      `nanos` field is `readonly i64`.
+- [⚠️] **Boehm GC finalizer infra** — `GC_REGISTER_FINALIZER` not currently
+      wired; `alloc_boehm.c:17` says Boehm cooperation requires opt-in.
+      `NovaAfterState` is `malloc`-owned (channels.h:1071-1084), not
+      GC-managed. AD7 finalizer cleanup honest-deferred behind
+      `[M-chanreader-gc-finalizer]`; f9 test scope adjusted to scope-exit
+      cleanup (timer-fire OR on_select_lost), not GC-drop.
+- [x] Confirm `Time` effect mock infra — `std/testing/handlers.nv`
+      `th.fixed_ms` works for `now()`; close_after runtime hook for
+      virtual deadline TBD in Ф.10.
+- [x] Confirm CancelToken cancel-aware resource hook (Plan 47 Ф.6).
+- [x] Записать baseline в `docs/plans/65-artifacts/baseline-2026-05-18.md`.
 
-**Acceptance:** baseline.md с counts + file list + infra readiness check.
+**Acceptance:** ✅ baseline.md captured; infra readiness summarized; one
+honest-defer (`[M-chanreader-gc-finalizer]`) documented in Эволюция.
+
+**Регрессия:** 698 PASS / 0 FAIL (baseline; matches main).
 
 ### Ф.1 — Compiler registration (1 day)
 
@@ -801,6 +815,19 @@ synthetic leak test.
 
 - **2026-05-18 v1**: исходный план, 10 фаз (Ф.0-Ф.9), 5 dev-days. MVP
   scope: rename + Duration + atomic switch + spec sync.
+- **2026-05-18 Ф.0 audit**: baseline captured 698 PASS / 0 FAIL.
+  Discovery: Boehm `GC_REGISTER_FINALIZER` not currently wired anywhere in
+  runtime (`alloc_boehm.c:17,113`). `NovaAfterState` is `malloc`-owned, not
+  GC-managed, so AD7's "GC drop → uv_close finalizer" cannot be implemented
+  without first introducing Boehm finalizer infrastructure project-wide.
+  Honest-deferred behind `[M-chanreader-gc-finalizer]`. `f9_drop_no_leak.nv`
+  acceptance shifts from "force GC → in-flight=0" to "exit scope → in-flight=0
+  via on_select_lost + scope cleanup". True drop-on-GC remains a future
+  task once Boehm finalizers are project-wide.
+  Discovery: `nova_time_after_ms` (named in Plan doc Ф.2/R11) does not exist
+  as an external symbol — current runtime entry is `Nova_Time_after`
+  (inline in `channels.h`). Ф.2 will introduce
+  `nova_chan_reader_close_after_ns` directly without rename alias.
 - **2026-05-18 v2**: industry-parity audit vs Go/Rust/TS обнаружил 6
   production-grade gaps:
   - cancel (Go Timer.Stop)
