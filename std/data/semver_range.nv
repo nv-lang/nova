@@ -65,7 +65,7 @@ export type ParseRangeError
 #stable(since = "0.1")
 export fn VersionReq.parse(s str) Fail[ParseRangeError] -> Self {
     let trimmed = s.trim()
-    if trimmed.len == 0 { throw EmptyInput }
+    if trimmed.len() == 0 { throw EmptyInput }
 
     if trimmed == "*" {
         return { sets: [], any_match: true }
@@ -87,7 +87,7 @@ fn parse_comparator_set(s str) Fail[ParseRangeError] -> []Comparator {
     let tokens = s.split(" ")
     for tok in tokens {
         let t = tok.trim()
-        if t.len == 0 { continue }
+        if t.len() == 0 { continue }
         let comps = parse_one_comparator(t)
         for c in comps { out.push(c) }
     }
@@ -98,30 +98,30 @@ fn parse_comparator_set(s str) Fail[ParseRangeError] -> []Comparator {
 fn parse_one_comparator(s str) Fail[ParseRangeError] -> []Comparator {
     if s.starts_with("^") {
         // ^1.2.3 → >=1.2.3 <2.0.0
-        let v = parse_version(s.slice(1, s.len))
+        let v = parse_version(s.slice(1, s.len()))
         let upper = Version.new(v.major + 1, 0, 0)
         return [Ge(v), Lt(upper)]
     }
     if s.starts_with("~") {
         // ~1.2.3 → >=1.2.3 <1.3.0
-        let v = parse_version(s.slice(1, s.len))
+        let v = parse_version(s.slice(1, s.len()))
         let upper = Version.new(v.major, v.minor + 1, 0)
         return [Ge(v), Lt(upper)]
     }
     if s.starts_with(">=") {
-        return [Ge(parse_version(s.slice(2, s.len)))]
+        return [Ge(parse_version(s.slice(2, s.len())))]
     }
     if s.starts_with("<=") {
-        return [Le(parse_version(s.slice(2, s.len)))]
+        return [Le(parse_version(s.slice(2, s.len())))]
     }
     if s.starts_with(">") {
-        return [Gt(parse_version(s.slice(1, s.len)))]
+        return [Gt(parse_version(s.slice(1, s.len())))]
     }
     if s.starts_with("<") {
-        return [Lt(parse_version(s.slice(1, s.len)))]
+        return [Lt(parse_version(s.slice(1, s.len())))]
     }
     if s.starts_with("=") {
-        return [Eq(parse_version(s.slice(1, s.len)))]
+        return [Eq(parse_version(s.slice(1, s.len())))]
     }
     [Eq(parse_version(s))]
 }

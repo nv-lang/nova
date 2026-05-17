@@ -5,7 +5,7 @@ module named_params.keyword_only
 
 fn connect(host str, port int = 8080, tls bool = false) -> int {
     let t = if tls { 1 } else { 0 }
-    host.len + port + t
+    host.len() + port + t
 }
 
 test "дефолтный параметр по имени — ок" {

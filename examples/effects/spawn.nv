@@ -42,5 +42,5 @@ fn main() {
     let results = parallel for i in 0..5 {
         i * i
     }
-    println("squares = ", results.len)   // 5
+    println("squares = ", results.len())   // 5
 }

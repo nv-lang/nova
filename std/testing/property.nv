@@ -405,7 +405,7 @@ test "len(a + b) == len(a) + len(b) для []int" {
         property(gen, |xs| {
             let ys = xs.reverse()       // любой второй массив
             let combined = xs + ys
-            assert_prop(combined.len == xs.len + ys.len)
+            assert_prop(combined.len() == xs.len() + ys.len())
         })
     }
 }

@@ -8,9 +8,9 @@ test "concat via +" {
 }
 
 test "len method" {
-    assert("".len == 0)
-    assert("abc".len == 3)
-    assert("hello, world".len == 12)
+    assert("".len() == 0)
+    assert("abc".len() == 3)
+    assert("hello, world".len() == 12)
 }
 
 test "starts_with / ends_with" {

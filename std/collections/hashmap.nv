@@ -131,7 +131,7 @@ export fn HashMap[K, V].with_capacity(min_capacity int) -> HashMap[K, V] {
 // (например WriteBuffer.from). Revert на explicit type до compiler fix
 // (отдельная задача в Plan 11 followup territory).
 export fn HashMap[K, V].from(pairs [](K, V)) -> HashMap[K, V] {
-    let mut m = HashMap[K, V].with_capacity(pairs.len * 2)
+    let mut m = HashMap[K, V].with_capacity(pairs.len() * 2)
     for (k, v) in pairs {
         m.insert(k, v)
     }
@@ -150,7 +150,7 @@ export fn HashMap[K, V] @len() -> int => @_count
 export fn HashMap[K, V] @is_empty() -> bool => @_count == 0
 
 // HashMap.@capacity() — общая ёмкость buckets массива.
-export fn HashMap[K, V] @capacity() -> int => @_buckets.len
+export fn HashMap[K, V] @capacity() -> int => @_buckets.len()
 
 
 // HashMap.@get(key) — найти значение по ключу.
@@ -233,7 +233,7 @@ export fn HashMap[K, V] mut @insert_new(key K, value V) {
 // mono path. Erased generic body stub'ится (caller-side mono drives).
 export fn HashMap[K, V] @clone() -> HashMap[K, V] {
     let mut copy = HashMap[K, V].with_capacity(@_count)
-    for i in 0..@_buckets.len {
+    for i in 0..@_buckets.len() {
         match @_buckets[i] {
             Occupied { key: k, value: v } => copy.insert_new(k, v)
             _ => {}
@@ -252,7 +252,7 @@ export fn HashMap[K, V] @clone() -> HashMap[K, V] {
 // (separate plan). Bootstrap workaround — direct field access на
 // ._buckets через Plan 56 array-element-type propagation fix.
 export fn HashMap[K, V] mut @merge_from(other HashMap[K, V]) {
-    for i in 0..other._buckets.len {
+    for i in 0..other._buckets.len() {
         match other._buckets[i] {
             Occupied { key: k, value: v } => @insert(k, v)
             _ => {}
@@ -265,7 +265,7 @@ export fn HashMap[K, V] mut @merge_from(other HashMap[K, V]) {
 // Возвращает новый HashMap с парами для которых pred(k, v) == true.
 export fn HashMap[K, V] @filter(pred fn(K, V) -> bool) -> HashMap[K, V] {
     let mut out = HashMap[K, V].with_capacity(@_count)
-    for i in 0..@_buckets.len {
+    for i in 0..@_buckets.len() {
         match @_buckets[i] {
             Occupied { key: k, value: v } => if pred(k, v) { out.insert_new(k, v) }
             _ => {}
@@ -317,7 +317,7 @@ export fn HashMap[K, V] mut @remove(key K) -> Option[V] {
 // Не освобождает массив (просто заполняет Empty), чтобы не
 // аллоцировать заново при следующем insert.
 export fn HashMap[K, V] mut @clear() {
-    for i in 0..@_buckets.len {
+    for i in 0..@_buckets.len() {
         @_buckets[i] = Empty
     }
     @_count = 0
@@ -379,7 +379,7 @@ export fn HashMap[K, V] @iter() -> HashMapIter[K, V] =>
 //
 // Структурно совместима с любым итератором: { next() -> Option[T] }.
 export fn HashMapIter[K, V] mut @next() -> Option[(K, V)] {
-    while @pos < @map._buckets.len {
+    while @pos < @map._buckets.len() {
         let slot = @map._buckets[@pos]
         @pos += 1
         if let Occupied { key, value } = slot {
@@ -429,7 +429,7 @@ export fn ValuesIter[K, V] mut @next() -> Option[V] =>
 //
 // Linear probing: cap-mask вместо modulo.
 fn HashMap[K, V] @find_slot(key K) -> int {
-    let mask = @_buckets.len - 1
+    let mask = @_buckets.len() - 1
     let mut idx = (key.hash() as int) & mask
     let mut first_tombstone = -1
 
@@ -457,15 +457,15 @@ fn HashMap[K, V] @find_slot(key K) -> int {
 // превышен или слишком много tombstones.
 fn HashMap[K, V] mut @maybe_grow() {
     let used = @_count + @_tombstones
-    let threshold = (@_buckets.len as f64 * @load_factor) as int
+    let threshold = (@_buckets.len() as f64 * @load_factor) as int
     if used < threshold { return }
 
     // Если tombstones — большая часть, можно rehash в тот же размер.
     // Иначе удваиваем capacity.
     let new_cap = if @_tombstones * 2 > @_count {
-        @_buckets.len
+        @_buckets.len()
     } else {
-        @_buckets.len * 2
+        @_buckets.len() * 2
     }
 
     @rehash(new_cap)

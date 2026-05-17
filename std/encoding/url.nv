@@ -75,7 +75,7 @@ export type ParseUrlError
 /// Throws `ParseUrlError`. По D67 `?` после нельзя.
 #stable(since = "0.1")
 export fn Url.from(s str) Fail[ParseUrlError] -> Self {
-    if s.len == 0 { throw EmptyInput }
+    if s.len() == 0 { throw EmptyInput }
 
     // 1. Извлечь scheme (до первого ":") и валидировать.
     let (scheme, after_scheme) = parse_scheme(s)
@@ -83,7 +83,7 @@ export fn Url.from(s str) Fail[ParseUrlError] -> Self {
     // 2. Если "://" — есть authority (user/host/port), иначе path сразу.
     let (user, password, host, port, after_authority) =
         if after_scheme.starts_with("//") {
-            parse_authority(after_scheme.slice(2, after_scheme.len))
+            parse_authority(after_scheme.slice(2, after_scheme.len()))
         } else {
             (None, None, None, None, after_scheme)
         }
@@ -93,9 +93,9 @@ export fn Url.from(s str) Fail[ParseUrlError] -> Self {
 
     // 4. Query — после "?", до "#".
     let (query, after_query) = if after_path.starts_with("?") {
-        let rest = after_path.slice(1, after_path.len)
+        let rest = after_path.slice(1, after_path.len())
         match rest.find("#") {
-            Some(i) => (Some(rest.slice(0, i)), rest.slice(i, rest.len))
+            Some(i) => (Some(rest.slice(0, i)), rest.slice(i, rest.len()))
             None    => (Some(rest), "")
         }
     } else {
@@ -104,7 +104,7 @@ export fn Url.from(s str) Fail[ParseUrlError] -> Self {
 
     // 5. Fragment — после "#".
     let fragment = if after_query.starts_with("#") {
-        Some(after_query.slice(1, after_query.len))
+        Some(after_query.slice(1, after_query.len()))
     } else {
         None
     }
@@ -128,14 +128,14 @@ fn parse_scheme(s str) Fail[ParseUrlError] -> (str, str) {
                 _ => ()
             }
             // Остальные — letter/digit/+/-/.
-            for j in 1..scheme.len {
+            for j in 1..scheme.len() {
                 match scheme.char_at(j) {
                     Some(c) if !is_scheme_char(c) =>
                         throw InvalidScheme { value: scheme }
                     _ => ()
                 }
             }
-            (scheme.to_lower(), s.slice(i + 1, s.len))
+            (scheme.to_lower(), s.slice(i + 1, s.len()))
         }
     }
 }
@@ -146,17 +146,17 @@ fn parse_authority(s str) Fail[ParseUrlError] -> (Option[str], Option[str], Opti
     // Найти конец authority — первый из /, ?, #.
     let auth_end = find_first_of(s, "/?#")
     let (auth, rest) = match auth_end {
-        Some(i) => (s.slice(0, i), s.slice(i, s.len))
+        Some(i) => (s.slice(0, i), s.slice(i, s.len()))
         None    => (s, "")
     }
 
-    if auth.len == 0 {
+    if auth.len() == 0 {
         return (None, None, None, None, rest)
     }
 
     // Userinfo — до "@", если есть
     let (userinfo_opt, host_port) = match auth.find("@") {
-        Some(i) => (Some(auth.slice(0, i)), auth.slice(i + 1, auth.len))
+        Some(i) => (Some(auth.slice(0, i)), auth.slice(i + 1, auth.len()))
         None    => (None, auth)
     }
 
@@ -164,7 +164,7 @@ fn parse_authority(s str) Fail[ParseUrlError] -> (Option[str], Option[str], Opti
     let (user, password) = match userinfo_opt {
         None => (None, None)
         Some(ui) => match ui.find(":") {
-            Some(i) => (Some(ui.slice(0, i)), Some(ui.slice(i + 1, ui.len)))
+            Some(i) => (Some(ui.slice(0, i)), Some(ui.slice(i + 1, ui.len())))
             None    => (Some(ui), None)
         }
     }
@@ -172,7 +172,7 @@ fn parse_authority(s str) Fail[ParseUrlError] -> (Option[str], Option[str], Opti
     // host[:port]
     let (host, port) = match host_port.find(":") {
         Some(i) => {
-            let port_str = host_port.slice(i + 1, host_port.len)
+            let port_str = host_port.slice(i + 1, host_port.len())
             let port_num = match int.try_from(port_str) {
                 Ok(n) if n >= 0 && n <= 65535 => n
                 _                              => throw InvalidPort { value: port_str }
@@ -190,14 +190,14 @@ fn parse_path(s str) -> (str, str) {
     // Path до "?" или "#" или EOF
     let path_end = find_first_of(s, "?#")
     match path_end {
-        Some(i) => (s.slice(0, i), s.slice(i, s.len))
+        Some(i) => (s.slice(0, i), s.slice(i, s.len()))
         None    => (s, "")
     }
 }
 
 fn find_first_of(s str, chars str) -> Option[int] {
     let mut i = 0
-    while i < s.len {
+    while i < s.len() {
         match s.char_at(i) {
             Some(c) => if chars.contains(str.from(c)) { return Some(i) }
             None    => return None
@@ -302,7 +302,7 @@ export fn Url @into() -> str {
 /// ```
 #stable(since = "0.1")
 export fn Url.encode_query(s str) -> str {
-    let mut buf = StringBuilder.with_capacity(s.len * 2)    // worst case
+    let mut buf = StringBuilder.with_capacity(s.len() * 2)    // worst case
     for c in s.chars() {
         if is_unreserved(c) {
             buf.append(c)
@@ -353,12 +353,12 @@ export fn Url.encode_query(s str) -> str {
 /// Percent-decode query string. Throws `InvalidPercentEncoding` если `%XX` malformed.
 #stable(since = "0.1")
 export fn Url.decode_query(s str) Fail[ParseUrlError] -> str {
-    let mut buf = WriteBuffer.with_capacity(s.len)
+    let mut buf = WriteBuffer.with_capacity(s.len())
     let mut i = 0
-    while i < s.len {
+    while i < s.len() {
         match s.char_at(i) {
             Some('%') => {
-                if i + 2 >= s.len {
+                if i + 2 >= s.len() {
                     throw InvalidPercentEncoding { position: i }
                 }
                 let hi = hex_value_or_throw(s, i + 1)

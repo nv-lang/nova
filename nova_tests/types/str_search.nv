@@ -117,7 +117,7 @@ test "split-by-find: parse 'key:value'" {
     let i = s.find(":").unwrap_or(-1)
     assert(i == 4)
     let key = s.slice(0, i)
-    let val = s.slice(i + 1, s.len)
+    let val = s.slice(i + 1, s.len())
     assert(key == "user")
     assert(val == "42")
 }
@@ -127,7 +127,7 @@ test "split-by-rfind: get last segment of path" {
     let i = path.rfind("/").unwrap_or(-1)
     assert(i == 14)
     let dir = path.slice(0, i)
-    let name = path.slice(i + 1, path.len)
+    let name = path.slice(i + 1, path.len())
     assert(dir == "/usr/local/bin")
     assert(name == "nova")
 }
@@ -138,7 +138,7 @@ test "split-by-rfind: get last segment of path" {
 
 test "slice: full range == original" {
     let s = "hello"
-    let r = s.slice(0, s.len)
+    let r = s.slice(0, s.len())
     assert(r == "hello")
 }
 
@@ -146,7 +146,7 @@ test "slice: empty slice (a == b)" {
     let s = "hello"
     let r = s.slice(2, 2)
     assert(r == "")
-    assert(r.len == 0)
+    assert(r.len() == 0)
 }
 
 test "slice: middle" {
@@ -161,7 +161,7 @@ test "slice: from start" {
 
 test "slice: to end" {
     let s = "hello"
-    let r = s.slice(2, s.len)
+    let r = s.slice(2, s.len())
     assert(r == "llo")
 }
 
@@ -190,24 +190,24 @@ test "rfind is case-sensitive" {
 
 test "len: ASCII — codepoints == bytes" {
     let s = "hello"
-    assert(s.len == 5)             // 5 codepoints (member access, school B)
+    assert(s.len() == 5)             // 5 codepoints (member access, school B)
     assert(s.byte_len() == 5)      // 5 bytes
 }
 
 test "len: Cyrillic — codepoints != bytes" {
     let s = "Привет"               // 6 codepoints, 12 bytes (2 byte/char UTF-8)
-    assert(s.len == 6)             // school B: codepoints
+    assert(s.len() == 6)             // school B: codepoints
     assert(s.byte_len() == 12)     // bytes
 }
 
 test "len: emoji — 4 байта на codepoint" {
     let s = "ab😀cd"                // 5 codepoints, 4 ASCII + 4 emoji = 8 bytes
-    assert(s.len == 5)
+    assert(s.len() == 5)
     assert(s.byte_len() == 8)
 }
 
 test "len: empty string" {
-    assert("".len == 0)
+    assert("".len() == 0)
     assert("".byte_len() == 0)
 }
 
@@ -215,7 +215,7 @@ test "len for mixed content" {
     let s = "a Привет b"           // a + space + 6 cyrillic + space + b = 10 codepoints
                                    // ASCII: a, space, space, b = 4 bytes
                                    // Cyrillic: 6*2 = 12 bytes; total bytes = 16
-    assert(s.len == 10)            // codepoints
+    assert(s.len() == 10)            // codepoints
     assert(s.byte_len() == 16)     // bytes
 }
 
@@ -249,7 +249,7 @@ test "split-by-find with Cyrillic" {
     let i = s.find(":").unwrap_or(-1)
     assert(i == 4)                 // codepoint offset
     let key = s.slice(0, i)
-    let val = s.slice(i + 1, s.len)
+    let val = s.slice(i + 1, s.len())
     assert(key == "ключ")
     assert(val == "значение")
 }
@@ -259,7 +259,7 @@ test "slice across emoji boundary" {
     let r = s.slice(2, 3)
     assert(r == "😀")
     assert(r.byte_len() == 4)      // emoji = 4 bytes
-    assert(r.len == 1)             // 1 codepoint
+    assert(r.len() == 1)             // 1 codepoint
 }
 
 // ================================================================
@@ -272,13 +272,13 @@ test "slice across emoji boundary" {
 test "bytes: ASCII — каждый символ = 1 байт" {
     let s = "abc"
     let bs = s.bytes()
-    assert(bs.len == 3)
+    assert(bs.len() == 3)
 }
 
 test "bytes: Cyrillic — UTF-8 многобайтовое представление" {
     let s = "Привет"               // 6 codepoints, 12 bytes
     let bs = s.bytes()
-    assert(bs.len == 12)
+    assert(bs.len() == 12)
 }
 
 test "bytes: for-in over s.bytes()" {
@@ -329,12 +329,12 @@ test "chars: emoji decode" {
 
 test "split: basic" {
     let parts = "a,b,c".split(",")
-    assert(parts.len == 3)
+    assert(parts.len() == 3)
 }
 
 test "split: no separator → один элемент" {
     let parts = "abc".split(",")
-    assert(parts.len == 1)
+    assert(parts.len() == 1)
 }
 
 test "split: для for-in" {
@@ -349,7 +349,7 @@ test "split: для for-in" {
 test "split: trailing separator" {
     let parts = "a,b,".split(",")
     // ["a", "b", ""] — empty tail
-    assert(parts.len == 3)
+    assert(parts.len() == 3)
 }
 
 // ================================================================
@@ -384,7 +384,7 @@ test "bytes: extreme values 0..255 через WriteBuffer" {
     wb.write_byte(0x00)
     wb.write_byte(0x7F)
     let bs = wb.into()
-    assert(bs.len == 3)
+    assert(bs.len() == 3)
 }
 
 test "bytes: for-in over packed []byte" {

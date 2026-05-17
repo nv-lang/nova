@@ -64,7 +64,7 @@ fn make_header_hs256() -> HashMap[str, JsonValue] {
 #stable(since = "0.1")
 export fn Jwt.decode_hs256(secret []byte, token str) Fail[JwtError] -> JsonValue {
     let parts = token.split(".")
-    if parts.len != 3 { throw InvalidFormat }
+    if parts.len() != 3 { throw InvalidFormat }
 
     let header_b64 = parts[0]
     let payload_b64 = parts[1]
@@ -95,7 +95,7 @@ export fn Jwt.decode_hs256(secret []byte, token str) Fail[JwtError] -> JsonValue
     let signing_input = header_b64 + "." + payload_b64
     let expected_mac = HmacSha256.compute(secret, signing_input.bytes())
     let actual_sig = Base64.decode_url(sig_b64)
-    if actual_sig.len != 32 { throw InvalidSignature }
+    if actual_sig.len() != 32 { throw InvalidSignature }
 
     // Constant-time compare
     let mut diff = 0

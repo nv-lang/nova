@@ -25,8 +25,8 @@ export type Deque[T] {
 
 export fn Deque[T].new() -> Self => { _items: [] }
 
-export fn Deque[T] @len() -> int => @_items.len
-export fn Deque[T] @is_empty() -> bool => @_items.len == 0
+export fn Deque[T] @len() -> int => @_items.len()
+export fn Deque[T] @is_empty() -> bool => @_items.len() == 0
 
 
 // O(1) amortized — append к концу
@@ -45,8 +45,8 @@ export fn Deque[T] mut @push_front(x T) -> () {
 
 // O(1)
 export fn Deque[T] mut @pop_back() -> Option[T] {
-    if @_items.len == 0 { return None }
-    let last_idx = @_items.len - 1
+    if @_items.len() == 0 { return None }
+    let last_idx = @_items.len() - 1
     let value = @_items[last_idx]
     let mut new_items []T = []
     for i in 0..last_idx {
@@ -59,11 +59,11 @@ export fn Deque[T] mut @pop_back() -> Option[T] {
 
 // O(n) на bootstrap (shift); O(1) в production через head pointer.
 export fn Deque[T] mut @pop_front() -> Option[T] {
-    if @_items.len == 0 { return None }
+    if @_items.len() == 0 { return None }
     let value = @_items[0]
     let mut new_items []T = []
     let mut i = 1
-    while i < @_items.len {
+    while i < @_items.len() {
         new_items.push(@_items[i])
         i += 1
     }
@@ -74,17 +74,17 @@ export fn Deque[T] mut @pop_front() -> Option[T] {
 
 // Peek, без удаления
 export fn Deque[T] @front() -> Option[T] {
-    if @_items.len == 0 { None } else { Some(@_items[0]) }
+    if @_items.len() == 0 { None } else { Some(@_items[0]) }
 }
 
 export fn Deque[T] @back() -> Option[T] {
-    if @_items.len == 0 { None } else { Some(@_items[@_items.len - 1]) }
+    if @_items.len() == 0 { None } else { Some(@_items[@_items.len() - 1]) }
 }
 
 
 // Random access
 export fn Deque[T] @get(i int) -> Option[T] {
-    if i < 0 || i >= @_items.len { None } else { Some(@_items[i]) }
+    if i < 0 || i >= @_items.len() { None } else { Some(@_items[i]) }
 }
 
 

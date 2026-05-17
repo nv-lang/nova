@@ -17,7 +17,7 @@ fn safe_index(xs []int, i int) -> Result {
     if i < 0 {
         return Err("negative index")
     }
-    if i >= xs.len {
+    if i >= xs.len() {
         return Err("out of bounds")
     }
     Ok(xs[i])

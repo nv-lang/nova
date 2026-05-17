@@ -282,7 +282,7 @@ fn is_hex_digit(c char) -> bool =>
     is_digit(c) || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')
 
 fn Lexer mut @read_keyword(kw str, t Token, line int, col int) Fail[ParseJsonError] -> TokenWithPos {
-    for i in 0..kw.len {
+    for i in 0..kw.len() {
         let expected = kw.char_at(i)
         let actual = @peek()
         if Some(expected.unwrap_or(' ')) != actual {
@@ -748,9 +748,9 @@ fn format_object(m HashMap[str, JsonValue]) -> str {
 export fn pretty(v JsonValue) -> str => pretty_at(v, 0)
 
 fn pretty_at(v JsonValue, depth int) -> str => match v {
-    Array(xs) if xs.len == 0 => "[]"
+    Array(xs) if xs.len() == 0 => "[]"
     Array(xs) => pretty_array(xs, depth)
-    Object(m) if m.len == 0 => "{}"
+    Object(m) if m.len() == 0 => "{}"
     Object(m) => pretty_object(m, depth)
     _ => v.into()
 }
@@ -806,7 +806,7 @@ test "parse: пустые collections" {
     let arr = Json.parse("[]")
     assert(arr.is_array())
     match arr.as_array() {
-        Some(xs) => assert(xs.len == 0)
+        Some(xs) => assert(xs.len() == 0)
         None     => assert(false)
     }
 
@@ -818,7 +818,7 @@ test "parse: array элементов" {
     let v = Json.parse("[1, 2, 3]")
     match v.as_array() {
         Some(xs) => {
-            assert(xs.len == 3)
+            assert(xs.len() == 3)
             assert(xs[0].as_num() == Some(1.0))
             assert(xs[1].as_num() == Some(2.0))
             assert(xs[2].as_num() == Some(3.0))
@@ -845,7 +845,7 @@ test "parse: nested structures" {
         Some(root) => match root.get("users") {
             Some(users_v) => match users_v.as_array() {
                 Some(users) => {
-                    assert(users.len == 2)
+                    assert(users.len() == 2)
                     assert(users[0].as_object().is_some())
                 }
                 None => assert(false)
@@ -869,7 +869,7 @@ test "parse: unicode escape" {
 test "parse: surrogate pair (emoji)" {
     let v = Json.parse("\"\\uD83D\\uDE00\"")   // 😀 (U+1F600)
     match v.as_str() {
-        Some(s) => assert(s.len > 0)
+        Some(s) => assert(s.len() > 0)
         None    => assert(false)
     }
 }
@@ -992,7 +992,7 @@ test "pretty: формат с отступами" {
 test "whitespace терпимость" {
     let v = Json.parse("  [  1  ,  2  ]  ")
     match v.as_array() {
-        Some(xs) => assert(xs.len == 2)
+        Some(xs) => assert(xs.len() == 2)
         None     => assert(false)
     }
 }

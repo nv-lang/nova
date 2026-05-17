@@ -33,24 +33,24 @@ export type StatsError
 /// Arithmetic mean. Throws `EmptyInput` для empty array.
 #stable(since = "0.1")
 export fn Stats.mean(xs []f64) Fail[StatsError] -> f64 {
-    if xs.len == 0 { throw EmptyInput }
+    if xs.len() == 0 { throw EmptyInput }
     let mut sum = 0.0
     for x in xs { sum = sum + x }
-    sum / (xs.len as f64)
+    sum / (xs.len() as f64)
 }
 
 /// Sample variance (denominator n-1). Throws `EmptyInput`.
 #stable(since = "0.1")
 export fn Stats.variance(xs []f64) Fail[StatsError] -> f64 {
-    if xs.len == 0 { throw EmptyInput }
-    if xs.len == 1 { return 0.0 }
+    if xs.len() == 0 { throw EmptyInput }
+    if xs.len() == 1 { return 0.0 }
     let m = Stats.mean(xs)
     let mut sum_sq = 0.0
     for x in xs {
         let diff = x - m
         sum_sq = sum_sq + diff * diff
     }
-    sum_sq / ((xs.len - 1) as f64)        // sample variance (n-1)
+    sum_sq / ((xs.len() - 1) as f64)        // sample variance (n-1)
 }
 
 /// Standard deviation = √variance.
@@ -61,7 +61,7 @@ export fn Stats.stddev(xs []f64) Fail[StatsError] -> f64 =>
 /// Median (50th percentile). Sorts copy of xs внутри.
 #stable(since = "0.1")
 export fn Stats.median(xs []f64) Fail[StatsError] -> f64 {
-    if xs.len == 0 { throw EmptyInput }
+    if xs.len() == 0 { throw EmptyInput }
     let sorted = sort_copy(xs)
     let n = sorted.len
     if n % 2 == 1 {
@@ -74,7 +74,7 @@ export fn Stats.median(xs []f64) Fail[StatsError] -> f64 {
 /// Percentile p ∈ [0, 100] с linear interpolation. Throws `InvalidPercentile` если out of range.
 #stable(since = "0.1")
 export fn Stats.percentile(xs []f64, p f64) Fail[StatsError] -> f64 {
-    if xs.len == 0 { throw EmptyInput }
+    if xs.len() == 0 { throw EmptyInput }
     if p < 0.0 || p > 100.0 { throw InvalidPercentile { value: p } }
     let sorted = sort_copy(xs)
     let n = sorted.len
@@ -93,7 +93,7 @@ export fn Stats.percentile(xs []f64, p f64) Fail[StatsError] -> f64 {
 /// Min и max за один pass — `(lo, hi)` tuple.
 #stable(since = "0.1")
 export fn Stats.min_max(xs []f64) Fail[StatsError] -> (f64, f64) {
-    if xs.len == 0 { throw EmptyInput }
+    if xs.len() == 0 { throw EmptyInput }
     let mut lo = xs[0]
     let mut hi = xs[0]
     for x in xs {
