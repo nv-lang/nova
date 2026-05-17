@@ -50,7 +50,7 @@ export fn SnowflakeGen mut @next() Time Fail[SnowflakeError] -> i64 {
     let now = Time.now_ms() as i64
 
     if now < @_last_ms {
-        throw ClockBackwards { now: now, last: @_last_ms }
+        throw ClockBackwards { now, last: @_last_ms }
     }
 
     if now == @_last_ms {

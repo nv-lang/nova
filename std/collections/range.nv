@@ -86,7 +86,7 @@ export type RangeIter {
 
 // `Range.iter()` — конструктор итератора.
 export fn Range @iter() -> RangeIter =>
-    { end: @end, _cur: @start }
+    { @end, _cur: @start }
 
 export fn RangeIter mut @next() -> Option[int] {
     if @_cur >= @end { return None }
@@ -118,7 +118,7 @@ export fn Range @step_by(step int) Fail[OverflowError] -> StepRangeIter {
     if step <= 0 {
         throw OverflowError { msg: "Range.step_by: step must be positive, got ${step}" }
     }
-    StepRangeIter { end: @end, step, _cur: @start }
+    StepRangeIter { @end, step, _cur: @start }
 }
 
 export fn StepRangeIter mut @next() -> Option[int] {
@@ -147,7 +147,7 @@ export type ReverseRangeIter {
 export fn Range @reverse() -> ReverseRangeIter {
     let _cur = if @end > @start { @end - 1 } else { @start }
     let _done = @end <= @start
-    ReverseRangeIter { start: @start, _cur, _done }
+    ReverseRangeIter { @start, _cur, _done }
 }
 
 export fn ReverseRangeIter mut @next() -> Option[int] {

@@ -77,7 +77,7 @@ export fn RetryPolicy.exponential(max_attempts int) -> Self =>
 export fn RetryPolicy.fixed(max_attempts int, delay Duration) -> Self =>
     {
         max_attempts,
-        backoff: Fixed { delay: delay },
+        backoff: Fixed { delay },
         jitter: NoJitter,
     }
 
