@@ -150,16 +150,35 @@ Scope note: full mono'd Result (NovaRes_<T>_<E> typedefs) — отдельная
 масштабная переработка ≈ Plan 56 vtable scope. Targeted fix покрывает
 основной use-case без системного refactor'а.
 
-### Fix C: Mono enrollment для anonymous record literal в generic return ⏸ deferred
+### Fix C: Mono enrollment для anonymous record literal в generic return ✅ VERIFIED 2026-05-17 EOD
 
-При emit anonymous record literal в return position generic fn'а с
-known `current_fn_return_ty` ending с mono'd template name (e.g.
-`Nova_Box____nova_int*`):
-- Trigger mono instance enrollment для template's struct definition.
-- Use substituted struct name (`Nova_Box____nova_int`) вместо placeholder
-  `Nova_Box____Nova_T_p`.
+**Status:** **no longer a bug** — implicitly resolved через Plan 59
+mono pipeline + per-static-method mono enrollment infrastructure.
 
-Scope: ~80-150 LOC + 5-10 tests. Deferred — не блокирует stdlib текущий.
+Comprehensive regression test exercises all предполагаемых failure
+scenarios:
+- `Box[T].of(value T) -> Box[T] => { v: value }` (single-field).
+- `Pair[A, B].make` (multi-field, heterogeneous types).
+- `Holder[T]` (T-field + concrete-type int field).
+- `Box[Box[int]].of` (nested generic).
+- `Box[T].twin` (factory-calls-factory intermediate helper).
+- Computed-field record literal.
+- Cross-module call (`import other.{Box}; Box[int].of(42)`).
+
+ВСЕ emit правильно mono'd struct names (`Nova_Box____nova_int*`,
+`Nova_Box____nova_str*`, etc.), **без** `Nova_T_p` placeholder leak.
+
+Tests (permanent regression guards):
+- `nova_tests/plan63/f1_anonymous_record_factory.nv` — 8 sub-tests.
+- `nova_tests/plan63/cm_box_use.nv` + `nova_tests/plan63/cm_box/lib.nv`
+  — cross-module folder-module factory case.
+
+**Remaining edge case (NOT Fix C scope):** generic method с method-level
+type param `[U]` (e.g. `Wrapper[T] @map[U](f fn(T) -> U) -> Wrapper[U]`)
+— mono'd только по receiver T, U остаётся `Nova_U_p` placeholder. Это
+**Plan 48 Ф.7 method-param mono** territory (extends per-receiver mono
+на per-method-typearg). Не блокирует Plan 63 closure — это полностью
+отдельная feature.
 
 ### Fix D: Typeargs-aware overload dispatch ✅ implicitly DONE
 
@@ -174,12 +193,14 @@ Acceptance: f18/f19 PASS — HashMap.new/with_capacity/clone/filter/from
 
 - ✅ `let snap = sb.peek()` infers snap as `str` (no explicit annotation). [Fix A]
 - ✅ `import X as p; p.VariadicFn(a, b, c)` lowers корректно. [Fix B]
-- ⏸ `Box[int].of(42)` (generic factory) — Fix C deferred, не критично.
+- ✅ `Box[int].of(42)` (generic factory) [Fix C — verified 2026-05-17 EOD,
+  implicitly resolved via Plan 59 mono pipeline].
 - ✅ `HashMap[str, int].from(pairs)` dispatches к HashMap.from. [Fix D + E]
 - ✅ `for (k, v) in pairs` в generic method body работает. [Fix E]
 - ✅ `Result[(T, U), E]` Ok-payload destructure работает. [Fix F]
 - ✅ Existing 620+ regression tests не регрессят (только Windows AV flakes).
 - ✅ Все 18 tests в `nova_tests/plan11_followup/` PASS (без workaround'ов).
+- ✅ Plan 63 fully closed (все 6 fixes A/B/C/D/E/F resolved).
 
 ## Связь с другими планами
 
