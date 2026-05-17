@@ -6452,29 +6452,61 @@ impl CEmitter {
         // Enables `for (k, v) in pairs` to extract typed fields without losing the
         // concrete K/V → nova_str/nova_int substitution stored in current_type_subst.
         let mut saved_tuple_elem_keys: Vec<String> = Vec::new();
+        // Plan 63 Fix E: ALSO save/restore array_element_types для fn params, чтобы
+        // не подцепить leak'нувшую запись из caller'а (e.g. test fn body создал
+        // `let pairs = [...]` с array_element_types["pairs"], и static method
+        // тоже принимает param "pairs" — без save/restore for-loop читает
+        // caller'скую запись с неправильным storage type).
+        let mut saved_array_elem_for_params: Vec<(String, Option<String>)> = Vec::new();
         for p in &fn_decl.params {
             if let crate::ast::TypeRef::Array(inner, _) = &p.ty {
                 if let crate::ast::TypeRef::Tuple(elems, _) = inner.as_ref() {
                     if !elems.is_empty() {
+                        // Plan 63 Fix E: для mono'd tuple field types кладём raw
+                        // C type (без `*`). Mono'd tuple struct хранит values
+                        // напрямую (no pointer-stomping), так что destructure'у
+                        // нужны raw types для direct `.fN` access. Boxing-wrap
+                        // оставлен только для legacy _NovaTupleN path'ов где
+                        // mono не выходит концлуч концом (e.g. iter-method case).
+                        let tuple_c_for_mono_check = self.type_ref_to_c(inner)
+                            .unwrap_or_else(|_| String::new());
+                        let is_mono_tuple = tuple_c_for_mono_check.starts_with("_NovaTuple_");
                         let field_tys: Vec<String> = elems.iter()
                             .map(|e| {
                                 let c_ty = self.type_ref_to_c(e)
                                     .unwrap_or_else(|_| "nova_int".to_string());
-                                // Mirror emit_tuple_lit boxing: struct types (nova_str, nova_unit,
-                                // _NovaTupleN, NovaOpt_*) are heap-allocated and stored as pointer.
-                                let needs_heap = c_ty.starts_with("_NovaTuple")
-                                    || c_ty.starts_with("NovaOpt_")
-                                    || c_ty == "nova_str"
-                                    || c_ty == "nova_unit";
-                                if needs_heap && !c_ty.ends_with('*') {
-                                    format!("{}*", c_ty)
-                                } else {
+                                if is_mono_tuple {
                                     c_ty
+                                } else {
+                                    // Legacy _NovaTupleN path: fields boxed.
+                                    let needs_heap = c_ty.starts_with("_NovaTuple")
+                                        || c_ty.starts_with("NovaOpt_")
+                                        || c_ty == "nova_str"
+                                        || c_ty == "nova_unit";
+                                    if needs_heap && !c_ty.ends_with('*') {
+                                        format!("{}*", c_ty)
+                                    } else {
+                                        c_ty
+                                    }
                                 }
                             })
                             .collect();
                         self.tuple_element_types.insert(p.name.clone(), field_tys);
                         saved_tuple_elem_keys.push(p.name.clone());
+
+                        // Plan 63 Fix E: register array_element_types для param, чтобы
+                        // for-loop emit видел typed pointer storage `_NovaTuple_<mono>*`.
+                        // Без этого elem_ty fallback → "nova_int" (через arr_ty)
+                        // ИЛИ подхватывает leak'нувшую запись из caller'а.
+                        let tuple_c = self.type_ref_to_c(inner)
+                            .unwrap_or_else(|_| format!("_NovaTuple{}", elems.len()));
+                        let stored_ty = if !tuple_c.ends_with('*') {
+                            format!("{}*", tuple_c)
+                        } else {
+                            tuple_c
+                        };
+                        let prev = self.array_element_types.insert(p.name.clone(), stored_ty);
+                        saved_array_elem_for_params.push((p.name.clone(), prev));
                     }
                 }
             }
@@ -6634,6 +6666,14 @@ impl CEmitter {
         }
         for key in &saved_tuple_elem_keys {
             self.tuple_element_types.remove(key);
+        }
+        // Plan 63 Fix E: restore caller-scope array_element_types для params, чтобы
+        // не утекали наши mono'd substituted entries в outer fn body.
+        for (name, prev) in saved_array_elem_for_params {
+            match prev {
+                Some(old) => { self.array_element_types.insert(name, old); }
+                None => { self.array_element_types.remove(&name); }
+            }
         }
         self.flush_boxed_vars();
         self.indent -= 1;
@@ -13047,8 +13087,16 @@ impl CEmitter {
                 };
                 let tup_tmp = self.fresh_tmp();
                 // elem_ty == "nova_int" means the element is a heap-pointer to _NovaTupleN.
-                // Otherwise it's the tuple struct stored directly.
-                if elem_ty == "nova_int" {
+                // Plan 63 Fix E: для mono'd tuple pointer (_NovaTuple_<arity>_<sigs>*) —
+                // deref в mono'd struct value, не в legacy _NovaTupleN. Это позволяет
+                // `for (k, v) in pairs` в generic method body корректно destructure
+                // typed tuples (без leaked entry из caller scope).
+                let is_mono_tuple_ptr = elem_ty.starts_with("_NovaTuple_")
+                    && elem_ty.ends_with('*');
+                if is_mono_tuple_ptr {
+                    let mono_ty = elem_ty.trim_end_matches('*');
+                    self.line(&format!("{} {} = *{};", mono_ty, tup_tmp, binding));
+                } else if elem_ty == "nova_int" {
                     self.line(&format!("_NovaTuple{} {} = *(_NovaTuple{}*)(intptr_t){};",
                         arity, tup_tmp, arity, binding));
                 } else {
@@ -14419,9 +14467,23 @@ impl CEmitter {
                 }
             }
         }
-        // Track the true element type if it's not nova_int (e.g. Nova_Box*)
+        // Track the true element type if it's not nova_int (e.g. Nova_Box*).
+        // Plan 63 Fix E: для boxed-storage (heap_alloc + pointer-stomp) кладём
+        // тип-указатель `<T>*`, не raw struct `<T>`. Без этого downstream
+        // for-loop emit'ает direct assignment вместо deref'а, что ломает
+        // mono'd tuple iteration в generic method bodies.
         if first_item_ty != "nova_int" && first_item_ty != elem_ty {
-            self.array_element_types.insert(tmp.clone(), first_item_ty);
+            let was_boxed = elem_ty == "nova_int"
+                && (first_item_ty.starts_with("_NovaTuple")
+                    || first_item_ty == "nova_str"
+                    || first_item_ty.starts_with("NovaOpt_"))
+                && !first_item_ty.ends_with('*');
+            let stored_ty = if was_boxed {
+                format!("{}*", first_item_ty)
+            } else {
+                first_item_ty
+            };
+            self.array_element_types.insert(tmp.clone(), stored_ty);
         }
         Ok(tmp)
     }

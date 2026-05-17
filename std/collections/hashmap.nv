@@ -126,12 +126,8 @@ export fn HashMap[K, V].with_capacity(min_capacity int) -> HashMap[K, V] {
 //
 // Пример:
 //   let m = HashMap.from([("a", 1), ("b", 2)])
-// NB: explicit `HashMap[K, V]` return type (не Self) — `Self` ухудшает D73
-// overload dispatch resolution для `.from`, compiler выбирает first matching
-// (например WriteBuffer.from). Revert на explicit type до compiler fix
-// (отдельная задача в Plan 11 followup territory).
-export fn HashMap[K, V].from(pairs [](K, V)) -> HashMap[K, V] {
-    let mut m = HashMap[K, V].with_capacity(pairs.len * 2)
+export fn HashMap[K, V].from(pairs [](K, V)) -> Self {
+    let mut m = Self.with_capacity(pairs.len * 2)
     for (k, v) in pairs {
         m.insert(k, v)
     }
