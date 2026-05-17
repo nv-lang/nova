@@ -1,0 +1,10 @@
+// Ф.27.1 (Plan 33.6): `#verify` fn без contracts — noop → W2402.
+// EXPECT_COMPILE_WARNING W2402
+
+module contracts.verify_no_contracts_w2402
+
+#verify
+fn no_contracts(x int) -> int
+{
+    x
+}

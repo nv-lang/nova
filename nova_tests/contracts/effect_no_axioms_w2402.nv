@@ -1,0 +1,17 @@
+// Ф.27.3 (Plan 33.6): effect с #pure methods но без axioms → W2402.
+// EXPECT_COMPILE_WARNING W2402
+
+module contracts.effect_no_axioms_w2402
+
+type Counter effect {
+    #pure value() -> int
+}
+
+fn no_op() -> int
+{
+    0
+}
+
+test "effect no axioms" {
+    assert(no_op() == 0)
+}
