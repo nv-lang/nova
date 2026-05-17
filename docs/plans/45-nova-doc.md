@@ -9,7 +9,7 @@
 | Ф.0 Spec D104-D107 | ✅ done | `spec/decisions/{03,09}-*.md` |
 | Ф.1 Lexer `///`/`//!` | ✅ done | `lexer/{mod,token}.rs` + 19 tests |
 | Ф.2 Parser attach | ✅ done | `parser/mod.rs` + 7 tests |
-| Ф.3 Doc attributes | ✅ done | orphan `///` warning; `propagate_stability` pass; sections + inline `#[deprecated]` / `#[stable]` / `#[unstable]` / `#[experimental]` / `#[since]` → `deprecation` + `stability` JSON fields; markdown rendering показывает badges |
+| Ф.3 Doc attributes | ✅ done | orphan `///` warning; `propagate_stability` pass; sections + inline `#deprecated` / `#stable` / `#unstable` / `#experimental` / `#since("X")` / `#stable(since="X")` → `deprecation` + `stability` JSON fields; markdown rendering показывает badges. **D96 canonical syntax (no brackets) + legacy `#[...]` bracket form** — оба формата поддержаны (fix 2026-05-18). `derive_for_module` — inline attrs из `//!` module inner-docs. |
 | Ф.4 DocModel + collector | ✅ done | `doc/{doctree,collector}.rs` |
 | Ф.5 Markdown + sections | ✅ done | `doc/markdown.rs` — 9 канонических секций + 7 tests |
 | Ф.6 Intra-doc links | ✅ done | `doc/links.rs` + 7 tests, broken-link reporting |
