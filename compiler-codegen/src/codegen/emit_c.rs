@@ -10201,7 +10201,15 @@ impl CEmitter {
                     let cond_val = self.emit_expr(cond_expr)?;
                     let cond_text = Self::expr_to_display(cond_expr);
                     let escaped_text = Self::escape_c_str(&cond_text);
-                    return Ok(format!("nova_assert({}, \"{}\")", cond_val, escaped_text));
+                    // Plan 11 Follow-up (2026-05-17): wrap в comma operator,
+                    // чтобы expression имела тип nova_unit. Иначе вызов assert
+                    // в expression position (match arm body, if-expr branch и пр.)
+                    // эмитится как `_tmp = nova_assert(...)` — C error "void to
+                    // nova_unit". Pattern мирроring `(nv_panic(msg), 0)` ниже.
+                    return Ok(format!(
+                        "(nova_assert({}, \"{}\"), NOVA_UNIT)",
+                        cond_val, escaped_text
+                    ));
                 }
             }
             // panic(msg str) -> Never — D13: смерть текущего fiber'а.
