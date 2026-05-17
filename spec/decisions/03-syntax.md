@@ -1670,7 +1670,7 @@ type Holder[T] {
     extra str
 }
 let h = Holder[int] { data: [1, 2, 3], extra: "info" }
-let n = h.len             // прокси к data.len
+let n = h.len()           // прокси к data.len() (D117 method-only)
 h.push(42)                // прокси к data.push
 ```
 
