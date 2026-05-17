@@ -495,6 +495,48 @@ Sub-items (каждый — отдельный commit):
 **Total 57.E implementation estimate:** ~800 LOC (E.1+E.5+E.6 only;
 E.2/E.3/E.4 design-sketched, not implemented).
 
+### **Plan 57.F — Sketches → implementation — ~2-3 dev-days**
+
+Pick-up предыдущих E.2/E.3/E.4 design-sketches. Production-grade
+implementations с opt-in defaults (нет mandatory external dependencies
+для basic Plan 57 usage).
+
+Sub-items (каждый — отдельный commit):
+
+1. **57.F.1 — SSH distributed bench (E.2 impl).**
+   - `bench/remote.rs`: `RemoteConfig` (host/user/repo path/runner_id)
+     parsed из `~/.nova-bench-remotes.toml`.
+   - `nova bench remote list/ping/run` subcommands.
+   - SSH через `std::process::Command("ssh", ...)` — no FFI.
+   - Parallel exec через `std::thread::spawn` per host.
+   - Result fetch через `scp` (или `ssh ... cat result.json` для
+     simplicity).
+   - **LOC:** ~400.
+
+2. **57.F.2 — AI regression interpretation (E.3 impl).**
+   - `bench/ai.rs`: prompt builder + HTTP client + 2 providers
+     (Anthropic, OpenAI).
+   - HTTP через `std::net::TcpStream` + TLS (rustls? — adds dep;
+     OR use system `curl` wrapper for simplicity → no deps).
+   - `nova bench diff ... --explain` flag.
+   - Token budget enforcement + cost logging.
+   - **LOC:** ~350 (curl wrapper approach).
+
+3. **57.F.3 — Memory bandwidth (E.4 impl, Linux-only).**
+   - Extend `bench/cpu_instr.rs` с MBM event detection (sysfs probe).
+   - Per-sample counter в `nova_rt/bench.h` Linux block.
+   - `nova bench mbm-check` diagnostic subcommand.
+   - `--measurement bandwidth` flag.
+   - **LOC:** ~250 (Linux-only stubs на other OS).
+
+4. **57.F.4 — Extend test coverage (e2e + .nv tests).**
+   - E2E sections для F.1 (remote list/ping smoke без real SSH host),
+     F.2 (--explain dry-run validates prompt construction),
+     F.3 (mbm-check graceful).
+   - **LOC:** ~150 (test scripts).
+
+**Total 57.F estimate:** ~1150 LOC + tests.
+
 ### **Plan 57.B — Advanced — ~3-4 dev-days**
 
 Sub-items (каждый — отдельный commit):
@@ -555,6 +597,13 @@ Sub-items (каждый — отдельный commit):
       diagnostic subcommand; per-sample runtime integration — Phase C TBD).
 - [x] `bench "x" { group "g" { case "c" { ... } } }` parse + emit + 4-entry
       output (composite names `x/g/c`).
+
+### **Plan 57.F** — sketches → impl, in progress 2026-05-17
+
+- [ ] SSH distributed bench coordination (E.2 sketch → impl).
+- [ ] AI regression interpretation (E.3 sketch → impl).
+- [ ] Memory bandwidth measurement (E.4 sketch → impl, Linux).
+- [ ] Extended test coverage (e2e + .nv).
 
 ### **Plan 57.E** — ✅ ALL CLOSED 2026-05-17 (3 impl + 3 design-sketch)
 
