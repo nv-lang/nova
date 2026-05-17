@@ -1,0 +1,19 @@
+// Ф.32.1 (Plan 33.6): lemma c ensures идентичными requires → W2402 (tautological).
+// EXPECT_COMPILE_WARNING W2402
+
+module contracts.f32_lemma_tautological_w2402
+
+// requires x >= 0; ensures x >= 0 — лемма не добавляет ничего нового.
+lemma identity_lemma(x int)
+    requires x >= 0
+    ensures x >= 0
+=> x
+
+#verify
+fn caller(x int) -> int
+    requires x >= 0
+    ensures result >= 0
+{
+    apply identity_lemma(x)
+    x
+}
