@@ -12596,6 +12596,32 @@ Diagnostic categories: E2401-E2405, W2401-W2402.
 
 **Plan 33.6 итог за 24 спринта:** полный contract lint catalog + AST walkers.
 
+## Ф.25 — duplicate detection + string len
+
+### Ф.25.1 — duplicate ensures/requires detection
+
+- pipeline.rs: `canon_expr` walker (без spans) → key для dedup HashMap.
+- 2+ idential `ensures`/`requires` → W2402.
+- Test: duplicate_ensures_w2402.
+- Коммит: `80417e5609f`.
+
+### Ф.25.2 — string len non-negative
+
+- trivial.rs: `try_len_check` для `(>= (App "_field_len*" [obj]) goal)` где
+  goal <= 0 → BoolLit(true).
+- Закрывает `ensures result >= 0` для string/array.len().
+- Test: trivial_string_len_positive.
+- Коммит: `80417e5609f`.
+
+### Ф.25.3 — != propagation (defer)
+
+- Risk regression в propagate_equalities. Defer.
+
+**Итого Ф.25:** 2 closed. **172 PASS (+2) / 42 SKIP / 1 pre-existing FAIL.**
+
+**Plan 33.6 итог за 25 спринтов:** complete contract lint catalog + dup detection +
+TrivialBackend string len.
+
 === Plan 45 �.25 � nova tests (positive + negative) ===
 
 ����� �������� �.25 (4 ����) �������� nova-tests .nv ��� �������� �����
