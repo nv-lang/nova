@@ -1,4 +1,4 @@
-# Plan 60 — nv-lang.org dogfooding initiative
+# Plan 64 — nv-lang.org dogfooding initiative
 
 > **Цель:** реальный сайт проекта `nv-lang.org`, написанный (постепенно) на самом
 > Nova. Не «сайт-визитка как у всех», а **продакшен-площадка для самого
@@ -127,7 +127,7 @@ HTTP-сервера на Nova. Это major work, связан с Plan 18 (stdli
 - `std/net/http/server` работает: можно написать 20-строчный hello-world
   HTTP-сервер на Nova
 - Покрытие тестами в `nova_tests/std/net/http/*`
-- Sub-plan (вероятно Plan 60.1 или отдельный 6X) детально расписывает stdlib работу
+- Sub-plan (вероятно Plan 64.1 или отдельный 6X) детально расписывает stdlib работу
 
 ---
 
@@ -223,7 +223,7 @@ Acceptance не фиксированный — это онгоинг.
 
 ## Open questions
 
-- Стоит ли вынести Ф.1 (HTTP stdlib) в отдельный sub-plan (Plan 60.1) или
+- Стоит ли вынести Ф.1 (HTTP stdlib) в отдельный sub-plan (Plan 64.1) или
   отдельный Plan 6X? Решить когда дойдём — зависит от объёма работы.
 - Где хостить логи / метрики? Self-hosted Grafana? Внешний сервис?
 - Нужен ли CI на VPS для сборки бинаря или сборка локально + scp?
