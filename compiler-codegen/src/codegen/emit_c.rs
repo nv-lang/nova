@@ -15090,6 +15090,20 @@ impl CEmitter {
                 // Plan 59 Phase 5: length-prefixed mangle — parse точен для
                 // any nesting depth. Registry-lookup workaround удалён
                 // (был needed когда split-by-`__` ломался на nested).
+                // Plan 59 Ф.7.1: arity diagnostic — если parse возвращает
+                // Some(elems) с **разным** arity, это user error (pattern
+                // arity != tuple arity). Без этого check'а silent fallback
+                // на legacy `_NovaTuple{n}` → wrong type → cryptic CC error
+                // "no member 'fN'". Emit clear Nova-level diagnostic.
+                if let Some(parsed) = Self::parse_mono_tuple_elements(&inferred) {
+                    if parsed.len() != n {
+                        return Err(format!(
+                            "tuple destructure arity mismatch: pattern имеет {} \
+                             элементов, scrutinee tuple `{}` — {} элементов. \
+                             Hint: pattern должен совпадать по arity с tuple-типом.",
+                            n, inferred, parsed.len()));
+                    }
+                }
                 let (struct_name, elem_tys): (String, Vec<String>) =
                     if let Some(elems) = Self::parse_mono_tuple_elements(&inferred)
                         .filter(|e| e.len() == n)
@@ -15363,6 +15377,25 @@ impl CEmitter {
             // (e.g. для `for (k, v) in coll.iter()` где coll — generic mono'd).
             // Без этого все tuple binds получают default `nova_int`.
             let elem_tys = self.tuple_element_types.get(scr_tmp).cloned();
+            // Plan 59 Ф.7.1: arity diagnostic — если pattern arity != actual
+            // tuple arity (lookup tuple_element_types or var_types mono'd
+            // name parse), emit clear Nova-level error до C-emit'а который
+            // даёт нечитаемый "no member 'fN'" message.
+            let actual_arity = elem_tys.as_ref().map(|v| v.len()).or_else(|| {
+                self.var_types.get(scr_tmp)
+                    .and_then(|ty| Self::parse_mono_tuple_elements(ty))
+                    .map(|v| v.len())
+            });
+            if let Some(expected) = actual_arity {
+                if parts.len() != expected {
+                    return Err(format!(
+                        "tuple destructure arity mismatch: pattern имеет {} элементов, \
+                         scrutinee tuple — {} элементов. \
+                         Hint: добавьте/уберите элементы в pattern, чтобы \
+                         совпадало с tuple-типом.",
+                        parts.len(), expected));
+                }
+            }
             for (i, p) in parts.iter().enumerate() {
                 let field = format!("{}{}f{}", scr_tmp, accessor, i);
                 let elem_ty = elem_tys.as_ref()
@@ -15803,6 +15836,24 @@ impl CEmitter {
                 }
             }
             Pattern::Tuple(pats, _) => {
+                // Plan 59 Ф.7.1: arity diagnostic для pattern_bind_typed —
+                // match `Some((a, b, c))` на 2-tuple должен дать clear
+                // Nova error до C-compile failure.
+                let elem_tys_known = self.tuple_element_types.get(scr).cloned();
+                let actual_arity = elem_tys_known.as_ref().map(|v| v.len()).or_else(|| {
+                    self.var_types.get(scr)
+                        .and_then(|ty| Self::parse_mono_tuple_elements(ty))
+                        .map(|v| v.len())
+                });
+                if let Some(expected) = actual_arity {
+                    if pats.len() != expected {
+                        return Err(format!(
+                            "tuple destructure arity mismatch: pattern имеет {} элементов, \
+                             scrutinee tuple — {} элементов. \
+                             Hint: pattern должен совпадать по arity с tuple-типом.",
+                            pats.len(), expected));
+                    }
+                }
                 for (i, p) in pats.iter().enumerate() {
                     match p {
                         Pattern::Wildcard(_) | Pattern::Literal(..) => {}
