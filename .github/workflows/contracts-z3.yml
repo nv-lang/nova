@@ -22,6 +22,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: true
       - name: Build nova-cli (release, no z3)
         run: cargo build --release --manifest-path nova-cli/Cargo.toml
       - name: Run contracts tests (TrivialBackend)
@@ -32,6 +34,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: true
       - name: Install libz3-dev
         run: sudo apt-get install -y libz3-dev
       - name: Build nova-cli (release, z3-backend feature)
