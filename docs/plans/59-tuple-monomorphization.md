@@ -493,3 +493,57 @@ Design only — нет immediate use case для bootstrap.
 
 Working dir: `d:\Sources\nova-lang\.claude\worktrees\plan-59-audit`
 (isolated worktree). Merge в main после complete acceptance.
+
+
+---
+
+## Ф.7.4-7.6 — Deferred до dedicated planning sessions (2026-05-17 EOD+2)
+
+### Rationale: L-priority items требуют design decisions
+
+После закрытия M-priority items (Ф.7.1-7.3) re-assessed L-priority items:
+
+**Ф.7.4 Named tuple fields** (~200 LOC + design):
+- Parser/AST extension straightforward (~50 LOC).
+- Open design questions:
+  - Литерал syntax: `(x: 1, y: 2)` collides с record literal `{x: 1, y: 2}`.
+    Nova должен явно differentiate.
+  - Mixed named+positional `(x: 1, 2)` — allow? Rust не позволяет.
+  - Type-equivalence: `(x: int, y: int)` ≡ `(int, int)` или separate?
+- Decisions impact spec (D27, D111) + may need extra D-block.
+- **Defer:** требует dedicated plan (Plan 64?) с design pre-discussion.
+
+**Ф.7.5 Full mono'd Result** (~300-400 LOC):
+- Plan 63 Fix F+ (ca677dd2147) уже покрывает наблюдаемые cases через
+  targeted boxed-pointer tracking — все 4 case'а Result[(T, U), E]
+  работают (5 sub-tests в f19).
+- Full mono refactor (NovaRes_<T>_<E> typedefs analogous Option):
+  - Расширение sum-type mono infrastructure.
+  - Migration всех Result usage в stdlib + tests.
+  - **Не блокирует prod use** — Fix F+ покрытие достаточно.
+- **Defer:** Plan 65? только когда появится use case с arbitrary T
+  в Result Ok payload (не tuple/struct).
+
+**Ф.7.6 Tuple subtyping / variance** (~200+ LOC):
+- Требует variance system в type-checker (covariance/contravariance).
+- Нет immediate use case в bootstrap; structural typing Nova не имеет.
+- **Design only**, не реализуется до появления requirements.
+
+### Что закрыто Phase 7
+
+- [x] Ф.7.1: tuple arity mismatch diagnostics (commit 12ac69b9700).
+- [x] Ф.7.2: stdlib HashMap.@clone() idiomatic (commit 4a6532ccea5).
+- [x] Ф.7.3: sizeof warning для больших tuples (commit a27e1968040).
+- [-] Ф.7.4: named tuple fields — deferred до dedicated plan.
+- [-] Ф.7.5: full mono'd Result — deferred (Fix F+ покрывает наблюдаемое).
+- [-] Ф.7.6: tuple subtyping — design only, не реализуется без use case.
+
+### Plan 59 финальное состояние
+
+- 7 phases: 6 закрыты полностью, Phase 7 — M-priority items закрыты,
+  L-priority deferred с rationale.
+- 25 regression tests (f1-f25) в nova_tests/plan59/, все PASS.
+- 2 dependent M-markers закрыты (Plan 63 Fix E + Fix F + Fix F+).
+- spec D111 + D-block amendments.
+
+**Validation:** `nova test plan59/` → 25 PASS / 0 FAIL.
