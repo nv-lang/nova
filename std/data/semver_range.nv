@@ -127,16 +127,11 @@ fn parse_one_comparator(s str) Fail[ParseRangeError] -> []Comparator {
 }
 
 fn parse_version(s str) Fail[ParseRangeError] -> Version {
-    // Используем std.semver.Version.from, преобразуем ParseVersionError в наш.
-    // NB: idiomatic `with Fail[A] = |e| throw B {...}` (handler-rethrow) сейчас
-    // ломает codegen (cross-effect throw в handler arm emit'ит wrong type cast).
-    // Pre-existing bug — pending separate fix.
-    let r = with Fail[ParseVersionError] = |e| interrupt Err(e) {
-        Ok(Version.from(s))
-    }
-    match r {
-        Ok(v)  => v
-        Err(_) => throw InvalidVersion { value: s }
+    // Plan 61 followup #1 + #2: cross-effect throw в handler-arm теперь
+    // работает (owner_iframe attach в emit_with). Idiomatic D65 правило 3
+    // form — handler-rethrow напрямую без Result-wrapping.
+    with Fail[ParseVersionError] = |_e| throw InvalidVersion { value: s } {
+        Version.from(s)
     }
 }
 

@@ -1,0 +1,24 @@
+module nova_tests.plan61.f3_typed_result_err
+
+// Plan 61 followup #3: Result[T, CustomErr] с typed Err payload.
+// Hybrid: Nova_Result extended err_typed_payload + tid; constructor
+// nova_make_Result_Err_typed для custom Err; !! dispatch'тся через
+// nova_throw_typed.
+
+export type DbError | ConnFailed(str) | Timeout
+
+fn try_connect() -> Result[int, DbError] {
+    Err(ConnFailed("127.0.0.1:5432"))
+}
+
+test "Result[int, DbError]!!  carries typed payload" {
+    let host = with Fail[DbError] = |e| interrupt (match e {
+        ConnFailed(h) => h
+        Timeout       => "timeout"
+    }) {
+        let _ = try_connect()!!
+        "unreachable"
+    }
+    assert(host == "127.0.0.1:5432",
+           "typed Err payload должен дойти через !! до typed Fail[DbError] handler")
+}

@@ -452,7 +452,17 @@ static inline NovaOpt_nova_int nova_str_char_at(nova_str s, nova_int idx) {
     return r;
 }
 
-/* ---- Built-in Result type (Ok carries nova_int, Err carries nova_str) ---- */
+/* ---- Built-in Result type (Ok carries nova_int, Err carries nova_str) ----
+ *
+ * Plan 61 followup #3: typed Err payload via err_typed_payload + tid.
+ * Backward compat: legacy `Err(nova_str)` использует payload.Err._0;
+ * custom `Err(T)` (T ≠ nova_str) использует err_typed_payload + tid.
+ * `!!` dispatch по tid (NOVA_TID_NONE → legacy string path; иначе typed
+ * throw через nova_throw_typed).
+ *
+ * Full mono'd NovaResult_<T>_<E> per-(T,E) struct — Plan 14/56 territory
+ * (sum-type monomorphization pass). Hybrid дает equivalent semantics для
+ * custom Err без полного mono refactor. */
 #define NOVA_TAG_Result_Ok  0
 #define NOVA_TAG_Result_Err 1
 
@@ -462,15 +472,33 @@ typedef struct Nova_Result {
         struct { nova_int _0; } Ok;
         struct { nova_str _0; } Err;
     } payload;
+    /* Plan 61 followup #3: typed Err payload (NULL для legacy string Err). */
+    void*       err_typed_payload;
+    NovaTypeId  err_typed_type_id;
 } Nova_Result;
 
 static inline Nova_Result* nova_make_Result_Ok(nova_int v) {
     Nova_Result* r = (Nova_Result*)nova_alloc(sizeof(Nova_Result));
-    r->tag = NOVA_TAG_Result_Ok; r->payload.Ok._0 = v; return r;
+    r->tag = NOVA_TAG_Result_Ok; r->payload.Ok._0 = v;
+    r->err_typed_payload = NULL; r->err_typed_type_id = NOVA_TID_NONE;
+    return r;
 }
 static inline Nova_Result* nova_make_Result_Err(nova_str v) {
     Nova_Result* r = (Nova_Result*)nova_alloc(sizeof(Nova_Result));
-    r->tag = NOVA_TAG_Result_Err; r->payload.Err._0 = v; return r;
+    r->tag = NOVA_TAG_Result_Err; r->payload.Err._0 = v;
+    r->err_typed_payload = NULL; r->err_typed_type_id = NOVA_TID_NONE;
+    return r;
+}
+/* Plan 61 followup #3: typed Err constructor. payload — heap-allocated
+ * copy of typed value (caller responsible — обычно codegen эмитит
+ * `T* p = nova_alloc(sizeof(T)); *p = val;` inline). tid = NOVA_TID_<T>. */
+static inline Nova_Result* nova_make_Result_Err_typed(void* payload, NovaTypeId tid) {
+    Nova_Result* r = (Nova_Result*)nova_alloc(sizeof(Nova_Result));
+    r->tag = NOVA_TAG_Result_Err;
+    r->payload.Err._0 = (nova_str){.ptr = "<typed err>", .len = 11};  /* diag fallback */
+    r->err_typed_payload = payload;
+    r->err_typed_type_id = tid;
+    return r;
 }
 static inline nova_bool nova_result_eq(Nova_Result* a, Nova_Result* b) {
     if (a->tag != b->tag) return 0;
