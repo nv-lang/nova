@@ -27,3 +27,4 @@
 | [read-toolchain.md](read-toolchain.md) | Только инфраструктура: nova CLI, test runner, структура репо. Входит в read-project. |
 | [regen-runtime.md](regen-runtime.md) | Регенерирует `std/runtime/*.nv` из `runtime_registry.rs` (Plan 13 Ф.3). |
 | [update-plans-readme.md](update-plans-readme.md) | Синхронизирует сводную таблицу `docs/plans/README.md` после закрытия плана или фазы. |
+| [update-spec.md](update-spec.md) | Аудит и обновление `spec/decisions/*.md` (D-blocks) + `spec/<topic>.md` — drift detection vs implementation, новые D-blocks для закрытых планов. |
