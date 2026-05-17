@@ -20,7 +20,7 @@ version = "0.1.0"
 nova-version = "0.5"
 license = "MIT OR Apache-2.0"
 description = "Демонстрационные программы и tutorial snippets Nova"
-repository = "https://github.com/nova-lang/nova"
+repository = "https://github.com/nv-lang/nova.git"
 
 # Корень — текущий каталог `.` вместо стандартного `src/`,
 # потому что demo-файлы лежат в подкаталогах прямо в examples/,
