@@ -1,0 +1,18 @@
+// Ф.28.1 (Plan 33.6): duplicate `apply lemma(args)` → W2402.
+// EXPECT_COMPILE_WARNING W2402
+
+module contracts.duplicate_apply_w2402
+
+lemma helper(x int)
+    ensures result == x
+=> x
+
+#verify
+fn use_dup(x int) -> int
+    requires x >= 0
+    ensures result == x
+{
+    apply helper(x)
+    apply helper(x)
+    x
+}

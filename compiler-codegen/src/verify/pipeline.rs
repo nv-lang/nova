@@ -2638,6 +2638,16 @@ let t0 = std::time::Instant::now();
                     }
                 }
             }
+            // Ф.28.3 (Plan 33.6): empty effect — methods.is_empty() и axioms.is_empty().
+            if let TypeDeclKind::Effect(methods) = &td.kind {
+                if methods.is_empty() && td.axioms.is_empty() {
+                    report.warnings.push(Diagnostic::new(
+                        format!("effect `{}` пустой (без methods и axioms) [W2402]:\n  \
+                                 удалите или добавьте methods/axioms — пустой effect noop.",
+                            td.name),
+                        td.span));
+                }
+            }
         }
     }
     // Ф.19.2 + Ф.19.3 (Plan 33.6): detection trivial/redundant contracts.
@@ -2870,6 +2880,27 @@ let t0 = std::time::Instant::now();
                              или добавьте contracts.",
                         fd.name),
                     fd.span));
+            }
+            // Ф.28.1 (Plan 33.6): duplicate `apply lemma(args)` detection.
+            let applies = collect_apply_stmts_in_body(&fd.body);
+            let mut seen_applies: std::collections::HashMap<String, Vec<Span>> =
+                std::collections::HashMap::new();
+            for (lemma_name, args, sp) in &applies {
+                let args_canon: Vec<String> = args.iter().map(|a| format!("{:?}", a.kind)).collect();
+                let key = format!("{}({})", lemma_name, args_canon.join(","));
+                seen_applies.entry(key).or_default().push(*sp);
+            }
+            for (key, spans) in &seen_applies {
+                if spans.len() >= 2 {
+                    for sp in spans.iter().skip(1) {
+                        report.warnings.push(Diagnostic::new(
+                            format!("fn `{}`: duplicate `apply {}` [W2402]:\n  \
+                                     повтор apply того же lemma с теми же args не даёт\n  \
+                                     extra info. Удалите дубликат.",
+                                fd.name, key),
+                            *sp));
+                    }
+                }
             }
         }
     }

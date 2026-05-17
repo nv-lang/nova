@@ -167,6 +167,12 @@ fn simplify_app(op: &str, args: &[SmtTerm]) -> SmtTerm {
             (SmtTerm::IntLit(a), SmtTerm::IntLit(b)) => SmtTerm::IntLit(a.saturating_sub(*b)),
             (a, SmtTerm::IntLit(0)) => a.clone(),
             (a, b) if a == b => SmtTerm::IntLit(0),
+            // Ф.28.2 (Plan 33.6): double negation `0 - (0 - X)` → X.
+            (SmtTerm::IntLit(0), SmtTerm::App(op2, a2))
+                if op2 == "-" && a2.len() == 2
+                && matches!(&a2[0], SmtTerm::IntLit(0)) => {
+                a2[1].clone()
+            }
             _ => SmtTerm::App(op.into(), args.to_vec()),
         },
         "*" if args.len() == 2 => match (&args[0], &args[1]) {
