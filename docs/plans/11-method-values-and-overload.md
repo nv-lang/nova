@@ -757,33 +757,43 @@ static Nova_Self Nova_LinkedList_method_reverse(...) { ... }   // unknown type
 с explicit type (история показала что Self.X() ломал mono dispatch ещё до
 моего fix'а, и осторожнее оставить пока).
 
-### Open issues
+### Дополнительный fix: assert-in-expression-position (2026-05-17)
 
-Изначально считал что есть sub-bug «sum-type `-> Self` body resolution» (на
-основе CC-FAIL repro_self_a.nv). При повторном analysis оказалось — это
-**не Self related**. Минимальный repro без assert-in-match-arm passing:
-
-```nova
-export fn Box[T] @swap_empty() -> Self => Empty
-let e = b.swap_empty()              // Nova_Box____nova_int* (✓)
-let is_empty = match e {            // OK
-    Empty   => true
-    Full(_) => false
-}
-assert(is_empty)                    // ОК
-```
-
-Падает только если `assert()` стоит **внутри** match arm body:
-
+Diagnosed одновременно с Self investigation. Падал repro_self_a.nv:
 ```nova
 match e {
-    Empty   => assert(true)         // ❌ codegen emit _nv_match = nova_assert(...)
-    Full(_) => assert(false)        //    nova_assert C-func returns void, не nova_unit
+    Empty   => assert(true)         // ❌ pre-fix: _nv_match = nova_assert(...)
+    Full(_) => assert(false)        //    nova_assert C-func returns void
 }
 ```
 
-**Это отдельный codegen bug** про assert-in-expression-position (match arm
-infers unit type, emit `_nv = nova_assert(...)`, но nova_assert returns void).
-Не Self, не trackится в этом plan'е. Может быть отдельным follow-up'ом.
+C error: «assigning to 'nova_unit' from incompatible type 'void'».
 
-Status: **Self bug полностью закрыт**. Все 5 known scenarios pass.
+**Корень:** assert/debug_assert codegen эмитил bare `nova_assert(cond, msg)`.
+В expression position (match arm body, if-expr branch, etc.) compiler
+declared unit-typed temp + assigned результат — но `nova_assert` C-функция
+returns `void` (см. effects.h:262).
+
+**Fix** в `compiler-codegen/src/codegen/emit_c.rs:10198`: wrap в comma operator
+mирроring `panic` (тот же pattern):
+```rust
+return Ok(format!(
+    "(nova_assert({}, \"{}\"), NOVA_UNIT)",
+    cond_val, escaped_text
+));
+```
+
+Теперь expression имеет тип nova_unit; в statement-position value
+ignored (no harm), в expression position — proper assignment.
+
+Verified: repro_self_a.nv + все touched stdlib — PASS.
+
+### Status
+
+**Self bug полностью закрыт.** Все scenarios pass:
+1. `-> Self` в generic instance method
+2. `Self.method()` static dispatch
+3. `Self.method()` instance dispatch
+4. `other Self` param
+5. `Self { ... }` literal
+6. `match` arm body с assert/panic/throw в expression position
