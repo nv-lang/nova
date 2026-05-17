@@ -508,6 +508,18 @@ enum BenchCmd {
     /// Returns `bench-history` если env не set, иначе `bench-history-<id>`.
     #[command(name = "runner-branch")]
     RunnerBranch,
+    /// Plan 57.E.5: detect changepoints (anomalies) в historical median
+    /// time-series per bench via PELT algorithm. Identifies regimes
+    /// where perf significantly shifted (≥5% delta).
+    #[command(name = "history-anomalies")]
+    HistoryAnomalies {
+        /// Branch (default: auto = NOVA_BENCH_RUNNER_ID-aware).
+        #[arg(long, default_value = "auto")]
+        branch: String,
+        /// Output format (text|json).
+        #[arg(long, default_value = "text")]
+        format: String,
+    },
     /// Plan 57.C.8: Measure per-pass compile time для corpus file(s).
     /// Wraps nova build с NOVA_PERF_TIMER=1; parses __PERF__ markers.
     Corpus {
@@ -2894,6 +2906,52 @@ fn cmd_bench(sub: BenchCmd) -> Result<()> {
             println!("{}", bench::history::default_branch());
             Ok(())
         }
+        BenchCmd::HistoryAnomalies { branch, format } => {
+            let repo = find_repo_root()?;
+            let branch = resolve_history_branch(&branch);
+            let results = bench::anomaly::scan_history(&repo, &branch)?;
+            if format == "json" {
+                let arr: Vec<serde_json::Value> = results.iter().map(|(name, cps)| {
+                    let cps_json: Vec<serde_json::Value> = cps.iter().map(|(entry, cp)| {
+                        serde_json::json!({
+                            "timestamp_unix": entry.timestamp_unix,
+                            "git_sha": entry.git_sha,
+                            "filename": entry.filename,
+                            "index": cp.index,
+                            "mean_before_ns": cp.mean_before,
+                            "mean_after_ns": cp.mean_after,
+                            "delta_pct": cp.delta_pct,
+                        })
+                    }).collect();
+                    serde_json::json!({"bench": name, "changepoints": cps_json})
+                }).collect();
+                let out = serde_json::json!({
+                    "format_version": "1",
+                    "kind": "bench-anomalies",
+                    "branch": branch,
+                    "results": arr,
+                });
+                println!("{}", serde_json::to_string_pretty(&out)?);
+            } else {
+                println!("Anomaly scan на branch `{}`:", branch);
+                if results.is_empty() {
+                    println!("(no significant changepoints — все benches stable)");
+                } else {
+                    for (name, cps) in &results {
+                        println!("\n{}: {} changepoint(s) detected:", name, cps.len());
+                        for (entry, cp) in cps {
+                            let dt = chrono_iso_short(entry.timestamp_unix);
+                            let sign = if cp.delta_pct >= 0.0 { "+" } else { "" };
+                            println!("  @{} (commit {}): {:.1} ns → {:.1} ns ({}{:.1}%)",
+                                dt, &entry.git_sha[..entry.git_sha.len().min(12)],
+                                cp.mean_before, cp.mean_after,
+                                sign, cp.delta_pct);
+                        }
+                    }
+                }
+            }
+            Ok(())
+        }
         BenchCmd::CpuInstrCheck => {
             println!("CPU instructions counter availability:");
             println!("  OS: {}", std::env::consts::OS);
@@ -2984,6 +3042,25 @@ fn cmd_bench(sub: BenchCmd) -> Result<()> {
             Ok(())
         }
     }
+}
+
+/// Plan 57.E.5: short ISO timestamp YYYY-MM-DD HH:MM для anomaly output.
+fn chrono_iso_short(secs: u64) -> String {
+    // Reuse repro::ReproMeta::timestamp_iso8601 logic (Howard Hinnant alg).
+    let z = (secs / 86400) as i64;
+    let h = (secs % 86400) / 3600;
+    let m = (secs % 3600) / 60;
+    let z_adj = z + 719468;
+    let era = if z_adj >= 0 { z_adj } else { z_adj - 146096 } / 146097;
+    let doe = (z_adj - era * 146097) as u64;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let y = (yoe as i64) + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m_cal = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = if m_cal <= 2 { y + 1 } else { y } as i32;
+    format!("{:04}-{:02}-{:02} {:02}:{:02}", year, m_cal, d, h, m)
 }
 
 /// Plan 57.D.4: resolve "auto" → bench::history::default_branch()

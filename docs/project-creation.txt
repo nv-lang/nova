@@ -14379,3 +14379,63 @@ Deferred follow-ups (вне Plan 59 scope):
 - [M-stdlib-iter-in-generic-method-body] — stdlib idiomatic removal
   cascades в @clone, нужна диагностика mono pass state isolation.
 - [M-result-erased-no-mono] — Result generics не monomorphized.
+Session: Plan 57.E — Production extensions (2026-05-17)
+
+Worktree: nova-lang-p57 (branch plan-57)
+
+Plan 57.E — Production extensions (3 impl + 3 design-sketch):
+
+  57.E.1 (commit b3c4a1778da) — dashboard drill-down.
+  bench/dashboard.rs::render_bench_detail() extended: histogram (30 bins)
+  of latest run raw samples + Tukey lo/hi fences markLines + stats
+  sidebar (median/MAD/CI95/range/n/outliers) + comparison view (oldest
+  vs latest median с colored delta).
+
+  57.E.5 (commit 01137b3be46) — PELT changepoint anomaly detection.
+  bench/anomaly.rs:
+  - pelt(series, penalty) -> Vec<cutpoints>: O(n) PELT algorithm
+    (Killick 2012). SSE cost function через prefix sums.
+  - default_penalty() — BIC-like 4·log(n)·variance (conservative).
+  - cuts_to_changepoints() — before/after means + delta_pct.
+  - scan_history() — reads orphan branch, per-bench PELT, filter |delta|>=5%.
+  CLI: `nova bench history-anomalies [--branch X] [--format text|json]`.
+  3/3 unit tests pass.
+
+  57.E.6 (commit b0e7b4ce01d) — e2e shell tests.
+  nova_tests/plan57_e2e/run_e2e.sh: bash script с 11 sections, 25 asserts:
+    1. nova bench run (smoke + JSON v1).
+    2. nova bench diff (geomean output).
+    3. nova bench gate (exit 0|1).
+    4. nova bench history-add + list.
+    5. nova bench dashboard (index/data/drill-down 57.E.1 verification).
+    6. nova bench calibrate.
+    7-8. nova bench corpus --json + --html.
+    9. nova bench runner-branch (default + env).
+    10. nova bench cpu-instr-check.
+    11. nova bench history-anomalies.
+  Cross-platform bash (Git Bash on Windows + native POSIX).
+  Cleanup trap (tmp dir + test branches).
+
+  57.E.2/3/4 (design-sketches, deferred):
+  - 57.E.2: distributed bench coordination — SSH-based orchestrator,
+    config ~/.nova-bench-remotes.toml, `remote run/ping/setup` commands.
+    ~500 LOC если impl. docs/plans/57.E.2-distributed-bench-sketch.md.
+  - 57.E.3: AI-driven regression interpretation — LLM consumer JSON
+    diff + git context, structured natural-language output. ~300 LOC.
+    docs/plans/57.E.3-ai-regression-interpretation-sketch.md.
+  - 57.E.4: memory bandwidth measurement — Intel MBM / AMD QoS via
+    perf_event_open RAW events. Linux-only, CAP_PERFMON. ~200 LOC.
+    docs/plans/57.E.4-memory-bandwidth-sketch.md.
+  Each sketch: motivation + architecture + API + phased plan + risks
+  + acceptance criteria + alternative considered + when to implement.
+
+Test coverage (cumulative all phases):
+- 47 unit tests (bench:: 44 + anomaly:: 3).
+- 11 .nv tests в nova_tests/plan57/ (4 positive + 7 negative).
+- 25 e2e shell asserts в nova_tests/plan57_e2e/run_e2e.sh.
+
+Plan 57 — completely closed across all 5 фаз (MVP + A + B + C + D + E).
+38+ commits в plan-57 branch.
+
+Plan 57 backlog: empty. Все production extensions либо implemented,
+либо design-sketched. Future work — pick up sketches when ROI shows.
