@@ -2738,9 +2738,97 @@ let t0 = std::time::Instant::now();
                     }
                 }
             }
+            // Ф.23.1 (Plan 33.6): contradictory requires — max(lower) > min(upper) для одной Var.
+            for var in lower_bounds.keys() {
+                let max_low = lower_bounds.get(var).unwrap().iter()
+                    .map(|(n, _)| *n).max().unwrap();
+                if let Some(ub) = upper_bounds.get(var) {
+                    let min_up = ub.iter().map(|(n, _)| *n).min().unwrap();
+                    if max_low > min_up {
+                        let span = ub.iter().find(|(n, _)| *n == min_up).map(|(_, s)| *s)
+                            .unwrap_or(fd.span);
+                        report.errors.push(Diagnostic::new(
+                            format!("fn `{}`: contradictory requires для `{}` [E2405]:\n  \
+                                     `requires {} >= {}` и `requires {} <= {}` несовместимы.\n  \
+                                     fn никогда не может быть вызвана с валидными аргументами.",
+                                fd.name, var, var, max_low, var, min_up),
+                            span));
+                    }
+                }
+            }
+            // Ф.23.3 (Plan 33.6): unused param detection.
+            let mut used_names: std::collections::HashSet<String> =
+                std::collections::HashSet::new();
+            collect_used_idents_in_body(&fd.body, &mut used_names);
+            for p in &fd.params {
+                if p.name.starts_with('_') { continue; } // intentional skip
+                if !used_names.contains(&p.name) {
+                    report.warnings.push(Diagnostic::new(
+                        format!("fn `{}`: param `{}` не используется в теле [W2402]:\n  \
+                                 удалите или переименуйте в `_{}` для intentional skip.",
+                            fd.name, p.name, p.name),
+                        fd.span));
+                }
+            }
         }
     }
     report
+}
+
+/// Ф.23.3: walker для сбора всех используемых Ident в body.
+fn collect_used_idents_in_body(body: &FnBody, out: &mut std::collections::HashSet<String>) {
+    match body {
+        FnBody::Expr(e) => collect_used_idents_in_expr(e, out),
+        FnBody::Block(b) => {
+            for s in &b.stmts { collect_used_idents_in_stmt(s, out); }
+            if let Some(e) = &b.trailing { collect_used_idents_in_expr(e, out); }
+        }
+        FnBody::External => {}
+    }
+}
+
+fn collect_used_idents_in_stmt(s: &Stmt, out: &mut std::collections::HashSet<String>) {
+    match s {
+        Stmt::Let(l) => collect_used_idents_in_expr(&l.value, out),
+        Stmt::Expr(e) => collect_used_idents_in_expr(e, out),
+        Stmt::Assign { value, target, .. } => {
+            collect_used_idents_in_expr(value, out);
+            collect_used_idents_in_expr(target, out);
+        }
+        Stmt::Return { value: Some(v), .. } => collect_used_idents_in_expr(v, out),
+        _ => {}
+    }
+}
+
+fn collect_used_idents_in_expr(e: &Expr, out: &mut std::collections::HashSet<String>) {
+    match &e.kind {
+        ExprKind::Ident(n) => { out.insert(n.clone()); }
+        ExprKind::Binary { left, right, .. } => {
+            collect_used_idents_in_expr(left, out);
+            collect_used_idents_in_expr(right, out);
+        }
+        ExprKind::Unary { operand, .. } => collect_used_idents_in_expr(operand, out),
+        ExprKind::Call { func, args, .. } => {
+            collect_used_idents_in_expr(func, out);
+            for a in args { collect_used_idents_in_expr(a.expr(), out); }
+        }
+        ExprKind::If { cond, then, else_ } => {
+            collect_used_idents_in_expr(cond, out);
+            for s in &then.stmts { collect_used_idents_in_stmt(s, out); }
+            if let Some(t) = &then.trailing { collect_used_idents_in_expr(t, out); }
+            if let Some(eb) = else_ {
+                match eb {
+                    ElseBranch::Block(b) => {
+                        for s in &b.stmts { collect_used_idents_in_stmt(s, out); }
+                        if let Some(t) = &b.trailing { collect_used_idents_in_expr(t, out); }
+                    }
+                    ElseBranch::If(e2) => collect_used_idents_in_expr(e2, out),
+                }
+            }
+        }
+        ExprKind::Member { obj, .. } => collect_used_idents_in_expr(obj, out),
+        _ => {}
+    }
 }
 
 /// Aggregated РѕС‚С‡С'С‚ РїРѕ РІРµСЂРёС„РёРєР°С†РёРё РјРѕРґСѓР»СЏ.

@@ -12549,6 +12549,30 @@ dead lemma diagnostic. Reasonable LIA subset без Z3.
 **Plan 33.6 итог за 22 спринта:** полный contract lint set + boolean logic
 с De Morgan.
 
+## Ф.23 — contradictory requires + unused params
+
+### Ф.23.1 — contradictory requires (E2405)
+
+- pipeline.rs: per Var собираем lower/upper bounds из requires.
+  Если max(lower) > min(upper) → E2405 «fn никогда не может быть вызвана».
+- Test: contradictory_requires_fail (EXPECT_COMPILE_ERROR E2405).
+- Коммит: `e4c3c9042da`.
+
+### Ф.23.2 — AND-merge bounds (deferred)
+
+- Risk regression при изменении canonical form `and`. Defer.
+
+### Ф.23.3 — unused fn param detection
+
+- pipeline.rs: AST walker `collect_used_idents_in_*` (FnBody/Stmt/Expr).
+  Param не в наборе и не starts with `_` → W2402 hint «rename to `_X`».
+- Коммит: `e4c3c9042da`.
+
+**Итого Ф.23:** 2 closed. **168 PASS (+1) / 42 SKIP / 1 pre-existing FAIL.**
+
+**Plan 33.6 итог за 23 спринта:** полное complement contract lints.
+Diagnostic categories: E2401-E2405, W2401-W2402.
+
 === Plan 45 �.25 � nova tests (positive + negative) ===
 
 ����� �������� �.25 (4 ����) �������� nova-tests .nv ��� �������� �����
@@ -13734,8 +13758,8 @@ Plan 45 family � ����� �����. ��� ������
 - Plan 16 follow-up � parser `#allow_transit`
 - Plan 42 follow-up � FileRegistry ��� handler matrix workspace
 
-����� 14 sessions (�.25 > �.33) Plan 45 close on ~98%. ��� user-facing
-features implemented � production-grade test coverage.
+����� 14 sessions (�.25 > �.33) Plan 45 close on ~98%. ��� user-facing
+features implemented � production-grade test coverage.
 
 
 Session: Plan 57 MVP — Performance Benchmark Infrastructure (2026-05-16)
