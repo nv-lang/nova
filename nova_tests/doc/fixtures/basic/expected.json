@@ -40,7 +40,7 @@
       },
       "stability": null,
       "summary": "Plan 45 / D104: smoke-test fixture для `nova doc`.",
-      "description": "Этот модуль содержит образцы для всех item kind'ов, проверяя\nчто collector + renderer'ы рендерят их корректно."
+      "description": "Этот модуль содержит образцы для всех item kind'ов, проверяя\nчто collector + renderer'ы рендерят их корректно.\n\n#stable"
     }
   ],
   "items": [
@@ -78,10 +78,15 @@
       },
       "source": {
         "file_id": 0,
-        "line": 25,
+        "line": 33,
         "peer_file": null
       },
-      "stability": null,
+      "stability": {
+        "feature": null,
+        "note": null,
+        "since": null,
+        "tier": "stable"
+      },
       "summary": "Максимальный размер буфера в байтах.",
       "type": "int",
       "value": "4096"
@@ -120,10 +125,15 @@
       },
       "source": {
         "file_id": 0,
-        "line": 19,
+        "line": 25,
         "peer_file": null
       },
-      "stability": null,
+      "stability": {
+        "feature": null,
+        "note": null,
+        "since": null,
+        "tier": "stable"
+      },
       "summary": "Двухмерная точка.",
       "definition": {
         "fields": [
@@ -157,7 +167,7 @@
         "realtime_nogc": false
       },
       "deprecation": null,
-      "description": "Пример:\n\n```nova\nassert(abs(-5) == 5)\n```",
+      "description": null,
       "doc_attrs": [
 
       ],
@@ -171,11 +181,11 @@
 
       ],
       "sections": {
-
+        "examples": "```nova\nassert(abs(-5) == 5)\n```\n\n#stable"
       },
       "source": {
         "file_id": 0,
-        "line": 15,
+        "line": 19,
         "peer_file": null
       },
       "stability": null,
