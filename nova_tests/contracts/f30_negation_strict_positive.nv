@@ -1,0 +1,17 @@
+// Ф.30.4 (Plan 33.6): TrivialBackend negation `>` strict.
+// `requires x <= -5; ensures (0 - x) > 0 { 0 - x }` — upper(x) = -5, -(-5) = 5 > 0.
+
+module contracts.f30_negation_strict_positive
+
+#verify
+fn negate_strict_positive(x int) -> int
+    requires x <= -5
+    ensures result > 0
+{
+    0 - x
+}
+
+test "negation strict positive" {
+    assert(negate_strict_positive(-7) == 7)
+    assert(negate_strict_positive(-5) == 5)
+}
