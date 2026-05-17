@@ -274,6 +274,13 @@ pub struct CEmitter {
     /// Set during emit_call when boxing a struct for nova_make_Option_Some.
     /// Consumed by next Stmt::Let to annotate the bound variable's inner type.
     pending_option_inner_type: Option<String>,
+    /// Plan 63 Fix F [M-result-erased-no-mono]: Result Ok-payload boxed type tracking.
+    /// Maps Result variable name → boxed inner C type (e.g. "_NovaTuple_2_8_nova_str_8_nova_int*"
+    /// для Result[(str, int), E]). Used at destructure для proper unboxing tuple/struct args.
+    result_ok_inner_types: HashMap<String, String>,
+    /// Set during emit_call when boxing struct/tuple для nova_make_Result_Ok.
+    /// Consumed by next Stmt::Let.
+    pending_result_ok_inner_type: Option<String>,
     /// Set of array variable names that store boxed nova_str* (as nova_int).
     /// Index access on these arrays must dereference: *(nova_str*)(arr->data[i]).
     str_box_arrays: HashSet<String>,
@@ -565,6 +572,8 @@ impl CEmitter {
             array_element_types: HashMap::new(),
             option_inner_types: HashMap::new(),
             pending_option_inner_type: None,
+            result_ok_inner_types: HashMap::new(),
+            pending_result_ok_inner_type: None,
             str_box_arrays: HashSet::new(),
             current_receiver_type: None,
             expected_record_type: None,
@@ -8287,6 +8296,10 @@ impl CEmitter {
                 if let Some(inner_ty) = self.pending_option_inner_type.take() {
                     self.option_inner_types.insert(binding.clone(), inner_ty);
                 }
+                // Plan 63 Fix F: consume pending Result Ok inner type (boxed tuple/struct).
+                if let Some(inner_ty) = self.pending_result_ok_inner_type.take() {
+                    self.result_ok_inner_types.insert(binding.clone(), inner_ty);
+                }
                 self.line(&format!("{} {} = {};", ty_c, binding, val));
                 // Plan 11 Ф.4: RHS — method value `obj.@method` или `Type.@method`.
                 // Регистрируем binding в fn_param_sigs так чтобы `f(args)` работало.
@@ -12625,8 +12638,14 @@ impl CEmitter {
                 self.line(&format!("{}* {} = ({}*)nova_alloc(sizeof({}));", arg_ty, heap_tmp, arg_ty, arg_ty));
                 self.line(&format!("*{} = {};", heap_tmp, v));
                 arg_strs.push(format!("(nova_int)({})", heap_tmp));
-                // Record that the next variable bound will have an inner boxed type
-                self.pending_option_inner_type = Some(format!("{}*", arg_ty));
+                // Record that the next variable bound will have an inner boxed type.
+                // Plan 63 Fix F: separate Option vs Result tracking — destructure
+                // looks up different maps (option_inner_types vs result_ok_inner_types).
+                if func_c == "nova_make_Result_Ok" {
+                    self.pending_result_ok_inner_type = Some(format!("{}*", arg_ty));
+                } else {
+                    self.pending_option_inner_type = Some(format!("{}*", arg_ty));
+                }
             } else {
                 arg_strs.push(v);
             }
@@ -13473,6 +13492,10 @@ impl CEmitter {
         // Propagate Option inner type info
         if let Some(inner_ty) = self.option_inner_types.get(scr.as_str()).cloned() {
             self.option_inner_types.insert(scr_tmp.clone(), inner_ty);
+        }
+        // Plan 63 Fix F: propagate Result Ok inner type info.
+        if let Some(inner_ty) = self.result_ok_inner_types.get(scr.as_str()).cloned() {
+            self.result_ok_inner_types.insert(scr_tmp.clone(), inner_ty);
         }
 
         // Result type: infer from arms (prefer non-trivial types), fall back to fn return type
@@ -14954,8 +14977,36 @@ impl CEmitter {
                                     .unwrap_or_else(|| "nova_int".into());
                                 let raw = format!("{}->payload.{}._{}",
                                     scr, variant_name, i);
-                                // If sub-pattern is an Option variant, payload is a boxed pointer
-                                if sub_is_opt_variant {
+                                // Plan 63 Fix F [M-result-erased-no-mono]: Result Ok
+                                // payload может быть boxed tuple (e.g. Result[(K,V), E]).
+                                // sum_schemas даёт ft=nova_int (Result hardcoded), но
+                                // result_ok_inner_types tracking имеет реальный type.
+                                // Используем для proper unboxing когда sub-pattern Tuple.
+                                let result_ok_inner = if type_name == "Result"
+                                    && variant_name == "Ok"
+                                    && matches!(p, Pattern::Tuple(..)) {
+                                    self.result_ok_inner_types.get(scr).cloned()
+                                } else {
+                                    None
+                                };
+                                if let Some(inner_ty) = result_ok_inner {
+                                    // inner_ty вида "_NovaTuple_..._mono*" — emit deref
+                                    // в local tmp, populate tuple_element_types для recursive
+                                    // pattern_bind_typed (он читает tys[scr] для f0/f1 type'ов).
+                                    let deref_ty = inner_ty.trim_end_matches('*').to_string();
+                                    let tup_tmp = self.fresh_tmp();
+                                    self.line(&format!(
+                                        "{} {} = *({})(intptr_t)({});",
+                                        deref_ty, tup_tmp, inner_ty, raw
+                                    ));
+                                    if let Some(elems) = Self::parse_mono_tuple_elements(&deref_ty) {
+                                        self.tuple_element_types.insert(tup_tmp.clone(), elems);
+                                        tmp_registrations.push(tup_tmp.clone());
+                                    }
+                                    self.var_types.insert(tup_tmp.clone(), deref_ty.clone());
+                                    (tup_tmp, deref_ty, false)
+                                } else if sub_is_opt_variant {
+                                    // If sub-pattern is an Option variant, payload is a boxed pointer
                                     (format!("((NovaOpt_nova_int*)({}))", raw), "NovaOpt_nova_int*".into(), true)
                                 } else {
                                     (raw, ft, false)
