@@ -542,13 +542,18 @@ fn propagate_bounds(conjuncts: &[SmtTerm]) -> Vec<SmtTerm> {
         // - result < Lit (но это эквивалентно `<` form).
         let try_modulus_check = |inner: &SmtTerm| -> Option<bool> {
             if let SmtTerm::App(iop, iargs) = inner {
-                if iop != ">=" || iargs.len() != 2 { return None; }
+                if iargs.len() != 2 { return None; }
                 let goal = match &iargs[1] { SmtTerm::IntLit(n) => *n, _ => return None };
                 if let SmtTerm::App(mop, margs) = &iargs[0] {
                     if mop != "%" || margs.len() != 2 { return None; }
                     if let (SmtTerm::Var(_), SmtTerm::IntLit(divisor)) = (&margs[0], &margs[1]) {
-                        if *divisor > 0 && goal <= 0 {
-                            return Some(true);
+                        if *divisor > 0 {
+                            // Lower bound: `(>= x%k goal)` где goal <= 0 → true.
+                            if iop == ">=" && goal <= 0 { return Some(true); }
+                            // Ф.26.1 (Plan 33.6): upper bound: `(< x%k goal)` где goal >= divisor → true,
+                            // `(<= x%k goal)` где goal >= divisor-1 → true.
+                            if iop == "<" && goal >= *divisor { return Some(true); }
+                            if iop == "<=" && goal >= divisor - 1 { return Some(true); }
                         }
                     }
                 }

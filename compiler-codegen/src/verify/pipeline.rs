@@ -2625,6 +2625,20 @@ let t0 = std::time::Instant::now();
                     ld.span));
             }
         }
+        // Ф.26.3 (Plan 33.6): axiom без binders + `=> true` — vacuous.
+        if let Item::Type(td) = item {
+            for ax in &td.axioms {
+                if ax.binders.is_empty() {
+                    if let ExprKind::BoolLit(true) = ax.formula.kind {
+                        report.warnings.push(Diagnostic::new(
+                            format!("axiom `{}.{}`: vacuous `=> true` без binders [W2402]:\n  \
+                                     добавьте binders или удалите — axiom тривиально true.",
+                                td.name, ax.name),
+                            ax.span));
+                    }
+                }
+            }
+        }
     }
     // Ф.19.2 + Ф.19.3 (Plan 33.6): detection trivial/redundant contracts.
     // Ф.21.2 (Plan 33.6): contradictory ensures detection.
@@ -2643,6 +2657,8 @@ let t0 = std::time::Instant::now();
                                 c.span));
                         }
                         // Ф.22.1 (Plan 33.6): `requires false` — vacuous fn.
+                        // Ф.26.2 (defer): для #trusted external blocked parser-level
+                        // earlier; нет смысла добавлять additional check.
                         if matches!(c.expr.kind, ExprKind::BoolLit(false)) {
                             report.warnings.push(Diagnostic::new(
                                 format!("fn `{}`: vacuous fn — `requires false` [W2402]:\n  \
