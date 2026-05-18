@@ -1,0 +1,18 @@
+// EXPECT_COMPILE_WARNING W2403
+//
+// Plan 33.9 Ф.6.1: `reveal X` где X не помечена `#opaque` → W2403.
+
+module contracts.f58_reveal_non_opaque_w2403
+
+#pure
+fn ordinary(x int) -> int
+=> x + 1
+
+#verify
+fn caller(n int) -> int
+    requires n >= 0
+    ensures result >= 0
+{
+    reveal ordinary
+    n
+}
