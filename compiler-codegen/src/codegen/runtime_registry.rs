@@ -987,6 +987,22 @@ pub fn render_nv(module: &str, fns: &[&RuntimeFn]) -> String {
     out.push_str("// Source of truth: compiler-codegen/src/codegen/runtime_registry.rs\n");
     out.push_str("//\n");
     out.push_str("// См. docs/plans/13-runtime-stdlib-and-autogen.md.\n");
+    // Plan 62.D.bis (D126, 2026-05-18): для opaque types StringBuilder /
+    // WriteBuffer / ReadBuffer canonical type-declaration живёт в
+    // std/prelude/collections.nv через `external type` (D126); этот файл
+    // содержит ТОЛЬКО methods через `external fn` (D82). Связь по
+    // receiver-type name.
+    if matches!(
+        module,
+        "std.runtime.string_builder"
+            | "std.runtime.write_buffer"
+            | "std.runtime.read_buffer"
+    ) {
+        out.push_str("//\n");
+        out.push_str("// Plan 62.D.bis (D126, 2026-05-18): type declaration — see\n");
+        out.push_str("// std/prelude/collections.nv (`external type`, D126).\n");
+        out.push_str("// This file declares ONLY methods via `external fn` (D82).\n");
+    }
     out.push('\n');
     out.push_str(&format!("module {}\n", module));
     out.push('\n');
