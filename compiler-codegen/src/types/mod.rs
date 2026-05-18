@@ -2019,14 +2019,21 @@ impl NameResCtx {
             // cross-file resolve (R27 auto-import). См. docs/plans/
             // 62-prelude-hardcode-migration.md §62.A.
             //
-            // RuntimeError variants остаются hardcoded — Plan 62.C
-            // (отдельная фаза). RuntimeError typedef + variant constructors
-            // живут в nova_rt/array.h и pre-populated sum_schemas
-            // (emit_c.rs:1000-1018); user-код declared'ит вариант через
-            // builtins HashSet recognition пока миграция не завершится.
-            "DivByZero", "Overflow", "IndexOutOfBounds",
-            "TypeMismatch", "AssertFailed", "NoHandler",
-            "RuntimeError",
+            // Plan 62.C: `RuntimeError` + 6 variants (`DivByZero`,
+            // `Overflow`, `IndexOutOfBounds`, `TypeMismatch`, `AssertFailed`,
+            // `NoHandler`) перенесены в std/prelude/errors.nv. Аналогично
+            // `ReadBufferError` + `UnexpectedEnd` (не были в этом HashSet'е,
+            // но добавлены в registry через init_prelude_decls_from_items
+            // — см. sum_schema_registry.rs::register_prelude_sum_from_decl).
+            // Type-checker теперь resolves их через cross-file resolve.
+            // Pre-populated `sum_schemas["RuntimeError"]` (emit_c.rs:1029-1048)
+            // оставлен как ABI-compat fallback baseline per 62.A.bis
+            // architecture (HardcodedBaseline остаётся, lookup precedence
+            // DeclaredFromPrelude > HardcodedBaseline).
+            //
+            // `RuntimeNoneError` НЕ перенесён — bootstrap parser не
+            // поддерживает empty-body sum syntax (тот же блокер что у
+            // `Never`). Остаётся as string-payload throw в nova_rt/effects.h.
             // Plan 62.B: `panic`/`exit`/`assert`/`debug_assert` (4 names)
             // перенесены в std/prelude/runtime.nv (file-based external fn
             // declarations). Type-checker теперь resolves их через
