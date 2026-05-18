@@ -17,6 +17,10 @@ fn factorial(n int) -> int
     decreases n
 => if n == 0 { 1 } else { n * factorial(n - 1) }
 
+// Plan 33.6 Ф.1.2: contracts с method call (arr.len()) → E2401 в SMT encoder.
+// Bench corpus measures parsing/type-check cost — для proof helper'ов
+// помечаем #unverified (opt-out из SMT verification).
+#unverified
 fn binary_search(arr []int, target int, lo int, hi int) -> int
     requires lo >= 0
     requires hi >= lo
@@ -31,6 +35,7 @@ fn binary_search(arr []int, target int, lo int, hi int) -> int
     else { binary_search(arr, target, lo, mid) }
 }
 
+#unverified
 fn sum_positive(xs []int) -> int
     requires xs.len() > 0
     ensures result >= 0
