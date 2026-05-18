@@ -440,3 +440,31 @@ inline-тестах до фикса). После Plan 70 Phase A2/A3 эти ме
   production-grade strict mode, 10-15 dev-days.
 - **2026-05-18**: добавлен concrete known bug Set.or/and/minus (Category A).
   Sub-планы 70.1 (module alias) и 70.2 (LinkedList mono) зафиксированы.
+- **2026-05-18 PhaseA partial session 1** (worktree `plan-70`,
+  commits `1b353895908`...`36c32b8edd0`):
+  - Ф.0 audit refined: 117 Cat A → 64 real Cat A1 (precise pattern
+    `type_ref_to_c().unwrap_or "nova_int"`).
+  - Ф.1 diagnostic helper `err_no_int_fallback` (E7001 reserved).
+  - Baseline: **761 PASS / 0 FAIL / 44 SKIP**.
+  - **~40 Cat A sites migrated** в Result-returning fns (no cascade):
+    PhaseA1.1 emit_type_decl (1), A1.2 emit_fn_forward_decl (5),
+    A1.3 emit_module overload (4), A1.4 emit_stmt let-fn-binding (11),
+    A2.1 emit_call HOF (5), A2.2 emit_fn + emit_lambda (6),
+    A2.3 emit_record_type (2), A3 mono'd method/fn/type/expr (7).
+  - 5 positive test fixtures `nova_tests/plan70/f1-f5_*.nv` — все PASS.
+  - **Final regression: 766 PASS / 0 FAIL / 44 SKIP** (+5 fixtures,
+    **0 regressions** vs baseline).
+
+  **Remaining ~24 sites следующей сессии:**
+  - **8 cascade-blocked** (no Result return — register_mono_instance,
+    register_mono_method_instance, infer_expr_c_type,
+    infer_mono_method_ret_with_args) — нужен signature refactor.
+  - **6 Cat B intentional erasure** (erased_type_ref_c,
+    emit_generic_method_erased, emit_fn erase_unk wrapped,
+    type_ref_to_c any_erased detection) — leave с inline doc rationale.
+  - **~10 misc smaller patterns** — sweep.
+
+  **Honest negative-test gap:** все migrated sites unreachable в practice
+  (type-checker pre-rejects pre-codegen). Migration = dead-code hardening
+  + diagnostic guard. Negative .nv тесты не реализуемы — documented
+  в `nova_tests/plan70/README.md` per-site.
