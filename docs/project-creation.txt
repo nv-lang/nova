@@ -15487,6 +15487,24 @@ Test: f51_square_nonneg_positive.
 Регрессия: 205 → 206 PASS (+1), 0 FAIL, 44 SKIP.
 
 
+# Plan 33.6 Ф.52 (2026-05-18): square strict + div_self
+
+## Ф.52.1 — square strict positive (a*a > 0 if a != 0)
+
+Ф.51.1 покрывал a*a >= 0. Strict требует non-zero (lower >= 1 OR upper <= -1).
+В try_var_mul_nonneg square branch: effective_goal == 1 + sign bounds check.
+
+## Ф.52.3 — a / a → 1 (non-zero assumption в spec scope)
+
+`ensures (x / x) == 1` тривиально для non-zero. Simplify_app("/")
+arm `(a, b) if a == b → IntLit(1)`. Safe pattern как Ф.45.2/Ф.45.3.
+
+Test: f52_square_strict_div_self_positive (square_strict_pos,
+square_strict_neg, div_self).
+
+Регрессия: 206 → 207 PASS (+1), 0 FAIL, 44 SKIP.
+
+
 ## Session: оба deferred follow-up'а Plan 59 закрыты (2026-05-17 EOD+1)
 
 После merge'а Plan 63 fixes от другого agent'а — обнаружено что оба
