@@ -88,3 +88,38 @@ fn ChanReader_close_after_doc_marker(d Duration) -> () {
     // (post-bootstrap), this file is doc-only.
     let _ = d
 }
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Plan 65 Ф.13 — `tick_every` namespace squat (forward-declared, NOT impl)
+// ──────────────────────────────────────────────────────────────────────────
+
+/// `ChanReader.tick_every(d Duration) -> ChanReader[()]` — periodic
+/// ticker channel (placeholder).
+///
+/// **Status: NOT IMPLEMENTED.** Реализация в **Plan 66**
+/// (`docs/plans/66-timer-wheel-and-tick-every.md`).
+///
+/// Цель этого declaration — **зарезервировать имя** в stdlib чтобы
+/// external crate / user code не определил конфликтующее
+/// `ChanReader.tick_every` до того как core реализация будет shipped.
+/// Также служит discovery-сигналом для AI agents: «такой API ожидается,
+/// но пока не доступен».
+///
+/// Plan 66 будет:
+/// - Семантика: периодический tick каждые `d`, drop-on-overflow по
+///   умолчанию (Tokio `MissedTickBehavior::Skip`). Опциональный enum
+///   для Burst/Delay (Tokio parity).
+/// - Реализация: requires custom timer-wheel runtime (current libuv
+///   per-handle overhead неприемлем для 10k+ concurrent tickers).
+///   В Plan 65 — libuv per-timer. В Plan 66 — Tokio-style hierarchical
+///   bucketing.
+///
+/// До Plan 66 implementation: вызов этой функции panic'ует с явным
+/// guidance.
+#unstable
+#stable(since = "0.6")
+fn ChanReader_tick_every_namespace_squat(d Duration) -> () {
+    let _ = d
+    panic("ChanReader.tick_every is not yet implemented — see Plan 66 (docs/plans/66-timer-wheel-and-tick-every.md). Use ChanReader.close_after for one-shot timers in Plan 65.")
+}
