@@ -1,0 +1,133 @@
+// std/prelude/collections.nv — file-based source of truth для prelude
+// collection-related types и iterator protocol. Plan 62 phase 62.D
+// (non-opaque scope).
+//
+// Декларации перенесены/добавлены в этот файл, чтобы:
+//   1) `nova doc` показывал canonical API в одном месте (AI-readable),
+//   2) пользователь мог shadow'ить эти names в своём коде с warning'ом
+//      (Plan 62.F W_PRELUDE_SHADOW),
+//   3) splittable prelude работал (`partial_prelude(collections)` opt-in
+//      только collections без core/runtime/errors).
+//
+// Архитектурные правила (Plan 62 §«Стратификация»):
+//   - **Один explicit import**: `std.prelude.core.{Option}` — нужен
+//     для signature `next() -> Option[T]`. Auto-import `std.prelude`
+//     отключён внутри `std.prelude.*` (cycle protection,
+//     `is_prelude_self_module` в compiler-codegen/src/manifest.rs:314+),
+//     поэтому Option надо завезти explicitly. `std.prelude.core` не
+//     импортирует обратно `std.prelude.collections` — cycle отсутствует.
+//
+// **Bootstrap status (Plan 62.D non-opaque):**
+//
+// - **`Iter[T]` protocol** объявлен здесь formally — раньше существовал
+//   ТОЛЬКО как structural duck-typing per D58 (codegen for-in dispatch:
+//   emit_c.rs:14324+ ищет метод `mut next() -> Option[T]` без проверки
+//   протокольной декларации). Формальная декларация:
+//     - даёт `nova doc` source-of-truth для `Iter[T]` API,
+//     - регистрируется в `BoundCtx.protocol_specs` (types/mod.rs:368) —
+//       eligible как bound (`T Iter`) per D72,
+//     - НЕ ломает существующий structural for-in dispatch (codegen
+//       продолжает искать `next` метод напрямую — protocol declaration
+//       не enforced на arbitrary type annotations типа `-> Iter[int]`),
+//     - идемпотентна с `lints.rs:565` `collect_protocol_names` который
+//       уже хардкодит "Iter" в HashSet встроенных protocols
+//       (HashSet de-dups, lints поведение не меняется).
+//   Signature в декларации — `next() -> Option[T]` БЕЗ `mut` (bootstrap
+//   parser не поддерживает `mut` префикс в protocol-method declaration;
+//   receiver mutability подразумевается use-case'ом и объявляется на
+//   стороне implementer'а: `fn RangeIter mut @next() -> ...`).
+//
+// **NOT migrated (Plan 62.D non-opaque scope):**
+//
+// - **`Range` / `RangeIter`** остаются в `std/collections/range.nv`
+//   (canonical location для модуля `std.collections.range`). Восемь
+//   существующих файлов explicitly импортируют их по этому пути:
+//     - nova_tests/modules/{export_import_reexport, selective_import,
+//       folder_per_file_imports/reader}.nv
+//     - nova_tests/negative_capability/selective_import_*_rejected.nv
+//     - nova_tests/syntax/step_by_cross_file.nv
+//   Перенос в `std/prelude/collections.nv` сломал бы эти imports.
+//
+//   **Re-export через prelude facade ОТЛОЖЕН (Plan 62.D non-opaque
+//   diagnosis 2026-05-18):** попытка `export import
+//   std.collections.range.{Range, RangeIter}` в std/prelude.nv (чтобы
+//   сделать их auto-available) триггерит 4 регрессии:
+//     - concurrency/cancel_semantics_test (CC-FAIL: NovaOpt match
+//       inference подбирает `Nova_Range*` вместо `nova_str` при
+//       вездесущей регистрации `Range` в record_schemas, см.
+//       emit_c.rs:19051 ExprKind::Range fallback к Nova_Range*);
+//     - syntax/closure_rev (closure capture mis-emit для local `let`);
+//     - generics/p48_closure_arg_inference (closure mono'd arg drop'ит x);
+//     - syntax/for_in_range_iter (duplicate name conflict — user-shadow
+//       per D29 должен быть warning, but enforcer rejects).
+//   Эти latent bugs существовали и до Plan 62.D, но maskились тем что
+//   `Range` регистрировался только в файлах с explicit import. Открытие
+//   через prelude exposes их. Включение re-export-строки требует
+//   предварительного fix всех 4-х bugs — это отдельный sub-plan
+//   (Plan 62.D non-opaque bis-1, см. plan doc §62.D).
+//
+// **NOT migrated (DEFER Plan 62.D.bis — отдельный sub-plan):**
+//
+// - **`StringBuilder` / `WriteBuffer` / `ReadBuffer`** — opaque
+//   runtime types, для миграции требуется новый `external type` D-block
+//   в spec/decisions (нет canonical syntax в bootstrap parser для
+//   forward-decl типа с runtime-only implementation). Остаются hardcoded
+//   в type-checker builtins / codegen. См. docs/plans/62-prelude-hardcode-
+//   migration.md §62.D.bis (создаётся отдельно).
+
+module std.prelude.collections
+
+// Explicit import — Option[T] нужен для signature протокольного метода
+// `next() -> Option[T]`. Auto-import `std.prelude` отключён для всех
+// `std.prelude.*` submodule (cycle protection). См. file-header выше.
+import std.prelude.core.{Option}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Iter[T] protocol (D58)
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Структурный протокол итератора по элементам типа `T`.
+///
+/// Тип удовлетворяет `Iter[T]` если у него есть метод
+/// `mut next() -> Option[T]`. `Some(v)` — следующий элемент, `None` —
+/// итерация завершена (idempotent: повторные вызовы продолжают
+/// возвращать `None`).
+///
+/// **D58 (spec/decisions/03-syntax.md)**: for-in loop dispatch'ит на
+/// `Iter[T]` через duck-typing — declaring `type Iter[T] protocol`
+/// канонизирует имя для `nova doc` и use-as-bound (`T Iter`) per D72,
+/// но НЕ меняет structural for-in dispatch (codegen продолжает искать
+/// метод `next` напрямую). Existing types `Range`/`RangeIter`/
+/// `StepRangeIter`/`ReverseRangeIter`/`HashMapIter`/`KeysIter`/
+/// `ValuesIter`/`Counter` (см. nova_tests/syntax/for_iter*.nv)
+/// автоматически удовлетворяют `Iter[T]` без `impl`-блока.
+///
+/// **Note on `mut` receiver**: bootstrap parser (`parse_effect_methods`,
+/// compiler-codegen/src/parser/mod.rs:2244+) НЕ поддерживает `mut`-
+/// модификатор перед именем метода в protocol-declaration. Имплементации
+/// (`fn RangeIter mut @next() -> ...`, `fn HashMapIter[K,V] mut @next()
+/// -> ...`) объявляют receiver mutability в свободной форме, на стороне
+/// implementer'а. Protocol-declaration описывает только signature
+/// (`name(params) -> ret`), mutability подразумевается use-case'ом
+/// (итератор хранит cursor → state-mutating call).
+///
+/// **Note on effects**: bound (protocol) methods обязаны быть pure
+/// per types/mod.rs:404-420 (vtable dispatch не propagates effect
+/// handlers). `next()` — pure — OK.
+///
+/// # Examples
+///
+/// ```nova
+/// // Custom iterator — implements Iter[int] структурно.
+/// type Counter { mut cur int, end int }
+/// fn Counter mut @next() -> Option[int] {
+///     if @cur >= @end { None } else { let v = @cur; @cur += 1; Some(v) }
+/// }
+/// let mut c = Counter { cur: 0, end: 3 }
+/// for x in c { /* yields 0, 1, 2 */ }
+/// ```
+#stable(since = "0.1")
+export type Iter[T] protocol {
+    next() -> Option[T]
+}
