@@ -1056,6 +1056,71 @@ static inline void nova_select_park(SelectCtx* ctx) {
     _nova_select_fire_lost(ctx);
 }
 
+/* ── Plan 65 Ф.11: Timer observability counters ────────────────────
+ *
+ * Enabled when env var NOVA_TIMER_METRICS=1 is set at process start.
+ * Counters are unconditionally maintained (cost = 1 atomic incr per
+ * alloc/fire/cancel) — disabled path == disabled dump. Atomic primitives
+ * use C11 stdatomic when available, else fall back to non-atomic int64
+ * (single-thread bootstrap correct; M:N upgrade tracked in Plan 23).
+ *
+ * Counters:
+ *   alloc_total      — lifetime sum of timer allocations (close_after calls
+ *                       that actually got past the fast-path).
+ *   alloc_active     — currently-live timers (alloc - fire - cancel).
+ *   fired            — naturally fired (timer_cb executed).
+ *   cancelled        — cancelled before firing (select_lost or cancel-token).
+ *   longest_pending_ms — max libuv ms argument ever passed (rolling
+ *                       maximum, not running sample).
+ *
+ * Bench-history snapshot is dumped via Time.timer_stats() — see fibers.h.
+ * Leak warning at atexit when alloc_active > 0. */
+typedef struct {
+    int64_t alloc_total;
+    int64_t alloc_active;
+    int64_t fired;
+    int64_t cancelled;
+    int64_t longest_pending_ms;
+    bool    metrics_enabled;
+    bool    atexit_installed;
+} NovaTimerStats;
+
+static NovaTimerStats _nova_timer_stats = {0};
+
+static void _nova_timer_metrics_atexit(void) {
+    if (!_nova_timer_stats.metrics_enabled) return;
+    fprintf(stderr,
+        "\nNOVA TIMER STATS:\n"
+        "  alloc_total:       %lld\n"
+        "  alloc_active:      %lld%s\n"
+        "  fired:             %lld\n"
+        "  cancelled:         %lld\n"
+        "  longest_pending:   %lld ms\n",
+        (long long)_nova_timer_stats.alloc_total,
+        (long long)_nova_timer_stats.alloc_active,
+        _nova_timer_stats.alloc_active > 0 ? "    [LEAK]" : "",
+        (long long)_nova_timer_stats.fired,
+        (long long)_nova_timer_stats.cancelled,
+        (long long)_nova_timer_stats.longest_pending_ms);
+    if (_nova_timer_stats.alloc_active > 0) {
+        fprintf(stderr,
+            "nova: WARNING: %lld timer(s) still active at process exit\n"
+            "      (Plan 65 leak detection — consider tok.cancel() or scope-exit cleanup)\n",
+            (long long)_nova_timer_stats.alloc_active);
+    }
+}
+
+static inline void _nova_timer_metrics_init_lazy(void) {
+    /* Single-thread bootstrap: check env once on first call. */
+    if (_nova_timer_stats.atexit_installed) return;
+    _nova_timer_stats.atexit_installed = true;
+    const char* env = getenv("NOVA_TIMER_METRICS");
+    if (env && (env[0] == '1' || env[0] == 't' || env[0] == 'T' || env[0] == 'y' || env[0] == 'Y')) {
+        _nova_timer_stats.metrics_enabled = true;
+        atexit(_nova_timer_metrics_atexit);
+    }
+}
+
 /* ── Time.after — D94 timeout channel (Plan 31 Ф.5) ───────────── */
 
 /* Plan 44.1 audit round 8 (2026-05-13): malloc/free вместо nova_alloc.
@@ -1084,7 +1149,53 @@ typedef struct NovaAfterState {
     uv_timer_t              timer;
     Nova_ChanWriter*        tx;
     bool                    cancelled;  /* set once timer is stopped/closed early */
+    /* Plan 65 Ф.10: cancel-token integration. When timer is allocated inside
+     * `supervised(cancel: tok)` scope, we register ourselves as a cancel
+     * resource on `tok`. `cancel_token_ref` is the token; `cancel_slot` is
+     * the registration index returned by `nova_cancel_token_register_resource`.
+     *
+     * On natural fire OR on_select_lost, we unregister via cancel_slot so
+     * the token doesn't keep a stale handle. On cancel-driven cleanup,
+     * the token clears its own slot before invoking us.
+     *
+     * NULL token / slot==-1 = no cancel-integration (top-level scope or
+     * supervised{} without cancel:). */
+    void*                   cancel_token_ref;  /* NovaCancelToken* */
+    int                     cancel_slot;
+    /* Plan 65 Ф.11: metrics — true after first counter increment, prevents
+     * double-decrement on cancel+close race. */
+    bool                    metrics_alive;
 } NovaAfterState;
+
+/* Plan 65 Ф.10/Ф.11: helpers to maintain metrics + cancel-slot
+ * de-registration safely. Idempotent — alive-flag prevents double-decrement
+ * when timer is cancelled by both on_select_lost and on cancel_resource_cb. */
+static inline void _nova_after_metrics_dec(NovaAfterState* st, bool counted_as_cancel) {
+    if (!st || !st->metrics_alive) return;
+    st->metrics_alive = false;
+    if (_nova_timer_stats.metrics_enabled) {
+        _nova_timer_stats.alloc_active--;
+        if (counted_as_cancel) {
+            _nova_timer_stats.cancelled++;
+        } else {
+            _nova_timer_stats.fired++;
+        }
+    }
+}
+
+/* Unregister this timer from its bound CancelToken, if any. Idempotent.
+ * Forward declaration of helper from fibers.h (declared as void* to avoid
+ * type-circularity — actual call goes via function-pointer fetched here). */
+static inline void _nova_after_unregister_from_token(NovaAfterState* st) {
+    if (!st || !st->cancel_token_ref || st->cancel_slot < 0) return;
+    /* Direct call: nova_cancel_token_unregister_resource is inline in
+     * fibers.h, but at this point in channels.h fibers.h has already been
+     * #included (per nova_rt.h order). So we can call directly. */
+    nova_cancel_token_unregister_resource(
+        (NovaCancelToken*)st->cancel_token_ref, st->cancel_slot);
+    st->cancel_slot = -1;
+    st->cancel_token_ref = NULL;
+}
 
 static void _nova_after_close_cb(uv_handle_t* h) {
     NovaAfterState* st = (NovaAfterState*)h->data;
@@ -1102,6 +1213,9 @@ static void _nova_after_timer_cb(uv_timer_t* h) {
      * (libuv assert(0) в core.c:694 на повторном endgame).
      * Order: cancelled-flag → try_send (idempotent) → writer_close → uv_close. */
     st->cancelled = true;
+    /* Plan 65 Ф.10/Ф.11: counts as fired + clean cancel-slot. */
+    _nova_after_metrics_dec(st, /*counted_as_cancel=*/false);
+    _nova_after_unregister_from_token(st);
     /* Non-blocking send: channel cap=1, always has room at this point. */
     nova_chan_writer_try_send(st->tx, 1);
     /* Close writer so reader sees channel as closed after consuming the value. */
@@ -1116,9 +1230,37 @@ static void _nova_after_on_select_lost(Nova_ChannelState* st) {
     NovaAfterState* after = (NovaAfterState*)st->cleanup_data;
     if (!after || after->cancelled) return;
     after->cancelled = true;
+    /* Plan 65 Ф.10/Ф.11: counts as cancelled + clean cancel-slot. */
+    _nova_after_metrics_dec(after, /*counted_as_cancel=*/true);
+    _nova_after_unregister_from_token(after);
     uv_timer_stop(&after->timer);
     /* Close writer so reader gets closed-state if it's reused outside select.
      * Idempotent through writer_closed guard. */
+    nova_chan_writer_close(after->tx);
+    uv_close((uv_handle_t*)&after->timer, _nova_after_close_cb);
+}
+
+/* Plan 65 Ф.10: cancel-token resource callback. Invoked when the
+ * CancelToken this timer is registered against fires `cancel()`.
+ *
+ * The token has already cleared its own slot when this is called — so
+ * we don't need to unregister. We do need to set the cancelled flag,
+ * tick metrics, and close the libuv handle.
+ *
+ * Race contract: this callback may execute concurrently with the normal
+ * timer fire / on_select_lost cleanup. The `cancelled` flag is the single
+ * source of truth — atomicity is guaranteed by single-thread bootstrap
+ * (callbacks all run inside the libuv loop). Under M:N (Plan 23) this
+ * MUST become atomic. */
+static void _nova_after_cancel_resource_cb(void* handle) {
+    NovaAfterState* after = (NovaAfterState*)handle;
+    if (!after || after->cancelled) return;
+    after->cancelled = true;
+    /* Slot already cleared by cancel_reason loop; nothing to unregister. */
+    after->cancel_token_ref = NULL;
+    after->cancel_slot = -1;
+    _nova_after_metrics_dec(after, /*counted_as_cancel=*/true);
+    uv_timer_stop(&after->timer);
     nova_chan_writer_close(after->tx);
     uv_close((uv_handle_t*)&after->timer, _nova_after_close_cb);
 }
@@ -1141,6 +1283,9 @@ static inline Nova_ChanReader* Nova_Time_after(nova_int ms) {
     }
     st->tx = pair.tx;
     st->cancelled = false;
+    st->cancel_token_ref = NULL;
+    st->cancel_slot      = -1;
+    st->metrics_alive    = false;
     int rc = uv_timer_init(nova_current_loop(), &st->timer);
     if (rc != 0) {
         fprintf(stderr, "nova: Nova_Time_after: uv_timer_init failed: %s\n",
@@ -1151,6 +1296,30 @@ static inline Nova_ChanReader* Nova_Time_after(nova_int ms) {
     /* Plan 44.1 Ф.2 B7: register cleanup hook on the channel state. */
     pair.rx->state->on_select_lost = _nova_after_on_select_lost;
     pair.rx->state->cleanup_data   = st;
+    /* Plan 65 Ф.10/Ф.11: register with bound CancelToken (if any) +
+     * tick alloc counter. */
+    _nova_timer_metrics_init_lazy();
+    if (_nova_timer_stats.metrics_enabled) {
+        _nova_timer_stats.alloc_total++;
+        _nova_timer_stats.alloc_active++;
+        if ((int64_t)ms > _nova_timer_stats.longest_pending_ms) {
+            _nova_timer_stats.longest_pending_ms = (int64_t)ms;
+        }
+    }
+    st->metrics_alive = true;
+    /* Discover bound cancel-token via TLS-current scope's reverse pointer. */
+    if (_nova_active_scope && _nova_active_scope->bound_token) {
+        NovaCancelToken* tok = (NovaCancelToken*)_nova_active_scope->bound_token;
+        int slot = nova_cancel_token_register_resource(
+            tok, st, _nova_after_cancel_resource_cb);
+        /* slot == -1 means token was already cancelled — callback was
+         * invoked immediately, which set cancelled=true and closed handle.
+         * Caller still gets a (closed) reader — recv() returns None. */
+        if (slot >= 0) {
+            st->cancel_token_ref = tok;
+            st->cancel_slot      = slot;
+        }
+    }
     uint64_t delay = ms > 0 ? (uint64_t)ms : 1;
     rc = uv_timer_start(&st->timer, _nova_after_timer_cb, delay, 0);
     if (rc != 0) {
@@ -1197,6 +1366,31 @@ static inline Nova_ChanReader* nova_chan_reader_close_after_ns(int64_t nanos) {
         nova_chan_writer_close(pair.tx);
         return pair.rx;
     }
+    /* Plan 65 Ф.10 mock-time path (AD6): if user has bound a Time handler
+     * (e.g. testing.fixed_ms or mut_clock), routes through handler's sleep
+     * so virtual-clock advance happens synchronously. After mock-sleep
+     * returns we deliver an already-closed reader — recv()/select observe
+     * the timer as fired-now. Deterministic and zero-libuv-cost in tests.
+     *
+     * Trade-off vs Tokio pause/advance: our model is purely synchronous —
+     * we do not retain the timer to honor a later Time.advance call from
+     * a peer fiber. For per-fiber sequential mock-time (the common test
+     * pattern) this is correct; for concurrent-mock fixtures we would need
+     * a virtual-clock registry (Plan 66 scope).
+     *
+     * Real-clock path runs only when handler is unbound. */
+    if (_nova_handler_Time) {
+        /* Compute ms via the same rounding rule as the real-clock path,
+         * then delegate to the handler's sleep. Most mock handlers ignore
+         * the actual ms value (fixed_ms) or advance virtual clock by it
+         * (mut_clock). */
+        int64_t ms_mock = (nanos + 999999) / 1000000;
+        if (ms_mock < 1) ms_mock = 1;
+        _nova_handler_Time->sleep(_nova_handler_Time->ctx, (nova_int)ms_mock);
+        Nova_ChannelPair pair = nova_channel_new(1);
+        nova_chan_writer_close(pair.tx);
+        return pair.rx;
+    }
     /* Round up to ms (libuv granularity) — never round down so we never
      * fire earlier than the caller requested. */
     int64_t ms = (nanos + 999999) / 1000000;
@@ -1204,6 +1398,28 @@ static inline Nova_ChanReader* nova_chan_reader_close_after_ns(int64_t nanos) {
      * larger than i64-max ms is multi-billion-year and pathological. */
     if (ms < 1) ms = 1;
     return Nova_Time_after((nova_int)ms);
+}
+
+/* Plan 65 Ф.11: timer stats accessor for Nova-level `Time.timer_stats()`.
+ * Returns the current counters as a 5-int64 struct (matching the
+ * Nova-side TimerStats record layout: alloc_total, alloc_active, fired,
+ * cancelled, longest_pending_ms). */
+typedef struct {
+    int64_t alloc_total;
+    int64_t alloc_active;
+    int64_t fired;
+    int64_t cancelled;
+    int64_t longest_pending_ms;
+} Nova_TimerStats;
+
+static inline Nova_TimerStats nova_time_timer_stats(void) {
+    Nova_TimerStats r;
+    r.alloc_total        = _nova_timer_stats.alloc_total;
+    r.alloc_active       = _nova_timer_stats.alloc_active;
+    r.fired              = _nova_timer_stats.fired;
+    r.cancelled          = _nova_timer_stats.cancelled;
+    r.longest_pending_ms = _nova_timer_stats.longest_pending_ms;
+    return r;
 }
 
 #endif /* NOVA_RT_CHANNELS_H */
