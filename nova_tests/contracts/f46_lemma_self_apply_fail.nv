@@ -1,0 +1,13 @@
+// EXPECT_COMPILE_ERROR E2408
+//
+// Ф.46.1 (Plan 33.6): lemma самоприменение — infinite proof = unsound.
+
+module contracts.f46_lemma_self_apply_fail
+
+lemma self_apply_bad(x int)
+    requires x >= 0
+    ensures x >= 0
+{
+    apply self_apply_bad(x)
+    x
+}
