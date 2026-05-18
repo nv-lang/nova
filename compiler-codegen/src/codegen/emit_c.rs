@@ -5059,6 +5059,18 @@ impl CEmitter {
                     self.line("}");
                     self.line("");
                 }
+                // Plan 62.A.bis Ф.2.1: mirror legacy insert в registry.
+                // Generic sum types — heap-pointer ABI (PointerErrorLike).
+                let variant_order: Vec<String> = variants.iter()
+                    .map(|v| v.name.clone()).collect();
+                let c_name = format!("Nova_{}", t.name);
+                self.sum_schema_registry.register_user_sum(
+                    &t.name,
+                    &sum_schema,
+                    &c_name,
+                    super::sum_schema_registry::SumAbi::PointerErrorLike,
+                    &variant_order,
+                );
                 self.sum_schemas.insert(t.name.clone(), sum_schema);
             }
             return Ok(());
@@ -5432,6 +5444,18 @@ impl CEmitter {
             self.line("");
         }
 
+        // Plan 62.A.bis Ф.2.1: mirror legacy insert в registry.
+        // emit_sum_type — heap-pointer ABI (PointerErrorLike).
+        let variant_order: Vec<String> = variants.iter()
+            .map(|v| v.name.clone()).collect();
+        let c_name = format!("Nova_{}", name);
+        self.sum_schema_registry.register_user_sum(
+            name,
+            &sum_schema,
+            &c_name,
+            super::sum_schema_registry::SumAbi::PointerErrorLike,
+            &variant_order,
+        );
         self.sum_schemas.insert(name.to_string(), sum_schema);
         Ok(())
     }
@@ -7590,6 +7614,17 @@ impl CEmitter {
                     self.line("");
                 }
                 let sum_key = mangled.strip_prefix("Nova_").unwrap_or(mangled);
+                // Plan 62.A.bis Ф.2.1: mirror legacy insert в registry.
+                // Generic mono'd sum types — heap-pointer ABI (PointerErrorLike).
+                let variant_order: Vec<String> = variants.iter()
+                    .map(|v| v.name.clone()).collect();
+                self.sum_schema_registry.register_user_sum(
+                    sum_key,
+                    &sum_schema,
+                    mangled,
+                    super::sum_schema_registry::SumAbi::PointerErrorLike,
+                    &variant_order,
+                );
                 self.sum_schemas.insert(sum_key.to_string(), sum_schema);
             }
             _ => { /* Protocol/effect/alias/newtype — not generic record/sum */ }
@@ -15775,8 +15810,11 @@ impl CEmitter {
                 let type_name = if path.len() > 1 {
                     path[..path.len()-1].join("_")
                 } else {
-                    // Look up which sum type has this variant
-                    self.find_variant(&variant_name)
+                    // Plan 62.A.bis Ф.2.1: registry-driven lookup (find_variant_v2)
+                    // вместо legacy find_variant. Semantically equivalent —
+                    // registry mirror'ит sum_schemas через register_user_sum
+                    // (+ init_hardcoded_baseline для Option/Result/RuntimeError).
+                    self.sum_schema_registry.find_variant_compat(&variant_name)
                         .map(|(t, _)| t)
                         .unwrap_or_else(|| {
                             // Fall back: infer from scrutinee's C type
@@ -15888,9 +15926,11 @@ impl CEmitter {
             Pattern::Record { type_path, fields, .. } => {
                 let scr_ty = self.var_types.get(scr).cloned().unwrap_or_default();
                 let type_name_from_path = type_path.as_ref().and_then(|p| p.last().cloned()).unwrap_or_default();
-                // Determine if this is a plain record or a sum-type record variant
+                // Determine if this is a plain record or a sum-type record variant.
+                // Plan 62.A.bis Ф.2.1: registry-driven lookup для sum-variant test.
                 let is_plain_record = self.record_schemas.contains_key(&type_name_from_path);
-                let is_sum_variant = !is_plain_record && self.find_variant(&type_name_from_path).is_some();
+                let is_sum_variant = !is_plain_record
+                    && self.sum_schema_registry.find_variant_compat(&type_name_from_path).is_some();
                 if is_plain_record {
                     // Plain record match: always succeeds; check literal fields
                     let mut conds = Vec::new();
@@ -15906,8 +15946,10 @@ impl CEmitter {
                     if conds.is_empty() { Ok("true".into()) }
                     else { Ok(format!("({})", conds.join(" && "))) }
                 } else if is_sum_variant {
-                    // Sum-type record variant: check tag + literal fields
-                    let (sum_type_name, _) = self.find_variant(&type_name_from_path).unwrap();
+                    // Sum-type record variant: check tag + literal fields.
+                    // Plan 62.A.bis Ф.2.1: registry lookup для sum-type name.
+                    let (sum_type_name, _) = self.sum_schema_registry
+                        .find_variant_compat(&type_name_from_path).unwrap();
                     let variant_name = type_name_from_path.clone();
                     let mut conds = vec![format!("({}->tag == NOVA_TAG_{}_{})", scr, sum_type_name, variant_name)];
                     for field in fields {

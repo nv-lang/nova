@@ -514,6 +514,80 @@ impl SumSchemaRegistry {
         // STUB: Phase 2 будет fully populated.
         // Wiring exists в emit_module() чтобы убедиться call-site stable.
     }
+
+    // ───────────────────────────────────────────────────────────────────
+    // Phase 2 helpers
+    // ───────────────────────────────────────────────────────────────────
+
+    /// Phase 2.1 helper: mirror legacy `sum_schemas.insert(name, schema)` в
+    /// registry как `DeclaredFromUser` entry. Используется на trois call-site'ах
+    /// в `emit_c.rs` (emit_type_decl / generic mono / emit_sum_type) чтобы
+    /// registry содержал тот же набор entries что legacy `sum_schemas`.
+    ///
+    /// `name` — sum-type C-key (e.g. "MyEnum", "Slot____nova_str__nova_int").
+    /// `legacy_schema` — variant_name → ordered Vec field C-types.
+    /// `c_name` — canonical C-type name (без `*`), e.g. "Nova_MyEnum".
+    /// `abi` — typically `PointerErrorLike` для user sums (heap-alloc).
+    /// `variant_order` — ordered variant names (legacy HashMap теряет порядок,
+    /// caller передаёт оригинальный AST order).
+    ///
+    /// Идемпотент: повторный register с тем же `(name, source)` overwrite'ит.
+    pub fn register_user_sum(
+        &mut self,
+        name: &str,
+        legacy_schema: &HashMap<String, Vec<String>>,
+        c_name: &str,
+        abi: SumAbi,
+        variant_order: &[String],
+    ) {
+        // Build VariantInfo Vec preserving order. Если variant_order пустой
+        // (caller не имеет порядка) — fall back на iteration HashMap (deterministic
+        // for tests но user-visible order undefined).
+        let variants: Vec<VariantInfo> = if !variant_order.is_empty() {
+            variant_order.iter()
+                .filter_map(|vname| {
+                    legacy_schema.get(vname).map(|fields| VariantInfo {
+                        variant_name: vname.clone(),
+                        field_c_types: fields.clone(),
+                    })
+                })
+                .collect()
+        } else {
+            legacy_schema.iter()
+                .map(|(vname, fields)| VariantInfo {
+                    variant_name: vname.clone(),
+                    field_c_types: fields.clone(),
+                })
+                .collect()
+        };
+
+        self.register_schema(SumSchemaEntry {
+            nova_name: name.to_string(),
+            c_name: c_name.to_string(),
+            variants,
+            abi,
+            source: SchemaSource::DeclaredFromUser,
+            origin_module: None,
+            method_routing: HashMap::new(),
+        });
+    }
+
+    /// Phase 2.1 compat shim: drop-in замена legacy `CEmitter::find_variant`.
+    /// Возвращает `(sum_name, field_c_types)` — тот же tuple что legacy.
+    /// Internally дёргает `find_variant_v2` и discards `SchemaSource`.
+    ///
+    /// **Semantic equivalence guarantee:** для каждого `variant_name`,
+    /// присутствующего в legacy `sum_schemas` HashMap, registry должен
+    /// содержать matching entry (после `init_hardcoded_baseline` +
+    /// `register_user_sum` вызовов на каждом legacy insert-сайте). Если
+    /// registry возвращает None но `sum_schemas.get(variant_name)` дал
+    /// бы что-то — это registration gap, не lookup bug.
+    pub fn find_variant_compat(&self, variant_name: &str)
+        -> Option<(String, Vec<String>)>
+    {
+        self.find_variant_v2(variant_name)
+            .map(|(sum_name, fields, _src)| (sum_name, fields))
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
