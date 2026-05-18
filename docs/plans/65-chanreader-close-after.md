@@ -7,8 +7,9 @@
 > **Статус:** proposed, не начат.
 > **Приоритет:** P1 (исправление API drift + capability semantics + bringing
 > timer-channel API на уровень Go/Tokio).
-> **Трудоёмкость:** ~9-11 dev-days (с v2 расширениями; MVP в Ф.0-Ф.9 за 5 дней,
-> production hardening Ф.10-Ф.14 ещё 4-6).
+> **Трудоёмкость:** ~12-14 dev-days (MVP в Ф.0-Ф.9 за 5 дней,
+> production hardening Ф.10-Ф.14 ещё 7-9 — из них Ф.12 расширена до
+> 3 дней под D124 Monotonic type introduction).
 
 ---
 
@@ -753,19 +754,140 @@ ready for production hardening (Ф.10-Ф.14) in a follow-up session.
 **Acceptance:** metrics work; bench recorded; leak warning fires on
 synthetic leak test.
 
-### Ф.12 — `ChanReader.close_at(Instant)` — absolute deadline API (1 day)
+### Ф.12 — `Monotonic` тип + `ChanReader.close_at(Monotonic)` (D124 implementation, 3 days)
 
-- [ ] Add `ChanReader.close_at(deadline Instant) -> ChanReader[()]` —
-      Tokio `sleep_until` parity, Go `time.Until(t) + After` shortcut.
-- [ ] Runtime: convert `deadline - Time.now()` → ns → call `close_after_ns`.
+> **Расширено 2026-05-18:** D124 принят (spec D-block в 06-concurrency.md)
+> — раздельные типы для wall-clock vs monotonic clock. Ф.12 теперь
+> включает introduction нового `Monotonic` типа + полную realization
+> D124, потому что `close_at(Timestamp)` был бы silent NTP-skew bug
+> (см. D124 «Почему»). Plan 68 reference удалён — всё делается здесь.
+
+#### Ф.12.1 — Тип `Monotonic` в stdlib (½ day)
+
+- [ ] В `std/time/duration.nv` добавить:
+   ```nova
+   /// Монотонная точка во времени относительно старта процесса.
+   /// Никогда не идёт назад (immune к NTP, DST, manual time set).
+   /// Используется для timer deadlines, profiling, retry budgets.
+   /// Сериализация запрещена — bessmysленно вне процесса.
+   #stable(since = "0.6")
+   export type Monotonic { readonly nanos i64 }
+
+   /// Construct Monotonic from current clock. Единственный
+   /// способ получить — нет `from_nanos` (raw bytes бессмысленны).
+   #stable(since = "0.6")
+   export fn Monotonic.now() -> Self => Time.now_monotonic()
+
+   /// Raw nanoseconds — escape hatch для FFI / bench.
+   /// Не сравнивай с другим процессом — у каждого свой epoch.
+   #stable(since = "0.6")
+   export fn Monotonic @as_nanos() -> i64 => @nanos
+   ```
+
+- [ ] Арифметика (через method dispatch):
+   - `Monotonic @plus(d Duration) -> Monotonic`
+   - `Monotonic @minus(other Monotonic) -> Duration`
+   - **Не реализуем**: `Monotonic @minus(Timestamp)` или `@plus(Timestamp)`
+     — compile-error через отсутствие overload (D124 правило 3).
+
+**Acceptance:** type-check + smoke test (`Monotonic.now() + Duration.from_secs(1)`).
+
+#### Ф.12.2 — Per-OS runtime extern (½ day)
+
+- [ ] Implement `nova_time_now_monotonic_ns(void) -> int64_t` в
+      `compiler-codegen/nova_rt/time.c` (создать файл если нет):
+   - **Linux:** `clock_gettime(CLOCK_MONOTONIC, &ts)` + convert к nanos.
+   - **macOS:** `clock_gettime(CLOCK_MONOTONIC, &ts)` (поддержан с 10.12)
+     или fallback `mach_absolute_time()` + `mach_timebase_info()`.
+   - **Windows:** `QueryPerformanceCounter` + `QueryPerformanceFrequency`,
+     convert к nanos с overflow-safe arithmetic.
+- [ ] Update `nova_rt.h` с declaration + comment по semantic guarantees.
+- [ ] Add to Makefile / Cargo build dep chain.
+- [ ] Unit-test isolated: monotonicity check (call N раз → strictly
+      non-decreasing); resolution sanity (>= 1µs); thread-safety.
+
+**Acceptance:** runtime function passes monotonicity + thread-safety
+unit tests на 3 OS (smoke, не CI matrix — это Plan 58).
+
+#### Ф.12.3 — Compiler schema fix + `now_monotonic()` (½ day)
+
+- [ ] **Fix existing latent bug** в `emit_c.rs:1042-1046`:
+   - `Time.now() -> nova_int` → `Time.now() -> Nova_Timestamp` (record).
+     Это aligns с реальным stdlib usage (resolved [M-time-now-schema-mismatch]).
+- [ ] Add `Time.now_monotonic() -> Nova_Monotonic` в `time_schema`.
+- [ ] `infer_expr_c_type` cases для обоих methods.
+- [ ] Handler-bridge для `Time.now()` если user-mock возвращает int
+      (паттерн Plan 65 Ф.1 `[M-handler-duration-schema-mismatch]` reuse).
+- [ ] Verify stdlib `std/time/duration.nv` методы (`is_past`, `is_future`,
+      `from_now`) compile cleanly после schema fix.
+
+**Acceptance:** `let t = Time.now()` тип = Timestamp; `let m = Time.now_monotonic()`
+тип = Monotonic; existing stdlib tests pass без regression.
+
+#### Ф.12.4 — `ChanReader.close_at(Monotonic)` API (½ day)
+
+- [ ] Register `ChanReader.close_at(deadline Monotonic) -> ChanReader[()]`
+      в external_registry + infer_expr_c_type.
+- [ ] Runtime: эмитит `nova_chan_reader_close_at_mono_ns(int64_t deadline_ns)`
+      — internally compute `delta = deadline - now_monotonic()`; clamp
+      negative к 0; call `nova_chan_reader_close_after_ns(delta)`.
 - [ ] Edge cases:
-   - past deadline (`deadline < now`) → already-closed reader, no leak
-   - future deadline overflow ns → use ms fallback
-- [ ] Tests: positive (5s in future) + negative (1s in past, immediate
-      close) + edge (now exactly).
-- [ ] Stdlib doc update.
+   - past deadline (`deadline < now_monotonic()`) → already-closed reader,
+     no timer alloc, no leak.
+   - future deadline overflow (deadline_ns > current + i64::MAX) → panic
+     с указанием actual values (не silent wrap-around).
+   - exact now (`deadline == now_monotonic()`) → immediate close (≤ 1
+     scheduler tick).
 
-**Acceptance:** `close_at` works; 3 tests PASS; documented.
+**Acceptance:** API доступен; 4 unit tests (past, future, exact-now,
+overflow) PASS.
+
+#### Ф.12.5 — Negative tests (compile-time type safety) (½ day)
+
+- [ ] `nova_tests/plan65/f12_*` фикстуры:
+   - `f12_a_ts_minus_mono_neg.nv` — `EXPECT_COMPILE_ERROR`: `Time.now().minus(Monotonic.now())` — diagnostic «cannot subtract incompatible clock types».
+   - `f12_b_assign_mono_to_ts_neg.nv` — `EXPECT_COMPILE_ERROR`: `let t Timestamp = Monotonic.now()` — type mismatch.
+   - `f12_c_mono_as_unix_neg.nv` — `EXPECT_COMPILE_ERROR`: `Monotonic.now().as_unix_secs()` — method не existуeт (нет overload).
+   - `f12_d_close_at_ts_neg.nv` — `EXPECT_COMPILE_ERROR`: `ChanReader.close_at(Time.now())` — expected Monotonic, got Timestamp.
+   - `f12_e_close_at_pos.nv` — positive: `ChanReader.close_at(Monotonic.now() + Duration.from_secs(1))` PASS.
+   - `f12_f_close_at_past.nv` — positive: past deadline → recv returns None immediately.
+   - `f12_g_close_at_mock_time.nv` — positive с mock Time effect:
+     deterministic firing через `Time.advance(...)` (depends on Ф.10).
+
+**Acceptance:** 7 fixtures pass under EXPECT semantics; diagnostic
+texts match expected substrings.
+
+#### Ф.12.6 — Migration audit + cancel_at hook (½ day)
+
+- [ ] Grep `Time.now() +.*Duration|deadline.*Time\.now` в std/, nova_tests/,
+      examples/ — найти все existing «timer deadline» patterns.
+- [ ] Категоризовать:
+   - **Должно быть Monotonic** (timer logic, retry budget, profiling) →
+     переписать на `Monotonic.now() + d`.
+   - **Должно остаться Timestamp** (логи, file mtime, протоколы) →
+     оставить.
+- [ ] Migration markers для ambiguous cases (`// AUDIT_PLAN65_Ф12: clock type?`).
+- [ ] D75 extension: `CancelToken @cancel_at(deadline Monotonic)` —
+      register deadline-based cancellation. Реализация через timer-channel
+      + cancel propagation (Plan 65 Ф.10 reuse).
+- [ ] Test `f12_h_cancel_token_deadline.nv`: `tok.cancel_at(Monotonic.now() + 100ms)`
+      → child fibers пробуждаются после 100ms.
+
+**Acceptance:** 0 silent wall-clock-as-timer patterns в std/; `cancel_at`
+работает; всё под NOVA_TIMER_METRICS clean (no leak).
+
+#### Ф.12 — Total
+
+**Acceptance Ф.12 целиком:**
+- [ ] D124 fully realized (Monotonic type + APIs + per-OS runtime + tests)
+- [ ] `ChanReader.close_at(Monotonic)` ships
+- [ ] Type-system guarantees (negative tests pass)
+- [ ] Latent `Time.now()` schema mismatch resolved
+- [ ] `CancelToken.cancel_at(Monotonic)` extension
+- [ ] 0 NTP-skew silent bugs в std/
+
+**Трудоёмкость:** ~3 dev-days (было ½ day в v2 — сильно недооценено,
+требовалось ввести новый тип + per-OS runtime + migration).
 
 ### Ф.13 — `ChanReader.tick_every(Duration)` API sketch + namespace squat (½ day)
 
