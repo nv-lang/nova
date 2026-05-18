@@ -588,6 +588,90 @@ impl SumSchemaRegistry {
         self.find_variant_v2(variant_name)
             .map(|(sum_name, fields, _src)| (sum_name, fields))
     }
+
+    // ───────────────────────────────────────────────────────────────────
+    // Phase 3 helpers — method routing dispatch
+    // ───────────────────────────────────────────────────────────────────
+
+    /// Phase 3 lookup: возвращает `MethodRouting` для `method_name` на
+    /// sum-type'е `nova_name`. Returns None если sum-type не зарегистрирован
+    /// или метод отсутствует в `method_routing` map'е.
+    ///
+    /// Используется в `emit_c.rs` method-dispatch path для замены hardcoded
+    /// if-chain'ов на declaration-driven dispatch. Highest-priority entry
+    /// (Prelude > User > Hardcoded) выигрывает — это позволяет Plan 62.A
+    /// follow-up'у переопределить routing через prelude declaration без
+    /// changes codegen-логики.
+    pub fn lookup_method_routing(&self, nova_name: &str, method_name: &str)
+        -> Option<&MethodRouting>
+    {
+        self.lookup_sum_schema(nova_name)?
+            .method_routing
+            .get(method_name)
+    }
+
+    /// Phase 3 reverse-lookup: преобразует C-type name (e.g. `"NovaOpt_nova_int"`,
+    /// `"Nova_Result*"`) в Nova-level sum-type name (`"Option"`, `"Result"`).
+    ///
+    /// Strategy: iterate entries и проверяет три pattern'а matching:
+    /// 1. **Template-like value sums** (`SumAbi::ValueOptionLike`): entry'шный
+    ///    `c_name` это canonical baseline mono (e.g. `"NovaOpt_nova_int"`).
+    ///    Реальный `obj_ty` может быть любой mono — мы match'им по prefix
+    ///    `"NovaOpt_"` (выводим из baseline c_name'а через `strip_after_underscore`).
+    /// 2. **Pointer sums** (`SumAbi::PointerErrorLike`): entry'шный `c_name`
+    ///    это base type без `*` (e.g. `"Nova_Result"`). Реальный `obj_ty`
+    ///    добавляет `*` суффикс — match по `obj_ty == format!("{}*", c_name)`
+    ///    или trim'аем `*` и сравниваем.
+    /// 3. **Inline value-tag-payload sums** (`SumAbi::ValueTagPayload`): exact
+    ///    match `obj_ty == c_name`.
+    ///
+    /// Multiple entries для одного nova_name (e.g. alias `NovaOpt_nova_int`
+    /// + canonical `Option`) — winner выбирается по precedence:
+    /// matches на entries с distinct nova_name'ами — `Option` matches раньше
+    /// `NovaOpt_nova_int` если оба entry в registry'е имеют тот же c_name
+    /// (потому что мы iter'им; первый match — Option в insertion order).
+    /// Для определённости выбираем entry с **shorter nova_name** (matches
+    /// existing `find_variant` heuristic). Это даёт `"Option"` а не алиас.
+    pub fn lookup_sum_for_c_type(&self, c_ty: &str) -> Option<&SumSchemaEntry> {
+        let c_ty_trimmed = c_ty.trim_end_matches('*').trim();
+        let mut best: Option<&SumSchemaEntry> = None;
+        for entry in &self.entries {
+            let matches = match entry.abi {
+                SumAbi::ValueOptionLike => {
+                    // Template prefix matching: NovaOpt_<T>. Берём prefix до
+                    // первого '_' включая, e.g. "NovaOpt_". Если entry c_name
+                    // == "NovaOpt_nova_int", prefix будет "NovaOpt_".
+                    if let Some(idx) = entry.c_name.find('_') {
+                        let prefix = &entry.c_name[..=idx];
+                        c_ty.starts_with(prefix) || c_ty_trimmed.starts_with(prefix)
+                    } else {
+                        false
+                    }
+                }
+                SumAbi::PointerErrorLike => {
+                    // Pointer sums: obj_ty имеет `*` суффикс.
+                    c_ty_trimmed == entry.c_name
+                }
+                SumAbi::ValueTagPayload => {
+                    // Inline value struct: exact match.
+                    c_ty == entry.c_name || c_ty_trimmed == entry.c_name
+                }
+            };
+            if matches {
+                // Prefer shorter nova_name (matches existing find_variant
+                // heuristic: "Option" preferred over "NovaOpt_nova_int" alias).
+                match best {
+                    None => best = Some(entry),
+                    Some(cur) => {
+                        if entry.nova_name.len() < cur.nova_name.len() {
+                            best = Some(entry);
+                        }
+                    }
+                }
+            }
+        }
+        best
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -870,6 +954,90 @@ mod tests {
         assert_eq!(source, SchemaSource::DeclaredFromPrelude,
             "find_variant_v2 must prefer DeclaredFromPrelude over HardcodedBaseline");
         assert_eq!(sum_name, "Option");
+    }
+
+    /// Phase 3: `lookup_method_routing` возвращает HardcodedRuntimeFn для
+    /// существующих методов Option/Result и None для несуществующих.
+    #[test]
+    fn test_lookup_method_routing_option_and_result() {
+        let mut reg = SumSchemaRegistry::new();
+        reg.init_hardcoded_baseline();
+
+        // Option.is_some — per-T trampoline.
+        let r = reg.lookup_method_routing("Option", "is_some")
+            .expect("Option.is_some must be routed");
+        match r {
+            MethodRouting::HardcodedRuntimeFn { c_name, is_per_t } => {
+                assert_eq!(c_name, "Nova_Option_method_is_some");
+                assert!(*is_per_t);
+            }
+            other => panic!("expected HardcodedRuntimeFn, got {:?}", other),
+        }
+
+        // Option.unwrap → inline sentinel.
+        let r = reg.lookup_method_routing("Option", "unwrap").unwrap();
+        match r {
+            MethodRouting::HardcodedRuntimeFn { c_name, is_per_t } => {
+                assert_eq!(c_name, "<inline>");
+                assert!(!*is_per_t);
+            }
+            other => panic!("expected HardcodedRuntimeFn<inline>, got {:?}", other),
+        }
+
+        // Result.unwrap_or — non-per-T trampoline.
+        let r = reg.lookup_method_routing("Result", "unwrap_or").unwrap();
+        match r {
+            MethodRouting::HardcodedRuntimeFn { c_name, is_per_t } => {
+                assert_eq!(c_name, "Nova_Result_method_unwrap_or");
+                assert!(!*is_per_t);
+            }
+            other => panic!("expected HardcodedRuntimeFn non-per-T, got {:?}", other),
+        }
+
+        // Result.unknown_method → None.
+        assert!(reg.lookup_method_routing("Result", "no_such_method").is_none());
+
+        // Unknown sum.
+        assert!(reg.lookup_method_routing("NoSuchSum", "any").is_none());
+    }
+
+    /// Phase 3: `lookup_sum_for_c_type` reverse-maps C-type → entry.
+    #[test]
+    fn test_lookup_sum_for_c_type_reverse_mapping() {
+        let mut reg = SumSchemaRegistry::new();
+        reg.init_hardcoded_baseline();
+
+        // NovaOpt_<T> template — должен резолвиться в Option (shorter name
+        // preferred над alias NovaOpt_nova_int).
+        let e = reg.lookup_sum_for_c_type("NovaOpt_nova_int")
+            .expect("NovaOpt_nova_int must resolve");
+        assert_eq!(e.nova_name, "Option");
+
+        // NovaOpt_nova_str (other mono) — также Option.
+        let e = reg.lookup_sum_for_c_type("NovaOpt_nova_str")
+            .expect("NovaOpt_nova_str must resolve");
+        assert_eq!(e.nova_name, "Option");
+
+        // Nova_Result* → Result.
+        let e = reg.lookup_sum_for_c_type("Nova_Result*")
+            .expect("Nova_Result* must resolve");
+        assert_eq!(e.nova_name, "Result");
+        assert_eq!(e.abi, SumAbi::PointerErrorLike);
+
+        // Without star.
+        let e = reg.lookup_sum_for_c_type("Nova_Result")
+            .expect("Nova_Result must resolve (no star)");
+        assert_eq!(e.nova_name, "Result");
+
+        // Nova_RuntimeError — value-tag-payload.
+        let e = reg.lookup_sum_for_c_type("Nova_RuntimeError")
+            .expect("Nova_RuntimeError must resolve");
+        assert_eq!(e.nova_name, "RuntimeError");
+        assert_eq!(e.abi, SumAbi::ValueTagPayload);
+
+        // Unknown.
+        assert!(reg.lookup_sum_for_c_type("NoSuchType").is_none());
+        assert!(reg.lookup_sum_for_c_type("NovaArray_nova_int*").is_none());
     }
 
     /// init_prelude_decls — Ф.1 stub. Не регистрирует entries, не падает.
