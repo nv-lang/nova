@@ -11849,12 +11849,52 @@ impl CEmitter {
                             _ => {}
                         }
                     }
+                    // Plan 62.A.bis Ф.3.2: Result method dispatch route'ится
+                    // через `sum_schema_registry`. Routable trampolines
+                    // (is_ok/is_err/ok/unwrap_or) emit'ятся через registry
+                    // entry; sentinel `"<inline>"` (err/unwrap_or_else/map/
+                    // map_err/unwrap) fall through к existing inline блокам
+                    // ниже. Result методы — non-per-T (single bootstrap mono).
                     if obj_ty == "Nova_Result*" {
+                        let routing = self.sum_schema_registry
+                            .lookup_method_routing("Result", method.as_str())
+                            .cloned();
+                        if let Some(super::sum_schema_registry::MethodRouting::HardcodedRuntimeFn {
+                            c_name, is_per_t,
+                        }) = &routing {
+                            if c_name != "<inline>" {
+                                let obj_c = self.emit_expr(obj)?;
+                                // Result methods — non-per-T в bootstrap'е
+                                // (`is_per_t = false`); если истинно — это
+                                // future per-T monomorphization (Plan 59).
+                                let mangled = if *is_per_t {
+                                    // Phase 3: per-T для Result не используется
+                                    // (registry: все false); но preserve future-
+                                    // proof path.
+                                    format!("{}_nova_int_nova_str", c_name)
+                                } else {
+                                    c_name.clone()
+                                };
+                                let mut parts = vec![obj_c];
+                                for a in args {
+                                    parts.push(self.emit_expr(a.expr())?);
+                                }
+                                return Ok(format!("{}({})", mangled, parts.join(", ")));
+                            }
+                        }
+                        if let Some(super::sum_schema_registry::MethodRouting::ExternalFn {
+                            c_name,
+                        }) = &routing {
+                            let obj_c = self.emit_expr(obj)?;
+                            let mut parts = vec![obj_c];
+                            for a in args {
+                                parts.push(self.emit_expr(a.expr())?);
+                            }
+                            return Ok(format!("{}({})", c_name, parts.join(", ")));
+                        }
+                        // Inline-sentinel + DeclaredBody fall through.
                         let obj_c = self.emit_expr(obj)?;
                         match method.as_str() {
-                            "is_ok" => return Ok(format!("Nova_Result_method_is_ok({})", obj_c)),
-                            "is_err" => return Ok(format!("Nova_Result_method_is_err({})", obj_c)),
-                            "ok" => return Ok(format!("Nova_Result_method_ok({})", obj_c)),
                             // D26 prelude: Result.err() → Option[E].
                             // Bootstrap: Err type — nova_str. Возвращаем
                             // NovaOpt_nova_int с интерпретируемой как str
@@ -11880,13 +11920,6 @@ impl CEmitter {
                                 self.indent -= 1;
                                 self.line("}");
                                 return Ok(opt_tmp);
-                            }
-                            "unwrap_or" => {
-                                if let Some(arg) = args.first() {
-                                    let v = self.emit_expr(arg.expr())?;
-                                    return Ok(format!(
-                                        "Nova_Result_method_unwrap_or({}, {})", obj_c, v));
-                                }
                             }
                             // D26 prelude: Result.unwrap_or_else(f). Err →
                             // f(e), Ok(v) → v. f это closure (nova_str → nova_int).
