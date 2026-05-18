@@ -312,6 +312,14 @@ pub struct FnDecl {
     /// Plan 33.3 Ф.13: `#trusted` external fn — контракты становятся axioms
     /// (без SMT-доказательства). Допустим только для `external fn`.
     pub is_trusted: bool,
+    /// Plan 33.9 Ф.1 (D24 §35): `#opaque` — body не раскрывается в SMT
+    /// scope (treated как UF). Требует `#pure`, conflict с `#verify`.
+    /// Реализовано: parser/AST/lints (V1); Z3 axiomatic encoding — V2.
+    pub is_opaque: bool,
+    /// Plan 33.9 Ф.3: `#fuel(n)` — controlled unfolding depth для opaque
+    /// recursive fns. None = default 0 (без unfold). Z3 emits chain of
+    /// N axioms (V2 — TrivialBackend ignores).
+    pub fuel: Option<u32>,
 }
 
 /// Plan 33.1 (D24): один контракт-clause функции.
@@ -894,6 +902,14 @@ pub enum Stmt {
     /// relation in SMT; erased in codegen.
     Calc {
         steps: Vec<CalcStep>,
+        span: Span,
+    },
+    /// Plan 33.9 Ф.2: `reveal name` — раскрывает opaque fn body в SMT
+    /// scope текущей fn body. Ghost statement: emit'ит axiom
+    /// `forall args. name(args) == body` в SMT scope; erased в codegen.
+    /// V1: parser/AST/lints (без real Z3 axiom emission — V2 task).
+    Reveal {
+        name: String,
         span: Span,
     },
 }
