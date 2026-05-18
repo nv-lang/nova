@@ -1,0 +1,18 @@
+// Ф.49.1 (Plan 33.6): apply к лемме с `requires false` → W2402 на call-site.
+// EXPECT_COMPILE_WARNING W2402
+
+module contracts.f49_apply_vacuous_lemma_w2402
+
+lemma vacuous(x int)
+    requires false
+    ensures x >= 0
+=> x
+
+#verify
+fn caller(x int) -> int
+    requires x >= 0
+    ensures result >= 0
+{
+    apply vacuous(x)
+    x
+}
