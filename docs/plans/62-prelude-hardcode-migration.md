@@ -176,7 +176,7 @@ sum_schemas.insert("Result", vec![Variant::Tuple("Ok", vec!["nova_int"]), Varian
 
 Это hardcoded на конкретные `(int, str)`. Невозможно полностью удалить эту строчку без полной generic monomorphization (Plan 14 Q-result-monomorphization, или Plan 59 tuple-mono approach extended на sum-types).
 
-**Decision:** Plan 62.A.bis (новая sub-task) — добавить generic schema registry поверх существующего `sum_schemas`. Hardcoded `Result` остаётся как fallback baseline, но `infer_result_type` сначала смотрит в registered prelude'е, потом в hardcoded. После того как Plan 59 mono-pattern расширится на sum-types — hardcoded compromise можно полностью удалить.
+**Decision:** см. **[Plan 62.A.bis](62.A.bis-sum-schema-registry.md)** — детальный design-документ (proposed 2026-05-18). Generic schema registry поверх существующего `sum_schemas`, hardcoded `Result` остаётся как fallback baseline, но `infer_result_type` сначала смотрит в registered prelude'е, потом в hardcoded. После того как Plan 59 mono-pattern расширится на sum-types — hardcoded compromise можно полностью удалить.
 
 ### Pattern-match codegen lookup
 
