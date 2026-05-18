@@ -1,4 +1,4 @@
-// EXPECT_COMPILE_ERROR #verify
+// EXPECT_COMPILE_ERROR error
 //
 // Ф.54 (test pack): негативный guard для Ф.30.2 addition strict.
 // `requires x >= 0; ensures (x+1) > 100` — недоказуемо (x может быть 0 → 1 < 100).

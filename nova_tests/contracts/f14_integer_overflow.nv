@@ -1,4 +1,4 @@
-﻿// Plan 33.3 Ф.14: Dafny-parity test 7 — Integer overflow guards.
+// Plan 33.3 Ф.14: Dafny-parity test 7 — Integer overflow guards.
 // Аналог overflow-safe arithmetic из Dafny.
 
 // REQUIRES_SMT_BACKEND z3

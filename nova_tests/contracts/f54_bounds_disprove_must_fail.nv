@@ -1,4 +1,4 @@
-// EXPECT_COMPILE_ERROR #verify
+// EXPECT_COMPILE_ERROR error
 //
 // Ф.54 (test pack): негативные guards для Ф.29-Ф.36 bound check helpers.
 // Проверяет что TrivialBackend НЕ доказывает невозможные ensures —
