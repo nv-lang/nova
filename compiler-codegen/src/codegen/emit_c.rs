@@ -12871,12 +12871,20 @@ impl CEmitter {
                                                     &mut self.current_type_subst,
                                                     type_subst.iter().cloned().collect(),
                                                 );
+                                                // Plan 70 PhaseA2: strict — fn-typed param resolution через mono subst.
                                                 let inner_ptys: Vec<String> = fp.iter()
-                                                    .map(|t| self.type_ref_to_c(t).unwrap_or_else(|_| "nova_int".into()))
-                                                    .collect();
-                                                let inner_ret = return_type.as_ref()
-                                                    .map(|t| self.type_ref_to_c(t).unwrap_or_else(|_| "nova_unit".into()))
-                                                    .unwrap_or_else(|| "nova_unit".into());
+                                                    .map(|t| self.type_ref_to_c(t).map_err(|e| self.err_no_int_fallback(
+                                                        "fn-typed call param через mono subst",
+                                                        &e,
+                                                    )))
+                                                    .collect::<Result<Vec<_>, _>>()?;
+                                                let inner_ret = match return_type.as_ref() {
+                                                    Some(t) => self.type_ref_to_c(t).map_err(|e| self.err_no_int_fallback(
+                                                        "fn-typed call return через mono subst",
+                                                        &e,
+                                                    ))?,
+                                                    None => "nova_unit".to_string(),
+                                                };
                                                 self.current_type_subst = saved_inner;
                                                 let prev_sig = self.fn_param_sigs.insert(
                                                     param_decl.name.clone(), (inner_ptys, inner_ret));
@@ -13038,9 +13046,13 @@ impl CEmitter {
                                                 _ => continue,
                                             };
                                             // Tmp var_types: bind closure params to substituted fn-param types.
+                                            // Plan 70 PhaseA2: strict — closure params binding в fn_param_sigs.
                                             let inner_ptys: Vec<String> = fp.iter()
-                                                .map(|t| self.type_ref_to_c(t).unwrap_or_else(|_| "nova_int".into()))
-                                                .collect();
+                                                .map(|t| self.type_ref_to_c(t).map_err(|e| self.err_no_int_fallback(
+                                                    "closure param type binding",
+                                                    &e,
+                                                )))
+                                                .collect::<Result<Vec<_>, _>>()?;
                                             let saved_var_types: Vec<(String, Option<String>)> =
                                                 closure_params.iter().zip(inner_ptys.iter())
                                                 .map(|(cp, c_ty)| (cp.name.clone(),
@@ -13125,9 +13137,13 @@ impl CEmitter {
                                 let mut arg_strs = Vec::new();
                                 for (param_decl, a) in fn_decl.params.iter().zip(args.iter()) {
                                     if let crate::ast::TypeRef::Func { params: fp, return_type, .. } = &param_decl.ty {
+                                        // Plan 70 PhaseA2: strict — emit_call fn_decl param sig
                                         let inner_ptys: Vec<String> = fp.iter()
-                                            .map(|t| self.type_ref_to_c(t).unwrap_or_else(|_| "nova_int".into()))
-                                            .collect();
+                                            .map(|t| self.type_ref_to_c(t).map_err(|e| self.err_no_int_fallback(
+                                                "emit_call fn-param sig",
+                                                &e,
+                                            )))
+                                            .collect::<Result<Vec<_>, _>>()?;
                                         let inner_ret = return_type.as_ref()
                                             .map(|t| self.type_ref_to_c(t).unwrap_or_else(|_| "nova_unit".into()))
                                             .unwrap_or_else(|| "nova_unit".into());
@@ -13674,9 +13690,13 @@ impl CEmitter {
                                                 &mut self.current_type_subst,
                                                 type_subst.iter().cloned().collect(),
                                             );
+                                            // Plan 70 PhaseA2: strict — emit_call mono-subst fn-param sig
                                             let inner_ptys: Vec<String> = fp.iter()
-                                                .map(|t| self.type_ref_to_c(t).unwrap_or_else(|_| "nova_int".into()))
-                                                .collect();
+                                                .map(|t| self.type_ref_to_c(t).map_err(|e| self.err_no_int_fallback(
+                                                    "emit_call mono-subst fn-param",
+                                                    &e,
+                                                )))
+                                                .collect::<Result<Vec<_>, _>>()?;
                                             let inner_ret = return_type.as_ref()
                                                 .map(|t| self.type_ref_to_c(t).unwrap_or_else(|_| "nova_unit".into()))
                                                 .unwrap_or_else(|| "nova_unit".into());
@@ -13881,9 +13901,13 @@ impl CEmitter {
                                     &mut self.current_type_subst,
                                     type_subst.iter().cloned().collect(),
                                 );
+                                // Plan 70 PhaseA2: strict — emit_call inner-subst fn-param sig
                                 let inner_ptys: Vec<String> = fp.iter()
-                                    .map(|t| self.type_ref_to_c(t).unwrap_or_else(|_| "nova_int".into()))
-                                    .collect();
+                                    .map(|t| self.type_ref_to_c(t).map_err(|e| self.err_no_int_fallback(
+                                        "emit_call inner-subst fn-param",
+                                        &e,
+                                    )))
+                                    .collect::<Result<Vec<_>, _>>()?;
                                 let inner_ret = return_type.as_ref()
                                     .map(|t| self.type_ref_to_c(t).unwrap_or_else(|_| "nova_unit".into()))
                                     .unwrap_or_else(|| "nova_unit".into());
