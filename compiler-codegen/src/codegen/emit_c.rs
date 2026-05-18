@@ -9027,12 +9027,20 @@ impl CEmitter {
                 // so `for f in xs { f() }` and `xs.push(|| ...)` work in non-param contexts.
                 if let Some(crate::ast::TypeRef::Array(inner, _)) = &decl.ty {
                     if let crate::ast::TypeRef::Func { params: fp, return_type, .. } = inner.as_ref() {
+                        // Plan 70 PhaseA1.4: strict — array-of-fn element sig lowering.
                         let ptys: Vec<String> = fp.iter()
-                            .map(|t| self.type_ref_to_c(t).unwrap_or_else(|_| "nova_int".into()))
-                            .collect();
-                        let rty = return_type.as_ref()
-                            .map(|rt| self.type_ref_to_c(rt).unwrap_or_else(|_| "nova_int".into()))
-                            .unwrap_or_else(|| "nova_unit".into());
+                            .map(|t| self.type_ref_to_c(t).map_err(|e| self.err_no_int_fallback(
+                                &format!("let `{}` array-of-fn element param type", binding),
+                                &e,
+                            )))
+                            .collect::<Result<Vec<_>, _>>()?;
+                        let rty = match return_type.as_ref() {
+                            Some(rt) => self.type_ref_to_c(rt).map_err(|e| self.err_no_int_fallback(
+                                &format!("let `{}` array-of-fn element return type", binding),
+                                &e,
+                            ))?,
+                            None => "nova_unit".to_string(),
+                        };
                         self.array_param_fn_sigs.insert(binding.clone(), (ptys, rty));
                         // Hint emit_array_lit when value is `[]` so storage uses void_p.
                         if matches!(decl.value.kind, ExprKind::ArrayLit(ref e) if e.is_empty()) {
@@ -9077,12 +9085,20 @@ impl CEmitter {
                 let (mv_expr, type_anno_sig): (&Expr, Option<(Vec<String>, String)>) =
                     if let ExprKind::As(inner, ty) = &decl.value.kind {
                         if let TypeRef::Func { params: fp, return_type, .. } = ty {
+                            // Plan 70 PhaseA1.4: strict — `as fn(...) -> R` annotation sig.
                             let ptys: Vec<String> = fp.iter()
-                                .map(|t| self.type_ref_to_c(t).unwrap_or_else(|_| "nova_int".into()))
-                                .collect();
-                            let rty = return_type.as_ref()
-                                .map(|rt| self.type_ref_to_c(rt).unwrap_or_else(|_| "nova_int".into()))
-                                .unwrap_or_else(|| "nova_unit".into());
+                                .map(|t| self.type_ref_to_c(t).map_err(|e| self.err_no_int_fallback(
+                                    &format!("let `{}` `as fn` param annotation", binding),
+                                    &e,
+                                )))
+                                .collect::<Result<Vec<_>, _>>()?;
+                            let rty = match return_type.as_ref() {
+                                Some(rt) => self.type_ref_to_c(rt).map_err(|e| self.err_no_int_fallback(
+                                    &format!("let `{}` `as fn` return annotation", binding),
+                                    &e,
+                                ))?,
+                                None => "nova_unit".to_string(),
+                            };
                             (inner.as_ref(), Some((ptys, rty)))
                         } else {
                             (&decl.value, None)
@@ -9156,19 +9172,37 @@ impl CEmitter {
                 }
                 // If RHS is a lambda, register the binding in fn_param_sigs so inc(5) works
                 if let ExprKind::Lambda { params, return_type, .. } = &decl.value.kind {
+                    // Plan 70 PhaseA1.4: strict — Lambda annotated params. Untyped param
+                    // (no `p.ty`) defaults to nova_int — Cat D legitimate (lambda params
+                    // unannotated inferred from context; default int is the documented
+                    // bootstrap fallback, not silent miscompilation).
                     let param_c_tys: Vec<String> = params.iter().map(|p| {
-                        if let Some(ty) = &p.ty { self.type_ref_to_c(ty).unwrap_or_else(|_| "nova_int".into()) }
-                        else { "nova_int".into() }
-                    }).collect();
+                        match &p.ty {
+                            Some(ty) => self.type_ref_to_c(ty).map_err(|e| self.err_no_int_fallback(
+                                &format!("let `{}` lambda param `{}` annotation", binding, p.name),
+                                &e,
+                            )),
+                            None => Ok("nova_int".into()),  // Cat D — bootstrap default for unannotated
+                        }
+                    }).collect::<Result<Vec<_>, _>>()?;
                     // Infer return type: priority — let-annotation > lambda annotation > default.
                     let ret_c = if let Some(TypeRef::Func { return_type: rt, .. }) = decl.ty.as_ref() {
-                        rt.as_ref().map(|t| self.type_ref_to_c(t).unwrap_or_else(|_| "nova_int".into()))
-                            .unwrap_or_else(|| "nova_int".into())
+                        // let-annotation `fn(...) -> R` — strict для R если есть.
+                        match rt.as_ref() {
+                            Some(t) => self.type_ref_to_c(t).map_err(|e| self.err_no_int_fallback(
+                                &format!("let `{}` annotation return type", binding),
+                                &e,
+                            ))?,
+                            None => "nova_int".to_string(),  // Cat D — fn без -> default int
+                        }
                     } else if let Some(rt) = return_type {
                         // Plan 08 Ф.4 prerequisite: lambda с явной `-> T`-аннотацией.
-                        self.type_ref_to_c(rt).unwrap_or_else(|_| "nova_int".into())
+                        self.type_ref_to_c(rt).map_err(|e| self.err_no_int_fallback(
+                            &format!("let `{}` lambda return annotation", binding),
+                            &e,
+                        ))?
                     } else {
-                        "nova_int".into()
+                        "nova_int".into()  // Cat D — bootstrap default
                     };
                     self.fn_param_sigs.insert(binding.clone(), (param_c_tys, ret_c));
                 }
@@ -9181,12 +9215,20 @@ impl CEmitter {
                 if let ExprKind::ClosureLight { params, .. } = &decl.value.kind {
                     let arity = params.len();
                     let (param_c_tys, ret_c) = if let Some(TypeRef::Func { params: anno_params, return_type: anno_ret, .. }) = decl.ty.as_ref() {
+                        // Plan 70 PhaseA1.4: strict — ClosureLight typed via let-annotation.
                         let ptys: Vec<String> = anno_params.iter()
-                            .map(|t| self.type_ref_to_c(t).unwrap_or_else(|_| "nova_int".into()))
-                            .collect();
-                        let rty = anno_ret.as_ref()
-                            .map(|t| self.type_ref_to_c(t).unwrap_or_else(|_| "nova_int".into()))
-                            .unwrap_or_else(|| "nova_int".into());
+                            .map(|t| self.type_ref_to_c(t).map_err(|e| self.err_no_int_fallback(
+                                &format!("let `{}` ClosureLight annotation param", binding),
+                                &e,
+                            )))
+                            .collect::<Result<Vec<_>, _>>()?;
+                        let rty = match anno_ret.as_ref() {
+                            Some(t) => self.type_ref_to_c(t).map_err(|e| self.err_no_int_fallback(
+                                &format!("let `{}` ClosureLight annotation return", binding),
+                                &e,
+                            ))?,
+                            None => "nova_int".to_string(),  // Cat D — fn без -> default int
+                        };
                         (ptys, rty)
                     } else {
                         // Без annotation: дефолт nova_int для arity и
@@ -9200,12 +9242,20 @@ impl CEmitter {
                 // Plan 19, C5: closure-full в let-биндинге. Типы
                 // параметров и return явные — берём из FnSigBody.
                 if let ExprKind::ClosureFull(sb) = &decl.value.kind {
+                    // Plan 70 PhaseA1.4: strict — ClosureFull typed params + return.
                     let param_c_tys: Vec<String> = sb.params.iter()
-                        .map(|p| self.type_ref_to_c(&p.ty).unwrap_or_else(|_| "nova_int".into()))
-                        .collect();
-                    let ret_c = sb.return_type.as_ref()
-                        .map(|t| self.type_ref_to_c(t).unwrap_or_else(|_| "nova_int".into()))
-                        .unwrap_or_else(|| "nova_unit".into());
+                        .map(|p| self.type_ref_to_c(&p.ty).map_err(|e| self.err_no_int_fallback(
+                            &format!("let `{}` ClosureFull param `{}`", binding, p.name),
+                            &e,
+                        )))
+                        .collect::<Result<Vec<_>, _>>()?;
+                    let ret_c = match sb.return_type.as_ref() {
+                        Some(t) => self.type_ref_to_c(t).map_err(|e| self.err_no_int_fallback(
+                            &format!("let `{}` ClosureFull return type", binding),
+                            &e,
+                        ))?,
+                        None => "nova_unit".to_string(),
+                    };
                     self.fn_param_sigs.insert(binding.clone(), (param_c_tys, ret_c));
                 }
                 // If RHS is a call to a function that returns fn(...), propagate closure sig to binding
