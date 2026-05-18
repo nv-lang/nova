@@ -437,6 +437,17 @@ pub struct CEmitter {
     /// equivalent: build fails with detailed diagnostic; user sees all E7001s
     /// в одном compile pass (better UX чем fail-fast).
     strict_errors: std::cell::RefCell<Vec<String>>,
+    /// Plan 70.1: set of imported-module prefix names visible в this module
+    /// (alias + last-segment of import path). Used в emit_call Member dispatch
+    /// чтобы распознать `<alias>.func(args)` или `<module>.func(args)` pattern
+    /// и переписать в bare `func(args)` (imported fns доступны без префикса
+    /// в text scope; префикс — namespace hint, не actual C-name component).
+    ///
+    /// Populated в emit_module pre-pass из `module.imports` + each peer_file
+    /// imports. Aliases (`import X as th`) и last-segments (`import X.Y` → `Y`)
+    /// оба добавляются. Без этого fix codegen эмитит `th.func(args)` напрямую
+    /// → undeclared identifier `th` в C → CC-FAIL.
+    imported_modules: HashSet<String>,
     /// Plan 20 Ф.4: stack of active defer/errdefer scopes during emission.
     /// Each block that contains a `defer`/`errdefer` stmt pushes a `DeferScope`
     /// on entry and pops on exit. `Stmt::Return`/`Break`/`Continue` walk the
@@ -690,6 +701,7 @@ impl CEmitter {
             var_boxed: HashMap::new(),
             warnings: std::cell::RefCell::new(Vec::new()),
             strict_errors: std::cell::RefCell::new(Vec::new()),
+            imported_modules: HashSet::new(),
             mono_fn_decls: HashMap::new(),
             mono_method_decls: HashMap::new(),
             self_method_decls: HashMap::new(),
@@ -957,6 +969,23 @@ impl CEmitter {
     }
 
     pub fn emit_module(mut self, module: &Module) -> Result<(String, Vec<String>), String> {
+        // Plan 70.1: register imported-module prefix names (aliases + last-segments)
+        // для emit_call Member dispatch rewrite. См. поле `imported_modules` doc.
+        let mut register_imports = |imports: &[crate::ast::Import], target: &mut HashSet<String>| {
+            for imp in imports {
+                if let Some(alias) = &imp.alias {
+                    target.insert(alias.clone());
+                }
+                if let Some(last) = imp.path.last() {
+                    target.insert(last.clone());
+                }
+            }
+        };
+        register_imports(&module.imports, &mut self.imported_modules);
+        for pf in &module.peer_files {
+            register_imports(&pf.imports, &mut self.imported_modules);
+        }
+
         // Plan 33.3 Ф.9.2 (D24): pre-pass — собрать invariants для record-типов.
         // Used в emit_record_lit для wrap'а конструкции в runtime-check.
         for item in &module.items {
@@ -11663,6 +11692,43 @@ impl CEmitter {
                 }
             }
             ExprKind::Member { obj, name: method } => {
+                // Plan 70.1: module-alias rewrite. `<alias>.func(args)` →
+                // bare `func(args)` (imported fns доступны через bare name).
+                // Без этого rewrite codegen эмитит `th.func(...)` → undeclared
+                // identifier `th` в C → CC-FAIL.
+                //
+                // Defensive guards:
+                // (a) Skip если prefix — local variable (var_types contains
+                //     name) — local shadowing wins per scope rules.
+                //     Critical: standard library modules имеют locals named
+                //     `p`/`s`/`m`/etc, которые collide с alias names в
+                //     consumer code (cross-file emit_module merges scopes).
+                // (b) Skip если prefix — intrinsic namespace (`gc`, `fibers`,
+                //     `runtime`, `Channel`, `Time`, etc.) — те уже имеют
+                //     специальный dispatch в infer_expr_c_type / emit_call.
+                //     Heuristic: skip если method-on-prefix распознан
+                //     downstream `infer_expr_c_type` Member arm (line 18403+
+                //     family — StringBuilder, ChannelPair, etc.).
+                if let ExprKind::Ident(prefix) = &obj.kind {
+                    let is_local_var = self.var_types.contains_key(prefix);
+                    let is_intrinsic_namespace = matches!(prefix.as_str(),
+                        "gc" | "fibers" | "runtime" | "Channel" | "ChanReader" |
+                        "ChanWriter" | "Time" | "Monotonic" | "CancelToken" |
+                        "StringBuilder" | "WriteBuffer" | "ReadBuffer" |
+                        "f64" | "f32" | "int" | "u8" | "u16" | "u32" | "u64" |
+                        "i8" | "i16" | "i32" | "i64" | "Self" | "Duration"
+                    );
+                    if !is_local_var
+                        && !is_intrinsic_namespace
+                        && self.imported_modules.contains(prefix)
+                    {
+                        let bare_func = Expr {
+                            kind: ExprKind::Ident(method.clone()),
+                            span: func.span,
+                        };
+                        return self.emit_call(&bare_func, args);
+                    }
+                }
                 // Plan 65 Ф.5: E5101 early guard — `Time.after(...)` was
                 // removed; emit a structured diagnostic with a machine-
                 // applicable fix-it suggestion.
