@@ -9345,6 +9345,15 @@ form. Now established pattern: запускать полный test suite пер
 
 **Регрессия:** 201 → 202 PASS (+1 из Ф.47.1), 0 FAIL.
 
+## [M-plan-33.6-Ф.48-lemma-unused-param] (2026-05-18)
+
+Аналог Ф.23.3 (unused fn param) для лемм. Walker `collect_used_idents`
+проходит body и contracts.expr — unused param без `_` префикса → W2402.
+
+**Регрессия:** 202 → 203 PASS (+1), 0 FAIL.
+
+**Lemma lint catalog — 12 rules** (добавился unused-param).
+
 ## [M-57.F.4-positive-negative-coverage] — Test expansion (2026-05-17)
 
 **Не simplification.** Прямой user feedback "тесты напиши по тому,
