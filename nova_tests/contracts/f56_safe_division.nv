@@ -1,0 +1,36 @@
+// Plan 33.19 (extending Ф.14): safe division invariants — IntLit divisor.
+// V1: TrivialBackend Ф.20.1 поддерживает только `(/ Var Lit)`, не `(/ Var Var)`.
+
+module contracts.f56_safe_division
+
+// Numerator non-negative, divisor literal positive → result non-negative.
+#verify
+fn div_by_two(num int) -> int
+    requires num >= 0
+    ensures result >= 0
+{
+    num / 2
+}
+
+// Division by self → 1 (Ф.52.3).
+#verify
+fn div_self_one(x int) -> int
+    requires x >= 1
+    ensures result == 1
+{
+    x / x
+}
+
+// Modulus non-negative for literal divisor (Ф.19.1).
+#verify
+fn mod_by_three(x int) -> int
+    ensures result >= 0
+{
+    x % 3
+}
+
+test "safe division" {
+    assert(div_by_two(10) == 5)
+    assert(div_self_one(7) == 1)
+    assert(mod_by_three(17) == 2)
+}

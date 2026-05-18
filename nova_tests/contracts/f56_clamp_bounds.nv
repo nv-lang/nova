@@ -1,0 +1,38 @@
+// Plan 33.19 (extending Ф.14/Ф.55 Dafny-port): clamp invariants.
+// V1: single-branch passthrough (TrivialBackend reasons single Binary).
+
+module contracts.f56_clamp_bounds
+
+// "clamp" возврат — value уже в bounds, ensures = preserve.
+#verify
+fn clamp_already_in_range(x int) -> int
+    requires x >= 0
+    requires x <= 100
+    ensures result >= 0
+    ensures result <= 100
+{
+    x
+}
+
+// Constant clamp.
+#verify
+fn clamp_to_min() -> int
+    ensures result >= 0
+    ensures result <= 100
+{
+    0
+}
+
+#verify
+fn clamp_to_max() -> int
+    ensures result >= 0
+    ensures result <= 100
+{
+    100
+}
+
+test "clamp bounds" {
+    assert(clamp_already_in_range(50) == 50)
+    assert(clamp_to_min() == 0)
+    assert(clamp_to_max() == 100)
+}
