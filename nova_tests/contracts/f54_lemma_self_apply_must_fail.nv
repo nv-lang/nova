@@ -1,0 +1,14 @@
+// EXPECT_COMPILE_ERROR E2408
+//
+// Ф.54 (test pack): негативный guard для Ф.46.1 lemma self-apply.
+// Soundness fix: lemma не должна применять саму себя (unsound proof).
+
+module contracts.f54_lemma_self_apply_must_fail
+
+lemma circular_proof(x int)
+    requires x >= 0
+    ensures x >= 0
+{
+    apply circular_proof(x)
+    x
+}
