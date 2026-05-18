@@ -1046,6 +1046,16 @@ impl CEmitter {
             let mut time_schema: HashMap<String, (Vec<String>, String)> = HashMap::new();
             time_schema.insert("sleep".to_string(), (vec!["nova_int".into()],    "nova_unit".into()));
             time_schema.insert("now".to_string(),   (vec![],                      "nova_int".into()));
+            // Plan 65 Ф.11: NOVA_TIMER_METRICS observability counters.
+            // Returns rolling counters from the runtime timer-stats struct
+            // maintained in channels.h. Disabled-path == disabled at-exit dump;
+            // counters themselves are always live (cost = 1 incr per
+            // alloc/fire/cancel of a close_after timer).
+            time_schema.insert("timer_alloc_total".to_string(),       (vec![], "nova_int".into()));
+            time_schema.insert("timer_alloc_active".to_string(),      (vec![], "nova_int".into()));
+            time_schema.insert("timer_fired".to_string(),             (vec![], "nova_int".into()));
+            time_schema.insert("timer_cancelled".to_string(),         (vec![], "nova_int".into()));
+            time_schema.insert("timer_longest_pending_ms".to_string(), (vec![], "nova_int".into()));
             self.effect_schemas.insert("Time".to_string(), time_schema);
         }
 
