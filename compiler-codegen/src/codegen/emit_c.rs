@@ -5785,11 +5785,18 @@ impl CEmitter {
                     return "void*".into();
                 }
                 // Option[T] where T is a type param → NovaOpt_nova_int
+                // Plan 62.A.bis Ф.2.4: c_name source = registry entry для
+                // "Option" (hardcoded baseline: "NovaOpt_nova_int"). Fallback
+                // на literal если registry почему-то пуст (defensive).
                 if name == "Option" {
                     if let Some(g) = generics.first() {
                         if let TypeRef::Named { path: gp, .. } = g {
                             if type_params.contains(&gp.join("_")) {
-                                return "NovaOpt_nova_int".into();
+                                let c_name = self.sum_schema_registry
+                                    .lookup_sum_schema("Option")
+                                    .map(|e| e.c_name.clone())
+                                    .unwrap_or_else(|| "NovaOpt_nova_int".into());
+                                return c_name;
                             }
                         }
                     }
