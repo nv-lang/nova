@@ -1038,11 +1038,14 @@ impl CEmitter {
         // Operations: `now() -> int` (monotonic ms), `sleep(ms int) -> unit`
         // (yields/sleeps depending on context — see fibers.h). User override
         // via `with Time = handler Time { sleep(ms) {...} now() {...} } { body }`.
+        //
+        // Plan 65 Ф.5: `Time.after(ms)` REMOVED. Replaced by
+        // `ChanReader.close_after(Duration)` (D94 revision). Usage of the
+        // legacy form triggers diagnostic E5101 (see emit_call dispatch).
         {
             let mut time_schema: HashMap<String, (Vec<String>, String)> = HashMap::new();
             time_schema.insert("sleep".to_string(), (vec!["nova_int".into()],    "nova_unit".into()));
             time_schema.insert("now".to_string(),   (vec![],                      "nova_int".into()));
-            time_schema.insert("after".to_string(), (vec!["nova_int".into()],    "Nova_ChanReader*".into()));
             self.effect_schemas.insert("Time".to_string(), time_schema);
         }
 
@@ -11284,6 +11287,38 @@ impl CEmitter {
                 }
             }
             ExprKind::Member { obj, name: method } => {
+                // Plan 65 Ф.5: E5101 early guard — `Time.after(...)` was
+                // removed; emit a structured diagnostic with a machine-
+                // applicable fix-it suggestion.
+                if method == "after" {
+                    let is_time = matches!(
+                        &obj.kind,
+                        ExprKind::Ident(n) if n == "Time"
+                    ) || matches!(
+                        &obj.kind,
+                        ExprKind::Path(p) if p.len() == 1 && p[0] == "Time"
+                    );
+                    if is_time {
+                        let suggestion = if let Some(first) = args.first() {
+                            let arg_repr = Self::expr_to_display(first.expr());
+                            format!(
+                                "ChanReader.close_after(Duration.from_millis({}))",
+                                arg_repr
+                            )
+                        } else {
+                            "ChanReader.close_after(Duration.from_millis(<ms>))".into()
+                        };
+                        return Err(format!(
+                            "[E5101] `Time.after` was removed in Plan 65 (D94 revision). \
+                             Use `ChanReader.close_after(Duration)` — the capability-split \
+                             replacement (D91 + D94). \
+                             Fix-it: replace with `{}`. \
+                             Run `cargo run --bin migrate_plan65 -- --apply` to migrate \
+                             the call site automatically.",
+                            suggestion
+                        ));
+                    }
+                }
                 // Plan 11 Ф.4.5: D66 — `Self.method(...)` в expression
                 // position. obj=Ident("Self") в теле метода → Ident(<current>).
                 // Создаем local rebind, не мутируя обратно.
@@ -12226,6 +12261,10 @@ impl CEmitter {
                         }
                     }
                 }
+                // Plan 65 Ф.5: E5101 (`Time.after` removed) — checked at
+                // the top of `ExprKind::Member` arm (~line 11289). The
+                // duplicate gate previously here is redundant now; the
+                // Member-arm guard fires before any dispatch reaches here.
                 // 1. Effect dispatch: `Counter.next()` → `Nova_Counter_next()`
                 //    `Time` and `Fail` are pre-registered as built-in effects in
                 //    emit_module — `Time.sleep(ms)` and `Fail.fail(msg)` go through
@@ -12980,6 +13019,28 @@ impl CEmitter {
                 format!("{obj}{acc}{method}", obj = obj_c, acc = accessor, method = method)
             }
             ExprKind::Path(parts) => {
+                // Plan 65 Ф.5: E5101 — `Time.after(...)` was removed.
+                // Path-form fast guard mirrors the Member-form arm above.
+                if parts.len() == 2 && parts[0] == "Time" && parts[1] == "after" {
+                    let suggestion = if let Some(first) = args.first() {
+                        let arg_repr = Self::expr_to_display(first.expr());
+                        format!(
+                            "ChanReader.close_after(Duration.from_millis({}))",
+                            arg_repr
+                        )
+                    } else {
+                        "ChanReader.close_after(Duration.from_millis(<ms>))".into()
+                    };
+                    return Err(format!(
+                        "[E5101] `Time.after` was removed in Plan 65 (D94 revision). \
+                         Use `ChanReader.close_after(Duration)` — the capability-split \
+                         replacement (D91 + D94). \
+                         Fix-it: replace with `{}`. \
+                         Run `cargo run --bin migrate_plan65 -- --apply` to migrate \
+                         the call site automatically.",
+                        suggestion
+                    ));
+                }
                 // Plan 11 Ф.4.5: D66 — Self в expression position (call).
                 // `Self.method(args)` в теле метода резолвится в
                 // `<current_type>.method(args)`. Тот же current_receiver_type
@@ -18302,15 +18363,10 @@ impl CEmitter {
                         if n == "Channel" && method == "new" {
                             return "Nova_ChannelPair".into();
                         }
-                        // D94 (Plan 31): Time.after(ms) → Nova_ChanReader*.
-                        // Plan 65 Ф.5: removed. Migrated to
-                        // ChanReader.close_after(Duration); see E5101 below.
-                        if n == "Time" && method == "after" {
-                            return "Nova_ChanReader*".into();
-                        }
                         // Plan 65 Ф.1: ChanReader.close_after(Duration) →
                         // Nova_ChanReader*. Capability-split static constructor
-                        // (D91 + D94 revision).
+                        // (D91 + D94 revision). Replaces the removed
+                        // `Time.after(int)` form (Plan 65 Ф.5).
                         if n == "ChanReader" && method == "close_after" {
                             return "Nova_ChanReader*".into();
                         }
