@@ -15403,6 +15403,36 @@ Test: f46_lemma_self_apply_fail (EXPECT_COMPILE_ERROR E2408).
 Lemma lint catalog теперь 11 rules.
 
 
+# Plan 33.6 Ф.47 (2026-05-18): long-conjunction hint + Ф.47.3 reverted
+
+## Ф.47.1 — long conjunction W2402
+
+`requires x >= 0 && x < 100 && x != 50 && x != 75 && x != 25` — 5 conjuncts.
+Diagnostic при failure укажет всю формулу, не conjunct. Recommend
+разделить на несколько clauses.
+
+Реализовано: count_and_conjuncts walker, >= 5 → W2402.
+
+Test: f47_long_conjunction_w2402.
+
+## Ф.47.3 REVERTED
+
+Попытка `not (op a b)` canonicalization (например `not (= a b) → (!= a b)`)
+сломала 27 тестов — propagate_bounds зависит от `not`-wrap форм. Откатано,
+moved to V3.
+
+## Регрессия
+
+Перед Ф.47: 201 PASS / 0 FAIL / 44 SKIP contracts.
+После Ф.47: 202 PASS (+1) / 0 FAIL / 44 SKIP contracts.
+
+## Lesson learned
+
+TrivialBackend simplify changes требуют holistic regression check —
+изменение simplify pattern может ломать chains которые depend on
+specific form. Always run полный contract test suite before committing.
+
+
 ## Session: оба deferred follow-up'а Plan 59 закрыты (2026-05-17 EOD+1)
 
 После merge'а Plan 63 fixes от другого agent'а — обнаружено что оба
