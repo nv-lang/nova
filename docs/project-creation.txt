@@ -15252,6 +15252,25 @@ Test: f38_modulus_strict_positive (mod_strict_above_neg, mod_strict_far_below).
 Регрессия: 192 → 193 PASS (+1), 0 FAIL, 44 SKIP.
 
 
+# Plan 33.6 Ф.39 (2026-05-18): = bounds check (паритет с !=)
+
+Ф.29.1 покрыл `!=` через bounds. Симметричный `=` отсутствовал.
+Pinned var (lower==upper==n) доказывал `== n` только через UnionFind path
+в частных случаях.
+
+Добавлены symmetric arms `("=", Var, IntLit)` / `("=", IntLit, Var)`:
+- lower(v) > n → false
+- upper(v) < n → false
+- lower(v) == upper(v) == n → true
+
+Test: f39_eq_bounds_positive (pinned_eq, bounded_not_eq).
+
+Регрессия: 193 → 194 PASS (+1), 0 FAIL, 44 SKIP.
+
+Все 6 base comparison operators (=, !=, <, <=, >, >=) теперь поддерживают
+Var-IntLit и Var-Var (literal bounds) checks.
+
+
 ## Session: оба deferred follow-up'а Plan 59 закрыты (2026-05-17 EOD+1)
 
 После merge'а Plan 63 fixes от другого agent'а — обнаружено что оба
