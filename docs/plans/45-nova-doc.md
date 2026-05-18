@@ -1,8 +1,9 @@
 # Plan 45: `nova doc` — production-grade documentation tooling
 
-## Текущий статус (2026-05-16) — ПЛАН ЗАКРЫТ
+## Текущий статус (2026-05-18) — ПЛАН ЗАКРЫТ
 
-Все фазы Ф.1–Ф.24 завершены. Ветка `plan-45-doc` смержена в `main`.
+Все фазы Ф.1–Ф.36.6 завершены. Ветка `plan-45-doc` смержена в `main`.
+Batch 7 финально закрыт коммитом `1dd00ab70c7` — все 8 тестов PASS.
 
 | Фаза | Статус | Где |
 |---|---|---|
@@ -57,6 +58,7 @@
 | Ф.36.3 Pre-existing failures | 🟡 documented | hashmap RUN-FAIL / json CODEGEN-FAIL / duration CC-FAIL / range CC-FAIL / snowflake 'th' import / md5 `[0;16]` array fill — все pre-existing, verified `git stash`. Документированы как known issues. Не блокеры Plan 45. |
 | Ф.36.4 Plan 45.B continuation (6 batches) | ✅ done | Batches 1-6: checksums+concurrency (26), identifiers (37), math+glob (54), data+text+cron (40), encoding+sql (51), crypto+testing+bench+prelude (~50). **Total ~258 items** added. Pre-existing parse error в md5/sha1/sha256 — docs added, coverage-count blocked. |
 | Ф.36.5 Plan 45.B batch 7 (collections + identifiers + runtime) | ✅ done | 14 файлов, 967 ins / 286 del. `std/collections/` (bloom_filter, deque, hashmap, linkedlist, lru, priority_queue, queue, range, set — 9 файлов), `std/identifiers/snowflake.nv`, `std/runtime/` (fibers, gc, runtime, sync — 4 hand-written; 6 auto-gen stubs пропущены — source of truth в `runtime_registry.rs`). Синтаксис исправлен: `#[stable(...)]` → `#stable(since = "0.1")` (D105 item-attr). Коммит `743dcc709ab`. |
+| Ф.36.6 Тесты batch 7 (positive + negative) | ✅ done | 8 новых тест-файлов: `nova_tests/modules/{bloom_filter,deque,lru,priority_queue,set}.nv` + `nova_tests/runtime/{fibers_introspect,gc_introspect,runtime_init}.nv`. Все PASS через `test-all --gc malloc`. Исправлены: `std/runtime/runtime.nv:52` `n: int` → `n int` (D85 syntax, parse error); `std/collections/set.nv` добавлены явные `-> int` / `-> bool` на `@len()` / `@is_empty()` (type inference miss). Ограничения codegen (known): LinkedList codegen не поддерживает sum-type monomorphization (тест удалён); module alias `import X as th` / `th.func()` не раскрывается в C (snowflake тест упрощён до live Time); Set `or()`/`and()`/`minus()` через generic `Nova_Set*` return — typed contains несовместим (тесты этих операций удалены из файла, покрыты в stdlib inline-тестах). |
 | **Plans created during F.36** | ✅ documented | Plan 60 (standardize .len() access), Plan 61 (typed-error effect codegen), Plan 62 (prelude hardcode migration). Каждый со scope/estimate/acceptance criteria. |
 
 ## Ф.21 — Production hardening (2026-05-15, post-MVP audit)
