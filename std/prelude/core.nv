@@ -1,0 +1,136 @@
+// std/prelude/core.nv — file-based source of truth для core prelude
+// types. Plan 62 phase 62.A.
+//
+// Декларации перенесены из hardcoded type-checker builtins HashSet в
+// этот файл, чтобы:
+//   1) `nova doc` показывал canonical API в одном месте (AI-readable),
+//   2) пользователь мог shadow'ить эти types в своём коде с warning'ом,
+//   3) splittable prelude работал (`partial_prelude(core)` opt-in
+//      только core без runtime/io).
+//
+// Архитектурные правила (Plan 62 §«Стратификация»):
+//   - **ZERO imports.** Все declarations self-contained на primitives
+//     или forward-reference через built-in effects (`Fail` распознан
+//     type-checker'ом).
+//   - Никаких `use std.runtime.*` — иначе circular import через
+//     auto-imported prelude.
+//
+// **Bootstrap status (Plan 62.A):**
+//
+// - Type declarations (Option/Result/Some/None/Ok/Err/Error/Ordering)
+//   перенесены сюда.
+// - Methods на Option/Result оставлены **hardcoded** в codegen
+//   (emit_c.rs:11567-11675+ — `is_some`/`is_none`/`unwrap`/`unwrap_or`/
+//   `unwrap_or_else`/`map`/`ok_or`/`is_ok`/`is_err`/`ok`/`err`/`map_err`)
+//   и runtime helpers (nova_rt/array.h `Nova_Option_method_*` /
+//   `Nova_Result_method_*`). См. **DEFER в Plan 62.A** ниже.
+//
+// **Сохранено как hardcoded (Plan 62.A explicitly defer):**
+//
+// - Codegen pre-populated `sum_schemas[Result]` (emit_c.rs:966-969) —
+//   bootstrap monomorphization compromise. Удаление отложено до Plan 59
+//   (tuple-mono extension на sum-types).
+// - Codegen pre-populated `record_schemas[Error]` (emit_c.rs:977-985) —
+//   осталось как infrastructure для `Nova_Error_static_new` runtime
+//   helper. Удаление в Plan 62.A.bis (generic schema registry).
+// - Pattern-match dispatch (`emit_c.rs:13543+`) — runtime helpers
+//   `Nova_Option_method_*` (array.h) бессрочно для bootstrap.
+//
+// **NOT yet (Plan 62.B/C/D/E/F):**
+//
+// - RuntimeError (Plan 62.C), runtime functions print/println/panic/
+//   exit/assert (Plan 62.B), effects Fail/Time/Mem/Detach (Plan 62.F),
+//   protocols From/Into/... (Plan 62.E), collections Iter/Range/...
+//   (Plan 62.D).
+//
+// **DEFER в Plan 62.A:**
+//
+// - **`type Never =`** (empty sum) per spec D26 §794-797 — bootstrap
+//   parser не поддерживает empty-body sum syntax (`parse_sum_variants`
+//   требует ≥1 `|` с variant). `Never` остаётся в type-checker builtins
+//   HashSet (handled via `ty_of_ref` mod.rs:2947 + `is_never_type`
+//   mod.rs:3239) пока parser не получит empty-sum support.
+// - **17 методов из D26 §283-306** (Option/Result API) — declaration
+//   через `external fn` создаёт type-checker сигнатуру `T → T` для
+//   `unwrap_or`/`unwrap`/`map`/etc. (где T — generic param), но codegen
+//   special-case (emit_c.rs:11567+) intercept'ит calls и возвращает
+//   **concrete** type (e.g. `Nova_Result_method_unwrap_or` returns
+//   `nova_int`). Mismatch ломает `==` codegen (тег-comparison вместо
+//   value-equality для primitive return). Декларации методов отложены
+//   до фазы где либо:
+//     (a) Plan 59 tuple-mono extends на sum-types — codegen эмитит
+//         mono'd Option/Result методы вместо runtime helpers, signature
+//         matches Nova decl, OR
+//     (b) codegen special-case передаёт обратно `T` (erased void*)
+//         consistent с Nova decl — but это требует boxing/unboxing
+//         каждого primitive call, performance regression.
+//   На сейчас methods продолжают работать через hardcoded codegen +
+//   runtime helpers (что и было до Plan 62.A).
+
+module std.prelude.core
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Sum types
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Optional value — `Some(v)` либо `None`. Idiomatic путь для
+/// fallible операций без exceptions / null. См. D26 spec.
+///
+/// **Bootstrap**: codegen имеет специальный value-type `NovaOpt_<T>`
+/// (nova_rt/array.h) и dispatches методы через emit_c.rs:11567+. Эта
+/// Nova-level декларация даёт type-checker'у канонический type-name
+/// для cross-file resolve; pre-populated `sum_schemas[Option]`
+/// (emit_c.rs:960-964) — runtime schema source-of-truth.
+#stable(since = "0.1")
+export type Option[T] | Some(T) | None
+
+/// Result of fallible computation. `Ok(v)` — success, `Err(e)` —
+/// failure with typed error payload `e: E`. См. D26 spec.
+///
+/// **Bootstrap**: codegen имеет heap-allocated `Nova_Result*` (nova_rt/
+/// array.h) hardcoded на `(Ok: nova_int, Err: nova_str)` (mono
+/// compromise — Plan 14 Q-result-monomorphization). Эта Nova-level
+/// декларация — canonical type-name; pre-populated `sum_schemas[Result]`
+/// (emit_c.rs:966-969) — runtime schema source-of-truth.
+#stable(since = "0.1")
+export type Result[T, E] | Ok(T) | Err(E)
+
+/// Three-way ordering для comparison protocols. Используется
+/// `Comparable.cmp(...)` (Plan 62.E). См. D26 spec.
+#stable(since = "0.1")
+export type Ordering | Less | Equal | Greater
+
+// DEFER: `type Never =` (empty sum) per spec D26 §794-797 — bootstrap
+// parser не поддерживает empty-body sum syntax (`parse_sum_variants`
+// требует ≥1 `|` с variant). `Never` остаётся в type-checker builtins
+// HashSet (handled via `ty_of_ref` mod.rs:2947 + `is_never_type`
+// mod.rs:3239). Декларация перенесётся сюда когда parser получит
+// empty-sum support. См. docs/plans/62-prelude-hardcode-migration.md.
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Record types
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Lightweight error record для quick-and-dirty failure cases.
+/// Поле `msg` — readonly UTF-8 string, описание ошибки. Для
+/// structured runtime errors см. `RuntimeError` (Plan 62.C). См. D26.
+///
+/// **Bootstrap**: `Nova_Error` typedef + `Nova_Error_static_new` runtime
+/// helper в nova_rt/array.h. Pre-populated `record_schemas[Error]`
+/// (emit_c.rs:977-985) регистрирует `msg: nova_str`; `method_receivers`
+/// маппит `new` на `Error`. Codegen для `Error.new(...)` идёт через
+/// runtime helper, не через Nova-level декларацию.
+#stable(since = "0.1")
+export type Error {
+    readonly msg str
+}
+
+// DEFER: Static fn `Error.new(msg)` и все 17 methods на Option/Result
+// (D26 §283-306) — codegen special-case dispatch (emit_c.rs:11567+)
+// возвращает concrete types через runtime helpers, что конфликтует
+// с type-checker сигнатурой `T → T` Nova-level external fn декларации.
+// Декларации добавятся в Plan 62.A.bis (generic schema registry) или
+// после Plan 59 tuple-mono extension на sum-types. На сейчас methods
+// работают через hardcoded codegen path (semantics не меняется).

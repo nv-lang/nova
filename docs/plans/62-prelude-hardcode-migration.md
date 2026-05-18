@@ -190,21 +190,65 @@ sum_schemas.insert("Result", vec![Variant::Tuple("Ok", vec!["nova_int"]), Varian
 
 ### Plan 62.A — Core types: Option/Result/Some/None/Ok/Err (3 days)
 
-- [ ] Создать `std/prelude/core.nv` с declarations:
+> **Status update 2026-05-18:** Phase 62.A complete (698/698 PASS, 0 regression). Types перенесены, builtins HashSet shrunk на 11 имён. **Deferred:** `Never` (parser не поддерживает empty-sum) + 17 методов (codegen/type-checker signature mismatch — см. §«DEFER» ниже).
+
+- [x] Создать `std/prelude/core.nv` с declarations:
   ```nova
   module std.prelude.core
   export type Option[T] | Some(T) | None
   export type Result[T, E] | Ok(T) | Err(E)
   export type Error { readonly msg str }
   export type Ordering | Less | Equal | Greater
-  export type Never
+  // DEFER: type Never — empty-sum syntax не поддержан parser'ом
   ```
-- [ ] Все ~17 методов из D26 §283-306 для Option/Result.
-- [ ] Update `std/prelude.nv` чтобы re-export `core.*`.
-- [ ] Add Sub-task 62.A.bis: generic schema registry для sum-types (поверх hardcoded `sum_schemas`).
-- [ ] Удалить из type-checker builtins HashSet: `Option, Result, Some, None, Ok, Err, Error, Ordering, Never, Less, Equal, Greater`.
-- [ ] **NOT yet:** удаление pre-populated `sum_schemas["Result"]` — оставляем до Plan 59 expand на sum.
-- [ ] Regression: 562/562 PASS.
+- [ ] ~~Все ~17 методов из D26 §283-306 для Option/Result.~~ **DEFER:**
+      `external fn Option[T] @unwrap_or(x T) -> T` создаёт type-checker
+      сигнатуру `T → T`, но codegen special-case (emit_c.rs:11567+)
+      возвращает concrete `nova_int` через runtime helper
+      `Nova_Result_method_unwrap_or` (array.h:486). Mismatch ломает `==`
+      codegen (routed через generic tag-comparison вместо primitive
+      equality). Декларации добавятся в Plan 62.A.bis (generic schema
+      registry) или после Plan 59 tuple-mono extension на sum-types.
+      Methods продолжают работать через hardcoded codegen path.
+- [x] Update `std/prelude.nv` чтобы re-export `core.*` (selective form;
+      wildcard `.* ` не поддержан per Plan 35 R25 rejected).
+- [ ] Add Sub-task 62.A.bis: generic schema registry для sum-types
+      (поверх hardcoded `sum_schemas`). **Postponed:** scope grew с
+      попыткой добавить методы.
+- [x] Удалить из type-checker builtins HashSet: `Option, Result, Some,
+      None, Ok, Err, Error, Ordering, Less, Equal, Greater` (11 имён;
+      `Never` deferred).
+- [x] **NOT yet (per план):** удаление pre-populated `sum_schemas["Result"]` —
+      оставлено до Plan 59 expand на sum.
+- [x] Regression: 698/698 PASS (новый baseline; старый documented
+      baseline 509/535 PASS устарел).
+
+**Дополнительные изменения compiler'а (Plan 62.A scope creep, минимально-необходимое):**
+
+- `compiler-codegen/src/manifest.rs:is_prelude_self_module` —
+  расширен на `std.prelude.<sub>` (splittable sub-modules). Без
+  этого `std.prelude.core` auto-импортирует `std.prelude` →
+  circular import.
+- `compiler-codegen/src/imports.rs:resolve_module_paths` — relaxed
+  ambiguity check (`<X>.nv` + folder `<X>/<sub>.nv`): permitted, если
+  ВСЕ peer declarations начинаются с `<X>.<sub>` (i.e. child modules,
+  не peers). Plan 42 D29 originally errored на любой file+folder
+  co-existence. Добавлен helper `extract_declared_module`
+  (lightweight `module X.Y.Z` extraction без полного парсинга).
+- `compiler-codegen/src/types/mod.rs:check_module` —
+  `external fn` whitelist расширен на `std.prelude.*` (через
+  `is_prelude_self_module`). Также: проверка теперь iterates только
+  entry peers' `items_here`, не merged `module.items` — иначе
+  prelude'овые external fns тропают на user-модулях при auto-import.
+- `compiler-codegen/src/codegen/emit_c.rs`:
+  - `emit_type_decl` skip emission for `Option`/`Result`/`Error`
+    (runtime defined в nova_rt/array.h, doubly-emit конфликтует
+    с runtime helpers).
+  - `generic_types` registration (1a + 1d) skips `Option`/`Result` —
+    они handled через `NovaOpt_<T>` / `Nova_Result*` value/heap
+    types, не через generic mono path.
+- `nova_tests/modules/prelude_auto_import.nv` — bumped
+  `PRELUDE_VERSION` assertion 1 → 2.
 
 ### Plan 62.B — Runtime functions: print/println/panic/assert/debug_assert/exit (2 days)
 

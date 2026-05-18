@@ -3,9 +3,14 @@
 // `std/prelude.nv` существует → resolve_imports_inline auto-добавляет
 // `import std.prelude` в queue. `PRELUDE_VERSION` const доступна без
 // explicit import.
+//
+// **Plan 62.A bump:** PRELUDE_VERSION 1 → 2 после миграции core types
+// (Option/Result/Some/None/Ok/Err/Error/Ordering) из hardcoded в
+// std/prelude/core.nv. См. docs/plans/62-prelude-hardcode-migration.md.
 
 module modules.prelude_auto_import
 
 test "PRELUDE_VERSION доступен без import" {
-    assert(PRELUDE_VERSION == 1)
+    // Plan 62.A: bump до 2 (core types перенесены в file-based form).
+    assert(PRELUDE_VERSION == 2)
 }
