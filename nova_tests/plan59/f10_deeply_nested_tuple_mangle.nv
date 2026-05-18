@@ -11,7 +11,7 @@ module plan59.f10_deeply_nested_tuple_mangle
 // Old mangle: `_NovaTuple_________NovaTuple_______NovaTuple_____NovaTuple____nova_int__nova_int...`
 // — split("__") даёт мусор.
 // New mangle: `_NovaTuple_2_<len>__NovaTuple_2_<len>_..._8_nova_int_8_nova_int`
-// — каждый element имеет explicit byte length, parser reads precisely.
+// — каждый element имеет explicit u8 length, parser reads precisely.
 
 fn make_deep() -> ((((int, int), int), int), int) {
     ((((1, 2), 3), 4), 5)

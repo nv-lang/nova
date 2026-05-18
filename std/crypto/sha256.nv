@@ -15,8 +15,8 @@
 //   - Случайные числа — `Random` effect
 //
 // API:
-//   Sha256.hash(data []byte) -> [32]byte
-//   Sha256.hash_str(data []byte) -> str        // 64-char hex
+//   Sha256.hash(data []u8) -> [32]u8
+//   Sha256.hash_str(data []u8) -> str        // 64-char hex
 //
 // Incremental:
 //   let mut state = Sha256.new()
@@ -36,7 +36,7 @@ module crypto.sha256
 #stable(since = "0.1")
 export type Sha256 {
     mut h [8]u32                       // hash state H0..H7
-    mut buffer []byte                   // pending < 64 bytes
+    mut buffer []u8                   // pending < 64 bytes
     mut total_len u64                   // total bytes
 }
 
@@ -93,7 +93,7 @@ export fn Sha256.new() -> Self =>
 
 /// One-shot SHA-256 hash: bytes → 32-byte digest.
 #stable(since = "0.1")
-export fn Sha256.hash(data []byte) -> [32]byte {
+export fn Sha256.hash(data []u8) -> [32]u8 {
     let mut state = Sha256.new()
     state.update(data)
     state.finalize()
@@ -101,9 +101,9 @@ export fn Sha256.hash(data []byte) -> [32]byte {
 
 /// One-shot SHA-256 hash в lowercase hex string (64 chars).
 #stable(since = "0.1")
-export fn Sha256.hash_str(data []byte) -> str {
+export fn Sha256.hash_str(data []u8) -> str {
     let digest = Sha256.hash(data)
-    let mut bytes []byte = []
+    let mut bytes []u8 = []
     for i in 0..32 { bytes.push(digest[i]) }
     Hex.encode(bytes)
 }
@@ -111,7 +111,7 @@ export fn Sha256.hash_str(data []byte) -> str {
 
 /// Incremental update — feed bytes в state.
 #stable(since = "0.1")
-export fn Sha256 mut @update(data []byte) -> () {
+export fn Sha256 mut @update(data []u8) -> () {
     @total_len = @total_len + (data.len() as u64)
     for b in data {
         @buffer.push(b)
@@ -124,7 +124,7 @@ export fn Sha256 mut @update(data []byte) -> () {
 
 /// Finalize hash — add padding + length, return 32-byte digest.
 #stable(since = "0.1")
-export fn Sha256 mut @finalize() -> [32]byte {
+export fn Sha256 mut @finalize() -> [32]u8 {
     let total_bits = @total_len * 8
 
     // Padding: 0x80, потом zeros до длины ≡ 56 (mod 64),
@@ -135,20 +135,20 @@ export fn Sha256 mut @finalize() -> [32]byte {
     }
     let mut i = 7
     while i >= 0 {
-        @buffer.push(((total_bits >> (i * 8)) & 0xFF) as byte)
+        @buffer.push(((total_bits >> (i * 8)) & 0xFF) as u8)
         i -= 1
     }
 
     let mut pos = 0
     while pos < @buffer.len() {
-        let mut block []byte = []
+        let mut block []u8 = []
         for j in 0..64 { block.push(@buffer[pos + j]) }
         @process_block(block)
         pos += 64
     }
 
     // 32 bytes output, big-endian.
-    let mut out [32]byte = [0; 32]
+    let mut out [32]u8 = [0; 32]
     let mut k = 0
     while k < 8 {
         write_be_u32(out, k * 4, @h[k])
@@ -162,7 +162,7 @@ export fn Sha256 mut @finalize() -> [32]byte {
 // Internal — process 64-byte block (FIPS 180-4 § 6.2)
 // ──────────────────────────────────────────────────────────────────────────
 
-fn Sha256 mut @process_block(block []byte) -> () {
+fn Sha256 mut @process_block(block []u8) -> () {
     // 1. Prepare message schedule W[0..63]
     let mut w [64]u32 = [0; 64]
     let mut t = 0
@@ -220,17 +220,17 @@ fn Sha256 mut @process_block(block []byte) -> () {
 fn rotr32(x u32, n int) -> u32 =>
     ((x >> n) | (x << (32 - n))) & 0xFFFFFFFF
 
-fn read_be_u32(data []byte, offset int) -> u32 =>
+fn read_be_u32(data []u8, offset int) -> u32 =>
     ((data[offset] as u32) << 24)
     | ((data[offset + 1] as u32) << 16)
     | ((data[offset + 2] as u32) << 8)
     | (data[offset + 3] as u32)
 
-fn write_be_u32(out mut [32]byte, offset int, v u32) -> () {
-    out[offset]     = ((v >> 24) & 0xFF) as byte
-    out[offset + 1] = ((v >> 16) & 0xFF) as byte
-    out[offset + 2] = ((v >> 8)  & 0xFF) as byte
-    out[offset + 3] = (v & 0xFF) as byte
+fn write_be_u32(out mut [32]u8, offset int, v u32) -> () {
+    out[offset]     = ((v >> 24) & 0xFF) as u8
+    out[offset + 1] = ((v >> 16) & 0xFF) as u8
+    out[offset + 2] = ((v >> 8)  & 0xFF) as u8
+    out[offset + 3] = (v & 0xFF) as u8
 }
 
 
@@ -256,18 +256,18 @@ test "SHA-256: 56-byte input (NIST 2-block sample)" {
 
 test "SHA-256: 1 миллион 'a' — long input stress" {
     // Известный test vector. Используем incremental чтобы не строить
-    // огромный []byte в памяти.
+    // огромный []u8 в памяти.
     let mut state = Sha256.new()
-    let chunk []byte = []byte.with_capacity(1000)
+    let chunk []u8 = []u8.with_capacity(1000)
     let mut tmp = chunk
-    for i in 0..1000 { tmp.push('a' as byte) }
+    for i in 0..1000 { tmp.push('a' as u8) }
     let mut k = 0
     while k < 1000 {
         state.update(tmp)
         k += 1
     }
     let digest = state.finalize()
-    let mut bytes []byte = []
+    let mut bytes []u8 = []
     for j in 0..32 { bytes.push(digest[j]) }
     assert(Hex.encode(bytes) ==
         "cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0")
@@ -282,7 +282,7 @@ test "SHA-256: incremental == one-shot" {
     state.update("fox jumps over ".bytes())
     state.update("the lazy dog".bytes())
     let digest = state.finalize()
-    let mut bytes []byte = []
+    let mut bytes []u8 = []
     for i in 0..32 { bytes.push(digest[i]) }
 
     assert(one_shot == Hex.encode(bytes))

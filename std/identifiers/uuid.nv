@@ -25,7 +25,7 @@
 //   - D74 instance-методы числовых операций.
 //
 // Pending features в bootstrap (для production tooling):
-//   - `Random.bytes(n int) -> []byte` — массовая генерация
+//   - `Random.bytes(n int) -> []u8` — массовая генерация
 //   - `Random.u64() -> u64`
 //   - `Time.now_ms() -> u64` — Unix timestamp ms
 //   - `Buffer @add_byte`, `@add_str`, `@into_str_unchecked`

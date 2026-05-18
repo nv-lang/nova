@@ -2,8 +2,8 @@
 //
 // План 05: `as` теперь эмитит явный C-cast, а не no-op. Тесты
 // проверяют:
-//   - narrowing (int → byte / int → i32) — wraparound
-//   - identity (byte → int / int → f64)
+//   - narrowing (int → u8 / int → i32) — wraparound
+//   - identity (u8 → int / int → f64)
 //   - truncate (f64 → int)
 //   - newtype ↔ underlying — no-op в C, корректный тип в Nova
 
@@ -16,7 +16,7 @@ type CastUserId alias int
 
 test "as byte: narrowing с wraparound" {
     let a int = 1111
-    let b = a as byte
+    let b = a as u8
     // 1111 mod 256 = 87
     assert(b as int == 87)
 }
@@ -24,7 +24,7 @@ test "as byte: narrowing с wraparound" {
 
 test "as byte: chain с bitwise (mask + cast)" {
     let n int = 0xFFFF
-    let lo = (n & 0xFF) as byte
+    let lo = (n & 0xFF) as u8
     assert(lo as int == 0xFF)
 }
 
@@ -60,7 +60,7 @@ test "newtype-alias as underlying: identity" {
 
 test "as byte: zero-byte preserved" {
     let z int = 256
-    let b = z as byte
+    let b = z as u8
     // 256 mod 256 = 0
     assert(b as int == 0)
 }
@@ -68,7 +68,7 @@ test "as byte: zero-byte preserved" {
 
 test "as byte: negative wraps to 0..255" {
     let neg int = -1
-    let b = neg as byte
+    let b = neg as u8
     // -1 wraps to 255 (0xFF) under unsigned semantics.
     assert(b as int == 255)
 }
