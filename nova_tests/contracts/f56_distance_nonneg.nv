@@ -1,0 +1,17 @@
+// Plan 33.19 (extending Ф.14): distance non-negative.
+// V1: TrivialBackend square nonneg (Ф.51.1) — без strict для composite expr.
+
+module contracts.f56_distance_nonneg
+
+// Distance squared всегда non-negative.
+#verify
+fn dist_squared(a int, b int) -> int
+    ensures result >= 0
+{
+    (a - b) * (a - b)
+}
+
+test "distance non-neg" {
+    assert(dist_squared(3, 7) == 16)
+    assert(dist_squared(5, 5) == 0)
+}

@@ -164,6 +164,8 @@ fn normalize_stmt(s: &mut Stmt, sigs: &Sigs) {
         Stmt::Calc { steps, .. } => {
             for step in steps { normalize_expr(&mut step.expr, sigs); }
         }
+        // Plan 33.9: reveal — ghost, no exprs to normalize.
+        Stmt::Reveal { .. } => {}
     }
 }
 

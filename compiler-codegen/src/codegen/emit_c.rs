@@ -897,7 +897,8 @@ impl CEmitter {
             | Stmt::AssertStatic { span, .. }
             | Stmt::Assume { span, .. }
             | Stmt::Apply { span, .. }
-            | Stmt::Calc { span, .. } => *span,
+            | Stmt::Calc { span, .. }
+            | Stmt::Reveal { span, .. } => *span,
             Stmt::Break(s) | Stmt::Continue(s) => *s,
         }
     }
@@ -9594,6 +9595,12 @@ impl CEmitter {
             // Plan 33.5 Ф.4.2: `calc { ... }` — ghost statement, полностью
             // стирается в codegen. SMT-семантика в verify/pipeline.rs.
             Stmt::Calc { .. } => {
+                // Ghost erasure.
+            }
+            // Plan 33.9 Ф.2: `reveal name` — ghost statement, полностью
+            // стирается в codegen. V1 — нет SMT-эффекта, V2 будет emit
+            // axiom `forall args. name(args) == body` в SMT scope.
+            Stmt::Reveal { .. } => {
                 // Ghost erasure.
             }
         }
