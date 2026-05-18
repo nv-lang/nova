@@ -1,5 +1,7 @@
 // Ф.14.2 (Plan 33.6): match handler без wildcard — last branch as fallback.
-// REQUIRES_SMT_BACKEND z3
+// REQUIRES_SMT_BACKEND z3v2
+// (См. handler_post_match_const_positive — та же V2 extract_match_assignments
+//  работа. Gated на `z3v2` до реализации Plan 33.5 Ф.6 V2.)
 
 module contracts.handler_post_match_no_wildcard
 
