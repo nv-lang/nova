@@ -4816,8 +4816,22 @@ impl CEmitter {
         self.var_types.insert(format!("fn_ret_{}", f.name), ret.clone());
         // Register fn-typed return signature for closure binding propagation
         if let Some(TypeRef::Func { params: fp, return_type, .. }) = &f.return_type {
-            let ptys: Vec<String> = fp.iter().map(|t| self.type_ref_to_c(t).unwrap_or_else(|_| "nova_int".into())).collect();
-            let rty = return_type.as_ref().map(|rt| self.type_ref_to_c(rt).unwrap_or_else(|_| "nova_int".into())).unwrap_or_else(|| "nova_unit".into());
+            // Plan 70 PhaseA1.2: strict mode — return-fn signature lowering.
+            // fn-returning-fn (HOF that returns closure): translate params + return
+            // through type_ref_to_c. Fail = invalid generic/missing type = compiler bug.
+            let ptys: Vec<String> = fp.iter()
+                .map(|t| self.type_ref_to_c(t).map_err(|e| self.err_no_int_fallback(
+                    &format!("fn-returning-fn `{}`: returned-closure param type", f.name),
+                    &e,
+                )))
+                .collect::<Result<Vec<_>, _>>()?;
+            let rty = match return_type.as_ref() {
+                Some(rt) => self.type_ref_to_c(rt).map_err(|e| self.err_no_int_fallback(
+                    &format!("fn-returning-fn `{}`: returned-closure return type", f.name),
+                    &e,
+                ))?,
+                None => "nova_unit".to_string(),
+            };
             self.fn_returns_fn_sig.insert(f.name.clone(), (ptys, rty));
         }
         // Plan 14 Ф.3: регистрируем сигнатуру free fn в user_fn_sigs для
@@ -4825,21 +4839,34 @@ impl CEmitter {
         // Только для top-level fn без receiver'а (не методы) и не для
         // generic fn (мономорфизация по call-site, sig зависит от инстанциации).
         if f.receiver.is_none() && f.generics.is_empty() {
+            // Plan 70 PhaseA1.2: strict mode — top-level non-generic fn signature
+            // (user_fn_sigs registration). All concrete param types must translate.
             let param_c_tys: Vec<String> = f.params.iter()
-                .map(|p| self.type_ref_to_c(&p.ty).unwrap_or_else(|_| "nova_int".into()))
-                .collect();
+                .map(|p| self.type_ref_to_c(&p.ty).map_err(|e| self.err_no_int_fallback(
+                    &format!("free fn `{}` parameter `{}`", f.name, p.name),
+                    &e,
+                )))
+                .collect::<Result<Vec<_>, _>>()?;
             self.user_fn_sigs.insert(f.name.clone(), (param_c_tys, ret.clone()));
             // Bidirectional inference: for each fn-typed parameter, record the
             // inner closure signature so ClosureLight call-site args can infer
             // their parameter types without explicit annotations.
             for (idx, p) in f.params.iter().enumerate() {
                 if let TypeRef::Func { params: fp, return_type, .. } = &p.ty {
+                    // Plan 70 PhaseA1.2: strict mode — HOF param signature (inner closure).
                     let inner_ptys: Vec<String> = fp.iter()
-                        .map(|t| self.type_ref_to_c(t).unwrap_or_else(|_| "nova_int".into()))
-                        .collect();
-                    let inner_rty = return_type.as_ref()
-                        .map(|rt| self.type_ref_to_c(rt).unwrap_or_else(|_| "nova_int".into()))
-                        .unwrap_or_else(|| "nova_unit".into());
+                        .map(|t| self.type_ref_to_c(t).map_err(|e| self.err_no_int_fallback(
+                            &format!("HOF param `{}` в fn `{}`: inner closure param type", p.name, f.name),
+                            &e,
+                        )))
+                        .collect::<Result<Vec<_>, _>>()?;
+                    let inner_rty = match return_type.as_ref() {
+                        Some(rt) => self.type_ref_to_c(rt).map_err(|e| self.err_no_int_fallback(
+                            &format!("HOF param `{}` в fn `{}`: inner closure return type", p.name, f.name),
+                            &e,
+                        ))?,
+                        None => "nova_unit".to_string(),
+                    };
                     self.hof_param_fn_sigs.insert(
                         (f.name.clone(), idx),
                         (inner_ptys, inner_rty),
