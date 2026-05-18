@@ -15433,6 +15433,18 @@ TrivialBackend simplify changes требуют holistic regression check —
 specific form. Always run полный contract test suite before committing.
 
 
+# Plan 33.6 Ф.48 (2026-05-18): lemma unused param W2402
+
+Аналог Ф.23.3 для лемм. Собрать used_names из body + contracts.expr,
+unused param без `_` префикса → W2402.
+
+Test: f48_lemma_unused_param_w2402.
+
+Регрессия: 202 → 203 PASS (+1), 0 FAIL, 44 SKIP.
+
+Lemma lint catalog — 12 rules.
+
+
 ## Session: оба deferred follow-up'а Plan 59 закрыты (2026-05-17 EOD+1)
 
 После merge'а Plan 63 fixes от другого agent'а — обнаружено что оба
