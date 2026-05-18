@@ -3159,8 +3159,8 @@ codegen-backedge'а (нишевой кейс).
 
 ## D124. Monotonic vs Timestamp — раздельные типы для wall-clock и монотонных часов
 
-> **Введён:** 2026-05-18 (Plan 65 Ф.12 driver). **Статус:** принят, не
-> реализован — реализация в Plan 68. **Уточняет** существующий
+> **Введён:** 2026-05-18 (Plan 65 Ф.12 driver). **Статус:** принят;
+> реализация в Plan 65 Ф.12.1-Ф.12.6. **Уточняет** существующий
 > `Timestamp` (`std/time/duration.nv`) и `Time` effect (`emit_c.rs:1037-1046`).
 
 ### Что
@@ -3293,9 +3293,10 @@ let deadline = Time.now() + Duration.from_secs(60)
   `ChanReader.close_at(Monotonic)`.
 - **[Plan 65](../../docs/plans/65-chanreader-close-after.md)** Ф.12 —
   driver для D124 (нужен `close_at` для absolute deadline).
-- **[Plan 68](../../docs/plans/68-monotonic-clock-type.md)** — реализация
-  D124: `Monotonic` тип + `Time.now_monotonic()` + `close_at` + runtime
-  `clock_gettime(CLOCK_MONOTONIC)` / `QueryPerformanceCounter` per OS.
+- **[Plan 65 Ф.12.1-Ф.12.6](../../docs/plans/65-chanreader-close-after.md)** —
+  реализация D124: `Monotonic` тип + `Time.now_monotonic()` + `close_at` +
+  runtime `clock_gettime(CLOCK_MONOTONIC)` / `QueryPerformanceCounter` per OS.
+  Driver — нужен для `ChanReader.close_at(Monotonic)`.
 - **[Plan 22](../../docs/plans/22-sleep-libuv-integration.md)** — libuv
   monotonic timer infra (`uv_hrtime()`) reused for `now_monotonic`.
 
@@ -3306,18 +3307,18 @@ let deadline = Time.now() + Duration.from_secs(60)
 | `Time.now()` (compiler schema) | `() -> nova_int` (raw ms, **противоречит** stdlib usage) | `() -> Timestamp` (record) |
 | `Time.now()` (stdlib calls) | `Timestamp` (`.gt()`, `.minus()`) — **silent mismatch** с schema | aligned с schema |
 | `Time.now_monotonic()` | ❌ нет | `() -> Monotonic` |
-| `Time.sleep(d)` | `(int ms)` (legacy) | `(Duration)` (миграция в Plan 68) |
+| `Time.sleep(d)` | `(int ms)` (legacy) | `(Duration)` (out-of-scope для Ф.12; отдельная задача) |
 | Deadline в API | `Time.now() + d` (wall-clock baked in) | `Monotonic.now() + d` (no NTP skew) |
-| `ChanReader.close_at(...)` | ❌ нет (Plan 65 Ф.12) | `(Monotonic) -> ChanReader[()]` |
+| `ChanReader.close_at(...)` | ❌ нет | `(Monotonic) -> ChanReader[()]` (Ф.12.4) |
 
-**Latent bug под текущим API** (resolved Plan 68): `time_schema`
+**Latent bug под текущим API** (resolved Plan 65 Ф.12.3): `time_schema`
 в `emit_c.rs:1044` declares `Time.now() -> nova_int`, но stdlib
 `std/time/duration.nv:538-714` использует как `Timestamp` record.
 Работает сейчас через handler-bridge (тот же mechanism что Plan 65
 fixed для Duration handler params, `[M-handler-duration-schema-mismatch]`).
-Plan 68 aligns schema с реальным usage.
+Plan 65 Ф.12.3 aligns schema с реальным usage.
 
-### Файлы (затронуты при реализации Plan 68)
+### Файлы (затронуты при реализации Plan 65 Ф.12)
 
 - `std/time/duration.nv` — добавить `type Monotonic { readonly nanos i64 }`
   + конструкторы только через `Monotonic.now()` / `Monotonic.@as_nanos()`.
@@ -3325,7 +3326,6 @@ Plan 68 aligns schema с реальным usage.
   `time_schema`: `now() -> Timestamp`, добавить `now_monotonic() -> Monotonic`.
 - `compiler-codegen/nova_rt/time.c` (новый) — `nova_time_now_realtime_ns()`
   + `nova_time_now_monotonic_ns()` per-OS implementations.
-- `nova_tests/plan68/` — типы не interconvertible (negative tests),
-  NTP-skew resilience (mock Time effect), `close_at(Monotonic)`
-  integration с Plan 65.
+- `nova_tests/plan65/f12_*` — типы не interconvertible (negative tests),
+  NTP-skew resilience (mock Time effect), `close_at(Monotonic)` integration.
 
