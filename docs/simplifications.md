@@ -9393,15 +9393,18 @@ G/H). ~3700 LOC implementation cumulative.
 
 ## Plan 65 — `ChanReader.close_after(Duration)` (2026-05-18, in progress)
 
-### [M-time-after-bare-int] (RESOLVED via Plan 65 Ф.5)
+### [M-time-after-bare-int] ✅ RESOLVED (Plan 65 Ф.5, 2026-05-18)
 - **Где:** `compiler-codegen/src/codegen/emit_c.rs:1043-1046` (Time effect schema)
 - **Что упрощено:** `Time.after(int ms)` принимал bare int — нет типовой
-  безопасности между mc/ms/s.
+  безопасности между мс/мкс/сек.
 - **Почему:** Bootstrap-stage Nova не имел Duration record. Plan 45 Ф.34.3
-  добавил `Duration` тип; Plan 65 уже переиспользует.
-- **Резолвится:** Plan 65 Ф.5 (atomic switch — Time.after удаляется,
-  ChanReader.close_after(Duration) заменяет).
-- **Приоритет:** H — закрывается в текущем Plan 65 цикле.
+  добавил `Duration` тип; Plan 65 переиспользует.
+- **Закрыто:** `Time.after` полностью удалён; заменён на
+  `ChanReader.close_after(Duration)` (D91 capability namespace, type-safe).
+  Compiler emits structured E5101 diagnostic с machine-applicable fix-it
+  при попытке использования старого API. Migration tool
+  `migrate_plan65` автоматически переводит literal arguments.
+- **Регрессия:** 705 PASS / 0 FAIL / 44 SKIP (baseline 698 + 7 plan65 tests).
 
 ### [M-chanreader-gc-finalizer] (DEFERRED — Plan 65 Ф.0 audit)
 - **Где:** `compiler-codegen/nova_rt/channels.h` `NovaAfterState` lifecycle.
