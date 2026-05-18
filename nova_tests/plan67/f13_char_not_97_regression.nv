@@ -1,0 +1,18 @@
+// Plan 67 closure regression-guard для AD3 nova_print_char.
+// До фикса: println('a') → nova_print_int('a') → "97"; println('я') → "1103".
+// После фикса: println(char_literal) → nova_print_char → корректная буква (UTF-8).
+//
+// Это explicit negative-guard: EXPECT_STDOUT a — если codegen регрессирует
+// обратно к nova_print_int, output будет "97" и тест FAIL.
+
+module plan67.f13_char_not_97_regression
+
+// EXPECT_STDOUT a
+// EXPECT_STDOUT z
+// EXPECT_STDOUT я
+
+fn main() Io -> () {
+    println('a')
+    println('z')
+    println('я')   // multi-byte UTF-8: 0xD1 0x8F
+}
