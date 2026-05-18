@@ -151,6 +151,26 @@ pub enum ModuleAttrKind {
     /// валидируются на resolver-этапе (compiler error при опечатке).
     /// Пустой list `partial_prelude()` — эквивалент `no_prelude` (валиден).
     PartialPrelude(Vec<String>),
+    /// **Plan 62.F.bis Ф.2:** `module X allow_prelude_shadow` (clause syntax,
+    /// analogous to `no_prelude` / `partial_prelude`). Suppresses
+    /// `W_PRELUDE_SHADOW` warnings emitted by `lints::lint_prelude_shadow`
+    /// for user-declarations that shadow prelude-imported names.
+    ///
+    /// **Когда применять:**
+    ///   - Local DSL слой, переопределяющий `Option`/`Result`/etc. с
+    ///     осознанным intent'ом (e.g. embedded targets с non-GC types).
+    ///   - Test fixtures, где user-decl эксплицитно тестирует shadowing.
+    ///   - Bootstrap слои, не имеющие no_prelude но желающие тихо
+    ///     shadow'ить отдельные имена.
+    ///
+    /// Без `allow_prelude_shadow` (default) — shadowing → W_PRELUDE_SHADOW
+    /// warning + user-declaration wins (compilation продолжается).
+    /// С `allow_prelude_shadow` — то же поведение, но без warning'а.
+    ///
+    /// Item-level suppress (`#[allow(prelude_shadow)] type Foo`) — DEFERRED
+    /// (требует generic attribute parser, который пока hardcoded на
+    /// `TypeAttr` enum'ы; см. ast::TypeAttr).
+    AllowPreludeShadow,
 }
 
 /// Plan 42.12 Ф.2 + Plan 42.14 Ф.1: cfg predicate.
