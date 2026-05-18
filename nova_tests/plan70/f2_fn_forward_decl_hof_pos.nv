@@ -1,0 +1,22 @@
+// Plan 70 PhaseA1.2 sites 4819, 4820, 4829, 4838, 4841 in emit_fn_forward_decl.
+// POSITIVE — fn-returning-fn (HOF) signature lowering + free fn с fn-typed params.
+
+module plan70.f2_fn_forward_decl_hof_pos
+
+// Site 4829: free fn с concrete params — user_fn_sigs registration path
+fn add(x int, y int) -> int => x + y
+
+// Sites 4838, 4841: free fn с fn-typed param (HOF) — hof_param_fn_sigs path
+fn apply(f fn(int) -> int, x int) -> int => f(x)
+
+// Sites 4819, 4820: fn-returning-fn (HOF returning closure)
+fn make_adder(n int) -> fn(int) -> int => |x| x + n
+
+test "free fn + HOF param + fn-returning-fn все компилируются" {
+    assert(add(2, 3) == 5)
+    assert(apply(add_one, 10) == 11)
+    let plus5 = make_adder(5)
+    assert(plus5(7) == 12)
+}
+
+fn add_one(x int) -> int => x + 1

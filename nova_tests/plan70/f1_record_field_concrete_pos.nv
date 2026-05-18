@@ -1,0 +1,22 @@
+// Plan 70 PhaseA1 site 4939 (emit_type_decl record field fallback).
+// POSITIVE — generic record с concrete fields компилируется без E7001.
+//
+// До strict mode: fallback к "nova_int" в emit_type_decl был silent
+// для concrete fields где type_ref_to_c failed.
+// После strict: concrete fields идут через успешный type_ref_to_c
+// (нет fail случая в этом сценарии), pos-path работает identical.
+
+module plan70.f1_record_field_concrete_pos
+
+type Box[T] {
+    value T          // type-param field — handled by void* arm, не fallback
+    label str        // concrete — handled by fallback path, должен пройти type_ref_to_c успешно
+    tag int          // concrete int — same
+}
+
+test "Box[int] concrete fields compile" {
+    let b Box[int] = { value: 42, label: "answer", tag: 1 }
+    assert(b.value == 42)
+    assert(b.label == "answer")
+    assert(b.tag == 1)
+}
