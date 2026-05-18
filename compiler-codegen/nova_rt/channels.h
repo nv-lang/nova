@@ -1169,17 +1169,20 @@ typedef struct NovaAfterState {
 
 /* Plan 65 Ф.10/Ф.11: helpers to maintain metrics + cancel-slot
  * de-registration safely. Idempotent — alive-flag prevents double-decrement
- * when timer is cancelled by both on_select_lost and on cancel_resource_cb. */
+ * when timer is cancelled by both on_select_lost and on cancel_resource_cb.
+ *
+ * Counters are ALWAYS maintained (cost = 1 incr/decr per alloc/fire/cancel)
+ * so that Time.timer_*() queries return valid values regardless of
+ * NOVA_TIMER_METRICS env. The env only controls the atexit dump + leak
+ * warning. */
 static inline void _nova_after_metrics_dec(NovaAfterState* st, bool counted_as_cancel) {
     if (!st || !st->metrics_alive) return;
     st->metrics_alive = false;
-    if (_nova_timer_stats.metrics_enabled) {
-        _nova_timer_stats.alloc_active--;
-        if (counted_as_cancel) {
-            _nova_timer_stats.cancelled++;
-        } else {
-            _nova_timer_stats.fired++;
-        }
+    _nova_timer_stats.alloc_active--;
+    if (counted_as_cancel) {
+        _nova_timer_stats.cancelled++;
+    } else {
+        _nova_timer_stats.fired++;
     }
 }
 
@@ -1297,14 +1300,13 @@ static inline Nova_ChanReader* Nova_Time_after(nova_int ms) {
     pair.rx->state->on_select_lost = _nova_after_on_select_lost;
     pair.rx->state->cleanup_data   = st;
     /* Plan 65 Ф.10/Ф.11: register with bound CancelToken (if any) +
-     * tick alloc counter. */
+     * tick alloc counter. Counters are always maintained — env only
+     * controls the atexit dump (init_lazy installs atexit when enabled). */
     _nova_timer_metrics_init_lazy();
-    if (_nova_timer_stats.metrics_enabled) {
-        _nova_timer_stats.alloc_total++;
-        _nova_timer_stats.alloc_active++;
-        if ((int64_t)ms > _nova_timer_stats.longest_pending_ms) {
-            _nova_timer_stats.longest_pending_ms = (int64_t)ms;
-        }
+    _nova_timer_stats.alloc_total++;
+    _nova_timer_stats.alloc_active++;
+    if ((int64_t)ms > _nova_timer_stats.longest_pending_ms) {
+        _nova_timer_stats.longest_pending_ms = (int64_t)ms;
     }
     st->metrics_alive = true;
     /* Discover bound cancel-token via TLS-current scope's reverse pointer. */
@@ -1420,6 +1422,25 @@ static inline Nova_TimerStats nova_time_timer_stats(void) {
     r.cancelled          = _nova_timer_stats.cancelled;
     r.longest_pending_ms = _nova_timer_stats.longest_pending_ms;
     return r;
+}
+
+/* Plan 65 Ф.11: Nova-level accessors for `Time.timer_*()` methods. The
+ * compiler dispatches `Time.timer_alloc_total()` etc. to these via the
+ * effect_schemas registration in emit_c.rs. */
+static inline nova_int Nova_Time_timer_alloc_total(void) {
+    return (nova_int)_nova_timer_stats.alloc_total;
+}
+static inline nova_int Nova_Time_timer_alloc_active(void) {
+    return (nova_int)_nova_timer_stats.alloc_active;
+}
+static inline nova_int Nova_Time_timer_fired(void) {
+    return (nova_int)_nova_timer_stats.fired;
+}
+static inline nova_int Nova_Time_timer_cancelled(void) {
+    return (nova_int)_nova_timer_stats.cancelled;
+}
+static inline nova_int Nova_Time_timer_longest_pending_ms(void) {
+    return (nova_int)_nova_timer_stats.longest_pending_ms;
 }
 
 #endif /* NOVA_RT_CHANNELS_H */
