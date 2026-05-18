@@ -310,7 +310,7 @@ export fn Url.encode_query(s str) -> str {
             buf.append('+')                          // конвенция form-encoding
         } else {
             // UTF-8 encode и percent-encode каждый байт.
-            // Простая версия для ASCII; для unicode требуется UTF-8 byte iteration.
+            // Простая версия для ASCII; для unicode требуется UTF-8 u8 iteration.
             let n = c as int
             if n < 128 {
                 buf.append('%')
@@ -318,7 +318,7 @@ export fn Url.encode_query(s str) -> str {
                 buf.append(hex_upper((n % 16) as u8))
             } else {
                 // Multi-byte UTF-8: упрощённо через char.
-                // Production: перекодировать через UTF-8 byte sequence.
+                // Production: перекодировать через UTF-8 u8 sequence.
                 buf.append('%')
                 buf.append(hex_upper((n / 16) as u8))
                 buf.append(hex_upper((n % 16) as u8))
@@ -330,11 +330,11 @@ export fn Url.encode_query(s str) -> str {
 
 // Декодирует percent-encoded строку.
 //
-// Mixed text+binary use-case: percent-decoded byte может быть частью
+// Mixed text+binary use-case: percent-decoded u8 может быть частью
 // multi-byte UTF-8 sequence — нужен byte-buffer с финализацией через
 // UTF-8 validation. StringBuilder text-only, не подходит. WriteBuffer
 // + write_char/write_str/write_byte накапливает UTF-8 bytes; финал
-// через `str.try_from([]byte)?` (D77) валидирует и конвертирует.
+// через `str.try_from([]u8)?` (D77) валидирует и конвертирует.
 //
 // На невалидный UTF-8 после decode'а — throw InvalidPercentEncoding
 // (consistent с тем что percent-encoding должен давать valid UTF-8;
@@ -364,7 +364,7 @@ export fn Url.decode_query(s str) Fail[ParseUrlError] -> str {
                 let hi = hex_value_or_throw(s, i + 1)
                 let lo = hex_value_or_throw(s, i + 2)
                 let byte_val = (hi * 16 + lo) as u8
-                buf.write_byte(byte_val as byte)
+                buf.write_byte(byte_val as u8)
                 i += 3
             }
             Some('+') => {

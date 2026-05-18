@@ -30,7 +30,7 @@ export type SqlValue
     | F(f64)
     | S(str)
     | B(bool)
-    | Bytes([]byte)
+    | Bytes([]u8)
     | Null
 
 

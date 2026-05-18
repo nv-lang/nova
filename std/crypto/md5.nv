@@ -15,8 +15,8 @@
 //   - совместимость с legacy системами
 //
 // API:
-//   Md5.hash(data []byte) -> [16]byte         // финальный digest
-//   Md5.hash_str(data []byte) -> str          // hex-строка (lowercase)
+//   Md5.hash(data []u8) -> [16]u8         // финальный digest
+//   Md5.hash_str(data []u8) -> str          // hex-строка (lowercase)
 //
 // Incremental:
 //   let mut state = Md5.new()
@@ -39,7 +39,7 @@ export type Md5 {
     mut b u32
     mut c u32
     mut d u32
-    mut buffer []byte                   // pending input < 64 bytes
+    mut buffer []u8                   // pending input < 64 bytes
     mut total_len u64                   // total bytes processed
 }
 
@@ -102,7 +102,7 @@ export fn Md5.new() -> Self =>
 
 /// One-shot MD5 hash: bytes → 16-byte digest.
 #stable(since = "0.1")
-export fn Md5.hash(data []byte) -> [16]byte {
+export fn Md5.hash(data []u8) -> [16]u8 {
     let mut state = Md5.new()
     state.update(data)
     state.finalize()
@@ -110,9 +110,9 @@ export fn Md5.hash(data []byte) -> [16]byte {
 
 /// One-shot MD5 hash в lowercase hex string.
 #stable(since = "0.1")
-export fn Md5.hash_str(data []byte) -> str {
+export fn Md5.hash_str(data []u8) -> str {
     let digest = Md5.hash(data)
-    let mut bytes []byte = []
+    let mut bytes []u8 = []
     for i in 0..16 { bytes.push(digest[i]) }
     Hex.encode(bytes)
 }
@@ -120,7 +120,7 @@ export fn Md5.hash_str(data []byte) -> str {
 
 /// Incremental update — feed bytes в state. Для streamed input.
 #stable(since = "0.1")
-export fn Md5 mut @update(data []byte) -> () {
+export fn Md5 mut @update(data []u8) -> () {
     @total_len = @total_len + (data.len() as u64)
 
     // Прибавляем к buffer и обрабатываем полные 64-байтные блоки.
@@ -135,7 +135,7 @@ export fn Md5 mut @update(data []byte) -> () {
 
 /// Finalize hash — add padding + length, return 16-byte digest. State invalid after.
 #stable(since = "0.1")
-export fn Md5 mut @finalize() -> [16]byte {
+export fn Md5 mut @finalize() -> [16]u8 {
     // Padding: append 0x80, потом 0-bytes до длины ≡ 56 (mod 64),
     // потом 8 байт длины в битах (little-endian).
     let total_bits = @total_len * 8
@@ -146,20 +146,20 @@ export fn Md5 mut @finalize() -> [16]byte {
     }
     // 8 байт длины в битах LE
     for i in 0..8 {
-        @buffer.push(((total_bits >> (i * 8)) & 0xFF) as byte)
+        @buffer.push(((total_bits >> (i * 8)) & 0xFF) as u8)
     }
 
     // Process remaining blocks.
     let mut pos = 0
     while pos < @buffer.len() {
-        let mut block []byte = []
+        let mut block []u8 = []
         for j in 0..64 { block.push(@buffer[pos + j]) }
         @process_block(block)
         pos += 64
     }
 
     // Вывод: 16 байт в LE-порядке.
-    let mut out [16]byte = [0; 16]
+    let mut out [16]u8 = [0; 16]
     write_le_u32(out, 0,  @a)
     write_le_u32(out, 4,  @b)
     write_le_u32(out, 8,  @c)
@@ -172,7 +172,7 @@ export fn Md5 mut @finalize() -> [16]byte {
 // Internal — process 64-byte block
 // ──────────────────────────────────────────────────────────────────────────
 
-fn Md5 mut @process_block(block []byte) -> () {
+fn Md5 mut @process_block(block []u8) -> () {
     // Read 16 little-endian u32 words.
     let mut m [16]u32 = [0; 16]
     for i in 0..16 {
@@ -224,17 +224,17 @@ fn Md5 mut @process_block(block []byte) -> () {
 fn rotl32(x u32, n int) -> u32 =>
     ((x << n) | (x >> (32 - n))) & 0xFFFFFFFF
 
-fn read_le_u32(data []byte, offset int) -> u32 =>
+fn read_le_u32(data []u8, offset int) -> u32 =>
     (data[offset] as u32)
     | ((data[offset + 1] as u32) << 8)
     | ((data[offset + 2] as u32) << 16)
     | ((data[offset + 3] as u32) << 24)
 
-fn write_le_u32(out mut [16]byte, offset int, v u32) -> () {
-    out[offset]     = (v & 0xFF) as byte
-    out[offset + 1] = ((v >> 8)  & 0xFF) as byte
-    out[offset + 2] = ((v >> 16) & 0xFF) as byte
-    out[offset + 3] = ((v >> 24) & 0xFF) as byte
+fn write_le_u32(out mut [16]u8, offset int, v u32) -> () {
+    out[offset]     = (v & 0xFF) as u8
+    out[offset + 1] = ((v >> 8)  & 0xFF) as u8
+    out[offset + 2] = ((v >> 16) & 0xFF) as u8
+    out[offset + 3] = ((v >> 24) & 0xFF) as u8
 }
 
 
@@ -276,7 +276,7 @@ test "MD5: incremental == one-shot" {
     state.update(part2)
     state.update(part3)
     let digest = state.finalize()
-    let mut bytes []byte = []
+    let mut bytes []u8 = []
     for i in 0..16 { bytes.push(digest[i]) }
 
     assert(one_shot == Hex.encode(bytes))

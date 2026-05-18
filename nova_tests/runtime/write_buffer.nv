@@ -5,12 +5,12 @@
 //
 // API:
 //   WriteBuffer.new(), WriteBuffer.with_capacity(n)
-//   WriteBuffer.from(b []byte)
+//   WriteBuffer.from(b []u8)
 //   wb.write_byte(v), wb.write_bytes(src)
 //   wb.write_u8/i8/u16_le/be/u32_le/be/u64_le/be/i*_le/be (18 methods)
 //   wb.write_f32_le/be/f64_le/be (4 methods)
 //   wb.len(), wb.capacity(), wb.clone()
-//   wb.into() -> []byte (infallible)
+//   wb.into() -> []u8 (infallible)
 
 module runtime.write_buffer
 
@@ -55,11 +55,11 @@ test "write_u8 — alias of write_byte" {
 // SECTION 3: endianness — LE/BE write_u32 round-trip via @into
 // ================================================================
 
-test "write_u32_le 0xDEADBEEF — LE byte order" {
+test "write_u32_le 0xDEADBEEF — LE u8 order" {
     let mut wb = WriteBuffer.new()
     wb.write_u32_le(0xDEADBEEF)
     let arr = wb.into()
-    // LE: lowest byte first → EF AD DE (Wait! 0xDEADBEEF = DE AD BE EF)
+    // LE: lowest u8 first → EF AD DE (Wait! 0xDEADBEEF = DE AD BE EF)
     // LE order: EF BE AD DE.
     assert(arr.len() == 4)
     assert(arr[0] == 0xEF)
@@ -68,7 +68,7 @@ test "write_u32_le 0xDEADBEEF — LE byte order" {
     assert(arr[3] == 0xDE)
 }
 
-test "write_u32_be 0xDEADBEEF — BE byte order" {
+test "write_u32_be 0xDEADBEEF — BE u8 order" {
     let mut wb = WriteBuffer.new()
     wb.write_u32_be(0xDEADBEEF)
     let arr = wb.into()
@@ -157,7 +157,7 @@ test "clone независим" {
 
 
 // ================================================================
-// SECTION 7: into → []byte
+// SECTION 7: into → []u8
 // ================================================================
 
 test "into() пустой буфер" {
@@ -211,9 +211,9 @@ test "write_char Cyrillic — 2 bytes UTF-8" {
 
 test "write_char + write_str + write_byte mixed" {
     let mut wb = WriteBuffer.new()
-    wb.write_char('A')          // 1 byte
+    wb.write_char('A')          // 1 u8
     wb.write_str("BC")          // 2 bytes
-    wb.write_byte(0x44)         // 1 byte
+    wb.write_byte(0x44)         // 1 u8
     let arr = wb.into()
     assert(arr.len() == 4)
     assert(arr[0] == 65)        // 'A'

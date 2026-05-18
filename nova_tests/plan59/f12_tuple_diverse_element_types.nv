@@ -6,23 +6,23 @@
 module plan59.f12_tuple_diverse_element_types
 
 
-test "5-element tuple: (int, str, bool, byte, f64)" {
-    let mix = (42, "label", true, 255 as byte, 3.14)
+test "5-element tuple: (int, str, bool, u8, f64)" {
+    let mix = (42, "label", true, 255 as u8, 3.14)
     assert(mix.0 == 42)
     assert(mix.1 == "label")
     assert(mix.2)
-    assert(mix.3 == (255 as byte))
+    assert(mix.3 == (255 as u8))
     assert(mix.4 == 3.14)
 }
 
 
 test "destructure 5-element tuple — каждый field точно typed" {
-    let pair = (100, "answer", false, 0 as byte, 2.71)
+    let pair = (100, "answer", false, 0 as u8, 2.71)
     let (i, s, b, by, f) = pair
     assert(i == 100)
     assert(s == "answer")
     assert(!b)
-    assert(by == (0 as byte))
+    assert(by == (0 as u8))
     assert(f == 2.71)
 }
 
@@ -31,9 +31,9 @@ test "destructure 5-element tuple — каждый field точно typed" {
 // `nova_bool` (9) ≠ `nova_byte` (9). Length prefix должен точно
 // разделять — split-by-`__` старого парсера бы спутал bool/byte.
 test "tuple где element name lengths varying — length-prefix critical" {
-    let combo = (true, 1 as byte, 2.0, "z", 7)
+    let combo = (true, 1 as u8, 2.0, "z", 7)
     assert(combo.0)
-    assert(combo.1 == (1 as byte))
+    assert(combo.1 == (1 as u8))
     assert(combo.2 == 2.0)
     assert(combo.3 == "z")
     assert(combo.4 == 7)
