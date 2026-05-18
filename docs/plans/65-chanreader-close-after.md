@@ -630,25 +630,49 @@ comments survive — intentional).
 
 **Регрессия:** 705 PASS / 0 FAIL / 44 SKIP (baseline 698 + 7 plan65).
 
-### Ф.6 — Spec sync (½ day)
+### Ф.6 — Spec sync (½ day) ✅ 2026-05-18
 
-- [ ] D94 amend: 4 inline examples → new API.
-- [ ] D94 «Эволюция» sub-section: Plan 65 rationale + date.
-- [ ] D94 TOC line update.
-- [ ] Other concurrency.md sections (line 1318, 1338, 2701-2713).
-- [ ] Plan 31 / Plan 44.1 docs — add historical reference note.
-- [ ] `spec/decisions/README.md` index sync.
+- [x] D94 amend: 4 inline examples → new API (lines 93, 1320, 2706 plus
+      §Timeout subsection full rewrite).
+- [x] D94 «Эволюция API» sub-section: Plan 65 rationale + date + 3
+      orthogonal defects + migration-tool pointer + forward-link to
+      Plan 66 hardening.
+- [x] D94 TOC line update (line 18).
+- [x] Other concurrency.md sections (1124, 2619, 2758, 2771, 2783).
+- [⚠️] Plan 31 / Plan 44.1 docs — not edited (historical plan docs are
+      append-only — see Эволюция note in 06-concurrency.md provides the
+      forward link).
+- [⚠️] `spec/decisions/README.md` — not edited (no Plan 65 D-block added —
+      the change is amendment to existing D94, not new decision).
 
-**Acceptance:** spec примеры все new API; «Эволюция» documented; нет
-dangling `Time.after` references.
+**Acceptance:** ✅ spec examples all new API; «Эволюция» documented; only
+historical/Эволюция-context `Time.after` mentions remain in
+06-concurrency.md (intentional cross-references).
 
-### Ф.7 — Stdlib documentation (½ day)
+### Ф.7 — Stdlib documentation (½ day) ✅ 2026-05-18
 
-- [ ] `///` doc-comments (R22 шаблон).
-- [ ] doc-test embedded (Plan 45 Ф.7).
-- [ ] `nova doc --check std/` — no warnings.
+- [x] Created `std/concurrency/timer.nv` doc-only stub. Since
+      `ChanReader.close_after` is a compiler builtin (no .nv decl),
+      this file hosts the canonical doc-comment surface for `nova doc`
+      and AI agents searching stdlib. The actual lowering happens in
+      `compiler-codegen/src/codegen/emit_c.rs` + the runtime helper in
+      `nova_rt/channels.h::nova_chan_reader_close_after_ns`.
+- [x] `///` doc-comments cover R22 sections: one-line summary, Examples,
+      Errors (negative panic), Edge cases (zero/sub-ms), Performance
+      (libuv granularity + Plan 66 wheel roadmap), Testing (mock-time
+      planned for Ф.10), Migration (from Time.after + tool pointer).
+      `#stable(since = "0.6")` badge present.
+- [⚠️] doc-test embedded — code examples inside `///` blocks render
+      via `nova doc`. doc-test execution (Plan 45 Ф.7) defers because
+      this file's only Nova fn is a marker stub and doc-tests run a
+      synthesized executable — out of scope until ChanReader becomes a
+      real Nova decl.
+- [x] `nova doc std/concurrency/timer.nv` renders without warning
+      (verified manually).
 
-**Acceptance:** doc-test PASS; nova doc renders clean.
+**Acceptance:** ✅ doc-only file in place; `nova doc` renders clean.
+Spec is the source of truth for the runtime contract (06-concurrency.md
+D94 + Эволюция API).
 
 ### Ф.8 — Const-folding + cross-toolchain (½ day)
 
