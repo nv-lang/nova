@@ -19,6 +19,16 @@ use std::path::{Path, PathBuf};
 pub struct Manifest {
     pub package_name: String,
     pub source_root: PathBuf,
+    /// **Plan 62.F.bis Ф.1 (edition versioning, 2026-05-18):**
+    /// `[package].edition = "2026.05"` — pin для prelude content. None →
+    /// rolling (uses `std/prelude.nv` facade). Some("X.Y") → resolver
+    /// проверяет наличие `std/prelude/<sanitized>.nv` (где `.` → `_`)
+    /// перед fallback'ом на rolling facade.
+    ///
+    /// Mirrors Rust's `edition = "2021"` и Go's `go 1.21` — stability
+    /// через explicit pin. Безопасно extends prelude content без
+    /// breaking existing packages.
+    pub edition: Option<String>,
 }
 
 /// Найти nova.toml в parent dirs и извлечь package_name + source_root.
@@ -42,6 +52,7 @@ fn parse_manifest(toml_path: &Path, dir: &Path) -> Option<Manifest> {
     let text = std::fs::read_to_string(toml_path).ok()?;
     let mut package_name: Option<String> = None;
     let mut lib_src: Option<String> = None;
+    let mut edition: Option<String> = None;
     let mut section: &str = "";
 
     for raw in text.lines() {
@@ -69,8 +80,11 @@ fn parse_manifest(toml_path: &Path, dir: &Path) -> Option<Manifest> {
             let key = key.trim();
             let val = val.trim().trim_matches('"').to_string();
             match (section, key) {
-                ("package", "name") => package_name = Some(val),
-                ("lib", "src")      => lib_src = Some(val),
+                ("package", "name")    => package_name = Some(val),
+                // Plan 62.F.bis Ф.1: `[package].edition = "2026.05"` pin
+                // для prelude content. Опционально — отсутствие → rolling.
+                ("package", "edition") => edition = Some(val),
+                ("lib", "src")         => lib_src = Some(val),
                 _ => {}
             }
         }
@@ -86,7 +100,71 @@ fn parse_manifest(toml_path: &Path, dir: &Path) -> Option<Manifest> {
     Some(Manifest {
         package_name: pkg,
         source_root,
+        edition,
     })
+}
+
+/// Plan 62.F.bis Ф.1: sanitize edition string для filesystem path + Nova
+/// identifier rules.
+///
+/// Преобразование:
+///   - Нон-alphanumeric ASCII символы → `_` (например `2026.05` → `2026_05`).
+///   - Если результат начинается с цифры (Nova ident должен начинаться
+///     с буквы/`_` per `is_ident_start`) — prefix `e` (от "edition").
+///     `2026.05` → `e2026_05`. `core` → `core` (без изменений).
+///   - Empty input → empty output (caller отвечает за None-handling).
+///
+/// Используется resolver'ом для lookup'а `std/prelude/<sanitized>.nv`.
+/// Файл `std/prelude/e2026_05.nv` имеет `module std.prelude.e2026_05`
+/// (валидный path element).
+pub fn sanitize_edition(edition: &str) -> String {
+    let raw: String = edition.chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+        .collect();
+    if raw.is_empty() {
+        return raw;
+    }
+    let first = raw.as_bytes()[0];
+    if first.is_ascii_digit() {
+        format!("e{}", raw)
+    } else {
+        raw
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sanitize_edition_year_dot() {
+        assert_eq!(sanitize_edition("2026.05"), "e2026_05");
+    }
+
+    #[test]
+    fn sanitize_edition_word_unchanged() {
+        assert_eq!(sanitize_edition("nightly"), "nightly");
+    }
+
+    #[test]
+    fn sanitize_edition_mixed() {
+        assert_eq!(sanitize_edition("v1-beta"), "v1_beta");
+    }
+
+    #[test]
+    fn sanitize_edition_starts_underscore_no_prefix() {
+        assert_eq!(sanitize_edition("_internal"), "_internal");
+    }
+
+    #[test]
+    fn sanitize_edition_empty() {
+        assert_eq!(sanitize_edition(""), "");
+    }
+
+    #[test]
+    fn sanitize_edition_pure_digits() {
+        assert_eq!(sanitize_edition("2026"), "e2026");
+    }
 }
 
 /// Compute expected module path for a file given its package manifest.
