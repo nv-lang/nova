@@ -15288,6 +15288,29 @@ Test: f40_lemma_body_eq_ensures_w2402 (trivial_double).
 Lemma lint catalog продолжает расти — теперь 10 different rules.
 
 
+# Plan 33.6 Ф.41 (2026-05-18): algebraic identities (a+b)-b → a
+
+`ensures (x + y) - y == x` — algebraic тавтология. TrivialBackend ранее
+не reasoning'овал (без literal bounds), Z3 умеет. Добавлены simplify
+rules в `simplify_app("-")`:
+
+- `(- (+ a b) b)` → a   (cancel right)
+- `(- (+ a b) a)` → b   (cancel left)
+- `(- a (+ a b))` → -b  (через `simplify("-", [0, b])`)
+- `(- a (+ b a))` → -b  (симметрично)
+
+Реализовано как 4 match arms перед default fallthrough.
+
+Tests:
+- f41_subtraction_algebraic_positive (cancel_b, cancel_a)
+- unit: simplify_subtraction_cancels_addition + _first_arg
+
+Регрессия: 195 → 196 PASS (+1), 0 FAIL, 44 SKIP.
+cargo test --lib verify::backend::trivial: 11/11 PASS (+2).
+
+TrivialBackend coverage extends на algebraic substitution identities.
+
+
 ## Session: оба deferred follow-up'а Plan 59 закрыты (2026-05-17 EOD+1)
 
 После merge'а Plan 63 fixes от другого agent'а — обнаружено что оба
