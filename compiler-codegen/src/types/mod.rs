@@ -2234,6 +2234,15 @@ impl NameResCtx {
             // С‚РёРї РїР°СЂР°РјРµС‚СЂР° `cancel CancelToken`. РњРµС‚РѕРґС‹ (cancel/is_cancelled/
             // bind) вЂ” built-in dispatch РІ codegen РЅР° receiver NovaCancelToken*.
             "CancelToken",
+            // Plan 62.D.bis (2026-05-18): StringBuilder / WriteBuffer /
+            // ReadBuffer объявлены в std/prelude/collections.nv через
+            // `external type` (D126). **Не были** в этом HashSet'е изначально
+            // (verified via grep на baseline) — cross-file resolve работает
+            // через std/runtime/<name>.nv external fn декларации + теперь
+            // через std/prelude/collections.nv type-decl (TypeDeclKind::Opaque).
+            // `nogc_blacklisted_call` (types/mod.rs:1454) сохраняет
+            // name-matches как capability data — не builtins source,
+            // не conflicts.
         ]
         .iter()
         .map(|s| s.to_string())

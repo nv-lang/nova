@@ -36,6 +36,7 @@
 | [D90](#d90-defer-и-errdefer--scope-level-cleanup-statement) | `defer` и `errdefer` — scope-level cleanup statement |
 | [D102](#d102-именованные-аргументы-и-значения-параметров-по-умолчанию) | Именованные аргументы `f(name: val)` и значения параметров по умолчанию `fn f(x int = 0)`; параметр с дефолтом — keyword-only |
 | [D108](#d108-map-литерал-k-v) | Map-литерал `[k: v]` — конструирование `HashMap[K, V]` (D104-D107 зарезервированы Plan 45) |
+| [D126](#d126-external-type--opaque-типы-без-body) | `external type X[Generics]` — opaque типы с runtime backing, без body (D109-D125 заняты другими планами) |
 
 ---
 
@@ -5282,3 +5283,303 @@ convention без compiler enforcement).
   обновлены на consistent `.len()` form.
 - [Plan 56](../../docs/plans/56-vtable-dispatch-erased-generics.md) —
   bound-K vtable dispatch для size-accessors на erased generics.
+
+---
+
+## D126. `external type` — opaque типы без body
+
+> **Status:** active (spec). Реализация — [Plan 62.D.bis](../../docs/plans/62.D.bis-opaque-types-and-external-type-d-block.md).
+> (Номера D109–D125 заняты другими планами — см. memory
+> `project-spec-dblock-numbering.md`.)
+
+### Что
+
+`external type X [Generics]` — модификатор type-декларации, означающий
+что **тип реализован в runtime (C-коде `nova_rt/`)**, а Nova-уровневая
+декларация даёт только имя + optional generic параметры. Тело
+(variants/fields/protocol/effect/alias/newtype) **отсутствует** —
+type «opaque». Аналог [D82](08-runtime.md#d82-external-fn--функции-с-runtime-implementation)
+`external fn`, но для типов.
+
+`external` применяется к **типам** через D126; к **функциям** — через
+[D82](08-runtime.md#d82-external-fn--функции-с-runtime-implementation).
+Один и тот же keyword, два валидных позиционирования
+(`external fn ...` / `external type ...`).
+
+### Правило
+
+#### Грамматика
+
+```
+type-decl = ['export'] ['external'] 'type' name [generic-params] [body]
+```
+
+Порядок modifiers строгий: `export` первым, `external` вторым. Body у
+`external type` **должен отсутствовать** (никаких `{ ... }`,
+`| variant`, `effect { ... }`, `protocol { ... }`, `alias TYPE`, или
+newtype `TYPE`), иначе compile error «external type cannot have a body».
+
+#### Примеры
+
+```nova
+// Public external (built-in, Plan 62.D.bis в std/prelude/collections.nv)
+export external type StringBuilder
+export external type WriteBuffer
+export external type ReadBuffer
+
+// Generic external (future Channel use-case)
+export external type Channel[T]
+
+// Two-param generic external (future Region use-case)
+export external type Region[T, Capability]
+
+// Private external (внутри runtime module'а)
+external type Nova_intrinsic_buffer
+```
+
+#### Связь с D26 prelude
+
+Built-in opaque-типы из [D26](08-runtime.md#d26-базовая-stdlib-и-prelude)
+(`StringBuilder`, `WriteBuffer`, `ReadBuffer`) объявляются через
+`external type` в `std/prelude/collections.nv` (Plan 62.D.bis,
+2026-05-18). Раньше (Plan 04) типы были «known-by-name» без formal
+declaration; D126 даёт canonical source-of-truth + `nova doc` surface +
+eligible для type-annotations / cross-file resolve.
+
+```nova
+// std/prelude/collections.nv
+module std.prelude.collections
+
+export external type StringBuilder
+export external type WriteBuffer
+export external type ReadBuffer
+// + Iter[T] protocol (D58)
+```
+
+Methods на opaque-типах объявляются **отдельно** через `external fn`
+([D82](08-runtime.md#d82-external-fn--функции-с-runtime-implementation))
+в `std/runtime/<type>.nv`:
+
+```nova
+// std/runtime/string_builder.nv
+module std.runtime.string_builder
+
+export external fn StringBuilder.new() -> Self
+export external fn StringBuilder mut @append(s str) -> Self
+export external fn StringBuilder @into() -> str
+// ... 11 more methods
+```
+
+Связь декларация ↔ methods — по receiver-type name (`StringBuilder`).
+Нет syntactic block'а, объединяющего type-decl с methods (по
+[D52](02-types.md#d52) это правильно — methods orthogonal к
+declarations, free-fn-style).
+
+#### Связь с D5/D47 видимостью
+
+`export external type` — публичный: имя видно из других модулей.
+`external type` без `export` — модуль-private. Те же правила, что для
+обычных type-декл. `external` ортогонален `export`.
+
+#### Связь с D52 kind-tokens
+
+[D52](02-types.md#d52) фиксирует kind-tokens `type` / `protocol` /
+`effect`. D126 **не** добавляет нового kind-token'а — `external` это
+**модификатор** перед `type` (mirror D82 для `fn`), не отдельный kind.
+
+В AST это кодируется через `TypeDeclKind::Opaque` (новый variant,
+Plan 62.D.bis Ф.1), параллельный existing `Record` / `Sum` / `Effect` /
+`Protocol` / `Alias` / `Newtype`. С точки зрения user'а — `external
+type X` это specialised type-declaration формы, не отдельный kind.
+
+#### Связь с будущим FFI
+
+`external type` — для типов, реализованных **в Nova-runtime**
+(`nova_rt/*.h`/`.c`). Для типов, импортируемых из **сторонних
+C-библиотек** (libuv handles, OS-libs), будет отдельный keyword
+`extern("C") type` (Q-ffi, не реализуется сейчас). Семантика разная:
+
+| Keyword | Реализация | C-name | Разрешён программисту |
+|---|---|---|---|
+| `external type` | Nova-runtime (`nova_rt/`) | `Nova_<Name>*` mangled | **нет** (только в `std.runtime.*` / `std.prelude.*`) |
+| `extern("C") type` (TBD) | сторонний C/lib | as-is | да (FFI) |
+
+#### Restriction: только `std.*`-whitelist
+
+Программистский Nova-код **не пишет** `external type`. Этот keyword —
+**экспозиционный**: только модули в `std.runtime.*` и `std.prelude.*`
+имеют право его использовать. Компилятор **отклоняет** `external type`
+в любом другом namespace'е:
+
+```
+error: `external type` is only allowed in `std.runtime.*` / `std.prelude.*`
+       modules (this module is `myapp.foo`); for FFI to external C libraries
+       a future `extern("C") type` keyword will be added (Q-ffi)
+```
+
+Whitelist реализуется через `manifest::is_stdlib_runtime_module ||
+is_prelude_self_module` (тот же check что для `external fn` per D82).
+
+#### Mangling и codegen
+
+`external type X` **не эмитит** struct definition в C output —
+определение живёт в runtime header (`nova_rt/<x>.h`):
+
+```c
+// nova_rt/string_builder.h
+typedef struct {
+    char*  data;
+    size_t len;
+    size_t cap;
+} Nova_StringBuilder;
+```
+
+Codegen reference на `external type X` использует mangling `Nova_X*`
+(pointer, opaque). Это идентично mangling user-defined record-типов
+(`type Foo { ... }` → `Nova_Foo*`), что обеспечивает consistency.
+
+| Nova-form | C-name |
+|---|---|
+| `let sb StringBuilder = ...` | `Nova_StringBuilder* sb = ...` |
+| `fn f(sb StringBuilder)` | `void f(Nova_StringBuilder* sb)` |
+| `external type Channel[T]` | `Nova_Channel*` (T erased в bootstrap) |
+
+`emit_type_decl` **skip'ает** emission для `TypeDeclKind::Opaque`.
+Forward-declarations (`typedef struct Nova_X Nova_X;`) skip'аются
+через `BUILTIN_RUNTIME_TYPES` skip-list — runtime header сам
+предоставляет.
+
+#### Validation
+
+Аналогично [D82](08-runtime.md#d82-external-fn--функции-с-runtime-implementation),
+компилятор validate'ит что декларированный `external type` **реально
+существует** в runtime (через `BUILTIN_RUNTIME_TYPES` list + at-emit-
+time check). Если user добавит `external type FooBar`, но
+`nova_rt/foo_bar.h` отсутствует → C-toolchain ошибётся при линковке
+с `undefined reference to Nova_FooBar` при первом методе.
+
+Полная Nova-side validation (компилятор знает все runtime-implemented
+типы и заранее ошибётся «type 'FooBar' not implemented in runtime»)
+— требует **registry runtime types**, который сейчас живёт неявно в
+`BUILTIN_RUNTIME_TYPES`. Q-codegen-runtime-types-registry — отдельная
+задача аналогично D82 builtins.nv validation; bootstrap relies на
+list maintenance.
+
+### Почему
+
+#### Зачем нужен `external type`
+
+1. **Source-of-truth для `nova doc`.** Программист (и AI) видит
+   формальную декларацию типа в одном месте — `nova doc
+   std.prelude.collections` покажет StringBuilder/WriteBuffer/
+   ReadBuffer как canonical API. Раньше (Plan 04, до Plan 62.D.bis)
+   типы существовали только как bare-name строки в D26 spec'е — не
+   visible в tooling.
+
+2. **Eligibility для cross-file resolve.** После formal declaration
+   типы участвуют в R26+R27 resolve (Plan 35). User-код может писать
+   `import std.prelude.collections.{StringBuilder}` или полагаться
+   на auto-import через prelude.
+
+3. **D29 W_PRELUDE_SHADOW работает.** User declaration `type
+   StringBuilder { ... }` теперь генерирует warning (mirror Plan
+   62.A behavior для Option/Result). Раньше silent shadow.
+
+4. **Symmetry с D82 `external fn`.** Если методы opaque-типа
+   объявляются через `external fn`, сам тип должен иметь parallel
+   form. Без D126 semantic asymmetry: methods are first-class, type
+   itself isn't.
+
+5. **Future-proof для opaque user-types** (Channel, Region, mmap'ed
+   buffers). Когда возникнет use-case, mechanism уже есть — нужно
+   только relax whitelist (или ввести `extern("C") type` для FFI).
+
+#### Почему не `opaque type`
+
+- Один keyword (`external`) для двух concepts (`fn` и `type`) —
+  снижает cognitive load. Прецедент: OCaml `external`, Dart
+  `external`, Kotlin `external` — все используют один keyword для
+  функций и (когда уместно) типов.
+- `opaque` подразумевает abstraction-from-user-code, а semantic
+  нужный здесь — **implementation-elsewhere**. `external` точнее
+  семантически.
+
+#### Почему не `#external` attribute
+
+- Per [D82](08-runtime.md#d82-external-fn--функции-с-runtime-implementation)
+  уже decision: «Атрибуты в Nova зарезервированы для тестов /
+  dev-tools (Q-attributes). Modifier-форма единообразна с `export`/
+  `mut`». D126 follows тот же principle.
+- `#external` дублировал бы syntax: `#external type X` vs `external
+  type X`. Choose one — modifier form for consistency.
+
+#### Почему restrict scope
+
+- Bootstrap MVP — программист **не должен** объявлять opaque types
+  произвольно. Runtime backing — это **compiler-versioned artefact**,
+  не user-extensible (см. D82 same argument). User-extensibility
+  опасна: declaration без runtime impl приведёт к undefined-reference
+  C errors.
+- Future relaxation требует либо:
+  - **Plugin mechanism** (compiler plugin defines runtime — too heavy
+    для bootstrap).
+  - **FFI keyword `extern("C") type`** (Q-ffi) — для внешних libs,
+    не Nova-runtime.
+
+### Что отвергнуто
+
+- **Bare-name `type X`** (no modifier, no body) — parser ambiguity с
+  newtype branch (`type X SomeType`).
+- **`opaque type X`** — separate keyword без явного gain.
+- **`#external` attribute** — modifier consistency lost.
+- **`type X { _ runtime }` body** — magic body, parsing complexity.
+- **Auto-discovery по runtime header presence** — magic, debugging
+  nightmare. Explicit `external` лучше.
+- **Включить methods в декларацию типа** (`external type X { fn
+  @method ... }`): per [D52](02-types.md#d52) + Plan 11, methods
+  orthogonal к type-decl (free-fn-style). Не ломаем consistency
+  только для opaque types.
+
+### Связь
+
+- [D5 / D47](07-modules.md#d47) — `export` modifier; `external` —
+  ортогональный второй modifier.
+- [D26](08-runtime.md#d26-базовая-stdlib-и-prelude) — prelude содержит
+  StringBuilder/WriteBuffer/ReadBuffer; декларации типов — через D126
+  в `std/prelude/collections.nv`.
+- [D30](#d30) — naming convention; `external` — full word.
+- [D52](02-types.md#d52) — kind-tokens (`type`/`effect`/`protocol`);
+  D126 **не** добавляет нового kind-token'а — `external` это modifier.
+- [D82](08-runtime.md#d82-external-fn--функции-с-runtime-implementation)
+  — `external fn`; D126 — type-analog того же принципа. Один keyword
+  `external`, два valid позиционирования.
+
+### Эволюция
+
+До Plan 62.D.bis (2026-05-18) типы StringBuilder/WriteBuffer/ReadBuffer
+существовали как «known-by-name» (D26 prose-only), без formal Nova-
+side declaration. D82 (2026-05-08, Plan 04) явно отложил `external
+type` как «not yet — built-in only».
+
+Plan 62 main (2026-05-18) выявил это как последний «known-by-name»
+hole в D26 visible prelude (все остальные items мигрированы 62.A–
+62.F). Plan 62.D.bis закрывает.
+
+D126 numbering — выбран чтобы продолжить chronology D124/D125 (Plan
+62.F.bis, 2026-05-18); ставит этот D-block в `03-syntax.md` (syntax-
+extension), отдельно от runtime-side D82 в `08-runtime.md`.
+
+### Bootstrap status (2026-05-18)
+
+- ✅ Lexer: `KwExternal` token уже существует (Plan 04 Этап 2).
+- ✅ Parser: relax `external` check на `KwType` (Plan 62.D.bis Ф.1).
+- ✅ AST: `TypeDeclKind::Opaque` variant добавлен (Plan 62.D.bis Ф.1).
+- ✅ Type-checker: whitelist enforcement (`std.runtime.*` /
+  `std.prelude.*`) — Plan 62.D.bis Ф.1.
+- ✅ Codegen: skip `emit_type_decl` для Opaque kind (Plan 62.D.bis Ф.1).
+- ✅ `std/prelude/collections.nv`: добавлены 3 declarations (Plan
+  62.D.bis Ф.2).
+- ✅ `std/prelude.nv` facade: re-export (Plan 62.D.bis Ф.2).
+- ⏳ Validation: формальная registry runtime-types — deferred
+  (Q-codegen-runtime-types-registry), bootstrap полагается на
+  `BUILTIN_RUNTIME_TYPES` list maintenance.
