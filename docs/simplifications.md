@@ -9354,6 +9354,15 @@ form. Now established pattern: запускать полный test suite пер
 
 **Lemma lint catalog — 12 rules** (добавился unused-param).
 
+## [M-plan-33.6-Ф.49-apply-vacuous-callsite] (2026-05-18)
+
+Дополняет Ф.31.3 — `apply lemma` где lemma имеет `requires false` warning
+теперь эмитится **на apply-site** (не только на lemma declaration).
+Важно когда программист добавил apply раньше, а lemma стала vacuous
+позже через refactoring.
+
+**Регрессия:** 203 → 204 PASS (+1), 0 FAIL.
+
 ## [M-57.F.4-positive-negative-coverage] — Test expansion (2026-05-17)
 
 **Не simplification.** Прямой user feedback "тесты напиши по тому,
