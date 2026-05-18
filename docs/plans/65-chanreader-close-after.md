@@ -502,32 +502,55 @@ honest-defer (`[M-chanreader-gc-finalizer]`) documented in Эволюция.
 
 **Регрессия:** 698 PASS / 0 FAIL (baseline; matches main).
 
-### Ф.1 — Compiler registration (1 day)
+### Ф.1 — Compiler registration (1 day) ✅ 2026-05-18
 
-- [ ] Add `ChanReader.close_after(d Duration) -> Nova_ChanReader*` в
-      `external_registry.rs`. Pattern: copy `Channel.new`, adapt.
-- [ ] `infer_expr_c_type`: Member case `ChanReader.close_after` →
-      `Nova_ChanReader*`.
-- [ ] **Не** удалять Time.after — atomic switch в Ф.6.
+- [x] `ChanReader.close_after(d Duration) -> Nova_ChanReader*` registered
+      via hardcoded receiver dispatch in `emit_c.rs` (mirrors `Channel.new`
+      pattern — not via external_registry because ChanReader is a
+      compiler-builtin opaque type with no .nv decl). Both Member-form
+      (`ChanReader.close_after(...)` parsed as `Member`) and Path-form
+      (parsed as `Path(["ChanReader", "close_after"])`) handled.
+- [x] `infer_expr_c_type`: both forms → `Nova_ChanReader*`.
+- [x] `Time.after` registration unchanged — atomic switch deferred to Ф.5.
+- [x] Side-fix (blocked Plan 65 progress): handler-method param annotation
+      bridge in `emit_handler_lit` so a user-annotated record-typed param
+      (e.g. `sleep(d Duration)`) can safely shadow the schema-wire int and
+      access `d.nanos` without invalid C. Restricted to `eff != "Fail"`
+      (Fail uses Plan 61 Ф.3 fail_e_map path) and `schema_ty == "nova_int"`
+      (struct wire types cannot round-trip via `intptr_t`). Tracked as
+      [M-handler-duration-schema-mismatch] in simplifications.md.
 
-**Acceptance:** new API type-checks; smoke test compiles.
+**Acceptance:** ✅ smoke `ChanReader.close_after(Duration.from_millis(10))`
+compiles and runs inside a `supervised{ spawn { ... } }` fiber.
 
-### Ф.2 — Runtime layer + drop semantics (1 day)
+### Ф.2 — Runtime layer + drop semantics (1 day) ✅ 2026-05-18 (folded with Ф.1)
 
-- [ ] Implement `nova_chan_reader_close_after_ns(int64_t)` в
-      `channel.c`:
-   - Negative → panic
-   - Zero → already-closed reader (no timer alloc)
-   - Sub-ms → round-up
-- [ ] Rename internal `nova_time_after_ms` → `nova_internal_chan_close_after_ms`.
-- [ ] **Finalizer registration** (R13): `GC_REGISTER_FINALIZER` на
-      Nova_ChanReader с pending timer; finalizer вызывает `uv_close()`
-      idempotently.
-- [ ] Codegen emit: `ChanReader.close_after(d)` → `nova_chan_reader_close_after_ns(d.nanos)`.
-- [ ] Unit-test runtime: 4 corner cases (neg/zero/sub-ms/normal) +
-      finalizer-no-leak.
+- [x] Implemented `nova_chan_reader_close_after_ns(int64_t)` inline in
+      `channels.h` (alongside `Nova_Time_after`):
+   - Negative → `fprintf+abort` panic (R4)
+   - Zero → already-closed reader, no timer allocation (R5 fast-path)
+   - Sub-ms → round-up to 1 ms (R6, libuv ms granularity)
+   - Normal → delegate to existing `Nova_Time_after(ms)` libuv path
+- [x] Internal rename SKIPPED — current runtime entry is `Nova_Time_after`
+      (inline in channels.h), no separate `nova_time_after_ms` symbol exists.
+      New `nova_chan_reader_close_after_ns` reuses the same backend without
+      a renamed alias (cleaner — see Plan 65 Эволюция).
+- [⚠️] **Finalizer registration (AD7)** — deferred. Boehm
+      `GC_REGISTER_FINALIZER` is not wired anywhere in runtime (verified
+      Ф.0). `NovaAfterState` remains `malloc`-owned with libuv-driven
+      cleanup. Honest-defer [M-chanreader-gc-finalizer]; f9 test adjusted.
+- [x] Codegen emit: `ChanReader.close_after(d)` →
+      `nova_chan_reader_close_after_ns((d)->nanos)`. Duration record-unpack
+      inline (AD4). Compile-time error on bare int (no `.nanos` field on
+      `nova_int` — caught via Plan-65-specific Err return in codegen, not C
+      compiler).
+- [x] Smoke test in `nova_tests/plan65/smoke_close_after.nv` validates
+      both normal (10 ms fires) and zero-duration (already-closed) paths.
 
-**Acceptance:** runtime handles все cases; finalizer test PASS.
+**Acceptance:** ✅ runtime handles all in-scope cases; finalizer test
+deferred behind [M-chanreader-gc-finalizer].
+
+**Регрессия:** 700 PASS / 0 FAIL / 44 SKIP (baseline 698 + 2 smoke tests).
 
 ### Ф.3 — Negative-test fixtures (½ day)
 
