@@ -3,7 +3,7 @@
 //
 // Запрещённые `as`-cast'ы (compile-error):
 //   - int as char     → char.try_from(n)?
-//   - char as byte    → byte.try_from(c)?  (за исключением CharLit)
+//   - char as u8    → byte.try_from(c)?  (за исключением CharLit)
 //   - int as bool     → n != 0
 //   - str as T        → T.try_from(s)?
 //   - T as str        → str.from(v)
@@ -17,7 +17,7 @@ module syntax.as_cast_restrictions
 
 
 test "char-literal as byte/int/u8 — разрешено (program ставит codepoint буквально)" {
-    let a = 'A' as byte
+    let a = 'A' as u8
     let b = 'A' as int
     let c = 'A' as u8
     assert(a as int == 65)
@@ -27,15 +27,15 @@ test "char-literal as byte/int/u8 — разрешено (program ставит c
 
 
 test "byte → int (widening) — разрешено" {
-    let b byte = 65
+    let b u8 = 65
     let n = b as int
     assert(n == 65)
 }
 
 
-test "int → byte (narrowing wraparound) — разрешено (план 05)" {
+test "int → u8 (narrowing wraparound) — разрешено (план 05)" {
     let big int = 1111
-    let b = big as byte
+    let b = big as u8
     assert(b as int == 87)  // 1111 mod 256
 }
 

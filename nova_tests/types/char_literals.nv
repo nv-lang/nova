@@ -2,7 +2,7 @@
 //
 // `char` в Nova — Unicode codepoint (4 байта значение, как Rust char,
 // Go rune). В bootstrap `char` представлен как nova_int. Литералы:
-//   'a'        — ASCII byte
+//   'a'        — ASCII u8
 //   '\n'/'\t'/'\r'/'\\'/'\''/'"'/'\0'   — escape sequences
 //   '\u{HEX}'  — Unicode codepoint by hex (1-6 hex digits)
 //   'é'        — non-ASCII through UTF-8 source

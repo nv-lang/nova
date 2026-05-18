@@ -38,11 +38,11 @@ test "5-level destructure" {
 }
 
 
-test "5-level mixed branches: ((str, (int, bool)), (f64, byte))" {
-    let mixed = (("greet", (1, true)), (1.5, 7 as byte))
+test "5-level mixed branches: ((str, (int, bool)), (f64, u8))" {
+    let mixed = (("greet", (1, true)), (1.5, 7 as u8))
     assert(mixed.0.0 == "greet")
     assert(mixed.0.1.0 == 1)
     assert(mixed.0.1.1)
     assert(mixed.1.0 == 1.5)
-    assert(mixed.1.1 == (7 as byte))
+    assert(mixed.1.1 == (7 as u8))
 }
