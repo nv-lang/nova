@@ -1046,11 +1046,20 @@ impl CEmitter {
             let mut time_schema: HashMap<String, (Vec<String>, String)> = HashMap::new();
             time_schema.insert("sleep".to_string(), (vec!["nova_int".into()],    "nova_unit".into()));
             time_schema.insert("now".to_string(),   (vec![],                      "nova_int".into()));
+            // Plan 65 Ф.12.3 / D124: monotonic clock — раздельный от wall-clock.
+            // Returns Monotonic.nanos (i64) — runtime использует
+            // clock_gettime(CLOCK_MONOTONIC) / QueryPerformanceCounter.
+            // Schema-wire returns nova_int (raw nanos); Nova-side wrapped в
+            // Monotonic record через std/time/duration.nv Monotonic.now().
+            //
+            // NOTE: latent Time.now() → Timestamp schema mismatch ([M-time-now-schema-mismatch])
+            // is documented and intentionally deferred — it requires a record-typed
+            // return through the effect schema layer, which has no precedent in
+            // the schema-wire convention. Plan 65 introduces now_monotonic via
+            // the same wire layer for parity (returns raw i64; Nova-side wraps
+            // it in Monotonic, same as fixed_ms returns int wrapped in Timestamp).
+            time_schema.insert("now_monotonic".to_string(), (vec![], "nova_int".into()));
             // Plan 65 Ф.11: NOVA_TIMER_METRICS observability counters.
-            // Returns rolling counters from the runtime timer-stats struct
-            // maintained in channels.h. Disabled-path == disabled at-exit dump;
-            // counters themselves are always live (cost = 1 incr per
-            // alloc/fire/cancel of a close_after timer).
             time_schema.insert("timer_alloc_total".to_string(),       (vec![], "nova_int".into()));
             time_schema.insert("timer_alloc_active".to_string(),      (vec![], "nova_int".into()));
             time_schema.insert("timer_fired".to_string(),             (vec![], "nova_int".into()));
@@ -9819,10 +9828,60 @@ impl CEmitter {
                     else if rty.starts_with("Nova_") && rty.ends_with('*') { Some(rty.clone()) }
                     else { None };
                 if let Some(sty) = sum_ty {
+                    // Plan 65 Ф.12 fix: use the FULL C type prefix (Nova_X) for
+                    // method dispatch — stripping `Nova_` produces `X_method_plus`
+                    // which doesn't exist in the emitted code (which uses
+                    // `Nova_X_method_plus`). Previously dormant bug (no user-side
+                    // Timestamp+Duration callers existed pre-Plan-65); exposed
+                    // by Monotonic.now() + Duration.
+                    let type_name_sum_full = sty.trim_end_matches('*').to_string();
                     let type_name_sum = sty.strip_prefix("Nova_").unwrap_or("").trim_end_matches('*').to_string();
-                    // D46 operator overloading: Nova_T* + Nova_T* → T_method_plus(l, r).
+                    // D46 operator overloading: Nova_T* + Nova_T* → Nova_T_method_plus(l, r).
                     if matches!(op, BinOp::Add) {
-                        return Ok(format!("{}_method_plus({}, {})", type_name_sum, l, r));
+                        return Ok(format!("{}_method_plus({}, {})", type_name_sum_full, l, r));
+                    }
+                    // Plan 65 Ф.12 / D124: dispatch `-` to the receiver's
+                    // _method_minus for record types (Duration, Timestamp,
+                    // Monotonic). Validate that the receiver has a registered
+                    // @minus overload for the operand type — without this
+                    // check, D124's "no cross-clock arithmetic" guarantee
+                    // would be silently bypassed (Timestamp - Monotonic
+                    // would dispatch to Timestamp.@minus(Duration)
+                    // because of struct-pointer compatibility in C).
+                    if matches!(op, BinOp::Sub) && lty.starts_with("Nova_") && lty.ends_with('*') {
+                        let recv_full = lty.trim_end_matches('*').to_string();
+                        let recv_short = recv_full.trim_start_matches("Nova_").to_string();
+                        // Look up registered @minus overloads on receiver.
+                        let key = (recv_short.clone(), "minus".to_string());
+                        let overloads = self.method_overloads.get(&key).cloned();
+                        if let Some(sigs) = overloads {
+                            // Find an overload whose only parameter type
+                            // matches rty exactly.
+                            let matching = sigs.iter().find(|s| {
+                                s.is_instance
+                                    && s.param_c_types.len() == 1
+                                    && s.param_c_types[0] == rty
+                            });
+                            if let Some(sig) = matching {
+                                return Ok(format!("{}({}, {})", sig.c_name, l, r));
+                            }
+                            // No overload matches the operand type — this is
+                            // a D124 type-system rejection point.
+                            return Err(format!(
+                                "binop `-`: no @minus overload on {} taking {} \
+                                 (Plan 65 / D124: prevents silent cross-clock \
+                                 arithmetic). Available overloads: {}",
+                                recv_short,
+                                rty,
+                                sigs.iter()
+                                    .filter(|s| s.is_instance && s.param_c_types.len() == 1)
+                                    .map(|s| s.param_c_types[0].clone())
+                                    .collect::<Vec<_>>()
+                                    .join(", ")
+                            ));
+                        }
+                        // No @minus registered — leave to fall-through (would
+                        // become invalid C, caught later).
                     }
                     if matches!(op, BinOp::Eq | BinOp::Neq) {
                         let type_name = type_name_sum;
@@ -12045,6 +12104,34 @@ impl CEmitter {
                             ));
                         }
                     }
+                    // Plan 65 Ф.12.1 / D124: Monotonic.now() — compiler builtin.
+                    // Bypasses Time-effect schema (latent record-return mismatch).
+                    if name == "Monotonic" && method == "now" {
+                        return Ok("((Nova_Monotonic*)nova_monotonic_now_record())".to_string());
+                    }
+                    // Plan 65 Ф.12.4 / D124: ChanReader.close_at(deadline Monotonic).
+                    // Type-system enforces Monotonic — bare int / Timestamp →
+                    // compile error via the C-type-mismatch path (similar to
+                    // close_after Duration enforcement).
+                    if name == "ChanReader" && method == "close_at" {
+                        if let Some(arg) = args.first() {
+                            let arg_c = self.infer_expr_c_type(arg.expr());
+                            let v = self.emit_expr(arg.expr())?;
+                            if arg_c != "Nova_Monotonic*" {
+                                return Err(format!(
+                                    "ChanReader.close_at(): expected Monotonic argument, got {} \
+                                     — use Monotonic.now() + Duration (Plan 65 Ф.12 / D124). \
+                                     Note: Timestamp is NOT allowed (would silently leak NTP \
+                                     skew into timer deadlines; see D124 §3).",
+                                    arg_c
+                                ));
+                            }
+                            return Ok(format!(
+                                "nova_chan_reader_close_at_mono_ns(({})->nanos)",
+                                v
+                            ));
+                        }
+                    }
                     // D75 (revised, Plan 47): CancelToken.new() — Member-form.
                     if name == "CancelToken" && method == "new" {
                         return Ok("nova_cancel_token_new()".to_string());
@@ -13141,6 +13228,30 @@ impl CEmitter {
                         }
                         return Ok(format!(
                             "nova_chan_reader_close_after_ns(({})->nanos)",
+                            v
+                        ));
+                    }
+                }
+                // Plan 65 Ф.12.1 / D124: Monotonic.now() — Path-form builtin.
+                if parts.len() == 2 && parts[0] == "Monotonic" && parts[1] == "now" {
+                    return Ok("((Nova_Monotonic*)nova_monotonic_now_record())".to_string());
+                }
+                // Plan 65 Ф.12.4 / D124: ChanReader.close_at(Monotonic) — Path-form.
+                if parts.len() == 2 && parts[0] == "ChanReader" && parts[1] == "close_at" {
+                    if let Some(arg) = args.first() {
+                        let arg_c = self.infer_expr_c_type(arg.expr());
+                        let v = self.emit_expr(arg.expr())?;
+                        if arg_c != "Nova_Monotonic*" {
+                            return Err(format!(
+                                "ChanReader.close_at(): expected Monotonic argument, got {} \
+                                 — use Monotonic.now() + Duration (Plan 65 Ф.12 / D124). \
+                                 Note: Timestamp is NOT allowed (would silently leak NTP \
+                                 skew into timer deadlines; see D124 §3).",
+                                arg_c
+                            ));
+                        }
+                        return Ok(format!(
+                            "nova_chan_reader_close_at_mono_ns(({})->nanos)",
                             v
                         ));
                     }
@@ -18380,6 +18491,14 @@ impl CEmitter {
                         if n == "ChanReader" && method == "close_after" {
                             return "Nova_ChanReader*".into();
                         }
+                        // Plan 65 Ф.12.4 / D124: ChanReader.close_at(Monotonic).
+                        if n == "ChanReader" && method == "close_at" {
+                            return "Nova_ChanReader*".into();
+                        }
+                        // Plan 65 Ф.12.1 / D124: Monotonic.now() returns Monotonic.
+                        if n == "Monotonic" && method == "now" {
+                            return "Nova_Monotonic*".into();
+                        }
                         // D75 (revised, Plan 47): CancelToken.new() — Member-form.
                         if n == "CancelToken" && method == "new" {
                             return "NovaCancelToken*".into();
@@ -18762,6 +18881,14 @@ impl CEmitter {
                         // Path-form.
                         if eff == "ChanReader" && method_name == "close_after" {
                             return "Nova_ChanReader*".into();
+                        }
+                        // Plan 65 Ф.12.4 / D124: ChanReader.close_at(Monotonic).
+                        if eff == "ChanReader" && method_name == "close_at" {
+                            return "Nova_ChanReader*".into();
+                        }
+                        // Plan 65 Ф.12.1 / D124: Monotonic.now() — Path-form.
+                        if eff == "Monotonic" && method_name == "now" {
+                            return "Nova_Monotonic*".into();
                         }
                         // D75 (revised, Plan 47): CancelToken.new() — Path-form.
                         if eff == "CancelToken" && method_name == "new" {

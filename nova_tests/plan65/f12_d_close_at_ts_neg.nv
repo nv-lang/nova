@@ -1,0 +1,14 @@
+// Plan 65 R18 / Ф.12.5 / D124: ChanReader.close_at requires Monotonic.
+// EXPECT_COMPILE_ERROR expected Monotonic argument
+
+module plan65.f12_d_close_at_ts_neg
+
+import std.time.duration
+
+fn main() -> () {
+    let ts = Timestamp.from_unix_secs(2000)
+    // Wrong: ChanReader.close_at expects Monotonic. Diagnostic must
+    // reference D124 / Monotonic.now() + Duration.
+    let _t = ChanReader.close_at(ts)
+    println("unreachable")
+}
