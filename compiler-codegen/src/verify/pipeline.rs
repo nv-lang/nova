@@ -1421,7 +1421,7 @@ fn collect_calc_in_block(b: &Block, out: &mut Vec<(Vec<CalcStep>, Span)>) {
 /// Ф.4.1: блок "ghost-only" -- все стейтменты ghost (`apply`).
 /// Такой блок при верификации трактуется как trailing-only (apply стираются).
 fn block_has_only_ghost_stmts(b: &Block) -> bool {
-    b.stmts.iter().all(|s| matches!(s, Stmt::Apply { .. } | Stmt::Calc { .. }))
+    b.stmts.iter().all(|s| matches!(s, Stmt::Apply { .. } | Stmt::Calc { .. } | Stmt::Reveal { .. }))
 }
 
 /// Ф.4.1: собрать все `apply lemma(args)` из тела функции.
