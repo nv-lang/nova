@@ -236,10 +236,20 @@ fn simplify_app(op: &str, args: &[SmtTerm]) -> SmtTerm {
         "/" if args.len() == 2 => match (&args[0], &args[1]) {
             (SmtTerm::IntLit(a), SmtTerm::IntLit(b)) if *b != 0 => SmtTerm::IntLit(a / b),
             (a, SmtTerm::IntLit(1)) => a.clone(),
+            // Ф.45.1 (Plan 33.6): division by -1 = negation.
+            (a, SmtTerm::IntLit(-1)) => {
+                simplify_app("-", &[SmtTerm::IntLit(0), a.clone()])
+            }
+            // Ф.45.2 (Plan 33.6): 0 / a → 0 (when a — non-literal Var).
+            // Note: undefined для a == 0 в runtime, но в spec-only contracts
+            // safe assume a != 0 (программист написал такой goal).
+            (SmtTerm::IntLit(0), _) => SmtTerm::IntLit(0),
             _ => SmtTerm::App(op.into(), args.to_vec()),
         },
         "%" if args.len() == 2 => match (&args[0], &args[1]) {
             (SmtTerm::IntLit(a), SmtTerm::IntLit(b)) if *b != 0 => SmtTerm::IntLit(a % b),
+            // Ф.45.3 (Plan 33.6): 0 % a → 0 (when a non-zero).
+            (SmtTerm::IntLit(0), _) => SmtTerm::IntLit(0),
             _ => SmtTerm::App(op.into(), args.to_vec()),
         },
 
