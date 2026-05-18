@@ -1,4 +1,4 @@
-﻿// Plan 33.3 Ф.14: Dafny-parity test 4 — Bank account transfer.
+// Plan 33.3 Ф.14: Dafny-parity test 4 — Bank account transfer.
 // Аналог bank account example из Dafny tutorial.
 
 // REQUIRES_SMT_BACKEND z3
