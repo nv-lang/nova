@@ -4,13 +4,16 @@
 // `import std.prelude` в queue. `PRELUDE_VERSION` const доступна без
 // explicit import.
 //
-// **Plan 62.A bump:** PRELUDE_VERSION 1 → 2 после миграции core types
-// (Option/Result/Some/None/Ok/Err/Error/Ordering) из hardcoded в
-// std/prelude/core.nv. См. docs/plans/62-prelude-hardcode-migration.md.
+// **Plan 62 history:**
+//   - 62.A bump 1 → 2 (core types: Option/Result/Some/None/Ok/Err/Error/
+//     Ordering перенесены в std/prelude/core.nv).
+//   - 62.B/C/D non-opaque/E reused version 2.
+//   - 62.F bump 2 → 3 + **Plan 62 closure** (effects.Fail[E] added).
+// См. docs/plans/62-prelude-hardcode-migration.md.
 
 module modules.prelude_auto_import
 
 test "PRELUDE_VERSION доступен без import" {
-    // Plan 62.A: bump до 2 (core types перенесены в file-based form).
-    assert(PRELUDE_VERSION == 2)
+    // Plan 62.F: bump до 3 (effects.Fail[E] declared, Plan 62 closed).
+    assert(PRELUDE_VERSION == 3)
 }

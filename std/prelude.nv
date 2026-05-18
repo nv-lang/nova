@@ -90,13 +90,29 @@ export import std.prelude.collections.{Iter}
 //     std/prelude/protocols.nv DEFER comment + plan doc §62.E.
 export import std.prelude.protocols.{From, Into, Hashable, Equatable, Comparable, Display}
 
+// Plan 62.F: re-export Fail[E] effect из std.prelude.effects.
+// Formal declaration matches hardcoded codegen pre-registration
+// (NovaVtable_Fail + Nova_Fail_fail в nova_rt/effects.h). Type-checker
+// и codegen матчат single-element path `["Fail"]` независимо. Декларация
+// здесь даёт canonical API surface для `nova doc`.
+//
+// Time/Mem/Detach НЕ re-export'ятся — Time и Mem ambient runtime
+// effects (не user-overridable beyond runtime helpers), Detach —
+// keyword-construct (`detach { ... }` D50). См. std/prelude/effects.nv.
+export import std.prelude.effects.{Fail}
+
 /// Prelude version marker — verify в тестах что auto-import работает.
 /// Bump'ается при каждой migration phase Plan 62.
 ///   - 1 = pre-migration (только этот placeholder).
 ///   - 2 = Plan 62.A done (core types в file-based form).
-///     Plan 62.B reused version 2 (runtime fns added, version bump
-///     reserved для финального Plan 62 закрытия per plan doc).
-///     Plan 62.C reused version 2 (error types added; version bump
-///     остаётся reserved для финального Plan 62 закрытия).
+///     Plan 62.B reused version 2 (runtime fns added).
+///     Plan 62.C reused version 2 (error types added).
+///     Plan 62.D non-opaque reused version 2 (Iter[T] added).
+///     Plan 62.E reused version 2 (protocols added).
+///   - 3 = Plan 62.F done (effects.Fail[E] added) + **Plan 62 closed**.
+///     Это финальный bump phase'а Plan 62; следующие bump'ы — из
+///     deferred sub-plans (62.A.bis sum_schemas removal, 62.B.bis
+///     print/println, 62.C.bis RuntimeNoneError, 62.D.bis opaque types,
+///     62.E.bis TryFrom/TryInto, etc.) когда они закроются.
 #stable(since = "0.1")
-export const PRELUDE_VERSION int = 2
+export const PRELUDE_VERSION int = 3

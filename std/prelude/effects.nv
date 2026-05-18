@@ -1,0 +1,84 @@
+// std/prelude/effects.nv — file-based source of truth для prelude
+// effects. Plan 62 phase 62.F.
+//
+// Декларации добавлены в этот файл, чтобы:
+//   1) `nova doc` показывал canonical API в одном месте (AI-readable),
+//   2) splittable prelude работал (`partial_prelude(effects)` opt-in
+//      только effects без core/runtime/errors/collections/protocols),
+//   3) `Fail[E]` имел formal declaration совпадающую с тем что
+//      hardcoded type-checker'ом и codegen'ом видит как single-element
+//      path `["Fail"]` (см. compiler-codegen/src/codegen/emit_c.rs:1059,
+//      types/mod.rs:3148, codegen/emit_c.rs:3186).
+//
+// Архитектурные правила (Plan 62 §«Стратификация»):
+//   - **ZERO imports.** Все declarations self-contained на primitives
+//     и built-in `Never` (см. core.nv DEFER comment).
+//   - Auto-import `std.prelude` отключён внутри `std.prelude.*` через
+//     `is_prelude_self_module` (compiler-codegen/src/manifest.rs:314+).
+//
+// **Bootstrap status (Plan 62.F):**
+//
+// - **`Fail[E]`** — formal declaration. Hardcoded recognition в type-checker
+//   и codegen остаётся неизменной — declaration здесь даёт canonical API
+//   + AI/doc surface. Codegen skip'ает emit_effect_type через
+//   RUNTIME_DEFINED_EFFECTS (emit_c.rs RUNTIME_DEFINED_TYPES extension),
+//   потому что `NovaVtable_Fail` уже определён в nova_rt/effects.h.
+//
+// **NOT migrated (Plan 62.F scope — deferred / runtime-internal):**
+//
+// - **`Time`** — ambient runtime effect (D11/D14/D62). Pre-registered в
+//   codegen `effect_schemas` (emit_c.rs:1071) — `Time.sleep(ms)`,
+//   `Time.now()`, `Time.after(ms)`. Не type-system effect в смысле user
+//   API — `Time.sleep` обычная функция в `std.time`. Formal declaration
+//   здесь не требуется.
+// - **`Mem`** — runtime introspection (alloc_count/free_count/live/reset).
+//   Pre-registered (emit_c.rs:1087). Используется внутренними тестами
+//   memory leak detection, не user-facing API.
+// - **`Detach`** — keyword-construct `detach { ... }` (D50). Это
+//   syntactic form, не declarable effect — реализован через парсер
+//   special-case + builtin type "Detach" (types/mod.rs:2080).
+//
+// Будущее: если Time/Mem станут user-overridable beyond bootstrap —
+// добавить formal declarations сюда же (62.F.bis / future plan).
+
+module std.prelude.effects
+
+/// **Failable-эффект** — единственный способ объявить ошибку в сигнатуре
+/// функции (D25, D62, D65; spec/decisions/04-effects.md).
+///
+/// **Параметр `E`** — тип значения, передаваемого в `fail(e)`. Может быть
+/// любой Nova-тип (sum-type, record, str, int, etc.). Соглашение:
+/// доменные ошибки — sum-типы (см. `std.prelude.errors.RuntimeError`).
+///
+/// **Сигнатура `fail(e E) -> Never`** — операция не возвращает управление.
+/// По D61 (str. 1430-1434) handler-body для Never-операции обязан
+/// завершиться `interrupt v`, `throw err`, `panic(...)` или `exit(...)`.
+///
+/// **Syntactic sugar:**
+///   - `throw expr` desugar'ится в `Fail[E].fail(expr)` где `E` infer'ится
+///     из expr type.
+///   - postfix `expr!!` на `Option[T]` / `Result[T, E]` (D85) тоже
+///     desugar'ится в `Fail` через unwrap-or-fail.
+///
+/// **Handler-формы (D31 sugar + D55 explicit):**
+/// ```
+/// // Lambda-форма (D31): inferred Fail[E] handler.
+/// with Fail[E] = |e| { panic("got {}", e) } { body }
+///
+/// // Explicit handler-форма (D55): full Handler[Fail[E]] declaration.
+/// with Fail[E] = handler Fail[E] { fail(e) => panic("...") } { body }
+/// ```
+///
+/// **Default handler:** runtime устанавливает `Nova_Fail_fail` который
+/// вызывает `nova_throw` → longjmp к ближайшему fail-frame (test_frame
+/// или spawn-entry frame). Бесшумная propagation в caller'а.
+///
+/// **Auto-inference (D62/D65 placeholder):** если функция содержит `throw`
+/// и `Fail` отсутствует в effect-row → компилятор автоматически добавляет
+/// `Fail` (см. `infer_effects`, types/mod.rs:2844+). Эта эвристика
+/// применяется ТОЛЬКО к non-exported функциям; exported требуют явный
+/// `Fail[E]` для documentation/AI clarity.
+#stable(since = "0.1")
+export type Fail[E] effect {
+    fail(e E) -> Never
+}
