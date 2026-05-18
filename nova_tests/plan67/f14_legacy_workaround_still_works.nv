@@ -1,0 +1,25 @@
+// Plan 67 closure regression-guard для legacy «workaround» pattern.
+//
+// До фикса програмисты обходили баг через:
+//     let s = str.from(x)       // explicit assign
+//     println(s)                // works (Ident path resolves)
+//
+// Workaround audit (Ф.3) подтвердил: 4 найденных случая такого паттерна
+// legitimate (assert(s == ...) tests, mutation, multi-use). Этот тест
+// гарантирует что unification infer_print_helper → infer_expr_c_type
+// НЕ сломала старую (legitimate) форму записи.
+
+module plan67.f14_legacy_workaround_still_works
+
+// EXPECT_STDOUT 42
+// EXPECT_STDOUT true
+// EXPECT_STDOUT hello
+
+fn main() Io -> () {
+    let s_int = str.from(42)        // legacy: explicit var
+    let s_bool = str.from(true)     // legacy: explicit var
+    let s_str = "hello"             // direct str var
+    println(s_int)
+    println(s_bool)
+    println(s_str)
+}

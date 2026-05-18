@@ -16099,3 +16099,38 @@ Honest-defers added (10 new in simplifications.md):
 
 All are L/M priority; none block Plan 65 production usage. Plan 65
 production-grade closed.
+
+2026-05-18 Plan 67 full closure (Ф.3 + Ф.4 + W6701 honest-defer)
+─────────────────────────────────────────────────────────────────
+
+Ф.3 — bench/corpus unblock + workaround audit:
+- 06_contracts.nv (primary CI fix target) builds + runs корректно
+  (output `7 / 5 / 120` от abs/-7, max/3,5, factorial/5).
+- Spot-check 02_arithmetic_loop.nv — также correct output.
+- 3 corpus files broken по unrelated reasons (D52 Plan 51, syntax
+  evolution, sum-type codegen) — [M-corpus-files-pre-existing-breakage].
+- Workaround audit (let s = str.from(...); println(s) cleanup):
+  CLEAN — все 4 найденных места = legitimate (test asserts, mutation,
+  multi-use), не workaround. Нечего инлайнить.
+- bench-history baseline corpus_*: deferred —
+  [M-bench-corpus-status-fail-fp] (status detection bug в bench corpus).
+
+Ф.4 — cross-toolchain + final audit:
+- Cross-toolchain — defer (Plan 58 CI matrix workflow отсутствует);
+  [M-plan67-cross-toolchain-deferred].
+- 3 marker'а RESOLVED в simplifications.md:
+  [M-println-overload-static-method], [M-println-char-as-int],
+  [M-infer-print-helper-duplication].
+
+W6701 opt-in lint (R4):
+- DEFER — codegen layer не имеет warning channel (только Result error).
+  [M-w6701-print-unknown-type-lint] записан, fix через diagnostic-infra
+  plan (Plan 36 expansion R7+).
+
+Test count после Plan 67 full closure:
+- baseline (post Plan 65 hardening merge): 717 PASS / 0 FAIL / 44 SKIP
+- Plan 67 Ф.0-Ф.2 уже добавили 10 fixtures в nova_tests/plan67/
+- Ф.3 + Ф.4 — без новых тестов (audit + docs only)
+- Регрессий 0
+
+Plan 67 production-grade closed. README row updated.
