@@ -4936,7 +4936,15 @@ impl CEmitter {
                             && !generics.is_empty()
                             && generics.iter().any(|g| Self::type_ref_uses_any_type_param(g, &type_params)) =>
                             "void*".to_string(),
-                        _ => self.type_ref_to_c(&f.ty).unwrap_or_else(|_| "nova_int".into()),
+                        // Plan 70 PhaseA1: strict mode — concrete field types must
+                        // translate successfully. Earlier arms catch generic-param erasure
+                        // patterns (void* / NovaArray_nova_int*); this fall-through is for
+                        // non-generic-param types where translation fail = compiler bug.
+                        _ => self.type_ref_to_c(&f.ty).map_err(|e|
+                                self.err_no_int_fallback(
+                                    &format!("field `{}` в type `{}`", f.name, t.name),
+                                    &e,
+                                ))?,
                     };
                     let mangled = Self::mangle_field_name(&f.name);
                     self.line(&format!("{} {};", c_ty, mangled));
