@@ -15271,6 +15271,23 @@ Test: f39_eq_bounds_positive (pinned_eq, bounded_not_eq).
 Var-IntLit и Var-Var (literal bounds) checks.
 
 
+# Plan 33.6 Ф.40 (2026-05-18): lemma body == ensures detection (W2402)
+
+`lemma foo(x) ensures x*2 >= 0 => x*2 >= 0` — body буквально совпадает с
+ensures. Не bug, но не добавляет proof-information: SMT доказывает
+trivially equality body == ensures. Программист скорее всего хотел
+calc { } или apply other_lemma.
+
+В verify_module lemma loop: если `ld.body` это FnBody::Expr, через
+`print_expr` сравнить body с каждой ensures. Match → W2402.
+
+Test: f40_lemma_body_eq_ensures_w2402 (trivial_double).
+
+Регрессия: 194 → 195 PASS (+1), 0 FAIL, 44 SKIP.
+
+Lemma lint catalog продолжает расти — теперь 10 different rules.
+
+
 ## Session: оба deferred follow-up'а Plan 59 закрыты (2026-05-17 EOD+1)
 
 После merge'а Plan 63 fixes от другого agent'а — обнаружено что оба
