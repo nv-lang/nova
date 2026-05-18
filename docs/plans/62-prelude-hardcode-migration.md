@@ -782,6 +782,7 @@ regression. Plan 62.F.bis отложит это в опционный sub-plan �
 |---|---|---|
 | 62.A | Option, Result, Some, None, Ok, Err, Error, Ordering (Less/Equal/Greater) + 12 methods на Option/Result | `core.nv` |
 | 62.B | panic, exit, assert, debug_assert (6 arity-overload signatures) | `runtime.nv` |
+| 62.B.bis | print, println (D69 variadic + `[]any` canonical D26 signature) + Plan 67 hotfix absorption | `runtime.nv` |
 | 62.C | RuntimeError (6 variants), ReadBufferError (1 variant) | `errors.nv` |
 | 62.D non-opaque | Iter[T] protocol formal declaration | `collections.nv` |
 | 62.D non-opaque bis-1 | Range / RangeIter re-export через prelude facade + 4 latent codegen bugs закрыты + D29 W_PRELUDE_SHADOW basic | `prelude.nv` re-export, fixes в emit_c.rs + types/mod.rs |
@@ -796,7 +797,7 @@ declared в file-based form (vs 1 placeholder PRELUDE_VERSION до Plan 62).
 | Sub-plan | Scope | Reason |
 |---|---|---|
 | **62.A.bis Ф.4** | Remove pre-populated `sum_schemas[Option/Result]` (emit_c.rs:754-766) | Bootstrap monomorphization compromise — нужен Plan 14 Q-result-monomorphization fix. Тип-checker'у не повлияет, codegen может построить generic schema runtime'ом. |
-| **62.B.bis** | print / println migration | variadic + type-polymorphic dispatch (emit_c.rs:13638+). Single-arg external fn сломал бы все non-str / multi-arg callers. Требует variadic external fn syntax (нет в bootstrap) или Display protocol + StringBuilder pipeline (62.D opaque + 62.E полная). |
+| **62.B.bis** ✅ ЗАКРЫТ 2026-05-18 | print / println migration | Closed 2026-05-18 — 7 phases (Ф.0–Ф.6 + Plan 67 absorption). PRELUDE_VERSION 6 → 7. `external fn print(...items []any) -> ()` + `println(...)` formally declared в `std/prelude/runtime.nv` через D69 variadic + `[]any` (canonical D26 signature). Plan 67 hotfix (silent-wrong-output для `println(str.from(int))`) absorbed как Ф.0 — `infer_print_helper` refactor через unified `infer_expr_c_type`. Codegen special-case fires ДО variadic routing (Ф.1 reorder) — preserves per-arg type info; synthesized `[]any` array никогда не строится. HashSet shrink: 2 entries removed (Ф.5). 713 PASS / 0 FAIL / 44 SKIP. |
 | **62.C bis** | RuntimeNoneError migration | Bootstrap parser не поддерживает empty-body sum syntax (`parse_sum_variants` требует ≥1 `\|`). Тот же блокер что `Never`. |
 | **62.D opaque (62.D.bis)** ✅ ЗАКРЫТ 2026-05-18 | StringBuilder, WriteBuffer, ReadBuffer | Closed 2026-05-18 — D126 `external type` syntax добавлен в spec (03-syntax.md), 3 типа formally declared в std/prelude/collections.nv, PRELUDE_VERSION 5 → 6. 712 PASS / 0 FAIL / 44 SKIP. Methods продолжают жить в std/runtime/<name>.nv через external fn (D82, unchanged). Range/RangeIter re-export ЗАКРЫТ в 62.D non-opaque bis-1. |
 | **62.E bis** | TryFrom[T, E] / TryInto[U, E] protocols | `Fail[E]` в protocol method триггерит Plan 56 Ф.2.7 enforcement (`bound method has effects` error). Требует either special-case в enforcement (Migration path a) или refactor D77 semantics (path b) или D122 handler-as-parameter (path c). |
@@ -821,15 +822,17 @@ declared в file-based form (vs 1 placeholder PRELUDE_VERSION до Plan 62).
 | Phase | HashSet | Items removed | Notes |
 |---|---|---|---|
 | 62.A | `types/mod.rs::builtins` | 0 | Option/Result/etc. оставлены — bootstrap monomorphization compromise. |
-| 62.B | `types/mod.rs::builtins` | 4 | panic, exit, assert, debug_assert removed; print/println оставлены. |
+| 62.B | `types/mod.rs::builtins` | 4 | panic, exit, assert, debug_assert removed; print/println оставлены (migrated в 62.B.bis). |
+| 62.B.bis | `types/mod.rs::builtins` | 2 | print, println removed (Ф.5 2026-05-18). |
 | 62.C | `types/mod.rs::builtins` | 7 | RuntimeError + 6 variants removed (file-based declaration теперь source of truth). |
 | 62.D non-opaque | `lints.rs::collect_protocol_names` | 1 | Iter removed. |
 | 62.E | `lints.rs::collect_protocol_names` | 4 | Hashable, From, Into, Iter (re-count overlap with 62.D). Total 4 new removals. |
 | 62.F | n/a | 0 | Fail оставлен — single-element path match'ится hardcoded type-checker (types/mod.rs:2865, codegen/emit_c.rs:3186). HashSet был не source of truth для Fail. |
 
-**Total: 15 HashSet entries removed** across Plan 62. Pre-population
-infrastructure (`emit_c.rs::init_pre_populated_schemas`) остаётся —
-это `sum_schema_registry` baseline (DeclaredFromPrelude > HardcodedBaseline
+**Total: 17 HashSet entries removed** across Plan 62 (включая 62.B.bis
+Ф.5 — print/println). Pre-population infrastructure
+(`emit_c.rs::init_pre_populated_schemas`) остаётся — это
+`sum_schema_registry` baseline (DeclaredFromPrelude > HardcodedBaseline
 precedence), не legacy duplication.
 
 ### Net win
@@ -843,9 +846,10 @@ precedence), не legacy duplication.
   W_PRELUDE_SHADOW per-module.
 - **Edition versioning** (62.F.bis Ф.1, D124) — `[package].edition` в
   `nova.toml` pin prelude content на snapshot, mirror Rust/Go.
-- **PRELUDE_VERSION** marker mechanism (5 = current after 62.F.bis;
-  future bumps от 62.A.bis/62.B.bis/62.C.bis/62.D.bis/62.E.bis когда они
-  закрываются).
+- **PRELUDE_VERSION** marker mechanism (7 = current after 62.B.bis;
+  chronology: 5 = 62.F.bis closure, 6 = 62.D.bis closure (opaque types),
+  7 = 62.B.bis closure (print/println). Future bumps от 62.A.bis Ф.4 /
+  62.C.bis / 62.E.bis когда они закрываются).
 - **`nova doc`** теперь видит canonical prelude API в одном месте
   (AI-readable, не разбросанным по type-checker/codegen).
 

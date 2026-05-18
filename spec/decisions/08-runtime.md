@@ -269,8 +269,8 @@ fn critical(...) -> Result =>
 >   `Error`/`Ordering` (`Never` deferred — bootstrap parser
 >   ограничение).
 > - `std/prelude/runtime.nv` — `panic`/`exit`/`assert`/`debug_assert`
->   (`print`/`println` deferred — variadic dispatch требует
->   compiler-side overload resolution, Plan 67).
+>   (`print`/`println` migrated в Plan 62.B.bis — `PRELUDE_VERSION = 7`,
+>   2026-05-18).
 > - `std/prelude/errors.nv` — `RuntimeError` (6 variants) +
 >   `ReadBufferError` (`RuntimeNoneError` deferred — bootstrap parser
 >   не поддерживает empty-body sum syntax).
@@ -305,10 +305,23 @@ fn critical(...) -> Result =>
 > остаются в `std/runtime/<name>.nv` через `external fn` (D82) —
 > связь по receiver-type name. См. [D126](03-syntax.md#d126-external-type--opaque-типы-без-body).
 >
+> **Plan 62.B.bis (закрыт 2026-05-18, `PRELUDE_VERSION = 7`):**
+> `print`/`println` formally declared в `std/prelude/runtime.nv` через
+> D69 variadic + `[]any` (canonical D26 signature `fn print(...items
+> []any) Io -> ()`). Plan 67 hotfix (silent-wrong-output bug в
+> `infer_print_helper` для `println(str.from(int))` паттерна) absorbed
+> как Ф.0 — refactor через unified `infer_expr_c_type` dispatch.
+> Codegen special-case (emit_c.rs:11270) fires ДО variadic routing
+> (Ф.1 reorder) — preserves per-arg type info, synthesized `[]any`
+> array никогда не строится; per-arg `nova_print_<type>` dispatch
+> сохраняется через `infer_print_helper` → unified inference.
+> Builtins HashSet shrink: `"print"`, `"println"` removed (Ф.5).
+> Cross-file resolve через R26+R27 находит declarations.
+> См. [Plan 62.B.bis](../../docs/plans/62.B.bis-print-println-migration.md).
+>
 > **Remaining deferred:** `Never`/`RuntimeNoneError` (bootstrap parser
-> empty-sum syntax), `print`/`println` (Plan 67 variadic + return-type
-> inference), `TryFrom`/`TryInto` (Plan 62.E.bis — требует Plan 56
-> Ф.2.7 effect-row enforcement).
+> empty-sum syntax), `TryFrom`/`TryInto` (Plan 62.E.bis — требует
+> Plan 56 Ф.2.7 effect-row enforcement).
 
 ### Правило
 
