@@ -15460,6 +15460,18 @@ Test: f49_apply_vacuous_lemma_w2402.
 Vacuous lemma detection теперь complete: declaration (Ф.31.3) + call-site (Ф.49.1).
 
 
+# Plan 33.6 Ф.50 (2026-05-18): long disjunction W2402 (паритет Ф.47.1)
+
+`count_or_disjuncts` walker (recursive) + >= 5 → W2402 с suggestion на
+pattern match или table lookup.
+
+Test: f50_long_disjunction_w2402.
+
+Регрессия: 204 → 205 PASS (+1), 0 FAIL, 44 SKIP.
+
+Readability hints полные для AND (Ф.47.1) и OR (Ф.50.2) композиций.
+
+
 ## Session: оба deferred follow-up'а Plan 59 закрыты (2026-05-17 EOD+1)
 
 После merge'а Plan 63 fixes от другого agent'а — обнаружено что оба
