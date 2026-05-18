@@ -1,0 +1,10 @@
+// Plan 67 Ф.2 f7 — println(str.from(char literal)) via str.from CharLit path.
+// CharLit → nova_char_to_str in str.from codegen → nova_print_str dispatch.
+
+module plan67.f7_char_var
+
+// EXPECT_STDOUT b
+
+fn main() Io -> () {
+    println(str.from('b'))
+}
