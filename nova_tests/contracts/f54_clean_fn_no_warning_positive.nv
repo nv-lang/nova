@@ -1,0 +1,35 @@
+// Ф.54 (test pack): positive — fn/lemma БЕЗ проблем НЕ должна давать warning.
+// Guards против false-positive lints (Ф.31-Ф.50).
+
+module contracts.f54_clean_fn_no_warning_positive
+
+// Чистая fn: requires + ensures (НЕ только requires) → no Ф.42.4 warning.
+// Содержит ensures с result → no Ф.33.1 tautological warning.
+#verify
+fn clean_fn(x int) -> int
+    requires x >= 0
+    ensures result == x + 1
+{
+    x + 1
+}
+
+// Чистая lemma: имеет params (используются), body отличается от ensures.
+lemma clean_lemma(x int)
+    requires x >= 0
+    ensures x + 1 > 0
+=> x
+
+// Caller использует lemma (не dead).
+#verify
+fn caller_uses_lemma(n int) -> int
+    requires n >= 0
+    ensures result >= 0
+{
+    apply clean_lemma(n)
+    n
+}
+
+test "clean fn/lemma no warning" {
+    assert(clean_fn(5) == 6)
+    assert(caller_uses_lemma(3) == 3)
+}

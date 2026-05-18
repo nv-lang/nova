@@ -1,0 +1,15 @@
+// EXPECT_COMPILE_ERROR E2405
+//
+// Ф.54 (test pack): негативный guard для Ф.31.1 apply к несуществующей лемме.
+// Раньше silent skip — теперь error.
+
+module contracts.f54_apply_undef_lemma_must_fail
+
+#verify
+fn use_ghost_lemma(n int) -> int
+    requires n >= 0
+    ensures result >= 0
+{
+    apply nonexistent_lemma_xyz(n)
+    n
+}

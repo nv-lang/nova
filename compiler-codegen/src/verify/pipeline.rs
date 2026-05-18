@@ -1421,7 +1421,7 @@ fn collect_calc_in_block(b: &Block, out: &mut Vec<(Vec<CalcStep>, Span)>) {
 /// Ф.4.1: блок "ghost-only" -- все стейтменты ghost (`apply`).
 /// Такой блок при верификации трактуется как trailing-only (apply стираются).
 fn block_has_only_ghost_stmts(b: &Block) -> bool {
-    b.stmts.iter().all(|s| matches!(s, Stmt::Apply { .. } | Stmt::Calc { .. }))
+    b.stmts.iter().all(|s| matches!(s, Stmt::Apply { .. } | Stmt::Calc { .. } | Stmt::Reveal { .. }))
 }
 
 /// Ф.4.1: собрать все `apply lemma(args)` из тела функции.
@@ -1467,6 +1467,46 @@ fn collect_apply_in_expr(e: &Expr, out: &mut Vec<(String, Vec<Expr>, Span)>) {
         ExprKind::If { cond, then, else_: None, .. } => {
             collect_apply_in_expr(cond, out);
             collect_apply_in_block(then, out);
+        }
+        _ => {}
+    }
+}
+
+/// Plan 33.9 Ф.6: собрать все `reveal name` statements из fn body.
+/// Возвращает (name, span). Used для lints (dup reveal, reveal-non-opaque).
+fn collect_reveal_stmts_in_body(body: &FnBody) -> Vec<(String, Span)> {
+    let mut out = Vec::new();
+    if let FnBody::Block(b) = body { collect_reveal_in_block(b, &mut out); }
+    out
+}
+
+fn collect_reveal_in_block(b: &Block, out: &mut Vec<(String, Span)>) {
+    for s in &b.stmts {
+        if let Stmt::Reveal { name, span } = s {
+            out.push((name.clone(), *span));
+        } else if let Stmt::Let(d) = s {
+            collect_reveal_in_expr(&d.value, out);
+        } else if let Stmt::Expr(e) = s {
+            collect_reveal_in_expr(e, out);
+        }
+    }
+}
+
+fn collect_reveal_in_expr(e: &Expr, out: &mut Vec<(String, Span)>) {
+    use crate::ast::ElseBranch;
+    match &e.kind {
+        ExprKind::Block(b) => collect_reveal_in_block(b, out),
+        ExprKind::If { cond, then, else_: Some(el), .. } => {
+            collect_reveal_in_expr(cond, out);
+            collect_reveal_in_block(then, out);
+            match el {
+                ElseBranch::Block(b) => collect_reveal_in_block(b, out),
+                ElseBranch::If(ie) => collect_reveal_in_expr(ie, out),
+            }
+        }
+        ExprKind::If { cond, then, else_: None, .. } => {
+            collect_reveal_in_expr(cond, out);
+            collect_reveal_in_block(then, out);
         }
         _ => {}
     }
@@ -3203,6 +3243,83 @@ let t0 = std::time::Instant::now();
                             fd.name, lemma_name, lemma_name),
                         *sp));
                 }
+            }
+            // Plan 33.9 Ф.6.1: `reveal X` где X не помечена `#opaque` → W2403.
+            // Reveal на non-opaque fn бесполезен (body уже видим verifier'у).
+            // Plan 33.9 Ф.6.3: duplicate `reveal X; reveal X;` → W2402.
+            let reveals = collect_reveal_stmts_in_body(&fd.body);
+            let mut seen_reveals: std::collections::HashMap<String, Vec<Span>> =
+                std::collections::HashMap::new();
+            for (name, sp) in &reveals {
+                seen_reveals.entry(name.clone()).or_default().push(*sp);
+                // Ф.6.1: проверка opaque target.
+                let target_is_opaque = module.items.iter().any(|it| {
+                    matches!(it, Item::Fn(fd) if fd.name == *name && fd.is_opaque)
+                });
+                let target_exists = module.items.iter().any(|it| {
+                    matches!(it, Item::Fn(fd) if fd.name == *name)
+                });
+                if !target_exists {
+                    report.errors.push(Diagnostic::new(
+                        format!("fn `{}`: `reveal {}` ссылается на несуществующую fn [E2411]:\n  \
+                                 объявите `#opaque #pure fn {}(...)` или удалите reveal.",
+                            fd.name, name, name),
+                        *sp));
+                } else if !target_is_opaque {
+                    report.warnings.push(Diagnostic::new(
+                        format!("fn `{}`: `reveal {}` на non-opaque fn [W2403]:\n  \
+                                 fn `{}` не помечена `#opaque` — reveal бесполезен\n  \
+                                 (body уже видим verifier'у). Удалите reveal или добавьте\n  \
+                                 `#opaque` к `{}`.",
+                            fd.name, name, name, name),
+                        *sp));
+                }
+            }
+            // Ф.6.3: dup reveal detection.
+            for (name, spans) in &seen_reveals {
+                if spans.len() >= 2 {
+                    for sp in spans.iter().skip(1) {
+                        report.warnings.push(Diagnostic::new(
+                            format!("fn `{}`: duplicate `reveal {}` [W2402]:\n  \
+                                     повторный reveal того же fn в одном scope не даёт\n  \
+                                     extra info. Удалите дубликат.",
+                                fd.name, name),
+                            *sp));
+                    }
+                }
+            }
+        }
+    }
+    // Plan 33.9 Ф.6.2: `#opaque` fn never reveal'ится никем в module → W2403.
+    // Также Ф.6.4: `#fuel(0)` явный — эквивалентно отсутствию (noise).
+    let mut all_reveals: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for item in &module.items {
+        if let Item::Fn(fd) = item {
+            for (n, _) in collect_reveal_stmts_in_body(&fd.body) {
+                all_reveals.insert(n);
+            }
+        }
+    }
+    for item in &module.items {
+        if let Item::Fn(fd) = item {
+            // Ф.6.2: dead opaque.
+            if fd.is_opaque && !all_reveals.contains(&fd.name) {
+                report.warnings.push(Diagnostic::new(
+                    format!("fn `{}`: `#opaque` но никогда не reveal'ится в модуле [W2403]:\n  \
+                             dead opaque — никто не доказывает с раскрытым body. Удалите\n  \
+                             `#opaque` (body будет inline'ится как обычно) или добавьте\n  \
+                             `reveal {}` в caller fn.",
+                        fd.name, fd.name),
+                    fd.span));
+            }
+            // Ф.6.4: explicit #fuel(0).
+            if let Some(0) = fd.fuel {
+                report.warnings.push(Diagnostic::new(
+                    format!("fn `{}`: `#fuel(0)` явный — эквивалентно отсутствию fuel [W2403]:\n  \
+                             default unfolding depth для opaque и так 0. Удалите\n  \
+                             `#fuel(0)` либо укажите `#fuel(N)` где N >= 1.",
+                        fd.name),
+                    fd.span));
             }
         }
     }
