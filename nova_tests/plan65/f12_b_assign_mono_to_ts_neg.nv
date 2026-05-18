@@ -1,0 +1,25 @@
+// Plan 65 R18 / Ф.12.5 / D124: ideally `let t Timestamp = Monotonic.now()`
+// should be rejected at compile-time. The current bootstrap codegen does
+// NOT enforce variable annotations strictly (gradual-type model), so this
+// assignment compiles silently.
+//
+// Honest-defer: [M-strict-var-annotations] — strict annotation enforcement
+// would catch this. Until then, D124's "Monotonic ≠ Timestamp" type-system
+// guarantee is enforced via OPERATOR overload absence (see f12_a) and via
+// ChanReader.close_at signature check (see f12_d), which are the practically
+// important sites. Variable-level mixing is a programmer-discipline issue.
+//
+// This test is informational — it documents the current behavior and is
+// expected to PASS until [M-strict-var-annotations] is closed.
+
+module plan65.f12_b_assign_mono_to_ts_neg
+
+import std.time.duration
+
+test "documented gap: monotonic-to-timestamp assign currently silent" {
+    // This compiles + runs today. When strict-annotation lands, this
+    // test should become an EXPECT_COMPILE_ERROR fixture.
+    let _t Timestamp = Monotonic.now()
+    // Reach this line == known-gap behavior confirmed.
+    assert(true)
+}

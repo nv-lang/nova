@@ -10,6 +10,8 @@
 
 module concurrency.select_test
 
+import std.time.duration
+
 // ================================================================
 // SECTION 1: single recv arm
 // ================================================================
@@ -191,7 +193,7 @@ test "select timeout: fires when channel stays empty" {
         spawn {
             select {
                 Some(_) = rx               => { branch = 1 }
-                Some(_) = Time.after(50)   => { branch = 2 }
+                Some(_) = ChanReader.close_after(Duration.from_millis(50))   => { branch = 2 }
             }
         }
     }
@@ -208,7 +210,7 @@ test "select timeout: data wins over timeout" {
             tx.send(99)
             select {
                 Some(v) = rx               => { branch = v }
-                Some(_) = Time.after(200)  => { branch = -1 }
+                Some(_) = ChanReader.close_after(Duration.from_millis(200))  => { branch = -1 }
             }
         }
     }
@@ -228,7 +230,7 @@ test "select timeout: producer wins race before timeout" {
         spawn {
             select {
                 Some(v) = rx               => { branch = v }
-                Some(_) = Time.after(500)  => { branch = -1 }
+                Some(_) = ChanReader.close_after(Duration.from_millis(500))  => { branch = -1 }
             }
         }
     }

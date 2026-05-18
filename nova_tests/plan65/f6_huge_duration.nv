@@ -1,0 +1,39 @@
+// Plan 65 R18 f6: very large Duration handled without silent overflow / UB.
+// Conversion ns → ms uses `(nanos + 999_999) / 1_000_000`. For nanos near
+// i64::MAX (~9.2e18), the +999_999 can NOT overflow because we early-reject
+// negatives, but the result fits in i64 (max ms ≈ 9.2e15). Cast to uint64
+// for uv_timer_start is safe.
+//
+// Positive: from_days(10_000) — about 27 years — handled cleanly. We don't
+// actually wait; just allocate and let `supervised{}` scope exit clean it up
+// via `on_select_lost` / scope cleanup. The point is no panic, no UB.
+
+module plan65.f6_huge_duration
+
+import std.time.duration
+
+test "Duration.from_days(10_000) allocates timer without panic" {
+    let huge = Duration.from_days(10_000)
+    let mut allocated = false
+    supervised {
+        spawn {
+            let _t = ChanReader.close_after(huge)
+            // Scope-exit cancels the pending timer; we never wait.
+            allocated = true
+        }
+    }
+    assert(allocated)
+}
+
+test "Duration.from_hours(1_000_000) allocates without overflow" {
+    // 1M hours = ~114 years. Still well within i64 ns range (~292 years cap).
+    let huge = Duration.from_hours(1_000_000)
+    let mut allocated = false
+    supervised {
+        spawn {
+            let _t = ChanReader.close_after(huge)
+            allocated = true
+        }
+    }
+    assert(allocated)
+}

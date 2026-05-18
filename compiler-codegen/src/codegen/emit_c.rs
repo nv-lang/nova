@@ -1038,11 +1038,33 @@ impl CEmitter {
         // Operations: `now() -> int` (monotonic ms), `sleep(ms int) -> unit`
         // (yields/sleeps depending on context — see fibers.h). User override
         // via `with Time = handler Time { sleep(ms) {...} now() {...} } { body }`.
+        //
+        // Plan 65 Ф.5: `Time.after(ms)` REMOVED. Replaced by
+        // `ChanReader.close_after(Duration)` (D94 revision). Usage of the
+        // legacy form triggers diagnostic E5101 (see emit_call dispatch).
         {
             let mut time_schema: HashMap<String, (Vec<String>, String)> = HashMap::new();
             time_schema.insert("sleep".to_string(), (vec!["nova_int".into()],    "nova_unit".into()));
             time_schema.insert("now".to_string(),   (vec![],                      "nova_int".into()));
-            time_schema.insert("after".to_string(), (vec!["nova_int".into()],    "Nova_ChanReader*".into()));
+            // Plan 65 Ф.12.3 / D124: monotonic clock — раздельный от wall-clock.
+            // Returns Monotonic.nanos (i64) — runtime использует
+            // clock_gettime(CLOCK_MONOTONIC) / QueryPerformanceCounter.
+            // Schema-wire returns nova_int (raw nanos); Nova-side wrapped в
+            // Monotonic record через std/time/duration.nv Monotonic.now().
+            //
+            // NOTE: latent Time.now() → Timestamp schema mismatch ([M-time-now-schema-mismatch])
+            // is documented and intentionally deferred — it requires a record-typed
+            // return through the effect schema layer, which has no precedent in
+            // the schema-wire convention. Plan 65 introduces now_monotonic via
+            // the same wire layer for parity (returns raw i64; Nova-side wraps
+            // it in Monotonic, same as fixed_ms returns int wrapped in Timestamp).
+            time_schema.insert("now_monotonic".to_string(), (vec![], "nova_int".into()));
+            // Plan 65 Ф.11: NOVA_TIMER_METRICS observability counters.
+            time_schema.insert("timer_alloc_total".to_string(),       (vec![], "nova_int".into()));
+            time_schema.insert("timer_alloc_active".to_string(),      (vec![], "nova_int".into()));
+            time_schema.insert("timer_fired".to_string(),             (vec![], "nova_int".into()));
+            time_schema.insert("timer_cancelled".to_string(),         (vec![], "nova_int".into()));
+            time_schema.insert("timer_longest_pending_ms".to_string(), (vec![], "nova_int".into()));
             self.effect_schemas.insert("Time".to_string(), time_schema);
         }
 
@@ -3352,9 +3374,52 @@ impl CEmitter {
 
             let mut fn_params = vec!["void* _ctx".to_string()];
             let mut method_param_types: Vec<(String, String)> = Vec::new();
+            // Plan 65 Ф.1: track params whose user-annotated type differs from
+            // the effect schema — handler body needs a reinterpret-cast bridge
+            // so `d.nanos` (Nova source) emits `((Nova_Duration*)d)->nanos`.
+            //
+            // Restrictions:
+            //   * Skip Fail effect — handled by the existing `fail_e_map`
+            //     mechanism below (Plan 61 Ф.3) which uses fail-frame payload
+            //     instead of a wire cast.
+            //   * Only apply when the schema wire type is a scalar pointer-able
+            //     primitive (`nova_int`) so the `(intptr_t)` round-trip is
+            //     well-defined; struct wire types (e.g. `nova_str`) can't be
+            //     casted via intptr_t.
+            let mut annotation_bridges: Vec<(String, String, String)> = Vec::new();
             for (i, p) in m.params.iter().enumerate() {
-                let ty = param_types.get(i).cloned().unwrap_or_else(|| "nova_int".into());
-                fn_params.push(format!("{} {}", ty, p.name));
+                let schema_ty = param_types.get(i).cloned()
+                    .unwrap_or_else(|| "nova_int".into());
+                let bridge_eligible = eff != "Fail" && schema_ty == "nova_int";
+                let ty = if bridge_eligible {
+                    if let Some(annot) = &p.ty {
+                        match self.type_ref_to_c(annot) {
+                            Ok(annot_c)
+                                if annot_c != schema_ty
+                                    && (annot_c.ends_with('*')
+                                        || annot_c.starts_with("Nova_")) =>
+                            {
+                                annotation_bridges.push((
+                                    p.name.clone(),
+                                    schema_ty.clone(),
+                                    annot_c.clone(),
+                                ));
+                                annot_c
+                            }
+                            _ => schema_ty.clone(),
+                        }
+                    } else {
+                        schema_ty.clone()
+                    }
+                } else {
+                    schema_ty.clone()
+                };
+                let (wire_ty, wire_name) = if annotation_bridges.iter().any(|(n, _, _)| n == &p.name) {
+                    (schema_ty.clone(), format!("{}_wire", p.name))
+                } else {
+                    (ty.clone(), p.name.clone())
+                };
+                fn_params.push(format!("{} {}", wire_ty, wire_name));
                 method_param_types.push((p.name.clone(), ty));
             }
 
@@ -3413,6 +3478,21 @@ impl CEmitter {
                     // Scalar capture stored as pointer: `#define cap (*_c->cap)` (deref)
                     self.line(&format!("#define {cap} (*_c->{cap})", cap = cap_name));
                 }
+            }
+            // Plan 65 Ф.1: rebind annotation-bridged handler params from the
+            // wire-typed C arg (schema int) to the user-annotated record
+            // pointer. Body code refers to the param by name, so we shadow
+            // the wire-arg with a same-name pointer alias.
+            //
+            // Why this matters: Time effect schema has `sleep(int)`, but
+            // mock handlers want to receive `Duration`. The call site emits
+            // the Duration pointer cast to int (intptr_t), so we reverse
+            // the cast in the body.
+            for (pname, _wire_ty, annot_ty) in &annotation_bridges {
+                self.line(&format!(
+                    "{annot} {pname} = ({annot})(intptr_t)({pname}_wire);",
+                    annot = annot_ty, pname = pname
+                ));
             }
 
             match &m.body {
@@ -9748,10 +9828,60 @@ impl CEmitter {
                     else if rty.starts_with("Nova_") && rty.ends_with('*') { Some(rty.clone()) }
                     else { None };
                 if let Some(sty) = sum_ty {
+                    // Plan 65 Ф.12 fix: use the FULL C type prefix (Nova_X) for
+                    // method dispatch — stripping `Nova_` produces `X_method_plus`
+                    // which doesn't exist in the emitted code (which uses
+                    // `Nova_X_method_plus`). Previously dormant bug (no user-side
+                    // Timestamp+Duration callers existed pre-Plan-65); exposed
+                    // by Monotonic.now() + Duration.
+                    let type_name_sum_full = sty.trim_end_matches('*').to_string();
                     let type_name_sum = sty.strip_prefix("Nova_").unwrap_or("").trim_end_matches('*').to_string();
-                    // D46 operator overloading: Nova_T* + Nova_T* → T_method_plus(l, r).
+                    // D46 operator overloading: Nova_T* + Nova_T* → Nova_T_method_plus(l, r).
                     if matches!(op, BinOp::Add) {
-                        return Ok(format!("{}_method_plus({}, {})", type_name_sum, l, r));
+                        return Ok(format!("{}_method_plus({}, {})", type_name_sum_full, l, r));
+                    }
+                    // Plan 65 Ф.12 / D124: dispatch `-` to the receiver's
+                    // _method_minus for record types (Duration, Timestamp,
+                    // Monotonic). Validate that the receiver has a registered
+                    // @minus overload for the operand type — without this
+                    // check, D124's "no cross-clock arithmetic" guarantee
+                    // would be silently bypassed (Timestamp - Monotonic
+                    // would dispatch to Timestamp.@minus(Duration)
+                    // because of struct-pointer compatibility in C).
+                    if matches!(op, BinOp::Sub) && lty.starts_with("Nova_") && lty.ends_with('*') {
+                        let recv_full = lty.trim_end_matches('*').to_string();
+                        let recv_short = recv_full.trim_start_matches("Nova_").to_string();
+                        // Look up registered @minus overloads on receiver.
+                        let key = (recv_short.clone(), "minus".to_string());
+                        let overloads = self.method_overloads.get(&key).cloned();
+                        if let Some(sigs) = overloads {
+                            // Find an overload whose only parameter type
+                            // matches rty exactly.
+                            let matching = sigs.iter().find(|s| {
+                                s.is_instance
+                                    && s.param_c_types.len() == 1
+                                    && s.param_c_types[0] == rty
+                            });
+                            if let Some(sig) = matching {
+                                return Ok(format!("{}({}, {})", sig.c_name, l, r));
+                            }
+                            // No overload matches the operand type — this is
+                            // a D124 type-system rejection point.
+                            return Err(format!(
+                                "binop `-`: no @minus overload on {} taking {} \
+                                 (Plan 65 / D124: prevents silent cross-clock \
+                                 arithmetic). Available overloads: {}",
+                                recv_short,
+                                rty,
+                                sigs.iter()
+                                    .filter(|s| s.is_instance && s.param_c_types.len() == 1)
+                                    .map(|s| s.param_c_types[0].clone())
+                                    .collect::<Vec<_>>()
+                                    .join(", ")
+                            ));
+                        }
+                        // No @minus registered — leave to fall-through (would
+                        // become invalid C, caught later).
                     }
                     if matches!(op, BinOp::Eq | BinOp::Neq) {
                         let type_name = type_name_sum;
@@ -11226,6 +11356,38 @@ impl CEmitter {
                 }
             }
             ExprKind::Member { obj, name: method } => {
+                // Plan 65 Ф.5: E5101 early guard — `Time.after(...)` was
+                // removed; emit a structured diagnostic with a machine-
+                // applicable fix-it suggestion.
+                if method == "after" {
+                    let is_time = matches!(
+                        &obj.kind,
+                        ExprKind::Ident(n) if n == "Time"
+                    ) || matches!(
+                        &obj.kind,
+                        ExprKind::Path(p) if p.len() == 1 && p[0] == "Time"
+                    );
+                    if is_time {
+                        let suggestion = if let Some(first) = args.first() {
+                            let arg_repr = Self::expr_to_display(first.expr());
+                            format!(
+                                "ChanReader.close_after(Duration.from_millis({}))",
+                                arg_repr
+                            )
+                        } else {
+                            "ChanReader.close_after(Duration.from_millis(<ms>))".into()
+                        };
+                        return Err(format!(
+                            "[E5101] `Time.after` was removed in Plan 65 (D94 revision). \
+                             Use `ChanReader.close_after(Duration)` — the capability-split \
+                             replacement (D91 + D94). \
+                             Fix-it: replace with `{}`. \
+                             Run `cargo run --bin migrate_plan65 -- --apply` to migrate \
+                             the call site automatically.",
+                            suggestion
+                        ));
+                    }
+                }
                 // Plan 11 Ф.4.5: D66 — `Self.method(...)` в expression
                 // position. obj=Ident("Self") в теле метода → Ident(<current>).
                 // Создаем local rebind, не мутируя обратно.
@@ -11909,6 +12071,67 @@ impl CEmitter {
                             return Ok(format!("nova_channel_new({})", v));
                         }
                     }
+                    // Plan 65 Ф.1: ChanReader.close_after(d Duration) →
+                    // nova_chan_reader_close_after_ns(d.nanos). Duration unpacks
+                    // inline (AD4 — zero-alloc field access).
+                    //
+                    // Const-folding (AD4 / Ф.8): literal Duration.from_secs(N)
+                    // — handled by the recursive emit_expr call below, which
+                    // resolves Duration construction into an i64 expression that
+                    // the C compiler can fold.
+                    if name == "ChanReader" && method == "close_after" {
+                        if let Some(arg) = args.first() {
+                            // Plan 65 Ф.1: Duration argument type-check is
+                            // enforced via the inferred C type — if user passes
+                            // bare int, infer returns "nova_int" not
+                            // "Nova_Duration*", so the .nanos access below
+                            // generates a C type error (caught at compile).
+                            // Future improvement (R2 + E5101): emit a
+                            // structured Nova diagnostic before reaching C.
+                            let arg_c = self.infer_expr_c_type(arg.expr());
+                            let v = self.emit_expr(arg.expr())?;
+                            if arg_c != "Nova_Duration*" {
+                                return Err(format!(
+                                    "ChanReader.close_after(): expected Duration argument, got {} \
+                                     — use Duration.from_millis(N) / Duration.from_secs(N) \
+                                     (Plan 65 / D94 revision)",
+                                    arg_c
+                                ));
+                            }
+                            return Ok(format!(
+                                "nova_chan_reader_close_after_ns(({})->nanos)",
+                                v
+                            ));
+                        }
+                    }
+                    // Plan 65 Ф.12.1 / D124: Monotonic.now() — compiler builtin.
+                    // Bypasses Time-effect schema (latent record-return mismatch).
+                    if name == "Monotonic" && method == "now" {
+                        return Ok("((Nova_Monotonic*)nova_monotonic_now_record())".to_string());
+                    }
+                    // Plan 65 Ф.12.4 / D124: ChanReader.close_at(deadline Monotonic).
+                    // Type-system enforces Monotonic — bare int / Timestamp →
+                    // compile error via the C-type-mismatch path (similar to
+                    // close_after Duration enforcement).
+                    if name == "ChanReader" && method == "close_at" {
+                        if let Some(arg) = args.first() {
+                            let arg_c = self.infer_expr_c_type(arg.expr());
+                            let v = self.emit_expr(arg.expr())?;
+                            if arg_c != "Nova_Monotonic*" {
+                                return Err(format!(
+                                    "ChanReader.close_at(): expected Monotonic argument, got {} \
+                                     — use Monotonic.now() + Duration (Plan 65 Ф.12 / D124). \
+                                     Note: Timestamp is NOT allowed (would silently leak NTP \
+                                     skew into timer deadlines; see D124 §3).",
+                                    arg_c
+                                ));
+                            }
+                            return Ok(format!(
+                                "nova_chan_reader_close_at_mono_ns(({})->nanos)",
+                                v
+                            ));
+                        }
+                    }
                     // D75 (revised, Plan 47): CancelToken.new() — Member-form.
                     if name == "CancelToken" && method == "new" {
                         return Ok("nova_cancel_token_new()".to_string());
@@ -12135,6 +12358,10 @@ impl CEmitter {
                         }
                     }
                 }
+                // Plan 65 Ф.5: E5101 (`Time.after` removed) — checked at
+                // the top of `ExprKind::Member` arm (~line 11289). The
+                // duplicate gate previously here is redundant now; the
+                // Member-arm guard fires before any dispatch reaches here.
                 // 1. Effect dispatch: `Counter.next()` → `Nova_Counter_next()`
                 //    `Time` and `Fail` are pre-registered as built-in effects in
                 //    emit_module — `Time.sleep(ms)` and `Fail.fail(msg)` go through
@@ -12889,6 +13116,28 @@ impl CEmitter {
                 format!("{obj}{acc}{method}", obj = obj_c, acc = accessor, method = method)
             }
             ExprKind::Path(parts) => {
+                // Plan 65 Ф.5: E5101 — `Time.after(...)` was removed.
+                // Path-form fast guard mirrors the Member-form arm above.
+                if parts.len() == 2 && parts[0] == "Time" && parts[1] == "after" {
+                    let suggestion = if let Some(first) = args.first() {
+                        let arg_repr = Self::expr_to_display(first.expr());
+                        format!(
+                            "ChanReader.close_after(Duration.from_millis({}))",
+                            arg_repr
+                        )
+                    } else {
+                        "ChanReader.close_after(Duration.from_millis(<ms>))".into()
+                    };
+                    return Err(format!(
+                        "[E5101] `Time.after` was removed in Plan 65 (D94 revision). \
+                         Use `ChanReader.close_after(Duration)` — the capability-split \
+                         replacement (D91 + D94). \
+                         Fix-it: replace with `{}`. \
+                         Run `cargo run --bin migrate_plan65 -- --apply` to migrate \
+                         the call site automatically.",
+                        suggestion
+                    ));
+                }
                 // Plan 11 Ф.4.5: D66 — Self в expression position (call).
                 // `Self.method(args)` в теле метода резолвится в
                 // `<current_type>.method(args)`. Тот же current_receiver_type
@@ -12962,6 +13211,49 @@ impl CEmitter {
                     if let Some(arg) = args.first() {
                         let v = self.emit_expr(arg.expr())?;
                         return Ok(format!("nova_channel_new({})", v));
+                    }
+                }
+                // Plan 65 Ф.1: ChanReader.close_after(Duration) — Path-form.
+                if parts.len() == 2 && parts[0] == "ChanReader" && parts[1] == "close_after" {
+                    if let Some(arg) = args.first() {
+                        let arg_c = self.infer_expr_c_type(arg.expr());
+                        let v = self.emit_expr(arg.expr())?;
+                        if arg_c != "Nova_Duration*" {
+                            return Err(format!(
+                                "ChanReader.close_after(): expected Duration argument, got {} \
+                                 — use Duration.from_millis(N) / Duration.from_secs(N) \
+                                 (Plan 65 / D94 revision)",
+                                arg_c
+                            ));
+                        }
+                        return Ok(format!(
+                            "nova_chan_reader_close_after_ns(({})->nanos)",
+                            v
+                        ));
+                    }
+                }
+                // Plan 65 Ф.12.1 / D124: Monotonic.now() — Path-form builtin.
+                if parts.len() == 2 && parts[0] == "Monotonic" && parts[1] == "now" {
+                    return Ok("((Nova_Monotonic*)nova_monotonic_now_record())".to_string());
+                }
+                // Plan 65 Ф.12.4 / D124: ChanReader.close_at(Monotonic) — Path-form.
+                if parts.len() == 2 && parts[0] == "ChanReader" && parts[1] == "close_at" {
+                    if let Some(arg) = args.first() {
+                        let arg_c = self.infer_expr_c_type(arg.expr());
+                        let v = self.emit_expr(arg.expr())?;
+                        if arg_c != "Nova_Monotonic*" {
+                            return Err(format!(
+                                "ChanReader.close_at(): expected Monotonic argument, got {} \
+                                 — use Monotonic.now() + Duration (Plan 65 Ф.12 / D124). \
+                                 Note: Timestamp is NOT allowed (would silently leak NTP \
+                                 skew into timer deadlines; see D124 §3).",
+                                arg_c
+                            ));
+                        }
+                        return Ok(format!(
+                            "nova_chan_reader_close_at_mono_ns(({})->nanos)",
+                            v
+                        ));
                     }
                 }
                 // D75 (revised, Plan 47): CancelToken.new() — Path-form.
@@ -18192,9 +18484,20 @@ impl CEmitter {
                         if n == "Channel" && method == "new" {
                             return "Nova_ChannelPair".into();
                         }
-                        // D94 (Plan 31): Time.after(ms) → Nova_ChanReader*.
-                        if n == "Time" && method == "after" {
+                        // Plan 65 Ф.1: ChanReader.close_after(Duration) →
+                        // Nova_ChanReader*. Capability-split static constructor
+                        // (D91 + D94 revision). Replaces the removed
+                        // `Time.after(int)` form (Plan 65 Ф.5).
+                        if n == "ChanReader" && method == "close_after" {
                             return "Nova_ChanReader*".into();
+                        }
+                        // Plan 65 Ф.12.4 / D124: ChanReader.close_at(Monotonic).
+                        if n == "ChanReader" && method == "close_at" {
+                            return "Nova_ChanReader*".into();
+                        }
+                        // Plan 65 Ф.12.1 / D124: Monotonic.now() returns Monotonic.
+                        if n == "Monotonic" && method == "now" {
+                            return "Nova_Monotonic*".into();
                         }
                         // D75 (revised, Plan 47): CancelToken.new() — Member-form.
                         if n == "CancelToken" && method == "new" {
@@ -18573,6 +18876,19 @@ impl CEmitter {
                         // D91 (Plan 21): Channel.new(cap) — Path-form.
                         if eff == "Channel" && method_name == "new" {
                             return "Nova_ChannelPair".into();
+                        }
+                        // Plan 65 Ф.1: ChanReader.close_after(Duration) —
+                        // Path-form.
+                        if eff == "ChanReader" && method_name == "close_after" {
+                            return "Nova_ChanReader*".into();
+                        }
+                        // Plan 65 Ф.12.4 / D124: ChanReader.close_at(Monotonic).
+                        if eff == "ChanReader" && method_name == "close_at" {
+                            return "Nova_ChanReader*".into();
+                        }
+                        // Plan 65 Ф.12.1 / D124: Monotonic.now() — Path-form.
+                        if eff == "Monotonic" && method_name == "now" {
+                            return "Nova_Monotonic*".into();
                         }
                         // D75 (revised, Plan 47): CancelToken.new() — Path-form.
                         if eff == "CancelToken" && method_name == "new" {
