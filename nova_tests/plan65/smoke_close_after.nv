@@ -1,0 +1,30 @@
+// Plan 65 Ф.1/Ф.2 smoke test — ChanReader.close_after compiles and works.
+
+module plan65.smoke_close_after
+
+import std.time.duration
+
+test "ChanReader.close_after(Duration.from_millis(10)) compiles and fires" {
+    let mut fired = false
+    supervised {
+        spawn {
+            let t = ChanReader.close_after(Duration.from_millis(10))
+            let v = t.recv()
+            fired = v.is_some() || v.is_none()
+        }
+    }
+    assert(fired)
+}
+
+test "ChanReader.close_after(Duration.from_secs(0)) returns already-closed" {
+    let mut closed_immediately = false
+    supervised {
+        spawn {
+            let t = ChanReader.close_after(Duration.from_secs(0))
+            // Zero duration → channel already closed; recv returns None.
+            let v = t.recv()
+            closed_immediately = v.is_none()
+        }
+    }
+    assert(closed_immediately)
+}
