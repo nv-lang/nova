@@ -101,5 +101,8 @@ test "prelude auto-import — PRELUDE_VERSION accessible (regression marker)" {
     // Time/Mem formal declarations + structured W_PRELUDE_SHADOW lint.
     // Plan 62.D.bis (2026-05-18) bump'нул 5 → 6: StringBuilder /
     // WriteBuffer / ReadBuffer formally declared via D126 `external type`.
-    assert(PRELUDE_VERSION == 6)
+    // Plan 62.B.bis (2026-05-18) bump'нул 6 → 7: print / println formally
+    // declared via D69 variadic + `[]any` (canonical D26 signature) в
+    // std/prelude/runtime.nv. Plan 67 hotfix absorbed как Ф.0.
+    assert(PRELUDE_VERSION == 7)
 }

@@ -28,7 +28,8 @@ test "StringBuilder visible через prelude (no explicit import)" {
     sb.append("world")
     let s = sb.into()
     assert(s == "hello, world")
-    assert(PRELUDE_VERSION == 6)
+    // Plan 62.B.bis bump 6 → 7: print / println formally declared.
+    assert(PRELUDE_VERSION == 7)
 }
 
 
