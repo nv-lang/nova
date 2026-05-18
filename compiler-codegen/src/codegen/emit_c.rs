@@ -1262,19 +1262,23 @@ impl CEmitter {
             }
         }
 
-        // 1a3. Plan 62.A.bis Ф.1: hook для будущего prelude-discovery.
-        // В Ф.1 — stub call (init_prelude_decls делает nothing). Phase 2
-        // расширит чтобы scan'ить `module.items` для type-decls с
-        // `std.prelude.*` origin и register'ить их с DeclaredFromPrelude
-        // source. Hook размещён здесь (между 1a2 и 1) чтобы registry был
-        // готов ДО emit_type_decl loop'а — type-decls из prelude уже
-        // зарегистрированы как DeclaredFromPrelude, а user types в
-        // emit_type_decl получат DeclaredFromUser source (Phase 2+).
+        // 1a3. Plan 62.A.bis Ф.1 + 62.A follow-up: hook для prelude-discovery.
         //
-        // Phase 1 invariant: ничто не читает registry, поэтому wiring
-        // safe — pure no-op для существующего поведения.
+        // Ф.1: hook был no-op (stub).
+        // **62.A follow-up (2026-05-18):** теперь scan'ит `module.items` для
+        // `external fn Option[T] @method` / `external fn Result[T, E] @method`
+        // declarations (приходящих из `std/prelude/core.nv` через R27 auto-
+        // import). Регистрирует `DeclaredFromPrelude` entries в registry,
+        // унаследовав method_routing от соответствующих HardcodedBaseline
+        // entries — behavior-preserving migration источника правды.
+        //
+        // Order matters: hook размещён ПОСЛЕ init_hardcoded_baseline
+        // (в `CEmitter::new()`) и ДО emit_type_decl loop'а — Prelude
+        // entries уже регистрированы когда user type-decls попадают в
+        // emit_type_decl (получают DeclaredFromUser source).
         let module_name_dotted = module.name.join(".");
         self.sum_schema_registry.init_prelude_decls(&module_name_dotted);
+        self.sum_schema_registry.init_prelude_decls_from_items(&module.items);
 
         // 1. Type declarations first (structs/unions needed by fn signatures)
         for item in &module.items {
