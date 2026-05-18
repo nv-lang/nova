@@ -15,7 +15,7 @@ structured-concurrency примитивы есть в языке, и как па
 | [D80](#d80-handler-scoping-per-fiber) | Handler scoping per-fiber — `with X = handler` локален для fiber'а, наследуется через spawn |
 | [D80](#d80-handler-scoping-per-fiber) | Handler scoping per-fiber — `with X = h` биндинги изолированы между fibers |
 | [D91](#d91-channel-revision--capability-split-на-chanwriter--chanreader) | `Channel` revision: capability-split на `ChanWriter[T]` / `ChanReader[T]`; `send`→`bool`; `tx.clone()` multi-writer ✅ |
-| [D94](#d94-select--multiplexed-channel-operations) | `select { ... }` — финальный синтаксис: `Some(v) = rx =>`, `Time.after(ms)` для timeout ✅ реализован (Plan 31 ✅; Plan 44.1 Ф.3 hardening) |
+| [D94](#d94-select--multiplexed-channel-operations) | `select { ... }` — финальный синтаксис: `Some(v) = rx =>`, `ChanReader.close_after(Duration)` для timeout ✅ реализован (Plan 31 ✅; Plan 44.1 Ф.3 hardening; Plan 65 — Duration-typed API revision) |
 
 ---
 
@@ -89,8 +89,9 @@ race {
     fetch(url_b),
 }
 
-// select — ожидание любого из событий (финальный синтаксис — D94)
-let t = Time.after(5.0)
+// select — ожидание любого из событий (финальный синтаксис — D94,
+// Plan 65 revision: ChanReader.close_after заменил Time.after(ms))
+let t = ChanReader.close_after(Duration.from_secs_f64(5.0))
 select {
     Some(msg) = channel_a.recv() => { process(msg) }
     Some(msg) = channel_b.recv() => { process(msg) }
@@ -1120,7 +1121,8 @@ keyword-исключение в [D43](03-syntax.md#d43)). `cancel:` — обыч
 ### `race` / `with_timeout` — stdlib, не keyword'ы
 
 `race` и `with_timeout` — **обычные функции стандартной библиотеки**,
-построенные на `supervised(cancel:)` + `spawn` + `Channel` + `Time.after`,
+построенные на `supervised(cancel:)` + `spawn` + `Channel` +
+`ChanReader.close_after(Duration)` (Plan 65 revision),
 вызываются через trailing-форму [D43](03-syntax.md#d43):
 
 ```nova
@@ -1314,8 +1316,8 @@ fn process(ch Channel[Request]) Db -> () {
 > Финальный синтаксис — см. [D94](#d94-select--multiplexed-channel-operations).
 
 ```nova
-// D94 финальный синтаксис:
-let timeout = Time.after(5.0)
+// D94 финальный синтаксис (Plan 65 revision):
+let timeout = ChanReader.close_after(Duration.from_secs_f64(5.0))
 select {
     Some(msg) = rx_a.recv() => { process_a(msg) }
     Some(msg) = rx_b.recv() => { process_b(msg) }
@@ -1335,8 +1337,8 @@ select {
    считается ready. Матчится `None`-паттерном.
 5. **Без default** и все каналы закрыты — panic "select: all channels closed".
 
-Timeout — через `Time.after(d)` возвращающий `ChanReader[()]` (обычный
-recv arm, никакого специального синтаксиса).
+Timeout — через `ChanReader.close_after(Duration)` возвращающий
+`ChanReader[()]` (обычный recv arm, никакого специального синтаксиса).
 
 #### Канонические patterns
 
@@ -2614,9 +2616,9 @@ throw'ы в D50 fire-and-forget — должны быть logged, не abort. П
 > **Реализовано в полной форме (Plan 31 Ф.6, Plan 44.1 Ф.2/Ф.3):**
 > - Panic «select: all channels closed» при all-closed без default — ✅
 >   (Plan 31 Ф.6; работает и в main-thread context'е через pre-check).
-> - `Time.after(ms)` timer cleanup при non-winning arm — ✅
+> - `ChanReader.close_after(Duration)` timer cleanup при non-winning arm — ✅
 >   (Plan 44.1 Ф.2 B7: `on_select_lost` callback + idempotent `cancelled`
->   flag на `NovaAfterState`).
+>   flag на `NovaAfterState`; reused by Plan 65 close_after API).
 > - `Channel.new(0)` — explicit panic «capacity must be >= 1` **перед**
 >   allocate'ом (Plan 44.1 Ф.3 B9, без leak'а на throw).
 > - **Adaptive per-call storage без cap'а на arm count** (Plan 44.1
@@ -2698,20 +2700,26 @@ arm-body     = block | stmt
 Синтаксис `pattern = rx.recv()` согласуется с `while let Some(v) = rx.recv()`
 (уже в языке). Оператор `<-` не вводится (отвергнут).
 
-### Timeout через `Time.after(d)`
+### Timeout через `ChanReader.close_after(Duration)`
 
 Специального `timeout` arm'а нет — timeout через обычный recv arm:
 
 ```nova
-let t = Time.after(1.0)     // ChanReader[()] закрывается через 1 сек
+let t = ChanReader.close_after(Duration.from_secs(1))     // ChanReader[()] закрывается через 1 сек
 select {
     Some(v) = rx.recv()  => { process(v) }
     None    = t.recv()   => { log_idle() }    // timeout сработал
 }
 ```
 
-`Time.after(d) -> ChanReader[()]` — функция в stdlib/eventloop.
-Select не знает про "timeout" специально.
+`ChanReader.close_after(d Duration) -> ChanReader[()]` —
+capability-split static constructor в stdlib/concurrency.
+Select не знает про "timeout" специально. **Plan 65 revision**:
+ранее API назывался `Time.after(int ms)` (bare int, без type
+safety); переименован и переведён на `Duration` для D91 capability
+namespace + строгой type safety. Migration tool
+`cargo run --bin migrate_plan65 -- --apply` автоматически переводит
+literal arguments.
 
 ### Правило
 
@@ -2744,9 +2752,11 @@ Go не поддерживает guards в select.
 
 1. **Ключевой primitive для fan-in.** Без select нельзя элегантно объединить
    несколько producers в одном consumer'е.
-2. **`Time.after(d)` вместо `timeout(expr)`** — timeout как обычный channel
-   (Go-style `time.After`). Нет специального синтаксиса, нет special-casing
-   в runtime.
+2. **`ChanReader.close_after(Duration)` вместо `timeout(expr)`** — timeout
+   как обычный channel (Go-style `time.After`, но с type-safe Duration вместо
+   bare int). Нет специального синтаксиса, нет special-casing в runtime.
+   **Plan 65 revision:** ранее `Time.after(int ms)` — bare int был отвергнут
+   как unsafe, переименован в D91 capability namespace.
 3. **`=` вместо `<-`** — согласованность с `while let Some(v) = rx.recv()`.
    Один оператор recv по всему языку.
 4. **Fisher-Yates shuffle** — fairness (Go использует то же). Нет starvation
@@ -2757,7 +2767,9 @@ Go не поддерживает guards в select.
 - **`<-` оператор в select** — нарушает consistency; отдельный оператор
   только для select (было в D79, удалено).
 - **`timeout(expr) =>` arm** — special-casing в грамматике и runtime
-  ради того, что решается обычным `Time.after(d)` channel'ом.
+  ради того, что решается обычным `ChanReader.close_after(Duration)`
+  channel'ом (см. Эволюция: bare `Time.after(int)` исторический artefact,
+  заменён в Plan 65).
 - **Biased mode** — детерминированный выбор arm'а (Tokio `biased`).
   Достигается через `--jobs 1` + фиксированный seed в тестах.
 - **Вложенный select запрещён** — излишнее ограничение; снято.
@@ -2769,11 +2781,42 @@ Go не поддерживает guards в select.
 - ✅ Parser + codegen: Plan 31 Ф.3
 - ✅ Arm guards: Plan 31 Ф.4
 - ✅ `Time.after(d)` + тесты: Plan 31 Ф.5
+   - **Plan 65 (2026-05-18) revision:** `Time.after(int ms)` removed,
+     replaced by `ChanReader.close_after(Duration)`. See "Эволюция API"
+     subsection below.
 - ✅ All-closed panic: Plan 31 Ф.6 (с pre-check для main-thread)
-- ✅ Hardening: Plan 44.1 Ф.2 (Time.after cleanup) + Ф.3 (select cap=32 +
+- ✅ Hardening: Plan 44.1 Ф.2 (timer cleanup, formerly Time.after, now
+  `ChanReader.close_after` after Plan 65) + Ф.3 (select cap=32 +
   compile-error overflow + Channel.new check ordering)
 - 🟡 M:N safety: Plan 44.1 Ф.1 (atomics + selectdone CAS + doubly-linked +
   per-call storage) — отложено вместе с Plan 44 M:N runtime
+
+### Эволюция API — timeout channel constructor (Plan 65, 2026-05-18)
+
+`Time.after(int ms) -> ChanReader[()]` (D94 v1, Plan 31 Ф.5)
+переименован в **`ChanReader.close_after(d Duration) -> ChanReader[()]`**
+(D94 v2, Plan 65). Три ортогональных дефекта закрыты:
+
+1. **Domain mismatch:** функция возвращает read-capability ChanReader,
+   но жила в `Time` namespace — discoverability проседала. Capability
+   namespace по D91 — `ChanReader.<constructor>`.
+2. **Type safety:** bare int `(1000)` неоднозначно (мс/мкс/сек). Duration
+   делает unit explicit: `Duration.from_secs(1)`.
+3. **Capability mismatch D91:** получение reader через `Time.X` неявно
+   подразумевало что Time владеет также writer — на самом деле runtime.
+
+**Семантика runtime неизменна** — внутренне всё ещё `Nova_Time_after`
+(libuv timer) + `on_select_lost` cleanup. Атомарный break без
+deprecated alias (Plan 60 atomic-migration convention): legacy
+вызов ловится диагностикой E5101 с machine-applicable fix-it
+suggestion. Migration tool `migrate_plan65` автоматически переводит
+literal arguments (int → from_millis, float → from_secs_f64).
+
+Дополнительные production-grade capabilities — cancel via D75
+CancelToken, mockable virtual time via `Time` effect, absolute
+deadline `close_at(Instant)`, observability counters — добавляются
+в Plan 65 Ф.10-Ф.14 (hardening), либо отложены в Plan 66
+(periodic ticker + custom timer-wheel optimisation).
 
 
 ## D97. Fiber stack allocation — per-thread mmap arena (Linux/macOS)
