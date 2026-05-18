@@ -134,6 +134,23 @@ pub enum ModuleAttrKind {
     /// Ф.3.4 (Plan 33.6): `#proof_budget(timeout_ms=N, vc_count_max=M)` —
     /// module-level бюджет верификации. Переопределяется per-fn `#verify_timeout`.
     ProofBudget { timeout_ms: Option<u32>, vc_count_max: Option<u32> },
+    /// **Plan 62.F:** `module X no_prelude` (clause syntax после module-path,
+    /// НЕ `#`-prefix per spec/decisions/07-modules.md:962-979). Suppress'ит
+    /// auto-import `std.prelude` (D26). Применение:
+    ///   - real-time / embedded (prelude содержит GC-using код),
+    ///   - bootstrap уровни (сам prelude и его sub-modules — auto-detected
+    ///     через `is_prelude_self_module`, не требует opt-out),
+    ///   - обучающие примеры где надо явно показать всё.
+    /// Без `no_prelude` — стандартный prelude auto-import (D26 default).
+    /// Совместим с explicit `import std.prelude.core.{Option}` etc.
+    NoPrelude,
+    /// **Plan 62.F:** `module X partial_prelude(core, runtime)` (clause syntax
+    /// после module-path). Auto-import только перечисленных sub-modules
+    /// `std.prelude.<name>` вместо full facade. Валидные имена: `core`,
+    /// `runtime`, `errors`, `collections`, `protocols`, `effects`. Имена
+    /// валидируются на resolver-этапе (compiler error при опечатке).
+    /// Пустой list `partial_prelude()` — эквивалент `no_prelude` (валиден).
+    PartialPrelude(Vec<String>),
 }
 
 /// Plan 42.12 Ф.2 + Plan 42.14 Ф.1: cfg predicate.

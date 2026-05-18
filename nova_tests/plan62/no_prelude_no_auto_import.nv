@@ -1,0 +1,28 @@
+// EXPECT_COMPILE_ERROR undefined identifier `assert`
+//
+// Plan 62.F Part 2 — `no_prelude` enforcement negative test.
+//
+// Verifies что `module X no_prelude` ДЕЙСТВИТЕЛЬНО подавляет auto-import
+// `std.prelude`. До Plan 62.F эта декларация игнорировалась parser'ом
+// (no_prelude был silent no-op): runtime functions всё равно auto-
+// import'ились через R27 — реальный bug.
+//
+// Plan 62.F (compiler-codegen/src/imports.rs:114+): добавлен
+// `has_no_prelude` check, который skip'ает auto-import при наличии
+// `ModuleAttrKind::NoPrelude` атрибута.
+//
+// **Why `assert` not `Option`:** Option/Some/Result/Ok/Err остаются
+// в type-checker builtins HashSet (62.A.bis Ф.4 deferred — removal
+// блокирован bootstrap monomorphization). Runtime functions (assert/
+// panic/exit/debug_assert) НЕ в этом HashSet'е — они приходят ТОЛЬКО
+// через prelude facade re-export. Поэтому `assert` — точный маркер
+// что auto-import suppressed.
+
+module plan62.no_prelude_no_auto_import no_prelude
+
+fn dummy() -> int => 1
+
+test "should never reach this — compile must fail" {
+    let _ = dummy()
+    assert(true)   // ← fails here: `assert` unavailable без auto-import
+}
