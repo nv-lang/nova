@@ -1,0 +1,25 @@
+// Ф.38.1 (Plan 33.6): TrivialBackend modulus strict `>` для negative goal.
+// `requires x >= 0; ensures (x % 5) > -1` — result >= 0 > -1.
+
+module contracts.f38_modulus_strict_positive
+
+#verify
+fn mod_strict_above_neg(x int) -> int
+    requires x >= 0
+    ensures result > -1
+{
+    x % 5
+}
+
+#verify
+fn mod_strict_far_below(x int) -> int
+    requires x >= 0
+    ensures result > -100
+{
+    x % 7
+}
+
+test "modulus strict positive" {
+    assert(mod_strict_above_neg(11) == 1)
+    assert(mod_strict_far_below(15) == 1)
+}

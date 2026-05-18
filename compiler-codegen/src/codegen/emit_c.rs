@@ -13915,80 +13915,20 @@ impl CEmitter {
     }
 
     fn infer_print_helper(&self, expr: &Expr) -> &'static str {
-        match &expr.kind {
-            ExprKind::IntLit(_) => "nova_print_int",
-            ExprKind::FloatLit(_) => "nova_print_f64",
-            ExprKind::BoolLit(_) => "nova_print_bool",
-            ExprKind::StrLit(_) => "nova_print_str",
-            ExprKind::InterpolatedStr { .. } => "nova_print_str",
-            ExprKind::Binary { op, .. } => match op {
-                BinOp::Eq | BinOp::Neq | BinOp::Lt | BinOp::Le
-                | BinOp::Gt | BinOp::Ge | BinOp::And | BinOp::Or
-                | BinOp::Implies | BinOp::Iff => "nova_print_bool",
-                _ => "nova_print_int",
-            },
-            ExprKind::Ident(name) => {
-                // Look up variable type
-                match self.var_types.get(name).map(|s| s.as_str()) {
-                    Some("nova_f64") | Some("nova_f32") => "nova_print_f64",
-                    Some("nova_bool") => "nova_print_bool",
-                    Some("nova_str") => "nova_print_str",
-                    _ => "nova_print_int",
-                }
-            }
-            ExprKind::Member { obj, name } => {
-                let obj_ty = self.infer_expr_c_type_str(obj);
-                // Plan 60 / D117: size-accessor field-style — больше не
-                // обрабатываем (emit_expr вернёт Err). Сохраняем dead-branch
-                // как защитную сетку: если когда-нибудь сюда попадёт —
-                // вернуть fallback printer (unreachable в normal flow).
-                if obj_ty == "nova_str" && matches!(name.as_str(), "len" | "is_empty" | "byte_len") {
-                    return "nova_print_int";
-                }
-                // Determine object's struct type, then look up field type in schema
-                let struct_name = obj_ty
-                    .strip_prefix("Nova_")
-                    .unwrap_or("")
-                    .trim_end_matches('*')
-                    .trim()
-                    .to_string();
-                if let Some(schema) = self.record_schemas.get(&struct_name) {
-                    match schema.get(name.as_str()).map(|s| s.as_str()) {
-                        Some("nova_f64") | Some("nova_f32") => "nova_print_f64",
-                        Some("nova_bool") => "nova_print_bool",
-                        Some("nova_str") => "nova_print_str",
-                        _ => "nova_print_int",
-                    }
-                } else {
-                    "nova_print_int"
-                }
-            }
-            ExprKind::Call { func, .. } => {
-                // String method calls: s.to_upper() → nova_print_str, s.starts_with() → nova_print_bool
-                if let ExprKind::Member { obj, name: method } = &func.kind {
-                    let obj_ty = self.infer_expr_c_type_str(obj);
-                    if obj_ty == "nova_str" {
-                        return match method.as_str() {
-                            "to_upper" | "to_lower" | "trim" | "slice" | "concat" => "nova_print_str",
-                            "starts_with" | "ends_with" | "contains" | "eq" => "nova_print_bool",
-                            _ => "nova_print_int",
-                        };
-                    }
-                }
-                // Infer return type from function's known type in var_types
-                if let ExprKind::Ident(name) = &func.kind {
-                    let key = format!("fn_ret_{}", name);
-                    match self.var_types.get(&key).map(|s| s.as_str()) {
-                        Some("nova_str") => "nova_print_str",
-                        Some("nova_f64") | Some("nova_f32") => "nova_print_f64",
-                        Some("nova_bool") => "nova_print_bool",
-                        _ => "nova_print_int",
-                    }
-                } else {
-                    "nova_print_int"
-                }
-            }
-            _ => "nova_print_int",
+        // AD3: char literals are stored as nova_int in the AST but should
+        // print as UTF-8 characters, not code-point integers.
+        if matches!(&expr.kind, ExprKind::CharLit(_)) {
+            return "nova_print_char";
+        }
+        // AD1: delegate to full type inference instead of manual pattern matching.
+        let c_ty = self.infer_expr_c_type(expr);
+        match c_ty.as_str() {
+            "nova_str"                                      => "nova_print_str",
+            "nova_bool"                                     => "nova_print_bool",
+            "nova_f32" | "nova_f64"                         => "nova_print_f64",
+            "nova_int" | "nova_i8" | "nova_i16" | "nova_i32" | "nova_i64"
+            | "nova_u8" | "nova_u16" | "nova_u32" | "nova_u64" => "nova_print_int",
+            _                                               => "nova_print_int",
         }
     }
 
