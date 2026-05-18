@@ -15158,6 +15158,46 @@ Test: f35_subtraction_upper_positive (diff_below_threshold, diff_strict).
 - Симметрия: всё через bounds-tracking, low-risk extensions.
 
 
+# Plan 33.6 Ф.36 (2026-05-18): const-mul + negation upper bound (полный паритет)
+
+Завершает паритет TrivialBackend bound check helpers — const-mul и negation
+теперь имеют upper-bound check (<=/< strict). 6 операций × 4 варианта =
+полный coverage (исключая const-mul L<0 и division upper — V3, nonlinear).
+
+## Ф.36.1 — Const-mul upper bound (<= (* L Var) goal)
+
+`try_const_mul_check` покрывал только lower. Новый `try_const_mul_upper`:
+для L>0 проверяет `upper(Var) * L <= effective_goal`. L<0 не покрывается
+(sign flip — нелинейный).
+
+Test: f36_const_mul_upper_positive (double_below, triple_strict_below).
+
+## Ф.36.2 — Negation upper bound (<= (- 0 Var) goal)
+
+`try_negation_check` покрывал только lower. Новый `try_negation_upper`:
+`-lower(Var) <= effective_goal` → true. Симметрия с Ф.17.1.
+
+Test: f36_negation_upper_positive (neg_below, neg_strict_below).
+
+## Регрессия
+
+Перед Ф.36: 188 PASS / 0 FAIL / 44 SKIP contracts.
+После Ф.36: 190 PASS (+2) / 0 FAIL / 44 SKIP contracts.
+
+## Acceptance
+
+Полный 4-вариант coverage TrivialBackend bound check helpers:
+
+| Operator | Lower ≥ | Lower > | Upper ≤ | Upper < |
+|----------|---------|---------|---------|---------|
+| addition | Ф.17.2 | Ф.30.2 | Ф.35.2 | Ф.35.2 |
+| subtraction | Ф.18.1 | Ф.29.4 | Ф.35.4 | Ф.35.4 |
+| const-mul (L>0) | Ф.16.3 | Ф.30.3 | Ф.36.1 | Ф.36.1 |
+| negation | Ф.17.1 | Ф.30.4 | Ф.36.2 | Ф.36.2 |
+| modulus | Ф.19.1 | — | Ф.26.1 | Ф.26.1 |
+| division | Ф.20.1 | Ф.31.2 | V3 (nonlinear) | V3 |
+
+
 ## Session: оба deferred follow-up'а Plan 59 закрыты (2026-05-17 EOD+1)
 
 После merge'а Plan 63 fixes от другого agent'а — обнаружено что оба
