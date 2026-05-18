@@ -1,0 +1,22 @@
+// Plan 70 PhaseA1.3 sites 1325, 1329 (free fn) + 1422, 1435 (method).
+// POSITIVE — module-scan overload registration: concrete free fn + методы
+// с concrete types компилируются.
+
+module plan70.f3_module_scan_overload_pos
+
+type Counter {
+    value int
+}
+
+// Sites 1325 / 1329: free fn registration with concrete param/return types
+fn double_int(x int) -> int => x * 2
+
+// Sites 1422 / 1435: method overload (non-generic receiver)
+fn Counter @inc() -> Self => { value: @value + 1 }
+
+test "free fn + method registration с concrete types" {
+    assert(double_int(7) == 14)
+    let c Counter = { value: 5 }
+    let c2 = c.inc()
+    assert(c2.value == 6)
+}
