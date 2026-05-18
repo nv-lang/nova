@@ -9260,6 +9260,28 @@ TrivialBackend без зависимости от bounds. Что можно до
 `a * 0 = 0` (уже есть), distributive `a*(b+c) = a*b + a*c` (рискованно —
 может ломать canonical form), commutativity (уже есть в `+`/`*`).
 
+## [M-plan-33.6-Ф.42-verify-only-requires] (2026-05-18)
+
+`#verify` fn без ensures (только requires) — доказывает валидность
+входов, но callerу нет гарантии об output. Программист скорее всего
+забыл написать `ensures result <...>`. Lint в verify_module fn loop:
+`MustVerify && has_requires && !has_ensures` → W2402.
+
+Дополняет Ф.27.1 (`#verify` совсем без contracts → noop).
+
+**Регрессия:** 196 → 197 PASS (+1), 0 FAIL.
+
+**Fn lint catalog** (после Ф.42):
+- vacuous fn (Ф.22.1)
+- noop verify (Ф.27.1)
+- only-requires (Ф.42.4)
+- tautological (Ф.33.1)
+- contradictory ensures (Ф.21.2)
+- redundant requires (Ф.22.2)
+- self-referential ensures (Ф.19.2)
+- duplicate clauses (Ф.25.1)
+- ensures_fail без Fail (Ф.34.1)
+
 ## [M-57.F.4-positive-negative-coverage] — Test expansion (2026-05-17)
 
 **Не simplification.** Прямой user feedback "тесты напиши по тому,
