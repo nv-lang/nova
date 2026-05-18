@@ -1,0 +1,18 @@
+// EXPECT_COMPILE_ERROR #verify
+//
+// Ф.54 (test pack): негативные guards для Ф.29-Ф.36 bound check helpers.
+// Проверяет что TrivialBackend НЕ доказывает невозможные ensures —
+// верификация должна fail'нуть, не silent-pass.
+//
+// Сценарий: `requires x >= 1; ensures x != 5` — недоказуемо: x = 5 possible.
+// Если TrivialBackend ошибочно скажет true → bug detected этим тестом.
+
+module contracts.f54_bounds_disprove_must_fail
+
+#verify
+fn neq_unprovable(x int) -> int
+    requires x >= 1
+    ensures result != 5
+{
+    x
+}
