@@ -11699,27 +11699,66 @@ impl CEmitter {
                             _ => {}
                         }
                     }
-                    // D26 prelude: built-in methods on Option (NovaOpt_T) and Result.
+                    // D26 prelude / Plan 62.A.bis Ф.3.1: built-in methods on
+                    // Option (NovaOpt_T). Method dispatch route'ится через
+                    // `sum_schema_registry` (MethodRouting::HardcodedRuntimeFn
+                    // → trampoline `Nova_Option_method_<m>_<T_sani>`; sentinel
+                    // `"<inline>"` → fall through к существующему inline emit
+                    // для Fail-effected methods (unwrap) и closure-applying
+                    // methods (unwrap_or_else / map / ok_or). См. Open Q #5
+                    // plan'а 62.A.bis.
                     if obj_ty.starts_with("NovaOpt_") {
                         let elem_ty = obj_ty.strip_prefix("NovaOpt_")
                             .unwrap_or("nova_int")
                             .trim_end_matches('*')
                             .trim()
                             .to_string();
+                        // Lookup routing через registry. Только Option methods
+                        // зарегистрированы — registry даёт highest-priority
+                        // entry (Prelude > User > Hardcoded).
+                        let routing = self.sum_schema_registry
+                            .lookup_method_routing("Option", method.as_str())
+                            .cloned();
+                        // Routable trampolines (is_some/is_none/unwrap_or)
+                        // emit'ятся напрямую; inline-sentinel methods
+                        // fall through к existing inline блокам ниже.
+                        if let Some(super::sum_schema_registry::MethodRouting::HardcodedRuntimeFn {
+                            c_name, is_per_t,
+                        }) = &routing {
+                            if c_name != "<inline>" {
+                                let obj_c = self.emit_expr(obj)?;
+                                let mangled = if *is_per_t {
+                                    format!("{}_{}", c_name, elem_ty)
+                                } else {
+                                    c_name.clone()
+                                };
+                                // Метод `unwrap_or` принимает 1 аргумент.
+                                // Predicates `is_some`/`is_none` — 0 аргументов.
+                                // Универсально emit'им (obj, args...).
+                                let mut parts = vec![obj_c];
+                                for a in args {
+                                    parts.push(self.emit_expr(a.expr())?);
+                                }
+                                return Ok(format!("{}({})", mangled, parts.join(", ")));
+                            }
+                        }
+                        // Только если registry дал ExternalFn (Plan 62.A
+                        // follow-up через prelude declaration) — emit прямо.
+                        if let Some(super::sum_schema_registry::MethodRouting::ExternalFn {
+                            c_name,
+                        }) = &routing {
+                            let obj_c = self.emit_expr(obj)?;
+                            let mut parts = vec![obj_c];
+                            for a in args {
+                                parts.push(self.emit_expr(a.expr())?);
+                            }
+                            return Ok(format!("{}({})", c_name, parts.join(", ")));
+                        }
+                        // Inline-sentinel methods + DeclaredBody fall through
+                        // к match блокам ниже (preserve Fail-effected dispatch
+                        // и closure-applying inline emit per Open Q #5).
                         let obj_c = self.emit_expr(obj)?;
                         match method.as_str() {
-                            "is_some" => return Ok(format!(
-                                "Nova_Option_method_is_some_{}({})", elem_ty, obj_c)),
-                            "is_none" => return Ok(format!(
-                                "Nova_Option_method_is_none_{}({})", elem_ty, obj_c)),
-                            "unwrap_or" => {
-                                if let Some(arg) = args.first() {
-                                    let v = self.emit_expr(arg.expr())?;
-                                    return Ok(format!(
-                                        "Nova_Option_method_unwrap_or_{}({}, {})",
-                                        elem_ty, obj_c, v));
-                                }
-                            }
                             "unwrap" => {
                                 // Inline check + Nova_Fail_fail on None
                                 let tmp = self.fresh_tmp();
