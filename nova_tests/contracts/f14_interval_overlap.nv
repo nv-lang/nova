@@ -1,4 +1,4 @@
-﻿// Plan 33.3 Ф.14: Dafny-parity test 14 — Interval/Range overlap.
+// Plan 33.3 Ф.14: Dafny-parity test 14 — Interval/Range overlap.
 // Классические interval lemmas из Dafny.
 
 // REQUIRES_SMT_BACKEND z3

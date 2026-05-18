@@ -1,4 +1,4 @@
-﻿// Plan 33.3 Ф.14: Dafny-parity test 13 — Bit manipulation properties.
+// Plan 33.3 Ф.14: Dafny-parity test 13 — Bit manipulation properties.
 
 // REQUIRES_SMT_BACKEND z3
 
