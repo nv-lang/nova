@@ -5364,12 +5364,20 @@ impl CEmitter {
             // record-полей. Использует Member-call routing для эмита
             // closure-call (`obj.f(x)` → NOVA_CLOS_CALL_*).
             if let TypeRef::Func { params: fp, return_type, .. } = &f.ty {
+                // Plan 70 PhaseA2.3: strict — record fn-typed field sig.
                 let ptys: Vec<String> = fp.iter()
-                    .map(|t| self.type_ref_to_c(t).unwrap_or_else(|_| "nova_int".into()))
-                    .collect();
-                let rty = return_type.as_ref()
-                    .map(|rt| self.type_ref_to_c(rt).unwrap_or_else(|_| "nova_int".into()))
-                    .unwrap_or_else(|| "nova_unit".into());
+                    .map(|t| self.type_ref_to_c(t).map_err(|e| self.err_no_int_fallback(
+                        &format!("record `{}` fn-typed field `{}` param", name, f.name),
+                        &e,
+                    )))
+                    .collect::<Result<Vec<_>, _>>()?;
+                let rty = match return_type.as_ref() {
+                    Some(rt) => self.type_ref_to_c(rt).map_err(|e| self.err_no_int_fallback(
+                        &format!("record `{}` fn-typed field `{}` return", name, f.name),
+                        &e,
+                    ))?,
+                    None => "nova_unit".to_string(),
+                };
                 self.record_field_fn_sigs.insert(
                     (name.to_string(), f.name.clone()),
                     (ptys, rty),
@@ -7134,12 +7142,20 @@ impl CEmitter {
         // Раньше set только перед ret_c — params получали Nova_Self fallback.
         let prev_recv_for_emit = self.current_receiver_type.replace(recv_type.to_string());
         let recv_c = self.receiver_c_type(recv_type);
+        // Plan 70 PhaseA3: strict — emit_monomorphized_method param/return.
         let param_c_tys: Vec<String> = fn_decl.params.iter()
-            .map(|p| self.type_ref_to_c(&p.ty).unwrap_or_else(|_| "nova_int".into()))
-            .collect();
-        let ret_c = fn_decl.return_type.as_ref()
-            .map(|t| self.type_ref_to_c(t).unwrap_or_else(|_| "nova_unit".into()))
-            .unwrap_or_else(|| "nova_unit".into());
+            .map(|p| self.type_ref_to_c(&p.ty).map_err(|e| self.err_no_int_fallback(
+                &format!("mono'd method `{}.{}` param `{}`", recv_type, fn_decl.name, p.name),
+                &e,
+            )))
+            .collect::<Result<Vec<_>, _>>()?;
+        let ret_c = match fn_decl.return_type.as_ref() {
+            Some(t) => self.type_ref_to_c(t).map_err(|e| self.err_no_int_fallback(
+                &format!("mono'd method `{}.{}` return", recv_type, fn_decl.name),
+                &e,
+            ))?,
+            None => "nova_unit".to_string(),
+        };
         // НЕ восстанавливаем здесь — оставляем set для body emit (var_types для
         // params, match infers и пр.). Restore в самом конце вместе с saved_subst.
         let _ = prev_recv_for_emit;
@@ -7172,15 +7188,23 @@ impl CEmitter {
             .map(|(p, ty)| (p.name.clone(), self.var_types.insert(p.name.clone(), ty.clone())))
             .collect();
         // Register function-typed params in fn_param_sigs with concrete types
+        // Plan 70 PhaseA3: strict — mono'd fn-typed param signature.
         let mut saved_fn_sigs: Vec<(String, Option<(Vec<String>, String)>)> = Vec::new();
         for (p, _c_ty) in fn_decl.params.iter().zip(&param_c_tys) {
             if let crate::ast::TypeRef::Func { params: fp, return_type, .. } = &p.ty {
                 let inner_ptys: Vec<String> = fp.iter()
-                    .map(|t| self.type_ref_to_c(t).unwrap_or_else(|_| "nova_int".into()))
-                    .collect();
-                let inner_ret = return_type.as_ref()
-                    .map(|t| self.type_ref_to_c(t).unwrap_or_else(|_| "nova_unit".into()))
-                    .unwrap_or_else(|| "nova_unit".into());
+                    .map(|t| self.type_ref_to_c(t).map_err(|e| self.err_no_int_fallback(
+                        &format!("mono'd fn-typed param `{}` element", p.name),
+                        &e,
+                    )))
+                    .collect::<Result<Vec<_>, _>>()?;
+                let inner_ret = match return_type.as_ref() {
+                    Some(t) => self.type_ref_to_c(t).map_err(|e| self.err_no_int_fallback(
+                        &format!("mono'd fn-typed param `{}` return", p.name),
+                        &e,
+                    ))?,
+                    None => "nova_unit".to_string(),
+                };
                 let prev = self.fn_param_sigs.insert(p.name.clone(), (inner_ptys, inner_ret));
                 saved_fn_sigs.push((p.name.clone(), prev));
             }
@@ -7520,9 +7544,13 @@ impl CEmitter {
                 // handles cases where a field references another generic instance
                 // (e.g. `Nova_Lru____K__V` has `Nova_HashMap____K__V* store`)
                 // that may be instantiated later in generic_type_defs_buf.
+                // Plan 70 PhaseA3: strict — mono'd generic type instance fields.
                 let field_ctys: Vec<String> = fields.iter()
-                    .map(|f| self.type_ref_to_c(&f.ty).unwrap_or_else(|_| "nova_int".into()))
-                    .collect();
+                    .map(|f| self.type_ref_to_c(&f.ty).map_err(|e| self.err_no_int_fallback(
+                        &format!("mono'd generic type instance field `{}`", f.name),
+                        &e,
+                    )))
+                    .collect::<Result<Vec<_>, _>>()?;
                 for c_ty in &field_ctys {
                     if let Some(inner) = c_ty.strip_suffix('*') {
                         let inner = inner.trim();
@@ -7678,9 +7706,13 @@ impl CEmitter {
             type_subst.iter().cloned().collect(),
         );
         // Compute concrete param types
+        // Plan 70 PhaseA3: strict — emit_monomorphized_fn param translation.
         let param_c_tys: Vec<String> = fn_decl.params.iter()
-            .map(|p| self.type_ref_to_c(&p.ty).unwrap_or_else(|_| "nova_int".into()))
-            .collect();
+            .map(|p| self.type_ref_to_c(&p.ty).map_err(|e| self.err_no_int_fallback(
+                &format!("mono'd fn `{}` param `{}`", fn_decl.name, p.name),
+                &e,
+            )))
+            .collect::<Result<Vec<_>, _>>()?;
         let ret_c = fn_decl.return_type.as_ref()
             .map(|t| self.type_ref_to_c(t).unwrap_or_else(|_| "nova_unit".into()))
             .unwrap_or_else(|| "nova_unit".into());
@@ -7724,15 +7756,23 @@ impl CEmitter {
             .map(|(p, ty)| (p.name.clone(), self.var_types.insert(p.name.clone(), ty.clone())))
             .collect();
         // Register function-typed params in fn_param_sigs with concrete types
+        // Plan 70 PhaseA3: strict — mono'd fn-typed param signature.
         let mut saved_fn_sigs: Vec<(String, Option<(Vec<String>, String)>)> = Vec::new();
         for (p, _c_ty) in fn_decl.params.iter().zip(&param_c_tys) {
             if let crate::ast::TypeRef::Func { params: fp, return_type, .. } = &p.ty {
                 let inner_ptys: Vec<String> = fp.iter()
-                    .map(|t| self.type_ref_to_c(t).unwrap_or_else(|_| "nova_int".into()))
-                    .collect();
-                let inner_ret = return_type.as_ref()
-                    .map(|t| self.type_ref_to_c(t).unwrap_or_else(|_| "nova_unit".into()))
-                    .unwrap_or_else(|| "nova_unit".into());
+                    .map(|t| self.type_ref_to_c(t).map_err(|e| self.err_no_int_fallback(
+                        &format!("mono'd fn-typed param `{}` element", p.name),
+                        &e,
+                    )))
+                    .collect::<Result<Vec<_>, _>>()?;
+                let inner_ret = match return_type.as_ref() {
+                    Some(t) => self.type_ref_to_c(t).map_err(|e| self.err_no_int_fallback(
+                        &format!("mono'd fn-typed param `{}` return", p.name),
+                        &e,
+                    ))?,
+                    None => "nova_unit".to_string(),
+                };
                 let prev = self.fn_param_sigs.insert(p.name.clone(), (inner_ptys, inner_ret));
                 saved_fn_sigs.push((p.name.clone(), prev));
             }
@@ -10562,12 +10602,20 @@ impl CEmitter {
                 if let ExprKind::Member { obj: mvobj, name: mvname } = &inner.kind {
                     if let Some(method_name) = mvname.strip_prefix('@') {
                         if let TypeRef::Func { params: fp, return_type, .. } = ty {
+                            // Plan 70 PhaseA3: strict — `as fn(...) -> R` annotation для method value.
                             let target_ptys: Vec<String> = fp.iter()
-                                .map(|t| self.type_ref_to_c(t).unwrap_or_else(|_| "nova_int".into()))
-                                .collect();
-                            let target_rty = return_type.as_ref()
-                                .map(|rt| self.type_ref_to_c(rt).unwrap_or_else(|_| "nova_int".into()))
-                                .unwrap_or_else(|| "nova_unit".into());
+                                .map(|t| self.type_ref_to_c(t).map_err(|e| self.err_no_int_fallback(
+                                    &format!("method value `as fn` annotation method `{}` param", method_name),
+                                    &e,
+                                )))
+                                .collect::<Result<Vec<_>, _>>()?;
+                            let target_rty = match return_type.as_ref() {
+                                Some(rt) => self.type_ref_to_c(rt).map_err(|e| self.err_no_int_fallback(
+                                    &format!("method value `as fn` annotation method `{}` return", method_name),
+                                    &e,
+                                ))?,
+                                None => "nova_unit".to_string(),
+                            };
                             return self.emit_method_value_typed(mvobj, method_name,
                                 Some((target_ptys, target_rty)));
                         }
