@@ -2027,9 +2027,26 @@ impl NameResCtx {
             "DivByZero", "Overflow", "IndexOutOfBounds",
             "TypeMismatch", "AssertFailed", "NoHandler",
             "RuntimeError",
-            // Built-in functions (СЃРј. codegen::emit_c.rs special-cases).
-            "assert", "debug_assert", "print", "println",
-            "panic", "exit",
+            // Plan 62.B: `panic`/`exit`/`assert`/`debug_assert` (4 names)
+            // перенесены в std/prelude/runtime.nv (file-based external fn
+            // declarations). Type-checker теперь resolves их через
+            // cross-file resolve (R27 auto-import + R26 re-export через
+            // std/prelude.nv facade). Codegen special-cases в emit_c.rs
+            // (~11086-11136) остаются:
+            //   - panic/exit нужны для comma-expression обёртки
+            //     `(nv_panic(msg), (nova_int)0LL)` в expression-position
+            //     (?? coalesce, if-else branches).
+            //   - assert/debug_assert: D89 expression-context + Plan 11
+            //     auto-derived cond_text (msg arg silently ignored).
+            // См. docs/plans/62-prelude-hardcode-migration.md §62.B.
+            //
+            // **NOT migrated (DEFER Plan 62.B.bis):**
+            // `print` / `println` остаются hardcoded — variadic +
+            // type-polymorphic dispatch (emit_println + make_print_call +
+            // infer_print_helper, emit_c.rs ~13638-13751) не выражается
+            // single-arg `external fn print(s str)` декларацией. См.
+            // std/prelude/runtime.nv DEFER comment + plan doc §62.B.
+            "print", "println",
             // Plan 32: GC introspection namespace (std.runtime.gc).
             // РСЃРїРѕР»СЊР·СѓРµС‚СЃСЏ РєР°Рє `gc.heap_size()`, `gc.collect()` Рё С‚.Рґ.
             // Source of truth РґР»СЏ signatures: std/runtime/gc.nv (external fn).
