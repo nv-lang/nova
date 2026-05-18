@@ -15588,3 +15588,57 @@ immediate use case. Design only.
 
 Phases 1-6 + Ф.7.1-7.3 закрыты полностью. Ф.7.4-7.6 deferred.
 25 tests f1-f25, все PASS. Production-grade complete.
+
+
+=== Plan 65 (2026-05-18) — ChanReader.close_after(Duration) MVP closed ===
+
+Atomic API rename + capability-split + Duration type-safety:
+`Time.after(int ms) -> ChanReader[()]` removed, replaced by
+`ChanReader.close_after(d Duration) -> ChanReader[()]`. Three orthogonal
+defects closed (domain/type/capability mismatch). Runtime semantics
+preserved (libuv timer + on_select_lost cleanup); only the user-facing
+constructor renamed.
+
+Phases Ф.0-Ф.9 (MVP) closed in single session:
+- Ф.0: baseline 698 PASS captured; honest-defer [M-chanreader-gc-finalizer]
+  recorded (Boehm GC_REGISTER_FINALIZER not wired in runtime).
+- Ф.1: compiler registration (hardcoded receiver dispatch, both Member
+  and Path forms). Side-fix: handler-method annotation bridge in
+  emit_handler_lit (required for mut_clock import to compile from tests
+  — tracked [M-handler-duration-schema-mismatch]).
+- Ф.2: runtime nova_chan_reader_close_after_ns(int64_t) inline in
+  channels.h. Corner cases: neg panic / zero fast-path / sub-ms round-up
+  / normal delegate to existing Nova_Time_after backend.
+- Ф.3: 6 negative+positive tests in nova_tests/plan65/ (f1/f3/f4/f5/f6).
+- Ф.4: migrate_plan65 token-aware migration tool (~500 LoC + 10 unit
+  tests). Auto-injects `import std.time.duration` for migrated files.
+  Exit codes 0/1/2 (idempotent/manual/changed).
+- Ф.5: corpus migration (13 rewrites in 7 files), Time.after removed
+  from compiler, E5101 diagnostic added (Member + Path forms).
+  f2_time_after_removed negative test passes.
+- Ф.6: spec/decisions/06-concurrency.md D94 amended; new "Эволюция API"
+  subsection with 3 defects + migration-tool pointer.
+- Ф.7: std/concurrency/timer.nv doc-only stub with #stable(since="0.6").
+- Ф.8: const-folding + cross-toolchain partial — both deferred with
+  honest markers ([M-plan65-const-fold] L, [M-plan58-ci-matrix-absent] M).
+  LLVM -O2+LTO folds chain at backend level; local clang Windows PASS.
+- Ф.9: this entry + simplifications.md updates + plans README.
+
+Hardening phases Ф.10-Ф.14 (CancelToken integration / Time-effect mock /
+NOVA_TIMER_METRICS observability / close_at absolute deadline /
+tick_every namespace squat + Plan 66 outline / 25-point stress audit)
+deferred to subsequent session(s) — MVP closure provides type-safe
+Duration-API parity with Go/Rust/TS baseline.
+
+Регрессия: 705 PASS / 0 FAIL / 44 SKIP (baseline 698 + 7 plan65 tests).
+0 code-level Time.after call sites remain.
+
+Commits in plan-65 branch (7 atomic per-phase):
+- f2d413612af feat(65 Ф.0) baseline
+- fec849bb0f0 feat(65 Ф.1+Ф.2) compiler + runtime
+- (Ф.3) test fixtures
+- bc4e7926222 feat(65 Ф.4) migration tool
+- e929a5a1da1 feat(65 Ф.5) atomic switch
+- e668f6d4172 docs(65 Ф.6) spec sync
+- 171e76a5487 docs(65 Ф.7) stdlib doc
+- a4013003bcd docs(65 Ф.8) const-fold + cross-toolchain status
