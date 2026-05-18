@@ -16,6 +16,8 @@
 
 module concurrency.plan40_perf_bench
 
+import std.time.duration
+
 
 test "perf: select dispatch throughput — 1000 iterations × 4-arm" {
     let t0 = Time.now()
@@ -61,7 +63,7 @@ test "perf: Time.after cleanup throughput — 200 quick recv-wins" {
             spawn {
                 select {
                     Some(_) = ch.rx => { wins = wins + 1 }
-                    Some(_) = Time.after(5_000) => { }  // 5s — никогда не fire'нет
+                    Some(_) = ChanReader.close_after(Duration.from_millis(5_000)) => { }  // 5s — никогда не fire'нет
                 }
             }
         }

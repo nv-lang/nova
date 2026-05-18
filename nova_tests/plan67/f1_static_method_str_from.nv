@@ -1,0 +1,12 @@
+// Plan 67 Ф.2 f1 — println(str.from(int)) должен эмитить nova_print_str.
+// BUG: до фикса — nova_print_int(nova_int_to_str(...)) → CC-FAIL или неверный вывод.
+
+module plan67.f1_static_method_str_from
+
+// EXPECT_STDOUT 42
+// EXPECT_STDOUT 100
+
+fn main() Io -> () {
+    println(str.from(42))
+    println(str.from(50 + 50))
+}

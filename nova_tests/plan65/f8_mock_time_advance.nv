@@ -1,0 +1,57 @@
+// Plan 65 R18 f8: close_after honors the bound Time-effect handler (AD6).
+//
+// When a mock Time handler is bound — e.g. testing.fixed_ms or
+// testing.mut_clock — the runtime delegates close_after to the handler's
+// sleep, then returns an already-closed reader. No libuv timer is allocated.
+//
+// Pattern matches Tokio's `pause(); sleep(d).await;` synchronous-mock idiom
+// for the simple single-fiber test case. Trade-off: virtual-clock advance
+// from a peer fiber after the close_after is NOT honored (we don't retain
+// the timer for later wake). For per-fiber sequential mock-time — the
+// common test shape — this is correct.
+//
+// IMPORTANT: this test asserts only the SLEEP delegation path. The mock
+// handler's `now()` slots are NOT exercised because of an unrelated
+// schema-mismatch limitation between the Time handler vtable and codegen
+// (see [M-handler-duration-schema-mismatch] / [M-time-now-schema-mismatch]
+// in docs/simplifications.md; the latter is targeted by Plan 65 Ф.12.3).
+
+module plan65.f8_mock_time_advance
+
+import std.time.duration
+
+test "close_after delegates to mock Time handler — sleep is invoked" {
+    let mut sleep_calls = 0
+    let mock = handler Time {
+        sleep(_d) => { sleep_calls = sleep_calls + 1; () }
+        now()    => 0
+        now_ms() => 0
+        now_ns() => 0
+    }
+    with Time = mock {
+        // Without mock-Time path, this would block for 10 seconds.
+        let t = ChanReader.close_after(Duration.from_secs(10))
+        // recv must return None immediately — channel already closed by
+        // mock-time fast-path.
+        let v = t.recv()
+        assert(v.is_none())
+    }
+    // The handler's sleep was actually invoked exactly once.
+    assert(sleep_calls == 1)
+}
+
+test "close_after through mock handler — multiple invocations counted" {
+    let mut sleep_calls = 0
+    let mock = handler Time {
+        sleep(_d) => { sleep_calls = sleep_calls + 1; () }
+        now()    => 0
+        now_ms() => 0
+        now_ns() => 0
+    }
+    with Time = mock {
+        let _t1 = ChanReader.close_after(Duration.from_secs(5))
+        let _t2 = ChanReader.close_after(Duration.from_millis(250))
+        let _t3 = ChanReader.close_after(Duration.from_nanos(500))
+    }
+    assert(sleep_calls == 3)
+}

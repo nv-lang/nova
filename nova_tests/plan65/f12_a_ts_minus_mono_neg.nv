@@ -1,0 +1,16 @@
+// Plan 65 R18 / Ф.12.5 / D124: type-system rejects subtracting Monotonic
+// from Timestamp (incompatible clock types).
+// EXPECT_COMPILE_ERROR no @minus overload on Timestamp taking Nova_Monotonic*
+
+module plan65.f12_a_ts_minus_mono_neg
+
+import std.time.duration
+
+fn main() -> () {
+    let ts = Timestamp.from_unix_secs(1000)
+    let mn = Monotonic.now()
+    // Attempting to subtract a Monotonic from a Timestamp must be a
+    // compile error per D124 §3 (no cross-clock arithmetic).
+    let _bad = ts - mn
+    println("unreachable")
+}

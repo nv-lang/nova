@@ -17,6 +17,16 @@ path = "src/bin/migrate_plan60.rs"
 # (std / nova_tests / examples / .md). Удаляется после Plan 60 closure
 # (или сохраняется как reference для future similar migrations).
 
+[[bin]]
+name = "migrate_plan65"
+path = "src/bin/migrate_plan65.rs"
+# Plan 65 Ф.4: one-shot migration tool Time.after(<lit>) →
+# ChanReader.close_after(Duration.from_*(<lit>)) for std/, nova_tests/,
+# examples/. Token-aware via nova_codegen lexer (skips strings, comments).
+# Emits MIGRATE_MANUAL markers for non-literal args (CI gate fails).
+# Retained after Plan 65 closure as reference for similar future
+# atomic-API-rename plans.
+
 [features]
 # Plan 33 V1: forward z3-backend во вложенный nova_codegen.
 # Build: `cargo build --release --features z3-backend` из nova-cli/.

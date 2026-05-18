@@ -1,0 +1,39 @@
+// Plan 65 R18 f10: select { ... } with a close_after timeout arm —
+// when the enclosing supervised(cancel: tok) scope is cancelled, the
+// timer is closed via cancel-resource callback AND the recv waiter is
+// woken via the standard cancel-park flow. Both cleanup paths
+// (on_select_lost + cancel_resource_cb) race-safely cooperate via the
+// `cancelled` flag on NovaAfterState.
+
+module plan65.f10_select_cancel_propagation
+
+import std.time.duration
+
+const TIMEOUT_MS i64 = 5000
+const SLACK_MS   i64 = 1500
+
+test "select close_after — cancel wakes select and closes timer" {
+    let tok = CancelToken.new()
+    let (tx, rx) = Channel.new[i64](1)
+    let t0 = Time.now()
+    with Fail = handler Fail {
+        fail(_msg) => interrupt ()
+    } {
+        supervised(cancel: tok) {
+            spawn {
+                // Long timeout — must be cancelled, not naturally fired.
+                select {
+                    Some(_) = rx => { }
+                    Some(_) = ChanReader.close_after(Duration.from_millis(TIMEOUT_MS)) => { }
+                }
+            }
+            spawn {
+                Time.sleep(50)
+                tok.cancel()
+            }
+        }
+    }
+    let elapsed = Time.now() - t0
+    // If cancel-propagation did not work, elapsed >= TIMEOUT_MS.
+    assert(elapsed < SLACK_MS)
+}

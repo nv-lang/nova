@@ -8,6 +8,8 @@
 
 module concurrency.fiber_arena_compact
 
+import std.time.duration
+
 test "fibers.compact() callable" {
     // Burst → quiescence → compact().
     let mut wins = 0
@@ -19,7 +21,7 @@ test "fibers.compact() callable" {
             spawn {
                 select {
                     Some(_) = ch.rx => { wins = wins + 1 }
-                    Some(_) = Time.after(5_000) => { }
+                    Some(_) = ChanReader.close_after(Duration.from_millis(5_000)) => { }
                 }
             }
         }

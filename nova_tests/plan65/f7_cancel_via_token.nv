@@ -1,0 +1,55 @@
+// Plan 65 R18 f7: ChanReader.close_after registers with the enclosing
+// CancelToken (AD5). When tok.cancel() fires before the timer would
+// naturally fire, the libuv handle is closed via the cancel-resource
+// callback — no leak, no late firing.
+//
+// Plan 65 Ф.10 implements this via NovaCancelToken.cleanup_handles[] +
+// NovaCancelToken.cleanup_cbs[] (see fibers.h). The runtime helper
+// nova_cancel_token_register_resource is invoked from
+// nova_chan_reader_close_after_ns when _nova_active_scope->bound_token
+// is non-NULL.
+//
+// Positive flow:
+//   1. supervised(cancel: tok) opens a scope and binds tok.
+//   2. spawn'd fiber A creates a long close_after(5_000ms) reader.
+//   3. spawn'd fiber B cancels tok after a brief delay.
+//   4. The token's cancel_reason iteration closes the timer; A's recv()
+//      returns None almost immediately (well below the 5-second budget).
+//   5. After scope exit the timer is no longer alive — no leak.
+//
+// Sanity check: this test must complete in well under 1 second.
+
+module plan65.f7_cancel_via_token
+
+import std.time.duration
+
+const TIMEOUT_MS i64 = 5000
+const SLACK_MS   i64 = 1500
+
+test "tok.cancel() closes a pending close_after timer (no leak)" {
+    let tok = CancelToken.new()
+    let t0 = Time.now()
+    with Fail = handler Fail {
+        fail(_msg) => interrupt ()
+    } {
+        supervised(cancel: tok) {
+            spawn {
+                let t = ChanReader.close_after(Duration.from_millis(TIMEOUT_MS))
+                // recv blocks until the timer fires or until our cancel
+                // closes the writer end of the channel.
+                let v = t.recv()
+                // v is None either way — fire (closed) or cancel (closed).
+                let _ = v.is_none()
+            }
+            spawn {
+                // Short pause so fiber A is parked on recv() when we cancel.
+                Time.sleep(50)
+                tok.cancel()
+            }
+        }
+    }
+    let elapsed = Time.now() - t0
+    // If cancel did NOT close the timer, elapsed >= TIMEOUT_MS.
+    // With cancel, elapsed ≈ 50 ms + scope-drain time.
+    assert(elapsed < SLACK_MS)
+}
