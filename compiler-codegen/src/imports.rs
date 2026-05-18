@@ -856,13 +856,71 @@ fn resolve_module_paths(
                 })
                 .unwrap_or(false);
             if has_direct_nv {
-                // Plan 42.08 Ф.2: ambiguous → return explicit ResolveErr
-                // вместо silent None. Caller emit'ит clear «ambiguous module
-                // X: <file> vs <folder>» вместо generic «cannot find».
-                return Err(ResolveErr::Ambiguous {
-                    file: single_file.clone(),
-                    folder: folder.clone(),
-                });
+                // Plan 62.A: разрешённый pattern — facade file `X.nv` +
+                // child-namespace folder `X/<sub>.nv` (where каждый sub
+                // declares `module X.<sub>`, not `module X`). В этом случае
+                // file — parent-module facade, folder peers — child
+                // modules, не peers of file. Это специально для
+                // splittable prelude design (Plan 62 §«Splittable
+                // structure»), но general-purpose: применимо к любому
+                // `<X>.nv` + `<X>/<sub>.nv` case.
+                //
+                // Detection: peek все direct .nv в folder; если ВСЕ
+                // declare `module <parent>.<X>.<...>` (т.е. их declared
+                // path starts with file's full path + один сегмент), —
+                // это child-namespace case, не ambiguity.
+                //
+                // Если хоть один peer declares `module <X>` или `module
+                // <parent>.<X>` (same path как file), — реальная
+                // ambiguity, error как раньше.
+                let file_module_full = parts.join(".");
+                let file_module_prefix = format!("{}.", file_module_full);
+                let mut all_children = true;
+                let mut any_peer = false;
+                if let Ok(entries) = std::fs::read_dir(&folder) {
+                    for entry in entries.filter_map(|e| e.ok()) {
+                        let p = entry.path();
+                        if !p.is_file() {
+                            continue;
+                        }
+                        if p.extension().and_then(|s| s.to_str()) != Some("nv") {
+                            continue;
+                        }
+                        any_peer = true;
+                        let declared = match extract_declared_module(&p) {
+                            Some(d) => d,
+                            None => {
+                                // Не удалось извлечь module declaration —
+                                // consideredambiguous (старое поведение).
+                                all_children = false;
+                                break;
+                            }
+                        };
+                        // Plan 42.6 rev-3 accepts both `<pkg>.<sub>` and
+                        // `<parent>.<sub>` forms. Treat peer as child if
+                        // declared starts with file_module_full + '.', OR
+                        // if declared = parts.last() (rev-3 short form для
+                        // peers того же folder). Conservatively: только
+                        // первый вариант (full path prefix) — это
+                        // unambiguous child marker.
+                        if !declared.starts_with(&file_module_prefix) {
+                            all_children = false;
+                            break;
+                        }
+                    }
+                }
+                if !any_peer || !all_children {
+                    // Plan 42.08 Ф.2: ambiguous → return explicit ResolveErr
+                    // вместо silent None. Caller emit'ит clear «ambiguous module
+                    // X: <file> vs <folder>» вместо generic «cannot find».
+                    return Err(ResolveErr::Ambiguous {
+                        file: single_file.clone(),
+                        folder: folder.clone(),
+                    });
+                }
+                // All peers — child modules. Fall through: return file as
+                // single resolved path (folder peers resolve через explicit
+                // `import X.<sub>` paths).
             }
         }
 
@@ -917,4 +975,94 @@ fn resolve_module_paths(
     }
 
     Err(ResolveErr::NotFound)
+}
+
+/// Plan 62.A: lightweight extraction of `module X.Y.Z` declaration из
+/// .nv file без полного парсинга. Использован в `resolve_module_paths`
+/// для disambiguating file+folder coexistence (facade + child-namespace
+/// pattern).
+///
+/// Возвращает declared module path как dotted string (e.g.
+/// `"std.prelude.core"`) или `None` если:
+///   - файл не читается,
+///   - module declaration не найден в первых ~50 non-comment lines,
+///   - syntax не распознан.
+///
+/// Скан: skip blank lines, line/block comments, attrs (`#stable(...)`).
+/// Останавливается на первой строке начинающейся с `module `.
+fn extract_declared_module(path: &Path) -> Option<String> {
+    let content = std::fs::read_to_string(path).ok()?;
+    let mut in_block_comment = false;
+    let mut lines_seen = 0;
+    for raw_line in content.lines() {
+        lines_seen += 1;
+        if lines_seen > 200 {
+            // module declaration MUST быть в первых ~200 lines (typically
+            // в первых 30). Не нашли — bail.
+            return None;
+        }
+        let line = raw_line.trim();
+        if in_block_comment {
+            if let Some(idx) = line.find("*/") {
+                let rest = &line[idx + 2..].trim_start();
+                if rest.is_empty() {
+                    in_block_comment = false;
+                    continue;
+                }
+                in_block_comment = false;
+                // continue parsing rest of line
+                if let Some(name) = try_parse_module_decl(rest) {
+                    return Some(name);
+                }
+                continue;
+            }
+            continue;
+        }
+        if line.is_empty() || line.starts_with("//") || line.starts_with("///") {
+            continue;
+        }
+        if line.starts_with("/*") {
+            if line.contains("*/") {
+                // Single-line block comment.
+                continue;
+            }
+            in_block_comment = true;
+            continue;
+        }
+        // Skip attrs (lines starting with `#`).
+        if line.starts_with('#') {
+            continue;
+        }
+        if let Some(name) = try_parse_module_decl(line) {
+            return Some(name);
+        }
+        // Первый non-comment non-attr line не "module ..." — bail.
+        return None;
+    }
+    None
+}
+
+/// Helper: если строка начинается с `module `, извлечь path как dotted
+/// string. Path = sequence of `[A-Za-z_][A-Za-z0-9_]*` separated by `.`,
+/// terminated whitespace/EOL/comment.
+fn try_parse_module_decl(line: &str) -> Option<String> {
+    let rest = line.strip_prefix("module ")?.trim_start();
+    let mut path = String::new();
+    let mut started_segment = false;
+    for ch in rest.chars() {
+        if ch.is_ascii_alphanumeric() || ch == '_' {
+            path.push(ch);
+            started_segment = true;
+        } else if ch == '.' && started_segment {
+            path.push('.');
+            started_segment = false;
+        } else {
+            break;
+        }
+    }
+    if path.is_empty() || path.ends_with('.') {
+        None
+    } else {
+        Some(path)
+    }
 }

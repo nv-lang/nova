@@ -304,7 +304,21 @@ pub fn is_stdlib_runtime_module(name: &[String]) -> bool {
 ///   так что result совпадает; для user package — `["myproject", "prelude"]`).
 ///
 /// Более permissive — match по `last() == "prelude"` чтобы прикрыть оба.
+///
+/// **Plan 62.A:** prelude теперь splittable — `std/prelude/<sub>.nv` тоже
+/// считаются "prelude self" для целей auto-import. Иначе sub-module
+/// получает auto-import `std.prelude`, который re-export'ит sub-module →
+/// circular import. Match по prefix:
+///   - `std.prelude.<sub>` (stdlib splittable)
+///   - `<pkg>.prelude.<sub>` (user-package splittable)
 pub fn is_prelude_self_module(name: &[String]) -> bool {
-    (name.len() == 2 && name[0] == "std" && name[1] == "prelude")
-        || name.last().map(|s| s == "prelude").unwrap_or(false)
+    // Legacy: any module чей last segment == "prelude"
+    // (e.g. ["std", "prelude"], ["foo", "prelude"], ["foo", "bar", "prelude"]).
+    let is_prelude_root = name.last().map(|s| s == "prelude").unwrap_or(false);
+    // Plan 62.A: splittable prelude sub-modules — penultimate == "prelude".
+    // E.g. ["std", "prelude", "core"], ["std", "prelude", "runtime"],
+    //      ["foo", "prelude", "core"].
+    let is_prelude_submodule = name.len() >= 2
+        && name.get(name.len() - 2).map(|s| s == "prelude").unwrap_or(false);
+    is_prelude_root || is_prelude_submodule
 }

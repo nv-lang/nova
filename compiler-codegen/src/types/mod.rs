@@ -69,9 +69,35 @@ pub fn check_module(module: &Module) -> Result<ModuleEnv, Vec<Diagnostic>> {
     //
     // Plan 42 Sub-plan 42.6: detect runtime module РїРѕ РѕР±РѕРёС… declaration
     // С„РѕСЂРјР°С‚РѕРІ (rev-1 legacy + rev-3 parent.X). Logic вЂ” РІ manifest helper.
-    let is_runtime_module = crate::manifest::is_stdlib_runtime_module(&module.name);
+    //
+    // Plan 62.A: also whitelist `std.prelude.*` submodules. Prelude
+    // sub-modules (`std/prelude/core.nv`, etc.) declare types/methods
+    // implemented by codegen helpers in `nova_rt/*.h` — same pattern
+    // as `std.runtime.*` (declaration-only, no Nova body).
+    //
+    // Plan 62.A (2026-05-18): check only items DECLARED HERE (in entry
+    // peers' `items_here`), not items merged from imports. Otherwise
+    // `external fn`-карта prelude'а проседает на каждом user-модуле:
+    // user `module foo` импортирует `std.prelude` → prelude.core external
+    // fns merge'нутся в `module.items` → check fires на foo. Items
+    // источника prelude.core валидируются при компиляции САМОГО
+    // prelude.core (отдельный `check_module` invocation на std).
+    let is_runtime_module = crate::manifest::is_stdlib_runtime_module(&module.name)
+        || crate::manifest::is_prelude_self_module(&module.name);
     if !is_runtime_module {
-        for item in &module.items {
+        // Collect entry peers' items_here (items declared в этом модуле
+        // самим, не pulled через imports). Fallback на module.items если
+        // peer_files пуст (legacy single-file).
+        let entry_items: Vec<&Item> = if module.peer_files.is_empty() {
+            module.items.iter().collect()
+        } else {
+            module.peer_files
+                .iter()
+                .filter(|pf| pf.is_entry_module)
+                .flat_map(|pf| pf.items_here.iter())
+                .collect()
+        };
+        for item in entry_items {
             if let Item::Fn(fd) = item {
                 if fd.is_external {
                     errors.push(Diagnostic::new(
@@ -1977,14 +2003,27 @@ impl NameResCtx {
             "u8", "u16", "u32", "u64",
             "f32", "f64", "uint", "size",
             // Other primitives.
-            "bool", "str", "byte", "char", "unit", "Never", "any",
+            "bool", "str", "byte", "char", "unit", "any",
+            // Plan 62.A: `Never` остаётся как hardcoded built-in. Bootstrap
+            // parser не поддерживает `type Never =` (empty sum) per spec
+            // D26 §794-797. Когда parser получит empty-sum syntax, Never
+            // переедет в std/prelude/core.nv и будет удалён отсюда.
+            "Never",
             // Boolean literals (parsed РєР°Рє Ident РІ bool-context РєРѕРµ-РіРґРµ).
             "true", "false",
             // Special idents.
             "Self", "self",
-            // Prelude variants Option / Result / Error / RuntimeError.
-            "None", "Some", "Ok", "Err",
-            "Option", "Result", "Error",
+            // Plan 62.A: `Option`/`Result`/`Some`/`None`/`Ok`/`Err`/`Error`/
+            // `Ordering`/`Less`/`Equal`/`Greater` (11 names) перенесены в
+            // std/prelude/core.nv. Type-checker теперь resolves их через
+            // cross-file resolve (R27 auto-import). См. docs/plans/
+            // 62-prelude-hardcode-migration.md §62.A.
+            //
+            // RuntimeError variants остаются hardcoded — Plan 62.C
+            // (отдельная фаза). RuntimeError typedef + variant constructors
+            // живут в nova_rt/array.h и pre-populated sum_schemas
+            // (emit_c.rs:1000-1018); user-код declared'ит вариант через
+            // builtins HashSet recognition пока миграция не завершится.
             "DivByZero", "Overflow", "IndexOutOfBounds",
             "TypeMismatch", "AssertFailed", "NoHandler",
             "RuntimeError",
