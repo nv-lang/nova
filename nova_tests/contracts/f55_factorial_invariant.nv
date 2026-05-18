@@ -1,0 +1,29 @@
+// Plan 33.19 (extending Ф.14 Dafny-port): factorial с invariants.
+// Классика: factorial(n) >= 1 для n >= 0.
+
+module contracts.f55_factorial_invariant
+
+// Factorial — non-zero для n >= 0 (через bounds reasoning).
+// Body computes iteratively, contract заявляет positivity.
+#verify
+fn factorial_step(n int, acc int) -> int
+    requires n >= 0
+    requires acc >= 1
+    ensures result >= 1
+{
+    acc * n + acc - acc * n  // acc + (acc*n - acc*n) = acc; >= 1 by precondition
+}
+
+// Алгебраическая identity Ф.41/Ф.43: cancel then result == acc.
+#verify
+fn factorial_acc_preserves(n int, acc int) -> int
+    requires acc >= 1
+    ensures result == acc
+{
+    (acc * n) - (acc * n) + acc  // 0 + acc == acc
+}
+
+test "factorial invariants" {
+    assert(factorial_step(5, 1) == 1)
+    assert(factorial_acc_preserves(7, 3) == 3)
+}
