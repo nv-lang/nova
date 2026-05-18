@@ -9370,6 +9370,13 @@ W2402 suggesting pattern match или table lookup.
 
 **Регрессия:** 204 → 205 PASS (+1), 0 FAIL.
 
+## [M-plan-33.6-Ф.51-square-nonneg] (2026-05-18)
+
+`a * a >= 0` universally — первый non-linear case без Z3. Equal-args
+check (margs[0] == margs[1]) перед sign-based branches в try_var_mul_nonneg.
+
+**Регрессия:** 205 → 206 PASS (+1), 0 FAIL.
+
 ## [M-57.F.4-positive-negative-coverage] — Test expansion (2026-05-17)
 
 **Не simplification.** Прямой user feedback "тесты напиши по тому,
