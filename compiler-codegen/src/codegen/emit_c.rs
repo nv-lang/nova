@@ -530,6 +530,21 @@ pub struct CEmitter {
     /// call (vs indirect через erased + cast). Backward compat: legacy
     /// `_nova_handler_Fail` (string slot) тоже install'тся (dual-install).
     per_e_fail_types: HashSet<String>,
+
+    /// Plan 62.A.bis Ф.1: layered sum-type schema registry. Populated в
+    /// `CEmitter::new()` через `init_hardcoded_baseline()` (4 entries:
+    /// Option, NovaOpt_nova_int alias, Result, RuntimeError). Phase 2+
+    /// будет добавлять `DeclaredFromPrelude` entries из `std/prelude/*.nv`
+    /// (через `init_prelude_decls` call в `emit_module()`).
+    ///
+    /// **Phase 1 invariant:** registry populated но никто (кроме unit
+    /// tests) его не читает — legacy `sum_schemas: HashMap<...>` field
+    /// продолжает быть единственным источником истины для всех 12
+    /// hardcoded dispatch points. Поэтому генерируемый C байт-идентичен
+    /// pre-Plan-62.A.bis baseline'у.
+    ///
+    /// См. `docs/plans/62.A.bis-sum-schema-registry.md` §«Phase 1».
+    pub(crate) sum_schema_registry: super::sum_schema_registry::SumSchemaRegistry,
 }
 
 /// Plan 20 Ф.4: per-defer-stmt entry — tracks one `defer { ... }` or
@@ -706,6 +721,16 @@ impl CEmitter {
             next_type_id: 17,
             fail_e_map: HashMap::new(),
             per_e_fail_types: HashSet::new(),
+            // Plan 62.A.bis Ф.1: registry populated через
+            // init_hardcoded_baseline() — 4 entries (Option, NovaOpt_nova_int
+            // alias, Result, RuntimeError). Phase 1 invariant: ничего не
+            // читает (кроме unit tests), legacy sum_schemas остаётся source
+            // of truth для всех dispatch points.
+            sum_schema_registry: {
+                let mut r = super::sum_schema_registry::SumSchemaRegistry::new();
+                r.init_hardcoded_baseline();
+                r
+            },
         }
     }
 
@@ -1236,6 +1261,20 @@ impl CEmitter {
                 }
             }
         }
+
+        // 1a3. Plan 62.A.bis Ф.1: hook для будущего prelude-discovery.
+        // В Ф.1 — stub call (init_prelude_decls делает nothing). Phase 2
+        // расширит чтобы scan'ить `module.items` для type-decls с
+        // `std.prelude.*` origin и register'ить их с DeclaredFromPrelude
+        // source. Hook размещён здесь (между 1a2 и 1) чтобы registry был
+        // готов ДО emit_type_decl loop'а — type-decls из prelude уже
+        // зарегистрированы как DeclaredFromPrelude, а user types в
+        // emit_type_decl получат DeclaredFromUser source (Phase 2+).
+        //
+        // Phase 1 invariant: ничто не читает registry, поэтому wiring
+        // safe — pure no-op для существующего поведения.
+        let module_name_dotted = module.name.join(".");
+        self.sum_schema_registry.init_prelude_decls(&module_name_dotted);
 
         // 1. Type declarations first (structs/unions needed by fn signatures)
         for item in &module.items {
