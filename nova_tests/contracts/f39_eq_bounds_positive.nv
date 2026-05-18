@@ -1,0 +1,27 @@
+// Ф.39.1 (Plan 33.6): TrivialBackend == bounds check (паритет с !=).
+// pinned var: `requires z >= 5; requires z <= 5; ensures result == 5`.
+// disproven: `requires x >= 10; ensures x != 5` (через bounds, x=5 impossible).
+
+module contracts.f39_eq_bounds_positive
+
+#verify
+fn pinned_eq(z int) -> int
+    requires z >= 5
+    requires z <= 5
+    ensures result == 5
+{
+    z
+}
+
+#verify
+fn bounded_not_eq(x int) -> int
+    requires x >= 10
+    ensures result != 5
+{
+    x
+}
+
+test "eq bounds" {
+    assert(pinned_eq(5) == 5)
+    assert(bounded_not_eq(15) == 15)
+}
