@@ -32,21 +32,24 @@
 // re-export через std/prelude.nv facade) даёт user'у возможность
 // shadow'ить эти имена с future warning'ом (Plan 62.F).
 //
-// **DEFER Plan 62.B → 62.B.bis:**
+// **Plan 62.B.bis (2026-05-18):**
 //
-// - `print(s str) -> ()` / `println(s str) -> ()` — **НЕ перенесены**.
-//   Реальная dispatch (`emit_c.rs::emit_println` + `make_print_call` +
-//   `infer_print_helper` ~13638-13751) — **variadic + type-polymorphic
-//   per-arg**: `println(42)`, `println(true)`, `println("x=", n, " y=", b)`
-//   все валидны и эмитятся в последовательность `nova_print_int` /
-//   `nova_print_bool` / `nova_print_str` calls. Single-arg `print(s str)`
-//   декларация сломает hundreds существующих test-call'ов (см.
-//   nova_tests/concurrency/parallel_for.nv `println("  fiber ", x, " a")`
-//   и аналоги). Полная миграция требует либо:
-//     (a) variadic external fn syntax (нет в bootstrap parser),
-//     (b) auto-derive Display + StringBuilder pipeline (Plan 62.D + 62.E),
-//     (c) Plan 67 println overload resolution extended на variadic.
-//   Перенос отложен в Plan 62.B.bis.
+// `print` / `println` теперь объявлены ниже как D69 variadic + `[]any`
+// в canonical D26 form. Реальная dispatch остаётся в codegen
+// special-case (emit_c.rs:11271 — name-keyed intercept fires **перед**
+// variadic routing per Plan 62.B.bis Ф.1 reorder), эмитируя per-arg
+// `nova_print_<type>` calls через unified `infer_print_helper`
+// (Plan 67 absorption — Ф.0 refactor через infer_expr_c_type).
+//
+// **Бутstrap semantics:**
+//   - Decl-only `[]any` variadic — type-checker принимает heterogeneous
+//     args (D54 `any` top-type), но synthesized `[]any` array **никогда
+//     не строится** — special-case intercept перехватывает раньше.
+//   - Per-arg type info сохраняется → `infer_print_helper` через
+//     `infer_expr_c_type` маршрутизирует на правильный helper
+//     (str/bool/int/f64).
+//   - Spread `print(...arr)` — Plan 14 Ф.6 limitation (отдельный
+//     todo: Plan 62.B.bis+1 / Plan 14 Ф.7).
 //
 // - `exit(code int, msg str)` — declaration ниже совпадает с реальностью
 //   (2 args fixed). Перенесён в 62.B.
@@ -121,3 +124,41 @@ external fn assert(cond bool, msg str) -> ()
 external fn debug_assert(cond bool) -> ()
 #stable(since = "0.1")
 external fn debug_assert(cond bool, msg str) -> ()
+
+/// Печать всех аргументов в stdout без разделителя и без trailing newline.
+/// D26 canonical signature: D69 variadic + `[]any` принимает heterogeneous
+/// args (int / str / bool / f64 / mixed). Эмитирует последовательность
+/// `nova_print_<type>` calls — один на argument.
+///
+/// **Bootstrap:** codegen special-case (emit_c.rs:11270 — Plan 62.B.bis
+/// Ф.1 intercept fires ДО variadic routing) маршрутизирует каждый arg
+/// через `infer_print_helper` (unified Plan 67 Ф.0 dispatch через
+/// `infer_expr_c_type`). Per-arg type info сохраняется — synthesized
+/// `[]any` array никогда не строится.
+///
+/// Spread `print(...arr)` пока не поддержан (Plan 14 Ф.6 limitation,
+/// deferred Plan 62.B.bis+1 / 14 Ф.7).
+///
+/// # Examples
+/// ```nova
+/// print("hello")              // → "hello"
+/// print("x = ", 42)           // → "x = 42"
+/// print("a=", 1, " b=", true) // → "a=1 b=true"
+/// ```
+#stable(since = "0.1")
+external fn print(...items []any) -> ()
+
+/// Печать всех аргументов в stdout + trailing newline ('\n'). Идентично
+/// `print(...)`, плюс `nova_print_newline()` в конце.
+///
+/// **Bootstrap:** см. `print` — общий codegen special-case
+/// (emit_c.rs::emit_println, flag `newline=true`).
+///
+/// # Examples
+/// ```nova
+/// println("hello")                                  // → "hello\n"
+/// println(str.from(factorial(5)))                   // → "120\n"
+/// println("count=", n, " total=", sum)              // mixed-type ok
+/// ```
+#stable(since = "0.1")
+external fn println(...items []any) -> ()
