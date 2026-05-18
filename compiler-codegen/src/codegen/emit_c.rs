@@ -13241,8 +13241,14 @@ impl CEmitter {
                         self.generic_type_instance_info.borrow()
                             .get(&format!("Nova_{}", rt_trimmed)).cloned();
                     if let Some((base_name, type_args_c)) = instance_opt {
+                        // Plan 70.2b: strip `@` prefix from method name for FnDecl
+                        // lookup — call-site Member.name includes `@` (e.g. `@sz`),
+                        // но FnDecl.name stored without (e.g. `sz`). Без этого strip
+                        // method dispatch на mono'd sum-types fails → fallback
+                        // emits literal `l->@sz()` в C → compile error.
+                        let method_stripped = method.trim_start_matches('@');
                         let method_decl = self.generic_type_methods.get(&base_name)
-                            .and_then(|ms| ms.iter().find(|m| m.name == *method))
+                            .and_then(|ms| ms.iter().find(|m| m.name == method_stripped))
                             .cloned();
                         if let Some(fn_decl) = method_decl {
                             let tmpl_opt = self.generic_type_templates.get(&base_name).cloned();
@@ -13367,10 +13373,12 @@ impl CEmitter {
                                 let is_instance = matches!(
                                     fn_decl.receiver.as_ref().map(|r| &r.kind),
                                     Some(crate::ast::ReceiverKind::Instance));
+                                // Plan 70.2b: use stripped name (without `@`) для C-name
+                                // construction — `@` invalid в C identifiers.
                                 let base_method_name = if is_instance {
-                                    format!("{}_method_{}", rt_trimmed, method)
+                                    format!("{}_method_{}", rt_trimmed, method_stripped)
                                 } else {
-                                    format!("{}_static_{}", rt_trimmed, method)
+                                    format!("{}_static_{}", rt_trimmed, method_stripped)
                                 };
                                 // Append method-level type-args suffix к method_c_name если
                                 // их > 0. Receiver-args уже в rt_trimmed (через mangled).
