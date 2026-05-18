@@ -151,95 +151,25 @@ pub fn check_module(module: &Module) -> Result<ModuleEnv, Vec<Diagnostic>> {
     // `nova_tests/syntax/for_in_range_iter.nv` (which locally declares
     // `type Range` and `type StepRangeIter`).
     //
-    // Note: full W_PRELUDE_SHADOW lint with structured diagnostic message,
-    // suppress-attribute, and per-name filtering is Plan 62.F.bis Ф.2 scope.
-    // This change implements only the basic downgrade-to-warning needed to
-    // unblock Range re-export through the prelude facade.
-    let prelude_visible_names: HashSet<String> = {
-        let mut s: HashSet<String> = HashSet::new();
-        // Pass 1: names declared directly in prelude peer files.
-        for pf in &module.peer_files {
-            if pf.is_entry_module { continue; }
-            let path_str = pf.path.to_string_lossy().replace('\\', "/");
-            let is_prelude_peer = path_str.contains("/std/prelude/")
-                || path_str.ends_with("/std/prelude.nv");
-            if !is_prelude_peer { continue; }
-            for it in &pf.items_here {
-                match it {
-                    Item::Type(td) => { s.insert(td.name.clone()); }
-                    Item::Fn(fd) => {
-                        let key = match &fd.receiver {
-                            Some(r) => format!("{}.{}", r.type_name, fd.name),
-                            None => fd.name.clone(),
-                        };
-                        s.insert(key);
-                    }
-                    Item::Const(cd) => { s.insert(cd.name.clone()); }
-                    _ => {}
-                }
-            }
-        }
-        // Pass 2: names re-exported through prelude facade via selective list.
-        for pf in &module.peer_files {
-            if pf.is_entry_module { continue; }
-            let path_str = pf.path.to_string_lossy().replace('\\', "/");
-            let is_prelude_peer = path_str.contains("/std/prelude/")
-                || path_str.ends_with("/std/prelude.nv");
-            if !is_prelude_peer { continue; }
-            for imp in &pf.imports {
-                if !imp.is_export { continue; }
-                if let Some(items) = &imp.items {
-                    for it in items {
-                        // Use alias if present (the visible name); else original.
-                        s.insert(it.alias.clone().unwrap_or_else(|| it.name.clone()));
-                    }
-                }
-                // Note: wildcard `export import X.*` is rejected per Plan 35
-                // R25, so `imp.items == None` (broad re-export) doesn't arise
-                // for prelude in practice.
-            }
-        }
-        s
-    };
+    // Plan 62.F.bis Ф.2 (2026-05-18): visibility computation вынесена в
+    // `lints::collect_prelude_visibility`. types::check_module использует
+    // её для silent classify duplicate'ов (user-decl wins); structured
+    // W_PRELUDE_SHADOW warning эмитится через `lints::lint_prelude_shadow`
+    // — отдельно, в pipeline после check_module. Раньше eprintln здесь
+    // дублировал диагностику; теперь silent — warnings приходят как
+    // structured LintWarning через `cmd_check` warnings field.
+    let prelude_vis = crate::lints::collect_prelude_visibility(module);
 
-    // Set of names contributed by NON-entry peer files (i.e., merged from
-    // imports). Names here may or may not be VISIBLE to user code (see
-    // `prelude_visible_names` for the visibility subset that's a D29 lint
-    // target). Used to detect "codegen-only merge" shadowing — when user
-    // re-declares a name that's in merged_from_imports_names but NOT in
-    // prelude_visible_names, the user's declaration silently wins (the
-    // merged item was only there for codegen completeness, not user-visible).
-    let merged_from_imports_names: HashSet<String> = {
-        let mut s: HashSet<String> = HashSet::new();
-        for pf in &module.peer_files {
-            if pf.is_entry_module { continue; }
-            for it in &pf.items_here {
-                match it {
-                    Item::Type(td) => { s.insert(td.name.clone()); }
-                    Item::Fn(fd) => {
-                        let key = match &fd.receiver {
-                            Some(r) => format!("{}.{}", r.type_name, fd.name),
-                            None => fd.name.clone(),
-                        };
-                        s.insert(key);
-                    }
-                    Item::Const(cd) => { s.insert(cd.name.clone()); }
-                    _ => {}
-                }
-            }
-        }
-        s
-    };
-
-    /// Classify a duplicate top-level name:
-    ///   - `Some(true)` → name is visible via prelude → W_PRELUDE_SHADOW warn
-    ///   - `Some(false)` → name is merged-from-imports (codegen-only, not
-    ///     user-visible) → silent (user wins)
-    ///   - `None` → genuine duplicate (e.g. user code declared same name twice)
-    ///     → error
+    // Classify a duplicate top-level name:
+    //   - `Some(true)` → name is visible via prelude → user-decl wins,
+    //     structured warning emitted by `lints::lint_prelude_shadow`
+    //   - `Some(false)` → name is merged-from-imports (codegen-only, not
+    //     user-visible) → silent (user wins)
+    //   - `None` → genuine duplicate (e.g. user code declared same name twice)
+    //     → error
     let classify_dup = |name: &str| -> Option<bool> {
-        if prelude_visible_names.contains(name) { Some(true) }
-        else if merged_from_imports_names.contains(name) { Some(false) }
+        if prelude_vis.visible.contains(name) { Some(true) }
+        else if prelude_vis.merged_from_imports.contains(name) { Some(false) }
         else { None }
     };
 
@@ -250,23 +180,13 @@ pub fn check_module(module: &Module) -> Result<ModuleEnv, Vec<Diagnostic>> {
                     // Plan 62.D bis-1: classify the duplicate per D29.
                     match classify_dup(&td.name) {
                         Some(true) => {
-                            // Visible via prelude → W_PRELUDE_SHADOW warning.
-                            // User code wins; the prelude binding is shadowed
-                            // (still reachable as `std.prelude.<sub>.<name>`).
-                            // Full lint structure (suppress-attr, severity
-                            // config) — Plan 62.F.bis Ф.2. stderr matches
-                            // existing warning convention (emit_c.rs:5276/6415,
-                            // parser warnings).
-                            eprintln!(
-                                "warning: [W_PRELUDE_SHADOW] top-level name `{}` \
-                                 shadows a declaration auto-imported from \
-                                 std.prelude (D29). User declaration wins; \
-                                 qualify as `std.prelude.<sub>.{}` to reference \
-                                 the prelude version. To suppress this lint, add \
-                                 `no_prelude` or `partial_prelude(...)` to the \
-                                 module declaration (Plan 62.F).",
-                                td.name, td.name
-                            );
+                            // Visible via prelude → user-declaration wins
+                            // silently here; structured W_PRELUDE_SHADOW
+                            // warning emitted by `lints::lint_prelude_shadow`
+                            // (Plan 62.F.bis Ф.2 — see warnings field в
+                            // cmd_check для surface). User-decl still wins;
+                            // qualify as `std.prelude.<sub>.<name>` для
+                            // прямого доступа к prelude version.
                             env.types.insert(td.name.clone(), td.clone());
                             continue;
                         }
@@ -339,16 +259,9 @@ pub fn check_module(module: &Module) -> Result<ModuleEnv, Vec<Diagnostic>> {
                     });
                     match classify_dup(&key) {
                         Some(true) => {
-                            eprintln!(
-                                "warning: [W_PRELUDE_SHADOW] definition `{}` \
-                                 shadows a declaration auto-imported from \
-                                 std.prelude (D29). User declaration wins; \
-                                 qualify call-site as `std.prelude.<sub>.<name>` \
-                                 to reach the prelude version. To suppress this \
-                                 lint, add `no_prelude` or `partial_prelude(...)` \
-                                 to the module declaration (Plan 62.F).",
-                                key
-                            );
+                            // Plan 62.F.bis Ф.2: silent user-wins; structured
+                            // W_PRELUDE_SHADOW warning эмитится через
+                            // `lints::lint_prelude_shadow`.
                             if let Some(pos) = dup_pos {
                                 entry[pos] = fd.clone();
                             }
@@ -382,16 +295,9 @@ pub fn check_module(module: &Module) -> Result<ModuleEnv, Vec<Diagnostic>> {
                     // Plan 62.D bis-1: same prelude-shadow rule as for types.
                     match classify_dup(&cd.name) {
                         Some(true) => {
-                            eprintln!(
-                                "warning: [W_PRELUDE_SHADOW] top-level name `{}` \
-                                 shadows a declaration auto-imported from \
-                                 std.prelude (D29). User declaration wins; \
-                                 qualify as `std.prelude.<sub>.{}` to reference \
-                                 the prelude version. To suppress this lint, add \
-                                 `no_prelude` or `partial_prelude(...)` to the \
-                                 module declaration (Plan 62.F).",
-                                cd.name, cd.name
-                            );
+                            // Plan 62.F.bis Ф.2: silent user-wins; structured
+                            // W_PRELUDE_SHADOW warning эмитится через
+                            // `lints::lint_prelude_shadow`.
                             env.consts.insert(cd.name.clone(), cd.clone());
                             continue;
                         }
