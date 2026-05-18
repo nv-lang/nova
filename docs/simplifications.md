@@ -73,12 +73,15 @@
 - **Как чинить:** Выражение вида `nova_bounds_check(arr, i)` или через .get().
 - **Приоритет:** L
 
-### [C8] println — тип аргумента по эвристике AST
+### [C8] println — тип аргумента через infer_expr_c_type ✅ RESOLVED Plan 67
 - **Где:** `emit_c.rs` → `make_print_call` / `infer_print_helper`
-- **Что упрощено:** Выбор `nova_print_int` vs `nova_print_str` vs `nova_print_bool` основан на AST-анализе (не типах). Может ошибаться для переменных сложных типов.
-- **Почему:** Без type checker нет другого способа.
-- **Как чинить:** Type checker с аннотированным AST.
-- **Приоритет:** M
+- **Что было:** Выбор `nova_print_int` vs `nova_print_str` vs `nova_print_bool` основан на
+  ручном AST pattern matching — не покрывал `str.from(x)`, if/match expr, method chains.
+- **Исправление (Plan 67):** `infer_print_helper` переписан на `infer_expr_c_type`-based
+  dispatch (AD1). Добавлен `nova_print_char` + CharLit pre-check (AD3). 10 новых тестов.
+- **Остаток:** `println(c)` где `c: char` — всё ещё `nova_print_int` (char stored as nova_int;
+  fix requires `nova_char` distinct C type — Plan 67+1).
+- **Приоритет:** RESOLVED
 
 ### [C9] pre-scan — два прохода, handler/spawn IDs должны совпадать
 - **Где:** `emit_c.rs` → `emit_handler_forward_decls` + `emit_fn`
