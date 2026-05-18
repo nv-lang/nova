@@ -1,0 +1,25 @@
+// Ф.36.1 (Plan 33.6): TrivialBackend const-mul upper bound `<=` / `<`.
+// `requires x <= 5; ensures (2 * x) <= 10` — upper(x)*L = 10.
+
+module contracts.f36_const_mul_upper_positive
+
+#verify
+fn double_below(x int) -> int
+    requires x <= 5
+    ensures result <= 10
+{
+    2 * x
+}
+
+#verify
+fn triple_strict_below(x int) -> int
+    requires x <= 3
+    ensures result < 10
+{
+    3 * x
+}
+
+test "const mul upper" {
+    assert(double_below(5) == 10)
+    assert(triple_strict_below(3) == 9)
+}

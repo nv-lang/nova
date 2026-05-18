@@ -1,0 +1,11 @@
+// Plan 67 Ф.2 f3 — println(str method chain) через infer_expr_c_type.
+// s.to_upper() returns nova_str — must dispatch to nova_print_str.
+
+module plan67.f3_method_chain_str
+
+// EXPECT_STDOUT HELLO
+
+fn main() Io -> () {
+    let s = "hello"
+    println(s.to_upper())
+}

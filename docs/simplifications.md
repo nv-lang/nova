@@ -73,12 +73,15 @@
 - **Как чинить:** Выражение вида `nova_bounds_check(arr, i)` или через .get().
 - **Приоритет:** L
 
-### [C8] println — тип аргумента по эвристике AST
+### [C8] println — тип аргумента через infer_expr_c_type ✅ RESOLVED Plan 67
 - **Где:** `emit_c.rs` → `make_print_call` / `infer_print_helper`
-- **Что упрощено:** Выбор `nova_print_int` vs `nova_print_str` vs `nova_print_bool` основан на AST-анализе (не типах). Может ошибаться для переменных сложных типов.
-- **Почему:** Без type checker нет другого способа.
-- **Как чинить:** Type checker с аннотированным AST.
-- **Приоритет:** M
+- **Что было:** Выбор `nova_print_int` vs `nova_print_str` vs `nova_print_bool` основан на
+  ручном AST pattern matching — не покрывал `str.from(x)`, if/match expr, method chains.
+- **Исправление (Plan 67):** `infer_print_helper` переписан на `infer_expr_c_type`-based
+  dispatch (AD1). Добавлен `nova_print_char` + CharLit pre-check (AD3). 10 новых тестов.
+- **Остаток:** `println(c)` где `c: char` — всё ещё `nova_print_int` (char stored as nova_int;
+  fix requires `nova_char` distinct C type — Plan 67+1).
+- **Приоритет:** RESOLVED
 
 ### [C9] pre-scan — два прохода, handler/spawn IDs должны совпадать
 - **Где:** `emit_c.rs` → `emit_handler_forward_decls` + `emit_fn`
@@ -9138,6 +9141,90 @@ Integration в check chain + not-invert section.
 negative² и mixed. Ф.34.2 закрыл оба case'а — TrivialBackend теперь
 полное покрытие Var-Var multiplication signs (положительный²,
 отрицательный², mixed).
+
+## [M-plan-33.6-Ф.35-add-sub-upper-bounds] (2026-05-18)
+
+Add/sub bound check helpers — полный 4-вариант coverage:
+- **addition lower** (Ф.17.2 `>=`, Ф.30.2 `>`)
+- **addition upper** (Ф.35.2 `<=`, Ф.35.2 `<`) ← новые
+- **subtraction lower** (Ф.18.1 `>=`, Ф.29.4 `>`)
+- **subtraction upper** (Ф.35.4 `<=`, Ф.35.4 `<`) ← новые
+
+Все 4 операции × 2 bound (lower/upper) × 2 strictness (strict/non-strict)
+теперь работают через bounds-tracking без Z3.
+
+**Регрессия:** 186 → 188 PASS (+2), 0 FAIL, 44 SKIP.
+
+**Что не закрывает (V3):** const-mul upper bound (`<= L*Var goal` где L>0),
+division upper bound, negation upper. Эти все требуют **negative goals**
+(или absolute value reasoning) — менее частые в практических контрактах.
+Если потребуется — добавлять по тому же шаблону. **Ф.36 закрыл const-mul
+upper и negation upper** (см. ниже).
+
+## [M-plan-33.6-Ф.36-const-mul-negation-upper] (2026-05-18)
+
+Завершает паритет TrivialBackend bound check helpers. `try_const_mul_upper`
++ `try_negation_upper` добавлены — теперь 6 операций × 4 варианта (lower/
+upper × strict/non-strict) = полный coverage, исключая const-mul L<0 и
+division upper (оба требуют nonlinear LIA / Z3).
+
+**Регрессия:** 188 → 190 PASS (+2), 0 FAIL, 44 SKIP.
+
+**Текущий matrix coverage:**
+
+| Operator | ≥ | > | ≤ | < |
+|----------|---|---|---|---|
+| addition | ✓ Ф.17.2 | ✓ Ф.30.2 | ✓ Ф.35.2 | ✓ Ф.35.2 |
+| subtraction | ✓ Ф.18.1 | ✓ Ф.29.4 | ✓ Ф.35.4 | ✓ Ф.35.4 |
+| const-mul (L>0) | ✓ Ф.16.3 | ✓ Ф.30.3 | ✓ Ф.36.1 | ✓ Ф.36.1 |
+| negation | ✓ Ф.17.1 | ✓ Ф.30.4 | ✓ Ф.36.2 | ✓ Ф.36.2 |
+| modulus | ✓ Ф.19.1 | — | ✓ Ф.26.1 | ✓ Ф.26.1 |
+| division | ✓ Ф.20.1 | ✓ Ф.31.2 | V3 | V3 |
+| var-mul | ✓ Ф.33.2 | — | ✓ Ф.34.2 | ✓ Ф.34.2 |
+
+**Что не покрывает (V3):**
+- const-mul с L<0 (sign flip — nonlinear)
+- division upper (nonlinear, требует Z3)
+- modulus `>` strict
+- arbitrary expression composition (e.g. `(a+b) * c`)
+
+**Ф.37 закрыл** var-mul strict variant (`>` / `<` для product через
+strict sign bounds).
+
+## [M-plan-33.6-Ф.37-var-mul-strict] (2026-05-18)
+
+Расширение var-mul check'а на strict случай. До Ф.37 был guard
+`if effective_goal > 0 { return None; }` — strict positive product не
+доказывался. После Ф.37:
+- `(> a*b 0)` при both lower >= 1 OR both upper <= -1 → product strictly
+  positive (prod = la*lb or ua*ub, проверка vs effective_goal).
+- `(< a*b 0)` при strict mixed signs (one lower >= 1, other upper <= -1).
+
+**Регрессия:** 190 → 192 PASS (+2), 0 FAIL, 44 SKIP.
+
+**TrivialBackend var-mul теперь полное coverage** по signs × strictness:
+- non-strict positive (both >= 0 / both <= 0) — Ф.33.2/Ф.34.2
+- non-strict negative (mixed signs) — Ф.34.2
+- strict positive (both >= 1 / both <= -1) — Ф.37
+- strict negative (strict mixed) — Ф.37
+
+## [M-plan-33.6-Ф.38-modulus-strict] (2026-05-18)
+
+Modulus check для positive divisor добрал последний variant: `>` strict
+для negative goal. До Ф.38 покрывались `>=`, `<`, `<=` (см. Ф.19.1/Ф.26.1).
+Теперь полный 4-вариант (≥, >, <, ≤).
+
+**Регрессия:** 192 → 193 PASS (+1), 0 FAIL.
+
+## [M-plan-33.6-Ф.39-eq-bounds] (2026-05-18)
+
+Симметричный `=` для Ф.29.1 (`!=` bounds check). Pinned var (lower==upper)
+теперь тривиально доказывается через `=`-check, а не только через UnionFind.
+Disproven `=` (когда literal out of range) — тоже через bounds.
+
+**Регрессия:** 193 → 194 PASS (+1), 0 FAIL.
+
+Все 6 base comparison operators поддерживают bounds-based reasoning.
 
 ## [M-57.F.4-positive-negative-coverage] — Test expansion (2026-05-17)
 
