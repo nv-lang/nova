@@ -9205,6 +9205,14 @@ strict sign bounds).
 - strict positive (both >= 1 / both <= -1) — Ф.37
 - strict negative (strict mixed) — Ф.37
 
+## [M-plan-33.6-Ф.38-modulus-strict] (2026-05-18)
+
+Modulus check для positive divisor добрал последний variant: `>` strict
+для negative goal. До Ф.38 покрывались `>=`, `<`, `<=` (см. Ф.19.1/Ф.26.1).
+Теперь полный 4-вариант (≥, >, <, ≤).
+
+**Регрессия:** 192 → 193 PASS (+1), 0 FAIL.
+
 ## [M-57.F.4-positive-negative-coverage] — Test expansion (2026-05-17)
 
 **Не simplification.** Прямой user feedback "тесты напиши по тому,

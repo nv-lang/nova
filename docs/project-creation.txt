@@ -15238,6 +15238,20 @@ TrivialBackend var-mul теперь полное coverage:
 chained mul (a*b*c) — это nonlinear LIA, требует Z3.
 
 
+# Plan 33.6 Ф.38 (2026-05-18): modulus strict `>` для negative goal
+
+Маленький паритет: `try_modulus_check` для divisor > 0 покрывал `>=, <, <=`,
+но не `>`. `ensures (x % 5) > -1` — тривиально (result >= 0 > -1), но
+не доказывался.
+
+Добавлен check `iop == ">" && goal <= -1` → true. Modulus check теперь
+полный для positive divisor: >=, >, <, <=.
+
+Test: f38_modulus_strict_positive (mod_strict_above_neg, mod_strict_far_below).
+
+Регрессия: 192 → 193 PASS (+1), 0 FAIL, 44 SKIP.
+
+
 ## Session: оба deferred follow-up'а Plan 59 закрыты (2026-05-17 EOD+1)
 
 После merge'а Plan 63 fixes от другого agent'а — обнаружено что оба
