@@ -1,0 +1,34 @@
+// Plan 33.19 (extending Ф.14): offset / shift invariants.
+// x + offset / x - offset preserves bounds (с правильным adjustment).
+
+module contracts.f57_offset_bounds
+
+#verify
+fn shift_up(x int) -> int
+    requires x >= 0
+    ensures result >= 5
+{
+    x + 5
+}
+
+#verify
+fn shift_down(x int) -> int
+    requires x >= 10
+    ensures result >= 0
+{
+    x - 10
+}
+
+// Symmetric: shift then unshift.
+#verify
+fn shift_round_trip(x int) -> int
+    ensures result == x
+{
+    (x + 7) - 7
+}
+
+test "offset bounds" {
+    assert(shift_up(3) == 8)
+    assert(shift_down(15) == 5)
+    assert(shift_round_trip(42) == 42)
+}
