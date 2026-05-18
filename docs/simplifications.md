@@ -9313,6 +9313,19 @@ cargo test --lib verify::backend::trivial: 14/14 PASS (+1).
 
 **Регрессия:** 199 → **200 PASS** (юбилейная цифра), 0 FAIL, 44 SKIP.
 
+## [M-plan-33.6-Ф.46-lemma-self-apply] (2026-05-18)
+
+Soundness fix: `lemma X { apply X(...) }` — самоприменение proof.
+Без strong induction guarantee proof proves what it assumes — это unsound.
+По дизайну error (не warning).
+
+Реализовано как scan apply-stmts в lemma body, `lemma_applied == ld.name` →
+E2408. Не покрывает mutual recursion (нужна SCC), strong induction.
+
+**Регрессия:** 200 → 201 PASS (+1), 0 FAIL.
+
+**Lemma lint catalog — 11 rules** теперь (добавился self-apply).
+
 ## [M-57.F.4-positive-negative-coverage] — Test expansion (2026-05-17)
 
 **Не simplification.** Прямой user feedback "тесты напиши по тому,

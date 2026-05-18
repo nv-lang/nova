@@ -2698,6 +2698,20 @@ let t0 = std::time::Instant::now();
                         ld.name, ld.name),
                     ld.span));
             }
+            // Ф.46.1 (Plan 33.6): lemma самоприменение (self-apply) — infinite proof.
+            // `lemma foo(x) { apply foo(x); ... }` — proof depends on itself.
+            // Error (не warning): proof is unsound by construction.
+            let self_applies = collect_apply_stmts_in_body(&ld.body);
+            for (lemma_applied, _, sp) in &self_applies {
+                if lemma_applied == &ld.name {
+                    report.errors.push(Diagnostic::new(
+                        format!("lemma `{}` применяет саму себя через `apply {}(...)` [E2408]:\n  \
+                                 self-application делает proof unsound (proves what it assumes).\n  \
+                                 Используйте strong induction через `apply lemma(x-1)` или удалите apply.",
+                            ld.name, ld.name),
+                        *sp));
+                }
+            }
             // Ф.40.1 (Plan 33.6): lemma body == ensures expression — body просто
             // повторяет ensures. Это не bug, но прозрачно: SMT доказывает результат
             // body == ensures тавтологически. Лучше пустой body или body содержащий
