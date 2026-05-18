@@ -9363,6 +9363,13 @@ form. Now established pattern: запускать полный test suite пер
 
 **Регрессия:** 203 → 204 PASS (+1), 0 FAIL.
 
+## [M-plan-33.6-Ф.50-long-disjunction] (2026-05-18)
+
+Паритет с Ф.47.1 для OR. `count_or_disjuncts` walker → если >= 5 →
+W2402 suggesting pattern match или table lookup.
+
+**Регрессия:** 204 → 205 PASS (+1), 0 FAIL.
+
 ## [M-57.F.4-positive-negative-coverage] — Test expansion (2026-05-17)
 
 **Не simplification.** Прямой user feedback "тесты напиши по тому,
