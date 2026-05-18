@@ -2494,6 +2494,31 @@ impl CEmitter {
 
     // ---- type mapping ----
 
+    /// Plan 70 Ф.1: Helper для формирования strict-error в местах где
+    /// раньше был silent `unwrap_or "nova_int"` fallback.
+    ///
+    /// `context`: краткое описание точки — `"parameter `x`"`,
+    /// `"field type"`, `"call argument 3"`, etc.
+    /// `cause`: оригинальная ошибка от `type_ref_to_c` или
+    /// inference helper.
+    ///
+    /// Returns formatted `Err(String)` ready для return через `?` или
+    /// прямого Err propagation.
+    ///
+    /// Diagnostic code: E7001 (range E7001-E7099 reserved для Plan 70
+    /// strict type propagation errors).
+    fn err_no_int_fallback(&self, context: &str, cause: &str) -> String {
+        format!(
+            "[E7001] cannot infer C type for {}: {}. \
+             Silent fallback к `nova_int` produced wrong runtime output \
+             для non-int types (record/string/float/bool). Add explicit \
+             type annotation, ensure generic is monomorphized, или \
+             register type в external_registry. \
+             См. Plan 70 ([M-no-silent-nova-int-fallback]).",
+            context, cause
+        )
+    }
+
     fn type_ref_to_c(&self, ty: &TypeRef) -> Result<String, String> {
         // Plan 48: type parameter substitution (monomorphization context)
         if let TypeRef::Named { path, generics, .. } = ty {
