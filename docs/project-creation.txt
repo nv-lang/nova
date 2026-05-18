@@ -15350,6 +15350,22 @@ simplify_addition_negation_zero.
 cargo test --lib verify::backend::trivial: 13/13 PASS (+2).
 
 
+# Plan 33.6 Ф.44 (2026-05-18): multiply by -1 = negation
+
+`(-1 * a)` или `(a * -1)` → `(0 - a)`. По дизайну multiplication by -1
+equivalent to unary negation. TrivialBackend ранее не reasoning'овал.
+
+Реализовано как 2 arm (symmetric) в `simplify_app("*")` перед commutativity
+sort. Использует `simplify_app("-", [0, a])` чтобы потенциально дальше
+simplify (через Ф.28.2 double negation collapse и др.).
+
+Tests: f44_mul_neg_one_positive (neg_via_mul, neg_via_mul_swapped).
+Unit: simplify_mul_neg_one_negates.
+
+Регрессия: 198 → 199 PASS (+1), 0 FAIL, 44 SKIP.
+cargo test --lib verify::backend::trivial: 14/14 PASS (+1).
+
+
 ## Session: оба deferred follow-up'а Plan 59 закрыты (2026-05-17 EOD+1)
 
 После merge'а Plan 63 fixes от другого agent'а — обнаружено что оба

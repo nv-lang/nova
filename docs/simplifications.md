@@ -9290,10 +9290,19 @@ TrivialBackend без зависимости от bounds. Что можно до
 **TrivialBackend algebraic identities — полное покрытие base patterns:**
 - subtraction: (a+b)-b → a (Ф.41), a-a → 0, 0-(0-X) → X (Ф.28.2)
 - addition: (a-b)+b → a (Ф.43.1), a + (-a) → 0 (Ф.43.2)
-- multiplication: a*0 → 0, a*1 → a (всегда было)
+- multiplication: a*0 → 0, a*1 → a (всегда было), a*-1 → 0-a (Ф.44.1)
 
 **Регрессия:** 197 → 198 PASS (+1), 0 FAIL.
 cargo test --lib verify::backend::trivial: 13/13 PASS (+2).
+
+## [M-plan-33.6-Ф.44-mul-neg-one] (2026-05-18)
+
+Multiply by -1 = negation. `(* -1 a)` → `(0 - a)` через simplify_app
+recursion (открывает дальнейшие simplifications через Ф.28.2 double
+negation collapse).
+
+**Регрессия:** 198 → 199 PASS (+1), 0 FAIL.
+cargo test --lib verify::backend::trivial: 14/14 PASS (+1).
 
 ## [M-57.F.4-positive-negative-coverage] — Test expansion (2026-05-17)
 
