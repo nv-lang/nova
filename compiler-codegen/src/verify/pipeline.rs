@@ -3120,6 +3120,16 @@ let t0 = std::time::Instant::now();
                     _ => 1,
                 }
             }
+            // Ф.50.2 (Plan 33.6): парный для OR — long disjunction.
+            // 5+ disjuncts через `||` — readability concern. Suggest pattern match,
+            // table lookup или enum-based dispatch.
+            fn count_or_disjuncts(e: &Expr) -> usize {
+                match &e.kind {
+                    ExprKind::Binary { op: BinOp::Or, left, right } =>
+                        count_or_disjuncts(left) + count_or_disjuncts(right),
+                    _ => 1,
+                }
+            }
             for c in &fd.contracts {
                 let n = count_and_conjuncts(&c.expr);
                 if n >= 5 {
@@ -3134,6 +3144,21 @@ let t0 = std::time::Instant::now();
                                  (каждый conjunct — отдельная строка). Diagnostic messages\n  \
                                  при failure тогда укажут который именно conjunct провален.",
                             fd.name, kind_str, n, kind_str),
+                        c.span));
+                }
+                let m = count_or_disjuncts(&c.expr);
+                if m >= 5 {
+                    let kind_str = match c.kind {
+                        ContractKind::Requires => "requires",
+                        ContractKind::Ensures => "ensures",
+                        ContractKind::EnsuresFail => "ensures_fail",
+                    };
+                    report.warnings.push(Diagnostic::new(
+                        format!("fn `{}`: `{}` clause содержит {} OR-disjunct'ов [W2402]:\n  \
+                                 для readability рассмотрите pattern match (`match x {{ A | B => true, _ => false }}`)\n  \
+                                 либо table lookup. Long disjunction обычно сигнал что должен\n  \
+                                 быть enum или set membership check.",
+                            fd.name, kind_str, m),
                         c.span));
                 }
             }
