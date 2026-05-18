@@ -1,0 +1,13 @@
+// EXPECT_COMPILE_ERROR contract violation
+//
+// Ф.54 (test pack): негативный guard для Ф.41.1 algebraic cancel.
+// `ensures (x+y)-y != x` — невозможно (algebraic identity). Должно fail.
+
+module contracts.f54_algebraic_disprove_must_fail
+
+#verify
+fn cancel_wrong_ensures(x int, y int) -> int
+    ensures result != x
+{
+    (x + y) - y
+}

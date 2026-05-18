@@ -1,0 +1,13 @@
+// EXPECT_COMPILE_ERROR #verify
+//
+// Ф.54 (test pack): негативный guard для Ф.51.1 square non-negative.
+// `ensures (x*x) < 0` — невозможно (square always >= 0). Если silent-pass — bug.
+
+module contracts.f54_square_disprove_must_fail
+
+#verify
+fn square_cant_be_negative(x int) -> int
+    ensures result < 0
+{
+    x * x
+}
