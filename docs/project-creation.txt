@@ -15472,6 +15472,21 @@ Test: f50_long_disjunction_w2402.
 Readability hints полные для AND (Ф.47.1) и OR (Ф.50.2) композиций.
 
 
+# Plan 33.6 Ф.51 (2026-05-18): square non-negative (a*a >= 0 universally)
+
+Квадрат переменной всегда неотрицателен, независимо от sign. Ф.33.2/Ф.34.2
+покрывали только cases с known sign bounds — square это special case
+покрывающий все signs.
+
+В try_var_mul_nonneg перед основной логикой: equal-args check
+(margs[0] == margs[1]) + effective_goal <= 0 → true. Первый
+non-linear case доказываемый без Z3.
+
+Test: f51_square_nonneg_positive.
+
+Регрессия: 205 → 206 PASS (+1), 0 FAIL, 44 SKIP.
+
+
 ## Session: оба deferred follow-up'а Plan 59 закрыты (2026-05-17 EOD+1)
 
 После merge'а Plan 63 fixes от другого agent'а — обнаружено что оба
