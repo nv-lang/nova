@@ -67,6 +67,7 @@
 | D121 | 09-tooling.md | Benchmark DSL — `bench "..." { measure { ... } }` + `bench.*` namespace |
 | D122 | 02-types.md | Hybrid dispatch для bound-K methods (vtable infra) |
 | D123 | 02-types.md | Tuple monomorphization — per-concrete-combo structs |
+| D124 | 06-concurrency.md | Monotonic vs Timestamp — раздельные типы для wall-clock и монотонных часов |
 
 ## История
 
