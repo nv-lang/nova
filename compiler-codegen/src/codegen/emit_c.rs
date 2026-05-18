@@ -14004,80 +14004,40 @@ impl CEmitter {
     }
 
     fn infer_print_helper(&self, expr: &Expr) -> &'static str {
-        match &expr.kind {
-            ExprKind::IntLit(_) => "nova_print_int",
-            ExprKind::FloatLit(_) => "nova_print_f64",
-            ExprKind::BoolLit(_) => "nova_print_bool",
-            ExprKind::StrLit(_) => "nova_print_str",
-            ExprKind::InterpolatedStr { .. } => "nova_print_str",
-            ExprKind::Binary { op, .. } => match op {
-                BinOp::Eq | BinOp::Neq | BinOp::Lt | BinOp::Le
-                | BinOp::Gt | BinOp::Ge | BinOp::And | BinOp::Or
-                | BinOp::Implies | BinOp::Iff => "nova_print_bool",
-                _ => "nova_print_int",
-            },
-            ExprKind::Ident(name) => {
-                // Look up variable type
-                match self.var_types.get(name).map(|s| s.as_str()) {
-                    Some("nova_f64") | Some("nova_f32") => "nova_print_f64",
-                    Some("nova_bool") => "nova_print_bool",
-                    Some("nova_str") => "nova_print_str",
-                    _ => "nova_print_int",
-                }
-            }
-            ExprKind::Member { obj, name } => {
-                let obj_ty = self.infer_expr_c_type_str(obj);
-                // Plan 60 / D117: size-accessor field-style — больше не
-                // обрабатываем (emit_expr вернёт Err). Сохраняем dead-branch
-                // как защитную сетку: если когда-нибудь сюда попадёт —
-                // вернуть fallback printer (unreachable в normal flow).
-                if obj_ty == "nova_str" && matches!(name.as_str(), "len" | "is_empty" | "byte_len") {
-                    return "nova_print_int";
-                }
-                // Determine object's struct type, then look up field type in schema
-                let struct_name = obj_ty
-                    .strip_prefix("Nova_")
-                    .unwrap_or("")
-                    .trim_end_matches('*')
-                    .trim()
-                    .to_string();
-                if let Some(schema) = self.record_schemas.get(&struct_name) {
-                    match schema.get(name.as_str()).map(|s| s.as_str()) {
-                        Some("nova_f64") | Some("nova_f32") => "nova_print_f64",
-                        Some("nova_bool") => "nova_print_bool",
-                        Some("nova_str") => "nova_print_str",
-                        _ => "nova_print_int",
-                    }
-                } else {
-                    "nova_print_int"
-                }
-            }
-            ExprKind::Call { func, .. } => {
-                // String method calls: s.to_upper() → nova_print_str, s.starts_with() → nova_print_bool
-                if let ExprKind::Member { obj, name: method } = &func.kind {
-                    let obj_ty = self.infer_expr_c_type_str(obj);
-                    if obj_ty == "nova_str" {
-                        return match method.as_str() {
-                            "to_upper" | "to_lower" | "trim" | "slice" | "concat" => "nova_print_str",
-                            "starts_with" | "ends_with" | "contains" | "eq" => "nova_print_bool",
-                            _ => "nova_print_int",
-                        };
-                    }
-                }
-                // Infer return type from function's known type in var_types
-                if let ExprKind::Ident(name) = &func.kind {
-                    let key = format!("fn_ret_{}", name);
-                    match self.var_types.get(&key).map(|s| s.as_str()) {
-                        Some("nova_str") => "nova_print_str",
-                        Some("nova_f64") | Some("nova_f32") => "nova_print_f64",
-                        Some("nova_bool") => "nova_print_bool",
-                        _ => "nova_print_int",
-                    }
-                } else {
-                    "nova_print_int"
-                }
-            }
-            _ => "nova_print_int",
+        // Plan 62.B.bis Ф.0 (Plan 67 absorption, 2026-05-18):
+        // Унифицируем dispatch через `infer_expr_c_type` — единый source of
+        // truth для return-type inference. До рефактора `infer_print_helper`
+        // дублировал narrow subset из `infer_expr_c_type` (IntLit/StrLit/
+        // Ident-var/Member-record-schema/Call-method-hardcoded-list/
+        // Call-Ident-fn_ret-cache), что приводило к Plan 67 silent-wrong-output
+        // bug: `println(str.from(factorial(5)))` эмитил `nova_print_int(
+        // nova_int_to_str(...))` потому что Member-func (`str.from`) не
+        // распознавался — fallback на `nova_print_int` дал invalid C.
+        //
+        // После рефактора любой паттерн, который `infer_expr_c_type` умеет
+        // (static methods `str.from`, method chains, if-expr, match-expr,
+        // generic mono return, external_registry, etc.) автоматически
+        // получает корректный print helper. ~75 LOC → ~25 LOC, DRY.
+        //
+        // Plan 67 AD2 — unknown-type fallback preserved: дефолт
+        // `nova_print_int` сохраняет current behavior (`%lld` cast'нется в
+        // garbage если actual type не int — это же поведение что и до).
+        let c_ty = self.infer_expr_c_type(expr);
+        match c_ty.as_str() {
+            "nova_str" => "nova_print_str",
+            "nova_bool" => "nova_print_bool",
+            "nova_f32" | "nova_f64" => "nova_print_f64",
+            // Signed/unsigned integer widths — все cast'ятся в long long
+            // через nova_print_int signature.
+            "nova_int" | "nova_i8" | "nova_i16" | "nova_i32" | "nova_i64"
+            | "nova_u8" | "nova_u16" | "nova_u32" | "nova_u64" => "nova_print_int",
+            // Plan 67 AD3 (char support) deferred: bootstrap maps `char`
+            // → `nova_int` (см. emit_c.rs:2694, sum_schema_registry, etc.),
+            // поэтому `nova_print_char` helper не нужен в bootstrap'е —
+            // `println('a')` печатает code-point (97) как int. Migration к
+            // отдельному `nova_char` C-type + UTF-8 print helper —
+            // post-bootstrap (Plan 67+1 или после `char` lift).
+            _ => "nova_print_int", // conservative fallback
         }
     }
 
