@@ -24,22 +24,40 @@
 //   RUNTIME_DEFINED_EFFECTS (emit_c.rs RUNTIME_DEFINED_TYPES extension),
 //   потому что `NovaVtable_Fail` уже определён в nova_rt/effects.h.
 //
-// **NOT migrated (Plan 62.F scope — deferred / runtime-internal):**
+// **Plan 62.F.bis Ф.3 (2026-05-18, this commit):**
 //
-// - **`Time`** — ambient runtime effect (D11/D14/D62). Pre-registered в
-//   codegen `effect_schemas` (emit_c.rs:1071) — `Time.sleep(ms)`,
-//   `Time.now()`, `Time.after(ms)`. Не type-system effect в смысле user
-//   API — `Time.sleep` обычная функция в `std.time`. Formal declaration
-//   здесь не требуется.
-// - **`Mem`** — runtime introspection (alloc_count/free_count/live/reset).
-//   Pre-registered (emit_c.rs:1087). Используется внутренними тестами
-//   memory leak detection, не user-facing API.
-// - **`Detach`** — keyword-construct `detach { ... }` (D50). Это
-//   syntactic form, не declarable effect — реализован через парсер
-//   special-case + builtin type "Detach" (types/mod.rs:2080).
+// - **`Time`** — formal declaration ниже. Hardcoded codegen
+//   pre-registration `effect_schemas["Time"]` (emit_c.rs:1077-1081)
+//   остаётся неизменной — declaration здесь даёт canonical API surface
+//   для `nova doc` + AI tooling. Codegen skip'ает emit_effect_type
+//   через RUNTIME_DEFINED_TYPES (emit_c.rs:5021+) и
+//   BUILTIN_VTABLE_NAMES (emit_c.rs:1231) — `NovaVtable_Time`
+//   pre-existing в nova_rt.
 //
-// Будущее: если Time/Mem станут user-overridable beyond bootstrap —
-// добавить formal declarations сюда же (62.F.bis / future plan).
+//   **Что включено в декларацию:**
+//     - `sleep(ms int) -> ()` — yield/sleep current fiber.
+//     - `now() -> int` — monotonic ms with handler override hook.
+//
+//   **Что DEFERRED (intentionally):**
+//     - `after(ms int) -> Chan[int]` — internal concurrency-runtime
+//       operation, requires `Chan[T]` в scope. `Chan[T]` живёт в
+//       runtime, не в prelude. Pre-registered в codegen
+//       `effect_schemas` (с `Nova_ChanReader*` raw type) — продолжает
+//       работать через codegen dispatch. Decl-only signature будущее
+//       расширение когда `Chan[T]` будет доступен в prelude.
+//
+//   **AI-first rationale:** users часто пишут `with Time = handler
+//   Time { sleep(ms) {...} } { body }` (mocking clocks). `nova doc`
+//   теперь показывает sleep/now signatures без обращения к runtime.
+//
+// - **`Mem`** — formal declaration ниже. Runtime introspection effect
+//   (alloc_count/free_count/live/reset). Hardcoded codegen
+//   pre-registration (emit_c.rs:1093-1098) остаётся; same skip
+//   через RUNTIME_DEFINED_TYPES.
+//
+// - **`Detach`** — keyword-construct `detach { ... }` (D50), NOT
+//   declarable effect. Остаётся специальным syntactic form в парсере
+//   + builtin type "Detach" (types/mod.rs:2080).
 
 module std.prelude.effects
 
@@ -81,4 +99,76 @@ module std.prelude.effects
 #stable(since = "0.1")
 export type Fail[E] effect {
     fail(e E) -> Never
+}
+
+/// **Time-effect** — ambient runtime эффект для доступа к часам и
+/// scheduler'у (D11 / D14 / D62, spec/decisions/04-effects.md).
+///
+/// **Назначение:** AI-first hooks для unit-тестов. В production
+/// `Time.now()` / `Time.sleep(ms)` дают monotonic clock и
+/// fiber-suspension через runtime. В тестах handler-override:
+/// ```nova
+/// with Time = handler Time { sleep(ms) {} now() { 12345 } } {
+///     // время "замерло" — sleep noop, now() возвращает fixed value
+///     run_test_with_fixed_clock()
+/// }
+/// ```
+///
+/// **Default handler** (без `with` block):
+///   - `sleep(ms)` — yields fiber через nova_fiber_sleep_ms (libuv timer
+///     или blocking sleep если в bootstrap mode).
+///   - `now()` — monotonic timestamp ms через nova_time_now_ms.
+///
+/// **Realtime-context:** `Time` суspend-effect (D64), запрещён внутри
+/// `realtime { ... }` блоков. См. `realtime_suspend_effect` в
+/// types/mod.rs.
+///
+/// **Что НЕ включено в декларацию** (intentional deferral):
+///   - `after(ms int) -> Chan[int]` — internal concurrency-runtime op,
+///     требует `Chan[T]` в scope. Pre-registered в codegen
+///     (emit_c.rs:1080) и работает; formal declaration появится когда
+///     `Chan[T]` будет доступен в prelude.
+///
+/// Match codegen `effect_schemas["Time"]` (emit_c.rs:1077-1081). Skip
+/// emission через RUNTIME_DEFINED_TYPES (emit_c.rs:5021+) и
+/// BUILTIN_VTABLE_NAMES (emit_c.rs:1231) — `NovaVtable_Time` живёт в
+/// nova_rt/effects.h.
+#stable(since = "0.1")
+export type Time effect {
+    sleep(ms int) -> ()
+    now() -> int
+}
+
+/// **Mem-effect** — runtime introspection эффект для memory allocator
+/// stats (D11 / D62).
+///
+/// **Назначение:** leak/growth тесты могут наблюдать allocator counters
+/// без exposing GC internals. Используется внутренними memory-growth
+/// тестами (nova_tests/runtime/memory_growth.nv) и в diagnostic
+/// harness (см. nova_tests/concurrency/sleep_leak_check.nv).
+///
+/// **Operations:**
+///   - `alloc_count() -> int` — total nova_alloc calls с момента gc_init
+///     или последнего `reset()`.
+///   - `free_count() -> int` — total free calls (plain malloc backend → 0).
+///   - `live() -> int` — `alloc_count() - free_count()`, грубая оценка
+///     live allocations.
+///   - `reset() -> ()` — zero stats counters (per-test isolation).
+///
+/// **Default handler** (без `with` block): runtime hooks через
+/// nova_mem_stats_* (см. nova_rt/runtime.c).
+///
+/// **Не user-overridable beyond bootstrap:** хотя effect-declaration
+/// allows `with Mem = handler {...}`, semantically counters reflect
+/// underlying allocator state — handler-override бесполезен (mocked
+/// counters не влияют на actual heap).
+///
+/// Match codegen `effect_schemas["Mem"]` (emit_c.rs:1093-1098). Skip
+/// emission через RUNTIME_DEFINED_TYPES.
+#stable(since = "0.1")
+export type Mem effect {
+    alloc_count() -> int
+    free_count() -> int
+    live() -> int
+    reset() -> ()
 }

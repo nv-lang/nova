@@ -60,7 +60,7 @@ fn pin_marker() -> int {
 
 test "edition 2026.05 pin marker visible" {
     let n = pin_marker()
-    assert(n == 4)
+    assert(n == 5)
 }
 "#,
     );
@@ -106,7 +106,7 @@ fn rolling_marker() -> int {
 
 test "rolling facade marker visible" {
     let n = rolling_marker()
-    assert(n == 4)
+    assert(n == 5)
 }
 "#,
     );
@@ -153,7 +153,7 @@ fn marker() -> int {
 }
 
 test "unknown edition falls back to rolling" {
-    assert(marker() == 4)
+    assert(marker() == 5)
 }
 "#,
     );
