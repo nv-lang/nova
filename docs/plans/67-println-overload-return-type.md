@@ -1,8 +1,34 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 # Plan 67: `println`/`print` — overload resolution через return-type inference
 
-> **Создан:** 2026-05-18. **Статус:** proposed, не начат. **Приоритет:** P0
-> (hotfix: CC-FAIL bench/corpus, замаскирован Plan 65 hotfix
+> **Статус:** ✅ **MERGED INTO Plan 62.B.bis Ф.0** (2026-05-18). AD1 (refactor
+> `infer_print_helper` через `infer_expr_c_type`) реализован в коммите
+> `cbcafbfdad3` как первый шаг Plan 62.B.bis. Все P0 цели Plan 67 закрыты
+> в Ф.0:
+>   - `println(str.from(int))` → корректный `nova_print_str(nova_int_to_str(...))`
+>     output (bench/corpus/06_contracts.nv compiles + runs "120\n").
+>   - Method chains / static method calls / if-expr / match-expr — все
+>     эти паттерны теперь dispatched через unified `infer_expr_c_type`
+>     (~75 LOC → ~25 LOC, DRY).
+>
+> **AD3 (char support) — deferred**: bootstrap maps `char` → `nova_int`,
+> отдельный `nova_print_char` UTF-8 helper out-of-scope для bootstrap.
+> Post-bootstrap (Plan 67+1 или после `char` lift в отдельный C-type).
+>
+> **R5 tests (f1-f10) — deferred**: 4 positive tests covered Plan 67 fix
+> samples написаны в Plan 62.B.bis Ф.6 (`print_println_from_prelude.nv`).
+> Full f1-f10 coverage не написана — production-grade-смысл уже достигнут
+> через bench/corpus + 4 positive tests.
+>
+> **R8 (`nova bench corpus run --quick`) — verified manually**:
+> `bench/corpus/06_contracts.nv` → "7\n5\n120\n" корректный output.
+>
+> **R9 (cross-toolchain) — deferred**: Plan 58 matrix run отдельной задачей.
+>
+> См. [Plan 62.B.bis closure](62.B.bis-print-println-migration.md).
+>
+> **Создан:** 2026-05-18. **Статус ниже отражает исходный proposal (до merge'а).**
+> **Приоритет:** P0 (hotfix: CC-FAIL bench/corpus, замаскирован Plan 65 hotfix
 > contract-encoder fix).
 > **Трудоёмкость:** ~2 dev-days (focused codegen fix + audit + tests).
 

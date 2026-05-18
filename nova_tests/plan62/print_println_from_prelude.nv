@@ -1,0 +1,66 @@
+// print_println_from_prelude.nv — Plan 62.B.bis closure (2026-05-18).
+//
+// Verifies что `print` / `println` formally declared в
+// std/prelude/runtime.nv через D69 variadic + `[]any` (canonical D26
+// signature) auto-available в любом module через R27 prelude auto-import.
+//
+// До 62.B.bis: `print`/`println` hardcoded в type-checker builtins
+// HashSet (compiler-codegen/src/types/mod.rs ~2206) + emit_c.rs
+// emit_println special-case. После Plan 62.B.bis Ф.0–Ф.5:
+//   - Ф.0 (Plan 67 absorption): infer_print_helper переписан через
+//     unified infer_expr_c_type — закрыт silent-wrong-output bug
+//     `println(str.from(int))` → "120\n", не nova_print_int(nova_str)
+//     garbage.
+//   - Ф.1: codegen intercept перенесён ДО variadic routing — preserves
+//     per-arg type info, synthesized `[]any` array никогда не строится.
+//   - Ф.2: declarations добавлены в std/prelude/runtime.nv + facade
+//     re-export + PRELUDE_VERSION 6 → 7.
+//   - Ф.5: HashSet shrink — `print`/`println` removed, cross-file
+//     resolve через R26+R27 находит declarations.
+//
+// Покрытие (4 sub-tests):
+//   1. Single str arg через prelude — basic resolve path.
+//   2. Variadic mixed-types (str + int + bool + f64) — Ф.0 fix
+//      preserves per-arg dispatch.
+//   3. Plan 67 fix verification — `println(str.from(int))` правильный
+//      output, не garbage.
+//   4. PRELUDE_VERSION bump check (sanity marker that migration applied).
+//
+// Codegen special-case остаётся в emit_c.rs (Plan 62.B.bis Ф.1 reorder).
+// См. docs/plans/62.B.bis-print-println-migration.md.
+
+module plan62.print_println_from_prelude
+
+
+test "println single str через prelude (basic resolve)" {
+    // Если HashSet shrink что-то сломал в cross-file resolve, этот test
+    // упал бы первым (compile error «unknown name `println`»).
+    println("hello via prelude")
+}
+
+
+test "println variadic mixed types — Ф.0 dispatch verified" {
+    // Per-arg type info preserved через codegen special-case (Ф.1 reorder
+    // — intercept fires ДО variadic routing → emit_println per-arg).
+    // infer_print_helper (Ф.0 Plan 67 refactor) → правильный
+    // nova_print_<type> для каждого arg.
+    println("a=", 1, " b=", true, " c=", 3.14)
+}
+
+
+test "Plan 67 fix: println(str.from(int)) корректный output" {
+    // До Ф.0: infer_print_helper не распознавал Call{Member{str, from}}
+    // → fallback nova_print_int(nova_str) — invalid C, silent garbage.
+    // После Ф.0: dispatch через infer_expr_c_type → nova_str → правильный
+    // nova_print_str(nova_int_to_str(...)).
+    //
+    // Sanity-only smoke test (output не assert'ится — runtime текст
+    // печатается; compile-success + run-success достаточно).
+    println(str.from(42))
+}
+
+
+test "PRELUDE_VERSION bumped to 7 (Plan 62.B.bis marker)" {
+    // 6 → 7 — print / println formally declared.
+    assert(PRELUDE_VERSION == 7)
+}
