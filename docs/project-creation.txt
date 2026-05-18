@@ -15383,6 +15383,26 @@ Test: f45_division_modulus_zero_positive (div_by_neg_one, zero_div, zero_mod).
 TrivialBackend полное покрытие zero/identity edge cases для division/modulus.
 
 
+# Plan 33.6 Ф.46 (2026-05-18): lemma self-apply soundness fix (E2408)
+
+`lemma foo(x) { apply foo(x); ... }` — самоприменение proof: proves what
+it assumes. Это soundness gap (без strong induction guarantee). По дизайну
+error (не warning).
+
+В verify_module lemma loop через `collect_apply_stmts_in_body` собрать
+applies, проверить если `lemma_applied == ld.name` — push E2408.
+
+Test: f46_lemma_self_apply_fail (EXPECT_COMPILE_ERROR E2408).
+
+Не покрывает (V3):
+- mutual recursion (A→B, B→A) — нужна SCC analysis
+- strong induction (apply X(n-1) где n decreases) — нужна termination
+
+Регрессия: 200 → 201 PASS (+1), 0 FAIL, 44 SKIP.
+
+Lemma lint catalog теперь 11 rules.
+
+
 ## Session: оба deferred follow-up'а Plan 59 закрыты (2026-05-17 EOD+1)
 
 После merge'а Plan 63 fixes от другого agent'а — обнаружено что оба
