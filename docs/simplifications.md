@@ -9282,6 +9282,19 @@ TrivialBackend без зависимости от bounds. Что можно до
 - duplicate clauses (Ф.25.1)
 - ensures_fail без Fail (Ф.34.1)
 
+## [M-plan-33.6-Ф.43-addition-algebraic] (2026-05-18)
+
+Симметрия Ф.41 для addition: (a-b)+b → a и additive inverse a+(0-a) → 0.
+4 match arms (2 для cancel, 2 для inverse) перед commutativity sort.
+
+**TrivialBackend algebraic identities — полное покрытие base patterns:**
+- subtraction: (a+b)-b → a (Ф.41), a-a → 0, 0-(0-X) → X (Ф.28.2)
+- addition: (a-b)+b → a (Ф.43.1), a + (-a) → 0 (Ф.43.2)
+- multiplication: a*0 → 0, a*1 → a (всегда было)
+
+**Регрессия:** 197 → 198 PASS (+1), 0 FAIL.
+cargo test --lib verify::backend::trivial: 13/13 PASS (+2).
+
 ## [M-57.F.4-positive-negative-coverage] — Test expansion (2026-05-17)
 
 **Не simplification.** Прямой user feedback "тесты напиши по тому,
