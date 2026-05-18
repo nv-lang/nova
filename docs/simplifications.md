@@ -9239,6 +9239,27 @@ tautological refinement, name collision, body==ensures (Ф.40), dead lemma,
 no-params, apply к undefined, arity mismatch, auto-inference fail,
 duplicate apply.
 
+## [M-plan-33.6-Ф.41-algebraic-cancel] (2026-05-18)
+
+TrivialBackend coverage добрался до **algebraic substitution identities**:
+`(a+b)-b → a` и `(a+b)-a → b`. Раньше TrivialBackend требовал literal
+bounds для arithmetic reasoning; Ф.41 закрывает частый pattern алгебраического
+сокращения без bound information.
+
+Реализовано как 4 match arms в `simplify_app("-")`:
+- `(- (+ a b) b)` → a
+- `(- (+ a b) a)` → b
+- `(- a (+ a b))` → -b (через `simplify("-", [0, b])`)
+- `(- a (+ b a))` → -b
+
+**Регрессия:** 195 → 196 PASS (+1), 0 FAIL, 44 SKIP.
+cargo test --lib verify::backend::trivial: 11/11 PASS (+2 cancel-tests).
+
+**Pattern:** algebraic identities открывают целое направление расширений
+TrivialBackend без зависимости от bounds. Что можно добавить дальше:
+`a * 0 = 0` (уже есть), distributive `a*(b+c) = a*b + a*c` (рискованно —
+может ломать canonical form), commutativity (уже есть в `+`/`*`).
+
 ## [M-57.F.4-positive-negative-coverage] — Test expansion (2026-05-17)
 
 **Не simplification.** Прямой user feedback "тесты напиши по тому,
