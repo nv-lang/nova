@@ -220,6 +220,11 @@ fn simplify_app(op: &str, args: &[SmtTerm]) -> SmtTerm {
             (SmtTerm::IntLit(0), _) | (_, SmtTerm::IntLit(0)) => SmtTerm::IntLit(0),
             (SmtTerm::IntLit(1), b) => b.clone(),
             (a, SmtTerm::IntLit(1)) => a.clone(),
+            // Ф.44.1 (Plan 33.6): multiplication by -1 = negation.
+            // `(* -1 a)` → `(- 0 a)` и `(* a -1)` → `(- 0 a)`.
+            (SmtTerm::IntLit(-1), a) | (a, SmtTerm::IntLit(-1)) => {
+                simplify_app("-", &[SmtTerm::IntLit(0), a.clone()])
+            }
             // Ф.9.4 (Plan 33.6): commutativity для *.
             (a, b) if !matches!(a, SmtTerm::IntLit(_)) && !matches!(b, SmtTerm::IntLit(_)) => {
                 let mut sorted = vec![a.clone(), b.clone()];
@@ -1294,5 +1299,14 @@ mod tests {
         let neg = SmtTerm::App("-".into(), vec![SmtTerm::IntLit(0), a.clone()]);
         let add = SmtTerm::App("+".into(), vec![a, neg]);
         assert_eq!(simplify(&add), SmtTerm::IntLit(0));
+    }
+
+    #[test]
+    fn simplify_mul_neg_one_negates() {
+        // Ф.44.1: -1 * a → 0 - a.
+        let a = SmtTerm::Var("a".into());
+        let mul = SmtTerm::App("*".into(), vec![SmtTerm::IntLit(-1), a.clone()]);
+        let expected = SmtTerm::App("-".into(), vec![SmtTerm::IntLit(0), a]);
+        assert_eq!(simplify(&mul), expected);
     }
 }
