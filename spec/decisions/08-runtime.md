@@ -422,8 +422,8 @@ type RangeIter {
 // std/runtime/write_buffer.nv, std/runtime/read_buffer.nv (Plan 13 Ф.8;
 // раньше были в едином std/runtime/builtins.nv — REMOVED 2026-05-08).
 type StringBuilder    // UTF-8 string accumulator, @into() -> str (infallible)
-type WriteBuffer      // binary write buffer, @into() -> []byte
-type ReadBuffer       // cursor-style binary reader, view над []byte
+type WriteBuffer      // binary write buffer, @into() -> []u8
+type ReadBuffer       // cursor-style binary reader, view над []u8
 
 // Ошибка ReadBuffer — недостаточно байт для read-операции.
 type ReadBufferError
@@ -629,7 +629,7 @@ assert(key.len() == 6)
 
 ```nova
 fn str @byte_len() -> int                    // O(1) — для C-interop размеров
-fn str @bytes() -> []byte                    // copy (D73 []byte.from(s))
+fn str @bytes() -> []u8                    // copy (D73 []u8.from(s))
 ```
 
 **Конверсия в `[]byte` через D73:**
@@ -1262,7 +1262,7 @@ Bound `[U From[X]]` в generic-сигнатуре требует чтобы ко
 ```nova
 type Utf8Error | InvalidByte | UnexpectedEnd
 
-fn str.from(b []byte) Fail[Utf8Error] -> Self {
+fn str.from(b []u8) Fail[Utf8Error] -> Self {
     if !is_valid_utf8(b) {
         throw Utf8Error.InvalidByte
     }
@@ -1272,7 +1272,7 @@ fn str.from(b []byte) Fail[Utf8Error] -> Self {
 // Caller-side — три варианта:
 
 // (1) Propagate via Fail в сигнатуре caller'а:
-fn parse_message(b []byte) Fail[Utf8Error] -> Message {
+fn parse_message(b []u8) Fail[Utf8Error] -> Message {
     let s = str.from(b)              // ошибка пробрасывается
     parse_inner(s)
 }

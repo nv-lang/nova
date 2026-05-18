@@ -1,10 +1,10 @@
 // read_buffer.nv — Plan 04: ReadBuffer cursor-style binary reader.
 //
-// ReadBuffer — view над []byte с position-cursor. Pair @read_* (Fail-form)
+// ReadBuffer — view над []u8 с position-cursor. Pair @read_* (Fail-form)
 // и @try_read_* (Result-form). Endianness explicit (LE/BE).
 //
 // API:
-//   ReadBuffer.from(b []byte)
+//   ReadBuffer.from(b []u8)
 //   rb.position(), rb.remaining(), rb.has_remaining(n), rb.remaining_bytes()
 //   rb.read_byte/u8/i8/u16_le/be/... (18 fail-form methods)
 //   rb.try_read_byte/u8/i8/u16_le/be/... (18 result-form methods)
@@ -134,7 +134,7 @@ test "try_read_u32_le Ok" {
 
 test "try_read_u32_le Err на коротком буфере" {
     let mut wb = WriteBuffer.new()
-    wb.write_byte(0xFF)             // только 1 byte, нужно 4
+    wb.write_byte(0xFF)             // только 1 u8, нужно 4
     let mut rb = ReadBuffer.from(wb.into())
     let r = rb.try_read_u32_le()
     assert(r.is_err())

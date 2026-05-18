@@ -289,7 +289,7 @@ type HttpCode i32 | Ok = 200 | NotFound = 404
        | Click(x int, y int)              = 1
        | KeyPress(key str)                 = 2
        | Idle                              = 3
-       | Data { payload []byte, crc u32 } = 10
+       | Data { payload []u8, crc u32 } = 10
    ```
 
 #### Cast между sum-типом и числом
@@ -1025,7 +1025,7 @@ let opt Option[str] = "alice"                // Some("alice")
 **Коллекции:**
 
 ```nova
-type SqlValue | I(i64) | F(f64) | S(str) | B(bool) | Bytes([]byte) | Null
+type SqlValue | I(i64) | F(f64) | S(str) | B(bool) | Bytes([]u8) | Null
 
 let args []SqlValue = [42, "alice", true]    // [I(42), S("alice"), B(true)]
 
@@ -2348,7 +2348,7 @@ deposit(my_acc, 50)
 // my_acc.balance == 150 — мутация видна
 ```
 
-**Примитивы — by value.** Числа, `bool`, `char`, `byte`, `()` —
+**Примитивы — by value.** Числа, `bool`, `char`, `u8`, `()` —
 всегда копия в регистре. С `mut x int` это локальная переменная
 функции, изменения не видны вызывающему:
 
@@ -3207,7 +3207,7 @@ Generic-bound method call'ы dispatch'аются по hybrid strategy:
 - ✅ Mono path для bound methods works (HashMap.@clone() пример).
 - ✅ Vtable runtime infrastructure готова (`NovaVtable_Hashable`,
   `NovaVtable_Comparable`, `NovaVtable_Display` + 4 primitive K
-  vtables: int/bool/byte/f64/str).
+  vtables: int/bool/u8/f64/str).
 - ✅ Erased emit для bound-method-using generic methods stub'ится
   (`emit_generic_method_erased` — wider stub condition включает Array
   fields с generic inner type).
@@ -3498,4 +3498,26 @@ template<U> Wrapper<U> map(...) }` — то же. Nova bootstrap теперь п
 - [Plan 63 Fix C](../../docs/plans/63-cross-module-mono-dispatch-correctness.md#fix-c-mono-enrollment-для-anonymous-record-literal-в-generic-return)
   — remaining edge case Plan 63, закрытый этим D119.
 - [Q-generic-receiver-method](../open-questions.md#q-generic-receiver-method)
+
+---
+
+## D125. Удаление `byte`: каноническое имя — `u8`
+
+**Решение:** Тип `byte` удалён из языка. Единственное каноническое имя
+для 8-битного беззнакового целого — `u8`. Срез байт пишется `[]u8`.
+
+**Мотивация.** Наличие двух равнозначных имён (`byte` и `u8`) порождает
+неоднозначность в коде, документации и стандартной библиотеке: один и тот же
+тип можно было написать двумя способами, что усложняло чтение и тулинг.
+
+**Миграция.** Все вхождения `byte` как типа заменяются на `u8`:
+- `[]byte` → `[]u8`
+- параметры/поля типа `byte` → `u8`
+- в примитивном перечислении: `byte` убирается из списка
+
+**Исключения (не меняются):**
+- Тег шаблонных строк `` bytes`...` `` (D48) — это имя функции, не тип.
+- Слово «byte» в английском/русском тексте комментариев (единицы памяти).
+
+**Реализовано:** [Plan 68](../../docs/plans/68-byte-to-u8.md)
   — частично закрыт (user generic типы); built-in `[]T @map[U]` V2.

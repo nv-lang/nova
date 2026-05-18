@@ -859,7 +859,7 @@ type SqlBuilder { ... }      // не SQL (record с полями)
 fn StringBuilder @capacity()  -> int     // не @cap()
 fn ReadBuffer    @position()  -> int     // не @pos()
 
-fn copy_into(destination []byte) -> ()   // не dest
+fn copy_into(destination []u8) -> ()   // не dest
 fn parse(input str) -> Result[T, E]      // не buf, не val
 ```
 
@@ -1404,11 +1404,11 @@ let total = nums.fold(0, acc.@add)  // bound: добавляет каждый nu
 
 ```nova
 fn Buffer mut @write(s str) -> ()
-fn Buffer mut @write(b []byte) -> ()
+fn Buffer mut @write(b []u8) -> ()
 
 let buf = Buffer.new()
 let f1 = buf.@write as fn(str) -> ()      // выбор по annotation
-let f2 = buf.@write as fn([]byte) -> ()
+let f2 = buf.@write as fn([]u8) -> ()
 ```
 
 Без annotation — compile error «ambiguous method value». Annotation
