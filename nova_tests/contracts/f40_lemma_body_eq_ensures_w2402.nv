@@ -1,0 +1,21 @@
+// Ф.40.1 (Plan 33.6): lemma body буквально совпадает с ensures → W2402.
+// EXPECT_COMPILE_WARNING W2402
+
+module contracts.f40_lemma_body_eq_ensures_w2402
+
+// body `x * 2` совпадает с ensures result == x * 2 (ensures говорит result == BODY).
+// Не нарушение — SMT доказывает trivially. Программист скорее всего хотел
+// нетривиальную proof chain (calc { } или apply other_lemma).
+lemma trivial_double(x int)
+    requires x >= 0
+    ensures x * 2 >= 0
+=> x * 2 >= 0
+
+#verify
+fn caller(x int) -> int
+    requires x >= 0
+    ensures result >= 0
+{
+    apply trivial_double(x)
+    x * 2
+}
