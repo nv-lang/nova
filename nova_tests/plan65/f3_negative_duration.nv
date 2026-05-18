@@ -1,0 +1,20 @@
+// Plan 65 R18 f3: ChanReader.close_after с negative Duration → runtime panic.
+// EXPECT_RUNTIME_PANIC negative duration
+//
+// Validates AD3 / R4 — runtime helper `nova_chan_reader_close_after_ns`
+// rejects ns < 0 with `fprintf+abort` (no UB, no silent zero-wait).
+
+module plan65.f3_negative_duration
+
+import std.time.duration
+
+fn main() -> () {
+    let neg = Duration.from_nanos(-1)
+    supervised {
+        spawn {
+            // Should panic before recv returns.
+            let _t = ChanReader.close_after(neg)
+            println("unreachable")
+        }
+    }
+}

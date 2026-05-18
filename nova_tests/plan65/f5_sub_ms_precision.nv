@@ -1,0 +1,27 @@
+// Plan 65 R18 f5: sub-ms Duration rounds up to ≥ 1ms.
+// Validates AD3 / R6 — sub-ms input is honoured as ≥ 1ms wait, never
+// rounded down to 0 (which would silently zero-wait).
+//
+// Positive: 500_000 ns (500 μs) input → actual delay ≥ 1ms.
+
+module plan65.f5_sub_ms_precision
+
+import std.time.duration
+
+test "500_000 ns Duration triggers at least 1ms delay" {
+    let mut elapsed_ok = false
+    supervised {
+        spawn {
+            let start = Time.now()
+            let t = ChanReader.close_after(Duration.from_nanos(500_000))
+            // recv blocks until timer fires (rounded to 1ms)
+            let _v = t.recv()
+            let after = Time.now()
+            // Time.now() returns monotonic ms. delta_ms >= 1 expected; allow
+            // small slack for scheduler jitter. Mostly we want to assert
+            // it's NOT 0 (which would prove rounding-down regression).
+            elapsed_ok = (after - start) >= 1
+        }
+    }
+    assert(elapsed_ok)
+}
