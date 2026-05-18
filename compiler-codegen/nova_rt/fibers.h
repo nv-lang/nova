@@ -271,6 +271,19 @@ typedef struct {
     void**  ctx_pins;
     int     ctx_pins_count;
     int     ctx_pins_cap;
+    /* Plan 65 Ф.10: reverse-pointer back to the CancelToken currently bound
+     * to this scope. Set in nova_cancel_token_bind, cleared in unbind.
+     * Used by runtime to discover the cancel-token from inside arbitrary
+     * blocking-resource constructors (e.g. ChanReader.close_after timers)
+     * without threading the token through every call site.
+     *
+     * NULL = scope has no bound cancel-token (top-level main, or
+     * supervised { ... } without `cancel:` arg). Resource constructors
+     * gracefully skip cancel-registration in that case.
+     *
+     * Forward-declared as void* — actual type is `NovaCancelToken*` (declared
+     * after this struct). Set/cleared via nova_cancel_token_bind/unbind. */
+    void*   bound_token;
 } NovaFiberQueue;
 
 /* Plan 22 Ф.3 (D93) + Ф.7 + Ф.8: NovaSchedState typedef.
@@ -505,6 +518,15 @@ static inline void nova_scope_pin_ctx(NovaFiberQueue* scope, void* ctx) {
  *  - linked[] — динамический список токенов-каскадов: при cancel() этого
  *    токена каскадно отменяются они. Растёт геометрически; GC-managed
  *    (nova_alloc), чтобы хранимые указатели не давали GC собрать цели. */
+/* Plan 65 Ф.10: resource cleanup callback registered against a CancelToken.
+ * Invoked from nova_cancel_token_cancel_reason. Callback receives the
+ * resource handle (e.g. NovaAfterState* for a close_after timer) and is
+ * responsible for stopping/closing the underlying OS resource.
+ *
+ * Idempotent: caller MUST tolerate being called twice (one cancel may race
+ * with the resource's own natural completion path). */
+typedef void (*NovaCancelResourceCb)(void* handle);
+
 typedef struct NovaCancelToken {
     nova_bool                 cancel_requested;  /* intent: был ли cancel() */
     NovaFiberQueue*           bound_scope;       /* live scope, либо NULL */
@@ -524,6 +546,16 @@ typedef struct NovaCancelToken {
      * codegen эмитит wrapper который unbox'ит B, вызывает A.from(b),
      * box'ит A. */
     void*                  (**linked_converters)(void*);
+    /* Plan 65 Ф.10: cancel-aware resource list (timers, file handles, etc).
+     * При cancel() — каждый callback вызывается с соответствующим handle.
+     * Используется ChanReader.close_after timers для cleanup без firing.
+     *
+     * Параллельные arrays — растут вместе. NULL handle/cb skip'аются (lazy
+     * de-registration mark). GC-managed (nova_alloc). */
+    void**                    cleanup_handles;
+    NovaCancelResourceCb*     cleanup_cbs;
+    int                       cleanup_count;
+    int                       cleanup_cap;
 } NovaCancelToken;
 
 /* Аллокация GC-managed токена. nova_alloc zero-инициализирует — все поля
@@ -543,6 +575,8 @@ static inline void nova_cancel_token_bind(NovaCancelToken* t, NovaFiberQueue* q)
         abort();
     }
     t->bound_scope = q;
+    /* Plan 65 Ф.10: reverse-pointer for resource cancel-registration lookup. */
+    q->bound_token = (void*)t;
     /* cancel-before-bind: pending intent пробрасывается в новый scope.
      * Plan 49 Ф.2: reason тоже копируется чтобы nova_fiber_yield увидел
      * её при throw'е CANCEL. */
@@ -558,7 +592,60 @@ static inline void nova_cancel_token_bind(NovaCancelToken* t, NovaFiberQueue* q)
  * помнит, что был отменён. */
 static inline void nova_cancel_token_unbind(NovaCancelToken* t) {
     if (!t) return;
+    /* Plan 65 Ф.10: clear reverse-pointer too. */
+    if (t->bound_scope) {
+        t->bound_scope->bound_token = NULL;
+    }
     t->bound_scope = NULL;
+}
+
+/* Plan 65 Ф.10: register cancel-aware resource. Returns slot index for
+ * later unregister (>= 0), or -1 on failure. Idempotent only at the
+ * caller's discretion (re-register with same handle creates a 2nd slot).
+ *
+ * Если token уже cancelled — cb вызывается immediately и регистрация
+ * skip'ается (handle бесполезно держать в списке для уже-cancelled token'а).
+ * Slot index в этом случае возвращается == -1.
+ *
+ * Growth strategy: геометрический (×2), GC-managed массивы. */
+static inline int nova_cancel_token_register_resource(NovaCancelToken* t,
+                                                      void* handle,
+                                                      NovaCancelResourceCb cb) {
+    if (!t || !cb || !handle) return -1;
+    if (t->cancel_requested) {
+        /* Late registration: token уже cancelled — выполняем cleanup
+         * сразу, не записываем в список. */
+        cb(handle);
+        return -1;
+    }
+    if (t->cleanup_count >= t->cleanup_cap) {
+        int new_cap = t->cleanup_cap > 0 ? t->cleanup_cap * 2 : 4;
+        void** new_handles = (void**)nova_alloc(sizeof(void*) * new_cap);
+        NovaCancelResourceCb* new_cbs = (NovaCancelResourceCb*)nova_alloc(sizeof(NovaCancelResourceCb) * new_cap);
+        for (int i = 0; i < t->cleanup_count; i++) {
+            new_handles[i] = t->cleanup_handles[i];
+            new_cbs[i]     = t->cleanup_cbs[i];
+        }
+        for (int i = t->cleanup_count; i < new_cap; i++) {
+            new_handles[i] = NULL;
+            new_cbs[i]     = NULL;
+        }
+        t->cleanup_handles = new_handles;
+        t->cleanup_cbs     = new_cbs;
+        t->cleanup_cap     = new_cap;
+    }
+    int slot = t->cleanup_count++;
+    t->cleanup_handles[slot] = handle;
+    t->cleanup_cbs[slot]     = cb;
+    return slot;
+}
+
+/* Plan 65 Ф.10: unregister cancel resource (timer fired naturally, etc).
+ * Idempotent — slot может быть уже -1 или соответствовать уже-cleared entry. */
+static inline void nova_cancel_token_unregister_resource(NovaCancelToken* t, int slot) {
+    if (!t || slot < 0 || slot >= t->cleanup_count) return;
+    t->cleanup_handles[slot] = NULL;
+    t->cleanup_cbs[slot]     = NULL;
 }
 
 /* Запросить отмену с типизированной причиной (Plan 49 Ф.1). `reason_ptr` —
@@ -571,6 +658,20 @@ static inline void nova_cancel_token_cancel_reason(NovaCancelToken* t, void* rea
     t->cancel_requested = true;
     t->reason_ptr = reason_ptr;
     t->has_reason = true;
+    /* Plan 65 Ф.10: invoke registered cancel-resource cleanup callbacks
+     * (timers, FDs, etc.) BEFORE waking parked fibers — так resource
+     * shutdown viewable как atomic с cancel propagation. */
+    for (int i = 0; i < t->cleanup_count; i++) {
+        if (t->cleanup_cbs[i] && t->cleanup_handles[i]) {
+            NovaCancelResourceCb cb = t->cleanup_cbs[i];
+            void* h = t->cleanup_handles[i];
+            /* Clear slot BEFORE invoking, so a cb that calls unregister
+             * (idempotent path) sees a no-op. */
+            t->cleanup_handles[i] = NULL;
+            t->cleanup_cbs[i]     = NULL;
+            cb(h);
+        }
+    }
     if (t->bound_scope) {
         t->bound_scope->cancel_requested = true;
         /* Plan 49 Ф.2: пропагируем reason в scope queue чтобы nova_fiber_yield
