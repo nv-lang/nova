@@ -9,11 +9,14 @@
 //     Ordering перенесены в std/prelude/core.nv).
 //   - 62.B/C/D non-opaque/E reused version 2.
 //   - 62.F bump 2 → 3 + **Plan 62 closure** (effects.Fail[E] added).
+//   - 62.D non-opaque bis-1 bump 3 → 4: Range / RangeIter теперь
+//     re-export'ятся через prelude facade, 4 latent codegen bugs закрыты.
 // См. docs/plans/62-prelude-hardcode-migration.md.
 
 module modules.prelude_auto_import
 
 test "PRELUDE_VERSION доступен без import" {
-    // Plan 62.F: bump до 3 (effects.Fail[E] declared, Plan 62 closed).
-    assert(PRELUDE_VERSION == 3)
+    // Plan 62.D bis-1: bump до 4 (Range / RangeIter теперь auto-available
+    // через prelude facade, 4 latent codegen bugs закрыты).
+    assert(PRELUDE_VERSION == 4)
 }

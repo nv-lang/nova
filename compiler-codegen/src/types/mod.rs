@@ -114,14 +114,175 @@ pub fn check_module(module: &Module) -> Result<ModuleEnv, Vec<Diagnostic>> {
         }
     }
 
+    // Plan 62.D bis-1 (2026-05-18, D29 W_PRELUDE_SHADOW basic):
+    // Determine which items in `module.items` came from imports (vs the
+    // user's own entry file) — these are conflict candidates for D29 lint
+    // and for the "codegen-completeness invisible merge" detection.
+    //
+    // The merge logic in `imports.rs` is two-phase:
+    //   - `merged_items` (→ `module.items`): ALL items from imported peer
+    //     modules are pulled in for codegen completeness (e.g. typedef'ы
+    //     should be available even if not selectively imported). This
+    //     causes apparent name conflicts when the user re-declares a name
+    //     that's in a merged-but-not-visible item.
+    //   - `imported_item_names` (per-peer): names actually VISIBLE to the
+    //     user via explicit imports + selective re-exports. This is the
+    //     proper "what does user see" set.
+    //
+    // D29 rule (W_PRELUDE_SHADOW basic): user declarations that conflict
+    // with names brought in via prelude auto-import → warning (not error).
+    // User declarations that conflict with codegen-only merged items (not
+    // user-visible) → silently accept user's declaration.
+    //
+    // We collect entry-visible names via prelude into `prelude_visible_names`;
+    // items in `module.items` NOT in this set AND NOT in user's own
+    // `items_here` are codegen-only merges — silently allowed to be
+    // shadowed by user code.
+    //
+    // Detection of "prelude-brought-in":
+    //   Pass 1: names declared directly in `std/prelude/*` or
+    //   `std/prelude.nv` peer files (items_here of those peers).
+    //   Pass 2: names re-exported through prelude facade via selective
+    //   `export import X.{A, B}` lists in prelude peer imports. The
+    //   re-exported alias (if any) is the visible name.
+    //
+    // Without this fix, enabling `export import
+    // std.collections.range.{Range, RangeIter}` in `std/prelude.nv` broke
+    // `nova_tests/syntax/for_in_range_iter.nv` (which locally declares
+    // `type Range` and `type StepRangeIter`).
+    //
+    // Note: full W_PRELUDE_SHADOW lint with structured diagnostic message,
+    // suppress-attribute, and per-name filtering is Plan 62.F.bis Ф.2 scope.
+    // This change implements only the basic downgrade-to-warning needed to
+    // unblock Range re-export through the prelude facade.
+    let prelude_visible_names: HashSet<String> = {
+        let mut s: HashSet<String> = HashSet::new();
+        // Pass 1: names declared directly in prelude peer files.
+        for pf in &module.peer_files {
+            if pf.is_entry_module { continue; }
+            let path_str = pf.path.to_string_lossy().replace('\\', "/");
+            let is_prelude_peer = path_str.contains("/std/prelude/")
+                || path_str.ends_with("/std/prelude.nv");
+            if !is_prelude_peer { continue; }
+            for it in &pf.items_here {
+                match it {
+                    Item::Type(td) => { s.insert(td.name.clone()); }
+                    Item::Fn(fd) => {
+                        let key = match &fd.receiver {
+                            Some(r) => format!("{}.{}", r.type_name, fd.name),
+                            None => fd.name.clone(),
+                        };
+                        s.insert(key);
+                    }
+                    Item::Const(cd) => { s.insert(cd.name.clone()); }
+                    _ => {}
+                }
+            }
+        }
+        // Pass 2: names re-exported through prelude facade via selective list.
+        for pf in &module.peer_files {
+            if pf.is_entry_module { continue; }
+            let path_str = pf.path.to_string_lossy().replace('\\', "/");
+            let is_prelude_peer = path_str.contains("/std/prelude/")
+                || path_str.ends_with("/std/prelude.nv");
+            if !is_prelude_peer { continue; }
+            for imp in &pf.imports {
+                if !imp.is_export { continue; }
+                if let Some(items) = &imp.items {
+                    for it in items {
+                        // Use alias if present (the visible name); else original.
+                        s.insert(it.alias.clone().unwrap_or_else(|| it.name.clone()));
+                    }
+                }
+                // Note: wildcard `export import X.*` is rejected per Plan 35
+                // R25, so `imp.items == None` (broad re-export) doesn't arise
+                // for prelude in practice.
+            }
+        }
+        s
+    };
+
+    // Set of names contributed by NON-entry peer files (i.e., merged from
+    // imports). Names here may or may not be VISIBLE to user code (see
+    // `prelude_visible_names` for the visibility subset that's a D29 lint
+    // target). Used to detect "codegen-only merge" shadowing — when user
+    // re-declares a name that's in merged_from_imports_names but NOT in
+    // prelude_visible_names, the user's declaration silently wins (the
+    // merged item was only there for codegen completeness, not user-visible).
+    let merged_from_imports_names: HashSet<String> = {
+        let mut s: HashSet<String> = HashSet::new();
+        for pf in &module.peer_files {
+            if pf.is_entry_module { continue; }
+            for it in &pf.items_here {
+                match it {
+                    Item::Type(td) => { s.insert(td.name.clone()); }
+                    Item::Fn(fd) => {
+                        let key = match &fd.receiver {
+                            Some(r) => format!("{}.{}", r.type_name, fd.name),
+                            None => fd.name.clone(),
+                        };
+                        s.insert(key);
+                    }
+                    Item::Const(cd) => { s.insert(cd.name.clone()); }
+                    _ => {}
+                }
+            }
+        }
+        s
+    };
+
+    /// Classify a duplicate top-level name:
+    ///   - `Some(true)` → name is visible via prelude → W_PRELUDE_SHADOW warn
+    ///   - `Some(false)` → name is merged-from-imports (codegen-only, not
+    ///     user-visible) → silent (user wins)
+    ///   - `None` → genuine duplicate (e.g. user code declared same name twice)
+    ///     → error
+    let classify_dup = |name: &str| -> Option<bool> {
+        if prelude_visible_names.contains(name) { Some(true) }
+        else if merged_from_imports_names.contains(name) { Some(false) }
+        else { None }
+    };
+
     for item in &module.items {
         match item {
             Item::Type(td) => {
                 if !names.insert(td.name.clone()) {
-                    errors.push(Diagnostic::new(
-                        format!("duplicate top-level name `{}`", td.name),
-                        td.span,
-                    ));
+                    // Plan 62.D bis-1: classify the duplicate per D29.
+                    match classify_dup(&td.name) {
+                        Some(true) => {
+                            // Visible via prelude → W_PRELUDE_SHADOW warning.
+                            // User code wins; the prelude binding is shadowed
+                            // (still reachable as `std.prelude.<sub>.<name>`).
+                            // Full lint structure (suppress-attr, severity
+                            // config) — Plan 62.F.bis Ф.2. stderr matches
+                            // existing warning convention (emit_c.rs:5276/6415,
+                            // parser warnings).
+                            eprintln!(
+                                "warning: [W_PRELUDE_SHADOW] top-level name `{}` \
+                                 shadows a declaration auto-imported from \
+                                 std.prelude (D29). User declaration wins; \
+                                 qualify as `std.prelude.<sub>.{}` to reference \
+                                 the prelude version. To suppress this lint, add \
+                                 `no_prelude` or `partial_prelude(...)` to the \
+                                 module declaration (Plan 62.F).",
+                                td.name, td.name
+                            );
+                            env.types.insert(td.name.clone(), td.clone());
+                            continue;
+                        }
+                        Some(false) => {
+                            // Codegen-only merge (not user-visible). User's
+                            // declaration silently wins.
+                            env.types.insert(td.name.clone(), td.clone());
+                            continue;
+                        }
+                        None => {
+                            errors.push(Diagnostic::new(
+                                format!("duplicate top-level name `{}`", td.name),
+                                td.span,
+                            ));
+                        }
+                    }
                 }
                 env.types.insert(td.name.clone(), td.clone());
             }
@@ -159,27 +320,92 @@ pub fn check_module(module: &Module) -> Result<ModuleEnv, Vec<Diagnostic>> {
                         _ => false,
                     }
                 });
-                if let Some(prev) = dup_existing {
-                    errors.push(Diagnostic::new(
-                        format!(
-                            "duplicate definition `{}` with same signature \
-                             (overload requires distinct param types, arity, РёР»Рё return type вЂ” \
-                             СЃРј. D84); previous definition has identical params and return type",
-                            key
-                        ),
-                        fd.span,
-                    ));
-                    let _ = prev; // silence unused
+                if dup_existing.is_some() {
+                    // Plan 62.D bis-1: D29 — duplicate fn signature shadowing
+                    // a prelude-imported definition → warning (not error).
+                    // E.g. `fn Range @step_by(int) -> StepRangeIter` declared
+                    // in both user file and the merged-via-prelude
+                    // std/collections/range.nv. User wins.
+                    let dup_pos = entry.iter().position(|existing| {
+                        let args_equal = existing.params.len() == fd.params.len()
+                            && existing.params.iter().zip(new_arg_tys.iter())
+                                .all(|(p, new_ty)| typeref_equal(&p.ty, new_ty));
+                        if !args_equal { return false; }
+                        match (&existing.return_type, &fd.return_type) {
+                            (None, None) => true,
+                            (Some(a), Some(b)) => typeref_equal(a, b),
+                            _ => false,
+                        }
+                    });
+                    match classify_dup(&key) {
+                        Some(true) => {
+                            eprintln!(
+                                "warning: [W_PRELUDE_SHADOW] definition `{}` \
+                                 shadows a declaration auto-imported from \
+                                 std.prelude (D29). User declaration wins; \
+                                 qualify call-site as `std.prelude.<sub>.<name>` \
+                                 to reach the prelude version. To suppress this \
+                                 lint, add `no_prelude` or `partial_prelude(...)` \
+                                 to the module declaration (Plan 62.F).",
+                                key
+                            );
+                            if let Some(pos) = dup_pos {
+                                entry[pos] = fd.clone();
+                            }
+                            continue;
+                        }
+                        Some(false) => {
+                            // Codegen-only merge — silent shadow.
+                            if let Some(pos) = dup_pos {
+                                entry[pos] = fd.clone();
+                            }
+                            continue;
+                        }
+                        None => {
+                            errors.push(Diagnostic::new(
+                                format!(
+                                    "duplicate definition `{}` with same signature \
+                                     (overload requires distinct param types, arity, или return type — \
+                                     см. D84); previous definition has identical params and return type",
+                                    key
+                                ),
+                                fd.span,
+                            ));
+                        }
+                    }
                 } else {
                     entry.push(fd.clone());
                 }
             }
             Item::Const(cd) => {
                 if !names.insert(cd.name.clone()) {
-                    errors.push(Diagnostic::new(
-                        format!("duplicate top-level name `{}`", cd.name),
-                        cd.span,
-                    ));
+                    // Plan 62.D bis-1: same prelude-shadow rule as for types.
+                    match classify_dup(&cd.name) {
+                        Some(true) => {
+                            eprintln!(
+                                "warning: [W_PRELUDE_SHADOW] top-level name `{}` \
+                                 shadows a declaration auto-imported from \
+                                 std.prelude (D29). User declaration wins; \
+                                 qualify as `std.prelude.<sub>.{}` to reference \
+                                 the prelude version. To suppress this lint, add \
+                                 `no_prelude` or `partial_prelude(...)` to the \
+                                 module declaration (Plan 62.F).",
+                                cd.name, cd.name
+                            );
+                            env.consts.insert(cd.name.clone(), cd.clone());
+                            continue;
+                        }
+                        Some(false) => {
+                            env.consts.insert(cd.name.clone(), cd.clone());
+                            continue;
+                        }
+                        None => {
+                            errors.push(Diagnostic::new(
+                                format!("duplicate top-level name `{}`", cd.name),
+                                cd.span,
+                            ));
+                        }
+                    }
                 }
                 env.consts.insert(cd.name.clone(), cd.clone());
             }

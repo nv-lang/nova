@@ -68,13 +68,30 @@ export import std.prelude.errors.{RuntimeError, DivByZero, Overflow, IndexOutOfB
 // напрямую, protocol declaration не enforced на type annotations).
 export import std.prelude.collections.{Iter}
 
-// Plan 62.D non-opaque (TEMPORARILY DISABLED for diagnosis): re-export
-// Range / RangeIter из std.collections.range. Включение этой строки
-// вызывает 4 регрессии (cancel_semantics_test, closure_rev,
+// Plan 62.D non-opaque bis-1 (2026-05-18): re-export Range / RangeIter из
+// std.collections.range. Раньше (Plan 62.D non-opaque) эта строка
+// триггерила 4 регрессии (cancel_semantics_test, closure_rev,
 // p48_closure_arg_inference, for_in_range_iter) — auto-availability
-// Range через prelude триггерит latent codegen bugs. Diagnosis ниже.
+// Range через prelude exposed 4 latent codegen bugs. Все четыре закрыты
+// в Plan 62.D bis-1:
+//   1. Match inference (Nova_Range* vs nova_str) — pattern bindings
+//      installed в infer_expr_c_type(Match) через
+//      pattern_binding_overrides RefCell (emit_c.rs:18936+).
+//   2. Closure capture inner-shadowing — scope-aware
+//      collect_truly_free_idents (emit_c.rs:16621+) respects inner let-
+//      bindings и lambda params; используется в emit_lambda.
+//   3. Closure mono'd arg-name drop — закрыт тем же fix #2 (same root
+//      cause: misnamed `collect_free_idents` собирал ВСЕ идентификаторы,
+//      включая inner-bound).
+//   4. D29 user-shadow — duplicate top-level имена пришедшие через
+//      prelude теперь warning W_PRELUDE_SHADOW (types/mod.rs:117+),
+//      codegen skip'ает merged duplicates при наличии user-declaration
+//      (emit_c.rs:1300+).
 //
-// export import std.collections.range.{Range, RangeIter}
+// Auto-import: user-modules видят `Range`/`RangeIter` без явного import.
+// Existing cross-file imports (`import std.collections.range.{Range}`) —
+// продолжают работать (selective re-export не блокирует direct import).
+export import std.collections.range.{Range, RangeIter}
 
 // Plan 62.E: re-export conversion / equality / hashing / ordering /
 // display protocols из std.prelude.protocols. From/Into/Hashable/
@@ -110,9 +127,13 @@ export import std.prelude.effects.{Fail}
 ///     Plan 62.D non-opaque reused version 2 (Iter[T] added).
 ///     Plan 62.E reused version 2 (protocols added).
 ///   - 3 = Plan 62.F done (effects.Fail[E] added) + **Plan 62 closed**.
-///     Это финальный bump phase'а Plan 62; следующие bump'ы — из
-///     deferred sub-plans (62.A.bis sum_schemas removal, 62.B.bis
-///     print/println, 62.C.bis RuntimeNoneError, 62.D.bis opaque types,
-///     62.E.bis TryFrom/TryInto, etc.) когда они закроются.
+///   - 4 = Plan 62.D non-opaque bis-1 done: Range / RangeIter теперь
+///     auto-available через prelude facade (re-export из
+///     std.collections.range), 4 latent codegen bugs закрыты
+///     (match inference + closure scope analysis + D29 W_PRELUDE_SHADOW).
+///     Следующие bump'ы — из других deferred sub-plans (62.A.bis
+///     sum_schemas removal, 62.B.bis print/println, 62.C.bis
+///     RuntimeNoneError, 62.D.bis opaque types, 62.E.bis TryFrom/TryInto,
+///     etc.) когда они закроются.
 #stable(since = "0.1")
-export const PRELUDE_VERSION int = 3
+export const PRELUDE_VERSION int = 4
