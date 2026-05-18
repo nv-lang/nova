@@ -261,8 +261,47 @@ fn critical(...) -> Result =>
 > auto-импортирует `std/prelude.nv` если файл существует — это
 > opt-in mechanism для расширения prelude из пользовательского кода
 > (или для миграции hardcoded items в file-based form). Bootstrap MVP:
-> `std/prelude.nv` содержит placeholder `PRELUDE_VERSION = 1`. Полная
-> миграция hardcoded → file-based — future work.
+> `std/prelude.nv` содержит placeholder `PRELUDE_VERSION = 1`.
+>
+> **Plan 62 (закрыт 2026-05-18, `PRELUDE_VERSION = 3`):** большая часть
+> prelude мигрирована в file-based декларации `std/prelude/*.nv`:
+> - `std/prelude/core.nv` — `Option`/`Result`/`Some`/`None`/`Ok`/`Err`/
+>   `Error`/`Ordering` (`Never` deferred — bootstrap parser
+>   ограничение).
+> - `std/prelude/runtime.nv` — `panic`/`exit`/`assert`/`debug_assert`
+>   (`print`/`println` deferred — variadic dispatch требует
+>   compiler-side overload resolution, Plan 67).
+> - `std/prelude/errors.nv` — `RuntimeError` (6 variants) +
+>   `ReadBufferError` (`RuntimeNoneError` deferred — bootstrap parser
+>   не поддерживает empty-body sum syntax).
+> - `std/prelude/collections.nv` — `Iter[T]` formal protocol declaration.
+> - `std/prelude/protocols.nv` — `From`/`Into`/`Hashable`/`Equatable`/
+>   `Comparable`/`Display` (6 formal protocols; `TryFrom`/`TryInto`
+>   deferred — Plan 56 Ф.2.7 effect-row enforcement).
+> - `std/prelude/effects.nv` — `Fail[E]` formal effect declaration.
+>
+> **Plan 62.D bis-1 (закрыт 2026-05-18, `PRELUDE_VERSION = 4`):**
+> `Range` / `RangeIter` re-export через prelude facade из
+> `std.collections.range`. Раньше эта строка триггерила 4 latent
+> codegen bugs (закрыты в bis-1).
+>
+> **Plan 62.F.bis (закрыт 2026-05-18, `PRELUDE_VERSION = 5`):**
+> - **Edition versioning** (D124): `[package].edition = "2026.05"` в
+>   `nova.toml` → resolver auto-импортирует `std/prelude/e2026_05.nv`
+>   вместо rolling facade. Mirror Rust's `edition = "2021"`. См.
+>   [D124](#d124-edition-versioned-prelude-resolver).
+> - **Structured W_PRELUDE_SHADOW lint** (D125): user-declaration
+>   shadowing prelude-imported имени → structured lint warning через
+>   `lints::lint_prelude_shadow`. Suppress: `module X
+>   allow_prelude_shadow` clause. См. [D125](#d125-prelude-shadow-warning-lint).
+> - **`Time`/`Mem` formal effect declarations** добавлены в
+>   `std/prelude/effects.nv` (codegen dispatch неизменен через
+>   pre-registered `effect_schemas`).
+>
+> **Remaining deferred:** `Never`/`RuntimeNoneError` (bootstrap parser),
+> `print`/`println` (Plan 67 variadic), `StringBuilder`/`WriteBuffer`/
+> `ReadBuffer` opaque types (Plan 62.D.bis — требует `external type`
+> D-block), `TryFrom`/`TryInto` (Plan 62.E.bis — требует Plan 56 fix).
 
 ### Правило
 
@@ -2858,3 +2897,159 @@ Codegen: `prim_builtin_method(c_ty, method)` в `emit_c.rs` перехватыв
 - [D26 — stdlib](08-runtime.md#d26) — примитивные методы часть runtime stdlib.
 - [docs/plans/48-closures-in-generics.md → Ф.8](../../docs/plans/48-closures-in-generics.md)
   — реализация.
+
+## D124. Edition-versioned prelude resolver
+
+### Что
+
+`[package].edition = "<X.Y>"` в `nova.toml` — pin prelude content на
+конкретный snapshot. Resolver выбирает `std/prelude/<sanitized(<X.Y>)>.nv`
+вместо rolling `std/prelude.nv` facade.
+
+**Sanitization rules** (`manifest::sanitize_edition`):
+- Не-alphanumeric ASCII → `_` (e.g. `2026.05` → `2026_05`).
+- Digit-leading prefix → `e` (e.g. `2026_05` → `e2026_05`), потому что
+  Nova-identifier должен начинаться с буквы / `_`.
+- Empty input → empty output (caller-side responsibility).
+
+**Examples:**
+- `edition = "2026.05"` → `std/prelude/e2026_05.nv`
+- `edition = "nightly"` → `std/prelude/nightly.nv`
+- `edition = "v1-beta"` → `std/prelude/v1_beta.nv`
+
+**Fallback chain** (resolver-side):
+1. Edition pin: `std/prelude/<sanitized>.nv` — если файл существует,
+   import path = `["std", "prelude", "<sanitized>"]`.
+2. Rolling facade: `std/prelude.nv` — backward-compat default (нет
+   edition в манифесте, или edition pin не найден).
+
+**Soft-fail:** edition specified, но файла нет → silently fall back на
+rolling facade (не блокируем build, user может указать pin без файла
+для будущего расширения).
+
+### Правило
+
+```toml
+# nova.toml
+[package]
+name = "myapp"
+edition = "2026.05"
+```
+
+→ Все модули в `myapp` auto-импортируют `std/prelude/e2026_05.nv`
+вместо rolling `std/prelude.nv`. Будущие изменения rolling facade
+(новые re-export'ы, signature drift) НЕ затрагивают packages с
+pinned edition — они видят фиксированный snapshot.
+
+### Зачем
+
+- **Industry-standard pinning.** Rust `edition = "2021"`, Go `go 1.21`,
+  Swift package `swift-tools-version` — stability через explicit pin.
+- **Migration safety.** Maintainer'ы prelude могут add'ить re-export'ы
+  в rolling facade без breaking changes для users с pinned edition.
+- **AI-friendly.** LLM-генерируемый код с stable edition → reproducible.
+
+### Что отвергнуто
+
+- **Universal pin через one global rolling.** Без edition future
+  изменения prelude (например new re-export shadowing user-type) ломают
+  существующие packages. Edition pin даёт opt-out из rolling.
+- **Multi-edition support в одном workspace.** Каждый package имеет
+  одну edition; transitive deps могут иметь свои edition'ы независимо.
+- **Auto-migrate workflow.** Edition bump — explicit decision package
+  owner'а (как Rust `cargo fix --edition`). Tooling может предложить,
+  но не auto-apply.
+
+### Связь
+
+- [D26 — stdlib и prelude](#d26) — base prelude content.
+- [D78 — package tooling](07-modules.md#d78) — `nova.toml` schema.
+- [Plan 62.F.bis Ф.1](../../docs/plans/62.F.bis-edition-shadow-and-runtime-effects.md)
+  — implementation.
+
+## D125. Prelude shadow warning lint
+
+### Что
+
+`W_PRELUDE_SHADOW` — structured lint warning эмитимый когда
+user-declaration top-level имени shadow'ит prelude-imported name
+(D26, D29). User-declaration wins (silent shadow), warning сигнализирует
+о потенциальной AI/training confusion.
+
+**Эмиттер:** `lints::lint_prelude_shadow` (lints.rs::lint_module
+включает его в общий проход). LintWarning имеет:
+- `rule = "W_PRELUDE_SHADOW"` (grep'абельно из CLI и для
+  `EXPECT_COMPILE_WARNING` matching в `nova test`).
+- `diag.message` начинается с `[W_PRELUDE_SHADOW]` tag (для rendering
+  через `diag.render` — `rule` поле не leak'ит в текст автоматически).
+- Actionable hint: `qualify as std.prelude.<sub>.<name>` или
+  `add allow_prelude_shadow / no_prelude / partial_prelude(...)`.
+
+**Visibility detection:** `lints::collect_prelude_visibility` — shared
+helper между `types::check_module` (silent classify duplicates как
+W_PRELUDE_SHADOW vs codegen-only merge) и `lint_prelude_shadow`
+(structured warning emission). 2-pass:
+1. Names declared directly в `std/prelude/*.nv` peer files (включая
+   `std/prelude.nv` facade себя).
+2. Names re-exported через `export import X.{A, B as C}` selective list.
+
+**Suppress mechanisms:**
+- **Module-level clause** `module X allow_prelude_shadow` — silences
+  ALL W_PRELUDE_SHADOW warnings в модуле. См.
+  [07-modules.md → Allow prelude shadow](07-modules.md#allow-prelude-shadow-plan-62fbis-2026-05-18).
+- **Prelude self-modules** (`std.prelude.*`, `<pkg>.prelude.*`) —
+  automatically skipped (они LEGITIMATELY declare prelude names).
+- **Item-level suppress** (`#[allow(prelude_shadow)] type Foo`) —
+  DEFERRED (требует generic attribute parser; пока не приоритет).
+
+### Правило
+
+```nova
+module myapp.dsl
+
+// Conflict: PRELUDE_VERSION auto-imported via std/prelude.nv;
+// user-decl wins (codegen skips merged duplicate via Const-skip path),
+// W_PRELUDE_SHADOW emitted.
+const PRELUDE_VERSION int = 42  // → warning
+```
+
+```nova
+module myapp.dsl allow_prelude_shadow
+
+// Same conflict, suppress'нут (warning не эмитится).
+const PRELUDE_VERSION int = 42  // → silent
+```
+
+### Зачем
+
+- **AI/training clarity.** LLM-generated code часто случайно shadow'ит
+  prelude names (e.g. local `type Result { ... }`). Warning catches it
+  early; explicit suppress сигнализирует intentional override.
+- **Migration safety.** Если будущий prelude bump добавит новое имя
+  (e.g. `From`/`Into` в Plan 62.E), existing user-decl с тем же именем
+  получит warning — обнаружение early-stage.
+- **Не error.** Sometimes shadowing намеренно (DSL слой, embedded);
+  warning + suppress даёт user-выбор vs hard block.
+
+### Что отвергнуто
+
+- **Hard error.** Per D5 / D26: user wins на conflict — shadowing
+  допустим как backward-compat механизм. Error блокировал бы legitimate
+  DSL use-cases.
+- **Codegen-only merge как warning.** Когда prelude impl-merge подтягивает
+  type не visible в user код (e.g. internal struct prelude'а), и user
+  re-declares то же имя — это НЕ shadow, потому что user не "видел"
+  prelude name. Lint фильтрует через `prelude_visible_names` vs
+  `merged_from_imports_names`.
+- **Per-name allowlist.** `allow_prelude_shadow = ["Option"]` — слишком
+  fine-grained, добавляет complexity без явного use-case. Module-level
+  bool clause достаточен.
+
+### Связь
+
+- [D26 — stdlib и prelude](#d26) — prelude scope rules.
+- [D29 — модули и импорты](07-modules.md#d29) — name resolution.
+- [07-modules.md → Allow prelude shadow](07-modules.md#allow-prelude-shadow-plan-62fbis-2026-05-18)
+  — clause syntax.
+- [Plan 62.F.bis Ф.2](../../docs/plans/62.F.bis-edition-shadow-and-runtime-effects.md)
+  — implementation.
