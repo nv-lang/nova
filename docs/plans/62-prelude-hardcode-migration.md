@@ -796,7 +796,7 @@ declared в file-based form (vs 1 placeholder PRELUDE_VERSION до Plan 62).
 | **62.C bis** | RuntimeNoneError migration | Bootstrap parser не поддерживает empty-body sum syntax (`parse_sum_variants` требует ≥1 `\|`). Тот же блокер что `Never`. |
 | **62.D opaque (62.D.bis)** | StringBuilder, WriteBuffer, ReadBuffer | Opaque runtime types — требуют `external type` D-block в spec (currently не существует). Range/RangeIter re-export ЗАКРЫТ в 62.D non-opaque bis-1 (4 latent codegen bugs fixed + D29 W_PRELUDE_SHADOW basic). |
 | **62.E bis** | TryFrom[T, E] / TryInto[U, E] protocols | `Fail[E]` в protocol method триггерит Plan 56 Ф.2.7 enforcement (`bound method has effects` error). Требует either special-case в enforcement (Migration path a) или refactor D77 semantics (path b) или D122 handler-as-parameter (path c). |
-| **62.F.bis** | Edition versioning + W_PRELUDE_SHADOW lint + Time/Mem/Detach formal declarations + 2 D-block amendments | Edition требует Manifest threading до imports.rs (currently не передаётся). Shadow lint — отдельная lints.rs task. Time/Mem ambient runtime effects (не user-overridable beyond bootstrap). Spec amendments out of bootstrap scope. |
+| **62.F.bis** ✅ ЗАКРЫТ 2026-05-18 | Edition versioning + W_PRELUDE_SHADOW lint + Time/Mem formal declarations + spec D-block amendments (D26/D124/D125) | Все 4 phases закрыты single-session (commits `445904b2b4e` Ф.1, `faf164529a9` Ф.2, `51a0ccf24fb` Ф.3, `f37193b075f` Ф.4). PRELUDE_VERSION 4 → 5. Item-level suppress `#[allow(prelude_shadow)]` остаётся deferred (требует generic attribute parser). `Time.after(ms) -> Chan[int]` deferred (требует Chan[T] в prelude). |
 
 ### Регрессия preserved
 
@@ -806,8 +806,11 @@ declared в file-based form (vs 1 placeholder PRELUDE_VERSION до Plan 62).
 - **Post-Plan 62.D non-opaque bis-1**: **709 PASS / 0 FAIL / 44 SKIP** +
   16/16 sum_schema + W_PRELUDE_SHADOW warning fires on intentional
   shadows (for_in_range_iter.nv).
-- **Net new tests** через Plan 62: +18 (Plan 62.A 5 tests, 62.B 0, 62.C
-  3 tests, 62.D 3 tests, 62.E 1 test, 62.F 6 tests).
+- **Post-Plan 62.F.bis (2026-05-18 final)**: **711 PASS / 0 FAIL / 44 SKIP**
+  (+2 fixtures plan62/prelude_shadow_warning + _suppress) + sum_schema 16/16
+  + sanitize_edition 6/6 + prelude_shadow 6/6 + edition_resolve 3/3.
+- **Net new tests** через Plan 62: +20 (Plan 62.A 5 tests, 62.B 0, 62.C
+  3 tests, 62.D 3 tests, 62.E 1 test, 62.F 6 tests, 62.F.bis 2 tests).
 
 ### HashSet shrink total
 
@@ -828,12 +831,16 @@ precedence), не legacy duplication.
 ### Net win
 
 - **Spec/impl drift closed** для P0 scope (Option/Result/Error/RuntimeError/
-  Ordering/effects.Fail/6 protocols/4 runtime fns).
+  Ordering/effects.Fail/6 protocols/4 runtime fns + Time/Mem через 62.F.bis).
 - **no_prelude bug fixed** (был silent — теперь real enforcement).
 - **partial_prelude** новая capability — opt-in subset (real-time, embedded,
   bootstrap use-cases).
-- **PRELUDE_VERSION** marker mechanism (4 = current after 62.D
-  non-opaque bis-1; future bumps от других bis-sub-plans когда они
+- **allow_prelude_shadow** новая capability (62.F.bis Ф.2) — suppress
+  W_PRELUDE_SHADOW per-module.
+- **Edition versioning** (62.F.bis Ф.1, D124) — `[package].edition` в
+  `nova.toml` pin prelude content на snapshot, mirror Rust/Go.
+- **PRELUDE_VERSION** marker mechanism (5 = current after 62.F.bis;
+  future bumps от 62.A.bis/62.B.bis/62.C.bis/62.D.bis/62.E.bis когда они
   закрываются).
 - **`nova doc`** теперь видит canonical prelude API в одном месте
   (AI-readable, не разбросанным по type-checker/codegen).
