@@ -597,6 +597,14 @@ pub enum TypeDeclKind {
     Newtype(TypeRef),
     /// `type Name alias OtherType` (D52)
     Alias(TypeRef),
+    /// Plan 62.D.bis (D126): `external type X [Generics]` — opaque
+    /// type known to compiler by name, реализация в runtime
+    /// (`nova_rt/<x>.h`/.c). Без body, без variants/fields. Restricted
+    /// to `std.runtime.*` / `std.prelude.*` модулям (whitelist в
+    /// types/mod.rs::check_module параллельно `external fn` per D82).
+    /// Codegen эмитит ссылку как `Nova_<Name>*` (pointer); struct
+    /// определение живёт в runtime header.
+    Opaque,
 }
 
 #[derive(Debug, Clone)]
