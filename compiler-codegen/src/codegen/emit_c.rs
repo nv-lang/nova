@@ -16019,7 +16019,8 @@ impl CEmitter {
                             if !scr_base.is_empty() && self.sum_schemas.contains_key(&scr_base) {
                                 scr_base
                             } else {
-                                self.find_variant(&variant_name)
+                                // Plan 62.A.bis Ф.2.3: registry-driven variant resolution.
+                                self.sum_schema_registry.find_variant_compat(&variant_name)
                                     .map(|(t, _)| t)
                                     .unwrap_or_default()
                             }
@@ -16322,7 +16323,8 @@ impl CEmitter {
                     {
                         sum_type_name_from_scr
                     } else {
-                        self.find_variant(&variant_name)
+                        // Plan 62.A.bis Ф.2.3: registry-driven variant resolution.
+                        self.sum_schema_registry.find_variant_compat(&variant_name)
                             .map(|(t, _)| t)
                             .unwrap_or_else(|| {
                                 scr_ty.strip_prefix("Nova_").unwrap_or(&scr_ty)
