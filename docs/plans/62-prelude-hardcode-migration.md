@@ -191,6 +191,8 @@ sum_schemas.insert("Result", vec![Variant::Tuple("Ok", vec!["nova_int"]), Varian
 ### Plan 62.A — Core types: Option/Result/Some/None/Ok/Err (3 days)
 
 > **Status update 2026-05-18:** Phase 62.A complete (698/698 PASS, 0 regression). Types перенесены, builtins HashSet shrunk на 11 имён. **Deferred:** `Never` (parser не поддерживает empty-sum) + 17 методов (codegen/type-checker signature mismatch — см. §«DEFER» ниже).
+>
+> **Status update 2026-05-18 (follow-up):** **12/17 methods discharged** через `std/prelude/core.nv` + `init_prelude_decls_from_items()` (registry-driven inheritance). 700/700 PASS, +2 positive test files. Deferred — 5 Result methods (`unwrap`/`unwrap_or`/`unwrap_or_else`/`map`/`map_err`) — originally-anticipated `T → T` блокер confirmed present для Result non-per-T mono compromise (Option per-T трамплины не affected). Один Option method `or` declared без codegen support (DEFER comment в core.nv). См. Sub-section §«62.A 17-methods defer» ниже.
 
 - [x] Создать `std/prelude/core.nv` с declarations:
   ```nova
@@ -201,15 +203,29 @@ sum_schemas.insert("Result", vec![Variant::Tuple("Ok", vec!["nova_int"]), Varian
   export type Ordering | Less | Equal | Greater
   // DEFER: type Never — empty-sum syntax не поддержан parser'ом
   ```
-- [ ] ~~Все ~17 методов из D26 §283-306 для Option/Result.~~ **DEFER:**
-      `external fn Option[T] @unwrap_or(x T) -> T` создаёт type-checker
-      сигнатуру `T → T`, но codegen special-case (emit_c.rs:11567+)
-      возвращает concrete `nova_int` через runtime helper
-      `Nova_Result_method_unwrap_or` (array.h:486). Mismatch ломает `==`
-      codegen (routed через generic tag-comparison вместо primitive
-      equality). Декларации добавятся в Plan 62.A.bis (generic schema
-      registry) или после Plan 59 tuple-mono extension на sum-types.
-      Methods продолжают работать через hardcoded codegen path.
+- [x] **Partial (12/17, 2026-05-18 follow-up):** D26 §283-306 methods для Option/Result.
+      - Option: **8/8** declared — `is_some`, `is_none`, `unwrap` (Fail[Error]),
+        `unwrap_or`, `unwrap_or_else`, `map`, `ok_or`, `or` (последний с DEFER —
+        codegen trampoline отсутствует).
+      - Result: **4/9** declared — `is_ok`, `is_err`, `ok`, `err`.
+      - Result deferred: **5/9** (`unwrap`, `unwrap_or`, `unwrap_or_else`, `map`,
+        `map_err`) — originally-anticipated `T → T` блокер всё ещё present.
+        Type-checker, видя `external fn Result[T, E] @unwrap_or(default T) -> T`,
+        инфериует результат `r.unwrap_or(0)` как `Result*` heap-pointer (через
+        generic substitution), codegen `==` идёт через sum-tag-comparison.
+        Конкретные regressions: `runtime/unwrap_or` / `runtime/result_methods` /
+        `runtime/from_into_basic` / `runtime/read_buffer` / `runtime/read_text`.
+        Лечение в Plan 62.B+ через per-T mono Result (как Option) или type-checker
+        special-case. Declarations закомментированы в core.nv с актуальным DEFER
+        comment'ом. **Корневая причина** — codegen `type_of_method_call_c`
+        (emit_c.rs:18619+) hardcoded возвращает `nova_int` для Result.unwrap_or,
+        несовместимо с generic Nova signature.
+- [x] `init_prelude_decls_from_items()` (sum_schema_registry.rs:513+) scan'ит
+      `module.items` для `Item::Fn` с receiver `Option`/`Result`,
+      регистрирует `DeclaredFromPrelude` entries с method_routing,
+      унаследованным от `HardcodedBaseline` — behavior-preserving
+      migration источника правды без изменения dispatch. +4 unit-теста
+      (13/13 PASS в sum_schema module).
 - [x] Update `std/prelude.nv` чтобы re-export `core.*` (selective form;
       wildcard `.* ` не поддержан per Plan 35 R25 rejected).
 - [ ] Add Sub-task 62.A.bis: generic schema registry для sum-types
