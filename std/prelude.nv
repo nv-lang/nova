@@ -46,11 +46,12 @@ module std.prelude
 export import std.prelude.core.{Option, Some, None, Result, Ok, Err, Error, Ordering, Less, Equal, Greater}
 
 // Plan 62.B: re-export runtime functions из std.prelude.runtime.
-// panic / exit / assert / debug_assert — selective list (см. 62.A
-// note про wildcard и multi-line). print / println НЕ перенесены —
-// variadic dispatch остаётся hardcoded в emit_c.rs (DEFER 62.B.bis,
-// см. std/prelude/runtime.nv).
-export import std.prelude.runtime.{panic, exit, assert, debug_assert}
+// panic / exit / assert / debug_assert / print / println — selective
+// list (см. 62.A note про wildcard и multi-line). Plan 62.B.bis
+// (2026-05-18): print / println добавлены — file-based D69 variadic +
+// `[]any` declarations в canonical D26 form. Codegen special-case
+// сохраняется как bootstrap implementation (см. std/prelude/runtime.nv).
+export import std.prelude.runtime.{panic, exit, assert, debug_assert, print, println}
 
 // Plan 62.C: re-export error types из std.prelude.errors.
 // RuntimeError (6 variants) + ReadBufferError (1 variant). Type name +
@@ -154,8 +155,15 @@ export import std.prelude.effects.{Fail, Time, Mem}
 ///     в std/prelude/collections.nv. Auto-available через prelude facade
 ///     — закрывает последний known-by-name hole в D26 visible prelude.
 ///     Methods продолжают жить в std/runtime/<name>.nv (external fn,
-///     D82, unchanged). Next bump'ы — из remaining deferred sub-plans
-///     (62.A.bis sum_schemas removal, 62.B.bis print/println,
-///     62.C.bis RuntimeNoneError, 62.E.bis TryFrom/TryInto).
+///     D82, unchanged).
+///   - 7 = Plan 62.B.bis done (2026-05-18): print / println formally
+///     declared в std/prelude/runtime.nv через D69 variadic + `[]any` —
+///     canonical D26 signature `fn print(...items []any) -> ()`. Plan 67
+///     hotfix (infer_print_helper refactor через infer_expr_c_type)
+///     absorbed как Ф.0. Codegen special-case (emit_c.rs:11270) fires
+///     перед variadic routing (Ф.1 reorder) — preserves per-arg type
+///     info, synthesized `[]any` array никогда не строится.
+///     Remaining deferred sub-plans: 62.A.bis sum_schemas removal,
+///     62.C.bis RuntimeNoneError, 62.E.bis TryFrom/TryInto.
 #stable(since = "0.1")
-export const PRELUDE_VERSION int = 6
+export const PRELUDE_VERSION int = 7
