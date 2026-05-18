@@ -19,6 +19,10 @@ pub(crate) struct ContractAttrs {
     pub verify_timeout_ms: Option<u32>,
     pub purity: Purity,
     pub is_trusted: bool,
+    /// Plan 33.9 Ф.1: `#opaque` attribute.
+    pub is_opaque: bool,
+    /// Plan 33.9 Ф.3: `#fuel(n)` attribute.
+    pub fuel: Option<u32>,
 }
 
 impl ContractAttrs {
@@ -27,6 +31,8 @@ impl ContractAttrs {
             && self.verify_timeout_ms.is_none()
             && matches!(self.purity, Purity::Unknown)
             && !self.is_trusted
+            && !self.is_opaque
+            && self.fuel.is_none()
     }
 }
 
@@ -1436,6 +1442,52 @@ impl Parser {
                     self.bump(); // trusted
                     attrs.is_trusted = true;
                 }
+                "opaque" => {
+                    // Plan 33.9 Ф.1: #opaque — body не раскрывается в SMT.
+                    // Validation (#opaque + #pure required, #opaque + #verify
+                    // conflict) — в pipeline / verify_module.
+                    self.bump(); // #
+                    self.bump(); // opaque
+                    attrs.is_opaque = true;
+                }
+                "fuel" => {
+                    // Plan 33.9 Ф.3: #fuel(n) — unfolding depth для opaque.
+                    self.bump(); // #
+                    self.bump(); // fuel
+                    if !matches!(self.peek().kind, TokenKind::LParen) {
+                        let span = self.peek().span;
+                        return Err(Diagnostic::new(
+                            "#fuel требует аргумент: `#fuel(N)`",
+                            span,
+                        ));
+                    }
+                    self.bump(); // (
+                    let n_token = self.peek().clone();
+                    let n = if let TokenKind::Int(n) = n_token.kind {
+                        self.bump();
+                        if !(0..=100).contains(&n) {
+                            return Err(Diagnostic::new(
+                                "#fuel(N) требует 0 <= N <= 100",
+                                n_token.span,
+                            ));
+                        }
+                        n as u32
+                    } else {
+                        return Err(Diagnostic::new(
+                            "#fuel требует int literal: `#fuel(2)`",
+                            n_token.span,
+                        ));
+                    };
+                    if !matches!(self.peek().kind, TokenKind::RParen) {
+                        let span = self.peek().span;
+                        return Err(Diagnostic::new(
+                            "ожидался `)` после #fuel(N)",
+                            span,
+                        ));
+                    }
+                    self.bump(); // )
+                    attrs.fuel = Some(n);
+                }
                 _ => break, // unknown #-name — не contract-attr, выходим
             }
             self.skip_newlines();
@@ -1837,6 +1889,8 @@ impl Parser {
             verify_timeout_ms: contract_attrs.verify_timeout_ms,
             purity: contract_attrs.purity,
             is_trusted: contract_attrs.is_trusted,
+            is_opaque: contract_attrs.is_opaque,
+            fuel: contract_attrs.fuel,
         })
     }
 
@@ -5737,6 +5791,22 @@ impl Parser {
             TokenKind::Ident(ref n) if n == "calc" => {
                 self.bump(); // consume `calc`
                 Ok(StmtOrExpr::Stmt(self.parse_calc_stmt(start)?))
+            }
+            // Plan 33.9 Ф.2: `reveal name` — раскрыть opaque fn body в SMT
+            // scope текущей fn body. Контекстуальный keyword (не резервируем
+            // `reveal` глобально). V1: parser/AST only — verify integration в V2.
+            TokenKind::Ident(ref n) if n == "reveal" => {
+                self.bump(); // consume `reveal`
+                let name = match self.peek().kind.clone() {
+                    TokenKind::Ident(n) => { self.bump(); n }
+                    _ => return Err(Diagnostic::new(
+                        "expected fn name after `reveal`",
+                        self.peek().span,
+                    )),
+                };
+                let end = self.tokens[self.pos.saturating_sub(1)].span;
+                let span = start.merge(end);
+                Ok(StmtOrExpr::Stmt(Stmt::Reveal { name, span }))
             }
             _ => {
                 let expr = self.parse_expr()?;
