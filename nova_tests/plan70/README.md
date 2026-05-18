@@ -23,3 +23,5 @@ broken code до codegen. Migration таких sites = **dead-code hardening**
 | 4819, 4820 | `emit_fn_forward_decl` (fn-returning-fn sig) | ❌ unreachable (type-checker resolves before codegen) | f2 pos covers |
 | 4829 | `emit_fn_forward_decl` (free fn params) | ❌ unreachable | f2 pos covers |
 | 4838, 4841 | `emit_fn_forward_decl` (HOF inner closure sig) | ❌ unreachable | f2 pos covers |
+| 1325, 1329 | `emit_module` (free-fn overload reg) | ❌ unreachable | f3 pos covers |
+| 1422, 1435 | `emit_module` (method overload reg, non-generic recv) | ❌ unreachable (generic-recv path = erased_type_ref_c, Cat B intentional) | f3 pos covers |
