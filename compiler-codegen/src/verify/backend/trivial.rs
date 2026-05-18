@@ -154,6 +154,26 @@ fn simplify_app(op: &str, args: &[SmtTerm]) -> SmtTerm {
             (SmtTerm::IntLit(a), SmtTerm::IntLit(b)) => SmtTerm::IntLit(a.saturating_add(*b)),
             (SmtTerm::IntLit(0), b) => b.clone(),
             (a, SmtTerm::IntLit(0)) => a.clone(),
+            // Ф.43.1 (Plan 33.6): `(+ (- a b) b)` → a (symmetric: `(+ b (- a b))` → a).
+            (SmtTerm::App(op2, a2), b)
+                if op2 == "-" && a2.len() == 2 && &a2[1] == b => {
+                a2[0].clone()
+            }
+            (b, SmtTerm::App(op2, a2))
+                if op2 == "-" && a2.len() == 2 && &a2[1] == b => {
+                a2[0].clone()
+            }
+            // Ф.43.2 (Plan 33.6): `(+ a (- 0 a))` → 0 (a + (-a) = 0).
+            (a, SmtTerm::App(op2, a2))
+                if op2 == "-" && a2.len() == 2
+                && matches!(&a2[0], SmtTerm::IntLit(0)) && &a2[1] == a => {
+                SmtTerm::IntLit(0)
+            }
+            (SmtTerm::App(op2, a2), a)
+                if op2 == "-" && a2.len() == 2
+                && matches!(&a2[0], SmtTerm::IntLit(0)) && &a2[1] == a => {
+                SmtTerm::IntLit(0)
+            }
             // Ф.6.3 (Plan 33.6): commutativity normalization для consistent hash.
             // Если оба не литерал — сортировать по pretty-print order.
             (a, b) if !matches!(a, SmtTerm::IntLit(_)) && !matches!(b, SmtTerm::IntLit(_)) => {
@@ -1255,5 +1275,24 @@ mod tests {
         let add = SmtTerm::App("+".into(), vec![a.clone(), b.clone()]);
         let sub = SmtTerm::App("-".into(), vec![add, a]);
         assert_eq!(simplify(&sub), b);
+    }
+
+    #[test]
+    fn simplify_addition_restores_sub() {
+        // Ф.43.1: (a - b) + b → a.
+        let a = SmtTerm::Var("a".into());
+        let b = SmtTerm::Var("b".into());
+        let sub = SmtTerm::App("-".into(), vec![a.clone(), b.clone()]);
+        let add = SmtTerm::App("+".into(), vec![sub, b]);
+        assert_eq!(simplify(&add), a);
+    }
+
+    #[test]
+    fn simplify_addition_negation_zero() {
+        // Ф.43.2: a + (0 - a) → 0.
+        let a = SmtTerm::Var("a".into());
+        let neg = SmtTerm::App("-".into(), vec![SmtTerm::IntLit(0), a.clone()]);
+        let add = SmtTerm::App("+".into(), vec![a, neg]);
+        assert_eq!(simplify(&add), SmtTerm::IntLit(0));
     }
 }
