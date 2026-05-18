@@ -6,36 +6,36 @@
 // (для T без NOVA_ARRAY_DECL в runtime). Some(v) и None теперь
 // эмитятся через compound literal с реальным T.
 //
-// Покрывает: Iter[byte], Iter[bool], Iter[i32], Iter[str], Iter[(int,str)].
+// Покрывает: Iter[u8], Iter[bool], Iter[i32], Iter[str], Iter[(int,str)].
 
 module syntax.for_iter_typed
 
 
-// Iter[byte] — счётчик байтов 0..n.
+// Iter[u8] — счётчик байтов 0..n.
 type ByteCounter {
-    end      byte
-    mut cur  byte
+    end      u8
+    mut cur  u8
 }
 
 
-export fn ByteCounter mut @next() -> Option[byte] {
+export fn ByteCounter mut @next() -> Option[u8] {
     if @cur >= @end {
         None
     } else {
         let v = @cur
-        @cur = (@cur as int + 1) as byte
+        @cur = (@cur as int + 1) as u8
         Some(v)
     }
 }
 
 
-export fn ByteCounter.new(end byte) -> ByteCounter {
-    ByteCounter { end, cur: 0 as byte }
+export fn ByteCounter.new(end u8) -> ByteCounter {
+    ByteCounter { end, cur: 0 as u8 }
 }
 
 
-test "for-in over Iter[byte]" {
-    let it = ByteCounter.new(5 as byte)
+test "for-in over Iter[u8]" {
+    let it = ByteCounter.new(5 as u8)
     let mut sum int = 0
     for b in it {
         sum = sum + b as int

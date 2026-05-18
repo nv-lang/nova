@@ -42,7 +42,7 @@ module collections.bloom_filter
 export type BloomFilter {
     readonly bits_size int          // public config
     readonly num_hashes int         // public config (k)
-    mut _bits []byte                // internal: packed bit array (1 byte = 8 bits)
+    mut _bits []u8                // internal: packed bit array (1 u8 = 8 bits)
 }
 
 
@@ -61,7 +61,7 @@ export type BloomFilter {
 #stable(since = "0.1")
 export fn BloomFilter.new(bits_size int, num_hashes int) -> Self {
     let byte_size = (bits_size + 7) / 8
-    let mut _bits []byte = []
+    let mut _bits []u8 = []
     for i in 0..byte_size { _bits.push(0) }
     {
         bits_size,
@@ -134,8 +134,8 @@ export fn BloomFilter @contains(s str) -> bool {
 fn BloomFilter mut @set_bit(idx int) -> () {
     let byte_idx = idx / 8
     let bit_in_byte = idx % 8
-    let mask = (1 << bit_in_byte) as byte
-    @_bits[byte_idx] = ((@_bits[byte_idx] as int) | (mask as int)) as byte
+    let mask = (1 << bit_in_byte) as u8
+    @_bits[byte_idx] = ((@_bits[byte_idx] as int) | (mask as int)) as u8
 }
 
 
