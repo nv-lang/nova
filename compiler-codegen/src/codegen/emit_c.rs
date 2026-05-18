@@ -1188,6 +1188,13 @@ impl CEmitter {
                 "f64", "f32", "bool", "str", "byte", "char",
                 "Option", "Result", "Self", "Handler", "CancelToken",
                 "Never", "Error",
+                // Plan 62.C: RuntimeError имеет real struct в array.h
+                // (skipped в RUNTIME_DEFINED_TYPES → emit_type_decl skipped
+                // → нет local emit, нужен fwd-decl skip чтобы не дублировать
+                // forward-decl). ReadBufferError — НЕ скипается т.к. codegen
+                // сам эмитит его struct через emit_sum_type, и fwd-decl
+                // нужен для cross-file refs (нативный flow).
+                "RuntimeError",
             ];
             // Runtime types defined in nova_rt/*.h with anonymous typedef'd structs.
             // A named forward decl `typedef struct Nova_X Nova_X;` would conflict
@@ -4883,10 +4890,21 @@ impl CEmitter {
         const RUNTIME_DEFINED_TYPES: &[&str] = &[
             // Plan 62.A: core prelude types.
             "Option", "Result", "Error",
-            // Plan 62.C (future): RuntimeError будет добавлен сюда.
-            // На сейчас он handled via pre-populated schema + builtins
-            // HashSet (codegen не doubly-emit'ит т.к. type declaration
-            // отсутствует в user/std коде вообще).
+            // Plan 62.C: RuntimeError declared в std/prelude/errors.nv.
+            // Skip emission т.к. C struct + constructors уже живут в
+            // nova_rt/array.h (`Nova_RuntimeError` + `nova_make_RuntimeError_*`,
+            // lines ~565-610). Schema registration через registry's
+            // `init_prelude_decls_from_items` (sum_schema_registry.rs:526+)
+            // inherits variants/abi от HardcodedBaseline.
+            "RuntimeError",
+            // **ReadBufferError**: НЕ добавляется в skip-list — нет
+            // dedicated C struct в nova_rt/*.h. Codegen эмитит полную
+            // typedef + nova_make_ReadBufferError_UnexpectedEnd через
+            // обычный emit_sum_type path. Registry получит две entries:
+            // DeclaredFromUser (от emit_sum_type → register_user_sum) +
+            // DeclaredFromPrelude (от init_prelude_decls_from_items).
+            // Lookup precedence — Prelude > User > Hardcoded; both
+            // PointerErrorLike ABI, no semantic conflict.
         ];
         if RUNTIME_DEFINED_TYPES.contains(&t.name.as_str()) {
             // Plan 62.A: skip emission — type defined in runtime. Schema
