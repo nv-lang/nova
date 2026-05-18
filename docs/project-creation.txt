@@ -15311,6 +15311,25 @@ cargo test --lib verify::backend::trivial: 11/11 PASS (+2).
 TrivialBackend coverage extends на algebraic substitution identities.
 
 
+# Plan 33.6 Ф.42 (2026-05-18): #verify fn без ensures → W2402
+
+`#verify fn check_input(x) requires x >= 0 { ... }` — verify-fn без
+ensures доказывает только валидность входов, но callerу нет гарантии
+об output. Программист скорее всего забыл написать `ensures result <...>`.
+
+В verify_module fn loop добавлен check: при `MustVerify && contracts
+непусто` — если только requires без ensures/ensures_fail, push W2402.
+
+Дополняет Ф.27.1 (`#verify` совсем без contracts → noop): там полное
+отсутствие, тут отсутствие output guarantee.
+
+Test: f42_verify_only_requires_w2402 (check_input).
+
+Регрессия: 196 → 197 PASS (+1), 0 FAIL, 44 SKIP.
+
+Fn lint catalog продолжает расти.
+
+
 ## Session: оба deferred follow-up'а Plan 59 закрыты (2026-05-17 EOD+1)
 
 После merge'а Plan 63 fixes от другого agent'а — обнаружено что оба
