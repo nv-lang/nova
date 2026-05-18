@@ -1,0 +1,22 @@
+// Plan 70 PhaseA1.4 sites 9081, 9084, 9160, 9165, 9169, 9185, 9188, 9204, 9207 в emit_stmt.
+// POSITIVE — let-binding с fn-typed values: Lambda и ClosureLight (типизированные).
+//
+// Site 9031, 9034 (array-of-fn) — separate test (trips pre-existing
+// Nova limitation array-of-fn dispatch, не Plan 70 scope).
+
+module plan70.f4_let_fn_binding_pos
+
+test "lambda с let-annotation -> fn(int)->int (sites 9160/9165/9169)" {
+    let f fn(int) -> int = |x| x * 2
+    assert(f(7) == 14)
+}
+
+test "ClosureLight с let-annotation (sites 9185, 9188)" {
+    let g fn(int) -> int = |y| y + 100
+    assert(g(5) == 105)
+}
+
+test "lambda без annotation — default int (Cat D path в migrated code)" {
+    let h = |x| x + 1
+    assert(h(10) == 11)
+}
