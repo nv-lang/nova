@@ -4984,6 +4984,14 @@ impl CEmitter {
     }
 
     fn emit_type_decl(&mut self, t: &TypeDecl) -> Result<(), String> {
+        // Plan 62.D.bis (D126): `external type X` — opaque, no emission.
+        // Struct definition lives in runtime header (`nova_rt/<name>.h`),
+        // never emit'нем locally. Forward-decl skip уже handled через
+        // BUILTIN_RUNTIME_TYPES (emit_c.rs:1212-1218); это early-return
+        // — defensive double-protection, делает intent explicit.
+        if matches!(t.kind, TypeDeclKind::Opaque) {
+            return Ok(());
+        }
         // Plan 62.A: skip emission of types pre-defined в nova_rt/*.h.
         // Когда `std/prelude/core.nv` declares `type Option[T]` /
         // `type Result[T, E]` / `type Error`, codegen НЕ должен заново
@@ -5034,6 +5042,15 @@ impl CEmitter {
             // + AI tooling без duplicate emit. BUILTIN_VTABLE_NAMES
             // обновлён включить Mem (emit_c.rs:1231).
             "Time", "Mem",
+            // Plan 62.D.bis (D126, 2026-05-18): opaque types declared
+            // through `external type` в std/prelude/collections.nv.
+            // Backing — nova_rt/{string_builder,write_buffer,read_buffer}.h.
+            // Defensive double-protection: actual skip уже через
+            // `TypeDeclKind::Opaque` early-return на top of emit_type_decl;
+            // эта запись keeps consistency с pattern Option/Result/Error/Fail
+            // на случай если user accidentally declared `type StringBuilder
+            // { ... }` (non-Opaque kind) — мы всё равно skip'нем.
+            "StringBuilder", "WriteBuffer", "ReadBuffer",
         ];
         if RUNTIME_DEFINED_TYPES.contains(&t.name.as_str()) {
             // Plan 62.A: skip emission — type defined in runtime. Schema
@@ -5256,6 +5273,10 @@ impl CEmitter {
             // undefined). Без vtable type_ref_to_c для protocol-методов
             // вообще не вызывается.
             TypeDeclKind::Protocol(_) => {}
+            // Plan 62.D.bis (D126): unreachable — early-return on top
+            // of emit_type_decl уже отфильтровал Opaque kind. Branch
+            // present для exhaustiveness; semantically meaningful no-op.
+            TypeDeclKind::Opaque => {}
         }
         Ok(())
     }

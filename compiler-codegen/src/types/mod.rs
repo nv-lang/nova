@@ -111,6 +111,24 @@ pub fn check_module(module: &Module) -> Result<ModuleEnv, Vec<Diagnostic>> {
                     ));
                 }
             }
+            // Plan 62.D.bis (D126): `external type X` — same whitelist as
+            // `external fn` per D82. Only `std.runtime.*` / `std.prelude.*`
+            // modules can declare opaque types (runtime backing —
+            // compiler-versioned artefact, not user-extensible).
+            if let Item::Type(td) = item {
+                if matches!(td.kind, TypeDeclKind::Opaque) {
+                    errors.push(Diagnostic::new(
+                        format!(
+                            "`external type` is only allowed in `std.runtime.*` / `std.prelude.*` modules \
+                             (this module is `{}`); for FFI to external C libraries \
+                             a future `extern(\"C\") type` keyword will be added (Q-ffi). \
+                             See D126 (spec/decisions/03-syntax.md).",
+                            module.name.join(".")
+                        ),
+                        td.span,
+                    ));
+                }
+            }
         }
     }
 
