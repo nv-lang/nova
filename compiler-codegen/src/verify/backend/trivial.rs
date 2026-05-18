@@ -616,6 +616,9 @@ fn propagate_bounds(conjuncts: &[SmtTerm]) -> Vec<SmtTerm> {
                         if *divisor > 0 {
                             // Lower bound: `(>= x%k goal)` где goal <= 0 → true.
                             if iop == ">=" && goal <= 0 { return Some(true); }
+                            // Ф.38.1 (Plan 33.6): strict lower: `(> x%k goal)` где goal <= -1 → true.
+                            // (result >= 0 > goal при goal < 0).
+                            if iop == ">" && goal <= -1 { return Some(true); }
                             // Ф.26.1 (Plan 33.6): upper bound: `(< x%k goal)` где goal >= divisor → true,
                             // `(<= x%k goal)` где goal >= divisor-1 → true.
                             if iop == "<" && goal >= *divisor { return Some(true); }
