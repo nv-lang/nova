@@ -15642,3 +15642,92 @@ Commits in plan-65 branch (7 atomic per-phase):
 - e668f6d4172 docs(65 Ф.6) spec sync
 - 171e76a5487 docs(65 Ф.7) stdlib doc
 - a4013003bcd docs(65 Ф.8) const-fold + cross-toolchain status
+
+
+=== Plan 65 (2026-05-18) — Production hardening Ф.10-Ф.14 closed ===
+
+All 5 hardening phases shipped on branch `plan-65-hardening` (forked
+from `plan-65` tip). Industry-parity coverage увеличена с 11/13 до
+12/13 (timer wheel остаётся defer'нут в Plan 66 outline). Nova объективно
+выгоднее baseline на 5 capabilities (typed Duration, native CancelToken
+integration, Time-effect mock, supervised select propagation,
+Monotonic clock type-safety).
+
+Ф.10 — CancelToken integration + Time-effect mock:
+- NovaCancelToken cleanup_handles[]/cleanup_cbs[] arrays + register/
+  unregister primitives. NovaFiberQueue gains bound_token reverse-pointer.
+- NovaAfterState gains cancel_token_ref + cancel_slot + metrics_alive.
+  All 3 cleanup paths (timer fire / select lost / token cancel) race-safe
+  via single `cancelled` flag.
+- Time-effect mock: close_after delegates to handler->sleep when handler
+  bound, returns already-closed reader (Tokio pause/advance sequential
+  idiom). Concurrent-advance deferred [M-mock-time-concurrent-advance].
+- 3 new tests: f7/f8/f10 PASS.
+
+Ф.11 — NOVA_TIMER_METRICS observability:
+- NovaTimerStats { alloc_total, alloc_active, fired, cancelled,
+  longest_pending_ms } maintained on every alloc/fire/cancel.
+- Lazy atexit installation via env var NOVA_TIMER_METRICS; dump + leak
+  warning when alloc_active > 0.
+- 5 Nova-level effect methods: Time.timer_alloc_total() / _active() /
+  _fired() / _cancelled() / _longest_pending_ms().
+- Test f11a: 5 sub-tests validate counter invariants. Bench auto-capture
+  + stack-frame leak attribution deferred (M-bench-timer-metrics-autocapture,
+  M-timer-leak-stack-frames).
+
+Ф.12 — Monotonic type + close_at + D124 implementation:
+- std/time/duration.nv adds type Monotonic + @plus(Duration)/@minus(Duration)
+  + @elapsed_since(Monotonic) + comparison ops. Operator @minus(Monotonic)
+  removed in favor of named elapsed_since (avoids method-dispatch
+  ambiguity through latent Time.now() int-schema).
+- Monotonic.now() — compiler-builtin (Path/Member-form dispatch), bypasses
+  Time-effect schema mismatch [M-time-now-schema-mismatch].
+- Runtime: _nova_monotonic_ns() via uv_hrtime() (covers Linux CLOCK_MONOTONIC
+  + Windows QPC + macOS abstraction via libuv).
+- ChanReader.close_at(Monotonic): strict Monotonic-only check; past-deadline
+  → already-closed (no leak); future-overflow → explicit panic.
+- BinOp::Add dispatcher fix: long-dormant Nova_X*+Nova_X* prefix bug
+  (X_method_plus → Nova_X_method_plus); exposed by Monotonic + Duration.
+- BinOp::Sub dispatcher new: validates @minus overload exists for operand
+  type via method_overloads registry — enforces D124's no-cross-clock
+  arithmetic guarantee.
+- 7 test fixtures (f12_a..g): 5 strict (close_at type-check, Monotonic
+  arithmetic, past-deadline) + 2 documented gaps (var-annotation +
+  method-receiver strictness — pre-existing language-wide limitations).
+- Migration audit: 28 Time.now() sites in std/+nova_tests/; rewrites
+  blocked by M-time-now-schema-mismatch (deferred).
+- CancelToken.cancel_at(Monotonic) — deferred [M-cancel-token-cancel-at]
+  (low priority, workaround = spawn watcher fiber).
+
+Ф.13 — tick_every namespace squat + Plan 66 outline:
+- std/concurrency/timer.nv: ChanReader_tick_every_namespace_squat fn
+  with #unstable + #stable(since="0.6") + panic body referencing Plan 66.
+- docs/plans/66-timer-wheel-and-tick-every.md created — R1-R5 outline.
+
+Ф.14 — Stress + 25-point final audit:
+- f11_concurrent_timer_alloc: 1000 timers across 10 fibers, complete
+  in ~1s, alloc_active returns to baseline (no leak).
+- 25-point audit: 18/25 strict PASS + 7/25 honest-defer (all documented
+  in simplifications.md). No silent gaps remain.
+
+Регрессия: 717 PASS / 0 FAIL / 44 SKIP (baseline 705 + 12 new fixtures:
+f7, f8, f10, f11, f11a, f12_{a..g}).
+
+Commits in plan-65-hardening branch (cherry-pick D124+plan-doc + 5 per-phase):
+- 10f93740c9f spec(D124) Monotonic vs Timestamp
+- 291bbc3e6ce plan(65 Ф.12) expansion to Monotonic introduction
+- 7a066d00b1f feat(65 Ф.10) CancelToken integration + mock
+- 217c39b0436 feat(65 Ф.11) NOVA_TIMER_METRICS
+- ... feat(65 Ф.12) Monotonic + close_at + D124 binop check
+- 4611a9459f5 feat(65 Ф.13) tick_every namespace squat + Plan 66 outline
+- ... feat(65 Ф.14) stress + 25-point audit
+
+Honest-defers added (10 new in simplifications.md):
+- [M-mock-time-concurrent-advance], [M-bench-timer-metrics-autocapture],
+- [M-timer-leak-stack-frames], [M-time-now-schema-mismatch],
+- [M-monotonic-mock-support], [M-strict-var-annotations],
+- [M-strict-method-receiver-check], [M-monotonic-per-os-isolated-tests],
+- [M-monotonic-migration-deferred], [M-cancel-token-cancel-at].
+
+All are L/M priority; none block Plan 65 production usage. Plan 65
+production-grade closed.
