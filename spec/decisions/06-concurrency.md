@@ -16,6 +16,7 @@ structured-concurrency примитивы есть в языке, и как па
 | [D80](#d80-handler-scoping-per-fiber) | Handler scoping per-fiber — `with X = h` биндинги изолированы между fibers |
 | [D91](#d91-channel-revision--capability-split-на-chanwriter--chanreader) | `Channel` revision: capability-split на `ChanWriter[T]` / `ChanReader[T]`; `send`→`bool`; `tx.clone()` multi-writer ✅ |
 | [D94](#d94-select--multiplexed-channel-operations) | `select { ... }` — финальный синтаксис: `Some(v) = rx =>`, `Time.after(ms)` для timeout ✅ реализован (Plan 31 ✅; Plan 44.1 Ф.3 hardening) |
+| [D124](#d124-monotonic-vs-timestamp--раздельные-типы-для-wall-clock-и-монотонных-часов) | Monotonic vs Timestamp — раздельные типы для wall-clock и монотонных часов |
 
 ---
 
@@ -3110,4 +3111,178 @@ codegen-backedge'а (нишевой кейс).
 - `compiler-codegen/src/codegen/emit_c.rs` — safepoint emit в `emit_fn` +
   `emit_loop_body_inline`.
 - `nova_tests/concurrency/mn_runtime_preemption.nv` — 2 positive + 2 negative.
+
+---
+
+## D124. Monotonic vs Timestamp — раздельные типы для wall-clock и монотонных часов
+
+> **Введён:** 2026-05-18 (Plan 65 Ф.12 driver). **Статус:** принят, не
+> реализован — реализация в Plan 68. **Уточняет** существующий
+> `Timestamp` (`std/time/duration.nv`) и `Time` effect (`emit_c.rs:1037-1046`).
+
+### Что
+
+Nova вводит **два различных типа** для представления «момента во времени»,
+разделяя их по источнику clock'а:
+
+```nova
+type Timestamp { readonly nanos i64 }    // wall-clock (Unix epoch nanos)
+type Monotonic { readonly nanos i64 }    // monotonic (process-local epoch)
+```
+
+Соответственно, `Time` effect имеет **два** метода:
+
+```nova
+Time.now()           -> Timestamp       // wall-clock: для логов, дат, сериализации
+Time.now_monotonic() -> Monotonic       // monotonic: для timers, deadlines, profiling
+```
+
+Эти типы **не interconvertible** — компилятор отвергает `let t Monotonic = Time.now()`
+(тип Timestamp), и наоборот. Сериализация `Monotonic` запрещена
+(нет epoch, бессмысленно вне процесса).
+
+### Правило
+
+1. **`Timestamp`** — для **семантического времени**: логи, файлы,
+   протоколы, БД, человеко-читаемые даты. Источник: `clock_gettime(CLOCK_REALTIME)`
+   / `GetSystemTimeAsFileTime`. **Прыгает** при NTP-синхронизации, DST,
+   manual time set. Сериализуется в Unix-epoch nanos.
+
+2. **`Monotonic`** — для **измерения промежутков и дедлайнов**: таймеры,
+   timeouts, retry, profiling. Источник: `clock_gettime(CLOCK_MONOTONIC)`
+   / `QueryPerformanceCounter`. **Никогда не идёт назад**. Бессмысленно
+   сериализовать (`Monotonic` одного процесса нерасшифровываема в
+   другом). Сравнение `Monotonic` между процессами — compile-error.
+
+3. **Арифметика:**
+   - `Timestamp - Timestamp -> Duration` (wall-clock interval, может быть
+     отрицательным при NTP backwards)
+   - `Monotonic - Monotonic -> Duration` (monotonic interval, всегда ≥ 0
+     если оба из same process)
+   - `Timestamp + Duration -> Timestamp`
+   - `Monotonic + Duration -> Monotonic`
+   - `Timestamp - Monotonic` — **compile-error** «cannot subtract
+     incompatible clock types»
+   - `Monotonic.as_unix_secs()` — **compile-error** «Monotonic не
+     представимы в Unix epoch»
+
+4. **API контракты:**
+   - `ChanReader.close_after(Duration)` — без изменений (длительность
+     clock-agnostic).
+   - `ChanReader.close_at(Monotonic)` — **только** Monotonic; иначе
+     NTP может вызвать early/late fire (silent bug).
+   - `Timestamp.from_unix_*` / `Timestamp.as_unix_*` — без изменений.
+   - `Monotonic.now()` (== `Time.now_monotonic()`) — единственный
+     способ construct'нуть; нет `Monotonic.from_nanos` (raw bytes
+     бессмысленны).
+
+5. **`Time` effect для тестов** (Plan 34 Ф.7 mock_clock):
+   - Mock-handler **должен реализовать обоих** `now()` и
+     `now_monotonic()` для consistency. Default mock: `now() == EPOCH +
+     elapsed_virtual`, `now_monotonic() == elapsed_virtual` (от старта
+     mock scope).
+
+### Почему
+
+**Проблема, которая закрывается:** silent bug при использовании
+wall-clock для timing logic. Сценарий:
+
+```nova
+// БАГ под старым API (одна Timestamp на всё):
+let deadline = Time.now() + Duration.from_secs(60)
+// ... 30 сек проходит ...
+// NTP синхронизирует часы НАЗАД на 5 секунд:
+//   Time.now() теперь "moment - 25s" вместо "moment - 30s"
+// Таймер сработает через 35 реальных секунд вместо 30.
+```
+
+**Параллели в индустрии** (все пришли к разделению после bug-bash):
+
+| Язык | Wall-clock | Monotonic | Когда разделили |
+|---|---|---|---|
+| **Rust** | `std::time::SystemTime` | `std::time::Instant` | с самого начала (1.0, 2015) |
+| **Java** | `java.time.Instant` | `System.nanoTime()` (long, не тип) | partial — Java 8, full Type — never |
+| **Go** | `time.Time` | `time.Time` с monotonic component | Go 1.9 (2017) — раньше использовали wall-clock everywhere → silent bugs |
+| **C#** | `DateTime` / `DateTimeOffset` | `Stopwatch.GetTimestamp()` | partial |
+| **Python** | `time.time()` | `time.monotonic()` | PEP 418 (Python 3.3, 2012) — явно разнесли после real-world failures |
+| **JS** | `Date.now()` | `performance.now()` | DOM Performance API |
+
+Все — после реальных production-инцидентов (Go 1.9 release notes:
+«невозможно правильно измерять timeouts во время DST/NTP без monotonic»).
+
+**Type safety > runtime documentation.** Альтернатива — «один Timestamp +
+документация „не используйте для timers"» — ловит баги только при ревью,
+не компилятором. Type-разделение делает ошибку **невыразимой**.
+
+### Что отвергнуто
+
+- **Один `Timestamp` тип с tag-field `kind: ClockKind`** — runtime
+  branch на каждой арифметической операции; теряется compile-time
+  guarantee.
+
+- **Go 1.9-стиль (один `Time` с обоими компонентами)** — `Time` несёт
+  и wall-clock, и monotonic; runtime сам выбирает что использовать.
+  Проще для users, но: два syscall на каждый `now()`; сериализация
+  требует drop'а monotonic component (silent footgun); невозможно
+  type-checker'ом запретить misuse; историческая правка после bug-bash,
+  не оригинальный дизайн.
+
+- **`Instant` имя (Rust convention)** — отвергнут в пользу `Monotonic`
+  потому что «Instant» в Java семантически = wall-clock (`java.time.Instant`),
+  путает Java-разработчиков. «Monotonic» прямо описывает свойство, без
+  культурных ассоциаций. Pair `Timestamp / Monotonic` читается симметрично.
+
+- **`Time.tick()` как low-level i64 monotonic ns** — даёт raw int,
+  теряет type-safety. Reserved как `Monotonic.@as_nanos() -> i64`
+  (escape hatch для FFI / bench).
+
+- **Отдельный `Duration_mono` для monotonic-interval'ов** — overkill;
+  `Duration` уже type-safe (signed, nanos), unit-agnostic. `Mono - Mono`
+  и `Ts - Ts` оба возвращают тот же `Duration`.
+
+### Связь
+
+- **[D75](#d75-supervisedcancel-tok--структурная-отмена-с-внешним-токеном)** —
+  `CancelToken` может иметь deadline (`tok.cancel_at(Monotonic)`) —
+  только monotonic, иначе same NTP-skew bug.
+- **[D94](#d94-select--multiplexed-channel-operations)** — `select` arms
+  с timeout через `ChanReader.close_after(Duration)` (clock-agnostic) или
+  `ChanReader.close_at(Monotonic)`.
+- **[Plan 65](../../docs/plans/65-chanreader-close-after.md)** Ф.12 —
+  driver для D124 (нужен `close_at` для absolute deadline).
+- **[Plan 68](../../docs/plans/68-monotonic-clock-type.md)** — реализация
+  D124: `Monotonic` тип + `Time.now_monotonic()` + `close_at` + runtime
+  `clock_gettime(CLOCK_MONOTONIC)` / `QueryPerformanceCounter` per OS.
+- **[Plan 22](../../docs/plans/22-sleep-libuv-integration.md)** — libuv
+  monotonic timer infra (`uv_hrtime()`) reused for `now_monotonic`.
+
+### Эволюция API
+
+| Что | Сейчас | После Plan 68 (D124 closure) |
+|---|---|---|
+| `Time.now()` (compiler schema) | `() -> nova_int` (raw ms, **противоречит** stdlib usage) | `() -> Timestamp` (record) |
+| `Time.now()` (stdlib calls) | `Timestamp` (`.gt()`, `.minus()`) — **silent mismatch** с schema | aligned с schema |
+| `Time.now_monotonic()` | ❌ нет | `() -> Monotonic` |
+| `Time.sleep(d)` | `(int ms)` (legacy) | `(Duration)` (миграция в Plan 68) |
+| Deadline в API | `Time.now() + d` (wall-clock baked in) | `Monotonic.now() + d` (no NTP skew) |
+| `ChanReader.close_at(...)` | ❌ нет (Plan 65 Ф.12) | `(Monotonic) -> ChanReader[()]` |
+
+**Latent bug под текущим API** (resolved Plan 68): `time_schema`
+в `emit_c.rs:1044` declares `Time.now() -> nova_int`, но stdlib
+`std/time/duration.nv:538-714` использует как `Timestamp` record.
+Работает сейчас через handler-bridge (тот же mechanism что Plan 65
+fixed для Duration handler params, `[M-handler-duration-schema-mismatch]`).
+Plan 68 aligns schema с реальным usage.
+
+### Файлы (затронуты при реализации Plan 68)
+
+- `std/time/duration.nv` — добавить `type Monotonic { readonly nanos i64 }`
+  + конструкторы только через `Monotonic.now()` / `Monotonic.@as_nanos()`.
+- `compiler-codegen/src/codegen/emit_c.rs:1042-1046` — обновить
+  `time_schema`: `now() -> Timestamp`, добавить `now_monotonic() -> Monotonic`.
+- `compiler-codegen/nova_rt/time.c` (новый) — `nova_time_now_realtime_ns()`
+  + `nova_time_now_monotonic_ns()` per-OS implementations.
+- `nova_tests/plan68/` — типы не interconvertible (negative tests),
+  NTP-skew resilience (mock Time effect), `close_at(Monotonic)`
+  integration с Plan 65.
 
