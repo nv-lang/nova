@@ -1,5 +1,8 @@
 // Ф.7.4 (Plan 33.6): axiom consistency под TrivialBackend → W2402.
 // Под Trivial backend нельзя проверить inconsistency, эмитится warning.
+// Под Z3 axioms проверяются точно (inconsistent → Disproved, иначе Proven),
+// поэтому W2402 не возникает — тест gated на trivial.
+// REQUIRES_SMT_BACKEND trivial
 // EXPECT_COMPILE_WARNING W2402
 
 module contracts.axiom_consistency_w2402_trivial

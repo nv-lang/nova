@@ -11867,7 +11867,10 @@ C-типа scrutinee (`Nova_LinkedList____nova_int*` → `LinkedList____nova_int
 - `pipeline.rs`: collect_trusted_fns(), UF declaration + forall ensures axiom injection
   перед requires encode caller'а.
 - `handler_exec.rs`: обновлены 3 точки создания EncodeCtx.
-- Тесты: external_no_trusted_fail (error без #trusted), external_trusted_positive (Z3).
+- Тесты: external_no_trusted_fail (error без #trusted).
+- external_trusted_positive.nv удалён 2026-05-18 — нарушал D82 whitelist
+  (`external fn` только в std.runtime.*); positive coverage перенесён
+  в stdlib test infra (out of scope nova_tests/).
 - V10 закрыт полностью. Коммит: `9220d452b02`.
 
 ### Ф.3.4 — #proof_budget module/fn timeout и vc_count_max
