@@ -3158,6 +3158,27 @@ let t0 = std::time::Instant::now();
                     }
                 }
             }
+            // Ф.49.1 (Plan 33.6): apply к лемме с `requires false` → W2402.
+            // Lemma vacuous (Ф.31.3 ловит на declaration side); здесь warning на
+            // call-site чтобы программист увидел useless apply.
+            for (lemma_name, _, sp) in &applies {
+                let lemma_has_false_req = module.items.iter().any(|it| {
+                    if let Item::Lemma(ld) = it {
+                        ld.name == *lemma_name && ld.contracts.iter().any(|c| {
+                            matches!(c.kind, ContractKind::Requires)
+                                && matches!(c.expr.kind, ExprKind::BoolLit(false))
+                        })
+                    } else { false }
+                });
+                if lemma_has_false_req {
+                    report.warnings.push(Diagnostic::new(
+                        format!("fn `{}`: `apply {}(...)` к vacuous лемме [W2402]:\n  \
+                                 лemma `{}` имеет `requires false` — apply никогда\n  \
+                                 не активирует precondition. Удалите apply или fix lemma.",
+                            fd.name, lemma_name, lemma_name),
+                        *sp));
+                }
+            }
         }
     }
     // Ф.27.3 (Plan 33.6): effect с #pure methods, но без axioms — suggest.
