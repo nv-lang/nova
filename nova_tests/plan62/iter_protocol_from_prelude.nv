@@ -95,8 +95,9 @@ test "empty Counter yields nothing" {
 test "prelude auto-import — PRELUDE_VERSION accessible (regression marker)" {
     // Sanity check: если migration phase что-то сломал в prelude resolve,
     // этот test упал бы первым. Plan 62.F bump'нул PRELUDE_VERSION 2 → 3
-    // в финальной фазе Plan 62 (effects.Fail[E] добавлен). Plan 62.D
-    // non-opaque bis-1 (2026-05-18) bump'нул 3 → 4: Range / RangeIter
-    // теперь auto-available через prelude facade.
-    assert(PRELUDE_VERSION == 4)
+    // (Plan 62 closure, effects.Fail[E] добавлен). Plan 62.D non-opaque
+    // bis-1 (2026-05-18) bump'нул 3 → 4: Range / RangeIter auto-available.
+    // Plan 62.F.bis (2026-05-18) bump'нул 4 → 5: edition versioning +
+    // Time/Mem formal declarations + structured W_PRELUDE_SHADOW lint.
+    assert(PRELUDE_VERSION == 5)
 }

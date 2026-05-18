@@ -11,12 +11,16 @@
 //   - 62.F bump 2 → 3 + **Plan 62 closure** (effects.Fail[E] added).
 //   - 62.D non-opaque bis-1 bump 3 → 4: Range / RangeIter теперь
 //     re-export'ятся через prelude facade, 4 latent codegen bugs закрыты.
+//   - 62.F.bis bump 4 → 5: edition versioning (`[package].edition` →
+//     `std/prelude/<sanitized>.nv` resolver) + structured
+//     W_PRELUDE_SHADOW lint с `allow_prelude_shadow` suppress + Time/Mem
+//     formal effect declarations + spec D-block amendments.
 // См. docs/plans/62-prelude-hardcode-migration.md.
 
 module modules.prelude_auto_import
 
 test "PRELUDE_VERSION доступен без import" {
-    // Plan 62.D bis-1: bump до 4 (Range / RangeIter теперь auto-available
-    // через prelude facade, 4 latent codegen bugs закрыты).
-    assert(PRELUDE_VERSION == 4)
+    // Plan 62.F.bis bump 4 → 5: edition versioning + Time/Mem formal
+    // declarations + structured W_PRELUDE_SHADOW lint.
+    assert(PRELUDE_VERSION == 5)
 }

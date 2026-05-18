@@ -31,9 +31,10 @@ export import std.prelude.errors.{RuntimeError, DivByZero, Overflow, IndexOutOfB
 export import std.prelude.collections.{Iter}
 export import std.collections.range.{Range, RangeIter}
 export import std.prelude.protocols.{From, Into, Hashable, Equatable, Comparable, Display}
-export import std.prelude.effects.{Fail}
+export import std.prelude.effects.{Fail, Time, Mem}
 
 /// Edition pin marker для verification что resolver выбрал edition vs
-/// rolling facade. Snapshot version = 4 (matches rolling on 2026-05-18).
+/// rolling facade. Snapshot version = 5 (matches rolling on
+/// 2026-05-18, post Plan 62.F.bis Ф.3 — Time/Mem added).
 #stable(since = "0.1")
-export const PRELUDE_EDITION_2026_05 int = 4
+export const PRELUDE_EDITION_2026_05 int = 5

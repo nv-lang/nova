@@ -1228,7 +1228,12 @@ impl CEmitter {
                 }
             }
             // Built-in vtables defined in nova_rt/effects.h — skip.
-            const BUILTIN_VTABLE_NAMES: &[&str] = &["Fail", "Time"];
+            // Plan 62.F.bis Ф.3 (2026-05-18): added "Mem" — formally
+            // declared в std/prelude/effects.nv, vtable handled через
+            // pre-registered effect_schemas + codegen helpers (no
+            // runtime/effects.h dedicated struct, but emit-skip required
+            // чтобы избежать conflict с declaration).
+            const BUILTIN_VTABLE_NAMES: &[&str] = &["Fail", "Time", "Mem"];
             for name in vtable_names {
                 if BUILTIN_VTABLE_NAMES.contains(&name.as_str()) { continue; }
                 // Local effects — emit_effect_type generates an anonymous typedef
@@ -5019,6 +5024,16 @@ impl CEmitter {
             // Также см. BUILTIN_VTABLE_NAMES (emit_c.rs:1221) — fwd-decl
             // skip-list для тех же effects (Fail, Time).
             "Fail",
+            // Plan 62.F.bis Ф.3 (2026-05-18): `Time` and `Mem` formally
+            // declared в std/prelude/effects.nv. Skip emission т.к.
+            // codegen effect_schemas pre-registers их (emit_c.rs:1077-1098),
+            // и `NovaVtable_Time` живёт в nova_rt/effects.h. Mem's vtable
+            // emitted on-demand via codegen helpers — skip type-decl
+            // (emit_effect_type would conflict с pre-existing schema).
+            // Declaration здесь — canonical API surface для `nova doc`
+            // + AI tooling без duplicate emit. BUILTIN_VTABLE_NAMES
+            // обновлён включить Mem (emit_c.rs:1231).
+            "Time", "Mem",
         ];
         if RUNTIME_DEFINED_TYPES.contains(&t.name.as_str()) {
             // Plan 62.A: skip emission — type defined in runtime. Schema
