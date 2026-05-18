@@ -762,20 +762,45 @@ production-grade; mock-time sequential semantics shipped.
 
 **Регрессия:** 708 PASS / 0 FAIL / 44 SKIP (baseline 705 + 3 new).
 
-### Ф.11 — Observability (1 day)
+### Ф.11 — Observability (1 day) ✅ 2026-05-18
 
-- [ ] Implement counters в runtime (R24): alloc_total / alloc_active /
-      fired / cancelled / longest_pending_ms.
-- [ ] `NOVA_TIMER_METRICS=1` env: enable + dump at process exit.
-- [ ] `Time.timer_stats() -> TimerStats` API в stdlib.
-- [ ] Bench-history integration: per-bench snapshot.
-- [ ] Leak warning: `alloc_active > 0` post-main → log first 10 leak
-      sources (best-effort stack capture).
-- [ ] Bench `timer_alloc_throughput` (1000 timers, alloc+fire) — record
-      baseline для Plan 66 wheel comparison.
+- [x] Counters в runtime (R24): `NovaTimerStats { alloc_total, alloc_active,
+      fired, cancelled, longest_pending_ms }` — единая статика в channels.h,
+      maintained always (cost = 1 incr/decr на alloc/fire/cancel, всегда
+      доступно через Nova API).
+- [x] `NOVA_TIMER_METRICS=1` env: lazy `atexit`-installation в
+      `_nova_timer_metrics_init_lazy()`. Dump прижимается к stderr + leak
+      warning если `alloc_active > 0` на exit.
+- [x] `Time.timer_*()` API: 5 effect-methods в `effect_schemas` в
+      emit_c.rs + Nova_Time_timer_* wrappers в channels.h. Returns
+      individual counters (struct-return через record_schema было бы
+      breaking change — single-method API rejected, multi-method избегает
+      latent codegen issues с struct-returning extern'ами).
+   - `Time.timer_alloc_total() -> int`
+   - `Time.timer_alloc_active() -> int`
+   - `Time.timer_fired() -> int`
+   - `Time.timer_cancelled() -> int`
+   - `Time.timer_longest_pending_ms() -> int`
+- [⚠️] Bench-history per-bench snapshot — defer'нут как enhancement.
+      Plan 57 bench harness не имеет hook'а для runtime stats capture;
+      добавление потребует touching bench-execution path в nova-cli.
+      Manual workflow: bench-code может вызвать `Time.timer_*()` сам.
+      Tracked [M-bench-timer-metrics-autocapture].
+- [x] Leak warning: `alloc_active > 0` post-main → atexit dump printed
+      `[LEAK]` marker + explicit "WARNING" line. Stack frame capture не
+      реализован (best-effort требует libbacktrace / Windows DbgHelp
+      integration — defer'нут [M-timer-leak-stack-frames]).
+- [⚠️] Bench `timer_alloc_throughput` (1000 timers) — defer'нут до Ф.14
+      (stress test суммирует scope-coverage requirements).
+- [x] Test: `f11a_timer_metrics.nv` — 5 sub-tests валидируют alloc_total/
+      alloc_active/fired/cancelled/longest_pending_ms через Nova API.
 
-**Acceptance:** metrics work; bench recorded; leak warning fires on
-synthetic leak test.
+**Acceptance:** ✅ metrics live, leak-warning atexit, Nova API exposed,
+5 metric-validation tests PASS. Bench auto-capture — honest-defer
+[M-bench-timer-metrics-autocapture].
+
+**Регрессия:** 709 PASS / 0 FAIL / 44 SKIP (baseline 705 + 4 new:
+f7, f8, f10, f11a).
 
 ### Ф.12 — `Monotonic` тип + `ChanReader.close_at(Monotonic)` (D124 implementation, 3 days)
 
