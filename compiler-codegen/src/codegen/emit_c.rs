@@ -1346,6 +1346,24 @@ impl CEmitter {
         };
         let user_fn_keys: HashSet<String> = user_fn_spans.iter()
             .map(|(k, _)| k.clone()).collect();
+        // Plan 62.F.bis Ф.2 (2026-05-18): same shadow-skip для Const items.
+        // Без этого `const PRELUDE_VERSION = 99` в user-коде + prelude's own
+        // `PRELUDE_VERSION` → C-level redefinition (CC-FAIL). User wins,
+        // merged duplicate skipped.
+        let user_const_spans: std::collections::HashSet<(String, crate::diag::Span)> = {
+            let mut s = std::collections::HashSet::new();
+            for pf in &module.peer_files {
+                if !pf.is_entry_module { continue; }
+                for it in &pf.items_here {
+                    if let Item::Const(cd) = it {
+                        s.insert((cd.name.clone(), cd.span));
+                    }
+                }
+            }
+            s
+        };
+        let user_const_names: HashSet<String> = user_const_spans.iter()
+            .map(|(n, _)| n.clone()).collect();
         // Helper: is this Type item the merged (non-user) duplicate of a
         // name the user has also declared? Skip if so.
         let should_skip_type = |t: &TypeDecl| -> bool {
@@ -1361,6 +1379,10 @@ impl CEmitter {
             };
             if !user_fn_keys.contains(&key) { return false; }
             !user_fn_spans.contains(&(key, f.span))
+        };
+        let should_skip_const = |c: &ConstDecl| -> bool {
+            if !user_const_names.contains(&c.name) { return false; }
+            !user_const_spans.contains(&(c.name.clone(), c.span))
         };
 
         // 1. Type declarations first (structs/unions needed by fn signatures)
@@ -1383,6 +1405,7 @@ impl CEmitter {
         // OK через forward-decl).
         for item in &module.items {
             if let Item::Const(c) = item {
+                if should_skip_const(c) { continue; }
                 if let Some(ty) = &c.ty {
                     self.forward_declare_generic_type(ty);
                 }
@@ -1392,6 +1415,7 @@ impl CEmitter {
         // 1b. Const declarations (after types, before fn forward decls)
         for item in &module.items {
             if let Item::Const(c) = item {
+                if should_skip_const(c) { continue; }
                 self.emit_const_decl(c)?;
             }
         }

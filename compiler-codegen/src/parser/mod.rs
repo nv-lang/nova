@@ -183,6 +183,18 @@ impl Parser {
                             span: clause_start.merge(clause_end),
                         });
                     }
+                    // Plan 62.F.bis Ф.2: `module X allow_prelude_shadow` —
+                    // suppress W_PRELUDE_SHADOW warnings at module-level
+                    // (см. ast::ModuleAttrKind::AllowPreludeShadow doc).
+                    "allow_prelude_shadow" => {
+                        self.bump(); // allow_prelude_shadow ident
+                        let clause_end = self.tokens[self.pos.saturating_sub(1)].span;
+                        clause_attrs.push(ModuleAttr {
+                            kind: ModuleAttrKind::AllowPreludeShadow,
+                            effects: Vec::new(),
+                            span: clause_start.merge(clause_end),
+                        });
+                    }
                     _ => break,
                 }
             }
