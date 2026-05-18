@@ -108,6 +108,82 @@ let ticks = ChanReader.tick_every_with(Duration.from_secs(1), TickBehavior.Burst
    list-walk или O(1) freelist. TBD.
 3. **Sub-ms timer precision** — wheel granularity 1ms, sub-ms requests
    round-up как сейчас. Acceptable?
+4. **Cancel propagation для `tick_every` ticker (КРИТИЧНО для design).**
+   `tick_every` создаёт периодический channel — кто его закрывает?
+   D91 capability-split: `ChanReader` **read-only**, нет метода `close`.
+   Сейчас в Plan 65 Ф.13 stub — ticker leak'ит при cancel (fiber парк
+   на `recv()` ждёт следующий тик, не реагирует на `tok.cancel()` до
+   него). Три design-варианта на рассмотрение:
+
+   **(a) `detach (cancel: tok) { ... }` — block-scoped cancel**
+   ```nova
+   detach (cancel: tok) {
+       let ticker = ChanReader.tick_every(d)   // auto-bound to tok
+       while true {
+           match ticker.recv() {
+               Some(_) => f()
+               None    => break    // tok.cancel() → runtime closes ticker
+           }
+       }
+   }
+   ```
+   Pros: mirror `supervised(cancel: tok)` D75, ergonomic, всё внутри
+   block видит ambient cancel. Cons: parser changes (detach сейчас
+   `detach { ... }` без аргументов), `Detach` effect semantics
+   меняется.
+
+   **(b) `tick_every(d, cancel: tok)` — per-constructor**
+   ```nova
+   let ticker = ChanReader.tick_every(d, cancel: tok)
+   while true {
+       match ticker.recv() {
+           Some(_) => f()
+           None    => break
+       }
+   }
+   ```
+   Pros: explicit per-timer, не trogает `detach`. Cons: boilerplate
+   proliferation (каждый timer/channel constructor должен принимать
+   cancel param), inconsistent с Plan 65 `close_after` (там ambient
+   scope hook без явного arg).
+
+   **(c) Return `Ticker` type вместо `ChanReader[()]` — Go-style**
+   ```nova
+   let ticker = ChanReader.tick_every(d)   // returns Ticker, not ChanReader
+   defer ticker.stop()                      // explicit cleanup
+   while true {
+       match ticker.recv() {
+           Some(_) => f()
+           None    => break
+       }
+   }
+   ```
+   `Ticker` имеет `.recv()` + `.stop()` + (опц.) `.reset(new_d)`.
+   Pros: matches Go `time.NewTicker` API, defer-based cleanup явный,
+   позволяет `reset` для rearm. Cons: новый тип (не просто
+   ChanReader), требует Ticker `.recv()` proxy на internal channel,
+   no ambient cancel — programmer должен явно `defer stop()`.
+
+   **(d) Гибрид: Ticker + ambient cancel hook (Plan 65 Ф.10 pattern)**
+   - `tick_every(d)` возвращает `Ticker` (как c)
+   - Ticker auto-регистрируется в surrounding `CancelToken` (если
+     bound) — Plan 65 Ф.10 reuse
+   - `defer ticker.stop()` опционально (для explicit cleanup);
+     ambient cancel чистит сам
+   - `while true { match ... }` достаточно — никакой `while !is_cancelled()`
+     polling
+
+   **Recommendation tentatively: (d)** — лучшее из всех: Go-style
+   Ticker type + Nova-native auto-cancel hook + defer fallback для
+   ручного управления. Аналогичная семантика для `close_after`
+   валидирована Plan 65.
+
+   **Why this matters:**
+   - Без правильного дизайна `set_interval`-helper не реализуем
+     корректно — ticker leak'ит после cancel.
+   - User-side `while !tok.is_cancelled()` polling — workaround, не
+     решение (latency = period).
+   - Decision блокирует начало Plan 66 implementation.
 
 ---
 
