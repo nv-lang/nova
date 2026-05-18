@@ -1201,9 +1201,23 @@ impl CEmitter {
 
         // 1a. Pre-populate generic_types + generic_type_templates BEFORE emit_type_decl
         // and method registration, so both know which types are generic templates.
+        //
+        // Plan 62.A: skip `Option` / `Result` — codegen имеет специальную
+        // обработку через `NovaOpt_<T>` (value type в nova_rt/array.h) и
+        // pre-populated sum_schemas. Регистрация template'а конфликтует
+        // с этой parallel infrastructure: drain_generic_type_worklist
+        // создал бы `Nova_Option____<T>` heap-allocated form,
+        // не совпадающий с runtime helper signatures.
         for item in &module.items {
             if let Item::Type(t) = item {
                 if !t.generics.is_empty() {
+                    // Plan 62.A: Option/Result handled via NovaOpt_<T> /
+                    // Nova_Result* infra — не регистрируем как generic
+                    // template. Error не generic (record), не попадает
+                    // в эту ветку.
+                    if t.name == "Option" || t.name == "Result" {
+                        continue;
+                    }
                     self.generic_types.insert(t.name.clone());
                     self.generic_type_templates.insert(t.name.clone(), t.clone());
                 }
@@ -1597,6 +1611,16 @@ impl CEmitter {
             }
             if let Item::Type(t) = item {
                 if !t.generics.is_empty() {
+                    // Plan 62.A: Option/Result handled via NovaOpt_<T> /
+                    // Nova_Result* runtime infrastructure — не регистрируем
+                    // как generic. Иначе variant ctor (`Err("...")`) пойдёт
+                    // через `is_generic_call` void* boxing path (line
+                    // 13549-13554), который не совпадает с runtime helper
+                    // signature `nova_make_Result_Err(nova_str)`. См. также
+                    // skip в 1a (line 1207-1213).
+                    if t.name == "Option" || t.name == "Result" {
+                        continue;
+                    }
                     self.generic_types.insert(t.name.clone());
                 }
             }
@@ -4802,6 +4826,32 @@ impl CEmitter {
     }
 
     fn emit_type_decl(&mut self, t: &TypeDecl) -> Result<(), String> {
+        // Plan 62.A: skip emission of types pre-defined в nova_rt/*.h.
+        // Когда `std/prelude/core.nv` declares `type Option[T]` /
+        // `type Result[T, E]` / `type Error`, codegen НЕ должен заново
+        // emit'ить typedef struct + constructors — они уже в nova_rt/
+        // array.h (`Nova_Option`, `Nova_Result`, `Nova_Error`,
+        // `nova_make_Result_Ok`, etc.). Conflict resolved через skip
+        // emission на основе name lookup. Schema registration уже сделана
+        // pre-populated (emit_module §954-985).
+        //
+        // Не путать с BUILTIN_TYPE_NAMES (forward-decl skip) — это
+        // полный skip emit_type_decl на самом раннем этапе.
+        const RUNTIME_DEFINED_TYPES: &[&str] = &[
+            // Plan 62.A: core prelude types.
+            "Option", "Result", "Error",
+            // Plan 62.C (future): RuntimeError будет добавлен сюда.
+            // На сейчас он handled via pre-populated schema + builtins
+            // HashSet (codegen не doubly-emit'ит т.к. type declaration
+            // отсутствует в user/std коде вообще).
+        ];
+        if RUNTIME_DEFINED_TYPES.contains(&t.name.as_str()) {
+            // Plan 62.A: skip emission — type defined in runtime. Schema
+            // registration через init_pre_populated_schemas. Methods
+            // (если есть) handled через codegen special-case dispatch
+            // (emit_c.rs:11567+) либо runtime helpers.
+            return Ok(());
+        }
         // Plan 48 Ф.3: generic types are emitted in erased form (void* for type-param fields)
         // for bootstrap erasure mode. Monomorphized instances are emitted lazily by
         // drain_generic_type_worklist when explicit type args are provided.

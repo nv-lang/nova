@@ -1,21 +1,38 @@
-// Plan 35 sub-plan 35.A R27 (D26): prelude module.
+// Plan 35 sub-plan 35.A R27 (D26): prelude module — auto-imported в
+// каждый module через resolve_imports_inline.
 //
-// Auto-imported в каждый module через resolve_imports_inline когда
-// `std/prelude.nv` существует (bootstrap stage discovery).
+// **Plan 62.A migration:** prelude теперь splittable — types/methods
+// живут в `std/prelude/<sub>.nv`, `std/prelude.nv` — facade re-export'ит
+// их. См. docs/plans/62-prelude-hardcode-migration.md.
 //
-// **Currently empty** — большая часть prelude (Option/Result/Some/None/
-// Ok/Err/Error/Never/print/println/panic) встроена в type-checker и
-// codegen напрямую (legacy hardcode). Этот файл — placeholder
-// показывающий что R27 механизм работает; user'ы могут расширять
-// prelude добавляя items сюда.
+// Текущий статус:
+//   - 62.A complete: core types (Option/Result/Some/None/Ok/Err/Error/
+//     Ordering/Never) перенесены в std/prelude/core.nv.
+//   - 62.B–62.F pending: runtime fns / errors / collections / protocols /
+//     effects остаются hardcoded в type-checker и codegen.
 //
-// **Future migration**: hardcoded prelude items постепенно переедут
-// в этот файл, удаляя type-checker special cases.
+// **Re-export syntax:** wildcard `export import X.*` rejected per Plan
+// 35 R25 — используем selective form `export import X.{A, B, ...}`.
+// Каждый re-export'ленный name становится auto-available в любом module
+// (через R27 auto-import + R26 re-export propagation).
 
 module std.prelude
 
+// Plan 62.A: re-export всех core prelude items из std.prelude.core.
+// Type names + variant constructors + Error + Ordering — все
+// перечислены selectively, поскольку `.*` wildcard не поддерживается
+// (Plan 35 R25 rejected). Multi-line lists тоже не поддерживаются
+// (bootstrap parser `parse_import_inner` не skip'ает newlines внутри
+// `{ }`), поэтому всё на одной строке.
+//
+// DEFER из re-export'а: `Never` — bootstrap parser не поддерживает
+// `type Never =` (empty sum). Остаётся в type-checker builtins HashSet
+// пока syntax не появится. См. std/prelude/core.nv (DEFER комментарий).
+export import std.prelude.core.{Option, Some, None, Result, Ok, Err, Error, Ordering, Less, Equal, Greater}
+
 /// Prelude version marker — verify в тестах что auto-import работает.
-/// Migration hardcoded prelude items (Option/Result/Some/None/Ok/Err/Error/
-/// Never/print/println/panic) → отдельный план: [docs/plans/62-prelude-hardcode-migration.md](../../docs/plans/62-prelude-hardcode-migration.md).
+/// Bump'ается при каждой migration phase Plan 62.
+///   - 1 = pre-migration (только этот placeholder).
+///   - 2 = Plan 62.A done (core types в file-based form).
 #stable(since = "0.1")
-export const PRELUDE_VERSION int = 1
+export const PRELUDE_VERSION int = 2
