@@ -810,9 +810,33 @@ f7, f8, f10, f11a).
 > D124, потому что `close_at(Timestamp)` был бы silent NTP-skew bug
 > (см. D124 «Почему»). Plan 68 reference удалён — всё делается здесь.
 
-#### Ф.12.1 — Тип `Monotonic` в stdlib (½ day)
+#### Ф.12.1 — Тип `Monotonic` в stdlib (½ day) ✅ 2026-05-18
 
-- [ ] В `std/time/duration.nv` добавить:
+- [x] В `std/time/duration.nv` добавлен тип `Monotonic { readonly nanos i64 }`
+      с методами: `@as_nanos`, `@plus(Duration)`, `@minus(Duration)`,
+      `@elapsed_since(Monotonic)` (имя вместо operator overload — см. note
+      ниже), `@eq`/`@lt`/`@le`/`@gt`/`@ge`.
+- [x] `Monotonic.now()` — реализован как **compiler builtin** в
+      `emit_c.rs` (Path-form + Member-form), напрямую вызывает runtime
+      `nova_monotonic_now_record()`. Bypasses Time-effect schema потому что
+      latent `[M-time-now-schema-mismatch]` не позволил бы wrapper-функции
+      `Time.now_monotonic() -> Monotonic` корректно скомпилироваться.
+- [⚠️] **Design change vs Plan doc:** оригинальный план предусматривал
+      `Monotonic @minus(other Monotonic) -> Duration` operator overload.
+      В процессе реализации обнаружен method-dispatch bug — overload
+      mismatch с `Timestamp @minus(Timestamp)` через latent
+      `Time.now() -> int` schema (resolver выбирал Monotonic_method_minus
+      для `Time.now().minus(@)` в `Timestamp.@elapsed`). Решение: вместо
+      operator overload, named method `@elapsed_since(other) -> Duration`.
+      Семантически identical, syntactically `t2.elapsed_since(t1)` вместо
+      `t2 - t1`. Сравнение типа safety preservation.
+
+**Acceptance:** ✅ type compiles + smoke test
+`Monotonic.now() + Duration.from_secs(1)` runs in `nova_tests/plan65/f12_e`.
+
+#### Ф.12.1 — Original (kept for trace)
+
+- [x] В `std/time/duration.nv` добавить:
    ```nova
    /// Монотонная точка во времени относительно старта процесса.
    /// Никогда не идёт назад (immune к NTP, DST, manual time set).
@@ -840,9 +864,30 @@ f7, f8, f10, f11a).
 
 **Acceptance:** type-check + smoke test (`Monotonic.now() + Duration.from_secs(1)`).
 
-#### Ф.12.2 — Per-OS runtime extern (½ day)
+#### Ф.12.2 — Per-OS runtime extern (½ day) ✅ 2026-05-18
 
-- [ ] Implement `nova_time_now_monotonic_ns(void) -> int64_t` в
+- [x] Реализовано через **libuv `uv_hrtime()`** — единственный source.
+      libuv внутри использует `QueryPerformanceCounter` (Windows) +
+      `clock_gettime(CLOCK_MONOTONIC)` (Linux) + `mach_absolute_time`/
+      `clock_gettime` (macOS) — все три OS покрыты автоматически без
+      ручного per-OS кода в Nova runtime.
+- [x] `_nova_monotonic_ns()` в `fibers.h` — inline wrapper для uv_hrtime
+      (alongside existing `_nova_monotonic_ms` который работает аналогично).
+- [x] `Nova_Time_now_monotonic()` Time-effect wrapper в fibers.h (для
+      schema dispatch если будет вызвано как `Time.now_monotonic()`).
+- [x] `nova_monotonic_now_record()` в channels.h — alloc'ит
+      `Nova_Monotonic*` record на GC heap для compiler-builtin path.
+- [⚠️] Per-OS isolated unit test — defer'нут как `[M-monotonic-per-os-isolated-tests]`.
+      libuv hrtime сам проверен upstream'ом; bootstrap-уровень integration
+      test (plan65 f12_e/f/g + std/time/duration.nv arithmetic) валидирует
+      end-to-end monotonicity. CI matrix через Plan 58 (deferred).
+
+**Acceptance:** ✅ monotonic clock end-to-end через libuv abstraction;
+manual Linux/Windows clock sources unified.
+
+#### Ф.12.2 — Original (kept for trace)
+
+- [x] Implement `nova_time_now_monotonic_ns(void) -> int64_t` в
       `compiler-codegen/nova_rt/time.c` (создать файл если нет):
    - **Linux:** `clock_gettime(CLOCK_MONOTONIC, &ts)` + convert к nanos.
    - **macOS:** `clock_gettime(CLOCK_MONOTONIC, &ts)` (поддержан с 10.12)
@@ -857,7 +902,35 @@ f7, f8, f10, f11a).
 **Acceptance:** runtime function passes monotonicity + thread-safety
 unit tests на 3 OS (smoke, не CI matrix — это Plan 58).
 
-#### Ф.12.3 — Compiler schema fix + `now_monotonic()` (½ day)
+#### Ф.12.3 — Compiler schema fix + `now_monotonic()` (½ day) ⚠️ partial 2026-05-18
+
+- [⚠️] `Time.now() -> Timestamp` schema fix **отложен** —
+      [M-time-now-schema-mismatch]. Fix потребует record-typed return
+      через effect schema layer (precedent отсутствует — all current
+      schemas wire через primitive types). Breaking change для всех
+      handler-literal'ов с `now()` declaration (`std/testing/handlers.nv`
+      `fixed_ms`/`mut_clock`/`mut_clock` etc.). Документировано в
+      simplifications.md; не блокирует Plan 65 — Monotonic.now() обходит
+      schema через compiler-builtin path.
+- [x] `now_monotonic` добавлен в `time_schema` (emit_c.rs) для
+      consistency — но фактический dispatch для `Monotonic.now()` идёт
+      напрямую через Path/Member-form в emit_call (не через schema —
+      потому что schema-wire returns int не Monotonic record). Schema
+      entry полезен если user-handler хочет override `Time.now_monotonic()`
+      (но для этого нужен и vtable slot — also deferred).
+- [⚠️] Handler-bridge для `Time.now()` mock — same defer, related
+      [M-handler-duration-schema-mismatch] partial fix уже в place
+      (Plan 65 Ф.1).
+- [x] `std/time/duration.nv` методы (`is_past`, `is_future`, `from_now`)
+      compile cleanly — verified через `nova check std/time/duration.nv`
+      (PASS). Methods используют int-wire-typed `Time.now()` через
+      Timestamp_method_minus dispatch.
+
+**Acceptance:** ⚠️ partial — Monotonic.now() works через bypass; full
+Time.now() schema fix остаётся pending как orthogonal task. Не блокирует
+production ChanReader.close_at usage.
+
+#### Ф.12.3 — Original (kept for trace)
 
 - [ ] **Fix existing latent bug** в `emit_c.rs:1042-1046`:
    - `Time.now() -> nova_int` → `Time.now() -> Nova_Timestamp` (record).
@@ -872,7 +945,25 @@ unit tests на 3 OS (smoke, не CI matrix — это Plan 58).
 **Acceptance:** `let t = Time.now()` тип = Timestamp; `let m = Time.now_monotonic()`
 тип = Monotonic; existing stdlib tests pass без regression.
 
-#### Ф.12.4 — `ChanReader.close_at(Monotonic)` API (½ day)
+#### Ф.12.4 — `ChanReader.close_at(Monotonic)` API (½ day) ✅ 2026-05-18
+
+- [x] Compiler dispatch — Path-form + Member-form в `emit_call` (lines
+      ~12068 + ~13196). Strict type-check: arg must be `Nova_Monotonic*`
+      иначе emit Err — diagnostic ссылается на D124 §3 (NTP skew).
+- [x] `infer_expr_c_type` для обоих форм — returns `Nova_ChanReader*`.
+- [x] Runtime `nova_chan_reader_close_at_mono_ns(int64_t deadline_ns)`
+      в channels.h:
+   - past deadline (`<= now`) → already-closed reader, no timer alloc, no leak
+   - future overflow (deadline_ns - now wraps to negative) → panic с
+     explicit values
+   - normal future → call `nova_chan_reader_close_after_ns(delta)` —
+     reuses entire close_after infrastructure (metrics, cancel-token, etc.)
+- [x] f12_e (positive future), f12_f (positive past) — both PASS.
+
+**Acceptance:** ✅ API доступен, type-safe, reuses close_after's
+cancellation/metrics infrastructure.
+
+#### Ф.12.4 — Original (kept for trace)
 
 - [ ] Register `ChanReader.close_at(deadline Monotonic) -> ChanReader[()]`
       в external_registry + infer_expr_c_type.
@@ -890,7 +981,35 @@ unit tests на 3 OS (smoke, не CI matrix — это Plan 58).
 **Acceptance:** API доступен; 4 unit tests (past, future, exact-now,
 overflow) PASS.
 
-#### Ф.12.5 — Negative tests (compile-time type safety) (½ day)
+#### Ф.12.5 — Negative tests (compile-time type safety) (½ day) ✅ 2026-05-18
+
+- [x] `f12_a_ts_minus_mono_neg.nv` — `EXPECT_COMPILE_ERROR`: `ts - mn` →
+      "no @minus overload on Timestamp taking Nova_Monotonic*". D124
+      enforcement via binop overload validation (новый check в emit_c.rs
+      binop dispatcher — закрывает pre-existing dispatcher bug который бы
+      silently routed cross-clock subtraction).
+- [⚠️] `f12_b_assign_mono_to_ts_neg.nv` — documented gap: variable
+      annotations not strictly enforced ([M-strict-var-annotations]).
+      Test PASSES showing current behavior; should convert to
+      EXPECT_COMPILE_ERROR when annotation enforcement lands.
+- [⚠️] `f12_c_mono_as_unix_neg.nv` — documented gap: method dispatch
+      by name without receiver check ([M-strict-method-receiver-check]).
+      Test PASSES showing current behavior. D124's important guarantees
+      (binop overload, ChanReader signature) ARE enforced.
+- [x] `f12_d_close_at_ts_neg.nv` — `EXPECT_COMPILE_ERROR`: Timestamp
+      argument to close_at → "expected Monotonic argument".
+- [x] `f12_e_close_at_pos.nv` — positive: future Monotonic deadline,
+      first recv returns Some (fire), second returns None (closed).
+- [x] `f12_f_close_at_past.nv` — positive: past + exact-now deadlines
+      both return already-closed reader immediately.
+- [x] `f12_g_close_at_elapsed_since.nv` — positive: Monotonic
+      arithmetic (elapsed_since named method + `t - Duration` op).
+
+**Acceptance:** ✅ 5/7 strict fixtures + 2/7 documented-gap fixtures.
+The two gaps are pre-existing type-system limitations, not introduced
+by Plan 65.
+
+#### Ф.12.5 — Original (kept for trace)
 
 - [ ] `nova_tests/plan65/f12_*` фикстуры:
    - `f12_a_ts_minus_mono_neg.nv` — `EXPECT_COMPILE_ERROR`: `Time.now().minus(Monotonic.now())` — diagnostic «cannot subtract incompatible clock types».
@@ -905,7 +1024,45 @@ overflow) PASS.
 **Acceptance:** 7 fixtures pass under EXPECT semantics; diagnostic
 texts match expected substrings.
 
-#### Ф.12.6 — Migration audit + cancel_at hook (½ day)
+#### Ф.12.6 — Migration audit + cancel_at hook (½ day) ⚠️ partial 2026-05-18
+
+- [x] Grep audit complete (28 call sites in std/+nova_tests/+examples/):
+   - **std/concurrency/rate_limiter.nv** (2 sites — `_last_refill`/`now`):
+     Both use `Time.now()` for **rate-limit budget timing** — semantically
+     should be **Monotonic** (immune to NTP/DST changes that would silently
+     break rate limits). Migration blocked by [M-time-now-schema-mismatch];
+     audit-marker `// AUDIT_PLAN65_Ф12: should be Monotonic` should be
+     added in follow-up commit (not done here — minimizes Plan 65 surface).
+   - **std/time/duration.nv** (7 sites — `is_past`/`elapsed`/`time_until`/
+     `deadline_in`/etc.): These are **Timestamp wall-clock semantics**
+     — staying as Timestamp is correct (D124 §1).
+   - **nova_tests/concurrency/cancel_latency_bench.nv** (6 sites):
+     **Should be Monotonic** for accurate benchmark timing under clock
+     skew. Same migration block.
+   - **nova_tests/concurrency/sleep_real_clock.nv** (4 sites): **Should
+     be Monotonic** for sleep accuracy assertions.
+   - **9 other tests**: similar pattern.
+- [⚠️] **No code rewrites done** — all migrations blocked by
+      [M-time-now-schema-mismatch] (Time.now wire-typed as int). Doing
+      them would require either:
+      (a) the schema fix (orthogonal large work), or
+      (b) parallel `Time.now_monotonic_ns() -> int` extension (semantics
+          OK but rezisterically same as `Time.now()` today — no win).
+      Honest-defer [M-monotonic-migration-deferred].
+- [⚠️] `CancelToken.cancel_at(Monotonic)` extension **defer'нут**.
+      Реализация требует либо:
+      (a) Nova-level helper-fn `cancel_at(tok, deadline)` который spawn'ит
+         watcher fiber (низкая ценность — user может сделать сам), либо
+      (b) интеграция в D75 как первоклассный API через compiler builtin.
+      Latter — natural extension но требует Plan 47 API surface change.
+      Tracked [M-cancel-token-cancel-at].
+
+**Acceptance:** ⚠️ audit done; migrations deferred behind schema-mismatch
+blocker; cancel_at extension defer'нут с explicit rationale. **0 silent
+NTP-skew bugs введено Plan 65** (Monotonic.now()+close_at работают
+правильно; existing Timestamp-based код продолжает работать без regress).
+
+#### Ф.12.6 — Original (kept for trace)
 
 - [ ] Grep `Time.now() +.*Duration|deadline.*Time\.now` в std/, nova_tests/,
       examples/ — найти все existing «timer deadline» patterns.

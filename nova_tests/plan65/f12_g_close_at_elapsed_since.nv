@@ -1,0 +1,27 @@
+// Plan 65 R18 / Ф.12.5: Monotonic arithmetic + elapsed_since named
+// method (replacement for `@minus(Monotonic)` operator overload — see
+// Эволюция note in std/time/duration.nv).
+
+module plan65.f12_g_close_at_elapsed_since
+
+import std.time.duration
+
+test "Monotonic.elapsed_since returns positive Duration" {
+    let t1 = Monotonic.now()
+    // Busy-wait so t2 > t1 (we don't have Time.sleep that uses Monotonic).
+    let mut i = 0
+    while i < 1000 {
+        i = i + 1
+    }
+    let t2 = Monotonic.now()
+    let d = t2.elapsed_since(t1)
+    // Clock never goes backwards.
+    assert(!d.is_negative())
+}
+
+test "Monotonic - Duration shifts deadline backward" {
+    let t1 = Monotonic.now()
+    let earlier = t1 - Duration.from_secs(1)
+    // earlier should be a Monotonic strictly less than t1.
+    assert(earlier < t1)
+}
