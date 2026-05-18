@@ -113,10 +113,16 @@ export import std.prelude.protocols.{From, Into, Hashable, Equatable, Comparable
 // и codegen матчат single-element path `["Fail"]` независимо. Декларация
 // здесь даёт canonical API surface для `nova doc`.
 //
-// Time/Mem/Detach НЕ re-export'ятся — Time и Mem ambient runtime
-// effects (не user-overridable beyond runtime helpers), Detach —
-// keyword-construct (`detach { ... }` D50). См. std/prelude/effects.nv.
-export import std.prelude.effects.{Fail}
+// Plan 62.F.bis Ф.3 (2026-05-18): added Time, Mem formal declarations.
+// Time — ambient clock effect (sleep/now/after — last one runtime-only).
+// Mem — runtime introspection (alloc_count/free_count/live/reset).
+// Skip codegen emit через RUNTIME_DEFINED_TYPES + BUILTIN_VTABLE_NAMES.
+// Pre-registered effect_schemas (emit_c.rs:1077-1098) — dispatch works
+// unchanged. Decl-only added: AI/doc surface + signature visibility.
+//
+// **Detach** НЕ re-export'ится — это keyword-construct (`detach { ... }`
+// D50), syntactic form а не declarable effect. См. std/prelude/effects.nv.
+export import std.prelude.effects.{Fail, Time, Mem}
 
 /// Prelude version marker — verify в тестах что auto-import работает.
 /// Bump'ается при каждой migration phase Plan 62.
@@ -131,9 +137,13 @@ export import std.prelude.effects.{Fail}
 ///     auto-available через prelude facade (re-export из
 ///     std.collections.range), 4 latent codegen bugs закрыты
 ///     (match inference + closure scope analysis + D29 W_PRELUDE_SHADOW).
-///     Следующие bump'ы — из других deferred sub-plans (62.A.bis
-///     sum_schemas removal, 62.B.bis print/println, 62.C.bis
-///     RuntimeNoneError, 62.D.bis opaque types, 62.E.bis TryFrom/TryInto,
-///     etc.) когда они закроются.
+///   - 5 = Plan 62.F.bis done (2026-05-18): edition versioning
+///     (`[package].edition` → `std/prelude/<sanitized>.nv` resolver) +
+///     structured W_PRELUDE_SHADOW lint с `allow_prelude_shadow`
+///     suppress + Time/Mem formal effect declarations + spec D-block
+///     amendments. Next bump'ы — из remaining deferred sub-plans
+///     (62.A.bis sum_schemas removal, 62.B.bis print/println,
+///     62.C.bis RuntimeNoneError, 62.D.bis opaque types, 62.E.bis
+///     TryFrom/TryInto).
 #stable(since = "0.1")
-export const PRELUDE_VERSION int = 4
+export const PRELUDE_VERSION int = 5
