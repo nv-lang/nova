@@ -15445,6 +15445,21 @@ Test: f48_lemma_unused_param_w2402.
 Lemma lint catalog — 12 rules.
 
 
+# Plan 33.6 Ф.49 (2026-05-18): apply к vacuous лемме (call-site W2402)
+
+Дополняет Ф.31.3 (declaration side): теперь lint покрывает apply-site.
+
+В fn loop: для каждого apply поискать лемму с таким именем в
+`module.items`, проверить has `requires false`. Если да → W2402 на
+call-site.
+
+Test: f49_apply_vacuous_lemma_w2402.
+
+Регрессия: 203 → 204 PASS (+1), 0 FAIL, 44 SKIP.
+
+Vacuous lemma detection теперь complete: declaration (Ф.31.3) + call-site (Ф.49.1).
+
+
 ## Session: оба deferred follow-up'а Plan 59 закрыты (2026-05-17 EOD+1)
 
 После merge'а Plan 63 fixes от другого agent'а — обнаружено что оба
