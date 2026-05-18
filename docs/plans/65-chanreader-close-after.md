@@ -552,11 +552,30 @@ deferred behind [M-chanreader-gc-finalizer].
 
 **Регрессия:** 700 PASS / 0 FAIL / 44 SKIP (baseline 698 + 2 smoke tests).
 
-### Ф.3 — Negative-test fixtures (½ day)
+### Ф.3 — Negative-test fixtures (½ day) ✅ 2026-05-18
 
-- [ ] `nova_tests/plan65/f1` — `f6` тесты (R18 первая часть).
+- [x] `nova_tests/plan65/f1_close_after_int_neg.nv` —
+      `EXPECT_COMPILE_ERROR` bare int rejection с Plan 65 message.
+- [x] `f2_time_after_removed.nv` — deferred to Ф.5 (Time.after still
+      exists in parallel until Ф.5 atomic switch).
+- [x] `f3_negative_duration.nv` — `EXPECT_RUNTIME_PANIC` "negative
+      duration" — validates AD3 / R4 runtime panic path.
+- [x] `f4_zero_duration.nv` — positive: 3 cases (from_nanos(0),
+      from_secs(0), via Duration.from_nanos for the constant-access
+      workaround). All verify R5 fast-path (no timer alloc).
+- [x] `f5_sub_ms_precision.nv` — positive: 500_000 ns → ≥ 1 ms wait
+      (Time.now() pre/post delta verified).
+- [x] `f6_huge_duration.nv` — positive: from_days(10_000) +
+      from_hours(1_000_000) — no overflow/panic.
 
-**Acceptance:** 6 tests PASS под new API.
+**Acceptance:** ✅ 6 tests PASS (1 negative + 1 runtime-panic + 4 positive).
+
+**Регрессия:** plan65/ suite — 6 PASS / 0 FAIL.
+
+Note: Discovered orthogonal limitation — `Duration.ZERO` const-access via
+Path-form does not propagate the record type into `infer_expr_c_type`
+(returns `nova_int`). f4 works around by using `Duration.from_nanos(0)`.
+Tracked: Plan 60 / Plan 53 follow-up territory, not Plan 65 scope.
 
 ### Ф.4 — Migration tool (1 day)
 
