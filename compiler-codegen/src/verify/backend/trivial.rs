@@ -801,6 +801,54 @@ fn propagate_bounds(conjuncts: &[SmtTerm]) -> Vec<SmtTerm> {
                 None
             } else { None }
         };
+        // Ф.36.1 (Plan 33.6): const-mul upper bound (`<=` / `<` strict).
+        // `(<= (* L Var) goal)` где L > 0 и known upper(Var) * L <= goal → true.
+        // Также `<`: effective_goal = goal-1.
+        // L < 0 не покрывается (sign flip — нелинейный case, требует Z3).
+        let try_const_mul_upper = |inner: &SmtTerm| -> Option<bool> {
+            if let SmtTerm::App(iop, iargs) = inner {
+                if (iop != "<=" && iop != "<") || iargs.len() != 2 { return None; }
+                let goal = match &iargs[1] { SmtTerm::IntLit(n) => *n, _ => return None };
+                let effective_goal = if iop == "<" { goal.saturating_sub(1) } else { goal };
+                if let SmtTerm::App(mop, margs) = &iargs[0] {
+                    if mop != "*" || margs.len() != 2 { return None; }
+                    let (l, v) = match (&margs[0], &margs[1]) {
+                        (SmtTerm::IntLit(l), SmtTerm::Var(v)) => (*l, v),
+                        (SmtTerm::Var(v), SmtTerm::IntLit(l)) => (*l, v),
+                        _ => return None,
+                    };
+                    if l > 0 {
+                        if let Some(known_up) = upper.get(v) {
+                            if known_up.saturating_mul(l) <= effective_goal {
+                                return Some(true);
+                            }
+                        }
+                    }
+                }
+                None
+            } else { None }
+        };
+        // Ф.36.2 (Plan 33.6): negation upper bound (`<=` / `<` strict).
+        // `(<= (- 0 Var) goal)` где -lower(Var) <= goal → true.
+        // Эквивалент: lower(Var) >= -goal.
+        let try_negation_upper = |inner: &SmtTerm| -> Option<bool> {
+            if let SmtTerm::App(iop, iargs) = inner {
+                if (iop != "<=" && iop != "<") || iargs.len() != 2 { return None; }
+                let goal = match &iargs[1] { SmtTerm::IntLit(n) => *n, _ => return None };
+                let effective_goal = if iop == "<" { goal.saturating_sub(1) } else { goal };
+                if let SmtTerm::App(sop, sargs) = &iargs[0] {
+                    if sop != "-" || sargs.len() != 2 { return None; }
+                    if let (SmtTerm::IntLit(0), SmtTerm::Var(v)) = (&sargs[0], &sargs[1]) {
+                        if let Some(known_low) = lower.get(v) {
+                            if known_low.saturating_neg() <= effective_goal {
+                                return Some(true);
+                            }
+                        }
+                    }
+                }
+                None
+            } else { None }
+        };
         // Ф.16.3 (Plan 33.6): strict-monotone constant multiply.
         // `(>= (* L Var) goal)` где L > 0 и known lower(Var) * L >= goal → true.
         // Ф.30.3: extended на `>` (strict).
@@ -930,6 +978,10 @@ fn propagate_bounds(conjuncts: &[SmtTerm]) -> Vec<SmtTerm> {
         if let Some(b) = try_const_mul_check(c) {
             return SmtTerm::BoolLit(b);
         }
+        // Ф.36.1: const-mul upper check.
+        if let Some(b) = try_const_mul_upper(c) {
+            return SmtTerm::BoolLit(b);
+        }
         // Ф.33.2: var-mul non-negative check.
         if let Some(b) = try_var_mul_nonneg(c) {
             return SmtTerm::BoolLit(b);
@@ -970,6 +1022,10 @@ fn propagate_bounds(conjuncts: &[SmtTerm]) -> Vec<SmtTerm> {
         if let Some(b) = try_negation_check(c) {
             return SmtTerm::BoolLit(b);
         }
+        // Ф.36.2: negation upper check.
+        if let Some(b) = try_negation_upper(c) {
+            return SmtTerm::BoolLit(b);
+        }
         // (not <inequality>) — invert result.
         if let SmtTerm::App(op, args) = c {
             if op == "not" && args.len() == 1 {
@@ -977,6 +1033,9 @@ fn propagate_bounds(conjuncts: &[SmtTerm]) -> Vec<SmtTerm> {
                     return SmtTerm::BoolLit(!b);
                 }
                 if let Some(b) = try_const_mul_check(&args[0]) {
+                    return SmtTerm::BoolLit(!b);
+                }
+                if let Some(b) = try_const_mul_upper(&args[0]) {
                     return SmtTerm::BoolLit(!b);
                 }
                 if let Some(b) = try_var_mul_nonneg(&args[0]) {
@@ -1007,6 +1066,9 @@ fn propagate_bounds(conjuncts: &[SmtTerm]) -> Vec<SmtTerm> {
                     return SmtTerm::BoolLit(!b);
                 }
                 if let Some(b) = try_negation_check(&args[0]) {
+                    return SmtTerm::BoolLit(!b);
+                }
+                if let Some(b) = try_negation_upper(&args[0]) {
                     return SmtTerm::BoolLit(!b);
                 }
             }
