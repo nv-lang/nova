@@ -15,12 +15,15 @@
 //     `std/prelude/<sanitized>.nv` resolver) + structured
 //     W_PRELUDE_SHADOW lint с `allow_prelude_shadow` suppress + Time/Mem
 //     formal effect declarations + spec D-block amendments.
+//   - 62.D.bis bump 5 → 6: StringBuilder / WriteBuffer / ReadBuffer
+//     formally declared via new D126 `external type` syntax в
+//     std/prelude/collections.nv (auto-available через prelude facade).
 // См. docs/plans/62-prelude-hardcode-migration.md.
 
 module modules.prelude_auto_import
 
 test "PRELUDE_VERSION доступен без import" {
-    // Plan 62.F.bis bump 4 → 5: edition versioning + Time/Mem formal
-    // declarations + structured W_PRELUDE_SHADOW lint.
-    assert(PRELUDE_VERSION == 5)
+    // Plan 62.D.bis bump 5 → 6: opaque types (StringBuilder/WriteBuffer/
+    // ReadBuffer) formally declared via D126 `external type`.
+    assert(PRELUDE_VERSION == 6)
 }
