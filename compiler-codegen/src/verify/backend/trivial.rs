@@ -244,6 +244,8 @@ fn simplify_app(op: &str, args: &[SmtTerm]) -> SmtTerm {
             // Note: undefined для a == 0 в runtime, но в spec-only contracts
             // safe assume a != 0 (программист написал такой goal).
             (SmtTerm::IntLit(0), _) => SmtTerm::IntLit(0),
+            // Ф.52.3 (Plan 33.6): a / a → 1 (when a non-zero — spec assumption).
+            (a, b) if a == b => SmtTerm::IntLit(1),
             _ => SmtTerm::App(op.into(), args.to_vec()),
         },
         "%" if args.len() == 2 => match (&args[0], &args[1]) {
@@ -815,6 +817,19 @@ fn propagate_bounds(conjuncts: &[SmtTerm]) -> Vec<SmtTerm> {
                     // даёт неотрицательный результат. Для effective_goal <= 0 → true.
                     if margs[0] == margs[1] && effective_goal <= 0 {
                         return Some(true);
+                    }
+                    // Ф.52.1 (Plan 33.6): square strict positive (a * a > 0 if a != 0).
+                    // Если a == a (square) и effective_goal == 1 (>=1, т.е. strict >0):
+                    // - lower(a) >= 1 OR upper(a) <= -1 → a != 0 → square >= 1.
+                    if margs[0] == margs[1] && effective_goal == 1 {
+                        if let SmtTerm::Var(v) = &margs[0] {
+                            if let Some(l) = lower.get(v) {
+                                if *l >= 1 { return Some(true); }
+                            }
+                            if let Some(u) = upper.get(v) {
+                                if *u <= -1 { return Some(true); }
+                            }
+                        }
                     }
                     if let (SmtTerm::Var(a), SmtTerm::Var(b)) = (&margs[0], &margs[1]) {
                         // Ф.37.2 (Plan 33.6): strict positive product.

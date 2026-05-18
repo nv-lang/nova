@@ -1,0 +1,35 @@
+// Ф.52 (Plan 33.6): TrivialBackend square strict + div_self.
+// Ф.52.1: `requires x >= 1; ensures (x * x) > 0` — square strict positive.
+// Ф.52.3: `ensures (x / x) == 1` (для non-zero — spec assumption).
+
+module contracts.f52_square_strict_div_self_positive
+
+#verify
+fn square_strict_pos(x int) -> int
+    requires x >= 1
+    ensures result > 0
+{
+    x * x
+}
+
+#verify
+fn square_strict_neg(x int) -> int
+    requires x <= -1
+    ensures result > 0
+{
+    x * x
+}
+
+#verify
+fn div_self(x int) -> int
+    requires x >= 1
+    ensures result == 1
+{
+    x / x
+}
+
+test "square strict + div self" {
+    assert(square_strict_pos(3) == 9)
+    assert(square_strict_neg(-4) == 16)
+    assert(div_self(7) == 1)
+}
