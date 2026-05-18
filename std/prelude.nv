@@ -66,7 +66,14 @@ export import std.prelude.errors.{RuntimeError, DivByZero, Overflow, IndexOutOfB
 // canonical API + eligible как bound (`T Iter`) per D72. Не ломает
 // existing structural for-in dispatch (codegen ищет метод `next`
 // напрямую, protocol declaration не enforced на type annotations).
-export import std.prelude.collections.{Iter}
+//
+// Plan 62.D.bis (2026-05-18): re-export StringBuilder / WriteBuffer /
+// ReadBuffer — opaque types declared через D126 `external type` в
+// std/prelude/collections.nv. Раньше существовали как «known-by-name»
+// (D26 prose-only); теперь auto-available через prelude (no explicit
+// `import std.prelude.collections.{StringBuilder}` required). Methods
+// продолжают жить в `std/runtime/<name>.nv` (external fn, D82).
+export import std.prelude.collections.{Iter, StringBuilder, WriteBuffer, ReadBuffer}
 
 // Plan 62.D non-opaque bis-1 (2026-05-18): re-export Range / RangeIter из
 // std.collections.range. Раньше (Plan 62.D non-opaque) эта строка
@@ -141,9 +148,14 @@ export import std.prelude.effects.{Fail, Time, Mem}
 ///     (`[package].edition` → `std/prelude/<sanitized>.nv` resolver) +
 ///     structured W_PRELUDE_SHADOW lint с `allow_prelude_shadow`
 ///     suppress + Time/Mem formal effect declarations + spec D-block
-///     amendments. Next bump'ы — из remaining deferred sub-plans
+///     amendments.
+///   - 6 = Plan 62.D.bis done (2026-05-18): StringBuilder / WriteBuffer /
+///     ReadBuffer formally declared via new D126 `external type` syntax
+///     в std/prelude/collections.nv. Auto-available через prelude facade
+///     — закрывает последний known-by-name hole в D26 visible prelude.
+///     Methods продолжают жить в std/runtime/<name>.nv (external fn,
+///     D82, unchanged). Next bump'ы — из remaining deferred sub-plans
 ///     (62.A.bis sum_schemas removal, 62.B.bis print/println,
-///     62.C.bis RuntimeNoneError, 62.D.bis opaque types, 62.E.bis
-///     TryFrom/TryInto).
+///     62.C.bis RuntimeNoneError, 62.E.bis TryFrom/TryInto).
 #stable(since = "0.1")
-export const PRELUDE_VERSION int = 5
+export const PRELUDE_VERSION int = 6

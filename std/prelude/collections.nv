@@ -68,14 +68,13 @@
 //        User declarations выигрывают, prelude-merged duplicates
 //        skip'аются.
 //
-// **NOT migrated (DEFER Plan 62.D.bis — отдельный sub-plan):**
-//
-// - **`StringBuilder` / `WriteBuffer` / `ReadBuffer`** — opaque
-//   runtime types, для миграции требуется новый `external type` D-block
-//   в spec/decisions (нет canonical syntax в bootstrap parser для
-//   forward-decl типа с runtime-only implementation). Остаются hardcoded
-//   в type-checker builtins / codegen. См. docs/plans/62-prelude-hardcode-
-//   migration.md §62.D.bis (создаётся отдельно).
+// **Plan 62.D.bis done (2026-05-18):** `StringBuilder` / `WriteBuffer` /
+// `ReadBuffer` formally declared via new `external type` syntax (D126).
+// Backing implementation остаётся в `nova_rt/<name>.h`/.c; method
+// declarations — в `std/runtime/<name>.nv` через `external fn` (D82,
+// unchanged). Type-decl + methods — два разных файла, связанных по
+// receiver-type name. См. spec/decisions/03-syntax.md §D126 +
+// docs/plans/62.D.bis-opaque-types-and-external-type-d-block.md.
 
 module std.prelude.collections
 
@@ -133,3 +132,76 @@ import std.prelude.core.{Option}
 export type Iter[T] protocol {
     next() -> Option[T]
 }
+
+// ──────────────────────────────────────────────────────────────────────────
+// Built-in opaque accumulator/buffer types (D126, Plan 04, Plan 62.D.bis)
+// ──────────────────────────────────────────────────────────────────────────
+//
+// `external type X` — opaque, реализация в runtime (nova_rt/<name>.h/.c).
+// Body отсутствует (declared в parser/mod.rs:2055+ как TypeDeclKind::Opaque).
+// Codegen skip'ает emission (emit_c.rs:4986+). Methods объявляются отдельно
+// в `std/runtime/<name>.nv` через `external fn` (D82); связь — по
+// receiver-type name. См. spec/decisions/03-syntax.md §D126 для семантики.
+//
+// До Plan 62.D.bis (2026-05-18) эти типы существовали как «known-by-name»
+// (D26 prose-only); D126 закрывает последний knew-by-name hole в D26
+// visible prelude (после 62.A/B/C/D-non-opaque/E/F).
+
+/// UTF-8 string accumulator. Append-only через `@append(s str)`/`@append_char(c char)`,
+/// финализация через `@into() -> str` (infallible — UTF-8 invariant
+/// поддерживается типом).
+///
+/// Полный API — в `std/runtime/string_builder.nv` через `external fn`
+/// declarations (D82). Backing — `nova_rt/string_builder.h` и
+/// `string_builder.c`.
+///
+/// **Use-case:** string concat в hot loop без аллокации временных str.
+///
+/// # Examples
+///
+/// ```nova
+/// let mut sb = StringBuilder.new()
+/// sb.append("Hello, ").append(name).append("!")
+/// let greeting = sb.into()
+/// ```
+#stable(since = "0.1")
+export external type StringBuilder
+
+/// Binary write buffer. Append-only через `@write_*` методы
+/// (byte, bytes, char, str, и 18 числовых × LE/BE). Финализация
+/// через `@into() -> []byte`.
+///
+/// Полный API — в `std/runtime/write_buffer.nv` через `external fn`.
+/// Backing — `nova_rt/write_buffer.h`/`.c`.
+///
+/// **Use-case:** binary serialization (network protocol, file format).
+///
+/// # Examples
+///
+/// ```nova
+/// let mut wb = WriteBuffer.new()
+/// wb.write_u32_be(0xDEADBEEF)
+/// let bs = wb.into()
+/// ```
+#stable(since = "0.1")
+export external type WriteBuffer
+
+/// Cursor-style binary reader. View над `[]byte`, advancing position.
+/// Pair `@read_*` (Fail[ReadBufferError]) / `@try_read_*`
+/// (Result[T, ReadBufferError]).
+///
+/// Полный API — в `std/runtime/read_buffer.nv` через `external fn`.
+/// Backing — `nova_rt/read_buffer.h`/`.c`. `ReadBufferError` declared
+/// в `std/prelude/errors.nv` (Plan 62.C).
+///
+/// **Use-case:** binary parsing с cursor advancement.
+///
+/// # Examples
+///
+/// ```nova
+/// let bs []byte = [0x12, 0x34, 0x56, 0x78]
+/// let mut rb = ReadBuffer.from(bs)
+/// let v = rb.try_read_u32_be()  // Result[u32, ReadBufferError]
+/// ```
+#stable(since = "0.1")
+export external type ReadBuffer
