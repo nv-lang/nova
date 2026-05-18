@@ -109,19 +109,70 @@ pub fn resolve_imports_inline_ex(
     // Skip prelude auto-import для самого prelude (избежать self-cycle).
     // Plan 42 Sub-plan 42.6: detect prelude self по обоих declaration
     // форматов (rev-1 legacy + rev-3 parent.X). Logic — в manifest helper.
+    //
+    // **Plan 62.F:** добавлены `no_prelude` / `partial_prelude(...)` opt-out
+    // механизмы (spec/decisions/07-modules.md:962-979). Logic:
+    //   - `no_prelude` → НЕ auto-import'им вообще (user explicit imports).
+    //   - `partial_prelude(a, b, ...)` → auto-import только `std.prelude.<a>`,
+    //     `std.prelude.<b>`, etc. Имена валидируются против файлов в
+    //     `std/prelude/`. Empty list → эквивалент no_prelude.
+    //   - default → full `std.prelude` facade (как раньше).
     let is_prelude_self = crate::manifest::is_prelude_self_module(&module.name);
+    let has_no_prelude = module.attrs.iter()
+        .any(|a| matches!(a.kind, crate::ast::ModuleAttrKind::NoPrelude));
+    let partial_prelude_names: Option<Vec<String>> = module.attrs.iter()
+        .find_map(|a| if let crate::ast::ModuleAttrKind::PartialPrelude(names) = &a.kind {
+            Some(names.clone())
+        } else { None });
     let mut initial_imports = module.imports.clone();
-    if !is_prelude_self {
-        let prelude_path = stdlib_dir.join("prelude.nv");
-        if prelude_path.exists() && prelude_path.is_file() {
-            initial_imports.push(Import {
-                path: vec!["std".into(), "prelude".into()],
-                items: None,
-                alias: None,
-                is_export: false,
-                span: crate::diag::Span::dummy(),
-                doc_attrs: Vec::new(),
-            });
+    if !is_prelude_self && !has_no_prelude {
+        if let Some(names) = partial_prelude_names {
+            // Plan 62.F: `partial_prelude(a, b, ...)` — auto-import только
+            // перечисленных sub-modules. Валидируем имена против реальных
+            // файлов `std/prelude/<name>.nv`. Bad name → compile error.
+            let prelude_subdir = stdlib_dir.join("prelude");
+            for name in &names {
+                let sub_path = prelude_subdir.join(format!("{}.nv", name));
+                if !sub_path.exists() || !sub_path.is_file() {
+                    let importing = module.name.join(".");
+                    return Err(anyhow!(
+                        "`partial_prelude({})`: unknown prelude sub-module `{}`\n  \
+                         in module `{}`\n  \
+                         expected file: {}\n  \
+                         valid sub-modules (Plan 62): core, runtime, errors, \
+                         collections, protocols, effects\n  \
+                         hint: check spelling or remove from list (D26, Plan 62.F)",
+                        names.join(", "),
+                        name,
+                        importing,
+                        sub_path.display(),
+                    ));
+                }
+                initial_imports.push(Import {
+                    path: vec!["std".into(), "prelude".into(), name.clone()],
+                    items: None,
+                    alias: None,
+                    is_export: false,
+                    span: crate::diag::Span::dummy(),
+                    doc_attrs: Vec::new(),
+                });
+            }
+            // Empty list `partial_prelude()` — НИЧЕГО не auto-import'им
+            // (== no_prelude effectively). Это legitimate use-case
+            // (явная «нулевая» декларация без переключения на no_prelude).
+        } else {
+            // Default: full prelude facade.
+            let prelude_path = stdlib_dir.join("prelude.nv");
+            if prelude_path.exists() && prelude_path.is_file() {
+                initial_imports.push(Import {
+                    path: vec!["std".into(), "prelude".into()],
+                    items: None,
+                    alias: None,
+                    is_export: false,
+                    span: crate::diag::Span::dummy(),
+                    doc_attrs: Vec::new(),
+                });
+            }
         }
     }
 

@@ -126,9 +126,66 @@ impl Parser {
         // и для items.
         let module_doc_attrs = self.parse_doc_attrs()?;
 
-        // module keyword.path
+        // module keyword.path [no_prelude | partial_prelude(...)]
+        //
+        // Plan 62.F: clause-syntax `module X no_prelude` /
+        // `module X partial_prelude(core, runtime)` (per spec/decisions/
+        // 07-modules.md:962-979). НЕ `#`-prefix атрибут — это identifiers
+        // после module-path, parser консюмит до expect_newline_or_eof.
+        // Аккумулируются в `clause_attrs` для merge с `module_attrs` ниже.
+        let mut clause_attrs: Vec<ModuleAttr> = Vec::new();
         let module_name = if self.eat(&TokenKind::KwModule).is_some() {
             let path = self.parse_dotted_path()?;
+            // Plan 62.F: optional `no_prelude` / `partial_prelude(...)` clause.
+            loop {
+                let clause_start = self.peek().span;
+                let clause_name = if let TokenKind::Ident(n) = &self.peek().kind {
+                    n.clone()
+                } else { break; };
+                match clause_name.as_str() {
+                    "no_prelude" => {
+                        self.bump(); // no_prelude ident
+                        let clause_end = self.tokens[self.pos.saturating_sub(1)].span;
+                        clause_attrs.push(ModuleAttr {
+                            kind: ModuleAttrKind::NoPrelude,
+                            effects: Vec::new(),
+                            span: clause_start.merge(clause_end),
+                        });
+                    }
+                    "partial_prelude" => {
+                        self.bump(); // partial_prelude ident
+                        if !matches!(self.peek().kind, TokenKind::LParen) {
+                            return Err(Diagnostic::new(
+                                "expected `(` after `partial_prelude` (e.g. `partial_prelude(core, runtime)`)",
+                                self.peek().span));
+                        }
+                        self.bump(); // (
+                        let mut names: Vec<String> = Vec::new();
+                        // Allow empty `partial_prelude()` (== no_prelude effectively).
+                        loop {
+                            if matches!(self.peek().kind, TokenKind::RParen) { break; }
+                            let (n, _) = self.parse_ident()?;
+                            names.push(n);
+                            if matches!(self.peek().kind, TokenKind::Comma) {
+                                self.bump();
+                            } else { break; }
+                        }
+                        if !matches!(self.peek().kind, TokenKind::RParen) {
+                            return Err(Diagnostic::new(
+                                "expected `)` closing `partial_prelude(...)` list",
+                                self.peek().span));
+                        }
+                        self.bump(); // )
+                        let clause_end = self.tokens[self.pos.saturating_sub(1)].span;
+                        clause_attrs.push(ModuleAttr {
+                            kind: ModuleAttrKind::PartialPrelude(names),
+                            effects: Vec::new(),
+                            span: clause_start.merge(clause_end),
+                        });
+                    }
+                    _ => break,
+                }
+            }
             self.expect_newline_or_eof()?;
             path
         } else {
@@ -245,11 +302,18 @@ impl Parser {
         // parser уровне — parser не знает path к исходнику. Caller'ы
         // (imports.rs::resolve_imports_inline / test_runner / cmd_check)
         // заполняют `peer_files` после parse.
+        //
+        // Plan 62.F: clause_attrs (`no_prelude` / `partial_prelude(...)`)
+        // merge'аются с `#`-prefix module_attrs. Order: clause_attrs идут
+        // после module_attrs (т.к. в source они появляются после module
+        // declaration). Имеют ту же семантику видимости.
+        let mut all_attrs = module_attrs;
+        all_attrs.extend(clause_attrs);
         Ok(Module {
             name: module_name,
             imports,
             items,
-            attrs: module_attrs,
+            attrs: all_attrs,
             doc_attrs: module_doc_attrs,
             span,
             peer_files: Vec::new(),
