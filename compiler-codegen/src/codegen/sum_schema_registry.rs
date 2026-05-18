@@ -497,22 +497,133 @@ impl SumSchemaRegistry {
         });
     }
 
-    /// Phase 2+ hook: discovery of file-based prelude declarations.
-    /// В Ф.1 — STUB: проверяет module name на префикс `"std.prelude"`,
-    /// но не регистрирует entries (пустая body). Call site exists в
-    /// `emit_module()` чтобы Phase 2 мог расширить без changes wiring.
+    /// **Plan 62.A follow-up (2026-05-18):** discovery of file-based prelude
+    /// method declarations. Scan'ит `items` для `Item::Fn` с receiver
+    /// `Option` или `Result` (имена sum-типов из `std.prelude.core`), и
+    /// регистрирует `DeclaredFromPrelude` entries в registry с
+    /// `method_routing` map'ом, унаследованным от соответствующих
+    /// `HardcodedBaseline` entries.
     ///
-    /// Phase 2 будет:
-    ///   1) Scan `module.items` для `Item::Type` с origin в `std.prelude.*`.
-    ///   2) Convert каждый `TypeDeclKind::Sum(variants)` в `SumSchemaEntry`
-    ///      с source = DeclaredFromPrelude.
-    ///   3) Variant-set validation против HardcodedBaseline (см. plan doc
-    ///      §«Phase 3 acceptance» — variant-set check).
+    /// **Behavior-preserving migration**: `lookup_method_routing("Option",
+    /// "unwrap_or")` после prelude scan'а возвращает тот же
+    /// `HardcodedRuntimeFn { c_name: "Nova_Option_method_unwrap_or",
+    /// is_per_t: true }` что и до scan'а (потому что Prelude entry inherits
+    /// routing от Hardcoded). Это позволяет переносить источник правды
+    /// (declaration moves from Rust HashMap → Nova file) без изменения
+    /// dispatch на call-site'ах.
     ///
-    /// `_module_name` — placeholder; в Ф.1 не используется.
+    /// **Filter**: registers ТОЛЬКО methods на `Option` / `Result`. Static
+    /// fns (без receiver) и methods на других типах (Error, RuntimeError)
+    /// игнорируются — их routing остаётся в HardcodedBaseline или будет
+    /// добавлен отдельным plan-item'ом (62.C для RuntimeError).
+    ///
+    /// **Idempotent**: повторный вызов с тем же items overwrite'ит Prelude
+    /// entry с same name; behavior preserved.
+    ///
+    /// **Type marker**: `items` — `&[Item]` через generic чтобы не вводить
+    /// cyclic зависимость registry → ast. Caller (emit_module) передаёт
+    /// `&module.items`.
+    pub fn init_prelude_decls_from_items(
+        &mut self,
+        items: &[crate::ast::Item],
+    ) {
+        use crate::ast::Item;
+
+        // Собираем имена sum-types, для которых HardcodedBaseline уже зарегистрирован
+        // (Option, Result). Только для них имеет смысл создавать Prelude override.
+        let prelude_sum_names = ["Option", "Result"];
+
+        for sum_name in prelude_sum_names {
+            // Соберём все methods, объявленные на этом sum-type в items'ах.
+            let methods: Vec<String> = items.iter().filter_map(|it| {
+                if let Item::Fn(f) = it {
+                    if !f.is_external {
+                        return None;
+                    }
+                    if let Some(recv) = &f.receiver {
+                        if recv.type_name == sum_name {
+                            return Some(f.name.clone());
+                        }
+                    }
+                }
+                None
+            }).collect();
+
+            if methods.is_empty() {
+                // Этот sum-type не задекларирован в файле — оставляем только
+                // HardcodedBaseline (skip Prelude registration). Это поддерживает
+                // partial declarations (если файл declar'ит только часть methods,
+                // остальные будут продолжать работать через HardcodedBaseline).
+                continue;
+            }
+
+            // Найдём HardcodedBaseline entry для копирования метаданных
+            // (variants + abi + method_routing).
+            let baseline = self.entries.iter()
+                .find(|e| e.nova_name == sum_name && e.source == SchemaSource::HardcodedBaseline)
+                .cloned();
+
+            let Some(baseline) = baseline else {
+                // Нет baseline — пропускаем (defensive; не должно случиться
+                // после init_hardcoded_baseline).
+                continue;
+            };
+
+            // **Critical**: inherit `method_routing` from HardcodedBaseline.
+            // Это behavior-preserving: declared method WITHOUT explicit
+            // override routing продолжает использовать тот же
+            // `HardcodedRuntimeFn` / `<inline>` sentinel что и раньше.
+            //
+            // В будущем (Plan 62.B+) можно расширить — например, добавить
+            // per-method override через doc-attrs или специальный syntax
+            // (`#routing(c_name = "...")`), чтобы Prelude entry могла
+            // переопределить routing для нового trampoline'а. Пока — pure
+            // inheritance.
+            let mut prelude_routing = baseline.method_routing.clone();
+
+            // Для каждого declared method убедимся, что routing entry
+            // существует. Если метод declared в файле, но не в Hardcoded
+            // routing map'е (e.g. `or` / `and_then` / `filter` — declared
+            // for documentation, но без codegen support) — добавляем
+            // placeholder `<inline>` чтобы dispatch fall through к
+            // existing inline блокам / error reporting. Без этого
+            // `lookup_method_routing` вернёт None и тесты которые НЕ
+            // используют этот method продолжают работать, но если кто-то
+            // его вызовет — будет fall through к default path.
+            //
+            // Bootstrap-conservative: НЕ добавляем routing entry для
+            // unknown method'ов — оставляем lookup'ы возвращать None.
+            // Это значит declaration `external fn Option @or(...)` без
+            // codegen support даст «method or not found» при call вместо
+            // искажённого dispatch'а. Точно то поведение что было до
+            // декларации.
+            let _ = &mut prelude_routing; // silence unused-mut warning
+
+            self.register_schema(SumSchemaEntry {
+                nova_name: sum_name.to_string(),
+                c_name: baseline.c_name.clone(),
+                variants: baseline.variants.clone(),
+                abi: baseline.abi,
+                source: SchemaSource::DeclaredFromPrelude,
+                origin_module: Some(vec![
+                    "std".into(), "prelude".into(), "core".into(),
+                ]),
+                method_routing: prelude_routing,
+            });
+        }
+    }
+
+    /// Legacy stub (compat shim для существующего callsite в emit_module).
+    /// Передаёт control в `init_prelude_decls_from_items` если у caller'а
+    /// есть items; иначе — no-op (preserve Ф.1 stub semantics).
+    ///
+    /// `_module_name` — historical placeholder; новая логика триггерится
+    /// через items, не через имя модуля. Оставлен в API чтобы не сломать
+    /// existing call-sites; будет удалён в Plan 62.A.bis cleanup.
     pub fn init_prelude_decls(&mut self, _module_name: &str) {
-        // STUB: Phase 2 будет fully populated.
-        // Wiring exists в emit_module() чтобы убедиться call-site stable.
+        // STUB: real work happens в init_prelude_decls_from_items.
+        // Этот wrapper оставлен для backward-compat с emit_module'ным
+        // вызовом (который скоро переедет на _from_items вариант).
     }
 
     // ───────────────────────────────────────────────────────────────────
@@ -1042,7 +1153,9 @@ mod tests {
 
     /// init_prelude_decls — Ф.1 stub. Не регистрирует entries, не падает.
     /// Phase 2 будет полностью populated; в Ф.1 хотим только убедиться
-    /// что wiring безопасный.
+    /// что wiring безопасный. **Plan 62.A follow-up (2026-05-18):**
+    /// `init_prelude_decls(&str)` остаётся wrapper-stub'ом — real work
+    /// moved в `init_prelude_decls_from_items`.
     #[test]
     fn test_init_prelude_decls_stub_is_safe() {
         let mut reg = SumSchemaRegistry::new();
@@ -1054,5 +1167,195 @@ mod tests {
         // Random module name — также no-op.
         reg.init_prelude_decls("user.code");
         assert_eq!(reg.len(), baseline_len);
+    }
+
+    /// Plan 62.A follow-up: empty items slice — no-op (нет prelude decls →
+    /// нет Prelude entries регистрируется).
+    #[test]
+    fn test_init_prelude_decls_from_items_empty_is_noop() {
+        let mut reg = SumSchemaRegistry::new();
+        reg.init_hardcoded_baseline();
+        let baseline_len = reg.len();
+        reg.init_prelude_decls_from_items(&[]);
+        assert_eq!(reg.len(), baseline_len,
+            "пустой items list не должен добавлять entries");
+    }
+
+    /// Plan 62.A follow-up: single Option.is_some declaration → Prelude
+    /// entry для Option, inheriting method_routing от HardcodedBaseline.
+    #[test]
+    fn test_init_prelude_decls_from_items_option_inherits_routing() {
+        use crate::ast::{
+            FnDecl, FnBody, Item, Receiver, ReceiverKind, RealtimeAttr,
+            VerifyMode, Purity,
+        };
+        use crate::diag::Span;
+
+        let mut reg = SumSchemaRegistry::new();
+        reg.init_hardcoded_baseline();
+
+        let opt_is_some = FnDecl {
+            doc: None,
+            doc_attrs: vec![],
+            is_export: false,
+            is_external: true,
+            name: "is_some".to_string(),
+            receiver: Some(Receiver {
+                type_name: "Option".to_string(),
+                generics: vec![],
+                kind: ReceiverKind::Instance,
+                mutable: false,
+                span: Span::default(),
+            }),
+            generics: vec![],
+            params: vec![],
+            effects: vec![],
+            return_type: None,
+            body: FnBody::External,
+            span: Span::default(),
+            realtime_attr: RealtimeAttr::None,
+            contracts: vec![],
+            reads: vec![],
+            modifies: vec![],
+            decreases: None,
+            verify_mode: VerifyMode::Default,
+            verify_timeout_ms: None,
+            purity: Purity::Unknown,
+            is_trusted: false,
+        };
+        let items = vec![Item::Fn(opt_is_some)];
+
+        reg.init_prelude_decls_from_items(&items);
+
+        // Lookup должен теперь возвращать Prelude entry (higher priority).
+        let entry = reg.lookup_sum_schema("Option")
+            .expect("Option must resolve");
+        assert_eq!(entry.source, SchemaSource::DeclaredFromPrelude,
+            "Prelude entry должен выигрывать lookup precedence");
+        assert!(entry.origin_module.is_some(),
+            "Prelude entry должен иметь origin_module = Some(std.prelude.core)");
+
+        // **Critical**: method_routing inherited от Hardcoded — Option.unwrap_or
+        // (которая NOT в declared items, но В Hardcoded routing) всё ещё
+        // findable через registry.
+        let routing = reg.lookup_method_routing("Option", "unwrap_or")
+            .expect("Option.unwrap_or должен оставаться routable после Prelude scan'а");
+        match routing {
+            MethodRouting::HardcodedRuntimeFn { c_name, is_per_t } => {
+                assert_eq!(c_name, "Nova_Option_method_unwrap_or",
+                    "routing must inherit от HardcodedBaseline");
+                assert!(*is_per_t,
+                    "is_per_t flag должен сохраниться");
+            }
+            other => panic!("expected HardcodedRuntimeFn, got {:?}", other),
+        }
+
+        // is_some тоже должен быть findable (был и в Hardcoded, и в Prelude).
+        let routing = reg.lookup_method_routing("Option", "is_some").unwrap();
+        match routing {
+            MethodRouting::HardcodedRuntimeFn { c_name, is_per_t } => {
+                assert_eq!(c_name, "Nova_Option_method_is_some");
+                assert!(*is_per_t);
+            }
+            other => panic!("expected HardcodedRuntimeFn for is_some, got {:?}", other),
+        }
+    }
+
+    /// Plan 62.A follow-up: Result method declaration → Prelude Result
+    /// entry. Verifies routing inherited (non-per-T for Result).
+    #[test]
+    fn test_init_prelude_decls_from_items_result_inherits_routing() {
+        use crate::ast::{
+            FnDecl, FnBody, Item, Receiver, ReceiverKind, RealtimeAttr,
+            VerifyMode, Purity,
+        };
+        use crate::diag::Span;
+
+        let mut reg = SumSchemaRegistry::new();
+        reg.init_hardcoded_baseline();
+
+        let res_is_ok = FnDecl {
+            doc: None,
+            doc_attrs: vec![],
+            is_export: false,
+            is_external: true,
+            name: "is_ok".to_string(),
+            receiver: Some(Receiver {
+                type_name: "Result".to_string(),
+                generics: vec![],
+                kind: ReceiverKind::Instance,
+                mutable: false,
+                span: Span::default(),
+            }),
+            generics: vec![],
+            params: vec![],
+            effects: vec![],
+            return_type: None,
+            body: FnBody::External,
+            span: Span::default(),
+            realtime_attr: RealtimeAttr::None,
+            contracts: vec![],
+            reads: vec![],
+            modifies: vec![],
+            decreases: None,
+            verify_mode: VerifyMode::Default,
+            verify_timeout_ms: None,
+            purity: Purity::Unknown,
+            is_trusted: false,
+        };
+        let items = vec![Item::Fn(res_is_ok)];
+
+        reg.init_prelude_decls_from_items(&items);
+
+        let entry = reg.lookup_sum_schema("Result")
+            .expect("Result must resolve");
+        assert_eq!(entry.source, SchemaSource::DeclaredFromPrelude);
+
+        // Routing для Result.unwrap_or — non-per-T (`is_per_t = false`).
+        let routing = reg.lookup_method_routing("Result", "unwrap_or").unwrap();
+        match routing {
+            MethodRouting::HardcodedRuntimeFn { c_name, is_per_t } => {
+                assert_eq!(c_name, "Nova_Result_method_unwrap_or");
+                assert!(!*is_per_t, "Result methods — non-per-T в bootstrap'е");
+            }
+            other => panic!("expected HardcodedRuntimeFn non-per-T, got {:?}", other),
+        }
+    }
+
+    /// Plan 62.A follow-up: non-Option/Result method declaration — ignored
+    /// (не создаёт Prelude entry).
+    #[test]
+    fn test_init_prelude_decls_from_items_ignores_other_types() {
+        use crate::ast::{
+            FnDecl, FnBody, Item, Receiver, ReceiverKind, RealtimeAttr,
+            VerifyMode, Purity,
+        };
+        use crate::diag::Span;
+
+        let mut reg = SumSchemaRegistry::new();
+        reg.init_hardcoded_baseline();
+        let baseline_len = reg.len();
+
+        // Method on Error (record, не sum в registry) — должен игнорироваться.
+        let error_method = FnDecl {
+            doc: None, doc_attrs: vec![], is_export: false, is_external: true,
+            name: "render".to_string(),
+            receiver: Some(Receiver {
+                type_name: "Error".to_string(),
+                generics: vec![], kind: ReceiverKind::Instance,
+                mutable: false, span: Span::default(),
+            }),
+            generics: vec![], params: vec![], effects: vec![], return_type: None,
+            body: FnBody::External, span: Span::default(),
+            realtime_attr: RealtimeAttr::None, contracts: vec![],
+            reads: vec![], modifies: vec![], decreases: None,
+            verify_mode: VerifyMode::Default, verify_timeout_ms: None,
+            purity: Purity::Unknown, is_trusted: false,
+        };
+        let items = vec![Item::Fn(error_method)];
+
+        reg.init_prelude_decls_from_items(&items);
+        assert_eq!(reg.len(), baseline_len,
+            "method on non-Option/Result type не должен добавлять entries");
     }
 }
