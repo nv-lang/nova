@@ -75,11 +75,11 @@ export fn Set[T].from_iter(it Iter[T]) -> Self {
 
 /// Число элементов в множестве.
 #stable(since = "0.1")
-export fn Set[T] @len() => @map.len()
+export fn Set[T] @len() -> int => @map.len()
 
 /// Возвращает `true` если множество пусто.
 #stable(since = "0.1")
-export fn Set[T] @is_empty() => @map.is_empty()
+export fn Set[T] @is_empty() -> bool => @map.is_empty()
 
 /// Проверить наличие элемента.
 #stable(since = "0.1")

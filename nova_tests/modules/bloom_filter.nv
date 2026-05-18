@@ -1,0 +1,67 @@
+// Тесты std.collections.bloom_filter.BloomFilter — probabilistic membership.
+// Позитивные: no false negatives, empty filter, optimal sizing.
+// Негативные: нет (false positives недетерминированы, не тестируем точный rate).
+
+module modules.bloom_filter
+
+import std.collections.bloom_filter.{BloomFilter}
+
+test "BloomFilter: вставленные элементы всегда contains=true" {
+    let mut bf = BloomFilter.new(1024, 3)
+    bf.insert("hello")
+    bf.insert("world")
+    bf.insert("nova")
+    assert(bf.contains("hello") == true)
+    assert(bf.contains("world") == true)
+    assert(bf.contains("nova") == true)
+}
+
+test "BloomFilter: пустой filter не содержит ничего" {
+    let bf = BloomFilter.new(1024, 3)
+    assert(bf.contains("anything") == false)
+    assert(bf.contains("") == false)
+    assert(bf.contains("hello") == false)
+}
+
+test "BloomFilter: optimal — вставленные гарантированно contains" {
+    let mut bf = BloomFilter.optimal(100, 0.01)
+    bf.insert("item1")
+    bf.insert("item2")
+    bf.insert("item3")
+    assert(bf.contains("item1") == true)
+    assert(bf.contains("item2") == true)
+    assert(bf.contains("item3") == true)
+}
+
+test "BloomFilter: false positive rate приемлемый" {
+    let mut bf = BloomFilter.new(1024, 4)
+    for i in 0..50 {
+        bf.insert("item-" + str.from(i))
+    }
+    let mut fp = 0
+    for j in 50..150 {
+        if bf.contains("item-" + str.from(j)) {
+            fp += 1
+        }
+    }
+    // При m=1024, k=4, n=50 — false positive rate << 50%
+    assert(fp < 50)
+}
+
+test "BloomFilter: разные строки независимы" {
+    let mut bf = BloomFilter.new(256, 2)
+    bf.insert("abc")
+    // "xyz" не вставляли — не обязан быть true (может быть false positive,
+    // но проверяем что "abc" точно присутствует)
+    assert(bf.contains("abc") == true)
+}
+
+test "BloomFilter: много вставок — no false negatives" {
+    let mut bf = BloomFilter.optimal(200, 0.05)
+    for i in 0..100 {
+        bf.insert("key-" + str.from(i))
+    }
+    for i in 0..100 {
+        assert(bf.contains("key-" + str.from(i)) == true)
+    }
+}
