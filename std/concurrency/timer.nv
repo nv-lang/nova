@@ -1,0 +1,90 @@
+// Plan 65 Ф.7: stdlib documentation surface for ChanReader.close_after.
+//
+// The implementation is a compiler builtin (codegen lowers
+// `ChanReader.close_after(d)` to `nova_chan_reader_close_after_ns(d.nanos)`
+// in compiler-codegen/nova_rt/channels.h). This file exists solely so
+// `nova doc` can render the API surface and so AI agents searching the
+// stdlib find authoritative usage examples.
+//
+// Spec source of truth: spec/decisions/06-concurrency.md (D94 +
+// "Эволюция API — timeout channel constructor (Plan 65, 2026-05-18)").
+
+module concurrency.timer
+
+import std.time.duration
+
+
+/// Create a one-shot `ChanReader[()]` that closes after `d` elapses.
+///
+/// The channel produces no value — `recv()` returns `Some(())` after the
+/// timer fires, then `None` thereafter (idempotent closed-state).
+///
+/// Primary use: timeout arms in `select { ... }`:
+///
+/// ```nova
+/// let t = ChanReader.close_after(Duration.from_secs(5))
+/// select {
+///     Some(v) = rx.recv() => process(v)
+///     None    = t.recv()  => log_idle()
+/// }
+/// ```
+///
+/// # Errors
+///
+/// - **Negative `Duration`** → runtime panic with the offending nanosecond
+///   value. There is no silent zero-wait; user gets an explicit stack frame.
+///
+/// # Edge cases
+///
+/// - **Zero `Duration`** (`Duration.ZERO`, `Duration.from_*(0)`) → channel
+///   is already closed; first `recv()` returns `None` without yielding.
+///   No libuv timer is allocated (fast-path).
+/// - **Sub-millisecond `Duration`** (e.g. `Duration.from_nanos(500_000)`)
+///   is rounded **up** to 1 ms (the libuv timer granularity). It will never
+///   round down to a shorter wait than requested.
+///
+/// # Performance
+///
+/// Each call currently allocates a fresh `uv_timer_t` libuv handle
+/// (~120 bytes + 1 syscall). Adequate for idiomatic 10-100 concurrent
+/// timers. For high-throughput timer loads (10k+ short HTTP timeouts), a
+/// custom timer-wheel runtime is planned in **Plan 66**; until then the
+/// per-timer libuv cost is the dominant overhead. Bench
+/// `timer_alloc_throughput` (see Plan 57) records the current baseline.
+///
+/// # Testing
+///
+/// Mockable through the `Time` effect handler is **planned for Plan 65
+/// Ф.10** (currently the runtime path is real-clock only). Until then,
+/// integration tests should use small real durations (`from_millis(10)`)
+/// and tolerate scheduler jitter via `>=` comparisons against `Time.now()`.
+///
+/// # Migration from `Time.after(int)`
+///
+/// `Time.after(int ms)` was removed in **Plan 65 / D94 revision**
+/// (2026-05-18). The compiler emits a structured E5101 diagnostic with a
+/// machine-applicable fix-it suggestion if the legacy form is encountered.
+/// Use the migration tool:
+///
+/// ```bash
+/// cargo run --bin migrate_plan65 -- --apply
+/// ```
+///
+/// which rewrites `Time.after(N)` → `ChanReader.close_after(Duration.from_millis(N))`
+/// for literal arguments. Non-literal arguments (computed expressions)
+/// receive a `MIGRATE_MANUAL` marker for human review.
+///
+/// # See also
+///
+/// - [`Duration`](../time/duration.nv) — the type-safe interval input.
+/// - [`Channel.new`](#channel.new) — companion capability-split constructor.
+/// - **Plan 66** (future) — `ChanReader.tick_every(Duration)` periodic
+///   ticker + custom timer-wheel runtime.
+#stable(since = "0.6")
+fn ChanReader_close_after_doc_marker(d Duration) -> () {
+    // Marker function — body is unreachable; codegen lowers the real
+    // ChanReader.close_after via compiler builtin, not via this fn.
+    // Plan 65 honest-defer: until ChanReader gains a true .nv decl
+    // (post-bootstrap), this file is doc-only.
+    let _ = d
+}
