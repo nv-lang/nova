@@ -495,13 +495,17 @@ non-str + multi-arg callers. Real test files используют все чет�
 - ✅ Regression: 709/0/44 PASS (baseline preserved, никаких новых
   positive tests — bis-1 это bug-fixing + миграция enable).
 
-**Plan 62.D.bis ОТДЕЛЬНЫЙ sub-plan (всё ещё DEFERRED):**
+**Plan 62.D.bis ЗАКРЫТ 2026-05-18 (PRELUDE_VERSION 6):**
 
-- 🚫 **`StringBuilder` / `WriteBuffer` / `ReadBuffer` — opaque
-  runtime types**, для миграции требуется новый `external type`
-  D-block в spec/decisions (нет canonical syntax в bootstrap parser
-  для forward-decl типа без body, с runtime-only implementation).
-  Остаются hardcoded в type-checker builtins / codegen.
+- ✅ **`StringBuilder` / `WriteBuffer` / `ReadBuffer` — opaque
+  runtime types** — мигрированы в `std/prelude/collections.nv` через
+  новый `external type` syntax (D126, spec/decisions/03-syntax.md).
+  6 phases закрыты — parser/AST/type-checker (Ф.1), migration
+  declarations (Ф.2), runtime header cross-refs (Ф.3), positive
+  tests verification (Ф.4), HashSet documentation (Ф.5), spec
+  D126/D26/D82 (Ф.6). PRELUDE_VERSION 5 → 6. 712 PASS / 0 FAIL /
+  44 SKIP preserved (+1 new test file plan62/opaque_types_from_prelude
+  с 4 sub-tests).
 
 **Acceptance:**
 
@@ -511,9 +515,9 @@ non-str + multi-arg callers. Real test files используют все чет�
   (bis-1 закрыт).
 - [x] 4 latent codegen bugs closed — pass.
 - [x] D29 W_PRELUDE_SHADOW basic — pass.
-- [x] No regression: 709/0/44.
-- [ ] StringBuilder/WriteBuffer/ReadBuffer migration — DEFERRED
-  (Plan 62.D.bis — needs `external type` D-block).
+- [x] No regression: 709/0/44 → 712/0/44 (+3 new tests across bis).
+- [x] StringBuilder/WriteBuffer/ReadBuffer migration ✅ ЗАКРЫТ
+  2026-05-18 (Plan 62.D.bis — D126 `external type` Ф.1–Ф.6).
 
 **Original spec (для справки):**
 
@@ -794,7 +798,7 @@ declared в file-based form (vs 1 placeholder PRELUDE_VERSION до Plan 62).
 | **62.A.bis Ф.4** | Remove pre-populated `sum_schemas[Option/Result]` (emit_c.rs:754-766) | Bootstrap monomorphization compromise — нужен Plan 14 Q-result-monomorphization fix. Тип-checker'у не повлияет, codegen может построить generic schema runtime'ом. |
 | **62.B.bis** | print / println migration | variadic + type-polymorphic dispatch (emit_c.rs:13638+). Single-arg external fn сломал бы все non-str / multi-arg callers. Требует variadic external fn syntax (нет в bootstrap) или Display protocol + StringBuilder pipeline (62.D opaque + 62.E полная). |
 | **62.C bis** | RuntimeNoneError migration | Bootstrap parser не поддерживает empty-body sum syntax (`parse_sum_variants` требует ≥1 `\|`). Тот же блокер что `Never`. |
-| **62.D opaque (62.D.bis)** | StringBuilder, WriteBuffer, ReadBuffer | Opaque runtime types — требуют `external type` D-block в spec (currently не существует). Range/RangeIter re-export ЗАКРЫТ в 62.D non-opaque bis-1 (4 latent codegen bugs fixed + D29 W_PRELUDE_SHADOW basic). |
+| **62.D opaque (62.D.bis)** ✅ ЗАКРЫТ 2026-05-18 | StringBuilder, WriteBuffer, ReadBuffer | Closed 2026-05-18 — D126 `external type` syntax добавлен в spec (03-syntax.md), 3 типа formally declared в std/prelude/collections.nv, PRELUDE_VERSION 5 → 6. 712 PASS / 0 FAIL / 44 SKIP. Methods продолжают жить в std/runtime/<name>.nv через external fn (D82, unchanged). Range/RangeIter re-export ЗАКРЫТ в 62.D non-opaque bis-1. |
 | **62.E bis** | TryFrom[T, E] / TryInto[U, E] protocols | `Fail[E]` в protocol method триггерит Plan 56 Ф.2.7 enforcement (`bound method has effects` error). Требует either special-case в enforcement (Migration path a) или refactor D77 semantics (path b) или D122 handler-as-parameter (path c). |
 | **62.F.bis** ✅ ЗАКРЫТ 2026-05-18 | Edition versioning + W_PRELUDE_SHADOW lint + Time/Mem formal declarations + spec D-block amendments (D26/D124/D125) | Все 4 phases закрыты single-session (commits `445904b2b4e` Ф.1, `faf164529a9` Ф.2, `51a0ccf24fb` Ф.3, `f37193b075f` Ф.4). PRELUDE_VERSION 4 → 5. Item-level suppress `#[allow(prelude_shadow)]` остаётся deferred (требует generic attribute parser). `Time.after(ms) -> Chan[int]` deferred (требует Chan[T] в prelude). |
 
@@ -861,10 +865,14 @@ precedence), не legacy duplication.
 
 Уже в spec (07-modules.md:962-979), но **усилить** wording: «resolver MUST skip auto-import for `no_prelude` modules; failure to do so is implementation bug».
 
-### Новый D-block — `external type` syntax
+### Новый D-block — `external type` syntax ✅ ЗАКРЫТ 2026-05-18 (D126)
 
-Если syntax не существует — D-block в `spec/decisions/03-syntax.md`:
-> **D113. `external type`** — opaque type declared without body, реализация в C/runtime. Backing — known-by-name register (см. StringBuilder/WriteBuffer/ReadBuffer). Differs from `protocol` (no methods) and `type` (no fields).
+Реализовано в Plan 62.D.bis Ф.6 — D126 добавлен в
+`spec/decisions/03-syntax.md`:
+> **D126. `external type X [Generics]`** — opaque type declared without
+> body, реализация в runtime (`nova_rt/`). Whitelist: только
+> `std.runtime.*` / `std.prelude.*` модули. Type-аналог D82
+> `external fn`. См. [D126](../../spec/decisions/03-syntax.md#d126-external-type--opaque-типы-без-body).
 
 ### Amend D29 (one-way) — prelude shadowing
 

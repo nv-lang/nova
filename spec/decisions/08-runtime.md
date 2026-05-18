@@ -298,10 +298,17 @@ fn critical(...) -> Result =>
 >   `std/prelude/effects.nv` (codegen dispatch неизменен через
 >   pre-registered `effect_schemas`).
 >
-> **Remaining deferred:** `Never`/`RuntimeNoneError` (bootstrap parser),
-> `print`/`println` (Plan 67 variadic), `StringBuilder`/`WriteBuffer`/
-> `ReadBuffer` opaque types (Plan 62.D.bis — требует `external type`
-> D-block), `TryFrom`/`TryInto` (Plan 62.E.bis — требует Plan 56 fix).
+> **Plan 62.D.bis (закрыт 2026-05-18, `PRELUDE_VERSION = 6`):**
+> StringBuilder/WriteBuffer/ReadBuffer formally declared через
+> `external type` (D126) в `std/prelude/collections.nv`. Закрывает
+> последний known-by-name hole в D26 visible prelude. Methods
+> остаются в `std/runtime/<name>.nv` через `external fn` (D82) —
+> связь по receiver-type name. См. [D126](03-syntax.md#d126-external-type--opaque-типы-без-body).
+>
+> **Remaining deferred:** `Never`/`RuntimeNoneError` (bootstrap parser
+> empty-sum syntax), `print`/`println` (Plan 67 variadic + return-type
+> inference), `TryFrom`/`TryInto` (Plan 62.E.bis — требует Plan 56
+> Ф.2.7 effect-row enforcement).
 
 ### Правило
 
@@ -455,14 +462,16 @@ type RangeIter {
     mut cur   int
 }
 
-// Built-in opaque accumulator/buffer типы (Plan 04, D82).
-// Объявлены как известные компилятору по имени (как int/str);
-// API — через external fn декларации в std/runtime/string_builder.nv,
-// std/runtime/write_buffer.nv, std/runtime/read_buffer.nv (Plan 13 Ф.8;
-// раньше были в едином std/runtime/builtins.nv — REMOVED 2026-05-08).
-type StringBuilder    // UTF-8 string accumulator, @into() -> str (infallible)
-type WriteBuffer      // binary write buffer, @into() -> []byte
-type ReadBuffer       // cursor-style binary reader, view над []byte
+// Built-in opaque accumulator/buffer типы (Plan 04, D82, D126).
+// Formal declarations — std/prelude/collections.nv через `external type`
+// (D126, Plan 62.D.bis, 2026-05-18). Methods — std/runtime/string_builder.nv,
+// std/runtime/write_buffer.nv, std/runtime/read_buffer.nv через `external fn`
+// (D82, Plan 13 Ф.8; раньше были в едином std/runtime/builtins.nv —
+// REMOVED 2026-05-08). До 62.D.bis типы существовали как «known-by-name»
+// (без formal Nova-side declaration) — теперь canonical source в prelude.
+external type StringBuilder    // UTF-8 string accumulator, @into() -> str (infallible)
+external type WriteBuffer      // binary write buffer, @into() -> []byte
+external type ReadBuffer       // cursor-style binary reader, view над []byte
 
 // Ошибка ReadBuffer — недостаточно байт для read-операции.
 type ReadBufferError
@@ -489,11 +498,14 @@ user-language — D117 enforce'ит method-only. Internal C-поля
 `arr->len` / `arr->cap` сохраняются как implementation detail.
 
 **Built-in opaque-типы для аккумуляции** (`StringBuilder`,
-`WriteBuffer`, `ReadBuffer`) — расширяют примитивы D26. Полный API
-описан в `std/runtime/string_builder.nv`, `std/runtime/write_buffer.nv`,
-`std/runtime/read_buffer.nv` (auto-generated через Plan 13 Ф.8) —
-`external fn` декларации (D82). Программист **не пишет**
-`type StringBuilder { ... }` — тип known-by-name.
+`WriteBuffer`, `ReadBuffer`) — расширяют примитивы D26. **Type
+declarations** — в `std/prelude/collections.nv` через `external type`
+([D126](03-syntax.md#d126-external-type--opaque-типы-без-body),
+Plan 62.D.bis, 2026-05-18). **Methods** — в `std/runtime/string_builder.nv`,
+`std/runtime/write_buffer.nv`, `std/runtime/read_buffer.nv` (auto-generated
+через Plan 13 Ф.8) — `external fn` декларации ([D82](#d82-external-fn--функции-с-runtime-implementation)).
+Программист **не пишет** `type StringBuilder { ... }` body — `external
+type` — это opaque marker, реализация в runtime (`nova_rt/`).
 
 | Тип | Глагол | Финализация | Use-case |
 |---|---|---|---|
@@ -2509,10 +2521,12 @@ runtime реализует zero-cost `debug_assert` в release; bootstrap
 Декларация даёт сигнатуру и имя; codegen lookup'ит C-функцию по
 имени в hard-coded таблице.
 
-`external` применяется **только к функциям**, не к типам и не к
-переменным. Built-in opaque-типы (`StringBuilder`, `WriteBuffer`,
-`ReadBuffer`) известны компилятору **по имени** как примитивы
-(`int`/`str`/`bool`); отдельной декларации типа нет.
+`external` применяется к **функциям** (этот D-block) и к **типам**
+(D126, Plan 62.D.bis, 2026-05-18). Один и тот же keyword, два валидных
+позиционирования. Built-in opaque-типы (`StringBuilder`, `WriteBuffer`,
+`ReadBuffer`) теперь имеют formal Nova-side declaration через
+`external type` в `std/prelude/collections.nv` — раньше (до 62.D.bis)
+существовали как «known-by-name» (без formal declaration).
 
 ### Правило
 
@@ -2543,17 +2557,26 @@ external fn Nova_intrinsic_unreachable() -> Never
 #### Связь с D26 prelude
 
 Built-in opaque-типы из D26 (`StringBuilder`, `WriteBuffer`,
-`ReadBuffer`) объявляются **только** через `external fn`-декларации
-(в файле `std/runtime/builtins.nv`). Программист **не пишет**
-`type StringBuilder { ... }` block — этот тип known-by-name как `int`.
+`ReadBuffer`) имеют **type declaration** через `external type`
+([D126](03-syntax.md#d126-external-type--opaque-типы-без-body),
+`std/prelude/collections.nv`) + **methods** через `external fn`
+(этот D-block, `std/runtime/<name>.nv`). Связь декларация ↔ methods
+— по receiver-type name.
 
 ```nova
-// std/runtime/builtins.nv (documentation-stub)
-module std.runtime.builtins
+// std/prelude/collections.nv (Plan 62.D.bis, 2026-05-18)
+module std.prelude.collections
+
+export external type StringBuilder    // D126
+export external type WriteBuffer      // D126
+export external type ReadBuffer       // D126
+
+// std/runtime/string_builder.nv (auto-generated, Plan 13 Ф.8)
+module std.runtime.string_builder
 
 export external fn StringBuilder.new() -> Self
 export external fn StringBuilder.with_capacity(n int) -> Self
-export external fn StringBuilder mut @append(s str) -> ()
+export external fn StringBuilder mut @append(s str) -> Self
 // ... остальные методы
 ```
 
@@ -2745,9 +2768,11 @@ D30 фиксирует «полные слова, не сокращения». `
 - **`@external` атрибут вместо keyword'а.** Атрибуты в Nova
   зарезервированы для тестов / dev-tools (Q-attributes). Modifier-форма
   единообразна с `export`/`mut`.
-- **`external type`** — отложено. Если когда-то появятся opaque
-  user-defined типы (Channel, mmap'ed Region), вернёмся; сейчас
-  built-in только.
+- **`external type`** — закрыто 2026-05-18 в [D126](03-syntax.md#d126-external-type--opaque-типы-без-body).
+  Изначально для три built-in (StringBuilder/WriteBuffer/ReadBuffer);
+  future user-defined opaque типы (Channel, mmap'ed Region) — тот же
+  D126 mechanism + relaxation whitelist'а. Plan 62.D.bis (Ф.1–Ф.6,
+  2026-05-18) — реализация в bootstrap.
 - **Codegen — single source (вариант A).** Сигнатуры жили бы в
   Rust-таблицах; builtins.nv был бы только документацией, а codegen
   cross-check'ал бы при чтении. Отвергнуто: дублирование (два места
@@ -2771,6 +2796,9 @@ D30 фиксирует «полные слова, не сокращения». `
 - [D54](03-syntax.md#d54) — `as`/`is` для конверсий; не пересекается.
 - [D73](#d73-from--into-protocol-пара-с-авто-выводом) — From/Into
   registry; D82 использует тот же dispatch-механизм для external-функций.
+- [D126](03-syntax.md#d126-external-type--opaque-типы-без-body) —
+  type-аналог D82 (`external type` для opaque-типов с runtime
+  backing). Один keyword `external`, два валидных позиционирования.
 
 ### Эволюция
 
