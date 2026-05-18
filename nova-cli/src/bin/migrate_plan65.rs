@@ -189,10 +189,15 @@ fn rewrite_nova(src: &str) -> Result<RewriteResult> {
 }
 
 fn rewrite_tokens(src: &str, tokens: &[Token]) -> Result<RewriteResult> {
-    let mut out = String::with_capacity(src.len() + 64);
+    let mut out = String::with_capacity(src.len() + 128);
     let mut cursor: usize = 0;
     let mut changes = 0usize;
     let mut manual_markers = 0usize;
+
+    // Track whether file already imports std.time.duration; if not, we will
+    // inject the import once we've finished rewriting (and only if at least
+    // one rewrite occurred — manual markers don't require Duration).
+    let needs_duration_import = !src.contains("import std.time.duration");
 
     let is_significant = |k: &TokenKind| !matches!(k, TokenKind::Newline | TokenKind::Eof);
 
@@ -287,7 +292,41 @@ fn rewrite_tokens(src: &str, tokens: &[Token]) -> Result<RewriteResult> {
 
     out.push_str(&src[cursor..]);
 
+    // Inject `import std.time.duration` after the `module ...` line, but
+    // only when at least one rewrite happened — manual-marker-only files
+    // already have their original Time.after call so they still need a
+    // Duration in scope after the user finishes migrating manually. So
+    // also include manual markers in the gate.
+    if (changes > 0 || manual_markers > 0) && needs_duration_import {
+        out = inject_duration_import(&out);
+    }
+
     Ok(RewriteResult { text: out, changes, manual_markers })
+}
+
+/// Insert `import std.time.duration` right after the `module ...` line.
+/// Idempotent: if the import is already present we return the input.
+fn inject_duration_import(src: &str) -> String {
+    if src.contains("import std.time.duration") {
+        return src.to_string();
+    }
+    let mut out = String::with_capacity(src.len() + 32);
+    let mut injected = false;
+    for line in src.lines() {
+        out.push_str(line);
+        out.push('\n');
+        if !injected && line.trim_start().starts_with("module ") {
+            out.push('\n');
+            out.push_str("import std.time.duration\n");
+            injected = true;
+        }
+    }
+    if src.ends_with('\n') {
+        out
+    } else {
+        // strip trailing newline we added
+        out.trim_end_matches('\n').to_string()
+    }
 }
 
 enum ArgKind {
@@ -490,5 +529,30 @@ let s = "Time.after(50)"  // string literal
         let src = "let _ = Time.after(10_000)\n";
         let r = rewrite_nova(src).unwrap();
         assert!(r.text.contains("Duration.from_millis(10_000)"));
+    }
+
+    #[test]
+    fn injects_duration_import_after_module() {
+        let src = "module foo.bar\n\ntest \"t\" { let _ = Time.after(50) }\n";
+        let r = rewrite_nova(src).unwrap();
+        assert!(r.text.contains("import std.time.duration"));
+        // Import must come after `module ...`.
+        let mod_pos = r.text.find("module foo.bar").unwrap();
+        let imp_pos = r.text.find("import std.time.duration").unwrap();
+        assert!(imp_pos > mod_pos);
+    }
+
+    #[test]
+    fn does_not_double_import_duration() {
+        let src = "module foo.bar\n\nimport std.time.duration\n\ntest \"t\" { let _ = Time.after(50) }\n";
+        let r = rewrite_nova(src).unwrap();
+        assert_eq!(r.text.matches("import std.time.duration").count(), 1);
+    }
+
+    #[test]
+    fn does_not_inject_import_when_no_rewrites() {
+        let src = "module foo.bar\n\ntest \"t\" { assert(true) }\n";
+        let r = rewrite_nova(src).unwrap();
+        assert!(!r.text.contains("import std.time.duration"));
     }
 }

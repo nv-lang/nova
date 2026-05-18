@@ -577,27 +577,58 @@ Path-form does not propagate the record type into `infer_expr_c_type`
 (returns `nova_int`). f4 works around by using `Duration.from_nanos(0)`.
 Tracked: Plan 60 / Plan 53 follow-up territory, not Plan 65 scope.
 
-### Ф.4 — Migration tool (1 day)
+### Ф.4 — Migration tool (1 day) ✅ 2026-05-18
 
-- [ ] `nova-cli/src/bin/migrate_plan65.rs`:
-   - Use nova-codegen lexer (token-aware per AD11)
-   - Transform rules table выше
-   - Dry-run mode + exit code semantics
-- [ ] Test на specific files (3 simple + 1 with computed expression).
-- [ ] Idempotency test: run twice → no diff.
-- [ ] Bin registered в `nova-cli/Cargo.toml`.
+- [x] `nova-cli/src/bin/migrate_plan65.rs` (~500 LoC):
+   - Token-aware via `nova_codegen::lexer` (AD11) — strings + comments
+     naturally skipped.
+   - Rules: int literal → `Duration.from_millis`; float literal →
+     `Duration.from_secs_f64`; non-literal → `/* MIGRATE_MANUAL ... */`
+     comment + leave call (CI gate exits 1).
+   - Preserves underscored literals (`10_000`) via span-based text extract.
+   - Unary-minus on literal honoured.
+   - Markdown mode (`--md`): walks ```nova fenced blocks + inline backticks.
+- [x] 7 unit tests in `#[cfg(test)]`: int / float / manual marker /
+      strings+comments skip / idempotent / negative / underscored. All PASS.
+- [x] Idempotency: re-running on already-migrated source = no diff.
+- [x] Bin registered in `nova-cli/Cargo.toml`.
 
-**Acceptance:** tool migrates 16/16 call sites; idempotent; CI dry-run gate.
+**Acceptance:** ✅ tool migrates **13 call sites in 7 files** (Plan-doc
+audit reported 16 with comments; pure executable calls = 13 — matches
+Ф.0 baseline). 0 MIGRATE_MANUAL markers — full automatic migration.
+Exit code semantics: 0/1/2 (idempotent/manual/changed).
 
-### Ф.5 — Atomic switch (½ day)
+**Регрессия:** unit tests 7/7 PASS; integration deferred to Ф.5 (atomic
+switch will actually invoke `--apply`).
 
-- [ ] Run migration tool на std/ + nova_tests/ + examples/.
-- [ ] Remove `Time.after` registration из compiler.
-- [ ] Remove infer_expr_c_type case для Time.after.
-- [ ] Add type-checker E5101 diagnostic с suggested fix (R9 format).
-- [ ] `nova test` → 0 regressions vs Ф.0 baseline.
+### Ф.5 — Atomic switch (½ day) ✅ 2026-05-18
 
-**Acceptance:** baseline preserved; legacy diagnostic ловит residual.
+- [x] Migration tool extended with auto-injection of
+      `import std.time.duration` (Ф.4 follow-up) — required because
+      migrated tests now reference Duration. 10/10 unit tests PASS.
+- [x] Ran `migrate_plan65 --apply --paths nova_tests std examples`:
+      **13 rewrites in 7 files**, 0 MIGRATE_MANUAL markers.
+      `nova_tests/concurrency/{fiber_arena_compact, plan40_channel_hardening,
+      plan40_perf_bench, select_closed_test, select_test,
+      select_timer_cleanup, select_timer_stress}.nv` all migrated to
+      `ChanReader.close_after(Duration.from_millis(N))` + import injected.
+- [x] Removed `Time.after` registration from compiler:
+   - `emit_c.rs:1045`: schema entry deleted (only `sleep`/`now` remain).
+   - `emit_c.rs:18247`: Member-form type inference branch deleted.
+- [x] Added E5101 diagnostic with structured fix-it suggestion in
+      `emit_call`, both Member-form and Path-form guards. Format includes
+      the migrated suggestion line (`ChanReader.close_after(Duration.from_millis(<arg>))`)
+      built from the original arg-expr display, plus a pointer to
+      `cargo run --bin migrate_plan65 -- --apply`.
+- [x] New negative test `nova_tests/plan65/f2_time_after_removed.nv`
+      verifies E5101 fires.
+
+**Acceptance:** ✅ baseline preserved (705 PASS / 0 FAIL / 44 SKIP);
+legacy diagnostic catches residual; 0 `Time.after` code-level call sites
+remain in std/ nova_tests/ examples/ (only historical mentions in
+comments survive — intentional).
+
+**Регрессия:** 705 PASS / 0 FAIL / 44 SKIP (baseline 698 + 7 plan65).
 
 ### Ф.6 — Spec sync (½ day)
 
