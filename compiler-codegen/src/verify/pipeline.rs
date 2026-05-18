@@ -2698,6 +2698,29 @@ let t0 = std::time::Instant::now();
                         ld.name, ld.name),
                     ld.span));
             }
+            // Ф.40.1 (Plan 33.6): lemma body == ensures expression — body просто
+            // повторяет ensures. Это не bug, но прозрачно: SMT доказывает результат
+            // body == ensures тавтологически. Лучше пустой body или body содержащий
+            // calc/apply hints. Detect: body это Expr и canon(body) == canon(any ensures).
+            use crate::ast::pretty::print_expr as pe;
+            if let crate::ast::FnBody::Expr(body_expr) = &ld.body {
+                let body_str = pe(body_expr);
+                for c in &ld.contracts {
+                    if matches!(c.kind, ContractKind::Ensures) {
+                        // Если body буквально совпадает с ensures expr.
+                        if body_str == pe(&c.expr) {
+                            report.warnings.push(Diagnostic::new(
+                                format!("lemma `{}`: body буквально совпадает с ensures [W2402]:\n  \
+                                         body не добавляет proof-information — SMT доказывает\n  \
+                                         тавтологически. Используйте `calc {{ }}` или `apply other_lemma`\n  \
+                                         для нетривиальной reasoning chain.",
+                                    ld.name),
+                                ld.span));
+                            break;
+                        }
+                    }
+                }
+            }
         }
         // Ф.26.3 (Plan 33.6): axiom без binders + `=> true` — vacuous.
         if let Item::Type(td) = item {
