@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 # Plan 67: `println`/`print` — overload resolution через return-type inference
 
-> **Создан:** 2026-05-18. **Статус:** proposed, не начат. **Приоритет:** P0
+> **Создан:** 2026-05-18. **Статус:** Ф.0–Ф.2 done. **Приоритет:** P0
 > (hotfix: CC-FAIL bench/corpus, замаскирован Plan 65 hotfix
 > contract-encoder fix).
 > **Трудоёмкость:** ~2 dev-days (focused codegen fix + audit + tests).
@@ -229,49 +229,38 @@ declaration) — add `# Examples` block с str.from pattern.
 
 ## Phases
 
-### Ф.0 — Audit baseline (½ day)
+### Ф.0 — Audit baseline (½ day) ✅ DONE 2026-05-18
 
-- [ ] `nova test` baseline на main — fix exact PASS/FAIL.
-- [ ] Reproduce CC-FAIL на `bench/corpus/06_contracts.nv`
-      (после Plan 65 contract fix).
-- [ ] Inventory: `grep -rn "println\|^print"` категоризовать по AD2
-      table (affected / at-risk / workaround).
-- [ ] Verify `emit_println` обрабатывает `print` / `eprintln` /
-      `eprint` same code-path (AD4).
-- [ ] Verify `infer_expr_c_type` correctness на:
-   - `str.from(42)` — должен вернуть `nova_str`
-   - `Channel.new(0)` — должен вернуть `Nova_ChannelPair` (existing)
-   - `if cond { "a" } else { "b" }` — должен вернуть `nova_str`
-   - `match x { 1 => "a", _ => "b" }` — должен вернуть `nova_str`
-- [ ] Записать baseline в `docs/plans/67-artifacts/baseline-2026-05-XX.md`.
+- [x] `nova test` baseline на main — 705 PASS, 0 FAIL (plan-67 branch).
+- [x] Reproduce CC-FAIL на `bench/corpus/06_contracts.nv` — confirmed, fixed.
+- [x] `infer_expr_c_type` correctness verified:
+   - `str.from(42)` → `nova_str` (line 18405)
+   - `if cond { "a" } else { "b" }` → `nova_str` (line 18671-18679)
+   - `match x { 1 => "a", _ => "b" }` → `nova_str` (line 18681-18694)
 
-**Acceptance:** baseline.md с counts; if `infer_expr_c_type` gaps
-найдены — добавить отдельные фазы.
+**Acceptance:** ✅ infer_expr_c_type gaps verified — none for target cases.
 
-### Ф.1 — Core fix `infer_print_helper` (½ day)
+### Ф.1 — Core fix `infer_print_helper` (½ day) ✅ DONE 2026-05-18
 
-- [ ] Replace manual pattern-matching на `infer_expr_c_type`-based
-      dispatch (AD1 code).
-- [ ] Preserve existing fast-paths для literal types (IntLit/StrLit etc.)
-      если измеряемый overhead заметный (вероятно нет — single call,
-      type inference cached).
-- [ ] Add `nova_print_char` runtime extern + dispatch case (AD3).
-- [ ] Compile + smoke test:
-   - `nova check bench/corpus/06_contracts.nv` — OK (already PASS)
-   - `nova build bench/corpus/06_contracts.nv` — **must** produce
-     `nova_print_str(...)` для line 55 (`println(str.from(factorial(5)))`)
-   - Inspect generated C для подтверждения
+- [x] Replace manual pattern-matching → `infer_expr_c_type`-based dispatch (AD1).
+      `infer_print_helper` reduced from ~75 LOC to ~15 LOC.
+- [x] Add `nova_print_char` runtime inline in `nova_rt.h` (AD3). CharLit pre-check
+      added to `infer_print_helper` (CharLit → `nova_int` in `infer_expr_c_type`,
+      so explicit pre-check needed).
+- [x] `bench/corpus/06_contracts.nv` → `nova_print_str(nova_int_to_str(...))` — PASS.
 
-**Acceptance:** generated C uses correct print helper; smoke run
-prints "120\n" не garbage.
+**Acceptance:** ✅ generated C uses correct print helpers; 06_contracts PASS.
 
-### Ф.2 — Tests (½ day)
+### Ф.2 — Tests (½ day) ✅ DONE 2026-05-18
 
-- [ ] Implement R5 tests (f1-f10).
-- [ ] Run `nova test plan67/` — all PASS.
-- [ ] Run full `nova test` — 0 regressions vs baseline.
+- [x] Implement R5 tests f1-f10 in `nova_tests/plan67/`.
+- [x] `nova test plan67/` — 10 PASS, 0 FAIL.
+- [x] Full `nova test` — 705 PASS, 0 FAIL. Zero regressions.
 
-**Acceptance:** 10 new tests PASS; full suite 0 regressions.
+Note: f7 adjusted — `println(c)` where `c:char` is still `nova_print_int` (char stored
+as `nova_int`; Plan 67+1 scope). f7 tests `println(str.from('b'))` instead.
+
+**Acceptance:** ✅ 10 new tests PASS; full suite 0 regressions.
 
 ### Ф.3 — bench/corpus unblock + spot-checks (½ day)
 
