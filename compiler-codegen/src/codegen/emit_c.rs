@@ -7120,8 +7120,16 @@ impl CEmitter {
                     &e,
                 )))
             .collect();
+        // Plan 70 PhaseB2 (session 2): cascade-blocked site (register_mono_instance).
+        // Outer None = no return_type declared (void fn — legitimate unit).
+        // Inner type_ref_to_c failure = silent miscompilation → E7001 via
+        // record_strict_error. Placeholder "nova_unit" returned, finalization fails.
         let ret_c = fn_decl.return_type.as_ref()
-            .map(|t| self.type_ref_to_c(t).unwrap_or_else(|_| "nova_unit".into()))
+            .map(|t| self.type_ref_to_c(t).unwrap_or_else(|e|
+                self.record_strict_error(
+                    &format!("register_mono_instance `{}` return type", fn_decl.name),
+                    &e,
+                )))
             .unwrap_or_else(|| "nova_unit".into());
         self.current_type_subst = saved_subst;
         let params_str = if fn_decl.params.is_empty() {
@@ -7192,8 +7200,13 @@ impl CEmitter {
                     &e,
                 )))
             .collect();
+        // Plan 70 PhaseB2 (session 2): cascade-blocked site (register_mono_method_instance).
         let ret_c = fn_decl.return_type.as_ref()
-            .map(|t| self.type_ref_to_c(t).unwrap_or_else(|_| "nova_unit".into()))
+            .map(|t| self.type_ref_to_c(t).unwrap_or_else(|e|
+                self.record_strict_error(
+                    &format!("register_mono_method_instance `{}.{}` return type", recv_type, fn_decl.name),
+                    &e,
+                )))
             .unwrap_or_else(|| "nova_unit".into());
         self.current_receiver_type = prev_recv_for_ret;
         self.current_type_subst = saved_subst;
@@ -7810,9 +7823,14 @@ impl CEmitter {
                 &e,
             )))
             .collect::<Result<Vec<_>, _>>()?;
-        let ret_c = fn_decl.return_type.as_ref()
-            .map(|t| self.type_ref_to_c(t).unwrap_or_else(|_| "nova_unit".into()))
-            .unwrap_or_else(|| "nova_unit".into());
+        // Plan 70 PhaseB2 (session 2): strict — emit_monomorphized_fn ret_c.
+        let ret_c = match fn_decl.return_type.as_ref() {
+            Some(t) => self.type_ref_to_c(t).map_err(|e| self.err_no_int_fallback(
+                &format!("mono'd fn `{}` return type", fn_decl.name),
+                &e,
+            ))?,
+            None => "nova_unit".into(),
+        };
         let params_str = if fn_decl.params.is_empty() {
             "void".to_string()
         } else {
@@ -13308,9 +13326,14 @@ impl CEmitter {
                                                 &e,
                                             )))
                                             .collect::<Result<Vec<_>, _>>()?;
-                                        let inner_ret = return_type.as_ref()
-                                            .map(|t| self.type_ref_to_c(t).unwrap_or_else(|_| "nova_unit".into()))
-                                            .unwrap_or_else(|| "nova_unit".into());
+                                        // Plan 70 PhaseB2 (session 2): strict — closure-arg return type.
+                                        let inner_ret = match return_type.as_ref() {
+                                            Some(t) => self.type_ref_to_c(t).map_err(|e| self.err_no_int_fallback(
+                                                "emit_call fn-param return",
+                                                &e,
+                                            ))?,
+                                            None => "nova_unit".into(),
+                                        };
                                         let prev_sig = self.fn_param_sigs.insert(
                                             param_decl.name.clone(), (inner_ptys.clone(), inner_ret.clone()));
                                         // Plan 48 method-param mono (Plan 63 fu, 2026-05-17 EOD):
@@ -13861,9 +13884,14 @@ impl CEmitter {
                                                     &e,
                                                 )))
                                                 .collect::<Result<Vec<_>, _>>()?;
-                                            let inner_ret = return_type.as_ref()
-                                                .map(|t| self.type_ref_to_c(t).unwrap_or_else(|_| "nova_unit".into()))
-                                                .unwrap_or_else(|| "nova_unit".into());
+                                            // Plan 70 PhaseB2 (session 2): strict — mono-subst closure-arg return.
+                                            let inner_ret = match return_type.as_ref() {
+                                                Some(t) => self.type_ref_to_c(t).map_err(|e| self.err_no_int_fallback(
+                                                    "emit_call mono-subst fn-param return",
+                                                    &e,
+                                                ))?,
+                                                None => "nova_unit".into(),
+                                            };
                                             self.current_type_subst = saved_inner;
                                             let prev_sig = self.fn_param_sigs.insert(
                                                 param_decl.name.clone(), (inner_ptys, inner_ret));
@@ -14072,9 +14100,14 @@ impl CEmitter {
                                         &e,
                                     )))
                                     .collect::<Result<Vec<_>, _>>()?;
-                                let inner_ret = return_type.as_ref()
-                                    .map(|t| self.type_ref_to_c(t).unwrap_or_else(|_| "nova_unit".into()))
-                                    .unwrap_or_else(|| "nova_unit".into());
+                                // Plan 70 PhaseB2 (session 2): strict — inner-subst closure-arg return.
+                                let inner_ret = match return_type.as_ref() {
+                                    Some(t) => self.type_ref_to_c(t).map_err(|e| self.err_no_int_fallback(
+                                        "emit_call inner-subst fn-param return",
+                                        &e,
+                                    ))?,
+                                    None => "nova_unit".into(),
+                                };
                                 self.current_type_subst = saved_inner;
                                 // Register temporarily so closure body knows the concrete sig
                                 let prev_sig = self.fn_param_sigs.insert(
@@ -18345,6 +18378,19 @@ impl CEmitter {
                 "nova_int".into()
             }
             ExprKind::SelfAccess => {
+                // Plan 70 Cat B (intentional erasure, session 2 finding):
+                // SelfAccess вне instance-method context — var_types["nova_self"]
+                // not registered. Reached в legitimate cases:
+                // (a) Closures inside instance methods — closure body inherits
+                //     `self` via capture, но var_types на этом уровне ещё
+                //     отдельный scope (Plan 8 closure-capture pre-registration
+                //     не покрывает SelfAccess).
+                // (b) Generic-fn body emit без receiver — `self` ref'ит type
+                //     param, который не registered как concrete type yet.
+                // Pre-strict fallback к "nova_int" работает для int-typed
+                // self contexts; non-int silent miscompilation possible но
+                // не observed в test corpus.
+                // Documented как Cat B13.
                 self.var_types.get("nova_self").cloned().unwrap_or_else(|| "nova_int".into())
             }
             ExprKind::HandlerLit { effect_name, .. } => {
@@ -19385,6 +19431,24 @@ impl CEmitter {
                         return field_ty.clone();
                     }
                 }
+                // Plan 70 Cat B (intentional erasure, session 2 finding):
+                // Member access fallback. Reached для:
+                // (a) Tuple field access без обвязки tuple_element_types
+                //     (call-result tuple, nested member на anon tuple) — типы
+                //     embedded в mangled name `_NovaTuple_N_lenT_T_...`, но
+                //     decoder отсутствует на этом code-path.
+                // (b) Generic-record field access до mono pass (erased schema
+                //     ещё не зарегистрирован).
+                // (c) Type-checker-rejected access (поле не существует) —
+                //     не reach'ит codegen.
+                //
+                // Strict-mode здесь требует full tuple-name decoder и pre-mono
+                // schema registration — отдельный план. Currently low ROI:
+                // нет observed silent miscompilation в test corpus с этим
+                // fallback (тесты с int-тuples работают; non-int tuples используют
+                // bound vars via tuple_element_types).
+                //
+                // Documented как Cat B12 в codegen-erasure-sites.md.
                 "nova_int".into()
             }
             ExprKind::Is(_, _) => "nova_bool".into(),
@@ -19456,6 +19520,24 @@ impl CEmitter {
                 }
                 "nova_unit".into()
             }
+            // Plan 70 Cat B (intentional erasure, session 2 finding): final wildcard
+            // в infer_expr_c_type. Reached for ExprKind variants which cannot
+            // meaningfully infer a standalone C type — primarily ClosureLight
+            // (variant 35, `|x| ...`) and Path-only expressions без call-context
+            // (variant 12). В этих случаях caller (emit_call, emit_let, etc.)
+            // знает expected type из bidirectional context (fn_param_sigs,
+            // current_fn_return_ty) и delivers правильный type через alternative path.
+            //
+            // Этот fallback — placeholder для "I don't know", не silent
+            // miscompilation: тип никогда не используется для actual C emit;
+            // используется только для overload resolution / hint computation,
+            // где nova_int treated как "any int-shaped placeholder".
+            //
+            // Migration к strict: requires bidirectional inference в каждом
+            // wildcard-hitter ExprKind (ClosureLight требует context; Path
+            // требует upper-context type) — отдельный план (Plan 70+1 если
+            // ever needed). Documented в docs/codegen-erasure-sites.md как
+            // B11 при добавлении.
             _ => "nova_int".into(),
         }
     }

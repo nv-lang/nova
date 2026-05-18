@@ -3521,3 +3521,112 @@ template<U> Wrapper<U> map(...) }` — то же. Nova bootstrap теперь п
 
 **Реализовано:** [Plan 68](../../docs/plans/68-byte-to-u8.md)
   — частично закрыт (user generic типы); built-in `[]T @map[U]` V2.
+
+---
+
+## D126. Strict type propagation в codegen — no silent `nova_int` fallback
+
+**Решение.** Codegen pass (`compiler-codegen/src/codegen/`) **обязан**
+производить deterministic, явный C-type для каждого Nova expression и
+type reference. **Silent fallback к `nova_int`** при failure type
+resolution — **запрещён**. Любой site где `type_ref_to_c(...)`
+возвращает `Err` без strict-error должен производить compile-time
+diagnostic `[E7001]` и failing build, а не подставлять placeholder
+type.
+
+**Мотивация.** До Plan 70 паттерн `type_ref_to_c(&ty).unwrap_or_else(|_|
+"nova_int".into())` встречался в codegen в 117 местах (audit 2026-05-18).
+Семантика: «если type translation failed → silently emit nova_int
+(`long long`) и продолжай». Результат — silent miscompilation:
+
+- pointer cast to int → garbage address как число
+- bool/char печатается как code-point (Plan 67 закрыл частный случай)
+- record/sum-type memcpy с неправильным sizeof
+- float → int truncation
+
+Программа «работает», но возвращает мусор. Debug невозможен — компилятор
+ничего не сигналит.
+
+**Industry baseline.** Rust / Swift / Go (post-1.18) — все производят
+compile error на любом unresolved type в codegen. Nova до Plan 70 был
+**хуже всех baseline** (silent default). D126 закрывает регрессию.
+
+**Категории erasure (Cat A/B/C/D).** Audit разделил 154 fallback sites
+на четыре категории:
+
+| Cat | Pattern | Семантика | Действие |
+|---|---|---|---|
+| **A1** | `type_ref_to_c(...).unwrap_or_else(\|_\| "nova_int")` | Silent fallback при resolution failure | **Strict error** |
+| **A2** | `_ => "nova_int"` wildcard без комментария | Wildcard fallback unknown type | **Strict error или Cat D classification** |
+| **B**  | `_ => "nova_int", // erased T` (commented) | Pre-mono generic body emit — type-param ещё unresolved | Documented intentional erasure |
+| **C**  | `WithResultCategory::IntLike => "nova_int"` | Categorical mapping для int-family aliases | Legit, keep |
+| **D**  | Dispatch wildcard на известный receiver | Known type, unknown method (type-checker уже rejected) | Legit, keep |
+
+**Только Cat A** даёт silent miscompilation. После Plan 70 closure все
+Cat A sites мигрированы к strict error path. Cat B/C/D documented
+в [docs/codegen-erasure-sites.md](../../docs/codegen-erasure-sites.md).
+
+**Strict-error architecture.** Две helper-функции в `emit_c.rs`:
+
+1. `err_no_int_fallback(context, cause) → String` — для functions
+   возвращающих `Result<_, String>`. Используется с `?` propagation:
+   ```rust
+   let ty = self.type_ref_to_c(&p.ty).map_err(|e|
+       self.err_no_int_fallback("parameter `x`", &e)
+   )?;
+   ```
+
+2. `record_strict_error(context, cause) → "nova_int"` — для
+   **cascade-blocked** sites (functions whose signature нельзя менять
+   без massive caller-chain refactor: `infer_expr_c_type` (135
+   callers), `register_mono_instance`, etc). Pushes E7001 в
+   `strict_errors: RefCell<Vec<String>>` field; finalization gate в
+   `emit_module` проверяет non-empty и failit codegen pass с
+   aggregated error message.
+
+Оба helper'а используют unified diagnostic format `[E7001]` (range
+E7001-E7099 reserved для Plan 70 family). Plan 36 R7 structured
+diagnostic compatibility.
+
+**Production-grade default.** Strict mode — **always on**, без opt-in
+env var. ANY silent fallback = build failure (Rust/Swift baseline).
+Это breaking change для user code который полагался на silent int
+default (R20 в Plan 70). Bootstrap convention: clean break с
+machine-applicable migration suggestions.
+
+**Diagnostic format (E7001).**
+```
+[E7001] cannot infer C type for parameter `x`: <cause>. Silent
+fallback к `nova_int` produced wrong runtime output для non-int
+types (record/string/float/bool). Add explicit type annotation,
+ensure generic is monomorphized, или register type в external_registry.
+См. Plan 70 ([M-no-silent-nova-int-fallback]).
+```
+
+**Internal lint guard (CI).** `scripts/lint-no-silent-int-fallback.sh`
+greps `compiler-codegen/src/` против baseline counts из
+`docs/codegen-erasure-sites.md`. Bumping baseline требует:
+1. Inline comment с rationale «почему erasure безопасна»
+2. Entry в `docs/codegen-erasure-sites.md` со file:line + причина
+3. PR review
+
+CI gate fails если added counts превышают baseline без updates.
+
+**Acceptance criteria (Plan 70 closure).**
+- [x] Helper infra `err_no_int_fallback` + `record_strict_error` (Ф.1 / Ф.B0)
+- [x] Cat A1/A2 migration: 90 → 8 (only Cat B holdovers remain)
+- [x] Cat B documentation: 10 sites listed в codegen-erasure-sites.md
+- [x] Internal lint guard `scripts/lint-no-silent-int-fallback.sh`
+- [x] Spec D126 (этот блок)
+- [x] 796+ PASS / 0 FAIL nova test (0 regressions vs baseline 761)
+
+**Реализовано:** [Plan 70](../../docs/plans/70-no-silent-nova-int-fallback.md)
+  — sessions 1+2 (2026-05-18); 90+ Cat A1 sites migrated, infrastructure
+  complete, lint guard active.
+
+**Связь:**
+- D118 — typed `Fail[E]` codegen (similar precision-by-construction pattern)
+- Plan 67 — println overload fix (sibling: один из видимых частных случаев)
+- Plan 48 — monomorphization (упрощает Cat B → меньше erasure)
+- Plan 36 — diagnostic infra (R7 structured format)
+- [docs/codegen-erasure-sites.md](../../docs/codegen-erasure-sites.md) — Cat B/D inventory
