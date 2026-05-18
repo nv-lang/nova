@@ -9377,6 +9377,13 @@ check (margs[0] == margs[1]) перед sign-based branches в try_var_mul_nonne
 
 **Регрессия:** 205 → 206 PASS (+1), 0 FAIL.
 
+## [M-plan-33.6-Ф.52-square-strict-div-self] (2026-05-18)
+
+`a * a > 0` если a != 0 (через sign bounds: lower >= 1 OR upper <= -1).
+Плюс `a / a → 1` simplify (spec scope assume non-zero).
+
+**Регрессия:** 206 → 207 PASS (+1), 0 FAIL.
+
 ## [M-57.F.4-positive-negative-coverage] — Test expansion (2026-05-17)
 
 **Не simplification.** Прямой user feedback "тесты напиши по тому,
