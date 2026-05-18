@@ -1402,6 +1402,22 @@ static inline int64_t _nova_monotonic_ms(void) {
     return (int64_t)(uv_hrtime() / 1000000ULL);
 }
 
+/* Plan 65 Ф.12.2 / D124: monotonic clock в наносекундах для типа Monotonic.
+ *
+ * Same underlying source as _nova_monotonic_ms (uv_hrtime).
+ *
+ * Windows: QueryPerformanceCounter normalised к ns через
+ *   QueryPerformanceFrequency (libuv handles 32→64-bit overflow
+ *   guard internally — см. uv__hrtime_win32 в libuv/src/win/util.c).
+ * macOS: mach_absolute_time + mach_timebase_info.
+ * Linux: clock_gettime(CLOCK_MONOTONIC).
+ *
+ * Returns int64_t (Nova-side Monotonic.nanos field is i64). Overflow при
+ * процесс-uptime > ~292 years — пренебрежимо. */
+static inline int64_t _nova_monotonic_ns(void) {
+    return (int64_t)uv_hrtime();
+}
+
 /* ─── Plan 22 Ф.4: libuv-based fiber-sleep ─── */
 /* uv.h + eventloop.h уже подключены выше в этом файле. */
 
@@ -1646,6 +1662,24 @@ static inline nova_int Nova_Time_now_ns(void) {
         return _nova_handler_Time->now_ns(_nova_handler_Time->ctx);
     }
     return _nova_time_default_now() * (nova_int)1000000;
+}
+
+/* Plan 65 Ф.12.2 / D124: dispatch для Monotonic.now() / Time.now_monotonic().
+ *
+ * NOTE: Time handler vtable currently не имеет slot'а под now_monotonic
+ * (NovaVtable_Time defined в effects.h до Plan 65). Под mock-handler этот
+ * вызов прозрачно возвращает real monotonic clock — НЕ mock'нутое значение.
+ * Это intentional trade-off: добавить slot потребует:
+ *   1. Расширения NovaVtable_Time layout
+ *   2. Re-emit'а ВСЕХ handler-literal'ов с зеро-init slot'ом (avoid
+ *      NULL dereference при handler без now_monotonic decl)
+ *   3. Прокидывания через std/testing/handlers.nv fixed_ms / mut_clock
+ *
+ * Concrete user-impact: mock-clock tests НЕ контролируют Monotonic time.
+ * Для timer deadline mock'а (Plan 65 Ф.10 mock-time path) используется
+ * Time.sleep вместо Monotonic — sleep dispatch уже идёт через vtable. */
+static inline nova_int Nova_Time_now_monotonic(void) {
+    return (nova_int)_nova_monotonic_ns();
 }
 
 #endif /* NOVA_RT_FIBERS_H */

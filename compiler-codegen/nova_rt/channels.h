@@ -1402,6 +1402,61 @@ static inline Nova_ChanReader* nova_chan_reader_close_after_ns(int64_t nanos) {
     return Nova_Time_after((nova_int)ms);
 }
 
+/* Plan 65 Ф.12.1 / D124: Monotonic.now() — runtime entry. Allocates a
+ * Nova_Monotonic record on the GC heap with current uv_hrtime() nanos.
+ *
+ * Note: Nova_Monotonic is a Nova-side record-type emitted by the codegen
+ * record schema; here we only know its layout is `struct { int64_t nanos; }`
+ * (consistent with Nova_Duration / Nova_Timestamp). To stay independent
+ * of codegen ordering, we cast via `int64_t` field-first access pattern. */
+typedef struct { int64_t nanos; } Nova_MonotonicLayout;
+
+static inline void* nova_monotonic_now_record(void) {
+    Nova_MonotonicLayout* m = (Nova_MonotonicLayout*)nova_alloc(sizeof(Nova_MonotonicLayout));
+    m->nanos = (int64_t)uv_hrtime();
+    return (void*)m;
+}
+
+/* Plan 65 Ф.12.4 / D124: ChanReader.close_at(deadline Monotonic).
+ *
+ * Builds a timer-channel that closes at the given monotonic deadline.
+ * Internally computes delta = deadline_ns - now_monotonic_ns(), clamps to
+ * 0 if past, and delegates to nova_chan_reader_close_after_ns.
+ *
+ * Edge cases (Plan 65 Ф.12.4 spec):
+ *   - past deadline (deadline < now)   → already-closed reader, no timer alloc
+ *   - exactly now                       → ≤ 1 ms wait via close_after_ns(1000) round-up
+ *   - future deadline overflow          → panic with explicit values
+ *   - normal future                     → close_after_ns(delta)
+ *
+ * Overflow guard: deadline_ns must be representable as a positive delta
+ * that doesn't exceed i64::MAX after subtraction. Practically the only
+ * way to overflow is if `deadline = INT64_MAX` and `now > 0` — the
+ * subtraction is safe, but we also explicitly reject deadlines that would
+ * round-up past INT64_MAX milliseconds in the underlying close_after_ns
+ * path. */
+static inline Nova_ChanReader* nova_chan_reader_close_at_mono_ns(int64_t deadline_ns) {
+    int64_t now = (int64_t)uv_hrtime();
+    if (deadline_ns <= now) {
+        /* Past or exactly-now: already-closed reader, no timer alloc. */
+        Nova_ChannelPair pair = nova_channel_new(1);
+        nova_chan_writer_close(pair.tx);
+        return pair.rx;
+    }
+    int64_t delta = deadline_ns - now;
+    /* Sanity check: delta should fit in i64; if deadline_ns came from
+     * Monotonic.now() + some Duration, addition could have wrapped past
+     * INT64_MAX. Detect via sign-flip check on delta. */
+    if (delta < 0) {
+        fprintf(stderr,
+            "nova: ChanReader.close_at: deadline overflow "
+            "(deadline=%lld ns, now=%lld ns, delta=%lld)\n",
+            (long long)deadline_ns, (long long)now, (long long)delta);
+        abort();
+    }
+    return nova_chan_reader_close_after_ns(delta);
+}
+
 /* Plan 65 Ф.11: timer stats accessor for Nova-level `Time.timer_stats()`.
  * Returns the current counters as a 5-int64 struct (matching the
  * Nova-side TimerStats record layout: alloc_total, alloc_active, fired,
