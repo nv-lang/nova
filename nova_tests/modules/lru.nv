@@ -1,0 +1,82 @@
+// Тесты std.collections.lru.Lru[K, V] — LRU cache с eviction.
+// Позитивные: put/get, eviction, recency refresh, update, len/contains.
+// Негативные: нет (runtime-поведение, не compile-error).
+
+module modules.lru
+
+import std.collections.lru.{Lru}
+
+test "Lru: put и get базовое" {
+    let mut c = Lru[str, int].new(3)
+    c.put("a", 1)
+    c.put("b", 2)
+    c.put("c", 3)
+    assert(c.get("a") == Some(1))
+    assert(c.get("b") == Some(2))
+    assert(c.get("c") == Some(3))
+    assert(c.len() == 3)
+}
+
+test "Lru: get несуществующего → None" {
+    let mut c = Lru[str, int].new(2)
+    c.put("x", 10)
+    assert(c.get("missing") == None)
+}
+
+test "Lru: eviction при достижении capacity" {
+    let mut c = Lru[str, int].new(2)
+    c.put("a", 1)
+    c.put("b", 2)
+    c.put("c", 3)   // вытесняет "a" (LRU)
+    assert(c.get("a") == None)
+    assert(c.get("b") == Some(2))
+    assert(c.get("c") == Some(3))
+    assert(c.len() == 2)
+}
+
+test "Lru: get обновляет recency — вытесняется другой" {
+    let mut c = Lru[str, int].new(2)
+    c.put("a", 1)
+    c.put("b", 2)
+    let _ = c.get("a")   // "a" теперь MRU
+    c.put("c", 3)        // вытесняет "b" (стал LRU)
+    assert(c.get("a") == Some(1))
+    assert(c.get("b") == None)
+    assert(c.get("c") == Some(3))
+}
+
+test "Lru: update существующего ключа" {
+    let mut c = Lru[str, int].new(3)
+    c.put("k", 1)
+    c.put("k", 99)
+    assert(c.get("k") == Some(99))
+    assert(c.len() == 1)
+}
+
+test "Lru: contains без обновления recency" {
+    let mut c = Lru[str, int].new(2)
+    c.put("a", 1)
+    c.put("b", 2)
+    assert(c.contains("a") == true)
+    assert(c.contains("z") == false)
+    // contains не меняет recency — "a" всё ещё LRU
+    c.put("c", 3)   // вытесняет "a"
+    assert(c.get("a") == None)
+}
+
+test "Lru: is_empty на новом кэше" {
+    let c = Lru[str, int].new(10)
+    assert(c.is_empty() == true)
+    assert(c.len() == 0)
+}
+
+test "Lru: capacity=1 всегда хранит только последний" {
+    let mut c = Lru[int, int].new(1)
+    c.put(1, 10)
+    c.put(2, 20)
+    c.put(3, 30)
+    assert(c.get(1) == None)
+    assert(c.get(2) == None)
+    assert(c.get(3) == Some(30))
+    assert(c.len() == 1)
+}
