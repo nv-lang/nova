@@ -11268,6 +11268,31 @@ impl CEmitter {
     }
 
     fn emit_call(&mut self, func: &Expr, args: &[CallArg]) -> Result<String, String> {
+        // Plan 62.B.bis Ф.1 (2026-05-18): print/println special-case
+        // intercept ДОЛЖЕН fire'ить ДО variadic routing. После Ф.2 этого
+        // же плана `std/prelude/runtime.nv` содержит
+        //   external fn print(...items []any) -> ()
+        //   external fn println(...items []any) -> ()
+        // и type-checker регистрирует `print`/`println` в
+        // `user_fn_variadic`. Если variadic routing запустится первым —
+        // он соберёт args в synthesized ArrayLit и recurse'нётся в
+        // `emit_call` с args = [single_array], потеряв per-arg type info
+        // (нужный `infer_print_helper` для `nova_print_<type>` dispatch).
+        //
+        // Special-case закрывает оба mode'а: pre-Ф.2 (hardcoded HashSet)
+        // и post-Ф.2 (file-based declaration в std/prelude/runtime.nv);
+        // intercept fires identically. После HashSet shrink в Ф.5 имя
+        // продолжает резолвиться через R26+R27 (cross-file resolve
+        // через facade re-export).
+        if let ExprKind::Ident(name) = &func.kind {
+            if name == "println" || name == "print" {
+                // Spread (...) inside print/println — DEFER'нут (Plan 14
+                // Ф.6 limitation note + design doc §Ф.4); validation
+                // делается внутри emit_println.
+                return self.emit_println(args, name == "println");
+            }
+        }
+
         // Plan 14 Ф.6 (D69): variadic-routing.
         //
         // Если вызываемая fn имеет variadic-параметр на последней позиции
@@ -11327,11 +11352,10 @@ impl CEmitter {
                 }
             }
         }
-        // Special case: println / print builtins
+        // Special case: println / print intercept ALREADY fired ABOVE
+        // (Plan 62.B.bis Ф.1 — ordering fix). Здесь только остальные
+        // name-keyed special-cases.
         if let ExprKind::Ident(name) = &func.kind {
-            if name == "println" || name == "print" {
-                return self.emit_println(args, name == "println");
-            }
             // D70 `to_str(x)` builtin removed (REPLACED → D73). String
             // conversion now via `str.from(x)` / `x.@into()` (with str-context).
             // assert(cond) / debug_assert(cond) → nova_assert(cond, "condition text").
