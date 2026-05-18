@@ -4905,6 +4905,17 @@ impl CEmitter {
             // DeclaredFromPrelude (от init_prelude_decls_from_items).
             // Lookup precedence — Prelude > User > Hardcoded; both
             // PointerErrorLike ABI, no semantic conflict.
+            //
+            // Plan 62.F: `Fail[E]` declared в std/prelude/effects.nv.
+            // Skip emission т.к. NovaVtable_Fail + Nova_Fail_fail()
+            // pre-registered в codegen (emit_c.rs:1057-1060) и runtime
+            // (nova_rt/effects.h). Type-checker / verify-pipeline матчит
+            // single-element path `["Fail"]` (см. types/mod.rs:2865,
+            // verify/pipeline.rs:505, codegen/emit_c.rs:3186) — declaration
+            // здесь даёт canonical API + AI/doc surface без duplicate emit.
+            // Также см. BUILTIN_VTABLE_NAMES (emit_c.rs:1221) — fwd-decl
+            // skip-list для тех же effects (Fail, Time).
+            "Fail",
         ];
         if RUNTIME_DEFINED_TYPES.contains(&t.name.as_str()) {
             // Plan 62.A: skip emission — type defined in runtime. Schema
