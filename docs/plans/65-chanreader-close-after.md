@@ -699,16 +699,23 @@ D94 + Эволюция API).
 matrix + AST-level const-fold deferred with honest markers; LLVM
 backend-level folding produces same runtime cost.
 
-### Ф.9 — Project docs MVP (½ day)
+### Ф.9 — Project docs MVP (½ day) ✅ 2026-05-18
 
-- [ ] `docs/project-creation.txt`: 2026-05-XX entry Plan 65 MVP closed.
-- [ ] `docs/simplifications.md`:
-   - `[M-time-after-bare-int]` RESOLVED
-   - `[M-libuv-ms-granularity]` honest-defer note
-   - `[M-timer-wheel-deferred]` → Plan 66 roadmap
-- [ ] Plans README row Plan 65 update.
+- [x] `docs/project-creation.txt`: 2026-05-18 entry Plan 65 MVP closed
+      added — phase-by-phase summary + commits + regression count.
+- [x] `docs/simplifications.md`:
+   - `[M-time-after-bare-int]` ✅ RESOLVED (Plan 65 Ф.5).
+   - `[M-libuv-ms-granularity]` honest-defer note (Plan 66 wheel).
+   - `[M-timer-wheel-deferred]` → Plan 66 roadmap.
+   - `[M-chanreader-gc-finalizer]` DEFERRED (Boehm infra absent).
+   - `[M-handler-duration-schema-mismatch]` PARTIAL fix (annotation bridge).
+   - `[M-plan65-const-fold]` DEFER (LLVM folds at backend).
+   - `[M-plan58-ci-matrix-absent]` system-level (cross-toolchain gap).
+- [x] Plans README row Plan 65 updated: MVP ЗАКРЫТ marker + hardening
+      deferred note + regression count.
 
-**Acceptance:** MVP scope (Ф.0-Ф.9) complete; ready для production hardening.
+**Acceptance:** ✅ MVP scope (Ф.0-Ф.9) complete; honest-defers documented;
+ready for production hardening (Ф.10-Ф.14) in a follow-up session.
 
 ---
 
