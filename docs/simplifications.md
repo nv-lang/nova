@@ -9473,3 +9473,34 @@ G/H). ~3700 LOC implementation cumulative.
   per-method param-type override registry. Outside Plan 65 scope.
 - **Приоритет:** M — works on supported platforms (Windows/Linux x64);
   needs proper schema-level fix before adding non-x64 targets.
+
+
+### [M-plan65-const-fold] (DEFER — Plan 65 Ф.8 partial)
+- **Где:** `compiler-codegen/src/codegen/emit_c.rs` ChanReader.close_after
+  Member/Path codegen.
+- **Что упрощено:** Plan 65 AD4 envisioned compile-time const-folding —
+  literal `Duration.from_secs(N)` → directly emit
+  `nova_chan_reader_close_after_ns(N * 1_000_000_000LL)`. Current
+  implementation routes through the runtime
+  `Nova_Duration_static_from_millis(N)` which allocates a record then
+  unpacks `->nanos`.
+- **Почему:** AST-level const-fold infra doesn't exist in compiler-codegen
+  yet (no `const_fold` module). LLVM at -O2 + LTO inlines + folds the
+  entire chain so wall-clock cost is identical.
+- **Как чинить:** add a small constant-folding pass that recognises
+  `Duration.from_<unit>(<int-literal>)` patterns and emits the pre-computed
+  ns value directly. Cleaner generated C; trivial bench win, AI-readable
+  output.
+- **Приоритет:** L — performance neutral, cosmetic.
+
+### [M-plan58-ci-matrix-absent] (SYSTEM-level)
+- **Где:** `.github/workflows/`.
+- **Что упрощено:** Plan 58 cross-toolchain matrix (Clang/MSVC/GCC build +
+  test) is not present as a CI workflow yet. Plan 65 Ф.8 acceptance
+  bullet "Cross-toolchain matrix" cannot be fully gated without it.
+- **Почему:** Plan 58 implementation is outside Plan 65 scope; the infra
+  needs separate dedicated work.
+- **Как чинить:** Plan 58 follow-up — add matrix workflow that builds on
+  ubuntu-latest (gcc/clang) + windows-latest (msvc/clang) and runs
+  `nova test` on each.
+- **Приоритет:** M — affects every plan that adds runtime code.
