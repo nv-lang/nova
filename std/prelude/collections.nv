@@ -37,7 +37,7 @@
 //   receiver mutability подразумевается use-case'ом и объявляется на
 //   стороне implementer'а: `fn RangeIter mut @next() -> ...`).
 //
-// **NOT migrated (Plan 62.D non-opaque scope):**
+// **Plan 62.D non-opaque bis-1 closure (2026-05-18):**
 //
 // - **`Range` / `RangeIter`** остаются в `std/collections/range.nv`
 //   (canonical location для модуля `std.collections.range`). Восемь
@@ -46,25 +46,27 @@
 //       folder_per_file_imports/reader}.nv
 //     - nova_tests/negative_capability/selective_import_*_rejected.nv
 //     - nova_tests/syntax/step_by_cross_file.nv
-//   Перенос в `std/prelude/collections.nv` сломал бы эти imports.
+//   Перенос файла сломал бы эти imports — поэтому декларации остаются
+//   на месте, а `std/prelude.nv` facade re-export'ит их селективно:
+//     `export import std.collections.range.{Range, RangeIter}`.
 //
-//   **Re-export через prelude facade ОТЛОЖЕН (Plan 62.D non-opaque
-//   diagnosis 2026-05-18):** попытка `export import
-//   std.collections.range.{Range, RangeIter}` в std/prelude.nv (чтобы
-//   сделать их auto-available) триггерит 4 регрессии:
-//     - concurrency/cancel_semantics_test (CC-FAIL: NovaOpt match
-//       inference подбирает `Nova_Range*` вместо `nova_str` при
-//       вездесущей регистрации `Range` в record_schemas, см.
-//       emit_c.rs:19051 ExprKind::Range fallback к Nova_Range*);
-//     - syntax/closure_rev (closure capture mis-emit для local `let`);
-//     - generics/p48_closure_arg_inference (closure mono'd arg drop'ит x);
-//     - syntax/for_in_range_iter (duplicate name conflict — user-shadow
-//       per D29 должен быть warning, but enforcer rejects).
-//   Эти latent bugs существовали и до Plan 62.D, но maskились тем что
-//   `Range` регистрировался только в файлах с explicit import. Открытие
-//   через prelude exposes их. Включение re-export-строки требует
-//   предварительного fix всех 4-х bugs — это отдельный sub-plan
-//   (Plan 62.D non-opaque bis-1, см. plan doc §62.D).
+//   До Plan 62.D bis-1 эта re-export-строка триггерила 4 регрессии
+//   (cancel_semantics_test / closure_rev / p48_closure_arg_inference /
+//   for_in_range_iter). Bis-1 закрыл все четыре баги:
+//     1. Match inference (Nova_Range* vs nova_str) — pattern bindings
+//        installed в `infer_expr_c_type(Match)` через
+//        `pattern_binding_overrides` RefCell (emit_c.rs:18936+).
+//        Без этого stale `r` из var_types другого scope перебивал
+//        правильный inner-type из scrutinee.
+//     2. Closure capture inner-shadowing — scope-aware
+//        `collect_truly_free_idents` (emit_c.rs:16621+) уважает inner
+//        let-bindings и lambda params. Раньше misnamed
+//        `collect_free_idents` собирал ВСЕ идентификаторы.
+//     3. Closure mono'd arg-name drop — same root cause как #2.
+//     4. D29 user-shadow — `W_PRELUDE_SHADOW` basic warning
+//        (types/mod.rs:117+) + codegen emit dedup (emit_c.rs:1300+).
+//        User declarations выигрывают, prelude-merged duplicates
+//        skip'аются.
 //
 // **NOT migrated (DEFER Plan 62.D.bis — отдельный sub-plan):**
 //

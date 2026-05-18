@@ -194,6 +194,15 @@ pub struct CEmitter {
     /// for type-param substitution (e.g. `T → nova_int`), consulted by
     /// `type_ref_to_c` BEFORE `current_type_subst`. Same `&self` reason as above.
     type_subst_overrides: RefCell<HashMap<String, String>>,
+    /// Plan 62.D bis-1 (2026-05-18): per-name override for match-arm pattern
+    /// bindings, consulted by `infer_expr_c_type` Ident arm BEFORE `var_types`.
+    /// Needed because `infer_expr_c_type(Match)` recurses into arm bodies in
+    /// `&self` context — pattern bindings (e.g. `Some(r) => r`) can't be
+    /// installed into `var_types`, and stale entries from prior bodies (e.g.
+    /// `let r = Range...` in another test file) would leak into the lookup,
+    /// returning wrong type. The Match path installs/restores the bindings via
+    /// this RefCell around the body-inference recursion.
+    pattern_binding_overrides: RefCell<HashMap<String, String>>,
     /// Names of variables declared as `let mut` (mutable) — used by spawn-capture
     /// to decide between copy-by-value (immutable scalar) and capture-by-pointer.
     var_mutable: HashSet<String>,
@@ -613,6 +622,7 @@ impl CEmitter {
             var_types: HashMap::new(),
             closure_param_type_overrides: RefCell::new(HashMap::new()),
             type_subst_overrides: RefCell::new(HashMap::new()),
+            pattern_binding_overrides: RefCell::new(HashMap::new()),
             var_mutable: HashSet::new(),
             record_schemas: HashMap::new(),
             sum_schemas: HashMap::new(),
@@ -1287,9 +1297,76 @@ impl CEmitter {
         self.sum_schema_registry.init_prelude_decls(&module_name_dotted);
         self.sum_schema_registry.init_prelude_decls_from_items(&module.items);
 
+        // Plan 62.D bis-1 (2026-05-18, D29 W_PRELUDE_SHADOW basic):
+        // Build the set of items that should be SKIPPED during emit due to
+        // user-shadow. When user file declares `type Range` while prelude
+        // facade re-exports `Range` from `std/collections/range.nv`, both
+        // items end up in `module.items` (merged-first, user-second per
+        // imports.rs:218-220). Emitting both causes C "redefinition" errors.
+        // User declaration wins per D29 — skip the merged (non-user) one.
+        // This matches the type-checker behavior in types/mod.rs
+        // `classify_dup`.
+        //
+        // For Types: skip merged item if any user item has the same name.
+        // For Fns: skip merged item if any user item has the same key
+        // (`<Receiver>.<name>` or `<name>`) AND matching arg-type-list (so
+        // legitimate user-defined overloads from a different module still
+        // emit). Approximation: skip merged fn with the same key, since
+        // method dispatch goes through method_receivers keyed by name only
+        // and overloads from different modules would create routing chaos.
+        let user_type_spans: std::collections::HashSet<(String, crate::diag::Span)> = {
+            let mut s = std::collections::HashSet::new();
+            for pf in &module.peer_files {
+                if !pf.is_entry_module { continue; }
+                for it in &pf.items_here {
+                    if let Item::Type(td) = it {
+                        s.insert((td.name.clone(), td.span));
+                    }
+                }
+            }
+            s
+        };
+        let user_type_names: HashSet<String> = user_type_spans.iter()
+            .map(|(n, _)| n.clone()).collect();
+        let user_fn_spans: std::collections::HashSet<(String, crate::diag::Span)> = {
+            let mut s = std::collections::HashSet::new();
+            for pf in &module.peer_files {
+                if !pf.is_entry_module { continue; }
+                for it in &pf.items_here {
+                    if let Item::Fn(fd) = it {
+                        let key = match &fd.receiver {
+                            Some(r) => format!("{}.{}", r.type_name, fd.name),
+                            None => fd.name.clone(),
+                        };
+                        s.insert((key, fd.span));
+                    }
+                }
+            }
+            s
+        };
+        let user_fn_keys: HashSet<String> = user_fn_spans.iter()
+            .map(|(k, _)| k.clone()).collect();
+        // Helper: is this Type item the merged (non-user) duplicate of a
+        // name the user has also declared? Skip if so.
+        let should_skip_type = |t: &TypeDecl| -> bool {
+            if !user_type_names.contains(&t.name) { return false; }
+            // User declared this name. If THIS span belongs to user — keep.
+            // Otherwise (merged from import) — skip.
+            !user_type_spans.contains(&(t.name.clone(), t.span))
+        };
+        let should_skip_fn = |f: &FnDecl| -> bool {
+            let key = match &f.receiver {
+                Some(r) => format!("{}.{}", r.type_name, f.name),
+                None => f.name.clone(),
+            };
+            if !user_fn_keys.contains(&key) { return false; }
+            !user_fn_spans.contains(&(key, f.span))
+        };
+
         // 1. Type declarations first (structs/unions needed by fn signatures)
         for item in &module.items {
             if let Item::Type(t) = item {
+                if should_skip_type(t) { continue; }
                 self.emit_type_decl(t)?;
             }
         }
@@ -1686,6 +1763,7 @@ impl CEmitter {
         // 2. Forward declarations for all functions (types are now known)
         for item in &module.items {
             if let Item::Fn(f) = item {
+                if should_skip_fn(f) { continue; } // Plan 62.D bis-1: D29 shadow
                 self.emit_fn_forward_decl(f)?;
             }
         }
@@ -1715,6 +1793,7 @@ impl CEmitter {
         // Simpler approach: emit all fns; before flush, emit lambda_forward_decls + lambda_impls.
         for item in &module.items {
             if let Item::Fn(f) = item {
+                if should_skip_fn(f) { continue; } // Plan 62.D bis-1: D29 shadow
                 self.emit_fn(f)?;
             }
         }
@@ -14871,20 +14950,43 @@ impl CEmitter {
             // (e.g. `Slot.Occupied { key: k, value: v }`). Lookup field types
             // через record_variant_field_types map. Поддерживает mono'd
             // instances (key включает mono suffix).
+            //
+            // Plan 62.D bis-1 (2026-05-18): also handle PLAIN-record patterns
+            // (`Pair { a, b }` where `Pair` is a record, not a sum-variant).
+            // Lookup field types via `record_schemas` (mirror of
+            // `pattern_bind_typed` at line ~16404). Without this, the previous
+            // code path used `scr_ty.to_string()` (Nova_Pair*) as the binding
+            // type, which then poisoned `a + b` inference (left-operand type
+            // would be `Nova_Pair*` → match result wrongly typed `Nova_Pair*`).
             Pattern::Record { type_path, fields, .. } => {
                 let mut out = vec![];
-                // sum_name из scr_ty: trim Nova_/* и split на mono parts.
-                let sum_name_full = scr_ty.trim_end_matches('*').trim()
+                let scr_base = scr_ty.trim_end_matches('*').trim()
                     .strip_prefix("Nova_").unwrap_or("").to_string();
-                // mono'd sum: "Slot____nova_str__nova_int" → base "Slot".
-                let sum_base = sum_name_full.split("____").next().unwrap_or("").to_string();
+                // Try plain-record path first: explicit type_path or scr-derived
+                // name; both must hit `record_schemas`.
+                let type_name_from_path = type_path
+                    .as_ref()
+                    .and_then(|p| p.last().cloned())
+                    .unwrap_or_else(|| scr_base.clone());
+                if this.record_schemas.contains_key(&type_name_from_path) {
+                    let field_types = this.record_schemas.get(&type_name_from_path).cloned().unwrap_or_default();
+                    for f in fields {
+                        let ty = field_types.get(&f.name).cloned().unwrap_or_else(|| "nova_int".into());
+                        let inner_pat = f.pattern.clone()
+                            .unwrap_or_else(|| Pattern::Ident { name: f.name.clone(), span: f.span });
+                        out.extend(Self::collect_pattern_inner_bindings(&inner_pat, &ty, this));
+                    }
+                    return out;
+                }
+                // Sum-variant record: e.g. `Slot.Occupied { key, value }`.
+                let sum_base = scr_base.split("____").next().unwrap_or("").to_string();
                 let variant_name = type_path.as_ref()
                     .and_then(|p| p.last().cloned())
                     .unwrap_or_default();
                 if !variant_name.is_empty() && !sum_base.is_empty() {
                     for f in fields {
                         // Try mono'd key first, then base.
-                        let key_mono = format!("{}::{}::{}", sum_name_full, variant_name, f.name);
+                        let key_mono = format!("{}::{}::{}", scr_base, variant_name, f.name);
                         let key_base = format!("{}::{}::{}", sum_base, variant_name, f.name);
                         let field_c = this.record_variant_field_types.get(&key_mono)
                             .or_else(|| this.record_variant_field_types.get(&key_base))
@@ -16608,6 +16710,250 @@ impl CEmitter {
         }
     }
 
+    // ─────────────────────────────────────────────────────────────────────
+    // Plan 62.D bis-1 (2026-05-18): scope-aware free-variable collector.
+    // The original `collect_free_idents` is misnamed — it returns ALL
+    // identifiers in an expression, including ones bound by inner `let`s,
+    // pattern matches, and nested lambdas. Used as-is for closure-capture
+    // analysis (emit_lambda line ~16670), the resulting filter
+    // (`var_types.contains_key`) incorrectly treats inner-shadowed names as
+    // captures from the outer scope when those names ALSO happen to be in
+    // `var_types` (e.g. `s` from a prior `let s = ...` in another function
+    // body — `var_types` is a global HashMap that doesn't reset per-fn).
+    //
+    // The fix: track inner bindings (let-statements, lambda params, match
+    // patterns) and exclude them from the free set. We use a `bound` HashSet
+    // that's pushed/popped as we descend.
+    //
+    // Production semantics: in a sequence of `let`s, the lexical scope of
+    // `let x = ...` covers the rest of the block. So binding order matters:
+    // `let s = ...; let f = || s + 1` — `s` IS free in `f`'s body. But
+    // `let f = || { let s = ...; s + 1 }` — `s` is locally bound, NOT free.
+    //
+    // The collector descends through blocks, growing `bound` as it visits
+    // each `let` BEFORE visiting subsequent statements (matches lexical scope).
+    fn collect_truly_free_idents(
+        expr: &Expr,
+        bound: &mut HashSet<String>,
+        out: &mut HashSet<String>,
+    ) {
+        match &expr.kind {
+            ExprKind::Ident(n) => {
+                if !bound.contains(n) {
+                    out.insert(n.clone());
+                }
+            }
+            ExprKind::Binary { left, right, .. } => {
+                Self::collect_truly_free_idents(left, bound, out);
+                Self::collect_truly_free_idents(right, bound, out);
+            }
+            ExprKind::Unary { operand, .. } => {
+                Self::collect_truly_free_idents(operand, bound, out);
+            }
+            ExprKind::Call { func, args, .. } => {
+                Self::collect_truly_free_idents(func, bound, out);
+                for a in args { Self::collect_truly_free_idents(a.expr(), bound, out); }
+            }
+            ExprKind::Member { obj, .. } => {
+                Self::collect_truly_free_idents(obj, bound, out);
+            }
+            ExprKind::Index { obj, index } => {
+                Self::collect_truly_free_idents(obj, bound, out);
+                Self::collect_truly_free_idents(index, bound, out);
+            }
+            ExprKind::Block(b) => {
+                Self::collect_truly_free_idents_block(b, bound, out);
+            }
+            ExprKind::If { cond, then, else_, .. } => {
+                Self::collect_truly_free_idents(cond, bound, out);
+                Self::collect_truly_free_idents_block(then, bound, out);
+                if let Some(e) = else_ {
+                    match e {
+                        ElseBranch::Block(b) =>
+                            Self::collect_truly_free_idents_block(b, bound, out),
+                        ElseBranch::If(ex) =>
+                            Self::collect_truly_free_idents(ex, bound, out),
+                    }
+                }
+            }
+            ExprKind::Lambda { params, body, .. } => {
+                // Inner lambda: its params shadow outer scope inside the body.
+                // Snapshot bound, add params, recurse, restore.
+                let saved: Vec<String> = params.iter()
+                    .filter_map(|p| if bound.insert(p.name.clone()) { Some(p.name.clone()) } else { None })
+                    .collect();
+                Self::collect_truly_free_idents(body, bound, out);
+                for n in saved { bound.remove(&n); }
+            }
+            ExprKind::ClosureLight { params, body } => {
+                let saved: Vec<String> = params.iter()
+                    .filter_map(|p| if bound.insert(p.name.clone()) { Some(p.name.clone()) } else { None })
+                    .collect();
+                match body {
+                    crate::ast::ClosureBody::Expr(e) =>
+                        Self::collect_truly_free_idents(e, bound, out),
+                    crate::ast::ClosureBody::Block(b) =>
+                        Self::collect_truly_free_idents_block(b, bound, out),
+                }
+                for n in saved { bound.remove(&n); }
+            }
+            ExprKind::ClosureFull(c) => {
+                let saved: Vec<String> = c.params.iter()
+                    .filter_map(|p| if bound.insert(p.name.clone()) { Some(p.name.clone()) } else { None })
+                    .collect();
+                match &c.body {
+                    crate::ast::FnBody::Expr(e) =>
+                        Self::collect_truly_free_idents(e, bound, out),
+                    crate::ast::FnBody::Block(b) =>
+                        Self::collect_truly_free_idents_block(b, bound, out),
+                    crate::ast::FnBody::External => {}
+                }
+                for n in saved { bound.remove(&n); }
+            }
+            ExprKind::TupleLit(elems) => {
+                for e in elems { Self::collect_truly_free_idents(e, bound, out); }
+            }
+            ExprKind::Detach(b) => {
+                Self::collect_truly_free_idents_block(b, bound, out);
+            }
+            ExprKind::Supervised { body, cancel } => {
+                Self::collect_truly_free_idents_block(body, bound, out);
+                if let Some(c) = cancel {
+                    Self::collect_truly_free_idents(c, bound, out);
+                }
+            }
+            ExprKind::Select { arms } => {
+                for arm in arms {
+                    match &arm.op {
+                        SelectOp::Recv { chan, .. } =>
+                            Self::collect_truly_free_idents(chan, bound, out),
+                        SelectOp::Send { chan, value } => {
+                            Self::collect_truly_free_idents(chan, bound, out);
+                            Self::collect_truly_free_idents(value, bound, out);
+                        }
+                        SelectOp::Default => {}
+                    }
+                    if let Some(g) = &arm.guard {
+                        Self::collect_truly_free_idents(g, bound, out);
+                    }
+                    Self::collect_truly_free_idents_block(&arm.body, bound, out);
+                }
+            }
+            ExprKind::Match { scrutinee, arms } => {
+                Self::collect_truly_free_idents(scrutinee, bound, out);
+                for arm in arms {
+                    // Pattern bindings shadow the outer scope inside the arm body.
+                    let mut pat_binds: HashSet<String> = HashSet::new();
+                    Self::collect_pattern_bindings(&arm.pattern, &mut pat_binds);
+                    let added: Vec<String> = pat_binds.iter()
+                        .filter_map(|n| if bound.insert(n.clone()) { Some(n.clone()) } else { None })
+                        .collect();
+                    if let Some(g) = &arm.guard {
+                        Self::collect_truly_free_idents(g, bound, out);
+                    }
+                    match &arm.body {
+                        MatchArmBody::Expr(e) =>
+                            Self::collect_truly_free_idents(e, bound, out),
+                        MatchArmBody::Block(b) =>
+                            Self::collect_truly_free_idents_block(b, bound, out),
+                    }
+                    for n in added { bound.remove(&n); }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn collect_truly_free_idents_block(
+        block: &Block,
+        bound: &mut HashSet<String>,
+        out: &mut HashSet<String>,
+    ) {
+        // Lexical scope: each `let x = ...` binds `x` for SUBSEQUENT stmts/trailing.
+        // We collect inserted names and pop them all on block exit (block-local).
+        let mut added: Vec<String> = Vec::new();
+        for s in &block.stmts {
+            match s {
+                Stmt::Let(d) => {
+                    // Value expression evaluated in scope BEFORE binding x.
+                    Self::collect_truly_free_idents(&d.value, bound, out);
+                    // After this let, x is bound for the rest of the block.
+                    let mut pat_binds: HashSet<String> = HashSet::new();
+                    Self::collect_pattern_bindings(&d.pattern, &mut pat_binds);
+                    for n in pat_binds {
+                        if bound.insert(n.clone()) {
+                            added.push(n);
+                        }
+                    }
+                }
+                Stmt::Assign { target, value, .. } => {
+                    Self::collect_truly_free_idents(target, bound, out);
+                    Self::collect_truly_free_idents(value, bound, out);
+                }
+                Stmt::Expr(e) =>
+                    Self::collect_truly_free_idents(e, bound, out),
+                Stmt::Return { value: Some(e), .. } =>
+                    Self::collect_truly_free_idents(e, bound, out),
+                _ => {}
+            }
+        }
+        if let Some(t) = &block.trailing {
+            Self::collect_truly_free_idents(t, bound, out);
+        }
+        // Pop block-local bindings.
+        for n in added { bound.remove(&n); }
+    }
+
+    /// Collect names introduced by a pattern (used by closure free-var collector
+    /// and by future scope analyses). Recursively visits sub-patterns; for `Or`,
+    /// takes the union (any alternative's bindings count as introduced). Wildcard,
+    /// literals, and unit-variants introduce nothing.
+    fn collect_pattern_bindings(pat: &Pattern, out: &mut HashSet<String>) {
+        match pat {
+            Pattern::Wildcard(_) | Pattern::Literal(..) => {}
+            Pattern::Ident { name, .. } => { out.insert(name.clone()); }
+            Pattern::Binding { name, inner, .. } => {
+                out.insert(name.clone());
+                Self::collect_pattern_bindings(inner, out);
+            }
+            Pattern::Or { alternatives, .. } => {
+                for alt in alternatives {
+                    Self::collect_pattern_bindings(alt, out);
+                }
+            }
+            Pattern::Variant { kind, .. } => {
+                match kind {
+                    VariantPatternKind::Tuple { patterns, .. } => {
+                        for p in patterns { Self::collect_pattern_bindings(p, out); }
+                    }
+                    VariantPatternKind::Unit => {}
+                }
+            }
+            Pattern::Record { fields, .. } => {
+                for f in fields {
+                    if let Some(inner) = &f.pattern {
+                        Self::collect_pattern_bindings(inner, out);
+                    } else {
+                        // shorthand `{ name }` — binds `name`.
+                        out.insert(f.name.clone());
+                    }
+                }
+            }
+            Pattern::Tuple(pats, _) => {
+                for p in pats { Self::collect_pattern_bindings(p, out); }
+            }
+            Pattern::Array { elems, .. } => {
+                for el in elems {
+                    match el {
+                        ArrayPatternElem::Item(p) => Self::collect_pattern_bindings(p, out),
+                        ArrayPatternElem::Rest => {}
+                        ArrayPatternElem::RestBind(name) => { out.insert(name.clone()); }
+                    }
+                }
+            }
+        }
+    }
+
     /// Emit a lambda expression. Returns the C expression (a function pointer or closure pointer).
     fn emit_lambda(
         &mut self,
@@ -16655,10 +17001,19 @@ impl CEmitter {
             self.infer_lambda_return_type_with_params(body, params, &param_c_tys)
         };
 
-        // Detect free variables: idents in body that are NOT lambda params
+        // Plan 62.D bis-1 (2026-05-18): scope-aware free-var detection.
+        // The previous `collect_free_idents` returned ALL idents in body
+        // including inner `let`-bound names, which led to mis-emit when those
+        // names happened to also be in the global `var_types` HashMap from
+        // a different scope (e.g. `s` from a prior `let s = ...` in another
+        // function body — `var_types` doesn't reset between functions). The
+        // resulting `_box_s = s` referenced an out-of-scope variable.
+        // `collect_truly_free_idents` respects lexical scope: inner `let`s,
+        // nested lambdas, and match patterns shadow outer names.
         let param_names: HashSet<String> = params.iter().map(|p| p.name.clone()).collect();
         let mut body_idents = HashSet::new();
-        Self::collect_free_idents(body, &mut body_idents);
+        let mut initial_bound = param_names.clone();
+        Self::collect_truly_free_idents(body, &mut initial_bound, &mut body_idents);
         // Free vars = body idents that exist in var_types and are not lambda params
         let free_vars: Vec<(String, String)> = body_idents.iter()
             .filter(|n| !param_names.contains(*n) && self.var_types.contains_key(*n))
@@ -17966,6 +18321,15 @@ impl CEmitter {
                 if let Some(ty) = self.closure_param_type_overrides.borrow().get(name) {
                     return ty.clone();
                 }
+                // Plan 62.D bis-1 (2026-05-18): match-arm pattern binding
+                // override — set by `infer_expr_c_type(ExprKind::Match)` before
+                // recursing into arm body. Must be checked BEFORE `var_types` to
+                // avoid leaked stale entry from a different scope (e.g. `let r =
+                // Range...` in another test file would otherwise return
+                // `Nova_Range*` for `r` in `match opt { Some(r) => r }`).
+                if let Some(ty) = self.pattern_binding_overrides.borrow().get(name) {
+                    return ty.clone();
+                }
                 if let Some(ty) = self.var_types.get(name) {
                     return ty.clone();
                 }
@@ -18933,19 +19297,51 @@ impl CEmitter {
                     .map(|e| self.infer_expr_c_type(e))
                     .unwrap_or_else(|| "nova_unit".into())
             }
-            ExprKind::Match { arms, .. } => {
-                // Infer result type from first non-unit arm
-                for arm in arms {
+            ExprKind::Match { scrutinee, arms } => {
+                // Plan 62.D bis-1 (2026-05-18): infer arm body type WITH pattern
+                // bindings installed via `pattern_binding_overrides` RefCell.
+                // Without this, `match opt { Some(r) => r }` would look up `r` in
+                // `var_types` and pick up stale entry from a different scope
+                // (e.g. `let r = Range...` in another test file) instead of the
+                // correct inner type (`nova_str` for `Option[str]`). Mirrors the
+                // emit_match `infer_arm` closure (line ~14694) which installs into
+                // `var_types`; here we use RefCell since `&self`.
+                let scr_ty = self.infer_expr_c_type(scrutinee);
+                let infer_arm = |this: &Self, arm: &MatchArm| -> String {
+                    let bindings: Vec<(String, String)> =
+                        Self::collect_pattern_inner_bindings(&arm.pattern, &scr_ty, this);
+                    let saved: Vec<(String, Option<String>)> = {
+                        let mut overrides = this.pattern_binding_overrides.borrow_mut();
+                        bindings.iter()
+                            .map(|(n, t)| {
+                                let prev = overrides.insert(n.clone(), t.clone());
+                                (n.clone(), prev)
+                            })
+                            .collect()
+                    };
                     let t = match &arm.body {
-                        MatchArmBody::Expr(e) => self.infer_expr_c_type(e),
+                        MatchArmBody::Expr(e) => this.infer_expr_c_type(e),
                         MatchArmBody::Block(b) => b.trailing.as_ref()
-                            .map(|e| self.infer_expr_c_type(e))
+                            .map(|e| this.infer_expr_c_type(e))
                             .unwrap_or_else(|| "nova_unit".into()),
                     };
+                    let mut overrides = this.pattern_binding_overrides.borrow_mut();
+                    for (n, prev) in saved {
+                        match prev {
+                            Some(p) => { overrides.insert(n, p); }
+                            None => { overrides.remove(&n); }
+                        }
+                    }
+                    t
+                };
+                // First pass: find a non-unit, non-nova_int type.
+                for arm in arms {
+                    let t = infer_arm(self, arm);
                     if t != "nova_unit" && t != "nova_int" {
                         return t;
                     }
                 }
+                // Second pass: settle for nova_int if no better type found.
                 "nova_int".into()
             }
             ExprKind::Member { obj, name } => {
