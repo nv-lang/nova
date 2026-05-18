@@ -9179,12 +9179,31 @@ division upper (оба требуют nonlinear LIA / Z3).
 | division | ✓ Ф.20.1 | ✓ Ф.31.2 | V3 | V3 |
 | var-mul | ✓ Ф.33.2 | — | ✓ Ф.34.2 | ✓ Ф.34.2 |
 
-**Что не покрывает:**
+**Что не покрывает (V3):**
 - const-mul с L<0 (sign flip — nonlinear)
 - division upper (nonlinear, требует Z3)
-- var-mul strict variant (`>` / `<` strict для product)
 - modulus `>` strict
 - arbitrary expression composition (e.g. `(a+b) * c`)
+
+**Ф.37 закрыл** var-mul strict variant (`>` / `<` для product через
+strict sign bounds).
+
+## [M-plan-33.6-Ф.37-var-mul-strict] (2026-05-18)
+
+Расширение var-mul check'а на strict случай. До Ф.37 был guard
+`if effective_goal > 0 { return None; }` — strict positive product не
+доказывался. После Ф.37:
+- `(> a*b 0)` при both lower >= 1 OR both upper <= -1 → product strictly
+  positive (prod = la*lb or ua*ub, проверка vs effective_goal).
+- `(< a*b 0)` при strict mixed signs (one lower >= 1, other upper <= -1).
+
+**Регрессия:** 190 → 192 PASS (+2), 0 FAIL, 44 SKIP.
+
+**TrivialBackend var-mul теперь полное coverage** по signs × strictness:
+- non-strict positive (both >= 0 / both <= 0) — Ф.33.2/Ф.34.2
+- non-strict negative (mixed signs) — Ф.34.2
+- strict positive (both >= 1 / both <= -1) — Ф.37
+- strict negative (strict mixed) — Ф.37
 
 ## [M-57.F.4-positive-negative-coverage] — Test expansion (2026-05-17)
 
