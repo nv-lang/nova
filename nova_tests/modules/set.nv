@@ -1,0 +1,61 @@
+// Тесты std.collections.set.Set[T] — множество над HashMap[T, ()].
+// Позитивные: insert/contains/remove, is_empty/len, clear, with_capacity.
+// Негативные: insert дубликата возвращает false, remove несуществующего возвращает false.
+// Примечание: or/and/minus тесты пропущены — generic Set* return type несовместим
+// с typed contains в текущем codegen (D117-area limitation).
+
+module modules.set
+
+import std.collections.set.{Set}
+
+test "Set: insert новый — true, дубликат — false" {
+    let mut s = Set[int].new()
+    assert(s.insert(1) == true)
+    assert(s.insert(1) == false)
+    assert(s.insert(2) == true)
+    assert(s.len() == 2)
+}
+
+test "Set: contains после insert" {
+    let mut s = Set[str].new()
+    s.insert("alice")
+    s.insert("bob")
+    assert(s.contains("alice") == true)
+    assert(s.contains("bob") == true)
+    assert(s.contains("charlie") == false)
+}
+
+test "Set: remove возвращает true если был, false если нет" {
+    let mut s = Set[int].new()
+    s.insert(10)
+    assert(s.remove(10) == true)
+    assert(s.remove(10) == false)
+    assert(s.contains(10) == false)
+    assert(s.len() == 0)
+}
+
+test "Set: is_empty и len" {
+    let mut s = Set[int].new()
+    assert(s.is_empty() == true)
+    assert(s.len() == 0)
+    s.insert(1)
+    assert(s.is_empty() == false)
+    assert(s.len() == 1)
+}
+
+test "Set: clear" {
+    let mut s = Set[int].new()
+    s.insert(1)
+    s.insert(2)
+    s.insert(3)
+    s.clear()
+    assert(s.is_empty() == true)
+    assert(s.len() == 0)
+}
+
+test "Set: with_capacity — работает аналогично new" {
+    let mut s = Set[int].with_capacity(16)
+    s.insert(42)
+    assert(s.contains(42) == true)
+    assert(s.len() == 1)
+}

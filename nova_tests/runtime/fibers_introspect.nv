@@ -1,0 +1,63 @@
+// Тесты std.runtime.fibers — fiber arena introspection API.
+// На Windows arena отключена → всё возвращает 0 (honest sentinel).
+// На Linux/macOS → slot_count > 0.
+// Тесты используют differential-pattern: if fibers.slot_count() == 0 { skip }.
+
+module runtime.fibers_introspect
+
+import std.runtime.fibers
+
+test "fibers.virtual_reserved: возвращает int >= 0" {
+    let v = fibers.virtual_reserved()
+    assert(v >= 0)
+}
+
+test "fibers.slot_count: возвращает int >= 0" {
+    let s = fibers.slot_count()
+    assert(s >= 0)
+}
+
+test "fibers.slots_active: возвращает int >= 0" {
+    let a = fibers.slots_active()
+    assert(a >= 0)
+}
+
+test "fibers.high_water: возвращает int >= 0" {
+    let h = fibers.high_water()
+    assert(h >= 0)
+}
+
+test "fibers.compact: не падает" {
+    fibers.compact()
+    assert(true)
+}
+
+test "fibers: на Windows всё = 0, на Linux slot_count > 0" {
+    let sc = fibers.slot_count()
+    if sc == 0 {
+        // Windows — arena off, честный sentinel
+        assert(fibers.virtual_reserved() == 0)
+        assert(fibers.slots_active() == 0)
+        assert(fibers.high_water() == 0)
+    } else {
+        // Linux/macOS — arena активна
+        assert(fibers.virtual_reserved() > 0)
+        assert(fibers.slot_count() > 0)
+    }
+}
+
+test "fibers.slots_active <= fibers.slot_count" {
+    let sc = fibers.slot_count()
+    let sa = fibers.slots_active()
+    if sc > 0 {
+        assert(sa <= sc)
+    } else {
+        assert(sa == 0)
+    }
+}
+
+test "fibers.high_water >= fibers.slots_active" {
+    let hw = fibers.high_water()
+    let sa = fibers.slots_active()
+    assert(hw >= sa)
+}

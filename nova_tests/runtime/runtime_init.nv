@@ -1,0 +1,54 @@
+// Тесты std.runtime.runtime — M:N runtime control API.
+// Проверяет init/shutdown/worker_count/is_initialized/current_worker_id/yield.
+// bootstrap-режим: init(1) запускает 1 worker.
+
+module runtime.runtime_init
+
+import std.runtime.runtime
+
+test "runtime.worker_count: 0 до init" {
+    // Если runtime не инициализирован — worker_count = 0
+    if !runtime.is_initialized() {
+        assert(runtime.worker_count() == 0)
+    } else {
+        // Уже инициализирован другим тестом — просто проверяем >= 0
+        assert(runtime.worker_count() >= 0)
+    }
+}
+
+test "runtime.is_initialized: bool" {
+    let b = runtime.is_initialized()
+    assert(b == true || b == false)
+}
+
+test "runtime.init и shutdown: идемпотентный цикл" {
+    runtime.init(1)
+    assert(runtime.is_initialized() == true)
+    assert(runtime.worker_count() >= 1)
+    runtime.shutdown()
+    assert(runtime.is_initialized() == false)
+    assert(runtime.worker_count() == 0)
+}
+
+test "runtime.current_worker_id: -1 из main thread" {
+    // Вне worker fiber — возвращает -1
+    if !runtime.is_initialized() {
+        assert(runtime.current_worker_id() == -1)
+    } else {
+        // Инициализирован — из main thread всё равно -1
+        assert(runtime.current_worker_id() == -1)
+    }
+}
+
+test "runtime.yield: не падает вне fiber контекста" {
+    // Вне fiber — no-op
+    runtime.yield()
+    assert(true)
+}
+
+test "runtime.init(0): auto-detect workers" {
+    runtime.init(0)
+    assert(runtime.is_initialized() == true)
+    assert(runtime.worker_count() >= 1)
+    runtime.shutdown()
+}
