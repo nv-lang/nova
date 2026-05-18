@@ -1,0 +1,184 @@
+// protocols_bound_resolution.nv — Plan 62.E.
+//
+// Verifies что formal protocol declarations в std/prelude/protocols.nv
+// (re-export'нутые через std/prelude.nv facade) auto-available везде
+// через R27 auto-import, и что bound clauses `[T Hashable]`/`[T Equatable]`/
+// `[T Comparable]`/`[T From[X]]`/`[T Into[X]]`/`[T Display]` резолвятся
+// через cross-file resolve без explicit import.
+//
+// Покрытие (6 из 8 protocols — TryFrom/TryInto deferred per Plan 56 Ф.2.7
+// effect-free enforcement):
+//   1. `Hashable` bound — generic fn принимает T удовлетворяющий
+//      `hash() -> u64`. User-defined type implementing структурно.
+//   2. `Equatable` bound — generic fn принимает T удовлетворяющий
+//      `eq(other Self) -> bool`. User-defined type implementing.
+//   3. `Comparable` bound — generic fn принимает T удовлетворяющий
+//      `cmp(other Self) -> Ordering`. Ordering тоже резолвится через
+//      prelude (std.prelude.core).
+//   4. `From[X]` bound — type-decl c bound на conversion.
+//   5. `Into[X]` bound — bound на dual direction (D73 auto-derive).
+//   6. `Display` bound — formatting protocol (StringBuilder dependency
+//      резолвится через type-checker builtins HashSet).
+//
+// Acceptance: все 6 tests должны pass — type-check проходит при
+// satisfied bound'ах, runtime behavior корректный.
+
+module plan62.protocols_bound_resolution
+
+
+// User-defined тип, удовлетворяющий Hashable + Equatable + Comparable
+// структурно. Все три метода реализованы как @hash/@eq/@cmp instance fns.
+type Item {
+    id u64
+}
+
+fn Item.new(id u64) -> Item => { id }
+
+export fn Item @hash() -> u64 => @id
+
+export fn Item @eq(other Item) -> bool => @id == other.id
+
+export fn Item @cmp(other Item) -> Ordering =>
+    if @id < other.id { Less }
+    else if @id > other.id { Greater }
+    else { Equal }
+
+
+// ────────────────────────────────────────────────────────────────────
+// 1. Hashable bound — резолвится через prelude auto-import.
+// ────────────────────────────────────────────────────────────────────
+
+fn hash_anything[T Hashable](v T) -> u64 => v.hash()
+
+test "Hashable bound резолвится через prelude — Item.hash()" {
+    let it = Item.new(42 as u64)
+    let h = hash_anything(it)
+    assert(h == (42 as u64))
+}
+
+
+// ────────────────────────────────────────────────────────────────────
+// 2. Equatable bound — резолвится через prelude auto-import.
+// ────────────────────────────────────────────────────────────────────
+
+fn eq_via_bound[T Equatable](a T, b T) -> bool => a.eq(b)
+
+test "Equatable bound — Item.eq()" {
+    let a = Item.new(7 as u64)
+    let b = Item.new(7 as u64)
+    let c = Item.new(8 as u64)
+    assert(eq_via_bound(a, b) == true)
+    assert(eq_via_bound(a, c) == false)
+}
+
+
+// ────────────────────────────────────────────────────────────────────
+// 3. Comparable bound — резолвится через prelude auto-import.
+//    Ordering тоже резолвится (std.prelude.core).
+// ────────────────────────────────────────────────────────────────────
+
+fn min_of[T Comparable](a T, b T) -> T =>
+    match a.cmp(b) {
+        Less    => a
+        Equal   => a
+        Greater => b
+    }
+
+test "Comparable bound — Item.cmp() с Ordering match" {
+    let a = Item.new(3 as u64)
+    let b = Item.new(7 as u64)
+    let m = min_of(a, b)
+    assert(m.id == (3 as u64))
+}
+
+
+// ────────────────────────────────────────────────────────────────────
+// 4. From[X] bound — type-decl с bound на conversion.
+// ────────────────────────────────────────────────────────────────────
+
+type Celsius { value f64 }
+type Fahrenheit { value f64 }
+
+// D73 `From[Fahrenheit]` impl: static factory, не instance method.
+// Syntax: `fn Type.from(...)` (без `@`) — see std/encoding/json.nv:627+.
+export fn Celsius.from(f Fahrenheit) -> Celsius =>
+    { value: (f.value - 32.0) * 5.0 / 9.0 }
+
+// Generic fn с bound `[T From[X]]` — bootstrap limitation: generic
+// static method dispatch (`T.from(f)`) не monomorphизируется в
+// bootstrap codegen (Plan 14 limitation, см. Q-result-monomorphization).
+// Поэтому здесь тест проверяет direct call на concrete type — bound
+// parsed and resolution через prelude работает; full generic dispatch
+// — Plan 62.E+.
+
+test "From[X] bound — concrete Celsius.from(Fahrenheit) через prelude resolution" {
+    let f = Fahrenheit { value: 212.0 }
+    let c = Celsius.from(f)
+    // 212°F == 100°C
+    assert(c.value > 99.9 && c.value < 100.1)
+}
+
+// Bound declaration parsed — type-checker eligibility check (без actual
+// call) проверяет что bound резолвится через prelude.
+fn _accepts_from[T From[Fahrenheit]](_v T) -> () => ()
+
+
+// ────────────────────────────────────────────────────────────────────
+// 5. Into[X] bound — dual direction, D73 auto-derive (BOOTSTRAP NOTE).
+// ────────────────────────────────────────────────────────────────────
+
+// D73 auto-derive `Into[U]` от `From[T]` в bootstrap'е НЕ реализован:
+// type-checker не синтезирует `Fahrenheit.into()` body из существующей
+// `Celsius.from(Fahrenheit)` декларации (см. plan doc §62.E + Plan 62.E+).
+// Поэтому здесь тест проверяет explicit `@into` impl: канонический
+// pattern для Into-удовлетворения до полной D73 реализации.
+
+type FahrToC { value f64 }
+
+export fn FahrToC @into() -> Celsius =>
+    { value: (@value - 32.0) * 5.0 / 9.0 }
+
+// Generic fn с bound `[T Into[Celsius]]` — type-checker валидирует что
+// T имеет `into() -> Celsius` метод (структурно через prelude).
+fn needs_into[T Into[Celsius]](v T) -> Celsius => v.into()
+
+test "Into[X] bound — explicit @into impl резолвится через prelude" {
+    let f = FahrToC { value: 32.0 }
+    let c = needs_into(f)
+    // 32°F == 0°C
+    assert(c.value > -0.1 && c.value < 0.1)
+}
+
+
+// ────────────────────────────────────────────────────────────────────
+// 6. Display bound — StringBuilder dependency резолвится через builtins.
+// ────────────────────────────────────────────────────────────────────
+
+// User-defined type с Display impl. StringBuilder — opaque runtime type
+// (builtin HashSet), API: `append(s str)`, `into() -> str` (см.
+// std/runtime/string_builder.nv). `str.from(int)` для int → str.
+type Pair { x int, y int }
+
+export fn Pair @fmt(sb StringBuilder) -> () {
+    sb.append("(")
+    sb.append(str.from(@x))
+    sb.append(", ")
+    sb.append(str.from(@y))
+    sb.append(")")
+}
+
+// Generic fn с Display bound — caller-side проверка eligibility.
+// Note: `mut sb` — StringBuilder mutation в protocol-method вызывается
+// напрямую (бойлерплейт через bound dispatch — Plan 56 effect-free
+// разрешает mutating receiver через `mut @method`).
+fn fmt_to_string[T Display](v T) -> str {
+    let mut sb = StringBuilder.new()
+    v.fmt(sb)
+    sb.into()
+}
+
+test "Display bound — Pair.fmt() в StringBuilder" {
+    let p = Pair { x: 3, y: 7 }
+    let s = fmt_to_string(p)
+    assert(s == "(3, 7)")
+}
