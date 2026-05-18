@@ -3090,6 +3090,33 @@ let t0 = std::time::Instant::now();
                         fd.span));
                 }
             }
+            // Ф.47.1 (Plan 33.6): readability hint — contract clause с 5+ AND-conjuncts.
+            // Recursive count: `(a && b && c && d && e)` → 5 conjuncts. Подсказка:
+            // разделите на несколько `requires <a>` / `requires <b>` clauses для clarity.
+            fn count_and_conjuncts(e: &Expr) -> usize {
+                match &e.kind {
+                    ExprKind::Binary { op: BinOp::And, left, right } =>
+                        count_and_conjuncts(left) + count_and_conjuncts(right),
+                    _ => 1,
+                }
+            }
+            for c in &fd.contracts {
+                let n = count_and_conjuncts(&c.expr);
+                if n >= 5 {
+                    let kind_str = match c.kind {
+                        ContractKind::Requires => "requires",
+                        ContractKind::Ensures => "ensures",
+                        ContractKind::EnsuresFail => "ensures_fail",
+                    };
+                    report.warnings.push(Diagnostic::new(
+                        format!("fn `{}`: `{}` clause содержит {} AND-conjunct'ов [W2402]:\n  \
+                                 для readability разделите на несколько `{}` clauses\n  \
+                                 (каждый conjunct — отдельная строка). Diagnostic messages\n  \
+                                 при failure тогда укажут который именно conjunct провален.",
+                            fd.name, kind_str, n, kind_str),
+                        c.span));
+                }
+            }
             // Ф.28.1 (Plan 33.6): duplicate `apply lemma(args)` detection.
             let applies = collect_apply_stmts_in_body(&fd.body);
             let mut seen_applies: std::collections::HashMap<String, Vec<Span>> =

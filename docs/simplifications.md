@@ -9326,6 +9326,25 @@ E2408. Не покрывает mutual recursion (нужна SCC), strong inducti
 
 **Lemma lint catalog — 11 rules** теперь (добавился self-apply).
 
+## [M-plan-33.6-Ф.47-long-conjunction-and-not-canon-revert] (2026-05-18)
+
+Два изменения:
+
+**1. Ф.47.1 — long conjunction W2402.** Contract clause c 5+ AND-conjuncts
+получает W2402 hint "разделите на несколько clauses для readability".
+`count_and_conjuncts` walker рекурсивно считает.
+
+**2. Ф.47.3 ATTEMPTED+REVERTED.** Попытка `not (op a b)` canonicalization
+в simplify_app сломала 27 тестов. propagate_bounds chain зависит от
+конкретной формы `not (>= var lit)` для inversion handling; переписать
+в `(< var lit)` ломает downstream matching. Откатано без commit.
+
+**Lesson:** TrivialBackend simplify changes требуют holistic regression
+check — single pattern change может ломать chains depending on specific
+form. Now established pattern: запускать полный test suite перед commit.
+
+**Регрессия:** 201 → 202 PASS (+1 из Ф.47.1), 0 FAIL.
+
 ## [M-57.F.4-positive-negative-coverage] — Test expansion (2026-05-17)
 
 **Не simplification.** Прямой user feedback "тесты напиши по тому,
