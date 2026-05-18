@@ -1,0 +1,35 @@
+// Plan 33.19 (extending Ф.14): negate invariants.
+// negate(x) = -x; bounds invert.
+
+module contracts.f57_negate_invariant
+
+#verify
+fn negate_pos_to_neg(x int) -> int
+    requires x >= 5
+    ensures result <= -5
+{
+    0 - x
+}
+
+#verify
+fn negate_neg_to_pos(x int) -> int
+    requires x <= -10
+    ensures result >= 10
+{
+    0 - x
+}
+
+// Double negation = identity (Ф.28.2).
+#verify
+fn double_negate(x int) -> int
+    requires x >= 0
+    ensures result >= 0
+{
+    0 - (0 - x)
+}
+
+test "negate invariants" {
+    assert(negate_pos_to_neg(7) == -7)
+    assert(negate_neg_to_pos(-15) == 15)
+    assert(double_negate(8) == 8)
+}

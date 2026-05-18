@@ -1,0 +1,34 @@
+// Plan 33.19 (extending Ф.14/Ф.55/Ф.56): doubling invariants.
+// 2*x для positive x остаётся positive.
+
+module contracts.f57_double_invariant
+
+#verify
+fn double_nonneg(x int) -> int
+    requires x >= 0
+    ensures result >= 0
+{
+    2 * x
+}
+
+#verify
+fn double_strict_pos(x int) -> int
+    requires x >= 1
+    ensures result > 0
+{
+    2 * x
+}
+
+#verify
+fn double_bounded(x int) -> int
+    requires x <= 50
+    ensures result <= 100
+{
+    2 * x
+}
+
+test "double invariants" {
+    assert(double_nonneg(5) == 10)
+    assert(double_strict_pos(3) == 6)
+    assert(double_bounded(40) == 80)
+}
