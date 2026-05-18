@@ -1320,13 +1320,20 @@ impl CEmitter {
             if let Item::Fn(f) = item {
                 // === D84: free-function overload registration ===
                 if f.receiver.is_none() {
+                    // Plan 70 PhaseA1.3: strict mode — free-fn overload registration
+                    // (D84). Все concrete param/return типы должны successfully
+                    // translate. Pre-mono erasure handled separately (is_generic_recv path).
                     let param_c_types: Vec<String> = f.params.iter()
-                        .map(|p| self.type_ref_to_c(&p.ty)
-                            .unwrap_or_else(|_| "nova_int".into()))
-                        .collect();
+                        .map(|p| self.type_ref_to_c(&p.ty).map_err(|e| self.err_no_int_fallback(
+                            &format!("free fn `{}` overload-reg parameter `{}`", f.name, p.name),
+                            &e,
+                        )))
+                        .collect::<Result<Vec<_>, _>>()?;
                     let return_c_type = match &f.return_type {
-                        Some(t) => self.type_ref_to_c(t)
-                            .unwrap_or_else(|_| "nova_int".into()),
+                        Some(t) => self.type_ref_to_c(t).map_err(|e| self.err_no_int_fallback(
+                            &format!("free fn `{}` overload-reg return type", f.name),
+                            &e,
+                        ))?,
                         // Plan 55 Ф.3: для `=> expr` body инфирим из выражения
                         // (call-site нужен правильный type до emit_fn). Для Block —
                         // оставляем nova_unit (Block без `-> T` имеет side-effect
@@ -1415,13 +1422,19 @@ impl CEmitter {
                     } else {
                         HashSet::new()
                     };
+                    // Plan 70 PhaseA1.3: strict mode — method overload registration.
+                    // Generic-recv path uses erased_type_ref_c (preserves type-param erasure,
+                    // intentional Cat B). Non-generic-recv: strict translation required.
                     let param_c_types: Vec<String> = f.params.iter()
                         .map(|p| if is_generic_recv {
-                            self.erased_type_ref_c(&Some(p.ty.clone()), &recv_type_params)
+                            Ok(self.erased_type_ref_c(&Some(p.ty.clone()), &recv_type_params))
                         } else {
-                            self.type_ref_to_c(&p.ty).unwrap_or_else(|_| "nova_int".into())
+                            self.type_ref_to_c(&p.ty).map_err(|e| self.err_no_int_fallback(
+                                &format!("method `{}.{}` parameter `{}`", recv.type_name, f.name, p.name),
+                                &e,
+                            ))
                         })
-                        .collect();
+                        .collect::<Result<Vec<_>, _>>()?;
                     // Resolve return type. `Self` → recv.type_name.
                     // Plan 55 Ф.3: для `=> expr` body инфирим (см. free-fn выше).
                     let return_c_type = match &f.return_type {
@@ -1431,8 +1444,10 @@ impl CEmitter {
                         Some(t) if is_generic_recv => {
                             self.erased_type_ref_c(&Some(t.clone()), &recv_type_params)
                         }
-                        Some(t) => self.type_ref_to_c(t)
-                            .unwrap_or_else(|_| "nova_int".into()),
+                        Some(t) => self.type_ref_to_c(t).map_err(|e| self.err_no_int_fallback(
+                            &format!("method `{}.{}` return type", recv.type_name, f.name),
+                            &e,
+                        ))?,
                         None => match &f.body {
                             FnBody::Expr(_) => self.return_type_c(f)
                                 .unwrap_or_else(|_| "nova_unit".into()),
