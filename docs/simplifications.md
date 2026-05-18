@@ -9223,6 +9223,19 @@ Disproven `=` (когда literal out of range) — тоже через bounds.
 
 Все 6 base comparison operators поддерживают bounds-based reasoning.
 
+## [M-plan-33.6-Ф.40-lemma-body-eq-ensures] (2026-05-18)
+
+Дополнительный lemma lint. `lemma foo() ensures X => X` — body буквально
+повторяет ensures, не добавляет proof-information. Detect через
+`print_expr` сравнение body (FnBody::Expr) с каждой ensures.
+
+**Регрессия:** 194 → 195 PASS (+1), 0 FAIL.
+
+**Lemma lint catalog complete — 10 rules:** vacuous precondition,
+tautological refinement, name collision, body==ensures (Ф.40), dead lemma,
+no-params, apply к undefined, arity mismatch, auto-inference fail,
+duplicate apply.
+
 ## [M-57.F.4-positive-negative-coverage] — Test expansion (2026-05-17)
 
 **Не simplification.** Прямой user feedback "тесты напиши по тому,
