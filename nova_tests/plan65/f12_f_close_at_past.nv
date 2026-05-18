@@ -1,0 +1,28 @@
+// Plan 65 R18 / Ф.12.5: ChanReader.close_at(Monotonic) — past deadline
+// returns an already-closed reader with no timer alloc + no leak.
+
+module plan65.f12_f_close_at_past
+
+import std.time.duration
+
+test "close_at past deadline — already-closed, immediate None" {
+    supervised {
+        spawn {
+            let past = Monotonic.now() - Duration.from_secs(1)
+            let t = ChanReader.close_at(past)
+            let v = t.recv()
+            assert(v.is_none())
+        }
+    }
+}
+
+test "close_at exactly-now deadline — immediate close" {
+    supervised {
+        spawn {
+            let now = Monotonic.now()
+            let t = ChanReader.close_at(now)
+            let v = t.recv()
+            assert(v.is_none())
+        }
+    }
+}

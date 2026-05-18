@@ -9,6 +9,8 @@
 
 module concurrency.plan40_channel_hardening
 
+import std.time.duration
+
 
 // ────────────────────────────────────────────────────────────────────
 // B9 — Channel.new capacity positive cases
@@ -130,7 +132,7 @@ test "B7: alternating recv-wins / timeout-wins (mixed pattern)" {
             spawn {
                 select {
                     Some(_) = ch.rx => { recv_wins = recv_wins + 1 }
-                    Some(_) = Time.after(50) => { timer_wins = timer_wins + 1 }
+                    Some(_) = ChanReader.close_after(Duration.from_millis(50)) => { timer_wins = timer_wins + 1 }
                 }
             }
         }
@@ -147,7 +149,7 @@ test "B7: very short timer (1ms) — timer wins" {
         spawn {
             select {
                 Some(_) = ch.rx => { }
-                Some(_) = Time.after(1) => { fired = true }
+                Some(_) = ChanReader.close_after(Duration.from_millis(1)) => { fired = true }
             }
         }
     }
@@ -165,7 +167,7 @@ test "B7: very long timer (10s), recv wins immediately — cleanup срабат�
         spawn {
             select {
                 Some(_) = ch.rx => { }
-                Some(_) = Time.after(10_000) => { }
+                Some(_) = ChanReader.close_after(Duration.from_millis(10_000)) => { }
             }
         }
     }
