@@ -1005,6 +1005,19 @@ fn propagate_bounds(conjuncts: &[SmtTerm]) -> Vec<SmtTerm> {
                                 if *l == *n && *u == *n { return Some(false); }
                             }
                         }
+                        // Ф.39.1 (Plan 33.6): == bounds check (паритет с !=).
+                        // `(= Var IntLit(n))` — если known lower > n или known upper < n → false;
+                        // если known lower == known upper == n → true (Var pinned к n).
+                        ("=", SmtTerm::Var(v), SmtTerm::IntLit(n))
+                        | ("=", SmtTerm::IntLit(n), SmtTerm::Var(v)) => {
+                            let lo = lower.get(v);
+                            let up = upper.get(v);
+                            if let Some(l) = lo { if *l > *n { return Some(false); } }
+                            if let Some(u) = up { if *u < *n { return Some(false); } }
+                            if let (Some(l), Some(u)) = (lo, up) {
+                                if *l == *n && *u == *n { return Some(true); }
+                            }
+                        }
                         _ => {}
                     }
                 }
