@@ -1,15 +1,18 @@
 // Plan 35 sub-plan 35.A R27 (D26): prelude module — auto-imported в
 // каждый module через resolve_imports_inline.
 //
-// **Plan 62.A migration:** prelude теперь splittable — types/methods
+// **Plan 62 migration:** prelude теперь splittable — types/methods/fns
 // живут в `std/prelude/<sub>.nv`, `std/prelude.nv` — facade re-export'ит
 // их. См. docs/plans/62-prelude-hardcode-migration.md.
 //
 // Текущий статус:
 //   - 62.A complete: core types (Option/Result/Some/None/Ok/Err/Error/
 //     Ordering/Never) перенесены в std/prelude/core.nv.
-//   - 62.B–62.F pending: runtime fns / errors / collections / protocols /
-//     effects остаются hardcoded в type-checker и codegen.
+//   - 62.B complete (partial): panic/exit/assert/debug_assert перенесены
+//     в std/prelude/runtime.nv. print/println DEFERRED — variadic +
+//     type-polymorphic dispatch, см. std/prelude/runtime.nv DEFER comment.
+//   - 62.C–62.F pending: errors / collections / protocols / effects
+//     остаются hardcoded в type-checker и codegen.
 //
 // **Re-export syntax:** wildcard `export import X.*` rejected per Plan
 // 35 R25 — используем selective form `export import X.{A, B, ...}`.
@@ -30,9 +33,18 @@ module std.prelude
 // пока syntax не появится. См. std/prelude/core.nv (DEFER комментарий).
 export import std.prelude.core.{Option, Some, None, Result, Ok, Err, Error, Ordering, Less, Equal, Greater}
 
+// Plan 62.B: re-export runtime functions из std.prelude.runtime.
+// panic / exit / assert / debug_assert — selective list (см. 62.A
+// note про wildcard и multi-line). print / println НЕ перенесены —
+// variadic dispatch остаётся hardcoded в emit_c.rs (DEFER 62.B.bis,
+// см. std/prelude/runtime.nv).
+export import std.prelude.runtime.{panic, exit, assert, debug_assert}
+
 /// Prelude version marker — verify в тестах что auto-import работает.
 /// Bump'ается при каждой migration phase Plan 62.
 ///   - 1 = pre-migration (только этот placeholder).
 ///   - 2 = Plan 62.A done (core types в file-based form).
+///     Plan 62.B reused version 2 (runtime fns added, version bump
+///     reserved для финального Plan 62 закрытия per plan doc).
 #stable(since = "0.1")
 export const PRELUDE_VERSION int = 2

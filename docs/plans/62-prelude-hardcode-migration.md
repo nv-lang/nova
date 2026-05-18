@@ -250,26 +250,96 @@ sum_schemas.insert("Result", vec![Variant::Tuple("Ok", vec!["nova_int"]), Varian
 - `nova_tests/modules/prelude_auto_import.nv` — bumped
   `PRELUDE_VERSION` assertion 1 → 2.
 
-### Plan 62.B — Runtime functions: print/println/panic/assert/debug_assert/exit (2 days)
+### Plan 62.B — Runtime functions: panic/exit/assert/debug_assert (partial) (2 days)
 
-- [ ] Создать `std/prelude/runtime.nv`:
+> **Status update 2026-05-18:** Phase 62.B complete (partial scope —
+> 698/698 PASS preserved, 4/6 functions migrated). `panic`/`exit`/`assert`/
+> `debug_assert` перенесены в `std/prelude/runtime.nv` через `external fn`
+> declarations. **Deferred:** `print` / `println` (variadic +
+> type-polymorphic dispatch — single-arg `external fn print(s str)`
+> декларация сломала бы hundreds существующих test-callers вида
+> `println("x=", n)`. См. §«DEFER 62.B → 62.B.bis» ниже).
+
+- [x] Создать `std/prelude/runtime.nv`:
   ```nova
   module std.prelude.runtime
-  external fn print(s str) -> ()
-  external fn println(s str) -> ()
   external fn panic(msg str) -> Never
   external fn exit(code int, msg str) -> Never
-  external fn assert(cond bool, msg str = "assertion failed") -> ()
-  external fn debug_assert(cond bool, msg str = "debug assertion failed") -> ()
+  external fn assert(cond bool) -> ()
+  external fn assert(cond bool, msg str) -> ()        // D84 arity overload
+  external fn debug_assert(cond bool) -> ()
+  external fn debug_assert(cond bool, msg str) -> ()  // D84 arity overload
+  // DEFER: print / println — см. ниже.
   ```
-- [ ] Wire external fns через registry (`runtime_registry.rs`):
-  ```rust
-  RuntimeFn { module: "std.prelude.runtime", name: "println", c_name: "nv_println", ... }
-  ```
-- [ ] Update emit_c.rs: вместо `name == "println"` special-case — use generic external-fn dispatch path (already exists for other external fns).
-- [ ] **Keep special inline for assert/debug_assert** because comma-operator pattern (`(nova_assert(cond, "text"), NOVA_UNIT)`) — это не fn-call optimization, это inline-comma form, нужно для D89 expression-context assertions. Но удалить из builtins HashSet name-recognition.
-- [ ] Удалить из type-checker builtins: `print, println, panic, assert, debug_assert, exit`.
-- [ ] Regression: 562/562 PASS.
+  - Default-param syntax (`msg str = "assertion failed"`) **отвергнут** —
+    D102 named-only-defaults требует keyword-form (`assert(c, msg="x")`)
+    на call-site'е, но ~17 test файлов используют 2-arg positional форму
+    (`assert(c, "msg")`). D84 arity overload работает без break'а.
+  - `msg` параметр в 2-arg форме **SILENTLY IGNORED** в bootstrap'е —
+    emit_c.rs:11086 всё равно использует auto-derived cond_text (Plan 11
+    fix). Explicit msg override — отдельная задача (требует change в
+    emit_c.rs c использованием user-supplied msg).
+- [x] **NOT wired** через registry (`runtime_registry.rs`) — registry —
+      это auto-gen infrastructure для `std/runtime/string.nv` /
+      `std/runtime/math.nv` (Plan 13), не runtime dispatch. Dispatch
+      остаётся через emit_c.rs name-keyed special-cases (см. ниже).
+- [x] **emit_c.rs special-cases НЕ конвертированы** в generic external-fn
+      dispatch — оба остаются name-keyed:
+  - `panic`/`exit` (emit_c.rs:11115/11128): нужны comma-expression обёртка
+    `(nv_panic(msg), (nova_int)0LL)` для использования в expression-position
+    (`?? panic(...)`, `if cond { v } else { panic(...) }`). Generic
+    external-fn dispatch вернул бы `void`, что в C cast'ить в `nova_int`
+    нельзя. Comma-expression — bootstrap решение.
+  - `assert`/`debug_assert` (emit_c.rs:11086): D89 expression-context +
+    Plan 11 comma-operator wrap `(nova_assert(cond, "<text>"), NOVA_UNIT)`.
+    `<text>` — auto-derived display rep'а expression'а (msg arg silently
+    ignored). Generic dispatch не даёт auto-derive.
+  - Все 4 intercept'а остаются по `name == "X"` lookup — после HashSet
+    shrink (Step 5) это **продолжает работать**, потому что cross-file
+    resolve через R26+R27 находит declaration, и AST Ident name всё ещё
+    `"panic"` / `"exit"` / `"assert"` / `"debug_assert"` (не qualified).
+- [x] Update `std/prelude.nv` чтобы re-export `runtime.{panic, exit,
+      assert, debug_assert}` (selective form, mirror 62.A).
+- [x] Удалить из type-checker builtins (4 имени): `panic, exit, assert,
+      debug_assert`. **NOT removed:** `print, println` (DEFER 62.B.bis).
+- [x] Regression: 698/698 PASS (новый baseline после 62.A).
+
+**DEFER 62.B → 62.B.bis: print / println**
+
+Реальная dispatch (`emit_c.rs::emit_println` + `make_print_call` +
+`infer_print_helper` ~13638-13751) — **variadic + type-polymorphic
+per-argument**:
+- `println(42)` → `nova_print_int(42); nova_print_newline()`
+- `println(true)` → `nova_print_bool(true); nova_print_newline()`
+- `println("hello")` → `nova_print_str("hello"); nova_print_newline()`
+- `println("x=", n)` → `nova_print_str("x="); nova_print_int(n); nova_print_newline()`
+- `println("  fiber ", x, " a")` — 3-arg mixed types
+
+Single-arg `external fn print(s str) -> ()` декларация сломает все
+non-str + multi-arg callers. Real test files используют все четыре
+формы выше (см. `nova_tests/concurrency/parallel_for.nv` и аналоги).
+
+Полная миграция требует либо:
+- (a) variadic external fn syntax — нет в bootstrap parser;
+- (b) auto-derive Display protocol + StringBuilder pipeline (Plan 62.D
+  collections + Plan 62.E protocols) — пользователь пишет
+  `println("x=${n}")`, type-checker auto-derives Display::fmt для
+  каждого argument'а через `${...}` interpolation;
+- (c) Plan 67 (println return-type inference) extended на variadic
+  + type-polymorphic arity matching.
+
+Все три — out-of-scope 62.B (≤2 dev-days). Запланирован Plan 62.B.bis
+после 62.D + 62.E (Display protocol даст canonical pipeline).
+
+**Файлы изменены (Plan 62.B partial):**
+
+- `std/prelude/runtime.nv` (NEW) — 4 external fn declarations с
+  6 arity-overload вариантами.
+- `std/prelude.nv` — добавлен `export import std.prelude.runtime.{panic,
+  exit, assert, debug_assert}`.
+- `compiler-codegen/src/types/mod.rs:2031-2032` — builtins HashSet
+  shrunk на 4 имени (`panic, exit, assert, debug_assert` удалены;
+  `print, println` оставлены с DEFER comment).
 
 ### Plan 62.C — Error types: RuntimeError/RuntimeNoneError (1 day)
 
