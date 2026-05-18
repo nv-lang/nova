@@ -2712,6 +2712,26 @@ let t0 = std::time::Instant::now();
                         *sp));
                 }
             }
+            // Ф.48.1 (Plan 33.6): unused lemma param. Param должен встречаться
+            // в каком-то contract либо body. Скорее всего программист забыл.
+            {
+                let mut used_names: std::collections::HashSet<String> =
+                    std::collections::HashSet::new();
+                collect_used_idents_in_body(&ld.body, &mut used_names);
+                for c in &ld.contracts {
+                    collect_used_idents_in_expr(&c.expr, &mut used_names);
+                }
+                for p in &ld.params {
+                    if p.name.starts_with('_') { continue; } // intentional skip
+                    if !used_names.contains(&p.name) {
+                        report.warnings.push(Diagnostic::new(
+                            format!("lemma `{}`: param `{}` не используется в contracts/body [W2402]:\n  \
+                                     удалите или переименуйте в `_{}` для intentional skip.",
+                                ld.name, p.name, p.name),
+                            ld.span));
+                    }
+                }
+            }
             // Ф.40.1 (Plan 33.6): lemma body == ensures expression — body просто
             // повторяет ensures. Это не bug, но прозрачно: SMT доказывает результат
             // body == ensures тавтологически. Лучше пустой body или body содержащий
