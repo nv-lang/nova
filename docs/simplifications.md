@@ -9213,6 +9213,16 @@ Modulus check для positive divisor добрал последний variant: `
 
 **Регрессия:** 192 → 193 PASS (+1), 0 FAIL.
 
+## [M-plan-33.6-Ф.39-eq-bounds] (2026-05-18)
+
+Симметричный `=` для Ф.29.1 (`!=` bounds check). Pinned var (lower==upper)
+теперь тривиально доказывается через `=`-check, а не только через UnionFind.
+Disproven `=` (когда literal out of range) — тоже через bounds.
+
+**Регрессия:** 193 → 194 PASS (+1), 0 FAIL.
+
+Все 6 base comparison operators поддерживают bounds-based reasoning.
+
 ## [M-57.F.4-positive-negative-coverage] — Test expansion (2026-05-17)
 
 **Не simplification.** Прямой user feedback "тесты напиши по тому,
