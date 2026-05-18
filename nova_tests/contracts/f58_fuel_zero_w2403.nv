@@ -1,0 +1,9 @@
+// EXPECT_COMPILE_WARNING W2403
+//
+// Plan 33.9 Ф.6.4: `#fuel(0)` explicit — эквивалентно отсутствию → W2403 noise.
+
+module contracts.f58_fuel_zero_w2403
+
+#opaque #pure #fuel(0)
+fn helper(x int) -> int
+=> x + 1
