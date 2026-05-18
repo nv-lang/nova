@@ -810,6 +810,12 @@ fn propagate_bounds(conjuncts: &[SmtTerm]) -> Vec<SmtTerm> {
                 let effective_goal = if iop == ">" { goal.saturating_add(1) } else { goal };
                 if let SmtTerm::App(mop, margs) = &iargs[0] {
                     if mop != "*" || margs.len() != 2 { return None; }
+                    // Ф.51.1 (Plan 33.6): square non-negative (a * a >= 0 always).
+                    // Универсально true без bounds — продакт переменной на саму себя
+                    // даёт неотрицательный результат. Для effective_goal <= 0 → true.
+                    if margs[0] == margs[1] && effective_goal <= 0 {
+                        return Some(true);
+                    }
                     if let (SmtTerm::Var(a), SmtTerm::Var(b)) = (&margs[0], &margs[1]) {
                         // Ф.37.2 (Plan 33.6): strict positive product.
                         // `(> a*b 0)` при lower(a) >= 1 && lower(b) >= 1 → product >= 1.
