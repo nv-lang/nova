@@ -9507,3 +9507,128 @@ G/H). ~3700 LOC implementation cumulative.
   ubuntu-latest (gcc/clang) + windows-latest (msvc/clang) and runs
   `nova test` on each.
 - **Приоритет:** M — affects every plan that adds runtime code.
+
+### [M-mock-time-concurrent-advance] (DEFER — Plan 65 Ф.10)
+- **Где:** `compiler-codegen/nova_rt/channels.h::nova_chan_reader_close_after_ns`.
+- **Что упрощено:** mock-Time path delegates to `_nova_handler_Time->sleep`
+  synchronously and then returns an already-closed reader. This works
+  perfectly for the single-fiber sequential-mock pattern (most common
+  test shape) but does NOT support peer-fiber `Time.advance(d)` waking
+  a timer parked in another fiber.
+- **Почему:** true Tokio-style `pause()/advance(d)` with concurrent
+  registry requires a virtual-clock infrastructure with timer indexing
+  + cross-fiber wake. Significant runtime addition out of Plan 65 scope.
+- **Как чинить:** Plan 66 (timer-wheel) is a natural host — add a
+  `MockVirtualClock` mode параллельно с real-clock path.
+- **Приоритет:** L — sequential-mock covers all current test needs.
+
+### [M-bench-timer-metrics-autocapture] (DEFER — Plan 65 Ф.11)
+- **Где:** `nova-cli/src/bench/*` + `compiler-codegen/nova_rt/bench.h`.
+- **Что упрощено:** `NOVA_TIMER_METRICS` counters are queryable via
+  `Time.timer_*()` Nova API но не интегрированы автоматически в bench
+  history snapshots (Plan 57). Bench-side code должно вызвать
+  `Time.timer_*()` manually для capture.
+- **Почему:** добавление хука в bench-execution path в nova-cli требует
+  touching Plan 57 infra (out of Plan 65 scope).
+- **Как чинить:** Plan 57 follow-up — add `bench.runtime_stats` capture
+  hook for per-bench Time.timer_* snapshot.
+- **Приоритет:** L.
+
+### [M-timer-leak-stack-frames] (DEFER — Plan 65 Ф.11)
+- **Где:** `compiler-codegen/nova_rt/channels.h::_nova_timer_metrics_atexit`.
+- **Что упрощено:** Leak warning (`alloc_active > 0` post-main) dumps
+  counter + WARNING line, но НЕ capture'ит stack frames первых N
+  leaked timers (R25 plan-doc spec).
+- **Почему:** best-effort stack capture требует libbacktrace (Linux)
+  или DbgHelp (Windows) integration — нетривиально per-platform.
+- **Как чинить:** integration sees in-flight timer alloc-site backtrace
+  (best effort). Plan 66 / dedicated observability plan.
+- **Приоритет:** L — leak counter + LEAK marker дают достаточно signal'а
+  для investigation; миллион timers с no stack info лучше чем ноль.
+
+### [M-time-now-schema-mismatch] (DEFER — known since Plan 65 Ф.0; affects Ф.12.3)
+- **Где:** `compiler-codegen/src/codegen/emit_c.rs:1048` (time_schema)
+  + `compiler-codegen/nova_rt/fibers.h::Nova_Time_now`.
+- **Что упрощено:** `Time.now()` wired через effect schema returns
+  `nova_int` (ms count), но stdlib `std/time/duration.nv` объявляет
+  `Time.now() -> Timestamp` (record). User-side method-dispatch ломается:
+  `Time.now().minus(other)` через codegen routes по int-receiver path
+  не Timestamp_method_minus.
+- **Почему:** schema-wire convention в effect_schemas — primitive return
+  types only; record-returning extern не имеет precedent. Fix потребует
+  расширения schema layer ИЛИ переписывания всех stdlib usages
+  Time.now() с explicit wrap (`Timestamp.from_unix_millis(Time.now())`).
+- **Как чинить:** дедицированный plan для schema layer extension с
+  record-typed returns + миграция std/testing/handlers.nv handler
+  literals под новый schema.
+- **Приоритет:** M — workaround'ы существуют (используй ms-int напрямую,
+  не Timestamp), но D124 (Monotonic vs Timestamp safety) недостроен
+  потому что Monotonic.now() не может быть `=> Time.now_monotonic()`
+  wrapper.
+
+### [M-monotonic-mock-support] (DEFER — Plan 65 Ф.12.1)
+- **Где:** `compiler-codegen/nova_rt/effects.h::NovaVtable_Time`
+  + `compiler-codegen/nova_rt/channels.h::nova_monotonic_now_record`.
+- **Что упрощено:** mock Time handler (e.g. `testing.fixed_ms`,
+  `mut_clock`) НЕ может перехватить `Monotonic.now()` — runtime всегда
+  возвращает real uv_hrtime().
+- **Почему:** add slot `now_monotonic` в NovaVtable_Time — breaking
+  change для всех handler-literal'ов (existing handlers без
+  now_monotonic declarations would NULL-deref). Требует параллельной
+  миграции std/testing/handlers.nv + всех user-side handler literals.
+- **Как чинить:** future plan — добавить опциональный slot с default-impl
+  fallback (delegates к real clock если handler не override'ит).
+- **Приоритет:** L — mock-Monotonic малополезно (real-clock тесты с
+  monotonic invariant корректны под любой clock impl).
+
+### [M-strict-var-annotations] (DEFER — Plan 65 Ф.12.5, pre-existing)
+- **Где:** type-check layer (compiler-codegen).
+- **Что упрощено:** `let x Foo = bar` где `bar: Bar != Foo` не вызывает
+  compile error — annotations пока treated as hints, not constraints.
+- **Почему:** strict-annotation enforcement требует unification pass
+  и нетривиально для record types vs nominal types vs Self.
+- **Как чинить:** dedicated typing-strictness plan.
+- **Приоритет:** L — D124 important guarantees enforced через operator
+  overload absence + ChanReader signature check.
+
+### [M-strict-method-receiver-check] (DEFER — Plan 65 Ф.12.5, pre-existing)
+- **Где:** method dispatch в emit_c.rs.
+- **Что упрощено:** `m.method()` resolves по method name без strict
+  receiver-type check — `m.method()` где m: Foo, method only declared
+  on Bar, may silently route to Bar_method_method(m).
+- **Почему:** dispatcher legacy — receiver type определяется по C-type
+  inference которая loose.
+- **Как чинить:** dedicated method-resolution strictness plan.
+- **Приоритет:** L — same family как M-strict-var-annotations.
+
+### [M-monotonic-per-os-isolated-tests] (DEFER — Plan 65 Ф.12.2)
+- **Где:** `compiler-codegen/nova_rt/` (no dedicated time.c).
+- **Что упрощено:** per-OS unit tests для `_nova_monotonic_ns()`
+  отдельно от integration не написаны.
+- **Почему:** libuv hrtime уже covered upstream'ом + bootstrap
+  integration (plan65 f12_e/f/g + std/time/duration.nv arithmetic)
+  validates end-to-end.
+- **Как чинить:** Plan 58 (CI matrix) follow-up может добавить
+  per-platform isolated test.
+- **Приоритет:** L.
+
+### [M-monotonic-migration-deferred] (DEFER — Plan 65 Ф.12.6)
+- **Где:** `std/concurrency/rate_limiter.nv`, `nova_tests/concurrency/cancel_latency_bench.nv`,
+  `nova_tests/concurrency/sleep_real_clock.nv`, и др. (≈9 sites).
+- **Что упрощено:** existing `Time.now()`-based timing code должен быть
+  переписан на `Monotonic.now()` для NTP/DST-skew immunity, но миграция
+  blocked by [M-time-now-schema-mismatch].
+- **Почему:** см. M-time-now-schema-mismatch.
+- **Как чинить:** после schema-mismatch fix — добавить `// AUDIT_PLAN65_Ф12`
+  markers + rewrite в follow-up commit.
+- **Приоритет:** M (semantic correctness под clock-skew).
+
+### [M-cancel-token-cancel-at] (DEFER — Plan 65 Ф.12.6)
+- **Где:** `compiler-codegen/nova_rt/fibers.h::NovaCancelToken`.
+- **Что упрощено:** `CancelToken.cancel_at(deadline Monotonic)` extension
+  не реализован.
+- **Почему:** требует Plan 47 API surface change (compiler-builtin
+  method на CancelToken).
+- **Как чинить:** user может реализовать сам: spawn fiber который
+  `sleep(deadline.elapsed_since(Monotonic.now()))` затем `tok.cancel()`.
+- **Приоритет:** L — workaround existed.
