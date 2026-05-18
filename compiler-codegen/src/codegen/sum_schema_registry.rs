@@ -512,10 +512,29 @@ impl SumSchemaRegistry {
     /// (declaration moves from Rust HashMap → Nova file) без изменения
     /// dispatch на call-site'ах.
     ///
-    /// **Filter**: registers ТОЛЬКО methods на `Option` / `Result`. Static
-    /// fns (без receiver) и methods на других типах (Error, RuntimeError)
-    /// игнорируются — их routing остаётся в HardcodedBaseline или будет
-    /// добавлен отдельным plan-item'ом (62.C для RuntimeError).
+    /// **Filter (методы)**: registers Prelude method-routing entry ТОЛЬКО
+    /// для methods на `Option` / `Result`. Static fns (без receiver) и
+    /// methods на других типах игнорируются.
+    ///
+    /// **Plan 62.C extension (2026-05-18)**: scan также распознаёт
+    /// `Item::Type` с `TypeDeclKind::Sum` для прелюдных error-типов
+    /// (`RuntimeError`, `ReadBufferError`). Логика:
+    /// - **`RuntimeError`** — HardcodedBaseline уже зарегистрирован
+    ///   (см. `init_hardcoded_baseline` lines ~458-497). Проверяем
+    ///   variant set strict-equality между prelude-declaration и baseline
+    ///   (per Plan 62.A.bis acceptance: «strict equality в 62.A.bis;
+    ///   extension requires edition bump (Plan 62.F)»). При совпадении
+    ///   регистрируем Prelude entry, наследуя `variants` + `abi` +
+    ///   `c_name` + `method_routing` от baseline (currently empty
+    ///   routing — RuntimeError не имеет methods в bootstrap'е).
+    ///   Mismatch (variant set differs) — silently skip Prelude
+    ///   registration (HardcodedBaseline продолжает работать как
+    ///   fallback); в будущем сюда добавится `W_PRELUDE_VARIANT_DRIFT`.
+    /// - **`ReadBufferError`** — НЕТ HardcodedBaseline (не входит в
+    ///   `init_hardcoded_baseline`). Регистрируем Prelude entry с
+    ///   variants парсимыми напрямую из AST. ABI = `PointerErrorLike`
+    ///   (heap-pointer, по аналогии с Result в bootstrap'е).
+    ///   `method_routing` — empty map (нет methods на ReadBufferError).
     ///
     /// **Idempotent**: повторный вызов с тем же items overwrite'ит Prelude
     /// entry с same name; behavior preserved.
@@ -528,6 +547,11 @@ impl SumSchemaRegistry {
         items: &[crate::ast::Item],
     ) {
         use crate::ast::Item;
+
+        // ─────────────────────────────────────────────────────────────────
+        // Part 1 (Plan 62.A follow-up): method-routing inheritance для
+        // Option / Result (см. doc-comment выше).
+        // ─────────────────────────────────────────────────────────────────
 
         // Собираем имена sum-types, для которых HardcodedBaseline уже зарегистрирован
         // (Option, Result). Только для них имеет смысл создавать Prelude override.
@@ -611,6 +635,168 @@ impl SumSchemaRegistry {
                 method_routing: prelude_routing,
             });
         }
+
+        // ─────────────────────────────────────────────────────────────────
+        // Part 2 (Plan 62.C): sum-type Prelude registration для error-типов
+        // из std/prelude/errors.nv.
+        // ─────────────────────────────────────────────────────────────────
+
+        for item in items {
+            let Item::Type(t) = item else { continue; };
+            let crate::ast::TypeDeclKind::Sum(variants) = &t.kind else { continue; };
+
+            match t.name.as_str() {
+                "RuntimeError" => {
+                    self.register_prelude_sum_inheriting_baseline(
+                        &t.name, variants,
+                        &["std".into(), "prelude".into(), "errors".into()],
+                    );
+                }
+                "ReadBufferError" => {
+                    self.register_prelude_sum_from_decl(
+                        &t.name, variants,
+                        SumAbi::PointerErrorLike,
+                        &["std".into(), "prelude".into(), "errors".into()],
+                    );
+                }
+                _ => {
+                    // Другие sum-types из user code НЕ регистрируются здесь —
+                    // их обрабатывает `register_user_sum` через emit_type_decl
+                    // (DeclaredFromUser source). Только known prelude error
+                    // types из std/prelude/errors.nv ловятся здесь как Prelude.
+                }
+            }
+        }
+    }
+
+    /// **Plan 62.C helper**: регистрирует Prelude entry для sum-type, у
+    /// которого уже есть HardcodedBaseline entry — наследует variants +
+    /// abi + c_name + method_routing от baseline. **Strict variant-set
+    /// equality**: declaration МУСТ содержать ровно тот же набор variant
+    /// names что и baseline; mismatch → silent skip (HardcodedBaseline
+    /// fallback). См. Plan 62.A.bis acceptance criteria.
+    ///
+    /// Используется для `RuntimeError` — миграция declaration источника
+    /// правды (hardcoded HashMap → std/prelude/errors.nv) при сохранении
+    /// behavior (codegen продолжает использовать pre-populated sum_schemas
+    /// как ABI-compat fallback).
+    fn register_prelude_sum_inheriting_baseline(
+        &mut self,
+        nova_name: &str,
+        decl_variants: &[crate::ast::SumVariant],
+        origin_module: &[String],
+    ) {
+        let baseline = self.entries.iter()
+            .find(|e| e.nova_name == nova_name && e.source == SchemaSource::HardcodedBaseline)
+            .cloned();
+
+        let Some(baseline) = baseline else {
+            // Нет baseline — нечего наследовать. Defensive — для known
+            // prelude types (`RuntimeError`) baseline должен быть зарегистрирован.
+            return;
+        };
+
+        // Strict variant set check — declaration variant names МУСТ совпадать
+        // с baseline. Иначе skip (mismatch logged через debug-only path
+        // в будущем; в bootstrap'е — silent для regression-safety).
+        let decl_names: std::collections::HashSet<&str> = decl_variants.iter()
+            .map(|v| v.name.as_str()).collect();
+        let baseline_names: std::collections::HashSet<&str> = baseline.variants.iter()
+            .map(|v| v.variant_name.as_str()).collect();
+        if decl_names != baseline_names {
+            // Variant set drift — Plan 62.F edition bump territory.
+            // Skip Prelude registration; HardcodedBaseline продолжает
+            // работать как fallback. Это означает что user'ская
+            // declaration с другим набором variants попадёт как
+            // DeclaredFromUser (через emit_type_decl) только если она
+            // НЕ skipped по RUNTIME_DEFINED_TYPES (что для RuntimeError
+            // ложно — она в skip-list'е). На практике для prelude/errors.nv
+            // мы контролируем content, mismatch здесь — bug.
+            return;
+        }
+
+        self.register_schema(SumSchemaEntry {
+            nova_name: nova_name.to_string(),
+            c_name: baseline.c_name.clone(),
+            variants: baseline.variants.clone(),
+            abi: baseline.abi,
+            source: SchemaSource::DeclaredFromPrelude,
+            origin_module: Some(origin_module.to_vec()),
+            method_routing: baseline.method_routing.clone(),
+        });
+    }
+
+    /// **Plan 62.C helper**: регистрирует Prelude entry для sum-type без
+    /// HardcodedBaseline (e.g. `ReadBufferError`). Парсит variant info
+    /// напрямую из AST через minimal type-ref→C-type mapper (только
+    /// primitives `int` → `nova_int`, `str` → `nova_str`, `bool` → `nova_bool`).
+    ///
+    /// Variants поддерживают unit / tuple-positional / record-fields формы.
+    /// Record-variant field order — из AST insertion order (как в `emit_sum_type`).
+    /// `method_routing` — empty HashMap (нет methods).
+    ///
+    /// **Bootstrap-ограничение**: complex generics в variant полях
+    /// (e.g. `Wrapped(Option[T])`) НЕ поддерживаются — попытка вернуть
+    /// fallback `"nova_int"` (как `type_ref_to_c` в emit_c.rs). Для
+    /// prelude/errors.nv это OK — variants используют только `int` и `str`.
+    fn register_prelude_sum_from_decl(
+        &mut self,
+        nova_name: &str,
+        decl_variants: &[crate::ast::SumVariant],
+        abi: SumAbi,
+        origin_module: &[String],
+    ) {
+        use crate::ast::{SumVariantKind, TypeRef};
+
+        // Minimal primitive type-ref → C-type mapper. Достаточно для
+        // prelude/errors.nv variants (int / str). Сложные generics —
+        // fallback на "nova_int" (не должны встречаться в prelude/errors.nv).
+        fn type_ref_to_c_minimal(ty: &TypeRef) -> String {
+            match ty {
+                TypeRef::Named { path, .. } if path.len() == 1 => {
+                    match path[0].as_str() {
+                        "int" | "i64" | "u64" | "uint" | "size" => "nova_int".to_string(),
+                        "i32" | "u32" => "nova_int".to_string(),
+                        "i16" | "u16" | "i8" | "u8" | "byte" => "nova_int".to_string(),
+                        "f64" | "f32" => "nova_f64".to_string(),
+                        "bool" => "nova_bool".to_string(),
+                        "str" => "nova_str".to_string(),
+                        "char" => "nova_int".to_string(),
+                        _ => "nova_int".to_string(),
+                    }
+                }
+                TypeRef::Unit(_) => "nova_unit".to_string(),
+                _ => "nova_int".to_string(),
+            }
+        }
+
+        let variants: Vec<VariantInfo> = decl_variants.iter().map(|v| {
+            let field_c_types = match &v.kind {
+                SumVariantKind::Unit => Vec::new(),
+                SumVariantKind::Tuple(tys) => {
+                    tys.iter().map(type_ref_to_c_minimal).collect()
+                }
+                SumVariantKind::Record(fields) => {
+                    fields.iter().map(|f| type_ref_to_c_minimal(&f.ty)).collect()
+                }
+            };
+            VariantInfo {
+                variant_name: v.name.clone(),
+                field_c_types,
+            }
+        }).collect();
+
+        let c_name = format!("Nova_{}", nova_name);
+
+        self.register_schema(SumSchemaEntry {
+            nova_name: nova_name.to_string(),
+            c_name,
+            variants,
+            abi,
+            source: SchemaSource::DeclaredFromPrelude,
+            origin_module: Some(origin_module.to_vec()),
+            method_routing: HashMap::new(),
+        });
     }
 
     /// Legacy stub (compat shim для существующего callsite в emit_module).
@@ -1320,6 +1506,237 @@ mod tests {
             }
             other => panic!("expected HardcodedRuntimeFn non-per-T, got {:?}", other),
         }
+    }
+
+    /// **Plan 62.C**: RuntimeError sum-declaration в items → Prelude entry,
+    /// наследующий variants + method_routing от HardcodedBaseline. Variant
+    /// set strict-equality enforced.
+    #[test]
+    fn test_runtime_error_prelude_decl_inherits_baseline_variants() {
+        use crate::ast::{
+            Item, TypeDecl, TypeDeclKind, SumVariant, SumVariantKind, RecordField,
+            TypeRef,
+        };
+        use crate::diag::Span;
+
+        let mut reg = SumSchemaRegistry::new();
+        reg.init_hardcoded_baseline();
+
+        // Baseline должен быть зарегистрирован init_hardcoded_baseline'ом.
+        let baseline_entry = reg.lookup_sum_schema("RuntimeError")
+            .expect("RuntimeError HardcodedBaseline must exist").clone();
+        assert_eq!(baseline_entry.source, SchemaSource::HardcodedBaseline);
+        assert_eq!(baseline_entry.variants.len(), 6);
+
+        // Helper для построения TypeRef::Named("int" / "str").
+        let mk_named = |name: &str| TypeRef::Named {
+            path: vec![name.to_string()],
+            generics: vec![],
+            span: Span::default(),
+        };
+        let mk_field = |name: &str, ty_name: &str| RecordField {
+            name: name.to_string(),
+            ty: mk_named(ty_name),
+            readonly: false,
+            mutable: false,
+            is_embed: false,
+            embed_anonymous: false,
+            span: Span::default(),
+        };
+        let mk_variant = |name: &str, kind: SumVariantKind| SumVariant {
+            name: name.to_string(),
+            kind,
+            discriminant: None,
+            span: Span::default(),
+        };
+
+        // Конструируем prelude-declaration RuntimeError — все 6 variants,
+        // matching std/prelude/errors.nv.
+        let runtime_error_decl = TypeDecl {
+            doc: None,
+            doc_attrs: vec![],
+            is_export: true,
+            name: "RuntimeError".to_string(),
+            generics: vec![],
+            kind: TypeDeclKind::Sum(vec![
+                mk_variant("DivByZero", SumVariantKind::Unit),
+                mk_variant("Overflow", SumVariantKind::Unit),
+                mk_variant("IndexOutOfBounds", SumVariantKind::Record(vec![
+                    mk_field("index", "int"),
+                    mk_field("length", "int"),
+                ])),
+                mk_variant("TypeMismatch", SumVariantKind::Tuple(vec![mk_named("str")])),
+                mk_variant("AssertFailed", SumVariantKind::Tuple(vec![mk_named("str")])),
+                mk_variant("NoHandler", SumVariantKind::Tuple(vec![mk_named("str")])),
+            ]),
+            span: Span::default(),
+            attrs: vec![],
+            invariants: vec![],
+            axioms: vec![],
+        };
+        let items = vec![Item::Type(runtime_error_decl)];
+
+        reg.init_prelude_decls_from_items(&items);
+
+        // Primary lookup теперь должен вернуть Prelude entry (higher priority).
+        let entry = reg.lookup_sum_schema("RuntimeError")
+            .expect("RuntimeError must resolve");
+        assert_eq!(entry.source, SchemaSource::DeclaredFromPrelude,
+            "Prelude entry должен выигрывать lookup precedence");
+        assert!(entry.origin_module.is_some(),
+            "Prelude entry должен иметь origin_module = Some(std.prelude.errors)");
+        assert_eq!(entry.origin_module.as_ref().unwrap(),
+            &vec!["std".to_string(), "prelude".to_string(), "errors".to_string()]);
+
+        // **Critical**: variants inherited от baseline (с правильными
+        // field_c_types: positional layout).
+        assert_eq!(entry.variants.len(), 6);
+        let by_name: std::collections::HashMap<&str, &VariantInfo> =
+            entry.variants.iter().map(|v| (v.variant_name.as_str(), v)).collect();
+        assert!(by_name["DivByZero"].field_c_types.is_empty());
+        assert!(by_name["Overflow"].field_c_types.is_empty());
+        assert_eq!(by_name["IndexOutOfBounds"].field_c_types,
+            vec!["nova_int".to_string(), "nova_int".to_string()]);
+        assert_eq!(by_name["TypeMismatch"].field_c_types,
+            vec!["nova_str".to_string()]);
+        assert_eq!(by_name["AssertFailed"].field_c_types,
+            vec!["nova_str".to_string()]);
+        assert_eq!(by_name["NoHandler"].field_c_types,
+            vec!["nova_str".to_string()]);
+
+        // ABI inherited (ValueTagPayload per baseline).
+        assert_eq!(entry.abi, SumAbi::ValueTagPayload);
+
+        // c_name inherited (Nova_RuntimeError).
+        assert_eq!(entry.c_name, "Nova_RuntimeError");
+
+        // find_variant_v2 для всех variants должен вернуть Prelude source.
+        for vn in &["DivByZero", "Overflow", "IndexOutOfBounds",
+                    "TypeMismatch", "AssertFailed", "NoHandler"] {
+            let (sum, _, src) = reg.find_variant_v2(vn)
+                .unwrap_or_else(|| panic!("variant {} must resolve", vn));
+            assert_eq!(sum, "RuntimeError");
+            assert_eq!(src, SchemaSource::DeclaredFromPrelude,
+                "variant {} must resolve через Prelude (higher priority)", vn);
+        }
+    }
+
+    /// **Plan 62.C**: variant-set drift между prelude declaration и
+    /// HardcodedBaseline → silent skip Prelude registration (baseline
+    /// продолжает работать как fallback). Plan 62.F edition territory.
+    #[test]
+    fn test_runtime_error_prelude_decl_variant_drift_skipped() {
+        use crate::ast::{
+            Item, TypeDecl, TypeDeclKind, SumVariant, SumVariantKind,
+        };
+        use crate::diag::Span;
+
+        let mut reg = SumSchemaRegistry::new();
+        reg.init_hardcoded_baseline();
+
+        let mk_variant = |name: &str| SumVariant {
+            name: name.to_string(),
+            kind: SumVariantKind::Unit,
+            discriminant: None,
+            span: Span::default(),
+        };
+
+        // Drift: declaration с extra variant "MyExtra" + missing 5 baseline'ных.
+        let drifted_decl = TypeDecl {
+            doc: None, doc_attrs: vec![], is_export: true,
+            name: "RuntimeError".to_string(),
+            generics: vec![],
+            kind: TypeDeclKind::Sum(vec![
+                mk_variant("DivByZero"),  // matches baseline
+                mk_variant("MyExtra"),    // extra — not in baseline
+            ]),
+            span: Span::default(), attrs: vec![],
+            invariants: vec![], axioms: vec![],
+        };
+
+        reg.init_prelude_decls_from_items(&[Item::Type(drifted_decl)]);
+
+        // Primary lookup STILL HardcodedBaseline — Prelude registration skipped.
+        let entry = reg.lookup_sum_schema("RuntimeError").unwrap();
+        assert_eq!(entry.source, SchemaSource::HardcodedBaseline,
+            "variant drift должен trigger silent skip; baseline остаётся primary");
+        // Layered count: ровно 1 entry (baseline; no Prelude registered).
+        let layered = reg.lookup_sum_schema_layered("RuntimeError");
+        assert_eq!(layered.len(), 1, "Prelude entry не должен быть зарегистрирован");
+    }
+
+    /// **Plan 62.C**: ReadBufferError sum-declaration → Prelude entry с
+    /// variants парсимыми из AST (HardcodedBaseline для ReadBufferError
+    /// отсутствует). PointerErrorLike ABI.
+    #[test]
+    fn test_read_buffer_error_prelude_decl_registers_from_ast() {
+        use crate::ast::{
+            Item, TypeDecl, TypeDeclKind, SumVariant, SumVariantKind, RecordField,
+            TypeRef,
+        };
+        use crate::diag::Span;
+
+        let mut reg = SumSchemaRegistry::new();
+        reg.init_hardcoded_baseline();
+
+        // ReadBufferError НЕ должен быть в baseline.
+        assert!(reg.lookup_sum_schema("ReadBufferError").is_none(),
+            "ReadBufferError не должен быть в HardcodedBaseline");
+
+        let mk_named = |name: &str| TypeRef::Named {
+            path: vec![name.to_string()],
+            generics: vec![],
+            span: Span::default(),
+        };
+        let mk_field = |name: &str, ty_name: &str| RecordField {
+            name: name.to_string(),
+            ty: mk_named(ty_name),
+            readonly: false, mutable: false,
+            is_embed: false, embed_anonymous: false,
+            span: Span::default(),
+        };
+
+        let rbe_decl = TypeDecl {
+            doc: None, doc_attrs: vec![], is_export: true,
+            name: "ReadBufferError".to_string(),
+            generics: vec![],
+            kind: TypeDeclKind::Sum(vec![
+                SumVariant {
+                    name: "UnexpectedEnd".to_string(),
+                    kind: SumVariantKind::Record(vec![
+                        mk_field("wanted", "int"),
+                        mk_field("available", "int"),
+                    ]),
+                    discriminant: None,
+                    span: Span::default(),
+                },
+            ]),
+            span: Span::default(), attrs: vec![],
+            invariants: vec![], axioms: vec![],
+        };
+
+        reg.init_prelude_decls_from_items(&[Item::Type(rbe_decl)]);
+
+        let entry = reg.lookup_sum_schema("ReadBufferError")
+            .expect("ReadBufferError должен быть зарегистрирован");
+        assert_eq!(entry.source, SchemaSource::DeclaredFromPrelude);
+        assert_eq!(entry.abi, SumAbi::PointerErrorLike);
+        assert_eq!(entry.c_name, "Nova_ReadBufferError");
+        assert_eq!(entry.origin_module.as_ref().unwrap(),
+            &vec!["std".to_string(), "prelude".to_string(), "errors".to_string()]);
+
+        // UnexpectedEnd variant с 2 int полями.
+        assert_eq!(entry.variants.len(), 1);
+        let v = &entry.variants[0];
+        assert_eq!(v.variant_name, "UnexpectedEnd");
+        assert_eq!(v.field_c_types,
+            vec!["nova_int".to_string(), "nova_int".to_string()]);
+
+        // find_variant_v2 для UnexpectedEnd должен резолвиться в ReadBufferError.
+        let (sum, _, src) = reg.find_variant_v2("UnexpectedEnd")
+            .expect("UnexpectedEnd должен резолвиться");
+        assert_eq!(sum, "ReadBufferError");
+        assert_eq!(src, SchemaSource::DeclaredFromPrelude);
     }
 
     /// Plan 62.A follow-up: non-Option/Result method declaration — ignored
