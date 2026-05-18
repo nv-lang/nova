@@ -2197,13 +2197,17 @@ impl NameResCtx {
             //     auto-derived cond_text (msg arg silently ignored).
             // См. docs/plans/62-prelude-hardcode-migration.md §62.B.
             //
-            // **NOT migrated (DEFER Plan 62.B.bis):**
-            // `print` / `println` остаются hardcoded — variadic +
-            // type-polymorphic dispatch (emit_println + make_print_call +
-            // infer_print_helper, emit_c.rs ~13638-13751) не выражается
-            // single-arg `external fn print(s str)` декларацией. См.
-            // std/prelude/runtime.nv DEFER comment + plan doc §62.B.
-            "print", "println",
+            // Plan 62.B.bis (2026-05-18) closure: `print` / `println`
+            // больше не hardcoded — formally declared в
+            // std/prelude/runtime.nv через D69 variadic + `[]any`
+            // (canonical D26 signature). Cross-file resolve через R27
+            // auto-import + R26 facade re-export находит declarations.
+            // Codegen special-case (emit_c.rs:11270, Ф.1 reorder) fires
+            // ДО variadic routing — preserves per-arg type info,
+            // synthesized `[]any` array никогда не строится; per-arg
+            // `nova_print_<type>` dispatch через infer_print_helper
+            // (Ф.0 Plan 67 absorption — unified через infer_expr_c_type).
+            // См. docs/plans/62.B.bis-print-println-migration.md.
             // Plan 32: GC introspection namespace (std.runtime.gc).
             // РСЃРїРѕР»СЊР·СѓРµС‚СЃСЏ РєР°Рє `gc.heap_size()`, `gc.collect()` Рё С‚.Рґ.
             // Source of truth РґР»СЏ signatures: std/runtime/gc.nv (external fn).
