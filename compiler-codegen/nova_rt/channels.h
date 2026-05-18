@@ -1162,4 +1162,48 @@ static inline Nova_ChanReader* Nova_Time_after(nova_int ms) {
     return pair.rx;
 }
 
+/* ── Plan 65: ChanReader.close_after(Duration) — D94 revision ───── */
+/*
+ * Plan 65 Ф.2 (2026-05-18): replaces Time.after(ms) — provides type-safe
+ * Duration argument + ns-precision semantics. Same internal libuv timer
+ * implementation as Nova_Time_after but with explicit corner-case handling:
+ *
+ *   - nanos < 0   → panic (R4)
+ *   - nanos == 0  → fast-path: return an already-closed reader, no timer
+ *                   allocation (R5)
+ *   - 0 < nanos < 1_000_000  (sub-ms) → round up to 1ms (R6; libuv
+ *                   granularity = ms)
+ *   - nanos >= 1_000_000 → round up to nearest ms (R6 — never round down
+ *                   to a shorter wait than user requested)
+ *
+ * Honest defer (Plan 65 Ф.0 audit): AD7 finalizer-on-GC-drop is not wired
+ * in this revision. NovaAfterState ownership is identical to Nova_Time_after
+ * (raw malloc, freed by libuv close callback). True GC-driven cleanup
+ * requires project-wide Boehm GC_REGISTER_FINALIZER which is not yet in
+ * place — tracked as [M-chanreader-gc-finalizer] in docs/simplifications.md.
+ */
+static inline Nova_ChanReader* nova_chan_reader_close_after_ns(int64_t nanos) {
+    if (nanos < 0) {
+        fprintf(stderr,
+            "nova: ChanReader.close_after: negative duration %lld ns\n",
+            (long long)nanos);
+        abort();
+    }
+    if (nanos == 0) {
+        /* R5 fast-path: produce an already-closed reader without allocating
+         * any libuv timer. Channel.cap=1, then close the writer end —
+         * subsequent recv() on the reader returns None idempotently. */
+        Nova_ChannelPair pair = nova_channel_new(1);
+        nova_chan_writer_close(pair.tx);
+        return pair.rx;
+    }
+    /* Round up to ms (libuv granularity) — never round down so we never
+     * fire earlier than the caller requested. */
+    int64_t ms = (nanos + 999999) / 1000000;
+    /* uv_timer_start uses uint64_t ms; clamp to avoid wrap. Anything
+     * larger than i64-max ms is multi-billion-year and pathological. */
+    if (ms < 1) ms = 1;
+    return Nova_Time_after((nova_int)ms);
+}
+
 #endif /* NOVA_RT_CHANNELS_H */

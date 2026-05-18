@@ -9389,3 +9389,87 @@ Verification (release nova binary, Windows):
 
 Plan 57 — **completely closed across all 8 phases** (MVP/A/B/C/D/E/F/
 G/H). ~3700 LOC implementation cumulative.
+
+
+## Plan 65 — `ChanReader.close_after(Duration)` (2026-05-18, in progress)
+
+### [M-time-after-bare-int] (RESOLVED via Plan 65 Ф.5)
+- **Где:** `compiler-codegen/src/codegen/emit_c.rs:1043-1046` (Time effect schema)
+- **Что упрощено:** `Time.after(int ms)` принимал bare int — нет типовой
+  безопасности между mc/ms/s.
+- **Почему:** Bootstrap-stage Nova не имел Duration record. Plan 45 Ф.34.3
+  добавил `Duration` тип; Plan 65 уже переиспользует.
+- **Резолвится:** Plan 65 Ф.5 (atomic switch — Time.after удаляется,
+  ChanReader.close_after(Duration) заменяет).
+- **Приоритет:** H — закрывается в текущем Plan 65 цикле.
+
+### [M-chanreader-gc-finalizer] (DEFERRED — Plan 65 Ф.0 audit)
+- **Где:** `compiler-codegen/nova_rt/channels.h` `NovaAfterState` lifecycle.
+- **Что упрощено:** AD7 в Plan 65 описывал `GC_REGISTER_FINALIZER` для
+  `Nova_ChanReader` — при collect timer закрывается. Не реализовано —
+  Boehm finalizer infra не wired in runtime (`alloc_boehm.c:17,113`).
+- **Почему:** Project-wide Boehm finalizer регистрация требует отдельной
+  audit + Plan 27 follow-up. Текущий runtime использует malloc/libuv-driven
+  cleanup для NovaAfterState (`raw malloc, NOT nova_alloc` — channels.h:1071-1084),
+  что adequately handles select-cancel + timer-fire paths.
+- **Как чинить:** future plan (Plan 65 не блокируется). Wire
+  `GC_REGISTER_FINALIZER` end-to-end; добавить finalizer для
+  `Nova_ChanReader` с pending timer; ensure idempotency.
+- **Impact:** f9_drop_no_leak test acceptance shifts to scope-exit
+  cleanup (timer-fire OR `on_select_lost`) instead of "force GC → 0
+  in-flight".
+- **Приоритет:** M — does not block Plan 65 MVP; affects only the
+  pathological case of leaking references to ChanReader timers без
+  explicit cancel (currently rare; libuv closes timer when handle GC'd
+  via close cb, not via Boehm finalizer).
+
+### [M-libuv-ms-granularity] (DEFER — honest doc-note in Plan 65 Ф.2)
+- **Где:** `nova_chan_reader_close_after_ns` — runtime conversion ns→ms.
+- **Что упрощено:** Sub-ms durations округляются вверх к 1 ms (libuv
+  `uv_timer_start` принимает только ms granularity).
+- **Почему:** libuv API limitation. Альтернатива (self-host timer wheel
+  с ns precision) — Plan 66 scope.
+- **Как чинить:** Plan 66 — custom timer-wheel runtime с ns-precision.
+- **Impact:** users specifying `Duration.from_nanos(500_000)` (500 μs)
+  получают actual delay ≥ 1 ms.
+- **Приоритет:** L — documented behaviour; рарely matters в production
+  (sub-ms timers usually not actionable in user code).
+
+### [M-timer-wheel-deferred] (DEFER — Plan 66 roadmap)
+- **Где:** entire timer subsystem — `nova_chan_reader_close_after_ns` +
+  `Nova_Time_after`.
+- **Что упрощено:** Каждый timer = новый `uv_timer_t` handle (libuv
+  per-timer alloc). На high-throughput timer loads (10k+ concurrent
+  HTTP timeouts) — significant overhead vs Tokio's TimerEntry wheel или
+  Go runtime/timer heap.
+- **Почему:** Self-host timer-wheel — separate plan (Plan 66) с runtime
+  benchmark gates. libuv per-timer adequate для idiomatic 10-100 timer
+  loads.
+- **Как чинить:** Plan 66 — custom timer-wheel (Tokio-style hierarchical
+  bucketing) с conditional switch based on concurrent timer count.
+- **Приоритет:** L — performance optimization, not correctness.
+
+### [M-handler-duration-schema-mismatch] (PARTIAL FIX — Plan 65 Ф.1)
+- **Где:** `compiler-codegen/src/codegen/emit_c.rs::emit_handler_lit`
+  + `std/testing/handlers.nv::mut_clock`.
+- **Что упрощено:** Time effect schema declares `sleep(int ms)`, but
+  user-defined mock handlers (e.g. `mut_clock`) want to receive `Duration`
+  for ergonomic `d.nanos` access. Pre-Plan-65 такая handler-body генерила
+  invalid C (`(nova_int).nanos`) при cross-module import, surfaced first
+  под Plan 65 потому что migrated tests import `std.time.duration`.
+- **Partial fix in Plan 65 Ф.1:** added annotation-bridge in
+  `emit_handler_lit` — when handler param has explicit non-schema record
+  type annotation, function signature stays schema-typed (wire ABI) and
+  body re-binds via `(Nova_T*)(intptr_t)<param>_wire` cast. Limited to
+  non-Fail effects + `nova_int` wire types (struct wire types can't
+  intptr_t-cast). Required updating `std/testing/handlers.nv::mut_clock`
+  to add explicit `sleep(d Duration)` annotation.
+- **Почему partial:** не решает asymmetric ABI fundamentally — call site
+  pours Duration into int slot via intptr_t pun. Works because ChanReader/
+  Duration are pointer types on Windows/Linux x64, но фактически рискованно
+  под потенциальными big-endian / 32-bit / non-pointer-wire arches.
+- **Как чинить:** broaden Time effect schema to accept Duration AND int
+  (overload — Plan 11 multi-overload mechanism), OR introduce per-effect
+  per-method param-type override registry. Outside Plan 65 scope.
+- **Приоритет:** M — works on supported platforms (Windows/Linux x64);
+  needs proper schema-level fix before adding non-x64 targets.
