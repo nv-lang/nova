@@ -426,6 +426,17 @@ pub struct CEmitter {
     /// so test runner can route them to captured_stderr rather than leaking
     /// to the terminal.
     warnings: std::cell::RefCell<Vec<String>>,
+    /// Plan 70 Ф.B0: accumulated strict-mode E7001 errors from cascade-blocked
+    /// sites that detected `nova_int` silent fallback. Populated by
+    /// `record_strict_error`. Checked at `emit_module` finalization — non-empty
+    /// → `Err(aggregated)` returned, codegen pass fails, no `.c` written.
+    ///
+    /// Используется вместо `?` propagation в местах где function signature
+    /// нельзя menять без massive caller-chain refactor (infer_expr_c_type
+    /// returns `String`, register_mono_instance returns `()`, etc.). Effect
+    /// equivalent: build fails with detailed diagnostic; user sees all E7001s
+    /// в одном compile pass (better UX чем fail-fast).
+    strict_errors: std::cell::RefCell<Vec<String>>,
     /// Plan 20 Ф.4: stack of active defer/errdefer scopes during emission.
     /// Each block that contains a `defer`/`errdefer` stmt pushes a `DeferScope`
     /// on entry and pops on exit. `Stmt::Return`/`Break`/`Continue` walk the
@@ -678,6 +689,7 @@ impl CEmitter {
             defer_block_counter: 0,
             var_boxed: HashMap::new(),
             warnings: std::cell::RefCell::new(Vec::new()),
+            strict_errors: std::cell::RefCell::new(Vec::new()),
             mono_fn_decls: HashMap::new(),
             mono_method_decls: HashMap::new(),
             self_method_decls: HashMap::new(),
@@ -1968,7 +1980,29 @@ impl CEmitter {
         let per_e_decls = self.render_per_e_fail_decls();
         self.out = self.out.replace("/*__PER_E_FAIL_DECLS__*/", &per_e_decls);
 
-        Ok((self.out, self.warnings.into_inner()))
+        // Plan 70 Ф.B0 (session 2): strict-error finalization gate.
+        // Cascade-blocked sites (infer_expr_c_type, register_mono_instance,
+        // register_mono_method_instance, infer_mono_method_ret_with_args, etc.)
+        // не могут propagate `?` без массивного caller-chain refactor — вместо
+        // этого они push'ат E7001 в `strict_errors`. Здесь aggregate'им и failim
+        // codegen pass если non-empty. Production-grade strict mode: ANY silent
+        // fallback = build failure (default, no opt-out env var).
+        let strict_errors = self.strict_errors.into_inner();
+        let warnings = self.warnings.into_inner();
+        if !strict_errors.is_empty() {
+            // Deduplicate (один site может быть hit multiple раз на разных
+            // generic instantiations — diagnostic message identical).
+            let mut seen = std::collections::HashSet::new();
+            let unique: Vec<String> = strict_errors.into_iter()
+                .filter(|m| seen.insert(m.clone()))
+                .collect();
+            let count = unique.len();
+            return Err(format!(
+                "Plan 70 strict type propagation — {} unique silent fallback site(s) detected:\n\n{}",
+                count, unique.join("\n\n")
+            ));
+        }
+        Ok((self.out, warnings))
     }
 
     /// Mangle a test name and append a numeric suffix to guarantee uniqueness.
@@ -2535,25 +2569,31 @@ impl CEmitter {
         )
     }
 
-    /// Plan 70 Ф.1.5: deferred-warning helper для cascade-blocked sites
-    /// (functions whose signature can't be changed без массивного refactor:
-    /// register_mono_instance/register_mono_method_instance — no return type;
-    /// infer_expr_c_type — returns String; infer_mono_method_ret_with_args —
-    /// returns Option<String>).
+    /// Plan 70 Ф.B0 (session 2): strict-error helper для cascade-blocked sites
+    /// (functions whose signature can't be changed без массивного caller-chain
+    /// refactor — `infer_expr_c_type` (135 callers), `register_mono_instance`,
+    /// `register_mono_method_instance`, `infer_mono_method_ret_with_args` etc).
     ///
-    /// Records [W7001] warning через existing `warnings` field, returns
-    /// "nova_int" placeholder. Compiler output собирает все warnings и
-    /// emit'ит их в stderr; pipeline check может escalate'ать к error
-    /// если NOVA_STRICT_TYPES env var set (deferred — Plan 70 session 2).
+    /// Pushes `[E7001]` error в `strict_errors` field, returns `"nova_int"`
+    /// placeholder. Codegen pass продолжает чтобы собрать **все** strict
+    /// errors в одном run (better UX чем fail-fast); `emit_module` finalization
+    /// проверяет `strict_errors.is_empty()` и возвращает aggregated `Err`
+    /// если non-empty — `.c` файл не пишется, build fails.
     ///
-    /// Цель: визуально-loud signal что silent fallback произошёл, без
-    /// breaking signature changes. Production-grade compromise: warning >
-    /// silent, но < hard error (последний требует cascade refactor).
-    fn warn_silent_int_fallback(&self, context: &str, cause: &str) -> String {
-        self.warnings.borrow_mut().push(format!(
-            "[W7001] silent fallback к nova_int для {}: {}. \
-             Set NOVA_STRICT_TYPES=1 чтобы escalate (deferred — Plan 70 session 2). \
-             Возможна wrong codegen output для non-int types.",
+    /// Semantic effect: equivalent к `?` propagation up the call chain, без
+    /// signature changes. Production-grade strict mode: ANY silent fallback =
+    /// build failure (default, no opt-out env var).
+    ///
+    /// Replaces session 1's `warn_silent_int_fallback` (W7001 deferred-warning) —
+    /// все её callers мигрированы на этот helper в PhaseB1.
+    fn record_strict_error(&self, context: &str, cause: &str) -> String {
+        self.strict_errors.borrow_mut().push(format!(
+            "[E7001] cannot infer C type for {}: {}. \
+             Silent fallback к `nova_int` would produce wrong runtime output \
+             для non-int types (record/string/float/bool). Add explicit \
+             type annotation, ensure generic is monomorphized, или \
+             register type в external_registry. \
+             См. Plan 70 ([M-no-silent-nova-int-fallback]).",
             context, cause
         ));
         "nova_int".to_string()
@@ -7069,12 +7109,13 @@ impl CEmitter {
             &mut self.current_type_subst,
             type_subst.iter().cloned().collect(),
         );
-        // Plan 70 PhaseA4 cascade-blocked (register_mono_instance — no return,
-        // signature cascade massive): use warn_silent_int_fallback (W7001) для
-        // deferred-warning instead of strict error. См. warn_silent_int_fallback doc.
+        // Plan 70 PhaseB1 (session 2): cascade-blocked site (register_mono_instance —
+        // no return type, caller chain change requires массивный refactor).
+        // Strict mode: record E7001 в strict_errors; emit_module finalization
+        // fails build если non-empty. См. record_strict_error doc.
         let param_c_tys: Vec<String> = fn_decl.params.iter()
             .map(|p| self.type_ref_to_c(&p.ty).unwrap_or_else(|e|
-                self.warn_silent_int_fallback(
+                self.record_strict_error(
                     &format!("register_mono_instance `{}` param `{}`", fn_decl.name, p.name),
                     &e,
                 )))
@@ -7142,10 +7183,11 @@ impl CEmitter {
         );
         let prev_recv_for_ret = self.current_receiver_type.replace(recv_type.to_string());
         let recv_c = self.receiver_c_type(recv_type);
-        // Plan 70 PhaseA4 cascade-blocked (register_mono_method_instance — no return).
+        // Plan 70 PhaseB1 (session 2): cascade-blocked site (register_mono_method_instance —
+        // no return type). Strict mode: record E7001 в strict_errors.
         let param_c_tys: Vec<String> = fn_decl.params.iter()
             .map(|p| self.type_ref_to_c(&p.ty).unwrap_or_else(|e|
-                self.warn_silent_int_fallback(
+                self.record_strict_error(
                     &format!("register_mono_method_instance `{}.{}` param `{}`", recv_type, fn_decl.name, p.name),
                     &e,
                 )))
@@ -17566,7 +17608,7 @@ impl CEmitter {
                 // Plan 70 PhaseA4 cascade-blocked (infer_mono_method_ret_with_args — Option return).
                 let inner_ptys: Vec<String> = fp.iter()
                     .map(|t| self.type_ref_to_c(t).unwrap_or_else(|e|
-                        self.warn_silent_int_fallback(
+                        self.record_strict_error(
                             "infer_mono_method_ret_with_args fn-param resolve",
                             &e,
                         )))
@@ -19350,9 +19392,10 @@ impl CEmitter {
                 // D54: тип `expr as T` — это T, не type-of(expr).
                 // Без этого `let b = a as byte` infer'ил бы тип b как nova_int
                 // (тип a) вместо nova_byte. План 05.
-                // Plan 70 PhaseA4 cascade-blocked (infer_expr_c_type returns String).
+                // Plan 70 PhaseB1 (session 2): cascade-blocked (infer_expr_c_type returns String).
+                // Strict mode: E7001 в strict_errors → build fails at emit_module finalization.
                 self.type_ref_to_c(ty).unwrap_or_else(|e|
-                    self.warn_silent_int_fallback(
+                    self.record_strict_error(
                         "infer_expr_c_type `as T` annotation",
                         &e,
                     ))
