@@ -173,6 +173,26 @@ fn simplify_app(op: &str, args: &[SmtTerm]) -> SmtTerm {
                 && matches!(&a2[0], SmtTerm::IntLit(0)) => {
                 a2[1].clone()
             }
+            // Ф.41.1 (Plan 33.6): algebraic identities through addition.
+            // `(- (+ a b) b)` → a   и   `(- (+ a b) a)` → b
+            (SmtTerm::App(op2, a2), b)
+                if op2 == "+" && a2.len() == 2 => {
+                if &a2[0] == b { return a2[1].clone(); }
+                if &a2[1] == b { return a2[0].clone(); }
+                SmtTerm::App(op.into(), args.to_vec())
+            }
+            // `(- a (+ a b))` → -b   и   `(- a (+ b a))` → -b
+            // (через 0 - b — сохраняем как Sub чтобы reuse существующий simplify).
+            (a, SmtTerm::App(op2, a2))
+                if op2 == "+" && a2.len() == 2 => {
+                if &a2[0] == a {
+                    return simplify_app("-", &[SmtTerm::IntLit(0), a2[1].clone()]);
+                }
+                if &a2[1] == a {
+                    return simplify_app("-", &[SmtTerm::IntLit(0), a2[0].clone()]);
+                }
+                SmtTerm::App(op.into(), args.to_vec())
+            }
             _ => SmtTerm::App(op.into(), args.to_vec()),
         },
         "*" if args.len() == 2 => match (&args[0], &args[1]) {
@@ -1215,5 +1235,25 @@ mod tests {
         let inner = SmtTerm::App("or".into(), vec![f.clone(), t]);
         let outer = SmtTerm::App("or".into(), vec![f, inner]);
         assert_eq!(simplify(&outer), SmtTerm::BoolLit(true));
+    }
+
+    #[test]
+    fn simplify_subtraction_cancels_addition() {
+        // Ф.41.1: (a + b) - b → a.
+        let a = SmtTerm::Var("a".into());
+        let b = SmtTerm::Var("b".into());
+        let add = SmtTerm::App("+".into(), vec![a.clone(), b.clone()]);
+        let sub = SmtTerm::App("-".into(), vec![add, b]);
+        assert_eq!(simplify(&sub), a);
+    }
+
+    #[test]
+    fn simplify_subtraction_cancels_first_arg() {
+        // Ф.41.1: (a + b) - a → b.
+        let a = SmtTerm::Var("a".into());
+        let b = SmtTerm::Var("b".into());
+        let add = SmtTerm::App("+".into(), vec![a.clone(), b.clone()]);
+        let sub = SmtTerm::App("-".into(), vec![add, a]);
+        assert_eq!(simplify(&sub), b);
     }
 }
