@@ -1,0 +1,14 @@
+// EXPECT_COMPILE_ERROR E2411
+//
+// Plan 33.9 Ф.6.1: `reveal X` где X не существует → E2411.
+
+module contracts.f58_reveal_undef_fail
+
+#verify
+fn caller(n int) -> int
+    requires n >= 0
+    ensures result >= 0
+{
+    reveal nonexistent_fn_xyz
+    n
+}

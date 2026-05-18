@@ -1,0 +1,19 @@
+// EXPECT_COMPILE_WARNING W2402
+//
+// Plan 33.9 Ф.6.3: duplicate `reveal X; reveal X;` → W2402.
+
+module contracts.f58_dup_reveal_w2402
+
+#opaque #pure
+fn helper(x int) -> int
+=> x + 1
+
+#verify
+fn caller(n int) -> int
+    requires n >= 0
+    ensures result >= 0
+{
+    reveal helper
+    reveal helper   // дубликат
+    n
+}
