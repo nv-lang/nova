@@ -15,7 +15,8 @@ structured-concurrency примитивы есть в языке, и как па
 | [D80](#d80-handler-scoping-per-fiber) | Handler scoping per-fiber — `with X = handler` локален для fiber'а, наследуется через spawn |
 | [D80](#d80-handler-scoping-per-fiber) | Handler scoping per-fiber — `with X = h` биндинги изолированы между fibers |
 | [D91](#d91-channel-revision--capability-split-на-chanwriter--chanreader) | `Channel` revision: capability-split на `ChanWriter[T]` / `ChanReader[T]`; `send`→`bool`; `tx.clone()` multi-writer ✅ |
-| [D94](#d94-select--multiplexed-channel-operations) | `select { ... }` — финальный синтаксис: `Some(v) = rx =>`, `Time.after(ms)` для timeout ✅ реализован (Plan 31 ✅; Plan 44.1 Ф.3 hardening) |
+| [D94](#d94-select--multiplexed-channel-operations) | `select { ... }` — финальный синтаксис: `Some(v) = rx =>`, `ChanReader.close_after(Duration)` для timeout ✅ реализован (Plan 31 ✅; Plan 44.1 Ф.3 hardening; Plan 65 — Duration-typed API revision) |
+| [D124](#d124-monotonic-vs-timestamp--раздельные-типы-для-wall-clock-и-монотонных-часов) | Monotonic vs Timestamp — раздельные типы для wall-clock и монотонных часов |
 
 ---
 
@@ -89,8 +90,9 @@ race {
     fetch(url_b),
 }
 
-// select — ожидание любого из событий (финальный синтаксис — D94)
-let t = Time.after(5.0)
+// select — ожидание любого из событий (финальный синтаксис — D94,
+// Plan 65 revision: ChanReader.close_after заменил Time.after(ms))
+let t = ChanReader.close_after(Duration.from_secs_f64(5.0))
 select {
     Some(msg) = channel_a.recv() => { process(msg) }
     Some(msg) = channel_b.recv() => { process(msg) }
@@ -1120,7 +1122,8 @@ keyword-исключение в [D43](03-syntax.md#d43)). `cancel:` — обыч
 ### `race` / `with_timeout` — stdlib, не keyword'ы
 
 `race` и `with_timeout` — **обычные функции стандартной библиотеки**,
-построенные на `supervised(cancel:)` + `spawn` + `Channel` + `Time.after`,
+построенные на `supervised(cancel:)` + `spawn` + `Channel` +
+`ChanReader.close_after(Duration)` (Plan 65 revision),
 вызываются через trailing-форму [D43](03-syntax.md#d43):
 
 ```nova
@@ -1314,8 +1317,8 @@ fn process(ch Channel[Request]) Db -> () {
 > Финальный синтаксис — см. [D94](#d94-select--multiplexed-channel-operations).
 
 ```nova
-// D94 финальный синтаксис:
-let timeout = Time.after(5.0)
+// D94 финальный синтаксис (Plan 65 revision):
+let timeout = ChanReader.close_after(Duration.from_secs_f64(5.0))
 select {
     Some(msg) = rx_a.recv() => { process_a(msg) }
     Some(msg) = rx_b.recv() => { process_b(msg) }
@@ -1335,8 +1338,8 @@ select {
    считается ready. Матчится `None`-паттерном.
 5. **Без default** и все каналы закрыты — panic "select: all channels closed".
 
-Timeout — через `Time.after(d)` возвращающий `ChanReader[()]` (обычный
-recv arm, никакого специального синтаксиса).
+Timeout — через `ChanReader.close_after(Duration)` возвращающий
+`ChanReader[()]` (обычный recv arm, никакого специального синтаксиса).
 
 #### Канонические patterns
 
@@ -2614,9 +2617,9 @@ throw'ы в D50 fire-and-forget — должны быть logged, не abort. П
 > **Реализовано в полной форме (Plan 31 Ф.6, Plan 44.1 Ф.2/Ф.3):**
 > - Panic «select: all channels closed» при all-closed без default — ✅
 >   (Plan 31 Ф.6; работает и в main-thread context'е через pre-check).
-> - `Time.after(ms)` timer cleanup при non-winning arm — ✅
+> - `ChanReader.close_after(Duration)` timer cleanup при non-winning arm — ✅
 >   (Plan 44.1 Ф.2 B7: `on_select_lost` callback + idempotent `cancelled`
->   flag на `NovaAfterState`).
+>   flag на `NovaAfterState`; reused by Plan 65 close_after API).
 > - `Channel.new(0)` — explicit panic «capacity must be >= 1` **перед**
 >   allocate'ом (Plan 44.1 Ф.3 B9, без leak'а на throw).
 > - **Adaptive per-call storage без cap'а на arm count** (Plan 44.1
@@ -2698,20 +2701,26 @@ arm-body     = block | stmt
 Синтаксис `pattern = rx.recv()` согласуется с `while let Some(v) = rx.recv()`
 (уже в языке). Оператор `<-` не вводится (отвергнут).
 
-### Timeout через `Time.after(d)`
+### Timeout через `ChanReader.close_after(Duration)`
 
 Специального `timeout` arm'а нет — timeout через обычный recv arm:
 
 ```nova
-let t = Time.after(1.0)     // ChanReader[()] закрывается через 1 сек
+let t = ChanReader.close_after(Duration.from_secs(1))     // ChanReader[()] закрывается через 1 сек
 select {
     Some(v) = rx.recv()  => { process(v) }
     None    = t.recv()   => { log_idle() }    // timeout сработал
 }
 ```
 
-`Time.after(d) -> ChanReader[()]` — функция в stdlib/eventloop.
-Select не знает про "timeout" специально.
+`ChanReader.close_after(d Duration) -> ChanReader[()]` —
+capability-split static constructor в stdlib/concurrency.
+Select не знает про "timeout" специально. **Plan 65 revision**:
+ранее API назывался `Time.after(int ms)` (bare int, без type
+safety); переименован и переведён на `Duration` для D91 capability
+namespace + строгой type safety. Migration tool
+`cargo run --bin migrate_plan65 -- --apply` автоматически переводит
+literal arguments.
 
 ### Правило
 
@@ -2744,9 +2753,11 @@ Go не поддерживает guards в select.
 
 1. **Ключевой primitive для fan-in.** Без select нельзя элегантно объединить
    несколько producers в одном consumer'е.
-2. **`Time.after(d)` вместо `timeout(expr)`** — timeout как обычный channel
-   (Go-style `time.After`). Нет специального синтаксиса, нет special-casing
-   в runtime.
+2. **`ChanReader.close_after(Duration)` вместо `timeout(expr)`** — timeout
+   как обычный channel (Go-style `time.After`, но с type-safe Duration вместо
+   bare int). Нет специального синтаксиса, нет special-casing в runtime.
+   **Plan 65 revision:** ранее `Time.after(int ms)` — bare int был отвергнут
+   как unsafe, переименован в D91 capability namespace.
 3. **`=` вместо `<-`** — согласованность с `while let Some(v) = rx.recv()`.
    Один оператор recv по всему языку.
 4. **Fisher-Yates shuffle** — fairness (Go использует то же). Нет starvation
@@ -2757,7 +2768,9 @@ Go не поддерживает guards в select.
 - **`<-` оператор в select** — нарушает consistency; отдельный оператор
   только для select (было в D79, удалено).
 - **`timeout(expr) =>` arm** — special-casing в грамматике и runtime
-  ради того, что решается обычным `Time.after(d)` channel'ом.
+  ради того, что решается обычным `ChanReader.close_after(Duration)`
+  channel'ом (см. Эволюция: bare `Time.after(int)` исторический artefact,
+  заменён в Plan 65).
 - **Biased mode** — детерминированный выбор arm'а (Tokio `biased`).
   Достигается через `--jobs 1` + фиксированный seed в тестах.
 - **Вложенный select запрещён** — излишнее ограничение; снято.
@@ -2769,11 +2782,42 @@ Go не поддерживает guards в select.
 - ✅ Parser + codegen: Plan 31 Ф.3
 - ✅ Arm guards: Plan 31 Ф.4
 - ✅ `Time.after(d)` + тесты: Plan 31 Ф.5
+   - **Plan 65 (2026-05-18) revision:** `Time.after(int ms)` removed,
+     replaced by `ChanReader.close_after(Duration)`. See "Эволюция API"
+     subsection below.
 - ✅ All-closed panic: Plan 31 Ф.6 (с pre-check для main-thread)
-- ✅ Hardening: Plan 44.1 Ф.2 (Time.after cleanup) + Ф.3 (select cap=32 +
+- ✅ Hardening: Plan 44.1 Ф.2 (timer cleanup, formerly Time.after, now
+  `ChanReader.close_after` after Plan 65) + Ф.3 (select cap=32 +
   compile-error overflow + Channel.new check ordering)
 - 🟡 M:N safety: Plan 44.1 Ф.1 (atomics + selectdone CAS + doubly-linked +
   per-call storage) — отложено вместе с Plan 44 M:N runtime
+
+### Эволюция API — timeout channel constructor (Plan 65, 2026-05-18)
+
+`Time.after(int ms) -> ChanReader[()]` (D94 v1, Plan 31 Ф.5)
+переименован в **`ChanReader.close_after(d Duration) -> ChanReader[()]`**
+(D94 v2, Plan 65). Три ортогональных дефекта закрыты:
+
+1. **Domain mismatch:** функция возвращает read-capability ChanReader,
+   но жила в `Time` namespace — discoverability проседала. Capability
+   namespace по D91 — `ChanReader.<constructor>`.
+2. **Type safety:** bare int `(1000)` неоднозначно (мс/мкс/сек). Duration
+   делает unit explicit: `Duration.from_secs(1)`.
+3. **Capability mismatch D91:** получение reader через `Time.X` неявно
+   подразумевало что Time владеет также writer — на самом деле runtime.
+
+**Семантика runtime неизменна** — внутренне всё ещё `Nova_Time_after`
+(libuv timer) + `on_select_lost` cleanup. Атомарный break без
+deprecated alias (Plan 60 atomic-migration convention): legacy
+вызов ловится диагностикой E5101 с machine-applicable fix-it
+suggestion. Migration tool `migrate_plan65` автоматически переводит
+literal arguments (int → from_millis, float → from_secs_f64).
+
+Дополнительные production-grade capabilities — cancel via D75
+CancelToken, mockable virtual time via `Time` effect, absolute
+deadline `close_at(Instant)`, observability counters — добавляются
+в Plan 65 Ф.10-Ф.14 (hardening), либо отложены в Plan 66
+(periodic ticker + custom timer-wheel optimisation).
 
 
 ## D97. Fiber stack allocation — per-thread mmap arena (Linux/macOS)
@@ -3110,4 +3154,178 @@ codegen-backedge'а (нишевой кейс).
 - `compiler-codegen/src/codegen/emit_c.rs` — safepoint emit в `emit_fn` +
   `emit_loop_body_inline`.
 - `nova_tests/concurrency/mn_runtime_preemption.nv` — 2 positive + 2 negative.
+
+---
+
+## D124. Monotonic vs Timestamp — раздельные типы для wall-clock и монотонных часов
+
+> **Введён:** 2026-05-18 (Plan 65 Ф.12 driver). **Статус:** принят;
+> реализация в Plan 65 Ф.12.1-Ф.12.6. **Уточняет** существующий
+> `Timestamp` (`std/time/duration.nv`) и `Time` effect (`emit_c.rs:1037-1046`).
+
+### Что
+
+Nova вводит **два различных типа** для представления «момента во времени»,
+разделяя их по источнику clock'а:
+
+```nova
+type Timestamp { readonly nanos i64 }    // wall-clock (Unix epoch nanos)
+type Monotonic { readonly nanos i64 }    // monotonic (process-local epoch)
+```
+
+Соответственно, `Time` effect имеет **два** метода:
+
+```nova
+Time.now()           -> Timestamp       // wall-clock: для логов, дат, сериализации
+Time.now_monotonic() -> Monotonic       // monotonic: для timers, deadlines, profiling
+```
+
+Эти типы **не interconvertible** — компилятор отвергает `let t Monotonic = Time.now()`
+(тип Timestamp), и наоборот. Сериализация `Monotonic` запрещена
+(нет epoch, бессмысленно вне процесса).
+
+### Правило
+
+1. **`Timestamp`** — для **семантического времени**: логи, файлы,
+   протоколы, БД, человеко-читаемые даты. Источник: `clock_gettime(CLOCK_REALTIME)`
+   / `GetSystemTimeAsFileTime`. **Прыгает** при NTP-синхронизации, DST,
+   manual time set. Сериализуется в Unix-epoch nanos.
+
+2. **`Monotonic`** — для **измерения промежутков и дедлайнов**: таймеры,
+   timeouts, retry, profiling. Источник: `clock_gettime(CLOCK_MONOTONIC)`
+   / `QueryPerformanceCounter`. **Никогда не идёт назад**. Бессмысленно
+   сериализовать (`Monotonic` одного процесса нерасшифровываема в
+   другом). Сравнение `Monotonic` между процессами — compile-error.
+
+3. **Арифметика:**
+   - `Timestamp - Timestamp -> Duration` (wall-clock interval, может быть
+     отрицательным при NTP backwards)
+   - `Monotonic - Monotonic -> Duration` (monotonic interval, всегда ≥ 0
+     если оба из same process)
+   - `Timestamp + Duration -> Timestamp`
+   - `Monotonic + Duration -> Monotonic`
+   - `Timestamp - Monotonic` — **compile-error** «cannot subtract
+     incompatible clock types»
+   - `Monotonic.as_unix_secs()` — **compile-error** «Monotonic не
+     представимы в Unix epoch»
+
+4. **API контракты:**
+   - `ChanReader.close_after(Duration)` — без изменений (длительность
+     clock-agnostic).
+   - `ChanReader.close_at(Monotonic)` — **только** Monotonic; иначе
+     NTP может вызвать early/late fire (silent bug).
+   - `Timestamp.from_unix_*` / `Timestamp.as_unix_*` — без изменений.
+   - `Monotonic.now()` (== `Time.now_monotonic()`) — единственный
+     способ construct'нуть; нет `Monotonic.from_nanos` (raw bytes
+     бессмысленны).
+
+5. **`Time` effect для тестов** (Plan 34 Ф.7 mock_clock):
+   - Mock-handler **должен реализовать обоих** `now()` и
+     `now_monotonic()` для consistency. Default mock: `now() == EPOCH +
+     elapsed_virtual`, `now_monotonic() == elapsed_virtual` (от старта
+     mock scope).
+
+### Почему
+
+**Проблема, которая закрывается:** silent bug при использовании
+wall-clock для timing logic. Сценарий:
+
+```nova
+// БАГ под старым API (одна Timestamp на всё):
+let deadline = Time.now() + Duration.from_secs(60)
+// ... 30 сек проходит ...
+// NTP синхронизирует часы НАЗАД на 5 секунд:
+//   Time.now() теперь "moment - 25s" вместо "moment - 30s"
+// Таймер сработает через 35 реальных секунд вместо 30.
+```
+
+**Параллели в индустрии** (все пришли к разделению после bug-bash):
+
+| Язык | Wall-clock | Monotonic | Когда разделили |
+|---|---|---|---|
+| **Rust** | `std::time::SystemTime` | `std::time::Instant` | с самого начала (1.0, 2015) |
+| **Java** | `java.time.Instant` | `System.nanoTime()` (long, не тип) | partial — Java 8, full Type — never |
+| **Go** | `time.Time` | `time.Time` с monotonic component | Go 1.9 (2017) — раньше использовали wall-clock everywhere → silent bugs |
+| **C#** | `DateTime` / `DateTimeOffset` | `Stopwatch.GetTimestamp()` | partial |
+| **Python** | `time.time()` | `time.monotonic()` | PEP 418 (Python 3.3, 2012) — явно разнесли после real-world failures |
+| **JS** | `Date.now()` | `performance.now()` | DOM Performance API |
+
+Все — после реальных production-инцидентов (Go 1.9 release notes:
+«невозможно правильно измерять timeouts во время DST/NTP без monotonic»).
+
+**Type safety > runtime documentation.** Альтернатива — «один Timestamp +
+документация „не используйте для timers"» — ловит баги только при ревью,
+не компилятором. Type-разделение делает ошибку **невыразимой**.
+
+### Что отвергнуто
+
+- **Один `Timestamp` тип с tag-field `kind: ClockKind`** — runtime
+  branch на каждой арифметической операции; теряется compile-time
+  guarantee.
+
+- **Go 1.9-стиль (один `Time` с обоими компонентами)** — `Time` несёт
+  и wall-clock, и monotonic; runtime сам выбирает что использовать.
+  Проще для users, но: два syscall на каждый `now()`; сериализация
+  требует drop'а monotonic component (silent footgun); невозможно
+  type-checker'ом запретить misuse; историческая правка после bug-bash,
+  не оригинальный дизайн.
+
+- **`Instant` имя (Rust convention)** — отвергнут в пользу `Monotonic`
+  потому что «Instant» в Java семантически = wall-clock (`java.time.Instant`),
+  путает Java-разработчиков. «Monotonic» прямо описывает свойство, без
+  культурных ассоциаций. Pair `Timestamp / Monotonic` читается симметрично.
+
+- **`Time.tick()` как low-level i64 monotonic ns** — даёт raw int,
+  теряет type-safety. Reserved как `Monotonic.@as_nanos() -> i64`
+  (escape hatch для FFI / bench).
+
+- **Отдельный `Duration_mono` для monotonic-interval'ов** — overkill;
+  `Duration` уже type-safe (signed, nanos), unit-agnostic. `Mono - Mono`
+  и `Ts - Ts` оба возвращают тот же `Duration`.
+
+### Связь
+
+- **[D75](#d75-supervisedcancel-tok--структурная-отмена-с-внешним-токеном)** —
+  `CancelToken` может иметь deadline (`tok.cancel_at(Monotonic)`) —
+  только monotonic, иначе same NTP-skew bug.
+- **[D94](#d94-select--multiplexed-channel-operations)** — `select` arms
+  с timeout через `ChanReader.close_after(Duration)` (clock-agnostic) или
+  `ChanReader.close_at(Monotonic)`.
+- **[Plan 65](../../docs/plans/65-chanreader-close-after.md)** Ф.12 —
+  driver для D124 (нужен `close_at` для absolute deadline).
+- **[Plan 65 Ф.12.1-Ф.12.6](../../docs/plans/65-chanreader-close-after.md)** —
+  реализация D124: `Monotonic` тип + `Time.now_monotonic()` + `close_at` +
+  runtime `clock_gettime(CLOCK_MONOTONIC)` / `QueryPerformanceCounter` per OS.
+  Driver — нужен для `ChanReader.close_at(Monotonic)`.
+- **[Plan 22](../../docs/plans/22-sleep-libuv-integration.md)** — libuv
+  monotonic timer infra (`uv_hrtime()`) reused for `now_monotonic`.
+
+### Эволюция API
+
+| Что | Сейчас | После Plan 68 (D124 closure) |
+|---|---|---|
+| `Time.now()` (compiler schema) | `() -> nova_int` (raw ms, **противоречит** stdlib usage) | `() -> Timestamp` (record) |
+| `Time.now()` (stdlib calls) | `Timestamp` (`.gt()`, `.minus()`) — **silent mismatch** с schema | aligned с schema |
+| `Time.now_monotonic()` | ❌ нет | `() -> Monotonic` |
+| `Time.sleep(d)` | `(int ms)` (legacy) | `(Duration)` (out-of-scope для Ф.12; отдельная задача) |
+| Deadline в API | `Time.now() + d` (wall-clock baked in) | `Monotonic.now() + d` (no NTP skew) |
+| `ChanReader.close_at(...)` | ❌ нет | `(Monotonic) -> ChanReader[()]` (Ф.12.4) |
+
+**Latent bug под текущим API** (resolved Plan 65 Ф.12.3): `time_schema`
+в `emit_c.rs:1044` declares `Time.now() -> nova_int`, но stdlib
+`std/time/duration.nv:538-714` использует как `Timestamp` record.
+Работает сейчас через handler-bridge (тот же mechanism что Plan 65
+fixed для Duration handler params, `[M-handler-duration-schema-mismatch]`).
+Plan 65 Ф.12.3 aligns schema с реальным usage.
+
+### Файлы (затронуты при реализации Plan 65 Ф.12)
+
+- `std/time/duration.nv` — добавить `type Monotonic { readonly nanos i64 }`
+  + конструкторы только через `Monotonic.now()` / `Monotonic.@as_nanos()`.
+- `compiler-codegen/src/codegen/emit_c.rs:1042-1046` — обновить
+  `time_schema`: `now() -> Timestamp`, добавить `now_monotonic() -> Monotonic`.
+- `compiler-codegen/nova_rt/time.c` (новый) — `nova_time_now_realtime_ns()`
+  + `nova_time_now_monotonic_ns()` per-OS implementations.
+- `nova_tests/plan65/f12_*` — типы не interconvertible (negative tests),
+  NTP-skew resilience (mock Time effect), `close_at(Monotonic)` integration.
 

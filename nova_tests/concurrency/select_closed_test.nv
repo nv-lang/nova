@@ -7,6 +7,8 @@
 
 module concurrency.select_closed_test
 
+import std.time.duration
+
 // ================================================================
 // SECTION 1: Wildcard arm при наличии данных и при закрытом канале
 // ================================================================
@@ -90,7 +92,7 @@ test "select: data wins supervised(cancel:) race" {
             spawn {
                 select {
                     Some(v) = rx              => { branch = v }
-                    Some(_) = Time.after(200) => { branch = -1 }
+                    Some(_) = ChanReader.close_after(Duration.from_millis(200)) => { branch = -1 }
                 }
             }
         }
