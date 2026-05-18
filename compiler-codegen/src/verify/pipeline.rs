@@ -3058,6 +3058,24 @@ let t0 = std::time::Instant::now();
                         fd.name),
                     fd.span));
             }
+            // Ф.42.4 (Plan 33.6): `#verify` fn с только requires (без ensures) —
+            // доказывает только что входы валидны, callerу никакой гарантии не даёт.
+            // Полезно redirecting attention — добавь ensures либо удали `#verify`.
+            if matches!(fd.verify_mode, VerifyMode::MustVerify) && !fd.contracts.is_empty() {
+                let has_ensures = fd.contracts.iter().any(|c|
+                    matches!(c.kind, ContractKind::Ensures | ContractKind::EnsuresFail));
+                let has_requires = fd.contracts.iter().any(|c|
+                    matches!(c.kind, ContractKind::Requires));
+                if has_requires && !has_ensures {
+                    report.warnings.push(Diagnostic::new(
+                        format!("fn `{}` имеет только `requires` без `ensures` [W2402]:\n  \
+                                 verify-fn без ensures не даёт callerу гарантий —\n  \
+                                 только проверяет валидность входов. Добавьте `ensures result <условие>`\n  \
+                                 либо удалите `#verify` (runtime требования проверятся compile-time).",
+                            fd.name),
+                        fd.span));
+                }
+            }
             // Ф.28.1 (Plan 33.6): duplicate `apply lemma(args)` detection.
             let applies = collect_apply_stmts_in_body(&fd.body);
             let mut seen_applies: std::collections::HashMap<String, Vec<Span>> =
