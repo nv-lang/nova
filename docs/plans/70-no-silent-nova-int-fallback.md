@@ -406,9 +406,37 @@ applicable migration suggestions. Document в release notes (когда
 
 ---
 
+## Конкретные known bugs закрываемые Plan 70
+
+### Set.or / Set.and / Set.minus — silent wrong output
+
+`Set.or(other)`, `Set.and(other)`, `Set.minus(other)` возвращают
+generic `Nova_Set*` без mono'd типа. Последующий вызов `.contains(x)`
+на результате диспатчится в `Nova_Set_method_contains` — stub,
+всегда возвращающий `false`. Это Category A silent miscompilation.
+
+**Воспроизведение:** тест `nova_tests/modules/set.nv` — тесты
+`or()`/`and()`/`minus()` удалены из-за этого бага (покрыты в stdlib
+inline-тестах до фикса). После Plan 70 Phase A2/A3 эти методы
+должны работать корректно — тесты вернуть.
+
+**Acceptance:** после Plan 70 написать/вернуть тесты Set.or/and/minus
+в `nova_tests/modules/set.nv` и убедиться что PASS.
+
+---
+
+## Sub-планы
+
+- **[Plan 70.1](70.1-module-alias-resolution.md)** — `import X as th` + `th.func()` не раскрывается в C codegen
+- **[Plan 70.2](70.2-linkedlist-sum-type-mono.md)** — LinkedList sum-type monomorphization broken
+
+---
+
 ## Эволюция плана
 
 - **2026-05-18 created**: после Plan 67 closure user раскрыл systemic
   problem — «всё неизвестное = int, куча багов в истории». Audit показал
   155 fallback sites (120 silent miscompilation Category A). Plan 70 —
   production-grade strict mode, 10-15 dev-days.
+- **2026-05-18**: добавлен concrete known bug Set.or/and/minus (Category A).
+  Sub-планы 70.1 (module alias) и 70.2 (LinkedList mono) зафиксированы.
