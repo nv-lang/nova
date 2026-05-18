@@ -1,0 +1,12 @@
+// Plan 67 Ф.2 f6 — println(char literal) → AD3 nova_print_char.
+// До фикса: nova_print_int('a') → печатает "97", не "a".
+
+module plan67.f6_char_literal
+
+// EXPECT_STDOUT a
+// EXPECT_STDOUT z
+
+fn main() Io -> () {
+    println('a')
+    println('z')
+}
