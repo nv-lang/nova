@@ -1,0 +1,35 @@
+// Ф.45 (Plan 33.6): TrivialBackend division/modulus identities.
+// Ф.45.1: a / -1 → 0 - a (division by -1 = negate)
+// Ф.45.2: 0 / a → 0
+// Ф.45.3: 0 % a → 0
+
+module contracts.f45_division_modulus_zero_positive
+
+#verify
+fn div_by_neg_one(x int) -> int
+    ensures result == (0 - x)
+{
+    x / -1
+}
+
+#verify
+fn zero_div(a int) -> int
+    requires a >= 1
+    ensures result == 0
+{
+    0 / a
+}
+
+#verify
+fn zero_mod(a int) -> int
+    requires a >= 1
+    ensures result == 0
+{
+    0 % a
+}
+
+test "division modulus zero" {
+    assert(div_by_neg_one(5) == -5)
+    assert(zero_div(7) == 0)
+    assert(zero_mod(3) == 0)
+}

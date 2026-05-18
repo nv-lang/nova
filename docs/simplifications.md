@@ -9304,6 +9304,15 @@ negation collapse).
 **Регрессия:** 198 → 199 PASS (+1), 0 FAIL.
 cargo test --lib verify::backend::trivial: 14/14 PASS (+1).
 
+## [M-plan-33.6-Ф.45-division-modulus-zero] (2026-05-18)
+
+Закрыто 3 trivial identities за один спринт:
+- `a / -1` → `0 - a` (паритет Ф.44.1 для multiplication)
+- `0 / a` → 0 (assume a != 0 в spec scope)
+- `0 % a` → 0 (аналогично)
+
+**Регрессия:** 199 → **200 PASS** (юбилейная цифра), 0 FAIL, 44 SKIP.
+
 ## [M-57.F.4-positive-negative-coverage] — Test expansion (2026-05-17)
 
 **Не simplification.** Прямой user feedback "тесты напиши по тому,
