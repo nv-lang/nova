@@ -1,6 +1,11 @@
 # Plan 62: Migrate hardcoded prelude → `std/prelude.nv` (full D26 compliance + splittable + `no_prelude` enforcement)
 
 > **Status:** ✅ **ЗАКРЫТ 2026-05-18** (P0 parts completed; deferred sub-plans listed in §«Итог Plan 62»). Architectural cleanup. Закрывает spec/impl drift между [D26](../../spec/decisions/08-runtime.md#d26) и фактической реализацией. **6 фазных sub-plans (62.A–62.F)** — реалистичная estimate 10-15 dev-days, fact: ~9 dev-days с deferred sub-plans (62.A.bis Ф.4, 62.B.bis, 62.C non-RuntimeNoneError, 62.D opaque types, 62.E TryFrom/TryInto, 62.F.bis edition+shadow-warning).
+>
+> **Update 2026-05-18 (Plan 62.D non-opaque bis-1):** Range / RangeIter
+> миграция через prelude facade closed. 4 latent codegen bugs fixed
+> (match inference + closure scope analysis + D29 W_PRELUDE_SHADOW basic).
+> PRELUDE_VERSION bump 3 → 4. См. §62.D.
 
 ---
 
@@ -428,10 +433,12 @@ non-str + multi-arg callers. Real test files используют все чет�
 
 ### Plan 62.D — Iter[T] + Range + StringBuilder + WriteBuffer + ReadBuffer (2 days)
 
-> **Status update 2026-05-18:** Phase 62.D **partial complete** — только
-> `Iter[T]` protocol перенесён. Range/RangeIter re-export через facade
-> ОТЛОЖЕН (exposes 4 latent codegen bugs); StringBuilder/WriteBuffer/
-> ReadBuffer — нужен `external type` D-block (Plan 62.D.bis).
+> **Status update 2026-05-18:** Phase 62.D **non-opaque complete** —
+> `Iter[T]` protocol перенесён (62.D non-opaque), Range/RangeIter теперь
+> auto-available через prelude facade (62.D non-opaque bis-1, всё ещё
+> declared в std.collections.range — cross-file imports preserved).
+> StringBuilder/WriteBuffer/ReadBuffer — нужен `external type` D-block
+> (Plan 62.D.bis — отдельный sub-plan).
 
 **Что сделано (Plan 62.D non-opaque, commit XXXXX):**
 
@@ -451,56 +458,62 @@ non-str + multi-arg callers. Real test files используют все чет�
   loop, empty Counter, PRELUDE_VERSION sanity.
 - ✅ Regression: 701/0/44 PASS (baseline preserved).
 
-**Что отложено (ОБОСНОВАНИЯ):**
+**Plan 62.D non-opaque bis-1 (commit ВПЕРЁД, 2026-05-18, ЗАКРЫТ):**
 
-- 🚫 **`Range` / `RangeIter` остаются в `std/collections/range.nv`**
-  (canonical location для модуля `std.collections.range`). 8
-  существующих файлов explicitly импортируют их по этому пути:
-    - nova_tests/modules/{export_import_reexport, selective_import,
-      folder_per_file_imports/reader}.nv
-    - nova_tests/negative_capability/selective_import_*_rejected.nv
-    - nova_tests/syntax/step_by_cross_file.nv
-  Перенос сломал бы эти imports.
-- 🚫 **`export import std.collections.range.{Range, RangeIter}` в
-  facade ОТЛОЖЕН.** Попытка добавить эту строку (чтобы Range стал
-  auto-available через prelude) вызывает 4 регрессии (verified
-  2026-05-18):
-    1. `concurrency/cancel_semantics_test` (CC-FAIL):
-       `let r1 = tok.reason() let got = match r1 { Some(r) => r ... }` —
-       `got` получает тип `Nova_Range*` вместо `nova_str`. Root cause —
-       match inference с зарегистрированным `Range` в `record_schemas`
-       триггерит коллизию в `infer_expr_c_type` или
-       `collect_pattern_inner_bindings` (emit_c.rs:14654, 14786). Без
-       prelude re-export Range регистрировался только в файлах с
-       explicit import — bug был masked.
-    2. `syntax/closure_rev` (CC-FAIL): closure capture mis-emit для
-       local `let s = x + y` внутри `fn(x int, y int) -> int { let s
-       = ...; s * 2 }`. Generated C: `*_box_s = s` где `s` не в scope.
-    3. `generics/p48_closure_arg_inference` (CC-FAIL): generic closure
-       arg mono'd version drop'ит local var `x`. Generated C:
-       `_nv_tmp_38->x = x` где `x` не в scope. Похожий closure-related
-       bug.
-    4. `syntax/for_in_range_iter` (CODEGEN-FAIL): дубликат имени
-       `type Range` (test re-declare'ит локально для изоляции). D29
-       говорит user-shadow prelude должен быть warning, но enforcer
-       rejects как error.
-  Эти bugs существуют и до Plan 62.D, но maskились ограниченной
-  видимостью `Range`. Требуется отдельный sub-plan Plan 62.D non-opaque
-  bis-1 (fix 4 codegen bugs) перед включением re-export-строки.
+- ✅ **`Range` / `RangeIter` теперь re-export'ятся через prelude facade**
+  (`export import std.collections.range.{Range, RangeIter}` в
+  `std/prelude.nv`). Auto-available во всех модулях. Декларации остаются
+  в `std/collections/range.nv` — 8 existing cross-file imports работают
+  без изменений (selective re-export не блокирует direct import).
+- ✅ **PRELUDE_VERSION bump 3 → 4** в `std/prelude.nv` (marker для
+  тестов, оба `prelude_auto_import.nv` и `iter_protocol_from_prelude.nv`
+  updated).
+- ✅ **4 latent codegen bugs fixed** (все четыре существовали и до
+  Plan 62.D, но maskились ограниченной видимостью `Range`):
+    1. **Match inference (Nova_Range* vs nova_str)** — pattern
+       bindings installed в `infer_expr_c_type(ExprKind::Match)`
+       через новый `pattern_binding_overrides` RefCell
+       (emit_c.rs:18936+). Раньше stale entry для arm-binding `r` в
+       `var_types` (из `let r = Range...` в другом scope) перебивал
+       правильный inner type из scrutinee. Mirror'ит emit-time
+       `emit_match::infer_arm` (line 14694) но через `&self` RefCell.
+    2. **Closure capture inner-shadowing (closure_rev)** — новый
+       scope-aware `collect_truly_free_idents` (emit_c.rs:16621+)
+       уважает inner `let`-bindings, lambda params, match patterns.
+       Раньше misnamed `collect_free_idents` собирал ВСЕ идентификаторы
+       (включая inner-bound), и filter `var_types.contains_key`
+       ложно идентифицировал inner-shadowed `s` как capture.
+    3. **Closure mono'd arg-name drop (p48_closure_arg_inference)** —
+       same root cause как #2; fix #2 закрыл оба теста.
+    4. **D29 user-shadow** — duplicate top-level имя пришедшее через
+       prelude теперь генерирует warning `W_PRELUDE_SHADOW` (basic
+       version; full structured lint — Plan 62.F.bis Ф.2 scope).
+       Codegen `emit_module` skip'ает merged (non-user) duplicates
+       при наличии user-declaration с тем же именем (emit_c.rs:1300+).
+       Закрывает `nova_tests/syntax/for_in_range_iter.nv` который
+       re-declare'ит `type Range` и `type StepRangeIter` locally.
+- ✅ Regression: 709/0/44 PASS (baseline preserved, никаких новых
+  positive tests — bis-1 это bug-fixing + миграция enable).
+
+**Plan 62.D.bis ОТДЕЛЬНЫЙ sub-plan (всё ещё DEFERRED):**
+
 - 🚫 **`StringBuilder` / `WriteBuffer` / `ReadBuffer` — opaque
   runtime types**, для миграции требуется новый `external type`
   D-block в spec/decisions (нет canonical syntax в bootstrap parser
   для forward-decl типа без body, с runtime-only implementation).
-  Остаются hardcoded в type-checker builtins / codegen. Plan 62.D.bis —
-  отдельный sub-plan.
+  Остаются hardcoded в type-checker builtins / codegen.
 
 **Acceptance:**
 
 - [x] Iter[T] declared formally — pass.
 - [x] Iter[T] auto-available через prelude — pass (positive test).
-- [x] No regression: 701/0/44.
-- [ ] Range/RangeIter migration — DEFERRED (bis-1).
-- [ ] StringBuilder/WriteBuffer/ReadBuffer migration — DEFERRED (bis).
+- [x] Range / RangeIter auto-available через prelude — pass
+  (bis-1 закрыт).
+- [x] 4 latent codegen bugs closed — pass.
+- [x] D29 W_PRELUDE_SHADOW basic — pass.
+- [x] No regression: 709/0/44.
+- [ ] StringBuilder/WriteBuffer/ReadBuffer migration — DEFERRED
+  (Plan 62.D.bis — needs `external type` D-block).
 
 **Original spec (для справки):**
 
@@ -767,6 +780,7 @@ regression. Plan 62.F.bis отложит это в опционный sub-plan �
 | 62.B | panic, exit, assert, debug_assert (6 arity-overload signatures) | `runtime.nv` |
 | 62.C | RuntimeError (6 variants), ReadBufferError (1 variant) | `errors.nv` |
 | 62.D non-opaque | Iter[T] protocol formal declaration | `collections.nv` |
+| 62.D non-opaque bis-1 | Range / RangeIter re-export через prelude facade + 4 latent codegen bugs закрыты + D29 W_PRELUDE_SHADOW basic | `prelude.nv` re-export, fixes в emit_c.rs + types/mod.rs |
 | 62.E | From[T], Into[U], Hashable, Equatable, Comparable, Display (6/8 protocols) | `protocols.nv` |
 | 62.F | Fail[E] effect formal declaration | `effects.nv` |
 
@@ -780,7 +794,7 @@ declared в file-based form (vs 1 placeholder PRELUDE_VERSION до Plan 62).
 | **62.A.bis Ф.4** | Remove pre-populated `sum_schemas[Option/Result]` (emit_c.rs:754-766) | Bootstrap monomorphization compromise — нужен Plan 14 Q-result-monomorphization fix. Тип-checker'у не повлияет, codegen может построить generic schema runtime'ом. |
 | **62.B.bis** | print / println migration | variadic + type-polymorphic dispatch (emit_c.rs:13638+). Single-arg external fn сломал бы все non-str / multi-arg callers. Требует variadic external fn syntax (нет в bootstrap) или Display protocol + StringBuilder pipeline (62.D opaque + 62.E полная). |
 | **62.C bis** | RuntimeNoneError migration | Bootstrap parser не поддерживает empty-body sum syntax (`parse_sum_variants` требует ≥1 `\|`). Тот же блокер что `Never`. |
-| **62.D opaque (62.D.bis)** | StringBuilder, WriteBuffer, ReadBuffer | Opaque runtime types — требуют `external type` D-block в spec (currently не существует). Plus Range/RangeIter re-export через facade включает 4 latent codegen bugs (cancel_semantics_test / closure_rev / p48_closure_arg_inference / for_in_range_iter). |
+| **62.D opaque (62.D.bis)** | StringBuilder, WriteBuffer, ReadBuffer | Opaque runtime types — требуют `external type` D-block в spec (currently не существует). Range/RangeIter re-export ЗАКРЫТ в 62.D non-opaque bis-1 (4 latent codegen bugs fixed + D29 W_PRELUDE_SHADOW basic). |
 | **62.E bis** | TryFrom[T, E] / TryInto[U, E] protocols | `Fail[E]` в protocol method триггерит Plan 56 Ф.2.7 enforcement (`bound method has effects` error). Требует either special-case в enforcement (Migration path a) или refactor D77 semantics (path b) или D122 handler-as-parameter (path c). |
 | **62.F.bis** | Edition versioning + W_PRELUDE_SHADOW lint + Time/Mem/Detach formal declarations + 2 D-block amendments | Edition требует Manifest threading до imports.rs (currently не передаётся). Shadow lint — отдельная lints.rs task. Time/Mem ambient runtime effects (не user-overridable beyond bootstrap). Spec amendments out of bootstrap scope. |
 
@@ -789,6 +803,9 @@ declared в file-based form (vs 1 placeholder PRELUDE_VERSION до Plan 62).
 - **Pre-Plan 62 baseline**: 691 PASS (если посмотреть на Plan 35.A R27 init).
 - **Post-Plan 62 final**: **709 PASS / 0 FAIL / 44 SKIP** + 16/16 sum_schema
   unit tests + 0 регрессий.
+- **Post-Plan 62.D non-opaque bis-1**: **709 PASS / 0 FAIL / 44 SKIP** +
+  16/16 sum_schema + W_PRELUDE_SHADOW warning fires on intentional
+  shadows (for_in_range_iter.nv).
 - **Net new tests** через Plan 62: +18 (Plan 62.A 5 tests, 62.B 0, 62.C
   3 tests, 62.D 3 tests, 62.E 1 test, 62.F 6 tests).
 
@@ -815,8 +832,9 @@ precedence), не legacy duplication.
 - **no_prelude bug fixed** (был silent — теперь real enforcement).
 - **partial_prelude** новая capability — opt-in subset (real-time, embedded,
   bootstrap use-cases).
-- **PRELUDE_VERSION** marker mechanism (3 = current; future bumps от
-  bis-sub-plans когда они закрываются).
+- **PRELUDE_VERSION** marker mechanism (4 = current after 62.D
+  non-opaque bis-1; future bumps от других bis-sub-plans когда они
+  закрываются).
 - **`nova doc`** теперь видит canonical prelude API в одном месте
   (AI-readable, не разбросанным по type-checker/codegen).
 
