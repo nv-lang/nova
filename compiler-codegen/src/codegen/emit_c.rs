@@ -3352,9 +3352,52 @@ impl CEmitter {
 
             let mut fn_params = vec!["void* _ctx".to_string()];
             let mut method_param_types: Vec<(String, String)> = Vec::new();
+            // Plan 65 Ф.1: track params whose user-annotated type differs from
+            // the effect schema — handler body needs a reinterpret-cast bridge
+            // so `d.nanos` (Nova source) emits `((Nova_Duration*)d)->nanos`.
+            //
+            // Restrictions:
+            //   * Skip Fail effect — handled by the existing `fail_e_map`
+            //     mechanism below (Plan 61 Ф.3) which uses fail-frame payload
+            //     instead of a wire cast.
+            //   * Only apply when the schema wire type is a scalar pointer-able
+            //     primitive (`nova_int`) so the `(intptr_t)` round-trip is
+            //     well-defined; struct wire types (e.g. `nova_str`) can't be
+            //     casted via intptr_t.
+            let mut annotation_bridges: Vec<(String, String, String)> = Vec::new();
             for (i, p) in m.params.iter().enumerate() {
-                let ty = param_types.get(i).cloned().unwrap_or_else(|| "nova_int".into());
-                fn_params.push(format!("{} {}", ty, p.name));
+                let schema_ty = param_types.get(i).cloned()
+                    .unwrap_or_else(|| "nova_int".into());
+                let bridge_eligible = eff != "Fail" && schema_ty == "nova_int";
+                let ty = if bridge_eligible {
+                    if let Some(annot) = &p.ty {
+                        match self.type_ref_to_c(annot) {
+                            Ok(annot_c)
+                                if annot_c != schema_ty
+                                    && (annot_c.ends_with('*')
+                                        || annot_c.starts_with("Nova_")) =>
+                            {
+                                annotation_bridges.push((
+                                    p.name.clone(),
+                                    schema_ty.clone(),
+                                    annot_c.clone(),
+                                ));
+                                annot_c
+                            }
+                            _ => schema_ty.clone(),
+                        }
+                    } else {
+                        schema_ty.clone()
+                    }
+                } else {
+                    schema_ty.clone()
+                };
+                let (wire_ty, wire_name) = if annotation_bridges.iter().any(|(n, _, _)| n == &p.name) {
+                    (schema_ty.clone(), format!("{}_wire", p.name))
+                } else {
+                    (ty.clone(), p.name.clone())
+                };
+                fn_params.push(format!("{} {}", wire_ty, wire_name));
                 method_param_types.push((p.name.clone(), ty));
             }
 
@@ -3413,6 +3456,21 @@ impl CEmitter {
                     // Scalar capture stored as pointer: `#define cap (*_c->cap)` (deref)
                     self.line(&format!("#define {cap} (*_c->{cap})", cap = cap_name));
                 }
+            }
+            // Plan 65 Ф.1: rebind annotation-bridged handler params from the
+            // wire-typed C arg (schema int) to the user-annotated record
+            // pointer. Body code refers to the param by name, so we shadow
+            // the wire-arg with a same-name pointer alias.
+            //
+            // Why this matters: Time effect schema has `sleep(int)`, but
+            // mock handlers want to receive `Duration`. The call site emits
+            // the Duration pointer cast to int (intptr_t), so we reverse
+            // the cast in the body.
+            for (pname, _wire_ty, annot_ty) in &annotation_bridges {
+                self.line(&format!(
+                    "{annot} {pname} = ({annot})(intptr_t)({pname}_wire);",
+                    annot = annot_ty, pname = pname
+                ));
             }
 
             match &m.body {
@@ -11909,6 +11967,39 @@ impl CEmitter {
                             return Ok(format!("nova_channel_new({})", v));
                         }
                     }
+                    // Plan 65 Ф.1: ChanReader.close_after(d Duration) →
+                    // nova_chan_reader_close_after_ns(d.nanos). Duration unpacks
+                    // inline (AD4 — zero-alloc field access).
+                    //
+                    // Const-folding (AD4 / Ф.8): literal Duration.from_secs(N)
+                    // — handled by the recursive emit_expr call below, which
+                    // resolves Duration construction into an i64 expression that
+                    // the C compiler can fold.
+                    if name == "ChanReader" && method == "close_after" {
+                        if let Some(arg) = args.first() {
+                            // Plan 65 Ф.1: Duration argument type-check is
+                            // enforced via the inferred C type — if user passes
+                            // bare int, infer returns "nova_int" not
+                            // "Nova_Duration*", so the .nanos access below
+                            // generates a C type error (caught at compile).
+                            // Future improvement (R2 + E5101): emit a
+                            // structured Nova diagnostic before reaching C.
+                            let arg_c = self.infer_expr_c_type(arg.expr());
+                            let v = self.emit_expr(arg.expr())?;
+                            if arg_c != "Nova_Duration*" {
+                                return Err(format!(
+                                    "ChanReader.close_after(): expected Duration argument, got {} \
+                                     — use Duration.from_millis(N) / Duration.from_secs(N) \
+                                     (Plan 65 / D94 revision)",
+                                    arg_c
+                                ));
+                            }
+                            return Ok(format!(
+                                "nova_chan_reader_close_after_ns(({})->nanos)",
+                                v
+                            ));
+                        }
+                    }
                     // D75 (revised, Plan 47): CancelToken.new() — Member-form.
                     if name == "CancelToken" && method == "new" {
                         return Ok("nova_cancel_token_new()".to_string());
@@ -12962,6 +13053,25 @@ impl CEmitter {
                     if let Some(arg) = args.first() {
                         let v = self.emit_expr(arg.expr())?;
                         return Ok(format!("nova_channel_new({})", v));
+                    }
+                }
+                // Plan 65 Ф.1: ChanReader.close_after(Duration) — Path-form.
+                if parts.len() == 2 && parts[0] == "ChanReader" && parts[1] == "close_after" {
+                    if let Some(arg) = args.first() {
+                        let arg_c = self.infer_expr_c_type(arg.expr());
+                        let v = self.emit_expr(arg.expr())?;
+                        if arg_c != "Nova_Duration*" {
+                            return Err(format!(
+                                "ChanReader.close_after(): expected Duration argument, got {} \
+                                 — use Duration.from_millis(N) / Duration.from_secs(N) \
+                                 (Plan 65 / D94 revision)",
+                                arg_c
+                            ));
+                        }
+                        return Ok(format!(
+                            "nova_chan_reader_close_after_ns(({})->nanos)",
+                            v
+                        ));
                     }
                 }
                 // D75 (revised, Plan 47): CancelToken.new() — Path-form.
@@ -18193,7 +18303,15 @@ impl CEmitter {
                             return "Nova_ChannelPair".into();
                         }
                         // D94 (Plan 31): Time.after(ms) → Nova_ChanReader*.
+                        // Plan 65 Ф.5: removed. Migrated to
+                        // ChanReader.close_after(Duration); see E5101 below.
                         if n == "Time" && method == "after" {
+                            return "Nova_ChanReader*".into();
+                        }
+                        // Plan 65 Ф.1: ChanReader.close_after(Duration) →
+                        // Nova_ChanReader*. Capability-split static constructor
+                        // (D91 + D94 revision).
+                        if n == "ChanReader" && method == "close_after" {
                             return "Nova_ChanReader*".into();
                         }
                         // D75 (revised, Plan 47): CancelToken.new() — Member-form.
@@ -18573,6 +18691,11 @@ impl CEmitter {
                         // D91 (Plan 21): Channel.new(cap) — Path-form.
                         if eff == "Channel" && method_name == "new" {
                             return "Nova_ChannelPair".into();
+                        }
+                        // Plan 65 Ф.1: ChanReader.close_after(Duration) —
+                        // Path-form.
+                        if eff == "ChanReader" && method_name == "close_after" {
+                            return "Nova_ChanReader*".into();
                         }
                         // D75 (revised, Plan 47): CancelToken.new() — Path-form.
                         if eff == "CancelToken" && method_name == "new" {
