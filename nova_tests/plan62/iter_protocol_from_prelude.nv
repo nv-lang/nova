@@ -99,5 +99,7 @@ test "prelude auto-import — PRELUDE_VERSION accessible (regression marker)" {
     // bis-1 (2026-05-18) bump'нул 3 → 4: Range / RangeIter auto-available.
     // Plan 62.F.bis (2026-05-18) bump'нул 4 → 5: edition versioning +
     // Time/Mem formal declarations + structured W_PRELUDE_SHADOW lint.
-    assert(PRELUDE_VERSION == 5)
+    // Plan 62.D.bis (2026-05-18) bump'нул 5 → 6: StringBuilder /
+    // WriteBuffer / ReadBuffer formally declared via D126 `external type`.
+    assert(PRELUDE_VERSION == 6)
 }

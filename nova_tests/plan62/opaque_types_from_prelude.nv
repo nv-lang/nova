@@ -1,0 +1,70 @@
+// opaque_types_from_prelude.nv — Plan 62.D.bis (D126, 2026-05-18).
+//
+// Verifies что StringBuilder / WriteBuffer / ReadBuffer formally declared
+// в std/prelude/collections.nv (через D126 `external type`) auto-available
+// в любом module через R27 prelude auto-import. До 62.D.bis эти типы
+// существовали как «known-by-name» (D26 prose-only) без formal Nova-side
+// declaration — теперь canonical source в std/prelude/collections.nv.
+//
+// Покрытие (4 sub-tests):
+//   1. StringBuilder via prelude — без explicit import.
+//   2. WriteBuffer via prelude — без explicit import.
+//   3. ReadBuffer via prelude — без explicit import. Тест cross-resolve
+//      ReadBufferError (declared в std/prelude/errors.nv per Plan 62.C).
+//   4. StringBuilder usable as parameter type — `fn f(sb StringBuilder)`
+//      type-annotation резолвится через cross-file (Plan 35 R26+R27).
+//
+// Methods StringBuilder/WriteBuffer/ReadBuffer остаются в `std/runtime/
+// <name>.nv` через `external fn` (D82); receiver-type matching по имени
+// работает unchanged. См. spec/decisions/03-syntax.md §D126 +
+// docs/plans/62.D.bis-opaque-types-and-external-type-d-block.md.
+
+module plan62.opaque_types_from_prelude
+
+
+test "StringBuilder visible через prelude (no explicit import)" {
+    let mut sb = StringBuilder.new()
+    sb.append("hello, ")
+    sb.append("world")
+    let s = sb.into()
+    assert(s == "hello, world")
+    assert(PRELUDE_VERSION == 6)
+}
+
+
+test "WriteBuffer visible через prelude (no explicit import)" {
+    let mut wb = WriteBuffer.new()
+    wb.write_u32_be(0xDEADBEEF)
+    let bs = wb.into()
+    assert(bs.len() == 4)
+    // BE encoding 0xDEADBEEF → 0xDE 0xAD 0xBE 0xEF
+    assert(bs[0] == 0xDE)
+    assert(bs[1] == 0xAD)
+    assert(bs[2] == 0xBE)
+    assert(bs[3] == 0xEF)
+}
+
+
+test "ReadBuffer visible через prelude (no explicit import)" {
+    let bs []byte = [0x12, 0x34, 0x56, 0x78]
+    let mut rb = ReadBuffer.from(bs)
+    let v = rb.try_read_u32_be()
+    match v {
+        Ok(n)  => assert(n == 0x12345678)
+        Err(_) => assert(false)
+    }
+}
+
+
+// Type annotation works — formal declaration eligible как type-name
+// в parameter position. До 62.D.bis такой annotation резолвился через
+// implicit builtin recognition; теперь — через cross-file resolve
+// (R26 prelude facade re-export + R27 auto-import).
+fn takes_sb(sb StringBuilder) -> str => sb.into()
+
+
+test "StringBuilder usable as function parameter type" {
+    let mut sb = StringBuilder.new()
+    sb.append("ok")
+    assert(takes_sb(sb) == "ok")
+}
