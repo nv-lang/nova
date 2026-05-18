@@ -1,0 +1,28 @@
+// Ф.37.2 (Plan 33.6): TrivialBackend var-mul strict positive product.
+// `requires a >= 1; requires b >= 1; ensures (a * b) > 0` — strict positive.
+
+module contracts.f37_var_mul_strict_positive
+
+#verify
+fn pos_pos_strict(a int, b int) -> int
+    requires a >= 1
+    requires b >= 1
+    ensures result > 0
+{
+    a * b
+}
+
+// Both strictly negative (upper <= -1) → product >= 1 > 0.
+#verify
+fn neg_neg_strict(a int, b int) -> int
+    requires a <= -1
+    requires b <= -1
+    ensures result > 0
+{
+    a * b
+}
+
+test "var-mul strict positive" {
+    assert(pos_pos_strict(2, 3) == 6)
+    assert(neg_neg_strict(-2, -3) == 6)
+}

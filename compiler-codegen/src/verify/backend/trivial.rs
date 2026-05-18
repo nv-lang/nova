@@ -750,10 +750,30 @@ fn propagate_bounds(conjuncts: &[SmtTerm]) -> Vec<SmtTerm> {
                 if (iop != ">=" && iop != ">") || iargs.len() != 2 { return None; }
                 let goal = match &iargs[1] { SmtTerm::IntLit(n) => *n, _ => return None };
                 let effective_goal = if iop == ">" { goal.saturating_add(1) } else { goal };
-                if effective_goal > 0 { return None; }
                 if let SmtTerm::App(mop, margs) = &iargs[0] {
                     if mop != "*" || margs.len() != 2 { return None; }
                     if let (SmtTerm::Var(a), SmtTerm::Var(b)) = (&margs[0], &margs[1]) {
+                        // Ф.37.2 (Plan 33.6): strict positive product.
+                        // `(> a*b 0)` при lower(a) >= 1 && lower(b) >= 1 → product >= 1.
+                        // Для effective_goal > 0 нужен strict positive case.
+                        if effective_goal > 0 {
+                            if let (Some(la), Some(lb)) = (lower.get(a), lower.get(b)) {
+                                if *la >= 1 && *lb >= 1 {
+                                    let prod = la.saturating_mul(*lb);
+                                    if prod >= effective_goal { return Some(true); }
+                                }
+                            }
+                            // Both strictly negative: lower(a) <= -1 && lower(b) <= -1 не работает
+                            // (нужны upper bounds). upper(a) <= -1 && upper(b) <= -1 → product >= 1.
+                            if let (Some(ua), Some(ub)) = (upper.get(a), upper.get(b)) {
+                                if *ua <= -1 && *ub <= -1 {
+                                    let prod = ua.saturating_mul(*ub);
+                                    if prod >= effective_goal { return Some(true); }
+                                }
+                            }
+                            return None;
+                        }
+                        // effective_goal <= 0: non-strict positive (>= 0 case).
                         // Both non-negative.
                         if let (Some(la), Some(lb)) = (lower.get(a), lower.get(b)) {
                             if *la >= 0 && *lb >= 0 {
@@ -780,10 +800,28 @@ fn propagate_bounds(conjuncts: &[SmtTerm]) -> Vec<SmtTerm> {
                 if (iop != "<=" && iop != "<") || iargs.len() != 2 { return None; }
                 let goal = match &iargs[1] { SmtTerm::IntLit(n) => *n, _ => return None };
                 let effective_goal = if iop == "<" { goal.saturating_sub(1) } else { goal };
-                if effective_goal < 0 { return None; }
                 if let SmtTerm::App(mop, margs) = &iargs[0] {
                     if mop != "*" || margs.len() != 2 { return None; }
                     if let (SmtTerm::Var(a), SmtTerm::Var(b)) = (&margs[0], &margs[1]) {
+                        // Ф.37.2 (Plan 33.6): strict negative product.
+                        // `(< a*b 0)` при strict mixed signs (lower(a) >= 1 && upper(b) <= -1
+                        // OR upper(a) <= -1 && lower(b) >= 1) → product <= -1.
+                        if effective_goal < 0 {
+                            if let (Some(la), Some(ub)) = (lower.get(a), upper.get(b)) {
+                                if *la >= 1 && *ub <= -1 {
+                                    let prod = la.saturating_mul(*ub);
+                                    if prod <= effective_goal { return Some(true); }
+                                }
+                            }
+                            if let (Some(ua), Some(lb)) = (upper.get(a), lower.get(b)) {
+                                if *ua <= -1 && *lb >= 1 {
+                                    let prod = ua.saturating_mul(*lb);
+                                    if prod <= effective_goal { return Some(true); }
+                                }
+                            }
+                            return None;
+                        }
+                        // effective_goal >= 0: non-strict negative (<= 0 case).
                         // A non-neg, B non-pos.
                         if let (Some(la), Some(ub)) = (lower.get(a), upper.get(b)) {
                             if *la >= 0 && *ub <= 0 {
