@@ -25,3 +25,8 @@ broken code до codegen. Migration таких sites = **dead-code hardening**
 | 4838, 4841 | `emit_fn_forward_decl` (HOF inner closure sig) | ❌ unreachable | f2 pos covers |
 | 1325, 1329 | `emit_module` (free-fn overload reg) | ❌ unreachable | f3 pos covers |
 | 1422, 1435 | `emit_module` (method overload reg, non-generic recv) | ❌ unreachable (generic-recv path = erased_type_ref_c, Cat B intentional) | f3 pos covers |
+| 9031, 9034 | `emit_stmt` (let array-of-fn element sig) | ❌ unreachable + array-of-fn dispatch has pre-existing limitation | f4 pos via lambda only |
+| 9081, 9084 | `emit_stmt` (let `as fn` annotation) | ❌ unreachable | f4 implicit (lambda tested) |
+| 9160, 9165, 9169 | `emit_stmt` (let Lambda annotation) | ❌ unreachable | f4 pos covers |
+| 9185, 9188 | `emit_stmt` (let ClosureLight annotation) | ❌ unreachable | f4 pos covers |
+| 9204, 9207 | `emit_stmt` (let ClosureFull params/return) | ❌ unreachable | f4 implicit |
