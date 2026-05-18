@@ -9384,6 +9384,32 @@ check (margs[0] == margs[1]) перед sign-based branches в try_var_mul_nonne
 
 **Регрессия:** 206 → 207 PASS (+1), 0 FAIL.
 
+## [M-plan-33.6-Ф.53-modulus-identities] (2026-05-18)
+
+`a % 1 → 0` (любое число mod 1) и `a % a → 0` (non-zero — spec assumption,
+паритет Ф.52.3). Финальный спринт автономной сессии 2026-05-18.
+
+**Регрессия:** 207 → 208 PASS (+1), 0 FAIL.
+
+## [Plan 33.6 Ф.29-Ф.53 SESSION SUMMARY] — 2026-05-18
+
+25 спринтов за автономную сессию: 170 → **208 PASS** (+38, +22%), 0 FAIL,
+44 SKIP. Один откат (Ф.47.3 not-canon — 27 регрессий, moved to V3).
+
+**Coverage achieved:**
+- Полный 4-вариант (≥, >, ≤, <) для bound checks: addition, subtraction,
+  const-mul (L>0), negation, modulus, division (lower)
+- Var-mul по 4 sign combinations + square (`a*a >= 0` universally)
+- Algebraic identities: cancel/restore, additive inverse, mul/div by -1,
+  a/a, a%a, a%1
+- 11 fn lints + 13 lemma lints
+- 1 soundness fix (lemma self-apply E2408 — было silent unsound)
+
+**Lesson learned:** Ф.47.3 revert показал что simplify changes требуют
+holistic regression test (не только unit tests). Established pattern:
+запускать полный `nova test nova_tests/contracts/` перед commit любого
+simplify change.
+
 ## [M-57.F.4-positive-negative-coverage] — Test expansion (2026-05-17)
 
 **Не simplification.** Прямой user feedback "тесты напиши по тому,
