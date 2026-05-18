@@ -162,16 +162,58 @@ pub fn resolve_imports_inline_ex(
             // (явная «нулевая» декларация без переключения на no_prelude).
         } else {
             // Default: full prelude facade.
-            let prelude_path = stdlib_dir.join("prelude.nv");
-            if prelude_path.exists() && prelude_path.is_file() {
-                initial_imports.push(Import {
-                    path: vec!["std".into(), "prelude".into()],
-                    items: None,
-                    alias: None,
-                    is_export: false,
-                    span: crate::diag::Span::dummy(),
-                    doc_attrs: Vec::new(),
-                });
+            //
+            // Plan 62.F.bis Ф.1 (edition versioning, 2026-05-18):
+            // если в `nova.toml` указано `[package].edition = "<X>"`, и
+            // соответствующий `std/prelude/<sanitized>.nv` существует —
+            // используем его вместо rolling `std/prelude.nv` facade.
+            // Sanitization: `.` → `_` (например `2026.05` → `2026_05.nv`).
+            //
+            // Fallback chain (resolver-side):
+            //   1. edition pin: `std/prelude/<sanitized>.nv` — если найден,
+            //      import path = `["std", "prelude", "<sanitized>"]`.
+            //   2. rolling facade: `std/prelude.nv` — backward-compat
+            //      default (нет edition в манифесте, или edition pin не
+            //      найден на диске).
+            //
+            // Безопасность: pin даёт stable prelude content на edition
+            // — даже если будущие версии compiler'а изменят `std/prelude.nv`,
+            // package с `edition = "2026.05"` видит фиксированный snapshot.
+            // Soft-fail (edition specified, но файла нет): silently fall back
+            // на rolling facade — не блокируем build, но user может явно
+            // указать edition без файла (например для будущего pin).
+            let mut edition_pin_used = false;
+            if let Some(manifest) = crate::manifest::find_manifest(entry_path) {
+                if let Some(edition) = &manifest.edition {
+                    let sanitized = crate::manifest::sanitize_edition(edition);
+                    if !sanitized.is_empty() {
+                        let pin_path = stdlib_dir.join("prelude").join(format!("{}.nv", sanitized));
+                        if pin_path.exists() && pin_path.is_file() {
+                            initial_imports.push(Import {
+                                path: vec!["std".into(), "prelude".into(), sanitized.clone()],
+                                items: None,
+                                alias: None,
+                                is_export: false,
+                                span: crate::diag::Span::dummy(),
+                                doc_attrs: Vec::new(),
+                            });
+                            edition_pin_used = true;
+                        }
+                    }
+                }
+            }
+            if !edition_pin_used {
+                let prelude_path = stdlib_dir.join("prelude.nv");
+                if prelude_path.exists() && prelude_path.is_file() {
+                    initial_imports.push(Import {
+                        path: vec!["std".into(), "prelude".into()],
+                        items: None,
+                        alias: None,
+                        is_export: false,
+                        span: crate::diag::Span::dummy(),
+                        doc_attrs: Vec::new(),
+                    });
+                }
             }
         }
     }

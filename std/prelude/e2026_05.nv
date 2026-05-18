@@ -1,0 +1,39 @@
+// Plan 62.F.bis Ф.1: edition pin для `[package].edition = "2026.05"`.
+// Sanitized filename `e2026_05.nv` (digit-leading `2026_05` нельзя
+// использовать как Nova-identifier — `e` префикс per
+// `manifest::sanitize_edition`).
+//
+// **Назначение:** дать stable snapshot prelude content на edition. Если
+// package's nova.toml содержит:
+//   [package]
+//   edition = "2026.05"
+// resolver auto-импортирует ЭТОТ файл вместо rolling `std/prelude.nv`
+// facade. Будущие изменения rolling facade (например new re-export'ы)
+// НЕ влияют на `edition = "2026.05"` packages — они видят фиксированный
+// snapshot ниже.
+//
+// Mirror Rust's `edition = "2021"` и Go's `go 1.21` — stability через
+// explicit pin. Migration path: package owners bump edition при готовности
+// принять новый content.
+//
+// **Maintenance:** этот файл — snapshot `std/prelude.nv` на момент
+// 2026-05-18 closure Plan 62 + 62.F.bis. Новые edition pins (например
+// `e2026_06.nv` если будут changes) создаются как новый файл; этот
+// остаётся неизменным forever (cross-version stability).
+
+module std.prelude.e2026_05
+
+// Re-export всех items из current sub-modules. Идентично rolling facade
+// на момент создания pin'а (Plan 62.F.bis 2026-05-18).
+export import std.prelude.core.{Option, Some, None, Result, Ok, Err, Error, Ordering, Less, Equal, Greater}
+export import std.prelude.runtime.{panic, exit, assert, debug_assert}
+export import std.prelude.errors.{RuntimeError, DivByZero, Overflow, IndexOutOfBounds, TypeMismatch, AssertFailed, NoHandler, ReadBufferError, UnexpectedEnd}
+export import std.prelude.collections.{Iter}
+export import std.collections.range.{Range, RangeIter}
+export import std.prelude.protocols.{From, Into, Hashable, Equatable, Comparable, Display}
+export import std.prelude.effects.{Fail}
+
+/// Edition pin marker для verification что resolver выбрал edition vs
+/// rolling facade. Snapshot version = 4 (matches rolling on 2026-05-18).
+#stable(since = "0.1")
+export const PRELUDE_EDITION_2026_05 int = 4
