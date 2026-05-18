@@ -2534,6 +2534,30 @@ impl CEmitter {
         )
     }
 
+    /// Plan 70 Ф.1.5: deferred-warning helper для cascade-blocked sites
+    /// (functions whose signature can't be changed без массивного refactor:
+    /// register_mono_instance/register_mono_method_instance — no return type;
+    /// infer_expr_c_type — returns String; infer_mono_method_ret_with_args —
+    /// returns Option<String>).
+    ///
+    /// Records [W7001] warning через existing `warnings` field, returns
+    /// "nova_int" placeholder. Compiler output собирает все warnings и
+    /// emit'ит их в stderr; pipeline check может escalate'ать к error
+    /// если NOVA_STRICT_TYPES env var set (deferred — Plan 70 session 2).
+    ///
+    /// Цель: визуально-loud signal что silent fallback произошёл, без
+    /// breaking signature changes. Production-grade compromise: warning >
+    /// silent, но < hard error (последний требует cascade refactor).
+    fn warn_silent_int_fallback(&self, context: &str, cause: &str) -> String {
+        self.warnings.borrow_mut().push(format!(
+            "[W7001] silent fallback к nova_int для {}: {}. \
+             Set NOVA_STRICT_TYPES=1 чтобы escalate (deferred — Plan 70 session 2). \
+             Возможна wrong codegen output для non-int types.",
+            context, cause
+        ));
+        "nova_int".to_string()
+    }
+
     fn type_ref_to_c(&self, ty: &TypeRef) -> Result<String, String> {
         // Plan 48: type parameter substitution (monomorphization context)
         if let TypeRef::Named { path, generics, .. } = ty {
@@ -2645,6 +2669,12 @@ impl CEmitter {
                         // Plan 48 Ф.3: if this is a generic type with concrete type args,
                         // compute mangled name and enqueue instance emission.
                         if !generics.is_empty() && self.generic_type_templates.contains_key(&name) {
+                            // Plan 70 Cat B (intentional): generic type args translation
+                            // в any_erased detection — fallback к "nova_int" не silent
+                            // miscompilation, а *part of contract*: код ниже использует
+                            // any_erased check чтобы skip mangling если type-param ещё
+                            // unresolved. Strict-mode здесь = false-positive — мы
+                            // explicitly tolerate erasure для partial-mono path.
                             let type_args_c: Vec<String> = generics.iter()
                                 .map(|g| self.type_ref_to_c(g).unwrap_or_else(|_| "nova_int".into()))
                                 .collect();
@@ -5856,6 +5886,10 @@ impl CEmitter {
                         return format!("Nova_{}*", name);
                     }
                 }
+                // Plan 70 Cat B (intentional erasure): erased_type_ref_c is whole-fn
+                // erasure path для emit_generic_* contexts. type_ref_to_c fallback к
+                // nova_int legitimately handles type-params не in subst (mono pending).
+                // Strict-mode здесь = breaking erased dispatch. Documented Cat B.
                 self.type_ref_to_c(ty).unwrap_or_else(|_| "nova_int".into())
             }
             TypeRef::Array(inner, _) => {
@@ -5864,9 +5898,12 @@ impl CEmitter {
                         return "NovaArray_nova_int*".into();
                     }
                 }
+                // Plan 70 Cat B (intentional): array element fallback to void*
+                // (preserves pointer-stomping для erased generic arrays).
                 self.type_ref_to_c(ty).unwrap_or_else(|_| "void*".into())
             }
             TypeRef::Unit(_) => "nova_unit".into(),
+            // Plan 70 Cat B (intentional): erased_type_ref_c whole-fn erasure default.
             _ => self.type_ref_to_c(ty).unwrap_or_else(|_| "nova_int".into()),
         }
     }
@@ -6062,6 +6099,11 @@ impl CEmitter {
                         }
                         c
                     };
+                    // Plan 70 Cat B (intentional erasure): erase_unk нормализует
+                    // unknown→nova_int для consistent pointer-stomping в emit_generic_*
+                    // (erased generics). type_ref_to_c fail здесь = type-param ещё не
+                    // mono'd, erase_unk применяет к "nova_int" → tracks эту erasure.
+                    // Strict-mode false-positive — это namespace squat для erased dispatch.
                     let param_c_tys: Vec<String> = fp.iter()
                         .map(|t| erase_unk(self.type_ref_to_c(t).unwrap_or_else(|_| "nova_int".into())))
                         .collect();
@@ -7026,8 +7068,15 @@ impl CEmitter {
             &mut self.current_type_subst,
             type_subst.iter().cloned().collect(),
         );
+        // Plan 70 PhaseA4 cascade-blocked (register_mono_instance — no return,
+        // signature cascade massive): use warn_silent_int_fallback (W7001) для
+        // deferred-warning instead of strict error. См. warn_silent_int_fallback doc.
         let param_c_tys: Vec<String> = fn_decl.params.iter()
-            .map(|p| self.type_ref_to_c(&p.ty).unwrap_or_else(|_| "nova_int".into()))
+            .map(|p| self.type_ref_to_c(&p.ty).unwrap_or_else(|e|
+                self.warn_silent_int_fallback(
+                    &format!("register_mono_instance `{}` param `{}`", fn_decl.name, p.name),
+                    &e,
+                )))
             .collect();
         let ret_c = fn_decl.return_type.as_ref()
             .map(|t| self.type_ref_to_c(t).unwrap_or_else(|_| "nova_unit".into()))
@@ -7092,8 +7141,13 @@ impl CEmitter {
         );
         let prev_recv_for_ret = self.current_receiver_type.replace(recv_type.to_string());
         let recv_c = self.receiver_c_type(recv_type);
+        // Plan 70 PhaseA4 cascade-blocked (register_mono_method_instance — no return).
         let param_c_tys: Vec<String> = fn_decl.params.iter()
-            .map(|p| self.type_ref_to_c(&p.ty).unwrap_or_else(|_| "nova_int".into()))
+            .map(|p| self.type_ref_to_c(&p.ty).unwrap_or_else(|e|
+                self.warn_silent_int_fallback(
+                    &format!("register_mono_method_instance `{}.{}` param `{}`", recv_type, fn_decl.name, p.name),
+                    &e,
+                )))
             .collect();
         let ret_c = fn_decl.return_type.as_ref()
             .map(|t| self.type_ref_to_c(t).unwrap_or_else(|_| "nova_unit".into()))
@@ -8205,6 +8259,11 @@ impl CEmitter {
                         }
                         c
                     };
+                    // Plan 70 Cat B (intentional erasure): erase_unk нормализует
+                    // unknown→nova_int для consistent pointer-stomping в emit_generic_*
+                    // (erased generics). type_ref_to_c fail здесь = type-param ещё не
+                    // mono'd, erase_unk применяет к "nova_int" → tracks эту erasure.
+                    // Strict-mode false-positive — это namespace squat для erased dispatch.
                     let param_c_tys: Vec<String> = fp.iter()
                         .map(|t| erase_unk(self.type_ref_to_c(t).unwrap_or_else(|_| "nova_int".into())))
                         .collect();
@@ -17497,8 +17556,13 @@ impl CEmitter {
                 };
                 // type_ref_to_c теперь уже видит receiver subst — fp типы (`fn(T)→U`)
                 // resolve'ятся правильно для T (U остаётся как Nova_U_p placeholder).
+                // Plan 70 PhaseA4 cascade-blocked (infer_mono_method_ret_with_args — Option return).
                 let inner_ptys: Vec<String> = fp.iter()
-                    .map(|t| self.type_ref_to_c(t).unwrap_or_else(|_| "nova_int".into()))
+                    .map(|t| self.type_ref_to_c(t).unwrap_or_else(|e|
+                        self.warn_silent_int_fallback(
+                            "infer_mono_method_ret_with_args fn-param resolve",
+                            &e,
+                        )))
                     .collect();
                 // Save prior closure overrides, install fresh for these param names.
                 let mut overrides = self.closure_param_type_overrides.borrow_mut();
@@ -19279,7 +19343,12 @@ impl CEmitter {
                 // D54: тип `expr as T` — это T, не type-of(expr).
                 // Без этого `let b = a as byte` infer'ил бы тип b как nova_int
                 // (тип a) вместо nova_byte. План 05.
-                self.type_ref_to_c(ty).unwrap_or_else(|_| "nova_int".into())
+                // Plan 70 PhaseA4 cascade-blocked (infer_expr_c_type returns String).
+                self.type_ref_to_c(ty).unwrap_or_else(|e|
+                    self.warn_silent_int_fallback(
+                        "infer_expr_c_type `as T` annotation",
+                        &e,
+                    ))
             }
             // Plan 36 followup: `0..10` literal — Nova_Range* (если type
             // зарегистрирован). Без этого fallback nova_int ломал
