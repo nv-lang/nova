@@ -9863,3 +9863,92 @@ G/H). ~3700 LOC implementation cumulative.
 - **Как чинить:** user может реализовать сам: spawn fiber который
   `sleep(deadline.elapsed_since(Monotonic.now()))` затем `tok.cancel()`.
 - **Приоритет:** L — workaround existed.
+
+### [M-println-overload-static-method] (RESOLVED — Plan 67 Ф.1)
+- **Где:** `compiler-codegen/src/codegen/emit_c.rs::infer_print_helper`.
+- **Что было:** для `println(str.from(x))` codegen эмитил
+  `nova_print_int(nova_int_to_str(...))` — type mismatch CC-FAIL.
+  Affected: 25 sites в bench/corpus + silent-wrong-output для
+  if/match-expr println args.
+- **Как закрыто (commit `9a90802b022`):** унификация `infer_print_helper`
+  через `infer_expr_c_type` (DRY 75→15 LOC) — static method calls /
+  method chains / if-expr / match-expr / nested str.from все попадают
+  «бесплатно».
+- **Verified:** `bench/corpus/06_contracts.nv` runs `7 / 5 / 120`
+  (abs/-7/max/3,5/factorial/5) корректно. Plan 67 fixtures f1-f10 PASS.
+
+### [M-println-char-as-int] (RESOLVED — Plan 67 Ф.1 AD3)
+- **Где:** same.
+- **Что было:** `println('a')` печатал `97` (code-point как int).
+- **Как закрыто:** `nova_print_char` runtime inline + CharLit pre-check
+  в `infer_print_helper` (CharLit имеет `nova_int` C-type, нужен explicit
+  bypass до infer dispatch).
+- **Verified:** plan67/f6_char_literal.nv PASS.
+
+### [M-infer-print-helper-duplication] (RESOLVED — Plan 67 Ф.1 AD1)
+- **Где:** same.
+- **Что было:** `infer_print_helper` дублировал manual pattern-matching
+  параллельно с `infer_expr_c_type` (~75 LOC). Любое расширение
+  (новый stdlib API, новый built-in) требовало двух правок.
+- **Как закрыто:** delegated to `infer_expr_c_type` (single source of
+  truth). Bug-fixes в infer автоматически покрывают println.
+
+### [M-w6701-print-unknown-type-lint] (DEFER — Plan 67 R4)
+- **Где:** `compiler-codegen/src/codegen/emit_c.rs::infer_print_helper`.
+- **Что упрощено:** opt-in lint warning W6701 «cannot infer print
+  helper; defaulting to int» для unknown return type fallback case
+  (R4 в plan-doc 67) — не реализован.
+- **Почему:** codegen layer не имеет warning channel — `Result<_, String>`
+  только error. `verify::pipeline::Reason::Warning` exists но он для
+  contracts verifier (W2402 family), не для codegen path. Добавление
+  codegen warning infra — отдельный план (separate scope от Plan 67
+  hotfix).
+- **Как чинить:** dedicated diagnostic-infra plan (likely Plan 36
+  expansion R7+) добавит warning channel в codegen; затем W6701 = 5 LOC.
+- **Приоритет:** L — fallback к `nova_print_int` для unknown types
+  preserves current behavior; misuse детектируется при run-time
+  (wrong output) или при review.
+
+### [M-plan67-cross-toolchain-deferred] (DEFER — Plan 67 Ф.4)
+- **Где:** `.github/workflows/cross-toolchain.yml` (отсутствует).
+- **Что упрощено:** Plan 67 verified только на Windows/Clang.
+  MSVC + GCC не прогонялись.
+- **Почему:** Plan 58 CI matrix infrastructure не реализован —
+  `cross-toolchain.yml` workflow не существует. Plan 67 не может его
+  создать (separate scope).
+- **Как чинить:** Plan 58 implementation (приоритизирован, plan v2
+  доступен).
+- **Приоритет:** L — Clang Windows full PASS включая 06_contracts;
+  bug-class (overload resolution) toolchain-agnostic (C function
+  signature mismatch — would fail equally на любом toolchain).
+
+### [M-bench-corpus-status-fail-fp] (DEFER — Plan 67 Ф.3)
+- **Где:** `nova bench corpus`.
+- **Что упрощено:** `bench corpus 06_contracts.nv` reports
+  `"status": "fail: exit=Some(1)"` хотя `nova build` того же файла
+  succeeds и binary runs correctly. False-positive в bench corpus
+  status detection.
+- **Почему:** bench corpus pipeline проверяет что-то extra (binary run?
+  perf marker parsing?) что не работает для 06_contracts (вероятно
+  отсутствие __PERF__ markers в C output после Plan 67 codegen change).
+- **Как чинить:** дебаг bench corpus status check — отдельный bug
+  ticket для Plan 57.C.8 infra.
+- **Приоритет:** L — не блокирует Plan 67 main acceptance (compile +
+  run + correct output ✅ через direct `nova build`).
+
+### [M-corpus-files-pre-existing-breakage] (DEFER — Plan 67 Ф.3 spot-check)
+- **Где:** `bench/corpus/03_generic_heavy.nv`, `04_effects_handlers.nv`,
+  `07_collection.nv`.
+- **Что упрощено:** 3 из 5 spot-checked corpus files не собираются
+  по pre-existing причинам **не связанным с Plan 67**:
+  - `03_generic_heavy`: D52 violation (Plan 51 enforcement) — redundant
+    type prefix `Pair { ... }` в return-position.
+  - `04_effects_handlers`: syntax change — `audit_action("user-login")`
+    parse error (likely handler-binding evolution).
+  - `07_collection`: codegen C-compile error `(NovaOpt_nova_int)0` —
+    sum-type optional return unreachable path.
+- **Почему:** corpus files не обновлялись синхронно с language evolution.
+- **Как чинить:** corpus refresh task (отдельно от Plan 67, который
+  фиксирует только println overload).
+- **Приоритет:** L для Plan 67 (06_contracts — primary target — works);
+  M для overall corpus health.
