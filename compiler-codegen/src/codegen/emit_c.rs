@@ -1737,6 +1737,12 @@ impl CEmitter {
                 }
             }
         }
+        // Plan 70.2: drain generic_type_worklist after test emission — test
+        // bodies могут enqueue generic-type instances (e.g. LinkedList[int] via
+        // Cons-constructor inference в try_infer_variant_mono_args). Без этого
+        // drain instances enqueued at emit_test stage никогда не processed,
+        // → "use of undeclared identifier 'Nova_LinkedList____nova_int'".
+        self.drain_generic_type_worklist()?;
 
         // 5b. Plan 57: Bench function definitions (только в bench_mode).
         // В обычной сборке bench items игнорируются — tests/main работают
