@@ -15119,6 +15119,158 @@ Test: f34_var_mul_neg_neg_positive, f34_var_mul_nonpos_positive.
 - ensures_fail на non-Fail fn не падает с verify-error, эмитит W2402.
 
 
+# Plan 33.6 Ф.35 (2026-05-18): addition/subtraction upper bound (<= / <)
+
+Паритет с lower-bound check helpers (>=/> уже есть Ф.17.2/Ф.18.1/Ф.29.4/
+Ф.30.2) для верхней границы. Add/sub bound × {lower, upper} × {strict,
+non-strict} — все 4 combinations теперь покрыты.
+
+## Ф.35.2 — Addition upper bound (<= (+ a b) goal)
+
+`requires x <= 5; requires y <= 5; ensures (x+y) <= 10` — тривиально
+из upper sum, но check не запускался. `try_addition_upper` проверяет
+`upper(a) + upper(b) <= effective_goal` (effective = goal-1 для <).
+Var+Var и Var+Lit cases.
+
+Test: f35_addition_upper_positive (sum_below_threshold, shifted_upper,
+sum_strict).
+
+## Ф.35.4 — Subtraction upper bound (<= (- a b) goal)
+
+`(a - b <= goal)` где `upper(a) - lower(b) <= goal` → true (максимум a
+минус минимум b). 3 case: Var-Var, Var-Lit, Lit-Var с правильным min/max
+выбором bound'а. Strict `<` через effective_goal.
+
+Test: f35_subtraction_upper_positive (diff_below_threshold, diff_strict).
+
+## Регрессия
+
+Перед Ф.35: 186 PASS / 0 FAIL / 44 SKIP contracts.
+После Ф.35: 188 PASS (+2) / 0 FAIL / 44 SKIP contracts.
+
+## Acceptance
+
+- Add/sub bound check helpers — полный 4-вариант coverage:
+  ```
+  addition:    lower (Ф.17.2 >=, Ф.30.2 >)   upper (Ф.35.2 <=, Ф.35.2 <)
+  subtraction: lower (Ф.18.1 >=, Ф.29.4 >)   upper (Ф.35.4 <=, Ф.35.4 <)
+  ```
+- Симметрия: всё через bounds-tracking, low-risk extensions.
+
+
+# Plan 33.6 Ф.36 (2026-05-18): const-mul + negation upper bound (полный паритет)
+
+Завершает паритет TrivialBackend bound check helpers — const-mul и negation
+теперь имеют upper-bound check (<=/< strict). 6 операций × 4 варианта =
+полный coverage (исключая const-mul L<0 и division upper — V3, nonlinear).
+
+## Ф.36.1 — Const-mul upper bound (<= (* L Var) goal)
+
+`try_const_mul_check` покрывал только lower. Новый `try_const_mul_upper`:
+для L>0 проверяет `upper(Var) * L <= effective_goal`. L<0 не покрывается
+(sign flip — нелинейный).
+
+Test: f36_const_mul_upper_positive (double_below, triple_strict_below).
+
+## Ф.36.2 — Negation upper bound (<= (- 0 Var) goal)
+
+`try_negation_check` покрывал только lower. Новый `try_negation_upper`:
+`-lower(Var) <= effective_goal` → true. Симметрия с Ф.17.1.
+
+Test: f36_negation_upper_positive (neg_below, neg_strict_below).
+
+## Регрессия
+
+Перед Ф.36: 188 PASS / 0 FAIL / 44 SKIP contracts.
+После Ф.36: 190 PASS (+2) / 0 FAIL / 44 SKIP contracts.
+
+## Acceptance
+
+Полный 4-вариант coverage TrivialBackend bound check helpers:
+
+| Operator | Lower ≥ | Lower > | Upper ≤ | Upper < |
+|----------|---------|---------|---------|---------|
+| addition | Ф.17.2 | Ф.30.2 | Ф.35.2 | Ф.35.2 |
+| subtraction | Ф.18.1 | Ф.29.4 | Ф.35.4 | Ф.35.4 |
+| const-mul (L>0) | Ф.16.3 | Ф.30.3 | Ф.36.1 | Ф.36.1 |
+| negation | Ф.17.1 | Ф.30.4 | Ф.36.2 | Ф.36.2 |
+| modulus | Ф.19.1 | — | Ф.26.1 | Ф.26.1 |
+| division | Ф.20.1 | Ф.31.2 | V3 (nonlinear) | V3 |
+
+
+# Plan 33.6 Ф.37 (2026-05-18): var-mul strict positive / strict negative
+
+Расширение var-mul на strict случай. До Ф.37: Ф.33.2/Ф.34.2 покрывали
+только non-strict (>= 0 / <= 0), strict отвергался guard'ом
+`effective_goal > 0 { return None; }`.
+
+## Ф.37.2 — Strict positive product (> (* a b) goal)
+
+Branch перед основной логикой: при effective_goal > 0 проверяем
+- `lower(a) >= 1 && lower(b) >= 1` → la*lb >= effective_goal? → true
+- `upper(a) <= -1 && upper(b) <= -1` (both strictly negative) → ua*ub
+  (положительное число) >= effective_goal?
+
+Test: f37_var_mul_strict_positive (pos_pos_strict, neg_neg_strict).
+
+## Ф.37.2-b — Strict negative product (< (* a b) goal)
+
+Симметрично для try_var_mul_nonpos:
+- `lower(a) >= 1 && upper(b) <= -1` → product <= -1
+- `upper(a) <= -1 && lower(b) >= 1` → симметрично
+
+Test: f37_var_mul_strict_negative (pos_neg_strict, neg_pos_strict).
+
+## Регрессия
+
+Перед Ф.37: 190 PASS / 0 FAIL / 44 SKIP contracts.
+После Ф.37: 192 PASS (+2) / 0 FAIL / 44 SKIP contracts.
+
+## Acceptance
+
+TrivialBackend var-mul теперь полное coverage:
+- both >= 0 / both <= 0 → product non-negative (Ф.33.2 + Ф.34.2)
+- mixed signs → product non-positive (Ф.34.2)
+- both >= 1 / both <= -1 → product strictly positive (Ф.37)
+- strict mixed → product strictly negative (Ф.37)
+
+Не покрывает: один из vars unknown sign (упер/lower NaN для одного),
+chained mul (a*b*c) — это nonlinear LIA, требует Z3.
+
+
+# Plan 33.6 Ф.38 (2026-05-18): modulus strict `>` для negative goal
+
+Маленький паритет: `try_modulus_check` для divisor > 0 покрывал `>=, <, <=`,
+но не `>`. `ensures (x % 5) > -1` — тривиально (result >= 0 > -1), но
+не доказывался.
+
+Добавлен check `iop == ">" && goal <= -1` → true. Modulus check теперь
+полный для positive divisor: >=, >, <, <=.
+
+Test: f38_modulus_strict_positive (mod_strict_above_neg, mod_strict_far_below).
+
+Регрессия: 192 → 193 PASS (+1), 0 FAIL, 44 SKIP.
+
+
+# Plan 33.6 Ф.39 (2026-05-18): = bounds check (паритет с !=)
+
+Ф.29.1 покрыл `!=` через bounds. Симметричный `=` отсутствовал.
+Pinned var (lower==upper==n) доказывал `== n` только через UnionFind path
+в частных случаях.
+
+Добавлены symmetric arms `("=", Var, IntLit)` / `("=", IntLit, Var)`:
+- lower(v) > n → false
+- upper(v) < n → false
+- lower(v) == upper(v) == n → true
+
+Test: f39_eq_bounds_positive (pinned_eq, bounded_not_eq).
+
+Регрессия: 193 → 194 PASS (+1), 0 FAIL, 44 SKIP.
+
+Все 6 base comparison operators (=, !=, <, <=, >, >=) теперь поддерживают
+Var-IntLit и Var-Var (literal bounds) checks.
+
+
 ## Session: оба deferred follow-up'а Plan 59 закрыты (2026-05-17 EOD+1)
 
 После merge'а Plan 63 fixes от другого agent'а — обнаружено что оба
