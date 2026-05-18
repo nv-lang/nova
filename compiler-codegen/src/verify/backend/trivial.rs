@@ -252,6 +252,10 @@ fn simplify_app(op: &str, args: &[SmtTerm]) -> SmtTerm {
             (SmtTerm::IntLit(a), SmtTerm::IntLit(b)) if *b != 0 => SmtTerm::IntLit(a % b),
             // Ф.45.3 (Plan 33.6): 0 % a → 0 (when a non-zero).
             (SmtTerm::IntLit(0), _) => SmtTerm::IntLit(0),
+            // Ф.53.1 (Plan 33.6): a % 1 → 0 (любое число mod 1 = 0).
+            (_, SmtTerm::IntLit(1)) | (_, SmtTerm::IntLit(-1)) => SmtTerm::IntLit(0),
+            // Ф.53.2 (Plan 33.6): a % a → 0 (для non-zero — spec assumption).
+            (a, b) if a == b => SmtTerm::IntLit(0),
             _ => SmtTerm::App(op.into(), args.to_vec()),
         },
 
