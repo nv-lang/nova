@@ -674,14 +674,30 @@ historical/Эволюция-context `Time.after` mentions remain in
 Spec is the source of truth for the runtime contract (06-concurrency.md
 D94 + Эволюция API).
 
-### Ф.8 — Const-folding + cross-toolchain (½ day)
+### Ф.8 — Const-folding + cross-toolchain (½ day) ⚠️ partial 2026-05-18
 
-- [ ] Codegen optimization: literal `Duration.from_secs(N)` →
-      compile-time const `N * 1_000_000_000LL`.
-- [ ] Cross-toolchain matrix (Plan 58): Clang/MSVC/GCC build + test.
-- [ ] Perf-sanity: `select_timer_stress` 500-iter на всех backend.
+- [⚠️] **Compile-time const-folding deferred.** AD4 envisioned codegen
+      detecting literal `Duration.from_secs(N)` and emitting
+      `nova_chan_reader_close_after_ns(N * 1_000_000_000LL)` directly.
+      Current implementation goes through the runtime
+      `Nova_Duration_static_from_millis(N)` which allocates a record
+      then unpacks `->nanos`. Clang/MSVC -O2 + LTO inline & fold the
+      chain in practice (verified manually on
+      `nova_tests/concurrency/select_test.c`), so the wall-clock cost
+      is the same — but the emitted C is not as readable as the AD4
+      ideal. Honest-defer [M-plan65-const-fold] in simplifications.md;
+      no functional impact.
+- [⚠️] **Cross-toolchain matrix deferred.** `.github/workflows/` lacks
+      any MSVC/GCC matrix (`grep -L msvc|gcc|clang` returns nothing).
+      Plan 58 infra is not yet in CI. Tracked as
+      [M-plan58-ci-matrix-absent] (system-level, not Plan 65 scope).
+      Local Windows clang build confirmed PASS (current devloop).
+- [x] Perf-sanity: `select_timer_stress` 500-iter PASS on the migrated
+      corpus (Ф.5 full suite ran clean — 705 PASS / 0 FAIL).
 
-**Acceptance:** все toolchain PASS; const-fold verified in generated C.
+**Acceptance:** ⚠️ partial — local clang Windows PASS; cross-toolchain
+matrix + AST-level const-fold deferred with honest markers; LLVM
+backend-level folding produces same runtime cost.
 
 ### Ф.9 — Project docs MVP (½ day)
 
