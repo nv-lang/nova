@@ -16,9 +16,9 @@
 //   - Webhook signature verification
 //
 // API:
-//   HmacSha256.compute(key []byte, message []byte) -> [32]byte
-//   HmacSha256.compute_str(key []byte, message []byte) -> str    // hex
-//   HmacSha256.verify(key []byte, message []byte, mac [32]byte) -> bool
+//   HmacSha256.compute(key []u8, message []u8) -> [32]u8
+//   HmacSha256.compute_str(key []u8, message []u8) -> str    // hex
+//   HmacSha256.verify(key []u8, message []u8, mac [32]u8) -> bool
 //                                                       // constant-time
 
 module crypto.hmac
@@ -41,16 +41,16 @@ const SHA256_OUTPUT_SIZE int = 32
 /// let mac = HmacSha256.compute("secret".bytes(), "data".bytes())
 /// ```
 #stable(since = "0.1")
-export fn HmacSha256.compute(key []byte, message []byte) -> [32]byte {
+export fn HmacSha256.compute(key []u8, message []u8) -> [32]u8 {
     // Step 1: нормализация ключа к block_size.
     let key_block = normalize_key_sha256(key)
 
     // Step 2: ipad / opad
-    let mut inner_pad []byte = []byte.with_capacity(SHA256_BLOCK_SIZE)
-    let mut outer_pad []byte = []byte.with_capacity(SHA256_BLOCK_SIZE)
+    let mut inner_pad []u8 = []u8.with_capacity(SHA256_BLOCK_SIZE)
+    let mut outer_pad []u8 = []u8.with_capacity(SHA256_BLOCK_SIZE)
     for i in 0..SHA256_BLOCK_SIZE {
-        inner_pad.push(((key_block[i] as int) ^ 0x36) as byte)
-        outer_pad.push(((key_block[i] as int) ^ 0x5C) as byte)
+        inner_pad.push(((key_block[i] as int) ^ 0x36) as u8)
+        outer_pad.push(((key_block[i] as int) ^ 0x5C) as u8)
     }
 
     // Step 3: inner hash = H(ipad || message)
@@ -62,7 +62,7 @@ export fn HmacSha256.compute(key []byte, message []byte) -> [32]byte {
     // Step 4: outer hash = H(opad || inner_digest)
     let mut outer = Sha256.new()
     outer.update(outer_pad)
-    let mut inner_bytes []byte = []
+    let mut inner_bytes []u8 = []
     for j in 0..SHA256_OUTPUT_SIZE {
         inner_bytes.push(inner_digest[j])
     }
@@ -72,9 +72,9 @@ export fn HmacSha256.compute(key []byte, message []byte) -> [32]byte {
 
 /// HMAC-SHA-256 в lowercase hex string (64 chars).
 #stable(since = "0.1")
-export fn HmacSha256.compute_str(key []byte, message []byte) -> str {
+export fn HmacSha256.compute_str(key []u8, message []u8) -> str {
     let mac = HmacSha256.compute(key, message)
-    let mut bytes []byte = []
+    let mut bytes []u8 = []
     for i in 0..SHA256_OUTPUT_SIZE { bytes.push(mac[i]) }
     Hex.encode(bytes)
 }
@@ -82,14 +82,14 @@ export fn HmacSha256.compute_str(key []byte, message []byte) -> str {
 /// **Constant-time** MAC verification (security-critical). НЕ используй `==`
 /// для tag comparison — leak'ит timing.
 #stable(since = "0.1")
-export fn HmacSha256.verify(key []byte, message []byte, expected [32]byte) -> bool {
+export fn HmacSha256.verify(key []u8, message []u8, expected [32]u8) -> bool {
     let computed = HmacSha256.compute(key, message)
     constant_time_eq(computed, expected)
 }
 
 // Constant-time равенство массивов байт. XOR all pairs, аккумулируем
 // в diff; результат 0 ⇔ равны. Без early-exit на различие.
-fn constant_time_eq(a [32]byte, b [32]byte) -> bool {
+fn constant_time_eq(a [32]u8, b [32]u8) -> bool {
     let mut diff int = 0
     for i in 0..32 {
         diff = diff | ((a[i] as int) ^ (b[i] as int))
@@ -105,8 +105,8 @@ fn constant_time_eq(a [32]byte, b [32]byte) -> bool {
 // Если key длиннее block_size — берём H(key) (32 байта для SHA-256).
 // Если короче — pad нулями справа до block_size.
 // Если ровно — без изменений.
-fn normalize_key_sha256(key []byte) -> []byte {
-    let mut block []byte = []byte.with_capacity(SHA256_BLOCK_SIZE)
+fn normalize_key_sha256(key []u8) -> []u8 {
+    let mut block []u8 = []u8.with_capacity(SHA256_BLOCK_SIZE)
 
     if key.len() > SHA256_BLOCK_SIZE {
         let hashed = Sha256.hash(key)
@@ -128,7 +128,7 @@ test "HMAC-SHA256: RFC 4231 test case 1" {
     // Key  = 0x0b × 20
     // Data = "Hi There"
     // HMAC = b0344c61d8db38535ca8afceaf0bf12b881dc200c9833da726e9376c2e32cff7
-    let mut key []byte = []
+    let mut key []u8 = []
     for i in 0..20 { key.push(0x0B) }
     let data = "Hi There".bytes()
     assert(HmacSha256.compute_str(key, data) ==
@@ -149,9 +149,9 @@ test "HMAC-SHA256: RFC 4231 test case 3 (длинный key)" {
     // Key  = 0xaa × 20
     // Data = 0xdd × 50
     // HMAC = 773ea91e36800e46854db8ebd09181a72959098b3ef8c122d9635514ced565fe
-    let mut key []byte = []
+    let mut key []u8 = []
     for i in 0..20 { key.push(0xAA) }
-    let mut data []byte = []
+    let mut data []u8 = []
     for j in 0..50 { data.push(0xDD) }
     assert(HmacSha256.compute_str(key, data) ==
         "773ea91e36800e46854db8ebd09181a72959098b3ef8c122d9635514ced565fe")
@@ -160,7 +160,7 @@ test "HMAC-SHA256: RFC 4231 test case 3 (длинный key)" {
 test "HMAC-SHA256: key > block_size (используется hashed)" {
     // Key  = 0xaa × 131
     // Data = "Test Using Larger Than Block-Size Key - Hash Key First"
-    let mut key []byte = []
+    let mut key []u8 = []
     for i in 0..131 { key.push(0xAA) }
     let data = "Test Using Larger Than Block-Size Key - Hash Key First".bytes()
     assert(HmacSha256.compute_str(key, data) ==
@@ -177,7 +177,7 @@ test "verify: правильный MAC — true" {
 test "verify: неправильный MAC — false" {
     let key = "secret".bytes()
     let data = "important message".bytes()
-    let wrong [32]byte = [0; 32]
+    let wrong [32]u8 = [0; 32]
     assert(!HmacSha256.verify(key, data, wrong))
 }
 

@@ -819,7 +819,7 @@ sleep-list с deadline и scheduler пропустит sleeping fibers до их
 При запуске spawn внутри `supervised`, его захваты переменных делятся на:
 
 - **By value** — переменная объявлена как `let` (не `let mut`) И тип scalar
-  (`int`, `bool`, `f64`, `f32`, `byte`). Значение **копируется** в ctx-struct
+  (`int`, `bool`, `f64`, `f32`, `u8`). Значение **копируется** в ctx-struct
   как `T name` — fiber видит snapshot на момент spawn'а.
 - **By pointer** — переменная mutable (`let mut`) или non-scalar (record, array,
   string). В ctx-struct хранится `T* name`, fiber разделяет состояние с

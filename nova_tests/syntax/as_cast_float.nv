@@ -114,5 +114,5 @@ test "int wraparound (план 05) не сломан" {
     // 2^32 mod 2^32 = 0
     assert(small as int == 0)
     let big2 int = 0x1FF
-    assert(big2 as byte as int == 255)
+    assert(big2 as u8 as int == 255)
 }

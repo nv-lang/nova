@@ -1,11 +1,11 @@
-// stdlib/hex.nv — Hex encoding/decoding `[]byte` ↔ `str`.
+// stdlib/hex.nv — Hex encoding/decoding `[]u8` ↔ `str`.
 //
 // Independent implementation. Hex — universal encoding, no copyright.
 //
 // API:
-//   Hex.encode(data []byte) -> str            // lowercase
-//   Hex.encode_upper(data []byte) -> str
-//   Hex.decode(s str) Fail[ParseHexError] -> []byte
+//   Hex.encode(data []u8) -> str            // lowercase
+//   Hex.encode_upper(data []u8) -> str
+//   Hex.decode(s str) Fail[ParseHexError] -> []u8
 //
 // Use cases: hash digests (SHA, CRC), binary dumps, debugging,
 // crypto tokens, file integrity.
@@ -22,15 +22,15 @@ export type ParseHexError
 
 /// Encode bytes как lowercase hex (e.g. `[0xDE, 0xAD]` → `"dead"`).
 #stable(since = "0.1")
-export fn Hex.encode(data []byte) -> str =>
+export fn Hex.encode(data []u8) -> str =>
     encode_with(data, false)
 
 /// Encode bytes как uppercase hex (`"DEAD"`).
 #stable(since = "0.1")
-export fn Hex.encode_upper(data []byte) -> str =>
+export fn Hex.encode_upper(data []u8) -> str =>
     encode_with(data, true)
 
-fn encode_with(data []byte, upper bool) -> str {
+fn encode_with(data []u8, upper bool) -> str {
     let mut buf = StringBuilder.with_capacity(data.len() * 2)
     for b in data {
         let hi = (b as int) / 16
@@ -66,15 +66,15 @@ fn digit(n u8, upper bool) -> char {
 
 /// Decode hex string в bytes. Case-insensitive. Throws `OddLength`/`InvalidChar`.
 #stable(since = "0.1")
-export fn Hex.decode(s str) Fail[ParseHexError] -> []byte {
+export fn Hex.decode(s str) Fail[ParseHexError] -> []u8 {
     if s.len() % 2 != 0 {
         throw OddLength { actual: s.len() }
     }
-    let mut out []byte = []byte.with_capacity(s.len() / 2)
+    let mut out []u8 = []u8.with_capacity(s.len() / 2)
     for i in (0..s.len()).step_by(2) {
         let hi = digit_value(s, i)
         let lo = digit_value(s, i + 1)
-        out.push(((hi * 16 + lo) & 0xFF) as byte)
+        out.push(((hi * 16 + lo) & 0xFF) as u8)
     }
     out
 }
@@ -103,22 +103,22 @@ fn digit_value(s str, pos int) Fail[ParseHexError] -> int {
 // ──────────────────────────────────────────────────────────────────────────
 
 test "encode: пустой массив" {
-    let empty []byte = []
+    let empty []u8 = []
     assert(Hex.encode(empty) == "")
 }
 
 test "encode: lowercase по умолчанию" {
-    let data []byte = [0xDE, 0xAD, 0xBE, 0xEF]
+    let data []u8 = [0xDE, 0xAD, 0xBE, 0xEF]
     assert(Hex.encode(data) == "deadbeef")
 }
 
 test "encode_upper: uppercase" {
-    let data []byte = [0xDE, 0xAD, 0xBE, 0xEF]
+    let data []u8 = [0xDE, 0xAD, 0xBE, 0xEF]
     assert(Hex.encode_upper(data) == "DEADBEEF")
 }
 
 test "encode: leading zeros сохраняются" {
-    let data []byte = [0x00, 0x01, 0x0F]
+    let data []u8 = [0x00, 0x01, 0x0F]
     assert(Hex.encode(data) == "00010f")
 }
 

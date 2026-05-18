@@ -38,12 +38,12 @@ export const NAMESPACE_X500 Uuid =
 /// предпочитайте `Uuid.v5` для новых проектов.
 #stable(since = "0.1")
 export fn Uuid.v3(namespace Uuid, name str) -> Self {
-    let mut input []byte = []
+    let mut input []u8 = []
     push_uuid_bytes(input, namespace)
     for b in name.bytes() { input.push(b) }
 
     let digest = Md5.hash(input)
-    let mut bytes []byte = []
+    let mut bytes []u8 = []
     for i in 0..16 { bytes.push(digest[i]) }
 
     // Set version=3 (MD5) и variant
@@ -60,13 +60,13 @@ export fn Uuid.v3(namespace Uuid, name str) -> Self {
 /// ```
 #stable(since = "0.1")
 export fn Uuid.v5(namespace Uuid, name str) -> Self {
-    let mut input []byte = []
+    let mut input []u8 = []
     push_uuid_bytes(input, namespace)
     for b in name.bytes() { input.push(b) }
 
     let digest = Sha1.hash(input)
     // Берём первые 16 байт SHA-1 (она даёт 20).
-    let mut bytes []byte = []
+    let mut bytes []u8 = []
     for i in 0..16 { bytes.push(digest[i]) }
 
     set_version_variant(bytes, 5)
@@ -78,27 +78,27 @@ export fn Uuid.v5(namespace Uuid, name str) -> Self {
 // Helpers
 // ──────────────────────────────────────────────────────────────────────────
 
-fn push_uuid_bytes(out mut []byte, u Uuid) {
+fn push_uuid_bytes(out mut []u8, u Uuid) {
     let mut i = 7
     while i >= 0 {
-        out.push(((u.hi >> (i * 8)) & 0xFF) as byte)
+        out.push(((u.hi >> (i * 8)) & 0xFF) as u8)
         i -= 1
     }
     let mut j = 7
     while j >= 0 {
-        out.push(((u.lo >> (j * 8)) & 0xFF) as byte)
+        out.push(((u.lo >> (j * 8)) & 0xFF) as u8)
         j -= 1
     }
 }
 
-fn set_version_variant(bytes mut []byte, version int) {
+fn set_version_variant(bytes mut []u8, version int) {
     // Version в старшие 4 бита 6-го байта (нумерация с 0).
-    bytes[6] = (((bytes[6] as int) & 0x0F) | (version << 4)) as byte
+    bytes[6] = (((bytes[6] as int) & 0x0F) | (version << 4)) as u8
     // Variant 10 в старшие 2 бита 8-го байта.
-    bytes[8] = (((bytes[8] as int) & 0x3F) | 0x80) as byte
+    bytes[8] = (((bytes[8] as int) & 0x3F) | 0x80) as u8
 }
 
-fn bytes_to_uuid(bytes []byte) -> Uuid {
+fn bytes_to_uuid(bytes []u8) -> Uuid {
     let mut hi u64 = 0
     for i in 0..8 {
         hi = (hi << 8) | (bytes[i] as u64)

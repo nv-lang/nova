@@ -33,14 +33,14 @@ export type JwtError
 ///
 /// Format: `<header_b64>.<payload_b64>.<signature_b64>` (RFC 7519).
 #stable(since = "0.1")
-export fn Jwt.encode_hs256(secret []byte, claims JsonValue) -> str {
+export fn Jwt.encode_hs256(secret []u8, claims JsonValue) -> str {
     let header = JsonValue.Object(make_header_hs256())
     let header_b64 = Base64.encode_url(header.into().bytes())
     let payload_b64 = Base64.encode_url(claims.into().bytes())
 
     let signing_input = header_b64 + "." + payload_b64
     let mac = HmacSha256.compute(secret, signing_input.bytes())
-    let mut mac_bytes []byte = []
+    let mut mac_bytes []u8 = []
     for i in 0..32 { mac_bytes.push(mac[i]) }
     let sig_b64 = Base64.encode_url(mac_bytes)
 
@@ -62,7 +62,7 @@ fn make_header_hs256() -> HashMap[str, JsonValue] {
 /// Verify HS256 signature + return payload. **Не проверяет** exp/nbf — это
 /// делает `validate_hs256`. Throws `JwtError` (Invalid format/sig/alg).
 #stable(since = "0.1")
-export fn Jwt.decode_hs256(secret []byte, token str) Fail[JwtError] -> JsonValue {
+export fn Jwt.decode_hs256(secret []u8, token str) Fail[JwtError] -> JsonValue {
     let parts = token.split(".")
     if parts.len() != 3 { throw InvalidFormat }
 
@@ -119,7 +119,7 @@ export fn Jwt.decode_hs256(secret []byte, token str) Fail[JwtError] -> JsonValue
 /// Full JWT validation: signature + `exp` (expiration) + `nbf` (not-before).
 /// Использует Time effect — детерминирован в тестах через `th.fixed_ms(...)`.
 #stable(since = "0.1")
-export fn Jwt.validate_hs256(secret []byte, token str) Time Fail[JwtError] -> JsonValue {
+export fn Jwt.validate_hs256(secret []u8, token str) Time Fail[JwtError] -> JsonValue {
     let claims = Jwt.decode_hs256(secret, token)
     let now_ms = Time.now_ms()
     let now_s = now_ms / 1000
