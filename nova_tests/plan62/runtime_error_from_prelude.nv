@@ -1,0 +1,107 @@
+// runtime_error_from_prelude.nv — Plan 62.C acceptance test.
+//
+// Verifies что RuntimeError + ReadBufferError types, объявленные в
+// std/prelude/errors.nv, видны через cross-file resolve (R27 auto-import
+// + R26 re-export через std/prelude.nv facade) и dispatch через
+// `sum_schema_registry` Prelude entries работает идентично previous
+// hardcoded-в-HashSet path. Pre-populated `sum_schemas["RuntimeError"]`
+// (emit_c.rs:1029-1048) остался как ABI-compat fallback, но lookup
+// precedence теперь — Prelude > HardcodedBaseline.
+//
+// **Idiom note**: используем `if let` вместо `match` для pattern
+// destructuring (см. nova_tests/runtime/error_runtime_error.nv §63-64
+// — assignment-style match ломается на nova_assert-void mismatch).
+
+module plan62.runtime_error_from_prelude
+
+
+// ─── RuntimeError variants (через Prelude) ───────────────────────────
+
+test "Plan 62.C: RuntimeError.DivByZero — unit-variant" {
+    let e = DivByZero
+    assert(e is DivByZero)
+}
+
+test "Plan 62.C: RuntimeError.Overflow — unit-variant" {
+    let e = Overflow
+    assert(e is Overflow)
+}
+
+test "Plan 62.C: RuntimeError.IndexOutOfBounds — record-variant" {
+    let e = IndexOutOfBounds { index: 5, length: 3 }
+    assert(e is IndexOutOfBounds)
+    // Destructure через if-let (избегаем assignment-style match).
+    let mut got_index = 0
+    let mut got_length = 0
+    if let IndexOutOfBounds { index, length } = e {
+        got_index = index
+        got_length = length
+    }
+    assert(got_index == 5)
+    assert(got_length == 3)
+}
+
+test "Plan 62.C: RuntimeError.TypeMismatch — positional tuple-variant" {
+    let e = TypeMismatch("expected int")
+    assert(e is TypeMismatch)
+    let mut got = ""
+    if let TypeMismatch(s) = e {
+        got = s
+    }
+    assert(got == "expected int")
+}
+
+test "Plan 62.C: RuntimeError.AssertFailed — positional tuple-variant" {
+    let e = AssertFailed("x > 0")
+    assert(e is AssertFailed)
+    let mut got = ""
+    if let AssertFailed(s) = e {
+        got = s
+    }
+    assert(got == "x > 0")
+}
+
+test "Plan 62.C: RuntimeError.NoHandler — positional tuple-variant" {
+    let e = NoHandler("Db")
+    assert(e is NoHandler)
+    let mut got = ""
+    if let NoHandler(s) = e {
+        got = s
+    }
+    assert(got == "Db")
+}
+
+
+// ─── ReadBufferError variant (через Prelude, no baseline) ────────────
+
+test "Plan 62.C: ReadBufferError.UnexpectedEnd — record-variant" {
+    let e = UnexpectedEnd { wanted: 10, available: 5 }
+    assert(e is UnexpectedEnd)
+    let mut got_wanted = 0
+    let mut got_available = 0
+    if let UnexpectedEnd { wanted, available } = e {
+        got_wanted = wanted
+        got_available = available
+    }
+    assert(got_wanted == 10)
+    assert(got_available == 5)
+}
+
+
+// ─── Mixed: оба type'а из errors.nv доступны одновременно ───────────
+
+test "Plan 62.C: RuntimeError и ReadBufferError независимы" {
+    // Оба type'а должны быть declar'able одновременно — cross-file
+    // resolve (R27 auto-import + R26 re-export через std/prelude.nv)
+    // даёт user коду оба namespace'а.
+    let re = DivByZero
+    let rbe = UnexpectedEnd { wanted: 7, available: 0 }
+    assert(re is DivByZero)
+    assert(rbe is UnexpectedEnd)
+    // NOTE: cross-type `is` checks (`re is UnexpectedEnd`) опущены — это
+    // pre-existing bootstrap-ограничение (codegen blindly сравнивает
+    // tag-enum values без проверки sum-type identity, и cross-enum
+    // collisions могут давать ложные срабатывания). Тип-system должен
+    // отвергнуть cross-type pattern statically — отдельная задача
+    // (вне scope Plan 62.C).
+}

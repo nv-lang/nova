@@ -359,7 +359,15 @@ non-str + multi-arg callers. Real test files используют все чет�
 
 ### Plan 62.C — Error types: RuntimeError/RuntimeNoneError (1 day)
 
-- [ ] Создать `std/prelude/errors.nv`:
+> **Status update 2026-05-18:** Phase 62.C complete — 2/3 types migrated
+> (RuntimeError + ReadBufferError + 7 variant names; RuntimeNoneError
+> deferred per parser empty-sum limitation, same blocker as `Never`).
+> nova test 700/0/44 → **701/0/44 (+1)**, registry unit tests 13 → **16
+> (+3)**. Pre-populated `sum_schemas["RuntimeError"]` оставлен как
+> ABI-compat fallback baseline per 62.A.bis architecture; lookup precedence
+> теперь DeclaredFromPrelude > HardcodedBaseline.
+
+- [x] Создать `std/prelude/errors.nv`:
   ```nova
   module std.prelude.errors
   export type RuntimeError
@@ -369,14 +377,54 @@ non-str + multi-arg callers. Real test files используют все чет�
       | TypeMismatch(str)
       | AssertFailed(str)
       | NoHandler(str)
-  export type RuntimeNoneError
+  // DEFER: type RuntimeNoneError — bootstrap parser blocker (см. ниже)
   export type ReadBufferError
       | UnexpectedEnd { wanted int, available int }
   ```
-- [ ] Wire через generic schema registry (Plan 62.A.bis).
-- [ ] Удалить из builtins HashSet: 7 RuntimeError variants + RuntimeError + RuntimeNoneError + ReadBufferError + UnexpectedEnd.
-- [ ] Удалить pre-populated `sum_schemas["RuntimeError"]` (797-820) — заменить на registry lookup.
-- [ ] Regression: 562/562 PASS.
+- [x] Wire через generic schema registry (Plan 62.A.bis) —
+  `init_prelude_decls_from_items()` extended c Part 2 (sum-type
+  registration). RuntimeError → `register_prelude_sum_inheriting_baseline`
+  (inherits variants/abi/c_name/method_routing от HardcodedBaseline +
+  strict variant-set equality check). ReadBufferError →
+  `register_prelude_sum_from_decl` (parses variants из AST,
+  PointerErrorLike ABI).
+- [x] Удалить из builtins HashSet: **7 имён** (DivByZero, Overflow,
+  IndexOutOfBounds, TypeMismatch, AssertFailed, NoHandler, RuntimeError).
+  `RuntimeNoneError`, `ReadBufferError`, `UnexpectedEnd` — изначально НЕ
+  были в HashSet'е (verified via grep на baseline'е); cross-file resolve
+  для них работает через runtime_registry signatures + emit_sum_type
+  для ReadBufferError.
+- [x] **НЕ удаляли** pre-populated `sum_schemas["RuntimeError"]`
+  (emit_c.rs:1029-1048) — оставлен как ABI-compat fallback baseline per
+  Plan 62.A.bis design (HardcodedBaseline остаётся, lookup precedence
+  DeclaredFromPrelude > HardcodedBaseline). Удаление отложено до Plan
+  62.F (edition cleanup).
+- [x] Facade `std/prelude.nv` обновлён — 3-й `export import` line с
+  RuntimeError + 6 variants + ReadBufferError + UnexpectedEnd (9 имён).
+- [x] `RUNTIME_DEFINED_TYPES` skip-list (emit_c.rs:4883) расширен на
+  `RuntimeError` (но НЕ ReadBufferError — у неё нет C struct в nova_rt,
+  codegen эмитит свой через emit_sum_type). `BUILTIN_TYPE_NAMES`
+  расширен на RuntimeError (fwd-decl skip).
+- [x] Positive test `nova_tests/plan62/runtime_error_from_prelude.nv`
+  (8 tests, все PASS) — coverage всех 6 RuntimeError variants + 1
+  ReadBufferError variant.
+- [x] Regression: **701 PASS / 0 FAIL / 44 SKIP** (+1 от baseline 700).
+  Sum-schema unit tests **16/16 PASS** (3 новых: variant inherit, drift
+  skip, ReadBufferError from-AST).
+
+**DEFER Plan 62.C → Plan 62.F (edition cleanup):**
+
+- `type RuntimeNoneError` (unit-type per D85) — bootstrap parser
+  `parse_sum_variants` (parser/mod.rs:2160) требует ≥1 `|` с variant;
+  `parse_type_decl` (parser/mod.rs:2042+) при отсутствии body падает в
+  newtype branch. Empty-body `type Name` не поддерживается. То же
+  ограничение что у `Never` (Plan 62.A defer, см. std/prelude/core.nv:
+  104-109). `RuntimeNoneError` остаётся как string-payload throw в
+  `nova_rt/effects.h:122-126` (`nova_throw(nova_str_from_cstr("Runtime
+  NoneError"))`) — никакого C-уровневого `Nova_RuntimeNoneError` не
+  существует. Декларация перенесётся вместе с `Never` когда parser
+  получит empty-sum syntax (D-block addition в spec/decisions/
+  03-syntax.md).
 
 ### Plan 62.D — Iter[T] + Range + StringBuilder + WriteBuffer + ReadBuffer (2 days)
 
