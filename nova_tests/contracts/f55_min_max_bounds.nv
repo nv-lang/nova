@@ -1,0 +1,25 @@
+// Plan 33.19 (extending Ф.14 Dafny-port): max/min bounds reasoning без if (V1).
+// TrivialBackend не reasoning'ует про if-then-else напрямую; используем
+// bounded passthrough.
+
+module contracts.f55_min_max_bounds
+
+#verify
+fn max_with_zero(a int) -> int
+    requires a >= 0
+    ensures result >= 0
+{
+    a
+}
+
+#verify
+fn min_const() -> int
+    ensures result >= 1
+{
+    1
+}
+
+test "min/max bounds" {
+    assert(max_with_zero(7) == 7)
+    assert(min_const() == 1)
+}

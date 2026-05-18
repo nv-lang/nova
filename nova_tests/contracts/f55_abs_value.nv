@@ -1,0 +1,26 @@
+// Plan 33.19 (extending Ф.14 Dafny-port): abs() V1 — single-branch.
+// Положительный bound (a >= 0) → abs = a сам по себе.
+
+module contracts.f55_abs_value
+
+#verify
+fn abs_already_pos(x int) -> int
+    requires x >= 0
+    ensures result >= 0
+{
+    x
+}
+
+// abs от entirely-negative: result = 0 - x → bound через Ф.17.1 negation.
+#verify
+fn abs_of_negative(x int) -> int
+    requires x <= -5
+    ensures result >= 5
+{
+    0 - x
+}
+
+test "abs value" {
+    assert(abs_already_pos(7) == 7)
+    assert(abs_of_negative(-10) == 10)
+}
