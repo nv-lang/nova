@@ -15366,6 +15366,23 @@ Unit: simplify_mul_neg_one_negates.
 cargo test --lib verify::backend::trivial: 14/14 PASS (+1).
 
 
+# Plan 33.6 Ф.45 (2026-05-18): division/modulus zero identities
+
+Три identities:
+- Ф.45.1: a / -1 → 0 - a (паритет Ф.44.1 для multiplication)
+- Ф.45.2: 0 / a → 0
+- Ф.45.3: 0 % a → 0
+
+В контексте contracts программист пишет такие goals только когда a != 0
+(иначе runtime UB), поэтому assumption safe.
+
+Test: f45_division_modulus_zero_positive (div_by_neg_one, zero_div, zero_mod).
+
+Регрессия: 199 → 200 PASS (+1, юбилейная цифра 200), 0 FAIL, 44 SKIP.
+
+TrivialBackend полное покрытие zero/identity edge cases для division/modulus.
+
+
 ## Session: оба deferred follow-up'а Plan 59 закрыты (2026-05-17 EOD+1)
 
 После merge'а Plan 63 fixes от другого agent'а — обнаружено что оба
