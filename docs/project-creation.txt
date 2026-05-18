@@ -15541,6 +15541,137 @@ gaps закрыты, contract lint catalog обширный, TrivialBackend по
 практически все common arithmetic identities без Z3.
 
 
+# Plan 33.19 expansion 2026-05-18: Ф.55 + Ф.56 — 10 новых Dafny-port тестов
+
+После закрытия Plan 33.6 — расширение Plan 33.19 (Dafny tutorial port).
+Plan 33.3 уже сделал 20 тестов в `nova_tests/contracts/f14_*.nv`.
+Расширил corpus до **30** через 2 batch'а:
+
+**Ф.55 (5 tests):**
+- f55_factorial_invariant — factorial step с algebraic cancel + acc preserves
+- f55_min_max_bounds — bounded passthrough (V1 без if-then-else)
+- f55_power_recursion — pow_step через Ф.37.2 strict positive product
+- f55_sum_bounds — sum_two_nonneg (Ф.17.2) + sum_bounded (Ф.35.2)
+- f55_abs_value — abs_already_pos (passthrough) + abs_of_negative (Ф.17.1 negation)
+
+**Ф.56 (5 tests):**
+- f56_clamp_bounds — passthrough в bounds + constants (clamp pattern)
+- f56_distance_nonneg — (a-b)*(a-b) >= 0 через Ф.51.1 square nonneg
+- f56_counter_increment — inc/dec/inc_bounded patterns
+- f56_safe_division — div_by_two + div_self_one + mod_by_three
+- f56_buffer_index_safety — valid_index + advance + last_valid
+
+Регрессия за Ф.55+Ф.56:
+- Перед Ф.55: 217 PASS / 0 FAIL / 44 SKIP (после Ф.54 test pack).
+- После Ф.55: 222 PASS (+5).
+- После Ф.56: **227 PASS** (+5), 0 FAIL, 44 SKIP.
+
+Уроки V1 design constraints (TrivialBackend reality check):
+- if-then-else не reasons на boolean branches → upgraded to single-branch
+  passthrough patterns (V3: ite reasoning требует Z3 path-sensitive).
+- (a+b)+c (chained addition) не reasons → 2-arity max (V3: associativity
+  через flatten уже работает в `and`/`or`, но не для arithmetic).
+- (acc*base)*base не reasons → split на 1 multiplication.
+- (a-b)*(a-b) > 0 для mixed signs не reasons (square strict только для Var, не для composite).
+- (Var/Var) не reasons → only (Var/Lit) через Ф.20.1.
+
+Эти ограничения **правильно отложены до Z3** — они требуют либо
+path-sensitive analysis (ite reasoning), либо substitution chains
+(nested arithmetic), либо semantic Var-Var (без literal bounds).
+
+## Финальная сводка автономной сессии 2026-05-18
+
+**27 спринтов:** Ф.29-Ф.53 (Plan 33.6 hardening) + Ф.54 test pack +
+Ф.55-Ф.56 (Plan 33.19 expansion).
+
+**Tests:** 170 → **227 PASS** (+57, +33.5%), 0 FAIL, 44 SKIP (Z3-only).
+Unit tests verify::backend::trivial: 6 → 14 (+8).
+
+**Один откат:** Ф.47.3 not-canon (27 регрессий) — moved to V3, документировано.
+
+**Commits:** ~50 (feat + docs парами для каждого спринта).
+
+**Coverage:**
+- TrivialBackend bound check helpers — полный 4-вариант (≥, >, ≤, <) для
+  всех 6 arithmetic ops.
+- Var-mul по 4 sign combinations + square (Ф.51, Ф.52).
+- Algebraic identities: cancel/restore, inverse, mul/div by -1, a/a, a%a, a%1.
+- 11 fn lints + 13 lemma lints + readability hints для long AND/OR.
+- 1 soundness fix: lemma self-apply E2408 (Ф.46.1).
+- 30 Dafny-port тестов в `nova_tests/contracts/f14_/f55_/f56_*.nv`.
+
+Plan 33.6 — **production-grade complete**.
+Plan 33.19 — **partial (30/20 minimum), стабильно расширяемо**.
+
+
+# Plan 33.9 V1 bootstrap 2026-05-18: opaque/reveal/fuel
+
+После Plan 33.6 (production hardening) + Plan 33.19 expansion (35 Dafny
+tests) — открытие нового плана 33.9 для контролируемого matching-loops
+при scaling до 50+ contracts.
+
+## Сделано
+
+**Сначала proper plan doc** — 33.9-opaque-reveal-fuel.md (~350 lines в
+стиле других 33.x с phasing/acceptance/dependencies/open-questions).
+Это unlock'ает дальнейшую реализацию без risk регрессии (production-
+grade specification).
+
+**V1 bootstrap (Ф.1+Ф.2+Ф.3 parser/AST + Ф.6 pipeline lints):**
+
+Ф.1 — parser+AST для `#opaque` attribute:
+- ContractAttrs.is_opaque: bool
+- FnDecl.is_opaque: bool
+- Parser arm `"opaque"` рядом с `"trusted"` (similar bool attr).
+
+Ф.2 — parser+AST для `reveal name` statement:
+- Stmt::Reveal { name, span } — новый variant в Stmt enum.
+- Parser arm в `parse_stmt_or_expr` (контекстуальный keyword).
+- Обновлены все 15+ match'ей в codegen/interp/types/lints/desugar/
+  callnorm/verify pipeline (ghost statement, no-op везде кроме verify).
+
+Ф.3 — parser+AST для `#fuel(N)`:
+- ContractAttrs.fuel: Option<u32>
+- FnDecl.fuel: Option<u32>
+- Parser arm `"fuel"` с argument parsing: `#fuel(N)` где `0 <= N <= 100`.
+- Validation: required argument, valid int range.
+
+Ф.6 — 5 pipeline lints в verify_module:
+- `collect_reveal_stmts_in_body` helper (analog `collect_apply_stmts`).
+- E2411: `reveal X` где X не существует в module → compile error.
+- W2403: `reveal X` где X не помечена `#opaque` (reveal бесполезен).
+- W2403: `#opaque` fn никогда не reveal'ится (dead opaque).
+- W2402: duplicate `reveal X; reveal X;` в одном scope.
+- W2403: `#fuel(0)` явный (эквивалентно отсутствию — noise).
+
+## Тесты
+
+`nova_tests/contracts/f58_*.nv` — 6 файлов:
+- f58_opaque_parse_smoke (positive: #opaque + #fuel(2) + reveal compose).
+- f58_reveal_undef_fail (EXPECT_COMPILE_ERROR E2411).
+- f58_reveal_non_opaque_w2403 (EXPECT_COMPILE_WARNING).
+- f58_dead_opaque_w2403 (EXPECT_COMPILE_WARNING).
+- f58_dup_reveal_w2402 (EXPECT_COMPILE_WARNING).
+- f58_fuel_zero_w2403 (EXPECT_COMPILE_WARNING).
+
+## Регрессия
+
+Перед Plan 33.9: 232 PASS / 0 FAIL / 44 SKIP.
+После Plan 33.9 V1: **238 PASS** (+6) / 0 FAIL / 44 SKIP contracts.
+
+## Не сделано (deferred)
+
+- Ф.4 TrivialBackend integration — silent passthrough (V1 conservative).
+  UF emission в SMT scope — V2 task (требует encode.rs changes).
+- Ф.5 Z3 axiomatic encoding + fuel chain — V2 (focused 2-day research
+  session с тестовым корпусом matching loops).
+- Ф.7 spec sync (D-NN decision) + idiom doc — V3 polish.
+
+Bootstrap V1 закрывает все парсинг + lint pain points. Z3 V2
+разблокируется когда понадобится — proper spec и parser/AST уже готовы,
+plus pipeline lints catch'ат основные user errors сейчас.
+
+
 ## Session: оба deferred follow-up'а Plan 59 закрыты (2026-05-17 EOD+1)
 
 После merge'а Plan 63 fixes от другого agent'а — обнаружено что оба

@@ -1,0 +1,42 @@
+// Plan 33.19 (extending Ф.14): modular arithmetic invariants.
+// x % k bounds (Ф.19.1 / Ф.26.1 / Ф.38.1).
+
+module contracts.f57_modular_invariant
+
+#verify
+fn mod_lower_bound(x int) -> int
+    ensures result >= 0
+{
+    x % 256
+}
+
+#verify
+fn mod_upper_bound(x int) -> int
+    ensures result < 256
+{
+    x % 256
+}
+
+// Modulo by self → 0 (Ф.53.2).
+#verify
+fn mod_self_zero(k int) -> int
+    requires k >= 1
+    ensures result == 0
+{
+    k % k
+}
+
+// Modulo by 1 → 0 (Ф.53.1).
+#verify
+fn mod_one_zero(x int) -> int
+    ensures result == 0
+{
+    x % 1
+}
+
+test "modular invariants" {
+    assert(mod_lower_bound(513) == 1)
+    assert(mod_upper_bound(513) == 1)
+    assert(mod_self_zero(7) == 0)
+    assert(mod_one_zero(42) == 0)
+}
