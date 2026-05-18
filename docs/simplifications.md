@@ -9155,7 +9155,36 @@ Add/sub bound check helpers — полный 4-вариант coverage:
 **Что не закрывает (V3):** const-mul upper bound (`<= L*Var goal` где L>0),
 division upper bound, negation upper. Эти все требуют **negative goals**
 (или absolute value reasoning) — менее частые в практических контрактах.
-Если потребуется — добавлять по тому же шаблону.
+Если потребуется — добавлять по тому же шаблону. **Ф.36 закрыл const-mul
+upper и negation upper** (см. ниже).
+
+## [M-plan-33.6-Ф.36-const-mul-negation-upper] (2026-05-18)
+
+Завершает паритет TrivialBackend bound check helpers. `try_const_mul_upper`
++ `try_negation_upper` добавлены — теперь 6 операций × 4 варианта (lower/
+upper × strict/non-strict) = полный coverage, исключая const-mul L<0 и
+division upper (оба требуют nonlinear LIA / Z3).
+
+**Регрессия:** 188 → 190 PASS (+2), 0 FAIL, 44 SKIP.
+
+**Текущий matrix coverage:**
+
+| Operator | ≥ | > | ≤ | < |
+|----------|---|---|---|---|
+| addition | ✓ Ф.17.2 | ✓ Ф.30.2 | ✓ Ф.35.2 | ✓ Ф.35.2 |
+| subtraction | ✓ Ф.18.1 | ✓ Ф.29.4 | ✓ Ф.35.4 | ✓ Ф.35.4 |
+| const-mul (L>0) | ✓ Ф.16.3 | ✓ Ф.30.3 | ✓ Ф.36.1 | ✓ Ф.36.1 |
+| negation | ✓ Ф.17.1 | ✓ Ф.30.4 | ✓ Ф.36.2 | ✓ Ф.36.2 |
+| modulus | ✓ Ф.19.1 | — | ✓ Ф.26.1 | ✓ Ф.26.1 |
+| division | ✓ Ф.20.1 | ✓ Ф.31.2 | V3 | V3 |
+| var-mul | ✓ Ф.33.2 | — | ✓ Ф.34.2 | ✓ Ф.34.2 |
+
+**Что не покрывает:**
+- const-mul с L<0 (sign flip — nonlinear)
+- division upper (nonlinear, требует Z3)
+- var-mul strict variant (`>` / `<` strict для product)
+- modulus `>` strict
+- arbitrary expression composition (e.g. `(a+b) * c`)
 
 ## [M-57.F.4-positive-negative-coverage] — Test expansion (2026-05-17)
 
