@@ -15330,6 +15330,26 @@ Test: f42_verify_only_requires_w2402 (check_input).
 Fn lint catalog продолжает расти.
 
 
+# Plan 33.6 Ф.43 (2026-05-18): addition algebraic identities
+
+Симметрия Ф.41 для addition cancel + additive inverse:
+
+- (a - b) + b → a   (Ф.43.1, паритет с Ф.41.1)
+- (b) + (a - b) → a (Ф.43.1 symmetric)
+- a + (0 - a) → 0   (Ф.43.2, additive inverse)
+- (0 - a) + a → 0   (Ф.43.2 symmetric)
+
+Placed перед commutativity sort в simplify_app("+") чтобы pattern не
+портился перестановкой args.
+
+Tests: f43_addition_algebraic_positive (restore_after_sub,
+add_negation_zero). Unit: simplify_addition_restores_sub +
+simplify_addition_negation_zero.
+
+Регрессия: 197 → 198 PASS (+1), 0 FAIL, 44 SKIP.
+cargo test --lib verify::backend::trivial: 13/13 PASS (+2).
+
+
 ## Session: оба deferred follow-up'а Plan 59 закрыты (2026-05-17 EOD+1)
 
 После merge'а Plan 63 fixes от другого agent'а — обнаружено что оба
