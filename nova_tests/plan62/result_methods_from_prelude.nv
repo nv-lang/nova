@@ -1,0 +1,62 @@
+// result_methods_from_prelude.nv — Plan 62.A follow-up.
+//
+// Verifies что Result methods, объявленные в std/prelude/core.nv
+// (`external fn Result[T, E] @method`), работают через registry path.
+//
+// Coverage: 4 из 9 declared methods (is_ok, is_err, ok, err). Остальные
+// 5 (unwrap, unwrap_or, unwrap_or_else, map, map_err) — deferred per
+// blocker в core.nv (type-checker T → T mismatch для Result generic mono).
+
+module plan62.result_methods_from_prelude
+
+// ────────────────────────────────────────────────────────────────────
+// is_ok / is_err — direct trampolines.
+// ────────────────────────────────────────────────────────────────────
+
+test "Result.is_ok returns true for Ok" {
+    let r = Ok(42)
+    assert(r.is_ok())
+}
+
+test "Result.is_ok returns false for Err" {
+    let r = Err("bad")
+    assert(!r.is_ok())
+}
+
+test "Result.is_err returns false for Ok" {
+    let r = Ok(7)
+    assert(!r.is_err())
+}
+
+test "Result.is_err returns true for Err" {
+    let r = Err("fail")
+    assert(r.is_err())
+}
+
+// ────────────────────────────────────────────────────────────────────
+// ok / err — convert Result to Option.
+// ────────────────────────────────────────────────────────────────────
+
+test "Result.ok returns Some for Ok" {
+    let r = Ok(5)
+    let o = r.ok()
+    assert(o.is_some())
+}
+
+test "Result.ok returns None for Err" {
+    let r = Err("bad")
+    let o = r.ok()
+    assert(o.is_none())
+}
+
+test "Result.err returns None for Ok" {
+    let r = Ok(9)
+    let e = r.err()
+    assert(e.is_none())
+}
+
+test "Result.err returns Some for Err" {
+    let r = Err("oops")
+    let e = r.err()
+    assert(e.is_some())
+}
