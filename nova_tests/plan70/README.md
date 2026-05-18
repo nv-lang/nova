@@ -20,4 +20,6 @@ broken code до codegen. Migration таких sites = **dead-code hardening**
 | Site (line) | Containing fn | Reachable neg? | Test |
 |---|---|---|---|
 | 4939 | `emit_type_decl` | ❌ unreachable (type-checker pre-rejects) | f1 pos only |
-| (next sites...) | | | |
+| 4819, 4820 | `emit_fn_forward_decl` (fn-returning-fn sig) | ❌ unreachable (type-checker resolves before codegen) | f2 pos covers |
+| 4829 | `emit_fn_forward_decl` (free fn params) | ❌ unreachable | f2 pos covers |
+| 4838, 4841 | `emit_fn_forward_decl` (HOF inner closure sig) | ❌ unreachable | f2 pos covers |
