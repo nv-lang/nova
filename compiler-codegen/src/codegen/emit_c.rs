@@ -6465,7 +6465,8 @@ impl CEmitter {
     ) -> Option<(String, String, Vec<String>)> {
         use crate::ast::{TypeDeclKind, SumVariantKind};
         // 1. Find parent sum-type by variant name.
-        let (parent_type, _) = self.find_variant(variant_name)?;
+        // Plan 62.A.bis Ф.2.2: registry-driven variant resolution.
+        let (parent_type, _) = self.sum_schema_registry.find_variant_compat(variant_name)?;
         // 2. Must be a generic template (has type params).
         let template = self.generic_type_templates.get(&parent_type)?.clone();
         if template.generics.is_empty() { return None; }
@@ -9579,7 +9580,8 @@ impl CEmitter {
                 }
                 // Unit variants (e.g. `Red` from `type Color | Red | Green`) are
                 // not function calls in Nova but need `nova_make_Color_Red()` in C.
-                if let Some((type_name, fields)) = self.find_variant(name) {
+                // Plan 62.A.bis Ф.2.2: variant lookup via registry.
+                if let Some((type_name, fields)) = self.sum_schema_registry.find_variant_compat(name) {
                     if fields.is_empty() {
                         // Plan 14 Ф.1: `None` — typed compound literal по
                         // current_fn_return_ty. Иначе — legacy nova_make.
@@ -10503,7 +10505,8 @@ impl CEmitter {
                     _ => return Err("`is` expects a variant name (e.g. `x is Some`)".into()),
                 };
                 // Find the sum-type that owns this variant.
-                let (sum_type, _fields) = self.find_variant(&variant_name)
+                // Plan 62.A.bis Ф.2.2: registry-driven variant resolution.
+                let (sum_type, _fields) = self.sum_schema_registry.find_variant_compat(&variant_name)
                     .ok_or_else(|| format!("`is {}` — unknown variant", variant_name))?;
                 let inner_ty = self.infer_expr_c_type(inner);
                 let inner_c = self.emit_expr(inner)?;
@@ -11047,7 +11050,8 @@ impl CEmitter {
     fn infer_func_c_name(&self, func: &Expr) -> String {
         match &func.kind {
             ExprKind::Ident(name) => {
-                if let Some((type_name, _)) = self.find_variant(name) {
+                // Plan 62.A.bis Ф.2.2: registry-driven variant resolution.
+                if let Some((type_name, _)) = self.sum_schema_registry.find_variant_compat(name) {
                     format!("nova_make_{}_{}", type_name, name)
                 } else {
                     format!("nova_fn_{}", name)
@@ -11260,7 +11264,8 @@ impl CEmitter {
 
         let func_c = match &func.kind {
             ExprKind::Ident(name) => {
-                if let Some((type_name, _)) = self.find_variant(name) {
+                // Plan 62.A.bis Ф.2.2: variant construction via registry.
+                if let Some((type_name, _)) = self.sum_schema_registry.find_variant_compat(name) {
                     // Plan 61 followup #3: Result.Err(custom_value) — typed
                     // path для не-nova_str argument. Bootstrap Result hardcoded
                     // на (Ok int, Err nova_str), но typed Err payload теперь
@@ -13631,7 +13636,8 @@ impl CEmitter {
         // the monomorphized instance which expects concrete types — skip the
         // void* boxing so the arg type matches the mono signature.
         let is_generic_call = if let ExprKind::Ident(name) = &func.kind {
-            if let Some((type_name, _)) = self.find_variant(name) {
+            // Plan 62.A.bis Ф.2.2: registry-driven variant resolution.
+            if let Some((type_name, _)) = self.sum_schema_registry.find_variant_compat(name) {
                 self.generic_types.contains(&type_name)
                     && self.try_infer_variant_mono_args(name, args).is_none()
             } else { false }
@@ -15158,8 +15164,9 @@ impl CEmitter {
             } else {
                 struct_name
             };
-            // Check if this is a sum-type record variant (not a plain record)
-            if let Some((sum_type_name, _)) = self.find_variant(&struct_name) {
+            // Check if this is a sum-type record variant (not a plain record).
+            // Plan 62.A.bis Ф.2.2: registry-driven variant resolution.
+            if let Some((sum_type_name, _)) = self.sum_schema_registry.find_variant_compat(&struct_name) {
                 // Emit as sum-type record variant constructor: nova_make_T_Variant(field_vals...)
                 // D109: In monomorphized context, sum_type_name may be the erased base type
                 // (e.g. "Slot"). Compute concrete monomorphized name if generic params available.
@@ -17786,8 +17793,9 @@ impl CEmitter {
                 let struct_name = if raw_name == "Self" {
                     self.current_receiver_type.clone().unwrap_or(raw_name)
                 } else { raw_name };
-                // Check if this is a sum-type record variant
-                if let Some((sum_type_name, _)) = self.find_variant(&struct_name) {
+                // Check if this is a sum-type record variant.
+                // Plan 62.A.bis Ф.2.2: registry-driven sum variant lookup.
+                if let Some((sum_type_name, _)) = self.sum_schema_registry.find_variant_compat(&struct_name) {
                     format!("Nova_{}*", sum_type_name)
                 } else if self.generic_types.contains(&struct_name) {
                     // Generic type: compute concrete mono name from field values.
@@ -17847,8 +17855,9 @@ impl CEmitter {
                 if let Some(ty) = self.var_types.get(name) {
                     return ty.clone();
                 }
-                // Check if it's a unit variant (e.g. None, Err, Ok used as value)
-                if let Some((type_name, fields)) = self.find_variant(name) {
+                // Check if it's a unit variant (e.g. None, Err, Ok used as value).
+                // Plan 62.A.bis Ф.2.2: registry-driven variant resolution.
+                if let Some((type_name, fields)) = self.sum_schema_registry.find_variant_compat(name) {
                     if fields.is_empty() {
                         if type_name == "Option" || type_name == "NovaOpt_nova_int" {
                             // Plan 14 Ф.1: None infer'ится по контексту
@@ -18129,8 +18138,9 @@ impl CEmitter {
                     if name == "println" || name == "print" || name == "assert" || name == "debug_assert" {
                         return "nova_unit".into();
                     }
-                    // Variant constructor call: Some(x), None, etc. → return option/sum type
-                    if let Some((type_name, _)) = self.find_variant(name) {
+                    // Variant constructor call: Some(x), None, etc. → return option/sum type.
+                    // Plan 62.A.bis Ф.2.2: registry-driven variant resolution.
+                    if let Some((type_name, _)) = self.sum_schema_registry.find_variant_compat(name) {
                         // Plan 14 Ф.1: Some(x) infer как NovaOpt_<T>, где T = тип аргумента.
                         // None infer'ится по контексту current_fn_return_ty (если NovaOpt_<X>).
                         // Иначе — legacy NovaOpt_nova_int.
