@@ -561,9 +561,25 @@ fn collect_effect_names(m: &Module) -> HashSet<String> {
 /// scan'имся по нему напрямую (раньше было закомменчено потому что
 /// все protocols/effects попадали в Effect-variant).
 fn collect_protocol_names(m: &Module) -> HashSet<String> {
+    // Plan 62.D non-opaque: `Iter` мигрирован в std/prelude/collections.nv.
+    // Plan 62.E: `From`, `Into`, `Hashable`, `Display` (+ новые `Equatable`,
+    // `Comparable`) мигрированы в std/prelude/protocols.nv — auto-imported
+    // через R27 в каждый module, попадают в `m.items` через
+    // `resolve_imports_inline` и captures'ятся for-loop'ом ниже. `TryFrom`/
+    // `TryInto` deferred (Plan 56 Ф.2.7 effect-row enforcement), но они и
+    // не нужны в этом lint-HashSet'е (он используется только для
+    // protocol-in-effect-position warning'а на bare-name idents).
+    //
+    // **Остаются hardcoded:**
+    //   - `Ord`, `Eq`, `ToStr` — legacy aliases (используются в
+    //     nova_tests/types/generics.nv `TwoBounds[K Hashable, V Eq]`,
+    //     std/encoding/json.nv comments etc.). Канонические имена per
+    //     D109 — `Comparable`/`Equatable`, но `Ord`/`Eq` остаются как
+    //     back-compat имена пока тесты не переписаны.
+    //   - `TryFrom`, `TryInto` — deferred protocol declarations (Plan
+    //     56 Ф.2.7), keep лint coverage пока formal decl не появится.
     let mut names: HashSet<String> = [
-        "Hashable", "Ord", "Eq", "Iter", "From", "Into",
-        "TryFrom", "TryInto", "ToStr",
+        "Ord", "Eq", "ToStr", "TryFrom", "TryInto",
     ].iter().map(|s| s.to_string()).collect();
     for item in &m.items {
         if let Item::Type(td) = item {

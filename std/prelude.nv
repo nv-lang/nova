@@ -76,6 +76,20 @@ export import std.prelude.collections.{Iter}
 //
 // export import std.collections.range.{Range, RangeIter}
 
+// Plan 62.E: re-export conversion / equality / hashing / ordering /
+// display protocols из std.prelude.protocols. From/Into/Hashable/
+// Equatable/Comparable/Display — 6 formal protocol declarations.
+// Декларации additive: auto-derive логика D73 (From/Into) и built-in
+// dispatch для Hash/Eq/Ord примитивов в codegen остаются неизменными.
+// Bound clauses `[T Hashable]` теперь могут резолвиться через cross-file
+// resolve (Plan 15 generic-bounds infrastructure).
+//
+// **Deferred:**
+//   - TryFrom/TryInto — Plan 56 Ф.2.7 запрещает effects в protocol
+//     methods, `Fail[E]` сигнатура триггерит compile-error. См.
+//     std/prelude/protocols.nv DEFER comment + plan doc §62.E.
+export import std.prelude.protocols.{From, Into, Hashable, Equatable, Comparable, Display}
+
 /// Prelude version marker — verify в тестах что auto-import работает.
 /// Bump'ается при каждой migration phase Plan 62.
 ///   - 1 = pre-migration (только этот placeholder).
