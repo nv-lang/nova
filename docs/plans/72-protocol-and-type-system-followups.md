@@ -260,12 +260,14 @@ C codegen → clang → нативный бинарник), не только и
 `p3b_fatptr_return_pos.nv` (6) ✅; p0/p1a/p1c/p3a/p2a/p2b — см. отдельные fixtures.
 Rust unit test: `p0_erased_now_dispatches_via_vtable` в `test_runner.rs` ✅.
 
-> **Примечание (2026-05-20):** счётчик «все test cases ✅» относится к
-> `nova test` (интерпретатор). `nova test-build` (реальный C codegen)
+> **Примечание (2026-05-20):** счётчик «все test cases ✅» был снят через
+> `nova-codegen test-interp` (интерпретатор; ранее назывался `nova-codegen
+> test`). Реальный C-codegen pipeline (`nova test-build` / `nova test` из
+> nova-cli — `test_runner::run_one` → CEmitter → clang → нативный бинарник)
 > показывает, что `p1b` / `p2a` / `p2b` / `p3b_vtable_dispatch` (Case C —
 > protocol-as-**параметр**) пока падают на C-бэкенде — pre-existing gap,
-> замаскированный интерпретатором. `p3b_fatptr_return_pos` проверен и
-> через `test-build`.
+> замаскированный интерпретатором. `p3b_fatptr_return_pos` проверен через
+> `test-build`.
 
 ---
 
