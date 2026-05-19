@@ -489,6 +489,8 @@ impl VerificationPipeline {
 
             // Ф.16.1 (Plan 33.6): если ensures содержит `exists`, используем
             // try_prove_with_witness для extract witness в info-note.
+            // Plan 33.9 Ф.4: save a clone for opaque-UF check after goal is consumed.
+            let goal_for_opaque_check = goal.clone();
             let exists_var = find_exists_var(&c.expr);
             let proof_result = if let Some(var_name) = &exists_var {
                 let (proof, witness) = super::backend::try_prove_with_witness(
@@ -517,9 +519,39 @@ impl VerificationPipeline {
                     results.push((c.span, VerifyResult::Disproved(model, cex)));
                 }
                 SatResult::Unknown(reason) => {
-                    // Plan 33.3 Р¤.9.10: AI-friendly diagnostic вЂ" РєР°С‚РµРіРѕСЂРёР·РёСЂСѓРµРј
+                    // Plan 33.3 Ф.9.10: AI-friendly diagnostic — категоризируем
                     // reason + suggestions.
-                    let msg = unknown_to_diag_message(reason);
+                    // Plan 33.9 Ф.4: upgrade NotAttempted → UnsupportedTheory when
+                    // the goal or body_val contains an opaque UF call. TrivialBackend
+                    // cannot discharge opaque-fn contracts; user needs `reveal X` or Z3.
+                    let upgraded_reason = if matches!(&reason, UnknownReason::NotAttempted(_)) {
+                        let opaque_in_goal = term_references_opaque_uf(&goal_for_opaque_check, &pure_fns);
+                        let opaque_in_body = body_val.as_ref()
+                            .and_then(|bv| term_references_opaque_uf(bv, &pure_fns));
+                        let opaque_name = opaque_in_goal.or(opaque_in_body);
+                        if let Some(fname) = opaque_name {
+                            let has_reveal = collect_reveal_stmts_in_body(&fd.body)
+                                .iter().any(|(n, _)| n == &fname);
+                            if has_reveal {
+                                UnknownReason::UnsupportedTheory(format!(
+                                    "opaque fn `{}` was revealed but TrivialBackend cannot \
+                                     discharge reveal-injected axioms (quantified formulas). \
+                                     Use Z3 backend: `--smt-backend=z3` or \
+                                     `NOVA_SMT_BACKEND=z3`.", fname))
+                            } else {
+                                UnknownReason::UnsupportedTheory(format!(
+                                    "opaque fn `{}` called without `reveal {}`. \
+                                     Add `reveal {}` before calling it in a `#verify` fn, \
+                                     or use Z3 backend: `--smt-backend=z3`.",
+                                    fname, fname, fname))
+                            }
+                        } else {
+                            reason
+                        }
+                    } else {
+                        reason
+                    };
+                    let msg = unknown_to_diag_message(upgraded_reason);
                     results.push((c.span, VerifyResult::Unknown(msg)));
                 }
             }
@@ -1502,6 +1534,49 @@ fn collect_apply_in_expr(e: &Expr, out: &mut Vec<(String, Vec<Expr>, Span)>) {
             collect_apply_in_block(then, out);
         }
         _ => {}
+    }
+}
+
+/// Plan 33.9 Ф.4: check whether an SMT term references any `_pure_fn_X` UF
+/// where fn `X` is marked `is_opaque` in `pure_fns`. Used to upgrade
+/// `Unknown(NotAttempted)` → `Unknown(UnsupportedTheory)` so TrivialBackend
+/// emits W2402 instead of staying silent when opaque calls are unresolvable.
+fn term_references_opaque_uf(
+    term: &SmtTerm,
+    pure_fns: &std::collections::HashMap<String, encode::PureFnInfo>,
+) -> Option<String> {
+    match term {
+        SmtTerm::App(op, args) => {
+            // Check if this App is an opaque UF call: op starts with "_pure_fn_"
+            // and the corresponding fn is is_opaque.
+            if let Some(fn_name) = op.strip_prefix("_pure_fn_") {
+                // Strip possible fuel suffix: _pure_fn_X_fuel0 → X
+                let base_name = fn_name.split("_fuel").next().unwrap_or(fn_name);
+                if let Some(info) = pure_fns.get(base_name) {
+                    if info.is_opaque {
+                        return Some(base_name.to_string());
+                    }
+                }
+            }
+            // Recurse into args.
+            for a in args {
+                if let Some(name) = term_references_opaque_uf(a, pure_fns) {
+                    return Some(name);
+                }
+            }
+            None
+        }
+        SmtTerm::Forall(_, patterns, body) => {
+            for pat_group in patterns {
+                for p in pat_group {
+                    if let Some(name) = term_references_opaque_uf(p, pure_fns) {
+                        return Some(name);
+                    }
+                }
+            }
+            term_references_opaque_uf(body, pure_fns)
+        }
+        _ => None,
     }
 }
 

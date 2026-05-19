@@ -1,0 +1,35 @@
+// EXPECT_COMPILE_WARNING W2402
+//
+// Plan 33.9 Ф.4: opaque fn call under TrivialBackend → W2402 (not silent).
+// TrivialBackend cannot discharge opaque-fn contracts; emits W2402 with hint.
+// No REQUIRES_SMT_BACKEND — runs under default TrivialBackend.
+//
+// Two cases:
+//   1. No reveal — W2402 "add reveal or use Z3"
+//   2. With reveal — W2402 "TrivialBackend cannot discharge quantified axioms, use Z3"
+// Both use default verify mode so Unknown → W2402 (not error).
+
+module contracts.f58_opaque_trivial_w2402
+
+#opaque #pure
+fn double(x int) -> int
+    requires x >= 0
+    ensures result >= 0
+=> x + x
+
+// Case 1: no reveal → W2402 "add reveal or use Z3"
+fn caller_no_reveal(n int) -> int
+    requires n >= 0
+    ensures result >= 0
+{
+    double(n)
+}
+
+// Case 2: with reveal → W2402 "TrivialBackend cannot discharge axioms, use Z3"
+fn caller_with_reveal(n int) -> int
+    requires n >= 0
+    ensures result >= 0
+{
+    reveal double
+    double(n)
+}
