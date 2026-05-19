@@ -127,13 +127,13 @@ export fn Bcrypt.verify(password str, hash_str str) -> bool {
 // argon2 (newer, рекомендуется OWASP). Здесь — PBKDF2-style stretching
 // через SHA-256 для демонстрации API.
 
-fn bcrypt_kdf(password []byte, salt []byte, cost int) -> []byte {
+fn bcrypt_kdf(password []u8, salt []u8, cost int) -> []u8 {
     let rounds = 1 << cost          // 2^cost
     let mut state = Sha256.new()
     state.update(salt)
     state.update(password)
     let mut digest = state.finalize()
-    let mut bytes []byte = []
+    let mut bytes []u8 = []
     for i in 0..32 { bytes.push(digest[i]) }
 
     // Iterate `rounds` times — экспоненциальная стоимость по cost.
@@ -142,18 +142,18 @@ fn bcrypt_kdf(password []byte, salt []byte, cost int) -> []byte {
         s.update(bytes)
         s.update(salt)
         let d = s.finalize()
-        let mut new_bytes []byte = []
+        let mut new_bytes []u8 = []
         for j in 0..32 { new_bytes.push(d[j]) }
         bytes = new_bytes
     }
     // Берём первые 23 байта (как bcrypt — 184 бита output)
-    let mut out []byte = []
+    let mut out []u8 = []
     for p in 0..23 { out.push(bytes[p]) }
     out
 }
 
 
-fn constant_time_eq(a []byte, b []byte) -> bool {
+fn constant_time_eq(a []u8, b []u8) -> bool {
     if a.len() != b.len() { return false }
     let mut diff = 0
     for i in 0..a.len() {
@@ -175,7 +175,7 @@ fn constant_time_eq(a []byte, b []byte) -> bool {
 const BCRYPT_ALPHABET str = "./ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
 
 
-fn bcrypt_base64_encode(data []byte) -> str {
+fn bcrypt_base64_encode(data []u8) -> str {
     let mut buf = StringBuilder.with_capacity(data.len() * 4 / 3 + 4)
     let mut i = 0
     while i + 2 < data.len() {
@@ -209,8 +209,8 @@ fn alphabet_char(idx int) -> char =>
     BCRYPT_ALPHABET.char_at(idx).unwrap_or('.')
 
 
-fn bcrypt_base64_decode(s str) -> Option[[]byte] {
-    let mut out []byte = []
+fn bcrypt_base64_decode(s str) -> Option[[]u8] {
+    let mut out []u8 = []
     let mut i = 0
     while i + 3 < s.len() {
         let c0 = bcrypt_decode_char(s.char_at(i))
@@ -220,9 +220,9 @@ fn bcrypt_base64_decode(s str) -> Option[[]byte] {
         match (c0, c1, c2, c3) {
             (Some(a), Some(b), Some(c), Some(d)) => {
                 let triple = (a << 18) | (b << 12) | (c << 6) | d
-                out.push(((triple >> 16) & 0xFF) as byte)
-                out.push(((triple >> 8) & 0xFF) as byte)
-                out.push((triple & 0xFF) as byte)
+                out.push(((triple >> 16) & 0xFF) as u8)
+                out.push(((triple >> 8) & 0xFF) as u8)
+                out.push((triple & 0xFF) as u8)
             }
             _ => return None
         }
@@ -231,7 +231,7 @@ fn bcrypt_base64_decode(s str) -> Option[[]byte] {
     // Trailing
     if i + 1 < s.len() {
         match (bcrypt_decode_char(s.char_at(i)), bcrypt_decode_char(s.char_at(i + 1))) {
-            (Some(a), Some(b)) => out.push(((a << 2) | (b >> 4)) as byte)
+            (Some(a), Some(b)) => out.push(((a << 2) | (b >> 4)) as u8)
             _ => return None
         }
     }

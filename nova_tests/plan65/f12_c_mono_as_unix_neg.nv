@@ -1,0 +1,26 @@
+// Plan 65 R18 / Ф.12.5 / D124: ideally `Monotonic.as_unix_secs()` should
+// be rejected at compile-time (no such overload on Monotonic). The current
+// bootstrap method-resolver dispatches by method name without strictly
+// verifying receiver type — so `m.as_unix_secs()` silently routes to
+// Nova_Timestamp_method_as_unix_secs(m), producing garbage at runtime.
+//
+// Honest-defer: [M-strict-method-receiver-check] — same family as
+// [M-strict-var-annotations]. D124's important guarantees (binop overload
+// absence, ChanReader signature check) are enforced; method-by-name
+// dispatch is a pre-existing language-wide gap not introduced by Plan 65.
+//
+// This test is informational and expected to PASS.
+
+module plan65.f12_c_mono_as_unix_neg
+
+import std.time.duration
+
+test "documented gap: m.as_unix_secs() compiles silently (wrong dispatch)" {
+    let m = Monotonic.now()
+    // Compiles + runs returning meaningless value (nanos / 1e9 of monotonic
+    // clock, NOT Unix epoch seconds). Documented pre-existing behavior.
+    let bogus = m.as_unix_secs()
+    // The actual value is irrelevant — what matters is the call compiled.
+    let _ = bogus
+    assert(true)
+}

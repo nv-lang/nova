@@ -18,7 +18,7 @@ module crypto.sha1
 #stable(since = "0.1")
 export type Sha1 {
     mut h [5]u32
-    mut buffer []byte
+    mut buffer []u8
     mut total_len u64
 }
 
@@ -33,7 +33,7 @@ export fn Sha1.new() -> Self =>
 
 /// One-shot SHA-1 hash: bytes → 20-byte digest.
 #stable(since = "0.1")
-export fn Sha1.hash(data []byte) -> [20]byte {
+export fn Sha1.hash(data []u8) -> [20]u8 {
     let mut state = Sha1.new()
     state.update(data)
     state.finalize()
@@ -41,16 +41,16 @@ export fn Sha1.hash(data []byte) -> [20]byte {
 
 /// One-shot SHA-1 hash в lowercase hex string.
 #stable(since = "0.1")
-export fn Sha1.hash_str(data []byte) -> str {
+export fn Sha1.hash_str(data []u8) -> str {
     let digest = Sha1.hash(data)
-    let mut bytes []byte = []
+    let mut bytes []u8 = []
     for i in 0..20 { bytes.push(digest[i]) }
     Hex.encode(bytes)
 }
 
 /// Incremental update — feed bytes в state.
 #stable(since = "0.1")
-export fn Sha1 mut @update(data []byte) -> () {
+export fn Sha1 mut @update(data []u8) -> () {
     @total_len = @total_len + (data.len() as u64)
     for b in data {
         @buffer.push(b)
@@ -63,38 +63,38 @@ export fn Sha1 mut @update(data []byte) -> () {
 
 /// Finalize hash — add padding + length, return 20-byte digest.
 #stable(since = "0.1")
-export fn Sha1 mut @finalize() -> [20]byte {
+export fn Sha1 mut @finalize() -> [20]u8 {
     let total_bits = @total_len * 8
     @buffer.push(0x80)
     while @buffer.len() % 64 != 56 { @buffer.push(0x00) }
     let mut i = 7
     while i >= 0 {
-        @buffer.push(((total_bits >> (i * 8)) & 0xFF) as byte)
+        @buffer.push(((total_bits >> (i * 8)) & 0xFF) as u8)
         i -= 1
     }
 
     let mut pos = 0
     while pos < @buffer.len() {
-        let mut block []byte = []
+        let mut block []u8 = []
         for j in 0..64 { block.push(@buffer[pos + j]) }
         @process_block(block)
         pos += 64
     }
 
-    let mut out [20]byte = [0; 20]
+    let mut out [20]u8 = [0; 20]
     let mut k = 0
     while k < 5 {
         let v = @h[k]
-        out[k * 4]     = ((v >> 24) & 0xFF) as byte
-        out[k * 4 + 1] = ((v >> 16) & 0xFF) as byte
-        out[k * 4 + 2] = ((v >> 8) & 0xFF) as byte
-        out[k * 4 + 3] = (v & 0xFF) as byte
+        out[k * 4]     = ((v >> 24) & 0xFF) as u8
+        out[k * 4 + 1] = ((v >> 16) & 0xFF) as u8
+        out[k * 4 + 2] = ((v >> 8) & 0xFF) as u8
+        out[k * 4 + 3] = (v & 0xFF) as u8
         k += 1
     }
     out
 }
 
-fn Sha1 mut @process_block(block []byte) -> () {
+fn Sha1 mut @process_block(block []u8) -> () {
     let mut w [80]u32 = [0; 80]
     let mut t = 0
     while t < 16 {

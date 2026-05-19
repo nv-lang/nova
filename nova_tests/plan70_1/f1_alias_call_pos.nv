@@ -1,0 +1,26 @@
+// Plan 70.1 Ф.1 POSITIVE: `import X as alias` + `alias.func(args)`.
+//
+// Before fix: codegen эмитит `h.add_one(...)` напрямую → undeclared
+// identifier `h` в C → CC-FAIL.
+// After fix (Plan 70.1): Member { obj: Ident("h"), name: "add_one" }
+// rewrite в bare `add_one(...)` — alias prefix dropped, imported fn
+// доступен через bare name в scope.
+
+module nova_tests.plan70_1.f1_alias_call_pos
+
+import nova_tests.plan70_1.helper_mod as h
+
+test "alias-import: h.add_one(int)" {
+    let r = h.add_one(41)
+    assert(r == 42)
+}
+
+test "alias-import: h.double + chaining" {
+    let r = h.double(h.add_one(20))
+    assert(r == 42)
+}
+
+test "alias-import: h.greet(str)" {
+    let s = h.greet("world")
+    assert(s == "hello, world")
+}

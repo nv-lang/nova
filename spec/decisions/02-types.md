@@ -289,7 +289,7 @@ type HttpCode i32 | Ok = 200 | NotFound = 404
        | Click(x int, y int)              = 1
        | KeyPress(key str)                 = 2
        | Idle                              = 3
-       | Data { payload []byte, crc u32 } = 10
+       | Data { payload []u8, crc u32 } = 10
    ```
 
 #### Cast между sum-типом и числом
@@ -1025,7 +1025,7 @@ let opt Option[str] = "alice"                // Some("alice")
 **Коллекции:**
 
 ```nova
-type SqlValue | I(i64) | F(f64) | S(str) | B(bool) | Bytes([]byte) | Null
+type SqlValue | I(i64) | F(f64) | S(str) | B(bool) | Bytes([]u8) | Null
 
 let args []SqlValue = [42, "alice", true]    // [I(42), S("alice"), B(true)]
 
@@ -2348,7 +2348,7 @@ deposit(my_acc, 50)
 // my_acc.balance == 150 — мутация видна
 ```
 
-**Примитивы — by value.** Числа, `bool`, `char`, `byte`, `()` —
+**Примитивы — by value.** Числа, `bool`, `char`, `u8`, `()` —
 всегда копия в регистре. С `mut x int` это локальная переменная
 функции, изменения не видны вызывающему:
 
@@ -3207,7 +3207,7 @@ Generic-bound method call'ы dispatch'аются по hybrid strategy:
 - ✅ Mono path для bound methods works (HashMap.@clone() пример).
 - ✅ Vtable runtime infrastructure готова (`NovaVtable_Hashable`,
   `NovaVtable_Comparable`, `NovaVtable_Display` + 4 primitive K
-  vtables: int/bool/byte/f64/str).
+  vtables: int/bool/u8/f64/str).
 - ✅ Erased emit для bound-method-using generic methods stub'ится
   (`emit_generic_method_erased` — wider stub condition включает Array
   fields с generic inner type).
@@ -3498,4 +3498,208 @@ template<U> Wrapper<U> map(...) }` — то же. Nova bootstrap теперь п
 - [Plan 63 Fix C](../../docs/plans/63-cross-module-mono-dispatch-correctness.md#fix-c-mono-enrollment-для-anonymous-record-literal-в-generic-return)
   — remaining edge case Plan 63, закрытый этим D119.
 - [Q-generic-receiver-method](../open-questions.md#q-generic-receiver-method)
+
+---
+
+## D125. Удаление `byte`: каноническое имя — `u8`
+
+**Решение:** Тип `byte` удалён из языка. Единственное каноническое имя
+для 8-битного беззнакового целого — `u8`. Срез байт пишется `[]u8`.
+
+**Мотивация.** Наличие двух равнозначных имён (`byte` и `u8`) порождает
+неоднозначность в коде, документации и стандартной библиотеке: один и тот же
+тип можно было написать двумя способами, что усложняло чтение и тулинг.
+
+**Миграция.** Все вхождения `byte` как типа заменяются на `u8`:
+- `[]byte` → `[]u8`
+- параметры/поля типа `byte` → `u8`
+- в примитивном перечислении: `byte` убирается из списка
+
+**Исключения (не меняются):**
+- Тег шаблонных строк `` bytes`...` `` (D48) — это имя функции, не тип.
+- Слово «byte» в английском/русском тексте комментариев (единицы памяти).
+
+**Реализовано:** [Plan 68](../../docs/plans/68-byte-to-u8.md)
   — частично закрыт (user generic типы); built-in `[]T @map[U]` V2.
+
+---
+
+## D126. Strict type propagation в codegen — no silent `nova_int` fallback
+
+**Решение.** Codegen pass (`compiler-codegen/src/codegen/`) **обязан**
+производить deterministic, явный C-type для каждого Nova expression и
+type reference. **Silent fallback к `nova_int`** при failure type
+resolution — **запрещён**. Любой site где `type_ref_to_c(...)`
+возвращает `Err` без strict-error должен производить compile-time
+diagnostic `[E7001]` и failing build, а не подставлять placeholder
+type.
+
+**Мотивация.** До Plan 70 паттерн `type_ref_to_c(&ty).unwrap_or_else(|_|
+"nova_int".into())` встречался в codegen в 117 местах (audit 2026-05-18).
+Семантика: «если type translation failed → silently emit nova_int
+(`long long`) и продолжай». Результат — silent miscompilation:
+
+- pointer cast to int → garbage address как число
+- bool/char печатается как code-point (Plan 67 закрыл частный случай)
+- record/sum-type memcpy с неправильным sizeof
+- float → int truncation
+
+Программа «работает», но возвращает мусор. Debug невозможен — компилятор
+ничего не сигналит.
+
+**Industry baseline.** Rust / Swift / Go (post-1.18) — все производят
+compile error на любом unresolved type в codegen. Nova до Plan 70 был
+**хуже всех baseline** (silent default). D126 закрывает регрессию.
+
+**Категории erasure (Cat A/B/C/D).** Audit разделил 154 fallback sites
+на четыре категории:
+
+| Cat | Pattern | Семантика | Действие |
+|---|---|---|---|
+| **A1** | `type_ref_to_c(...).unwrap_or_else(\|_\| "nova_int")` | Silent fallback при resolution failure | **Strict error** |
+| **A2** | `_ => "nova_int"` wildcard без комментария | Wildcard fallback unknown type | **Strict error или Cat D classification** |
+| **B**  | `_ => "nova_int", // erased T` (commented) | Pre-mono generic body emit — type-param ещё unresolved | Documented intentional erasure |
+| **C**  | `WithResultCategory::IntLike => "nova_int"` | Categorical mapping для int-family aliases | Legit, keep |
+| **D**  | Dispatch wildcard на известный receiver | Known type, unknown method (type-checker уже rejected) | Legit, keep |
+
+**Только Cat A** даёт silent miscompilation. После Plan 70 closure все
+Cat A sites мигрированы к strict error path. Cat B/C/D documented
+в [docs/codegen-erasure-sites.md](../../docs/codegen-erasure-sites.md).
+
+**Strict-error architecture.** Две helper-функции в `emit_c.rs`:
+
+1. `err_no_int_fallback(context, cause) → String` — для functions
+   возвращающих `Result<_, String>`. Используется с `?` propagation:
+   ```rust
+   let ty = self.type_ref_to_c(&p.ty).map_err(|e|
+       self.err_no_int_fallback("parameter `x`", &e)
+   )?;
+   ```
+
+2. `record_strict_error(context, cause) → "nova_int"` — для
+   **cascade-blocked** sites (functions whose signature нельзя менять
+   без massive caller-chain refactor: `infer_expr_c_type` (135
+   callers), `register_mono_instance`, etc). Pushes E7001 в
+   `strict_errors: RefCell<Vec<String>>` field; finalization gate в
+   `emit_module` проверяет non-empty и failit codegen pass с
+   aggregated error message.
+
+Оба helper'а используют unified diagnostic format `[E7001]` (range
+E7001-E7099 reserved для Plan 70 family). Plan 36 R7 structured
+diagnostic compatibility.
+
+**Production-grade default.** Strict mode — **always on**, без opt-in
+env var. ANY silent fallback = build failure (Rust/Swift baseline).
+Это breaking change для user code который полагался на silent int
+default (R20 в Plan 70). Bootstrap convention: clean break с
+machine-applicable migration suggestions.
+
+**Diagnostic format (E7001).**
+```
+[E7001] cannot infer C type for parameter `x`: <cause>. Silent
+fallback к `nova_int` produced wrong runtime output для non-int
+types (record/string/float/bool). Add explicit type annotation,
+ensure generic is monomorphized, или register type в external_registry.
+См. Plan 70 ([M-no-silent-nova-int-fallback]).
+```
+
+**Internal lint guard (CI).** `scripts/lint-no-silent-int-fallback.sh`
+greps `compiler-codegen/src/` против baseline counts из
+`docs/codegen-erasure-sites.md`. Bumping baseline требует:
+1. Inline comment с rationale «почему erasure безопасна»
+2. Entry в `docs/codegen-erasure-sites.md` со file:line + причина
+3. PR review
+
+CI gate fails если added counts превышают baseline без updates.
+
+**Acceptance criteria (Plan 70 closure).**
+- [x] Helper infra `err_no_int_fallback` + `record_strict_error` (Ф.1 / Ф.B0)
+- [x] Cat A1/A2 migration: 90 → 8 (only Cat B holdovers remain)
+- [x] Cat B documentation: 10 sites listed в codegen-erasure-sites.md
+- [x] Internal lint guard `scripts/lint-no-silent-int-fallback.sh`
+- [x] Spec D126 (этот блок)
+- [x] 796+ PASS / 0 FAIL nova test (0 regressions vs baseline 761)
+
+**Реализовано:** [Plan 70](../../docs/plans/70-no-silent-nova-int-fallback.md)
+  — sessions 1+2 (2026-05-18); 90+ Cat A1 sites migrated, infrastructure
+  complete, lint guard active.
+
+**Связь:**
+- D118 — typed `Fail[E]` codegen (similar precision-by-construction pattern)
+- Plan 67 — println overload fix (sibling: один из видимых частных случаев)
+- Plan 48 — monomorphization (упрощает Cat B → меньше erasure)
+- Plan 36 — diagnostic infra (R7 structured format)
+- [docs/codegen-erasure-sites.md](../../docs/codegen-erasure-sites.md) — Cat B/D inventory
+
+---
+
+## D128. `char` distinct from `int` в codegen mono'd generics
+
+**Решение.** Тип `char` имеет собственный C-typedef `nova_char` (alias
+над `int64_t`, same underlying storage как `nova_int`, но distinct C
+identifier). Generic mono mangling использует `nova_char` separately от
+`nova_int`, поэтому `Option[char]` и `Option[int]` производят разные
+C-типы `NovaOpt_nova_char` vs `NovaOpt_nova_int` — структурно
+неотличимы становятся **различимы**.
+
+**Мотивация.** До Plan 70.3 оба `char` и `int` map'ились в один C-тип
+`nova_int`. Результат — silent type collapse в generic mono:
+
+- `Option[char]` и `Option[int]` mangle в идентичный `NovaOpt_nova_int`
+- `[]char` и `[]int` обе → `NovaArray_nova_int*`
+- `Map[char, V]` и `Map[int, V]` → одинаковая mangled name
+
+Concrete observed bug (триггер плана): `str @char_at(idx int) -> Option[int]`
+declared, returned `Option[char]` де-факто. Type-checker не ловил
+поскольку C-level structural compatibility. ~50 callers использовали
+char literals (`Some('/')`, `unwrap_or('.')`) в slot expecting
+`Option[int]` — silent collapse через NovaOpt_nova_int. User pre-fix
+2026-05-19 corrected signature, Plan 70.3 — архитектурное предотвращение.
+
+**Industry baseline.** Rust/Swift `char` is distinct primitive (`char`
+vs `u32`); Go has `rune` distinct from `int32`. Nova до Plan 70.3 был
+unusual в C-level collapse. D128 закрывает регрессию.
+
+**Implementation (Plan 70.3 Ф.1-Ф.2).**
+
+1. **Typedef:** `typedef int64_t nova_char;` в `compiler-codegen/nova_rt/nova_rt.h`
+   — zero ABI cost (same storage layout как `nova_int`).
+2. **Codegen mapping:** `type_ref_to_c "char" => "nova_char"` (was
+   `"nova_int"`) в `emit_c.rs` и `external_registry.rs` (двойная sync).
+3. **Array element:** `[]char → NovaArray_nova_char*` (separate
+   instantiation parallel `NovaArray_nova_int*`).
+4. **Option element:** `NovaOpt_nova_char` typedef + constructors +
+   `nova_opt_eq_nova_char` helper.
+5. **CharLit emission:** `'x' → ((nova_char)<codepoint>LL)` (was `(nova_int)`).
+6. **infer_expr_c_type:** `CharLit => "nova_char"` (was `"nova_int"`).
+7. **Runtime fn signatures:** `nova_str_char_at` updated return
+   `NovaOpt_nova_char` (was `NovaOpt_nova_int`).
+
+**Backward compat.** В `emit_binary_op` special-case для
+`Nova_StringBuilder* + char` accepts **обе** `nova_char` AND `nova_int`
+для backward-compat — pre-fix existing code emitted char as `nova_int`,
+existing test binaries reference legacy form. After full migration of
+existing generated C (regen test fixtures), `nova_int` branch может
+быть удалён.
+
+**ABI cost.** Zero. `nova_char` is `typedef int64_t` — same size,
+same alignment, same wire-format. Only difference — C type identifier
+для compiler-level distinction.
+
+**Acceptance criteria.**
+- [x] Ф.1 codegen mapping switch (`emit_c.rs` + `external_registry.rs`)
+- [x] Ф.2 runtime helpers parallel (`NovaArray_DECL(nova_char)`,
+      `NovaOpt_nova_char` constructors + eq helper)
+- [x] Ф.3 audit + fixtures (2 PASS в `nova_tests/plan70_3/`)
+- [ ] Ф.4 type-checker tightening (reject `let x Option[int] = Some('a')`)
+- [x] Ф.5 spec D128 (этот блок)
+- [x] 0 regressions в `nova test` (801 PASS sustained)
+
+**Реализовано:** [Plan 70.3](../../docs/plans/70.3-char-int-mono-distinction.md)
+  — Ф.0-Ф.5 closed 2026-05-19.
+
+**Связь:**
+- D26 — Q-string-indexing (char = codepoint convention)
+- D54 — `as`-cast narrowing (explicit char↔int conversion)
+- Plan 70 — parent family (silent type bugs от Nova↔C collapse)
+- Plan 70.4 — sibling proposal (f32/f64 generic-container distinct mangling)

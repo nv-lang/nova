@@ -1,0 +1,28 @@
+// Ф.35.4 (Plan 33.6): TrivialBackend subtraction upper bound `<=` / `<`.
+// `requires a <= 10; requires b >= 5; ensures (a - b) <= 5` — upper(a)-lower(b) = 10-5 = 5.
+
+module contracts.f35_subtraction_upper_positive
+
+#verify
+fn diff_below_threshold(a int, b int) -> int
+    requires a <= 10
+    requires b >= 5
+    ensures result <= 5
+{
+    a - b
+}
+
+// Strict `<`.
+#verify
+fn diff_strict(a int, b int) -> int
+    requires a <= 10
+    requires b >= 5
+    ensures result < 6
+{
+    a - b
+}
+
+test "subtraction upper" {
+    assert(diff_below_threshold(10, 5) == 5)
+    assert(diff_strict(7, 8) == -1)
+}

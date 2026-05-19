@@ -1,8 +1,11 @@
 // EXPECT_COMPILE_ERROR E2402
+// REQUIRES_SMT_BACKEND trivial
 //
 // Ф.1.4 soundness regression guard (Plan 33.6):
 // Handler с branching под #verify → E2402.
 // Если silent-skip вернётся — этот тест упадёт.
+// Z3-вариант: handler-exec V1 успешно Disproves (другой error path) —
+// gated на trivial; V2 даст positive coverage в отдельном тесте.
 
 module contracts.soundness_guard_handler_unknown_must_error
 

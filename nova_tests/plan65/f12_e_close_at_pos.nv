@@ -1,0 +1,21 @@
+// Plan 65 R18 / Ф.12.5: ChanReader.close_at(Monotonic) — positive case.
+// Future Monotonic deadline produces a channel that closes after delta.
+
+module plan65.f12_e_close_at_pos
+
+import std.time.duration
+
+test "close_at future deadline — fires after delta" {
+    supervised {
+        spawn {
+            let deadline = Monotonic.now() + Duration.from_millis(10)
+            let t = ChanReader.close_at(deadline)
+            // First recv: timer fires → Some(1) (the sentinel value).
+            // Second recv: channel was also closed → None.
+            let v1 = t.recv()
+            assert(v1.is_some())
+            let v2 = t.recv()
+            assert(v2.is_none())
+        }
+    }
+}

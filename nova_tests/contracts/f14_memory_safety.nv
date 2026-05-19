@@ -1,4 +1,4 @@
-﻿// Plan 33.3 Ф.14: Dafny-parity test 20 — Memory safety bounds.
+// Plan 33.3 Ф.14: Dafny-parity test 20 — Memory safety bounds.
 // Аналог array bounds checking в Dafny.
 
 // REQUIRES_SMT_BACKEND z3

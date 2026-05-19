@@ -2034,6 +2034,8 @@ impl Interpreter {
             Stmt::Apply { .. } => Ok(Flow::Value(Value::Unit)),
             // Ф.4.2: calc — ghost statement, нет runtime-эффекта.
             Stmt::Calc { .. } => Ok(Flow::Value(Value::Unit)),
+            // Plan 33.9 Ф.2: reveal — ghost statement.
+            Stmt::Reveal { .. } => Ok(Flow::Value(Value::Unit)),
         }
     }
 

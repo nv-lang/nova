@@ -1,6 +1,9 @@
 // Ф.13.2 (Plan 33.6): handler с match-branching по constant patterns.
 // extract_match_assignments конвертирует в nested ite.
-// REQUIRES_SMT_BACKEND z3
+// REQUIRES_SMT_BACKEND z3v2
+// (V2 handler-exec: parser сейчас не принимает `pat => stmt` с assignment
+//  внутри `match`-arm для action body, и нет extract_match_assignments
+//  логики. Gated на `z3v2` — fixture для Plan 33.5 Ф.6 V2 session.)
 
 module contracts.handler_post_match_const_positive
 

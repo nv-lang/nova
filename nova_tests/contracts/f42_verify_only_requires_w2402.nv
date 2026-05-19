@@ -1,0 +1,11 @@
+// Ф.42.4 (Plan 33.6): `#verify` fn с только requires (без ensures) → W2402.
+// EXPECT_COMPILE_WARNING W2402
+
+module contracts.f42_verify_only_requires_w2402
+
+#verify
+fn check_input(x int) -> int
+    requires x >= 0
+{
+    x + 1
+}

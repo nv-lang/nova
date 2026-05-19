@@ -216,7 +216,7 @@ fn write_module_with_xpage_links(
     item_pages: &std::collections::HashMap<String, String>,
 ) {
     // Build per-page link map: text → URL (single-page anchor OR cross-page).
-    let mut effective_links: Vec<DocLink> = links.iter().map(|l| {
+    let effective_links: Vec<DocLink> = links.iter().map(|l| {
         let mut effective = l.clone();
         // Если target_url есть (external) — оставить.
         // Если target_id есть — substitute cross-page URL.

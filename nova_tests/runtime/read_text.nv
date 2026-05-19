@@ -16,7 +16,7 @@ module runtime.read_text
 // SECTION 1: read_char — happy path
 // ================================================================
 
-test "read_char ASCII (1 byte)" {
+test "read_char ASCII (1 u8)" {
     let mut wb = WriteBuffer.new()
     wb.write_char('H')
     wb.write_char('i')
@@ -55,16 +55,16 @@ test "read_char emoji (4 bytes UTF-8)" {
 
 test "read_char advances by codepoint width, not byte" {
     let mut wb = WriteBuffer.new()
-    wb.write_char('A')   // 1 byte
+    wb.write_char('A')   // 1 u8
     wb.write_char('П')   // 2 bytes
-    wb.write_char('B')   // 1 byte
+    wb.write_char('B')   // 1 u8
     let bs = wb.into()
     assert(bs.len() == 4)            // 1+2+1
     let mut rb = ReadBuffer.from(bs)
 
     let c1 = rb.read_char()
     assert(c1 == 'A')
-    assert(rb.position() == 1)     // advanced 1 byte
+    assert(rb.position() == 1)     // advanced 1 u8
 
     let c2 = rb.read_char()
     assert(c2 == 'П')
@@ -72,7 +72,7 @@ test "read_char advances by codepoint width, not byte" {
 
     let c3 = rb.read_char()
     assert(c3 == 'B')
-    assert(rb.position() == 4)     // advanced 1 byte
+    assert(rb.position() == 4)     // advanced 1 u8
 }
 
 

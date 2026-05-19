@@ -1,0 +1,20 @@
+// Plan 70.1 helper module — provides export fns для alias-import tests.
+//
+// Не сам test (no test/main блоков) — only export'ы. Подгружается через
+// import в f1_alias_call_pos.nv / f3_whole_module_pos.nv.
+
+module nova_tests.plan70_1.helper_mod
+
+export fn add_one(x int) -> int => x + 1
+
+export fn double(x int) -> int => x * 2
+
+export fn greet(name str) -> str => "hello, " + name
+
+// Self-check (требуется test runner'ом — иначе file treated как broken
+// test без entry point → CC-FAIL с undefined symbol nova_fn_main_impl).
+test "helper_mod self-check: add_one / double / greet" {
+    assert(add_one(1) == 2)
+    assert(double(3) == 6)
+    assert(greet("x") == "hello, x")
+}

@@ -63,7 +63,7 @@ module testing.handlers
 #stable(since = "0.1")
 export type Random effect {
     u64() -> u64                        // 64 случайных бита
-    bytes(n int) -> []byte              // массовая генерация
+    bytes(n int) -> []u8              // массовая генерация
 }
 
 
@@ -136,13 +136,13 @@ export fn seeded(seed u64) -> Handler[Random] {
             s0 = s0 ^ s3
             s2 = s2 ^ t
             s3 = rotl64(s3, 45)
-            // Invalidate byte cache — следующий bytes() возьмёт fresh state.
+            // Invalidate u8 cache — следующий bytes() возьмёт fresh state.
             buf_remaining = 0
             return result
         }
         bytes(n) {
             // Production: 8 байт за один advance state.
-            let mut out []byte = []
+            let mut out []u8 = []
             let mut i = 0
             while i < n {
                 if buf_remaining == 0 {
@@ -158,7 +158,7 @@ export fn seeded(seed u64) -> Handler[Random] {
                     buf = result
                     buf_remaining = 8
                 }
-                out.push((buf & 0xFF) as byte)
+                out.push((buf & 0xFF) as u8)
                 buf = buf >> 8
                 buf_remaining = buf_remaining - 1
                 i = i + 1
@@ -198,9 +198,17 @@ export fn mut_clock(start_ms u64) -> Handler[Time] {
         now_ms() => current_ms
         now_ns() => current_ms * 1_000_000
         now() => Timestamp.from_unix_millis(current_ms as i64)
-        sleep(d) {
+        sleep(d Duration) {
             // Duration внутри — i64 nanos (см. std/time/duration.nv).
             // Конверсия в ms через целочисленное деление.
+            //
+            // Plan 65 Ф.1: explicit `Duration` annotation forces handler-body
+            // codegen to use `Nova_Duration*` instead of the schema-derived
+            // `nova_int` param type. Without this, importing this module
+            // from any test causes invalid C `(nova_int).nanos`. The fix is
+            // codegen-side (emit_handler_lit honours annotation when present),
+            // see [M-handler-duration-schema-mismatch] in docs/simplifications.md
+            // for the broader Time-effect schema mismatch issue.
             let nanos = d.nanos
             let delta_ms = if nanos > 0 {
                 (nanos / 1_000_000) as u64
