@@ -14,6 +14,13 @@
 
 /* ---- Primitive types ---- */
 typedef int64_t  nova_int;
+/* Plan 70.3: distinct typedef для char — same underlying int64_t storage,
+ * но distinct C type для generic mangling. Без этого `Option[char]` и
+ * `Option[int]` оба mangle'ятся в `NovaOpt_nova_int` → silent type collapse
+ * в mono'd generic instances (см. docs/plans/70.3-char-int-mono-distinction.md).
+ * Zero ABI cost — typedef alias, не отдельный type. Compiler-side mangling
+ * generates distinct `Nova*_nova_char` vs `Nova*_nova_int` C-names. */
+typedef int64_t  nova_char;
 typedef double   nova_f64;
 typedef float    nova_f32;
 typedef bool     nova_bool;
