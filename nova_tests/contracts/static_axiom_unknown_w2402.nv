@@ -1,5 +1,7 @@
 // Ф.7.5 (Plan 33.6): static-axiom check Unknown под Trivial → W2402.
 // Под TrivialBackend нельзя доказать non-trivial axiom, должен эмиттиться W2402.
+// Под Z3 axiom доказывается точно, W2402 не возникает — тест gated на trivial.
+// REQUIRES_SMT_BACKEND trivial
 // EXPECT_COMPILE_WARNING W2402
 
 module contracts.static_axiom_unknown_w2402

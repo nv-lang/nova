@@ -438,6 +438,15 @@ impl Z3Backend {
     /// Создаёт fresh constant с именем «uf__{name}__{ptr_of_arg}». Mixed
     /// sorts через один name (Counter.value, AnotherEffect.value) работают
     /// корректно потому что fresh-const'ы независимы.
+    ///
+    /// Plan 33.6 (2026-05-18): size-accessor UFs (`_field_len_int`,
+    /// `_field_cap_int`, `_field_byte_len_int`) — non-negative by
+    /// construction (соответствуют `obj.len()` / `obj.cap()` / `obj.byte_len()`,
+    /// которые runtime-emit'ятся через `_size_t`-возвращающие builtins).
+    /// Без этого axiom'а Z3 находил counterexample где `len()` < 0
+    /// (см. trivial_string_len_positive.nv). TrivialBackend уже шорткатит
+    /// `>= 0` goal для `_field_len*` через trivial.rs:628; здесь обеспечиваем
+    /// тот же гарант на real-SMT уровне.
     unsafe fn legacy_uninterpreted_app(&mut self, name: &str, args: &[ffi::Z3_ast]) -> Result<ffi::Z3_ast, String> {
         let mut key = format!("uf__{}", name);
         for a in args {
@@ -452,6 +461,20 @@ impl Z3Backend {
         ffi::Z3_inc_ref(self.ctx, ast);
         self.refs.push(ast);
         self.vars.insert(key.clone(), (ast, SortRef::Int));
+
+        if matches!(
+            name,
+            "_field_len_int" | "_field_cap_int" | "_field_byte_len_int"
+        ) {
+            let zero = ffi::Z3_mk_int(self.ctx, 0, self.int_sort);
+            ffi::Z3_inc_ref(self.ctx, zero);
+            self.refs.push(zero);
+            let ge = ffi::Z3_mk_ge(self.ctx, ast, zero);
+            ffi::Z3_inc_ref(self.ctx, ge);
+            self.refs.push(ge);
+            ffi::Z3_solver_assert(self.ctx, self.solver, ge);
+        }
+
         Ok(ast)
     }
 
