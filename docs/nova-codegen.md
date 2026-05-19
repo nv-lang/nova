@@ -23,7 +23,7 @@ Version: `0.1.0` (bootstrap). Cargo package `nova-codegen`, crate
 - [Commands](#commands)
   - [`nova-codegen check`](#nova-codegen-check)
   - [`nova-codegen run`](#nova-codegen-run)
-  - [`nova-codegen test`](#nova-codegen-test)
+  - [`nova-codegen test-interp`](#nova-codegen-test-interp)
   - [`nova-codegen compile`](#nova-codegen-compile)
   - [`nova-codegen emit-runtime-stubs`](#nova-codegen-emit-runtime-stubs)
   - [`nova-codegen dump-runtime`](#nova-codegen-dump-runtime)
@@ -128,12 +128,12 @@ handlers, structured concurrency, contracts, defer, channels.
 
 ---
 
-### `nova-codegen test`
+### `nova-codegen test-interp`
 
-Run `test "..." { ... }` blocks in a file via the interpreter.
+Run `test "..." { ... }` blocks in a file via the interpreter (no C-codegen).
 
 ```
-nova-codegen test FILE
+nova-codegen test-interp FILE
 ```
 
 **Pipeline:** parse → path-check → annotate_map_literals → desugar →
