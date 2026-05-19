@@ -19,6 +19,16 @@ use std::path::{Path, PathBuf};
 pub struct Manifest {
     pub package_name: String,
     pub source_root: PathBuf,
+    /// Plan 71 / D127: opt-in строгий enforcement правила
+    /// `public-missing-stability` (Plan 45 §11.5 №7).
+    ///
+    /// Source: `[lib] enforce-stability = true` в `nova.toml`.
+    /// Default (если flag не задан) — `false`: lint emit Warning, не
+    /// блокирует `nova doc --check`. `true` — Error, exit 1.
+    ///
+    /// Test/example/bench paths игнорируют этот flag (см.
+    /// `doc::lints::LintConfig::fixture_dirs`) — там lint всегда skip'ается.
+    pub enforce_stability: bool,
 }
 
 /// Найти nova.toml в parent dirs и извлечь package_name + source_root.
@@ -38,10 +48,15 @@ pub fn find_manifest(file: &Path) -> Option<Manifest> {
     }
 }
 
-fn parse_manifest(toml_path: &Path, dir: &Path) -> Option<Manifest> {
+/// Parse a `nova.toml` directly from `toml_path`, with `dir` as the
+/// manifest-relative source-root anchor. Public for use from
+/// `nova-cli::build_lint_config_for` fallback path и в integration
+/// tests (Plan 71 Ф.1 / Ф.5).
+pub fn parse_manifest(toml_path: &Path, dir: &Path) -> Option<Manifest> {
     let text = std::fs::read_to_string(toml_path).ok()?;
     let mut package_name: Option<String> = None;
     let mut lib_src: Option<String> = None;
+    let mut enforce_stability: bool = false;
     let mut section: &str = "";
 
     for raw in text.lines() {
@@ -64,13 +79,23 @@ fn parse_manifest(toml_path: &Path, dir: &Path) -> Option<Manifest> {
             let _ = section;
             continue;
         }
-        // key = "value" — minimal parsing
+        // key = "value" or key = bool — minimal parsing.
         if let Some((key, val)) = line.split_once('=') {
             let key = key.trim();
-            let val = val.trim().trim_matches('"').to_string();
+            let raw_val = val.trim();
+            // Strip trailing inline comment ` # ...`. TOML allows `key = true # comment`.
+            let raw_val = raw_val.split('#').next().unwrap_or("").trim();
+            let str_val = raw_val.trim_matches('"').to_string();
             match (section, key) {
-                ("package", "name") => package_name = Some(val),
-                ("lib", "src")      => lib_src = Some(val),
+                ("package", "name") => package_name = Some(str_val),
+                ("lib", "src")      => lib_src = Some(str_val),
+                // Plan 71 / D127: `[lib] enforce-stability = true|false`.
+                // Conservative: anything other than literal `true` → false.
+                // Malformed value (e.g. `"garbage"`, `42`) silently → false
+                // (acceptance test Ф.1 №3 — `enforce-stability = "garbage"` ignored).
+                ("lib", "enforce-stability") => {
+                    enforce_stability = raw_val == "true";
+                }
                 _ => {}
             }
         }
@@ -86,6 +111,7 @@ fn parse_manifest(toml_path: &Path, dir: &Path) -> Option<Manifest> {
     Some(Manifest {
         package_name: pkg,
         source_root,
+        enforce_stability,
     })
 }
 
@@ -307,4 +333,78 @@ pub fn is_stdlib_runtime_module(name: &[String]) -> bool {
 pub fn is_prelude_self_module(name: &[String]) -> bool {
     (name.len() == 2 && name[0] == "std" && name[1] == "prelude")
         || name.last().map(|s| s == "prelude").unwrap_or(false)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+
+    /// Helper: записывает text в tempfile под name, возвращает (path, dir).
+    /// Использует unique временную директорию, чтобы тесты не интерферировали.
+    fn write_toml(name: &str, text: &str) -> (std::path::PathBuf, std::path::PathBuf) {
+        let dir = std::env::temp_dir().join(format!("nova_manifest_test_{}_{}", name,
+            std::process::id()));
+        std::fs::create_dir_all(&dir).expect("mkdir tempdir");
+        let toml_path = dir.join("nova.toml");
+        let mut f = std::fs::File::create(&toml_path).expect("create toml");
+        f.write_all(text.as_bytes()).expect("write toml");
+        (toml_path, dir)
+    }
+
+    /// Plan 71 Ф.1 acceptance №1: `enforce-stability = true` корректно парсится.
+    #[test]
+    fn enforce_stability_true() {
+        let (path, dir) = write_toml("estab_true", "[package]\nname = \"x\"\n[lib]\nsrc = \".\"\nenforce-stability = true\n");
+        let m = parse_manifest(&path, &dir).expect("parse");
+        assert!(m.enforce_stability);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Plan 71 Ф.1 acceptance №2: при отсутствии flag — default false.
+    #[test]
+    fn enforce_stability_default_false() {
+        let (path, dir) = write_toml("estab_default", "[package]\nname = \"x\"\n[lib]\nsrc = \".\"\n");
+        let m = parse_manifest(&path, &dir).expect("parse");
+        assert!(!m.enforce_stability);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Plan 71 Ф.1 acceptance №3: `enforce-stability = "garbage"` → ignored (false).
+    /// Conservative parsing: anything kроме literal `true` → false.
+    #[test]
+    fn enforce_stability_garbage_ignored() {
+        let (path, dir) = write_toml("estab_garbage", "[package]\nname = \"x\"\n[lib]\nsrc = \".\"\nenforce-stability = \"garbage\"\n");
+        let m = parse_manifest(&path, &dir).expect("parse");
+        assert!(!m.enforce_stability);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Дополнительно: `enforce-stability = false` (explicit) → false.
+    #[test]
+    fn enforce_stability_explicit_false() {
+        let (path, dir) = write_toml("estab_explicit_false", "[package]\nname = \"x\"\n[lib]\nsrc = \".\"\nenforce-stability = false\n");
+        let m = parse_manifest(&path, &dir).expect("parse");
+        assert!(!m.enforce_stability);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Robustness: inline comment после value не ломает парсинг.
+    #[test]
+    fn enforce_stability_trailing_comment() {
+        let (path, dir) = write_toml("estab_trail_cmt", "[package]\nname = \"x\"\n[lib]\nsrc = \".\"\nenforce-stability = true # opt-in строгий режим\n");
+        let m = parse_manifest(&path, &dir).expect("parse");
+        assert!(m.enforce_stability);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Flag в неправильной секции (`[package]`) — не должен распознаваться.
+    #[test]
+    fn enforce_stability_wrong_section_ignored() {
+        let (path, dir) = write_toml("estab_wrong_section",
+            "[package]\nname = \"x\"\nenforce-stability = true\n[lib]\nsrc = \".\"\n");
+        let m = parse_manifest(&path, &dir).expect("parse");
+        assert!(!m.enforce_stability, "flag только в [lib], не в [package]");
+        std::fs::remove_dir_all(&dir).ok();
+    }
 }
