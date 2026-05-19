@@ -31,7 +31,15 @@ export external fn str @find(needle str) -> Option[int]
 export external fn str @rfind(needle str) -> Option[int]
 
 // Codepoint по индексу (codepoint-indexed). None при OOB.
-export external fn str @char_at(idx int) -> Option[int]
+//
+// **Plan 71 follow-up (2026-05-19):** signature corrected `Option[int]`
+// → `Option[char]`. C-runtime эмитит codepoint (`Option[char] =
+// NovaOpt_nova_int` per nova_rt/array.h), все ~50 callers в std/* уже
+// потребляют как `Option[char]` (match `Some('/')`, equality
+// `== Some('=')`, передача в `bcrypt_decode_char(c Option[char])`).
+// Декларация была неверной — char и int share C-тип `nova_int`, поэтому
+// type-checker не ловил silent mismatch.
+export external fn str @char_at(idx int) -> Option[char]
 
 // Codepoint-indexed slice (D26 школа B).
 export external fn str @slice(from int, to int) -> str
