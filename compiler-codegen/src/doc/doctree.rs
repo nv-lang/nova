@@ -189,6 +189,16 @@ pub struct DocModule {
     pub realtime_matrix: Vec<RealtimeConstraintEntry>,
     /// Span первого токена модуля — для "View Source" links (D107).
     pub source_span: Span,
+    /// Plan 71 / D127: пути к source-файлам, формирующим этот module.
+    ///
+    /// Single-file module — один путь (`peer_files[0].path`); folder-module —
+    /// все peers. Используется `doc::lints` для определения test/example/bench
+    /// fixture exemption (правило `public-missing-stability`).
+    ///
+    /// Пусто, если caller не предоставил `Module.peer_files` (например,
+    /// synthesized DocTree в unit-тестах). В таком случае fixture-detection
+    /// возвращает false (lint работает по строгому пути).
+    pub source_paths: Vec<std::path::PathBuf>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
