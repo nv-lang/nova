@@ -206,6 +206,26 @@ pub struct CEmitter {
     /// Names of variables declared as `let mut` (mutable) — used by spawn-capture
     /// to decide between copy-by-value (immutable scalar) and capture-by-pointer.
     var_mutable: HashSet<String>,
+    /// Plan 72 P0 (E7201): variables whose declared Nova type is a protocol type
+    /// (erased to void*). Maps var_name → protocol type name for diagnostics.
+    /// Used to detect method calls on erased protocol values at compile time.
+    protocol_vars: HashMap<String, String>,
+    /// Plan 72 P1-C: variables declared as Result[T, E]. Maps var_name →
+    /// (ok_c_type, err_c_type) so that .unwrap() / .ok() / .err() etc.
+    /// return the correct T or E type instead of the hardcoded nova_int.
+    result_type_params: HashMap<String, (String, String)>,
+    /// Plan 72 P3-B: protocol method registry.
+    /// Maps protocol_name → (type_param_names, method_signatures).
+    /// Populated when a Protocol TypeDecl is processed.
+    protocol_method_registry: HashMap<String, (Vec<String>, Vec<EffectMethod>)>,
+    /// Plan 72 P3-B: companion vtable C variable for each protocol-typed var.
+    /// Maps var_name → vtable_c_var_name (e.g. "x" → "__vt_x").
+    /// Present only when a concrete type was assigned at declaration.
+    protocol_var_vtable: HashMap<String, String>,
+    /// Plan 72 P3-B: emitted vtable struct type names to avoid duplication.
+    emitted_vtable_types: HashSet<String>,
+    /// Plan 72 P3-B: emitted vtable instances — (vtable_struct, concrete_mangled).
+    emitted_vtable_instances: HashSet<(String, String)>,
     /// Maps struct name → field name → C type
     record_schemas: HashMap<String, HashMap<String, String>>,
     /// Maps sum type name → variant name → field types (positional)
@@ -659,6 +679,12 @@ impl CEmitter {
             type_subst_overrides: RefCell::new(HashMap::new()),
             pattern_binding_overrides: RefCell::new(HashMap::new()),
             var_mutable: HashSet::new(),
+            protocol_vars: HashMap::new(),
+            result_type_params: HashMap::new(),
+            protocol_method_registry: HashMap::new(),
+            protocol_var_vtable: HashMap::new(),
+            emitted_vtable_types: HashSet::new(),
+            emitted_vtable_instances: HashSet::new(),
             record_schemas: HashMap::new(),
             sum_schemas: HashMap::new(),
             effect_schemas: HashMap::new(),
@@ -1365,8 +1391,16 @@ impl CEmitter {
                     // `Nova_Iter*` для protocol-typed parameters → CC-FAIL
                     // `unknown type name 'Nova_Iter'` (regression от merge'а
                     // main↔plan-62-main).
-                    if matches!(t.kind, crate::ast::TypeDeclKind::Protocol(_)) {
+                    if let crate::ast::TypeDeclKind::Protocol(methods) = &t.kind {
                         self.protocol_types.insert(t.name.clone());
+                        // Plan 72 P3-B: register method signatures for vtable generation.
+                        let type_params: Vec<String> = t.generics.iter()
+                            .map(|g| g.name.clone())
+                            .collect();
+                        self.protocol_method_registry.insert(
+                            t.name.clone(),
+                            (type_params, methods.clone()),
+                        );
                         continue;
                     }
                     self.generic_types.insert(t.name.clone());
@@ -2301,6 +2335,9 @@ impl CEmitter {
         let saved_var_types = self.var_types.clone();
         let saved_var_mutable = self.var_mutable.clone();
         let saved_cancel_token_t_map = self.cancel_token_t_map.clone();
+        let saved_protocol_vars = self.protocol_vars.clone(); // Plan 72 P0
+        let saved_result_type_params = self.result_type_params.clone(); // Plan 72 P1-C
+        let saved_protocol_var_vtable = self.protocol_var_vtable.clone(); // Plan 72 P3-B
 
         // Подход: setup и teardown эмитятся как ТЕЛО функций, а measure —
         // отдельная функция. Setup mutates var_types — эти переменные
@@ -2497,6 +2534,9 @@ impl CEmitter {
         self.var_types = saved_var_types;
         self.var_mutable = saved_var_mutable;
         self.cancel_token_t_map = saved_cancel_token_t_map;
+        self.protocol_vars = saved_protocol_vars; // Plan 72 P0
+        self.result_type_params = saved_result_type_params; // Plan 72 P1-C
+        self.protocol_var_vtable = saved_protocol_var_vtable; // Plan 72 P3-B
         let bench_body = std::mem::replace(&mut self.out, saved_out);
         self.indent = saved_indent;
         if !self.lambda_forward_decls.is_empty() {
@@ -2525,6 +2565,9 @@ impl CEmitter {
         let saved_var_types = self.var_types.clone();
         let saved_var_mutable = self.var_mutable.clone();
         let saved_cancel_token_t_map = self.cancel_token_t_map.clone();
+        let saved_protocol_vars = self.protocol_vars.clone();
+        let saved_result_type_params_test = self.result_type_params.clone(); // Plan 72 P1-C
+        let saved_protocol_var_vtable_test = self.protocol_var_vtable.clone(); // Plan 72 P3-B
         self.line(&format!("static nova_unit nova_test_{}(void) {{", safe));
         self.indent = 1;
         self.emit_block_stmts(&t.body, "nova_unit")?;
@@ -2535,6 +2578,9 @@ impl CEmitter {
         self.var_types = saved_var_types;
         self.var_mutable = saved_var_mutable;
         self.cancel_token_t_map = saved_cancel_token_t_map;
+        self.protocol_vars = saved_protocol_vars;
+        self.result_type_params = saved_result_type_params_test; // Plan 72 P1-C
+        self.protocol_var_vtable = saved_protocol_var_vtable_test; // Plan 72 P3-B
         let test_body = std::mem::replace(&mut self.out, saved_out);
         self.indent = saved_indent;
         // Flush any lambdas discovered during this test's emit
@@ -2855,6 +2901,174 @@ impl CEmitter {
             context, cause
         ));
         "nova_int".to_string()
+    }
+
+    /// Plan 72 P0 (E7201): if `ty` is a protocol type (or a generic protocol
+    /// instantiation like `Iter[int]`), return the base protocol name.
+    /// Returns `None` for non-protocol types.
+    fn extract_protocol_type_name(&self, ty: &TypeRef) -> Option<String> {
+        if let TypeRef::Named { path, .. } = ty {
+            let name = path.last()?;
+            if self.protocol_types.contains(name) {
+                return Some(name.clone());
+            }
+        }
+        None
+    }
+
+    /// Plan 72 P1-C: if `ty` is `Result[T, E]`, return (C type of T, C type of E).
+    /// Returns `None` for non-Result types.
+    fn extract_result_type_params(&self, ty: &TypeRef) -> Option<(String, String)> {
+        if let TypeRef::Named { path, generics, .. } = ty {
+            let name = path.last()?;
+            if name == "Result" && generics.len() == 2 {
+                let ok_c = self.type_ref_to_c(&generics[0]).ok()?;
+                let err_c = self.type_ref_to_c(&generics[1]).ok()?;
+                return Some((ok_c, err_c));
+            }
+        }
+        None
+    }
+
+    /// Plan 72 P1-C: emit a C cast expression that reinterprets a `nova_int`
+    /// storage slot as `target_ty`. For pointer types uses intptr_t relay;
+    /// for nova_f64 uses a union bit-cast; for other scalars a direct cast.
+    fn cast_from_nova_int(value: &str, target_ty: &str) -> String {
+        if target_ty == "nova_int" { return value.to_string(); }
+        if target_ty == "nova_f64" {
+            return format!("({{ union {{ nova_int i; nova_f64 f; }} _u; _u.i = ({}); _u.f; }})", value);
+        }
+        if target_ty.ends_with('*') {
+            return format!("({})(intptr_t)({})", target_ty, value);
+        }
+        format!("({})({})", target_ty, value)
+    }
+
+    /// Plan 72 P3-B: generate vtable struct, thunk functions, vtable instance,
+    /// and a companion variable for a protocol-typed binding.
+    ///
+    /// Returns the companion C variable name (e.g. `"__vt_x"`) on success,
+    /// or `None` if vtable generation is not possible (missing registry entry,
+    /// unknown concrete type, etc.).
+    ///
+    /// Side-effects:
+    /// - May append to `self.mono_fwd_decls` (vtable struct, thunks, instance).
+    /// - Emits the companion variable declaration into the current body via `self.line()`.
+    fn emit_protocol_vtable_companion(
+        &mut self,
+        var_name: &str,
+        proto_name: &str,
+        type_args: &[String],   // concrete C types for each protocol type param
+        concrete_c_ty: &str,    // C type of the assigned value, e.g. "Nova_IntCounter*"
+    ) -> Option<String> {
+        // Require at least one type arg and a pointer concrete type (Nova_X*).
+        if type_args.is_empty() { return None; }
+        if !concrete_c_ty.ends_with('*') { return None; }
+
+        // Derive the concrete struct name from the C type ("Nova_IntCounter*" → "IntCounter").
+        let concrete_name = concrete_c_ty
+            .trim_start_matches("Nova_")
+            .trim_end_matches('*')
+            .trim()
+            .to_string();
+        if concrete_name.is_empty() { return None; }
+
+        // Mangle type args for use in identifiers.
+        let args_mangled: String = type_args.iter()
+            .map(|t| Self::sanitize_c_for_ident(t))
+            .collect::<Vec<_>>()
+            .join("_");
+
+        let vtable_struct = format!("NovaVtable_{}_{}", proto_name, args_mangled);
+        let vtable_instance = format!("_vt_{}_{}__{}", proto_name, args_mangled, concrete_name);
+        let companion = format!("__vt_{}", var_name);
+
+        // Get protocol method registry entry (clone to avoid borrow conflict).
+        let (type_params, methods) = self.protocol_method_registry.get(proto_name)?.clone();
+
+        // Build type substitution: protocol type-param → concrete C type.
+        let subst: HashMap<String, String> = type_params.iter()
+            .zip(type_args.iter())
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+
+        // ── Emit vtable struct typedef (once per (proto, type_args)) ──────────
+        if !self.emitted_vtable_types.contains(&vtable_struct) {
+            self.emitted_vtable_types.insert(vtable_struct.clone());
+            let old_subst = std::mem::replace(&mut self.current_type_subst, subst.clone());
+            let mut fields = String::new();
+            for m in &methods {
+                let ret_c = m.return_type.as_ref()
+                    .and_then(|rt| self.type_ref_to_c(rt).ok())
+                    .unwrap_or_else(|| "nova_unit".to_string());
+                let extra_params: Vec<String> = m.params.iter()
+                    .filter_map(|p| self.type_ref_to_c(&p.ty).ok())
+                    .collect();
+                let params_str = std::iter::once("void*".to_string())
+                    .chain(extra_params.iter().cloned())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                fields.push_str(&format!("    {} (*{})({}); \n", ret_c, m.name, params_str));
+            }
+            self.current_type_subst = old_subst;
+            self.mono_fwd_decls.push_str(&format!(
+                "/* Plan 72 P3-B: vtable struct for {} instantiated with {} */\n\
+                 typedef struct {vts} {{\n{fields}}} {vts};\n",
+                proto_name, args_mangled, vts = vtable_struct, fields = fields
+            ));
+        }
+
+        // ── Emit thunks + vtable instance (once per (proto, type_args, concrete)) ─
+        let inst_key = (vtable_struct.clone(), concrete_name.clone());
+        if !self.emitted_vtable_instances.contains(&inst_key) {
+            self.emitted_vtable_instances.insert(inst_key);
+            let old_subst = std::mem::replace(&mut self.current_type_subst, subst.clone());
+            let mut field_inits = Vec::new();
+            for m in &methods {
+                let thunk_name = format!(
+                    "_thunk_{}_{}_{}__{}", proto_name, args_mangled, m.name, concrete_name
+                );
+                let ret_c = m.return_type.as_ref()
+                    .and_then(|rt| self.type_ref_to_c(rt).ok())
+                    .unwrap_or_else(|| "nova_unit".to_string());
+                let extra_param_tys: Vec<String> = m.params.iter()
+                    .filter_map(|p| self.type_ref_to_c(&p.ty).ok())
+                    .collect();
+                // Extra param declarations in the thunk signature.
+                let extra_sig = extra_param_tys.iter().enumerate()
+                    .map(|(i, t)| format!(", {} a{}", t, i))
+                    .collect::<String>();
+                // Arguments forwarded to concrete method (skip void* self, add cast).
+                let extra_fwd = (0..extra_param_tys.len())
+                    .map(|i| format!(", a{}", i))
+                    .collect::<String>();
+                // Concrete method mangled name: Nova_<TypeName>_method_<methodName>
+                let concrete_method = format!("Nova_{}_method_{}", concrete_name, m.name);
+                self.mono_fwd_decls.push_str(&format!(
+                    "static {ret_c} {thunk}(void* self{extra_sig}) {{\n\
+                     \treturn {concrete_method}(({cty})self{extra_fwd});\n\
+                     }}\n",
+                    ret_c = ret_c,
+                    thunk = thunk_name,
+                    extra_sig = extra_sig,
+                    concrete_method = concrete_method,
+                    cty = concrete_c_ty,
+                    extra_fwd = extra_fwd,
+                ));
+                field_inits.push(format!("    .{} = {}", m.name, thunk_name));
+            }
+            self.current_type_subst = old_subst;
+            self.mono_fwd_decls.push_str(&format!(
+                "static const {} {} = {{\n{}\n}};\n",
+                vtable_struct,
+                vtable_instance,
+                field_inits.join(",\n")
+            ));
+        }
+
+        // ── Emit companion variable in function body ──────────────────────────
+        self.line(&format!("const {}* {} = &{};", vtable_struct, companion, vtable_instance));
+        Some(companion)
     }
 
     fn type_ref_to_c(&self, ty: &TypeRef) -> Result<String, String> {
@@ -5444,6 +5658,13 @@ impl CEmitter {
             // Generic sum types: emit erased form so that erased method bodies
             // (emit_generic_method_erased) can access ->tag and ->payload.
             if let TypeDeclKind::Sum(variants) = &t.kind {
+                // Plan 72 P1-B: generic empty sum — same int64_t ABI as non-generic.
+                if variants.is_empty() {
+                    self.line(&format!("typedef int64_t Nova_{};", t.name));
+                    self.line("");
+                    self.sum_schemas.insert(t.name.clone(), HashMap::new());
+                    return Ok(());
+                }
                 let type_params: HashSet<String> = t.generics.iter().map(|g| g.name.clone()).collect();
                 // Tag enum
                 self.line("typedef enum {");
@@ -5852,6 +6073,17 @@ impl CEmitter {
     }
 
     fn emit_sum_type(&mut self, name: &str, variants: &[SumVariant]) -> Result<(), String> {
+        // Plan 72 P1-B: empty sum type (0 variants) — bottom / uninhabited type.
+        // `type Never` / `type RuntimeNoneError` etc. C does not support empty
+        // enums, so emit as `typedef int64_t Nova_X;` (ABI placeholder).
+        // No constructors emitted — the type is uninhabited by definition.
+        if variants.is_empty() {
+            self.line(&format!("typedef int64_t Nova_{};", name));
+            self.line("");
+            // Register empty schema so type-ref lookups don't fall to void*.
+            self.sum_schemas.insert(name.to_string(), HashMap::new());
+            return Ok(());
+        }
         // Tag enum
         self.line("typedef enum {");
         self.indent += 1;
@@ -7231,6 +7463,91 @@ impl CEmitter {
                         for (gen_ty, c_ty) in generics.iter().zip(iargs.iter()) {
                             Self::infer_type_param_binding(gen_ty, c_ty, &mut subst);
                         }
+                    }
+                }
+            }
+        }
+        // Source 2e (Plan 72 P2-B): structural bound inference.
+        // For `fn foo[U, T Iter[U]](it T)` when T is resolved but U isn't:
+        // iterate over method_overloads for the concrete T type and try to extract
+        // the bound-generic values from method return types.
+        // Handles the `Iter[U]` pattern: T is bound by `Iter[U]`, T is resolved to
+        // `Nova_IntCounter*`, look at `next() -> NovaOpt_nova_int*` → U = nova_int.
+        {
+            let still_unresolved: std::collections::HashSet<String> = subst.iter()
+                .filter(|(_, v)| v.is_none())
+                .map(|(n, _)| n.clone())
+                .collect();
+            if !still_unresolved.is_empty() {
+                // Collect candidates: (bound_generic_name, candidate_c_type)
+                let mut candidates: Vec<(String, String)> = Vec::new();
+                for gp in &fn_decl.generics {
+                    // Only look at resolved type params that have a bound
+                    let resolved_c = match subst.iter().find(|(n, _)| n == &gp.name) {
+                        Some((_, Some(c))) => c.clone(),
+                        _ => continue,
+                    };
+                    let bound_ref = match &gp.bound {
+                        Some(b) => b,
+                        None => continue,
+                    };
+                    // Extract Nova type name from resolved C type
+                    let nova_name = {
+                        let t = resolved_c.trim_end_matches('*').trim();
+                        t.strip_prefix("Nova_").unwrap_or("").to_string()
+                    };
+                    if nova_name.is_empty() { continue; }
+                    // Get the bound's generic params (e.g., `Iter[U]` → generics=[U])
+                    let bound_generics = match bound_ref {
+                        crate::ast::TypeRef::Named { generics, .. } => generics,
+                        _ => continue,
+                    };
+                    // Find which positions in bound_generics are unresolved type params
+                    let mut unresolved_at: Vec<(usize, String)> = Vec::new();
+                    for (i, bg) in bound_generics.iter().enumerate() {
+                        if let crate::ast::TypeRef::Named { path, generics, .. } = bg {
+                            if generics.is_empty() {
+                                let name = path.join("_");
+                                if still_unresolved.contains(&name) {
+                                    unresolved_at.push((i, name));
+                                }
+                            }
+                        }
+                    }
+                    if unresolved_at.is_empty() { continue; }
+                    // Gather all instance methods of the concrete type
+                    let methods: Vec<(String, String)> = self.method_overloads.iter()
+                        .filter(|((t, _), _)| t == &nova_name)
+                        .flat_map(|((_, m), sigs)| {
+                            sigs.iter()
+                                .filter(|s| s.is_instance)
+                                .map(move |s| (m.clone(), s.return_c_type.clone()))
+                        })
+                        .collect();
+                    // For each unresolved-at position, try extracting from method return types
+                    for (pos, u_name) in &unresolved_at {
+                        for (_, ret_c) in &methods {
+                            if ret_c.is_empty() || ret_c == "void*" { continue; }
+                            // Position 0 in bound (e.g., Iter[U]): the return type wraps U
+                            // in Option → `NovaOpt_X*` or directly `Nova_X*`.
+                            if *pos == 0 {
+                                if let Some(inner) = ret_c
+                                    .strip_prefix("NovaOpt_")
+                                    .and_then(|s| s.strip_suffix('*'))
+                                {
+                                    if !inner.is_empty() && inner != "void" {
+                                        candidates.push((u_name.clone(), inner.to_string()));
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                // Apply candidates (do not overwrite already-resolved slots)
+                for (name, c_ty) in candidates {
+                    if let Some(slot) = subst.iter_mut().find(|(n, v)| n == &name && v.is_none()) {
+                        slot.1 = Some(c_ty);
                     }
                 }
             }
@@ -8741,6 +9058,12 @@ impl CEmitter {
             self.register_fn_result_ok_inner_type(&mangled, rt);
         }
         // Register param types in var_types for match/infer
+        // Plan 72 P0: save protocol_vars state before fn body (params may add protocol-typed entries)
+        let saved_protocol_vars_fn = self.protocol_vars.clone();
+        // Plan 72 P1-C: save result_type_params state before fn body
+        let saved_result_type_params_fn = self.result_type_params.clone();
+        // Plan 72 P3-B: save protocol_var_vtable state before fn body
+        let saved_protocol_var_vtable_fn = self.protocol_var_vtable.clone();
         if let Some(recv) = &f.receiver {
             if matches!(recv.kind, ReceiverKind::Instance) {
                 self.var_types.insert("nova_self".into(), self.receiver_c_type(&recv.type_name));
@@ -8748,6 +9071,16 @@ impl CEmitter {
         }
         for p in &f.params {
             if let Ok(ty_c) = self.type_ref_to_c(&p.ty) {
+                // Plan 72 P0 (E7201): track protocol-typed params before ty_c is moved
+                if let Some(proto_name) = self.extract_protocol_type_name(&p.ty) {
+                    self.protocol_vars.insert(p.name.clone(), proto_name);
+                }
+                // Plan 72 P1-C: track Result[T,E]-typed params
+                if let Some(result_params) = self.extract_result_type_params(&p.ty) {
+                    self.result_type_params.insert(p.name.clone(), result_params);
+                } else {
+                    self.result_type_params.remove(&p.name);
+                }
                 self.var_types.insert(p.name.clone(), ty_c);
                 // Register function-typed params so body() calls emit proper function pointer calls
                 if let TypeRef::Func { params: fp, return_type, .. } = &p.ty {
@@ -8954,6 +9287,12 @@ impl CEmitter {
             FnBody::External => {}
         }
         self.expected_record_type = saved_expected;
+        // Plan 72 P0: restore protocol_vars after fn body (clear param-registered entries).
+        self.protocol_vars = saved_protocol_vars_fn;
+        // Plan 72 P1-C: restore result_type_params after fn body.
+        self.result_type_params = saved_result_type_params_fn;
+        // Plan 72 P3-B: restore protocol_var_vtable after fn body.
+        self.protocol_var_vtable = saved_protocol_var_vtable_fn;
         // Plan 55 Ф.4: restore prior current_fn_return_ty (mono-pass leak fix).
         self.current_fn_return_ty = saved_ret_ty;
         // Plan 63 Fix F+ [M-result-erased-no-mono]: restore pending state.
@@ -9597,6 +9936,63 @@ impl CEmitter {
                 // For pointer types: the emitted tmp expression already carries the type.
                 // Just declare the binding with the right type.
                 self.var_types.insert(binding.clone(), ty_c.clone());
+                // Plan 72 P0 (E7201): track protocol-typed bindings so method calls
+                // on erased protocol vars emit E7201 instead of silent NULL.
+                // Also propagates through plain assignment: `let xx = x` where x is protocol-typed.
+                if let Some(ty_ann) = &decl.ty {
+                    if let Some(proto_name) = self.extract_protocol_type_name(ty_ann) {
+                        self.protocol_vars.insert(binding.clone(), proto_name);
+                    } else {
+                        self.protocol_vars.remove(&binding);
+                    }
+                } else if let ExprKind::Ident(rhs_var) = &decl.value.kind {
+                    if let Some(proto_name) = self.protocol_vars.get(rhs_var.as_str()).cloned() {
+                        self.protocol_vars.insert(binding.clone(), proto_name);
+                    } else {
+                        self.protocol_vars.remove(&binding);
+                    }
+                } else {
+                    self.protocol_vars.remove(&binding);
+                }
+                // Plan 72 P1-C: track Result[T,E]-typed bindings for correct .unwrap()/.ok() types.
+                if let Some(ty_ann) = &decl.ty {
+                    if let Some(result_params) = self.extract_result_type_params(ty_ann) {
+                        self.result_type_params.insert(binding.clone(), result_params);
+                    } else {
+                        self.result_type_params.remove(&binding);
+                    }
+                } else if let ExprKind::Ident(rhs_var) = &decl.value.kind {
+                    if let Some(params) = self.result_type_params.get(rhs_var.as_str()).cloned() {
+                        self.result_type_params.insert(binding.clone(), params);
+                    } else {
+                        self.result_type_params.remove(&binding);
+                    }
+                } else {
+                    self.result_type_params.remove(&binding);
+                }
+                // Plan 72 P3-B: if this var is protocol-typed and RHS has a concrete
+                // pointer type, generate a vtable + companion variable.
+                if let Some(proto_name) = self.protocol_vars.get(&binding).cloned() {
+                    // Get type args from the type annotation (e.g. Iter[int] → ["nova_int"]).
+                    let type_args: Vec<String> = if let Some(TypeRef::Named { generics, .. }) = &decl.ty {
+                        generics.iter().filter_map(|g| self.type_ref_to_c(g).ok()).collect()
+                    } else { vec![] };
+                    // Get the concrete C type of the RHS.
+                    let concrete_c = self.infer_expr_c_type(&decl.value);
+                    if !type_args.is_empty() && concrete_c.ends_with('*') {
+                        if let Some(companion) = self.emit_protocol_vtable_companion(
+                            &binding, &proto_name, &type_args, &concrete_c
+                        ) {
+                            self.protocol_var_vtable.insert(binding.clone(), companion);
+                        } else {
+                            self.protocol_var_vtable.remove(&binding);
+                        }
+                    } else {
+                        self.protocol_var_vtable.remove(&binding);
+                    }
+                } else {
+                    self.protocol_var_vtable.remove(&binding);
+                }
                 // Plan 49 Ф.6 P0 fix: track CancelToken[T] T для per-T `reason()`
                 // un-box. Rebind ОЧИЩАЕТ предыдущую запись чтобы не утечь между
                 // function/test bodies (cancel_token_t_map не scope'd).
@@ -12715,6 +13111,40 @@ impl CEmitter {
                             _ => {}
                         }
                     }
+                    // Plan 72 P1-C: Result.unwrap_or inline with proper T cast when type is known.
+                    // Must come BEFORE registry dispatch so non-nova_int T types are handled.
+                    if obj_ty == "Nova_Result*" && method == "unwrap_or" {
+                        let ok_c_ty = if let ExprKind::Ident(var_name) = &obj.kind {
+                            self.result_type_params.get(var_name.as_str())
+                                .map(|(ok_c, _)| ok_c.clone())
+                                .unwrap_or_else(|| "nova_int".to_string())
+                        } else {
+                            "nova_int".to_string()
+                        };
+                        if ok_c_ty != "nova_int" {
+                            if let Some(default_arg) = args.first() {
+                                let d = self.emit_expr(default_arg.expr())?;
+                                let obj_c = self.emit_expr(obj)?;
+                                let tmp = self.fresh_tmp();
+                                self.line(&format!("Nova_Result* {} = {};", tmp, obj_c));
+                                let result_v = self.fresh_tmp();
+                                self.line(&format!("{} {};", ok_c_ty, result_v));
+                                self.line(&format!("if ({}->tag == NOVA_TAG_Result_Ok) {{", tmp));
+                                self.indent += 1;
+                                let cast = Self::cast_from_nova_int(
+                                    &format!("{}->payload.Ok._0", tmp), &ok_c_ty);
+                                self.line(&format!("{} = {};", result_v, cast));
+                                self.indent -= 1;
+                                self.line("} else {");
+                                self.indent += 1;
+                                self.line(&format!("{} = {};", result_v, d));
+                                self.indent -= 1;
+                                self.line("}");
+                                return Ok(result_v);
+                            }
+                        }
+                        // ok_c_ty == "nova_int": fall through to registry (nova_result_unwrap_or)
+                    }
                     // Plan 62.A.bis Ф.3.2: Result method dispatch route'ится
                     // через `sum_schema_registry`. Routable trampolines
                     // (is_ok/is_err/ok/unwrap_or) emit'ятся через registry
@@ -12788,24 +13218,35 @@ impl CEmitter {
                                 return Ok(opt_tmp);
                             }
                             // D26 prelude: Result.unwrap_or_else(f). Err →
-                            // f(e), Ok(v) → v. f это closure (nova_str → nova_int).
+                            // f(e), Ok(v) → v. f это closure (nova_str → T).
+                            // Plan 72 P1-C: use actual T type for result variable.
                             "unwrap_or_else" => {
                                 if let Some(arg) = args.first() {
+                                    let ok_c_ty = if let ExprKind::Ident(var_name) = &obj.kind {
+                                        self.result_type_params.get(var_name.as_str())
+                                            .map(|(ok_c, _)| ok_c.clone())
+                                            .unwrap_or_else(|| "nova_int".to_string())
+                                    } else {
+                                        "nova_int".to_string()
+                                    };
                                     let f = self.emit_expr(arg.expr())?;
                                     let tmp = self.fresh_tmp();
                                     self.line(&format!("Nova_Result* {} = {};", tmp, obj_c));
                                     let result = self.fresh_tmp();
-                                    self.line(&format!("nova_int {};", result));
+                                    self.line(&format!("{} {};", ok_c_ty, result));
                                     self.line(&format!("if ({}->tag == NOVA_TAG_Result_Ok) {{", tmp));
                                     self.indent += 1;
-                                    self.line(&format!("{} = {}->payload.Ok._0;", result, tmp));
+                                    let cast_ok = Self::cast_from_nova_int(
+                                        &format!("{}->payload.Ok._0", tmp), &ok_c_ty);
+                                    self.line(&format!("{} = {};", result, cast_ok));
                                     self.indent -= 1;
                                     self.line("} else {");
                                     self.indent += 1;
-                                    // Closure (nova_str → nova_int): NovaClos_si signature.
-                                    self.line(&format!(
-                                        "{} = ((nova_int(*)(void*, nova_str))(((NovaClos_ii*)({}))->fn))(((NovaClos_ii*)({}))->env, {}->payload.Err._0);",
-                                        result, f, f, tmp));
+                                    // Closure (nova_str → T): cast return to T.
+                                    let clos_call = format!(
+                                        "((nova_int(*)(void*, nova_str))(((NovaClos_ii*)({f}))->fn))(((NovaClos_ii*)({f}))->env, {tmp}->payload.Err._0)");
+                                    let cast_err = Self::cast_from_nova_int(&clos_call, &ok_c_ty);
+                                    self.line(&format!("{} = {};", result, cast_err));
                                     self.indent -= 1;
                                     self.line("}");
                                     return Ok(result);
@@ -12865,6 +13306,14 @@ impl CEmitter {
                                 }
                             }
                             "unwrap" => {
+                                // Plan 72 P1-C: cast payload.Ok._0 to actual T type.
+                                let ok_c_ty = if let ExprKind::Ident(var_name) = &obj.kind {
+                                    self.result_type_params.get(var_name.as_str())
+                                        .map(|(ok_c, _)| ok_c.clone())
+                                        .unwrap_or_else(|| "nova_int".to_string())
+                                } else {
+                                    "nova_int".to_string()
+                                };
                                 let tmp = self.fresh_tmp();
                                 self.line(&format!("Nova_Result* {} = {};", tmp, obj_c));
                                 self.line(&format!("if ({}->tag == NOVA_TAG_Result_Err) {{", tmp));
@@ -12872,7 +13321,9 @@ impl CEmitter {
                                 self.line(&format!("Nova_Fail_fail({}->payload.Err._0);", tmp));
                                 self.indent -= 1;
                                 self.line("}");
-                                return Ok(format!("({}->payload.Ok._0)", tmp));
+                                let cast = Self::cast_from_nova_int(
+                                    &format!("{}->payload.Ok._0", tmp), &ok_c_ty);
+                                return Ok(format!("({})", cast));
                             }
                             _ => {}
                         }
@@ -13519,6 +13970,35 @@ impl CEmitter {
                         let mut arg_strs = vec![obj_c];
                         for a in args { arg_strs.push(self.emit_expr(a.expr())?); }
                         return Ok(format!("{}({})", rt_fn, arg_strs.join(", ")));
+                    }
+                }
+
+                // Plan 72 P0/P3-B: detect method call on a protocol-typed variable.
+                // If a vtable companion was generated at assignment (P3-B), dispatch through
+                // it. Otherwise emit E7201 (P0) instead of silent NULL.
+                if let ExprKind::Ident(var_name) = &obj.kind {
+                    if let Some(proto_name) = self.protocol_vars.get(var_name.as_str()).cloned() {
+                        // P3-B: vtable dispatch when companion is available.
+                        if let Some(vt_companion) = self.protocol_var_vtable.get(var_name.as_str()).cloned() {
+                            let obj_c = self.emit_expr(obj)?;
+                            let mut call_args = vec![obj_c];
+                            for a in args { call_args.push(self.emit_expr(a.expr())?); }
+                            return Ok(format!("{}->{method}({})", vt_companion, call_args.join(", ")));
+                        }
+                        // P0: E7201 — no vtable available.
+                        let method_str = method.to_string();
+                        let msg = format!(
+                            "error E7201: method call `.{}()` on erased protocol type `{}` — \
+                             no vtable available (variable `{}`)\n  \
+                             note: `{}` is declared as `{}` (protocol), which is erased to void* \
+                             — method dispatch cannot be performed at this codegen stage\n  \
+                             help: use a generic bound instead: \
+                             `fn foo[T {}](x T)` where T is constrained, not an existential",
+                            method_str, proto_name, var_name, var_name, proto_name, proto_name
+                        );
+                        self.strict_errors.borrow_mut().push(msg);
+                        for a in args { let _ = self.emit_expr(a.expr())?; }
+                        return Ok("NULL".into());
                     }
                 }
 
@@ -16306,7 +16786,15 @@ impl CEmitter {
             };
             // Check if this is a sum-type record variant (not a plain record).
             // Plan 62.A.bis Ф.2.2: registry-driven variant resolution.
-            if let Some((sum_type_name, _)) = self.sum_schema_registry.find_variant_compat(&struct_name) {
+            // Plan 72 P3-A: if struct_name is already in record_schemas (plain record), skip the
+            // sum_schema_registry lookup — prevents prelude-shadow collision (e.g. `Range { start: 0 }`
+            // where "Range" is both a known record and potentially matches a sum-variant name).
+            let variant_lookup = if self.record_schemas.contains_key(&struct_name) {
+                None
+            } else {
+                self.sum_schema_registry.find_variant_compat(&struct_name)
+            };
+            if let Some((sum_type_name, _)) = variant_lookup {
                 // Emit as sum-type record variant constructor: nova_make_T_Variant(field_vals...)
                 // D109: In monomorphized context, sum_type_name may be the erased base type
                 // (e.g. "Slot"). Compute concrete monomorphized name if generic params available.
@@ -20044,11 +20532,22 @@ impl CEmitter {
                         };
                     }
                     // D26 prelude: Nova_Result* method type inference.
+                    // Plan 72 P1-C: use tracked Result[T,E] type params when available.
                     if obj_ty == "Nova_Result*" {
+                        let (ok_c, err_c) = if let ExprKind::Ident(var_name) = &obj.kind {
+                            self.result_type_params.get(var_name.as_str())
+                                .cloned()
+                                .unwrap_or_else(|| ("nova_int".into(), "nova_str".into()))
+                        } else {
+                            ("nova_int".into(), "nova_str".into())
+                        };
+                        let ok_ident = Self::sanitize_c_for_ident(&ok_c);
+                        let err_ident = Self::sanitize_c_for_ident(&err_c);
                         return match method.as_str() {
                             "is_ok" | "is_err" => "nova_bool".into(),
-                            "unwrap" | "unwrap_or" | "unwrap_or_else" => "nova_int".into(),
-                            "ok" | "err" => "NovaOpt_nova_int".into(),
+                            "unwrap" | "unwrap_or" | "unwrap_or_else" => ok_c,
+                            "ok"  => format!("NovaOpt_{}", ok_ident),
+                            "err" => format!("NovaOpt_{}", err_ident),
                             "map" | "map_err" => "Nova_Result*".into(),
                             _ => "nova_int".into(),
                         };
