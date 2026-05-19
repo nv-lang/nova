@@ -694,6 +694,10 @@ impl CEmitter {
                 s.insert("nova_f64".to_string());
                 // Plan 70.4: nova_f32 NovaOpt declared в array.h — skip lazy.
                 s.insert("nova_f32".to_string());
+                // Plan 70.4 Ф.2: sized-int NovaOpt declared in array.h — skip lazy.
+                for t in ["int32_t", "int16_t", "int8_t", "uint32_t", "uint16_t", "uint64_t"] {
+                    s.insert(t.to_string());
+                }
                 std::cell::RefCell::new(s)
             },
             // Plan 54 Ф.9: pre-populated primitive sanitized → c_ty
@@ -703,6 +707,10 @@ impl CEmitter {
             novaopt_value_types: {
                 let mut m = std::collections::HashMap::new();
                 for t in ["nova_int", "nova_char", "nova_byte", "nova_bool", "nova_str", "nova_f64", "nova_f32"] {
+                    m.insert(t.to_string(), t.to_string());
+                }
+                // Plan 70.4 Ф.2: sized-int types.
+                for t in ["int32_t", "int16_t", "int8_t", "uint32_t", "uint16_t", "uint64_t"] {
                     m.insert(t.to_string(), t.to_string());
                 }
                 std::cell::RefCell::new(m)
@@ -2818,11 +2826,19 @@ impl CEmitter {
                             // Map C type name back to canonical Nova array key.
                             match c_ty.as_str() {
                                 "nova_str"  => "str",
-                                "nova_byte" | "uint8_t" | "int8_t" => "byte",
+                                "nova_byte" | "uint8_t" => "byte",
                                 "nova_bool" => "bool",
                                 "nova_f64" | "float" | "double" => "f64",
                                 // Plan 70.4: nova_f32 maps back to "f32" key, not "f64".
                                 "nova_f32" => "f32",
+                                // Plan 70.4 Ф.2: sized-int C types → Nova keys.
+                                "int32_t"  => "i32",
+                                "int16_t"  => "i16",
+                                "int8_t"   => "i8",
+                                "uint32_t" => "u32",
+                                "uint16_t" => "u16",
+                                "uint64_t" => "u64",
+                                "nova_char" => "char",
                                 _ => nova_name,   // fallback → NovaArray_nova_int*
                             }
                         } else {
@@ -2835,8 +2851,17 @@ impl CEmitter {
                             "f64" => "NovaArray_nova_f64*".into(),
                             // Plan 70.4: f32 distinct from f64 (ABI: 4 vs 8 bytes).
                             "f32" => "NovaArray_nova_f32*".into(),
-                            // int/i8-i64/u16-u64/char и unknown user types
-                            // — через int64 slot (boxed pointers для record/sum).
+                            // Plan 70.3: char distinct from int.
+                            "char" => "NovaArray_nova_char*".into(),
+                            // Plan 70.4 Ф.2: sized-int arrays — distinct packed storage.
+                            "i32" => "NovaArray_int32_t*".into(),
+                            "i16" => "NovaArray_int16_t*".into(),
+                            "i8"  => "NovaArray_int8_t*".into(),
+                            "i64" => "NovaArray_nova_int*".into(), // i64 == nova_int (int64_t)
+                            "u32" => "NovaArray_uint32_t*".into(),
+                            "u16" => "NovaArray_uint16_t*".into(),
+                            "u64" => "NovaArray_uint64_t*".into(),
+                            // int + unknown user types — через int64 slot.
                             _ => "NovaArray_nova_int*".into(),
                         });
                     }
@@ -5898,10 +5923,16 @@ impl CEmitter {
                         "bool" => "nova_bool",
                         "f64"  => "nova_f64",
                         "f32"  => "nova_f32",
-                        "byte" => "nova_byte",
-                        "int"  | "i8" | "i16" | "i32" | "i64"
-                        | "u8" | "u16" | "u32" | "u64" => "nova_int",
-                        _ => "nova_int", // erased T
+                        "byte" | "u8" => "nova_byte",
+                        "char" => "nova_char",
+                        // Plan 70.4 Ф.2: sized-int distinct packed storage.
+                        "i32"  => "int32_t",
+                        "i16"  => "int16_t",
+                        "i8"   => "int8_t",
+                        "u32"  => "uint32_t",
+                        "u16"  => "uint16_t",
+                        "u64"  => "uint64_t",
+                        _ => "nova_int", // int/i64/erased T
                     };
                     return format!("NovaArray_{}*", c_elem);
                 }
@@ -5919,12 +5950,20 @@ impl CEmitter {
                 "str"  => "nova_str",
                 "bool" => "nova_bool",
                 "f64" => "nova_f64",
-                // Plan 70.4: f32 distinct from f64 (4 vs 8 bytes ABI).
+                // Plan 70.4: f32 distinct (4 vs 8 bytes ABI).
                 "f32" => "nova_f32",
-                "byte" => "nova_byte",
-                "int" | "i8" | "i16" | "i32" | "i64"
-                | "u8" | "u16" | "u32" | "u64" => "nova_int",
-                _ => "nova_int", // erased T
+                "byte" | "u8" => "nova_byte",
+                // Plan 70.3: char distinct.
+                "char" => "nova_char",
+                // Plan 70.4 Ф.2: sized-int distinct packed storage.
+                "i32"  => "int32_t",
+                "i16"  => "int16_t",
+                "i8"   => "int8_t",
+                "u32"  => "uint32_t",
+                "u16"  => "uint16_t",
+                "u64"  => "uint64_t",
+                // int/i64 + unknown erased T → nova_int.
+                _ => "nova_int",
             };
             return format!("NovaArray_{}", c_elem);
         }
@@ -11919,7 +11958,15 @@ impl CEmitter {
                             "f64"            => "nova_f64",
                             // Plan 70.4: f32 distinct (nova_array_new_nova_f32).
                             "f32"            => "nova_f32",
-                            // int / другие типы — через nova_int slot.
+                            // Plan 70.4 Ф.2: sized-int distinct packed storage.
+                            "char"           => "nova_char",
+                            "i32"            => "int32_t",
+                            "i16"            => "int16_t",
+                            "i8"             => "int8_t",
+                            "u32"            => "uint32_t",
+                            "u16"            => "uint16_t",
+                            "u64"            => "uint64_t",
+                            // int/i64 / others — nova_int slot.
                             _                => "nova_int",
                         };
                         match method.as_str() {
@@ -14082,6 +14129,31 @@ impl CEmitter {
                     // мисроутятся в `nova_fn_<...>` fallback и через legacy
                     // method_receivers picks wrong overload (str.from / WriteBuffer.from).
                     // Это «type-aware» branch: parts[0] точно тип — explicit dispatch.
+                    // Plan 70.4 Ф.2: Option.Some/None need typed compound-literal
+                    // emission (same as nova_make_Option_Some path) so that
+                    // Option[i32] / Option[u32] etc. get the right NovaOpt_T type.
+                    // Without this, they go through Nova_Option_static_Some which
+                    // returns NovaOpt_nova_int regardless of inner type.
+                    if parts[0] == "Option" && method_name == "Some" && args.len() == 1 {
+                        let arg_ty = self.infer_expr_c_type(args[0].expr());
+                        let arg_v = self.emit_expr(args[0].expr())?;
+                        if !arg_ty.is_empty() && arg_ty != "void*" {
+                            let sanitized = Self::sanitize_for_novaopt(&arg_ty);
+                            self.register_novaopt_decl(&sanitized, &arg_ty);
+                            return Ok(format!(
+                                "((NovaOpt_{}){{.tag = NOVA_TAG_Option_Some, .value = ({})}})",
+                                sanitized, arg_v));
+                        }
+                        return Ok(format!("nova_make_Option_Some({})", arg_v));
+                    }
+                    if parts[0] == "Option" && method_name == "None" && args.is_empty() {
+                        // None — use current_fn_return_ty if it's NovaOpt_<X>, else nova_int.
+                        let opt_ty: String = self.current_fn_return_ty.as_ref()
+                            .filter(|t| t.starts_with("NovaOpt_"))
+                            .cloned()
+                            .unwrap_or_else(|| "NovaOpt_nova_int".into());
+                        return Ok(format!("(({}){{.tag = NOVA_TAG_Option_None}})", opt_ty));
+                    }
                     let parts0 = parts[0].as_str();
                     let is_known_type = self.record_schemas.contains_key(parts0)
                         || self.sum_schemas.contains_key(parts0)
@@ -16102,6 +16174,13 @@ impl CEmitter {
             "nova_byte" => "nova_byte",
             // Plan 70.3: char has distinct nova_char typedef.
             "nova_char" => "nova_char",
+            // Plan 70.4 Ф.2: sized-int distinct packed storage.
+            "int32_t"   => "int32_t",
+            "int16_t"   => "int16_t",
+            "int8_t"    => "int8_t",
+            "uint32_t"  => "uint32_t",
+            "uint16_t"  => "uint16_t",
+            "uint64_t"  => "uint64_t",
             _ => match self.current_array_elem_hint.as_deref().unwrap_or("nova_int") {
                 "nova_str"  => "nova_str",
                 "nova_bool" => "nova_bool",
@@ -16111,6 +16190,13 @@ impl CEmitter {
                 "nova_byte" => "nova_byte",
                 // Plan 70.3: char hint.
                 "nova_char" => "nova_char",
+                // Plan 70.4 Ф.2: sized-int hint from typed context.
+                "int32_t"   => "int32_t",
+                "int16_t"   => "int16_t",
+                "int8_t"    => "int8_t",
+                "uint32_t"  => "uint32_t",
+                "uint16_t"  => "uint16_t",
+                "uint64_t"  => "uint64_t",
                 "void_p"    => "void_p",
                 _           => "nova_int",
             },
@@ -18009,8 +18095,12 @@ impl CEmitter {
         // nova_int + nova_str: runtime array.h provides methods.
         // nova_f64 + nova_f32: runtime array.h provides methods (Plan 70.4).
         // nova_char + nova_byte + nova_bool: lazy-generated here (below).
+        // Plan 70.4 Ф.2: sized-int types — array.h provides methods.
+        let sized_int_in_runtime = matches!(sanitized,
+            "int32_t" | "int16_t" | "int8_t" | "uint32_t" | "uint16_t" | "uint64_t");
         if sanitized != "nova_int" && sanitized != "nova_str"
-            && sanitized != "nova_f64" && sanitized != "nova_f32" {
+            && sanitized != "nova_f64" && sanitized != "nova_f32"
+            && !sized_int_in_runtime {
             let methods = format!(
                 "static inline nova_bool Nova_Option_method_is_some_{sani}(NovaOpt_{sani} o) {{ return o.tag == NOVA_TAG_Option_Some; }}\n\
                  static inline nova_bool Nova_Option_method_is_none_{sani}(NovaOpt_{sani} o) {{ return o.tag == NOVA_TAG_Option_None; }}\n\
@@ -18900,6 +18990,14 @@ impl CEmitter {
                                 "f64"            => "nova_f64",
                                 // Plan 70.4: f32 distinct (NovaArray_nova_f32*).
                                 "f32"            => "nova_f32",
+                                // Plan 70.4 Ф.2: sized-int distinct.
+                                "char"           => "nova_char",
+                                "i32"            => "int32_t",
+                                "i16"            => "int16_t",
+                                "i8"             => "int8_t",
+                                "u32"            => "uint32_t",
+                                "u16"            => "uint16_t",
+                                "u64"            => "uint64_t",
                                 _                => "nova_int",
                             };
                             return format!("NovaArray_{}*", arr_suffix);

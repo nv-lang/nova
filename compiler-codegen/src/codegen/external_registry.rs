@@ -251,8 +251,16 @@ impl ExternalRegistry {
                             "f64" => "NovaArray_nova_f64*".into(),
                             // Plan 70.4: f32 distinct from f64 (ABI: 4 vs 8 bytes).
                             "f32" => "NovaArray_nova_f32*".into(),
-                            // Plan 70.3: distinct array element type для char.
+                            // Plan 70.3: distinct array element type for char.
                             "char" => "NovaArray_nova_char*".into(),
+                            // Plan 70.4 Ф.2: sized-int arrays — distinct packed storage.
+                            "i32" => "NovaArray_int32_t*".into(),
+                            "i16" => "NovaArray_int16_t*".into(),
+                            "i8"  => "NovaArray_int8_t*".into(),
+                            "i64" => "NovaArray_nova_int*".into(), // i64 == nova_int (int64_t)
+                            "u32" => "NovaArray_uint32_t*".into(),
+                            "u16" => "NovaArray_uint16_t*".into(),
+                            "u64" => "NovaArray_uint64_t*".into(),
                             _ => "NovaArray_nova_int*".into(),
                         });
                     }
