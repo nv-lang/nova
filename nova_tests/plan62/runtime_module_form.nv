@@ -1,0 +1,44 @@
+// runtime_module_form.nv — D29 rev-3 cleanup regression
+// (commit 25f07d92f26 — `runtime_registry::render_nv` bug fix).
+//
+// Verifies что runtime файлы (`std/runtime/<X>.nv`), declared как
+// **`module runtime.<X>`** (2-seg parent.target), доступны через
+// runtime registry dispatch.
+//
+// Drift backstory: `render_nv` в `compiler-codegen/src/codegen/
+// runtime_registry.rs` ранее эмитил `module std.runtime.X`
+// (3-seg full path) — это conflicted с manifest D29 rev-3 check'ом
+// и привело к compile-error при regen. Fix: emit `module runtime.X`,
+// что соответствует rev-3 parent.target form (parent=runtime,
+// target=X, package name `std` опускается).
+//
+// 3 affected runtime файла: math, string, char (плюс 7 other файлов
+// были вручную поправлены тем же коммитом). Этот test exercises
+// math runtime functions (f64.sqrt, f64.abs) — если registry-driven
+// resolution ломается, тест не скомпилируется.
+
+module plan62.runtime_module_form
+
+test "f64 @sqrt — declared в std/runtime/math.nv (module runtime.math)" {
+    let x = 16.0
+    let r = x.sqrt()
+    // sqrt(16) = 4. Используем abs+epsilon чтобы избежать
+    // floating-point равенства.
+    let diff = (r - 4.0).abs()
+    assert(diff < 0.0001)
+}
+
+test "f64 @abs — runtime registry resolves через 2-seg declaration" {
+    let neg = -7.5
+    let r = neg.abs()
+    let diff = (r - 7.5).abs()
+    assert(diff < 0.0001)
+}
+
+test "f64.PI — static constant из runtime module" {
+    // f64.PI — type-checker built-in, но проверяет что numeric
+    // constants пайплайн совместим с runtime-math 2-seg form.
+    let p = f64.PI
+    assert(p > 3.14)
+    assert(p < 3.15)
+}

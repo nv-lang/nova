@@ -3,6 +3,10 @@
 // Source of truth: compiler-codegen/src/codegen/runtime_registry.rs
 //
 // См. docs/plans/13-runtime-stdlib-and-autogen.md.
+//
+// Plan 62.D.bis (D126, 2026-05-18): type declaration — see
+// std/prelude/collections.nv (`external type`, D126).
+// This file declares ONLY methods via `external fn` (D82).
 
 module runtime.string_builder
 

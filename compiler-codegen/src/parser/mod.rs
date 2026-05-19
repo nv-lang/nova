@@ -138,9 +138,78 @@ impl Parser {
         // и для items.
         let module_doc_attrs = self.parse_doc_attrs()?;
 
-        // module keyword.path
+        // module keyword.path [no_prelude | partial_prelude(...)]
+        //
+        // Plan 62.F: clause-syntax `module X no_prelude` /
+        // `module X partial_prelude(core, runtime)` (per spec/decisions/
+        // 07-modules.md:962-979). НЕ `#`-prefix атрибут — это identifiers
+        // после module-path, parser консюмит до expect_newline_or_eof.
+        // Аккумулируются в `clause_attrs` для merge с `module_attrs` ниже.
+        let mut clause_attrs: Vec<ModuleAttr> = Vec::new();
         let module_name = if self.eat(&TokenKind::KwModule).is_some() {
             let path = self.parse_dotted_path()?;
+            // Plan 62.F: optional `no_prelude` / `partial_prelude(...)` clause.
+            loop {
+                let clause_start = self.peek().span;
+                let clause_name = if let TokenKind::Ident(n) = &self.peek().kind {
+                    n.clone()
+                } else { break; };
+                match clause_name.as_str() {
+                    "no_prelude" => {
+                        self.bump(); // no_prelude ident
+                        let clause_end = self.tokens[self.pos.saturating_sub(1)].span;
+                        clause_attrs.push(ModuleAttr {
+                            kind: ModuleAttrKind::NoPrelude,
+                            effects: Vec::new(),
+                            span: clause_start.merge(clause_end),
+                        });
+                    }
+                    "partial_prelude" => {
+                        self.bump(); // partial_prelude ident
+                        if !matches!(self.peek().kind, TokenKind::LParen) {
+                            return Err(Diagnostic::new(
+                                "expected `(` after `partial_prelude` (e.g. `partial_prelude(core, runtime)`)",
+                                self.peek().span));
+                        }
+                        self.bump(); // (
+                        let mut names: Vec<String> = Vec::new();
+                        // Allow empty `partial_prelude()` (== no_prelude effectively).
+                        loop {
+                            if matches!(self.peek().kind, TokenKind::RParen) { break; }
+                            let (n, _) = self.parse_ident()?;
+                            names.push(n);
+                            if matches!(self.peek().kind, TokenKind::Comma) {
+                                self.bump();
+                            } else { break; }
+                        }
+                        if !matches!(self.peek().kind, TokenKind::RParen) {
+                            return Err(Diagnostic::new(
+                                "expected `)` closing `partial_prelude(...)` list",
+                                self.peek().span));
+                        }
+                        self.bump(); // )
+                        let clause_end = self.tokens[self.pos.saturating_sub(1)].span;
+                        clause_attrs.push(ModuleAttr {
+                            kind: ModuleAttrKind::PartialPrelude(names),
+                            effects: Vec::new(),
+                            span: clause_start.merge(clause_end),
+                        });
+                    }
+                    // Plan 62.F.bis Ф.2: `module X allow_prelude_shadow` —
+                    // suppress W_PRELUDE_SHADOW warnings at module-level
+                    // (см. ast::ModuleAttrKind::AllowPreludeShadow doc).
+                    "allow_prelude_shadow" => {
+                        self.bump(); // allow_prelude_shadow ident
+                        let clause_end = self.tokens[self.pos.saturating_sub(1)].span;
+                        clause_attrs.push(ModuleAttr {
+                            kind: ModuleAttrKind::AllowPreludeShadow,
+                            effects: Vec::new(),
+                            span: clause_start.merge(clause_end),
+                        });
+                    }
+                    _ => break,
+                }
+            }
             self.expect_newline_or_eof()?;
             path
         } else {
@@ -257,11 +326,18 @@ impl Parser {
         // parser уровне — parser не знает path к исходнику. Caller'ы
         // (imports.rs::resolve_imports_inline / test_runner / cmd_check)
         // заполняют `peer_files` после parse.
+        //
+        // Plan 62.F: clause_attrs (`no_prelude` / `partial_prelude(...)`)
+        // merge'аются с `#`-prefix module_attrs. Order: clause_attrs идут
+        // после module_attrs (т.к. в source они появляются после module
+        // declaration). Имеют ту же семантику видимости.
+        let mut all_attrs = module_attrs;
+        all_attrs.extend(clause_attrs);
         Ok(Module {
             name: module_name,
             imports,
             items,
-            attrs: module_attrs,
+            attrs: all_attrs,
             doc_attrs: module_doc_attrs,
             span,
             peer_files: Vec::new(),
@@ -877,15 +953,18 @@ impl Parser {
         let type_attrs = self.parse_type_attrs()?;
 
         let is_export = self.eat(&TokenKind::KwExport).is_some();
-        // D82: `external` modifier — между `export` и `fn`. Только для fn.
+        // D82: `external` modifier — между `export` и `fn`.
+        // Plan 62.D.bis (D126): `external` теперь также валиден перед `type`
+        // (opaque type, реализация в runtime). См. spec/decisions/03-syntax.md
+        // §D126 + types/mod.rs::check_module whitelist enforcement.
         let is_external = self.eat(&TokenKind::KwExternal).is_some();
         if is_external {
-            // Только `fn` допустимо после `external`.
-            if !matches!(self.peek().kind, TokenKind::KwFn) {
+            // Только `fn` либо `type` допустимы после `external`.
+            if !matches!(self.peek().kind, TokenKind::KwFn | TokenKind::KwType) {
                 let span = self.peek().span;
                 return Err(Diagnostic::new(
                     format!(
-                        "`external` is only valid before `fn`, got {}",
+                        "`external` is only valid before `fn` or `type`, got {}",
                         self.peek().kind.name()
                     ),
                     span,
@@ -946,7 +1025,7 @@ impl Parser {
         }
         let parsed = match self.peek().kind {
             TokenKind::KwFn => Item::Fn(self.parse_fn(is_export, is_external, realtime_attr, contract_attrs, pending_doc.clone(), pending_doc_attrs.clone())?),
-            TokenKind::KwType => Item::Type(self.parse_type_decl(is_export, type_attrs, pending_doc.clone(), pending_doc_attrs.clone())?),
+            TokenKind::KwType => Item::Type(self.parse_type_decl(is_export, is_external, type_attrs, pending_doc.clone(), pending_doc_attrs.clone())?),
             TokenKind::KwLet => {
                 if let Some(d) = &pending_doc {
                     // Plan 45 Ф.3: orphan `///` warning — doc-comment'ы
@@ -2043,10 +2122,10 @@ impl Parser {
 
     // ─── type declarations ───────────────────────────────────────────────
 
-    fn parse_type_decl(&mut self, is_export: bool, attrs: Vec<crate::ast::TypeAttr>, doc: Option<crate::ast::DocBlock>, doc_attrs: Vec<crate::ast::DocAttr>) -> Result<TypeDecl, Diagnostic> {
+    fn parse_type_decl(&mut self, is_export: bool, is_external: bool, attrs: Vec<crate::ast::TypeAttr>, doc: Option<crate::ast::DocBlock>, doc_attrs: Vec<crate::ast::DocAttr>) -> Result<TypeDecl, Diagnostic> {
         let start = self.peek().span;
         self.expect(&TokenKind::KwType)?;
-        let (name, _) = self.parse_ident()?;
+        let (name, name_span) = self.parse_ident()?;
 
         // Plan 15 (D72): generics в форме `[T]` или `[T Hashable]`.
         // Bound — protocol-тип, проверяется в type-checker'е на use-site.
@@ -2055,6 +2134,79 @@ impl Parser {
         } else {
             Vec::new()
         };
+
+        // Plan 62.D.bis (D126): `external type X [Generics]` — opaque type,
+        // реализация в runtime. Body отсутствует — никакого `{ ... }`, `|`,
+        // `effect`, `protocol`, `alias TYPE`, newtype `TYPE`. Если parser
+        // встречает что-то похожее на body — это compile error.
+        if is_external {
+            // Skip newlines чтобы консистентно отвергать «external type X\n{...}».
+            self.skip_newlines();
+            match self.peek().kind {
+                TokenKind::LBrace
+                | TokenKind::Pipe
+                | TokenKind::KwEffect
+                | TokenKind::KwProtocol
+                | TokenKind::KwAlias => {
+                    let span = self.peek().span;
+                    return Err(Diagnostic::new(
+                        format!(
+                            "external type `{}` cannot have a body (got `{}`); \
+                             external types are opaque — implementation lives in runtime \
+                             (`nova_rt/<name>.h`/.c). See D126 (spec/decisions/03-syntax.md).",
+                            name,
+                            self.peek().kind.name()
+                        ),
+                        span,
+                    ));
+                }
+                _ => {}
+            }
+            // Дополнительно: если на line следует **ident, начинающийся с
+            // uppercase или примитива** — это похоже на newtype-тело
+            // (`external type Foo Bar`). Отвергаем для cleaner diagnostic.
+            // Heuristic: если следующий токен начинает type expression
+            // (ident начинающийся с letter, LBracket для array-type, или
+            // примитив-keyword), но НЕ newline/EOF — это newtype body.
+            let is_body_start = match &self.peek().kind {
+                TokenKind::Ident(s) if !s.is_empty()
+                    && s.chars().next().map(|c| c.is_alphabetic() || c == '_').unwrap_or(false) => true,
+                TokenKind::LBracket => true, // []byte etc.
+                TokenKind::KwFn => true,     // fn-type
+                TokenKind::Amp => true,      // &Type
+                _ => false,
+            };
+            if is_body_start {
+                let span = self.peek().span;
+                return Err(Diagnostic::new(
+                    format!(
+                        "external type `{}` cannot have a newtype-style body \
+                         (got token `{}`); external types are opaque — \
+                         implementation lives in runtime. See D126.",
+                        name,
+                        self.peek().kind.name()
+                    ),
+                    span,
+                ));
+            }
+            // OK — newline или EOF. Создаём Opaque декларацию.
+            let last_span = self.tokens[self.pos.saturating_sub(1)].span;
+            self.expect_newline_or_eof().ok();
+            return Ok(TypeDecl {
+                doc,
+                doc_attrs,
+                is_export,
+                name,
+                generics,
+                kind: TypeDeclKind::Opaque,
+                span: start.merge(last_span),
+                attrs,
+                invariants: Vec::new(),
+                axioms: Vec::new(),
+            });
+        }
+        // Silence unused warning when is_external is false; name_span used только в Opaque branch.
+        let _ = name_span;
 
         // Тело типа может идти на следующей строке для multi-line sum'ов
         // и эффектов. Skip newlines перед body.
@@ -3938,9 +4090,10 @@ impl Parser {
                 // могут быть subject'ом static-method'а (`int.try_from`,
                 // `str.from`, `f64.try_from`). Lowercase, поэтому не path
                 // через PascalCase-rule. Делаем явное исключение.
+                // Plan 70.5 Ф.4: `uint` добавлен (alias u64) — `uint.MAX` работает.
                 let is_primitive_type = matches!(first.as_str(),
                     "int" | "i8" | "i16" | "i32" | "i64"
-                    | "u8" | "u16" | "u32" | "u64"
+                    | "u8" | "u16" | "u32" | "u64" | "uint"
                     | "f32" | "f64" | "byte" | "bool" | "char" | "str"
                 );
                 if (starts_uppercase || is_primitive_type)
@@ -6516,6 +6669,108 @@ mod tests {
             panic!()
         };
         assert_eq!(methods.len(), 2);
+    }
+
+    // Plan 62.D.bis (D126, 2026-05-18): `external type X [Generics]` —
+    // opaque type, реализация в runtime. Parser tests cover positive +
+    // negative (body rejection) + generic-params scenarios. Whitelist
+    // enforcement (only std.runtime.* / std.prelude.*) — отдельный
+    // type-checker test, не parser.
+    #[test]
+    fn external_type_simple() {
+        let m = parse_or_panic("external type StringBuilder\n");
+        let Item::Type(t) = &m.items[0] else { panic!("expected Type item") };
+        assert_eq!(t.name, "StringBuilder");
+        assert!(t.generics.is_empty(), "non-generic opaque");
+        assert!(!t.is_export, "no `export` modifier");
+        assert!(matches!(t.kind, TypeDeclKind::Opaque), "kind must be Opaque");
+    }
+
+    #[test]
+    fn external_type_export() {
+        let m = parse_or_panic("export external type WriteBuffer\n");
+        let Item::Type(t) = &m.items[0] else { panic!() };
+        assert_eq!(t.name, "WriteBuffer");
+        assert!(t.is_export, "`export` modifier present");
+        assert!(matches!(t.kind, TypeDeclKind::Opaque));
+    }
+
+    #[test]
+    fn external_type_generic() {
+        // Future Channel[T] use-case: parser должен принять generic params.
+        let m = parse_or_panic("external type Channel[T]\n");
+        let Item::Type(t) = &m.items[0] else { panic!() };
+        assert_eq!(t.name, "Channel");
+        assert_eq!(t.generics.len(), 1);
+        assert_eq!(t.generics[0].name, "T");
+        assert!(matches!(t.kind, TypeDeclKind::Opaque));
+    }
+
+    #[test]
+    fn external_type_generic_multi() {
+        let m = parse_or_panic("external type Region[T, C]\n");
+        let Item::Type(t) = &m.items[0] else { panic!() };
+        assert_eq!(t.generics.len(), 2);
+        assert_eq!(t.generics[0].name, "T");
+        assert_eq!(t.generics[1].name, "C");
+        assert!(matches!(t.kind, TypeDeclKind::Opaque));
+    }
+
+    #[test]
+    fn external_type_body_rejected_brace() {
+        let r = parse("external type Foo { x int }\n");
+        assert!(r.is_err(), "external type with record body must error");
+        let err = r.unwrap_err().message;
+        assert!(err.contains("cannot have a body"), "msg: {err}");
+    }
+
+    #[test]
+    fn external_type_body_rejected_sum() {
+        let r = parse("external type Foo | A | B\n");
+        assert!(r.is_err(), "external type with sum body must error");
+        let err = r.unwrap_err().message;
+        assert!(err.contains("cannot have a body"), "msg: {err}");
+    }
+
+    #[test]
+    fn external_type_body_rejected_effect() {
+        let r = parse("external type Foo effect { op() -> int }\n");
+        assert!(r.is_err(), "external type with effect body must error");
+        let err = r.unwrap_err().message;
+        assert!(err.contains("cannot have a body"), "msg: {err}");
+    }
+
+    #[test]
+    fn external_type_body_rejected_protocol() {
+        let r = parse("external type Foo protocol { op() -> int }\n");
+        assert!(r.is_err(), "external type with protocol body must error");
+        let err = r.unwrap_err().message;
+        assert!(err.contains("cannot have a body"), "msg: {err}");
+    }
+
+    #[test]
+    fn external_type_body_rejected_alias() {
+        let r = parse("external type Foo alias int\n");
+        assert!(r.is_err(), "external type with alias body must error");
+        let err = r.unwrap_err().message;
+        assert!(err.contains("cannot have a body"), "msg: {err}");
+    }
+
+    #[test]
+    fn external_type_body_rejected_newtype() {
+        let r = parse("external type Foo SomeOther\n");
+        assert!(r.is_err(), "external type with newtype-style body must error");
+        let err = r.unwrap_err().message;
+        assert!(err.contains("cannot have a") && err.contains("body"), "msg: {err}");
+    }
+
+    #[test]
+    fn external_only_before_fn_or_type() {
+        // Регрессионный — `external let` остаётся ошибкой с обновлённым сообщением.
+        let r = parse("external let x = 1\n");
+        assert!(r.is_err());
+        let err = r.unwrap_err().message;
+        assert!(err.contains("`fn` or `type`"), "msg: {err}");
     }
 
     #[test]

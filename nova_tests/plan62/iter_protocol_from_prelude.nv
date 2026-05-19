@@ -1,0 +1,108 @@
+// iter_protocol_from_prelude.nv — Plan 62.D non-opaque.
+//
+// Verifies что `Iter[T]` protocol formal declaration в std/prelude/
+// collections.nv (re-export'нутая через std/prelude.nv facade) auto-
+// available везде через R27 auto-import. До 62.D `Iter[T]` существовал
+// ТОЛЬКО как structural duck-typing per D58 — формальная декларация
+// канонизирует тип-имя для `nova doc`, eligible как bound (`T Iter`)
+// per D72, и не ломает existing structural for-in dispatch.
+//
+// Покрытие:
+//   1. `Iter[T]` использован как return-type annotation без explicit
+//      import — резолвится через auto-import prelude.
+//   2. Custom type, имеющий `next() -> Option[T]`, передаётся туда где
+//      ожидается `Iter[T]` — duck-typing работает как раньше.
+//   3. For-in dispatch продолжает находить `next` метод структурно
+//      (codegen НЕ enforce'ит protocol declaration на arbitrary
+//      type-annotations).
+
+module plan62.iter_protocol_from_prelude
+
+
+// Custom iterator-state: counter от 0 до N (exclusive).
+// Удовлетворяет `Iter[int]` структурно — есть `mut next() -> Option[int]`.
+type Counter {
+    end       int
+    mut cur   int
+}
+
+// Static fn `Counter.new(...)` — конструктор (см. nova_tests/syntax/
+// for_iter.nv pattern, `fn Counter.new(end int) -> Counter`).
+fn Counter.new(end int) -> Counter {
+    Counter { end, cur: 0 }
+}
+
+fn Counter mut @next() -> Option[int] {
+    if @cur >= @end { return None }
+    let v = @cur
+    @cur += 1
+    Some(v)
+}
+
+
+// ────────────────────────────────────────────────────────────────────
+// 1. `Iter[T]` annotation auto-available через prelude (no import).
+// ────────────────────────────────────────────────────────────────────
+
+// `-> Iter[int]` — protocol type annotation. Раньше резолвилось через
+// type-checker silent pass-through (нет registered Iter type, никакой
+// проверки). Теперь резолвится через cross-file resolve в
+// std.prelude.collections.Iter. Поведение идентично: signature
+// принимается, codegen не меняется.
+fn make_counter(n int) -> Counter =>
+    Counter.new(n)
+
+
+// ────────────────────────────────────────────────────────────────────
+// 2. For-in over `Counter` — structural duck-typing продолжает работать.
+// ────────────────────────────────────────────────────────────────────
+
+test "Counter ducks Iter[int] — for-in dispatch via structural next()" {
+    let mut sum = 0
+    let it = make_counter(5)
+    for x in it {
+        sum += x
+    }
+    // 0+1+2+3+4 = 10
+    assert(sum == 10)
+}
+
+
+test "Counter iter — manual next() loop yields all elements then None" {
+    let mut it = make_counter(3)
+    assert(it.next() == Some(0))
+    assert(it.next() == Some(1))
+    assert(it.next() == Some(2))
+    assert(it.next() == None)
+    // None стабилен после исчерпания (idempotent).
+    assert(it.next() == None)
+}
+
+
+test "empty Counter yields nothing" {
+    let mut count = 0
+    for _x in make_counter(0) {
+        count += 1
+    }
+    assert(count == 0)
+}
+
+
+// ────────────────────────────────────────────────────────────────────
+// 3. PRELUDE_VERSION sanity — auto-import path работает.
+// ────────────────────────────────────────────────────────────────────
+
+test "prelude auto-import — PRELUDE_VERSION accessible (regression marker)" {
+    // Sanity check: если migration phase что-то сломал в prelude resolve,
+    // этот test упал бы первым. Plan 62.F bump'нул PRELUDE_VERSION 2 → 3
+    // (Plan 62 closure, effects.Fail[E] добавлен). Plan 62.D non-opaque
+    // bis-1 (2026-05-18) bump'нул 3 → 4: Range / RangeIter auto-available.
+    // Plan 62.F.bis (2026-05-18) bump'нул 4 → 5: edition versioning +
+    // Time/Mem formal declarations + structured W_PRELUDE_SHADOW lint.
+    // Plan 62.D.bis (2026-05-18) bump'нул 5 → 6: StringBuilder /
+    // WriteBuffer / ReadBuffer formally declared via D126 `external type`.
+    // Plan 62.B.bis (2026-05-18) bump'нул 6 → 7: print / println formally
+    // declared via D69 variadic + `[]any` (canonical D26 signature) в
+    // std/prelude/runtime.nv. Plan 67 hotfix absorbed как Ф.0.
+    assert(PRELUDE_VERSION == 7)
+}

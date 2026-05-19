@@ -217,9 +217,12 @@ impl ExternalRegistry {
                     "i16" => "int16_t".into(),
                     "i8"  => "int8_t".into(),
                     "u64" => "uint64_t".into(),
+                    // Plan 70.5: uint = alias u64.
+                    "uint" => "uint64_t".into(),
                     "u32" => "uint32_t".into(),
                     "u16" => "uint16_t".into(),
-                    "u8"  => "uint8_t".into(),
+                    // Plan 70.4 Ф.4: u8 → nova_byte (unified with byte).
+                    "u8"  => "nova_byte".into(),
                     "f64" => "nova_f64".into(),
                     "f32" => "nova_f32".into(),
                     "bool" => "nova_bool".into(),
@@ -248,9 +251,21 @@ impl ExternalRegistry {
                             "str" => "NovaArray_nova_str*".into(),
                             "byte" | "u8" => "NovaArray_nova_byte*".into(),
                             "bool" => "NovaArray_nova_bool*".into(),
-                            "f64" | "f32" => "NovaArray_nova_f64*".into(),
-                            // Plan 70.3: distinct array element type для char.
+                            "f64" => "NovaArray_nova_f64*".into(),
+                            // Plan 70.4: f32 distinct from f64 (ABI: 4 vs 8 bytes).
+                            "f32" => "NovaArray_nova_f32*".into(),
+                            // Plan 70.3: distinct array element type for char.
                             "char" => "NovaArray_nova_char*".into(),
+                            // Plan 70.4 Ф.2: sized-int arrays — distinct packed storage.
+                            "i32" => "NovaArray_int32_t*".into(),
+                            "i16" => "NovaArray_int16_t*".into(),
+                            "i8"  => "NovaArray_int8_t*".into(),
+                            "i64" => "NovaArray_nova_int*".into(), // i64 == nova_int (int64_t)
+                            "u32"  => "NovaArray_uint32_t*".into(),
+                            "u16"  => "NovaArray_uint16_t*".into(),
+                            "u64"  => "NovaArray_uint64_t*".into(),
+                            // Plan 70.5: uint = alias u64.
+                            "uint" => "NovaArray_uint64_t*".into(),
                             _ => "NovaArray_nova_int*".into(),
                         });
                     }

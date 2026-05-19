@@ -167,4 +167,12 @@ static inline int64_t nova_int_from_f64_bits(double f) {
     return (int64_t)u;
 }
 
+/* Plan 70.5 Q2: int → uint saturation (negative → 0, D54 precedent).
+ * Uses int64_t directly (nova_int = typedef int64_t, defined later in nova_rt.h).
+ * i64 max < u64 max — no upper saturation needed.
+ * int → u64 (direct cast) remains bit-cast; only `as uint` uses this. */
+static inline uint64_t nova_int_to_uint(int64_t x) {
+    return (x < 0) ? (uint64_t)0 : (uint64_t)x;
+}
+
 #endif /* NOVA_CAST_H */
