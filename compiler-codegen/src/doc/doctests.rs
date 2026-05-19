@@ -280,6 +280,7 @@ mod tests {
                 end: 0,
                 file_id: 0,
             },
+            source_paths: Vec::new(),
         });
         t
     }
