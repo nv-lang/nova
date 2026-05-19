@@ -1,0 +1,55 @@
+// Plan 72 P3-B fat pointer: protocol-as-value через возврат из функции.
+//
+// До fat pointer: `let x = get_iter()` давал `void* x`, vtable не генерировался,
+// `x.next()` давал E7201. После: `let x Iter[int] = get_iter()` эмитит
+// NovaBox_Iter_nova_int x = { .data = ..., .vtable = ... } и диспатч работает.
+
+module plan72.p3b_fatptr_return_pos
+
+type IntCounter {
+    mut cur int
+    end int
+}
+
+fn IntCounter mut @next() -> Option[int] => {
+    if @cur < @end {
+        let v = @cur
+        @cur += 1
+        Some(v)
+    } else {
+        None
+    }
+}
+
+fn make_counter(n int) -> IntCounter => {
+    IntCounter { cur: 0, end: n }
+}
+
+test "P3-B fat ptr — let x Iter[int] = make_counter(3); x.next()" {
+    let c = make_counter(3)
+    let mut x Iter[int] = c
+    let r = x.next()
+    assert(r.is_some())
+}
+
+test "P3-B fat ptr — два вызова next() после функции-конструктора" {
+    let c = make_counter(1)
+    let mut x Iter[int] = c
+    let r0 = x.next()
+    let r1 = x.next()
+    assert(r0.is_some())
+    assert(r1.is_none())
+}
+
+test "P3-B fat ptr — count через protocol var из make_counter" {
+    let c = make_counter(5)
+    let mut x Iter[int] = c
+    let mut count = 0
+    let mut go = true
+    loop {
+        if !go { break }
+        let r = x.next()
+        if r.is_some() { count += 1 } else { go = false }
+    }
+    assert(count == 5)
+}
