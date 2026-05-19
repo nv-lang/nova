@@ -19,6 +19,10 @@ pub struct GateVerdict {
     pub delta_pct: f64,
     pub p_value: f64,
     pub threshold_pct: f64,
+    /// p-value threshold (Welch's t-test). Reserved for future JSON
+    /// `--format json` output — currently terminal-format только показывает
+    /// `p_value`; `threshold_p` будет emit'нут в structured output для CI.
+    #[allow(dead_code)]
     pub threshold_p: f64,
     pub exempt: bool,
     pub regressed: bool,

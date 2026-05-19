@@ -1784,6 +1784,9 @@ pub fn run_one(opts: &TestBuildOpts) -> Outcome {
     }
 
     // Step 3 — run с timeout.
+    // `mut` нужен только под non-Windows path (env-вызовы ниже). На
+    // Windows компилятор увидит unused-mut warning без cfg_attr.
+    #[cfg_attr(target_os = "windows", allow(unused_mut))]
     let mut run_cmd = Command::new(&exe_file);
     #[cfg(not(target_os = "windows"))]
     {
