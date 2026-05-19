@@ -968,6 +968,17 @@ fn resolve_module_paths(
                 // ambiguity, error как раньше.
                 let file_module_full = parts.join(".");
                 let file_module_prefix = format!("{}.", file_module_full);
+                // Plan 62 cleanup (2026-05-19): rev-3 strict `parent.target`
+                // means sub-modules в `X/` declare `module <X>.<sub>` (2 seg)
+                // — НЕ полный `<parent_of_X>.<X>.<sub>` (3+ seg).
+                // file's target (folder name) — last segment of parts.
+                // Accept peer as sub-module if its declared form is either:
+                //   - full path `<parent>.<X>.<sub>` (legacy rev-1 / facade)
+                //   - short path `<X>.<sub>` (rev-3 strict)
+                // Conflict (ambiguity) if peer declares `<X>` alone, или
+                // `<parent>.<X>` (i.e. same path как file — peer of file).
+                let file_target = parts.last().cloned().unwrap_or_default();
+                let short_prefix = format!("{}.", file_target);
                 let mut all_children = true;
                 let mut any_peer = false;
                 if let Ok(entries) = std::fs::read_dir(&folder) {
@@ -989,14 +1000,18 @@ fn resolve_module_paths(
                                 break;
                             }
                         };
-                        // Plan 42.6 rev-3 accepts both `<pkg>.<sub>` and
-                        // `<parent>.<sub>` forms. Treat peer as child if
-                        // declared starts with file_module_full + '.', OR
-                        // if declared = parts.last() (rev-3 short form для
-                        // peers того же folder). Conservatively: только
-                        // первый вариант (full path prefix) — это
-                        // unambiguous child marker.
-                        if !declared.starts_with(&file_module_prefix) {
+                        // Detect peer-of-file (ambiguity) — declared is
+                        // exactly file_module_full (e.g. `std.prelude`) or
+                        // exactly `<X>` (e.g. `prelude`).
+                        if declared == file_module_full || declared == file_target {
+                            all_children = false;
+                            break;
+                        }
+                        // Accept sub-module форм: either full prefix
+                        // `<parent>.<X>.` или short prefix `<X>.`.
+                        let is_full_child = declared.starts_with(&file_module_prefix);
+                        let is_short_child = declared.starts_with(&short_prefix);
+                        if !is_full_child && !is_short_child {
                             all_children = false;
                             break;
                         }
