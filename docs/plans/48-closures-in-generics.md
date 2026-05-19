@@ -824,6 +824,60 @@ identical to main baseline — не codegen-related).
   f[Box[T]]) — упирается в orthogonal codegen bug "anonymous record
   literal".
 
+### Plan 62 followup — protocol-as-parameter mono ergonomics (2026-05-19)
+
+Обнаружено в Plan 62 cleanup merge sprint (commits 99a629634ab,
+ed3d00eb9c9). Два gap'а в monomorphization mechanic'е для popular
+pattern `fn foo[U, T Iter[U]](it T)`:
+
+**Gap A: parser bug — `mut <name> <generic-type>`.**
+
+Декларация `fn sum_iter[U, T Iter[U]](mut it T)` не парсится:
+```
+error: expected identifier, got `mut`
+```
+Workaround — local re-bind в теле:
+```nova
+fn sum_iter[U, T Iter[U]](it_in T) -> int => {
+    let mut it = it_in
+    while let Some(_v) = it.next() { ... }
+    ...
+}
+```
+Парсер видимо bail'ит когда type-position это **generic type-var**
+(uppercase single letter). Same `mut acc Account` со concrete type
+парсится OK. **Mini-fix**, scope ≤ parser rule extension.
+
+**Gap B: structural inference для bound type-var.**
+
+Compiler не выводит `U = int` из argument `c: IntCounter` через
+structural bound `T Iter[U]`. Diagnostic:
+```
+error: cannot infer type argument `U` for generic function `sum_iter`
+(returned only — turbofish required)
+```
+User должен писать **двойной turbofish** на call-site:
+```nova
+let count = sum_iter[int, IntCounter](c)
+```
+Вместо expected ergonomic form:
+```nova
+let count = sum_iter(c)  // U=int (от IntCounter @next return), T=IntCounter
+```
+
+Rust/Swift делают это inference automatically — given concrete arg
+type, walk methods, match return-type of named protocol-method, bind
+free type-var. Не trivial, но industry-standard ergonomics для
+generic-bound-style protocol-as-param.
+
+**Regression marker:** `nova_tests/plan62/protocol_param_generic_bound.nv`
+(commit `ed3d00eb9c9` или follow-up). Documents что pattern works с
+turbofish, но not без него.
+
+**Scope (если будет sprint):** parser fix Gap A — small. Inference Gap B —
+medium-deep (требует extension к existing generic-fn type-arg resolution
+visitor). Combined estimate ~4-8 hours, P2 (workaround есть, deferred-OK).
+
 ---
 
 ## Связь

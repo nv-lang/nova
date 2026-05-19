@@ -3703,3 +3703,117 @@ same alignment, same wire-format. Only difference — C type identifier
 - D54 — `as`-cast narrowing (explicit char↔int conversion)
 - Plan 70 — parent family (silent type bugs от Nova↔C collapse)
 - Plan 70.4 — sibling proposal (f32/f64 generic-container distinct mangling)
+
+---
+
+## D129. `int` как alias `i64` в bootstrap Nova
+
+**Решение.** Тип `int` в Nova bootstrap является **alias** для `i64`
+(64-bit signed integer). Оба маппируются в C-тип `nova_int`
+(`typedef int64_t`). Отсутствие distinction в codegen — **намеренно**:
+это не collapse-баг (как в Plan 70.3 `char/int`), а архитектурный
+bootstrap-invariant.
+
+**Мотивация.** Audit Plan 70.4 выявил, что `int` и `i64` используют
+один C-тип. Mangle для `Map[int, V]` и `Map[i64, V]` идентичен. В
+отличие от других collapse-паттернов Ф.1/Ф.2 плана 70.4 (ABI-real
+silent miscompilation) или Plan 70.3 char/int (semantically distinct
+types), `int` ≡ `i64` является семантическим инвариантом — оба
+означают 64-bit signed integer без разницы в значении или поведении.
+Nova bootstrap targets x86_64 only (fixed 64-bit pointer width).
+
+**Industry baseline.**
+- Rust: `isize` distinct от `i64` (platform-pointer width varies на 32-bit)
+- Go: `int` distinct от `int64` (platform-pointer width)
+- C#: `int` = alias `System.Int32` (semantically identical)
+- Python/Java: нет fixed-width integer aliases
+- **Nova:** `int` = alias `i64` — правильная аналогия C# для fixed-width platform
+
+**Future evolution path.** Если Nova добавит multi-arch targets
+(32-bit, WASM), `int` может стать platform-pointer-width type аналогично
+Rust's `isize`. На этот момент потребуется breaking change в codegen
+mangling — `Map[int, V]` и `Map[i64, V]` станут distinct. D129
+explicitly documents текущее bootstrap decision как **alias-based**,
+чтобы будущий architect не принял отсутствие distinction за bug.
+Migration path: introduce `nova_iptr` (platform-width) typedef, make
+`int` resolve to it, maintain `nova_int` = `int64_t` for `i64`.
+
+**Codegen.** Без изменений. `type_ref_to_c "int" => "nova_int"` и
+`"i64" => "nova_int"` — оба корректны и эквивалентны по спецификации.
+Distinct mangling не вводится, т.к. это создало бы необходимость явно
+выбирать `int` vs `i64` для каждого generic instantiation — user-hostile
+и ортогонально семантической разнице (которой нет).
+
+**Acceptance criteria.**
+- [x] Ф.3 spec D129 (этот блок) — формализует alias decision
+- [x] Нет codegen изменений — intentional collapse документирован
+- [ ] Future: multi-arch migration path зафиксирован (Migration note выше)
+
+**Реализовано:** [Plan 70.4](../../docs/plans/70.4-primitive-type-distinction-complete.md)
+  — Ф.3 closed 2026-05-19.
+
+**Связь:**
+- D54 — `as`-cast narrowing semantics
+- D128 — Plan 70.3 char/int distinction (contrast: там distinction нужна)
+- Plan 70.4 — parent plan (этот блок = Plan 70.4 Ф.3)
+- Plan 70 — parent family (silent type bugs)
+
+---
+
+## D130. `uint` — unsigned 64-bit alias в bootstrap Nova
+
+**Решение.** Тип `uint` является **alias** для `u64` (64-bit unsigned
+integer) в Nova bootstrap. Маппируется в C-тип `uint64_t`. Отличие
+от `int`/`i64` (alias pair, signed) — `uint`/`u64` является
+симметричным unsigned pair. `int as uint` cast **saturates** (negative → 0);
+`int as u64` — direct bit-cast (существующее поведение сохранено).
+
+**Дизайн (Q1-Q4, подтверждены 2026-05-19).**
+
+| Вопрос | Решение | Обоснование |
+|---|---|---|
+| **Q1: alias или distinct?** | Alias `u64` (= `uint64_t`) | Mirror `int` = `i64` alias pattern; нет multi-arch story в bootstrap |
+| **Q2: int→uint cast** | `as uint` saturates (neg → 0) | D54 precedent (float→int); Rust bit-cast hostile; Swift trap verbose |
+| **Q3: Indexing** | Keep `int` (no change) | Breaking change для 100+ APIs; Swift/Go/Kotlin используют signed indexing |
+| **Q4: Literal default** | `int` (keep current) | Backward compat; `42 as uint` или `let x uint = 42` для opt-in |
+
+**Saturation semantics (`int as uint`).**
+```
+ -1000 as uint → 0
+    -1 as uint → 0
+     0 as uint → 0
+     1 as uint → 1
+```
+Реализован через `nova_int_to_uint(int64_t x)` helper в `nova_rt/cast.h`.
+`u64 as uint` — direct cast (no-op; `uint64_t → uint64_t`).
+
+**Codegen mapping.**
+- `type_ref_to_c "uint" => "uint64_t"` (scalar)
+- `[]uint → NovaArray_uint64_t*` (parallel с `u64`)
+- `Option[uint] → NovaOpt_uint64_t` (parallel с `u64`)
+- `uint.MAX` — **не поддержан** parser'ом (parser не распознаёт
+  `uint` как type-path prefix; используй `u64.MAX` = эквивалент).
+
+**Будущая эволюция.** Аналогично D129 (int/i64): если Nova добавит
+multi-arch, `uint` может стать platform-pointer-width unsigned (как
+Rust's `usize`). Bootstrap-grade alias.
+
+**Acceptance criteria.**
+- [x] `let x uint = 42 as uint` компилируется
+- [x] `int as uint` saturates (neg → 0) — `nova_int_to_uint` helper
+- [x] `int as u64` остаётся bit-cast (no saturation)
+- [x] `[]uint` → `NovaArray_uint64_t*`
+- [x] `Option[uint]` → `NovaOpt_uint64_t`
+- [x] 3 fixtures `nova_tests/plan70_5/` PASS
+- [x] 0 regressions
+- [ ] `uint.MAX` — defer (parser keyword support)
+
+**Реализовано:** [Plan 70.5](../../docs/plans/70.5-uint-primitive-symmetry.md)
+  — Ф.1-Ф.3 closed 2026-05-19.
+
+**Связь:**
+- D54 — `as`-cast saturation precedent
+- D129 — int/i64 alias (signed symmetric pair)
+- Plan 07 — original float→int saturation
+- Plan 70.5 — parent plan (этот блок)
+- Plan 70.4 — sibling (codegen type distinction family)

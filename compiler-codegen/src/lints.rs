@@ -98,6 +98,174 @@ pub fn lint_module(m: &Module) -> Vec<LintWarning> {
             Item::Lemma(_) => {}
         }
     }
+    // Plan 62.F.bis Ф.2: structured W_PRELUDE_SHADOW warnings — extends
+    // basic eprintln из 62.D bis-1 (types/mod.rs::check_module) на
+    // структурированную форму с suppress-clause `module X
+    // allow_prelude_shadow`. Emitted в общий warnings Vec — surfaces через
+    // `cmd_check` warnings field (то же что и другие lints).
+    warnings.extend(lint_prelude_shadow(m));
+    warnings
+}
+
+/// Plan 62.F.bis Ф.2: snapshot prelude-visibility state модуля.
+/// Совместно используется `types::check_module` (silent classify duplicate
+/// при name-merge) и `lint_prelude_shadow` (emit structured warning).
+///
+/// **Pass 1**: имена объявленные прямо в `std/prelude/*.nv` peer-файлах
+/// (включая `std/prelude.nv` facade себя).
+/// **Pass 2**: имена re-export'нутые prelude facade через `export import
+/// X.{A, B as C}` — используем alias если есть, иначе оригинальное имя.
+///
+/// Возвращает оба set'а отдельно — caller'ы используют по-разному.
+#[derive(Debug, Default)]
+pub struct PreludeVisibility {
+    /// User-visible имена из prelude (peer-decls + re-exports).
+    pub visible: HashSet<String>,
+    /// All имена из non-entry peer items (включая codegen-only merge —
+    /// items pulled для completeness, не user-visible). Subset relation:
+    /// `visible ⊆ merged_from_imports`.
+    pub merged_from_imports: HashSet<String>,
+}
+
+/// Вычислить prelude-visibility для модуля. Идемпотентна — multiple
+/// calls возвращают тот же результат.
+pub fn collect_prelude_visibility(module: &Module) -> PreludeVisibility {
+    let mut visible: HashSet<String> = HashSet::new();
+    let mut merged_from_imports: HashSet<String> = HashSet::new();
+    // Pass 1: names declared directly in prelude peer files + collect
+    // merged_from_imports set (всё что pulled из non-entry peers).
+    for pf in &module.peer_files {
+        if pf.is_entry_module { continue; }
+        let path_str = pf.path.to_string_lossy().replace('\\', "/");
+        let is_prelude_peer = path_str.contains("/std/prelude/")
+            || path_str.ends_with("/std/prelude.nv");
+        for it in &pf.items_here {
+            let key = match it {
+                Item::Type(td) => Some(td.name.clone()),
+                Item::Fn(fd) => Some(match &fd.receiver {
+                    Some(r) => format!("{}.{}", r.type_name, fd.name),
+                    None => fd.name.clone(),
+                }),
+                Item::Const(cd) => Some(cd.name.clone()),
+                _ => None,
+            };
+            if let Some(k) = key {
+                merged_from_imports.insert(k.clone());
+                if is_prelude_peer {
+                    visible.insert(k);
+                }
+            }
+        }
+    }
+    // Pass 2: names re-exported through prelude facade via selective list.
+    // Re-exported alias (or original) — user-visible name; добавляем
+    // в `visible`. Также добавляем в `merged_from_imports` (re-export
+    // implies merge for codegen completeness).
+    for pf in &module.peer_files {
+        if pf.is_entry_module { continue; }
+        let path_str = pf.path.to_string_lossy().replace('\\', "/");
+        let is_prelude_peer = path_str.contains("/std/prelude/")
+            || path_str.ends_with("/std/prelude.nv");
+        if !is_prelude_peer { continue; }
+        for imp in &pf.imports {
+            if !imp.is_export { continue; }
+            if let Some(items) = &imp.items {
+                for it in items {
+                    let visible_name = it.alias.clone().unwrap_or_else(|| it.name.clone());
+                    visible.insert(visible_name.clone());
+                    merged_from_imports.insert(visible_name);
+                }
+            }
+            // Wildcard `export import X.*` rejected per Plan 35 R25.
+        }
+    }
+    PreludeVisibility { visible, merged_from_imports }
+}
+
+/// Plan 62.F.bis Ф.2: lint W_PRELUDE_SHADOW — emit structured warning
+/// для user-declarations что shadow'ят prelude-visible имена.
+///
+/// **Алгоритм:**
+/// 1. Compute `PreludeVisibility` через `collect_prelude_visibility`.
+/// 2. Сканируем entry's items_here (только user-declarations, не merged
+///    items): для каждого top-level Type/Fn/Const проверяем conflict
+///    с `visible` set.
+/// 3. Если conflict — emit warning (rule: `W_PRELUDE_SHADOW`,
+///    severity = warning). User-declaration wins (это уже handled в
+///    types::check_module и emit_c.rs); lint лишь сигнализирует.
+///
+/// **Suppress:** `module X allow_prelude_shadow` clause (parser добавляет
+/// `ModuleAttrKind::AllowPreludeShadow`) → возвращает empty Vec. Также
+/// suppress'нут automatically для prelude self-modules (`std.prelude.*`
+/// — они САМИ объявляют prelude names, не shadowing).
+///
+/// **Hint в сообщении:** `qualify as std.prelude.<sub>.<name>` для
+/// reach'а prelude-версии, или `add allow_prelude_shadow` для suppress.
+pub fn lint_prelude_shadow(module: &Module) -> Vec<LintWarning> {
+    let mut warnings = Vec::new();
+    // Suppress: module-level `allow_prelude_shadow` clause.
+    let suppressed = module.attrs.iter()
+        .any(|a| matches!(a.kind, crate::ast::ModuleAttrKind::AllowPreludeShadow));
+    if suppressed {
+        return warnings;
+    }
+    // Suppress: prelude self-modules (они declare prelude items legitimately).
+    if crate::manifest::is_prelude_self_module(&module.name) {
+        return warnings;
+    }
+    let vis = collect_prelude_visibility(module);
+    if vis.visible.is_empty() {
+        return warnings;
+    }
+    // Iterate entry's items_here (user-decls only, not merged-from-imports).
+    // Если peer_files пуст (legacy single-file без resolver-merge), fall
+    // back на module.items.
+    let entry_items: Vec<&Item> = if module.peer_files.is_empty() {
+        module.items.iter().collect()
+    } else {
+        module.peer_files.iter()
+            .filter(|pf| pf.is_entry_module)
+            .flat_map(|pf| pf.items_here.iter())
+            .collect()
+    };
+    for item in entry_items {
+        let (name, span) = match item {
+            Item::Type(td) => (td.name.clone(), td.span),
+            Item::Fn(fd) => {
+                let key = match &fd.receiver {
+                    Some(r) => format!("{}.{}", r.type_name, fd.name),
+                    None => fd.name.clone(),
+                };
+                (key, fd.span)
+            }
+            Item::Const(cd) => (cd.name.clone(), cd.span),
+            _ => continue,
+        };
+        if vis.visible.contains(&name) {
+            // Структурированный warning. Лидирующий `[W_PRELUDE_SHADOW]`
+            // tag в сообщении — для grep'абельности из CLI и для
+            // EXPECT_COMPILE_WARNING matching в test_runner (lint rendered
+            // через `diag.render` который не включает `rule` field,
+            // поэтому tag нужен в самом тексте).
+            let diag = Diagnostic::new(
+                format!(
+                    "[W_PRELUDE_SHADOW] top-level name `{}` shadows a \
+                     declaration auto-imported from std.prelude (D29). \
+                     User declaration wins — qualify as \
+                     `std.prelude.<sub>.{}` to reach the prelude version. \
+                     Suppress: add `allow_prelude_shadow` clause to module \
+                     declaration, or switch to `no_prelude` / \
+                     `partial_prelude(...)` (Plan 62.F).",
+                    name, name
+                ),
+                span,
+            );
+            warnings.push(LintWarning {
+                rule: "W_PRELUDE_SHADOW",
+                diag,
+            });
+        }
+    }
     warnings
 }
 
@@ -561,9 +729,25 @@ fn collect_effect_names(m: &Module) -> HashSet<String> {
 /// scan'имся по нему напрямую (раньше было закомменчено потому что
 /// все protocols/effects попадали в Effect-variant).
 fn collect_protocol_names(m: &Module) -> HashSet<String> {
+    // Plan 62.D non-opaque: `Iter` мигрирован в std/prelude/collections.nv.
+    // Plan 62.E: `From`, `Into`, `Hashable`, `Display` (+ новые `Equatable`,
+    // `Comparable`) мигрированы в std/prelude/protocols.nv — auto-imported
+    // через R27 в каждый module, попадают в `m.items` через
+    // `resolve_imports_inline` и captures'ятся for-loop'ом ниже. `TryFrom`/
+    // `TryInto` deferred (Plan 56 Ф.2.7 effect-row enforcement), но они и
+    // не нужны в этом lint-HashSet'е (он используется только для
+    // protocol-in-effect-position warning'а на bare-name idents).
+    //
+    // **Остаются hardcoded:**
+    //   - `Ord`, `Eq`, `ToStr` — legacy aliases (используются в
+    //     nova_tests/types/generics.nv `TwoBounds[K Hashable, V Eq]`,
+    //     std/encoding/json.nv comments etc.). Канонические имена per
+    //     D109 — `Comparable`/`Equatable`, но `Ord`/`Eq` остаются как
+    //     back-compat имена пока тесты не переписаны.
+    //   - `TryFrom`, `TryInto` — deferred protocol declarations (Plan
+    //     56 Ф.2.7), keep лint coverage пока formal decl не появится.
     let mut names: HashSet<String> = [
-        "Hashable", "Ord", "Eq", "Iter", "From", "Into",
-        "TryFrom", "TryInto", "ToStr",
+        "Ord", "Eq", "ToStr", "TryFrom", "TryInto",
     ].iter().map(|s| s.to_string()).collect();
     for item in &m.items {
         if let Item::Type(td) = item {
@@ -701,5 +885,115 @@ mod tests {
         let m = parse("module foo\nfn lookup(id int) Db -> int => id\n");
         let ws = lint_module(&m);
         assert_eq!(ws.len(), 0);
+    }
+
+    /// Plan 62.F.bis Ф.2: tests для `lint_prelude_shadow` + suppress.
+    ///
+    /// Конструкция test-fixture: парсим entry-module + вручную создаём
+    /// fake prelude PeerFile с одним type `Foo`, имитируя ситуацию когда
+    /// resolver merge'нул prelude items. Без peer_files visibility-логика
+    /// не активирует (single-file legacy path).
+    mod prelude_shadow {
+        use super::*;
+        use crate::ast::{Item, PeerFile, TypeDecl, TypeDeclKind};
+        use crate::diag::{FileId, Span};
+        use std::collections::HashSet;
+        use std::path::PathBuf;
+
+        /// Создаёт fake prelude peer file со списком top-level type-имён.
+        fn fake_prelude_peer(name_decls: &[&str]) -> PeerFile {
+            let items: Vec<Item> = name_decls.iter().map(|n| Item::Type(TypeDecl {
+                doc: None,
+                doc_attrs: Vec::new(),
+                is_export: true,
+                name: (*n).to_string(),
+                generics: Vec::new(),
+                kind: TypeDeclKind::Record(Vec::new()),
+                span: Span::dummy(),
+                attrs: Vec::new(),
+                invariants: Vec::new(),
+                axioms: Vec::new(),
+            })).collect();
+            PeerFile {
+                path: PathBuf::from("/synthetic/std/prelude/core.nv"),
+                file_id: FileId::from(42_u32),
+                imports: Vec::new(),
+                items_here: items,
+                imported_item_names: HashSet::new(),
+                is_entry_module: false,
+            }
+        }
+
+        fn add_fake_prelude(m: &mut Module, names: &[&str]) {
+            // Ensure entry's own peer_file существует — иначе fallback
+            // на module.items (legacy single-file).
+            let entry_peer = PeerFile {
+                path: PathBuf::from("/synthetic/entry.nv"),
+                file_id: FileId::from(0_u32),
+                imports: m.imports.clone(),
+                items_here: m.items.clone(),
+                imported_item_names: HashSet::new(),
+                is_entry_module: true,
+            };
+            m.peer_files = vec![entry_peer, fake_prelude_peer(names)];
+        }
+
+        #[test]
+        fn warns_on_user_type_shadowing_prelude_option() {
+            let mut m = parse("module myapp\ntype Option { foo int }\n");
+            add_fake_prelude(&mut m, &["Option"]);
+            let ws = lint_prelude_shadow(&m);
+            assert_eq!(ws.len(), 1, "expected one W_PRELUDE_SHADOW");
+            assert_eq!(ws[0].rule, "W_PRELUDE_SHADOW");
+            assert!(ws[0].diag.message.contains("`Option`"),
+                "message should mention shadowed name: {}", ws[0].diag.message);
+        }
+
+        #[test]
+        fn no_warning_when_no_shadow() {
+            let mut m = parse("module myapp\ntype MyType { x int }\n");
+            add_fake_prelude(&mut m, &["Option", "Result"]);
+            let ws = lint_prelude_shadow(&m);
+            assert!(ws.is_empty(), "no shadow → no warning, got {:?}", ws);
+        }
+
+        #[test]
+        fn suppress_via_allow_prelude_shadow_clause() {
+            // Module clause `allow_prelude_shadow` парсится → ModuleAttrKind.
+            let mut m = parse("module myapp allow_prelude_shadow\ntype Option { foo int }\n");
+            add_fake_prelude(&mut m, &["Option"]);
+            let ws = lint_prelude_shadow(&m);
+            assert!(ws.is_empty(), "suppress should silence W_PRELUDE_SHADOW, got {:?}", ws);
+        }
+
+        #[test]
+        fn no_prelude_does_not_suppress_explicit_shadow_lint() {
+            // `no_prelude` отключает auto-import — visibility set пуст,
+            // shadowing невозможен → no warning естественно.
+            let mut m = parse("module myapp no_prelude\ntype Option { foo int }\n");
+            // НЕ добавляем fake prelude peer'ы — `no_prelude` исключает их.
+            let ws = lint_prelude_shadow(&m);
+            assert!(ws.is_empty(), "no_prelude → no prelude visibility, no warning");
+        }
+
+        #[test]
+        fn const_shadowing_emits_warning() {
+            let mut m = parse("module myapp\nconst PRELUDE_VERSION int = 99\n");
+            add_fake_prelude(&mut m, &["PRELUDE_VERSION"]);
+            let ws = lint_prelude_shadow(&m);
+            assert_eq!(ws.len(), 1);
+            assert!(ws[0].diag.message.contains("`PRELUDE_VERSION`"));
+        }
+
+        #[test]
+        fn prelude_self_module_skipped() {
+            // Prelude sub-modules legitimately declare prelude names —
+            // не должны получать W_PRELUDE_SHADOW для себя.
+            let mut m = parse("module std.prelude.core\ntype Option { x int }\n");
+            // Даже если бы peer_file сказал что Option visible — should skip.
+            add_fake_prelude(&mut m, &["Option"]);
+            let ws = lint_prelude_shadow(&m);
+            assert!(ws.is_empty(), "prelude self-module must be skipped");
+        }
     }
 }

@@ -1,0 +1,21 @@
+// EXPECT_COMPILE_ERROR panic
+//
+// Plan 62.F Part 3 — `partial_prelude(core)` negative test.
+//
+// Verifies что `partial_prelude(core)` НЕ auto-import'ит runtime
+// functions из `std.prelude.runtime` (panic / exit / assert / debug_assert).
+// Использование `panic("...")` без explicit import должно fail.
+//
+// Expected error: `panic` — unknown identifier (поскольку core sub-module
+// не re-export'ит panic).
+
+module plan62.partial_prelude_no_panic_in_core partial_prelude(core)
+
+fn explode() -> int {
+    panic("boom")
+}
+
+test "should never reach this — panic isn't in core" {
+    let _ = explode()
+    assert(true)
+}

@@ -109,19 +109,112 @@ pub fn resolve_imports_inline_ex(
     // Skip prelude auto-import для самого prelude (избежать self-cycle).
     // Plan 42 Sub-plan 42.6: detect prelude self по обоих declaration
     // форматов (rev-1 legacy + rev-3 parent.X). Logic — в manifest helper.
+    //
+    // **Plan 62.F:** добавлены `no_prelude` / `partial_prelude(...)` opt-out
+    // механизмы (spec/decisions/07-modules.md:962-979). Logic:
+    //   - `no_prelude` → НЕ auto-import'им вообще (user explicit imports).
+    //   - `partial_prelude(a, b, ...)` → auto-import только `std.prelude.<a>`,
+    //     `std.prelude.<b>`, etc. Имена валидируются против файлов в
+    //     `std/prelude/`. Empty list → эквивалент no_prelude.
+    //   - default → full `std.prelude` facade (как раньше).
     let is_prelude_self = crate::manifest::is_prelude_self_module(&module.name);
+    let has_no_prelude = module.attrs.iter()
+        .any(|a| matches!(a.kind, crate::ast::ModuleAttrKind::NoPrelude));
+    let partial_prelude_names: Option<Vec<String>> = module.attrs.iter()
+        .find_map(|a| if let crate::ast::ModuleAttrKind::PartialPrelude(names) = &a.kind {
+            Some(names.clone())
+        } else { None });
     let mut initial_imports = module.imports.clone();
-    if !is_prelude_self {
-        let prelude_path = stdlib_dir.join("prelude.nv");
-        if prelude_path.exists() && prelude_path.is_file() {
-            initial_imports.push(Import {
-                path: vec!["std".into(), "prelude".into()],
-                items: None,
-                alias: None,
-                is_export: false,
-                span: crate::diag::Span::dummy(),
-                doc_attrs: Vec::new(),
-            });
+    if !is_prelude_self && !has_no_prelude {
+        if let Some(names) = partial_prelude_names {
+            // Plan 62.F: `partial_prelude(a, b, ...)` — auto-import только
+            // перечисленных sub-modules. Валидируем имена против реальных
+            // файлов `std/prelude/<name>.nv`. Bad name → compile error.
+            let prelude_subdir = stdlib_dir.join("prelude");
+            for name in &names {
+                let sub_path = prelude_subdir.join(format!("{}.nv", name));
+                if !sub_path.exists() || !sub_path.is_file() {
+                    let importing = module.name.join(".");
+                    return Err(anyhow!(
+                        "`partial_prelude({})`: unknown prelude sub-module `{}`\n  \
+                         in module `{}`\n  \
+                         expected file: {}\n  \
+                         valid sub-modules (Plan 62): core, runtime, errors, \
+                         collections, protocols, effects\n  \
+                         hint: check spelling or remove from list (D26, Plan 62.F)",
+                        names.join(", "),
+                        name,
+                        importing,
+                        sub_path.display(),
+                    ));
+                }
+                initial_imports.push(Import {
+                    path: vec!["std".into(), "prelude".into(), name.clone()],
+                    items: None,
+                    alias: None,
+                    is_export: false,
+                    span: crate::diag::Span::dummy(),
+                    doc_attrs: Vec::new(),
+                });
+            }
+            // Empty list `partial_prelude()` — НИЧЕГО не auto-import'им
+            // (== no_prelude effectively). Это legitimate use-case
+            // (явная «нулевая» декларация без переключения на no_prelude).
+        } else {
+            // Default: full prelude facade.
+            //
+            // Plan 62.F.bis Ф.1 (edition versioning, 2026-05-18):
+            // если в `nova.toml` указано `[package].edition = "<X>"`, и
+            // соответствующий `std/prelude/<sanitized>.nv` существует —
+            // используем его вместо rolling `std/prelude.nv` facade.
+            // Sanitization: `.` → `_` (например `2026.05` → `2026_05.nv`).
+            //
+            // Fallback chain (resolver-side):
+            //   1. edition pin: `std/prelude/<sanitized>.nv` — если найден,
+            //      import path = `["std", "prelude", "<sanitized>"]`.
+            //   2. rolling facade: `std/prelude.nv` — backward-compat
+            //      default (нет edition в манифесте, или edition pin не
+            //      найден на диске).
+            //
+            // Безопасность: pin даёт stable prelude content на edition
+            // — даже если будущие версии compiler'а изменят `std/prelude.nv`,
+            // package с `edition = "2026.05"` видит фиксированный snapshot.
+            // Soft-fail (edition specified, но файла нет): silently fall back
+            // на rolling facade — не блокируем build, но user может явно
+            // указать edition без файла (например для будущего pin).
+            let mut edition_pin_used = false;
+            if let Some(manifest) = crate::manifest::find_manifest(entry_path) {
+                if let Some(edition) = &manifest.edition {
+                    let sanitized = crate::manifest::sanitize_edition(edition);
+                    if !sanitized.is_empty() {
+                        let pin_path = stdlib_dir.join("prelude").join(format!("{}.nv", sanitized));
+                        if pin_path.exists() && pin_path.is_file() {
+                            initial_imports.push(Import {
+                                path: vec!["std".into(), "prelude".into(), sanitized.clone()],
+                                items: None,
+                                alias: None,
+                                is_export: false,
+                                span: crate::diag::Span::dummy(),
+                                doc_attrs: Vec::new(),
+                            });
+                            edition_pin_used = true;
+                        }
+                    }
+                }
+            }
+            if !edition_pin_used {
+                let prelude_path = stdlib_dir.join("prelude.nv");
+                if prelude_path.exists() && prelude_path.is_file() {
+                    initial_imports.push(Import {
+                        path: vec!["std".into(), "prelude".into()],
+                        items: None,
+                        alias: None,
+                        is_export: false,
+                        span: crate::diag::Span::dummy(),
+                        doc_attrs: Vec::new(),
+                    });
+                }
+            }
         }
     }
 
@@ -856,13 +949,86 @@ fn resolve_module_paths(
                 })
                 .unwrap_or(false);
             if has_direct_nv {
-                // Plan 42.08 Ф.2: ambiguous → return explicit ResolveErr
-                // вместо silent None. Caller emit'ит clear «ambiguous module
-                // X: <file> vs <folder>» вместо generic «cannot find».
-                return Err(ResolveErr::Ambiguous {
-                    file: single_file.clone(),
-                    folder: folder.clone(),
-                });
+                // Plan 62.A: разрешённый pattern — facade file `X.nv` +
+                // child-namespace folder `X/<sub>.nv` (where каждый sub
+                // declares `module X.<sub>`, not `module X`). В этом случае
+                // file — parent-module facade, folder peers — child
+                // modules, не peers of file. Это специально для
+                // splittable prelude design (Plan 62 §«Splittable
+                // structure»), но general-purpose: применимо к любому
+                // `<X>.nv` + `<X>/<sub>.nv` case.
+                //
+                // Detection: peek все direct .nv в folder; если ВСЕ
+                // declare `module <parent>.<X>.<...>` (т.е. их declared
+                // path starts with file's full path + один сегмент), —
+                // это child-namespace case, не ambiguity.
+                //
+                // Если хоть один peer declares `module <X>` или `module
+                // <parent>.<X>` (same path как file), — реальная
+                // ambiguity, error как раньше.
+                let file_module_full = parts.join(".");
+                let file_module_prefix = format!("{}.", file_module_full);
+                // Plan 62 cleanup (2026-05-19): rev-3 strict `parent.target`
+                // means sub-modules в `X/` declare `module <X>.<sub>` (2 seg)
+                // — НЕ полный `<parent_of_X>.<X>.<sub>` (3+ seg).
+                // file's target (folder name) — last segment of parts.
+                // Accept peer as sub-module if its declared form is either:
+                //   - full path `<parent>.<X>.<sub>` (legacy rev-1 / facade)
+                //   - short path `<X>.<sub>` (rev-3 strict)
+                // Conflict (ambiguity) if peer declares `<X>` alone, или
+                // `<parent>.<X>` (i.e. same path как file — peer of file).
+                let file_target = parts.last().cloned().unwrap_or_default();
+                let short_prefix = format!("{}.", file_target);
+                let mut all_children = true;
+                let mut any_peer = false;
+                if let Ok(entries) = std::fs::read_dir(&folder) {
+                    for entry in entries.filter_map(|e| e.ok()) {
+                        let p = entry.path();
+                        if !p.is_file() {
+                            continue;
+                        }
+                        if p.extension().and_then(|s| s.to_str()) != Some("nv") {
+                            continue;
+                        }
+                        any_peer = true;
+                        let declared = match extract_declared_module(&p) {
+                            Some(d) => d,
+                            None => {
+                                // Не удалось извлечь module declaration —
+                                // consideredambiguous (старое поведение).
+                                all_children = false;
+                                break;
+                            }
+                        };
+                        // Detect peer-of-file (ambiguity) — declared is
+                        // exactly file_module_full (e.g. `std.prelude`) or
+                        // exactly `<X>` (e.g. `prelude`).
+                        if declared == file_module_full || declared == file_target {
+                            all_children = false;
+                            break;
+                        }
+                        // Accept sub-module форм: either full prefix
+                        // `<parent>.<X>.` или short prefix `<X>.`.
+                        let is_full_child = declared.starts_with(&file_module_prefix);
+                        let is_short_child = declared.starts_with(&short_prefix);
+                        if !is_full_child && !is_short_child {
+                            all_children = false;
+                            break;
+                        }
+                    }
+                }
+                if !any_peer || !all_children {
+                    // Plan 42.08 Ф.2: ambiguous → return explicit ResolveErr
+                    // вместо silent None. Caller emit'ит clear «ambiguous module
+                    // X: <file> vs <folder>» вместо generic «cannot find».
+                    return Err(ResolveErr::Ambiguous {
+                        file: single_file.clone(),
+                        folder: folder.clone(),
+                    });
+                }
+                // All peers — child modules. Fall through: return file as
+                // single resolved path (folder peers resolve через explicit
+                // `import X.<sub>` paths).
             }
         }
 
@@ -917,4 +1083,94 @@ fn resolve_module_paths(
     }
 
     Err(ResolveErr::NotFound)
+}
+
+/// Plan 62.A: lightweight extraction of `module X.Y.Z` declaration из
+/// .nv file без полного парсинга. Использован в `resolve_module_paths`
+/// для disambiguating file+folder coexistence (facade + child-namespace
+/// pattern).
+///
+/// Возвращает declared module path как dotted string (e.g.
+/// `"std.prelude.core"`) или `None` если:
+///   - файл не читается,
+///   - module declaration не найден в первых ~50 non-comment lines,
+///   - syntax не распознан.
+///
+/// Скан: skip blank lines, line/block comments, attrs (`#stable(...)`).
+/// Останавливается на первой строке начинающейся с `module `.
+fn extract_declared_module(path: &Path) -> Option<String> {
+    let content = std::fs::read_to_string(path).ok()?;
+    let mut in_block_comment = false;
+    let mut lines_seen = 0;
+    for raw_line in content.lines() {
+        lines_seen += 1;
+        if lines_seen > 200 {
+            // module declaration MUST быть в первых ~200 lines (typically
+            // в первых 30). Не нашли — bail.
+            return None;
+        }
+        let line = raw_line.trim();
+        if in_block_comment {
+            if let Some(idx) = line.find("*/") {
+                let rest = &line[idx + 2..].trim_start();
+                if rest.is_empty() {
+                    in_block_comment = false;
+                    continue;
+                }
+                in_block_comment = false;
+                // continue parsing rest of line
+                if let Some(name) = try_parse_module_decl(rest) {
+                    return Some(name);
+                }
+                continue;
+            }
+            continue;
+        }
+        if line.is_empty() || line.starts_with("//") || line.starts_with("///") {
+            continue;
+        }
+        if line.starts_with("/*") {
+            if line.contains("*/") {
+                // Single-line block comment.
+                continue;
+            }
+            in_block_comment = true;
+            continue;
+        }
+        // Skip attrs (lines starting with `#`).
+        if line.starts_with('#') {
+            continue;
+        }
+        if let Some(name) = try_parse_module_decl(line) {
+            return Some(name);
+        }
+        // Первый non-comment non-attr line не "module ..." — bail.
+        return None;
+    }
+    None
+}
+
+/// Helper: если строка начинается с `module `, извлечь path как dotted
+/// string. Path = sequence of `[A-Za-z_][A-Za-z0-9_]*` separated by `.`,
+/// terminated whitespace/EOL/comment.
+fn try_parse_module_decl(line: &str) -> Option<String> {
+    let rest = line.strip_prefix("module ")?.trim_start();
+    let mut path = String::new();
+    let mut started_segment = false;
+    for ch in rest.chars() {
+        if ch.is_ascii_alphanumeric() || ch == '_' {
+            path.push(ch);
+            started_segment = true;
+        } else if ch == '.' && started_segment {
+            path.push('.');
+            started_segment = false;
+        } else {
+            break;
+        }
+    }
+    if path.is_empty() || path.ends_with('.') {
+        None
+    } else {
+        Some(path)
+    }
 }

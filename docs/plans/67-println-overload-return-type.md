@@ -1,8 +1,13 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 # Plan 67: `println`/`print` — overload resolution через return-type inference
 
-> **Создан:** 2026-05-18. **Статус:** Ф.0–Ф.2 done. **Приоритет:** P0
-> (hotfix: CC-FAIL bench/corpus, замаскирован Plan 65 hotfix
+> **Создан:** 2026-05-18. **Статус:** ✅ ЗАКРЫТ 2026-05-18 (Ф.0–Ф.4 done; см.
+> `## Acceptance criteria` ниже + commit `9a90802b022`). На parallel branch
+> `plan-62-main` идентичный refactor `infer_print_helper` через
+> `infer_expr_c_type` был absorbed как Plan 62.B.bis Ф.0 (commit
+> `cbcafbfdad3`); при merge'е в main converged в один результат — main's
+> Plan 67 closure канонический. См. [Plan 62.B.bis closure](62.B.bis-print-println-migration.md).
+> **Приоритет:** P0 (hotfix: CC-FAIL bench/corpus, замаскирован Plan 65 hotfix
 > contract-encoder fix).
 > **Трудоёмкость:** ~2 dev-days (focused codegen fix + audit + tests).
 

@@ -780,6 +780,47 @@ spec D122. Когда cross-crate compilation потребует — codegen
 integration straightforward (vtable struct already designed,
 primitive thunks already exist).
 
+### Plan 62 followup — silent miscompilation на protocol-as-value (2026-05-19)
+
+Plan 62 cleanup merge sprint обнаружил **конкретное проявление**
+deferred truly-erased dispatch — **silent miscompilation** на method
+call'ах через protocol-as-value:
+
+```nova
+type IntCounter { mut cur int, end int }
+fn IntCounter mut @next() -> Option[int] => { ... }
+
+// Case A: binding-level — WORKS (mono coercion concrete → void*).
+let _x Iter[int] = IntCounter.new(1, 4)
+
+// Case B: method dispatch на existential — SILENT WRONG (deferred).
+let mut x Iter[int] = c
+let r = x.next()    // compiles, runs, но returns wrong result
+                    // (None вместо Some(1)) — silent miscompilation
+
+// Case C: protocol-as-param method dispatch — SAME silent bug.
+fn foo(x Iter[int]) -> bool => { let mut xx = x; xx.next().is_some() }
+foo(c)              // compiles, returns false вместо true
+```
+
+**Severity:** silent miscompilation страшнее CC-FAIL. Compile passes,
+runtime gives wrong answer без diagnostic. Это violates Nova принцип
+«no silent fallback» (Plan 70 style).
+
+**Что добавить когда Plan 03 vtable codegen integration land'нет:**
+1. Если existential method dispatch — emit vtable lookup, не silent
+   placeholder.
+2. До Plan 03 — strict diagnostic (E-code) при попытке method-call
+   на existential типе, mirror Plan 70 «no silent fallback» pattern.
+
+**Regression marker:** `nova_tests/plan62/protocol_as_value_probe.nv` —
+positive smoke только для Case A (binding). Cases B+C удалены из теста
+потому что silent miscompilation, не want to silently «verify wrong».
+См. plan-62-main commit c31ec3c1e36 + ed3d00eb9c9 для context.
+
+**Scope (когда Plan 03 active):** ~1-2 dev-day для diagnostic-only;
+~5-10 dev-days для full vtable codegen integration.
+
 ### Plan 56 — final closure decision
 
 **ЗАКРЫТ как production-grade для bootstrap** (2026-05-16 EOD+1).

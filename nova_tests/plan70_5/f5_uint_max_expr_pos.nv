@@ -1,0 +1,46 @@
+module nova_tests.plan70_5.f5_uint_max_expr_pos
+
+// Plan 70.5 Ф.4: uint.MAX доступен напрямую как Path-выражение.
+// Проверяем все контексты где раньше требовался workaround `u64.MAX as uint`.
+
+fn clamp_uint(x uint, hi uint) -> uint {
+    if x > hi { hi } else { x }
+}
+
+test "uint.MAX equals u64.MAX" {
+    assert(uint.MAX == u64.MAX)
+}
+
+test "uint.MAX in let binding" {
+    let m uint = uint.MAX
+    assert(m == uint.MAX)
+}
+
+test "uint.MAX greater than int.MAX cast" {
+    let umax uint = uint.MAX
+    let imax uint = int.MAX as uint
+    assert(umax > imax)
+}
+
+test "uint.MAX as function arg" {
+    let clamped = clamp_uint(uint.MAX, 1000 as uint)
+    assert(clamped == 1000 as uint)
+}
+
+test "uint.MAX in Option" {
+    let o Option[uint] = Some(uint.MAX)
+    assert(o.is_some())
+    assert(o.unwrap_or(0 as uint) == uint.MAX)
+}
+
+test "uint.MAX in array" {
+    let arr []uint = []uint.new()
+    arr.push(uint.MAX)
+    assert(arr[0] == uint.MAX)
+}
+
+test "uint.MAX - 1 is one less than max" {
+    let m uint = uint.MAX
+    let prev u64 = m as u64 - 1 as u64
+    assert(prev == u64.MAX - 1 as u64)
+}

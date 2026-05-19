@@ -1,0 +1,139 @@
+// std/prelude/errors.nv — file-based source of truth для prelude error
+// types. Plan 62 phase 62.C.
+//
+// Декларации перенесены из hardcoded type-checker builtins HashSet
+// (compiler-codegen/src/types/mod.rs:2027-2029) в этот файл, чтобы:
+//   1) `nova doc` показывал canonical API в одном месте (AI-readable),
+//   2) пользователь мог shadow'ить эти types в своём коде с warning'ом
+//      (Plan 62.F W_PRELUDE_SHADOW),
+//   3) splittable prelude работал (`partial_prelude(errors)` opt-in
+//      только errors без core/runtime).
+//
+// Архитектурные правила (Plan 62 §«Стратификация»):
+//   - **ZERO imports.** Все declarations self-contained на primitives
+//     (`int`, `str`). Никаких `use std.runtime.*` — иначе circular
+//     import через auto-imported prelude.
+//
+// **Bootstrap status (Plan 62.C):**
+//
+// - `RuntimeError` declared here как plain `type` (не `external`) —
+//   variants visible для type-checker'а через cross-file resolve.
+//   Codegen НЕ doubly-emit'ит C struct: `emit_type_decl`
+//   (emit_c.rs:4871+) skip'ает RuntimeError через RUNTIME_DEFINED_TYPES
+//   список — implementation остаётся в `nova_rt/array.h`
+//   (`Nova_RuntimeError` + `nova_make_RuntimeError_<Variant>`
+//   constructors, lines ~565-610).
+// - `init_prelude_decls_from_items` (sum_schema_registry.rs:526+)
+//   распознаёт RuntimeError type decl, регистрирует Prelude entry
+//   с variants + abi + method_routing **inherited от HardcodedBaseline**
+//   (behavior-preserving migration — Plan 62.A.bis architecture).
+// - Pre-populated `sum_schemas["RuntimeError"]` (emit_c.rs:1029-1048)
+//   оставлен как ABI-compat fallback baseline per 62.A.bis design
+//   («HardcodedBaseline остаётся fallback; lookup precedence
+//   DeclaredFromPrelude > HardcodedBaseline»).
+// - `ReadBufferError` — нет HardcodedBaseline entry; codegen
+//   distinguish'ет sum-type через type-name только (runtime-level
+//   payload — string-based throw, см. nova_rt/read_buffer.h:62-77).
+//   Variants регистрируются через registry для cross-file resolve.
+//
+// **DEFER Plan 62.C → 62.B/F:**
+//
+// - **`type RuntimeNoneError`** (unit-type per D85) — bootstrap parser
+//   `parse_sum_variants` (parser/mod.rs:2160) требует ≥1 `|` с variant;
+//   `parse_type_decl` (parser/mod.rs:2042+) при отсутствии `|`/`{`/`alias`
+//   падает в newtype branch (`parse_type()`), что ожидает type-ref.
+//   Empty-body `type Name` (без вариантов / полей) парсер не поддерживает.
+//   То же ограничение что у `Never` (Plan 62.A defer, см.
+//   std/prelude/core.nv:104-109). `RuntimeNoneError` остаётся как
+//   string-payload throw в `nova_rt/effects.h:122-126`
+//   (`nova_throw(nova_str_from_cstr("RuntimeNoneError"))`) — никакого
+//   structured type декларировать не нужно. Декларация перенесётся сюда
+//   когда parser получит empty-sum support (тот же D-block как у Never).
+//
+// - **Throw-point conversion to structured `RuntimeError`-payload**
+//   (compiler:    a/b на 0, arr[i] out-of-bounds, etc.) остаётся отдельной
+//   задачей — требует расширения fail-frame mechanism с `nova_str` на
+//   `void*` payload. См. spec/decisions/08-runtime.md §«Bootstrap-
+//   ограничения» (~lines 370-376).
+
+module prelude.errors
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Runtime errors (D26 §«Bottom-уровневые runtime-ошибки»)
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Bottom-уровневые runtime-ошибки. Бросаются автоматически compiler'ом
+/// (`a/b` на 0, `arr[i]` out-of-bounds, type mismatch, и т.д.) либо
+/// вручную через `throw`. См. D26 spec / D65.
+///
+/// `StackOverflow` и `OutOfMemory` НЕ входят — они panic (D13), не Fail.
+///
+/// **Bootstrap**: `Nova_RuntimeError*` typedef + `nova_make_RuntimeError_*`
+/// constructors живут в `nova_rt/array.h` (~lines 557-610). Pre-populated
+/// `sum_schemas["RuntimeError"]` (emit_c.rs:1029-1048) регистрирует
+/// 6 variants; `init_prelude_decls_from_items` (Plan 62.C) распознаёт
+/// эту декларацию и регистрирует Prelude entry в `sum_schema_registry`
+/// inheriting variant info и (currently empty) `method_routing` от
+/// HardcodedBaseline.
+///
+/// **Variant set strict-equality (Plan 62.A.bis acceptance):** этот
+/// declaration МУСТ matchить ровно 6 вариантов HardcodedBaseline entry
+/// (sum_schema_registry.rs:458-483). Расширение variant set требует
+/// edition bump (Plan 62.F).
+#stable(since = "0.1")
+export type RuntimeError
+    | DivByZero
+    | Overflow
+    | IndexOutOfBounds { index int, length int }
+    | TypeMismatch(str)
+    | AssertFailed(str)
+    | NoHandler(str)
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// ReadBuffer errors (D26 §«Прочие prelude-типы»)
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Ошибка чтения буфера: данных меньше чем ожидалось. Throw'ится
+/// `@read_*` методами `ReadBuffer` (см. nova_rt/read_buffer.h) когда
+/// cursor выходит за границы underlying byte-slice.
+///
+/// **Bootstrap**: actual error payload в `Nova_Fail_fail` — это
+/// formatted `nova_str` ("ReadBuffer.UnexpectedEnd: wanted N, available M",
+/// см. nova_rt/read_buffer.h:62-77 и :254-272), НЕ structured
+/// `Nova_ReadBufferError*`. Эта Nova-level декларация даёт type-checker'у
+/// канонический type-name для signatures `Fail[ReadBufferError]` /
+/// `Result[T, ReadBufferError]` (см. runtime_registry.rs:893-954) и
+/// pattern-matching конструкций. Конверсия в structured payload
+/// отложена (см. spec/decisions/08-runtime.md §«Bootstrap-ограничения»).
+///
+/// Variants:
+///   - `UnexpectedEnd { wanted int, available int }` — попытка прочитать
+///     `wanted` байтов когда осталось `available < wanted`.
+#stable(since = "0.1")
+export type ReadBufferError
+    | UnexpectedEnd { wanted int, available int }
+
+
+// DEFER (Plan 62.C → Plan 62.F edition cleanup):
+//
+// `type RuntimeNoneError` (unit-type per D85) — bootstrap parser не
+// поддерживает empty-body sum syntax (`parse_type_decl` ожидает либо
+// `|` (sum), либо `{` (record), либо `alias`/newtype; bare `type Name`
+// падает в newtype branch и парсит следующий token как type-ref).
+// Тот же блокер что у `Never` (std/prelude/core.nv:104-109).
+//
+// `RuntimeNoneError` остаётся как string-payload throw в
+// `nova_rt/effects.h:122-126`:
+//
+//     nova_throw(nova_str_from_cstr("RuntimeNoneError"));
+//
+// Никакого C-уровневого `Nova_RuntimeNoneError` типа не существует —
+// `expr!!` на None просто бросает строку. Декларация перенесётся сюда
+// одновременно с `Never` когда parser получит empty-sum syntax (D-block
+// addition в spec/decisions/03-syntax.md).
+//
+// Закомментированная форма (для documentation):
+//   #stable(since = "0.1")
+//   export type RuntimeNoneError

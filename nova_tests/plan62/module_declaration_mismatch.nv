@@ -1,0 +1,31 @@
+// EXPECT_COMPILE_ERROR module declaration does not match file path
+//
+// module_declaration_mismatch.nv — D29 rev-3 cleanup negative test
+// (commit 1e8096d3e95 backstop).
+//
+// Verifies что compiler **отвергает** файлы с declaration, которая
+// не соответствует расположению файла относительно package source
+// root'а. Это core invariant D29: `module <parent>.<target>` (rev-3)
+// или `module <pkg>.<dir1>.<dir2>...<file>` (rev-1 legacy) — обе
+// формы checked в `compiler-codegen/src/manifest.rs::
+// check_module_declaration_matches_path`.
+//
+// Без этой проверки revert prelude declarations (commit 1e8096d3e95)
+// можно было бы сделать «как попало» — здесь мы убеждаемся что
+// guard rail включён и работает.
+//
+// Этот файл лежит в `nova_tests/plan62/`. Ожидаемый module name
+// согласно package `nova_tests` (см. nova_tests/nova.toml):
+//   - rev-3:  `plan62.module_declaration_mismatch`
+//   - rev-1:  `nova_tests.plan62.module_declaration_mismatch`
+// А мы declarem `nonexistent.parent.target` — оба формата отклонят
+// его, и компилятор должен эмитировать diagnostic «module
+// declaration does not match file path».
+
+module nonexistent.parent.target
+
+fn dummy() -> int => 1
+
+test "should never reach this — compile must fail on D29 mismatch" {
+    let _ = dummy()
+}
