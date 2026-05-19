@@ -3,9 +3,130 @@
 //! Реализует 8 дополнительных lint правил поверх существующих
 //! (broken-links + missing-summary из --check mode).
 //!
-//! Все lints — additive: `nova doc --check` агрегирует и exit 1 при любом.
+//! Все lints — additive: `nova doc --check` агрегирует и exit 1 при любом
+//! **Error**-severity нарушении. Plan 71 ввёл `Severity::Warning` для
+//! `public-missing-stability` в default-режиме — этот lint emit'ит warning
+//! (не блокирует CI), error только под `enforce-stability = true` в
+//! `nova.toml [lib]`.
 
 use crate::doc::doctree::*;
+use std::path::Path;
+
+/// Plan 71 / D127: severity-уровень lint'а.
+///
+/// Mapped в `nova doc --check` exit code: `Error` → exit 1, `Warning` →
+/// печать в stderr без блокировки CI (если нет `--strict`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Severity {
+    /// Блокирует CI — exit 1.
+    Error,
+    /// Печатается в stderr, exit 0 (если только нет `--strict` поверх).
+    Warning,
+}
+
+impl Severity {
+    /// Строковое имя для `--format json` output и CLI таблицы.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Severity::Error => "error",
+            Severity::Warning => "warning",
+        }
+    }
+}
+
+/// Plan 71 / D127: конфигурация lint-pipeline'а.
+///
+/// Загружается из `nova.toml [lib]` (см. [`crate::manifest::Manifest`]).
+/// `nova-cli` строит `LintConfig` per-invocation:
+/// - `strict_stability` ← `manifest.enforce_stability` (или `false` если manifest не найден).
+/// - `fixture_dirs` ← `LintConfig::default_fixture_dirs()` (hardcoded
+///   `nova_tests / tests / examples / bench` для V1; manifest-config —
+///   V2 если будет user-request).
+#[derive(Debug, Clone)]
+pub struct LintConfig {
+    /// `true` — повышает severity `public-missing-stability` до `Error`.
+    /// `false` (default) — оставляет `Warning`. Source:
+    /// `[lib] enforce-stability = true` в `nova.toml`.
+    pub strict_stability: bool,
+    /// Path component names, маркирующие файл как
+    /// test/example/bench fixture. Для таких файлов
+    /// `public-missing-stability` skip'ается *полностью* — даже как
+    /// warning. Default: `["nova_tests", "tests", "examples", "bench"]`.
+    ///
+    /// Match — по любому path-сегменту в абсолютном пути
+    /// `DocModule.source_paths`. Это robust к layout'ам:
+    /// `<repo>/nova_tests/foo.nv`, `<workspace>/tests/bar/baz.nv`,
+    /// `<root>/bench/corpus/perf.nv` — все определяются как fixtures.
+    pub fixture_dirs: Vec<String>,
+}
+
+impl Default for LintConfig {
+    fn default() -> Self {
+        Self::with_defaults()
+    }
+}
+
+impl LintConfig {
+    /// Default-конфиг: lenient mode (strict_stability=false) +
+    /// canonical fixture-dirs из Plan 71.
+    pub fn with_defaults() -> Self {
+        Self {
+            strict_stability: false,
+            fixture_dirs: Self::default_fixture_dirs(),
+        }
+    }
+
+    /// Canonical fixture-dirs hardcoded for V1 (Plan 71).
+    /// Поменять через manifest config — V2 (cм. Plan 71 open question №2).
+    pub fn default_fixture_dirs() -> Vec<String> {
+        vec![
+            "nova_tests".to_string(),
+            "tests".to_string(),
+            "examples".to_string(),
+            "bench".to_string(),
+        ]
+    }
+
+    /// Проверить, является ли модуль fixture'ом (test/example/bench).
+    ///
+    /// Возвращает `true` если **любой** из `source_paths` модуля
+    /// содержит сегмент из `fixture_dirs` в своём path-component
+    /// списке. Folder-modules: достаточно, чтобы один peer был под
+    /// fixture-dir (peers одного folder'а структурно делят родителя,
+    /// так что обычно все peers либо все fixtures, либо все нет;
+    /// `any` устойчив к edge case'ам).
+    ///
+    /// Пустой `source_paths` (synthesized DocTree) → `false`
+    /// (fallthrough к строгому пути; для prod-кода irrelevant).
+    pub fn is_fixture_module(&self, source_paths: &[std::path::PathBuf]) -> bool {
+        if source_paths.is_empty() {
+            return false;
+        }
+        let fixture_set: std::collections::HashSet<&str> =
+            self.fixture_dirs.iter().map(String::as_str).collect();
+        source_paths
+            .iter()
+            .any(|p| path_has_component(p, &fixture_set))
+    }
+}
+
+/// Helper: возвращает `true` если у `p` есть Normal-сегмент, имя которого
+/// (как `&str`) присутствует в `set`. Robust ко всем path-форматам:
+/// абсолютный/relative, Windows backslash/Unix slash, `..` / `.` сегменты
+/// (которые мы игнорируем — Plan 71 не enforce'ит paths за пределы repo).
+fn path_has_component(p: &Path, set: &std::collections::HashSet<&str>) -> bool {
+    use std::path::Component;
+    for c in p.components() {
+        if let Component::Normal(os) = c {
+            if let Some(s) = os.to_str() {
+                if set.contains(s) {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
 
 /// Один lint-нарушение.
 #[derive(Debug, Clone)]
@@ -16,32 +137,66 @@ pub struct DocLintViolation {
     pub rule: &'static str,
     /// Человекочитаемое объяснение.
     pub message: String,
+    /// Plan 71 / D127: severity. `Error` блокирует CI; `Warning` —
+    /// печатается, но `nova doc --check` exit 0. Все правила кроме
+    /// `public-missing-stability` всегда `Error` (исторический default).
+    /// `public-missing-stability` — `Warning` по default, `Error` если
+    /// `LintConfig.strict_stability == true`.
+    pub severity: Severity,
 }
 
 /// Запускает все §11.5 lints на DocTree. Возвращает список нарушений.
-pub fn run_lints(tree: &DocTree) -> Vec<DocLintViolation> {
+///
+/// Plan 71: signature changed — теперь принимает `&LintConfig` для
+/// контроля `public-missing-stability` severity + fixture-skip. Caller'ы
+/// без специфической конфигурации могут использовать
+/// `&LintConfig::default()`.
+pub fn run_lints(tree: &DocTree, config: &LintConfig) -> Vec<DocLintViolation> {
     let mut out = Vec::new();
     for m in &tree.modules {
-        lint_module(m, &mut out);
+        // Plan 71 / D127: test/example/bench exemption — skip
+        // public-missing-stability полностью для fixtures.
+        let is_fixture = config.is_fixture_module(&m.source_paths);
+        lint_module(m, config, is_fixture, &mut out);
         for it in &m.items {
-            lint_item(it, &mut out);
+            lint_item(it, config, is_fixture, &mut out);
         }
     }
     out
 }
 
-fn lint_module(m: &DocModule, out: &mut Vec<DocLintViolation>) {
+fn lint_module(
+    m: &DocModule,
+    config: &LintConfig,
+    is_fixture: bool,
+    out: &mut Vec<DocLintViolation>,
+) {
     // Rule 7: public module без stability tier.
-    if !m.hide_doc && m.stability.is_none() {
+    // Plan 71 / D127:
+    //   - fixture path → skip полностью (не emit'им даже warning),
+    //   - strict_stability=true → severity=Error,
+    //   - strict_stability=false → severity=Warning.
+    if !m.hide_doc && m.stability.is_none() && !is_fixture {
+        let severity = if config.strict_stability {
+            Severity::Error
+        } else {
+            Severity::Warning
+        };
         out.push(DocLintViolation {
             item_id: m.path.join("."),
             rule: "public-missing-stability",
             message: "public module has no stability tier (#stable / #unstable / #experimental)".to_string(),
+            severity,
         });
     }
 }
 
-fn lint_item(it: &DocItem, out: &mut Vec<DocLintViolation>) {
+fn lint_item(
+    it: &DocItem,
+    config: &LintConfig,
+    is_fixture: bool,
+    out: &mut Vec<DocLintViolation>,
+) {
     let id = &it.id;
 
     // Rule 8: summary слишком длинная (> 120 символов).
@@ -51,6 +206,7 @@ fn lint_item(it: &DocItem, out: &mut Vec<DocLintViolation>) {
                 item_id: id.clone(),
                 rule: "summary-too-long",
                 message: format!("summary is {} chars (max 120); move details to description", s.len()),
+                severity: Severity::Error,
             });
         }
 
@@ -77,6 +233,7 @@ fn lint_item(it: &DocItem, out: &mut Vec<DocLintViolation>) {
                     item_id: id.clone(),
                     rule: "summary-not-sentence",
                     message: format!("summary {} (style-guide §11.5 №1)", reason),
+                    severity: Severity::Error,
                 });
             }
         }
@@ -90,6 +247,7 @@ fn lint_item(it: &DocItem, out: &mut Vec<DocLintViolation>) {
                 item_id: id.clone(),
                 rule: "imperative-mood",
                 message: format!("summary should start with an imperative verb, not '{}'", first_word),
+                severity: Severity::Error,
             });
         }
     }
@@ -111,6 +269,7 @@ fn lint_item(it: &DocItem, out: &mut Vec<DocLintViolation>) {
                     key,
                     CANONICAL_SECTIONS.join(", ")
                 ),
+                severity: Severity::Error,
             });
         }
     }
@@ -123,6 +282,7 @@ fn lint_item(it: &DocItem, out: &mut Vec<DocLintViolation>) {
                     item_id: id.clone(),
                     rule: "examples-missing",
                     message: "public function has no # Examples section".to_string(),
+                    severity: Severity::Error,
                 });
             }
         }
@@ -135,6 +295,7 @@ fn lint_item(it: &DocItem, out: &mut Vec<DocLintViolation>) {
                 item_id: id.clone(),
                 rule: "deprecated-incomplete",
                 message: "deprecated item missing both `since` version and deprecation note".to_string(),
+                severity: Severity::Error,
             });
         }
         // Plan 45 Ф.26.4 / §11.5 №6 — deprecated-overdue.
@@ -151,17 +312,28 @@ fn lint_item(it: &DocItem, out: &mut Vec<DocLintViolation>) {
                         "deprecation `until = \"{}\"` reached (current = `{}`); item should be removed",
                         until, current
                     ),
+                    severity: Severity::Error,
                 });
             }
         }
     }
 
     // Rule 7: exported item без stability.
-    if it.visibility == Visibility::Export && it.stability.is_none() {
+    // Plan 71 / D127:
+    //   - fixture path → skip полностью (не emit'им даже warning),
+    //   - strict_stability=true → severity=Error,
+    //   - strict_stability=false → severity=Warning.
+    if it.visibility == Visibility::Export && it.stability.is_none() && !is_fixture {
+        let severity = if config.strict_stability {
+            Severity::Error
+        } else {
+            Severity::Warning
+        };
         out.push(DocLintViolation {
             item_id: id.clone(),
             rule: "public-missing-stability",
             message: "exported item has no stability tier (#stable / #unstable / #experimental)".to_string(),
+            severity,
         });
     }
 
@@ -180,6 +352,7 @@ fn lint_item(it: &DocItem, out: &mut Vec<DocLintViolation>) {
                 message: format!("section '{}' appears before '{}' (canonical order: {})",
                     ORDER[w[1]], ORDER[w[0]],
                     ORDER.iter().filter(|k| it.sections.contains_key(**k)).cloned().collect::<Vec<_>>().join(" < ")),
+                severity: Severity::Error,
             });
             break;
         }
@@ -192,6 +365,7 @@ fn lint_item(it: &DocItem, out: &mut Vec<DocLintViolation>) {
                 item_id: id.clone(),
                 rule: "markdown-subset",
                 message: "description contains disallowed raw HTML tags (<script>, <iframe>, <style>)".to_string(),
+                severity: Severity::Error,
             });
         }
     }

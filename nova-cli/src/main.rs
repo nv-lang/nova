@@ -922,6 +922,13 @@ fn read_file(path: &Path) -> Result<String> {
 
 /// Plan 45 Ф.24.13: parse + typecheck + infer_effects one .nv file.
 /// Returns Ok((source, module)) or Err(warning_string) for graceful-fail.
+///
+/// Plan 71 / D127: после parse инициализирует `module.peer_files[0]` с
+/// абсолютным path-ом файла, чтобы `doc::collect` мог populate
+/// `DocModule.source_paths` для fixture-detection в lints. Parser
+/// оставляет peer_files пустым — `resolve_imports_inline` заполняет в
+/// build/test path'ах, но `nova doc` MVP single-file mode не резолвит
+/// импорты, поэтому seed'им здесь.
 fn parse_one_file(f: &Path) -> Result<(String, nova_codegen::ast::Module), String> {
     let src = match std::fs::read_to_string(f) {
         Ok(s) => s,
@@ -932,6 +939,7 @@ fn parse_one_file(f: &Path) -> Result<(String, nova_codegen::ast::Module), Strin
         Ok(mut m) => {
             let _ = nova_codegen::types::check_module(&m);
             nova_codegen::types::infer_effects(&mut m);
+            ensure_entry_peer_path(&mut m, f);
             Ok((src, m))
         }
         Err(d) => Err(format!(
@@ -940,6 +948,26 @@ fn parse_one_file(f: &Path) -> Result<(String, nova_codegen::ast::Module), Strin
             d.render(&src, &path_str)
         )),
     }
+}
+
+/// Plan 71 / D127: seed `module.peer_files[0]` if empty. Used by
+/// `nova doc` single-file mode (which does not invoke
+/// `resolve_imports_inline`), so the doc collector can read the source
+/// path для fixture-detection lints.
+///
+/// No-op if `peer_files` already populated (resolver уже сделал работу).
+fn ensure_entry_peer_path(module: &mut nova_codegen::ast::Module, file_path: &Path) {
+    if !module.peer_files.is_empty() {
+        return;
+    }
+    module.peer_files.push(nova_codegen::ast::PeerFile {
+        path: file_path.to_path_buf(),
+        file_id: nova_codegen::diag::MAIN_FILE_ID,
+        imports: module.imports.clone(),
+        items_here: module.items.clone(),
+        imported_item_names: std::collections::HashSet::new(),
+        is_entry_module: true,
+    });
 }
 
 fn default_tmp_dir() -> PathBuf {
@@ -1446,7 +1474,7 @@ fn cmd_doc(path: &Path, format: &str, json_schema: bool, include_private: bool, 
         bail!("file not found: {}", path.display());
     }
     if watch {
-        return cmd_doc_watch(path, format, include_private, run_doc_tests, check, coverage);
+        return cmd_doc_watch(path, format, include_private, run_doc_tests, check, coverage, strict);
     }
     let src = read_file(path)?;
     let path_str = path.to_string_lossy();
@@ -1467,6 +1495,9 @@ fn cmd_doc(path: &Path, format: &str, json_schema: bool, include_private: bool, 
     // делать полный type-check.
     let _ = nova_codegen::types::check_module(&module);
     nova_codegen::types::infer_effects(&mut module);
+    // Plan 71 / D127: seed peer_files[0].path для DocModule.source_paths →
+    // fixture-detection lints. Без resolve_imports_inline peer_files empty.
+    ensure_entry_peer_path(&mut module, path);
     let mut tree = nova_codegen::doc::build(&module);
     // Plan 45 Ф.26.2 / Ф.23.4: populate handler matrix (Effect.handlers).
     nova_codegen::doc::populate_handler_matrix(&mut tree, &src);
@@ -1487,7 +1518,8 @@ fn cmd_doc(path: &Path, format: &str, json_schema: bool, include_private: bool, 
         return cmd_doc_coverage(&tree, coverage_threshold);
     }
     if check {
-        return cmd_doc_check(&tree, format);
+        let lint_config = build_lint_config_for(path);
+        return cmd_doc_check(&tree, format, &lint_config, strict);
     }
     if mutate_contracts {
         return cmd_doc_mutate_contracts(&tree, format, if real_exec { Some(&src) } else { None });
@@ -1672,7 +1704,8 @@ fn cmd_doc_workspace(
         return cmd_doc_coverage(&tree, coverage_threshold);
     }
     if check {
-        return cmd_doc_check(&tree, format);
+        let lint_config = build_lint_config_for(dir);
+        return cmd_doc_check(&tree, format, &lint_config, strict);
     }
     if mutate_contracts {
         // Plan 45 Ф.29.4: workspace-mode mutation testing real-exec.
@@ -1745,7 +1778,50 @@ struct CheckIssue {
     severity: &'static str,
 }
 
-fn cmd_doc_check(tree: &nova_codegen::doc::DocTree, format: &str) -> Result<()> {
+/// Plan 71 / D127: load manifest near `path` (file or dir) and build a
+/// `LintConfig` reflecting `enforce-stability` flag and canonical fixture
+/// directories. `path` может быть file (нормальный walk-up к nova.toml)
+/// или directory (используем sentinel-файл внутри для canonicalize).
+///
+/// Manifest не найден → default lenient config (strict_stability=false).
+fn build_lint_config_for(path: &Path) -> nova_codegen::doc::LintConfig {
+    let mut cfg = nova_codegen::doc::LintConfig::default();
+    // `find_manifest` ожидает существующий path (canonicalize'ит). Для
+    // directory передаём sentinel-файл внутри (он не обязан существовать —
+    // canonicalize упадёт и мы fallback'нем к walking parents from dir).
+    let manifest = if path.is_dir() {
+        // Используем any-file-like sentinel: parent walk from <dir>/anything
+        // даст nova.toml в самом <dir> либо выше.
+        nova_codegen::manifest::find_manifest(&path.join("__lint_probe__"))
+            .or_else(|| {
+                // Fallback: walking parents from path itself, ищем nova.toml
+                // через manual loop (find_manifest требует canonicalize).
+                let mut dir = path.to_path_buf();
+                loop {
+                    let toml = dir.join("nova.toml");
+                    if toml.is_file() {
+                        return nova_codegen::manifest::parse_manifest(&toml, &dir);
+                    }
+                    if !dir.pop() {
+                        return None;
+                    }
+                }
+            })
+    } else {
+        nova_codegen::manifest::find_manifest(path)
+    };
+    if let Some(m) = manifest {
+        cfg.strict_stability = m.enforce_stability;
+    }
+    cfg
+}
+
+fn cmd_doc_check(
+    tree: &nova_codegen::doc::DocTree,
+    format: &str,
+    lint_config: &nova_codegen::doc::LintConfig,
+    strict: bool,
+) -> Result<()> {
     let mut issues: Vec<CheckIssue> = Vec::new();
     // Broken links.
     for link in &tree.links {
@@ -1772,13 +1848,14 @@ fn cmd_doc_check(tree: &nova_codegen::doc::DocTree, format: &str) -> Result<()> 
             }
         }
     }
-    // Lint violations.
-    for v in nova_codegen::doc::run_lints(tree) {
+    // Lint violations. Plan 71 / D127: severity-aware — `public-missing-stability`
+    // emit'ится с Warning по default; Error только под `enforce-stability = true`.
+    for v in nova_codegen::doc::run_lints(tree, lint_config) {
         issues.push(CheckIssue {
             rule: v.rule.to_string(),
             item_id: v.item_id,
             message: v.message,
-            severity: "error",
+            severity: v.severity.as_str(),
         });
     }
 
@@ -1794,7 +1871,11 @@ fn cmd_doc_check(tree: &nova_codegen::doc::DocTree, format: &str) -> Result<()> 
         });
     }
 
-    let has_errors = issues.iter().any(|i| i.severity == "error");
+    // Plan 71 / D127: `--strict` эскалирует warnings до errors для CI gate'а.
+    // Без `--strict` только true-error severity блокирует exit 1.
+    let has_errors = issues
+        .iter()
+        .any(|i| i.severity == "error" || (strict && i.severity == "warning"));
 
     if format == "json" {
         // Plan 45 Ф.24.4: structured JSON output for CI.
@@ -2117,6 +2198,7 @@ fn cmd_doc_watch(
     run_doc_tests: bool,
     check: bool,
     coverage: bool,
+    strict: bool,
 ) -> Result<()> {
     // Plan 45 Ф.34.2: use WatchCache для incremental parse.
     let mut cache = nova_codegen::doc::watch_cache::WatchCache::new();
@@ -2153,7 +2235,8 @@ fn cmd_doc_watch(
                     if coverage {
                         let _ = cmd_doc_coverage(&tree, None);
                     } else if check {
-                        let _ = cmd_doc_check(&tree, format);
+                        let lint_config = build_lint_config_for(path);
+                        let _ = cmd_doc_check(&tree, format, &lint_config, strict);
                     } else if run_doc_tests {
                         let summary = nova_codegen::doc::test_runner::run_doc_tests_with_source(&tree.doc_tests, Some(&src));
                         let _ = print_doc_test_summary(summary);

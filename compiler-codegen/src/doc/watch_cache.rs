@@ -84,6 +84,20 @@ impl WatchCache {
         // Type-check + infer effects (тот же pipeline что cmd_doc делает).
         let _ = crate::types::check_module(&module);
         crate::types::infer_effects(&mut module);
+        // Plan 71 / D127: seed peer_files[0].path для doc::collect →
+        // DocModule.source_paths → fixture-detection в lints. Parser
+        // оставляет peer_files пустым; `nova doc` watch single-file mode
+        // не зовёт resolve_imports_inline, поэтому seed'им здесь.
+        if module.peer_files.is_empty() {
+            module.peer_files.push(crate::ast::PeerFile {
+                path: path.to_path_buf(),
+                file_id: crate::diag::MAIN_FILE_ID,
+                imports: module.imports.clone(),
+                items_here: module.items.clone(),
+                imported_item_names: std::collections::HashSet::new(),
+                is_entry_module: true,
+            });
+        }
         let arc = Arc::new(module);
         self.entries.insert(path.to_path_buf(), CacheEntry {
             mtime,
