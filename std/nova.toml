@@ -36,6 +36,16 @@ repository = "https://github.com/nv-lang/nova.git"
 [lib]
 src = "."
 
+# Plan 71 / D127: opt-in строгий enforcement правила
+# `public-missing-stability` (Plan 45 §11.5 №7). Severity →
+# `error`, что блокирует `nova doc --check` (exit 1) и CI gate
+# при каждом exported item без `#stable`/`#unstable`/`#experimental`
+# annotation. Stdlib обязан документировать stability tier на каждом
+# элементе публичного API (semver commitments). User crates по
+# умолчанию (без этого flag'а) получают `warning`, который видим
+# в stderr, но не блокирует CI.
+enforce-stability = true
+
 # Stdlib не имеет внешних зависимостей — использует только
 # prelude и собственные модули.
 [dependencies]
