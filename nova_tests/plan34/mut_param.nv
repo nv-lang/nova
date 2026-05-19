@@ -1,0 +1,25 @@
+// Plan 72 P1-A: a `mut`-modifier on a function parameter is accepted by the
+// parser, and mutation through the parameter is visible to the caller
+// (records are reference types).
+//
+// History: this was the Plan 34 negative test `negative_mut_param`
+// (`// EXPECT_COMPILE_ERROR expected identifier, got `mut``). That file
+// carried its own regression marker — "если парсер расширят поддержкой
+// mut-param, тест провалится — нужно обновить/удалить". Plan 72 P1-A landed
+// mut-param support, so it is converted here into a positive regression guard.
+
+module plan34.mut_param
+
+type Counter { mut value int }
+
+fn bump(mut c Counter) -> () {
+    c.value = c.value + 1
+}
+
+test "P1-A — mut-параметр функции принимается парсером и мутирует поле" {
+    let c = Counter { value: 0 }
+    bump(c)
+    bump(c)
+    bump(c)
+    assert(c.value == 3)
+}
