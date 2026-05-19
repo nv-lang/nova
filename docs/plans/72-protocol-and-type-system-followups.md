@@ -129,42 +129,31 @@ type RuntimeNoneError  // same
 
 ---
 
-### P1-C — Result[T,E] 5 методов: неверный return type в codegen
+### ✅ ЗАКРЫТ P1-C — Result[T,E] 5 методов: неверный return type в codegen
 
-**Что сломано:** `unwrap`, `unwrap_or`, `map`, `map_err`,
-`unwrap_or_else` всегда возвращают `nova_int` вместо `T`/`E`.
+**Что было сломано:** `unwrap`, `unwrap_or`, `map`, `map_err`,
+`unwrap_or_else` всегда возвращали `nova_int` вместо `T`/`E`.
 
-**Корень:** `type_of_method_call_c` hardcode'ит `nova_int` для generic
-return-type когда `T` ещё не substituted. Требует Plan 59 Ф.7.5
-(sum-type mono extension).
+**Фикс (Plan 72 P1-C, 2026-05-19):** `CEmitter.result_type_params:
+HashMap<String, (String, String)>` — при `let v: Result[T, E] = ...`
+запоминаем `(T_c, E_c)`. `infer_expr_c_type` и emit-paths для
+`unwrap`/`unwrap_or`/`unwrap_or_else` используют правильный тип через
+`extract_result_type_params` + `cast_from_nova_int`. Без Plan 59.
 
-**Что сейчас:** в Plan 62.A.bis Ф.4 — defer до Plan 59. Зависимость
-явная.
-
-**Зависимость:** Plan 59 (`59-tuple-monomorphization.md`) уже закрыт как
-infrastructure; Ф.7.5 — extension для sum-type methods return-type
-inference. Это отдельный 1-2 dev-дня sprint в Plan 59 followup или
-standalone sub-plan.
+**Тесты:** `nova_tests/plan72/p1c_result_type_params_pos.nv` — 6 cases ✅.
 
 ---
 
-### P2-A — TryFrom / TryInto protocols (62.E.bis)
+### ✅ ЗАКРЫТ P2-A — TryFrom / TryInto protocols (62.E.bis)
 
-**Что заблокировано:**
+**Оригинальный blocker:** `Fail[E]` effect row в protocol-методе
+запрещён Plan 56 Ф.2.7. Без vtable effect не пробрасывается.
 
-```nova
-protocol TryFrom[T] {
-    fn from(v T) -> Result[Self, RuntimeError]
-}
-```
+**Разблокировка (migration path b, 2026-05-19):** `Result[Self, E]`
+вместо `Fail[E]` effect row. Caller'ы матчат/unwrap'ят Result вместо
+`?` propagation. Declarations в `std/prelude/protocols.nv`.
 
-Protocol-method с effect return-type (`Result` с runtime error) требует
-Plan 56 Ф.2.7 — effects-in-protocol-method-body enforcement в codegen.
-Без этого codegen не знает как routing'ить effect через vtable-like path.
-
-**Scope:** связан с P0 (vtable dispatch) — после P0 diagnostic, Ф.2.7
-из Plan 56 можно реализовать отдельно (~2-3 dev-дня). Разблокирует
-62.E.bis полностью.
+**Тесты:** `nova_tests/plan72/p2a_try_from_into_pos.nv` — 4 cases ✅.
 
 ---
 
@@ -203,20 +192,24 @@ W_PRELUDE_SHADOW (D125). Фикс — в `emit_record_lit` проверять ч
 
 ---
 
-### P3-B — Full vtable codegen для erased dispatch
+### ✅ ЗАКРЫТ P3-B — Full vtable codegen для erased dispatch
 
-**Что нужно:** когда P0 diagnostic введён (`E7201` на erased method
-call), следующий шаг — реально **сделать erased dispatch рабочим**
-через vtable. Это Plan 56 Ф.1/Ф.2/Ф.3 architecture полностью — уже
-задизайнено в плане.
+**Что было нужно:** после P0 E7201 diagnostic — реализовать vtable
+dispatch, чтобы Cases B + C из `protocol_as_value_probe.nv` работали.
 
-**Зависимость:** Plan 03 (multi-crate ecosystem) — не нужен для
-single-crate. Т.е. vtable codegen реально можно сделать раньше без
-Plan 03 — это отдельный sprint (~5-10 dev-дней).
+**Реализация (Plan 72 P3-B, 2026-05-19):**
+- `CEmitter` + 4 новых поля: `protocol_method_registry`, `protocol_var_vtable`,
+  `emitted_vtable_types`, `emitted_vtable_instances`
+- `emit_protocol_vtable_companion` (~120 LOC): для `let mut x Iter[int] = c`
+  генерирует `NovaVtable_Iter_nova_int` struct typedef, thunk functions,
+  vtable instance + companion variable `__vt_x`
+- E7201 block расширен: проверяет `protocol_var_vtable` → dispatch через
+  `__vt_x->method(x, args)` если vtable есть
+- P0 negative fixture обновлён → positive test (P3-B supersedes E7201 для
+  этого случая). Rust unit test переименован в `p0_erased_now_dispatches_via_vtable`.
 
-**Что даёт:** Cases B + C из `protocol_as_value_probe.nv` перестают
-быть E7201 и становятся рабочими. `fn foo(x Iter[int])` с method-call
-наконец работает.
+**Тесты:** `nova_tests/plan72/p3b_vtable_dispatch_pos.nv` — 3 cases ✅.
+`nova_tests/plan72/p0_erased_method_call_neg.nv` — теперь positive test ✅.
 
 ---
 
@@ -229,11 +222,13 @@ Plan 03 — это отдельный sprint (~5-10 dev-дней).
 | P1-B — empty-sum syntax | ✅ ЗАКРЫТ | `type X` без тела; `type X { }` тоже; пустой C typedef |
 | P2-B — structural inference without turbofish | ✅ ЗАКРЫТ | Source 2e в `resolve_mono_type_args`: смотрим `next()→Option[U]` return type |
 | P3-A — record-shadow Range | ✅ ЗАКРЫТ | `emit_record_lit` проверяет `record_schemas` до `sum_schema_registry` |
-| P1-C — Result[T,E] 5 методов | ⏳ DEFERRED | Зависит Plan 59 Ф.7.5 |
-| P2-A — TryFrom/TryInto | ⏳ DEFERRED | Зависит Plan 56 Ф.2.7 |
-| P3-B — full vtable codegen | ⏳ DEFERRED | Plan 56 Ф.1–Ф.3, отдельный sprint |
+| P1-C — Result[T,E] 5 методов | ✅ ЗАКРЫТ | `result_type_params` в `CEmitter`; `cast_from_nova_int`; без Plan 59 |
+| P2-A — TryFrom/TryInto | ✅ ЗАКРЫТ | Migration path (b): `Result[Self, E]` вместо `Fail[E]`; в `std/prelude/protocols.nv` |
+| P3-B — full vtable codegen | ✅ ЗАКРЫТ | `NovaVtable_*` struct + thunks + companion `__vt_x`; P0 fixture → positive |
 
-Тесты: `nova_tests/plan72/` — 5 fixtures, все 11 test cases ✅.
+Тесты: `nova_tests/plan72/` — 8 fixtures, все 25 test cases ✅
+(p0: 1, p1a: 2, p1b: 2, p1c: 6, p2a: 4, p2b: 3, p3a: 3, p3b: 3).
+Rust unit test: `p0_erased_now_dispatches_via_vtable` в `test_runner.rs` ✅.
 
 ---
 

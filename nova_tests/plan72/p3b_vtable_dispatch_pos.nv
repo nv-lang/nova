@@ -1,0 +1,63 @@
+// Plan 72 P3-B: Full vtable codegen for protocol-as-value (existential dispatch).
+//
+// Before this fix, calling a method on a variable declared with a protocol type
+// (`let x Iter[int] = c; x.next()`) would produce compile error E7201 (Plan 72 P0).
+//
+// With P3-B, the compiler generates a NovaVtable_Iter_nova_int struct, thunk functions,
+// and a companion vtable variable, then dispatches through __vt_x->next(x).
+//
+// Cases B and C from `protocol_as_value_probe.nv` now work instead of E7201.
+
+module plan72.p3b_vtable_dispatch_pos
+
+type IntCounter {
+    mut cur int
+    end int
+}
+
+fn IntCounter mut @next() -> Option[int] => {
+    if @cur < @end {
+        let v = @cur
+        @cur += 1
+        Some(v)
+    } else {
+        None
+    }
+}
+
+fn consume_iter(mut x Iter[int]) -> int => {
+    let mut count = 0
+    let mut go = true
+    loop {
+        if !go { break }
+        let r = x.next()
+        if r.is_some() {
+            count += 1
+        } else {
+            go = false
+        }
+    }
+    count
+}
+
+test "P3-B — method call on existential Iter[int] (Case B)" {
+    let c = IntCounter { cur: 0, end: 3 }
+    let mut x Iter[int] = c
+    let r = x.next()
+    assert(r.is_some())
+}
+
+test "P3-B — protocol-as-value next() returns None after exhaustion" {
+    let c = IntCounter { cur: 0, end: 1 }
+    let mut x Iter[int] = c
+    let r0 = x.next()
+    let r1 = x.next()
+    assert(r0.is_some())
+    assert(r1.is_none())
+}
+
+test "P3-B — consume_iter via protocol-as-value (Case C)" {
+    let c = IntCounter { cur: 0, end: 3 }
+    let n = consume_iter(c)
+    assert(n == 3)
+}

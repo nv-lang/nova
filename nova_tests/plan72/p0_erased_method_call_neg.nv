@@ -1,15 +1,20 @@
-// EXPECT_COMPILE_ERROR E7201
+// Plan 72 P0 (historical) — E7201 diagnostic for erased protocol method call.
 //
-// Plan 72 P0 (E7201): method call on erased protocol type — negative test.
+// ORIGINAL STATUS (before P3-B): This fixture was a NEGATIVE test.
+// `let mut x Iter[int] = c; x.next()` produced compile error E7201 —
+// "method call on erased protocol type" — instead of silently generating
+// broken C code. E7201 replaced the silent miscompilation of P0.
 //
-// Erased protocol types (existential) are void* in codegen — there is no
-// vtable at this stage (Plan 03 / Plan 56 Ф.3 deferred). Calling a method
-// on such a variable silently returned NULL (wrong result) before this fix.
+// UPDATED STATUS (Plan 72 P3-B, 2026-05-19): P3-B implements full vtable
+// codegen for protocol-as-value (existential) dispatch. The E7201 block now
+// dispatches through the generated vtable when a concrete type is known.
+// This fixture is now a POSITIVE test — the same code that was E7201 in P0
+// now compiles and runs correctly via vtable dispatch.
 //
-// This test must produce compile error E7201 instead of silently
-// generating broken C code.
+// The Rust unit test `e7201_erased_protocol_method_call_fails` is updated
+// to `p0_erased_now_dispatches_via_vtable` — verifying P3-B success.
 //
-// Regression: prior behaviour was `compile OK, runtime WRONG (None instead of Some)`.
+// Canonical P3-B positive tests: nova_tests/plan72/p3b_vtable_dispatch_pos.nv
 
 module plan72.p0_erased_method_call_neg
 
@@ -28,10 +33,10 @@ fn IntCounter mut @next() -> Option[int] => {
     }
 }
 
-// This should fail: x is declared as the erased protocol type Iter[int].
-// Calling x.next() has no vtable — must produce E7201.
-test "E7201 — method call on existential Iter[int] is compile error" {
+// P3-B: this now compiles and dispatches via NovaVtable_Iter_nova_int.
+test "P0→P3-B — method call on existential Iter[int] now works via vtable" {
     let c = IntCounter { cur: 0, end: 3 }
     let mut x Iter[int] = c
-    let _r = x.next()   // E7201: method call on erased protocol type `Iter[int]`
+    let r = x.next()
+    assert(r.is_some())
 }
