@@ -219,7 +219,8 @@ impl ExternalRegistry {
                     "u64" => "uint64_t".into(),
                     "u32" => "uint32_t".into(),
                     "u16" => "uint16_t".into(),
-                    "u8"  => "uint8_t".into(),
+                    // Plan 70.4 Ф.4: u8 → nova_byte (unified with byte).
+                    "u8"  => "nova_byte".into(),
                     "f64" => "nova_f64".into(),
                     "f32" => "nova_f32".into(),
                     "bool" => "nova_bool".into(),

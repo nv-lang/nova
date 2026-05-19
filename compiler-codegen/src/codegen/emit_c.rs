@@ -2506,7 +2506,8 @@ impl CEmitter {
     /// int64 (например 0xCBF29CE484222325 как FNV-64 offset).
     fn emit_typed_int_literal(n: i64, ty_c: &str) -> String {
         match ty_c {
-            "uint8_t" | "uint16_t" | "uint32_t" => {
+            // Plan 70.4 Ф.4: nova_byte = typedef uint8_t — same U-suffix treatment.
+            "nova_byte" | "uint8_t" | "uint16_t" | "uint32_t" => {
                 // Unsigned 32-bit и меньше: U-suffix + cast к точному типу.
                 // n хранится как i64; для отрицательных значений или > i32::MAX
                 // используем явное приведение через хеш-bit-pattern.
@@ -2682,7 +2683,10 @@ impl CEmitter {
                     "u64"  => Ok("uint64_t".into()),
                     "u32"  => Ok("uint32_t".into()),
                     "u16"  => Ok("uint16_t".into()),
-                    "u8"   => Ok("uint8_t".into()),
+                    // Plan 70.4 Ф.4: u8 → nova_byte (same as byte). Both are
+                    // typedef uint8_t under the hood — distinct C names caused
+                    // Option[byte] ≠ Option[u8] mangle collapse.
+                    "u8"   => Ok("nova_byte".into()),
                     "f64"  => Ok("nova_f64".into()),
                     "f32"  => Ok("nova_f32".into()),
                     "bool" => Ok("nova_bool".into()),
@@ -18262,8 +18266,11 @@ impl CEmitter {
     /// в том, чтобы быть «promotable» к более типизированному операнду.
     fn is_typed_integer(ty: &str) -> bool {
         matches!(ty,
+            // C stdint types from Ф.2 sized-int
             "uint8_t" | "uint16_t" | "uint32_t" | "uint64_t" |
-            "int8_t" | "int16_t" | "int32_t"
+            "int8_t" | "int16_t" | "int32_t" |
+            // Plan 70.4 Ф.4: nova_byte = typedef uint8_t — treat as typed 8-bit unsigned.
+            "nova_byte"
         )
     }
 
@@ -18296,7 +18303,8 @@ impl CEmitter {
             ("u64",  "MAX", "UINT64_MAX",            "uint64_t"),
             ("u32",  "MAX", "UINT32_MAX",            "uint32_t"),
             ("u16",  "MAX", "UINT16_MAX",            "uint16_t"),
-            ("u8",   "MAX", "UINT8_MAX",             "uint8_t"),
+            // Plan 70.4 Ф.4: u8 → nova_byte (unified); "byte" alias same.
+            ("u8",   "MAX", "((nova_byte)UINT8_MAX)", "nova_byte"),
             ("byte", "MAX", "((nova_byte)UINT8_MAX)", "nova_byte"),
             // Char (codepoint)
             ("char", "MAX", "((nova_int)0x10FFFFLL)", "nova_int"),

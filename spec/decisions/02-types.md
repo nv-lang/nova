@@ -3703,3 +3703,57 @@ same alignment, same wire-format. Only difference — C type identifier
 - D54 — `as`-cast narrowing (explicit char↔int conversion)
 - Plan 70 — parent family (silent type bugs от Nova↔C collapse)
 - Plan 70.4 — sibling proposal (f32/f64 generic-container distinct mangling)
+
+---
+
+## D129. `int` как alias `i64` в bootstrap Nova
+
+**Решение.** Тип `int` в Nova bootstrap является **alias** для `i64`
+(64-bit signed integer). Оба маппируются в C-тип `nova_int`
+(`typedef int64_t`). Отсутствие distinction в codegen — **намеренно**:
+это не collapse-баг (как в Plan 70.3 `char/int`), а архитектурный
+bootstrap-invariant.
+
+**Мотивация.** Audit Plan 70.4 выявил, что `int` и `i64` используют
+один C-тип. Mangle для `Map[int, V]` и `Map[i64, V]` идентичен. В
+отличие от других collapse-паттернов Ф.1/Ф.2 плана 70.4 (ABI-real
+silent miscompilation) или Plan 70.3 char/int (semantically distinct
+types), `int` ≡ `i64` является семантическим инвариантом — оба
+означают 64-bit signed integer без разницы в значении или поведении.
+Nova bootstrap targets x86_64 only (fixed 64-bit pointer width).
+
+**Industry baseline.**
+- Rust: `isize` distinct от `i64` (platform-pointer width varies на 32-bit)
+- Go: `int` distinct от `int64` (platform-pointer width)
+- C#: `int` = alias `System.Int32` (semantically identical)
+- Python/Java: нет fixed-width integer aliases
+- **Nova:** `int` = alias `i64` — правильная аналогия C# для fixed-width platform
+
+**Future evolution path.** Если Nova добавит multi-arch targets
+(32-bit, WASM), `int` может стать platform-pointer-width type аналогично
+Rust's `isize`. На этот момент потребуется breaking change в codegen
+mangling — `Map[int, V]` и `Map[i64, V]` станут distinct. D129
+explicitly documents текущее bootstrap decision как **alias-based**,
+чтобы будущий architect не принял отсутствие distinction за bug.
+Migration path: introduce `nova_iptr` (platform-width) typedef, make
+`int` resolve to it, maintain `nova_int` = `int64_t` for `i64`.
+
+**Codegen.** Без изменений. `type_ref_to_c "int" => "nova_int"` и
+`"i64" => "nova_int"` — оба корректны и эквивалентны по спецификации.
+Distinct mangling не вводится, т.к. это создало бы необходимость явно
+выбирать `int` vs `i64` для каждого generic instantiation — user-hostile
+и ортогонально семантической разнице (которой нет).
+
+**Acceptance criteria.**
+- [x] Ф.3 spec D129 (этот блок) — формализует alias decision
+- [x] Нет codegen изменений — intentional collapse документирован
+- [ ] Future: multi-arch migration path зафиксирован (Migration note выше)
+
+**Реализовано:** [Plan 70.4](../../docs/plans/70.4-primitive-type-distinction-complete.md)
+  — Ф.3 closed 2026-05-19.
+
+**Связь:**
+- D54 — `as`-cast narrowing semantics
+- D128 — Plan 70.3 char/int distinction (contrast: там distinction нужна)
+- Plan 70.4 — parent plan (этот блок = Plan 70.4 Ф.3)
+- Plan 70 — parent family (silent type bugs)
