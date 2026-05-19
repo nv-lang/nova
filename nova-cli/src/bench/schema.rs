@@ -219,8 +219,14 @@ pub fn run_result_to_json(meta: &ReproMeta, benches: &[AnalyzedBench]) -> Value 
 }
 
 /// Парсинг run JSON для `nova bench diff` consumption.
+///
+/// `format_version` хранится для будущей JSON v2 schema migration —
+/// consumer'ы могут проверять `parsed.format_version != "1"` и fall'нуть
+/// fast. Сейчас только `nova bench v1` всё что мы emit'им, поэтому
+/// поле не читается в текущем pipeline.
 #[derive(Debug, Clone)]
 pub struct RunResultParsed {
+    #[allow(dead_code)] // reserved for v2 schema migration
     pub format_version: String,
     pub metadata: ReproMeta,
     pub benches: Vec<AnalyzedBench>,

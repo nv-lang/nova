@@ -14,7 +14,7 @@
 //!
 //! Subprocess git (без libgit2 dep — feedback_third_party_libs).
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::Command;
 
 use anyhow::{anyhow, bail, Result};
@@ -306,6 +306,10 @@ pub fn default_branch() -> String {
 }
 
 /// Render brief summary of history-add command.
+///
+/// Reserved for `nova bench history-add --help` extended description
+/// (currently clap-derive embeds the doc-comment instead).
+#[allow(dead_code)]
 pub fn explain() -> &'static str {
     "Appends a bench result JSON to an orphan git branch (default \
      `bench-history`). The orphan branch is independent — no shared \

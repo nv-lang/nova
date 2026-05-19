@@ -16,7 +16,7 @@
 //! documentation purposes (false positives = string literals containing `foo(` are
 //! acceptable — this is for discoverability, not correctness).
 
-use super::doctree::{DocItem, DocTree, ItemKind, ScrapedExample};
+use super::doctree::{DocTree, ItemKind, ScrapedExample};
 use std::path::{Path, PathBuf};
 
 const MAX_EXAMPLES: usize = 3;
