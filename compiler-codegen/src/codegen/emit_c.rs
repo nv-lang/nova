@@ -2944,8 +2944,10 @@ impl CEmitter {
         format!("({})({})", target_ty, value)
     }
 
-    /// Plan 72 P3-B: generate vtable struct, thunk functions, vtable instance,
-    /// and a companion variable for a protocol-typed binding.
+    /// Plan 72 P3-B (updated): generate vtable struct typedef, NovaBox typedef,
+    /// thunk functions, and vtable instance for a protocol-typed binding.
+    /// Returns (vtable_instance_name, box_c_type) on success, None on failure.
+    /// Caller emits the box initialization; no companion variable is generated here.
     ///
     /// Returns the companion C variable name (e.g. `"__vt_x"`) on success,
     /// or `None` if vtable generation is not possible (missing registry entry,
@@ -2956,11 +2958,10 @@ impl CEmitter {
     /// - Emits the companion variable declaration into the current body via `self.line()`.
     fn emit_protocol_vtable_companion(
         &mut self,
-        var_name: &str,
         proto_name: &str,
         type_args: &[String],   // concrete C types for each protocol type param
         concrete_c_ty: &str,    // C type of the assigned value, e.g. "Nova_IntCounter*"
-    ) -> Option<String> {
+    ) -> Option<(String, String)> {  // (vtable_instance_name, box_c_type)
         // Require at least one type arg and a pointer concrete type (Nova_X*).
         if type_args.is_empty() { return None; }
         if !concrete_c_ty.ends_with('*') { return None; }
@@ -2980,8 +2981,8 @@ impl CEmitter {
             .join("_");
 
         let vtable_struct = format!("NovaVtable_{}_{}", proto_name, args_mangled);
+        let box_c_type = format!("NovaBox_{}_{}", proto_name, args_mangled);
         let vtable_instance = format!("_vt_{}_{}__{}", proto_name, args_mangled, concrete_name);
-        let companion = format!("__vt_{}", var_name);
 
         // Get protocol method registry entry (clone to avoid borrow conflict).
         let (type_params, methods) = self.protocol_method_registry.get(proto_name)?.clone();
@@ -2992,7 +2993,7 @@ impl CEmitter {
             .map(|(k, v)| (k.clone(), v.clone()))
             .collect();
 
-        // ── Emit vtable struct typedef (once per (proto, type_args)) ──────────
+        // ── Emit vtable struct typedef + NovaBox typedef (once per (proto, type_args)) ──
         if !self.emitted_vtable_types.contains(&vtable_struct) {
             self.emitted_vtable_types.insert(vtable_struct.clone());
             let old_subst = std::mem::replace(&mut self.current_type_subst, subst.clone());
@@ -3011,10 +3012,16 @@ impl CEmitter {
                 fields.push_str(&format!("    {} (*{})({}); \n", ret_c, m.name, params_str));
             }
             self.current_type_subst = old_subst;
+            // Vtable struct typedef.
             self.mono_fwd_decls.push_str(&format!(
-                "/* Plan 72 P3-B: vtable struct for {} instantiated with {} */\n\
+                "/* Plan 72 P3-B: vtable for {} instantiated with {} */\n\
                  typedef struct {vts} {{\n{fields}}} {vts};\n",
                 proto_name, args_mangled, vts = vtable_struct, fields = fields
+            ));
+            // Fat-pointer box struct typedef: { void* data; const VT* vtable; }.
+            self.mono_fwd_decls.push_str(&format!(
+                "typedef struct {{ void* data; const {vts}* vtable; }} {box};\n",
+                vts = vtable_struct, box = box_c_type
             ));
         }
 
@@ -3034,15 +3041,12 @@ impl CEmitter {
                 let extra_param_tys: Vec<String> = m.params.iter()
                     .filter_map(|p| self.type_ref_to_c(&p.ty).ok())
                     .collect();
-                // Extra param declarations in the thunk signature.
                 let extra_sig = extra_param_tys.iter().enumerate()
                     .map(|(i, t)| format!(", {} a{}", t, i))
                     .collect::<String>();
-                // Arguments forwarded to concrete method (skip void* self, add cast).
                 let extra_fwd = (0..extra_param_tys.len())
                     .map(|i| format!(", a{}", i))
                     .collect::<String>();
-                // Concrete method mangled name: Nova_<TypeName>_method_<methodName>
                 let concrete_method = format!("Nova_{}_method_{}", concrete_name, m.name);
                 self.mono_fwd_decls.push_str(&format!(
                     "static {ret_c} {thunk}(void* self{extra_sig}) {{\n\
@@ -3066,9 +3070,7 @@ impl CEmitter {
             ));
         }
 
-        // ── Emit companion variable in function body ──────────────────────────
-        self.line(&format!("const {}* {} = &{};", vtable_struct, companion, vtable_instance));
-        Some(companion)
+        Some((vtable_instance, box_c_type))
     }
 
     fn type_ref_to_c(&self, ty: &TypeRef) -> Result<String, String> {
@@ -9970,20 +9972,25 @@ impl CEmitter {
                 } else {
                     self.result_type_params.remove(&binding);
                 }
-                // Plan 72 P3-B: if this var is protocol-typed and RHS has a concrete
-                // pointer type, generate a vtable + companion variable.
+                // Plan 72 P3-B (fat pointer): if this var is protocol-typed and RHS
+                // has a concrete pointer type, generate vtable + NovaBox fat pointer.
+                // The box initialization replaces the plain `void* x = val` declaration
+                // (see line below). We stash (vtable_instance, box_c_type) here.
+                let mut protocol_box: Option<(String, String)> = None; // (vtable_instance, box_c_type)
                 if let Some(proto_name) = self.protocol_vars.get(&binding).cloned() {
-                    // Get type args from the type annotation (e.g. Iter[int] → ["nova_int"]).
                     let type_args: Vec<String> = if let Some(TypeRef::Named { generics, .. }) = &decl.ty {
                         generics.iter().filter_map(|g| self.type_ref_to_c(g).ok()).collect()
                     } else { vec![] };
-                    // Get the concrete C type of the RHS.
                     let concrete_c = self.infer_expr_c_type(&decl.value);
                     if !type_args.is_empty() && concrete_c.ends_with('*') {
-                        if let Some(companion) = self.emit_protocol_vtable_companion(
-                            &binding, &proto_name, &type_args, &concrete_c
+                        if let Some((vtable_instance, box_c_type)) = self.emit_protocol_vtable_companion(
+                            &proto_name, &type_args, &concrete_c
                         ) {
-                            self.protocol_var_vtable.insert(binding.clone(), companion);
+                            // Override var_types so method dispatch sees the box type.
+                            self.var_types.insert(binding.clone(), box_c_type.clone());
+                            // Keep protocol_var_vtable for backward compat (method dispatch checks it).
+                            self.protocol_var_vtable.insert(binding.clone(), vtable_instance.clone());
+                            protocol_box = Some((vtable_instance, box_c_type));
                         } else {
                             self.protocol_var_vtable.remove(&binding);
                         }
@@ -10089,7 +10096,15 @@ impl CEmitter {
                 if let Some(inner_ty) = self.pending_result_ok_inner_type.take() {
                     self.result_ok_inner_types.insert(binding.clone(), inner_ty);
                 }
-                self.line(&format!("{} {} = {};", ty_c, binding, val));
+                // Plan 72 P3-B (fat pointer): protocol-typed var → NovaBox init.
+                if let Some((vtable_instance, box_c_type)) = &protocol_box {
+                    self.line(&format!(
+                        "{} {} = {{ .data = (void*)({}), .vtable = &{} }};",
+                        box_c_type, binding, val, vtable_instance
+                    ));
+                } else {
+                    self.line(&format!("{} {} = {};", ty_c, binding, val));
+                }
                 // Plan 11 Ф.4: RHS — method value `obj.@method` или `Type.@method`.
                 // Регистрируем binding в fn_param_sigs так чтобы `f(args)` работало.
                 // Plan 11 Ф.5: `expr as fn(P...) -> R` — type annotation для disambig
@@ -13974,11 +13989,25 @@ impl CEmitter {
                 }
 
                 // Plan 72 P0/P3-B: detect method call on a protocol-typed variable.
-                // If a vtable companion was generated at assignment (P3-B), dispatch through
-                // it. Otherwise emit E7201 (P0) instead of silent NULL.
+                // Fat-pointer dispatch (box): var_types contains NovaBox_* → use .vtable field.
+                // Companion dispatch (legacy, dead after P3-B fat-pointer): protocol_var_vtable.
+                // Otherwise emit E7201 (P0) instead of silent NULL.
                 if let ExprKind::Ident(var_name) = &obj.kind {
                     if let Some(proto_name) = self.protocol_vars.get(var_name.as_str()).cloned() {
-                        // P3-B: vtable dispatch when companion is available.
+                        // P3-B fat pointer: var_types holds NovaBox_* — dispatch via .vtable field.
+                        let var_c_ty = self.var_types.get(var_name.as_str()).cloned().unwrap_or_default();
+                        if var_c_ty.starts_with("NovaBox_") {
+                            let mut extra_args = String::new();
+                            for a in args {
+                                extra_args.push_str(", ");
+                                extra_args.push_str(&self.emit_expr(a.expr())?);
+                            }
+                            return Ok(format!(
+                                "{vn}.vtable->{method}({vn}.data{extra})",
+                                vn = var_name, method = method, extra = extra_args
+                            ));
+                        }
+                        // P3-B legacy companion (kept for backward compat, normally unreachable).
                         if let Some(vt_companion) = self.protocol_var_vtable.get(var_name.as_str()).cloned() {
                             let obj_c = self.emit_expr(obj)?;
                             let mut call_args = vec![obj_c];
