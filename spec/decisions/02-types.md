@@ -3630,3 +3630,76 @@ CI gate fails если added counts превышают baseline без updates.
 - Plan 48 — monomorphization (упрощает Cat B → меньше erasure)
 - Plan 36 — diagnostic infra (R7 structured format)
 - [docs/codegen-erasure-sites.md](../../docs/codegen-erasure-sites.md) — Cat B/D inventory
+
+---
+
+## D128. `char` distinct from `int` в codegen mono'd generics
+
+**Решение.** Тип `char` имеет собственный C-typedef `nova_char` (alias
+над `int64_t`, same underlying storage как `nova_int`, но distinct C
+identifier). Generic mono mangling использует `nova_char` separately от
+`nova_int`, поэтому `Option[char]` и `Option[int]` производят разные
+C-типы `NovaOpt_nova_char` vs `NovaOpt_nova_int` — структурно
+неотличимы становятся **различимы**.
+
+**Мотивация.** До Plan 70.3 оба `char` и `int` map'ились в один C-тип
+`nova_int`. Результат — silent type collapse в generic mono:
+
+- `Option[char]` и `Option[int]` mangle в идентичный `NovaOpt_nova_int`
+- `[]char` и `[]int` обе → `NovaArray_nova_int*`
+- `Map[char, V]` и `Map[int, V]` → одинаковая mangled name
+
+Concrete observed bug (триггер плана): `str @char_at(idx int) -> Option[int]`
+declared, returned `Option[char]` де-факто. Type-checker не ловил
+поскольку C-level structural compatibility. ~50 callers использовали
+char literals (`Some('/')`, `unwrap_or('.')`) в slot expecting
+`Option[int]` — silent collapse через NovaOpt_nova_int. User pre-fix
+2026-05-19 corrected signature, Plan 70.3 — архитектурное предотвращение.
+
+**Industry baseline.** Rust/Swift `char` is distinct primitive (`char`
+vs `u32`); Go has `rune` distinct from `int32`. Nova до Plan 70.3 был
+unusual в C-level collapse. D128 закрывает регрессию.
+
+**Implementation (Plan 70.3 Ф.1-Ф.2).**
+
+1. **Typedef:** `typedef int64_t nova_char;` в `compiler-codegen/nova_rt/nova_rt.h`
+   — zero ABI cost (same storage layout как `nova_int`).
+2. **Codegen mapping:** `type_ref_to_c "char" => "nova_char"` (was
+   `"nova_int"`) в `emit_c.rs` и `external_registry.rs` (двойная sync).
+3. **Array element:** `[]char → NovaArray_nova_char*` (separate
+   instantiation parallel `NovaArray_nova_int*`).
+4. **Option element:** `NovaOpt_nova_char` typedef + constructors +
+   `nova_opt_eq_nova_char` helper.
+5. **CharLit emission:** `'x' → ((nova_char)<codepoint>LL)` (was `(nova_int)`).
+6. **infer_expr_c_type:** `CharLit => "nova_char"` (was `"nova_int"`).
+7. **Runtime fn signatures:** `nova_str_char_at` updated return
+   `NovaOpt_nova_char` (was `NovaOpt_nova_int`).
+
+**Backward compat.** В `emit_binary_op` special-case для
+`Nova_StringBuilder* + char` accepts **обе** `nova_char` AND `nova_int`
+для backward-compat — pre-fix existing code emitted char as `nova_int`,
+existing test binaries reference legacy form. After full migration of
+existing generated C (regen test fixtures), `nova_int` branch может
+быть удалён.
+
+**ABI cost.** Zero. `nova_char` is `typedef int64_t` — same size,
+same alignment, same wire-format. Only difference — C type identifier
+для compiler-level distinction.
+
+**Acceptance criteria.**
+- [x] Ф.1 codegen mapping switch (`emit_c.rs` + `external_registry.rs`)
+- [x] Ф.2 runtime helpers parallel (`NovaArray_DECL(nova_char)`,
+      `NovaOpt_nova_char` constructors + eq helper)
+- [x] Ф.3 audit + fixtures (2 PASS в `nova_tests/plan70_3/`)
+- [ ] Ф.4 type-checker tightening (reject `let x Option[int] = Some('a')`)
+- [x] Ф.5 spec D128 (этот блок)
+- [x] 0 regressions в `nova test` (801 PASS sustained)
+
+**Реализовано:** [Plan 70.3](../../docs/plans/70.3-char-int-mono-distinction.md)
+  — Ф.0-Ф.5 closed 2026-05-19.
+
+**Связь:**
+- D26 — Q-string-indexing (char = codepoint convention)
+- D54 — `as`-cast narrowing (explicit char↔int conversion)
+- Plan 70 — parent family (silent type bugs от Nova↔C collapse)
+- Plan 70.4 — sibling proposal (f32/f64 generic-container distinct mangling)

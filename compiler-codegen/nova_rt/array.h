@@ -103,6 +103,12 @@
 NOVA_ARRAY_DECL(nova_int)
 NOVA_ARRAY_IMPL(nova_int)
 
+/* Plan 70.3: nova_char distinct typedef над int64_t — same storage
+ * как nova_int, но distinct C type для generic mono mangling.
+ * Prevents Option[char]↔Option[int] structural collapse. */
+NOVA_ARRAY_DECL(nova_char)
+NOVA_ARRAY_IMPL(nova_char)
+
 NOVA_ARRAY_DECL(nova_byte)
 NOVA_ARRAY_IMPL(nova_byte)
 
@@ -205,6 +211,18 @@ static inline NovaOpt_nova_int nova_make_NovaOpt_nova_int_None(void) {
     NovaOpt_nova_int r; r.tag = NOVA_TAG_Option_None; r.value = 0; return r;
 }
 static inline nova_bool nova_opt_eq_nova_int(NovaOpt_nova_int a, NovaOpt_nova_int b) {
+    if (a.tag != b.tag) return 0;
+    if (a.tag == NOVA_TAG_Option_None) return 1;
+    return a.value == b.value;
+}
+/* Plan 70.3: nova_char Option constructors/eq mirror nova_int. */
+static inline NovaOpt_nova_char nova_make_NovaOpt_nova_char_Some(nova_char v) {
+    NovaOpt_nova_char r; r.tag = NOVA_TAG_Option_Some; r.value = v; return r;
+}
+static inline NovaOpt_nova_char nova_make_NovaOpt_nova_char_None(void) {
+    NovaOpt_nova_char r; r.tag = NOVA_TAG_Option_None; r.value = 0; return r;
+}
+static inline nova_bool nova_opt_eq_nova_char(NovaOpt_nova_char a, NovaOpt_nova_char b) {
     if (a.tag != b.tag) return 0;
     if (a.tag == NOVA_TAG_Option_None) return 1;
     return a.value == b.value;
@@ -409,10 +427,11 @@ static inline NovaArray_nova_int* nova_str_chars(nova_str s) {
 }
 
 /* ---- nova_str_char_at: codepoint по codepoint-индексу.
- * Возвращает Option[char] = NovaOpt_nova_int. None если idx out-of-range
- * или невалидный UTF-8. O(idx) — линейная итерация по UTF-8. */
-static inline NovaOpt_nova_int nova_str_char_at(nova_str s, nova_int idx) {
-    NovaOpt_nova_int r;
+ * Возвращает Option[char] = NovaOpt_nova_char (Plan 70.3: distinct typedef).
+ * None если idx out-of-range или невалидный UTF-8. O(idx) — линейная
+ * итерация по UTF-8. */
+static inline NovaOpt_nova_char nova_str_char_at(nova_str s, nova_int idx) {
+    NovaOpt_nova_char r;
     r.tag = NOVA_TAG_Option_None;
     r.value = 0;
     if (idx < 0) return r;
