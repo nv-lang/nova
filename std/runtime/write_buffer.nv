@@ -8,7 +8,7 @@
 // std/prelude/collections.nv (`external type`, D126).
 // This file declares ONLY methods via `external fn` (D82).
 
-module std.runtime.write_buffer
+module runtime.write_buffer
 
 
 // ─── WriteBuffer ───
