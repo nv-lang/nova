@@ -3731,7 +3731,24 @@ fn cmd_contracts_counterexample(file: &std::path::Path, fn_name: &str, contract_
 
 // ---------- entry point ----------
 
+/// Точка входа: запускаем всё в потоке с увеличенным стеком (64 MiB).
+///
+/// AST-обходы (parser, type-checker, codegen emit) взаимно рекурсивны
+/// через expr ↔ block ↔ stmt. На Windows стек главного потока по
+/// умолчанию мал — для глубоко вложенных выражений и больших модулей
+/// (особенно в debug-сборке) этого недостаточно. Spawn с explicit
+/// stack_size — тот же паттерн, что в `nova-codegen/src/main.rs`.
 fn main() -> ExitCode {
+    std::thread::Builder::new()
+        .name("nova-main".to_string())
+        .stack_size(64 * 1024 * 1024)
+        .spawn(run)
+        .expect("spawn main thread")
+        .join()
+        .unwrap_or(ExitCode::FAILURE)
+}
+
+fn run() -> ExitCode {
     // Plan 36 R7: guarantee exit=101 on panic (cargo convention, cross-platform).
     // Без этого default Rust panic handler даёт 101 на Unix но 0xC0000409 на Windows.
     std::panic::set_hook(Box::new(|info| {
