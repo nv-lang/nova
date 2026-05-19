@@ -7,7 +7,12 @@ name: nova-doc
 #      missing summaries (exit 1 на любое issue).
 #   2. `nova doc <file> --test` — doc-tests из ```nova fenced blocks.
 #
-# Reproducible: `SOURCE_DATE_EPOCH` фиксирует `generated_at`.
+# Plan 71 follow-up: `SOURCE_DATE_EPOCH` НЕ задаётся на уровне workflow.
+# Если поставить — оно унаследуется в `cargo test --test doc_golden`,
+# и `render_json` начнёт эмитить поле `generated_at`, которое
+# `expected.json` snapshots не содержат → golden drift, 14/14 fail.
+# Если кому-то понадобится bit-for-bit `nova doc` output, ставить SDE
+# per-step (внутри конкретной команды), не на workflow level.
 
 on:
   pull_request:
@@ -18,9 +23,6 @@ on:
       - ".github/workflows/nova-doc.yml"
   push:
     branches: [main]
-
-env:
-  SOURCE_DATE_EPOCH: 1700000000
 
 jobs:
   doc-check:
