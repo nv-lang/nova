@@ -4,13 +4,13 @@
   "doc_tests": [
     {
       "from_id": "nova_tests.doc.fixtures.sections.sample::divide",
-      "full_source": "assert(divide(10, 3) == 6)",
+      "full_source": "assert(divide(10, 3) == 3)",
       "id": "nova_tests.doc.fixtures.sections.sample::doc_test_1",
       "index": 1,
       "modifiers": [
 
       ],
-      "visible_source": "assert(divide(10, 3) == 6)"
+      "visible_source": "assert(divide(10, 3) == 3)"
     }
   ],
   "links": [
@@ -80,7 +80,7 @@
       ],
       "sections": {
         "errors": "Возвращает `DivisionByZero`, если `b == 0`.",
-        "examples": "```nova\nassert(divide(10, 3) == 6)\n```",
+        "examples": "```nova\nassert(divide(10, 3) == 3)\n```",
         "panics": "Никогда не паникует.",
         "since": "0.1.0\n\n#stable"
       },
