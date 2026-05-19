@@ -1,0 +1,70 @@
+// facade_rule_e_smoke.nv — D29 Rule E cleanup regression
+// (commits f6c64d3fb0d + 9d6edcdf253).
+//
+// Verifies что Rule E case (b) — co-existence of `X.nv` (facade)
+// with `X/<sub>.nv` (sub-modules) — работает для prelude pattern:
+//
+//   std/prelude.nv      ← facade, re-export'ит всё через
+//                         `export import std.prelude.core.{...}`
+//   std/prelude/core.nv ← submodule, declares `module prelude.core`
+//   std/prelude/runtime.nv, errors.nv, collections.nv, ...
+//
+// Это **NEW в D29 rev-3** — раньше folder-module и file-module
+// для одного имени конфликтовали. Plan 42 §«Rule E» специально
+// разрешил co-existence как "файл является facade, который
+// re-export'ит peer-folder". Эта rule была формально внесена в
+// spec/decisions/07-modules.md в commit f6c64d3fb0d, а
+// `compiler-codegen/src/imports.rs` recognize'ит оба формата
+// (2-seg + 3-seg) backward-compat per commit 9d6edcdf253.
+//
+// Test smoke: используем имена которые приходят ТОЛЬКО через
+// facade re-export std.prelude (auto-imported per R27). Если
+// Rule E case (b) сломается — resolver не найдёт `Some`/`Ok` /
+// `assert`, и компиляция упадёт.
+
+module plan62.facade_rule_e_smoke
+
+// Это auto-imported через std.prelude facade (Rule E case b):
+// - Option/Some/None/Result/Ok/Err — re-export'ятся из
+//   std.prelude.core (sub-module).
+// - assert — re-export'ится из std.prelude.runtime (sub-module).
+// Если facade-vs-folder co-existence не работает, тест не
+// скомпилируется ни одной строкой ниже.
+
+fn maybe_ok(flag bool) -> Result[int, str] {
+    if flag {
+        Ok(42)
+    } else {
+        Err("nope")
+    }
+}
+
+fn maybe_some(flag bool) -> Option[int] {
+    if flag {
+        Some(7)
+    } else {
+        None
+    }
+}
+
+test "Rule E case (b): Some доступен через facade re-export" {
+    let s = maybe_some(true)
+    assert(s.is_some())
+    assert(s.unwrap() == 7)
+}
+
+test "Rule E case (b): None доступен через facade re-export" {
+    let n = maybe_some(false)
+    assert(n.is_none())
+}
+
+test "Rule E case (b): Result/Ok доступен через facade re-export" {
+    let r = maybe_ok(true)
+    assert(r.is_ok())
+    assert(r.unwrap_or(0) == 42)
+}
+
+test "Rule E case (b): Err также резолвится через facade" {
+    let r = maybe_ok(false)
+    assert(r.is_err())
+}

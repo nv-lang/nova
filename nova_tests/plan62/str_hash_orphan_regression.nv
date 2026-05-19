@@ -1,0 +1,42 @@
+// str_hash_orphan_regression.nv — D29 cleanup regression
+// (commit 25f07d92f26).
+//
+// Verifies что `str @hash() -> u64` доступен как method вызов на
+// строковом литерале / переменной. До 25f07d92f26 этот метод был
+// «orphan» в `compiler-codegen/src/codegen/runtime_registry.rs`:
+// declared в `std/runtime/string.nv` файле, но отсутствовал в
+// in-Rust registry, который driver'ит `nova regen-runtime`. При
+// следующем regen .nv файл бы потерял declaration (silent drop),
+// и все `.hash()` вызовы по string'ам перестали бы резолвиться.
+//
+// Fix: добавлена RuntimeFn entry в str_runtime() для @hash. Этот
+// test — golden marker для CI: если кто-то снова уберёт entry,
+// .hash() на str всё ещё работает в раннтайме (через nova_rt),
+// но регистр выдаст mismatch при regen — а здесь мы хотя бы
+// гарантируем functional correctness через end-to-end smoke.
+//
+// FNV-1a hash by spec — non-zero для непустых строк; разные
+// строки дают разные hashes (with overwhelming probability).
+
+module plan62.str_hash_orphan_regression
+
+test "str @hash via .hash() — non-zero для непустой строки" {
+    let s = "hello"
+    let h = s.hash()
+    assert(h != (0 as u64))
+}
+
+test "str @hash via .hash() — литерал также работает" {
+    // Inline вызов: проверяет что method dispatch резолвится
+    // независимо от того, биндим ли мы строку в let'е.
+    let h = "world".hash()
+    assert(h != (0 as u64))
+}
+
+test "str @hash — разные строки → разные hashes" {
+    let a = "alpha".hash()
+    let b = "beta".hash()
+    // FNV-1a collision на двух 5-символьных строках с разным
+    // содержимым крайне маловероятна — практически impossible.
+    assert(a != b)
+}

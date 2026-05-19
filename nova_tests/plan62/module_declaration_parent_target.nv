@@ -1,0 +1,46 @@
+// module_declaration_parent_target.nv — D29 rev-3 cleanup regression
+// (commit 1e8096d3e95).
+//
+// Verifies что full-path import `std.prelude.core.{...}` корректно
+// разрешается в файл `std/prelude/core.nv`, который declares **`module
+// prelude.core`** (2-seg parent.target form), а НЕ `std.prelude.core`
+// (3-seg full path).
+//
+// Drift backstory: до commit 1e8096d3e95 файл declared `module
+// std.prelude.core` — это нарушало D29 rev-3 «package name + first
+// segment не дублируется» (см. spec/decisions/07-modules.md §D29).
+// Revert вернул всем 7 prelude файлам корректный parent.target form.
+//
+// Этот smoke компилируется + runs только если resolver правильно
+// сопоставляет full-path import к 2-seg declaration через manifest
+// expansion (manifest.rs::expected_module_path_rev3).
+//
+// `no_prelude` + explicit import гарантирует что resolution идёт
+// именно через std.prelude.core, не через facade или auto-import.
+
+module plan62.module_declaration_parent_target no_prelude
+
+import std.prelude.core.{Option, Some, None}
+import std.prelude.runtime.{assert}
+
+fn box_value(v int) -> Option[int] => Some(v)
+
+test "parent.target form: Some constructor через full-path import" {
+    let s = box_value(101)
+    // Match без method-dispatch — структурное сравнение через Option
+    // variants, declared в std/prelude/core.nv (declares `module
+    // prelude.core`). Если resolver не сопоставил full-path → 2-seg,
+    // даже `Some(...)` уже не скомпилировался бы.
+    match s {
+        Some(x) => assert(x == 101),
+        None    => assert(false),
+    }
+}
+
+test "parent.target form: None constructor через full-path import" {
+    let n Option[int] = None
+    match n {
+        Some(_) => assert(false),
+        None    => assert(true),
+    }
+}
