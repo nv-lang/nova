@@ -468,3 +468,49 @@ inline-тестах до фикса). После Plan 70 Phase A2/A3 эти ме
   (type-checker pre-rejects pre-codegen). Migration = dead-code hardening
   + diagnostic guard. Negative .nv тесты не реализуемы — documented
   в `nova_tests/plan70/README.md` per-site.
+
+- **2026-05-18 PhaseB session 2** (worktree `plan-70`):
+  - **PhaseB0 infrastructure:** new `strict_errors: RefCell<Vec<String>>`
+    field + `record_strict_error(context, cause)` helper + finalization
+    gate в `emit_module` (Err aggregated если non-empty).
+  - **PhaseB1 cascade migration:** 4 W7001 (deferred-warning) sites
+    мигрированы к E7001 strict через `record_strict_error`:
+    register_mono_instance param, register_mono_method_instance param,
+    infer_mono_method_ret_with_args fn-param, infer_expr_c_type `as T`.
+  - **PhaseB2 unit-fallback migration:** 6 sites где `unwrap_or "nova_unit"`
+    silently substituted return type — теперь strict:
+    register_mono_instance ret_c, register_mono_method_instance ret_c,
+    emit_monomorphized_fn ret_c, 3× emit_call closure-arg ret.
+  - **Ф.2 internal lint guard:** `scripts/lint-no-silent-int-fallback.sh`
+    с baseline counts (Cat A1=8, Cat A2=24). CI gate против регресса.
+  - **Ф.3 Cat B audit:** `docs/codegen-erasure-sites.md` — 10 Cat B
+    documented (B1-B10) + 20 Cat D dispatch wildcards listed.
+  - **Ф.4 Spec D126** «Strict type propagation в codegen» — добавлен
+    в spec/decisions/02-types.md.
+  - **Production-grade default:** strict mode always on, no opt-in env var.
+    Replaces session 1's deferred-warning helper (`warn_silent_int_fallback`).
+
+  **Production architecture rationale:** cascade refactor `infer_expr_c_type`
+  signature change (`String → Result<String, String>` with 135 callers fixed)
+  было отложено в пользу collect-then-fail pattern. Semantic effect identical
+  (build fails on ANY silent fallback), без signature churn. User видит ВСЕ
+  E7001 sites в одном compile pass — better UX чем fail-fast.
+
+  **PhaseB3 revert lessons (3 sites reclassified Cat A → Cat B):**
+  Initial strict-mode attempt на 3 wildcards (final infer_expr_c_type wildcard,
+  Member access exhausted fallback, SelfAccess outside method context) failed
+  full nova test:
+  - **Site 19493** (final wildcard) triggered на ClosureLight (variant 35)
+    + Path (variant 12) — legitimate ExprKinds где standalone inference
+    невозможен (требуется bidirectional context от caller).
+  - **Site 19437** (Member access) triggered на tuple field access
+    `_NovaTuple_*` — mangled name содержит element types embedded, но
+    decoder отсутствует на этом code path.
+  - **Site 18382** (SelfAccess) triggered на closure inside instance method
+    — closure body inherits `self` via capture, но var_types scope inside
+    closure отдельный.
+
+  All 3 reclassified как Cat B11/B12/B13 в [docs/codegen-erasure-sites.md](../../docs/codegen-erasure-sites.md);
+  strict migration deferred — требует дополнительные scope (bidirectional
+  inference / tuple decoder / closure-capture self-registration). Documented
+  как future work, не silent miscompilation в test corpus.
