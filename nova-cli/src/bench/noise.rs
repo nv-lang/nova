@@ -31,8 +31,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{anyhow, Result};
 use serde_json::Value;
 
-use super::schema::{AnalyzedBench, RunResultParsed};
-use super::stats::welch_t_test;
+use super::schema::RunResultParsed;
 
 pub const NOISE_SCHEMA_VERSION: &str = "1";
 pub const DEFAULT_NOISE_FILE: &str = ".nova-bench-noise.json";
