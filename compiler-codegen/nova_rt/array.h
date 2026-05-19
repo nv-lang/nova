@@ -250,6 +250,16 @@ static inline nova_bool nova_opt_eq_nova_char(NovaOpt_nova_char a, NovaOpt_nova_
     if (a.tag == NOVA_TAG_Option_None) return 1;
     return a.value == b.value;
 }
+/* Plan 70.3/70.4: nova_char Option methods for Option[char].is_some/is_none/unwrap_or. */
+static inline nova_bool Nova_Option_method_is_some_nova_char(NovaOpt_nova_char o) {
+    return o.tag == NOVA_TAG_Option_Some;
+}
+static inline nova_bool Nova_Option_method_is_none_nova_char(NovaOpt_nova_char o) {
+    return o.tag == NOVA_TAG_Option_None;
+}
+static inline nova_char Nova_Option_method_unwrap_or_nova_char(NovaOpt_nova_char o, nova_char dv) {
+    return o.tag == NOVA_TAG_Option_Some ? o.value : dv;
+}
 static inline nova_bool nova_opt_eq_nova_str(NovaOpt_nova_str a, NovaOpt_nova_str b) {
     if (a.tag != b.tag) return 0;
     if (a.tag == NOVA_TAG_Option_None) return 1;
@@ -260,10 +270,26 @@ static inline nova_bool nova_opt_eq_nova_bool(NovaOpt_nova_bool a, NovaOpt_nova_
     if (a.tag == NOVA_TAG_Option_None) return 1;
     return a.value == b.value;
 }
+/* Plan 70.4 Ф.4: nova_byte Option constructors + methods mirror nova_int. */
+static inline NovaOpt_nova_byte nova_make_NovaOpt_nova_byte_Some(nova_byte v) {
+    NovaOpt_nova_byte r; r.tag = NOVA_TAG_Option_Some; r.value = v; return r;
+}
+static inline NovaOpt_nova_byte nova_make_NovaOpt_nova_byte_None(void) {
+    NovaOpt_nova_byte r; r.tag = NOVA_TAG_Option_None; r.value = 0; return r;
+}
 static inline nova_bool nova_opt_eq_nova_byte(NovaOpt_nova_byte a, NovaOpt_nova_byte b) {
     if (a.tag != b.tag) return 0;
     if (a.tag == NOVA_TAG_Option_None) return 1;
     return a.value == b.value;
+}
+static inline nova_bool Nova_Option_method_is_some_nova_byte(NovaOpt_nova_byte o) {
+    return o.tag == NOVA_TAG_Option_Some;
+}
+static inline nova_bool Nova_Option_method_is_none_nova_byte(NovaOpt_nova_byte o) {
+    return o.tag == NOVA_TAG_Option_None;
+}
+static inline nova_byte Nova_Option_method_unwrap_or_nova_byte(NovaOpt_nova_byte o, nova_byte dv) {
+    return o.tag == NOVA_TAG_Option_Some ? o.value : dv;
 }
 static inline nova_bool nova_opt_eq_nova_f64(NovaOpt_nova_f64 a, NovaOpt_nova_f64 b) {
     if (a.tag != b.tag) return 0;
