@@ -1,0 +1,41 @@
+// Plan 70.4 Ф.1 POSITIVE: []f32 distinct from []f64.
+//
+// Pre-fix: "f64" | "f32" → "NovaArray_nova_f64*" — both arrays collapsed
+// to same C struct type. ABI mismatch: f32=4bytes, f64=8bytes → silent
+// 2x memory overhead + potential data corruption for f32 arrays.
+//
+// Post-fix: "f32" → "NovaArray_nova_f32*" distinct struct with float* data.
+
+module nova_tests.plan70_4.f1_array_f32_vs_f64_pos
+
+test "[]f64 stores f64 values" {
+    let vals []f64 = [1.0, 2.5, 3.5]
+    assert(vals.len() == 3)
+    assert(vals[0] == 1.0)
+    assert(vals[2] == 3.5)
+}
+
+test "[]f64 push and access" {
+    let v []f64 = []f64.new()
+    v.push(0.5)
+    v.push(1.5)
+    assert(v.len() == 2)
+    assert(v[0] == 0.5)
+    assert(v[1] == 1.5)
+}
+
+test "[]f32 stores f32 values" {
+    let vals []f32 = [1.0 as f32, 2.5 as f32]
+    assert(vals.len() == 2)
+    assert(vals[0] == 1.0 as f32)
+    assert(vals[1] == 2.5 as f32)
+}
+
+test "[]f32 push and access" {
+    let v []f32 = []f32.new()
+    v.push(0.5 as f32)
+    v.push(1.5 as f32)
+    assert(v.len() == 2)
+    assert(v[0] == 0.5 as f32)
+    assert(v[1] == 1.5 as f32)
+}

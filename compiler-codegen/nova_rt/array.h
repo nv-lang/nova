@@ -118,6 +118,12 @@ NOVA_ARRAY_IMPL(nova_bool)
 NOVA_ARRAY_DECL(nova_f64)
 NOVA_ARRAY_IMPL(nova_f64)
 
+/* Plan 70.4: nova_f32 distinct from nova_f64 — ABI difference (4 vs 8 bytes).
+ * []f32 и []f64 must have distinct NovaArray structs to avoid 2x memory cost
+ * and silent data corruption when f32 arrays processed as f64. */
+NOVA_ARRAY_DECL(nova_f32)
+NOVA_ARRAY_IMPL(nova_f32)
+
 /* ---- void_p — array of opaque pointers (used for closures via NovaClosBase*).
  *
  * Plan 55 Ф.1: `[]fn(...) -> T` (array of closures) → NovaArray_void_p*.
@@ -246,6 +252,38 @@ static inline nova_bool nova_opt_eq_nova_f64(NovaOpt_nova_f64 a, NovaOpt_nova_f6
     if (a.tag != b.tag) return 0;
     if (a.tag == NOVA_TAG_Option_None) return 1;
     return a.value == b.value;
+}
+/* D26 Option methods for nova_f64 — parallel to nova_int/nova_str. */
+static inline nova_bool Nova_Option_method_is_some_nova_f64(NovaOpt_nova_f64 o) {
+    return o.tag == NOVA_TAG_Option_Some;
+}
+static inline nova_bool Nova_Option_method_is_none_nova_f64(NovaOpt_nova_f64 o) {
+    return o.tag == NOVA_TAG_Option_None;
+}
+static inline nova_f64 Nova_Option_method_unwrap_or_nova_f64(NovaOpt_nova_f64 o, nova_f64 default_v) {
+    return o.tag == NOVA_TAG_Option_Some ? o.value : default_v;
+}
+/* Plan 70.4: nova_f32 Option constructors/eq mirror nova_f64. */
+static inline NovaOpt_nova_f32 nova_make_NovaOpt_nova_f32_Some(nova_f32 v) {
+    NovaOpt_nova_f32 r; r.tag = NOVA_TAG_Option_Some; r.value = v; return r;
+}
+static inline NovaOpt_nova_f32 nova_make_NovaOpt_nova_f32_None(void) {
+    NovaOpt_nova_f32 r; r.tag = NOVA_TAG_Option_None; r.value = 0.0f; return r;
+}
+static inline nova_bool nova_opt_eq_nova_f32(NovaOpt_nova_f32 a, NovaOpt_nova_f32 b) {
+    if (a.tag != b.tag) return 0;
+    if (a.tag == NOVA_TAG_Option_None) return 1;
+    return a.value == b.value;
+}
+/* Plan 70.4: D26 Option methods for nova_f32 — parallel to nova_f64. */
+static inline nova_bool Nova_Option_method_is_some_nova_f32(NovaOpt_nova_f32 o) {
+    return o.tag == NOVA_TAG_Option_Some;
+}
+static inline nova_bool Nova_Option_method_is_none_nova_f32(NovaOpt_nova_f32 o) {
+    return o.tag == NOVA_TAG_Option_None;
+}
+static inline nova_f32 Nova_Option_method_unwrap_or_nova_f32(NovaOpt_nova_f32 o, nova_f32 default_v) {
+    return o.tag == NOVA_TAG_Option_Some ? o.value : default_v;
 }
 
 /* ---- D26 Option methods: is_some / is_none / unwrap_or ---- */
