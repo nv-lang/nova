@@ -194,6 +194,15 @@ pub struct CEmitter {
     /// for type-param substitution (e.g. `T → nova_int`), consulted by
     /// `type_ref_to_c` BEFORE `current_type_subst`. Same `&self` reason as above.
     type_subst_overrides: RefCell<HashMap<String, String>>,
+    /// Plan 62.D bis-1 (2026-05-18): per-name override for match-arm pattern
+    /// bindings, consulted by `infer_expr_c_type` Ident arm BEFORE `var_types`.
+    /// Needed because `infer_expr_c_type(Match)` recurses into arm bodies in
+    /// `&self` context — pattern bindings (e.g. `Some(r) => r`) can't be
+    /// installed into `var_types`, and stale entries from prior bodies (e.g.
+    /// `let r = Range...` in another test file) would leak into the lookup,
+    /// returning wrong type. The Match path installs/restores the bindings via
+    /// this RefCell around the body-inference recursion.
+    pattern_binding_overrides: RefCell<HashMap<String, String>>,
     /// Names of variables declared as `let mut` (mutable) — used by spawn-capture
     /// to decide between copy-by-value (immutable scalar) and capture-by-pointer.
     var_mutable: HashSet<String>,
@@ -371,6 +380,13 @@ pub struct CEmitter {
     /// Set of type names that are generic (have type parameters).
     /// Methods on these types have void*-erased params; call sites must box/unbox.
     generic_types: HashSet<String>,
+    /// Plan 62.E + merge-fix 2026-05-19: set of protocol type names (e.g. `Iter`,
+    /// `Display`, `Hashable`). Protocol values имеют нулевой runtime footprint —
+    /// erase в void* в emit context'е (type_ref_to_c / erased_type_ref_c).
+    /// До Plan 62.E protocols жили только как known-by-name compiler builtins
+    /// (`Iter` хардкоден); теперь formal declarations в `std/prelude/collections.nv`
+    /// + `std/prelude/protocols.nv` требуют explicit erasure registration.
+    protocol_types: HashSet<String>,
     /// Maps generic function name → tuple arity when the function returns a tuple of type params.
     /// Used to populate tuple_element_types at call sites.
     generic_fn_tuple_arity: HashMap<String, usize>,
@@ -552,6 +568,21 @@ pub struct CEmitter {
     /// call (vs indirect через erased + cast). Backward compat: legacy
     /// `_nova_handler_Fail` (string slot) тоже install'тся (dual-install).
     per_e_fail_types: HashSet<String>,
+
+    /// Plan 62.A.bis Ф.1: layered sum-type schema registry. Populated в
+    /// `CEmitter::new()` через `init_hardcoded_baseline()` (4 entries:
+    /// Option, NovaOpt_nova_int alias, Result, RuntimeError). Phase 2+
+    /// будет добавлять `DeclaredFromPrelude` entries из `std/prelude/*.nv`
+    /// (через `init_prelude_decls` call в `emit_module()`).
+    ///
+    /// **Phase 1 invariant:** registry populated но никто (кроме unit
+    /// tests) его не читает — legacy `sum_schemas: HashMap<...>` field
+    /// продолжает быть единственным источником истины для всех 12
+    /// hardcoded dispatch points. Поэтому генерируемый C байт-идентичен
+    /// pre-Plan-62.A.bis baseline'у.
+    ///
+    /// См. `docs/plans/62.A.bis-sum-schema-registry.md` §«Phase 1».
+    pub(crate) sum_schema_registry: super::sum_schema_registry::SumSchemaRegistry,
 }
 
 /// Plan 20 Ф.4: per-defer-stmt entry — tracks one `defer { ... }` or
@@ -626,6 +657,7 @@ impl CEmitter {
             var_types: HashMap::new(),
             closure_param_type_overrides: RefCell::new(HashMap::new()),
             type_subst_overrides: RefCell::new(HashMap::new()),
+            pattern_binding_overrides: RefCell::new(HashMap::new()),
             var_mutable: HashSet::new(),
             record_schemas: HashMap::new(),
             sum_schemas: HashMap::new(),
@@ -673,6 +705,7 @@ impl CEmitter {
             fn_returns_fn_sig: HashMap::new(),
             generic_fns: HashSet::new(),
             generic_types: HashSet::new(),
+            protocol_types: HashSet::new(),
             generic_fn_tuple_arity: HashMap::new(),
             type_aliases: HashMap::new(),
             current_parfor_slot: None,
@@ -750,6 +783,16 @@ impl CEmitter {
             next_type_id: 17,
             fail_e_map: HashMap::new(),
             per_e_fail_types: HashSet::new(),
+            // Plan 62.A.bis Ф.1: registry populated через
+            // init_hardcoded_baseline() — 4 entries (Option, NovaOpt_nova_int
+            // alias, Result, RuntimeError). Phase 1 invariant: ничего не
+            // читает (кроме unit tests), legacy sum_schemas остаётся source
+            // of truth для всех dispatch points.
+            sum_schema_registry: {
+                let mut r = super::sum_schema_registry::SumSchemaRegistry::new();
+                r.init_hardcoded_baseline();
+                r
+            },
         }
     }
 
@@ -1247,6 +1290,13 @@ impl CEmitter {
                 "f64", "f32", "bool", "str", "byte", "char",
                 "Option", "Result", "Self", "Handler", "CancelToken",
                 "Never", "Error",
+                // Plan 62.C: RuntimeError имеет real struct в array.h
+                // (skipped в RUNTIME_DEFINED_TYPES → emit_type_decl skipped
+                // → нет local emit, нужен fwd-decl skip чтобы не дублировать
+                // forward-decl). ReadBufferError — НЕ скипается т.к. codegen
+                // сам эмитит его struct через emit_sum_type, и fwd-decl
+                // нужен для cross-file refs (нативный flow).
+                "RuntimeError",
             ];
             // Runtime types defined in nova_rt/*.h with anonymous typedef'd structs.
             // A named forward decl `typedef struct Nova_X Nova_X;` would conflict
@@ -1270,7 +1320,12 @@ impl CEmitter {
                 }
             }
             // Built-in vtables defined in nova_rt/effects.h — skip.
-            const BUILTIN_VTABLE_NAMES: &[&str] = &["Fail", "Time"];
+            // Plan 62.F.bis Ф.3 (2026-05-18): added "Mem" — formally
+            // declared в std/prelude/effects.nv, vtable handled через
+            // pre-registered effect_schemas + codegen helpers (no
+            // runtime/effects.h dedicated struct, but emit-skip required
+            // чтобы избежать conflict с declaration).
+            const BUILTIN_VTABLE_NAMES: &[&str] = &["Fail", "Time", "Mem"];
             for name in vtable_names {
                 if BUILTIN_VTABLE_NAMES.contains(&name.as_str()) { continue; }
                 // Local effects — emit_effect_type generates an anonymous typedef
@@ -1285,9 +1340,35 @@ impl CEmitter {
 
         // 1a. Pre-populate generic_types + generic_type_templates BEFORE emit_type_decl
         // and method registration, so both know which types are generic templates.
+        //
+        // Plan 62.A: skip `Option` / `Result` — codegen имеет специальную
+        // обработку через `NovaOpt_<T>` (value type в nova_rt/array.h) и
+        // pre-populated sum_schemas. Регистрация template'а конфликтует
+        // с этой parallel infrastructure: drain_generic_type_worklist
+        // создал бы `Nova_Option____<T>` heap-allocated form,
+        // не совпадающий с runtime helper signatures.
         for item in &module.items {
             if let Item::Type(t) = item {
                 if !t.generics.is_empty() {
+                    // Plan 62.A: Option/Result handled via NovaOpt_<T> /
+                    // Nova_Result* infra — не регистрируем как generic
+                    // template. Error не generic (record), не попадает
+                    // в эту ветку.
+                    if t.name == "Option" || t.name == "Result" {
+                        continue;
+                    }
+                    // Plan 62.E (`std/prelude/collections.nv` 2026-05-18) +
+                    // 2026-05-19 merge fix: skip generic protocol declarations
+                    // (e.g. `Iter[T]`). Protocols имеют нулевой runtime footprint
+                    // — value erased to void*. Регистрация template'а заставила бы
+                    // emit_type_decl + erased_type_ref_c генерировать struct и
+                    // `Nova_Iter*` для protocol-typed parameters → CC-FAIL
+                    // `unknown type name 'Nova_Iter'` (regression от merge'а
+                    // main↔plan-62-main).
+                    if matches!(t.kind, crate::ast::TypeDeclKind::Protocol(_)) {
+                        self.protocol_types.insert(t.name.clone());
+                        continue;
+                    }
                     self.generic_types.insert(t.name.clone());
                     self.generic_type_templates.insert(t.name.clone(), t.clone());
                 }
@@ -1307,9 +1388,116 @@ impl CEmitter {
             }
         }
 
+        // 1a3. Plan 62.A.bis Ф.1 + 62.A follow-up: hook для prelude-discovery.
+        //
+        // Ф.1: hook был no-op (stub).
+        // **62.A follow-up (2026-05-18):** теперь scan'ит `module.items` для
+        // `external fn Option[T] @method` / `external fn Result[T, E] @method`
+        // declarations (приходящих из `std/prelude/core.nv` через R27 auto-
+        // import). Регистрирует `DeclaredFromPrelude` entries в registry,
+        // унаследовав method_routing от соответствующих HardcodedBaseline
+        // entries — behavior-preserving migration источника правды.
+        //
+        // Order matters: hook размещён ПОСЛЕ init_hardcoded_baseline
+        // (в `CEmitter::new()`) и ДО emit_type_decl loop'а — Prelude
+        // entries уже регистрированы когда user type-decls попадают в
+        // emit_type_decl (получают DeclaredFromUser source).
+        let module_name_dotted = module.name.join(".");
+        self.sum_schema_registry.init_prelude_decls(&module_name_dotted);
+        self.sum_schema_registry.init_prelude_decls_from_items(&module.items);
+
+        // Plan 62.D bis-1 (2026-05-18, D29 W_PRELUDE_SHADOW basic):
+        // Build the set of items that should be SKIPPED during emit due to
+        // user-shadow. When user file declares `type Range` while prelude
+        // facade re-exports `Range` from `std/collections/range.nv`, both
+        // items end up in `module.items` (merged-first, user-second per
+        // imports.rs:218-220). Emitting both causes C "redefinition" errors.
+        // User declaration wins per D29 — skip the merged (non-user) one.
+        // This matches the type-checker behavior in types/mod.rs
+        // `classify_dup`.
+        //
+        // For Types: skip merged item if any user item has the same name.
+        // For Fns: skip merged item if any user item has the same key
+        // (`<Receiver>.<name>` or `<name>`) AND matching arg-type-list (so
+        // legitimate user-defined overloads from a different module still
+        // emit). Approximation: skip merged fn with the same key, since
+        // method dispatch goes through method_receivers keyed by name only
+        // and overloads from different modules would create routing chaos.
+        let user_type_spans: std::collections::HashSet<(String, crate::diag::Span)> = {
+            let mut s = std::collections::HashSet::new();
+            for pf in &module.peer_files {
+                if !pf.is_entry_module { continue; }
+                for it in &pf.items_here {
+                    if let Item::Type(td) = it {
+                        s.insert((td.name.clone(), td.span));
+                    }
+                }
+            }
+            s
+        };
+        let user_type_names: HashSet<String> = user_type_spans.iter()
+            .map(|(n, _)| n.clone()).collect();
+        let user_fn_spans: std::collections::HashSet<(String, crate::diag::Span)> = {
+            let mut s = std::collections::HashSet::new();
+            for pf in &module.peer_files {
+                if !pf.is_entry_module { continue; }
+                for it in &pf.items_here {
+                    if let Item::Fn(fd) = it {
+                        let key = match &fd.receiver {
+                            Some(r) => format!("{}.{}", r.type_name, fd.name),
+                            None => fd.name.clone(),
+                        };
+                        s.insert((key, fd.span));
+                    }
+                }
+            }
+            s
+        };
+        let user_fn_keys: HashSet<String> = user_fn_spans.iter()
+            .map(|(k, _)| k.clone()).collect();
+        // Plan 62.F.bis Ф.2 (2026-05-18): same shadow-skip для Const items.
+        // Без этого `const PRELUDE_VERSION = 99` в user-коде + prelude's own
+        // `PRELUDE_VERSION` → C-level redefinition (CC-FAIL). User wins,
+        // merged duplicate skipped.
+        let user_const_spans: std::collections::HashSet<(String, crate::diag::Span)> = {
+            let mut s = std::collections::HashSet::new();
+            for pf in &module.peer_files {
+                if !pf.is_entry_module { continue; }
+                for it in &pf.items_here {
+                    if let Item::Const(cd) = it {
+                        s.insert((cd.name.clone(), cd.span));
+                    }
+                }
+            }
+            s
+        };
+        let user_const_names: HashSet<String> = user_const_spans.iter()
+            .map(|(n, _)| n.clone()).collect();
+        // Helper: is this Type item the merged (non-user) duplicate of a
+        // name the user has also declared? Skip if so.
+        let should_skip_type = |t: &TypeDecl| -> bool {
+            if !user_type_names.contains(&t.name) { return false; }
+            // User declared this name. If THIS span belongs to user — keep.
+            // Otherwise (merged from import) — skip.
+            !user_type_spans.contains(&(t.name.clone(), t.span))
+        };
+        let should_skip_fn = |f: &FnDecl| -> bool {
+            let key = match &f.receiver {
+                Some(r) => format!("{}.{}", r.type_name, f.name),
+                None => f.name.clone(),
+            };
+            if !user_fn_keys.contains(&key) { return false; }
+            !user_fn_spans.contains(&(key, f.span))
+        };
+        let should_skip_const = |c: &ConstDecl| -> bool {
+            if !user_const_names.contains(&c.name) { return false; }
+            !user_const_spans.contains(&(c.name.clone(), c.span))
+        };
+
         // 1. Type declarations first (structs/unions needed by fn signatures)
         for item in &module.items {
             if let Item::Type(t) = item {
+                if should_skip_type(t) { continue; }
                 self.emit_type_decl(t)?;
             }
         }
@@ -1326,6 +1514,7 @@ impl CEmitter {
         // OK через forward-decl).
         for item in &module.items {
             if let Item::Const(c) = item {
+                if should_skip_const(c) { continue; }
                 if let Some(ty) = &c.ty {
                     self.forward_declare_generic_type(ty);
                 }
@@ -1335,6 +1524,7 @@ impl CEmitter {
         // 1b. Const declarations (after types, before fn forward decls)
         for item in &module.items {
             if let Item::Const(c) = item {
+                if should_skip_const(c) { continue; }
                 self.emit_const_decl(c)?;
             }
         }
@@ -1696,6 +1886,16 @@ impl CEmitter {
             }
             if let Item::Type(t) = item {
                 if !t.generics.is_empty() {
+                    // Plan 62.A: Option/Result handled via NovaOpt_<T> /
+                    // Nova_Result* runtime infrastructure — не регистрируем
+                    // как generic. Иначе variant ctor (`Err("...")`) пойдёт
+                    // через `is_generic_call` void* boxing path (line
+                    // 13549-13554), который не совпадает с runtime helper
+                    // signature `nova_make_Result_Err(nova_str)`. См. также
+                    // skip в 1a (line 1207-1213).
+                    if t.name == "Option" || t.name == "Result" {
+                        continue;
+                    }
                     self.generic_types.insert(t.name.clone());
                 }
             }
@@ -1711,6 +1911,7 @@ impl CEmitter {
         // 2. Forward declarations for all functions (types are now known)
         for item in &module.items {
             if let Item::Fn(f) = item {
+                if should_skip_fn(f) { continue; } // Plan 62.D bis-1: D29 shadow
                 self.emit_fn_forward_decl(f)?;
             }
         }
@@ -1740,6 +1941,7 @@ impl CEmitter {
         // Simpler approach: emit all fns; before flush, emit lambda_forward_decls + lambda_impls.
         for item in &module.items {
             if let Item::Fn(f) = item {
+                if should_skip_fn(f) { continue; } // Plan 62.D bis-1: D29 shadow
                 self.emit_fn(f)?;
             }
         }
@@ -2765,6 +2967,17 @@ impl CEmitter {
                     // подчёркивания Nova_ — это runtime-struct, не Nova-record).
                     "CancelToken" => Ok("NovaCancelToken*".into()),
                     _ => {
+                        // Plan 62.E (`std/prelude/collections.nv`) + merge fix
+                        // 2026-05-19: generic protocol declarations (e.g. `Iter[T]`,
+                        // `Hashable`, `Display`) — value-type erased to void*.
+                        // Без этого arm type_ref_to_c эмитит "Nova_Iter*" → CC-FAIL
+                        // `unknown type name`. Last-segment match покрывает оба
+                        // canonical и full-path форму (после import-resolve).
+                        if self.protocol_types.contains(&name)
+                            || path.last().map(|s| self.protocol_types.contains(s)).unwrap_or(false)
+                        {
+                            return Ok("void*".into());
+                        }
                         // Check if it's a type alias — return the aliased type directly (no *)
                         if let Some(aliased_c) = self.type_aliases.get(&name).cloned() {
                             return Ok(aliased_c);
@@ -5105,6 +5318,81 @@ impl CEmitter {
     }
 
     fn emit_type_decl(&mut self, t: &TypeDecl) -> Result<(), String> {
+        // Plan 62.D.bis (D126): `external type X` — opaque, no emission.
+        // Struct definition lives in runtime header (`nova_rt/<name>.h`),
+        // never emit'нем locally. Forward-decl skip уже handled через
+        // BUILTIN_RUNTIME_TYPES (emit_c.rs:1212-1218); это early-return
+        // — defensive double-protection, делает intent explicit.
+        if matches!(t.kind, TypeDeclKind::Opaque) {
+            return Ok(());
+        }
+        // Plan 62.A: skip emission of types pre-defined в nova_rt/*.h.
+        // Когда `std/prelude/core.nv` declares `type Option[T]` /
+        // `type Result[T, E]` / `type Error`, codegen НЕ должен заново
+        // emit'ить typedef struct + constructors — они уже в nova_rt/
+        // array.h (`Nova_Option`, `Nova_Result`, `Nova_Error`,
+        // `nova_make_Result_Ok`, etc.). Conflict resolved через skip
+        // emission на основе name lookup. Schema registration уже сделана
+        // pre-populated (emit_module §954-985).
+        //
+        // Не путать с BUILTIN_TYPE_NAMES (forward-decl skip) — это
+        // полный skip emit_type_decl на самом раннем этапе.
+        const RUNTIME_DEFINED_TYPES: &[&str] = &[
+            // Plan 62.A: core prelude types.
+            "Option", "Result", "Error",
+            // Plan 62.C: RuntimeError declared в std/prelude/errors.nv.
+            // Skip emission т.к. C struct + constructors уже живут в
+            // nova_rt/array.h (`Nova_RuntimeError` + `nova_make_RuntimeError_*`,
+            // lines ~565-610). Schema registration через registry's
+            // `init_prelude_decls_from_items` (sum_schema_registry.rs:526+)
+            // inherits variants/abi от HardcodedBaseline.
+            "RuntimeError",
+            // **ReadBufferError**: НЕ добавляется в skip-list — нет
+            // dedicated C struct в nova_rt/*.h. Codegen эмитит полную
+            // typedef + nova_make_ReadBufferError_UnexpectedEnd через
+            // обычный emit_sum_type path. Registry получит две entries:
+            // DeclaredFromUser (от emit_sum_type → register_user_sum) +
+            // DeclaredFromPrelude (от init_prelude_decls_from_items).
+            // Lookup precedence — Prelude > User > Hardcoded; both
+            // PointerErrorLike ABI, no semantic conflict.
+            //
+            // Plan 62.F: `Fail[E]` declared в std/prelude/effects.nv.
+            // Skip emission т.к. NovaVtable_Fail + Nova_Fail_fail()
+            // pre-registered в codegen (emit_c.rs:1057-1060) и runtime
+            // (nova_rt/effects.h). Type-checker / verify-pipeline матчит
+            // single-element path `["Fail"]` (см. types/mod.rs:2865,
+            // verify/pipeline.rs:505, codegen/emit_c.rs:3186) — declaration
+            // здесь даёт canonical API + AI/doc surface без duplicate emit.
+            // Также см. BUILTIN_VTABLE_NAMES (emit_c.rs:1221) — fwd-decl
+            // skip-list для тех же effects (Fail, Time).
+            "Fail",
+            // Plan 62.F.bis Ф.3 (2026-05-18): `Time` and `Mem` formally
+            // declared в std/prelude/effects.nv. Skip emission т.к.
+            // codegen effect_schemas pre-registers их (emit_c.rs:1077-1098),
+            // и `NovaVtable_Time` живёт в nova_rt/effects.h. Mem's vtable
+            // emitted on-demand via codegen helpers — skip type-decl
+            // (emit_effect_type would conflict с pre-existing schema).
+            // Declaration здесь — canonical API surface для `nova doc`
+            // + AI tooling без duplicate emit. BUILTIN_VTABLE_NAMES
+            // обновлён включить Mem (emit_c.rs:1231).
+            "Time", "Mem",
+            // Plan 62.D.bis (D126, 2026-05-18): opaque types declared
+            // through `external type` в std/prelude/collections.nv.
+            // Backing — nova_rt/{string_builder,write_buffer,read_buffer}.h.
+            // Defensive double-protection: actual skip уже через
+            // `TypeDeclKind::Opaque` early-return на top of emit_type_decl;
+            // эта запись keeps consistency с pattern Option/Result/Error/Fail
+            // на случай если user accidentally declared `type StringBuilder
+            // { ... }` (non-Opaque kind) — мы всё равно skip'нем.
+            "StringBuilder", "WriteBuffer", "ReadBuffer",
+        ];
+        if RUNTIME_DEFINED_TYPES.contains(&t.name.as_str()) {
+            // Plan 62.A: skip emission — type defined in runtime. Schema
+            // registration через init_pre_populated_schemas. Methods
+            // (если есть) handled через codegen special-case dispatch
+            // (emit_c.rs:11567+) либо runtime helpers.
+            return Ok(());
+        }
         // Plan 48 Ф.3: generic types are emitted in erased form (void* for type-param fields)
         // for bootstrap erasure mode. Monomorphized instances are emitted lazily by
         // drain_generic_type_worklist when explicit type args are provided.
@@ -5281,6 +5569,18 @@ impl CEmitter {
                     self.line("}");
                     self.line("");
                 }
+                // Plan 62.A.bis Ф.2.1: mirror legacy insert в registry.
+                // Generic sum types — heap-pointer ABI (PointerErrorLike).
+                let variant_order: Vec<String> = variants.iter()
+                    .map(|v| v.name.clone()).collect();
+                let c_name = format!("Nova_{}", t.name);
+                self.sum_schema_registry.register_user_sum(
+                    &t.name,
+                    &sum_schema,
+                    &c_name,
+                    super::sum_schema_registry::SumAbi::PointerErrorLike,
+                    &variant_order,
+                );
                 self.sum_schemas.insert(t.name.clone(), sum_schema);
             }
             return Ok(());
@@ -5315,6 +5615,10 @@ impl CEmitter {
             // undefined). Без vtable type_ref_to_c для protocol-методов
             // вообще не вызывается.
             TypeDeclKind::Protocol(_) => {}
+            // Plan 62.D.bis (D126): unreachable — early-return on top
+            // of emit_type_decl уже отфильтровал Opaque kind. Branch
+            // present для exhaustiveness; semantically meaningful no-op.
+            TypeDeclKind::Opaque => {}
         }
         Ok(())
     }
@@ -5662,6 +5966,18 @@ impl CEmitter {
             self.line("");
         }
 
+        // Plan 62.A.bis Ф.2.1: mirror legacy insert в registry.
+        // emit_sum_type — heap-pointer ABI (PointerErrorLike).
+        let variant_order: Vec<String> = variants.iter()
+            .map(|v| v.name.clone()).collect();
+        let c_name = format!("Nova_{}", name);
+        self.sum_schema_registry.register_user_sum(
+            name,
+            &sum_schema,
+            &c_name,
+            super::sum_schema_registry::SumAbi::PointerErrorLike,
+            &variant_order,
+        );
         self.sum_schemas.insert(name.to_string(), sum_schema);
         Ok(())
     }
@@ -6017,11 +6333,18 @@ impl CEmitter {
                     return "void*".into();
                 }
                 // Option[T] where T is a type param → NovaOpt_nova_int
+                // Plan 62.A.bis Ф.2.4: c_name source = registry entry для
+                // "Option" (hardcoded baseline: "NovaOpt_nova_int"). Fallback
+                // на literal если registry почему-то пуст (defensive).
                 if name == "Option" {
                     if let Some(g) = generics.first() {
                         if let TypeRef::Named { path: gp, .. } = g {
                             if type_params.contains(&gp.join("_")) {
-                                return "NovaOpt_nova_int".into();
+                                let c_name = self.sum_schema_registry
+                                    .lookup_sum_schema("Option")
+                                    .map(|e| e.c_name.clone())
+                                    .unwrap_or_else(|| "NovaOpt_nova_int".into());
+                                return c_name;
                             }
                         }
                     }
@@ -6709,7 +7032,8 @@ impl CEmitter {
     ) -> Option<(String, String, Vec<String>)> {
         use crate::ast::{TypeDeclKind, SumVariantKind};
         // 1. Find parent sum-type by variant name.
-        let (parent_type, _) = self.find_variant(variant_name)?;
+        // Plan 62.A.bis Ф.2.2: registry-driven variant resolution.
+        let (parent_type, _) = self.sum_schema_registry.find_variant_compat(variant_name)?;
         // 2. Must be a generic template (has type params).
         let template = self.generic_type_templates.get(&parent_type)?.clone();
         if template.generics.is_empty() { return None; }
@@ -7905,6 +8229,17 @@ impl CEmitter {
                     self.line("");
                 }
                 let sum_key = mangled.strip_prefix("Nova_").unwrap_or(mangled);
+                // Plan 62.A.bis Ф.2.1: mirror legacy insert в registry.
+                // Generic mono'd sum types — heap-pointer ABI (PointerErrorLike).
+                let variant_order: Vec<String> = variants.iter()
+                    .map(|v| v.name.clone()).collect();
+                self.sum_schema_registry.register_user_sum(
+                    sum_key,
+                    &sum_schema,
+                    mangled,
+                    super::sum_schema_registry::SumAbi::PointerErrorLike,
+                    &variant_order,
+                );
                 self.sum_schemas.insert(sum_key.to_string(), sum_schema);
             }
             _ => { /* Protocol/effect/alias/newtype — not generic record/sum */ }
@@ -9948,7 +10283,8 @@ impl CEmitter {
                 }
                 // Unit variants (e.g. `Red` from `type Color | Red | Green`) are
                 // not function calls in Nova but need `nova_make_Color_Red()` in C.
-                if let Some((type_name, fields)) = self.find_variant(name) {
+                // Plan 62.A.bis Ф.2.2: variant lookup via registry.
+                if let Some((type_name, fields)) = self.sum_schema_registry.find_variant_compat(name) {
                     if fields.is_empty() {
                         // Plan 14 Ф.1: `None` — typed compound literal по
                         // current_fn_return_ty. Иначе — legacy nova_make.
@@ -10937,7 +11273,8 @@ impl CEmitter {
                     _ => return Err("`is` expects a variant name (e.g. `x is Some`)".into()),
                 };
                 // Find the sum-type that owns this variant.
-                let (sum_type, _fields) = self.find_variant(&variant_name)
+                // Plan 62.A.bis Ф.2.2: registry-driven variant resolution.
+                let (sum_type, _fields) = self.sum_schema_registry.find_variant_compat(&variant_name)
                     .ok_or_else(|| format!("`is {}` — unknown variant", variant_name))?;
                 let inner_ty = self.infer_expr_c_type(inner);
                 let inner_c = self.emit_expr(inner)?;
@@ -11481,7 +11818,8 @@ impl CEmitter {
     fn infer_func_c_name(&self, func: &Expr) -> String {
         match &func.kind {
             ExprKind::Ident(name) => {
-                if let Some((type_name, _)) = self.find_variant(name) {
+                // Plan 62.A.bis Ф.2.2: registry-driven variant resolution.
+                if let Some((type_name, _)) = self.sum_schema_registry.find_variant_compat(name) {
                     format!("nova_make_{}_{}", type_name, name)
                 } else {
                     format!("nova_fn_{}", name)
@@ -11519,6 +11857,31 @@ impl CEmitter {
     }
 
     fn emit_call(&mut self, func: &Expr, args: &[CallArg]) -> Result<String, String> {
+        // Plan 62.B.bis Ф.1 (2026-05-18): print/println special-case
+        // intercept ДОЛЖЕН fire'ить ДО variadic routing. После Ф.2 этого
+        // же плана `std/prelude/runtime.nv` содержит
+        //   external fn print(...items []any) -> ()
+        //   external fn println(...items []any) -> ()
+        // и type-checker регистрирует `print`/`println` в
+        // `user_fn_variadic`. Если variadic routing запустится первым —
+        // он соберёт args в synthesized ArrayLit и recurse'нётся в
+        // `emit_call` с args = [single_array], потеряв per-arg type info
+        // (нужный `infer_print_helper` для `nova_print_<type>` dispatch).
+        //
+        // Special-case закрывает оба mode'а: pre-Ф.2 (hardcoded HashSet)
+        // и post-Ф.2 (file-based declaration в std/prelude/runtime.nv);
+        // intercept fires identically. После HashSet shrink в Ф.5 имя
+        // продолжает резолвиться через R26+R27 (cross-file resolve
+        // через facade re-export).
+        if let ExprKind::Ident(name) = &func.kind {
+            if name == "println" || name == "print" {
+                // Spread (...) inside print/println — DEFER'нут (Plan 14
+                // Ф.6 limitation note + design doc §Ф.4); validation
+                // делается внутри emit_println.
+                return self.emit_println(args, name == "println");
+            }
+        }
+
         // Plan 14 Ф.6 (D69): variadic-routing.
         //
         // Если вызываемая fn имеет variadic-параметр на последней позиции
@@ -11578,11 +11941,10 @@ impl CEmitter {
                 }
             }
         }
-        // Special case: println / print builtins
+        // Special case: println / print intercept ALREADY fired ABOVE
+        // (Plan 62.B.bis Ф.1 — ordering fix). Здесь только остальные
+        // name-keyed special-cases.
         if let ExprKind::Ident(name) = &func.kind {
-            if name == "println" || name == "print" {
-                return self.emit_println(args, name == "println");
-            }
             // D70 `to_str(x)` builtin removed (REPLACED → D73). String
             // conversion now via `str.from(x)` / `x.@into()` (with str-context).
             // assert(cond) / debug_assert(cond) → nova_assert(cond, "condition text").
@@ -11694,7 +12056,8 @@ impl CEmitter {
 
         let func_c = match &func.kind {
             ExprKind::Ident(name) => {
-                if let Some((type_name, _)) = self.find_variant(name) {
+                // Plan 62.A.bis Ф.2.2: variant construction via registry.
+                if let Some((type_name, _)) = self.sum_schema_registry.find_variant_compat(name) {
                     // Plan 61 followup #3: Result.Err(custom_value) — typed
                     // path для не-nova_str argument. Bootstrap Result hardcoded
                     // на (Ok int, Err nova_str), но typed Err payload теперь
@@ -12202,27 +12565,66 @@ impl CEmitter {
                             _ => {}
                         }
                     }
-                    // D26 prelude: built-in methods on Option (NovaOpt_T) and Result.
+                    // D26 prelude / Plan 62.A.bis Ф.3.1: built-in methods on
+                    // Option (NovaOpt_T). Method dispatch route'ится через
+                    // `sum_schema_registry` (MethodRouting::HardcodedRuntimeFn
+                    // → trampoline `Nova_Option_method_<m>_<T_sani>`; sentinel
+                    // `"<inline>"` → fall through к существующему inline emit
+                    // для Fail-effected methods (unwrap) и closure-applying
+                    // methods (unwrap_or_else / map / ok_or). См. Open Q #5
+                    // plan'а 62.A.bis.
                     if obj_ty.starts_with("NovaOpt_") {
                         let elem_ty = obj_ty.strip_prefix("NovaOpt_")
                             .unwrap_or("nova_int")
                             .trim_end_matches('*')
                             .trim()
                             .to_string();
+                        // Lookup routing через registry. Только Option methods
+                        // зарегистрированы — registry даёт highest-priority
+                        // entry (Prelude > User > Hardcoded).
+                        let routing = self.sum_schema_registry
+                            .lookup_method_routing("Option", method.as_str())
+                            .cloned();
+                        // Routable trampolines (is_some/is_none/unwrap_or)
+                        // emit'ятся напрямую; inline-sentinel methods
+                        // fall through к existing inline блокам ниже.
+                        if let Some(super::sum_schema_registry::MethodRouting::HardcodedRuntimeFn {
+                            c_name, is_per_t,
+                        }) = &routing {
+                            if c_name != "<inline>" {
+                                let obj_c = self.emit_expr(obj)?;
+                                let mangled = if *is_per_t {
+                                    format!("{}_{}", c_name, elem_ty)
+                                } else {
+                                    c_name.clone()
+                                };
+                                // Метод `unwrap_or` принимает 1 аргумент.
+                                // Predicates `is_some`/`is_none` — 0 аргументов.
+                                // Универсально emit'им (obj, args...).
+                                let mut parts = vec![obj_c];
+                                for a in args {
+                                    parts.push(self.emit_expr(a.expr())?);
+                                }
+                                return Ok(format!("{}({})", mangled, parts.join(", ")));
+                            }
+                        }
+                        // Только если registry дал ExternalFn (Plan 62.A
+                        // follow-up через prelude declaration) — emit прямо.
+                        if let Some(super::sum_schema_registry::MethodRouting::ExternalFn {
+                            c_name,
+                        }) = &routing {
+                            let obj_c = self.emit_expr(obj)?;
+                            let mut parts = vec![obj_c];
+                            for a in args {
+                                parts.push(self.emit_expr(a.expr())?);
+                            }
+                            return Ok(format!("{}({})", c_name, parts.join(", ")));
+                        }
+                        // Inline-sentinel methods + DeclaredBody fall through
+                        // к match блокам ниже (preserve Fail-effected dispatch
+                        // и closure-applying inline emit per Open Q #5).
                         let obj_c = self.emit_expr(obj)?;
                         match method.as_str() {
-                            "is_some" => return Ok(format!(
-                                "Nova_Option_method_is_some_{}({})", elem_ty, obj_c)),
-                            "is_none" => return Ok(format!(
-                                "Nova_Option_method_is_none_{}({})", elem_ty, obj_c)),
-                            "unwrap_or" => {
-                                if let Some(arg) = args.first() {
-                                    let v = self.emit_expr(arg.expr())?;
-                                    return Ok(format!(
-                                        "Nova_Option_method_unwrap_or_{}({}, {})",
-                                        elem_ty, obj_c, v));
-                                }
-                            }
                             "unwrap" => {
                                 // Inline check + Nova_Fail_fail on None
                                 let tmp = self.fresh_tmp();
@@ -12313,12 +12715,52 @@ impl CEmitter {
                             _ => {}
                         }
                     }
+                    // Plan 62.A.bis Ф.3.2: Result method dispatch route'ится
+                    // через `sum_schema_registry`. Routable trampolines
+                    // (is_ok/is_err/ok/unwrap_or) emit'ятся через registry
+                    // entry; sentinel `"<inline>"` (err/unwrap_or_else/map/
+                    // map_err/unwrap) fall through к existing inline блокам
+                    // ниже. Result методы — non-per-T (single bootstrap mono).
                     if obj_ty == "Nova_Result*" {
+                        let routing = self.sum_schema_registry
+                            .lookup_method_routing("Result", method.as_str())
+                            .cloned();
+                        if let Some(super::sum_schema_registry::MethodRouting::HardcodedRuntimeFn {
+                            c_name, is_per_t,
+                        }) = &routing {
+                            if c_name != "<inline>" {
+                                let obj_c = self.emit_expr(obj)?;
+                                // Result methods — non-per-T в bootstrap'е
+                                // (`is_per_t = false`); если истинно — это
+                                // future per-T monomorphization (Plan 59).
+                                let mangled = if *is_per_t {
+                                    // Phase 3: per-T для Result не используется
+                                    // (registry: все false); но preserve future-
+                                    // proof path.
+                                    format!("{}_nova_int_nova_str", c_name)
+                                } else {
+                                    c_name.clone()
+                                };
+                                let mut parts = vec![obj_c];
+                                for a in args {
+                                    parts.push(self.emit_expr(a.expr())?);
+                                }
+                                return Ok(format!("{}({})", mangled, parts.join(", ")));
+                            }
+                        }
+                        if let Some(super::sum_schema_registry::MethodRouting::ExternalFn {
+                            c_name,
+                        }) = &routing {
+                            let obj_c = self.emit_expr(obj)?;
+                            let mut parts = vec![obj_c];
+                            for a in args {
+                                parts.push(self.emit_expr(a.expr())?);
+                            }
+                            return Ok(format!("{}({})", c_name, parts.join(", ")));
+                        }
+                        // Inline-sentinel + DeclaredBody fall through.
                         let obj_c = self.emit_expr(obj)?;
                         match method.as_str() {
-                            "is_ok" => return Ok(format!("Nova_Result_method_is_ok({})", obj_c)),
-                            "is_err" => return Ok(format!("Nova_Result_method_is_err({})", obj_c)),
-                            "ok" => return Ok(format!("Nova_Result_method_ok({})", obj_c)),
                             // D26 prelude: Result.err() → Option[E].
                             // Bootstrap: Err type — nova_str. Возвращаем
                             // NovaOpt_nova_int с интерпретируемой как str
@@ -12344,13 +12786,6 @@ impl CEmitter {
                                 self.indent -= 1;
                                 self.line("}");
                                 return Ok(opt_tmp);
-                            }
-                            "unwrap_or" => {
-                                if let Some(arg) = args.first() {
-                                    let v = self.emit_expr(arg.expr())?;
-                                    return Ok(format!(
-                                        "Nova_Result_method_unwrap_or({}, {})", obj_c, v));
-                                }
                             }
                             // D26 prelude: Result.unwrap_or_else(f). Err →
                             // f(e), Ok(v) → v. f это closure (nova_str → nova_int).
@@ -14349,7 +14784,8 @@ impl CEmitter {
         // the monomorphized instance which expects concrete types — skip the
         // void* boxing so the arg type matches the mono signature.
         let is_generic_call = if let ExprKind::Ident(name) = &func.kind {
-            if let Some((type_name, _)) = self.find_variant(name) {
+            // Plan 62.A.bis Ф.2.2: registry-driven variant resolution.
+            if let Some((type_name, _)) = self.sum_schema_registry.find_variant_compat(name) {
                 self.generic_types.contains(&type_name)
                     && self.try_infer_variant_mono_args(name, args).is_none()
             } else { false }
@@ -14465,20 +14901,43 @@ impl CEmitter {
     }
 
     fn infer_print_helper(&self, expr: &Expr) -> &'static str {
-        // AD3: char literals are stored as nova_int in the AST but should
-        // print as UTF-8 characters, not code-point integers.
+        // Plan 62.B.bis Ф.0 / Plan 67 (converged 2026-05-18):
+        // Унифицируем dispatch через `infer_expr_c_type` — единый source of
+        // truth для return-type inference. До рефактора `infer_print_helper`
+        // дублировал narrow subset из `infer_expr_c_type` (IntLit/StrLit/
+        // Ident-var/Member-record-schema/Call-method-hardcoded-list/
+        // Call-Ident-fn_ret-cache), что приводило к Plan 67 silent-wrong-output
+        // bug: `println(str.from(factorial(5)))` эмитил `nova_print_int(
+        // nova_int_to_str(...))` потому что Member-func (`str.from`) не
+        // распознавался — fallback на `nova_print_int` дал invalid C.
+        //
+        // После рефактора любой паттерн, который `infer_expr_c_type` умеет
+        // (static methods `str.from`, method chains, if-expr, match-expr,
+        // generic mono return, external_registry, etc.) автоматически
+        // получает корректный print helper. ~75 LOC → ~25 LOC, DRY.
+        //
+        // Plan 67 AD2 — unknown-type fallback preserved: дефолт
+        // `nova_print_int` сохраняет current behavior (`%lld` cast'нется в
+        // garbage если actual type не int — это же поведение что и до).
+        //
+        // AD3 (Plan 67): char literals print as UTF-8 (not code-point int).
+        // Plan 70.3 introduced distinct `nova_char` typedef — для char-typed
+        // variables (не literal) `infer_expr_c_type` возвращает "nova_char"
+        // и текущая логика falls through к `nova_print_int` (prints code-point
+        // через %lld). Полный UTF-8 print для char-var deferred.
         if matches!(&expr.kind, ExprKind::CharLit(_)) {
             return "nova_print_char";
         }
-        // AD1: delegate to full type inference instead of manual pattern matching.
         let c_ty = self.infer_expr_c_type(expr);
         match c_ty.as_str() {
             "nova_str"                                      => "nova_print_str",
             "nova_bool"                                     => "nova_print_bool",
             "nova_f32" | "nova_f64"                         => "nova_print_f64",
+            // Signed/unsigned integer widths — все cast'ятся в long long
+            // через nova_print_int signature.
             "nova_int" | "nova_i8" | "nova_i16" | "nova_i32" | "nova_i64"
             | "nova_u8" | "nova_u16" | "nova_u32" | "nova_u64" => "nova_print_int",
-            _                                               => "nova_print_int",
+            _                                               => "nova_print_int", // conservative fallback
         }
     }
 
@@ -15411,20 +15870,43 @@ impl CEmitter {
             // (e.g. `Slot.Occupied { key: k, value: v }`). Lookup field types
             // через record_variant_field_types map. Поддерживает mono'd
             // instances (key включает mono suffix).
+            //
+            // Plan 62.D bis-1 (2026-05-18): also handle PLAIN-record patterns
+            // (`Pair { a, b }` where `Pair` is a record, not a sum-variant).
+            // Lookup field types via `record_schemas` (mirror of
+            // `pattern_bind_typed` at line ~16404). Without this, the previous
+            // code path used `scr_ty.to_string()` (Nova_Pair*) as the binding
+            // type, which then poisoned `a + b` inference (left-operand type
+            // would be `Nova_Pair*` → match result wrongly typed `Nova_Pair*`).
             Pattern::Record { type_path, fields, .. } => {
                 let mut out = vec![];
-                // sum_name из scr_ty: trim Nova_/* и split на mono parts.
-                let sum_name_full = scr_ty.trim_end_matches('*').trim()
+                let scr_base = scr_ty.trim_end_matches('*').trim()
                     .strip_prefix("Nova_").unwrap_or("").to_string();
-                // mono'd sum: "Slot____nova_str__nova_int" → base "Slot".
-                let sum_base = sum_name_full.split("____").next().unwrap_or("").to_string();
+                // Try plain-record path first: explicit type_path or scr-derived
+                // name; both must hit `record_schemas`.
+                let type_name_from_path = type_path
+                    .as_ref()
+                    .and_then(|p| p.last().cloned())
+                    .unwrap_or_else(|| scr_base.clone());
+                if this.record_schemas.contains_key(&type_name_from_path) {
+                    let field_types = this.record_schemas.get(&type_name_from_path).cloned().unwrap_or_default();
+                    for f in fields {
+                        let ty = field_types.get(&f.name).cloned().unwrap_or_else(|| "nova_int".into());
+                        let inner_pat = f.pattern.clone()
+                            .unwrap_or_else(|| Pattern::Ident { name: f.name.clone(), span: f.span });
+                        out.extend(Self::collect_pattern_inner_bindings(&inner_pat, &ty, this));
+                    }
+                    return out;
+                }
+                // Sum-variant record: e.g. `Slot.Occupied { key, value }`.
+                let sum_base = scr_base.split("____").next().unwrap_or("").to_string();
                 let variant_name = type_path.as_ref()
                     .and_then(|p| p.last().cloned())
                     .unwrap_or_default();
                 if !variant_name.is_empty() && !sum_base.is_empty() {
                     for f in fields {
                         // Try mono'd key first, then base.
-                        let key_mono = format!("{}::{}::{}", sum_name_full, variant_name, f.name);
+                        let key_mono = format!("{}::{}::{}", scr_base, variant_name, f.name);
                         let key_base = format!("{}::{}::{}", sum_base, variant_name, f.name);
                         let field_c = this.record_variant_field_types.get(&key_mono)
                             .or_else(|| this.record_variant_field_types.get(&key_base))
@@ -15822,8 +16304,9 @@ impl CEmitter {
             } else {
                 struct_name
             };
-            // Check if this is a sum-type record variant (not a plain record)
-            if let Some((sum_type_name, _)) = self.find_variant(&struct_name) {
+            // Check if this is a sum-type record variant (not a plain record).
+            // Plan 62.A.bis Ф.2.2: registry-driven variant resolution.
+            if let Some((sum_type_name, _)) = self.sum_schema_registry.find_variant_compat(&struct_name) {
                 // Emit as sum-type record variant constructor: nova_make_T_Variant(field_vals...)
                 // D109: In monomorphized context, sum_type_name may be the erased base type
                 // (e.g. "Slot"). Compute concrete monomorphized name if generic params available.
@@ -16496,8 +16979,11 @@ impl CEmitter {
                 let type_name = if path.len() > 1 {
                     path[..path.len()-1].join("_")
                 } else {
-                    // Look up which sum type has this variant
-                    self.find_variant(&variant_name)
+                    // Plan 62.A.bis Ф.2.1: registry-driven lookup (find_variant_v2)
+                    // вместо legacy find_variant. Semantically equivalent —
+                    // registry mirror'ит sum_schemas через register_user_sum
+                    // (+ init_hardcoded_baseline для Option/Result/RuntimeError).
+                    self.sum_schema_registry.find_variant_compat(&variant_name)
                         .map(|(t, _)| t)
                         .unwrap_or_else(|| {
                             // Fall back: infer from scrutinee's C type
@@ -16609,9 +17095,11 @@ impl CEmitter {
             Pattern::Record { type_path, fields, .. } => {
                 let scr_ty = self.var_types.get(scr).cloned().unwrap_or_default();
                 let type_name_from_path = type_path.as_ref().and_then(|p| p.last().cloned()).unwrap_or_default();
-                // Determine if this is a plain record or a sum-type record variant
+                // Determine if this is a plain record or a sum-type record variant.
+                // Plan 62.A.bis Ф.2.1: registry-driven lookup для sum-variant test.
                 let is_plain_record = self.record_schemas.contains_key(&type_name_from_path);
-                let is_sum_variant = !is_plain_record && self.find_variant(&type_name_from_path).is_some();
+                let is_sum_variant = !is_plain_record
+                    && self.sum_schema_registry.find_variant_compat(&type_name_from_path).is_some();
                 if is_plain_record {
                     // Plain record match: always succeeds; check literal fields
                     let mut conds = Vec::new();
@@ -16627,8 +17115,10 @@ impl CEmitter {
                     if conds.is_empty() { Ok("true".into()) }
                     else { Ok(format!("({})", conds.join(" && "))) }
                 } else if is_sum_variant {
-                    // Sum-type record variant: check tag + literal fields
-                    let (sum_type_name, _) = self.find_variant(&type_name_from_path).unwrap();
+                    // Sum-type record variant: check tag + literal fields.
+                    // Plan 62.A.bis Ф.2.1: registry lookup для sum-type name.
+                    let (sum_type_name, _) = self.sum_schema_registry
+                        .find_variant_compat(&type_name_from_path).unwrap();
                     let variant_name = type_name_from_path.clone();
                     let mut conds = vec![format!("({}->tag == NOVA_TAG_{}_{})", scr, sum_type_name, variant_name)];
                     for field in fields {
@@ -16691,7 +17181,8 @@ impl CEmitter {
                             if !scr_base.is_empty() && self.sum_schemas.contains_key(&scr_base) {
                                 scr_base
                             } else {
-                                self.find_variant(&variant_name)
+                                // Plan 62.A.bis Ф.2.3: registry-driven variant resolution.
+                                self.sum_schema_registry.find_variant_compat(&variant_name)
                                     .map(|(t, _)| t)
                                     .unwrap_or_default()
                             }
@@ -16994,7 +17485,8 @@ impl CEmitter {
                     {
                         sum_type_name_from_scr
                     } else {
-                        self.find_variant(&variant_name)
+                        // Plan 62.A.bis Ф.2.3: registry-driven variant resolution.
+                        self.sum_schema_registry.find_variant_compat(&variant_name)
                             .map(|(t, _)| t)
                             .unwrap_or_else(|| {
                                 scr_ty.strip_prefix("Nova_").unwrap_or(&scr_ty)
@@ -17166,6 +17658,250 @@ impl CEmitter {
         }
     }
 
+    // ─────────────────────────────────────────────────────────────────────
+    // Plan 62.D bis-1 (2026-05-18): scope-aware free-variable collector.
+    // The original `collect_free_idents` is misnamed — it returns ALL
+    // identifiers in an expression, including ones bound by inner `let`s,
+    // pattern matches, and nested lambdas. Used as-is for closure-capture
+    // analysis (emit_lambda line ~16670), the resulting filter
+    // (`var_types.contains_key`) incorrectly treats inner-shadowed names as
+    // captures from the outer scope when those names ALSO happen to be in
+    // `var_types` (e.g. `s` from a prior `let s = ...` in another function
+    // body — `var_types` is a global HashMap that doesn't reset per-fn).
+    //
+    // The fix: track inner bindings (let-statements, lambda params, match
+    // patterns) and exclude them from the free set. We use a `bound` HashSet
+    // that's pushed/popped as we descend.
+    //
+    // Production semantics: in a sequence of `let`s, the lexical scope of
+    // `let x = ...` covers the rest of the block. So binding order matters:
+    // `let s = ...; let f = || s + 1` — `s` IS free in `f`'s body. But
+    // `let f = || { let s = ...; s + 1 }` — `s` is locally bound, NOT free.
+    //
+    // The collector descends through blocks, growing `bound` as it visits
+    // each `let` BEFORE visiting subsequent statements (matches lexical scope).
+    fn collect_truly_free_idents(
+        expr: &Expr,
+        bound: &mut HashSet<String>,
+        out: &mut HashSet<String>,
+    ) {
+        match &expr.kind {
+            ExprKind::Ident(n) => {
+                if !bound.contains(n) {
+                    out.insert(n.clone());
+                }
+            }
+            ExprKind::Binary { left, right, .. } => {
+                Self::collect_truly_free_idents(left, bound, out);
+                Self::collect_truly_free_idents(right, bound, out);
+            }
+            ExprKind::Unary { operand, .. } => {
+                Self::collect_truly_free_idents(operand, bound, out);
+            }
+            ExprKind::Call { func, args, .. } => {
+                Self::collect_truly_free_idents(func, bound, out);
+                for a in args { Self::collect_truly_free_idents(a.expr(), bound, out); }
+            }
+            ExprKind::Member { obj, .. } => {
+                Self::collect_truly_free_idents(obj, bound, out);
+            }
+            ExprKind::Index { obj, index } => {
+                Self::collect_truly_free_idents(obj, bound, out);
+                Self::collect_truly_free_idents(index, bound, out);
+            }
+            ExprKind::Block(b) => {
+                Self::collect_truly_free_idents_block(b, bound, out);
+            }
+            ExprKind::If { cond, then, else_, .. } => {
+                Self::collect_truly_free_idents(cond, bound, out);
+                Self::collect_truly_free_idents_block(then, bound, out);
+                if let Some(e) = else_ {
+                    match e {
+                        ElseBranch::Block(b) =>
+                            Self::collect_truly_free_idents_block(b, bound, out),
+                        ElseBranch::If(ex) =>
+                            Self::collect_truly_free_idents(ex, bound, out),
+                    }
+                }
+            }
+            ExprKind::Lambda { params, body, .. } => {
+                // Inner lambda: its params shadow outer scope inside the body.
+                // Snapshot bound, add params, recurse, restore.
+                let saved: Vec<String> = params.iter()
+                    .filter_map(|p| if bound.insert(p.name.clone()) { Some(p.name.clone()) } else { None })
+                    .collect();
+                Self::collect_truly_free_idents(body, bound, out);
+                for n in saved { bound.remove(&n); }
+            }
+            ExprKind::ClosureLight { params, body } => {
+                let saved: Vec<String> = params.iter()
+                    .filter_map(|p| if bound.insert(p.name.clone()) { Some(p.name.clone()) } else { None })
+                    .collect();
+                match body {
+                    crate::ast::ClosureBody::Expr(e) =>
+                        Self::collect_truly_free_idents(e, bound, out),
+                    crate::ast::ClosureBody::Block(b) =>
+                        Self::collect_truly_free_idents_block(b, bound, out),
+                }
+                for n in saved { bound.remove(&n); }
+            }
+            ExprKind::ClosureFull(c) => {
+                let saved: Vec<String> = c.params.iter()
+                    .filter_map(|p| if bound.insert(p.name.clone()) { Some(p.name.clone()) } else { None })
+                    .collect();
+                match &c.body {
+                    crate::ast::FnBody::Expr(e) =>
+                        Self::collect_truly_free_idents(e, bound, out),
+                    crate::ast::FnBody::Block(b) =>
+                        Self::collect_truly_free_idents_block(b, bound, out),
+                    crate::ast::FnBody::External => {}
+                }
+                for n in saved { bound.remove(&n); }
+            }
+            ExprKind::TupleLit(elems) => {
+                for e in elems { Self::collect_truly_free_idents(e, bound, out); }
+            }
+            ExprKind::Detach(b) => {
+                Self::collect_truly_free_idents_block(b, bound, out);
+            }
+            ExprKind::Supervised { body, cancel } => {
+                Self::collect_truly_free_idents_block(body, bound, out);
+                if let Some(c) = cancel {
+                    Self::collect_truly_free_idents(c, bound, out);
+                }
+            }
+            ExprKind::Select { arms } => {
+                for arm in arms {
+                    match &arm.op {
+                        SelectOp::Recv { chan, .. } =>
+                            Self::collect_truly_free_idents(chan, bound, out),
+                        SelectOp::Send { chan, value } => {
+                            Self::collect_truly_free_idents(chan, bound, out);
+                            Self::collect_truly_free_idents(value, bound, out);
+                        }
+                        SelectOp::Default => {}
+                    }
+                    if let Some(g) = &arm.guard {
+                        Self::collect_truly_free_idents(g, bound, out);
+                    }
+                    Self::collect_truly_free_idents_block(&arm.body, bound, out);
+                }
+            }
+            ExprKind::Match { scrutinee, arms } => {
+                Self::collect_truly_free_idents(scrutinee, bound, out);
+                for arm in arms {
+                    // Pattern bindings shadow the outer scope inside the arm body.
+                    let mut pat_binds: HashSet<String> = HashSet::new();
+                    Self::collect_pattern_bindings(&arm.pattern, &mut pat_binds);
+                    let added: Vec<String> = pat_binds.iter()
+                        .filter_map(|n| if bound.insert(n.clone()) { Some(n.clone()) } else { None })
+                        .collect();
+                    if let Some(g) = &arm.guard {
+                        Self::collect_truly_free_idents(g, bound, out);
+                    }
+                    match &arm.body {
+                        MatchArmBody::Expr(e) =>
+                            Self::collect_truly_free_idents(e, bound, out),
+                        MatchArmBody::Block(b) =>
+                            Self::collect_truly_free_idents_block(b, bound, out),
+                    }
+                    for n in added { bound.remove(&n); }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn collect_truly_free_idents_block(
+        block: &Block,
+        bound: &mut HashSet<String>,
+        out: &mut HashSet<String>,
+    ) {
+        // Lexical scope: each `let x = ...` binds `x` for SUBSEQUENT stmts/trailing.
+        // We collect inserted names and pop them all on block exit (block-local).
+        let mut added: Vec<String> = Vec::new();
+        for s in &block.stmts {
+            match s {
+                Stmt::Let(d) => {
+                    // Value expression evaluated in scope BEFORE binding x.
+                    Self::collect_truly_free_idents(&d.value, bound, out);
+                    // After this let, x is bound for the rest of the block.
+                    let mut pat_binds: HashSet<String> = HashSet::new();
+                    Self::collect_pattern_bindings(&d.pattern, &mut pat_binds);
+                    for n in pat_binds {
+                        if bound.insert(n.clone()) {
+                            added.push(n);
+                        }
+                    }
+                }
+                Stmt::Assign { target, value, .. } => {
+                    Self::collect_truly_free_idents(target, bound, out);
+                    Self::collect_truly_free_idents(value, bound, out);
+                }
+                Stmt::Expr(e) =>
+                    Self::collect_truly_free_idents(e, bound, out),
+                Stmt::Return { value: Some(e), .. } =>
+                    Self::collect_truly_free_idents(e, bound, out),
+                _ => {}
+            }
+        }
+        if let Some(t) = &block.trailing {
+            Self::collect_truly_free_idents(t, bound, out);
+        }
+        // Pop block-local bindings.
+        for n in added { bound.remove(&n); }
+    }
+
+    /// Collect names introduced by a pattern (used by closure free-var collector
+    /// and by future scope analyses). Recursively visits sub-patterns; for `Or`,
+    /// takes the union (any alternative's bindings count as introduced). Wildcard,
+    /// literals, and unit-variants introduce nothing.
+    fn collect_pattern_bindings(pat: &Pattern, out: &mut HashSet<String>) {
+        match pat {
+            Pattern::Wildcard(_) | Pattern::Literal(..) => {}
+            Pattern::Ident { name, .. } => { out.insert(name.clone()); }
+            Pattern::Binding { name, inner, .. } => {
+                out.insert(name.clone());
+                Self::collect_pattern_bindings(inner, out);
+            }
+            Pattern::Or { alternatives, .. } => {
+                for alt in alternatives {
+                    Self::collect_pattern_bindings(alt, out);
+                }
+            }
+            Pattern::Variant { kind, .. } => {
+                match kind {
+                    VariantPatternKind::Tuple { patterns, .. } => {
+                        for p in patterns { Self::collect_pattern_bindings(p, out); }
+                    }
+                    VariantPatternKind::Unit => {}
+                }
+            }
+            Pattern::Record { fields, .. } => {
+                for f in fields {
+                    if let Some(inner) = &f.pattern {
+                        Self::collect_pattern_bindings(inner, out);
+                    } else {
+                        // shorthand `{ name }` — binds `name`.
+                        out.insert(f.name.clone());
+                    }
+                }
+            }
+            Pattern::Tuple(pats, _) => {
+                for p in pats { Self::collect_pattern_bindings(p, out); }
+            }
+            Pattern::Array { elems, .. } => {
+                for el in elems {
+                    match el {
+                        ArrayPatternElem::Item(p) => Self::collect_pattern_bindings(p, out),
+                        ArrayPatternElem::Rest => {}
+                        ArrayPatternElem::RestBind(name) => { out.insert(name.clone()); }
+                    }
+                }
+            }
+        }
+    }
+
     /// Emit a lambda expression. Returns the C expression (a function pointer or closure pointer).
     fn emit_lambda(
         &mut self,
@@ -17222,10 +17958,19 @@ impl CEmitter {
             self.infer_lambda_return_type_with_params(body, params, &param_c_tys)
         };
 
-        // Detect free variables: idents in body that are NOT lambda params
+        // Plan 62.D bis-1 (2026-05-18): scope-aware free-var detection.
+        // The previous `collect_free_idents` returned ALL idents in body
+        // including inner `let`-bound names, which led to mis-emit when those
+        // names happened to also be in the global `var_types` HashMap from
+        // a different scope (e.g. `s` from a prior `let s = ...` in another
+        // function body — `var_types` doesn't reset between functions). The
+        // resulting `_box_s = s` referenced an out-of-scope variable.
+        // `collect_truly_free_idents` respects lexical scope: inner `let`s,
+        // nested lambdas, and match patterns shadow outer names.
         let param_names: HashSet<String> = params.iter().map(|p| p.name.clone()).collect();
         let mut body_idents = HashSet::new();
-        Self::collect_free_idents(body, &mut body_idents);
+        let mut initial_bound = param_names.clone();
+        Self::collect_truly_free_idents(body, &mut initial_bound, &mut body_idents);
         // Free vars = body idents that exist in var_types and are not lambda params
         let free_vars: Vec<(String, String)> = body_idents.iter()
             .filter(|n| !param_names.contains(*n) && self.var_types.contains_key(*n))
@@ -18515,8 +19260,9 @@ impl CEmitter {
                 let struct_name = if raw_name == "Self" {
                     self.current_receiver_type.clone().unwrap_or(raw_name)
                 } else { raw_name };
-                // Check if this is a sum-type record variant
-                if let Some((sum_type_name, _)) = self.find_variant(&struct_name) {
+                // Check if this is a sum-type record variant.
+                // Plan 62.A.bis Ф.2.2: registry-driven sum variant lookup.
+                if let Some((sum_type_name, _)) = self.sum_schema_registry.find_variant_compat(&struct_name) {
                     format!("Nova_{}*", sum_type_name)
                 } else if self.generic_types.contains(&struct_name) {
                     // Generic type: compute concrete mono name from field values.
@@ -18573,11 +19319,21 @@ impl CEmitter {
                 if let Some(ty) = self.closure_param_type_overrides.borrow().get(name) {
                     return ty.clone();
                 }
+                // Plan 62.D bis-1 (2026-05-18): match-arm pattern binding
+                // override — set by `infer_expr_c_type(ExprKind::Match)` before
+                // recursing into arm body. Must be checked BEFORE `var_types` to
+                // avoid leaked stale entry from a different scope (e.g. `let r =
+                // Range...` in another test file would otherwise return
+                // `Nova_Range*` for `r` in `match opt { Some(r) => r }`).
+                if let Some(ty) = self.pattern_binding_overrides.borrow().get(name) {
+                    return ty.clone();
+                }
                 if let Some(ty) = self.var_types.get(name) {
                     return ty.clone();
                 }
-                // Check if it's a unit variant (e.g. None, Err, Ok used as value)
-                if let Some((type_name, fields)) = self.find_variant(name) {
+                // Check if it's a unit variant (e.g. None, Err, Ok used as value).
+                // Plan 62.A.bis Ф.2.2: registry-driven variant resolution.
+                if let Some((type_name, fields)) = self.sum_schema_registry.find_variant_compat(name) {
                     if fields.is_empty() {
                         if type_name == "Option" || type_name == "NovaOpt_nova_int" {
                             // Plan 14 Ф.1: None infer'ится по контексту
@@ -18871,8 +19627,9 @@ impl CEmitter {
                     if name == "println" || name == "print" || name == "assert" || name == "debug_assert" {
                         return "nova_unit".into();
                     }
-                    // Variant constructor call: Some(x), None, etc. → return option/sum type
-                    if let Some((type_name, _)) = self.find_variant(name) {
+                    // Variant constructor call: Some(x), None, etc. → return option/sum type.
+                    // Plan 62.A.bis Ф.2.2: registry-driven variant resolution.
+                    if let Some((type_name, _)) = self.sum_schema_registry.find_variant_compat(name) {
                         // Plan 14 Ф.1: Some(x) infer как NovaOpt_<T>, где T = тип аргумента.
                         // None infer'ится по контексту current_fn_return_ty (если NovaOpt_<X>).
                         // Иначе — legacy NovaOpt_nova_int.
@@ -19587,19 +20344,51 @@ impl CEmitter {
                     .map(|e| self.infer_expr_c_type(e))
                     .unwrap_or_else(|| "nova_unit".into())
             }
-            ExprKind::Match { arms, .. } => {
-                // Infer result type from first non-unit arm
-                for arm in arms {
+            ExprKind::Match { scrutinee, arms } => {
+                // Plan 62.D bis-1 (2026-05-18): infer arm body type WITH pattern
+                // bindings installed via `pattern_binding_overrides` RefCell.
+                // Without this, `match opt { Some(r) => r }` would look up `r` in
+                // `var_types` and pick up stale entry from a different scope
+                // (e.g. `let r = Range...` in another test file) instead of the
+                // correct inner type (`nova_str` for `Option[str]`). Mirrors the
+                // emit_match `infer_arm` closure (line ~14694) which installs into
+                // `var_types`; here we use RefCell since `&self`.
+                let scr_ty = self.infer_expr_c_type(scrutinee);
+                let infer_arm = |this: &Self, arm: &MatchArm| -> String {
+                    let bindings: Vec<(String, String)> =
+                        Self::collect_pattern_inner_bindings(&arm.pattern, &scr_ty, this);
+                    let saved: Vec<(String, Option<String>)> = {
+                        let mut overrides = this.pattern_binding_overrides.borrow_mut();
+                        bindings.iter()
+                            .map(|(n, t)| {
+                                let prev = overrides.insert(n.clone(), t.clone());
+                                (n.clone(), prev)
+                            })
+                            .collect()
+                    };
                     let t = match &arm.body {
-                        MatchArmBody::Expr(e) => self.infer_expr_c_type(e),
+                        MatchArmBody::Expr(e) => this.infer_expr_c_type(e),
                         MatchArmBody::Block(b) => b.trailing.as_ref()
-                            .map(|e| self.infer_expr_c_type(e))
+                            .map(|e| this.infer_expr_c_type(e))
                             .unwrap_or_else(|| "nova_unit".into()),
                     };
+                    let mut overrides = this.pattern_binding_overrides.borrow_mut();
+                    for (n, prev) in saved {
+                        match prev {
+                            Some(p) => { overrides.insert(n, p); }
+                            None => { overrides.remove(&n); }
+                        }
+                    }
+                    t
+                };
+                // First pass: find a non-unit, non-nova_int type.
+                for arm in arms {
+                    let t = infer_arm(self, arm);
                     if t != "nova_unit" && t != "nova_int" {
                         return t;
                     }
                 }
+                // Second pass: settle for nova_int if no better type found.
                 "nova_int".into()
             }
             ExprKind::Member { obj, name } => {

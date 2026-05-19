@@ -69,9 +69,35 @@ pub fn check_module(module: &Module) -> Result<ModuleEnv, Vec<Diagnostic>> {
     //
     // Plan 42 Sub-plan 42.6: detect runtime module РїРѕ РѕР±РѕРёС… declaration
     // С„РѕСЂРјР°С‚РѕРІ (rev-1 legacy + rev-3 parent.X). Logic вЂ” РІ manifest helper.
-    let is_runtime_module = crate::manifest::is_stdlib_runtime_module(&module.name);
+    //
+    // Plan 62.A: also whitelist `std.prelude.*` submodules. Prelude
+    // sub-modules (`std/prelude/core.nv`, etc.) declare types/methods
+    // implemented by codegen helpers in `nova_rt/*.h` — same pattern
+    // as `std.runtime.*` (declaration-only, no Nova body).
+    //
+    // Plan 62.A (2026-05-18): check only items DECLARED HERE (in entry
+    // peers' `items_here`), not items merged from imports. Otherwise
+    // `external fn`-карта prelude'а проседает на каждом user-модуле:
+    // user `module foo` импортирует `std.prelude` → prelude.core external
+    // fns merge'нутся в `module.items` → check fires на foo. Items
+    // источника prelude.core валидируются при компиляции САМОГО
+    // prelude.core (отдельный `check_module` invocation на std).
+    let is_runtime_module = crate::manifest::is_stdlib_runtime_module(&module.name)
+        || crate::manifest::is_prelude_self_module(&module.name);
     if !is_runtime_module {
-        for item in &module.items {
+        // Collect entry peers' items_here (items declared в этом модуле
+        // самим, не pulled через imports). Fallback на module.items если
+        // peer_files пуст (legacy single-file).
+        let entry_items: Vec<&Item> = if module.peer_files.is_empty() {
+            module.items.iter().collect()
+        } else {
+            module.peer_files
+                .iter()
+                .filter(|pf| pf.is_entry_module)
+                .flat_map(|pf| pf.items_here.iter())
+                .collect()
+        };
+        for item in entry_items {
             if let Item::Fn(fd) = item {
                 if fd.is_external {
                     errors.push(Diagnostic::new(
@@ -85,17 +111,116 @@ pub fn check_module(module: &Module) -> Result<ModuleEnv, Vec<Diagnostic>> {
                     ));
                 }
             }
+            // Plan 62.D.bis (D126): `external type X` — same whitelist as
+            // `external fn` per D82. Only `std.runtime.*` / `std.prelude.*`
+            // modules can declare opaque types (runtime backing —
+            // compiler-versioned artefact, not user-extensible).
+            if let Item::Type(td) = item {
+                if matches!(td.kind, TypeDeclKind::Opaque) {
+                    errors.push(Diagnostic::new(
+                        format!(
+                            "`external type` is only allowed in `std.runtime.*` / `std.prelude.*` modules \
+                             (this module is `{}`); for FFI to external C libraries \
+                             a future `extern(\"C\") type` keyword will be added (Q-ffi). \
+                             See D126 (spec/decisions/03-syntax.md).",
+                            module.name.join(".")
+                        ),
+                        td.span,
+                    ));
+                }
+            }
         }
     }
+
+    // Plan 62.D bis-1 (2026-05-18, D29 W_PRELUDE_SHADOW basic):
+    // Determine which items in `module.items` came from imports (vs the
+    // user's own entry file) — these are conflict candidates for D29 lint
+    // and for the "codegen-completeness invisible merge" detection.
+    //
+    // The merge logic in `imports.rs` is two-phase:
+    //   - `merged_items` (→ `module.items`): ALL items from imported peer
+    //     modules are pulled in for codegen completeness (e.g. typedef'ы
+    //     should be available even if not selectively imported). This
+    //     causes apparent name conflicts when the user re-declares a name
+    //     that's in a merged-but-not-visible item.
+    //   - `imported_item_names` (per-peer): names actually VISIBLE to the
+    //     user via explicit imports + selective re-exports. This is the
+    //     proper "what does user see" set.
+    //
+    // D29 rule (W_PRELUDE_SHADOW basic): user declarations that conflict
+    // with names brought in via prelude auto-import → warning (not error).
+    // User declarations that conflict with codegen-only merged items (not
+    // user-visible) → silently accept user's declaration.
+    //
+    // We collect entry-visible names via prelude into `prelude_visible_names`;
+    // items in `module.items` NOT in this set AND NOT in user's own
+    // `items_here` are codegen-only merges — silently allowed to be
+    // shadowed by user code.
+    //
+    // Detection of "prelude-brought-in":
+    //   Pass 1: names declared directly in `std/prelude/*` or
+    //   `std/prelude.nv` peer files (items_here of those peers).
+    //   Pass 2: names re-exported through prelude facade via selective
+    //   `export import X.{A, B}` lists in prelude peer imports. The
+    //   re-exported alias (if any) is the visible name.
+    //
+    // Without this fix, enabling `export import
+    // std.collections.range.{Range, RangeIter}` in `std/prelude.nv` broke
+    // `nova_tests/syntax/for_in_range_iter.nv` (which locally declares
+    // `type Range` and `type StepRangeIter`).
+    //
+    // Plan 62.F.bis Ф.2 (2026-05-18): visibility computation вынесена в
+    // `lints::collect_prelude_visibility`. types::check_module использует
+    // её для silent classify duplicate'ов (user-decl wins); structured
+    // W_PRELUDE_SHADOW warning эмитится через `lints::lint_prelude_shadow`
+    // — отдельно, в pipeline после check_module. Раньше eprintln здесь
+    // дублировал диагностику; теперь silent — warnings приходят как
+    // structured LintWarning через `cmd_check` warnings field.
+    let prelude_vis = crate::lints::collect_prelude_visibility(module);
+
+    // Classify a duplicate top-level name:
+    //   - `Some(true)` → name is visible via prelude → user-decl wins,
+    //     structured warning emitted by `lints::lint_prelude_shadow`
+    //   - `Some(false)` → name is merged-from-imports (codegen-only, not
+    //     user-visible) → silent (user wins)
+    //   - `None` → genuine duplicate (e.g. user code declared same name twice)
+    //     → error
+    let classify_dup = |name: &str| -> Option<bool> {
+        if prelude_vis.visible.contains(name) { Some(true) }
+        else if prelude_vis.merged_from_imports.contains(name) { Some(false) }
+        else { None }
+    };
 
     for item in &module.items {
         match item {
             Item::Type(td) => {
                 if !names.insert(td.name.clone()) {
-                    errors.push(Diagnostic::new(
-                        format!("duplicate top-level name `{}`", td.name),
-                        td.span,
-                    ));
+                    // Plan 62.D bis-1: classify the duplicate per D29.
+                    match classify_dup(&td.name) {
+                        Some(true) => {
+                            // Visible via prelude → user-declaration wins
+                            // silently here; structured W_PRELUDE_SHADOW
+                            // warning emitted by `lints::lint_prelude_shadow`
+                            // (Plan 62.F.bis Ф.2 — see warnings field в
+                            // cmd_check для surface). User-decl still wins;
+                            // qualify as `std.prelude.<sub>.<name>` для
+                            // прямого доступа к prelude version.
+                            env.types.insert(td.name.clone(), td.clone());
+                            continue;
+                        }
+                        Some(false) => {
+                            // Codegen-only merge (not user-visible). User's
+                            // declaration silently wins.
+                            env.types.insert(td.name.clone(), td.clone());
+                            continue;
+                        }
+                        None => {
+                            errors.push(Diagnostic::new(
+                                format!("duplicate top-level name `{}`", td.name),
+                                td.span,
+                            ));
+                        }
+                    }
                 }
                 env.types.insert(td.name.clone(), td.clone());
             }
@@ -133,27 +258,78 @@ pub fn check_module(module: &Module) -> Result<ModuleEnv, Vec<Diagnostic>> {
                         _ => false,
                     }
                 });
-                if let Some(prev) = dup_existing {
-                    errors.push(Diagnostic::new(
-                        format!(
-                            "duplicate definition `{}` with same signature \
-                             (overload requires distinct param types, arity, РёР»Рё return type вЂ” \
-                             СЃРј. D84); previous definition has identical params and return type",
-                            key
-                        ),
-                        fd.span,
-                    ));
-                    let _ = prev; // silence unused
+                if dup_existing.is_some() {
+                    // Plan 62.D bis-1: D29 — duplicate fn signature shadowing
+                    // a prelude-imported definition → warning (not error).
+                    // E.g. `fn Range @step_by(int) -> StepRangeIter` declared
+                    // in both user file and the merged-via-prelude
+                    // std/collections/range.nv. User wins.
+                    let dup_pos = entry.iter().position(|existing| {
+                        let args_equal = existing.params.len() == fd.params.len()
+                            && existing.params.iter().zip(new_arg_tys.iter())
+                                .all(|(p, new_ty)| typeref_equal(&p.ty, new_ty));
+                        if !args_equal { return false; }
+                        match (&existing.return_type, &fd.return_type) {
+                            (None, None) => true,
+                            (Some(a), Some(b)) => typeref_equal(a, b),
+                            _ => false,
+                        }
+                    });
+                    match classify_dup(&key) {
+                        Some(true) => {
+                            // Plan 62.F.bis Ф.2: silent user-wins; structured
+                            // W_PRELUDE_SHADOW warning эмитится через
+                            // `lints::lint_prelude_shadow`.
+                            if let Some(pos) = dup_pos {
+                                entry[pos] = fd.clone();
+                            }
+                            continue;
+                        }
+                        Some(false) => {
+                            // Codegen-only merge — silent shadow.
+                            if let Some(pos) = dup_pos {
+                                entry[pos] = fd.clone();
+                            }
+                            continue;
+                        }
+                        None => {
+                            errors.push(Diagnostic::new(
+                                format!(
+                                    "duplicate definition `{}` with same signature \
+                                     (overload requires distinct param types, arity, или return type — \
+                                     см. D84); previous definition has identical params and return type",
+                                    key
+                                ),
+                                fd.span,
+                            ));
+                        }
+                    }
                 } else {
                     entry.push(fd.clone());
                 }
             }
             Item::Const(cd) => {
                 if !names.insert(cd.name.clone()) {
-                    errors.push(Diagnostic::new(
-                        format!("duplicate top-level name `{}`", cd.name),
-                        cd.span,
-                    ));
+                    // Plan 62.D bis-1: same prelude-shadow rule as for types.
+                    match classify_dup(&cd.name) {
+                        Some(true) => {
+                            // Plan 62.F.bis Ф.2: silent user-wins; structured
+                            // W_PRELUDE_SHADOW warning эмитится через
+                            // `lints::lint_prelude_shadow`.
+                            env.consts.insert(cd.name.clone(), cd.clone());
+                            continue;
+                        }
+                        Some(false) => {
+                            env.consts.insert(cd.name.clone(), cd.clone());
+                            continue;
+                        }
+                        None => {
+                            errors.push(Diagnostic::new(
+                                format!("duplicate top-level name `{}`", cd.name),
+                                cd.span,
+                            ));
+                        }
+                    }
                 }
                 env.consts.insert(cd.name.clone(), cd.clone());
             }
@@ -1981,20 +2157,61 @@ impl NameResCtx {
             "u8", "u16", "u32", "u64",
             "f32", "f64", "uint", "size",
             // Other primitives.
-            "bool", "str", "byte", "char", "unit", "Never", "any",
+            "bool", "str", "byte", "char", "unit", "any",
+            // Plan 62.A: `Never` остаётся как hardcoded built-in. Bootstrap
+            // parser не поддерживает `type Never =` (empty sum) per spec
+            // D26 §794-797. Когда parser получит empty-sum syntax, Never
+            // переедет в std/prelude/core.nv и будет удалён отсюда.
+            "Never",
             // Boolean literals (parsed РєР°Рє Ident РІ bool-context РєРѕРµ-РіРґРµ).
             "true", "false",
             // Special idents.
             "Self", "self",
-            // Prelude variants Option / Result / Error / RuntimeError.
-            "None", "Some", "Ok", "Err",
-            "Option", "Result", "Error",
-            "DivByZero", "Overflow", "IndexOutOfBounds",
-            "TypeMismatch", "AssertFailed", "NoHandler",
-            "RuntimeError",
-            // Built-in functions (СЃРј. codegen::emit_c.rs special-cases).
-            "assert", "debug_assert", "print", "println",
-            "panic", "exit",
+            // Plan 62.A: `Option`/`Result`/`Some`/`None`/`Ok`/`Err`/`Error`/
+            // `Ordering`/`Less`/`Equal`/`Greater` (11 names) перенесены в
+            // std/prelude/core.nv. Type-checker теперь resolves их через
+            // cross-file resolve (R27 auto-import). См. docs/plans/
+            // 62-prelude-hardcode-migration.md §62.A.
+            //
+            // Plan 62.C: `RuntimeError` + 6 variants (`DivByZero`,
+            // `Overflow`, `IndexOutOfBounds`, `TypeMismatch`, `AssertFailed`,
+            // `NoHandler`) перенесены в std/prelude/errors.nv. Аналогично
+            // `ReadBufferError` + `UnexpectedEnd` (не были в этом HashSet'е,
+            // но добавлены в registry через init_prelude_decls_from_items
+            // — см. sum_schema_registry.rs::register_prelude_sum_from_decl).
+            // Type-checker теперь resolves их через cross-file resolve.
+            // Pre-populated `sum_schemas["RuntimeError"]` (emit_c.rs:1029-1048)
+            // оставлен как ABI-compat fallback baseline per 62.A.bis
+            // architecture (HardcodedBaseline остаётся, lookup precedence
+            // DeclaredFromPrelude > HardcodedBaseline).
+            //
+            // `RuntimeNoneError` НЕ перенесён — bootstrap parser не
+            // поддерживает empty-body sum syntax (тот же блокер что у
+            // `Never`). Остаётся as string-payload throw в nova_rt/effects.h.
+            // Plan 62.B: `panic`/`exit`/`assert`/`debug_assert` (4 names)
+            // перенесены в std/prelude/runtime.nv (file-based external fn
+            // declarations). Type-checker теперь resolves их через
+            // cross-file resolve (R27 auto-import + R26 re-export через
+            // std/prelude.nv facade). Codegen special-cases в emit_c.rs
+            // (~11086-11136) остаются:
+            //   - panic/exit нужны для comma-expression обёртки
+            //     `(nv_panic(msg), (nova_int)0LL)` в expression-position
+            //     (?? coalesce, if-else branches).
+            //   - assert/debug_assert: D89 expression-context + Plan 11
+            //     auto-derived cond_text (msg arg silently ignored).
+            // См. docs/plans/62-prelude-hardcode-migration.md §62.B.
+            //
+            // Plan 62.B.bis (2026-05-18) closure: `print` / `println`
+            // больше не hardcoded — formally declared в
+            // std/prelude/runtime.nv через D69 variadic + `[]any`
+            // (canonical D26 signature). Cross-file resolve через R27
+            // auto-import + R26 facade re-export находит declarations.
+            // Codegen special-case (emit_c.rs:11270, Ф.1 reorder) fires
+            // ДО variadic routing — preserves per-arg type info,
+            // synthesized `[]any` array никогда не строится; per-arg
+            // `nova_print_<type>` dispatch через infer_print_helper
+            // (Ф.0 Plan 67 absorption — unified через infer_expr_c_type).
+            // См. docs/plans/62.B.bis-print-println-migration.md.
             // Plan 32: GC introspection namespace (std.runtime.gc).
             // РСЃРїРѕР»СЊР·СѓРµС‚СЃСЏ РєР°Рє `gc.heap_size()`, `gc.collect()` Рё С‚.Рґ.
             // Source of truth РґР»СЏ signatures: std/runtime/gc.nv (external fn).
@@ -2025,6 +2242,15 @@ impl NameResCtx {
             // С‚РёРї РїР°СЂР°РјРµС‚СЂР° `cancel CancelToken`. РњРµС‚РѕРґС‹ (cancel/is_cancelled/
             // bind) вЂ” built-in dispatch РІ codegen РЅР° receiver NovaCancelToken*.
             "CancelToken",
+            // Plan 62.D.bis (2026-05-18): StringBuilder / WriteBuffer /
+            // ReadBuffer объявлены в std/prelude/collections.nv через
+            // `external type` (D126). **Не были** в этом HashSet'е изначально
+            // (verified via grep на baseline) — cross-file resolve работает
+            // через std/runtime/<name>.nv external fn декларации + теперь
+            // через std/prelude/collections.nv type-decl (TypeDeclKind::Opaque).
+            // `nogc_blacklisted_call` (types/mod.rs:1454) сохраняет
+            // name-matches как capability data — не builtins source,
+            // не conflicts.
         ]
         .iter()
         .map(|s| s.to_string())

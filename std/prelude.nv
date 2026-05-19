@@ -1,21 +1,169 @@
-// Plan 35 sub-plan 35.A R27 (D26): prelude module.
+// Plan 35 sub-plan 35.A R27 (D26): prelude module — auto-imported в
+// каждый module через resolve_imports_inline.
 //
-// Auto-imported в каждый module через resolve_imports_inline когда
-// `std/prelude.nv` существует (bootstrap stage discovery).
+// **Plan 62 migration:** prelude теперь splittable — types/methods/fns
+// живут в `std/prelude/<sub>.nv`, `std/prelude.nv` — facade re-export'ит
+// их. См. docs/plans/62-prelude-hardcode-migration.md.
 //
-// **Currently empty** — большая часть prelude (Option/Result/Some/None/
-// Ok/Err/Error/Never/print/println/panic) встроена в type-checker и
-// codegen напрямую (legacy hardcode). Этот файл — placeholder
-// показывающий что R27 механизм работает; user'ы могут расширять
-// prelude добавляя items сюда.
+// Текущий статус:
+//   - 62.A complete: core types (Option/Result/Some/None/Ok/Err/Error/
+//     Ordering/Never) перенесены в std/prelude/core.nv.
+//   - 62.B complete (partial): panic/exit/assert/debug_assert перенесены
+//     в std/prelude/runtime.nv. print/println DEFERRED — variadic +
+//     type-polymorphic dispatch, см. std/prelude/runtime.nv DEFER comment.
+//   - 62.C complete (partial): RuntimeError + ReadBufferError перенесены
+//     в std/prelude/errors.nv. RuntimeNoneError DEFERRED — bootstrap
+//     parser не поддерживает empty-body sum syntax (тот же блокер что
+//     у `Never`, см. std/prelude/errors.nv DEFER comment).
+//   - 62.D complete (partial, non-opaque scope): Iter[T] protocol
+//     объявлен formally в std/prelude/collections.nv (раньше был только
+//     structural duck-typing per D58). Range / RangeIter re-export
+//     через facade ОТЛОЖЕН — exposes 4 latent codegen bugs
+//     (cancel_semantics_test / closure_rev / p48_closure_arg_inference /
+//     for_in_range_iter, см. std/prelude/collections.nv DEFER comment).
+//     DEFERRED (Plan 62.D.bis): StringBuilder / WriteBuffer / ReadBuffer —
+//     opaque runtime types, требуют `external type` D-block в spec.
+//   - 62.E–62.F pending: protocols / effects / no_prelude остаются
+//     hardcoded в type-checker и codegen.
 //
-// **Future migration**: hardcoded prelude items постепенно переедут
-// в этот файл, удаляя type-checker special cases.
+// **Re-export syntax:** wildcard `export import X.*` rejected per Plan
+// 35 R25 — используем selective form `export import X.{A, B, ...}`.
+// Каждый re-export'ленный name становится auto-available в любом module
+// (через R27 auto-import + R26 re-export propagation).
 
 module std.prelude
 
+// Plan 62.A: re-export всех core prelude items из std.prelude.core.
+// Type names + variant constructors + Error + Ordering — все
+// перечислены selectively, поскольку `.*` wildcard не поддерживается
+// (Plan 35 R25 rejected). Multi-line lists тоже не поддерживаются
+// (bootstrap parser `parse_import_inner` не skip'ает newlines внутри
+// `{ }`), поэтому всё на одной строке.
+//
+// DEFER из re-export'а: `Never` — bootstrap parser не поддерживает
+// `type Never =` (empty sum). Остаётся в type-checker builtins HashSet
+// пока syntax не появится. См. std/prelude/core.nv (DEFER комментарий).
+export import std.prelude.core.{Option, Some, None, Result, Ok, Err, Error, Ordering, Less, Equal, Greater}
+
+// Plan 62.B: re-export runtime functions из std.prelude.runtime.
+// panic / exit / assert / debug_assert / print / println — selective
+// list (см. 62.A note про wildcard и multi-line). Plan 62.B.bis
+// (2026-05-18): print / println добавлены — file-based D69 variadic +
+// `[]any` declarations в canonical D26 form. Codegen special-case
+// сохраняется как bootstrap implementation (см. std/prelude/runtime.nv).
+export import std.prelude.runtime.{panic, exit, assert, debug_assert, print, println}
+
+// Plan 62.C: re-export error types из std.prelude.errors.
+// RuntimeError (6 variants) + ReadBufferError (1 variant). Type name +
+// variant constructors — все перечислены selectively (см. 62.A note про
+// wildcard и multi-line). RuntimeNoneError НЕ перенесён — bootstrap
+// parser не поддерживает empty-body sum syntax (тот же блокер что у
+// `Never`, см. std/prelude/errors.nv DEFER comment).
+export import std.prelude.errors.{RuntimeError, DivByZero, Overflow, IndexOutOfBounds, TypeMismatch, AssertFailed, NoHandler, ReadBufferError, UnexpectedEnd}
+
+// Plan 62.D non-opaque: re-export Iter[T] protocol formal declaration из
+// std.prelude.collections. До 62.D `Iter[T]` существовал ТОЛЬКО как
+// structural duck-typing per D58 — формальная декларация даёт `nova doc`
+// canonical API + eligible как bound (`T Iter`) per D72. Не ломает
+// existing structural for-in dispatch (codegen ищет метод `next`
+// напрямую, protocol declaration не enforced на type annotations).
+//
+// Plan 62.D.bis (2026-05-18): re-export StringBuilder / WriteBuffer /
+// ReadBuffer — opaque types declared через D126 `external type` в
+// std/prelude/collections.nv. Раньше существовали как «known-by-name»
+// (D26 prose-only); теперь auto-available через prelude (no explicit
+// `import std.prelude.collections.{StringBuilder}` required). Methods
+// продолжают жить в `std/runtime/<name>.nv` (external fn, D82).
+export import std.prelude.collections.{Iter, StringBuilder, WriteBuffer, ReadBuffer}
+
+// Plan 62.D non-opaque bis-1 (2026-05-18): re-export Range / RangeIter из
+// std.collections.range. Раньше (Plan 62.D non-opaque) эта строка
+// триггерила 4 регрессии (cancel_semantics_test, closure_rev,
+// p48_closure_arg_inference, for_in_range_iter) — auto-availability
+// Range через prelude exposed 4 latent codegen bugs. Все четыре закрыты
+// в Plan 62.D bis-1:
+//   1. Match inference (Nova_Range* vs nova_str) — pattern bindings
+//      installed в infer_expr_c_type(Match) через
+//      pattern_binding_overrides RefCell (emit_c.rs:18936+).
+//   2. Closure capture inner-shadowing — scope-aware
+//      collect_truly_free_idents (emit_c.rs:16621+) respects inner let-
+//      bindings и lambda params; используется в emit_lambda.
+//   3. Closure mono'd arg-name drop — закрыт тем же fix #2 (same root
+//      cause: misnamed `collect_free_idents` собирал ВСЕ идентификаторы,
+//      включая inner-bound).
+//   4. D29 user-shadow — duplicate top-level имена пришедшие через
+//      prelude теперь warning W_PRELUDE_SHADOW (types/mod.rs:117+),
+//      codegen skip'ает merged duplicates при наличии user-declaration
+//      (emit_c.rs:1300+).
+//
+// Auto-import: user-modules видят `Range`/`RangeIter` без явного import.
+// Existing cross-file imports (`import std.collections.range.{Range}`) —
+// продолжают работать (selective re-export не блокирует direct import).
+export import std.collections.range.{Range, RangeIter}
+
+// Plan 62.E: re-export conversion / equality / hashing / ordering /
+// display protocols из std.prelude.protocols. From/Into/Hashable/
+// Equatable/Comparable/Display — 6 formal protocol declarations.
+// Декларации additive: auto-derive логика D73 (From/Into) и built-in
+// dispatch для Hash/Eq/Ord примитивов в codegen остаются неизменными.
+// Bound clauses `[T Hashable]` теперь могут резолвиться через cross-file
+// resolve (Plan 15 generic-bounds infrastructure).
+//
+// **Deferred:**
+//   - TryFrom/TryInto — Plan 56 Ф.2.7 запрещает effects в protocol
+//     methods, `Fail[E]` сигнатура триггерит compile-error. См.
+//     std/prelude/protocols.nv DEFER comment + plan doc §62.E.
+export import std.prelude.protocols.{From, Into, Hashable, Equatable, Comparable, Display}
+
+// Plan 62.F: re-export Fail[E] effect из std.prelude.effects.
+// Formal declaration matches hardcoded codegen pre-registration
+// (NovaVtable_Fail + Nova_Fail_fail в nova_rt/effects.h). Type-checker
+// и codegen матчат single-element path `["Fail"]` независимо. Декларация
+// здесь даёт canonical API surface для `nova doc`.
+//
+// Plan 62.F.bis Ф.3 (2026-05-18): added Time, Mem formal declarations.
+// Time — ambient clock effect (sleep/now/after — last one runtime-only).
+// Mem — runtime introspection (alloc_count/free_count/live/reset).
+// Skip codegen emit через RUNTIME_DEFINED_TYPES + BUILTIN_VTABLE_NAMES.
+// Pre-registered effect_schemas (emit_c.rs:1077-1098) — dispatch works
+// unchanged. Decl-only added: AI/doc surface + signature visibility.
+//
+// **Detach** НЕ re-export'ится — это keyword-construct (`detach { ... }`
+// D50), syntactic form а не declarable effect. См. std/prelude/effects.nv.
+export import std.prelude.effects.{Fail, Time, Mem}
+
 /// Prelude version marker — verify в тестах что auto-import работает.
-/// Migration hardcoded prelude items (Option/Result/Some/None/Ok/Err/Error/
-/// Never/print/println/panic) → отдельный план: [docs/plans/62-prelude-hardcode-migration.md](../../docs/plans/62-prelude-hardcode-migration.md).
+/// Bump'ается при каждой migration phase Plan 62.
+///   - 1 = pre-migration (только этот placeholder).
+///   - 2 = Plan 62.A done (core types в file-based form).
+///     Plan 62.B reused version 2 (runtime fns added).
+///     Plan 62.C reused version 2 (error types added).
+///     Plan 62.D non-opaque reused version 2 (Iter[T] added).
+///     Plan 62.E reused version 2 (protocols added).
+///   - 3 = Plan 62.F done (effects.Fail[E] added) + **Plan 62 closed**.
+///   - 4 = Plan 62.D non-opaque bis-1 done: Range / RangeIter теперь
+///     auto-available через prelude facade (re-export из
+///     std.collections.range), 4 latent codegen bugs закрыты
+///     (match inference + closure scope analysis + D29 W_PRELUDE_SHADOW).
+///   - 5 = Plan 62.F.bis done (2026-05-18): edition versioning
+///     (`[package].edition` → `std/prelude/<sanitized>.nv` resolver) +
+///     structured W_PRELUDE_SHADOW lint с `allow_prelude_shadow`
+///     suppress + Time/Mem formal effect declarations + spec D-block
+///     amendments.
+///   - 6 = Plan 62.D.bis done (2026-05-18): StringBuilder / WriteBuffer /
+///     ReadBuffer formally declared via new D126 `external type` syntax
+///     в std/prelude/collections.nv. Auto-available через prelude facade
+///     — закрывает последний known-by-name hole в D26 visible prelude.
+///     Methods продолжают жить в std/runtime/<name>.nv (external fn,
+///     D82, unchanged).
+///   - 7 = Plan 62.B.bis done (2026-05-18): print / println formally
+///     declared в std/prelude/runtime.nv через D69 variadic + `[]any` —
+///     canonical D26 signature `fn print(...items []any) -> ()`. Plan 67
+///     hotfix (infer_print_helper refactor через infer_expr_c_type)
+///     absorbed как Ф.0. Codegen special-case (emit_c.rs:11270) fires
+///     перед variadic routing (Ф.1 reorder) — preserves per-arg type
+///     info, synthesized `[]any` array никогда не строится.
+///     Remaining deferred sub-plans: 62.A.bis sum_schemas removal,
+///     62.C.bis RuntimeNoneError, 62.E.bis TryFrom/TryInto.
 #stable(since = "0.1")
-export const PRELUDE_VERSION int = 1
+export const PRELUDE_VERSION int = 7

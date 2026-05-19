@@ -563,6 +563,15 @@ fn collect_type(module_path: &[String], t: &TypeDecl) -> DocItem {
                 inner: render_type(inner_ty),
             })
         }
+        // Plan 62.D.bis (D126, 2026-05-18): `external type X` — opaque type
+        // (StringBuilder, WriteBuffer, ReadBuffer, future Channel[T]).
+        // Doc surface — type alias к "opaque (runtime-implemented)" — fallback
+        // на newtype-like display с pseudo-target "opaque". `nova doc`
+        // покажет declaration + doc-comment + generic params + visibility.
+        // Future enhancement: dedicated `TypeDefinition::Opaque` variant
+        // в doc tree для richer rendering ("Implementation: runtime —
+        // nova_rt/<name>.h" line). Bootstrap — alias-style для simplicity.
+        TypeDeclKind::Opaque => ItemKind::Type(TypeDefinition::Alias("opaque".to_string())),
     };
     DocItem {
         id,

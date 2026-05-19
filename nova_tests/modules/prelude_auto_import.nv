@@ -3,9 +3,31 @@
 // `std/prelude.nv` существует → resolve_imports_inline auto-добавляет
 // `import std.prelude` в queue. `PRELUDE_VERSION` const доступна без
 // explicit import.
+//
+// **Plan 62 history:**
+//   - 62.A bump 1 → 2 (core types: Option/Result/Some/None/Ok/Err/Error/
+//     Ordering перенесены в std/prelude/core.nv).
+//   - 62.B/C/D non-opaque/E reused version 2.
+//   - 62.F bump 2 → 3 + **Plan 62 closure** (effects.Fail[E] added).
+//   - 62.D non-opaque bis-1 bump 3 → 4: Range / RangeIter теперь
+//     re-export'ятся через prelude facade, 4 latent codegen bugs закрыты.
+//   - 62.F.bis bump 4 → 5: edition versioning (`[package].edition` →
+//     `std/prelude/<sanitized>.nv` resolver) + structured
+//     W_PRELUDE_SHADOW lint с `allow_prelude_shadow` suppress + Time/Mem
+//     formal effect declarations + spec D-block amendments.
+//   - 62.D.bis bump 5 → 6: StringBuilder / WriteBuffer / ReadBuffer
+//     formally declared via new D126 `external type` syntax в
+//     std/prelude/collections.nv (auto-available через prelude facade).
+//   - 62.B.bis bump 6 → 7: print / println formally declared в
+//     std/prelude/runtime.nv через D69 variadic + `[]any` (canonical D26
+//     signature). Plan 67 hotfix absorbed как Ф.0.
+// См. docs/plans/62-prelude-hardcode-migration.md.
 
 module modules.prelude_auto_import
 
 test "PRELUDE_VERSION доступен без import" {
-    assert(PRELUDE_VERSION == 1)
+    // Plan 62.B.bis bump 6 → 7: print / println formally declared via
+    // D69 variadic + `[]any` (canonical D26 signature) в
+    // std/prelude/runtime.nv.
+    assert(PRELUDE_VERSION == 7)
 }

@@ -24,21 +24,23 @@ module collections.hashmap
 // Типы
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Structural protocol: тип `K` удовлетворяет если имеет `hash() -> u64`.
-///
-/// Используется как bound в `HashMap[K Hashable, V]`.
-///
-/// # Examples
-///
-/// ```nova
-/// // str и int удовлетворяют Hashable автоматически (prelude).
-/// let m = HashMap[str, int].new()
-/// m.insert("key", 42)
-/// ```
-#stable(since = "0.1")
-export type Hashable protocol {
-    hash() -> u64
-}
+// Plan 62.E (2026-05-18): `Hashable` мигрирован в `std/prelude/protocols.nv`
+// как canonical prelude protocol per D109 split policy (hash-only; equality
+// вынесена в отдельный `Equatable`). Удалена local-декларация чтобы избежать
+// `duplicate top-level name Hashable` при загрузке prelude (R27 auto-import
+// делает prelude `Hashable` видимым в каждом module включая
+// `std.collections.hashmap`).
+//
+// `HashMap[K Hashable, V]` ниже теперь резолвит `Hashable` через cross-file
+// resolve в prelude (`std.prelude.protocols.Hashable`). Структурное
+// требование `eq(other Self) -> bool` для key collision check сохраняется
+// implicitly через codegen lookup `key.eq(other_key)` — не объявлено
+// formally здесь, потому что split-policy D109: `[K Hashable + Equatable]`
+// будет рекомендованной формой когда multi-bound syntax появится в
+// bootstrap parser (D72 ext).
+//
+// Документация моевого Hashable осталась в `std/prelude/protocols.nv`
+// (single source of truth для `nova doc`).
 
 // Slot — состояние ячейки в open-addressing-таблице.
 //
