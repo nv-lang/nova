@@ -1,0 +1,24 @@
+module nova_tests.plan70_5.f4_uint_max_min_pos
+
+// Plan 70.5 Ф.4: uint.MAX via parser keyword (was deferred — parser fix).
+
+test "uint.MAX equals u64.MAX" {
+    assert(uint.MAX == u64.MAX)
+}
+
+test "uint.MAX equals u64.MAX value" {
+    let m uint = uint.MAX
+    let expected u64 = u64.MAX
+    assert(m as u64 == expected)
+}
+
+test "uint min is zero" {
+    let z uint = 0 as uint
+    assert(z == 0 as uint)
+}
+
+test "uint.MAX + 1 wraps to 0" {
+    let m uint = uint.MAX
+    let w uint = (m as u64 + 1 as u64) as uint
+    assert(w == 0 as uint)
+}

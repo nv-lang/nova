@@ -3938,9 +3938,10 @@ impl Parser {
                 // могут быть subject'ом static-method'а (`int.try_from`,
                 // `str.from`, `f64.try_from`). Lowercase, поэтому не path
                 // через PascalCase-rule. Делаем явное исключение.
+                // Plan 70.5 Ф.4: `uint` добавлен (alias u64) — `uint.MAX` работает.
                 let is_primitive_type = matches!(first.as_str(),
                     "int" | "i8" | "i16" | "i32" | "i64"
-                    | "u8" | "u16" | "u32" | "u64"
+                    | "u8" | "u16" | "u32" | "u64" | "uint"
                     | "f32" | "f64" | "byte" | "bool" | "char" | "str"
                 );
                 if (starts_uppercase || is_primitive_type)
