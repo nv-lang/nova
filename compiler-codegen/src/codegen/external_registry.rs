@@ -248,7 +248,9 @@ impl ExternalRegistry {
                             "str" => "NovaArray_nova_str*".into(),
                             "byte" | "u8" => "NovaArray_nova_byte*".into(),
                             "bool" => "NovaArray_nova_bool*".into(),
-                            "f64" | "f32" => "NovaArray_nova_f64*".into(),
+                            "f64" => "NovaArray_nova_f64*".into(),
+                            // Plan 70.4: f32 distinct from f64 (ABI: 4 vs 8 bytes).
+                            "f32" => "NovaArray_nova_f32*".into(),
                             // Plan 70.3: distinct array element type для char.
                             "char" => "NovaArray_nova_char*".into(),
                             _ => "NovaArray_nova_int*".into(),
