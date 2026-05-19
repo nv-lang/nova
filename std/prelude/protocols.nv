@@ -52,7 +52,7 @@
 //   с этими declarations (HashSet de-dups; protocol resolution
 //   не ломается).
 
-module std.prelude.protocols
+module prelude.protocols
 
 // Explicit import — Ordering нужен для signature протокольного метода
 // `cmp(other Self) -> Ordering` в Comparable. Auto-import `std.prelude`

@@ -56,7 +56,7 @@
 //   `void*` payload. См. spec/decisions/08-runtime.md §«Bootstrap-
 //   ограничения» (~lines 370-376).
 
-module std.prelude.errors
+module prelude.errors
 
 
 // ──────────────────────────────────────────────────────────────────────────

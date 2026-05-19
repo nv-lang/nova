@@ -59,7 +59,7 @@
 //   declarable effect. Остаётся специальным syntactic form в парсере
 //   + builtin type "Detach" (types/mod.rs:2080).
 
-module std.prelude.effects
+module prelude.effects
 
 /// **Failable-эффект** — единственный способ объявить ошибку в сигнатуре
 /// функции (D25, D62, D65; spec/decisions/04-effects.md).

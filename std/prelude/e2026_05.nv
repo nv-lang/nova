@@ -21,7 +21,7 @@
 // `e2026_06.nv` если будут changes) создаются как новый файл; этот
 // остаётся неизменным forever (cross-version stability).
 
-module std.prelude.e2026_05
+module prelude.e2026_05
 
 // Re-export всех items из current sub-modules. Идентично rolling facade
 // на момент создания pin'а (Plan 62.F.bis 2026-05-18).
