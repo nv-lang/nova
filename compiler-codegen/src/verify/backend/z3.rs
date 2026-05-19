@@ -413,13 +413,20 @@ impl Z3Backend {
 
             // Plan 33.3 Ф.9: pure_view-UF через real Z3_func_decl
             // (pre-declared в declare_function, sorts из effect-сигнатуры).
-            // Дайт soundness для axiom-propagation даже под alpha-rename.
             (op_name, args_arr) if op_name.starts_with("_view_") => {
                 return self.uf_app(op_name, args_arr);
             }
+            // Plan 33.4 D.0.2: pure fn UFs (`_pure_fn_*`) — pre-declared via
+            // declare_function. Routes through uf_app for proper Z3_func_decl use.
+            (op_name, args_arr) if op_name.starts_with("_pure_fn_") => {
+                return self.uf_app(op_name, args_arr);
+            }
+            // Plan 33.6 Ф.4.2: trusted external fn UFs (`_trusted_*`).
+            (op_name, args_arr) if op_name.starts_with("_trusted_") => {
+                return self.uf_app(op_name, args_arr);
+            }
             // Legacy: record member access (`_field_X(obj)`) кодируется
-            // через fake fresh-const trick (mixed sorts через одну UF
-            // не поддерживаются realf func_decl'ом).
+            // через fake fresh-const trick.
             (op_name, args_arr) if op_name.starts_with("_field_") => {
                 return self.legacy_uninterpreted_app(op_name, args_arr);
             }

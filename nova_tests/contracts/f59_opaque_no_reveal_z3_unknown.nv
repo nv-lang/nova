@@ -1,0 +1,29 @@
+// REQUIRES_SMT_BACKEND z3
+// EXPECT_COMPILE_ERROR contract violation
+//
+// Plan 33.9 Ф.5: opaque fn without reveal — Z3 cannot prove caller's ensures.
+// Z3 sees double_opaque as an uninterpreted function, so it CAN find a model
+// where _pure_fn_double_opaque(n) != n * 2 → contract violation.
+// This demonstrates that `reveal` is required to verify body-dependent ensures.
+
+module contracts.f59_opaque_no_reveal_z3_unknown
+
+#opaque #pure
+fn double_opaque(x int) -> int
+    requires x >= 0
+    ensures result >= 0
+=> x * 2
+
+#verify
+fn caller_without_reveal(n int) -> int
+    requires n >= 0
+    ensures result == n * 2
+{
+    // No reveal — Z3 sees double_opaque as UF and disproves result == n*2.
+    // Fix: add `reveal double_opaque` before calling it.
+    double_opaque(n)
+}
+
+test "opaque no reveal" {
+    assert(double_opaque(3) == 6)
+}
