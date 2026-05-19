@@ -479,11 +479,9 @@ pub fn encode_expr_with_ctx(e: &Expr, ctx: &EncodeCtx) -> Result<SmtTerm, Encodi
             "tagged template `tag\"...\"` в контракте не поддерживается; \
              контракт должен быть pure boolean expression".into())),
 
-        // Прочие конструкции — generic fallback с названием.
-        _ => Err(EncodingError::Unsupported(
-            "данная конструкция не поддерживается в SMT-encoder'е контрактов; \
-             используйте только int/bool/str/forall/exists/if/pure-fn-call".into()
-        )),
+        // ExprKind exhaustive выше — wildcard был бы unreachable. Если в
+        // ExprKind добавится новый variant, компилятор подсветит match
+        // как non-exhaustive → нужно явно решить SMT-семантику.
     }
 }
 

@@ -80,6 +80,12 @@ impl Parser {
             .unwrap_or_default()
     }
 
+    /// Disable struct-literal parsing внутри `f` (ambiguity guard для
+    /// `if x { }` / `while x { }` / etc). Сейчас current parser использует
+    /// более точный `with_no_struct_or_trailing` (см. ниже); этот helper
+    /// сохранён как minimal API для случаев когда нужен только struct-lit
+    /// guard без trailing-block.
+    #[allow(dead_code)]
     fn with_no_struct_lit<R>(
         &mut self,
         f: impl FnOnce(&mut Self) -> Result<R, Diagnostic>,
@@ -381,6 +387,12 @@ impl Parser {
     /// неожиданной позиции (например, внутри тела функции). Тихо
     /// съедает их, чтобы не валить парсинг. Lint в Ф.3 даст warning
     /// «orphan doc-comment».
+    ///
+    /// **Reserved**: текущий parser обрабатывает orphan doc-comments
+    /// inline через `match self.peek().kind { DocComment => ... }`
+    /// без отдельного helper-prologue. Helper сохранён как мечтаемая
+    /// точка консолидации этой логики (Plan 45 Ф.3 lint integration).
+    #[allow(dead_code)]
     fn skip_stray_doc_comments(&mut self) {
         while matches!(self.peek().kind, TokenKind::DocComment { .. }) {
             self.bump();
@@ -712,6 +724,10 @@ impl Parser {
         self.parse_import_inner(doc_attrs)
     }
 
+    /// Public no-attr entry point — callers use
+    /// `parse_import_with_attrs(Vec::new())` instead. Сохранён для
+    /// symmetry с D-rule attr-aware parsing semantics.
+    #[allow(dead_code)]
     fn parse_import(&mut self) -> Result<Import, Diagnostic> {
         self.parse_import_inner(Vec::new())
     }

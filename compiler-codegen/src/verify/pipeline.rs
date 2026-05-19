@@ -1036,7 +1036,7 @@ fn tarjan_scc(
             .unwrap_or_default();
         dfs_stack.push((start.clone(), children, 0));
 
-        'dfs: loop {
+        loop {
             let Some(frame) = dfs_stack.last_mut() else { break };
             let (node, children, child_idx) = frame;
             if *child_idx < children.len() {
@@ -2488,7 +2488,7 @@ let t0 = std::time::Instant::now();
             } else {
                 pipeline.verify_fn(module, fd, &inferred_pure)
             };
-            let elapsed_ms = t0.elapsed().as_millis() as u64;
+            let _elapsed_ms = t0.elapsed().as_millis() as u64;
             for (span, vr) in results {
                 match vr {
                     VerifyResult::Proven => {

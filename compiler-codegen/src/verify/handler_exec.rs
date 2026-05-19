@@ -697,7 +697,9 @@ fn rewrite_post_in_expr(
         return Ok((result_expr, true));
     }
 
-    let mut changed = false;
+    // `changed` инициализируется первым же arm'ом match'а; `_ =>` early-return'ит
+    // и не использует переменную. Initial assignment был бы dead store.
+    let changed;
     let new_kind = match &formula.kind {
         Binary { op, left, right } => {
             let (l, cl) = rewrite_post_in_expr(left, methods)?;
@@ -738,7 +740,7 @@ fn verify_post_axiom_with_handler(
     ax: &AxiomInfo,
     pure_views: &std::collections::HashMap<String, super::encode::PureViewSig>,
     methods: &[crate::ast::HandlerMethod],
-    effect_name: &str,
+    _effect_name: &str,
     module: &Module,
     inferred_pure: &std::collections::HashSet<String>,
 ) -> VerifyResult {
