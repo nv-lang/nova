@@ -76,7 +76,7 @@
 // receiver-type name. См. spec/decisions/03-syntax.md §D126 +
 // docs/plans/62.D.bis-opaque-types-and-external-type-d-block.md.
 
-module std.prelude.collections
+module prelude.collections
 
 // Explicit import — Option[T] нужен для signature протокольного метода
 // `next() -> Option[T]`. Auto-import `std.prelude` отключён для всех

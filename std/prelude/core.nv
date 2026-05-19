@@ -67,7 +67,7 @@
 //   На сейчас methods продолжают работать через hardcoded codegen +
 //   runtime helpers (что и было до Plan 62.A).
 
-module std.prelude.core
+module prelude.core
 
 
 // ──────────────────────────────────────────────────────────────────────────
