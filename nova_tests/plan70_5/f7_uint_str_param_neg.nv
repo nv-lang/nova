@@ -1,0 +1,15 @@
+// Plan 70.5 Ф.4 — negative: uint передан в функцию ожидающую str.
+//
+// uint (uint64_t) несовместим с параметром типа str (nova_str struct).
+// Clang отвергает вызов как incompatible argument type.
+//
+// Параллель Rust: `fn f(x: &str) {}; f(u64::MAX)` — compile error.
+
+module nova_tests.plan70_5.f7_uint_str_param_neg
+
+fn format_str(s str) -> str { s }
+
+// EXPECT_CC_ERROR incompatible type
+fn bad() -> str {
+    format_str(uint.MAX)
+}
