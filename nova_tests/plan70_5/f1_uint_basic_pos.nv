@@ -1,0 +1,30 @@
+module nova_tests.plan70_5.f1_uint_basic_pos
+
+// Plan 70.5 Ф.1+Ф.4: uint = alias u64 — declaration, cast, and max value.
+
+test "uint declaration via cast" {
+    let x uint = 42 as uint
+    assert(x == 42 as uint)
+}
+
+test "positive int as uint unchanged" {
+    let x int = 100
+    let u uint = x as uint
+    assert(u == 100 as uint)
+}
+
+test "uint max value" {
+    let m uint = uint.MAX
+    assert(m == u64.MAX)
+}
+
+test "uint zero" {
+    let z uint = 0 as uint
+    assert(z == 0 as uint)
+}
+
+test "uint and u64 are same C type" {
+    let u uint = 7 as uint
+    let v u64 = u as u64
+    assert(v == 7 as u64)
+}

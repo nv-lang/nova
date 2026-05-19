@@ -1,0 +1,33 @@
+// Plan 62.E — Hashable protocol regression marker.
+//
+// Plan 62.E (commit 05c74d4dd11) разнёс combined Hashable из
+// std/collections/hashmap.nv (hash + eq) в split: Hashable (hash-only)
+// + Equatable (eq-only) per D26/D109. Один источник истины — prelude.
+//
+// Эта проверка: user может объявить protocol с тем же именем, что
+// prelude, и получает W_PRELUDE_SHADOW warning (per 62.D bis-1 +
+// 62.F.bis Ф.2 — structured lint), не CODEGEN-FAIL.
+//
+// Positive path: locally-defined Hashable со structurally-different
+// signature не ломает компиляцию.
+
+module plan62.duplicate_hashable_protocol
+
+// User shadows prelude Hashable с другим required method (extra arg).
+// W_PRELUDE_SHADOW warning, не error. User-version wins для structural
+// matching внутри этого module'я.
+type Hashable protocol {
+    hash_with_seed(seed u64) -> u64
+}
+
+type Bucket {
+    value int
+}
+
+fn Bucket @hash_with_seed(seed u64) -> u64 => (@value as u64) ^ seed
+
+test "user-defined Hashable shadow — runs OK через user-version" {
+    let b = Bucket { value: 42 }
+    let h = b.hash_with_seed(7 as u64)
+    assert(h != (0 as u64))
+}

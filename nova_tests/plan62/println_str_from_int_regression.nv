@@ -1,0 +1,35 @@
+// Plan 67 / 62.B.bis Ф.0 — silent-wrong-output regression marker.
+//
+// Этот файл — focused regression test для Plan 67 closure (merged into
+// 62.B.bis Ф.0):
+//
+//   До Ф.0: `println(str.from(N))` где N int → infer_print_helper
+//   fallback'ил на `nova_print_int` (manual heuristic не распознавал
+//   Call{Member{str, from}}) → generated C:
+//     nova_print_int(nova_int_to_str(N));   // type mismatch — silent UB
+//
+//   После Ф.0 (~75 LOC → ~25 LOC через infer_expr_c_type unified):
+//     nova_print_str(nova_int_to_str(N));   // correct
+//
+// Test smoke-проверяет factorial-like chain что использует
+// `println(str.from(...))` (точно паттерн bench/corpus/06_contracts.nv,
+// который был P0 hotfix trigger).
+
+module plan62.println_str_from_int_regression
+
+fn factorial(n int) -> int => {
+    if n <= 1 { 1 } else { n * factorial(n - 1) }
+}
+
+test "println(str.from(factorial(N))) — Plan 67 fix smoke" {
+    println(str.from(factorial(5)))  // expect "120" — compile + run без UB
+}
+
+test "println(str.from(int_literal)) basic" {
+    println(str.from(42))
+}
+
+test "println(str.from(int_var)) с variable" {
+    let n = 7
+    println(str.from(n))
+}

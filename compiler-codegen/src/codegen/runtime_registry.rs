@@ -243,6 +243,22 @@ fn str_runtime() -> Vec<RuntimeFn> {
             doc: "Равенство по контенту (memcmp). O(min). Также вызывается оператором ==.",
         nova_body: None,
     },
+        // D109 (Plan 48 Ф.8): FNV-1a hash для str — ключ HashMap.
+        // Codegen vector: `prim_builtin_method` dispatch перехватывает
+        // вызов до общего resolver'а (emit_c.rs); declaration здесь —
+        // для AI/IDE discovery + sanity-check.
+        RuntimeFn {
+            module: "std.runtime.string",
+            receiver: Some("str"),
+            is_static: false, is_mut: false,
+            name: "hash",
+            params: &[],
+            return_ty: "u64",
+            effects: &[],
+            c_name: "nova_str_hash",
+            doc: "FNV-1a хеш по байтам строки. Используется в std.collections.HashMap.",
+            nova_body: None,
+        },
         // 2026-05-12: lex byte-wise compare для nova_str. Bootstrap MVP —
         // ASCII-correct; UTF-8 partial. Полное Unicode collation —
         // production milestone.
@@ -987,8 +1003,37 @@ pub fn render_nv(module: &str, fns: &[&RuntimeFn]) -> String {
     out.push_str("// Source of truth: compiler-codegen/src/codegen/runtime_registry.rs\n");
     out.push_str("//\n");
     out.push_str("// См. docs/plans/13-runtime-stdlib-and-autogen.md.\n");
+    // Plan 62.D.bis (D126, 2026-05-18): для opaque types StringBuilder /
+    // WriteBuffer / ReadBuffer canonical type-declaration живёт в
+    // std/prelude/collections.nv через `external type` (D126); этот файл
+    // содержит ТОЛЬКО methods через `external fn` (D82). Связь по
+    // receiver-type name.
+    if matches!(
+        module,
+        "std.runtime.string_builder"
+            | "std.runtime.write_buffer"
+            | "std.runtime.read_buffer"
+    ) {
+        out.push_str("//\n");
+        out.push_str("// Plan 62.D.bis (D126, 2026-05-18): type declaration — see\n");
+        out.push_str("// std/prelude/collections.nv (`external type`, D126).\n");
+        out.push_str("// This file declares ONLY methods via `external fn` (D82).\n");
+    }
     out.push('\n');
-    out.push_str(&format!("module {}\n", module));
+    // D29 rev-3 (2026-05-13) `parent.target` rule: module declaration ==
+    // `<parent_of_target>.<target_name>` (2 segments), не full filesystem
+    // path. Registry хранит canonical full path (`std.runtime.string`),
+    // render эмитит short-form (`runtime.string`) per spec. См.
+    // `spec/decisions/07-modules.md` D29 «Объявление модуля».
+    let decl = {
+        let parts: Vec<&str> = module.split('.').collect();
+        if parts.len() >= 2 {
+            format!("{}.{}", parts[parts.len() - 2], parts[parts.len() - 1])
+        } else {
+            module.to_string()
+        }
+    };
+    out.push_str(&format!("module {}\n", decl));
     out.push('\n');
     out.push('\n');
     let mut last_recv: Option<&str> = None;

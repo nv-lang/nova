@@ -1,0 +1,34 @@
+// no_prelude_explicit_import.nv — Plan 62.F Part 2 positive test.
+//
+// Verifies что `no_prelude` + explicit `import std.prelude.core.{Option}`
+// корректно работают — пользователь может opt-out из auto-import и
+// явно завезти только нужные имена. Это main use-case real-time /
+// embedded модулей (spec/decisions/07-modules.md:962-979).
+
+module plan62.no_prelude_explicit_import no_prelude
+
+// `Some` нужен для конструктора. `assert` — для test'ов (runtime fn,
+// не доступен без auto-import). Импортируем оба explicitly.
+import std.prelude.core.{Option, Some, None}
+import std.prelude.runtime.{assert}
+
+fn make_some() -> Option[int] {
+    Some(42)
+}
+
+fn make_none() -> Option[int] {
+    None
+}
+
+test "no_prelude + explicit import — Some constructor works" {
+    let o = make_some()
+    // `is_some` — method на Option, registered через runtime helper.
+    // Доступен independent от prelude auto-import (lookup идёт через
+    // method-receiver registry, не через name-scope).
+    assert(o.is_some())
+}
+
+test "no_prelude + explicit import — None constructor works" {
+    let n = make_none()
+    assert(n.is_none())
+}
