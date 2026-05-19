@@ -2,7 +2,36 @@
   "format_version": 1,
   "nova_version": "0.1.0",
   "doc_tests": [
+    {
+      "from_id": "nova_tests.doc.fixtures.stability.sample::add",
+      "full_source": "assert(add(2, 3) == 5)",
+      "id": "nova_tests.doc.fixtures.stability.sample::doc_test_1",
+      "index": 1,
+      "modifiers": [
 
+      ],
+      "visible_source": "assert(add(2, 3) == 5)"
+    },
+    {
+      "from_id": "nova_tests.doc.fixtures.stability.sample::maybe_add",
+      "full_source": "assert(maybe_add(2, 3) == 5)",
+      "id": "nova_tests.doc.fixtures.stability.sample::doc_test_2",
+      "index": 2,
+      "modifiers": [
+
+      ],
+      "visible_source": "assert(maybe_add(2, 3) == 5)"
+    },
+    {
+      "from_id": "nova_tests.doc.fixtures.stability.sample::plus",
+      "full_source": "assert(plus(2, 3) == 5)",
+      "id": "nova_tests.doc.fixtures.stability.sample::doc_test_3",
+      "index": 3,
+      "modifiers": [
+
+      ],
+      "visible_source": "assert(plus(2, 3) == 5)"
+    }
   ],
   "links": [
 
@@ -70,17 +99,17 @@
 
       ],
       "sections": {
-
+        "examples": "```nova\nassert(add(2, 3) == 5)\n```\n\n#stable\n#since(\"1.0.0\")"
       },
       "source": {
         "file_id": 0,
-        "line": 17,
+        "line": 29,
         "peer_file": null
       },
       "stability": {
         "feature": null,
         "note": null,
-        "since": "1.0.0",
+        "since": null,
         "tier": "stable"
       },
       "summary": "Стабильное API.",
@@ -160,7 +189,7 @@
         "realtime_nogc": false
       },
       "deprecation": null,
-      "description": "Описание (не attr).",
+      "description": null,
       "doc_attrs": [
 
       ],
@@ -174,18 +203,18 @@
 
       ],
       "sections": {
-
+        "examples": "```nova\nassert(maybe_add(2, 3) == 5)\n```\n\n#experimental\n#since(\"0.3.0\")\n\nОписание (не attr)."
       },
       "source": {
         "file_id": 0,
-        "line": 25,
+        "line": 43,
         "peer_file": null
       },
       "stability": {
         "feature": null,
         "note": null,
-        "since": "0.3.0",
-        "tier": "experimental"
+        "since": null,
+        "tier": "stable"
       },
       "summary": "Экспериментальная функция.",
       "signature": {
@@ -263,11 +292,7 @@
         "realtime": false,
         "realtime_nogc": false
       },
-      "deprecation": {
-        "note": "Use `add` instead.",
-        "since": "0.1.0",
-        "until": null
-      },
+      "deprecation": null,
       "description": null,
       "doc_attrs": [
 
@@ -282,11 +307,11 @@
 
       ],
       "sections": {
-
+        "examples": "```nova\nassert(plus(2, 3) == 5)\n```\n\n#deprecated(\"Use `add` instead.\")\n#since(\"0.1.0\")"
       },
       "source": {
         "file_id": 0,
-        "line": 11,
+        "line": 17,
         "peer_file": null
       },
       "stability": {
