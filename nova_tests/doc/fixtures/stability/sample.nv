@@ -6,17 +6,35 @@ module nova_tests.doc.fixtures.stability.sample
 
 /// Сложить два числа.
 ///
+/// # Examples
+///
+/// ```nova
+/// assert(plus(2, 3) == 5)
+/// ```
+///
 /// #deprecated("Use `add` instead.")
 /// #since("0.1.0")
 export fn plus(a int, b int) -> int => a + b
 
 /// Стабильное API.
 ///
+/// # Examples
+///
+/// ```nova
+/// assert(add(2, 3) == 5)
+/// ```
+///
 /// #stable
 /// #since("1.0.0")
 export fn add(a int, b int) -> int => a + b
 
 /// Экспериментальная функция.
+///
+/// # Examples
+///
+/// ```nova
+/// assert(maybe_add(2, 3) == 5)
+/// ```
 ///
 /// #experimental
 /// #since("0.3.0")

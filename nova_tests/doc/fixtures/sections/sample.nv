@@ -12,7 +12,7 @@ module nova_tests.doc.fixtures.sections.sample
 /// # Examples
 ///
 /// ```nova
-/// assert(divide(10, 3) == 6)
+/// assert(divide(10, 3) == 3)
 /// ```
 ///
 /// # Errors
