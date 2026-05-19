@@ -13,8 +13,8 @@ module runtime.read_buffer
 
 // ─── ReadBuffer ───
 
-// Создать ReadBuffer из []byte (view, no copy).
-export external fn ReadBuffer.from(b []byte) -> Self
+// Создать ReadBuffer из []u8 (view, no copy).
+export external fn ReadBuffer.from(b []u8) -> Self
 
 // Текущий offset cursor'а в байтах.
 export external fn ReadBuffer @position() -> int
@@ -25,31 +25,31 @@ export external fn ReadBuffer @remaining() -> int
 // True если осталось ≥ n байт.
 export external fn ReadBuffer @has_remaining(n int) -> bool
 
-// Скопировать оставшиеся байты как []byte.
-export external fn ReadBuffer @remaining_bytes() -> []byte
+// Скопировать оставшиеся байты как []u8.
+export external fn ReadBuffer @remaining_bytes() -> []u8
 
 // 1 byte. Throw'ит ReadBufferError при недостатке байт.
-export external fn ReadBuffer mut @read_byte() Fail[ReadBufferError] -> byte
+export external fn ReadBuffer mut @read_byte() Fail[ReadBufferError] -> u8
 
 // 1 byte. Result-форма (Ok(value) или Err(UnexpectedEnd)).
 export external fn ReadBuffer mut @try_read_byte() -> Result[byte, ReadBufferError]
 
 // n байт (с n int параметром). Throw'ит ReadBufferError при недостатке байт.
-export external fn ReadBuffer mut @read_bytes(n int) Fail[ReadBufferError] -> []byte
+export external fn ReadBuffer mut @read_bytes(n int) Fail[ReadBufferError] -> []u8
 
 // n байт (с n int параметром). Result-форма (Ok(value) или Err(UnexpectedEnd)).
-export external fn ReadBuffer mut @try_read_bytes(n int) -> Result[[]byte, ReadBufferError]
+export external fn ReadBuffer mut @try_read_bytes(n int) -> Result[[]u8, ReadBufferError]
 
-// 1 byte unsigned. Throw'ит ReadBufferError при недостатке байт.
+// 1 u8 unsigned. Throw'ит ReadBufferError при недостатке байт.
 export external fn ReadBuffer mut @read_u8() Fail[ReadBufferError] -> u8
 
-// 1 byte unsigned. Result-форма (Ok(value) или Err(UnexpectedEnd)).
+// 1 u8 unsigned. Result-форма (Ok(value) или Err(UnexpectedEnd)).
 export external fn ReadBuffer mut @try_read_u8() -> Result[u8, ReadBufferError]
 
-// 1 byte signed. Throw'ит ReadBufferError при недостатке байт.
+// 1 u8 signed. Throw'ит ReadBufferError при недостатке байт.
 export external fn ReadBuffer mut @read_i8() Fail[ReadBufferError] -> i8
 
-// 1 byte signed. Result-форма (Ok(value) или Err(UnexpectedEnd)).
+// 1 u8 signed. Result-форма (Ok(value) или Err(UnexpectedEnd)).
 export external fn ReadBuffer mut @try_read_i8() -> Result[i8, ReadBufferError]
 
 // u16 little-endian. Throw'ит ReadBufferError при недостатке байт.

@@ -52,7 +52,7 @@ test "StringBuilder.from(s) — ASCII длина совпадает" {
 test "StringBuilder.from(c char) — ASCII single codepoint" {
     let sb = StringBuilder.from('A')
     assert(sb.len() == 1)         // 1 codepoint
-    assert(sb.byte_len() == 1)    // 1 byte
+    assert(sb.byte_len() == 1)    // 1 u8
 }
 
 test "StringBuilder.from(c char) — Cyrillic один codepoint = 2 байта" {
@@ -92,7 +92,7 @@ test "append(c char) — ASCII single byte" {
 
 test "append(c char) — UTF-8 multi-byte mixed" {
     let mut sb = StringBuilder.new()
-    sb.append('A')      // 1 byte, 1 codepoint
+    sb.append('A')      // 1 u8, 1 codepoint
     sb.append('Я')      // 2 bytes, 1 codepoint
     sb.append('中')     // 3 bytes, 1 codepoint
     assert(sb.len() == 3)         // 3 codepoints

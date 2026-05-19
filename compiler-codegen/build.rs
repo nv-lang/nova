@@ -23,12 +23,22 @@ fn main() {
         return;
     }
 
-    // vcpkg manifest mode складывает install'ы в
-    // `<crate>/vcpkg_installed/<triplet>/lib/`. Та же папка где
-    // bdwgc — берём оттуда libz3.lib.
+    // **Linkage strategy** (Plan 71 follow-up 2026-05-19):
     //
-    // Используем x64-windows-static (как для bdwgc), чтобы Nova-binary
-    // не зависел от внешних DLL.
+    //   Windows / macOS — vcpkg manifest mode (static):
+    //     `<crate>/vcpkg_installed/<triplet>/lib/libz3.a` или `libz3.lib`.
+    //     Static чтобы Nova-binary не зависел от внешних DLL.
+    //
+    //   Linux — система через `apt-get install libz3-dev` (dynamic):
+    //     ищем libz3 в стандартных system library paths (`/usr/lib/...`).
+    //     Не требуем vcpkg_installed на Linux — apt быстрее и проще для
+    //     CI runner. Если vcpkg-build хочется и на Linux — поддерживается
+    //     через переопределение `VCPKG_TRIPLET=x64-linux` + наличие
+    //     `vcpkg_installed/x64-linux/lib/` (тогда static-link предпочтётся).
+    //
+    // CI workflow `.github/workflows/contracts-z3.yml` Linux job ставит
+    // libz3-dev через apt и ожидает dynamic-link path.
+
     let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap();
     let triplet_default = if cfg!(target_os = "windows") {
         "x64-windows-static"
@@ -46,9 +56,14 @@ fn main() {
         .join(&triplet)
         .join("lib");
 
-    if !lib_dir.exists() {
-        // Hard error — без libz3.lib feature z3-backend не имеет смысла.
-        // Сообщение даёт точный hint как починить.
+    // Linux: prefer system-installed libz3 (apt-installed libz3-dev) если
+    // vcpkg_installed/ нет. Hard-error был бы избыточным — apt-route
+    // полностью работоспособна.
+    let use_vcpkg = lib_dir.exists();
+
+    if !use_vcpkg && !cfg!(target_os = "linux") {
+        // На non-Linux (Windows/macOS) vcpkg обязателен — apt-эквивалент
+        // отсутствует, через homebrew/vcpkg идёт стандартный путь.
         panic!(
             "z3-backend feature enabled, but {} not found.\n\
              Run from compiler-codegen/:\n    \
@@ -59,14 +74,20 @@ fn main() {
         );
     }
 
-    println!("cargo:rustc-link-search=native={}", lib_dir.display());
-    // На MSVC vcpkg производит `libz3.lib` (с префиксом lib); Rust ищет
-    // `<name>.lib`, поэтому `static=libz3` корректен. На Linux/macOS
-    // та же библиотека `libz3.a` — `static=z3` (Rust добавит `lib` префикс).
-    if cfg!(target_os = "windows") {
-        println!("cargo:rustc-link-lib=static=libz3");
+    if use_vcpkg {
+        println!("cargo:rustc-link-search=native={}", lib_dir.display());
+        // На MSVC vcpkg производит `libz3.lib` (с префиксом lib); Rust ищет
+        // `<name>.lib`, поэтому `static=libz3` корректен. На Linux/macOS
+        // та же библиотека `libz3.a` — `static=z3` (Rust добавит `lib` префикс).
+        if cfg!(target_os = "windows") {
+            println!("cargo:rustc-link-lib=static=libz3");
+        } else {
+            println!("cargo:rustc-link-lib=static=z3");
+        }
     } else {
-        println!("cargo:rustc-link-lib=static=z3");
+        // Linux + no vcpkg = используем system-shared libz3 (apt-installed).
+        // libz3.so в /usr/lib/x86_64-linux-gnu/ → стандартный linker path.
+        println!("cargo:rustc-link-lib=dylib=z3");
     }
 
     // Z3 — это C++ библиотека → нужен C++ runtime для статической линковки.

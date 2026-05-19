@@ -1,0 +1,23 @@
+// Ф.44.1 (Plan 33.6): TrivialBackend `(* -1 a)` → `(0 - a)` (multiply by -1 = negate).
+// Полезно для simplify chains через algebraic intermediates.
+
+module contracts.f44_mul_neg_one_positive
+
+#verify
+fn neg_via_mul(x int) -> int
+    ensures result == (0 - x)
+{
+    -1 * x
+}
+
+#verify
+fn neg_via_mul_swapped(x int) -> int
+    ensures result == (0 - x)
+{
+    x * -1
+}
+
+test "multiply by -1" {
+    assert(neg_via_mul(5) == -5)
+    assert(neg_via_mul_swapped(7) == -7)
+}

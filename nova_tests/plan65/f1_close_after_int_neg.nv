@@ -1,0 +1,13 @@
+// Plan 65 R18 f1: ChanReader.close_after rejects bare int argument.
+// EXPECT_COMPILE_ERROR expected Duration argument
+//
+// Migration path documented in the diagnostic: use Duration.from_millis(N)
+// instead of raw int — Plan 65 / D94 revision.
+
+module plan65.f1_close_after_int_neg
+
+fn main() -> () {
+    // Bare int — должно быть отклонено codegen'ом с E5101-style сообщением.
+    let _t = ChanReader.close_after(50)
+    println("unreachable")
+}

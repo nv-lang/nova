@@ -1,0 +1,23 @@
+// Ф.41.1 (Plan 33.6): TrivialBackend algebraic identities: (a+b)-b → a.
+// `ensures (x + y) - y == x` — без bounds, trivially через algebraic.
+
+module contracts.f41_subtraction_algebraic_positive
+
+#verify
+fn cancel_b(x int, y int) -> int
+    ensures result == x
+{
+    (x + y) - y
+}
+
+#verify
+fn cancel_a(x int, y int) -> int
+    ensures result == y
+{
+    (x + y) - x
+}
+
+test "algebraic cancel" {
+    assert(cancel_b(3, 7) == 3)
+    assert(cancel_a(3, 7) == 7)
+}

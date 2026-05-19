@@ -1,0 +1,41 @@
+// Plan 33.19 (extending Ф.14): range check invariants.
+// Value within range — bounded passthrough patterns.
+
+module contracts.f57_range_check
+
+// Уже в range — passthrough.
+#verify
+fn in_range_byte(x int) -> int
+    requires x >= 0
+    requires x <= 255
+    ensures result >= 0
+    ensures result <= 255
+{
+    x
+}
+
+// Byte difference в bounds.
+#verify
+fn byte_diff(a int, b int) -> int
+    requires a <= 255
+    requires b >= 0
+    ensures result <= 255
+{
+    a - b
+}
+
+// Sum двух bytes <= 510 (max byte * 2).
+#verify
+fn byte_sum_bounded(a int, b int) -> int
+    requires a <= 255
+    requires b <= 255
+    ensures result <= 510
+{
+    a + b
+}
+
+test "range check" {
+    assert(in_range_byte(128) == 128)
+    assert(byte_diff(200, 50) == 150)
+    assert(byte_sum_bounded(100, 150) == 250)
+}

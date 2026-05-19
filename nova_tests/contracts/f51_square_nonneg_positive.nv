@@ -1,0 +1,16 @@
+// Ф.51.1 (Plan 33.6): TrivialBackend `a * a >= 0` (квадрат неотрицателен без bounds).
+
+module contracts.f51_square_nonneg_positive
+
+#verify
+fn square_nonneg(x int) -> int
+    ensures result >= 0
+{
+    x * x
+}
+
+test "square nonneg" {
+    assert(square_nonneg(5) == 25)
+    assert(square_nonneg(-3) == 9)
+    assert(square_nonneg(0) == 0)
+}

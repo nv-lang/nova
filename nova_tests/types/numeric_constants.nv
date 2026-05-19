@@ -44,8 +44,8 @@ test "u32.MAX = 2^32 - 1" {
     assert(u32.MAX as int == 4294967295)
 }
 
-test "byte.MAX = 255" {
-    assert(byte.MAX as int == 255)
+test "u8.MAX = 255" {
+    assert(u8.MAX as int == 255)
 }
 
 // ── char (codepoint) ─────────────────────────────────────────────────────

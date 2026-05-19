@@ -1,0 +1,36 @@
+// Plan 33.19 (extending Ф.14): counter increment invariants.
+// counter += 1 preserves non-negativity, bounds upper.
+
+module contracts.f56_counter_increment
+
+#verify
+fn inc(c int) -> int
+    requires c >= 0
+    ensures result >= 1
+{
+    c + 1
+}
+
+#verify
+fn dec(c int) -> int
+    requires c >= 1
+    ensures result >= 0
+{
+    c - 1
+}
+
+#verify
+fn inc_bounded(c int) -> int
+    requires c >= 0
+    requires c <= 99
+    ensures result >= 1
+    ensures result <= 100
+{
+    c + 1
+}
+
+test "counter increment" {
+    assert(inc(0) == 1)
+    assert(dec(5) == 4)
+    assert(inc_bounded(50) == 51)
+}

@@ -225,7 +225,8 @@ impl ExternalRegistry {
                     "bool" => "nova_bool".into(),
                     "str" => "nova_str".into(),
                     "byte" => "nova_byte".into(),
-                    "char" => "nova_int".into(),
+                    // Plan 70.3: distinct nova_char typedef (mirror emit_c.rs:2680).
+                    "char" => "nova_char".into(),
                     "Self" => match recv {
                         Some("str") => "nova_str".into(),
                         Some(t) => format!("Nova_{}*", t),
@@ -248,6 +249,8 @@ impl ExternalRegistry {
                             "byte" | "u8" => "NovaArray_nova_byte*".into(),
                             "bool" => "NovaArray_nova_bool*".into(),
                             "f64" | "f32" => "NovaArray_nova_f64*".into(),
+                            // Plan 70.3: distinct array element type для char.
+                            "char" => "NovaArray_nova_char*".into(),
                             _ => "NovaArray_nova_int*".into(),
                         });
                     }

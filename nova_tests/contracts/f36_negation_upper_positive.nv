@@ -1,0 +1,25 @@
+// Ф.36.2 (Plan 33.6): TrivialBackend negation upper bound `<=` / `<`.
+// `requires x >= -5; ensures (0 - x) <= 5` — -lower(x) = 5.
+
+module contracts.f36_negation_upper_positive
+
+#verify
+fn neg_below(x int) -> int
+    requires x >= -5
+    ensures result <= 5
+{
+    0 - x
+}
+
+#verify
+fn neg_strict_below(x int) -> int
+    requires x >= -4
+    ensures result < 5
+{
+    0 - x
+}
+
+test "negation upper" {
+    assert(neg_below(-5) == 5)
+    assert(neg_strict_below(-3) == 3)
+}

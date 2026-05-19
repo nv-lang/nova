@@ -1,0 +1,25 @@
+// Ф.43.1+43.2 (Plan 33.6): TrivialBackend addition algebraic identities.
+// (a - b) + b → a   и   a + (0 - a) → 0.
+
+module contracts.f43_addition_algebraic_positive
+
+// (x - y) + y == x — Ф.43.1.
+#verify
+fn restore_after_sub(x int, y int) -> int
+    ensures result == x
+{
+    (x - y) + y
+}
+
+// x + (0 - x) == 0 — Ф.43.2.
+#verify
+fn add_negation_zero(x int) -> int
+    ensures result == 0
+{
+    x + (0 - x)
+}
+
+test "addition algebraic" {
+    assert(restore_after_sub(10, 3) == 10)
+    assert(add_negation_zero(7) == 0)
+}

@@ -1036,7 +1036,7 @@ fn tarjan_scc(
             .unwrap_or_default();
         dfs_stack.push((start.clone(), children, 0));
 
-        'dfs: loop {
+        loop {
             let Some(frame) = dfs_stack.last_mut() else { break };
             let (node, children, child_idx) = frame;
             if *child_idx < children.len() {
@@ -1421,7 +1421,7 @@ fn collect_calc_in_block(b: &Block, out: &mut Vec<(Vec<CalcStep>, Span)>) {
 /// Ф.4.1: блок "ghost-only" -- все стейтменты ghost (`apply`).
 /// Такой блок при верификации трактуется как trailing-only (apply стираются).
 fn block_has_only_ghost_stmts(b: &Block) -> bool {
-    b.stmts.iter().all(|s| matches!(s, Stmt::Apply { .. } | Stmt::Calc { .. }))
+    b.stmts.iter().all(|s| matches!(s, Stmt::Apply { .. } | Stmt::Calc { .. } | Stmt::Reveal { .. }))
 }
 
 /// Ф.4.1: собрать все `apply lemma(args)` из тела функции.
@@ -1467,6 +1467,46 @@ fn collect_apply_in_expr(e: &Expr, out: &mut Vec<(String, Vec<Expr>, Span)>) {
         ExprKind::If { cond, then, else_: None, .. } => {
             collect_apply_in_expr(cond, out);
             collect_apply_in_block(then, out);
+        }
+        _ => {}
+    }
+}
+
+/// Plan 33.9 Ф.6: собрать все `reveal name` statements из fn body.
+/// Возвращает (name, span). Used для lints (dup reveal, reveal-non-opaque).
+fn collect_reveal_stmts_in_body(body: &FnBody) -> Vec<(String, Span)> {
+    let mut out = Vec::new();
+    if let FnBody::Block(b) = body { collect_reveal_in_block(b, &mut out); }
+    out
+}
+
+fn collect_reveal_in_block(b: &Block, out: &mut Vec<(String, Span)>) {
+    for s in &b.stmts {
+        if let Stmt::Reveal { name, span } = s {
+            out.push((name.clone(), *span));
+        } else if let Stmt::Let(d) = s {
+            collect_reveal_in_expr(&d.value, out);
+        } else if let Stmt::Expr(e) = s {
+            collect_reveal_in_expr(e, out);
+        }
+    }
+}
+
+fn collect_reveal_in_expr(e: &Expr, out: &mut Vec<(String, Span)>) {
+    use crate::ast::ElseBranch;
+    match &e.kind {
+        ExprKind::Block(b) => collect_reveal_in_block(b, out),
+        ExprKind::If { cond, then, else_: Some(el), .. } => {
+            collect_reveal_in_expr(cond, out);
+            collect_reveal_in_block(then, out);
+            match el {
+                ElseBranch::Block(b) => collect_reveal_in_block(b, out),
+                ElseBranch::If(ie) => collect_reveal_in_expr(ie, out),
+            }
+        }
+        ExprKind::If { cond, then, else_: None, .. } => {
+            collect_reveal_in_expr(cond, out);
+            collect_reveal_in_block(then, out);
         }
         _ => {}
     }
@@ -2448,7 +2488,7 @@ let t0 = std::time::Instant::now();
             } else {
                 pipeline.verify_fn(module, fd, &inferred_pure)
             };
-            let elapsed_ms = t0.elapsed().as_millis() as u64;
+            let _elapsed_ms = t0.elapsed().as_millis() as u64;
             for (span, vr) in results {
                 match vr {
                     VerifyResult::Proven => {
@@ -2697,6 +2737,63 @@ let t0 = std::time::Instant::now();
                              Переименуйте один из них для clarity.",
                         ld.name, ld.name),
                     ld.span));
+            }
+            // Ф.46.1 (Plan 33.6): lemma самоприменение (self-apply) — infinite proof.
+            // `lemma foo(x) { apply foo(x); ... }` — proof depends on itself.
+            // Error (не warning): proof is unsound by construction.
+            let self_applies = collect_apply_stmts_in_body(&ld.body);
+            for (lemma_applied, _, sp) in &self_applies {
+                if lemma_applied == &ld.name {
+                    report.errors.push(Diagnostic::new(
+                        format!("lemma `{}` применяет саму себя через `apply {}(...)` [E2408]:\n  \
+                                 self-application делает proof unsound (proves what it assumes).\n  \
+                                 Используйте strong induction через `apply lemma(x-1)` или удалите apply.",
+                            ld.name, ld.name),
+                        *sp));
+                }
+            }
+            // Ф.48.1 (Plan 33.6): unused lemma param. Param должен встречаться
+            // в каком-то contract либо body. Скорее всего программист забыл.
+            {
+                let mut used_names: std::collections::HashSet<String> =
+                    std::collections::HashSet::new();
+                collect_used_idents_in_body(&ld.body, &mut used_names);
+                for c in &ld.contracts {
+                    collect_used_idents_in_expr(&c.expr, &mut used_names);
+                }
+                for p in &ld.params {
+                    if p.name.starts_with('_') { continue; } // intentional skip
+                    if !used_names.contains(&p.name) {
+                        report.warnings.push(Diagnostic::new(
+                            format!("lemma `{}`: param `{}` не используется в contracts/body [W2402]:\n  \
+                                     удалите или переименуйте в `_{}` для intentional skip.",
+                                ld.name, p.name, p.name),
+                            ld.span));
+                    }
+                }
+            }
+            // Ф.40.1 (Plan 33.6): lemma body == ensures expression — body просто
+            // повторяет ensures. Это не bug, но прозрачно: SMT доказывает результат
+            // body == ensures тавтологически. Лучше пустой body или body содержащий
+            // calc/apply hints. Detect: body это Expr и canon(body) == canon(any ensures).
+            use crate::ast::pretty::print_expr as pe;
+            if let crate::ast::FnBody::Expr(body_expr) = &ld.body {
+                let body_str = pe(body_expr);
+                for c in &ld.contracts {
+                    if matches!(c.kind, ContractKind::Ensures) {
+                        // Если body буквально совпадает с ensures expr.
+                        if body_str == pe(&c.expr) {
+                            report.warnings.push(Diagnostic::new(
+                                format!("lemma `{}`: body буквально совпадает с ensures [W2402]:\n  \
+                                         body не добавляет proof-information — SMT доказывает\n  \
+                                         тавтологически. Используйте `calc {{ }}` или `apply other_lemma`\n  \
+                                         для нетривиальной reasoning chain.",
+                                    ld.name),
+                                ld.span));
+                            break;
+                        }
+                    }
+                }
             }
         }
         // Ф.26.3 (Plan 33.6): axiom без binders + `=> true` — vacuous.
@@ -3035,6 +3132,76 @@ let t0 = std::time::Instant::now();
                         fd.name),
                     fd.span));
             }
+            // Ф.42.4 (Plan 33.6): `#verify` fn с только requires (без ensures) —
+            // доказывает только что входы валидны, callerу никакой гарантии не даёт.
+            // Полезно redirecting attention — добавь ensures либо удали `#verify`.
+            if matches!(fd.verify_mode, VerifyMode::MustVerify) && !fd.contracts.is_empty() {
+                let has_ensures = fd.contracts.iter().any(|c|
+                    matches!(c.kind, ContractKind::Ensures | ContractKind::EnsuresFail));
+                let has_requires = fd.contracts.iter().any(|c|
+                    matches!(c.kind, ContractKind::Requires));
+                if has_requires && !has_ensures {
+                    report.warnings.push(Diagnostic::new(
+                        format!("fn `{}` имеет только `requires` без `ensures` [W2402]:\n  \
+                                 verify-fn без ensures не даёт callerу гарантий —\n  \
+                                 только проверяет валидность входов. Добавьте `ensures result <условие>`\n  \
+                                 либо удалите `#verify` (runtime требования проверятся compile-time).",
+                            fd.name),
+                        fd.span));
+                }
+            }
+            // Ф.47.1 (Plan 33.6): readability hint — contract clause с 5+ AND-conjuncts.
+            // Recursive count: `(a && b && c && d && e)` → 5 conjuncts. Подсказка:
+            // разделите на несколько `requires <a>` / `requires <b>` clauses для clarity.
+            fn count_and_conjuncts(e: &Expr) -> usize {
+                match &e.kind {
+                    ExprKind::Binary { op: BinOp::And, left, right } =>
+                        count_and_conjuncts(left) + count_and_conjuncts(right),
+                    _ => 1,
+                }
+            }
+            // Ф.50.2 (Plan 33.6): парный для OR — long disjunction.
+            // 5+ disjuncts через `||` — readability concern. Suggest pattern match,
+            // table lookup или enum-based dispatch.
+            fn count_or_disjuncts(e: &Expr) -> usize {
+                match &e.kind {
+                    ExprKind::Binary { op: BinOp::Or, left, right } =>
+                        count_or_disjuncts(left) + count_or_disjuncts(right),
+                    _ => 1,
+                }
+            }
+            for c in &fd.contracts {
+                let n = count_and_conjuncts(&c.expr);
+                if n >= 5 {
+                    let kind_str = match c.kind {
+                        ContractKind::Requires => "requires",
+                        ContractKind::Ensures => "ensures",
+                        ContractKind::EnsuresFail => "ensures_fail",
+                    };
+                    report.warnings.push(Diagnostic::new(
+                        format!("fn `{}`: `{}` clause содержит {} AND-conjunct'ов [W2402]:\n  \
+                                 для readability разделите на несколько `{}` clauses\n  \
+                                 (каждый conjunct — отдельная строка). Diagnostic messages\n  \
+                                 при failure тогда укажут который именно conjunct провален.",
+                            fd.name, kind_str, n, kind_str),
+                        c.span));
+                }
+                let m = count_or_disjuncts(&c.expr);
+                if m >= 5 {
+                    let kind_str = match c.kind {
+                        ContractKind::Requires => "requires",
+                        ContractKind::Ensures => "ensures",
+                        ContractKind::EnsuresFail => "ensures_fail",
+                    };
+                    report.warnings.push(Diagnostic::new(
+                        format!("fn `{}`: `{}` clause содержит {} OR-disjunct'ов [W2402]:\n  \
+                                 для readability рассмотрите pattern match (`match x {{ A | B => true, _ => false }}`)\n  \
+                                 либо table lookup. Long disjunction обычно сигнал что должен\n  \
+                                 быть enum или set membership check.",
+                            fd.name, kind_str, m),
+                        c.span));
+                }
+            }
             // Ф.28.1 (Plan 33.6): duplicate `apply lemma(args)` detection.
             let applies = collect_apply_stmts_in_body(&fd.body);
             let mut seen_applies: std::collections::HashMap<String, Vec<Span>> =
@@ -3055,6 +3222,104 @@ let t0 = std::time::Instant::now();
                             *sp));
                     }
                 }
+            }
+            // Ф.49.1 (Plan 33.6): apply к лемме с `requires false` → W2402.
+            // Lemma vacuous (Ф.31.3 ловит на declaration side); здесь warning на
+            // call-site чтобы программист увидел useless apply.
+            for (lemma_name, _, sp) in &applies {
+                let lemma_has_false_req = module.items.iter().any(|it| {
+                    if let Item::Lemma(ld) = it {
+                        ld.name == *lemma_name && ld.contracts.iter().any(|c| {
+                            matches!(c.kind, ContractKind::Requires)
+                                && matches!(c.expr.kind, ExprKind::BoolLit(false))
+                        })
+                    } else { false }
+                });
+                if lemma_has_false_req {
+                    report.warnings.push(Diagnostic::new(
+                        format!("fn `{}`: `apply {}(...)` к vacuous лемме [W2402]:\n  \
+                                 лemma `{}` имеет `requires false` — apply никогда\n  \
+                                 не активирует precondition. Удалите apply или fix lemma.",
+                            fd.name, lemma_name, lemma_name),
+                        *sp));
+                }
+            }
+            // Plan 33.9 Ф.6.1: `reveal X` где X не помечена `#opaque` → W2403.
+            // Reveal на non-opaque fn бесполезен (body уже видим verifier'у).
+            // Plan 33.9 Ф.6.3: duplicate `reveal X; reveal X;` → W2402.
+            let reveals = collect_reveal_stmts_in_body(&fd.body);
+            let mut seen_reveals: std::collections::HashMap<String, Vec<Span>> =
+                std::collections::HashMap::new();
+            for (name, sp) in &reveals {
+                seen_reveals.entry(name.clone()).or_default().push(*sp);
+                // Ф.6.1: проверка opaque target.
+                let target_is_opaque = module.items.iter().any(|it| {
+                    matches!(it, Item::Fn(fd) if fd.name == *name && fd.is_opaque)
+                });
+                let target_exists = module.items.iter().any(|it| {
+                    matches!(it, Item::Fn(fd) if fd.name == *name)
+                });
+                if !target_exists {
+                    report.errors.push(Diagnostic::new(
+                        format!("fn `{}`: `reveal {}` ссылается на несуществующую fn [E2411]:\n  \
+                                 объявите `#opaque #pure fn {}(...)` или удалите reveal.",
+                            fd.name, name, name),
+                        *sp));
+                } else if !target_is_opaque {
+                    report.warnings.push(Diagnostic::new(
+                        format!("fn `{}`: `reveal {}` на non-opaque fn [W2403]:\n  \
+                                 fn `{}` не помечена `#opaque` — reveal бесполезен\n  \
+                                 (body уже видим verifier'у). Удалите reveal или добавьте\n  \
+                                 `#opaque` к `{}`.",
+                            fd.name, name, name, name),
+                        *sp));
+                }
+            }
+            // Ф.6.3: dup reveal detection.
+            for (name, spans) in &seen_reveals {
+                if spans.len() >= 2 {
+                    for sp in spans.iter().skip(1) {
+                        report.warnings.push(Diagnostic::new(
+                            format!("fn `{}`: duplicate `reveal {}` [W2402]:\n  \
+                                     повторный reveal того же fn в одном scope не даёт\n  \
+                                     extra info. Удалите дубликат.",
+                                fd.name, name),
+                            *sp));
+                    }
+                }
+            }
+        }
+    }
+    // Plan 33.9 Ф.6.2: `#opaque` fn never reveal'ится никем в module → W2403.
+    // Также Ф.6.4: `#fuel(0)` явный — эквивалентно отсутствию (noise).
+    let mut all_reveals: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for item in &module.items {
+        if let Item::Fn(fd) = item {
+            for (n, _) in collect_reveal_stmts_in_body(&fd.body) {
+                all_reveals.insert(n);
+            }
+        }
+    }
+    for item in &module.items {
+        if let Item::Fn(fd) = item {
+            // Ф.6.2: dead opaque.
+            if fd.is_opaque && !all_reveals.contains(&fd.name) {
+                report.warnings.push(Diagnostic::new(
+                    format!("fn `{}`: `#opaque` но никогда не reveal'ится в модуле [W2403]:\n  \
+                             dead opaque — никто не доказывает с раскрытым body. Удалите\n  \
+                             `#opaque` (body будет inline'ится как обычно) или добавьте\n  \
+                             `reveal {}` в caller fn.",
+                        fd.name, fd.name),
+                    fd.span));
+            }
+            // Ф.6.4: explicit #fuel(0).
+            if let Some(0) = fd.fuel {
+                report.warnings.push(Diagnostic::new(
+                    format!("fn `{}`: `#fuel(0)` явный — эквивалентно отсутствию fuel [W2403]:\n  \
+                             default unfolding depth для opaque и так 0. Удалите\n  \
+                             `#fuel(0)` либо укажите `#fuel(N)` где N >= 1.",
+                        fd.name),
+                    fd.span));
             }
         }
     }

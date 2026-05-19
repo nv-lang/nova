@@ -859,3 +859,110 @@ test "elapsed / time_until" {
         assert(later.time_until() == 5.seconds())  // 10s - 5s
     }
 }
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Plan 65 Ф.12 / D124 — Monotonic clock (monotonic time, immune to wall-clock skew)
+// ──────────────────────────────────────────────────────────────────────────
+//
+// `Monotonic` — точка во времени относительно непрерывной монотонной
+// шкалы (CLOCK_MONOTONIC на Linux/macOS, QueryPerformanceCounter на Windows).
+//
+// Never goes backwards: immune к NTP adjustments, daylight-saving, system
+// time changes. Используется для timer deadlines, profiling intervals,
+// retry budgets — везде где «прошло сколько-то времени» важнее даты.
+//
+// D124 (раздельные типы для wall-clock vs monotonic) — type-system запрещает
+// случайное использование Timestamp где нужен Monotonic (silent NTP-skew
+// bug) и наоборот. Compile-error на смешивание arithmetic operations.
+
+/// Monotonic — момент в монотонной шкале процесса. Never decreases.
+///
+/// Используется для timer deadlines (`ChanReader.close_at(Monotonic)`),
+/// profiling intervals, retry budgets. Immune к NTP/DST/manual clock
+/// adjustments.
+///
+/// Сериализация запрещена — bessmysленно вне процесса (у каждого процесса
+/// свой epoch). Для inter-process timestamps используй `Timestamp`.
+///
+/// # Examples
+/// ```nova
+/// let start = Monotonic.now()
+/// // ... work ...
+/// let elapsed = Monotonic.now() - start  // → Duration
+/// ```
+#stable(since = "0.6")
+export type Monotonic {
+    readonly nanos i64
+}
+
+// NOTE: `Monotonic.now()` is provided as a compiler-builtin (Path-form
+// dispatch in emit_c.rs), not as a Nova fn here. The reason: declaring
+// it as `fn Monotonic.now() Time -> Self => Time.now_monotonic()` would
+// trigger the latent Time-effect schema mismatch ([M-time-now-schema-mismatch])
+// — Time.now_monotonic() is wire-typed as int but the surrounding fn must
+// return a Monotonic record. Skipping the wrapper avoids the breakage.
+//
+// User-facing call surface remains identical: `Monotonic.now()` works.
+
+/// Raw nanoseconds — escape hatch для FFI / bench. Cросс-процессное
+/// сравнение бессмысленно. Cравнение внутри одного процесса допустимо.
+#stable(since = "0.6")
+export fn Monotonic @as_nanos() -> i64 => @nanos
+
+
+// ── Monotonic arithmetic (D124 rule 3: NO cross-type ops with Timestamp) ──
+
+/// `Monotonic + Duration → Monotonic` — сдвинуть монотонный момент вперёд
+/// (deadline в будущем).
+#stable(since = "0.6")
+export fn Monotonic @plus(d Duration) -> Monotonic =>
+    { nanos: @nanos + d.nanos }
+
+/// `Monotonic - Duration → Monotonic` — сдвинуть монотонный момент назад
+/// (deadline в прошлом или earlier-than-now).
+///
+/// NOTE: для `Monotonic - Monotonic → Duration` используй `elapsed_since`
+/// (named method). Operator overload отсутствует, чтобы не конфликтовать
+/// с method-resolution на receiver type (см. Эволюция).
+#stable(since = "0.6")
+export fn Monotonic @minus(d Duration) -> Monotonic =>
+    { nanos: @nanos - d.nanos }
+
+/// Elapsed time between two Monotonic points. Signed: positive если
+/// `self` after `other`, negative если before.
+///
+/// # Examples
+/// ```nova
+/// let t1 = Monotonic.now()
+/// // ... work ...
+/// let t2 = Monotonic.now()
+/// let elapsed = t2.elapsed_since(t1)  // Duration ≥ 0 (clock не идёт назад)
+/// ```
+#stable(since = "0.6")
+export fn Monotonic @elapsed_since(other Monotonic) -> Duration =>
+    { nanos: @nanos - other.nanos }
+
+
+// ── Сравнение (D46) — обычный paтterн как у Duration/Timestamp ──
+
+/// Equality (`==`). Только внутри одного процесса.
+#stable(since = "0.6")
+export fn Monotonic @eq(other Monotonic) => @nanos == other.nanos
+
+#stable(since = "0.6")
+export fn Monotonic @lt(other Monotonic) => @nanos < other.nanos
+
+#stable(since = "0.6")
+export fn Monotonic @le(other Monotonic) => @nanos <= other.nanos
+
+#stable(since = "0.6")
+export fn Monotonic @gt(other Monotonic) => @nanos > other.nanos
+
+#stable(since = "0.6")
+export fn Monotonic @ge(other Monotonic) => @nanos >= other.nanos
+
+
+// Note: NO `Monotonic.as_unix_secs()`, `Monotonic.from_unix_*()`,
+// `Monotonic + Timestamp`, `Monotonic - Timestamp` overloads. D124 правило 3:
+// смешивание clock-семantik — compile-error через absent overload.

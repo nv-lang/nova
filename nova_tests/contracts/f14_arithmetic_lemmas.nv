@@ -1,4 +1,4 @@
-﻿// Plan 33.3 Ф.14: Dafny-parity test 5 — Arithmetic lemmas.
+// Plan 33.3 Ф.14: Dafny-parity test 5 — Arithmetic lemmas.
 // Аналог lemmas из Dafny стандартной библиотеки (Math.dfy).
 
 // REQUIRES_SMT_BACKEND z3

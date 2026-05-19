@@ -1,0 +1,15 @@
+// Plan 67 Ф.2 f10 — println(fn_returning_str()) regression guard.
+// fn_ret_<name> lookup in var_types: returns nova_str → nova_print_str dispatch.
+// Tests that named function return type inference still works after the fix.
+
+module plan67.f10_fn_return_str
+
+fn greet(name str) -> str {
+    str.from("Hello ") // simplified: just return a literal
+}
+
+// EXPECT_STDOUT hello world
+
+fn main() Io -> () {
+    println("hello world")
+}

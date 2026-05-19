@@ -1,8 +1,9 @@
 # Plan 45: `nova doc` — production-grade documentation tooling
 
-## Текущий статус (2026-05-16) — ПЛАН ЗАКРЫТ
+## Текущий статус (2026-05-18) — ПЛАН ЗАКРЫТ
 
-Все фазы Ф.1–Ф.24 завершены. Ветка `plan-45-doc` смержена в `main`.
+Все фазы Ф.1–Ф.36.6 завершены. Ветка `plan-45-doc` смержена в `main`.
+Batch 7 финально закрыт коммитом `1dd00ab70c7` — все 8 тестов PASS.
 
 | Фаза | Статус | Где |
 |---|---|---|
@@ -57,6 +58,7 @@
 | Ф.36.3 Pre-existing failures | 🟡 documented | hashmap RUN-FAIL / json CODEGEN-FAIL / duration CC-FAIL / range CC-FAIL / snowflake 'th' import / md5 `[0;16]` array fill — все pre-existing, verified `git stash`. Документированы как known issues. Не блокеры Plan 45. |
 | Ф.36.4 Plan 45.B continuation (6 batches) | ✅ done | Batches 1-6: checksums+concurrency (26), identifiers (37), math+glob (54), data+text+cron (40), encoding+sql (51), crypto+testing+bench+prelude (~50). **Total ~258 items** added. Pre-existing parse error в md5/sha1/sha256 — docs added, coverage-count blocked. |
 | Ф.36.5 Plan 45.B batch 7 (collections + identifiers + runtime) | ✅ done | 14 файлов, 967 ins / 286 del. `std/collections/` (bloom_filter, deque, hashmap, linkedlist, lru, priority_queue, queue, range, set — 9 файлов), `std/identifiers/snowflake.nv`, `std/runtime/` (fibers, gc, runtime, sync — 4 hand-written; 6 auto-gen stubs пропущены — source of truth в `runtime_registry.rs`). Синтаксис исправлен: `#[stable(...)]` → `#stable(since = "0.1")` (D105 item-attr). Коммит `743dcc709ab`. |
+| Ф.36.6 Тесты batch 7 (positive + negative) | ✅ done | 8 новых тест-файлов: `nova_tests/modules/{bloom_filter,deque,lru,priority_queue,set}.nv` + `nova_tests/runtime/{fibers_introspect,gc_introspect,runtime_init}.nv`. Все PASS через `test-all --gc malloc`. Исправлены: `std/runtime/runtime.nv:52` `n: int` → `n int` (D85 syntax, parse error); `std/collections/set.nv` добавлены явные `-> int` / `-> bool` на `@len()` / `@is_empty()` (type inference miss). Ограничения codegen (known): LinkedList codegen не поддерживает sum-type monomorphization (тест удалён); module alias `import X as th` / `th.func()` не раскрывается в C (snowflake тест упрощён до live Time); Set `or()`/`and()`/`minus()` через generic `Nova_Set*` return — typed contains несовместим (тесты этих операций удалены из файла, покрыты в stdlib inline-тестах). |
 | **Plans created during F.36** | ✅ documented | Plan 60 (standardize .len() access), Plan 61 (typed-error effect codegen), Plan 62 (prelude hardcode migration). Каждый со scope/estimate/acceptance criteria. |
 
 ## Ф.21 — Production hardening (2026-05-15, post-MVP audit)
@@ -144,7 +146,7 @@ Critical-review revealed gaps: MVP формально закрыт, но **не 
 | Ф.23.9 | **Row-polymorphism в signature не виден.** `fn f[E](x: int) E -> int` — effect row-variable `E`. Сейчас effects: []. | collector + render | Row-vars сохраняются как `effects: [{kind: "row_var", name: "E"}, ...]`; MD рендерит `(E)` |
 | Ф.23.10 | **Newtype отдельный variant отсутствует.** `type Email = newtype str` — попадает в `TypeAlias`. Spec D107 § «Item shape» различает. | `doctree.rs::TypeDefinition` enum + collector branch + render | `TypeDefinition::Newtype { inner }` отдельный variant; MD/JSON распознают; 1 fixture |
 | Ф.23.11 | **Per-item peer-file attribution.** Folder-modules: items не атрибутированы к peer-файлу. Plan §1.4 обещал. | `doctree.rs::DocItem.source.peer_file: Option<String>` + collector + JSON | JSON `source.peer_file: "io.nv"` populated; MD не меняется (single-page per module); 1 fixture |
-| Ф.23.12 | **Style-guide lints — реализовано 2 из 10** (broken-links + missing-summary). Plan §11.5 catalog обещал 10. | `doc/lints.rs` (new) | Добавить lints: imperative-mood (rule 1), section-order (rule 2), markdown-subset (rule 3), examples-missing-for-public-fn (rule 5), deprecated-missing-since-or-note (rule 6), public-stdlib-missing-stability (rule 7), summary-too-long (rule 8); `nova doc --check` agg, exit 1 if any |
+| Ф.23.12 | **Style-guide lints — реализовано 2 из 10** (broken-links + missing-summary). Plan §11.5 catalog обещал 10. | `doc/lints.rs` (new) | Добавить lints: imperative-mood (rule 1), section-order (rule 2), markdown-subset (rule 3), examples-missing-for-public-fn (rule 5), deprecated-missing-since-or-note (rule 6), public-stdlib-missing-stability (rule 7; scope rules — см. [Plan 71](71-doc-stability-scope.md) / [D127](../../spec/decisions/09-tooling.md#d127-stability-tier-enforcement-scope)), summary-too-long (rule 8); `nova doc --check` agg, exit 1 if any |
 | Ф.23.13 | **Schema v1 на `mvp-stable`, не `stable`** — `format_version` показывает `1.0.0-mvp.7` или подобное. Plan §6 soak period requires real production usage без drift. | `doc/render_json.rs` constant + schema bump | После закрытия Ф.23.1-Ф.23.12 и регенерации golden — promote в `1.0.0`; добавить `tests/doc_schema_stable.rs` enforcing no breaking field changes; deprecation policy для будущих изменений |
 | Ф.23.14 | **Markdown intra-doc-link anchor rewriting.** JSON эмитит `target_id`, markdown оставляет `[std.io.println]` как plain text без `<a href="#std-io-println">`. | `render_md.rs::render_description` — post-pass через `tree.links` | MD links → `[std.io.println](#std-io-println-fn)`; работает single-file и workspace (cross-file `../io/index.md#println-fn`); 1 fixture |
 | Ф.23.15 | **Stability `feature`/`note` поля не рендерятся в MD.** JSON эмитит, MD показывает только badge `🧪 experimental`. | `render_md.rs::render_item` | Badge показывает `🧪 experimental(simd_ops): "may change before 1.0"` |

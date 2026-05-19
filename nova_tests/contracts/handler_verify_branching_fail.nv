@@ -1,7 +1,10 @@
 // EXPECT_COMPILE_ERROR E2402
+// REQUIRES_SMT_BACKEND trivial
 //
 // Ф.1.3 (Plan 33.6): handler с branching в action body под #verify →
 // symbolic exec V1 не поддерживает if/match → Unknown → compile error E2402.
+// Под Z3 backend V1 exec может выдать Disproved (другая diagnostic, не E2402) —
+// тест gated на trivial. V2 handler-exec (Plan 33.5 Ф.6) даст separate coverage.
 
 module contracts.handler_verify_branching_fail
 

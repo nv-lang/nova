@@ -20,13 +20,13 @@ export external fn WriteBuffer.new() -> Self
 export external fn WriteBuffer.with_capacity(n int) -> Self
 
 // Создать WriteBuffer из существующих байт.
-export external fn WriteBuffer.from(b []byte) -> Self
+export external fn WriteBuffer.from(b []u8) -> Self
 
 // Append один byte. Returns self for chaining.
-export external fn WriteBuffer mut @write_byte(v byte) -> Self
+export external fn WriteBuffer mut @write_byte(v u8) -> Self
 
 // Append массив байт (memcpy). Returns self.
-export external fn WriteBuffer mut @write_bytes(src []byte) -> Self
+export external fn WriteBuffer mut @write_bytes(src []u8) -> Self
 
 // Append n нулевых байт (memset). Returns self.
 export external fn WriteBuffer mut @write_zero(n int) -> Self
@@ -37,10 +37,10 @@ export external fn WriteBuffer mut @write_char(c char) -> Self
 // Append UTF-8 байты из str (memcpy). Returns self.
 export external fn WriteBuffer mut @write_str(s str) -> Self
 
-// 1 byte unsigned, без endianness.
+// 1 u8 unsigned, без endianness.
 export external fn WriteBuffer mut @write_u8(v u8) -> Self
 
-// 1 byte signed, без endianness.
+// 1 u8 signed, без endianness.
 export external fn WriteBuffer mut @write_i8(v i8) -> Self
 
 // u16 little-endian (2 байта).
@@ -100,6 +100,6 @@ export external fn WriteBuffer @capacity() -> int
 // Создать независимую копию (deep copy buffer).
 export external fn WriteBuffer @clone() -> Self
 
-// Финализировать в []byte. Infallible.
-export external fn WriteBuffer @into() -> []byte
+// Финализировать в []u8. Infallible.
+export external fn WriteBuffer @into() -> []u8
 

@@ -1,0 +1,28 @@
+// Plan 33.19 (extending Ф.14 Dafny-port): sum of non-negatives is non-negative.
+// V1: только 2-arity addition (TrivialBackend reasoning per single Binary).
+
+module contracts.f55_sum_bounds
+
+#verify
+fn sum_two_nonneg(a int, b int) -> int
+    requires a >= 0
+    requires b >= 0
+    ensures result >= 0
+{
+    a + b
+}
+
+// Sum bounded above (Ф.35.2 addition upper).
+#verify
+fn sum_bounded(a int, b int) -> int
+    requires a <= 100
+    requires b <= 100
+    ensures result <= 200
+{
+    a + b
+}
+
+test "sum bounds" {
+    assert(sum_two_nonneg(3, 4) == 7)
+    assert(sum_bounded(80, 90) == 170)
+}

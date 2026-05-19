@@ -1,0 +1,49 @@
+// Ф.54 (test pack): positive integration — несколько фич Ф.29-Ф.53 вместе.
+
+module contracts.f54_integration_positive
+
+// Использует: Ф.41.1 algebraic cancel + Ф.51.1 square nonneg.
+#verify
+fn cancel_then_square(x int, y int) -> int
+    ensures result >= 0
+{
+    let cancelled = (x + y) - y  // cancelled == x (Ф.41.1)
+    cancelled * cancelled  // x*x >= 0 (Ф.51.1)
+}
+
+// Использует: Ф.30.2 addition strict + Ф.43.1 (a-b)+b → a.
+#verify
+fn restore_then_strict(x int) -> int
+    requires x >= 5
+    ensures result > 0
+{
+    let restored = (x - 1) + 1  // restored == x (Ф.43.1)
+    restored  // x >= 5 > 0 (Ф.30.2)
+}
+
+// Использует: Ф.44.1 mul by -1 + Ф.36.2 negation upper.
+#verify
+fn neg_via_mul_bounded(x int) -> int
+    requires x >= -10
+    ensures result <= 10
+{
+    -1 * x  // -1 * x → 0 - x (Ф.44.1); 0 - x <= 10 (Ф.36.2)
+}
+
+// Использует: Ф.52.3 a/a → 1 + Ф.45.3 0%a → 0.
+#verify
+fn div_and_mod_self(a int) -> int
+    requires a >= 1
+    ensures result == 1
+{
+    let q = a / a    // q == 1 (Ф.52.3)
+    let r = 0 % a    // r == 0 (Ф.45.3)
+    q + r            // 1 + 0 == 1
+}
+
+test "integration" {
+    assert(cancel_then_square(3, 5) == 9)
+    assert(restore_then_strict(7) == 7)
+    assert(neg_via_mul_bounded(-5) == 5)
+    assert(div_and_mod_self(7) == 1)
+}

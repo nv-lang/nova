@@ -1,0 +1,41 @@
+// Plan 33.19 (extending Ф.14): buffer index safety invariants.
+// Канонический safety-critical pattern: index в bounds.
+
+module contracts.f56_buffer_index_safety
+
+// Index within [0, capacity-1] → preserve via passthrough.
+#verify
+fn valid_index(idx int, cap int) -> int
+    requires idx >= 0
+    requires cap >= 1
+    requires idx <= cap - 1
+    ensures result >= 0
+{
+    idx
+}
+
+// Advance index by 1, stay in bounds (Ф.30.2 addition strict).
+#verify
+fn advance(idx int) -> int
+    requires idx >= 0
+    requires idx <= 98
+    ensures result >= 1
+    ensures result <= 99
+{
+    idx + 1
+}
+
+// Last valid index — cap - 1 (Ф.18.1 subtraction lower).
+#verify
+fn last_valid(cap int) -> int
+    requires cap >= 1
+    ensures result >= 0
+{
+    cap - 1
+}
+
+test "buffer index safety" {
+    assert(valid_index(5, 10) == 5)
+    assert(advance(7) == 8)
+    assert(last_valid(10) == 9)
+}

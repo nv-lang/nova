@@ -1,0 +1,19 @@
+// Ф.48.1 (Plan 33.6): lemma с unused param → W2402.
+// EXPECT_COMPILE_WARNING W2402
+
+module contracts.f48_lemma_unused_param_w2402
+
+// `unused_y` не встречается ни в requires, ни в ensures, ни в body.
+lemma my_lemma(x int, unused_y int)
+    requires x >= 0
+    ensures x >= 0
+=> x
+
+#verify
+fn caller(x int) -> int
+    requires x >= 0
+    ensures result >= 0
+{
+    apply my_lemma(x, 5)
+    x
+}

@@ -1,0 +1,34 @@
+// Plan 70.3 Ф.1 POSITIVE: Option[char] distinct from Option[int].
+//
+// Pre-fix: оба map'ились в `NovaOpt_nova_int` — structurally identical
+// → type-checker silent collapse в slot positions.
+// Post-fix: distinct `nova_char` typedef → `NovaOpt_nova_char` vs
+// `NovaOpt_nova_int` — independent C structs.
+
+module nova_tests.plan70_3.f1_option_char_vs_int_pos
+
+test "Option[char] holds char-literal correctly" {
+    let c Option[char] = Some('a')
+    match c {
+        Some(ch) => assert(ch == 'a')
+        None => assert(false)
+    }
+}
+
+test "Option[int] holds int-literal correctly" {
+    let i Option[int] = Some(42)
+    match i {
+        Some(n) => assert(n == 42)
+        None => assert(false)
+    }
+}
+
+test "Option[char].None correctly typed" {
+    let c Option[char] = None
+    match c { None => {}, Some(_) => assert(false) }
+}
+
+test "Option[int].None correctly typed" {
+    let i Option[int] = None
+    match i { None => {}, Some(_) => assert(false) }
+}

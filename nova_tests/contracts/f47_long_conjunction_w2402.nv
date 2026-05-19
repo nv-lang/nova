@@ -1,0 +1,12 @@
+// Ф.47.1 (Plan 33.6): readability hint for 5+ AND-conjuncts в contract clause.
+// EXPECT_COMPILE_WARNING W2402
+
+module contracts.f47_long_conjunction_w2402
+
+#verify
+fn complex(x int) -> int
+    requires x >= 0 && x < 100 && x != 50 && x != 75 && x != 25
+    ensures result >= 0
+{
+    x
+}

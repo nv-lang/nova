@@ -14,6 +14,13 @@
 
 /* ---- Primitive types ---- */
 typedef int64_t  nova_int;
+/* Plan 70.3: distinct typedef для char — same underlying int64_t storage,
+ * но distinct C type для generic mangling. Без этого `Option[char]` и
+ * `Option[int]` оба mangle'ятся в `NovaOpt_nova_int` → silent type collapse
+ * в mono'd generic instances (см. docs/plans/70.3-char-int-mono-distinction.md).
+ * Zero ABI cost — typedef alias, не отдельный type. Compiler-side mangling
+ * generates distinct `Nova*_nova_char` vs `Nova*_nova_int` C-names. */
+typedef int64_t  nova_char;
 typedef double   nova_f64;
 typedef float    nova_f32;
 typedef bool     nova_bool;
@@ -295,6 +302,15 @@ static inline void nova_print_f64(nova_f64 v)  { printf("%g", v); }
 static inline void nova_print_f32(nova_f32 v)  { printf("%g", (double)v); }
 static inline void nova_print_bool(nova_bool v) { printf("%s", v ? "true" : "false"); }
 static inline void nova_print_str(nova_str v)   { fwrite(v.ptr, 1, v.len, stdout); }
+static inline void nova_print_char(nova_int cp) {
+    if (cp < 0 || cp > 0x10FFFF || (cp >= 0xD800 && cp <= 0xDFFF)) cp = 0xFFFD;
+    char buf[4]; size_t n;
+    if (cp < 0x80)        { buf[0]=(char)cp; n=1; }
+    else if (cp < 0x800)  { buf[0]=(char)(0xC0|(cp>>6)); buf[1]=(char)(0x80|(cp&0x3F)); n=2; }
+    else if (cp < 0x10000){ buf[0]=(char)(0xE0|(cp>>12)); buf[1]=(char)(0x80|((cp>>6)&0x3F)); buf[2]=(char)(0x80|(cp&0x3F)); n=3; }
+    else                  { buf[0]=(char)(0xF0|(cp>>18)); buf[1]=(char)(0x80|((cp>>12)&0x3F)); buf[2]=(char)(0x80|((cp>>6)&0x3F)); buf[3]=(char)(0x80|(cp&0x3F)); n=4; }
+    fwrite(buf, 1, n, stdout);
+}
 static inline void nova_print_newline(void)     { putchar('\n'); }
 
 /* ---- Unit ---- */

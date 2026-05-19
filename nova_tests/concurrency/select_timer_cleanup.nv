@@ -18,6 +18,8 @@
 
 module concurrency.select_timer_cleanup
 
+import std.time.duration
+
 test "Time.after cleanup: 50 quick wins не оставляют висящих таймеров" {
     let mut wins = 0
     let mut i = 0
@@ -30,7 +32,7 @@ test "Time.after cleanup: 50 quick wins не оставляют висящих �
             spawn {
                 select {
                     Some(_) = ch.rx => { wins = wins + 1 }
-                    Some(_) = Time.after(10_000) => {
+                    Some(_) = ChanReader.close_after(Duration.from_millis(10_000)) => {
                         // 10s timeout — никогда не должен сработать,
                         // если recv wins; но если sub-test runs <10s
                         // и B7 работает — timer cancelled.
@@ -51,7 +53,7 @@ test "Time.after wins: подтверждает что таймер всё ещ�
         spawn {
             select {
                 Some(_) = ch.rx => { }
-                Some(_) = Time.after(50) => { timeout_fired = true }
+                Some(_) = ChanReader.close_after(Duration.from_millis(50)) => { timeout_fired = true }
             }
         }
     }

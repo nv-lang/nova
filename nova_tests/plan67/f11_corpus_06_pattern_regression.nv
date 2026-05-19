@@ -1,0 +1,25 @@
+// Plan 67 closure regression-guard — точный pattern из bench/corpus/06_contracts.nv:
+// println(str.from(fn_call(...))) для int-returning function.
+// До 9a90802b022 это эмитило nova_print_int(nova_int_to_str(...)) — CC-FAIL.
+// После фикса — nova_print_str(...) с корректным выводом.
+
+module plan67.f11_corpus_06_pattern_regression
+
+// EXPECT_STDOUT 7
+// EXPECT_STDOUT 5
+// EXPECT_STDOUT 120
+
+fn abs(x int) -> int =>
+    if x < 0 { 0 - x } else { x }
+
+fn max(a int, b int) -> int =>
+    if a > b { a } else { b }
+
+fn factorial(n int) -> int =>
+    if n == 0 { 1 } else { n * factorial(n - 1) }
+
+fn main() Io -> () {
+    println(str.from(abs(-7)))
+    println(str.from(max(3, 5)))
+    println(str.from(factorial(5)))
+}

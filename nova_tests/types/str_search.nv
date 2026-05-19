@@ -223,8 +223,8 @@ test "len for mixed content" {
 // SECTION 8: find/rfind/slice с Unicode (codepoint offsets)
 // ================================================================
 
-test "find: Cyrillic returns codepoint offset, not byte offset" {
-    let s = "Привет мир"           // 'мир' starts at codepoint 7 (byte 13)
+test "find: Cyrillic returns codepoint offset, not u8 offset" {
+    let s = "Привет мир"           // 'мир' starts at codepoint 7 (u8 13)
     let r = s.find("мир")
     assert(r.unwrap_or(-1) == 7)   // codepoint, не 13
 }
@@ -265,7 +265,7 @@ test "slice across emoji boundary" {
 // ================================================================
 // SECTION 9: bytes() и chars() — итерация по строке
 // ================================================================
-// D26 spec: s.bytes() → []byte (UTF-8 байты),
+// D26 spec: s.bytes() → []u8 (UTF-8 байты),
 //           s.chars() → Iter[char] (lazy в spec, eager в bootstrap).
 // for-in по результату должен работать.
 
@@ -296,9 +296,9 @@ test "bytes: let-binding then for-in" {
     let bs = s.bytes()
     let mut count = 0
     for b in bs {
-        if b == 'A' as byte { count = count + 1 }
-        if b == 'B' as byte { count = count + 1 }
-        if b == 'C' as byte { count = count + 1 }
+        if b == 'A' as u8 { count = count + 1 }
+        if b == 'B' as u8 { count = count + 1 }
+        if b == 'C' as u8 { count = count + 1 }
     }
     assert(count == 3)
 }
@@ -353,9 +353,9 @@ test "split: trailing separator" {
 }
 
 // ================================================================
-// SECTION 11: []byte — packed storage (real uint8_t[], не int64-erasure)
+// SECTION 11: []u8 — packed storage (real uint8_t[], не int64-erasure)
 // ================================================================
-// Codegen-маппинг `[]byte` → `NovaArray_nova_byte*` с реальным uint8_t[]
+// Codegen-маппинг `[]u8` → `NovaArray_nova_byte*` с реальным uint8_t[]
 // (не nova_int слотами). Тест проверяет что round-trip через
 // bytes() / for-in / WriteBuffer + str.try_from работает.
 //
@@ -376,7 +376,7 @@ test "bytes: round-trip через str.try_from" {
 }
 
 test "bytes: extreme values 0..255 через WriteBuffer" {
-    // Если []byte был int64-erasure, 0xFF мог бы потеряться при
+    // Если []u8 был int64-erasure, 0xFF мог бы потеряться при
     // приведении (signed sign-extend). С packed uint8_t[] сохраняется
     // битово-точно.
     let mut wb = WriteBuffer.with_capacity(3)
@@ -387,13 +387,13 @@ test "bytes: extreme values 0..255 через WriteBuffer" {
     assert(bs.len() == 3)
 }
 
-test "bytes: for-in over packed []byte" {
-    // For-in: каждый элемент — реально byte (uint8_t), не int64.
+test "bytes: for-in over packed []u8" {
+    // For-in: каждый элемент — реально u8 (uint8_t), не int64.
     let s = "ABC"
     let bs = s.bytes()
     let mut sum = 0
     for b in bs {
-        // b — это byte (nova_byte = uint8_t), но cast to int для арифметики
+        // b — это u8 (nova_byte = uint8_t), но cast to int для арифметики
         sum = sum + (b as int)
     }
     // 'A'(65) + 'B'(66) + 'C'(67) = 198

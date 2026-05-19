@@ -1,0 +1,39 @@
+// Plan 70.2 Ф.1+Ф.2+Ф.3 POSITIVE: LinkedList[int] sum-type mono.
+//
+// Pre-fix: LinkedList.nil() при mono с T=int не подставляет параметр в
+// constructor name; Cons destructure → t: void* вместо LinkedList____nova_int*;
+// method dispatch collides с StringBuilder.
+
+module nova_tests.plan70_2.f1_linkedlist_int_pos
+
+type LinkedList[T]
+    | Nil
+    | Cons(T, LinkedList[T])
+
+fn len_int(l LinkedList[int]) -> int {
+    match l {
+        Nil => 0
+        Cons(_, rest) => 1 + len_int(rest)
+    }
+}
+
+fn sum_int(l LinkedList[int]) -> int {
+    match l {
+        Nil => 0
+        Cons(h, rest) => h + sum_int(rest)
+    }
+}
+
+test "LinkedList[int]: nil + cons + len" {
+    let l0 LinkedList[int] = Nil
+    let l1 = Cons(1, l0)
+    let l2 = Cons(2, l1)
+    let l3 = Cons(3, l2)
+    assert(len_int(l0) == 0)
+    assert(len_int(l3) == 3)
+}
+
+test "LinkedList[int]: sum" {
+    let l = Cons(10, Cons(20, Cons(30, Nil)))
+    assert(sum_int(l) == 60)
+}

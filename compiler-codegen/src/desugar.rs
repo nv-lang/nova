@@ -124,7 +124,7 @@ impl DesugarCtx {
             // Plan 33.3 Ф.13: Apply/Calc — proof-statements внутри lemma-body.
             // Spec-only, не emit'ятся в codegen. Map-литералы внутри proof —
             // edge case, не покрываем (lemma body — spec, не runtime).
-            Stmt::Apply { .. } | Stmt::Calc { .. } => {}
+            Stmt::Apply { .. } | Stmt::Calc { .. } | Stmt::Reveal { .. } => {}
         }
     }
 
