@@ -1,0 +1,37 @@
+// REQUIRES_SMT_BACKEND z3
+//
+// Plan 33.9 Ф.5: fuel chain for recursive opaque fn.
+// count_down(n) = n — a simple recursive fn that counts down.
+// With #fuel(2), Z3 gets 2 levels of unrolling. Combined with reveal,
+// Z3 can prove count_down(0) == 0 and count_down(1) == 1.
+
+module contracts.f59_fuel_recursive_z3_positive
+
+#opaque #pure #fuel(2)
+fn count_down(n int) -> int
+    requires n >= 0
+    ensures result >= 0
+=>
+    if n == 0 { 0 } else { 1 + count_down(n - 1) }
+
+#verify
+fn prove_base_case() -> int
+    ensures result == 0
+{
+    reveal count_down
+    count_down(0)
+}
+
+#verify
+fn prove_one_step() -> int
+    ensures result == 1
+{
+    reveal count_down
+    count_down(1)
+}
+
+test "fuel recursive base case" {
+    assert(count_down(0) == 0)
+    assert(count_down(1) == 1)
+    assert(count_down(2) == 2)
+}
