@@ -26,7 +26,7 @@
 
 ## Задачи по приоритетам
 
-### P0 — Silent miscompilation: diagnostic вместо неверного ответа
+### ✅ ЗАКРЫТ P0 — Silent miscompilation: diagnostic вместо неверного ответа
 
 **Что сломано:**
 
@@ -74,7 +74,7 @@ Regression marker (только binding coercion — работает):
 
 ---
 
-### P1-A — Parser: `mut it T` когда `T` — generic type-var
+### ✅ ЗАКРЫТ P1-A — Parser: `mut it T` когда `T` — generic type-var
 
 **Что сломано:**
 
@@ -99,7 +99,7 @@ fn sum_iter[U, T Iter[U]](mut it T) -> int => { ... }
 
 ---
 
-### P1-B — Empty-sum syntax для `type Never` и `type RuntimeNoneError`
+### ✅ ЗАКРЫТ P1-B — Empty-sum syntax для `type Never` и `type RuntimeNoneError`
 
 **Что сломано:**
 
@@ -168,7 +168,7 @@ Plan 56 Ф.2.7 — effects-in-protocol-method-body enforcement в codegen.
 
 ---
 
-### P2-B — Structural inference `[U, T Iter[U]]` без turbofish
+### ✅ ЗАКРЫТ P2-B — Structural inference `[U, T Iter[U]]` без turbofish
 
 **Что сломано:**
 
@@ -194,7 +194,7 @@ let count = sum_iter(c)
 
 ---
 
-### P3-A — Record-shadow codegen edge case
+### ✅ ЗАКРЫТ P3-A — Record-shadow codegen edge case
 
 **Что есть:** `Range` struct имеет поле `start` — codegen при
 `let r = Range { start: 0, end: 10 }` иногда конфликтует с
@@ -217,6 +217,23 @@ Plan 03 — это отдельный sprint (~5-10 dev-дней).
 **Что даёт:** Cases B + C из `protocol_as_value_probe.nv` перестают
 быть E7201 и становятся рабочими. `fn foo(x Iter[int])` с method-call
 наконец работает.
+
+---
+
+## Итоги (2026-05-19)
+
+| Задача | Статус | Примечания |
+|--------|--------|------------|
+| P0 — E7201 erased method call | ✅ ЗАКРЫТ | `protocol_vars` в `CEmitter`; E7201 в `strict_errors`; unit test в `test_runner.rs` |
+| P1-A — `mut it T` parser fix | ✅ ЗАКРЫТ | `parse_param()` принимает leading `mut` для generic type-var |
+| P1-B — empty-sum syntax | ✅ ЗАКРЫТ | `type X` без тела; `type X { }` тоже; пустой C typedef |
+| P2-B — structural inference without turbofish | ✅ ЗАКРЫТ | Source 2e в `resolve_mono_type_args`: смотрим `next()→Option[U]` return type |
+| P3-A — record-shadow Range | ✅ ЗАКРЫТ | `emit_record_lit` проверяет `record_schemas` до `sum_schema_registry` |
+| P1-C — Result[T,E] 5 методов | ⏳ DEFERRED | Зависит Plan 59 Ф.7.5 |
+| P2-A — TryFrom/TryInto | ⏳ DEFERRED | Зависит Plan 56 Ф.2.7 |
+| P3-B — full vtable codegen | ⏳ DEFERRED | Plan 56 Ф.1–Ф.3, отдельный sprint |
+
+Тесты: `nova_tests/plan72/` — 5 fixtures, все 11 test cases ✅.
 
 ---
 

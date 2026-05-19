@@ -1,0 +1,35 @@
+// Plan 72 P1-B: empty-sum type syntax — `type X` without body.
+//
+// Parser previously required at least one variant after `type Name`.
+// Bottom/uninhabited types like `Never` and marker types without payload
+// need to compile with no variants.
+//
+// This test verifies:
+// 1. `type Uninhabited` (no body) parses and compiles
+// 2. `type Marker { }` (explicit empty braces) parses and compiles
+// 3. Empty sum types produce a valid C typedef (not a build error)
+
+module plan72.p1b_empty_sum_type_pos
+
+// Empty sum — bottom / uninhabited type (0 variants).
+type Uninhabited
+
+// Explicit empty body — same semantics.
+type EmptyMarker { }
+
+// A function that nominally references an empty type in its signature
+// (but can never be called with an actual value of that type).
+fn absorb_never(x Uninhabited) -> int => 0
+
+test "P1-B — empty sum type compiles without variants" {
+    // We cannot construct Uninhabited values (no variants), so we only
+    // verify that the type resolved at compile time. The test just passes
+    // if compilation succeeds.
+    let _ok = true
+    assert(_ok)
+}
+
+test "P1-B — explicit empty braces sum type compiles" {
+    let _ok = true
+    assert(_ok)
+}
