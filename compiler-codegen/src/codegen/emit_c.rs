@@ -2681,6 +2681,8 @@ impl CEmitter {
                     "i16"  => Ok("int16_t".into()),
                     "i8"   => Ok("int8_t".into()),
                     "u64"  => Ok("uint64_t".into()),
+                    // Plan 70.5: uint = alias u64 (bootstrap, mirror int = i64).
+                    "uint" => Ok("uint64_t".into()),
                     "u32"  => Ok("uint32_t".into()),
                     "u16"  => Ok("uint16_t".into()),
                     // Plan 70.4 Ф.4: u8 → nova_byte (same as byte). Both are
@@ -2862,9 +2864,11 @@ impl CEmitter {
                             "i16" => "NovaArray_int16_t*".into(),
                             "i8"  => "NovaArray_int8_t*".into(),
                             "i64" => "NovaArray_nova_int*".into(), // i64 == nova_int (int64_t)
-                            "u32" => "NovaArray_uint32_t*".into(),
-                            "u16" => "NovaArray_uint16_t*".into(),
-                            "u64" => "NovaArray_uint64_t*".into(),
+                            "u32"  => "NovaArray_uint32_t*".into(),
+                            "u16"  => "NovaArray_uint16_t*".into(),
+                            "u64"  => "NovaArray_uint64_t*".into(),
+                            // Plan 70.5: uint = alias u64.
+                            "uint" => "NovaArray_uint64_t*".into(),
                             // int + unknown user types — через int64 slot.
                             _ => "NovaArray_nova_int*".into(),
                         });
@@ -5936,6 +5940,8 @@ impl CEmitter {
                         "u32"  => "uint32_t",
                         "u16"  => "uint16_t",
                         "u64"  => "uint64_t",
+                        // Plan 70.5: uint = alias u64.
+                        "uint" => "uint64_t",
                         _ => "nova_int", // int/i64/erased T
                     };
                     return format!("NovaArray_{}*", c_elem);
@@ -5966,6 +5972,8 @@ impl CEmitter {
                 "u32"  => "uint32_t",
                 "u16"  => "uint16_t",
                 "u64"  => "uint64_t",
+                // Plan 70.5: uint = alias u64.
+                "uint" => "uint64_t",
                 // int/i64 + unknown erased T → nova_int.
                 _ => "nova_int",
             };
@@ -10891,6 +10899,11 @@ impl CEmitter {
                 let inner_c_ty = inner_c_ty_for_check;
                 let v = self.emit_expr(inner)?;
 
+                // Plan 70.5 Q2: int → uint saturation (neg → 0).
+                // Only for explicit `uint` target (not u64 — that bit-casts).
+                if inner_c_ty == "nova_int" && target_nova.as_deref() == Some("uint") {
+                    return Ok(format!("nova_int_to_uint({})", v));
+                }
                 let src_suffix = match inner_c_ty.as_str() {
                     "nova_f64" => Some("f64"),
                     "nova_f32" => Some("f32"),
@@ -11970,6 +11983,8 @@ impl CEmitter {
                             "u32"            => "uint32_t",
                             "u16"            => "uint16_t",
                             "u64"            => "uint64_t",
+                            // Plan 70.5: uint = alias u64.
+                            "uint"           => "uint64_t",
                             // int/i64 / others — nova_int slot.
                             _                => "nova_int",
                         };
@@ -13770,7 +13785,8 @@ impl CEmitter {
                             let target = parts[0].as_str();
                             let helper_name = match target {
                                 "int" | "i64" => Some("nova_str_to_i64"),
-                                "u64" | "u32" | "u16" | "u8" => Some("nova_str_to_u64"),
+                                // Plan 70.5: uint alias u64 — same str parser.
+                                "u64" | "u32" | "u16" | "u8" | "uint" => Some("nova_str_to_u64"),
                                 "i32" | "i16" | "i8" => Some("nova_str_to_i64"),
                                 "f64" | "f32" => Some("nova_str_to_f64"),
                                 "bool" => Some("nova_str_to_bool"),
@@ -18301,6 +18317,8 @@ impl CEmitter {
             ("i8",   "MIN", "INT8_MIN",              "int8_t"),
             // Unsigned integers
             ("u64",  "MAX", "UINT64_MAX",            "uint64_t"),
+            // Plan 70.5: uint = alias u64.
+            ("uint", "MAX", "UINT64_MAX",            "uint64_t"),
             ("u32",  "MAX", "UINT32_MAX",            "uint32_t"),
             ("u16",  "MAX", "UINT16_MAX",            "uint16_t"),
             // Plan 70.4 Ф.4: u8 → nova_byte (unified); "byte" alias same.
@@ -19006,6 +19024,8 @@ impl CEmitter {
                                 "u32"            => "uint32_t",
                                 "u16"            => "uint16_t",
                                 "u64"            => "uint64_t",
+                                // Plan 70.5: uint = alias u64.
+                                "uint"           => "uint64_t",
                                 _                => "nova_int",
                             };
                             return format!("NovaArray_{}*", arr_suffix);

@@ -217,6 +217,8 @@ impl ExternalRegistry {
                     "i16" => "int16_t".into(),
                     "i8"  => "int8_t".into(),
                     "u64" => "uint64_t".into(),
+                    // Plan 70.5: uint = alias u64.
+                    "uint" => "uint64_t".into(),
                     "u32" => "uint32_t".into(),
                     "u16" => "uint16_t".into(),
                     // Plan 70.4 Ф.4: u8 → nova_byte (unified with byte).
@@ -259,9 +261,11 @@ impl ExternalRegistry {
                             "i16" => "NovaArray_int16_t*".into(),
                             "i8"  => "NovaArray_int8_t*".into(),
                             "i64" => "NovaArray_nova_int*".into(), // i64 == nova_int (int64_t)
-                            "u32" => "NovaArray_uint32_t*".into(),
-                            "u16" => "NovaArray_uint16_t*".into(),
-                            "u64" => "NovaArray_uint64_t*".into(),
+                            "u32"  => "NovaArray_uint32_t*".into(),
+                            "u16"  => "NovaArray_uint16_t*".into(),
+                            "u64"  => "NovaArray_uint64_t*".into(),
+                            // Plan 70.5: uint = alias u64.
+                            "uint" => "NovaArray_uint64_t*".into(),
                             _ => "NovaArray_nova_int*".into(),
                         });
                     }
