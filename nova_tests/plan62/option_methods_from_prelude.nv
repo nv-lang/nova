@@ -1,0 +1,106 @@
+// option_methods_from_prelude.nv — Plan 62.A follow-up.
+//
+// Verifies что Option methods, объявленные в std/prelude/core.nv
+// (`external fn Option[T] @method`), вызываются через registry-routed
+// dispatch и работают идентично previous hardcoded path.
+//
+// Coverage: 7 из 8 declared methods (исключая `or`, который deferred
+// per comment в core.nv — `Nova_Option_method_or` trampoline отсутствует).
+
+module plan62.option_methods_from_prelude
+
+// ────────────────────────────────────────────────────────────────────
+// is_some / is_none — per-T trampolines.
+// ────────────────────────────────────────────────────────────────────
+
+test "Option.is_some returns true for Some" {
+    let s = Some(42)
+    assert(s.is_some())
+}
+
+test "Option.is_some returns false for None" {
+    let n = None
+    assert(!n.is_some())
+}
+
+test "Option.is_none returns false for Some" {
+    let s = Some(7)
+    assert(!s.is_none())
+}
+
+test "Option.is_none returns true for None" {
+    let n = None
+    assert(n.is_none())
+}
+
+// ────────────────────────────────────────────────────────────────────
+// unwrap — inline emit с Fail dispatch.
+// ────────────────────────────────────────────────────────────────────
+
+test "Option.unwrap returns value for Some" {
+    let s = Some(10)
+    assert(s.unwrap() == 10)
+}
+
+// ────────────────────────────────────────────────────────────────────
+// unwrap_or — per-T trampoline `Nova_Option_method_unwrap_or_<T>`.
+// ────────────────────────────────────────────────────────────────────
+
+test "Option.unwrap_or returns value for Some" {
+    let s = Some(99)
+    assert(s.unwrap_or(0) == 99)
+}
+
+test "Option.unwrap_or returns default for None" {
+    let n = None
+    assert(n.unwrap_or(123) == 123)
+}
+
+// ────────────────────────────────────────────────────────────────────
+// unwrap_or_else — inline emit с closure-call.
+// ────────────────────────────────────────────────────────────────────
+
+test "Option.unwrap_or_else returns value for Some" {
+    let s = Some(5)
+    let n = s.unwrap_or_else(|| 0)
+    assert(n == 5)
+}
+
+test "Option.unwrap_or_else evaluates closure for None" {
+    let n = None
+    let v = n.unwrap_or_else(|| 42)
+    assert(v == 42)
+}
+
+// ────────────────────────────────────────────────────────────────────
+// map — inline emit с closure (T → T).
+// ────────────────────────────────────────────────────────────────────
+
+test "Option.map transforms Some payload" {
+    let s = Some(3)
+    let r = s.map(|x| x * 2)
+    assert(r.is_some())
+    assert(r.unwrap() == 6)
+}
+
+test "Option.map passes through None" {
+    let n = None
+    let r = n.map(|x| x * 2)
+    assert(r.is_none())
+}
+
+// ────────────────────────────────────────────────────────────────────
+// ok_or — inline emit creating Result.
+// ────────────────────────────────────────────────────────────────────
+
+test "Option.ok_or returns Ok for Some" {
+    let s = Some(11)
+    let r = s.ok_or("err")
+    assert(r.is_ok())
+}
+
+test "Option.ok_or returns Err for None" {
+    let n = None
+    let r = n.ok_or("oops")
+    assert(r.is_err())
+}

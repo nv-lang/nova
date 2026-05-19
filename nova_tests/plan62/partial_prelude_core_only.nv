@@ -1,0 +1,35 @@
+// partial_prelude_core_only.nv — Plan 62.F Part 3 positive test.
+//
+// Verifies что `partial_prelude(core, runtime)` auto-import'ит ТОЛЬКО
+// перечисленные sub-modules — Option/Result + assert доступны без
+// extra imports. Errors / collections / protocols / effects — НЕ
+// auto-import'ятся (нужен explicit import при использовании).
+//
+// Use-case: bootstrap уровни, prelude development, тонкая настройка
+// transitive deps. Negative coverage (panic в core-only) — отдельным
+// файлом partial_prelude_no_panic_in_core.nv.
+
+module plan62.partial_prelude_core_only partial_prelude(core, runtime)
+
+// core provides Option + Some + None + Ok + Err + Ordering.
+// runtime provides assert (+ panic / exit / debug_assert).
+fn make_some() -> Option[int] {
+    Some(7)
+}
+
+test "partial_prelude(core, runtime) — Option available" {
+    let o = make_some()
+    assert(o.is_some())
+    assert(o.unwrap() == 7)
+}
+
+test "partial_prelude(core, runtime) — Result available" {
+    let r Result[int, str] = Ok(99)
+    assert(r.is_ok())
+    assert(r.unwrap_or(0) == 99)
+}
+
+test "partial_prelude(core, runtime) — Ordering available" {
+    let o = Less
+    assert(o == Less)
+}

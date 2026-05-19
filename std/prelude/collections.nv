@@ -1,0 +1,207 @@
+// std/prelude/collections.nv — file-based source of truth для prelude
+// collection-related types и iterator protocol. Plan 62 phase 62.D
+// (non-opaque scope).
+//
+// Декларации перенесены/добавлены в этот файл, чтобы:
+//   1) `nova doc` показывал canonical API в одном месте (AI-readable),
+//   2) пользователь мог shadow'ить эти names в своём коде с warning'ом
+//      (Plan 62.F W_PRELUDE_SHADOW),
+//   3) splittable prelude работал (`partial_prelude(collections)` opt-in
+//      только collections без core/runtime/errors).
+//
+// Архитектурные правила (Plan 62 §«Стратификация»):
+//   - **Один explicit import**: `std.prelude.core.{Option}` — нужен
+//     для signature `next() -> Option[T]`. Auto-import `std.prelude`
+//     отключён внутри `std.prelude.*` (cycle protection,
+//     `is_prelude_self_module` в compiler-codegen/src/manifest.rs:314+),
+//     поэтому Option надо завезти explicitly. `std.prelude.core` не
+//     импортирует обратно `std.prelude.collections` — cycle отсутствует.
+//
+// **Bootstrap status (Plan 62.D non-opaque):**
+//
+// - **`Iter[T]` protocol** объявлен здесь formally — раньше существовал
+//   ТОЛЬКО как structural duck-typing per D58 (codegen for-in dispatch:
+//   emit_c.rs:14324+ ищет метод `mut next() -> Option[T]` без проверки
+//   протокольной декларации). Формальная декларация:
+//     - даёт `nova doc` source-of-truth для `Iter[T]` API,
+//     - регистрируется в `BoundCtx.protocol_specs` (types/mod.rs:368) —
+//       eligible как bound (`T Iter`) per D72,
+//     - НЕ ломает существующий structural for-in dispatch (codegen
+//       продолжает искать `next` метод напрямую — protocol declaration
+//       не enforced на arbitrary type annotations типа `-> Iter[int]`),
+//     - идемпотентна с `lints.rs:565` `collect_protocol_names` который
+//       уже хардкодит "Iter" в HashSet встроенных protocols
+//       (HashSet de-dups, lints поведение не меняется).
+//   Signature в декларации — `next() -> Option[T]` БЕЗ `mut` (bootstrap
+//   parser не поддерживает `mut` префикс в protocol-method declaration;
+//   receiver mutability подразумевается use-case'ом и объявляется на
+//   стороне implementer'а: `fn RangeIter mut @next() -> ...`).
+//
+// **Plan 62.D non-opaque bis-1 closure (2026-05-18):**
+//
+// - **`Range` / `RangeIter`** остаются в `std/collections/range.nv`
+//   (canonical location для модуля `std.collections.range`). Восемь
+//   существующих файлов explicitly импортируют их по этому пути:
+//     - nova_tests/modules/{export_import_reexport, selective_import,
+//       folder_per_file_imports/reader}.nv
+//     - nova_tests/negative_capability/selective_import_*_rejected.nv
+//     - nova_tests/syntax/step_by_cross_file.nv
+//   Перенос файла сломал бы эти imports — поэтому декларации остаются
+//   на месте, а `std/prelude.nv` facade re-export'ит их селективно:
+//     `export import std.collections.range.{Range, RangeIter}`.
+//
+//   До Plan 62.D bis-1 эта re-export-строка триггерила 4 регрессии
+//   (cancel_semantics_test / closure_rev / p48_closure_arg_inference /
+//   for_in_range_iter). Bis-1 закрыл все четыре баги:
+//     1. Match inference (Nova_Range* vs nova_str) — pattern bindings
+//        installed в `infer_expr_c_type(Match)` через
+//        `pattern_binding_overrides` RefCell (emit_c.rs:18936+).
+//        Без этого stale `r` из var_types другого scope перебивал
+//        правильный inner-type из scrutinee.
+//     2. Closure capture inner-shadowing — scope-aware
+//        `collect_truly_free_idents` (emit_c.rs:16621+) уважает inner
+//        let-bindings и lambda params. Раньше misnamed
+//        `collect_free_idents` собирал ВСЕ идентификаторы.
+//     3. Closure mono'd arg-name drop — same root cause как #2.
+//     4. D29 user-shadow — `W_PRELUDE_SHADOW` basic warning
+//        (types/mod.rs:117+) + codegen emit dedup (emit_c.rs:1300+).
+//        User declarations выигрывают, prelude-merged duplicates
+//        skip'аются.
+//
+// **Plan 62.D.bis done (2026-05-18):** `StringBuilder` / `WriteBuffer` /
+// `ReadBuffer` formally declared via new `external type` syntax (D126).
+// Backing implementation остаётся в `nova_rt/<name>.h`/.c; method
+// declarations — в `std/runtime/<name>.nv` через `external fn` (D82,
+// unchanged). Type-decl + methods — два разных файла, связанных по
+// receiver-type name. См. spec/decisions/03-syntax.md §D126 +
+// docs/plans/62.D.bis-opaque-types-and-external-type-d-block.md.
+
+module prelude.collections
+
+// Explicit import — Option[T] нужен для signature протокольного метода
+// `next() -> Option[T]`. Auto-import `std.prelude` отключён для всех
+// `std.prelude.*` submodule (cycle protection). См. file-header выше.
+import std.prelude.core.{Option}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Iter[T] protocol (D58)
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Структурный протокол итератора по элементам типа `T`.
+///
+/// Тип удовлетворяет `Iter[T]` если у него есть метод
+/// `mut next() -> Option[T]`. `Some(v)` — следующий элемент, `None` —
+/// итерация завершена (idempotent: повторные вызовы продолжают
+/// возвращать `None`).
+///
+/// **D58 (spec/decisions/03-syntax.md)**: for-in loop dispatch'ит на
+/// `Iter[T]` через duck-typing — declaring `type Iter[T] protocol`
+/// канонизирует имя для `nova doc` и use-as-bound (`T Iter`) per D72,
+/// но НЕ меняет structural for-in dispatch (codegen продолжает искать
+/// метод `next` напрямую). Existing types `Range`/`RangeIter`/
+/// `StepRangeIter`/`ReverseRangeIter`/`HashMapIter`/`KeysIter`/
+/// `ValuesIter`/`Counter` (см. nova_tests/syntax/for_iter*.nv)
+/// автоматически удовлетворяют `Iter[T]` без `impl`-блока.
+///
+/// **Note on `mut` receiver**: bootstrap parser (`parse_effect_methods`,
+/// compiler-codegen/src/parser/mod.rs:2244+) НЕ поддерживает `mut`-
+/// модификатор перед именем метода в protocol-declaration. Имплементации
+/// (`fn RangeIter mut @next() -> ...`, `fn HashMapIter[K,V] mut @next()
+/// -> ...`) объявляют receiver mutability в свободной форме, на стороне
+/// implementer'а. Protocol-declaration описывает только signature
+/// (`name(params) -> ret`), mutability подразумевается use-case'ом
+/// (итератор хранит cursor → state-mutating call).
+///
+/// **Note on effects**: bound (protocol) methods обязаны быть pure
+/// per types/mod.rs:404-420 (vtable dispatch не propagates effect
+/// handlers). `next()` — pure — OK.
+///
+/// # Examples
+///
+/// ```nova
+/// // Custom iterator — implements Iter[int] структурно.
+/// type Counter { mut cur int, end int }
+/// fn Counter mut @next() -> Option[int] {
+///     if @cur >= @end { None } else { let v = @cur; @cur += 1; Some(v) }
+/// }
+/// let mut c = Counter { cur: 0, end: 3 }
+/// for x in c { /* yields 0, 1, 2 */ }
+/// ```
+#stable(since = "0.1")
+export type Iter[T] protocol {
+    next() -> Option[T]
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Built-in opaque accumulator/buffer types (D126, Plan 04, Plan 62.D.bis)
+// ──────────────────────────────────────────────────────────────────────────
+//
+// `external type X` — opaque, реализация в runtime (nova_rt/<name>.h/.c).
+// Body отсутствует (declared в parser/mod.rs:2055+ как TypeDeclKind::Opaque).
+// Codegen skip'ает emission (emit_c.rs:4986+). Methods объявляются отдельно
+// в `std/runtime/<name>.nv` через `external fn` (D82); связь — по
+// receiver-type name. См. spec/decisions/03-syntax.md §D126 для семантики.
+//
+// До Plan 62.D.bis (2026-05-18) эти типы существовали как «known-by-name»
+// (D26 prose-only); D126 закрывает последний knew-by-name hole в D26
+// visible prelude (после 62.A/B/C/D-non-opaque/E/F).
+
+/// UTF-8 string accumulator. Append-only через `@append(s str)`/`@append_char(c char)`,
+/// финализация через `@into() -> str` (infallible — UTF-8 invariant
+/// поддерживается типом).
+///
+/// Полный API — в `std/runtime/string_builder.nv` через `external fn`
+/// declarations (D82). Backing — `nova_rt/string_builder.h` и
+/// `string_builder.c`.
+///
+/// **Use-case:** string concat в hot loop без аллокации временных str.
+///
+/// # Examples
+///
+/// ```nova
+/// let mut sb = StringBuilder.new()
+/// sb.append("Hello, ").append(name).append("!")
+/// let greeting = sb.into()
+/// ```
+#stable(since = "0.1")
+export external type StringBuilder
+
+/// Binary write buffer. Append-only через `@write_*` методы
+/// (byte, bytes, char, str, и 18 числовых × LE/BE). Финализация
+/// через `@into() -> []byte`.
+///
+/// Полный API — в `std/runtime/write_buffer.nv` через `external fn`.
+/// Backing — `nova_rt/write_buffer.h`/`.c`.
+///
+/// **Use-case:** binary serialization (network protocol, file format).
+///
+/// # Examples
+///
+/// ```nova
+/// let mut wb = WriteBuffer.new()
+/// wb.write_u32_be(0xDEADBEEF)
+/// let bs = wb.into()
+/// ```
+#stable(since = "0.1")
+export external type WriteBuffer
+
+/// Cursor-style binary reader. View над `[]byte`, advancing position.
+/// Pair `@read_*` (Fail[ReadBufferError]) / `@try_read_*`
+/// (Result[T, ReadBufferError]).
+///
+/// Полный API — в `std/runtime/read_buffer.nv` через `external fn`.
+/// Backing — `nova_rt/read_buffer.h`/`.c`. `ReadBufferError` declared
+/// в `std/prelude/errors.nv` (Plan 62.C).
+///
+/// **Use-case:** binary parsing с cursor advancement.
+///
+/// # Examples
+///
+/// ```nova
+/// let bs []byte = [0x12, 0x34, 0x56, 0x78]
+/// let mut rb = ReadBuffer.from(bs)
+/// let v = rb.try_read_u32_be()  // Result[u32, ReadBufferError]
+/// ```
+#stable(since = "0.1")
+export external type ReadBuffer

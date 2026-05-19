@@ -1,0 +1,239 @@
+// std/prelude/protocols.nv — file-based source of truth для prelude
+// conversion / equality / ordering / hashing / display protocols.
+// Plan 62 phase 62.E.
+//
+// Декларации добавлены в этот файл, чтобы:
+//   1) `nova doc` показывал canonical API в одном месте (AI-readable),
+//   2) пользователь мог shadow'ить эти names в своём коде с warning'ом
+//      (Plan 62.F W_PRELUDE_SHADOW),
+//   3) splittable prelude работал (`partial_prelude(protocols)` opt-in
+//      только protocols без core/runtime/errors/collections).
+//
+// Архитектурные правила (Plan 62 §«Стратификация»):
+//   - **Один explicit import**: `std.prelude.core.{Ordering}` нужен для
+//     signature `cmp(other Self) -> Ordering`. Auto-import `std.prelude`
+//     отключён внутри `std.prelude.*` (cycle protection,
+//     `is_prelude_self_module` в compiler-codegen/src/manifest.rs:314+),
+//     поэтому Ordering надо завезти explicitly. `std.prelude.core` не
+//     импортирует обратно `std.prelude.protocols` — cycle отсутствует.
+//
+// **Bootstrap status (Plan 62.E):**
+//
+// - **`From[T]` / `Into[U]`** — formal declarations (D73). Auto-derive
+//   логика для `Into[U]` из `From[Self]` живёт в compiler — declarations
+//   здесь дают canonical API + eligible как bound (`T From[X]`) per D72.
+//   Не ломают существующую D73 auto-derive (compiler продолжает работать
+//   независимо от protocol-declaration).
+// - **`TryFrom[T, E]` / `TryInto[U, E]`** — fallible-конверсии (D77).
+//   Аналогично D73 — declarations additive. Auto-derive не реализован
+//   в bootstrap'е (TryInto от TryFrom — Plan 62.E+).
+// - **`Hashable`** — `hash() -> u64` only (split из combined hash+eq в
+//   `std/collections/hashmap.nv` per D109 split policy). Совместимо с
+//   structural matching: type удовлетворяющий combined `Hashable`
+//   (hash+eq) автоматически удовлетворяет split `Hashable` (только hash).
+// - **`Equatable`** — `eq(other Self) -> bool` (split из combined per D109).
+// - **`Comparable`** — `cmp(other Self) -> Ordering` (D109 strict).
+//   Ordering импортирован explicitly из `std.prelude.core` (cycle prot).
+//
+// **NOT migrated (Plan 62.E scope — deferred / in-progress):**
+//
+// - **`Display`** — `fmt(sb StringBuilder) -> ()` зависит от
+//   `StringBuilder` (opaque runtime type, hardcoded в type-checker
+//   builtins). До 62.D.bis (опаковые типы → `external type`) Display
+//   declaration не может ссылаться на StringBuilder через cross-file
+//   resolve. См. DEFER comment ниже.
+//
+// **NOT modified (Plan 62.E explicit non-goals):**
+//
+// - Auto-derive логика D73 (From/Into) в compiler-codegen — остаётся.
+// - Built-in dispatch Hash/Eq/Ord для примитивов (`int.hash()`,
+//   `str.eq()`, etc.) в codegen — остаётся.
+// - `lints.rs:565` `collect_protocol_names` HashSet — идемпотентно
+//   с этими declarations (HashSet de-dups; protocol resolution
+//   не ломается).
+
+module prelude.protocols
+
+// Explicit import — Ordering нужен для signature протокольного метода
+// `cmp(other Self) -> Ordering` в Comparable. Auto-import `std.prelude`
+// отключён для всех `std.prelude.*` submodule (cycle protection). См.
+// file-header выше.
+import std.prelude.core.{Ordering}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Conversion protocols (D73, D77)
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Конверсия `T → Self` (D73, spec/decisions/08-runtime.md#d73).
+///
+/// Реализация: `fn Foo @from(t T) -> Foo => ...`. Auto-derive `Into[Self]`
+/// для `T` если `From[T]` объявлен на `Self`.
+///
+/// # Examples
+///
+/// ```nova
+/// type Celsius { value f64 }
+/// fn Celsius @from(f Fahrenheit) -> Celsius =>
+///     Celsius { value: (f.value - 32.0) * 5.0 / 9.0 }
+/// // Авто-доступно: Fahrenheit.into() -> Celsius
+/// ```
+#stable(since = "0.1")
+export type From[T] protocol {
+    from(t T) -> Self
+}
+
+/// Конверсия `Self → U` — instance method (D73).
+///
+/// Auto-derived из `From[Self]` если `From[U]` для `T=Self` существует
+/// (compiler синтезирует `into()` body как `U.from(self)`).
+///
+/// # Examples
+///
+/// ```nova
+/// let c Celsius = f.into()  // вызывает Celsius.from(f) автоматически
+/// ```
+#stable(since = "0.1")
+export type Into[U] protocol {
+    into() -> U
+}
+
+// DEFER (Plan 62.E, 2026-05-18):
+//
+// /// Fallible конверсия `T → Self` с `Fail[E]` (D77).
+// export type TryFrom[T, E] protocol {
+//     try_from(t T) Fail[E] -> Self
+// }
+//
+// /// Fallible конверсия `Self → U` с `Fail[E]` (D77).
+// export type TryInto[U, E] protocol {
+//     try_into() Fail[E] -> U
+// }
+//
+// **Reason:** Plan 56 Ф.2.7 enforcement (compiler-codegen/src/types/mod.rs:404-432)
+// требует чтобы все protocol-методы были pure (без effect row): bound
+// dispatch через vtable не propagates effect handlers. Декларации
+// `try_from`/`try_into` с `Fail[E]` сигнатурой триггерят compile-error
+// "bound method ... has effects" во всех файлах подгружающих prelude.
+//
+// **Migration path (Plan 62.E.bis или Plan 56 ext):** одно из:
+//   (a) Special-case в Plan 56 Ф.2.7 enforcement: разрешить `Fail[E]`
+//       (но не другие effects) в protocol methods — Fail-only методы
+//       могут diverge безопасно через codegen tag-check, vtable
+//       dispatch может пробрасывать Fail handler как любой другой
+//       (D122 handler-as-parameter pattern).
+//   (b) Декларировать TryFrom/TryInto **без** effect row, с возвратом
+//       `Result[Self, E]` / `Result[U, E]` — но это меняет D77
+//       semantics (caller обязан match'ить вместо try-propagation).
+//   (c) Использовать handler-as-parameter (D122) pattern: `try_from`
+//       принимает `Fail[E]` handler явно как параметр — breaks D77
+//       ergonomics ("?"-операторы).
+//
+// До разрешения этого блокера TryFrom/TryInto остаются как convention
+// (структурно: тип имеет метод `try_from(T) Fail[E] -> Self`). См.
+// docs/plans/62-prelude-hardcode-migration.md §62.E.
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Equality / Hashing / Ordering protocols (D109)
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Хэшируемые типы — для `HashMap[K, ...]` / `HashSet[K]` (D109,
+/// spec/decisions/04-effects.md).
+///
+/// **Split policy (D109):** `Hashable` определяет только `hash() -> u64`,
+/// equality вынесена в отдельный `Equatable`. Это упрощает структурную
+/// проверку: `[K Hashable]` означает "достаточно для хэш-таблицы lookup'а
+/// **до** collision check", `[K Hashable + Equatable]` — полный contract.
+///
+/// **Совместимость:** существующий `std/collections/hashmap.nv` declar'ит
+/// `Hashable` с двумя методами (combined hash+eq). Любой тип
+/// удовлетворяющий combined version автоматически удовлетворяет split
+/// version (структурное матчинг по подмножеству). Combined declaration
+/// в hashmap.nv останется до Plan 62.D.bis канонизации.
+///
+/// **Bootstrap:** примитивы (`int`/`str`/`bool`/`char`/числовые) — auto-
+/// hashable per type-checker special-case (emit_c.rs:5817). Именованные
+/// типы должны явно реализовать `fn T @hash() -> u64`.
+///
+/// # Examples
+///
+/// ```nova
+/// type UserId { value u64 }
+/// fn UserId @hash() -> u64 => @value
+/// // UserId теперь удовлетворяет Hashable structurally.
+/// ```
+#stable(since = "0.1")
+export type Hashable protocol {
+    hash() -> u64
+}
+
+/// Сравниваемые на равенство (D109).
+///
+/// `Self == Self` через явный метод (не оператор-equality для arbitrary
+/// types). Примитивы — auto-derived, named types — explicit `@eq`.
+///
+/// # Examples
+///
+/// ```nova
+/// type Point { x int, y int }
+/// fn Point @eq(other Point) -> bool => @x == other.x && @y == other.y
+/// ```
+#stable(since = "0.1")
+export type Equatable protocol {
+    eq(other Self) -> bool
+}
+
+/// Полный порядок (D109). Возвращает `Ordering` (`Less`/`Equal`/`Greater`).
+///
+/// Транзитивность и antisymmetry — программистская обязанность (compiler
+/// не верифицирует). Для partial order — отдельный protocol (Plan 62.E+).
+///
+/// # Examples
+///
+/// ```nova
+/// fn UserId @cmp(other UserId) -> Ordering =>
+///     if @value < other.value { Less }
+///     else if @value > other.value { Greater }
+///     else { Equal }
+/// ```
+#stable(since = "0.1")
+export type Comparable protocol {
+    cmp(other Self) -> Ordering
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Display protocol (D109)
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Форматирование в строку (для println, str.from, etc).
+///
+/// Метод `fmt(sb)` пишет representation в `StringBuilder` (opaque runtime
+/// type — hardcoded в type-checker builtins HashSet до Plan 62.D.bis
+/// канонизации через `external type` D-block). Возвращает `()`; вся
+/// работа — побочный effect на `sb`.
+///
+/// **Bootstrap status:** `StringBuilder` известен type-checker'у через
+/// builtins HashSet (types/mod.rs:2000+). Cross-file reference сюда
+/// разрешим — type-checker распознаёт builtin name без declaration
+/// lookup. После 62.D.bis declaration переедет в `std/prelude/collections.nv`
+/// или отдельный модуль, и эта ссылка станет resolved через нормальный
+/// cross-file path.
+///
+/// # Examples
+///
+/// ```nova
+/// type Point { x int, y int }
+/// fn Point @fmt(sb StringBuilder) -> () {
+///     sb.append("Point(")
+///     sb.append_int(@x)
+///     sb.append(", ")
+///     sb.append_int(@y)
+///     sb.append(")")
+/// }
+/// ```
+#stable(since = "0.1")
+export type Display protocol {
+    fmt(sb StringBuilder) -> ()
+}

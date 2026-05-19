@@ -1,0 +1,27 @@
+// EXPECT_COMPILE_ERROR
+//
+// Plan 62.A.bis registry strict variant-set equality (negative test).
+//
+// Plan 62.A.bis Phase 1 design § «Variant set check» / Open Questions #8:
+//   "strict equality в 62.A.bis. Extension requires edition bump (Plan 62.F)"
+//
+// Когда user (или future maintainer) пытается shadowить prelude'овый
+// sum-type (RuntimeError) с другой variant-set'й — registry должен
+// reject через `duplicate top-level name` / variant-set mismatch
+// diagnostic, не silently override hardcoded baseline.
+//
+// Этот файл ре-declares `RuntimeError` с одним вариантом `Custom(str)`
+// (вместо canonical 6 вариантов из HardcodedBaseline). Ожидается
+// compile-fail — иначе registry строгое equality нарушено и hardcoded
+// pattern dispatch может попасть на несуществующий variant runtime'ом.
+
+module plan62.runtime_error_variant_mismatch
+
+type RuntimeError
+    | Custom(str)
+
+fn dummy() -> int => 1
+
+test "should never reach this — compile must fail с variant-mismatch" {
+    let _ = dummy()
+}
