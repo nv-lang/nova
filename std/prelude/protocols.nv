@@ -98,40 +98,44 @@ export type Into[U] protocol {
     into() -> U
 }
 
-// DEFER (Plan 62.E, 2026-05-18):
+// Plan 72 P2-A (2026-05-19): TryFrom / TryInto unblocked via migration path (b).
 //
-// /// Fallible конверсия `T → Self` с `Fail[E]` (D77).
-// export type TryFrom[T, E] protocol {
-//     try_from(t T) Fail[E] -> Self
-// }
+// Original blocker (Plan 62.E, 2026-05-18): `Fail[E]` effect row in protocol
+// methods is prohibited by Plan 56 Ф.2.7 enforcement — no vtable for effects.
 //
-// /// Fallible конверсия `Self → U` с `Fail[E]` (D77).
-// export type TryInto[U, E] protocol {
-//     try_into() Fail[E] -> U
-// }
-//
-// **Reason:** Plan 56 Ф.2.7 enforcement (compiler-codegen/src/types/mod.rs:404-432)
-// требует чтобы все protocol-методы были pure (без effect row): bound
-// dispatch через vtable не propagates effect handlers. Декларации
-// `try_from`/`try_into` с `Fail[E]` сигнатурой триггерят compile-error
-// "bound method ... has effects" во всех файлах подгружающих prelude.
-//
-// **Migration path (Plan 62.E.bis или Plan 56 ext):** одно из:
-//   (a) Special-case в Plan 56 Ф.2.7 enforcement: разрешить `Fail[E]`
-//       (но не другие effects) в protocol methods — Fail-only методы
-//       могут diverge безопасно через codegen tag-check, vtable
-//       dispatch может пробрасывать Fail handler как любой другой
-//       (D122 handler-as-parameter pattern).
-//   (b) Декларировать TryFrom/TryInto **без** effect row, с возвратом
-//       `Result[Self, E]` / `Result[U, E]` — но это меняет D77
-//       semantics (caller обязан match'ить вместо try-propagation).
-//   (c) Использовать handler-as-parameter (D122) pattern: `try_from`
-//       принимает `Fail[E]` handler явно как параметр — breaks D77
-//       ergonomics ("?"-операторы).
-//
-// До разрешения этого блокера TryFrom/TryInto остаются как convention
-// (структурно: тип имеет метод `try_from(T) Fail[E] -> Self`). См.
-// docs/plans/62-prelude-hardcode-migration.md §62.E.
+// Resolution: use `Result[Self, E]` return type instead of `Fail[E]` effect row.
+// Callers must explicitly match/unwrap the Result instead of using try-propagation ("?").
+// This is idiomatic for fallible protocol-bound dispatch until Plan 56 Ф.2.7 is extended.
+
+/// Fallible конверсия `T → Self`, возвращает `Result[Self, E]`.
+///
+/// Имплементируйте на типах, которые могут быть построены из `T` с возможностью ошибки.
+/// Автоматически даёт `T.try_from(v)` (D77). Принят migration path (b) Plan 62.E.bis:
+/// `Result[Self, E]` вместо `Fail[E]` effect row (Plan 56 Ф.2.7 ограничение).
+///
+/// # Examples
+///
+/// ```nova
+/// let r = MyNum.try_from("42")
+/// match r {
+///     Ok(n) => println("got " + str.from(n.val))
+///     Err(e) => println("error: " + e)
+/// }
+/// ```
+#stable(since = "0.1")
+export type TryFrom[T, E] protocol {
+    try_from(t T) -> Result[Self, E]
+}
+
+/// Fallible конверсия `Self → U`, возвращает `Result[U, E]`.
+///
+/// Автоматически реализуется через `TryFrom`: если `U TryFrom[Self, E]`,
+/// то `v.try_into()` эквивалентен `U.try_from(v)`.
+/// Принят migration path (b) Plan 62.E.bis.
+#stable(since = "0.1")
+export type TryInto[U, E] protocol {
+    try_into() -> Result[U, E]
+}
 
 
 // ──────────────────────────────────────────────────────────────────────────
