@@ -1,0 +1,21 @@
+// EXPECT_RUNTIME_PANIC panic from prelude
+//
+// Plan 62.B file-based runtime fns — `panic` actual runtime smoke
+// (positive functional test, not just compile check).
+//
+// Verifies что `panic(msg)` declared в `std/prelude/runtime.nv` через
+// `external fn panic(msg str) -> Never`:
+//   - Resolves через prelude facade auto-import (R27).
+//   - Actually fires runtime panic (intercept в codegen → nv_panic).
+//   - Возвращает Never (compile-acceptable как single-expression body).
+//
+// До 62.B: panic был hardcoded в type-checker builtins HashSet +
+// codegen special-case на name match. После 62.B: HashSet shrunk на
+// 4 имени (panic/exit/assert/debug_assert), name-keyed intercept
+// fires для AST Ident.
+
+module plan62.panic_runtime_smoke
+
+test "panic actually fires from prelude declaration" {
+    panic("panic from prelude — Plan 62.B smoke")
+}
