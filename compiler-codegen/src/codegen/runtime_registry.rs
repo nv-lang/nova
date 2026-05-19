@@ -150,7 +150,7 @@ fn str_runtime() -> Vec<RuntimeFn> {
             is_static: false, is_mut: false,
             name: "char_at",
             params: &[("idx", "int")],
-            return_ty: "Option[int]",
+            return_ty: "Option[char]",
             effects: &[],
             c_name: "nova_str_char_at",
             doc: "Codepoint по индексу (codepoint-indexed). None при OOB.",
