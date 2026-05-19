@@ -686,6 +686,8 @@ impl CEmitter {
             novaopt_decls_seen: {
                 let mut s = std::collections::HashSet::new();
                 s.insert("nova_int".to_string());
+                // Plan 70.3: nova_char NovaOpt declared в array.h — skip lazy.
+                s.insert("nova_char".to_string());
                 s.insert("nova_byte".to_string());
                 s.insert("nova_bool".to_string());
                 s.insert("nova_str".to_string());
@@ -694,9 +696,11 @@ impl CEmitter {
             },
             // Plan 54 Ф.9: pre-populated primitive sanitized → c_ty
             // pairs (для них sanitized совпадает с c_ty).
+            // Plan 70.3: nova_char added — runtime declares NovaOpt_nova_char
+            // в array.h; lazy emit must skip чтобы не redefine.
             novaopt_value_types: {
                 let mut m = std::collections::HashMap::new();
-                for t in ["nova_int", "nova_byte", "nova_bool", "nova_str", "nova_f64"] {
+                for t in ["nova_int", "nova_char", "nova_byte", "nova_bool", "nova_str", "nova_f64"] {
                     m.insert(t.to_string(), t.to_string());
                 }
                 std::cell::RefCell::new(m)
@@ -2674,18 +2678,11 @@ impl CEmitter {
                     "bool" => Ok("nova_bool".into()),
                     "str"  => Ok("nova_str".into()),
                     "byte" => Ok("nova_byte".into()),
-                    // D26 Q-string-indexing школа B: char это codepoint = nova_int в bootstrap.
-                    // Без этой ветки fallback вёл к `Nova_char*` (struct ptr) → invalid C
-                    // (`Nova_char` undefined и коллизия с C keyword `char`).
-                    //
-                    // Plan 70.3 (deferred): distinct `nova_char` typedef ready в
-                    // nova_rt/nova_rt.h — но migration к "char" => "nova_char"
-                    // ломает registered method overloads (StringBuilder.append_char
-                    // param type registered as "char" → translates на "nova_int"
-                    // currently; switch к "nova_char" requires sync с runtime_registry.rs
-                    // c_name patterns + method_overloads param_c_types comparison +
-                    // 50+ caller sites). Cascade-refactor — full Ф.2/Ф.3/Ф.4 атомарно.
-                    "char" => Ok("nova_int".into()),
+                    // D26 Q-string-indexing школа B: char это Unicode codepoint.
+                    // Plan 70.3: distinct `nova_char` typedef над `nova_int` (см.
+                    // nova_rt/nova_rt.h). Same int64_t storage, но distinct C name
+                    // → generic mono mangle distinguishes Option[char] vs Option[int].
+                    "char" => Ok("nova_char".into()),
                     "Option" => {
                         // Plan 14 Ф.1: Option[T] правильно типизирован
                         // через generic. Для T без NOVA_ARRAY_DECL в
@@ -9835,9 +9832,8 @@ impl CEmitter {
     fn emit_expr(&mut self, expr: &Expr) -> Result<String, String> {
         match &expr.kind {
             ExprKind::IntLit(n)   => Ok(format!("((nova_int){}LL)", n)),
-            // Plan 70.3 deferred: char literal cast remains `nova_int`
-            // pending full migration (см. type_ref_to_c "char" comment).
-            ExprKind::CharLit(cp) => Ok(format!("((nova_int){}LL)", cp)),
+            // Plan 70.3: char literal cast к distinct `nova_char` typedef.
+            ExprKind::CharLit(cp) => Ok(format!("((nova_char){}LL)", cp)),
             ExprKind::FloatLit(f) => {
                 // f.to_string() для 1e20 даёт "100000000000000000000" (без точки/exp)
                 // — это integer-литерал в C, переполняет u64. Принудительно
@@ -10091,8 +10087,9 @@ impl CEmitter {
                     if rty == "nova_str" {
                         return Ok(format!("Nova_StringBuilder_method_append_str({}, {})", l, r));
                     }
-                    if rty == "nova_int" {
-                        // char через nova_int — Ф.9.2 char overload.
+                    // Plan 70.3: char теперь distinct nova_char typedef.
+                    // Accept оба для backward-compat (раньше char emit'ился как nova_int).
+                    if rty == "nova_char" || rty == "nova_int" {
                         return Ok(format!("Nova_StringBuilder_method_append_char({}, {})", l, r));
                     }
                 }
@@ -18274,11 +18271,8 @@ impl CEmitter {
         }
         match &expr.kind {
             ExprKind::IntLit(_) => "nova_int".into(),
-            // Plan 70.3 deferred: char literal infers как `nova_int` pending
-            // full migration. Switch к "nova_char" нужно в концерте с
-            // type_ref_to_c, runtime_registry.rs char-param translations,
-            // method_overloads param_c_types comparison, 50+ caller sites.
-            ExprKind::CharLit(_) => "nova_int".into(),
+            // Plan 70.3: char literal infers как `nova_char` (distinct typedef).
+            ExprKind::CharLit(_) => "nova_char".into(),
             ExprKind::FloatLit(_) => "nova_f64".into(),
             ExprKind::BoolLit(_) => "nova_bool".into(),
             ExprKind::StrLit(_) => "nova_str".into(),
