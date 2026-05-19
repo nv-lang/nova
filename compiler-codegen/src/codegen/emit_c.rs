@@ -2677,6 +2677,14 @@ impl CEmitter {
                     // D26 Q-string-indexing школа B: char это codepoint = nova_int в bootstrap.
                     // Без этой ветки fallback вёл к `Nova_char*` (struct ptr) → invalid C
                     // (`Nova_char` undefined и коллизия с C keyword `char`).
+                    //
+                    // Plan 70.3 (deferred): distinct `nova_char` typedef ready в
+                    // nova_rt/nova_rt.h — но migration к "char" => "nova_char"
+                    // ломает registered method overloads (StringBuilder.append_char
+                    // param type registered as "char" → translates на "nova_int"
+                    // currently; switch к "nova_char" requires sync с runtime_registry.rs
+                    // c_name patterns + method_overloads param_c_types comparison +
+                    // 50+ caller sites). Cascade-refactor — full Ф.2/Ф.3/Ф.4 атомарно.
                     "char" => Ok("nova_int".into()),
                     "Option" => {
                         // Plan 14 Ф.1: Option[T] правильно типизирован
@@ -9827,6 +9835,8 @@ impl CEmitter {
     fn emit_expr(&mut self, expr: &Expr) -> Result<String, String> {
         match &expr.kind {
             ExprKind::IntLit(n)   => Ok(format!("((nova_int){}LL)", n)),
+            // Plan 70.3 deferred: char literal cast remains `nova_int`
+            // pending full migration (см. type_ref_to_c "char" comment).
             ExprKind::CharLit(cp) => Ok(format!("((nova_int){}LL)", cp)),
             ExprKind::FloatLit(f) => {
                 // f.to_string() для 1e20 даёт "100000000000000000000" (без точки/exp)
@@ -18264,6 +18274,10 @@ impl CEmitter {
         }
         match &expr.kind {
             ExprKind::IntLit(_) => "nova_int".into(),
+            // Plan 70.3 deferred: char literal infers как `nova_int` pending
+            // full migration. Switch к "nova_char" нужно в концерте с
+            // type_ref_to_c, runtime_registry.rs char-param translations,
+            // method_overloads param_c_types comparison, 50+ caller sites.
             ExprKind::CharLit(_) => "nova_int".into(),
             ExprKind::FloatLit(_) => "nova_f64".into(),
             ExprKind::BoolLit(_) => "nova_bool".into(),
