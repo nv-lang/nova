@@ -1,0 +1,14 @@
+// Plan 70.5 Ф.4 — negative: несуществующая константа uint.NONEXISTENT.
+//
+// После Ф.4 `uint.X` парсится как Path(["uint", "X"]).
+// Если X не в numeric_type_constant_mapping, кодоген эмитит
+// идентификатор `uint_X` в C, который не объявлен → CC-FAIL.
+//
+// Документирует поведение codegen для неизвестных type-path констант.
+
+module nova_tests.plan70_5.f8_uint_undefined_const_neg
+
+// EXPECT_CC_ERROR undeclared identifier
+fn bad() -> uint {
+    uint.NONEXISTENT
+}

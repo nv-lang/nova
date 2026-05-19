@@ -1,0 +1,14 @@
+// Plan 70.5 Ф.4 — negative: uint value assigned to str variable.
+//
+// uint (uint64_t) несовместим со str (nova_str struct).
+// Clang обязан отвергнуть инициализацию без явного привода типов.
+//
+// Параллель Rust: `let x: &str = u64::MAX` — compile error.
+
+module nova_tests.plan70_5.f6_uint_str_assign_neg
+
+// EXPECT_CC_ERROR incompatible type
+fn bad() -> str {
+    let x str = uint.MAX
+    x
+}
