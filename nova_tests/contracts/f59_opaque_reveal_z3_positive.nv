@@ -1,0 +1,28 @@
+// REQUIRES_SMT_BACKEND z3
+//
+// Plan 33.9 Ф.5: opaque fn + reveal — Z3 verifies caller contract.
+// Without reveal, Z3 sees _pure_fn_double(x) as uninterpreted function and
+// cannot prove result == x * 2. With reveal, the body axiom is injected and
+// Z3 can prove the ensures.
+
+module contracts.f59_opaque_reveal_z3_positive
+
+#opaque #pure
+fn double(x int) -> int
+    requires x >= 0
+    ensures result >= 0
+=> x * 2
+
+#verify
+fn caller_with_reveal(n int) -> int
+    requires n >= 0
+    ensures result == n * 2
+{
+    reveal double
+    double(n)
+}
+
+test "opaque reveal z3 positive" {
+    assert(double(5) == 10)
+    assert(caller_with_reveal(7) == 14)
+}
