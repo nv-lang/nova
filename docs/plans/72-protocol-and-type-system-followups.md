@@ -141,6 +141,27 @@ HashMap<String, (String, String)>` — при `let v: Result[T, E] = ...`
 `extract_result_type_params` + `cast_from_nova_int`. Без Plan 59.
 
 **Тесты:** `nova_tests/plan72/p1c_result_type_params_pos.nv` — 6 cases ✅.
+`nova_tests/plan72/p1c_result_chain_pos.nv` — 6 cases ✅.
+`nova_tests/plan72/p1c_result_inline_chain_pos.nv` — 4 cases ✅.
+
+**Известное ограничение (P1-C followup):** `result_type_params` работает
+только когда receiver — **именованная переменная** (`let r = ...; r.unwrap_or(...)`).
+Inline-цепочки (`parse_bool("x").unwrap_or(false)`) попадают в ветку `else`
+в `infer_expr_c_type` (emit_c.rs:20541) и получают fallback `(nova_int, nova_str)`.
+
+Тесты с `bool` и `int` проходят случайно — в C `bool` совместим с `int`
+по размеру, каст не ломает результат. Для типов-указателей (`Nova_Foo*`)
+или `f64` inline-цепочка даст **неверный результат без ошибки компиляции**.
+
+Пример опасного кода:
+```nova
+type Celsius { deg int }
+fn parse_celsius(s str) -> Result[Celsius, str] => ...
+let c = parse_celsius("100").unwrap_or(Celsius { deg: 0 })  // WRONG: каст nova_int → Nova_Celsius*
+```
+
+Фикс: расширить `infer_expr_c_type` для `ExprKind::MethodCall` — рекурсивно
+выводить тип `T` из типа receiver'а когда receiver — тоже `Result`-returning call.
 
 ---
 
