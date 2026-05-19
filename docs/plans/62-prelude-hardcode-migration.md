@@ -882,6 +882,42 @@ precedence), не legacy duplication.
 
 > User can declare item with same name as prelude item; lint warning (`W_PRELUDE_SHADOW`), не error. Explicit `import std.prelude.{Option as Opt}` (rename) — works without warning.
 
+### Amend D29 — Rule E formal sync ✅ ЗАКРЫТ 2026-05-19 (cleanup)
+
+Plan 62 cleanup (2026-05-19) обнаружил silent drift между spec D29 и
+Plan 42 Rule E:
+
+1. **Spec D29 line 129** содержал absolute-conflict wording для `X.nv`
+   + `X/` co-existence. Plan 42 (закрыт 2026-05-14) ввёл Rule E:
+   conflict только когда `X/` содержит peer-files declaring `module X`;
+   sub-modules declaring `module X.<sub>` — валидно (facade pattern).
+   Реализовано в compiler (Plan 62.A агент), но spec не sync'нут.
+   **Fixed**: spec/decisions/07-modules.md D29 section updated с
+   Rule E (case a/b distinction) + facade pattern example.
+
+2. **10 файлов в std/prelude/ + std/runtime/** имели нарушающее rev-3
+   `parent.target` declaration (`module std.prelude.X` / `module
+   std.runtime.X` — full path 3 seg вместо 2 seg). Plan 42 rev-3
+   (2026-05-13) явно требует `module prelude.X` / `module runtime.X`.
+   **Fixed**: reverted к strict 2-seg form.
+
+3. **`runtime_registry.rs::render_nv`** emitted `module std.runtime.X`
+   (full path) при auto-generation. **Fixed**: derive short-form
+   (`runtime.X`) из registry's canonical full-path module key.
+
+4. **`imports.rs::resolve_module_paths`** Rule E check expected peer
+   sub-modules to declare full-path prefix form. После rev-3 strict
+   revert sub-modules declare 2-seg form. **Fixed**: check accepts
+   both forms (legacy facade + rev-3 strict).
+
+Commits:
+- `f6c64d3fb0d` spec(D29): sync Rule E
+- `1e8096d3e95` fix(modules): revert 7 prelude declarations
+- `25f07d92f26` fix(runtime_registry): render_nv 2-seg + str @hash registry entry
+- `9d6edcdf253` fix(imports): Rule E check accepts 2-seg
+
+Regression: **719 PASS / 0 FAIL / 44 SKIP** preserved.
+
 ### Amend D102 (default params) — для `assert`
 
 `assert(cond, msg = "assertion failed")` — default-msg-param. Currently special-case'нут как inline; после Plan 62.B unified через D102 mechanism (Plan 46/50).
