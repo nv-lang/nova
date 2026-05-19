@@ -23,6 +23,12 @@
 use anyhow::{anyhow, Result};
 
 /// Source метрики — какой counter был использован.
+///
+/// Сейчас все variants конструируются только на Linux-gated кодом
+/// (см. `#[cfg(target_os = "linux")]` блоки в этом модуле); на других
+/// OS они не constructable, что вызывает warn(dead_code) на Win/macOS.
+/// Allow → public API surface стабилен везде.
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MembwSource {
     /// LLC cache misses × cache line (estimate).

@@ -571,6 +571,12 @@ struct DeferEntry {
 
 /// Plan 20 Ф.4: per-block defer state. One scope per block that contains
 /// at least one defer/errdefer.
+///
+/// `needs_failframe` / `failframe_var` / `intframe_var` сейчас не читаются
+/// напрямую (codegen использует `failframe_popped_var` / `intframe_popped_var`
+/// + проверки на `entries.iter().any(_)`), но сохраняются как diagnostic
+/// metadata + точки расширения для будущей debug-инфраструктуры.
+#[allow(dead_code)]
 struct DeferScope {
     /// Unique block ID for naming.
     block_id: usize,
@@ -971,7 +977,7 @@ impl CEmitter {
     pub fn emit_module(mut self, module: &Module) -> Result<(String, Vec<String>), String> {
         // Plan 70.1: register imported-module prefix names (aliases + last-segments)
         // для emit_call Member dispatch rewrite. См. поле `imported_modules` doc.
-        let mut register_imports = |imports: &[crate::ast::Import], target: &mut HashSet<String>| {
+        let register_imports = |imports: &[crate::ast::Import], target: &mut HashSet<String>| {
             for imp in imports {
                 if let Some(alias) = &imp.alias {
                     target.insert(alias.clone());
@@ -5695,6 +5701,12 @@ impl CEmitter {
     /// Plan 11 Ф.2: overload resolution. Возвращает выбранный MethodSig
     /// или подробную ошибку. `arg_c_types` — типы args без receiver'а.
     /// Strict matching, no implicit conversions.
+    ///
+    /// **Reserved for future use** — current emit_call использует
+    /// inline resolution; этот helper готов к экстракции если потребуется
+    /// разделить overload-lookup из call-emission. Сохраняется для
+    /// stability semver public-ish API surface.
+    #[allow(dead_code)]
     fn resolve_overload(
         &self,
         receiver_type: &str,
@@ -8432,7 +8444,7 @@ impl CEmitter {
         // превышает порог (10000) — runtime panic. Это catches infinite
         // recursion в debug. Полный well-founded check (m_new < m_old) —
         // ждёт SMT (Z3 backend).
-        let depth_var = if f.decreases.is_some() {
+        let _depth_var = if f.decreases.is_some() {
             // Sanitize fn name для C-identifier.
             let san: String = f.name.chars()
                 .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
@@ -15564,6 +15576,12 @@ impl CEmitter {
     /// map-coercion в позиции `HashMap[str, V]`. Эмитим mirror MapLit-
     /// десугаринга: `HashMap[str, V].with_capacity(n) + n × insert`.
     /// Не строим intermediate AST — прямой C-emit.
+    ///
+    /// **Reserved**: текущий codegen использует desugar::desugar_module
+    /// для record-as-map coercion (Plan 52 Ф.5). Этот helper —
+    /// fallback для direct-emit path, оставлен после Plan 52
+    /// миграции на desugar.
+    #[allow(dead_code)]
     fn emit_record_as_map(
         &mut self,
         fields: &[RecordLitField],
@@ -17555,6 +17573,11 @@ impl CEmitter {
         result
     }
 
+    /// Convenience alias на `infer_expr_c_type` (returns `String` напрямую,
+    /// без `&str`-view). Сохранён как public-ish surface для consumer'ов
+    /// которым удобнее владеющий String — текущий emit-pipeline сам берёт
+    /// `infer_expr_c_type`, но helper полезен для tests/external callers.
+    #[allow(dead_code)]
     fn infer_expr_c_type_str(&self, expr: &Expr) -> String {
         self.infer_expr_c_type(expr)
     }

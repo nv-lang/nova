@@ -13,7 +13,7 @@
 //!   - Sortable table: per-bench latest values + trend arrow.
 //!   - Offline fallback: можно скачать echarts.min.js и заменить CDN URL.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use anyhow::{anyhow, Result};
 use serde_json::Value;

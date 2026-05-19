@@ -3060,8 +3060,13 @@ const SUSPEND_EFFECT_NAMES: &[&str] = &[
     "Net", "Fs", "Db", "Time",
 ];
 
-/// AST-С„РѕСЂРјС‹ РєРѕС‚РѕСЂС‹Рµ СЃР°РјРё РїРѕ СЃРµР±Рµ СЃС‡РёС‚Р°СЋС‚СЃСЏ suspend (РґР°Р¶Рµ РµСЃР»Рё effects
-/// РЅРµ РѕР±СЉСЏРІР»РµРЅС‹).
+/// AST-формы которые сами по себе считаются suspend (даже если effects
+/// не объявлены).
+///
+/// **Reserved**: текущая suspend-detection использует прямой
+/// `matches!` inline в effect-inference path'е. Helper сохранён для
+/// возможной consolidation если правил станет больше.
+#[allow(dead_code)]
 fn is_suspend_expr_kind(kind: &ExprKind) -> bool {
     matches!(kind,
         ExprKind::ParallelFor { .. }

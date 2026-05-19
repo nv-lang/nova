@@ -37,7 +37,4 @@ pub mod callgrind;
 #[allow(dead_code)]
 pub mod errno;
 
-pub use stats::SampleStats;
-pub use schema::{RawBenchResult, AnalyzedBench, RunResultParsed, run_result_to_json, SCHEMA_VERSION};
-pub use repro::{ReproMeta, SamplingMeta};
-pub use config::BenchToml;
+pub use schema::SCHEMA_VERSION;
