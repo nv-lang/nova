@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 # Plan 71: `doc-check` stability-tier scope — opt-in vs implicit
 
+> **Статус:** ✅ **ЗАКРЫТ 2026-05-19** (Ф.0-Ф.6: план + spec D127 + idiom page + manifest field + lint config/severity + fixture-skip + stdlib opt-in + 17 unit + 11 integration tests + smoke green).
 > **Создан:** 2026-05-19. **Приоритет:** P1 (CI блокер для nova-doc workflow).
 > **Трудоёмкость:** ~0.5 dev-day (фокусированная правка lint + manifest flag + tests).
 > **Зависит от:** Plan 45 Ф.23.12 (style-guide lints), [D105](../../spec/decisions/09-tooling.md#d105-doc-атрибуты).
@@ -404,3 +405,90 @@ opt-in `error` (для production library crates).
 3. **Warning для `experimental-overuse`?**
    - Idiom page упоминает, но не реализовано.
    - **Решение:** out of scope Plan 71. Будущий Plan 45.A item.
+
+---
+
+## Implementation log
+
+### 2026-05-19 — Ф.0-Ф.6 implementation closure
+
+**Worktree:** `nova-p71` (branch `plan-71`, base `main` 02b487a53d1).
+
+**Pre-implemented (commit `db76aaf8386` 2026-05-19 morning):**
+- Plan 71 doc itself (this file)
+- D127 в `spec/decisions/09-tooling.md` (+73 LOC)
+- `docs/idioms/stability-tiers.md` (new, 118 LOC)
+- `docs/plans/README.md` entry
+- `docs/plans/45-nova-doc.md` §11.5 №7 cross-link к D127
+
+**Implementation сегодняшней сессии (3 commits):**
+
+1. **Ф.1 — `Manifest.enforce_stability` field + parser** (commit `a533d772695`)
+   - `compiler-codegen/src/manifest.rs`: новый `pub enforce_stability: bool`
+     field; парсер `[lib] enforce-stability = true/false`; conservative
+     parsing (anything кроме literal `true` → false); `parse_manifest`
+     повышен до `pub` для использования из nova-cli fallback path +
+     integration tests
+   - 6 unit-tests acceptance: enforce_stability_true / _default_false /
+     _garbage_ignored / _explicit_false / _trailing_comment /
+     _wrong_section_ignored — все PASS
+
+2. **Ф.2 + Ф.5 + Ф.6 — lint config/severity + fixture-skip + tests**
+   (commit `b8640610283`)
+   - `compiler-codegen/src/doc/lints.rs`:
+     - new pub enum `Severity { Error, Warning }` + `as_str()`
+     - new pub struct `LintConfig { strict_stability, fixture_dirs }`
+       + Default / `with_defaults` / `default_fixture_dirs` /
+       `is_fixture_module`
+     - `DocLintViolation` приобретает `pub severity: Severity`
+     - `run_lints(tree, &LintConfig)` — signature change
+     - Rule 7 (`public-missing-stability`): severity = Error если
+       `strict_stability`, else Warning; skip полностью если path под
+       fixture_dirs
+     - Other rules: `Severity::Error` (historical default preserved)
+   - `compiler-codegen/src/doc/mod.rs`: pub use re-exports +
+     `run_lints(tree, &LintConfig)` signature
+   - `compiler-codegen/src/doc/doctree.rs`: `DocModule` приобретает
+     `pub source_paths: Vec<PathBuf>`
+   - `compiler-codegen/src/doc/collector.rs`: `collect_one` populates
+     `source_paths` из `module.peer_files`
+   - `compiler-codegen/src/doc/doctests.rs`: test fixture updated
+   - `compiler-codegen/src/doc/watch_cache.rs`: seed peer_files[0] во
+     время cache miss/stale path (`nova doc --watch`)
+   - `nova-cli/src/main.rs`:
+     - new `build_lint_config_for(path)`: loads manifest → maps
+       enforce_stability → strict_stability
+     - `cmd_doc_check(tree, format, &LintConfig, strict)` — signature
+       change; severity-aware exit code
+     - new `ensure_entry_peer_path`: seed peer_files[0] для doc MVP
+       single-file + workspace flows (parser leaves peer_files empty)
+     - все 3 cmd_doc_check call-sites updated (single-file / workspace /
+       watch)
+     - `cmd_doc_watch` signature gains `strict: bool`
+   - `compiler-codegen/tests/doc_lints_scope.rs` (new, 11 tests):
+     - Plan 71 Ф.5 acceptance (6 required): default_warning_non_strict
+       / strict_error_with_flag / fixture_exempt_default /
+       fixture_exempt_strict / examples_exempt / bench_exempt
+     - +5 robustness extras: tests_dir_exempt /
+       windows_separator_fixture_detection /
+       empty_source_paths_not_fixture / stdlib_path_lints_module_level
+       / other_rules_remain_error_severity
+     - все 11/11 PASS
+
+3. **Ф.3 stdlib opt-in — `std/nova.toml`** (commit `6391ec7df5c`)
+   - `enforce-stability = true` flag — stdlib обязан документировать
+     stability tier на каждом export
+
+**Ф.6 smoke verification:**
+- `nova doc nova_tests/doc/fixtures/basic/sample.nv --check` →
+  `doc-check: ok (3 item(s), 0 link(s))`, exit 0 (no warnings printed)
+- `nova doc std/concurrency/timer.nv --check` →
+  `doc-check: [public-missing-stability] concurrency.timer: ...`,
+  exit 1 (stdlib enforce-stability = true → Error severity)
+
+**Regression check:**
+- `cargo test --lib doc::` → 154 passed / 0 failed
+- `cargo test --test doc_lints_scope` → 11 passed / 0 failed
+- `cargo test --lib manifest::` → 6 passed / 0 failed
+- Pre-existing failure `parser::tests::fn_static_method` — не относится
+  к Plan 71 (existed on `main` before changes).
