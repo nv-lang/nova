@@ -439,7 +439,7 @@ fn walk_stmt_lints(s: &Stmt, out: &mut Vec<LintWarning>) {
         Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. } => walk_expr_lints(body, out),
         Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => walk_expr_lints(expr, out),
         // Plan 33.3 Ф.13: Apply/Calc — proof-statements, spec-only.
-        Stmt::Apply { .. } | Stmt::Calc { .. } => {}
+        Stmt::Apply { .. } | Stmt::Calc { .. } | Stmt::Reveal { .. } => {}
     }
 }
 

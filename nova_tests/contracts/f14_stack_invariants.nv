@@ -1,4 +1,4 @@
-﻿// Plan 33.3 Ф.14: Dafny-parity test 3 — Stack/Queue invariants.
+// Plan 33.3 Ф.14: Dafny-parity test 3 — Stack/Queue invariants.
 // Моделируем stack через size counter (без реальных arrays в SMT).
 
 // REQUIRES_SMT_BACKEND z3

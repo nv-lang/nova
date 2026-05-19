@@ -154,6 +154,26 @@ fn simplify_app(op: &str, args: &[SmtTerm]) -> SmtTerm {
             (SmtTerm::IntLit(a), SmtTerm::IntLit(b)) => SmtTerm::IntLit(a.saturating_add(*b)),
             (SmtTerm::IntLit(0), b) => b.clone(),
             (a, SmtTerm::IntLit(0)) => a.clone(),
+            // Ф.43.1 (Plan 33.6): `(+ (- a b) b)` → a (symmetric: `(+ b (- a b))` → a).
+            (SmtTerm::App(op2, a2), b)
+                if op2 == "-" && a2.len() == 2 && &a2[1] == b => {
+                a2[0].clone()
+            }
+            (b, SmtTerm::App(op2, a2))
+                if op2 == "-" && a2.len() == 2 && &a2[1] == b => {
+                a2[0].clone()
+            }
+            // Ф.43.2 (Plan 33.6): `(+ a (- 0 a))` → 0 (a + (-a) = 0).
+            (a, SmtTerm::App(op2, a2))
+                if op2 == "-" && a2.len() == 2
+                && matches!(&a2[0], SmtTerm::IntLit(0)) && &a2[1] == a => {
+                SmtTerm::IntLit(0)
+            }
+            (SmtTerm::App(op2, a2), a)
+                if op2 == "-" && a2.len() == 2
+                && matches!(&a2[0], SmtTerm::IntLit(0)) && &a2[1] == a => {
+                SmtTerm::IntLit(0)
+            }
             // Ф.6.3 (Plan 33.6): commutativity normalization для consistent hash.
             // Если оба не литерал — сортировать по pretty-print order.
             (a, b) if !matches!(a, SmtTerm::IntLit(_)) && !matches!(b, SmtTerm::IntLit(_)) => {
@@ -173,6 +193,26 @@ fn simplify_app(op: &str, args: &[SmtTerm]) -> SmtTerm {
                 && matches!(&a2[0], SmtTerm::IntLit(0)) => {
                 a2[1].clone()
             }
+            // Ф.41.1 (Plan 33.6): algebraic identities through addition.
+            // `(- (+ a b) b)` → a   и   `(- (+ a b) a)` → b
+            (SmtTerm::App(op2, a2), b)
+                if op2 == "+" && a2.len() == 2 => {
+                if &a2[0] == b { return a2[1].clone(); }
+                if &a2[1] == b { return a2[0].clone(); }
+                SmtTerm::App(op.into(), args.to_vec())
+            }
+            // `(- a (+ a b))` → -b   и   `(- a (+ b a))` → -b
+            // (через 0 - b — сохраняем как Sub чтобы reuse существующий simplify).
+            (a, SmtTerm::App(op2, a2))
+                if op2 == "+" && a2.len() == 2 => {
+                if &a2[0] == a {
+                    return simplify_app("-", &[SmtTerm::IntLit(0), a2[1].clone()]);
+                }
+                if &a2[1] == a {
+                    return simplify_app("-", &[SmtTerm::IntLit(0), a2[0].clone()]);
+                }
+                SmtTerm::App(op.into(), args.to_vec())
+            }
             _ => SmtTerm::App(op.into(), args.to_vec()),
         },
         "*" if args.len() == 2 => match (&args[0], &args[1]) {
@@ -180,6 +220,11 @@ fn simplify_app(op: &str, args: &[SmtTerm]) -> SmtTerm {
             (SmtTerm::IntLit(0), _) | (_, SmtTerm::IntLit(0)) => SmtTerm::IntLit(0),
             (SmtTerm::IntLit(1), b) => b.clone(),
             (a, SmtTerm::IntLit(1)) => a.clone(),
+            // Ф.44.1 (Plan 33.6): multiplication by -1 = negation.
+            // `(* -1 a)` → `(- 0 a)` и `(* a -1)` → `(- 0 a)`.
+            (SmtTerm::IntLit(-1), a) | (a, SmtTerm::IntLit(-1)) => {
+                simplify_app("-", &[SmtTerm::IntLit(0), a.clone()])
+            }
             // Ф.9.4 (Plan 33.6): commutativity для *.
             (a, b) if !matches!(a, SmtTerm::IntLit(_)) && !matches!(b, SmtTerm::IntLit(_)) => {
                 let mut sorted = vec![a.clone(), b.clone()];
@@ -191,10 +236,26 @@ fn simplify_app(op: &str, args: &[SmtTerm]) -> SmtTerm {
         "/" if args.len() == 2 => match (&args[0], &args[1]) {
             (SmtTerm::IntLit(a), SmtTerm::IntLit(b)) if *b != 0 => SmtTerm::IntLit(a / b),
             (a, SmtTerm::IntLit(1)) => a.clone(),
+            // Ф.45.1 (Plan 33.6): division by -1 = negation.
+            (a, SmtTerm::IntLit(-1)) => {
+                simplify_app("-", &[SmtTerm::IntLit(0), a.clone()])
+            }
+            // Ф.45.2 (Plan 33.6): 0 / a → 0 (when a — non-literal Var).
+            // Note: undefined для a == 0 в runtime, но в spec-only contracts
+            // safe assume a != 0 (программист написал такой goal).
+            (SmtTerm::IntLit(0), _) => SmtTerm::IntLit(0),
+            // Ф.52.3 (Plan 33.6): a / a → 1 (when a non-zero — spec assumption).
+            (a, b) if a == b => SmtTerm::IntLit(1),
             _ => SmtTerm::App(op.into(), args.to_vec()),
         },
         "%" if args.len() == 2 => match (&args[0], &args[1]) {
             (SmtTerm::IntLit(a), SmtTerm::IntLit(b)) if *b != 0 => SmtTerm::IntLit(a % b),
+            // Ф.45.3 (Plan 33.6): 0 % a → 0 (when a non-zero).
+            (SmtTerm::IntLit(0), _) => SmtTerm::IntLit(0),
+            // Ф.53.1 (Plan 33.6): a % 1 → 0 (любое число mod 1 = 0).
+            (_, SmtTerm::IntLit(1)) | (_, SmtTerm::IntLit(-1)) => SmtTerm::IntLit(0),
+            // Ф.53.2 (Plan 33.6): a % a → 0 (для non-zero — spec assumption).
+            (a, b) if a == b => SmtTerm::IntLit(0),
             _ => SmtTerm::App(op.into(), args.to_vec()),
         },
 
@@ -616,6 +677,9 @@ fn propagate_bounds(conjuncts: &[SmtTerm]) -> Vec<SmtTerm> {
                         if *divisor > 0 {
                             // Lower bound: `(>= x%k goal)` где goal <= 0 → true.
                             if iop == ">=" && goal <= 0 { return Some(true); }
+                            // Ф.38.1 (Plan 33.6): strict lower: `(> x%k goal)` где goal <= -1 → true.
+                            // (result >= 0 > goal при goal < 0).
+                            if iop == ">" && goal <= -1 { return Some(true); }
                             // Ф.26.1 (Plan 33.6): upper bound: `(< x%k goal)` где goal >= divisor → true,
                             // `(<= x%k goal)` где goal >= divisor-1 → true.
                             if iop == "<" && goal >= *divisor { return Some(true); }
@@ -660,6 +724,67 @@ fn propagate_bounds(conjuncts: &[SmtTerm]) -> Vec<SmtTerm> {
                 None
             } else { None }
         };
+        // Ф.35.4 (Plan 33.6): subtraction upper bound — `<=` / `<` strict.
+        // `(<= (- a b) goal)` где upper(a) - lower(b) <= goal → true (max - min).
+        // `(< (- a b) goal)` → effective_goal = goal - 1.
+        let try_subtraction_upper = |inner: &SmtTerm| -> Option<bool> {
+            if let SmtTerm::App(iop, iargs) = inner {
+                if (iop != "<=" && iop != "<") || iargs.len() != 2 { return None; }
+                let goal = match &iargs[1] { SmtTerm::IntLit(n) => *n, _ => return None };
+                let effective_goal = if iop == "<" { goal.saturating_sub(1) } else { goal };
+                if let SmtTerm::App(sop, sargs) = &iargs[0] {
+                    if sop != "-" || sargs.len() != 2 { return None; }
+                    match (&sargs[0], &sargs[1]) {
+                        (SmtTerm::Var(a), SmtTerm::Var(b)) => {
+                            if let (Some(ua), Some(lb)) = (upper.get(a), lower.get(b)) {
+                                if ua.saturating_sub(*lb) <= effective_goal { return Some(true); }
+                            }
+                        }
+                        (SmtTerm::Var(v), SmtTerm::IntLit(n)) => {
+                            if let Some(known_up) = upper.get(v) {
+                                if known_up.saturating_sub(*n) <= effective_goal { return Some(true); }
+                            }
+                        }
+                        (SmtTerm::IntLit(n), SmtTerm::Var(v)) => {
+                            if let Some(known_low) = lower.get(v) {
+                                if n.saturating_sub(*known_low) <= effective_goal { return Some(true); }
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                None
+            } else { None }
+        };
+        // Ф.35.2 (Plan 33.6): addition upper bound — `<=` / `<` strict.
+        // `(<= (+ a b) goal)` где upper(a) + upper(b) <= goal → true.
+        let try_addition_upper = |inner: &SmtTerm| -> Option<bool> {
+            if let SmtTerm::App(iop, iargs) = inner {
+                if (iop != "<=" && iop != "<") || iargs.len() != 2 { return None; }
+                let goal = match &iargs[1] { SmtTerm::IntLit(n) => *n, _ => return None };
+                let effective_goal = if iop == "<" { goal.saturating_sub(1) } else { goal };
+                if let SmtTerm::App(aop, aargs) = &iargs[0] {
+                    if aop != "+" || aargs.len() != 2 { return None; }
+                    if let (SmtTerm::Var(a), SmtTerm::Var(b)) = (&aargs[0], &aargs[1]) {
+                        if let (Some(ua), Some(ub)) = (upper.get(a), upper.get(b)) {
+                            if ua.saturating_add(*ub) <= effective_goal { return Some(true); }
+                        }
+                    }
+                    // (+ Var Lit) или (+ Lit Var).
+                    let (var_opt, lit_opt) = match (&aargs[0], &aargs[1]) {
+                        (SmtTerm::Var(v), SmtTerm::IntLit(n)) => (Some(v), Some(*n)),
+                        (SmtTerm::IntLit(n), SmtTerm::Var(v)) => (Some(v), Some(*n)),
+                        _ => (None, None),
+                    };
+                    if let (Some(v), Some(n)) = (var_opt, lit_opt) {
+                        if let Some(known_up) = upper.get(v) {
+                            if known_up.saturating_add(n) <= effective_goal { return Some(true); }
+                        }
+                    }
+                }
+                None
+            } else { None }
+        };
         // Ф.17.1 (Plan 33.6): negation monotone.
         // `(>= (- 0 Var) goal)` где known upper(Var) <= -goal → true.
         // Ф.30.4: extended на `>` (strict).
@@ -689,10 +814,49 @@ fn propagate_bounds(conjuncts: &[SmtTerm]) -> Vec<SmtTerm> {
                 if (iop != ">=" && iop != ">") || iargs.len() != 2 { return None; }
                 let goal = match &iargs[1] { SmtTerm::IntLit(n) => *n, _ => return None };
                 let effective_goal = if iop == ">" { goal.saturating_add(1) } else { goal };
-                if effective_goal > 0 { return None; }
                 if let SmtTerm::App(mop, margs) = &iargs[0] {
                     if mop != "*" || margs.len() != 2 { return None; }
+                    // Ф.51.1 (Plan 33.6): square non-negative (a * a >= 0 always).
+                    // Универсально true без bounds — продакт переменной на саму себя
+                    // даёт неотрицательный результат. Для effective_goal <= 0 → true.
+                    if margs[0] == margs[1] && effective_goal <= 0 {
+                        return Some(true);
+                    }
+                    // Ф.52.1 (Plan 33.6): square strict positive (a * a > 0 if a != 0).
+                    // Если a == a (square) и effective_goal == 1 (>=1, т.е. strict >0):
+                    // - lower(a) >= 1 OR upper(a) <= -1 → a != 0 → square >= 1.
+                    if margs[0] == margs[1] && effective_goal == 1 {
+                        if let SmtTerm::Var(v) = &margs[0] {
+                            if let Some(l) = lower.get(v) {
+                                if *l >= 1 { return Some(true); }
+                            }
+                            if let Some(u) = upper.get(v) {
+                                if *u <= -1 { return Some(true); }
+                            }
+                        }
+                    }
                     if let (SmtTerm::Var(a), SmtTerm::Var(b)) = (&margs[0], &margs[1]) {
+                        // Ф.37.2 (Plan 33.6): strict positive product.
+                        // `(> a*b 0)` при lower(a) >= 1 && lower(b) >= 1 → product >= 1.
+                        // Для effective_goal > 0 нужен strict positive case.
+                        if effective_goal > 0 {
+                            if let (Some(la), Some(lb)) = (lower.get(a), lower.get(b)) {
+                                if *la >= 1 && *lb >= 1 {
+                                    let prod = la.saturating_mul(*lb);
+                                    if prod >= effective_goal { return Some(true); }
+                                }
+                            }
+                            // Both strictly negative: lower(a) <= -1 && lower(b) <= -1 не работает
+                            // (нужны upper bounds). upper(a) <= -1 && upper(b) <= -1 → product >= 1.
+                            if let (Some(ua), Some(ub)) = (upper.get(a), upper.get(b)) {
+                                if *ua <= -1 && *ub <= -1 {
+                                    let prod = ua.saturating_mul(*ub);
+                                    if prod >= effective_goal { return Some(true); }
+                                }
+                            }
+                            return None;
+                        }
+                        // effective_goal <= 0: non-strict positive (>= 0 case).
                         // Both non-negative.
                         if let (Some(la), Some(lb)) = (lower.get(a), lower.get(b)) {
                             if *la >= 0 && *lb >= 0 {
@@ -719,10 +883,28 @@ fn propagate_bounds(conjuncts: &[SmtTerm]) -> Vec<SmtTerm> {
                 if (iop != "<=" && iop != "<") || iargs.len() != 2 { return None; }
                 let goal = match &iargs[1] { SmtTerm::IntLit(n) => *n, _ => return None };
                 let effective_goal = if iop == "<" { goal.saturating_sub(1) } else { goal };
-                if effective_goal < 0 { return None; }
                 if let SmtTerm::App(mop, margs) = &iargs[0] {
                     if mop != "*" || margs.len() != 2 { return None; }
                     if let (SmtTerm::Var(a), SmtTerm::Var(b)) = (&margs[0], &margs[1]) {
+                        // Ф.37.2 (Plan 33.6): strict negative product.
+                        // `(< a*b 0)` при strict mixed signs (lower(a) >= 1 && upper(b) <= -1
+                        // OR upper(a) <= -1 && lower(b) >= 1) → product <= -1.
+                        if effective_goal < 0 {
+                            if let (Some(la), Some(ub)) = (lower.get(a), upper.get(b)) {
+                                if *la >= 1 && *ub <= -1 {
+                                    let prod = la.saturating_mul(*ub);
+                                    if prod <= effective_goal { return Some(true); }
+                                }
+                            }
+                            if let (Some(ua), Some(lb)) = (upper.get(a), lower.get(b)) {
+                                if *ua <= -1 && *lb >= 1 {
+                                    let prod = ua.saturating_mul(*lb);
+                                    if prod <= effective_goal { return Some(true); }
+                                }
+                            }
+                            return None;
+                        }
+                        // effective_goal >= 0: non-strict negative (<= 0 case).
                         // A non-neg, B non-pos.
                         if let (Some(la), Some(ub)) = (lower.get(a), upper.get(b)) {
                             if *la >= 0 && *ub <= 0 {
@@ -732,6 +914,54 @@ fn propagate_bounds(conjuncts: &[SmtTerm]) -> Vec<SmtTerm> {
                         // A non-pos, B non-neg.
                         if let (Some(ua), Some(lb)) = (upper.get(a), lower.get(b)) {
                             if *ua <= 0 && *lb >= 0 {
+                                return Some(true);
+                            }
+                        }
+                    }
+                }
+                None
+            } else { None }
+        };
+        // Ф.36.1 (Plan 33.6): const-mul upper bound (`<=` / `<` strict).
+        // `(<= (* L Var) goal)` где L > 0 и known upper(Var) * L <= goal → true.
+        // Также `<`: effective_goal = goal-1.
+        // L < 0 не покрывается (sign flip — нелинейный case, требует Z3).
+        let try_const_mul_upper = |inner: &SmtTerm| -> Option<bool> {
+            if let SmtTerm::App(iop, iargs) = inner {
+                if (iop != "<=" && iop != "<") || iargs.len() != 2 { return None; }
+                let goal = match &iargs[1] { SmtTerm::IntLit(n) => *n, _ => return None };
+                let effective_goal = if iop == "<" { goal.saturating_sub(1) } else { goal };
+                if let SmtTerm::App(mop, margs) = &iargs[0] {
+                    if mop != "*" || margs.len() != 2 { return None; }
+                    let (l, v) = match (&margs[0], &margs[1]) {
+                        (SmtTerm::IntLit(l), SmtTerm::Var(v)) => (*l, v),
+                        (SmtTerm::Var(v), SmtTerm::IntLit(l)) => (*l, v),
+                        _ => return None,
+                    };
+                    if l > 0 {
+                        if let Some(known_up) = upper.get(v) {
+                            if known_up.saturating_mul(l) <= effective_goal {
+                                return Some(true);
+                            }
+                        }
+                    }
+                }
+                None
+            } else { None }
+        };
+        // Ф.36.2 (Plan 33.6): negation upper bound (`<=` / `<` strict).
+        // `(<= (- 0 Var) goal)` где -lower(Var) <= goal → true.
+        // Эквивалент: lower(Var) >= -goal.
+        let try_negation_upper = |inner: &SmtTerm| -> Option<bool> {
+            if let SmtTerm::App(iop, iargs) = inner {
+                if (iop != "<=" && iop != "<") || iargs.len() != 2 { return None; }
+                let goal = match &iargs[1] { SmtTerm::IntLit(n) => *n, _ => return None };
+                let effective_goal = if iop == "<" { goal.saturating_sub(1) } else { goal };
+                if let SmtTerm::App(sop, sargs) = &iargs[0] {
+                    if sop != "-" || sargs.len() != 2 { return None; }
+                    if let (SmtTerm::IntLit(0), SmtTerm::Var(v)) = (&sargs[0], &sargs[1]) {
+                        if let Some(known_low) = lower.get(v) {
+                            if known_low.saturating_neg() <= effective_goal {
                                 return Some(true);
                             }
                         }
@@ -855,6 +1085,19 @@ fn propagate_bounds(conjuncts: &[SmtTerm]) -> Vec<SmtTerm> {
                                 if *l == *n && *u == *n { return Some(false); }
                             }
                         }
+                        // Ф.39.1 (Plan 33.6): == bounds check (паритет с !=).
+                        // `(= Var IntLit(n))` — если known lower > n или known upper < n → false;
+                        // если known lower == known upper == n → true (Var pinned к n).
+                        ("=", SmtTerm::Var(v), SmtTerm::IntLit(n))
+                        | ("=", SmtTerm::IntLit(n), SmtTerm::Var(v)) => {
+                            let lo = lower.get(v);
+                            let up = upper.get(v);
+                            if let Some(l) = lo { if *l > *n { return Some(false); } }
+                            if let Some(u) = up { if *u < *n { return Some(false); } }
+                            if let (Some(l), Some(u)) = (lo, up) {
+                                if *l == *n && *u == *n { return Some(true); }
+                            }
+                        }
                         _ => {}
                     }
                 }
@@ -867,6 +1110,10 @@ fn propagate_bounds(conjuncts: &[SmtTerm]) -> Vec<SmtTerm> {
         }
         // Ф.16.3: const-mul check.
         if let Some(b) = try_const_mul_check(c) {
+            return SmtTerm::BoolLit(b);
+        }
+        // Ф.36.1: const-mul upper check.
+        if let Some(b) = try_const_mul_upper(c) {
             return SmtTerm::BoolLit(b);
         }
         // Ф.33.2: var-mul non-negative check.
@@ -885,6 +1132,14 @@ fn propagate_bounds(conjuncts: &[SmtTerm]) -> Vec<SmtTerm> {
         if let Some(b) = try_subtraction_check(c) {
             return SmtTerm::BoolLit(b);
         }
+        // Ф.35.4: subtraction upper bound check.
+        if let Some(b) = try_subtraction_upper(c) {
+            return SmtTerm::BoolLit(b);
+        }
+        // Ф.35.2: addition upper bound check.
+        if let Some(b) = try_addition_upper(c) {
+            return SmtTerm::BoolLit(b);
+        }
         // Ф.19.1: modulus check.
         if let Some(b) = try_modulus_check(c) {
             return SmtTerm::BoolLit(b);
@@ -901,6 +1156,10 @@ fn propagate_bounds(conjuncts: &[SmtTerm]) -> Vec<SmtTerm> {
         if let Some(b) = try_negation_check(c) {
             return SmtTerm::BoolLit(b);
         }
+        // Ф.36.2: negation upper check.
+        if let Some(b) = try_negation_upper(c) {
+            return SmtTerm::BoolLit(b);
+        }
         // (not <inequality>) — invert result.
         if let SmtTerm::App(op, args) = c {
             if op == "not" && args.len() == 1 {
@@ -908,6 +1167,9 @@ fn propagate_bounds(conjuncts: &[SmtTerm]) -> Vec<SmtTerm> {
                     return SmtTerm::BoolLit(!b);
                 }
                 if let Some(b) = try_const_mul_check(&args[0]) {
+                    return SmtTerm::BoolLit(!b);
+                }
+                if let Some(b) = try_const_mul_upper(&args[0]) {
                     return SmtTerm::BoolLit(!b);
                 }
                 if let Some(b) = try_var_mul_nonneg(&args[0]) {
@@ -922,6 +1184,12 @@ fn propagate_bounds(conjuncts: &[SmtTerm]) -> Vec<SmtTerm> {
                 if let Some(b) = try_subtraction_check(&args[0]) {
                     return SmtTerm::BoolLit(!b);
                 }
+                if let Some(b) = try_subtraction_upper(&args[0]) {
+                    return SmtTerm::BoolLit(!b);
+                }
+                if let Some(b) = try_addition_upper(&args[0]) {
+                    return SmtTerm::BoolLit(!b);
+                }
                 if let Some(b) = try_modulus_check(&args[0]) {
                     return SmtTerm::BoolLit(!b);
                 }
@@ -932,6 +1200,9 @@ fn propagate_bounds(conjuncts: &[SmtTerm]) -> Vec<SmtTerm> {
                     return SmtTerm::BoolLit(!b);
                 }
                 if let Some(b) = try_negation_check(&args[0]) {
+                    return SmtTerm::BoolLit(!b);
+                }
+                if let Some(b) = try_negation_upper(&args[0]) {
                     return SmtTerm::BoolLit(!b);
                 }
             }
@@ -1024,5 +1295,53 @@ mod tests {
         let inner = SmtTerm::App("or".into(), vec![f.clone(), t]);
         let outer = SmtTerm::App("or".into(), vec![f, inner]);
         assert_eq!(simplify(&outer), SmtTerm::BoolLit(true));
+    }
+
+    #[test]
+    fn simplify_subtraction_cancels_addition() {
+        // Ф.41.1: (a + b) - b → a.
+        let a = SmtTerm::Var("a".into());
+        let b = SmtTerm::Var("b".into());
+        let add = SmtTerm::App("+".into(), vec![a.clone(), b.clone()]);
+        let sub = SmtTerm::App("-".into(), vec![add, b]);
+        assert_eq!(simplify(&sub), a);
+    }
+
+    #[test]
+    fn simplify_subtraction_cancels_first_arg() {
+        // Ф.41.1: (a + b) - a → b.
+        let a = SmtTerm::Var("a".into());
+        let b = SmtTerm::Var("b".into());
+        let add = SmtTerm::App("+".into(), vec![a.clone(), b.clone()]);
+        let sub = SmtTerm::App("-".into(), vec![add, a]);
+        assert_eq!(simplify(&sub), b);
+    }
+
+    #[test]
+    fn simplify_addition_restores_sub() {
+        // Ф.43.1: (a - b) + b → a.
+        let a = SmtTerm::Var("a".into());
+        let b = SmtTerm::Var("b".into());
+        let sub = SmtTerm::App("-".into(), vec![a.clone(), b.clone()]);
+        let add = SmtTerm::App("+".into(), vec![sub, b]);
+        assert_eq!(simplify(&add), a);
+    }
+
+    #[test]
+    fn simplify_addition_negation_zero() {
+        // Ф.43.2: a + (0 - a) → 0.
+        let a = SmtTerm::Var("a".into());
+        let neg = SmtTerm::App("-".into(), vec![SmtTerm::IntLit(0), a.clone()]);
+        let add = SmtTerm::App("+".into(), vec![a, neg]);
+        assert_eq!(simplify(&add), SmtTerm::IntLit(0));
+    }
+
+    #[test]
+    fn simplify_mul_neg_one_negates() {
+        // Ф.44.1: -1 * a → 0 - a.
+        let a = SmtTerm::Var("a".into());
+        let mul = SmtTerm::App("*".into(), vec![SmtTerm::IntLit(-1), a.clone()]);
+        let expected = SmtTerm::App("-".into(), vec![SmtTerm::IntLit(0), a]);
+        assert_eq!(simplify(&mul), expected);
     }
 }

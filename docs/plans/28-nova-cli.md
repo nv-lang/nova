@@ -1,7 +1,7 @@
 # План 28: `nova` CLI binary
 
-**Статус:** план, не начат.
-**Дата создания:** 2026-05-11.
+**Статус:** ✅ ЗАКРЫТ 2026-05-18 (Ф.0-Ф.7; nova-cli/ crate, все субкоманды реализованы, run_tests.ps1/run_tests.sh/regen_runtime.ps1 удалены).
+**Дата создания:** 2026-05-11. **Обновлён:** 2026-05-18.
 **Тип:** инфраструктурный (DX). Заменяет run_tests.ps1 / run_tests.sh / regen_runtime.ps1 единым Rust-бинарём.
 
 ---
@@ -379,3 +379,21 @@ fn find_repo_root() -> Result<PathBuf> {
 - [Plan 24](24-cross-platform-test-runner.md) — движок test-runner (остаётся в nova-codegen)
 - [Plan 26](26-test-runner-hardening.md) — hardening test-runner (уже закрыт, переиспользуется)
 - [Plan 03](03-package-ecosystem-roadmap.md) — будущий полный `nova` CLI (self-host, package manager)
+
+---
+
+## Implementation log
+
+- **2026-05-18** — `nova-cli/` crate реализован. Команды в `src/main.rs`:
+  - `nova check` — type-check файл или директорию (Plan 36 R7/R10, polymorphic path)
+  - `nova run` — запустить файл через интерпретатор
+  - `nova build` — компилировать .nv → native binary
+  - `nova test` — запустить тесты (файл или директория, все флаги из плана)
+  - `nova test-build` — build + run одного test-файла (IDE/CI)
+  - `nova regen-runtime` — регенерировать runtime stubs (заменяет regen_runtime.ps1)
+  - `nova doc` — генерация документации (Plan 45, D107: markdown/json, --test, --check, --watch, --coverage, --diff, --scrape-examples, --output-dir, MCP)
+  - `nova doc-query` — query JSON doc output через DSL (Plan 45 Ф.32.1)
+  - `nova doc-mcp` — MCP server JSON-RPC over stdio (Plan 45 Ф.32.3)
+  - `migrate_plan60`, `migrate_plan65` — one-shot migration binaries (src/bin/)
+  - Зависимости: `clap`, `anyhow`, `serde_json`, `nova_codegen`
+  - Plan 36 R7 exit codes (0/1/2/101), R10 `--color auto|always|never`

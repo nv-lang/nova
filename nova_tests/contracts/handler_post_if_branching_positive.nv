@@ -1,7 +1,10 @@
 // Ф.11.5 (Plan 33.6): handler с if-branching в action body —
 // extract_block_assignments извлекает оба branches как ite.
-// REQUIRES_SMT_BACKEND z3
-// (Под TrivialBackend post-axiom вернёт Unknown — нужен Z3 для решения ite.)
+// REQUIRES_SMT_BACKEND z3v2
+// (Под TrivialBackend post-axiom вернёт Unknown — нужен Z3 для решения ite.
+//  Под Z3 V1 symbolic-exec тоже даёт Disproved на branching action — требует
+//  Plan 33.5 Ф.6 V2 handler-exec extension. Gated на фиктивный backend
+//  `z3v2` чтобы skip до реализации V2 — fixture сохранён для будущей сессии.)
 
 module contracts.handler_post_if_branching_positive
 

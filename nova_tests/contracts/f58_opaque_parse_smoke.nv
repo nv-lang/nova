@@ -1,0 +1,25 @@
+// Plan 33.9 Ф.1 V1 smoke test — parser accepts #opaque + #fuel + reveal.
+
+module contracts.f58_opaque_parse_smoke
+
+// #opaque + #pure + #fuel(2) — все три attribute composable.
+#opaque #pure #fuel(2)
+fn opaque_helper(x int) -> int
+    requires x >= 0
+    ensures result >= 0
+=> x + x
+
+// Caller uses reveal — parser принимает statement.
+#verify
+fn use_opaque(n int) -> int
+    requires n >= 0
+    ensures result >= 0
+{
+    reveal opaque_helper
+    opaque_helper(n)
+}
+
+test "opaque + reveal + fuel parse smoke" {
+    assert(opaque_helper(5) == 10)
+    assert(use_opaque(7) == 14)
+}

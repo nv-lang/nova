@@ -1,0 +1,19 @@
+// EXPECT_COMPILE_WARNING W2403
+//
+// Plan 33.9 Ф.6.2: `#opaque` fn никогда не reveal'ится → W2403 (dead opaque).
+
+module contracts.f58_dead_opaque_w2403
+
+#opaque #pure
+fn never_revealed(x int) -> int
+=> x * 2
+
+// Caller просто использует fn без reveal — opaque body не доступен SMT.
+// Но никто не делает reveal — opaque бесполезно.
+#verify
+fn use_it(n int) -> int
+    requires n >= 0
+    ensures result >= 0
+{
+    n
+}

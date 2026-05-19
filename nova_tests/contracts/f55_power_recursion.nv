@@ -1,0 +1,17 @@
+// Plan 33.19 (extending Ф.14 Dafny-port): power step с invariant.
+// V1: single multiplication step (Ф.37.2 strict positive product).
+
+module contracts.f55_power_recursion
+
+#verify
+fn pow_step(acc int, base int) -> int
+    requires acc >= 1
+    requires base >= 1
+    ensures result > 0
+{
+    acc * base
+}
+
+test "power step" {
+    assert(pow_step(2, 3) == 6)
+}

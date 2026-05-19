@@ -1,7 +1,7 @@
 // Ф.25.2 negative (Plan 33.6): `ensures len > 0` не доказуем без bounds.
 // Trivial знает только `len >= 0` (non-negative), upper bound — нет.
 // REQUIRES_SMT_BACKEND z3
-// EXPECT_COMPILE_ERROR `#verify` failed
+// EXPECT_COMPILE_ERROR contract violation in `data_len_positive`
 
 module contracts.trivial_string_len_fail
 

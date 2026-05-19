@@ -1,0 +1,48 @@
+// Plan 65 R18 f4: ChanReader.close_after(Duration.ZERO) → already-closed.
+// Positive: zero Duration -> channel closed immediately, recv returns None
+// without yielding. AD3 / R5 fast-path: no libuv timer allocation.
+
+module plan65.f4_zero_duration
+
+import std.time.duration
+
+test "zero Duration produces an already-closed reader" {
+    // NOTE: use Duration.from_nanos(0) rather than the Duration.ZERO const —
+    // const-access through Path-form does not currently inherit the record
+    // type in infer_expr_c_type (orthogonal codegen limitation, not Plan 65).
+    // Once that is fixed, the line below can read `Duration.ZERO`.
+    let mut got_none = false
+    supervised {
+        spawn {
+            let t = ChanReader.close_after(Duration.from_nanos(0))
+            let v = t.recv()
+            // No timer allocated; recv immediately returns None.
+            got_none = v.is_none()
+        }
+    }
+    assert(got_none)
+}
+
+test "zero Duration via from_secs(0) — equivalent fast-path" {
+    let mut got_none = false
+    supervised {
+        spawn {
+            let t = ChanReader.close_after(Duration.from_secs(0))
+            let v = t.recv()
+            got_none = v.is_none()
+        }
+    }
+    assert(got_none)
+}
+
+test "zero Duration via from_nanos(0) — equivalent fast-path" {
+    let mut got_none = false
+    supervised {
+        spawn {
+            let t = ChanReader.close_after(Duration.from_nanos(0))
+            let v = t.recv()
+            got_none = v.is_none()
+        }
+    }
+    assert(got_none)
+}

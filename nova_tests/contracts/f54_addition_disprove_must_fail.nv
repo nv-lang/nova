@@ -1,0 +1,14 @@
+// EXPECT_COMPILE_ERROR error
+//
+// Ф.54 (test pack): негативный guard для Ф.30.2 addition strict.
+// `requires x >= 0; ensures (x+1) > 100` — недоказуемо (x может быть 0 → 1 < 100).
+
+module contracts.f54_addition_disprove_must_fail
+
+#verify
+fn add_unprovable(x int) -> int
+    requires x >= 0
+    ensures result > 100
+{
+    x + 1
+}

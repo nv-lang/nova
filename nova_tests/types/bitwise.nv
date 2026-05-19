@@ -126,7 +126,7 @@ test "byte mask via & 0xFF" {
     assert((v & 0xFF) == 0x78)
 }
 
-test "extract high byte via >> + &" {
+test "extract high u8 via >> + &" {
     let v = 0x12345678
     assert(((v >> 24) & 0xFF) == 0x12)
 }

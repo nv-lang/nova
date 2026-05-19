@@ -19,6 +19,10 @@ pub(crate) struct ContractAttrs {
     pub verify_timeout_ms: Option<u32>,
     pub purity: Purity,
     pub is_trusted: bool,
+    /// Plan 33.9 Ф.1: `#opaque` attribute.
+    pub is_opaque: bool,
+    /// Plan 33.9 Ф.3: `#fuel(n)` attribute.
+    pub fuel: Option<u32>,
 }
 
 impl ContractAttrs {
@@ -27,6 +31,8 @@ impl ContractAttrs {
             && self.verify_timeout_ms.is_none()
             && matches!(self.purity, Purity::Unknown)
             && !self.is_trusted
+            && !self.is_opaque
+            && self.fuel.is_none()
     }
 }
 
@@ -74,6 +80,12 @@ impl Parser {
             .unwrap_or_default()
     }
 
+    /// Disable struct-literal parsing внутри `f` (ambiguity guard для
+    /// `if x { }` / `while x { }` / etc). Сейчас current parser использует
+    /// более точный `with_no_struct_or_trailing` (см. ниже); этот helper
+    /// сохранён как minimal API для случаев когда нужен только struct-lit
+    /// guard без trailing-block.
+    #[allow(dead_code)]
     fn with_no_struct_lit<R>(
         &mut self,
         f: impl FnOnce(&mut Self) -> Result<R, Diagnostic>,
@@ -451,6 +463,12 @@ impl Parser {
     /// неожиданной позиции (например, внутри тела функции). Тихо
     /// съедает их, чтобы не валить парсинг. Lint в Ф.3 даст warning
     /// «orphan doc-comment».
+    ///
+    /// **Reserved**: текущий parser обрабатывает orphan doc-comments
+    /// inline через `match self.peek().kind { DocComment => ... }`
+    /// без отдельного helper-prologue. Helper сохранён как мечтаемая
+    /// точка консолидации этой логики (Plan 45 Ф.3 lint integration).
+    #[allow(dead_code)]
     fn skip_stray_doc_comments(&mut self) {
         while matches!(self.peek().kind, TokenKind::DocComment { .. }) {
             self.bump();
@@ -782,6 +800,10 @@ impl Parser {
         self.parse_import_inner(doc_attrs)
     }
 
+    /// Public no-attr entry point — callers use
+    /// `parse_import_with_attrs(Vec::new())` instead. Сохранён для
+    /// symmetry с D-rule attr-aware parsing semantics.
+    #[allow(dead_code)]
     fn parse_import(&mut self) -> Result<Import, Diagnostic> {
         self.parse_import_inner(Vec::new())
     }
@@ -1515,6 +1537,52 @@ impl Parser {
                     self.bump(); // trusted
                     attrs.is_trusted = true;
                 }
+                "opaque" => {
+                    // Plan 33.9 Ф.1: #opaque — body не раскрывается в SMT.
+                    // Validation (#opaque + #pure required, #opaque + #verify
+                    // conflict) — в pipeline / verify_module.
+                    self.bump(); // #
+                    self.bump(); // opaque
+                    attrs.is_opaque = true;
+                }
+                "fuel" => {
+                    // Plan 33.9 Ф.3: #fuel(n) — unfolding depth для opaque.
+                    self.bump(); // #
+                    self.bump(); // fuel
+                    if !matches!(self.peek().kind, TokenKind::LParen) {
+                        let span = self.peek().span;
+                        return Err(Diagnostic::new(
+                            "#fuel требует аргумент: `#fuel(N)`",
+                            span,
+                        ));
+                    }
+                    self.bump(); // (
+                    let n_token = self.peek().clone();
+                    let n = if let TokenKind::Int(n) = n_token.kind {
+                        self.bump();
+                        if !(0..=100).contains(&n) {
+                            return Err(Diagnostic::new(
+                                "#fuel(N) требует 0 <= N <= 100",
+                                n_token.span,
+                            ));
+                        }
+                        n as u32
+                    } else {
+                        return Err(Diagnostic::new(
+                            "#fuel требует int literal: `#fuel(2)`",
+                            n_token.span,
+                        ));
+                    };
+                    if !matches!(self.peek().kind, TokenKind::RParen) {
+                        let span = self.peek().span;
+                        return Err(Diagnostic::new(
+                            "ожидался `)` после #fuel(N)",
+                            span,
+                        ));
+                    }
+                    self.bump(); // )
+                    attrs.fuel = Some(n);
+                }
                 _ => break, // unknown #-name — не contract-attr, выходим
             }
             self.skip_newlines();
@@ -1916,6 +1984,8 @@ impl Parser {
             verify_timeout_ms: contract_attrs.verify_timeout_ms,
             purity: contract_attrs.purity,
             is_trusted: contract_attrs.is_trusted,
+            is_opaque: contract_attrs.is_opaque,
+            fuel: contract_attrs.fuel,
         })
     }
 
@@ -5890,6 +5960,22 @@ impl Parser {
                 self.bump(); // consume `calc`
                 Ok(StmtOrExpr::Stmt(self.parse_calc_stmt(start)?))
             }
+            // Plan 33.9 Ф.2: `reveal name` — раскрыть opaque fn body в SMT
+            // scope текущей fn body. Контекстуальный keyword (не резервируем
+            // `reveal` глобально). V1: parser/AST only — verify integration в V2.
+            TokenKind::Ident(ref n) if n == "reveal" => {
+                self.bump(); // consume `reveal`
+                let name = match self.peek().kind.clone() {
+                    TokenKind::Ident(n) => { self.bump(); n }
+                    _ => return Err(Diagnostic::new(
+                        "expected fn name after `reveal`",
+                        self.peek().span,
+                    )),
+                };
+                let end = self.tokens[self.pos.saturating_sub(1)].span;
+                let span = start.merge(end);
+                Ok(StmtOrExpr::Stmt(Stmt::Reveal { name, span }))
+            }
             _ => {
                 let expr = self.parse_expr()?;
                 // Assignment?
@@ -6528,7 +6614,11 @@ mod tests {
 
     #[test]
     fn fn_static_method() {
-        let m = parse_or_panic("fn Account.new(owner str) -> Account => Account { }\n");
+        // Plan 51 / D55 (record-literal type unification): `-> Account => Account { }`
+        // более не допускается — тип объявлен дважды. Тест проверяет только
+        // signature parsing (receiver kind), поэтому body — block-form (`{ }`),
+        // которая всегда валидна и не зависит от record-literal правил.
+        let m = parse_or_panic("fn Account.new(owner str) -> Account { }\n");
         let Item::Fn(f) = &m.items[0] else { panic!() };
         let r = f.receiver.as_ref().unwrap();
         assert_eq!(r.type_name, "Account");

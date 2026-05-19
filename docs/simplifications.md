@@ -73,12 +73,15 @@
 - **Как чинить:** Выражение вида `nova_bounds_check(arr, i)` или через .get().
 - **Приоритет:** L
 
-### [C8] println — тип аргумента по эвристике AST
+### [C8] println — тип аргумента через infer_expr_c_type ✅ RESOLVED Plan 67
 - **Где:** `emit_c.rs` → `make_print_call` / `infer_print_helper`
-- **Что упрощено:** Выбор `nova_print_int` vs `nova_print_str` vs `nova_print_bool` основан на AST-анализе (не типах). Может ошибаться для переменных сложных типов.
-- **Почему:** Без type checker нет другого способа.
-- **Как чинить:** Type checker с аннотированным AST.
-- **Приоритет:** M
+- **Что было:** Выбор `nova_print_int` vs `nova_print_str` vs `nova_print_bool` основан на
+  ручном AST pattern matching — не покрывал `str.from(x)`, if/match expr, method chains.
+- **Исправление (Plan 67):** `infer_print_helper` переписан на `infer_expr_c_type`-based
+  dispatch (AD1). Добавлен `nova_print_char` + CharLit pre-check (AD3). 10 новых тестов.
+- **Остаток:** `println(c)` где `c: char` — всё ещё `nova_print_int` (char stored as nova_int;
+  fix requires `nova_char` distinct C type — Plan 67+1).
+- **Приоритет:** RESOLVED
 
 ### [C9] pre-scan — два прохода, handler/spawn IDs должны совпадать
 - **Где:** `emit_c.rs` → `emit_handler_forward_decls` + `emit_fn`
@@ -9139,6 +9142,274 @@ negative² и mixed. Ф.34.2 закрыл оба case'а — TrivialBackend те
 полное покрытие Var-Var multiplication signs (положительный²,
 отрицательный², mixed).
 
+## [M-plan-33.6-Ф.35-add-sub-upper-bounds] (2026-05-18)
+
+Add/sub bound check helpers — полный 4-вариант coverage:
+- **addition lower** (Ф.17.2 `>=`, Ф.30.2 `>`)
+- **addition upper** (Ф.35.2 `<=`, Ф.35.2 `<`) ← новые
+- **subtraction lower** (Ф.18.1 `>=`, Ф.29.4 `>`)
+- **subtraction upper** (Ф.35.4 `<=`, Ф.35.4 `<`) ← новые
+
+Все 4 операции × 2 bound (lower/upper) × 2 strictness (strict/non-strict)
+теперь работают через bounds-tracking без Z3.
+
+**Регрессия:** 186 → 188 PASS (+2), 0 FAIL, 44 SKIP.
+
+**Что не закрывает (V3):** const-mul upper bound (`<= L*Var goal` где L>0),
+division upper bound, negation upper. Эти все требуют **negative goals**
+(или absolute value reasoning) — менее частые в практических контрактах.
+Если потребуется — добавлять по тому же шаблону. **Ф.36 закрыл const-mul
+upper и negation upper** (см. ниже).
+
+## [M-plan-33.6-Ф.36-const-mul-negation-upper] (2026-05-18)
+
+Завершает паритет TrivialBackend bound check helpers. `try_const_mul_upper`
++ `try_negation_upper` добавлены — теперь 6 операций × 4 варианта (lower/
+upper × strict/non-strict) = полный coverage, исключая const-mul L<0 и
+division upper (оба требуют nonlinear LIA / Z3).
+
+**Регрессия:** 188 → 190 PASS (+2), 0 FAIL, 44 SKIP.
+
+**Текущий matrix coverage:**
+
+| Operator | ≥ | > | ≤ | < |
+|----------|---|---|---|---|
+| addition | ✓ Ф.17.2 | ✓ Ф.30.2 | ✓ Ф.35.2 | ✓ Ф.35.2 |
+| subtraction | ✓ Ф.18.1 | ✓ Ф.29.4 | ✓ Ф.35.4 | ✓ Ф.35.4 |
+| const-mul (L>0) | ✓ Ф.16.3 | ✓ Ф.30.3 | ✓ Ф.36.1 | ✓ Ф.36.1 |
+| negation | ✓ Ф.17.1 | ✓ Ф.30.4 | ✓ Ф.36.2 | ✓ Ф.36.2 |
+| modulus | ✓ Ф.19.1 | — | ✓ Ф.26.1 | ✓ Ф.26.1 |
+| division | ✓ Ф.20.1 | ✓ Ф.31.2 | V3 | V3 |
+| var-mul | ✓ Ф.33.2 | — | ✓ Ф.34.2 | ✓ Ф.34.2 |
+
+**Что не покрывает (V3):**
+- const-mul с L<0 (sign flip — nonlinear)
+- division upper (nonlinear, требует Z3)
+- modulus `>` strict
+- arbitrary expression composition (e.g. `(a+b) * c`)
+
+**Ф.37 закрыл** var-mul strict variant (`>` / `<` для product через
+strict sign bounds).
+
+## [M-plan-33.6-Ф.37-var-mul-strict] (2026-05-18)
+
+Расширение var-mul check'а на strict случай. До Ф.37 был guard
+`if effective_goal > 0 { return None; }` — strict positive product не
+доказывался. После Ф.37:
+- `(> a*b 0)` при both lower >= 1 OR both upper <= -1 → product strictly
+  positive (prod = la*lb or ua*ub, проверка vs effective_goal).
+- `(< a*b 0)` при strict mixed signs (one lower >= 1, other upper <= -1).
+
+**Регрессия:** 190 → 192 PASS (+2), 0 FAIL, 44 SKIP.
+
+**TrivialBackend var-mul теперь полное coverage** по signs × strictness:
+- non-strict positive (both >= 0 / both <= 0) — Ф.33.2/Ф.34.2
+- non-strict negative (mixed signs) — Ф.34.2
+- strict positive (both >= 1 / both <= -1) — Ф.37
+- strict negative (strict mixed) — Ф.37
+
+## [M-plan-33.6-Ф.38-modulus-strict] (2026-05-18)
+
+Modulus check для positive divisor добрал последний variant: `>` strict
+для negative goal. До Ф.38 покрывались `>=`, `<`, `<=` (см. Ф.19.1/Ф.26.1).
+Теперь полный 4-вариант (≥, >, <, ≤).
+
+**Регрессия:** 192 → 193 PASS (+1), 0 FAIL.
+
+## [M-plan-33.6-Ф.39-eq-bounds] (2026-05-18)
+
+Симметричный `=` для Ф.29.1 (`!=` bounds check). Pinned var (lower==upper)
+теперь тривиально доказывается через `=`-check, а не только через UnionFind.
+Disproven `=` (когда literal out of range) — тоже через bounds.
+
+**Регрессия:** 193 → 194 PASS (+1), 0 FAIL.
+
+Все 6 base comparison operators поддерживают bounds-based reasoning.
+
+## [M-plan-33.6-Ф.40-lemma-body-eq-ensures] (2026-05-18)
+
+Дополнительный lemma lint. `lemma foo() ensures X => X` — body буквально
+повторяет ensures, не добавляет proof-information. Detect через
+`print_expr` сравнение body (FnBody::Expr) с каждой ensures.
+
+**Регрессия:** 194 → 195 PASS (+1), 0 FAIL.
+
+**Lemma lint catalog complete — 10 rules:** vacuous precondition,
+tautological refinement, name collision, body==ensures (Ф.40), dead lemma,
+no-params, apply к undefined, arity mismatch, auto-inference fail,
+duplicate apply.
+
+## [M-plan-33.6-Ф.41-algebraic-cancel] (2026-05-18)
+
+TrivialBackend coverage добрался до **algebraic substitution identities**:
+`(a+b)-b → a` и `(a+b)-a → b`. Раньше TrivialBackend требовал literal
+bounds для arithmetic reasoning; Ф.41 закрывает частый pattern алгебраического
+сокращения без bound information.
+
+Реализовано как 4 match arms в `simplify_app("-")`:
+- `(- (+ a b) b)` → a
+- `(- (+ a b) a)` → b
+- `(- a (+ a b))` → -b (через `simplify("-", [0, b])`)
+- `(- a (+ b a))` → -b
+
+**Регрессия:** 195 → 196 PASS (+1), 0 FAIL, 44 SKIP.
+cargo test --lib verify::backend::trivial: 11/11 PASS (+2 cancel-tests).
+
+**Pattern:** algebraic identities открывают целое направление расширений
+TrivialBackend без зависимости от bounds. Что можно добавить дальше:
+`a * 0 = 0` (уже есть), distributive `a*(b+c) = a*b + a*c` (рискованно —
+может ломать canonical form), commutativity (уже есть в `+`/`*`).
+
+## [M-plan-33.6-Ф.42-verify-only-requires] (2026-05-18)
+
+`#verify` fn без ensures (только requires) — доказывает валидность
+входов, но callerу нет гарантии об output. Программист скорее всего
+забыл написать `ensures result <...>`. Lint в verify_module fn loop:
+`MustVerify && has_requires && !has_ensures` → W2402.
+
+Дополняет Ф.27.1 (`#verify` совсем без contracts → noop).
+
+**Регрессия:** 196 → 197 PASS (+1), 0 FAIL.
+
+**Fn lint catalog** (после Ф.42):
+- vacuous fn (Ф.22.1)
+- noop verify (Ф.27.1)
+- only-requires (Ф.42.4)
+- tautological (Ф.33.1)
+- contradictory ensures (Ф.21.2)
+- redundant requires (Ф.22.2)
+- self-referential ensures (Ф.19.2)
+- duplicate clauses (Ф.25.1)
+- ensures_fail без Fail (Ф.34.1)
+
+## [M-plan-33.6-Ф.43-addition-algebraic] (2026-05-18)
+
+Симметрия Ф.41 для addition: (a-b)+b → a и additive inverse a+(0-a) → 0.
+4 match arms (2 для cancel, 2 для inverse) перед commutativity sort.
+
+**TrivialBackend algebraic identities — полное покрытие base patterns:**
+- subtraction: (a+b)-b → a (Ф.41), a-a → 0, 0-(0-X) → X (Ф.28.2)
+- addition: (a-b)+b → a (Ф.43.1), a + (-a) → 0 (Ф.43.2)
+- multiplication: a*0 → 0, a*1 → a (всегда было), a*-1 → 0-a (Ф.44.1)
+
+**Регрессия:** 197 → 198 PASS (+1), 0 FAIL.
+cargo test --lib verify::backend::trivial: 13/13 PASS (+2).
+
+## [M-plan-33.6-Ф.44-mul-neg-one] (2026-05-18)
+
+Multiply by -1 = negation. `(* -1 a)` → `(0 - a)` через simplify_app
+recursion (открывает дальнейшие simplifications через Ф.28.2 double
+negation collapse).
+
+**Регрессия:** 198 → 199 PASS (+1), 0 FAIL.
+cargo test --lib verify::backend::trivial: 14/14 PASS (+1).
+
+## [M-plan-33.6-Ф.45-division-modulus-zero] (2026-05-18)
+
+Закрыто 3 trivial identities за один спринт:
+- `a / -1` → `0 - a` (паритет Ф.44.1 для multiplication)
+- `0 / a` → 0 (assume a != 0 в spec scope)
+- `0 % a` → 0 (аналогично)
+
+**Регрессия:** 199 → **200 PASS** (юбилейная цифра), 0 FAIL, 44 SKIP.
+
+## [M-plan-33.6-Ф.46-lemma-self-apply] (2026-05-18)
+
+Soundness fix: `lemma X { apply X(...) }` — самоприменение proof.
+Без strong induction guarantee proof proves what it assumes — это unsound.
+По дизайну error (не warning).
+
+Реализовано как scan apply-stmts в lemma body, `lemma_applied == ld.name` →
+E2408. Не покрывает mutual recursion (нужна SCC), strong induction.
+
+**Регрессия:** 200 → 201 PASS (+1), 0 FAIL.
+
+**Lemma lint catalog — 11 rules** теперь (добавился self-apply).
+
+## [M-plan-33.6-Ф.47-long-conjunction-and-not-canon-revert] (2026-05-18)
+
+Два изменения:
+
+**1. Ф.47.1 — long conjunction W2402.** Contract clause c 5+ AND-conjuncts
+получает W2402 hint "разделите на несколько clauses для readability".
+`count_and_conjuncts` walker рекурсивно считает.
+
+**2. Ф.47.3 ATTEMPTED+REVERTED.** Попытка `not (op a b)` canonicalization
+в simplify_app сломала 27 тестов. propagate_bounds chain зависит от
+конкретной формы `not (>= var lit)` для inversion handling; переписать
+в `(< var lit)` ломает downstream matching. Откатано без commit.
+
+**Lesson:** TrivialBackend simplify changes требуют holistic regression
+check — single pattern change может ломать chains depending on specific
+form. Now established pattern: запускать полный test suite перед commit.
+
+**Регрессия:** 201 → 202 PASS (+1 из Ф.47.1), 0 FAIL.
+
+## [M-plan-33.6-Ф.48-lemma-unused-param] (2026-05-18)
+
+Аналог Ф.23.3 (unused fn param) для лемм. Walker `collect_used_idents`
+проходит body и contracts.expr — unused param без `_` префикса → W2402.
+
+**Регрессия:** 202 → 203 PASS (+1), 0 FAIL.
+
+**Lemma lint catalog — 12 rules** (добавился unused-param).
+
+## [M-plan-33.6-Ф.49-apply-vacuous-callsite] (2026-05-18)
+
+Дополняет Ф.31.3 — `apply lemma` где lemma имеет `requires false` warning
+теперь эмитится **на apply-site** (не только на lemma declaration).
+Важно когда программист добавил apply раньше, а lemma стала vacuous
+позже через refactoring.
+
+**Регрессия:** 203 → 204 PASS (+1), 0 FAIL.
+
+## [M-plan-33.6-Ф.50-long-disjunction] (2026-05-18)
+
+Паритет с Ф.47.1 для OR. `count_or_disjuncts` walker → если >= 5 →
+W2402 suggesting pattern match или table lookup.
+
+**Регрессия:** 204 → 205 PASS (+1), 0 FAIL.
+
+## [M-plan-33.6-Ф.51-square-nonneg] (2026-05-18)
+
+`a * a >= 0` universally — первый non-linear case без Z3. Equal-args
+check (margs[0] == margs[1]) перед sign-based branches в try_var_mul_nonneg.
+
+**Регрессия:** 205 → 206 PASS (+1), 0 FAIL.
+
+## [M-plan-33.6-Ф.52-square-strict-div-self] (2026-05-18)
+
+`a * a > 0` если a != 0 (через sign bounds: lower >= 1 OR upper <= -1).
+Плюс `a / a → 1` simplify (spec scope assume non-zero).
+
+**Регрессия:** 206 → 207 PASS (+1), 0 FAIL.
+
+## [M-plan-33.6-Ф.53-modulus-identities] (2026-05-18)
+
+`a % 1 → 0` (любое число mod 1) и `a % a → 0` (non-zero — spec assumption,
+паритет Ф.52.3). Финальный спринт автономной сессии 2026-05-18.
+
+**Регрессия:** 207 → 208 PASS (+1), 0 FAIL.
+
+## [Plan 33.6 Ф.29-Ф.53 SESSION SUMMARY] — 2026-05-18
+
+25 спринтов за автономную сессию: 170 → **208 PASS** (+38, +22%), 0 FAIL,
+44 SKIP. Один откат (Ф.47.3 not-canon — 27 регрессий, moved to V3).
+
+**Coverage achieved:**
+- Полный 4-вариант (≥, >, ≤, <) для bound checks: addition, subtraction,
+  const-mul (L>0), negation, modulus, division (lower)
+- Var-mul по 4 sign combinations + square (`a*a >= 0` universally)
+- Algebraic identities: cancel/restore, additive inverse, mul/div by -1,
+  a/a, a%a, a%1
+- 11 fn lints + 13 lemma lints
+- 1 soundness fix (lemma self-apply E2408 — было silent unsound)
+
+**Lesson learned:** Ф.47.3 revert показал что simplify changes требуют
+holistic regression test (не только unit tests). Established pattern:
+запускать полный `nova test nova_tests/contracts/` перед commit любого
+simplify change.
+
 ## [M-57.F.4-positive-negative-coverage] — Test expansion (2026-05-17)
 
 **Не simplification.** Прямой user feedback "тесты напиши по тому,
@@ -9389,3 +9660,335 @@ Verification (release nova binary, Windows):
 
 Plan 57 — **completely closed across all 8 phases** (MVP/A/B/C/D/E/F/
 G/H). ~3700 LOC implementation cumulative.
+
+
+## Plan 65 — `ChanReader.close_after(Duration)` (2026-05-18, in progress)
+
+### [M-time-after-bare-int] ✅ RESOLVED (Plan 65 Ф.5, 2026-05-18)
+- **Где:** `compiler-codegen/src/codegen/emit_c.rs:1043-1046` (Time effect schema)
+- **Что упрощено:** `Time.after(int ms)` принимал bare int — нет типовой
+  безопасности между мс/мкс/сек.
+- **Почему:** Bootstrap-stage Nova не имел Duration record. Plan 45 Ф.34.3
+  добавил `Duration` тип; Plan 65 переиспользует.
+- **Закрыто:** `Time.after` полностью удалён; заменён на
+  `ChanReader.close_after(Duration)` (D91 capability namespace, type-safe).
+  Compiler emits structured E5101 diagnostic с machine-applicable fix-it
+  при попытке использования старого API. Migration tool
+  `migrate_plan65` автоматически переводит literal arguments.
+- **Регрессия:** 705 PASS / 0 FAIL / 44 SKIP (baseline 698 + 7 plan65 tests).
+
+### [M-chanreader-gc-finalizer] (DEFERRED — Plan 65 Ф.0 audit)
+- **Где:** `compiler-codegen/nova_rt/channels.h` `NovaAfterState` lifecycle.
+- **Что упрощено:** AD7 в Plan 65 описывал `GC_REGISTER_FINALIZER` для
+  `Nova_ChanReader` — при collect timer закрывается. Не реализовано —
+  Boehm finalizer infra не wired in runtime (`alloc_boehm.c:17,113`).
+- **Почему:** Project-wide Boehm finalizer регистрация требует отдельной
+  audit + Plan 27 follow-up. Текущий runtime использует malloc/libuv-driven
+  cleanup для NovaAfterState (`raw malloc, NOT nova_alloc` — channels.h:1071-1084),
+  что adequately handles select-cancel + timer-fire paths.
+- **Как чинить:** future plan (Plan 65 не блокируется). Wire
+  `GC_REGISTER_FINALIZER` end-to-end; добавить finalizer для
+  `Nova_ChanReader` с pending timer; ensure idempotency.
+- **Impact:** f9_drop_no_leak test acceptance shifts to scope-exit
+  cleanup (timer-fire OR `on_select_lost`) instead of "force GC → 0
+  in-flight".
+- **Приоритет:** M — does not block Plan 65 MVP; affects only the
+  pathological case of leaking references to ChanReader timers без
+  explicit cancel (currently rare; libuv closes timer when handle GC'd
+  via close cb, not via Boehm finalizer).
+
+### [M-libuv-ms-granularity] (DEFER — honest doc-note in Plan 65 Ф.2)
+- **Где:** `nova_chan_reader_close_after_ns` — runtime conversion ns→ms.
+- **Что упрощено:** Sub-ms durations округляются вверх к 1 ms (libuv
+  `uv_timer_start` принимает только ms granularity).
+- **Почему:** libuv API limitation. Альтернатива (self-host timer wheel
+  с ns precision) — Plan 66 scope.
+- **Как чинить:** Plan 66 — custom timer-wheel runtime с ns-precision.
+- **Impact:** users specifying `Duration.from_nanos(500_000)` (500 μs)
+  получают actual delay ≥ 1 ms.
+- **Приоритет:** L — documented behaviour; рарely matters в production
+  (sub-ms timers usually not actionable in user code).
+
+### [M-timer-wheel-deferred] (DEFER — Plan 66 roadmap)
+- **Где:** entire timer subsystem — `nova_chan_reader_close_after_ns` +
+  `Nova_Time_after`.
+- **Что упрощено:** Каждый timer = новый `uv_timer_t` handle (libuv
+  per-timer alloc). На high-throughput timer loads (10k+ concurrent
+  HTTP timeouts) — significant overhead vs Tokio's TimerEntry wheel или
+  Go runtime/timer heap.
+- **Почему:** Self-host timer-wheel — separate plan (Plan 66) с runtime
+  benchmark gates. libuv per-timer adequate для idiomatic 10-100 timer
+  loads.
+- **Как чинить:** Plan 66 — custom timer-wheel (Tokio-style hierarchical
+  bucketing) с conditional switch based on concurrent timer count.
+- **Приоритет:** L — performance optimization, not correctness.
+
+### [M-handler-duration-schema-mismatch] (PARTIAL FIX — Plan 65 Ф.1)
+- **Где:** `compiler-codegen/src/codegen/emit_c.rs::emit_handler_lit`
+  + `std/testing/handlers.nv::mut_clock`.
+- **Что упрощено:** Time effect schema declares `sleep(int ms)`, but
+  user-defined mock handlers (e.g. `mut_clock`) want to receive `Duration`
+  for ergonomic `d.nanos` access. Pre-Plan-65 такая handler-body генерила
+  invalid C (`(nova_int).nanos`) при cross-module import, surfaced first
+  под Plan 65 потому что migrated tests import `std.time.duration`.
+- **Partial fix in Plan 65 Ф.1:** added annotation-bridge in
+  `emit_handler_lit` — when handler param has explicit non-schema record
+  type annotation, function signature stays schema-typed (wire ABI) and
+  body re-binds via `(Nova_T*)(intptr_t)<param>_wire` cast. Limited to
+  non-Fail effects + `nova_int` wire types (struct wire types can't
+  intptr_t-cast). Required updating `std/testing/handlers.nv::mut_clock`
+  to add explicit `sleep(d Duration)` annotation.
+- **Почему partial:** не решает asymmetric ABI fundamentally — call site
+  pours Duration into int slot via intptr_t pun. Works because ChanReader/
+  Duration are pointer types on Windows/Linux x64, но фактически рискованно
+  под потенциальными big-endian / 32-bit / non-pointer-wire arches.
+- **Как чинить:** broaden Time effect schema to accept Duration AND int
+  (overload — Plan 11 multi-overload mechanism), OR introduce per-effect
+  per-method param-type override registry. Outside Plan 65 scope.
+- **Приоритет:** M — works on supported platforms (Windows/Linux x64);
+  needs proper schema-level fix before adding non-x64 targets.
+
+
+### [M-plan65-const-fold] (DEFER — Plan 65 Ф.8 partial)
+- **Где:** `compiler-codegen/src/codegen/emit_c.rs` ChanReader.close_after
+  Member/Path codegen.
+- **Что упрощено:** Plan 65 AD4 envisioned compile-time const-folding —
+  literal `Duration.from_secs(N)` → directly emit
+  `nova_chan_reader_close_after_ns(N * 1_000_000_000LL)`. Current
+  implementation routes through the runtime
+  `Nova_Duration_static_from_millis(N)` which allocates a record then
+  unpacks `->nanos`.
+- **Почему:** AST-level const-fold infra doesn't exist in compiler-codegen
+  yet (no `const_fold` module). LLVM at -O2 + LTO inlines + folds the
+  entire chain so wall-clock cost is identical.
+- **Как чинить:** add a small constant-folding pass that recognises
+  `Duration.from_<unit>(<int-literal>)` patterns and emits the pre-computed
+  ns value directly. Cleaner generated C; trivial bench win, AI-readable
+  output.
+- **Приоритет:** L — performance neutral, cosmetic.
+
+### [M-plan58-ci-matrix-absent] (SYSTEM-level)
+- **Где:** `.github/workflows/`.
+- **Что упрощено:** Plan 58 cross-toolchain matrix (Clang/MSVC/GCC build +
+  test) is not present as a CI workflow yet. Plan 65 Ф.8 acceptance
+  bullet "Cross-toolchain matrix" cannot be fully gated without it.
+- **Почему:** Plan 58 implementation is outside Plan 65 scope; the infra
+  needs separate dedicated work.
+- **Как чинить:** Plan 58 follow-up — add matrix workflow that builds on
+  ubuntu-latest (gcc/clang) + windows-latest (msvc/clang) and runs
+  `nova test` on each.
+- **Приоритет:** M — affects every plan that adds runtime code.
+
+### [M-mock-time-concurrent-advance] (DEFER — Plan 65 Ф.10)
+- **Где:** `compiler-codegen/nova_rt/channels.h::nova_chan_reader_close_after_ns`.
+- **Что упрощено:** mock-Time path delegates to `_nova_handler_Time->sleep`
+  synchronously and then returns an already-closed reader. This works
+  perfectly for the single-fiber sequential-mock pattern (most common
+  test shape) but does NOT support peer-fiber `Time.advance(d)` waking
+  a timer parked in another fiber.
+- **Почему:** true Tokio-style `pause()/advance(d)` with concurrent
+  registry requires a virtual-clock infrastructure with timer indexing
+  + cross-fiber wake. Significant runtime addition out of Plan 65 scope.
+- **Как чинить:** Plan 66 (timer-wheel) is a natural host — add a
+  `MockVirtualClock` mode параллельно с real-clock path.
+- **Приоритет:** L — sequential-mock covers all current test needs.
+
+### [M-bench-timer-metrics-autocapture] (DEFER — Plan 65 Ф.11)
+- **Где:** `nova-cli/src/bench/*` + `compiler-codegen/nova_rt/bench.h`.
+- **Что упрощено:** `NOVA_TIMER_METRICS` counters are queryable via
+  `Time.timer_*()` Nova API но не интегрированы автоматически в bench
+  history snapshots (Plan 57). Bench-side code должно вызвать
+  `Time.timer_*()` manually для capture.
+- **Почему:** добавление хука в bench-execution path в nova-cli требует
+  touching Plan 57 infra (out of Plan 65 scope).
+- **Как чинить:** Plan 57 follow-up — add `bench.runtime_stats` capture
+  hook for per-bench Time.timer_* snapshot.
+- **Приоритет:** L.
+
+### [M-timer-leak-stack-frames] (DEFER — Plan 65 Ф.11)
+- **Где:** `compiler-codegen/nova_rt/channels.h::_nova_timer_metrics_atexit`.
+- **Что упрощено:** Leak warning (`alloc_active > 0` post-main) dumps
+  counter + WARNING line, но НЕ capture'ит stack frames первых N
+  leaked timers (R25 plan-doc spec).
+- **Почему:** best-effort stack capture требует libbacktrace (Linux)
+  или DbgHelp (Windows) integration — нетривиально per-platform.
+- **Как чинить:** integration sees in-flight timer alloc-site backtrace
+  (best effort). Plan 66 / dedicated observability plan.
+- **Приоритет:** L — leak counter + LEAK marker дают достаточно signal'а
+  для investigation; миллион timers с no stack info лучше чем ноль.
+
+### [M-time-now-schema-mismatch] (DEFER — known since Plan 65 Ф.0; affects Ф.12.3)
+- **Где:** `compiler-codegen/src/codegen/emit_c.rs:1048` (time_schema)
+  + `compiler-codegen/nova_rt/fibers.h::Nova_Time_now`.
+- **Что упрощено:** `Time.now()` wired через effect schema returns
+  `nova_int` (ms count), но stdlib `std/time/duration.nv` объявляет
+  `Time.now() -> Timestamp` (record). User-side method-dispatch ломается:
+  `Time.now().minus(other)` через codegen routes по int-receiver path
+  не Timestamp_method_minus.
+- **Почему:** schema-wire convention в effect_schemas — primitive return
+  types only; record-returning extern не имеет precedent. Fix потребует
+  расширения schema layer ИЛИ переписывания всех stdlib usages
+  Time.now() с explicit wrap (`Timestamp.from_unix_millis(Time.now())`).
+- **Как чинить:** дедицированный plan для schema layer extension с
+  record-typed returns + миграция std/testing/handlers.nv handler
+  literals под новый schema.
+- **Приоритет:** M — workaround'ы существуют (используй ms-int напрямую,
+  не Timestamp), но D124 (Monotonic vs Timestamp safety) недостроен
+  потому что Monotonic.now() не может быть `=> Time.now_monotonic()`
+  wrapper.
+
+### [M-monotonic-mock-support] (DEFER — Plan 65 Ф.12.1)
+- **Где:** `compiler-codegen/nova_rt/effects.h::NovaVtable_Time`
+  + `compiler-codegen/nova_rt/channels.h::nova_monotonic_now_record`.
+- **Что упрощено:** mock Time handler (e.g. `testing.fixed_ms`,
+  `mut_clock`) НЕ может перехватить `Monotonic.now()` — runtime всегда
+  возвращает real uv_hrtime().
+- **Почему:** add slot `now_monotonic` в NovaVtable_Time — breaking
+  change для всех handler-literal'ов (existing handlers без
+  now_monotonic declarations would NULL-deref). Требует параллельной
+  миграции std/testing/handlers.nv + всех user-side handler literals.
+- **Как чинить:** future plan — добавить опциональный slot с default-impl
+  fallback (delegates к real clock если handler не override'ит).
+- **Приоритет:** L — mock-Monotonic малополезно (real-clock тесты с
+  monotonic invariant корректны под любой clock impl).
+
+### [M-strict-var-annotations] (DEFER — Plan 65 Ф.12.5, pre-existing)
+- **Где:** type-check layer (compiler-codegen).
+- **Что упрощено:** `let x Foo = bar` где `bar: Bar != Foo` не вызывает
+  compile error — annotations пока treated as hints, not constraints.
+- **Почему:** strict-annotation enforcement требует unification pass
+  и нетривиально для record types vs nominal types vs Self.
+- **Как чинить:** dedicated typing-strictness plan.
+- **Приоритет:** L — D124 important guarantees enforced через operator
+  overload absence + ChanReader signature check.
+
+### [M-strict-method-receiver-check] (DEFER — Plan 65 Ф.12.5, pre-existing)
+- **Где:** method dispatch в emit_c.rs.
+- **Что упрощено:** `m.method()` resolves по method name без strict
+  receiver-type check — `m.method()` где m: Foo, method only declared
+  on Bar, may silently route to Bar_method_method(m).
+- **Почему:** dispatcher legacy — receiver type определяется по C-type
+  inference которая loose.
+- **Как чинить:** dedicated method-resolution strictness plan.
+- **Приоритет:** L — same family как M-strict-var-annotations.
+
+### [M-monotonic-per-os-isolated-tests] (DEFER — Plan 65 Ф.12.2)
+- **Где:** `compiler-codegen/nova_rt/` (no dedicated time.c).
+- **Что упрощено:** per-OS unit tests для `_nova_monotonic_ns()`
+  отдельно от integration не написаны.
+- **Почему:** libuv hrtime уже covered upstream'ом + bootstrap
+  integration (plan65 f12_e/f/g + std/time/duration.nv arithmetic)
+  validates end-to-end.
+- **Как чинить:** Plan 58 (CI matrix) follow-up может добавить
+  per-platform isolated test.
+- **Приоритет:** L.
+
+### [M-monotonic-migration-deferred] (DEFER — Plan 65 Ф.12.6)
+- **Где:** `std/concurrency/rate_limiter.nv`, `nova_tests/concurrency/cancel_latency_bench.nv`,
+  `nova_tests/concurrency/sleep_real_clock.nv`, и др. (≈9 sites).
+- **Что упрощено:** existing `Time.now()`-based timing code должен быть
+  переписан на `Monotonic.now()` для NTP/DST-skew immunity, но миграция
+  blocked by [M-time-now-schema-mismatch].
+- **Почему:** см. M-time-now-schema-mismatch.
+- **Как чинить:** после schema-mismatch fix — добавить `// AUDIT_PLAN65_Ф12`
+  markers + rewrite в follow-up commit.
+- **Приоритет:** M (semantic correctness под clock-skew).
+
+### [M-cancel-token-cancel-at] (DEFER — Plan 65 Ф.12.6)
+- **Где:** `compiler-codegen/nova_rt/fibers.h::NovaCancelToken`.
+- **Что упрощено:** `CancelToken.cancel_at(deadline Monotonic)` extension
+  не реализован.
+- **Почему:** требует Plan 47 API surface change (compiler-builtin
+  method на CancelToken).
+- **Как чинить:** user может реализовать сам: spawn fiber который
+  `sleep(deadline.elapsed_since(Monotonic.now()))` затем `tok.cancel()`.
+- **Приоритет:** L — workaround existed.
+
+### [M-println-overload-static-method] (RESOLVED — Plan 67 Ф.1)
+- **Где:** `compiler-codegen/src/codegen/emit_c.rs::infer_print_helper`.
+- **Что было:** для `println(str.from(x))` codegen эмитил
+  `nova_print_int(nova_int_to_str(...))` — type mismatch CC-FAIL.
+  Affected: 25 sites в bench/corpus + silent-wrong-output для
+  if/match-expr println args.
+- **Как закрыто (commit `9a90802b022`):** унификация `infer_print_helper`
+  через `infer_expr_c_type` (DRY 75→15 LOC) — static method calls /
+  method chains / if-expr / match-expr / nested str.from все попадают
+  «бесплатно».
+- **Verified:** `bench/corpus/06_contracts.nv` runs `7 / 5 / 120`
+  (abs/-7/max/3,5/factorial/5) корректно. Plan 67 fixtures f1-f10 PASS.
+
+### [M-println-char-as-int] (RESOLVED — Plan 67 Ф.1 AD3)
+- **Где:** same.
+- **Что было:** `println('a')` печатал `97` (code-point как int).
+- **Как закрыто:** `nova_print_char` runtime inline + CharLit pre-check
+  в `infer_print_helper` (CharLit имеет `nova_int` C-type, нужен explicit
+  bypass до infer dispatch).
+- **Verified:** plan67/f6_char_literal.nv PASS.
+
+### [M-infer-print-helper-duplication] (RESOLVED — Plan 67 Ф.1 AD1)
+- **Где:** same.
+- **Что было:** `infer_print_helper` дублировал manual pattern-matching
+  параллельно с `infer_expr_c_type` (~75 LOC). Любое расширение
+  (новый stdlib API, новый built-in) требовало двух правок.
+- **Как закрыто:** delegated to `infer_expr_c_type` (single source of
+  truth). Bug-fixes в infer автоматически покрывают println.
+
+### [M-w6701-print-unknown-type-lint] (DEFER — Plan 67 R4)
+- **Где:** `compiler-codegen/src/codegen/emit_c.rs::infer_print_helper`.
+- **Что упрощено:** opt-in lint warning W6701 «cannot infer print
+  helper; defaulting to int» для unknown return type fallback case
+  (R4 в plan-doc 67) — не реализован.
+- **Почему:** codegen layer не имеет warning channel — `Result<_, String>`
+  только error. `verify::pipeline::Reason::Warning` exists но он для
+  contracts verifier (W2402 family), не для codegen path. Добавление
+  codegen warning infra — отдельный план (separate scope от Plan 67
+  hotfix).
+- **Как чинить:** dedicated diagnostic-infra plan (likely Plan 36
+  expansion R7+) добавит warning channel в codegen; затем W6701 = 5 LOC.
+- **Приоритет:** L — fallback к `nova_print_int` для unknown types
+  preserves current behavior; misuse детектируется при run-time
+  (wrong output) или при review.
+
+### [M-plan67-cross-toolchain-deferred] (DEFER — Plan 67 Ф.4)
+- **Где:** `.github/workflows/cross-toolchain.yml` (отсутствует).
+- **Что упрощено:** Plan 67 verified только на Windows/Clang.
+  MSVC + GCC не прогонялись.
+- **Почему:** Plan 58 CI matrix infrastructure не реализован —
+  `cross-toolchain.yml` workflow не существует. Plan 67 не может его
+  создать (separate scope).
+- **Как чинить:** Plan 58 implementation (приоритизирован, plan v2
+  доступен).
+- **Приоритет:** L — Clang Windows full PASS включая 06_contracts;
+  bug-class (overload resolution) toolchain-agnostic (C function
+  signature mismatch — would fail equally на любом toolchain).
+
+### [M-bench-corpus-status-fail-fp] (DEFER — Plan 67 Ф.3)
+- **Где:** `nova bench corpus`.
+- **Что упрощено:** `bench corpus 06_contracts.nv` reports
+  `"status": "fail: exit=Some(1)"` хотя `nova build` того же файла
+  succeeds и binary runs correctly. False-positive в bench corpus
+  status detection.
+- **Почему:** bench corpus pipeline проверяет что-то extra (binary run?
+  perf marker parsing?) что не работает для 06_contracts (вероятно
+  отсутствие __PERF__ markers в C output после Plan 67 codegen change).
+- **Как чинить:** дебаг bench corpus status check — отдельный bug
+  ticket для Plan 57.C.8 infra.
+- **Приоритет:** L — не блокирует Plan 67 main acceptance (compile +
+  run + correct output ✅ через direct `nova build`).
+
+### [M-corpus-files-pre-existing-breakage] (DEFER — Plan 67 Ф.3 spot-check)
+- **Где:** `bench/corpus/03_generic_heavy.nv`, `04_effects_handlers.nv`,
+  `07_collection.nv`.
+- **Что упрощено:** 3 из 5 spot-checked corpus files не собираются
+  по pre-existing причинам **не связанным с Plan 67**:
+  - `03_generic_heavy`: D52 violation (Plan 51 enforcement) — redundant
+    type prefix `Pair { ... }` в return-position.
+  - `04_effects_handlers`: syntax change — `audit_action("user-login")`
+    parse error (likely handler-binding evolution).
+  - `07_collection`: codegen C-compile error `(NovaOpt_nova_int)0` —
+    sum-type optional return unreachable path.
+- **Почему:** corpus files не обновлялись синхронно с language evolution.
+- **Как чинить:** corpus refresh task (отдельно от Plan 67, который
+  фиксирует только println overload).
+- **Приоритет:** L для Plan 67 (06_contracts — primary target — works);
+  M для overall corpus health.

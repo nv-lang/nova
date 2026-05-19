@@ -833,13 +833,13 @@ fn select_or_default[T](chs []ChanReader[T]) -> T = ...
 fn internal_helper() -> int => 42
 
 #doc_alias("malloc", "alloc")
-fn allocate(n int) -> []byte = ...
+fn allocate(n int) -> []u8 = ...
 
 #doc(inline)
 export import std.collections.range.{Range}
 
 #doc(summary = "Compute SHA-256 hash of the input bytes.")
-fn sha256(data []byte) -> [32]byte = ...
+fn sha256(data []u8) -> [32]u8 = ...
 ```
 
 ### Семантика
@@ -1922,3 +1922,76 @@ ENOSYS → kernel CONFIG_PERF_EVENTS missing).
 - Plan 22 (libuv integration) — `uv_hrtime()` для measurement primitive.
 - Plan 57 (полный 10-layer design + MVP / 57.A / 57.B phasing).
 - [docs/perf-conventions.md](../../docs/perf-conventions.md) — pragmatic guide.
+
+---
+
+## D127. Stability-tier enforcement scope (Plan 71)
+
+### Что
+
+`#stable` / `#unstable` / `#experimental` (определены в [D105](#d105-doc-атрибуты))
+**не требуются на каждом exported item**. Lint `public-missing-stability`
+(Plan 45 §11.5 №7) имеет следующий scope:
+
+1. **По умолчанию** — severity = `warning`. CI не блокируется.
+2. **`enforce-stability = true` в `nova.toml [lib]`** — severity = `error`.
+   Opt-in для пакетов, обязующихся документировать stability публичного API
+   (stdlib, library crates с обратной совместимостью).
+3. **Fixture/example exemption** — независимо от flag, файлы под путями
+   `nova_tests/**`, `tests/**`, `examples/**`, `bench/**` (relative to
+   manifest root) skip'ают правило полностью. Эти контексты — не
+   "stable API surface".
+
+### Manifest формат
+
+```toml
+# nova.toml
+[lib]
+src = "."
+enforce-stability = true   # optional, default false
+```
+
+Boolean. Любое не-`true` значение трактуется как `false` (forward-compat
+для будущих enum'ов severity'ей, если потребуются).
+
+### Почему
+
+1. **Industry baseline** — Rust stdlib единственный enforces stability
+   строго (`#![feature(staged_api)]`), и только для stdlib, не для user
+   crates. Swift, Kotlin, Go, Python, OCaml, Haskell — convention-based
+   без enforcement. Nova консервативно расширяет: default warning (учит
+   conventions), opt-in error (для production library crates).
+2. **Test fixtures — не public API.** Требовать stability annotation'ов
+   с `nova_tests/doc/fixtures/**/*.nv` методологически неверно: fixtures
+   существуют как тестовые данные для doc-collector'а, не как stable
+   API surface.
+3. **CI не должен падать на новых fixture'ах.** До Plan 71 каждое
+   добавление test fixture без `#stable` ломало `nova-doc` CI workflow.
+   Auto-exempt path-prefix логика устраняет этот mode-failure.
+4. **Stdlib opt-in.** `std/nova.toml` приобретает `enforce-stability = true`
+   — stdlib обязан декларировать stability каждого export'а, как
+   user-facing API. User-application'ы не обязаны.
+
+### Что отвергнуто
+
+- **Per-file `#allow(public-missing-stability)`** — отложено в Plan 71.A
+  (требует расширения lint-attr infrastructure). Path-prefix exemption
+  покрывает 95% legitimate use cases.
+- **Manifest-config `fixture_dirs = ["custom/path"]`** — отложено V2.
+  Hardcoded prefix список (`nova_tests/`, `tests/`, `examples/`, `bench/`)
+  — стандартная convention, override редко необходим.
+- **Default = error (strict-by-default)** — выбрано против. Учить
+  conventions warning'ами лучше, чем блокировать CI у каждого нового
+  contributor'а.
+- **`--strict-stability` CLI flag** — overlap с manifest-level setting;
+  manifest — единый source of truth. CLI override может быть добавлен
+  в Plan 71.A если возникнет user-запрос.
+
+### Связь
+
+- [D105](#d105-doc-атрибуты) — определение `#stable` / `#unstable` /
+  `#experimental` атрибутов.
+- Plan 45 Ф.23.12 §11.5 №7 — определение lint `public-missing-stability`.
+- Plan 71 — implementation.
+- [docs/idioms/stability-tiers.md](../../docs/idioms/stability-tiers.md)
+  — pragmatic guide.

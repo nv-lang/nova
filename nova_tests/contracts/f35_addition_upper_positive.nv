@@ -1,0 +1,38 @@
+// Ф.35.2 (Plan 33.6): TrivialBackend addition upper bound `<=` / `<`.
+// `requires x <= 5; requires y <= 5; ensures (x + y) <= 10` — upper sum.
+
+module contracts.f35_addition_upper_positive
+
+#verify
+fn sum_below_threshold(x int, y int) -> int
+    requires x <= 5
+    requires y <= 5
+    ensures result <= 10
+{
+    x + y
+}
+
+// Var + Lit.
+#verify
+fn shifted_upper(x int) -> int
+    requires x <= 5
+    ensures result <= 8
+{
+    x + 3
+}
+
+// Strict `<`.
+#verify
+fn sum_strict(x int, y int) -> int
+    requires x <= 5
+    requires y <= 5
+    ensures result < 11
+{
+    x + y
+}
+
+test "addition upper" {
+    assert(sum_below_threshold(5, 5) == 10)
+    assert(shifted_upper(2) == 5)
+    assert(sum_strict(3, 4) == 7)
+}

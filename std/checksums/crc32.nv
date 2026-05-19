@@ -14,13 +14,13 @@
 // Алгоритм:
 //   - Pre-computed таблица 256 значений (lazy в реальной реализации,
 //     здесь — runtime функция-replacement).
-//   - Для каждого байта: crc = table[(crc ^ byte) & 0xFF] ^ (crc >> 8)
+//   - Для каждого байта: crc = table[(crc ^ u8) & 0xFF] ^ (crc >> 8)
 //   - Финальное XOR с 0xFFFFFFFF
 //
 // Pure function, без эффектов. Прямая проверка integrity.
 //
 // API:
-//   fn crc32(data []byte) -> u32
+//   fn crc32(data []u8) -> u32
 
 module checksums.crc32
 
@@ -67,10 +67,10 @@ fn lookup(i u8) -> u32 => table_value(i)
 /// assert(cs == 0xCBF43926)
 /// ```
 #stable(since = "0.1")
-export fn crc32(data []byte) -> u32 {
+export fn crc32(data []u8) -> u32 {
     let mut crc u32 = 0xFFFFFFFF
-    for byte in data {
-        let idx = (crc ^ (byte as u32)) as u8
+    for u8 in data {
+        let idx = (crc ^ (u8 as u32)) as u8
         crc = lookup(idx) ^ (crc >> 8)
     }
     crc ^ 0xFFFFFFFF
@@ -90,10 +90,10 @@ export fn crc32_init() -> u32 => 0xFFFFFFFF
 
 /// Update CRC-32 state с новыми bytes. Без финализации (нужен `crc32_finalize`).
 #stable(since = "0.1")
-export fn crc32_update(state u32, data []byte) -> u32 {
+export fn crc32_update(state u32, data []u8) -> u32 {
     let mut crc = state
-    for byte in data {
-        let idx = (crc ^ (byte as u32)) as u8
+    for u8 in data {
+        let idx = (crc ^ (u8 as u32)) as u8
         crc = lookup(idx) ^ (crc >> 8)
     }
     crc
@@ -110,7 +110,7 @@ export fn crc32_finalize(state u32) -> u32 =>
 // ──────────────────────────────────────────────────────────────────────────
 
 test "crc32: пустой ввод → 0" {
-    let empty []byte = []
+    let empty []u8 = []
     assert(crc32(empty) == 0)
 }
 
@@ -124,12 +124,12 @@ test "crc32: 'hello world' → 0x0D4A1185" {
 }
 
 test "crc32: один байт 0x00 → 0xD202EF8D" {
-    let data []byte = [0x00]
+    let data []u8 = [0x00]
     assert(crc32(data) == 0xD202EF8D)
 }
 
 test "crc32: один байт 0xFF → 0xFF000000" {
-    let data []byte = [0xFF]
+    let data []u8 = [0xFF]
     assert(crc32(data) == 0xFF000000)
 }
 
@@ -153,15 +153,15 @@ test "crc32: incremental == монолитный" {
 test "crc32: чувствительность к 1-битной ошибке" {
     // Изменение одного бита должно полностью изменить checksum
     let original = "hello".bytes()
-    let mut modified []byte = []
+    let mut modified []u8 = []
     for b in original { modified.push(b) }
-    modified[0] = (modified[0] as u32 ^ 1) as byte    // flip младший бит первого байта
+    modified[0] = (modified[0] as u32 ^ 1) as u8    // flip младший бит первого байта
 
     assert(crc32(original) != crc32(modified))
 }
 
 test "crc32: длинный ввод (1KB нулей)" {
-    let mut data []byte = []
+    let mut data []u8 = []
     for i in 0..1024 {
         data.push(0)
     }

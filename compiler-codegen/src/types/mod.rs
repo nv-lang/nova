@@ -680,6 +680,8 @@ impl<'a> BoundCtx<'a> {
             Stmt::Calc { steps, .. } => {
                 for step in steps { self.walk_expr(&step.expr, scope, errors); }
             }
+            // Plan 33.9 Ф.2: reveal — ghost, name resolution в pipeline.
+            Stmt::Reveal { .. } => {}
         }
     }
 
@@ -1639,6 +1641,8 @@ impl<'a> CapabilityCtx<'a> {
             Stmt::Apply { .. } => {}
             // Ф.4.2: calc — ghost, нет capability-эффектов.
             Stmt::Calc { .. } => {}
+            // Plan 33.9 Ф.2: reveal — ghost, нет capability-эффектов.
+            Stmt::Reveal { .. } => {}
         }
     }
 
@@ -2442,6 +2446,8 @@ impl NameResCtx {
             Stmt::Calc { steps, .. } => {
                 for step in steps { self.walk_expr(&step.expr, file_id, scope, errors); }
             }
+            // Plan 33.9 Ф.2: reveal — ghost, name resolution в pipeline.
+            Stmt::Reveal { .. } => {}
         }
     }
 
@@ -3079,6 +3085,8 @@ fn has_throw_in_stmt(s: &Stmt) -> bool {
         Stmt::Apply { args, .. } => args.iter().any(has_throw_in_expr),
         // Ф.4.2: calc — ghost, шаги могут содержать throw.
         Stmt::Calc { steps, .. } => steps.iter().any(|s| has_throw_in_expr(&s.expr)),
+        // Plan 33.9 Ф.2: reveal — ghost, no throw inside.
+        Stmt::Reveal { .. } => false,
     }
 }
 
@@ -3278,8 +3286,13 @@ const SUSPEND_EFFECT_NAMES: &[&str] = &[
     "Net", "Fs", "Db", "Time",
 ];
 
-/// AST-С„РѕСЂРјС‹ РєРѕС‚РѕСЂС‹Рµ СЃР°РјРё РїРѕ СЃРµР±Рµ СЃС‡РёС‚Р°СЋС‚СЃСЏ suspend (РґР°Р¶Рµ РµСЃР»Рё effects
-/// РЅРµ РѕР±СЉСЏРІР»РµРЅС‹).
+/// AST-формы которые сами по себе считаются suspend (даже если effects
+/// не объявлены).
+///
+/// **Reserved**: текущая suspend-detection использует прямой
+/// `matches!` inline в effect-inference path'е. Helper сохранён для
+/// возможной consolidation если правил станет больше.
+#[allow(dead_code)]
 fn is_suspend_expr_kind(kind: &ExprKind) -> bool {
     matches!(kind,
         ExprKind::ParallelFor { .. }
@@ -3793,6 +3806,7 @@ fn walk_block_for_handler_lits(b: &Block, never_ops: &HashSet<(String, String)>,
             Stmt::Calc { steps, .. } => {
                 for step in steps { walk_expr_for_handler_lits(&step.expr, never_ops, errors); }
             }
+            Stmt::Reveal { .. } => {}
         }
     }
     if let Some(t) = &b.trailing { walk_expr_for_handler_lits(t, never_ops, errors); }
@@ -4141,6 +4155,7 @@ fn walk_block_for_defers(b: &Block, fn_effects: &HashMap<String, Vec<TypeRef>>, 
             Stmt::Calc { steps, .. } => {
                 for step in steps { walk_expr_for_defers(&step.expr, fn_effects, errors); }
             }
+            Stmt::Reveal { .. } => {}
         }
     }
     if let Some(t) = &b.trailing {
@@ -4586,6 +4601,7 @@ fn check_defer_body_block(b: &Block, kw: &str, fn_effects: &HashMap<String, Vec<
             Stmt::Calc { steps, .. } => {
                 for step in steps { check_defer_body_inner(&step.expr, kw, fn_effects, ctx, errors); }
             }
+            Stmt::Reveal { .. } => {}
         }
     }
     if let Some(t) = &b.trailing {
@@ -5475,7 +5491,7 @@ impl MapLitCtx {
                 self.walk_expr(expr, None, errors);
             }
             // Plan 33.3 Ф.13: Apply/Calc — proof-statements, spec-only.
-            Stmt::Apply { .. } | Stmt::Calc { .. } => {}
+            Stmt::Apply { .. } | Stmt::Calc { .. } | Stmt::Reveal { .. } => {}
         }
     }
 
@@ -6257,7 +6273,7 @@ impl MapLitAnnotator {
             Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => {
                 self.walk_expr(expr, None);
             }
-            Stmt::Apply { .. } | Stmt::Calc { .. } => {}
+            Stmt::Apply { .. } | Stmt::Calc { .. } | Stmt::Reveal { .. } => {}
         }
     }
 

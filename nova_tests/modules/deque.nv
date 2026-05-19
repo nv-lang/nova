@@ -1,0 +1,83 @@
+// Тесты std.collections.deque.Deque[T] — double-ended queue.
+// Позитивные: push_front/back, pop_front/back, front/back, len, is_empty, clear.
+
+module modules.deque
+
+import std.collections.deque.{Deque}
+
+test "Deque: push_back и pop_front — FIFO порядок" {
+    let mut d = Deque[int].new()
+    d.push_back(1)
+    d.push_back(2)
+    d.push_back(3)
+    assert(d.pop_front() == Some(1))
+    assert(d.pop_front() == Some(2))
+    assert(d.pop_front() == Some(3))
+    assert(d.pop_front() == None)
+}
+
+test "Deque: push_front и pop_front — LIFO порядок" {
+    let mut d = Deque[int].new()
+    d.push_front(1)
+    d.push_front(2)
+    d.push_front(3)
+    assert(d.pop_front() == Some(3))
+    assert(d.pop_front() == Some(2))
+    assert(d.pop_front() == Some(1))
+}
+
+test "Deque: push_back и pop_back — LIFO порядок" {
+    let mut d = Deque[int].new()
+    d.push_back(10)
+    d.push_back(20)
+    d.push_back(30)
+    assert(d.pop_back() == Some(30))
+    assert(d.pop_back() == Some(20))
+    assert(d.pop_back() == Some(10))
+    assert(d.pop_back() == None)
+}
+
+test "Deque: смешанный push_front/push_back" {
+    let mut d = Deque[int].new()
+    d.push_back(2)
+    d.push_front(1)
+    d.push_back(3)
+    // порядок: [1, 2, 3]
+    assert(d.pop_front() == Some(1))
+    assert(d.pop_front() == Some(2))
+    assert(d.pop_front() == Some(3))
+}
+
+test "Deque: front и back не удаляют" {
+    let mut d = Deque[str].new()
+    d.push_back("a")
+    d.push_back("b")
+    assert(d.front() == Some("a"))
+    assert(d.back() == Some("b"))
+    assert(d.len() == 2)
+    assert(d.front() == Some("a"))
+}
+
+test "Deque: len и is_empty" {
+    let mut d = Deque[int].new()
+    assert(d.is_empty() == true)
+    assert(d.len() == 0)
+    d.push_back(1)
+    assert(d.is_empty() == false)
+    assert(d.len() == 1)
+    d.push_front(0)
+    assert(d.len() == 2)
+}
+
+
+test "Deque: pop из пустого — None" {
+    let mut d = Deque[int].new()
+    assert(d.pop_front() == None)
+    assert(d.pop_back() == None)
+}
+
+test "Deque: front и back пустого — None" {
+    let d = Deque[int].new()
+    assert(d.front() == None)
+    assert(d.back() == None)
+}
