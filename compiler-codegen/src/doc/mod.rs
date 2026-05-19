@@ -42,6 +42,8 @@ pub mod config;
 pub mod watch_cache;
 
 pub use doctree::{DocTree, DocModule, DocItem, ItemKind, Signature, Visibility};
+// Plan 71 / D127: stability-tier scope configuration.
+pub use lints::{DocLintViolation, LintConfig, Severity};
 
 use crate::ast::Module;
 
@@ -155,8 +157,12 @@ pub fn populate_handler_matrix_workspace(tree: &mut DocTree, sources_by_module_p
 }
 
 /// Plan 45 Ф.23.12: run style-guide lints, return violations.
-pub fn run_lints(tree: &DocTree) -> Vec<lints::DocLintViolation> {
-    lints::run_lints(tree)
+///
+/// Plan 71 / D127: signature changed — теперь принимает `&LintConfig`.
+/// Caller'ы, не нуждающиеся в специфической конфигурации (default lenient
+/// mode + canonical fixture-dirs), могут передать `&LintConfig::default()`.
+pub fn run_lints(tree: &DocTree, config: &LintConfig) -> Vec<lints::DocLintViolation> {
+    lints::run_lints(tree, config)
 }
 
 /// Plan 45 Ф.23.2 / D106: populate verify_status для fn items с contracts.
