@@ -6446,7 +6446,11 @@ mod tests {
 
     #[test]
     fn fn_static_method() {
-        let m = parse_or_panic("fn Account.new(owner str) -> Account => Account { }\n");
+        // Plan 51 / D55 (record-literal type unification): `-> Account => Account { }`
+        // более не допускается — тип объявлен дважды. Тест проверяет только
+        // signature parsing (receiver kind), поэтому body — block-form (`{ }`),
+        // которая всегда валидна и не зависит от record-literal правил.
+        let m = parse_or_panic("fn Account.new(owner str) -> Account { }\n");
         let Item::Fn(f) = &m.items[0] else { panic!() };
         let r = f.receiver.as_ref().unwrap();
         assert_eq!(r.type_name, "Account");
