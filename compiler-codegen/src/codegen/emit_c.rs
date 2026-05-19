@@ -426,6 +426,28 @@ pub struct CEmitter {
     /// so test runner can route them to captured_stderr rather than leaking
     /// to the terminal.
     warnings: std::cell::RefCell<Vec<String>>,
+    /// Plan 70 Ф.B0: accumulated strict-mode E7001 errors from cascade-blocked
+    /// sites that detected `nova_int` silent fallback. Populated by
+    /// `record_strict_error`. Checked at `emit_module` finalization — non-empty
+    /// → `Err(aggregated)` returned, codegen pass fails, no `.c` written.
+    ///
+    /// Используется вместо `?` propagation в местах где function signature
+    /// нельзя menять без massive caller-chain refactor (infer_expr_c_type
+    /// returns `String`, register_mono_instance returns `()`, etc.). Effect
+    /// equivalent: build fails with detailed diagnostic; user sees all E7001s
+    /// в одном compile pass (better UX чем fail-fast).
+    strict_errors: std::cell::RefCell<Vec<String>>,
+    /// Plan 70.1: set of imported-module prefix names visible в this module
+    /// (alias + last-segment of import path). Used в emit_call Member dispatch
+    /// чтобы распознать `<alias>.func(args)` или `<module>.func(args)` pattern
+    /// и переписать в bare `func(args)` (imported fns доступны без префикса
+    /// в text scope; префикс — namespace hint, не actual C-name component).
+    ///
+    /// Populated в emit_module pre-pass из `module.imports` + each peer_file
+    /// imports. Aliases (`import X as th`) и last-segments (`import X.Y` → `Y`)
+    /// оба добавляются. Без этого fix codegen эмитит `th.func(args)` напрямую
+    /// → undeclared identifier `th` в C → CC-FAIL.
+    imported_modules: HashSet<String>,
     /// Plan 20 Ф.4: stack of active defer/errdefer scopes during emission.
     /// Each block that contains a `defer`/`errdefer` stmt pushes a `DeferScope`
     /// on entry and pops on exit. `Stmt::Return`/`Break`/`Continue` walk the
@@ -678,6 +700,8 @@ impl CEmitter {
             defer_block_counter: 0,
             var_boxed: HashMap::new(),
             warnings: std::cell::RefCell::new(Vec::new()),
+            strict_errors: std::cell::RefCell::new(Vec::new()),
+            imported_modules: HashSet::new(),
             mono_fn_decls: HashMap::new(),
             mono_method_decls: HashMap::new(),
             self_method_decls: HashMap::new(),
@@ -945,6 +969,23 @@ impl CEmitter {
     }
 
     pub fn emit_module(mut self, module: &Module) -> Result<(String, Vec<String>), String> {
+        // Plan 70.1: register imported-module prefix names (aliases + last-segments)
+        // для emit_call Member dispatch rewrite. См. поле `imported_modules` doc.
+        let mut register_imports = |imports: &[crate::ast::Import], target: &mut HashSet<String>| {
+            for imp in imports {
+                if let Some(alias) = &imp.alias {
+                    target.insert(alias.clone());
+                }
+                if let Some(last) = imp.path.last() {
+                    target.insert(last.clone());
+                }
+            }
+        };
+        register_imports(&module.imports, &mut self.imported_modules);
+        for pf in &module.peer_files {
+            register_imports(&pf.imports, &mut self.imported_modules);
+        }
+
         // Plan 33.3 Ф.9.2 (D24): pre-pass — собрать invariants для record-типов.
         // Used в emit_record_lit для wrap'а конструкции в runtime-check.
         for item in &module.items {
@@ -1696,6 +1737,12 @@ impl CEmitter {
                 }
             }
         }
+        // Plan 70.2: drain generic_type_worklist after test emission — test
+        // bodies могут enqueue generic-type instances (e.g. LinkedList[int] via
+        // Cons-constructor inference в try_infer_variant_mono_args). Без этого
+        // drain instances enqueued at emit_test stage никогда не processed,
+        // → "use of undeclared identifier 'Nova_LinkedList____nova_int'".
+        self.drain_generic_type_worklist()?;
 
         // 5b. Plan 57: Bench function definitions (только в bench_mode).
         // В обычной сборке bench items игнорируются — tests/main работают
@@ -1968,7 +2015,29 @@ impl CEmitter {
         let per_e_decls = self.render_per_e_fail_decls();
         self.out = self.out.replace("/*__PER_E_FAIL_DECLS__*/", &per_e_decls);
 
-        Ok((self.out, self.warnings.into_inner()))
+        // Plan 70 Ф.B0 (session 2): strict-error finalization gate.
+        // Cascade-blocked sites (infer_expr_c_type, register_mono_instance,
+        // register_mono_method_instance, infer_mono_method_ret_with_args, etc.)
+        // не могут propagate `?` без массивного caller-chain refactor — вместо
+        // этого они push'ат E7001 в `strict_errors`. Здесь aggregate'им и failim
+        // codegen pass если non-empty. Production-grade strict mode: ANY silent
+        // fallback = build failure (default, no opt-out env var).
+        let strict_errors = self.strict_errors.into_inner();
+        let warnings = self.warnings.into_inner();
+        if !strict_errors.is_empty() {
+            // Deduplicate (один site может быть hit multiple раз на разных
+            // generic instantiations — diagnostic message identical).
+            let mut seen = std::collections::HashSet::new();
+            let unique: Vec<String> = strict_errors.into_iter()
+                .filter(|m| seen.insert(m.clone()))
+                .collect();
+            let count = unique.len();
+            return Err(format!(
+                "Plan 70 strict type propagation — {} unique silent fallback site(s) detected:\n\n{}",
+                count, unique.join("\n\n")
+            ));
+        }
+        Ok((self.out, warnings))
     }
 
     /// Mangle a test name and append a numeric suffix to guarantee uniqueness.
@@ -2535,25 +2604,31 @@ impl CEmitter {
         )
     }
 
-    /// Plan 70 Ф.1.5: deferred-warning helper для cascade-blocked sites
-    /// (functions whose signature can't be changed без массивного refactor:
-    /// register_mono_instance/register_mono_method_instance — no return type;
-    /// infer_expr_c_type — returns String; infer_mono_method_ret_with_args —
-    /// returns Option<String>).
+    /// Plan 70 Ф.B0 (session 2): strict-error helper для cascade-blocked sites
+    /// (functions whose signature can't be changed без массивного caller-chain
+    /// refactor — `infer_expr_c_type` (135 callers), `register_mono_instance`,
+    /// `register_mono_method_instance`, `infer_mono_method_ret_with_args` etc).
     ///
-    /// Records [W7001] warning через existing `warnings` field, returns
-    /// "nova_int" placeholder. Compiler output собирает все warnings и
-    /// emit'ит их в stderr; pipeline check может escalate'ать к error
-    /// если NOVA_STRICT_TYPES env var set (deferred — Plan 70 session 2).
+    /// Pushes `[E7001]` error в `strict_errors` field, returns `"nova_int"`
+    /// placeholder. Codegen pass продолжает чтобы собрать **все** strict
+    /// errors в одном run (better UX чем fail-fast); `emit_module` finalization
+    /// проверяет `strict_errors.is_empty()` и возвращает aggregated `Err`
+    /// если non-empty — `.c` файл не пишется, build fails.
     ///
-    /// Цель: визуально-loud signal что silent fallback произошёл, без
-    /// breaking signature changes. Production-grade compromise: warning >
-    /// silent, но < hard error (последний требует cascade refactor).
-    fn warn_silent_int_fallback(&self, context: &str, cause: &str) -> String {
-        self.warnings.borrow_mut().push(format!(
-            "[W7001] silent fallback к nova_int для {}: {}. \
-             Set NOVA_STRICT_TYPES=1 чтобы escalate (deferred — Plan 70 session 2). \
-             Возможна wrong codegen output для non-int types.",
+    /// Semantic effect: equivalent к `?` propagation up the call chain, без
+    /// signature changes. Production-grade strict mode: ANY silent fallback =
+    /// build failure (default, no opt-out env var).
+    ///
+    /// Replaces session 1's `warn_silent_int_fallback` (W7001 deferred-warning) —
+    /// все её callers мигрированы на этот helper в PhaseB1.
+    fn record_strict_error(&self, context: &str, cause: &str) -> String {
+        self.strict_errors.borrow_mut().push(format!(
+            "[E7001] cannot infer C type for {}: {}. \
+             Silent fallback к `nova_int` would produce wrong runtime output \
+             для non-int types (record/string/float/bool). Add explicit \
+             type annotation, ensure generic is monomorphized, или \
+             register type в external_registry. \
+             См. Plan 70 ([M-no-silent-nova-int-fallback]).",
             context, cause
         ));
         "nova_int".to_string()
@@ -7069,18 +7144,27 @@ impl CEmitter {
             &mut self.current_type_subst,
             type_subst.iter().cloned().collect(),
         );
-        // Plan 70 PhaseA4 cascade-blocked (register_mono_instance — no return,
-        // signature cascade massive): use warn_silent_int_fallback (W7001) для
-        // deferred-warning instead of strict error. См. warn_silent_int_fallback doc.
+        // Plan 70 PhaseB1 (session 2): cascade-blocked site (register_mono_instance —
+        // no return type, caller chain change requires массивный refactor).
+        // Strict mode: record E7001 в strict_errors; emit_module finalization
+        // fails build если non-empty. См. record_strict_error doc.
         let param_c_tys: Vec<String> = fn_decl.params.iter()
             .map(|p| self.type_ref_to_c(&p.ty).unwrap_or_else(|e|
-                self.warn_silent_int_fallback(
+                self.record_strict_error(
                     &format!("register_mono_instance `{}` param `{}`", fn_decl.name, p.name),
                     &e,
                 )))
             .collect();
+        // Plan 70 PhaseB2 (session 2): cascade-blocked site (register_mono_instance).
+        // Outer None = no return_type declared (void fn — legitimate unit).
+        // Inner type_ref_to_c failure = silent miscompilation → E7001 via
+        // record_strict_error. Placeholder "nova_unit" returned, finalization fails.
         let ret_c = fn_decl.return_type.as_ref()
-            .map(|t| self.type_ref_to_c(t).unwrap_or_else(|_| "nova_unit".into()))
+            .map(|t| self.type_ref_to_c(t).unwrap_or_else(|e|
+                self.record_strict_error(
+                    &format!("register_mono_instance `{}` return type", fn_decl.name),
+                    &e,
+                )))
             .unwrap_or_else(|| "nova_unit".into());
         self.current_type_subst = saved_subst;
         let params_str = if fn_decl.params.is_empty() {
@@ -7142,16 +7226,22 @@ impl CEmitter {
         );
         let prev_recv_for_ret = self.current_receiver_type.replace(recv_type.to_string());
         let recv_c = self.receiver_c_type(recv_type);
-        // Plan 70 PhaseA4 cascade-blocked (register_mono_method_instance — no return).
+        // Plan 70 PhaseB1 (session 2): cascade-blocked site (register_mono_method_instance —
+        // no return type). Strict mode: record E7001 в strict_errors.
         let param_c_tys: Vec<String> = fn_decl.params.iter()
             .map(|p| self.type_ref_to_c(&p.ty).unwrap_or_else(|e|
-                self.warn_silent_int_fallback(
+                self.record_strict_error(
                     &format!("register_mono_method_instance `{}.{}` param `{}`", recv_type, fn_decl.name, p.name),
                     &e,
                 )))
             .collect();
+        // Plan 70 PhaseB2 (session 2): cascade-blocked site (register_mono_method_instance).
         let ret_c = fn_decl.return_type.as_ref()
-            .map(|t| self.type_ref_to_c(t).unwrap_or_else(|_| "nova_unit".into()))
+            .map(|t| self.type_ref_to_c(t).unwrap_or_else(|e|
+                self.record_strict_error(
+                    &format!("register_mono_method_instance `{}.{}` return type", recv_type, fn_decl.name),
+                    &e,
+                )))
             .unwrap_or_else(|| "nova_unit".into());
         self.current_receiver_type = prev_recv_for_ret;
         self.current_type_subst = saved_subst;
@@ -7768,9 +7858,14 @@ impl CEmitter {
                 &e,
             )))
             .collect::<Result<Vec<_>, _>>()?;
-        let ret_c = fn_decl.return_type.as_ref()
-            .map(|t| self.type_ref_to_c(t).unwrap_or_else(|_| "nova_unit".into()))
-            .unwrap_or_else(|| "nova_unit".into());
+        // Plan 70 PhaseB2 (session 2): strict — emit_monomorphized_fn ret_c.
+        let ret_c = match fn_decl.return_type.as_ref() {
+            Some(t) => self.type_ref_to_c(t).map_err(|e| self.err_no_int_fallback(
+                &format!("mono'd fn `{}` return type", fn_decl.name),
+                &e,
+            ))?,
+            None => "nova_unit".into(),
+        };
         let params_str = if fn_decl.params.is_empty() {
             "void".to_string()
         } else {
@@ -11603,6 +11698,43 @@ impl CEmitter {
                 }
             }
             ExprKind::Member { obj, name: method } => {
+                // Plan 70.1: module-alias rewrite. `<alias>.func(args)` →
+                // bare `func(args)` (imported fns доступны через bare name).
+                // Без этого rewrite codegen эмитит `th.func(...)` → undeclared
+                // identifier `th` в C → CC-FAIL.
+                //
+                // Defensive guards:
+                // (a) Skip если prefix — local variable (var_types contains
+                //     name) — local shadowing wins per scope rules.
+                //     Critical: standard library modules имеют locals named
+                //     `p`/`s`/`m`/etc, которые collide с alias names в
+                //     consumer code (cross-file emit_module merges scopes).
+                // (b) Skip если prefix — intrinsic namespace (`gc`, `fibers`,
+                //     `runtime`, `Channel`, `Time`, etc.) — те уже имеют
+                //     специальный dispatch в infer_expr_c_type / emit_call.
+                //     Heuristic: skip если method-on-prefix распознан
+                //     downstream `infer_expr_c_type` Member arm (line 18403+
+                //     family — StringBuilder, ChannelPair, etc.).
+                if let ExprKind::Ident(prefix) = &obj.kind {
+                    let is_local_var = self.var_types.contains_key(prefix);
+                    let is_intrinsic_namespace = matches!(prefix.as_str(),
+                        "gc" | "fibers" | "runtime" | "Channel" | "ChanReader" |
+                        "ChanWriter" | "Time" | "Monotonic" | "CancelToken" |
+                        "StringBuilder" | "WriteBuffer" | "ReadBuffer" |
+                        "f64" | "f32" | "int" | "u8" | "u16" | "u32" | "u64" |
+                        "i8" | "i16" | "i32" | "i64" | "Self" | "Duration"
+                    );
+                    if !is_local_var
+                        && !is_intrinsic_namespace
+                        && self.imported_modules.contains(prefix)
+                    {
+                        let bare_func = Expr {
+                            kind: ExprKind::Ident(method.clone()),
+                            span: func.span,
+                        };
+                        return self.emit_call(&bare_func, args);
+                    }
+                }
                 // Plan 65 Ф.5: E5101 early guard — `Time.after(...)` was
                 // removed; emit a structured diagnostic with a machine-
                 // applicable fix-it suggestion.
@@ -13109,8 +13241,14 @@ impl CEmitter {
                         self.generic_type_instance_info.borrow()
                             .get(&format!("Nova_{}", rt_trimmed)).cloned();
                     if let Some((base_name, type_args_c)) = instance_opt {
+                        // Plan 70.2b: strip `@` prefix from method name for FnDecl
+                        // lookup — call-site Member.name includes `@` (e.g. `@sz`),
+                        // но FnDecl.name stored without (e.g. `sz`). Без этого strip
+                        // method dispatch на mono'd sum-types fails → fallback
+                        // emits literal `l->@sz()` в C → compile error.
+                        let method_stripped = method.trim_start_matches('@');
                         let method_decl = self.generic_type_methods.get(&base_name)
-                            .and_then(|ms| ms.iter().find(|m| m.name == *method))
+                            .and_then(|ms| ms.iter().find(|m| m.name == method_stripped))
                             .cloned();
                         if let Some(fn_decl) = method_decl {
                             let tmpl_opt = self.generic_type_templates.get(&base_name).cloned();
@@ -13235,10 +13373,12 @@ impl CEmitter {
                                 let is_instance = matches!(
                                     fn_decl.receiver.as_ref().map(|r| &r.kind),
                                     Some(crate::ast::ReceiverKind::Instance));
+                                // Plan 70.2b: use stripped name (without `@`) для C-name
+                                // construction — `@` invalid в C identifiers.
                                 let base_method_name = if is_instance {
-                                    format!("{}_method_{}", rt_trimmed, method)
+                                    format!("{}_method_{}", rt_trimmed, method_stripped)
                                 } else {
-                                    format!("{}_static_{}", rt_trimmed, method)
+                                    format!("{}_static_{}", rt_trimmed, method_stripped)
                                 };
                                 // Append method-level type-args suffix к method_c_name если
                                 // их > 0. Receiver-args уже в rt_trimmed (через mangled).
@@ -13266,9 +13406,14 @@ impl CEmitter {
                                                 &e,
                                             )))
                                             .collect::<Result<Vec<_>, _>>()?;
-                                        let inner_ret = return_type.as_ref()
-                                            .map(|t| self.type_ref_to_c(t).unwrap_or_else(|_| "nova_unit".into()))
-                                            .unwrap_or_else(|| "nova_unit".into());
+                                        // Plan 70 PhaseB2 (session 2): strict — closure-arg return type.
+                                        let inner_ret = match return_type.as_ref() {
+                                            Some(t) => self.type_ref_to_c(t).map_err(|e| self.err_no_int_fallback(
+                                                "emit_call fn-param return",
+                                                &e,
+                                            ))?,
+                                            None => "nova_unit".into(),
+                                        };
                                         let prev_sig = self.fn_param_sigs.insert(
                                             param_decl.name.clone(), (inner_ptys.clone(), inner_ret.clone()));
                                         // Plan 48 method-param mono (Plan 63 fu, 2026-05-17 EOD):
@@ -13819,9 +13964,14 @@ impl CEmitter {
                                                     &e,
                                                 )))
                                                 .collect::<Result<Vec<_>, _>>()?;
-                                            let inner_ret = return_type.as_ref()
-                                                .map(|t| self.type_ref_to_c(t).unwrap_or_else(|_| "nova_unit".into()))
-                                                .unwrap_or_else(|| "nova_unit".into());
+                                            // Plan 70 PhaseB2 (session 2): strict — mono-subst closure-arg return.
+                                            let inner_ret = match return_type.as_ref() {
+                                                Some(t) => self.type_ref_to_c(t).map_err(|e| self.err_no_int_fallback(
+                                                    "emit_call mono-subst fn-param return",
+                                                    &e,
+                                                ))?,
+                                                None => "nova_unit".into(),
+                                            };
                                             self.current_type_subst = saved_inner;
                                             let prev_sig = self.fn_param_sigs.insert(
                                                 param_decl.name.clone(), (inner_ptys, inner_ret));
@@ -14030,9 +14180,14 @@ impl CEmitter {
                                         &e,
                                     )))
                                     .collect::<Result<Vec<_>, _>>()?;
-                                let inner_ret = return_type.as_ref()
-                                    .map(|t| self.type_ref_to_c(t).unwrap_or_else(|_| "nova_unit".into()))
-                                    .unwrap_or_else(|| "nova_unit".into());
+                                // Plan 70 PhaseB2 (session 2): strict — inner-subst closure-arg return.
+                                let inner_ret = match return_type.as_ref() {
+                                    Some(t) => self.type_ref_to_c(t).map_err(|e| self.err_no_int_fallback(
+                                        "emit_call inner-subst fn-param return",
+                                        &e,
+                                    ))?,
+                                    None => "nova_unit".into(),
+                                };
                                 self.current_type_subst = saved_inner;
                                 // Register temporarily so closure body knows the concrete sig
                                 let prev_sig = self.fn_param_sigs.insert(
@@ -17566,7 +17721,7 @@ impl CEmitter {
                 // Plan 70 PhaseA4 cascade-blocked (infer_mono_method_ret_with_args — Option return).
                 let inner_ptys: Vec<String> = fp.iter()
                     .map(|t| self.type_ref_to_c(t).unwrap_or_else(|e|
-                        self.warn_silent_int_fallback(
+                        self.record_strict_error(
                             "infer_mono_method_ret_with_args fn-param resolve",
                             &e,
                         )))
@@ -18303,6 +18458,19 @@ impl CEmitter {
                 "nova_int".into()
             }
             ExprKind::SelfAccess => {
+                // Plan 70 Cat B (intentional erasure, session 2 finding):
+                // SelfAccess вне instance-method context — var_types["nova_self"]
+                // not registered. Reached в legitimate cases:
+                // (a) Closures inside instance methods — closure body inherits
+                //     `self` via capture, но var_types на этом уровне ещё
+                //     отдельный scope (Plan 8 closure-capture pre-registration
+                //     не покрывает SelfAccess).
+                // (b) Generic-fn body emit без receiver — `self` ref'ит type
+                //     param, который не registered как concrete type yet.
+                // Pre-strict fallback к "nova_int" работает для int-typed
+                // self contexts; non-int silent miscompilation possible но
+                // не observed в test corpus.
+                // Documented как Cat B13.
                 self.var_types.get("nova_self").cloned().unwrap_or_else(|| "nova_int".into())
             }
             ExprKind::HandlerLit { effect_name, .. } => {
@@ -19343,6 +19511,24 @@ impl CEmitter {
                         return field_ty.clone();
                     }
                 }
+                // Plan 70 Cat B (intentional erasure, session 2 finding):
+                // Member access fallback. Reached для:
+                // (a) Tuple field access без обвязки tuple_element_types
+                //     (call-result tuple, nested member на anon tuple) — типы
+                //     embedded в mangled name `_NovaTuple_N_lenT_T_...`, но
+                //     decoder отсутствует на этом code-path.
+                // (b) Generic-record field access до mono pass (erased schema
+                //     ещё не зарегистрирован).
+                // (c) Type-checker-rejected access (поле не существует) —
+                //     не reach'ит codegen.
+                //
+                // Strict-mode здесь требует full tuple-name decoder и pre-mono
+                // schema registration — отдельный план. Currently low ROI:
+                // нет observed silent miscompilation в test corpus с этим
+                // fallback (тесты с int-тuples работают; non-int tuples используют
+                // bound vars via tuple_element_types).
+                //
+                // Documented как Cat B12 в codegen-erasure-sites.md.
                 "nova_int".into()
             }
             ExprKind::Is(_, _) => "nova_bool".into(),
@@ -19350,9 +19536,10 @@ impl CEmitter {
                 // D54: тип `expr as T` — это T, не type-of(expr).
                 // Без этого `let b = a as byte` infer'ил бы тип b как nova_int
                 // (тип a) вместо nova_byte. План 05.
-                // Plan 70 PhaseA4 cascade-blocked (infer_expr_c_type returns String).
+                // Plan 70 PhaseB1 (session 2): cascade-blocked (infer_expr_c_type returns String).
+                // Strict mode: E7001 в strict_errors → build fails at emit_module finalization.
                 self.type_ref_to_c(ty).unwrap_or_else(|e|
-                    self.warn_silent_int_fallback(
+                    self.record_strict_error(
                         "infer_expr_c_type `as T` annotation",
                         &e,
                     ))
@@ -19413,6 +19600,24 @@ impl CEmitter {
                 }
                 "nova_unit".into()
             }
+            // Plan 70 Cat B (intentional erasure, session 2 finding): final wildcard
+            // в infer_expr_c_type. Reached for ExprKind variants which cannot
+            // meaningfully infer a standalone C type — primarily ClosureLight
+            // (variant 35, `|x| ...`) and Path-only expressions без call-context
+            // (variant 12). В этих случаях caller (emit_call, emit_let, etc.)
+            // знает expected type из bidirectional context (fn_param_sigs,
+            // current_fn_return_ty) и delivers правильный type через alternative path.
+            //
+            // Этот fallback — placeholder для "I don't know", не silent
+            // miscompilation: тип никогда не используется для actual C emit;
+            // используется только для overload resolution / hint computation,
+            // где nova_int treated как "any int-shaped placeholder".
+            //
+            // Migration к strict: requires bidirectional inference в каждом
+            // wildcard-hitter ExprKind (ClosureLight требует context; Path
+            // требует upper-context type) — отдельный план (Plan 70+1 если
+            // ever needed). Documented в docs/codegen-erasure-sites.md как
+            // B11 при добавлении.
             _ => "nova_int".into(),
         }
     }
