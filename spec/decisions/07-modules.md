@@ -126,8 +126,38 @@ src/admin/
 Чтобы использовать invoice из users.nv, нужен явный
 `import admin.billing.{Invoice}`.
 
-**Конфликт** `X.nv` + папка `X/` на одном уровне (например `admin.nv`
-рядом с `admin/`) — compile error «ambiguous module 'admin'».
+**Конфликт `X.nv` + папка `X/` на одном уровне — Rule E** (Plan 42,
+2026-05-14; spec sync 2026-05-19 в рамках Plan 62 cleanup):
+
+`X.nv` single-file и папка `X/` рядом сосуществуют по правилам:
+
+- **(a) Conflict** — `X/` содержит direct `.nv` файлы, **который объявляет
+  `module <parent>.X`** (т.е. peer-files of folder-module `X`).
+  В этом случае `X.nv` и `X/peer.nv` оба claim'ят name `X` (parent=tame).
+  Compile error «ambiguous module 'X'».
+- **(b) Валидно (facade pattern)** — `X.nv` существует и `X/` содержит
+  **только nested sub-modules** (declaring `module X.<sub>`), либо
+  только sub-folders без direct `.nv`. В этом случае `X/` — не module,
+  а namespace-container; `X.nv` — single-file module `X` который может
+  re-export'ить nested sub-modules через `export import X.<sub>.{...}`.
+
+**Example facade pattern (Plan 62 splittable prelude):**
+
+```
+std/
+├── prelude.nv                 module std.prelude (facade re-export)
+└── prelude/                   (namespace-container, не module)
+    ├── core.nv                module prelude.core (independent sub-module)
+    ├── runtime.nv             module prelude.runtime (independent sub-module)
+    └── ...
+```
+
+`std/prelude.nv` объявляет `module std.prelude` и через `export import
+std.prelude.core.{...}` re-export'ит declarations из nested sub-modules.
+`std/prelude/core.nv` объявляет `module prelude.core` (parent=prelude,
+target=core — rev-3 правило). Каждый sub-module независим, peers
+только внутри своей папки. См. также `docs/plans/42-folder-modules.md`
+Rule E и Plan 62.
 
 #### Объявление модуля — правило `parent.X`
 
