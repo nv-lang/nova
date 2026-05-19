@@ -46,10 +46,16 @@ pub struct PureFnInfo {
     pub param_names: Vec<String>,
     pub param_sorts: Vec<SortRef>,
     pub return_sort: SortRef,
-    /// Body expression for inlining. If present, calls to this fn in contracts
-    /// are inlined (substituting args for params) rather than encoded as UF.
-    /// This gives Z3 immediate ground truth without quantifier instantiation.
+    /// Body expression for inlining. If present and not opaque, calls to this fn
+    /// in contracts are inlined. For opaque fns, body_expr is kept here for
+    /// reveal-axiom emission but NOT inlined at call sites.
     pub body_expr: Option<Box<Expr>>,
+    /// Plan 33.9 Ф.5: true if fn is `#opaque` — body axiom withheld from Z3
+    /// until `reveal` is encountered in verifying fn. Call sites encode as UF.
+    pub is_opaque: bool,
+    /// Plan 33.9 Ф.5: fuel depth for opaque fn. None = 0 (fully opaque).
+    /// Positive n → emit n-step unrolled axioms instead of single body forall.
+    pub fuel: Option<u32>,
 }
 
 /// SMT UF name for a pure fn: `_pure_fn_<name>`.
@@ -166,23 +172,26 @@ pub fn encode_expr_with_ctx(e: &Expr, ctx: &EncodeCtx) -> Result<SmtTerm, Encodi
                                 name, info.param_sorts.len(), args.len()
                             )));
                         }
-                        if let Some(body_e) = &info.body_expr {
-                            // Inline: encode body with params substituted by encoded args.
-                            let mut term = encode_expr_with_ctx(body_e, ctx)?;
-                            for (param_name, call_arg) in info.param_names.iter().zip(args.iter()) {
-                                let enc_arg = encode_expr_with_ctx(call_arg.expr(), ctx)?;
-                                term = term.substitute(param_name, &enc_arg);
+                        // Plan 33.9 Ф.5: opaque fns always encode as UF at call sites —
+                        // body is only revealed via explicit `reveal` in verifying fn.
+                        if !info.is_opaque {
+                            if let Some(body_e) = &info.body_expr {
+                                // Inline: encode body with params substituted by encoded args.
+                                let mut term = encode_expr_with_ctx(body_e, ctx)?;
+                                for (param_name, call_arg) in info.param_names.iter().zip(args.iter()) {
+                                    let enc_arg = encode_expr_with_ctx(call_arg.expr(), ctx)?;
+                                    term = term.substitute(param_name, &enc_arg);
+                                }
+                                return Ok(term);
                             }
-                            return Ok(term);
-                        } else {
-                            // No body → UF application.
-                            let mut encoded_args = Vec::with_capacity(args.len());
-                            for a in args {
-                                encoded_args.push(encode_expr_with_ctx(a.expr(), ctx)?);
-                            }
-                            let uf = pure_fn_uf_name(name);
-                            return Ok(SmtTerm::App(uf, encoded_args));
                         }
+                        // Opaque OR no body → UF application.
+                        let mut encoded_args = Vec::with_capacity(args.len());
+                        for a in args {
+                            encoded_args.push(encode_expr_with_ctx(a.expr(), ctx)?);
+                        }
+                        let uf = pure_fn_uf_name(name);
+                        return Ok(SmtTerm::App(uf, encoded_args));
                     }
                 }
             }

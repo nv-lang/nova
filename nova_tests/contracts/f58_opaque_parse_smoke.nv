@@ -1,4 +1,8 @@
-// Plan 33.9 Ф.1 V1 smoke test — parser accepts #opaque + #fuel + reveal.
+// REQUIRES_SMT_BACKEND z3
+//
+// Plan 33.9 Ф.5 (upgraded from V1 parse smoke): opaque + reveal + fuel verified by Z3.
+// Previously (V1) this was a parse-only smoke test; now that Z3 axiomatic encoding is
+// implemented, verification works and proves ensures under reveal.
 
 module contracts.f58_opaque_parse_smoke
 
