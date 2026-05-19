@@ -371,6 +371,14 @@ fn collect_one(module: &Module) -> DocModule {
         entries
     };
 
+    // Plan 71 / D127: пути source-файлов для fixture-exemption logic в doc::lints.
+    // Folder-modules — все peers; single-file — один путь.
+    let source_paths: Vec<std::path::PathBuf> = module
+        .peer_files
+        .iter()
+        .map(|pf| pf.path.clone())
+        .collect();
+
     DocModule {
         path: module_path,
         name: module_name,
@@ -385,6 +393,7 @@ fn collect_one(module: &Module) -> DocModule {
         effect_matrix,
         realtime_matrix,
         source_span: module.span,
+        source_paths,
     }
 }
 
