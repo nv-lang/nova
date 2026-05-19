@@ -1,0 +1,27 @@
+// Plan 72 P1-C followup: полностью inline цепочки без let-биндингов.
+
+module plan72.p1c_result_inline_chain_pos
+
+fn parse_int(s str) -> Result[int, str] => {
+    if s == "42" { Ok(42) } else { Err("bad") }
+}
+
+fn parse_bool(s str) -> Result[bool, str] => {
+    if s == "true" { Ok(true) } else { Err("not a bool") }
+}
+
+test "P1-C inline — parse_bool(...).unwrap_or(false) Ok" {
+    assert(parse_bool("true").unwrap_or(false) == true)
+}
+
+test "P1-C inline — parse_bool(...).unwrap_or(false) Err" {
+    assert(parse_bool("nope").unwrap_or(false) == false)
+}
+
+test "P1-C inline — parse_int(...).map(...).unwrap_or(0)" {
+    assert(parse_int("42").map(fn(x int) -> int => x * 2).unwrap_or(0) == 84)
+}
+
+test "P1-C inline — parse_bool(...).map(...).unwrap_or(true)" {
+    assert(parse_bool("true").map(fn(b bool) -> bool => !b).unwrap_or(true) == false)
+}
