@@ -1,0 +1,38 @@
+// Plan 72 P3-A: record-shadow codegen edge case — `Range { start, end }` literal.
+//
+// `Range` is a plain record in `std/collections/range.nv` with fields
+// `start int` and `end int`. However, the prelude-shadow lookup in
+// `emit_record_lit` could incorrectly treat it as a sum-type variant
+// (W_PRELUDE_SHADOW / D125 collision) because `find_variant_compat` was
+// called BEFORE the `record_schemas.contains_key` check.
+//
+// The fix: when `record_schemas` contains the struct name, skip the
+// sum_schema_registry lookup — prefer the known plain record.
+//
+// This test verifies that `Range { start: 0, end: 10 }` still works
+// correctly as a plain struct init (no crash, correct field values).
+
+module plan72.p3a_record_shadow_range_pos
+
+import std.collections.range
+
+test "P3-A — Range { start, end } plain record init (not sum variant)" {
+    let r = Range { start: 2, end: 7 }
+    assert(r.start == 2)
+    assert(r.end == 7)
+}
+
+test "P3-A — Range literal with computed values" {
+    let lo = 0
+    let hi = 100
+    let r = Range { start: lo, end: hi }
+    assert(r.start == 0)
+    assert(r.end == 100)
+}
+
+test "P3-A — Range spread update" {
+    let r1 = Range { start: 5, end: 10 }
+    let r2 = Range { ...r1, start: 0 }
+    assert(r2.start == 0)
+    assert(r2.end == 10)
+}

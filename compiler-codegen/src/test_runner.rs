@@ -3862,4 +3862,27 @@ mod tests {
         // 31-я строка и далее не учитываются.
         assert_eq!(parse_smt_backend_requirement(&s), None);
     }
+
+    // Plan 72 P0 (E7201): method call on erased protocol type → compile error.
+    // Verifies that codegen_to_c (which runs import resolution + emit_module)
+    // returns Err containing "E7201" for the negative fixture.
+    #[test]
+    fn e7201_erased_protocol_method_call_fails() {
+        let nv_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent().unwrap()
+            .join("nova_tests/plan72/p0_erased_method_call_neg.nv");
+        if !nv_path.exists() {
+            // Fixture not yet present (e.g. CI checkout without nova_tests) — skip.
+            return;
+        }
+        let src = std::fs::read_to_string(&nv_path).expect("read p0 fixture");
+        let result = codegen_to_c(&nv_path, &src, None);
+        match result {
+            Err(msg) => assert!(
+                msg.contains("E7201"),
+                "codegen_to_c должен выдать E7201, но вернул: {}", msg
+            ),
+            Ok(_) => panic!("codegen_to_c должен FAIL с E7201, но succeeded"),
+        }
+    }
 }

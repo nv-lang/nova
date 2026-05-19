@@ -1408,6 +1408,8 @@ mod tests {
             verify_timeout_ms: None,
             purity: Purity::Unknown,
             is_trusted: false,
+            fuel: None,
+            is_opaque: false,
         };
         let items = vec![Item::Fn(opt_is_some)];
 
@@ -1488,6 +1490,8 @@ mod tests {
             verify_timeout_ms: None,
             purity: Purity::Unknown,
             is_trusted: false,
+            fuel: None,
+            is_opaque: false,
         };
         let items = vec![Item::Fn(res_is_ok)];
 
@@ -1768,6 +1772,7 @@ mod tests {
             reads: vec![], modifies: vec![], decreases: None,
             verify_mode: VerifyMode::Default, verify_timeout_ms: None,
             purity: Purity::Unknown, is_trusted: false,
+            fuel: None, is_opaque: false,
         };
         let items = vec![Item::Fn(error_method)];
 

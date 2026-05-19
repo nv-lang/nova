@@ -1,0 +1,54 @@
+// Plan 72 P2-B: structural type inference `[U, T Iter[U]]` without turbofish.
+//
+// The compiler previously could not infer `U` from the bound chain:
+//   arg: IntCounter → param T → bound Iter[U] → method next() -> Option[int] → U = int
+//
+// With P2-B Source 2e, the compiler looks at method return types of the resolved
+// concrete type to extract bound generics.
+//
+// Turbofish form `sum_iter[int, IntCounter](c)` was already working (regression marker).
+// This test adds the non-turbofish form.
+
+module plan72.p2b_structural_inference_pos
+
+type IntCounter {
+    mut cur int
+    end int
+}
+
+fn IntCounter mut @next() -> Option[int] => {
+    if @cur < @end {
+        let v = @cur
+        @cur += 1
+        Some(v)
+    } else {
+        None
+    }
+}
+
+fn sum_iter[U, T Iter[U]](it_in T) -> int => {
+    let mut it = it_in
+    let mut total = 0
+    while let Some(_v) = it.next() {
+        total += 1
+    }
+    total
+}
+
+test "P2-B — turbofish still works (regression guard)" {
+    let c = IntCounter { cur: 1, end: 4 }
+    let count = sum_iter[int, IntCounter](c)
+    assert(count == 3)
+}
+
+test "P2-B — structural inference without turbofish" {
+    let c = IntCounter { cur: 0, end: 5 }
+    let count = sum_iter(c)
+    assert(count == 5)
+}
+
+test "P2-B — empty iterator inferred without turbofish" {
+    let c = IntCounter { cur: 10, end: 10 }
+    let count = sum_iter(c)
+    assert(count == 0)
+}

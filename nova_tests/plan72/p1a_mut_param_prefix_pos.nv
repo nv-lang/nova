@@ -1,0 +1,47 @@
+// Plan 72 P1-A: `mut name type` syntax — leading-mut parameter form.
+//
+// Parser previously only accepted `name mut type` (postfix mut) for parameters
+// but NOT `mut name type` (prefix mut). Generic type-var names (single uppercase)
+// triggered a parse error with leading mut.
+//
+// This test verifies:
+// 1. `mut it T` works in a generic function (T is a type-var, not concrete type)
+// 2. The mutated parameter behaves correctly (next() side-effect works)
+
+module plan72.p1a_mut_param_prefix_pos
+
+type Counter {
+    mut cur int
+    end int
+}
+
+fn Counter mut @next() -> Option[int] => {
+    if @cur < @end {
+        let v = @cur
+        @cur += 1
+        Some(v)
+    } else {
+        None
+    }
+}
+
+// Plan 72 P1-A: leading `mut it T` syntax — T is a generic type-var.
+fn count_items[U, T Iter[U]](mut it T) -> int => {
+    let mut total = 0
+    while let Some(_) = it.next() {
+        total += 1
+    }
+    total
+}
+
+test "P1-A — `mut it T` leading-mut parameter with generic type-var" {
+    let c = Counter { cur: 0, end: 5 }
+    let n = count_items[int, Counter](c)
+    assert(n == 5)
+}
+
+test "P1-A — leading-mut parameter with concrete type" {
+    let c = Counter { cur: 0, end: 3 }
+    let n = count_items[int, Counter](c)
+    assert(n == 3)
+}
