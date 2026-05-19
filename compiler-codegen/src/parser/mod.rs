@@ -1994,10 +1994,16 @@ impl Parser {
         // Только последний param в списке может быть variadic; check
         // выполняется в parse_fn после сбора всех params'ов.
         let is_variadic = self.eat(&TokenKind::DotDotDot).is_some();
+        // Plan 72 P1-A (D6): `mut name type` prefix form — allow `mut` BEFORE
+        // the parameter name. Previously only `name mut type` was accepted, which
+        // prevented writing `fn sum_iter[U, T Iter[U]](mut it T)`. Both forms
+        // are semantically identical (mut is noop in bootstrap GC semantics).
+        if matches!(self.peek().kind, TokenKind::KwMut) {
+            self.bump(); // consume leading `mut`
+        }
         let (name, name_span) = self.parse_ident()?;
-        // D6: mut-маркер на параметре говорит, что внутри fn значение
-        // можно мутировать. В bootstrap'е GC + reference-семантика делают
-        // это noop для семантики, но позволяет писать spec-faithful код.
+        // D6: mut-маркер после имени — `name mut type` (legacy form).
+        // В bootstrap'е GC + reference-семантика делают это noop.
         // Игнорируем `mut`, оставляем тип.
         if matches!(self.peek().kind, TokenKind::KwMut) {
             self.bump();
@@ -2227,6 +2233,47 @@ impl Parser {
         // (D72 enforcement) регистрирует только Protocol-kind.
         // Plan 33.3 Ф.9: axioms собираются внутри effect-блока (после
         // методов и pure_view-объявлений). Для protocol — всегда пусто.
+        // Plan 72 P1-B: empty-sum syntax — `type X` without body.
+        // After skip_newlines(), if the next token starts a new declaration
+        // (keyword like `fn`, `type`, `const`, `export`, `import`, `test`,
+        // `module`) or is a newline/EOF (meaning the declaration is done),
+        // treat this as an empty sum type: 0 variants, uninhabited.
+        // Also accept `type X { }` (empty braces) as empty sum for symmetry.
+        // Use cases: `type Never` (bottom type), `type RuntimeNoneError` (marker).
+        {
+            let is_body_end = matches!(
+                self.peek().kind,
+                TokenKind::Newline
+                    | TokenKind::Eof
+                    | TokenKind::KwFn
+                    | TokenKind::KwType
+                    | TokenKind::KwConst
+                    | TokenKind::KwExport
+                    | TokenKind::KwImport
+                    | TokenKind::KwTest
+                    | TokenKind::KwModule
+            );
+            if is_body_end {
+                let last_span = self.tokens[self.pos.saturating_sub(1)].span;
+                let kind = TypeDeclKind::Sum(Vec::new());
+                // Skip trailing newline if present
+                self.expect_newline_or_eof().ok();
+                // Invariants and axioms not applicable for empty sum
+                return Ok(TypeDecl {
+                    doc,
+                    doc_attrs,
+                    is_export,
+                    name,
+                    generics,
+                    kind,
+                    span: start.merge(last_span),
+                    attrs,
+                    invariants: Vec::new(),
+                    axioms: Vec::new(),
+                });
+            }
+        }
+
         let mut effect_axioms: Vec<EffectAxiom> = Vec::new();
         let kind = match self.peek().kind {
             TokenKind::KwEffect => {

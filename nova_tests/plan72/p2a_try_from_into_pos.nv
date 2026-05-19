@@ -1,0 +1,50 @@
+// Plan 72 P2-A: TryFrom[T, E] and TryInto[U, E] protocols.
+//
+// Previously deferred (Plan 62.E, Plan 56 Ф.2.7): the `Fail[E]` effect row
+// in protocol methods is blocked because vtable dispatch cannot propagate
+// effect handlers. Unblocked via migration path (b): use `Result[Self, E]`
+// return type instead of `Fail[E]` effect row.
+//
+// Protocol declarations are now live in std/prelude/protocols.nv (stable 0.1).
+// Callers must match/unwrap the Result instead of using try-propagation "?".
+
+module plan72.p2a_try_from_into_pos
+
+type Celsius { deg int }
+type Fahrenheit { deg int }
+
+fn Celsius.try_from(f Fahrenheit) -> Result[Celsius, str] => {
+    let c = (f.deg - 32) * 5 / 9
+    if c < -273 { Err("below absolute zero") } else { Ok(Celsius { deg: c }) }
+}
+
+fn Fahrenheit.try_from(c Celsius) -> Result[Fahrenheit, str] => {
+    let f = c.deg * 9 / 5 + 32
+    Ok(Fahrenheit { deg: f })
+}
+
+test "P2-A — TryFrom Fahrenheit → Celsius Ok path" {
+    let r = Celsius.try_from(Fahrenheit { deg: 212 })
+    assert(r.is_ok())
+    let c = r.unwrap_or(Celsius { deg: 0 })
+    assert(c.deg == 100)
+}
+
+test "P2-A — TryFrom Fahrenheit → Celsius Err path (below abs zero)" {
+    let r = Celsius.try_from(Fahrenheit { deg: -1000 })
+    assert(r.is_err())
+}
+
+test "P2-A — TryFrom Celsius → Fahrenheit Ok path" {
+    let r = Fahrenheit.try_from(Celsius { deg: 100 })
+    assert(r.is_ok())
+    let f = r.unwrap_or(Fahrenheit { deg: 0 })
+    assert(f.deg == 212)
+}
+
+test "P2-A — TryInto via try_from symmetry" {
+    let r = Celsius.try_from(Fahrenheit { deg: 32 })
+    assert(r.is_ok())
+    let c = r.unwrap_or(Celsius { deg: -1 })
+    assert(c.deg == 0)
+}
