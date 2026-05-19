@@ -54,7 +54,7 @@
 // - `exit(code int, msg str)` — declaration ниже совпадает с реальностью
 //   (2 args fixed). Перенесён в 62.B.
 
-module std.prelude.runtime
+module prelude.runtime
 
 
 // ──────────────────────────────────────────────────────────────────────────
