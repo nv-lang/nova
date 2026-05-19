@@ -1,0 +1,25 @@
+// EXPECT_COMPILE_ERROR external type
+//
+// Plan 62.D.bis whitelist enforcement (negative test).
+//
+// D126 §«Restriction whitelist»: `external type X` allowed только в
+// std.prelude.* / std.runtime.* modules. User-space modules должны
+// reject parser/type-checker'ом с explicit diagnostic — иначе любой
+// user может declare opaque type без runtime backing'а, что приведёт
+// к dangling pointer'у в codegen.
+//
+// Этот файл вне whitelist'а пытается declare `external type FooBar`
+// — ожидается compile-fail.
+//
+// Plan 62.D.bis Ф.1 implementation: `compiler-codegen/src/types/mod.rs`
+// whitelist check (is_stdlib_runtime_module || is_prelude_self_module).
+
+module plan62.external_type_outside_whitelist
+
+external type FooBar
+
+fn dummy() -> int => 1
+
+test "should never reach this — compile must fail (whitelist)" {
+    let _ = dummy()
+}
