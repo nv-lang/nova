@@ -126,8 +126,38 @@ src/admin/
 Чтобы использовать invoice из users.nv, нужен явный
 `import admin.billing.{Invoice}`.
 
-**Конфликт** `X.nv` + папка `X/` на одном уровне (например `admin.nv`
-рядом с `admin/`) — compile error «ambiguous module 'admin'».
+**Конфликт `X.nv` + папка `X/` на одном уровне — Rule E** (Plan 42,
+2026-05-14; spec sync 2026-05-19 в рамках Plan 62 cleanup):
+
+`X.nv` single-file и папка `X/` рядом сосуществуют по правилам:
+
+- **(a) Conflict** — `X/` содержит direct `.nv` файлы, **который объявляет
+  `module <parent>.X`** (т.е. peer-files of folder-module `X`).
+  В этом случае `X.nv` и `X/peer.nv` оба claim'ят name `X` (parent=tame).
+  Compile error «ambiguous module 'X'».
+- **(b) Валидно (facade pattern)** — `X.nv` существует и `X/` содержит
+  **только nested sub-modules** (declaring `module X.<sub>`), либо
+  только sub-folders без direct `.nv`. В этом случае `X/` — не module,
+  а namespace-container; `X.nv` — single-file module `X` который может
+  re-export'ить nested sub-modules через `export import X.<sub>.{...}`.
+
+**Example facade pattern (Plan 62 splittable prelude):**
+
+```
+std/
+├── prelude.nv                 module std.prelude (facade re-export)
+└── prelude/                   (namespace-container, не module)
+    ├── core.nv                module prelude.core (independent sub-module)
+    ├── runtime.nv             module prelude.runtime (independent sub-module)
+    └── ...
+```
+
+`std/prelude.nv` объявляет `module std.prelude` и через `export import
+std.prelude.core.{...}` re-export'ит declarations из nested sub-modules.
+`std/prelude/core.nv` объявляет `module prelude.core` (parent=prelude,
+target=core — rev-3 правило). Каждый sub-module независим, peers
+только внутри своей папки. См. также `docs/plans/42-folder-modules.md`
+Rule E и Plan 62.
 
 #### Объявление модуля — правило `parent.X`
 
@@ -978,6 +1008,68 @@ import std.result.Result
 
 Без `no_prelude` — стандартный prelude в скоупе (D26).
 
+#### Partial prelude opt-in (Plan 62.F, 2026-05-15)
+
+Если `no_prelude` слишком coarse-grained (нужны только core types но
+не runtime/protocols), используй `partial_prelude(<list>)`:
+
+```nova
+module my.dsl partial_prelude(core, runtime)
+
+// Видимо: Option, Result, Some, None, Ok, Err, Error, Ordering (из core)
+// + panic, exit, assert, debug_assert (из runtime).
+// НЕ видимо: RuntimeError (errors), Iter (collections), From/Hashable
+// (protocols), Fail (effects).
+```
+
+Валидные sub-modules (значения `<list>`):
+- `core` — `Option`/`Result`/`Some`/`None`/`Ok`/`Err`/`Error`/`Ordering`.
+- `runtime` — `panic`/`exit`/`assert`/`debug_assert`.
+- `errors` — `RuntimeError` (6 variants) + `ReadBufferError`.
+- `collections` — `Iter[T]` protocol.
+- `protocols` — `From`/`Into`/`Hashable`/`Equatable`/`Comparable`/`Display`.
+- `effects` — `Fail[E]` + `Time` + `Mem`.
+
+Имена валидируются на resolver-этапе — `partial_prelude(badname)` →
+compile error со списком валидных имён. Пустой список
+`partial_prelude()` — эквивалент `no_prelude` (legitimate use-case).
+
+Применение:
+- **Bootstrap уровни** — selective opt-in без manual import каждого
+  Option/Result.
+- **DSL слой** — нужны Option/Result но не protocols.
+- **AI-friendly minimal context** — student/training material с
+  controlled visibility.
+
+Без `partial_prelude(...)` или `no_prelude` — full prelude facade
+(default behavior, D26).
+
+#### Allow prelude shadow (Plan 62.F.bis Ф.2, 2026-05-18)
+
+Per-file клауза для подавления `W_PRELUDE_SHADOW` lint warnings
+(см. [D125](08-runtime.md#d125-prelude-shadow-warning-lint)):
+
+```nova
+module my.dsl allow_prelude_shadow
+
+// User-redefinition prelude name — warning silenced
+type Option { foo int }
+const PRELUDE_VERSION int = 99
+```
+
+Применение:
+- **Local DSL слой** — переопределение `Option`/`Result` с осознанным
+  intent'ом (например embedded targets с non-GC types).
+- **Test fixtures** — explicit testing shadowing behavior.
+- **Bootstrap слои** — selective shadow без переключения на
+  `no_prelude`.
+
+Без `allow_prelude_shadow` — shadowing допустим (user-decl wins), но
+эмитится structured `W_PRELUDE_SHADOW` warning через
+`lints::lint_prelude_shadow`. Item-level suppress
+(`#[allow(prelude_shadow)] type Foo`) — DEFERRED (требует generic
+attribute parser).
+
 #### Конвенции имён
 
 - **Пакет** — `name` в `nova.toml`, snake_case (`my_project`).
@@ -1008,7 +1100,10 @@ import std.result.Result
 8. **Path/module enforcement** — AI-friendly. LLM получает
    compile error с suggestion, а не undefined behavior.
 9. **Prelude opt-out per-file** — гранулярнее чем per-project, согласовано
-   с D64 `realtime { ... }` блоками per-function.
+   с D64 `realtime { ... }` блоками per-function. Per-file клаузы
+   `no_prelude` / `partial_prelude(...)` (Plan 62.F) /
+   `allow_prelude_shadow` (Plan 62.F.bis Ф.2) дают спектр от полного
+   opt-out до tone-down диагностики при shadowing.
 10. **Корень src/ default + override** — простой default + power user
     customization. Прецедент Cargo (`[lib] path = "..."`), Maven (`src/main/java`).
 

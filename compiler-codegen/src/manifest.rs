@@ -19,6 +19,16 @@ use std::path::{Path, PathBuf};
 pub struct Manifest {
     pub package_name: String,
     pub source_root: PathBuf,
+    /// **Plan 62.F.bis Ф.1 (edition versioning, 2026-05-18):**
+    /// `[package].edition = "2026.05"` — pin для prelude content. None →
+    /// rolling (uses `std/prelude.nv` facade). Some("X.Y") → resolver
+    /// проверяет наличие `std/prelude/<sanitized>.nv` (где `.` → `_`)
+    /// перед fallback'ом на rolling facade.
+    ///
+    /// Mirrors Rust's `edition = "2021"` и Go's `go 1.21` — stability
+    /// через explicit pin. Безопасно extends prelude content без
+    /// breaking existing packages.
+    pub edition: Option<String>,
     /// Plan 71 / D127: opt-in строгий enforcement правила
     /// `public-missing-stability` (Plan 45 §11.5 №7).
     ///
@@ -56,6 +66,7 @@ pub fn parse_manifest(toml_path: &Path, dir: &Path) -> Option<Manifest> {
     let text = std::fs::read_to_string(toml_path).ok()?;
     let mut package_name: Option<String> = None;
     let mut lib_src: Option<String> = None;
+    let mut edition: Option<String> = None;
     let mut enforce_stability: bool = false;
     let mut section: &str = "";
 
@@ -88,6 +99,9 @@ pub fn parse_manifest(toml_path: &Path, dir: &Path) -> Option<Manifest> {
             let str_val = raw_val.trim_matches('"').to_string();
             match (section, key) {
                 ("package", "name") => package_name = Some(str_val),
+                // Plan 62.F.bis Ф.1: `[package].edition = "2026.05"` pin
+                // для prelude content. Опционально — отсутствие → rolling.
+                ("package", "edition") => edition = Some(str_val),
                 ("lib", "src")      => lib_src = Some(str_val),
                 // Plan 71 / D127: `[lib] enforce-stability = true|false`.
                 // Conservative: anything other than literal `true` → false.
@@ -111,8 +125,72 @@ pub fn parse_manifest(toml_path: &Path, dir: &Path) -> Option<Manifest> {
     Some(Manifest {
         package_name: pkg,
         source_root,
+        edition,
         enforce_stability,
     })
+}
+
+/// Plan 62.F.bis Ф.1: sanitize edition string для filesystem path + Nova
+/// identifier rules.
+///
+/// Преобразование:
+///   - Нон-alphanumeric ASCII символы → `_` (например `2026.05` → `2026_05`).
+///   - Если результат начинается с цифры (Nova ident должен начинаться
+///     с буквы/`_` per `is_ident_start`) — prefix `e` (от "edition").
+///     `2026.05` → `e2026_05`. `core` → `core` (без изменений).
+///   - Empty input → empty output (caller отвечает за None-handling).
+///
+/// Используется resolver'ом для lookup'а `std/prelude/<sanitized>.nv`.
+/// Файл `std/prelude/e2026_05.nv` имеет `module std.prelude.e2026_05`
+/// (валидный path element).
+pub fn sanitize_edition(edition: &str) -> String {
+    let raw: String = edition.chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+        .collect();
+    if raw.is_empty() {
+        return raw;
+    }
+    let first = raw.as_bytes()[0];
+    if first.is_ascii_digit() {
+        format!("e{}", raw)
+    } else {
+        raw
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sanitize_edition_year_dot() {
+        assert_eq!(sanitize_edition("2026.05"), "e2026_05");
+    }
+
+    #[test]
+    fn sanitize_edition_word_unchanged() {
+        assert_eq!(sanitize_edition("nightly"), "nightly");
+    }
+
+    #[test]
+    fn sanitize_edition_mixed() {
+        assert_eq!(sanitize_edition("v1-beta"), "v1_beta");
+    }
+
+    #[test]
+    fn sanitize_edition_starts_underscore_no_prefix() {
+        assert_eq!(sanitize_edition("_internal"), "_internal");
+    }
+
+    #[test]
+    fn sanitize_edition_empty() {
+        assert_eq!(sanitize_edition(""), "");
+    }
+
+    #[test]
+    fn sanitize_edition_pure_digits() {
+        assert_eq!(sanitize_edition("2026"), "e2026");
+    }
 }
 
 /// Compute expected module path for a file given its package manifest.
@@ -330,13 +408,27 @@ pub fn is_stdlib_runtime_module(name: &[String]) -> bool {
 ///   так что result совпадает; для user package — `["myproject", "prelude"]`).
 ///
 /// Более permissive — match по `last() == "prelude"` чтобы прикрыть оба.
+///
+/// **Plan 62.A:** prelude теперь splittable — `std/prelude/<sub>.nv` тоже
+/// считаются "prelude self" для целей auto-import. Иначе sub-module
+/// получает auto-import `std.prelude`, который re-export'ит sub-module →
+/// circular import. Match по prefix:
+///   - `std.prelude.<sub>` (stdlib splittable)
+///   - `<pkg>.prelude.<sub>` (user-package splittable)
 pub fn is_prelude_self_module(name: &[String]) -> bool {
-    (name.len() == 2 && name[0] == "std" && name[1] == "prelude")
-        || name.last().map(|s| s == "prelude").unwrap_or(false)
+    // Legacy: any module чей last segment == "prelude"
+    // (e.g. ["std", "prelude"], ["foo", "prelude"], ["foo", "bar", "prelude"]).
+    let is_prelude_root = name.last().map(|s| s == "prelude").unwrap_or(false);
+    // Plan 62.A: splittable prelude sub-modules — penultimate == "prelude".
+    // E.g. ["std", "prelude", "core"], ["std", "prelude", "runtime"],
+    //      ["foo", "prelude", "core"].
+    let is_prelude_submodule = name.len() >= 2
+        && name.get(name.len() - 2).map(|s| s == "prelude").unwrap_or(false);
+    is_prelude_root || is_prelude_submodule
 }
 
 #[cfg(test)]
-mod tests {
+mod parse_tests {
     use super::*;
     use std::io::Write;
 

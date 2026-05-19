@@ -1,0 +1,49 @@
+// fail_effect_from_prelude.nv — Plan 62.F Part 1 positive test.
+//
+// Verifies что `Fail[E]` declared в std/prelude/effects.nv:
+//   1) auto-import'ится через prelude facade (R27 + facade re-export),
+//   2) совместим с hardcoded codegen pre-registration (NovaVtable_Fail),
+//   3) `throw <expr>` desugar в `Fail[E].fail(expr)` работает идентично,
+//   4) handler `with Fail[E] = |e| ...` ловит typed payload.
+
+module plan62.fail_effect_from_prelude
+
+// Auto-import std.prelude → re-export std.prelude.effects.{Fail}.
+// `Fail` доступен по single-element path без explicit import (D26).
+// Codegen матчит path `["Fail"]` и эмитит call через built-in vtable.
+//
+// Syntax: effects объявляются МЕЖДУ params и `->`: `fn f(...) E -> R`.
+
+fn raise_int(x int) Fail[int] -> int {
+    if x < 0 {
+        throw 42
+    }
+    x * 2
+}
+
+test "Fail[int] auto-imported from prelude — throw + handler" {
+    let result = with Fail[int] = |e| interrupt e + 1 {
+        raise_int(-1)
+    }
+    // throw 42 → handler interrupts с 42 + 1 = 43.
+    assert(result == 43)
+}
+
+test "Fail[int] handler bypassed when no throw" {
+    let result = with Fail[int] = |_e| interrupt 0 {
+        raise_int(5)
+    }
+    // 5 * 2 = 10 (handler не triggered, raise_int возвращает normally).
+    assert(result == 10)
+}
+
+fn raise_str() Fail[str] -> int {
+    throw "boom"
+}
+
+test "Fail[str] — different E parameter than [int]" {
+    let result = with Fail[str] = |e| interrupt (if e == "boom" { 1 } else { 999 }) {
+        raise_str()
+    }
+    assert(result == 1)
+}
