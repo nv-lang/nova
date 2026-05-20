@@ -1,0 +1,10 @@
+// Plan 33.8 Ф.1.5: переполнение знакового `int` при умножении → panic.
+// EXPECT_RUNTIME_PANIC integer overflow
+
+module contracts.int_overflow_mul_panic
+
+fn double(x int) -> int => x * 2
+
+test "int * overflow panics" {
+    let _ = double(int.MAX)
+}

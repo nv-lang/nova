@@ -10953,6 +10953,18 @@ impl CEmitter {
                 }
                 let l = self.emit_expr_with_target_type(left, target_ty_c)?;
                 let r = self.emit_expr_with_target_type(right, target_ty_c)?;
+                // Plan 33.8 Ф.1.2: знаковая `int` Add/Sub/Mul → checked-форма.
+                if lty == "nova_int" && rty == "nova_int" {
+                    let checked = match op {
+                        BinOp::Add => Some("nova_int_checked_add"),
+                        BinOp::Sub => Some("nova_int_checked_sub"),
+                        BinOp::Mul => Some("nova_int_checked_mul"),
+                        _ => None,
+                    };
+                    if let Some(helper) = checked {
+                        return Ok(format!("{}({}, {})", helper, l, r));
+                    }
+                }
                 let op_str = match op {
                     BinOp::Add => "+",  BinOp::Sub => "-",
                     BinOp::Mul => "*",  BinOp::Div => "/",
@@ -11477,6 +11489,21 @@ impl CEmitter {
                     BinOp::Implies => return Ok(format!("((!({})) || ({}))", l, r)),
                     BinOp::Iff => return Ok(format!("(({}) == ({}))", l, r)),
                     _ => {}
+                }
+                // Plan 33.8 Ф.1.2: знаковая `int` Add/Sub/Mul → checked-форма
+                // (паника при переполнении, spec 04-effects.md). Только для
+                // безграничного `nova_int`; sized-типы (wrap, Plan 33.7) и
+                // прочее эмитятся обычным C-оператором.
+                if lty == "nova_int" && rty == "nova_int" {
+                    let checked = match op {
+                        BinOp::Add => Some("nova_int_checked_add"),
+                        BinOp::Sub => Some("nova_int_checked_sub"),
+                        BinOp::Mul => Some("nova_int_checked_mul"),
+                        _ => None,
+                    };
+                    if let Some(helper) = checked {
+                        return Ok(format!("{}({}, {})", helper, l, r));
+                    }
                 }
                 let op_str = match op {
                     BinOp::Add => "+",  BinOp::Sub => "-",
