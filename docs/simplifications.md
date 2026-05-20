@@ -9992,3 +9992,45 @@ G/H). ~3700 LOC implementation cumulative.
   фиксирует только println overload).
 - **Приоритет:** L для Plan 67 (06_contracts — primary target — works);
   M для overall corpus health.
+
+---
+
+## Plan 70.3 — char↔int distinction (2026-05-19/20)
+
+### [M-plan70-3-uint-max-parser] ✅ RESOLVED (Plan 70.5 Ф.4, 2026-05-20)
+- **Где:** `compiler-codegen/src/parser/mod.rs` `is_primitive_type` list (~line 3941).
+- **Что упрощено:** `uint.MAX` парсился как `Member(Ident("uint"), "MAX")`
+  вместо `Path(["uint", "MAX"])` — `uint` отсутствовал в списке type-keywords
+  парсера. Workaround: `u64.MAX as uint`.
+- **Закрыто:** добавлен `"uint"` в `is_primitive_type` (1 строчка). Fixtures
+  f4-f8 в `nova_tests/plan70_5/` подтверждают.
+
+### [M-plan70-4-arr-uint-indexing] (DEFER — breaking change)
+- **Где:** array indexing API — `arr[i int]` сигнатура.
+- **Что упрощено:** `arr[i uint]` не поддерживается как тип индекса.
+  Сейчас `arr.len() -> int`, Range/Iter `-> Option[int]`.
+- **Почему:** Breaking change для 100+ API sites. Swift/Go pattern —
+  используют `Int` для индексов (не uint/usize) из соображений эргономики.
+- **Как чинить:** отдельный план после type-checker API revision.
+- **Приоритет:** L — ergonomics, не bug.
+
+### [M-plan70-4-byte-full-removal] (DEFER — type-checker alias resolution)
+- **Где:** `byte` type alias — `std/prelude.nv` + type-checker.
+- **Что упрощено:** `byte` → `nova_byte` унификация выполнена в codegen
+  (Plan 70.4 Ф.4), но `byte` как keyword всё ещё существует в языке как
+  отдельный тип в type-checker.
+- **Почему:** полное удаление требует alias-resolution в type-checker
+  (Plan 69 closure scope).
+- **Как чинить:** Plan 69 follow-up — resolve `byte` как alias `u8` в
+  type-checker, затем deprecate keyword.
+- **Приоритет:** M — codegen unified, только type-checker gap.
+
+## Plan 70.5 — uint symmetric primitive (2026-05-19/20)
+
+### [M-plan70-5-uint-min-constant] (ACCEPTED — по дизайну)
+- **Где:** `numeric_type_constant_mapping` в `emit_c.rs`.
+- **Что упрощено:** `uint.MIN` не зарегистрирован как константа (в отличие
+  от `int.MIN`). Для `uint` минимум = 0, что выражается как `0 as uint`.
+- **Почему:** `uint.MIN == 0` тривиально и не несёт семантической ценности
+  в отличие от `int.MIN = INT64_MIN` (non-obvious boundary value).
+- **Приоритет:** L — можно добавить при необходимости.
