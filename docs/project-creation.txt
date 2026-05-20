@@ -16749,3 +16749,72 @@ Full nova test (release, C-codegen): 864 PASS / 0 FAIL / 47 SKIP
 payload-type mismatch и closure-арность .map() ловятся только
 C-backstop'ом или не ловятся — задокументировано в simplifications.md
 [M-option-result-method-misuse-cc-only].
+
+2026-05-20 D122 amended — эффекты разрешены в protocol-методах
+──────────────────────────────────────────────────────────────────────
+
+Снят запрет Plan 56 Ф.2.7 (effect-free enforcement bound-методов).
+
+Контекст: Ф.2.7 / D122 отвергал любой protocol-метод с effect-row
+(Fail/Io/Db) — rationale «vtable dispatch не пробрасывает effect
+handlers». Но bootstrap использует mono-dispatch (true-vtable отложен
+в Plan 03); под mono эффект protocol-метода пробрасывается как у
+обычной effectful-функции. Запрет блокировал легитимные паттерны —
+напр. `type TryFrom[T,E] protocol { try_from(t T) Fail[E] -> Self }`.
+
+Изменения:
+- types/mod.rs::check_module — убрана effect-free проверка protocol-
+  методов.
+- spec/decisions/02-types.md D122 — «bound methods обязаны быть pure»
+  заменено на «могут иметь эффекты; mono-dispatch пробрасывает; true-
+  vtable (Plan 03) — будущее ограничение».
+- docs/plans/56-...md — Ф.2.7 помечен REVERTED.
+- simplifications.md [M-tryfrom-tryinto-deferred] — effect-блокер снят,
+  остаётся только миграция деклараций (Plan 62.E.bis).
+- Тест: f5_negative_bound_effect (negative) → f5_effectful_protocols
+  (positive): effectful protocol + impl + generic bound [T Checked] +
+  Fail-handler + буквальный TryFrom[T,E]. plan56 6/6.
+
+Полный прогон: 870 PASS / 0 FAIL / 52 SKIP. 0 регрессий.
+
+2026-05-20 Plan 62.E.bis — TryFrom / TryInto migration (закрытие defer)
+─────────────────────────────────────────────────────────────────
+
+Последний deferred protocol-sub-plan Plan 62.E закрыт. `TryFrom[T, E]`
+/ `TryInto[U, E]` мигрированы в prelude — 8/8 протоколов.
+
+Контекст блокера:
+- В Plan 62.E (2026-05-18) TryFrom/TryInto deferred — объявлялись с
+  `Fail[E]` effect-row, который Plan 56 Ф.2.7 (effect-free enforcement)
+  отвергал («bound method has effects»).
+- Effect-блокер снят независимо — Plan 56 Ф.2.7-revert (D122 amended:
+  эффекты в protocol-методах разрешены под mono-dispatch).
+
+Решение (migration path b, user-выбор «try_from должен возвращать
+Result»):
+- `TryFrom[T, E]` / `TryInto[U, E]` объявлены через форму
+  `try_from(t T) -> Result[Self, E]` (D77 Result-форма, не `Fail[E]`).
+  Декларации уже были в std/prelude/protocols.nv (Plan 72 P2-A);
+  62.E.bis добавил их в facade `std/prelude.nv` export-list.
+- Stale-комментарии в prelude.nv («Ф.2.7 запрещает effects»)
+  устранены. PRELUDE_VERSION 7 → 8.
+
+Тесты:
+- plan62/tryfrom_tryinto_from_prelude (positive) — TryFrom/TryInto
+  Ok/Err discrimination + bound-parse через prelude.
+- plan62/tryfrom_bound_unsatisfied_neg (negative) — bound enforcement:
+  тип без try_from отвергается с «does not satisfy TryFrom bound».
+- 3 regression-маркера PRELUDE_VERSION переведены на монотонный `>=`
+  (не ломаются на будущих bump'ах).
+- plan62 35/35 PASS.
+
+Codegen-баг обнаружен (не в scope 62.E.bis): `match Result[<user-
+record>, E]` с binding'ом Ok-payload → переменная типизируется
+nova_int (CC-FAIL member-reference). Pre-existing (ловит plan72/
+p2a_try_from_into_pos), семейство Result-monomorphization. Вынесен в
+simplifications.md [M-result-record-payload-match] → Plan 59 sum-mono.
+Позитивный тест использует Ok/Err-дискриминацию без field-access.
+
+Plan 62.E.bis закрыт. Остаток deferred sub-plans Plan 62: 62.A.bis Ф.4
+(ждёт Plan 59 Ф.7.5 increment 2), 62.C.bis RuntimeNoneError (ждёт
+empty-sum syntax, Plan 72 P1-B).

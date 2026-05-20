@@ -1,0 +1,74 @@
+// conversions_positive.nv — Plan 75 Ф.3
+// str.from(char/int/bool) Ok-ветки. Round-trip bytes.
+
+module str.conversions_positive
+
+test "str.from ASCII char" {
+    assert(str.from('A') == "A")
+}
+
+test "str.from Cyrillic char (2-byte UTF-8)" {
+    let s = str.from('Ю')
+    assert(s == "Ю")
+    assert(s.byte_len() == 2)
+    assert(s.len() == 1)
+}
+
+test "str.from emoji char (4-byte UTF-8)" {
+    let s = str.from('😀')
+    assert(s == "😀")
+    assert(s.byte_len() == 4)
+    assert(s.len() == 1)
+}
+
+test "str.from(int) zero" {
+    assert(str.from(0) == "0")
+}
+
+test "str.from(int) positive" {
+    assert(str.from(42) == "42")
+}
+
+test "str.from(int) negative" {
+    assert(str.from(-7) == "-7")
+}
+
+test "str.from(true)" {
+    assert(str.from(true) == "true")
+}
+
+test "str.from(false)" {
+    assert(str.from(false) == "false")
+}
+
+test "int.try_from valid positive" {
+    let r = int.try_from("123")
+    assert(r.is_ok())
+    assert(r.unwrap_or(0) == 123)
+}
+
+test "int.try_from valid negative" {
+    let r = int.try_from("-100")
+    assert(r.is_ok())
+    assert(r.unwrap_or(0) == -100)
+}
+
+test "bool.try_from true" {
+    assert(bool.try_from("true").is_ok())
+}
+
+test "bool.try_from false" {
+    assert(bool.try_from("false").is_ok())
+}
+
+test "round-trip ASCII str through bytes" {
+    let s = "hello"
+    let r = str.try_from(s.bytes())
+    assert(r.is_ok())
+}
+
+test "round-trip Cyrillic str through bytes" {
+    let s = "Привет"
+    let r = str.try_from(s.bytes())
+    assert(r.is_ok())
+}

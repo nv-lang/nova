@@ -1,0 +1,36 @@
+// is_empty_hash.nv — Plan 75 Ф.1
+// @is_empty: добавлен в string.nv (Plan 75). @hash: FNV-1a determinism.
+
+module str.is_empty_hash
+
+test "is_empty: empty string returns true" {
+    assert("".is_empty())
+}
+
+test "is_empty: non-empty string returns false" {
+    assert(!"x".is_empty())
+}
+
+test "is_empty: space is not empty" {
+    assert(!" ".is_empty())
+}
+
+test "is_empty: multi-char string returns false" {
+    assert(!"hello".is_empty())
+}
+
+test "hash: same string same hash" {
+    assert("abc".hash() == "abc".hash())
+}
+
+test "hash: empty string stable" {
+    assert("".hash() == "".hash())
+}
+
+test "hash: different strings different hash" {
+    assert("abc".hash() != "abd".hash())
+}
+
+test "hash: empty vs non-empty differ" {
+    assert("".hash() != "x".hash())
+}
