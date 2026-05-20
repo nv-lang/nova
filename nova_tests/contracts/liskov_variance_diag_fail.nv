@@ -1,0 +1,31 @@
+// REQUIRES_SMT_BACKEND z3
+// EXPECT_COMPILE_ERROR variance параметров эффекта
+//
+// Plan 33.6 Ф.3.8: variance inference для Liskov-диагностики.
+// Handler нарушает ensures эффекта; диагностика должна включать
+// variance-заметку по параметрам метода:
+//   - `x`  появляется только в `requires` → contravariant
+//   - `lo` появляется только в `ensures`  → covariant
+//   - `n`  появляется и в requires, и в ensures → invariant
+//
+// Handler `clamp_low(x, lo, n)` возвращает `x` без клампинга — при x < lo
+// нарушает `ensures result >= lo`. Z3 находит counterexample, и Liskov-
+// диагностика выводит variance каждого параметра.
+
+module contracts.liskov_variance_diag_fail
+
+type Clamp effect {
+    clamp_low(x int, lo int, n int) -> int
+        requires x <= n
+        ensures result >= lo
+        ensures result <= n
+}
+
+test "liskov variance diagnostic" {
+    with #verify Clamp = handler Clamp {
+        clamp_low(x, lo, n) => x
+    } {
+        let r = Clamp.clamp_low(0, 5, 10)
+        assert(r == 0)
+    }
+}

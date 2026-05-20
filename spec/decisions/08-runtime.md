@@ -319,6 +319,25 @@ fn critical(...) -> Result =>
 > Cross-file resolve через R26+R27 находит declarations.
 > См. [Plan 62.B.bis](../../docs/plans/62.B.bis-print-println-migration.md).
 >
+> **Plan 62.A.bis (закрыт 2026-05-20):** введён layered schema registry
+> для sum-types в codegen (`SumSchemaRegistry` —
+> `compiler-codegen/src/codegen/sum_schema_registry.rs`). Registry
+> работает в трёх слоях с убывающим приоритетом:
+> `DeclaredFromPrelude > DeclaredFromUser > HardcodedBaseline`.
+> Hardcoded entries (Option/Result/Error/RuntimeError) остаются в
+> качестве ABI-compat fallback для runtime-хелперов в `nova_rt/array.h`.
+> File-based декларации в `std/prelude/core.nv` (через `external fn
+> Option[T] @method`) получают приоритет и маршрутизируют вызовы через
+> `MethodRouting` registry (HardcodedRuntimeFn / ExternalFn /
+> DeclaredBody). Unblocked: 7 из 8 методов Option (is_some, is_none,
+> unwrap, unwrap_or, unwrap_or_else, map, ok_or) + 4 из 9 методов
+> Result (is_ok, is_err, ok, err) — задекларированы в `std/prelude/core.nv`.
+> Deferred в core: 5 Result-методов возвращающих `T` (unwrap_or и др.)
+> — blocker: type-checker выводит generic `T`, codegen возвращает
+> `nova_int`, `==` после вызова ломается (Plan 62.B+). `Option.or` —
+> trampoline в `nova_rt/array.h` отсутствует (Plan 62.B+). Phase 4
+> (удаление legacy `sum_schemas`) deferred до Plan 59 sum-mono.
+>
 > **Remaining deferred:** `Never`/`RuntimeNoneError` (bootstrap parser
 > empty-sum syntax), `TryFrom`/`TryInto` (Plan 62.E.bis — требует
 > Plan 56 Ф.2.7 effect-row enforcement).
@@ -392,7 +411,7 @@ let port int = env.get("PORT").map(parse_int).unwrap_or(8080)
 | `Option.unwrap_or_else(f)` | ✅ inline (closure call) | ✅ runtime/result_methods.nv |
 | `Option.map(f)` | ✅ inline | ✅ |
 | `Option.ok_or(e)` | ✅ inline | ✅ |
-| `Option.or(other)` | ❌ не реализован в bootstrap | — |
+| `Option.or(other)` | ✅ per-T trampoline `Nova_Option_method_or_<T>` | ✅ plan62/option_or_from_prelude.nv |
 | `Result.is_ok` / `is_err` | ✅ | ✅ |
 | `Result.ok()` → Option[T] | ✅ runtime helper | ✅ |
 | `Result.err()` → Option[E] | ✅ inline (boxed nova_str) | ✅ |
@@ -409,6 +428,15 @@ let port int = env.get("PORT").map(parse_int).unwrap_or(8080)
 | `RuntimeError.TypeMismatch(s)` | ✅ tuple-variant constructor | ✅ |
 | `RuntimeError.AssertFailed(s)` | ✅ tuple-variant constructor | ✅ |
 | `RuntimeError.NoHandler(s)` | ✅ tuple-variant constructor | ✅ |
+
+> **Plan 62.B (2026-05-20):** `Option.or` реализован — per-T trampoline
+> `Nova_Option_method_or_<T>`. Все 17 Option/Result методов из §283-306
+> теперь задекларированы в `std/prelude/core.nv` через `external fn`
+> (раньше 5 Result-методов — `unwrap`/`unwrap_or`/`unwrap_or_else`/`map`/
+> `map_err` — оставались hardcoded-only из-за generic-стаб блокера в
+> type inference, см. plan-doc 62 §«Status update 2026-05-20»). Починен
+> pre-existing баг `Result.map` для `bool`/`char`-typed closure
+> (хардкод `NOVA_CLOS_CALL_ii` int-layout → calling-convention mismatch).
 
 **Bootstrap-ограничения**:
 - `Result[T, E]` зашит на `(nova_int Ok, nova_str Err)`. Generic

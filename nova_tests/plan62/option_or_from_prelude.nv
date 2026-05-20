@@ -1,0 +1,69 @@
+// option_or_from_prelude.nv — Plan 62.B, 2026-05-20.
+//
+// Tests для Option[T].or() — per-T trampoline Nova_Option_method_or_<T>.
+// 5 позитивных тестов: 4 комбинации Some/None + chain + str payload.
+// `None` всегда с явной аннотацией (`let b Option[int] = None`) — без
+// неё bootstrap-inference дефолтит элемент к `int` (см. plan-doc 62).
+
+module plan62.option_or_from_prelude
+
+// ────────────────────────────────────────────────────────────────────
+// Some.or(Some) — левый выигрывает
+// ────────────────────────────────────────────────────────────────────
+
+test "Option.or: Some.or(Some) returns left value" {
+    let a = Some(1)
+    let b = Some(2)
+    let r = a.or(b)
+    assert(r.is_some())
+    assert(r.unwrap() == 1)
+}
+
+// ────────────────────────────────────────────────────────────────────
+// Some.or(None) — None как inline аргумент, тип из a
+// ────────────────────────────────────────────────────────────────────
+
+test "Option.or: Some.or(None) returns left value" {
+    let a = Some(42)
+    let b Option[int] = None
+    let r = a.or(b)
+    assert(r.is_some())
+    assert(r.unwrap() == 42)
+}
+
+// ────────────────────────────────────────────────────────────────────
+// None.or(Some) — typed annotation, fallback к правому
+// ────────────────────────────────────────────────────────────────────
+
+test "Option.or: None.or(Some) returns right value" {
+    let a Option[int] = None
+    let b = Some(99)
+    let r = a.or(b)
+    assert(r.is_some())
+    assert(r.unwrap() == 99)
+}
+
+// ────────────────────────────────────────────────────────────────────
+// Chain: typed None → None → Some
+// ────────────────────────────────────────────────────────────────────
+
+test "Option.or: chain finds first Some" {
+    let a Option[int] = None
+    let b Option[int] = None
+    let c = Some(7)
+    let r = a.or(b).or(c)
+    assert(r.is_some())
+    assert(r.unwrap() == 7)
+}
+
+// ────────────────────────────────────────────────────────────────────
+// str payload — per-T специализация для nova_str
+// ────────────────────────────────────────────────────────────────────
+
+test "Option.or: works with str payload" {
+    let a = Some("hello")
+    let b = Some("world")
+    let r = a.or(b)
+    assert(r.is_some())
+    assert(r.unwrap() == "hello")
+}
