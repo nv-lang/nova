@@ -91,6 +91,9 @@
         if (a->len != b->len) return 0; \
         for (int64_t _i = 0; _i < a->len; _i++) { if (a->data[_i] != b->data[_i]) return 0; } \
         return 1; \
+    } \
+    static inline NovaOpt_##T Nova_Option_method_or_##T(NovaOpt_##T self, NovaOpt_##T other) { \
+        return self.tag == NOVA_TAG_Option_Some ? self : other; \
     }
 
 /* ---- Default instantiations for primitive arrays.
@@ -800,5 +803,10 @@ static inline Nova_RuntimeError* nova_make_RuntimeError_NoHandler(nova_str msg) 
     e->payload.NoHandler._0 = msg;
     return e;
 }
+
+/* Plan 62.B: Nova_Option_method_or_nova_str — explicit specialization.
+ * NOVA_ARRAY_IMPL generates or_<T> for int/char/byte/bool/f64/f32/sized-ints.
+ * nova_str needs explicit because NOVA_ARRAY_IMPL is not instantiated for it. */
+static inline NovaOpt_nova_str Nova_Option_method_or_nova_str(NovaOpt_nova_str s, NovaOpt_nova_str o) { return s.tag == NOVA_TAG_Option_Some ? s : o; }
 
 #endif /* NOVA_RT_ARRAY_H */

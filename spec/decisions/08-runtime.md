@@ -411,7 +411,7 @@ let port int = env.get("PORT").map(parse_int).unwrap_or(8080)
 | `Option.unwrap_or_else(f)` | ✅ inline (closure call) | ✅ runtime/result_methods.nv |
 | `Option.map(f)` | ✅ inline | ✅ |
 | `Option.ok_or(e)` | ✅ inline | ✅ |
-| `Option.or(other)` | ❌ не реализован в bootstrap | — |
+| `Option.or(other)` | ✅ per-T trampoline `Nova_Option_method_or_<T>` | ✅ plan62/option_or_from_prelude.nv |
 | `Result.is_ok` / `is_err` | ✅ | ✅ |
 | `Result.ok()` → Option[T] | ✅ runtime helper | ✅ |
 | `Result.err()` → Option[E] | ✅ inline (boxed nova_str) | ✅ |
@@ -428,6 +428,15 @@ let port int = env.get("PORT").map(parse_int).unwrap_or(8080)
 | `RuntimeError.TypeMismatch(s)` | ✅ tuple-variant constructor | ✅ |
 | `RuntimeError.AssertFailed(s)` | ✅ tuple-variant constructor | ✅ |
 | `RuntimeError.NoHandler(s)` | ✅ tuple-variant constructor | ✅ |
+
+> **Plan 62.B (2026-05-20):** `Option.or` реализован — per-T trampoline
+> `Nova_Option_method_or_<T>`. Все 17 Option/Result методов из §283-306
+> теперь задекларированы в `std/prelude/core.nv` через `external fn`
+> (раньше 5 Result-методов — `unwrap`/`unwrap_or`/`unwrap_or_else`/`map`/
+> `map_err` — оставались hardcoded-only из-за generic-стаб блокера в
+> type inference, см. plan-doc 62 §«Status update 2026-05-20»). Починен
+> pre-existing баг `Result.map` для `bool`/`char`-typed closure
+> (хардкод `NOVA_CLOS_CALL_ii` int-layout → calling-convention mismatch).
 
 **Bootstrap-ограничения**:
 - `Result[T, E]` зашит на `(nova_int Ok, nova_str Err)`. Generic
