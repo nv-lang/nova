@@ -343,6 +343,46 @@ bump-DOWN baseline (counts decreasing — strict gain).
 
 ---
 
+## Cat D sites (dispatch wildcards in non-codegen helpers)
+
+### D1. `sum_schema_registry.rs:~765` — `type_ref_to_c_minimal` unknown named type
+
+```rust
+// Plan 70 Cat D: unknown named type in prelude/errors.nv schema registration.
+_ => "nova_int".to_string(),
+```
+
+**Rationale:** `type_ref_to_c_minimal` is a local helper used exclusively by
+`register_prelude_sum_from_decl` to map prelude/errors.nv variant field types
+to C type names for the ABI-compat baseline schema registry. The function is
+intentionally minimal ("sufficient for errors.nv which uses only int/str/bool/char").
+Unknown named types (records, protocols, etc.) should not appear in prelude error
+variants — this wildcard is a defensive guard, not a codegen path.
+
+**Reachability:** Unreachable in practice for all known prelude error declarations.
+
+**Added by:** Plan 62.A.bis (sum schema registry, 2026-05-18).
+
+---
+
+### D2. `sum_schema_registry.rs:~769` — `type_ref_to_c_minimal` non-primitive TypeRef
+
+```rust
+// Plan 70 Cat D: non-primitive TypeRef (generic, func, protocol) in prelude schema.
+_ => "nova_int".to_string(),
+```
+
+**Rationale:** Same as D1 — outer match arm covers TypeRef variants other than
+`Named` and `Unit` (e.g., `Func`, `Array`, `Generic`). These should not appear
+in prelude/errors.nv variant definitions. Defensive fallback for schema-registration
+path only; never output to emitted C.
+
+**Reachability:** Unreachable for all known prelude error declarations.
+
+**Added by:** Plan 62.A.bis (sum schema registry, 2026-05-18).
+
+---
+
 ## Cross-references
 
 - **Plan 70 doc:** `docs/plans/70-no-silent-nova-int-fallback.md`
