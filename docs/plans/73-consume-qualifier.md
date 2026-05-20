@@ -1,0 +1,274 @@
+# Plan 73: `consume` qualifier — D131
+
+> **Создан 2026-05-19.**
+>
+> **Цель:** добавить в Nova compile-time проверку логической линейности.
+> Некоторые типы (`StringBuilder`) после определённых вызовов (`into()`)
+> инвалидируются. Сейчас это защищается только runtime-флагом — нужна
+> ошибка компилятора при use-after-consume и maybe-consumed.
+
+---
+
+## Контекст
+
+Nova использует GC, borrow checker не нужен. Но `consume` — это не про
+memory safety, а про **логический инвариант**: после `sb.into()` буфер
+отдан, дальнейшее использование `sb` — семантическая ошибка.
+
+Синтаксис симметричен `mut`:
+
+```nova
+fn StringBuilder mut @append(s str) -> Self   // mutable self
+fn StringBuilder consume @into() -> str        // consuming self
+
+fn foo(mut a int) { ... }                      // mutable param
+fn foo(consume sb StringBuilder) -> str { ... } // consuming param
+```
+
+Callsite **неявный** — просто `sb.into()` / `foo(sb)`.
+(`consume:` занято синтаксисом named params с default-значениями.)
+
+---
+
+## Решение D131
+
+Добавить в `spec/decisions/05-memory.md` решение D131:
+
+- `consume` — квалификатор receiver/param, не ownership в смысле Rust
+- После `consume`-вызова переменная переходит в состояние `Consumed`
+- Use-after-consume → **compile error**
+- Maybe-consumed (consume только на части веток) → **compile error**
+- Runtime-флаг `consumed` в C-рантайме остаётся как defense-in-depth
+
+---
+
+## Фазы
+
+### Ф.1 — Спек: D131 в `spec/decisions/05-memory.md`
+
+Добавить после D6. Следующий свободный D-номер: **D131**.
+
+---
+
+### Ф.2 — AST: `consume: bool`
+
+**`compiler-codegen/src/ast/mod.rs`**
+
+`Receiver` (lines 469-475) — рядом с `mutable`:
+```rust
+pub struct Receiver {
+    pub type_name: String,
+    pub generics: Vec<TypeRef>,
+    pub kind: ReceiverKind,
+    pub mutable: bool,   // fn Type mut @method
+    pub consume: bool,   // fn Type consume @method  ← NEW
+    pub span: Span,
+}
+```
+
+`Param` (lines 484-499) — новое поле (сейчас `mut` на params не хранится):
+```rust
+pub struct Param {
+    pub name: String,
+    pub ty: TypeRef,
+    pub is_variadic: bool,
+    pub default: Option<Expr>,
+    pub consume: bool,   // consume name Type  ← NEW
+    pub span: Span,
+}
+```
+
+---
+
+### Ф.3 — Парсер: `consume`
+
+**`compiler-codegen/src/parser/mod.rs`**
+
+**Лексер** — добавить `KwConsume` токен для ключевого слова `consume`.
+
+**Method receiver** (lines 1798-1822) — по аналогии с `mut`:
+```rust
+if matches!(self.peek().kind, TokenKind::KwConsume)
+    && matches!(self.peek_at(1).kind, TokenKind::At | TokenKind::Dot)
+{
+    self.bump();
+    receiver_consume = true;
+}
+// Receiver { ..., consume: receiver_consume }
+```
+`consume` и `mut` взаимоисключающие — если оба → parse error.
+
+**Parameter** (`parse_param`, lines 1992-2045):
+```rust
+let is_consume = if matches!(self.peek().kind, TokenKind::KwConsume) {
+    self.bump();
+    true
+} else { false };
+// Param { ..., consume: is_consume }
+```
+
+---
+
+### Ф.4 — Семантика: VarState tracking
+
+**`compiler-codegen/src/types/mod.rs`**
+
+#### 4.1 Тип состояния
+
+```rust
+#[derive(Clone)]
+enum VarState {
+    Live,
+    Consumed(Span),       // потреблено здесь
+    MaybeConsumed(Span),  // потреблено на части путей
+}
+```
+
+#### 4.2 ConsumeCtx
+
+Отдельная структура (не смешивать с name-resolution scope stack):
+
+```rust
+struct ConsumeCtx {
+    states: HashMap<String, VarState>,
+}
+```
+
+Передаётся рядом с `scope` в `walk_*` методах.
+
+#### 4.3 Логика
+
+**`Stmt::Let`** — добавить `states[name] = VarState::Live`.
+
+**Вызов `consume`-метода** (`expr.@method()`):
+- Проверить состояние receiver → если `Consumed`/`MaybeConsumed` → error
+- Установить `Consumed(call_span)`
+
+**Передача в `consume`-параметр** (`f(arg)`):
+- Аналогично для соответствующего аргумента
+
+**`Ident(name)`** — любое использование:
+- Если `Consumed(at)` или `MaybeConsumed(at)` → error:
+  ```
+  error: use of consumed variable `sb`
+    note: consumed at <at>
+  ```
+
+**Ветвление** (if/match):
+```
+saved = consume_ctx.clone()
+walk then-branch  → states_then
+restore consume_ctx = saved
+walk else-branch  → states_else  (или saved если нет else)
+
+join по каждой переменной:
+  (Live, Live)         → Live
+  (Consumed, Consumed) → Consumed
+  (Live, Consumed)     → MaybeConsumed
+  (Consumed, Live)     → MaybeConsumed
+  (MaybeConsumed, _)   → MaybeConsumed
+```
+
+**Цикл** (loop/while/for) — pessimistic:
+- Определить какие переменные consumed внутри тела
+- Пометить их `MaybeConsumed` перед входом в тело
+- Re-walk; ошибки → обычные
+
+---
+
+### Ф.5 — Обновить stdlib и C-рантайм
+
+**`std/runtime/string_builder.nv`**:
+- Добавить квалификатор `consume`
+- Обновить комментарий: убрать "runtime panic", добавить "compile error (D131)"
+
+```nova
+// Финализировать в str. После вызова sb недоступна — compile error (D131).
+export external fn StringBuilder consume @into() -> str
+```
+
+**`compiler-codegen/nova_rt/string_builder.h`**:
+- Удалить поле `nova_bool consumed` из `Nova_StringBuilder`
+- Удалить макрос/функцию `_nova_string_builder_check_live`
+- В `Nova_StringBuilder_method_into` после построения `nova_str` занулить
+  внутренние поля — defense-in-depth: если компилятор пропустит,
+  следующий доступ даёт null pointer dereference → panic, не тихая порча:
+
+```c
+static inline nova_str Nova_StringBuilder_method_into(Nova_StringBuilder* b) {
+    nova_str s = (nova_str){
+        .ptr = (const char*)b->data,
+        .len = (size_t)b->len,
+    };
+    b->data = NULL;   // defense-in-depth: use-after-consume → null deref
+    b->len  = 0;
+    b->cap  = 0;
+    return s;
+}
+```
+
+---
+
+### Ф.6 — Тесты
+
+Новые fixture-файлы:
+
+**Позитивные:**
+```nova
+// consume-ok-basic.nv
+let sb = StringBuilder.new()
+sb.@append("hi")
+let s = sb.@into()
+// sb не используется — ок
+```
+
+```nova
+// consume-ok-if-both.nv
+let sb = StringBuilder.new()
+let s = if cond { sb.@into() } else { sb.@into() }
+// оба пути consume — ок
+```
+
+**Негативные:**
+```nova
+// consume-err-use-after.nv
+let sb = StringBuilder.new()
+let s = sb.@into()
+sb.@append("oops")  // error: use of consumed variable `sb`
+```
+
+```nova
+// consume-err-maybe.nv
+let sb = StringBuilder.new()
+if cond { let _ = sb.@into() }
+sb.@append("oops")  // error: maybe-consumed
+```
+
+```nova
+// consume-err-loop.nv
+let sb = StringBuilder.new()
+loop { let _ = sb.@into() }  // error: sb maybe-consumed on 2nd iteration
+```
+
+---
+
+## Критические файлы
+
+| Файл | Изменение |
+|------|-----------|
+| `spec/decisions/05-memory.md` | D131 |
+| `compiler-codegen/src/ast/mod.rs` | `Receiver.consume`, `Param.consume` |
+| `compiler-codegen/src/parser/mod.rs` | парсинг `consume` |
+| `compiler-codegen/src/lexer/mod.rs` | `KwConsume` токен |
+| `compiler-codegen/src/types/mod.rs` | `VarState`, `ConsumeCtx`, walk-логика |
+| `std/runtime/string_builder.nv` | `consume @into()` + обновить комментарий |
+| `compiler-codegen/nova_rt/string_builder.h` | удалить `consumed` поле + `check_live`, занулять поля в `into()` |
+| `tests/consume-*.nv` | fixture-тесты |
+
+## Верификация
+
+```
+nova test tests/consume-ok-*.nv    # все проходят
+nova test tests/consume-err-*.nv   # все дают ожидаемые ошибки
+nova test std/                     # нет регрессий
+```
