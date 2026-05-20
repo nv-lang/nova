@@ -10325,3 +10325,25 @@ G/H). ~3700 LOC implementation cumulative.
 - **РљР°Рє С‡РёРЅРёС‚СЊ:** РґРѕР±Р°РІРёС‚СЊ `Nova_Option_method_or_<T>(opt, other) { ... }`
   РІ NOVA_DECLARE_OPTION_T macro + routing entry РІ init_hardcoded_baseline.
 - **РџСЂРёРѕСЂРёС‚РµС‚:** L вЂ” or() РјРµРЅРµРµ РёСЃРїРѕР»СЊР·СѓРµРј С‡РµРј unwrap_or/map.
+
+### [M-typecheck-lenient-no-p1b-p2a-negatives] (KNOWN GAP — Plan 72, 2026-05-21)
+- **Где:** type-checker (`compiler-codegen/src/types/`).
+- **Что:** type-checker не отвергает на compile-time: argument-type mismatch
+  (`fn f(x Void); f(42)`), wrong type-arity (`Result[Celsius]` вместо
+  `Result[T, E]`), несуществующий вариант (`Color.Red` у пустого sum'а),
+  bare type-as-value (`let c = Color`). Все принимаются (NEG-NO-ERROR) или
+  ловятся лишь на C-компиляции (CC-FAIL), не как Nova-level compile error.
+- **Последствие:** для Plan 72 p1b (empty-sum misuse) и p2a (Result type
+  mismatch) нельзя написать чистый negative-тест (Nova-level
+  `EXPECT_COMPILE_ERROR`). Negative-coverage есть только у p2b (codegen
+  «cannot infer type argument») и p3b (codegen E7202) — там ошибка на
+  codegen-уровне, не на type-checker'е. Попытки негативов p1b/p2a через
+  arg-mismatch / bad-variant / arithmetic-on-struct давали NEG-NO-ERROR
+  либо CC-FAIL — оба не годятся как Nova-negative.
+- **Почему:** bootstrap type-checker минимальный; строгие проверки
+  совместимости arg↔param-типов, арности type-args, существования варианта
+  откладывались.
+- **Как чинить:** type-checker hardening — отдельный план (arg↔param type
+  compatibility, type-argument arity, variant existence).
+- **Приоритет:** M — поздняя диагностика (CC-FAIL / runtime вместо
+  Nova-error); потенциальный вектор тихих ошибок.
