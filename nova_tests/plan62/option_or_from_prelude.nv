@@ -1,9 +1,9 @@
 // option_or_from_prelude.nv — Plan 62.B, 2026-05-20.
 //
 // Tests для Option[T].or() — per-T trampoline Nova_Option_method_or_<T>.
-// Позитивные: все 4 комбинации Some/None + chain + str payload.
-// None как аргумент (inline) — тип выводится из объекта, ок.
-// None как let-binding без аннотации — негативный тест (E0001).
+// 5 позитивных тестов: 4 комбинации Some/None + chain + str payload.
+// `None` всегда с явной аннотацией (`let b Option[int] = None`) — без
+// неё bootstrap-inference дефолтит элемент к `int` (см. plan-doc 62).
 
 module plan62.option_or_from_prelude
 
