@@ -753,3 +753,66 @@ D — итеративно (plan72 → runtime → plan62 → full). Erased-gene
 
 Итог: D1a/D1b/D1c/D2 — green-additive коммиты; D3 — малый флип +
 итеративный fix; D4 — cleanup. D больше не «атомарный монолит».
+
+### Шаг D3 — заметки по исполнению (2026-05-21)
+
+D3 оказался крупнее «малого флипа» — он **поглотил шаг E** (удаление
+legacy `Nova_Result`), потому что вскрылись два факта, не учтённых в
+исходном плане:
+
+1. **`Nova_Result` несёт 2 лишних поля** — `err_typed_payload` /
+   `err_typed_type_id` (Plan 61 fu#3, typed-Err для `!!`), которых не
+   было в `NovaRes_<n>` схемы A. Решение: добавлены в схему A
+   (`register_novares_decl`) → mono сохраняет typed-Err.
+
+2. **Runtime-заголовки** (`read_buffer.h`, `string_builder.h`) —
+   рукописные C-функции `try_read_*` / `try_from_bytes` возвращают
+   `Nova_Result*`. Они включаются ДО splice-маркера
+   `__NOVARES_TYPEDEFS__`, поэтому не могут ссылаться на lazy-
+   generated `NovaRes_<n>`. Решение: `NovaRes_nova_int_nova_str`
+   определён руками в `nova_rt/array.h` (как канонический erased
+   инстанс), `register_novares_decl` пропускает его lazy-emit
+   (аналог skip `NovaOpt_nova_int`). `Nova_Result` /
+   `nova_make_Result_*` / `Nova_Result_method_*` — `#define`-алиасы
+   на время перехода.
+
+**Сделано в D3:**
+- флип `result_repr_c_type` → `NovaRes_<n>*`;
+- `array.h`: `Nova_Result` → `NovaRes_nova_int_nova_str` + алиасы;
+- схема A + typed-Err поля + `nova_make_NovaRes_<n>_Err_typed`;
+- producer-inference (`try_read_*`, `ok_or`, `try_from`, `try_into`,
+  `map`/`map_err`, erased-fallback) → mono-типы;
+- `infer_expr_c_type` для `Ok`/`Err` → mono `NovaRes_<n>*`;
+- pattern-match: mono `NovaRes_<n>` Ok/Err payload — реальный тип
+  inline (без `intptr_t`-boxing для tuple-Ok);
+- `.err()` inline-emit → `NovaOpt_<err_s>` (был хардкод
+  `NovaOpt_nova_int`);
+- `!!` non-str Err → `nova_throw_typed` с реальным typed-payload;
+- удалён legacy typed-Err early-return
+  (`nova_make_Result_Err_typed` hybrid) — mono несёт typed Err
+  прямо в `payload.Err._0`.
+
+**Итеративный fix** — 3 CC-FAIL после флипа (фокус-прогон) +
+1 на полном прогоне, все закрыты:
+`plan59/f19-f22` (tuple-Ok mono unbox), `plan61/f3` (typed Err
+mono throw), `runtime/result_methods` + `plan55/f2`
+(`.err()` / `Ok` inference), `syntax/match_advanced` (nested
+`Some` в mono `Ok` payload — value-форма вместо boxed pointer в
+`pattern_cond` / `pattern_bind_typed`).
+
+### Шаг D4 — kill silent fallback (2026-05-21)
+
+Тихий default `resolve_result_te(...).unwrap_or_else(|| (nova_int,
+nova_str))` — источник трудно-детектируемых багов: при невыводимом
+(T,E) codegen молча предполагал `Result[int,str]` и эмитил неверный
+C-код вместо явной ошибки.
+
+Добавлен `resolve_result_te_strict(obj, obj_ty, method)` →
+`Result<(String,String), String>`: после флипа D3 любой Result-
+`obj_ty` — `NovaRes_<n>*`, `novares_ok_err` детерминирован; провал
+резолюции = реальный codegen-баг → громкий codegen-error.
+
+5 emit-сайтов Result-методов (`unwrap_or`, `err`, `unwrap_or_else`,
+`map`, `unwrap`) переведены на strict-вариант (`?`-propagation).
+`!!` non-str-Err и inference-сайт (`infer_expr_c_type`, best-effort,
+не может propagate'ить Err) — оставлены lenient.
