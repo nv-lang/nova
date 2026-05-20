@@ -9997,6 +9997,25 @@ G/H). ~3700 LOC implementation cumulative.
 
 ## Plan 70.3 — char↔int distinction (2026-05-19/20)
 
+### [M-plan70-3-array-assign-no-typecheck] (DEFER — array-level type-checker tightening)
+- **Где:** type-checker / codegen — array assignment compatibility check.
+- **Что упрощено:** `let ints []int = chars` (где `chars []char`)
+  **собирается успешно** — codegen не отвергает присваивание `[]char` в
+  `[]int`-переменную. Distinct `nova_char` typedef обеспечивает CC-FAIL
+  для scalar/Option collapse (`Some('a')` в `Option[int]` → ошибка), но
+  array-level mismatch проскальзывает.
+- **Почему:** `NovaArray_nova_char*` и `NovaArray_nova_int*` — оба
+  pointer-типы; на codegen-path присваивание, видимо, проходит через
+  cast или type-erasure до того как clang мог бы отвергнуть несовместимые
+  struct-pointer типы. Type-checker не имеет explicit правила
+  «`[]char` ≠ `[]int`».
+- **Как чинить:** array-element type compatibility rule в type-checker —
+  отвергать assignment если element types различаются (char vs int).
+  Negative-fixture написать после fix (сейчас дал бы NEG-NO-ERROR).
+- **Приоритет:** L — scalar/Option/generic-record collapse (основной
+  vector bug-class) закрыт; array-assignment edge редок и обычно
+  ловится на использовании (element-type mismatch при `.push`/index).
+
 ### [M-plan70-3-uint-max-parser] ✅ RESOLVED (Plan 70.5 Ф.4, 2026-05-20)
 - **Где:** `compiler-codegen/src/parser/mod.rs` `is_primitive_type` list (~line 3941).
 - **Что упрощено:** `uint.MAX` парсился как `Member(Ident("uint"), "MAX")`
