@@ -214,6 +214,17 @@ pub struct CEmitter {
     /// (ok_c_type, err_c_type) so that .unwrap() / .ok() / .err() etc.
     /// return the correct T or E type instead of the hardcoded nova_int.
     result_type_params: HashMap<String, (String, String)>,
+    /// Plan 72 P2-A: functions whose declared return type is `Result[T, E]`.
+    /// Maps a call-site key (`fn_name` for free fns, `Type.method` for static
+    /// methods) → (ok_c_type, err_c_type). Lets `let r = f(...)` (call RHS, no
+    /// annotation) populate `result_type_params[r]` instead of falling back to
+    /// the hardcoded `(nova_int, nova_str)`.
+    fn_result_type_params: HashMap<String, (String, String)>,
+    /// Plan 72 P3-B: free functions with protocol-typed parameters. Maps
+    /// `fn_name` → per-parameter `Some((proto, type_args))` (protocol param,
+    /// lowered to `NovaBox_*`) or `None`. Lets a call site box concrete
+    /// arguments passed where a protocol parameter is expected.
+    fn_protocol_params: HashMap<String, Vec<Option<(String, Vec<String>)>>>,
     /// Plan 72 P3-B: protocol method registry.
     /// Maps protocol_name → (type_param_names, method_signatures).
     /// Populated when a Protocol TypeDecl is processed.
@@ -284,6 +295,11 @@ pub struct CEmitter {
     record_variant_field_order: HashMap<String, Vec<String>>,
     /// Return type of the currently-emitting function, used for match result type inference.
     current_fn_return_ty: Option<String>,
+    /// Plan 72 P3-B return: when the currently-emitting function declares a
+    /// protocol return type (e.g. `-> Iter[int]`), holds `(proto_name,
+    /// [concrete C type args])`. Return values are wrapped into a `NovaBox_*`
+    /// fat pointer. `None` for ordinary functions.
+    current_fn_returns_protocol: Option<(String, Vec<String>)>,
     /// Plan 33.3 Ф.9.2 (D24): record-invariants per-type. Map struct_name →
     /// list of (invariant-expr, span). Используется emit_record_lit'ом для
     /// wrap'а конструкции в runtime-check (`if (!Inv(tmp)) violation; tmp`).
@@ -681,6 +697,8 @@ impl CEmitter {
             var_mutable: HashSet::new(),
             protocol_vars: HashMap::new(),
             result_type_params: HashMap::new(),
+            fn_result_type_params: HashMap::new(),
+            fn_protocol_params: HashMap::new(),
             protocol_method_registry: HashMap::new(),
             protocol_var_vtable: HashMap::new(),
             emitted_vtable_types: HashSet::new(),
@@ -703,6 +721,7 @@ impl CEmitter {
             record_variant_field_types: HashMap::new(),
             record_variant_field_order: HashMap::new(),
             current_fn_return_ty: None,
+            current_fn_returns_protocol: None,
             contracts_post_label: None,
             ghost_vars: std::collections::HashSet::new(),
             proven_contracts: std::collections::HashSet::new(),
@@ -1272,9 +1291,19 @@ impl CEmitter {
         for item in &module.items {
             if let Item::Type(t) = item {
                 match &t.kind {
-                    TypeDeclKind::Record(_) | TypeDeclKind::Sum(_) => {
+                    TypeDeclKind::Record(_) => {
                         self.user_type_fwd_decls.push_str(&format!(
                             "typedef struct Nova_{0} Nova_{0};\n", t.name));
+                    }
+                    TypeDeclKind::Sum(variants) => {
+                        // Plan 72 P1-B: an empty sum (0 variants) is emitted by
+                        // `emit_sum_type` as `typedef int64_t Nova_X`, not a
+                        // struct — a `typedef struct` forward decl would clash
+                        // (typedef redefinition with different types).
+                        if !variants.is_empty() {
+                            self.user_type_fwd_decls.push_str(&format!(
+                                "typedef struct Nova_{0} Nova_{0};\n", t.name));
+                        }
                     }
                     _ => {}
                 }
@@ -2930,6 +2959,40 @@ impl CEmitter {
         None
     }
 
+    /// Plan 72 P3-B: if `ty` is a generic protocol instantiation (e.g.
+    /// `Iter[int]`), return `(proto_name, [concrete C type args])`. Used for
+    /// both protocol return types and protocol parameter types — they lower to
+    /// the `NovaBox_*` fat pointer. Returns `None` for non-protocol types.
+    fn protocol_type_args(&self, ty: &TypeRef) -> Option<(String, Vec<String>)> {
+        let proto_name = self.extract_protocol_type_name(ty)?;
+        let TypeRef::Named { generics, .. } = ty else { return None; };
+        if generics.is_empty() { return None; }
+        let type_args: Vec<String> = generics.iter()
+            .filter_map(|g| self.type_ref_to_c(g).ok())
+            .collect();
+        if type_args.len() != generics.len() { return None; }
+        Some((proto_name, type_args))
+    }
+
+    /// Plan 72 P3-B return: if `f`'s declared return type is a generic protocol
+    /// (e.g. `-> Iter[int]`), return `(proto_name, [concrete C type args])`.
+    fn protocol_box_return_type_info(&self, f: &FnDecl) -> Option<(String, Vec<String>)> {
+        self.protocol_type_args(f.return_type.as_ref()?)
+    }
+
+    /// Plan 72 P3-B: if `ty` is a generic protocol, return
+    /// `(box_c_type, proto_name, type_args)` where `box_c_type` is the
+    /// `NovaBox_<proto>_<args>` fat-pointer type name. Pure string derivation
+    /// (`&self`) — the typedef itself is emitted by `emit_protocol_box_typedef`.
+    fn protocol_box_c_type_for(&self, ty: &TypeRef) -> Option<(String, String, Vec<String>)> {
+        let (proto, type_args) = self.protocol_type_args(ty)?;
+        let args_mangled: String = type_args.iter()
+            .map(|t| Self::sanitize_c_for_ident(t))
+            .collect::<Vec<_>>()
+            .join("_");
+        Some((format!("NovaBox_{}_{}", proto, args_mangled), proto, type_args))
+    }
+
     /// Plan 72 P1-C: emit a C cast expression that reinterprets a `nova_int`
     /// storage slot as `target_ty`. For pointer types uses intptr_t relay;
     /// for nova_f64 uses a union bit-cast; for other scalars a direct cast.
@@ -2981,8 +3044,11 @@ impl CEmitter {
             .join("_");
 
         let vtable_struct = format!("NovaVtable_{}_{}", proto_name, args_mangled);
-        let box_c_type = format!("NovaBox_{}_{}", proto_name, args_mangled);
         let vtable_instance = format!("_vt_{}_{}__{}", proto_name, args_mangled, concrete_name);
+
+        // Emit (or reuse) the vtable struct + NovaBox typedef. Concrete-type
+        // independent — shared across every implementer of this protocol.
+        let box_c_type = self.emit_protocol_box_typedef(proto_name, type_args)?;
 
         // Get protocol method registry entry (clone to avoid borrow conflict).
         let (type_params, methods) = self.protocol_method_registry.get(proto_name)?.clone();
@@ -2992,38 +3058,6 @@ impl CEmitter {
             .zip(type_args.iter())
             .map(|(k, v)| (k.clone(), v.clone()))
             .collect();
-
-        // ── Emit vtable struct typedef + NovaBox typedef (once per (proto, type_args)) ──
-        if !self.emitted_vtable_types.contains(&vtable_struct) {
-            self.emitted_vtable_types.insert(vtable_struct.clone());
-            let old_subst = std::mem::replace(&mut self.current_type_subst, subst.clone());
-            let mut fields = String::new();
-            for m in &methods {
-                let ret_c = m.return_type.as_ref()
-                    .and_then(|rt| self.type_ref_to_c(rt).ok())
-                    .unwrap_or_else(|| "nova_unit".to_string());
-                let extra_params: Vec<String> = m.params.iter()
-                    .filter_map(|p| self.type_ref_to_c(&p.ty).ok())
-                    .collect();
-                let params_str = std::iter::once("void*".to_string())
-                    .chain(extra_params.iter().cloned())
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                fields.push_str(&format!("    {} (*{})({}); \n", ret_c, m.name, params_str));
-            }
-            self.current_type_subst = old_subst;
-            // Vtable struct typedef.
-            self.mono_fwd_decls.push_str(&format!(
-                "/* Plan 72 P3-B: vtable for {} instantiated with {} */\n\
-                 typedef struct {vts} {{\n{fields}}} {vts};\n",
-                proto_name, args_mangled, vts = vtable_struct, fields = fields
-            ));
-            // Fat-pointer box struct typedef: { void* data; const VT* vtable; }.
-            self.mono_fwd_decls.push_str(&format!(
-                "typedef struct {{ void* data; const {vts}* vtable; }} {box};\n",
-                vts = vtable_struct, box = box_c_type
-            ));
-        }
 
         // ── Emit thunks + vtable instance (once per (proto, type_args, concrete)) ─
         let inst_key = (vtable_struct.clone(), concrete_name.clone());
@@ -3071,6 +3105,95 @@ impl CEmitter {
         }
 
         Some((vtable_instance, box_c_type))
+    }
+
+    /// Plan 72 P3-B: emit the vtable struct typedef and the `NovaBox_*`
+    /// fat-pointer typedef for `(proto_name, type_args)`. Concrete-type
+    /// independent, so it is safe to call from forward-decl emission (where the
+    /// implementing type is not yet known). Emitted into `generic_type_defs_buf`,
+    /// which is spliced before *both* function forward declarations and bodies.
+    /// Idempotent — returns the `NovaBox_*` C type name on success.
+    fn emit_protocol_box_typedef(
+        &mut self,
+        proto_name: &str,
+        type_args: &[String],
+    ) -> Option<String> {
+        if type_args.is_empty() { return None; }
+        let args_mangled: String = type_args.iter()
+            .map(|t| Self::sanitize_c_for_ident(t))
+            .collect::<Vec<_>>()
+            .join("_");
+        let vtable_struct = format!("NovaVtable_{}_{}", proto_name, args_mangled);
+        let box_c_type = format!("NovaBox_{}_{}", proto_name, args_mangled);
+        // Need the protocol method registry to lay out the vtable struct.
+        let (type_params, methods) = self.protocol_method_registry.get(proto_name)?.clone();
+        if self.emitted_vtable_types.contains(&vtable_struct) {
+            return Some(box_c_type);
+        }
+        self.emitted_vtable_types.insert(vtable_struct.clone());
+        // Substitute protocol type-params → concrete C types while lowering
+        // method return / param types.
+        let subst: HashMap<String, String> = type_params.iter()
+            .zip(type_args.iter())
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+        let old_subst = std::mem::replace(&mut self.current_type_subst, subst);
+        let mut fields = String::new();
+        for m in &methods {
+            let ret_c = m.return_type.as_ref()
+                .and_then(|rt| self.type_ref_to_c(rt).ok())
+                .unwrap_or_else(|| "nova_unit".to_string());
+            let extra_params: Vec<String> = m.params.iter()
+                .filter_map(|p| self.type_ref_to_c(&p.ty).ok())
+                .collect();
+            let params_str = std::iter::once("void*".to_string())
+                .chain(extra_params.iter().cloned())
+                .collect::<Vec<_>>()
+                .join(", ");
+            fields.push_str(&format!("    {} (*{})({}); \n", ret_c, m.name, params_str));
+        }
+        self.current_type_subst = old_subst;
+        // Vtable struct typedef.
+        self.generic_type_defs_buf.push_str(&format!(
+            "/* Plan 72 P3-B: vtable for {} instantiated with {} */\n\
+             typedef struct {vts} {{\n{fields}}} {vts};\n",
+            proto_name, args_mangled, vts = vtable_struct, fields = fields
+        ));
+        // Fat-pointer box struct typedef: { void* data; const VT* vtable; }.
+        self.generic_type_defs_buf.push_str(&format!(
+            "typedef struct {{ void* data; const {vts}* vtable; }} {box};\n",
+            vts = vtable_struct, box = box_c_type
+        ));
+        Some(box_c_type)
+    }
+
+    /// Plan 72 P3-B: box a concrete value `val` (C type `concrete_c`) into the
+    /// `NovaBox_*` fat pointer for protocol `(proto, type_args)`. Values that
+    /// are already boxed (`NovaBox_*`) pass through unchanged. Shared by
+    /// protocol-return wrapping and protocol-parameter argument coercion.
+    fn box_value_for_protocol(
+        &mut self, val: String, concrete_c: &str, proto: &str, type_args: &[String],
+    ) -> String {
+        if concrete_c.starts_with("NovaBox_") {
+            return val;
+        }
+        if let Some((inst, box_ty)) =
+            self.emit_protocol_vtable_companion(proto, type_args, concrete_c)
+        {
+            return format!("({box_ty}){{ .data = (void*)({val}), .vtable = &{inst} }}");
+        }
+        val
+    }
+
+    /// Plan 72 P3-B return: if the current function declares a protocol return
+    /// type, wrap a concrete return value `val` (source expression `val_expr`)
+    /// into a `NovaBox_*` fat pointer. No-op for ordinary return types.
+    fn wrap_protocol_return(&mut self, val: String, val_expr: &Expr) -> String {
+        let Some((proto, type_args)) = self.current_fn_returns_protocol.clone() else {
+            return val;
+        };
+        let concrete_c = self.infer_expr_c_type(val_expr);
+        self.box_value_for_protocol(val, &concrete_c, &proto, &type_args)
     }
 
     fn type_ref_to_c(&self, ty: &TypeRef) -> Result<String, String> {
@@ -5409,11 +5532,52 @@ impl CEmitter {
         } else {
             self.current_receiver_type = None;
         }
-        let ret = self.return_type_c(f)?;
+        let mut ret = self.return_type_c(f)?;
+        // Plan 72 P3-B return: a protocol return type (`-> Iter[int]`) lowers to
+        // a `NovaBox_*` fat pointer — the C function physically returns the
+        // 16-byte { data, vtable } struct. Emit the typedef up front so the
+        // forward declaration that uses it is valid.
+        if let Some((proto, type_args)) = self.protocol_box_return_type_info(f) {
+            if let Some(box_ty) = self.emit_protocol_box_typedef(&proto, &type_args) {
+                ret = box_ty;
+            }
+        }
         let params = self.params_c(f)?;
         let mangled = self.mangle_fn(f);
         // Register return type so call sites can infer print helper
         self.var_types.insert(format!("fn_ret_{}", f.name), ret.clone());
+        // Plan 72 P2-A: register Result[T,E] return params so `let r = f(...)`
+        // (call RHS, no annotation) populates `result_type_params[r]` correctly
+        // instead of falling back to `(nova_int, nova_str)`.
+        if let Some(rt) = &f.return_type {
+            if let Some(rparams) = self.extract_result_type_params(rt) {
+                let key = match &f.receiver {
+                    Some(recv) => format!("{}.{}", recv.type_name, f.name),
+                    None => f.name.clone(),
+                };
+                self.fn_result_type_params.insert(key, rparams);
+            }
+        }
+        // Plan 72 P3-B: protocol-typed parameters lower to `NovaBox_*` fat
+        // pointers (so the callee can dispatch via the vtable). Emit the
+        // vtable/box typedef for each, and — for free functions — register the
+        // per-parameter protocol info so call sites can box concrete arguments.
+        {
+            let mut param_protos: Vec<Option<(String, Vec<String>)>> = Vec::new();
+            let mut any_proto = false;
+            for p in &f.params {
+                if let Some((proto, type_args)) = self.protocol_type_args(&p.ty) {
+                    self.emit_protocol_box_typedef(&proto, &type_args);
+                    param_protos.push(Some((proto, type_args)));
+                    any_proto = true;
+                } else {
+                    param_protos.push(None);
+                }
+            }
+            if any_proto && f.receiver.is_none() {
+                self.fn_protocol_params.insert(f.name.clone(), param_protos);
+            }
+        }
         // Register fn-typed return signature for closure binding propagation
         if let Some(TypeRef::Func { params: fp, return_type, .. }) = &f.return_type {
             // Plan 70 PhaseA1.2: strict mode — return-fn signature lowering.
@@ -6542,7 +6706,14 @@ impl CEmitter {
             }
         }
         for p in &f.params {
-            let ty_c = self.type_ref_to_c(&p.ty)?;
+            // Plan 72 P3-B: a protocol-typed parameter (`x Iter[int]`) lowers
+            // to the `NovaBox_*` fat pointer so the callee can dispatch via the
+            // vtable — mirrors the protocol-return-type lowering.
+            let ty_c = if let Some((box_ty, _, _)) = self.protocol_box_c_type_for(&p.ty) {
+                box_ty
+            } else {
+                self.type_ref_to_c(&p.ty)?
+            };
             parts.push(format!("{} {}", ty_c, p.name));
         }
         if parts.is_empty() {
@@ -7008,6 +7179,31 @@ impl CEmitter {
                 }
             }
             _ => String::new(),
+        }
+    }
+
+    /// Plan 72 P2-A: derive the `fn_result_type_params` lookup key for a call's
+    /// callee expression. `Ident` → free-fn name; `Path[T, m]` or
+    /// `Member{Type, m}` (Type is a known record/sum) → `Type.method` static
+    /// form. Returns `None` for forms not tracked (instance-method calls etc.).
+    fn call_result_type_params_key(&self, func: &crate::ast::Expr) -> Option<String> {
+        use crate::ast::ExprKind;
+        match &func.kind {
+            ExprKind::Ident(name) => Some(name.clone()),
+            ExprKind::Path(parts) if parts.len() == 2 => {
+                Some(format!("{}.{}", parts[0], parts[1]))
+            }
+            ExprKind::Member { obj, name } => {
+                if let ExprKind::Ident(t) = &obj.kind {
+                    if self.record_schemas.contains_key(t.as_str())
+                        || self.sum_schemas.contains_key(t.as_str())
+                    {
+                        return Some(format!("{}.{}", t, name));
+                    }
+                }
+                None
+            }
+            _ => None,
         }
     }
 
@@ -7533,10 +7729,11 @@ impl CEmitter {
                             // Position 0 in bound (e.g., Iter[U]): the return type wraps U
                             // in Option → `NovaOpt_X*` or directly `Nova_X*`.
                             if *pos == 0 {
-                                if let Some(inner) = ret_c
-                                    .strip_prefix("NovaOpt_")
-                                    .and_then(|s| s.strip_suffix('*'))
-                                {
+                                if let Some(rest) = ret_c.strip_prefix("NovaOpt_") {
+                                    // `next() -> Option[U]` lowers to the value
+                                    // type `NovaOpt_<U>` (no `*`); a boxed form
+                                    // `NovaOpt_<U>*` may also occur. Accept both.
+                                    let inner = rest.strip_suffix('*').unwrap_or(rest);
                                     if !inner.is_empty() && inner != "void" {
                                         candidates.push((u_name.clone(), inner.to_string()));
                                         break;
@@ -9033,7 +9230,17 @@ impl CEmitter {
         } else {
             self.current_receiver_type = None;
         }
-        let ret = self.return_type_c(f)?;
+        let mut ret = self.return_type_c(f)?;
+        // Plan 72 P3-B return: protocol return type (`-> Iter[int]`) → the C
+        // function returns a `NovaBox_*` fat pointer; trailing/explicit return
+        // values are boxed (see `wrap_protocol_return`).
+        let saved_fn_returns_protocol = self.current_fn_returns_protocol.take();
+        if let Some((proto, type_args)) = self.protocol_box_return_type_info(f) {
+            if let Some(box_ty) = self.emit_protocol_box_typedef(&proto, &type_args) {
+                ret = box_ty;
+                self.current_fn_returns_protocol = Some((proto, type_args));
+            }
+        }
         // Plan 55 Ф.4: save/restore current_fn_return_ty чтобы прошлый
         // ret не leak'ал при recursive emit (e.g. mono pass запускает
         // emit_fn для transitively'd dependencies из тела generic).
@@ -9072,10 +9279,16 @@ impl CEmitter {
             }
         }
         for p in &f.params {
-            if let Ok(ty_c) = self.type_ref_to_c(&p.ty) {
+            if let Ok(mut ty_c) = self.type_ref_to_c(&p.ty) {
                 // Plan 72 P0 (E7201): track protocol-typed params before ty_c is moved
                 if let Some(proto_name) = self.extract_protocol_type_name(&p.ty) {
                     self.protocol_vars.insert(p.name.clone(), proto_name);
+                }
+                // Plan 72 P3-B: a protocol-typed parameter is a `NovaBox_*` fat
+                // pointer — `var_types` must reflect that so method calls on it
+                // dispatch via `.vtable` instead of emitting E7201.
+                if let Some((box_ty, _, _)) = self.protocol_box_c_type_for(&p.ty) {
+                    ty_c = box_ty;
                 }
                 // Plan 72 P1-C: track Result[T,E]-typed params
                 if let Some(result_params) = self.extract_result_type_params(&p.ty) {
@@ -9233,6 +9446,8 @@ impl CEmitter {
             FnBody::Expr(e) => {
                 self.emit_source_annotation_for_expr(e);
                 let val = self.emit_expr(e)?;
+                // Plan 72 P3-B return: box the trailing value for a protocol return type.
+                let val = self.wrap_protocol_return(val, e);
                 if ret == "nova_unit" {
                     self.line(&format!("{};", val));
                     if has_ensures {
@@ -9295,6 +9510,8 @@ impl CEmitter {
         self.result_type_params = saved_result_type_params_fn;
         // Plan 72 P3-B: restore protocol_var_vtable after fn body.
         self.protocol_var_vtable = saved_protocol_var_vtable_fn;
+        // Plan 72 P3-B return: restore protocol-return state.
+        self.current_fn_returns_protocol = saved_fn_returns_protocol;
         // Plan 55 Ф.4: restore prior current_fn_return_ty (mono-pass leak fix).
         self.current_fn_return_ty = saved_ret_ty;
         // Plan 63 Fix F+ [M-result-erased-no-mono]: restore pending state.
@@ -9848,6 +10065,8 @@ impl CEmitter {
         if let Some(trailing) = &block.trailing {
             self.emit_source_annotation_for_expr(trailing);
             let val = self.emit_expr(trailing)?;
+            // Plan 72 P3-B return: box the trailing value for a protocol return type.
+            let val = self.wrap_protocol_return(val, trailing);
             if let Some(label) = post_label {
                 // Contracts mode: trailing → _nova_result; goto post.
                 if ret_ty == "nova_unit" {
@@ -9965,6 +10184,17 @@ impl CEmitter {
                     }
                 } else if let ExprKind::Ident(rhs_var) = &decl.value.kind {
                     if let Some(params) = self.result_type_params.get(rhs_var.as_str()).cloned() {
+                        self.result_type_params.insert(binding.clone(), params);
+                    } else {
+                        self.result_type_params.remove(&binding);
+                    }
+                } else if let ExprKind::Call { func, .. } = &decl.value.kind {
+                    // Plan 72 P2-A: `let r = f(...)` where f returns Result[T,E]
+                    // — pull (ok_c, err_c) from the callee's registered return
+                    // type so r.unwrap()/.unwrap_or()/.ok()/.err() get T/E.
+                    if let Some(params) = self.call_result_type_params_key(func)
+                        .and_then(|k| self.fn_result_type_params.get(&k).cloned())
+                    {
                         self.result_type_params.insert(binding.clone(), params);
                     } else {
                         self.result_type_params.remove(&binding);
@@ -10355,6 +10585,8 @@ impl CEmitter {
                 // If no defers active, this is a no-op.
                 if let Some(v) = value {
                     let val = self.emit_expr(v)?;
+                    // Plan 72 P3-B return: box explicit return value for a protocol return type.
+                    let val = self.wrap_protocol_return(val, v);
                     let ret_ty = self.current_fn_return_ty.clone().unwrap_or_else(|| "nova_int".to_string());
                     if let Some(label) = post_label {
                         // Contracts mode: stash в _nova_result, defer cleanup,
@@ -13993,20 +14225,23 @@ impl CEmitter {
                 // Companion dispatch (legacy, dead after P3-B fat-pointer): protocol_var_vtable.
                 // Otherwise emit E7201 (P0) instead of silent NULL.
                 if let ExprKind::Ident(var_name) = &obj.kind {
-                    if let Some(proto_name) = self.protocol_vars.get(var_name.as_str()).cloned() {
-                        // P3-B fat pointer: var_types holds NovaBox_* — dispatch via .vtable field.
-                        let var_c_ty = self.var_types.get(var_name.as_str()).cloned().unwrap_or_default();
-                        if var_c_ty.starts_with("NovaBox_") {
-                            let mut extra_args = String::new();
-                            for a in args {
-                                extra_args.push_str(", ");
-                                extra_args.push_str(&self.emit_expr(a.expr())?);
-                            }
-                            return Ok(format!(
-                                "{vn}.vtable->{method}({vn}.data{extra})",
-                                vn = var_name, method = method, extra = extra_args
-                            ));
+                    // Plan 72 P3-B fat pointer: a `NovaBox_*` binding dispatches via
+                    // its `.vtable` field. Such bindings come from `let x Iter[int] = c`
+                    // OR from a function with a protocol return type — the latter is
+                    // intentionally NOT registered in `protocol_vars`.
+                    let var_c_ty = self.var_types.get(var_name.as_str()).cloned().unwrap_or_default();
+                    if var_c_ty.starts_with("NovaBox_") {
+                        let mut extra_args = String::new();
+                        for a in args {
+                            extra_args.push_str(", ");
+                            extra_args.push_str(&self.emit_expr(a.expr())?);
                         }
+                        return Ok(format!(
+                            "{vn}.vtable->{method}({vn}.data{extra})",
+                            vn = var_name, method = method, extra = extra_args
+                        ));
+                    }
+                    if let Some(proto_name) = self.protocol_vars.get(var_name.as_str()).cloned() {
                         // P3-B legacy companion (kept for backward compat, normally unreachable).
                         if let Some(vt_companion) = self.protocol_var_vtable.get(var_name.as_str()).cloned() {
                             let obj_c = self.emit_expr(obj)?;
@@ -15339,6 +15574,19 @@ impl CEmitter {
                 self.infer_expr_c_type(a.expr())
             } else { String::new() };
             let v = self.emit_expr(a.expr())?;
+            // Plan 72 P3-B: box a concrete argument passed where a protocol
+            // parameter is expected — fat-pointer parameter coercion (mirrors
+            // `let x Iter[int] = c`). Args already boxed pass through.
+            if let Some(cname) = &callee_name_for_hof {
+                if let Some(Some((proto, type_args))) = self.fn_protocol_params
+                    .get(cname).and_then(|ps| ps.get(arg_idx)).cloned()
+                {
+                    let concrete_c = self.infer_expr_c_type(a.expr());
+                    let boxed = self.box_value_for_protocol(v, &concrete_c, &proto, &type_args);
+                    arg_strs.push(boxed);
+                    continue;
+                }
+            }
             if is_generic_call {
                 // For generic (void*-erased) functions: nova_str must be boxed as pointer
                 if arg_ty == "nova_str" {
