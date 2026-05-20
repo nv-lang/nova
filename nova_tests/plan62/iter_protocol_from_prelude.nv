@@ -104,5 +104,6 @@ test "prelude auto-import — PRELUDE_VERSION accessible (regression marker)" {
     // Plan 62.B.bis (2026-05-18) bump'нул 6 → 7: print / println formally
     // declared via D69 variadic + `[]any` (canonical D26 signature) в
     // std/prelude/runtime.nv. Plan 67 hotfix absorbed как Ф.0.
-    assert(PRELUDE_VERSION == 7)
+    // Маркер монотонный (`>=`) — 62.E.bis поднял PRELUDE_VERSION до 8.
+    assert(PRELUDE_VERSION >= 7)
 }

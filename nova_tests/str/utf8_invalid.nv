@@ -1,0 +1,50 @@
+// utf8_invalid.nv — Plan 75 Ф.6 дополнение
+//
+// str.try_from([]byte) с невалидными UTF-8 байтами → Err.
+// Реализация: Nova_str_static_try_from_bytes в nova_rt/string_builder.h
+// вызывает _nova_validate_utf8; при ошибке → Err("invalid UTF-8 byte sequence").
+
+module str.utf8_invalid
+
+test "lone continuation byte is invalid UTF-8" {
+    // 0x80 сам по себе — continuation byte без leading byte: invalid.
+    let arr []byte = []byte.new()
+    arr.push(0x80 as byte)
+    assert(str.try_from(arr).is_err())
+}
+
+test "0xFF byte is always invalid UTF-8" {
+    // 0xFF никогда не встречается в корректном UTF-8.
+    let arr []byte = []byte.new()
+    arr.push(0xFF as byte)
+    assert(str.try_from(arr).is_err())
+}
+
+test "overlong encoding is invalid UTF-8" {
+    // 0xC0 0x80 — overlong encoding нулевого символа (Modified UTF-8, не стандарт).
+    let arr []byte = []byte.new()
+    arr.push(0xC0 as byte)
+    arr.push(0x80 as byte)
+    assert(str.try_from(arr).is_err())
+}
+
+test "incomplete multibyte sequence is invalid UTF-8" {
+    // 0xC3 без следующего continuation byte — неполная 2-байтная последовательность.
+    let arr []byte = []byte.new()
+    arr.push(0xC3 as byte)
+    assert(str.try_from(arr).is_err())
+}
+
+test "valid UTF-8 bytes succeed" {
+    // Контрольный позитивный тест: "Hi" в ASCII.
+    let arr []byte = []byte.new()
+    arr.push(0x48 as byte) // 'H'
+    arr.push(0x69 as byte) // 'i'
+    assert(str.try_from(arr).is_ok())
+}
+
+test "empty byte array gives Ok empty string" {
+    // Пустой массив — валидный UTF-8 (пустая строка).
+    let arr []byte = []byte.new()
+    assert(str.try_from(arr).is_ok())
+}

@@ -306,4 +306,11 @@ extern "C" {
     pub fn Z3_mk_bvsub_no_overflow(c: Z3_context, t1: Z3_ast, t2: Z3_ast) -> Z3_ast;
     pub fn Z3_mk_bvsub_no_underflow(c: Z3_context, t1: Z3_ast, t2: Z3_ast, is_signed: c_int) -> Z3_ast;
     pub fn Z3_mk_bvmul_no_overflow(c: Z3_context, t1: Z3_ast, t2: Z3_ast, is_signed: c_int) -> Z3_ast;
+
+    // Resize (Plan 33.7 V2): cast между BV-ширинами.
+    // zero_ext/sign_ext: расширение на `i` дополнительных бит (нулями / знаком).
+    // extract: выделение бит [high..low] включительно → BV ширины (high-low+1).
+    pub fn Z3_mk_zero_ext(c: Z3_context, i: c_uint, t: Z3_ast) -> Z3_ast;
+    pub fn Z3_mk_sign_ext(c: Z3_context, i: c_uint, t: Z3_ast) -> Z3_ast;
+    pub fn Z3_mk_extract(c: Z3_context, high: c_uint, low: c_uint, t: Z3_ast) -> Z3_ast;
 }

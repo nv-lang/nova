@@ -44,6 +44,8 @@ Spec: [D24](../spec/decisions/09-tooling.md#d24-стратегия-smt-пров�
   - [`reveal fn_name`](#reveal-fn_name)
   - [`#fuel(n)`](#fueln)
 - [Bounded quantifiers](#bounded-quantifiers)
+- [Bit-vectors and overflow](#bit-vectors-and-overflow)
+  - [`#nooverflow`](#nooverflow)
 - [Trusted external functions](#trusted-external-functions)
 - [SMT backend selection](#smt-backend-selection)
 - [Contract syntax grammar](#contract-syntax-grammar)
@@ -598,6 +600,69 @@ ensures  exists i in 0..result.len() : result[i] == target
 
 The collection after `in` must be an iterable (`[]T`, range, set,
 map). The body must be `bool` and `#pure`.
+
+---
+
+## Bit-vectors and overflow
+
+Sized integer types — `u8`, `u16`, `u32`, `u64`, `i8`, `i16`, `i32` —
+are encoded into the SMT **bit-vector theory** instead of unbounded
+integers. This gives precise machine semantics: arithmetic wraps around
+(two's complement), and bitwise operators are reasoned about exactly.
+
+```nova
+// REQUIRES_SMT_BACKEND z3
+
+#verify
+fn low_byte(x u32) -> u32
+    ensures result <= 255 as u32
+=> x & 255 as u32
+```
+
+The plain `int` type stays an **unbounded** mathematical integer — it is
+not a bit-vector. Use `int` for general-purpose arithmetic; use sized
+types for low-level, packed, crypto, or FFI code where bit-width matters.
+
+Bitwise operators `&`, `|`, `^`, `<<`, `>>` are available in contracts
+on sized-integer operands (they remain unsupported on `int`).
+
+**Signedness.** Unsigned types (`u8`/`u16`/`u32`/`u64`) and signed types
+(`i8`/`i16`/`i32`) differ in comparison, division, remainder and
+right-shift. The verifier picks the correct operator from the parameter
+type: `i32` comparisons are signed (`-1 < 0` holds), `u32` comparisons
+are unsigned (`0xFFFFFFFF > 0`). Signed division rounds toward zero;
+`>>` on a signed value is an arithmetic shift.
+
+**Casts between sized types.** `x as u32` resizes a bit-vector: a wider
+target zero-extends an unsigned source and sign-extends a signed source;
+a narrower target truncates the low bits. For example `(b as u32)` where
+`b : u8` is always `<= 255`, and `(x as u8)` keeps only the low byte.
+
+### `#nooverflow`
+
+By default, sized-integer arithmetic **wraps around** silently. The
+`#nooverflow` attribute makes the verifier emit an extra proof
+obligation for every `+`, `-`, `*` in the function body: the operation
+must not overflow the type. An unprovable obligation is a compile error.
+
+```nova
+// REQUIRES_SMT_BACKEND z3
+
+#nooverflow #verify
+fn safe_add_u32(a u32, b u32) -> u32
+    requires a <= 1000 as u32 && b <= 1000 as u32
+    ensures  result == a + b
+=> a + b
+```
+
+Here the precondition bounds `a` and `b` so their sum cannot exceed
+`2^32 - 1` — the overflow obligation is discharged. Without a bounding
+`requires`, `a + b` could overflow and `#nooverflow` rejects the
+function at compile time.
+
+`#nooverflow` requires an SMT backend with bit-vector support
+(`REQUIRES_SMT_BACKEND z3`); the trivial backend reports the
+bit-vector theory as unsupported.
 
 ---
 

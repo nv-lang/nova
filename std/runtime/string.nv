@@ -15,6 +15,9 @@ export external fn str @len() -> int
 // Длина в байтах. O(1). Для FFI / буферных операций.
 export external fn str @byte_len() -> int
 
+// True если строка пустая. O(n) через @len (codepoints); для bootstrap приемлемо.
+export fn str @is_empty() -> bool => @len() == 0
+
 // True если строка начинается с prefix.
 export external fn str @starts_with(prefix str) -> bool
 
@@ -31,14 +34,6 @@ export external fn str @find(needle str) -> Option[int]
 export external fn str @rfind(needle str) -> Option[int]
 
 // Codepoint по индексу (codepoint-indexed). None при OOB.
-//
-// **Plan 71 follow-up (2026-05-19):** signature corrected `Option[int]`
-// → `Option[char]`. C-runtime эмитит codepoint (`Option[char] =
-// NovaOpt_nova_int` per nova_rt/array.h), все ~50 callers в std/* уже
-// потребляют как `Option[char]` (match `Some('/')`, equality
-// `== Some('=')`, передача в `bcrypt_decode_char(c Option[char])`).
-// Декларация была неверной — char и int share C-тип `nova_int`, поэтому
-// type-checker не ловил silent mismatch.
 export external fn str @char_at(idx int) -> Option[char]
 
 // Codepoint-indexed slice (D26 школа B).
@@ -77,8 +72,8 @@ export external fn str @gt(other str) -> bool
 // Lexicographic greater-or-equal. Также вызывается оператором `>=`.
 export external fn str @ge(other str) -> bool
 
-// UTF-8 bytes как []u8 (copy).
-export external fn str @bytes() -> []u8
+// UTF-8 bytes как []byte (copy).
+export external fn str @bytes() -> []byte
 
 // Codepoints как []char (eager). Future: Iter[char] для лениво.
 export external fn str @chars() -> []char

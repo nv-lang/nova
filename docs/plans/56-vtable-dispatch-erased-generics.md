@@ -401,19 +401,23 @@ static void nova_fn_f____<T>(void* x, const NovaVtable_Hashable* _vt_T_h,
 Caller передаёт обе vtables. ABI: vtables после positional args в
 порядке declaration в `T: A + B + C`.
 
-### Ф.2.7 — Effect-free enforcement
+### Ф.2.7 — Effect-free enforcement — ⚠️ REVERTED (2026-05-20)
 
-Bound methods **должны** быть pure (no Fail / Io / Db). Type-checker
-rejects:
-```nova
-type BadBound[T] protocol {
-    save() Io -> ()    // ❌ Io effect в bound — vtable rejects
-}
-```
+> **Отменено 2026-05-20 (D122 amended).** Запрет на эффекты в
+> protocol-методах снят. Изначально rationale был «vtable dispatch не
+> propagates effect handlers», но bootstrap использует **mono-dispatch**
+> (true-vtable отложен в Plan 03) — под mono эффект protocol-метода
+> пробрасывается как у обычной effectful-функции. Запрет блокировал
+> легитимные паттерны (`type TryFrom[T,E] protocol { try_from(t T)
+> Fail[E] -> Self }`). Тест переехал: `f5_negative_bound_effect`
+> (negative) → `f5_effectful_protocols` (positive).
+>
+> **Будущее ограничение** (Plan 03): true-vtable dispatch не пробросит
+> effect-handlers через ABI — effectful-protocol bounds в truly-erased
+> контексте обязаны mono-dispatch'иться.
 
-Diagnostic: `bound method 'BadBound.save' имеет effect Io — bound
-methods обязаны быть pure (rationale: vtable dispatch не propagates
-effect handlers)`.
+~~Bound methods **должны** быть pure (no Fail / Io / Db). Type-checker
+rejects effectful protocol methods.~~ — снято, см. выше.
 
 ### Ф.2.8 — Diagnostic improvements
 
@@ -433,8 +437,12 @@ effect handlers)`.
 - [ ] Self type substitution работает (test: `Comparable.eq(other Self)`).
 - [ ] Multi-bound — 2+ vtables propagated через ABI.
 - [ ] Default methods — generated thunks для non-override'd defaults.
-- [ ] Effect-free enforcement (Ф.2.7) — type-checker rejects effectful
-      bound methods с diagnostic.
+- [x] Effect-free enforcement (Ф.2.7) — **REVERTED 2026-05-20 (D122
+      amended)**: запрет на эффекты в protocol-методах снят. Rationale
+      касался только true-vtable dispatch (Plan 03); bootstrap —
+      mono-dispatch, эффект пробрасывается нормально. Тест переехал:
+      `f5_negative_bound_effect` (negative) → `f5_effectful_protocols`
+      (positive). См. секцию «Ф.2.7 — REVERTED» выше.
 - [ ] **8 тестов** в `plan56/f2_*.nv`.
 
 ### Ф.2 Estimate
