@@ -220,6 +220,11 @@ pub struct CEmitter {
     /// annotation) populate `result_type_params[r]` instead of falling back to
     /// the hardcoded `(nova_int, nova_str)`.
     fn_result_type_params: HashMap<String, (String, String)>,
+    /// Plan 72 P3-B: free functions with protocol-typed parameters. Maps
+    /// `fn_name` → per-parameter `Some((proto, type_args))` (protocol param,
+    /// lowered to `NovaBox_*`) or `None`. Lets a call site box concrete
+    /// arguments passed where a protocol parameter is expected.
+    fn_protocol_params: HashMap<String, Vec<Option<(String, Vec<String>)>>>,
     /// Plan 72 P3-B: protocol method registry.
     /// Maps protocol_name → (type_param_names, method_signatures).
     /// Populated when a Protocol TypeDecl is processed.
@@ -693,6 +698,7 @@ impl CEmitter {
             protocol_vars: HashMap::new(),
             result_type_params: HashMap::new(),
             fn_result_type_params: HashMap::new(),
+            fn_protocol_params: HashMap::new(),
             protocol_method_registry: HashMap::new(),
             protocol_var_vtable: HashMap::new(),
             emitted_vtable_types: HashSet::new(),
@@ -2953,12 +2959,11 @@ impl CEmitter {
         None
     }
 
-    /// Plan 72 P3-B return: if `f`'s declared return type is a generic protocol
-    /// (e.g. `-> Iter[int]`), return `(proto_name, [concrete C type args])`.
-    /// Such functions are emitted with a `NovaBox_*` fat-pointer C return type
-    /// and their return values are boxed. Returns `None` otherwise.
-    fn protocol_box_return_type_info(&self, f: &FnDecl) -> Option<(String, Vec<String>)> {
-        let ty = f.return_type.as_ref()?;
+    /// Plan 72 P3-B: if `ty` is a generic protocol instantiation (e.g.
+    /// `Iter[int]`), return `(proto_name, [concrete C type args])`. Used for
+    /// both protocol return types and protocol parameter types — they lower to
+    /// the `NovaBox_*` fat pointer. Returns `None` for non-protocol types.
+    fn protocol_type_args(&self, ty: &TypeRef) -> Option<(String, Vec<String>)> {
         let proto_name = self.extract_protocol_type_name(ty)?;
         let TypeRef::Named { generics, .. } = ty else { return None; };
         if generics.is_empty() { return None; }
@@ -2967,6 +2972,25 @@ impl CEmitter {
             .collect();
         if type_args.len() != generics.len() { return None; }
         Some((proto_name, type_args))
+    }
+
+    /// Plan 72 P3-B return: if `f`'s declared return type is a generic protocol
+    /// (e.g. `-> Iter[int]`), return `(proto_name, [concrete C type args])`.
+    fn protocol_box_return_type_info(&self, f: &FnDecl) -> Option<(String, Vec<String>)> {
+        self.protocol_type_args(f.return_type.as_ref()?)
+    }
+
+    /// Plan 72 P3-B: if `ty` is a generic protocol, return
+    /// `(box_c_type, proto_name, type_args)` where `box_c_type` is the
+    /// `NovaBox_<proto>_<args>` fat-pointer type name. Pure string derivation
+    /// (`&self`) — the typedef itself is emitted by `emit_protocol_box_typedef`.
+    fn protocol_box_c_type_for(&self, ty: &TypeRef) -> Option<(String, String, Vec<String>)> {
+        let (proto, type_args) = self.protocol_type_args(ty)?;
+        let args_mangled: String = type_args.iter()
+            .map(|t| Self::sanitize_c_for_ident(t))
+            .collect::<Vec<_>>()
+            .join("_");
+        Some((format!("NovaBox_{}_{}", proto, args_mangled), proto, type_args))
     }
 
     /// Plan 72 P1-C: emit a C cast expression that reinterprets a `nova_int`
@@ -3143,27 +3167,33 @@ impl CEmitter {
         Some(box_c_type)
     }
 
+    /// Plan 72 P3-B: box a concrete value `val` (C type `concrete_c`) into the
+    /// `NovaBox_*` fat pointer for protocol `(proto, type_args)`. Values that
+    /// are already boxed (`NovaBox_*`) pass through unchanged. Shared by
+    /// protocol-return wrapping and protocol-parameter argument coercion.
+    fn box_value_for_protocol(
+        &mut self, val: String, concrete_c: &str, proto: &str, type_args: &[String],
+    ) -> String {
+        if concrete_c.starts_with("NovaBox_") {
+            return val;
+        }
+        if let Some((inst, box_ty)) =
+            self.emit_protocol_vtable_companion(proto, type_args, concrete_c)
+        {
+            return format!("({box_ty}){{ .data = (void*)({val}), .vtable = &{inst} }}");
+        }
+        val
+    }
+
     /// Plan 72 P3-B return: if the current function declares a protocol return
     /// type, wrap a concrete return value `val` (source expression `val_expr`)
-    /// into a `NovaBox_*` fat pointer `{ data, vtable }`. Values that are
-    /// already boxed (e.g. forwarding another protocol-returning call) pass
-    /// through unchanged. No-op when the function returns an ordinary type.
+    /// into a `NovaBox_*` fat pointer. No-op for ordinary return types.
     fn wrap_protocol_return(&mut self, val: String, val_expr: &Expr) -> String {
         let Some((proto, type_args)) = self.current_fn_returns_protocol.clone() else {
             return val;
         };
         let concrete_c = self.infer_expr_c_type(val_expr);
-        if concrete_c.starts_with("NovaBox_") {
-            return val;
-        }
-        if let Some((inst, box_ty)) =
-            self.emit_protocol_vtable_companion(&proto, &type_args, &concrete_c)
-        {
-            return format!(
-                "({box_ty}){{ .data = (void*)({val}), .vtable = &{inst} }}"
-            );
-        }
-        val
+        self.box_value_for_protocol(val, &concrete_c, &proto, &type_args)
     }
 
     fn type_ref_to_c(&self, ty: &TypeRef) -> Result<String, String> {
@@ -5528,6 +5558,26 @@ impl CEmitter {
                 self.fn_result_type_params.insert(key, rparams);
             }
         }
+        // Plan 72 P3-B: protocol-typed parameters lower to `NovaBox_*` fat
+        // pointers (so the callee can dispatch via the vtable). Emit the
+        // vtable/box typedef for each, and — for free functions — register the
+        // per-parameter protocol info so call sites can box concrete arguments.
+        {
+            let mut param_protos: Vec<Option<(String, Vec<String>)>> = Vec::new();
+            let mut any_proto = false;
+            for p in &f.params {
+                if let Some((proto, type_args)) = self.protocol_type_args(&p.ty) {
+                    self.emit_protocol_box_typedef(&proto, &type_args);
+                    param_protos.push(Some((proto, type_args)));
+                    any_proto = true;
+                } else {
+                    param_protos.push(None);
+                }
+            }
+            if any_proto && f.receiver.is_none() {
+                self.fn_protocol_params.insert(f.name.clone(), param_protos);
+            }
+        }
         // Register fn-typed return signature for closure binding propagation
         if let Some(TypeRef::Func { params: fp, return_type, .. }) = &f.return_type {
             // Plan 70 PhaseA1.2: strict mode — return-fn signature lowering.
@@ -6656,7 +6706,14 @@ impl CEmitter {
             }
         }
         for p in &f.params {
-            let ty_c = self.type_ref_to_c(&p.ty)?;
+            // Plan 72 P3-B: a protocol-typed parameter (`x Iter[int]`) lowers
+            // to the `NovaBox_*` fat pointer so the callee can dispatch via the
+            // vtable — mirrors the protocol-return-type lowering.
+            let ty_c = if let Some((box_ty, _, _)) = self.protocol_box_c_type_for(&p.ty) {
+                box_ty
+            } else {
+                self.type_ref_to_c(&p.ty)?
+            };
             parts.push(format!("{} {}", ty_c, p.name));
         }
         if parts.is_empty() {
@@ -9222,10 +9279,16 @@ impl CEmitter {
             }
         }
         for p in &f.params {
-            if let Ok(ty_c) = self.type_ref_to_c(&p.ty) {
+            if let Ok(mut ty_c) = self.type_ref_to_c(&p.ty) {
                 // Plan 72 P0 (E7201): track protocol-typed params before ty_c is moved
                 if let Some(proto_name) = self.extract_protocol_type_name(&p.ty) {
                     self.protocol_vars.insert(p.name.clone(), proto_name);
+                }
+                // Plan 72 P3-B: a protocol-typed parameter is a `NovaBox_*` fat
+                // pointer — `var_types` must reflect that so method calls on it
+                // dispatch via `.vtable` instead of emitting E7201.
+                if let Some((box_ty, _, _)) = self.protocol_box_c_type_for(&p.ty) {
+                    ty_c = box_ty;
                 }
                 // Plan 72 P1-C: track Result[T,E]-typed params
                 if let Some(result_params) = self.extract_result_type_params(&p.ty) {
@@ -15511,6 +15574,19 @@ impl CEmitter {
                 self.infer_expr_c_type(a.expr())
             } else { String::new() };
             let v = self.emit_expr(a.expr())?;
+            // Plan 72 P3-B: box a concrete argument passed where a protocol
+            // parameter is expected — fat-pointer parameter coercion (mirrors
+            // `let x Iter[int] = c`). Args already boxed pass through.
+            if let Some(cname) = &callee_name_for_hof {
+                if let Some(Some((proto, type_args))) = self.fn_protocol_params
+                    .get(cname).and_then(|ps| ps.get(arg_idx)).cloned()
+                {
+                    let concrete_c = self.infer_expr_c_type(a.expr());
+                    let boxed = self.box_value_for_protocol(v, &concrete_c, &proto, &type_args);
+                    arg_strs.push(boxed);
+                    continue;
+                }
+            }
             if is_generic_call {
                 // For generic (void*-erased) functions: nova_str must be boxed as pointer
                 if arg_ty == "nova_str" {
