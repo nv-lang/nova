@@ -236,8 +236,13 @@ impl ExternalRegistry {
                         None => return Err("Self in non-receiver context".into()),
                     },
                     "Result" => {
+                        // Plan 59 Ф.7.5 D3: erased mono Result-инстанс.
+                        // External-fn Result-возвраты (`try_read_*` и т.п.)
+                        // физически дают erased (int,str) представление —
+                        // `NovaRes_nova_int_nova_str` (hand-defined в
+                        // nova_rt/array.h). Раньше — legacy `Nova_Result*`.
                         let _ = generics;
-                        "Nova_Result*".into()
+                        "NovaRes_nova_int_nova_str*".into()
                     }
                     "Option" => "NovaOpt_nova_int".into(),
                     _ => format!("Nova_{}*", name),
