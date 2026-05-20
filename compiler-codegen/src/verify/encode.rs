@@ -244,14 +244,13 @@ pub fn encode_expr_with_ctx(e: &Expr, ctx: &EncodeCtx) -> Result<SmtTerm, Encodi
             // Plan 33.7: BitVec dispatch — если хотя бы один операнд BitVec-типа.
             let is_bv = is_bv_term(&l, ctx) || is_bv_term(&r, ctx);
             if is_bv {
-                // Знаковость — из ширины типа: u8/u16/u32/u64 unsigned, i8/i16/i32 signed.
-                // Эвристика: только unsigned по умолчанию (u* типы стандарт для bv);
-                // если нужна знаковость — пользователь пишет i32/i8 тип параметра.
-                // Точное решение: смотреть type_name в AST — отложено до V2.
-                // Пока: все bv ops unsigned (bvult/bvule/etc.) для u8/u16/u32/u64.
-                // i8/i16/i32 — signed. Определяем через первое ненулевое bv_width + odd-width trick.
-                // Простейший корректный вариант: unsigned (u* доминирует). TODO V2: per-type.
-                let is_signed = false; // V1: assume unsigned; i8/i16/i32 V2
+                // Plan 33.7 V2: знаковость из SortRef::BitVec.signed BV-операнда.
+                // i8/i16/i32 → signed (bvsdiv/bvslt/...), u8/u16/u32/u64 → unsigned.
+                // Литералы знаковость не несут — берём от Var-операнда; если
+                // оба литералы (редко) — unsigned по умолчанию.
+                let is_signed = bv_signed(&l, ctx)
+                    .or_else(|| bv_signed(&r, ctx))
+                    .unwrap_or(false);
                 let bv_op = bin_op_to_bv_smt(*op, is_signed)?;
                 // IntLit в BV-контексте: автоматически lift в BitVecLit с шириной из другого операнда.
                 let width = bv_width(&l, ctx).or_else(|| bv_width(&r, ctx)).unwrap_or(32);
@@ -449,17 +448,46 @@ pub fn encode_expr_with_ctx(e: &Expr, ctx: &EncodeCtx) -> Result<SmtTerm, Encodi
              используйте if/else или #pure fn".into())),
 
         // As (type cast): Plan 33.7 — numeric BV casts supported.
-        // `IntLit(n) as u32` → BitVecLit(n, 32); other casts → inner term.
-        // Non-BV casts fall through to Unsupported.
+        // V2: cast resize между BV-ширинами через zero_extend/sign_extend/extract.
         ExprKind::As(inner, ty) => {
-            let bv_width_opt = type_ref_name_to_bv_width(ty);
-            if let Some(w) = bv_width_opt {
-                // Encode inner; then lift if IntLit.
-                let inner_t = encode_expr_with_ctx(inner, ctx)?;
-                Ok(lift_intlit_to_bv(inner_t, w))
-            } else {
-                // Non-BV cast: encode inner and pass through (e.g. int cast).
-                encode_expr_with_ctx(inner, ctx)
+            let inner_t = encode_expr_with_ctx(inner, ctx)?;
+            match type_ref_name_to_bv(ty) {
+                Some((dst_w, _dst_signed)) => {
+                    // Цель — BV-тип ширины dst_w.
+                    match &inner_t {
+                        // Литерал: просто переразрядка значения.
+                        SmtTerm::IntLit(_) => Ok(lift_intlit_to_bv(inner_t, dst_w)),
+                        SmtTerm::BitVecLit(v, _) => Ok(SmtTerm::BitVecLit(*v, dst_w)),
+                        // BV-sorted term: resize по ширине-источника.
+                        _ => match bv_width(&inner_t, ctx) {
+                            Some(src_w) if src_w == dst_w => Ok(inner_t),
+                            Some(src_w) if dst_w > src_w => {
+                                // Расширение: sign_extend для signed-источника,
+                                // zero_extend для unsigned.
+                                let k = dst_w - src_w;
+                                let src_signed = bv_signed(&inner_t, ctx).unwrap_or(false);
+                                let op = if src_signed {
+                                    format!("sign_extend {}", k)
+                                } else {
+                                    format!("zero_extend {}", k)
+                                };
+                                Ok(SmtTerm::App(op, vec![inner_t]))
+                            }
+                            Some(src_w) => {
+                                // Сужение (dst_w < src_w): extract младших dst_w бит.
+                                let _ = src_w;
+                                Ok(SmtTerm::App(
+                                    format!("extract {} 0", dst_w - 1),
+                                    vec![inner_t],
+                                ))
+                            }
+                            // Источник не BV (например int-выражение) → lift если литерал.
+                            None => Ok(lift_intlit_to_bv(inner_t, dst_w)),
+                        },
+                    }
+                }
+                // Цель — не BV-тип (например `int`): pass inner through.
+                None => Ok(inner_t),
             }
         }
         ExprKind::Is(_, ty) => Err(EncodingError::Unsupported(format!(
@@ -632,7 +660,7 @@ fn is_fp_term(t: &SmtTerm, ctx: &EncodeCtx) -> bool {
 fn is_bv_term(t: &SmtTerm, ctx: &EncodeCtx) -> bool {
     match t {
         SmtTerm::BitVecLit(_, _) => true,
-        SmtTerm::Var(name) => matches!(ctx.var_sorts.get(name), Some(SortRef::BitVec(_))),
+        SmtTerm::Var(name) => matches!(ctx.var_sorts.get(name), Some(SortRef::BitVec { .. })),
         SmtTerm::App(op, _) if op.starts_with("bv") => true,
         _ => false,
     }
@@ -644,8 +672,24 @@ fn bv_width(t: &SmtTerm, ctx: &EncodeCtx) -> Option<u32> {
     match t {
         SmtTerm::BitVecLit(_, w) => Some(*w),
         SmtTerm::Var(name) => {
-            if let Some(SortRef::BitVec(w)) = ctx.var_sorts.get(name) {
-                Some(*w)
+            if let Some(SortRef::BitVec { width, .. }) = ctx.var_sorts.get(name) {
+                Some(*width)
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
+/// Plan 33.7 V2: получить знаковость BitVec из term. Только Var несёт
+/// знаковость (через SortRef::BitVec.signed); литерал — None (определяется
+/// контекстом). Используется для выбора bvsdiv/bvslt vs bvudiv/bvult.
+fn bv_signed(t: &SmtTerm, ctx: &EncodeCtx) -> Option<bool> {
+    match t {
+        SmtTerm::Var(name) => {
+            if let Some(SortRef::BitVec { signed, .. }) = ctx.var_sorts.get(name) {
+                Some(*signed)
             } else {
                 None
             }
@@ -731,16 +775,19 @@ fn lift_intlit_to_bv(t: SmtTerm, width: u32) -> SmtTerm {
     }
 }
 
-/// Plan 33.7: map TypeRef → BV width for `as`-cast support.
-/// Returns Some(N) for BV types, None for non-BV types.
-fn type_ref_name_to_bv_width(ty: &crate::ast::TypeRef) -> Option<u32> {
+/// Plan 33.7: map TypeRef → (BV width, signed) for `as`-cast support.
+/// Returns Some((N, signed)) for BV types, None for non-BV types.
+fn type_ref_name_to_bv(ty: &crate::ast::TypeRef) -> Option<(u32, bool)> {
     if let crate::ast::TypeRef::Named { path, generics, .. } = ty {
         if generics.is_empty() && path.len() == 1 {
             return match path[0].as_str() {
-                "u8" | "byte" | "i8" => Some(8),
-                "u16" | "i16" => Some(16),
-                "u32" | "i32" => Some(32),
-                "u64" | "usize" | "uint" => Some(64),
+                "u8" | "byte" => Some((8, false)),
+                "i8" => Some((8, true)),
+                "u16" => Some((16, false)),
+                "i16" => Some((16, true)),
+                "u32" => Some((32, false)),
+                "i32" => Some((32, true)),
+                "u64" | "usize" | "uint" => Some((64, false)),
                 _ => None,
             };
         }

@@ -1,0 +1,26 @@
+// REQUIRES_SMT_BACKEND z3
+//
+// Plan 33.7 V2: BV cast resize. Каст между ширинами BV использует
+// zero_extend (unsigned-источник) / sign_extend (signed) / extract (сужение).
+// u8 → u32: zero_extend 24 → значение сохраняется, верхние биты нулевые.
+
+module contracts.f61_bv_cast_resize_z3_positive
+
+// Расширение u8 → u32: результат всегда <= 255 (старший байт занулён).
+#verify
+fn widen_u8_to_u32(b u8) -> u32
+    ensures result <= 255 as u32
+=> b as u32
+
+// Сужение u32 → u8: extract младших 8 бит → результат <= 255.
+#verify
+fn narrow_u32_to_u8(x u32) -> u8
+    ensures result <= 255 as u8
+=> x as u8
+
+test "bv cast resize z3 positive" {
+    assert(widen_u8_to_u32(200 as u8) == 200 as u32)
+    assert(widen_u8_to_u32(0 as u8) == 0 as u32)
+    assert(narrow_u32_to_u8(300 as u32) == 44 as u8)
+    assert(narrow_u32_to_u8(100 as u32) == 100 as u8)
+}
