@@ -16513,10 +16513,11 @@ P3-B — protocol-typed parameters (commit 1aad24b954b):
 test(plan34): negative_mut_param → positive mut_param (fe372fa0bab) —
 P1-A сделал mut-параметр валидным, старый negative-тест устарел.
 
-Тесты: full `nova test nova_tests` (release) — 853 PASS / 1 FAIL до
-p3b (единственный FAIL p3b_vtable_dispatch); с p3b → 854 / 0 / 43 SKIP
-(z3 contracts). Baseline на pre-change HEAD подтвердил 0 регрессий.
-Honest-defer: [M-protocol-param-free-fn-only] в simplifications.md.
+Тесты: full `nova test nova_tests` (release) — после фикса всех 4 багов
+(p1b/p2a/p2b/p3b) и P1-C: 886 PASS / 0 FAIL / 56 SKIP (z3 contracts),
+измерено 2026-05-21. Baseline на pre-change HEAD подтвердил 0 регрессий.
+P3-B honest-defers ([M-protocol-param-free-fn-only],
+[M-protocol-return-wrap-relies-on-infer]) — закрыты 2026-05-21.
 
 main ↔ plan-72 синхронизированы (9c264bc15fd).
 
