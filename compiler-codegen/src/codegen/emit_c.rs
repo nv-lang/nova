@@ -467,6 +467,12 @@ pub struct CEmitter {
     /// `Nova_X*` (не sanitized "Nova_X_p"). Без map'a `t_from_scr` =
     /// strip("NovaOpt_") даёт sanitized, что breaks pointer types.
     novaopt_value_types: std::cell::RefCell<std::collections::HashMap<String, String>>,
+    /// Plan 59 Ф.7.5: lazy mono'd `NovaRes_<OkC>_<ErrC>` Result typedefs —
+    /// per-(T,E) value-type структуры, аналог `novaopt_typedefs_buf`.
+    /// Splice'ится в маркер `/*__NOVARES_TYPEDEFS__*/` после emit_module.
+    novares_typedefs_buf: std::cell::RefCell<String>,
+    /// Plan 59 Ф.7.5: dedup-set уже эмитированных `NovaRes_<ok>_<err>` имён.
+    novares_decls_seen: std::cell::RefCell<std::collections::HashSet<String>>,
     /// Plan 59: registry mono'd tuple types. Каждая Vec<String> — element
     /// C types для конкретной mono'd tuple (e.g. `["nova_str", "nova_int"]`
     /// для `(str, int)`). При emit_module — выводим struct typedef для
@@ -794,6 +800,8 @@ impl CEmitter {
                 std::cell::RefCell::new(m)
             },
             mono_tuple_instances: std::cell::RefCell::new(std::collections::HashSet::new()),
+            novares_typedefs_buf: std::cell::RefCell::new(String::new()),
+            novares_decls_seen: std::cell::RefCell::new(std::collections::HashSet::new()),
             defer_scopes: Vec::new(),
             defer_block_counter: 0,
             var_boxed: HashMap::new(),
@@ -2196,6 +2204,17 @@ impl CEmitter {
                 typedefs)
         };
         self.out = self.out.replace("/*__NOVAOPT_TYPEDEFS__*/", &replacement);
+        // Plan 59 Ф.7.5: splice mono'd NovaRes_<ok>_<err> typedefs.
+        let novares_typedefs = self.novares_typedefs_buf.borrow().clone();
+        let novares_replacement = if novares_typedefs.is_empty() {
+            String::new()
+        } else {
+            format!(
+                "/* Plan 59 Ф.7.5: mono'd NovaRes_<ok>_<err> Result typedef'ы. \
+                 Order: registration */\n{}",
+                novares_typedefs)
+        };
+        self.out = self.out.replace("/*__NOVARES_TYPEDEFS__*/", &novares_replacement);
         // Plan 48 Ф.3: splice generic type instance definitions
         let generic_type_defs = std::mem::take(&mut self.generic_type_defs_buf);
         self.out = self.out.replace("/*__GENERIC_TYPE_DEFS__*/", &generic_type_defs);
@@ -2662,6 +2681,10 @@ impl CEmitter {
         // в registration order (innermost first); splice'ится в финальный
         // `out` через `replace` после полного emit_module.
         self.line("/*__NOVAOPT_TYPEDEFS__*/");
+        // Plan 59 Ф.7.5: маркер для splice'а mono'd NovaRes_<ok>_<err>
+        // typedef'ов. ПОСЛЕ NovaOpt-маркера — NovaRes-структуры ссылаются
+        // на NovaOpt_<ok>/<err> (return-типы ok()/err()).
+        self.line("/*__NOVARES_TYPEDEFS__*/");
         self.line("");
     }
 
@@ -3279,7 +3302,27 @@ impl CEmitter {
                             Ok("NovaOpt_nova_int".into())
                         }
                     }
-                    "Result" => Ok("Nova_Result*".into()),
+                    "Result" => {
+                        // Plan 59 Ф.7.5: при concrete (T, E) регистрируем
+                        // mono'd `NovaRes_<ok>_<err>` typedef. Return-тип
+                        // остаётся `Nova_Result*` (legacy) — переключение
+                        // codegen на mono — в последующих инкрементах.
+                        if generics.len() == 2 {
+                            if let (Ok(ok_c), Ok(err_c)) = (
+                                self.type_ref_to_c(&generics[0]),
+                                self.type_ref_to_c(&generics[1]),
+                            ) {
+                                if !ok_c.is_empty() && ok_c != "void*"
+                                    && !err_c.is_empty() && err_c != "void*"
+                                    && !self.is_generic_stub_c(&ok_c)
+                                    && !self.is_generic_stub_c(&err_c)
+                                {
+                                    self.register_novares_decl(&ok_c, &err_c);
+                                }
+                            }
+                        }
+                        Ok("Nova_Result*".into())
+                    }
                     "Self" => {
                         // Self resolves to current receiver type.
                         // Plan 11 Follow-up: hard-error если Self в non-receiver
@@ -7199,6 +7242,58 @@ impl CEmitter {
                         || self.sum_schemas.contains_key(t.as_str())
                     {
                         return Some(format!("{}.{}", t, name));
+                    }
+                }
+                None
+            }
+            _ => None,
+        }
+    }
+
+    /// Plan 59 Ф.7.5-lite: выводит `(ok_c, err_c)` для произвольного
+    /// Result-выражения, включая **inline** (без let-биндинга) — закрывает
+    /// блокер `[M-result-method-named-var-only]`.
+    ///
+    /// - `Ident` → `result_type_params` (tracked named var);
+    /// - `Call(fn)` где fn объявлена с return `Result[T,E]` →
+    ///   `fn_result_type_params` (инфра Plan 72 P2-A);
+    /// - `.map`/`.map_err` цепочка → рекурсия по receiver'у + closure
+    ///   return-type (`typed_closure_c_sig`).
+    ///
+    /// `None` — тип не выводится (caller фоллбэчится на `(nova_int, nova_str)`).
+    fn infer_result_type_params(&self, expr: &crate::ast::Expr) -> Option<(String, String)> {
+        use crate::ast::ExprKind;
+        match &expr.kind {
+            ExprKind::TurboFish { base, .. } => self.infer_result_type_params(base),
+            ExprKind::Ident(v) => self.result_type_params.get(v.as_str()).cloned(),
+            ExprKind::Call { func, args, .. } => {
+                // fn-call с declared return `Result[T,E]`.
+                if let Some(k) = self.call_result_type_params_key(func) {
+                    if let Some(p) = self.fn_result_type_params.get(&k) {
+                        return Some(p.clone());
+                    }
+                }
+                // Result method-chain: obj.map(f) → Result[U,E];
+                //                      obj.map_err(f) → Result[T,F].
+                if let ExprKind::Member { obj, name } = &func.kind {
+                    match name.as_str() {
+                        "map" => {
+                            let (ok, err) = self.infer_result_type_params(obj)?;
+                            let u = args.first()
+                                .and_then(|a| self.typed_closure_c_sig(a.expr()))
+                                .map(|(_, ret)| ret)
+                                .unwrap_or(ok);
+                            return Some((u, err));
+                        }
+                        "map_err" => {
+                            let (ok, err) = self.infer_result_type_params(obj)?;
+                            let f = args.first()
+                                .and_then(|a| self.typed_closure_c_sig(a.expr()))
+                                .map(|(_, ret)| ret)
+                                .unwrap_or(err);
+                            return Some((ok, f));
+                        }
+                        _ => {}
                     }
                 }
                 None
@@ -13414,13 +13509,10 @@ impl CEmitter {
                     // Plan 72 P1-C: Result.unwrap_or inline with proper T cast when type is known.
                     // Must come BEFORE registry dispatch so non-nova_int T types are handled.
                     if obj_ty == "Nova_Result*" && method == "unwrap_or" {
-                        let ok_c_ty = if let ExprKind::Ident(var_name) = &obj.kind {
-                            self.result_type_params.get(var_name.as_str())
-                                .map(|(ok_c, _)| ok_c.clone())
-                                .unwrap_or_else(|| "nova_int".to_string())
-                        } else {
-                            "nova_int".to_string()
-                        };
+                        // Plan 59 Ф.7.5-lite: inline-aware Ok-type inference.
+                        let ok_c_ty = self.infer_result_type_params(obj)
+                            .map(|(ok_c, _)| ok_c)
+                            .unwrap_or_else(|| "nova_int".to_string());
                         if ok_c_ty != "nova_int" {
                             if let Some(default_arg) = args.first() {
                                 let d = self.emit_expr(default_arg.expr())?;
@@ -13522,13 +13614,10 @@ impl CEmitter {
                             // Plan 72 P1-C: use actual T type for result variable.
                             "unwrap_or_else" => {
                                 if let Some(arg) = args.first() {
-                                    let ok_c_ty = if let ExprKind::Ident(var_name) = &obj.kind {
-                                        self.result_type_params.get(var_name.as_str())
-                                            .map(|(ok_c, _)| ok_c.clone())
-                                            .unwrap_or_else(|| "nova_int".to_string())
-                                    } else {
-                                        "nova_int".to_string()
-                                    };
+                                    // Plan 59 Ф.7.5-lite: inline-aware Ok-type.
+                                    let ok_c_ty = self.infer_result_type_params(obj)
+                                        .map(|(ok_c, _)| ok_c)
+                                        .unwrap_or_else(|| "nova_int".to_string());
                                     let f = self.emit_expr(arg.expr())?;
                                     let tmp = self.fresh_tmp();
                                     self.line(&format!("Nova_Result* {} = {};", tmp, obj_c));
@@ -13569,13 +13658,9 @@ impl CEmitter {
                                     let (param_c, ret_c) = self
                                         .typed_closure_c_sig(arg.expr())
                                         .or_else(|| {
-                                            if let ExprKind::Ident(v) = &obj.kind {
-                                                self.result_type_params
-                                                    .get(v.as_str())
-                                                    .map(|(ok_c, _)| {
-                                                        (ok_c.clone(), ok_c.clone())
-                                                    })
-                                            } else { None }
+                                            // Plan 59 Ф.7.5-lite: inline-aware.
+                                            self.infer_result_type_params(obj)
+                                                .map(|(ok_c, _)| (ok_c.clone(), ok_c))
                                         })
                                         .unwrap_or_else(|| {
                                             ("nova_int".into(), "nova_int".into())
@@ -13633,13 +13718,10 @@ impl CEmitter {
                             }
                             "unwrap" => {
                                 // Plan 72 P1-C: cast payload.Ok._0 to actual T type.
-                                let ok_c_ty = if let ExprKind::Ident(var_name) = &obj.kind {
-                                    self.result_type_params.get(var_name.as_str())
-                                        .map(|(ok_c, _)| ok_c.clone())
-                                        .unwrap_or_else(|| "nova_int".to_string())
-                                } else {
-                                    "nova_int".to_string()
-                                };
+                                // Plan 59 Ф.7.5-lite: inline-aware Ok-type.
+                                let ok_c_ty = self.infer_result_type_params(obj)
+                                    .map(|(ok_c, _)| ok_c)
+                                    .unwrap_or_else(|| "nova_int".to_string());
                                 let tmp = self.fresh_tmp();
                                 self.line(&format!("Nova_Result* {} = {};", tmp, obj_c));
                                 self.line(&format!("if ({}->tag == NOVA_TAG_Result_Err) {{", tmp));
@@ -19717,6 +19799,71 @@ impl CEmitter {
         }
     }
 
+    /// Plan 59 Ф.7.5: lazy-регистрирует mono'd `NovaRes_<ok>_<err>` —
+    /// per-(T,E) value-type Result-структуру, аналог `register_novaopt_decl`.
+    ///
+    /// Эмитит typedef + `Ok`/`Err` конструкторы + trampoline-методы
+    /// (`is_ok`/`is_err`/`unwrap_or`/`ok`/`err`) в `novares_typedefs_buf`.
+    /// `unwrap`/`map`/`map_err`/`unwrap_or_else` — inline-emit в codegen
+    /// (нужен AST: Fail-effect / closure-apply), trampoline не требуется.
+    ///
+    /// `ok()`/`err()` возвращают `NovaOpt_<ok>` / `NovaOpt_<err>` — поэтому
+    /// зависимые NovaOpt-типы регистрируются здесь же (порядок splice:
+    /// `/*__NOVAOPT_TYPEDEFS__*/` стоит до `/*__NOVARES_TYPEDEFS__*/`).
+    ///
+    /// Value-тип (без heap-alloc) — zero-cost, как `NovaOpt_<T>`.
+    fn register_novares_decl(&self, ok_c: &str, err_c: &str) {
+        let ok_s = Self::sanitize_for_novaopt(ok_c);
+        let err_s = Self::sanitize_for_novaopt(err_c);
+        let name = format!("{}_{}", ok_s, err_s);
+        {
+            let mut seen = self.novares_decls_seen.borrow_mut();
+            if seen.contains(&name) { return; }
+            seen.insert(name.clone());
+        }
+        // Зависимые NovaOpt-типы — для return-типов `ok()` / `err()`.
+        self.register_novaopt_decl(&ok_s, ok_c);
+        self.register_novaopt_decl(&err_s, err_c);
+
+        let mut buf = self.novares_typedefs_buf.borrow_mut();
+        buf.push_str(&format!(
+            "typedef struct NovaRes_{n} {{ int tag; \
+             union {{ {ok} ok; {err} err; }} payload; }} NovaRes_{n};\n",
+            n = name, ok = ok_c, err = err_c));
+        buf.push_str(&format!(
+            "static inline NovaRes_{n} nova_make_NovaRes_{n}_Ok({ok} v) {{ \
+             NovaRes_{n} r; r.tag = NOVA_TAG_Result_Ok; r.payload.ok = v; return r; }}\n",
+            n = name, ok = ok_c));
+        buf.push_str(&format!(
+            "static inline NovaRes_{n} nova_make_NovaRes_{n}_Err({err} v) {{ \
+             NovaRes_{n} r; r.tag = NOVA_TAG_Result_Err; r.payload.err = v; return r; }}\n",
+            n = name, err = err_c));
+        buf.push_str(&format!(
+            "static inline nova_bool Nova_Result_method_is_ok_{n}(NovaRes_{n} r) {{ \
+             return r.tag == NOVA_TAG_Result_Ok; }}\n",
+            n = name));
+        buf.push_str(&format!(
+            "static inline nova_bool Nova_Result_method_is_err_{n}(NovaRes_{n} r) {{ \
+             return r.tag == NOVA_TAG_Result_Err; }}\n",
+            n = name));
+        buf.push_str(&format!(
+            "static inline {ok} Nova_Result_method_unwrap_or_{n}(NovaRes_{n} r, {ok} default_v) {{ \
+             return r.tag == NOVA_TAG_Result_Ok ? r.payload.ok : default_v; }}\n",
+            n = name, ok = ok_c));
+        buf.push_str(&format!(
+            "static inline NovaOpt_{oks} Nova_Result_method_ok_{n}(NovaRes_{n} r) {{ \
+             NovaOpt_{oks} o; if (r.tag == NOVA_TAG_Result_Ok) {{ \
+             o.tag = NOVA_TAG_Option_Some; o.value = r.payload.ok; }} \
+             else {{ o.tag = NOVA_TAG_Option_None; }} return o; }}\n",
+            n = name, oks = ok_s));
+        buf.push_str(&format!(
+            "static inline NovaOpt_{errs} Nova_Result_method_err_{n}(NovaRes_{n} r) {{ \
+             NovaOpt_{errs} o; if (r.tag == NOVA_TAG_Result_Err) {{ \
+             o.tag = NOVA_TAG_Option_Some; o.value = r.payload.err; }} \
+             else {{ o.tag = NOVA_TAG_Option_None; }} return o; }}\n",
+            n = name, errs = err_s));
+    }
+
 
     /// Plan 08 Ф.5: as-cast restrictions для char/byte/bool.
     /// По D54 запрещены конверсии где как-cast даёт неочевидную или
@@ -20968,13 +21115,9 @@ impl CEmitter {
                     // D26 prelude: Nova_Result* method type inference.
                     // Plan 72 P1-C: use tracked Result[T,E] type params when available.
                     if obj_ty == "Nova_Result*" {
-                        let (ok_c, err_c) = if let ExprKind::Ident(var_name) = &obj.kind {
-                            self.result_type_params.get(var_name.as_str())
-                                .cloned()
-                                .unwrap_or_else(|| ("nova_int".into(), "nova_str".into()))
-                        } else {
-                            ("nova_int".into(), "nova_str".into())
-                        };
+                        // Plan 59 Ф.7.5-lite: inline-aware (T,E) inference.
+                        let (ok_c, err_c) = self.infer_result_type_params(obj)
+                            .unwrap_or_else(|| ("nova_int".into(), "nova_str".into()));
                         let ok_ident = Self::sanitize_c_for_ident(&ok_c);
                         let err_ident = Self::sanitize_c_for_ident(&err_c);
                         return match method.as_str() {
