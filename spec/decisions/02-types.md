@@ -3222,8 +3222,16 @@ Type-checker (Plan 15 / D72) enforces:
   enforcement).
 
 Codegen (Plan 56 Ф.1 + Ф.2):
-- Bound methods обязаны быть **pure** (нет `Fail` / `Io` / `Db`
-  effects). Rationale: vtable dispatch не propagates effect handlers.
+- **Protocol-методы могут иметь эффекты** (`Fail` / `Io` / `Db`) —
+  напр. `type TryFrom[T, E] protocol { try_from(t T) Fail[E] -> Self }`.
+  Под **mono-dispatch** (текущий bootstrap) эффект protocol-метода
+  пробрасывается как у обычной effectful-функции — без спец-кейса.
+  *(D122 amended 2026-05-20: снят запрет Plan 56 Ф.2.7 на pure-only
+  bound methods.)* **Ограничение**: true-vtable dispatch (Plan 03) не
+  пробрасывает effect-handlers через vtable-ABI — в truly-erased
+  контексте effectful-protocol bounds обязаны mono-dispatch'иться;
+  чистая vtable-диспетчеризация effectful-метода — будущая работа
+  Plan 03.
 - Self type в bound method signature substitutes runtime receiver type.
 
 ### Связь
