@@ -1,0 +1,16 @@
+// Plan 70.4 Ф.1 — negative: Option[f32] несовместим с Option[f64].
+//
+// После Ф.1 f32/f64 генерируют разные C-структуры (NovaOpt_nova_f32 vs
+// NovaOpt_nova_f64). Передача одного вместо другого — CC-FAIL.
+//
+// Параллель Rust: Option<f32> и Option<f64> — разные типы, compile error.
+
+module nova_tests.plan70_4.f6_option_f32_f64_mismatch_neg
+
+fn take_opt_f64(o Option[f64]) -> bool { o.is_some() }
+
+// EXPECT_CC_ERROR incompatible type
+fn bad() -> bool {
+    let o Option[f32] = Some(1.0 as f32)
+    take_opt_f64(o)
+}
