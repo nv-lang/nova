@@ -473,6 +473,9 @@ pub struct CEmitter {
     novares_typedefs_buf: std::cell::RefCell<String>,
     /// Plan 59 Ф.7.5: dedup-set уже эмитированных `NovaRes_<ok>_<err>` имён.
     novares_decls_seen: std::cell::RefCell<std::collections::HashSet<String>>,
+    /// Plan 59 Ф.7.5: mangled `<ok_s>_<err_s>` → (ok_c, err_c). Восстановление
+    /// (T,E) из C-типа `NovaRes_<n>*` (sanitized ≠ c_ty для pointer-типов).
+    novares_value_types: std::cell::RefCell<std::collections::HashMap<String, (String, String)>>,
     /// Plan 59: registry mono'd tuple types. Каждая Vec<String> — element
     /// C types для конкретной mono'd tuple (e.g. `["nova_str", "nova_int"]`
     /// для `(str, int)`). При emit_module — выводим struct typedef для
@@ -802,6 +805,7 @@ impl CEmitter {
             mono_tuple_instances: std::cell::RefCell::new(std::collections::HashSet::new()),
             novares_typedefs_buf: std::cell::RefCell::new(String::new()),
             novares_decls_seen: std::cell::RefCell::new(std::collections::HashSet::new()),
+            novares_value_types: std::cell::RefCell::new(std::collections::HashMap::new()),
             defer_scopes: Vec::new(),
             defer_block_counter: 0,
             var_boxed: HashMap::new(),
@@ -19799,19 +19803,54 @@ impl CEmitter {
         }
     }
 
+    /// Plan 59 Ф.7.5: резолвит (T, E) generics `Result[T,E]` в concrete
+    /// C-типы для mono'd `NovaRes_<ok>_<err>`. Erased type-param / `void*` /
+    /// generic-стаб → fallback `nova_int` / `nova_str` (int/str instance как
+    /// ABI-compat erased представление, аналог `NovaOpt_nova_int`).
+    fn result_mono_c_pair(&self, generics: &[TypeRef]) -> (String, String) {
+        let resolve = |slot: usize, fallback: &str| -> String {
+            if let Some(tr) = generics.get(slot) {
+                if let Ok(c) = self.type_ref_to_c(tr) {
+                    if !c.is_empty() && c != "void*" && !self.is_generic_stub_c(&c) {
+                        return c;
+                    }
+                }
+            }
+            fallback.to_string()
+        };
+        (resolve(0, "nova_int"), resolve(1, "nova_str"))
+    }
+
+    /// Plan 59 Ф.7.5: mangled `<ok_s>_<err_s>` для пары C-типов (без
+    /// `NovaRes_` префикса и `*`).
+    fn novares_name(ok_c: &str, err_c: &str) -> String {
+        format!("{}_{}",
+            Self::sanitize_for_novaopt(ok_c),
+            Self::sanitize_for_novaopt(err_c))
+    }
+
+    /// Plan 59 Ф.7.5: если `c_ty` — mono'd Result `NovaRes_<n>*`, вернуть
+    /// concrete (ok_c, err_c) через `novares_value_types`.
+    fn novares_ok_err(&self, c_ty: &str) -> Option<(String, String)> {
+        let n = c_ty.strip_prefix("NovaRes_")?.strip_suffix('*')?;
+        self.novares_value_types.borrow().get(n).cloned()
+    }
+
     /// Plan 59 Ф.7.5: lazy-регистрирует mono'd `NovaRes_<ok>_<err>` —
-    /// per-(T,E) value-type Result-структуру, аналог `register_novaopt_decl`.
+    /// per-(T,E) Result-тип, аналог `register_novaopt_decl`.
     ///
-    /// Эмитит typedef + `Ok`/`Err` конструкторы + trampoline-методы
+    /// Эмитит typedef + heap `Ok`/`Err` конструкторы + trampoline-методы
     /// (`is_ok`/`is_err`/`unwrap_or`/`ok`/`err`) в `novares_typedefs_buf`.
-    /// `unwrap`/`map`/`map_err`/`unwrap_or_else` — inline-emit в codegen
-    /// (нужен AST: Fail-effect / closure-apply), trampoline не требуется.
+    /// `unwrap`/`map`/`map_err`/`unwrap_or_else` — inline-emit в codegen.
     ///
     /// `ok()`/`err()` возвращают `NovaOpt_<ok>` / `NovaOpt_<err>` — поэтому
-    /// зависимые NovaOpt-типы регистрируются здесь же (порядок splice:
-    /// `/*__NOVAOPT_TYPEDEFS__*/` стоит до `/*__NOVARES_TYPEDEFS__*/`).
+    /// зависимые NovaOpt-типы регистрируются здесь же.
     ///
-    /// Value-тип (без heap-alloc) — zero-cost, как `NovaOpt_<T>`.
+    /// **Payload-схема** — та же, что у legacy `Nova_Result`:
+    /// `union { struct { <T> _0; } Ok; struct { <E> _0; } Err; }` (доступ
+    /// `payload.Ok._0` / `payload.Err._0`). Это даёт совместимость с
+    /// generic pattern-match codegen без изменений. Heap-pointer
+    /// представление (как legacy).
     fn register_novares_decl(&self, ok_c: &str, err_c: &str) {
         let ok_s = Self::sanitize_for_novaopt(ok_c);
         let err_s = Self::sanitize_for_novaopt(err_c);
@@ -19821,45 +19860,50 @@ impl CEmitter {
             if seen.contains(&name) { return; }
             seen.insert(name.clone());
         }
+        self.novares_value_types.borrow_mut()
+            .insert(name.clone(), (ok_c.to_string(), err_c.to_string()));
         // Зависимые NovaOpt-типы — для return-типов `ok()` / `err()`.
         self.register_novaopt_decl(&ok_s, ok_c);
         self.register_novaopt_decl(&err_s, err_c);
 
         let mut buf = self.novares_typedefs_buf.borrow_mut();
         buf.push_str(&format!(
-            "typedef struct NovaRes_{n} {{ int tag; \
-             union {{ {ok} ok; {err} err; }} payload; }} NovaRes_{n};\n",
+            "typedef struct NovaRes_{n} {{ int tag; union {{ \
+             struct {{ {ok} _0; }} Ok; struct {{ {err} _0; }} Err; \
+             }} payload; }} NovaRes_{n};\n",
             n = name, ok = ok_c, err = err_c));
         buf.push_str(&format!(
-            "static inline NovaRes_{n} nova_make_NovaRes_{n}_Ok({ok} v) {{ \
-             NovaRes_{n} r; r.tag = NOVA_TAG_Result_Ok; r.payload.ok = v; return r; }}\n",
+            "static inline NovaRes_{n}* nova_make_NovaRes_{n}_Ok({ok} v) {{ \
+             NovaRes_{n}* r = (NovaRes_{n}*)nova_alloc(sizeof(NovaRes_{n})); \
+             r->tag = NOVA_TAG_Result_Ok; r->payload.Ok._0 = v; return r; }}\n",
             n = name, ok = ok_c));
         buf.push_str(&format!(
-            "static inline NovaRes_{n} nova_make_NovaRes_{n}_Err({err} v) {{ \
-             NovaRes_{n} r; r.tag = NOVA_TAG_Result_Err; r.payload.err = v; return r; }}\n",
+            "static inline NovaRes_{n}* nova_make_NovaRes_{n}_Err({err} v) {{ \
+             NovaRes_{n}* r = (NovaRes_{n}*)nova_alloc(sizeof(NovaRes_{n})); \
+             r->tag = NOVA_TAG_Result_Err; r->payload.Err._0 = v; return r; }}\n",
             n = name, err = err_c));
         buf.push_str(&format!(
-            "static inline nova_bool Nova_Result_method_is_ok_{n}(NovaRes_{n} r) {{ \
-             return r.tag == NOVA_TAG_Result_Ok; }}\n",
+            "static inline nova_bool Nova_Result_method_is_ok_{n}(NovaRes_{n}* r) {{ \
+             return r->tag == NOVA_TAG_Result_Ok; }}\n",
             n = name));
         buf.push_str(&format!(
-            "static inline nova_bool Nova_Result_method_is_err_{n}(NovaRes_{n} r) {{ \
-             return r.tag == NOVA_TAG_Result_Err; }}\n",
+            "static inline nova_bool Nova_Result_method_is_err_{n}(NovaRes_{n}* r) {{ \
+             return r->tag == NOVA_TAG_Result_Err; }}\n",
             n = name));
         buf.push_str(&format!(
-            "static inline {ok} Nova_Result_method_unwrap_or_{n}(NovaRes_{n} r, {ok} default_v) {{ \
-             return r.tag == NOVA_TAG_Result_Ok ? r.payload.ok : default_v; }}\n",
+            "static inline {ok} Nova_Result_method_unwrap_or_{n}(NovaRes_{n}* r, {ok} default_v) {{ \
+             return r->tag == NOVA_TAG_Result_Ok ? r->payload.Ok._0 : default_v; }}\n",
             n = name, ok = ok_c));
         buf.push_str(&format!(
-            "static inline NovaOpt_{oks} Nova_Result_method_ok_{n}(NovaRes_{n} r) {{ \
-             NovaOpt_{oks} o; if (r.tag == NOVA_TAG_Result_Ok) {{ \
-             o.tag = NOVA_TAG_Option_Some; o.value = r.payload.ok; }} \
+            "static inline NovaOpt_{oks} Nova_Result_method_ok_{n}(NovaRes_{n}* r) {{ \
+             NovaOpt_{oks} o; if (r->tag == NOVA_TAG_Result_Ok) {{ \
+             o.tag = NOVA_TAG_Option_Some; o.value = r->payload.Ok._0; }} \
              else {{ o.tag = NOVA_TAG_Option_None; }} return o; }}\n",
             n = name, oks = ok_s));
         buf.push_str(&format!(
-            "static inline NovaOpt_{errs} Nova_Result_method_err_{n}(NovaRes_{n} r) {{ \
-             NovaOpt_{errs} o; if (r.tag == NOVA_TAG_Result_Err) {{ \
-             o.tag = NOVA_TAG_Option_Some; o.value = r.payload.err; }} \
+            "static inline NovaOpt_{errs} Nova_Result_method_err_{n}(NovaRes_{n}* r) {{ \
+             NovaOpt_{errs} o; if (r->tag == NOVA_TAG_Result_Err) {{ \
+             o.tag = NOVA_TAG_Option_Some; o.value = r->payload.Err._0; }} \
              else {{ o.tag = NOVA_TAG_Option_None; }} return o; }}\n",
             n = name, errs = err_s));
     }
