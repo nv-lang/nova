@@ -11274,8 +11274,52 @@ impl CEmitter {
                                     .join(", ")
                             ));
                         }
+                        // D46: @minus for generic types (e.g. Set[T].minus) when method_overloads
+                        // has no concrete mono'd entry (erased key is base type, not mono'd).
+                        if let Some(idx) = recv_short.find("____") {
+                            let base_type = recv_short[..idx].to_string();
+                            let mono_args = &recv_short[idx + 4..];
+                            let mk = (base_type, "minus".to_string());
+                            if let Some(fn_decl) = self.self_method_decls.get(&mk).cloned() {
+                                let mono_parts: Vec<String> = mono_args.split("__").map(|s| s.to_string()).collect();
+                                let recv_generics: Vec<String> = fn_decl.receiver.as_ref()
+                                    .map(|r| r.generics.iter().filter_map(|tr| {
+                                        if let TypeRef::Named { path, .. } = tr { path.first().cloned() } else { None }
+                                    }).collect::<Vec<_>>())
+                                    .unwrap_or_default();
+                                if recv_generics.len() == mono_parts.len() {
+                                    let type_subst: Vec<(String, String)> = recv_generics.into_iter().zip(mono_parts).collect();
+                                    let mono_name = format!("{}_method_minus", recv_full);
+                                    self.register_mono_method_instance(&fn_decl, type_subst, &mono_name, &recv_short);
+                                    return Ok(format!("{}({}, {})", mono_name, l, r));
+                                }
+                            }
+                        }
                         // No @minus registered — leave to fall-through (would
                         // become invalid C, caught later).
+                    }
+                    // D46: BitOr/BitAnd → @or/@and method dispatch for generic types (e.g. Set[T]).
+                    if matches!(op, BinOp::BitOr | BinOp::BitAnd) {
+                        let op_method = if matches!(op, BinOp::BitOr) { "or" } else { "and" };
+                        if let Some(idx) = type_name_sum.find("____") {
+                            let base_type = type_name_sum[..idx].to_string();
+                            let mono_args = &type_name_sum[idx + 4..];
+                            let mk = (base_type, op_method.to_string());
+                            if let Some(fn_decl) = self.self_method_decls.get(&mk).cloned() {
+                                let mono_parts: Vec<String> = mono_args.split("__").map(|s| s.to_string()).collect();
+                                let recv_generics: Vec<String> = fn_decl.receiver.as_ref()
+                                    .map(|r| r.generics.iter().filter_map(|tr| {
+                                        if let TypeRef::Named { path, .. } = tr { path.first().cloned() } else { None }
+                                    }).collect::<Vec<_>>())
+                                    .unwrap_or_default();
+                                if recv_generics.len() == mono_parts.len() {
+                                    let type_subst: Vec<(String, String)> = recv_generics.into_iter().zip(mono_parts).collect();
+                                    let mono_name = format!("{}_method_{}", type_name_sum_full, op_method);
+                                    self.register_mono_method_instance(&fn_decl, type_subst, &mono_name, &type_name_sum);
+                                    return Ok(format!("{}({}, {})", mono_name, l, r));
+                                }
+                            }
+                        }
                     }
                     if matches!(op, BinOp::Eq | BinOp::Neq) {
                         let type_name = type_name_sum;
@@ -20356,7 +20400,19 @@ impl CEmitter {
                                         .and_then(|ms| ms.iter().find(|m| m.name == mn))
                                     {
                                         if let Some(ret_ty) = &method_decl.return_type {
-                                            if let Some(c_ty) = Self::apply_type_subst_to_ref(ret_ty, &subst) {
+                                            let c_ty_opt = Self::apply_type_subst_to_ref(ret_ty, &subst)
+                                                .or_else(|| {
+                                                    // Self return type: resolve to concrete receiver type.
+                                                    // apply_type_subst_to_ref can't resolve Self (not a type param).
+                                                    if let crate::ast::TypeRef::Named { path, generics, .. } = ret_ty {
+                                                        if generics.is_empty() && path.last().map(|s| s.as_str()) == Some("Self") {
+                                                            let mangled = Self::compute_generic_type_c_name(&base_name, &type_args_c);
+                                                            return Some(format!("{}*", mangled));
+                                                        }
+                                                    }
+                                                    None
+                                                });
+                                            if let Some(c_ty) = c_ty_opt {
                                                 if !c_ty.is_empty() && c_ty != "void*" {
                                                     return c_ty;
                                                 }
