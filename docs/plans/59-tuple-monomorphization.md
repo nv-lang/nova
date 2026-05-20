@@ -722,3 +722,34 @@ codegen работает для `NovaRes_<n>` без изменений** (он 
 **Тест-стратегия:** после каждого A/B/C/E — полный прогон 0 регрессий;
 D — итеративно (plan72 → runtime → plan62 → full). Erased-generic
 кейсы — особое внимание (fallback `NovaRes_nova_int_nova_str*`).
+
+### Шаг D — декомпозиция на D1-D4 (2026-05-20)
+
+> D («флип») сам по себе ещё крупный (~25 сайтов). Раскладываем тем же
+> приёмом: сделать emit/construction **dual-mode** (работают и для
+> legacy `Nova_Result*`, и для mono `NovaRes_<n>*`) — это аддитивно и
+> green, пока `NovaRes_<n>*` не течёт; затем крошечный флип активирует
+> mono-путь, который dual-код уже умеет.
+
+- **D1 — dual-mode emit (green-additive).** ~25 method-emit / `?` / `!!`
+  / `char.try_from` сайтов сейчас эмитят литерал `"Nova_Result*"`
+  var-decl + `nova_make_Result_*` + `Nova_Result_method_*`. Перевести:
+  var-decl `"{obj_ty} {tmp} = ..."` (вместо литерала); имена
+  конструкторов/методов — через helper'ы, дающие legacy-имя для
+  `Nova_Result*` и `_<n>`-суффикс для `NovaRes_<n>*`. `payload.Ok._0`
+  / `Err._0` — без изменений (схема A). Аддитивно (legacy-путь даёт
+  идентичный вывод) → green. Дробится: **D1a** (9 method-emit блоков),
+  **D1b** (`?`/`!!`), **D1c** (`char.try_from` + `Option.ok_or` emit).
+- **D2 — dual-mode construction (green-additive).** `Ok(v)`/`Err(e)` в
+  emit_call → эмитить `nova_make_Result_*` ИЛИ `nova_make_NovaRes_<n>_*`
+  по expected/inferred (T,E). Mono-ветка dormant до флипа → green.
+- **D3 — флип (малый, активация).** `type_ref_to_c[Result]` →
+  `NovaRes_<n>*` (одна строка) + producer-returns (`try_read_*`,
+  `ok_or`, `map`/`map_err` и т.д. → `NovaRes_<n>*`). D1/D2 уже dual →
+  флип активирует mono-путь. Прогон → fix остаточного → green.
+- **D4 — kill silent fallback.** Заменить `.unwrap_or_else(|| (nova_int,
+  nova_str))` (5 точек) на жёсткую codegen-ошибку (после D3
+  `novares_ok_err` детерминирован → fallback недостижим).
+
+Итог: D1a/D1b/D1c/D2 — green-additive коммиты; D3 — малый флип +
+итеративный fix; D4 — cleanup. D больше не «атомарный монолит».
