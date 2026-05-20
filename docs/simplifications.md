@@ -10171,15 +10171,39 @@ G/H). ~3700 LOC implementation cumulative.
   `sum_schemas` baseline — теперь чистая задача Plan 62.A.bis Ф.4
   (передана агенту 62.A.bis).
 
-### [M-runtime-none-error-deferred] (DEFER — Plan 62.C → Plan 72 P1-B)
-- **Где:** `std/prelude/errors.nv` — отсутствует `type RuntimeNoneError`.
-- **Что упрощено:** `RuntimeNoneError` не мигрирован в prelude —
-  парсер не принимает `type X` без тела (empty-sum / marker type).
-- **Почему:** парсер требует ≥1 вариант после `type Name`; пустой
-  sum-type — отдельная синтаксическая фича.
-- **Как чинить:** Plan 72 P1-B — empty-sum syntax (`type Never` /
-  `type RuntimeNoneError` без тела).
-- **Приоритет:** L — единственный тип ошибки, не блокирует prelude.
+### [M-runtime-none-error-deferred] ✅ RESOLVED (Plan 62.C.bis, 2026-05-20)
+- **Где:** `std/prelude/errors.nv` + `std/prelude.nv` facade.
+- **Что было упрощено:** `RuntimeNoneError` (unit-тип, D85 — ошибка
+  `Option!!` на None) не был задекларирован в prelude.
+- **Почему (было):** bootstrap parser не принимал bodyless `type X`
+  (без вариантов / полей).
+- **Закрыто 2026-05-20 (Plan 62.C.bis):** Plan 72 P1-B добавил
+  bodyless-type support в parser. `type RuntimeNoneError` задеклариро-
+  ван в errors.nv + re-export через facade. PRELUDE_VERSION 8 → 9.
+  Тест `plan62/runtime_none_error_from_prelude`. `Never` НЕ мигрирован
+  (bottom-тип → строчный keyword `never`, Plan 75 cleanup).
+
+### [M-runtime-none-error-throw-codegen] (DEFER — Plan 19 C7 / codegen)
+- **Где:** `nova_rt/effects.h` `nova_throw_runtime_none_error` + `!!`
+  codegen; bodyless-type value codegen.
+- **Что упрощено:** два codegen-gap'а вокруг `RuntimeNoneError`
+  (декларация в prelude есть, но полное использование ограничено):
+  1. `opt!!` на None бросает через low-level `nova_throw` (string
+     payload) в обход handler-vtable — `with Fail = handler { fail
+     {...} }` перехватывает throw (программа не abort'ится), но тело
+     `fail`-арма НЕ исполняется. Explicit `throw "x"` invoke'ит
+     vtable корректно — `!!` использует другой путь.
+  2. Явный `throw RuntimeNoneError` (bodyless-тип как value-выражение)
+     не codegen'ится — bodyless-тип не имеет value-формы (`use of
+     undeclared identifier 'RuntimeNoneError'`).
+- **Почему:** `!!`-оператор (Plan 19 C7) эмитит runtime-helper вместо
+  handler-vtable invocation; bodyless-тип не получает синтезированной
+  unit-value константы.
+- **Как чинить:** (1) `!!`-codegen должен invoke'ить `_nova_handler_
+  Fail->fail(ctx, payload)` как explicit `throw`. (2) Синтезировать
+  unit-value для bodyless-типов (как у unit-вариантов sum-типов).
+- **Приоритет:** L — `opt!!` Some-path + catchability работают;
+  declaration резолвится; gap'ы тангенциальны к prelude-миграции.
 
 ### [M-tryfrom-tryinto-deferred] ✅ RESOLVED (Plan 62.E.bis, 2026-05-20)
 - **Где:** `std/prelude/protocols.nv` + `std/prelude.nv` facade.

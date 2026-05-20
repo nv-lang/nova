@@ -17020,3 +17020,43 @@ soundness (refinement types — спекулятивны, план не напи
 (оптимизация/полнота), отложены честно. contracts suite: 291 PASS /
 0 FAIL; полный nova_tests: 931 PASS / 0 FAIL.
 Plan 33.8: ✅ soundness ЗАКРЫТ (2026-05-21).
+
+2026-05-20 Plan 62.C.bis — RuntimeNoneError migration (закрытие defer)
+─────────────────────────────────────────────────────────────────
+
+`RuntimeNoneError` (unit-тип, D85 — ошибка `Option!!` на None)
+мигрирован в prelude. Предпоследний deferred sub-plan Plan 62 закрыт.
+
+Контекст блокера:
+- В Plan 62.C (2026-05-18) RuntimeNoneError deferred — bootstrap
+  parser не принимал bodyless `type X` (без вариантов / полей).
+- Блокер снят — Plan 72 P1-B добавил bodyless-type support в parser.
+
+Что сделал:
+- `type RuntimeNoneError` (bodyless unit-тип) задекларирован в
+  `std/prelude/errors.nv` — заменил DEFER-блок реальной декларацией
+  с doc-комментарием. Canonical type-name для type-checker'а;
+  runtime throw остаётся string-payload (как у ReadBufferError).
+- Добавлен в facade `std/prelude.nv` export-list. PRELUDE_VERSION
+  8 → 9. Stale-комментарии («parser не поддерживает empty-body»)
+  устранены в errors.nv + prelude.nv.
+- `Never` НЕ мигрирован — bottom-тип должен быть строчным keyword'ом
+  `never`, не капитализированным prelude-типом (Plan 75 cleanup).
+
+Тест:
+- plan62/runtime_none_error_from_prelude — Some-path (Fail[Runtime
+  NoneError] сигнатура резолвится из prelude + `opt!!` Some) +
+  None-throw catchability (with-блок перехватывает, no abort).
+- plan62 36/36 PASS.
+
+Codegen-gap'ы обнаружены (не scope 62.C.bis, вынесены в
+simplifications.md [M-runtime-none-error-throw-codegen]):
+- `opt!!` на None бросает через low-level `nova_throw` в обход
+  handler-vtable — `fail`-арм handler'а не исполняется (throw
+  перехватывается with-блоком, но кастомное тело арма пропускается).
+  Баг `!!`-оператора (Plan 19 C7).
+- Явный `throw RuntimeNoneError` (bodyless-тип как value) не
+  codegen'ится — bodyless-тип не имеет value-формы.
+
+Plan 62.C.bis закрыт. Остаток deferred sub-plans Plan 62: только
+62.A.bis Ф.4 (ждёт Plan 59 Ф.7.5 increment 2).
