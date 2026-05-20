@@ -16519,3 +16519,57 @@ p3b (единственный FAIL p3b_vtable_dispatch); с p3b → 854 / 0 / 43
 Honest-defer: [M-protocol-param-free-fn-only] в simplifications.md.
 
 main ↔ plan-72 синхронизированы (9c264bc15fd).
+
+
+# Plan 33.5 + 33.6 аудит 2026-05-20: закрытие Ф.3.8 + статусы
+
+Аудит планов 33.5 и 33.6 (семейство контрактов). Запрошен пользователем
+после полного закрытия Plan 33.9.
+
+## Plan 33.5 — аудит
+
+README числил 33.5 как 🟡 partial с заявлением «Ф.1.1 ghost erasure НЕ
+закрыт». Проверка по коду: ghost erasure закрыт в Plan 33.6 (types/mod.rs
+compile-error «ghost variable cannot be read in non-ghost code», soundness
+guard ghost_runtime_use_fail.nv). Все 6 фаз 33.5 реализованы.
+
+Главная находка — реальная регрессия: при прогоне contracts/ под
+NOVA_SMT_BACKEND=z3 падали 2 теста — f58_opaque_trivial_w2402.nv и
+f58_nonopaque_trivial_no_upgrade.nv (из Plan 33.9 Ф.4). Они проверяют
+TrivialBackend-специфичные сообщения, но не имели маркера
+REQUIRES_SMT_BACKEND — под Z3 контракт доказывается, текста нет, тест
+падает NEG-WRONG-WARN. Добавлен `// REQUIRES_SMT_BACKEND trivial`.
+
+Статус 33.5 обновлён 🟡 → ✅ ЗАКРЫТ.
+
+## Plan 33.6 — закрытие Ф.3.8
+
+Секция «Статус выполнения» 33.6 была датирована 2026-05-16 и числила
+Ф.3.1-Ф.5.4 как «не закрыто». Проверка по коду: всё реализовано, кроме
+Ф.3.8 variance inference — ни кода, ни теста.
+
+Реализована Ф.3.8 (handler_exec.rs):
+- ParamVariance enum: Contravariant (только в requires) / Covariant
+  (только в ensures) / Invariant (в обоих или нигде).
+- infer_param_variance(param, contracts) — анализ по контрактам метода.
+- contract_mentions_ident — проверка упоминания идентификатора через
+  Debug-репрезентацию AST (точный паттерн `Ident("<name>")`).
+- liskov_variance_note — заметка, подключена к SatResult::Sat ветке
+  verify_liskov_method.
+
+Примечание: исходный acceptance Ф.3.8 предполагал handler.requires
+строже effect.requires, но HandlerMethod в грамматике Nova не имеет
+собственных contracts. Реализовано полезное ядро — variance-aware
+обогащение существующей Liskov-диагностики, без нового синтаксиса.
+
+Тест liskov_variance_diag_fail.nv (REQUIRES_SMT_BACKEND z3): handler
+clamp_low(x, lo, n) => x нарушает ensures; диагностика выводит
+x=contravariant, lo=covariant, n=invariant.
+
+Статус 33.6 обновлён 🟢 mature → ✅ ЗАКРЫТ.
+
+## Регрессия
+
+contracts/ suite: 239 PASS trivial / 276 PASS z3 / 0 FAIL.
+
+Семейство ядра контрактов 33.1-33.6 + 33.9 полностью закрыто.
