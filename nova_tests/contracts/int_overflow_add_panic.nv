@@ -1,0 +1,12 @@
+// Plan 33.8 Ф.1.5: переполнение знакового `int` при сложении → panic
+// (а не молчаливый wrap / C-UB). Это делает безграничную SMT-кодировку
+// `int` в верификаторе sound.
+// EXPECT_RUNTIME_PANIC integer overflow
+
+module contracts.int_overflow_add_panic
+
+fn add_one(x int) -> int => x + 1
+
+test "int + overflow panics" {
+    let _ = add_one(int.MAX)
+}

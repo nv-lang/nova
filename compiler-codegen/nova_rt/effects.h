@@ -348,6 +348,38 @@ static inline void nv_panic(nova_str msg) {
     abort();
 }
 
+/* Plan 33.8 Ф.1.2: checked знаковая `int`-арифметика.
+ *
+ * Переполнение `int` (i64) — `panic` (spec 04-effects.md, D13), а НЕ
+ * молчаливый wrap или C-UB. Это делает безграничную SMT-кодировку `int`
+ * в верификаторе sound: верифицированная функция либо вернёт истинный
+ * математический результат, либо умрёт паникой — ложного (обёрнутого)
+ * значения она вернуть не может.
+ *
+ * Sized-типы (u8/u16/u32/u64/i8/i16/i32) сюда НЕ идут — у них семантика
+ * wrap-around (Plan 33.7), эмитятся обычным C-оператором.
+ *
+ * `__builtin_*_overflow` пишут результат в `*r` всегда (даже при
+ * переполнении — обёрнутое значение), поэтому `return r` определён. */
+#define NOVA_INT_OVF_PANIC(lit) \
+    nv_panic((nova_str){ .ptr = (lit), .len = sizeof(lit) - 1 })
+
+static inline nova_int nova_int_checked_add(nova_int a, nova_int b) {
+    nova_int r;
+    if (__builtin_add_overflow(a, b, &r)) NOVA_INT_OVF_PANIC("integer overflow: +");
+    return r;
+}
+static inline nova_int nova_int_checked_sub(nova_int a, nova_int b) {
+    nova_int r;
+    if (__builtin_sub_overflow(a, b, &r)) NOVA_INT_OVF_PANIC("integer overflow: -");
+    return r;
+}
+static inline nova_int nova_int_checked_mul(nova_int a, nova_int b) {
+    nova_int r;
+    if (__builtin_mul_overflow(a, b, &r)) NOVA_INT_OVF_PANIC("integer overflow: *");
+    return r;
+}
+
 /* nv_exit(code, msg) — D13: смерть всего процесса.
  *
  * exit это финальная точка — НЕ routes через fail-frame (handler-ом не
