@@ -660,7 +660,17 @@ static inline NovaOpt_nova_char nova_str_char_at(nova_str s, nova_int idx) {
 #define NOVA_TAG_Result_Ok  0
 #define NOVA_TAG_Result_Err 1
 
-typedef struct Nova_Result {
+/* Plan 59 Ф.7.5 D3: канонический mono'd Result для erased (T,E) =
+ * (int, str). Раньше назывался `Nova_Result` (single hardcoded
+ * representation). Теперь — `NovaRes_nova_int_nova_str`, инстанс
+ * семейства `NovaRes_<ok>_<err>` (per-(T,E) мономорфизация). Определён
+ * руками здесь (а не lazy-generated в `__NOVARES_TYPEDEFS__`), потому
+ * что runtime-заголовки (`read_buffer.h`, `string_builder.h`, `cast.h`)
+ * ссылаются на него, а они включаются ДО splice-маркера.
+ *
+ * `Nova_Result` / `nova_make_Result_*` / `Nova_Result_method_*` —
+ * back-compat алиасы на время перехода (шаг E их удалит). */
+typedef struct NovaRes_nova_int_nova_str {
     int tag;
     union {
         struct { nova_int _0; } Ok;
@@ -669,16 +679,18 @@ typedef struct Nova_Result {
     /* Plan 61 followup #3: typed Err payload (NULL для legacy string Err). */
     void*       err_typed_payload;
     NovaTypeId  err_typed_type_id;
-} Nova_Result;
+} NovaRes_nova_int_nova_str;
 
-static inline Nova_Result* nova_make_Result_Ok(nova_int v) {
-    Nova_Result* r = (Nova_Result*)nova_alloc(sizeof(Nova_Result));
+#define Nova_Result NovaRes_nova_int_nova_str
+
+static inline NovaRes_nova_int_nova_str* nova_make_NovaRes_nova_int_nova_str_Ok(nova_int v) {
+    NovaRes_nova_int_nova_str* r = (NovaRes_nova_int_nova_str*)nova_alloc(sizeof(NovaRes_nova_int_nova_str));
     r->tag = NOVA_TAG_Result_Ok; r->payload.Ok._0 = v;
     r->err_typed_payload = NULL; r->err_typed_type_id = NOVA_TID_NONE;
     return r;
 }
-static inline Nova_Result* nova_make_Result_Err(nova_str v) {
-    Nova_Result* r = (Nova_Result*)nova_alloc(sizeof(Nova_Result));
+static inline NovaRes_nova_int_nova_str* nova_make_NovaRes_nova_int_nova_str_Err(nova_str v) {
+    NovaRes_nova_int_nova_str* r = (NovaRes_nova_int_nova_str*)nova_alloc(sizeof(NovaRes_nova_int_nova_str));
     r->tag = NOVA_TAG_Result_Err; r->payload.Err._0 = v;
     r->err_typed_payload = NULL; r->err_typed_type_id = NOVA_TID_NONE;
     return r;
@@ -686,31 +698,38 @@ static inline Nova_Result* nova_make_Result_Err(nova_str v) {
 /* Plan 61 followup #3: typed Err constructor. payload — heap-allocated
  * copy of typed value (caller responsible — обычно codegen эмитит
  * `T* p = nova_alloc(sizeof(T)); *p = val;` inline). tid = NOVA_TID_<T>. */
-static inline Nova_Result* nova_make_Result_Err_typed(void* payload, NovaTypeId tid) {
-    Nova_Result* r = (Nova_Result*)nova_alloc(sizeof(Nova_Result));
+static inline NovaRes_nova_int_nova_str* nova_make_NovaRes_nova_int_nova_str_Err_typed(void* payload, NovaTypeId tid) {
+    NovaRes_nova_int_nova_str* r = (NovaRes_nova_int_nova_str*)nova_alloc(sizeof(NovaRes_nova_int_nova_str));
     r->tag = NOVA_TAG_Result_Err;
     r->payload.Err._0 = (nova_str){.ptr = "<typed err>", .len = 11};  /* diag fallback */
     r->err_typed_payload = payload;
     r->err_typed_type_id = tid;
     return r;
 }
-static inline nova_bool nova_result_eq(Nova_Result* a, Nova_Result* b) {
+/* Back-compat алиасы (шаг E удалит). */
+#define nova_make_Result_Ok        nova_make_NovaRes_nova_int_nova_str_Ok
+#define nova_make_Result_Err       nova_make_NovaRes_nova_int_nova_str_Err
+#define nova_make_Result_Err_typed nova_make_NovaRes_nova_int_nova_str_Err_typed
+
+static inline nova_bool nova_result_eq(NovaRes_nova_int_nova_str* a, NovaRes_nova_int_nova_str* b) {
     if (a->tag != b->tag) return 0;
     if (a->tag == NOVA_TAG_Result_Ok)  return a->payload.Ok._0  == b->payload.Ok._0;
     return nova_str_eq(a->payload.Err._0, b->payload.Err._0);
 }
 
-/* ---- D26 Result methods: is_ok / is_err / unwrap_or / ok ---- */
-static inline nova_bool Nova_Result_method_is_ok(Nova_Result* r) {
+/* ---- D26 Result methods: is_ok / is_err / unwrap_or / ok ----
+ * Plan 59 Ф.7.5 D3: суффикс `_nova_int_nova_str` — инстанс семейства
+ * `Nova_Result_method_*_<n>`. Back-compat алиасы без суффикса ниже. */
+static inline nova_bool Nova_Result_method_is_ok_nova_int_nova_str(NovaRes_nova_int_nova_str* r) {
     return r->tag == NOVA_TAG_Result_Ok;
 }
-static inline nova_bool Nova_Result_method_is_err(Nova_Result* r) {
+static inline nova_bool Nova_Result_method_is_err_nova_int_nova_str(NovaRes_nova_int_nova_str* r) {
     return r->tag == NOVA_TAG_Result_Err;
 }
-static inline nova_int Nova_Result_method_unwrap_or(Nova_Result* r, nova_int default_v) {
+static inline nova_int Nova_Result_method_unwrap_or_nova_int_nova_str(NovaRes_nova_int_nova_str* r, nova_int default_v) {
     return r->tag == NOVA_TAG_Result_Ok ? r->payload.Ok._0 : default_v;
 }
-static inline NovaOpt_nova_int Nova_Result_method_ok(Nova_Result* r) {
+static inline NovaOpt_nova_int Nova_Result_method_ok_nova_int_nova_str(NovaRes_nova_int_nova_str* r) {
     NovaOpt_nova_int o;
     if (r->tag == NOVA_TAG_Result_Ok) {
         o.tag = NOVA_TAG_Option_Some; o.value = r->payload.Ok._0;
@@ -719,6 +738,11 @@ static inline NovaOpt_nova_int Nova_Result_method_ok(Nova_Result* r) {
     }
     return o;
 }
+/* Back-compat алиасы (шаг E удалит). */
+#define Nova_Result_method_is_ok     Nova_Result_method_is_ok_nova_int_nova_str
+#define Nova_Result_method_is_err    Nova_Result_method_is_err_nova_int_nova_str
+#define Nova_Result_method_unwrap_or Nova_Result_method_unwrap_or_nova_int_nova_str
+#define Nova_Result_method_ok        Nova_Result_method_ok_nova_int_nova_str
 
 /* Plan 08 Ф.1: D73/D77 prelude конверсии (str↔numeric, char↔str, etc.).
  * Подключаем здесь — после определения nova_alloc (alloc.h) и nova_str
