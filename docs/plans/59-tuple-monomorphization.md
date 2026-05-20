@@ -666,3 +666,52 @@ documented-блокера. **Не меняет представление** — 
 тест `plan59/f29_result_inline_inference` (8 inline-кейсов). Полный
 прогон **869 PASS / 0 FAIL / 52 SKIP**, 0 регрессий. Блокер
 `[M-result-method-named-var-only]` для основного кейса снят.
+
+### Ф.7.5 ядро (инкремент 2) — декомпозированный план A-E (2026-05-20)
+
+> Прежний «executable план ядра» трактовал переключение представления
+> как один атомарный блок (~50 сайтов). Это и было главным риском.
+> Здесь — декомпозиция, где A/B/C/E **independently green**, а
+> атомарный риск сжат до меньшего шага D.
+
+**Ключевое дизайн-решение:** mono-тип `NovaRes_<n>` использует **ту же
+payload-схему**, что legacy `Nova_Result`:
+`union { struct { <T> _0; } Ok; struct { <E> _0; } Err; }` — доступ
+`payload.Ok._0` / `payload.Err._0`. Следствие: **generic pattern-match
+codegen работает для `NovaRes_<n>` без изменений** (он эмитит
+`payload.<Variant>._<idx>`), и ~20 сайтов field-access **не трогаем**.
+Отличие mono от legacy — только: (1) типы полей payload (реальные T/E
+вместо `nova_int`/`nova_str`), (2) имя типа.
+
+**Шаги:**
+
+- **A** — `register_novares_decl`: pointer-форма, payload-схема
+  `Ok._0`/`Err._0` (как legacy), + helpers (`result_mono_c_pair`,
+  `novares_name`, `novares_ok_err`, поле `novares_value_types`).
+  Аддитивно — `type_ref_to_c` пока возвращает `Nova_Result*`, новое
+  ничем не используется → **green, коммит**.
+- **B** — helper `is_result_like(ty)` принимает И `Nova_Result*`, И
+  `NovaRes_<n>*`. Все `obj_ty == "Nova_Result*"` проверки (~15) → через
+  него. Аддитивно (поведение не меняется — `NovaRes_<n>*` ещё не течёт)
+  → **green, коммит**.
+- **C** — inference (`infer_expr_c_type`) + emit Result-методов
+  восстанавливают (T,E) из обоих типов: `Nova_Result*` → дефолт
+  `(nova_int, nova_str)`; `NovaRes_<n>*` → `novares_ok_err`. Аддитивно
+  → **green, коммит**.
+- **D** — **флип** (атомарное ядро, но меньшее): `type_ref_to_c[Result]`
+  → `NovaRes_<n>*`; construction `Ok`/`Err` → `nova_make_NovaRes_<n>_*`;
+  method-dispatch → суффикс `_<n>`. Теперь `NovaRes_<n>*` течёт везде —
+  B обрабатывает dispatch, C — инференс, pattern-match (generic,
+  `Ok._0`) работает т.к. payload-схема совпадает. Прогон → fix → green.
+- **E** — удалить legacy `Nova_Result` + `nova_make_Result_*` +
+  `Nova_Result_method_*` из `array.h` (после D ничего не ссылается) →
+  **green, коммит**. ← разблокирует Plan 62.A.bis Ф.4 (удаление
+  legacy `sum_schemas` — `[M-legacy-sum-schemas-retained]`).
+
+**Закрывает:** `[M-legacy-sum-schemas-retained]` (через E + 62.A.bis
+Ф.4), `[M-result-record-payload-match]` (D — Ok-payload типизируется
+реальным T), остаток `[M-result-method-named-var-only]`.
+
+**Тест-стратегия:** после каждого A/B/C/E — полный прогон 0 регрессий;
+D — итеративно (plan72 → runtime → plan62 → full). Erased-generic
+кейсы — особое внимание (fallback `NovaRes_nova_int_nova_str*`).
