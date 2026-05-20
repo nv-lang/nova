@@ -10119,3 +10119,39 @@ G/H). ~3700 LOC implementation cumulative.
 - **Почему:** `uint.MIN == 0` тривиально и не несёт семантической ценности
   в отличие от `int.MIN = INT64_MIN` (non-obvious boundary value).
 - **Приоритет:** L — можно добавить при необходимости.
+
+---
+
+## Plan 72 — P3-B protocol fat pointers (2026-05-20)
+
+### [M-protocol-param-free-fn-only] (DEFER — Plan 72 P3-B)
+- **Где:** `compiler-codegen/src/codegen/emit_c.rs::emit_call`
+  (`fn_protocol_params` registry).
+- **Что упрощено:** call-site боксинг concrete-аргументов в `NovaBox_*`
+  для protocol-typed параметров (`fn foo(x Iter[int])`) реализован только
+  для **free-function** вызовов. Static/instance методы с
+  protocol-параметром не получают arg-боксинг на call-site.
+- **Почему:** `emit_call` ~3100 строк без центрального arg-hook; method
+  call paths разбросаны по десяткам return-веток. Free-fn путь
+  (финальный arg-loop) — единственная локализованная точка для боксинга
+  без инвазивной правки всего emit_call.
+- **Как чинить:** расширить ключ `fn_protocol_params` на `Type.method`
+  форму + хукнуть боксинг в method-call ветках emit_call (или ввести
+  общий arg-coercion hook через emit_expr_with_target_type).
+- **Приоритет:** L — фикстура p3b_vtable_dispatch (free fn `consume_iter`)
+  покрыта; методы с protocol-параметром в текущем коде редки, и при
+  пропуске ловится CC-FAIL (type mismatch), не silent-wrong.
+
+### [M-protocol-return-wrap-relies-on-infer] (DEFER — Plan 72 P3-B)
+- **Где:** `emit_c.rs::wrap_protocol_return` / `box_value_for_protocol`.
+- **Что упрощено:** боксинг return/arg-значения в `NovaBox_*` берёт
+  конкретный тип через `infer_expr_c_type`. Если inference вернёт
+  не-указатель (`nova_int`/`NovaOpt_X`) — error-path возвращает значение
+  необёрнутым → CC-FAIL вместо Nova-диагностики.
+- **Почему:** конкретный тип реализатора известен только из тела/арга —
+  `infer_expr_c_type` единственный источник; зависимость inherent.
+- **Как чинить:** при желании — strict-error вместо тихого fallback;
+  множество отвергаемых программ то же (CC-FAIL → Nova-error).
+- **Приоритет:** L — для type-checked кода недостижимо (примитив,
+  реализующий протокол, нетипичен); idiomatic if/match/var — проверено,
+  всё боксится корректно. Всегда CC-FAIL, не silent miscompile.

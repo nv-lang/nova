@@ -16475,3 +16475,47 @@ W2402. Ценность Ф.4 — именно более точное opaque-awa
 После Ф.4 closure: **239 PASS** (+1 negative test) / 0 FAIL / 47 SKIP.
 
 Plan 33.9 полностью закрыт — все фазы Ф.1-Ф.7 ✅ DONE.
+
+2026-05-20 Plan 72 P3-B followup + p1b/p2a/p2b C-backend closure
+─────────────────────────────────────────────────────────────────
+
+Контекст: Plan 72 был помечен «✅ ЗАКРЫТ» по результатам интерпретатора
+(`nova-codegen test-interp`, ранее `nova-codegen test`). Прогон через
+`nova test` / `test-build` (реальный C-codegen → clang → бинарник)
+показал: 4 фикстуры plan72 падали на C-бэкенде, P3-B был неполон.
+
+P3-B followup — function-return fat pointer (commit 48dfd9f45a5):
+- `fn get_iter() -> Iter[int]` возвращает `NovaBox_*` (fat pointer
+  {data, vtable}) вместо `void*`; `let x = get_iter()` без аннотации
+  биндится как NovaBox_* и диспатчит x.next() через vtable.
+- CEmitter.current_fn_returns_protocol; emit_protocol_box_typedef
+  (typedef в generic_type_defs_buf — до forward-decls); wrap_protocol_return.
+- p3b_fatptr_return_pos.nv — 6 cases.
+
+nova-cli debug stack overflow (commit 45ba1246abc):
+- nova-cli `main` исполнял всё на OS-main-thread → overflow в debug на
+  рекурсивных AST-обходах (даже `nova --version`). Вынесен в `run`,
+  обёрнут в 64 MiB-поток (паттерн из nova-codegen/src/main.rs).
+
+p1b/p2a/p2b — C-backend codegen fixes (commit 80edd5110f9):
+- p1b: empty sum `type X` → `typedef int64_t`; forward-decl pass больше
+  не объявляет его `typedef struct` (typedef redefinition).
+- p2a: `let r = f(...)` с Result-возвращающей f → реестр
+  fn_result_type_params populates result_type_params[r] (был fallback
+  nova_int → member-ref на nova_int CC-FAIL).
+- p2b: structural inference Source 2e принимает `NovaOpt_X` без `*`.
+
+P3-B — protocol-typed parameters (commit 1aad24b954b):
+- `fn consume_iter(x Iter[int])` — protocol-параметр → NovaBox_* C-тип;
+  emit_call боксит concrete-аргументы; var_types[param]=NovaBox_* →
+  x.next() диспатчит через vtable (был E7201).
+
+test(plan34): negative_mut_param → positive mut_param (fe372fa0bab) —
+P1-A сделал mut-параметр валидным, старый negative-тест устарел.
+
+Тесты: full `nova test nova_tests` (release) — 853 PASS / 1 FAIL до
+p3b (единственный FAIL p3b_vtable_dispatch); с p3b → 854 / 0 / 43 SKIP
+(z3 contracts). Baseline на pre-change HEAD подтвердил 0 регрессий.
+Honest-defer: [M-protocol-param-free-fn-only] в simplifications.md.
+
+main ↔ plan-72 синхронизированы (9c264bc15fd).
