@@ -761,11 +761,16 @@ impl SumSchemaRegistry {
                         "f64" | "f32" => "nova_f64".to_string(),
                         "bool" => "nova_bool".to_string(),
                         "str" => "nova_str".to_string(),
-                        "char" => "nova_int".to_string(),
+                        "char" => "nova_char".to_string(), // Plan 70.3: char distinct from int
+                        // Plan 70 Cat D: unknown named type in prelude/errors.nv schema registration.
+                        // This path should not be reached (errors.nv uses only int/str/bool/char).
+                        // Fallback to nova_int for ABI-compat baseline schema only; not codegen output.
                         _ => "nova_int".to_string(),
                     }
                 }
                 TypeRef::Unit(_) => "nova_unit".to_string(),
+                // Plan 70 Cat D: non-primitive TypeRef (generic, func, protocol) in prelude schema
+                // registration. Should not appear in prelude/errors.nv variants. Defensive fallback.
                 _ => "nova_int".to_string(),
             }
         }
