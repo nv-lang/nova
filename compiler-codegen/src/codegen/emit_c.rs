@@ -15248,14 +15248,15 @@ impl CEmitter {
                         let arg_ty = self.infer_expr_c_type(arg_expr);
                         let v = self.emit_expr(arg_expr)?;
                         if parts[0] == "str" {
-                            // CharLit detection — ДО numeric, потому что
-                            // char хранится как nova_int (одно представление).
-                            // emit_expr_c_type для CharLit даёт "nova_int",
-                            // но семантика char→str ≠ int→str.
+                            // CharLit is always nova_char (Plan 70.3); char
+                            // variable is also nova_char — both must route
+                            // to nova_char_to_str, not nova_int_to_str.
                             if let ExprKind::CharLit(_) = &arg_expr.kind {
                                 return Ok(format!("nova_char_to_str({})", v));
                             }
                             match arg_ty.as_str() {
+                                // Plan 75: char variable → nova_char_to_str (D26/Plan 70.3).
+                                "nova_char" => return Ok(format!("nova_char_to_str({})", v)),
                                 "nova_bool" => return Ok(format!("nova_bool_to_str({})", v)),
                                 "nova_f64"  => return Ok(format!("nova_f64_to_str({})", v)),
                                 "nova_int"  => return Ok(format!("nova_int_to_str({})", v)),
@@ -20545,7 +20546,19 @@ impl CEmitter {
                                     let trimmed = obj_ty.trim_start_matches("Nova_")
                                         .trim_end_matches('*').trim().to_string();
                                     if !trimmed.is_empty() && trimmed != "void" {
-                                        Some((trimmed, name.clone(), true))
+                                        // Plan 75: primitive C-names → Nova type names for
+                                        // method_overloads lookup (keys use Nova names).
+                                        let nova_name = match trimmed.as_str() {
+                                            "nova_str"  => "str".to_string(),
+                                            "nova_int"  => "int".to_string(),
+                                            "nova_char" => "char".to_string(),
+                                            "nova_bool" => "bool".to_string(),
+                                            "nova_f64"  => "f64".to_string(),
+                                            "nova_f32"  => "f32".to_string(),
+                                            "nova_byte" => "byte".to_string(),
+                                            other       => other.to_string(),
+                                        };
+                                        Some((nova_name, name.clone(), true))
                                     } else {
                                         None
                                     }
@@ -21240,11 +21253,13 @@ impl CEmitter {
                             "to_upper" | "to_lower" | "trim" | "slice" | "concat" => "nova_str".into(),
                             "starts_with" | "ends_with" | "contains" | "eq" => "nova_bool".into(),
                             "len" | "char_len" | "byte_len" => "nova_int".into(),
-                            "find" | "rfind" | "char_at" => "NovaOpt_nova_int".into(),
+                            // Plan 71 follow-up + Plan 75: char_at → Option[char], not Option[int].
+                            "char_at" => "NovaOpt_nova_char".into(),
+                            "find" | "rfind" => "NovaOpt_nova_int".into(),
                             // D26: s.bytes() → []byte (packed uint8_t[]).
                             "bytes" => "NovaArray_nova_byte*".into(),
-                            // s.chars() → []char (bootstrap-eager codepoints как nova_int).
-                            "chars" => "NovaArray_nova_int*".into(),
+                            // s.chars() → []char (Plan 70.3: nova_char distinct typedef).
+                            "chars" => "NovaArray_nova_char*".into(),
                             // s.split(sep) → []str (Iter[str] eager в bootstrap).
                             "split" => "NovaArray_nova_str*".into(),
                             _ => "nova_int".into(),

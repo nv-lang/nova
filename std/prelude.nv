@@ -23,8 +23,12 @@
 //     for_in_range_iter, см. std/prelude/collections.nv DEFER comment).
 //     DEFERRED (Plan 62.D.bis): StringBuilder / WriteBuffer / ReadBuffer —
 //     opaque runtime types, требуют `external type` D-block в spec.
-//   - 62.E–62.F pending: protocols / effects / no_prelude остаются
-//     hardcoded в type-checker и codegen.
+//   - 62.E complete: 8 protocols (From/Into/TryFrom/TryInto/Hashable/
+//     Equatable/Comparable/Display) в std/prelude/protocols.nv,
+//     re-export через facade. TryFrom/TryInto добавлены 62.E.bis
+//     (2026-05-20) после снятия effect-блокера (Plan 56 Ф.2.7-revert).
+//   - 62.F complete: Fail[E] effect formally объявлен. См. версии
+//     5-8 в PRELUDE_VERSION doc-блоке ниже — canonical chronology.
 //
 // **Re-export syntax:** wildcard `export import X.*` rejected per Plan
 // 35 R25 — используем selective form `export import X.{A, B, ...}`.
@@ -101,19 +105,20 @@ export import std.prelude.collections.{Iter, StringBuilder, WriteBuffer, ReadBuf
 // продолжают работать (selective re-export не блокирует direct import).
 export import std.collections.range.{Range, RangeIter}
 
-// Plan 62.E: re-export conversion / equality / hashing / ordering /
-// display protocols из std.prelude.protocols. From/Into/Hashable/
-// Equatable/Comparable/Display — 6 formal protocol declarations.
+// Plan 62.E / 62.E.bis: re-export conversion / equality / hashing /
+// ordering / display protocols из std.prelude.protocols. 8 formal
+// protocol declarations: From/Into/TryFrom/TryInto/Hashable/Equatable/
+// Comparable/Display.
 // Декларации additive: auto-derive логика D73 (From/Into) и built-in
 // dispatch для Hash/Eq/Ord примитивов в codegen остаются неизменными.
 // Bound clauses `[T Hashable]` теперь могут резолвиться через cross-file
 // resolve (Plan 15 generic-bounds infrastructure).
 //
-// **Deferred:**
-//   - TryFrom/TryInto — Plan 56 Ф.2.7 запрещает effects в protocol
-//     methods, `Fail[E]` сигнатура триггерит compile-error. См.
-//     std/prelude/protocols.nv DEFER comment + plan doc §62.E.
-export import std.prelude.protocols.{From, Into, Hashable, Equatable, Comparable, Display}
+// **62.E.bis (2026-05-20):** TryFrom/TryInto добавлены. Используют форму
+// `try_from(t T) -> Result[Self, E]` (D77, migration path b) — fallible
+// конверсия возвращает Result, вызывающий открывает через match. См.
+// std/prelude/protocols.nv.
+export import std.prelude.protocols.{From, Into, TryFrom, TryInto, Hashable, Equatable, Comparable, Display}
 
 // Plan 62.F: re-export Fail[E] effect из std.prelude.effects.
 // Formal declaration matches hardcoded codegen pre-registration
@@ -163,7 +168,13 @@ export import std.prelude.effects.{Fail, Time, Mem}
 ///     absorbed как Ф.0. Codegen special-case (emit_c.rs:11270) fires
 ///     перед variadic routing (Ф.1 reorder) — preserves per-arg type
 ///     info, synthesized `[]any` array никогда не строится.
-///     Remaining deferred sub-plans: 62.A.bis sum_schemas removal,
-///     62.C.bis RuntimeNoneError, 62.E.bis TryFrom/TryInto.
+///   - 8 = Plan 62.E.bis done (2026-05-20): TryFrom / TryInto formally
+///     re-exported через prelude facade. Effect-блокер снят Plan 56
+///     Ф.2.7-revert (D122 amended — эффекты в protocol-методах
+///     разрешены под mono-dispatch); декларации используют форму
+///     `try_from(t T) -> Result[Self, E]` (D77, migration path b).
+///     Remaining deferred sub-plans: 62.A.bis sum_schemas removal
+///     (ждёт Plan 59 Ф.7.5 increment 2), 62.C.bis RuntimeNoneError
+///     (ждёт empty-sum syntax, Plan 72 P1-B).
 #stable(since = "0.1")
-export const PRELUDE_VERSION int = 7
+export const PRELUDE_VERSION int = 8

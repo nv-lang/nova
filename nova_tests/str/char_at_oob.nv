@@ -1,0 +1,21 @@
+// char_at_oob.nv — Plan 75 Ф.1
+// @char_at OOB: индекс за пределами строки → None.
+
+module str.char_at_oob
+
+test "char_at: empty string returns None" {
+    assert("".char_at(0) == None)
+}
+
+test "char_at: large index returns None" {
+    assert("abc".char_at(100) == None)
+}
+
+test "char_at: negative index returns None" {
+    assert("abc".char_at(-1) == None)
+}
+
+test "char_at: index equals len returns None" {
+    let s = "hello"
+    assert(s.char_at(s.len()) == None)
+}

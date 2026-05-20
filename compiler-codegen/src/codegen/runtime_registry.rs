@@ -84,6 +84,19 @@ fn str_runtime() -> Vec<RuntimeFn> {
             doc: "Длина в байтах. O(1). Для FFI / буферных операций.",
         nova_body: None,
     },
+        // Plan 75: @is_empty — логичный спутник @len; у всех коллекций есть, у str не было.
+        RuntimeFn {
+            module: "std.runtime.string",
+            receiver: Some("str"),
+            is_static: false, is_mut: false,
+            name: "is_empty",
+            params: &[],
+            return_ty: "bool",
+            effects: &[],
+            c_name: "",
+            doc: "True если строка пустая. O(n) через @len (codepoints); для bootstrap приемлемо.",
+            nova_body: Some("@len() == 0"),
+        },
         RuntimeFn {
             module: "std.runtime.string",
             receiver: Some("str"),
