@@ -214,6 +214,12 @@ pub struct CEmitter {
     /// (ok_c_type, err_c_type) so that .unwrap() / .ok() / .err() etc.
     /// return the correct T or E type instead of the hardcoded nova_int.
     result_type_params: HashMap<String, (String, String)>,
+    /// Plan 72 P2-A: functions whose declared return type is `Result[T, E]`.
+    /// Maps a call-site key (`fn_name` for free fns, `Type.method` for static
+    /// methods) → (ok_c_type, err_c_type). Lets `let r = f(...)` (call RHS, no
+    /// annotation) populate `result_type_params[r]` instead of falling back to
+    /// the hardcoded `(nova_int, nova_str)`.
+    fn_result_type_params: HashMap<String, (String, String)>,
     /// Plan 72 P3-B: protocol method registry.
     /// Maps protocol_name → (type_param_names, method_signatures).
     /// Populated when a Protocol TypeDecl is processed.
@@ -686,6 +692,7 @@ impl CEmitter {
             var_mutable: HashSet::new(),
             protocol_vars: HashMap::new(),
             result_type_params: HashMap::new(),
+            fn_result_type_params: HashMap::new(),
             protocol_method_registry: HashMap::new(),
             protocol_var_vtable: HashMap::new(),
             emitted_vtable_types: HashSet::new(),
@@ -1278,9 +1285,19 @@ impl CEmitter {
         for item in &module.items {
             if let Item::Type(t) = item {
                 match &t.kind {
-                    TypeDeclKind::Record(_) | TypeDeclKind::Sum(_) => {
+                    TypeDeclKind::Record(_) => {
                         self.user_type_fwd_decls.push_str(&format!(
                             "typedef struct Nova_{0} Nova_{0};\n", t.name));
+                    }
+                    TypeDeclKind::Sum(variants) => {
+                        // Plan 72 P1-B: an empty sum (0 variants) is emitted by
+                        // `emit_sum_type` as `typedef int64_t Nova_X`, not a
+                        // struct — a `typedef struct` forward decl would clash
+                        // (typedef redefinition with different types).
+                        if !variants.is_empty() {
+                            self.user_type_fwd_decls.push_str(&format!(
+                                "typedef struct Nova_{0} Nova_{0};\n", t.name));
+                        }
                     }
                     _ => {}
                 }
@@ -5499,6 +5516,18 @@ impl CEmitter {
         let mangled = self.mangle_fn(f);
         // Register return type so call sites can infer print helper
         self.var_types.insert(format!("fn_ret_{}", f.name), ret.clone());
+        // Plan 72 P2-A: register Result[T,E] return params so `let r = f(...)`
+        // (call RHS, no annotation) populates `result_type_params[r]` correctly
+        // instead of falling back to `(nova_int, nova_str)`.
+        if let Some(rt) = &f.return_type {
+            if let Some(rparams) = self.extract_result_type_params(rt) {
+                let key = match &f.receiver {
+                    Some(recv) => format!("{}.{}", recv.type_name, f.name),
+                    None => f.name.clone(),
+                };
+                self.fn_result_type_params.insert(key, rparams);
+            }
+        }
         // Register fn-typed return signature for closure binding propagation
         if let Some(TypeRef::Func { params: fp, return_type, .. }) = &f.return_type {
             // Plan 70 PhaseA1.2: strict mode — return-fn signature lowering.
@@ -7096,6 +7125,31 @@ impl CEmitter {
         }
     }
 
+    /// Plan 72 P2-A: derive the `fn_result_type_params` lookup key for a call's
+    /// callee expression. `Ident` → free-fn name; `Path[T, m]` or
+    /// `Member{Type, m}` (Type is a known record/sum) → `Type.method` static
+    /// form. Returns `None` for forms not tracked (instance-method calls etc.).
+    fn call_result_type_params_key(&self, func: &crate::ast::Expr) -> Option<String> {
+        use crate::ast::ExprKind;
+        match &func.kind {
+            ExprKind::Ident(name) => Some(name.clone()),
+            ExprKind::Path(parts) if parts.len() == 2 => {
+                Some(format!("{}.{}", parts[0], parts[1]))
+            }
+            ExprKind::Member { obj, name } => {
+                if let ExprKind::Ident(t) = &obj.kind {
+                    if self.record_schemas.contains_key(t.as_str())
+                        || self.sum_schemas.contains_key(t.as_str())
+                    {
+                        return Some(format!("{}.{}", t, name));
+                    }
+                }
+                None
+            }
+            _ => None,
+        }
+    }
+
     /// Plan 63 Fix F+: register fn's Result Ok payload boxed mono'd type
     /// при emit_fn. Если return type — `Result[Tuple(<concrete>), E]` или
     /// `Result[<user_struct>, E]` (boxed-as-pointer), populate
@@ -7618,10 +7672,11 @@ impl CEmitter {
                             // Position 0 in bound (e.g., Iter[U]): the return type wraps U
                             // in Option → `NovaOpt_X*` or directly `Nova_X*`.
                             if *pos == 0 {
-                                if let Some(inner) = ret_c
-                                    .strip_prefix("NovaOpt_")
-                                    .and_then(|s| s.strip_suffix('*'))
-                                {
+                                if let Some(rest) = ret_c.strip_prefix("NovaOpt_") {
+                                    // `next() -> Option[U]` lowers to the value
+                                    // type `NovaOpt_<U>` (no `*`); a boxed form
+                                    // `NovaOpt_<U>*` may also occur. Accept both.
+                                    let inner = rest.strip_suffix('*').unwrap_or(rest);
                                     if !inner.is_empty() && inner != "void" {
                                         candidates.push((u_name.clone(), inner.to_string()));
                                         break;
@@ -10066,6 +10121,17 @@ impl CEmitter {
                     }
                 } else if let ExprKind::Ident(rhs_var) = &decl.value.kind {
                     if let Some(params) = self.result_type_params.get(rhs_var.as_str()).cloned() {
+                        self.result_type_params.insert(binding.clone(), params);
+                    } else {
+                        self.result_type_params.remove(&binding);
+                    }
+                } else if let ExprKind::Call { func, .. } = &decl.value.kind {
+                    // Plan 72 P2-A: `let r = f(...)` where f returns Result[T,E]
+                    // — pull (ok_c, err_c) from the callee's registered return
+                    // type so r.unwrap()/.unwrap_or()/.ok()/.err() get T/E.
+                    if let Some(params) = self.call_result_type_params_key(func)
+                        .and_then(|k| self.fn_result_type_params.get(&k).cloned())
+                    {
                         self.result_type_params.insert(binding.clone(), params);
                     } else {
                         self.result_type_params.remove(&binding);
