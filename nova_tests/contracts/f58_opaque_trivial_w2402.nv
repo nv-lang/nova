@@ -1,10 +1,12 @@
+// REQUIRES_SMT_BACKEND trivial
 // EXPECT_COMPILE_WARNING opaque fn `double` called without `reveal double`
 // EXPECT_COMPILE_WARNING opaque fn `double` was revealed but TrivialBackend
 //
 // Plan 33.9 Ф.4 (positive): opaque fn call under TrivialBackend → W2402 with
 // an opaque-aware message. TrivialBackend cannot discharge opaque-fn contracts;
 // the message names the fn and points at `reveal` / Z3.
-// No REQUIRES_SMT_BACKEND — runs under default TrivialBackend.
+// Trivial-specific: under Z3 the contract is proven, so the opaque-aware
+// W2402 wording does not appear — REQUIRES_SMT_BACKEND trivial pins the test.
 //
 // Two cases, both asserted by distinct message substrings:
 //   1. No reveal   → "called without `reveal double`"

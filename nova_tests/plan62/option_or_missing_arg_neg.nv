@@ -1,0 +1,18 @@
+// EXPECT_COMPILE_ERROR обязательный параметр
+
+// option_or_missing_arg_neg.nv — Plan 62.B негативный тест.
+//
+// Verifies что compiler отвергает вызов Option.or без обязательного
+// аргумента. Сигнатура (std/prelude/core.nv):
+//   external fn Option[T] @or(other Option[T]) -> Option[T]
+// Параметр `other` обязателен. Вызов `.or()` без аргумента должен дать
+// чёткую Nova-диагностику («обязательный параметр `other` не передан»),
+// а не silently скомпилироваться.
+
+module plan62.option_or_missing_arg_neg
+
+test "Option.or без аргумента — compile error" {
+    let a = Some(1)
+    let r = a.or()
+    assert(r.is_some())
+}

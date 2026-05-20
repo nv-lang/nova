@@ -1,0 +1,18 @@
+// REQUIRES_SMT_BACKEND z3
+//
+// Plan 33.7 Ф.5: #nooverflow — Z3 proves add won't overflow given requires.
+// Precondition guarantees a + b < 2^32, so no overflow VC fails.
+
+module contracts.f60_bv_nooverflow_safe_z3_positive
+
+#nooverflow #verify
+fn safe_add_u32(a u32, b u32) -> u32
+    requires a <= 1000 as u32 && b <= 1000 as u32
+    ensures result == a + b
+=> a + b
+
+test "bv nooverflow safe z3 positive" {
+    assert(safe_add_u32(100 as u32, 200 as u32) == 300 as u32)
+    assert(safe_add_u32(0 as u32, 0 as u32) == 0 as u32)
+    assert(safe_add_u32(1000 as u32, 1000 as u32) == 2000 as u32)
+}

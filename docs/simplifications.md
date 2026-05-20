@@ -4796,6 +4796,23 @@ Sub-plans 35.A-E:
   match → if/else, lambda → #pure fn и т.д.). Soundness gap закрыт.
 - **Дата закрытия:** 2026-05-16
 
+### [V20] ✅ BitVec theory (sized integers) — ЗАКРЫТО Plan 33.7 (2026-05-20)
+- **Где:** `compiler-codegen/src/verify/{ir.rs,encode.rs,pipeline.rs,backend/z3.rs,backend/z3_ffi.rs,backend/trivial.rs}`, `compiler-codegen/src/ast/mod.rs`, `compiler-codegen/src/parser/mod.rs`.
+- **Что реализовано:**
+  * `SortRef::BitVec(N)` и `SmtTerm::BitVecLit(v, w)` в SMT-IR.
+  * Z3 FFI: bvadd/bvsub/bvmul/bvsdiv/bvudiv/bvsrem/bvurem, bitwise bvand/bvor/bvxor/bvnot/bvshl/bvlshr/bvashr, signed/unsigned comparisons bvslt/bvsle/bvsgt/bvsge/bvult/bvule/bvugt/bvuge, overflow predicates bvadd_no_overflow/bvsub_no_underflow/bvmul_no_overflow.
+  * `type_ref_to_sort`/`type_to_sort`: u8/i8→BitVec(8), u16/i16→BitVec(16), u32/i32→BitVec(32), u64/usize→BitVec(64); `int`/`i64` остаются `SortRef::Int`.
+  * BV binary dispatch в `encode_expr`: если хоть один операнд BV-типа → bv-операторы; `IntLit`-литерал в BV-контексте автоматически поднимается в `BitVecLit`.
+  * `as`-cast encoding: `0 as u32` → `BitVecLit(0, 32)` и т.д.
+  * TrivialBackend: `check_sat` ранний выход с `UnsupportedTheory` для BV-сортов или bv-операторов.
+  * `#nooverflow` атрибут: парсится как `ContractAttrs.no_overflow: bool`, устанавливает `FnDecl.no_overflow`; pipeline.rs генерирует overflow VCs (`bvadd_no_overflow_u` и т.д.) для каждой Add/Sub/Mul в теле fn с BV-sorted параметрами.
+  * 5 новых тестов: f60_bv_arith_trivial_positive, f60_bv_arith_z3_positive, f60_bv_bitwise_z3_positive, f60_bv_nooverflow_safe_z3_positive, f60_bv_nooverflow_overflow_fail.
+- **Остаток (V2):**
+  * Точное определение знаковости (is_signed) из type_name i8/i16/i32 вместо глобального false.
+  * BV cast resize (BitVec(32) → BitVec(8) через zero-extend/sign-extend).
+  * Overflow VCs для блочных тел (вложенные stmt, let-bindings с BV-выражениями).
+- **Дата закрытия:** 2026-05-20
+
 ### [ЗАКР 2026-05-16] pipeline.rs монолит — handler code в отдельный модуль [Ф.2.1]
 - **Закрыто (Plan 33.6 Ф.2.1, 2026-05-16, commit ddc11f2e):**
   * `compiler-codegen/src/verify/handler_exec.rs` — 689 строк handler verification:
@@ -10013,6 +10030,49 @@ G/H). ~3700 LOC implementation cumulative.
   убрать `result_type_params` и выводить тип из mono-инстанса.
 - **Приоритет:** M — для `bool`/`int` inline-цепочки проходят случайно
   (C ABI совместим по размеру); для pointer-типов даёт wrong result.
+- **Plan 62.B (2026-05-20):** частично улучшено. (1) `external fn`
+  декларации Result-методов в `std/prelude/core.nv` раскомментированы;
+  чтобы их return-type `T` (стаб `Nova_T*` от `external_registry`) не
+  ломал binop value-equality, добавлен `is_generic_stub_c` — generic-aware
+  lookup-блоки `infer_expr_c_type` пропускают стаб и доходят до
+  specialized `Nova_Result*` ветки (`result_type_params`). (2) `Result.map`
+  closure-call теперь эмитит fn-pointer cast по фактической C-сигнатуре
+  closure (`typed_closure_c_sig`), а не хардкод `NOVA_CLOS_CALL_ii` —
+  `bool`/`char`-typed closures больше не зависят от «совпадения по
+  размеру», работают корректно. Остаточное упрощение: inline `unwrap_or`
+  return-type всё ещё `(nova_int, nova_str)` fallback (полное лечение —
+  Plan 59 Ф.7.5).
+
+### [M-option-result-method-misuse-cc-only] (DEFER — type-checker tightening)
+- **Где:** `compiler-codegen/src/types/mod.rs` — method-call checking
+  для Option/Result; `emit_c.rs` method dispatch.
+- **Что упрощено:** bootstrap type-checker не ловит на Nova-уровне ряд
+  misuse'ов Option/Result-методов (обнаружено при написании негативных
+  тестов Plan 62.B):
+  - payload-type mismatch (`Some(1).or(Some("x"))`,
+    `Result[int,_].unwrap_or("s")`) — отвергается только C-backstop'ом
+    (CC-FAIL «incompatible type»), не Nova-диагностикой.
+  - `.or()` / Option-методы на non-Option receiver (`(42).or(...)`) —
+    проходят type-checker; codegen эмитит вызов несуществующего
+    `Nova_Option_method_or` → linker error (undefined symbol).
+  - closure-арность `.map()` не проверяется: `Some(1).map(fn(x int,
+    y int) -> int => x)` (2-параметровый closure) компилируется и
+    выполняется молча.
+  Arity обязательного параметра ЛОВИТСЯ корректно (`.or()` без
+  аргумента → чёткая Nova-диагностика «обязательный параметр не
+  передан»).
+- **Почему:** полная проверка method-call типов против declared
+  `external fn` сигнатур требует unification + generic instantiation
+  в type-checker'е; bootstrap полагается на C-backstop как safety net.
+- **Как чинить:** type-checker pass для method-call arg-type/arity
+  validation против `external_registry` сигнатур (Plan 72 type-system
+  followups или отдельный type-checker plan).
+- **Приоритет:** M — C-backstop ловит большинство (молчаливый garbage
+  только для closure-арности `.map`); диагностики хуже Nova-grade, но
+  не unsound для primitive-типов.
+- **Тесты:** plan62/option_or_payload_mismatch_neg.nv +
+  result_unwrap_or_arg_mismatch_neg.nv (EXPECT_CC_ERROR) +
+  option_or_missing_arg_neg.nv (EXPECT_COMPILE_ERROR — arity ловится).
 
 ### [M-legacy-sum-schemas-retained] (DEFER — Plan 62.A.bis Ф.4 → Plan 59)
 - **Где:** `compiler-codegen/src/codegen/` — hardcoded `sum_schemas` +
@@ -10176,3 +10236,34 @@ G/H). ~3700 LOC implementation cumulative.
   `generic_type_instance_info` для извлечения args по ТОЧНОМУ ключу.
 - **Приоритет:** L — edge case; простые generic Set[int]/HashMap[str,int]
   работают корректно.
+
+## Plan 62.A.bis вЂ” Generic schema registry (2026-05-20)
+
+### [M-result-generic-T-method-mismatch] (DEFER вЂ” Plan 62.B+)
+- **Р“РґРµ:** `std/prelude/core.nv` + `compiler-codegen/src/codegen/emit_c.rs`
+  (`type_of_method_call_c`, lines 18619+).
+- **Р§С‚Рѕ СѓРїСЂРѕС‰РµРЅРѕ:** 5 РјРµС‚РѕРґРѕРІ Result РІРѕР·РІСЂР°С‰Р°СЋС‰РёС… `T` (unwrap, unwrap_or,
+  unwrap_or_else, map, map_err) РЅРµ Р·Р°РґРµРєР»Р°СЂРёСЂРѕРІР°РЅС‹ РІ `std/prelude/core.nv`
+  вЂ” Р·Р°РєРѕРјРјРµРЅС‚РёСЂРѕРІР°РЅС‹ СЃ РѕР±СЉСЏСЃРЅРµРЅРёРµРј blocker'Р°.
+- **РџРѕС‡РµРјСѓ:** type-checker РІРёРґРёС‚ `Result[T, E] @unwrap_or(default T) -> T`
+  РєР°Рє generic signature Рё РІС‹РІРѕРґРёС‚ С‚РёРї СЂРµР·СѓР»СЊС‚Р°С‚Р° `r.unwrap_or(0)` РєР°Рє
+  `Result*` РІРјРµСЃС‚Рѕ `nova_int`. Codegen РґРµР»Р°РµС‚ tag-comparison РІРјРµСЃС‚Рѕ
+  value-equality РїСЂРё `r.unwrap_or(0) == 42`. Silent wrong output.
+- **РљР°Рє С‡РёРЅРёС‚СЊ:** per-T monomorphization Result.unwrap_or (РєР°Рє Option С‡РµСЂРµР·
+  NovaOpt_<T>), РёР»Рё type-checker special-case РїСЂРёР·РЅР°СЋС‰РёР№ concrete Ok-type
+  РёР· object'Р° Р±РµР· declared generic signature. РћР±Р° РїСѓС‚Рё вЂ” Plan 62.B+.
+- **РџСЂРёРѕСЂРёС‚РµС‚:** M вЂ” Result.unwrap_or/unwrap Р°РєС‚РёРІРЅРѕ РёСЃРїРѕР»СЊР·СѓРµС‚СЃСЏ; С‚РµРєСѓС‰РёР№
+  hardcoded path (emit_c.rs:11567+) СЂР°Р±РѕС‚Р°РµС‚ РєРѕСЂСЂРµРєС‚РЅРѕ С‡РµСЂРµР· bootstrap mono
+  compromise. Р РµРіСЂРµСЃСЃРёРё РЅРµС‚ вЂ” С‚РѕР»СЊРєРѕ РґРµРєР»Р°СЂР°С†РёСЏ РІ core.nv РЅРµ РґРѕР±Р°РІР»РµРЅР°.
+
+### [M-option-or-no-trampoline] (DEFER вЂ” Plan 62.B+)
+- **Р“РґРµ:** `nova_rt/array.h` + `std/prelude/core.nv`.
+- **Р§С‚Рѕ СѓРїСЂРѕС‰РµРЅРѕ:** `external fn Option[T] @or(other Option[T]) -> Option[T]`
+  Р·Р°РґРµРєР»Р°СЂРёСЂРѕРІР°РЅ РІ core.nv РґР»СЏ РґРѕРєСѓРјРµРЅС‚Р°С†РёРё, РЅРѕ codegen trampoline
+  `Nova_Option_method_or_<T>` РІ array.h РѕС‚СЃСѓС‚СЃС‚РІСѓРµС‚. Р’С‹Р·РѕРІ `opt.or(other)`
+  РґР°С‘С‚ CC-FAIL.
+- **РџРѕС‡РµРјСѓ:** РґРѕР±Р°РІР»РµРЅРёРµ per-T trampoline С‚СЂРµР±СѓРµС‚ РёР·РјРµРЅРµРЅРёСЏ nova_rt/array.h
+  (NOVA_DECLARE_OPTION_T macro) вЂ” РѕС‚РґРµР»СЊРЅР°СЏ Р·Р°РґР°С‡Р° РІРЅРµ scope 62.A.bis.
+- **РљР°Рє С‡РёРЅРёС‚СЊ:** РґРѕР±Р°РІРёС‚СЊ `Nova_Option_method_or_<T>(opt, other) { ... }`
+  РІ NOVA_DECLARE_OPTION_T macro + routing entry РІ init_hardcoded_baseline.
+- **РџСЂРёРѕСЂРёС‚РµС‚:** L вЂ” or() РјРµРЅРµРµ РёСЃРїРѕР»СЊР·СѓРµРј С‡РµРј unwrap_or/map.

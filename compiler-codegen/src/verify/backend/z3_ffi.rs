@@ -260,4 +260,50 @@ extern "C" {
 
     // Сбросить error code.
     pub fn Z3_reset_error_code(c: Z3_context);
+
+    // ─── Bit-vectors (Plan 33.7) ──────────────────────────────────────────
+    // Sort: (_ BitVec sz) — ширина sz бит.
+    pub fn Z3_mk_bv_sort(c: Z3_context, sz: c_uint) -> Z3_sort;
+
+    // Numerals.
+    pub fn Z3_mk_unsigned_int64(c: Z3_context, v: u64, ty: Z3_sort) -> Z3_ast;
+
+    // Arithmetic (результат wrap-around по модулю 2^N — 2's complement).
+    pub fn Z3_mk_bvadd(c: Z3_context, t1: Z3_ast, t2: Z3_ast) -> Z3_ast;
+    pub fn Z3_mk_bvsub(c: Z3_context, t1: Z3_ast, t2: Z3_ast) -> Z3_ast;
+    pub fn Z3_mk_bvmul(c: Z3_context, t1: Z3_ast, t2: Z3_ast) -> Z3_ast;
+    pub fn Z3_mk_bvsdiv(c: Z3_context, t1: Z3_ast, t2: Z3_ast) -> Z3_ast; // signed div
+    pub fn Z3_mk_bvsrem(c: Z3_context, t1: Z3_ast, t2: Z3_ast) -> Z3_ast; // signed rem
+    pub fn Z3_mk_bvudiv(c: Z3_context, t1: Z3_ast, t2: Z3_ast) -> Z3_ast; // unsigned div
+    pub fn Z3_mk_bvurem(c: Z3_context, t1: Z3_ast, t2: Z3_ast) -> Z3_ast; // unsigned rem
+    pub fn Z3_mk_bvneg(c: Z3_context, t: Z3_ast) -> Z3_ast;               // unary minus
+
+    // Bitwise.
+    pub fn Z3_mk_bvand(c: Z3_context, t1: Z3_ast, t2: Z3_ast) -> Z3_ast;
+    pub fn Z3_mk_bvor(c: Z3_context, t1: Z3_ast, t2: Z3_ast) -> Z3_ast;
+    pub fn Z3_mk_bvxor(c: Z3_context, t1: Z3_ast, t2: Z3_ast) -> Z3_ast;
+    pub fn Z3_mk_bvnot(c: Z3_context, t: Z3_ast) -> Z3_ast;
+    pub fn Z3_mk_bvshl(c: Z3_context, t1: Z3_ast, t2: Z3_ast) -> Z3_ast;
+    pub fn Z3_mk_bvlshr(c: Z3_context, t1: Z3_ast, t2: Z3_ast) -> Z3_ast; // logical shift right
+    pub fn Z3_mk_bvashr(c: Z3_context, t1: Z3_ast, t2: Z3_ast) -> Z3_ast; // arithmetic shift right
+
+    // Signed comparisons (→ Bool).
+    pub fn Z3_mk_bvslt(c: Z3_context, t1: Z3_ast, t2: Z3_ast) -> Z3_ast;
+    pub fn Z3_mk_bvsle(c: Z3_context, t1: Z3_ast, t2: Z3_ast) -> Z3_ast;
+    pub fn Z3_mk_bvsgt(c: Z3_context, t1: Z3_ast, t2: Z3_ast) -> Z3_ast;
+    pub fn Z3_mk_bvsge(c: Z3_context, t1: Z3_ast, t2: Z3_ast) -> Z3_ast;
+
+    // Unsigned comparisons (→ Bool).
+    pub fn Z3_mk_bvult(c: Z3_context, t1: Z3_ast, t2: Z3_ast) -> Z3_ast;
+    pub fn Z3_mk_bvule(c: Z3_context, t1: Z3_ast, t2: Z3_ast) -> Z3_ast;
+    pub fn Z3_mk_bvugt(c: Z3_context, t1: Z3_ast, t2: Z3_ast) -> Z3_ast;
+    pub fn Z3_mk_bvuge(c: Z3_context, t1: Z3_ast, t2: Z3_ast) -> Z3_ast;
+
+    // Overflow predicates: возвращают Bool — «нет переполнения при операции».
+    // is_signed: 1 = signed, 0 = unsigned.
+    pub fn Z3_mk_bvadd_no_overflow(c: Z3_context, t1: Z3_ast, t2: Z3_ast, is_signed: c_int) -> Z3_ast;
+    pub fn Z3_mk_bvadd_no_underflow(c: Z3_context, t1: Z3_ast, t2: Z3_ast) -> Z3_ast;
+    pub fn Z3_mk_bvsub_no_overflow(c: Z3_context, t1: Z3_ast, t2: Z3_ast) -> Z3_ast;
+    pub fn Z3_mk_bvsub_no_underflow(c: Z3_context, t1: Z3_ast, t2: Z3_ast, is_signed: c_int) -> Z3_ast;
+    pub fn Z3_mk_bvmul_no_overflow(c: Z3_context, t1: Z3_ast, t2: Z3_ast, is_signed: c_int) -> Z3_ast;
 }

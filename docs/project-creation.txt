@@ -16554,3 +16554,198 @@ Nova_Set* (erased), out.insert(x) вызывал erased stub → пустой Se
 
 [M-d46-multi-generic-arg-split] честно задокументирован в simplifications.md.
 
+# Plan 33.5 + 33.6 аудит 2026-05-20: закрытие Ф.3.8 + статусы
+
+Аудит планов 33.5 и 33.6 (семейство контрактов). Запрошен пользователем
+после полного закрытия Plan 33.9.
+
+## Plan 33.5 — аудит
+
+README числил 33.5 как 🟡 partial с заявлением «Ф.1.1 ghost erasure НЕ
+закрыт». Проверка по коду: ghost erasure закрыт в Plan 33.6 (types/mod.rs
+compile-error «ghost variable cannot be read in non-ghost code», soundness
+guard ghost_runtime_use_fail.nv). Все 6 фаз 33.5 реализованы.
+
+Главная находка — реальная регрессия: при прогоне contracts/ под
+NOVA_SMT_BACKEND=z3 падали 2 теста — f58_opaque_trivial_w2402.nv и
+f58_nonopaque_trivial_no_upgrade.nv (из Plan 33.9 Ф.4). Они проверяют
+TrivialBackend-специфичные сообщения, но не имели маркера
+REQUIRES_SMT_BACKEND — под Z3 контракт доказывается, текста нет, тест
+падает NEG-WRONG-WARN. Добавлен `// REQUIRES_SMT_BACKEND trivial`.
+
+Статус 33.5 обновлён 🟡 → ✅ ЗАКРЫТ.
+
+## Plan 33.6 — закрытие Ф.3.8
+
+Секция «Статус выполнения» 33.6 была датирована 2026-05-16 и числила
+Ф.3.1-Ф.5.4 как «не закрыто». Проверка по коду: всё реализовано, кроме
+Ф.3.8 variance inference — ни кода, ни теста.
+
+Реализована Ф.3.8 (handler_exec.rs):
+- ParamVariance enum: Contravariant (только в requires) / Covariant
+  (только в ensures) / Invariant (в обоих или нигде).
+- infer_param_variance(param, contracts) — анализ по контрактам метода.
+- contract_mentions_ident — проверка упоминания идентификатора через
+  Debug-репрезентацию AST (точный паттерн `Ident("<name>")`).
+- liskov_variance_note — заметка, подключена к SatResult::Sat ветке
+  verify_liskov_method.
+
+Примечание: исходный acceptance Ф.3.8 предполагал handler.requires
+строже effect.requires, но HandlerMethod в грамматике Nova не имеет
+собственных contracts. Реализовано полезное ядро — variance-aware
+обогащение существующей Liskov-диагностики, без нового синтаксиса.
+
+Тест liskov_variance_diag_fail.nv (REQUIRES_SMT_BACKEND z3): handler
+clamp_low(x, lo, n) => x нарушает ensures; диагностика выводит
+x=contravariant, lo=covariant, n=invariant.
+
+Статус 33.6 обновлён 🟢 mature → ✅ ЗАКРЫТ.
+
+## Регрессия
+
+contracts/ suite: 239 PASS trivial / 276 PASS z3 / 0 FAIL.
+
+Семейство ядра контрактов 33.1-33.6 + 33.9 полностью закрыто.
+
+## Plan 62.A.bis вЂ” Generic schema registry РґР»СЏ sum-types (2026-05-20)
+
+РђСѓРґРёС‚ Рё С„РёРЅР°Р»СЊРЅРѕРµ Р·Р°РєСЂС‹С‚РёРµ РїРѕРґРїР»Р°РЅР° 62.A.bis. Р’СЃРµ С„Р°Р·С‹ СЂРµР°Р»РёР·РѕРІР°РЅС‹
+РІ РїСЂРµРґС‹РґСѓС‰РёС… СЃРµСЃСЃРёСЏС… Рё СЃРјРµСЂР¶РµРЅС‹ РІ main.
+
+### Р§С‚Рѕ Р±С‹Р»Рѕ СЃРґРµР»Р°РЅРѕ СЂР°РЅРµРµ (Р¤.1-3)
+
+- `SumSchemaRegistry` struct (sum_schema_registry.rs, 1783 СЃС‚СЂРѕРєРё):
+  `SumSchemaEntry` + `SumAbi` + `MethodRouting` + `SchemaSource`.
+- Layered lookup: DeclaredFromPrelude > DeclaredFromUser > HardcodedBaseline.
+- 4 hardcoded baseline entries (Option/Result/Error/RuntimeError).
+- `init_prelude_decls_from_items` вЂ” СЃРєР°РЅРёСЂСѓРµС‚ `external fn` РґРµРєР»Р°СЂР°С†РёРё
+  РёР· std/prelude/core.nv, СЂРµРіРёСЃС‚СЂРёСЂСѓРµС‚ DeclaredFromPrelude entries
+  РЅР°СЃР»РµРґСѓСЏ HardcodedBaseline method_routing (behavior-preserving).
+- `lookup_method_routing` / `lookup_sum_for_c_type` helpers.
+- 9 unit-С‚РµСЃС‚РѕРІ РІ registry (cargo test).
+- Р’СЃРµ 12 dispatch-point variant lookup СѓРЅРёС„РёС†РёСЂРѕРІР°РЅС‹ С‡РµСЂРµР·
+  `find_variant_compat` / `lookup_sum_schema`.
+- Method routing РІ emit_c.rs (lines 13229, 13403): Option/Result РјРµС‚РѕРґС‹
+  РёРґСѓС‚ С‡РµСЂРµР· registry, HardcodedRuntimeFn в†’ trampoline, `"<inline>"`
+  sentinel в†’ fall through Рє inline emit Р±Р»РѕРєР°Рј.
+
+### Plan 62.A follow-up (2026-05-18, СЃРјРµСЂР¶РµРЅ СЂР°РЅРµРµ)
+
+- `std/prelude/core.nv` РґРѕРїРѕР»РЅРµРЅ `external fn` РґРµРєР»Р°СЂР°С†РёСЏРјРё:
+  Option: is_some, is_none, unwrap, unwrap_or, unwrap_or_else, map,
+  ok_or, or (or вЂ” deferred, trampoline РѕС‚СЃСѓС‚СЃС‚РІСѓРµС‚).
+  Result: is_ok, is_err, ok, err (5 generic-T РјРµС‚РѕРґРѕРІ Р·Р°РєРѕРјРјРµРЅС‚РёСЂРѕРІР°РЅС‹
+  вЂ” blocker type-checker Tв†’T mismatch).
+
+### РўРµСЃС‚С‹ (nova_tests/plan62/, 29 PASS / 0 FAIL)
+
+- option_methods_from_prelude.nv вЂ” 7 РјРµС‚РѕРґРѕРІ Option С‡РµСЂРµР· registry.
+- result_methods_from_prelude.nv вЂ” 4 РјРµС‚РѕРґР° Result С‡РµСЂРµР· registry.
+- runtime_error_from_prelude.nv вЂ” Plan 62.C acceptance (RuntimeError/ReadBufferError).
+- runtime_error_variant_mismatch.nv вЂ” negative test (variant-set mismatch в†’ compile error).
+- + 25 РґСЂСѓРіРёС… С‚РµСЃС‚РѕРІ РёР· Plan 62 (W_PRELUDE_SHADOW, partial_prelude, etc.).
+
+### Р РµРіСЂРµСЃСЃРёСЏ
+
+Full suite: 855 PASS / 0 FAIL / 47 SKIP.
+(8 pre-existing plan72 failures РЅРµ РѕС‚ 62.A.bis.)
+
+### Р§С‚Рѕ РЅРµ СЃРґРµР»Р°РЅРѕ / deferred
+
+- Phase 4 (СѓРґР°Р»РµРЅРёРµ legacy sum_schemas field) вЂ” deferred РґРѕ Plan 59 per design.
+- 5 Result-РјРµС‚РѕРґРѕРІ (unwrap_or/unwrap/etc.) вЂ” blocker: type-checker T mismatch.
+- Option.or вЂ” trampoline Nova_Option_method_or_<T> РѕС‚СЃСѓС‚СЃС‚РІСѓРµС‚ РІ array.h.
+- D26 РІ 08-runtime.md РѕР±РЅРѕРІР»С’РЅ (Bootstrap-СЂР°СЃС€РёСЂРµРЅРёРµ В§62.A.bis РґРѕР±Р°РІР»РµРЅ).
+
+# Plan 33.7 BitVec theory + #nooverflow (2026-05-20)
+
+После закрытия 33.1-33.6 + 33.9 — Plan 33.7: bit-vector theory для sized integer
+типов (u8/u16/u32/u64/i8/i16/i32) и `#nooverflow` атрибут.
+
+## Ф.1: SMT-IR расширение (ir.rs)
+- `SortRef::BitVec(u32)` — BitVec sort с шириной в битах.
+- `SmtTerm::BitVecLit(u64, u32)` — BV literal с hex pretty-print (`#x0000001A`).
+
+## Ф.2: Z3 backend (z3_ffi.rs + z3.rs)
+- Z3_mk_bv_sort, Z3_mk_unsigned_int64 — создание BV sort и literal.
+- Полный набор BV ops: bvadd/bvsub/bvmul/bvsdiv/bvudiv/bvsrem/bvurem.
+- Bitwise: bvand/bvor/bvxor/bvnot/bvshl/bvlshr/bvashr.
+- Comparisons: bvslt/bvsle/bvsgt/bvsge (signed), bvult/bvule/bvugt/bvuge (unsigned).
+- Overflow predicates: bvadd_no_overflow/bvadd_no_underflow, bvsub_no_overflow/bvsub_no_underflow, bvmul_no_overflow (signed+unsigned variants).
+- `sort_for(SortRef::BitVec(w))` → `Z3_mk_bv_sort(ctx, w)`.
+- `translate_inner_impl(BitVecLit)`, `translate_app(bv*)`.
+- `extract_model` для BV: `Z3_get_numeral_int64` → `ModelValue::Int`.
+
+## Ф.3: encode.rs + pipeline.rs
+- `is_bv_term()`/`bv_width()` — detect BV context.
+- `bin_op_to_bv_smt(op, is_signed)` — BinOp → bv-оператор строка.
+- `lift_intlit_to_bv(t, width)` — IntLit → BitVecLit в BV-контексте.
+- `ExprKind::Binary`: BV dispatch первый, затем FP, затем Int.
+- `ExprKind::As(inner, ty)`: `type_ref_name_to_bv_width(ty)` — кастование
+  `0 as u32` → `BitVecLit(0, 32)`. Non-BV cast: encode inner, pass through.
+- `type_ref_to_sort`/`type_to_sort`: u8/i8→BitVec(8), u16/i16→BitVec(16),
+  u32/i32→BitVec(32), u64/usize→BitVec(64); int/i64/money/nat→SortRef::Int.
+- TrivialBackend: ранний `UnsupportedTheory` для BV sort или bv-оператора.
+
+## Ф.4: #nooverflow атрибут
+- `ContractAttrs.no_overflow: bool` (parser/mod.rs).
+- `parse_contract_attrs()`: кейс `"nooverflow"` → `attrs.no_overflow = true`.
+- `FnDecl.no_overflow: bool` (ast/mod.rs).
+- `verify_fn`: если `fd.no_overflow` → `collect_bv_arith_ops_in_body` собирает
+  все BinOp Add/Sub/Mul с BV-sorted операндами → emit overflow VCs через `try_prove`.
+- VCs: `bvadd_no_overflow_u` / `bvsub_no_underflow_u` / `bvmul_no_overflow_u`.
+
+## Ф.5: тесты (5 фикстур)
+- `f60_bv_arith_trivial_positive.nv` — u32/u8 params, trivial backend, W2402 (UnsupportedTheory).
+- `f60_bv_arith_z3_positive.nv` — Z3 верифицирует BV add/sub identity + u8 bounds.
+- `f60_bv_bitwise_z3_positive.nv` — Z3 верифицирует bvand/bvor операции.
+- `f60_bv_nooverflow_safe_z3_positive.nv` — #nooverflow + requires bounds → proven.
+- `f60_bv_nooverflow_overflow_fail.nv` — #nooverflow без bounds → overflow disproved.
+
+## Результат
+contracts/ suite: **281 PASS** / 0 FAIL (добавлены 5 новых тестов).
+simplifications.md: V20 (BitVec theory).
+Plan 33.7: ✅ ЗАКРЫТ (2026-05-20).
+
+2026-05-20 Plan 62.B — Option.or + Result-методы (prelude declarations)
+──────────────────────────────────────────────────────────────────────
+
+Завершает D26 §283-306: 17/17 Option+Result методов задекларированы
+в std/prelude/core.nv (было 12/17 — 5 Result-методов оставались
+deferred с Plan 62.A).
+
+A — Option.or (commit 79db8ef):
+- per-T trampoline Nova_Option_method_or_<T> в nova_rt/array.h (через
+  NOVA_ARRAY_IMPL macro + explicit nova_str-специализация).
+- sum_schema_registry routing HardcodedRuntimeFn { is_per_t: true }.
+- emit_c.rs infer_expr_c_type: "map" | "or" → NovaOpt_<elem>.
+
+B — Result unwrap/unwrap_or/unwrap_or_else/map/map_err:
+- Блокер: external_registry::type_ref_to_c маппит generic return-type
+  T в стаб "Nova_T*" (_ => Nova_<name>*). infer_expr_c_type возвращал
+  этот стаб для r.unwrap_or(0) из 3 lookup-путей (method_overloads
+  single/multi-overload, external_registry.by_key); binop-dispatch
+  принимал Nova_* за sum-type pointer → ->tag-comparison вместо
+  value-equality → CC-FAIL.
+- Лечение: helper is_generic_stub_c — точный семантический критерий
+  (тот же, что у erase_unk в emit_fn): Nova_X* — реальный тип ⇔
+  X ∈ record_schemas ∪ sum_schemas ∪ generic_types, иначе unresolved
+  type-параметр. Generic-aware lookup-блоки пропускают стаб →
+  управление доходит до specialized Nova_Result* ветки, знающей
+  concrete Ok/Err-тип из result_type_params.
+- Pre-existing баг Result.map (verified: падал на pre-Task-A state):
+  хардкод NOVA_CLOS_CALL_ii (int-layout) для bool/char-typed closure →
+  calling-convention mismatch, garbage в верхних байтах результата.
+  Closure-call теперь эмитит fn-pointer cast по фактической
+  C-сигнатуре closure-литерала (helper typed_closure_c_sig).
+
+Тесты: plan62 33/33 (вкл. 3 негативных теста — arity-диагностика +
+2 C-backstop type-mismatch), runtime 20/20, plan72 9/11 → 11/11.
+Full nova test (release, C-codegen): 864 PASS / 0 FAIL / 47 SKIP
+(было 862/2 — оба FAIL pre-existing plan72, починены здесь).
+0 регрессий.
+
+Негативные тесты вскрыли type-checker gaps (best-effort inference):
+payload-type mismatch и closure-арность .map() ловятся только
+C-backstop'ом или не ловятся — задокументировано в simplifications.md
+[M-option-result-method-misuse-cc-only].

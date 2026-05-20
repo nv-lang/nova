@@ -1,0 +1,28 @@
+// REQUIRES_SMT_BACKEND z3
+//
+// Plan 33.7 Ф.5: BV arithmetic verified by Z3.
+// u32 params map to BitVec(32); BV comparisons and add/sub/mul use bv ops.
+
+module contracts.f60_bv_arith_z3_positive
+
+// Simple identity: ensure add-then-sub round-trips within BV range.
+#verify
+fn bv_identity(x u32) -> u32
+    requires x >= 10 as u32
+    ensures result == x
+{
+    let y u32 = x + 5 as u32
+    y - 5 as u32
+}
+
+// Constant bounds: 255 as u8 is max for u8.
+#verify
+fn bv_bounds_u8(x u8) -> u8
+    requires x >= 0 as u8
+    ensures result <= 255 as u8
+=> x
+
+test "bv arith z3 positive" {
+    assert(bv_identity(42 as u32) == 42 as u32)
+    assert(bv_bounds_u8(100 as u8) == 100 as u8)
+}

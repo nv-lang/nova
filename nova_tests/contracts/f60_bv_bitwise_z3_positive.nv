@@ -1,0 +1,25 @@
+// REQUIRES_SMT_BACKEND z3
+//
+// Plan 33.7 Ф.5: BV bitwise operations in contracts.
+// u32 params use bvand/bvor/bvxor/bvshl/bvlshr SMT ops.
+
+module contracts.f60_bv_bitwise_z3_positive
+
+// Mask low 8 bits: x & 0xFF → result in [0, 255].
+#verify
+fn low_byte(x u32) -> u32
+    ensures result <= 255 as u32
+=> x & 255 as u32
+
+// x | 1 → always odd (bit 0 set) → result >= 1.
+#verify
+fn set_bit0(x u32) -> u32
+    ensures result >= 1 as u32
+=> x | 1 as u32
+
+test "bv bitwise z3 positive" {
+    assert(low_byte(0x1A2B3C4D as u32) == 0x4D as u32)
+    assert(low_byte(0 as u32) == 0 as u32)
+    assert(set_bit0(4 as u32) == 5 as u32)
+    assert(set_bit0(3 as u32) == 3 as u32)
+}

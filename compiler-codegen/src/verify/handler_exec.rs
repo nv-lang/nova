@@ -211,6 +211,79 @@ fn collect_effect_method_contracts(
     Vec::new()
 }
 
+/// Ф.3.8 (Plan 33.6): variance параметра effect-метода относительно его контрактов.
+///
+/// - `Contravariant` — параметр появляется только в `requires` clauses.
+///   Handler принимает input; ослабление requires безопасно, усиление — нарушение.
+/// - `Covariant` — параметр появляется только в `ensures` clauses.
+///   Handler даёт output; усиление ensures безопасно, ослабление — нарушение.
+/// - `Invariant` — параметр в обоих видах clauses (либо нигде): обычная проверка.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ParamVariance {
+    Contravariant,
+    Covariant,
+    Invariant,
+}
+
+impl ParamVariance {
+    fn describe(self) -> &'static str {
+        match self {
+            ParamVariance::Contravariant => "contravariant (появляется только в `requires`)",
+            ParamVariance::Covariant => "covariant (появляется только в `ensures`)",
+            ParamVariance::Invariant => "invariant (появляется в `requires` и `ensures`)",
+        }
+    }
+}
+
+/// Ф.3.8: проверка, упоминается ли идентификатор `name` в выражении.
+///
+/// Использует Debug-репрезентацию AST: идентификаторы кодируются как
+/// `Ident("name")`. Это устойчиво к расширению `ExprKind` новыми вариантами —
+/// не требует ручного обхода всех 40+ узлов. Контракты — булевы выражения
+/// ограниченного класса, ложные срабатывания на под-строках имени исключены
+/// точным паттерном `Ident("<name>")`.
+fn contract_mentions_ident(expr: &Expr, name: &str) -> bool {
+    let needle = format!("Ident(\"{}\")", name);
+    format!("{:?}", expr.kind).contains(&needle)
+}
+
+/// Ф.3.8: вывести variance параметра по контрактам effect-метода.
+fn infer_param_variance(param_name: &str, contracts: &[Contract]) -> ParamVariance {
+    let mut in_requires = false;
+    let mut in_ensures = false;
+    for c in contracts {
+        if !contract_mentions_ident(&c.expr, param_name) {
+            continue;
+        }
+        match c.kind {
+            ContractKind::Requires => in_requires = true,
+            ContractKind::Ensures => in_ensures = true,
+            _ => {}
+        }
+    }
+    match (in_requires, in_ensures) {
+        (true, false) => ParamVariance::Contravariant,
+        (false, true) => ParamVariance::Covariant,
+        _ => ParamVariance::Invariant,
+    }
+}
+
+/// Ф.3.8: построить variance-aware заметку для Liskov-диагностики.
+///
+/// Для каждого effect-параметра показывает выведенную variance — это помогает
+/// программисту понять, в какую сторону безопасно править контракт эффекта.
+fn liskov_variance_note(effect_params: &[Param], effect_contracts: &[Contract]) -> String {
+    if effect_params.is_empty() {
+        return String::new();
+    }
+    let mut lines = Vec::new();
+    for p in effect_params {
+        let v = infer_param_variance(&p.name, effect_contracts);
+        lines.push(format!("    параметр `{}`: {}", p.name, v.describe()));
+    }
+    format!("\n  variance параметров эффекта:\n{}", lines.join("\n"))
+}
+
 /// Ф.5.2: Liskov-верификация одного handler-метода.
 fn verify_liskov_method(
     pipeline: &VerificationPipeline,
@@ -312,14 +385,17 @@ fn verify_liskov_method(
             SatResult::Unsat(_) => {}
             SatResult::Sat(model) => {
                 let cex = format_counterexample(&model);
+                // Ф.3.8 (Plan 33.6): variance-aware заметка — показывает
+                // программисту, как именно безопасно править контракт эффекта.
+                let variance_note = liskov_variance_note(effect_params, effect_contracts);
                 diagnostics.push(Diagnostic::new(
                     format!(
                         "`#verify` handler method `{}` нарушает контракт эффекта @ position {}:\n  \
                          clause: {}\n  \
                          counterexample: {}\n  \
-                         Liskov: handler.{} должен удовлетворять ensures эффекта при его requires.\n  \
+                         Liskov: handler.{} должен удовлетворять ensures эффекта при его requires.{}\n  \
                          hint: fix handler body или ослабьте именно этот ensures в effect-decl.",
-                        method_name, c.span.start, clause_pretty, cex, method_name,
+                        method_name, c.span.start, clause_pretty, cex, method_name, variance_note,
                     ),
                     binding_span,
                 ));
