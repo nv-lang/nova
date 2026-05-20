@@ -1117,34 +1117,23 @@ impl CEmitter {
                 }
             }
         }
-        // Pre-populate sum_schemas with built-in Option and Result types.
+        // Pre-populate sum_schemas with built-in Option type.
         //
-        // Plan 62.A.bis Ф.4 (2026-05-21): попытка удалить hardcoded
-        // `Result` sum_schema вскрыла регрессию — nested-pattern
-        // `match opt { Some(Err(e)) => ... }` типизирует inner-variant
-        // payload через `sum_schemas["Result"]` в `pattern_bind_typed`
-        // (~line 18183), не через `NovaRes_<T>_<E>` mono / `novares_ok_err`.
-        // Удаление отложено до фикса этого пути в Plan 59 Result-mono.
-        // См. [M-legacy-sum-schemas-retained] в simplifications.md.
+        // Plan 62.A.bis Ф.4 (2026-05-21): legacy hardcoded
+        // `sum_schemas["Result"]` УДАЛЁН. Result полностью
+        // мономорфизирован (Plan 59 Ф.7.5 increment 2) — `Result[T, E]`
+        // → `NovaRes_<ok>_<err>*`, pattern_bind_typed / pattern_cond
+        // резолвят (T,E) через `novares_ok_err` на mono-типе scrutinee
+        // (включая nested `Some(Ok/Err(..))` — фикс Plan 59 commit
+        // `2b184a3c06a`). Erased baseline-инстанс
+        // `NovaRes_nova_int_nova_str` hand-defined в `nova_rt/array.h`.
+        // См. docs/plans/59-tuple-monomorphization.md.
         {
             let mut opt_variants = HashMap::new();
             opt_variants.insert("Some".to_string(), vec!["nova_int".to_string()]);
             opt_variants.insert("None".to_string(), vec![]);
             self.sum_schemas.insert("Option".to_string(), opt_variants.clone());
             self.sum_schemas.insert("NovaOpt_nova_int".to_string(), opt_variants);
-
-            // Plan 59 Ф.7.5 (2026-05-21): legacy hardcoded
-            // `sum_schemas["Result"]` БОЛЬШЕ НЕ НУЖЕН для pattern-match —
-            // Result полностью мономорфизирован (`NovaRes_<T>_<E>`),
-            // pattern_bind_typed / pattern_cond резолвят (T,E) через
-            // `novares_ok_err` на mono-типе scrutinee (включая nested
-            // `Some(Ok/Err(..))`). Сам insert удаляется в Plan 62.A.bis
-            // Ф.4 (вместе с очисткой init_hardcoded_baseline) — оставлен
-            // как ABI-fallback до того момента.
-            let mut res_variants = HashMap::new();
-            res_variants.insert("Ok".to_string(), vec!["nova_int".to_string()]);
-            res_variants.insert("Err".to_string(), vec!["nova_str".to_string()]);
-            self.sum_schemas.insert("Result".to_string(), res_variants);
         }
 
         // D26 prelude: Error — record для quick errors с msg.
