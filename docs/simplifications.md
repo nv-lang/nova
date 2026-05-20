@@ -4672,6 +4672,10 @@ Sub-plans 35.A-E:
 - **Приоритет:** M (Z3 работает; CI coverage — отдельная задача).
 
 ### [V2] Loop invariants парсятся, но не сохраняются в AST
+> **✅ СУПЕРСЕДЕД (аудит Plan 33.8, 2026-05-21):** закрыто. `ExprKind::For`/
+> `While`/`Loop` имеют поля `invariants: Vec<Expr>` + `decreases` (Plan 33.4,
+> см. закрытый `[V14]`); SMT havoc + preservation + decreases — реализованы
+> (Plan 33.5 Ф.2). Запись устарела и сохранена для истории.
 - **Где:** `parser::skip_loop_clauses` в `parse_while`/`parse_for`/`parse_loop`.
 - **Что упрощено:** `invariant <expr>` и `decreases <expr>` между
   loop-header и body парсятся и игнорируются — программист может писать
@@ -4685,6 +4689,9 @@ Sub-plans 35.A-E:
 - **Приоритет:** M — depends on [V1] (без Z3 не имеет смысла).
 
 ### [V3] Composition требует #pure, но purity не выводится автоматически
+> **✅ СУПЕРСЕДЕД (аудит Plan 33.8, 2026-05-21):** закрыто. SCC-инференс
+> чистоты по call-graph реализован в Plan 33.5 Ф.3 (`inferred_pure` /
+> `collect_pure_fns` в `pipeline.rs`). Запись устарела, сохранена для истории.
 - **Где:** `types::ContractCtx::pure_fn_names`.
 - **Что упрощено:** Composition (вызов user fn в контрактах) разрешён
   только если у fn есть явный `#pure` атрибут. SCC-inference по
@@ -4825,6 +4832,42 @@ Sub-plans 35.A-E:
 - **Остаток:** нет. V20 полностью закрыт (V1 + V2).
 - **Дата закрытия:** V1 — 2026-05-20; V2 — 2026-05-21.
 
+### [V23] ✅ Verifier soundness hardening — ЗАКРЫТО Plan 33.8 (2026-05-21)
+- **Где:** `compiler-codegen/src/verify/pipeline.rs`, `codegen/emit_c.rs`,
+  `nova_rt/effects.h`, `lints.rs`, `ast/mod.rs`, `spec/decisions/04-effects.md`.
+- **Контекст:** аудит «с чистого листа» при закрытии Plan 33.7 нашёл 3
+  SOUNDNESS-CRITICAL дыры — места, где верификатор объявлял контракт
+  «доказан», хотя в рантайме он мог быть ложным.
+- **Что закрыто:**
+  * **Переполнение `int`** (Ф.1). `int` (i64) переполнялся молча (C-UB),
+    а верификатор кодировал `int` безграничным Z3 Int → `ensures result==a+b`
+    «доказывался», в release проверка стиралась, рантайм переполнялся.
+    Фикс: переполнение `int` → `panic` (`nova_int_checked_add/sub/mul` через
+    `__builtin_*_overflow` → `nv_panic`). Паника делает безграничную
+    кодировку sound (функция либо вернёт истинный результат, либо умрёт).
+    `nat` — аксиома `nat >= 0`. Спека `04-effects.md` исправлена.
+  * **Сохранение инварианта цикла** (Ф.2). `verify_loop_preservation`
+    havoc-моделировала только присваивания первого уровня; составные
+    `*=`/`/=`, вложенные в if/блок/цикл, повторные — переменная замораживалась
+    → ложный `Proven`. Фикс: `loop_body_model_incomplete` — тело вне
+    sound-envelope → fail-safe `Warning`, не `Proven`.
+  * **`assume`** (Ф.3). Обещанный линт `trust-introduced` не существовал;
+    AST-комментарий лгал про SMT-интеграцию. Фикс: линт реализован;
+    комментарий честный (SMT-интеграция `assume` — V2, наивная была бы
+    unsound в не-flow-sensitive модели).
+- **Остаток (V2, НЕ soundness — оптимизация/полнота):**
+  * Ф.1.3 — overflow-VC для `int` в верификаторе (предупреждать «возможна
+    паника» + стирать panic-check где доказано). Оптимизация: дыра уже
+    закрыта паникой.
+  * Ф.2.2 — моделировать условные/составные присваивания в циклах через
+    `ite` (доказывать такие циклы, а не честно warning'ать). Полнота.
+  * `assume` SMT-интеграция — требует flow-sensitive верификации.
+- **Тесты:** 8 новых (`loop_cond_assign_w2402`, `loop_compound_assign_w2402`,
+  `assume_trust_introduced_warn`, `int_overflow_add_panic`,
+  `int_overflow_mul_panic`, `int_arith_no_overflow_positive` + 2 unit-теста
+  `lints.rs`). Полный `nova_tests`: 931 PASS; contracts: 291 PASS / 0 FAIL.
+- **Дата закрытия:** 2026-05-21.
+
 ### [ЗАКР 2026-05-16] pipeline.rs монолит — handler code в отдельный модуль [Ф.2.1]
 - **Закрыто (Plan 33.6 Ф.2.1, 2026-05-16, commit ddc11f2e):**
   * `compiler-codegen/src/verify/handler_exec.rs` — 689 строк handler verification:
@@ -4920,7 +4963,9 @@ Sub-plans 35.A-E:
 - Нет учёта aliasing binders (id в action и id в view считаются одинаковыми).
 - **Приоритет:** L — покрывает 90% паттернов; сложные случаи → `#trusted`.
 
-### [V15] Generic axioms — Unknown в SMT encoding (2026-05-15)
+### [V21] Generic axioms — Unknown в SMT encoding (2026-05-15)
+> **Перенумеровано из `[V15]`** (аудит Plan 33.8, 2026-05-21): тег `[V15]`
+> уже занят закрытой записью «Frame SMT axiom». Эта запись — ОТКРЫТА.
 - **Где:** `compiler-codegen/src/verify/pipeline.rs::encode_axiom`.
 - **Что:** `axiom foo[T](id T) => ...` с generic binder возвращает
   `Unknown(NotAttempted)` без SMT verification.
@@ -4931,7 +4976,9 @@ Sub-plans 35.A-E:
 - **Приоритет:** M — generic axioms используются в стандартных
   алгоритмических паттернах (sorted arrays, set membership).
 
-### [V16] post(Action)(view) — block-body handlers не поддержаны
+### [V22] post(Action)(view) — block-body handlers не поддержаны
+> **Перенумеровано из `[V16]`** (аудит Plan 33.8, 2026-05-21): тег `[V16]`
+> уже занят закрытой записью «BinderType enum». Эта запись — ОТКРЫТА.
 - **Где:** `compiler-codegen/src/verify/pipeline.rs::verify_post_axiom_with_handler`.
 - **Что:** handler method с `block { ... }` body вместо `=> expr` пропускается
   (continue) в V1 верификации static axioms. В Ф.6 post-symbolic-exec —
