@@ -10218,6 +10218,25 @@ G/H). ~3700 LOC implementation cumulative.
 
 ---
 
+## Plan 70 — D46 BinOp dispatch + Self-return inference (2026-05-20)
+
+### [M-d46-multi-generic-arg-split] (ACCEPTED — edge case)
+- **Где:** `emit_c.rs` — BinOp dispatch block for BitOr/BitAnd/Sub
+  (D46 operator overloading для generic types).
+- **Что упрощено:** разбивка mono-аргументов из `type_name_sum`:
+  `"Set____nova_int"` → `"nova_int".split("__")` — использует `"__"`
+  (двойное подчёркивание) как разделитель между type arg'ами.
+  Для вложенных generic типов (`Set[Set[int]]` → `"Set____Nova_Set____nova_int_p"`)
+  сплит даст неправильный результат — `["Nova_Set", "", "nova_int_p"]`.
+- **Почему:** паттерн идентичен существующему `Self.method()` fast-path
+  на строке ~12899 в emit_c.rs. Вложенные generics чрезвычайно редки
+  на практике (Set[Set[int]] — нетипичная конструкция).
+- **Как чинить:** при необходимости — length-prefix encoding (ala
+  Plan 59 tuple mangle) для type args; или использовать
+  `generic_type_instance_info` для извлечения args по ТОЧНОМУ ключу.
+- **Приоритет:** L — edge case; простые generic Set[int]/HashMap[str,int]
+  работают корректно.
+
 ## Plan 62.A.bis вЂ” Generic schema registry (2026-05-20)
 
 ### [M-result-generic-T-method-mismatch] (DEFER вЂ” Plan 62.B+)
