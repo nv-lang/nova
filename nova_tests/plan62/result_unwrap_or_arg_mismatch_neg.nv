@@ -1,0 +1,22 @@
+// EXPECT_CC_ERROR incompatible type
+
+// result_unwrap_or_arg_mismatch_neg.nv — Plan 62.B негативный тест.
+//
+// Verifies что Result.unwrap_or с default-аргументом неверного типа не
+// компилируется. `Result[int, str]` — Ok-тип `int`; сигнатура
+// `@unwrap_or(default T) -> T` требует `default` того же типа `T`.
+//
+// Bootstrap type-checker не ловит mismatch на Nova-уровне (best-effort
+// inference — см. [C2] / [M-result-method-named-var-only] в
+// docs/simplifications.md), но C-backstop отвергает: trampoline
+// `Nova_Result_method_unwrap_or` принимает `nova_int`, а переданный
+// `"wrong"` — `nova_str` → clang «incompatible type». Тест фиксирует,
+// что misuse не компилируется молча.
+
+module plan62.result_unwrap_or_arg_mismatch_neg
+
+test "Result.unwrap_or с default неверного типа — compile error" {
+    let r Result[int, str] = Ok(1)
+    let v = r.unwrap_or("wrong")
+    assert(v == 1)
+}
