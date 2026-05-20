@@ -1,4 +1,4 @@
-# Plan 75: `never` — bottom-тип как строчный встроенный keyword
+# Plan 76: `never` — bottom-тип как строчный встроенный keyword
 
 > **Создан 2026-05-20.** Выделен из обсуждения Plan 72 P1-B.
 >
@@ -41,7 +41,7 @@ Bottom-тип выпадает из конвенции:
   Закрывается отдельно (Plan 62.C.bis; empty-sum syntax P1-B уже готов и
   проверен — `type RuntimeNoneError` парсится+компилируется).
 
-**Plan 75 — только про `never`. `RuntimeNoneError` вне scope.**
+**Plan 76 — только про `never`. `RuntimeNoneError` вне scope.**
 
 ---
 
