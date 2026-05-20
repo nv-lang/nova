@@ -13522,7 +13522,10 @@ impl CEmitter {
                                 let d = self.emit_expr(default_arg.expr())?;
                                 let obj_c = self.emit_expr(obj)?;
                                 let tmp = self.fresh_tmp();
-                                self.line(&format!("Nova_Result* {} = {};", tmp, obj_c));
+                                // Plan 59 Ф.7.5 D1a: dual-mode var-decl —
+                                // `obj_ty` = legacy `Nova_Result*` ИЛИ
+                                // mono `NovaRes_<n>*`.
+                                self.line(&format!("{} {} = {};", obj_ty, tmp, obj_c));
                                 let result_v = self.fresh_tmp();
                                 self.line(&format!("{} {};", ok_c_ty, result_v));
                                 self.line(&format!("if ({}->tag == NOVA_TAG_Result_Ok) {{", tmp));
@@ -13556,13 +13559,17 @@ impl CEmitter {
                         }) = &routing {
                             if c_name != "<inline>" {
                                 let obj_c = self.emit_expr(obj)?;
-                                // Result methods — non-per-T в bootstrap'е
-                                // (`is_per_t = false`); если истинно — это
-                                // future per-T monomorphization (Plan 59).
-                                let mangled = if *is_per_t {
-                                    // Phase 3: per-T для Result не используется
-                                    // (registry: все false); но preserve future-
-                                    // proof path.
+                                // Plan 59 Ф.7.5 D1a: dual-mode trampoline.
+                                // Mono `NovaRes_<n>*` → суффикс `_<n>`
+                                // (per-(T,E) trampoline из
+                                // `register_novares_decl`); legacy
+                                // `Nova_Result*` → `c_name` без суффикса.
+                                // `is_per_t` — устаревший bootstrap-флаг
+                                // (registry: все false); mono-резолюция
+                                // теперь по фактическому `obj_ty`.
+                                let mangled = if obj_ty.starts_with("NovaRes_") {
+                                    self.result_method_c_name(&obj_ty, c_name)
+                                } else if *is_per_t {
                                     format!("{}_nova_int_nova_str", c_name)
                                 } else {
                                     c_name.clone()
@@ -13594,7 +13601,8 @@ impl CEmitter {
                             // используем boxed nova_str* из tmp.
                             "err" => {
                                 let tmp = self.fresh_tmp();
-                                self.line(&format!("Nova_Result* {} = {};", tmp, obj_c));
+                                // Plan 59 Ф.7.5 D1a: dual-mode var-decl.
+                                self.line(&format!("{} {} = {};", obj_ty, tmp, obj_c));
                                 let opt_tmp = self.fresh_tmp();
                                 self.line(&format!("NovaOpt_nova_int {};", opt_tmp));
                                 self.line(&format!("if ({}->tag == NOVA_TAG_Result_Err) {{", tmp));
@@ -13624,7 +13632,8 @@ impl CEmitter {
                                         .unwrap_or_else(|| "nova_int".to_string());
                                     let f = self.emit_expr(arg.expr())?;
                                     let tmp = self.fresh_tmp();
-                                    self.line(&format!("Nova_Result* {} = {};", tmp, obj_c));
+                                    // Plan 59 Ф.7.5 D1a: dual-mode var-decl.
+                                    self.line(&format!("{} {} = {};", obj_ty, tmp, obj_c));
                                     let result = self.fresh_tmp();
                                     self.line(&format!("{} {};", ok_c_ty, result));
                                     self.line(&format!("if ({}->tag == NOVA_TAG_Result_Ok) {{", tmp));
@@ -13671,9 +13680,11 @@ impl CEmitter {
                                         });
                                     let f = self.emit_expr(arg.expr())?;
                                     let tmp = self.fresh_tmp();
-                                    self.line(&format!("Nova_Result* {} = {};", tmp, obj_c));
+                                    // Plan 59 Ф.7.5 D1a: dual-mode var-decl
+                                    // + dual-mode `Ok`-конструктор.
+                                    self.line(&format!("{} {} = {};", obj_ty, tmp, obj_c));
                                     let out = self.fresh_tmp();
-                                    self.line(&format!("Nova_Result* {};", out));
+                                    self.line(&format!("{} {};", obj_ty, out));
                                     self.line(&format!("if ({}->tag == NOVA_TAG_Result_Ok) {{", tmp));
                                     self.indent += 1;
                                     let mapped = self.fresh_tmp();
@@ -13682,7 +13693,8 @@ impl CEmitter {
                                     self.line(&format!(
                                         "{rc} {m} = (({rc}(*)(void*, {pc}))(((NovaClos_ii*)({f}))->fn))(((NovaClos_ii*)({f}))->env, {av});",
                                         rc = ret_c, pc = param_c, m = mapped, f = f, av = arg_val));
-                                    self.line(&format!("{} = nova_make_Result_Ok((nova_int){});", out, mapped));
+                                    let ok_ctor = self.result_ctor_name(&obj_ty, "Ok");
+                                    self.line(&format!("{} = {}((nova_int){});", out, ok_ctor, mapped));
                                     self.indent -= 1;
                                     self.line("} else {");
                                     self.indent += 1;
@@ -13698,9 +13710,11 @@ impl CEmitter {
                                 if let Some(arg) = args.first() {
                                     let f = self.emit_expr(arg.expr())?;
                                     let tmp = self.fresh_tmp();
-                                    self.line(&format!("Nova_Result* {} = {};", tmp, obj_c));
+                                    // Plan 59 Ф.7.5 D1a: dual-mode var-decl
+                                    // + dual-mode `Err`-конструктор.
+                                    self.line(&format!("{} {} = {};", obj_ty, tmp, obj_c));
                                     let out = self.fresh_tmp();
-                                    self.line(&format!("Nova_Result* {};", out));
+                                    self.line(&format!("{} {};", obj_ty, out));
                                     self.line(&format!("if ({}->tag == NOVA_TAG_Result_Err) {{", tmp));
                                     self.indent += 1;
                                     // Closure (nova_str → nova_str): сигнатура
@@ -13710,7 +13724,8 @@ impl CEmitter {
                                     self.line(&format!(
                                         "nova_str {} = ((nova_str(*)(void*, nova_str))(((NovaClos_ii*)({}))->fn))(((NovaClos_ii*)({}))->env, {}->payload.Err._0);",
                                         new_err, f, f, tmp));
-                                    self.line(&format!("{} = nova_make_Result_Err({});", out, new_err));
+                                    let err_ctor = self.result_ctor_name(&obj_ty, "Err");
+                                    self.line(&format!("{} = {}({});", out, err_ctor, new_err));
                                     self.indent -= 1;
                                     self.line("} else {");
                                     self.indent += 1;
@@ -13727,7 +13742,8 @@ impl CEmitter {
                                     .map(|(ok_c, _)| ok_c)
                                     .unwrap_or_else(|| "nova_int".to_string());
                                 let tmp = self.fresh_tmp();
-                                self.line(&format!("Nova_Result* {} = {};", tmp, obj_c));
+                                // Plan 59 Ф.7.5 D1a: dual-mode var-decl.
+                                self.line(&format!("{} {} = {};", obj_ty, tmp, obj_c));
                                 self.line(&format!("if ({}->tag == NOVA_TAG_Result_Err) {{", tmp));
                                 self.indent += 1;
                                 self.line(&format!("Nova_Fail_fail({}->payload.Err._0);", tmp));
@@ -19859,6 +19875,38 @@ impl CEmitter {
     {
         self.novares_ok_err(obj_ty)
             .or_else(|| self.infer_result_type_params(obj))
+    }
+
+    /// Plan 59 Ф.7.5 D1a: dual-mode имя конструктора `Ok`/`Err` для Result
+    /// C-типа. Legacy `Nova_Result*` → `nova_make_Result_<Variant>`; mono
+    /// `NovaRes_<n>*` → `nova_make_NovaRes_<n>_<Variant>`. `variant` —
+    /// `"Ok"` или `"Err"`.
+    fn result_ctor_name(&self, obj_ty: &str, variant: &str) -> String {
+        match Self::is_result_like(obj_ty) {
+            true if obj_ty.starts_with("NovaRes_") => {
+                let n = obj_ty
+                    .strip_prefix("NovaRes_")
+                    .and_then(|s| s.strip_suffix('*'))
+                    .unwrap_or("");
+                format!("nova_make_NovaRes_{}_{}", n, variant)
+            }
+            _ => format!("nova_make_Result_{}", variant),
+        }
+    }
+
+    /// Plan 59 Ф.7.5 D1a: dual-mode имя trampoline-метода Result. Legacy
+    /// `Nova_Result*` → `base` без суффикса; mono `NovaRes_<n>*` →
+    /// `base_<n>` (per-(T,E) trampoline из `register_novares_decl`).
+    fn result_method_c_name(&self, obj_ty: &str, base: &str) -> String {
+        if obj_ty.starts_with("NovaRes_") && obj_ty.ends_with('*') {
+            let n = obj_ty
+                .strip_prefix("NovaRes_")
+                .and_then(|s| s.strip_suffix('*'))
+                .unwrap_or("");
+            format!("{}_{}", base, n)
+        } else {
+            base.to_string()
+        }
     }
 
     /// Plan 59 Ф.7.5: lazy-регистрирует mono'd `NovaRes_<ok>_<err>` —
