@@ -18,8 +18,9 @@ enum Cmd {
     Check { file: PathBuf },
     /// Type-check + интерпретировать (вызывается main).
     Run { file: PathBuf },
-    /// Запустить тесты в файле.
-    Test { file: PathBuf },
+    /// Запустить тесты в файле через интерпретатор (без C-codegen).
+    #[command(name = "test-interp")]
+    TestInterp { file: PathBuf },
     /// Скомпилировать Nova-файл в C (вывод в stdout или -o файл).
     Compile {
         file: PathBuf,
@@ -186,7 +187,7 @@ fn run() -> ExitCode {
     let result = match cli.cmd {
         Cmd::Check { file } => cmd_check(&file),
         Cmd::Run { file } => cmd_run(&file),
-        Cmd::Test { file } => cmd_test(&file),
+        Cmd::TestInterp { file } => cmd_test(&file),
         Cmd::Compile { file, output, no_annotate_source, no_lint } =>
             cmd_compile(&file, output.as_deref(), !no_annotate_source, !no_lint),
         Cmd::EmitRuntimeStubs { root, check } =>

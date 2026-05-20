@@ -1,0 +1,27 @@
+// EXPECT_COMPILE_WARNING trivial backend handles only tautologies
+//
+// Plan 33.9 Ф.4 (negative): a NON-opaque #pure fn whose contract is beyond
+// TrivialBackend still produces the plain TrivialBackend W2402 — the Ф.4
+// opaque-aware upgrade must NOT fire here (no `opaque`/`reveal` wording).
+//
+// Guards against false-positive: term_references_opaque_uf must return None
+// for _pure_fn_* UFs whose backing fn is not #opaque.
+// No REQUIRES_SMT_BACKEND — runs under default TrivialBackend.
+
+module contracts.f58_nonopaque_trivial_no_upgrade
+
+// Plain #pure (NO #opaque): non-linear body TrivialBackend cannot discharge.
+#pure
+fn square(x int) -> int
+    requires x >= 0
+    ensures result >= x
+=> x * x
+
+// Caller references the non-opaque pure fn. Goal contains _pure_fn_square,
+// but square.is_opaque == false → Ф.4 upgrade skipped → plain W2402 message.
+fn caller_nonopaque(n int) -> int
+    requires n >= 2
+    ensures result >= n
+{
+    square(n)
+}
