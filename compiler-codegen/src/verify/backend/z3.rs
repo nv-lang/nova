@@ -167,7 +167,7 @@ impl Z3Backend {
             SortRef::Str => self.str_sort,
             SortRef::F32 => unsafe { ffi::Z3_mk_fpa_sort_32(self.ctx) },
             SortRef::F64 => unsafe { ffi::Z3_mk_fpa_sort_64(self.ctx) },
-            SortRef::BitVec(w) => unsafe { ffi::Z3_mk_bv_sort(self.ctx, *w) },
+            SortRef::BitVec { width, .. } => unsafe { ffi::Z3_mk_bv_sort(self.ctx, *width) },
             SortRef::Named(name) => {
                 // Plan 33.1 trivial backend wraps record-types as
                 // uninterpreted; для Z3 делаем то же — uninterpreted
@@ -456,6 +456,28 @@ impl Z3Backend {
             ("bvmul_no_overflow_s", &[x, y]) => ffi::Z3_mk_bvmul_no_overflow(ctx, x, y, 1),
             ("bvmul_no_overflow_u", &[x, y]) => ffi::Z3_mk_bvmul_no_overflow(ctx, x, y, 0),
 
+            // Plan 33.7 V2: BV cast-resize. Op-строка несёт числовой
+            // параметр: "zero_extend N" / "sign_extend N" / "extract H L".
+            (op_name, &[x]) if op_name.starts_with("zero_extend ") => {
+                let n: u32 = op_name["zero_extend ".len()..].trim().parse()
+                    .map_err(|_| format!("z3: bad zero_extend param in `{}`", op_name))?;
+                ffi::Z3_mk_zero_ext(ctx, n as c_uint, x)
+            }
+            (op_name, &[x]) if op_name.starts_with("sign_extend ") => {
+                let n: u32 = op_name["sign_extend ".len()..].trim().parse()
+                    .map_err(|_| format!("z3: bad sign_extend param in `{}`", op_name))?;
+                ffi::Z3_mk_sign_ext(ctx, n as c_uint, x)
+            }
+            (op_name, &[x]) if op_name.starts_with("extract ") => {
+                let rest = &op_name["extract ".len()..];
+                let mut parts = rest.split_whitespace();
+                let high: u32 = parts.next().and_then(|s| s.parse().ok())
+                    .ok_or_else(|| format!("z3: bad extract high in `{}`", op_name))?;
+                let low: u32 = parts.next().and_then(|s| s.parse().ok())
+                    .ok_or_else(|| format!("z3: bad extract low in `{}`", op_name))?;
+                ffi::Z3_mk_extract(ctx, high as c_uint, low as c_uint, x)
+            }
+
             // Plan 33.3 Ф.9: pure_view-UF через real Z3_func_decl
             // (pre-declared в declare_function, sorts из effect-сигнатуры).
             (op_name, args_arr) if op_name.starts_with("_view_") => {
@@ -599,7 +621,7 @@ impl Z3Backend {
                         }
                     }
                     // Plan 33.7: BitVec — попытаться извлечь как int64.
-                    SortRef::BitVec(_) => {
+                    SortRef::BitVec { .. } => {
                         let mut iv: i64 = 0;
                         if ffi::Z3_get_numeral_int64(self.ctx, out, &mut iv) != 0 {
                             ModelValue::Int(iv)

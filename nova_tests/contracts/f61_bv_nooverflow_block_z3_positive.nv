@@ -1,0 +1,22 @@
+// REQUIRES_SMT_BACKEND z3
+//
+// Plan 33.7 V2.3: #nooverflow для блочных тел. Overflow VC генерируется
+// и для арифметики в let-биндингах внутри { }-блока, и для последующих
+// операций над let-связанной BV-переменной.
+
+module contracts.f61_bv_nooverflow_block_z3_positive
+
+#nooverflow #verify
+fn block_sum_u32(a u32, b u32, c u32) -> u32
+    requires a <= 100 as u32 && b <= 100 as u32 && c <= 100 as u32
+    ensures result == a + b + c
+{
+    let ab u32 = a + b
+    ab + c
+}
+
+test "bv nooverflow block z3 positive" {
+    assert(block_sum_u32(10 as u32, 20 as u32, 30 as u32) == 60 as u32)
+    assert(block_sum_u32(100 as u32, 100 as u32, 100 as u32) == 300 as u32)
+    assert(block_sum_u32(0 as u32, 0 as u32, 0 as u32) == 0 as u32)
+}

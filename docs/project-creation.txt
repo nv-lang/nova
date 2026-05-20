@@ -16705,7 +16705,51 @@ Full suite: 855 PASS / 0 FAIL / 47 SKIP.
 ## Результат
 contracts/ suite: **281 PASS** / 0 FAIL (добавлены 5 новых тестов).
 simplifications.md: V20 (BitVec theory).
-Plan 33.7: ✅ ЗАКРЫТ (2026-05-20).
+Plan 33.7 V1: ✅ ЗАКРЫТ (2026-05-20).
+
+# Plan 33.7 V2 — закрытие V2-остатка (2026-05-21)
+
+После V1 (5 фаз) — закрыт V2-остаток упрощения [V20]: точная знаковость,
+BV cast resize, overflow VC для блочных тел.
+
+## V2.1: точная знаковость (signedness)
+- `SortRef::BitVec(u32)` → `SortRef::BitVec { width: u32, signed: bool }`.
+  i8/i16/i32 → signed=true, u8/u16/u32/u64 → signed=false.
+- `type_ref_to_sort`/`type_to_sort` (pipeline.rs) маппят с правильным signed.
+- `encode.rs`: новый helper `bv_signed(term, ctx)` — знаковость из
+  SortRef BV-операнда. BV binary dispatch: `is_signed` берётся из операнда,
+  не глобальный false → bvsdiv/bvslt для i*, bvudiv/bvult для u*.
+- `verify_fn` overflow VC: signedness из BV-операнда → bvadd_no_overflow_s
+  для signed-типов, bvadd_no_overflow_u для unsigned.
+
+## V2.2: BV cast resize
+- `as`-каст между BV-ширинами: расширение → zero_extend (unsigned) /
+  sign_extend (signed); сужение → extract младших бит.
+- FFI (z3_ffi.rs): Z3_mk_zero_ext, Z3_mk_sign_ext, Z3_mk_extract.
+- translate_app (z3.rs): prefix-match `"zero_extend N"`/`"sign_extend N"`/
+  `"extract H L"` — числовой параметр парсится из op-строки.
+- `type_ref_name_to_bv` возвращает (width, signed) для выбора extend-режима.
+
+## V2.3: overflow VC для блочных тел
+- `collect_bv_arith_ops_in_body` рекурсит в let-bindings, блок-выражения,
+  if/else-блоки через `BvScope { sorts, subst }`.
+- `let x u32 = E` регистрирует subst `x → encode(E)`. Overflow VC для
+  `x + c` переписывается подстановкой в `(E) + c` — операнды только
+  fn-параметры (declared в backend). Это избегает undeclared-var в Z3
+  (была причина segfault при наивном подходе с free-var x).
+- Helpers `bv_sort_in_term`/`bv_lit_width` — рекурсивный поиск
+  width/signedness в App-терме после subst.
+
+## Тесты V2 (4 фикстуры)
+- f61_bv_signed_z3_positive — i32 signed comparison/division.
+- f61_bv_cast_resize_z3_positive — u8↔u32 widen/narrow.
+- f61_bv_nooverflow_block_z3_positive — overflow VC в let-блоке.
+- f61_bv_signed_overflow_fail — #nooverflow i8 signed overflow (negative).
+
+## Результат
+contracts/ suite: **285 PASS** / 0 FAIL (+4 теста V2).
+simplifications.md [V20]: остаток V2 закрыт.
+Plan 33.7: ✅ ЗАКРЫТ полностью (V1 + V2, 2026-05-21).
 
 2026-05-20 Plan 62.B — Option.or + Result-методы (prelude declarations)
 ──────────────────────────────────────────────────────────────────────
