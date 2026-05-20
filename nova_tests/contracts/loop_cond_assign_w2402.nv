@@ -1,0 +1,26 @@
+// Plan 33.8 Ф.2.3: негатив для soundness-фикса сохранения инварианта цикла.
+// EXPECT_COMPILE_WARNING W2402
+//
+// Тело цикла содержит УСЛОВНОЕ присваивание `if i > 5 { x = x + 1 }`.
+// V1-havoc-модель (`extract_body_assignments`) собирает только присваивания
+// первого уровня — `x` внутри `if` не попадает в havoc-набор. До Ф.2.1
+// верификатор «доказывал» инвариант `x >= 0` на ЗАМОРОЖЕННОМ значении `x`
+// (ложный Proven). После Ф.2.1 тело распознаётся как вне sound-envelope →
+// preservation fail-safe возвращает W2402, проверка НЕ заявляется доказанной.
+
+module contracts.loop_cond_assign_w2402
+
+fn cond_accumulate(n int) -> int
+    requires n >= 0
+{
+    let mut i = 0
+    let mut x = 0
+    while i < n
+        invariant x >= 0
+        decreases n - i
+    {
+        if i > 5 { x = x + 1 }
+        i = i + 1
+    }
+    x
+}
