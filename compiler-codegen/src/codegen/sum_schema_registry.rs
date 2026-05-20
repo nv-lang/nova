@@ -343,6 +343,10 @@ impl SumSchemaRegistry {
             c_name: "<inline>".to_string(),
             is_per_t: false,
         });
+        option_methods.insert("or".to_string(), MethodRouting::HardcodedRuntimeFn {
+            c_name: "Nova_Option_method_or".to_string(),
+            is_per_t: true,
+        });
 
         self.register_schema(SumSchemaEntry {
             nova_name: "Option".to_string(),
