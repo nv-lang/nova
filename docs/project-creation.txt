@@ -16622,4 +16622,54 @@ Full suite: 855 PASS / 0 FAIL / 47 SKIP.
 - Phase 4 (СѓРґР°Р»РµРЅРёРµ legacy sum_schemas field) вЂ” deferred РґРѕ Plan 59 per design.
 - 5 Result-РјРµС‚РѕРґРѕРІ (unwrap_or/unwrap/etc.) вЂ” blocker: type-checker T mismatch.
 - Option.or вЂ” trampoline Nova_Option_method_or_<T> РѕС‚СЃСѓС‚СЃС‚РІСѓРµС‚ РІ array.h.
-- D26 РІ 08-runtime.md РѕР±РЅРѕРІР»С‘РЅ (Bootstrap-СЂР°СЃС€РёСЂРµРЅРёРµ В§62.A.bis РґРѕР±Р°РІР»РµРЅ).
+- D26 РІ 08-runtime.md РѕР±РЅРѕРІР»С’РЅ (Bootstrap-СЂР°СЃС€РёСЂРµРЅРёРµ В§62.A.bis РґРѕР±Р°РІР»РµРЅ).
+
+# Plan 33.7 BitVec theory + #nooverflow (2026-05-20)
+
+После закрытия 33.1-33.6 + 33.9 — Plan 33.7: bit-vector theory для sized integer
+типов (u8/u16/u32/u64/i8/i16/i32) и `#nooverflow` атрибут.
+
+## Ф.1: SMT-IR расширение (ir.rs)
+- `SortRef::BitVec(u32)` — BitVec sort с шириной в битах.
+- `SmtTerm::BitVecLit(u64, u32)` — BV literal с hex pretty-print (`#x0000001A`).
+
+## Ф.2: Z3 backend (z3_ffi.rs + z3.rs)
+- Z3_mk_bv_sort, Z3_mk_unsigned_int64 — создание BV sort и literal.
+- Полный набор BV ops: bvadd/bvsub/bvmul/bvsdiv/bvudiv/bvsrem/bvurem.
+- Bitwise: bvand/bvor/bvxor/bvnot/bvshl/bvlshr/bvashr.
+- Comparisons: bvslt/bvsle/bvsgt/bvsge (signed), bvult/bvule/bvugt/bvuge (unsigned).
+- Overflow predicates: bvadd_no_overflow/bvadd_no_underflow, bvsub_no_overflow/bvsub_no_underflow, bvmul_no_overflow (signed+unsigned variants).
+- `sort_for(SortRef::BitVec(w))` → `Z3_mk_bv_sort(ctx, w)`.
+- `translate_inner_impl(BitVecLit)`, `translate_app(bv*)`.
+- `extract_model` для BV: `Z3_get_numeral_int64` → `ModelValue::Int`.
+
+## Ф.3: encode.rs + pipeline.rs
+- `is_bv_term()`/`bv_width()` — detect BV context.
+- `bin_op_to_bv_smt(op, is_signed)` — BinOp → bv-оператор строка.
+- `lift_intlit_to_bv(t, width)` — IntLit → BitVecLit в BV-контексте.
+- `ExprKind::Binary`: BV dispatch первый, затем FP, затем Int.
+- `ExprKind::As(inner, ty)`: `type_ref_name_to_bv_width(ty)` — кастование
+  `0 as u32` → `BitVecLit(0, 32)`. Non-BV cast: encode inner, pass through.
+- `type_ref_to_sort`/`type_to_sort`: u8/i8→BitVec(8), u16/i16→BitVec(16),
+  u32/i32→BitVec(32), u64/usize→BitVec(64); int/i64/money/nat→SortRef::Int.
+- TrivialBackend: ранний `UnsupportedTheory` для BV sort или bv-оператора.
+
+## Ф.4: #nooverflow атрибут
+- `ContractAttrs.no_overflow: bool` (parser/mod.rs).
+- `parse_contract_attrs()`: кейс `"nooverflow"` → `attrs.no_overflow = true`.
+- `FnDecl.no_overflow: bool` (ast/mod.rs).
+- `verify_fn`: если `fd.no_overflow` → `collect_bv_arith_ops_in_body` собирает
+  все BinOp Add/Sub/Mul с BV-sorted операндами → emit overflow VCs через `try_prove`.
+- VCs: `bvadd_no_overflow_u` / `bvsub_no_underflow_u` / `bvmul_no_overflow_u`.
+
+## Ф.5: тесты (5 фикстур)
+- `f60_bv_arith_trivial_positive.nv` — u32/u8 params, trivial backend, W2402 (UnsupportedTheory).
+- `f60_bv_arith_z3_positive.nv` — Z3 верифицирует BV add/sub identity + u8 bounds.
+- `f60_bv_bitwise_z3_positive.nv` — Z3 верифицирует bvand/bvor операции.
+- `f60_bv_nooverflow_safe_z3_positive.nv` — #nooverflow + requires bounds → proven.
+- `f60_bv_nooverflow_overflow_fail.nv` — #nooverflow без bounds → overflow disproved.
+
+## Результат
+contracts/ suite: **281 PASS** / 0 FAIL (добавлены 5 новых тестов).
+simplifications.md: V20 (BitVec theory).
+Plan 33.7: ✅ ЗАКРЫТ (2026-05-20).
