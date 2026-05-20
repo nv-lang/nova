@@ -16322,3 +16322,40 @@ Test count после Plan 67 full closure:
 - Регрессий 0
 
 Plan 67 production-grade closed. README row updated.
+
+2026-05-19/20 Plan 70.3 Ф.4 + Plan 70.4 + Plan 70.5 closure
+─────────────────────────────────────────────────────────────
+
+Plan 70.3 Ф.4 — char↔int type-checker tightening:
+- `nova_char` distinct typedef (Ф.1-Ф.3) автоматически обеспечивает
+  CC-FAIL для обоих направлений collapse.
+- f3: `Some(42)` в `Option[char]` slot → CC-FAIL incompatible type.
+- f4: `Some('a')` в `Option[int]` slot → CC-FAIL incompatible type.
+- f5: `Box[char]` vs `Box[int]` — distinct mono instances, 3 tests.
+- 5/5 plan70_3 fixtures PASS. Plan 70.3 полностью закрыт.
+
+Plan 70.4 — primitive type distinction complete:
+- Ф.1: f32/f64 arrays → distinct `NovaArray_nova_f32*` / `NovaArray_nova_f64*`.
+- Ф.2: sized-int ABI fix — `[]i8/i16/i32/u16/u32/u64` distinct packed
+  storage. Устраняет 2x-8x memory overhead + FFI ABI mismatch.
+- Ф.3: Spec D129 — `int` = `i64` alias в bootstrap Nova (intentional).
+- Ф.4: `u8` → `nova_byte` mangle unification. `Option[u8]` ≡ `Option[byte]`.
+- Негативные тесты: f6 (Option[f32]≠Option[f64]), f7 (Option[i16]≠Option[i32]).
+- Позитивный f8: Option[u8] ↔ Option[byte] взаимозаменяемы.
+- 8/8 plan70_4 fixtures PASS.
+
+Plan 70.5 — uint symmetric primitive:
+- Ф.1: `uint` → `uint64_t` во всех codegen dispatch-сайтах (13 sites в
+  emit_c.rs + 2 в external_registry.rs).
+- Ф.2: `int as uint` saturation (neg→0) через `nova_int_to_uint(int64_t)`
+  в `cast.h`. D54 precedent. `int as u64` unchanged (bit-cast).
+- Ф.3: Spec D130. 3 фикстуры (f1-f3, 11 тестов) PASS.
+- Ф.4: `uint.MAX` parser fix — добавлен `"uint"` в `is_primitive_type`
+  в parser/mod.rs (1 строчка). f4-f8 fixtures (pos + neg) PASS.
+- 8/8 plan70_5 fixtures PASS.
+- Deferred: `arr[i uint]` indexing (breaking change), `byte` full removal.
+
+Test count после Plan 70.3-70.5:
+- baseline (post Plan 70.2): 808 PASS / 0 FAIL
+- +21 новых план-фикстур (plan70_3: 5, plan70_4: 8, plan70_5: 8)
+- Регрессий 0
