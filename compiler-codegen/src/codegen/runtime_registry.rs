@@ -50,11 +50,71 @@ pub fn all() -> Vec<RuntimeFn> {
     let mut v = Vec::new();
     v.extend(str_runtime());
     v.extend(math_runtime());
+    v.extend(numeric_runtime());
     v.extend(char_runtime());
     v.extend(string_builder_runtime());
     v.extend(write_buffer_runtime());
     v.extend(read_buffer_runtime());
     v
+}
+
+/// `std.runtime.numeric` — Plan 74: IEEE 754 primitive bit-cast.
+/// `f64 ↔ u64`, `f32 ↔ u32` reinterpret-cast. C-реализация —
+/// `nova_rt/numeric.h` (memcpy-based, zero-cost). Codegen dispatch'ит
+/// эти методы hard-coded (primitive-type methods, как D74 math), а не
+/// через external_registry — registry-запись здесь даёт canonical
+/// Nova-side декларацию для `nova doc` / IDE discovery.
+fn numeric_runtime() -> Vec<RuntimeFn> {
+    vec![
+        RuntimeFn {
+            module: "std.runtime.numeric",
+            receiver: Some("f64"),
+            is_static: false, is_mut: false,
+            name: "to_bits",
+            params: &[],
+            return_ty: "u64",
+            effects: &[],
+            c_name: "Nova_f64_to_bits",
+            doc: "IEEE 754 bit-pattern double как u64 (reinterpret-cast).",
+            nova_body: None,
+        },
+        RuntimeFn {
+            module: "std.runtime.numeric",
+            receiver: Some("f64"),
+            is_static: true, is_mut: false,
+            name: "from_bits",
+            params: &[("bits", "u64")],
+            return_ty: "f64",
+            effects: &[],
+            c_name: "Nova_f64_from_bits",
+            doc: "Восстановить f64 из IEEE 754 bit-pattern (reinterpret-cast).",
+            nova_body: None,
+        },
+        RuntimeFn {
+            module: "std.runtime.numeric",
+            receiver: Some("f32"),
+            is_static: false, is_mut: false,
+            name: "to_bits",
+            params: &[],
+            return_ty: "u32",
+            effects: &[],
+            c_name: "Nova_f32_to_bits",
+            doc: "IEEE 754 bit-pattern float как u32 (reinterpret-cast).",
+            nova_body: None,
+        },
+        RuntimeFn {
+            module: "std.runtime.numeric",
+            receiver: Some("f32"),
+            is_static: true, is_mut: false,
+            name: "from_bits",
+            params: &[("bits", "u32")],
+            return_ty: "f32",
+            effects: &[],
+            c_name: "Nova_f32_from_bits",
+            doc: "Восстановить f32 из IEEE 754 bit-pattern (reinterpret-cast).",
+            nova_body: None,
+        },
+    ]
 }
 
 /// `std.runtime.string` — UTF-8 операции на str.

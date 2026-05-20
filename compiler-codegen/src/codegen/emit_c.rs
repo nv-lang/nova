@@ -14026,14 +14026,22 @@ impl CEmitter {
                 // StringBuilder/WriteBuffer/ReadBuffer удалён. Registry-
                 // driven путь (Plan 12 Ф.3) обрабатывает это раньше.
                 //
-                // f64.from_bits / int.to_bits — НЕ в registry (это primitive
-                // type methods, не external fn в std/runtime/builtins.nv).
-                // Оставляем как hard-coded.
+                // f64/f32.from_bits / int.to_bits — НЕ в external_registry
+                // (это primitive type methods, не external fn в opaque-type
+                // builtins). Hard-coded dispatch. Plan 74: f64/f32 bit-cast
+                // через nova_rt/numeric.h. `int.to_bits(f f64)` — legacy
+                // Plan 04 helper (read_buffer round-trip), оставлен как есть.
                 if let ExprKind::Ident(name) = &obj.kind {
                     if name == "f64" && method == "from_bits" {
                         if let Some(arg) = args.first() {
                             let v = self.emit_expr(arg.expr())?;
-                            return Ok(format!("nova_f64_from_bits({})", v));
+                            return Ok(format!("Nova_f64_from_bits({})", v));
+                        }
+                    }
+                    if name == "f32" && method == "from_bits" {
+                        if let Some(arg) = args.first() {
+                            let v = self.emit_expr(arg.expr())?;
+                            return Ok(format!("Nova_f32_from_bits({})", v));
                         }
                     }
                     if name == "int" && method == "to_bits" {
@@ -14378,6 +14386,17 @@ impl CEmitter {
                 //     типах. В runtime'е они мапятся на стандартные C-функции
                 //     из <math.h>.
                 if obj_ty == "nova_f64" || obj_ty == "nova_f32" {
+                    // Plan 74: `f.to_bits()` — IEEE 754 reinterpret-cast в
+                    // unsigned integer bit-pattern (f64→u64, f32→u32).
+                    if method == "to_bits" && args.is_empty() {
+                        let obj_c = self.emit_expr(obj)?;
+                        let c_fn = if obj_ty == "nova_f32" {
+                            "Nova_f32_to_bits"
+                        } else {
+                            "Nova_f64_to_bits"
+                        };
+                        return Ok(format!("{}({})", c_fn, obj_c));
+                    }
                     if let Some(c_fn) = Self::f64_method_to_c(method) {
                         let obj_c = self.emit_expr(obj)?;
                         let mut arg_strs = vec![obj_c];
@@ -15294,14 +15313,21 @@ impl CEmitter {
                         }
                     }
                 }
-                // Plan 04 follow-up: f64.from_bits(n int) — IEEE 754
-                // bit-cast int → f64. Pair with int.to_bits(f f64). Используется
-                // для распаковки try_read_f64_*: r.unwrap_or(0) даёт nova_int
-                // bits, f64.from_bits(bits) → восстанавливает double.
+                // Plan 74: f64/f32.from_bits(bits uN) — IEEE 754 bit-cast
+                // uN → float через nova_rt/numeric.h. Pair с `f.to_bits()`.
+                // Legacy Plan 04: f64.from_bits также служит распаковке
+                // try_read_f64_* (r.unwrap_or(0) → nova_int bits →
+                // f64.from_bits). int.to_bits(f f64) — обратная упаковка.
                 if parts.len() == 2 && parts[0] == "f64" && parts[1] == "from_bits" {
                     if let Some(arg) = args.first() {
                         let v = self.emit_expr(arg.expr())?;
-                        return Ok(format!("nova_f64_from_bits({})", v));
+                        return Ok(format!("Nova_f64_from_bits({})", v));
+                    }
+                }
+                if parts.len() == 2 && parts[0] == "f32" && parts[1] == "from_bits" {
+                    if let Some(arg) = args.first() {
+                        let v = self.emit_expr(arg.expr())?;
+                        return Ok(format!("Nova_f32_from_bits({})", v));
                     }
                 }
                 if parts.len() == 2 && parts[0] == "int" && parts[1] == "to_bits" {
@@ -21376,10 +21402,13 @@ impl CEmitter {
                                 _ => "nova_int".into(),
                             };
                         }
-                        // Plan 04 follow-up: f64.from_bits(int) → nova_f64,
-                        // int.to_bits(f64) → nova_int.
+                        // Plan 74: f64/f32.from_bits(uN) → float; legacy
+                        // Plan 04 int.to_bits(f64) → nova_int.
                         if n == "f64" && method == "from_bits" {
                             return "nova_f64".into();
+                        }
+                        if n == "f32" && method == "from_bits" {
+                            return "nova_f32".into();
                         }
                         if n == "int" && method == "to_bits" {
                             return "nova_int".into();
@@ -21585,6 +21614,15 @@ impl CEmitter {
                     }
                     // D74 math methods on f64/f32 — return f64 (most) or bool (predicates).
                     if obj_ty == "nova_f64" || obj_ty == "nova_f32" {
+                        // Plan 74: `f.to_bits()` → unsigned bit-pattern
+                        // (f64→u64, f32→u32).
+                        if method == "to_bits" {
+                            return if obj_ty == "nova_f32" {
+                                "uint32_t".into()
+                            } else {
+                                "uint64_t".into()
+                            };
+                        }
                         if Self::f64_method_to_c(method).is_some() {
                             return match method.as_str() {
                                 "is_nan" | "is_finite" | "is_infinite" => "nova_bool".into(),
@@ -21714,9 +21752,12 @@ impl CEmitter {
                                 _ => "nova_int".into(),
                             };
                         }
-                        // Plan 04 follow-up: f64.from_bits / int.to_bits.
+                        // Plan 74: f64/f32.from_bits; legacy Plan 04 int.to_bits.
                         if eff == "f64" && method_name == "from_bits" {
                             return "nova_f64".into();
+                        }
+                        if eff == "f32" && method_name == "from_bits" {
+                            return "nova_f32".into();
                         }
                         if eff == "int" && method_name == "to_bits" {
                             return "nova_int".into();

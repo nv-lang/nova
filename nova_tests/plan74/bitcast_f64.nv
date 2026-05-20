@@ -1,0 +1,60 @@
+// Plan 74 Ф.4: f64 ↔ u64 IEEE 754 bit-cast.
+//
+// `f64 @to_bits() -> u64` / `f64.from_bits(bits u64) -> f64` —
+// reinterpret-cast между double и его bit-pattern. Реализация:
+// nova_rt/numeric.h (memcpy-based).
+
+module nova_tests.plan74.bitcast_f64
+
+test "f64.to_bits — known IEEE 754 patterns" {
+    // 1.0 = 0x3FF0000000000000 (sign 0, exp 1023, mantissa 0).
+    assert((1.0).to_bits() == 0x3FF0000000000000)
+    // 2.0 = 0x4000000000000000.
+    assert((2.0).to_bits() == 0x4000000000000000)
+    // +0.0 = all zero bits.
+    assert((0.0).to_bits() == 0)
+}
+
+test "f64.from_bits — восстановление из bit-pattern" {
+    assert(f64.from_bits(0x3FF0000000000000) == 1.0)
+    assert(f64.from_bits(0x4000000000000000) == 2.0)
+    assert(f64.from_bits(0) == 0.0)
+}
+
+test "f64 round-trip — from_bits(to_bits(x)) == x" {
+    let a = 3.14159265358979
+    assert(f64.from_bits(a.to_bits()) == a)
+
+    let b = -2.5
+    assert(f64.from_bits(b.to_bits()) == b)
+
+    let c = 1.0e300
+    assert(f64.from_bits(c.to_bits()) == c)
+
+    let d = -1.0e-300
+    assert(f64.from_bits(d.to_bits()) == d)
+}
+
+test "f64.to_bits — negative zero отличается от positive zero" {
+    // -0.0 == 0.0 по IEEE 754, но bit-patterns различны:
+    // -0.0 = 0x8000000000000000 (sign bit set), +0.0 = 0.
+    let neg_zero = -0.0
+    let pos_zero = 0.0
+    assert(neg_zero == pos_zero)
+    assert(neg_zero.to_bits() != pos_zero.to_bits())
+    assert(pos_zero.to_bits() == 0)
+}
+
+test "f64 NaN bit-pattern round-trip" {
+    // Quiet NaN: 0x7FF8000000000000.
+    let nan = f64.from_bits(0x7FF8000000000000)
+    assert(nan.is_nan())
+    assert(nan.to_bits() == 0x7FF8000000000000)
+}
+
+test "f64 infinity bit-pattern" {
+    // +Infinity = 0x7FF0000000000000.
+    let inf = f64.from_bits(0x7FF0000000000000)
+    assert(inf.is_infinite())
+    assert(inf.to_bits() == 0x7FF0000000000000)
+}
