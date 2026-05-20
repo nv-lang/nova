@@ -1,0 +1,35 @@
+// interpolation_char.nv — Plan 75 Ф.5
+//
+// Char-literal в ${} работает (codegen знает тип литерала).
+// Char-переменная в ${} — известный баг Q-char-tracking-in-interpolation:
+//   "${c}" эмитит nova_int_to_str вместо nova_char_to_str.
+// Workaround: ${str.from(c)} принудительно вызывает char→str encode.
+
+module str.interpolation_char
+
+test "char literal in interpolation" {
+    assert("c=${'A'}" == "c=A")
+}
+
+test "char literal Cyrillic in interpolation" {
+    assert("${'Я'}" == "Я")
+}
+
+test "char literal emoji in interpolation" {
+    assert("${'😀'}" == "😀")
+}
+
+test "char variable via str.from workaround" {
+    let c char = 'A'
+    assert("${str.from(c)}" == "A")
+}
+
+test "char variable Cyrillic via str.from workaround" {
+    let cy char = 'Ю'
+    assert("${str.from(cy)}" == "Ю")
+}
+
+test "char variable emoji via str.from workaround" {
+    let e char = '😀'
+    assert("${str.from(e)}" == "😀")
+}

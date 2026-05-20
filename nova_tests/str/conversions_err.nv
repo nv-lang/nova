@@ -1,0 +1,52 @@
+// conversions_err.nv — Plan 75 Ф.4
+// Err-ветки конверсий: int/f64/bool/char.try_from с невалидными входами.
+
+module str.conversions_err
+
+test "int.try_from non-numeric string returns Err" {
+    assert(int.try_from("abc").is_err())
+}
+
+test "int.try_from empty string returns Err" {
+    assert(int.try_from("").is_err())
+}
+
+test "int.try_from overflow returns Err" {
+    assert(int.try_from("9999999999999999999999").is_err())
+}
+
+test "int.try_from float string returns Err" {
+    assert(int.try_from("3.14").is_err())
+}
+
+test "f64.try_from bad string returns Err" {
+    assert(f64.try_from("bad").is_err())
+}
+
+test "f64.try_from empty string returns Err" {
+    assert(f64.try_from("").is_err())
+}
+
+test "bool.try_from maybe returns Err" {
+    assert(bool.try_from("maybe").is_err())
+}
+
+test "bool.try_from True (capital) returns Err" {
+    assert(bool.try_from("True").is_err())
+}
+
+test "bool.try_from 1 returns Err" {
+    assert(bool.try_from("1").is_err())
+}
+
+test "char.try_from empty string returns Err" {
+    assert(char.try_from("").is_err())
+}
+
+test "char.try_from multi-char string returns Err" {
+    assert(char.try_from("hello").is_err())
+}
+
+test "char.try_from two-char returns Err" {
+    assert(char.try_from("ab").is_err())
+}
