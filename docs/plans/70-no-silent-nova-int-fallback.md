@@ -514,3 +514,32 @@ inline-тестах до фикса). После Plan 70 Phase A2/A3 эти ме
   strict migration deferred — требует дополнительные scope (bidirectional
   inference / tuple decoder / closure-capture self-registration). Documented
   как future work, не silent miscompilation в test corpus.
+
+- **2026-05-20 D46 BinOp dispatch session 3** (worktree `plan-70`):
+  Закрыт конкретный known bug «Set.or/and/minus — silent wrong output»
+  (описан выше в разделе «Конкретные known bugs»). Три связанных фикса:
+
+  **Ф.1 — BitOr/BitAnd dispatch** (`emit_c.rs`, внутри `if let Some(sty) = sum_ty` блока):
+  Для моно'd generic типа (имя содержит `"____"`) ищет метод в
+  `self_method_decls` по `(base_type, "or")` / `(base_type, "and")`,
+  строит `type_subst` из receiver generics, вызывает
+  `register_mono_method_instance`, возвращает `Nova_T____args_method_or(l, r)`.
+
+  **Ф.2 — Sub fallback для generic types** (`emit_c.rs`):
+  Существующий Sub-блок искал `method_overloads[("Set____nova_int","minus")]`
+  (erased key "Set" не находил). Добавлен fallback через `self_method_decls`
+  с аналогичной mono-instance логикой.
+
+  **Ф.3 — `infer_expr_c_type` Self-return fix** (`emit_c.rs`, Ф.3 fallback ~line 20402):
+  `apply_type_subst_to_ref(Self, {T→nova_int})` возвращал None (Self ≠ type
+  param в subst-словаре). Добавлен `or_else`: если return type —
+  `TypeRef::Named["Self"]` и base/args известны → возвращаем
+  `compute_generic_type_c_name(base, args)*`.
+  БЕЗ этого фикса: `let mut out = Self.new()` в моно'd методе получало тип
+  `Nova_Set*` (erased) → `out.insert(x)` вызывал NOP-stub → пустой Set.
+
+  **Тест:** `nova_tests/modules/set_ops.nv` (3 теста: Set.or/and/minus) — **3/3 PASS**.
+  **Регрессии:** 862 PASS / 2 pre-existing plan72 FAIL / 47 SKIP.
+  **Simplification:** `[M-d46-multi-generic-arg-split]` (multi-arg nested generic
+  split edge case) задокументирован в `docs/simplifications.md`.
+  **Merged:** plan-70 → main 2026-05-20 (commit `5cf129ace28`).
