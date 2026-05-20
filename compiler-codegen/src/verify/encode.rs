@@ -241,15 +241,33 @@ pub fn encode_expr_with_ctx(e: &Expr, ctx: &EncodeCtx) -> Result<SmtTerm, Encodi
         ExprKind::Binary { op, left, right } => {
             let l = encode_expr_with_ctx(left, ctx)?;
             let r = encode_expr_with_ctx(right, ctx)?;
-            // Plan 33.3 Ф.11: если хотя бы один операнд — FP literal или
-            // переменная FP-типа, используем fp.* операторы.
-            let is_fp = is_fp_term(&l, ctx) || is_fp_term(&r, ctx);
-            if is_fp {
-                let fp_op = bin_op_to_fp_smt(*op)?;
-                Ok(SmtTerm::App(fp_op.into(), vec![l, r]))
+            // Plan 33.7: BitVec dispatch — если хотя бы один операнд BitVec-типа.
+            let is_bv = is_bv_term(&l, ctx) || is_bv_term(&r, ctx);
+            if is_bv {
+                // Знаковость — из ширины типа: u8/u16/u32/u64 unsigned, i8/i16/i32 signed.
+                // Эвристика: только unsigned по умолчанию (u* типы стандарт для bv);
+                // если нужна знаковость — пользователь пишет i32/i8 тип параметра.
+                // Точное решение: смотреть type_name в AST — отложено до V2.
+                // Пока: все bv ops unsigned (bvult/bvule/etc.) для u8/u16/u32/u64.
+                // i8/i16/i32 — signed. Определяем через первое ненулевое bv_width + odd-width trick.
+                // Простейший корректный вариант: unsigned (u* доминирует). TODO V2: per-type.
+                let is_signed = false; // V1: assume unsigned; i8/i16/i32 V2
+                let bv_op = bin_op_to_bv_smt(*op, is_signed)?;
+                // IntLit в BV-контексте: автоматически lift в BitVecLit с шириной из другого операнда.
+                let width = bv_width(&l, ctx).or_else(|| bv_width(&r, ctx)).unwrap_or(32);
+                let l2 = lift_intlit_to_bv(l, width);
+                let r2 = lift_intlit_to_bv(r, width);
+                Ok(SmtTerm::App(bv_op.into(), vec![l2, r2]))
             } else {
-                let op_str = bin_op_to_smt(*op)?;
-                Ok(SmtTerm::App(op_str.into(), vec![l, r]))
+                // Plan 33.3 Ф.11: FP dispatch.
+                let is_fp = is_fp_term(&l, ctx) || is_fp_term(&r, ctx);
+                if is_fp {
+                    let fp_op = bin_op_to_fp_smt(*op)?;
+                    Ok(SmtTerm::App(fp_op.into(), vec![l, r]))
+                } else {
+                    let op_str = bin_op_to_smt(*op)?;
+                    Ok(SmtTerm::App(op_str.into(), vec![l, r]))
+                }
             }
         }
 
@@ -430,10 +448,20 @@ pub fn encode_expr_with_ctx(e: &Expr, ctx: &EncodeCtx) -> Result<SmtTerm, Encodi
             "оператор `??` в контракте не поддерживается; \
              используйте if/else или #pure fn".into())),
 
-        // As (type cast) / Is (type check) — типовые операции вне SMT.
-        ExprKind::As(_, ty) => Err(EncodingError::Unsupported(format!(
-            "type cast `as {:?}` в контракте не поддерживается; \
-             используйте #pure fn для конвертации", ty))),
+        // As (type cast): Plan 33.7 — numeric BV casts supported.
+        // `IntLit(n) as u32` → BitVecLit(n, 32); other casts → inner term.
+        // Non-BV casts fall through to Unsupported.
+        ExprKind::As(inner, ty) => {
+            let bv_width_opt = type_ref_name_to_bv_width(ty);
+            if let Some(w) = bv_width_opt {
+                // Encode inner; then lift if IntLit.
+                let inner_t = encode_expr_with_ctx(inner, ctx)?;
+                Ok(lift_intlit_to_bv(inner_t, w))
+            } else {
+                // Non-BV cast: encode inner and pass through (e.g. int cast).
+                encode_expr_with_ctx(inner, ctx)
+            }
+        }
         ExprKind::Is(_, ty) => Err(EncodingError::Unsupported(format!(
             "type check `is {:?}` в контракте не поддерживается; \
              используйте discriminant через #pure fn", ty))),
@@ -600,6 +628,58 @@ fn is_fp_term(t: &SmtTerm, ctx: &EncodeCtx) -> bool {
     }
 }
 
+/// Plan 33.7: определяем по SmtTerm — является ли он BitVec типом.
+fn is_bv_term(t: &SmtTerm, ctx: &EncodeCtx) -> bool {
+    match t {
+        SmtTerm::BitVecLit(_, _) => true,
+        SmtTerm::Var(name) => matches!(ctx.var_sorts.get(name), Some(SortRef::BitVec(_))),
+        SmtTerm::App(op, _) if op.starts_with("bv") => true,
+        _ => false,
+    }
+}
+
+/// Plan 33.7: получить ширину BitVec из term (для литерала или var).
+/// Возвращает None если тип неизвестен.
+fn bv_width(t: &SmtTerm, ctx: &EncodeCtx) -> Option<u32> {
+    match t {
+        SmtTerm::BitVecLit(_, w) => Some(*w),
+        SmtTerm::Var(name) => {
+            if let Some(SortRef::BitVec(w)) = ctx.var_sorts.get(name) {
+                Some(*w)
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
+/// Plan 33.7: BinOp → BitVec SMT operator (знаковость из is_signed).
+fn bin_op_to_bv_smt(op: BinOp, is_signed: bool) -> Result<&'static str, EncodingError> {
+    Ok(match op {
+        BinOp::Add => "bvadd",
+        BinOp::Sub => "bvsub",
+        BinOp::Mul => "bvmul",
+        BinOp::Div => if is_signed { "bvsdiv" } else { "bvudiv" },
+        BinOp::Mod => if is_signed { "bvsrem" } else { "bvurem" },
+        BinOp::Eq  => "=",
+        BinOp::Neq => "!=",
+        BinOp::Lt  => if is_signed { "bvslt" } else { "bvult" },
+        BinOp::Le  => if is_signed { "bvsle" } else { "bvule" },
+        BinOp::Gt  => if is_signed { "bvsgt" } else { "bvugt" },
+        BinOp::Ge  => if is_signed { "bvsge" } else { "bvuge" },
+        BinOp::And => "and",
+        BinOp::Or  => "or",
+        BinOp::Implies => "=>",
+        BinOp::Iff => "<=>",
+        BinOp::BitAnd => "bvand",
+        BinOp::BitOr  => "bvor",
+        BinOp::BitXor => "bvxor",
+        BinOp::Shl   => "bvshl",
+        BinOp::Shr   => "bvlshr",
+    })
+}
+
 /// Plan 33.3 Ф.11: BinOp → FP SMT operator.
 fn bin_op_to_fp_smt(op: BinOp) -> Result<&'static str, EncodingError> {
     Ok(match op {
@@ -633,11 +713,39 @@ fn bin_op_to_smt(op: BinOp) -> Result<&'static str, EncodingError> {
         BinOp::And => "and", BinOp::Or => "or",
         BinOp::Implies => "=>",
         BinOp::Iff => "=",
+        // Plan 33.7: bitwise ops на Int-контексте (без bv var) → не поддерживаем.
+        // В bv-контексте (bv_term detected) они обрабатываются в bin_op_to_bv_smt.
         BinOp::BitAnd | BinOp::BitOr | BinOp::BitXor | BinOp::Shl | BinOp::Shr => {
             return Err(EncodingError::Unsupported(
-                "bitwise operators in contracts not supported in Plan 33.1".into()));
+                "bitwise operators require u8/u16/u32/u64/i8/i16/i32 typed parameters \
+                 (bit-vector theory, Plan 33.7); `int` context not supported".into()));
         }
     })
+}
+
+/// Plan 33.7: lift IntLit в BitVecLit с нужной шириной если контекст bv.
+fn lift_intlit_to_bv(t: SmtTerm, width: u32) -> SmtTerm {
+    match t {
+        SmtTerm::IntLit(n) => SmtTerm::BitVecLit(n as u64, width),
+        other => other,
+    }
+}
+
+/// Plan 33.7: map TypeRef → BV width for `as`-cast support.
+/// Returns Some(N) for BV types, None for non-BV types.
+fn type_ref_name_to_bv_width(ty: &crate::ast::TypeRef) -> Option<u32> {
+    if let crate::ast::TypeRef::Named { path, generics, .. } = ty {
+        if generics.is_empty() && path.len() == 1 {
+            return match path[0].as_str() {
+                "u8" | "byte" | "i8" => Some(8),
+                "u16" | "i16" => Some(16),
+                "u32" | "i32" => Some(32),
+                "u64" | "usize" | "uint" => Some(64),
+                _ => None,
+            };
+        }
+    }
+    None
 }
 
 /// Make valid SMT-IR var name from pretty-printed term.

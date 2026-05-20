@@ -357,6 +357,10 @@ pub struct FnDecl {
     /// recursive fns. None = default 0 (без unfold). Z3 emits chain of
     /// N axioms (V2 — TrivialBackend ignores).
     pub fuel: Option<u32>,
+    /// Plan 33.7: `#nooverflow` — для каждой BitVec-арифметической операции
+    /// в теле fn генерируется overflow VC. Если доказательство неудачно →
+    /// compile error. Без атрибута: wrap-around семантика (2's complement).
+    pub no_overflow: bool,
 }
 
 /// Plan 33.1 (D24): один контракт-clause функции.

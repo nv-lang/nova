@@ -784,6 +784,70 @@ impl VerificationPipeline {
             }
         }
 
+        // Plan 33.7 Ф.4: `#nooverflow` — для каждой BV-арифм. операции в теле
+        // генерируется overflow VC. Если не доказано → compile error (E2410).
+        if fd.no_overflow {
+            let bv_ops = collect_bv_arith_ops_in_body(&fd.body, &ctx);
+            for (op_span, op, lhs_t, rhs_t) in bv_ops {
+                let width = match (&lhs_t, &rhs_t) {
+                    (SmtTerm::BitVecLit(_, w), _) => *w,
+                    (_, SmtTerm::BitVecLit(_, w)) => *w,
+                    (SmtTerm::Var(n), _) => match ctx.var_sorts.get(n) {
+                        Some(SortRef::BitVec(w)) => *w,
+                        _ => continue,
+                    },
+                    (_, SmtTerm::Var(n)) => match ctx.var_sorts.get(n) {
+                        Some(SortRef::BitVec(w)) => *w,
+                        _ => continue,
+                    },
+                    _ => continue,
+                };
+                let is_signed = matches!(width, 8 | 16 | 32) && {
+                    // Determine signedness from var sort.
+                    // V1: treat i8/i16/i32 as signed, u8/u16/u32/u64 as unsigned.
+                    // We can't distinguish here without type info, default unsigned.
+                    false
+                };
+                let vc: Option<SmtTerm> = match op {
+                    crate::ast::BinOp::Add => Some(SmtTerm::App(
+                        if is_signed { "bvadd_no_overflow_s" } else { "bvadd_no_overflow_u" }.into(),
+                        vec![lhs_t, rhs_t],
+                    )),
+                    crate::ast::BinOp::Sub => Some(SmtTerm::App(
+                        if is_signed { "bvsub_no_underflow_s" } else { "bvsub_no_underflow_u" }.into(),
+                        vec![lhs_t, rhs_t],
+                    )),
+                    crate::ast::BinOp::Mul => Some(SmtTerm::App(
+                        if is_signed { "bvmul_no_overflow_s" } else { "bvmul_no_overflow_u" }.into(),
+                        vec![lhs_t, rhs_t],
+                    )),
+                    _ => None,
+                };
+                if let Some(vc_term) = vc {
+                    let op_name = match op {
+                        crate::ast::BinOp::Add => "addition",
+                        crate::ast::BinOp::Sub => "subtraction",
+                        crate::ast::BinOp::Mul => "multiplication",
+                        _ => "arithmetic",
+                    };
+                    match try_prove(&mut *backend, vc_term) {
+                        SatResult::Unsat(_) => {
+                            results.push((op_span, VerifyResult::Proven));
+                        }
+                        SatResult::Sat(model) => {
+                            let cex = format_counterexample(&model);
+                            results.push((op_span, VerifyResult::Disproved(model,
+                                format!("#nooverflow: {} may overflow (u{}): {}", op_name, width, cex))));
+                        }
+                        SatResult::Unknown(reason) => {
+                            results.push((op_span, VerifyResult::Unknown(
+                                format!("#nooverflow {} check: {}", op_name, unknown_to_diag_message(reason)))));
+                        }
+                    }
+                }
+            }
+        }
+
         let _ = self.timeout_ms; // РёСЃРїРѕР»СЊР·СѓРµС‚СЃСЏ РєРѕРіРґР° РґРѕР±Р°РІРёРј Z3-backend
         results
     }
@@ -2278,10 +2342,18 @@ fn type_ref_to_sort(ty: &crate::ast::TypeRef) -> SortRef {
     if let crate::ast::TypeRef::Named { path, .. } = ty {
         if let Some(name) = path.last() {
             return match name.as_str() {
-                "int" | "i32" | "i64" | "u32" | "u64" | "usize" => SortRef::Int,
+                // Unbounded integer (Nova `int` = i64) — Z3 Int sort (global decision 33.1).
+                "int" | "i64" | "money" | "nat" => SortRef::Int,
+                // Plan 33.7: sized integer types → BitVec sort.
+                "u8" | "byte" | "i8"  => SortRef::BitVec(8),
+                "u16" | "i16"          => SortRef::BitVec(16),
+                "u32" | "i32"          => SortRef::BitVec(32),
+                "u64" | "i32u" | "usize" => SortRef::BitVec(64),
                 "bool" => SortRef::Bool,
-                "str" => SortRef::Str,
-                _ => SortRef::Int,
+                "str"  => SortRef::Str,
+                "f32"  => SortRef::F32,
+                "f64"  => SortRef::F64,
+                _      => SortRef::Int,
             };
         }
     }
@@ -2540,12 +2612,17 @@ pub(super) fn find_exists_var(e: &crate::ast::Expr) -> Option<String> {
 pub(super) fn type_to_sort(ty: &TypeRef) -> SortRef {
     match ty {
         TypeRef::Named { path, .. } if path.len() == 1 => match path[0].as_str() {
-            "int" | "i32" | "i64" | "money" | "nat" => SortRef::Int,
+            "int" | "i64" | "money" | "nat" => SortRef::Int,
+            // Plan 33.7: sized integer types → BitVec.
+            "u8" | "byte" | "i8"      => SortRef::BitVec(8),
+            "u16" | "i16"              => SortRef::BitVec(16),
+            "u32" | "i32"              => SortRef::BitVec(32),
+            "u64" | "usize"            => SortRef::BitVec(64),
             "bool" => SortRef::Bool,
-            "str" => SortRef::Str,
-            "f32" => SortRef::F32,
-            "f64" => SortRef::F64,
-            other => SortRef::Named(other.into()),
+            "str"  => SortRef::Str,
+            "f32"  => SortRef::F32,
+            "f64"  => SortRef::F64,
+            other  => SortRef::Named(other.into()),
         },
         _ => SortRef::Named("opaque".into()),
     }
@@ -3695,6 +3772,104 @@ fn collect_used_idents_in_expr(e: &Expr, out: &mut std::collections::HashSet<Str
         }
         ExprKind::Member { obj, .. } => collect_used_idents_in_expr(obj, out),
         _ => {}
+    }
+}
+
+/// Plan 33.7 Ф.4: собрать все BV-арифметические операции в теле fn.
+/// Возвращает Vec<(span, op, lhs_SmtTerm, rhs_SmtTerm)>.
+/// Только Add/Sub/Mul где оба операнда имеют BV-сорт в var_sorts.
+fn collect_bv_arith_ops_in_body(
+    body: &FnBody,
+    ctx: &encode::EncodeCtx,
+) -> Vec<(Span, crate::ast::BinOp, SmtTerm, SmtTerm)> {
+    let mut out = Vec::new();
+    match body {
+        FnBody::Expr(e) => collect_bv_arith_in_expr(e, ctx, &mut out),
+        FnBody::Block(b) => {
+            for s in &b.stmts { collect_bv_arith_in_stmt(s, ctx, &mut out); }
+            if let Some(t) = &b.trailing { collect_bv_arith_in_expr(t, ctx, &mut out); }
+        }
+        FnBody::External => {}
+    }
+    out
+}
+
+fn collect_bv_arith_in_stmt(
+    s: &Stmt,
+    ctx: &encode::EncodeCtx,
+    out: &mut Vec<(Span, crate::ast::BinOp, SmtTerm, SmtTerm)>,
+) {
+    match s {
+        Stmt::Let(ld) => {
+            collect_bv_arith_in_expr(&ld.value, ctx, out);
+        }
+        Stmt::Expr(e) => collect_bv_arith_in_expr(e, ctx, out),
+        Stmt::Assign { value, .. } => collect_bv_arith_in_expr(value, ctx, out),
+        Stmt::Return { value: Some(v), .. } => collect_bv_arith_in_expr(v, ctx, out),
+        Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => {
+            collect_bv_arith_in_expr(expr, ctx, out);
+        }
+        Stmt::Throw { value, .. } | Stmt::Defer { body: value, .. } | Stmt::ErrDefer { body: value, .. } => {
+            collect_bv_arith_in_expr(value, ctx, out);
+        }
+        _ => {}
+    }
+}
+
+fn collect_bv_arith_in_expr(
+    e: &Expr,
+    ctx: &encode::EncodeCtx,
+    out: &mut Vec<(Span, crate::ast::BinOp, SmtTerm, SmtTerm)>,
+) {
+    match &e.kind {
+        ExprKind::Binary { op, left, right } => {
+            // Recurse first.
+            collect_bv_arith_in_expr(left, ctx, out);
+            collect_bv_arith_in_expr(right, ctx, out);
+            // Only collect overflow-relevant ops.
+            if !matches!(op, crate::ast::BinOp::Add | crate::ast::BinOp::Sub | crate::ast::BinOp::Mul) {
+                return;
+            }
+            // Check if either operand is BV-sorted.
+            let lhs_is_bv = is_expr_bv_sorted(left, ctx);
+            let rhs_is_bv = is_expr_bv_sorted(right, ctx);
+            if !lhs_is_bv && !rhs_is_bv { return; }
+            // Encode both sides; skip if encoding fails (e.g. complex expr).
+            let Ok(lhs_t) = encode::encode_expr_with_ctx(left, ctx) else { return };
+            let Ok(rhs_t) = encode::encode_expr_with_ctx(right, ctx) else { return };
+            out.push((e.span, *op, lhs_t, rhs_t));
+        }
+        ExprKind::If { cond, then, else_ } => {
+            collect_bv_arith_in_expr(cond, ctx, out);
+            for s in &then.stmts { collect_bv_arith_in_stmt(s, ctx, out); }
+            if let Some(t) = &then.trailing { collect_bv_arith_in_expr(t, ctx, out); }
+            if let Some(eb) = else_ {
+                match eb {
+                    ElseBranch::Block(b) => {
+                        for s in &b.stmts { collect_bv_arith_in_stmt(s, ctx, out); }
+                        if let Some(t) = &b.trailing { collect_bv_arith_in_expr(t, ctx, out); }
+                    }
+                    ElseBranch::If(e2) => collect_bv_arith_in_expr(e2, ctx, out),
+                }
+            }
+        }
+        ExprKind::Call { func, args, .. } => {
+            collect_bv_arith_in_expr(func, ctx, out);
+            for a in args { collect_bv_arith_in_expr(a.expr(), ctx, out); }
+        }
+        ExprKind::Unary { operand, .. } => collect_bv_arith_in_expr(operand, ctx, out),
+        _ => {}
+    }
+}
+
+fn is_expr_bv_sorted(e: &Expr, ctx: &encode::EncodeCtx) -> bool {
+    match &e.kind {
+        ExprKind::Ident(n) => matches!(ctx.var_sorts.get(n), Some(SortRef::BitVec(_))),
+        ExprKind::Binary { left, right, .. } => {
+            is_expr_bv_sorted(left, ctx) || is_expr_bv_sorted(right, ctx)
+        }
+        ExprKind::IntLit(_) => false, // bare int literal — BV only in context
+        _ => false,
     }
 }
 
