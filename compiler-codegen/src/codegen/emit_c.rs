@@ -11889,7 +11889,7 @@ impl CEmitter {
                     self.line(&format!("{} {} = {};", inner_ty, try_tmp, val));
                     self.line(&format!("if ({}.tag == NOVA_TAG_Option_None) {{ return {}; }}", try_tmp, none_expr));
                     Ok(format!("({}.value)", try_tmp))
-                } else if inner_ty == "Nova_Result*" {
+                } else if Self::is_result_like(&inner_ty) {
                     // Result?: if Err, propagate Err; else extract Ok value
                     self.line(&format!("Nova_Result* {} = {};", try_tmp, val));
                     self.line(&format!("if ({}->tag == NOVA_TAG_Result_Err) {{ return nova_make_Result_Err({}->payload.Err._0); }}", try_tmp, try_tmp));
@@ -11924,7 +11924,7 @@ impl CEmitter {
                         bang_tmp
                     ));
                     Ok(format!("({}.value)", bang_tmp))
-                } else if inner_ty == "Nova_Result*" {
+                } else if Self::is_result_like(&inner_ty) {
                     // Result!!: на Err бросаем error value через Fail-эффект.
                     //
                     // Plan 61 followup #3: hybrid Err handling.
@@ -13512,7 +13512,7 @@ impl CEmitter {
                     }
                     // Plan 72 P1-C: Result.unwrap_or inline with proper T cast when type is known.
                     // Must come BEFORE registry dispatch so non-nova_int T types are handled.
-                    if obj_ty == "Nova_Result*" && method == "unwrap_or" {
+                    if Self::is_result_like(&obj_ty) && method == "unwrap_or" {
                         // Plan 59 Ф.7.5-lite: inline-aware Ok-type inference.
                         let ok_c_ty = self.infer_result_type_params(obj)
                             .map(|(ok_c, _)| ok_c)
@@ -13547,7 +13547,7 @@ impl CEmitter {
                     // entry; sentinel `"<inline>"` (err/unwrap_or_else/map/
                     // map_err/unwrap) fall through к existing inline блокам
                     // ниже. Result методы — non-per-T (single bootstrap mono).
-                    if obj_ty == "Nova_Result*" {
+                    if Self::is_result_like(&obj_ty) {
                         let routing = self.sum_schema_registry
                             .lookup_method_routing("Result", method.as_str())
                             .cloned();
@@ -19836,6 +19836,15 @@ impl CEmitter {
         self.novares_value_types.borrow().get(n).cloned()
     }
 
+    /// Plan 59 Ф.7.5: распознаёт C-тип как Result — legacy `Nova_Result*`
+    /// ИЛИ mono'd `NovaRes_<n>*`. Используется в dispatch-проверках вместо
+    /// `ty == "Nova_Result*"` чтобы шаг D (флип на mono) не требовал
+    /// править каждый сайт.
+    fn is_result_like(ty: &str) -> bool {
+        ty == "Nova_Result*"
+            || (ty.starts_with("NovaRes_") && ty.ends_with('*'))
+    }
+
     /// Plan 59 Ф.7.5: lazy-регистрирует mono'd `NovaRes_<ok>_<err>` —
     /// per-(T,E) Result-тип, аналог `register_novaopt_decl`.
     ///
@@ -21158,7 +21167,7 @@ impl CEmitter {
                     }
                     // D26 prelude: Nova_Result* method type inference.
                     // Plan 72 P1-C: use tracked Result[T,E] type params when available.
-                    if obj_ty == "Nova_Result*" {
+                    if Self::is_result_like(&obj_ty) {
                         // Plan 59 Ф.7.5-lite: inline-aware (T,E) inference.
                         let (ok_c, err_c) = self.infer_result_type_params(obj)
                             .unwrap_or_else(|| ("nova_int".into(), "nova_str".into()));
