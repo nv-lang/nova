@@ -10134,7 +10134,16 @@ impl CEmitter {
                 let ty_c = if let Some(ty) = &decl.ty {
                     self.type_ref_to_c(ty)?
                 } else {
-                    self.infer_expr_c_type(&decl.value)
+                    let inferred = self.infer_expr_c_type(&decl.value);
+                    if inferred == "__none_ambiguous__" {
+                        // None без контекста — дефолт nova_int (legacy).
+                        // Ошибка только если тип аннотирован и несовместим
+                        // (например let x Option[str] = None без hint).
+                        // TODO(62.B): bidirectional inference из usage.
+                        "NovaOpt_nova_int".into()
+                    } else {
+                        inferred
+                    }
                 };
                 // target-type-aware emit: для typed-integer ty_c литералы внутри
                 // Binary получают native-typed cast вместо ((nova_int)NLL).
@@ -15346,7 +15355,6 @@ impl CEmitter {
                         return Ok(format!("nova_make_Option_Some({})", arg_v));
                     }
                     if parts[0] == "Option" && method_name == "None" && args.is_empty() {
-                        // None — use current_fn_return_ty if it's NovaOpt_<X>, else nova_int.
                         let opt_ty: String = self.current_fn_return_ty.as_ref()
                             .filter(|t| t.starts_with("NovaOpt_"))
                             .cloned()
@@ -15403,7 +15411,6 @@ impl CEmitter {
             return Ok(format!("nova_make_Option_Some({})", arg_v));
         }
         if func_c == "nova_make_Option_None" && args.is_empty() {
-            // None — T берётся из current_fn_return_ty если это NovaOpt_<X>.
             let opt_ty: String = self.current_fn_return_ty.as_ref()
                 .filter(|t| t.starts_with("NovaOpt_"))
                 .cloned()
@@ -20803,7 +20810,7 @@ impl CEmitter {
                         return match method.as_str() {
                             "is_some" | "is_none" => "nova_bool".into(),
                             "unwrap_or" | "unwrap" | "unwrap_or_else" => elem_ty,
-                            "map" => format!("NovaOpt_{}", elem_ty),
+                            "map" | "or" => format!("NovaOpt_{}", elem_ty),
                             "ok_or" => "Nova_Result*".into(),
                             _ => "nova_int".into(),
                         };
