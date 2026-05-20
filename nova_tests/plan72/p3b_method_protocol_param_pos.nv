@@ -1,0 +1,58 @@
+module plan72.p3b_method_protocol_param_pos
+
+// Plan 72 P3-B: protocol-typed parameter on a METHOD (instance + static).
+// Regression guard for closed [M-protocol-param-free-fn-only] — call-site
+// arg-boxing now covers methods, not only free functions.
+
+type IntCounter {
+    mut cur int
+    end int
+}
+
+fn IntCounter mut @next() -> Option[int] => {
+    if @cur < @end {
+        let v = @cur
+        @cur += 1
+        Some(v)
+    } else {
+        None
+    }
+}
+
+type Summer { tag int }
+
+// instance method with a protocol-typed parameter
+fn Summer @drain(mut it Iter[int]) -> int => {
+    let mut count = 0
+    let mut go = true
+    loop {
+        if !go { break }
+        let r = it.next()
+        if r.is_some() { count += 1 } else { go = false }
+    }
+    count
+}
+
+// static method with a protocol-typed parameter
+fn Summer.count_static(mut it Iter[int]) -> int => {
+    let mut n = 0
+    let mut go = true
+    loop {
+        if !go { break }
+        if it.next().is_some() { n += 1 } else { go = false }
+    }
+    n
+}
+
+test "method protocol param — instance call boxes arg" {
+    let s = Summer { tag: 0 }
+    let c = IntCounter { cur: 0, end: 4 }
+    let n = s.drain(c)
+    assert(n == 4)
+}
+
+test "method protocol param — static call boxes arg" {
+    let c = IntCounter { cur: 0, end: 3 }
+    let n = Summer.count_static(c)
+    assert(n == 3)
+}

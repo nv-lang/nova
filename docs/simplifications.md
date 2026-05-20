@@ -10250,37 +10250,29 @@ G/H). ~3700 LOC implementation cumulative.
 
 ## Plan 72 — P3-B protocol fat pointers (2026-05-20)
 
-### [M-protocol-param-free-fn-only] (DEFER — Plan 72 P3-B)
-- **Где:** `compiler-codegen/src/codegen/emit_c.rs::emit_call`
-  (`fn_protocol_params` registry).
-- **Что упрощено:** call-site боксинг concrete-аргументов в `NovaBox_*`
-  для protocol-typed параметров (`fn foo(x Iter[int])`) реализован только
-  для **free-function** вызовов. Static/instance методы с
-  protocol-параметром не получают arg-боксинг на call-site.
-- **Почему:** `emit_call` ~3100 строк без центрального arg-hook; method
-  call paths разбросаны по десяткам return-веток. Free-fn путь
-  (финальный arg-loop) — единственная локализованная точка для боксинга
-  без инвазивной правки всего emit_call.
-- **Как чинить:** расширить ключ `fn_protocol_params` на `Type.method`
-  форму + хукнуть боксинг в method-call ветках emit_call (или ввести
-  общий arg-coercion hook через emit_expr_with_target_type).
-- **Приоритет:** L — фикстура p3b_vtable_dispatch (free fn `consume_iter`)
-  покрыта; методы с protocol-параметром в текущем коде редки, и при
-  пропуске ловится CC-FAIL (type mismatch), не silent-wrong.
+### [M-protocol-param-free-fn-only] ✅ RESOLVED (Plan 72 P3-B, 2026-05-21)
+- **Что было:** call-site боксинг concrete-аргументов в `NovaBox_*` для
+  protocol-typed параметров (`fn foo(x Iter[int])`) работал только для
+  **free-function** вызовов; static/instance методы не получали arg-боксинг.
+- **Как закрыто:** унифицированный pre-pass в начале `emit_call` — для любого
+  callee с protocol-параметрами concrete-аргументы пре-боксируются в
+  `NovaBox_*`-temporaries, и вызов re-dispatch'ится с заменой этих
+  аргументов на temp-ident'ы. Один хук покрывает free fn + static + instance
+  методы, без per-branch правок. `fn_protocol_params` регистрируется и для
+  методов (ключ `Type.method`); `call_protocol_params_key` резолвит callee
+  всех трёх форм (включая instance — через тип receiver'а).
+- **Verified:** `nova_tests/plan72/p3b_method_protocol_param_pos.nv`
+  (instance + static метод с protocol-параметром) ✅; plan72 test-all 12/12.
 
-### [M-protocol-return-wrap-relies-on-infer] (DEFER — Plan 72 P3-B)
-- **Где:** `emit_c.rs::wrap_protocol_return` / `box_value_for_protocol`.
-- **Что упрощено:** боксинг return/arg-значения в `NovaBox_*` берёт
-  конкретный тип через `infer_expr_c_type`. Если inference вернёт
-  не-указатель (`nova_int`/`NovaOpt_X`) — error-path возвращает значение
-  необёрнутым → CC-FAIL вместо Nova-диагностики.
-- **Почему:** конкретный тип реализатора известен только из тела/арга —
-  `infer_expr_c_type` единственный источник; зависимость inherent.
-- **Как чинить:** при желании — strict-error вместо тихого fallback;
-  множество отвергаемых программ то же (CC-FAIL → Nova-error).
-- **Приоритет:** L — для type-checked кода недостижимо (примитив,
-  реализующий протокол, нетипичен); idiomatic if/match/var — проверено,
-  всё боксится корректно. Всегда CC-FAIL, не silent miscompile.
+### [M-protocol-return-wrap-relies-on-infer] ✅ RESOLVED (Plan 72 P3-B, 2026-05-21)
+- **Что было:** `box_value_for_protocol` при неудаче боксинга (concrete-тип —
+  не-указатель) тихо возвращал необёрнутое значение → confusing CC-FAIL
+  ниже по потоку вместо Nova-диагностики.
+- **Как закрыто:** вместо тихого fallback — строгая compile-ошибка **E7202**
+  («cannot box value into protocol … — concrete type … is not a boxable
+  implementer»). Путь достижим только для не-указательного concrete-типа;
+  type-checker нормально гарантирует record/sum implementer, так что это
+  strict defensive guard.
 
 ---
 
