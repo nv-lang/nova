@@ -9993,6 +9993,10 @@ G/H). ~3700 LOC implementation cumulative.
 - **Приоритет:** L для Plan 67 (06_contracts — primary target — works);
   M для overall corpus health.
 
+---
+
+## Plan 62 — prelude hardcode migration (2026-05-18)
+
 ### [M-result-method-named-var-only] (DEFER — Plan 62.A.bis Ф.3)
 - **Где:** `emit_c.rs` — `result_type_params: HashMap<String, (String,
   String)>` на `CEmitter`; method-dispatch для `unwrap`/`unwrap_or`/
@@ -10054,3 +10058,100 @@ G/H). ~3700 LOC implementation cumulative.
 - **Как чинить:** Plan 72 P0 (E7201 diagnostic вместо silent wrong) +
   P3-B (full vtable / NovaBox fat-pointer dispatch).
 - **Приоритет:** M — закрывается в Plan 72 (P0 уже done, P3-B partial).
+
+---
+
+## Plan 70.3 — char↔int distinction (2026-05-19/20)
+
+### [M-plan70-3-array-assign-no-typecheck] (DEFER — array-level type-checker tightening)
+- **Где:** type-checker / codegen — array assignment compatibility check.
+- **Что упрощено:** `let ints []int = chars` (где `chars []char`)
+  **собирается успешно** — codegen не отвергает присваивание `[]char` в
+  `[]int`-переменную. Distinct `nova_char` typedef обеспечивает CC-FAIL
+  для scalar/Option collapse (`Some('a')` в `Option[int]` → ошибка), но
+  array-level mismatch проскальзывает.
+- **Почему:** `NovaArray_nova_char*` и `NovaArray_nova_int*` — оба
+  pointer-типы; на codegen-path присваивание, видимо, проходит через
+  cast или type-erasure до того как clang мог бы отвергнуть несовместимые
+  struct-pointer типы. Type-checker не имеет explicit правила
+  «`[]char` ≠ `[]int`».
+- **Как чинить:** array-element type compatibility rule в type-checker —
+  отвергать assignment если element types различаются (char vs int).
+  Negative-fixture написать после fix (сейчас дал бы NEG-NO-ERROR).
+- **Приоритет:** L — scalar/Option/generic-record collapse (основной
+  vector bug-class) закрыт; array-assignment edge редок и обычно
+  ловится на использовании (element-type mismatch при `.push`/index).
+
+### [M-plan70-3-uint-max-parser] ✅ RESOLVED (Plan 70.5 Ф.4, 2026-05-20)
+- **Где:** `compiler-codegen/src/parser/mod.rs` `is_primitive_type` list (~line 3941).
+- **Что упрощено:** `uint.MAX` парсился как `Member(Ident("uint"), "MAX")`
+  вместо `Path(["uint", "MAX"])` — `uint` отсутствовал в списке type-keywords
+  парсера. Workaround: `u64.MAX as uint`.
+- **Закрыто:** добавлен `"uint"` в `is_primitive_type` (1 строчка). Fixtures
+  f4-f8 в `nova_tests/plan70_5/` подтверждают.
+
+### [M-plan70-4-arr-uint-indexing] (DEFER — breaking change)
+- **Где:** array indexing API — `arr[i int]` сигнатура.
+- **Что упрощено:** `arr[i uint]` не поддерживается как тип индекса.
+  Сейчас `arr.len() -> int`, Range/Iter `-> Option[int]`.
+- **Почему:** Breaking change для 100+ API sites. Swift/Go pattern —
+  используют `Int` для индексов (не uint/usize) из соображений эргономики.
+- **Как чинить:** отдельный план после type-checker API revision.
+- **Приоритет:** L — ergonomics, не bug.
+
+### [M-plan70-4-byte-full-removal] (DEFER — type-checker alias resolution)
+- **Где:** `byte` type alias — `std/prelude.nv` + type-checker.
+- **Что упрощено:** `byte` → `nova_byte` унификация выполнена в codegen
+  (Plan 70.4 Ф.4), но `byte` как keyword всё ещё существует в языке как
+  отдельный тип в type-checker.
+- **Почему:** полное удаление требует alias-resolution в type-checker
+  (Plan 69 closure scope).
+- **Как чинить:** Plan 69 follow-up — resolve `byte` как alias `u8` в
+  type-checker, затем deprecate keyword.
+- **Приоритет:** M — codegen unified, только type-checker gap.
+
+## Plan 70.5 — uint symmetric primitive (2026-05-19/20)
+
+### [M-plan70-5-uint-min-constant] (ACCEPTED — по дизайну)
+- **Где:** `numeric_type_constant_mapping` в `emit_c.rs`.
+- **Что упрощено:** `uint.MIN` не зарегистрирован как константа (в отличие
+  от `int.MIN`). Для `uint` минимум = 0, что выражается как `0 as uint`.
+- **Почему:** `uint.MIN == 0` тривиально и не несёт семантической ценности
+  в отличие от `int.MIN = INT64_MIN` (non-obvious boundary value).
+- **Приоритет:** L — можно добавить при необходимости.
+
+---
+
+## Plan 72 — P3-B protocol fat pointers (2026-05-20)
+
+### [M-protocol-param-free-fn-only] (DEFER — Plan 72 P3-B)
+- **Где:** `compiler-codegen/src/codegen/emit_c.rs::emit_call`
+  (`fn_protocol_params` registry).
+- **Что упрощено:** call-site боксинг concrete-аргументов в `NovaBox_*`
+  для protocol-typed параметров (`fn foo(x Iter[int])`) реализован только
+  для **free-function** вызовов. Static/instance методы с
+  protocol-параметром не получают arg-боксинг на call-site.
+- **Почему:** `emit_call` ~3100 строк без центрального arg-hook; method
+  call paths разбросаны по десяткам return-веток. Free-fn путь
+  (финальный arg-loop) — единственная локализованная точка для боксинга
+  без инвазивной правки всего emit_call.
+- **Как чинить:** расширить ключ `fn_protocol_params` на `Type.method`
+  форму + хукнуть боксинг в method-call ветках emit_call (или ввести
+  общий arg-coercion hook через emit_expr_with_target_type).
+- **Приоритет:** L — фикстура p3b_vtable_dispatch (free fn `consume_iter`)
+  покрыта; методы с protocol-параметром в текущем коде редки, и при
+  пропуске ловится CC-FAIL (type mismatch), не silent-wrong.
+
+### [M-protocol-return-wrap-relies-on-infer] (DEFER — Plan 72 P3-B)
+- **Где:** `emit_c.rs::wrap_protocol_return` / `box_value_for_protocol`.
+- **Что упрощено:** боксинг return/arg-значения в `NovaBox_*` берёт
+  конкретный тип через `infer_expr_c_type`. Если inference вернёт
+  не-указатель (`nova_int`/`NovaOpt_X`) — error-path возвращает значение
+  необёрнутым → CC-FAIL вместо Nova-диагностики.
+- **Почему:** конкретный тип реализатора известен только из тела/арга —
+  `infer_expr_c_type` единственный источник; зависимость inherent.
+- **Как чинить:** при желании — strict-error вместо тихого fallback;
+  множество отвергаемых программ то же (CC-FAIL → Nova-error).
+- **Приоритет:** L — для type-checked кода недостижимо (примитив,
+  реализующий протокол, нетипичен); idiomatic if/match/var — проверено,
+  всё боксится корректно. Всегда CC-FAIL, не silent miscompile.
