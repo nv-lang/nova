@@ -198,6 +198,8 @@ sum_schemas.insert("Result", vec![Variant::Tuple("Ok", vec!["nova_int"]), Varian
 > **Status update 2026-05-18:** Phase 62.A complete (698/698 PASS, 0 regression). Types перенесены, builtins HashSet shrunk на 11 имён. **Deferred:** `Never` (parser не поддерживает empty-sum) + 17 методов (codegen/type-checker signature mismatch — см. §«DEFER» ниже).
 >
 > **Status update 2026-05-18 (follow-up):** **12/17 methods discharged** через `std/prelude/core.nv` + `init_prelude_decls_from_items()` (registry-driven inheritance). 700/700 PASS, +2 positive test files. Deferred — 5 Result methods (`unwrap`/`unwrap_or`/`unwrap_or_else`/`map`/`map_err`) — originally-anticipated `T → T` блокер confirmed present для Result non-per-T mono compromise (Option per-T трамплины не affected). Один Option method `or` declared без codegen support (DEFER comment в core.nv). См. Sub-section §«62.A 17-methods defer» ниже.
+>
+> **Status update 2026-05-20 (Plan 62.B — Option.or + Result methods):** **17/17 methods discharged.** Option `or` получил per-T trampoline `Nova_Option_method_or_<T>` (`nova_rt/array.h` `NOVA_ARRAY_IMPL` macro + explicit `nova_str` спец. + `sum_schema_registry` routing `HardcodedRuntimeFn { is_per_t: true }`). 5 deferred Result methods (`unwrap`/`unwrap_or`/`unwrap_or_else`/`map`/`map_err`) разблокированы. **Корневая причина** (уточнена): `external_registry::type_ref_to_c` маппит generic return-type `T` в стаб `"Nova_T*"` (`_ => Nova_<name>*`); `infer_expr_c_type` возвращал этот стаб для `r.unwrap_or(0)` из 3 lookup-путей (`method_overloads` single/multi-overload, `external_registry.by_key`); binop-dispatch принимал `Nova_*` за sum-type pointer → `->tag`-comparison вместо value-equality (CC-FAIL). **Лечение:** helper `is_generic_stub_c` (emit_c.rs) распознаёт стаб `Nova_<X>*` точным семантическим критерием (тот же, что у `erase_unk`): `X` — реальный тип ⇔ `X ∈ record_schemas ∪ sum_schemas ∪ generic_types`, иначе unresolved type-параметр. Все generic-aware lookup-блоки пропускают стаб → управление доходит до specialized `Nova_Result*` ветки `infer_expr_c_type`, знающей concrete Ok/Err-тип. Все 5 declarations раскомментированы в core.nv. **Дополнительно** починен pre-existing баг `Result.map` для `bool`/`char`-closures (хардкод `NOVA_CLOS_CALL_ii` int-layout → calling-convention mismatch / garbage; падал ещё до Plan 62.A — verified): closure-call теперь эмитит fn-pointer cast по фактической C-сигнатуре closure-литерала (`typed_closure_c_sig`). plan62 30/30 PASS, runtime 20/20 PASS, plan72 9/11 → 11/11 PASS.
 
 - [x] Создать `std/prelude/core.nv` с declarations:
   ```nova
@@ -208,23 +210,21 @@ sum_schemas.insert("Result", vec![Variant::Tuple("Ok", vec!["nova_int"]), Varian
   export type Ordering | Less | Equal | Greater
   // DEFER: type Never — empty-sum syntax не поддержан parser'ом
   ```
-- [x] **Partial (12/17, 2026-05-18 follow-up):** D26 §283-306 methods для Option/Result.
+- [x] **Complete (17/17 — 12 в 62.A 2026-05-18, 5 в 62.B 2026-05-20):** D26 §283-306 methods для Option/Result.
       - Option: **8/8** declared — `is_some`, `is_none`, `unwrap` (Fail[Error]),
-        `unwrap_or`, `unwrap_or_else`, `map`, `ok_or`, `or` (последний с DEFER —
-        codegen trampoline отсутствует).
-      - Result: **4/9** declared — `is_ok`, `is_err`, `ok`, `err`.
-      - Result deferred: **5/9** (`unwrap`, `unwrap_or`, `unwrap_or_else`, `map`,
-        `map_err`) — originally-anticipated `T → T` блокер всё ещё present.
-        Type-checker, видя `external fn Result[T, E] @unwrap_or(default T) -> T`,
-        инфериует результат `r.unwrap_or(0)` как `Result*` heap-pointer (через
-        generic substitution), codegen `==` идёт через sum-tag-comparison.
-        Конкретные regressions: `runtime/unwrap_or` / `runtime/result_methods` /
-        `runtime/from_into_basic` / `runtime/read_buffer` / `runtime/read_text`.
-        Лечение в Plan 62.B+ через per-T mono Result (как Option) или type-checker
-        special-case. Declarations закомментированы в core.nv с актуальным DEFER
-        comment'ом. **Корневая причина** — codegen `type_of_method_call_c`
-        (emit_c.rs:18619+) hardcoded возвращает `nova_int` для Result.unwrap_or,
-        несовместимо с generic Nova signature.
+        `unwrap_or`, `unwrap_or_else`, `map`, `ok_or`, `or` (последний — per-T
+        trampoline `Nova_Option_method_or_<T>`, Plan 62.B).
+      - Result: **9/9** declared — `is_ok`, `is_err`, `ok`, `err` (62.A) +
+        `unwrap`, `unwrap_or`, `unwrap_or_else`, `map`, `map_err` (62.B).
+      - **Plan 62.B fix:** прежний `T → T` блокер для 5 Result methods снят.
+        Корневая причина: `external_registry::type_ref_to_c` маппит generic
+        return-type `T` в стаб `"Nova_T*"`; `infer_expr_c_type` возвращал стаб
+        для `r.unwrap_or(0)` → binop принимал `Nova_*` за sum-type pointer →
+        `->tag`-comparison. Лечение — helper `is_generic_stub_c` (emit_c.rs):
+        три generic-aware lookup-блока пропускают стаб `Nova_<X>*`, давая
+        управление specialized `Nova_Result*` ветке. Все ранее-affected
+        regressions (`runtime/unwrap_or`, `result_methods`, `from_into_basic`,
+        `read_buffer`, `read_text`) — зелёные.
 - [x] `init_prelude_decls_from_items()` (sum_schema_registry.rs:513+) scan'ит
       `module.items` для `Item::Fn` с receiver `Option`/`Result`,
       регистрирует `DeclaredFromPrelude` entries с method_routing,
