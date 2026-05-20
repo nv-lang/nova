@@ -1,0 +1,12 @@
+// EXPECT_COMPILE_ERROR error
+// REQUIRES_SMT_BACKEND z3
+//
+// Plan 33.7 Ф.5: #nooverflow — Z3 disproves, overflow is possible.
+// No precondition bounding a+b, so a=4294967295, b=1 → overflow.
+
+module contracts.f60_bv_nooverflow_overflow_fail
+
+#nooverflow #verify
+fn unsafe_add_u32(a u32, b u32) -> u32
+    ensures result == a + b
+=> a + b
