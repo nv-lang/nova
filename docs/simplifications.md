@@ -9995,6 +9995,72 @@ G/H). ~3700 LOC implementation cumulative.
 
 ---
 
+## Plan 62 — prelude hardcode migration (2026-05-18)
+
+### [M-result-method-named-var-only] (DEFER — Plan 62.A.bis Ф.3)
+- **Где:** `emit_c.rs` — `result_type_params: HashMap<String, (String,
+  String)>` на `CEmitter`; method-dispatch для `unwrap`/`unwrap_or`/
+  `unwrap_or_else`/`map`/`map_err`.
+- **Что упрощено:** правильный return-type для Result-методов выводится
+  только когда receiver — **именованная переменная** (`let r = ...;
+  r.unwrap_or(...)`). Inline-цепочки (`parse_bool("x").unwrap_or(false)`)
+  попадают в fallback-ветку `infer_expr_c_type` и получают
+  `(nova_int, nova_str)`.
+- **Почему:** полноценный вывод требует sum-type monomorphization
+  (Plan 59 Ф.7.5); `result_type_params` — bootstrap-обходка через
+  per-binding кэш, не mono-pass.
+- **Как чинить:** Plan 59 Ф.7.5 sum-type mono extension; затем
+  убрать `result_type_params` и выводить тип из mono-инстанса.
+- **Приоритет:** M — для `bool`/`int` inline-цепочки проходят случайно
+  (C ABI совместим по размеру); для pointer-типов даёт wrong result.
+
+### [M-legacy-sum-schemas-retained] (DEFER — Plan 62.A.bis Ф.4 → Plan 59)
+- **Где:** `compiler-codegen/src/codegen/` — hardcoded `sum_schemas` +
+  `sum_schema_registry.rs::init_hardcoded_baseline()`.
+- **Что упрощено:** legacy hardcoded `sum_schemas` НЕ удалён —
+  сохранён как ABI-compat fallback под слоёным registry. Plan 62.A.bis
+  планировал Ф.4 = полное удаление.
+- **Почему:** `nova_rt/array.h` value-type helpers зависят от точного
+  hardcoded ABI; удаление безопасно только после Plan 59 sum-mono.
+- **Как чинить:** Plan 59 Ф.7.5 → удалить baseline, registry становится
+  единственным источником схем.
+- **Приоритет:** L — дублирование без функционального вреда (registry
+  имеет приоритет, baseline только fallback).
+
+### [M-runtime-none-error-deferred] (DEFER — Plan 62.C → Plan 72 P1-B)
+- **Где:** `std/prelude/errors.nv` — отсутствует `type RuntimeNoneError`.
+- **Что упрощено:** `RuntimeNoneError` не мигрирован в prelude —
+  парсер не принимает `type X` без тела (empty-sum / marker type).
+- **Почему:** парсер требует ≥1 вариант после `type Name`; пустой
+  sum-type — отдельная синтаксическая фича.
+- **Как чинить:** Plan 72 P1-B — empty-sum syntax (`type Never` /
+  `type RuntimeNoneError` без тела).
+- **Приоритет:** L — единственный тип ошибки, не блокирует prelude.
+
+### [M-tryfrom-tryinto-deferred] (DEFER — Plan 62.E → Plan 56 Ф.2.7)
+- **Где:** `std/prelude/protocols.nv` — 6/8 протоколов мигрированы,
+  `TryFrom`/`TryInto` отсутствуют.
+- **Что упрощено:** `TryFrom`/`TryInto` (protocol-method с effect
+  return-type `Result[Self, RuntimeError]`) не мигрированы.
+- **Почему:** codegen не умеет routing'ить effect через protocol-method
+  body — требует Plan 56 Ф.2.7 (effects-in-protocol-methods).
+- **Как чинить:** Plan 56 Ф.2.7 → затем 62.E.bis закрывает TryFrom/Into.
+- **Приоритет:** M — 6/8 протоколов покрывают основной conversion API.
+
+### [M-protocol-as-value-binding-only] (DEFER — Plan 62.D/E → Plan 72 P0/P3-B)
+- **Где:** codegen — protocol-type как тип переменной/параметра
+  (`let x Iter[int] = ...`, `fn foo(x Iter[int])`).
+- **Что упрощено:** existential protocol-type поддержан только на
+  **binding-level** (concrete → `void*` coercion компилируется).
+  Method-dispatch на erased значении — был silent miscompilation.
+- **Почему:** truly-erased dispatch требует vtable codegen; Plan 62
+  не имел его в scope.
+- **Как чинить:** Plan 72 P0 (E7201 diagnostic вместо silent wrong) +
+  P3-B (full vtable / NovaBox fat-pointer dispatch).
+- **Приоритет:** M — закрывается в Plan 72 (P0 уже done, P3-B partial).
+
+---
+
 ## Plan 70.3 — char↔int distinction (2026-05-19/20)
 
 ### [M-plan70-3-array-assign-no-typecheck] (DEFER — array-level type-checker tightening)
