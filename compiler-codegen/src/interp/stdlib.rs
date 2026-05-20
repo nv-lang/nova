@@ -87,7 +87,7 @@ pub fn install(env: &Env) {
             }),
         })),
     );
-    // exit(code int, msg str) -> Never — D13: смерть всего процесса.
+    // exit(code int, msg str) -> never — D13: смерть всего процесса.
     // В test-runner'е перехватывается как fail теста (через NativeError);
     // в production-runtime гасит процесс с указанным exit code.
     env.define(

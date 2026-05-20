@@ -1356,7 +1356,8 @@ impl CEmitter {
                 "u64", "u32", "u16", "u8",
                 "f64", "f32", "bool", "str", "byte", "char",
                 "Option", "Result", "Self", "Handler", "CancelToken",
-                "Never", "Error",
+                // Plan 76: bottom-тип `never` — строчный встроенный примитив.
+                "never", "Error",
                 // Plan 62.C: RuntimeError имеет real struct в array.h
                 // (skipped в RUNTIME_DEFINED_TYPES → emit_type_decl skipped
                 // → нет local emit, нужен fwd-decl skip чтобы не дублировать
@@ -3267,6 +3268,11 @@ impl CEmitter {
                     // nova_rt/nova_rt.h). Same int64_t storage, но distinct C name
                     // → generic mono mangle distinguishes Option[char] vs Option[int].
                     "char" => Ok("nova_char".into()),
+                    // Plan 76: `never` — bottom-тип (uninhabited). Значений
+                    // не существует, поэтому C-тип — чистый ABI placeholder.
+                    // `nova_int` — консистентно с empty-sum (`typedef
+                    // int64_t Nova_X`); слот никогда не читается/пишется.
+                    "never" => Ok("nova_int".into()),
                     "Option" => {
                         // Plan 14 Ф.1: Option[T] правильно типизирован
                         // через generic. Для T без NOVA_ARRAY_DECL в
@@ -3706,7 +3712,7 @@ impl CEmitter {
         // that throw inside body (Nova_Fail_fail with installed handler) ends
         // up unwinding back here. Body normal completion → result; throw →
         // handler runs (state captured), then nova_throw → fail-frame catches.
-        // (D65 «Fail strict»: fail() is Never from caller's perspective.)
+        // (D65 «Fail strict»: fail() is never from caller's perspective.)
         let fframe = if has_fail { Some(self.fresh_tmp()) } else { None };
         if let Some(ff) = &fframe {
             self.line(&format!("NovaFailFrame {};", ff));
@@ -6289,7 +6295,7 @@ impl CEmitter {
 
     fn emit_sum_type(&mut self, name: &str, variants: &[SumVariant]) -> Result<(), String> {
         // Plan 72 P1-B: empty sum type (0 variants) — bottom / uninhabited type.
-        // `type Never` / `type RuntimeNoneError` etc. C does not support empty
+        // `type RuntimeNoneError` etc. (empty sum). C does not support empty
         // enums, so emit as `typedef int64_t Nova_X;` (ABI placeholder).
         // No constructors emitted — the type is uninhabited by definition.
         if variants.is_empty() {
@@ -12249,7 +12255,7 @@ impl CEmitter {
                 Ok("NOVA_UNIT".into())
             }
             ExprKind::Throw(value) => {
-                // D25/D65/D85: throw в expression-position. Тип Never —
+                // D25/D65/D85: throw в expression-position. Тип never —
                 // control никогда не вернётся. Эмитируем effect-call через
                 // comma-expression `(call(...), dummy)`. См. Stmt::Throw для
                 // detail на typed/string dispatch.
@@ -12808,7 +12814,7 @@ impl CEmitter {
                     ));
                 }
             }
-            // panic(msg str) -> Never — D13: смерть текущего fiber'а.
+            // panic(msg str) -> never — D13: смерть текущего fiber'а.
             // Routes через NovaFailFrame внутри fiber'а, через NovaTestFrame
             // в тестах, иначе — stderr + abort. См. nv_panic в effects.h.
             //
@@ -12829,7 +12835,7 @@ impl CEmitter {
                 let msg_val = self.emit_expr(args[0].expr())?;
                 return Ok(format!("(nv_panic({}), (nova_int)0LL)", msg_val));
             }
-            // exit(code int, msg str) -> Never — D13: смерть всего процесса.
+            // exit(code int, msg str) -> never — D13: смерть всего процесса.
             // НЕ перехватывается handler'ом. В тестах routes через NovaTestFrame
             // (test-runner-level), в production — exit(code). См. nv_exit.
             // Тот же comma-expression паттерн что и для panic.

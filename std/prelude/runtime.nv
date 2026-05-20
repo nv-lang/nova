@@ -70,10 +70,10 @@ module prelude.runtime
 /// **Bootstrap:** реализация в `nv_panic` (nova_rt/effects.h:330). Codegen
 /// special-case (emit_c.rs:11115) эмитит `(nv_panic(msg), (nova_int)0LL)` —
 /// comma-expression обёртка для использования в expression-position
-/// (`?? panic(...)`, `if cond { v } else { panic(...) }`). `-> Never`
+/// (`?? panic(...)`, `if cond { v } else { panic(...) }`). `-> never`
 /// сигнатура позволяет panic быть веткой без значения.
 #stable(since = "0.1")
-external fn panic(msg str) -> Never
+external fn panic(msg str) -> never
 
 /// Аварийное завершение всего процесса с exit-code и сообщением. D13
 /// «три уровня катастрофы» — НЕ перехватывается handler'ом.
@@ -85,7 +85,7 @@ external fn panic(msg str) -> Never
 /// special-case (emit_c.rs:11128) эмитит `(nv_exit(code, msg), (nova_int)0LL)` —
 /// тот же comma-expression паттерн что и panic.
 #stable(since = "0.1")
-external fn exit(code int, msg str) -> Never
+external fn exit(code int, msg str) -> never
 
 /// Runtime-проверка условия. Падает с auto-generated сообщением
 /// (текст condition'а через display) если `cond == false`. Always-on:

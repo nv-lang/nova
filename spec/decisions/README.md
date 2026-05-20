@@ -31,7 +31,7 @@
 | D85 | 04-effects.md | Операторы `?` и `!!` — унифицированное поведение для `Result` и `Option` |
 | D86 | 04-effects.md | `??` coalesce-оператор — fallback для `Result`/`Option` без `Fail` |
 | D87 | 04-effects.md | `Handler[E, IRT]` — параметризация handler типом interrupt'а |
-| D88 | 03-syntax.md | Default-значения generic-параметров (`Handler[E]` ≡ `Handler[E, Never]`) |
+| D88 | 03-syntax.md | Default-значения generic-параметров (`Handler[E]` ≡ `Handler[E, never]`) |
 | D89 | 09-tooling.md | Test-tooling конвенции — `EXPECT_*` маркеры для negative-тестов |
 | D90 | 03-syntax.md | `defer` и `errdefer` — scope-level cleanup statements |
 | D91 | 06-concurrency.md | Channel revision — capability-split на `ChanWriter` / `ChanReader` |

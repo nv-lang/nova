@@ -2,12 +2,12 @@
 //
 // Spec: spec/decisions/08-runtime.md → D13 «Три уровня катастрофы».
 //
-// - panic(msg str) -> Never — смерть текущего fiber'а.
+// - panic(msg str) -> never — смерть текущего fiber'а.
 //   Внутри fiber'а: routes через nearest NovaFailFrame (longjmp на
 //   стеке fiber'а, не пересекает mco-boundary). На main flow с
 //   тест-frame'ом: routes в test-runner.
 //
-// - exit(code int, msg str) -> Never — смерть всего процесса.
+// - exit(code int, msg str) -> never — смерть всего процесса.
 //   НЕ перехватывается handler'ом. В тестах — routes через
 //   NovaTestFrame (test-runner), в production — exit(code).
 //
@@ -20,8 +20,8 @@ module runtime.panic_exit
 
 // ───── Базовый sanity: функции есть в prelude и компилируются ─────
 
-test "panic компилируется в правильную позицию (Never)" {
-    // panic имеет тип Never, поэтому совместим с любой position.
+test "panic компилируется в правильную позицию (never)" {
+    // panic имеет тип never, поэтому совместим с любой position.
     // Здесь не вызываем — иначе тест упадёт. Проверяем что код
     // с условным panic компилируется и не выполняет ветку с panic.
     let x int = if true { 42 } else { panic("unreachable") }
@@ -29,15 +29,15 @@ test "panic компилируется в правильную позицию (N
 }
 
 
-test "exit компилируется в правильную позицию (Never)" {
-    // exit имеет тип Never — то же что и panic.
+test "exit компилируется в правильную позицию (never)" {
+    // exit имеет тип never — то же что и panic.
     let x int = if true { 42 } else { exit(1, "unreachable") }
     assert(x == 42)
 }
 
 
-test "panic в Never-position у return" {
-    // Never-тип позволяет panic быть веткой без значения.
+test "panic в never-position у return" {
+    // never-тип позволяет panic быть веткой без значения.
     let n = compute_or_panic(10)
     assert(n == 100)
 }
@@ -49,7 +49,7 @@ fn compute_or_panic(x int) -> int {
 }
 
 
-test "exit в Never-position у return" {
+test "exit в never-position у return" {
     let n = compute_or_exit(5)
     assert(n == 50)
 }
