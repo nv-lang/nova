@@ -703,6 +703,13 @@ codegen работает для `NovaRes_<n>` без изменений** (он 
   method-dispatch → суффикс `_<n>`. Теперь `NovaRes_<n>*` течёт везде —
   B обрабатывает dispatch, C — инференс, pattern-match (generic,
   `Ok._0`) работает т.к. payload-схема совпадает. Прогон → fix → green.
+  **В конце D:** заменить silent fallback `(nova_int, nova_str)` (при
+  невыводимом (T,E)) на жёсткую codegen-ошибку. После флипа любой
+  Result-`obj_ty` = `NovaRes_<n>*`, `novares_ok_err` детерминирован
+  (тип несёт (T,E)) → fallback недостижим; если путь всё же достигнут
+  — громкий fail, а не тихий неверный C-код. Молчаливая догадка
+  `Result[int,str]` — известный источник сложно-детектируемых багов
+  (`[M-result-method-named-var-only]` / `[C2]`) — устраняется здесь.
 - **E** — удалить legacy `Nova_Result` + `nova_make_Result_*` +
   `Nova_Result_method_*` из `array.h` (после D ничего не ссылается) →
   **green, коммит**. ← разблокирует Plan 62.A.bis Ф.4 (удаление
