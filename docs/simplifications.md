@@ -10155,3 +10155,36 @@ G/H). ~3700 LOC implementation cumulative.
 - **Приоритет:** L — для type-checked кода недостижимо (примитив,
   реализующий протокол, нетипичен); idiomatic if/match/var — проверено,
   всё боксится корректно. Всегда CC-FAIL, не silent miscompile.
+
+---
+
+## Plan 62.A.bis вЂ” Generic schema registry (2026-05-20)
+
+### [M-result-generic-T-method-mismatch] (DEFER вЂ” Plan 62.B+)
+- **Р“РґРµ:** `std/prelude/core.nv` + `compiler-codegen/src/codegen/emit_c.rs`
+  (`type_of_method_call_c`, lines 18619+).
+- **Р§С‚Рѕ СѓРїСЂРѕС‰РµРЅРѕ:** 5 РјРµС‚РѕРґРѕРІ Result РІРѕР·РІСЂР°С‰Р°СЋС‰РёС… `T` (unwrap, unwrap_or,
+  unwrap_or_else, map, map_err) РЅРµ Р·Р°РґРµРєР»Р°СЂРёСЂРѕРІР°РЅС‹ РІ `std/prelude/core.nv`
+  вЂ” Р·Р°РєРѕРјРјРµРЅС‚РёСЂРѕРІР°РЅС‹ СЃ РѕР±СЉСЏСЃРЅРµРЅРёРµРј blocker'Р°.
+- **РџРѕС‡РµРјСѓ:** type-checker РІРёРґРёС‚ `Result[T, E] @unwrap_or(default T) -> T`
+  РєР°Рє generic signature Рё РІС‹РІРѕРґРёС‚ С‚РёРї СЂРµР·СѓР»СЊС‚Р°С‚Р° `r.unwrap_or(0)` РєР°Рє
+  `Result*` РІРјРµСЃС‚Рѕ `nova_int`. Codegen РґРµР»Р°РµС‚ tag-comparison РІРјРµСЃС‚Рѕ
+  value-equality РїСЂРё `r.unwrap_or(0) == 42`. Silent wrong output.
+- **РљР°Рє С‡РёРЅРёС‚СЊ:** per-T monomorphization Result.unwrap_or (РєР°Рє Option С‡РµСЂРµР·
+  NovaOpt_<T>), РёР»Рё type-checker special-case РїСЂРёР·РЅР°СЋС‰РёР№ concrete Ok-type
+  РёР· object'Р° Р±РµР· declared generic signature. РћР±Р° РїСѓС‚Рё вЂ” Plan 62.B+.
+- **РџСЂРёРѕСЂРёС‚РµС‚:** M вЂ” Result.unwrap_or/unwrap Р°РєС‚РёРІРЅРѕ РёСЃРїРѕР»СЊР·СѓРµС‚СЃСЏ; С‚РµРєСѓС‰РёР№
+  hardcoded path (emit_c.rs:11567+) СЂР°Р±РѕС‚Р°РµС‚ РєРѕСЂСЂРµРєС‚РЅРѕ С‡РµСЂРµР· bootstrap mono
+  compromise. Р РµРіСЂРµСЃСЃРёРё РЅРµС‚ вЂ” С‚РѕР»СЊРєРѕ РґРµРєР»Р°СЂР°С†РёСЏ РІ core.nv РЅРµ РґРѕР±Р°РІР»РµРЅР°.
+
+### [M-option-or-no-trampoline] (DEFER вЂ” Plan 62.B+)
+- **Р“РґРµ:** `nova_rt/array.h` + `std/prelude/core.nv`.
+- **Р§С‚Рѕ СѓРїСЂРѕС‰РµРЅРѕ:** `external fn Option[T] @or(other Option[T]) -> Option[T]`
+  Р·Р°РґРµРєР»Р°СЂРёСЂРѕРІР°РЅ РІ core.nv РґР»СЏ РґРѕРєСѓРјРµРЅС‚Р°С†РёРё, РЅРѕ codegen trampoline
+  `Nova_Option_method_or_<T>` РІ array.h РѕС‚СЃСѓС‚СЃС‚РІСѓРµС‚. Р’С‹Р·РѕРІ `opt.or(other)`
+  РґР°С‘С‚ CC-FAIL.
+- **РџРѕС‡РµРјСѓ:** РґРѕР±Р°РІР»РµРЅРёРµ per-T trampoline С‚СЂРµР±СѓРµС‚ РёР·РјРµРЅРµРЅРёСЏ nova_rt/array.h
+  (NOVA_DECLARE_OPTION_T macro) вЂ” РѕС‚РґРµР»СЊРЅР°СЏ Р·Р°РґР°С‡Р° РІРЅРµ scope 62.A.bis.
+- **РљР°Рє С‡РёРЅРёС‚СЊ:** РґРѕР±Р°РІРёС‚СЊ `Nova_Option_method_or_<T>(opt, other) { ... }`
+  РІ NOVA_DECLARE_OPTION_T macro + routing entry РІ init_hardcoded_baseline.
+- **РџСЂРёРѕСЂРёС‚РµС‚:** L вЂ” or() РјРµРЅРµРµ РёСЃРїРѕР»СЊР·СѓРµРј С‡РµРј unwrap_or/map.
