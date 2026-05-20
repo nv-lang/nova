@@ -1,0 +1,27 @@
+// Plan 33.7 Ф.5: BV types in contracts — trivial backend returns Unknown,
+// not an error. Functions without `#verify` produce only W2402 (unverified),
+// no compile error.
+//
+// Trivial backend does not support BV theory → UnsupportedTheory unknown.
+// Contract parsing + type mapping must succeed (no crash).
+
+module contracts.f60_bv_arith_trivial_positive
+
+fn add_u32(a u32, b u32) -> u32
+    requires a >= 0 as u32
+    ensures result >= 0 as u32
+=> a + b
+
+fn clamp_u8(x u8, lo u8, hi u8) -> u8
+    requires lo <= hi
+    ensures result >= lo && result <= hi
+{
+    if x < lo { lo } else if x > hi { hi } else { x }
+}
+
+test "bv arith trivial positive" {
+    assert(add_u32(3 as u32, 4 as u32) == 7 as u32)
+    assert(clamp_u8(200 as u8, 10 as u8, 100 as u8) == 100 as u8)
+    assert(clamp_u8(5 as u8, 10 as u8, 100 as u8) == 10 as u8)
+    assert(clamp_u8(50 as u8, 10 as u8, 100 as u8) == 50 as u8)
+}

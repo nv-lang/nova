@@ -23,6 +23,8 @@ pub(crate) struct ContractAttrs {
     pub is_opaque: bool,
     /// Plan 33.9 Ф.3: `#fuel(n)` attribute.
     pub fuel: Option<u32>,
+    /// Plan 33.7 Ф.4: `#nooverflow` — emit overflow VCs for BitVec arithmetic.
+    pub no_overflow: bool,
 }
 
 impl ContractAttrs {
@@ -33,6 +35,7 @@ impl ContractAttrs {
             && !self.is_trusted
             && !self.is_opaque
             && self.fuel.is_none()
+            && !self.no_overflow
     }
 }
 
@@ -1583,6 +1586,13 @@ impl Parser {
                     self.bump(); // )
                     attrs.fuel = Some(n);
                 }
+                "nooverflow" => {
+                    // Plan 33.7 Ф.4: #nooverflow — emit overflow VCs for
+                    // each BitVec arithmetic op in the fn body.
+                    self.bump(); // #
+                    self.bump(); // nooverflow
+                    attrs.no_overflow = true;
+                }
                 _ => break, // unknown #-name — не contract-attr, выходим
             }
             self.skip_newlines();
@@ -1986,6 +1996,7 @@ impl Parser {
             is_trusted: contract_attrs.is_trusted,
             is_opaque: contract_attrs.is_opaque,
             fuel: contract_attrs.fuel,
+            no_overflow: contract_attrs.no_overflow,
         })
     }
 

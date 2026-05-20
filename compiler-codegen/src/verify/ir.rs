@@ -27,6 +27,9 @@ pub enum SortRef {
     F64,
     /// Uninterpreted sort, named (например для record-типов).
     Named(String),
+    /// Plan 33.7: bit-vector sort (_ BitVec N) для u8/u16/u32/u64/i8/i16/i32.
+    /// Ширина N в битах (8, 16, 32, 64).
+    BitVec(u32),
 }
 
 /// Term — выражение в SMT-IR. Все Nova-выражения контрактов
@@ -40,6 +43,10 @@ pub enum SmtTerm {
     /// IEEE 754 float literals (f64 хранит как bits для точности).
     F32Lit(u32),  // f32::to_bits()
     F64Lit(u64),  // f64::to_bits()
+    /// Plan 33.7: bit-vector literal — значение + ширина в битах.
+    /// Знаковость определяется контекстом (u8/i8 оба 8 бит, Z3 bv
+    /// семантика одинакова — знак определяет только операция).
+    BitVecLit(u64, u32),
     /// Symbolic variable (параметр функции, `result`, `old(...)`).
     Var(String),
     /// Application: `op(args...)`.
@@ -183,6 +190,10 @@ impl SmtTerm {
             SmtTerm::StrLit(s) => format!("\"{}\"", s),
             SmtTerm::F32Lit(bits) => format!("{}f32", f32::from_bits(*bits)),
             SmtTerm::F64Lit(bits) => format!("{}f64", f64::from_bits(*bits)),
+            SmtTerm::BitVecLit(v, w) => {
+                let hex_digits = (*w as usize + 3) / 4;
+                format!("#x{:0>width$x}", v, width = hex_digits)
+            }
             SmtTerm::Var(n) => n.clone(),
             SmtTerm::App(op, args) => {
                 let args_str: Vec<String> = args.iter().map(|a| a.pretty()).collect();

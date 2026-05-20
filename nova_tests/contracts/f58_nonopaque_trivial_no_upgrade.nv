@@ -1,3 +1,4 @@
+// REQUIRES_SMT_BACKEND trivial
 // EXPECT_COMPILE_WARNING trivial backend handles only tautologies
 //
 // Plan 33.9 Ф.4 (negative): a NON-opaque #pure fn whose contract is beyond
@@ -6,7 +7,9 @@
 //
 // Guards against false-positive: term_references_opaque_uf must return None
 // for _pure_fn_* UFs whose backing fn is not #opaque.
-// No REQUIRES_SMT_BACKEND — runs under default TrivialBackend.
+// Trivial-specific: the "trivial backend handles only tautologies" wording
+// is TrivialBackend-only — REQUIRES_SMT_BACKEND trivial pins the test
+// (under Z3 the non-linear `x * x` contract is proven, no W2402).
 
 module contracts.f58_nonopaque_trivial_no_upgrade
 
