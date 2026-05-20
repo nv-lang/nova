@@ -1,0 +1,9 @@
+// EXPECT_COMPILE_ERROR int as str
+// neg_cast_int_as_str.nv — Plan 75 Ф.6
+// "int as str" запрещён (D54). Использовать str.from(n).
+
+module str.neg_cast_int_as_str
+
+fn main() Io {
+    let _ = 42 as str
+}
