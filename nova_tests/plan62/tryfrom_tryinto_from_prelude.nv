@@ -1,0 +1,122 @@
+// tryfrom_tryinto_from_prelude.nv — Plan 62.E.bis (2026-05-20).
+//
+// Verifies что formal protocol declarations `TryFrom[T, E]` /
+// `TryInto[U, E]` в std/prelude/protocols.nv re-export'нуты через
+// std/prelude.nv facade и auto-available везде через R27 auto-import.
+//
+// Контекст: TryFrom/TryInto были deferred в Plan 62.E из-за того что
+// исходно объявлялись с `Fail[E]` effect-row, который Plan 56 Ф.2.7
+// (effect-free enforcement) отвергал. 62.E.bis закрывает defer:
+//   - effect-блокер снят (Plan 56 Ф.2.7-revert, D122 amended);
+//   - декларации используют форму `try_from(t T) -> Result[Self, E]`
+//     (D77, migration path b) — fallible конверсия возвращает Result,
+//     вызывающий открывает через `match`.
+//
+// **Scope-замечание (codegen):** `match` на `Result[<user-record>, E]`
+// с binding'ом Ok-payload в переменную + field-access на ней —
+// pre-existing codegen-баг (`register_fn_result_ok_inner_type` не
+// регистрирует struct Ok-payload → payload типизируется как nova_int;
+// тот же баг ловит plan72/p2a_try_from_into_pos). Это **не** 62.E.bis
+// scope — баг семейства Result-monomorphization (Plan 59). Поэтому
+// тест проверяет Ok/Err **дискриминацию** (без field-access), что
+// полностью покрывает то, что 62.E.bis доставляет: protocol-декларации
+// в prelude + facade re-export + bound resolution. См. simplifications.md
+// [M-result-record-payload-match].
+//
+// `TryFrom`/`TryInto`/`Result`/`Ok`/`Err` — все из prelude, БЕЗ import.
+
+module plan62.tryfrom_tryinto_from_prelude
+
+
+// ────────────────────────────────────────────────────────────────────
+// 1. TryFrom — static factory, fallible. Удовлетворяет TryFrom[int, str].
+// ────────────────────────────────────────────────────────────────────
+
+type PositiveInt { val int }
+
+fn PositiveInt.make(n int) -> PositiveInt => { val: n }
+
+// TryFrom[int, str] impl: static-метод (как From — `fn Type.try_from`,
+// без `@`). Negative input → Err.
+export fn PositiveInt.try_from(n int) -> Result[PositiveInt, str] =>
+    if n >= 0 { Ok(PositiveInt.make(n)) } else { Err("negative") }
+
+
+test "TryFrom from prelude — Ok discriminant" {
+    let r = PositiveInt.try_from(42)
+    let is_ok = match r {
+        Ok(_) => true
+        Err(_) => false
+    }
+    assert(is_ok)
+}
+
+test "TryFrom from prelude — Err discriminant" {
+    let r = PositiveInt.try_from(-1)
+    let is_ok = match r {
+        Ok(_) => true
+        Err(_) => false
+    }
+    assert(!is_ok)
+}
+
+
+// ────────────────────────────────────────────────────────────────────
+// 2. TryInto — instance method, fallible. Удовлетворяет TryInto[Feet, str].
+// ────────────────────────────────────────────────────────────────────
+
+type Meters { v int }
+type Feet { v int }
+
+fn Feet.make(v int) -> Feet => { v }
+
+// TryInto[Feet, str] impl: instance-метод (как Into — `@try_into`).
+export fn Meters @try_into() -> Result[Feet, str] =>
+    if @v >= 0 { Ok(Feet.make(@v * 3)) } else { Err("negative meters") }
+
+
+test "TryInto from prelude — Ok discriminant" {
+    let m = Meters { v: 10 }
+    let r = m.try_into()
+    let is_ok = match r {
+        Ok(_) => true
+        Err(_) => false
+    }
+    assert(is_ok)
+}
+
+test "TryInto from prelude — Err discriminant" {
+    let m = Meters { v: -5 }
+    let r = m.try_into()
+    let is_ok = match r {
+        Ok(_) => true
+        Err(_) => false
+    }
+    assert(!is_ok)
+}
+
+
+// ────────────────────────────────────────────────────────────────────
+// 3. Bound-parse — `[T TryFrom[..]]` / `[T TryInto[..]]` резолвятся
+//    через prelude. Bootstrap limitation: full generic static-method
+//    dispatch не monomorph'ится (как у From — Plan 62.E note), поэтому
+//    проверяем только что bound parsed + protocol резолвится. Функции
+//    не вызываются.
+// ────────────────────────────────────────────────────────────────────
+
+fn _accepts_try_from[T TryFrom[int, str]](_v T) -> () => ()
+
+fn _accepts_try_into[T TryInto[Feet, str]](_v T) -> () => ()
+
+
+test "TryFrom/TryInto bounds резолвятся через prelude (parse + eligibility)" {
+    // Сам факт компиляции _accepts_try_from / _accepts_try_into выше
+    // подтверждает что protocol-имена резолвятся через prelude facade.
+    assert(true)
+}
+
+
+test "PRELUDE_VERSION >= 8 (Plan 62.E.bis marker)" {
+    // 7 → 8 — TryFrom / TryInto re-export'нуты через prelude facade.
+    assert(PRELUDE_VERSION >= 8)
+}

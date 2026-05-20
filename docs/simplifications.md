@@ -10106,22 +10106,43 @@ G/H). ~3700 LOC implementation cumulative.
   `type RuntimeNoneError` без тела).
 - **Приоритет:** L — единственный тип ошибки, не блокирует prelude.
 
-### [M-tryfrom-tryinto-deferred] (DEFER — Plan 62.E.bis; effect-блокер снят 2026-05-20)
-- **Где:** `std/prelude/protocols.nv` — 6/8 протоколов мигрированы,
-  `TryFrom`/`TryInto` отсутствуют.
-- **Что упрощено:** `TryFrom`/`TryInto` (protocol с effectful методом,
-  напр. `try_from(t T) Fail[E] -> Self`) не задекларированы в prelude.
-- **Почему (было):** требовалось разрешение эффектов в protocol-методах
-  (codegen-routing effect через bound-метод).
-- **Разблокировано 2026-05-20:** запрет Plan 56 Ф.2.7 на effectful
-  protocol-методы **снят** (D122 amended) — эффекты в протоколах
-  работают под mono-dispatch. Тест `plan56/f5_effectful_protocols`:
-  effectful bound-метод вызывается через generic bound `[T Checked]`,
-  `Fail`-эффект пробрасывается и ловится handler'ом.
-- **Как чинить:** Plan 62.E.bis — задекларировать `TryFrom`/`TryInto` в
-  `std/prelude/protocols.nv`. Effect-блокер устранён, осталась сама
-  миграция деклараций.
-- **Приоритет:** M — 6/8 протоколов покрывают основной conversion API.
+### [M-tryfrom-tryinto-deferred] ✅ RESOLVED (Plan 62.E.bis, 2026-05-20)
+- **Где:** `std/prelude/protocols.nv` + `std/prelude.nv` facade.
+- **Что было упрощено:** `TryFrom`/`TryInto` не были задекларированы /
+  re-export'нуты в prelude — 6/8 протоколов.
+- **Почему (было):** исходно объявлялись с `Fail[E]` effect-row, который
+  Plan 56 Ф.2.7 (effect-free enforcement) отвергал.
+- **Закрыто 2026-05-20 (Plan 62.E.bis):**
+  - Effect-блокер снят раньше (Plan 56 Ф.2.7-revert, D122 amended —
+    эффекты в protocol-методах разрешены под mono-dispatch).
+  - `TryFrom[T, E]` / `TryInto[U, E]` задекларированы в protocols.nv
+    через форму `try_from(t T) -> Result[Self, E]` (D77, migration
+    path b — обычный возврат Result, не `Fail[E]` effect; user-выбор
+    2026-05-20: «try_from должен возвращать Result»).
+  - Добавлены в facade `std/prelude.nv` export-list (8/8 протоколов).
+  - PRELUDE_VERSION 7 → 8. Тесты: `plan62/tryfrom_tryinto_from_prelude`
+    (positive) + `tryfrom_bound_unsatisfied_neg` (negative — bound
+    enforcement).
+
+### [M-result-record-payload-match] (DEFER — Plan 59 sum-mono)
+- **Где:** `emit_c.rs` — `register_fn_result_ok_inner_type` (~7311) +
+  `pattern_bind_typed` Ok-arm (~18183).
+- **Что упрощено:** `match` на `Result[<user-record>, E]` с binding'ом
+  Ok-payload в переменную → переменная типизируется как `nova_int`
+  (hardcoded `sum_schemas["Result"]["Ok"]` fallback). Field-access на
+  ней даёт CC-FAIL `member reference base type 'nova_int'`.
+- **Почему:** `register_fn_result_ok_inner_type` регистрирует только
+  `Result[Tuple, E]` Ok-payload (комментарий на 7334 — «struct
+  user-types могут быть добавлены аналогично»); `pattern_bind_typed`
+  консультирует `result_ok_inner_types` только для `Pattern::Tuple`
+  sub-pattern, не для plain `Ident` (`Ok(p)`). Фикс требует хирургии
+  в 2 местах codegen.
+- **Как чинить:** Plan 59 (sum-type monomorphization) — registry для
+  struct Ok-payload + extend pattern_bind_typed на non-Tuple
+  sub-patterns. Семейство `[M-result-method-named-var-only]`.
+- **Приоритет:** M — pre-existing (ловит `plan72/p2a_try_from_into_pos`);
+  затрагивает любой `Result[Record, E]` match. Workaround:
+  Ok/Err-дискриминация без field-access на payload работает.
 
 ### [M-protocol-as-value-binding-only] (DEFER — Plan 62.D/E → Plan 72 P0/P3-B)
 - **Где:** codegen — protocol-type как тип переменной/параметра
