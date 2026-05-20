@@ -16941,3 +16941,82 @@ UNBLOCKED (само удаление sum_schemas baseline — Plan 62.A.bis Ф.4
 Коммиты: A f7e926d, B a630e5d, C 5676e48, D1a f164b65, D1b+D1c
 726303b, D2 a44f992, D3+D4 238b2eb. Мержи в main: a13f5ca, 5228934,
 6d3dd5f.
+
+# Plan 33.8 — Verifier soundness hardening (2026-05-21)
+
+Создан по результатам аудита «с чистого листа» при закрытии Plan 33.7.
+Пользователь попросил перепроверить всё семейство Plan 33 «без упрощений
+как для прода». Аудит двумя агентами (soundness + completeness) нашёл
+3 SOUNDNESS-CRITICAL дыры — места, где верификатор объявлял контракт
+«доказан», хотя в рантайме он мог быть ложным. Контракт «доказан»
+стирается из release — ложный «доказан» = баг в проде без проверки.
+
+## Ф.1 — Переполнение `int`
+
+Дыра: Nova `int` — i64 в рантайме; codegen эмитил голый C `+`/`-`/`*`
+(UB при переполнении, на практике wrap), а верификатор кодировал `int`
+безграничным Z3 Int. `ensures result == a + b` «доказывался»
+безграничной арифметикой, проверка стиралась, рантайм переполнялся.
+Спека сама себе противоречила (04-effects.md:1067 panic vs :3204
+RuntimeError.Overflow).
+
+Решение пользователя: переполнение `int` → `panic`.
+
+- Ф.1.1: спека 04-effects.md — убрана противоречащая строка, добавлен
+  явный абзац (int overflow = panic; sized-типы = wrap, Plan 33.7).
+  ir.rs — исправлен ложный комментарий «Int bounded».
+- Ф.1.2: effects.h — `nova_int_checked_add/sub/mul` через
+  `__builtin_*_overflow` → `nv_panic`. emit_c.rs — оба emit-сайта
+  (`emit_expr` + `emit_expr_with_target_type`) для `nova_int` Add/Sub/Mul
+  эмитят checked-helper. Sized-типы не затронуты. Паника делает
+  безграничную Z3-кодировку `int` sound.
+- Ф.1.3 (overflow-VC в верификаторе — предупреждение + стирание
+  panic-check) — оптимизация, не soundness → V2.
+- Ф.1.4: verify_fn ассертит `nat >= 0` для nat-параметров.
+- Ф.1.5: 3 теста (overflow add/mul panic + no-overflow positive).
+- Регрессия: полный nova_tests 931 PASS / 0 FAIL — нулевой fallout.
+
+## Ф.2 — Сохранение инварианта цикла
+
+Дыра: `verify_loop_preservation` havoc-моделировала только присваивания
+первого уровня (`extract_body_assignments`). Составные `*=`/`/=`,
+присваивания во вложенных if/блоках/циклах, повторные — переменная
+оставалась замороженной на entry-значении → инвариант «доказывался»
+на устаревшем значении, молча `Proven`.
+
+- Ф.2.1: `loop_body_model_incomplete()` (+ walker `expr_has_assignment`)
+  распознаёт тело вне sound-envelope → fail-safe `Warning` (W2402),
+  не `Proven`.
+- Ф.2.3: 2 негативных теста (условное / составное присваивание).
+- Ф.2.2 (полное моделирование `ite` для условных присваиваний) —
+  precision, не soundness → V2.
+
+## Ф.3 — `assume`
+
+Дыра: AST-комментарий обещал линт `trust-introduced` и SMT-интеграцию —
+не было ни того, ни другого. `assume` молча выбрасывался.
+
+- Ф.3.1: `lints.rs::check_assume_trust` — `assume` вне `#trusted` →
+  lint `trust-introduced`.
+- Ф.3.2: решено НЕ подключать `assume` к SMT в V1 — наивная проводка
+  unsound в не-flow-sensitive модели verify_fn. Лживый комментарий
+  исправлен.
+- Ф.3.3: 1 .nv-тест + 2 unit-теста.
+
+## Ф.4 — Честность доков
+
+simplifications.md: устранена коллизия тегов ([V15]→[V21], [V16]→[V22]),
+[V2]/[V3] помечены СУПЕРСЕДЕД, добавлена [V23]. README: строка 33.8;
+в строке 33.3 — честная пометка про недоставленные parallel/cross-check.
+
+Замечание аудита: роадмап 33.6 предлагает планы 33.12 (FP) / 33.13
+(strings) / 33.19 (Dafny-port) как будущие — но они УЖЕ сделаны под
+Plan 33.3 Ф.11/Ф.14. Слот «33.8 refinement types» переиспользован под
+soundness (refinement types — спекулятивны, план не написан).
+
+## Результат
+
+3 SOUNDNESS-CRITICAL дыры закрыты. Все V2-остатки — НЕ soundness
+(оптимизация/полнота), отложены честно. contracts suite: 291 PASS /
+0 FAIL; полный nova_tests: 931 PASS / 0 FAIL.
+Plan 33.8: ✅ soundness ЗАКРЫТ (2026-05-21).
