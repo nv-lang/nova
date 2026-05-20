@@ -67,7 +67,7 @@ impl SmtBackend for TrivialBackend {
     fn check_sat(&mut self) -> SatResult {
         // Plan 33.7: detect BitVec terms — TrivialBackend не имеет BV reasoning.
         // Early-return UnsupportedTheory с hint на Z3 backend.
-        if self.vars.values().any(|s| matches!(s, SortRef::BitVec(_)))
+        if self.vars.values().any(|s| matches!(s, SortRef::BitVec { .. }))
             || self.assertions.iter().any(|a| term_contains_bv_op(&a.formula))
         {
             return SatResult::Unknown(UnknownReason::UnsupportedTheory(

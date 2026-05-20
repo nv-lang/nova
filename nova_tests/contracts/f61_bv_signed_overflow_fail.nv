@@ -1,0 +1,15 @@
+// EXPECT_COMPILE_ERROR error
+// REQUIRES_SMT_BACKEND z3
+//
+// Plan 33.7 V2: #nooverflow на i8 — signed overflow. i8 диапазон
+// [-128, 127]; 100 + 100 = 200 переполняет signed-границу. Без bounding
+// requires Z3 находит контрпример → compile error.
+// Проверяет что overflow VC использует bvadd_no_overflow_s (signed),
+// не unsigned-вариант.
+
+module contracts.f61_bv_signed_overflow_fail
+
+#nooverflow #verify
+fn unsafe_add_i8(a i8, b i8) -> i8
+    ensures result == a + b
+=> a + b
