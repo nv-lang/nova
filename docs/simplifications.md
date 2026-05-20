@@ -4796,7 +4796,7 @@ Sub-plans 35.A-E:
   match → if/else, lambda → #pure fn и т.д.). Soundness gap закрыт.
 - **Дата закрытия:** 2026-05-16
 
-### [V20] ✅ BitVec theory (sized integers) — ЗАКРЫТО Plan 33.7 (2026-05-20)
+### [V20] ✅ BitVec theory (sized integers) — ЗАКРЫТО Plan 33.7 V1+V2 (2026-05-21)
 - **Где:** `compiler-codegen/src/verify/{ir.rs,encode.rs,pipeline.rs,backend/z3.rs,backend/z3_ffi.rs,backend/trivial.rs}`, `compiler-codegen/src/ast/mod.rs`, `compiler-codegen/src/parser/mod.rs`.
 - **Что реализовано:**
   * `SortRef::BitVec(N)` и `SmtTerm::BitVecLit(v, w)` в SMT-IR.
@@ -4806,12 +4806,24 @@ Sub-plans 35.A-E:
   * `as`-cast encoding: `0 as u32` → `BitVecLit(0, 32)` и т.д.
   * TrivialBackend: `check_sat` ранний выход с `UnsupportedTheory` для BV-сортов или bv-операторов.
   * `#nooverflow` атрибут: парсится как `ContractAttrs.no_overflow: bool`, устанавливает `FnDecl.no_overflow`; pipeline.rs генерирует overflow VCs (`bvadd_no_overflow_u` и т.д.) для каждой Add/Sub/Mul в теле fn с BV-sorted параметрами.
-  * 5 новых тестов: f60_bv_arith_trivial_positive, f60_bv_arith_z3_positive, f60_bv_bitwise_z3_positive, f60_bv_nooverflow_safe_z3_positive, f60_bv_nooverflow_overflow_fail.
-- **Остаток (V2):**
-  * Точное определение знаковости (is_signed) из type_name i8/i16/i32 вместо глобального false.
-  * BV cast resize (BitVec(32) → BitVec(8) через zero-extend/sign-extend).
-  * Overflow VCs для блочных тел (вложенные stmt, let-bindings с BV-выражениями).
-- **Дата закрытия:** 2026-05-20
+  * 5 новых тестов V1: f60_bv_arith_trivial_positive, f60_bv_arith_z3_positive, f60_bv_bitwise_z3_positive, f60_bv_nooverflow_safe_z3_positive, f60_bv_nooverflow_overflow_fail.
+- **V2 (ЗАКРЫТО 2026-05-21):**
+  * ✅ Точная знаковость: `SortRef::BitVec { width, signed }` — i8/i16/i32→signed,
+    u8/u16/u32/u64→unsigned. `is_signed` берётся из BV-операнда (`bv_signed`),
+    не глобальный false. Влияет на bvsdiv/bvslt vs bvudiv/bvult и на выбор
+    `bvadd_no_overflow_s/u` в overflow VC.
+  * ✅ BV cast resize: `as`-каст между BV-ширинами через `zero_extend N`
+    (unsigned-источник) / `sign_extend N` (signed) / `extract H L` (сужение).
+    FFI: `Z3_mk_zero_ext`/`Z3_mk_sign_ext`/`Z3_mk_extract`; translate_app
+    парсит числовой параметр из op-строки.
+  * ✅ Overflow VCs для блочных тел: `collect_bv_arith_ops_in_body` рекурсит
+    в let-bindings и блок-выражения (`BvScope` с subst-картой). `let x = E`
+    регистрирует subst `x → encode(E)` → VC переписывается в терминах
+    fn-параметров (declared в backend) — избегает undeclared-var в Z3.
+  * 4 новых теста V2: f61_bv_signed_z3_positive, f61_bv_cast_resize_z3_positive,
+    f61_bv_nooverflow_block_z3_positive, f61_bv_signed_overflow_fail.
+- **Остаток:** нет. V20 полностью закрыт (V1 + V2).
+- **Дата закрытия:** V1 — 2026-05-20; V2 — 2026-05-21.
 
 ### [ЗАКР 2026-05-16] pipeline.rs монолит — handler code в отдельный модуль [Ф.2.1]
 - **Закрыто (Plan 33.6 Ф.2.1, 2026-05-16, commit ddc11f2e):**
