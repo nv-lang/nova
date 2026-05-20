@@ -4796,6 +4796,23 @@ Sub-plans 35.A-E:
   match → if/else, lambda → #pure fn и т.д.). Soundness gap закрыт.
 - **Дата закрытия:** 2026-05-16
 
+### [V20] ✅ BitVec theory (sized integers) — ЗАКРЫТО Plan 33.7 (2026-05-20)
+- **Где:** `compiler-codegen/src/verify/{ir.rs,encode.rs,pipeline.rs,backend/z3.rs,backend/z3_ffi.rs,backend/trivial.rs}`, `compiler-codegen/src/ast/mod.rs`, `compiler-codegen/src/parser/mod.rs`.
+- **Что реализовано:**
+  * `SortRef::BitVec(N)` и `SmtTerm::BitVecLit(v, w)` в SMT-IR.
+  * Z3 FFI: bvadd/bvsub/bvmul/bvsdiv/bvudiv/bvsrem/bvurem, bitwise bvand/bvor/bvxor/bvnot/bvshl/bvlshr/bvashr, signed/unsigned comparisons bvslt/bvsle/bvsgt/bvsge/bvult/bvule/bvugt/bvuge, overflow predicates bvadd_no_overflow/bvsub_no_underflow/bvmul_no_overflow.
+  * `type_ref_to_sort`/`type_to_sort`: u8/i8→BitVec(8), u16/i16→BitVec(16), u32/i32→BitVec(32), u64/usize→BitVec(64); `int`/`i64` остаются `SortRef::Int`.
+  * BV binary dispatch в `encode_expr`: если хоть один операнд BV-типа → bv-операторы; `IntLit`-литерал в BV-контексте автоматически поднимается в `BitVecLit`.
+  * `as`-cast encoding: `0 as u32` → `BitVecLit(0, 32)` и т.д.
+  * TrivialBackend: `check_sat` ранний выход с `UnsupportedTheory` для BV-сортов или bv-операторов.
+  * `#nooverflow` атрибут: парсится как `ContractAttrs.no_overflow: bool`, устанавливает `FnDecl.no_overflow`; pipeline.rs генерирует overflow VCs (`bvadd_no_overflow_u` и т.д.) для каждой Add/Sub/Mul в теле fn с BV-sorted параметрами.
+  * 5 новых тестов: f60_bv_arith_trivial_positive, f60_bv_arith_z3_positive, f60_bv_bitwise_z3_positive, f60_bv_nooverflow_safe_z3_positive, f60_bv_nooverflow_overflow_fail.
+- **Остаток (V2):**
+  * Точное определение знаковости (is_signed) из type_name i8/i16/i32 вместо глобального false.
+  * BV cast resize (BitVec(32) → BitVec(8) через zero-extend/sign-extend).
+  * Overflow VCs для блочных тел (вложенные stmt, let-bindings с BV-выражениями).
+- **Дата закрытия:** 2026-05-20
+
 ### [ЗАКР 2026-05-16] pipeline.rs монолит — handler code в отдельный модуль [Ф.2.1]
 - **Закрыто (Plan 33.6 Ф.2.1, 2026-05-16, commit ddc11f2e):**
   * `compiler-codegen/src/verify/handler_exec.rs` — 689 строк handler verification:

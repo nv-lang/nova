@@ -167,6 +167,7 @@ impl Z3Backend {
             SortRef::Str => self.str_sort,
             SortRef::F32 => unsafe { ffi::Z3_mk_fpa_sort_32(self.ctx) },
             SortRef::F64 => unsafe { ffi::Z3_mk_fpa_sort_64(self.ctx) },
+            SortRef::BitVec(w) => unsafe { ffi::Z3_mk_bv_sort(self.ctx, *w) },
             SortRef::Named(name) => {
                 // Plan 33.1 trivial backend wraps record-types as
                 // uninterpreted; для Z3 делаем то же — uninterpreted
@@ -239,6 +240,12 @@ impl Z3Backend {
                 let v = f64::from_bits(*bits);
                 let f64_sort = ffi::Z3_mk_fpa_sort_64(self.ctx);
                 let ast = ffi::Z3_mk_fpa_numeral_double(self.ctx, v, f64_sort);
+                Ok(self.track(ast))
+            }
+            // Plan 33.7: bit-vector literal.
+            SmtTerm::BitVecLit(v, w) => {
+                let bv_sort = ffi::Z3_mk_bv_sort(self.ctx, *w);
+                let ast = ffi::Z3_mk_unsigned_int64(self.ctx, *v, bv_sort);
                 Ok(self.track(ast))
             }
             SmtTerm::Var(name) => {
@@ -411,6 +418,44 @@ impl Z3Backend {
             ("str.substr", &[s, off, len]) => ffi::Z3_mk_seq_extract(ctx, s, off, len),
             ("str.index",  &[s, sub, off]) => ffi::Z3_mk_seq_index(ctx, s, sub, off),
 
+            // ─── Bit-vectors (Plan 33.7) ──────────────────────────────────
+            // Arithmetic (wrap-around, 2's complement).
+            ("bvadd", &[x, y]) => ffi::Z3_mk_bvadd(ctx, x, y),
+            ("bvsub", &[x, y]) => ffi::Z3_mk_bvsub(ctx, x, y),
+            ("bvmul", &[x, y]) => ffi::Z3_mk_bvmul(ctx, x, y),
+            ("bvsdiv", &[x, y]) => ffi::Z3_mk_bvsdiv(ctx, x, y),
+            ("bvsrem", &[x, y]) => ffi::Z3_mk_bvsrem(ctx, x, y),
+            ("bvudiv", &[x, y]) => ffi::Z3_mk_bvudiv(ctx, x, y),
+            ("bvurem", &[x, y]) => ffi::Z3_mk_bvurem(ctx, x, y),
+            ("bvneg", &[x]) => ffi::Z3_mk_bvneg(ctx, x),
+            // Bitwise.
+            ("bvand", &[x, y]) => ffi::Z3_mk_bvand(ctx, x, y),
+            ("bvor",  &[x, y]) => ffi::Z3_mk_bvor(ctx, x, y),
+            ("bvxor", &[x, y]) => ffi::Z3_mk_bvxor(ctx, x, y),
+            ("bvnot", &[x]) => ffi::Z3_mk_bvnot(ctx, x),
+            ("bvshl",  &[x, y]) => ffi::Z3_mk_bvshl(ctx, x, y),
+            ("bvlshr", &[x, y]) => ffi::Z3_mk_bvlshr(ctx, x, y),
+            ("bvashr", &[x, y]) => ffi::Z3_mk_bvashr(ctx, x, y),
+            // Signed comparisons.
+            ("bvslt", &[x, y]) => ffi::Z3_mk_bvslt(ctx, x, y),
+            ("bvsle", &[x, y]) => ffi::Z3_mk_bvsle(ctx, x, y),
+            ("bvsgt", &[x, y]) => ffi::Z3_mk_bvsgt(ctx, x, y),
+            ("bvsge", &[x, y]) => ffi::Z3_mk_bvsge(ctx, x, y),
+            // Unsigned comparisons.
+            ("bvult", &[x, y]) => ffi::Z3_mk_bvult(ctx, x, y),
+            ("bvule", &[x, y]) => ffi::Z3_mk_bvule(ctx, x, y),
+            ("bvugt", &[x, y]) => ffi::Z3_mk_bvugt(ctx, x, y),
+            ("bvuge", &[x, y]) => ffi::Z3_mk_bvuge(ctx, x, y),
+            // Overflow predicates (для #nooverflow VC).
+            ("bvadd_no_overflow_s", &[x, y]) => ffi::Z3_mk_bvadd_no_overflow(ctx, x, y, 1),
+            ("bvadd_no_overflow_u", &[x, y]) => ffi::Z3_mk_bvadd_no_overflow(ctx, x, y, 0),
+            ("bvadd_no_underflow",  &[x, y]) => ffi::Z3_mk_bvadd_no_underflow(ctx, x, y),
+            ("bvsub_no_overflow",   &[x, y]) => ffi::Z3_mk_bvsub_no_overflow(ctx, x, y),
+            ("bvsub_no_underflow_s",&[x, y]) => ffi::Z3_mk_bvsub_no_underflow(ctx, x, y, 1),
+            ("bvsub_no_underflow_u",&[x, y]) => ffi::Z3_mk_bvsub_no_underflow(ctx, x, y, 0),
+            ("bvmul_no_overflow_s", &[x, y]) => ffi::Z3_mk_bvmul_no_overflow(ctx, x, y, 1),
+            ("bvmul_no_overflow_u", &[x, y]) => ffi::Z3_mk_bvmul_no_overflow(ctx, x, y, 0),
+
             // Plan 33.3 Ф.9: pure_view-UF через real Z3_func_decl
             // (pre-declared в declare_function, sorts из effect-сигнатуры).
             (op_name, args_arr) if op_name.starts_with("_view_") => {
@@ -551,6 +596,15 @@ impl Z3Backend {
                         } else {
                             let cs = CStr::from_ptr(s_ptr);
                             ModelValue::Str(cs.to_string_lossy().into_owned())
+                        }
+                    }
+                    // Plan 33.7: BitVec — попытаться извлечь как int64.
+                    SortRef::BitVec(_) => {
+                        let mut iv: i64 = 0;
+                        if ffi::Z3_get_numeral_int64(self.ctx, out, &mut iv) != 0 {
+                            ModelValue::Int(iv)
+                        } else {
+                            ModelValue::Unknown
                         }
                     }
                     SortRef::Named(_) | SortRef::F32 | SortRef::F64 => ModelValue::Unknown,
