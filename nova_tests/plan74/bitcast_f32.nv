@@ -1,0 +1,60 @@
+// Plan 74 Ф.4: f32 ↔ u32 IEEE 754 bit-cast.
+//
+// `f32 @to_bits() -> u32` / `f32.from_bits(bits u32) -> f32` —
+// reinterpret-cast между float и его bit-pattern. Реализация:
+// nova_rt/numeric.h (memcpy-based).
+
+module nova_tests.plan74.bitcast_f32
+
+test "f32.to_bits — known IEEE 754 patterns" {
+    let one f32 = 1.0
+    let two f32 = 2.0
+    let zero f32 = 0.0
+    // 1.0f = 0x3F800000 (sign 0, exp 127, mantissa 0).
+    assert(one.to_bits() == 0x3F800000)
+    // 2.0f = 0x40000000.
+    assert(two.to_bits() == 0x40000000)
+    assert(zero.to_bits() == 0)
+}
+
+test "f32.from_bits — восстановление из bit-pattern" {
+    let one f32 = 1.0
+    let two f32 = 2.0
+    let zero f32 = 0.0
+    assert(f32.from_bits(0x3F800000) == one)
+    assert(f32.from_bits(0x40000000) == two)
+    assert(f32.from_bits(0) == zero)
+}
+
+test "f32 round-trip — from_bits(to_bits(x)) == x" {
+    let a f32 = 3.14159
+    assert(f32.from_bits(a.to_bits()) == a)
+
+    let b f32 = -7.5
+    assert(f32.from_bits(b.to_bits()) == b)
+
+    let c f32 = 1.0e30
+    assert(f32.from_bits(c.to_bits()) == c)
+}
+
+test "f32.to_bits — negative zero отличается от positive zero" {
+    let neg_zero f32 = -0.0
+    let pos_zero f32 = 0.0
+    assert(neg_zero == pos_zero)
+    assert(neg_zero.to_bits() != pos_zero.to_bits())
+    assert(pos_zero.to_bits() == 0)
+}
+
+test "f32 NaN bit-pattern round-trip" {
+    // Quiet NaN: 0x7FC00000.
+    let nan = f32.from_bits(0x7FC00000)
+    assert(nan.is_nan())
+    assert(nan.to_bits() == 0x7FC00000)
+}
+
+test "f32 infinity bit-pattern" {
+    // +Infinity = 0x7F800000.
+    let inf = f32.from_bits(0x7F800000)
+    assert(inf.is_infinite())
+    assert(inf.to_bits() == 0x7F800000)
+}
