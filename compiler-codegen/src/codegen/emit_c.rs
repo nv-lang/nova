@@ -12906,14 +12906,37 @@ impl CEmitter {
                             ));
                         }
                     }
-                    // Plan 48 Ф.7.4 (partial): when the parent sum-type is
-                    // generic and we can infer all type-args from the call args
-                    // (e.g. `Ok2(42)` → Result2[nova_int]), route through the
-                    // mono pipeline so the receiver gets a concrete C struct
-                    // type (`Nova_Result2____nova_int*`) and method calls hit
-                    // the mono dispatch path. Otherwise fall back to the erased
-                    // constructor.
-                    if let Some((_, mangled, _)) =
+                    // Plan 59 Ф.7.5 D2: dual-mode construction `Ok`/`Err`.
+                    // Имя конструктора — через `result_repr_c_type` +
+                    // `result_ctor_name`: до флипа D3 →
+                    // `nova_make_Result_<V>` (идентично legacy → green);
+                    // после D3 → `nova_make_NovaRes_<n>_<V>`. (T,E)
+                    // best-effort: Ok-тип из arg для `Ok`, Err-тип из arg
+                    // для `Err`; недостающий slot — legacy-default
+                    // (`nova_int`/`nova_str`). Точная (T,E)-резолюция по
+                    // expected-типу — итеративный fix D3; до D3 default
+                    // безвреден (всё равно legacy ctor).
+                    if type_name == "Result"
+                        && (name == "Ok" || name == "Err")
+                    {
+                        let arg_c = args.first()
+                            .map(|a| self.infer_expr_c_type(a.expr()))
+                            .filter(|t| !t.is_empty()
+                                && t != "void*"
+                                && !self.is_generic_stub_c(t));
+                        let (ok_c, err_c) = if name == "Ok" {
+                            (arg_c.unwrap_or_else(|| "nova_int".into()),
+                             "nova_str".to_string())
+                        } else {
+                            ("nova_int".to_string(),
+                             arg_c.unwrap_or_else(|| "nova_str".into()))
+                        };
+                        let res_c = self.result_repr_c_type(&ok_c, &err_c);
+                        self.result_ctor_name(&res_c, name)
+                    } else if let Some((_, mangled, _)) =
+                        // Plan 48 Ф.7.4 (partial): generic parent sum-type
+                        // с выводимыми type-args (`Ok2(42)` → Result2[int])
+                        // → mono-pipeline (concrete C struct receiver).
                         self.try_infer_variant_mono_args(name, args)
                     {
                         format!("nova_make_{}_{}", mangled, name)
