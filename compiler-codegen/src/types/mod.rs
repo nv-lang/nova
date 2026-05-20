@@ -1,4 +1,4 @@
-﻿//! Type checker Рё effect inference.
+//! Type checker Рё effect inference.
 //!
 //! РњРёРЅРёРјР°Р»СЊРЅР°СЏ СЂРµР°Р»РёР·Р°С†РёСЏ: РїСЂРѕРІРµСЂСЏРµРј РёРјРµРЅР° С‚РёРїРѕРІ, РІС‹РІРѕРґРёРј С‚РёРїС‹ Р»РѕРєР°Р»СЊРЅС‹С…
 //! РїРµСЂРµРјРµРЅРЅС‹С…, РІС‹РІРѕРґРёРј СЌС„С„РµРєС‚С‹ РґР»СЏ private С„СѓРЅРєС†РёР№ (D28). Generic-РїР°СЂР°РјРµС‚СЂС‹
@@ -380,16 +380,16 @@ pub fn check_module(module: &Module) -> Result<ModuleEnv, Vec<Diagnostic>> {
     check_defer_bodies(module, &mut errors);
 
     // D61 В§1430-1434 / D90 Р¤.8 (1): handler-method РґР»СЏ СЌС„С„РµРєС‚-РѕРїРµСЂР°С†РёРё
-    // СЃ return type `Never` РћР‘РЇР—РђРќ Р·Р°РєРѕРЅС‡РёС‚СЊСЃСЏ exit-control'РѕРј
+    // СЃ return type `never` РћР‘РЇР—РђРќ Р·Р°РєРѕРЅС‡РёС‚СЊСЃСЏ exit-control'РѕРј
     // (`interrupt v` РёР»Рё `throw err` / `panic` / `exit`). РРЅР°С‡Рµ РЅРµС‚
-    // Р·РЅР°С‡РµРЅРёСЏ С‚РёРїР° Never РґР»СЏ РІРѕР·РІСЂР°С‚Р° вЂ” handler РЅРµ РјРѕР¶РµС‚ Р·Р°РєРѕРЅРЅРѕ
+    // Р·РЅР°С‡РµРЅРёСЏ С‚РёРїР° never РґР»СЏ РІРѕР·РІСЂР°С‚Р° вЂ” handler РЅРµ РјРѕР¶РµС‚ Р·Р°РєРѕРЅРЅРѕ
     // Р·Р°РІРµСЂС€РёС‚СЊСЃСЏ normally.
     //
-    // РџСЂРёРјРµРЅСЏРµС‚СЃСЏ Рє: Fail.fail (built-in, return Never), Р»СЋР±С‹Рј
-    // user-defined effect-operations СЃ return type Never.
+    // РџСЂРёРјРµРЅСЏРµС‚СЃСЏ Рє: Fail.fail (built-in, return never), Р»СЋР±С‹Рј
+    // user-defined effect-operations СЃ return type never.
     //
     // Walks РІСЃРµ handler-Р»РёС‚РµСЂР°Р»С‹ РІ module, РїСЂРѕРІРµСЂСЏРµС‚ РґР»СЏ РєР°Р¶РґРѕРіРѕ
-    // method'Р°, СЏРІР»СЏРµС‚СЃСЏ Р»Рё СЃРѕРѕС‚РІРµС‚СЃС‚РІСѓСЋС‰Р°СЏ operation Never-РІРѕР·РІСЂР°С‚-
+    // method'Р°, СЏРІР»СЏРµС‚СЃСЏ Р»Рё СЃРѕРѕС‚РІРµС‚СЃС‚РІСѓСЋС‰Р°СЏ operation never-РІРѕР·РІСЂР°С‚-
     // РЅРѕР№, Рё РµСЃР»Рё РґР° вЂ” body РґРѕР»Р¶РµРЅ diverge (static analysis).
     check_handler_never_ops(module, &mut errors);
 
@@ -1364,7 +1364,8 @@ impl<'a> BoundCtx<'a> {
             "int" | "i8" | "i16" | "i32" | "i64"
             | "u8" | "u16" | "u32" | "u64"
             | "f32" | "f64" | "bool" | "char" | "byte"
-            | "str" | "any") {
+            // Plan 76: `never` — bottom-тип, vacuously удовлетворяет любому bound.
+            | "str" | "any" | "never") {
             return;
         }
         let Some(spec_methods) = self.protocol_specs.get(&bound_name) else {
@@ -2135,11 +2136,11 @@ impl NameResCtx {
             "f32", "f64", "uint", "size",
             // Other primitives.
             "bool", "str", "byte", "char", "unit", "any",
-            // Plan 62.A: `Never` остаётся как hardcoded built-in. Bootstrap
-            // parser не поддерживает `type Never =` (empty sum) per spec
-            // D26 §794-797. Когда parser получит empty-sum syntax, Never
-            // переедет в std/prelude/core.nv и будет удалён отсюда.
-            "Never",
+            // Plan 76: `never` — bottom-тип (uninhabited, 0 значений),
+            // строчный встроенный примитив. Subtype любого `T`. Как и
+            // остальные примитивы (`int`/`bool`/...) — НЕ объявляется в
+            // prelude, известен компилятору напрямую.
+            "never",
             // Boolean literals (parsed РєР°Рє Ident РІ bool-context РєРѕРµ-РіРґРµ).
             "true", "false",
             // Special idents.
@@ -2163,8 +2164,8 @@ impl NameResCtx {
             // DeclaredFromPrelude > HardcodedBaseline).
             //
             // `RuntimeNoneError` НЕ перенесён — bootstrap parser не
-            // поддерживает empty-body sum syntax (тот же блокер что у
-            // `Never`). Остаётся as string-payload throw в nova_rt/effects.h.
+            // поддерживает empty-body sum syntax. Остаётся as
+            // string-payload throw в nova_rt/effects.h.
             // Plan 62.B: `panic`/`exit`/`assert`/`debug_assert` (4 names)
             // перенесены в std/prelude/runtime.nv (file-based external fn
             // declarations). Type-checker теперь resolves их через
@@ -3155,7 +3156,8 @@ pub fn ty_of_ref(tr: &TypeRef) -> Ty {
             Some("str") => Ty::Str,
             Some("bool") => Ty::Bool,
             Some("byte") => Ty::Int,
-            Some("Never") => Ty::Never,
+            // Plan 76: bottom-тип `never` — строчный встроенный примитив.
+            Some("never") => Ty::Never,
             Some(name) => Ty::Named(name.to_string()),
             None => Ty::Any,
         },
@@ -3279,21 +3281,21 @@ fn is_suspend_expr_kind(kind: &ExprKind) -> bool {
     )
 }
 
-/// D90 Р¤.8 (1): walk РјРѕРґСѓР»СЏ, РґР»СЏ РєР°Р¶РґРѕРіРѕ `HandlerLit { methods }`
-/// РїСЂРѕРІРµСЂСЏРµС‚, С‡С‚Рѕ methods РѕР±СЂР°Р±Р°С‚С‹РІР°СЋС‰РёРµ Never-operations Р·Р°РІРµСЂС€Р°СЋС‚СЃСЏ
-/// exit-control'РѕРј.
+/// D90 Ф.8 (1): walk модуля, для каждого `HandlerLit { methods }`
+/// проверяет, что methods обрабатывающие never-operations завершаются
+/// exit-control'ом.
 ///
-/// Never-operation = operation, С‡РµР№ return type вЂ” `Never`. Handler-method
-/// РґР»СЏ С‚Р°РєРѕР№ operation РЅРµ РјРѕР¶РµС‚ Р·Р°РІРµСЂС€РёС‚СЊСЃСЏ normally (РЅРµС‚ Р·РЅР°С‡РµРЅРёСЏ С‚РёРїР°
-/// Never). РџРѕ D61 (СЃС‚СЂ. 1430-1434) body РѕР±СЏР·Р°РЅ `interrupt v`, `throw err`,
-/// `panic(...)` РёР»Рё `exit(...)`.
+/// never-operation = operation, чей return type — `never`. Handler-method
+/// для такой operation не может завершиться normally (нет значения типа
+/// never). По D61 (стр. 1430-1434) body обязан `interrupt v`, `throw err`,
+/// `panic(...)` или `exit(...)`.
 ///
-/// Bootstrap-stage: Р·РЅР°РµРј С‡С‚Рѕ built-in `Fail.fail(value) -> Never` вЂ”
-/// РµРґРёРЅСЃС‚РІРµРЅРЅР°СЏ Never-operation РІ prelude. Hardcoded effect_name="Fail",
-/// method_name="fail". User-defined effects СЃ Never-methods Р±СѓРґСѓС‚ РїРѕРєСЂС‹С‚С‹
-/// РѕР±С‰РµР№ effect-schema-Р°РЅР°Р»РёС‚РёРєРѕР№ (Plan 25+).
+/// Bootstrap-stage: знаем что built-in `Fail.fail(value) -> never` —
+/// единственная never-operation в prelude. Hardcoded effect_name="Fail",
+/// method_name="fail". User-defined effects с never-methods будут покрыты
+/// общей effect-schema-аналитикой (Plan 25+).
 fn check_handler_never_ops(module: &Module, errors: &mut Vec<Diagnostic>) {
-    // РЎР±РѕСЂ: РєР°РєРёРµ user-defined effect-methods РёРјРµСЋС‚ return type Never.
+    // РЎР±РѕСЂ: РєР°РєРёРµ user-defined effect-methods РёРјРµСЋС‚ return type never.
     // Bootstrap: С‚РѕР»СЊРєРѕ Fail.fail вЂ” РІСЃС‚СЂРѕРµРЅРЅС‹Р№. User effects РїР°СЂСЃСЏС‚СЃСЏ
     // С‡РµСЂРµР· TypeDecl::Effect вЂ” Р°РЅР°Р»РёР·РёСЂСѓРµРј РёС… EffectMethod.return_type.
     let mut never_ops: HashSet<(String, String)> = HashSet::new();
@@ -3452,7 +3454,8 @@ fn walk_expr_for_with_gate(e: &Expr, eff_pv: &HashSet<String>, errors: &mut Vec<
 fn type_ref_is_never(t: &TypeRef) -> bool {
     if let TypeRef::Named { path, .. } = t {
         if let Some(last) = path.last() {
-            return last == "Never";
+            // Plan 76: bottom-тип — строчный `never`.
+            return last == "never";
         }
     }
     false
@@ -3800,10 +3803,10 @@ fn walk_expr_for_handler_lits(e: &Expr, never_ops: &HashSet<(String, String)>, e
                     if !handler_body_diverges(&m.body) {
                         errors.push(Diagnostic::new(
                             format!(
-                                "handler-method `{}.{}` РѕР±СЂР°Р±Р°С‚С‹РІР°РµС‚ РѕРїРµСЂР°С†РёСЋ СЃ РІРѕР·РІСЂР°С‰Р°РµРјС‹Рј С‚РёРїРѕРј `Never` \
-                                 (D61 В§1430-1434, D65): body РѕР±СЏР·Р°РЅ Р·Р°РІРµСЂС€РёС‚СЊСЃСЏ С‡РµСЂРµР· `interrupt v`, \
-                                 `throw err`, `panic(...)` РёР»Рё `exit(...)`. РќРµР»СЊР·СЏ Р·Р°РІРµСЂС€РёС‚СЊ handler-method \
-                                 normally вЂ” РЅРµС‚ Р·РЅР°С‡РµРЅРёСЏ С‚РёРїР° `Never` РґР»СЏ return.",
+                                "handler-method `{}.{}` обрабатывает операцию с возвращаемым типом `never` \
+                                 (D61 §1430-1434, D65): body обязан завершиться через `interrupt v`, \
+                                 `throw err`, `panic(...)` или `exit(...)`. Нельзя завершить handler-method \
+                                 normally — нет значения типа `never` для return.",
                                 eff_last, m.name
                             ),
                             m.span,
@@ -3982,7 +3985,7 @@ fn walk_expr_for_handler_lits(e: &Expr, never_ops: &HashSet<(String, String)>, e
 ///
 /// Exit-control = `interrupt`, `throw`, `panic(...)`, `exit(...)` вЂ”
 /// expressions/stmts РєРѕС‚РѕСЂС‹Рµ РіР°СЂР°РЅС‚РёСЂРѕРІР°РЅРЅРѕ РќР• РІРѕР·РІСЂР°С‰Р°СЋС‚ control РІ
-/// caller РѕРїРµСЂР°С†РёРё (Never-returning).
+/// caller РѕРїРµСЂР°С†РёРё (never-returning).
 ///
 /// Bootstrap conservative: РїСЂРѕРІРµСЂСЏРµРј СЃР°РјС‹Рµ С‡Р°СЃС‚С‹Рµ РїР°С‚С‚РµСЂРЅС‹:
 ///   - Expr body = exit-control expression.
@@ -4002,7 +4005,7 @@ fn expr_diverges(e: &Expr) -> bool {
     match &e.kind {
         // Direct exit-control.
         ExprKind::Interrupt(_) | ExprKind::Throw(_) => true,
-        // panic(...) / exit(...) вЂ” Never-returning builtins (D13).
+        // panic(...) / exit(...) вЂ” never-returning builtins (D13).
         ExprKind::Call { func, .. } => {
             if let ExprKind::Ident(name) = &func.kind {
                 matches!(name.as_str(), "panic" | "exit")
@@ -5976,6 +5979,8 @@ impl MapLitCtx {
             "int" | "i8" | "i16" | "i32" | "i64"
                 | "u8" | "u16" | "u32" | "u64"
                 | "f32" | "f64" | "bool" | "char" | "byte" | "str"
+                // Plan 76: `never` — bottom-тип (uninhabited), vacuously primitive.
+                | "never"
         ) {
             return;
         }

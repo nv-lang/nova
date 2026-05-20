@@ -1,8 +1,9 @@
 // Plan 72 P1-B: empty-sum type syntax — `type X` without body.
 //
 // Parser previously required at least one variant after `type Name`.
-// Bottom/uninhabited types like `Never` and marker types without payload
-// need to compile with no variants.
+// Marker types without payload and user-declared uninhabited types
+// need to compile with no variants. (The built-in bottom-type `never`
+// is a lowercase primitive — Plan 76 — not an empty-sum declaration.)
 //
 // This test verifies:
 // 1. `type Uninhabited` (no body) parses and compiles

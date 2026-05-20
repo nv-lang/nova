@@ -1,9 +1,9 @@
 // EXPECT_COMPILE_ERROR Fail.fail
 //
 // D61 §1430-1434 (revised by Plan 20 Ф.8): handler-method для эффект-
-// операции с return type `Never` ОБЯЗАН закончиться через
+// операции с return type `never` ОБЯЗАН закончиться через
 // `interrupt v`, `throw err`, `panic(...)` или `exit(...)`. Нельзя
-// завершить normally — нет значения типа `Never` для return.
+// завершить normally — нет значения типа `never` для return.
 //
 // Этот тест проверяет, что handler без exit-control отвергается
 // type-checker'ом.
