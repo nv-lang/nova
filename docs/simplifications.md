@@ -10030,6 +10030,49 @@ G/H). ~3700 LOC implementation cumulative.
   убрать `result_type_params` и выводить тип из mono-инстанса.
 - **Приоритет:** M — для `bool`/`int` inline-цепочки проходят случайно
   (C ABI совместим по размеру); для pointer-типов даёт wrong result.
+- **Plan 62.B (2026-05-20):** частично улучшено. (1) `external fn`
+  декларации Result-методов в `std/prelude/core.nv` раскомментированы;
+  чтобы их return-type `T` (стаб `Nova_T*` от `external_registry`) не
+  ломал binop value-equality, добавлен `is_generic_stub_c` — generic-aware
+  lookup-блоки `infer_expr_c_type` пропускают стаб и доходят до
+  specialized `Nova_Result*` ветки (`result_type_params`). (2) `Result.map`
+  closure-call теперь эмитит fn-pointer cast по фактической C-сигнатуре
+  closure (`typed_closure_c_sig`), а не хардкод `NOVA_CLOS_CALL_ii` —
+  `bool`/`char`-typed closures больше не зависят от «совпадения по
+  размеру», работают корректно. Остаточное упрощение: inline `unwrap_or`
+  return-type всё ещё `(nova_int, nova_str)` fallback (полное лечение —
+  Plan 59 Ф.7.5).
+
+### [M-option-result-method-misuse-cc-only] (DEFER — type-checker tightening)
+- **Где:** `compiler-codegen/src/types/mod.rs` — method-call checking
+  для Option/Result; `emit_c.rs` method dispatch.
+- **Что упрощено:** bootstrap type-checker не ловит на Nova-уровне ряд
+  misuse'ов Option/Result-методов (обнаружено при написании негативных
+  тестов Plan 62.B):
+  - payload-type mismatch (`Some(1).or(Some("x"))`,
+    `Result[int,_].unwrap_or("s")`) — отвергается только C-backstop'ом
+    (CC-FAIL «incompatible type»), не Nova-диагностикой.
+  - `.or()` / Option-методы на non-Option receiver (`(42).or(...)`) —
+    проходят type-checker; codegen эмитит вызов несуществующего
+    `Nova_Option_method_or` → linker error (undefined symbol).
+  - closure-арность `.map()` не проверяется: `Some(1).map(fn(x int,
+    y int) -> int => x)` (2-параметровый closure) компилируется и
+    выполняется молча.
+  Arity обязательного параметра ЛОВИТСЯ корректно (`.or()` без
+  аргумента → чёткая Nova-диагностика «обязательный параметр не
+  передан»).
+- **Почему:** полная проверка method-call типов против declared
+  `external fn` сигнатур требует unification + generic instantiation
+  в type-checker'е; bootstrap полагается на C-backstop как safety net.
+- **Как чинить:** type-checker pass для method-call arg-type/arity
+  validation против `external_registry` сигнатур (Plan 72 type-system
+  followups или отдельный type-checker plan).
+- **Приоритет:** M — C-backstop ловит большинство (молчаливый garbage
+  только для closure-арности `.map`); диагностики хуже Nova-grade, но
+  не unsound для primitive-типов.
+- **Тесты:** plan62/option_or_payload_mismatch_neg.nv +
+  result_unwrap_or_arg_mismatch_neg.nv (EXPECT_CC_ERROR) +
+  option_or_missing_arg_neg.nv (EXPECT_COMPILE_ERROR — arity ловится).
 
 ### [M-legacy-sum-schemas-retained] (DEFER — Plan 62.A.bis Ф.4 → Plan 59)
 - **Где:** `compiler-codegen/src/codegen/` — hardcoded `sum_schemas` +
