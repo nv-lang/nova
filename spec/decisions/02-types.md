@@ -3377,9 +3377,14 @@ Record literal для tuple struct полей (`{ end, idx: 0 }` для
   Defer до dedicated plan с design pre-discussion (Plan 64).
 - **Tuple subtyping** (`(int, str) <: (any, any)`) — требует variance
   system в type-checker; нет immediate use case в bootstrap.
-- **Full mono'd Result** (`NovaRes_<T>_<E>` typedefs analogous Option)
+- ~~**Full mono'd Result** (`NovaRes_<T>_<E>` typedefs analogous Option)
   — Plan 63 Fix F+ targeted boxed-pointer tracking покрывает все
-  observable cases без full sum-type mono refactor. Defer до Plan 65.
+  observable cases без full sum-type mono refactor. Defer до Plan 65.~~
+  **✅ РЕАЛИЗОВАНО (Plan 59 Ф.7.5 increment 2, 2026-05-21):** Result
+  полностью мономорфизирован — per-(T,E) C-тип `NovaRes_<ok>_<err>*`
+  (аналог `NovaOpt_<T>`). Legacy единый `Nova_Result` устранён;
+  targeted Fix F+ boxed-tracking больше не нужен — Ok/Err payload
+  типизируется реальным T/E inline.
 
 ### Связь
 
