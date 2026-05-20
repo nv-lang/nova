@@ -5167,13 +5167,16 @@ extern __thread NovaVtable_Fail_any* _nova_handler_Fail_any;
    last_error capture, `http.nv` / `audit.nv` convert-to-Response
    patterns) — legitimate patterns, не workaround; задокументировано.
 
-3. **Generic Result typed Err** — `Nova_Result` struct extended fields
-   `err_typed_payload: void*` + `err_typed_type_id: NovaTypeId`. Constructor
-   `nova_make_Result_Err_typed(payload, tid)` для custom Err type. Codegen
-   `Err(custom_value)` (где value ≠ nova_str) emit'тся через typed
-   constructor; `expr!!` dispatch'тся по tid (typed → nova_throw_typed,
-   else legacy Nova_Fail_fail). Backward compat: `Err(nova_str)` через
-   legacy path. Full per-(T, E) mono struct — Plan 14/56 territory.
+3. **Generic Result typed Err** — *(история: Plan 61 fu#3)* hybrid через
+   extended `Nova_Result` struct (`err_typed_payload` + `err_typed_type_id`)
+   + `nova_make_Result_Err_typed(payload, tid)`. **✅ Заменено полной
+   мономорфизацией (Plan 59 Ф.7.5 increment 2, 2026-05-21):** `Result[T,E]`
+   → per-(T,E) тип `NovaRes_<ok>_<err>*`, где `payload.Err._0` несёт
+   реальное typed-значение Err напрямую. `Err(custom_value)` строит
+   mono-инстанс (hybrid `nova_make_Result_Err_typed` early-return удалён);
+   `expr!!` для non-str Err — `nova_throw_typed` с реальным payload'ом.
+   typed-Err поля (`err_typed_payload`/`err_typed_type_id`) сохранены в
+   схеме mono-типа для `Result[T, str]`-кейсов.
 
 4. **Per-E TLS slots + per-E vtable** — реализовано через preamble splice
    `/*__PER_E_FAIL_DECLS__*/`. Для each E type registered in
@@ -5190,9 +5193,12 @@ extern __thread NovaVtable_Fail_any* _nova_handler_Fail_any;
 
 - **String-only `Fail`** — ломает D65 правило 1.
 - **`nova_throw_value` placeholder** — УДАЛЁН в Plan 61 Ф.4 (Silent UB #2).
-- **Full per-(T, E) Nova_Result mono struct** — требует extension Plan
+- ~~**Full per-(T, E) Nova_Result mono struct** — требует extension Plan
   48/59 mono на sum types. Hybrid через extended Nova_Result (typed slot)
-  даёт equivalent semantics для bootstrap; full mono — future polish.
+  даёт equivalent semantics для bootstrap; full mono — future polish.~~
+  **✅ РЕАЛИЗОВАНО (Plan 59 Ф.7.5 increment 2, 2026-05-21):** full
+  per-(T,E) Result mono — `NovaRes_<ok>_<err>*`. Hybrid через extended
+  `Nova_Result` снят, остался лишь как back-compat `#define`-алиас.
 
 ### Связь
 
@@ -5200,10 +5206,10 @@ extern __thread NovaVtable_Fail_any* _nova_handler_Fail_any;
 - [D85](#d85) — `expr!!` semantics.
 - [Plan 11](../../docs/plans/11-method-values-and-overload.md) — закрыт
   cross-effect throw bug в Plan 61 followup #1 (owner_iframe routing).
-- [Plan 14](../../docs/plans/14-stdlib-codegen-gaps.md) /
-  [Plan 56](../../docs/plans/56-vtable-dispatch-erased-generics.md) —
-  Future polish: full per-(T,E) Nova_Result mono struct (hybrid в Plan 61
-  fu#3 даёт equivalent semantics для bootstrap).
+- [Plan 59 Ф.7.5](../../docs/plans/59-tuple-monomorphization.md) —
+  full per-(T,E) Result mono struct `NovaRes_<ok>_<err>` ✅ реализован
+  (increment 2, 2026-05-21); заменил hybrid extended `Nova_Result` из
+  Plan 61 fu#3.
 - [Plan 49](../../docs/plans/49-cancel-throw-routing.md) — симметричная
   typed-payload infra для CANCEL kanal. Plan 61 — для USER kanal. Две
   оси параллельны.

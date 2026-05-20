@@ -439,9 +439,13 @@ let port int = env.get("PORT").map(parse_int).unwrap_or(8080)
 > (хардкод `NOVA_CLOS_CALL_ii` int-layout → calling-convention mismatch).
 
 **Bootstrap-ограничения**:
-- `Result[T, E]` зашит на `(nova_int Ok, nova_str Err)`. Generic
+- ~~`Result[T, E]` зашит на `(nova_int Ok, nova_str Err)`. Generic
   monomorphization для произвольных T/E — отдельная задача
-  (Q-result-monomorphization).
+  (Q-result-monomorphization).~~ **✅ ЗАКРЫТО (Plan 59 Ф.7.5
+  increment 2, 2026-05-21):** `Result[T, E]` полностью
+  мономорфизирован — per-(T,E) C-тип `NovaRes_<ok>_<err>*` (аналог
+  `NovaOpt_<T>`), реальные типы в Ok/Err payload'е. Legacy единый
+  `Nova_Result` устранён.
 - Lambda-параметры с не-`int` типом (например `fn(e str) -> str => ...`
   для `map_err`) требуют **явной аннотации** через closure-full
   (`fn(...)`). Closure-light (`|x|`) полагается на context-inference;
