@@ -65,6 +65,17 @@ impl SmtBackend for TrivialBackend {
     }
 
     fn check_sat(&mut self) -> SatResult {
+        // Plan 33.7: detect BitVec terms — TrivialBackend не имеет BV reasoning.
+        // Early-return UnsupportedTheory с hint на Z3 backend.
+        if self.vars.values().any(|s| matches!(s, SortRef::BitVec(_)))
+            || self.assertions.iter().any(|a| term_contains_bv_op(&a.formula))
+        {
+            return SatResult::Unknown(UnknownReason::UnsupportedTheory(
+                "bit-vector theory (u8/u16/u32/u64/i8/i16/i32 types in contracts); \
+                 use REQUIRES_SMT_BACKEND z3 for bitvector reasoning".into(),
+            ));
+        }
+
         // Trivial check-sat: упрощаем conjunction всех assertions
         // и проверяем результат:
         // - `true` → SAT (тривиальная модель).
@@ -132,7 +143,8 @@ impl SmtBackend for TrivialBackend {
 pub fn simplify(term: &SmtTerm) -> SmtTerm {
     match term {
         SmtTerm::IntLit(_) | SmtTerm::BoolLit(_) | SmtTerm::StrLit(_)
-        | SmtTerm::F32Lit(_) | SmtTerm::F64Lit(_) | SmtTerm::Var(_) => {
+        | SmtTerm::F32Lit(_) | SmtTerm::F64Lit(_) | SmtTerm::Var(_)
+        | SmtTerm::BitVecLit(_, _) => {
             term.clone()
         }
         SmtTerm::App(op, args) => {
@@ -546,6 +558,23 @@ fn propagate_equalities(term: &SmtTerm) -> SmtTerm {
         SmtTerm::App("and".into(), bound_propagated)
     };
     simplify(&result)
+}
+
+/// Plan 33.7: проверить содержит ли term BitVec операции или BitVecLit.
+/// TrivialBackend не reasoning'ует над BV теорией — используется для
+/// early-return UnsupportedTheory из check_sat.
+fn term_contains_bv_op(t: &SmtTerm) -> bool {
+    match t {
+        SmtTerm::BitVecLit(_, _) => true,
+        SmtTerm::App(op, args) => {
+            op.starts_with("bv") || args.iter().any(term_contains_bv_op)
+        }
+        SmtTerm::Forall(_, patterns, body) => {
+            term_contains_bv_op(body)
+                || patterns.iter().any(|p| p.iter().any(term_contains_bv_op))
+        }
+        _ => false,
+    }
 }
 
 /// Plan 33.6 Ф.15.2 (followup, 2026-05-17): apply bounds propagation
