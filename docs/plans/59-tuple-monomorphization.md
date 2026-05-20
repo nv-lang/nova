@@ -535,7 +535,8 @@ Working dir: `d:\Sources\nova-lang\.claude\worktrees\plan-59-audit`
 - [x] Ф.7.2: stdlib HashMap.@clone() idiomatic (commit 4a6532ccea5).
 - [x] Ф.7.3: sizeof warning для больших tuples (commit a27e1968040).
 - [-] Ф.7.4: named tuple fields — deferred до dedicated plan.
-- [-] Ф.7.5: full mono'd Result — deferred (Fix F+ покрывает наблюдаемое).
+- [x] Ф.7.5: full mono'd Result `NovaRes_<T>_<E>` — ✅ ЗАКРЫТ
+      (2026-05-21, инкременты 1/lite/2 — см. ниже; D3+D4 `238b2eb`).
 - [-] Ф.7.6: tuple subtyping — design only, не реализуется без use case.
 
 ### Plan 59 финальное состояние
@@ -668,6 +669,18 @@ documented-блокера. **Не меняет представление** — 
 `[M-result-method-named-var-only]` для основного кейса снят.
 
 ### Ф.7.5 ядро (инкремент 2) — декомпозированный план A-E (2026-05-20)
+
+> **✅ ЗАКРЫТ (2026-05-21).** Все шаги A/B/C/D1-D4 выполнены; шаг E
+> поглощён D3 (legacy `Nova_Result` переименован, не остаётся
+> сущности для отдельного удаления). Полный прогон `nova test` —
+> **883 PASS / 0 FAIL / 52 SKIP**.
+>
+> Коммиты: A `f7e926d`, B `a630e5d`, C `5676e48`, D1a `f164b65`,
+> D1b+D1c `726303b`, D2 `a44f992`, D3+D4 `238b2eb`.
+>
+> Закрыто: `[M-legacy-sum-schemas-retained]` (разблокирует Plan
+> 62.A.bis Ф.4), `[M-result-record-payload-match]`,
+> `[M-result-method-named-var-only]`.
 
 > Прежний «executable план ядра» трактовал переключение представления
 > как один атомарный блок (~50 сайтов). Это и было главным риском.
