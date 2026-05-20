@@ -17145,3 +17145,37 @@ C-тип Result-payload на access path → recursive резолв через
 novares_ok_err. Проверено repro агента (убрать sum_schemas["Result"]
 → 883 PASS / 0 FAIL дважды). Insert оставлен — scope 62.A.bis Ф.4.
 Коммит 2b184a3c06a, мерж 58e698104c0.
+
+2026-05-21 Plan 62.A.bis Ф.4 — ЗАКРЫТО (legacy sum_schemas[Result] removal)
+─────────────────────────────────────────────────────────────────
+
+Последний deferred sub-plan Plan 62 закрыт. **Plan 62 закрыт полностью.**
+
+Блокер устранён Plan 59 — агент закрыл nested-pattern Result-variant
+typing gap (commit `2b184a3c06a`): pattern_bind_typed / pattern_cond
+теперь резолвят (T,E) через `novares_ok_err` на mono-типе scrutinee
+(включая nested `Some(Ok/Err(..))`), а не через `sum_schemas["Result"]`.
+
+Что сделал:
+- Удалил legacy hardcoded `sum_schemas["Result"]` HashMap
+  pre-population из `emit_c.rs` (~line 1120).
+- Полный прогон: **887 PASS / 0 FAIL / 56 SKIP**, 0 регрессий.
+
+Что НЕ удалено (исследовано — не legacy, а живая инфраструктура):
+- `sum_schema_registry.rs::init_hardcoded_baseline()` Result-entry —
+  несёт `method_routing` для 9 Result-методов. `lookup_method_routing
+  ("Result", …)` (emit_c.rs:13613) активно его читает; источник
+  method-dispatch, не дублирующий fallback. Полное устранение —
+  рефактор method-routing архитектуры, вне Ф.4.
+- `nova_rt/array.h` `#define Nova_Result*` алиасы — bare `Nova_Result*`
+  ещё эмитится codegen'ом (referenced в generated .c).
+- `sum_schemas["Option"]` — Option-mono отдельная инициатива (не
+  Plan 59 Result-scope).
+
+Маркер `[M-legacy-sum-schemas-retained]` → ✅ RESOLVED: основной legacy
+`sum_schemas` HashMap для Result устранён, остаток реклассифицирован
+как infrastructure.
+
+**Plan 62 — все sub-plans закрыты** (62.A / 62.A.bis Ф.1-4 / 62.B.bis /
+62.C / 62.C.bis / 62.D / 62.D.bis / 62.E / 62.E.bis / 62.F.bis).
+Prelude полностью мигрирован из hardcode в файловые декларации.
