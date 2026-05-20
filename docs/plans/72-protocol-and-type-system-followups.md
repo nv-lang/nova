@@ -293,9 +293,10 @@ Rust unit test: `p0_erased_now_dispatches_via_vtable` в `test_runner.rs` ✅.
 > type-params для `let r = call`), `p2b` (structural inference `NovaOpt_X`
 > без `*`), `p3b_vtable_dispatch` (protocol-as-**параметр**, E7201).
 > **Все четыре исправлены** (commits `80edd5110f9`, `1aad24b954b`).
-> Plan 72 теперь верифицирован через C-бэкенд: full `nova test nova_tests`
-> = 853 PASS / 1 FAIL до p3b-param фикса (единственный FAIL — он сам) →
-> 854 / 0 / 43 SKIP (z3 contracts) с ним.
+> Plan 72 верифицирован через C-бэкенд: full `nova test nova_tests` =
+> **886 PASS / 0 FAIL / 56 SKIP** (z3 contracts), измерено 2026-05-21
+> после фикса всех 4 багов + P1-C + закрытия двух P3-B honest-defers
+> ([M-protocol-param-free-fn-only], [M-protocol-return-wrap-relies-on-infer]).
 
 ---
 
