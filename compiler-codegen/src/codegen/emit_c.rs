@@ -1125,6 +1125,14 @@ impl CEmitter {
             self.sum_schemas.insert("Option".to_string(), opt_variants.clone());
             self.sum_schemas.insert("NovaOpt_nova_int".to_string(), opt_variants);
 
+            // Plan 59 Ф.7.5 (2026-05-21): legacy hardcoded
+            // `sum_schemas["Result"]` БОЛЬШЕ НЕ НУЖЕН для pattern-match —
+            // Result полностью мономорфизирован (`NovaRes_<T>_<E>`),
+            // pattern_bind_typed / pattern_cond резолвят (T,E) через
+            // `novares_ok_err` на mono-типе scrutinee (включая nested
+            // `Some(Ok/Err(..))`). Сам insert удаляется в Plan 62.A.bis
+            // Ф.4 (вместе с очисткой init_hardcoded_baseline) — оставлен
+            // как ABI-fallback до того момента.
             let mut res_variants = HashMap::new();
             res_variants.insert("Ok".to_string(), vec!["nova_int".to_string()]);
             res_variants.insert("Err".to_string(), vec!["nova_str".to_string()]);
@@ -18061,6 +18069,23 @@ impl CEmitter {
                                         format!("((NovaOpt_nova_int*)({}))", raw)
                                     }
                                 } else {
+                                    // Plan 59 Ф.7.5 D3-fix (62.A.bis): если
+                                    // Option-payload — mono Result
+                                    // `NovaRes_<n>*` (nested `Some(Ok/Err(..))`)
+                                    // — зарегистрировать C-тип payload'а в
+                                    // var_types, чтобы recursive pattern_cond
+                                    // знал scr_ty (Result-variant tag/payload).
+                                    let payload_c = scr_ty.strip_prefix("NovaOpt_")
+                                        .map(|s| self.novaopt_value_types.borrow()
+                                            .get(s).cloned()
+                                            .unwrap_or_else(|| s.to_string()));
+                                    if let Some(pc) = payload_c
+                                        .filter(|t| t.starts_with("NovaRes_")
+                                            && t.ends_with('*'))
+                                    {
+                                        self.var_types.insert(raw.clone(), pc);
+                                        tmp_registrations.push(raw.clone());
+                                    }
                                     raw
                                 }
                             } else if is_opt_ptr {
@@ -18291,6 +18316,19 @@ impl CEmitter {
                                         if let Some(elems) = Self::parse_mono_tuple_elements(&t) {
                                             self.tuple_element_types.insert(raw.clone(), elems);
                                         }
+                                    }
+                                    // Plan 59 Ф.7.5 D3-fix (62.A.bis): если
+                                    // Option-payload — mono Result
+                                    // `NovaRes_<n>*` (nested `Some(Ok(..))` /
+                                    // `Some(Err(..))`), зарегистрировать тип
+                                    // в var_types на access path — иначе
+                                    // recursive pattern_bind_typed не знает
+                                    // scr_ty и падает в legacy
+                                    // `sum_schemas["Result"]` fallback
+                                    // (nova_int Ok / nova_str Err хардкод).
+                                    if t.starts_with("NovaRes_") && t.ends_with('*') {
+                                        self.var_types.insert(raw.clone(), t.clone());
+                                        tmp_registrations.push(raw.clone());
                                     }
                                     (raw, t, false)
                                 } else {
