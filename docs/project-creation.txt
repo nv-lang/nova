@@ -16520,7 +16520,6 @@ Honest-defer: [M-protocol-param-free-fn-only] в simplifications.md.
 
 main ↔ plan-72 синхронизированы (9c264bc15fd).
 
-
 # Plan 33.5 + 33.6 аудит 2026-05-20: закрытие Ф.3.8 + статусы
 
 Аудит планов 33.5 и 33.6 (семейство контрактов). Запрошен пользователем
@@ -16673,3 +16672,46 @@ Full suite: 855 PASS / 0 FAIL / 47 SKIP.
 contracts/ suite: **281 PASS** / 0 FAIL (добавлены 5 новых тестов).
 simplifications.md: V20 (BitVec theory).
 Plan 33.7: ✅ ЗАКРЫТ (2026-05-20).
+
+2026-05-20 Plan 62.B — Option.or + Result-методы (prelude declarations)
+──────────────────────────────────────────────────────────────────────
+
+Завершает D26 §283-306: 17/17 Option+Result методов задекларированы
+в std/prelude/core.nv (было 12/17 — 5 Result-методов оставались
+deferred с Plan 62.A).
+
+A — Option.or (commit 79db8ef):
+- per-T trampoline Nova_Option_method_or_<T> в nova_rt/array.h (через
+  NOVA_ARRAY_IMPL macro + explicit nova_str-специализация).
+- sum_schema_registry routing HardcodedRuntimeFn { is_per_t: true }.
+- emit_c.rs infer_expr_c_type: "map" | "or" → NovaOpt_<elem>.
+
+B — Result unwrap/unwrap_or/unwrap_or_else/map/map_err:
+- Блокер: external_registry::type_ref_to_c маппит generic return-type
+  T в стаб "Nova_T*" (_ => Nova_<name>*). infer_expr_c_type возвращал
+  этот стаб для r.unwrap_or(0) из 3 lookup-путей (method_overloads
+  single/multi-overload, external_registry.by_key); binop-dispatch
+  принимал Nova_* за sum-type pointer → ->tag-comparison вместо
+  value-equality → CC-FAIL.
+- Лечение: helper is_generic_stub_c — точный семантический критерий
+  (тот же, что у erase_unk в emit_fn): Nova_X* — реальный тип ⇔
+  X ∈ record_schemas ∪ sum_schemas ∪ generic_types, иначе unresolved
+  type-параметр. Generic-aware lookup-блоки пропускают стаб →
+  управление доходит до specialized Nova_Result* ветки, знающей
+  concrete Ok/Err-тип из result_type_params.
+- Pre-existing баг Result.map (verified: падал на pre-Task-A state):
+  хардкод NOVA_CLOS_CALL_ii (int-layout) для bool/char-typed closure →
+  calling-convention mismatch, garbage в верхних байтах результата.
+  Closure-call теперь эмитит fn-pointer cast по фактической
+  C-сигнатуре closure-литерала (helper typed_closure_c_sig).
+
+Тесты: plan62 33/33 (вкл. 3 негативных теста — arity-диагностика +
+2 C-backstop type-mismatch), runtime 20/20, plan72 9/11 → 11/11.
+Full nova test (release, C-codegen): 864 PASS / 0 FAIL / 47 SKIP
+(было 862/2 — оба FAIL pre-existing plan72, починены здесь).
+0 регрессий.
+
+Негативные тесты вскрыли type-checker gaps (best-effort inference):
+payload-type mismatch и closure-арность .map() ловятся только
+C-backstop'ом или не ловятся — задокументировано в simplifications.md
+[M-option-result-method-misuse-cc-only].
