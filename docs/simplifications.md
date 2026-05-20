@@ -10039,9 +10039,18 @@ G/H). ~3700 LOC implementation cumulative.
   closure-call теперь эмитит fn-pointer cast по фактической C-сигнатуре
   closure (`typed_closure_c_sig`), а не хардкод `NOVA_CLOS_CALL_ii` —
   `bool`/`char`-typed closures больше не зависят от «совпадения по
-  размеру», работают корректно. Остаточное упрощение: inline `unwrap_or`
-  return-type всё ещё `(nova_int, nova_str)` fallback (полное лечение —
-  Plan 59 Ф.7.5).
+  размеру», работают корректно.
+- **Plan 59 Ф.7.5-lite (2026-05-20):** основной кейс блокера ЗАКРЫТ.
+  Helper `infer_result_type_params(expr)` выводит (T,E) для **inline**
+  Result-выражений: `Call(fn → Result[T,E])` → `fn_result_type_params`;
+  `.map`/`.map_err` цепочки → рекурсия + closure return-type. Применён
+  в 5 точках (inference Result-методов + emit `unwrap_or`/
+  `unwrap_or_else`/`map`/`unwrap`) вместо паттерна «Ident-или-default».
+  Inline fn-call цепочки (`parse_x().unwrap_or(...)`,
+  `parse_x().map(f).unwrap_or(...)`) теперь типизируются корректно, а не
+  «случайно по размеру». Остаточный узкий edge: Result из field-access /
+  user-method (не Ident, не fn-call) — всё ещё fallback; полная mono
+  (`NovaRes_<T>_<E>`) — Plan 59 Ф.7.5 инкремент 2.
 
 ### [M-option-result-method-misuse-cc-only] (DEFER — type-checker tightening)
 - **Где:** `compiler-codegen/src/types/mod.rs` — method-call checking
