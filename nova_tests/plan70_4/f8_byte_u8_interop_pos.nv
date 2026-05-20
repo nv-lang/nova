@@ -1,0 +1,36 @@
+module nova_tests.plan70_4.f8_byte_u8_interop_pos
+
+// Plan 70.4 Ф.4 — positive: u8 и byte — одинаковый C-тип (nova_byte).
+// Option[u8] и Option[byte] взаимозаменяемы через функции.
+// Это ключевая гарантия Ф.4: унификация u8 → nova_byte.
+
+fn accept_opt_byte(o Option[byte]) -> byte {
+    o.unwrap_or(0 as byte)
+}
+
+fn accept_opt_u8(o Option[u8]) -> u8 {
+    o.unwrap_or(0 as u8)
+}
+
+test "Option[u8] принят функцией ожидающей Option[byte]" {
+    let o Option[u8] = Some(42 as u8)
+    let v = accept_opt_byte(o)
+    assert(v == 42 as byte)
+}
+
+test "Option[byte] принят функцией ожидающей Option[u8]" {
+    let o Option[byte] = Some(99 as byte)
+    let v = accept_opt_u8(o)
+    assert(v == 99 as u8)
+}
+
+test "[]u8 и []byte совместимы по элементам" {
+    let arr []u8 = []u8.new()
+    arr.push(255 as u8)
+    assert(arr[0] == u8.MAX)
+    assert(arr[0] == 255 as byte)
+}
+
+test "u8.MAX == byte.MAX" {
+    assert(u8.MAX == 255 as byte)
+}
