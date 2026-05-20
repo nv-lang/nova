@@ -626,6 +626,18 @@ types for low-level, packed, crypto, or FFI code where bit-width matters.
 Bitwise operators `&`, `|`, `^`, `<<`, `>>` are available in contracts
 on sized-integer operands (they remain unsupported on `int`).
 
+**Signedness.** Unsigned types (`u8`/`u16`/`u32`/`u64`) and signed types
+(`i8`/`i16`/`i32`) differ in comparison, division, remainder and
+right-shift. The verifier picks the correct operator from the parameter
+type: `i32` comparisons are signed (`-1 < 0` holds), `u32` comparisons
+are unsigned (`0xFFFFFFFF > 0`). Signed division rounds toward zero;
+`>>` on a signed value is an arithmetic shift.
+
+**Casts between sized types.** `x as u32` resizes a bit-vector: a wider
+target zero-extends an unsigned source and sign-extends a signed source;
+a narrower target truncates the low bits. For example `(b as u32)` where
+`b : u8` is always `<= 255`, and `(x as u8)` keeps only the low byte.
+
 ### `#nooverflow`
 
 By default, sized-integer arithmetic **wraps around** silently. The
