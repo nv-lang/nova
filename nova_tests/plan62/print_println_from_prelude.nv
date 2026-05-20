@@ -60,7 +60,9 @@ test "Plan 67 fix: println(str.from(int)) корректный output" {
 }
 
 
-test "PRELUDE_VERSION bumped to 7 (Plan 62.B.bis marker)" {
-    // 6 → 7 — print / println formally declared.
-    assert(PRELUDE_VERSION == 7)
+test "PRELUDE_VERSION >= 7 (Plan 62.B.bis marker)" {
+    // 6 → 7 — print / println formally declared. Маркер монотонный:
+    // PRELUDE_VERSION только растёт, поэтому `>=` (не ломается на
+    // последующих bump'ах — 62.E.bis поднял до 8).
+    assert(PRELUDE_VERSION >= 7)
 }
