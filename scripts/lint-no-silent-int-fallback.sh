@@ -37,10 +37,12 @@ BASELINE_TYPE_REF_TO_C_UNWRAP_OR=7   # type_ref_to_c(...).unwrap_or_else(|_| "no
                                      # B6 (6149), B7 (6152), B8 (8311), B9 (8314).
                                      # B2/B3 (5846/5867) — Cat A2 wildcard pattern.
                                      # B10 (7051) — Cat A2 wildcard pattern.
-BASELINE_WILDCARD_NOVA_INT=24        # _ => "nova_int" (Cat B/D legitimate)
+BASELINE_WILDCARD_NOVA_INT=26        # _ => "nova_int" (Cat B/D legitimate)
                                      # Cat B: B2 (5846), B3 (5867), B10 (7051),
                                      # B11 (19493), B12 (~19437 wildcard variant),
                                      # B13 (18382). Plus ~18 Cat D dispatch wildcards.
+                                     # Cat D: D1/D2 in sum_schema_registry.rs (Plan 62.A.bis,
+                                     #   type_ref_to_c_minimal — schema-registration only).
 
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CODEGEN_SRC="${PROJECT_ROOT}/compiler-codegen/src"
