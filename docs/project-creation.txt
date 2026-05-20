@@ -16552,7 +16552,13 @@ B — Result unwrap/unwrap_or/unwrap_or_else/map/map_err:
   Closure-call теперь эмитит fn-pointer cast по фактической
   C-сигнатуре closure-литерала (helper typed_closure_c_sig).
 
-Тесты: plan62 30/30, runtime 20/20, plan72 9/11 → 11/11.
+Тесты: plan62 33/33 (вкл. 3 негативных теста — arity-диагностика +
+2 C-backstop type-mismatch), runtime 20/20, plan72 9/11 → 11/11.
 Full nova test (release, C-codegen): 864 PASS / 0 FAIL / 47 SKIP
 (было 862/2 — оба FAIL pre-existing plan72, починены здесь).
 0 регрессий.
+
+Негативные тесты вскрыли type-checker gaps (best-effort inference):
+payload-type mismatch и closure-арность .map() ловятся только
+C-backstop'ом или не ловятся — задокументировано в simplifications.md
+[M-option-result-method-misuse-cc-only].

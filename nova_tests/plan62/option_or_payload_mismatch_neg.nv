@@ -1,0 +1,24 @@
+// EXPECT_CC_ERROR incompatible type
+
+// option_or_payload_mismatch_neg.nv — Plan 62.B негативный тест.
+//
+// Verifies что Option.or с несовпадающим payload-типом не
+// компилируется. `Some(1)` — Option[int], `Some("hello")` —
+// Option[str]; сигнатура `@or(other Option[T]) -> Option[T]` требует
+// одинаковый `T` у receiver'а и аргумента.
+//
+// Bootstrap type-checker не ловит это на Nova-уровне (best-effort
+// inference — см. [C2] в docs/simplifications.md), но C-backstop
+// отвергает: per-T trampoline `Nova_Option_method_or_nova_int`
+// принимает `NovaOpt_nova_int`, а переданный `NovaOpt_nova_str` —
+// несовместимый тип → clang «incompatible type». Тест фиксирует, что
+// misuse как минимум НЕ компилируется молча в garbage.
+
+module plan62.option_or_payload_mismatch_neg
+
+test "Option.or с разным payload-типом — compile error" {
+    let a = Some(1)
+    let b = Some("hello")
+    let r = a.or(b)
+    assert(r.is_some())
+}
