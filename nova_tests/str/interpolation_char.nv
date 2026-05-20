@@ -1,0 +1,38 @@
+// interpolation_char.nv — Plan 75 Ф.5
+//
+// ${char-literal} работало всегда (CharLit detection).
+// ${char-variable} — фикс Plan 75: добавлен case "nova_char" в emit_interpolated_str.
+
+module str.interpolation_char
+
+test "char literal ASCII in interpolation" {
+    assert("c=${'A'}" == "c=A")
+}
+
+test "char literal Cyrillic in interpolation" {
+    assert("${'Я'}" == "Я")
+}
+
+test "char literal emoji in interpolation" {
+    assert("${'😀'}" == "😀")
+}
+
+test "char variable ASCII in interpolation" {
+    let c char = 'A'
+    assert("${c}" == "A")
+}
+
+test "char variable Cyrillic in interpolation" {
+    let cy char = 'Ю'
+    assert("${cy}" == "Ю")
+}
+
+test "char variable emoji in interpolation" {
+    let e char = '😀'
+    assert("${e}" == "😀")
+}
+
+test "char variable embedded in text" {
+    let c char = 'Z'
+    assert("letter=${c}!" == "letter=Z!")
+}

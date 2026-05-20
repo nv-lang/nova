@@ -535,7 +535,8 @@ Working dir: `d:\Sources\nova-lang\.claude\worktrees\plan-59-audit`
 - [x] Ф.7.2: stdlib HashMap.@clone() idiomatic (commit 4a6532ccea5).
 - [x] Ф.7.3: sizeof warning для больших tuples (commit a27e1968040).
 - [-] Ф.7.4: named tuple fields — deferred до dedicated plan.
-- [-] Ф.7.5: full mono'd Result — deferred (Fix F+ покрывает наблюдаемое).
+- [x] Ф.7.5: full mono'd Result `NovaRes_<T>_<E>` — ✅ ЗАКРЫТ
+      (2026-05-21, инкременты 1/lite/2 — см. ниже; D3+D4 `238b2eb`).
 - [-] Ф.7.6: tuple subtyping — design only, не реализуется без use case.
 
 ### Plan 59 финальное состояние
@@ -547,3 +548,284 @@ Working dir: `d:\Sources\nova-lang\.claude\worktrees\plan-59-audit`
 - spec D123 + D-block amendments.
 
 **Validation:** `nova test plan59/` → 25 PASS / 0 FAIL.
+
+
+---
+
+## Ф.7.5 — Full mono'd Result: executable implementation plan (2026-05-20)
+
+> **Контекст.** User: «продолжай работать по плану 59 Ф.7.5 сам по всем
+> оставшимся пунктам без упрощений как для прода». Снят defer Ф.7.5.
+> Работа в worktree `nova-p59`, ветка `plan-59-f75`.
+
+### Дизайн-решение (зафиксировано)
+
+`Result[T, E]` → mono'd **`NovaRes_<okC>_<errC>*`** — heap-pointer (как
+legacy `Nova_Result*`), но per-(T,E) **типизированный payload union**
+`{ <T> ok; <E> err; }`. Pointer (а не value как `NovaOpt`) выбран
+сознательно: даёт корректность Ф.7.5 (типизированные Ok/Err, отсутствие
+int-slot truncation, корректная inference) при **нулевом
+calling-convention churn** vs legacy → максимальный шанс довести до
+зелёного. Value-репрезентация ортогональна фиче и осталась бы возможной
+future-микрооптимизацией.
+
+- **Erased-generic** `Result[T,E]` (T/E — type-param) → fallback
+  `NovaRes_nova_int_nova_str*` (int/str instance как ABI-compat erased
+  repr — прямой аналог fallback'а `NovaOpt_nova_int` у Option).
+- Mangling: `NovaRes_<sanitize(okC)>_<sanitize(errC)>` через
+  `sanitize_for_novaopt` — параллель NovaOpt.
+- Legacy `Nova_Result` typedef в `array.h` остаётся (безвреден), codegen
+  перестаёт его эмитить.
+
+### Инкремент 1 — ✅ ЗАКРЫТ (commit `9463cf1d83a`)
+
+Аддитивная инфраструктура (build green, поведение не изменено):
+- `register_novares_decl(ok_c, err_c)` (emit_c.rs) — lazy-эмитит typedef
+  `NovaRes_<n>` + heap-конструкторы `nova_make_NovaRes_<n>_Ok/_Err` +
+  trampoline-методы `Nova_Result_method_{is_ok,is_err,unwrap_or,ok,err}_<n>`.
+- Поля `novares_typedefs_buf` / `novares_decls_seen`; splice-маркер
+  `/*__NOVARES_TYPEDEFS__*/` (после `/*__NOVAOPT_TYPEDEFS__*/`).
+- `result_mono_c_pair` / `novares_name` helpers.
+- `type_ref_to_c[Result]` регистрирует mono typedef для concrete (T,E).
+
+### Инкремент 2 — ядро (переключение представления)
+
+**Природа задачи:** атомарная замена представления. ~40 сайтов
+codegen используют **string-based dispatch** (`obj_ty == "Nova_Result*"`)
+— Rust-компилятор НЕ ловит рассинхрон (строковое сравнение просто
+перестаёт матчиться); единственный safety net — падение тестов.
+Поэтому ядро — test-driven, focused-сессия.
+
+Регион за регионом (file:line — карта на момент 2026-05-20):
+
+1. **`register_novares_decl`** → pointer-форма (конструкторы heap-alloc
+   + return `NovaRes_<n>*`; методы принимают `NovaRes_<n>*`, `->`).
+2. **`type_ref_to_c[Result]`** (emit_c.rs ~3282) → возвращать
+   `NovaRes_<n>*` (concrete) / `NovaRes_nova_int_nova_str*` (erased),
+   через `result_mono_c_pair`.
+3. **Конструирование `Ok(v)`/`Err(e)`** (~12711-12753) → эмитить
+   `nova_make_NovaRes_<n>_Ok/_Err`; (T,E) из инференции арг-типа +
+   контекста (current_fn_return_ty / let-аннотация). Удалить ветку
+   `nova_make_Result_Err_typed` (hybrid больше не нужен — Err типизован).
+4. **9 методов** (~13372-13612) — per-(T,E) c_name + `->payload.ok` /
+   `->payload.err` (было `->payload.Ok._0` / `->payload.Err._0`):
+   - trampoline: `is_ok`/`is_err`/`unwrap_or`/`ok`/`err` → `_<n>` suffix;
+   - inline: `unwrap`/`map`/`map_err`/`unwrap_or_else`.
+5. **Pattern-match** (~16447-18049) — `collect_pattern_inner_bindings`,
+   `pattern_cond`, `pattern_bind_typed`: `NovaRes_<n>*`, `->tag`,
+   `->payload.ok`/`.err`. Recover (T,E) из имени типа `NovaRes_<ok>_<err>*`.
+6. **`?` / `!!`** (~11733-11826) — `ExprKind::Try`/`Bang` для Result:
+   `->payload.ok`/`.err`; propagate `nova_make_NovaRes_<n>_Err`; `!!` →
+   `Nova_Fail_fail` / `nova_throw_typed` напрямую по типизованному Err.
+7. **`infer_expr_c_type`** (~20914) — method return-types на базе
+   разобранного `NovaRes_<ok>_<err>*` (распарсить mangled имя).
+8. **`sum_schema_registry`** (~375-439) — Result schema: payload-поля
+   `ok`/`err`; method routing — per-(T,E) `is_per_t`-аналог.
+9. **Все `== "Nova_Result*"` строковые проверки** (~41 шт в emit_c.rs)
+   → helper `is_novares_c(ty) -> Option<(okC, errC)>` (распознаёт
+   `NovaRes_<ok>_<err>*`), заменить точечные сравнения.
+
+**Миграция stdlib + tests:** `.nv`-исходники Result НЕ ссылаются на
+C-типы (всё на Nova-уровне: `Result[T,E]`, `Ok`/`Err`, `match`, `?`).
+Поэтому миграция = «codegen корректен для всех паттернов» — проверяется
+прогоном, **без правок `.nv`** (если не всплывёт stdlib-workaround).
+
+**Тест-стратегия:** plan72 (Result-heavy) → runtime → plan62 → полный
+прогон 868. Erased-generic кейсы — особое внимание (ABI-fallback).
+
+**Риск:** нет compiler safety net (string-dispatch); средний период
+red-codegen; erased↔concrete boundary — потенциальные cast-mismatch'и
+(как у Option, [C2]-уровень).
+
+### Ф.7.5-lite — прицельный фикс инференса (2026-05-20) — ✅ ЗАКРЫТ
+
+> User: «запиши в план работ и делай». Полное переключение представления
+> (инкремент 2) — отдельная focused-сессия. Прицельно закрываем САМ
+> блокер `[M-result-method-named-var-only]` без рефактора представления.
+
+**Проблема.** `infer_expr_c_type` и emit Result-методов выводят (T,E)
+только когда receiver — именованная переменная (`result_type_params`
+keyed by var name). Inline-цепочки (`parse_x().unwrap_or(...)`,
+`parse_x().map(f).unwrap_or(...)`) → fallback `(nova_int, nova_str)` →
+для pointer-Ok-типов wrong result, для int/bool «случайно» проходит.
+
+**Фикс.** Helper `infer_result_type_params(expr) -> Option<(ok_c,err_c)>`:
+- `Ident` → `result_type_params`;
+- `Call(fn)` где fn возвращает `Result[T,E]` → `fn_result_type_params`
+  (инфра Plan 72 P2-A, `call_result_type_params_key`);
+- `.map`/`.map_err` цепочки → рекурсия + closure return-type
+  (`typed_closure_c_sig`).
+Применён в 5 точках (inference Result-методов + emit `unwrap_or` /
+`unwrap_or_else` / `map` / `unwrap`) вместо паттерна «Ident-или-default».
+
+**Закрывает:** inline fn-call Result-цепочки — основной кейс блокера.
+Остаток (Result из field-access / user-method) — узкий edge вне
+documented-блокера. **Не меняет представление** — `Nova_Result*`
+остаётся; инкремент 2 (полная mono) — отдельно.
+
+**Результат:** helper `infer_result_type_params` + 5 точек применения +
+тест `plan59/f29_result_inline_inference` (8 inline-кейсов). Полный
+прогон **869 PASS / 0 FAIL / 52 SKIP**, 0 регрессий. Блокер
+`[M-result-method-named-var-only]` для основного кейса снят.
+
+### Ф.7.5 ядро (инкремент 2) — декомпозированный план A-E (2026-05-20)
+
+> **✅ ЗАКРЫТ (2026-05-21).** Все шаги A/B/C/D1-D4 выполнены; шаг E
+> поглощён D3 (legacy `Nova_Result` переименован, не остаётся
+> сущности для отдельного удаления). Полный прогон `nova test` —
+> **883 PASS / 0 FAIL / 52 SKIP**.
+>
+> Коммиты: A `f7e926d`, B `a630e5d`, C `5676e48`, D1a `f164b65`,
+> D1b+D1c `726303b`, D2 `a44f992`, D3+D4 `238b2eb`.
+>
+> Закрыто: `[M-legacy-sum-schemas-retained]` (разблокирует Plan
+> 62.A.bis Ф.4), `[M-result-record-payload-match]`,
+> `[M-result-method-named-var-only]`.
+
+> Прежний «executable план ядра» трактовал переключение представления
+> как один атомарный блок (~50 сайтов). Это и было главным риском.
+> Здесь — декомпозиция, где A/B/C/E **independently green**, а
+> атомарный риск сжат до меньшего шага D.
+
+**Ключевое дизайн-решение:** mono-тип `NovaRes_<n>` использует **ту же
+payload-схему**, что legacy `Nova_Result`:
+`union { struct { <T> _0; } Ok; struct { <E> _0; } Err; }` — доступ
+`payload.Ok._0` / `payload.Err._0`. Следствие: **generic pattern-match
+codegen работает для `NovaRes_<n>` без изменений** (он эмитит
+`payload.<Variant>._<idx>`), и ~20 сайтов field-access **не трогаем**.
+Отличие mono от legacy — только: (1) типы полей payload (реальные T/E
+вместо `nova_int`/`nova_str`), (2) имя типа.
+
+**Шаги:**
+
+- **A** — `register_novares_decl`: pointer-форма, payload-схема
+  `Ok._0`/`Err._0` (как legacy), + helpers (`result_mono_c_pair`,
+  `novares_name`, `novares_ok_err`, поле `novares_value_types`).
+  Аддитивно — `type_ref_to_c` пока возвращает `Nova_Result*`, новое
+  ничем не используется → **green, коммит**.
+- **B** — helper `is_result_like(ty)` принимает И `Nova_Result*`, И
+  `NovaRes_<n>*`. Все `obj_ty == "Nova_Result*"` проверки (~15) → через
+  него. Аддитивно (поведение не меняется — `NovaRes_<n>*` ещё не течёт)
+  → **green, коммит**.
+- **C** — inference (`infer_expr_c_type`) + emit Result-методов
+  восстанавливают (T,E) из обоих типов: `Nova_Result*` → дефолт
+  `(nova_int, nova_str)`; `NovaRes_<n>*` → `novares_ok_err`. Аддитивно
+  → **green, коммит**.
+- **D** — **флип** (атомарное ядро, но меньшее): `type_ref_to_c[Result]`
+  → `NovaRes_<n>*`; construction `Ok`/`Err` → `nova_make_NovaRes_<n>_*`;
+  method-dispatch → суффикс `_<n>`. Теперь `NovaRes_<n>*` течёт везде —
+  B обрабатывает dispatch, C — инференс, pattern-match (generic,
+  `Ok._0`) работает т.к. payload-схема совпадает. Прогон → fix → green.
+  **В конце D:** заменить silent fallback `(nova_int, nova_str)` (при
+  невыводимом (T,E)) на жёсткую codegen-ошибку. После флипа любой
+  Result-`obj_ty` = `NovaRes_<n>*`, `novares_ok_err` детерминирован
+  (тип несёт (T,E)) → fallback недостижим; если путь всё же достигнут
+  — громкий fail, а не тихий неверный C-код. Молчаливая догадка
+  `Result[int,str]` — известный источник сложно-детектируемых багов
+  (`[M-result-method-named-var-only]` / `[C2]`) — устраняется здесь.
+- **E** — удалить legacy `Nova_Result` + `nova_make_Result_*` +
+  `Nova_Result_method_*` из `array.h` (после D ничего не ссылается) →
+  **green, коммит**. ← разблокирует Plan 62.A.bis Ф.4 (удаление
+  legacy `sum_schemas` — `[M-legacy-sum-schemas-retained]`).
+
+**Закрывает:** `[M-legacy-sum-schemas-retained]` (через E + 62.A.bis
+Ф.4), `[M-result-record-payload-match]` (D — Ok-payload типизируется
+реальным T), остаток `[M-result-method-named-var-only]`.
+
+**Тест-стратегия:** после каждого A/B/C/E — полный прогон 0 регрессий;
+D — итеративно (plan72 → runtime → plan62 → full). Erased-generic
+кейсы — особое внимание (fallback `NovaRes_nova_int_nova_str*`).
+
+### Шаг D — декомпозиция на D1-D4 (2026-05-20)
+
+> D («флип») сам по себе ещё крупный (~25 сайтов). Раскладываем тем же
+> приёмом: сделать emit/construction **dual-mode** (работают и для
+> legacy `Nova_Result*`, и для mono `NovaRes_<n>*`) — это аддитивно и
+> green, пока `NovaRes_<n>*` не течёт; затем крошечный флип активирует
+> mono-путь, который dual-код уже умеет.
+
+- **D1 — dual-mode emit (green-additive).** ~25 method-emit / `?` / `!!`
+  / `char.try_from` сайтов сейчас эмитят литерал `"Nova_Result*"`
+  var-decl + `nova_make_Result_*` + `Nova_Result_method_*`. Перевести:
+  var-decl `"{obj_ty} {tmp} = ..."` (вместо литерала); имена
+  конструкторов/методов — через helper'ы, дающие legacy-имя для
+  `Nova_Result*` и `_<n>`-суффикс для `NovaRes_<n>*`. `payload.Ok._0`
+  / `Err._0` — без изменений (схема A). Аддитивно (legacy-путь даёт
+  идентичный вывод) → green. Дробится: **D1a** (9 method-emit блоков),
+  **D1b** (`?`/`!!`), **D1c** (`char.try_from` + `Option.ok_or` emit).
+- **D2 — dual-mode construction (green-additive).** `Ok(v)`/`Err(e)` в
+  emit_call → эмитить `nova_make_Result_*` ИЛИ `nova_make_NovaRes_<n>_*`
+  по expected/inferred (T,E). Mono-ветка dormant до флипа → green.
+- **D3 — флип (малый, активация).** `type_ref_to_c[Result]` →
+  `NovaRes_<n>*` (одна строка) + producer-returns (`try_read_*`,
+  `ok_or`, `map`/`map_err` и т.д. → `NovaRes_<n>*`). D1/D2 уже dual →
+  флип активирует mono-путь. Прогон → fix остаточного → green.
+- **D4 — kill silent fallback.** Заменить `.unwrap_or_else(|| (nova_int,
+  nova_str))` (5 точек) на жёсткую codegen-ошибку (после D3
+  `novares_ok_err` детерминирован → fallback недостижим).
+
+Итог: D1a/D1b/D1c/D2 — green-additive коммиты; D3 — малый флип +
+итеративный fix; D4 — cleanup. D больше не «атомарный монолит».
+
+### Шаг D3 — заметки по исполнению (2026-05-21)
+
+D3 оказался крупнее «малого флипа» — он **поглотил шаг E** (удаление
+legacy `Nova_Result`), потому что вскрылись два факта, не учтённых в
+исходном плане:
+
+1. **`Nova_Result` несёт 2 лишних поля** — `err_typed_payload` /
+   `err_typed_type_id` (Plan 61 fu#3, typed-Err для `!!`), которых не
+   было в `NovaRes_<n>` схемы A. Решение: добавлены в схему A
+   (`register_novares_decl`) → mono сохраняет typed-Err.
+
+2. **Runtime-заголовки** (`read_buffer.h`, `string_builder.h`) —
+   рукописные C-функции `try_read_*` / `try_from_bytes` возвращают
+   `Nova_Result*`. Они включаются ДО splice-маркера
+   `__NOVARES_TYPEDEFS__`, поэтому не могут ссылаться на lazy-
+   generated `NovaRes_<n>`. Решение: `NovaRes_nova_int_nova_str`
+   определён руками в `nova_rt/array.h` (как канонический erased
+   инстанс), `register_novares_decl` пропускает его lazy-emit
+   (аналог skip `NovaOpt_nova_int`). `Nova_Result` /
+   `nova_make_Result_*` / `Nova_Result_method_*` — `#define`-алиасы
+   на время перехода.
+
+**Сделано в D3:**
+- флип `result_repr_c_type` → `NovaRes_<n>*`;
+- `array.h`: `Nova_Result` → `NovaRes_nova_int_nova_str` + алиасы;
+- схема A + typed-Err поля + `nova_make_NovaRes_<n>_Err_typed`;
+- producer-inference (`try_read_*`, `ok_or`, `try_from`, `try_into`,
+  `map`/`map_err`, erased-fallback) → mono-типы;
+- `infer_expr_c_type` для `Ok`/`Err` → mono `NovaRes_<n>*`;
+- pattern-match: mono `NovaRes_<n>` Ok/Err payload — реальный тип
+  inline (без `intptr_t`-boxing для tuple-Ok);
+- `.err()` inline-emit → `NovaOpt_<err_s>` (был хардкод
+  `NovaOpt_nova_int`);
+- `!!` non-str Err → `nova_throw_typed` с реальным typed-payload;
+- удалён legacy typed-Err early-return
+  (`nova_make_Result_Err_typed` hybrid) — mono несёт typed Err
+  прямо в `payload.Err._0`.
+
+**Итеративный fix** — 3 CC-FAIL после флипа (фокус-прогон) +
+1 на полном прогоне, все закрыты:
+`plan59/f19-f22` (tuple-Ok mono unbox), `plan61/f3` (typed Err
+mono throw), `runtime/result_methods` + `plan55/f2`
+(`.err()` / `Ok` inference), `syntax/match_advanced` (nested
+`Some` в mono `Ok` payload — value-форма вместо boxed pointer в
+`pattern_cond` / `pattern_bind_typed`).
+
+### Шаг D4 — kill silent fallback (2026-05-21)
+
+Тихий default `resolve_result_te(...).unwrap_or_else(|| (nova_int,
+nova_str))` — источник трудно-детектируемых багов: при невыводимом
+(T,E) codegen молча предполагал `Result[int,str]` и эмитил неверный
+C-код вместо явной ошибки.
+
+Добавлен `resolve_result_te_strict(obj, obj_ty, method)` →
+`Result<(String,String), String>`: после флипа D3 любой Result-
+`obj_ty` — `NovaRes_<n>*`, `novares_ok_err` детерминирован; провал
+резолюции = реальный codegen-баг → громкий codegen-error.
+
+5 emit-сайтов Result-методов (`unwrap_or`, `err`, `unwrap_or_else`,
+`map`, `unwrap`) переведены на strict-вариант (`?`-propagation).
+`!!` non-str-Err и inference-сайт (`infer_expr_c_type`, best-effort,
+не может propagate'ить Err) — оставлены lenient.

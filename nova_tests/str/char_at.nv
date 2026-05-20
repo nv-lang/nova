@@ -1,0 +1,40 @@
+// char_at.nv — Plan 75 Ф.1
+// @char_at: ASCII, кириллица, emoji — позитивные случаи, in-bounds.
+
+module str.char_at
+
+test "char_at: first ASCII char" {
+    assert("abc".char_at(0) == Some('a'))
+}
+
+test "char_at: middle ASCII char" {
+    assert("abc".char_at(1) == Some('b'))
+}
+
+test "char_at: last ASCII char" {
+    assert("abc".char_at(2) == Some('c'))
+}
+
+test "char_at: single char string" {
+    assert("x".char_at(0) == Some('x'))
+}
+
+test "char_at: Cyrillic first codepoint" {
+    assert("Привет".char_at(0) == Some('П'))
+}
+
+test "char_at: Cyrillic last codepoint" {
+    assert("Привет".char_at(5) == Some('т'))
+}
+
+test "char_at: emoji first codepoint" {
+    assert("😀abc".char_at(0) == Some('😀'))
+}
+
+test "char_at: ASCII after emoji" {
+    assert("😀abc".char_at(1) == Some('a'))
+}
+
+test "char_at: one past end returns None" {
+    assert("abc".char_at(3) == None)
+}

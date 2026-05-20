@@ -789,24 +789,20 @@ impl VerificationPipeline {
         if fd.no_overflow {
             let bv_ops = collect_bv_arith_ops_in_body(&fd.body, &ctx);
             for (op_span, op, lhs_t, rhs_t) in bv_ops {
-                let width = match (&lhs_t, &rhs_t) {
-                    (SmtTerm::BitVecLit(_, w), _) => *w,
-                    (_, SmtTerm::BitVecLit(_, w)) => *w,
-                    (SmtTerm::Var(n), _) => match ctx.var_sorts.get(n) {
-                        Some(SortRef::BitVec(w)) => *w,
-                        _ => continue,
-                    },
-                    (_, SmtTerm::Var(n)) => match ctx.var_sorts.get(n) {
-                        Some(SortRef::BitVec(w)) => *w,
-                        _ => continue,
-                    },
-                    _ => continue,
-                };
-                let is_signed = matches!(width, 8 | 16 | 32) && {
-                    // Determine signedness from var sort.
-                    // V1: treat i8/i16/i32 as signed, u8/u16/u32/u64 as unsigned.
-                    // We can't distinguish here without type info, default unsigned.
-                    false
+                // Width + signedness — из первого BV-sorted Var внутри терма
+                // (после V2.3-subst операнды могут быть App-выражениями).
+                // Литералы знаковость не несут — fallback на ширину BitVecLit.
+                let bv_sort = bv_sort_in_term(&lhs_t, &ctx.var_sorts)
+                    .or_else(|| bv_sort_in_term(&rhs_t, &ctx.var_sorts));
+                let (width, is_signed) = match bv_sort {
+                    Some((width, signed)) => (width, signed),
+                    None => {
+                        // Fallback: ширина из BitVecLit, знаковость unsigned.
+                        match (bv_lit_width(&lhs_t), bv_lit_width(&rhs_t)) {
+                            (Some(w), _) | (_, Some(w)) => (w, false),
+                            _ => continue,
+                        }
+                    }
                 };
                 let vc: Option<SmtTerm> = match op {
                     crate::ast::BinOp::Add => Some(SmtTerm::App(
@@ -830,6 +826,7 @@ impl VerificationPipeline {
                         crate::ast::BinOp::Mul => "multiplication",
                         _ => "arithmetic",
                     };
+                    let ty_prefix = if is_signed { "i" } else { "u" };
                     match try_prove(&mut *backend, vc_term) {
                         SatResult::Unsat(_) => {
                             results.push((op_span, VerifyResult::Proven));
@@ -837,7 +834,8 @@ impl VerificationPipeline {
                         SatResult::Sat(model) => {
                             let cex = format_counterexample(&model);
                             results.push((op_span, VerifyResult::Disproved(model,
-                                format!("#nooverflow: {} may overflow (u{}): {}", op_name, width, cex))));
+                                format!("#nooverflow: {} may overflow ({}{}): {}",
+                                    op_name, ty_prefix, width, cex))));
                         }
                         SatResult::Unknown(reason) => {
                             results.push((op_span, VerifyResult::Unknown(
@@ -2345,10 +2343,14 @@ fn type_ref_to_sort(ty: &crate::ast::TypeRef) -> SortRef {
                 // Unbounded integer (Nova `int` = i64) — Z3 Int sort (global decision 33.1).
                 "int" | "i64" | "money" | "nat" => SortRef::Int,
                 // Plan 33.7: sized integer types → BitVec sort.
-                "u8" | "byte" | "i8"  => SortRef::BitVec(8),
-                "u16" | "i16"          => SortRef::BitVec(16),
-                "u32" | "i32"          => SortRef::BitVec(32),
-                "u64" | "i32u" | "usize" => SortRef::BitVec(64),
+                // V2: signed=true для i8/i16/i32, false для u8/u16/u32/u64.
+                "u8" | "byte"  => SortRef::BitVec { width: 8,  signed: false },
+                "i8"           => SortRef::BitVec { width: 8,  signed: true },
+                "u16"          => SortRef::BitVec { width: 16, signed: false },
+                "i16"          => SortRef::BitVec { width: 16, signed: true },
+                "u32"          => SortRef::BitVec { width: 32, signed: false },
+                "i32"          => SortRef::BitVec { width: 32, signed: true },
+                "u64" | "i32u" | "usize" => SortRef::BitVec { width: 64, signed: false },
                 "bool" => SortRef::Bool,
                 "str"  => SortRef::Str,
                 "f32"  => SortRef::F32,
@@ -2614,10 +2616,14 @@ pub(super) fn type_to_sort(ty: &TypeRef) -> SortRef {
         TypeRef::Named { path, .. } if path.len() == 1 => match path[0].as_str() {
             "int" | "i64" | "money" | "nat" => SortRef::Int,
             // Plan 33.7: sized integer types → BitVec.
-            "u8" | "byte" | "i8"      => SortRef::BitVec(8),
-            "u16" | "i16"              => SortRef::BitVec(16),
-            "u32" | "i32"              => SortRef::BitVec(32),
-            "u64" | "usize"            => SortRef::BitVec(64),
+            // V2: signed=true для i8/i16/i32, false для u8/u16/u32/u64.
+            "u8" | "byte"  => SortRef::BitVec { width: 8,  signed: false },
+            "i8"           => SortRef::BitVec { width: 8,  signed: true },
+            "u16"          => SortRef::BitVec { width: 16, signed: false },
+            "i16"          => SortRef::BitVec { width: 16, signed: true },
+            "u32"          => SortRef::BitVec { width: 32, signed: false },
+            "i32"          => SortRef::BitVec { width: 32, signed: true },
+            "u64" | "usize"            => SortRef::BitVec { width: 64, signed: false },
             "bool" => SortRef::Bool,
             "str"  => SortRef::Str,
             "f32"  => SortRef::F32,
@@ -3775,99 +3781,187 @@ fn collect_used_idents_in_expr(e: &Expr, out: &mut std::collections::HashSet<Str
     }
 }
 
+/// V2.3: рекурсивно найти первый BV-sorted Var в терме → (width, signed).
+/// Используется для overflow-VC после subst (операнды могут быть App).
+fn bv_sort_in_term(
+    t: &SmtTerm,
+    var_sorts: &std::collections::HashMap<String, SortRef>,
+) -> Option<(u32, bool)> {
+    match t {
+        SmtTerm::Var(n) => match var_sorts.get(n) {
+            Some(SortRef::BitVec { width, signed }) => Some((*width, *signed)),
+            _ => None,
+        },
+        SmtTerm::App(_, args) => args.iter().find_map(|a| bv_sort_in_term(a, var_sorts)),
+        _ => None,
+    }
+}
+
+/// Найти ширину BitVecLit в терме (для fallback когда нет BV-Var).
+fn bv_lit_width(t: &SmtTerm) -> Option<u32> {
+    match t {
+        SmtTerm::BitVecLit(_, w) => Some(*w),
+        SmtTerm::App(_, args) => args.iter().find_map(bv_lit_width),
+        _ => None,
+    }
+}
+
+/// V2.3: scope обхода — карта sorts (для BV-детекции) + карта subst
+/// (let-имя → SmtTerm его значения). Subst позволяет переписать
+/// VC в терминах fn-параметров (уже declared в backend), избегая
+/// undeclared-var в Z3.
+#[derive(Clone)]
+struct BvScope {
+    sorts: std::collections::HashMap<String, SortRef>,
+    /// let-имя → закодированный SmtTerm значения (через subst подставляется).
+    subst: std::collections::HashMap<String, SmtTerm>,
+}
+
 /// Plan 33.7 Ф.4: собрать все BV-арифметические операции в теле fn.
 /// Возвращает Vec<(span, op, lhs_SmtTerm, rhs_SmtTerm)>.
-/// Только Add/Sub/Mul где оба операнда имеют BV-сорт в var_sorts.
+/// Только Add/Sub/Mul где хотя бы один операнд имеет BV-сорт.
+///
+/// V2.3: рекурсия в блочные тела (let-bindings, вложенные блоки,
+/// if/else-блоки). `let x u32 = E` регистрирует `x` как BV-sorted и
+/// запоминает subst `x → encode(E)` — последующие `x + y` детектятся и
+/// VC переписывается в `(E) + y` (только fn-параметры, declared в backend).
 fn collect_bv_arith_ops_in_body(
     body: &FnBody,
     ctx: &encode::EncodeCtx,
 ) -> Vec<(Span, crate::ast::BinOp, SmtTerm, SmtTerm)> {
     let mut out = Vec::new();
+    let mut scope = BvScope {
+        sorts: ctx.var_sorts.clone(),
+        subst: std::collections::HashMap::new(),
+    };
     match body {
-        FnBody::Expr(e) => collect_bv_arith_in_expr(e, ctx, &mut out),
-        FnBody::Block(b) => {
-            for s in &b.stmts { collect_bv_arith_in_stmt(s, ctx, &mut out); }
-            if let Some(t) = &b.trailing { collect_bv_arith_in_expr(t, ctx, &mut out); }
-        }
+        FnBody::Expr(e) => collect_bv_arith_in_expr(e, ctx, &mut scope, &mut out),
+        FnBody::Block(b) => collect_bv_arith_in_block(b, ctx, &mut scope, &mut out),
         FnBody::External => {}
     }
     out
 }
 
+fn collect_bv_arith_in_block(
+    b: &Block,
+    ctx: &encode::EncodeCtx,
+    scope: &mut BvScope,
+    out: &mut Vec<(Span, crate::ast::BinOp, SmtTerm, SmtTerm)>,
+) {
+    for s in &b.stmts { collect_bv_arith_in_stmt(s, ctx, scope, out); }
+    if let Some(t) = &b.trailing { collect_bv_arith_in_expr(t, ctx, scope, out); }
+}
+
 fn collect_bv_arith_in_stmt(
     s: &Stmt,
     ctx: &encode::EncodeCtx,
+    scope: &mut BvScope,
     out: &mut Vec<(Span, crate::ast::BinOp, SmtTerm, SmtTerm)>,
 ) {
     match s {
         Stmt::Let(ld) => {
-            collect_bv_arith_in_expr(&ld.value, ctx, out);
+            collect_bv_arith_in_expr(&ld.value, ctx, scope, out);
+            // V2.3: `let x u32 = E` с явной BV-аннотацией → регистрируем
+            // `x` как BV-sorted и subst `x → encode(E, с текущим subst)`.
+            if let (crate::ast::Pattern::Ident { name, .. }, Some(ty)) = (&ld.pattern, &ld.ty) {
+                let sort = type_to_sort(ty);
+                if matches!(sort, SortRef::BitVec { .. }) {
+                    let ext_ctx = bv_scope_ctx(ctx, scope);
+                    if let Ok(mut val_t) = encode::encode_expr_with_ctx(&ld.value, &ext_ctx) {
+                        // Развернуть subst внутри val_t (вложенные let).
+                        for (k, v) in &scope.subst {
+                            val_t = val_t.substitute(k, v);
+                        }
+                        scope.sorts.insert(name.clone(), sort);
+                        scope.subst.insert(name.clone(), val_t);
+                    }
+                }
+            }
         }
-        Stmt::Expr(e) => collect_bv_arith_in_expr(e, ctx, out),
-        Stmt::Assign { value, .. } => collect_bv_arith_in_expr(value, ctx, out),
-        Stmt::Return { value: Some(v), .. } => collect_bv_arith_in_expr(v, ctx, out),
+        Stmt::Expr(e) => collect_bv_arith_in_expr(e, ctx, scope, out),
+        Stmt::Assign { value, .. } => collect_bv_arith_in_expr(value, ctx, scope, out),
+        Stmt::Return { value: Some(v), .. } => collect_bv_arith_in_expr(v, ctx, scope, out),
         Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => {
-            collect_bv_arith_in_expr(expr, ctx, out);
+            collect_bv_arith_in_expr(expr, ctx, scope, out);
         }
         Stmt::Throw { value, .. } | Stmt::Defer { body: value, .. } | Stmt::ErrDefer { body: value, .. } => {
-            collect_bv_arith_in_expr(value, ctx, out);
+            collect_bv_arith_in_expr(value, ctx, scope, out);
         }
         _ => {}
+    }
+}
+
+/// Построить EncodeCtx с расширенным var_sorts из BvScope.
+fn bv_scope_ctx<'a>(ctx: &encode::EncodeCtx<'a>, scope: &BvScope) -> encode::EncodeCtx<'a> {
+    encode::EncodeCtx {
+        pure_views: ctx.pure_views,
+        pure_fns: ctx.pure_fns,
+        trusted_fns: ctx.trusted_fns,
+        var_sorts: scope.sorts.clone(),
     }
 }
 
 fn collect_bv_arith_in_expr(
     e: &Expr,
     ctx: &encode::EncodeCtx,
+    scope: &mut BvScope,
     out: &mut Vec<(Span, crate::ast::BinOp, SmtTerm, SmtTerm)>,
 ) {
     match &e.kind {
         ExprKind::Binary { op, left, right } => {
-            // Recurse first.
-            collect_bv_arith_in_expr(left, ctx, out);
-            collect_bv_arith_in_expr(right, ctx, out);
-            // Only collect overflow-relevant ops.
+            collect_bv_arith_in_expr(left, ctx, scope, out);
+            collect_bv_arith_in_expr(right, ctx, scope, out);
             if !matches!(op, crate::ast::BinOp::Add | crate::ast::BinOp::Sub | crate::ast::BinOp::Mul) {
                 return;
             }
-            // Check if either operand is BV-sorted.
-            let lhs_is_bv = is_expr_bv_sorted(left, ctx);
-            let rhs_is_bv = is_expr_bv_sorted(right, ctx);
+            let lhs_is_bv = is_expr_bv_sorted(left, &scope.sorts);
+            let rhs_is_bv = is_expr_bv_sorted(right, &scope.sorts);
             if !lhs_is_bv && !rhs_is_bv { return; }
-            // Encode both sides; skip if encoding fails (e.g. complex expr).
-            let Ok(lhs_t) = encode::encode_expr_with_ctx(left, ctx) else { return };
-            let Ok(rhs_t) = encode::encode_expr_with_ctx(right, ctx) else { return };
+            let ext_ctx = bv_scope_ctx(ctx, scope);
+            let Ok(mut lhs_t) = encode::encode_expr_with_ctx(left, &ext_ctx) else { return };
+            let Ok(mut rhs_t) = encode::encode_expr_with_ctx(right, &ext_ctx) else { return };
+            // V2.3: подставить let-bound переменные их значениями, чтобы VC
+            // содержал только fn-параметры (declared в backend).
+            for (k, v) in &scope.subst {
+                lhs_t = lhs_t.substitute(k, v);
+                rhs_t = rhs_t.substitute(k, v);
+            }
             out.push((e.span, *op, lhs_t, rhs_t));
         }
         ExprKind::If { cond, then, else_ } => {
-            collect_bv_arith_in_expr(cond, ctx, out);
-            for s in &then.stmts { collect_bv_arith_in_stmt(s, ctx, out); }
-            if let Some(t) = &then.trailing { collect_bv_arith_in_expr(t, ctx, out); }
+            collect_bv_arith_in_expr(cond, ctx, scope, out);
+            let mut then_scope = scope.clone();
+            collect_bv_arith_in_block(then, ctx, &mut then_scope, out);
             if let Some(eb) = else_ {
                 match eb {
                     ElseBranch::Block(b) => {
-                        for s in &b.stmts { collect_bv_arith_in_stmt(s, ctx, out); }
-                        if let Some(t) = &b.trailing { collect_bv_arith_in_expr(t, ctx, out); }
+                        let mut else_scope = scope.clone();
+                        collect_bv_arith_in_block(b, ctx, &mut else_scope, out);
                     }
-                    ElseBranch::If(e2) => collect_bv_arith_in_expr(e2, ctx, out),
+                    ElseBranch::If(e2) => collect_bv_arith_in_expr(e2, ctx, scope, out),
                 }
             }
         }
-        ExprKind::Call { func, args, .. } => {
-            collect_bv_arith_in_expr(func, ctx, out);
-            for a in args { collect_bv_arith_in_expr(a.expr(), ctx, out); }
+        ExprKind::Block(b) => {
+            let mut blk_scope = scope.clone();
+            collect_bv_arith_in_block(b, ctx, &mut blk_scope, out);
         }
-        ExprKind::Unary { operand, .. } => collect_bv_arith_in_expr(operand, ctx, out),
+        ExprKind::Call { func, args, .. } => {
+            collect_bv_arith_in_expr(func, ctx, scope, out);
+            for a in args { collect_bv_arith_in_expr(a.expr(), ctx, scope, out); }
+        }
+        ExprKind::Unary { operand, .. } => collect_bv_arith_in_expr(operand, ctx, scope, out),
         _ => {}
     }
 }
 
-fn is_expr_bv_sorted(e: &Expr, ctx: &encode::EncodeCtx) -> bool {
+fn is_expr_bv_sorted(e: &Expr, sorts: &std::collections::HashMap<String, SortRef>) -> bool {
     match &e.kind {
-        ExprKind::Ident(n) => matches!(ctx.var_sorts.get(n), Some(SortRef::BitVec(_))),
+        ExprKind::Ident(n) => matches!(sorts.get(n), Some(SortRef::BitVec { .. })),
         ExprKind::Binary { left, right, .. } => {
-            is_expr_bv_sorted(left, ctx) || is_expr_bv_sorted(right, ctx)
+            is_expr_bv_sorted(left, sorts) || is_expr_bv_sorted(right, sorts)
         }
+        ExprKind::As(_, ty) => matches!(type_to_sort(ty), SortRef::BitVec { .. }),
         ExprKind::IntLit(_) => false, // bare int literal — BV only in context
         _ => false,
     }

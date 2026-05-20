@@ -1,0 +1,27 @@
+// EXPECT_COMPILE_ERROR does not satisfy
+//
+// Plan 62.E.bis (2026-05-20) — negative test.
+//
+// `TryFrom[T, E]` re-export'нут через prelude facade и eligible как
+// generic bound (D72). Type-checker (Plan 15 generic-bounds enforcement)
+// обязан отвергнуть вызов generic-функции с bound `[T TryFrom[int, str]]`,
+// если переданный тип НЕ удовлетворяет протоколу (нет static-метода
+// `try_from(int) -> Result[Self, str]`).
+//
+// Здесь `Plain` не реализует `try_from` — вызов `needs_try_from(p)`
+// ожидается compile-fail (bound not satisfied).
+
+module plan62.tryfrom_bound_unsatisfied_neg
+
+
+type Plain { x int }
+
+
+fn needs_try_from[T TryFrom[int, str]](v T) -> T => v
+
+
+test "TryFrom bound — non-implementing type должен быть отвергнут" {
+    let p = Plain { x: 1 }
+    let _ = needs_try_from(p)
+    assert(true)
+}

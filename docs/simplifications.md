@@ -4796,7 +4796,7 @@ Sub-plans 35.A-E:
   match → if/else, lambda → #pure fn и т.д.). Soundness gap закрыт.
 - **Дата закрытия:** 2026-05-16
 
-### [V20] ✅ BitVec theory (sized integers) — ЗАКРЫТО Plan 33.7 (2026-05-20)
+### [V20] ✅ BitVec theory (sized integers) — ЗАКРЫТО Plan 33.7 V1+V2 (2026-05-21)
 - **Где:** `compiler-codegen/src/verify/{ir.rs,encode.rs,pipeline.rs,backend/z3.rs,backend/z3_ffi.rs,backend/trivial.rs}`, `compiler-codegen/src/ast/mod.rs`, `compiler-codegen/src/parser/mod.rs`.
 - **Что реализовано:**
   * `SortRef::BitVec(N)` и `SmtTerm::BitVecLit(v, w)` в SMT-IR.
@@ -4806,12 +4806,24 @@ Sub-plans 35.A-E:
   * `as`-cast encoding: `0 as u32` → `BitVecLit(0, 32)` и т.д.
   * TrivialBackend: `check_sat` ранний выход с `UnsupportedTheory` для BV-сортов или bv-операторов.
   * `#nooverflow` атрибут: парсится как `ContractAttrs.no_overflow: bool`, устанавливает `FnDecl.no_overflow`; pipeline.rs генерирует overflow VCs (`bvadd_no_overflow_u` и т.д.) для каждой Add/Sub/Mul в теле fn с BV-sorted параметрами.
-  * 5 новых тестов: f60_bv_arith_trivial_positive, f60_bv_arith_z3_positive, f60_bv_bitwise_z3_positive, f60_bv_nooverflow_safe_z3_positive, f60_bv_nooverflow_overflow_fail.
-- **Остаток (V2):**
-  * Точное определение знаковости (is_signed) из type_name i8/i16/i32 вместо глобального false.
-  * BV cast resize (BitVec(32) → BitVec(8) через zero-extend/sign-extend).
-  * Overflow VCs для блочных тел (вложенные stmt, let-bindings с BV-выражениями).
-- **Дата закрытия:** 2026-05-20
+  * 5 новых тестов V1: f60_bv_arith_trivial_positive, f60_bv_arith_z3_positive, f60_bv_bitwise_z3_positive, f60_bv_nooverflow_safe_z3_positive, f60_bv_nooverflow_overflow_fail.
+- **V2 (ЗАКРЫТО 2026-05-21):**
+  * ✅ Точная знаковость: `SortRef::BitVec { width, signed }` — i8/i16/i32→signed,
+    u8/u16/u32/u64→unsigned. `is_signed` берётся из BV-операнда (`bv_signed`),
+    не глобальный false. Влияет на bvsdiv/bvslt vs bvudiv/bvult и на выбор
+    `bvadd_no_overflow_s/u` в overflow VC.
+  * ✅ BV cast resize: `as`-каст между BV-ширинами через `zero_extend N`
+    (unsigned-источник) / `sign_extend N` (signed) / `extract H L` (сужение).
+    FFI: `Z3_mk_zero_ext`/`Z3_mk_sign_ext`/`Z3_mk_extract`; translate_app
+    парсит числовой параметр из op-строки.
+  * ✅ Overflow VCs для блочных тел: `collect_bv_arith_ops_in_body` рекурсит
+    в let-bindings и блок-выражения (`BvScope` с subst-картой). `let x = E`
+    регистрирует subst `x → encode(E)` → VC переписывается в терминах
+    fn-параметров (declared в backend) — избегает undeclared-var в Z3.
+  * 4 новых теста V2: f61_bv_signed_z3_positive, f61_bv_cast_resize_z3_positive,
+    f61_bv_nooverflow_block_z3_positive, f61_bv_signed_overflow_fail.
+- **Остаток:** нет. V20 полностью закрыт (V1 + V2).
+- **Дата закрытия:** V1 — 2026-05-20; V2 — 2026-05-21.
 
 ### [ЗАКР 2026-05-16] pipeline.rs монолит — handler code в отдельный модуль [Ф.2.1]
 - **Закрыто (Plan 33.6 Ф.2.1, 2026-05-16, commit ddc11f2e):**
@@ -10014,7 +10026,7 @@ G/H). ~3700 LOC implementation cumulative.
 
 ## Plan 62 — prelude hardcode migration (2026-05-18)
 
-### [M-result-method-named-var-only] (DEFER — Plan 62.A.bis Ф.3)
+### [M-result-method-named-var-only] ✅ ЗАКРЫТО (Plan 59 Ф.7.5 increment 2, 2026-05-21)
 - **Где:** `emit_c.rs` — `result_type_params: HashMap<String, (String,
   String)>` на `CEmitter`; method-dispatch для `unwrap`/`unwrap_or`/
   `unwrap_or_else`/`map`/`map_err`.
@@ -10039,9 +10051,27 @@ G/H). ~3700 LOC implementation cumulative.
   closure-call теперь эмитит fn-pointer cast по фактической C-сигнатуре
   closure (`typed_closure_c_sig`), а не хардкод `NOVA_CLOS_CALL_ii` —
   `bool`/`char`-typed closures больше не зависят от «совпадения по
-  размеру», работают корректно. Остаточное упрощение: inline `unwrap_or`
-  return-type всё ещё `(nova_int, nova_str)` fallback (полное лечение —
-  Plan 59 Ф.7.5).
+  размеру», работают корректно.
+- **Plan 59 Ф.7.5-lite (2026-05-20):** основной кейс блокера ЗАКРЫТ.
+  Helper `infer_result_type_params(expr)` выводит (T,E) для **inline**
+  Result-выражений: `Call(fn → Result[T,E])` → `fn_result_type_params`;
+  `.map`/`.map_err` цепочки → рекурсия + closure return-type. Применён
+  в 5 точках (inference Result-методов + emit `unwrap_or`/
+  `unwrap_or_else`/`map`/`unwrap`) вместо паттерна «Ident-или-default».
+  Inline fn-call цепочки (`parse_x().unwrap_or(...)`,
+  `parse_x().map(f).unwrap_or(...)`) теперь типизируются корректно, а не
+  «случайно по размеру». Остаточный узкий edge: Result из field-access /
+  user-method (не Ident, не fn-call) — всё ещё fallback; полная mono
+  (`NovaRes_<T>_<E>`) — Plan 59 Ф.7.5 инкремент 2.
+- **✅ ЗАКРЫТО (Plan 59 Ф.7.5 increment 2, 2026-05-21):** полная
+  мономорфизация Result. `Result[T,E]` → per-(T,E) C-тип
+  `NovaRes_<ok>_<err>*` — тип сам несёт (T,E), резолюция через
+  `novares_ok_err` детерминирована независимо от формы выражения
+  (Ident / fn-call / field-access / method). Bootstrap-обходка
+  `result_type_params` больше не единственный источник. Тихий
+  fallback `(nova_int, nova_str)` устранён (D4): emit-сайты Result-
+  методов используют `resolve_result_te_strict` — жёсткая codegen-
+  ошибка вместо молчаливой догадки. Коммит D3+D4 `238b2eb`.
 
 ### [M-option-result-method-misuse-cc-only] (DEFER — type-checker tightening)
 - **Где:** `compiler-codegen/src/types/mod.rs` — method-call checking
@@ -10074,7 +10104,7 @@ G/H). ~3700 LOC implementation cumulative.
   result_unwrap_or_arg_mismatch_neg.nv (EXPECT_CC_ERROR) +
   option_or_missing_arg_neg.nv (EXPECT_COMPILE_ERROR — arity ловится).
 
-### [M-legacy-sum-schemas-retained] (DEFER — Plan 62.A.bis Ф.4 → Plan 59)
+### [M-legacy-sum-schemas-retained] (UNBLOCKED — Plan 62.A.bis Ф.4 готов к исполнению)
 - **Где:** `compiler-codegen/src/codegen/` — hardcoded `sum_schemas` +
   `sum_schema_registry.rs::init_hardcoded_baseline()`.
 - **Что упрощено:** legacy hardcoded `sum_schemas` НЕ удалён —
@@ -10086,6 +10116,13 @@ G/H). ~3700 LOC implementation cumulative.
   единственным источником схем.
 - **Приоритет:** L — дублирование без функционального вреда (registry
   имеет приоритет, baseline только fallback).
+- **Update 2026-05-21 (Plan 59 Ф.7.5 increment 2):** блокер снят.
+  Legacy `Nova_Result` устранён (переименован в
+  `NovaRes_nova_int_nova_str`, шаг E поглощён D3 — коммит `238b2eb`).
+  `nova_rt/array.h` value-type helpers больше не завязаны на единое
+  hardcoded Result-представление. Само удаление hardcoded
+  `sum_schemas` baseline — теперь чистая задача Plan 62.A.bis Ф.4
+  (передана агенту 62.A.bis).
 
 ### [M-runtime-none-error-deferred] (DEFER — Plan 62.C → Plan 72 P1-B)
 - **Где:** `std/prelude/errors.nv` — отсутствует `type RuntimeNoneError`.
@@ -10097,15 +10134,44 @@ G/H). ~3700 LOC implementation cumulative.
   `type RuntimeNoneError` без тела).
 - **Приоритет:** L — единственный тип ошибки, не блокирует prelude.
 
-### [M-tryfrom-tryinto-deferred] (DEFER — Plan 62.E → Plan 56 Ф.2.7)
-- **Где:** `std/prelude/protocols.nv` — 6/8 протоколов мигрированы,
-  `TryFrom`/`TryInto` отсутствуют.
-- **Что упрощено:** `TryFrom`/`TryInto` (protocol-method с effect
-  return-type `Result[Self, RuntimeError]`) не мигрированы.
-- **Почему:** codegen не умеет routing'ить effect через protocol-method
-  body — требует Plan 56 Ф.2.7 (effects-in-protocol-methods).
-- **Как чинить:** Plan 56 Ф.2.7 → затем 62.E.bis закрывает TryFrom/Into.
-- **Приоритет:** M — 6/8 протоколов покрывают основной conversion API.
+### [M-tryfrom-tryinto-deferred] ✅ RESOLVED (Plan 62.E.bis, 2026-05-20)
+- **Где:** `std/prelude/protocols.nv` + `std/prelude.nv` facade.
+- **Что было упрощено:** `TryFrom`/`TryInto` не были задекларированы /
+  re-export'нуты в prelude — 6/8 протоколов.
+- **Почему (было):** исходно объявлялись с `Fail[E]` effect-row, который
+  Plan 56 Ф.2.7 (effect-free enforcement) отвергал.
+- **Закрыто 2026-05-20 (Plan 62.E.bis):**
+  - Effect-блокер снят раньше (Plan 56 Ф.2.7-revert, D122 amended —
+    эффекты в protocol-методах разрешены под mono-dispatch).
+  - `TryFrom[T, E]` / `TryInto[U, E]` задекларированы в protocols.nv
+    через форму `try_from(t T) -> Result[Self, E]` (D77, migration
+    path b — обычный возврат Result, не `Fail[E]` effect; user-выбор
+    2026-05-20: «try_from должен возвращать Result»).
+  - Добавлены в facade `std/prelude.nv` export-list (8/8 протоколов).
+  - PRELUDE_VERSION 7 → 8. Тесты: `plan62/tryfrom_tryinto_from_prelude`
+    (positive) + `tryfrom_bound_unsatisfied_neg` (negative — bound
+    enforcement).
+
+### [M-result-record-payload-match] ✅ ЗАКРЫТО (Plan 59 Ф.7.5 increment 2, 2026-05-21)
+- **Где:** `emit_c.rs` — `register_fn_result_ok_inner_type` (~7311) +
+  `pattern_bind_typed` Ok-arm (~18183).
+- **Что было упрощено:** `match` на `Result[<user-record>, E]` с
+  binding'ом Ok-payload в переменную → переменная типизировалась как
+  `nova_int` (hardcoded `sum_schemas["Result"]["Ok"]` fallback).
+  Field-access на ней давал CC-FAIL `member reference base type
+  'nova_int'`.
+- **Почему (было):** legacy `Nova_Result` имел единый Ok-slot типа
+  `nova_int`; struct/record Ok-payload боксировался как `intptr_t`.
+  `pattern_bind_typed` консультировал `result_ok_inner_types` только
+  для `Pattern::Tuple` sub-pattern, не для plain `Ident`.
+- **Закрыто 2026-05-21 (Plan 59 Ф.7.5 increment 2, коммит `238b2eb`):**
+  полная мономорфизация Result. Mono-тип `NovaRes_<n>` несёт реальный
+  Ok-тип прямо в `payload.Ok._0` — никакого `nova_int`-erasure.
+  `pattern_bind_typed` / `pattern_cond` распознают mono `NovaRes_<n>`
+  через `novares_ok_err` и берут реальный inline-тип payload'а
+  (без `intptr_t`-boxing) для любого sub-pattern (Tuple / Ident /
+  вложенный Some). `[M-result-record-payload-match]` устранён как
+  следствие D3-флипа.
 
 ### [M-protocol-as-value-binding-only] (DEFER — Plan 62.D/E → Plan 72 P0/P3-B)
 - **Где:** codegen — protocol-type как тип переменной/параметра

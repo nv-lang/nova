@@ -1,0 +1,27 @@
+// REQUIRES_SMT_BACKEND z3
+//
+// Plan 33.7 V2: signed BV arithmetic — i8/i16/i32 используют signed
+// операторы (bvslt/bvsle/bvsdiv). Знаковость берётся из SortRef::BitVec.signed.
+// Для signed-типа `-1 < 0` истинно (для unsigned было бы false: 0xFF > 0).
+
+module contracts.f61_bv_signed_z3_positive
+
+// i32 параметр: signed comparison. `x <= x` тривиально true для bvsle.
+#verify
+fn signed_refl(x i32) -> bool
+    ensures result == true
+=> x <= x
+
+// signed division: i32 / положительный делитель. -10 / 2 == -5 (bvsdiv).
+#verify
+fn signed_halve(x i32) -> i32
+    requires x >= 0 as i32
+    ensures result <= x
+=> x / 2 as i32
+
+test "bv signed z3 positive" {
+    assert(signed_refl(42 as i32) == true)
+    assert(signed_refl(-7 as i32) == true)
+    assert(signed_halve(10 as i32) == 5 as i32)
+    assert(signed_halve(0 as i32) == 0 as i32)
+}

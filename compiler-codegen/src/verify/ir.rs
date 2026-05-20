@@ -28,8 +28,12 @@ pub enum SortRef {
     /// Uninterpreted sort, named (например для record-типов).
     Named(String),
     /// Plan 33.7: bit-vector sort (_ BitVec N) для u8/u16/u32/u64/i8/i16/i32.
-    /// Ширина N в битах (8, 16, 32, 64).
-    BitVec(u32),
+    /// `width` — ширина N в битах (8, 16, 32, 64).
+    /// `signed` (V2): true для i8/i16/i32, false для u8/u16/u32/u64. Влияет
+    /// на выбор bv-операторов (bvsdiv/bvslt vs bvudiv/bvult) и semantics
+    /// cast-resize (sign-extend vs zero-extend). Z3-sort одинаков для обоих —
+    /// `(_ BitVec N)`; знаковость существует только в Nova-типизации.
+    BitVec { width: u32, signed: bool },
 }
 
 /// Term — выражение в SMT-IR. Все Nova-выражения контрактов

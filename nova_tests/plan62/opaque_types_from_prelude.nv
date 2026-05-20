@@ -29,7 +29,8 @@ test "StringBuilder visible через prelude (no explicit import)" {
     let s = sb.into()
     assert(s == "hello, world")
     // Plan 62.B.bis bump 6 → 7: print / println formally declared.
-    assert(PRELUDE_VERSION == 7)
+    // Маркер монотонный (`>=`) — 62.E.bis поднял PRELUDE_VERSION до 8.
+    assert(PRELUDE_VERSION >= 7)
 }
 
 
