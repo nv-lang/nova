@@ -17060,3 +17060,88 @@ simplifications.md [M-runtime-none-error-throw-codegen]):
 
 Plan 62.C.bis закрыт. Остаток deferred sub-plans Plan 62: только
 62.A.bis Ф.4 (ждёт Plan 59 Ф.7.5 increment 2).
+=== Plan 75 — str test coverage + codegen bugfixes (2026-05-21) ===
+
+Nova_tests/str/ — 11 новых тест-файлов, все PASS.
+
+Покрытые области:
+- char_at.nv / char_at_oob.nv: @char_at ASCII/Unicode/emoji, OOB → None
+- is_empty_hash.nv: @is_empty() + @hash() determinism
+- split_edge.nv: соседние сепараторы, leading/trailing, не найден
+- conversions_positive.nv: str.from(char/int/bool/f64), int/bool.try_from Ok, round-trip []byte
+- conversions_err.nv: 12 Err-сценариев (int/f64/bool/char.try_from)
+- interpolation_char.nv: "${c}" для c: char — символ, не int-код
+- slice_oob.nv: clamp-поведение задокументировано
+- neg_cast_str_as_int.nv / neg_cast_int_as_str.nv: EXPECT_COMPILE_ERROR
+- utf8_invalid.nv: str.try_from([]byte) с невалидными UTF-8 → Err
+
+@is_empty добавлен в runtime_registry.rs → std/runtime/string.nv.
+
+3 codegen-бага исправлены в emit_c.rs:
+1. char_at return type: NovaOpt_nova_int → NovaOpt_nova_char (pre-Plan 71 артефакт).
+   nova_opt_eq_nova_int использовался вместо nova_opt_eq_nova_char — silent wrong compare.
+2. str.from(char var): отсутствовал case "nova_char" → nova_char_to_str.
+   При передаче char-переменной падал в fallthrough → nova_int_to_str → неверный вывод.
+3. infer_expr_c_type primitive receiver: передавал C-имена (nova_str) в таблицу method_overloads,
+   которая ожидает Nova-имена (str). Добавлен mapping nova_str→str, nova_char→char и т.д.
+4. emit_interpolated_str: отсутствовал case "nova_char" → nova_char_to_str.
+   "${c}" для c: char эмитил nova_int_to_str → выводил int-код (65 вместо "A").
+
+Регрессия: 881 PASS / 1 FAIL (pre-existing modules/prelude_auto_import).
+
+2026-05-21 Plan 62.A.bis Ф.4 — расследование (блокер уточнён, удаление отложено)
+─────────────────────────────────────────────────────────────────
+
+Plan 59 Ф.7.5 increment 2 закрыт (Result полностью мономорфизирован,
+`NovaRes_<ok>_<err>*`) — формально снял блокер для 62.A.bis Ф.4
+(удалить legacy hardcoded `sum_schemas["Result"]`).
+
+Попытка удаления `sum_schemas["Result"]` (emit_c.rs:~1128) + полный
+прогон вскрыли **остаточную зависимость**:
+- nested-pattern `match opt { Some(Err(e)) => ... }` (где opt —
+  Option[Result[T,E]]) типизирует inner-variant payload через
+  `sum_schemas["Result"]` в `pattern_bind_typed` (~18183), а НЕ
+  через `NovaRes_<T>_<E>` mono / `novares_ok_err`.
+- Без `sum_schemas["Result"]` → `field_types` пустой → payload `e`
+  типизируется `nova_int` вместо `nova_str` → CC-FAIL
+  (`plan55/f2_match_nested_pattern`).
+- `result_ok_inner_types` механизм покрывает только `Pattern::Tuple`
+  sub-pattern + `Ok`, не `Err` / plain `Ident`.
+
+Решение: удаление `sum_schemas["Result"]` откатил — build зелёный
+(884 PASS / 0 FAIL). Блокер уточнён в [M-legacy-sum-schemas-retained]:
+нужен Plan 59 follow-up — `pattern_bind_typed` должен резолвить
+Result-variant payload через `novares_ok_err` на mono-типе. После
+этого `sum_schemas["Result"]` removable, 62.A.bis Ф.4 закрывается.
+
+Параллельно: independent fix — `modules/prelude_auto_import` маркер
+`PRELUDE_VERSION == 8` → `>= 8` (62.C.bis bump 8→9 не обновил этот
+тест вне plan62/; маркер переведён на монотонный `>=`).
+
+62.A.bis Ф.4 остаётся deferred — но блокер теперь точно локализован
+(не «жди Plan 59 sum-mono» вообще, а конкретный pattern_bind_typed
+путь). Остаток Plan 62 — только этот пункт.
+
+UPDATE 2026-05-21 — блокер закрыт (Plan 59 пост-фикс, коммит
+2b184a3c06a). `pattern_bind_typed` / `pattern_cond` Option-ветки
+регистрируют C-тип Result-payload (`NovaRes_<n>*`) в var_types на
+access path → recursive pattern-match для nested `Some(Ok/Err(..))`
+резолвит (T,E) через `novares_ok_err`, не через legacy
+`sum_schemas["Result"]`. Проверено: с удалённым `sum_schemas
+["Result"]` insert полный прогон 883 PASS / 0 FAIL дважды. Insert
+оставлен по договорённости — его удаление = scope 62.A.bis Ф.4
+(теперь полностью разблокирован, fallback недостижим).
+
+=== Plan 59 Ф.7.5 пост-фикс — nested Result-variant payload (2026-05-21) ===
+
+Worktree nova-p59. Агент Plan 62.A.bis при подготовке Ф.4 нашёл
+остаточный gap Result-mono: pattern_bind_typed / pattern_cond для
+вложенных Result-паттернов (`Some(Ok/Err(..))` на `Option[Result
+[T,E]]`) типизировали payload через legacy `sum_schemas["Result"]`,
+не через `NovaRes_<T>_<E>`. Причина — при распаковке внешнего
+`Some(...)` C-тип inner-Result не регистрировался в var_types.
+Фикс: Option-ветки pattern_bind_typed/pattern_cond регистрируют
+C-тип Result-payload на access path → recursive резолв через
+novares_ok_err. Проверено repro агента (убрать sum_schemas["Result"]
+→ 883 PASS / 0 FAIL дважды). Insert оставлен — scope 62.A.bis Ф.4.
+Коммит 2b184a3c06a, мерж 58e698104c0.
