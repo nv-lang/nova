@@ -43,12 +43,13 @@
 //   `parse_type_decl` (parser/mod.rs:2042+) при отсутствии `|`/`{`/`alias`
 //   падает в newtype branch (`parse_type()`), что ожидает type-ref.
 //   Empty-body `type Name` (без вариантов / полей) парсер не поддерживает.
-//   То же ограничение что у `Never` (Plan 62.A defer, см.
-//   std/prelude/core.nv:104-109). `RuntimeNoneError` остаётся как
-//   string-payload throw в `nova_rt/effects.h:122-126`
+//   `RuntimeNoneError` остаётся как string-payload throw в
+//   `nova_rt/effects.h:122-126`
 //   (`nova_throw(nova_str_from_cstr("RuntimeNoneError"))`) — никакого
 //   structured type декларировать не нужно. Декларация перенесётся сюда
-//   когда parser получит empty-sum support (тот же D-block как у Never).
+//   когда parser получит empty-sum support.
+//   (Bottom-тип `never` — отдельная история: Plan 76 сделал его
+//   строчным встроенным примитивом, empty-sum к нему не относится.)
 //
 // - **Throw-point conversion to structured `RuntimeError`-payload**
 //   (compiler:    a/b на 0, arr[i] out-of-bounds, etc.) остаётся отдельной
@@ -122,7 +123,6 @@ export type ReadBufferError
 // поддерживает empty-body sum syntax (`parse_type_decl` ожидает либо
 // `|` (sum), либо `{` (record), либо `alias`/newtype; bare `type Name`
 // падает в newtype branch и парсит следующий token как type-ref).
-// Тот же блокер что у `Never` (std/prelude/core.nv:104-109).
 //
 // `RuntimeNoneError` остаётся как string-payload throw в
 // `nova_rt/effects.h:122-126`:
@@ -131,8 +131,8 @@ export type ReadBufferError
 //
 // Никакого C-уровневого `Nova_RuntimeNoneError` типа не существует —
 // `expr!!` на None просто бросает строку. Декларация перенесётся сюда
-// одновременно с `Never` когда parser получит empty-sum syntax (D-block
-// addition в spec/decisions/03-syntax.md).
+// когда parser получит empty-sum syntax (D-block addition в
+// spec/decisions/03-syntax.md).
 //
 // Закомментированная форма (для documentation):
 //   #stable(since = "0.1")

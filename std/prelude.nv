@@ -7,14 +7,15 @@
 //
 // Текущий статус:
 //   - 62.A complete: core types (Option/Result/Some/None/Ok/Err/Error/
-//     Ordering/Never) перенесены в std/prelude/core.nv.
+//     Ordering) перенесены в std/prelude/core.nv. Bottom-тип `never` —
+//     строчный встроенный примитив (Plan 76), в prelude НЕ объявляется.
 //   - 62.B complete (partial): panic/exit/assert/debug_assert перенесены
 //     в std/prelude/runtime.nv. print/println DEFERRED — variadic +
 //     type-polymorphic dispatch, см. std/prelude/runtime.nv DEFER comment.
 //   - 62.C complete (partial): RuntimeError + ReadBufferError перенесены
 //     в std/prelude/errors.nv. RuntimeNoneError DEFERRED — bootstrap
-//     parser не поддерживает empty-body sum syntax (тот же блокер что
-//     у `Never`, см. std/prelude/errors.nv DEFER comment).
+//     parser не поддерживает empty-body sum syntax (см.
+//     std/prelude/errors.nv DEFER comment).
 //   - 62.D complete (partial, non-opaque scope): Iter[T] protocol
 //     объявлен formally в std/prelude/collections.nv (раньше был только
 //     structural duck-typing per D58). Range / RangeIter re-export
@@ -44,9 +45,9 @@ module std.prelude
 // (bootstrap parser `parse_import_inner` не skip'ает newlines внутри
 // `{ }`), поэтому всё на одной строке.
 //
-// DEFER из re-export'а: `Never` — bootstrap parser не поддерживает
-// `type Never =` (empty sum). Остаётся в type-checker builtins HashSet
-// пока syntax не появится. См. std/prelude/core.nv (DEFER комментарий).
+// Bottom-тип `never` НЕ re-export'ится: это строчный встроенный
+// примитив (Plan 76), известен компилятору напрямую — как `int`/`bool`,
+// примитивы не объявляются и не re-export'ятся через prelude.
 export import std.prelude.core.{Option, Some, None, Result, Ok, Err, Error, Ordering, Less, Equal, Greater}
 
 // Plan 62.B: re-export runtime functions из std.prelude.runtime.
@@ -61,8 +62,8 @@ export import std.prelude.runtime.{panic, exit, assert, debug_assert, print, pri
 // RuntimeError (6 variants) + ReadBufferError (1 variant). Type name +
 // variant constructors — все перечислены selectively (см. 62.A note про
 // wildcard и multi-line). RuntimeNoneError НЕ перенесён — bootstrap
-// parser не поддерживает empty-body sum syntax (тот же блокер что у
-// `Never`, см. std/prelude/errors.nv DEFER comment).
+// parser не поддерживает empty-body sum syntax (см.
+// std/prelude/errors.nv DEFER comment).
 export import std.prelude.errors.{RuntimeError, DivByZero, Overflow, IndexOutOfBounds, TypeMismatch, AssertFailed, NoHandler, ReadBufferError, UnexpectedEnd}
 
 // Plan 62.D non-opaque: re-export Iter[T] protocol formal declaration из

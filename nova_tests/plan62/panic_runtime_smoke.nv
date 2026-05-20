@@ -4,10 +4,10 @@
 // (positive functional test, not just compile check).
 //
 // Verifies что `panic(msg)` declared в `std/prelude/runtime.nv` через
-// `external fn panic(msg str) -> Never`:
+// `external fn panic(msg str) -> never`:
 //   - Resolves через prelude facade auto-import (R27).
 //   - Actually fires runtime panic (intercept в codegen → nv_panic).
-//   - Возвращает Never (compile-acceptable как single-expression body).
+//   - Возвращает never (compile-acceptable как single-expression body).
 //
 // До 62.B: panic был hardcoded в type-checker builtins HashSet +
 // codegen special-case на name match. После 62.B: HashSet shrunk на

@@ -1,7 +1,7 @@
-// 54_throw_in_expression.nv — D25/D65: `throw` как expression, type Never.
+// 54_throw_in_expression.nv — D25/D65: `throw` как expression, type never.
 //
 // До этого `throw` парсился ТОЛЬКО как Stmt::Throw (statement-level).
-// Spec D65 «Fail strict»: throw — операция эффекта Fail с типом Never.
+// Spec D65 «Fail strict»: throw — операция эффекта Fail с типом never.
 // Это значит throw должен быть валидной expression в любой позиции,
 // требующей значения — match-arm body, тернарник, аргумент функции и т.д.
 //

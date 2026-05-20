@@ -1339,7 +1339,7 @@ pub enum ExprKind {
     /// Requires `Detach` effect in the enclosing function's signature.
     Detach(Block),
     /// `throw expr` в позиции expression (D25/D65). Обрабатывается как
-    /// эффект `Fail.fail(msg)`, тип `Never`. В codegen эмитируется как
+    /// эффект `Fail.fail(msg)`, тип `never`. В codegen эмитируется как
     /// `(Nova_Fail_fail(msg), zero<T>)` — comma-expression, dummy после
     /// fail() недостижим.
     Throw(Box<Expr>),

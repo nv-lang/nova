@@ -12,7 +12,7 @@
 //
 // Архитектурные правила (Plan 62 §«Стратификация»):
 //   - **ZERO imports.** Все declarations self-contained на primitives
-//     и built-in `Never` (см. core.nv DEFER comment).
+//     и built-in `never` (bottom-тип, строчный примитив — Plan 76).
 //   - Auto-import `std.prelude` отключён внутри `std.prelude.*` через
 //     `is_prelude_self_module` (compiler-codegen/src/manifest.rs:314+).
 //
@@ -68,8 +68,8 @@ module prelude.effects
 /// любой Nova-тип (sum-type, record, str, int, etc.). Соглашение:
 /// доменные ошибки — sum-типы (см. `std.prelude.errors.RuntimeError`).
 ///
-/// **Сигнатура `fail(e E) -> Never`** — операция не возвращает управление.
-/// По D61 (str. 1430-1434) handler-body для Never-операции обязан
+/// **Сигнатура `fail(e E) -> never`** — операция не возвращает управление.
+/// По D61 (str. 1430-1434) handler-body для never-операции обязан
 /// завершиться `interrupt v`, `throw err`, `panic(...)` или `exit(...)`.
 ///
 /// **Syntactic sugar:**
@@ -98,7 +98,7 @@ module prelude.effects
 /// `Fail[E]` для documentation/AI clarity.
 #stable(since = "0.1")
 export type Fail[E] effect {
-    fail(e E) -> Never
+    fail(e E) -> never
 }
 
 /// **Time-effect** — ambient runtime эффект для доступа к часам и

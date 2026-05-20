@@ -2250,7 +2250,9 @@ impl Parser {
         // `module`) or is a newline/EOF (meaning the declaration is done),
         // treat this as an empty sum type: 0 variants, uninhabited.
         // Also accept `type X { }` (empty braces) as empty sum for symmetry.
-        // Use cases: `type Never` (bottom type), `type RuntimeNoneError` (marker).
+        // Use case: `type RuntimeNoneError` (marker / uninhabited).
+        // Note: bottom-тип `never` — встроенный примитив (Plan 76), не
+        // объявляется через `type` — empty-sum здесь к нему не относится.
         {
             let is_body_end = matches!(
                 self.peek().kind,
@@ -4153,6 +4155,8 @@ impl Parser {
                     "int" | "i8" | "i16" | "i32" | "i64"
                     | "u8" | "u16" | "u32" | "u64" | "uint"
                     | "f32" | "f64" | "byte" | "bool" | "char" | "str"
+                    // Plan 76: `never` — bottom-тип, строчный встроенный примитив.
+                    | "never"
                 );
                 if (starts_uppercase || is_primitive_type)
                     && matches!(self.peek().kind, TokenKind::Dot)
@@ -4300,7 +4304,7 @@ impl Parser {
             TokenKind::KwParallel => self.parse_parallel_for(),
             TokenKind::KwDetach => self.parse_detach(),
             TokenKind::KwThrow => {
-                // D25/D65: `throw expr` as expression (type Never).
+                // D25/D65: `throw expr` as expression (type never).
                 // Stmt-level throw уже обрабатывается parse_stmt_or_expr;
                 // expression-level — здесь, для match-arm body, ternary,
                 // тd. Codegen эмитирует как Nova_Fail_fail(msg) +
@@ -7273,7 +7277,7 @@ mod tests {
 
     #[test]
     fn handler_single_param_default_irt() {
-        // `Handler[E]` ≡ `Handler[E, Never]` через D88 default.
+        // `Handler[E]` ≡ `Handler[E, never]` через D88 default.
         // Парсится как одноаргументный generic (default подставляется
         // в monomorphization, а не на parse-стадии).
         let m = parse_or_panic(
