@@ -16891,3 +16891,53 @@ Nova_tests/str/ — 11 новых тест-файлов, все PASS.
    "${c}" для c: char эмитил nova_int_to_str → выводил int-код (65 вместо "A").
 
 Регрессия: 881 PASS / 1 FAIL (pre-existing modules/prelude_auto_import).
+
+=== Plan 59 Ф.7.5 increment 2 — полная мономорфизация Result (2026-05-21) ===
+
+Worktree nova-p59, ветка plan-59-f75-core (синк с main в обе стороны).
+
+`Result[T,E]` теперь компилируется в per-(T,E) C-тип
+`NovaRes_<ok>_<err>*` (аналог `NovaOpt_<T>`), а не в единый hardcoded
+`Nova_Result`. Снят defer Ф.7.5.
+
+Декомпозиция атомарного флипа на green-additive шаги A-E + D1-D4:
+- A — инфраструктура `NovaRes_<n>` (typedef, конструкторы, helper'ы).
+- B — `is_result_like()` принимает И legacy, И mono тип.
+- C — `resolve_result_te` восстанавливает (T,E) из обоих.
+- D1a/D1b/D1c — dual-mode emit (method-блоки, ?/!!, producer-сайты).
+- D2 — dual-mode конструкция Ok/Err.
+- D3 — флип на mono (активация). Поглотил шаг E.
+- D4 — kill silent fallback.
+
+D3 оказался крупнее «малого флипа» — вскрылись 2 факта не из плана:
+1. legacy `Nova_Result` нёс 2 лишних поля (`err_typed_payload` /
+   `err_typed_type_id`, Plan 61 fu#3, typed-Err для `!!`) — добавлены
+   в схему A.
+2. runtime-заголовки (read_buffer.h, string_builder.h) — рукописные
+   C-функции `try_read_*` возвращают `Nova_Result*`, включаются ДО
+   splice-маркера. Решение: `Nova_Result` переименован в
+   `NovaRes_nova_int_nova_str` (hand-defined в nova_rt/array.h как
+   канонический erased-инстанс); `Nova_Result` / `nova_make_Result_*`
+   / `Nova_Result_method_*` оставлены `#define`-алиасами. Шаг E
+   (удаление legacy Result) поглощён D3.
+
+D4 — `resolve_result_te_strict`: жёсткая codegen-ошибка вместо тихого
+`(nova_int, nova_str)` default'а (источник трудно-детектируемых багов
+— `[M-result-method-named-var-only]`). Сразу поймал реальный баг:
+external_registry отдавал `Nova_Result*` для `try_read_*`.
+
+Итеративный fix — 4 CC-FAIL + 2 CODEGEN-FAIL после флипа, все
+закрыты (tuple-Ok mono unbox, typed-Err mono throw, .err()/Ok
+inference, nested Some в Ok, external_registry).
+
+Тест: финальный полный прогон nova test — 883 PASS / 0 FAIL /
+56 SKIP, 0 регрессий.
+
+Закрыто в simplifications.md: `[M-result-method-named-var-only]` ✅,
+`[M-result-record-payload-match]` ✅, `[M-legacy-sum-schemas-retained]`
+UNBLOCKED (само удаление sum_schemas baseline — Plan 62.A.bis Ф.4,
+теперь разблокирован).
+
+Коммиты: A f7e926d, B a630e5d, C 5676e48, D1a f164b65, D1b+D1c
+726303b, D2 a44f992, D3+D4 238b2eb. Мержи в main: a13f5ca, 5228934,
+6d3dd5f.
