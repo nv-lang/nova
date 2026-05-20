@@ -433,8 +433,12 @@ effect handlers)`.
 - [ ] Self type substitution работает (test: `Comparable.eq(other Self)`).
 - [ ] Multi-bound — 2+ vtables propagated через ABI.
 - [ ] Default methods — generated thunks для non-override'd defaults.
-- [ ] Effect-free enforcement (Ф.2.7) — type-checker rejects effectful
-      bound methods с diagnostic.
+- [x] Effect-free enforcement (Ф.2.7) — type-checker rejects effectful
+      bound methods с diagnostic. ✅ Реализовано: `types/mod.rs`
+      `check_module` (D122) — для каждого `Protocol`-метода с непустым
+      `effects` эмитится AI-first diagnostic. Тесты:
+      `plan56/f5_negative_bound_effect` (negative) +
+      `f6_pure_bound_protocols` (positive) — PASS.
 - [ ] **8 тестов** в `plan56/f2_*.nv`.
 
 ### Ф.2 Estimate
