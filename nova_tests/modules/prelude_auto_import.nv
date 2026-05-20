@@ -21,13 +21,15 @@
 //   - 62.B.bis bump 6 → 7: print / println formally declared в
 //     std/prelude/runtime.nv через D69 variadic + `[]any` (canonical D26
 //     signature). Plan 67 hotfix absorbed как Ф.0.
+//   - 62.E.bis bump 7 → 8: TryFrom / TryInto formally declared в
+//     std/prelude/protocols.nv (effect-блокер снят — эффекты в
+//     protocol-методах разрешены, D122 amended).
 // См. docs/plans/62-prelude-hardcode-migration.md.
 
 module modules.prelude_auto_import
 
 test "PRELUDE_VERSION доступен без import" {
-    // Plan 62.B.bis bump 6 → 7: print / println formally declared via
-    // D69 variadic + `[]any` (canonical D26 signature) в
-    // std/prelude/runtime.nv.
-    assert(PRELUDE_VERSION == 7)
+    // Plan 62.E.bis bump 7 → 8: TryFrom / TryInto formally declared
+    // в std/prelude/protocols.nv.
+    assert(PRELUDE_VERSION == 8)
 }
