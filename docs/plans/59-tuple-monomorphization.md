@@ -635,3 +635,34 @@ C-типы (всё на Nova-уровне: `Result[T,E]`, `Ok`/`Err`, `match`, `
 **Риск:** нет compiler safety net (string-dispatch); средний период
 red-codegen; erased↔concrete boundary — потенциальные cast-mismatch'и
 (как у Option, [C2]-уровень).
+
+### Ф.7.5-lite — прицельный фикс инференса (2026-05-20) — ✅ ЗАКРЫТ
+
+> User: «запиши в план работ и делай». Полное переключение представления
+> (инкремент 2) — отдельная focused-сессия. Прицельно закрываем САМ
+> блокер `[M-result-method-named-var-only]` без рефактора представления.
+
+**Проблема.** `infer_expr_c_type` и emit Result-методов выводят (T,E)
+только когда receiver — именованная переменная (`result_type_params`
+keyed by var name). Inline-цепочки (`parse_x().unwrap_or(...)`,
+`parse_x().map(f).unwrap_or(...)`) → fallback `(nova_int, nova_str)` →
+для pointer-Ok-типов wrong result, для int/bool «случайно» проходит.
+
+**Фикс.** Helper `infer_result_type_params(expr) -> Option<(ok_c,err_c)>`:
+- `Ident` → `result_type_params`;
+- `Call(fn)` где fn возвращает `Result[T,E]` → `fn_result_type_params`
+  (инфра Plan 72 P2-A, `call_result_type_params_key`);
+- `.map`/`.map_err` цепочки → рекурсия + closure return-type
+  (`typed_closure_c_sig`).
+Применён в 5 точках (inference Result-методов + emit `unwrap_or` /
+`unwrap_or_else` / `map` / `unwrap`) вместо паттерна «Ident-или-default».
+
+**Закрывает:** inline fn-call Result-цепочки — основной кейс блокера.
+Остаток (Result из field-access / user-method) — узкий edge вне
+documented-блокера. **Не меняет представление** — `Nova_Result*`
+остаётся; инкремент 2 (полная mono) — отдельно.
+
+**Результат:** helper `infer_result_type_params` + 5 точек применения +
+тест `plan59/f29_result_inline_inference` (8 inline-кейсов). Полный
+прогон **869 PASS / 0 FAIL / 52 SKIP**, 0 регрессий. Блокер
+`[M-result-method-named-var-only]` для основного кейса снят.
