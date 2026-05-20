@@ -10013,6 +10013,18 @@ G/H). ~3700 LOC implementation cumulative.
   убрать `result_type_params` и выводить тип из mono-инстанса.
 - **Приоритет:** M — для `bool`/`int` inline-цепочки проходят случайно
   (C ABI совместим по размеру); для pointer-типов даёт wrong result.
+- **Plan 62.B (2026-05-20):** частично улучшено. (1) `external fn`
+  декларации Result-методов в `std/prelude/core.nv` раскомментированы;
+  чтобы их return-type `T` (стаб `Nova_T*` от `external_registry`) не
+  ломал binop value-equality, добавлен `is_generic_stub_c` — generic-aware
+  lookup-блоки `infer_expr_c_type` пропускают стаб и доходят до
+  specialized `Nova_Result*` ветки (`result_type_params`). (2) `Result.map`
+  closure-call теперь эмитит fn-pointer cast по фактической C-сигнатуре
+  closure (`typed_closure_c_sig`), а не хардкод `NOVA_CLOS_CALL_ii` —
+  `bool`/`char`-typed closures больше не зависят от «совпадения по
+  размеру», работают корректно. Остаточное упрощение: inline `unwrap_or`
+  return-type всё ещё `(nova_int, nova_str)` fallback (полное лечение —
+  Plan 59 Ф.7.5).
 
 ### [M-legacy-sum-schemas-retained] (DEFER — Plan 62.A.bis Ф.4 → Plan 59)
 - **Где:** `compiler-codegen/src/codegen/` — hardcoded `sum_schemas` +

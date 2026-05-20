@@ -19,11 +19,13 @@
 //
 // - Type declarations (Option/Result/Some/None/Ok/Err/Error/Ordering)
 //   перенесены сюда.
-// - Methods на Option/Result оставлены **hardcoded** в codegen
-//   (emit_c.rs:11567-11675+ — `is_some`/`is_none`/`unwrap`/`unwrap_or`/
-//   `unwrap_or_else`/`map`/`ok_or`/`is_ok`/`is_err`/`ok`/`err`/`map_err`)
-//   и runtime helpers (nova_rt/array.h `Nova_Option_method_*` /
-//   `Nova_Result_method_*`). См. **DEFER в Plan 62.A** ниже.
+// - Methods на Option/Result задекларированы здесь (`external fn`);
+//   dispatch остаётся **hardcoded** в codegen (emit_c.rs:11567-11675+ —
+//   `is_some`/`is_none`/`unwrap`/`unwrap_or`/`unwrap_or_else`/`map`/`or`/
+//   `ok_or`/`is_ok`/`is_err`/`ok`/`err`/`map_err`) и runtime helpers
+//   (nova_rt/array.h `Nova_Option_method_*` / `Nova_Result_method_*`).
+//   Plan 62.B (2026-05-20) разблокировал Result `-> T`/`-> E` методы —
+//   см. блок Result ниже.
 //
 // **Сохранено как hardcoded (Plan 62.A explicitly defer):**
 //
@@ -50,22 +52,20 @@
 //   требует ≥1 `|` с variant). `Never` остаётся в type-checker builtins
 //   HashSet (handled via `ty_of_ref` mod.rs:2947 + `is_never_type`
 //   mod.rs:3239) пока parser не получит empty-sum support.
-// - **17 методов из D26 §283-306** (Option/Result API) — declaration
-//   через `external fn` создаёт type-checker сигнатуру `T → T` для
-//   `unwrap_or`/`unwrap`/`map`/etc. (где T — generic param), но codegen
-//   special-case (emit_c.rs:11567+) intercept'ит calls и возвращает
-//   **concrete** type (e.g. `Nova_Result_method_unwrap_or` returns
-//   `nova_int`). Mismatch ломает `==` codegen (тег-comparison вместо
-//   value-equality для primitive return). Декларации методов отложены
-//   до фазы где либо:
-//     (a) Plan 59 tuple-mono extends на sum-types — codegen эмитит
-//         mono'd Option/Result методы вместо runtime helpers, signature
-//         matches Nova decl, OR
-//     (b) codegen special-case передаёт обратно `T` (erased void*)
-//         consistent с Nova decl — but это требует boxing/unboxing
-//         каждого primitive call, performance regression.
-//   На сейчас methods продолжают работать через hardcoded codegen +
-//   runtime helpers (что и было до Plan 62.A).
+//
+// **РАЗБЛОКИРОВАНО в Plan 62.B (2026-05-20):**
+//
+// - **Option/Result API из D26 §283-306** — все методы Option (включая
+//   новый `or`) и Result (`unwrap`/`unwrap_or`/`unwrap_or_else`/`map`/
+//   `map_err`) теперь декларируются здесь. Прежний блокер: declaration
+//   через `external fn` с return-type `T` (generic param) даёт
+//   `external_registry::type_ref_to_c` → стаб `"Nova_T*"`, который
+//   `infer_expr_c_type` возвращал для `r.unwrap_or(0)`; binop-dispatch
+//   принимал `Nova_*` за sum-type pointer → `->tag` comparison вместо
+//   value-equality. Лечение: `is_generic_stub_c` (emit_c.rs) —
+//   generic-aware lookup-блоки пропускают стаб `Nova_<X>*`, давая
+//   управление specialized `Nova_Result*`/`NovaOpt_` веткам, знающим
+//   concrete тип. См. блоки методов ниже.
 
 module prelude.core
 
@@ -238,38 +238,61 @@ external fn Result[T, E] @is_ok() -> bool
 #stable(since = "0.1")
 external fn Result[T, E] @is_err() -> bool
 
-// **DEFER (62.A follow-up, 2026-05-18):** Result-методы, возвращающие
-// `T` или `E` (unwrap/unwrap_or/unwrap_or_else/map/map_err), **не**
-// декларируются здесь. Originally-anticipated блокер (Plan 62.A report
-// §«17 methods defer») всё ещё present: type-checker, видя сигнатуру
-// `Result[T, E] @unwrap_or(default T) -> T` с generic T, инфериует
-// результат `r.unwrap_or(0)` как Result-heap-pointer вместо
-// `nova_int` → codegen `==` идёт через sum-type tag comparison
-// (`->tag == ->tag`) вместо primitive equality. Конкретные regressions:
-// `runtime/unwrap_or` (`r.unwrap_or(0) == 42`), `runtime/result_methods`,
-// `runtime/from_into_basic`, `runtime/read_buffer`, `runtime/read_text`.
+// **Plan 62.B (2026-05-20):** Result-методы, возвращающие `T`/`E`
+// (unwrap/unwrap_or/unwrap_or_else/map/map_err), РАЗБЛОКИРОВАНЫ.
 //
-// **Корневая причина** (требует separate work): codegen `type_of_method_call_c`
-// (emit_c.rs:18619+) hardcoded возвращает `nova_int` для Result.unwrap_or
-// независимо от Nova signature, но Nova type-checker'у сигнатура `-> T`
-// (без instantiation) даёт `Result[T,E]*` mono'd обратно через generic
-// substitution. Mismatch ломает binop dispatch.
+// Прежний блокер (Plan 62.A report §«17 methods defer»): декларация
+// `Result[T, E] @unwrap_or(default T) -> T` даёт return-type `T`, который
+// `external_registry::type_ref_to_c` маппит в generic-стаб `"Nova_T*"`
+// (`_ => format!("Nova_{}*", name)`). `infer_expr_c_type` возвращал этот
+// стаб для `r.unwrap_or(0)`; binop-dispatch принимал `Nova_*` за sum-type
+// pointer и эмитил `->tag == ->tag` вместо value-equality → CC-FAIL.
 //
-// Лечение в Plan 62.B+ через одно из:
-//   - codegen per-T monomorphization Result.unwrap_or (как Option),
-//     убирая erased-T compromise.
-//   - Type-checker special-case для Result.unwrap_or признающий
-//     concrete-Ok-type из object'а (без declared signature).
-//   - Pin Nova declaration на `nova_int` (bootstrap mono) — temporary,
-//     но ломает D26 abstraction.
+// **Лечение** (emit_c.rs `is_generic_stub_c`): generic-aware lookup-блоки
+// (`method_overloads`, `external_registry.by_key`, `external_registry.
+// lookup`) распознают стаб `Nova_<X>*` (X — 1-2 заглавные буквы) и
+// пропускают его, давая управление specialized `Nova_Result*` ветке
+// `infer_expr_c_type`, которая знает concrete Ok/Err-тип из bootstrap
+// mono `(Ok: nova_int, Err: nova_str)` / `result_type_params` tracking'а.
 //
-// Закомментированные декларации (для documentation):
-//
-// external fn Result[T, E] @unwrap() Fail[E] -> T
-// external fn Result[T, E] @unwrap_or(default T) -> T
-// external fn Result[T, E] @unwrap_or_else(f fn(E) -> T) -> T
-// external fn Result[T, E] @map[U](f fn(T) -> U) -> Result[U, E]
-// external fn Result[T, E] @map_err[F](f fn(E) -> F) -> Result[T, F]
+// `map`/`map_err` имеют method-level generic (`[U]`/`[F]`); в bootstrap
+// codegen использует mono Ok=nova_int (полноценный U≠T — Plan 59 ext).
+
+/// Возвращает Ok-значение или fail'ит с error payload если Err. Идиома
+/// для случаев когда программист **гарантирует** успех (prove'ил выше).
+///
+/// **Bootstrap**: inline emit (`<inline>` sentinel). Tag-check + при Err
+/// прокидывает `Fail[E]` с error payload.
+#stable(since = "0.1")
+external fn Result[T, E] @unwrap() Fail[E] -> T
+
+/// Возвращает Ok-значение или `default` если Err.
+///
+/// **Bootstrap**: routes к `Nova_Result_method_unwrap_or` trampoline.
+#stable(since = "0.1")
+external fn Result[T, E] @unwrap_or(default T) -> T
+
+/// Возвращает Ok-значение или результат `f(e)` (lazy default от error).
+///
+/// **Bootstrap**: inline emit (`<inline>` sentinel). Closure cast через
+/// `NovaClos_ii` layout — `(E) -> T`.
+#stable(since = "0.1")
+external fn Result[T, E] @unwrap_or_else(f fn(E) -> T) -> T
+
+/// Применяет `f` к Ok-значению: `Ok(v) -> Ok(f(v))`, `Err(e)` пропускает.
+///
+/// **Bootstrap**: inline emit (`<inline>` sentinel). Generic U≠T в
+/// bootstrap не поддерживается полноценно (codegen использует mono
+/// Ok=nova_int для обеих сторон).
+#stable(since = "0.1")
+external fn Result[T, E] @map[U](f fn(T) -> U) -> Result[U, E]
+
+/// Применяет `f` к Err-payload: `Err(e) -> Err(f(e))`, `Ok(v)` пропускает.
+///
+/// **Bootstrap**: inline emit (`<inline>` sentinel). Generic F≠E в
+/// bootstrap не поддерживается полноценно (mono Err=nova_str).
+#stable(since = "0.1")
+external fn Result[T, E] @map_err[F](f fn(E) -> F) -> Result[T, F]
 
 /// `Ok(v) -> Some(v)`, `Err(_) -> None`. Discards error.
 ///

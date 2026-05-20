@@ -1,11 +1,16 @@
-// result_methods_from_prelude.nv — Plan 62.A follow-up.
+// result_methods_from_prelude.nv — Plan 62.A follow-up + Plan 62.B.
 //
 // Verifies что Result methods, объявленные в std/prelude/core.nv
 // (`external fn Result[T, E] @method`), работают через registry path.
 //
-// Coverage: 4 из 9 declared methods (is_ok, is_err, ok, err). Остальные
-// 5 (unwrap, unwrap_or, unwrap_or_else, map, map_err) — deferred per
-// blocker в core.nv (type-checker T → T mismatch для Result generic mono).
+// Coverage: все 9 declared methods. Plan 62.B (2026-05-20) разблокировал
+// unwrap/unwrap_or/unwrap_or_else/map/map_err — type-inference больше не
+// принимает generic-стаб `Nova_T*` (return-type `T` через
+// `type_ref_to_c`) за sum-type pointer. См. `is_generic_stub_c` в
+// emit_c.rs: generic-aware lookup-блоки пропускают стаб и доходят до
+// specialized `Nova_Result*` ветки, знающей concrete Ok-тип. Раньше
+// `r.unwrap_or(0) == 42` эмитился как `->tag`-сравнение вместо
+// value-equality (CC-FAIL).
 
 module plan62.result_methods_from_prelude
 
@@ -59,4 +64,89 @@ test "Result.err returns Some for Err" {
     let r = Err("oops")
     let e = r.err()
     assert(e.is_some())
+}
+
+// ────────────────────────────────────────────────────────────────────
+// unwrap — Ok-значение либо Fail[E] (Plan 62.B unblocked).
+// ────────────────────────────────────────────────────────────────────
+
+test "Result.unwrap returns Ok value" {
+    let r Result[int, str] = Ok(42)
+    assert(r.unwrap() == 42)
+}
+
+test "Result.unwrap throws Fail on Err" {
+    let mut caught = ""
+    with Fail = handler Fail {
+        fail(msg) {
+            caught = msg
+            interrupt ()
+        }
+    } {
+        let r Result[int, str] = Err("boom")
+        let _ = r.unwrap()
+    }
+    assert(caught == "boom")
+}
+
+// ────────────────────────────────────────────────────────────────────
+// unwrap_or — основной блокер 62.B: value-equality после метода `-> T`.
+// ────────────────────────────────────────────────────────────────────
+
+test "Result.unwrap_or returns Ok value" {
+    let r Result[int, str] = Ok(42)
+    assert(r.unwrap_or(0) == 42)
+}
+
+test "Result.unwrap_or returns default on Err" {
+    let r Result[int, str] = Err("bad")
+    assert(r.unwrap_or(99) == 99)
+}
+
+// ────────────────────────────────────────────────────────────────────
+// unwrap_or_else — lazy default от error payload.
+// ────────────────────────────────────────────────────────────────────
+
+test "Result.unwrap_or_else skips closure on Ok" {
+    let r Result[int, str] = Ok(7)
+    assert(r.unwrap_or_else(fn(e str) -> int => 0) == 7)
+}
+
+test "Result.unwrap_or_else calls closure on Err" {
+    let r Result[int, str] = Err("e")
+    assert(r.unwrap_or_else(fn(e str) -> int => 42) == 42)
+}
+
+// ────────────────────────────────────────────────────────────────────
+// map — Ok(v) → Ok(f(v)), Err пропускает.
+// ────────────────────────────────────────────────────────────────────
+
+test "Result.map transforms Ok value" {
+    let r Result[int, str] = Ok(10)
+    let r2 = r.map(|x| x * 2)
+    assert(r2.is_ok())
+    assert(r2.unwrap_or(0) == 20)
+}
+
+test "Result.map passes Err through" {
+    let r Result[int, str] = Err("E")
+    let r2 = r.map(|x| x + 1)
+    assert(r2.is_err())
+}
+
+// ────────────────────────────────────────────────────────────────────
+// map_err — Err(e) → Err(f(e)), Ok пропускает.
+// ────────────────────────────────────────────────────────────────────
+
+test "Result.map_err transforms Err payload" {
+    let r Result[int, str] = Err("boom")
+    let r2 = r.map_err(fn(e str) -> str => "wrapped")
+    assert(r2.is_err())
+}
+
+test "Result.map_err passes Ok through" {
+    let r Result[int, str] = Ok(42)
+    let r2 = r.map_err(fn(e str) -> str => "X")
+    assert(r2.is_ok())
+    assert(r2.unwrap_or(0) == 42)
 }
