@@ -16322,3 +16322,54 @@ Test count после Plan 67 full closure:
 - Регрессий 0
 
 Plan 67 production-grade closed. README row updated.
+
+
+# Plan 33.9 full closure 2026-05-20: Ф.4 TrivialBackend opaque-aware W2402
+
+После V1 bootstrap (Ф.1-Ф.3 + Ф.6, 2026-05-18) и Ф.5/Ф.7 closure
+(Z3 axiomatic encoding + spec D130, 2026-05-19) оставалась последняя
+фаза — Ф.4 TrivialBackend integration, помеченная 🟡 partial.
+
+## Сделано
+
+Ф.4 — opaque-aware диагностика в TrivialBackend:
+- `term_references_opaque_uf(term, pure_fns)` — новый helper в
+  pipeline.rs. Рекурсивно обходит SmtTerm-дерево (App / Forall),
+  ищет `_pure_fn_X` UF-узлы, где fn X имеет `is_opaque == true`
+  в registry pure_fns. Возвращает Option<String> с именем fn.
+- Модифицирован `SatResult::Unknown(reason)` match в ensures-цикле:
+  когда reason = NotAttempted И goal/body_val содержит opaque UF —
+  upgrade до UnsupportedTheory с actionable-сообщением. Два кейса:
+  - без `reveal` → "opaque fn X called without reveal X. Add
+    reveal X before calling it, or use Z3 backend".
+  - с `reveal` → "opaque fn X was revealed but TrivialBackend
+    cannot discharge reveal-injected axioms (quantified formulas).
+    Use Z3 backend".
+- `goal_for_opaque_check` — clone goal до того как он move'ится в
+  try_prove / try_prove_with_witness (E0382 borrow-after-move fix).
+
+## Наблюдение (не баг, но важно для тестов)
+
+Проверка `if !reason.contains("NotAttempted")` в pipeline (строка
+~2792) фактически всегда true: `unknown_to_diag_message` не оставляет
+имя enum-варианта в тексте, поэтому "silent passthrough для
+NotAttempted" давно не работает — обычный NotAttempted уже даёт
+W2402. Ценность Ф.4 — именно более точное opaque-aware сообщение
+(имя fn + reveal + Z3), а не "сделать не-silent".
+
+## Тесты
+
+- f58_opaque_trivial_w2402.nv (positive, обновлён): матчит не код
+  W2402, а конкретные opaque-aware фразы — "called without
+  reveal double" + "was revealed but TrivialBackend".
+- f58_nonopaque_trivial_no_upgrade.nv (negative, новый): не-opaque
+  #pure fn даёт обычное TrivialBackend-сообщение без слов
+  opaque/reveal — доказывает что upgrade НЕ срабатывает для
+  не-opaque UF (term_references_opaque_uf → None при is_opaque false).
+
+## Регрессия
+
+Перед Ф.4 closure: 238 PASS / 0 FAIL contracts.
+После Ф.4 closure: **239 PASS** (+1 negative test) / 0 FAIL / 47 SKIP.
+
+Plan 33.9 полностью закрыт — все фазы Ф.1-Ф.7 ✅ DONE.
