@@ -276,19 +276,26 @@ C codegen → clang → нативный бинарник), не только и
 | P2-A — TryFrom/TryInto | ✅ ЗАКРЫТ | Migration path (b): `Result[Self, E]` вместо `Fail[E]`; в `std/prelude/protocols.nv` |
 | P3-B — full vtable codegen | ✅ ЗАКРЫТ | `NovaVtable_*` struct + thunks + companion `__vt_x`; P0 fixture → positive |
 | P3-B followup — function-return fat pointer | ✅ ЗАКРЫТ | `fn () -> Iter[int]` возвращает `NovaBox_*`; `wrap_protocol_return` + `emit_protocol_box_typedef` |
+| P3-B param — protocol-typed параметры | ✅ ЗАКРЫТ | `fn foo(x Iter[int])` → `NovaBox_*` параметр; `emit_call` боксит аргументы; `fn_protocol_params` |
+| p1b/p2a/p2b — C-backend codegen fixes | ✅ ЗАКРЫТ | typedef redefinition / Result type-params для `let r = call` / `NovaOpt_X` без `*` — выявлены через `test-build` |
 
-Тесты: `nova_tests/plan72/` — p3b: `p3b_vtable_dispatch_pos.nv` (3) +
-`p3b_fatptr_return_pos.nv` (6) ✅; p0/p1a/p1c/p3a/p2a/p2b — см. отдельные fixtures.
+Тесты: `nova_tests/plan72/` — все фикстуры проходят через `test-build`
+(реальный C-codegen). p3b: `p3b_vtable_dispatch_pos.nv` (3) +
+`p3b_fatptr_return_pos.nv` (6) ✅.
 Rust unit test: `p0_erased_now_dispatches_via_vtable` в `test_runner.rs` ✅.
 
-> **Примечание (2026-05-20):** счётчик «все test cases ✅» был снят через
-> `nova-codegen test-interp` (интерпретатор; ранее назывался `nova-codegen
-> test`). Реальный C-codegen pipeline (`nova test-build` / `nova test` из
-> nova-cli — `test_runner::run_one` → CEmitter → clang → нативный бинарник)
-> показывает, что `p1b` / `p2a` / `p2b` / `p3b_vtable_dispatch` (Case C —
-> protocol-as-**параметр**) пока падают на C-бэкенде — pre-existing gap,
-> замаскированный интерпретатором. `p3b_fatptr_return_pos` проверен через
-> `test-build`.
+> **Примечание (2026-05-20, обновлено):** изначально статусы «✅ ЗАКРЫТ»
+> снимались через интерпретатор (`nova-codegen test-interp`, ранее
+> `nova-codegen test`). Прогон через реальный C-codegen pipeline
+> (`nova test` / `test-build` → `test_runner::run_one` → CEmitter →
+> clang → нативный бинарник) вскрыл 4 C-бэкенд бага, замаскированных
+> интерпретатором: `p1b` (typedef redefinition empty-sum), `p2a` (Result
+> type-params для `let r = call`), `p2b` (structural inference `NovaOpt_X`
+> без `*`), `p3b_vtable_dispatch` (protocol-as-**параметр**, E7201).
+> **Все четыре исправлены** (commits `80edd5110f9`, `1aad24b954b`).
+> Plan 72 теперь верифицирован через C-бэкенд: full `nova test nova_tests`
+> = 853 PASS / 1 FAIL до p3b-param фикса (единственный FAIL — он сам) →
+> 854 / 0 / 43 SKIP (z3 contracts) с ним.
 
 ---
 
