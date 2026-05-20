@@ -7515,7 +7515,8 @@ condition � ��������� ����� render_expr recursion.
 **������:** If � body � contract � �������� (������ condition ? a : b �����
 ����� if a > b { a } else { b } � ensures). Body content rare �������� ���
 verification (ensures ���� �� ���� boolean condition).
-**��� ������:** �������� ender_block(b) ������� ���������� render'��
+**��� ������:** �������� 
+ender_block(b) ������� ���������� render'��
 last expression block'�. ~30 LOC. ������ ���������.
 **���������:** L.
 
@@ -7815,7 +7816,8 @@ Audit-triggered closure tech debt ����� �.26:
 **�.27.1 closed:** Workspace handler matrix non-functional > ������ works
 cross-file ����� populate_handler_matrix_workspace.
 
-**�.27.2 closed:** ender_expr _ => "..." placeholder > �����������
+**�.27.2 closed:** 
+ender_expr _ => "..." placeholder > �����������
 coverage (Index, If, SelfAccess, InterpolatedStr, TurboFish) + helpful
 <kind> fallback ������ anonymous.
 
@@ -8039,11 +8041,13 @@ Total ~190-280 LOC. P3 — local quality-of-life fixes. Implementation
 ## Plan 45 �.30+�.31.1 simplifications (2026-05-16)
 
 ### HTML output single-page (no multi-page split)
-**���:** ender_html.rs. **��� ��������:** ��� modules � ����� HTML.
+**���:** 
+ender_html.rs. **��� ��������:** ��� modules � ����� HTML.
 **��� ������:** �.31.4 � file-per-module.
 
 ### HTML ��� JS / search index
-**���:** ender_html.rs. **��� ��������:** Pure HTML5+CSS3, no lunr.
+**���:** 
+ender_html.rs. **��� ��������:** Pure HTML5+CSS3, no lunr.
 **��� ������:** �.31.2 � generate search-index.json + lunr bundle.
 
 ### HTML ��� dark mode
@@ -8051,7 +8055,8 @@ Total ~190-280 LOC. P3 — local quality-of-life fixes. Implementation
 **��� ������:** �.31.3 � CSS variables + prefers-color-scheme media query.
 
 ### Intra-doc link rewrite ����� text substitute
-**���:** ender_html.rs::rewrite_and_escape. **��� ��������:** Plain replace.
+**���:** 
+ender_html.rs::rewrite_and_escape. **��� ��������:** Plain replace.
 **��� ������:** CommonMark-aware parser (~300 LOC).
 
 ### External crate URL template � single placeholder
@@ -10152,24 +10157,32 @@ G/H). ~3700 LOC implementation cumulative.
   option_or_missing_arg_neg.nv (EXPECT_COMPILE_ERROR — arity ловится).
 
 ### [M-legacy-sum-schemas-retained] (UNBLOCKED — Plan 62.A.bis Ф.4 готов к исполнению)
-- **Где:** `compiler-codegen/src/codegen/` — hardcoded `sum_schemas` +
-  `sum_schema_registry.rs::init_hardcoded_baseline()`.
-- **Что упрощено:** legacy hardcoded `sum_schemas` НЕ удалён —
-  сохранён как ABI-compat fallback под слоёным registry. Plan 62.A.bis
-  планировал Ф.4 = полное удаление.
-- **Почему:** `nova_rt/array.h` value-type helpers зависят от точного
-  hardcoded ABI; удаление безопасно только после Plan 59 sum-mono.
-- **Как чинить:** Plan 59 Ф.7.5 → удалить baseline, registry становится
-  единственным источником схем.
+- **Где:** `emit_c.rs` — pre-populated `sum_schemas["Result"]`
+  (~line 1128); `pattern_bind_typed` / `pattern_cond`.
+- **Что упрощено:** legacy hardcoded `sum_schemas["Result"]` НЕ удалён.
+- **Почему (исходно):** Plan 62.A.bis Ф.4 deferred до Plan 59 sum-mono.
+- **Уточнение 2026-05-21:** Plan 59 Ф.7.5 increment 2 закрыт (Result
+  полностью мономорфизирован — `NovaRes_<ok>_<err>*`). Попытка
+  удалить `sum_schemas["Result"]` вскрыла **остаточную зависимость**:
+  nested-pattern `match opt { Some(Err(e)) => ... }` (Option[Result
+  [T,E]]) типизировал inner-variant payload через
+  `sum_schemas["Result"]` в `pattern_bind_typed`, а НЕ через
+  `NovaRes_<T>_<E>` mono / `novares_ok_err`. `result_ok_inner_types`
+  механизм покрывал только `Pattern::Tuple` sub-pattern + `Ok`,
+  не `Err` / plain `Ident`.
+- **✅ Follow-up сделан 2026-05-21 (Plan 59 пост-фикс, коммит
+  `2b184a3c06a`):** Option-ветки `pattern_bind_typed` / `pattern_cond`
+  регистрируют C-тип Result-payload (`NovaRes_<n>*`) в `var_types` на
+  access path — recursive pattern-match для nested `Some(Ok/Err(..))`
+  резолвит (T,E) через `novares_ok_err`, не через legacy
+  `sum_schemas["Result"]`. Проверено: с удалённым `sum_schemas
+  ["Result"]` insert полный прогон 883 PASS / 0 FAIL дважды подряд.
+- **Остаток:** удаление самого `sum_schemas["Result"]` insert
+  (~line 1128) + чистка `init_hardcoded_baseline` — чистая задача
+  Plan 62.A.bis Ф.4. Hardcoded fallback для pattern-match уже
+  недостижим. Insert оставлен по договорённости как scope 62.A.bis.
 - **Приоритет:** L — дублирование без функционального вреда (registry
-  имеет приоритет, baseline только fallback).
-- **Update 2026-05-21 (Plan 59 Ф.7.5 increment 2):** блокер снят.
-  Legacy `Nova_Result` устранён (переименован в
-  `NovaRes_nova_int_nova_str`, шаг E поглощён D3 — коммит `238b2eb`).
-  `nova_rt/array.h` value-type helpers больше не завязаны на единое
-  hardcoded Result-представление. Само удаление hardcoded
-  `sum_schemas` baseline — теперь чистая задача Plan 62.A.bis Ф.4
-  (передана агенту 62.A.bis).
+  имеет приоритет, baseline только fallback; build зелёный).
 
 ### [M-runtime-none-error-deferred] ✅ RESOLVED (Plan 62.C.bis, 2026-05-20)
 - **Где:** `std/prelude/errors.nv` + `std/prelude.nv` facade.

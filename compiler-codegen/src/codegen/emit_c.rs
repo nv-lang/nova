@@ -1118,6 +1118,14 @@ impl CEmitter {
             }
         }
         // Pre-populate sum_schemas with built-in Option and Result types.
+        //
+        // Plan 62.A.bis Ф.4 (2026-05-21): попытка удалить hardcoded
+        // `Result` sum_schema вскрыла регрессию — nested-pattern
+        // `match opt { Some(Err(e)) => ... }` типизирует inner-variant
+        // payload через `sum_schemas["Result"]` в `pattern_bind_typed`
+        // (~line 18183), не через `NovaRes_<T>_<E>` mono / `novares_ok_err`.
+        // Удаление отложено до фикса этого пути в Plan 59 Result-mono.
+        // См. [M-legacy-sum-schemas-retained] в simplifications.md.
         {
             let mut opt_variants = HashMap::new();
             opt_variants.insert("Some".to_string(), vec!["nova_int".to_string()]);
