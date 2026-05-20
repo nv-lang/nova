@@ -10026,7 +10026,7 @@ G/H). ~3700 LOC implementation cumulative.
 
 ## Plan 62 — prelude hardcode migration (2026-05-18)
 
-### [M-result-method-named-var-only] (DEFER — Plan 62.A.bis Ф.3)
+### [M-result-method-named-var-only] ✅ ЗАКРЫТО (Plan 59 Ф.7.5 increment 2, 2026-05-21)
 - **Где:** `emit_c.rs` — `result_type_params: HashMap<String, (String,
   String)>` на `CEmitter`; method-dispatch для `unwrap`/`unwrap_or`/
   `unwrap_or_else`/`map`/`map_err`.
@@ -10063,6 +10063,15 @@ G/H). ~3700 LOC implementation cumulative.
   «случайно по размеру». Остаточный узкий edge: Result из field-access /
   user-method (не Ident, не fn-call) — всё ещё fallback; полная mono
   (`NovaRes_<T>_<E>`) — Plan 59 Ф.7.5 инкремент 2.
+- **✅ ЗАКРЫТО (Plan 59 Ф.7.5 increment 2, 2026-05-21):** полная
+  мономорфизация Result. `Result[T,E]` → per-(T,E) C-тип
+  `NovaRes_<ok>_<err>*` — тип сам несёт (T,E), резолюция через
+  `novares_ok_err` детерминирована независимо от формы выражения
+  (Ident / fn-call / field-access / method). Bootstrap-обходка
+  `result_type_params` больше не единственный источник. Тихий
+  fallback `(nova_int, nova_str)` устранён (D4): emit-сайты Result-
+  методов используют `resolve_result_te_strict` — жёсткая codegen-
+  ошибка вместо молчаливой догадки. Коммит D3+D4 `238b2eb`.
 
 ### [M-option-result-method-misuse-cc-only] (DEFER — type-checker tightening)
 - **Где:** `compiler-codegen/src/types/mod.rs` — method-call checking
@@ -10095,7 +10104,7 @@ G/H). ~3700 LOC implementation cumulative.
   result_unwrap_or_arg_mismatch_neg.nv (EXPECT_CC_ERROR) +
   option_or_missing_arg_neg.nv (EXPECT_COMPILE_ERROR — arity ловится).
 
-### [M-legacy-sum-schemas-retained] (DEFER — Plan 62.A.bis Ф.4 → Plan 59)
+### [M-legacy-sum-schemas-retained] (UNBLOCKED — Plan 62.A.bis Ф.4 готов к исполнению)
 - **Где:** `compiler-codegen/src/codegen/` — hardcoded `sum_schemas` +
   `sum_schema_registry.rs::init_hardcoded_baseline()`.
 - **Что упрощено:** legacy hardcoded `sum_schemas` НЕ удалён —
@@ -10107,6 +10116,13 @@ G/H). ~3700 LOC implementation cumulative.
   единственным источником схем.
 - **Приоритет:** L — дублирование без функционального вреда (registry
   имеет приоритет, baseline только fallback).
+- **Update 2026-05-21 (Plan 59 Ф.7.5 increment 2):** блокер снят.
+  Legacy `Nova_Result` устранён (переименован в
+  `NovaRes_nova_int_nova_str`, шаг E поглощён D3 — коммит `238b2eb`).
+  `nova_rt/array.h` value-type helpers больше не завязаны на единое
+  hardcoded Result-представление. Само удаление hardcoded
+  `sum_schemas` baseline — теперь чистая задача Plan 62.A.bis Ф.4
+  (передана агенту 62.A.bis).
 
 ### [M-runtime-none-error-deferred] (DEFER — Plan 62.C → Plan 72 P1-B)
 - **Где:** `std/prelude/errors.nv` — отсутствует `type RuntimeNoneError`.
@@ -10136,25 +10152,26 @@ G/H). ~3700 LOC implementation cumulative.
     (positive) + `tryfrom_bound_unsatisfied_neg` (negative — bound
     enforcement).
 
-### [M-result-record-payload-match] (DEFER — Plan 59 sum-mono)
+### [M-result-record-payload-match] ✅ ЗАКРЫТО (Plan 59 Ф.7.5 increment 2, 2026-05-21)
 - **Где:** `emit_c.rs` — `register_fn_result_ok_inner_type` (~7311) +
   `pattern_bind_typed` Ok-arm (~18183).
-- **Что упрощено:** `match` на `Result[<user-record>, E]` с binding'ом
-  Ok-payload в переменную → переменная типизируется как `nova_int`
-  (hardcoded `sum_schemas["Result"]["Ok"]` fallback). Field-access на
-  ней даёт CC-FAIL `member reference base type 'nova_int'`.
-- **Почему:** `register_fn_result_ok_inner_type` регистрирует только
-  `Result[Tuple, E]` Ok-payload (комментарий на 7334 — «struct
-  user-types могут быть добавлены аналогично»); `pattern_bind_typed`
-  консультирует `result_ok_inner_types` только для `Pattern::Tuple`
-  sub-pattern, не для plain `Ident` (`Ok(p)`). Фикс требует хирургии
-  в 2 местах codegen.
-- **Как чинить:** Plan 59 (sum-type monomorphization) — registry для
-  struct Ok-payload + extend pattern_bind_typed на non-Tuple
-  sub-patterns. Семейство `[M-result-method-named-var-only]`.
-- **Приоритет:** M — pre-existing (ловит `plan72/p2a_try_from_into_pos`);
-  затрагивает любой `Result[Record, E]` match. Workaround:
-  Ok/Err-дискриминация без field-access на payload работает.
+- **Что было упрощено:** `match` на `Result[<user-record>, E]` с
+  binding'ом Ok-payload в переменную → переменная типизировалась как
+  `nova_int` (hardcoded `sum_schemas["Result"]["Ok"]` fallback).
+  Field-access на ней давал CC-FAIL `member reference base type
+  'nova_int'`.
+- **Почему (было):** legacy `Nova_Result` имел единый Ok-slot типа
+  `nova_int`; struct/record Ok-payload боксировался как `intptr_t`.
+  `pattern_bind_typed` консультировал `result_ok_inner_types` только
+  для `Pattern::Tuple` sub-pattern, не для plain `Ident`.
+- **Закрыто 2026-05-21 (Plan 59 Ф.7.5 increment 2, коммит `238b2eb`):**
+  полная мономорфизация Result. Mono-тип `NovaRes_<n>` несёт реальный
+  Ok-тип прямо в `payload.Ok._0` — никакого `nova_int`-erasure.
+  `pattern_bind_typed` / `pattern_cond` распознают mono `NovaRes_<n>`
+  через `novares_ok_err` и берут реальный inline-тип payload'а
+  (без `intptr_t`-boxing) для любого sub-pattern (Tuple / Ident /
+  вложенный Some). `[M-result-record-payload-match]` устранён как
+  следствие D3-флипа.
 
 ### [M-protocol-as-value-binding-only] (DEFER — Plan 62.D/E → Plan 72 P0/P3-B)
 - **Где:** codegen — protocol-type как тип переменной/параметра
