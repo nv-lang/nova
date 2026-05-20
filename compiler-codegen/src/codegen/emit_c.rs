@@ -13514,7 +13514,7 @@ impl CEmitter {
                     // Must come BEFORE registry dispatch so non-nova_int T types are handled.
                     if Self::is_result_like(&obj_ty) && method == "unwrap_or" {
                         // Plan 59 Ф.7.5-lite: inline-aware Ok-type inference.
-                        let ok_c_ty = self.infer_result_type_params(obj)
+                        let ok_c_ty = self.resolve_result_te(obj, &obj_ty)
                             .map(|(ok_c, _)| ok_c)
                             .unwrap_or_else(|| "nova_int".to_string());
                         if ok_c_ty != "nova_int" {
@@ -13619,7 +13619,7 @@ impl CEmitter {
                             "unwrap_or_else" => {
                                 if let Some(arg) = args.first() {
                                     // Plan 59 Ф.7.5-lite: inline-aware Ok-type.
-                                    let ok_c_ty = self.infer_result_type_params(obj)
+                                    let ok_c_ty = self.resolve_result_te(obj, &obj_ty)
                                         .map(|(ok_c, _)| ok_c)
                                         .unwrap_or_else(|| "nova_int".to_string());
                                     let f = self.emit_expr(arg.expr())?;
@@ -13663,7 +13663,7 @@ impl CEmitter {
                                         .typed_closure_c_sig(arg.expr())
                                         .or_else(|| {
                                             // Plan 59 Ф.7.5-lite: inline-aware.
-                                            self.infer_result_type_params(obj)
+                                            self.resolve_result_te(obj, &obj_ty)
                                                 .map(|(ok_c, _)| (ok_c.clone(), ok_c))
                                         })
                                         .unwrap_or_else(|| {
@@ -13723,7 +13723,7 @@ impl CEmitter {
                             "unwrap" => {
                                 // Plan 72 P1-C: cast payload.Ok._0 to actual T type.
                                 // Plan 59 Ф.7.5-lite: inline-aware Ok-type.
-                                let ok_c_ty = self.infer_result_type_params(obj)
+                                let ok_c_ty = self.resolve_result_te(obj, &obj_ty)
                                     .map(|(ok_c, _)| ok_c)
                                     .unwrap_or_else(|| "nova_int".to_string());
                                 let tmp = self.fresh_tmp();
@@ -16758,6 +16758,11 @@ impl CEmitter {
                 // For bootstrap — parse the canonical form.
                 if (variant_name == "Ok" || variant_name == "Err") && patterns.len() == 1 {
                     let bare = scr_ty.trim_end_matches('*').trim();
+                    // Plan 59 Ф.7.5: mono'd `NovaRes_<ok>_<err>*` — (T,E) из registry.
+                    if let Some((ok_c, err_c)) = this.novares_ok_err(scr_ty) {
+                        let inner_c = if variant_name == "Ok" { ok_c } else { err_c };
+                        return Self::collect_pattern_inner_bindings(&patterns[0], &inner_c, this);
+                    }
                     if let Some(suffix) = bare.strip_prefix("Nova_Result____") {
                         // suffix = "<Ok_c>__<Err_c>"; split на 2 части по "__".
                         // (Имена primitive C-типов не содержат "__".)
@@ -19845,6 +19850,16 @@ impl CEmitter {
             || (ty.starts_with("NovaRes_") && ty.ends_with('*'))
     }
 
+    /// Plan 59 Ф.7.5: выводит (ok_c, err_c) для Result-выражения. Приоритет
+    /// — mono C-тип `NovaRes_<n>*` (несёт (T,E) сам, `novares_ok_err`);
+    /// fallback — `infer_result_type_params` (для legacy `Nova_Result*`).
+    fn resolve_result_te(&self, obj: &crate::ast::Expr, obj_ty: &str)
+        -> Option<(String, String)>
+    {
+        self.novares_ok_err(obj_ty)
+            .or_else(|| self.infer_result_type_params(obj))
+    }
+
     /// Plan 59 Ф.7.5: lazy-регистрирует mono'd `NovaRes_<ok>_<err>` —
     /// per-(T,E) Result-тип, аналог `register_novaopt_decl`.
     ///
@@ -21169,7 +21184,7 @@ impl CEmitter {
                     // Plan 72 P1-C: use tracked Result[T,E] type params when available.
                     if Self::is_result_like(&obj_ty) {
                         // Plan 59 Ф.7.5-lite: inline-aware (T,E) inference.
-                        let (ok_c, err_c) = self.infer_result_type_params(obj)
+                        let (ok_c, err_c) = self.resolve_result_te(obj, &obj_ty)
                             .unwrap_or_else(|| ("nova_int".into(), "nova_str".into()));
                         let ok_ident = Self::sanitize_c_for_ident(&ok_c);
                         let err_ident = Self::sanitize_c_for_ident(&err_c);
