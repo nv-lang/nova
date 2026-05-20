@@ -16749,3 +16749,30 @@ Full nova test (release, C-codegen): 864 PASS / 0 FAIL / 47 SKIP
 payload-type mismatch и closure-арность .map() ловятся только
 C-backstop'ом или не ловятся — задокументировано в simplifications.md
 [M-option-result-method-misuse-cc-only].
+
+2026-05-20 D122 amended — эффекты разрешены в protocol-методах
+──────────────────────────────────────────────────────────────────────
+
+Снят запрет Plan 56 Ф.2.7 (effect-free enforcement bound-методов).
+
+Контекст: Ф.2.7 / D122 отвергал любой protocol-метод с effect-row
+(Fail/Io/Db) — rationale «vtable dispatch не пробрасывает effect
+handlers». Но bootstrap использует mono-dispatch (true-vtable отложен
+в Plan 03); под mono эффект protocol-метода пробрасывается как у
+обычной effectful-функции. Запрет блокировал легитимные паттерны —
+напр. `type TryFrom[T,E] protocol { try_from(t T) Fail[E] -> Self }`.
+
+Изменения:
+- types/mod.rs::check_module — убрана effect-free проверка protocol-
+  методов.
+- spec/decisions/02-types.md D122 — «bound methods обязаны быть pure»
+  заменено на «могут иметь эффекты; mono-dispatch пробрасывает; true-
+  vtable (Plan 03) — будущее ограничение».
+- docs/plans/56-...md — Ф.2.7 помечен REVERTED.
+- simplifications.md [M-tryfrom-tryinto-deferred] — effect-блокер снят,
+  остаётся только миграция деклараций (Plan 62.E.bis).
+- Тест: f5_negative_bound_effect (negative) → f5_effectful_protocols
+  (positive): effectful protocol + impl + generic bound [T Checked] +
+  Fail-handler + буквальный TryFrom[T,E]. plan56 6/6.
+
+Полный прогон: 870 PASS / 0 FAIL / 52 SKIP. 0 регрессий.

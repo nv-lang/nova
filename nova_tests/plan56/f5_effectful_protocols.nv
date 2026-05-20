@@ -1,0 +1,68 @@
+// f5_effectful_protocols.nv — Plan 56 Ф.2.7 reverted (D122 amended 2026-05-20).
+//
+// Эффекты в protocol-методах РАЗРЕШЕНЫ. Раньше type-checker отвергал
+// любой protocol-метод с effect-row (Ф.2.7 / D122 — это и был
+// negative-тест f5_negative_bound_effect). Теперь под mono-dispatch
+// эффект protocol-метода пробрасывается как у обычной effectful-fn.
+
+module plan56.f5_effectful_protocols
+
+// Protocol с Fail-эффектом — раньше это был EXPECT_COMPILE_ERROR D122.
+type Checked protocol {
+    check(n int) Fail[str] -> int
+}
+
+// Protocol с Io-эффектом.
+type Logged protocol {
+    emit(msg str) Io -> ()
+}
+
+// Буквальный мотивирующий пример: generic protocol с effectful
+// static-методом — должен компилироваться (регрессия для D122 amend).
+type TryFrom[T, E] protocol {
+    try_from(t T) Fail[E] -> Self
+}
+
+type Validator {
+    min int
+}
+
+fn Validator @check(n int) Fail[str] -> int => {
+    if n < @min { throw "below min" }
+    n
+}
+
+fn Validator @emit(msg str) Io -> () => println(msg)
+
+// Generic fn с bound на effectful-протокол + вызов effectful bound-метода
+// (mono-dispatch — эффект пробрасывается).
+fn run_check[T Checked](item T, n int) Fail[str] -> int => item.check(n)
+
+test "effectful protocol method — Fail success path" {
+    let v = Validator { min: 10 }
+    assert(v.check(42) == 42)
+}
+
+test "effectful protocol method via generic bound" {
+    let v = Validator { min: 10 }
+    assert(run_check(v, 50) == 50)
+}
+
+test "effectful protocol method — Fail caught by handler" {
+    let v = Validator { min: 10 }
+    let mut caught = ""
+    with Fail = handler Fail {
+        fail(msg) {
+            caught = msg
+            interrupt ()
+        }
+    } {
+        let _ = v.check(3)
+    }
+    assert(caught == "below min")
+}
+
+test "effectful protocol method — Io effect" {
+    let v = Validator { min: 0 }
+    v.emit("effectful protocol Io: ok")
+}
