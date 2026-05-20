@@ -207,13 +207,11 @@ external fn Option[T] @ok_or[E](err E) -> Result[T, E]
 /// `Some(v) -> Some(v)`, `None -> other`. Возвращает другой Option если
 /// текущий пустой (fallback chain).
 ///
-/// **DEFER (62.A follow-up, 2026-05-18):** codegen inline emit отсутствует
-/// (`Nova_Option_method_or` trampoline не реализован, см. Bootstrap status
-/// table в spec/decisions/08-runtime.md §«Bootstrap status (2026-05-08)»).
-/// Декларация добавлена для документации canonical signature; вызов
-/// `opt.or(other)` сейчас приведёт к CC-fail. Реализация — Plan 62.B+
-/// (либо runtime helper Nova_Option_method_or_<T>, либо inline emit в
-/// dispatch блоке Option methods emit_c.rs:11761+).
+/// **Bootstrap**: routes к `Nova_Option_method_or_<T>` per-T trampoline
+/// (Plan 62.B, 2026-05-20). Trampoline определён в `nova_rt/array.h`
+/// через `NOVA_ARRAY_IMPL` macro + explicit специализации для всех
+/// primitive T (nova_int, nova_str, nova_char, nova_byte, nova_f32,
+/// nova_f64, sized-ints).
 #stable(since = "0.1")
 external fn Option[T] @or(other Option[T]) -> Option[T]
 
