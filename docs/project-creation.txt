@@ -16818,3 +16818,32 @@ simplifications.md [M-result-record-payload-match] → Plan 59 sum-mono.
 Plan 62.E.bis закрыт. Остаток deferred sub-plans Plan 62: 62.A.bis Ф.4
 (ждёт Plan 59 Ф.7.5 increment 2), 62.C.bis RuntimeNoneError (ждёт
 empty-sum syntax, Plan 72 P1-B).
+
+=== Plan 75 — str test coverage + codegen bugfixes (2026-05-21) ===
+
+Nova_tests/str/ — 11 новых тест-файлов, все PASS.
+
+Покрытые области:
+- char_at.nv / char_at_oob.nv: @char_at ASCII/Unicode/emoji, OOB → None
+- is_empty_hash.nv: @is_empty() + @hash() determinism
+- split_edge.nv: соседние сепараторы, leading/trailing, не найден
+- conversions_positive.nv: str.from(char/int/bool/f64), int/bool.try_from Ok, round-trip []byte
+- conversions_err.nv: 12 Err-сценариев (int/f64/bool/char.try_from)
+- interpolation_char.nv: "${c}" для c: char — символ, не int-код
+- slice_oob.nv: clamp-поведение задокументировано
+- neg_cast_str_as_int.nv / neg_cast_int_as_str.nv: EXPECT_COMPILE_ERROR
+- utf8_invalid.nv: str.try_from([]byte) с невалидными UTF-8 → Err
+
+@is_empty добавлен в runtime_registry.rs → std/runtime/string.nv.
+
+3 codegen-бага исправлены в emit_c.rs:
+1. char_at return type: NovaOpt_nova_int → NovaOpt_nova_char (pre-Plan 71 артефакт).
+   nova_opt_eq_nova_int использовался вместо nova_opt_eq_nova_char — silent wrong compare.
+2. str.from(char var): отсутствовал case "nova_char" → nova_char_to_str.
+   При передаче char-переменной падал в fallthrough → nova_int_to_str → неверный вывод.
+3. infer_expr_c_type primitive receiver: передавал C-имена (nova_str) в таблицу method_overloads,
+   которая ожидает Nova-имена (str). Добавлен mapping nova_str→str, nova_char→char и т.д.
+4. emit_interpolated_str: отсутствовал case "nova_char" → nova_char_to_str.
+   "${c}" для c: char эмитил nova_int_to_str → выводил int-код (65 вместо "A").
+
+Регрессия: 881 PASS / 1 FAIL (pre-existing modules/prelude_auto_import).
