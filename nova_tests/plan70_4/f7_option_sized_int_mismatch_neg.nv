@@ -1,0 +1,17 @@
+// Plan 70.4 Ф.2 — negative: Option[i16] несовместим с Option[i32].
+//
+// После Ф.2 sized-int типы генерируют разные C-структуры
+// (NovaOpt_int16_t vs NovaOpt_int32_t). Передача одного вместо другого
+// — CC-FAIL. Это ключевая гарантия ABI-fix: типы больше не слипаются.
+//
+// Параллель Rust: Option<i16> и Option<i32> — разные типы.
+
+module nova_tests.plan70_4.f7_option_sized_int_mismatch_neg
+
+fn take_opt_i32(o Option[i32]) -> bool { o.is_some() }
+
+// EXPECT_CC_ERROR incompatible type
+fn bad() -> bool {
+    let o Option[i16] = Some(1 as i16)
+    take_opt_i32(o)
+}
