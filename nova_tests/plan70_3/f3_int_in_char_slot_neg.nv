@@ -1,0 +1,21 @@
+// Plan 70.3 — negative: int literal в Option[char] slot.
+//
+// Distinct `nova_char` typedef (D128) → `NovaOpt_nova_char` ≠
+// `NovaOpt_nova_int`. Int-литерал `Some(42)` производит
+// `NovaOpt_nova_int`; присваивание в `Option[char]`-переменную —
+// incompatible struct types → clang отвергает.
+//
+// Параллель Rust: `let c: Option<char> = Some(42)` — compile error
+// (mismatched types, expected `char`, found integer).
+//
+// EXPECT_CC_ERROR incompatible type
+
+module nova_tests.plan70_3.f3_int_in_char_slot_neg
+
+test "int literal rejected in Option[char] slot" {
+    let c Option[char] = Some(42)
+    match c {
+        Some(ch) => assert(ch == 'a')
+        None => assert(false)
+    }
+}
