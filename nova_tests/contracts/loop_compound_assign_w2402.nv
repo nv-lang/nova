@@ -1,0 +1,25 @@
+// Plan 33.8 Ф.2.3: негатив для soundness-фикса сохранения инварианта цикла.
+// EXPECT_COMPILE_WARNING W2402
+//
+// Тело цикла содержит СОСТАВНОЕ присваивание `x *= 2`. V1-havoc-модель
+// (`extract_body_assignments`) пропускает `*=`/`/=` (только Assign/Add/Sub).
+// До Ф.2.1 `x` не попадал ни в havoc-набор, ни в post-state — инвариант
+// `x >= 1` «доказывался» на замороженном `x` (ложный Proven). После Ф.2.1
+// составное присваивание распознаётся как вне sound-envelope → W2402.
+
+module contracts.loop_compound_assign_w2402
+
+fn doubling(n int) -> int
+    requires n >= 0
+{
+    let mut i = 0
+    let mut x = 1
+    while i < n
+        invariant x >= 1
+        decreases n - i
+    {
+        x *= 2
+        i = i + 1
+    }
+    x
+}
