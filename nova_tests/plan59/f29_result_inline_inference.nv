@@ -1,0 +1,53 @@
+// f26_result_inline_inference.nv — Plan 59 Ф.7.5-lite.
+//
+// Inline Result-цепочки (без let-биндинга) выводят (T,E) из declared
+// return-типа функции через `infer_result_type_params`. Закрывает
+// основной кейс блокера [M-result-method-named-var-only]: раньше
+// inline-цепочки дефолтились к (nova_int, nova_str).
+
+module plan59.f29_result_inline_inference
+
+fn parse_int(s str) -> Result[int, str] => {
+    if s == "42" { Ok(42) } else { Err("bad int") }
+}
+
+fn parse_bool(s str) -> Result[bool, str] => {
+    if s == "true" { Ok(true) } else { Err("bad bool") }
+}
+
+// ── inline unwrap_or ──
+
+test "inline unwrap_or — Ok path" {
+    assert(parse_int("42").unwrap_or(0) == 42)
+}
+
+test "inline unwrap_or — Err path" {
+    assert(parse_int("xx").unwrap_or(-1) == -1)
+}
+
+test "inline bool Result unwrap_or" {
+    assert(parse_bool("true").unwrap_or(false) == true)
+    assert(parse_bool("no").unwrap_or(false) == false)
+}
+
+// ── inline map → unwrap_or (цепочка) ──
+
+test "inline map then unwrap_or — typed int closure" {
+    assert(parse_int("42").map(fn(x int) -> int => x * 2).unwrap_or(0) == 84)
+}
+
+test "inline map then unwrap_or — typed bool closure" {
+    assert(parse_bool("true").map(fn(b bool) -> bool => !b).unwrap_or(true) == false)
+}
+
+test "inline map Err passes through" {
+    assert(parse_int("xx").map(fn(x int) -> int => x + 1).unwrap_or(7) == 7)
+}
+
+// ── inline is_ok / is_err ──
+
+test "inline is_ok / is_err" {
+    assert(parse_int("42").is_ok())
+    assert(parse_int("xx").is_err())
+    assert(parse_bool("true").is_ok())
+}
