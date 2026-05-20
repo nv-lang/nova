@@ -16323,6 +16323,72 @@ Test count после Plan 67 full closure:
 
 Plan 67 production-grade closed. README row updated.
 
+2026-05-18 Plan 62 full closure — prelude hardcode migration
+─────────────────────────────────────────────────────────────────
+
+Migrate ~50 hardcoded prelude items (builtins HashSet) → file-based
+declarations в std/prelude/*.nv. D26 compliance + splittable
+(partial_prelude) + edition-versionable. Worktree nova-p62-prelude,
+branch plan-62-main.
+
+62.A — core types:
+- Option/Result/Error/Ordering → std/prelude/core.nv.
+- Option + Result methods (12) → core.nv через external fn.
+
+62.A.bis — sum schema registry (Ф.1-Ф.3):
+- Layered registry (sum_schema_registry.rs ~1300 LOC, 16 unit tests)
+  поверх hardcoded sum_schemas: file-based декларации получают
+  приоритет, hardcoded baseline — ABI-compat fallback для
+  nova_rt/array.h value-type helpers.
+- Ф.4 (legacy sum_schemas removal) — deferred до Plan 59 Ф.7.5.
+
+62.B.bis — print/println:
+- Canonical D69 variadic signature fn print(...items []any) Io -> ().
+- Поглотил Plan 67 hotfix как Ф.0 (infer_print_helper refactor через
+  unified infer_expr_c_type, ~75 → ~25 LOC).
+
+62.C — error types:
+- RuntimeError (6 variants) + ReadBufferError → std/prelude/errors.nv.
+- RuntimeNoneError — deferred (требует empty-sum syntax).
+
+62.D — collections:
+- Iter[T] protocol → std/prelude/collections.nv.
+- Range/RangeIter prelude facade (bis-1) + 4 latent codegen bug fix.
+- 62.D.bis — opaque types: новый syntax external type X (D126);
+  StringBuilder/WriteBuffer/ReadBuffer → formal declarations.
+
+62.E — protocols:
+- From/Into/Hashable/Equatable/Comparable/Display (6/8) → protocols.nv.
+- TryFrom/TryInto — deferred (требует Plan 56 Ф.2.7).
+
+62.F.bis — edition + shadow + runtime effects:
+- Edition versioning: nova.toml [package].edition → std/prelude/<ed>.nv.
+- W_PRELUDE_SHADOW структурный warning + allow-suppress.
+- Time/Mem formal ambient effect declarations. D124/D125.
+
+Cleanup:
+- D29 rev-3: prelude sub-modules объявляют module parent.target (2-seg).
+- Spec D29 Rule E: X.nv + X/ co-existence (facade file + child-namespace
+  folder) формально внесён из Plan 42.
+- 6 regression tests покрывающих все sub-plan families.
+
+PRELUDE_VERSION bumped 1 → 7. 29/29 nova_tests/plan62 PASS на release.
+Simplifications → simplifications.md: [M-result-method-named-var-only],
+[M-legacy-sum-schemas-retained], [M-runtime-none-error-deferred],
+[M-tryfrom-tryinto-deferred], [M-protocol-as-value-binding-only].
+
+Plan 62 production-grade closed (P0 scope). README row updated.
+
+2026-05-19 Plan 72 created — protocol/type-system followups (план-док)
+─────────────────────────────────────────────────────────────────
+
+Консолидирующий план-документ: разрозненные proposals из Plan 48
+§followup (Gap A/B mono ergonomics), Plan 56 §followup (silent
+miscompilation на protocol-as-value), 62.A.bis Ф.4, 62.C.bis,
+62.E.bis собраны в docs/plans/72-protocol-and-type-system-followups.md.
+Приоритеты P0 (E7201 diagnostic) → P3 (full vtable codegen).
+Реализация ведётся отдельной инициативой (worktree nova-p72).
+
 2026-05-19/20 Plan 70.3 Ф.4 + Plan 70.4 + Plan 70.5 closure
 ─────────────────────────────────────────────────────────────
 
@@ -16359,3 +16425,53 @@ Test count после Plan 70.3-70.5:
 - baseline (post Plan 70.2): 808 PASS / 0 FAIL
 - +21 новых план-фикстур (plan70_3: 5, plan70_4: 8, plan70_5: 8)
 - Регрессий 0
+
+# Plan 33.9 full closure 2026-05-20: Ф.4 TrivialBackend opaque-aware W2402
+
+После V1 bootstrap (Ф.1-Ф.3 + Ф.6, 2026-05-18) и Ф.5/Ф.7 closure
+(Z3 axiomatic encoding + spec D130, 2026-05-19) оставалась последняя
+фаза — Ф.4 TrivialBackend integration, помеченная 🟡 partial.
+
+## Сделано
+
+Ф.4 — opaque-aware диагностика в TrivialBackend:
+- `term_references_opaque_uf(term, pure_fns)` — новый helper в
+  pipeline.rs. Рекурсивно обходит SmtTerm-дерево (App / Forall),
+  ищет `_pure_fn_X` UF-узлы, где fn X имеет `is_opaque == true`
+  в registry pure_fns. Возвращает Option<String> с именем fn.
+- Модифицирован `SatResult::Unknown(reason)` match в ensures-цикле:
+  когда reason = NotAttempted И goal/body_val содержит opaque UF —
+  upgrade до UnsupportedTheory с actionable-сообщением. Два кейса:
+  - без `reveal` → "opaque fn X called without reveal X. Add
+    reveal X before calling it, or use Z3 backend".
+  - с `reveal` → "opaque fn X was revealed but TrivialBackend
+    cannot discharge reveal-injected axioms (quantified formulas).
+    Use Z3 backend".
+- `goal_for_opaque_check` — clone goal до того как он move'ится в
+  try_prove / try_prove_with_witness (E0382 borrow-after-move fix).
+
+## Наблюдение (не баг, но важно для тестов)
+
+Проверка `if !reason.contains("NotAttempted")` в pipeline (строка
+~2792) фактически всегда true: `unknown_to_diag_message` не оставляет
+имя enum-варианта в тексте, поэтому "silent passthrough для
+NotAttempted" давно не работает — обычный NotAttempted уже даёт
+W2402. Ценность Ф.4 — именно более точное opaque-aware сообщение
+(имя fn + reveal + Z3), а не "сделать не-silent".
+
+## Тесты
+
+- f58_opaque_trivial_w2402.nv (positive, обновлён): матчит не код
+  W2402, а конкретные opaque-aware фразы — "called without
+  reveal double" + "was revealed but TrivialBackend".
+- f58_nonopaque_trivial_no_upgrade.nv (negative, новый): не-opaque
+  #pure fn даёт обычное TrivialBackend-сообщение без слов
+  opaque/reveal — доказывает что upgrade НЕ срабатывает для
+  не-opaque UF (term_references_opaque_uf → None при is_opaque false).
+
+## Регрессия
+
+Перед Ф.4 closure: 238 PASS / 0 FAIL contracts.
+После Ф.4 closure: **239 PASS** (+1 negative test) / 0 FAIL / 47 SKIP.
+
+Plan 33.9 полностью закрыт — все фазы Ф.1-Ф.7 ✅ DONE.
