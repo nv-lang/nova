@@ -16029,6 +16029,8 @@ impl CEmitter {
                     } else {
                         match arg_ty.as_str() {
                             "nova_str" => v,
+                            // Plan 75: char variable → UTF-8 encode codepoint, not int-code.
+                            "nova_char" => format!("nova_char_to_str({})", v),
                             "nova_bool" => format!("nova_bool_to_str({})", v),
                             "nova_f64" => format!("nova_f64_to_str({})", v),
                             "nova_int" => format!("nova_int_to_str({})", v),
