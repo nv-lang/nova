@@ -13509,9 +13509,33 @@ impl CEmitter {
                                 }
                             }
                             // D26 prelude: Result.map(f). Ok(v) → Ok(f(v)),
-                            // Err(e) → Err(e). f это closure (nova_int → nova_int).
+                            // Err(e) → Err(e). f это closure `fn(T) -> U`.
                             "map" => {
                                 if let Some(arg) = args.first() {
+                                    // Plan 62.B: closure C-сигнатура. Bootstrap
+                                    // Result Ok-slot — nova_int, но closure-литерал
+                                    // может иметь distinct typedef (nova_bool/
+                                    // nova_char, Plan 70.3). Manual fn-pointer cast
+                                    // по фактическим типам лямбды — без него
+                                    // `NOVA_CLOS_CALL_ii` (int-layout) на
+                                    // nova_bool-closure даёт calling-convention
+                                    // mismatch (garbage в верхних байтах).
+                                    // ClosureLight (untyped) → фоллбэк на tracked
+                                    // Result Ok-type / nova_int.
+                                    let (param_c, ret_c) = self
+                                        .typed_closure_c_sig(arg.expr())
+                                        .or_else(|| {
+                                            if let ExprKind::Ident(v) = &obj.kind {
+                                                self.result_type_params
+                                                    .get(v.as_str())
+                                                    .map(|(ok_c, _)| {
+                                                        (ok_c.clone(), ok_c.clone())
+                                                    })
+                                            } else { None }
+                                        })
+                                        .unwrap_or_else(|| {
+                                            ("nova_int".into(), "nova_int".into())
+                                        });
                                     let f = self.emit_expr(arg.expr())?;
                                     let tmp = self.fresh_tmp();
                                     self.line(&format!("Nova_Result* {} = {};", tmp, obj_c));
@@ -13520,10 +13544,12 @@ impl CEmitter {
                                     self.line(&format!("if ({}->tag == NOVA_TAG_Result_Ok) {{", tmp));
                                     self.indent += 1;
                                     let mapped = self.fresh_tmp();
+                                    let arg_val = Self::cast_from_nova_int(
+                                        &format!("{}->payload.Ok._0", tmp), &param_c);
                                     self.line(&format!(
-                                        "nova_int {} = NOVA_CLOS_CALL_ii({}, {}->payload.Ok._0);",
-                                        mapped, f, tmp));
-                                    self.line(&format!("{} = nova_make_Result_Ok({});", out, mapped));
+                                        "{rc} {m} = (({rc}(*)(void*, {pc}))(((NovaClos_ii*)({f}))->fn))(((NovaClos_ii*)({f}))->env, {av});",
+                                        rc = ret_c, pc = param_c, m = mapped, f = f, av = arg_val));
+                                    self.line(&format!("{} = nova_make_Result_Ok((nova_int){});", out, mapped));
                                     self.indent -= 1;
                                     self.line("} else {");
                                     self.indent += 1;
@@ -19916,6 +19942,55 @@ impl CEmitter {
         }
     }
 
+    /// Plan 62.B: извлекает C-сигнатуру `(param0_c, return_c)` для
+    /// typed-closure аргумента (`ClosureFull` — `fn(x T) -> U`). Нужно
+    /// для Result.map: bootstrap-лямбды используют distinct typedef'ы
+    /// (`nova_bool`/`nova_char`, Plan 70.3), и fn-pointer cast при
+    /// closure-вызове обязан совпадать с фактической сигнатурой лямбды —
+    /// иначе `NOVA_CLOS_CALL_ii` (int-layout) на nova_bool-closure даёт
+    /// calling-convention mismatch (garbage в верхних байтах результата).
+    /// `ClosureLight` (`|x| ...`) — untyped → None (caller фоллбэчится
+    /// на tracked Result Ok-type / nova_int).
+    fn typed_closure_c_sig(&self, expr: &Expr) -> Option<(String, String)> {
+        if let ExprKind::ClosureFull(sig) = &expr.kind {
+            let p0 = sig.params.first()?;
+            let param_c = self.type_ref_to_c(&p0.ty).ok()?;
+            let ret_c = sig.return_type.as_ref()
+                .and_then(|t| self.type_ref_to_c(t).ok())
+                .unwrap_or_else(|| param_c.clone());
+            return Some((param_c, ret_c));
+        }
+        None
+    }
+
+    /// True если C-тип — generic-заглушка вида `Nova_T*` / `Nova_E*`, т.е.
+    /// `Nova_<X>*` где `X` — НЕ зарегистрированный тип (ни record-, ни
+    /// sum-schema, ни generic-template), а unresolved type-параметр.
+    ///
+    /// Plan 62.B: декларации `external fn Result[T,E] @unwrap_or -> T` в
+    /// prelude дают `external_registry::type_ref_to_c` для return-type `T`
+    /// → `"Nova_T*"` (`_ => format!("Nova_{}*", name)`). Если такой стаб
+    /// возвращается из `infer_expr_c_type`, binop-dispatch принимает его за
+    /// sum-type pointer и эмитит `->tag` сравнение вместо value-equality.
+    /// Этот предикат позволяет generic-aware блокам пропустить стаб и
+    /// дойти до специализированных `Nova_Result*` / `NovaOpt_` веток,
+    /// знающих конкретный Ok/elem-тип из контекста.
+    ///
+    /// Семантический критерий (не name-эвристика) — тот же, что у
+    /// `erase_unk` в `emit_fn` для erased array-extension generics:
+    /// `Nova_<X>*` — реальный тип ⇔ `X ∈ record_schemas ∪ sum_schemas ∪
+    /// generic_types`; иначе это erased type-param.
+    fn is_generic_stub_c(&self, s: &str) -> bool {
+        if let Some(inner) = s.strip_prefix("Nova_").and_then(|x| x.strip_suffix('*')) {
+            let name = inner.trim();
+            return !name.is_empty()
+                && !self.record_schemas.contains_key(name)
+                && !self.sum_schemas.contains_key(name)
+                && !self.generic_types.contains(name);
+        }
+        false
+    }
+
     fn infer_expr_c_type(&self, expr: &Expr) -> String {
         // D38 turbofish: type_args не меняют c-тип; делегируем в base.
         if let ExprKind::TurboFish { base, .. } = &expr.kind {
@@ -20321,7 +20396,13 @@ impl CEmitter {
                                 // Plan 11 Ф.9.3: override-precedence Own > Delegated.
                                 // Single → return its return_c_type (no override
                                 // conflict possible).
-                                if candidates.len() == 1 {
+                                // Plan 62.B: пропускаем generic-стаб `Nova_T*`
+                                // (prelude `external fn Result[T,E] -> T`) —
+                                // даём specialized `Nova_Result*` ветке ниже
+                                // вывести concrete Ok-тип.
+                                if candidates.len() == 1
+                                    && !self.is_generic_stub_c(&candidates[0].return_c_type)
+                                {
                                     return candidates[0].return_c_type.clone();
                                 }
                                 // Multi → strict match по arg-types.
@@ -20340,7 +20421,9 @@ impl CEmitter {
                                     if !owns.is_empty() { owns } else { strict }
                                 };
                                 if let Some(sig) = pool.first() {
-                                    return sig.return_c_type.clone();
+                                    if !self.is_generic_stub_c(&sig.return_c_type) {
+                                        return sig.return_c_type.clone();
+                                    }
                                 }
                                 // 0 matches — fallback на старую логику ниже.
                             }
@@ -20385,10 +20468,16 @@ impl CEmitter {
                                 .filter(|d| d.is_instance == want_inst)
                                 .collect();
                             if let Some(decl) = matching.first() {
-                                if !decl.return_c_type.is_empty()
-                                    && decl.return_c_type != "void*"
+                                // Plan 62.B: пропускаем generic-стаб `Nova_T*`
+                                // (single uppercase letter = type-param return)
+                                // — fall through to specialized NovaOpt_/
+                                // Nova_Result* блокам, знающим concrete тип.
+                                let c_ret = &decl.return_c_type;
+                                if !c_ret.is_empty()
+                                    && c_ret != "void*"
+                                    && !self.is_generic_stub_c(c_ret)
                                 {
-                                    return decl.return_c_type.clone();
+                                    return c_ret.clone();
                                 }
                             }
                         }
@@ -20796,7 +20885,12 @@ impl CEmitter {
                             .trim_end_matches('*').trim();
                         if let Some(decls) = self.external_registry.lookup(recv_ty, method) {
                             if let Some(decl) = decls.iter().find(|d| d.is_instance) {
-                                return decl.return_c_type.clone();
+                                // Plan 62.B: пропускаем generic-стаб `Nova_T*` —
+                                // fall through к specialized NovaOpt_/Nova_Result*
+                                // блокам, знающим concrete тип из tracking/context.
+                                if !self.is_generic_stub_c(&decl.return_c_type) {
+                                    return decl.return_c_type.clone();
+                                }
                             }
                         }
                     }
