@@ -1,0 +1,38 @@
+// EXPECT_COMPILE_WARNING opaque fn `double` called without `reveal double`
+// EXPECT_COMPILE_WARNING opaque fn `double` was revealed but TrivialBackend
+//
+// Plan 33.9 Ф.4 (positive): opaque fn call under TrivialBackend → W2402 with
+// an opaque-aware message. TrivialBackend cannot discharge opaque-fn contracts;
+// the message names the fn and points at `reveal` / Z3.
+// No REQUIRES_SMT_BACKEND — runs under default TrivialBackend.
+//
+// Two cases, both asserted by distinct message substrings:
+//   1. No reveal   → "called without `reveal double`"
+//   2. With reveal → "was revealed but TrivialBackend"
+// Default verify mode → Unknown becomes W2402 (warning, not error).
+
+module contracts.f58_opaque_trivial_w2402
+
+#opaque #pure
+fn double(x int) -> int
+    requires x >= 0
+    ensures result >= 0
+=> x + x
+
+// Case 1: no reveal → message tells user to add `reveal double`.
+fn caller_no_reveal(n int) -> int
+    requires n >= 0
+    ensures result >= 0
+{
+    double(n)
+}
+
+// Case 2: with reveal → message tells user TrivialBackend cannot discharge
+// the reveal-injected quantified axiom; use Z3.
+fn caller_with_reveal(n int) -> int
+    requires n >= 0
+    ensures result >= 0
+{
+    reveal double
+    double(n)
+}

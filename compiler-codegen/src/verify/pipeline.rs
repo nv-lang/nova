@@ -164,10 +164,14 @@ impl VerificationPipeline {
             backend.declare_function(&uf, &info.param_sorts, info.return_sort.clone());
         }
         // Body axioms: forall params. uf(params) == body_encoded.
+        // Plan 33.9 Ф.5: #opaque fns are skipped here — their body axiom is only
+        // injected when `reveal fn_name` is encountered in the verifying fn body.
         for item in &module.items {
             let Item::Fn(pfd) = item else { continue };
             if !matches!(pfd.purity, Purity::Pure) { continue; }
             let Some(info) = pure_fns.get(&pfd.name) else { continue };
+            // Skip opaque fns: body withheld until reveal.
+            if info.is_opaque { continue; }
             let body_expr = match &pfd.body {
                 FnBody::Expr(e) => Some(e),
                 FnBody::Block(b) if b.stmts.is_empty() => b.trailing.as_deref(),
@@ -177,14 +181,16 @@ impl VerificationPipeline {
                 if let Ok(body_term) = encode::encode_expr_with_ctx(body_e, &ctx) {
                     let param_vars: Vec<SmtTerm> = info.param_names.iter()
                         .map(|n| SmtTerm::Var(n.clone())).collect();
-                    let uf_app = SmtTerm::App(encode::pure_fn_uf_name(&pfd.name), param_vars);
-                    let eq_body = SmtTerm::eq(uf_app, body_term);
+                    let uf_app = SmtTerm::App(encode::pure_fn_uf_name(&pfd.name), param_vars.clone());
+                    let eq_body = SmtTerm::eq(uf_app.clone(), body_term);
                     let binders: Vec<(String, SortRef)> = info.param_names.iter()
                         .zip(info.param_sorts.iter())
                         .map(|(n, s)| (n.clone(), s.clone()))
                         .collect();
+                    // Trigger on UF application to guide instantiation.
+                    let patterns = if binders.is_empty() { vec![] } else { vec![vec![uf_app]] };
                     let axiom = if binders.is_empty() { eq_body } else {
-                        SmtTerm::Forall(binders, vec![], Box::new(eq_body))
+                        SmtTerm::Forall(binders, patterns, Box::new(eq_body))
                     };
                     backend.assert(Assertion {
                         formula: axiom,
@@ -403,9 +409,34 @@ impl VerificationPipeline {
             }
         }
 
+        // 2.55. Plan 33.9 Ф.5: inject body axioms for `reveal fn_name` statements.
+        // For each reveal in fn body: find the opaque pure fn, emit
+        //   forall params. _pure_fn_X(params) == body  :pattern { _pure_fn_X(params) }
+        // This makes Z3 aware of the fn body specifically in this verification scope.
+        // Fuel chain: if fn has #fuel(n), emit n unrolled axioms instead of single body forall.
+        for (reveal_name, _reveal_span) in collect_reveal_stmts_in_body(&fd.body) {
+            let Some(info) = pure_fns.get(&reveal_name) else { continue };
+            // Only opaque fns get reveal-injected axioms; non-opaque already have body axiom.
+            if !info.is_opaque { continue; }
+            // Find the fn declaration to get its body.
+            let pfd_opt = module.items.iter().find_map(|it| {
+                if let Item::Fn(pfd) = it { if pfd.name == reveal_name { return Some(pfd); } }
+                None
+            });
+            let Some(pfd) = pfd_opt else { continue };
+            let fuel = info.fuel.unwrap_or(0);
+            if fuel == 0 {
+                // Standard reveal: single body forall with trigger.
+                emit_opaque_body_axiom(pfd, info, &ctx, &mut *backend);
+            } else {
+                // Fuel chain: emit n levels of unrolled axioms.
+                emit_fuel_chain_axioms(pfd, info, fuel, &ctx, &mut *backend);
+            }
+        }
+
         // 2.6. Ф.4.2: обработать `calc { ... }` из тела fn.
         // Для каждого calc-блока: каждый смежный шаг (e_i rel e_{i+1}) доказывается
-        // и ассертируется в SMT-scope (как lemma: доказано → доступно для ensures).
+        // и ассертируется в SMT-scope (как lemma: доказано → доказано → доступно для ensures).
         // Результат: SMT знает все промежуточные равенства/неравенства.
         let calc_step_results = verify_calc_stmts_in_body(&fd.body, &ctx, &mut *backend);
 
@@ -458,6 +489,8 @@ impl VerificationPipeline {
 
             // Ф.16.1 (Plan 33.6): если ensures содержит `exists`, используем
             // try_prove_with_witness для extract witness в info-note.
+            // Plan 33.9 Ф.4: save a clone for opaque-UF check after goal is consumed.
+            let goal_for_opaque_check = goal.clone();
             let exists_var = find_exists_var(&c.expr);
             let proof_result = if let Some(var_name) = &exists_var {
                 let (proof, witness) = super::backend::try_prove_with_witness(
@@ -486,9 +519,39 @@ impl VerificationPipeline {
                     results.push((c.span, VerifyResult::Disproved(model, cex)));
                 }
                 SatResult::Unknown(reason) => {
-                    // Plan 33.3 Р¤.9.10: AI-friendly diagnostic вЂ" РєР°С‚РµРіРѕСЂРёР·РёСЂСѓРµРј
+                    // Plan 33.3 Ф.9.10: AI-friendly diagnostic — категоризируем
                     // reason + suggestions.
-                    let msg = unknown_to_diag_message(reason);
+                    // Plan 33.9 Ф.4: upgrade NotAttempted → UnsupportedTheory when
+                    // the goal or body_val contains an opaque UF call. TrivialBackend
+                    // cannot discharge opaque-fn contracts; user needs `reveal X` or Z3.
+                    let upgraded_reason = if matches!(&reason, UnknownReason::NotAttempted(_)) {
+                        let opaque_in_goal = term_references_opaque_uf(&goal_for_opaque_check, &pure_fns);
+                        let opaque_in_body = body_val.as_ref()
+                            .and_then(|bv| term_references_opaque_uf(bv, &pure_fns));
+                        let opaque_name = opaque_in_goal.or(opaque_in_body);
+                        if let Some(fname) = opaque_name {
+                            let has_reveal = collect_reveal_stmts_in_body(&fd.body)
+                                .iter().any(|(n, _)| n == &fname);
+                            if has_reveal {
+                                UnknownReason::UnsupportedTheory(format!(
+                                    "opaque fn `{}` was revealed but TrivialBackend cannot \
+                                     discharge reveal-injected axioms (quantified formulas). \
+                                     Use Z3 backend: `--smt-backend=z3` or \
+                                     `NOVA_SMT_BACKEND=z3`.", fname))
+                            } else {
+                                UnknownReason::UnsupportedTheory(format!(
+                                    "opaque fn `{}` called without `reveal {}`. \
+                                     Add `reveal {}` before calling it in a `#verify` fn, \
+                                     or use Z3 backend: `--smt-backend=z3`.",
+                                    fname, fname, fname))
+                            }
+                        } else {
+                            reason
+                        }
+                    } else {
+                        reason
+                    };
+                    let msg = unknown_to_diag_message(upgraded_reason);
                     results.push((c.span, VerifyResult::Unknown(msg)));
                 }
             }
@@ -899,6 +962,8 @@ pub(super) fn collect_pure_fns(
             param_sorts,
             return_sort,
             body_expr,
+            is_opaque: fd.is_opaque,
+            fuel: fd.fuel,
         });
     }
     out
@@ -1472,6 +1537,49 @@ fn collect_apply_in_expr(e: &Expr, out: &mut Vec<(String, Vec<Expr>, Span)>) {
     }
 }
 
+/// Plan 33.9 Ф.4: check whether an SMT term references any `_pure_fn_X` UF
+/// where fn `X` is marked `is_opaque` in `pure_fns`. Used to upgrade
+/// `Unknown(NotAttempted)` → `Unknown(UnsupportedTheory)` so TrivialBackend
+/// emits W2402 instead of staying silent when opaque calls are unresolvable.
+fn term_references_opaque_uf(
+    term: &SmtTerm,
+    pure_fns: &std::collections::HashMap<String, encode::PureFnInfo>,
+) -> Option<String> {
+    match term {
+        SmtTerm::App(op, args) => {
+            // Check if this App is an opaque UF call: op starts with "_pure_fn_"
+            // and the corresponding fn is is_opaque.
+            if let Some(fn_name) = op.strip_prefix("_pure_fn_") {
+                // Strip possible fuel suffix: _pure_fn_X_fuel0 → X
+                let base_name = fn_name.split("_fuel").next().unwrap_or(fn_name);
+                if let Some(info) = pure_fns.get(base_name) {
+                    if info.is_opaque {
+                        return Some(base_name.to_string());
+                    }
+                }
+            }
+            // Recurse into args.
+            for a in args {
+                if let Some(name) = term_references_opaque_uf(a, pure_fns) {
+                    return Some(name);
+                }
+            }
+            None
+        }
+        SmtTerm::Forall(_, patterns, body) => {
+            for pat_group in patterns {
+                for p in pat_group {
+                    if let Some(name) = term_references_opaque_uf(p, pure_fns) {
+                        return Some(name);
+                    }
+                }
+            }
+            term_references_opaque_uf(body, pure_fns)
+        }
+        _ => None,
+    }
+}
+
 /// Plan 33.9 Ф.6: собрать все `reveal name` statements из fn body.
 /// Возвращает (name, span). Used для lints (dup reveal, reveal-non-opaque).
 fn collect_reveal_stmts_in_body(body: &FnBody) -> Vec<(String, Span)> {
@@ -1509,6 +1617,147 @@ fn collect_reveal_in_expr(e: &Expr, out: &mut Vec<(String, Span)>) {
             collect_reveal_in_block(then, out);
         }
         _ => {}
+    }
+}
+
+/// Plan 33.9 Ф.5: emit body axiom for an opaque fn triggered by `reveal`.
+///
+/// Asserts:  forall params. _pure_fn_X(params) == body  :pattern { _pure_fn_X(params) }
+///
+/// The trigger on the UF application prevents matching loops: Z3 only instantiates
+/// the forall when it sees the UF applied to ground terms, not infinitely.
+fn emit_opaque_body_axiom(
+    pfd: &FnDecl,
+    info: &encode::PureFnInfo,
+    ctx: &encode::EncodeCtx,
+    backend: &mut dyn SmtBackend,
+) {
+    let body_expr = match &pfd.body {
+        FnBody::Expr(e) => Some(e as &Expr),
+        FnBody::Block(b) if b.stmts.is_empty() => b.trailing.as_deref(),
+        _ => None,
+    };
+    let Some(body_e) = body_expr else { return };
+    let Ok(body_term) = encode::encode_expr_with_ctx(body_e, ctx) else { return };
+    let param_vars: Vec<SmtTerm> = info.param_names.iter()
+        .map(|n| SmtTerm::Var(n.clone())).collect();
+    let uf_name = encode::pure_fn_uf_name(&pfd.name);
+    let uf_app = SmtTerm::App(uf_name, param_vars);
+    let eq_body = SmtTerm::eq(uf_app.clone(), body_term);
+    let binders: Vec<(String, SortRef)> = info.param_names.iter()
+        .zip(info.param_sorts.iter())
+        .map(|(n, s)| (n.clone(), s.clone()))
+        .collect();
+    // Trigger on UF app: Z3 instantiates only when it encounters _pure_fn_X(args).
+    let patterns = if binders.is_empty() { vec![] } else { vec![vec![uf_app]] };
+    let axiom = if binders.is_empty() { eq_body } else {
+        SmtTerm::Forall(binders, patterns, Box::new(eq_body))
+    };
+    backend.assert(Assertion {
+        formula: axiom,
+        label: Some(format!("reveal_body@{}", pfd.name)),
+    });
+}
+
+/// Plan 33.9 Ф.5: emit fuel-chain axioms for `#opaque #fuel(n)` fn after `reveal`.
+///
+/// Strategy (Dafny-style fuel chain):
+///   _pure_fn_X_fuel0  — UF, no axiom (cutoff at depth 0)
+///   _pure_fn_X_fuel1  — body where recursive calls → _pure_fn_X_fuel0
+///   _pure_fn_X_fuel2  — body where recursive calls → _pure_fn_X_fuel1
+///   ...
+///   _pure_fn_X        — body where recursive calls → _pure_fn_X_fuel(n-1)
+///
+/// Body is encoded normally (recursive call → `_pure_fn_X(args)` UF), then
+/// we apply `substitute_uf_name` to redirect recursive calls to the right level.
+fn emit_fuel_chain_axioms(
+    pfd: &FnDecl,
+    info: &encode::PureFnInfo,
+    fuel: u32,
+    ctx: &encode::EncodeCtx,
+    backend: &mut dyn SmtBackend,
+) {
+    let body_expr = match &pfd.body {
+        FnBody::Expr(e) => Some(e as &Expr),
+        FnBody::Block(b) if b.stmts.is_empty() => b.trailing.as_deref(),
+        _ => None,
+    };
+    let Some(body_e) = body_expr else {
+        // No body → fall back to plain reveal axiom.
+        emit_opaque_body_axiom(pfd, info, ctx, backend);
+        return;
+    };
+
+    let base_uf = encode::pure_fn_uf_name(&pfd.name);
+    let param_sorts = &info.param_sorts;
+    let return_sort = &info.return_sort;
+    let param_names = &info.param_names;
+
+    // Declare intermediate fuel-level UFs: _pure_fn_X_fuel0 .. _pure_fn_X_fuel(n-1).
+    for k in 0..fuel {
+        let fuel_uf = format!("{}_fuel{}", base_uf, k);
+        backend.declare_function(&fuel_uf, param_sorts, return_sort.clone());
+    }
+
+    // Encode body once (recursive self-call → _pure_fn_X, because that's what the
+    // encoder emits for opaque/non-body-inlined calls). Then use substitute_uf_name
+    // to redirect the recursive calls to the appropriate fuel level.
+    let Ok(base_body_term) = encode::encode_expr_with_ctx(body_e, ctx) else {
+        emit_opaque_body_axiom(pfd, info, ctx, backend);
+        return;
+    };
+
+    // Emit axiom for each fuel level (1..=fuel) and the top-level base_uf.
+    // Level k means: _pure_fn_X_fuel(k) = body[ _pure_fn_X → _pure_fn_X_fuel(k-1) ]
+    // The final level uses base_uf itself (no suffix).
+    for level in 1..=(fuel as usize) {
+        let axiom_uf = if level == fuel as usize {
+            base_uf.clone()
+        } else {
+            format!("{}_fuel{}", base_uf, level)
+        };
+        let cutoff_uf = format!("{}_fuel{}", base_uf, level - 1);
+        // Redirect recursive calls in the body: _pure_fn_X → _pure_fn_X_fuel(level-1).
+        let body_at_level = substitute_uf_name(&base_body_term, &base_uf, &cutoff_uf);
+
+        let param_vars: Vec<SmtTerm> = param_names.iter()
+            .map(|n| SmtTerm::Var(n.clone())).collect();
+        let uf_app = SmtTerm::App(axiom_uf.clone(), param_vars);
+        let eq_body = SmtTerm::eq(uf_app.clone(), body_at_level);
+        let binders: Vec<(String, SortRef)> = param_names.iter()
+            .zip(param_sorts.iter())
+            .map(|(n, s)| (n.clone(), s.clone()))
+            .collect();
+        let patterns = if binders.is_empty() { vec![] } else { vec![vec![uf_app]] };
+        let axiom = if binders.is_empty() { eq_body } else {
+            SmtTerm::Forall(binders, patterns, Box::new(eq_body))
+        };
+        backend.assert(Assertion {
+            formula: axiom,
+            label: Some(format!("fuel_chain@{}:level{}", pfd.name, level)),
+        });
+    }
+}
+
+/// Plan 33.9 Ф.5: substitute all `SmtTerm::App(from_op, args)` →
+/// `SmtTerm::App(to_op, args)` recursively (op-name substitution only).
+fn substitute_uf_name(term: &SmtTerm, from_op: &str, to_op: &str) -> SmtTerm {
+    match term {
+        SmtTerm::App(op, args) => {
+            let new_args: Vec<SmtTerm> = args.iter()
+                .map(|a| substitute_uf_name(a, from_op, to_op))
+                .collect();
+            let new_op = if op == from_op { to_op.to_string() } else { op.clone() };
+            SmtTerm::App(new_op, new_args)
+        }
+        SmtTerm::Forall(binders, patterns, body) => {
+            let new_body = substitute_uf_name(body, from_op, to_op);
+            let new_patterns: Vec<Vec<SmtTerm>> = patterns.iter()
+                .map(|pv| pv.iter().map(|p| substitute_uf_name(p, from_op, to_op)).collect())
+                .collect();
+            SmtTerm::Forall(binders.clone(), new_patterns, Box::new(new_body))
+        }
+        _ => term.clone(),
     }
 }
 

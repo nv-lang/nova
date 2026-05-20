@@ -1,0 +1,49 @@
+// Plan 72 P1-C followup: Result[T,E] method chains.
+//
+// Tests chained calls like parse_bool("true").map(...).unwrap_or(false)
+// where the intermediate Result is anonymous (no let binding).
+// The compiler must correctly infer T through the chain.
+
+module plan72.p1c_result_chain_pos
+
+fn parse_int(s str) -> Result[int, str] => {
+    if s == "42" { Ok(42) } else { Err("bad") }
+}
+
+fn parse_bool(s str) -> Result[bool, str] => {
+    if s == "true" { Ok(true) } else { Err("not a bool") }
+}
+
+test "P1-C chain — map on Result[int,str] Ok path" {
+    let r = parse_int("42")
+    let mapped = r.map(fn(x int) -> int => x + 1)
+    assert(mapped.unwrap_or(0) == 43)
+}
+
+test "P1-C chain — map on Result[int,str] Err path" {
+    let r = parse_int("bad")
+    let mapped = r.map(fn(x int) -> int => x + 1)
+    assert(mapped.unwrap_or(0) == 0)
+}
+
+test "P1-C chain — map_err on Result[int,str]" {
+    let r = parse_int("bad")
+    let mapped = r.map_err(fn(e str) -> str => "error: " + e)
+    assert(mapped.is_err())
+}
+
+test "P1-C chain — unwrap_or on inline Result[bool,str]" {
+    let b = parse_bool("true").unwrap_or(false)
+    assert(b)
+}
+
+test "P1-C chain — unwrap_or on inline Result[bool,str] Err" {
+    let b = parse_bool("nope").unwrap_or(false)
+    assert(!b)
+}
+
+test "P1-C chain — map then unwrap_or on Result[bool,str]" {
+    let r = parse_bool("true")
+    let mapped = r.map(fn(b bool) -> bool => !b)
+    assert(mapped.unwrap_or(true) == false)
+}
