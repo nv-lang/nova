@@ -16519,3 +16519,38 @@ p3b (единственный FAIL p3b_vtable_dispatch); с p3b → 854 / 0 / 43
 Honest-defer: [M-protocol-param-free-fn-only] в simplifications.md.
 
 main ↔ plan-72 синхронизированы (9c264bc15fd).
+
+2026-05-20 Plan 70 — D46 BinOp dispatch для generic operator overloading
+─────────────────────────────────────────────────────────────────────────
+
+Контекст: Plan 70 продолжение. Set.or/Set.and/Set.minus (D46 operator
+overloading) не работали для generic типов — `a | b` эмитировало C
+оператор `|` на struct pointer'ах → CC-FAIL.
+
+Три связанных фикса:
+
+Ф.1 — BinOp BitOr/BitAnd dispatch (новый блок в emit_c.rs):
+Внутри `if let Some(sty) = sum_ty` блока добавлен обработчик BitOr/BitAnd.
+Для моно'd типа (содержащего "____") ищет метод в self_method_decls по
+(base_type, "or")/(base_type, "and"), строит type_subst из receiver
+generics, вызывает register_mono_method_instance, возвращает
+`Nova_T____args_method_or(l, r)`.
+
+Ф.2 — Sub fallback для generic types:
+Существующий Sub-блок проверял method_overloads по моно'd ключу
+("Set____nova_int", "minus") — не находил (erased key "Set"). Добавлен
+fallback через self_method_decls с аналогичной mono-instance логикой.
+
+Ф.3 — infer_expr_c_type: Self-return в generic type instance methods:
+apply_type_subst_to_ref(Self, {T→nova_int}) возвращал None (Self не в
+subst-словаре). В Ф.3 fallback добавлен or_else: если return type —
+TypeRef::Named["Self"] и base_name/type_args_c известны, возвращаем
+compute_generic_type_c_name(base, args) + "*".
+БЕЗ этого: `let mut out = Self.new()` в моно'd методе получало тип
+Nova_Set* (erased), out.insert(x) вызывал erased stub → пустой Set.
+
+Тесты: nova_tests/modules/set_ops.nv (3 теста: Set.or/and/minus, 3/3 PASS).
+Регрессии: 862 PASS / 2 pre-existing plan72 FAIL (не связаны) / 47 SKIP.
+
+[M-d46-multi-generic-arg-split] честно задокументирован в simplifications.md.
+
