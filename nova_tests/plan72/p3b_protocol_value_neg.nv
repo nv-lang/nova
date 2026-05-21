@@ -1,0 +1,38 @@
+// EXPECT_COMPILE_ERROR E7202
+
+// Plan 72 P3-B negative: a protocol-typed parameter `Iter[int]` expects a
+// value that implements the protocol. Passing a plain `int` cannot be boxed
+// into the `NovaBox_*` fat pointer — must be a compile error (E7202 or a
+// type-checker rejection), not a silent miscompilation.
+
+module plan72.p3b_protocol_value_neg
+
+type IntCounter {
+    mut cur int
+    end int
+}
+
+fn IntCounter mut @next() -> Option[int] => {
+    if @cur < @end {
+        let v = @cur
+        @cur += 1
+        Some(v)
+    } else {
+        None
+    }
+}
+
+fn consume_iter(mut x Iter[int]) -> int => {
+    let mut count = 0
+    let mut go = true
+    loop {
+        if !go { break }
+        if x.next().is_some() { count += 1 } else { go = false }
+    }
+    count
+}
+
+test "P3-B neg — non-implementer passed to protocol parameter" {
+    let n = consume_iter(42)
+    assert(n == 0)
+}

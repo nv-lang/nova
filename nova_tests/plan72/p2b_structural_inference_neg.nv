@@ -1,0 +1,36 @@
+// EXPECT_COMPILE_ERROR cannot infer type argument
+
+// Plan 72 P2-B negative: structural inference of `[U, T Iter[U]]` requires
+// the argument to implement `Iter`. Passing a plain `int` (no `next()`
+// method) — `U` cannot be inferred and the bound is not satisfied.
+
+module plan72.p2b_structural_inference_neg
+
+type IntCounter {
+    mut cur int
+    end int
+}
+
+fn IntCounter mut @next() -> Option[int] => {
+    if @cur < @end {
+        let v = @cur
+        @cur += 1
+        Some(v)
+    } else {
+        None
+    }
+}
+
+fn sum_iter[U, T Iter[U]](it_in T) -> int => {
+    let mut it = it_in
+    let mut total = 0
+    while let Some(_v) = it.next() {
+        total += 1
+    }
+    total
+}
+
+test "P2-B neg — non-iterator argument" {
+    let n = sum_iter(42)
+    assert(n == 0)
+}
