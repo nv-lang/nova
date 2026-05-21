@@ -1,0 +1,11 @@
+// Plan 81 Ф.5: peer of folder-module `peer_recur`. `is_even` вызывает
+// `is_odd`, объявленную в соседнем peer-файле `odd.nv` — взаимная
+// рекурсия через границу peer'ов. Type-checker регистрирует сигнатуры
+// всех peer'ов до обхода тел, поэтому forward/backward-ссылки между
+// peer'ами резолвятся независимо от порядка объявлений.
+
+module nova_tests.plan81.peer_recur
+
+export fn is_even(n int) -> bool {
+    if n == 0 { true } else { is_odd(n - 1) }
+}

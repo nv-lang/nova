@@ -14,7 +14,7 @@ module syntax.as_cast
 type CastUserId alias int
 
 
-test "as byte: narrowing с wraparound" {
+test "as u8: narrowing с wraparound" {
     let a int = 1111
     let b = a as u8
     // 1111 mod 256 = 87
@@ -22,7 +22,7 @@ test "as byte: narrowing с wraparound" {
 }
 
 
-test "as byte: chain с bitwise (mask + cast)" {
+test "as u8: chain с bitwise (mask + cast)" {
     let n int = 0xFFFF
     let lo = (n & 0xFF) as u8
     assert(lo as int == 0xFF)
@@ -58,7 +58,7 @@ test "newtype-alias as underlying: identity" {
 }
 
 
-test "as byte: zero-byte preserved" {
+test "as u8: zero-byte preserved" {
     let z int = 256
     let b = z as u8
     // 256 mod 256 = 0
@@ -66,7 +66,7 @@ test "as byte: zero-byte preserved" {
 }
 
 
-test "as byte: negative wraps to 0..255" {
+test "as u8: negative wraps to 0..255" {
     let neg int = -1
     let b = neg as u8
     // -1 wraps to 255 (0xFF) under unsigned semantics.

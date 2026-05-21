@@ -1,0 +1,12 @@
+// EXPECT_COMPILE_ERROR E7301
+//
+// Plan 79 Ф.1: assignability also catches non-literal expressions —
+// a `bool`-typed variable assigned to an `int` annotation.
+
+module nova_tests.plan79.assign_var_category_mismatch
+
+fn run() -> int {
+    let flag bool = true
+    let n int = flag
+    n
+}

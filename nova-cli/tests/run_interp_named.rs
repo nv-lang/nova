@@ -8,6 +8,15 @@
 //! фикстуре `nova_tests/named_params/imported_named_run.nv` и проверяет
 //! stdout. Эта фикстура также прогоняется codegen-suite — двойное
 //! покрытие обоих путей (interp + codegen).
+//!
+//! **`#[ignore]` (2026-05-21):** treewalk-интерпретатор (`nova run`)
+//! сейчас намеренно не поддерживается — сильно устарел, к нему вернутся
+//! в будущем. После Plan 62.B prelude мигрировал на `external fn`,
+//! которые interp не реализует (`interp does not support external fn`),
+//! поэтому `nova run` падает на любом prelude-using файле. Тест
+//! сохранён — разморозить (`#[ignore]` снять), когда interp вернут в
+//! поддержку. Codegen-путь той же фикстуры остаётся зелёным в
+//! `nova test`.
 
 use std::path::PathBuf;
 use std::process::Command;
@@ -21,6 +30,9 @@ fn repo_root() -> PathBuf {
 }
 
 #[test]
+#[ignore = "treewalk-interp deprecated — не поддерживается; `nova run` \
+            падает на prelude `external fn` (Plan 62.B). Разморозить, \
+            когда interp вернут в поддержку."]
 fn nova_run_reordered_named_args_imported_callee() {
     let repo = repo_root();
     let fixture = repo

@@ -1,0 +1,19 @@
+// EXPECT_COMPILE_ERROR does not satisfy
+//
+// Plan 81 Ф.3: negative — a type lacking the protocol's method does not
+// satisfy a cross-file generic bound. The bound `Showable` (declared in
+// `bound_lib`) is resolved and enforced at the call site.
+
+module nova_tests.plan81.bound_cross_file_neg
+
+import nova_tests.plan81.bound_lib.{Showable}
+
+type NoShow { n int }
+
+fn describe[T Showable](x T) -> str => x.show()
+
+test "Ф.3 — non-conforming type rejected by cross-file bound" {
+    let bad = NoShow { n: 1 }
+    let _ = describe(bad)
+    assert(true)
+}

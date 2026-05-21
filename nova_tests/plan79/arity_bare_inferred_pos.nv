@@ -1,0 +1,28 @@
+// Plan 79 Ф.2: positive — a bare generic type name without explicit type
+// arguments is a legal Nova idiom (the arguments are inferred from the
+// body / context). Ф.2 must NOT flag this — an arity error is reported
+// only when arguments ARE given but their count is wrong.
+//
+// Regression guard: an early Ф.2 draft flagged bare `Result`/`Option`
+// and broke 6 existing tests (concurrency/fiber_throw, effects/throws,
+// runtime/unwrap_or, ...).
+
+module nova_tests.plan79.arity_bare_inferred_pos
+
+// Bare `Result` — type arguments inferred from Ok/Err in the body.
+fn validated(n int) -> Result {
+    if n > 0 { Ok(n) } else { Err("negative") }
+}
+
+// Bare `Option` — type argument inferred from Some/None in the body.
+fn lookup(n int) -> Option {
+    if n > 0 { Some(n) } else { None }
+}
+
+test "Ф.2 — bare Result/Option compiles (inferred type args)" {
+    let r = validated(5)
+    assert(r.is_ok())
+
+    let o = lookup(3)
+    assert(o == Some(3))
+}

@@ -1,0 +1,37 @@
+// Plan 79 Ф.1: positive — correct assignments compile and run. Guards
+// against false positives, in particular integer-literal polymorphism
+// (D44): `let x u8 = 200` must stay valid even though the literal's
+// default type is `int`.
+
+module nova_tests.plan79.assign_correct_pos
+
+type Point { x int, y int }
+
+fn want_bool(b bool) -> int => if b { 1 } else { 0 }
+fn want_int(n int) -> int => n
+fn want_str(s str) -> int => s.len()
+fn want_point(p Point) -> int => p.x
+
+test "Ф.1 — correct assignments compile" {
+    // integer literal adapts to the annotated type (D44)
+    let a u8 = 200
+    let b i64 = 5
+    let c int = 42
+    assert(a == 200)
+    assert(b == 5)
+    assert(c == 42)
+
+    let s str = "hello"
+    let flag bool = true
+    let g f64 = 2.5
+    assert(g > 2.0)
+
+    // variable passed to a parameter of the same category
+    assert(want_bool(flag) == 1)
+    assert(want_int(c) == 42)
+    assert(want_str(s) == 5)
+
+    // record passed to a parameter of the matching type
+    let p Point = { x: 1, y: 2 }
+    assert(want_point(p) == 1)
+}

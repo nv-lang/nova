@@ -147,6 +147,105 @@ pub fn with_result_category(c_type: &str) -> WithResultCategory {
     WithResultCategory::ValueStruct
 }
 
+/// Plan 81 Ф.7.2 — compiler-level reachability dead-code elimination for
+/// free functions.
+///
+/// Returns the set of **monomorphic free-function names** unreachable from
+/// any codegen root: their forward declaration and body are omitted from
+/// the generated C (smaller `.c`, faster C compilation — the final binary
+/// was already trimmed by linker-level DCE, Ф.7.1).
+///
+/// **Scope — only monomorphic free functions.**
+///  - Generic free functions are already emitted lazily via the
+///    monomorphization worklist — an uninstantiated one is never emitted.
+///  - Methods / types / constants are out of scope: compiler-level method
+///    DCE needs conservative protocol dynamic-dispatch retention (a
+///    separate increment, Ф.7.2-methods); the linker already strips unused
+///    methods from the binary.
+///
+/// **Soundness.** A monomorphic free function is only ever *called* by its
+/// name appearing syntactically — a bare `Ident` (same-module / merged
+/// calls) or a `Member` selector (`mod.func()` module-qualified calls,
+/// collected by `collect_used_names` since Ф.7.2). `collect_used_names`
+/// performs a complete AST walk over every expression / statement / type /
+/// contract position. Roots: `main`; every name referenced by a
+/// non-candidate item (methods, generic fns, tests, benches, consts,
+/// types, externals — all emitted unconditionally); and exported free
+/// functions (cross-module API surface). The transitive closure over
+/// candidate→candidate call edges is the reachable set; the dead set is
+/// its complement. Over-approximation is always toward keeping a function
+/// (e.g. a name shared by an overload, a local, or a struct field) — never
+/// toward dropping a reachable one.
+///
+/// **DCE is anchored to `fn main`.** If the module has no `main`, it is
+/// not an executable — a library compiled standalone, or a `nova check` /
+/// negative-test target — and there is no entry point to prune against:
+/// every free function is kept. (When such a library is later *imported*
+/// into an executable its functions are merged into that executable's
+/// module and pruned there, anchored by the executable's `main`.) This
+/// also keeps negative `EXPECT_CC_ERROR` fixtures intact — their
+/// erroneous, `main`-less function bodies must still reach the C compiler.
+fn compute_dead_free_fns(module: &Module) -> HashSet<String> {
+    let is_candidate = |f: &FnDecl| -> bool {
+        f.receiver.is_none()
+            && f.generics.is_empty()
+            && !matches!(f.body, crate::ast::FnBody::External)
+    };
+    // No `main` → not an executable → nothing to anchor reachability to;
+    // keep every free function.
+    let has_main = module.items.iter().any(|it| {
+        matches!(it, Item::Fn(f) if f.name == "main" && f.receiver.is_none())
+    });
+    if !has_main {
+        return HashSet::new();
+    }
+    let mut candidates: HashSet<String> = HashSet::new();
+    for item in &module.items {
+        if let Item::Fn(f) = item {
+            if is_candidate(f) {
+                candidates.insert(f.name.clone());
+            }
+        }
+    }
+    if candidates.is_empty() {
+        return HashSet::new();
+    }
+    // refs_of[name] — names referenced by candidate free fn(s) `name`
+    // (overloads sharing a name are unioned — kept/dropped together).
+    let mut refs_of: HashMap<String, HashSet<String>> = HashMap::new();
+    // Worklist seed: `main` is always a root.
+    let mut worklist: Vec<String> = vec!["main".to_string()];
+    for item in &module.items {
+        let mut refs: HashSet<String> = HashSet::new();
+        crate::lints::collect_used_names(std::slice::from_ref(item), &mut refs);
+        match item {
+            Item::Fn(f) if is_candidate(f) => {
+                if f.is_export {
+                    // Exported free fn — cross-module API surface → root.
+                    worklist.push(f.name.clone());
+                }
+                refs_of.entry(f.name.clone()).or_default().extend(refs);
+            }
+            _ => {
+                // Non-candidate item (method / generic fn / external /
+                // test / bench / const / type) is emitted unconditionally,
+                // so every name it references is a reachability root.
+                worklist.extend(refs);
+            }
+        }
+    }
+    let mut reachable: HashSet<String> = HashSet::new();
+    while let Some(name) = worklist.pop() {
+        if !candidates.contains(&name) || !reachable.insert(name.clone()) {
+            continue;
+        }
+        if let Some(refs) = refs_of.get(&name) {
+            worklist.extend(refs.iter().cloned());
+        }
+    }
+    candidates.difference(&reachable).cloned().collect()
+}
+
 pub struct CEmitter {
     out: String,
     /// File-scope handler impl function bodies (ctx structs + forward decls + bodies)
@@ -509,6 +608,10 @@ pub struct CEmitter {
     /// оба добавляются. Без этого fix codegen эмитит `th.func(args)` напрямую
     /// → undeclared identifier `th` в C → CC-FAIL.
     imported_modules: HashSet<String>,
+    /// Plan 81 Ф.6.2: имя свободной функции → путь объявляющего модуля.
+    /// Заполняется в `emit_module` из `module.peer_files`; `free_fn_c_name`
+    /// использует для mangling `nova_fn_<modpath>_<name>`.
+    fn_module_map: HashMap<String, Vec<String>>,
     /// Plan 20 Ф.4: stack of active defer/errdefer scopes during emission.
     /// Each block that contains a `defer`/`errdefer` stmt pushes a `DeferScope`
     /// on entry and pops on exit. `Stmt::Return`/`Break`/`Continue` walk the
@@ -812,6 +915,7 @@ impl CEmitter {
             warnings: std::cell::RefCell::new(Vec::new()),
             strict_errors: std::cell::RefCell::new(Vec::new()),
             imported_modules: HashSet::new(),
+            fn_module_map: HashMap::new(),
             mono_fn_decls: HashMap::new(),
             mono_method_decls: HashMap::new(),
             self_method_decls: HashMap::new(),
@@ -1106,6 +1210,23 @@ impl CEmitter {
             register_imports(&pf.imports, &mut self.imported_modules);
         }
 
+        // Plan 81 Ф.6.2: атрибуция свободных функций к объявляющим
+        // модулям — для symbol mangling `nova_fn_<modpath>_<name>`.
+        // Первый peer с данным именем побеждает (cross-module overload
+        // с одним именем — редкий edge; param-суффикс всё равно
+        // разводит C-имена).
+        for pf in &module.peer_files {
+            for item in &pf.items_here {
+                if let Item::Fn(f) = item {
+                    if f.receiver.is_none() {
+                        self.fn_module_map
+                            .entry(f.name.clone())
+                            .or_insert_with(|| pf.module_name.clone());
+                    }
+                }
+            }
+        }
+
         // Plan 33.3 Ф.9.2 (D24): pre-pass — собрать invariants для record-типов.
         // Used в emit_record_lit для wrap'а конструкции в runtime-check.
         for item in &module.items {
@@ -1359,7 +1480,7 @@ impl CEmitter {
             const BUILTIN_TYPE_NAMES: &[&str] = &[
                 "int", "i64", "i32", "i16", "i8",
                 "u64", "u32", "u16", "u8",
-                "f64", "f32", "bool", "str", "byte", "char",
+                "f64", "f32", "bool", "str", "char",
                 "Option", "Result", "Self", "Handler", "CancelToken",
                 // Plan 76: bottom-тип `never` — строчный встроенный примитив.
                 "never", "Error",
@@ -1574,6 +1695,16 @@ impl CEmitter {
             if !user_const_names.contains(&c.name) { return false; }
             !user_const_spans.contains(&(c.name.clone(), c.span))
         };
+        // Plan 81 Ф.7.2: compiler-level reachability DCE — monomorphic
+        // free functions unreachable from any root are not emitted (their
+        // forward decl + body are dropped from the `.c`).
+        let dead_free_fns = compute_dead_free_fns(module);
+        let is_dead_free_fn = |f: &FnDecl| -> bool {
+            f.receiver.is_none()
+                && f.generics.is_empty()
+                && !matches!(f.body, crate::ast::FnBody::External)
+                && dead_free_fns.contains(&f.name)
+        };
 
         // 1. Type declarations first (structs/unions needed by fn signatures)
         for item in &module.items {
@@ -1683,7 +1814,7 @@ impl CEmitter {
                     let key = ("".to_string(), f.name.clone());
                     let existing_count = self.method_overloads.get(&key)
                         .map(|v| v.len()).unwrap_or(0);
-                    let base_c_name = format!("nova_fn_{}", f.name);
+                    let base_c_name = self.free_fn_c_name(&f.name);
                     let c_name = if existing_count == 0 {
                         base_c_name.clone()
                     } else {
@@ -1993,6 +2124,7 @@ impl CEmitter {
         for item in &module.items {
             if let Item::Fn(f) = item {
                 if should_skip_fn(f) { continue; } // Plan 62.D bis-1: D29 shadow
+                if is_dead_free_fn(f) { continue; } // Plan 81 Ф.7.2: DCE
                 self.emit_fn_forward_decl(f)?;
             }
         }
@@ -2023,6 +2155,7 @@ impl CEmitter {
         for item in &module.items {
             if let Item::Fn(f) = item {
                 if should_skip_fn(f) { continue; } // Plan 62.D bis-1: D29 shadow
+                if is_dead_free_fn(f) { continue; } // Plan 81 Ф.7.2: DCE
                 self.emit_fn(f)?;
             }
         }
@@ -3281,7 +3414,6 @@ impl CEmitter {
                     "f32"  => Ok("nova_f32".into()),
                     "bool" => Ok("nova_bool".into()),
                     "str"  => Ok("nova_str".into()),
-                    "byte" => Ok("nova_byte".into()),
                     // D26 Q-string-indexing школа B: char это Unicode codepoint.
                     // Plan 70.3: distinct `nova_char` typedef над `nova_int` (см.
                     // nova_rt/nova_rt.h). Same int64_t storage, но distinct C name
@@ -3458,7 +3590,7 @@ impl CEmitter {
                             // Map C type name back to canonical Nova array key.
                             match c_ty.as_str() {
                                 "nova_str"  => "str",
-                                "nova_byte" | "uint8_t" => "byte",
+                                "nova_byte" | "uint8_t" => "u8",
                                 "nova_bool" => "bool",
                                 "nova_f64" | "float" | "double" => "f64",
                                 // Plan 70.4: nova_f32 maps back to "f32" key, not "f64".
@@ -3478,7 +3610,7 @@ impl CEmitter {
                         };
                         return Ok(match elem_key {
                             "str" => "NovaArray_nova_str*".into(),
-                            "byte" | "u8" => "NovaArray_nova_byte*".into(),
+                            "u8" => "NovaArray_nova_byte*".into(),
                             "bool" => "NovaArray_nova_bool*".into(),
                             "f64" => "NovaArray_nova_f64*".into(),
                             // Plan 70.4: f32 distinct from f64 (ABI: 4 vs 8 bytes).
@@ -5747,7 +5879,7 @@ impl CEmitter {
         if matches!(base_name.as_str(),
             "Option" | "Array" | "int" | "str" | "bool" | "f64" | "f32"
             | "i32" | "i64" | "u32" | "u64" | "i8" | "i16" | "u8" | "u16"
-            | "byte" | "char") {
+            | "char") {
             return;
         }
         // Вычислить C-имена type-args
@@ -6531,7 +6663,7 @@ impl CEmitter {
                     }
                 }
             }
-            format!("nova_fn_{}", f.name)
+            self.free_fn_c_name(&f.name)
         }
     }
 
@@ -6715,7 +6847,6 @@ impl CEmitter {
             "f64" => "nova_f64".to_string(),
             "bool" => "nova_bool".to_string(),
             "str" => "nova_str".to_string(),
-            "byte" => "nova_byte".to_string(),
             other => {
                 // Extension methods on array types: []T, []str, []int, etc.
                 if let Some(elem_ty) = other.strip_prefix("[]") {
@@ -6724,7 +6855,7 @@ impl CEmitter {
                         "bool" => "nova_bool",
                         "f64"  => "nova_f64",
                         "f32"  => "nova_f32",
-                        "byte" | "u8" => "nova_byte",
+                        "u8" => "nova_byte",
                         "char" => "nova_char",
                         // Plan 70.4 Ф.2: sized-int distinct packed storage.
                         "i32"  => "int32_t",
@@ -6755,7 +6886,7 @@ impl CEmitter {
                 "f64" => "nova_f64",
                 // Plan 70.4: f32 distinct (4 vs 8 bytes ABI).
                 "f32" => "nova_f32",
-                "byte" | "u8" => "nova_byte",
+                "u8" => "nova_byte",
                 // Plan 70.3: char distinct.
                 "char" => "nova_char",
                 // Plan 70.4 Ф.2: sized-int distinct packed storage.
@@ -7225,18 +7356,73 @@ impl CEmitter {
     }
 
     /// Plan 63 Fix F+: get C-name of callee for fn_result_ok_inner_types lookup.
+    /// Plan 81 Ф.6: C-имя символа пользовательской свободной функции.
+    ///
+    /// Единая точка построения имени — Ф.6.1 централизует ~15
+    /// разбросанных `format!("nova_fn_{}", ...)`; Ф.6.2 заменит тело на
+    /// mangling с путём модуля (`nova_<modpath>_<name>`). Перегрузки
+    /// добавляют param-type-суффикс на стороне `method_overloads`;
+    /// синтетика (`nova_fn_main_impl`, closure-адаптеры `nova_fn_vi`
+    /// и т.п.) сюда **не** идёт — она exempt.
+    fn free_fn_c_name(&self, name: &str) -> String {
+        match self.fn_module_map.get(name) {
+            Some(modpath) if !modpath.is_empty() => {
+                Self::mangle_free_fn(modpath, name)
+            }
+            // Не пользовательская функция (runtime/builtin/синтетика)
+            // либо peer_files не заполнены — legacy-имя (без коллизий
+            // в single-crate bootstrap, см. D134).
+            _ => format!("nova_fn_{}", name),
+        }
+    }
+
+    /// Plan 81 Ф.6.2 (D134): mangled C-имя свободной функции —
+    /// `nova_fn_` + length-prefixed сегменты пути модуля + length-prefixed
+    /// имя функции. Length-prefix однозначен: Nova-идентификаторы не
+    /// начинаются с цифры, поэтому граница «число длины ↔ идентификатор»
+    /// чёткая. Префикс `nova_fn_` зарезервирован — не коллидирует с
+    /// runtime-символами (`nova_str_*`, `nova_int_*`, ...).
+    fn mangle_free_fn(modpath: &[String], name: &str) -> String {
+        let mut s = String::from("nova_fn_");
+        for seg in modpath {
+            s.push_str(&seg.len().to_string());
+            s.push_str(seg);
+        }
+        s.push_str(&name.len().to_string());
+        s.push_str(name);
+        // Лимит длины C-идентификатора: при превышении — усечение +
+        // hash-суффикс (сохраняет уникальность).
+        if s.len() > 240 {
+            let h = Self::ident_hash(&s);
+            let head: String = s.chars().take(216).collect();
+            format!("{}_h{:08x}", head, h)
+        } else {
+            s
+        }
+    }
+
+    /// FNV-1a 32-bit — hash-суффикс для усечённых mangled-имён.
+    fn ident_hash(s: &str) -> u32 {
+        let mut h: u32 = 2166136261;
+        for b in s.bytes() {
+            h ^= b as u32;
+            h = h.wrapping_mul(16777619);
+        }
+        h
+    }
+
     /// Mirrors `emit_call`'s callee name resolution для Ident/Path/Member cases.
     fn call_target_c_name(&self, func: &crate::ast::Expr) -> String {
         use crate::ast::ExprKind;
         match &func.kind {
-            ExprKind::Ident(name) => format!("nova_fn_{}", name),
+            ExprKind::Ident(name) => self.free_fn_c_name(name),
             ExprKind::Path(parts) if !parts.is_empty() => {
                 // Static-method-style `Type.method` → "Nova_Type_method_<method>"
                 // (Plan 11: instance methods all use _method_ mangling).
                 if parts.len() == 2 {
                     format!("Nova_{}_method_{}", parts[0], parts[1])
                 } else {
-                    format!("nova_fn_{}", parts.join("_"))
+                    self.free_fn_c_name(&parts.join("_"))
                 }
             }
             ExprKind::Member { obj, name } => {
@@ -7460,7 +7646,7 @@ impl CEmitter {
             "nova_bool" => "bool".to_string(),
             "nova_f64"  => "f64".to_string(),
             "nova_f32"  => "f32".to_string(),
-            "nova_byte" => "byte".to_string(),
+            "nova_byte" => "u8".to_string(),
             other => other.strip_prefix("Nova_").unwrap_or(other).to_string(),
         }
     }
@@ -8082,7 +8268,7 @@ impl CEmitter {
                     "f64" => "nova_f64",
                     "bool" => "nova_bool",
                     "str" => "nova_str",
-                    "byte" => "nova_byte",
+                    "u8" => "nova_byte",
                     _ => return None,
                 };
                 Some(c.to_string())
@@ -8152,7 +8338,7 @@ impl CEmitter {
                     "bool"          => "nova_bool".to_string(),
                     "f64"           => "nova_f64".to_string(),
                     "f32"           => "nova_f32".to_string(),
-                    "byte" | "u8"  => "nova_byte".to_string(),
+                    "u8"  => "nova_byte".to_string(),
                     "unit"          => "nova_unit".to_string(),
                     other           => format!("Nova_{}*", other),
                 }
@@ -8172,7 +8358,7 @@ impl CEmitter {
     /// Called when type argument inference fails (e.g. generic record params).
     /// Idempotent — body is only emitted once (guarded by mono_instantiated).
     fn register_erased_instance(&mut self, fn_decl: &crate::ast::FnDecl) {
-        let erased_name = format!("nova_fn_{}", fn_decl.name);
+        let erased_name = self.free_fn_c_name(&fn_decl.name);
         if self.mono_instantiated.contains(&erased_name) {
             return; // Already registered (either erased or mono base name)
         }
@@ -10551,7 +10737,7 @@ impl CEmitter {
                                         || matches!(n.as_str(),
                                             "int" | "i8" | "i16" | "i32" | "i64"
                                             | "u8" | "u16" | "u32" | "u64"
-                                            | "f32" | "f64" | "byte" | "bool" | "char" | "str");
+                                            | "f32" | "f64" | "bool" | "char" | "str");
                                     if is_type { (n.clone(), true) } else {
                                         let obj_ty = self.var_types.get(n).cloned().unwrap_or_default();
                                         let t = Self::nova_type_name_from_c(&obj_ty);
@@ -10574,7 +10760,7 @@ impl CEmitter {
                                         "f32" => "nova_f32".to_string(),
                                         "str" => "nova_str".to_string(),
                                         "char" => "nova_int".to_string(),
-                                        "byte" => "nova_byte".to_string(),
+                                        "u8" => "nova_byte".to_string(),
                                         "bool" => "nova_bool".to_string(),
                                         _ => format!("Nova_{}*", type_name),
                                     };
@@ -11198,7 +11384,7 @@ impl CEmitter {
                     if let Some(closure_value) = self.emit_free_fn_value(name) {
                         return Ok(closure_value);
                     }
-                    return Ok(format!("nova_fn_{}", name));
+                    return Ok(self.free_fn_c_name(name));
                 }
                 Ok(name.clone())
             }
@@ -12772,10 +12958,10 @@ impl CEmitter {
                 if let Some((type_name, _)) = self.sum_schema_registry.find_variant_compat(name) {
                     format!("nova_make_{}_{}", type_name, name)
                 } else {
-                    format!("nova_fn_{}", name)
+                    self.free_fn_c_name(name)
                 }
             }
-            _ => "nova_fn_unknown".into(),
+            _ => self.free_fn_c_name("unknown"),
         }
     }
 
@@ -13137,11 +13323,11 @@ impl CEmitter {
                             }
                         } else {
                             // Single overload — короткое имя (backward compat).
-                            format!("nova_fn_{}", name)
+                            self.free_fn_c_name(name)
                         }
                     } else {
                         // Не зарегистрирована в registry (тесты, prelude builtins).
-                        format!("nova_fn_{}", name)
+                        self.free_fn_c_name(name)
                     }
                 }
             }
@@ -13332,7 +13518,7 @@ impl CEmitter {
                         // Mapping Nova-type → NovaArray storage suffix.
                         let arr_suffix = match elem_t.as_str() {
                             "str"            => "nova_str",
-                            "byte" | "u8"    => "nova_byte",
+                            "u8"    => "nova_byte",
                             "bool"           => "nova_bool",
                             "f64"            => "nova_f64",
                             // Plan 70.4: f32 distinct (nova_array_new_nova_f32).
@@ -14593,7 +14779,7 @@ impl CEmitter {
                         "nova_bool" => Some("bool"),
                         "nova_f64"  => Some("f64"),
                         "nova_f32"  => Some("f32"),
-                        "nova_byte" => Some("byte"),
+                        "nova_byte" => Some("u8"),
                         _ => None,
                     };
                     if let Some(prim) = prim_nova_name {
@@ -15807,9 +15993,9 @@ impl CEmitter {
                             safe, method_name, arg_strs.join(", ")
                         ));
                     }
-                    format!("nova_fn_{}", parts.join("_"))
+                    self.free_fn_c_name(&parts.join("_"))
                 } else {
-                    format!("nova_fn_{}", parts.join("_"))
+                    self.free_fn_c_name(&parts.join("_"))
                 }
             }
             _ => self.emit_expr(func)?,
@@ -15880,7 +16066,7 @@ impl CEmitter {
                 if has_tuple_return {
                     // Force erasure fallback for tuple-returning generic fns.
                     self.register_erased_instance(&fn_decl.clone());
-                    let erased_name = format!("nova_fn_{}", fn_name);
+                    let erased_name = self.free_fn_c_name(fn_name);
                     let mut arg_strs = Vec::new();
                     for a in args.iter() {
                         let arg_ty = self.infer_expr_c_type(a.expr());
@@ -15901,7 +16087,7 @@ impl CEmitter {
                 // Ф.0: resolve type args
                 match self.resolve_mono_type_args(&fn_decl, &turbofish_type_refs, args) {
                     Ok(type_subst) => {
-                        let base_c_name = format!("nova_fn_{}", fn_name);
+                        let base_c_name = self.free_fn_c_name(fn_name);
                         let mono_name = Self::compute_mono_name(&base_c_name, &type_subst);
                         // Register instance (forward decl + worklist)
                         self.register_mono_instance(&fn_decl.clone(), type_subst.clone(), &mono_name.clone());
@@ -19502,7 +19688,7 @@ impl CEmitter {
                     || matches!(n.as_str(),
                         "int" | "i8" | "i16" | "i32" | "i64"
                         | "u8" | "u16" | "u32" | "u64"
-                        | "f32" | "f64" | "byte" | "bool" | "char" | "str");
+                        | "f32" | "f64" | "bool" | "char" | "str");
                 if is_type { (n.clone(), true) } else {
                     // Bound: derive type from var.
                     let obj_ty = self.var_types.get(n).cloned().unwrap_or_default();
@@ -19556,7 +19742,7 @@ impl CEmitter {
             "f32" => "nova_f32".to_string(),
             "str" => "nova_str".to_string(),
             "char" => "nova_int".to_string(),
-            "byte" => "nova_byte".to_string(),
+            "u8" => "nova_byte".to_string(),
             "bool" => "nova_bool".to_string(),
             _ => format!("Nova_{}*", type_name),
         };
@@ -19668,7 +19854,7 @@ impl CEmitter {
         let (param_c_tys, ret_c_ty) = self.user_fn_sigs.get(fn_name).cloned()?;
         // Emit thunk one-time (deduped).
         if !self.emitted_fn_thunks.contains(fn_name) {
-            let thunk_name = format!("nova_fn_{}_thunk", fn_name);
+            let thunk_name = format!("{}_thunk", self.free_fn_c_name(fn_name));
             // Build params: void* env, T0 p0, T1 p1, ...
             let mut params = vec!["void* _env".to_string()];
             for (i, ty) in param_c_tys.iter().enumerate() {
@@ -19686,10 +19872,10 @@ impl CEmitter {
                 .map(|i| format!("p{}", i))
                 .collect();
             if ret_c_ty == "nova_unit" {
-                impl_buf.push_str(&format!("    nova_fn_{}({});\n", fn_name, call_args.join(", ")));
+                impl_buf.push_str(&format!("    {}({});\n", self.free_fn_c_name(fn_name), call_args.join(", ")));
                 impl_buf.push_str("    return NOVA_UNIT;\n");
             } else {
-                impl_buf.push_str(&format!("    return nova_fn_{}({});\n", fn_name, call_args.join(", ")));
+                impl_buf.push_str(&format!("    return {}({});\n", self.free_fn_c_name(fn_name), call_args.join(", ")));
             }
             impl_buf.push_str("}\n\n");
             self.lambda_impls.push_str(&impl_buf);
@@ -19699,7 +19885,7 @@ impl CEmitter {
         let clos_struct = Self::clos_struct_name(&param_c_tys, &ret_c_ty);
         let clos_fn_ty = Self::clos_fn_ty(&param_c_tys, &ret_c_ty);
         let clos_tmp = self.fresh_tmp();
-        let thunk_name = format!("nova_fn_{}_thunk", fn_name);
+        let thunk_name = format!("{}_thunk", self.free_fn_c_name(fn_name));
         self.line(&format!(
             "{}* {} = ({}*)nova_alloc(sizeof({}));",
             clos_struct, clos_tmp, clos_struct, clos_struct
@@ -20451,7 +20637,7 @@ impl CEmitter {
             ("i64",  "char", "use `char.try_from(n)?`"),
             ("u32",  "char", "use `char.try_from(n)?`"),
             ("u64",  "char", "use `char.try_from(n)?`"),
-            ("char", "byte", "use `byte.try_from(c)?` (fails if codepoint > 0xFF)"),
+            ("char", "u8", "use `u8.try_from(c)?` (fails if codepoint > 0xFF)"),
             ("int",  "bool", "use explicit comparison (`n != 0` for truthy-int)"),
             ("i8",   "bool", "use `n != 0`"),
             ("i16",  "bool", "use `n != 0`"),
@@ -20461,7 +20647,6 @@ impl CEmitter {
             ("u16",  "bool", "use `n != 0`"),
             ("u32",  "bool", "use `n != 0`"),
             ("u64",  "bool", "use `n != 0`"),
-            ("byte", "bool", "use `n != 0`"),
             ("f64",  "bool", "use `f != 0.0`"),
             ("f32",  "bool", "use `f != 0.0`"),
             ("str",  "int",  "use `int.try_from(s)?` (parses decimal)"),
@@ -20526,7 +20711,7 @@ impl CEmitter {
             "nova_f32"  => "f32".into(),
             "nova_bool" => "bool".into(),
             "nova_str"  => "str".into(),
-            "nova_byte" => "byte".into(),
+            "nova_byte" => "u8".into(),
             "int8_t"    => "i8".into(),
             "int16_t"   => "i16".into(),
             "int32_t"   => "i32".into(),
@@ -20584,9 +20769,8 @@ impl CEmitter {
             ("uint", "MAX", "UINT64_MAX",            "uint64_t"),
             ("u32",  "MAX", "UINT32_MAX",            "uint32_t"),
             ("u16",  "MAX", "UINT16_MAX",            "uint16_t"),
-            // Plan 70.4 Ф.4: u8 → nova_byte (unified); "byte" alias same.
+            // Plan 70.4 Ф.4: u8 → nova_byte (C typedef uint8_t).
             ("u8",   "MAX", "((nova_byte)UINT8_MAX)", "nova_byte"),
-            ("byte", "MAX", "((nova_byte)UINT8_MAX)", "nova_byte"),
             // Char (codepoint)
             ("char", "MAX", "((nova_int)0x10FFFFLL)", "nova_int"),
             ("char", "MIN", "((nova_int)0LL)",        "nova_int"),
@@ -21083,7 +21267,7 @@ impl CEmitter {
                                             "nova_bool" => "bool".to_string(),
                                             "nova_f64"  => "f64".to_string(),
                                             "nova_f32"  => "f32".to_string(),
-                                            "nova_byte" => "byte".to_string(),
+                                            "nova_byte" => "u8".to_string(),
                                             other       => other.to_string(),
                                         };
                                         Some((nova_name, name.clone(), true))
@@ -21395,7 +21579,7 @@ impl CEmitter {
                         {
                             let arr_suffix = match parts[1].as_str() {
                                 "str"            => "nova_str",
-                                "byte" | "u8"    => "nova_byte",
+                                "u8"    => "nova_byte",
                                 "bool"           => "nova_bool",
                                 "f64"            => "nova_f64",
                                 // Plan 70.4: f32 distinct (NovaArray_nova_f32*).
@@ -22326,5 +22510,112 @@ impl CEmitter {
             }
         }
         out
+    }
+}
+
+#[cfg(test)]
+mod mangle_tests {
+    //! Plan 81 Ф.6.2 (D134): unit-тесты схемы symbol mangling.
+    use super::CEmitter;
+
+    #[test]
+    fn mangles_with_module_path() {
+        let got = CEmitter::mangle_free_fn(
+            &["nova_tests".to_string(), "plan79".to_string()],
+            "want_int",
+        );
+        assert_eq!(got, "nova_fn_10nova_tests6plan798want_int");
+    }
+
+    #[test]
+    fn length_prefix_is_unambiguous() {
+        // snake_case-сегмент с `_` внутри: разделитель `_` был бы
+        // неоднозначен — длина-префикс разводит границы.
+        let a = CEmitter::mangle_free_fn(&["a".to_string()], "b_c");
+        let b = CEmitter::mangle_free_fn(&["a_b".to_string()], "c");
+        assert_eq!(a, "nova_fn_1a3b_c");
+        assert_eq!(b, "nova_fn_3a_b1c");
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn long_name_truncated_with_hash() {
+        let seg = "x".repeat(300);
+        let got = CEmitter::mangle_free_fn(&[seg], "f");
+        assert!(got.len() <= 240, "len = {}", got.len());
+        assert!(got.contains("_h"));
+    }
+}
+
+#[cfg(test)]
+mod dce_tests {
+    //! Plan 81 Ф.7.2: unit-тесты reachability-DCE для свободных функций.
+    use super::compute_dead_free_fns;
+
+    fn dead_of(src: &str) -> std::collections::HashSet<String> {
+        let module = crate::parser::parse(src).expect("fixture parses");
+        compute_dead_free_fns(&module)
+    }
+
+    #[test]
+    fn unreachable_free_fn_is_dead() {
+        let dead = dead_of(
+            "module t\n\
+             fn used() -> int => 1\n\
+             fn unused() -> int => 2\n\
+             fn main() -> int => used()\n",
+        );
+        assert!(dead.contains("unused"), "unused has no caller → dead");
+        assert!(!dead.contains("used"), "used is called by main");
+        assert!(!dead.contains("main"), "main is the codegen root");
+    }
+
+    #[test]
+    fn transitively_reachable_is_kept_orphan_chain_is_dead() {
+        let dead = dead_of(
+            "module t\n\
+             fn leaf() -> int => 9\n\
+             fn mid() -> int => leaf()\n\
+             fn orphan_leaf() -> int => 5\n\
+             fn orphan() -> int => orphan_leaf()\n\
+             fn main() -> int => mid()\n",
+        );
+        // main → mid → leaf — whole chain reachable.
+        assert!(!dead.contains("mid"));
+        assert!(!dead.contains("leaf"), "leaf reachable transitively via mid");
+        // orphan → orphan_leaf — entire chain has no live caller.
+        assert!(dead.contains("orphan"));
+        assert!(
+            dead.contains("orphan_leaf"),
+            "callee of a dead fn is itself dead (its only caller is dead)"
+        );
+    }
+
+    #[test]
+    fn exported_free_fn_is_a_root() {
+        // An exported free fn is cross-module API surface — kept even
+        // without a local caller.
+        let dead = dead_of(
+            "module t\n\
+             export fn api() -> int => 1\n\
+             fn helper_of_api() -> int => api()\n\
+             fn main() -> int => 0\n",
+        );
+        assert!(!dead.contains("api"), "exported fn is a root");
+    }
+
+    #[test]
+    fn module_qualified_call_keeps_callee() {
+        // `mod.func()` parses as a Member expression; the selector name is
+        // collected (Ф.7.2) so the callee is not wrongly dropped.
+        let dead = dead_of(
+            "module t\n\
+             fn target() -> int => 7\n\
+             fn main() -> int => somemod.target()\n",
+        );
+        assert!(
+            !dead.contains("target"),
+            "callee referenced via `mod.target()` must stay reachable"
+        );
     }
 }

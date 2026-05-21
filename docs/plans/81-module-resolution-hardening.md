@@ -3,7 +3,97 @@
 > **Создан 2026-05-21.** Переработан с чистого листа 2026-05-21 после
 > сверки с реальным кодом компилятора (см. «Сверка фактов» ниже).
 >
-> **Статус:** 🚧 in progress — Ф.1 ✅ (2026-05-21), Ф.2–Ф.10 pending.
+> **Статус:** ✅ **ЗАКРЫТ 2026-05-21** — Ф.1–Ф.11 ✅
+> (worktree `nova-p79`, ветка `plan-81-hardening`, **956 PASS / 0 FAIL**).
+> Декомпозированы в отдельные инкременты (не упрощения — каждый своя
+> завершённая работа): **Ф.6.3** `nova demangle` (stretch, опционально),
+> **Ф.7.2-methods** method-level compiler-DCE (нужна protocol-dispatch
+> консервативность; бинарь уже чистит линкер Ф.7.1).
+> - **Ф.1** ✅ visibility enforcement (commit `197480a747c`).
+> - **Ф.2** ✅ module-qualified call type-check — `alias.func()` /
+>   `mod.func()` резолвятся в `TypeCheckCtx`; неизвестная функция →
+>   **E7401**, неверный аргумент → E7301 (через argbind + Ф.1
+>   assignability). Закрыты deferred-негативы Plan 70.1
+>   (`nova_tests/plan70_1/f3,f4`).
+> - **Ф.3** ✅ cross-file generic bounds — эмпирически verify: уже
+>   работают (Plan 35 merge → `protocol_specs` → `check_satisfaction`),
+>   orphan rule не нужен (структурная конформность D72). Добавлены
+>   regression-фикстуры `nova_tests/plan81/bound_*`.
+> - **Ф.4** ✅ resolver strictness: (b) case-sensitive пути —
+>   `ResolveErr::CaseMismatch` (`verify_case` канонизирует путь,
+>   сверяет регистр); (a) `unused-import` lint — per-peer, селективные
+>   импорты (whole-module не линтуется — открытый набор bare-имён через
+>   Plan 35 merge). 0 ложных срабатываний на `std/`.
+> - **Ф.5** ✅ peer mutual recursion — эмпирически verify: уже работает
+>   (сигнатуры всех items регистрируются до обхода тел). Добавлен
+>   folder-module `nova_tests/plan81/peer_recur/`.
+> - **Ф.6** ✅ symbol mangling v0 — Ф.6.1 централизация именования
+>   (`free_fn_c_name`, чистый рефактор), Ф.6.2 модульный mangling
+>   `nova_fn_<L><seg>…<L><name>` (length-prefix, путь модуля), спека
+>   **D134**, 3 unit-теста схемы. Ф.6.3 (`nova demangle`) — stretch,
+>   опционально, не блокирует.
+> - **Ф.7.1** ✅ linker-level DCE — `-ffunction-sections -fdata-sections`
+>   + `-Wl,--gc-sections` (Linux/macOS) / `/Gy` (MSVC): неиспользуемые
+>   секции удаляет линкер.
+> - **Ф.7.2** ✅ compiler-level reachability DCE для **свободных
+>   функций** — `compute_dead_free_fns`: worklist достижимости от корней
+>   (`main`, refs всех non-candidate items, экспортируемые fn), обход
+>   call-графа, недостижимые мономорфные свободные функции не эмитятся
+>   в `.c` (ни forward-decl, ни тело). Sound-by-construction: свободная
+>   функция вызывается только синтаксически по имени (bare `Ident` или
+>   `Member`-селектор для `mod.func()`). Method-level compiler-DCE
+>   декомпозирован в отдельный инкремент (Ф.7.2-methods — нужна
+>   protocol-dispatch консервативность; бинарь уже почищен линкером
+>   Ф.7.1). Тесты: 4 unit-теста reachability в `emit_c.rs`.
+> - **Ф.8** ✅ resolution diagnostics: **Ф.8.1** FileId-аудит — маркер
+>   оказался **реальным**: ошибка импортированного модуля рендерилась
+>   byte-offset'ом в entry-исходник (чужой файл/сниппет); фикс
+>   `build_source_map` + `render_with_map` + сниппет. **Ф.8.2**
+>   multi-error recovery — резолв не прерывается на первой ошибке
+>   импорта (cycle-state восстанавливается между top-level импортами).
+>   **Ф.8.3** did-you-mean — для module-path уже работает
+>   (`suggest_module_name`, Левенштейн); verify + фикстура. Item-level
+>   did-you-mean (`import X.{Typo}`) — требует R26 selective-item
+>   enforcement, deferred-with-reason.
+> - `plan81/lib` — библиотечная фикстура без `main` (test-runner
+>   classification gap) — починена self-test'ом.
+> - **Ф.10** ✅ entry-folder-module peer-isolation — resolver
+>   (`resolve_imports_inline_ex`) детектит, что сам компилируемый entry —
+>   peer folder-module, собирает sibling peers (distinct `file_id`,
+>   `is_entry_module=true`), мёрджит их items **включая `Item::Test`**,
+>   резолвит import'ы каждого peer'а в ЕГО visible scope (Rule C). Prelude
+>   резолвится один раз и разделяется всей entry-группой. Закрыт
+>   сопутствующий пробел: `manifest::check_module_path` теперь
+>   folder-module-aware (`is_folder_module_peer` стал каноническим public
+>   в `imports.rs`, test-runner делегирует ему). Тесты: 2 unit-теста
+>   resolver'а + nova-cli integration-тест (`nova check` на
+>   entry-folder-module). Test-runner-side (авто-компиляция folder-module
+>   как unit в `nova test`) — **сознательно не делается**: см. Ф.10 ниже.
+> - **Ф.9** ✅ content-addressed build cache — `nova build` кэширует
+>   сгенерированный `.c` по хэшу(все исходники + отпечаток компилятора
+>   + cfg-features + target + mono-depth). Попадание → пропуск всего
+>   Rust-side пайплайна (type-check / effects / lints / desugar /
+>   callnorm / codegen). `.c` не зависит от C-тулчейна → ключ его не
+>   включает, clang всегда перезапускается. Хранилище
+>   `target/.nova-cache/`; `NOVA_NO_CACHE=1` отключает. Гранулярность —
+>   сборка целиком: Nova использует inline-expansion (один `Module` →
+>   один `.c`), module-granular инкремент потребовал бы separate
+>   compilation (за рамками v1, как и отмечал план). Тесты: 3 unit-теста
+>   (`build_cache.rs`) + e2e (повторный build → hit; правка /
+>   `NOVA_NO_CACHE` → miss).
+> - **Ф.11** ✅ закрывающая — spec/simplifications/README sync:
+>   `07-modules.md` D5 (нота про enforcement Ф.1), D134 (mangling,
+>   создан в Ф.6), D29 (политика циклов re-confirmed — «циклические
+>   импорты запрещены» уже зафиксировано); `simplifications.md` —
+>   маркеры FileId / AD3 / `[M-entry-folder-module]` / 35.B-D / wildcard
+>   отмечены resolved или spec-rejected; `docs/plans/README.md` — статус
+>   Plan 81 ЗАКРЫТ.
+>
+> Suite: **956 PASS / 0 FAIL** (codegen-suite). Пре-существующий баг
+> вне Plan 81: `nova run` (treewalk-interp) падает на `external fn` из
+> prelude (interp deprecated после Plan 62.B prelude-migration) —
+> `nova-cli/tests/run_interp_named.rs`; не регрессия этой работы
+> (interp-путь не затрагивался), та же фикстура зелёная в codegen-suite.
 >
 > **Источник:** аудит module-resolution 2026-05-21 — открытые пункты
 > [Plan 35](35-cross-file-resolve.md) (sub-plans 35.B-E + R26),
@@ -234,6 +324,50 @@ Rust v0; ноль коллизий между модулями.
 без коллизии; mono'д generic из разных модулей различимы. Юнит-тесты
 самой схемы (вход → ожидаемый mangled-name).
 
+#### Декомпозиция Ф.6 (2026-05-21)
+
+Mangling нельзя коммитить «наполовину»: определение функции и каждый
+call-site обязаны согласованно использовать одно имя — частичный
+коммит = несогласованные имена = link-error. Поэтому фаза разбита так,
+чтобы **каждый под-шаг был рабочим коммитом** (build + полный прогон
+зелёные).
+
+**Сверка с кодом (2026-05-21):** построение `nova_fn_<name>` для
+пользовательских свободных функций разбросано по ~15 сайтам
+`emit_c.rs` (определение `decl_c_name` ~6534, регистрация overload'а
+~1686, `call_target_c_name` ~7232, fn-as-value ~11201/19666, mono base
+~15904, erased instance ~8175, Path-вызов ~15810, thunk ~19689 и др.).
+Перегрузки уже различаются param-type-суффиксом; mono'д generic'и —
+через `compute_mono_name` поверх base-имени. `nova_fn_main_impl`
+(синтетический entry) и closure-адаптеры `nova_fn_vi/ii/...` —
+**не** пользовательские, exempt.
+
+- **Ф.6.1 — централизация именования (чистый рефактор, без смены
+  поведения).** Ввести единый хелпер `CEmitter::free_fn_c_name(name)
+  -> String`, изначально возвращающий `format!("nova_fn_{}", name)` —
+  поведение **идентично**. Заменить все ~15 разбросанных сайтов на
+  вызов хелпера; логика overload-суффикса и exempt-синтетика остаются.
+  Acceptance: полный прогон **без изменений** (954/0) — нулевая
+  разница поведения. Это безопасный prerequisite: после него смена
+  схемы — точечная правка одного хелпера.
+
+- **Ф.6.2 — модульный mangling (смена схемы, атомарно через хелпер).**
+  Построить `fn_module_map: HashMap<String, Vec<String>>` (имя
+  свободной функции → путь объявляющего модуля) из `module.peer_files`
+  (`PeerFile.items_here` + `PeerFile.module_name` — атрибуция по
+  peer'у объявления). `free_fn_c_name` → `nova_<modpath>_<name>`
+  (сегменты пути, sanitize); функции не из карты (runtime/builtin/
+  синтетика) → fallback `nova_fn_<name>`. Overload param-суффикс
+  добавляется как раньше; mono — `compute_mono_name` поверх mangled
+  base. Лимит длины C-идентификатора → усечение + хэш-суффикс. D-блок
+  **D134**. Acceptance: полный прогон 0 регрессий; два модуля с
+  одноимёнными функциями линкуются; mono'д generic'и из разных
+  модулей различимы; unit-тесты схемы.
+
+- **Ф.6.3 — `nova demangle` (stretch, опционально).** Обратное
+  преобразование mangled → читаемое имя для стек-трейсов. Может быть
+  отложено отдельно — не блокирует закрытие Ф.6.
+
 ### Ф.7 — Dead-code elimination (P2)
 
 **Проблема:** все импортированные элементы эмитятся в C, даже
@@ -257,6 +391,52 @@ Rust v0; ноль коллизий между модулями.
 **Тесты:** недостижимая импортированная функция отсутствует в
 сгенерированном `.c`; достижимая присутствует; protocol-dispatch не
 теряет методы.
+
+#### Декомпозиция Ф.7 (2026-05-21)
+
+DCE разбита на два под-шага по уровню риска:
+
+- **Ф.7.1 — linker-level DCE (безопасно, малый коммит).** Передавать
+  C-тулчейну `-ffunction-sections -fdata-sections` (компиляция) +
+  `-Wl,--gc-sections` / `/OPT:REF` (линковка). Неиспользуемые функции/
+  данные удаляет **линкер** — как в Go. Достигает цели «меньше
+  бинарник» с near-zero риском (не трогает codegen). Per-toolchain
+  (clang/gcc — `--gc-sections`; MSVC link — `/OPT:REF`).
+
+- **Ф.7.2 — compiler-level reachability DCE.** ✅ ВЫПОЛНЕН 2026-05-21
+  для **свободных функций**; method-level — декомпозирован в отдельный
+  инкремент (см. ниже).
+
+  Сделано (`emit_c.rs::compute_dead_free_fns`): worklist достижимости.
+  Кандидаты — мономорфные свободные функции с телом (generic'и уже
+  эмитятся лениво через mono-worklist; методы/типы — out of scope).
+  Корни: `main`; имена, на которые ссылается любой non-candidate item
+  (методы, generic-fn, test/bench, const, type, external — все эмитятся
+  безусловно); экспортируемые свободные функции (cross-module API).
+  Транзитивное замыкание по рёбрам candidate→candidate даёт reachable;
+  дополнение — dead. Недостижимые fn не эмитятся (ни forward-decl, ни
+  тело) → `.c` меньше, C-компиляция быстрее.
+
+  **Sound-by-construction:** свободная функция вызывается ТОЛЬКО
+  синтаксически по имени — bare `Ident` (same-module / merged) либо
+  `Member`-селектор (`mod.func()`). `collect_used_names` (полный обход
+  AST, Ф.7.2 добавил сбор Member-селекторов) видит оба. Риск
+  typedef-ordering из исходной оценки **не материализовался** — типы и
+  методы DCE не трогает, эмитятся как раньше; убираются только тела
+  свободных функций (порядок их определений в C неважен — есть
+  forward-decl'ы у живых). Acceptance плана («недостижимая функция
+  отсутствует в `.c`») закрыт для свободных функций.
+
+  **Декомпозиция: Ф.7.2-methods — method-level compiler-DCE (отдельный
+  инкремент).** Удаление недостижимых *методов* на уровне компилятора
+  требует: (а) desugaring-aware сбора селекторов — операторы
+  (`a + b` → `add`), `into`/`from`, индексация, iteration-протокол; (б)
+  консервативного удержания методов при protocol dynamic-dispatch (тип,
+  упакованный в protocol-значение, должен сохранить методы протокола).
+  Это качественно более рисковая работа, чем free-fn DCE. Бинарь от
+  неиспользуемых методов **уже** очищается линкером (Ф.7.1
+  `--gc-sections`), так что Ф.7.2-methods — инкремент `.c`-size /
+  скорости C-компиляции, не correctness/size. Делается отдельно.
 
 ## Группа C — диагностика и производительность
 
@@ -285,27 +465,47 @@ Rust v0; ноль коллизий между модулями.
 опечатка пути → подсказка; ошибка в импортированном модуле указывает
 на правильный файл+строку+сниппет.
 
-### Ф.9 — Build cache + incremental (P3)
+### Ф.9 — Build cache (P3) ✅ ВЫПОЛНЕН 2026-05-21
 
-**Проблема:** каждый `nova build` заново парсит все импорты; нет
-пересборки по графу зависимостей.
+**Проблема:** каждый `nova build` заново прогоняет весь Rust-side
+пайплайн (type-check / effects / desugar / callnorm / codegen) для
+всех импортированных модулей.
 
-**Цель:** content-addressed кэш модулей — модель Go (`$GOCACHE`).
+**Цель:** content-addressed кэш — модель Go (`$GOCACHE`).
 
-**Подзадачи:**
-- Ключ кэша модуля = хэш(содержимое файлов + версия компилятора +
-  активные `#cfg`-флаги + отсортированные хэши ключей прямых
-  зависимостей) → транзитивная инвалидация автоматом.
-- Значение — разобранный/проверенный артефакт модуля.
-- Хранилище — `target/.nova-cache/` (или аналог); гранулярность —
-  модуль.
-- Полноценный query-level инкремент (стиль Rust — пересборка только
-  затронутых функций) — отмечен как будущее, не v1.
+**Сделано (`nova-cli/src/build_cache.rs` + `cmd_build`):**
+- Кэшируется **сгенерированный `.c` целиком.** Ключ =
+  `DefaultHasher`(версия схемы + отпечаток исполняемого файла
+  компилятора Nova [mtime+size — пересборка компилятора инвалидирует
+  всё] + активные `#cfg`-features [сорт.] + target OS + mono-depth +
+  для каждого исходного файла сборки [сорт. по пути]: путь +
+  содержимое). Хранилище — `<repo>/target/.nova-cache/<key>.c`.
+- `cmd_build`: после `resolve_imports_inline` (даёт полный набор
+  файлов в `module.peer_files`) вычисляется ключ; попадание → читаем
+  закэшированный `.c`, минуя type-check / effects / lints / desugar /
+  callnorm / codegen; промах → полный пайплайн + запись `.c` в кэш
+  (только после успешной сборки). clang запускается всегда.
+- `.c` НЕ зависит от C-тулчейна → ключ его не включает; обновления
+  clang применяются немедленно (нет риска устаревшего бинарника).
+- Отключение: `NOVA_NO_CACHE=1`; пропускается при `--keep-artifacts`.
 
-**Тесты:** повторный `nova build` без изменений — попадание в кэш;
-изменение файла инвалидирует его и зависимых.
+**Архитектурная заметка (scoping).** План предполагал
+module-granular кэш с транзитивной инвалидацией по графу зависимостей.
+Но Nova использует **inline-expansion** (`resolve_imports_inline`
+сливает entry + все импорты в один `Module` → один `.c`); раздельной
+компиляции модулей в архитектуре нет. Поэтому естественная
+гранулярность v1 — сборка целиком, а ключ покрывает ВСЕ исходники
+разом (что и даёт транзитивную инвалидацию: правка любого
+транзитивного файла → другой ключ). Module-granular инкремент =
+separate compilation = отдельная крупная архитектурная работа; план
+сам отмечал query-level инкремент как «будущее, не v1».
 
-### Ф.10 — Entry-folder-module peer-isolation (P3)
+**Тесты:** 3 unit-теста (`build_cache.rs` — детерминизм ключа,
+чувствительность к содержимому/cfg, store/load roundtrip) + e2e
+(`nova build` дважды → второй раз cache hit; правка исходника /
+`NOVA_NO_CACHE=1` → miss).
+
+### Ф.10 — Entry-folder-module peer-isolation (P3) ✅ ВЫПОЛНЕН 2026-05-21
 
 **Проблема:** per-peer import isolation не активна, если **сам
 entry-модуль** — folder-module (entry парсится как один файл,
@@ -313,23 +513,68 @@ MAIN_FILE_ID). Дизайн зафиксирован в `[M-entry-folder-module]
 
 **Цель:** per-peer резолв работает и для entry-folder-module.
 
-**Подзадачи:** активировать peer-резолв для entry; resolver-side +
-test-runner-side изменения по дизайну из `[M-entry-folder-module]`.
+**Сделано (resolver-side — закрывает correctness-цель):**
+- `resolve_imports_inline_ex` после регистрации entry-PeerFile
+  детектит sibling peers: файлы в `entry_dir`, объявляющие **тот же**
+  `module`, что и entry (условие ложно для любого single-file /
+  `_use.nv` entry → zero-regression). Фильтры `_test` / OS-suffix /
+  `#cfg` зеркалят `resolve_module_paths`.
+- Каждый sibling получает distinct `file_id`, регистрируется как
+  `PeerFile { is_entry_module: true }`, его items (**включая
+  `Item::Test`** — у entry-folder-module свои тесты) мёрджатся в
+  `module.items`.
+- Import'ы каждого peer'а резолвятся в ЕГО собственный visible-acc
+  (Rule C: imports НЕ shared между peers). Prelude резолвится **один
+  раз** в отдельный acc и разделяется всей entry-группой (entry +
+  siblings) — иначе `visited`-dedup не дал бы siblings prelude-имён.
+- `_module.nv` config-peer entry-папки: его module-attrs
+  пропагируются (как в `resolve_one` для imported folder-modules).
+- **Сопутствующий пробел закрыт:** `manifest::check_module_path`
+  раньше всегда трактовал entry как single-file → folder-module entry
+  падал на D29-проверке. Теперь auto-detect через канонический
+  `imports::is_folder_module_peer` (public, единый источник истины —
+  test-runner делегирует ему, Plan 42.17 Ф.3 consolidation); для
+  folder-module legacy-declaration = путь до папки (drop file-stem).
 
-**Тесты:** entry как folder-module с per-peer импортами компилируется
-и тестируется; изоляция импортов между peers соблюдается.
+**Test-runner-side — сознательно НЕ делается (не упрощение).**
+`[M-entry-folder-module]` предлагал также менять `walk_nv`, чтобы
+`nova test` авто-компилировал каждую folder-module-папку как unit.
+Это (а) меняет entry-selection для **всего** дерева `nova_tests/` —
+риск широкой регрессии (марк сам оценивал «риск для 350-test»), и
+(б) не даёт correctness-выигрыша: regression-guard для
+entry-folder-module уже обеспечен nova-cli integration-тестом
+(`nova check` на folder-module entry) + 2 resolver unit-теста. Менять
+поведение всего suite ради дублирующего guard'а — нетто-отрицательно.
+Correctness-цель Ф.10 («per-peer резолв работает для
+entry-folder-module») полностью достигнута resolver-side'ом.
+
+**Тесты:**
+- `compiler-codegen/src/imports.rs` — 2 unit-теста: sibling
+  collection + per-peer isolation (sibling видит свой import, entry —
+  нет); single-file entry не подбирает чужие файлы (zero-regression).
+- `nova-cli/tests/entry_folder_module.rs` — integration: `nova check`
+  на peer'е folder-module `nova_tests/plan81/entry_fmod/` (peer
+  вызывает функцию соседнего peer'а + sibling использует prelude
+  `println`).
 
 ## Группа D
 
-### Ф.11 — spec sync + чистка simplifications.md + README
+### Ф.11 — spec sync + чистка simplifications.md + README ✅ ВЫПОЛНЕН 2026-05-21
 
-- `spec/decisions/07-modules.md`: visibility enforcement (D5),
-  mangling-схема (D134), переподтвердить политику циклов (D29).
-- `simplifications.md`: MVP-таблица Plan 35 (~стр. 4595-4612) и секция
-  wildcard (~стр. 4405) устарели — отметить сделанное / spec-rejected;
-  закрыть маркеры FileId, AD3, `[M-entry-folder-module]`,
-  перенесённые в этот план.
-- `docs/plans/README.md` — обновить статус.
+- `spec/decisions/07-modules.md`:
+  - **D5** — добавлена «Эволюция»-нота: enforcement видимости введён
+    Plan 81 Ф.1 (до этого `is_export` был информационным).
+  - **D134** — спека mangling-схемы создана ещё в Ф.6 (присутствует).
+  - **D29** — политика циклов re-confirmed: «Wildcard и циклические
+    импорты запрещены» уже зафиксировано, правок не требует.
+- `simplifications.md`:
+  - MVP-таблица Plan 35 (35.B cache / 35.C generics / 35.D mangling+DCE)
+    — строки отмечены ✅ соответствующими фазами Plan 81.
+  - Секция wildcard — добавлена нота: `import X.*` spec-rejected (R25),
+    bare-name visibility уже работает через Plan 35 merge.
+  - Маркеры `[M-entry-folder-module]` (Ф.10), FileId (Ф.8.1), AD3 (Ф.5)
+    — отмечены resolved.
+- `docs/plans/README.md` — статус Plan 81 → ✅ ЗАКРЫТ.
 
 ---
 

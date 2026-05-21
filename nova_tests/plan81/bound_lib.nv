@@ -1,0 +1,12 @@
+// Plan 81 Ф.3: helper module declaring a protocol used as a generic
+// bound from another module.
+
+module nova_tests.plan81.bound_lib
+
+export type Showable protocol {
+    show() -> str
+}
+
+test "bound_lib self-check" {
+    assert(true)
+}

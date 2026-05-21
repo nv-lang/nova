@@ -227,7 +227,6 @@ impl ExternalRegistry {
                     "f32" => "nova_f32".into(),
                     "bool" => "nova_bool".into(),
                     "str" => "nova_str".into(),
-                    "byte" => "nova_byte".into(),
                     // Plan 70.3: distinct nova_char typedef (mirror emit_c.rs:2680).
                     "char" => "nova_char".into(),
                     "Self" => match recv {
@@ -254,7 +253,7 @@ impl ExternalRegistry {
                     if path.len() == 1 {
                         return Ok(match path[0].as_str() {
                             "str" => "NovaArray_nova_str*".into(),
-                            "byte" | "u8" => "NovaArray_nova_byte*".into(),
+                            "u8" => "NovaArray_nova_byte*".into(),
                             "bool" => "NovaArray_nova_bool*".into(),
                             "f64" => "NovaArray_nova_f64*".into(),
                             // Plan 70.4: f32 distinct from f64 (ABI: 4 vs 8 bytes).

@@ -1,0 +1,12 @@
+// Plan 81 Ф.10: sibling peer файла `app.nv`. Объявляет `helper`
+// (видна peer'у `app.nv` через общий group-namespace) и использует
+// prelude-функцию `println` — подтверждает, что sibling peers
+// entry-folder-module получают prelude auto-import так же, как сам
+// entry (prelude резолвится один раз и разделяется всей группой).
+
+module nova_tests.plan81.entry_fmod
+
+fn helper() -> int {
+    println("entry-folder-module peer compiled")
+    42
+}

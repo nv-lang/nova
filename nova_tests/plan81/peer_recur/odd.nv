@@ -1,0 +1,9 @@
+// Plan 81 Ф.5: peer of folder-module `peer_recur`. `is_odd` вызывает
+// `is_even` из соседнего peer-файла `even.nv` — обратное направление
+// взаимной рекурсии.
+
+module nova_tests.plan81.peer_recur
+
+export fn is_odd(n int) -> bool {
+    if n == 0 { false } else { is_even(n - 1) }
+}

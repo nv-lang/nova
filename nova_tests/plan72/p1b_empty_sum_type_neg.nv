@@ -1,0 +1,18 @@
+// EXPECT_COMPILE_ERROR E7301
+//
+// Plan 79 Ф.8 — closes Plan 72 [M-typecheck-missing-type-compat-checks].
+//
+// Negative companion to p1b_empty_sum_type_pos. An empty / uninhabited
+// type has no values; assigning a concrete value to an `Uninhabited`-
+// typed binding is a type error. Before Plan 79 the type-checker
+// accepted this silently (NEG-NO-ERROR) — now it is a Nova compile
+// error (E7301, assignability).
+
+module plan72.p1b_empty_sum_type_neg
+
+type Uninhabited
+
+fn run() -> int {
+    let x Uninhabited = 5
+    0
+}

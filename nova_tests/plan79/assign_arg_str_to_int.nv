@@ -1,0 +1,10 @@
+// EXPECT_COMPILE_ERROR E7301
+//
+// Plan 79 Ф.1: a string literal passed where an `int` parameter is
+// required.
+
+module nova_tests.plan79.assign_arg_str_to_int
+
+fn want_int(n int) -> int => n
+
+fn run() -> int => want_int("oops")
