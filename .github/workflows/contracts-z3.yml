@@ -46,3 +46,24 @@ jobs:
         env:
           NOVA_SMT_BACKEND: z3
         run: ./nova-cli/target/release/nova test . --filter contracts
+
+  # Plan 33.8 Ф.7: soundness-regression-suite ratchet.
+  # Тесты с маркером `// SOUNDNESS_REGRESSION` стерегут закрытые
+  # soundness-дыры. Они исполняются в задачах contracts-* выше; этот
+  # job — анти-удаление: число guard-тестов не должно убывать.
+  # При добавлении нового soundness-теста — поднять порог.
+  soundness-regression-guard:
+    name: contracts / soundness-regression guard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Soundness-regression suite must not shrink
+        run: |
+          COUNT=$(grep -rl "SOUNDNESS_REGRESSION" nova_tests/ | wc -l)
+          echo "soundness-regression guard tests: $COUNT"
+          MIN=12
+          if [ "$COUNT" -lt "$MIN" ]; then
+            echo "ERROR: soundness-regression suite shrank below $MIN."
+            echo "Soundness guard-тест удалён или потерял маркер. См. Plan 33.8 Ф.7."
+            exit 1
+          fi
