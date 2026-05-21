@@ -1,0 +1,8 @@
+// EXPECT_COMPILE_ERROR E7310
+//
+// Plan 79 Ф.2: type-arity check. `Result[T, E, X]` — three arguments
+// where the type declares two.
+
+module nova_tests.plan79.arity_result_too_many
+
+fn classify(n int) -> Result[int, str, bool] => Ok(n)

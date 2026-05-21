@@ -452,6 +452,12 @@ pub fn check_module(module: &Module) -> Result<ModuleEnv, Vec<Diagnostic>> {
     let map_lit_ctx = MapLitCtx::build(module);
     map_lit_ctx.check_module(module, &mut errors);
 
+    // Plan 79: type-checker hardening — «no silent fallback» на уровне
+    // типов. Отдельный проход (паттерн NameResCtx / MapLitCtx): доводит
+    // type-checker до типовой полноты. Ф.2 — арность type-аргументов.
+    let type_check_ctx = TypeCheckCtx::build(module);
+    type_check_ctx.check_module(module, &mut errors);
+
     // Plan 33.1 Ф.3 (D24): SMT verification.
     // TrivialBackend по умолчанию (Z3 — отдельная feature в будущем).
     // Доказанные контракты записываются в env для zero-cost release.
@@ -474,6 +480,637 @@ pub fn check_module(module: &Module) -> Result<ModuleEnv, Vec<Diagnostic>> {
         Ok(env)
     } else {
         Err(errors)
+    }
+}
+
+// ============================================================================
+// Plan 79: type-checker hardening — «no silent fallback» на уровне типов.
+//
+// Type-checker bootstrap'а проверяет имена/структуру/эффекты/контракты, но НЕ
+// базовую совместимость типов. Plan 79 доводит его до типовой полноты: каждое
+// использование типа проверяется, несовместимость → compile-error (серия
+// E73xx) вместо silent miscompilation или поздней CC-FAIL.
+//
+//   Ф.2 — арность type-аргументов (`Result[int]` → E7310).   [реализовано]
+//   Ф.1 — assignability arg↔param и annotation↔RHS.          [pending]
+//   Ф.3 — существование поля / варианта.                      [pending]
+//   Ф.4 — type-vs-value.                                      [pending]
+//
+// Отдельный проход `TypeCheckCtx` (паттерн NameResCtx / ContractCtx /
+// MapLitCtx) — растёт по фазам, минимум регрессий к существующим walk'ам.
+// ============================================================================
+
+/// Объявленная арность generic-типа.
+struct ArityInfo {
+    /// Число объявленных generic-параметров.
+    count: usize,
+    /// Span объявления `type` — для note «declared here». `None` у
+    /// built-in типов (Option/Result/примитивы), чьё объявление не
+    /// находится в текущем модуле.
+    decl_span: Option<Span>,
+}
+
+/// Plan 79: проход типовой полноты type-checker'а.
+struct TypeCheckCtx {
+    /// Ф.2: имя типа → объявленная арность.
+    arity: HashMap<String, ArityInfo>,
+}
+
+/// `true` для имён, у которых arity **не** проверяется: referential-типы
+/// и эффекты с sugar/гибкой арностью.
+fn arity_exempt(name: &str) -> bool {
+    matches!(
+        name,
+        // referential / top / bottom
+        "Self" | "any" | "never" | "Never"
+        // Fail[E] ≡ bare Fail (D65); Handler[E] ≡ Handler[E, never] (D88)
+        | "Fail" | "Handler"
+        // built-in эффекты с параметрами — не объявлены как Item::Type,
+        // в таблицу не попадут; перечислены явно для ясности
+        | "Ask" | "Alloc"
+    )
+}
+
+impl TypeCheckCtx {
+    fn build(module: &Module) -> Self {
+        let mut arity: HashMap<String, ArityInfo> = HashMap::new();
+        // Все типы (пользовательские + merged-from-imports) — для подсчёта
+        // арности; неверная арность на импортированном типе тоже ловится.
+        // `decl_span: None` — у импортированных/prelude-типов объявление
+        // не в текущем файле, note «declared here» был бы с чужим/битым
+        // span'ом (см. Plan 81 Ф.8 file_id-утечки).
+        for item in &module.items {
+            if let Item::Type(td) = item {
+                arity.insert(
+                    td.name.clone(),
+                    ArityInfo { count: td.generics.len(), decl_span: None },
+                );
+            }
+        }
+        // Типы, объявленные в самом компилируемом модуле (entry peers'
+        // `items_here`) — для них note «declared here» указывает на
+        // реальный исходник пользователя.
+        let own_items: Vec<&Item> = if module.peer_files.is_empty() {
+            module.items.iter().collect()
+        } else {
+            module
+                .peer_files
+                .iter()
+                .filter(|pf| pf.is_entry_module)
+                .flat_map(|pf| pf.items_here.iter())
+                .collect()
+        };
+        for item in own_items {
+            if let Item::Type(td) = item {
+                arity.insert(
+                    td.name.clone(),
+                    ArityInfo { count: td.generics.len(), decl_span: Some(td.span) },
+                );
+            }
+        }
+        // Prelude-типы обычно приходят как Item::Type через auto-import;
+        // fallback на известную арность для модулей без prelude.
+        arity.entry("Option".to_string())
+            .or_insert(ArityInfo { count: 1, decl_span: None });
+        arity.entry("Result".to_string())
+            .or_insert(ArityInfo { count: 2, decl_span: None });
+        // Примитивы — арность 0 (`int[X]` / `bool[T]` — ошибка).
+        for prim in [
+            "int", "i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64",
+            "uint", "f32", "f64", "str", "bool", "byte", "char",
+        ] {
+            arity.entry(prim.to_string())
+                .or_insert(ArityInfo { count: 0, decl_span: None });
+        }
+        TypeCheckCtx { arity }
+    }
+
+    fn check_module(&self, module: &Module, errors: &mut Vec<Diagnostic>) {
+        for item in &module.items {
+            match item {
+                Item::Fn(fd) => self.check_fn(fd, errors),
+                Item::Type(td) => self.check_type_decl(td, errors),
+                Item::Const(cd) => {
+                    let empty = HashSet::new();
+                    if let Some(t) = &cd.ty {
+                        self.walk_typeref(t, &empty, errors);
+                    }
+                    self.walk_expr(&cd.value, &empty, errors);
+                }
+                Item::Test(t) => {
+                    let empty = HashSet::new();
+                    self.walk_block(&t.body, &empty, errors);
+                }
+                Item::Let(_) | Item::Bench(_) | Item::Lemma(_) => {}
+            }
+        }
+    }
+
+    // --- Ф.2: walk сигнатур ---------------------------------------------
+
+    fn check_fn(&self, fd: &FnDecl, errors: &mut Vec<Diagnostic>) {
+        // Generic-scope функции: её собственные generic-параметры +
+        // generic-параметры receiver-типа (`fn Box[T] @get() -> T`).
+        let mut gs: HashSet<String> = HashSet::new();
+        for g in &fd.generics {
+            gs.insert(g.name.clone());
+        }
+        if let Some(r) = &fd.receiver {
+            for tr in &r.generics {
+                if let TypeRef::Named { path, .. } = tr {
+                    if path.len() == 1 {
+                        gs.insert(path[0].clone());
+                    }
+                }
+            }
+        }
+        // Bounds и defaults generic-параметров.
+        for g in &fd.generics {
+            if let Some(b) = &g.bound {
+                self.walk_typeref(b, &gs, errors);
+            }
+            if let Some(d) = &g.default {
+                self.walk_typeref(d, &gs, errors);
+            }
+        }
+        // Параметры, return, эффекты.
+        for p in &fd.params {
+            self.walk_typeref(&p.ty, &gs, errors);
+            if let Some(dv) = &p.default {
+                self.walk_expr(dv, &gs, errors);
+            }
+        }
+        if let Some(rt) = &fd.return_type {
+            self.walk_typeref(rt, &gs, errors);
+        }
+        for e in &fd.effects {
+            self.walk_typeref(e, &gs, errors);
+        }
+        for c in &fd.contracts {
+            self.walk_expr(&c.expr, &gs, errors);
+        }
+        if let Some(d) = &fd.decreases {
+            self.walk_expr(d, &gs, errors);
+        }
+        // Тело.
+        match &fd.body {
+            FnBody::Expr(e) => self.walk_expr(e, &gs, errors),
+            FnBody::Block(b) => self.walk_block(b, &gs, errors),
+            FnBody::External => {}
+        }
+    }
+
+    fn check_type_decl(&self, td: &TypeDecl, errors: &mut Vec<Diagnostic>) {
+        let mut gs: HashSet<String> = HashSet::new();
+        for g in &td.generics {
+            gs.insert(g.name.clone());
+        }
+        for g in &td.generics {
+            if let Some(b) = &g.bound {
+                self.walk_typeref(b, &gs, errors);
+            }
+            if let Some(d) = &g.default {
+                self.walk_typeref(d, &gs, errors);
+            }
+        }
+        match &td.kind {
+            TypeDeclKind::Record(fields) => {
+                for f in fields {
+                    self.walk_typeref(&f.ty, &gs, errors);
+                }
+            }
+            TypeDeclKind::Sum(variants) => {
+                for v in variants {
+                    match &v.kind {
+                        SumVariantKind::Unit => {}
+                        SumVariantKind::Tuple(tys) => {
+                            for t in tys {
+                                self.walk_typeref(t, &gs, errors);
+                            }
+                        }
+                        SumVariantKind::Record(fields) => {
+                            for f in fields {
+                                self.walk_typeref(&f.ty, &gs, errors);
+                            }
+                        }
+                    }
+                }
+            }
+            TypeDeclKind::Effect(methods) | TypeDeclKind::Protocol(methods) => {
+                for m in methods {
+                    let mut ms = gs.clone();
+                    for g in &m.generics {
+                        ms.insert(g.name.clone());
+                    }
+                    for p in &m.params {
+                        self.walk_typeref(&p.ty, &ms, errors);
+                    }
+                    if let Some(rt) = &m.return_type {
+                        self.walk_typeref(rt, &ms, errors);
+                    }
+                    for e in &m.effects {
+                        self.walk_typeref(e, &ms, errors);
+                    }
+                }
+            }
+            TypeDeclKind::Newtype(tr) => self.walk_typeref(tr, &gs, errors),
+            TypeDeclKind::Alias(tr) => self.walk_typeref(tr, &gs, errors),
+            TypeDeclKind::Opaque => {}
+        }
+    }
+
+    /// Ф.2: рекурсивная проверка арности одного TypeRef-дерева.
+    fn walk_typeref(
+        &self,
+        tr: &TypeRef,
+        gs: &HashSet<String>,
+        errors: &mut Vec<Diagnostic>,
+    ) {
+        match tr {
+            TypeRef::Named { path, generics, span } => {
+                for g in generics {
+                    self.walk_typeref(g, gs, errors);
+                }
+                let Some(name) = path.last() else { return; };
+                // generic-параметр в scope — абстрактное имя, не тип.
+                if gs.contains(name) {
+                    return;
+                }
+                if arity_exempt(name) {
+                    return;
+                }
+                // Неизвестное имя — не наша забота (name-resolution).
+                let Some(info) = self.arity.get(name) else { return; };
+                let actual = generics.len();
+                // `actual == 0` — type-аргументы опущены и выводятся из
+                // контекста (`fn f() -> Result { Ok(1) }`, `let x Option`).
+                // Это легальный idiom Nova — не arity-ошибка. Ошибка только
+                // когда аргументы УКАЗАНЫ, но их число неверно.
+                if actual > 0 && actual != info.count {
+                    errors.push(arity_diag(name, info, actual, *span));
+                }
+            }
+            TypeRef::Array(inner, _) | TypeRef::FixedArray(_, inner, _) => {
+                self.walk_typeref(inner, gs, errors);
+            }
+            TypeRef::Tuple(items, _) => {
+                for it in items {
+                    self.walk_typeref(it, gs, errors);
+                }
+            }
+            TypeRef::Func { params, effects, return_type, .. } => {
+                for p in params {
+                    self.walk_typeref(p, gs, errors);
+                }
+                for e in effects {
+                    self.walk_typeref(e, gs, errors);
+                }
+                if let Some(rt) = return_type {
+                    self.walk_typeref(rt, gs, errors);
+                }
+            }
+            TypeRef::Unit(_) => {}
+        }
+    }
+
+    // --- Ф.2: walk тел (turbofish / as / is / let-аннотации) ------------
+
+    fn walk_block(
+        &self,
+        b: &Block,
+        gs: &HashSet<String>,
+        errors: &mut Vec<Diagnostic>,
+    ) {
+        for s in &b.stmts {
+            self.walk_stmt(s, gs, errors);
+        }
+        if let Some(t) = &b.trailing {
+            self.walk_expr(t, gs, errors);
+        }
+    }
+
+    fn walk_stmt(
+        &self,
+        s: &Stmt,
+        gs: &HashSet<String>,
+        errors: &mut Vec<Diagnostic>,
+    ) {
+        match s {
+            Stmt::Expr(e) => self.walk_expr(e, gs, errors),
+            Stmt::Let(d) => {
+                if let Some(t) = &d.ty {
+                    self.walk_typeref(t, gs, errors);
+                }
+                self.walk_expr(&d.value, gs, errors);
+            }
+            Stmt::Assign { target, value, .. } => {
+                self.walk_expr(target, gs, errors);
+                self.walk_expr(value, gs, errors);
+            }
+            Stmt::Return { value, .. } => {
+                if let Some(v) = value {
+                    self.walk_expr(v, gs, errors);
+                }
+            }
+            Stmt::Throw { value, .. } => self.walk_expr(value, gs, errors),
+            Stmt::Break(_) | Stmt::Continue(_) | Stmt::Reveal { .. } => {}
+            Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. } => {
+                self.walk_expr(body, gs, errors);
+            }
+            Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => {
+                self.walk_expr(expr, gs, errors);
+            }
+            Stmt::Apply { args, .. } => {
+                for a in args {
+                    self.walk_expr(a, gs, errors);
+                }
+            }
+            Stmt::Calc { steps, .. } => {
+                for step in steps {
+                    self.walk_expr(&step.expr, gs, errors);
+                }
+            }
+        }
+    }
+
+    fn walk_expr(
+        &self,
+        e: &Expr,
+        gs: &HashSet<String>,
+        errors: &mut Vec<Diagnostic>,
+    ) {
+        match &e.kind {
+            ExprKind::TurboFish { base, type_args } => {
+                for t in type_args {
+                    self.walk_typeref(t, gs, errors);
+                }
+                // Если turbofish целится в известный тип — проверить
+                // арность самого turbofish'а (`HashMap[str].new()`).
+                // Generic-функции (`parse[int]`) в `arity` не попадают —
+                // их арность с D88-дефолтами проверяется отдельно (не Ф.2).
+                let target: Option<&String> = match &base.kind {
+                    ExprKind::Ident(n) => Some(n),
+                    ExprKind::Path(parts) => parts.last(),
+                    _ => None,
+                };
+                if let Some(name) = target {
+                    if !gs.contains(name) && !arity_exempt(name) {
+                        if let Some(info) = self.arity.get(name) {
+                            // turbofish всегда указывает аргументы явно —
+                            // пустой `[]` не парсится; проверяем как есть.
+                            if !type_args.is_empty()
+                                && type_args.len() != info.count
+                            {
+                                errors.push(arity_diag(
+                                    name, info, type_args.len(), e.span,
+                                ));
+                            }
+                        }
+                    }
+                }
+                self.walk_expr(base, gs, errors);
+            }
+            ExprKind::As(inner, ty) | ExprKind::Is(inner, ty) => {
+                self.walk_expr(inner, gs, errors);
+                self.walk_typeref(ty, gs, errors);
+            }
+            ExprKind::Call { func, args, trailing } => {
+                self.walk_expr(func, gs, errors);
+                for a in args {
+                    self.walk_expr(a.expr(), gs, errors);
+                }
+                if let Some(t) = trailing {
+                    match t {
+                        Trailing::Block(b) => self.walk_block(b, gs, errors),
+                        Trailing::LegacyBlockWithParams(tb) => {
+                            self.walk_block(&tb.body, gs, errors)
+                        }
+                        Trailing::Fn(sb) => self.walk_fn_sig_body(sb, gs, errors),
+                    }
+                }
+            }
+            ExprKind::Binary { left, right, .. } => {
+                self.walk_expr(left, gs, errors);
+                self.walk_expr(right, gs, errors);
+            }
+            ExprKind::Unary { operand, .. } => self.walk_expr(operand, gs, errors),
+            ExprKind::Try(inner) | ExprKind::Bang(inner) => {
+                self.walk_expr(inner, gs, errors)
+            }
+            ExprKind::Coalesce(a, b) => {
+                self.walk_expr(a, gs, errors);
+                self.walk_expr(b, gs, errors);
+            }
+            ExprKind::Member { obj, .. } => self.walk_expr(obj, gs, errors),
+            ExprKind::Index { obj, index } => {
+                self.walk_expr(obj, gs, errors);
+                self.walk_expr(index, gs, errors);
+            }
+            ExprKind::If { cond, then, else_ } => {
+                self.walk_expr(cond, gs, errors);
+                self.walk_block(then, gs, errors);
+                if let Some(eb) = else_ {
+                    self.walk_else(eb, gs, errors);
+                }
+            }
+            ExprKind::IfLet { scrutinee, then, else_, .. } => {
+                self.walk_expr(scrutinee, gs, errors);
+                self.walk_block(then, gs, errors);
+                if let Some(eb) = else_ {
+                    self.walk_else(eb, gs, errors);
+                }
+            }
+            ExprKind::Match { scrutinee, arms } => {
+                self.walk_expr(scrutinee, gs, errors);
+                for arm in arms {
+                    if let Some(g) = &arm.guard {
+                        self.walk_expr(g, gs, errors);
+                    }
+                    match &arm.body {
+                        MatchArmBody::Expr(e) => self.walk_expr(e, gs, errors),
+                        MatchArmBody::Block(b) => self.walk_block(b, gs, errors),
+                    }
+                }
+            }
+            ExprKind::Block(b) => self.walk_block(b, gs, errors),
+            ExprKind::ArrayLit(elems) => {
+                for el in elems {
+                    match el {
+                        ArrayElem::Item(e) | ArrayElem::Spread(e) => {
+                            self.walk_expr(e, gs, errors)
+                        }
+                    }
+                }
+            }
+            ExprKind::MapLit { elems, .. } => {
+                for (k, v) in crate::ast::MapElem::cloned_pairs(elems).iter() {
+                    self.walk_expr(k, gs, errors);
+                    self.walk_expr(v, gs, errors);
+                }
+            }
+            ExprKind::TupleLit(elems) => {
+                for e in elems {
+                    self.walk_expr(e, gs, errors);
+                }
+            }
+            ExprKind::RecordLit { fields, .. } => {
+                for f in fields {
+                    if let Some(v) = &f.value {
+                        self.walk_expr(v, gs, errors);
+                    }
+                }
+            }
+            ExprKind::TaggedTemplate { tag, args, .. } => {
+                self.walk_expr(tag, gs, errors);
+                for a in args {
+                    self.walk_expr(a, gs, errors);
+                }
+            }
+            ExprKind::InterpolatedStr { parts } => {
+                for p in parts {
+                    if let InterpStrPart::Expr(e) = p {
+                        self.walk_expr(e, gs, errors);
+                    }
+                }
+            }
+            ExprKind::Lambda { body, .. } => self.walk_expr(body, gs, errors),
+            ExprKind::ClosureLight { body, .. } => match body {
+                ClosureBody::Expr(e) => self.walk_expr(e, gs, errors),
+                ClosureBody::Block(b) => self.walk_block(b, gs, errors),
+            },
+            ExprKind::ClosureFull(sb) => self.walk_fn_sig_body(sb, gs, errors),
+            ExprKind::Spawn(body) => self.walk_expr(body, gs, errors),
+            ExprKind::Detach(body) => self.walk_block(body, gs, errors),
+            ExprKind::Supervised { body, cancel } => {
+                if let Some(c) = cancel {
+                    self.walk_expr(c, gs, errors);
+                }
+                self.walk_block(body, gs, errors);
+            }
+            ExprKind::Forbid { body, .. } => self.walk_block(body, gs, errors),
+            ExprKind::Realtime { body, .. } => self.walk_block(body, gs, errors),
+            ExprKind::ParallelFor { iter, body, .. } => {
+                self.walk_expr(iter, gs, errors);
+                self.walk_block(body, gs, errors);
+            }
+            ExprKind::For { iter, body, .. } => {
+                self.walk_expr(iter, gs, errors);
+                self.walk_block(body, gs, errors);
+            }
+            ExprKind::While { cond, body, .. } => {
+                self.walk_expr(cond, gs, errors);
+                self.walk_block(body, gs, errors);
+            }
+            ExprKind::WhileLet { scrutinee, body, .. } => {
+                self.walk_expr(scrutinee, gs, errors);
+                self.walk_block(body, gs, errors);
+            }
+            ExprKind::Loop { body, .. } => self.walk_block(body, gs, errors),
+            ExprKind::Select { arms } => {
+                for arm in arms {
+                    match &arm.op {
+                        SelectOp::Recv { chan, .. } => {
+                            self.walk_expr(chan, gs, errors)
+                        }
+                        SelectOp::Send { chan, value } => {
+                            self.walk_expr(chan, gs, errors);
+                            self.walk_expr(value, gs, errors);
+                        }
+                        SelectOp::Default => {}
+                    }
+                    if let Some(g) = &arm.guard {
+                        self.walk_expr(g, gs, errors);
+                    }
+                    self.walk_block(&arm.body, gs, errors);
+                }
+            }
+            ExprKind::Range { start, end, .. } => {
+                self.walk_expr(start, gs, errors);
+                self.walk_expr(end, gs, errors);
+            }
+            ExprKind::Throw(inner) => self.walk_expr(inner, gs, errors),
+            ExprKind::Interrupt(opt) => {
+                if let Some(e) = opt {
+                    self.walk_expr(e, gs, errors);
+                }
+            }
+            ExprKind::With { body, .. } => self.walk_block(body, gs, errors),
+            ExprKind::Forall { range, body, .. }
+            | ExprKind::Exists { range, body, .. } => {
+                self.walk_expr(range, gs, errors);
+                self.walk_expr(body, gs, errors);
+            }
+            ExprKind::HandlerLit { methods, .. } => {
+                for m in methods {
+                    match &m.body {
+                        HandlerMethodBody::Expr(e) => self.walk_expr(e, gs, errors),
+                        HandlerMethodBody::Block(b) => self.walk_block(b, gs, errors),
+                    }
+                }
+            }
+            ExprKind::IntLit(_) | ExprKind::FloatLit(_) | ExprKind::BoolLit(_)
+            | ExprKind::StrLit(_) | ExprKind::CharLit(_) | ExprKind::UnitLit
+            | ExprKind::Ident(_) | ExprKind::Path(_) | ExprKind::SelfAccess => {}
+        }
+    }
+
+    fn walk_else(
+        &self,
+        eb: &ElseBranch,
+        gs: &HashSet<String>,
+        errors: &mut Vec<Diagnostic>,
+    ) {
+        match eb {
+            ElseBranch::Block(b) => self.walk_block(b, gs, errors),
+            ElseBranch::If(e) => self.walk_expr(e, gs, errors),
+        }
+    }
+
+    fn walk_fn_sig_body(
+        &self,
+        sb: &FnSigBody,
+        gs: &HashSet<String>,
+        errors: &mut Vec<Diagnostic>,
+    ) {
+        for p in &sb.params {
+            self.walk_typeref(&p.ty, gs, errors);
+        }
+        for e in &sb.effects {
+            self.walk_typeref(e, gs, errors);
+        }
+        if let Some(rt) = &sb.return_type {
+            self.walk_typeref(rt, gs, errors);
+        }
+        match &sb.body {
+            FnBody::Expr(e) => self.walk_expr(e, gs, errors),
+            FnBody::Block(b) => self.walk_block(b, gs, errors),
+            FnBody::External => {}
+        }
+    }
+}
+
+/// Ф.2: построить диагностику E7310 о неверной арности type-аргументов.
+/// Вызывается только когда аргументы УКАЗАНЫ (`actual > 0`) — опущенные
+/// аргументы легальны (выводятся из контекста), это не arity-ошибка.
+fn arity_diag(name: &str, info: &ArityInfo, actual: usize, span: Span) -> Diagnostic {
+    let plural = |n: usize| if n == 1 { "" } else { "s" };
+    let werewas = |n: usize| if n == 1 { "was" } else { "were" };
+    let msg = if info.count == 0 {
+        format!(
+            "[E7310] type `{}` is not generic — it takes no type arguments, \
+             but {} {} provided",
+            name, actual, werewas(actual),
+        )
+    } else {
+        format!(
+            "[E7310] type `{}` expects {} type argument{}, but {} {} provided",
+            name, info.count, plural(info.count), actual, werewas(actual),
+        )
+    };
+    let diag = Diagnostic::new(msg, span);
+    match info.decl_span {
+        Some(ds) => diag.with_note_at(format!("type `{}` declared here", name), ds),
+        None => diag,
     }
 }
 
