@@ -1,8 +1,13 @@
 # Plan 32: GC introspection API (`gc.heap_size()` / `gc.collect()`)
 
-> **Статус:** Ф.1 ✅. Ф.2 ✅. Ф.4 ✅. Ф.3 (std/runtime/gc.nv auto-gen) и
-> Ф.5 (spec D26 prelude) — добавлены 2026-05-12 audit fix.
-> **Создан:** 2026-05-12. **Обновлён:** 2026-05-12.
+> **Статус:** ✅ ЗАКРЫТ — все фазы Ф.1-Ф.5 выполнены. Ф.1 runtime API
+> (`nova_rt/alloc.h`), Ф.2 codegen-dispatch `gc.*` (`emit_c.rs`), Ф.4
+> тесты (`nova_tests/concurrency/gc_introspection.nv`), Ф.5 spec/docs.
+> Ф.3 — `std/runtime/gc.nv` реализован как **handwritten** (не auto-gen
+> — сознательный отход от плана; файл заполнен в Plan 34 follow-up).
+> Расширение после закрытия: `gc.last_pause_ns()` (Plan 57.C.2).
+> **Создан:** 2026-05-12. **Обновлён:** 2026-05-21 (аудит план-статусов:
+> шапка приведена к фактическому состоянию ✅ ЗАКРЫТ).
 
 ## Контекст
 
