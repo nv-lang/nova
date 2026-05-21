@@ -274,13 +274,33 @@ impl SumSchemaRegistry {
     // Bootstrap: init_hardcoded_baseline
     // ───────────────────────────────────────────────────────────────────
 
-    /// Populates registry с 4 HardcodedBaseline entries:
-    /// Option / Result / Error-as-record-skipped / RuntimeError.
+    /// Populates registry с HardcodedBaseline entries для Option / Result /
+    /// RuntimeError.
     ///
-    /// **Mirror'ит** существующий pre-populate code в `emit_c.rs:958-1023`
-    /// — variant info, c_names, method_routing entries — должны matchить
-    /// что там есть (Phase 2+ acceptance: `legacy_sum_schema_view` возвращает
-    /// identical HashMap к pre-migration `sum_schemas.get(name)`).
+    /// **Plan 78 Ф.1 (переклассификация, 2026-05-22).** Этот baseline несёт
+    /// две разные по природе вещи, и важно их не путать:
+    ///
+    /// 1. **`method_routing`** — это **легитимный реестр C-реализации**, НЕ
+    ///    хардкод-зеркало `.nv`-декларации. Методы Option/Result физически
+    ///    реализованы C-функциями в `nova_rt/array.h`
+    ///    (`Nova_Option_method_<m>_<T>` трамплины) либо инлайнятся codegen'ом
+    ///    (`<inline>` sentinel). «Трамплин или инлайн», `c_name`, `is_per_t`
+    ///    — это implementation-факты рантайма, которых в `.nv`-декларации
+    ///    нет и быть не может (ср. `Result.ok()` и `Result.err()` —
+    ///    неразличимые сигнатуры `-> Option[...]`, но первый трамплин,
+    ///    второй inline). Это тот же класс данных, что `runtime_registry.rs`
+    ///    / `external_registry.rs` — Rust-реестр C-backed API. Он **не
+    ///    подлежит удалению** Plan 78: набор C-реализованных prelude-типов
+    ///    фиксирован (Option/Result/RuntimeError) и не растёт с
+    ///    пользовательским кодом — пользовательские типы получают методы с
+    ///    Nova-телом через обычный codegen, без routing-таблицы.
+    ///
+    /// 2. **`variants`** (Some/None, Ok/Err, …) — вот это **действительно
+    ///    зеркало** `.nv`-type-деклараций (`std/prelude/core.nv`/`errors.nv`).
+    ///    Слоёный registry уже решает дубль приоритетом
+    ///    `DeclaredFromPrelude > HardcodedBaseline` — baseline variants
+    ///    остаются как fallback. Чистку pre-populate `sum_schemas` (то же
+    ///    зеркало в `emit_c.rs`) делает Plan 78 Ф.2.
     ///
     /// **NOT included** (per design doc §«Что не делаем»):
     /// - `Error` record schema — записывается в `record_schemas`, не sum.
