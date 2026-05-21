@@ -1,4 +1,4 @@
-//! Type checker Рё effect inference.
+﻿//! Type checker Рё effect inference.
 //!
 //! РњРёРЅРёРјР°Р»СЊРЅР°СЏ СЂРµР°Р»РёР·Р°С†РёСЏ: РїСЂРѕРІРµСЂСЏРµРј РёРјРµРЅР° С‚РёРїРѕРІ, РІС‹РІРѕРґРёРј С‚РёРїС‹ Р»РѕРєР°Р»СЊРЅС‹С…
 //! РїРµСЂРµРјРµРЅРЅС‹С…, РІС‹РІРѕРґРёРј СЌС„С„РµРєС‚С‹ РґР»СЏ private С„СѓРЅРєС†РёР№ (D28). Generic-РїР°СЂР°РјРµС‚СЂС‹
@@ -2117,12 +2117,14 @@ impl NameResCtx {
         } else {
             // Р“СЂСѓРїРїРёСЂСѓРµРј peers РїРѕ parent dir РїСѓС‚Рё. Р’СЃРµ peers РѕРґРЅРѕР№
             // РїР°РїРєРё = РѕРґРЅР° module-group, РґРµР»СЏС‚ declarations.
-            let mut groups: HashMap<std::path::PathBuf, HashSet<String>> = HashMap::new();
-            let mut peer_group_key: HashMap<FileId, std::path::PathBuf> = HashMap::new();
+            let mut groups: HashMap<(std::path::PathBuf, Vec<String>), HashSet<String>> = HashMap::new();
+            let mut peer_group_key: HashMap<FileId, (std::path::PathBuf, Vec<String>)> = HashMap::new();
             for pf in &module.peer_files {
-                let group_key = pf.path.parent()
+                let dir_key = pf.path.parent()
                     .map(|p| p.to_path_buf())
                     .unwrap_or_else(|| pf.path.clone());
+                // Plan 81 F.1: group by (dir, module_name).
+                let group_key = (dir_key, pf.module_name.clone());
                 peer_group_key.insert(pf.file_id, group_key.clone());
                 let entry = groups.entry(group_key).or_default();
                 collect_decl_names(&pf.items_here, entry);

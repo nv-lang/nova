@@ -1114,6 +1114,7 @@ mod tests {
                 items_here: items,
                 imported_item_names: HashSet::new(),
                 is_entry_module: false,
+                module_name: vec!["std".into(), "prelude".into(), "core".into()],
             }
         }
 
@@ -1127,6 +1128,7 @@ mod tests {
                 items_here: m.items.clone(),
                 imported_item_names: HashSet::new(),
                 is_entry_module: true,
+                module_name: m.name.clone(),
             };
             m.peer_files = vec![entry_peer, fake_prelude_peer(names)];
         }

@@ -29,9 +29,8 @@ use std::path::{Path, PathBuf};
 ///   2. `<repo>/<path/parts>.nv`     — repo-root import (для `std.X.Y` это `<repo>/std/X/Y.nv`)
 ///   3. `<stdlib_dir>/<X/Y>.nv`      — explicit stdlib (если path начинается с `std.`)
 ///
-/// **Limitations** (sub-plans 35.A-E):
-///   - Нет visibility filter (is_export informational).
-///   - Нет symbol mangling.
+/// **Limitations** (sub-plans 35.A-E / Plan 81):
+///   - Нет symbol mangling (Plan 81 Ф.3).
 ///   - Нет DCE.
 ///   - Нет signature/body 2-pass split.
 ///   - Wildcard `import X.*` не поддерживается.
@@ -79,6 +78,8 @@ pub fn resolve_imports_inline_ex(
         imported_item_names: HashSet::new(),
         // Plan 42.15: entry — часть компилируемого module.
         is_entry_module: true,
+        // Plan 81 Ф.1: declared module name для group-isolation.
+        module_name: module.name.clone(),
     };
     // Local counter для file_id (entry = 0, peers начинают с 1).
     // Используем Vec<PeerFile> чтобы collect peers через resolve_one,
@@ -494,6 +495,8 @@ fn resolve_one(
             items_here: peer_module.items.clone(),
             imported_item_names: HashSet::new(),
             is_entry_module: false,
+            // Plan 81 Ф.1: declared module name для group-isolation.
+            module_name: peer_module.name.clone(),
         });
 
         // Plan 42.15: accumulator имён items видимых ЭТОМУ peer'у через
@@ -564,24 +567,37 @@ fn resolve_one(
             } else {
                 std::collections::HashMap::new()
             };
+        // Plan 81 Ф.1: opt-in visibility enforcement. Если хотя бы один
+        // item в модуле помечен `export` — только exported items видны
+        // caller'у (как Rust `pub` / TS `export`). Если ни один — всё
+        // видно (backward-compat с std/, external fn и legacy-модулями
+        // у которых нет явного export-аннотации).
+        let module_has_exports = peer_module.items.iter().any(|item| match item {
+            Item::Fn(f) => f.is_export,
+            Item::Type(t) => t.is_export,
+            Item::Const(c) => c.is_export,
+            _ => false,
+        });
         // Merge items from this peer (with optional rename).
         // Plan 42.15: имена merged items пишутся в `visible_acc` —
         // caller (peer/entry который написал `imp`) получает их в свой
         // visible scope. Это и есть «import притащил эти имена».
         for item in peer_module.items {
-            let name = match &item {
-                Item::Type(t) => Some(t.name.clone()),
-                Item::Fn(f) => Some(f.name.clone()),
-                Item::Const(c) => Some(c.name.clone()),
+            // Plan 81 Ф.1: извлекаем is_export вместе с именем.
+            let (name, is_export) = match &item {
+                Item::Type(t) => (Some(t.name.clone()), t.is_export),
+                Item::Fn(f) => (Some(f.name.clone()), f.is_export),
+                Item::Const(c) => (Some(c.name.clone()), c.is_export),
                 // Plan 57: bench не экспортируется (как test/let/lemma).
-                Item::Test(_) | Item::Bench(_) | Item::Let(_) | Item::Lemma(_) => None,
+                Item::Test(_) | Item::Bench(_) | Item::Let(_) | Item::Lemma(_) => (None, false),
             };
             match (&item, name) {
                 (Item::Type(_) | Item::Fn(_) | Item::Const(_), Some(item_name)) => {
                     // Codegen completeness: ВСЕ items merge'атся в
-                    // merged_items (inline expansion — `A`'s body может
-                    // ссылаться на `B` из того же модуля). Selective list
-                    // влияет на visibility, не на codegen-scope.
+                    // merged_items (inline expansion — exported fn может
+                    // вызывать приватный helper из того же модуля).
+                    // is_export + selective list влияют на visibility,
+                    // но НЕ на codegen-scope.
                     let final_name = if let Some(new_name) = rename_map.get(&item_name) {
                         let renamed = rename_item(item, new_name.clone());
                         merged_items.push(renamed);
@@ -590,13 +606,16 @@ fn resolve_one(
                         merged_items.push(item);
                         item_name.clone()
                     };
-                    // Plan 42.15: visible_acc — что caller's peer ВИДИТ.
-                    // Selective filter: `import X.{A}` — только `A` виден
-                    // caller'у; `B` (тоже из X, не в списке) merge'ится в
-                    // merged_items для codegen completeness, но НЕ виден
-                    // caller'у по имени. Матч по оригинальному `item_name`;
-                    // в scope кладётся `final_name` (renamed при alias).
-                    if import_selects(imp, &item_name) {
+                    // Plan 81 Ф.1: виден caller'у если модуль не использует
+                    // явную экспорт-аннотацию (!module_has_exports) ИЛИ
+                    // сам item помечен export (is_export). Приватные items
+                    // в export-аннотированных модулях остаются в merged_items
+                    // для codegen (inline expansion), но НЕ входят в
+                    // visible_acc → type-checker их не видит снаружи.
+                    // Plan 42.15: selective filter (`import X.{A}`) применяется
+                    // поверх visibility. Матч по оригинальному item_name;
+                    // в scope кладётся final_name (renamed при alias).
+                    if (!module_has_exports || is_export) && import_selects(imp, &item_name) {
                         visible_acc.insert(final_name);
                     }
                 }
