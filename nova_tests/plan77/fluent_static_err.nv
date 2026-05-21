@@ -1,0 +1,16 @@
+// EXPECT_COMPILE_ERROR D132
+//
+// Plan 77 (D132): `-> @` (возврат receiver'а) допустим только для
+// instance-метода. У static-метода нет `@`-receiver'а → parse error.
+
+module nova_tests.plan77.fluent_static_err
+
+type Gizmo { v int }
+
+// ОШИБКА D132: `-> @` на static-методе (нет receiver'а).
+fn Gizmo.make() -> @ => { v: 1 }
+
+test "static -> @ rejected" {
+    let g = Gizmo { v: 0 }
+    assert(g.v == 0)
+}
