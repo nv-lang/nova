@@ -226,8 +226,20 @@ pub fn resolve_imports_inline_ex(
     // Plan 42.15: accumulator visible-имён для entry's PeerFile.
     let mut entry_visible: HashSet<String> = HashSet::new();
 
+    // Plan 81 Ф.8.2: multi-error recovery. Резолв НЕ прерывается на
+    // первой ошибке импорта — собираем все и репортим разом. Между
+    // top-level импортами восстанавливаем cycle-detection state
+    // (`in_progress` / `import_chain` / `visited`) из снапшота, если
+    // `resolve_one` упал, не сбалансировав push/pop — иначе ложные
+    // cycle-ошибки на последующих импортах. `merged_items` / `peer_files`
+    // могут остаться частичными — это безвредно: при наличии ошибок
+    // дальнейший пайплайн (type-check) не запускается.
+    let mut import_errors: Vec<String> = Vec::new();
     for imp in &initial_imports {
-        resolve_one(
+        let in_progress_snap = in_progress.clone();
+        let import_chain_snap = import_chain.clone();
+        let visited_snap = visited.clone();
+        let res = resolve_one(
             imp,
             entry_path,
             &entry_dir,
@@ -242,7 +254,20 @@ pub fn resolve_imports_inline_ex(
             include_test_peers,
             &mut inherited_attrs,
             &mut entry_visible,
-        )?;
+        );
+        if let Err(e) = res {
+            import_errors.push(format!("{}", e));
+            in_progress = in_progress_snap;
+            import_chain = import_chain_snap;
+            visited = visited_snap;
+        }
+    }
+    if !import_errors.is_empty() {
+        return Err(anyhow!(
+            "{} import error(s):\n\n{}",
+            import_errors.len(),
+            import_errors.join("\n\n"),
+        ));
     }
 
     // Plan 42.15: записываем visible-имена в entry's PeerFile (file_id=0).
