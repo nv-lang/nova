@@ -10156,33 +10156,34 @@ G/H). ~3700 LOC implementation cumulative.
   result_unwrap_or_arg_mismatch_neg.nv (EXPECT_CC_ERROR) +
   option_or_missing_arg_neg.nv (EXPECT_COMPILE_ERROR — arity ловится).
 
-### [M-legacy-sum-schemas-retained] (UNBLOCKED — Plan 62.A.bis Ф.4 готов к исполнению)
-- **Где:** `emit_c.rs` — pre-populated `sum_schemas["Result"]`
-  (~line 1128); `pattern_bind_typed` / `pattern_cond`.
-- **Что упрощено:** legacy hardcoded `sum_schemas["Result"]` НЕ удалён.
-- **Почему (исходно):** Plan 62.A.bis Ф.4 deferred до Plan 59 sum-mono.
-- **Уточнение 2026-05-21:** Plan 59 Ф.7.5 increment 2 закрыт (Result
-  полностью мономорфизирован — `NovaRes_<ok>_<err>*`). Попытка
-  удалить `sum_schemas["Result"]` вскрыла **остаточную зависимость**:
-  nested-pattern `match opt { Some(Err(e)) => ... }` (Option[Result
-  [T,E]]) типизировал inner-variant payload через
-  `sum_schemas["Result"]` в `pattern_bind_typed`, а НЕ через
-  `NovaRes_<T>_<E>` mono / `novares_ok_err`. `result_ok_inner_types`
-  механизм покрывал только `Pattern::Tuple` sub-pattern + `Ok`,
-  не `Err` / plain `Ident`.
-- **✅ Follow-up сделан 2026-05-21 (Plan 59 пост-фикс, коммит
-  `2b184a3c06a`):** Option-ветки `pattern_bind_typed` / `pattern_cond`
-  регистрируют C-тип Result-payload (`NovaRes_<n>*`) в `var_types` на
-  access path — recursive pattern-match для nested `Some(Ok/Err(..))`
-  резолвит (T,E) через `novares_ok_err`, не через legacy
-  `sum_schemas["Result"]`. Проверено: с удалённым `sum_schemas
-  ["Result"]` insert полный прогон 883 PASS / 0 FAIL дважды подряд.
-- **Остаток:** удаление самого `sum_schemas["Result"]` insert
-  (~line 1128) + чистка `init_hardcoded_baseline` — чистая задача
-  Plan 62.A.bis Ф.4. Hardcoded fallback для pattern-match уже
-  недостижим. Insert оставлен по договорённости как scope 62.A.bis.
-- **Приоритет:** L — дублирование без функционального вреда (registry
-  имеет приоритет, baseline только fallback; build зелёный).
+### [M-legacy-sum-schemas-retained] ✅ RESOLVED (Plan 62.A.bis Ф.4, 2026-05-21)
+- **Где:** `emit_c.rs` — pre-populated `sum_schemas["Result"]`.
+- **Что было упрощено:** legacy hardcoded `sum_schemas["Result"]`
+  HashMap — ABI-compat fallback-baseline для Result variant-schema.
+- **Почему (было):** до Plan 59 Result не был мономорфизирован —
+  единое hardcoded представление было необходимо.
+- **Закрыто 2026-05-21 (Plan 62.A.bis Ф.4):**
+  - Plan 59 Ф.7.5 increment 2 полностью мономорфизировал Result
+    (`NovaRes_<ok>_<err>*`); nested-pattern Result-variant typing
+    переведён на `novares_ok_err` (Plan 59 commit `2b184a3c06a`).
+  - `sum_schemas["Result"]` HashMap pre-population **удалена** из
+    `emit_c.rs`. Полный прогон: **887 PASS / 0 FAIL**.
+- **Что НЕ удалено (и почему — не legacy, а живая инфраструктура):**
+  - `sum_schema_registry.rs::init_hardcoded_baseline()` Result-entry —
+    **остаётся**: несёт `method_routing` для 9 Result-методов
+    (`is_ok`/`ok`/`unwrap_or`/…). `lookup_method_routing("Result", …)`
+    (emit_c.rs:13613) активно его читает; `init_prelude_decls_from_items`
+    наследует routing от него. Это **источник** method-dispatch, не
+    дублирующий fallback. Полное устранение требует рефактора
+    method-routing архитектуры — отдельная задача, вне Ф.4.
+  - `nova_rt/array.h` `#define Nova_Result` / `nova_make_Result_*` /
+    `Nova_Result_method_*` — **остаются**: bare `Nova_Result*` всё ещё
+    эмитится codegen'ом (referenced в generated .c). Их удаление —
+    отдельная codegen-чистка.
+  - `sum_schemas["Option"]` — оставлен: Option-mono — отдельная
+    инициатива (не Plan 59 Result-scope).
+- **Приоритет:** закрыто — основной legacy `sum_schemas` HashMap
+  для Result устранён; остаток реклассифицирован как infrastructure.
 
 ### [M-runtime-none-error-deferred] ✅ RESOLVED (Plan 62.C.bis, 2026-05-20)
 - **Где:** `std/prelude/errors.nv` + `std/prelude.nv` facade.
