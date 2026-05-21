@@ -1,0 +1,19 @@
+// Plan 81 Ф.3: positive — a generic bound `[T Showable]` where the
+// protocol `Showable` is declared in another module resolves and is
+// satisfied by a conforming type. Cross-file bounds work via the
+// Plan 35 import-merge (no orphan rule — structural conformance, D72).
+
+module nova_tests.plan81.bound_cross_file_pos
+
+import nova_tests.plan81.bound_lib.{Showable}
+
+type Tag { label str }
+
+fn Tag @show() -> str => @label
+
+fn describe[T Showable](x T) -> str => x.show()
+
+test "Ф.3 — cross-file bound satisfied by a conforming type" {
+    let t = Tag { label: "ok" }
+    assert(describe(t) == "ok")
+}
