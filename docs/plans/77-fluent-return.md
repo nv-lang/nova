@@ -2,8 +2,20 @@
 
 > **Создан 2026-05-21.** Выделен из обсуждения Plan 73 (D131 `consume`).
 >
-> **Статус: 📋 ПРОПОЗАЛ — требует решения автора языка по варианту
-> (A / B / C).** Реализацию НЕ начинать до выбора варианта.
+> **✅ ЗАКРЫТ 2026-05-21 — выбран вариант B (`-> @`).** Реализовано:
+> parser (`-> @` → `return_type = Self` + `FnDecl.returns_receiver`,
+> instance-only check), check-pass `check_fluent_return` (тело
+> non-external `-> @`-метода обязано завершаться `@` — делает гарантию
+> проверяемой), consume-checker (`let x = recv.fluent()` → `x` алиас
+> `recv` — закрывает builder-chain `[M-consume-method-result-alias]`),
+> `runtime_registry::render_nv` (~22 stdlib builder'а `mut`-instance-Self
+> → `-> @`; `@plus` с nova_body остаётся `-> Self`), spec D132. Codegen —
+> `-> @` ≡ `-> Self` (тело возвращает `@`); авто-return-@ НЕ делался
+> (codegen имеет несколько method-emission путей — риск; явный `@`
+> консистентен с Rust `{ ...; self }`). 5 фикстур `nova_tests/plan77/`.
+>
+> Историческая часть документа (варианты A/B/C, сравнение) — ниже,
+> сохранена как rationale.
 >
 > **Цель:** дать языку точный способ выразить «метод возвращает сам
 > receiver» (а не просто значение того же типа). Нужно для:
