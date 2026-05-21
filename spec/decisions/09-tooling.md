@@ -1784,6 +1784,29 @@ Boehm GC). Собственные биндинги дают:
   factory/selector по env/flag.
 - `compiler-codegen/build.rs` — feature `z3-backend`; link Z3 shared lib.
 
+### Cross-check Z3 ↔ CVC5 (Plan 33.14)
+
+Вторая, **полностью независимая от FFI**, линия проверки VC. CVC5
+подключён не через FFI, а через текстовый SMT-LIB v2 и подпроцесс —
+это намеренно: текстовый путь не разделяет код с Z3-FFI-трансляцией и
+служит вторым независимым кодировщиком (поймал бы баги кодирования
+вроде Plan 33.8 Ф.6.2 даже без второго решателя).
+
+- `compiler-codegen/src/verify/smtlib.rs` — `SmtLibEmitter`: `SmtTerm` →
+  текст SMT-LIB v2. Точное зеркало `Z3Backend`-трансляции по набору
+  операторов; при любой неуверенности — `EmitError`, а не приблизительный
+  вывод (иначе cross-check давал бы ложные disagreement'ы).
+- `compiler-codegen/src/verify/backend/cvc5.rs` — `Cvc5Backend`:
+  `SmtBackend` через подпроцесс `cvc5`. Бинарник нет → `Unknown`
+  (graceful skip), не паника.
+- `compiler-codegen/src/verify/crosscheck.rs` — `CrossCheckBackend`:
+  прогоняет каждую VC через Z3 И CVC5; definite-disagreement
+  (`Proven` vs `Disproved`) → compile-error `[E2412]`. Включается
+  `NOVA_CROSSCHECK=1` (CI-only режим).
+
+Gate срабатывает **только** на definite-disagreement; любой `Unknown` /
+timeout с любой стороны — норма. CI-job — `contracts-crosscheck`.
+
 
 ---
 

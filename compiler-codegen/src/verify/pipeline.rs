@@ -52,6 +52,9 @@ pub enum VerifyResult {
 pub enum BackendChoice {
     Trivial,
     Z3,
+    /// Plan 33.14: каждая VC прогоняется через Z3 И CVC5, расхождения
+    /// определённых ответов поднимают compile-error. CI-only режим.
+    CrossCheck,
 }
 
 impl BackendChoice {
@@ -60,16 +63,49 @@ impl BackendChoice {
         match s.trim().to_ascii_lowercase().as_str() {
             "trivial" | "default" | "" => Some(BackendChoice::Trivial),
             "z3" => Some(BackendChoice::Z3),
+            "crosscheck" | "cross-check" => Some(BackendChoice::CrossCheck),
             _ => None,
         }
     }
 
     /// Backend РїРѕ СѓРјРѕР»С‡Р°РЅРёСЋ: СЃРјРѕС‚СЂРёРј `NOVA_SMT_BACKEND`, РёРЅР°С‡Рµ Trivial.
+    ///
+    /// Plan 33.14: `NOVA_CROSSCHECK=1` имеет приоритет над `NOVA_SMT_BACKEND`
+    /// и принудительно включает cross-check режим.
     pub fn from_env() -> Self {
+        if let Ok(v) = std::env::var("NOVA_CROSSCHECK") {
+            let v = v.trim().to_ascii_lowercase();
+            if v == "1" || v == "true" || v == "yes" || v == "on" {
+                return BackendChoice::CrossCheck;
+            }
+        }
         std::env::var("NOVA_SMT_BACKEND")
             .ok()
             .and_then(|s| Self::parse(&s))
             .unwrap_or(BackendChoice::Trivial)
+    }
+}
+
+/// Plan 33.14: одноразовые предупреждения для деградации cross-check'а.
+fn crosscheck_warn_once(which: u8) {
+    use std::sync::Once;
+    static CVC5_MISSING: Once = Once::new();
+    static Z3_MISSING: Once = Once::new();
+    match which {
+        0 => CVC5_MISSING.call_once(|| {
+            eprintln!(
+                "warning: NOVA_CROSSCHECK задан, но бинарник `cvc5` не найден \
+                 (env NOVA_CVC5 / PATH); cross-check вырождается в «только Z3». \
+                 Установите cvc5 для полной проверки."
+            );
+        }),
+        _ => Z3_MISSING.call_once(|| {
+            eprintln!(
+                "warning: NOVA_CROSSCHECK задан, но бинарь собран без \
+                 `--features z3-backend`; cross-check недоступен, fallback на \
+                 trivial backend. Пересоберите с `cargo build --features z3-backend`."
+            );
+        }),
     }
 }
 
@@ -111,6 +147,25 @@ impl VerificationPipeline {
                          `--features z3-backend`; falling back to trivial backend. \
                          Rebuild СЃ `cargo build --features z3-backend`."
                     );
+                    Box::new(TrivialBackend::new())
+                }
+            }
+            // Plan 33.14: cross-check режим Z3 ↔ CVC5.
+            BackendChoice::CrossCheck => {
+                #[cfg(feature = "z3-backend")]
+                {
+                    if super::backend::cvc5::cvc5_available() {
+                        Box::new(super::crosscheck::CrossCheckBackend::new(self.timeout_ms))
+                    } else {
+                        // cvc5 нет — деградируем до Z3, чтобы компиляция
+                        // не ломалась (cross-check просто не сработает).
+                        crosscheck_warn_once(0);
+                        Box::new(super::backend::z3::Z3Backend::new(self.timeout_ms))
+                    }
+                }
+                #[cfg(not(feature = "z3-backend"))]
+                {
+                    crosscheck_warn_once(1);
                     Box::new(TrivialBackend::new())
                 }
             }
@@ -2972,6 +3027,8 @@ pub fn verify_module(module: &Module) -> ModuleVerifyReport {
     for item in &module.items {
         if let Item::Fn(fd) = item {
             if fd.contracts.is_empty() { continue; }
+            // Plan 33.14: контекст для атрибуции cross-check-расхождений.
+            super::crosscheck::set_current_fn(Some(fd.name.clone()));
             // Plan 33.3 Ф.13: #trusted external fn -- контракты axioms, SMT-verify пропускается.
             if fd.is_trusted && fd.is_external { continue; }
             // Ф.4.1 (Plan 33.6): #unverified fn внутри #must_verify_module → conflict error.
@@ -3139,6 +3196,8 @@ let t0 = std::time::Instant::now();
         // Лемма -- это proven proof term: failure = hard error (always MustVerify).
         if let Item::Lemma(ld) = item {
             if ld.contracts.is_empty() { continue; }
+            // Plan 33.14: контекст для атрибуции cross-check-расхождений.
+            super::crosscheck::set_current_fn(Some(ld.name.clone()));
             let results = pipeline.verify_lemma(module, ld, &inferred_pure);
             for (span, vr) in results {
                 match vr {
@@ -3874,6 +3933,29 @@ let t0 = std::time::Instant::now();
                 }
             }
         }
+    }
+    // Plan 33.14 Ф.4+Ф.5: слить накопленные cross-check-расхождения.
+    // Непустой список — soundness-критичная находка (Z3 и CVC5 дали
+    // противоположные definite-ответы): поднимаем compile-error. Это и
+    // есть merge-gate для CI-job `contracts-crosscheck`. В обычном режиме
+    // (без NOVA_CROSSCHECK) коллектор всегда пуст — drain это no-op.
+    super::crosscheck::set_current_fn(None);
+    let disagreements = super::crosscheck::take_disagreements();
+    for d in &disagreements {
+        let span = d
+            .fn_name
+            .as_ref()
+            .and_then(|name| {
+                module.items.iter().find_map(|it| match it {
+                    Item::Fn(fd) if &fd.name == name => Some(fd.span),
+                    Item::Lemma(ld) if &ld.name == name => Some(ld.span),
+                    _ => None,
+                })
+            })
+            .unwrap_or_else(crate::diag::Span::dummy);
+        report
+            .errors
+            .push(Diagnostic::new(super::crosscheck::format_one(d), span));
     }
     report
 }
