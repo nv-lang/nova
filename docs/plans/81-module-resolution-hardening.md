@@ -3,8 +3,8 @@
 > **Создан 2026-05-21.** Переработан с чистого листа 2026-05-21 после
 > сверки с реальным кодом компилятора (см. «Сверка фактов» ниже).
 >
-> **Статус:** 🚧 in progress — Ф.1 ✅ + Ф.2 ✅ + Ф.3 ✅ (2026-05-21,
-> worktree `nova-p79`, ветка `plan-81-hardening`), Ф.4–Ф.11 pending.
+> **Статус:** 🚧 in progress — Ф.1–Ф.5 ✅ (2026-05-21, worktree
+> `nova-p79`, ветка `plan-81-hardening`), Ф.6–Ф.11 pending.
 > - **Ф.1** ✅ visibility enforcement (commit `197480a747c`).
 > - **Ф.2** ✅ module-qualified call type-check — `alias.func()` /
 >   `mod.func()` резолвятся в `TypeCheckCtx`; неизвестная функция →
@@ -15,10 +15,18 @@
 >   работают (Plan 35 merge → `protocol_specs` → `check_satisfaction`),
 >   orphan rule не нужен (структурная конформность D72). Добавлены
 >   regression-фикстуры `nova_tests/plan81/bound_*`.
+> - **Ф.4** ✅ resolver strictness: (b) case-sensitive пути —
+>   `ResolveErr::CaseMismatch` (`verify_case` канонизирует путь,
+>   сверяет регистр); (a) `unused-import` lint — per-peer, селективные
+>   импорты (whole-module не линтуется — открытый набор bare-имён через
+>   Plan 35 merge). 0 ложных срабатываний на `std/`.
+> - **Ф.5** ✅ peer mutual recursion — эмпирически verify: уже работает
+>   (сигнатуры всех items регистрируются до обхода тел). Добавлен
+>   folder-module `nova_tests/plan81/peer_recur/`.
 > - `plan81/lib` — библиотечная фикстура без `main` (test-runner
 >   classification gap) — починена self-test'ом.
 >
-> Suite на момент Ф.3: **949 PASS / 0 FAIL**.
+> Suite на момент Ф.5: **953 PASS / 0 FAIL**.
 >
 > **Источник:** аудит module-resolution 2026-05-21 — открытые пункты
 > [Plan 35](35-cross-file-resolve.md) (sub-plans 35.B-E + R26),
