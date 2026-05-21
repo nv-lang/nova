@@ -99,6 +99,25 @@ Go / Rust / TS ловят **все пять** на этапе компиляци
 - D-блок: «типовая полнота» — каждое выражение типизировано, нет
   silent-fallback на уровне типов; правила assignability; статус `any`.
 
+### Ф.8 — Follow-up: дописать негативные тесты Plan 72 (p1b/p2a)
+
+**Обязательная задача ПОСЛЕ закрытия Ф.1–Ф.6.** На момент Plan 72
+негативные тесты для подзадач **p1b** (empty-sum misuse) и **p2a**
+(Result type mismatch) написать было **невозможно** — type-checker
+лояльно принимал natural-negatives (NEG-NO-ERROR) либо они ловились
+лишь C-компилятором (CC-FAIL). Это задокументировано в Plan 72
+simplifications как `[M-typecheck-missing-type-compat-checks]`.
+
+Plan 79 (Ф.1–Ф.4) делает эти случаи Nova-level compile-error'ами →
+негативы становятся писабельны. Поэтому:
+
+- После Ф.6 — **вернуться в `nova_tests/plan72/`** и дописать
+  `p1b_empty_sum_type_neg.nv` и `p2a_try_from_into_neg.nv`
+  (`EXPECT_COMPILE_ERROR` на assignability / type-arity / bad-variant).
+- Снять оговорку «p1b/p2a без negative-покрытия» в Plan 72 doc и
+  пометить `[M-typecheck-missing-type-compat-checks]` как RESOLVED.
+- Plan 72 после этого получает полное pos+neg покрытие всех 8 подзадач.
+
 ---
 
 ## Порядок выполнения
@@ -111,6 +130,7 @@ Go / Rust / TS ловят **все пять** на этапе компиляци
 Ф.5 (no any-hole)     — ~1 день (аудит)
 Ф.6 (тесты)           — ~1 день
 Ф.7 (spec)            — ~0.5 дня
+Ф.8 (follow-up: негативы Plan 72 p1b/p2a) — ~0.5 дня, ПОСЛЕ Ф.1-Ф.6
 ```
 
 Рекомендуется **per-check инкрементально** (как Plan 70 мигрировал
