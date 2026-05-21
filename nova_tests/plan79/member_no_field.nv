@@ -1,0 +1,13 @@
+// EXPECT_COMPILE_ERROR E7320
+//
+// Plan 79 Ф.3: field existence. `p.z` — `z` is not a field of `Point`.
+// Used to fail only at C compilation (CC-FAIL); now → E7320.
+
+module nova_tests.plan79.member_no_field
+
+type Point { x int, y int }
+
+fn run() -> int {
+    let p Point = { x: 1, y: 2 }
+    p.z
+}
