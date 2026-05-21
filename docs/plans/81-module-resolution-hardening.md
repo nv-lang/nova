@@ -3,9 +3,9 @@
 > **Создан 2026-05-21.** Переработан с чистого листа 2026-05-21 после
 > сверки с реальным кодом компилятора (см. «Сверка фактов» ниже).
 >
-> **Статус:** 🚧 in progress — Ф.1–Ф.6 ✅ + Ф.7.1 ✅ + Ф.8.1 ✅
+> **Статус:** 🚧 in progress — Ф.1–Ф.6 ✅ + Ф.7.1 ✅ + Ф.8 ✅
 > (2026-05-21, worktree `nova-p79`, ветка `plan-81-hardening`), Ф.7.2 +
-> Ф.8.2/Ф.8.3 + Ф.9–Ф.11 pending.
+> Ф.9–Ф.11 pending.
 > - **Ф.1** ✅ visibility enforcement (commit `197480a747c`).
 > - **Ф.2** ✅ module-qualified call type-check — `alias.func()` /
 >   `mod.func()` резолвятся в `TypeCheckCtx`; неизвестная функция →
@@ -33,13 +33,16 @@
 >   + `-Wl,--gc-sections` (Linux/macOS) / `/Gy` (MSVC): неиспользуемые
 >   секции удаляет линкер. Ф.7.2 (compiler-level reachability DCE) —
 >   pending (крупная, см. декомпозицию Ф.7).
-> - **Ф.8.1** ✅ FileId-аудит — маркер оказался **реальным**: ошибка в
->   импортированном модуле рендерилась byte-offset'ом в entry-исходник
->   (чужой файл/сниппет). Фикс: `build_source_map` из `peer_files` +
->   `cmd_check` рендерит через `render_with_map`; `render_with_map`
->   дополнен сниппетом. Ф.8.2 (multi-error recovery) + Ф.8.3
->   (did-you-mean — для module-path уже есть `suggest_module_name`;
->   item-level требует R26-enforcement) — pending.
+> - **Ф.8** ✅ resolution diagnostics: **Ф.8.1** FileId-аудит — маркер
+>   оказался **реальным**: ошибка импортированного модуля рендерилась
+>   byte-offset'ом в entry-исходник (чужой файл/сниппет); фикс
+>   `build_source_map` + `render_with_map` + сниппет. **Ф.8.2**
+>   multi-error recovery — резолв не прерывается на первой ошибке
+>   импорта (cycle-state восстанавливается между top-level импортами).
+>   **Ф.8.3** did-you-mean — для module-path уже работает
+>   (`suggest_module_name`, Левенштейн); verify + фикстура. Item-level
+>   did-you-mean (`import X.{Typo}`) — требует R26 selective-item
+>   enforcement, deferred-with-reason.
 > - `plan81/lib` — библиотечная фикстура без `main` (test-runner
 >   classification gap) — починена self-test'ом.
 >
