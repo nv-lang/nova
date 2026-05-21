@@ -1,0 +1,9 @@
+// EXPECT_COMPILE_ERROR E7320
+//
+// Plan 79 Ф.3: field existence on a parameter-typed value.
+
+module nova_tests.plan79.member_no_field_param
+
+type User { id int, name str }
+
+fn describe(u User) -> int => u.age

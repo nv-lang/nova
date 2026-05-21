@@ -1162,7 +1162,10 @@ impl<'a> TypeCheckCtx<'a> {
             scope.insert(p.name.clone(), p.ty.clone());
         }
         match &fd.body {
-            FnBody::Expr(e) => self.f1_expr(e, &gs, &mut scope, errors),
+            FnBody::Expr(e) => {
+                self.f1_expr(e, &gs, &mut scope, errors);
+                self.f4_check_value(e, &scope, errors);
+            }
             FnBody::Block(b) => self.f1_block(b, &gs, &mut scope, errors),
             FnBody::External => {}
         }
@@ -1190,6 +1193,7 @@ impl<'a> TypeCheckCtx<'a> {
         }
         if let Some(t) = &b.trailing {
             self.f1_expr(t, gs, scope, errors);
+            self.f4_check_value(t, scope, errors);
         }
         for (n, prev) in snapshot {
             match prev {
@@ -1210,6 +1214,7 @@ impl<'a> TypeCheckCtx<'a> {
             Stmt::Expr(e) => self.f1_expr(e, gs, scope, errors),
             Stmt::Let(d) => {
                 self.f1_expr(&d.value, gs, scope, errors);
+                self.f4_check_value(&d.value, scope, errors);
                 // Ф.1: annotation ↔ RHS.
                 if let (Some(ann), Some(name)) =
                     (&d.ty, pattern_simple_name(&d.pattern))
@@ -1236,9 +1241,13 @@ impl<'a> TypeCheckCtx<'a> {
             Stmt::Return { value, .. } => {
                 if let Some(v) = value {
                     self.f1_expr(v, gs, scope, errors);
+                    self.f4_check_value(v, scope, errors);
                 }
             }
-            Stmt::Throw { value, .. } => self.f1_expr(value, gs, scope, errors),
+            Stmt::Throw { value, .. } => {
+                self.f1_expr(value, gs, scope, errors);
+                self.f4_check_value(value, scope, errors);
+            }
             Stmt::Break(_) | Stmt::Continue(_) | Stmt::Reveal { .. } => {}
             Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. } => {
                 self.f1_expr(body, gs, scope, errors);
@@ -1271,6 +1280,7 @@ impl<'a> TypeCheckCtx<'a> {
                 self.f1_expr(func, gs, scope, errors);
                 for a in args {
                     self.f1_expr(a.expr(), gs, scope, errors);
+                    self.f4_check_value(a.expr(), scope, errors);
                 }
                 if let Some(t) = trailing {
                     match t {
@@ -1296,9 +1306,12 @@ impl<'a> TypeCheckCtx<'a> {
             ExprKind::Binary { left, right, .. } => {
                 self.f1_expr(left, gs, scope, errors);
                 self.f1_expr(right, gs, scope, errors);
+                self.f4_check_value(left, scope, errors);
+                self.f4_check_value(right, scope, errors);
             }
             ExprKind::Unary { operand, .. } => {
-                self.f1_expr(operand, gs, scope, errors)
+                self.f1_expr(operand, gs, scope, errors);
+                self.f4_check_value(operand, scope, errors);
             }
             ExprKind::Try(inner) | ExprKind::Bang(inner) => {
                 self.f1_expr(inner, gs, scope, errors)
@@ -1307,7 +1320,10 @@ impl<'a> TypeCheckCtx<'a> {
                 self.f1_expr(a, gs, scope, errors);
                 self.f1_expr(b, gs, scope, errors);
             }
-            ExprKind::Member { obj, .. } => self.f1_expr(obj, gs, scope, errors),
+            ExprKind::Member { obj, name } => {
+                self.f1_expr(obj, gs, scope, errors);
+                self.f3_check_member(obj, name, e.span, scope, errors);
+            }
             ExprKind::Index { obj, index } => {
                 self.f1_expr(obj, gs, scope, errors);
                 self.f1_expr(index, gs, scope, errors);
@@ -1501,7 +1517,10 @@ impl<'a> TypeCheckCtx<'a> {
         errors: &mut Vec<Diagnostic>,
     ) {
         match &sb.body {
-            FnBody::Expr(e) => self.f1_expr(e, gs, scope, errors),
+            FnBody::Expr(e) => {
+                self.f1_expr(e, gs, scope, errors);
+                self.f4_check_value(e, scope, errors);
+            }
             FnBody::Block(b) => self.f1_block(b, gs, scope, errors),
             FnBody::External => {}
         }
@@ -1617,6 +1636,110 @@ impl<'a> TypeCheckCtx<'a> {
                 );
             }
         }
+    }
+
+    /// Ф.3: проверить существование поля/метода `name` у `obj`.
+    ///
+    /// Консервативно: проверяется только когда тип `obj` уверенно
+    /// резолвится в concrete record **без embed'ов** (`use`-поля
+    /// проксируют члены — резолв слишком сложен). Метод ИЛИ поле —
+    /// обе формы валидны (`obj.field`, `obj.method`, `obj.method()`).
+    fn f3_check_member(
+        &self,
+        obj: &Expr,
+        name: &str,
+        span: Span,
+        scope: &HashMap<String, TypeRef>,
+        errors: &mut Vec<Diagnostic>,
+    ) {
+        let Some(obj_tr) = self.infer_expr_type(obj, scope) else { return; };
+        let TypeRef::Named { path, .. } = &obj_tr else { return; };
+        let Some(tname) = path.last() else { return; };
+        let Some(td) = self.types.get(tname) else { return; };
+        let TypeDeclKind::Record(fields) = &td.kind else { return; };
+        // embed (`use`) проксирует поля/методы вложенного типа — резолв
+        // слишком сложен для надёжной проверки, пропускаем такой тип.
+        if fields.iter().any(|f| f.is_embed) {
+            return;
+        }
+        if fields.iter().any(|f| f.name == name) {
+            return;
+        }
+        // Метод? Имена операторных методов могут храниться с ведущим `@`.
+        let has_method = self.method_table.get(tname).map_or(false, |m| {
+            m.keys().any(|k| k.trim_start_matches('@') == name)
+        });
+        if has_method {
+            return;
+        }
+        // `into` / `try_into` синтезируются компилятором из `From` /
+        // `TryFrom` (D73/D77) — их нет в method_table, но они валидны
+        // для любого типа-источника конверсии.
+        if matches!(name, "into" | "try_into") {
+            return;
+        }
+        let avail: Vec<&str> =
+            fields.iter().map(|f| f.name.as_str()).collect();
+        let mut diag = Diagnostic::new(
+            format!(
+                "[E7320] no field or method `{}` on type `{}`",
+                name, tname,
+            ),
+            span,
+        );
+        if !avail.is_empty() {
+            diag = diag.with_note(format!(
+                "`{}` has field{}: {}",
+                tname,
+                if avail.len() == 1 { "" } else { "s" },
+                avail.join(", "),
+            ));
+        }
+        errors.push(diag);
+    }
+
+    /// Ф.4: имя типа в value-позиции (`let c = Foo`, `Foo + 1`) → E7330.
+    ///
+    /// Флагится только bare `Ident`, разрешающийся в **непустой**
+    /// record/sum-тип. Пустые типы (unit), эффекты (handler — значение),
+    /// протоколы/newtype/alias/opaque, а также имена, перекрытые
+    /// локальной переменной — пропускаются (валидно либо неоднозначно).
+    fn f4_check_value(
+        &self,
+        expr: &Expr,
+        scope: &HashMap<String, TypeRef>,
+        errors: &mut Vec<Diagnostic>,
+    ) {
+        let ExprKind::Ident(name) = &expr.kind else { return; };
+        // Локальная переменная / параметр перекрывает имя типа.
+        if scope.contains_key(name) {
+            return;
+        }
+        let Some(td) = self.types.get(name) else { return; };
+        let kind = match &td.kind {
+            TypeDeclKind::Record(fields) if !fields.is_empty() => "record type",
+            TypeDeclKind::Sum(variants) if !variants.is_empty() => "sum type",
+            // empty record/sum (unit), effect/protocol/newtype/alias/opaque —
+            // не value-misuse (либо валидно как значение, либо неоднозначно).
+            _ => return,
+        };
+        let hint = match &td.kind {
+            TypeDeclKind::Record(_) => format!(
+                "construct a value: `{} {{ ... }}` or a constructor `{}.new(...)`",
+                name, name,
+            ),
+            TypeDeclKind::Sum(_) => {
+                format!("use one of `{}`'s variants", name)
+            }
+            _ => String::new(),
+        };
+        errors.push(
+            Diagnostic::new(
+                format!("[E7330] `{}` is a {}, not a value", name, kind),
+                expr.span,
+            )
+            .with_note(hint),
+        );
     }
 
     /// Ф.1: совместимо ли `expr` с типом `expected`?
