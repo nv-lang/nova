@@ -13,3 +13,12 @@ export fn public_value() -> int {
 }
 
 export const ANSWER int = 43
+
+// Self-test — also makes this file a valid test fixture (the test
+// runner builds a `.nv` file as an executable; a library module with
+// no `main`/`test` would fail to link). `lib` is imported by
+// `visibility_ok` / `visibility_fn_rejected` as their target module.
+test "lib — exported and private members resolve internally" {
+    assert(public_value() == 43)
+    assert(ANSWER == 43)
+}

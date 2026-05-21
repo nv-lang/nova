@@ -1,0 +1,13 @@
+// EXPECT_COMPILE_ERROR E7330
+//
+// Plan 79 Ф.4: a type name used as a value. `let c = Widget` — `Widget`
+// is a type, not a value. Used to fail only at C compilation.
+
+module nova_tests.plan79.type_as_value_let
+
+type Widget { w int }
+
+fn run() -> int {
+    let c = Widget
+    0
+}

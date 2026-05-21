@@ -1,0 +1,15 @@
+// Plan 81 Ф.10: entry-folder-module. `app.nv` — peer с `fn main`.
+// Когда сам компилируемый entry — peer folder-module, resolver
+// собирает sibling peers (`lib.nv`) и компилирует группу как один
+// модуль. `main` вызывает `helper`, объявленную в соседнем peer'е —
+// подтверждает, что peers entry-folder-module делят declarations
+// namespace (Rule C: «peers share declarations»).
+//
+// Проверяется через `nova check` (см. nova-cli/tests/entry_folder_module.rs).
+// Без Ф.10 sibling `lib.nv` не собирался бы → `helper` undefined.
+
+module nova_tests.plan81.entry_fmod
+
+fn main() -> int {
+    helper()
+}

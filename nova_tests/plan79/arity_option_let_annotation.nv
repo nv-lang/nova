@@ -1,0 +1,11 @@
+// EXPECT_COMPILE_ERROR E7310
+//
+// Plan 79 Ф.2: type-arity check fires on `let` type annotations too,
+// not only on signatures. `Option` declares one type parameter.
+
+module nova_tests.plan79.arity_option_let_annotation
+
+fn run() -> int {
+    let x Option[int, bool] = None
+    0
+}

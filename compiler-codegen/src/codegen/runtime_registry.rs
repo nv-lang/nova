@@ -29,7 +29,7 @@ pub struct RuntimeFn {
     pub name: &'static str,
     /// Параметры (без receiver'а): `(name, nova_type_name)`.
     pub params: &'static [(&'static str, &'static str)],
-    /// Nova return type (`"str"`, `"f64"`, `"bool"`, `"int"`, `"[]byte"`,
+    /// Nova return type (`"str"`, `"f64"`, `"bool"`, `"int"`, `"[]u8"`,
     /// `"Option[int]"`, `"Iter[char]"`, etc.).
     pub return_ty: &'static str,
     /// Effects (`"Fail[Error]"` etc.). Пустой массив для total functions.
@@ -393,10 +393,10 @@ fn str_runtime() -> Vec<RuntimeFn> {
             is_static: false, is_mut: false, is_consume: false,
             name: "bytes",
             params: &[],
-            return_ty: "[]byte",
+            return_ty: "[]u8",
             effects: &[],
             c_name: "nova_str_bytes",
-            doc: "UTF-8 bytes как []byte (copy).",
+            doc: "UTF-8 bytes как []u8 (copy).",
         nova_body: None,
     },
         RuntimeFn {
@@ -825,20 +825,20 @@ fn write_buffer_runtime() -> Vec<RuntimeFn> {
         nova_body: None,
     });
     v.push(RuntimeFn { module: m, receiver: recv, is_static: true, is_mut: false, is_consume: false,
-        name: "from", params: &[("b", "[]byte")], return_ty: "Self", effects: &[],
+        name: "from", params: &[("b", "[]u8")], return_ty: "Self", effects: &[],
         c_name: "Nova_WriteBuffer_static_from",
         doc: "Создать WriteBuffer из существующих байт.",
         nova_body: None,
     });
     // Базовые write. Все mut @write_* возвращают Self для chaining (Ф.9.1).
     v.push(RuntimeFn { module: m, receiver: recv, is_static: false, is_mut: true, is_consume: false,
-        name: "write_byte", params: &[("v", "byte")], return_ty: "Self", effects: &[],
+        name: "write_byte", params: &[("v", "u8")], return_ty: "Self", effects: &[],
         c_name: "Nova_WriteBuffer_method_write_byte",
         doc: "Append один byte. Returns self for chaining.",
         nova_body: None,
     });
     v.push(RuntimeFn { module: m, receiver: recv, is_static: false, is_mut: true, is_consume: false,
-        name: "write_bytes", params: &[("src", "[]byte")], return_ty: "Self", effects: &[],
+        name: "write_bytes", params: &[("src", "[]u8")], return_ty: "Self", effects: &[],
         c_name: "Nova_WriteBuffer_method_write_bytes",
         doc: "Append массив байт (memcpy). Returns self.",
         nova_body: None,
@@ -915,9 +915,9 @@ fn write_buffer_runtime() -> Vec<RuntimeFn> {
         nova_body: None,
     });
     v.push(RuntimeFn { module: m, receiver: recv, is_static: false, is_mut: false, is_consume: false,
-        name: "into", params: &[], return_ty: "[]byte", effects: &[],
+        name: "into", params: &[], return_ty: "[]u8", effects: &[],
         c_name: "Nova_WriteBuffer_method_into",
-        doc: "Финализировать в []byte. Infallible.",
+        doc: "Финализировать в []u8. Infallible.",
         nova_body: None,
     });
     v
@@ -932,9 +932,9 @@ fn read_buffer_runtime() -> Vec<RuntimeFn> {
     let mut v: Vec<RuntimeFn> = Vec::new();
     // Создание (Self — Plan 13 Ф.9.1 unification).
     v.push(RuntimeFn { module: m, receiver: recv, is_static: true, is_mut: false, is_consume: false,
-        name: "from", params: &[("b", "[]byte")], return_ty: "Self", effects: &[],
+        name: "from", params: &[("b", "[]u8")], return_ty: "Self", effects: &[],
         c_name: "Nova_ReadBuffer_static_from",
-        doc: "Создать ReadBuffer из []byte (view, no copy).",
+        doc: "Создать ReadBuffer из []u8 (view, no copy).",
         nova_body: None,
     });
     // Cursor metadata (read-only).
@@ -957,15 +957,15 @@ fn read_buffer_runtime() -> Vec<RuntimeFn> {
         nova_body: None,
     });
     v.push(RuntimeFn { module: m, receiver: recv, is_static: false, is_mut: false, is_consume: false,
-        name: "remaining_bytes", params: &[], return_ty: "[]byte", effects: &[],
+        name: "remaining_bytes", params: &[], return_ty: "[]u8", effects: &[],
         c_name: "Nova_ReadBuffer_method_remaining_bytes",
-        doc: "Скопировать оставшиеся байты как []byte.",
+        doc: "Скопировать оставшиеся байты как []u8.",
         nova_body: None,
     });
     // 18 numeric × LE/BE × Fail-form / Try-form.
     let read_specs: Vec<(&'static str, &'static str, &'static str)> = vec![
-        ("read_byte",  "byte", "1 byte."),
-        ("read_bytes", "[]byte", "n байт (с n int параметром)."),
+        ("read_byte",  "u8", "1 byte."),
+        ("read_bytes", "[]u8", "n байт (с n int параметром)."),
         ("read_u8",    "u8",  "1 byte unsigned."),
         ("read_i8",    "i8",  "1 byte signed."),
         ("read_u16_le","u16", "u16 little-endian."),

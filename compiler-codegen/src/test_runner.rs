@@ -821,6 +821,15 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
             if !target.is_empty() {
                 flags.insert(0, target.to_string());
             }
+            // Plan 81 Ф.7.1: linker-level DCE. -ffunction-sections /
+            // -fdata-sections кладут каждую функцию/данные в отдельную
+            // секцию; линкер затем удаляет неиспользуемые. Отсечение
+            // делает линкер (как в Go) — без анализа в компиляторе,
+            // near-zero риск. На Linux/macOS активируется -Wl,--gc-sections
+            // (ниже, cfg-блок); на Windows lld-link folding включён по
+            // умолчанию (/OPT:REF) — секции дают линкеру гранулярность.
+            flags.push("-ffunction-sections".to_string());
+            flags.push("-fdata-sections".to_string());
             // Plan 44.2 P41-5 + audit round 5: stack-clash protection (CVE-2017-1000366).
             // -fstack-clash-protection inserts page-by-page probing on stack frames
             // >4KB, preventing skip past single guard page in one SP subtraction.
@@ -831,6 +840,10 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
             {
                 flags.push("-fstack-clash-protection".to_string());
                 flags.push("-fstack-protector-strong".to_string());
+                // Plan 81 Ф.7.1: GNU ld / lld удаляют неиспользуемые
+                // секции (function/data sections выше). На Windows
+                // lld-link делает то же по умолчанию (/OPT:REF).
+                flags.push("-Wl,--gc-sections".to_string());
             }
             // Plan 44.5: NOVA_GC_BOEHM activates GC root registration in fibers.h.
             // GC_THREADS — Boehm compiled with -DGC_THREADS (vcpkg build.ninja confirms);
@@ -942,6 +955,10 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
                 }
                 Mode::Release => { c.args(["/nologo", "/W0", "/O2", "/DNDEBUG"]); }
             }
+            // Plan 81 Ф.7.1: /Gy — function-level linking (каждая функция
+            // в свой COMDAT); link.exe /OPT:REF (default в release) удаляет
+            // неиспользуемые. MSVC-эквивалент -ffunction-sections.
+            c.arg("/Gy");
             // Plan 44.5: NOVA_GC_BOEHM + GC_THREADS — Boehm compiled with -DGC_THREADS;
             // client must define it too for GC_register_my_thread API (M:N workers).
             if opts.gc_kind == GcKind::Boehm {
@@ -997,6 +1014,11 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
                     c.arg("-w");
                 }
             }
+            // Plan 81 Ф.7.1: linker-level DCE (GNU ld удаляет
+            // неиспользуемые секции).
+            c.arg("-ffunction-sections");
+            c.arg("-fdata-sections");
+            c.arg("-Wl,--gc-sections");
             // Plan 44.5: NOVA_GC_BOEHM + GC_THREADS for M:N worker thread registration.
             if opts.gc_kind == GcKind::Boehm {
                 c.arg("-DNOVA_GC_BOEHM");
@@ -1976,65 +1998,12 @@ pub fn find_repo_root_from(start: &Path) -> Option<PathBuf> {
 }
 
 /// Plan 42 D29 rev-3: heuristic — is this file a peer of folder-module?
-///
-/// Folder-module = все .nv files в parent dir объявляют **тот же**
-/// `module X`. Single-file = unique declaration per file (current
-/// existing model в nova_tests/basics/ где каждый .nv объявляет
-/// свой own module).
-///
-/// Detect: parse `module X` declaration first-line из каждого .nv в
-/// parent. Если все одинаковы — folder-module peer. Иначе single-file.
-///
-/// Лёгкая heuristic (без полного parser): grep первую non-comment
-/// строку для `module ...` pattern.
+/// Plan 81 Ф.10: delegates to the canonical
+/// `crate::imports::is_folder_module_peer` — single source of truth
+/// (Plan 42.17 Ф.3 scanner-consolidation), now also consumed by
+/// `manifest::check_module_path` for folder-module entry validation.
 fn is_folder_module_peer(path: &Path) -> bool {
-    let parent = match path.parent() {
-        Some(p) => p,
-        None => return false,
-    };
-    // Plan 42.12 Ф.1: filter peers по target — `_windows.nv` peer на Linux
-    // skip'ается, не учитывается в folder-module detection.
-    let target = crate::imports::current_target_os();
-    let entries: Vec<PathBuf> = match std::fs::read_dir(parent) {
-        Ok(it) => it
-            .filter_map(|e| e.ok())
-            .map(|e| e.path())
-            .filter(|p| {
-                if !p.is_file() {
-                    return false;
-                }
-                if p.extension().and_then(|s| s.to_str()) != Some("nv") {
-                    return false;
-                }
-                if let Some(stem) = p.file_stem().and_then(|s| s.to_str()) {
-                    let core_stem = stem.strip_suffix("_test").unwrap_or(stem);
-                    if !crate::imports::peer_active_for_target_pub(core_stem, target) {
-                        return false;
-                    }
-                }
-                true
-            })
-            .collect(),
-        Err(_) => return false,
-    };
-    if entries.len() < 2 {
-        return false;
-    }
-    // Plan 42.17 Ф.3: единый сканер `crate::imports::scan_module_decl`.
-    let mut decls: Vec<Vec<String>> = Vec::with_capacity(entries.len());
-    for entry in &entries {
-        let src = match std::fs::read_to_string(entry) {
-            Ok(s) => s,
-            Err(_) => return false,
-        };
-        match crate::imports::scan_module_decl(&src) {
-            Some(d) => decls.push(d),
-            None => return false,
-        }
-    }
-    // All decls identical?
-    let first = &decls[0];
-    decls.iter().all(|d| d == first)
+    crate::imports::is_folder_module_peer(path)
 }
 
 /// Plan 52 Ф.9: возвращает `(codegen_warnings, lint_warnings)` — последние

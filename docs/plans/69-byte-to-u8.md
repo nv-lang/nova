@@ -1,6 +1,6 @@
-# Plan 68 — Remove `byte` type alias, canonicalise `u8`
+# Plan 69 — Remove `byte` type alias, canonicalise `u8`
 
-## Status: in-progress
+## Status: ✅ ЗАКРЫТ 2026-05-22
 
 ## Problem
 
@@ -38,10 +38,26 @@ Add D125 in `spec/decisions/02-types.md`:
 ## Steps
 
 1. [x] Create this plan document.
-2. [ ] Add D125 to `spec/decisions/02-types.md`.
-3. [ ] Mass-replace `byte` → `u8` in `spec/decisions/` (skip `bytes` tag and prose).
-4. [ ] Mass-replace `byte` → `u8` in `std/`.
-5. [ ] Mass-replace `byte` → `u8` in `nova_tests/`.
-6. [ ] Mass-replace `byte` → `u8` in `examples/`.
-7. [ ] Build + test.
-8. [ ] Commit.
+2. [x] Add D125 to `spec/decisions/02-types.md`.
+3. [x] Replace `byte` → `u8` (тип) в `spec/decisions/` — per-occurrence,
+   проза и тег `bytes` не тронуты.
+4. [x] Replace `byte` → `u8` в `std/` (4 файла: `prelude/collections.nv`,
+   `runtime/read_buffer.nv`, `runtime/string.nv`, `runtime/write_buffer.nv`).
+5. [x] Replace `byte` → `u8` в `nova_tests/`. Фикстуры
+   `plan70_4/f5_byte_u8_alias_pos.nv` и `f8_byte_u8_interop_pos.nv`
+   **удалены** — они тестировали `byte`↔`u8`-алиасинг, который Plan 69
+   как раз убирает.
+6. [x] `examples/` — вхождений типа `byte` нет (0).
+7. [x] Убрать `byte` из builtin-типов компилятора — `types/mod.rs`,
+   `parser/mod.rs`, `codegen/emit_c.rs`. C-typedef `nova_byte` сохранён
+   (внутреннее имя codegen для `u8`, не пользовательская поверхность).
+8. [x] Build + `nova test` — зелёный.
+9. [x] Commit.
+
+## Реализация (2026-05-22)
+
+`byte` больше не распознаётся компилятором как тип — единственное имя
+8-битного беззнакового целого — `u8`, срез — `[]u8`. Прогон `nova test`
+после удаления `byte` из компилятора служит enforcement'ом: любой
+пропущенный `byte`-as-type → ошибка компиляции. Тег `bytes` (D48) и
+слово «byte» в прозе комментариев — не затронуты (по D125).

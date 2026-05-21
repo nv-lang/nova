@@ -1,9 +1,9 @@
 // as_cast_restrictions.nv — Plan 08 Ф.5: as-cast restrictions для
-// char/byte/bool. Раздел allowed-cases.
+// char/u8/bool. Раздел allowed-cases.
 //
 // Запрещённые `as`-cast'ы (compile-error):
 //   - int as char     → char.try_from(n)?
-//   - char as u8    → byte.try_from(c)?  (за исключением CharLit)
+//   - char as u8    → u8.try_from(c)?  (за исключением CharLit)
 //   - int as bool     → n != 0
 //   - str as T        → T.try_from(s)?
 //   - T as str        → str.from(v)
@@ -16,7 +16,7 @@
 module syntax.as_cast_restrictions
 
 
-test "char-literal as byte/int/u8 — разрешено (program ставит codepoint буквально)" {
+test "char-literal as int/u8 — разрешено (program ставит codepoint буквально)" {
     let a = 'A' as u8
     let b = 'A' as int
     let c = 'A' as u8
@@ -26,7 +26,7 @@ test "char-literal as byte/int/u8 — разрешено (program ставит c
 }
 
 
-test "byte → int (widening) — разрешено" {
+test "u8 → int (widening) — разрешено" {
     let b u8 = 65
     let n = b as int
     assert(n == 65)

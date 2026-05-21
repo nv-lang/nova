@@ -4192,7 +4192,7 @@ impl Parser {
                 let is_primitive_type = matches!(first.as_str(),
                     "int" | "i8" | "i16" | "i32" | "i64"
                     | "u8" | "u16" | "u32" | "u64" | "uint"
-                    | "f32" | "f64" | "byte" | "bool" | "char" | "str"
+                    | "f32" | "f64" | "bool" | "char" | "str"
                     // Plan 76: `never` — bottom-тип, строчный встроенный примитив.
                     | "never"
                 );

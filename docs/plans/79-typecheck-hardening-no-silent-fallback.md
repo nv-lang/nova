@@ -3,6 +3,31 @@
 > **Создан 2026-05-21.** Выделен из re-check'а
 > `[M-typecheck-missing-type-compat-checks]` (Plan 72 simplifications).
 >
+> **Статус:** ✅ **ЗАКРЫТ 2026-05-21** (worktree `nova-p79`, ветка
+> `plan-79`). Ф.1 assignability (E7301) + Ф.2 type-arity (E7310) +
+> Ф.3 field/method existence (E7320) + Ф.4 type-vs-value (E7330) +
+> Ф.5 audit + Ф.6 тесты (27 фикстур: 25 `nova_tests/plan79/` +
+> 2 `nova_tests/plan72/` p1b/p2a negatives) + Ф.7 спека
+> [D135](../../spec/decisions/02-types.md#d135) + Ф.8 закрытие
+> `[M-typecheck-missing-type-compat-checks]`. Проход `TypeCheckCtx` в
+> `compiler-codegen/src/types/mod.rs`. Full suite **946 PASS / 1 FAIL**
+> — единственный FAIL `plan81/lib` pre-existing (Plan 81 Ф.1, не
+> относится к Plan 79; библиотечная фикстура без `main` —
+> test-runner classification gap).
+>
+> **Ф.5 (no any-hole) — итог аудита:** type-checker bootstrap'а по
+> дизайну не типизирует каждое выражение (вывод завершается в
+> кодогене). Проверки Ф.1/Ф.3/Ф.4 используют **локальный skip**
+> (`Compat::Unknown` / ранний `return`), когда тип не выводится — это
+> не silent miscompilation (программа не становится неверной;
+> недостающая проверка ловится дальше по пайплайну либо случай
+> корректен). `any` — только `TyCat::Other` из явной аннотации, он не
+> отключает проверку соседних выражений. Silent-wrong пути нет.
+> «Невыводимый тип → CE» из исходного scope Ф.5 не реализуется: для
+> минимального bootstrap-type-checker'а это отвергло бы массу
+> валидного кода — полная типизация каждого выражения = пост-bootstrap
+> full inference engine, вне scope Plan 79. Зафиксировано в D135.
+>
 > **Цель:** довести принцип Plan 70 «no silent fallback» до **type-checker'а**.
 > Сейчас Plan 70 закрыл silent-fallback в *кодогене*; type-checker всё ещё
 > молча принимает базовые ошибки типов. Дожать так, чтобы **каждое
