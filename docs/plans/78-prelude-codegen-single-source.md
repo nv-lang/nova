@@ -68,6 +68,16 @@ Result[T, E] @is_ok() -> bool` в `core.nv` даёт codegen'у достаточ
 После: `init_prelude_decls_from_items` строит routing с нуля из
 declarations; `init_hardcoded_baseline` Option/Result entries удаляются.
 
+> **Порядок-капкан (урок Plan 59).** Ф.1 **завершить и проверить
+> полным прогоном ДО начала Ф.2.** `init_prelude_decls_from_items`
+> наследует routing от baseline — если удалить baseline раньше, чем
+> `.nv`-routing полностью работает, dispatch ломается молча. В Plan 59
+> был аналог (флип D3 нельзя было до dual-mode D1/D2). Ф.1.0 design
+> обязан сначала подтвердить, что выбранная схема покрывает **все**
+> mono-trampoline'ы — включая per-(T,E) `_<n>`-суффиксы (как
+> `Nova_Result_method_is_ok_<n>` из `register_novares_decl`), не
+> только non-mono методы.
+
 ### Ф.2 — Удалить `sum_schemas` pre-populate (P2, ~1-2 dev-days)
 
 **Сейчас:** `emit_c.rs` пре-популяцирует `sum_schemas["Option"]`,
@@ -82,8 +92,37 @@ declarations; `init_hardcoded_baseline` Option/Result entries удаляются
   `DeclaredFromPrelude` entry (из `errors.nv`) должен полностью
   покрывать; убрать `sum_schemas["RuntimeError"]`.
 
+**Уроки Plan 59 (тот же класс работы — удаление hardcoded зеркала).**
+
+1. **Чинить обе pattern-функции, не только `pattern_bind_typed`.**
+   В Plan 59 gap был в **двух** местах: `pattern_bind_typed`
+   (привязка переменной из payload) И `pattern_cond` (проверка тега
+   варианта). Починка только первой оставляет `pattern_cond`
+   сломанным для вложенных паттернов. Ф.2 обязана покрыть **обе**.
+
+2. **Конкретный repro для Option-внутри.** Plan 59 пост-фикс закрыл
+   `Option` *снаружи* (`Some(Ok(..))` / `Some(Err(..))` на
+   `Option[Result[T,E]]`). Ф.2 про `sum_schemas["Option"]` — это
+   симметричный, но **другой** баг: `Option` *внутри*. Обязательные
+   repro-кейсы: `match x { Some(Some(v)) => v }` на
+   `Option[Option[T]]`, плюс `Ok(Some(..))` на `Result[Option[T],E]`.
+   Без явного кейса легко пропустить.
+
+3. **RuntimeError — проверить record-variant путь.** `RuntimeError`
+   имеет record-варианты (`IndexOutOfBounds {i, n}`). В Plan 59
+   record-variant payload (`[M-result-record-payload-match]`) шёл
+   через **отдельную** ветку `pattern_bind_typed` (Record-ветка,
+   ~18599), не Tuple-ветку. Ф.2 для RuntimeError проверить и
+   tuple-, и record-variant pattern-пути.
+
 **Метод:** удалить insert → полный прогон → если регрессия, локализо-
 вать (как с Result nested-pattern) → фикс или honest-defer.
+
+> **Flaky-прогон (урок Plan 59).** При удалении `sum_schemas
+> ["Result"]` единичный «1 FAIL» оказался flaky — не воспроизвёлся
+> на повторном прогоне без изменений кода. При FAIL в Ф.2 —
+> **перепрогнать дважды**, отличить flaky от реальной регрессии,
+> прежде чем диагностировать.
 
 ### Ф.3 — print/println — делегировать Plan 68 (deferred)
 
