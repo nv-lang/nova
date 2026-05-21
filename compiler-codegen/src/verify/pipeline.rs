@@ -674,6 +674,21 @@ impl VerificationPipeline {
             }
         }
 
+        // Plan 33.8 Ф.6.5: рекурсивная функция без `decreases` — завершимость
+        // НЕ верифицируется. `ensures` доказывается лишь как partial
+        // correctness; индукция по рекурсии без well-founded меры
+        // потенциально unsound. Предупреждаем (раньше — молчаливый пропуск).
+        if fd.decreases.is_none() {
+            if let Some((call_span, _)) = find_recursive_calls_in_body(&fd.body, &fd.name).first() {
+                results.push((*call_span, VerifyResult::Warning(
+                    format!("рекурсивная функция `{}` без `decreases` [W2402]: \
+                             завершимость НЕ верифицирована — `ensures` доказан \
+                             только как partial correctness. Добавьте \
+                             `decreases <мера>` для проверки well-foundedness, \
+                             либо `#unverified`.", fd.name))));
+            }
+        }
+
         // Plan 33.4 D.0.3: verify loop invariants at entry.
         // Р"Р»СЏ РєР°Р¶РґРѕРіРѕ С†РёРєР»Р° СЃ `invariant <expr>` РІ С‚РµР»Рµ fn:
         // РїС‹С‚Р°РµРјСЃСЏ РґРѕРєР°Р·Р°С‚СЊ С‡С‚Рѕ invariant РІС‹РїРѕР»РЅСЏРµС‚СЃСЏ РїСЂРё РІС…РѕРґРµ РІ С„СѓРЅРєС†РёСЋ
@@ -1948,10 +1963,21 @@ fn collect_loop_decreases_in_body(body: &FnBody) -> Vec<(Span, Expr, Vec<(String
 }
 
 fn collect_loop_decreases_in_block(b: &Block, out: &mut Vec<(Span, Expr, Vec<(String, i64)>)>) {
-    for s in &b.stmts {
-        if let Stmt::Expr(e) = s { collect_loop_decreases_in_expr(e, out); }
-    }
+    for s in &b.stmts { collect_loop_decreases_in_stmt(s, out); }
     if let Some(e) = &b.trailing { collect_loop_decreases_in_expr(e, out); }
+}
+
+/// Plan 33.8 Ф.6.4: спуск во все stmt-формы, не только `Stmt::Expr` —
+/// иначе цикл в `let x = while...` / `return while...` пропускался и его
+/// well-foundedness не проверялась молча.
+fn collect_loop_decreases_in_stmt(s: &Stmt, out: &mut Vec<(Span, Expr, Vec<(String, i64)>)>) {
+    match s {
+        Stmt::Expr(e) => collect_loop_decreases_in_expr(e, out),
+        Stmt::Let(ld) => collect_loop_decreases_in_expr(&ld.value, out),
+        Stmt::Return { value: Some(v), .. } => collect_loop_decreases_in_expr(v, out),
+        Stmt::Assign { value, .. } => collect_loop_decreases_in_expr(value, out),
+        _ => {}
+    }
 }
 
 fn collect_loop_decreases_in_expr(e: &Expr, out: &mut Vec<(Span, Expr, Vec<(String, i64)>)>) {
@@ -2065,10 +2091,21 @@ fn collect_loop_preservation_targets(body: &FnBody) -> Vec<LoopPreservationTarge
 }
 
 fn collect_loop_preservation_in_block(b: &Block, out: &mut Vec<LoopPreservationTarget>) {
-    for s in &b.stmts {
-        if let Stmt::Expr(e) = s { collect_loop_preservation_in_expr(e, out); }
-    }
+    for s in &b.stmts { collect_loop_preservation_in_stmt(s, out); }
     if let Some(e) = &b.trailing { collect_loop_preservation_in_expr(e, out); }
+}
+
+/// Plan 33.8 Ф.6.4: спуск во все stmt-формы, не только `Stmt::Expr` —
+/// иначе цикл в `let x = while...` / `return while...` пропускался и его
+/// invariant preservation не проверялась молча.
+fn collect_loop_preservation_in_stmt(s: &Stmt, out: &mut Vec<LoopPreservationTarget>) {
+    match s {
+        Stmt::Expr(e) => collect_loop_preservation_in_expr(e, out),
+        Stmt::Let(ld) => collect_loop_preservation_in_expr(&ld.value, out),
+        Stmt::Return { value: Some(v), .. } => collect_loop_preservation_in_expr(v, out),
+        Stmt::Assign { value, .. } => collect_loop_preservation_in_expr(value, out),
+        _ => {}
+    }
 }
 
 fn collect_loop_preservation_in_expr(e: &Expr, out: &mut Vec<LoopPreservationTarget>) {
@@ -2842,9 +2879,10 @@ pub(super) fn unknown_to_diag_message(reason: UnknownReason) -> String {
     match reason {
         UnknownReason::Timeout => {
             "SMT solver hit timeout. \
-             Suggestions: (1) simplify the contract into smaller steps via \
-             intermediate `assert_static`; (2) increase `#verify_timeout(N)`; \
-             (3) mark `#unverified` if verification is intentionally complex.".into()
+             Suggestions: (1) extract sub-expressions into `#pure` helper \
+             functions (composition is verified); (2) increase \
+             `#verify_timeout(N)`; (3) mark `#unverified` if verification is \
+             intentionally complex.".into()
         }
         UnknownReason::NonLinearArithmetic => {
             "non-linear arithmetic in contract (e.g. `x * y`, `x / y`). \
@@ -2862,8 +2900,8 @@ pub(super) fn unknown_to_diag_message(reason: UnknownReason) -> String {
         UnknownReason::NotAttempted(s) => {
             format!("{}\n  AI-friendly hint: contract is beyond TrivialBackend \
                      capabilities (only reflexive ensures, constant folding, \
-                     impl-shortcuts). Add intermediate `assert_static`, or \
-                     mark `#unverified`, or wait for Z3 backend.", s)
+                     impl-shortcuts). Use the Z3 backend \
+                     (`REQUIRES_SMT_BACKEND z3`), or mark `#unverified`.", s)
         }
     }
 }

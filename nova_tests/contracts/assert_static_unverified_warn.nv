@@ -1,0 +1,11 @@
+// Plan 33.8 Ф.6.3: `assert_static` в V1 НЕ верифицируется SMT (модель
+// верификатора flow-insensitive). Чтобы не было ложной уверенности —
+// lint `assert-static-unverified`.
+// EXPECT_COMPILE_WARNING assert-static-unverified
+
+module contracts.assert_static_unverified_warn
+
+fn checked_step(x int) -> int {
+    assert_static x >= 0
+    x + 1
+}
