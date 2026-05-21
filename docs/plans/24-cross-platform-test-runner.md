@@ -1,6 +1,12 @@
 # План 24: cross-platform test runner
 
-**Статус:** активный, в работе.
+**Статус:** ✅ ЗАКРЫТ (Ф.1-Ф.3). Runner реализован в
+`compiler-codegen/src/test_runner.rs` (subcommands `test-build`/
+`test-all`); впоследствии поглощён Plan 28 — пользовательская точка
+входа `nova test` / `nova test-build` (тот же runner-модуль),
+wrapper-скрипты `run_tests.ps1/.sh` удалены. Linux/macOS smoke-test —
+отложено (отдельно). Шапка-метка обновлена 2026-05-21 (аудит
+план-статусов: была устаревшая «в работе»).
 **Дата создания:** 2026-05-11.
 **Тип:** инфраструктурный (test pipeline). Делает Nova сборку и тесты
 доступными на Linux/macOS, не только Windows.
