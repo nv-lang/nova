@@ -86,6 +86,13 @@ pub struct Z3Backend {
     /// push/pop scope stack — храним высоту `assertions`/`refs` чтобы
     /// откатывать.
     scopes: Vec<(usize, usize)>,
+    /// Plan 33.8 Ф.6.2: формула не транслировалась в Z3 AST (`assert`
+    /// получил `Err`). Если непереведённой оказалась `not goal` из
+    /// `try_prove`, её молчаливый отброс мог бы дать ложный `Unsat`
+    /// (= ложный `Proven`) на противоречивом контексте. Поэтому при
+    /// любой ошибке трансляции помечаем backend tainted → следующий
+    /// `check_sat` обязан вернуть `Unknown`, а не доверять решателю.
+    translation_failed: bool,
 }
 
 // SAFETY: Z3 context is не thread-safe для одновременного использования
@@ -150,6 +157,7 @@ impl Z3Backend {
                 refs: Vec::new(),
                 assertions: Vec::new(),
                 scopes: Vec::new(),
+                translation_failed: false,
             }
         }
     }
@@ -710,11 +718,12 @@ impl SmtBackend for Z3Backend {
                 self.assertions.push(assertion);
             },
             Err(_msg) => {
-                // Translation fail → ничего не assert'им. check_sat вернёт
-                // Unknown(BackendError) если эта формула была критична —
-                // upstream pipeline уже логирует EncodingFailed.
-                // (Мы могли бы сохранить msg для diag, но проще оставить
-                // sub-component reporting через encoder.)
+                // Plan 33.8 Ф.6.2: формула не транслировалась. Молча
+                // отбрасывать НЕЛЬЗЯ — если это была `not goal` из
+                // try_prove, а контекст противоречив, check_sat вернёт
+                // Unsat = ложный Proven. Помечаем backend tainted →
+                // check_sat вернёт Unknown(BackendError).
+                self.translation_failed = true;
             }
         }
     }
@@ -746,6 +755,19 @@ impl SmtBackend for Z3Backend {
     }
 
     fn check_sat(&mut self) -> SatResult {
+        // Plan 33.8 Ф.6.2: если хоть одна формула не транслировалась в Z3
+        // (`assert` получил `Err`), решателю доверять нельзя. `try_prove`
+        // вызывает `assert(not goal)` непосредственно перед `check_sat` —
+        // значит провал трансляции `not goal` гарантированно попадает в
+        // этот флаг до проверки. Возвращаем `Unknown`, а не рискуем
+        // ложным `Unsat` (= ложный `Proven`) на противоречивом контексте.
+        if self.translation_failed {
+            self.translation_failed = false;
+            return SatResult::Unknown(UnknownReason::BackendError(
+                "формула не транслировалась в Z3 AST — результат \
+                 проверки не определён (Plan 33.8 Ф.6.2)".into(),
+            ));
+        }
         let res = unsafe { ffi::Z3_solver_check(self.ctx, self.solver) };
         match res {
             ffi::Z3_L_TRUE => SatResult::Sat(self.extract_model()),

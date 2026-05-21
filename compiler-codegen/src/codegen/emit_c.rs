@@ -10683,6 +10683,27 @@ impl CEmitter {
                 }
                 let tgt = self.emit_expr(target)?;
                 let val = self.emit_expr(value)?;
+                // Plan 33.8 Ф.6.1: знаковая `int` compound-арифметика
+                // (`+=`/`-=`/`*=`) — checked, паника при переполнении (как и
+                // обычные `+`/`-`/`*`, Ф.1.2). Через lvalue-указатель, чтобы
+                // target вычислялся ровно один раз (важно для `arr[f()] += y`).
+                // Только для безграничного `nova_int`; sized-типы — wrap.
+                let checked_helper = match op {
+                    AssignOp::Add => Some("nova_int_checked_add"),
+                    AssignOp::Sub => Some("nova_int_checked_sub"),
+                    AssignOp::Mul => Some("nova_int_checked_mul"),
+                    _ => None,
+                };
+                if let Some(helper) = checked_helper {
+                    if self.infer_expr_c_type(target) == "nova_int"
+                        && self.infer_expr_c_type(value) == "nova_int"
+                    {
+                        let p = self.fresh_tmp_named("ca");
+                        self.line(&format!("nova_int* {} = &({});", p, tgt));
+                        self.line(&format!("*{} = {}(*{}, {});", p, helper, p, val));
+                        return Ok(());
+                    }
+                }
                 let op_str = match op {
                     AssignOp::Assign => "=",
                     AssignOp::Add    => "+=",
