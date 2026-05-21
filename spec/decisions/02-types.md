@@ -3371,12 +3371,17 @@ Record literal для tuple struct полей (`{ end, idx: 0 }` для
 
 - **Universal tuple type** (all elements `any`) — type-erased, runtime
   type-tag overhead, breaks AOT zero-cost goal.
-- **Named tuple fields** (`(x: T1, y: T2)`) — collision с record
-  literal `{x:1, y:2}` syntax; mixed named+positional behaviour
-  открытый вопрос; type-equivalence `(x:int, y:int) ≡ (int, int)`?
-  Defer до dedicated plan с design pre-discussion (Plan 64).
-- **Tuple subtyping** (`(int, str) <: (any, any)`) — требует variance
-  system в type-checker; нет immediate use case в bootstrap.
+- **Named tuple fields** (`(x: T1, y: T2)`) — **ОТКЛОНЕНО окончательно
+  (Plan 59 Ф.7.4, 2026-05-21).** Именованные поля кортежа почти
+  идентичны record'у; заводить два почти одинаковых синтаксиса для
+  одной семантики в Nova нет причин. Нужен агрегат с именованными
+  полями — это record (`type T { x int, y int }`). Tuple остаётся
+  позиционным (`.0`/`.1`).
+- **Tuple subtyping** (`(int, str) <: (any, any)`) — **ОТКЛОНЕНО
+  окончательно (Plan 59 Ф.7.6, 2026-05-21).** Реализация дорогая
+  (требует variance-системы covariance/contravariance в type-checker,
+  которой в Nova нет — язык не использует structural typing); под
+  фичу не нашлось ни одной реальной задачи. Не реализуется.
 - ~~**Full mono'd Result** (`NovaRes_<T>_<E>` typedefs analogous Option)
   — Plan 63 Fix F+ targeted boxed-pointer tracking покрывает все
   observable cases без full sum-type mono refactor. Defer до Plan 65.~~
