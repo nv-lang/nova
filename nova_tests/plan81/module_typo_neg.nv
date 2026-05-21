@@ -1,0 +1,11 @@
+// EXPECT_COMPILE_ERROR did you mean
+//
+// Plan 81 Ф.8.3: опечатка в пути импортируемого модуля → подсказка
+// «did you mean …» по расстоянию Левенштейна (`suggest_module_name`).
+// `bound_libb` — опечатка реального `bound_lib`.
+
+module nova_tests.plan81.module_typo_neg
+
+import nova_tests.plan81.bound_libb.{Showable}
+
+fn run() -> int => 0
