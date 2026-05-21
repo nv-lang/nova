@@ -4592,24 +4592,25 @@ loader, single-root), R2 (in-memory dedup via visited), R3 (topo walk
 refactor `CEmitter::emit_module` 600+ LOC) и unblock'ит multi-file
 stdlib через `nova build` сегодня.
 
-**Не реализовано (отложено в sub-plans 35.A-E):**
+**MVP-упрощения Plan 35 — статус (обновлено 2026-05-21, Plan 81 Ф.11).**
+Большинство закрыто Plan 81 (module-resolution hardening) и Plan 42/62.
 
-| Sub-plan | Что упрощено в MVP | Workaround / Impact |
+| Пункт | Что упрощалось в MVP | Статус |
 |---|---|---|
-| 35.A wildcard | `import X.Y.*` не поддерживается | используй `import X.Y` + bare names через AST merge |
-| 35.A visibility | `is_export` informational only, не enforced | private items из imported модуля доступны (spec violation) |
-| 35.A `export use` | Re-export не поддерживается | каждый файл re-decl'ит для exposure |
-| 35.A prelude | Нет автоматического prelude module | bare `Option`/`Result` уже работают через hardcoded baseline |
-| 35.B disk cache | Каждый `nova build` re-parsит imports | acceptable для CI; локально медленно при changes |
-| 35.B incremental | Нет dependency-based rebuild | full re-parse каждый раз |
-| 35.B memory cache invalidation | Простой `HashSet<canonical_path>` per build | каждый процесс начинает с нуля |
-| 35.C cross-file generics | Generic bounds не resolve cross-file | inline дублирование bound trait в каждом файле |
-| 35.D stable mangling | Нет mangling, items в global namespace | collision если user re-defines stdlib type (unlikely) |
-| 35.D DCE | Все imported items emit'ятся (bloat) | bin size больше необходимого |
-| 35.E `#[cfg(...)]` | Нет conditional compilation | platform-specific код через if-runtime |
-| AD3 sig/body 2-pass | Single-pass typecheck merged AST | mutual recursion через modules может ломаться; flat deps OK |
-| FileId propagation | Все Spans в imported items имеют file_id=0 | cross-file diagnostics показывают main file даже для imported errors |
-| `nova test` parity | `resolve_imports_inline` только в `cmd_build` | `nova test` с `import` не работает (отдельный pipeline в test_runner) |
+| 35.A wildcard | `import X.Y.*` | ❌ spec-rejected (D29/D5) — не доработка |
+| 35.A visibility | `is_export` informational only | ✅ **Plan 81 Ф.1** — enforced на границе модуля |
+| 35.A `export use` | re-export не поддерживается | ✅ **Plan 42.09** — `export import X.{A as B}` |
+| 35.A prelude | нет prelude module | ✅ `std/prelude.nv` (Plan 35 R27 + Plan 62) |
+| 35.B disk cache | каждый `nova build` re-parsит imports | 🚧 **Plan 81 Ф.9** — pending |
+| 35.B incremental | нет dependency-based rebuild | 🚧 **Plan 81 Ф.9** — pending |
+| 35.B memory cache invalidation | `HashSet<path>` per build | 🚧 **Plan 81 Ф.9** — pending |
+| 35.C cross-file generics | generic bounds не resolve cross-file | ✅ **Plan 81 Ф.3** — verify: работают (Plan 35 merge → `protocol_specs`); orphan rule не нужен |
+| 35.D stable mangling | items в global namespace | ✅ **Plan 81 Ф.6** — symbol mangling v0 (D134) |
+| 35.D DCE | все imported items emit'ятся (bloat) | 🚧 **Plan 81 Ф.7** — Ф.7.1 linker-DCE ✅; Ф.7.2 compiler-DCE pending |
+| 35.E `#[cfg(...)]` | нет conditional compilation | ✅ **Plan 42.12** |
+| AD3 sig/body 2-pass | single-pass typecheck — mutual recursion ломается | ✅ **Plan 81 Ф.5** — verify: взаимная рекурсия peer'ов работает (сигнатуры регистрируются до тел) |
+| FileId propagation | imported spans → cross-file diagnostics в чужом файле | ✅ **Plan 81 Ф.8.1** — `render_with_map`/`SourceMap` фикс |
+| `nova test` parity | `resolve_imports_inline` только в `cmd_build` | ✅ **Plan 35 R31** — unified pipeline |
 
 ### Почему inline expansion вместо register_imported_module
 
