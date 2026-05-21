@@ -623,6 +623,16 @@ The plain `int` type stays an **unbounded** mathematical integer — it is
 not a bit-vector. Use `int` for general-purpose arithmetic; use sized
 types for low-level, packed, crypto, or FFI code where bit-width matters.
 
+**`int` overflow is a panic.** Signed `int` arithmetic (`+`, `-`, `*`)
+that would exceed the 64-bit range **panics** at runtime — it never
+silently wraps. This is what makes verification of `int` contracts
+sound: the verifier reasons about `int` as an unbounded mathematical
+integer, and a proven `ensures result == a + b` holds for every value
+the function actually returns — because if `a + b` would overflow, the
+function panics instead of returning a wrong (wrapped) result. Sized
+integer types wrap instead of panicking (see above); reach for
+`#nooverflow` on them when wrap-around is not acceptable.
+
 Bitwise operators `&`, `|`, `^`, `<<`, `>>` are available in contracts
 on sized-integer operands (they remain unsupported on `int`).
 
