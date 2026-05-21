@@ -3,9 +3,9 @@
 > **Создан 2026-05-21.** Переработан с чистого листа 2026-05-21 после
 > сверки с реальным кодом компилятора (см. «Сверка фактов» ниже).
 >
-> **Статус:** 🚧 in progress — Ф.1–Ф.8 ✅ + Ф.10 ✅
-> (2026-05-21, worktree `nova-p79`, ветка `plan-81-hardening`), Ф.9 +
-> Ф.11 pending.
+> **Статус:** 🚧 in progress — Ф.1–Ф.10 ✅
+> (2026-05-21, worktree `nova-p79`, ветка `plan-81-hardening`), Ф.11
+> (закрывающая — spec/README sync) pending.
 > - **Ф.1** ✅ visibility enforcement (commit `197480a747c`).
 > - **Ф.2** ✅ module-qualified call type-check — `alias.func()` /
 >   `mod.func()` резолвятся в `TypeCheckCtx`; неизвестная функция →
@@ -66,8 +66,24 @@
 >   resolver'а + nova-cli integration-тест (`nova check` на
 >   entry-folder-module). Test-runner-side (авто-компиляция folder-module
 >   как unit в `nova test`) — **сознательно не делается**: см. Ф.10 ниже.
+> - **Ф.9** ✅ content-addressed build cache — `nova build` кэширует
+>   сгенерированный `.c` по хэшу(все исходники + отпечаток компилятора
+>   + cfg-features + target + mono-depth). Попадание → пропуск всего
+>   Rust-side пайплайна (type-check / effects / lints / desugar /
+>   callnorm / codegen). `.c` не зависит от C-тулчейна → ключ его не
+>   включает, clang всегда перезапускается. Хранилище
+>   `target/.nova-cache/`; `NOVA_NO_CACHE=1` отключает. Гранулярность —
+>   сборка целиком: Nova использует inline-expansion (один `Module` →
+>   один `.c`), module-granular инкремент потребовал бы separate
+>   compilation (за рамками v1, как и отмечал план). Тесты: 3 unit-теста
+>   (`build_cache.rs`) + e2e (повторный build → hit; правка /
+>   `NOVA_NO_CACHE` → miss).
 >
-> Suite на момент Ф.8.1: **954 PASS / 0 FAIL**.
+> Suite: **956 PASS / 0 FAIL** (codegen-suite). Пре-существующий баг
+> вне Plan 81: `nova run` (treewalk-interp) падает на `external fn` из
+> prelude (interp deprecated после Plan 62.B prelude-migration) —
+> `nova-cli/tests/run_interp_named.rs`; не регрессия этой работы
+> (interp-путь не затрагивался), та же фикстура зелёная в codegen-suite.
 >
 > **Источник:** аудит module-resolution 2026-05-21 — открытые пункты
 > [Plan 35](35-cross-file-resolve.md) (sub-plans 35.B-E + R26),
@@ -439,25 +455,45 @@ DCE разбита на два под-шага по уровню риска:
 опечатка пути → подсказка; ошибка в импортированном модуле указывает
 на правильный файл+строку+сниппет.
 
-### Ф.9 — Build cache + incremental (P3)
+### Ф.9 — Build cache (P3) ✅ ВЫПОЛНЕН 2026-05-21
 
-**Проблема:** каждый `nova build` заново парсит все импорты; нет
-пересборки по графу зависимостей.
+**Проблема:** каждый `nova build` заново прогоняет весь Rust-side
+пайплайн (type-check / effects / desugar / callnorm / codegen) для
+всех импортированных модулей.
 
-**Цель:** content-addressed кэш модулей — модель Go (`$GOCACHE`).
+**Цель:** content-addressed кэш — модель Go (`$GOCACHE`).
 
-**Подзадачи:**
-- Ключ кэша модуля = хэш(содержимое файлов + версия компилятора +
-  активные `#cfg`-флаги + отсортированные хэши ключей прямых
-  зависимостей) → транзитивная инвалидация автоматом.
-- Значение — разобранный/проверенный артефакт модуля.
-- Хранилище — `target/.nova-cache/` (или аналог); гранулярность —
-  модуль.
-- Полноценный query-level инкремент (стиль Rust — пересборка только
-  затронутых функций) — отмечен как будущее, не v1.
+**Сделано (`nova-cli/src/build_cache.rs` + `cmd_build`):**
+- Кэшируется **сгенерированный `.c` целиком.** Ключ =
+  `DefaultHasher`(версия схемы + отпечаток исполняемого файла
+  компилятора Nova [mtime+size — пересборка компилятора инвалидирует
+  всё] + активные `#cfg`-features [сорт.] + target OS + mono-depth +
+  для каждого исходного файла сборки [сорт. по пути]: путь +
+  содержимое). Хранилище — `<repo>/target/.nova-cache/<key>.c`.
+- `cmd_build`: после `resolve_imports_inline` (даёт полный набор
+  файлов в `module.peer_files`) вычисляется ключ; попадание → читаем
+  закэшированный `.c`, минуя type-check / effects / lints / desugar /
+  callnorm / codegen; промах → полный пайплайн + запись `.c` в кэш
+  (только после успешной сборки). clang запускается всегда.
+- `.c` НЕ зависит от C-тулчейна → ключ его не включает; обновления
+  clang применяются немедленно (нет риска устаревшего бинарника).
+- Отключение: `NOVA_NO_CACHE=1`; пропускается при `--keep-artifacts`.
 
-**Тесты:** повторный `nova build` без изменений — попадание в кэш;
-изменение файла инвалидирует его и зависимых.
+**Архитектурная заметка (scoping).** План предполагал
+module-granular кэш с транзитивной инвалидацией по графу зависимостей.
+Но Nova использует **inline-expansion** (`resolve_imports_inline`
+сливает entry + все импорты в один `Module` → один `.c`); раздельной
+компиляции модулей в архитектуре нет. Поэтому естественная
+гранулярность v1 — сборка целиком, а ключ покрывает ВСЕ исходники
+разом (что и даёт транзитивную инвалидацию: правка любого
+транзитивного файла → другой ключ). Module-granular инкремент =
+separate compilation = отдельная крупная архитектурная работа; план
+сам отмечал query-level инкремент как «будущее, не v1».
+
+**Тесты:** 3 unit-теста (`build_cache.rs` — детерминизм ключа,
+чувствительность к содержимому/cfg, store/load roundtrip) + e2e
+(`nova build` дважды → второй раз cache hit; правка исходника /
+`NOVA_NO_CACHE=1` → miss).
 
 ### Ф.10 — Entry-folder-module peer-isolation (P3) ✅ ВЫПОЛНЕН 2026-05-21
 

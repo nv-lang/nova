@@ -16,6 +16,7 @@ use std::time::Duration;
 use nova_codegen::test_runner;
 
 mod bench;
+mod build_cache;
 
 // ---------- Plan 36 R7: structured CLI error types ----------
 
@@ -2584,56 +2585,93 @@ fn cmd_build(
         nova_codegen::imports::resolve_imports_inline(&path, &mut module, &repo, &paths.stdlib_dir)?;
     }
 
+    // Plan 81 Ф.9: content-addressed build cache. После резолва импортов
+    // (выше) известен полный набор исходных файлов сборки. При
+    // байт-идентичных входах переиспользуем сгенерированный `.c`, минуя
+    // type-check / effects / lints / desugar / callnorm / codegen.
+    // Отключается NOVA_NO_CACHE=1; пропускается при --keep-artifacts
+    // (debug-режим — нужен полный набор реальных промежуточных артефактов).
+    let cache_key: Option<String> =
+        if build_cache::cache_enabled() && !keep_artifacts {
+            let feats: Vec<String> =
+                nova_codegen::imports::enabled_features().into_iter().collect();
+            build_cache::compute_c_key(
+                &module.peer_files,
+                &feats,
+                nova_codegen::imports::current_target_os(),
+                mono_depth,
+            )
+        } else {
+            None
+        };
+
+    let c_code: String = match cache_key
+        .as_deref()
+        .and_then(|k| build_cache::load_c(&repo, k))
     {
-        let _t = nova_codegen::perf_timer::PerfTimer::new("type-check");
-        nova_codegen::types::check_module(&module).map_err(|errs| {
-            let msgs: Vec<String> = errs.iter()
-                .map(|d| d.render(&src, &path_str))
-                .collect();
-            anyhow!("{}", msgs.join("\n"))
-        })?;
-    }
-    {
-        let _t = nova_codegen::perf_timer::PerfTimer::new("effects-infer");
-        nova_codegen::types::infer_effects(&mut module);
-    }
-    {
-        let _t = nova_codegen::perf_timer::PerfTimer::new("lints");
-        for w in nova_codegen::lints::lint_module(&module) {
-            let (line, col) = nova_codegen::diag::byte_to_line_col(&src, w.diag.span.start);
-            eprintln!("{} {}:{}:{}: {} [{}]", bold(&yellow("warning:")), path.display(), line, col, w.diag.message, w.rule);
+        Some(cached) => {
+            // Cache hit. Кэш пишется ТОЛЬКО после успешной сборки —
+            // байт-идентичный вход уже прошёл type-check и codegen.
+            eprintln!("{} build cache hit — reusing generated C", green("note:"));
+            cached
         }
-    }
-
-    // Plan 52 Ф.4: десугаринг map-литералов `[k: v]` → block-expression.
-    {
-        let _t = nova_codegen::perf_timer::PerfTimer::new("annotate-maps");
-        nova_codegen::types::annotate_map_literals(&mut module);
-    }
-    {
-        let _t = nova_codegen::perf_timer::PerfTimer::new("desugar");
-        nova_codegen::desugar::desugar_module(&mut module);
-    }
-
-    // Plan 46 (D102) Ф.2: нормализация call-site — named args → positional.
-    {
-        let _t = nova_codegen::perf_timer::PerfTimer::new("callnorm");
-        nova_codegen::callnorm::normalize_module(&mut module);
-    }
-
-    let (c_code, warnings) = {
-        let _t = nova_codegen::perf_timer::PerfTimer::new("codegen");
-        let mut emitter = nova_codegen::codegen::CEmitter::new();
-        emitter.set_source_for_annotations(src.clone());
-        if let Some(n) = mono_depth {
-            emitter.set_mono_depth_limit(n);
+        None => {
+            // Cache miss — полный Rust-side пайплайн.
+            {
+                let _t = nova_codegen::perf_timer::PerfTimer::new("type-check");
+                nova_codegen::types::check_module(&module).map_err(|errs| {
+                    let msgs: Vec<String> = errs.iter()
+                        .map(|d| d.render(&src, &path_str))
+                        .collect();
+                    anyhow!("{}", msgs.join("\n"))
+                })?;
+            }
+            {
+                let _t = nova_codegen::perf_timer::PerfTimer::new("effects-infer");
+                nova_codegen::types::infer_effects(&mut module);
+            }
+            {
+                let _t = nova_codegen::perf_timer::PerfTimer::new("lints");
+                for w in nova_codegen::lints::lint_module(&module) {
+                    let (line, col) = nova_codegen::diag::byte_to_line_col(&src, w.diag.span.start);
+                    eprintln!("{} {}:{}:{}: {} [{}]", bold(&yellow("warning:")), path.display(), line, col, w.diag.message, w.rule);
+                }
+            }
+            // Plan 52 Ф.4: десугаринг map-литералов `[k: v]` → block-expr.
+            {
+                let _t = nova_codegen::perf_timer::PerfTimer::new("annotate-maps");
+                nova_codegen::types::annotate_map_literals(&mut module);
+            }
+            {
+                let _t = nova_codegen::perf_timer::PerfTimer::new("desugar");
+                nova_codegen::desugar::desugar_module(&mut module);
+            }
+            // Plan 46 (D102) Ф.2: нормализация call-site — named → positional.
+            {
+                let _t = nova_codegen::perf_timer::PerfTimer::new("callnorm");
+                nova_codegen::callnorm::normalize_module(&mut module);
+            }
+            let (c_code, warnings) = {
+                let _t = nova_codegen::perf_timer::PerfTimer::new("codegen");
+                let mut emitter = nova_codegen::codegen::CEmitter::new();
+                emitter.set_source_for_annotations(src.clone());
+                if let Some(n) = mono_depth {
+                    emitter.set_mono_depth_limit(n);
+                }
+                emitter.emit_module(&module)
+                    .map_err(|e| anyhow!("codegen error: {}", e))?
+            };
+            for w in &warnings {
+                eprintln!("{}", w);
+            }
+            // Записываем `.c` в кэш — только теперь, после успешного
+            // codegen (кэшируем лишь заведомо валидный артефакт).
+            if let Some(k) = &cache_key {
+                build_cache::store_c(&repo, k, &c_code);
+            }
+            c_code
         }
-        emitter.emit_module(&module)
-            .map_err(|e| anyhow!("codegen error: {}", e))?
     };
-    for w in &warnings {
-        eprintln!("{}", w);
-    }
 
     // determine output path
     let exe_stem = path.file_stem().unwrap_or_default();
