@@ -372,6 +372,10 @@ mod tests {
     use crate::verify::ir::{Model, UnknownReason, UnsatCore};
     use std::collections::HashMap;
 
+    /// Сериализует тесты, трогающие процесс-глобальный коллектор
+    /// `DISAGREEMENTS` — иначе они гонятся при parallel `cargo test`.
+    static COLLECTOR_GUARD: Mutex<()> = Mutex::new(());
+
     fn proven() -> SatResult {
         SatResult::Unsat(UnsatCore::default())
     }
@@ -413,6 +417,7 @@ mod tests {
 
     #[test]
     fn collector_record_take_roundtrip() {
+        let _guard = COLLECTOR_GUARD.lock().unwrap();
         // Очистить возможный мусор от других тестов того же процесса.
         let _ = take_disagreements();
         record_disagreement(Disagreement {
@@ -427,6 +432,71 @@ mod tests {
         assert_eq!(drained.len(), 1);
         assert_eq!(drained[0].fn_name.as_deref(), Some("foo"));
         // Повторный take — пусто.
+        assert_eq!(take_disagreements().len(), 0);
+    }
+
+    // ── End-to-end интеграционные тесты (требуют Z3 + cvc5) ───────────
+
+    /// Прогнать формулу через настоящий `CrossCheckBackend` (Z3 + cvc5).
+    /// Запускается только при наличии cvc5 в окружении.
+    #[cfg(feature = "z3-backend")]
+    #[test]
+    fn crosscheck_agreement_records_no_disagreement() {
+        use crate::verify::backend::cvc5::cvc5_available;
+        use crate::verify::backend::{try_prove, SmtBackend};
+        use crate::verify::ir::{Assertion, SortRef};
+
+        let _guard = COLLECTOR_GUARD.lock().unwrap();
+        if !cvc5_available() {
+            eprintln!("cvc5 недоступен — интеграционный тест пропущен");
+            return;
+        }
+        let _ = take_disagreements();
+
+        // requires x > 0 ⊢ x + 1 > 0 — оба решателя обязаны доказать.
+        let mut b = CrossCheckBackend::new(5000);
+        b.declare_var("x", SortRef::Int);
+        let x = SmtTerm::Var("x".into());
+        b.assert(Assertion {
+            formula: SmtTerm::App(">".into(), vec![x.clone(), SmtTerm::IntLit(0)]),
+            label: None,
+        });
+        let goal = SmtTerm::App(
+            ">".into(),
+            vec![
+                SmtTerm::App("+".into(), vec![x, SmtTerm::IntLit(1)]),
+                SmtTerm::IntLit(0),
+            ],
+        );
+        let r = try_prove(&mut b, goal);
+        assert!(matches!(r, SatResult::Unsat(_)), "ожидался Proven, получили {:?}", r);
+        // Z3 и CVC5 согласны → расхождений быть не должно.
+        assert_eq!(
+            take_disagreements().len(),
+            0,
+            "согласие решателей не должно давать disagreement"
+        );
+    }
+
+    /// Опровержимая цель: оба решателя дают `Disproved` — тоже согласие,
+    /// расхождений быть не должно.
+    #[cfg(feature = "z3-backend")]
+    #[test]
+    fn crosscheck_agreement_on_disproved() {
+        use crate::verify::backend::cvc5::cvc5_available;
+        use crate::verify::backend::try_prove;
+
+        let _guard = COLLECTOR_GUARD.lock().unwrap();
+        if !cvc5_available() {
+            return;
+        }
+        let _ = take_disagreements();
+
+        let mut b = CrossCheckBackend::new(5000);
+        // 100 == 42 — ложно; try_prove(not goal) → оба дают Sat.
+        let goal = SmtTerm::eq(SmtTerm::IntLit(100), SmtTerm::IntLit(42));
+        let r = try_prove(&mut b, goal);
+        assert!(matches!(r, SatResult::Sat(_)), "ожидался Disproved, получили {:?}", r);
         assert_eq!(take_disagreements().len(), 0);
     }
 
