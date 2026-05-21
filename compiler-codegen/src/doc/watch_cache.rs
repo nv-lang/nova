@@ -96,6 +96,7 @@ impl WatchCache {
                 items_here: module.items.clone(),
                 imported_item_names: std::collections::HashSet::new(),
                 is_entry_module: true,
+                module_name: module.name.clone(),
             });
         }
         let arc = Arc::new(module);
