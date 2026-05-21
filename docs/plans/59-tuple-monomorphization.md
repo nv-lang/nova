@@ -503,15 +503,13 @@ Working dir: `d:\Sources\nova-lang\.claude\worktrees\plan-59-audit`
 
 После закрытия M-priority items (Ф.7.1-7.3) re-assessed L-priority items:
 
-**Ф.7.4 Named tuple fields** (~200 LOC + design):
-- Parser/AST extension straightforward (~50 LOC).
-- Open design questions:
-  - Литерал syntax: `(x: 1, y: 2)` collides с record literal `{x: 1, y: 2}`.
-    Nova должен явно differentiate.
-  - Mixed named+positional `(x: 1, 2)` — allow? Rust не позволяет.
-  - Type-equivalence: `(x: int, y: int)` ≡ `(int, int)` или separate?
-- Decisions impact spec (D27, D123) + may need extra D-block.
-- **Defer:** требует dedicated plan (Plan 64?) с design pre-discussion.
+**Ф.7.4 Named tuple fields** — ❌ **ОТКЛОНЕНО окончательно
+(2026-05-21).** Именованные поля кортежа почти идентичны record'у;
+заводить два почти одинаковых синтаксиса для одной семантики в Nova
+нет причин. Нужен агрегат с именами — это record. Tuple остаётся
+позиционным. Открытые дизайн-вопросы (collision с record-литералом,
+mixed named+positional, type-equivalence) больше не актуальны — фича
+не реализуется. spec `02-types.md` (D123 «Что отвергнуто») обновлён.
 
 **Ф.7.5 Full mono'd Result** (~300-400 LOC):
 - Plan 63 Fix F+ (ca677dd2147) уже покрывает наблюдаемые cases через
@@ -524,20 +522,26 @@ Working dir: `d:\Sources\nova-lang\.claude\worktrees\plan-59-audit`
 - **Defer:** Plan 65? только когда появится use case с arbitrary T
   в Result Ok payload (не tuple/struct).
 
-**Ф.7.6 Tuple subtyping / variance** (~200+ LOC):
-- Требует variance system в type-checker (covariance/contravariance).
-- Нет immediate use case в bootstrap; structural typing Nova не имеет.
-- **Design only**, не реализуется до появления requirements.
+**Ф.7.6 Tuple subtyping / variance** — ❌ **ОТКЛОНЕНО окончательно
+(2026-05-21).** Реализация дорогая (требует variance-системы
+covariance/contravariance в type-checker, которой в Nova нет —
+structural typing язык не использует); под фичу не нашлось ни одной
+реальной задачи. Не реализуется. spec `02-types.md` (D123 «Что
+отвергнуто») обновлён.
 
 ### Что закрыто Phase 7
 
 - [x] Ф.7.1: tuple arity mismatch diagnostics (commit 12ac69b9700).
 - [x] Ф.7.2: stdlib HashMap.@clone() idiomatic (commit 4a6532ccea5).
 - [x] Ф.7.3: sizeof warning для больших tuples (commit a27e1968040).
-- [-] Ф.7.4: named tuple fields — deferred до dedicated plan.
+- [x] Ф.7.4: named tuple fields — ❌ ОТКЛОНЕНО окончательно
+      (2026-05-21): почти идентично record'у, два почти одинаковых
+      синтаксиса в Nova не нужны. spec 02-types.md обновлён.
 - [x] Ф.7.5: full mono'd Result `NovaRes_<T>_<E>` — ✅ ЗАКРЫТ
       (2026-05-21, инкременты 1/lite/2 — см. ниже; D3+D4 `238b2eb`).
-- [-] Ф.7.6: tuple subtyping — design only, не реализуется без use case.
+- [x] Ф.7.6: tuple subtyping — ❌ ОТКЛОНЕНО окончательно
+      (2026-05-21): нет use case, реализация дорогая (variance-система).
+      spec 02-types.md обновлён.
 
 ### Plan 59 финальное состояние
 
