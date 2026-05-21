@@ -10123,6 +10123,14 @@ G/H). ~3700 LOC implementation cumulative.
   hardcoded Result-представление. Само удаление hardcoded
   `sum_schemas` baseline — теперь чистая задача Plan 62.A.bis Ф.4
   (передана агенту 62.A.bis).
+- **Update 2026-05-21 (пост-фикс, коммит `2b184a3c06a`):** закрыт
+  последний gap, мешавший удалению `sum_schemas["Result"]` —
+  `pattern_bind_typed`/`pattern_cond` для nested Result-variant
+  payload (`Some(Ok/Err(..))`) резолвят (T,E) через `novares_ok_err`
+  на `NovaRes_<n>*`, не через hardcoded fallback. Проверено: с
+  удалённым `sum_schemas["Result"]` insert полный прогон 883 PASS /
+  0 FAIL. Plan 62.A.bis Ф.4 полностью разблокирован — fallback для
+  pattern-match недостижим.
 
 ### [M-runtime-none-error-deferred] (DEFER — Plan 62.C → Plan 72 P1-B)
 - **Где:** `std/prelude/errors.nv` — отсутствует `type RuntimeNoneError`.
