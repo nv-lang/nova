@@ -1,0 +1,11 @@
+// EXPECT_COMPILE_ERROR E7310
+//
+// Plan 79 Ф.8 — closes Plan 72 [M-typecheck-missing-type-compat-checks].
+//
+// Negative companion to p2a_try_from_into_pos. `Result` requires exactly
+// two type arguments (T, E). `Result[int]` with one used to compile
+// silently — now a Nova compile error (E7310, type-arity).
+
+module plan72.p2a_try_from_into_neg
+
+fn convert(n int) -> Result[int] => Ok(n)

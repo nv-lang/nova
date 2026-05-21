@@ -10423,36 +10423,24 @@ G/H). ~3700 LOC implementation cumulative.
   РІ NOVA_DECLARE_OPTION_T macro + routing entry РІ init_hardcoded_baseline.
 - **РџСЂРёРѕСЂРёС‚РµС‚:** L вЂ” or() РјРµРЅРµРµ РёСЃРїРѕР»СЊР·СѓРµРј С‡РµРј unwrap_or/map.
 
-### [M-typecheck-missing-type-compat-checks] (KNOWN GAP — Plan 72, расширено 2026-05-21)
-> Ранее назывался `[M-typecheck-lenient-no-p1b-p2a-negatives]` — переименован:
-> повторная проверка показала, что проблема шире, чем «нельзя написать
-> negative-тест», и это **P1 correctness-баг**, а не L test-coverage.
+### [M-typecheck-missing-type-compat-checks] ✅ ЗАКРЫТ 2026-05-21 (Plan 79)
+> Ранее назывался `[M-typecheck-lenient-no-p1b-p2a-negatives]`.
 
-- **Где:** type-checker (`compiler-codegen/src/types/mod.rs`, 7434 строк —
-  он проверяет многое: имена, дубли, эффекты, контракты — но НЕ базовую
-  совместимость типов).
-- **Что (перепроверено эмпирически 2026-05-21):** type-checker НЕ отвергает:
-  - **argument-type mismatch** — `fn want_bool(x bool); want_bool(42)` →
-    компилируется И запускается, **тихо** (silent miscompilation).
-  - **annotation↔RHS mismatch** — `let x int = true` → компилируется тихо.
-  - **wrong type-arity** — `fn g() -> Result[int]` (1 арг вместо 2) → тихо.
-  - **type-as-value** — `let c = Foo` (имя типа как значение) → CC-FAIL
-    (ловит только C-компилятор: «use of undeclared identifier Foo»).
-  - **non-existent field** — `f.nonexistent` → CC-FAIL («no member named»).
-- **Severity:** первые три — **silent miscompilation** (нет ни Nova-CE, ни
-  CC-FAIL — программа просто работает неверно). Это прямое нарушение
-  принципа Plan 70 «no silent fallback». Это **P1**, не L: Plan 70 закрыл
-  silent-fallback в *codegen*; этот gap — тот же класс багов в *type-checker*.
-- **Последствие для тестов:** для Plan 72 p1b/p2a нельзя написать чистый
-  negative-тест (Nova-level `EXPECT_COMPILE_ERROR`) — natural negatives дают
-  NEG-NO-ERROR или CC-FAIL. p2b/p3b негативы есть (codegen-level ошибки).
-- **Почему:** bootstrap type-checker строился инкрементально; базовый слой
-  type-compatibility (assignability arg↔param и annotation↔RHS, арность
-  type-args, существование поля/варианта) не был реализован.
-- **Как чинить:** отдельный план «type-checker hardening» — assignability
-  check, type-argument arity, field/variant existence, type-vs-value. Тот же
-  дух, что Plan 70, но для type-checker'а. Разблокирует и негативы p1b/p2a.
-- **Приоритет:** **P1** — silent miscompilation на базовых ошибках типов.
+- **Что было:** type-checker не отвергал базовые ошибки типов —
+  argument-type mismatch (`want_bool(42)`), annotation↔RHS mismatch
+  (`let x int = true`), wrong type-arity (`Result[int]`) компилировались
+  **тихо** (silent miscompilation); type-as-value (`let c = Foo`) и
+  non-existent field (`f.nonexistent`) ловились только C-компилятором.
+- **Закрыто:** [Plan 79](plans/79-typecheck-hardening-no-silent-fallback.md)
+  — проход `TypeCheckCtx` в `types/mod.rs` (серия E73xx):
+  - Ф.1 assignability arg↔param + annotation↔RHS → **E7301**;
+  - Ф.2 арность type-аргументов → **E7310**;
+  - Ф.3 существование поля/метода → **E7320**;
+  - Ф.4 type-vs-value → **E7330**.
+  Спека — [D135](../spec/decisions/02-types.md#d135). Negative-тесты
+  для Plan 72 p1b/p2a дописаны (`nova_tests/plan72/p1b_empty_sum_type_neg.nv`,
+  `p2a_try_from_into_neg.nv`) — оговорка «p1b/p2a без negative-покрытия»
+  снята.
 ---
 
 ## Plan 73 — consume qualifier (D131, 2026-05-21)
