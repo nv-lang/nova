@@ -4119,6 +4119,10 @@ struct ConsumeRegistry {
     fn_params: HashMap<String, Vec<usize>>,
     /// `(receiver_type, method_name)` → индексы consume-параметров.
     method_params: HashMap<(String, String), Vec<usize>>,
+    /// Plan 73 followup: free-fn name → имя return-типа (Named, 1-seg).
+    /// Для var-type инференса `let x = factory()` — расширяет резолв
+    /// consume-метода за пределы очевидных конструкторов.
+    fn_return_types: HashMap<String, String>,
 }
 
 impl ConsumeRegistry {
@@ -4126,6 +4130,7 @@ impl ConsumeRegistry {
         let mut methods: HashSet<(String, String)> = HashSet::new();
         let mut fn_params: HashMap<String, Vec<usize>> = HashMap::new();
         let mut method_params: HashMap<(String, String), Vec<usize>> = HashMap::new();
+        let mut fn_return_types: HashMap<String, String> = HashMap::new();
 
         // 1. Runtime-stdlib consume-методы (`StringBuilder.into` и т.п.).
         //    Single source of truth — runtime_registry.rs (`is_consume`).
@@ -4158,11 +4163,18 @@ impl ConsumeRegistry {
                         if !consume_idx.is_empty() {
                             fn_params.insert(fd.name.clone(), consume_idx);
                         }
+                        // Plan 73 followup: return-тип свободной функции.
+                        if let Some(TypeRef::Named { path, .. }) = &fd.return_type {
+                            if path.len() == 1 {
+                                fn_return_types
+                                    .insert(fd.name.clone(), path[0].clone());
+                            }
+                        }
                     }
                 }
             }
         }
-        ConsumeRegistry { methods, fn_params, method_params }
+        ConsumeRegistry { methods, fn_params, method_params, fn_return_types }
     }
 }
 
@@ -4213,22 +4225,56 @@ fn consume_pattern_names(p: &Pattern, out: &mut Vec<String>) {
 /// Flow-context consume-анализа одной функции / теста.
 struct ConsumeCtx<'a> {
     reg: &'a ConsumeRegistry,
-    /// Состояние линейности per-variable.
+    /// Состояние линейности per-variable. Ключ — каноническое имя
+    /// (alias-класс представлен своим каноническим членом).
     states: HashMap<String, VarState>,
     /// Best-effort тип переменной — для резолва consume-метода по
     /// receiver'у. Неизвестный тип → метод не трактуется как consuming
     /// (sound: false-negative, не false-positive).
     var_types: HashMap<String, String>,
+    /// Plan 73 followup: alias-карта. `let a = b` -> `aliases[a] = b`
+    /// (b — каноническое имя). Обе переменные ссылаются на ОДИН
+    /// heap-объект; consume любой -> consume всего alias-класса.
+    aliases: HashMap<String, String>,
 }
 
 impl<'a> ConsumeCtx<'a> {
     fn new(reg: &'a ConsumeRegistry) -> Self {
-        ConsumeCtx { reg, states: HashMap::new(), var_types: HashMap::new() }
+        ConsumeCtx {
+            reg,
+            states: HashMap::new(),
+            var_types: HashMap::new(),
+            aliases: HashMap::new(),
+        }
+    }
+
+    /// Каноническое имя alias-класса переменной (следует по цепочке
+    /// `aliases`). Guard от циклов — теоретически невозможны (alias
+    /// всегда на уже-существующее имя), но защищаемся.
+    fn canonical(&self, name: &str) -> String {
+        let mut cur = name.to_string();
+        for _ in 0..64 {
+            match self.aliases.get(&cur) {
+                Some(next) if next != &cur => cur = next.clone(),
+                _ => break,
+            }
+        }
+        cur
+    }
+
+    /// Пометить alias-класс переменной потреблённым.
+    fn mark_consumed(&mut self, name: &str, span: Span) {
+        let canon = self.canonical(name);
+        if self.states.contains_key(&canon) {
+            self.states.insert(canon, VarState::Consumed(span));
+        }
     }
 
     /// Зарегистрировать новую live-переменную (с опц. известным типом).
     fn declare(&mut self, name: &str, ty: Option<String>) {
         if name == "_" { return; }
+        // Свежий binding — не алиас (рвём прежнюю alias-связь при shadow).
+        self.aliases.remove(name);
         self.states.insert(name.to_string(), VarState::Live);
         match ty {
             Some(t) => { self.var_types.insert(name.to_string(), t); }
@@ -4236,9 +4282,43 @@ impl<'a> ConsumeCtx<'a> {
         }
     }
 
+    /// Зарегистрировать alias `name` -> `canon` (`let a = b`): обе
+    /// переменные — один объект.
+    fn declare_alias(&mut self, name: &str, canon: &str, ty: Option<String>) {
+        if name == "_" { return; }
+        self.states.remove(name);            // shadow: убрать прежнее состояние
+        self.aliases.insert(name.to_string(), canon.to_string());
+        match ty {
+            Some(t) => { self.var_types.insert(name.to_string(), t); }
+            None => { self.var_types.remove(name); }
+        }
+    }
+
+    /// Развязать alias-класс переменной `name` перед её реассайном
+    /// (`name = ...`). Каждый член класса становится независимой
+    /// переменной с ТЕКУЩИМ состоянием класса (объект-то прежний,
+    /// меняется только привязка `name`). Sound: исключает ложную
+    /// propagation consume через устаревший alias после реассайна.
+    fn dissolve_alias_class(&mut self, name: &str) {
+        let canon = self.canonical(name);
+        let class_state = self.states.get(&canon).cloned()
+            .unwrap_or(VarState::Live);
+        let all_aliased: Vec<String> = self.aliases.keys().cloned().collect();
+        for m in all_aliased {
+            if self.canonical(&m) == canon {
+                self.aliases.remove(&m);
+                // member продолжает ссылаться на прежний объект —
+                // сохраняем его состояние как независимое.
+                self.states.insert(m, class_state.clone());
+            }
+        }
+        // `canon` сохраняет своё состояние в `states` (уже там).
+    }
+
     /// Использование переменной — проверка use-after-consume.
     fn use_var(&self, name: &str, span: Span, errors: &mut Vec<Diagnostic>) {
-        match self.states.get(name) {
+        let canon = self.canonical(name);
+        match self.states.get(&canon) {
             Some(VarState::Consumed(at)) => {
                 errors.push(Diagnostic::new(
                     format!(
@@ -4287,10 +4367,17 @@ impl<'a> ConsumeCtx<'a> {
                         return Some(parts[0].clone());
                     }
                 }
+                // Plan 73 followup: свободная функция с известным
+                // return-типом (`let x = make_builder()`).
+                if let ExprKind::Ident(fname) = &func.kind {
+                    if let Some(rt) = self.reg.fn_return_types.get(fname) {
+                        return Some(rt.clone());
+                    }
+                }
                 None
             }
             // Алиас `let y = x` — переносим известный тип `x`.
-            ExprKind::Ident(n) => self.var_types.get(n).cloned(),
+            ExprKind::Ident(n) => self.var_types.get(&self.canonical(n)).cloned(),
             // `User { ... }` record-литерал.
             ExprKind::RecordLit { type_name: Some(path), .. } if path.len() == 1 => {
                 Some(path[0].clone())
@@ -4299,33 +4386,22 @@ impl<'a> ConsumeCtx<'a> {
         }
     }
 
-    /// Имя consume-метода для receiver-типа?
+    /// Имя consume-метода для receiver-типа? (тип берётся по
+    /// каноническому имени alias-класса).
     fn is_consume_method(&self, recv_var: &str, method: &str) -> bool {
-        self.var_types.get(recv_var)
+        self.var_types.get(&self.canonical(recv_var))
             .map(|ty| self.reg.methods.contains(&(ty.clone(), method.to_string())))
             .unwrap_or(false)
     }
 
     /// Пометить аргументы в consume-позициях как потреблённые.
-    /// Аргументы уже walk'нуты вызывающим (use-after-consume проверен).
-    fn consume_args(&mut self, args: &[CallArg], idxs: &[usize],
-                    span: Span, errors: &mut Vec<Diagnostic>) {
+    /// Аргументы уже walk'нуты вызывающим (use-after-consume проверен) —
+    /// здесь только переход состояния alias-класса.
+    fn consume_args(&mut self, args: &[CallArg], idxs: &[usize], span: Span) {
         for &i in idxs {
             if let Some(CallArg::Item(arg)) = args.get(i) {
                 if let ExprKind::Ident(name) = &arg.kind {
-                    // use_var уже отработал в walk'е аргумента; здесь —
-                    // только переход состояния. Если уже потреблена —
-                    // ошибка уже выдана.
-                    if matches!(self.states.get(name),
-                        Some(VarState::Live) | None)
-                        && self.states.contains_key(name)
-                    {
-                        self.states.insert(name.clone(), VarState::Consumed(span));
-                    } else if self.states.contains_key(name) {
-                        // Maybe/Consumed — оставляем (ошибка уже есть).
-                        self.states.insert(name.clone(), VarState::Consumed(span));
-                    }
-                    let _ = errors;
+                    self.mark_consumed(name, span);
                 }
             }
         }
@@ -4404,13 +4480,29 @@ fn consume_walk_stmt(ctx: &mut ConsumeCtx, s: &Stmt, errors: &mut Vec<Diagnostic
     match s {
         Stmt::Let(decl) => {
             consume_walk_expr(ctx, &decl.value, errors);
-            let ty = ctx.infer_let_type(decl);
             let mut names = Vec::new();
             consume_pattern_names(&decl.pattern, &mut names);
-            for n in &names {
-                // Тип привязываем только к одиночному ident-pattern'у.
-                let t = if names.len() == 1 { ty.clone() } else { None };
-                ctx.declare(n, t);
+            // Plan 73 followup: alias-форма `let a = b` — RHS голый
+            // идентификатор tracked-переменной. `a` и `b` ссылаются на
+            // один heap-объект → регистрируем alias.
+            let alias_src: Option<String> = if names.len() == 1 {
+                if let ExprKind::Ident(src) = &decl.value.kind {
+                    let canon = ctx.canonical(src);
+                    if canon != names[0] && ctx.states.contains_key(&canon) {
+                        Some(canon)
+                    } else { None }
+                } else { None }
+            } else { None };
+            if let Some(canon) = alias_src {
+                let ty = ctx.var_types.get(&canon).cloned();
+                ctx.declare_alias(&names[0], &canon, ty);
+            } else {
+                let ty = ctx.infer_let_type(decl);
+                for n in &names {
+                    // Тип привязываем только к одиночному ident-pattern'у.
+                    let t = if names.len() == 1 { ty.clone() } else { None };
+                    ctx.declare(n, t);
+                }
             }
         }
         Stmt::Expr(e) => consume_walk_expr(ctx, e, errors),
@@ -4419,16 +4511,17 @@ fn consume_walk_stmt(ctx: &mut ConsumeCtx, s: &Stmt, errors: &mut Vec<Diagnostic
             match &target.kind {
                 ExprKind::Ident(name) => {
                     if matches!(op, AssignOp::Assign) {
-                        // `x = v` — переменная переполучает значение → live.
-                        if ctx.states.contains_key(name) {
-                            ctx.states.insert(name.clone(), VarState::Live);
-                        }
+                        // `x = v` — свежее значение. Развязываем alias-класс
+                        // `x` (прочие члены сохраняют прежнее состояние), x
+                        // получает новый объект → live и сам по себе.
+                        ctx.dissolve_alias_class(name);
+                        ctx.aliases.remove(name);
+                        ctx.states.insert(name.clone(), VarState::Live);
                     } else {
                         // compound `+=` и т.п. читают старое значение.
                         ctx.use_var(name, target.span, errors);
-                        if ctx.states.contains_key(name) {
-                            ctx.states.insert(name.clone(), VarState::Live);
-                        }
+                        let canon = ctx.canonical(name);
+                        ctx.states.insert(canon, VarState::Live);
                     }
                 }
                 _ => consume_walk_expr(ctx, target, errors),
@@ -4535,18 +4628,17 @@ fn consume_walk_expr(ctx: &mut ConsumeCtx, e: &Expr, errors: &mut Vec<Diagnostic
                         for a in args { consume_walk_expr(ctx, a.expr(), errors); }
                         if let Some(t) = trailing { consume_walk_trailing(ctx, t, errors); }
                         let recv = recv.clone();
-                        // consume-метод → receiver потребляется.
-                        if ctx.is_consume_method(&recv, method)
-                            && matches!(ctx.states.get(&recv), Some(VarState::Live))
-                        {
-                            ctx.states.insert(recv.clone(), VarState::Consumed(e.span));
+                        // consume-метод → receiver (весь alias-класс)
+                        // потребляется.
+                        if ctx.is_consume_method(&recv, method) {
+                            ctx.mark_consumed(&recv, e.span);
                         }
                         // consume-параметры метода.
-                        if let Some(ty) = ctx.var_types.get(&recv).cloned() {
+                        if let Some(ty) = ctx.var_types.get(&ctx.canonical(&recv)).cloned() {
                             if let Some(idxs) = ctx.reg
                                 .method_params.get(&(ty, method.clone())).cloned()
                             {
-                                ctx.consume_args(args, &idxs, e.span, errors);
+                                ctx.consume_args(args, &idxs, e.span);
                             }
                         }
                     } else {
@@ -4560,7 +4652,7 @@ fn consume_walk_expr(ctx: &mut ConsumeCtx, e: &Expr, errors: &mut Vec<Diagnostic
                     for a in args { consume_walk_expr(ctx, a.expr(), errors); }
                     if let Some(t) = trailing { consume_walk_trailing(ctx, t, errors); }
                     if let Some(idxs) = ctx.reg.fn_params.get(fname).cloned() {
-                        ctx.consume_args(args, &idxs, e.span, errors);
+                        ctx.consume_args(args, &idxs, e.span);
                     }
                 }
                 // Path call: Type.static(args) / module.fn(args).
@@ -4571,12 +4663,12 @@ fn consume_walk_expr(ctx: &mut ConsumeCtx, e: &Expr, errors: &mut Vec<Diagnostic
                         if let Some(idxs) = ctx.reg.method_params
                             .get(&(parts[0].clone(), parts[1].clone())).cloned()
                         {
-                            ctx.consume_args(args, &idxs, e.span, errors);
+                            ctx.consume_args(args, &idxs, e.span);
                         }
                     }
                     if let Some(last) = parts.last() {
                         if let Some(idxs) = ctx.reg.fn_params.get(last).cloned() {
-                            ctx.consume_args(args, &idxs, e.span, errors);
+                            ctx.consume_args(args, &idxs, e.span);
                         }
                     }
                 }
