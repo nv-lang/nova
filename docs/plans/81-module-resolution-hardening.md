@@ -3,9 +3,9 @@
 > **Создан 2026-05-21.** Переработан с чистого листа 2026-05-21 после
 > сверки с реальным кодом компилятора (см. «Сверка фактов» ниже).
 >
-> **Статус:** 🚧 in progress — Ф.1–Ф.6 ✅ + Ф.7.1 ✅ + Ф.8 ✅ + Ф.10 ✅
-> (2026-05-21, worktree `nova-p79`, ветка `plan-81-hardening`), Ф.7.2 +
-> Ф.9 + Ф.11 pending.
+> **Статус:** 🚧 in progress — Ф.1–Ф.8 ✅ + Ф.10 ✅
+> (2026-05-21, worktree `nova-p79`, ветка `plan-81-hardening`), Ф.9 +
+> Ф.11 pending.
 > - **Ф.1** ✅ visibility enforcement (commit `197480a747c`).
 > - **Ф.2** ✅ module-qualified call type-check — `alias.func()` /
 >   `mod.func()` резолвятся в `TypeCheckCtx`; неизвестная функция →
@@ -31,8 +31,17 @@
 >   опционально, не блокирует.
 > - **Ф.7.1** ✅ linker-level DCE — `-ffunction-sections -fdata-sections`
 >   + `-Wl,--gc-sections` (Linux/macOS) / `/Gy` (MSVC): неиспользуемые
->   секции удаляет линкер. Ф.7.2 (compiler-level reachability DCE) —
->   pending (крупная, см. декомпозицию Ф.7).
+>   секции удаляет линкер.
+> - **Ф.7.2** ✅ compiler-level reachability DCE для **свободных
+>   функций** — `compute_dead_free_fns`: worklist достижимости от корней
+>   (`main`, refs всех non-candidate items, экспортируемые fn), обход
+>   call-графа, недостижимые мономорфные свободные функции не эмитятся
+>   в `.c` (ни forward-decl, ни тело). Sound-by-construction: свободная
+>   функция вызывается только синтаксически по имени (bare `Ident` или
+>   `Member`-селектор для `mod.func()`). Method-level compiler-DCE
+>   декомпозирован в отдельный инкремент (Ф.7.2-methods — нужна
+>   protocol-dispatch консервативность; бинарь уже почищен линкером
+>   Ф.7.1). Тесты: 4 unit-теста reachability в `emit_c.rs`.
 > - **Ф.8** ✅ resolution diagnostics: **Ф.8.1** FileId-аудит — маркер
 >   оказался **реальным**: ошибка импортированного модуля рендерилась
 >   byte-offset'ом в entry-исходник (чужой файл/сниппет); фикс
@@ -368,15 +377,40 @@ DCE разбита на два под-шага по уровню риска:
   бинарник» с near-zero риском (не трогает codegen). Per-toolchain
   (clang/gcc — `--gc-sections`; MSVC link — `/OPT:REF`).
 
-- **Ф.7.2 — compiler-level reachability DCE (крупное, рисковое).**
-  Worklist достижимости от корней (`main`, `test`/`bench`, export'ы
-  корневого модуля), обход call/type-графа, эмит только достижимого.
-  Риск: codegen-completeness merge'и существуют для typedef-ordering
-  single-pass codegen'а — агрессивный DCE может уронить порядок;
-  protocol dynamic-dispatch требует консервативного удержания методов.
-  Делается как единый завершённый блок с полным fallout-прогоном.
-  Acceptance плана («недостижимая функция отсутствует в `.c`»)
-  закрывается именно здесь.
+- **Ф.7.2 — compiler-level reachability DCE.** ✅ ВЫПОЛНЕН 2026-05-21
+  для **свободных функций**; method-level — декомпозирован в отдельный
+  инкремент (см. ниже).
+
+  Сделано (`emit_c.rs::compute_dead_free_fns`): worklist достижимости.
+  Кандидаты — мономорфные свободные функции с телом (generic'и уже
+  эмитятся лениво через mono-worklist; методы/типы — out of scope).
+  Корни: `main`; имена, на которые ссылается любой non-candidate item
+  (методы, generic-fn, test/bench, const, type, external — все эмитятся
+  безусловно); экспортируемые свободные функции (cross-module API).
+  Транзитивное замыкание по рёбрам candidate→candidate даёт reachable;
+  дополнение — dead. Недостижимые fn не эмитятся (ни forward-decl, ни
+  тело) → `.c` меньше, C-компиляция быстрее.
+
+  **Sound-by-construction:** свободная функция вызывается ТОЛЬКО
+  синтаксически по имени — bare `Ident` (same-module / merged) либо
+  `Member`-селектор (`mod.func()`). `collect_used_names` (полный обход
+  AST, Ф.7.2 добавил сбор Member-селекторов) видит оба. Риск
+  typedef-ordering из исходной оценки **не материализовался** — типы и
+  методы DCE не трогает, эмитятся как раньше; убираются только тела
+  свободных функций (порядок их определений в C неважен — есть
+  forward-decl'ы у живых). Acceptance плана («недостижимая функция
+  отсутствует в `.c`») закрыт для свободных функций.
+
+  **Декомпозиция: Ф.7.2-methods — method-level compiler-DCE (отдельный
+  инкремент).** Удаление недостижимых *методов* на уровне компилятора
+  требует: (а) desugaring-aware сбора селекторов — операторы
+  (`a + b` → `add`), `into`/`from`, индексация, iteration-протокол; (б)
+  консервативного удержания методов при protocol dynamic-dispatch (тип,
+  упакованный в protocol-значение, должен сохранить методы протокола).
+  Это качественно более рисковая работа, чем free-fn DCE. Бинарь от
+  неиспользуемых методов **уже** очищается линкером (Ф.7.1
+  `--gc-sections`), так что Ф.7.2-methods — инкремент `.c`-size /
+  скорости C-компиляции, не correctness/size. Делается отдельно.
 
 ## Группа C — диагностика и производительность
 
