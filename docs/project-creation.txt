@@ -17180,3 +17180,78 @@ typing gap (commit `2b184a3c06a`): pattern_bind_typed / pattern_cond
 **Plan 62 — все sub-plans закрыты** (62.A / 62.A.bis Ф.1-4 / 62.B.bis /
 62.C / 62.C.bis / 62.D / 62.D.bis / 62.E / 62.E.bis / 62.F.bis).
 Prelude полностью мигрирован из hardcode в файловые декларации.
+=== Plans 73 / 74 / 76 — consume qualifier, primitive bitcast, never (2026-05-21) ===
+
+Три самостоятельных плана за одну сессию (worktree nova-p73-76, ветка
+plan-73-76). Регрессия прогонялась после каждого; финал — 896 PASS /
+0 FAIL / 56 SKIP (TrivialBackend; 56 SKIP — Z3-gated contracts).
+
+Plan 74 — primitive bitcast (commit 005fd29):
+  Ф.1 nova_rt/numeric.h — memcpy-based f64↔u64 / f32↔u32 reinterpret-cast
+  (IEEE 754 bit-pattern). Ф.2 numeric_runtime() в runtime_registry.rs.
+  Ф.3 auto-gen std/runtime/numeric.nv. Ф.4 — 12 sub-тестов
+  nova_tests/plan74/ (known patterns, round-trip, ±0.0 sign-bit, NaN, ∞).
+  Codegen — hard-coded primitive dispatch (как D74 math): instance
+  f.to_bits() + static fX.from_bits() (Member + Path form) + infer.
+  Legacy Plan 04 int.to_bits(f f64) / f64.from_bits сохранены.
+
+Plan 76 — Never → never (commit 5e3acfb):
+  Bottom-тип приведён к конвенции примитивов — строчный встроенный
+  `never`. Ф.1 parser is_primitive_type. Ф.2 Rust string-rename
+  "Never"→"never" (builtins HashSet, ty_of_ref, BUILTIN_TYPE_NAMES);
+  type_ref_to_c — явный never→nova_int ABI placeholder (раньше неявно
+  падало в dangling Nova_Never*). Внутренний enum-variant Ty::Never
+  ОСТАВЛЕН — корректный Rust PascalCase, ровно как int→Ty::Int. Ф.3 .nv
+  (Fail.fail / panic / exit → -> never). Ф.4 spec — 08-runtime.md
+  bottom-type definition переписана + rename decisions/03,04,07,10 +
+  narrative. Ф.5 тесты.
+  Грабли: bootstrap type-checker permissive к unknown uppercase-типам —
+  запланированный негативный тест «Never (заглавная) → CE» снят честно
+  (зона Plan 37 type-checker parity); покрытие через существующий
+  fail_handler_no_exit_rejected.nv.
+
+Plan 73 — consume qualifier, D131 (commit 5678439):
+  Compile-time проверка логической линейности. Ф.1 spec D131
+  (05-memory.md). Ф.2 AST Receiver.consume + Param.consume. Ф.3 parser
+  KwConsume — receiver-квалификатор mut/consume взаимоисключающие,
+  параметр `consume name Type`. Ф.4 flow-sensitive check_consume pass
+  (types/mod.rs) — VarState Live/Consumed/MaybeConsumed + ConsumeRegistry
+  + branch-join (if/match/??/select) + пессимистичные циклы (consume в
+  теле → maybe-consumed на 2-й итерации) + изолированный walk
+  closure/handler/trailing. Ф.5 stdlib+runtime — runtime_registry
+  is_consume → auto-gen string_builder.nv `consume @into`;
+  string_builder.h — убран runtime-флаг `consumed`, @into() зануляет
+  data/len/cap, _check_live repurposed как `data != NULL`
+  defense-in-depth assert. Ф.6 — 8 фикстур nova_tests/plan73/ (3 pos +
+  5 neg); f15_stringbuilder_consumed_negative мигрирован RUNTIME_PANIC →
+  COMPILE_ERROR.
+  2 осознанных bootstrap-ограничения (alias-tracking,
+  receiver-type resolution best-effort) — см. simplifications.md
+  [M-consume-no-alias-tracking] / [M-consume-receiver-type-best-effort].
+  Оба — false-negative-направление (ложных ошибок не дают).
+
+Кодировка: в types/mod.rs обнаружена pre-existing порча кодировки
+(mojibake в части комментариев); затронутые Plan 76 строки переписаны
+в корректный UTF-8, остальное не трогалось (вне scope).
+
+Коммиты: Plan 74 005fd29, Plan 76 5e3acfb, Plan 73 5678439, docs e7945eb.
+Ветка plan-73-76; merge в main отложен — на момент сессии main был в
+состоянии незавершённого merge-конфликта другого агента и ушёл вперёд
+на ~14 коммитов.
+
+Followup (та же сессия) — усиление consume-checker'а по запросу:
+- alias-tracking (canonical-name): `let a = b` → consume любого имени
+  инвалидирует весь alias-класс; `dissolve_alias_class` при реассайне
+  исключает false-positive (member'ы сохраняют состояние, реассайнутая
+  переменная — fresh).
+- вывод типа переменной из return-типа свободной функции
+  (`let x = factory()`), не только из явного конструктора.
+- +4 фикстуры (consume_err_alias / consume_err_factory /
+  consume_ok_alias / consume_ok_reassign).
+- simplifications.md: `[M-consume-no-alias-tracking]` →
+  `[M-consume-method-result-alias]` (остался только builder-chain
+  `let x = sb.append(...)`); `[M-consume-receiver-type-best-effort]` сужен.
+- Plan 77 (docs/plans/77-fluent-return.md) — черновик-пропозал
+  «`-> @` / fluent-return» (точное «метод возвращает receiver» vs
+  `Self` = «тот же тип»), варианты A/B/C + сравнение Rust/Go/TS, на
+  решение автора языка. Разблокирует sound builder-chain alias.

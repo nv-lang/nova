@@ -1,0 +1,40 @@
+// Plan 76 Ф.5: `never` — bottom-тип как строчный встроенный примитив.
+//
+// Verifies что lowercase `never` работает в type-позициях:
+//   - return type не-возвращающей функции (`fn f() -> never`);
+//   - тип `throw` / `panic` выражений (совместим с любым типом);
+//   - bottom-тип ⊥ — подтип любого `T`.
+
+module nova_tests.plan76.never_positive
+
+// `never` как return type функции — D25/D65 non-returning fn.
+fn fail_always(msg str) -> never {
+    panic(msg)
+}
+
+// never-typed выражение в позиции, ожидающей int — bottom-тип
+// совместим с любым типом (⊥ <: T).
+fn parse_or_die(s str) -> int {
+    if s == "42" { return 42 }
+    fail_always("bad input")
+}
+
+test "never return type — функция компилируется, happy path работает" {
+    let x = parse_or_die("42")
+    assert(x == 42)
+}
+
+test "throw имеет тип never — совместим с int-позицией" {
+    let n int = if true { 7 } else { throw "unreachable" }
+    assert(n == 7)
+}
+
+test "panic (тип never) — ветка if-else без значения" {
+    let v int = if true { 100 } else { fail_always("no") }
+    assert(v == 100)
+}
+
+test "exit (тип never) — ветка if-else без значения" {
+    let w int = if true { 5 } else { exit(1, "no") }
+    assert(w == 5)
+}

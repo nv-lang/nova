@@ -179,7 +179,7 @@ fn main() Io -> () {
 
 ##### `exit` — детали
 
-- **Сигнатура:** `fn exit(code int, msg str) -> Never`. `code` —
+- **Сигнатура:** `fn exit(code int, msg str) -> never`. `code` —
   exit code для процесса (по конвенции 0 = успех, ≥1 = ошибка). `msg`
   выводится в stderr перед завершением; пустая строка — без сообщения.
 - **Не вызывает defer'ы / handler'ы.** Процесс гасится, стек не
@@ -249,14 +249,14 @@ fn critical(...) -> Result =>
 ## D26. Базовая stdlib и prelude
 
 ### Что
-Базовые типы (`Option[T]`, `Result[T, E]`, `Error`, `Never`,
+Базовые типы (`Option[T]`, `Result[T, E]`, `Error`, `never`,
 `Ordering`) и их конструкторы (`Some`, `None`, `Ok`, `Err`) живут в
 **prelude** — автоматически в скоупе любого модуля, без `import`.
 Список prelude **явно зафиксирован** в одном месте, не «магия».
 
 > **Bootstrap-расширение (Plan 35 sub-plan 35.A R27, 2026-05-12):**
 > большая часть prelude (`Option`/`Result`/`Some`/`None`/`Ok`/`Err`/
-> `Error`/`Never`/`print`/`println`/`panic`) реализована **hardcoded**
+> `Error`/`never`/`print`/`println`/`panic`) реализована **hardcoded**
 > в type-checker'е и codegen'е. Параллельно `compiler-codegen::imports`
 > auto-импортирует `std/prelude.nv` если файл существует — это
 > opt-in mechanism для расширения prelude из пользовательского кода
@@ -266,8 +266,8 @@ fn critical(...) -> Result =>
 > **Plan 62 (закрыт 2026-05-18, `PRELUDE_VERSION = 3`):** большая часть
 > prelude мигрирована в file-based декларации `std/prelude/*.nv`:
 > - `std/prelude/core.nv` — `Option`/`Result`/`Some`/`None`/`Ok`/`Err`/
->   `Error`/`Ordering` (`Never` deferred — bootstrap parser
->   ограничение).
+>   `Error`/`Ordering`. Bottom-тип `never` — строчный встроенный
+>   примитив (Plan 76), в prelude не объявляется (как `int`/`bool`).
 > - `std/prelude/runtime.nv` — `panic`/`exit`/`assert`/`debug_assert`
 >   (`print`/`println` migrated в Plan 62.B.bis — `PRELUDE_VERSION = 7`,
 >   2026-05-18).
@@ -338,9 +338,10 @@ fn critical(...) -> Result =>
 > trampoline в `nova_rt/array.h` отсутствует (Plan 62.B+). Phase 4
 > (удаление legacy `sum_schemas`) deferred до Plan 59 sum-mono.
 >
-> **Remaining deferred:** `Never`/`RuntimeNoneError` (bootstrap parser
+> **Remaining deferred:** `RuntimeNoneError` (bootstrap parser
 > empty-sum syntax), `TryFrom`/`TryInto` (Plan 62.E.bis — требует
-> Plan 56 Ф.2.7 effect-row enforcement).
+> Plan 56 Ф.2.7 effect-row enforcement). Bottom-тип `never` — закрыт
+> Plan 76 (строчный встроенный примитив, не требует prelude-декларации).
 
 ### Правило
 
@@ -352,7 +353,8 @@ fn critical(...) -> Result =>
 type Option[T] | Some(T) | None
 type Result[T, E] | Ok(T) | Err(E)
 type Ordering | Less | Equal | Greater
-type Never                                       // unit без значений (uninhabited)
+// `never` — bottom-тип (uninhabited): строчный встроенный примитив,
+// НЕ объявляется (как `int`/`bool`). См. «`never` — bottom-тип» ниже.
 type any protocol { }                            // top-type через пустой protocol (D53)
 ```
 
@@ -868,8 +870,8 @@ fn parse_data(s str) -> Data { ... }
 ```nova
 fn print(...items []any) Io -> ()           // variadic, см. D69
 fn println(...items []any) Io -> ()         // variadic + newline
-fn panic(msg str) -> Never                  // смерть текущего fiber'а (D13)
-fn exit(code int, msg str) -> Never         // смерть всего процесса (D13)
+fn panic(msg str) -> never                  // смерть текущего fiber'а (D13)
+fn exit(code int, msg str) -> never         // смерть всего процесса (D13)
 
 // Assertions — обычные fn-call, обязательно со скобками
 fn assert(cond bool) -> ()                  // always runtime; failure → panic (D13)
@@ -886,24 +888,24 @@ Spread разрешён: `print(...parts)`.
 со скобками как любой fn-call: `assert(x > 0)`. Build-mode семантика —
 [D81](#d81). Failure любого assert'а — panic ([D13](#d13)), не Fail.
 
-#### `Never` — обычный тип без значений
+#### `never` — bottom-тип (uninhabited)
 
-`Never` объявлен как **sum-type с нулём вариантов** — синтаксически
-`type Never =` (после `=` пусто). Это легальная конструкция в системе
-[02-types.md → D17](02-types.md#d17): пустой список вариантов —
-корректный частный случай.
+`never` — **bottom-тип** языка: строчный встроенный примитив, в одном
+ряду с `int`/`bool`/`f64`. **Не объявляется** ни в prelude, ни через
+`type` — компилятор знает его напрямую (как и остальные примитивы).
+Имя строчное по конвенции примитивов (Plan 76).
 
-**Свойства следуют из пустоты, не из специального правила:**
+**Свойства:**
 
-- **Нельзя создать значение типа `Never`** — нет ни одного варианта.
-- **`Never` — подтип любого типа** (bottom type ⊥). Любой контекст,
-  ожидающий `T`, может принять `Never`-выражение.
+- **Uninhabited** — значений типа `never` не существует (0 значений).
+- **`never` — подтип любого типа** (bottom type ⊥). Любой контекст,
+  ожидающий `T`, может принять `never`-выражение.
 - **Используется в типах не-возвращающих выражений** — `throw expr`,
-  `return expr`, `panic(...)`, бесконечный `loop`. Все имеют тип
-  `Never`, поэтому совместимы с любым контекстом.
+  `return expr`, `panic(...)`, `exit(...)`, бесконечный `loop`. Все
+  имеют тип `never`, поэтому совместимы с любым контекстом.
 
-Аналоги: Rust `!`, Haskell `Void`, Kotlin/Scala `Nothing`,
-TypeScript `never`. Не уникальная фича Nova.
+Аналоги: Rust `!` (`never`-RFC), Haskell `Void`, Kotlin/Scala
+`Nothing`, TypeScript `never`. Не уникальная фича Nova.
 
 #### Эффекты как обычные типы — `Fail[E]` не магия
 
@@ -913,7 +915,7 @@ kind-токен `effect` ([04-effects.md → D18 (REVISED)](04-effects.md#d18-э
 
 ```nova
 type Fail[E] effect {
-    fail(value E) -> Never
+    fail(value E) -> never
 }
 ```
 
@@ -970,7 +972,7 @@ Prelude **документирован**, его содержимое — фик
   локальность через документированный prelude.
 - [04-effects.md → D25](04-effects.md#d25) — `throw` и `Fail[Error]`.
 - [04-effects.md → D18](04-effects.md#d18) — эффекты как обычные типы.
-- [02-types.md → D17](02-types.md#d17) — sum-type, `Never` как пустой.
+- [02-types.md → D17](02-types.md#d17) — sum-type, `never` как пустой.
 - [03-syntax.md → D20](03-syntax.md#d20) — `()` вместо `void`.
 - [07-modules.md → D29](07-modules.md#d29) — prelude и явные импорты.
 
@@ -1486,9 +1488,9 @@ let n = u64.try_from(s).unwrap_or(0)  // → fallback default
 2. **Compiler не синтезирует try-формы из infallible `from()`** —
    нет error-type для Result. Если нужно (например, generic-bound
    требует `TryFrom`), программист пишет explicit
-   `T.try_from(v) -> Result[T, Never]` (Never = uninhabited error).
-3. **`Result[T, Never]`** automatically converts to `T` через unwrap
-   — Never-type не имеет значений, `Err` ветка unreachable.
+   `T.try_from(v) -> Result[T, never]` (never = uninhabited error).
+3. **`Result[T, never]`** automatically converts to `T` через unwrap
+   — never-type не имеет значений, `Err` ветка unreachable.
 
 **Когда писать `Fail`, когда нет:**
 - `Fahrenheit.from(c Celsius)` — без Fail (всегда успех).
@@ -2597,7 +2599,7 @@ export external fn StringBuilder.new() -> Self
 export external fn StringBuilder mut @append(s str) -> ()
 
 // Private external (используется внутри runtime/builtins.nv module'а)
-external fn Nova_intrinsic_unreachable() -> Never
+external fn Nova_intrinsic_unreachable() -> never
 ```
 
 #### Связь с D26 prelude

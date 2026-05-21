@@ -44,9 +44,9 @@
 //   canonical type-name для type-checker'а; runtime throw остаётся
 //   string-payload (`nova_rt/effects.h`), structured payload отложен
 //   (тот же mechanism что у `ReadBufferError`).
-//   `Never` НЕ мигрируется сюда — bottom-тип должен быть строчным
-//   keyword'ом `never`, не капитализированным prelude-типом (Plan 75
-//   cleanup).
+//   Bottom-тип НЕ мигрируется сюда — это строчный встроенный примитив
+//   `never` (Plan 76, закрыт 2026-05-21), не капитализированный
+//   prelude-тип.
 //
 // **DEFER Plan 62.C → 62.B/F:**
 //

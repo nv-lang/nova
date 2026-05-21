@@ -3825,7 +3825,7 @@ import std.use                      // ✗ — `use` в module path
 #### Что разрешено
 
 **Зарезервированные identifier'ы** (D26 prelude — `Self`, `any`,
-`Never`, `Option`, `Some`, `None`, `Result`, `Ok`, `Err`, `Error`,
+`never`, `Option`, `Some`, `None`, `Result`, `Ok`, `Err`, `Error`,
 `int`, `f64`, etc.) — это **обычные имена** в prelude scope, не
 keyword'ы. Программист может **переопределить локально** (см.
 [overview.md](../overview.md) «Зарезервированные identifier'ы»),
@@ -3938,7 +3938,7 @@ Generic-параметры могут иметь **default-значение** ч
 указал его явно.
 
 Закрывает [Q-default-generic](../open-questions.md#q-default-generic).
-Триггер принятия — [D87](04-effects.md#d87) (`Handler[E, IRT = Never]`).
+Триггер принятия — [D87](04-effects.md#d87) (`Handler[E, IRT = never]`).
 
 ### Правило
 
@@ -4042,7 +4042,7 @@ Default-тип **должен** удовлетворять bound'у — комп
    пишет (получает явное значение).
 3. **Прецеденты:** Rust (`Vec<T, A: Allocator = Global>`),
    C++ (`template<typename T = int>`), TypeScript (`Foo<T = string>`).
-4. **Realistic consumer.** [D87](04-effects.md#d87) `Handler[E, IRT = Never]` —
+4. **Realistic consumer.** [D87](04-effects.md#d87) `Handler[E, IRT = never]` —
    главный практический use-case в Nova prelude.
 
 ### Что отвергнуто
@@ -4063,7 +4063,7 @@ Default-тип **должен** удовлетворять bound'у — комп
   расширяет до `[T Hashable = SomeDefault]`.
 - [D52](02-types.md#d52) — newtype/alias; D88 дополняет alias-механику
   (alias для конкретной инстанции, default — для самой частой).
-- [D87](04-effects.md#d87) — `Handler[E, IRT = Never]` главный consumer.
+- [D87](04-effects.md#d87) — `Handler[E, IRT = never]` главный consumer.
 
 ### Эволюция
 
@@ -4474,11 +4474,11 @@ scope ждёт defer'ов всех детей, scheduling непредсказу
   - **Ф.8 Production-grade hardening** (2026-05-11, commits e04ca85d
     + 61af5af4 + 007bb9ba + d913aa08 + 33c1e050):
     * (1) Type-check enforcement D61 §1430-1434: handler-method для
-      эффект-операции с return type `Never` ОБЯЗАН закончиться
+      эффект-операции с return type `never` ОБЯЗАН закончиться
       `interrupt`/`throw`/`panic`/`exit`. Static analysis в
       `check_handler_never_ops` + helpers (`expr_diverges`,
       `block_diverges`). Покрывает Fail.fail + user-defined effects
-      с Never-методами.
+      с never-методами.
     * (2) Defer/errdefer на interrupt-path: codegen эмитит local
       NovaInterruptFrame setjmp wrapper аналогично fail-frame.
       На interrupt — invoke только `defer` (skip `errdefer` —

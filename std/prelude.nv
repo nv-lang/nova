@@ -7,7 +7,8 @@
 //
 // Текущий статус:
 //   - 62.A complete: core types (Option/Result/Some/None/Ok/Err/Error/
-//     Ordering/Never) перенесены в std/prelude/core.nv.
+//     Ordering) перенесены в std/prelude/core.nv. Bottom-тип `never` —
+//     строчный встроенный примитив (Plan 76), в prelude НЕ объявляется.
 //   - 62.B complete (partial): panic/exit/assert/debug_assert перенесены
 //     в std/prelude/runtime.nv. print/println DEFERRED — variadic +
 //     type-polymorphic dispatch, см. std/prelude/runtime.nv DEFER comment.
@@ -43,9 +44,9 @@ module std.prelude
 // (bootstrap parser `parse_import_inner` не skip'ает newlines внутри
 // `{ }`), поэтому всё на одной строке.
 //
-// DEFER из re-export'а: `Never` — bootstrap parser не поддерживает
-// `type Never =` (empty sum). Остаётся в type-checker builtins HashSet
-// пока syntax не появится. См. std/prelude/core.nv (DEFER комментарий).
+// Bottom-тип `never` НЕ re-export'ится: это строчный встроенный
+// примитив (Plan 76), известен компилятору напрямую — как `int`/`bool`,
+// примитивы не объявляются и не re-export'ятся через prelude.
 export import std.prelude.core.{Option, Some, None, Result, Ok, Err, Error, Ordering, Less, Equal, Greater}
 
 // Plan 62.B: re-export runtime functions из std.prelude.runtime.

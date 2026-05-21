@@ -1,0 +1,16 @@
+// EXPECT_COMPILE_ERROR D131
+//
+// Plan 73 followup: тип переменной выводится из return-типа свободной
+// функции (`let sb = make_builder()`), не только из явного конструктора —
+// поэтому consume-метод `into()` корректно распознаётся.
+
+module nova_tests.plan73.consume_err_factory
+
+fn make_builder() -> StringBuilder => StringBuilder.new()
+
+test "use after consume — тип из return-типа функции" {
+    let sb = make_builder()
+    let s = sb.into()
+    sb.append("oops")          // ОШИБКА D131: sb потреблён @into()
+    assert(s == "")
+}
