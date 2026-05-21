@@ -1683,7 +1683,7 @@ impl CEmitter {
                     let key = ("".to_string(), f.name.clone());
                     let existing_count = self.method_overloads.get(&key)
                         .map(|v| v.len()).unwrap_or(0);
-                    let base_c_name = format!("nova_fn_{}", f.name);
+                    let base_c_name = self.free_fn_c_name(&f.name);
                     let c_name = if existing_count == 0 {
                         base_c_name.clone()
                     } else {
@@ -6531,7 +6531,7 @@ impl CEmitter {
                     }
                 }
             }
-            format!("nova_fn_{}", f.name)
+            self.free_fn_c_name(&f.name)
         }
     }
 
@@ -7225,18 +7225,30 @@ impl CEmitter {
     }
 
     /// Plan 63 Fix F+: get C-name of callee for fn_result_ok_inner_types lookup.
+    /// Plan 81 Ф.6: C-имя символа пользовательской свободной функции.
+    ///
+    /// Единая точка построения имени — Ф.6.1 централизует ~15
+    /// разбросанных `format!("nova_fn_{}", ...)`; Ф.6.2 заменит тело на
+    /// mangling с путём модуля (`nova_<modpath>_<name>`). Перегрузки
+    /// добавляют param-type-суффикс на стороне `method_overloads`;
+    /// синтетика (`nova_fn_main_impl`, closure-адаптеры `nova_fn_vi`
+    /// и т.п.) сюда **не** идёт — она exempt.
+    fn free_fn_c_name(&self, name: &str) -> String {
+        format!("nova_fn_{}", name)
+    }
+
     /// Mirrors `emit_call`'s callee name resolution для Ident/Path/Member cases.
     fn call_target_c_name(&self, func: &crate::ast::Expr) -> String {
         use crate::ast::ExprKind;
         match &func.kind {
-            ExprKind::Ident(name) => format!("nova_fn_{}", name),
+            ExprKind::Ident(name) => self.free_fn_c_name(name),
             ExprKind::Path(parts) if !parts.is_empty() => {
                 // Static-method-style `Type.method` → "Nova_Type_method_<method>"
                 // (Plan 11: instance methods all use _method_ mangling).
                 if parts.len() == 2 {
                     format!("Nova_{}_method_{}", parts[0], parts[1])
                 } else {
-                    format!("nova_fn_{}", parts.join("_"))
+                    self.free_fn_c_name(&parts.join("_"))
                 }
             }
             ExprKind::Member { obj, name } => {
@@ -8172,7 +8184,7 @@ impl CEmitter {
     /// Called when type argument inference fails (e.g. generic record params).
     /// Idempotent — body is only emitted once (guarded by mono_instantiated).
     fn register_erased_instance(&mut self, fn_decl: &crate::ast::FnDecl) {
-        let erased_name = format!("nova_fn_{}", fn_decl.name);
+        let erased_name = self.free_fn_c_name(&fn_decl.name);
         if self.mono_instantiated.contains(&erased_name) {
             return; // Already registered (either erased or mono base name)
         }
@@ -11198,7 +11210,7 @@ impl CEmitter {
                     if let Some(closure_value) = self.emit_free_fn_value(name) {
                         return Ok(closure_value);
                     }
-                    return Ok(format!("nova_fn_{}", name));
+                    return Ok(self.free_fn_c_name(name));
                 }
                 Ok(name.clone())
             }
@@ -12772,10 +12784,10 @@ impl CEmitter {
                 if let Some((type_name, _)) = self.sum_schema_registry.find_variant_compat(name) {
                     format!("nova_make_{}_{}", type_name, name)
                 } else {
-                    format!("nova_fn_{}", name)
+                    self.free_fn_c_name(name)
                 }
             }
-            _ => "nova_fn_unknown".into(),
+            _ => self.free_fn_c_name("unknown"),
         }
     }
 
@@ -13137,11 +13149,11 @@ impl CEmitter {
                             }
                         } else {
                             // Single overload — короткое имя (backward compat).
-                            format!("nova_fn_{}", name)
+                            self.free_fn_c_name(name)
                         }
                     } else {
                         // Не зарегистрирована в registry (тесты, prelude builtins).
-                        format!("nova_fn_{}", name)
+                        self.free_fn_c_name(name)
                     }
                 }
             }
@@ -15807,9 +15819,9 @@ impl CEmitter {
                             safe, method_name, arg_strs.join(", ")
                         ));
                     }
-                    format!("nova_fn_{}", parts.join("_"))
+                    self.free_fn_c_name(&parts.join("_"))
                 } else {
-                    format!("nova_fn_{}", parts.join("_"))
+                    self.free_fn_c_name(&parts.join("_"))
                 }
             }
             _ => self.emit_expr(func)?,
@@ -15880,7 +15892,7 @@ impl CEmitter {
                 if has_tuple_return {
                     // Force erasure fallback for tuple-returning generic fns.
                     self.register_erased_instance(&fn_decl.clone());
-                    let erased_name = format!("nova_fn_{}", fn_name);
+                    let erased_name = self.free_fn_c_name(fn_name);
                     let mut arg_strs = Vec::new();
                     for a in args.iter() {
                         let arg_ty = self.infer_expr_c_type(a.expr());
@@ -15901,7 +15913,7 @@ impl CEmitter {
                 // Ф.0: resolve type args
                 match self.resolve_mono_type_args(&fn_decl, &turbofish_type_refs, args) {
                     Ok(type_subst) => {
-                        let base_c_name = format!("nova_fn_{}", fn_name);
+                        let base_c_name = self.free_fn_c_name(fn_name);
                         let mono_name = Self::compute_mono_name(&base_c_name, &type_subst);
                         // Register instance (forward decl + worklist)
                         self.register_mono_instance(&fn_decl.clone(), type_subst.clone(), &mono_name.clone());
@@ -19668,7 +19680,7 @@ impl CEmitter {
         let (param_c_tys, ret_c_ty) = self.user_fn_sigs.get(fn_name).cloned()?;
         // Emit thunk one-time (deduped).
         if !self.emitted_fn_thunks.contains(fn_name) {
-            let thunk_name = format!("nova_fn_{}_thunk", fn_name);
+            let thunk_name = format!("{}_thunk", self.free_fn_c_name(fn_name));
             // Build params: void* env, T0 p0, T1 p1, ...
             let mut params = vec!["void* _env".to_string()];
             for (i, ty) in param_c_tys.iter().enumerate() {
@@ -19686,10 +19698,10 @@ impl CEmitter {
                 .map(|i| format!("p{}", i))
                 .collect();
             if ret_c_ty == "nova_unit" {
-                impl_buf.push_str(&format!("    nova_fn_{}({});\n", fn_name, call_args.join(", ")));
+                impl_buf.push_str(&format!("    {}({});\n", self.free_fn_c_name(fn_name), call_args.join(", ")));
                 impl_buf.push_str("    return NOVA_UNIT;\n");
             } else {
-                impl_buf.push_str(&format!("    return nova_fn_{}({});\n", fn_name, call_args.join(", ")));
+                impl_buf.push_str(&format!("    return {}({});\n", self.free_fn_c_name(fn_name), call_args.join(", ")));
             }
             impl_buf.push_str("}\n\n");
             self.lambda_impls.push_str(&impl_buf);
@@ -19699,7 +19711,7 @@ impl CEmitter {
         let clos_struct = Self::clos_struct_name(&param_c_tys, &ret_c_ty);
         let clos_fn_ty = Self::clos_fn_ty(&param_c_tys, &ret_c_ty);
         let clos_tmp = self.fresh_tmp();
-        let thunk_name = format!("nova_fn_{}_thunk", fn_name);
+        let thunk_name = format!("{}_thunk", self.free_fn_c_name(fn_name));
         self.line(&format!(
             "{}* {} = ({}*)nova_alloc(sizeof({}));",
             clos_struct, clos_tmp, clos_struct, clos_struct
