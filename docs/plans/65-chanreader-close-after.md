@@ -4,7 +4,10 @@
 > **Создан:** 2026-05-18. **Ревизия v2:** 2026-05-18 (industry-parity audit
 > vs Go `time.*` + Rust `tokio::time::*` + TS `setTimeout`/Tokio Sleep;
 > добавлены cancel, deadline, mock-time, drop, observability, timer-wheel).
-> **Статус:** proposed, не начат.
+> **Статус:** ✅ ЗАКРЫТ (MVP Ф.0-Ф.9 + hardening Ф.10-Ф.14 — close_after,
+> CancelToken cleanup, Time-effect mock, Monotonic close_at, NOVA_TIMER_
+> METRICS, 1000-timer stress; 717 PASS / 0 FAIL). Шапка-метка обновлена
+> 2026-05-21 (аудит план-статусов: была устаревшая «proposed, не начат»).
 > **Приоритет:** P1 (исправление API drift + capability semantics + bringing
 > timer-channel API на уровень Go/Tokio).
 > **Трудоёмкость:** ~12-14 dev-days (MVP в Ф.0-Ф.9 за 5 дней,
