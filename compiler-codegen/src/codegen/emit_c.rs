@@ -147,6 +147,105 @@ pub fn with_result_category(c_type: &str) -> WithResultCategory {
     WithResultCategory::ValueStruct
 }
 
+/// Plan 81 Ф.7.2 — compiler-level reachability dead-code elimination for
+/// free functions.
+///
+/// Returns the set of **monomorphic free-function names** unreachable from
+/// any codegen root: their forward declaration and body are omitted from
+/// the generated C (smaller `.c`, faster C compilation — the final binary
+/// was already trimmed by linker-level DCE, Ф.7.1).
+///
+/// **Scope — only monomorphic free functions.**
+///  - Generic free functions are already emitted lazily via the
+///    monomorphization worklist — an uninstantiated one is never emitted.
+///  - Methods / types / constants are out of scope: compiler-level method
+///    DCE needs conservative protocol dynamic-dispatch retention (a
+///    separate increment, Ф.7.2-methods); the linker already strips unused
+///    methods from the binary.
+///
+/// **Soundness.** A monomorphic free function is only ever *called* by its
+/// name appearing syntactically — a bare `Ident` (same-module / merged
+/// calls) or a `Member` selector (`mod.func()` module-qualified calls,
+/// collected by `collect_used_names` since Ф.7.2). `collect_used_names`
+/// performs a complete AST walk over every expression / statement / type /
+/// contract position. Roots: `main`; every name referenced by a
+/// non-candidate item (methods, generic fns, tests, benches, consts,
+/// types, externals — all emitted unconditionally); and exported free
+/// functions (cross-module API surface). The transitive closure over
+/// candidate→candidate call edges is the reachable set; the dead set is
+/// its complement. Over-approximation is always toward keeping a function
+/// (e.g. a name shared by an overload, a local, or a struct field) — never
+/// toward dropping a reachable one.
+///
+/// **DCE is anchored to `fn main`.** If the module has no `main`, it is
+/// not an executable — a library compiled standalone, or a `nova check` /
+/// negative-test target — and there is no entry point to prune against:
+/// every free function is kept. (When such a library is later *imported*
+/// into an executable its functions are merged into that executable's
+/// module and pruned there, anchored by the executable's `main`.) This
+/// also keeps negative `EXPECT_CC_ERROR` fixtures intact — their
+/// erroneous, `main`-less function bodies must still reach the C compiler.
+fn compute_dead_free_fns(module: &Module) -> HashSet<String> {
+    let is_candidate = |f: &FnDecl| -> bool {
+        f.receiver.is_none()
+            && f.generics.is_empty()
+            && !matches!(f.body, crate::ast::FnBody::External)
+    };
+    // No `main` → not an executable → nothing to anchor reachability to;
+    // keep every free function.
+    let has_main = module.items.iter().any(|it| {
+        matches!(it, Item::Fn(f) if f.name == "main" && f.receiver.is_none())
+    });
+    if !has_main {
+        return HashSet::new();
+    }
+    let mut candidates: HashSet<String> = HashSet::new();
+    for item in &module.items {
+        if let Item::Fn(f) = item {
+            if is_candidate(f) {
+                candidates.insert(f.name.clone());
+            }
+        }
+    }
+    if candidates.is_empty() {
+        return HashSet::new();
+    }
+    // refs_of[name] — names referenced by candidate free fn(s) `name`
+    // (overloads sharing a name are unioned — kept/dropped together).
+    let mut refs_of: HashMap<String, HashSet<String>> = HashMap::new();
+    // Worklist seed: `main` is always a root.
+    let mut worklist: Vec<String> = vec!["main".to_string()];
+    for item in &module.items {
+        let mut refs: HashSet<String> = HashSet::new();
+        crate::lints::collect_used_names(std::slice::from_ref(item), &mut refs);
+        match item {
+            Item::Fn(f) if is_candidate(f) => {
+                if f.is_export {
+                    // Exported free fn — cross-module API surface → root.
+                    worklist.push(f.name.clone());
+                }
+                refs_of.entry(f.name.clone()).or_default().extend(refs);
+            }
+            _ => {
+                // Non-candidate item (method / generic fn / external /
+                // test / bench / const / type) is emitted unconditionally,
+                // so every name it references is a reachability root.
+                worklist.extend(refs);
+            }
+        }
+    }
+    let mut reachable: HashSet<String> = HashSet::new();
+    while let Some(name) = worklist.pop() {
+        if !candidates.contains(&name) || !reachable.insert(name.clone()) {
+            continue;
+        }
+        if let Some(refs) = refs_of.get(&name) {
+            worklist.extend(refs.iter().cloned());
+        }
+    }
+    candidates.difference(&reachable).cloned().collect()
+}
+
 pub struct CEmitter {
     out: String,
     /// File-scope handler impl function bodies (ctx structs + forward decls + bodies)
@@ -1596,6 +1695,16 @@ impl CEmitter {
             if !user_const_names.contains(&c.name) { return false; }
             !user_const_spans.contains(&(c.name.clone(), c.span))
         };
+        // Plan 81 Ф.7.2: compiler-level reachability DCE — monomorphic
+        // free functions unreachable from any root are not emitted (their
+        // forward decl + body are dropped from the `.c`).
+        let dead_free_fns = compute_dead_free_fns(module);
+        let is_dead_free_fn = |f: &FnDecl| -> bool {
+            f.receiver.is_none()
+                && f.generics.is_empty()
+                && !matches!(f.body, crate::ast::FnBody::External)
+                && dead_free_fns.contains(&f.name)
+        };
 
         // 1. Type declarations first (structs/unions needed by fn signatures)
         for item in &module.items {
@@ -2015,6 +2124,7 @@ impl CEmitter {
         for item in &module.items {
             if let Item::Fn(f) = item {
                 if should_skip_fn(f) { continue; } // Plan 62.D bis-1: D29 shadow
+                if is_dead_free_fn(f) { continue; } // Plan 81 Ф.7.2: DCE
                 self.emit_fn_forward_decl(f)?;
             }
         }
@@ -2045,6 +2155,7 @@ impl CEmitter {
         for item in &module.items {
             if let Item::Fn(f) = item {
                 if should_skip_fn(f) { continue; } // Plan 62.D bis-1: D29 shadow
+                if is_dead_free_fn(f) { continue; } // Plan 81 Ф.7.2: DCE
                 self.emit_fn(f)?;
             }
         }
@@ -22437,5 +22548,78 @@ mod mangle_tests {
         let got = CEmitter::mangle_free_fn(&[seg], "f");
         assert!(got.len() <= 240, "len = {}", got.len());
         assert!(got.contains("_h"));
+    }
+}
+
+#[cfg(test)]
+mod dce_tests {
+    //! Plan 81 Ф.7.2: unit-тесты reachability-DCE для свободных функций.
+    use super::compute_dead_free_fns;
+
+    fn dead_of(src: &str) -> std::collections::HashSet<String> {
+        let module = crate::parser::parse(src).expect("fixture parses");
+        compute_dead_free_fns(&module)
+    }
+
+    #[test]
+    fn unreachable_free_fn_is_dead() {
+        let dead = dead_of(
+            "module t\n\
+             fn used() -> int => 1\n\
+             fn unused() -> int => 2\n\
+             fn main() -> int => used()\n",
+        );
+        assert!(dead.contains("unused"), "unused has no caller → dead");
+        assert!(!dead.contains("used"), "used is called by main");
+        assert!(!dead.contains("main"), "main is the codegen root");
+    }
+
+    #[test]
+    fn transitively_reachable_is_kept_orphan_chain_is_dead() {
+        let dead = dead_of(
+            "module t\n\
+             fn leaf() -> int => 9\n\
+             fn mid() -> int => leaf()\n\
+             fn orphan_leaf() -> int => 5\n\
+             fn orphan() -> int => orphan_leaf()\n\
+             fn main() -> int => mid()\n",
+        );
+        // main → mid → leaf — whole chain reachable.
+        assert!(!dead.contains("mid"));
+        assert!(!dead.contains("leaf"), "leaf reachable transitively via mid");
+        // orphan → orphan_leaf — entire chain has no live caller.
+        assert!(dead.contains("orphan"));
+        assert!(
+            dead.contains("orphan_leaf"),
+            "callee of a dead fn is itself dead (its only caller is dead)"
+        );
+    }
+
+    #[test]
+    fn exported_free_fn_is_a_root() {
+        // An exported free fn is cross-module API surface — kept even
+        // without a local caller.
+        let dead = dead_of(
+            "module t\n\
+             export fn api() -> int => 1\n\
+             fn helper_of_api() -> int => api()\n\
+             fn main() -> int => 0\n",
+        );
+        assert!(!dead.contains("api"), "exported fn is a root");
+    }
+
+    #[test]
+    fn module_qualified_call_keeps_callee() {
+        // `mod.func()` parses as a Member expression; the selector name is
+        // collected (Ф.7.2) so the callee is not wrongly dropped.
+        let dead = dead_of(
+            "module t\n\
+             fn target() -> int => 7\n\
+             fn main() -> int => somemod.target()\n",
+        );
+        assert!(
+            !dead.contains("target"),
+            "callee referenced via `mod.target()` must stay reachable"
+        );
     }
 }
