@@ -1,0 +1,30 @@
+// Plan 73 (D131): user-defined consume — метод и параметр.
+//
+// `fn Token consume @release()` — consuming receiver.
+// `fn drain(consume t Token)` — consuming параметр.
+
+module nova_tests.plan73.consume_ok_user
+
+type Token { val int }
+
+fn Token.new(v int) -> Token => { val: v }
+
+// consume-метод: после @release() Token недоступен.
+fn Token consume @release() -> int => @val
+
+// consume-параметр: после drain(t) переменная-источник недоступна.
+fn drain(consume t Token) -> int => t.release()
+
+test "user consume-метод — release потребляет Token" {
+    let tok = Token.new(7)
+    let v = tok.release()
+    // tok после release() не используется — ok.
+    assert(v == 7)
+}
+
+test "user consume-параметр — drain потребляет аргумент" {
+    let tok = Token.new(9)
+    let v = drain(tok)
+    // tok после drain(tok) не используется — ok.
+    assert(v == 9)
+}

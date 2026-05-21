@@ -1,0 +1,24 @@
+// EXPECT_COMPILE_ERROR D131
+//
+// Plan 73 (D131): consume в теле цикла — на 2-й итерации это
+// use-after-consume. Анализ циклов пессимистичный: переменная,
+// потреблённая в теле, помечается maybe-consumed.
+
+module nova_tests.plan73.consume_err_loop
+
+fn drain_loop() -> int {
+    let sb = StringBuilder.new()
+    sb.append("x")
+    let mut n = 0
+    while n < 3 {
+        // ОШИБКА D131: sb потребляется в теле цикла — на 2-й
+        // итерации значение уже отдано.
+        let _gone = sb.into()
+        n = n + 1
+    }
+    n
+}
+
+test "consume в цикле — отвергается" {
+    assert(drain_loop() == 3)
+}

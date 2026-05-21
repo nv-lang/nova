@@ -283,3 +283,100 @@ D6 в текущей форме **revised**. История:
   замещающее решение.
 - [history/evolution.md](history/evolution.md) — детальная хронология
   пересмотра.
+
+---
+
+## D131. `consume` — квалификатор логической линейности
+
+> **Plan 73.** Принято 2026-05-21.
+
+### Что
+
+Квалификатор `consume` на **receiver'е** метода или на **параметре**
+функции. Помечает, что вызов **забирает значение целиком**: после
+consume-вызова переменная-источник логически инвалидируется и больше
+не может использоваться.
+
+```nova
+fn StringBuilder consume @into() -> str          // consuming receiver
+fn drain(consume sb StringBuilder) -> str        // consuming параметр
+```
+
+Это **не** ownership в смысле Rust и **не** borrow checker. Памятью
+по-прежнему управляет GC ([D6](#d6-память-managed-по-умолчанию-regions-opt-in-для-real-time));
+`consume` проверяет **логический инвариант**: например, после
+`sb.into()` буфер `StringBuilder` отдан в результирующий `str`,
+поэтому дальнейшее использование `sb` — семантическая ошибка.
+
+### Синтаксис
+
+`consume` стоит на месте `mut` — между именем типа и `@` (receiver)
+либо перед именем параметра:
+
+```nova
+fn Type consume @method(...) -> R       // receiver
+fn f(consume name Type) -> R            // параметр
+```
+
+**Call-site неявный** — `sb.into()` / `f(sb)` без специального
+синтаксиса (маркер `consume:` занят именованными аргументами с
+дефолтами, [D102](03-syntax.md#d102-именованные-аргументы-и-значения-параметров-по-умолчанию)).
+
+`consume` и `mut` на одном receiver — **взаимоисключающие** (parse
+error): `consume` забирает значение целиком, `mut` мутирует его на
+месте.
+
+### Правило
+
+Компилятор проводит **flow-sensitive** анализ. У каждой переменной —
+состояние `VarState`:
+
+- **`Live`** — значение доступно.
+- **`Consumed`** — значение потреблено.
+- **`MaybeConsumed`** — потреблено лишь на части путей выполнения.
+
+Переходы:
+
+- consume-вызов (`v.consume_method(...)` или `f(v)` в consume-позиции)
+  переводит `v` в `Consumed`.
+- Использование `v` в состоянии `Consumed` → **compile error**
+  (use-after-consume).
+- Использование `v` в состоянии `MaybeConsumed` → **compile error**
+  (maybe-consumed: компилятор не гарантирует доступность).
+
+**Слияние путей** (`if`/`match`/`??`/`select`): состояние объединяется
+по-переменно — `(Live, Consumed) → MaybeConsumed`, `(Consumed,
+Consumed) → Consumed`, `(Live, Live) → Live`.
+
+**Циклы** (`for`/`while`/`loop`) — пессимистично: переменная,
+потреблённая в теле, становится `MaybeConsumed` (на 2-й итерации
+consume — уже use-after-consume).
+
+`consume` на closure / handler / trailing-теле, которые исполняются
+0+ раз, обрабатывается изолированно: use-after-consume внутри ловится,
+но их собственные consume наружу не протекают.
+
+### Runtime defense-in-depth
+
+Compile-time проверка — основной механизм. В C-рантайме consume-методы
+дополнительно зануляют внутреннее состояние (`StringBuilder.@into()`
+обнуляет `data`/`len`/`cap`); если статическая проверка обойдена,
+следующий доступ fail-fast'ит через assert, а не молча портит данные.
+Прежний runtime-флаг `consumed` удалён — его роль закрыта D131.
+
+### Границы (bootstrap)
+
+- **Без alias-tracking.** `let a = b` создаёт независимо отслеживаемую
+  переменную `a`; consume `a` не помечает `b` (false-negative,
+  permissive — не выдаёт ложных ошибок).
+- **Резолв consume-метода по типу receiver'а — best-effort.** Тип
+  переменной выводится из аннотации / очевидного конструктора
+  (`Type.new()`); если тип неизвестен, метод не трактуется как
+  consuming (sound: false-negative, не false-positive).
+
+### Связь
+
+- [03-syntax.md → D30](03-syntax.md#d30) — `mut` как аналогичный
+  receiver/param-квалификатор.
+- `std/runtime/string_builder.nv` — `StringBuilder consume @into()`,
+  первый потребитель D131.

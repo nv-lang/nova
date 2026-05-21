@@ -69,6 +69,8 @@ pub enum TokenKind {
     KwLet,
     KwConst,
     KwMut,
+    /// Plan 73 (D131): `consume` — consuming receiver/param qualifier.
+    KwConsume,
     KwReadonly,
     KwIf,
     KwElse,
@@ -205,6 +207,7 @@ impl TokenKind {
             TokenKind::KwLet => "`let`",
             TokenKind::KwConst => "`const`",
             TokenKind::KwMut => "`mut`",
+            TokenKind::KwConsume => "`consume`",
             TokenKind::KwReadonly => "`readonly`",
             TokenKind::KwIf => "`if`",
             TokenKind::KwElse => "`else`",

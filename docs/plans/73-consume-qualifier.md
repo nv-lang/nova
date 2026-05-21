@@ -2,6 +2,28 @@
 
 > **Создан 2026-05-19.**
 >
+> **✅ ЗАКРЫТ 2026-05-21.** Все 6 фаз: Ф.1 spec D131 (`05-memory.md`),
+> Ф.2 AST (`Receiver.consume` + `Param.consume`), Ф.3 parser (`KwConsume`
+> токен + receiver-квалификатор `mut`/`consume` взаимоисключающие +
+> `consume name Type` параметр), Ф.4 семантика — flow-sensitive
+> `check_consume` pass в `types/mod.rs` (`VarState` Live/Consumed/
+> MaybeConsumed + `ConsumeRegistry` + branch-join if/match/??/select +
+> пессимистичные циклы + изолированный walk closure/handler/trailing),
+> Ф.5 stdlib+runtime (`runtime_registry` `is_consume` → auto-gen
+> `string_builder.nv` `consume @into`; `string_builder.h` — убран
+> runtime-флаг `consumed`, `@into()` зануляет поля + repurposed
+> `_check_live` как `data != NULL` defense-in-depth assert), Ф.6 тесты
+> `nova_tests/plan73/` (8 фикстур: 3 positive — basic / branches /
+> user-defined метод+параметр; 5 negative — use-after / maybe-consumed /
+> loop / consume-param / mut+consume parse-conflict). Existing
+> `f15_stringbuilder_consumed_negative` мигрирован RUNTIME_PANIC →
+> COMPILE_ERROR.
+>
+> **Границы (bootstrap):** без alias-tracking (`let a = b` — независимые
+> переменные); резолв consume-метода по типу receiver'а best-effort
+> (аннотация / очевидный конструктор `Type.new()`) — неизвестный тип
+> → метод не consuming (sound: false-negative, не false-positive).
+>
 > **Цель:** добавить в Nova compile-time проверку логической линейности.
 > Некоторые типы (`StringBuilder`) после определённых вызовов (`into()`)
 > инвалидируются. Сейчас это защищается только runtime-флагом — нужна

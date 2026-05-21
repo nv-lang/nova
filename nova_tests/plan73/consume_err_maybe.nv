@@ -1,0 +1,22 @@
+// EXPECT_COMPILE_ERROR D131
+//
+// Plan 73 (D131): maybe-consumed — consume лишь на части веток.
+// После if (без else) sb потреблён только если flag истинно —
+// использование после = compile error.
+
+module nova_tests.plan73.consume_err_maybe
+
+fn run(flag bool) -> int {
+    let sb = StringBuilder.new()
+    sb.append("data")
+    if flag {
+        let _gone = sb.into()
+    }
+    // ОШИБКА D131: sb maybe-consumed (then-ветка потребила, else — нет).
+    sb.append("more")
+    0
+}
+
+test "maybe-consumed после if — отвергается" {
+    assert(run(true) == 0)
+}
