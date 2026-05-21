@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 # Plan 38: Numeric type constants (`int.MAX` / `f64.MAX` / etc.)
 
-> **Статус:** план, не начат. Средний приоритет.
+> **Статус:** ✅ ЗАКРЫТ (commit 64d1a41c1a — codegen mapping для D26
+> numeric type constants, 18 sub-тестов `numeric_constants.nv` PASS,
+> 210/210 regression). Шапка-метка обновлена 2026-05-21 (аудит
+> план-статусов: была устаревшая «не начат»).
 > **Создан:** 2026-05-12.
 > **Обнаружен:** 2026-05-12 при работе над Plan 35 Ф.1 (cross-file
 > resolve) — `std/collections/range.nv:Range.inclusive` использует
