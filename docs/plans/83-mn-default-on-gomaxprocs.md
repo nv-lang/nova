@@ -1,162 +1,137 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-# Plan 83: M:N по умолчанию + GOMAXPROCS-style конфигурация
+# Plan 83: M:N по умолчанию + GOMAXPROCS-style конфигурация — roadmap-индекс
 
-> **Создан:** 2026-05-21.
-> **Статус:** 📋 proposed, не начат. Ф.0 = readiness gate (decision point).
-> **Приоритет:** P2 — эргономика/конкурентоспособность vs Go; не баг.
+> **Создан:** 2026-05-21. **Редакция 2** (2026-05-22): production-grade
+> переработка против `runtime.c`/`runtime.nv`/libuv 1.52.
+> **Редакция 3** (2026-05-22): **декомпозиция** — план разбит на три
+> под-плана по линии гейта Plan 82 (см. §2). Этот файл — roadmap-индекс.
+> **Статус:** roadmap. **Приоритет:** P2 — эргономика vs Go; не баг.
 > **Родитель:** [Plan 44](44-mn-runtime-roadmap.md) (M:N runtime).
-> **Жёсткая зависимость флипа дефолта:** [Plan 82](82-windows-fiber-arena.md)
-> (Windows fiber arena) + GC-safety под multi-worker. До их закрытия
-> Ф.1-Ф.4 (инфраструктура) делаются, **Ф.5 (флип) — нет**.
 
 ---
 
 ## 1. Проблема
 
 M:N-рантайм Nova сейчас **opt-in**: чтобы получить параллелизм, надо
-явно вызвать `runtime.init(n)`. Дефолт — single-threaded cooperative.
-`std/runtime/runtime.nv` сам помечен «opt-in proof of concept».
+явно вызвать `runtime.init(n)`. Дефолт — single-threaded cooperative;
+`std/runtime/runtime.nv` сам помечен «opt-in proof of concept… не для
+production». Это **противоположно индустрии:**
 
-Это **противоположно индустрии**:
-
-| Рантайм | Параллелизм по умолчанию | Число worker'ов default | Override |
+| Рантайм | Параллелизм по умолчанию | Worker'ов default | Override |
 |---|---|---|---|
 | **Go** | **вкл** (всегда) | `NumCPU` | env `GOMAXPROCS` + `runtime.GOMAXPROCS(n)` |
 | **Rust — tokio** (multi-thread) | **вкл** | `NumCPU` | `worker_threads(n)` builder |
 | **TS / Node** | выкл (одно-поточный event loop) | — | `worker_threads` явно |
 | **Nova сейчас** | **выкл** (opt-in) | — | `runtime.init(n)` обязателен |
 
-Go и tokio оба дефолтят на `NumCPU`. Nova — единственный, кто требует
-явного включения. Следствие: **большинство Nova-программ никогда не
-получают параллелизм** — «спавнишь fiber, он бежит параллельно без
-церемоний» (killer-эргономика Go) у Nova не работает из коробки.
+Go и tokio дефолтят на `NumCPU`. Nova — единственный, кто требует явного
+включения → **большинство скомпилированных Nova-программ никогда не
+получают параллелизм**, killer-эргономика Go «спавнишь fiber → он бежит
+параллельно» из коробки не работает.
 
-## 2. Цель
+**Цель.** M:N включён по умолчанию для compiled-бинарей; worker'ов =
+`NumCPU`; без обязательного `runtime.init`. `runtime.init(n)` — из
+«включателя» в **опциональный тюнер**. Override — Go-паритет: ENV + API.
 
-M:N включён **по умолчанию**, worker'ов = `NumCPU`, без обязательного
-`runtime.init`. `runtime.init(n)` меняет роль: из «включателя M:N» в
-**опциональный тюнер** числа worker'ов. Override-каналы — Go-паритет:
-ENV + API. `NOVA_MAXPROCS=1` = один worker (детерминизм/отладка).
+**Scope-граница.** «M:N по умолчанию» — для **скомпилированных бинарей**
+(`nova build`, `nova test` через C-backend). `nova run` (treewalk-
+интерпретатор) однопоточный по конструкции и таким остаётся — M:N-рантайм
+(`runtime.c`) линкуется только в C-backend. Это граница (интерпретатор
+для скриптов, компилятор для прода), не упрощение; фиксируется в spec.
 
-**НЕ цель:** concurrent GC (Plan 44 v1.0+), CLI-флаг (env достаточно —
-Go его не имеет; опционально, вне scope).
+## 2. Декомпозиция (редакция 3)
 
-## 3. Почему флип дефолта надо гейтить
+План разбит на три под-плана. **Линия разреза — гейт Plan 82:** Ф.1-Ф.5
+исходной редакции 2 не зависят от Plan 82 и mergeable независимо; флип —
+жёстко заблокирован. Бундл в одном плане держал бы 83 в `open`, пока не
+закроется 82. Разрез даёт независимо закрываемые части.
 
-Флип «выкл → вкл» раздаёт M:N **всем** программам сразу. До флипа
-обязательно:
-- **Plan 82** закрыт — иначе каждая Windows-программа побежит
-  параллельно на слабых 56 КБ calloc-стеках без overflow-detection
-  (silent heap corruption под реальной конкуренцией).
-- **GC-safety под multi-worker** подтверждена — stop-the-world
-  корректен при N worker'ах, либо concurrent GC. Сейчас в `fibers.h`
-  безопасность calloc-пути на Windows опирается на «single-thread
-  cooperative — GC не запускается между yield/resume»; под реальным
-  M:N это допущение исчезает.
-- **Soak/stress** валидация (10⁶ spawn, work-stealing migration, no
-  race/leak/deadlock).
+| # | Файл | Что | Зависимость | Статус |
+|---|---|---|---|---|
+| **83.1** | [83.1-mn-infrastructure.md](83.1-mn-infrastructure.md) | M:N-инфраструктура: worker-count resolution, `NOVA_MAXPROCS`, API-reshape (`runtime.init` → тюнер), lazy-spawn + auto-shutdown, thread-budget для `nova test`/`bench`. Дефолт **остаётся opt-in**. | нет (безопасно сейчас) | 📋 proposed |
+| **83.2** | [83.2-mn-default-flip.md](83.2-mn-default-flip.md) | Собственно флип дефолта (M:N вкл) + миграция + spec + speedup-бенчмарк. Включает readiness-gate. | **Plan 82 ✅ + 83.1 ✅ + GC-safety** | 📋 proposed (GATED) |
+| **83.3** | [83.3-blocking-effect-threadpool.md](83.3-blocking-effect-threadpool.md) | `Blocking`-эффект (D50) → libuv threadpool. Companion: без него worker залипает в блокирующем syscall'е и `NOVA_MAXPROCS=N` не даёт N CPU throughput. | нет (ортогонален Plan 82) | 📋 proposed |
 
-Поэтому план разделён: **Ф.1-Ф.4 — инфраструктура** (безопасны сейчас,
-дефолт остаётся opt-in), **Ф.5 — собственно флип** (только после
-зелёного gate Ф.0).
+**Порядок:** 83.1 и 83.3 — параллелизуемы, делаются сейчас. 83.2 — только
+после Plan 82 ✅ + 83.1 ✅; honest-quality 83.2 требует и 83.3 ✅ (иначе
+флип обещает параллелизм, проседающий под блокирующей нагрузкой —
+допустимо с documented-ограничением, но 83.3 закрывает это честно).
 
-## 4. Фазы
+## 3. Общие требования паритета (П1-П6)
 
-### Ф.0 — Readiness gate (decision point, ~1 день)
+Чтобы `NOVA_MAXPROCS` действительно **значил** то же, что `GOMAXPROCS`,
+а не «просто число потоков». Под-планы ссылаются на эти пункты.
 
-Определить точные предусловия безопасного флипа дефолта + аудит
-текущей зрелости M:N (что реально работает, известные race'ы,
-состояние Windows, статус GC под multi-worker). Зафиксировать
-go/no-go критерии для Ф.5. Без этого Ф.5 не стартует.
+- **П1. Worker = слитые Go-`P`+`M`.** В Go `GOMAXPROCS` — число `P`
+  (исполняют Go-код одновременно); `M` (OS-потоков) может быть больше.
+  Nova-«worker» = OS-поток + libuv-loop + deque = `P` и `M` слиты →
+  worker **не должен залипать**, иначе теряется `P`. → 83.3.
+- **П2. Блокирующая работа не пинит worker.** Вся I/O уже async через
+  libuv (Plan 22). Genuinely-blocking (FFI, эффект `Blocking` D50) →
+  **libuv threadpool** (`uv_queue_work`), worker остаётся свободен. → 83.3.
+- **П3. Oversubscription в `nova test`/`bench`.** `nova test` гоняет
+  тест-файлы как параллельные subprocess'ы (`--jobs num_cpus`); каждый с
+  `NumCPU` worker'ами → `NumCPU²` потоков. Нужен thread-budget. → 83.1 Ф.5.
+- **П4. Lazy-spawn policy.** Hello-world без `spawn` → **0** worker-
+  потоков. V1: пул `maxprocs` поднимается на первом worker-bound
+  `spawn`. V2/followup: инкрементальный рост (полный Go-`M`-паритет). → 83.1 Ф.4.
+- **П5. Детерминизм без переобещания.** `NOVA_MAXPROCS=1` убирает
+  **параллелизм** (нет гонок от истинной конкуренции) — этого хватает
+  для отладки. Но `=1` **не** даёт детерминированного **расписания**:
+  sysmon-preemption (Plan 44.7) активна и при одном worker'е. Полный
+  scheduling-детерминизм (cooperative-only) — вне scope 83. → 83.1.
+- **П6. Порядок разрешения.** `explicit API > ENV NOVA_MAXPROCS >
+  default uv_available_parallelism()`. Клэмп `[1, 1024]`. cgroup —
+  покрыт libuv статически; динамический re-read квоты (Go 1.25) —
+  followup. → 83.1 Ф.1.
 
-### Ф.1 — Worker-count resolution (~1-2 дня)
+## 4. Сравнение с Go / Rust / TS
 
-- Кросс-платформенное определение `NumCPU` (`sysconf(_SC_NPROCESSORS_ONLN)`
-  POSIX / `GetSystemInfo` Windows; учесть cgroup-лимиты на Linux —
-  как Go 1.25+ читает cgroup quota, чтобы в контейнере не брать
-  «железные» CPU).
-- Порядок разрешения числа worker'ов: **explicit API > ENV > default
-  `NumCPU`**.
-- Клэмп: min 1, max — разумный потолок.
+| Аспект | Go | tokio (multi-thread) | TS / Node | **Nova сейчас** | **Nova — цель 83** |
+|---|---|---|---|---|---|
+| Параллелизм по умолчанию | вкл | вкл | выкл | **выкл** | **вкл** (compiled) |
+| Worker'ов default | `NumCPU` | `NumCPU` | — | — | `NumCPU` (`uv_available_parallelism`) |
+| cgroup-aware | да, динамически (1.25+) | нет (по умолч.) | — | — | **да, статически** (libuv); dynamic — followup |
+| Override env / API | `GOMAXPROCS` / `runtime.GOMAXPROCS` | — / builder | — | — / `runtime.init` | `NOVA_MAXPROCS` / `runtime.init` тюнер + getter |
+| Изменение во время работы | **да** | нет (fixed) | — | — | **нет** (tokio-паритет; followup) |
+| Цена для hello-world | ~0 (`M` лениво) | пул при build рантайма | 0 | 0 | **0** (lazy-spawn, 83.1) |
+| Блокирующий syscall в корутине | `P` отдаётся другому `M` | `spawn_blocking` → отд. пул | n/p | инлайн (пинит) | `Blocking` → libuv threadpool (83.3) |
 
-### Ф.2 — ENV `NOVA_MAXPROCS` (~0.5 дня)
+**Где Nova после Plan 83 не хуже / лучше:** паритет с Go/tokio по
+дефолт-параллелизму и авто-`NumCPU`; **лучше tokio** по cgroup-awareness
+(частый источник tokio-oversubscription в контейнерах) и по нулевой цене
+hello-world; **честно позади Go** в dynamic-resize (= tokio, осознанный
+scope-выбор); TS — дефолт-выкл, Nova-with-flip как Go/tokio.
 
-- Парсинг/валидация `NOVA_MAXPROCS` (аналог `GOMAXPROCS`). Имя в
-  стиле существующих `NOVA_*` env (`NOVA_TARGET_OS`, `NOVA_FEATURES`,
-  `NOVA_GC_LIB_DIR`, …).
-- `NOVA_MAXPROCS=1` — явный single-worker режим.
-- Невалидное значение → понятная диагностика, fallback на default.
+## 5. Почему флип (83.2) гейтится
 
-### Ф.3 — API reshape: `runtime.init` → опциональный тюнер (~2 дня)
-
-- Рантайм авто-конфигурируется на `NumCPU` без вызова `init`.
-- `runtime.init(n)` остаётся как **опциональный** override-before-start
-  (вызов до первого spawn). Добавить runtime-getter (аналог
-  `runtime.GOMAXPROCS()` для чтения текущего значения).
-- Чёткая семантика: вызов `init` после старта рантайма — ошибка либо
-  no-op с диагностикой (решить в Ф.3).
-
-### Ф.4 — Lazy worker-thread spawn (~2 дня)
-
-«Дефолт-вкл» **не должен** означать «hello-world спавнит N OS-потоков».
-Worker-потоки поднимаются **лениво** под реальную fiber-нагрузку
-(как Go создаёт M по необходимости). Тривиальная программа без fiber'ов
-не платит за пул потоков. Scheduler сконфигурирован на `NumCPU`, но
-физические потоки — on-demand.
-
-### Ф.5 — Флип дефолта (GATED — только после Plan 82 ✅ + GC-safety ✅)
-
-Собственно изменение: дефолт = M:N вкл, worker'ов = `NumCPU`. Одно
-обозримое ревью-able изменение. **Не выполнять**, пока не зелёный
-gate Ф.0.
-
-### Ф.6 — Миграция + escape hatch (~1-2 дня)
-
-- Sweep существующих `runtime.init(n)` вызовов в `std/` / `nova_tests/`
-  / `examples/` — теперь опциональны.
-- Детерминизм escape hatch: `NOVA_MAXPROCS=1` даёт воспроизводимое
-  single-worker исполнение (для отладки / тестов). Задокументировать.
-- Fallout: тесты, которые молча полагались на single-threaded порядок.
-
-### Ф.7 — spec + docs + benchmarks (~1 день)
-
-- Spec: M:N — дефолтная модель исполнения; D-block по `NOVA_MAXPROCS` +
-  resolution order.
-- Бенчмарк: измеренный parallel speedup на N ядрах (нужен —
-  `bench/micro/` сейчас не имеет параллельного workload'а).
-- `docs/concurrency*`, README.
-
-## 5. Acceptance
-
-- Программа без единого вызова `runtime.*` использует все CPU при
-  fiber-нагрузке (паритет Go/tokio).
-- `NOVA_MAXPROCS` + `runtime.init(n)` корректно override'ят; порядок
-  разрешения соблюдён; `NOVA_MAXPROCS=1` → детерминированный
-  single-worker.
-- Hello-world (без fiber'ов) не создаёт worker-пул (Ф.4 lazy spawn).
-- Измеренный speedup на multi-core workload'е.
-- 0 регрессий; gate Ф.0 зелёный перед Ф.5.
+Флип «выкл → вкл» раздаёт M:N **всем** compiled-программам. До него
+обязательно: **Plan 82 ✅** (иначе Windows-программы бегут параллельно на
+56 КБ calloc-стеках без overflow-detection и GC-интеграции →
+corruption); **GC-safety под multi-worker** (STW корректен при N
+worker'ах); **83.1 ✅** (инфраструктура); **soak/stress** (10⁶ spawn,
+work-stealing migration, no race/leak/deadlock). Детальные go/no-go
+критерии — readiness-gate в [83.2](83.2-mn-default-flip.md) Ф.0.
 
 ## 6. Честная рамка
 
-- Инфраструктура (Ф.1-Ф.4) безопасна и полезна **сразу** — даже до
-  флипа: `NOVA_MAXPROCS`, авто-`NumCPU` при opt-in, lazy spawn.
-- **Флип (Ф.5) — рисковый и заблокирован** Plan 82 + GC-safety. Если
-  gate Ф.0 покажет, что M:N не готов раздаваться всем — Ф.5
-  откладывается, инфраструктура всё равно остаётся ценной.
-- Дефолт-параллелизм означает, что пользовательский код становится
-  race-aware (как в Go). Это сознательная языковая позиция, не
-  упрощение — фиксируется в spec (Ф.7).
+- Инфраструктура (83.1) и `Blocking`-offload (83.3) безопасны и полезны
+  **сразу**, до флипа — закрываются независимо от Plan 82.
+- **Флип (83.2) рисковый и заблокирован.** Если gate покажет
+  неготовность — 83.2 откладывается, 83.1/83.3 всё равно ценны.
+- Дефолт-параллелизм делает пользовательский код race-aware (как в Go) —
+  сознательная языковая позиция, фиксируется в spec.
 
 ## 7. Связь
 
-- [Plan 82](82-windows-fiber-arena.md) — Windows fiber arena; **жёсткий
-  гейт** для Ф.5 (флип нельзя до закрытия 82).
-- [Plan 44.5](44.5-work-stealing-scheduler.md) ✅ — work-stealing
-  scheduler (инфраструктура worker'ов уже есть, `runtime.c`).
+- [Plan 82](82-windows-fiber-arena.md) — Windows fiber arena;
+  **жёсткий гейт** для 83.2.
+- [Plan 44.5](44.5-work-stealing-scheduler.md) ✅ — work-stealing;
+  worker-инфраструктура (`runtime.c`) уже есть.
+- [Plan 44.7](44.7-preemption.md) ✅ — sysmon-preemption (П5).
 - [Plan 44.4](44.4-mn-runtime-stage0.md) ✅ — `runtime.init/shutdown`,
-  `NovaWorker` — переосмысливается в Ф.3.
-- [Plan 44](44-mn-runtime-roadmap.md) — M:N umbrella; concurrent GC
-  (v1.0+) — смежный, не блокер инфраструктуры, но усиливает gate Ф.5.
-- Ориентиры: Go (`GOMAXPROCS`, default `NumCPU`, lazy M), tokio
-  (multi-thread runtime, default `NumCPU` worker_threads).
+  `NovaWorker` — переосмысливаются в 83.1.
+- [Plan 57](57-perf-benchmark-infrastructure.md) ✅ — `bench`; 83.1 Ф.5.
+- D50 (`06-concurrency.md`) — эффекты `Blocking`/`Detach` — источник 83.3.
+- Ориентиры: Go (`GOMAXPROCS`, lazy `M`, dynamic cgroup 1.25+), tokio
+  (fixed `worker_threads`), Node (`worker_threads` — дефолт-выкл).
