@@ -85,6 +85,14 @@ pub struct PeerFile {
     /// `is_entry_module = true` peers — иначе items импортированных
     /// folder-modules «протекли» бы в shared namespace (нарушение Rule C).
     pub is_entry_module: bool,
+    /// Plan 81 Ф.1: объявленное имя модуля (из `module X.Y.Z`).
+    /// Используется NameResCtx для группировки peers одного module:
+    /// только files с одинаковым module_name делят declarations namespace.
+    /// Защищает от ложного group-sharing когда два разных модуля живут
+    /// в одной директории (e.g. nova_tests/plan81/lib.nv vs
+    /// nova_tests/plan81/visibility_fn_rejected.nv — разные модули,
+    /// разные module_name, но одна папка).
+    pub module_name: Vec<String>,
 }
 
 /// Plan 45 / D104: блок doc-comment'ов, привязанный к item'у или

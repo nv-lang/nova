@@ -1,0 +1,14 @@
+// Plan 81 Ф.1: exported items доступны импортирующему. Приватная
+// `hidden` вызывается только внутри `public_value` — не напрямую.
+
+module nova_tests.plan81.visibility_ok
+
+import nova_tests.plan81.lib.{public_value, ANSWER}
+
+test "exported fn is visible" {
+    assert(public_value() == 43)
+}
+
+test "exported const is visible" {
+    assert(ANSWER == 43)
+}
