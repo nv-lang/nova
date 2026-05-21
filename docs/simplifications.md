@@ -10333,3 +10333,47 @@ G/H). ~3700 LOC implementation cumulative.
 - **РљР°Рє С‡РёРЅРёС‚СЊ:** РґРѕР±Р°РІРёС‚СЊ `Nova_Option_method_or_<T>(opt, other) { ... }`
   РІ NOVA_DECLARE_OPTION_T macro + routing entry РІ init_hardcoded_baseline.
 - **РџСЂРёРѕСЂРёС‚РµС‚:** L вЂ” or() РјРµРЅРµРµ РёСЃРїРѕР»СЊР·СѓРµРј С‡РµРј unwrap_or/map.
+
+---
+
+## Plan 73 — consume qualifier (D131, 2026-05-21)
+
+### [M-consume-no-alias-tracking] (DEFER)
+- **Где:** `compiler-codegen/src/types/mod.rs` -> `check_consume` / `ConsumeCtx`.
+- **Что упрощено:** consume-анализ ведётся per-variable, без alias-tracking.
+  `let a = b` создаёт независимо отслеживаемую переменную `a`; consume `a`
+  НЕ помечает `b` потреблённой. Use-after-consume через алиас не ловится.
+- **Почему:** alias-анализ требует points-to / object-identity tracking —
+  для bootstrap избыточно. Реалистичный паттерн (`sb.into()` напрямую) покрыт.
+  Направление false-negative — ложных ошибок checker не даёт.
+- **Как чинить:** object-identity (union-find по alias-классам) либо
+  move-семантика на `let`-binding от consume-типа.
+- **Приоритет:** L
+
+### [M-consume-receiver-type-best-effort] (DEFER)
+- **Где:** `compiler-codegen/src/types/mod.rs` -> `ConsumeCtx::infer_value_type`.
+- **Что упрощено:** тип receiver'а для резолва consume-метода выводится
+  best-effort — из аннотации `let x T` либо очевидного конструктора
+  (`Type.new()` / `with_capacity` / `from`). Неизвестный тип -> метод не
+  трактуется как consuming.
+- **Почему:** полный type inference в consume-pass требует прогона
+  type-checker'а с аннотированным AST (та же системная проблема, что [C2]).
+  Прямой конструкторный паттерн (основной use case) покрыт.
+- **Как чинить:** прогнать type inference перед consume-pass, передавать
+  типы выражений через аннотированный AST.
+- **Приоритет:** M
+
+## Plan 76 — bottom-тип never (2026-05-21)
+
+### [M-never-uppercase-no-negative-test] (DEFER -> Plan 37)
+- **Где:** `nova_tests/plan76/`.
+- **Что упрощено:** запланированный негативный тест «`Never` (заглавная) ->
+  compile error» не реализован — bootstrap type-checker permissive к
+  unknown uppercase type-именам, `Never` после rename не даёт чистой
+  ошибки на type-check.
+- **Почему:** строгая проверка unknown-type — зона Plan 37 (typecheck
+  semantic parity), вне scope Plan 76.
+- **Как чинить:** Plan 37 strict type-resolution -> добавить негативную
+  фикстуру.
+- **Приоритет:** L — все `Never`-сайты мигрированы; негативное покрытие
+  never-семантики есть (`fail_handler_no_exit_rejected.nv`).
