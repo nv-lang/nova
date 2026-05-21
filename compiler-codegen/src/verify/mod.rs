@@ -23,6 +23,8 @@ pub mod handler_exec;
 pub mod cache;
 pub mod suggest;
 pub mod subsumption_cache;
+/// Plan 33.14: SMT-LIB v2 текстовый эмиттер (вторая линия кодирования).
+pub mod smtlib;
 
 pub use ir::{Formula, SmtTerm, SortRef, SatResult, Model, UnsatCore, UnknownReason};
 pub use backend::SmtBackend;
