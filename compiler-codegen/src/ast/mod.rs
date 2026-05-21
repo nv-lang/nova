@@ -937,9 +937,15 @@ pub enum Stmt {
         span: Span,
     },
     /// Plan 33.2 Ф.8 (D24): `assert_static <bool>` — intermediate proof
-    /// obligation. SMT обязан доказать в release; debug — runtime check.
-    /// Доказанные → стираются. Недоказанные → compile error (как
-    /// `#must_verify`).
+    /// obligation. В debug — runtime check; в release — стирается.
+    ///
+    /// Plan 33.8 Ф.6.3: V1 — `assert_static` НЕ верифицируется SMT.
+    /// Корректная compile-time проверка требует flow-sensitive
+    /// верификации (нужно знать состояние именно в точке assert'а, а
+    /// модель `verify_fn` flow-insensitive — та же причина, что у
+    /// `assume`). Полная интеграция отложена (V2). В V1 `assert_static`
+    /// действует как обычный runtime-assert; lint `assert-static-unverified`
+    /// (lints.rs) предупреждает, чтобы не было ложной уверенности.
     AssertStatic {
         expr: Expr,
         span: Span,

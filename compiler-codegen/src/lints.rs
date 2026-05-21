@@ -33,6 +33,7 @@ pub fn lint_module(m: &Module) -> Vec<LintWarning> {
             Item::Fn(f) => {
                 check_fn(f, &mut warnings);
                 check_assume_trust(f, &mut warnings);
+                check_assert_static_unverified(f, &mut warnings);
                 check_protocol_in_effect_position(f, &protocol_names, &effect_names, &mut warnings);
                 // Plan 52 Ф.2: map-литерал lints (dup-key, NaN-key) —
                 // требуют обхода выражений внутри тела функции.
@@ -826,7 +827,11 @@ fn check_assume_trust(f: &FnDecl, out: &mut Vec<LintWarning>) {
     }
     let mut spans: Vec<Span> = Vec::new();
     if let FnBody::Block(b) = &f.body {
-        collect_assume_spans_block(b, &mut spans);
+        collect_marked_spans_block(
+            b,
+            &|s| match s { Stmt::Assume { span, .. } => Some(*span), _ => None },
+            &mut spans,
+        );
     }
     for sp in spans {
         out.push(LintWarning {
@@ -837,8 +842,7 @@ fn check_assume_trust(f: &FnDecl, out: &mut Vec<LintWarning>) {
                      допущение [trust-introduced]: верификатор принимает его \
                      без доказательства — ошибочное `assume` делает любой \
                      контракт «доказуемым». Пометьте функцию `#trusted`, если \
-                     допущение намеренно (FFI / внешнее знание), либо докажите \
-                     факт через `assert_static`.",
+                     допущение намеренно (FFI / внешнее знание).",
                     f.name
                 ),
                 sp,
@@ -847,45 +851,96 @@ fn check_assume_trust(f: &FnDecl, out: &mut Vec<LintWarning>) {
     }
 }
 
-fn collect_assume_spans_block(b: &Block, out: &mut Vec<Span>) {
-    for s in &b.stmts {
-        collect_assume_spans_stmt(s, out);
+/// Plan 33.8 Ф.6.3: `assert_static` в V1 НЕ верифицируется SMT — модель
+/// верификатора flow-insensitive (нужно знать состояние именно в точке
+/// assert'а). Действует как обычный runtime-assert (debug; в release
+/// стирается). Предупреждаем, чтобы не было ложной уверенности
+/// «обязательство доказано статически».
+fn check_assert_static_unverified(f: &FnDecl, out: &mut Vec<LintWarning>) {
+    let mut spans: Vec<Span> = Vec::new();
+    if let FnBody::Block(b) = &f.body {
+        collect_marked_spans_block(
+            b,
+            &|s| match s { Stmt::AssertStatic { span, .. } => Some(*span), _ => None },
+            &mut spans,
+        );
     }
-    if let Some(t) = &b.trailing {
-        collect_assume_spans_expr(t, out);
+    for sp in spans {
+        out.push(LintWarning {
+            rule: "assert-static-unverified",
+            diag: Diagnostic::new(
+                format!(
+                    "warning: `assert_static` в функции `{}` НЕ верифицируется \
+                     статически в V1 [assert-static-unverified]: действует как \
+                     runtime-проверка (debug), в release стирается. Полная \
+                     compile-time верификация требует flow-sensitive анализа \
+                     (Plan 33.8 → V2). Для гарантированной проверки выразите \
+                     факт контрактом `ensures`.",
+                    f.name
+                ),
+                sp,
+            ),
+        });
     }
 }
 
-fn collect_assume_spans_stmt(s: &Stmt, out: &mut Vec<Span>) {
+/// Plan 33.8: обход тела функции — собирает span'ы statement'ов, для
+/// которых `matcher` вернул Some. Рекурсивно спускается в блоки/циклы/
+/// if/match. Используется lint'ами `trust-introduced` и
+/// `assert-static-unverified`.
+fn collect_marked_spans_block(
+    b: &Block,
+    matcher: &dyn Fn(&Stmt) -> Option<Span>,
+    out: &mut Vec<Span>,
+) {
+    for s in &b.stmts {
+        collect_marked_spans_stmt(s, matcher, out);
+    }
+    if let Some(t) = &b.trailing {
+        collect_marked_spans_expr(t, matcher, out);
+    }
+}
+
+fn collect_marked_spans_stmt(
+    s: &Stmt,
+    matcher: &dyn Fn(&Stmt) -> Option<Span>,
+    out: &mut Vec<Span>,
+) {
+    if let Some(sp) = matcher(s) {
+        out.push(sp);
+    }
     match s {
-        Stmt::Assume { span, .. } => out.push(*span),
-        Stmt::Expr(e) => collect_assume_spans_expr(e, out),
-        Stmt::Let(ld) => collect_assume_spans_expr(&ld.value, out),
-        Stmt::Return { value: Some(v), .. } => collect_assume_spans_expr(v, out),
-        Stmt::Throw { value, .. } => collect_assume_spans_expr(value, out),
+        Stmt::Expr(e) => collect_marked_spans_expr(e, matcher, out),
+        Stmt::Let(ld) => collect_marked_spans_expr(&ld.value, matcher, out),
+        Stmt::Return { value: Some(v), .. } => collect_marked_spans_expr(v, matcher, out),
+        Stmt::Throw { value, .. } => collect_marked_spans_expr(value, matcher, out),
         Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. } => {
-            collect_assume_spans_expr(body, out)
+            collect_marked_spans_expr(body, matcher, out)
         }
         _ => {}
     }
 }
 
-fn collect_assume_spans_expr(e: &Expr, out: &mut Vec<Span>) {
+fn collect_marked_spans_expr(
+    e: &Expr,
+    matcher: &dyn Fn(&Stmt) -> Option<Span>,
+    out: &mut Vec<Span>,
+) {
     match &e.kind {
-        ExprKind::Block(b) => collect_assume_spans_block(b, out),
+        ExprKind::Block(b) => collect_marked_spans_block(b, matcher, out),
         ExprKind::If { then, else_, .. } => {
-            collect_assume_spans_block(then, out);
+            collect_marked_spans_block(then, matcher, out);
             match else_ {
-                Some(ElseBranch::Block(b)) => collect_assume_spans_block(b, out),
-                Some(ElseBranch::If(ei)) => collect_assume_spans_expr(ei, out),
+                Some(ElseBranch::Block(b)) => collect_marked_spans_block(b, matcher, out),
+                Some(ElseBranch::If(ei)) => collect_marked_spans_expr(ei, matcher, out),
                 None => {}
             }
         }
         ExprKind::IfLet { then, else_, .. } => {
-            collect_assume_spans_block(then, out);
+            collect_marked_spans_block(then, matcher, out);
             match else_ {
-                Some(ElseBranch::Block(b)) => collect_assume_spans_block(b, out),
-                Some(ElseBranch::If(ei)) => collect_assume_spans_expr(ei, out),
+                Some(ElseBranch::Block(b)) => collect_marked_spans_block(b, matcher, out),
+                Some(ElseBranch::If(ei)) => collect_marked_spans_expr(ei, matcher, out),
                 None => {}
             }
         }
@@ -893,12 +948,12 @@ fn collect_assume_spans_expr(e: &Expr, out: &mut Vec<Span>) {
         | ExprKind::WhileLet { body, .. }
         | ExprKind::Loop { body, .. }
         | ExprKind::For { body, .. }
-        | ExprKind::ParallelFor { body, .. } => collect_assume_spans_block(body, out),
+        | ExprKind::ParallelFor { body, .. } => collect_marked_spans_block(body, matcher, out),
         ExprKind::Match { arms, .. } => {
             for arm in arms {
                 match &arm.body {
-                    MatchArmBody::Expr(ae) => collect_assume_spans_expr(ae, out),
-                    MatchArmBody::Block(b) => collect_assume_spans_block(b, out),
+                    MatchArmBody::Expr(ae) => collect_marked_spans_expr(ae, matcher, out),
+                    MatchArmBody::Block(b) => collect_marked_spans_block(b, matcher, out),
                 }
             }
         }
@@ -969,6 +1024,27 @@ mod tests {
             !ws.iter().any(|w| w.rule == "trust-introduced"),
             "trust-introduced не должен эмититься внутри #trusted"
         );
+    }
+
+    // Plan 33.8 Ф.6.3: `assert_static` → lint `assert-static-unverified`.
+    #[test]
+    fn warns_on_assert_static() {
+        let m = parse(
+            "module foo\nfn step(x int) -> int {\n    assert_static x >= 0\n    x + 1\n}\n",
+        );
+        let ws = lint_module(&m);
+        assert!(
+            ws.iter().any(|w| w.rule == "assert-static-unverified"),
+            "ожидался assert-static-unverified, получено: {:?}",
+            ws.iter().map(|w| w.rule).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn no_assert_static_warning_without_it() {
+        let m = parse("module foo\nfn plain(x int) -> int {\n    x + 1\n}\n");
+        let ws = lint_module(&m);
+        assert!(!ws.iter().any(|w| w.rule == "assert-static-unverified"));
     }
 
     #[test]
