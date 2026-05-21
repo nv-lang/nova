@@ -3201,11 +3201,21 @@ type RuntimeError
 | Операция | Бросает |
 |---|---|
 | `a / b` (b == 0) | `RuntimeError.DivByZero` |
-| `a + b` (checked, overflow) | `RuntimeError.Overflow` |
 | `arr[i]` (i out of bounds) | `RuntimeError.IndexOutOfBounds { index: i, length: arr.len }` |
 | `(x as Type)` (cast fail) | `RuntimeError.TypeMismatch("expected ..., got ...")` |
 | `assert(cond)` (false) | `RuntimeError.AssertFailed("...")` |
 | `Db.query(...)` (no handler) | `RuntimeError.NoHandler("Db")` |
+
+**Переполнение знаковой целочисленной арифметики `int`** (`a + b`,
+`a - b`, `a * b` за границами `int.MIN..int.MAX`) — **`panic`, не
+`Fail`** (Plan 33.8 Ф.1.1, решение 2026-05-21). Не ловится в коде; как
+`StackOverflow`/`OutOfMemory`. Причина: переполнение — баг программы, а
+не ожидаемая ошибка; делать каждую арифметическую операцию эффектной
+(`Fail` в сигнатуре) недопустимо эргономически. Sized-типы
+(`u8`/`u16`/`u32`/`u64`/`i8`/`i16`/`i32`) — иная семантика: wrap-around
+по модулю 2^N (см. Plan 33.7). Вариант `RuntimeError.Overflow`
+сохранён в типе для явных checked-арифметических API stdlib, но
+оператор `+` его НЕ бросает.
 
 `StackOverflow` и `OutOfMemory` **не входят** в `RuntimeError` — они
 panic'и, не Fail. Не ловятся в коде. См. [D13](08-runtime.md#d13).

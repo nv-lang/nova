@@ -1,0 +1,14 @@
+// Plan 33.8 Ф.1.5: int-арифметика без переполнения — обычное поведение,
+// checked-helper'ы (nova_int_checked_add/sub/mul) возвращают точный
+// результат, паники нет.
+
+module contracts.int_arith_no_overflow_positive
+
+fn compute(a int, b int) -> int => a * b + a - b
+
+test "int arithmetic, no overflow" {
+    assert(compute(3, 4) == 11)
+    assert(compute(100, 200) == 19900)
+    assert(compute(-5, 7) == -47)
+    assert(compute(0, 0) == 0)
+}

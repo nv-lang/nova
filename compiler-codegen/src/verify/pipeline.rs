@@ -249,6 +249,21 @@ impl VerificationPipeline {
             let sort = type_to_sort(&p.ty);
             backend.declare_var(&p.name, sort.clone());
             backend.declare_var(&format!("_old_{}", p.name), sort);
+            // Plan 33.8 Ф.1.4: `nat` — неотрицательный `int`. Без аксиомы
+            // `nat >= 0` верификатор считал бы nat-параметр любым целым
+            // (включая отрицательные) → ложные counterexample'ы и unsound
+            // рассуждение о свойствах, опирающихся на неотрицательность.
+            if type_ref_is_nat(&p.ty) {
+                for vname in [p.name.clone(), format!("_old_{}", p.name)] {
+                    backend.assert(Assertion {
+                        formula: SmtTerm::App(">=".into(), vec![
+                            SmtTerm::Var(vname),
+                            SmtTerm::IntLit(0),
+                        ]),
+                        label: Some("nat_nonneg".into()),
+                    });
+                }
+            }
         }
 
         // Plan 33.3 Р¤.9: РґР»СЏ РєР°Р¶РґРѕРіРѕ СЌС„С„РµРєС‚Р° РІ СЃРёРіРЅР°С‚СѓСЂРµ fn СЂРµРіРёСЃС‚СЂРёСЂСѓРµРј
@@ -2031,6 +2046,11 @@ struct LoopPreservationTarget {
     cond: Option<Expr>,           // None РґР»СЏ `loop { }` (СѓСЃР»РѕРІРёРµ = true)
     body_assignments: Vec<(String, Expr)>, // (var_name, value_expr) РёР· body stmts
     havoc_vars: Vec<String>,      // vars РјСѓС‚РёСЂСѓРµРјС‹Рµ РІ С‚РµР»Рµ
+    /// Plan 33.8 Ф.2.1: тело цикла вне sound-envelope havoc-модели
+    /// (составное `*=`/`/=`, присваивание во вложенном if/блоке/цикле,
+    /// повторное присваивание). Если true — preservation fail-safe
+    /// возвращает Warning, а не Proven.
+    model_incomplete: bool,
 }
 
 /// Р¤.2: СЃРѕР±СЂР°С‚СЊ РІСЃРµ while/loop СЃ invariants РґР»СЏ havoc+preservation.
@@ -2062,6 +2082,7 @@ fn collect_loop_preservation_in_expr(e: &Expr, out: &mut Vec<LoopPreservationTar
                 cond: Some(*cond.clone()),
                 body_assignments: assignments,
                 havoc_vars,
+                model_incomplete: loop_body_model_incomplete(body),
             });
             collect_loop_preservation_in_block(body, out);
         }
@@ -2074,6 +2095,7 @@ fn collect_loop_preservation_in_expr(e: &Expr, out: &mut Vec<LoopPreservationTar
                 cond: None,
                 body_assignments: assignments,
                 havoc_vars,
+                model_incomplete: loop_body_model_incomplete(body),
             });
             collect_loop_preservation_in_block(body, out);
         }
@@ -2090,6 +2112,7 @@ fn collect_loop_preservation_in_expr(e: &Expr, out: &mut Vec<LoopPreservationTar
                 cond: None,
                 body_assignments: assignments,
                 havoc_vars,
+                model_incomplete: loop_body_model_incomplete(body),
             });
             collect_loop_preservation_in_block(body, out);
         }
@@ -2141,6 +2164,127 @@ fn extract_body_assignments(body: &Block) -> Vec<(String, Expr)> {
     result
 }
 
+/// Plan 33.8 Ф.2.1: выходит ли тело цикла за пределы sound-envelope
+/// havoc-модели `verify_loop_preservation`.
+///
+/// Модель `extract_body_assignments` корректна ТОЛЬКО для тела, которое —
+/// плоский список first-level `Stmt::Assign` (op Assign/Add/Sub, target —
+/// Ident, каждая переменная присваивается не более одного раза). Всё
+/// прочее — составное `*=`/`/=`, присваивание во вложенном if/блоке/цикле/
+/// match, повторное присваивание — havoc-набор не покрывает, и инвариант
+/// «доказался» бы на устаревшем значении немоделированной переменной.
+/// В таких случаях preservation обязана fail-safe вернуть Warning.
+fn loop_body_model_incomplete(body: &Block) -> bool {
+    let mut first_level_assigned: std::collections::HashSet<String> =
+        std::collections::HashSet::new();
+    for s in &body.stmts {
+        match s {
+            Stmt::Assign { target, op, value, .. } => {
+                let simple_op = matches!(op, AssignOp::Assign | AssignOp::Add | AssignOp::Sub);
+                let ExprKind::Ident(name) = &target.kind else { return true };
+                if !simple_op { return true; }
+                if !first_level_assigned.insert(name.clone()) { return true; }
+                // rhs с присваиванием через block-выражение — вне модели.
+                if expr_has_assignment(value) { return true; }
+            }
+            // `let` создаёт свежий локал — безопасен для soundness (худший
+            // случай — свободная переменная → imprecision → Unknown, не
+            // ложный Proven); но его значение может прятать присваивание.
+            Stmt::Let(ld) => {
+                if expr_has_assignment(&ld.value) { return true; }
+            }
+            // Любой иной stmt: если несёт присваивание где-либо в поддереве
+            // (вложенный if/цикл/match) — вне модели.
+            other => {
+                if stmt_has_assignment(other) { return true; }
+            }
+        }
+    }
+    if let Some(t) = &body.trailing {
+        if expr_has_assignment(t) { return true; }
+    }
+    false
+}
+
+/// Plan 33.8 Ф.2.1: содержит ли блок `Stmt::Assign` где-либо в поддереве.
+fn block_has_assignment(b: &Block) -> bool {
+    b.stmts.iter().any(stmt_has_assignment)
+        || b.trailing.as_deref().map_or(false, expr_has_assignment)
+}
+
+fn stmt_has_assignment(s: &Stmt) -> bool {
+    match s {
+        Stmt::Assign { .. } => true,
+        Stmt::Let(ld) => expr_has_assignment(&ld.value),
+        Stmt::Expr(e) => expr_has_assignment(e),
+        Stmt::Return { value, .. } => value.as_ref().map_or(false, expr_has_assignment),
+        Stmt::Throw { value, .. } => expr_has_assignment(value),
+        Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. } => expr_has_assignment(body),
+        Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => expr_has_assignment(expr),
+        Stmt::Break(_) | Stmt::Continue(_)
+        | Stmt::Apply { .. } | Stmt::Calc { .. } | Stmt::Reveal { .. } => false,
+    }
+}
+
+fn else_branch_has_assignment(eb: &Option<ElseBranch>) -> bool {
+    match eb {
+        Some(ElseBranch::Block(b)) => block_has_assignment(b),
+        Some(ElseBranch::If(ei)) => expr_has_assignment(ei),
+        None => false,
+    }
+}
+
+fn expr_has_assignment(e: &Expr) -> bool {
+    match &e.kind {
+        ExprKind::Block(b) => block_has_assignment(b),
+        ExprKind::If { cond, then, else_ } => {
+            expr_has_assignment(cond)
+                || block_has_assignment(then)
+                || else_branch_has_assignment(else_)
+        }
+        ExprKind::IfLet { scrutinee, then, else_, .. } => {
+            expr_has_assignment(scrutinee)
+                || block_has_assignment(then)
+                || else_branch_has_assignment(else_)
+        }
+        ExprKind::While { cond, body, .. } => {
+            expr_has_assignment(cond) || block_has_assignment(body)
+        }
+        ExprKind::WhileLet { scrutinee, body, .. } => {
+            expr_has_assignment(scrutinee) || block_has_assignment(body)
+        }
+        ExprKind::Loop { body, .. } => block_has_assignment(body),
+        ExprKind::For { iter, body, .. } => {
+            expr_has_assignment(iter) || block_has_assignment(body)
+        }
+        ExprKind::ParallelFor { iter, body, .. } => {
+            expr_has_assignment(iter) || block_has_assignment(body)
+        }
+        ExprKind::Match { scrutinee, arms } => {
+            expr_has_assignment(scrutinee)
+                || arms.iter().any(|arm| {
+                    arm.guard.as_ref().map_or(false, expr_has_assignment)
+                        || match &arm.body {
+                            MatchArmBody::Expr(ae) => expr_has_assignment(ae),
+                            MatchArmBody::Block(b) => block_has_assignment(b),
+                        }
+                })
+        }
+        ExprKind::Binary { left, right, .. } => {
+            expr_has_assignment(left) || expr_has_assignment(right)
+        }
+        ExprKind::Unary { operand, .. } => expr_has_assignment(operand),
+        ExprKind::Call { func, args, .. } => {
+            expr_has_assignment(func)
+                || args.iter().any(|a| expr_has_assignment(a.expr()))
+        }
+        // Прочие ExprKind (литералы, Ident, Member, Index, As, лямбды и т.п.)
+        // не несут `Stmt::Assign` в реалистичном теле цикла. Экзотический
+        // случай (assignment внутри closure/spawn в теле цикла) — V2.
+        _ => false,
+    }
+}
+
 /// Р¤.2: verify invariant preservation РґР»СЏ РѕРґРЅРѕРіРѕ С†РёРєР»Р°.
 ///
 /// РђР»РіРѕСЂРёС‚Рј:
@@ -2158,6 +2302,20 @@ fn verify_loop_preservation(
     backend: &mut dyn SmtBackend,
 ) -> Vec<(Span, VerifyResult)> {
     let mut results = Vec::new();
+
+    // Plan 33.8 Ф.2.1: fail-safe — тело цикла вне sound-envelope havoc-модели.
+    // Возвращаем Warning (W2402) вместо ложного Proven: havoc-набор не
+    // покрывает составные/вложенные/повторные присваивания, и инвариант
+    // «доказался» бы на устаревшем значении немоделированной переменной.
+    if lp.model_incomplete {
+        results.push((lp.span, VerifyResult::Warning(
+            "сохранение инварианта цикла НЕ проверено [W2402]: тело цикла \
+             содержит присваивание вне модели верификатора (составное \
+             `*=`/`/=`, присваивание во вложенном if/блоке/цикле/match, \
+             либо повторное присваивание одной переменной).\n  \
+             Упростите тело цикла или пометьте функцию #unverified.".into())));
+        return results;
+    }
 
     // Step 1: declare fresh havoc vars.
     let mut havoc_map: std::collections::HashMap<String, SmtTerm> = std::collections::HashMap::new();
@@ -2609,6 +2767,13 @@ pub(super) fn find_exists_var(e: &crate::ast::Expr) -> Option<String> {
         }
         _ => None,
     }
+}
+
+/// Plan 33.8 Ф.1.4: тип `nat` (неотрицательный int). `type_to_sort`
+/// мэпит `nat` в `SortRef::Int`, теряя неотрицательность — её
+/// восстанавливает аксиома `nat >= 0` в `verify_fn`.
+fn type_ref_is_nat(ty: &TypeRef) -> bool {
+    matches!(ty, TypeRef::Named { path, .. } if path.len() == 1 && path[0] == "nat")
 }
 
 pub(super) fn type_to_sort(ty: &TypeRef) -> SortRef {
