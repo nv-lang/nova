@@ -781,7 +781,7 @@ fn type_ref_name_to_bv(ty: &crate::ast::TypeRef) -> Option<(u32, bool)> {
     if let crate::ast::TypeRef::Named { path, generics, .. } = ty {
         if generics.is_empty() && path.len() == 1 {
             return match path[0].as_str() {
-                "u8" | "byte" => Some((8, false)),
+                "u8" => Some((8, false)),
                 "i8" => Some((8, true)),
                 "u16" => Some((16, false)),
                 "i16" => Some((16, true)),

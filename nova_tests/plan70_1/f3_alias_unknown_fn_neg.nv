@@ -1,0 +1,16 @@
+// EXPECT_COMPILE_ERROR E7401
+//
+// Plan 81 Ф.2: calling a function that does not exist in an aliased
+// module. `h.add_two` is not declared in helper_mod. Before Plan 81 this
+// failed only at link time (undefined symbol — Plan 70.1 known
+// limitation, EXPECT_COMPILE_ERROR could not catch it); now it is a
+// proper Nova compile error.
+
+module nova_tests.plan70_1.f3_alias_unknown_fn_neg
+
+import nova_tests.plan70_1.helper_mod as h
+
+test "alias call to a non-existent function is rejected" {
+    let _r = h.add_two(1)
+    assert(true)
+}

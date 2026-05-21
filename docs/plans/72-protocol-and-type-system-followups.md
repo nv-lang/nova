@@ -298,6 +298,16 @@ Rust unit test: `p0_erased_now_dispatches_via_vtable` в `test_runner.rs` ✅.
 > после фикса всех 4 багов + P1-C + закрытия двух P3-B honest-defers
 > ([M-protocol-param-free-fn-only], [M-protocol-return-wrap-relies-on-infer]).
 
+> **Negative-покрытие p1b/p2a (2026-05-21, Plan 79 Ф.8):** на момент
+> Plan 72 для подзадач p1b (empty-sum misuse) и p2a (Result type
+> mismatch) нельзя было написать чистый Nova-level negative-тест —
+> type-checker лояльно принимал natural-negatives. После
+> [Plan 79](79-typecheck-hardening-no-silent-fallback.md) (E7301/E7310)
+> они стали писабельны: `nova_tests/plan72/p1b_empty_sum_type_neg.nv` +
+> `p2a_try_from_into_neg.nv` добавлены. Маркер
+> `[M-typecheck-missing-type-compat-checks]` ✅ ЗАКРЫТ. Plan 72 получил
+> полное pos+neg покрытие всех 8 подзадач.
+
 ---
 
 ## Порядок выполнения

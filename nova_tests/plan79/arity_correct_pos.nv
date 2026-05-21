@@ -1,0 +1,39 @@
+// Plan 79 Ф.2: positive — correct type-arity across every checked
+// position (signatures, fields, let annotations, turbofish, nested
+// generics) compiles and runs unchanged. Guards against false positives.
+
+module nova_tests.plan79.arity_correct_pos
+
+import std.collections.hashmap.{HashMap}
+
+type Box[T] { value T }
+
+fn box_of(n int) -> Box[int] => { value: n }
+
+// Field types with correct arity.
+type Registry {
+    last Option[int]
+    cached Result[int, str]
+}
+
+// Result/Option with correct arity in signatures.
+fn lookup(n int) -> Result[int, str] => Ok(n)
+
+fn maybe(n int) -> Option[int] => Some(n)
+
+test "Ф.2 — correct arity compiles" {
+    // Result[T, E] — 2 args; Option[T] — 1 arg; in let annotations.
+    let r Result[int, str] = lookup(3)
+    assert(r.is_ok())
+
+    let m Option[int] = maybe(5)
+    assert(m == Some(5))
+
+    // user generic at correct arity (one type parameter)
+    let b = box_of(42)
+    assert(b.value == 42)
+
+    // turbofish at correct arity — HashMap[K, V] declares two parameters
+    let h = HashMap[str, int].new()
+    assert(h.len() == 0)
+}

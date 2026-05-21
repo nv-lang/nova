@@ -121,7 +121,7 @@ test "precedence: & binds tighter than ^" {
 // SECTION 7: типичные паттерны (CRC, hash, masking)
 // ================================================================
 
-test "byte mask via & 0xFF" {
+test "u8 mask via & 0xFF" {
     let v = 0x12345678
     assert((v & 0xFF) == 0x78)
 }

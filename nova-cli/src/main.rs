@@ -16,6 +16,7 @@ use std::time::Duration;
 use nova_codegen::test_runner;
 
 mod bench;
+mod build_cache;
 
 // ---------- Plan 36 R7: structured CLI error types ----------
 
@@ -967,7 +968,54 @@ fn ensure_entry_peer_path(module: &mut nova_codegen::ast::Module, file_path: &Pa
         items_here: module.items.clone(),
         imported_item_names: std::collections::HashSet::new(),
         is_entry_module: true,
+        module_name: module.name.clone(),
     });
+}
+
+/// Plan 81 Ф.8.1: построить `SourceMap` из `module.peer_files` для
+/// cross-file диагностики. Каждый peer-файл получил уникальный `file_id`
+/// в резолвере (`parse_with_file_id`); рендер через `render_with_map`
+/// показывает ошибку из импортированного модуля в **правильном** файле
+/// со сниппетом (а не byte-offset, применённый к entry-исходнику).
+///
+/// Источники peer'ов перечитываются с диска — дёшево, вызывается только
+/// при наличии ошибок. file_id'ы резолвера сплошные (1..N), регистрация
+/// в порядке id совпадает с авто-инкрементом `SourceMap::register`.
+fn build_source_map(
+    module: &nova_codegen::ast::Module,
+    entry_src: &str,
+    entry_path: &Path,
+) -> nova_codegen::diag::SourceMap {
+    let mut map = nova_codegen::diag::SourceMap::new();
+    map.register_main(entry_path.to_path_buf(), entry_src.to_string());
+    let max_fid = module
+        .peer_files
+        .iter()
+        .map(|p| p.file_id)
+        .max()
+        .unwrap_or(0);
+    for fid in 1..=max_fid {
+        let (p, s) = module
+            .peer_files
+            .iter()
+            .find(|pf| pf.file_id == fid)
+            .map(|pf| {
+                let src = std::fs::read_to_string(&pf.path).unwrap_or_default();
+                (pf.path.clone(), src)
+            })
+            .unwrap_or_else(|| (PathBuf::from("<unknown>"), String::new()));
+        // Снять Windows verbatim-префикс `\\?\` (peer-пути канонизированы
+        // резолвером) — чтобы диагностика показывала чистый путь.
+        let p = {
+            let s = p.to_string_lossy();
+            match s.strip_prefix(r"\\?\") {
+                Some(rest) => PathBuf::from(rest),
+                None => p.clone(),
+            }
+        };
+        map.register(p, s);
+    }
+    map
 }
 
 fn default_tmp_dir() -> PathBuf {
@@ -1324,7 +1372,12 @@ fn check_one_file(path: &Path, verbose: bool) -> CheckResult {
 
     // 3. types::check_module
     if let Err(errs) = nova_codegen::types::check_module(&module) {
-        let msgs: Vec<String> = errs.iter().map(|d| d.render(&src, &path_str)).collect();
+        // Plan 81 Ф.8.1: cross-file рендер — ошибка из импортированного
+        // модуля показывается в правильном файле (через SourceMap по
+        // file_id), а не byte-offset'ом в entry-исходнике.
+        let smap = build_source_map(&module, &src, path);
+        let msgs: Vec<String> =
+            errs.iter().map(|d| d.render_with_map(&smap)).collect();
         return CheckResult {
             file: path.to_path_buf(),
             error: Some(msgs.join("\n")),
@@ -2532,56 +2585,93 @@ fn cmd_build(
         nova_codegen::imports::resolve_imports_inline(&path, &mut module, &repo, &paths.stdlib_dir)?;
     }
 
+    // Plan 81 Ф.9: content-addressed build cache. После резолва импортов
+    // (выше) известен полный набор исходных файлов сборки. При
+    // байт-идентичных входах переиспользуем сгенерированный `.c`, минуя
+    // type-check / effects / lints / desugar / callnorm / codegen.
+    // Отключается NOVA_NO_CACHE=1; пропускается при --keep-artifacts
+    // (debug-режим — нужен полный набор реальных промежуточных артефактов).
+    let cache_key: Option<String> =
+        if build_cache::cache_enabled() && !keep_artifacts {
+            let feats: Vec<String> =
+                nova_codegen::imports::enabled_features().into_iter().collect();
+            build_cache::compute_c_key(
+                &module.peer_files,
+                &feats,
+                nova_codegen::imports::current_target_os(),
+                mono_depth,
+            )
+        } else {
+            None
+        };
+
+    let c_code: String = match cache_key
+        .as_deref()
+        .and_then(|k| build_cache::load_c(&repo, k))
     {
-        let _t = nova_codegen::perf_timer::PerfTimer::new("type-check");
-        nova_codegen::types::check_module(&module).map_err(|errs| {
-            let msgs: Vec<String> = errs.iter()
-                .map(|d| d.render(&src, &path_str))
-                .collect();
-            anyhow!("{}", msgs.join("\n"))
-        })?;
-    }
-    {
-        let _t = nova_codegen::perf_timer::PerfTimer::new("effects-infer");
-        nova_codegen::types::infer_effects(&mut module);
-    }
-    {
-        let _t = nova_codegen::perf_timer::PerfTimer::new("lints");
-        for w in nova_codegen::lints::lint_module(&module) {
-            let (line, col) = nova_codegen::diag::byte_to_line_col(&src, w.diag.span.start);
-            eprintln!("{} {}:{}:{}: {} [{}]", bold(&yellow("warning:")), path.display(), line, col, w.diag.message, w.rule);
+        Some(cached) => {
+            // Cache hit. Кэш пишется ТОЛЬКО после успешной сборки —
+            // байт-идентичный вход уже прошёл type-check и codegen.
+            eprintln!("{} build cache hit — reusing generated C", green("note:"));
+            cached
         }
-    }
-
-    // Plan 52 Ф.4: десугаринг map-литералов `[k: v]` → block-expression.
-    {
-        let _t = nova_codegen::perf_timer::PerfTimer::new("annotate-maps");
-        nova_codegen::types::annotate_map_literals(&mut module);
-    }
-    {
-        let _t = nova_codegen::perf_timer::PerfTimer::new("desugar");
-        nova_codegen::desugar::desugar_module(&mut module);
-    }
-
-    // Plan 46 (D102) Ф.2: нормализация call-site — named args → positional.
-    {
-        let _t = nova_codegen::perf_timer::PerfTimer::new("callnorm");
-        nova_codegen::callnorm::normalize_module(&mut module);
-    }
-
-    let (c_code, warnings) = {
-        let _t = nova_codegen::perf_timer::PerfTimer::new("codegen");
-        let mut emitter = nova_codegen::codegen::CEmitter::new();
-        emitter.set_source_for_annotations(src.clone());
-        if let Some(n) = mono_depth {
-            emitter.set_mono_depth_limit(n);
+        None => {
+            // Cache miss — полный Rust-side пайплайн.
+            {
+                let _t = nova_codegen::perf_timer::PerfTimer::new("type-check");
+                nova_codegen::types::check_module(&module).map_err(|errs| {
+                    let msgs: Vec<String> = errs.iter()
+                        .map(|d| d.render(&src, &path_str))
+                        .collect();
+                    anyhow!("{}", msgs.join("\n"))
+                })?;
+            }
+            {
+                let _t = nova_codegen::perf_timer::PerfTimer::new("effects-infer");
+                nova_codegen::types::infer_effects(&mut module);
+            }
+            {
+                let _t = nova_codegen::perf_timer::PerfTimer::new("lints");
+                for w in nova_codegen::lints::lint_module(&module) {
+                    let (line, col) = nova_codegen::diag::byte_to_line_col(&src, w.diag.span.start);
+                    eprintln!("{} {}:{}:{}: {} [{}]", bold(&yellow("warning:")), path.display(), line, col, w.diag.message, w.rule);
+                }
+            }
+            // Plan 52 Ф.4: десугаринг map-литералов `[k: v]` → block-expr.
+            {
+                let _t = nova_codegen::perf_timer::PerfTimer::new("annotate-maps");
+                nova_codegen::types::annotate_map_literals(&mut module);
+            }
+            {
+                let _t = nova_codegen::perf_timer::PerfTimer::new("desugar");
+                nova_codegen::desugar::desugar_module(&mut module);
+            }
+            // Plan 46 (D102) Ф.2: нормализация call-site — named → positional.
+            {
+                let _t = nova_codegen::perf_timer::PerfTimer::new("callnorm");
+                nova_codegen::callnorm::normalize_module(&mut module);
+            }
+            let (c_code, warnings) = {
+                let _t = nova_codegen::perf_timer::PerfTimer::new("codegen");
+                let mut emitter = nova_codegen::codegen::CEmitter::new();
+                emitter.set_source_for_annotations(src.clone());
+                if let Some(n) = mono_depth {
+                    emitter.set_mono_depth_limit(n);
+                }
+                emitter.emit_module(&module)
+                    .map_err(|e| anyhow!("codegen error: {}", e))?
+            };
+            for w in &warnings {
+                eprintln!("{}", w);
+            }
+            // Записываем `.c` в кэш — только теперь, после успешного
+            // codegen (кэшируем лишь заведомо валидный артефакт).
+            if let Some(k) = &cache_key {
+                build_cache::store_c(&repo, k, &c_code);
+            }
+            c_code
         }
-        emitter.emit_module(&module)
-            .map_err(|e| anyhow!("codegen error: {}", e))?
     };
-    for w in &warnings {
-        eprintln!("{}", w);
-    }
 
     // determine output path
     let exe_stem = path.file_stem().unwrap_or_default();

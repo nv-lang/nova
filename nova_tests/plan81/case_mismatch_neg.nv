@@ -1,0 +1,15 @@
+// EXPECT_COMPILE_ERROR Bound_Lib
+//
+// Plan 81 Ф.4: an import whose path case does not match the on-disk
+// file name. The real module is `bound_lib` (lowercase) — `Bound_Lib`
+// is rejected. On a case-insensitive filesystem (Windows/macOS) the
+// resolver detects the mismatch ("module path case mismatch"); on a
+// case-sensitive FS (Linux) it reports "cannot find module". Both
+// correctly reject the non-portable import — the pattern `Bound_Lib`
+// appears in either diagnostic.
+
+module nova_tests.plan81.case_mismatch_neg
+
+import nova_tests.plan81.Bound_Lib.{Showable}
+
+fn run() -> int => 0

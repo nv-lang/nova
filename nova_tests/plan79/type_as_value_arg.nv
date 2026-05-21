@@ -1,0 +1,11 @@
+// EXPECT_COMPILE_ERROR E7330
+//
+// Plan 79 Ф.4: a sum-type name passed as an argument value.
+
+module nova_tests.plan79.type_as_value_arg
+
+type Palette | Red | Green | Blue
+
+fn take(n int) -> int => n
+
+fn run() -> int => take(Palette)
