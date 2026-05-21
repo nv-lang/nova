@@ -21,6 +21,10 @@ pub struct RuntimeFn {
     pub is_static: bool,
     /// `mut` receiver (`fn T mut @method`).
     pub is_mut: bool,
+    /// Plan 73 (D131): `consume` receiver (`fn T consume @method`).
+    /// После вызова такого метода переменная-источник инвалидируется.
+    /// Взаимоисключающий с `is_mut`.
+    pub is_consume: bool,
     /// Method name (без receiver-префикса).
     pub name: &'static str,
     /// Параметры (без receiver'а): `(name, nova_type_name)`.
@@ -69,7 +73,7 @@ fn numeric_runtime() -> Vec<RuntimeFn> {
         RuntimeFn {
             module: "std.runtime.numeric",
             receiver: Some("f64"),
-            is_static: false, is_mut: false,
+            is_static: false, is_mut: false, is_consume: false,
             name: "to_bits",
             params: &[],
             return_ty: "u64",
@@ -81,7 +85,7 @@ fn numeric_runtime() -> Vec<RuntimeFn> {
         RuntimeFn {
             module: "std.runtime.numeric",
             receiver: Some("f64"),
-            is_static: true, is_mut: false,
+            is_static: true, is_mut: false, is_consume: false,
             name: "from_bits",
             params: &[("bits", "u64")],
             return_ty: "f64",
@@ -93,7 +97,7 @@ fn numeric_runtime() -> Vec<RuntimeFn> {
         RuntimeFn {
             module: "std.runtime.numeric",
             receiver: Some("f32"),
-            is_static: false, is_mut: false,
+            is_static: false, is_mut: false, is_consume: false,
             name: "to_bits",
             params: &[],
             return_ty: "u32",
@@ -105,7 +109,7 @@ fn numeric_runtime() -> Vec<RuntimeFn> {
         RuntimeFn {
             module: "std.runtime.numeric",
             receiver: Some("f32"),
-            is_static: true, is_mut: false,
+            is_static: true, is_mut: false, is_consume: false,
             name: "from_bits",
             params: &[("bits", "u32")],
             return_ty: "f32",
@@ -123,7 +127,7 @@ fn str_runtime() -> Vec<RuntimeFn> {
         RuntimeFn {
             module: "std.runtime.string",
             receiver: Some("str"),
-            is_static: false, is_mut: false,
+            is_static: false, is_mut: false, is_consume: false,
             name: "len",
             params: &[],
             return_ty: "int",
@@ -135,7 +139,7 @@ fn str_runtime() -> Vec<RuntimeFn> {
         RuntimeFn {
             module: "std.runtime.string",
             receiver: Some("str"),
-            is_static: false, is_mut: false,
+            is_static: false, is_mut: false, is_consume: false,
             name: "byte_len",
             params: &[],
             return_ty: "int",
@@ -148,7 +152,7 @@ fn str_runtime() -> Vec<RuntimeFn> {
         RuntimeFn {
             module: "std.runtime.string",
             receiver: Some("str"),
-            is_static: false, is_mut: false,
+            is_static: false, is_mut: false, is_consume: false,
             name: "is_empty",
             params: &[],
             return_ty: "bool",
@@ -160,7 +164,7 @@ fn str_runtime() -> Vec<RuntimeFn> {
         RuntimeFn {
             module: "std.runtime.string",
             receiver: Some("str"),
-            is_static: false, is_mut: false,
+            is_static: false, is_mut: false, is_consume: false,
             name: "starts_with",
             params: &[("prefix", "str")],
             return_ty: "bool",
@@ -172,7 +176,7 @@ fn str_runtime() -> Vec<RuntimeFn> {
         RuntimeFn {
             module: "std.runtime.string",
             receiver: Some("str"),
-            is_static: false, is_mut: false,
+            is_static: false, is_mut: false, is_consume: false,
             name: "ends_with",
             params: &[("suffix", "str")],
             return_ty: "bool",
@@ -184,7 +188,7 @@ fn str_runtime() -> Vec<RuntimeFn> {
         RuntimeFn {
             module: "std.runtime.string",
             receiver: Some("str"),
-            is_static: false, is_mut: false,
+            is_static: false, is_mut: false, is_consume: false,
             name: "contains",
             params: &[("needle", "str")],
             return_ty: "bool",
@@ -196,7 +200,7 @@ fn str_runtime() -> Vec<RuntimeFn> {
         RuntimeFn {
             module: "std.runtime.string",
             receiver: Some("str"),
-            is_static: false, is_mut: false,
+            is_static: false, is_mut: false, is_consume: false,
             name: "find",
             params: &[("needle", "str")],
             return_ty: "Option[int]",
@@ -208,7 +212,7 @@ fn str_runtime() -> Vec<RuntimeFn> {
         RuntimeFn {
             module: "std.runtime.string",
             receiver: Some("str"),
-            is_static: false, is_mut: false,
+            is_static: false, is_mut: false, is_consume: false,
             name: "rfind",
             params: &[("needle", "str")],
             return_ty: "Option[int]",
@@ -220,7 +224,7 @@ fn str_runtime() -> Vec<RuntimeFn> {
         RuntimeFn {
             module: "std.runtime.string",
             receiver: Some("str"),
-            is_static: false, is_mut: false,
+            is_static: false, is_mut: false, is_consume: false,
             name: "char_at",
             params: &[("idx", "int")],
             return_ty: "Option[char]",
@@ -232,7 +236,7 @@ fn str_runtime() -> Vec<RuntimeFn> {
         RuntimeFn {
             module: "std.runtime.string",
             receiver: Some("str"),
-            is_static: false, is_mut: false,
+            is_static: false, is_mut: false, is_consume: false,
             name: "slice",
             params: &[("from", "int"), ("to", "int")],
             return_ty: "str",
@@ -244,7 +248,7 @@ fn str_runtime() -> Vec<RuntimeFn> {
         RuntimeFn {
             module: "std.runtime.string",
             receiver: Some("str"),
-            is_static: false, is_mut: false,
+            is_static: false, is_mut: false, is_consume: false,
             name: "trim",
             params: &[],
             return_ty: "str",
@@ -256,7 +260,7 @@ fn str_runtime() -> Vec<RuntimeFn> {
         RuntimeFn {
             module: "std.runtime.string",
             receiver: Some("str"),
-            is_static: false, is_mut: false,
+            is_static: false, is_mut: false, is_consume: false,
             name: "to_lower",
             params: &[],
             return_ty: "str",
@@ -268,7 +272,7 @@ fn str_runtime() -> Vec<RuntimeFn> {
         RuntimeFn {
             module: "std.runtime.string",
             receiver: Some("str"),
-            is_static: false, is_mut: false,
+            is_static: false, is_mut: false, is_consume: false,
             name: "to_upper",
             params: &[],
             return_ty: "str",
@@ -280,7 +284,7 @@ fn str_runtime() -> Vec<RuntimeFn> {
         RuntimeFn {
             module: "std.runtime.string",
             receiver: Some("str"),
-            is_static: false, is_mut: false,
+            is_static: false, is_mut: false, is_consume: false,
             name: "concat",
             params: &[("other", "str")],
             return_ty: "str",
@@ -295,7 +299,7 @@ fn str_runtime() -> Vec<RuntimeFn> {
         RuntimeFn {
             module: "std.runtime.string",
             receiver: Some("str"),
-            is_static: false, is_mut: false,
+            is_static: false, is_mut: false, is_consume: false,
             name: "plus",
             params: &[("other", "str")],
             return_ty: "str",
@@ -307,7 +311,7 @@ fn str_runtime() -> Vec<RuntimeFn> {
         RuntimeFn {
             module: "std.runtime.string",
             receiver: Some("str"),
-            is_static: false, is_mut: false,
+            is_static: false, is_mut: false, is_consume: false,
             name: "eq",
             params: &[("other", "str")],
             return_ty: "bool",
@@ -323,7 +327,7 @@ fn str_runtime() -> Vec<RuntimeFn> {
         RuntimeFn {
             module: "std.runtime.string",
             receiver: Some("str"),
-            is_static: false, is_mut: false,
+            is_static: false, is_mut: false, is_consume: false,
             name: "hash",
             params: &[],
             return_ty: "u64",
@@ -338,7 +342,7 @@ fn str_runtime() -> Vec<RuntimeFn> {
         RuntimeFn {
             module: "std.runtime.string",
             receiver: Some("str"),
-            is_static: false, is_mut: false,
+            is_static: false, is_mut: false, is_consume: false,
             name: "lt",
             params: &[("other", "str")],
             return_ty: "bool",
@@ -350,7 +354,7 @@ fn str_runtime() -> Vec<RuntimeFn> {
         RuntimeFn {
             module: "std.runtime.string",
             receiver: Some("str"),
-            is_static: false, is_mut: false,
+            is_static: false, is_mut: false, is_consume: false,
             name: "le",
             params: &[("other", "str")],
             return_ty: "bool",
@@ -362,7 +366,7 @@ fn str_runtime() -> Vec<RuntimeFn> {
         RuntimeFn {
             module: "std.runtime.string",
             receiver: Some("str"),
-            is_static: false, is_mut: false,
+            is_static: false, is_mut: false, is_consume: false,
             name: "gt",
             params: &[("other", "str")],
             return_ty: "bool",
@@ -374,7 +378,7 @@ fn str_runtime() -> Vec<RuntimeFn> {
         RuntimeFn {
             module: "std.runtime.string",
             receiver: Some("str"),
-            is_static: false, is_mut: false,
+            is_static: false, is_mut: false, is_consume: false,
             name: "ge",
             params: &[("other", "str")],
             return_ty: "bool",
@@ -386,7 +390,7 @@ fn str_runtime() -> Vec<RuntimeFn> {
         RuntimeFn {
             module: "std.runtime.string",
             receiver: Some("str"),
-            is_static: false, is_mut: false,
+            is_static: false, is_mut: false, is_consume: false,
             name: "bytes",
             params: &[],
             return_ty: "[]byte",
@@ -398,7 +402,7 @@ fn str_runtime() -> Vec<RuntimeFn> {
         RuntimeFn {
             module: "std.runtime.string",
             receiver: Some("str"),
-            is_static: false, is_mut: false,
+            is_static: false, is_mut: false, is_consume: false,
             name: "chars",
             params: &[],
             return_ty: "[]char",
@@ -410,7 +414,7 @@ fn str_runtime() -> Vec<RuntimeFn> {
         RuntimeFn {
             module: "std.runtime.string",
             receiver: Some("str"),
-            is_static: false, is_mut: false,
+            is_static: false, is_mut: false, is_consume: false,
             name: "split",
             params: &[("sep", "str")],
             return_ty: "[]str",
@@ -466,7 +470,7 @@ fn math_runtime() -> Vec<RuntimeFn> {
         v.push(RuntimeFn {
             module: "std.runtime.math",
             receiver: Some("f64"),
-            is_static: false, is_mut: false,
+            is_static: false, is_mut: false, is_consume: false,
             name,
             params: &[],
             return_ty: "f64",
@@ -480,7 +484,7 @@ fn math_runtime() -> Vec<RuntimeFn> {
     v.push(RuntimeFn {
         module: "std.runtime.math",
         receiver: Some("f64"),
-        is_static: false, is_mut: false,
+        is_static: false, is_mut: false, is_consume: false,
         name: "atan2",
         params: &[("x", "f64")],
         return_ty: "f64",
@@ -492,7 +496,7 @@ fn math_runtime() -> Vec<RuntimeFn> {
     v.push(RuntimeFn {
         module: "std.runtime.math",
         receiver: Some("f64"),
-        is_static: false, is_mut: false,
+        is_static: false, is_mut: false, is_consume: false,
         name: "pow",
         params: &[("exp", "f64")],
         return_ty: "f64",
@@ -504,7 +508,7 @@ fn math_runtime() -> Vec<RuntimeFn> {
     v.push(RuntimeFn {
         module: "std.runtime.math",
         receiver: Some("f64"),
-        is_static: false, is_mut: false,
+        is_static: false, is_mut: false, is_consume: false,
         name: "hypot",
         params: &[("y", "f64")],
         return_ty: "f64",
@@ -517,7 +521,7 @@ fn math_runtime() -> Vec<RuntimeFn> {
     v.push(RuntimeFn {
         module: "std.runtime.math",
         receiver: Some("f64"),
-        is_static: false, is_mut: false,
+        is_static: false, is_mut: false, is_consume: false,
         name: "is_nan",
         params: &[],
         return_ty: "bool",
@@ -529,7 +533,7 @@ fn math_runtime() -> Vec<RuntimeFn> {
     v.push(RuntimeFn {
         module: "std.runtime.math",
         receiver: Some("f64"),
-        is_static: false, is_mut: false,
+        is_static: false, is_mut: false, is_consume: false,
         name: "is_finite",
         params: &[],
         return_ty: "bool",
@@ -541,7 +545,7 @@ fn math_runtime() -> Vec<RuntimeFn> {
     v.push(RuntimeFn {
         module: "std.runtime.math",
         receiver: Some("f64"),
-        is_static: false, is_mut: false,
+        is_static: false, is_mut: false, is_consume: false,
         name: "is_infinite",
         params: &[],
         return_ty: "bool",
@@ -581,7 +585,7 @@ fn math_runtime() -> Vec<RuntimeFn> {
         v.push(RuntimeFn {
             module: "std.runtime.math",
             receiver: Some("f32"),
-            is_static: false, is_mut: false,
+            is_static: false, is_mut: false, is_consume: false,
             name,
             params: &[],
             return_ty: "f32",
@@ -595,7 +599,7 @@ fn math_runtime() -> Vec<RuntimeFn> {
     v.push(RuntimeFn {
         module: "std.runtime.math",
         receiver: Some("f32"),
-        is_static: false, is_mut: false,
+        is_static: false, is_mut: false, is_consume: false,
         name: "atan2",
         params: &[("x", "f32")],
         return_ty: "f32",
@@ -607,7 +611,7 @@ fn math_runtime() -> Vec<RuntimeFn> {
     v.push(RuntimeFn {
         module: "std.runtime.math",
         receiver: Some("f32"),
-        is_static: false, is_mut: false,
+        is_static: false, is_mut: false, is_consume: false,
         name: "pow",
         params: &[("exp", "f32")],
         return_ty: "f32",
@@ -619,7 +623,7 @@ fn math_runtime() -> Vec<RuntimeFn> {
     v.push(RuntimeFn {
         module: "std.runtime.math",
         receiver: Some("f32"),
-        is_static: false, is_mut: false,
+        is_static: false, is_mut: false, is_consume: false,
         name: "hypot",
         params: &[("y", "f32")],
         return_ty: "f32",
@@ -633,7 +637,7 @@ fn math_runtime() -> Vec<RuntimeFn> {
     v.push(RuntimeFn {
         module: "std.runtime.math",
         receiver: Some("f32"),
-        is_static: false, is_mut: false,
+        is_static: false, is_mut: false, is_consume: false,
         name: "is_nan",
         params: &[],
         return_ty: "bool",
@@ -645,7 +649,7 @@ fn math_runtime() -> Vec<RuntimeFn> {
     v.push(RuntimeFn {
         module: "std.runtime.math",
         receiver: Some("f32"),
-        is_static: false, is_mut: false,
+        is_static: false, is_mut: false, is_consume: false,
         name: "is_finite",
         params: &[],
         return_ty: "bool",
@@ -657,7 +661,7 @@ fn math_runtime() -> Vec<RuntimeFn> {
     v.push(RuntimeFn {
         module: "std.runtime.math",
         receiver: Some("f32"),
-        is_static: false, is_mut: false,
+        is_static: false, is_mut: false, is_consume: false,
         name: "is_infinite",
         params: &[],
         return_ty: "bool",
@@ -675,7 +679,7 @@ fn char_runtime() -> Vec<RuntimeFn> {
         RuntimeFn {
             module: "std.runtime.char",
             receiver: Some("str"),
-            is_static: true, is_mut: false,
+            is_static: true, is_mut: false, is_consume: false,
             name: "from",
             params: &[("c", "char")],
             return_ty: "str",
@@ -692,37 +696,37 @@ fn string_builder_runtime() -> Vec<RuntimeFn> {
     let m = "std.runtime.string_builder";
     let recv = Some("StringBuilder");
     vec![
-        RuntimeFn { module: m, receiver: recv, is_static: true,  is_mut: false,
+        RuntimeFn { module: m, receiver: recv, is_static: true,  is_mut: false, is_consume: false,
             name: "new", params: &[], return_ty: "Self", effects: &[],
             c_name: "Nova_StringBuilder_static_new",
             doc: "Создать пустой StringBuilder с initial capacity 16.",
             nova_body: None,
         },
-        RuntimeFn { module: m, receiver: recv, is_static: true,  is_mut: false,
+        RuntimeFn { module: m, receiver: recv, is_static: true,  is_mut: false, is_consume: false,
             name: "with_capacity", params: &[("n", "int")], return_ty: "Self", effects: &[],
             c_name: "Nova_StringBuilder_static_with_capacity",
             doc: "Создать StringBuilder с pre-allocated capacity n.",
             nova_body: None,
         },
-        RuntimeFn { module: m, receiver: recv, is_static: true,  is_mut: false,
+        RuntimeFn { module: m, receiver: recv, is_static: true,  is_mut: false, is_consume: false,
             name: "from", params: &[("s", "str")], return_ty: "Self", effects: &[],
             c_name: "Nova_StringBuilder_static_from_str",
             doc: "Создать StringBuilder из существующей строки (copy).",
             nova_body: None,
         },
-        RuntimeFn { module: m, receiver: recv, is_static: true,  is_mut: false,
+        RuntimeFn { module: m, receiver: recv, is_static: true,  is_mut: false, is_consume: false,
             name: "from", params: &[("c", "char")], return_ty: "Self", effects: &[],
             c_name: "Nova_StringBuilder_static_from_char",
             doc: "Создать StringBuilder из одного codepoint (UTF-8 encode 1-4 байта).",
             nova_body: None,
         },
-        RuntimeFn { module: m, receiver: recv, is_static: false, is_mut: true,
+        RuntimeFn { module: m, receiver: recv, is_static: false, is_mut: true, is_consume: false,
             name: "append", params: &[("s", "str")], return_ty: "Self", effects: &[],
             c_name: "Nova_StringBuilder_method_append_str",
             doc: "Append UTF-8 bytes из str. Возвращает self для chaining (Ф.9.1).",
             nova_body: None,
         },
-        RuntimeFn { module: m, receiver: recv, is_static: false, is_mut: true,
+        RuntimeFn { module: m, receiver: recv, is_static: false, is_mut: true, is_consume: false,
             name: "append", params: &[("c", "char")], return_ty: "Self", effects: &[],
             c_name: "Nova_StringBuilder_method_append_char",
             doc: "Append codepoint как UTF-8 (1-4 байта). Возвращает self для chaining.",
@@ -731,67 +735,69 @@ fn string_builder_runtime() -> Vec<RuntimeFn> {
         // Plan 13 Ф.9.2: оператор `+` через метод @plus.
         // sb + str  → sb.@plus(s) → @append(s)
         // sb + char → sb.@plus(c) → @append(c)
-        RuntimeFn { module: m, receiver: recv, is_static: false, is_mut: true,
+        RuntimeFn { module: m, receiver: recv, is_static: false, is_mut: true, is_consume: false,
             name: "plus", params: &[("s", "str")], return_ty: "Self", effects: &[],
             c_name: "",
             doc: "Оператор `+`: `sb + s == sb.@plus(s)` → @append (D46).",
             nova_body: Some("@append(s)"),
         },
-        RuntimeFn { module: m, receiver: recv, is_static: false, is_mut: true,
+        RuntimeFn { module: m, receiver: recv, is_static: false, is_mut: true, is_consume: false,
             name: "plus", params: &[("c", "char")], return_ty: "Self", effects: &[],
             c_name: "",
             doc: "Оператор `+`: `sb + c == sb.@plus(c)` → @append (D46, char overload).",
             nova_body: Some("@append(c)"),
         },
-        RuntimeFn { module: m, receiver: recv, is_static: false, is_mut: false,
+        RuntimeFn { module: m, receiver: recv, is_static: false, is_mut: false, is_consume: false,
             name: "len", params: &[], return_ty: "int", effects: &[],
             c_name: "Nova_StringBuilder_method_len",
             doc: "Длина в codepoint'ах (D26 школа B). O(n) UTF-8 walk.",
             nova_body: None,
         },
-        RuntimeFn { module: m, receiver: recv, is_static: false, is_mut: false,
+        RuntimeFn { module: m, receiver: recv, is_static: false, is_mut: false, is_consume: false,
             name: "byte_len", params: &[], return_ty: "int", effects: &[],
             c_name: "Nova_StringBuilder_method_byte_len",
             doc: "Размер в UTF-8 байтах. O(1). Для FFI / capacity-планирования.",
             nova_body: None,
         },
-        RuntimeFn { module: m, receiver: recv, is_static: false, is_mut: false,
+        RuntimeFn { module: m, receiver: recv, is_static: false, is_mut: false, is_consume: false,
             name: "capacity", params: &[], return_ty: "int", effects: &[],
             c_name: "Nova_StringBuilder_method_capacity",
             doc: "Allocated capacity в байтах (>= byte_len).",
             nova_body: None,
         },
-        RuntimeFn { module: m, receiver: recv, is_static: false, is_mut: false,
+        RuntimeFn { module: m, receiver: recv, is_static: false, is_mut: false, is_consume: false,
             name: "clone", params: &[], return_ty: "Self", effects: &[],
             c_name: "Nova_StringBuilder_method_clone",
             doc: "Создать независимую копию (deep copy buffer).",
             nova_body: None,
         },
-        RuntimeFn { module: m, receiver: recv, is_static: false, is_mut: false,
+        // Plan 73 (D131): `consume @into` — после @into() переменная-источник
+        // недоступна; повторное использование — compile error, не runtime panic.
+        RuntimeFn { module: m, receiver: recv, is_static: false, is_mut: false, is_consume: true,
             name: "into", params: &[], return_ty: "str", effects: &[],
             c_name: "Nova_StringBuilder_method_into",
-            doc: "Финализировать в str. Infallible (UTF-8 invariant поддерживается append'ами). После consume mutating методы → runtime panic.",
+            doc: "Финализировать в str. Infallible (UTF-8 invariant поддерживается append'ами). consume-метод (D131): после @into() StringBuilder недоступен — повторное использование = compile error.",
             nova_body: None,
         },
-        RuntimeFn { module: m, receiver: recv, is_static: false, is_mut: false,
+        RuntimeFn { module: m, receiver: recv, is_static: false, is_mut: false, is_consume: false,
             name: "starts_with", params: &[("prefix", "str")], return_ty: "bool", effects: &[],
             c_name: "Nova_StringBuilder_method_starts_with",
             doc: "Non-consuming: проверить prefix буфера. Возвращает false после @into() (consumed).",
             nova_body: None,
         },
-        RuntimeFn { module: m, receiver: recv, is_static: false, is_mut: false,
+        RuntimeFn { module: m, receiver: recv, is_static: false, is_mut: false, is_consume: false,
             name: "ends_with", params: &[("suffix", "str")], return_ty: "bool", effects: &[],
             c_name: "Nova_StringBuilder_method_ends_with",
             doc: "Non-consuming: проверить suffix буфера. Возвращает false после @into() (consumed).",
             nova_body: None,
         },
-        RuntimeFn { module: m, receiver: recv, is_static: false, is_mut: false,
+        RuntimeFn { module: m, receiver: recv, is_static: false, is_mut: false, is_consume: false,
             name: "is_empty", params: &[], return_ty: "bool", effects: &[],
             c_name: "Nova_StringBuilder_method_is_empty",
             doc: "Non-consuming: true если буфер пуст (или consumed).",
             nova_body: None,
         },
-        RuntimeFn { module: m, receiver: recv, is_static: false, is_mut: false,
+        RuntimeFn { module: m, receiver: recv, is_static: false, is_mut: false, is_consume: false,
             name: "peek", params: &[], return_ty: "str", effects: &[],
             c_name: "Nova_StringBuilder_method_peek",
             doc: "Non-consuming snapshot буфера как str. ВАЖНО: pointer на тот же buffer — subsequent append может realloc'нуть. Использовать только immediately (sb.peek().ends_with(...)).",
@@ -806,51 +812,51 @@ fn write_buffer_runtime() -> Vec<RuntimeFn> {
     let recv = Some("WriteBuffer");
     let mut v: Vec<RuntimeFn> = Vec::new();
     // Создание (Self для единообразия — Plan 13 Ф.9.1).
-    v.push(RuntimeFn { module: m, receiver: recv, is_static: true, is_mut: false,
+    v.push(RuntimeFn { module: m, receiver: recv, is_static: true, is_mut: false, is_consume: false,
         name: "new", params: &[], return_ty: "Self", effects: &[],
         c_name: "Nova_WriteBuffer_static_new",
         doc: "Создать пустой WriteBuffer.",
         nova_body: None,
     });
-    v.push(RuntimeFn { module: m, receiver: recv, is_static: true, is_mut: false,
+    v.push(RuntimeFn { module: m, receiver: recv, is_static: true, is_mut: false, is_consume: false,
         name: "with_capacity", params: &[("n", "int")], return_ty: "Self", effects: &[],
         c_name: "Nova_WriteBuffer_static_with_capacity",
         doc: "Создать WriteBuffer с pre-allocated capacity.",
         nova_body: None,
     });
-    v.push(RuntimeFn { module: m, receiver: recv, is_static: true, is_mut: false,
+    v.push(RuntimeFn { module: m, receiver: recv, is_static: true, is_mut: false, is_consume: false,
         name: "from", params: &[("b", "[]byte")], return_ty: "Self", effects: &[],
         c_name: "Nova_WriteBuffer_static_from",
         doc: "Создать WriteBuffer из существующих байт.",
         nova_body: None,
     });
     // Базовые write. Все mut @write_* возвращают Self для chaining (Ф.9.1).
-    v.push(RuntimeFn { module: m, receiver: recv, is_static: false, is_mut: true,
+    v.push(RuntimeFn { module: m, receiver: recv, is_static: false, is_mut: true, is_consume: false,
         name: "write_byte", params: &[("v", "byte")], return_ty: "Self", effects: &[],
         c_name: "Nova_WriteBuffer_method_write_byte",
         doc: "Append один byte. Returns self for chaining.",
         nova_body: None,
     });
-    v.push(RuntimeFn { module: m, receiver: recv, is_static: false, is_mut: true,
+    v.push(RuntimeFn { module: m, receiver: recv, is_static: false, is_mut: true, is_consume: false,
         name: "write_bytes", params: &[("src", "[]byte")], return_ty: "Self", effects: &[],
         c_name: "Nova_WriteBuffer_method_write_bytes",
         doc: "Append массив байт (memcpy). Returns self.",
         nova_body: None,
     });
-    v.push(RuntimeFn { module: m, receiver: recv, is_static: false, is_mut: true,
+    v.push(RuntimeFn { module: m, receiver: recv, is_static: false, is_mut: true, is_consume: false,
         name: "write_zero", params: &[("n", "int")], return_ty: "Self", effects: &[],
         c_name: "Nova_WriteBuffer_method_write_zero",
         doc: "Append n нулевых байт (memset). Returns self.",
         nova_body: None,
     });
     // Text → UTF-8 bytes (Plan 04 Этап 6.1).
-    v.push(RuntimeFn { module: m, receiver: recv, is_static: false, is_mut: true,
+    v.push(RuntimeFn { module: m, receiver: recv, is_static: false, is_mut: true, is_consume: false,
         name: "write_char", params: &[("c", "char")], return_ty: "Self", effects: &[],
         c_name: "Nova_WriteBuffer_method_write_char",
         doc: "UTF-8 encode codepoint (1-4 байта). Returns self.",
         nova_body: None,
     });
-    v.push(RuntimeFn { module: m, receiver: recv, is_static: false, is_mut: true,
+    v.push(RuntimeFn { module: m, receiver: recv, is_static: false, is_mut: true, is_consume: false,
         name: "write_str", params: &[("s", "str")], return_ty: "Self", effects: &[],
         c_name: "Nova_WriteBuffer_method_write_str",
         doc: "Append UTF-8 байты из str (memcpy). Returns self.",
@@ -883,32 +889,32 @@ fn write_buffer_runtime() -> Vec<RuntimeFn> {
             format!("Nova_WriteBuffer_method_{}", name).into_boxed_str(),
         );
         let params_static: &'static [(&'static str, &'static str)] = Box::leak(Box::new([("v", *arg_ty)]));
-        v.push(RuntimeFn { module: m, receiver: recv, is_static: false, is_mut: true,
+        v.push(RuntimeFn { module: m, receiver: recv, is_static: false, is_mut: true, is_consume: false,
             name, params: params_static, return_ty: "Self", effects: &[],
             c_name: c_name_static, doc,
             nova_body: None,
         });
     }
     // Финализация / read-only.
-    v.push(RuntimeFn { module: m, receiver: recv, is_static: false, is_mut: false,
+    v.push(RuntimeFn { module: m, receiver: recv, is_static: false, is_mut: false, is_consume: false,
         name: "len", params: &[], return_ty: "int", effects: &[],
         c_name: "Nova_WriteBuffer_method_len",
         doc: "Текущий размер в байтах.",
         nova_body: None,
     });
-    v.push(RuntimeFn { module: m, receiver: recv, is_static: false, is_mut: false,
+    v.push(RuntimeFn { module: m, receiver: recv, is_static: false, is_mut: false, is_consume: false,
         name: "capacity", params: &[], return_ty: "int", effects: &[],
         c_name: "Nova_WriteBuffer_method_capacity",
         doc: "Allocated capacity в байтах.",
         nova_body: None,
     });
-    v.push(RuntimeFn { module: m, receiver: recv, is_static: false, is_mut: false,
+    v.push(RuntimeFn { module: m, receiver: recv, is_static: false, is_mut: false, is_consume: false,
         name: "clone", params: &[], return_ty: "Self", effects: &[],
         c_name: "Nova_WriteBuffer_method_clone",
         doc: "Создать независимую копию (deep copy buffer).",
         nova_body: None,
     });
-    v.push(RuntimeFn { module: m, receiver: recv, is_static: false, is_mut: false,
+    v.push(RuntimeFn { module: m, receiver: recv, is_static: false, is_mut: false, is_consume: false,
         name: "into", params: &[], return_ty: "[]byte", effects: &[],
         c_name: "Nova_WriteBuffer_method_into",
         doc: "Финализировать в []byte. Infallible.",
@@ -925,32 +931,32 @@ fn read_buffer_runtime() -> Vec<RuntimeFn> {
     let recv = Some("ReadBuffer");
     let mut v: Vec<RuntimeFn> = Vec::new();
     // Создание (Self — Plan 13 Ф.9.1 unification).
-    v.push(RuntimeFn { module: m, receiver: recv, is_static: true, is_mut: false,
+    v.push(RuntimeFn { module: m, receiver: recv, is_static: true, is_mut: false, is_consume: false,
         name: "from", params: &[("b", "[]byte")], return_ty: "Self", effects: &[],
         c_name: "Nova_ReadBuffer_static_from",
         doc: "Создать ReadBuffer из []byte (view, no copy).",
         nova_body: None,
     });
     // Cursor metadata (read-only).
-    v.push(RuntimeFn { module: m, receiver: recv, is_static: false, is_mut: false,
+    v.push(RuntimeFn { module: m, receiver: recv, is_static: false, is_mut: false, is_consume: false,
         name: "position", params: &[], return_ty: "int", effects: &[],
         c_name: "Nova_ReadBuffer_method_position",
         doc: "Текущий offset cursor'а в байтах.",
         nova_body: None,
     });
-    v.push(RuntimeFn { module: m, receiver: recv, is_static: false, is_mut: false,
+    v.push(RuntimeFn { module: m, receiver: recv, is_static: false, is_mut: false, is_consume: false,
         name: "remaining", params: &[], return_ty: "int", effects: &[],
         c_name: "Nova_ReadBuffer_method_remaining",
         doc: "Сколько байт осталось до конца буфера.",
         nova_body: None,
     });
-    v.push(RuntimeFn { module: m, receiver: recv, is_static: false, is_mut: false,
+    v.push(RuntimeFn { module: m, receiver: recv, is_static: false, is_mut: false, is_consume: false,
         name: "has_remaining", params: &[("n", "int")], return_ty: "bool", effects: &[],
         c_name: "Nova_ReadBuffer_method_has_remaining",
         doc: "True если осталось ≥ n байт.",
         nova_body: None,
     });
-    v.push(RuntimeFn { module: m, receiver: recv, is_static: false, is_mut: false,
+    v.push(RuntimeFn { module: m, receiver: recv, is_static: false, is_mut: false, is_consume: false,
         name: "remaining_bytes", params: &[], return_ty: "[]byte", effects: &[],
         c_name: "Nova_ReadBuffer_method_remaining_bytes",
         doc: "Скопировать оставшиеся байты как []byte.",
@@ -1005,40 +1011,40 @@ fn read_buffer_runtime() -> Vec<RuntimeFn> {
         let doc_try: &'static str = Box::leak(
             format!("{} Result-форма (Ok(value) или Err(UnexpectedEnd)).", doc).into_boxed_str(),
         );
-        v.push(RuntimeFn { module: m, receiver: recv, is_static: false, is_mut: true,
+        v.push(RuntimeFn { module: m, receiver: recv, is_static: false, is_mut: true, is_consume: false,
             name, params: params_fail, return_ty: ret_ty, effects: &["Fail[ReadBufferError]"],
             c_name: c_name_fail, doc: doc_fail,
             nova_body: None,
         });
-        v.push(RuntimeFn { module: m, receiver: recv, is_static: false, is_mut: true,
+        v.push(RuntimeFn { module: m, receiver: recv, is_static: false, is_mut: true, is_consume: false,
             name: try_name, params: params_try, return_ty: try_ret, effects: &[],
             c_name: c_name_try, doc: doc_try,
             nova_body: None,
         });
     }
     // Plan 13 Ф.9.4: codepoint-уровневые reads.
-    v.push(RuntimeFn { module: m, receiver: recv, is_static: false, is_mut: true,
+    v.push(RuntimeFn { module: m, receiver: recv, is_static: false, is_mut: true, is_consume: false,
         name: "read_char", params: &[],
         return_ty: "char", effects: &["Fail[ReadBufferError]"],
         c_name: "Nova_ReadBuffer_method_read_char",
         doc: "Один codepoint (UTF-8 1-4 байта). Throw'ит UnexpectedEnd / InvalidUtf8.",
         nova_body: None,
     });
-    v.push(RuntimeFn { module: m, receiver: recv, is_static: false, is_mut: true,
+    v.push(RuntimeFn { module: m, receiver: recv, is_static: false, is_mut: true, is_consume: false,
         name: "try_read_char", params: &[],
         return_ty: "Result[char, ReadBufferError]", effects: &[],
         c_name: "Nova_ReadBuffer_method_try_read_char",
         doc: "Result-форма @read_char (Ok(char) или Err(UnexpectedEnd|InvalidUtf8)).",
         nova_body: None,
     });
-    v.push(RuntimeFn { module: m, receiver: recv, is_static: false, is_mut: true,
+    v.push(RuntimeFn { module: m, receiver: recv, is_static: false, is_mut: true, is_consume: false,
         name: "read_str", params: &[("n", "int")],
         return_ty: "str", effects: &["Fail[ReadBufferError]"],
         c_name: "Nova_ReadBuffer_method_read_str",
         doc: "n codepoint'ов как str. Throw'ит UnexpectedEnd / InvalidUtf8.",
         nova_body: None,
     });
-    v.push(RuntimeFn { module: m, receiver: recv, is_static: false, is_mut: true,
+    v.push(RuntimeFn { module: m, receiver: recv, is_static: false, is_mut: true, is_consume: false,
         name: "try_read_str", params: &[("n", "int")],
         return_ty: "Result[str, ReadBufferError]", effects: &[],
         c_name: "Nova_ReadBuffer_method_try_read_str",
@@ -1138,7 +1144,9 @@ pub fn render_nv(module: &str, fns: &[&RuntimeFn]) -> String {
                 out.push('.');
             } else {
                 out.push(' ');
+                // Plan 73 (D131): `mut` / `consume` — взаимоисключающие.
                 if f.is_mut { out.push_str("mut "); }
+                if f.is_consume { out.push_str("consume "); }
                 out.push('@');
             }
             out.push_str(f.name);

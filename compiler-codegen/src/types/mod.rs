@@ -393,6 +393,10 @@ pub fn check_module(module: &Module) -> Result<ModuleEnv, Vec<Diagnostic>> {
     // РЅРѕР№, Рё РµСЃР»Рё РґР° вЂ” body РґРѕР»Р¶РµРЅ diverge (static analysis).
     check_handler_never_ops(module, &mut errors);
 
+    // Plan 73 (D131): consume-qualifier flow-sensitive check. Use-after-
+    // consume и maybe-consumed (consume на части веток) → compile error.
+    check_consume(module, &mut errors);
+
     // Plan 33.3 Р¤.9 (D24): validate axiom-bodies РІ effect-Р±Р»РѕРєР°С….
     // РљР°Р¶РґС‹Р№ axiom РґРѕР»Р¶РµРЅ СЃСЃС‹Р»Р°С‚СЊСЃСЏ С‚РѕР»СЊРєРѕ РЅР° binders + pure_view-ops
     // **С‚РѕРіРѕ Р¶Рµ СЌС„С„РµРєС‚Р°** + Р»РёС‚РµСЂР°Р»С‹ + boolean/arith operators. Р›СЋР±РѕР№
@@ -4074,6 +4078,769 @@ fn stmt_diverges(s: &Stmt) -> bool {
 
 /// Walk РјРѕРґСѓР»СЏ: РґР»СЏ РєР°Р¶РґРѕРіРѕ defer/errdefer statement РІ bodies С„СѓРЅРєС†РёР№
 /// Рё С‚РµСЃС‚Р°С… вЂ” РїСЂРѕРІРµСЂРёС‚СЊ body constraints.
+// ─────────────────────────────────────────────────────────────────────
+// Plan 73 (D131): consume-qualifier flow-sensitive check.
+//
+// `consume` помечает receiver / параметр, чьё значение логически
+// забирается вызовом (`fn StringBuilder consume @into()`,
+// `fn f(consume sb StringBuilder)`). После consume-вызова переменная-
+// источник недоступна:
+//   - повторное использование (use-after-consume) → compile error;
+//   - использование на пути, где consume произошёл лишь на части веток
+//     (maybe-consumed) → compile error.
+//
+// Анализ flow-sensitive: состояние `VarState` каждой переменной
+// протягивается через statements, ветвится на if/match/coalesce и
+// пессимистично обрабатывает циклы (consume в теле → переменная
+// maybe-consumed на 2-й итерации). Это НЕ borrow checker — памятью
+// управляет GC; проверяется только логический инвариант D131.
+//
+// Closure / handler / trailing тела walk'аются изолированно (могут
+// исполняться 0+ раз): use-after-consume внутри них ловится, но их
+// собственные consume наружу не протекают (conservative).
+// ─────────────────────────────────────────────────────────────────────
+
+/// Состояние логической линейности переменной (D131).
+#[derive(Clone)]
+enum VarState {
+    /// Значение доступно.
+    Live,
+    /// Значение потреблено в указанной точке.
+    Consumed(Span),
+    /// Значение потреблено лишь на части путей выполнения.
+    MaybeConsumed(Span),
+}
+
+/// Реестр consume-аннотаций: user-module + runtime-stdlib.
+struct ConsumeRegistry {
+    /// `(receiver_type, method_name)` — consume-методы.
+    methods: HashSet<(String, String)>,
+    /// free-fn name → индексы consume-параметров.
+    fn_params: HashMap<String, Vec<usize>>,
+    /// `(receiver_type, method_name)` → индексы consume-параметров.
+    method_params: HashMap<(String, String), Vec<usize>>,
+}
+
+impl ConsumeRegistry {
+    fn build(module: &Module) -> Self {
+        let mut methods: HashSet<(String, String)> = HashSet::new();
+        let mut fn_params: HashMap<String, Vec<usize>> = HashMap::new();
+        let mut method_params: HashMap<(String, String), Vec<usize>> = HashMap::new();
+
+        // 1. Runtime-stdlib consume-методы (`StringBuilder.into` и т.п.).
+        //    Single source of truth — runtime_registry.rs (`is_consume`).
+        for f in crate::codegen::runtime_registry::all() {
+            if f.is_consume {
+                if let Some(recv) = f.receiver {
+                    methods.insert((recv.to_string(), f.name.to_string()));
+                }
+            }
+        }
+
+        // 2. User-module: consume-receiver методы + consume-параметры.
+        for item in &module.items {
+            if let Item::Fn(fd) = item {
+                let consume_idx: Vec<usize> = fd.params.iter().enumerate()
+                    .filter(|(_, p)| p.consume)
+                    .map(|(i, _)| i)
+                    .collect();
+                match &fd.receiver {
+                    Some(r) => {
+                        if r.consume {
+                            methods.insert((r.type_name.clone(), fd.name.clone()));
+                        }
+                        if !consume_idx.is_empty() {
+                            method_params.insert(
+                                (r.type_name.clone(), fd.name.clone()), consume_idx);
+                        }
+                    }
+                    None => {
+                        if !consume_idx.is_empty() {
+                            fn_params.insert(fd.name.clone(), consume_idx);
+                        }
+                    }
+                }
+            }
+        }
+        ConsumeRegistry { methods, fn_params, method_params }
+    }
+}
+
+/// Имена, связываемые pattern'ом (best-effort: Ident / Tuple / Record /
+/// Variant / Array / Or). Используется для регистрации новых live-vars.
+fn consume_pattern_names(p: &Pattern, out: &mut Vec<String>) {
+    match p {
+        Pattern::Ident { name, .. } => out.push(name.clone()),
+        Pattern::Binding { name, inner, .. } => {
+            out.push(name.clone());
+            consume_pattern_names(inner, out);
+        }
+        Pattern::Tuple(ps, _) => {
+            for sp in ps { consume_pattern_names(sp, out); }
+        }
+        Pattern::Variant { kind, .. } => {
+            if let VariantPatternKind::Tuple { patterns, .. } = kind {
+                for sp in patterns { consume_pattern_names(sp, out); }
+            }
+        }
+        Pattern::Record { fields, .. } => {
+            for f in fields {
+                match &f.pattern {
+                    Some(sp) => consume_pattern_names(sp, out),
+                    None => out.push(f.name.clone()), // shorthand `{ name }`
+                }
+            }
+        }
+        Pattern::Array { elems, .. } => {
+            for el in elems {
+                match el {
+                    ArrayPatternElem::Item(sp) => consume_pattern_names(sp, out),
+                    ArrayPatternElem::RestBind(n) => out.push(n.clone()),
+                    ArrayPatternElem::Rest => {}
+                }
+            }
+        }
+        Pattern::Or { alternatives, .. } => {
+            // Альтернативы связывают одинаковый набор имён — берём первую.
+            if let Some(first) = alternatives.first() {
+                consume_pattern_names(first, out);
+            }
+        }
+        Pattern::Wildcard(_) | Pattern::Literal(..) => {}
+    }
+}
+
+/// Flow-context consume-анализа одной функции / теста.
+struct ConsumeCtx<'a> {
+    reg: &'a ConsumeRegistry,
+    /// Состояние линейности per-variable.
+    states: HashMap<String, VarState>,
+    /// Best-effort тип переменной — для резолва consume-метода по
+    /// receiver'у. Неизвестный тип → метод не трактуется как consuming
+    /// (sound: false-negative, не false-positive).
+    var_types: HashMap<String, String>,
+}
+
+impl<'a> ConsumeCtx<'a> {
+    fn new(reg: &'a ConsumeRegistry) -> Self {
+        ConsumeCtx { reg, states: HashMap::new(), var_types: HashMap::new() }
+    }
+
+    /// Зарегистрировать новую live-переменную (с опц. известным типом).
+    fn declare(&mut self, name: &str, ty: Option<String>) {
+        if name == "_" { return; }
+        self.states.insert(name.to_string(), VarState::Live);
+        match ty {
+            Some(t) => { self.var_types.insert(name.to_string(), t); }
+            None => { self.var_types.remove(name); }
+        }
+    }
+
+    /// Использование переменной — проверка use-after-consume.
+    fn use_var(&self, name: &str, span: Span, errors: &mut Vec<Diagnostic>) {
+        match self.states.get(name) {
+            Some(VarState::Consumed(at)) => {
+                errors.push(Diagnostic::new(
+                    format!(
+                        "использование потреблённой переменной `{}` (D131): \
+                         её значение отдано consume-вызовом и больше недоступно",
+                        name),
+                    span,
+                ).with_note_at("значение потреблено здесь".to_string(), *at));
+            }
+            Some(VarState::MaybeConsumed(at)) => {
+                errors.push(Diagnostic::new(
+                    format!(
+                        "использование, возможно, потреблённой переменной `{}` \
+                         (D131): значение потребляется не на всех путях \
+                         выполнения — компилятор не может гарантировать, что \
+                         оно ещё доступно",
+                        name),
+                    span,
+                ).with_note_at(
+                    "значение потенциально потреблено здесь".to_string(), *at));
+            }
+            _ => {}
+        }
+    }
+
+    /// Вывести тип значения `let`-binding'а (best-effort).
+    fn infer_let_type(&self, decl: &LetDecl) -> Option<String> {
+        // Явная аннотация `let x T = ...`.
+        if let Some(TypeRef::Named { path, .. }) = &decl.ty {
+            if path.len() == 1 {
+                return Some(path[0].clone());
+            }
+        }
+        self.infer_value_type(&decl.value)
+    }
+
+    /// Best-effort тип выражения — только синтаксически очевидные формы.
+    fn infer_value_type(&self, e: &Expr) -> Option<String> {
+        match &e.kind {
+            // Конструктор `Type.new(...)` / `.with_capacity` / `.from` и т.п.
+            ExprKind::Call { func, .. } => {
+                if let ExprKind::Path(parts) = &func.kind {
+                    if parts.len() == 2 && matches!(parts[1].as_str(),
+                        "new" | "with_capacity" | "from" | "default" | "filled")
+                    {
+                        return Some(parts[0].clone());
+                    }
+                }
+                None
+            }
+            // Алиас `let y = x` — переносим известный тип `x`.
+            ExprKind::Ident(n) => self.var_types.get(n).cloned(),
+            // `User { ... }` record-литерал.
+            ExprKind::RecordLit { type_name: Some(path), .. } if path.len() == 1 => {
+                Some(path[0].clone())
+            }
+            _ => None,
+        }
+    }
+
+    /// Имя consume-метода для receiver-типа?
+    fn is_consume_method(&self, recv_var: &str, method: &str) -> bool {
+        self.var_types.get(recv_var)
+            .map(|ty| self.reg.methods.contains(&(ty.clone(), method.to_string())))
+            .unwrap_or(false)
+    }
+
+    /// Пометить аргументы в consume-позициях как потреблённые.
+    /// Аргументы уже walk'нуты вызывающим (use-after-consume проверен).
+    fn consume_args(&mut self, args: &[CallArg], idxs: &[usize],
+                    span: Span, errors: &mut Vec<Diagnostic>) {
+        for &i in idxs {
+            if let Some(CallArg::Item(arg)) = args.get(i) {
+                if let ExprKind::Ident(name) = &arg.kind {
+                    // use_var уже отработал в walk'е аргумента; здесь —
+                    // только переход состояния. Если уже потреблена —
+                    // ошибка уже выдана.
+                    if matches!(self.states.get(name),
+                        Some(VarState::Live) | None)
+                        && self.states.contains_key(name)
+                    {
+                        self.states.insert(name.clone(), VarState::Consumed(span));
+                    } else if self.states.contains_key(name) {
+                        // Maybe/Consumed — оставляем (ошибка уже есть).
+                        self.states.insert(name.clone(), VarState::Consumed(span));
+                    }
+                    let _ = errors;
+                }
+            }
+        }
+    }
+}
+
+/// Plan 73 (D131): consume-check входная точка — walk всех function /
+/// method / test bodies модуля.
+fn check_consume(module: &Module, errors: &mut Vec<Diagnostic>) {
+    let reg = ConsumeRegistry::build(module);
+    for item in &module.items {
+        match item {
+            Item::Fn(f) => {
+                let mut ctx = ConsumeCtx::new(&reg);
+                // Параметры функции — live на входе; consume-параметры
+                // внутри тела тоже просто live (consume у caller'а).
+                for p in &f.params {
+                    let pty = match &p.ty {
+                        TypeRef::Named { path, .. } if path.len() == 1 =>
+                            Some(path[0].clone()),
+                        _ => None,
+                    };
+                    ctx.declare(&p.name, pty);
+                }
+                match &f.body {
+                    FnBody::Block(b) => consume_walk_block(&mut ctx, b, errors),
+                    FnBody::Expr(e) => consume_walk_expr(&mut ctx, e, errors),
+                    FnBody::External => {}
+                }
+            }
+            Item::Test(t) => {
+                let mut ctx = ConsumeCtx::new(&reg);
+                consume_walk_block(&mut ctx, &t.body, errors);
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Объединить два VarState на слиянии путей (branch join).
+fn consume_join2(a: &VarState, b: &VarState) -> VarState {
+    match (a, b) {
+        (VarState::Live, VarState::Live) => VarState::Live,
+        (VarState::Consumed(s), VarState::Consumed(_)) => VarState::Consumed(*s),
+        (VarState::MaybeConsumed(s), _) | (_, VarState::MaybeConsumed(s)) =>
+            VarState::MaybeConsumed(*s),
+        (VarState::Consumed(s), VarState::Live)
+        | (VarState::Live, VarState::Consumed(s)) => VarState::MaybeConsumed(*s),
+    }
+}
+
+/// Слить состояния веток. Базис — `saved` (pre-branch); ветка-локальные
+/// переменные отбрасываются.
+fn consume_join(saved: &HashMap<String, VarState>,
+                a: &HashMap<String, VarState>,
+                b: &HashMap<String, VarState>) -> HashMap<String, VarState> {
+    let mut out = HashMap::new();
+    for (k, base) in saved {
+        let sa = a.get(k).unwrap_or(base);
+        let sb = b.get(k).unwrap_or(base);
+        out.insert(k.clone(), consume_join2(sa, sb));
+    }
+    out
+}
+
+fn consume_walk_block(ctx: &mut ConsumeCtx, b: &Block, errors: &mut Vec<Diagnostic>) {
+    for s in &b.stmts {
+        consume_walk_stmt(ctx, s, errors);
+    }
+    if let Some(t) = &b.trailing {
+        consume_walk_expr(ctx, t, errors);
+    }
+}
+
+fn consume_walk_stmt(ctx: &mut ConsumeCtx, s: &Stmt, errors: &mut Vec<Diagnostic>) {
+    match s {
+        Stmt::Let(decl) => {
+            consume_walk_expr(ctx, &decl.value, errors);
+            let ty = ctx.infer_let_type(decl);
+            let mut names = Vec::new();
+            consume_pattern_names(&decl.pattern, &mut names);
+            for n in &names {
+                // Тип привязываем только к одиночному ident-pattern'у.
+                let t = if names.len() == 1 { ty.clone() } else { None };
+                ctx.declare(n, t);
+            }
+        }
+        Stmt::Expr(e) => consume_walk_expr(ctx, e, errors),
+        Stmt::Assign { target, op, value, .. } => {
+            consume_walk_expr(ctx, value, errors);
+            match &target.kind {
+                ExprKind::Ident(name) => {
+                    if matches!(op, AssignOp::Assign) {
+                        // `x = v` — переменная переполучает значение → live.
+                        if ctx.states.contains_key(name) {
+                            ctx.states.insert(name.clone(), VarState::Live);
+                        }
+                    } else {
+                        // compound `+=` и т.п. читают старое значение.
+                        ctx.use_var(name, target.span, errors);
+                        if ctx.states.contains_key(name) {
+                            ctx.states.insert(name.clone(), VarState::Live);
+                        }
+                    }
+                }
+                _ => consume_walk_expr(ctx, target, errors),
+            }
+        }
+        Stmt::Return { value, .. } => {
+            if let Some(v) = value { consume_walk_expr(ctx, v, errors); }
+        }
+        Stmt::Throw { value, .. } => consume_walk_expr(ctx, value, errors),
+        Stmt::Break(_) | Stmt::Continue(_) | Stmt::Reveal { .. } => {}
+        // defer/errdefer исполняются на scope-exit — walk изолированно
+        // (use-after-consume ловится, consume наружу не протекает).
+        Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. } => {
+            consume_walk_isolated_expr(ctx, &[], body, errors);
+        }
+        Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => {
+            consume_walk_expr(ctx, expr, errors);
+        }
+        Stmt::Apply { args, .. } => {
+            for a in args { consume_walk_expr(ctx, a, errors); }
+        }
+        Stmt::Calc { steps, .. } => {
+            for st in steps { consume_walk_expr(ctx, &st.expr, errors); }
+        }
+    }
+}
+
+/// Walk блока изолированно (closure / handler / trailing): состояние
+/// `states` восстанавливается после — consume внутрь наружу не течёт.
+fn consume_walk_isolated_block(ctx: &mut ConsumeCtx, params: &[String],
+                               b: &Block, errors: &mut Vec<Diagnostic>) {
+    let saved = ctx.states.clone();
+    for p in params { ctx.declare(p, None); }
+    consume_walk_block(ctx, b, errors);
+    ctx.states = saved;
+}
+
+fn consume_walk_isolated_expr(ctx: &mut ConsumeCtx, params: &[String],
+                              e: &Expr, errors: &mut Vec<Diagnostic>) {
+    let saved = ctx.states.clone();
+    for p in params { ctx.declare(p, None); }
+    consume_walk_expr(ctx, e, errors);
+    ctx.states = saved;
+}
+
+/// Walk тела цикла (for/while/loop) — пессимистично: переменная,
+/// потреблённая в теле, становится maybe-consumed (consume на 2-й
+/// итерации = use-after-consume).
+fn consume_walk_loop(ctx: &mut ConsumeCtx, loop_vars: &[String],
+                     body: &Block, errors: &mut Vec<Diagnostic>) {
+    let pre = ctx.states.clone();
+    // Pass 1 — обнаружить consume в теле (ошибки в throwaway sink).
+    for v in loop_vars { ctx.declare(v, None); }
+    let mut throwaway: Vec<Diagnostic> = Vec::new();
+    consume_walk_block(ctx, body, &mut throwaway);
+    let consumed: Vec<String> = pre.keys()
+        .filter(|k| matches!(ctx.states.get(*k),
+            Some(VarState::Consumed(_)) | Some(VarState::MaybeConsumed(_))))
+        .cloned()
+        .collect();
+    // Reset к pre, pre-mark consumed-в-теле как maybe-consumed.
+    ctx.states = pre.clone();
+    for k in &consumed {
+        ctx.states.insert(k.clone(), VarState::MaybeConsumed(body.span));
+    }
+    // Pass 2 — реальный walk (ошибки эмитятся).
+    for v in loop_vars { ctx.declare(v, None); }
+    consume_walk_block(ctx, body, errors);
+    // Post-loop: цикл мог не выполниться ни разу → consumed-в-теле
+    // переменные maybe-consumed; ветка-локальные сбрасываются.
+    ctx.states = pre;
+    for k in &consumed {
+        ctx.states.insert(k.clone(), VarState::MaybeConsumed(body.span));
+    }
+}
+
+fn consume_walk_expr(ctx: &mut ConsumeCtx, e: &Expr, errors: &mut Vec<Diagnostic>) {
+    match &e.kind {
+        // ─── Листья ───
+        ExprKind::IntLit(_) | ExprKind::FloatLit(_) | ExprKind::StrLit(_)
+        | ExprKind::BoolLit(_) | ExprKind::UnitLit | ExprKind::CharLit(_)
+        | ExprKind::Path(_) | ExprKind::SelfAccess => {}
+
+        // ─── Использование переменной ───
+        ExprKind::Ident(name) => ctx.use_var(name, e.span, errors),
+
+        // ─── Интерполированная строка `"... ${expr} ..."` ───
+        ExprKind::InterpolatedStr { parts } => {
+            for p in parts {
+                if let InterpStrPart::Expr(ex) = p {
+                    consume_walk_expr(ctx, ex, errors);
+                }
+            }
+        }
+
+        // ─── Вызовы — точки consume ───
+        ExprKind::Call { func, args, trailing } => {
+            match &func.kind {
+                // Method call: obj.method(args).
+                ExprKind::Member { obj, name: method } => {
+                    if let ExprKind::Ident(recv) = &obj.kind {
+                        // Любой вызов метода — использование receiver'а.
+                        ctx.use_var(recv, obj.span, errors);
+                        for a in args { consume_walk_expr(ctx, a.expr(), errors); }
+                        if let Some(t) = trailing { consume_walk_trailing(ctx, t, errors); }
+                        let recv = recv.clone();
+                        // consume-метод → receiver потребляется.
+                        if ctx.is_consume_method(&recv, method)
+                            && matches!(ctx.states.get(&recv), Some(VarState::Live))
+                        {
+                            ctx.states.insert(recv.clone(), VarState::Consumed(e.span));
+                        }
+                        // consume-параметры метода.
+                        if let Some(ty) = ctx.var_types.get(&recv).cloned() {
+                            if let Some(idxs) = ctx.reg
+                                .method_params.get(&(ty, method.clone())).cloned()
+                            {
+                                ctx.consume_args(args, &idxs, e.span, errors);
+                            }
+                        }
+                    } else {
+                        consume_walk_expr(ctx, obj, errors);
+                        for a in args { consume_walk_expr(ctx, a.expr(), errors); }
+                        if let Some(t) = trailing { consume_walk_trailing(ctx, t, errors); }
+                    }
+                }
+                // Free-fn call: f(args).
+                ExprKind::Ident(fname) => {
+                    for a in args { consume_walk_expr(ctx, a.expr(), errors); }
+                    if let Some(t) = trailing { consume_walk_trailing(ctx, t, errors); }
+                    if let Some(idxs) = ctx.reg.fn_params.get(fname).cloned() {
+                        ctx.consume_args(args, &idxs, e.span, errors);
+                    }
+                }
+                // Path call: Type.static(args) / module.fn(args).
+                ExprKind::Path(parts) => {
+                    for a in args { consume_walk_expr(ctx, a.expr(), errors); }
+                    if let Some(t) = trailing { consume_walk_trailing(ctx, t, errors); }
+                    if parts.len() == 2 {
+                        if let Some(idxs) = ctx.reg.method_params
+                            .get(&(parts[0].clone(), parts[1].clone())).cloned()
+                        {
+                            ctx.consume_args(args, &idxs, e.span, errors);
+                        }
+                    }
+                    if let Some(last) = parts.last() {
+                        if let Some(idxs) = ctx.reg.fn_params.get(last).cloned() {
+                            ctx.consume_args(args, &idxs, e.span, errors);
+                        }
+                    }
+                }
+                _ => {
+                    consume_walk_expr(ctx, func, errors);
+                    for a in args { consume_walk_expr(ctx, a.expr(), errors); }
+                    if let Some(t) = trailing { consume_walk_trailing(ctx, t, errors); }
+                }
+            }
+        }
+
+        // ─── Доступы / операторы ───
+        ExprKind::Member { obj, .. } => consume_walk_expr(ctx, obj, errors),
+        ExprKind::Index { obj, index } => {
+            consume_walk_expr(ctx, obj, errors);
+            consume_walk_expr(ctx, index, errors);
+        }
+        ExprKind::TurboFish { base, .. } => consume_walk_expr(ctx, base, errors),
+        ExprKind::Try(inner) | ExprKind::Bang(inner) => consume_walk_expr(ctx, inner, errors),
+        ExprKind::As(inner, _) | ExprKind::Is(inner, _) => consume_walk_expr(ctx, inner, errors),
+        ExprKind::Unary { operand, .. } => consume_walk_expr(ctx, operand, errors),
+        ExprKind::Binary { left, right, .. } => {
+            consume_walk_expr(ctx, left, errors);
+            consume_walk_expr(ctx, right, errors);
+        }
+        ExprKind::Throw(inner) => consume_walk_expr(ctx, inner, errors),
+        ExprKind::Interrupt(opt) => {
+            if let Some(v) = opt { consume_walk_expr(ctx, v, errors); }
+        }
+        ExprKind::Range { start, end, .. } => {
+            consume_walk_expr(ctx, start, errors);
+            consume_walk_expr(ctx, end, errors);
+        }
+
+        // ─── `a ?? b` — `b` исполняется условно ───
+        ExprKind::Coalesce(a, b) => {
+            consume_walk_expr(ctx, a, errors);
+            let after_a = ctx.states.clone();
+            consume_walk_expr(ctx, b, errors);
+            let after_b = ctx.states.clone();
+            ctx.states = consume_join(&after_a, &after_a, &after_b);
+        }
+
+        // ─── Ветвление if / if-let ───
+        ExprKind::If { cond, then, else_ } => {
+            consume_walk_expr(ctx, cond, errors);
+            consume_walk_if(ctx, then, else_, errors);
+        }
+        ExprKind::IfLet { pattern, scrutinee, then, else_ } => {
+            consume_walk_expr(ctx, scrutinee, errors);
+            let saved = ctx.states.clone();
+            let mut names = Vec::new();
+            consume_pattern_names(pattern, &mut names);
+            for n in &names { ctx.declare(n, None); }
+            consume_walk_block(ctx, then, errors);
+            let then_states = ctx.states.clone();
+            ctx.states = saved.clone();
+            consume_walk_else(ctx, else_, errors);
+            let else_states = ctx.states.clone();
+            ctx.states = consume_join(&saved, &then_states, &else_states);
+        }
+
+        // ─── match ───
+        ExprKind::Match { scrutinee, arms } => {
+            consume_walk_expr(ctx, scrutinee, errors);
+            let saved = ctx.states.clone();
+            let mut joined: Option<HashMap<String, VarState>> = None;
+            for arm in arms {
+                ctx.states = saved.clone();
+                let mut names = Vec::new();
+                consume_pattern_names(&arm.pattern, &mut names);
+                for n in &names { ctx.declare(n, None); }
+                if let Some(g) = &arm.guard { consume_walk_expr(ctx, g, errors); }
+                match &arm.body {
+                    MatchArmBody::Expr(ex) => consume_walk_expr(ctx, ex, errors),
+                    MatchArmBody::Block(b) => consume_walk_block(ctx, b, errors),
+                }
+                let arm_states = ctx.states.clone();
+                joined = Some(match joined {
+                    None => arm_states,
+                    Some(j) => consume_join(&saved, &j, &arm_states),
+                });
+            }
+            ctx.states = joined.unwrap_or(saved);
+        }
+
+        // ─── select ───
+        ExprKind::Select { arms } => {
+            let saved = ctx.states.clone();
+            let mut joined: Option<HashMap<String, VarState>> = None;
+            for arm in arms {
+                ctx.states = saved.clone();
+                match &arm.op {
+                    SelectOp::Recv { binding, chan } => {
+                        consume_walk_expr(ctx, chan, errors);
+                        if let Some(b) = binding { ctx.declare(b, None); }
+                    }
+                    SelectOp::Send { chan, value } => {
+                        consume_walk_expr(ctx, chan, errors);
+                        consume_walk_expr(ctx, value, errors);
+                    }
+                    SelectOp::Default => {}
+                }
+                if let Some(g) = &arm.guard { consume_walk_expr(ctx, g, errors); }
+                consume_walk_block(ctx, &arm.body, errors);
+                let arm_states = ctx.states.clone();
+                joined = Some(match joined {
+                    None => arm_states,
+                    Some(j) => consume_join(&saved, &j, &arm_states),
+                });
+            }
+            ctx.states = joined.unwrap_or(saved);
+        }
+
+        // ─── Циклы — пессимистично ───
+        ExprKind::For { pattern, iter, body, .. }
+        | ExprKind::ParallelFor { pattern, iter, body } => {
+            consume_walk_expr(ctx, iter, errors);
+            let mut names = Vec::new();
+            consume_pattern_names(pattern, &mut names);
+            consume_walk_loop(ctx, &names, body, errors);
+        }
+        ExprKind::While { cond, body, .. } => {
+            consume_walk_expr(ctx, cond, errors);
+            consume_walk_loop(ctx, &[], body, errors);
+        }
+        ExprKind::WhileLet { pattern, scrutinee, body, .. } => {
+            consume_walk_expr(ctx, scrutinee, errors);
+            let mut names = Vec::new();
+            consume_pattern_names(pattern, &mut names);
+            consume_walk_loop(ctx, &names, body, errors);
+        }
+        ExprKind::Loop { body, .. } => consume_walk_loop(ctx, &[], body, errors),
+
+        // ─── Блоки / scope-конструкции ───
+        ExprKind::Block(b) => consume_walk_block(ctx, b, errors),
+        ExprKind::With { bindings, body } => {
+            for wb in bindings { consume_walk_expr(ctx, &wb.handler, errors); }
+            consume_walk_block(ctx, body, errors);
+        }
+        ExprKind::Supervised { body, cancel } => {
+            if let Some(c) = cancel { consume_walk_expr(ctx, c, errors); }
+            consume_walk_block(ctx, body, errors);
+        }
+        ExprKind::Forbid { body, .. } | ExprKind::Realtime { body, .. } => {
+            consume_walk_block(ctx, body, errors);
+        }
+        ExprKind::Detach(b) => consume_walk_isolated_block(ctx, &[], b, errors),
+        ExprKind::Spawn(inner) => consume_walk_isolated_expr(ctx, &[], inner, errors),
+
+        // ─── Литералы-агрегаты ───
+        ExprKind::TupleLit(elems) => {
+            for el in elems { consume_walk_expr(ctx, el, errors); }
+        }
+        ExprKind::ArrayLit(elems) => {
+            for el in elems {
+                match el {
+                    ArrayElem::Item(ex) | ArrayElem::Spread(ex) =>
+                        consume_walk_expr(ctx, ex, errors),
+                }
+            }
+        }
+        ExprKind::MapLit { elems, .. } => {
+            for el in elems {
+                match el {
+                    MapElem::Pair(k, v) => {
+                        consume_walk_expr(ctx, k, errors);
+                        consume_walk_expr(ctx, v, errors);
+                    }
+                    MapElem::Spread(ex) => consume_walk_expr(ctx, ex, errors),
+                }
+            }
+        }
+        ExprKind::RecordLit { fields, .. } => {
+            for f in fields {
+                if let Some(v) = &f.value { consume_walk_expr(ctx, v, errors); }
+            }
+        }
+        ExprKind::TaggedTemplate { tag, args, .. } => {
+            consume_walk_expr(ctx, tag, errors);
+            for a in args { consume_walk_expr(ctx, a, errors); }
+        }
+
+        // ─── Closure / handler — изолированный walk ───
+        ExprKind::Lambda { params, body, .. } => {
+            let names: Vec<String> = params.iter().map(|p| p.name.clone()).collect();
+            consume_walk_isolated_expr(ctx, &names, body, errors);
+        }
+        ExprKind::ClosureLight { params, body } => {
+            let names: Vec<String> = params.iter().map(|p| p.name.clone()).collect();
+            match body {
+                ClosureBody::Expr(ex) => consume_walk_isolated_expr(ctx, &names, ex, errors),
+                ClosureBody::Block(b) => consume_walk_isolated_block(ctx, &names, b, errors),
+            }
+        }
+        ExprKind::ClosureFull(sig) => {
+            let names: Vec<String> = sig.params.iter().map(|p| p.name.clone()).collect();
+            consume_walk_fnbody_isolated(ctx, &names, &sig.body, errors);
+        }
+        ExprKind::HandlerLit { methods, .. } => {
+            for m in methods {
+                let names: Vec<String> = m.params.iter().map(|p| p.name.clone()).collect();
+                match &m.body {
+                    HandlerMethodBody::Expr(ex) =>
+                        consume_walk_isolated_expr(ctx, &names, ex, errors),
+                    HandlerMethodBody::Block(b) =>
+                        consume_walk_isolated_block(ctx, &names, b, errors),
+                }
+            }
+        }
+
+        // ─── Контрактные кванторы — ghost, walk body для use-detection ───
+        ExprKind::Forall { body, range, .. } | ExprKind::Exists { body, range, .. } => {
+            consume_walk_expr(ctx, range, errors);
+            consume_walk_expr(ctx, body, errors);
+        }
+    }
+}
+
+/// if-then-else branch join (общий для `If`).
+fn consume_walk_if(ctx: &mut ConsumeCtx, then: &Block,
+                   else_: &Option<ElseBranch>, errors: &mut Vec<Diagnostic>) {
+    let saved = ctx.states.clone();
+    consume_walk_block(ctx, then, errors);
+    let then_states = ctx.states.clone();
+    ctx.states = saved.clone();
+    consume_walk_else(ctx, else_, errors);
+    let else_states = ctx.states.clone();
+    ctx.states = consume_join(&saved, &then_states, &else_states);
+}
+
+fn consume_walk_else(ctx: &mut ConsumeCtx, else_: &Option<ElseBranch>,
+                     errors: &mut Vec<Diagnostic>) {
+    match else_ {
+        Some(ElseBranch::Block(b)) => consume_walk_block(ctx, b, errors),
+        Some(ElseBranch::If(e)) => consume_walk_expr(ctx, e, errors),
+        None => {}
+    }
+}
+
+fn consume_walk_trailing(ctx: &mut ConsumeCtx, t: &Trailing,
+                         errors: &mut Vec<Diagnostic>) {
+    match t {
+        Trailing::Block(b) => consume_walk_isolated_block(ctx, &[], b, errors),
+        Trailing::Fn(sig) => {
+            let names: Vec<String> = sig.params.iter().map(|p| p.name.clone()).collect();
+            consume_walk_fnbody_isolated(ctx, &names, &sig.body, errors);
+        }
+        Trailing::LegacyBlockWithParams(tb) => {
+            let names: Vec<String> = tb.params.iter().map(|p| p.name.clone()).collect();
+            consume_walk_isolated_block(ctx, &names, &tb.body, errors);
+        }
+    }
+}
+
+fn consume_walk_fnbody_isolated(ctx: &mut ConsumeCtx, params: &[String],
+                                body: &FnBody, errors: &mut Vec<Diagnostic>) {
+    match body {
+        FnBody::Block(b) => consume_walk_isolated_block(ctx, params, b, errors),
+        FnBody::Expr(e) => consume_walk_isolated_expr(ctx, params, e, errors),
+        FnBody::External => {}
+    }
+}
+
 fn check_defer_bodies(module: &Module, errors: &mut Vec<Diagnostic>) {
     // Lookup callee effects: fn_name -> effects (РґР»СЏ suspend detection).
     let mut fn_effects: HashMap<String, Vec<TypeRef>> = HashMap::new();
