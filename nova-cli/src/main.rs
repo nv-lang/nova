@@ -971,6 +971,52 @@ fn ensure_entry_peer_path(module: &mut nova_codegen::ast::Module, file_path: &Pa
     });
 }
 
+/// Plan 81 Ф.8.1: построить `SourceMap` из `module.peer_files` для
+/// cross-file диагностики. Каждый peer-файл получил уникальный `file_id`
+/// в резолвере (`parse_with_file_id`); рендер через `render_with_map`
+/// показывает ошибку из импортированного модуля в **правильном** файле
+/// со сниппетом (а не byte-offset, применённый к entry-исходнику).
+///
+/// Источники peer'ов перечитываются с диска — дёшево, вызывается только
+/// при наличии ошибок. file_id'ы резолвера сплошные (1..N), регистрация
+/// в порядке id совпадает с авто-инкрементом `SourceMap::register`.
+fn build_source_map(
+    module: &nova_codegen::ast::Module,
+    entry_src: &str,
+    entry_path: &Path,
+) -> nova_codegen::diag::SourceMap {
+    let mut map = nova_codegen::diag::SourceMap::new();
+    map.register_main(entry_path.to_path_buf(), entry_src.to_string());
+    let max_fid = module
+        .peer_files
+        .iter()
+        .map(|p| p.file_id)
+        .max()
+        .unwrap_or(0);
+    for fid in 1..=max_fid {
+        let (p, s) = module
+            .peer_files
+            .iter()
+            .find(|pf| pf.file_id == fid)
+            .map(|pf| {
+                let src = std::fs::read_to_string(&pf.path).unwrap_or_default();
+                (pf.path.clone(), src)
+            })
+            .unwrap_or_else(|| (PathBuf::from("<unknown>"), String::new()));
+        // Снять Windows verbatim-префикс `\\?\` (peer-пути канонизированы
+        // резолвером) — чтобы диагностика показывала чистый путь.
+        let p = {
+            let s = p.to_string_lossy();
+            match s.strip_prefix(r"\\?\") {
+                Some(rest) => PathBuf::from(rest),
+                None => p.clone(),
+            }
+        };
+        map.register(p, s);
+    }
+    map
+}
+
 fn default_tmp_dir() -> PathBuf {
     if cfg!(target_os = "windows") {
         if let Some(temp) = std::env::var_os("TEMP") {
@@ -1325,7 +1371,12 @@ fn check_one_file(path: &Path, verbose: bool) -> CheckResult {
 
     // 3. types::check_module
     if let Err(errs) = nova_codegen::types::check_module(&module) {
-        let msgs: Vec<String> = errs.iter().map(|d| d.render(&src, &path_str)).collect();
+        // Plan 81 Ф.8.1: cross-file рендер — ошибка из импортированного
+        // модуля показывается в правильном файле (через SourceMap по
+        // file_id), а не byte-offset'ом в entry-исходнике.
+        let smap = build_source_map(&module, &src, path);
+        let msgs: Vec<String> =
+            errs.iter().map(|d| d.render_with_map(&smap)).collect();
         return CheckResult {
             file: path.to_path_buf(),
             error: Some(msgs.join("\n")),
