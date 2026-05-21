@@ -1,0 +1,10 @@
+// EXPECT_COMPILE_ERROR E7310
+//
+// Plan 79 Ф.2: a non-generic type used with type arguments. `Marker`
+// declares no generic parameters, so `Marker[int]` is invalid.
+
+module nova_tests.plan79.arity_nongeneric_type
+
+type Marker { tag int }
+
+fn describe(m Marker[int]) -> int => m.tag
