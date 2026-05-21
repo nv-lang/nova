@@ -10209,6 +10209,19 @@ G/H). ~3700 LOC implementation cumulative.
     инициатива (не Plan 59 Result-scope).
 - **Приоритет:** закрыто — основной legacy `sum_schemas` HashMap
   для Result устранён; остаток реклассифицирован как infrastructure.
+- **Plan 78 Ф.1 (2026-05-22) — финализация переклассификации.**
+  Design-фаза подтвердила: `init_hardcoded_baseline().method_routing`
+  **нельзя** механически вывести из `.nv`-деклараций (контрпример
+  `Result.ok()` vs `Result.err()` — неразличимые сигнатуры
+  `-> Option[...]`, но первый трамплин, второй inline). Решение
+  (вариант 2, владелец плана): `method_routing` — **легитимный реестр
+  C-реализации** рантайма, того же класса что `runtime_registry.rs` /
+  `external_registry.rs` (методы Option/Result физически реализованы
+  C-функциями в `nova_rt/array.h`). НЕ хардкод-зеркало декларации, НЕ
+  подлежит удалению. «Отдельная задача» (рефактор method-routing) —
+  снята: routing легитимен. Переклассифицирующий doc-комментарий —
+  в `sum_schema_registry.rs::init_hardcoded_baseline`. Остаётся Plan 78
+  Ф.2 — `variants`-зеркало (`sum_schemas` pre-populate).
 
 ### [M-runtime-none-error-deferred] ✅ RESOLVED (Plan 62.C.bis, 2026-05-20)
 - **Где:** `std/prelude/errors.nv` + `std/prelude.nv` facade.
