@@ -125,7 +125,10 @@ pub fn resolve_imports_inline_ex(
         .find_map(|a| if let crate::ast::ModuleAttrKind::PartialPrelude(names) = &a.kind {
             Some(names.clone())
         } else { None });
-    let mut initial_imports = module.imports.clone();
+    // Plan 81 Ф.10: prelude auto-imports collected separately from the
+    // entry's own (and sibling peers') `import` statements — prelude is
+    // resolved once and shared by every entry-group peer (see below).
+    let mut prelude_imports: Vec<Import> = Vec::new();
     if !is_prelude_self && !has_no_prelude {
         if let Some(names) = partial_prelude_names {
             // Plan 62.F: `partial_prelude(a, b, ...)` — auto-import только
@@ -149,7 +152,7 @@ pub fn resolve_imports_inline_ex(
                         sub_path.display(),
                     ));
                 }
-                initial_imports.push(Import {
+                prelude_imports.push(Import {
                     path: vec!["std".into(), "prelude".into(), name.clone()],
                     items: None,
                     alias: None,
@@ -190,7 +193,7 @@ pub fn resolve_imports_inline_ex(
                     if !sanitized.is_empty() {
                         let pin_path = stdlib_dir.join("prelude").join(format!("{}.nv", sanitized));
                         if pin_path.exists() && pin_path.is_file() {
-                            initial_imports.push(Import {
+                            prelude_imports.push(Import {
                                 path: vec!["std".into(), "prelude".into(), sanitized.clone()],
                                 items: None,
                                 alias: None,
@@ -206,7 +209,7 @@ pub fn resolve_imports_inline_ex(
             if !edition_pin_used {
                 let prelude_path = stdlib_dir.join("prelude.nv");
                 if prelude_path.exists() && prelude_path.is_file() {
-                    initial_imports.push(Import {
+                    prelude_imports.push(Import {
                         path: vec!["std".into(), "prelude".into()],
                         items: None,
                         alias: None,
@@ -223,8 +226,157 @@ pub fn resolve_imports_inline_ex(
     // of imported folder-modules. Applied to entry's module.attrs at end.
     let mut inherited_attrs: Vec<crate::ast::ModuleAttr> = Vec::new();
 
-    // Plan 42.15: accumulator visible-имён для entry's PeerFile.
-    let mut entry_visible: HashSet<String> = HashSet::new();
+    // Plan 81 Ф.10: entry-folder-module peer collection.
+    //
+    // The caller parses only the entry FILE (`parser::parse` → one
+    // `Module`, `MAIN_FILE_ID`). If that file is a peer of a folder-module,
+    // its sibling peers must also be compiled — they share the module's
+    // namespace and the entry alone is incomplete. `resolve_one` collects
+    // peers for *imported* folder-modules; here we do the equivalent for
+    // the *entry* folder-module.
+    //
+    // A file in `entry_dir` is a sibling peer iff it declares the **same**
+    // `module` path as the entry. This condition is false for every
+    // single-file entry and every `_use.nv` test entry (each declares a
+    // unique per-file module), so this branch is inert for all current
+    // entry shapes — zero regression.
+    //
+    // Each sibling gets a distinct `file_id` (per-peer diagnostics +
+    // per-peer import isolation), is registered as a `PeerFile` with
+    // `is_entry_module = true` (it *is* part of the compiled module), and
+    // its items — **including `Item::Test`** — are merged into
+    // `module.items` (an entry folder-module's own tests must run, unlike
+    // imported peers whose tests are skipped).
+    struct SiblingPeer {
+        path: PathBuf,
+        file_id: FileId,
+        module: Module,
+    }
+    let mut siblings: Vec<SiblingPeer> = Vec::new();
+    {
+        let entry_canon = entry_path.canonicalize().ok();
+        let target = current_target_os();
+        if let Ok(entries) = std::fs::read_dir(&entry_dir) {
+            let mut sib_paths: Vec<PathBuf> = entries
+                .filter_map(|e| e.ok())
+                .map(|e| e.path())
+                .filter(|p| {
+                    p.is_file()
+                        && p.extension().and_then(|s| s.to_str()) == Some("nv")
+                })
+                .filter(|p| {
+                    // Exclude the entry file itself.
+                    match (p.canonicalize().ok(), &entry_canon) {
+                        (Some(pc), Some(ec)) => &pc != ec,
+                        _ => p.as_path() != entry_path,
+                    }
+                })
+                .filter(|p| {
+                    // Mirror `resolve_module_paths` peer filters: `_test`
+                    // peers only in test mode; OS-suffix peers only for the
+                    // current target.
+                    if let Some(stem) = p.file_stem().and_then(|s| s.to_str()) {
+                        let core = stem.strip_suffix("_test").unwrap_or(stem);
+                        if !include_test_peers && core != stem {
+                            return false;
+                        }
+                        if !peer_active_for_target(core, target) {
+                            return false;
+                        }
+                    }
+                    true
+                })
+                .filter(|p| {
+                    // Sibling = declares the SAME module path as the entry.
+                    read_module_decl(p).as_deref() == Some(module.name.as_slice())
+                })
+                .collect();
+            // Alphabetical → deterministic file_id assignment.
+            sib_paths.sort();
+            for sp in sib_paths {
+                let src = std::fs::read_to_string(&sp).map_err(|e| {
+                    anyhow!("failed to read entry-folder peer {}: {}", sp.display(), e)
+                })?;
+                let fid = next_file_id;
+                next_file_id += 1;
+                let sib_mod = parser::parse_with_file_id(&src, fid).map_err(|d| {
+                    let (line, col) = byte_to_line_col(&src, d.span.start);
+                    anyhow!(
+                        "in entry-folder peer '{}' ({}): {}:{}: {}",
+                        module.name.join("."),
+                        sp.display(),
+                        line,
+                        col,
+                        d.message
+                    )
+                })?;
+                // Plan 42.12: inactive `#cfg` peer — skip entirely.
+                if !cfg_active(&sib_mod) {
+                    continue;
+                }
+                let canon = sp.canonicalize().unwrap_or(sp);
+                siblings.push(SiblingPeer { path: canon, file_id: fid, module: sib_mod });
+            }
+        }
+    }
+
+    // Plan 42.10 + Ф.10: `_module.nv` config peer of the entry folder —
+    // propagate its module-level attrs (Forbid / Cfg / Doc) onto the
+    // compiled module, exactly as `resolve_one` does for imported peers.
+    for sib in &siblings {
+        let is_module_config = sib.path.file_stem()
+            .and_then(|s| s.to_str())
+            .map_or(false, |stem| stem == "_module");
+        if is_module_config {
+            for attr in &sib.module.attrs {
+                inherited_attrs.push(attr.clone());
+            }
+        }
+    }
+
+    // Register sibling PeerFiles (snapshot of items before merge;
+    // `imported_item_names` filled after import resolution below).
+    for sib in &siblings {
+        peer_files.push(PeerFile {
+            path: sib.path.clone(),
+            file_id: sib.file_id,
+            imports: sib.module.imports.clone(),
+            items_here: sib.module.items.clone(),
+            imported_item_names: HashSet::new(),
+            is_entry_module: true,
+            module_name: sib.module.name.clone(),
+        });
+    }
+
+    // Plan 81 Ф.10: per-peer visible-name accumulators.
+    //   index 0      — entry's own imports.
+    //   index 1      — prelude (auto-import; shared by ALL entry-group
+    //                  peers — resolved once, the `visited` set prevents
+    //                  re-resolution so each peer cannot re-derive it).
+    //   index 2 + i  — sibling `siblings[i]`'s own imports.
+    // Rule C: a peer sees only its OWN imports — accumulators are NOT
+    // shared between peers; prelude (index 1) is the one deliberate
+    // exception, mirroring how the entry receives prelude auto-import.
+    let mut visible_accs: Vec<HashSet<String>> =
+        vec![HashSet::new(); 2 + siblings.len()];
+
+    // Build the import work-list: (import, importer-file path, acc index).
+    // Order: entry's own imports, then each sibling's, then prelude last —
+    // keeps `merged_items` in «imported-then-prelude» order (identical to
+    // pre-Ф.10 for single-file entries: no siblings → entry imports then
+    // prelude).
+    let mut import_work: Vec<(Import, PathBuf, usize)> = Vec::new();
+    for imp in &module.imports {
+        import_work.push((imp.clone(), entry_path.to_path_buf(), 0));
+    }
+    for (si, sib) in siblings.iter().enumerate() {
+        for imp in &sib.module.imports {
+            import_work.push((imp.clone(), sib.path.clone(), 2 + si));
+        }
+    }
+    for imp in &prelude_imports {
+        import_work.push((imp.clone(), entry_path.to_path_buf(), 1));
+    }
 
     // Plan 81 Ф.8.2: multi-error recovery. Резолв НЕ прерывается на
     // первой ошибке импорта — собираем все и репортим разом. Между
@@ -235,13 +387,13 @@ pub fn resolve_imports_inline_ex(
     // могут остаться частичными — это безвредно: при наличии ошибок
     // дальнейший пайплайн (type-check) не запускается.
     let mut import_errors: Vec<String> = Vec::new();
-    for imp in &initial_imports {
+    for (imp, importer, acc_idx) in &import_work {
         let in_progress_snap = in_progress.clone();
         let import_chain_snap = import_chain.clone();
         let visited_snap = visited.clone();
         let res = resolve_one(
             imp,
-            entry_path,
+            importer,
             &entry_dir,
             repo,
             stdlib_dir,
@@ -253,7 +405,7 @@ pub fn resolve_imports_inline_ex(
             &mut next_file_id,
             include_test_peers,
             &mut inherited_attrs,
-            &mut entry_visible,
+            &mut visible_accs[*acc_idx],
         );
         if let Err(e) = res {
             import_errors.push(format!("{}", e));
@@ -270,9 +422,20 @@ pub fn resolve_imports_inline_ex(
         ));
     }
 
-    // Plan 42.15: записываем visible-имена в entry's PeerFile (file_id=0).
+    // Plan 81 Ф.10: write per-peer `imported_item_names`. Each entry-group
+    // peer sees the names brought by its OWN imports plus prelude (index 1).
+    let prelude_visible = visible_accs[1].clone();
     if let Some(entry_pf) = peer_files.iter_mut().find(|p| p.file_id == MAIN_FILE_ID) {
-        entry_pf.imported_item_names = entry_visible;
+        let mut s = std::mem::take(&mut visible_accs[0]);
+        s.extend(prelude_visible.iter().cloned());
+        entry_pf.imported_item_names = s;
+    }
+    for (si, sib) in siblings.iter().enumerate() {
+        if let Some(pf) = peer_files.iter_mut().find(|p| p.file_id == sib.file_id) {
+            let mut s = std::mem::take(&mut visible_accs[2 + si]);
+            s.extend(prelude_visible.iter().cloned());
+            pf.imported_item_names = s;
+        }
     }
 
     // Entry done — promote из in_progress → visited.
@@ -280,11 +443,14 @@ pub fn resolve_imports_inline_ex(
     visited.insert(entry_key);
     import_chain.pop();
 
-    // Prepend merged items: imported сначала, потом user code.
-    // Это важно для bootstrap single-pass codegen — typedef'ы должны
-    // появиться ДО use-site.
+    // Prepend merged items: imported сначала, потом user code (entry +
+    // sibling peers). Это важно для bootstrap single-pass codegen —
+    // typedef'ы должны появиться ДО use-site.
     let mut new_items = merged_items;
     new_items.append(&mut module.items);
+    for sib in &mut siblings {
+        new_items.append(&mut sib.module.items);
+    }
     module.items = new_items;
 
     // Plan 42 Sub-plan 42.4 шаг 2: переносим собранные PeerFile в module.
@@ -741,6 +907,65 @@ pub fn scan_module_decl(src: &str) -> Option<Vec<String>> {
 fn read_module_decl(path: &Path) -> Option<Vec<String>> {
     let src = std::fs::read_to_string(path).ok()?;
     scan_module_decl(&src)
+}
+
+/// Plan 42 D29 rev-3 / Plan 81 Ф.10: is `path` a peer of a folder-module?
+///
+/// Folder-module = every `.nv` file in `path`'s parent directory declares
+/// the **same** `module X`. A single-file module is the opposite: each
+/// file declares its own unique module. Lightweight — scans only the
+/// first `module` line of each peer (no full parse), and filters
+/// OS-suffix peers (`_windows.nv` …) inactive for the current target so
+/// they do not skew the detection.
+///
+/// Canonical detector (Plan 42.17 Ф.3 consolidation). Used by
+/// `manifest::check_module_path` — so `nova check` / `nova build` validate
+/// a folder-module *entry* against the folder-module D29 rule rather than
+/// the single-file rule — and by the test-runner directory walk.
+pub fn is_folder_module_peer(path: &Path) -> bool {
+    let parent = match path.parent() {
+        Some(p) => p,
+        None => return false,
+    };
+    let target = current_target_os();
+    let entries: Vec<PathBuf> = match std::fs::read_dir(parent) {
+        Ok(it) => it
+            .filter_map(|e| e.ok())
+            .map(|e| e.path())
+            .filter(|p| {
+                if !p.is_file() {
+                    return false;
+                }
+                if p.extension().and_then(|s| s.to_str()) != Some("nv") {
+                    return false;
+                }
+                if let Some(stem) = p.file_stem().and_then(|s| s.to_str()) {
+                    let core_stem = stem.strip_suffix("_test").unwrap_or(stem);
+                    if !peer_active_for_target(core_stem, target) {
+                        return false;
+                    }
+                }
+                true
+            })
+            .collect(),
+        Err(_) => return false,
+    };
+    if entries.len() < 2 {
+        return false;
+    }
+    let mut decls: Vec<Vec<String>> = Vec::with_capacity(entries.len());
+    for entry in &entries {
+        let src = match std::fs::read_to_string(entry) {
+            Ok(s) => s,
+            Err(_) => return false,
+        };
+        match scan_module_decl(&src) {
+            Some(d) => decls.push(d),
+            None => return false,
+        }
+    }
+    let first = &decls[0];
+    decls.iter().all(|d| d == first)
 }
 
 /// Plan 42.09: rename item (Type/Fn/Const) при selective re-import.
@@ -1283,5 +1508,168 @@ fn try_parse_module_decl(line: &str) -> Option<String> {
         None
     } else {
         Some(path)
+    }
+}
+
+#[cfg(test)]
+mod entry_folder_module_tests {
+    //! Plan 81 Ф.10: when the compiled entry file is itself a peer of a
+    //! folder-module, `resolve_imports_inline_ex` must collect the sibling
+    //! peers, register them with distinct `file_id`s, merge their items,
+    //! and resolve each peer's imports into ITS OWN visible scope
+    //! (Rule C — per-peer import isolation).
+    use super::*;
+
+    /// Unique scratch directory under the OS temp dir.
+    fn unique_tmp(tag: &str) -> PathBuf {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        std::env::temp_dir().join(format!(
+            "nova_p81_{}_{}_{}",
+            tag,
+            std::process::id(),
+            nanos
+        ))
+    }
+
+    fn write_file(path: &Path, content: &str) {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).expect("create_dir_all");
+        }
+        std::fs::write(path, content).expect("write fixture file");
+    }
+
+    #[test]
+    fn entry_folder_module_collects_siblings_with_per_peer_isolation() {
+        // proj/m/app.nv  — entry peer (`fn main`), uses sibling's `helper`.
+        // proj/m/lib.nv  — sibling peer, imports `dep` and uses `dep_fn`.
+        // proj/dep.nv    — a separate single-file module.
+        let root = unique_tmp("f10");
+        let proj = root.join("proj");
+        let app = proj.join("m").join("app.nv");
+        let lib = proj.join("m").join("lib.nv");
+        let dep = proj.join("dep.nv");
+
+        write_file(&app, "module m\n\nfn main() -> int => helper()\n");
+        write_file(
+            &lib,
+            "module m\n\nimport dep.{dep_fn}\n\nfn helper() -> int => dep_fn()\n",
+        );
+        write_file(&dep, "module dep\n\nexport fn dep_fn() -> int => 7\n");
+
+        let src = std::fs::read_to_string(&app).expect("read entry");
+        let mut module = parser::parse(&src).expect("entry parses");
+        // Nonexistent stdlib dir → prelude auto-import is skipped, keeping
+        // this test hermetic (no dependency on the real std/ tree).
+        let stdlib = root.join("no_stdlib");
+
+        resolve_imports_inline_ex(&app, &mut module, &proj, &stdlib, false)
+            .expect("entry-folder-module resolves");
+
+        // Exactly two entry-group peers: app (MAIN_FILE_ID) + lib (sibling).
+        let entry_peers: Vec<&PeerFile> = module
+            .peer_files
+            .iter()
+            .filter(|p| p.is_entry_module)
+            .collect();
+        assert_eq!(
+            entry_peers.len(),
+            2,
+            "expected entry + 1 sibling peer, got {}",
+            entry_peers.len()
+        );
+
+        // The sibling got a distinct, non-MAIN file_id.
+        let sib = module
+            .peer_files
+            .iter()
+            .find(|p| p.is_entry_module && p.file_id != MAIN_FILE_ID)
+            .expect("sibling peer registered");
+        assert!(
+            sib.path.ends_with("lib.nv"),
+            "sibling peer should be lib.nv, got {}",
+            sib.path.display()
+        );
+        assert_eq!(sib.module_name, vec!["m".to_string()]);
+
+        // Sibling items AND the sibling's imported items are merged into
+        // `module.items` for codegen completeness.
+        let fn_names: HashSet<String> = module
+            .items
+            .iter()
+            .filter_map(|it| match it {
+                Item::Fn(f) => Some(f.name.clone()),
+                _ => None,
+            })
+            .collect();
+        assert!(fn_names.contains("main"), "entry's `main` present");
+        assert!(fn_names.contains("helper"), "sibling's `helper` merged");
+        assert!(
+            fn_names.contains("dep_fn"),
+            "sibling's imported `dep_fn` merged for codegen"
+        );
+
+        // Rule C — per-peer import isolation: `dep_fn` is visible to the
+        // SIBLING (it wrote `import dep.{dep_fn}`), but NOT to the entry
+        // (which imported nothing).
+        assert!(
+            sib.imported_item_names.contains("dep_fn"),
+            "sibling must see its own import `dep_fn`"
+        );
+        let entry_pf = module
+            .peer_files
+            .iter()
+            .find(|p| p.file_id == MAIN_FILE_ID)
+            .expect("entry peer present");
+        assert!(
+            !entry_pf.imported_item_names.contains("dep_fn"),
+            "entry must NOT see the sibling's import (Rule C isolation)"
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn single_file_entry_collects_no_siblings() {
+        // A lone file whose directory contains another `.nv` declaring a
+        // DIFFERENT module must NOT be treated as a folder-module — the
+        // Ф.10 detection branch stays inert (zero-regression guarantee).
+        let root = unique_tmp("f10solo");
+        let proj = root.join("proj");
+        let solo = proj.join("solo.nv");
+        let other = proj.join("other.nv");
+
+        write_file(&solo, "module solo\n\nfn main() -> int => 0\n");
+        write_file(&other, "module other\n\nfn unrelated() -> int => 1\n");
+
+        let src = std::fs::read_to_string(&solo).expect("read entry");
+        let mut module = parser::parse(&src).expect("entry parses");
+        let stdlib = root.join("no_stdlib");
+
+        resolve_imports_inline_ex(&solo, &mut module, &proj, &stdlib, false)
+            .expect("single-file entry resolves");
+
+        assert_eq!(
+            module.peer_files.len(),
+            1,
+            "single-file entry must register exactly one peer (itself)"
+        );
+        assert!(module.peer_files[0].is_entry_module);
+        let fn_names: HashSet<String> = module
+            .items
+            .iter()
+            .filter_map(|it| match it {
+                Item::Fn(f) => Some(f.name.clone()),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            !fn_names.contains("unrelated"),
+            "a file declaring a different module must not be pulled in"
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

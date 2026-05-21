@@ -337,7 +337,13 @@ pub fn check_module_path(
     file: &Path,
     declared: &[String],
 ) -> Result<(), String> {
-    check_module_path_with_kind(file, declared, false)
+    // Plan 81 Ф.10: auto-detect whether `file` is a peer of a folder-module
+    // so a folder-module *entry* (`nova check` / `nova build` pointed at one
+    // of its peers) is validated against the folder-module D29 rule, not the
+    // single-file rule. For every single-file entry the detector returns
+    // false → identical to the pre-Ф.10 behaviour.
+    let is_folder_module = crate::imports::is_folder_module_peer(file);
+    check_module_path_with_kind(file, declared, is_folder_module)
 }
 
 pub fn check_module_path_with_kind(
@@ -348,7 +354,22 @@ pub fn check_module_path_with_kind(
     let Some(manifest) = find_manifest(file) else {
         return Ok(());
     };
-    let expected_legacy = expected_module_path(file, &manifest);
+    // Plan 81 Ф.10: a folder-module peer's legacy (rev-1) declaration is the
+    // path to the FOLDER — every peer of the folder shares one declaration,
+    // so the file-stem segment is dropped. This matches the universal
+    // folder-module convention (peer_recur, std/prelude/, …) and the
+    // `import` path that addresses the folder.
+    let expected_legacy = {
+        let base = expected_module_path(file, &manifest);
+        if is_folder_module {
+            base.map(|mut v| {
+                v.pop();
+                v
+            })
+        } else {
+            base
+        }
+    };
     let expected_rev3 = expected_module_path_rev3(file, &manifest, is_folder_module);
 
     // rev-3 first (preferred); fallback rev-1 (legacy compatibility).
