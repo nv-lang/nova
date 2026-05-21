@@ -940,9 +940,17 @@ pub enum Stmt {
         span: Span,
     },
     /// Plan 33.3 (D24): `assume <bool>` — escape hatch для FFI / external
-    /// knowledge. SMT принимает как axiom (без proof). В debug — runtime
-    /// check; в release — стирается. Warning категории `trust-introduced`
-    /// вне `#trusted` функции.
+    /// knowledge. В debug — runtime check; в release — стирается.
+    ///
+    /// Plan 33.8 Ф.3.1: вне `#trusted` функции эмитится lint-warning
+    /// `trust-introduced` (lints.rs `check_assume_trust`).
+    ///
+    /// V1: `assume` НЕ интегрирован в SMT-scope верификатора (формула не
+    /// ассертится как аксиома). Корректная интеграция требует
+    /// flow-sensitive верификации (assume на позиции N ограничивает только
+    /// VC после N) — текущая модель verify_fn не flow-sensitive. Полная
+    /// интеграция отложена (Plan 33.8 Ф.3.2 → V2). Текущее поведение
+    /// soundness-safe: assume просто не влияет на доказательства.
     Assume {
         expr: Expr,
         span: Span,

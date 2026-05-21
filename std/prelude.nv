@@ -12,10 +12,9 @@
 //   - 62.B complete (partial): panic/exit/assert/debug_assert перенесены
 //     в std/prelude/runtime.nv. print/println DEFERRED — variadic +
 //     type-polymorphic dispatch, см. std/prelude/runtime.nv DEFER comment.
-//   - 62.C complete (partial): RuntimeError + ReadBufferError перенесены
-//     в std/prelude/errors.nv. RuntimeNoneError DEFERRED — bootstrap
-//     parser не поддерживает empty-body sum syntax (см.
-//     std/prelude/errors.nv DEFER comment).
+//   - 62.C complete: RuntimeError + ReadBufferError + RuntimeNoneError
+//     перенесены в std/prelude/errors.nv. RuntimeNoneError добавлен
+//     62.C.bis (2026-05-20) после P1-B bodyless-type support в parser.
 //   - 62.D complete (partial, non-opaque scope): Iter[T] protocol
 //     объявлен formally в std/prelude/collections.nv (раньше был только
 //     structural duck-typing per D58). Range / RangeIter re-export
@@ -58,13 +57,13 @@ export import std.prelude.core.{Option, Some, None, Result, Ok, Err, Error, Orde
 // сохраняется как bootstrap implementation (см. std/prelude/runtime.nv).
 export import std.prelude.runtime.{panic, exit, assert, debug_assert, print, println}
 
-// Plan 62.C: re-export error types из std.prelude.errors.
-// RuntimeError (6 variants) + ReadBufferError (1 variant). Type name +
-// variant constructors — все перечислены selectively (см. 62.A note про
-// wildcard и multi-line). RuntimeNoneError НЕ перенесён — bootstrap
-// parser не поддерживает empty-body sum syntax (см.
-// std/prelude/errors.nv DEFER comment).
-export import std.prelude.errors.{RuntimeError, DivByZero, Overflow, IndexOutOfBounds, TypeMismatch, AssertFailed, NoHandler, ReadBufferError, UnexpectedEnd}
+// Plan 62.C / 62.C.bis: re-export error types из std.prelude.errors.
+// RuntimeError (6 variants) + ReadBufferError (1 variant) +
+// RuntimeNoneError (unit-type, D85 — ошибка `Option!!` на None). Type
+// name + variant constructors — все перечислены selectively (см. 62.A
+// note про wildcard и multi-line). RuntimeNoneError добавлен 62.C.bis
+// (2026-05-20) после P1-B bodyless-type support в parser.
+export import std.prelude.errors.{RuntimeError, DivByZero, Overflow, IndexOutOfBounds, TypeMismatch, AssertFailed, NoHandler, ReadBufferError, UnexpectedEnd, RuntimeNoneError}
 
 // Plan 62.D non-opaque: re-export Iter[T] protocol formal declaration из
 // std.prelude.collections. До 62.D `Iter[T]` существовал ТОЛЬКО как
@@ -174,8 +173,11 @@ export import std.prelude.effects.{Fail, Time, Mem}
 ///     Ф.2.7-revert (D122 amended — эффекты в protocol-методах
 ///     разрешены под mono-dispatch); декларации используют форму
 ///     `try_from(t T) -> Result[Self, E]` (D77, migration path b).
+///   - 9 = Plan 62.C.bis done (2026-05-20): RuntimeNoneError
+///     (unit-type, D85 — ошибка `Option!!` на None) formally
+///     задекларирован в std/prelude/errors.nv + re-export через facade.
+///     Блокер снят Plan 72 P1-B (bodyless-type support в parser).
 ///     Remaining deferred sub-plans: 62.A.bis sum_schemas removal
-///     (ждёт Plan 59 Ф.7.5 increment 2), 62.C.bis RuntimeNoneError
-///     (ждёт empty-sum syntax, Plan 72 P1-B).
+///     (ждёт Plan 59 Ф.7.5 increment 2).
 #stable(since = "0.1")
-export const PRELUDE_VERSION int = 8
+export const PRELUDE_VERSION int = 9

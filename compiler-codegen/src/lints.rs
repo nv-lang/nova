@@ -32,6 +32,7 @@ pub fn lint_module(m: &Module) -> Vec<LintWarning> {
         match item {
             Item::Fn(f) => {
                 check_fn(f, &mut warnings);
+                check_assume_trust(f, &mut warnings);
                 check_protocol_in_effect_position(f, &protocol_names, &effect_names, &mut warnings);
                 // Plan 52 Ф.2: map-литерал lints (dup-key, NaN-key) —
                 // требуют обхода выражений внутри тела функции.
@@ -816,6 +817,95 @@ fn check_fn(f: &FnDecl, out: &mut Vec<LintWarning>) {
     }
 }
 
+/// Plan 33.8 Ф.3.1: `assume` вне `#trusted`-функции вводит непроверяемое
+/// допущение (rule `trust-introduced`). Внутри `#trusted` функции допущение
+/// разрешено молча — граница доверия объявлена явно.
+fn check_assume_trust(f: &FnDecl, out: &mut Vec<LintWarning>) {
+    if f.is_trusted {
+        return;
+    }
+    let mut spans: Vec<Span> = Vec::new();
+    if let FnBody::Block(b) = &f.body {
+        collect_assume_spans_block(b, &mut spans);
+    }
+    for sp in spans {
+        out.push(LintWarning {
+            rule: "trust-introduced",
+            diag: Diagnostic::new(
+                format!(
+                    "warning: `assume` в функции `{}` вводит непроверяемое \
+                     допущение [trust-introduced]: верификатор принимает его \
+                     без доказательства — ошибочное `assume` делает любой \
+                     контракт «доказуемым». Пометьте функцию `#trusted`, если \
+                     допущение намеренно (FFI / внешнее знание), либо докажите \
+                     факт через `assert_static`.",
+                    f.name
+                ),
+                sp,
+            ),
+        });
+    }
+}
+
+fn collect_assume_spans_block(b: &Block, out: &mut Vec<Span>) {
+    for s in &b.stmts {
+        collect_assume_spans_stmt(s, out);
+    }
+    if let Some(t) = &b.trailing {
+        collect_assume_spans_expr(t, out);
+    }
+}
+
+fn collect_assume_spans_stmt(s: &Stmt, out: &mut Vec<Span>) {
+    match s {
+        Stmt::Assume { span, .. } => out.push(*span),
+        Stmt::Expr(e) => collect_assume_spans_expr(e, out),
+        Stmt::Let(ld) => collect_assume_spans_expr(&ld.value, out),
+        Stmt::Return { value: Some(v), .. } => collect_assume_spans_expr(v, out),
+        Stmt::Throw { value, .. } => collect_assume_spans_expr(value, out),
+        Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. } => {
+            collect_assume_spans_expr(body, out)
+        }
+        _ => {}
+    }
+}
+
+fn collect_assume_spans_expr(e: &Expr, out: &mut Vec<Span>) {
+    match &e.kind {
+        ExprKind::Block(b) => collect_assume_spans_block(b, out),
+        ExprKind::If { then, else_, .. } => {
+            collect_assume_spans_block(then, out);
+            match else_ {
+                Some(ElseBranch::Block(b)) => collect_assume_spans_block(b, out),
+                Some(ElseBranch::If(ei)) => collect_assume_spans_expr(ei, out),
+                None => {}
+            }
+        }
+        ExprKind::IfLet { then, else_, .. } => {
+            collect_assume_spans_block(then, out);
+            match else_ {
+                Some(ElseBranch::Block(b)) => collect_assume_spans_block(b, out),
+                Some(ElseBranch::If(ei)) => collect_assume_spans_expr(ei, out),
+                None => {}
+            }
+        }
+        ExprKind::While { body, .. }
+        | ExprKind::WhileLet { body, .. }
+        | ExprKind::Loop { body, .. }
+        | ExprKind::For { body, .. }
+        | ExprKind::ParallelFor { body, .. } => collect_assume_spans_block(body, out),
+        ExprKind::Match { arms, .. } => {
+            for arm in arms {
+                match &arm.body {
+                    MatchArmBody::Expr(ae) => collect_assume_spans_expr(ae, out),
+                    MatchArmBody::Block(b) => collect_assume_spans_block(b, out),
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
 /// `Fail` без generic-параметра. Не путаем с `Fail[E]` (typed) или
 /// `Fail[any]` (явная erasure — программист сознательно opt-in).
 fn is_fail_untyped(ty: &TypeRef) -> bool {
@@ -852,6 +942,33 @@ mod tests {
         let m = parse("module foo\nexport fn parse(s str) Fail[ParseError] -> int => 0\n");
         let ws = lint_module(&m);
         assert_eq!(ws.len(), 0);
+    }
+
+    // Plan 33.8 Ф.3.3: `assume` вне `#trusted` → lint `trust-introduced`.
+    #[test]
+    fn warns_on_assume_outside_trusted() {
+        let m = parse(
+            "module foo\nfn risky(x int) -> int {\n    assume x >= 0\n    x + 1\n}\n",
+        );
+        let ws = lint_module(&m);
+        assert!(
+            ws.iter().any(|w| w.rule == "trust-introduced"),
+            "ожидался trust-introduced warning, получено: {:?}",
+            ws.iter().map(|w| w.rule).collect::<Vec<_>>()
+        );
+    }
+
+    // Plan 33.8 Ф.3.3: `assume` внутри `#trusted` — без warning.
+    #[test]
+    fn no_warning_on_assume_in_trusted() {
+        let m = parse(
+            "module foo\n#trusted\nfn ffi(x int) -> int {\n    assume x >= 0\n    x + 1\n}\n",
+        );
+        let ws = lint_module(&m);
+        assert!(
+            !ws.iter().any(|w| w.rule == "trust-introduced"),
+            "trust-introduced не должен эмититься внутри #trusted"
+        );
     }
 
     #[test]

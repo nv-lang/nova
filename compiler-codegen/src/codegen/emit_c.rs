@@ -1117,18 +1117,23 @@ impl CEmitter {
                 }
             }
         }
-        // Pre-populate sum_schemas with built-in Option and Result types.
+        // Pre-populate sum_schemas with built-in Option type.
+        //
+        // Plan 62.A.bis Ф.4 (2026-05-21): legacy hardcoded
+        // `sum_schemas["Result"]` УДАЛЁН. Result полностью
+        // мономорфизирован (Plan 59 Ф.7.5 increment 2) — `Result[T, E]`
+        // → `NovaRes_<ok>_<err>*`, pattern_bind_typed / pattern_cond
+        // резолвят (T,E) через `novares_ok_err` на mono-типе scrutinee
+        // (включая nested `Some(Ok/Err(..))` — фикс Plan 59 commit
+        // `2b184a3c06a`). Erased baseline-инстанс
+        // `NovaRes_nova_int_nova_str` hand-defined в `nova_rt/array.h`.
+        // См. docs/plans/59-tuple-monomorphization.md.
         {
             let mut opt_variants = HashMap::new();
             opt_variants.insert("Some".to_string(), vec!["nova_int".to_string()]);
             opt_variants.insert("None".to_string(), vec![]);
             self.sum_schemas.insert("Option".to_string(), opt_variants.clone());
             self.sum_schemas.insert("NovaOpt_nova_int".to_string(), opt_variants);
-
-            let mut res_variants = HashMap::new();
-            res_variants.insert("Ok".to_string(), vec!["nova_int".to_string()]);
-            res_variants.insert("Err".to_string(), vec!["nova_str".to_string()]);
-            self.sum_schemas.insert("Result".to_string(), res_variants);
         }
 
         // D26 prelude: Error — record для quick errors с msg.
@@ -3210,6 +3215,20 @@ impl CEmitter {
         {
             return format!("({box_ty}){{ .data = (void*)({val}), .vtable = &{inst} }}");
         }
+        // Plan 72 [M-protocol-return-wrap-relies-on-infer] closed: a value that
+        // cannot be boxed into the protocol fat pointer is a hard compile error
+        // (E7202), not a silent passthrough that would surface downstream as a
+        // confusing CC-FAIL. Reachable only when the concrete type is a
+        // non-pointer (primitive / Option / tuple) — the type-checker normally
+        // guarantees a record/sum implementer, so this is a strict guard.
+        self.strict_errors.borrow_mut().push(format!(
+            "error E7202: cannot box value into protocol `{}` — concrete type \
+             `{}` is not a boxable implementer\n  \
+             note: only record/sum types (heap pointers `Nova_X*`) can be \
+             stored in a protocol fat pointer (NovaBox)\n  \
+             help: pass/return a value of a type that implements `{}`",
+            proto, concrete_c, proto
+        ));
         val
     }
 
@@ -5615,8 +5634,9 @@ impl CEmitter {
         }
         // Plan 72 P3-B: protocol-typed parameters lower to `NovaBox_*` fat
         // pointers (so the callee can dispatch via the vtable). Emit the
-        // vtable/box typedef for each, and — for free functions — register the
-        // per-parameter protocol info so call sites can box concrete arguments.
+        // vtable/box typedef for each, and register the per-parameter protocol
+        // info (keyed `fn_name` for free fns, `Type.method` for methods) so
+        // call sites can box concrete arguments — for both free fns and methods.
         {
             let mut param_protos: Vec<Option<(String, Vec<String>)>> = Vec::new();
             let mut any_proto = false;
@@ -5629,8 +5649,12 @@ impl CEmitter {
                     param_protos.push(None);
                 }
             }
-            if any_proto && f.receiver.is_none() {
-                self.fn_protocol_params.insert(f.name.clone(), param_protos);
+            if any_proto {
+                let key = match &f.receiver {
+                    Some(recv) => format!("{}.{}", recv.type_name, f.name),
+                    None => f.name.clone(),
+                };
+                self.fn_protocol_params.insert(key, param_protos);
             }
         }
         // Register fn-typed return signature for closure binding propagation
@@ -7257,6 +7281,40 @@ impl CEmitter {
                     }
                 }
                 None
+            }
+            _ => None,
+        }
+    }
+
+    /// Plan 72 P3-B [M-protocol-param-free-fn-only]: derive the
+    /// `fn_protocol_params` key for a call's callee. Free fn (`Ident`) → name;
+    /// static method (`Path[T,m]` / `Member{Type,m}`) → `Type.method`;
+    /// instance method (`Member{var,m}`) → `<RecvType>.method` resolved via
+    /// the receiver's inferred type. Covers free fns AND methods uniformly.
+    fn call_protocol_params_key(&self, func: &crate::ast::Expr) -> Option<String> {
+        use crate::ast::ExprKind;
+        match &func.kind {
+            ExprKind::Ident(name) => Some(name.clone()),
+            ExprKind::Path(parts) if parts.len() == 2 => {
+                Some(format!("{}.{}", parts[0], parts[1]))
+            }
+            ExprKind::Member { obj, name } => {
+                if let ExprKind::Ident(t) = &obj.kind {
+                    if self.record_schemas.contains_key(t.as_str())
+                        || self.sum_schemas.contains_key(t.as_str())
+                    {
+                        // Static-method form `Type.method`.
+                        return Some(format!("{}.{}", t, name));
+                    }
+                }
+                // Instance call `obj.method(...)` — resolve the receiver type
+                // (`Nova_Foo*` → `Foo`) so the key matches the `Type.method`
+                // registration form.
+                let recv_c = self.infer_expr_c_type(obj);
+                let recv = recv_c.trim_end_matches('*').trim()
+                    .strip_prefix("Nova_")?;
+                if recv.is_empty() { return None; }
+                Some(format!("{}.{}", recv, name))
             }
             _ => None,
         }
@@ -10951,6 +11009,18 @@ impl CEmitter {
                 }
                 let l = self.emit_expr_with_target_type(left, target_ty_c)?;
                 let r = self.emit_expr_with_target_type(right, target_ty_c)?;
+                // Plan 33.8 Ф.1.2: знаковая `int` Add/Sub/Mul → checked-форма.
+                if lty == "nova_int" && rty == "nova_int" {
+                    let checked = match op {
+                        BinOp::Add => Some("nova_int_checked_add"),
+                        BinOp::Sub => Some("nova_int_checked_sub"),
+                        BinOp::Mul => Some("nova_int_checked_mul"),
+                        _ => None,
+                    };
+                    if let Some(helper) = checked {
+                        return Ok(format!("{}({}, {})", helper, l, r));
+                    }
+                }
                 let op_str = match op {
                     BinOp::Add => "+",  BinOp::Sub => "-",
                     BinOp::Mul => "*",  BinOp::Div => "/",
@@ -11475,6 +11545,21 @@ impl CEmitter {
                     BinOp::Implies => return Ok(format!("((!({})) || ({}))", l, r)),
                     BinOp::Iff => return Ok(format!("(({}) == ({}))", l, r)),
                     _ => {}
+                }
+                // Plan 33.8 Ф.1.2: знаковая `int` Add/Sub/Mul → checked-форма
+                // (паника при переполнении, spec 04-effects.md). Только для
+                // безграничного `nova_int`; sized-типы (wrap, Plan 33.7) и
+                // прочее эмитятся обычным C-оператором.
+                if lty == "nova_int" && rty == "nova_int" {
+                    let checked = match op {
+                        BinOp::Add => Some("nova_int_checked_add"),
+                        BinOp::Sub => Some("nova_int_checked_sub"),
+                        BinOp::Mul => Some("nova_int_checked_mul"),
+                        _ => None,
+                    };
+                    if let Some(helper) = checked {
+                        return Ok(format!("{}({}, {})", helper, l, r));
+                    }
                 }
                 let op_str = match op {
                     BinOp::Add => "+",  BinOp::Sub => "-",
@@ -12723,6 +12808,51 @@ impl CEmitter {
                 // Ф.6 limitation note + design doc §Ф.4); validation
                 // делается внутри emit_println.
                 return self.emit_println(args, name == "println");
+            }
+        }
+
+        // Plan 72 P3-B [M-protocol-param-free-fn-only]: if the callee has
+        // protocol-typed parameters, pre-box concrete arguments into NovaBox_*
+        // temporaries and re-dispatch with each such arg replaced by the temp
+        // ident. One hook covers free fns, static methods and instance methods
+        // uniformly — no per-branch boxing in the (scattered) call-emission code.
+        if let Some(key) = self.call_protocol_params_key(func) {
+            if let Some(param_protos) = self.fn_protocol_params.get(&key).cloned() {
+                let mut new_args: Vec<CallArg> = Vec::with_capacity(args.len());
+                let mut rewrote = false;
+                for (i, a) in args.iter().enumerate() {
+                    if let CallArg::Item(arg_expr) = a {
+                        if let Some(Some((proto, type_args))) = param_protos.get(i) {
+                            let concrete_c = self.infer_expr_c_type(arg_expr);
+                            // Already a fat pointer (e.g. forwarding a protocol
+                            // var, or a re-dispatched pre-boxed temp) — skip.
+                            if !concrete_c.starts_with("NovaBox_") {
+                                let v = self.emit_expr(arg_expr)?;
+                                let boxed = self.box_value_for_protocol(
+                                    v, &concrete_c, proto, type_args);
+                                let args_mangled: String = type_args.iter()
+                                    .map(|t| Self::sanitize_c_for_ident(t))
+                                    .collect::<Vec<_>>().join("_");
+                                let box_ty = format!(
+                                    "NovaBox_{}_{}", proto, args_mangled);
+                                let tmp = self.fresh_tmp();
+                                self.line(&format!(
+                                    "{} {} = {};", box_ty, tmp, boxed));
+                                self.var_types.insert(tmp.clone(), box_ty);
+                                new_args.push(CallArg::Item(Expr {
+                                    kind: ExprKind::Ident(tmp),
+                                    span: arg_expr.span,
+                                }));
+                                rewrote = true;
+                                continue;
+                            }
+                        }
+                    }
+                    new_args.push(a.clone());
+                }
+                if rewrote {
+                    return self.emit_call(func, &new_args);
+                }
             }
         }
 
@@ -15862,19 +15992,9 @@ impl CEmitter {
                 self.infer_expr_c_type(a.expr())
             } else { String::new() };
             let v = self.emit_expr(a.expr())?;
-            // Plan 72 P3-B: box a concrete argument passed where a protocol
-            // parameter is expected — fat-pointer parameter coercion (mirrors
-            // `let x Iter[int] = c`). Args already boxed pass through.
-            if let Some(cname) = &callee_name_for_hof {
-                if let Some(Some((proto, type_args))) = self.fn_protocol_params
-                    .get(cname).and_then(|ps| ps.get(arg_idx)).cloned()
-                {
-                    let concrete_c = self.infer_expr_c_type(a.expr());
-                    let boxed = self.box_value_for_protocol(v, &concrete_c, &proto, &type_args);
-                    arg_strs.push(boxed);
-                    continue;
-                }
-            }
+            // Plan 72 P3-B: protocol-typed-parameter argument boxing is now
+            // handled by the unified pre-pass at emit_call's start (covers free
+            // fns + static/instance methods) — no per-arg hook needed here.
             if is_generic_call {
                 // For generic (void*-erased) functions: nova_str must be boxed as pointer
                 if arg_ty == "nova_str" {
@@ -18093,6 +18213,23 @@ impl CEmitter {
                                         format!("((NovaOpt_nova_int*)({}))", raw)
                                     }
                                 } else {
+                                    // Plan 59 Ф.7.5 D3-fix (62.A.bis): если
+                                    // Option-payload — mono Result
+                                    // `NovaRes_<n>*` (nested `Some(Ok/Err(..))`)
+                                    // — зарегистрировать C-тип payload'а в
+                                    // var_types, чтобы recursive pattern_cond
+                                    // знал scr_ty (Result-variant tag/payload).
+                                    let payload_c = scr_ty.strip_prefix("NovaOpt_")
+                                        .map(|s| self.novaopt_value_types.borrow()
+                                            .get(s).cloned()
+                                            .unwrap_or_else(|| s.to_string()));
+                                    if let Some(pc) = payload_c
+                                        .filter(|t| t.starts_with("NovaRes_")
+                                            && t.ends_with('*'))
+                                    {
+                                        self.var_types.insert(raw.clone(), pc);
+                                        tmp_registrations.push(raw.clone());
+                                    }
                                     raw
                                 }
                             } else if is_opt_ptr {
@@ -18323,6 +18460,19 @@ impl CEmitter {
                                         if let Some(elems) = Self::parse_mono_tuple_elements(&t) {
                                             self.tuple_element_types.insert(raw.clone(), elems);
                                         }
+                                    }
+                                    // Plan 59 Ф.7.5 D3-fix (62.A.bis): если
+                                    // Option-payload — mono Result
+                                    // `NovaRes_<n>*` (nested `Some(Ok(..))` /
+                                    // `Some(Err(..))`), зарегистрировать тип
+                                    // в var_types на access path — иначе
+                                    // recursive pattern_bind_typed не знает
+                                    // scr_ty и падает в legacy
+                                    // `sum_schemas["Result"]` fallback
+                                    // (nova_int Ok / nova_str Err хардкод).
+                                    if t.starts_with("NovaRes_") && t.ends_with('*') {
+                                        self.var_types.insert(raw.clone(), t.clone());
+                                        tmp_registrations.push(raw.clone());
                                     }
                                     (raw, t, false)
                                 } else {

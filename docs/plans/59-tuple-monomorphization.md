@@ -829,3 +829,30 @@ C-код вместо явной ошибки.
 `map`, `unwrap`) переведены на strict-вариант (`?`-propagation).
 `!!` non-str-Err и inference-сайт (`infer_expr_c_type`, best-effort,
 не может propagate'ить Err) — оставлены lenient.
+
+### Пост-фикс — nested Result-variant payload (2026-05-21)
+
+> Найден агентом Plan 62.A.bis при подготовке Ф.4 (удаление
+> `sum_schemas["Result"]`).
+
+Остаточный gap Result-mono: `pattern_bind_typed` / `pattern_cond`
+для **nested**-pattern Result-variant payload (`Some(Ok/Err(..))`
+на `Option[Result[T,E]]`) типизировали payload через legacy
+`sum_schemas["Result"]` (хардкод `nova_int` Ok / `nova_str` Err),
+а не через `NovaRes_<T>_<E>` / `novares_ok_err`.
+
+Причина: при распаковке внешнего `Some(...)` для inner-Result-
+payload C-тип не регистрировался в `var_types` на access path →
+recursive pattern-match не знал `scr_ty` → падал в hardcoded
+fallback.
+
+Фикс: Option-ветки `pattern_bind_typed` и `pattern_cond` — если
+Option-payload mono Result `NovaRes_<n>*`, регистрируют его C-тип
+в `var_types` на access path. Recursive вызов резолвит (T,E)
+через `novares_ok_err`.
+
+Проверено: убрать `sum_schemas["Result"]` insert (repro) → полный
+прогон 883 PASS / 0 FAIL дважды подряд. Insert возвращён — его
+удаление + чистка `init_hardcoded_baseline` = scope Plan 62.A.bis
+Ф.4. После фикса hardcoded fallback для pattern-match недостижим.
+Коммит `2b184a3c06a`.
