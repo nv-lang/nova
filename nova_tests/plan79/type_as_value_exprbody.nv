@@ -1,0 +1,9 @@
+// EXPECT_COMPILE_ERROR E7330
+//
+// Plan 79 Ф.4: a type name as the whole expression-body of a function.
+
+module nova_tests.plan79.type_as_value_exprbody
+
+type Account { balance int }
+
+fn get() -> Account => Account
