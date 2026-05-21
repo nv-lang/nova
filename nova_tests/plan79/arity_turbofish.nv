@@ -1,0 +1,16 @@
+// EXPECT_COMPILE_ERROR E7310
+//
+// Plan 79 Ф.2: type-arity check on a turbofish that targets a generic
+// type. `Box[T]` declares one parameter — `Box[int, str].new(...)` is
+// invalid.
+
+module nova_tests.plan79.arity_turbofish
+
+type Box[T] { value T }
+
+fn Box[T].new(v T) -> Box[T] => { value: v }
+
+fn run() -> int {
+    let b = Box[int, str].new(1)
+    b.value
+}
