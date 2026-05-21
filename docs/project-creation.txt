@@ -16996,5 +16996,24 @@ Plan 73 — consume qualifier, D131 (commit 5678439):
 (mojibake в части комментариев); затронутые Plan 76 строки переписаны
 в корректный UTF-8, остальное не трогалось (вне scope).
 
-Коммиты: Plan 74 005fd29, Plan 76 5e3acfb, Plan 73 5678439, docs —
-отдельным коммитом. Ветка plan-73-76 → merge в main.
+Коммиты: Plan 74 005fd29, Plan 76 5e3acfb, Plan 73 5678439, docs e7945eb.
+Ветка plan-73-76; merge в main отложен — на момент сессии main был в
+состоянии незавершённого merge-конфликта другого агента и ушёл вперёд
+на ~14 коммитов.
+
+Followup (та же сессия) — усиление consume-checker'а по запросу:
+- alias-tracking (canonical-name): `let a = b` → consume любого имени
+  инвалидирует весь alias-класс; `dissolve_alias_class` при реассайне
+  исключает false-positive (member'ы сохраняют состояние, реассайнутая
+  переменная — fresh).
+- вывод типа переменной из return-типа свободной функции
+  (`let x = factory()`), не только из явного конструктора.
+- +4 фикстуры (consume_err_alias / consume_err_factory /
+  consume_ok_alias / consume_ok_reassign).
+- simplifications.md: `[M-consume-no-alias-tracking]` →
+  `[M-consume-method-result-alias]` (остался только builder-chain
+  `let x = sb.append(...)`); `[M-consume-receiver-type-best-effort]` сужен.
+- Plan 77 (docs/plans/77-fluent-return.md) — черновик-пропозал
+  «`-> @` / fluent-return» (точное «метод возвращает receiver» vs
+  `Self` = «тот же тип»), варианты A/B/C + сравнение Rust/Go/TS, на
+  решение автора языка. Разблокирует sound builder-chain alias.
