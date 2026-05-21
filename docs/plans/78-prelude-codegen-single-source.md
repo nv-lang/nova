@@ -2,7 +2,11 @@
 
 > **Создан 2026-05-21.** Follow-up Plan 62 (prelude hardcode migration).
 >
-> **Статус:** 📋 proposed, не начат.
+> **Статус:** 🚧 in progress (2026-05-22) — **Ф.1.0 design ✅**,
+> **Ф.3 ✅** (зафиксирован deferred на Plan 68), **Ф.4 ✅** (аудит:
+> legitimate codegen, переклассифицирован). **Ф.1-реализация + Ф.2** —
+> pending (рискованный codegen, см. вывод Ф.1.0 ниже — требует нового
+> `.nv`-routing-атрибута; делать со свежего контекста).
 >
 > **Приоритет:** P2 — корректностного бага нет (layered registry +
 > hardcoded fallback работают), но есть **дублирование** = drift-риск.
@@ -68,6 +72,49 @@ Result[T, E] @is_ok() -> bool` в `core.nv` даёт codegen'у достаточ
 После: `init_prelude_decls_from_items` строит routing с нуля из
 declarations; `init_hardcoded_baseline` Option/Result entries удаляются.
 
+#### Ф.1.0 — design (✅ ВЫПОЛНЕН 2026-05-22)
+
+Изучена method-dispatch машинерия (`sum_schema_registry.rs` +
+`emit_c.rs`). Вывод по схемам (a)/(b)/(c):
+
+**`MethodRouting`** имеет 3 формы. Для Ф.1 значимы:
+`HardcodedRuntimeFn { c_name, is_per_t }` (с особым sentinel'ом
+`c_name == "<inline>"`). Не-inline методы → реальный C-trampoline;
+inline-методы → `<inline>` → codegen падает в match-блоки
+(closure-applying, variant-construction).
+
+**Не-inline методы — convention РАБОТАЕТ.**
+- Option (`is_some`/`is_none`/`unwrap_or`/`or`): per-T →
+  `Nova_Option_method_<m>_<sani_T>`. Суффикс `_<T>` добавляет call-site.
+- Result (`is_ok`/`is_err`/`unwrap_or`/`ok`): per-(T,E) →
+  `Nova_Result_method_<m>_<ok>_<err>` (mono) либо legacy
+  `Nova_Result_method_<m>`. (T,E)-суффикс уже вычисляет call-site
+  (`result_method_c_name`); routing лишь сообщает «не-inline».
+- Т.е. для не-inline routing сводится к булеву «inline или нет» +
+  базовому имени `Nova_<T>_method_<m>` — выводится из имени типа/метода.
+
+**Inline-методы — convention НЕ РАБОТАЕТ, нужен ЯВНЫЙ маркер.**
+Inline: Option `unwrap`/`unwrap_or_else`/`map`/`ok_or`; Result
+`unwrap`/`unwrap_or_else`/`map`/`map_err`/`err`. Вывести «inline» из
+сигнатуры **нельзя надёжно** — контрпример: Result `@ok() -> Option[T]`
+(НЕ inline, trampoline) и `@err() -> Option[E]` (inline) имеют
+**неразличимые** сигнатуры. Closure-параметр / `Fail`-эффект покрывают
+часть, но не `err`.
+
+**Решение — схема (c) гибрид, но с уточнением:** convention по
+умолчанию + **явный routing-маркер в `.nv`-декларации** для inline-
+методов. Хардкод-список inline-методов в Rust **отвергнут** — это
+снова хардкод-зеркало, противоречит цели Plan 78.
+
+**Вывод для реализации Ф.1 (важно — задача больше исходной оценки):**
+требуется **новый атрибут `.nv`-декларации** (напр. doc-attr
+`#routing(inline)` или аналог) — а это затрагивает parser + spec-D-блок.
+Сначала спроектировать формат атрибута, затем parser, затем
+`init_prelude_decls_from_items` строит routing (convention + атрибут),
+затем удаление baseline. Делать со свежего контекста, отдельной
+сессией — изменение формата деклараций + риск «молчаливого» слома
+dispatch (suite не всегда ловит — урок Plan 59).
+
 > **Порядок-капкан (урок Plan 59).** Ф.1 **завершить и проверить
 > полным прогоном ДО начала Ф.2.** `init_prelude_decls_from_items`
 > наследует routing от baseline — если удалить baseline раньше, чем
@@ -124,7 +171,12 @@ declarations; `init_hardcoded_baseline` Option/Result entries удаляются
 > **перепрогнать дважды**, отличить flaky от реальной регрессии,
 > прежде чем диагностировать.
 
-### Ф.3 — print/println — делегировать Plan 68 (deferred)
+### Ф.3 — print/println — делегировать Plan 68 (deferred) ✅ ЗАФИКСИРОВАН 2026-05-22
+
+**Решение зафиксировано:** Ф.3 = ссылка, не реализация. print/println как
+обычные Nova-функции через protocol-as-value — это **Plan 68** (proposed,
+блокирован Q1-Q6). Plan 78 спец-кейсы print/println НЕ трогает, пока
+Plan 68 не разблокирован и не реализован. Делать в Ф.3 сейчас нечего.
 
 **Сейчас:** `emit_c.rs` спец-кейсы `name == "println"` / `"print"`
 (~12747, 21091) — per-arg type dispatch через `infer_print_helper`.
@@ -134,22 +186,31 @@ value (`[]Into[str]`) — это **Plan 68** (proposed, блокирован Q1-
 Plan 78 **не дублирует** Plan 68 — Ф.3 = «дождаться Plan 68, тогда
 спец-кейс удаляется». Ссылка, не реализация.
 
-### Ф.4 — panic/exit/assert/debug_assert — аудит (P3, ~1 dev-day)
+### Ф.4 — panic/exit/assert/debug_assert — аудит (P3) ✅ ВЫПОЛНЕН 2026-05-22
 
-**Сейчас:** спец-кейсы (~12826-12868) для:
-- panic/exit — comma-expression обёртка `(nv_panic(msg), (nova_int)0)`
-  в expression-position (`??` coalesce, if-else branches).
-- assert/debug_assert — D89 expression-context + auto-derived
-  `cond_text` (Plan 11).
+**Заключение аудита.** Спец-кейсы `panic`/`exit`/`assert`/`debug_assert`
+в `emit_c.rs` (~13137-13186) — **legitimate codegen-механика, НЕ
+prelude-хардкод-зеркало.**
 
-**Цель:** проверить — это **prelude-хардкод** (зеркало `runtime.nv`)
-или **легитимная codegen-механика** (expression-position для
-`Never`-возвращающих fns не убирается в принципе)?
+Сами функции объявлены в `std/prelude/runtime.nv` как `external fn`
+(тип/сигнатура — оттуда, не из codegen). Codegen-спец-кейс делает
+другое — **expression-position lowering**:
+- `panic`/`exit` → `(nv_panic(msg), (nova_int)0LL)` comma-expression:
+  `nv_panic` имеет C-сигнатуру `void` и не возвращается (longjmp/abort),
+  но C требует value-expression как cast-target в expression-position
+  (`??`-coalesce, тернарник). Comma-operator даёт value, не нарушая
+  short-circuit.
+- `assert`/`debug_assert` → `(nova_assert(cond, "<text>"), NOVA_UNIT)`:
+  тот же comma-приём для `nova_unit`-типа в expression-position +
+  auto-derived `cond_text` (D89 / Plan 11 — текст условия в сообщении,
+  выводится из AST, не из декларации).
 
-**Вероятный исход:** оставить как legitimate codegen, но
-**переклассифицировать** — это не «дублирование prelude-декларации»,
-а codegen-обработка expression-position. Задокументировать в
-`simplifications.md`, чтобы не путать с настоящим хардкодом.
+Это **обработка `Never`/`void`-возвращающих функций в
+expression-position** — её нельзя выразить декларацией в `.nv`,
+поэтому она остаётся в codegen. Дублирования prelude-декларации здесь
+нет. **Действие: оставить как есть, переклассифицировано** (не хардкод-
+зеркало). Отдельной записи в `simplifications.md` не требуется — это
+не «упрощение», а корректная codegen-механика.
 
 ### Ф.5 — spec + docs + verification (P2, ~0.5 dev-day)
 
