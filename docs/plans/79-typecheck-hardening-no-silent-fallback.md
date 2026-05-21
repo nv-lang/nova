@@ -3,6 +3,9 @@
 > **Создан 2026-05-21.** Выделен из re-check'а
 > `[M-typecheck-missing-type-compat-checks]` (Plan 72 simplifications).
 >
+> **Статус:** 🚧 in progress — worktree `nova-p79` (ветка `plan-79`),
+> старт 2026-05-21. Ф.1–Ф.8 pending.
+>
 > **Цель:** довести принцип Plan 70 «no silent fallback» до **type-checker'а**.
 > Сейчас Plan 70 закрыл silent-fallback в *кодогене*; type-checker всё ещё
 > молча принимает базовые ошибки типов. Дожать так, чтобы **каждое
