@@ -1,0 +1,16 @@
+// EXPECT_COMPILE_ERROR E7301
+//
+// Plan 79 Ф.1: passing a value of one record type where a different
+// record type is expected.
+
+module nova_tests.plan79.assign_arg_wrong_record
+
+type User { id int }
+type Order { total int }
+
+fn process(o Order) -> int => o.total
+
+fn run() -> int {
+    let u User = { id: 1 }
+    process(u)
+}

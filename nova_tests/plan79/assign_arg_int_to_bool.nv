@@ -1,0 +1,10 @@
+// EXPECT_COMPILE_ERROR E7301
+//
+// Plan 79 Ф.1: arg ↔ param assignability. `want_bool(42)` passed an
+// `int` where `bool` is required — compiled silently before Plan 79.
+
+module nova_tests.plan79.assign_arg_int_to_bool
+
+fn want_bool(b bool) -> int => 1
+
+fn run() -> int => want_bool(42)
