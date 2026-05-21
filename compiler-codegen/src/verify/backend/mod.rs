@@ -11,6 +11,10 @@
 
 pub mod trivial;
 
+/// Plan 33.14 Ф.2: CVC5 runner — независимая текстовая SMT-LIB линия.
+/// Не требует feature-флага (подпроцесс, без FFI-линковки).
+pub mod cvc5;
+
 #[cfg(feature = "z3-backend")]
 pub mod z3_ffi;
 #[cfg(feature = "z3-backend")]
