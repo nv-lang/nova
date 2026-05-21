@@ -1117,18 +1117,23 @@ impl CEmitter {
                 }
             }
         }
-        // Pre-populate sum_schemas with built-in Option and Result types.
+        // Pre-populate sum_schemas with built-in Option type.
+        //
+        // Plan 62.A.bis Ф.4 (2026-05-21): legacy hardcoded
+        // `sum_schemas["Result"]` УДАЛЁН. Result полностью
+        // мономорфизирован (Plan 59 Ф.7.5 increment 2) — `Result[T, E]`
+        // → `NovaRes_<ok>_<err>*`, pattern_bind_typed / pattern_cond
+        // резолвят (T,E) через `novares_ok_err` на mono-типе scrutinee
+        // (включая nested `Some(Ok/Err(..))` — фикс Plan 59 commit
+        // `2b184a3c06a`). Erased baseline-инстанс
+        // `NovaRes_nova_int_nova_str` hand-defined в `nova_rt/array.h`.
+        // См. docs/plans/59-tuple-monomorphization.md.
         {
             let mut opt_variants = HashMap::new();
             opt_variants.insert("Some".to_string(), vec!["nova_int".to_string()]);
             opt_variants.insert("None".to_string(), vec![]);
             self.sum_schemas.insert("Option".to_string(), opt_variants.clone());
             self.sum_schemas.insert("NovaOpt_nova_int".to_string(), opt_variants);
-
-            let mut res_variants = HashMap::new();
-            res_variants.insert("Ok".to_string(), vec!["nova_int".to_string()]);
-            res_variants.insert("Err".to_string(), vec!["nova_str".to_string()]);
-            self.sum_schemas.insert("Result".to_string(), res_variants);
         }
 
         // D26 prelude: Error — record для quick errors с msg.
@@ -10998,6 +11003,18 @@ impl CEmitter {
                 }
                 let l = self.emit_expr_with_target_type(left, target_ty_c)?;
                 let r = self.emit_expr_with_target_type(right, target_ty_c)?;
+                // Plan 33.8 Ф.1.2: знаковая `int` Add/Sub/Mul → checked-форма.
+                if lty == "nova_int" && rty == "nova_int" {
+                    let checked = match op {
+                        BinOp::Add => Some("nova_int_checked_add"),
+                        BinOp::Sub => Some("nova_int_checked_sub"),
+                        BinOp::Mul => Some("nova_int_checked_mul"),
+                        _ => None,
+                    };
+                    if let Some(helper) = checked {
+                        return Ok(format!("{}({}, {})", helper, l, r));
+                    }
+                }
                 let op_str = match op {
                     BinOp::Add => "+",  BinOp::Sub => "-",
                     BinOp::Mul => "*",  BinOp::Div => "/",
@@ -11522,6 +11539,21 @@ impl CEmitter {
                     BinOp::Implies => return Ok(format!("((!({})) || ({}))", l, r)),
                     BinOp::Iff => return Ok(format!("(({}) == ({}))", l, r)),
                     _ => {}
+                }
+                // Plan 33.8 Ф.1.2: знаковая `int` Add/Sub/Mul → checked-форма
+                // (паника при переполнении, spec 04-effects.md). Только для
+                // безграничного `nova_int`; sized-типы (wrap, Plan 33.7) и
+                // прочее эмитятся обычным C-оператором.
+                if lty == "nova_int" && rty == "nova_int" {
+                    let checked = match op {
+                        BinOp::Add => Some("nova_int_checked_add"),
+                        BinOp::Sub => Some("nova_int_checked_sub"),
+                        BinOp::Mul => Some("nova_int_checked_mul"),
+                        _ => None,
+                    };
+                    if let Some(helper) = checked {
+                        return Ok(format!("{}({}, {})", helper, l, r));
+                    }
                 }
                 let op_str = match op {
                     BinOp::Add => "+",  BinOp::Sub => "-",
@@ -18149,6 +18181,23 @@ impl CEmitter {
                                         format!("((NovaOpt_nova_int*)({}))", raw)
                                     }
                                 } else {
+                                    // Plan 59 Ф.7.5 D3-fix (62.A.bis): если
+                                    // Option-payload — mono Result
+                                    // `NovaRes_<n>*` (nested `Some(Ok/Err(..))`)
+                                    // — зарегистрировать C-тип payload'а в
+                                    // var_types, чтобы recursive pattern_cond
+                                    // знал scr_ty (Result-variant tag/payload).
+                                    let payload_c = scr_ty.strip_prefix("NovaOpt_")
+                                        .map(|s| self.novaopt_value_types.borrow()
+                                            .get(s).cloned()
+                                            .unwrap_or_else(|| s.to_string()));
+                                    if let Some(pc) = payload_c
+                                        .filter(|t| t.starts_with("NovaRes_")
+                                            && t.ends_with('*'))
+                                    {
+                                        self.var_types.insert(raw.clone(), pc);
+                                        tmp_registrations.push(raw.clone());
+                                    }
                                     raw
                                 }
                             } else if is_opt_ptr {
@@ -18379,6 +18428,19 @@ impl CEmitter {
                                         if let Some(elems) = Self::parse_mono_tuple_elements(&t) {
                                             self.tuple_element_types.insert(raw.clone(), elems);
                                         }
+                                    }
+                                    // Plan 59 Ф.7.5 D3-fix (62.A.bis): если
+                                    // Option-payload — mono Result
+                                    // `NovaRes_<n>*` (nested `Some(Ok(..))` /
+                                    // `Some(Err(..))`), зарегистрировать тип
+                                    // в var_types на access path — иначе
+                                    // recursive pattern_bind_typed не знает
+                                    // scr_ty и падает в legacy
+                                    // `sum_schemas["Result"]` fallback
+                                    // (nova_int Ok / nova_str Err хардкод).
+                                    if t.starts_with("NovaRes_") && t.ends_with('*') {
+                                        self.var_types.insert(raw.clone(), t.clone());
+                                        tmp_registrations.push(raw.clone());
                                     }
                                     (raw, t, false)
                                 } else {

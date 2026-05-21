@@ -29,7 +29,7 @@
 module modules.prelude_auto_import
 
 test "PRELUDE_VERSION доступен без import" {
-    // Plan 62.E.bis bump 7 → 8: TryFrom / TryInto formally declared
-    // в std/prelude/protocols.nv.
-    assert(PRELUDE_VERSION == 8)
+    // PRELUDE_VERSION монотонно растёт с каждой migration phase Plan 62.
+    // `>=` — маркер не ломается на последующих bump'ах (62.C.bis → 9).
+    assert(PRELUDE_VERSION >= 8)
 }
