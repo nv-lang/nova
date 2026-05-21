@@ -1910,8 +1910,36 @@ impl Parser {
 
         // Effects: до `->` или до тела
         let effects = self.parse_effects_until_arrow_or_body()?;
+        // Plan 77 (D132): `-> @` — fluent-return (метод возвращает receiver).
+        let mut returns_receiver = false;
         let return_type = if self.eat(&TokenKind::Arrow).is_some() {
-            Some(self.parse_type()?)
+            if matches!(self.peek().kind, TokenKind::At) {
+                let at_span = self.peek().span;
+                self.bump(); // `@`
+                returns_receiver = true;
+                // `-> @` допустим только для instance-метода (есть `@`-receiver).
+                let ok = matches!(
+                    &receiver,
+                    Some(Receiver { kind: ReceiverKind::Instance, .. })
+                );
+                if !ok {
+                    return Err(Diagnostic::new(
+                        "`-> @` (fluent-return, возврат receiver'а) допустим \
+                         только для instance-метода с `@`-receiver'ом (D132)"
+                            .to_string(),
+                        at_span,
+                    ));
+                }
+                // Тип результата — receiver-тип; представляем как `Self`,
+                // переиспользуя всю Self-инфраструктуру type-checker/codegen.
+                Some(TypeRef::Named {
+                    path: vec!["Self".to_string()],
+                    generics: vec![],
+                    span: at_span,
+                })
+            } else {
+                Some(self.parse_type()?)
+            }
         } else {
             None
         };
@@ -1976,6 +2004,7 @@ impl Parser {
             params,
             effects,
             return_type,
+            returns_receiver,
             body,
             span: start.merge(end_span),
             realtime_attr,
