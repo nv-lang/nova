@@ -203,7 +203,9 @@ fn check_imports_unused(
 }
 
 /// Plan 81 Ф.4: собрать все имена-ссылки в items (для unused-import).
-fn collect_used_names(items: &[Item], out: &mut HashSet<String>) {
+/// Plan 81 Ф.7.2: также используется codegen'ом для reachability-DCE —
+/// `pub(crate)`. Полный обход AST (все expr/stmt/type-позиции).
+pub(crate) fn collect_used_names(items: &[Item], out: &mut HashSet<String>) {
     for item in items {
         match item {
             Item::Fn(f) => {
@@ -450,7 +452,16 @@ fn collect_expr(e: &Expr, out: &mut HashSet<String>) {
             collect_expr(a, out);
             collect_expr(b, out);
         }
-        ExprKind::Member { obj, .. } => collect_expr(obj, out),
+        ExprKind::Member { obj, name } => {
+            collect_expr(obj, out);
+            // Plan 81 Ф.7.2: collect the selector name. A module-qualified
+            // free-function call `mod.func()` parses as `Member{obj, name}`
+            // and codegen lowers it to a call of the free function `func`,
+            // so reachability-DCE must observe `func`. (For the unused-import
+            // lint this is a harmless over-approximation — a name reachable
+            // as `obj.name` is conservatively treated as used.)
+            out.insert(name.clone());
+        }
         ExprKind::Index { obj, index } => {
             collect_expr(obj, out);
             collect_expr(index, out);

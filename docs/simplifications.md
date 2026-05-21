@@ -4606,7 +4606,7 @@ stdlib через `nova build` сегодня.
 | 35.B memory cache invalidation | `HashSet<path>` per build | 🚧 **Plan 81 Ф.9** — pending |
 | 35.C cross-file generics | generic bounds не resolve cross-file | ✅ **Plan 81 Ф.3** — verify: работают (Plan 35 merge → `protocol_specs`); orphan rule не нужен |
 | 35.D stable mangling | items в global namespace | ✅ **Plan 81 Ф.6** — symbol mangling v0 (D134) |
-| 35.D DCE | все imported items emit'ятся (bloat) | 🚧 **Plan 81 Ф.7** — Ф.7.1 linker-DCE ✅; Ф.7.2 compiler-DCE pending |
+| 35.D DCE | все imported items emit'ятся (bloat) | ✅ **Plan 81 Ф.7** — Ф.7.1 linker-DCE ✅ + Ф.7.2 compiler-DCE свободных функций ✅ (недостижимые fn не эмитятся в `.c`); method-level compiler-DCE — отдельный инкремент (Ф.7.2-methods) |
 | 35.E `#[cfg(...)]` | нет conditional compilation | ✅ **Plan 42.12** |
 | AD3 sig/body 2-pass | single-pass typecheck — mutual recursion ломается | ✅ **Plan 81 Ф.5** — verify: взаимная рекурсия peer'ов работает (сигнатуры регистрируются до тел) |
 | FileId propagation | imported spans → cross-file diagnostics в чужом файле | ✅ **Plan 81 Ф.8.1** — `render_with_map`/`SourceMap` фикс |
