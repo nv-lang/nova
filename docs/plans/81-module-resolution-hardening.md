@@ -1,187 +1,394 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
-# Plan 81: Module-resolution hardening — закрытие оставшихся недоработок ресолва
+# Plan 81: Module-resolution hardening — production-grade резолв модулей
 
-> **Создан 2026-05-21.** Консолидирует все открытые недоработки
-> резолва модулей, разбросанные по закрытым планам.
+> **Создан 2026-05-21.** Переработан с чистого листа 2026-05-21 после
+> сверки с реальным кодом компилятора (см. «Сверка фактов» ниже).
 >
 > **Статус:** 📋 proposed, не начат.
 >
 > **Источник:** аудит module-resolution 2026-05-21 — открытые пункты
 > [Plan 35](35-cross-file-resolve.md) (sub-plans 35.B-E + R26),
 > [Plan 70.1](70.1-module-alias-resolution.md) (known-limitation) и
-> ряд маркеров `simplifications.md`. Эти планы закрыты как MVP —
-> доработка фич переносится сюда.
+> маркеры `simplifications.md`. Эти планы закрыты как bootstrap-MVP —
+> доведение до production-grade переносится сюда.
+>
+> **Цель:** закрыть резолв модулей так, чтобы по каждому аспекту Nova
+> была **не хуже Go / Rust / TS**, а где возможно — лучше. Без
+> упрощений: каждая фаза доводится до production-grade с позитивными
+> и негативными тестами и синхронизацией спеки.
 
 ---
 
 ## Зачем
 
-Bootstrap-MVP резолва модулей закрыт (Plan 35 — cross-file resolve;
-Plan 42 + 16 sub-plans — folder-modules; Plan 70.1 — alias codegen).
-Но MVP оставил «честные пропуски»: часть из них — про **корректность**
-(нарушение спеки), часть — про **качество кода** и **производительность**.
-Этот план собирает их в один список и доводит до production-grade.
+Bootstrap-MVP резолва модулей работает (Plan 35 cross-file resolve;
+Plan 42 + 16 sub-plans folder-modules; Plan 70.1 alias codegen). Но
+MVP оставил «честные пропуски» трёх сортов: **корректность** (нарушения
+спеки — компилируется неверное), **качество codegen** (коллизии имён,
+раздувание бинарника) и **диагностика/производительность**. Этот план
+собирает их и доводит до уровня state-of-the-art.
 
-## Что НЕ входит (отклонено спекой — не недоработки)
+## Сверка фактов (2026-05-21, по коду компилятора)
 
-- **Относительные пути** `import ../sibling` — D29: import всегда
-  full path от корня. Дизайн-решение, остаётся.
-- **Wildcard** `import X.Y.*` — R25 spec-rejected (D29/D5). Bare-name
-  доступ — только через `import X as alias` + `alias.fn()`.
-- **pub-гранулярность** (R28) — spec-rejected (D5).
+Перед переработкой проверены 7 ключевых фактов — план опирается на
+реальное состояние, а не на догадки:
 
-## Что уже сделано (для контекста — НЕ задачи плана)
+1. **Конформность протоколов — структурная** (D72: «Nova не имеет
+   orphan rule — нет `impl Trait for Type`»). → cross-file generic
+   bounds **не требуют** orphan/coherence-правила (проще Rust).
+2. **`Span`/`FileId`/`SourceMap` уже есть** (`compiler-codegen/src/diag.rs`).
+   → FileId — не «строить инфраструктуру», а **аудит и закрытие
+   утечек** `file_id=0`.
+3. **`export` — строго по-элементно**; field-level visibility отвергнут
+   (R28 ❌ D5; `_prefix` полей — конвенция, не enforced, D47). →
+   visibility enforcement только для top-level элементов.
+4. **External/runtime-функции уже mangled** (`Nova_<Type>_<method>_<name>`),
+   а вот **свободные функции пользователя — `nova_fn_<name>` без пути
+   модуля** → реальная коллизия между модулями.
+5. **Unused imports не детектятся** вообще (нет такого линта).
+6. **Идентификаторы ASCII-only** (лексер) → mangling без punycode.
+7. **Циклы импортов запрещены** (hard error, Go-style); peer-файлы
+   folder-модуля делят namespace и **не** импортируют друг друга.
+
+## Планка: Go / Rust / TS vs Nova
+
+| Аспект | Go | Rust | TS | Nova сейчас | Nova после Plan 81 |
+|---|---|---|---|---|---|
+| Видимость (`export`/private) | enforced (Caps) | enforced (`pub`) | enforced (`export`) | ❌ **не enforced** | ✅ enforced (Ф.1) |
+| Member-call по alias | compile-error | compile-error | compile-error | ❌ link-error | ✅ compile-error (Ф.2) |
+| Cross-module generic bounds | ✅ | ✅ (+orphan rule) | ✅ | ❌ не резолвит | ✅ структурно, без orphan (Ф.3) |
+| Unused imports | **error** | warning | opt-in | ❌ нет | ✅ warn + opt-in-error (Ф.4) |
+| Case-sensitive пути | error | enforced | `forceConsistentCasing` | ❌ нет | ✅ enforced (Ф.4) |
+| Order-independent decls / mutual recursion | ✅ | ✅ | ✅ | ⚠️ peers ломаются | ✅ 2-pass (Ф.5) |
+| Symbol naming | pkg-path | v0 mangling | n/a | ⚠️ `nova_fn_<name>` без пути | ✅ v0 с путём (Ф.6) |
+| Dead-code elimination | linker | compiler+linker | bundler | ❌ всё эмитится | ✅ compiler-level (Ф.7) |
+| Cross-file диагностика | FileSet | SourceMap | SourceFile | ⚠️ утечки `file_id=0` | ✅ точная (Ф.8) |
+| Multi-error + «did you mean» | терсо | ✅ сильно | ✅ сильно | ⚠️ частично | ✅ multi-error + suggest (Ф.8) |
+| Инкрементальная сборка | content-cache | query-incremental | `.tsbuildinfo` | ❌ re-parse каждый раз | ✅ content-addressed cache (Ф.9) |
+| Циклы импортов | forbidden | forbidden (crate) | allowed | ✅ forbidden | ✅ (уже соответствует Go) |
+
+## Что НЕ входит
+
+**Отклонено спекой (не недоработки):**
+- Относительные пути `import ../sibling` — D29 (import всегда full path).
+- Wildcard `import X.Y.*` — R25 spec-rejected (D29/D5).
+- pub-гранулярность / field-level visibility — R28 ❌ D5, D47.
+
+**За рамками плана (отдельная будущая работа):**
+- Менеджер пакетов / версионирование внешних зависимостей — этот план
+  про резолв внутри одного дерева исходников.
+- Циклы импортов между модулями остаются **запрещены** (D29, Go-style)
+  — осознанное решение, не доработка.
+
+## Что уже сделано (контекст, НЕ задачи)
 
 selective `import X.{A,B}`, `export import` re-export, prelude
 auto-import, `#cfg` conditional compilation (Plan 42.12/42.16),
-`nova test` cross-file parity (R31), folder-modules, alias codegen.
+`nova test` cross-file parity (R31), folder-modules + `internal/`,
+alias codegen (Plan 70.1), цикл-детекция, `SourceMap`/`FileId` типы.
 
 ---
 
-## Фазы
+# Фазы
 
-### Ф.1 — Visibility enforcement (P1 — корректность)
+## Группа A — корректность резолва
 
-**Проблема:** флаг `is_export` сейчас чисто информационный.
-Приватные (не-`export`) элементы импортированного модуля **доступны**
-в импортирующем коде — нарушение спеки D29/D5.
+### Ф.1 — Visibility enforcement (P1 — нарушение спеки)
 
-**Задача:** type-checker обязан скрывать не-`export` элементы
-импортированного модуля; обращение к ним → ошибка «undefined
-identifier» (или отдельный E-код «private item»). Peer-файлы одного
-folder-модуля видят приватные элементы друг друга (это правильно) —
-граница только на границе модуля.
+**Проблема:** флаг `is_export` информационный. Не-`export` элементы
+импортированного модуля **доступны** снаружи — нарушение D5.
 
-*(Было: Plan 35 R26 «post-bootstrap».)*
+**Цель:** type-checker скрывает не-`export` top-level элементы за
+границей модуля. Уровень — как Go (Caps) / Rust (`pub`) / TS (`export`).
 
-### Ф.2 — Cross-file generic bounds (P2 — функц. дыра)
+**Подзадачи:**
+- На границе модуля видимы только `export`-элементы; обращение к
+  приватному → **выделенный диагностик** «X приватен для модуля M»
+  (не общий «undefined» — UX-уровень Rust «function `foo` is private»).
+- Peer-файлы одного folder-модуля видят не-`export` элементы друг
+  друга (это правильно — внутри границы). Проверить, что enforcement
+  срабатывает **только** на внешней границе.
+- `_test.nv` — peer модуля-под-тестом → white-box доступ к приватному
+  сохраняется автоматически (как Go white-box / Rust `#[cfg(test)]`).
+  Зафиксировать тестом, что не сломалось.
+- `import` (без `export`) не реэкспортирует имя: импортированное в A
+  имя приватно для A; наружу выходит только через `export import`.
+- Согласованность с enforcement `internal/` (Plan 42.13 Rule H).
+- **Не** вводить field-level visibility (R28/D47 — отклонено).
 
-**Проблема:** `[T Hashable]`, где `Hashable` объявлен в другом модуле,
-type-checker не резолвит — bound не проверяется.
+**Тесты:** позитив — `export`-элемент виден, приватный виден из peer/
+`_test.nv`; негатив — обращение к приватному элементу импортированного
+модуля → compile-error; импортированное-не-реэкспортированное имя не
+видно у третьего модуля.
 
-**Задача:** резолвить generic-bounds cross-file; убрать workaround
-«inline-дублирование bound-протокола в каждом файле».
+### Ф.2 — Alias & cross-module member-call type-check (P1)
 
-*(Было: Plan 35.C.)*
+**Проблема:** `import X as a; a.unknown()` даёт link-error (undefined
+symbol), а не compile-error — `EXPECT_COMPILE_ERROR` не ловит
+(Plan 70.1 known-limitation). Type-checker не валидирует Member-call
+против сигнатуры функции модуля.
 
-### Ф.3 — Symbol mangling v0 (P2 — безопасность codegen)
+**Цель:** неизвестный метод / неверные аргументы при вызове через
+alias или полный путь модуля → **compile-error** (как Go/Rust/TS).
 
-**Проблема:** импортированные элементы лежат в глобальном C-namespace
-без стабильного mangling — риск коллизии линковки, если пользователь
-переопределит имя stdlib-типа.
+**Подзадачи:**
+- Резолв `alias.func(args)` / `mod.path.func(args)` к декларации
+  функции целевого модуля.
+- Проверка существования функции + arity + типов аргументов против
+  сигнатуры; ошибка с точным span (E-код).
+- Согласовать с Ф.1 (приватная функция модуля → «private», не
+  «undefined»).
 
-**Задача:** стабильная схема mangling v0 (module-path → C-префикс),
-D-блок со спецификацией схемы (**резерв D134**; D133 занят Plan 80).
+**Тесты:** негатив — `a.unknown()`, неверная arity, неверный тип
+аргумента; позитив — корректный вызов через alias. Фикстуры
+`nova_tests/plan70_1/` (закрывает deferred-негативы Plan 70.1).
 
-*(Было: Plan 35.D, часть 1.)*
+### Ф.3 — Cross-file generic bounds (P2)
 
-### Ф.4 — Dead-code elimination (P2 — качество)
+**Проблема:** `[T Hashable]`, где протокол `Hashable` объявлен в
+другом модуле, не резолвится — bound не проверяется.
+
+**Цель:** резолвить имя протокола в bound через таблицу импортов;
+дальше — обычная **структурная** проверка (D53/D72).
+
+**Подзадачи:**
+- Резолв идентификатора протокола в `[T Protocol]` с учётом импортов
+  и prelude.
+- Структурная проверка bound'а после резолва (механизм уже есть).
+- Убрать workaround «inline-дублирование bound-протокола в каждом
+  файле».
+- **Orphan/coherence rule НЕ нужен** — Nova структурна (D72), нет
+  `impl`-блоков. Это проще Rust и так же безопасно — отметить как
+  преимущество.
+
+**Тесты:** позитив — generic-функция с bound из импортированного
+модуля компилируется и работает; негатив — тип без нужных методов →
+compile-error с указанием недостающего метода.
+
+### Ф.4 — Resolver strictness: unused imports + case-sensitive пути (P2)
+
+**Проблема:** (а) неиспользуемые импорты не детектятся вообще;
+(б) путь модуля не сверяется по регистру с именем файла/папки — на
+case-insensitive ФС (Windows!) `import Std.Collections` может ложно
+зарезолвиться.
+
+**Цель:** обе проверки на уровне Go/Rust/TS.
+
+**Подзадачи:**
+- **Unused imports:** линт, отслеживающий использование каждого
+  импортированного имени; по умолчанию warning, opt-in error через
+  `nova.toml` (паттерн Plan 71 `enforce-stability`). Покрывает спектр
+  Go (error) / Rust (warn) / TS (opt-in) — пользователь выбирает.
+- **Case-sensitivity:** путь модуля обязан совпадать по регистру с
+  именем файла/папки на диске; рассогласование → compile-error
+  (как Go, Rust, TS `forceConsistentCasingInFileNames`). Критично
+  для корректности на Windows.
+
+**Тесты:** негатив — unused import → warning (и error при opt-in);
+`import` с неверным регистром → compile-error. Позитив — used import
+тихо, корректный регистр резолвится.
+
+### Ф.5 — Peer mutual recursion (2-pass typecheck) (P2)
+
+**Проблема:** single-pass typecheck merged-AST folder-модуля —
+взаимная рекурсия между peer-файлами может ломаться при некоторых
+порядках объявлений (маркер AD3).
+
+**Цель:** объявления в folder-модуле order-independent; взаимная
+рекурсия между peers работает (как Go package / Rust / TS).
+
+**Подзадачи:**
+- 2-проходный typecheck merged-AST: проход 1 — собрать все сигнатуры
+  (типы, функции) всех peers; проход 2 — проверить тела.
+- Зафиксировать: cross-**модульная** рекурсия невозможна by design
+  (цикл импортов = error, D29) — Ф.5 строго про peers одного
+  folder-модуля.
+
+**Тесты:** позитив — два peer-файла со взаимно-рекурсивными функциями/
+типами в любом порядке объявления компилируются.
+
+## Группа B — качество codegen
+
+### Ф.6 — Systematic symbol mangling v0 (P2, D-блок D134)
+
+**Проблема:** свободные функции пользователя → `nova_fn_<name>` **без
+пути модуля**. Два модуля с `fn foo()` → оба `nova_fn_foo` → коллизия
+линковки. Глобальный C-namespace без стабильной схемы.
+
+**Цель:** стабильная версионированная схема mangling «v0», уровня
+Rust v0; ноль коллизий между модулями.
+
+**Подзадачи:**
+- Схема: каждый user top-level символ → `nova_<mangled-modpath>_<kind>_<name>`
+  + кодирование type-аргументов для мономорфизированных generic'ов +
+  при необходимости короткий disambiguator-хэш.
+- ASCII-only (подтверждено лексером) → punycode не нужен.
+- Лимит длины C-идентификатора: при превышении безопасного порога —
+  усечение + хэш-суффикс (сохраняет уникальность).
+- **Exempt:** runtime/external-функции (`builtins.nv` registry) и
+  ABI-символы остаются с текущими именами — это FFI/ABI-поверхность.
+- D-блок **D134** — спецификация схемы (D133 занят Plan 80).
+- Документировать схему; опционально `nova demangle` для читаемых
+  стек-трейсов (как `rustc`-демэнглер) — stretch.
+
+**Тесты:** позитив — два модуля с одноимёнными функциями линкуются
+без коллизии; mono'д generic из разных модулей различимы. Юнит-тесты
+самой схемы (вход → ожидаемый mangled-name).
+
+### Ф.7 — Dead-code elimination (P2)
 
 **Проблема:** все импортированные элементы эмитятся в C, даже
-неиспользуемые (`import std.collections.range` тянет 20+ методов,
-используются ~2) — раздувание бинарника и время компиляции.
+недостижимые (`import std.collections.range` тянет 20+ методов).
 
-**Задача:** tree-shaking — эмитить только достижимые из entry
-импортированные элементы.
+**Цель:** эмитить только достижимый код — уровень Go (linker DCE),
+с выигрышем по скорости компиляции (отсечение на уровне компилятора).
 
-*(Было: Plan 35.D, часть 2.)*
+**Подзадачи:**
+- Worklist достижимости от корней: `main` (executable); все блоки
+  `test`/`bench` (`nova test`); `export`-элементы корневого модуля
+  (library-сборка).
+- Обход графа: вызовы функций, ссылки на типы/константы/методы;
+  динамическая диспетчеризация (protocol-значение) — консервативно
+  метить protocol-методы используемого типа; generic'и — только
+  реально инстанцированные мономорфизации.
+- Эмитить только элементы из множества достижимости.
+- Дополнительно — флаги C `-ffunction-sections -fdata-sections
+  -Wl,--gc-sections` как страховка.
 
-### Ф.5 — FileId propagation в диагностику (P2 — UX)
+**Тесты:** недостижимая импортированная функция отсутствует в
+сгенерированном `.c`; достижимая присутствует; protocol-dispatch не
+теряет методы.
 
-**Проблема:** все `Span` в импортированных элементах имеют
-`file_id = 0` (MAIN_FILE_ID) — ошибка в импортированном модуле
-показывается против main-файла.
+## Группа C — диагностика и производительность
 
-**Задача:** прокинуть реальный `file_id` через резолв импортов;
-cross-file диагностика указывает на настоящий файл и строку.
-Может потребовать предварительной FileId-инфраструктуры — оценить
-в начале фазы.
+### Ф.8 — Resolution diagnostics: multi-error + suggestions + FileId-аудит (P2)
 
-*(Было: маркер `simplifications.md` «FileId propagation».)*
+**Проблема:** (а) резолв падает на первой ошибке импорта; (б) нет
+«did you mean» для опечаток; (в) маркер simplifications утверждает,
+что импортированные span'ы имеют `file_id=0` — но инфраструктура
+`SourceMap`/`FileId` уже есть и peers получают FileId → маркер
+вероятно устарел, нужен аудит.
 
-### Ф.6 — Build cache + incremental (P3 — производительность)
+**Цель:** диагностика резолва уровня Rust/TS (Go здесь терсее —
+шанс быть **лучше Go**).
+
+**Подзадачи:**
+- Multi-error recovery: не прерываться на первой нерезолвленной
+  ссылке — собрать и показать все ошибки резолва.
+- «Did you mean?»: предложение по Левенштейну для опечаток в пути
+  модуля / имени импорта (как Rust/TS).
+- **FileId-аудит:** проверить, действительно ли single-file импорты и
+  все peers получают корректный `file_id` и `SourceMap` заполнен их
+  содержимым (для рендера сниппета); закрыть остатки `file_id=0`;
+  обновить/закрыть устаревший маркер.
+
+**Тесты:** несколько ошибок импорта в одном файле — показаны все;
+опечатка пути → подсказка; ошибка в импортированном модуле указывает
+на правильный файл+строку+сниппет.
+
+### Ф.9 — Build cache + incremental (P3)
 
 **Проблема:** каждый `nova build` заново парсит все импорты; нет
-dependency-based пересборки.
+пересборки по графу зависимостей.
 
-**Задача:** on-disk кэш разобранных модулей + инкрементальная
-пересборка по графу зависимостей.
+**Цель:** content-addressed кэш модулей — модель Go (`$GOCACHE`).
 
-*(Было: Plan 35.B.)*
+**Подзадачи:**
+- Ключ кэша модуля = хэш(содержимое файлов + версия компилятора +
+  активные `#cfg`-флаги + отсортированные хэши ключей прямых
+  зависимостей) → транзитивная инвалидация автоматом.
+- Значение — разобранный/проверенный артефакт модуля.
+- Хранилище — `target/.nova-cache/` (или аналог); гранулярность —
+  модуль.
+- Полноценный query-level инкремент (стиль Rust — пересборка только
+  затронутых функций) — отмечен как будущее, не v1.
 
-### Ф.7 — Alias member-call type-check + негативные тесты (P2)
+**Тесты:** повторный `nova build` без изменений — попадание в кэш;
+изменение файла инвалидирует его и зависимых.
 
-**Проблема:** `import X as a; a.unknown()` даёт link-error
-(undefined symbol), а не compile-error — `EXPECT_COMPILE_ERROR`
-не ловит. Type-checker не валидирует Member-call против
-alias-резолвленной сигнатуры.
-
-**Задача:** type-checker проверяет `alias.func(args)` против
-сигнатуры функции модуля; неизвестный метод / неверные аргументы →
-compile-error. Негативные фикстуры для `nova_tests/plan70_1/`.
-
-*(Было: Plan 70.1 known-limitation.)*
-
-### Ф.8 — Entry-folder-module peer-isolation (P3)
+### Ф.10 — Entry-folder-module peer-isolation (P3)
 
 **Проблема:** per-peer import isolation не активна, если **сам
 entry-модуль** — folder-module (entry парсится как один файл,
-MAIN_FILE_ID).
+MAIN_FILE_ID). Дизайн зафиксирован в `[M-entry-folder-module]`.
 
-**Задача:** активировать per-peer резолв и для entry-folder-module.
+**Цель:** per-peer резолв работает и для entry-folder-module.
 
-*(Было: `[M-entry-folder-module]`, designed-defer Plan 42.17 Ф.8.)*
+**Подзадачи:** активировать peer-резолв для entry; resolver-side +
+test-runner-side изменения по дизайну из `[M-entry-folder-module]`.
 
-### Ф.9 — Cross-module mutual recursion (P3 — edge-case)
+**Тесты:** entry как folder-module с per-peer импортами компилируется
+и тестируется; изоляция импортов между peers соблюдается.
 
-**Проблема:** single-pass typecheck merged AST — взаимная рекурсия
-через границы модулей может ломаться (flat-зависимости работают).
+## Группа D
 
-**Задача:** 2-pass typecheck (сигнатуры → тела), чтобы mutual
-recursion через модули резолвилась.
+### Ф.11 — spec sync + чистка simplifications.md + README
 
-*(Было: маркер `simplifications.md` «AD3 sig/body 2-pass».)*
-
-### Ф.10 — spec sync + чистка simplifications.md + README
-
-- Обновить `spec/decisions/07-modules.md` (visibility, mangling D134).
-- Почистить `simplifications.md`: MVP-таблица Plan 35 (~стр. 4595-4612)
-  и секция wildcard (~стр. 4405) устарели — отметить сделанное /
-  spec-rejected, закрыть маркеры, перенесённые в этот план.
-- Обновить `docs/plans/README.md`.
+- `spec/decisions/07-modules.md`: visibility enforcement (D5),
+  mangling-схема (D134), переподтвердить политику циклов (D29).
+- `simplifications.md`: MVP-таблица Plan 35 (~стр. 4595-4612) и секция
+  wildcard (~стр. 4405) устарели — отметить сделанное / spec-rejected;
+  закрыть маркеры FileId, AD3, `[M-entry-folder-module]`,
+  перенесённые в этот план.
+- `docs/plans/README.md` — обновить статус.
 
 ---
 
-## Приоритеты
+## Где Nova будет ≥ Go/Rust/TS
+
+- **Generic bounds без orphan rule** — структурная конформность (D72):
+  cross-file bounds работают без когнитивного налога orphan-правил
+  Rust, и так же безопасно. **Лучше Rust.**
+- **Две гранулярности модулей** — folder-module (как Go package) +
+  file-module: больше гибкости, чем у Go (только package) или Rust
+  (только дерево модулей).
+- **DCE на уровне компилятора** — отсечение до C-кодогенерации
+  ускоряет компиляцию; Go полагается только на линкер. **≥ Go.**
+- **Диагностика резолва** — multi-error + «did you mean» + точные
+  cross-file span'ы: **лучше терсого Go**, на уровне Rust/TS.
+- **Unused imports — гибко** — warn по умолчанию + opt-in error:
+  покрывает и строгость Go (error), и мягкость Rust (warn) без
+  навязывания.
+- **Циклы импортов запрещены** — как Go (чистая архитектура), строже
+  TS.
+
+## Приоритеты и порядок
 
 | Фаза | Приоритет | Природа |
 |---|---|---|
 | Ф.1 visibility | **P1** | корректность (нарушение спеки) |
-| Ф.2 generic bounds | P2 | функц. дыра |
-| Ф.3 mangling | P2 | безопасность codegen |
-| Ф.4 DCE | P2 | качество |
-| Ф.5 FileId | P2 | диагностика / UX |
-| Ф.7 alias type-check | P2 | корректность ошибок |
-| Ф.6 cache | P3 | производительность |
-| Ф.8 entry-folder | P3 | edge-case |
-| Ф.9 mutual recursion | P3 | edge-case |
+| Ф.2 alias type-check | **P1** | корректность (compile vs link error) |
+| Ф.3 generic bounds | P2 | функц. дыра |
+| Ф.4 strictness | P2 | корректность (Windows) + UX |
+| Ф.5 peer mutual recursion | P2 | корректность |
+| Ф.6 mangling | P2 | безопасность codegen |
+| Ф.7 DCE | P2 | качество |
+| Ф.8 диагностика | P2 | UX |
+| Ф.9 cache | P3 | производительность |
+| Ф.10 entry-folder | P3 | edge-case |
 
-Рекомендованный порядок: Ф.1 → Ф.7 → Ф.2 → Ф.3 → Ф.4 → Ф.5 → Ф.9 →
-Ф.8 → Ф.6 → Ф.10. Фазы независимы — можно закрывать по одной
-отдельными коммитами.
+**Рекомендованный порядок:** Ф.1 → Ф.2 → Ф.3 → Ф.5 → Ф.4 → Ф.8 →
+Ф.6 → Ф.7 → Ф.10 → Ф.9 → Ф.11. Фазы независимы — каждую можно
+закрывать отдельным коммитом с тестами.
 
 ## Зависимости
 
 - Опирается на закрытые Plan 35 / Plan 42.x / Plan 70.1.
-- Ф.5 может потребовать FileId-инфраструктуры (оценить в начале фазы).
+- Ф.6 требует D-блок D134.
+- Прочие фазы независимы между собой.
 
 ## Ссылки
 
 - [Plan 35](35-cross-file-resolve.md) — cross-file resolve MVP; sub-plans
   35.B-E и R26 перенесены сюда.
-- [Plan 42](42-folder-modules.md) — folder-modules; `[M-entry-folder-module]`
-  → Ф.8.
+- [Plan 42](42-folder-modules.md) / [Plan 42.17](42.17-audit-closure.md)
+  — folder-modules; `[M-entry-folder-module]` → Ф.10.
 - [Plan 70.1](70.1-module-alias-resolution.md) — alias codegen;
-  known-limitation → Ф.7.
-- `docs/simplifications.md` — маркеры FileId / AD3 / MVP-таблица.
-- `spec/decisions/07-modules.md` — D29 (модули), D5 (видимость).
+  known-limitation → Ф.2.
+- [Plan 71](71-doc-stability-scope.md) — паттерн warn + opt-in-error
+  (для Ф.4 unused imports).
+- `docs/simplifications.md` — маркеры FileId / AD3 / `[M-entry-folder-module]`.
+- `spec/decisions/07-modules.md` — D5 (видимость), D29 (модули,
+  циклы), D47 (поля record).
+- `spec/decisions/02-types.md` — D72/D53 (структурные bound'ы).
+- `compiler-codegen/src/diag.rs` — `Span`/`FileId`/`SourceMap`.
+- `compiler-codegen/src/imports.rs` — резолв импортов, цикл-детекция.
