@@ -7,6 +7,11 @@
 > vs Rust + Go + Nova-specific = 65 gaps закрыто, MVP boundary declared,
 > sub-plans 35.A-E).
 > **Выделен из:** [Plan 14](14-stdlib-codegen-gaps.md) (Ф.5), при закрытии того плана 2026-05-12.
+>
+> **🔗 Открытые под-задачи перенесены в [Plan 81](81-module-resolution-hardening.md)**
+> (2026-05-21): visibility enforcement (R26), 35.B cache/incremental,
+> 35.C cross-file generic bounds, 35.D mangling + DCE, FileId
+> propagation. Эти фичи будут доработаны там, не в этом плане.
 
 ---
 
