@@ -3,7 +3,22 @@
 > **Создан 2026-05-21.** Переработан с чистого листа 2026-05-21 после
 > сверки с реальным кодом компилятора (см. «Сверка фактов» ниже).
 >
-> **Статус:** 🚧 in progress — Ф.1 ✅ (2026-05-21), Ф.2–Ф.10 pending.
+> **Статус:** 🚧 in progress — Ф.1 ✅ + Ф.2 ✅ + Ф.3 ✅ (2026-05-21,
+> worktree `nova-p79`, ветка `plan-81-hardening`), Ф.4–Ф.11 pending.
+> - **Ф.1** ✅ visibility enforcement (commit `197480a747c`).
+> - **Ф.2** ✅ module-qualified call type-check — `alias.func()` /
+>   `mod.func()` резолвятся в `TypeCheckCtx`; неизвестная функция →
+>   **E7401**, неверный аргумент → E7301 (через argbind + Ф.1
+>   assignability). Закрыты deferred-негативы Plan 70.1
+>   (`nova_tests/plan70_1/f3,f4`).
+> - **Ф.3** ✅ cross-file generic bounds — эмпирически verify: уже
+>   работают (Plan 35 merge → `protocol_specs` → `check_satisfaction`),
+>   orphan rule не нужен (структурная конформность D72). Добавлены
+>   regression-фикстуры `nova_tests/plan81/bound_*`.
+> - `plan81/lib` — библиотечная фикстура без `main` (test-runner
+>   classification gap) — починена self-test'ом.
+>
+> Suite на момент Ф.3: **949 PASS / 0 FAIL**.
 >
 > **Источник:** аудит module-resolution 2026-05-21 — открытые пункты
 > [Plan 35](35-cross-file-resolve.md) (sub-plans 35.B-E + R26),
