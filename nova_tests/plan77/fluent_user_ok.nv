@@ -1,0 +1,29 @@
+// Plan 77 (D132): user-defined `-> @` fluent-метод.
+// `mut @method() -> @` — тело завершается `@` (вернуть receiver);
+// chaining работает.
+
+module nova_tests.plan77.fluent_user_ok
+
+type Counter { mut n int }
+
+fn Counter.new() -> Counter => { n: 0 }
+
+// fluent-метод: мутирует, возвращает сам receiver (тело кончается `@`).
+fn Counter mut @bump() -> @ {
+    @n = @n + 1
+    @
+}
+
+fn Counter @value() -> int => @n
+
+test "user fluent-метод — chaining через -> @" {
+    let c = Counter.new()
+    let r = c.bump().bump().bump()
+    assert(r.value() == 3)
+}
+
+test "fluent + alias — потребления нет, ошибки нет" {
+    let c = Counter.new()
+    let same = c.bump()        // same — алиас c (bump: -> @)
+    assert(same.value() == 1)
+}
