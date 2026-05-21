@@ -605,6 +605,7 @@ impl<'a> Lexer<'a> {
             "let" => TokenKind::KwLet,
             "const" => TokenKind::KwConst,
             "mut" => TokenKind::KwMut,
+            "consume" => TokenKind::KwConsume,
             "readonly" => TokenKind::KwReadonly,
             "if" => TokenKind::KwIf,
             "else" => TokenKind::KwElse,

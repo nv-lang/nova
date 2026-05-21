@@ -49,8 +49,8 @@ export external fn StringBuilder @capacity() -> int
 // Создать независимую копию (deep copy buffer).
 export external fn StringBuilder @clone() -> Self
 
-// Финализировать в str. Infallible (UTF-8 invariant поддерживается append'ами). После consume mutating методы → runtime panic.
-export external fn StringBuilder @into() -> str
+// Финализировать в str. Infallible (UTF-8 invariant поддерживается append'ами). consume-метод (D131): после @into() StringBuilder недоступен — повторное использование = compile error.
+export external fn StringBuilder consume @into() -> str
 
 // Non-consuming: проверить prefix буфера. Возвращает false после @into() (consumed).
 export external fn StringBuilder @starts_with(prefix str) -> bool

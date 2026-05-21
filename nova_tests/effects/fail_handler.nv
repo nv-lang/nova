@@ -113,7 +113,7 @@ test "with Fail: throw from spawn caught by outer handler" {
 }
 
 test "with Fail: handler ловит throw из supervised (cross-mco-boundary interrupt)" {
-    // По spec D61/D65: handler-method для Fail (fail() -> Never)
+    // По spec D61/D65: handler-method для Fail (fail() -> never)
     // завершается через `interrupt v`, не через return/trailing.
     //
     // Когда throw случается в spawn-body, а with-handler установлен

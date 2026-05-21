@@ -2,6 +2,17 @@
 
 > **Создан 2026-05-19.**
 >
+> **✅ ЗАКРЫТ 2026-05-21.** Все 4 фазы выполнены: Ф.1 `nova_rt/numeric.h`
+> (memcpy-based `Nova_f64_to_bits`/`Nova_f64_from_bits`/`Nova_f32_to_bits`/
+> `Nova_f32_from_bits`, included в nova_rt.h), Ф.2 `numeric_runtime()` в
+> `runtime_registry.rs`, Ф.3 `std/runtime/numeric.nv` (auto-gen, regen-check
+> green), Ф.4 тесты `nova_tests/plan74/bitcast_f64.nv` + `bitcast_f32.nv`
+> (12 sub-тестов: known IEEE 754 patterns, round-trip, ±0.0 sign-bit, NaN,
+> ±∞). Codegen dispatch — hard-coded primitive-type methods (как D74 math):
+> instance `f.to_bits()` + static `fX.from_bits()` (Member + Path form) +
+> `infer_expr_c_type`. Legacy Plan 04 `int.to_bits(f f64)` / `f64.from_bits`
+> сохранены (read_buffer round-trip).
+>
 > **Цель:** добавить безопасные методы reinterpret-cast для примитивных
 > value-типов: `f64 ↔ u64`, `f32 ↔ u32`. Нужны для IEEE 754 bit-level
 > операций (хэши, NaN-boxing, FFI, `realtime nogc` зоны).

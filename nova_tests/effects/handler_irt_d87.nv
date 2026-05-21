@@ -1,7 +1,7 @@
 // handler_irt_d87.nv — Plan 19 D87: `Handler[E, IRT]` параметризация.
 //
 // D87: тип Handler параметризован эффектом и interrupt-return-type.
-// `Handler[E]` ≡ `Handler[E, Never]` через D88 default.
+// `Handler[E]` ≡ `Handler[E, never]` через D88 default.
 //
 // Bootstrap-уровень: parser принимает `Handler[E, IRT]`, runtime —
 // type-erases (IRT не enforce'ится). Production type-checker
@@ -18,7 +18,7 @@ type Logger effect {
     log(msg str) -> ()
 }
 
-test "Handler[E] (default IRT=Never): handler без interrupt" {
+test "Handler[E] (default IRT=never): handler без interrupt" {
     let mut count = 0
     with Logger = handler Logger {
         log(_msg) {

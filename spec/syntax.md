@@ -432,7 +432,7 @@ f64.try_parse(s str) -> Option[f64]
   удовлетворяющему protocol'у ([D66](decisions/02-types.md#d66)).
   Валиден в любом type-контексте.
 - `any` — top-type для runtime type-check ([D54](decisions/03-syntax.md#d54)).
-- `Never` — bottom-type для не-возвращающих функций.
+- `never` — bottom-type для не-возвращающих функций.
 
 **Prelude types:**
 - `Option[T]`, `Some(v)`, `None` — sum-тип
@@ -1579,7 +1579,7 @@ fn handle(r Request) Db Log -> Response =>
 
 `panic` — это смерть **fiber'а**, не процесса. В сервере падает только
 текущий запрос, остальное работает. Если нужно гарантированно гасить
-процесс — отдельная функция `exit(code int, msg str) -> Never`
+процесс — отдельная функция `exit(code int, msg str) -> never`
 ([D13](decisions/08-runtime.md#d13)).
 
 Подробно — [revolutionary.md R11](revolutionary.md), [D13](decisions/08-runtime.md#d13).

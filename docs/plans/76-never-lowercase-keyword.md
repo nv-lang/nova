@@ -2,6 +2,25 @@
 
 > **Создан 2026-05-20.** Выделен из обсуждения Plan 72 P1-B.
 >
+> **✅ ЗАКРЫТ 2026-05-21.** Все 5 фаз: Ф.1 parser (`never` в
+> `is_primitive_type`), Ф.2 Rust rename (`"Never"` → `"never"` string
+> literals в `types/mod.rs` builtins HashSet / `ty_of_ref` / `emit_c.rs`
+> BUILTIN_TYPE_NAMES + `type_ref_to_c` `never → nova_int` ABI placeholder
+> + user-facing diagnostic; внутренний enum-variant `Ty::Never` оставлен
+> — корректный Rust PascalCase, ровно как `int → Ty::Int`), Ф.3 миграция
+> 3 функциональных `.nv` (`Fail.fail`/`panic`/`exit` → `-> never`) +
+> комментарии prelude/тестов, Ф.4 spec (08-runtime.md bottom-type
+> definition rewrite + bulk rename в decisions/03,04,07,10 + narrative),
+> Ф.5 `nova_tests/plan76/never_positive.nv` + миграция фикстур.
+> **888 PASS / 0 FAIL / 56 SKIP.**
+>
+> Примечание по Ф.5: запланированный негативный тест «`Never` (заглавная)
+> → compile error» снят — bootstrap type-checker permissive к unknown
+> uppercase type-именам (Plan 37 scope). Негативное покрытие never-семантики
+> остаётся через `fail_handler_no_exit_rejected.nv` (never-операция handler
+> обязан diverge). «Construct `never` value → CE» требует строгого
+> assignment-checking (Plan 37) — отложено честно, не симулировано.
+>
 > **Цель:** привести bottom-тип к единой конвенции примитивов Nova —
 > переименовать `Never` → `never` (строчный), сделать встроенным
 > keyword'ом, убрать любую идею «объявить его в prelude».

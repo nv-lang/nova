@@ -2759,7 +2759,7 @@ fn Range @step(n int) -> StepIter
 > комбинацию `return v` (нормальное завершение, continuation
 > возобновляется) + `interrupt v` (досрочное прерывание with-блока).
 > Линейность — one-shot. Multi-shot отложен под Q-multishot-resume
-> (если когда-нибудь потребуется backtracking-эффект). Для Never-операций
+> (если когда-нибудь потребуется backtracking-эффект). Для never-операций
 > разрешён только `interrupt`. См. D61 «Алгоритм компиляции/интерпретации
 > эффектов» — пошаговое тех-задание имплементатору.
 >
@@ -2781,7 +2781,7 @@ fn Range @step(n int) -> StepIter
 3. **Тип `resume`.** `fn(R) -> ()` или `fn(R) -> T_with_block`?
 4. Что если `resume` **не вызван**? handler возвращает за весь
    `with`-блок? Какое значение?
-5. **Запрещён ли `resume`** для `Never`-операций (`Fail.throw`)?
+5. **Запрещён ли `resume`** для `never`-операций (`Fail.throw`)?
 6. **`resume()` без аргумента** для unit-операций — сахар или
    обязательная форма?
 
@@ -2824,9 +2824,9 @@ fn try_parse(s str) -> Option[int] =>
 бросает — handler возвращает `None`, и **весь with-блок** даёт
 `None`.
 
-#### Never-операции
+#### never-операции
 
-`Fail.throw` имеет тип `Never` (нет возвратного значения). `resume`
+`Fail.throw` имеет тип `never` (нет возвратного значения). `resume`
 для неё **запрещён** — нечего возобновлять. Линтер/тайпчекер должен
 запретить.
 
@@ -2847,7 +2847,7 @@ log(msg) { println(msg); resume(()) }
 - Линейность (one-shot recommended).
 - Точный тип `resume`.
 - Поведение если не вызван.
-- Запрет для Never.
+- Запрет для never.
 - Поведение для unit-операций.
 - Что происходит при второй попытке вызова (panic vs compile-error).
 - Пример каждой формы.
@@ -3635,9 +3635,9 @@ type Float protocol {
 
 > ✅ **ЗАКРЫТО → [D88](decisions/03-syntax.md#d88-default-значения-generic-параметров)** (2026-05-10).
 > Триггер — [D87](decisions/04-effects.md#d87-handlere-irt--параметризация-handler-типом-interruptа)
-> `Handler[E, IRT = Never]`: тип handler'а должен сообщать о
+> `Handler[E, IRT = never]`: тип handler'а должен сообщать о
 > возможности `interrupt`, но обратная совместимость требует
-> `Handler[E] ≡ Handler[E, Never]` через default. Это и есть real
+> `Handler[E] ≡ Handler[E, never]` через default. Это и есть real
 > consumer, которого ждали.
 >
 > Принят синтаксис из текущего раздела as-is: `[T = f64]`,

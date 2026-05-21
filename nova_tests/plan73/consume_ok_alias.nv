@@ -1,0 +1,20 @@
+// Plan 73 followup: alias — позитивный случай. consume через alias
+// один раз, без повторного использования ни одного имени → ошибки нет.
+
+module nova_tests.plan73.consume_ok_alias
+
+fn build_via_factory() -> str {
+    let sb = make_sb()
+    let view = sb              // alias
+    view.into()                // consume через alias; sb/view дальше не used
+}
+
+fn make_sb() -> StringBuilder {
+    let sb = StringBuilder.new()
+    sb.append("from-factory")
+    sb
+}
+
+test "alias + factory-return — корректный consume" {
+    assert(build_via_factory() == "from-factory")
+}

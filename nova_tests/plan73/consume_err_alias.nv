@@ -1,0 +1,16 @@
+// EXPECT_COMPILE_ERROR D131
+//
+// Plan 73 followup: use-after-consume через alias. `let alias = sb`
+// создаёт второе имя на тот же объект — consume через любое имя
+// инвалидирует весь alias-класс.
+
+module nova_tests.plan73.consume_err_alias
+
+test "use after consume через alias" {
+    let sb = StringBuilder.new()
+    sb.append("hi")
+    let twin = sb              // twin и sb — один и тот же объект
+    let s = twin.into()       // consume через alias-имя
+    sb.append("oops")         // ОШИБКА D131: sb — алиас потреблённого
+    assert(s == "hi")
+}
