@@ -53,7 +53,33 @@ pub struct Disagreement {
 static DISAGREEMENTS: Mutex<Vec<Disagreement>> = Mutex::new(Vec::new());
 
 /// Записать найденное расхождение в глобальный коллектор.
+///
+/// Дополнительно, если задан `NOVA_CROSSCHECK_LOG`, дописывает строку в
+/// указанный файл. `nova test` компилирует каждый `.nv` отдельным
+/// процессом, и in-process коллектор виден только своему процессу;
+/// файл же аккумулирует расхождения всего прогона корпуса — на нём
+/// строится airtight CI-gate (Ф.5). Append на POSIX атомарен для
+/// коротких строк.
 pub fn record_disagreement(d: Disagreement) {
+    if let Ok(path) = std::env::var("NOVA_CROSSCHECK_LOG") {
+        if !path.trim().is_empty() {
+            use std::io::Write;
+            if let Ok(mut f) = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(path.trim())
+            {
+                let _ = writeln!(
+                    f,
+                    "DISAGREEMENT fn={} z3={} cvc5={} vc={}",
+                    d.fn_name.as_deref().unwrap_or("?"),
+                    d.z3_verdict,
+                    d.cvc5_verdict,
+                    d.vc
+                );
+            }
+        }
+    }
     if let Ok(mut g) = DISAGREEMENTS.lock() {
         g.push(d);
     }
