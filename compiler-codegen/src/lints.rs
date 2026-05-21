@@ -11,7 +11,8 @@
 
 use crate::ast::{
     ArrayElem, Block, ClosureBody, ElseBranch, Expr, ExprKind, FnBody, FnDecl,
-    HandlerMethodBody, Item, MatchArmBody, Module, Stmt, TypeDeclKind, TypeRef,
+    HandlerMethodBody, Import, Item, MatchArmBody, Module, Stmt, TypeDeclKind,
+    TypeRef,
 };
 use crate::diag::{Diagnostic, Span};
 use std::collections::HashSet;
@@ -106,7 +107,538 @@ pub fn lint_module(m: &Module) -> Vec<LintWarning> {
     // allow_prelude_shadow`. Emitted в общий warnings Vec — surfaces через
     // `cmd_check` warnings field (то же что и другие lints).
     warnings.extend(lint_prelude_shadow(m));
+    // Plan 81 Ф.4: неиспользуемые импорты.
+    warnings.extend(lint_unused_imports(m));
     warnings
+}
+
+// ============================================================================
+// Plan 81 Ф.4: unused-import lint.
+//
+// Per-peer: имена, привнесённые `import`'ом этого peer-файла, должны
+// использоваться в его `items_here` (per-peer isolation — Plan 42.15
+// Rule C). Неиспользуемые → warning `unused-import`. По умолчанию
+// warning; opt-in error через `nova.toml` — на уровне CLI (--strict).
+// ============================================================================
+
+/// Имена, которые `import` делает видимыми в peer-файле.
+fn import_brought_names(imp: &Import) -> Vec<String> {
+    match &imp.items {
+        // Селективный `import X.{A, B as C}` — видимы final-имена.
+        Some(items) => items
+            .iter()
+            .map(|it| it.alias.clone().unwrap_or_else(|| it.name.clone()))
+            .collect(),
+        // Whole-module `import X` / `import X as a` — виден module-prefix.
+        None => {
+            if let Some(a) = &imp.alias {
+                vec![a.clone()]
+            } else if let Some(last) = imp.path.last() {
+                vec![last.clone()]
+            } else {
+                Vec::new()
+            }
+        }
+    }
+}
+
+/// `true` если import — авто-prelude (`std.prelude*`): он неявный, его
+/// нельзя пометить «unused».
+fn is_prelude_import(imp: &Import) -> bool {
+    matches!(imp.path.first().map(String::as_str), Some("std"))
+        && imp.path.get(1).map(String::as_str) == Some("prelude")
+}
+
+fn lint_unused_imports(m: &Module) -> Vec<LintWarning> {
+    let mut warnings = Vec::new();
+    if m.peer_files.is_empty() {
+        // Pre-resolution / single-file без populated peer_files — flat.
+        check_imports_unused(&m.imports, &m.items, &mut warnings);
+    } else {
+        // Per-peer (Plan 42.15 Rule C — импорты изолированы по peer'ам).
+        for pf in &m.peer_files {
+            check_imports_unused(&pf.imports, &pf.items_here, &mut warnings);
+        }
+    }
+    warnings
+}
+
+fn check_imports_unused(
+    imports: &[Import],
+    items: &[Item],
+    warnings: &mut Vec<LintWarning>,
+) {
+    let mut used: HashSet<String> = HashSet::new();
+    collect_used_names(items, &mut used);
+    for imp in imports {
+        // `export import` — re-export: имена и есть API, «используются».
+        if imp.is_export || is_prelude_import(imp) {
+            continue;
+        }
+        // Whole-module `import X` делает доступным И prefix `X`, И —
+        // через Plan 35 merge — все экспортируемые имена модуля X как
+        // bare-имена. Достоверно определить «не использован» нельзя без
+        // резолва экспортов X → не линтуем (иначе ложные срабатывания
+        // на bare-использовании). Селективный `import X.{A, B}` несёт
+        // точно известный набор имён.
+        if imp.items.is_none() {
+            continue;
+        }
+        for name in import_brought_names(imp) {
+            if !used.contains(&name) {
+                warnings.push(LintWarning {
+                    rule: "unused-import",
+                    diag: crate::diag::Diagnostic::new(
+                        format!(
+                            "unused import `{}` — imported but never \
+                             referenced in this file",
+                            name,
+                        ),
+                        imp.span,
+                    ),
+                });
+            }
+        }
+    }
+}
+
+/// Plan 81 Ф.4: собрать все имена-ссылки в items (для unused-import).
+fn collect_used_names(items: &[Item], out: &mut HashSet<String>) {
+    for item in items {
+        match item {
+            Item::Fn(f) => {
+                for g in &f.generics {
+                    if let Some(b) = &g.bound {
+                        collect_tr(b, out);
+                    }
+                    if let Some(d) = &g.default {
+                        collect_tr(d, out);
+                    }
+                }
+                for p in &f.params {
+                    collect_tr(&p.ty, out);
+                    if let Some(dv) = &p.default {
+                        collect_expr(dv, out);
+                    }
+                }
+                if let Some(rt) = &f.return_type {
+                    collect_tr(rt, out);
+                }
+                for e in &f.effects {
+                    collect_tr(e, out);
+                }
+                for c in &f.contracts {
+                    collect_expr(&c.expr, out);
+                }
+                match &f.body {
+                    FnBody::Expr(e) => collect_expr(e, out),
+                    FnBody::Block(b) => collect_block(b, out),
+                    FnBody::External => {}
+                }
+            }
+            Item::Type(td) => {
+                for g in &td.generics {
+                    if let Some(b) = &g.bound {
+                        collect_tr(b, out);
+                    }
+                    if let Some(d) = &g.default {
+                        collect_tr(d, out);
+                    }
+                }
+                match &td.kind {
+                    TypeDeclKind::Record(fields) => {
+                        for fld in fields {
+                            collect_tr(&fld.ty, out);
+                        }
+                    }
+                    TypeDeclKind::Sum(variants) => {
+                        for v in variants {
+                            match &v.kind {
+                                crate::ast::SumVariantKind::Unit => {}
+                                crate::ast::SumVariantKind::Tuple(tys) => {
+                                    for t in tys {
+                                        collect_tr(t, out);
+                                    }
+                                }
+                                crate::ast::SumVariantKind::Record(fields) => {
+                                    for fld in fields {
+                                        collect_tr(&fld.ty, out);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    TypeDeclKind::Effect(methods)
+                    | TypeDeclKind::Protocol(methods) => {
+                        for mth in methods {
+                            for p in &mth.params {
+                                collect_tr(&p.ty, out);
+                            }
+                            if let Some(rt) = &mth.return_type {
+                                collect_tr(rt, out);
+                            }
+                            for e in &mth.effects {
+                                collect_tr(e, out);
+                            }
+                        }
+                    }
+                    TypeDeclKind::Newtype(tr) | TypeDeclKind::Alias(tr) => {
+                        collect_tr(tr, out)
+                    }
+                    TypeDeclKind::Opaque => {}
+                }
+            }
+            Item::Const(c) => {
+                if let Some(t) = &c.ty {
+                    collect_tr(t, out);
+                }
+                collect_expr(&c.value, out);
+            }
+            Item::Let(l) => collect_expr(&l.value, out),
+            Item::Test(t) => collect_block(&t.body, out),
+            Item::Bench(b) => {
+                for s in &b.setup {
+                    collect_stmt(s, out);
+                }
+                collect_block(&b.measure_body, out);
+                for s in &b.teardown {
+                    collect_stmt(s, out);
+                }
+                for grp in &b.groups {
+                    for case in &grp.cases {
+                        for s in &case.setup {
+                            collect_stmt(s, out);
+                        }
+                        collect_block(&case.measure_body, out);
+                        for s in &case.teardown {
+                            collect_stmt(s, out);
+                        }
+                    }
+                }
+            }
+            Item::Lemma(_) => {}
+        }
+    }
+}
+
+/// Собрать имена из TypeRef-дерева (все сегменты path'ей).
+fn collect_tr(tr: &TypeRef, out: &mut HashSet<String>) {
+    match tr {
+        TypeRef::Named { path, generics, .. } => {
+            for seg in path {
+                out.insert(seg.clone());
+            }
+            for g in generics {
+                collect_tr(g, out);
+            }
+        }
+        TypeRef::Array(inner, _) | TypeRef::FixedArray(_, inner, _) => {
+            collect_tr(inner, out)
+        }
+        TypeRef::Tuple(items, _) => {
+            for it in items {
+                collect_tr(it, out);
+            }
+        }
+        TypeRef::Func { params, effects, return_type, .. } => {
+            for p in params {
+                collect_tr(p, out);
+            }
+            for e in effects {
+                collect_tr(e, out);
+            }
+            if let Some(rt) = return_type {
+                collect_tr(rt, out);
+            }
+        }
+        TypeRef::Unit(_) => {}
+    }
+}
+
+fn collect_block(b: &Block, out: &mut HashSet<String>) {
+    for s in &b.stmts {
+        collect_stmt(s, out);
+    }
+    if let Some(t) = &b.trailing {
+        collect_expr(t, out);
+    }
+}
+
+fn collect_stmt(s: &Stmt, out: &mut HashSet<String>) {
+    match s {
+        Stmt::Expr(e) => collect_expr(e, out),
+        Stmt::Let(d) => {
+            if let Some(t) = &d.ty {
+                collect_tr(t, out);
+            }
+            collect_expr(&d.value, out);
+        }
+        Stmt::Assign { target, value, .. } => {
+            collect_expr(target, out);
+            collect_expr(value, out);
+        }
+        Stmt::Return { value, .. } => {
+            if let Some(v) = value {
+                collect_expr(v, out);
+            }
+        }
+        Stmt::Throw { value, .. } => collect_expr(value, out),
+        Stmt::Break(_) | Stmt::Continue(_) | Stmt::Reveal { .. } => {}
+        Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. } => {
+            collect_expr(body, out)
+        }
+        Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => {
+            collect_expr(expr, out)
+        }
+        Stmt::Apply { args, .. } => {
+            for a in args {
+                collect_expr(a, out);
+            }
+        }
+        Stmt::Calc { steps, .. } => {
+            for step in steps {
+                collect_expr(&step.expr, out);
+            }
+        }
+    }
+}
+
+fn collect_expr(e: &Expr, out: &mut HashSet<String>) {
+    match &e.kind {
+        ExprKind::Ident(n) => {
+            out.insert(n.clone());
+        }
+        ExprKind::Path(parts) => {
+            for p in parts {
+                out.insert(p.clone());
+            }
+        }
+        ExprKind::TurboFish { base, type_args } => {
+            collect_expr(base, out);
+            for t in type_args {
+                collect_tr(t, out);
+            }
+        }
+        ExprKind::As(inner, ty) | ExprKind::Is(inner, ty) => {
+            collect_expr(inner, out);
+            collect_tr(ty, out);
+        }
+        ExprKind::Call { func, args, trailing } => {
+            collect_expr(func, out);
+            for a in args {
+                collect_expr(a.expr(), out);
+            }
+            if let Some(t) = trailing {
+                match t {
+                    crate::ast::Trailing::Block(b) => collect_block(b, out),
+                    crate::ast::Trailing::LegacyBlockWithParams(tb) => {
+                        collect_block(&tb.body, out)
+                    }
+                    crate::ast::Trailing::Fn(sb) => {
+                        collect_fn_sig_body(sb, out)
+                    }
+                }
+            }
+        }
+        ExprKind::Binary { left, right, .. } => {
+            collect_expr(left, out);
+            collect_expr(right, out);
+        }
+        ExprKind::Unary { operand, .. } => collect_expr(operand, out),
+        ExprKind::Try(i) | ExprKind::Bang(i) => collect_expr(i, out),
+        ExprKind::Coalesce(a, b) => {
+            collect_expr(a, out);
+            collect_expr(b, out);
+        }
+        ExprKind::Member { obj, .. } => collect_expr(obj, out),
+        ExprKind::Index { obj, index } => {
+            collect_expr(obj, out);
+            collect_expr(index, out);
+        }
+        ExprKind::If { cond, then, else_ } => {
+            collect_expr(cond, out);
+            collect_block(then, out);
+            if let Some(eb) = else_ {
+                collect_else(eb, out);
+            }
+        }
+        ExprKind::IfLet { scrutinee, then, else_, .. } => {
+            collect_expr(scrutinee, out);
+            collect_block(then, out);
+            if let Some(eb) = else_ {
+                collect_else(eb, out);
+            }
+        }
+        ExprKind::Match { scrutinee, arms } => {
+            collect_expr(scrutinee, out);
+            for arm in arms {
+                if let Some(g) = &arm.guard {
+                    collect_expr(g, out);
+                }
+                match &arm.body {
+                    MatchArmBody::Expr(e) => collect_expr(e, out),
+                    MatchArmBody::Block(b) => collect_block(b, out),
+                }
+            }
+        }
+        ExprKind::Block(b) => collect_block(b, out),
+        ExprKind::ArrayLit(elems) => {
+            for el in elems {
+                match el {
+                    ArrayElem::Item(e) | ArrayElem::Spread(e) => {
+                        collect_expr(e, out)
+                    }
+                }
+            }
+        }
+        ExprKind::MapLit { elems, .. } => {
+            for (k, v) in crate::ast::MapElem::cloned_pairs(elems).iter() {
+                collect_expr(k, out);
+                collect_expr(v, out);
+            }
+        }
+        ExprKind::TupleLit(elems) => {
+            for e in elems {
+                collect_expr(e, out);
+            }
+        }
+        ExprKind::RecordLit { type_name, fields, .. } => {
+            if let Some(tn) = type_name {
+                for seg in tn {
+                    out.insert(seg.clone());
+                }
+            }
+            for f in fields {
+                if let Some(v) = &f.value {
+                    collect_expr(v, out);
+                }
+            }
+        }
+        ExprKind::TaggedTemplate { tag, args, .. } => {
+            collect_expr(tag, out);
+            for a in args {
+                collect_expr(a, out);
+            }
+        }
+        ExprKind::InterpolatedStr { parts } => {
+            for p in parts {
+                if let crate::ast::InterpStrPart::Expr(e) = p {
+                    collect_expr(e, out);
+                }
+            }
+        }
+        ExprKind::Lambda { body, .. } => collect_expr(body, out),
+        ExprKind::ClosureLight { body, .. } => match body {
+            ClosureBody::Expr(e) => collect_expr(e, out),
+            ClosureBody::Block(b) => collect_block(b, out),
+        },
+        ExprKind::ClosureFull(sb) => collect_fn_sig_body(sb, out),
+        ExprKind::Spawn(body) => collect_expr(body, out),
+        ExprKind::Detach(body) => collect_block(body, out),
+        ExprKind::Supervised { body, cancel } => {
+            if let Some(c) = cancel {
+                collect_expr(c, out);
+            }
+            collect_block(body, out);
+        }
+        ExprKind::Forbid { body, .. } => collect_block(body, out),
+        ExprKind::Realtime { body, .. } => collect_block(body, out),
+        ExprKind::ParallelFor { iter, body, .. } => {
+            collect_expr(iter, out);
+            collect_block(body, out);
+        }
+        ExprKind::For { iter, body, .. } => {
+            collect_expr(iter, out);
+            collect_block(body, out);
+        }
+        ExprKind::While { cond, body, .. } => {
+            collect_expr(cond, out);
+            collect_block(body, out);
+        }
+        ExprKind::WhileLet { scrutinee, body, .. } => {
+            collect_expr(scrutinee, out);
+            collect_block(body, out);
+        }
+        ExprKind::Loop { body, .. } => collect_block(body, out),
+        ExprKind::Select { arms } => {
+            for arm in arms {
+                match &arm.op {
+                    crate::ast::SelectOp::Recv { chan, .. } => {
+                        collect_expr(chan, out)
+                    }
+                    crate::ast::SelectOp::Send { chan, value } => {
+                        collect_expr(chan, out);
+                        collect_expr(value, out);
+                    }
+                    crate::ast::SelectOp::Default => {}
+                }
+                if let Some(g) = &arm.guard {
+                    collect_expr(g, out);
+                }
+                collect_block(&arm.body, out);
+            }
+        }
+        ExprKind::Range { start, end, .. } => {
+            collect_expr(start, out);
+            collect_expr(end, out);
+        }
+        ExprKind::Throw(i) => collect_expr(i, out),
+        ExprKind::Interrupt(opt) => {
+            if let Some(e) = opt {
+                collect_expr(e, out);
+            }
+        }
+        ExprKind::With { bindings, body } => {
+            for b in bindings {
+                collect_tr(&b.effect, out);
+                collect_expr(&b.handler, out);
+            }
+            collect_block(body, out);
+        }
+        ExprKind::Forall { range, body, .. }
+        | ExprKind::Exists { range, body, .. } => {
+            collect_expr(range, out);
+            collect_expr(body, out);
+        }
+        ExprKind::HandlerLit { effect_name, methods } => {
+            for seg in effect_name {
+                out.insert(seg.clone());
+            }
+            for mth in methods {
+                match &mth.body {
+                    HandlerMethodBody::Expr(e) => collect_expr(e, out),
+                    HandlerMethodBody::Block(b) => collect_block(b, out),
+                }
+            }
+        }
+        ExprKind::IntLit(_) | ExprKind::FloatLit(_) | ExprKind::BoolLit(_)
+        | ExprKind::StrLit(_) | ExprKind::CharLit(_) | ExprKind::UnitLit
+        | ExprKind::SelfAccess => {}
+    }
+}
+
+fn collect_else(eb: &ElseBranch, out: &mut HashSet<String>) {
+    match eb {
+        ElseBranch::Block(b) => collect_block(b, out),
+        ElseBranch::If(e) => collect_expr(e, out),
+    }
+}
+
+fn collect_fn_sig_body(sb: &crate::ast::FnSigBody, out: &mut HashSet<String>) {
+    for p in &sb.params {
+        collect_tr(&p.ty, out);
+    }
+    for e in &sb.effects {
+        collect_tr(e, out);
+    }
+    if let Some(rt) = &sb.return_type {
+        collect_tr(rt, out);
+    }
+    match &sb.body {
+        FnBody::Expr(e) => collect_expr(e, out),
+        FnBody::Block(b) => collect_block(b, out),
+        FnBody::External => {}
+    }
 }
 
 /// Plan 62.F.bis Ф.2: snapshot prelude-visibility state модуля.
@@ -999,6 +1531,45 @@ mod tests {
         assert_eq!(ws.len(), 0);
     }
 
+    // Plan 81 Ф.4: unused-import lint.
+
+    #[test]
+    fn warns_on_unused_selective_import() {
+        let m = parse(
+            "module foo\nimport bar.{Unused}\nfn run() -> int => 0\n",
+        );
+        let ws = lint_module(&m);
+        assert!(ws.iter().any(|w| w.rule == "unused-import"));
+    }
+
+    #[test]
+    fn no_warning_on_used_selective_import() {
+        let m = parse(
+            "module foo\nimport bar.{Helper}\nfn run() -> int => Helper()\n",
+        );
+        let ws = lint_module(&m);
+        assert!(!ws.iter().any(|w| w.rule == "unused-import"));
+    }
+
+    #[test]
+    fn no_warning_on_whole_module_import() {
+        // Whole-module import не линтуется — открытый набор bare-имён.
+        let m = parse("module foo\nimport bar\nfn run() -> int => 0\n");
+        let ws = lint_module(&m);
+        assert!(!ws.iter().any(|w| w.rule == "unused-import"));
+    }
+
+    #[test]
+    fn used_import_in_type_position_not_flagged() {
+        // Импортированный тип, использованный только в сигнатуре.
+        let m = parse(
+            "module foo\nimport bar.{Widget}\n\
+             fn run(w Widget) -> int => 0\n",
+        );
+        let ws = lint_module(&m);
+        assert!(!ws.iter().any(|w| w.rule == "unused-import"));
+    }
+
     // Plan 33.8 Ф.3.3: `assume` вне `#trusted` → lint `trust-introduced`.
     #[test]
     fn warns_on_assume_outside_trusted() {
@@ -1065,8 +1636,12 @@ mod tests {
 
     #[test]
     fn warns_on_protocol_in_effect_position() {
-        // Hashable — встроенный protocol; в effect-position warning.
-        let m = parse("module foo\nfn process(x int) Hashable -> int => x\n");
+        // `Eq` — protocol (hardcoded back-compat alias в
+        // `collect_protocol_names`); в effect-position → warning.
+        // Раньше тест использовал `Hashable` — после Plan 62.E он
+        // мигрирован в prelude и распознаётся только после import-merge,
+        // которого bare `parse` не делает (stale test, чинится здесь).
+        let m = parse("module foo\nfn process(x int) Eq -> int => x\n");
         let ws = lint_module(&m);
         assert_eq!(ws.len(), 1);
         assert_eq!(ws[0].rule, "protocol-in-effect-position");
