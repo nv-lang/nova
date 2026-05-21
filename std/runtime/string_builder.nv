@@ -26,10 +26,10 @@ export external fn StringBuilder.from(s str) -> Self
 export external fn StringBuilder.from(c char) -> Self
 
 // Append UTF-8 bytes из str. Возвращает self для chaining (Ф.9.1).
-export external fn StringBuilder mut @append(s str) -> Self
+export external fn StringBuilder mut @append(s str) -> @
 
 // Append codepoint как UTF-8 (1-4 байта). Возвращает self для chaining.
-export external fn StringBuilder mut @append(c char) -> Self
+export external fn StringBuilder mut @append(c char) -> @
 
 // Оператор `+`: `sb + s == sb.@plus(s)` → @append (D46).
 export fn StringBuilder mut @plus(s str) -> Self => @append(s)

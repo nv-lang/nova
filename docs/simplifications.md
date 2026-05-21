@@ -10436,21 +10436,12 @@ G/H). ~3700 LOC implementation cumulative.
 
 ## Plan 73 — consume qualifier (D131, 2026-05-21)
 
-### [M-consume-method-result-alias] (DEFER -> план «-> @»)
-> Обновлено 2026-05-21: прямой alias `let a = b` теперь отслеживается
-> (canonical-name aliasing — consume любого имени инвалидирует весь
-> alias-класс). Маркер сужен до method-result alias.
-- **Где:** `compiler-codegen/src/types/mod.rs` -> `check_consume` / `ConsumeCtx`.
-- **Что упрощено:** alias через **результат метода** не отслеживается:
-  `let sb2 = sb.append("x")` (builder-chaining, `append` фактически
-  возвращает тот же объект) — `sb2` не считается алиасом `sb`.
-- **Почему:** `-> Self` гарантирует «тот же ТИП», не «тот же ОБЪЕКТ» —
-  считать результат `Self`-метода алиасом было бы unsound (false positive,
-  если метод вернёт свежий объект).
-- **Как чинить:** ввести точное «возвращает receiver» — план «`-> @` /
-  fluent-return» ([плановый черновик](plans/77-fluent-return.md)). Тогда
-  builder-chain alias станет sound.
-- **Приоритет:** L — направление false-negative (ложных ошибок не даёт).
+### [M-consume-method-result-alias] ✅ ЗАКРЫТ 2026-05-21 (Plan 77)
+> История: прямой alias `let a = b` закрыт 2026-05-21 (canonical-name
+> aliasing). Method-result alias (builder-chain) закрыт Plan 77 —
+> синтаксис `-> @` (D132) даёт проверяемую гарантию «метод возвращает
+> receiver»; consume-checker трактует `let x = recv.fluent()` как alias.
+> `~22` stdlib builder-метода мигрированы на `-> @`. Маркер закрыт.
 
 ### [M-consume-receiver-type-best-effort] (DEFER -> Plan 37)
 > Обновлено 2026-05-21: добавлен вывод типа из return-типа свободной
