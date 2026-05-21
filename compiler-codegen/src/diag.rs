@@ -236,6 +236,8 @@ impl Diagnostic {
         let (src, path) = resolver.resolve(&self.span);
         let (line, col) = byte_to_line_col(src, self.span.start);
         let mut out = format!("{}:{}:{}: error: {}", path, line, col, self.message);
+        // Plan 81 Ф.8.1: source-snippet с caret — как в single-file `render`.
+        append_snippet(&mut out, src, &self.span, line, col);
         self.render_extras(&mut out, &resolver);
         out
     }
@@ -378,5 +380,23 @@ mod tests {
         assert_eq!(byte_to_line_col(src, 4), (2, 1));
         assert_eq!(byte_to_line_col(src, 5), (2, 2));
         assert_eq!(byte_to_line_col(src, 8), (3, 1));
+    }
+
+    /// Plan 81 Ф.8.1: cross-file рендер — диагностика со span'ом из
+    /// не-entry файла показывает правильный файл/строку/сниппет.
+    #[test]
+    fn render_with_map_resolves_cross_file() {
+        let mut map = SourceMap::new();
+        map.register_main(PathBuf::from("entry.nv"), "fn a() {}\n".to_string());
+        // file_id 1 — "импортированный" файл.
+        let imported = "line one\nbad token here\n";
+        let fid = map.register(PathBuf::from("imported.nv"), imported.to_string());
+        assert_eq!(fid, 1);
+        // span на втором слове строки 2 ("token" — байты 13..18).
+        let d = Diagnostic::new("bad thing", Span::with_file(13, 18, fid));
+        let out = d.render_with_map(&map);
+        assert!(out.contains("imported.nv:2:"), "got: {}", out);
+        assert!(out.contains("bad token here"), "snippet missing: {}", out);
+        assert!(!out.contains("entry.nv"), "wrong file: {}", out);
     }
 }
