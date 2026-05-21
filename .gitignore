@@ -37,11 +37,8 @@ __pycache__/
 .venv/
 venv/
 
-# Локальные настройки Claude Code
-.claude/settings.local.json
-.claude/worktrees/
-.claude/scheduled_tasks.lock
-.claude/cargo-target/
+# Локальные настройки Claude Code (вся папка — личная оснастка сессий)
+.claude/
 
 # Личные рабочие материалы
 docs/.sessions/
