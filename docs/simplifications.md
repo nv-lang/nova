@@ -10338,30 +10338,36 @@ G/H). ~3700 LOC implementation cumulative.
 
 ## Plan 73 — consume qualifier (D131, 2026-05-21)
 
-### [M-consume-no-alias-tracking] (DEFER)
+### [M-consume-method-result-alias] (DEFER -> план «-> @»)
+> Обновлено 2026-05-21: прямой alias `let a = b` теперь отслеживается
+> (canonical-name aliasing — consume любого имени инвалидирует весь
+> alias-класс). Маркер сужен до method-result alias.
 - **Где:** `compiler-codegen/src/types/mod.rs` -> `check_consume` / `ConsumeCtx`.
-- **Что упрощено:** consume-анализ ведётся per-variable, без alias-tracking.
-  `let a = b` создаёт независимо отслеживаемую переменную `a`; consume `a`
-  НЕ помечает `b` потреблённой. Use-after-consume через алиас не ловится.
-- **Почему:** alias-анализ требует points-to / object-identity tracking —
-  для bootstrap избыточно. Реалистичный паттерн (`sb.into()` напрямую) покрыт.
-  Направление false-negative — ложных ошибок checker не даёт.
-- **Как чинить:** object-identity (union-find по alias-классам) либо
-  move-семантика на `let`-binding от consume-типа.
-- **Приоритет:** L
+- **Что упрощено:** alias через **результат метода** не отслеживается:
+  `let sb2 = sb.append("x")` (builder-chaining, `append` фактически
+  возвращает тот же объект) — `sb2` не считается алиасом `sb`.
+- **Почему:** `-> Self` гарантирует «тот же ТИП», не «тот же ОБЪЕКТ» —
+  считать результат `Self`-метода алиасом было бы unsound (false positive,
+  если метод вернёт свежий объект).
+- **Как чинить:** ввести точное «возвращает receiver» — план «`-> @` /
+  fluent-return» ([плановый черновик](plans/77-fluent-return.md)). Тогда
+  builder-chain alias станет sound.
+- **Приоритет:** L — направление false-negative (ложных ошибок не даёт).
 
-### [M-consume-receiver-type-best-effort] (DEFER)
+### [M-consume-receiver-type-best-effort] (DEFER -> Plan 37)
+> Обновлено 2026-05-21: добавлен вывод типа из return-типа свободной
+> функции (`let x = factory()`) и перенос типа через alias.
 - **Где:** `compiler-codegen/src/types/mod.rs` -> `ConsumeCtx::infer_value_type`.
-- **Что упрощено:** тип receiver'а для резолва consume-метода выводится
-  best-effort — из аннотации `let x T` либо очевидного конструктора
-  (`Type.new()` / `with_capacity` / `from`). Неизвестный тип -> метод не
-  трактуется как consuming.
-- **Почему:** полный type inference в consume-pass требует прогона
-  type-checker'а с аннотированным AST (та же системная проблема, что [C2]).
-  Прямой конструкторный паттерн (основной use case) покрыт.
-- **Как чинить:** прогнать type inference перед consume-pass, передавать
-  типы выражений через аннотированный AST.
-- **Приоритет:** M
+- **Что упрощено:** тип receiver'а выводится best-effort. Покрыто: явная
+  аннотация `let x T`, очевидный конструктор (`Type.new()` /
+  `with_capacity` / `from`), return-тип свободной функции
+  (`let x = factory()`), alias `let y = x`. НЕ покрыто: return-типы
+  method-call'ов (`let x = obj.make()`) и сложные выражения.
+- **Почему:** полное определение типов = прогон type-checker'а с
+  аннотированным AST (системная проблема [C2]).
+- **Как чинить:** consume-check на полностью типизированном AST — Plan 37.
+- **Приоритет:** M — основные паттерны (конструктор, фабрика-функция,
+  alias) покрыты.
 
 ## Plan 76 — bottom-тип never (2026-05-21)
 
