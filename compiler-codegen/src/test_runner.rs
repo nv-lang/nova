@@ -821,6 +821,15 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
             if !target.is_empty() {
                 flags.insert(0, target.to_string());
             }
+            // Plan 81 Ф.7.1: linker-level DCE. -ffunction-sections /
+            // -fdata-sections кладут каждую функцию/данные в отдельную
+            // секцию; линкер затем удаляет неиспользуемые. Отсечение
+            // делает линкер (как в Go) — без анализа в компиляторе,
+            // near-zero риск. На Linux/macOS активируется -Wl,--gc-sections
+            // (ниже, cfg-блок); на Windows lld-link folding включён по
+            // умолчанию (/OPT:REF) — секции дают линкеру гранулярность.
+            flags.push("-ffunction-sections".to_string());
+            flags.push("-fdata-sections".to_string());
             // Plan 44.2 P41-5 + audit round 5: stack-clash protection (CVE-2017-1000366).
             // -fstack-clash-protection inserts page-by-page probing on stack frames
             // >4KB, preventing skip past single guard page in one SP subtraction.
@@ -831,6 +840,10 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
             {
                 flags.push("-fstack-clash-protection".to_string());
                 flags.push("-fstack-protector-strong".to_string());
+                // Plan 81 Ф.7.1: GNU ld / lld удаляют неиспользуемые
+                // секции (function/data sections выше). На Windows
+                // lld-link делает то же по умолчанию (/OPT:REF).
+                flags.push("-Wl,--gc-sections".to_string());
             }
             // Plan 44.5: NOVA_GC_BOEHM activates GC root registration in fibers.h.
             // GC_THREADS — Boehm compiled with -DGC_THREADS (vcpkg build.ninja confirms);
@@ -942,6 +955,10 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
                 }
                 Mode::Release => { c.args(["/nologo", "/W0", "/O2", "/DNDEBUG"]); }
             }
+            // Plan 81 Ф.7.1: /Gy — function-level linking (каждая функция
+            // в свой COMDAT); link.exe /OPT:REF (default в release) удаляет
+            // неиспользуемые. MSVC-эквивалент -ffunction-sections.
+            c.arg("/Gy");
             // Plan 44.5: NOVA_GC_BOEHM + GC_THREADS — Boehm compiled with -DGC_THREADS;
             // client must define it too for GC_register_my_thread API (M:N workers).
             if opts.gc_kind == GcKind::Boehm {
@@ -997,6 +1014,11 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
                     c.arg("-w");
                 }
             }
+            // Plan 81 Ф.7.1: linker-level DCE (GNU ld удаляет
+            // неиспользуемые секции).
+            c.arg("-ffunction-sections");
+            c.arg("-fdata-sections");
+            c.arg("-Wl,--gc-sections");
             // Plan 44.5: NOVA_GC_BOEHM + GC_THREADS for M:N worker thread registration.
             if opts.gc_kind == GcKind::Boehm {
                 c.arg("-DNOVA_GC_BOEHM");
