@@ -839,4 +839,30 @@ mod tests {
         assert!(matches!(res, SatResult::Sat(_)),
                 "z3 should disprove 100==42, got {:?}", res);
     }
+
+    // SOUNDNESS_REGRESSION — Plan 33.8 Ф.6.2 / Ф.7.2.
+    // try_prove непереводимой цели на ПРОТИВОРЕЧИВОМ контексте не должен
+    // дать ложный Unsat (= ложный Proven). Без фикса Ф.6.2 `assert` молча
+    // отбрасывал непереведённую `not goal`, и check_sat на unsat-контексте
+    // возвращал Unsat. С фиксом — backend помечается tainted → Unknown.
+    #[test]
+    fn z3_translation_failure_no_false_proven() {
+        let mut b = Z3Backend::new(2000);
+        b.declare_var("x", SortRef::Int);
+        let x = SmtTerm::Var("x".into());
+        // Противоречивый контекст: x > 0 AND x < 0.
+        b.assert(Assertion {
+            formula: SmtTerm::App(">".into(), vec![x.clone(), SmtTerm::IntLit(0)]),
+            label: None,
+        });
+        b.assert(Assertion {
+            formula: SmtTerm::App("<".into(), vec![x, SmtTerm::IntLit(0)]),
+            label: None,
+        });
+        // Цель с несуществующим оператором — не транслируется в Z3 AST.
+        let goal = SmtTerm::App("__nonexistent_op__".into(), vec![SmtTerm::IntLit(1)]);
+        let res = try_prove(&mut b, goal);
+        assert!(matches!(res, SatResult::Unknown(_)),
+                "translation failure must NOT yield false Proven, got {:?}", res);
+    }
 }

@@ -2,6 +2,7 @@
 // непроверяемое допущение → lint-warning `trust-introduced`.
 // EXPECT_COMPILE_WARNING trust-introduced
 
+// SOUNDNESS_REGRESSION — Plan 33.8 Ф.7: стережёт закрытую soundness-дыру.
 module contracts.assume_trust_introduced_warn
 
 fn risky(x int) -> int {
