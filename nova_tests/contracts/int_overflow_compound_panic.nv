@@ -1,0 +1,16 @@
+// Plan 33.8 Ф.6.1: переполнение знакового `int` через СОСТАВНОЕ
+// присваивание (`+=`) — panic. Фикс Ф.1.2 покрывал только выражения
+// `a + b`; `acc += step` шло сырым C мимо checked-арифметики.
+// EXPECT_RUNTIME_PANIC integer overflow
+
+module contracts.int_overflow_compound_panic
+
+fn accumulate(start int, step int) -> int {
+    let mut acc = start
+    acc += step
+    acc
+}
+
+test "int += overflow panics" {
+    let _ = accumulate(int.MAX, 1)
+}
