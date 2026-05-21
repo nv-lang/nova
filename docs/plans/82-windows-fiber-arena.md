@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 # Plan 82: Windows fiber stack arena — re-diagnosis + production-реализация
 
-> **Создан:** 2026-05-21. **Редакция 3** (2026-05-21): вторая перепроверка
-> с чистого листа — верификация против `runtime.c`, `alloc_boehm.c`,
-> vendored Boehm 8.2.8 (`gc.h`/`gc_mark.h`/`win32_threads.c`), minicoro
-> `mco_coro`. GC-дизайн (§5.2) переписан на проверенные API; добавлена
-> подпроблема П5 (GC↔switch атомарность) с доказательством корректности.
+> **Создан:** 2026-05-21. **Редакция 4** (2026-05-21): сверка GC-дизайна
+> против minicoro `mco_state`/`_mco_create_context` — исправлен реальный
+> баг (колбэк пропускал `MCO_NORMAL`-fiber'ы → UAF) и формула раскладки
+> слота; добавлен push header-блока (defense-in-depth) + честный паритет
+> по числу fiber'ов с Go (§3). Редакция 3 — верификация против
+> `runtime.c`/`alloc_boehm.c`/Boehm 8.2.8, GC-дизайн на проверенных API,
+> подпроблема П5 (GC↔switch атомарность).
 > **Статус:** 📋 proposed, не начат. Ф.0 = re-diagnosis (decision point).
 > **Приоритет:** P2 — Windows работает для single-thread cooperative
 > (calloc-fallback), но без lazy-commit, без overflow-detection и **без
@@ -232,6 +234,15 @@ TIB — **не** подпроблема (§1.1). Реальная работа:
      стека** (надёжнее для FFI и для самого conservative GC).
    - **Паритет с Go по памяти:** Go растит стек по факту, Nova
      lazy-commit'ит по факту.
+   - **Паритет с Go по числу fiber'ов:** Go держит миллионы горутин
+     (стек 2–8 KB). Nova: `slot_count` слотов × 8 MB **резерва** на
+     worker; резерв виртуального адреса бесплатен (64-bit user-space —
+     128 TB), commit-charge idle-fiber'а ≈ 1–2 страницы ≈ как у горутины.
+     Архитектурного потолка ниже Go нет; текущий `slot_count` (4096,
+     наследие 44.2) конфигурируем, неограниченный рост — arena-chaining
+     (роадмап Plan 44, вне scope 82). Честно: без chaining это
+     **настраиваемый**, а не **безграничный** потолок — единственное
+     место, где Nova по умолчанию строже Go.
    - **Паритет с Go по диапазону GC-скана:** precise push сканирует
      закоммиченный `[committed_low, top]` каждого fiber'а — практически
      тот же объём, что сканирует Go (`[sp, hi]`). Разница —
@@ -286,13 +297,15 @@ slot_base (low)                                          slot_top (high)
   без commit-charge. `slot_size` — 8 MB (как Linux 44.2).
 - **Hard guard:** нижние `NOVA_FIBER_GUARD_SIZE` (16 KB — защита от
   stack-clash единичным большим кадром) держатся `PAGE_NOACCESS` навсегда.
-- **Фикс дефекта раскладки 44.2.** minicoro кладёт `mco_coro`-header в
-  начало (low-адрес) выделенного блока, стек — над `storage`
-  (`mco_coro` поля 288–307; layout header→storage→stack). Переполнение
-  растёт вниз и **сначала корёжит header**, затем упирается в guard →
-  битый switch-back, ложная диагностика. Production-фикс: вычислить
-  `header_off = align16(sizeof(mco_coro)) + storage_size` и поставить
-  движущуюся `PAGE_GUARD`-вершину **выше header'а**. Linux 44.2 этот
+- **Фикс дефекта раскладки 44.2.** minicoro размещает в выделенном блоке
+  **четыре** 16-выровненных секции подряд от low-адреса —
+  `[mco_coro][ctxbuf][storage][stack]` (`_mco_create_context` /
+  `_mco_init_desc_sizes`). Стек растёт вниз и при переполнении **сначала
+  корёжит `storage`/`ctxbuf`/`mco_coro`-header**, затем упирается в
+  guard → битый switch-back, ложная диагностика. Production-фикс:
+  поставить движущуюся `PAGE_GUARD`-вершину на **нижней границе
+  stack-секции** (смещение = сумма размеров трёх предшествующих секций;
+  вычисляется из layout в Ф.1), выше header-блока. Linux 44.2 этот
   дефект не чинил — Plan 82 чинит (это «без упрощений»).
 - **Lazy commit — два пути, выбор в Ф.0:**
   - **Путь A (предпочтительный) — OS-native grow.** После TIB-свопа
@@ -316,6 +329,11 @@ slot_base (low)                                          slot_top (high)
   `__chkstk` в прологе функций с локалами > 1 страницы — пробинг по
   странице вниз драйвит guard-grow. Это Windows-аналог Linux
   `-fstack-clash-protection`; отдельный флаг не нужен.
+- **minicoro собственная overflow-проверка** (`mco_yield`,
+  minicoro.h:1826) — coarse backstop: сверяет `magic_number` + границы
+  SP, возвращает `MCO_STACK_OVERFLOW` *постфактум* на yield. Guard-страница
+  ловит *немедленно* на фолте и точнее — она первична; minicoro-проверка
+  остаётся вторым рубежом, отключать её не нужно.
 - **Decommit при освобождении слота.** `VirtualFree(committed_range,
   MEM_DECOMMIT)` снимает commit-charge (`MEM_RESET`/`DiscardVirtualMemory`
   НЕ снимают — не годятся). Антипаттерн syscall-storm (урок Linux P41-3):
@@ -351,22 +369,37 @@ unregister в обёртке `mco_destroy`. Мутации реестра — п
 увидит полу-связанный узел.
 
 **(2) `GC_set_push_other_roots(cb)`** (`gc_mark.h:311`) — `cb` зовётся на
-mark-фазе (мир остановлен). `cb` обходит реестр и для **каждого** живого
-fiber'а (`mco_status` ∈ {`SUSPENDED`, `RUNNING`}) пушит **закоммиченный**
-диапазон его слота через `GC_push_all(lo, hi)` (`gc_mark.h:300`):
-- `hi` = usable-top слота (`co->stack_base + co->stack_size` —
-  публичные поля minicoro, §1.1).
-- `lo` = `committed_low` слота — нижняя граница реально закоммиченного.
-  V1: колбэк делает `VirtualQuery` вниз от вершины до первой
-  не-`MEM_COMMIT` страницы (как сам Boehm в `GC_get_stack_min`).
-  Оптимизация: арена трекает `committed_low` per-slot (обновляется при
-  grow) → без VirtualQuery.
-- Также пушит **suspended native worker-стеки** (§П3.3): для каждого
-  worker'а, крутящего fiber, `GC_push_all(saved_native_sp,
-  native_stack_base)`. `saved_native_sp` worker фиксирует сам — взятие
-  `&local` в `_worker_main` непосредственно перед `mco_resume` (кадры
-  ниже — `mco_resume`/`_mco_switch`, GC-указателей не содержат);
-  `native_stack_base` — из `GC_get_stack_base` при старте worker'а.
+mark-фазе (мир остановлен). `cb` обходит реестр и для **каждого
+не-`MCO_DEAD`** fiber'а пушит закоммиченные диапазоны его слота через
+`GC_push_all(lo, hi)` (`gc_mark.h:300`):
+- **Статус-фильтр — все три не-мёртвых состояния.** `mco_state`
+  (minicoro.h:263-268): `MCO_DEAD`/`MCO_NORMAL`/`MCO_RUNNING`/
+  `MCO_SUSPENDED`. Пушить нужно `RUNNING`, `SUSPENDED` **и `MCO_NORMAL`** —
+  последнее это fiber, который сам запустил вложенный
+  `supervised { spawn … }` и сейчас «active but not running» (резюмнул
+  sub-fiber; minicoro.h:573-574 выставляет `prev_co->state = MCO_NORMAL`).
+  На его стеке — живые данные; пропуск = UAF. Корректный фильтр:
+  `mco_status(co) != MCO_DEAD` (`MCO_DEAD`-слот живых указателей не
+  содержит — пушить безвредно, можно и пропустить).
+- **Stack-секция:** `hi` = usable-top (`co->stack_base + co->stack_size`,
+  публичные поля minicoro, §1.1); `lo` = `committed_low` — нижняя граница
+  закоммиченного. V1: `VirtualQuery` вниз от вершины до первой
+  не-`MEM_COMMIT` страницы (как Boehm в `GC_get_stack_min`). Опт.: арена
+  трекает `committed_low` per-slot; либо читать
+  `((_mco_ctxbuf*)co->context)->stack_limit` (saved `TEB.StackLimit` =
+  committed-low — но это coupling к minicoro internals).
+- **Header-блок слота** `[mco_coro][ctxbuf][storage]` (§5.1) — пушить
+  отдельным `GC_push_all`. Он закоммичен от создания и содержит
+  `co->user_data` — указатель на `SpawnCtx` с захватами замыкания.
+  Это делает достижимость `SpawnCtx` независимой от корректности
+  отдельного `fiber_ctx[]`/`ctx_pins`-рутинга (`fibers.h`) —
+  defense-in-depth, не полагаемся на чужую подсистему.
+- **Suspended native worker-стеки** (§П3.3): для каждого worker'а,
+  крутящего fiber, `GC_push_all(saved_native_sp, native_stack_base)`.
+  `saved_native_sp` worker фиксирует сам — `&local` в `_worker_main`
+  перед `mco_resume` (кадры ниже — `mco_resume`/`_mco_switch`,
+  GC-указателей не содержат); `native_stack_base` — из
+  `GC_get_stack_base` при старте worker'а.
 
 **Почему это commit-безопасно и race-free (П5) — по построению:**
 - Границы `[committed_low, top]` — **свойства слота**, не регистры,
@@ -500,8 +533,9 @@ A и завершённого на B, должен освобождаться в
   пропорционален активным fiber'ам.
 - **Тест-якорь корректности П3/П5:** GC форсируется, пока fiber активен,
   при живых указателях И на fiber-стеке, И на suspended native-стеке;
-  отдельно — GC во время work-stealing миграции → объект жив после
-  resume (нет UAF), сканер не падает (нет AV).
+  отдельно — (а) fiber в `MCO_NORMAL` (запустил вложенный `supervised`)
+  с живыми данными на своём стеке; (б) GC во время work-stealing
+  миграции → объект жив после resume (нет UAF), сканер не падает (нет AV).
 
 ### Ф.3 — Cross-thread migration correctness (~2 дня)
 
@@ -553,6 +587,7 @@ A и завершённого на B, должен освобождаться в
 | Deep call ≈ потолок large-reserve | lazy commit растёт корректно до потолка, затем overflow |
 | Cross-thread migration (work-stealing) | fiber A→steal→B: TIB, SEH, guard, GC-видимость на B |
 | **GC во время активного fiber'а** | живые указатели на fiber- И native-стеке → no UAF, сканер не падает (якорь П3) |
+| **GC при fiber в `MCO_NORMAL`** | родительский fiber запустил вложенный `supervised` → его стек со живыми данными просканирован (якорь П3) |
 | **GC во время `_mco_switch` под M:N** | collect застаёт worker mid-switch → корректно (якорь П5) |
 | GC stress: 10k fibers | no leak, no false-retention, commit-charge ограничен |
 | Long soak: 10⁶ spawn/yield | без деградации, без роста commit |
