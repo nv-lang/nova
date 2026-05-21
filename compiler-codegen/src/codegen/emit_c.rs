@@ -509,6 +509,10 @@ pub struct CEmitter {
     /// оба добавляются. Без этого fix codegen эмитит `th.func(args)` напрямую
     /// → undeclared identifier `th` в C → CC-FAIL.
     imported_modules: HashSet<String>,
+    /// Plan 81 Ф.6.2: имя свободной функции → путь объявляющего модуля.
+    /// Заполняется в `emit_module` из `module.peer_files`; `free_fn_c_name`
+    /// использует для mangling `nova_fn_<modpath>_<name>`.
+    fn_module_map: HashMap<String, Vec<String>>,
     /// Plan 20 Ф.4: stack of active defer/errdefer scopes during emission.
     /// Each block that contains a `defer`/`errdefer` stmt pushes a `DeferScope`
     /// on entry and pops on exit. `Stmt::Return`/`Break`/`Continue` walk the
@@ -812,6 +816,7 @@ impl CEmitter {
             warnings: std::cell::RefCell::new(Vec::new()),
             strict_errors: std::cell::RefCell::new(Vec::new()),
             imported_modules: HashSet::new(),
+            fn_module_map: HashMap::new(),
             mono_fn_decls: HashMap::new(),
             mono_method_decls: HashMap::new(),
             self_method_decls: HashMap::new(),
@@ -1104,6 +1109,23 @@ impl CEmitter {
         register_imports(&module.imports, &mut self.imported_modules);
         for pf in &module.peer_files {
             register_imports(&pf.imports, &mut self.imported_modules);
+        }
+
+        // Plan 81 Ф.6.2: атрибуция свободных функций к объявляющим
+        // модулям — для symbol mangling `nova_fn_<modpath>_<name>`.
+        // Первый peer с данным именем побеждает (cross-module overload
+        // с одним именем — редкий edge; param-суффикс всё равно
+        // разводит C-имена).
+        for pf in &module.peer_files {
+            for item in &pf.items_here {
+                if let Item::Fn(f) = item {
+                    if f.receiver.is_none() {
+                        self.fn_module_map
+                            .entry(f.name.clone())
+                            .or_insert_with(|| pf.module_name.clone());
+                    }
+                }
+            }
         }
 
         // Plan 33.3 Ф.9.2 (D24): pre-pass — собрать invariants для record-типов.
@@ -7234,7 +7256,50 @@ impl CEmitter {
     /// синтетика (`nova_fn_main_impl`, closure-адаптеры `nova_fn_vi`
     /// и т.п.) сюда **не** идёт — она exempt.
     fn free_fn_c_name(&self, name: &str) -> String {
-        format!("nova_fn_{}", name)
+        match self.fn_module_map.get(name) {
+            Some(modpath) if !modpath.is_empty() => {
+                Self::mangle_free_fn(modpath, name)
+            }
+            // Не пользовательская функция (runtime/builtin/синтетика)
+            // либо peer_files не заполнены — legacy-имя (без коллизий
+            // в single-crate bootstrap, см. D134).
+            _ => format!("nova_fn_{}", name),
+        }
+    }
+
+    /// Plan 81 Ф.6.2 (D134): mangled C-имя свободной функции —
+    /// `nova_fn_` + length-prefixed сегменты пути модуля + length-prefixed
+    /// имя функции. Length-prefix однозначен: Nova-идентификаторы не
+    /// начинаются с цифры, поэтому граница «число длины ↔ идентификатор»
+    /// чёткая. Префикс `nova_fn_` зарезервирован — не коллидирует с
+    /// runtime-символами (`nova_str_*`, `nova_int_*`, ...).
+    fn mangle_free_fn(modpath: &[String], name: &str) -> String {
+        let mut s = String::from("nova_fn_");
+        for seg in modpath {
+            s.push_str(&seg.len().to_string());
+            s.push_str(seg);
+        }
+        s.push_str(&name.len().to_string());
+        s.push_str(name);
+        // Лимит длины C-идентификатора: при превышении — усечение +
+        // hash-суффикс (сохраняет уникальность).
+        if s.len() > 240 {
+            let h = Self::ident_hash(&s);
+            let head: String = s.chars().take(216).collect();
+            format!("{}_h{:08x}", head, h)
+        } else {
+            s
+        }
+    }
+
+    /// FNV-1a 32-bit — hash-суффикс для усечённых mangled-имён.
+    fn ident_hash(s: &str) -> u32 {
+        let mut h: u32 = 2166136261;
+        for b in s.bytes() {
+            h ^= b as u32;
+            h = h.wrapping_mul(16777619);
+        }
+        h
     }
 
     /// Mirrors `emit_call`'s callee name resolution для Ident/Path/Member cases.
@@ -22338,5 +22403,39 @@ impl CEmitter {
             }
         }
         out
+    }
+}
+
+#[cfg(test)]
+mod mangle_tests {
+    //! Plan 81 Ф.6.2 (D134): unit-тесты схемы symbol mangling.
+    use super::CEmitter;
+
+    #[test]
+    fn mangles_with_module_path() {
+        let got = CEmitter::mangle_free_fn(
+            &["nova_tests".to_string(), "plan79".to_string()],
+            "want_int",
+        );
+        assert_eq!(got, "nova_fn_10nova_tests6plan798want_int");
+    }
+
+    #[test]
+    fn length_prefix_is_unambiguous() {
+        // snake_case-сегмент с `_` внутри: разделитель `_` был бы
+        // неоднозначен — длина-префикс разводит границы.
+        let a = CEmitter::mangle_free_fn(&["a".to_string()], "b_c");
+        let b = CEmitter::mangle_free_fn(&["a_b".to_string()], "c");
+        assert_eq!(a, "nova_fn_1a3b_c");
+        assert_eq!(b, "nova_fn_3a_b1c");
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn long_name_truncated_with_hash() {
+        let seg = "x".repeat(300);
+        let got = CEmitter::mangle_free_fn(&[seg], "f");
+        assert!(got.len() <= 240, "len = {}", got.len());
+        assert!(got.contains("_h"));
     }
 }
