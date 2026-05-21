@@ -1,0 +1,119 @@
+name: contracts-crosscheck
+
+# Plan 33.14: Z3 ↔ CVC5 cross-check.
+#
+# Вторая линия защиты soundness (в дополнение к Plan 33.8 Ф.7
+# regression-suite). Каждая verification condition корпуса контрактов
+# прогоняется через ДВА независимых пути:
+#   - Z3   — через FFI-backend;
+#   - CVC5 — через текстовый SMT-LIB v2 (независимый кодировщик) и
+#            подпроцесс cvc5.
+# Расхождение определённых ответов (Proven vs Disproved) — soundness-баг:
+# job падает.
+#
+# Gate строится на файле NOVA_CROSSCHECK_LOG: nova test компилирует
+# каждый .nv отдельным процессом, и файл аккумулирует расхождения всего
+# прогона — gate airtight независимо от per-test pass/fail.
+#
+# Стоимость: cross-check гоняет каждую VC дважды + spawn cvc5. Если
+# per-PR станет дорого — перевести триггер на schedule (nightly).
+
+on:
+  pull_request:
+    paths:
+      - "compiler-codegen/src/verify/**"
+      - "nova_tests/contracts/**"
+      - ".github/workflows/contracts-crosscheck.yml"
+  push:
+    branches: [main]
+
+jobs:
+  # ── Cross-check всего корпуса контрактов ───────────────────────────
+  contracts-crosscheck:
+    name: contracts / cross-check Z3↔CVC5
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Install system deps (Boehm GC + Z3)
+        run: sudo apt-get update && sudo apt-get install -y libgc-dev libz3-dev
+
+      - name: Install cvc5
+        run: |
+          set -euxo pipefail
+          CVC5_VERSION=1.2.0
+          cd /tmp
+          curl -fL -o cvc5.zip \
+            "https://github.com/cvc5/cvc5/releases/download/cvc5-${CVC5_VERSION}/cvc5-Linux-x86_64-static.zip"
+          unzip -q cvc5.zip
+          CVC5_BIN=$(find /tmp -maxdepth 4 -name cvc5 -type f | head -1)
+          if [ -z "$CVC5_BIN" ]; then
+            echo "ERROR: cvc5 binary not found in release archive"; exit 1
+          fi
+          sudo install -m 755 "$CVC5_BIN" /usr/local/bin/cvc5
+          # Если cvc5 не запустится — job упадёт здесь, а не «тихо
+          # деградирует» до Z3-only (что обошло бы gate).
+          cvc5 --version
+
+      - name: Build nova-cli (release, z3-backend feature)
+        run: cargo build --release --features z3-backend --manifest-path nova-cli/Cargo.toml
+
+      - name: Run contracts corpus under cross-check
+        env:
+          NOVA_CROSSCHECK: "1"
+          NOVA_CROSSCHECK_LOG: ${{ github.workspace }}/crosscheck-disagreements.log
+        # nova test может вернуть non-zero, если расхождение свалило
+        # позитивный тест — это нормально; авторитетом gate'а является
+        # файл-лог ниже. Suite-статус как таковой стережёт contracts-z3.
+        run: |
+          ./nova-cli/target/release/nova test . --filter contracts \
+            || echo "note: nova test exit non-zero — см. gate-шаг ниже и job contracts-z3"
+
+      - name: Gate — 0 definite-disagreements обязательно для merge
+        run: |
+          LOG="${{ github.workspace }}/crosscheck-disagreements.log"
+          if [ -s "$LOG" ]; then
+            echo "::error::cross-check нашёл definite-расхождения Z3 ↔ CVC5"
+            echo "------------------------------------------------------------"
+            cat "$LOG"
+            echo "------------------------------------------------------------"
+            echo "Каждая строка — VC, на которой Z3 и CVC5 дали"
+            echo "противоположные определённые ответы. Это soundness-критично:"
+            echo "верификатор мог объявить ложный Proven. См. Plan 33.14."
+            exit 1
+          fi
+          echo "cross-check: 0 definite-расхождений — Z3 и CVC5 согласны."
+
+  # ── Unit-тесты эмиттера/runner'а/cross-check с реальным cvc5 ────────
+  # Прогоняет cargo-тесты verify::smtlib / verify::backend::cvc5 /
+  # verify::crosscheck. С установленным cvc5 интеграционные тесты
+  # (cvc5_integration_*) исполняются по-настоящему, а не пропускаются.
+  crosscheck-unit:
+    name: contracts / cross-check unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Install system deps (Z3)
+        run: sudo apt-get update && sudo apt-get install -y libz3-dev
+
+      - name: Install cvc5
+        run: |
+          set -euxo pipefail
+          CVC5_VERSION=1.2.0
+          cd /tmp
+          curl -fL -o cvc5.zip \
+            "https://github.com/cvc5/cvc5/releases/download/cvc5-${CVC5_VERSION}/cvc5-Linux-x86_64-static.zip"
+          unzip -q cvc5.zip
+          CVC5_BIN=$(find /tmp -maxdepth 4 -name cvc5 -type f | head -1)
+          sudo install -m 755 "$CVC5_BIN" /usr/local/bin/cvc5
+          cvc5 --version
+
+      - name: cargo test — verify modules (z3-backend)
+        run: |
+          cargo test --features z3-backend --manifest-path compiler-codegen/Cargo.toml \
+            --lib -- verify::smtlib verify::backend::cvc5 verify::crosscheck
