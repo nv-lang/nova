@@ -62,6 +62,15 @@ static, метод), `const`, `let`, `protocol` ([D42](02-types.md#d42)).
 Изначально использовалось `pub` (Rust-style), заменено на `export` для
 симметрии с `import`. Подробно — [history/evolution.md](history/evolution.md).
 
+**Enforcement (Plan 81 Ф.1, 2026-05-21).** До Plan 81 флаг `is_export`
+был информационным — не-`export` элементы импортированного модуля были
+доступны снаружи (нарушение этого D-блока). Plan 81 Ф.1 ввёл реальный
+enforcement: type-checker скрывает не-`export` top-level элементы за
+границей модуля; обращение к приватному → выделенный диагностик.
+Уровень — как Go (Caps) / Rust (`pub`) / TS (`export`). Peer-файлы
+folder-модуля и `_test.nv` сохраняют white-box доступ к приватному
+(внутри границы модуля).
+
 ---
 
 ## D29. Модули и импорты
