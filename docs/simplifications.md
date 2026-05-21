@@ -4601,9 +4601,9 @@ stdlib через `nova build` сегодня.
 | 35.A visibility | `is_export` informational only | ✅ **Plan 81 Ф.1** — enforced на границе модуля |
 | 35.A `export use` | re-export не поддерживается | ✅ **Plan 42.09** — `export import X.{A as B}` |
 | 35.A prelude | нет prelude module | ✅ `std/prelude.nv` (Plan 35 R27 + Plan 62) |
-| 35.B disk cache | каждый `nova build` re-parsит imports | 🚧 **Plan 81 Ф.9** — pending |
-| 35.B incremental | нет dependency-based rebuild | 🚧 **Plan 81 Ф.9** — pending |
-| 35.B memory cache invalidation | `HashSet<path>` per build | 🚧 **Plan 81 Ф.9** — pending |
+| 35.B disk cache | каждый `nova build` re-parsит imports | ✅ **Plan 81 Ф.9** — content-addressed `.c`-кэш (`target/.nova-cache/`); попадание минует type-check/codegen |
+| 35.B incremental | нет dependency-based rebuild | ✅ **Plan 81 Ф.9** — ключ покрывает все транзитивные исходники → правка любого инвалидирует кэш (whole-build гранулярность — Nova inline-expansion, не separate compilation) |
+| 35.B memory cache invalidation | `HashSet<path>` per build | ✅ **Plan 81 Ф.9** — content-addressed (хэш содержимого), не path-set |
 | 35.C cross-file generics | generic bounds не resolve cross-file | ✅ **Plan 81 Ф.3** — verify: работают (Plan 35 merge → `protocol_specs`); orphan rule не нужен |
 | 35.D stable mangling | items в global namespace | ✅ **Plan 81 Ф.6** — symbol mangling v0 (D134) |
 | 35.D DCE | все imported items emit'ятся (bloat) | ✅ **Plan 81 Ф.7** — Ф.7.1 linker-DCE ✅ + Ф.7.2 compiler-DCE свободных функций ✅ (недостижимые fn не эмитятся в `.c`); method-level compiler-DCE — отдельный инкремент (Ф.7.2-methods) |
