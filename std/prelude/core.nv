@@ -45,13 +45,14 @@
 //   protocols From/Into/... (Plan 62.E), collections Iter/Range/...
 //   (Plan 62.D).
 //
-// **DEFER в Plan 62.A:**
+// **Plan 76 (2026-05-21): bottom-тип `never`.**
 //
-// - **`type Never =`** (empty sum) per spec D26 §794-797 — bootstrap
-//   parser не поддерживает empty-body sum syntax (`parse_sum_variants`
-//   требует ≥1 `|` с variant). `Never` остаётся в type-checker builtins
-//   HashSet (handled via `ty_of_ref` mod.rs:2947 + `is_never_type`
-//   mod.rs:3239) пока parser не получит empty-sum support.
+// - Bottom-тип переименован `Never` → `never` и оформлен как строчный
+//   встроенный примитив (как `int`/`bool`). В prelude НЕ объявляется —
+//   примитивы не декларируются. Известен компилятору напрямую через
+//   type-checker builtins HashSet (`ty_of_ref` + `type_ref_is_never`).
+//   Идея «`type Never =` empty-sum в prelude» отменена: встроенный
+//   bottom-тип не должен быть ни капитализированным, ни в prelude.
 //
 // **РАЗБЛОКИРОВАНО в Plan 62.B (2026-05-20):**
 //
@@ -101,12 +102,10 @@ export type Result[T, E] | Ok(T) | Err(E)
 #stable(since = "0.1")
 export type Ordering | Less | Equal | Greater
 
-// DEFER: `type Never =` (empty sum) per spec D26 §794-797 — bootstrap
-// parser не поддерживает empty-body sum syntax (`parse_sum_variants`
-// требует ≥1 `|` с variant). `Never` остаётся в type-checker builtins
-// HashSet (handled via `ty_of_ref` mod.rs:2947 + `is_never_type`
-// mod.rs:3239). Декларация перенесётся сюда когда parser получит
-// empty-sum support. См. docs/plans/62-prelude-hardcode-migration.md.
+// Plan 76 (2026-05-21): bottom-тип `never` — строчный встроенный
+// примитив (как `int`/`bool`), в prelude НЕ объявляется. Известен
+// компилятору напрямую (type-checker builtins HashSet, `ty_of_ref` +
+// `type_ref_is_never`). См. docs/plans/76-never-lowercase-keyword.md.
 
 
 // ──────────────────────────────────────────────────────────────────────────

@@ -1,0 +1,15 @@
+// EXPECT_COMPILE_ERROR D131
+//
+// Plan 73 (D131): use-after-consume — использование StringBuilder
+// после consume-метода `@into()` должно давать compile error.
+
+module nova_tests.plan73.consume_err_use_after
+
+test "use after into — отвергается" {
+    let sb = StringBuilder.new()
+    sb.append("hi")
+    let s = sb.into()
+    // ОШИБКА D131: sb потреблён вызовом @into() выше.
+    sb.append("oops")
+    assert(s == "hi")
+}

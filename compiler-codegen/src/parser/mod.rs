@@ -1803,17 +1803,38 @@ impl Parser {
         let receiver: Option<Receiver>;
         let name: String;
         let mut fn_generics: Vec<GenericParam> = Vec::new();
-        let receiver_mut: bool;
 
-        if matches!(self.peek().kind, TokenKind::KwMut)
+        // Plan 73 (D131): optional `mut` / `consume` receiver-квалификатор
+        // перед `@`/`.`. Взаимоисключающие — `consume` забирает значение
+        // целиком, `mut` мутирует на месте.
+        let mut receiver_mut = false;
+        let mut receiver_consume = false;
+        if matches!(self.peek().kind, TokenKind::KwMut | TokenKind::KwConsume)
             && matches!(
                 self.peek_at(1).kind,
-                TokenKind::At | TokenKind::Dot
+                TokenKind::At | TokenKind::Dot | TokenKind::KwMut | TokenKind::KwConsume
             )
         {
-            // `Type mut @method` или `Type mut .method` (на всякий случай)
-            self.bump(); // mut
-            receiver_mut = true;
+            if matches!(self.peek().kind, TokenKind::KwMut) {
+                receiver_mut = true;
+            } else {
+                receiver_consume = true;
+            }
+            self.bump(); // mut / consume
+            // Второй квалификатор подряд → конфликт (D131).
+            if matches!(self.peek().kind, TokenKind::KwMut | TokenKind::KwConsume) {
+                return Err(Diagnostic::new(
+                    "receiver не может иметь два квалификатора подряд: `mut` и \
+                     `consume` взаимоисключающие (D131) — `consume` забирает \
+                     значение целиком, `mut` мутирует его на месте; оставьте один"
+                        .to_string(),
+                    self.peek().span,
+                ));
+            }
+        }
+
+        if matches!(self.peek().kind, TokenKind::At | TokenKind::Dot) {
+            // `Type [mut|consume] @method` (instance) / `... .method` (static).
             let kind = if matches!(self.peek().kind, TokenKind::At) {
                 self.bump();
                 ReceiverKind::Instance
@@ -1828,30 +1849,7 @@ impl Parser {
                 generics: recv_generics,
                 kind,
                 mutable: receiver_mut,
-                span: first_span,
-            });
-            let (n, _) = self.parse_ident()?;
-            name = n;
-        } else if matches!(self.peek().kind, TokenKind::At) {
-            self.bump();
-            let recv_generics = Self::generic_params_to_type_refs(generics_first_decl)?;
-            receiver = Some(Receiver {
-                type_name: first_ident.clone(),
-                generics: recv_generics,
-                kind: ReceiverKind::Instance,
-                mutable: false,
-                span: first_span,
-            });
-            let (n, _) = self.parse_ident()?;
-            name = n;
-        } else if matches!(self.peek().kind, TokenKind::Dot) {
-            self.bump();
-            let recv_generics = Self::generic_params_to_type_refs(generics_first_decl)?;
-            receiver = Some(Receiver {
-                type_name: first_ident.clone(),
-                generics: recv_generics,
-                kind: ReceiverKind::Static,
-                mutable: false,
+                consume: receiver_consume,
                 span: first_span,
             });
             let (n, _) = self.parse_ident()?;
@@ -2005,6 +2003,16 @@ impl Parser {
         // Только последний param в списке может быть variadic; check
         // выполняется в parse_fn после сбора всех params'ов.
         let is_variadic = self.eat(&TokenKind::DotDotDot).is_some();
+        // Plan 73 (D131): `consume name Type` — consuming параметр. После
+        // передачи аргумента в такой параметр переменная-источник
+        // логически инвалидируется (use-after-consume → compile error).
+        // `consume` идёт перед именем (как leading `mut`).
+        let is_consume = if matches!(self.peek().kind, TokenKind::KwConsume) {
+            self.bump();
+            true
+        } else {
+            false
+        };
         // Plan 72 P1-A (D6): `mut name type` prefix form — allow `mut` BEFORE
         // the parameter name. Previously only `name mut type` was accepted, which
         // prevented writing `fn sum_iter[U, T Iter[U]](mut it T)`. Both forms
@@ -2052,6 +2060,7 @@ impl Parser {
             span: name_span.merge(span_end),
             is_variadic,
             default,
+            consume: is_consume,
         })
     }
 
@@ -2250,7 +2259,9 @@ impl Parser {
         // `module`) or is a newline/EOF (meaning the declaration is done),
         // treat this as an empty sum type: 0 variants, uninhabited.
         // Also accept `type X { }` (empty braces) as empty sum for symmetry.
-        // Use cases: `type Never` (bottom type), `type RuntimeNoneError` (marker).
+        // Use case: `type RuntimeNoneError` (marker / uninhabited).
+        // Note: bottom-тип `never` — встроенный примитив (Plan 76), не
+        // объявляется через `type` — empty-sum здесь к нему не относится.
         {
             let is_body_end = matches!(
                 self.peek().kind,
@@ -4153,6 +4164,8 @@ impl Parser {
                     "int" | "i8" | "i16" | "i32" | "i64"
                     | "u8" | "u16" | "u32" | "u64" | "uint"
                     | "f32" | "f64" | "byte" | "bool" | "char" | "str"
+                    // Plan 76: `never` — bottom-тип, строчный встроенный примитив.
+                    | "never"
                 );
                 if (starts_uppercase || is_primitive_type)
                     && matches!(self.peek().kind, TokenKind::Dot)
@@ -4300,7 +4313,7 @@ impl Parser {
             TokenKind::KwParallel => self.parse_parallel_for(),
             TokenKind::KwDetach => self.parse_detach(),
             TokenKind::KwThrow => {
-                // D25/D65: `throw expr` as expression (type Never).
+                // D25/D65: `throw expr` as expression (type never).
                 // Stmt-level throw уже обрабатывается parse_stmt_or_expr;
                 // expression-level — здесь, для match-arm body, ternary,
                 // тd. Codegen эмитирует как Nova_Fail_fail(msg) +
@@ -7273,7 +7286,7 @@ mod tests {
 
     #[test]
     fn handler_single_param_default_irt() {
-        // `Handler[E]` ≡ `Handler[E, Never]` через D88 default.
+        // `Handler[E]` ≡ `Handler[E, never]` через D88 default.
         // Парсится как одноаргументный generic (default подставляется
         // в monomorphization, а не на parse-стадии).
         let m = parse_or_panic(

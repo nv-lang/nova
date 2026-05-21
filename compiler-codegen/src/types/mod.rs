@@ -1,4 +1,4 @@
-﻿//! Type checker Рё effect inference.
+//! Type checker Рё effect inference.
 //!
 //! РњРёРЅРёРјР°Р»СЊРЅР°СЏ СЂРµР°Р»РёР·Р°С†РёСЏ: РїСЂРѕРІРµСЂСЏРµРј РёРјРµРЅР° С‚РёРїРѕРІ, РІС‹РІРѕРґРёРј С‚РёРїС‹ Р»РѕРєР°Р»СЊРЅС‹С…
 //! РїРµСЂРµРјРµРЅРЅС‹С…, РІС‹РІРѕРґРёРј СЌС„С„РµРєС‚С‹ РґР»СЏ private С„СѓРЅРєС†РёР№ (D28). Generic-РїР°СЂР°РјРµС‚СЂС‹
@@ -380,18 +380,22 @@ pub fn check_module(module: &Module) -> Result<ModuleEnv, Vec<Diagnostic>> {
     check_defer_bodies(module, &mut errors);
 
     // D61 В§1430-1434 / D90 Р¤.8 (1): handler-method РґР»СЏ СЌС„С„РµРєС‚-РѕРїРµСЂР°С†РёРё
-    // СЃ return type `Never` РћР‘РЇР—РђРќ Р·Р°РєРѕРЅС‡РёС‚СЊСЃСЏ exit-control'РѕРј
+    // СЃ return type `never` РћР‘РЇР—РђРќ Р·Р°РєРѕРЅС‡РёС‚СЊСЃСЏ exit-control'РѕРј
     // (`interrupt v` РёР»Рё `throw err` / `panic` / `exit`). РРЅР°С‡Рµ РЅРµС‚
-    // Р·РЅР°С‡РµРЅРёСЏ С‚РёРїР° Never РґР»СЏ РІРѕР·РІСЂР°С‚Р° вЂ” handler РЅРµ РјРѕР¶РµС‚ Р·Р°РєРѕРЅРЅРѕ
+    // Р·РЅР°С‡РµРЅРёСЏ С‚РёРїР° never РґР»СЏ РІРѕР·РІСЂР°С‚Р° вЂ” handler РЅРµ РјРѕР¶РµС‚ Р·Р°РєРѕРЅРЅРѕ
     // Р·Р°РІРµСЂС€РёС‚СЊСЃСЏ normally.
     //
-    // РџСЂРёРјРµРЅСЏРµС‚СЃСЏ Рє: Fail.fail (built-in, return Never), Р»СЋР±С‹Рј
-    // user-defined effect-operations СЃ return type Never.
+    // РџСЂРёРјРµРЅСЏРµС‚СЃСЏ Рє: Fail.fail (built-in, return never), Р»СЋР±С‹Рј
+    // user-defined effect-operations СЃ return type never.
     //
     // Walks РІСЃРµ handler-Р»РёС‚РµСЂР°Р»С‹ РІ module, РїСЂРѕРІРµСЂСЏРµС‚ РґР»СЏ РєР°Р¶РґРѕРіРѕ
-    // method'Р°, СЏРІР»СЏРµС‚СЃСЏ Р»Рё СЃРѕРѕС‚РІРµС‚СЃС‚РІСѓСЋС‰Р°СЏ operation Never-РІРѕР·РІСЂР°С‚-
+    // method'Р°, СЏРІР»СЏРµС‚СЃСЏ Р»Рё СЃРѕРѕС‚РІРµС‚СЃС‚РІСѓСЋС‰Р°СЏ operation never-РІРѕР·РІСЂР°С‚-
     // РЅРѕР№, Рё РµСЃР»Рё РґР° вЂ” body РґРѕР»Р¶РµРЅ diverge (static analysis).
     check_handler_never_ops(module, &mut errors);
+
+    // Plan 73 (D131): consume-qualifier flow-sensitive check. Use-after-
+    // consume и maybe-consumed (consume на части веток) → compile error.
+    check_consume(module, &mut errors);
 
     // Plan 33.3 Р¤.9 (D24): validate axiom-bodies РІ effect-Р±Р»РѕРєР°С….
     // РљР°Р¶РґС‹Р№ axiom РґРѕР»Р¶РµРЅ СЃСЃС‹Р»Р°С‚СЊСЃСЏ С‚РѕР»СЊРєРѕ РЅР° binders + pure_view-ops
@@ -1364,7 +1368,8 @@ impl<'a> BoundCtx<'a> {
             "int" | "i8" | "i16" | "i32" | "i64"
             | "u8" | "u16" | "u32" | "u64"
             | "f32" | "f64" | "bool" | "char" | "byte"
-            | "str" | "any") {
+            // Plan 76: `never` — bottom-тип, vacuously удовлетворяет любому bound.
+            | "str" | "any" | "never") {
             return;
         }
         let Some(spec_methods) = self.protocol_specs.get(&bound_name) else {
@@ -2135,11 +2140,11 @@ impl NameResCtx {
             "f32", "f64", "uint", "size",
             // Other primitives.
             "bool", "str", "byte", "char", "unit", "any",
-            // Plan 62.A: `Never` остаётся как hardcoded built-in. Bootstrap
-            // parser не поддерживает `type Never =` (empty sum) per spec
-            // D26 §794-797. Когда parser получит empty-sum syntax, Never
-            // переедет в std/prelude/core.nv и будет удалён отсюда.
-            "Never",
+            // Plan 76: `never` — bottom-тип (uninhabited, 0 значений),
+            // строчный встроенный примитив. Subtype любого `T`. Как и
+            // остальные примитивы (`int`/`bool`/...) — НЕ объявляется в
+            // prelude, известен компилятору напрямую.
+            "never",
             // Boolean literals (parsed РєР°Рє Ident РІ bool-context РєРѕРµ-РіРґРµ).
             "true", "false",
             // Special idents.
@@ -2163,8 +2168,8 @@ impl NameResCtx {
             // DeclaredFromPrelude > HardcodedBaseline).
             //
             // `RuntimeNoneError` НЕ перенесён — bootstrap parser не
-            // поддерживает empty-body sum syntax (тот же блокер что у
-            // `Never`). Остаётся as string-payload throw в nova_rt/effects.h.
+            // поддерживает empty-body sum syntax. Остаётся as
+            // string-payload throw в nova_rt/effects.h.
             // Plan 62.B: `panic`/`exit`/`assert`/`debug_assert` (4 names)
             // перенесены в std/prelude/runtime.nv (file-based external fn
             // declarations). Type-checker теперь resolves их через
@@ -3155,7 +3160,8 @@ pub fn ty_of_ref(tr: &TypeRef) -> Ty {
             Some("str") => Ty::Str,
             Some("bool") => Ty::Bool,
             Some("byte") => Ty::Int,
-            Some("Never") => Ty::Never,
+            // Plan 76: bottom-тип `never` — строчный встроенный примитив.
+            Some("never") => Ty::Never,
             Some(name) => Ty::Named(name.to_string()),
             None => Ty::Any,
         },
@@ -3279,21 +3285,21 @@ fn is_suspend_expr_kind(kind: &ExprKind) -> bool {
     )
 }
 
-/// D90 Р¤.8 (1): walk РјРѕРґСѓР»СЏ, РґР»СЏ РєР°Р¶РґРѕРіРѕ `HandlerLit { methods }`
-/// РїСЂРѕРІРµСЂСЏРµС‚, С‡С‚Рѕ methods РѕР±СЂР°Р±Р°С‚С‹РІР°СЋС‰РёРµ Never-operations Р·Р°РІРµСЂС€Р°СЋС‚СЃСЏ
-/// exit-control'РѕРј.
+/// D90 Ф.8 (1): walk модуля, для каждого `HandlerLit { methods }`
+/// проверяет, что methods обрабатывающие never-operations завершаются
+/// exit-control'ом.
 ///
-/// Never-operation = operation, С‡РµР№ return type вЂ” `Never`. Handler-method
-/// РґР»СЏ С‚Р°РєРѕР№ operation РЅРµ РјРѕР¶РµС‚ Р·Р°РІРµСЂС€РёС‚СЊСЃСЏ normally (РЅРµС‚ Р·РЅР°С‡РµРЅРёСЏ С‚РёРїР°
-/// Never). РџРѕ D61 (СЃС‚СЂ. 1430-1434) body РѕР±СЏР·Р°РЅ `interrupt v`, `throw err`,
-/// `panic(...)` РёР»Рё `exit(...)`.
+/// never-operation = operation, чей return type — `never`. Handler-method
+/// для такой operation не может завершиться normally (нет значения типа
+/// never). По D61 (стр. 1430-1434) body обязан `interrupt v`, `throw err`,
+/// `panic(...)` или `exit(...)`.
 ///
-/// Bootstrap-stage: Р·РЅР°РµРј С‡С‚Рѕ built-in `Fail.fail(value) -> Never` вЂ”
-/// РµРґРёРЅСЃС‚РІРµРЅРЅР°СЏ Never-operation РІ prelude. Hardcoded effect_name="Fail",
-/// method_name="fail". User-defined effects СЃ Never-methods Р±СѓРґСѓС‚ РїРѕРєСЂС‹С‚С‹
-/// РѕР±С‰РµР№ effect-schema-Р°РЅР°Р»РёС‚РёРєРѕР№ (Plan 25+).
+/// Bootstrap-stage: знаем что built-in `Fail.fail(value) -> never` —
+/// единственная never-operation в prelude. Hardcoded effect_name="Fail",
+/// method_name="fail". User-defined effects с never-methods будут покрыты
+/// общей effect-schema-аналитикой (Plan 25+).
 fn check_handler_never_ops(module: &Module, errors: &mut Vec<Diagnostic>) {
-    // РЎР±РѕСЂ: РєР°РєРёРµ user-defined effect-methods РёРјРµСЋС‚ return type Never.
+    // РЎР±РѕСЂ: РєР°РєРёРµ user-defined effect-methods РёРјРµСЋС‚ return type never.
     // Bootstrap: С‚РѕР»СЊРєРѕ Fail.fail вЂ” РІСЃС‚СЂРѕРµРЅРЅС‹Р№. User effects РїР°СЂСЃСЏС‚СЃСЏ
     // С‡РµСЂРµР· TypeDecl::Effect вЂ” Р°РЅР°Р»РёР·РёСЂСѓРµРј РёС… EffectMethod.return_type.
     let mut never_ops: HashSet<(String, String)> = HashSet::new();
@@ -3452,7 +3458,8 @@ fn walk_expr_for_with_gate(e: &Expr, eff_pv: &HashSet<String>, errors: &mut Vec<
 fn type_ref_is_never(t: &TypeRef) -> bool {
     if let TypeRef::Named { path, .. } = t {
         if let Some(last) = path.last() {
-            return last == "Never";
+            // Plan 76: bottom-тип — строчный `never`.
+            return last == "never";
         }
     }
     false
@@ -3800,10 +3807,10 @@ fn walk_expr_for_handler_lits(e: &Expr, never_ops: &HashSet<(String, String)>, e
                     if !handler_body_diverges(&m.body) {
                         errors.push(Diagnostic::new(
                             format!(
-                                "handler-method `{}.{}` РѕР±СЂР°Р±Р°С‚С‹РІР°РµС‚ РѕРїРµСЂР°С†РёСЋ СЃ РІРѕР·РІСЂР°С‰Р°РµРјС‹Рј С‚РёРїРѕРј `Never` \
-                                 (D61 В§1430-1434, D65): body РѕР±СЏР·Р°РЅ Р·Р°РІРµСЂС€РёС‚СЊСЃСЏ С‡РµСЂРµР· `interrupt v`, \
-                                 `throw err`, `panic(...)` РёР»Рё `exit(...)`. РќРµР»СЊР·СЏ Р·Р°РІРµСЂС€РёС‚СЊ handler-method \
-                                 normally вЂ” РЅРµС‚ Р·РЅР°С‡РµРЅРёСЏ С‚РёРїР° `Never` РґР»СЏ return.",
+                                "handler-method `{}.{}` обрабатывает операцию с возвращаемым типом `never` \
+                                 (D61 §1430-1434, D65): body обязан завершиться через `interrupt v`, \
+                                 `throw err`, `panic(...)` или `exit(...)`. Нельзя завершить handler-method \
+                                 normally — нет значения типа `never` для return.",
                                 eff_last, m.name
                             ),
                             m.span,
@@ -3982,7 +3989,7 @@ fn walk_expr_for_handler_lits(e: &Expr, never_ops: &HashSet<(String, String)>, e
 ///
 /// Exit-control = `interrupt`, `throw`, `panic(...)`, `exit(...)` вЂ”
 /// expressions/stmts РєРѕС‚РѕСЂС‹Рµ РіР°СЂР°РЅС‚РёСЂРѕРІР°РЅРЅРѕ РќР• РІРѕР·РІСЂР°С‰Р°СЋС‚ control РІ
-/// caller РѕРїРµСЂР°С†РёРё (Never-returning).
+/// caller РѕРїРµСЂР°С†РёРё (never-returning).
 ///
 /// Bootstrap conservative: РїСЂРѕРІРµСЂСЏРµРј СЃР°РјС‹Рµ С‡Р°СЃС‚С‹Рµ РїР°С‚С‚РµСЂРЅС‹:
 ///   - Expr body = exit-control expression.
@@ -4002,7 +4009,7 @@ fn expr_diverges(e: &Expr) -> bool {
     match &e.kind {
         // Direct exit-control.
         ExprKind::Interrupt(_) | ExprKind::Throw(_) => true,
-        // panic(...) / exit(...) вЂ” Never-returning builtins (D13).
+        // panic(...) / exit(...) вЂ” never-returning builtins (D13).
         ExprKind::Call { func, .. } => {
             if let ExprKind::Ident(name) = &func.kind {
                 matches!(name.as_str(), "panic" | "exit")
@@ -4071,6 +4078,861 @@ fn stmt_diverges(s: &Stmt) -> bool {
 
 /// Walk РјРѕРґСѓР»СЏ: РґР»СЏ РєР°Р¶РґРѕРіРѕ defer/errdefer statement РІ bodies С„СѓРЅРєС†РёР№
 /// Рё С‚РµСЃС‚Р°С… вЂ” РїСЂРѕРІРµСЂРёС‚СЊ body constraints.
+// ─────────────────────────────────────────────────────────────────────
+// Plan 73 (D131): consume-qualifier flow-sensitive check.
+//
+// `consume` помечает receiver / параметр, чьё значение логически
+// забирается вызовом (`fn StringBuilder consume @into()`,
+// `fn f(consume sb StringBuilder)`). После consume-вызова переменная-
+// источник недоступна:
+//   - повторное использование (use-after-consume) → compile error;
+//   - использование на пути, где consume произошёл лишь на части веток
+//     (maybe-consumed) → compile error.
+//
+// Анализ flow-sensitive: состояние `VarState` каждой переменной
+// протягивается через statements, ветвится на if/match/coalesce и
+// пессимистично обрабатывает циклы (consume в теле → переменная
+// maybe-consumed на 2-й итерации). Это НЕ borrow checker — памятью
+// управляет GC; проверяется только логический инвариант D131.
+//
+// Closure / handler / trailing тела walk'аются изолированно (могут
+// исполняться 0+ раз): use-after-consume внутри них ловится, но их
+// собственные consume наружу не протекают (conservative).
+// ─────────────────────────────────────────────────────────────────────
+
+/// Состояние логической линейности переменной (D131).
+#[derive(Clone)]
+enum VarState {
+    /// Значение доступно.
+    Live,
+    /// Значение потреблено в указанной точке.
+    Consumed(Span),
+    /// Значение потреблено лишь на части путей выполнения.
+    MaybeConsumed(Span),
+}
+
+/// Реестр consume-аннотаций: user-module + runtime-stdlib.
+struct ConsumeRegistry {
+    /// `(receiver_type, method_name)` — consume-методы.
+    methods: HashSet<(String, String)>,
+    /// free-fn name → индексы consume-параметров.
+    fn_params: HashMap<String, Vec<usize>>,
+    /// `(receiver_type, method_name)` → индексы consume-параметров.
+    method_params: HashMap<(String, String), Vec<usize>>,
+    /// Plan 73 followup: free-fn name → имя return-типа (Named, 1-seg).
+    /// Для var-type инференса `let x = factory()` — расширяет резолв
+    /// consume-метода за пределы очевидных конструкторов.
+    fn_return_types: HashMap<String, String>,
+}
+
+impl ConsumeRegistry {
+    fn build(module: &Module) -> Self {
+        let mut methods: HashSet<(String, String)> = HashSet::new();
+        let mut fn_params: HashMap<String, Vec<usize>> = HashMap::new();
+        let mut method_params: HashMap<(String, String), Vec<usize>> = HashMap::new();
+        let mut fn_return_types: HashMap<String, String> = HashMap::new();
+
+        // 1. Runtime-stdlib consume-методы (`StringBuilder.into` и т.п.).
+        //    Single source of truth — runtime_registry.rs (`is_consume`).
+        for f in crate::codegen::runtime_registry::all() {
+            if f.is_consume {
+                if let Some(recv) = f.receiver {
+                    methods.insert((recv.to_string(), f.name.to_string()));
+                }
+            }
+        }
+
+        // 2. User-module: consume-receiver методы + consume-параметры.
+        for item in &module.items {
+            if let Item::Fn(fd) = item {
+                let consume_idx: Vec<usize> = fd.params.iter().enumerate()
+                    .filter(|(_, p)| p.consume)
+                    .map(|(i, _)| i)
+                    .collect();
+                match &fd.receiver {
+                    Some(r) => {
+                        if r.consume {
+                            methods.insert((r.type_name.clone(), fd.name.clone()));
+                        }
+                        if !consume_idx.is_empty() {
+                            method_params.insert(
+                                (r.type_name.clone(), fd.name.clone()), consume_idx);
+                        }
+                    }
+                    None => {
+                        if !consume_idx.is_empty() {
+                            fn_params.insert(fd.name.clone(), consume_idx);
+                        }
+                        // Plan 73 followup: return-тип свободной функции.
+                        if let Some(TypeRef::Named { path, .. }) = &fd.return_type {
+                            if path.len() == 1 {
+                                fn_return_types
+                                    .insert(fd.name.clone(), path[0].clone());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        ConsumeRegistry { methods, fn_params, method_params, fn_return_types }
+    }
+}
+
+/// Имена, связываемые pattern'ом (best-effort: Ident / Tuple / Record /
+/// Variant / Array / Or). Используется для регистрации новых live-vars.
+fn consume_pattern_names(p: &Pattern, out: &mut Vec<String>) {
+    match p {
+        Pattern::Ident { name, .. } => out.push(name.clone()),
+        Pattern::Binding { name, inner, .. } => {
+            out.push(name.clone());
+            consume_pattern_names(inner, out);
+        }
+        Pattern::Tuple(ps, _) => {
+            for sp in ps { consume_pattern_names(sp, out); }
+        }
+        Pattern::Variant { kind, .. } => {
+            if let VariantPatternKind::Tuple { patterns, .. } = kind {
+                for sp in patterns { consume_pattern_names(sp, out); }
+            }
+        }
+        Pattern::Record { fields, .. } => {
+            for f in fields {
+                match &f.pattern {
+                    Some(sp) => consume_pattern_names(sp, out),
+                    None => out.push(f.name.clone()), // shorthand `{ name }`
+                }
+            }
+        }
+        Pattern::Array { elems, .. } => {
+            for el in elems {
+                match el {
+                    ArrayPatternElem::Item(sp) => consume_pattern_names(sp, out),
+                    ArrayPatternElem::RestBind(n) => out.push(n.clone()),
+                    ArrayPatternElem::Rest => {}
+                }
+            }
+        }
+        Pattern::Or { alternatives, .. } => {
+            // Альтернативы связывают одинаковый набор имён — берём первую.
+            if let Some(first) = alternatives.first() {
+                consume_pattern_names(first, out);
+            }
+        }
+        Pattern::Wildcard(_) | Pattern::Literal(..) => {}
+    }
+}
+
+/// Flow-context consume-анализа одной функции / теста.
+struct ConsumeCtx<'a> {
+    reg: &'a ConsumeRegistry,
+    /// Состояние линейности per-variable. Ключ — каноническое имя
+    /// (alias-класс представлен своим каноническим членом).
+    states: HashMap<String, VarState>,
+    /// Best-effort тип переменной — для резолва consume-метода по
+    /// receiver'у. Неизвестный тип → метод не трактуется как consuming
+    /// (sound: false-negative, не false-positive).
+    var_types: HashMap<String, String>,
+    /// Plan 73 followup: alias-карта. `let a = b` -> `aliases[a] = b`
+    /// (b — каноническое имя). Обе переменные ссылаются на ОДИН
+    /// heap-объект; consume любой -> consume всего alias-класса.
+    aliases: HashMap<String, String>,
+}
+
+impl<'a> ConsumeCtx<'a> {
+    fn new(reg: &'a ConsumeRegistry) -> Self {
+        ConsumeCtx {
+            reg,
+            states: HashMap::new(),
+            var_types: HashMap::new(),
+            aliases: HashMap::new(),
+        }
+    }
+
+    /// Каноническое имя alias-класса переменной (следует по цепочке
+    /// `aliases`). Guard от циклов — теоретически невозможны (alias
+    /// всегда на уже-существующее имя), но защищаемся.
+    fn canonical(&self, name: &str) -> String {
+        let mut cur = name.to_string();
+        for _ in 0..64 {
+            match self.aliases.get(&cur) {
+                Some(next) if next != &cur => cur = next.clone(),
+                _ => break,
+            }
+        }
+        cur
+    }
+
+    /// Пометить alias-класс переменной потреблённым.
+    fn mark_consumed(&mut self, name: &str, span: Span) {
+        let canon = self.canonical(name);
+        if self.states.contains_key(&canon) {
+            self.states.insert(canon, VarState::Consumed(span));
+        }
+    }
+
+    /// Зарегистрировать новую live-переменную (с опц. известным типом).
+    fn declare(&mut self, name: &str, ty: Option<String>) {
+        if name == "_" { return; }
+        // Свежий binding — не алиас (рвём прежнюю alias-связь при shadow).
+        self.aliases.remove(name);
+        self.states.insert(name.to_string(), VarState::Live);
+        match ty {
+            Some(t) => { self.var_types.insert(name.to_string(), t); }
+            None => { self.var_types.remove(name); }
+        }
+    }
+
+    /// Зарегистрировать alias `name` -> `canon` (`let a = b`): обе
+    /// переменные — один объект.
+    fn declare_alias(&mut self, name: &str, canon: &str, ty: Option<String>) {
+        if name == "_" { return; }
+        self.states.remove(name);            // shadow: убрать прежнее состояние
+        self.aliases.insert(name.to_string(), canon.to_string());
+        match ty {
+            Some(t) => { self.var_types.insert(name.to_string(), t); }
+            None => { self.var_types.remove(name); }
+        }
+    }
+
+    /// Развязать alias-класс переменной `name` перед её реассайном
+    /// (`name = ...`). Каждый член класса становится независимой
+    /// переменной с ТЕКУЩИМ состоянием класса (объект-то прежний,
+    /// меняется только привязка `name`). Sound: исключает ложную
+    /// propagation consume через устаревший alias после реассайна.
+    fn dissolve_alias_class(&mut self, name: &str) {
+        let canon = self.canonical(name);
+        let class_state = self.states.get(&canon).cloned()
+            .unwrap_or(VarState::Live);
+        let all_aliased: Vec<String> = self.aliases.keys().cloned().collect();
+        for m in all_aliased {
+            if self.canonical(&m) == canon {
+                self.aliases.remove(&m);
+                // member продолжает ссылаться на прежний объект —
+                // сохраняем его состояние как независимое.
+                self.states.insert(m, class_state.clone());
+            }
+        }
+        // `canon` сохраняет своё состояние в `states` (уже там).
+    }
+
+    /// Использование переменной — проверка use-after-consume.
+    fn use_var(&self, name: &str, span: Span, errors: &mut Vec<Diagnostic>) {
+        let canon = self.canonical(name);
+        match self.states.get(&canon) {
+            Some(VarState::Consumed(at)) => {
+                errors.push(Diagnostic::new(
+                    format!(
+                        "использование потреблённой переменной `{}` (D131): \
+                         её значение отдано consume-вызовом и больше недоступно",
+                        name),
+                    span,
+                ).with_note_at("значение потреблено здесь".to_string(), *at));
+            }
+            Some(VarState::MaybeConsumed(at)) => {
+                errors.push(Diagnostic::new(
+                    format!(
+                        "использование, возможно, потреблённой переменной `{}` \
+                         (D131): значение потребляется не на всех путях \
+                         выполнения — компилятор не может гарантировать, что \
+                         оно ещё доступно",
+                        name),
+                    span,
+                ).with_note_at(
+                    "значение потенциально потреблено здесь".to_string(), *at));
+            }
+            _ => {}
+        }
+    }
+
+    /// Вывести тип значения `let`-binding'а (best-effort).
+    fn infer_let_type(&self, decl: &LetDecl) -> Option<String> {
+        // Явная аннотация `let x T = ...`.
+        if let Some(TypeRef::Named { path, .. }) = &decl.ty {
+            if path.len() == 1 {
+                return Some(path[0].clone());
+            }
+        }
+        self.infer_value_type(&decl.value)
+    }
+
+    /// Best-effort тип выражения — только синтаксически очевидные формы.
+    fn infer_value_type(&self, e: &Expr) -> Option<String> {
+        match &e.kind {
+            // Конструктор `Type.new(...)` / `.with_capacity` / `.from` и т.п.
+            ExprKind::Call { func, .. } => {
+                if let ExprKind::Path(parts) = &func.kind {
+                    if parts.len() == 2 && matches!(parts[1].as_str(),
+                        "new" | "with_capacity" | "from" | "default" | "filled")
+                    {
+                        return Some(parts[0].clone());
+                    }
+                }
+                // Plan 73 followup: свободная функция с известным
+                // return-типом (`let x = make_builder()`).
+                if let ExprKind::Ident(fname) = &func.kind {
+                    if let Some(rt) = self.reg.fn_return_types.get(fname) {
+                        return Some(rt.clone());
+                    }
+                }
+                None
+            }
+            // Алиас `let y = x` — переносим известный тип `x`.
+            ExprKind::Ident(n) => self.var_types.get(&self.canonical(n)).cloned(),
+            // `User { ... }` record-литерал.
+            ExprKind::RecordLit { type_name: Some(path), .. } if path.len() == 1 => {
+                Some(path[0].clone())
+            }
+            _ => None,
+        }
+    }
+
+    /// Имя consume-метода для receiver-типа? (тип берётся по
+    /// каноническому имени alias-класса).
+    fn is_consume_method(&self, recv_var: &str, method: &str) -> bool {
+        self.var_types.get(&self.canonical(recv_var))
+            .map(|ty| self.reg.methods.contains(&(ty.clone(), method.to_string())))
+            .unwrap_or(false)
+    }
+
+    /// Пометить аргументы в consume-позициях как потреблённые.
+    /// Аргументы уже walk'нуты вызывающим (use-after-consume проверен) —
+    /// здесь только переход состояния alias-класса.
+    fn consume_args(&mut self, args: &[CallArg], idxs: &[usize], span: Span) {
+        for &i in idxs {
+            if let Some(CallArg::Item(arg)) = args.get(i) {
+                if let ExprKind::Ident(name) = &arg.kind {
+                    self.mark_consumed(name, span);
+                }
+            }
+        }
+    }
+}
+
+/// Plan 73 (D131): consume-check входная точка — walk всех function /
+/// method / test bodies модуля.
+fn check_consume(module: &Module, errors: &mut Vec<Diagnostic>) {
+    let reg = ConsumeRegistry::build(module);
+    for item in &module.items {
+        match item {
+            Item::Fn(f) => {
+                let mut ctx = ConsumeCtx::new(&reg);
+                // Параметры функции — live на входе; consume-параметры
+                // внутри тела тоже просто live (consume у caller'а).
+                for p in &f.params {
+                    let pty = match &p.ty {
+                        TypeRef::Named { path, .. } if path.len() == 1 =>
+                            Some(path[0].clone()),
+                        _ => None,
+                    };
+                    ctx.declare(&p.name, pty);
+                }
+                match &f.body {
+                    FnBody::Block(b) => consume_walk_block(&mut ctx, b, errors),
+                    FnBody::Expr(e) => consume_walk_expr(&mut ctx, e, errors),
+                    FnBody::External => {}
+                }
+            }
+            Item::Test(t) => {
+                let mut ctx = ConsumeCtx::new(&reg);
+                consume_walk_block(&mut ctx, &t.body, errors);
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Объединить два VarState на слиянии путей (branch join).
+fn consume_join2(a: &VarState, b: &VarState) -> VarState {
+    match (a, b) {
+        (VarState::Live, VarState::Live) => VarState::Live,
+        (VarState::Consumed(s), VarState::Consumed(_)) => VarState::Consumed(*s),
+        (VarState::MaybeConsumed(s), _) | (_, VarState::MaybeConsumed(s)) =>
+            VarState::MaybeConsumed(*s),
+        (VarState::Consumed(s), VarState::Live)
+        | (VarState::Live, VarState::Consumed(s)) => VarState::MaybeConsumed(*s),
+    }
+}
+
+/// Слить состояния веток. Базис — `saved` (pre-branch); ветка-локальные
+/// переменные отбрасываются.
+fn consume_join(saved: &HashMap<String, VarState>,
+                a: &HashMap<String, VarState>,
+                b: &HashMap<String, VarState>) -> HashMap<String, VarState> {
+    let mut out = HashMap::new();
+    for (k, base) in saved {
+        let sa = a.get(k).unwrap_or(base);
+        let sb = b.get(k).unwrap_or(base);
+        out.insert(k.clone(), consume_join2(sa, sb));
+    }
+    out
+}
+
+fn consume_walk_block(ctx: &mut ConsumeCtx, b: &Block, errors: &mut Vec<Diagnostic>) {
+    for s in &b.stmts {
+        consume_walk_stmt(ctx, s, errors);
+    }
+    if let Some(t) = &b.trailing {
+        consume_walk_expr(ctx, t, errors);
+    }
+}
+
+fn consume_walk_stmt(ctx: &mut ConsumeCtx, s: &Stmt, errors: &mut Vec<Diagnostic>) {
+    match s {
+        Stmt::Let(decl) => {
+            consume_walk_expr(ctx, &decl.value, errors);
+            let mut names = Vec::new();
+            consume_pattern_names(&decl.pattern, &mut names);
+            // Plan 73 followup: alias-форма `let a = b` — RHS голый
+            // идентификатор tracked-переменной. `a` и `b` ссылаются на
+            // один heap-объект → регистрируем alias.
+            let alias_src: Option<String> = if names.len() == 1 {
+                if let ExprKind::Ident(src) = &decl.value.kind {
+                    let canon = ctx.canonical(src);
+                    if canon != names[0] && ctx.states.contains_key(&canon) {
+                        Some(canon)
+                    } else { None }
+                } else { None }
+            } else { None };
+            if let Some(canon) = alias_src {
+                let ty = ctx.var_types.get(&canon).cloned();
+                ctx.declare_alias(&names[0], &canon, ty);
+            } else {
+                let ty = ctx.infer_let_type(decl);
+                for n in &names {
+                    // Тип привязываем только к одиночному ident-pattern'у.
+                    let t = if names.len() == 1 { ty.clone() } else { None };
+                    ctx.declare(n, t);
+                }
+            }
+        }
+        Stmt::Expr(e) => consume_walk_expr(ctx, e, errors),
+        Stmt::Assign { target, op, value, .. } => {
+            consume_walk_expr(ctx, value, errors);
+            match &target.kind {
+                ExprKind::Ident(name) => {
+                    if matches!(op, AssignOp::Assign) {
+                        // `x = v` — свежее значение. Развязываем alias-класс
+                        // `x` (прочие члены сохраняют прежнее состояние), x
+                        // получает новый объект → live и сам по себе.
+                        ctx.dissolve_alias_class(name);
+                        ctx.aliases.remove(name);
+                        ctx.states.insert(name.clone(), VarState::Live);
+                    } else {
+                        // compound `+=` и т.п. читают старое значение.
+                        ctx.use_var(name, target.span, errors);
+                        let canon = ctx.canonical(name);
+                        ctx.states.insert(canon, VarState::Live);
+                    }
+                }
+                _ => consume_walk_expr(ctx, target, errors),
+            }
+        }
+        Stmt::Return { value, .. } => {
+            if let Some(v) = value { consume_walk_expr(ctx, v, errors); }
+        }
+        Stmt::Throw { value, .. } => consume_walk_expr(ctx, value, errors),
+        Stmt::Break(_) | Stmt::Continue(_) | Stmt::Reveal { .. } => {}
+        // defer/errdefer исполняются на scope-exit — walk изолированно
+        // (use-after-consume ловится, consume наружу не протекает).
+        Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. } => {
+            consume_walk_isolated_expr(ctx, &[], body, errors);
+        }
+        Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => {
+            consume_walk_expr(ctx, expr, errors);
+        }
+        Stmt::Apply { args, .. } => {
+            for a in args { consume_walk_expr(ctx, a, errors); }
+        }
+        Stmt::Calc { steps, .. } => {
+            for st in steps { consume_walk_expr(ctx, &st.expr, errors); }
+        }
+    }
+}
+
+/// Walk блока изолированно (closure / handler / trailing): состояние
+/// `states` восстанавливается после — consume внутрь наружу не течёт.
+fn consume_walk_isolated_block(ctx: &mut ConsumeCtx, params: &[String],
+                               b: &Block, errors: &mut Vec<Diagnostic>) {
+    let saved = ctx.states.clone();
+    for p in params { ctx.declare(p, None); }
+    consume_walk_block(ctx, b, errors);
+    ctx.states = saved;
+}
+
+fn consume_walk_isolated_expr(ctx: &mut ConsumeCtx, params: &[String],
+                              e: &Expr, errors: &mut Vec<Diagnostic>) {
+    let saved = ctx.states.clone();
+    for p in params { ctx.declare(p, None); }
+    consume_walk_expr(ctx, e, errors);
+    ctx.states = saved;
+}
+
+/// Walk тела цикла (for/while/loop) — пессимистично: переменная,
+/// потреблённая в теле, становится maybe-consumed (consume на 2-й
+/// итерации = use-after-consume).
+fn consume_walk_loop(ctx: &mut ConsumeCtx, loop_vars: &[String],
+                     body: &Block, errors: &mut Vec<Diagnostic>) {
+    let pre = ctx.states.clone();
+    // Pass 1 — обнаружить consume в теле (ошибки в throwaway sink).
+    for v in loop_vars { ctx.declare(v, None); }
+    let mut throwaway: Vec<Diagnostic> = Vec::new();
+    consume_walk_block(ctx, body, &mut throwaway);
+    let consumed: Vec<String> = pre.keys()
+        .filter(|k| matches!(ctx.states.get(*k),
+            Some(VarState::Consumed(_)) | Some(VarState::MaybeConsumed(_))))
+        .cloned()
+        .collect();
+    // Reset к pre, pre-mark consumed-в-теле как maybe-consumed.
+    ctx.states = pre.clone();
+    for k in &consumed {
+        ctx.states.insert(k.clone(), VarState::MaybeConsumed(body.span));
+    }
+    // Pass 2 — реальный walk (ошибки эмитятся).
+    for v in loop_vars { ctx.declare(v, None); }
+    consume_walk_block(ctx, body, errors);
+    // Post-loop: цикл мог не выполниться ни разу → consumed-в-теле
+    // переменные maybe-consumed; ветка-локальные сбрасываются.
+    ctx.states = pre;
+    for k in &consumed {
+        ctx.states.insert(k.clone(), VarState::MaybeConsumed(body.span));
+    }
+}
+
+fn consume_walk_expr(ctx: &mut ConsumeCtx, e: &Expr, errors: &mut Vec<Diagnostic>) {
+    match &e.kind {
+        // ─── Листья ───
+        ExprKind::IntLit(_) | ExprKind::FloatLit(_) | ExprKind::StrLit(_)
+        | ExprKind::BoolLit(_) | ExprKind::UnitLit | ExprKind::CharLit(_)
+        | ExprKind::Path(_) | ExprKind::SelfAccess => {}
+
+        // ─── Использование переменной ───
+        ExprKind::Ident(name) => ctx.use_var(name, e.span, errors),
+
+        // ─── Интерполированная строка `"... ${expr} ..."` ───
+        ExprKind::InterpolatedStr { parts } => {
+            for p in parts {
+                if let InterpStrPart::Expr(ex) = p {
+                    consume_walk_expr(ctx, ex, errors);
+                }
+            }
+        }
+
+        // ─── Вызовы — точки consume ───
+        ExprKind::Call { func, args, trailing } => {
+            match &func.kind {
+                // Method call: obj.method(args).
+                ExprKind::Member { obj, name: method } => {
+                    if let ExprKind::Ident(recv) = &obj.kind {
+                        // Любой вызов метода — использование receiver'а.
+                        ctx.use_var(recv, obj.span, errors);
+                        for a in args { consume_walk_expr(ctx, a.expr(), errors); }
+                        if let Some(t) = trailing { consume_walk_trailing(ctx, t, errors); }
+                        let recv = recv.clone();
+                        // consume-метод → receiver (весь alias-класс)
+                        // потребляется.
+                        if ctx.is_consume_method(&recv, method) {
+                            ctx.mark_consumed(&recv, e.span);
+                        }
+                        // consume-параметры метода.
+                        if let Some(ty) = ctx.var_types.get(&ctx.canonical(&recv)).cloned() {
+                            if let Some(idxs) = ctx.reg
+                                .method_params.get(&(ty, method.clone())).cloned()
+                            {
+                                ctx.consume_args(args, &idxs, e.span);
+                            }
+                        }
+                    } else {
+                        consume_walk_expr(ctx, obj, errors);
+                        for a in args { consume_walk_expr(ctx, a.expr(), errors); }
+                        if let Some(t) = trailing { consume_walk_trailing(ctx, t, errors); }
+                    }
+                }
+                // Free-fn call: f(args).
+                ExprKind::Ident(fname) => {
+                    for a in args { consume_walk_expr(ctx, a.expr(), errors); }
+                    if let Some(t) = trailing { consume_walk_trailing(ctx, t, errors); }
+                    if let Some(idxs) = ctx.reg.fn_params.get(fname).cloned() {
+                        ctx.consume_args(args, &idxs, e.span);
+                    }
+                }
+                // Path call: Type.static(args) / module.fn(args).
+                ExprKind::Path(parts) => {
+                    for a in args { consume_walk_expr(ctx, a.expr(), errors); }
+                    if let Some(t) = trailing { consume_walk_trailing(ctx, t, errors); }
+                    if parts.len() == 2 {
+                        if let Some(idxs) = ctx.reg.method_params
+                            .get(&(parts[0].clone(), parts[1].clone())).cloned()
+                        {
+                            ctx.consume_args(args, &idxs, e.span);
+                        }
+                    }
+                    if let Some(last) = parts.last() {
+                        if let Some(idxs) = ctx.reg.fn_params.get(last).cloned() {
+                            ctx.consume_args(args, &idxs, e.span);
+                        }
+                    }
+                }
+                _ => {
+                    consume_walk_expr(ctx, func, errors);
+                    for a in args { consume_walk_expr(ctx, a.expr(), errors); }
+                    if let Some(t) = trailing { consume_walk_trailing(ctx, t, errors); }
+                }
+            }
+        }
+
+        // ─── Доступы / операторы ───
+        ExprKind::Member { obj, .. } => consume_walk_expr(ctx, obj, errors),
+        ExprKind::Index { obj, index } => {
+            consume_walk_expr(ctx, obj, errors);
+            consume_walk_expr(ctx, index, errors);
+        }
+        ExprKind::TurboFish { base, .. } => consume_walk_expr(ctx, base, errors),
+        ExprKind::Try(inner) | ExprKind::Bang(inner) => consume_walk_expr(ctx, inner, errors),
+        ExprKind::As(inner, _) | ExprKind::Is(inner, _) => consume_walk_expr(ctx, inner, errors),
+        ExprKind::Unary { operand, .. } => consume_walk_expr(ctx, operand, errors),
+        ExprKind::Binary { left, right, .. } => {
+            consume_walk_expr(ctx, left, errors);
+            consume_walk_expr(ctx, right, errors);
+        }
+        ExprKind::Throw(inner) => consume_walk_expr(ctx, inner, errors),
+        ExprKind::Interrupt(opt) => {
+            if let Some(v) = opt { consume_walk_expr(ctx, v, errors); }
+        }
+        ExprKind::Range { start, end, .. } => {
+            consume_walk_expr(ctx, start, errors);
+            consume_walk_expr(ctx, end, errors);
+        }
+
+        // ─── `a ?? b` — `b` исполняется условно ───
+        ExprKind::Coalesce(a, b) => {
+            consume_walk_expr(ctx, a, errors);
+            let after_a = ctx.states.clone();
+            consume_walk_expr(ctx, b, errors);
+            let after_b = ctx.states.clone();
+            ctx.states = consume_join(&after_a, &after_a, &after_b);
+        }
+
+        // ─── Ветвление if / if-let ───
+        ExprKind::If { cond, then, else_ } => {
+            consume_walk_expr(ctx, cond, errors);
+            consume_walk_if(ctx, then, else_, errors);
+        }
+        ExprKind::IfLet { pattern, scrutinee, then, else_ } => {
+            consume_walk_expr(ctx, scrutinee, errors);
+            let saved = ctx.states.clone();
+            let mut names = Vec::new();
+            consume_pattern_names(pattern, &mut names);
+            for n in &names { ctx.declare(n, None); }
+            consume_walk_block(ctx, then, errors);
+            let then_states = ctx.states.clone();
+            ctx.states = saved.clone();
+            consume_walk_else(ctx, else_, errors);
+            let else_states = ctx.states.clone();
+            ctx.states = consume_join(&saved, &then_states, &else_states);
+        }
+
+        // ─── match ───
+        ExprKind::Match { scrutinee, arms } => {
+            consume_walk_expr(ctx, scrutinee, errors);
+            let saved = ctx.states.clone();
+            let mut joined: Option<HashMap<String, VarState>> = None;
+            for arm in arms {
+                ctx.states = saved.clone();
+                let mut names = Vec::new();
+                consume_pattern_names(&arm.pattern, &mut names);
+                for n in &names { ctx.declare(n, None); }
+                if let Some(g) = &arm.guard { consume_walk_expr(ctx, g, errors); }
+                match &arm.body {
+                    MatchArmBody::Expr(ex) => consume_walk_expr(ctx, ex, errors),
+                    MatchArmBody::Block(b) => consume_walk_block(ctx, b, errors),
+                }
+                let arm_states = ctx.states.clone();
+                joined = Some(match joined {
+                    None => arm_states,
+                    Some(j) => consume_join(&saved, &j, &arm_states),
+                });
+            }
+            ctx.states = joined.unwrap_or(saved);
+        }
+
+        // ─── select ───
+        ExprKind::Select { arms } => {
+            let saved = ctx.states.clone();
+            let mut joined: Option<HashMap<String, VarState>> = None;
+            for arm in arms {
+                ctx.states = saved.clone();
+                match &arm.op {
+                    SelectOp::Recv { binding, chan } => {
+                        consume_walk_expr(ctx, chan, errors);
+                        if let Some(b) = binding { ctx.declare(b, None); }
+                    }
+                    SelectOp::Send { chan, value } => {
+                        consume_walk_expr(ctx, chan, errors);
+                        consume_walk_expr(ctx, value, errors);
+                    }
+                    SelectOp::Default => {}
+                }
+                if let Some(g) = &arm.guard { consume_walk_expr(ctx, g, errors); }
+                consume_walk_block(ctx, &arm.body, errors);
+                let arm_states = ctx.states.clone();
+                joined = Some(match joined {
+                    None => arm_states,
+                    Some(j) => consume_join(&saved, &j, &arm_states),
+                });
+            }
+            ctx.states = joined.unwrap_or(saved);
+        }
+
+        // ─── Циклы — пессимистично ───
+        ExprKind::For { pattern, iter, body, .. }
+        | ExprKind::ParallelFor { pattern, iter, body } => {
+            consume_walk_expr(ctx, iter, errors);
+            let mut names = Vec::new();
+            consume_pattern_names(pattern, &mut names);
+            consume_walk_loop(ctx, &names, body, errors);
+        }
+        ExprKind::While { cond, body, .. } => {
+            consume_walk_expr(ctx, cond, errors);
+            consume_walk_loop(ctx, &[], body, errors);
+        }
+        ExprKind::WhileLet { pattern, scrutinee, body, .. } => {
+            consume_walk_expr(ctx, scrutinee, errors);
+            let mut names = Vec::new();
+            consume_pattern_names(pattern, &mut names);
+            consume_walk_loop(ctx, &names, body, errors);
+        }
+        ExprKind::Loop { body, .. } => consume_walk_loop(ctx, &[], body, errors),
+
+        // ─── Блоки / scope-конструкции ───
+        ExprKind::Block(b) => consume_walk_block(ctx, b, errors),
+        ExprKind::With { bindings, body } => {
+            for wb in bindings { consume_walk_expr(ctx, &wb.handler, errors); }
+            consume_walk_block(ctx, body, errors);
+        }
+        ExprKind::Supervised { body, cancel } => {
+            if let Some(c) = cancel { consume_walk_expr(ctx, c, errors); }
+            consume_walk_block(ctx, body, errors);
+        }
+        ExprKind::Forbid { body, .. } | ExprKind::Realtime { body, .. } => {
+            consume_walk_block(ctx, body, errors);
+        }
+        ExprKind::Detach(b) => consume_walk_isolated_block(ctx, &[], b, errors),
+        ExprKind::Spawn(inner) => consume_walk_isolated_expr(ctx, &[], inner, errors),
+
+        // ─── Литералы-агрегаты ───
+        ExprKind::TupleLit(elems) => {
+            for el in elems { consume_walk_expr(ctx, el, errors); }
+        }
+        ExprKind::ArrayLit(elems) => {
+            for el in elems {
+                match el {
+                    ArrayElem::Item(ex) | ArrayElem::Spread(ex) =>
+                        consume_walk_expr(ctx, ex, errors),
+                }
+            }
+        }
+        ExprKind::MapLit { elems, .. } => {
+            for el in elems {
+                match el {
+                    MapElem::Pair(k, v) => {
+                        consume_walk_expr(ctx, k, errors);
+                        consume_walk_expr(ctx, v, errors);
+                    }
+                    MapElem::Spread(ex) => consume_walk_expr(ctx, ex, errors),
+                }
+            }
+        }
+        ExprKind::RecordLit { fields, .. } => {
+            for f in fields {
+                if let Some(v) = &f.value { consume_walk_expr(ctx, v, errors); }
+            }
+        }
+        ExprKind::TaggedTemplate { tag, args, .. } => {
+            consume_walk_expr(ctx, tag, errors);
+            for a in args { consume_walk_expr(ctx, a, errors); }
+        }
+
+        // ─── Closure / handler — изолированный walk ───
+        ExprKind::Lambda { params, body, .. } => {
+            let names: Vec<String> = params.iter().map(|p| p.name.clone()).collect();
+            consume_walk_isolated_expr(ctx, &names, body, errors);
+        }
+        ExprKind::ClosureLight { params, body } => {
+            let names: Vec<String> = params.iter().map(|p| p.name.clone()).collect();
+            match body {
+                ClosureBody::Expr(ex) => consume_walk_isolated_expr(ctx, &names, ex, errors),
+                ClosureBody::Block(b) => consume_walk_isolated_block(ctx, &names, b, errors),
+            }
+        }
+        ExprKind::ClosureFull(sig) => {
+            let names: Vec<String> = sig.params.iter().map(|p| p.name.clone()).collect();
+            consume_walk_fnbody_isolated(ctx, &names, &sig.body, errors);
+        }
+        ExprKind::HandlerLit { methods, .. } => {
+            for m in methods {
+                let names: Vec<String> = m.params.iter().map(|p| p.name.clone()).collect();
+                match &m.body {
+                    HandlerMethodBody::Expr(ex) =>
+                        consume_walk_isolated_expr(ctx, &names, ex, errors),
+                    HandlerMethodBody::Block(b) =>
+                        consume_walk_isolated_block(ctx, &names, b, errors),
+                }
+            }
+        }
+
+        // ─── Контрактные кванторы — ghost, walk body для use-detection ───
+        ExprKind::Forall { body, range, .. } | ExprKind::Exists { body, range, .. } => {
+            consume_walk_expr(ctx, range, errors);
+            consume_walk_expr(ctx, body, errors);
+        }
+    }
+}
+
+/// if-then-else branch join (общий для `If`).
+fn consume_walk_if(ctx: &mut ConsumeCtx, then: &Block,
+                   else_: &Option<ElseBranch>, errors: &mut Vec<Diagnostic>) {
+    let saved = ctx.states.clone();
+    consume_walk_block(ctx, then, errors);
+    let then_states = ctx.states.clone();
+    ctx.states = saved.clone();
+    consume_walk_else(ctx, else_, errors);
+    let else_states = ctx.states.clone();
+    ctx.states = consume_join(&saved, &then_states, &else_states);
+}
+
+fn consume_walk_else(ctx: &mut ConsumeCtx, else_: &Option<ElseBranch>,
+                     errors: &mut Vec<Diagnostic>) {
+    match else_ {
+        Some(ElseBranch::Block(b)) => consume_walk_block(ctx, b, errors),
+        Some(ElseBranch::If(e)) => consume_walk_expr(ctx, e, errors),
+        None => {}
+    }
+}
+
+fn consume_walk_trailing(ctx: &mut ConsumeCtx, t: &Trailing,
+                         errors: &mut Vec<Diagnostic>) {
+    match t {
+        Trailing::Block(b) => consume_walk_isolated_block(ctx, &[], b, errors),
+        Trailing::Fn(sig) => {
+            let names: Vec<String> = sig.params.iter().map(|p| p.name.clone()).collect();
+            consume_walk_fnbody_isolated(ctx, &names, &sig.body, errors);
+        }
+        Trailing::LegacyBlockWithParams(tb) => {
+            let names: Vec<String> = tb.params.iter().map(|p| p.name.clone()).collect();
+            consume_walk_isolated_block(ctx, &names, &tb.body, errors);
+        }
+    }
+}
+
+fn consume_walk_fnbody_isolated(ctx: &mut ConsumeCtx, params: &[String],
+                                body: &FnBody, errors: &mut Vec<Diagnostic>) {
+    match body {
+        FnBody::Block(b) => consume_walk_isolated_block(ctx, params, b, errors),
+        FnBody::Expr(e) => consume_walk_isolated_expr(ctx, params, e, errors),
+        FnBody::External => {}
+    }
+}
+
 fn check_defer_bodies(module: &Module, errors: &mut Vec<Diagnostic>) {
     // Lookup callee effects: fn_name -> effects (РґР»СЏ suspend detection).
     let mut fn_effects: HashMap<String, Vec<TypeRef>> = HashMap::new();
@@ -5976,6 +6838,8 @@ impl MapLitCtx {
             "int" | "i8" | "i16" | "i32" | "i64"
                 | "u8" | "u16" | "u32" | "u64"
                 | "f32" | "f64" | "bool" | "char" | "byte" | "str"
+                // Plan 76: `never` — bottom-тип (uninhabited), vacuously primitive.
+                | "never"
         ) {
             return;
         }

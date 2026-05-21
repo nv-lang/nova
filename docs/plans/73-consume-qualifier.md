@@ -2,6 +2,38 @@
 
 > **Создан 2026-05-19.**
 >
+> **✅ ЗАКРЫТ 2026-05-21.** Все 6 фаз: Ф.1 spec D131 (`05-memory.md`),
+> Ф.2 AST (`Receiver.consume` + `Param.consume`), Ф.3 parser (`KwConsume`
+> токен + receiver-квалификатор `mut`/`consume` взаимоисключающие +
+> `consume name Type` параметр), Ф.4 семантика — flow-sensitive
+> `check_consume` pass в `types/mod.rs` (`VarState` Live/Consumed/
+> MaybeConsumed + `ConsumeRegistry` + branch-join if/match/??/select +
+> пессимистичные циклы + изолированный walk closure/handler/trailing),
+> Ф.5 stdlib+runtime (`runtime_registry` `is_consume` → auto-gen
+> `string_builder.nv` `consume @into`; `string_builder.h` — убран
+> runtime-флаг `consumed`, `@into()` зануляет поля + repurposed
+> `_check_live` как `data != NULL` defense-in-depth assert), Ф.6 тесты
+> `nova_tests/plan73/` (фикстуры: positive — basic / branches /
+> user-defined метод+параметр; negative — use-after / maybe-consumed /
+> loop / consume-param / mut+consume parse-conflict). Existing
+> `f15_stringbuilder_consumed_negative` мигрирован RUNTIME_PANIC →
+> COMPILE_ERROR.
+>
+> **Followup (2026-05-21, тот же план):** consume-checker усилен —
+> (1) canonical-name **alias-tracking**: `let a = b` → consume любого
+> имени инвалидирует весь alias-класс (sound); (2) тип переменной
+> выводится также из **return-типа свободной функции** (`let x =
+> factory()`). +3 фикстуры (`consume_err_alias`, `consume_err_factory`,
+> `consume_ok_alias`).
+>
+> **Границы (bootstrap):** alias через **результат метода**
+> (`let sb2 = sb.append(...)`, builder-chain) не отслеживается — требует
+> точного «возвращает receiver» ([Plan 77](77-fluent-return.md)); резолв
+> типа receiver'а best-effort (return-типы method-call'ов не покрыты →
+> Plan 37). Оба — sound (false-negative, не false-positive). См.
+> `simplifications.md` `[M-consume-method-result-alias]` /
+> `[M-consume-receiver-type-best-effort]`.
+>
 > **Цель:** добавить в Nova compile-time проверку логической линейности.
 > Некоторые типы (`StringBuilder`) после определённых вызовов (`into()`)
 > инвалидируются. Сейчас это защищается только runtime-флагом — нужна

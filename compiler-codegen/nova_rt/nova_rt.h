@@ -10,6 +10,7 @@
 #include <math.h>     /* D74: f64.sqrt()/sin()/cos()/etc. → libm */
 #include <float.h>    /* Plan 38: f64.MAX (DBL_MAX) / f64.EPSILON / etc. */
 #include "cast.h"     /* План 07: float→int saturation helpers */
+#include "numeric.h"  /* Plan 74: f64/f32 ↔ uN IEEE 754 bit-cast */
 /* conv.h подключается в array.h (после nova_alloc и определения nova_str). */
 
 /* ---- Primitive types ---- */

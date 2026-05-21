@@ -1,0 +1,16 @@
+// EXPECT_COMPILE_ERROR D131
+//
+// Plan 73 (D131): `mut` и `consume` на одном receiver — взаимо-
+// исключающие квалификаторы. Парсер должен отвергнуть `mut consume`.
+
+module nova_tests.plan73.consume_err_mut_conflict
+
+type Gadget { x int }
+
+// ОШИБКА D131: receiver не может быть одновременно `mut` и `consume`.
+fn Gadget mut consume @broken() -> int => @x
+
+test "mut+consume conflict" {
+    let g = Gadget { x: 1 }
+    assert(g.x == 1)
+}

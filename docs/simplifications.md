@@ -10432,3 +10432,52 @@ G/H). ~3700 LOC implementation cumulative.
   compatibility, type-argument arity, variant existence).
 - **Приоритет:** M — поздняя диагностика (CC-FAIL / runtime вместо
   Nova-error); потенциальный вектор тихих ошибок.
+---
+
+## Plan 73 — consume qualifier (D131, 2026-05-21)
+
+### [M-consume-method-result-alias] (DEFER -> план «-> @»)
+> Обновлено 2026-05-21: прямой alias `let a = b` теперь отслеживается
+> (canonical-name aliasing — consume любого имени инвалидирует весь
+> alias-класс). Маркер сужен до method-result alias.
+- **Где:** `compiler-codegen/src/types/mod.rs` -> `check_consume` / `ConsumeCtx`.
+- **Что упрощено:** alias через **результат метода** не отслеживается:
+  `let sb2 = sb.append("x")` (builder-chaining, `append` фактически
+  возвращает тот же объект) — `sb2` не считается алиасом `sb`.
+- **Почему:** `-> Self` гарантирует «тот же ТИП», не «тот же ОБЪЕКТ» —
+  считать результат `Self`-метода алиасом было бы unsound (false positive,
+  если метод вернёт свежий объект).
+- **Как чинить:** ввести точное «возвращает receiver» — план «`-> @` /
+  fluent-return» ([плановый черновик](plans/77-fluent-return.md)). Тогда
+  builder-chain alias станет sound.
+- **Приоритет:** L — направление false-negative (ложных ошибок не даёт).
+
+### [M-consume-receiver-type-best-effort] (DEFER -> Plan 37)
+> Обновлено 2026-05-21: добавлен вывод типа из return-типа свободной
+> функции (`let x = factory()`) и перенос типа через alias.
+- **Где:** `compiler-codegen/src/types/mod.rs` -> `ConsumeCtx::infer_value_type`.
+- **Что упрощено:** тип receiver'а выводится best-effort. Покрыто: явная
+  аннотация `let x T`, очевидный конструктор (`Type.new()` /
+  `with_capacity` / `from`), return-тип свободной функции
+  (`let x = factory()`), alias `let y = x`. НЕ покрыто: return-типы
+  method-call'ов (`let x = obj.make()`) и сложные выражения.
+- **Почему:** полное определение типов = прогон type-checker'а с
+  аннотированным AST (системная проблема [C2]).
+- **Как чинить:** consume-check на полностью типизированном AST — Plan 37.
+- **Приоритет:** M — основные паттерны (конструктор, фабрика-функция,
+  alias) покрыты.
+
+## Plan 76 — bottom-тип never (2026-05-21)
+
+### [M-never-uppercase-no-negative-test] (DEFER -> Plan 37)
+- **Где:** `nova_tests/plan76/`.
+- **Что упрощено:** запланированный негативный тест «`Never` (заглавная) ->
+  compile error» не реализован — bootstrap type-checker permissive к
+  unknown uppercase type-именам, `Never` после rename не даёт чистой
+  ошибки на type-check.
+- **Почему:** строгая проверка unknown-type — зона Plan 37 (typecheck
+  semantic parity), вне scope Plan 76.
+- **Как чинить:** Plan 37 strict type-resolution -> добавить негативную
+  фикстуру.
+- **Приоритет:** L — все `Never`-сайты мигрированы; негативное покрытие
+  never-семантики есть (`fail_handler_no_exit_rejected.nv`).

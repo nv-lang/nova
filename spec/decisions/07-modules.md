@@ -441,7 +441,7 @@ let y MyOption = ...                            // my.Option
 #### Prelude — без `import`
 
 Prelude ([08-runtime.md → D26](08-runtime.md#d26)) — `Option`, `Result`,
-`Some`, `None`, `Ok`, `Err`, `Error`, `Never`, базовые типы,
+`Some`, `None`, `Ok`, `Err`, `Error`, `never`, базовые типы,
 стандартные эффекты, `print`/`println`/`panic` — **автоматически в
 скоупе**, без `import`.
 
