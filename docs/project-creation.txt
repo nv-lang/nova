@@ -16941,3 +16941,15 @@ UNBLOCKED (само удаление sum_schemas baseline — Plan 62.A.bis Ф.4
 Коммиты: A f7e926d, B a630e5d, C 5676e48, D1a f164b65, D1b+D1c
 726303b, D2 a44f992, D3+D4 238b2eb. Мержи в main: a13f5ca, 5228934,
 6d3dd5f.
+
+Пост-фикс (2026-05-21) — nested Result-variant payload. Агент
+Plan 62.A.bis при подготовке Ф.4 нашёл остаточный gap: pattern_bind_
+typed / pattern_cond для вложенных Result-паттернов (`Some(Ok/Err
+(..))` на `Option[Result[T,E]]`) типизировали payload через legacy
+`sum_schemas["Result"]`, не через `NovaRes_<T>_<E>`. Причина — при
+распаковке внешнего `Some(...)` C-тип inner-Result не регистрировался
+в var_types. Фикс: Option-ветки pattern_bind_typed/pattern_cond
+регистрируют C-тип Result-payload на access path → recursive резолв
+через novares_ok_err. Проверено repro агента (убрать sum_schemas
+["Result"] → 883 PASS / 0 FAIL дважды). Insert оставлен — его
+удаление = scope 62.A.bis Ф.4. Коммит 2b184a3c06a, мерж 58e698104c0.
