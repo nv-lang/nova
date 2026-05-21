@@ -393,6 +393,10 @@ pub fn check_module(module: &Module) -> Result<ModuleEnv, Vec<Diagnostic>> {
     // РЅРѕР№, Рё РµСЃР»Рё РґР° вЂ” body РґРѕР»Р¶РµРЅ diverge (static analysis).
     check_handler_never_ops(module, &mut errors);
 
+    // Plan 77 (D132): `-> @` fluent-return — тело метода обязано
+    // вернуть `@`. Делает гарантию проверяемой для consume-checker.
+    check_fluent_return(module, &mut errors);
+
     // Plan 73 (D131): consume-qualifier flow-sensitive check. Use-after-
     // consume и maybe-consumed (consume на части веток) → compile error.
     check_consume(module, &mut errors);
@@ -4123,6 +4127,10 @@ struct ConsumeRegistry {
     /// Для var-type инференса `let x = factory()` — расширяет резолв
     /// consume-метода за пределы очевидных конструкторов.
     fn_return_types: HashMap<String, String>,
+    /// Plan 77 (D132): `(receiver_type, method)` — fluent-методы `-> @`,
+    /// гарантированно возвращающие сам receiver. `let x = recv.method()`
+    /// для такого метода → `x` алиас `recv`.
+    recv_returning: HashSet<(String, String)>,
 }
 
 impl ConsumeRegistry {
@@ -4131,13 +4139,22 @@ impl ConsumeRegistry {
         let mut fn_params: HashMap<String, Vec<usize>> = HashMap::new();
         let mut method_params: HashMap<(String, String), Vec<usize>> = HashMap::new();
         let mut fn_return_types: HashMap<String, String> = HashMap::new();
+        let mut recv_returning: HashSet<(String, String)> = HashSet::new();
 
         // 1. Runtime-stdlib consume-методы (`StringBuilder.into` и т.п.).
         //    Single source of truth — runtime_registry.rs (`is_consume`).
         for f in crate::codegen::runtime_registry::all() {
-            if f.is_consume {
-                if let Some(recv) = f.receiver {
+            if let Some(recv) = f.receiver {
+                if f.is_consume {
                     methods.insert((recv.to_string(), f.name.to_string()));
+                }
+                // Plan 77 (D132): fluent builder-методы рендерятся `-> @`
+                // (mirror `render_nv` is_fluent) — гарантированно
+                // возвращают receiver.
+                if !f.is_static && f.is_mut && f.return_ty == "Self"
+                    && f.nova_body.is_none()
+                {
+                    recv_returning.insert((recv.to_string(), f.name.to_string()));
                 }
             }
         }
@@ -4153,6 +4170,11 @@ impl ConsumeRegistry {
                     Some(r) => {
                         if r.consume {
                             methods.insert((r.type_name.clone(), fd.name.clone()));
+                        }
+                        // Plan 77 (D132): `-> @` fluent-метод.
+                        if fd.returns_receiver {
+                            recv_returning
+                                .insert((r.type_name.clone(), fd.name.clone()));
                         }
                         if !consume_idx.is_empty() {
                             method_params.insert(
@@ -4174,7 +4196,9 @@ impl ConsumeRegistry {
                 }
             }
         }
-        ConsumeRegistry { methods, fn_params, method_params, fn_return_types }
+        ConsumeRegistry {
+            methods, fn_params, method_params, fn_return_types, recv_returning,
+        }
     }
 }
 
@@ -4410,6 +4434,44 @@ impl<'a> ConsumeCtx<'a> {
 
 /// Plan 73 (D131): consume-check входная точка — walk всех function /
 /// method / test bodies модуля.
+/// Plan 77 (D132): `-> @` fluent-return — тело non-external метода
+/// обязано завершаться выражением `@` (вернуть сам receiver). Делает
+/// гарантию «возвращает receiver» проверяемой → consume-checker может
+/// soundly трактовать `let x = recv.method()` как alias receiver'а.
+fn check_fluent_return(module: &Module, errors: &mut Vec<Diagnostic>) {
+    fn tail_is_self(body: &FnBody) -> bool {
+        match body {
+            // External — C-реализация (StringBuilder/WriteBuffer); C-функция
+            // возвращает receiver-pointer по контракту runtime'а.
+            FnBody::External => true,
+            FnBody::Expr(e) => matches!(e.kind, ExprKind::SelfAccess),
+            FnBody::Block(b) => b.trailing.as_ref()
+                .map(|t| matches!(t.kind, ExprKind::SelfAccess))
+                .unwrap_or(false),
+        }
+    }
+    for item in &module.items {
+        if let Item::Fn(f) = item {
+            if !f.returns_receiver { continue; }
+            if !tail_is_self(&f.body) {
+                let span = match &f.body {
+                    FnBody::Block(b) => b.span,
+                    FnBody::Expr(e) => e.span,
+                    FnBody::External => f.span,
+                };
+                errors.push(Diagnostic::new(
+                    format!(
+                        "метод `{}` объявлен `-> @` (fluent-return, D132): его \
+                         тело обязано завершаться выражением `@` — вернуть сам \
+                         receiver. Добавьте `@` последним выражением тела.",
+                        f.name),
+                    span,
+                ));
+            }
+        }
+    }
+}
+
 fn check_consume(module: &Module, errors: &mut Vec<Diagnostic>) {
     let reg = ConsumeRegistry::build(module);
     for item in &module.items {
@@ -4482,16 +4544,37 @@ fn consume_walk_stmt(ctx: &mut ConsumeCtx, s: &Stmt, errors: &mut Vec<Diagnostic
             consume_walk_expr(ctx, &decl.value, errors);
             let mut names = Vec::new();
             consume_pattern_names(&decl.pattern, &mut names);
-            // Plan 73 followup: alias-форма `let a = b` — RHS голый
-            // идентификатор tracked-переменной. `a` и `b` ссылаются на
-            // один heap-объект → регистрируем alias.
+            // alias-форма `let <name> = <rhs>` — `name` ссылается на тот
+            // же объект:
+            //   (a) Plan 73 followup: `let a = b` — RHS голый идентификатор.
+            //   (b) Plan 77 (D132): `let x = recv.fluent()` — fluent-метод
+            //       `-> @` гарантированно возвращает сам receiver.
             let alias_src: Option<String> = if names.len() == 1 {
-                if let ExprKind::Ident(src) = &decl.value.kind {
-                    let canon = ctx.canonical(src);
-                    if canon != names[0] && ctx.states.contains_key(&canon) {
-                        Some(canon)
-                    } else { None }
-                } else { None }
+                match &decl.value.kind {
+                    ExprKind::Ident(src) => {
+                        let canon = ctx.canonical(src);
+                        if canon != names[0] && ctx.states.contains_key(&canon) {
+                            Some(canon)
+                        } else { None }
+                    }
+                    ExprKind::Call { func, .. } => {
+                        if let ExprKind::Member { obj, name: method } = &func.kind {
+                            if let ExprKind::Ident(recv) = &obj.kind {
+                                let canon = ctx.canonical(recv);
+                                let fluent = ctx.var_types.get(&canon)
+                                    .map(|ty| ctx.reg.recv_returning
+                                        .contains(&(ty.clone(), method.clone())))
+                                    .unwrap_or(false);
+                                if fluent && canon != names[0]
+                                    && ctx.states.contains_key(&canon)
+                                {
+                                    Some(canon)
+                                } else { None }
+                            } else { None }
+                        } else { None }
+                    }
+                    _ => None,
+                }
             } else { None };
             if let Some(canon) = alias_src {
                 let ty = ctx.var_types.get(&canon).cloned();

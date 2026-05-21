@@ -310,6 +310,11 @@ pub struct FnDecl {
     pub params: Vec<Param>,
     pub effects: Vec<TypeRef>, // эффекты между `)` и `->`
     pub return_type: Option<TypeRef>,
+    /// Plan 77 (D132): `-> @` — метод возвращает сам receiver (fluent).
+    /// `return_type` при этом = `Self` (тип результата — receiver-тип);
+    /// флаг добавляет гарантию «возвращается именно receiver». Валидно
+    /// только для instance-метода (parser enforce'ит).
+    pub returns_receiver: bool,
     pub body: FnBody,
     pub span: Span,
     /// Plan 16 (D64 sugar §3697): `@realtime` атрибут перед `fn`.
