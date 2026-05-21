@@ -5203,7 +5203,7 @@ spec-level work.
 
 ---
 
-### [M-entry-folder-module] Entry folder-module — per-peer изоляция не активна
+### [M-entry-folder-module] Entry folder-module — per-peer изоляция не активна — ✅ RESOLVED 2026-05-21
 
 - **Где:** `compiler-codegen/src/imports.rs` (`resolve_imports_inline_ex`).
 - **Что:** entry-модуль парсится caller'ом как **один файл**
@@ -5237,13 +5237,21 @@ spec-level work.
      Меняет entry-selection → начнёт компилировать каждую fixture
      standalone — **риск для 350-test регрессии**, отдельная focused-
      работа.
-- **Статус:** honest-defer (Plan 42.17 Ф.8). Не баг — нулевая
-  regression-exposure; машинерия изоляции корректна для импортированных
-  folder-modules. Реализовать в отдельной сессии (resolver-side +
-  test-runner-side вместе, с полной регрессией).
-- **Приоритет:** L — by-design не reachable до folder-module entry-point
-  (когда `main` проекта или explicit `nova test <folder-module-peer>`
-  станет use-case'ом).
+- **Resolved:** Plan 81 Ф.10 — **resolver-side** реализован.
+  `resolve_imports_inline_ex` детектит entry-folder-module, собирает
+  sibling peers (distinct `file_id`, `is_entry_module=true`), мёрджит
+  их items (включая `Item::Test`), резолвит import'ы каждого peer'а в
+  его собственный visible-scope (Rule C). Prelude резолвится один раз
+  и разделяется всей entry-группой. Попутно `manifest::check_module_path`
+  стал folder-module-aware (канонический `imports::is_folder_module_peer`).
+- **Test-runner-side НЕ делался — сознательно** (не упрощение): авто-
+  компиляция folder-module как unit в `walk_nv` меняет entry-selection
+  всего дерева `nova_tests/` (риск широкой регрессии) и не даёт
+  correctness-выигрыша — regression-guard уже обеспечен nova-cli
+  integration-тестом + resolver unit-тестами. См. Plan 81 §Ф.10.
+- **Tests:** `compiler-codegen/src/imports.rs` (2 unit-теста resolver'а)
+  + `nova-cli/tests/entry_folder_module.rs` (integration: `nova check`
+  на peer'е folder-module `nova_tests/plan81/entry_fmod/`).
 
 
 ---

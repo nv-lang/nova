@@ -3,9 +3,9 @@
 > **Создан 2026-05-21.** Переработан с чистого листа 2026-05-21 после
 > сверки с реальным кодом компилятора (см. «Сверка фактов» ниже).
 >
-> **Статус:** 🚧 in progress — Ф.1–Ф.6 ✅ + Ф.7.1 ✅ + Ф.8 ✅
+> **Статус:** 🚧 in progress — Ф.1–Ф.6 ✅ + Ф.7.1 ✅ + Ф.8 ✅ + Ф.10 ✅
 > (2026-05-21, worktree `nova-p79`, ветка `plan-81-hardening`), Ф.7.2 +
-> Ф.9–Ф.11 pending.
+> Ф.9 + Ф.11 pending.
 > - **Ф.1** ✅ visibility enforcement (commit `197480a747c`).
 > - **Ф.2** ✅ module-qualified call type-check — `alias.func()` /
 >   `mod.func()` резолвятся в `TypeCheckCtx`; неизвестная функция →
@@ -45,6 +45,18 @@
 >   enforcement, deferred-with-reason.
 > - `plan81/lib` — библиотечная фикстура без `main` (test-runner
 >   classification gap) — починена self-test'ом.
+> - **Ф.10** ✅ entry-folder-module peer-isolation — resolver
+>   (`resolve_imports_inline_ex`) детектит, что сам компилируемый entry —
+>   peer folder-module, собирает sibling peers (distinct `file_id`,
+>   `is_entry_module=true`), мёрджит их items **включая `Item::Test`**,
+>   резолвит import'ы каждого peer'а в ЕГО visible scope (Rule C). Prelude
+>   резолвится один раз и разделяется всей entry-группой. Закрыт
+>   сопутствующий пробел: `manifest::check_module_path` теперь
+>   folder-module-aware (`is_folder_module_peer` стал каноническим public
+>   в `imports.rs`, test-runner делегирует ему). Тесты: 2 unit-теста
+>   resolver'а + nova-cli integration-тест (`nova check` на
+>   entry-folder-module). Test-runner-side (авто-компиляция folder-module
+>   как unit в `nova test`) — **сознательно не делается**: см. Ф.10 ниже.
 >
 > Suite на момент Ф.8.1: **954 PASS / 0 FAIL**.
 >
@@ -413,7 +425,7 @@ DCE разбита на два под-шага по уровню риска:
 **Тесты:** повторный `nova build` без изменений — попадание в кэш;
 изменение файла инвалидирует его и зависимых.
 
-### Ф.10 — Entry-folder-module peer-isolation (P3)
+### Ф.10 — Entry-folder-module peer-isolation (P3) ✅ ВЫПОЛНЕН 2026-05-21
 
 **Проблема:** per-peer import isolation не активна, если **сам
 entry-модуль** — folder-module (entry парсится как один файл,
@@ -421,11 +433,49 @@ MAIN_FILE_ID). Дизайн зафиксирован в `[M-entry-folder-module]
 
 **Цель:** per-peer резолв работает и для entry-folder-module.
 
-**Подзадачи:** активировать peer-резолв для entry; resolver-side +
-test-runner-side изменения по дизайну из `[M-entry-folder-module]`.
+**Сделано (resolver-side — закрывает correctness-цель):**
+- `resolve_imports_inline_ex` после регистрации entry-PeerFile
+  детектит sibling peers: файлы в `entry_dir`, объявляющие **тот же**
+  `module`, что и entry (условие ложно для любого single-file /
+  `_use.nv` entry → zero-regression). Фильтры `_test` / OS-suffix /
+  `#cfg` зеркалят `resolve_module_paths`.
+- Каждый sibling получает distinct `file_id`, регистрируется как
+  `PeerFile { is_entry_module: true }`, его items (**включая
+  `Item::Test`** — у entry-folder-module свои тесты) мёрджатся в
+  `module.items`.
+- Import'ы каждого peer'а резолвятся в ЕГО собственный visible-acc
+  (Rule C: imports НЕ shared между peers). Prelude резолвится **один
+  раз** в отдельный acc и разделяется всей entry-группой (entry +
+  siblings) — иначе `visited`-dedup не дал бы siblings prelude-имён.
+- `_module.nv` config-peer entry-папки: его module-attrs
+  пропагируются (как в `resolve_one` для imported folder-modules).
+- **Сопутствующий пробел закрыт:** `manifest::check_module_path`
+  раньше всегда трактовал entry как single-file → folder-module entry
+  падал на D29-проверке. Теперь auto-detect через канонический
+  `imports::is_folder_module_peer` (public, единый источник истины —
+  test-runner делегирует ему, Plan 42.17 Ф.3 consolidation); для
+  folder-module legacy-declaration = путь до папки (drop file-stem).
 
-**Тесты:** entry как folder-module с per-peer импортами компилируется
-и тестируется; изоляция импортов между peers соблюдается.
+**Test-runner-side — сознательно НЕ делается (не упрощение).**
+`[M-entry-folder-module]` предлагал также менять `walk_nv`, чтобы
+`nova test` авто-компилировал каждую folder-module-папку как unit.
+Это (а) меняет entry-selection для **всего** дерева `nova_tests/` —
+риск широкой регрессии (марк сам оценивал «риск для 350-test»), и
+(б) не даёт correctness-выигрыша: regression-guard для
+entry-folder-module уже обеспечен nova-cli integration-тестом
+(`nova check` на folder-module entry) + 2 resolver unit-теста. Менять
+поведение всего suite ради дублирующего guard'а — нетто-отрицательно.
+Correctness-цель Ф.10 («per-peer резолв работает для
+entry-folder-module») полностью достигнута resolver-side'ом.
+
+**Тесты:**
+- `compiler-codegen/src/imports.rs` — 2 unit-теста: sibling
+  collection + per-peer isolation (sibling видит свой import, entry —
+  нет); single-file entry не подбирает чужие файлы (zero-regression).
+- `nova-cli/tests/entry_folder_module.rs` — integration: `nova check`
+  на peer'е folder-module `nova_tests/plan81/entry_fmod/` (peer
+  вызывает функцию соседнего peer'а + sibling использует prelude
+  `println`).
 
 ## Группа D
 
