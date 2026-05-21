@@ -1,6 +1,25 @@
 # Plan 61: Typed `Fail[E]` codegen — hybrid (per-E mono + erased `Fail[any]` fallback)
 
-> **Status:** proposed (2026-05-17, revised). Architectural change. Закрывает три silent UB в effect-codegen + два открытых open-issue (Plan 11 cross-effect throw, Plan 49 «typed Fail-канал — future work»). Реализует [D65](../../spec/decisions/04-effects.md#d65) на C-уровне.
+> **Status:** ✅ **ЗАКРЫТ 2026-05-17.** Architectural change реализован.
+> Закрыты все 3 silent UB в effect-codegen (throw type-pun,
+> `nova_throw_value` placeholder, handler-arm wrong C-type) + open-issue'ы
+> Plan 11 / Plan 49. [D65](../../spec/decisions/04-effects.md#d65)
+> реализован на C-уровне.
+>
+> **Реализация:** impl `75b3da4682b` (typed `Fail[E]` codegen — payload
+> preservation via fail-frame; typeid.h/.c, effects.c/h, emit_c.rs) +
+> merge `657630e39ae` + production-grade closure `4cd6b7f650c`
+> («all 4 deferred items resolved — 0 deferred, 0 simplifications»).
+> Все 4 маркера `[M-plan-61-*]` в simplifications.md — RESOLVED.
+>
+> **Фактический подход** отличается от исходного плана ниже: вместо
+> «per-E mono first» реализовано **typed payload в fail-frame**
+> (`error_user_payload` + `NovaTypeId`, D65 lookup precedence через
+> `NOVA_THROW_USER_TYPED`) + **per-E dispatch** (`_nova_throw_typed_<E>`
+> + per-E vtable/TLS, followup #4) — эквивалент с меньшей сложностью.
+> Фазы Ф.0-Ф.8 ниже — исходный план; чек-боксы не обновлялись, источник
+> истины по реализации — closure-коммит и записи в project-creation.txt.
+> Шапка-метка обновлена 2026-05-21 (была устаревшая «proposed»).
 
 ---
 
