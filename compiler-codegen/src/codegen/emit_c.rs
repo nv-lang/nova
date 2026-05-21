@@ -1480,7 +1480,7 @@ impl CEmitter {
             const BUILTIN_TYPE_NAMES: &[&str] = &[
                 "int", "i64", "i32", "i16", "i8",
                 "u64", "u32", "u16", "u8",
-                "f64", "f32", "bool", "str", "byte", "char",
+                "f64", "f32", "bool", "str", "char",
                 "Option", "Result", "Self", "Handler", "CancelToken",
                 // Plan 76: bottom-тип `never` — строчный встроенный примитив.
                 "never", "Error",
@@ -3414,7 +3414,6 @@ impl CEmitter {
                     "f32"  => Ok("nova_f32".into()),
                     "bool" => Ok("nova_bool".into()),
                     "str"  => Ok("nova_str".into()),
-                    "byte" => Ok("nova_byte".into()),
                     // D26 Q-string-indexing школа B: char это Unicode codepoint.
                     // Plan 70.3: distinct `nova_char` typedef над `nova_int` (см.
                     // nova_rt/nova_rt.h). Same int64_t storage, но distinct C name
@@ -3591,7 +3590,7 @@ impl CEmitter {
                             // Map C type name back to canonical Nova array key.
                             match c_ty.as_str() {
                                 "nova_str"  => "str",
-                                "nova_byte" | "uint8_t" => "byte",
+                                "nova_byte" | "uint8_t" => "u8",
                                 "nova_bool" => "bool",
                                 "nova_f64" | "float" | "double" => "f64",
                                 // Plan 70.4: nova_f32 maps back to "f32" key, not "f64".
@@ -3611,7 +3610,7 @@ impl CEmitter {
                         };
                         return Ok(match elem_key {
                             "str" => "NovaArray_nova_str*".into(),
-                            "byte" | "u8" => "NovaArray_nova_byte*".into(),
+                            "u8" => "NovaArray_nova_byte*".into(),
                             "bool" => "NovaArray_nova_bool*".into(),
                             "f64" => "NovaArray_nova_f64*".into(),
                             // Plan 70.4: f32 distinct from f64 (ABI: 4 vs 8 bytes).
@@ -5880,7 +5879,7 @@ impl CEmitter {
         if matches!(base_name.as_str(),
             "Option" | "Array" | "int" | "str" | "bool" | "f64" | "f32"
             | "i32" | "i64" | "u32" | "u64" | "i8" | "i16" | "u8" | "u16"
-            | "byte" | "char") {
+            | "char") {
             return;
         }
         // Вычислить C-имена type-args
@@ -6848,7 +6847,6 @@ impl CEmitter {
             "f64" => "nova_f64".to_string(),
             "bool" => "nova_bool".to_string(),
             "str" => "nova_str".to_string(),
-            "byte" => "nova_byte".to_string(),
             other => {
                 // Extension methods on array types: []T, []str, []int, etc.
                 if let Some(elem_ty) = other.strip_prefix("[]") {
@@ -6857,7 +6855,7 @@ impl CEmitter {
                         "bool" => "nova_bool",
                         "f64"  => "nova_f64",
                         "f32"  => "nova_f32",
-                        "byte" | "u8" => "nova_byte",
+                        "u8" => "nova_byte",
                         "char" => "nova_char",
                         // Plan 70.4 Ф.2: sized-int distinct packed storage.
                         "i32"  => "int32_t",
@@ -6888,7 +6886,7 @@ impl CEmitter {
                 "f64" => "nova_f64",
                 // Plan 70.4: f32 distinct (4 vs 8 bytes ABI).
                 "f32" => "nova_f32",
-                "byte" | "u8" => "nova_byte",
+                "u8" => "nova_byte",
                 // Plan 70.3: char distinct.
                 "char" => "nova_char",
                 // Plan 70.4 Ф.2: sized-int distinct packed storage.
@@ -7648,7 +7646,7 @@ impl CEmitter {
             "nova_bool" => "bool".to_string(),
             "nova_f64"  => "f64".to_string(),
             "nova_f32"  => "f32".to_string(),
-            "nova_byte" => "byte".to_string(),
+            "nova_byte" => "u8".to_string(),
             other => other.strip_prefix("Nova_").unwrap_or(other).to_string(),
         }
     }
@@ -8270,7 +8268,7 @@ impl CEmitter {
                     "f64" => "nova_f64",
                     "bool" => "nova_bool",
                     "str" => "nova_str",
-                    "byte" => "nova_byte",
+                    "u8" => "nova_byte",
                     _ => return None,
                 };
                 Some(c.to_string())
@@ -8340,7 +8338,7 @@ impl CEmitter {
                     "bool"          => "nova_bool".to_string(),
                     "f64"           => "nova_f64".to_string(),
                     "f32"           => "nova_f32".to_string(),
-                    "byte" | "u8"  => "nova_byte".to_string(),
+                    "u8"  => "nova_byte".to_string(),
                     "unit"          => "nova_unit".to_string(),
                     other           => format!("Nova_{}*", other),
                 }
@@ -10739,7 +10737,7 @@ impl CEmitter {
                                         || matches!(n.as_str(),
                                             "int" | "i8" | "i16" | "i32" | "i64"
                                             | "u8" | "u16" | "u32" | "u64"
-                                            | "f32" | "f64" | "byte" | "bool" | "char" | "str");
+                                            | "f32" | "f64" | "bool" | "char" | "str");
                                     if is_type { (n.clone(), true) } else {
                                         let obj_ty = self.var_types.get(n).cloned().unwrap_or_default();
                                         let t = Self::nova_type_name_from_c(&obj_ty);
@@ -10762,7 +10760,7 @@ impl CEmitter {
                                         "f32" => "nova_f32".to_string(),
                                         "str" => "nova_str".to_string(),
                                         "char" => "nova_int".to_string(),
-                                        "byte" => "nova_byte".to_string(),
+                                        "u8" => "nova_byte".to_string(),
                                         "bool" => "nova_bool".to_string(),
                                         _ => format!("Nova_{}*", type_name),
                                     };
@@ -13520,7 +13518,7 @@ impl CEmitter {
                         // Mapping Nova-type → NovaArray storage suffix.
                         let arr_suffix = match elem_t.as_str() {
                             "str"            => "nova_str",
-                            "byte" | "u8"    => "nova_byte",
+                            "u8"    => "nova_byte",
                             "bool"           => "nova_bool",
                             "f64"            => "nova_f64",
                             // Plan 70.4: f32 distinct (nova_array_new_nova_f32).
@@ -14781,7 +14779,7 @@ impl CEmitter {
                         "nova_bool" => Some("bool"),
                         "nova_f64"  => Some("f64"),
                         "nova_f32"  => Some("f32"),
-                        "nova_byte" => Some("byte"),
+                        "nova_byte" => Some("u8"),
                         _ => None,
                     };
                     if let Some(prim) = prim_nova_name {
@@ -19690,7 +19688,7 @@ impl CEmitter {
                     || matches!(n.as_str(),
                         "int" | "i8" | "i16" | "i32" | "i64"
                         | "u8" | "u16" | "u32" | "u64"
-                        | "f32" | "f64" | "byte" | "bool" | "char" | "str");
+                        | "f32" | "f64" | "bool" | "char" | "str");
                 if is_type { (n.clone(), true) } else {
                     // Bound: derive type from var.
                     let obj_ty = self.var_types.get(n).cloned().unwrap_or_default();
@@ -19744,7 +19742,7 @@ impl CEmitter {
             "f32" => "nova_f32".to_string(),
             "str" => "nova_str".to_string(),
             "char" => "nova_int".to_string(),
-            "byte" => "nova_byte".to_string(),
+            "u8" => "nova_byte".to_string(),
             "bool" => "nova_bool".to_string(),
             _ => format!("Nova_{}*", type_name),
         };
@@ -20639,7 +20637,7 @@ impl CEmitter {
             ("i64",  "char", "use `char.try_from(n)?`"),
             ("u32",  "char", "use `char.try_from(n)?`"),
             ("u64",  "char", "use `char.try_from(n)?`"),
-            ("char", "byte", "use `byte.try_from(c)?` (fails if codepoint > 0xFF)"),
+            ("char", "u8", "use `u8.try_from(c)?` (fails if codepoint > 0xFF)"),
             ("int",  "bool", "use explicit comparison (`n != 0` for truthy-int)"),
             ("i8",   "bool", "use `n != 0`"),
             ("i16",  "bool", "use `n != 0`"),
@@ -20649,7 +20647,6 @@ impl CEmitter {
             ("u16",  "bool", "use `n != 0`"),
             ("u32",  "bool", "use `n != 0`"),
             ("u64",  "bool", "use `n != 0`"),
-            ("byte", "bool", "use `n != 0`"),
             ("f64",  "bool", "use `f != 0.0`"),
             ("f32",  "bool", "use `f != 0.0`"),
             ("str",  "int",  "use `int.try_from(s)?` (parses decimal)"),
@@ -20714,7 +20711,7 @@ impl CEmitter {
             "nova_f32"  => "f32".into(),
             "nova_bool" => "bool".into(),
             "nova_str"  => "str".into(),
-            "nova_byte" => "byte".into(),
+            "nova_byte" => "u8".into(),
             "int8_t"    => "i8".into(),
             "int16_t"   => "i16".into(),
             "int32_t"   => "i32".into(),
@@ -20772,9 +20769,8 @@ impl CEmitter {
             ("uint", "MAX", "UINT64_MAX",            "uint64_t"),
             ("u32",  "MAX", "UINT32_MAX",            "uint32_t"),
             ("u16",  "MAX", "UINT16_MAX",            "uint16_t"),
-            // Plan 70.4 Ф.4: u8 → nova_byte (unified); "byte" alias same.
+            // Plan 70.4 Ф.4: u8 → nova_byte (C typedef uint8_t).
             ("u8",   "MAX", "((nova_byte)UINT8_MAX)", "nova_byte"),
-            ("byte", "MAX", "((nova_byte)UINT8_MAX)", "nova_byte"),
             // Char (codepoint)
             ("char", "MAX", "((nova_int)0x10FFFFLL)", "nova_int"),
             ("char", "MIN", "((nova_int)0LL)",        "nova_int"),
@@ -21271,7 +21267,7 @@ impl CEmitter {
                                             "nova_bool" => "bool".to_string(),
                                             "nova_f64"  => "f64".to_string(),
                                             "nova_f32"  => "f32".to_string(),
-                                            "nova_byte" => "byte".to_string(),
+                                            "nova_byte" => "u8".to_string(),
                                             other       => other.to_string(),
                                         };
                                         Some((nova_name, name.clone(), true))
@@ -21583,7 +21579,7 @@ impl CEmitter {
                         {
                             let arr_suffix = match parts[1].as_str() {
                                 "str"            => "nova_str",
-                                "byte" | "u8"    => "nova_byte",
+                                "u8"    => "nova_byte",
                                 "bool"           => "nova_bool",
                                 "f64"            => "nova_f64",
                                 // Plan 70.4: f32 distinct (NovaArray_nova_f32*).

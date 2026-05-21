@@ -48,7 +48,7 @@ test "WriteBuffer visible через prelude (no explicit import)" {
 
 
 test "ReadBuffer visible через prelude (no explicit import)" {
-    let bs []byte = [0x12, 0x34, 0x56, 0x78]
+    let bs []u8 = [0x12, 0x34, 0x56, 0x78]
     let mut rb = ReadBuffer.from(bs)
     let v = rb.try_read_u32_be()
     match v {

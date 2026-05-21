@@ -1253,7 +1253,7 @@ instance-method  := Type ("mut")? "@" identifier "(" params ")" ...
 
 Receiver-тип может быть **любым именованным типом**: record, sum, newtype,
 unit-тип, protocol — **и встроенный примитив** (`int`, `str`, `bool`,
-`f64`, `u8`, ..., `byte`). Это естественное следствие того, что в Nova
+`f64`, `u8`, ...). Это естественное следствие того, что в Nova
 примитивы — обычные типы (D30, D32), просто с lowercase-именами и
 особым представлением в runtime.
 
@@ -2727,7 +2727,7 @@ let code = NotFound as int    // 404
 - **int → Sum через `as`** — type-небезопасно (число может не
   попасть в варианты). Только через pattern match (см. D52).
 
-#### Запрещённые `as`-cast'ы для char/byte/bool
+#### Запрещённые `as`-cast'ы для char/u8/bool
 
 Рrune `as`-cast'ов где seemingly-numeric mappingвыражает unsafe
 семантику. Программист должен использовать `try_from` (с
@@ -2736,13 +2736,13 @@ range-check'ом) или explicit comparison:
 | Запрещено через `as` | Альтернатива |
 |---|---|
 | `int as char`, `iN/uN as char` | `char.try_from(n)?` (range 0..0x10FFFF, не surrogate) |
-| `char as byte` | `byte.try_from(c)?` (fails если codepoint > 0xFF) |
-| `int/byte/f64/etc as bool` | `n != 0` (или `n != 0.0`) |
+| `char as u8` | `u8.try_from(c)?` (fails если codepoint > 0xFF) |
+| `int/u8/f64/etc as bool` | `n != 0` (или `n != 0.0`) |
 | `str as int/i32/f64/bool/char` | `T.try_from(s)?` (parse) |
 | `int/f64/bool/char as str` | `str.from(v)` (format) |
 
-**Исключение для char-литералов:** `'A' as byte`, `'A' as int`,
-`'A' as u8` разрешены — программист видит codepoint буквально на
+**Исключение для char-литералов:** `'A' as int`, `'A' as u8`
+разрешены — программист видит codepoint буквально на
 write-time, range-check не нужен.
 
 **Исключение для int-литералов → char:** `0x41 as char`, `65 as char`

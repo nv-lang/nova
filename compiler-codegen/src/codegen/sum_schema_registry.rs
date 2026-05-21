@@ -761,7 +761,7 @@ impl SumSchemaRegistry {
                     match path[0].as_str() {
                         "int" | "i64" | "u64" | "uint" | "size" => "nova_int".to_string(),
                         "i32" | "u32" => "nova_int".to_string(),
-                        "i16" | "u16" | "i8" | "u8" | "byte" => "nova_int".to_string(),
+                        "i16" | "u16" | "i8" | "u8" => "nova_int".to_string(),
                         "f64" | "f32" => "nova_f64".to_string(),
                         "bool" => "nova_bool".to_string(),
                         "str" => "nova_str".to_string(),
