@@ -1,0 +1,13 @@
+// Plan 33.8 Ф.6.5: рекурсивная функция с контрактами, но без `decreases` —
+// завершимость не верифицируется. Раньше — молчаливый пропуск; теперь
+// W2402 (`ensures` доказан лишь как partial correctness).
+// EXPECT_COMPILE_WARNING decreases
+
+module contracts.recursive_no_decreases_warn
+
+fn count_down(n int) -> int
+    requires n >= 0
+    ensures result == 0
+{
+    if n == 0 { 0 } else { count_down(n - 1) }
+}

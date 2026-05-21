@@ -4855,18 +4855,30 @@ Sub-plans 35.A-E:
     AST-комментарий лгал про SMT-интеграцию. Фикс: линт реализован;
     комментарий честный (SMT-интеграция `assume` — V2, наивная была бы
     unsound в не-flow-sensitive модели).
+- **Ф.6 — второй аудит «с чистого листа» (нашёл 3 пропущенных проблемы):**
+  * Ф.6.1 — фикс Ф.1.2 был НЕПОЛНЫМ: compound assignment `+=`/`-=`/`*=`
+    для `int` эмитился сырым C мимо checked-арифметики → молчаливый wrap.
+    Закрыто: `emit_c.rs` роутит int compound-assign через `nova_int_checked_*`.
+  * Ф.6.2 — Z3 `assert()` молча отбрасывал непереведённые формулы → если
+    `not goal` не транслировалась, противоречивый контекст давал ложный
+    `Proven`. Закрыто: `translation_failed` флаг → `check_sat` → `Unknown`.
+  * Ф.6.3 — `assert_static` не верифицировался SMT (spec Plan 33.2 Ф.8
+    не выполнена). V1: lint `assert-static-unverified`; SMT-верификация → V2.
+  * Ф.6.4 — сборщики циклов спускались только в `Stmt::Expr` (циклы в
+    `let`/`return` пропускались). Ф.6.5 — рекурсия без `decreases` → W2402.
 - **Остаток (V2, НЕ soundness — оптимизация/полнота):**
   * Ф.1.3 — overflow-VC для `int` в верификаторе (предупреждать «возможна
-    паника» + стирать panic-check где доказано). Оптимизация: дыра уже
-    закрыта паникой.
+    паника» + стирать panic-check где доказано). Оптимизация.
   * Ф.2.2 — моделировать условные/составные присваивания в циклах через
     `ite` (доказывать такие циклы, а не честно warning'ать). Полнота.
-  * `assume` SMT-интеграция — требует flow-sensitive верификации.
-- **Тесты:** 8 новых (`loop_cond_assign_w2402`, `loop_compound_assign_w2402`,
-  `assume_trust_introduced_warn`, `int_overflow_add_panic`,
-  `int_overflow_mul_panic`, `int_arith_no_overflow_positive` + 2 unit-теста
-  `lints.rs`). Полный `nova_tests`: 931 PASS; contracts: 291 PASS / 0 FAIL.
-- **Дата закрытия:** 2026-05-21.
+  * `assume` + `assert_static` SMT-интеграция — требует flow-sensitive
+    верификации (единая V2-фича).
+- **Тесты:** 14 новых (`loop_cond_assign_w2402`, `loop_compound_assign_w2402`,
+  `assume_trust_introduced_warn`, `int_overflow_{add,mul,compound}_panic`,
+  `int_arith_no_overflow_positive`, `assert_static_unverified_warn`,
+  `recursive_no_decreases_warn` + 4 unit-теста `lints.rs`). Полный
+  `nova_tests`: 936 PASS / 0 FAIL; contracts: 291 PASS / 0 FAIL.
+- **Дата закрытия:** V1 (Ф.1–Ф.5) — 2026-05-21; Ф.6 (2-й аудит) — 2026-05-21.
 
 ### [ЗАКР 2026-05-16] pipeline.rs монолит — handler code в отдельный модуль [Ф.2.1]
 - **Закрыто (Plan 33.6 Ф.2.1, 2026-05-16, commit ddc11f2e):**
@@ -10445,21 +10457,12 @@ G/H). ~3700 LOC implementation cumulative.
 
 ## Plan 73 — consume qualifier (D131, 2026-05-21)
 
-### [M-consume-method-result-alias] (DEFER -> план «-> @»)
-> Обновлено 2026-05-21: прямой alias `let a = b` теперь отслеживается
-> (canonical-name aliasing — consume любого имени инвалидирует весь
-> alias-класс). Маркер сужен до method-result alias.
-- **Где:** `compiler-codegen/src/types/mod.rs` -> `check_consume` / `ConsumeCtx`.
-- **Что упрощено:** alias через **результат метода** не отслеживается:
-  `let sb2 = sb.append("x")` (builder-chaining, `append` фактически
-  возвращает тот же объект) — `sb2` не считается алиасом `sb`.
-- **Почему:** `-> Self` гарантирует «тот же ТИП», не «тот же ОБЪЕКТ» —
-  считать результат `Self`-метода алиасом было бы unsound (false positive,
-  если метод вернёт свежий объект).
-- **Как чинить:** ввести точное «возвращает receiver» — план «`-> @` /
-  fluent-return» ([плановый черновик](plans/77-fluent-return.md)). Тогда
-  builder-chain alias станет sound.
-- **Приоритет:** L — направление false-negative (ложных ошибок не даёт).
+### [M-consume-method-result-alias] ✅ ЗАКРЫТ 2026-05-21 (Plan 77)
+> История: прямой alias `let a = b` закрыт 2026-05-21 (canonical-name
+> aliasing). Method-result alias (builder-chain) закрыт Plan 77 —
+> синтаксис `-> @` (D132) даёт проверяемую гарантию «метод возвращает
+> receiver»; consume-checker трактует `let x = recv.fluent()` как alias.
+> `~22` stdlib builder-метода мигрированы на `-> @`. Маркер закрыт.
 
 ### [M-consume-receiver-type-best-effort] (DEFER -> Plan 37)
 > Обновлено 2026-05-21: добавлен вывод типа из return-типа свободной

@@ -1,0 +1,21 @@
+// EXPECT_COMPILE_ERROR D132
+//
+// Plan 77 (D132): `-> @` гарантирует возврат receiver'а — тело обязано
+// завершаться выражением `@`. Здесь тело кончается statement'ом без
+// `@` → compile error (иначе гарантия `-> @` была бы ложной).
+
+module nova_tests.plan77.fluent_body_err
+
+type Bldr { mut k int }
+
+fn Bldr.new() -> Bldr => { k: 0 }
+
+// ОШИБКА D132: тело `-> @` метода не завершается `@`.
+fn Bldr mut @tweak() -> @ {
+    @k = @k + 1
+}
+
+test "fluent body without @" {
+    let b = Bldr.new()
+    assert(b.k == 0)
+}

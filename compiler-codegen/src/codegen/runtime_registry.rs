@@ -1165,8 +1165,18 @@ pub fn render_nv(module: &str, fns: &[&RuntimeFn]) -> String {
             out.push_str(eff);
         }
         // return.
-        out.push_str(" -> ");
-        out.push_str(f.return_ty);
+        // Plan 77 (D132): fluent builder-метод (`mut` instance, возвращает
+        // `Self` = сам receiver) рендерится как `-> @`. Исключение —
+        // записи с `nova_body` (напр. `@plus => @append`): они остаются
+        // `-> Self`, тело не обязано буквально быть `@`.
+        let is_fluent = !f.is_static && f.is_mut
+            && f.return_ty == "Self" && f.nova_body.is_none();
+        if is_fluent {
+            out.push_str(" -> @");
+        } else {
+            out.push_str(" -> ");
+            out.push_str(f.return_ty);
+        }
         // Plan 13 Ф.9.2: тело для записей с nova_body.
         if let Some(body) = f.nova_body {
             out.push_str(" => ");

@@ -5583,3 +5583,68 @@ extension), отдельно от runtime-side D82 в `08-runtime.md`.
 - ⏳ Validation: формальная registry runtime-types — deferred
   (Q-codegen-runtime-types-registry), bootstrap полагается на
   `BUILTIN_RUNTIME_TYPES` list maintenance.
+
+---
+
+## D132. `-> @` — fluent-return (метод возвращает receiver)
+
+> **Plan 77.** Принято 2026-05-21 (вариант B обсуждения Plan 73).
+
+### Что
+
+Тип возврата `-> @` означает: метод возвращает **сам receiver**.
+Тип результата — receiver-тип (эквивалент `Self`), плюс гарантия, что
+возвращается именно тот объект, на котором метод вызван.
+
+```nova
+fn StringBuilder mut @append(s str) -> @      // вернёт сам StringBuilder
+fn Counter mut @bump() -> @ { @n = @n + 1; @ }
+```
+
+### Зачем — `Self` отвечает «какой тип», `@` отвечает «какой объект»
+
+`Self` ([D66](02-types.md#d66)) — referential **тип**: «тот же тип, что
+у receiver'а». Метод `@m() -> Self` может вернуть и **новый** объект
+того же типа (`@clone() -> Self` — копия). Builder-/fluent-методам
+нужно строго «**тот же объект**» — для chaining (`sb.append("a")
+.append("b")`) и для проверяемых инвариантов.
+
+`-> @` даёт это явно: `@` в позиции return-type — value-level двойник
+type-level `Self`, консистентно с `@` = receiver везде в Nova.
+
+### Правила
+
+- **Только instance-метод.** `-> @` требует `@`-receiver'а; на
+  static-методе (`Type.method`) и свободной функции — parse error.
+- **Тело обязано вернуть `@`.** Non-external метод с `-> @`: тело
+  завершается выражением `@`. Иначе compile error — иначе гарантия
+  `-> @` была бы ложной.
+- **`external fn ... -> @`** — C-реализация по контракту runtime'а
+  возвращает receiver (напр. `Nova_StringBuilder_method_append` →
+  `return b`).
+- Тип результата для type-checker / codegen — receiver-тип (как `Self`).
+
+### Что это разблокирует
+
+- **Sound builder-chain alias** в consume-checker ([D131](05-memory.md#d131)):
+  `let sb2 = sb.append("x")` — раз `append` объявлен `-> @`, `sb2`
+  гарантированно алиас `sb`; use-after-consume через chain ловится.
+- Самодокументируемые fluent-API — fluent виден из сигнатуры
+  (важно для AI-first: локальность контекста).
+
+### Сравнение
+
+Rust выражает «возвращает receiver» через `&mut self -> &mut Self`
+(заём) либо `self -> Self` (move) — точно, но ценой borrow-checker /
+ownership-модели. Go сознательно отказался от builder-chaining
+(`b.WriteString(...)` отдельными statement'ами). TS `this`-тип — как
+наш `Self`, «тот же тип», без гарантии объекта. `-> @` даёт
+Rust-уровень точности **без borrows / lifetimes** — поверх GC.
+
+### Связь
+
+- [D131](05-memory.md#d131) — `consume`; главный потребитель `-> @`
+  (builder-chain alias).
+- [D66](02-types.md#d66) — `Self` (referential тип); `-> @` — его
+  value-level уточнение «именно receiver».
+- [D35](#d35) — методы инстанса.
