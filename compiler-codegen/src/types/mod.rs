@@ -521,6 +521,10 @@ struct TypeCheckCtx<'a> {
     /// Ф.1: объявления типов — для разворачивания alias/newtype при
     /// категоризации (assignability сравнивает категории, не имена).
     types: HashMap<String, &'a TypeDecl>,
+    /// Plan 81 Ф.2: префиксы импортированных модулей (alias + последний
+    /// сегмент пути import'а) — для резолва module-qualified вызовов
+    /// `alias.func(...)`.
+    imported_modules: HashSet<String>,
 }
 
 /// `true` для имён, у которых arity **не** проверяется: referential-типы
@@ -613,7 +617,24 @@ impl<'a> TypeCheckCtx<'a> {
             arity.entry(prim.to_string())
                 .or_insert(ArityInfo { count: 0, decl_span: None });
         }
-        TypeCheckCtx { arity, fn_decls, method_table, types }
+        // Plan 81 Ф.2: префиксы импортированных модулей.
+        let mut imported_modules: HashSet<String> = HashSet::new();
+        let mut collect = |imports: &[Import]| {
+            for imp in imports {
+                if let Some(a) = &imp.alias {
+                    imported_modules.insert(a.clone());
+                }
+                if let Some(last) = imp.path.last() {
+                    imported_modules.insert(last.clone());
+                }
+            }
+        };
+        collect(&module.imports);
+        for pf in &module.peer_files {
+            collect(&pf.imports);
+        }
+        drop(collect);
+        TypeCheckCtx { arity, fn_decls, method_table, types, imported_modules }
     }
 
     fn check_module(&self, module: &Module, errors: &mut Vec<Diagnostic>) {
@@ -1594,8 +1615,48 @@ impl<'a> TypeCheckCtx<'a> {
                     _ => return,
                 }
             }
-            // instance-методы (`obj.method`) — receiver-type inference
-            // ненадёжна в bootstrap; их резолвит codegen по type-info.
+            // Plan 81 Ф.2: module-qualified вызов `alias.func(...)` /
+            // `mod.func(...)`. `obj` — alias/имя импортированного модуля,
+            // `name` — свободная функция этого модуля. Раньше неизвестная
+            // функция давала link-error (EXPECT_COMPILE_ERROR не ловил —
+            // Plan 70.1 known-limitation); теперь — compile-error E7401.
+            ExprKind::Member { obj, name } => {
+                let ExprKind::Ident(prefix) = &obj.kind else { return; };
+                // Локальная переменная перекрывает имя → это instance-
+                // метод на значении, не module-call.
+                if scope.contains_key(prefix) {
+                    return;
+                }
+                // Не импортированный модуль → instance-метод (codegen).
+                if !self.imported_modules.contains(prefix) {
+                    return;
+                }
+                // Intrinsic namespace (gc / Time / Channel / ...) —
+                // спец-dispatch в codegen, не обычная free fn.
+                if is_intrinsic_namespace(prefix) {
+                    return;
+                }
+                match self.fn_decls.get(name) {
+                    Some(overloads) => match overloads.as_slice() {
+                        [single] => single,
+                        // 0 (никогда) или overload — пропускаем arg-check.
+                        _ => return,
+                    },
+                    None => {
+                        errors.push(Diagnostic::new(
+                            format!(
+                                "[E7401] no function `{}` in module `{}`",
+                                name, prefix,
+                            ),
+                            base.span,
+                        ));
+                        return;
+                    }
+                }
+            }
+            // прочие instance-методы (`obj.method` на значении) —
+            // receiver-type inference ненадёжна в bootstrap; codegen
+            // резолвит по type-info.
             _ => return,
         };
         let Ok(bindings) =
@@ -1966,6 +2027,21 @@ fn fn_generic_scope(fd: &FnDecl) -> HashSet<String> {
         }
     }
     gs
+}
+
+/// Plan 81 Ф.2: имена-namespace со специальным dispatch в codegen
+/// (`gc.collect()`, `Time.sleep()`, ...) — не обычные module-qualified
+/// вызовы свободных функций. Совпадает со списком guard'а в
+/// `emit_c.rs` (Member-rewrite Plan 70.1).
+fn is_intrinsic_namespace(name: &str) -> bool {
+    matches!(
+        name,
+        "gc" | "fibers" | "runtime" | "Channel" | "ChanReader"
+        | "ChanWriter" | "Time" | "Monotonic" | "CancelToken"
+        | "StringBuilder" | "WriteBuffer" | "ReadBuffer"
+        | "f64" | "f32" | "int" | "u8" | "u16" | "u32" | "u64"
+        | "i8" | "i16" | "i32" | "i64" | "Self" | "Duration"
+    )
 }
 
 /// Ф.1: TypeRef примитива по имени.
