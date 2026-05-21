@@ -399,4 +399,108 @@ mod tests {
         let goal = SmtTerm::eq(SmtTerm::IntLit(100), SmtTerm::IntLit(42));
         assert!(matches!(try_prove(&mut b, goal), SatResult::Sat(_)));
     }
+
+    // ── Покрытие теорий: каждый тест доказывает тавтологию из своей
+    //    SMT-теории. Definite-ответ (Unsat) подтверждает, что эмиттер
+    //    выдал cvc5-парсящийся SMT-LIB именно для этой теории — Unknown
+    //    означал бы баг кодирования (cvc5 не смог разобрать/обработать).
+
+    #[test]
+    fn cvc5_integration_bitvector_theory() {
+        if !cvc5_available() {
+            return;
+        }
+        use super::super::try_prove;
+        let mut b = Cvc5Backend::new(5000);
+        b.declare_var("a", SortRef::BitVec { width: 8, signed: false });
+        let a = SmtTerm::Var("a".into());
+        // bvadd(a, 0) == a — тавтология BV-теории.
+        let goal = SmtTerm::eq(
+            SmtTerm::App("bvadd".into(), vec![a.clone(), SmtTerm::BitVecLit(0, 8)]),
+            a,
+        );
+        assert!(
+            matches!(try_prove(&mut b, goal), SatResult::Unsat(_)),
+            "cvc5 не доказал BV-тавтологию — баг эмиссии bit-vector'ов"
+        );
+    }
+
+    #[test]
+    fn cvc5_integration_float_theory() {
+        if !cvc5_available() {
+            return;
+        }
+        use super::super::try_prove;
+        use super::super::Assertion;
+        let mut b = Cvc5Backend::new(5000);
+        b.declare_var("x", SortRef::F64);
+        let x = SmtTerm::Var("x".into());
+        // Предполагаем, что x не NaN; тогда x <= x (FP-теория).
+        b.assert(Assertion {
+            formula: SmtTerm::not(SmtTerm::App("fp.is_nan".into(), vec![x.clone()])),
+            label: None,
+        });
+        let goal = SmtTerm::App("fp.leq".into(), vec![x.clone(), x]);
+        assert!(
+            matches!(try_prove(&mut b, goal), SatResult::Unsat(_)),
+            "cvc5 не доказал FP-тавтологию — баг эмиссии floating-point"
+        );
+    }
+
+    #[test]
+    fn cvc5_integration_string_theory() {
+        if !cvc5_available() {
+            return;
+        }
+        use super::super::try_prove;
+        let mut b = Cvc5Backend::new(5000);
+        b.declare_var("s", SortRef::Str);
+        // str.len(s) >= 0 — тавтология теории строк.
+        let goal = SmtTerm::App(
+            ">=".into(),
+            vec![
+                SmtTerm::App("str.len".into(), vec![SmtTerm::Var("s".into())]),
+                SmtTerm::IntLit(0),
+            ],
+        );
+        assert!(
+            matches!(try_prove(&mut b, goal), SatResult::Unsat(_)),
+            "cvc5 не доказал string-тавтологию — баг эмиссии строк"
+        );
+    }
+
+    #[test]
+    fn cvc5_integration_quantifier_and_uf() {
+        if !cvc5_available() {
+            return;
+        }
+        use super::super::try_prove;
+        use super::super::Assertion;
+        let mut b = Cvc5Backend::new(5000);
+        b.declare_function("_view_f", &[SortRef::Int], SortRef::Int);
+        // forall i. _view_f(i) >= 0
+        let body = SmtTerm::App(
+            ">=".into(),
+            vec![
+                SmtTerm::App("_view_f".into(), vec![SmtTerm::Var("i".into())]),
+                SmtTerm::IntLit(0),
+            ],
+        );
+        b.assert(Assertion {
+            formula: SmtTerm::Forall(vec![("i".into(), SortRef::Int)], vec![], Box::new(body)),
+            label: None,
+        });
+        // goal: _view_f(0) >= 0 — следует инстанцированием квантора.
+        let goal = SmtTerm::App(
+            ">=".into(),
+            vec![
+                SmtTerm::App("_view_f".into(), vec![SmtTerm::IntLit(0)]),
+                SmtTerm::IntLit(0),
+            ],
+        );
+        assert!(
+            matches!(try_prove(&mut b, goal), SatResult::Unsat(_)),
+            "cvc5 не доказал forall+UF — баг эмиссии кванторов / UF"
+        );
+    }
 }
