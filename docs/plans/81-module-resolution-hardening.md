@@ -3,9 +3,9 @@
 > **Создан 2026-05-21.** Переработан с чистого листа 2026-05-21 после
 > сверки с реальным кодом компилятора (см. «Сверка фактов» ниже).
 >
-> **Статус:** 🚧 in progress — Ф.1–Ф.6 ✅ + Ф.7.1 ✅ (2026-05-21,
-> worktree `nova-p79`, ветка `plan-81-hardening`), Ф.7.2 + Ф.8–Ф.11
-> pending.
+> **Статус:** 🚧 in progress — Ф.1–Ф.6 ✅ + Ф.7.1 ✅ + Ф.8.1 ✅
+> (2026-05-21, worktree `nova-p79`, ветка `plan-81-hardening`), Ф.7.2 +
+> Ф.8.2/Ф.8.3 + Ф.9–Ф.11 pending.
 > - **Ф.1** ✅ visibility enforcement (commit `197480a747c`).
 > - **Ф.2** ✅ module-qualified call type-check — `alias.func()` /
 >   `mod.func()` резолвятся в `TypeCheckCtx`; неизвестная функция →
@@ -33,10 +33,17 @@
 >   + `-Wl,--gc-sections` (Linux/macOS) / `/Gy` (MSVC): неиспользуемые
 >   секции удаляет линкер. Ф.7.2 (compiler-level reachability DCE) —
 >   pending (крупная, см. декомпозицию Ф.7).
+> - **Ф.8.1** ✅ FileId-аудит — маркер оказался **реальным**: ошибка в
+>   импортированном модуле рендерилась byte-offset'ом в entry-исходник
+>   (чужой файл/сниппет). Фикс: `build_source_map` из `peer_files` +
+>   `cmd_check` рендерит через `render_with_map`; `render_with_map`
+>   дополнен сниппетом. Ф.8.2 (multi-error recovery) + Ф.8.3
+>   (did-you-mean — для module-path уже есть `suggest_module_name`;
+>   item-level требует R26-enforcement) — pending.
 > - `plan81/lib` — библиотечная фикстура без `main` (test-runner
 >   classification gap) — починена self-test'ом.
 >
-> Suite на момент Ф.7.1: **954 PASS / 0 FAIL**.
+> Suite на момент Ф.8.1: **954 PASS / 0 FAIL**.
 >
 > **Источник:** аудит module-resolution 2026-05-21 — открытые пункты
 > [Plan 35](35-cross-file-resolve.md) (sub-plans 35.B-E + R26),
