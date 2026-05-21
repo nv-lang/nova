@@ -2594,7 +2594,7 @@ fn type_ref_to_sort(ty: &crate::ast::TypeRef) -> SortRef {
                 "int" | "i64" | "money" | "nat" => SortRef::Int,
                 // Plan 33.7: sized integer types → BitVec sort.
                 // V2: signed=true для i8/i16/i32, false для u8/u16/u32/u64.
-                "u8" | "byte"  => SortRef::BitVec { width: 8,  signed: false },
+                "u8"           => SortRef::BitVec { width: 8,  signed: false },
                 "i8"           => SortRef::BitVec { width: 8,  signed: true },
                 "u16"          => SortRef::BitVec { width: 16, signed: false },
                 "i16"          => SortRef::BitVec { width: 16, signed: true },
@@ -2874,7 +2874,7 @@ pub(super) fn type_to_sort(ty: &TypeRef) -> SortRef {
             "int" | "i64" | "money" | "nat" => SortRef::Int,
             // Plan 33.7: sized integer types → BitVec.
             // V2: signed=true для i8/i16/i32, false для u8/u16/u32/u64.
-            "u8" | "byte"  => SortRef::BitVec { width: 8,  signed: false },
+            "u8"           => SortRef::BitVec { width: 8,  signed: false },
             "i8"           => SortRef::BitVec { width: 8,  signed: true },
             "u16"          => SortRef::BitVec { width: 16, signed: false },
             "i16"          => SortRef::BitVec { width: 16, signed: true },

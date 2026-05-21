@@ -3537,8 +3537,11 @@ template<U> Wrapper<U> map(...) }` — то же. Nova bootstrap теперь п
 - Тег шаблонных строк `` bytes`...` `` (D48) — это имя функции, не тип.
 - Слово «byte» в английском/русском тексте комментариев (единицы памяти).
 
-**Реализовано:** [Plan 68](../../docs/plans/68-byte-to-u8.md)
-  — частично закрыт (user generic типы); built-in `[]T @map[U]` V2.
+**Реализовано:** [Plan 69](../../docs/plans/69-byte-to-u8.md) — 2026-05-22.
+`byte` удалён из builtin-типов компилятора (lexer/parser/type-checker/
+codegen); все вхождения в `spec/` / `std/` / `nova_tests/` мигрированы
+на `u8`. C-typedef `nova_byte` (= `uint8_t`) сохранён как внутреннее имя
+codegen — не пользовательская поверхность.
 
 ---
 

@@ -169,7 +169,7 @@ export external type StringBuilder
 
 /// Binary write buffer. Append-only через `@write_*` методы
 /// (byte, bytes, char, str, и 18 числовых × LE/BE). Финализация
-/// через `@into() -> []byte`.
+/// через `@into() -> []u8`.
 ///
 /// Полный API — в `std/runtime/write_buffer.nv` через `external fn`.
 /// Backing — `nova_rt/write_buffer.h`/`.c`.
@@ -186,7 +186,7 @@ export external type StringBuilder
 #stable(since = "0.1")
 export external type WriteBuffer
 
-/// Cursor-style binary reader. View над `[]byte`, advancing position.
+/// Cursor-style binary reader. View над `[]u8`, advancing position.
 /// Pair `@read_*` (Fail[ReadBufferError]) / `@try_read_*`
 /// (Result[T, ReadBufferError]).
 ///
@@ -199,7 +199,7 @@ export external type WriteBuffer
 /// # Examples
 ///
 /// ```nova
-/// let bs []byte = [0x12, 0x34, 0x56, 0x78]
+/// let bs []u8 = [0x12, 0x34, 0x56, 0x78]
 /// let mut rb = ReadBuffer.from(bs)
 /// let v = rb.try_read_u32_be()  // Result[u32, ReadBufferError]
 /// ```
