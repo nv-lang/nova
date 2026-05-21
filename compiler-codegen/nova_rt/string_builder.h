@@ -8,11 +8,15 @@
  *
  * Capacity-grow: 2x при переполнении. Initial capacity — 16 байт.
  *
- * После consume (any @into / @clone'ом не считаем) флаг `consumed = 1`.
- * Любой @append на consumed buffer → nova_assert "string builder consumed".
+ * Plan 73 (D131): `@into()` помечен `consume` — use-after-@into ловится
+ * компилятором (compile error). Runtime-флаг `consumed` удалён; вместо
+ * него `@into()` зануляет `data`/`len`/`cap`, а `_nova_string_builder_
+ * check_live` — defense-in-depth assert (`data != NULL`): если статическая
+ * проверка обойдена, доступ fail-fast'ит с понятным сообщением, а не
+ * молча портит данные.
  *
  * См. spec/decisions/08-runtime.md → D26 (prelude), D82 (external fn),
- * spec/open-questions.md → Q-string-builder.
+ * spec/decisions/05-memory.md → D131 (consume), Q-string-builder.
  */
 
 #include "alloc.h"
@@ -26,7 +30,6 @@ typedef struct Nova_StringBuilder {
     nova_byte* data;
     int64_t    len;
     int64_t    cap;
-    nova_bool  consumed;
 } Nova_StringBuilder;
 
 static inline Nova_StringBuilder* Nova_StringBuilder_static_new(void) {
@@ -34,7 +37,6 @@ static inline Nova_StringBuilder* Nova_StringBuilder_static_new(void) {
     b->data = (nova_byte*)nova_alloc(NOVA_STRING_BUILDER_INIT_CAP);
     b->len = 0;
     b->cap = NOVA_STRING_BUILDER_INIT_CAP;
-    b->consumed = 0;
     return b;
 }
 
@@ -44,7 +46,6 @@ static inline Nova_StringBuilder* Nova_StringBuilder_static_with_capacity(nova_i
     b->data = (nova_byte*)nova_alloc((size_t)cap);
     b->len = 0;
     b->cap = cap;
-    b->consumed = 0;
     return b;
 }
 
@@ -59,8 +60,13 @@ static inline void _nova_string_builder_reserve(Nova_StringBuilder* b, int64_t e
     b->cap = new_cap;
 }
 
+/* Plan 73 (D131): defense-in-depth liveness guard. Use-after-@into() —
+ * compile error (D131 consume-check); этот assert ловит случай, когда
+ * статическая проверка обойдена (`@into()` зануляет `data`). Fail-fast
+ * с понятным сообщением вместо тихой порчи / null-deref. */
 static inline void _nova_string_builder_check_live(Nova_StringBuilder* b) {
-    nova_assert(!b->consumed, "string builder consumed: cannot mutate after @into");
+    nova_assert(b->data != NULL,
+        "StringBuilder use-after-@into(): значение потреблено (D131 consume)");
 }
 
 /* StringBuilder.from(s str). */
@@ -71,7 +77,6 @@ static inline Nova_StringBuilder* Nova_StringBuilder_static_from_str(nova_str s)
     if (s.len > 0) memcpy(b->data, s.ptr, s.len);
     b->len = (int64_t)s.len;
     b->cap = cap;
-    b->consumed = 0;
     return b;
 }
 
@@ -108,7 +113,6 @@ static inline Nova_StringBuilder* Nova_StringBuilder_static_from_char(nova_int c
     Nova_StringBuilder* b = (Nova_StringBuilder*)nova_alloc(sizeof(Nova_StringBuilder));
     b->data = (nova_byte*)nova_alloc(NOVA_STRING_BUILDER_INIT_CAP);
     b->cap = NOVA_STRING_BUILDER_INIT_CAP;
-    b->consumed = 0;
     b->len = _nova_utf8_encode(b->data, cp);
     return b;
 }
@@ -171,26 +175,31 @@ static inline Nova_StringBuilder* Nova_StringBuilder_method_clone(Nova_StringBui
     if (src->len > 0) memcpy(b->data, src->data, (size_t)src->len);
     b->len = src->len;
     b->cap = cap;
-    b->consumed = 0;
     return b;
 }
 
 /* @into() -> str — INFALLIBLE (UTF-8 invariant поддерживается типом).
- * Transfers ownership: reuse b->data as the new str's backing. */
+ * Transfers ownership: reuse b->data as the new str's backing.
+ * Plan 73 (D131): `consume @into` — после вызова StringBuilder
+ * недоступен. Зануляем data/len/cap: повторный доступ → fail-fast
+ * через `_nova_string_builder_check_live` (defense-in-depth, если
+ * compile-time consume-check обойдён). */
 static inline nova_str Nova_StringBuilder_method_into(Nova_StringBuilder* b) {
     _nova_string_builder_check_live(b);
     nova_str s = (nova_str){
         .ptr = (const char*)b->data,
         .len = (size_t)b->len,
     };
-    b->consumed = 1;
+    b->data = NULL;
+    b->len  = 0;
+    b->cap  = 0;
     return s;
 }
 
 /* @starts_with(prefix str) -> bool — non-consuming читает буфер.
- * O(min(|prefix|, |buf|)) memcmp. После @into() возвращает false (consumed). */
+ * O(min(|prefix|, |buf|)) memcmp. */
 static inline nova_bool Nova_StringBuilder_method_starts_with(Nova_StringBuilder* b, nova_str prefix) {
-    if (b->consumed) return 0;
+    _nova_string_builder_check_live(b);
     if ((int64_t)prefix.len > b->len) return 0;
     if (prefix.len == 0) return 1;
     return memcmp(b->data, prefix.ptr, prefix.len) == 0 ? 1 : 0;
@@ -199,7 +208,7 @@ static inline nova_bool Nova_StringBuilder_method_starts_with(Nova_StringBuilder
 /* @ends_with(suffix str) -> bool — non-consuming читает буфер.
  * O(min(|suffix|, |buf|)) memcmp. */
 static inline nova_bool Nova_StringBuilder_method_ends_with(Nova_StringBuilder* b, nova_str suffix) {
-    if (b->consumed) return 0;
+    _nova_string_builder_check_live(b);
     if ((int64_t)suffix.len > b->len) return 0;
     if (suffix.len == 0) return 1;
     int64_t offset = b->len - (int64_t)suffix.len;
@@ -208,7 +217,7 @@ static inline nova_bool Nova_StringBuilder_method_ends_with(Nova_StringBuilder* 
 
 /* @is_empty() -> bool — non-consuming, O(1). */
 static inline nova_bool Nova_StringBuilder_method_is_empty(Nova_StringBuilder* b) {
-    if (b->consumed) return 1;
+    _nova_string_builder_check_live(b);
     return b->len == 0 ? 1 : 0;
 }
 

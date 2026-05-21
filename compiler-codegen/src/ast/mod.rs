@@ -475,6 +475,11 @@ pub struct Receiver {
     pub generics: Vec<TypeRef>,    // Repo[T] — generics типа
     pub kind: ReceiverKind,
     pub mutable: bool,             // `fn Type mut @method`
+    /// Plan 73 (D131): `fn Type consume @method` — consuming receiver.
+    /// После вызова такого метода переменная-источник логически
+    /// инвалидируется; use-after-consume → compile error. Взаимно-
+    /// исключающий с `mutable` (parser enforce'ит).
+    pub consume: bool,
     pub span: Span,
 }
 
@@ -500,6 +505,10 @@ pub struct Param {
     /// Параметры с дефолтом идут строго после параметров без дефолта;
     /// variadic-параметр НЕ может иметь дефолт. `None` — обязательный.
     pub default: Option<Expr>,
+    /// Plan 73 (D131): `consume name Type` — consuming параметр.
+    /// После передачи аргумента в такой параметр переменная-источник
+    /// логически инвалидируется; use-after-consume → compile error.
+    pub consume: bool,
 }
 
 /// Plan 15 (D72): generic-параметр с optional bound.

@@ -1,14 +1,17 @@
 module plan11_followup.f15_stringbuilder_consumed_negative
 
-// EXPECT_RUNTIME_PANIC string builder consumed
+// EXPECT_COMPILE_ERROR D131
 //
-// Sprint F.36: StringBuilder.@into() ставит consumed flag. Subsequent
-// mutating ops (append) триггерят runtime panic. Verify это поведение
-// сохранено после добавления non-consuming методов.
+// Sprint F.36 (исходно): StringBuilder.@into() ставил runtime-флаг
+// `consumed`; mutating-op после @into() → runtime panic.
+//
+// Plan 73 (D131): `@into()` помечен `consume` — use-after-consume
+// теперь ловится КОМПИЛЯТОРОМ (compile error), не runtime'ом.
+// Старый runtime-флаг `consumed` удалён.
 
-test "append после @into() — runtime panic" {
+test "append после @into() — compile error (D131)" {
     let mut sb = StringBuilder.new()
     sb.append("hello")
     let _ = sb.into()                     // consume
-    sb.append(" world")                   // ← должен panic
+    sb.append(" world")                   // ← ОШИБКА D131: use-after-consume
 }

@@ -1,0 +1,35 @@
+// Plan 73 (D131): consume на ВСЕХ ветках — не maybe-consumed.
+//
+// Если переменная потребляется в каждой ветке if/match, после
+// слияния путей она однозначно Consumed (не MaybeConsumed) —
+// ошибки нет.
+
+module nova_tests.plan73.consume_ok_branches
+
+fn pick(flag bool) -> str {
+    let sb = StringBuilder.new()
+    sb.append("payload")
+    // Обе ветки потребляют sb → join даёт Consumed, не MaybeConsumed.
+    let s = if flag { sb.into() } else { sb.into() }
+    s
+}
+
+test "if-обе-ветки consume — ok" {
+    assert(pick(true) == "payload")
+    assert(pick(false) == "payload")
+}
+
+fn classify(n int) -> str {
+    let sb = StringBuilder.new()
+    sb.append("n=")
+    // match: каждая рука потребляет sb.
+    match n {
+        0 => sb.into()
+        _ => sb.into()
+    }
+}
+
+test "match-все-руки consume — ok" {
+    assert(classify(0) == "n=")
+    assert(classify(5) == "n=")
+}

@@ -1,0 +1,20 @@
+// EXPECT_COMPILE_ERROR D131
+//
+// Plan 73 (D131): use-after-consume через consume-параметр.
+// После передачи переменной в `consume`-параметр она недоступна.
+
+module nova_tests.plan73.consume_err_param
+
+type Token { val int }
+
+fn Token.new(v int) -> Token => { val: v }
+
+fn consume_it(consume t Token) -> int => t.val
+
+test "use after consume-param — отвергается" {
+    let tok = Token.new(3)
+    let a = consume_it(tok)
+    // ОШИБКА D131: tok потреблён передачей в consume-параметр выше.
+    let b = consume_it(tok)
+    assert(a + b == 6)
+}
