@@ -36,20 +36,19 @@
 //   payload — string-based throw, см. nova_rt/read_buffer.h:62-77).
 //   Variants регистрируются через registry для cross-file resolve.
 //
-// **DEFER Plan 62.C → 62.B/F:**
+// **62.C.bis (2026-05-20): `RuntimeNoneError` мигрирован.**
 //
-// - **`type RuntimeNoneError`** (unit-type per D85) — bootstrap parser
-//   `parse_sum_variants` (parser/mod.rs:2160) требует ≥1 `|` с variant;
-//   `parse_type_decl` (parser/mod.rs:2042+) при отсутствии `|`/`{`/`alias`
-//   падает в newtype branch (`parse_type()`), что ожидает type-ref.
-//   Empty-body `type Name` (без вариантов / полей) парсер не поддерживает.
-//   `RuntimeNoneError` остаётся как string-payload throw в
-//   `nova_rt/effects.h:122-126`
-//   (`nova_throw(nova_str_from_cstr("RuntimeNoneError"))`) — никакого
-//   structured type декларировать не нужно. Декларация перенесётся сюда
-//   когда parser получит empty-sum support.
-//   (Bottom-тип `never` — отдельная история: Plan 76 сделал его
-//   строчным встроенным примитивом, empty-sum к нему не относится.)
+// - **`type RuntimeNoneError`** (unit-type per D85) задекларирован ниже.
+//   Блокер снят: Plan 72 P1-B добавил bodyless-type support в parser
+//   (`type Name` без вариантов / полей теперь parsable). Декларация —
+//   canonical type-name для type-checker'а; runtime throw остаётся
+//   string-payload (`nova_rt/effects.h`), structured payload отложен
+//   (тот же mechanism что у `ReadBufferError`).
+//   Bottom-тип НЕ мигрируется сюда — это строчный встроенный примитив
+//   `never` (Plan 76, закрыт 2026-05-21), не капитализированный
+//   prelude-тип.
+//
+// **DEFER Plan 62.C → 62.B/F:**
 //
 // - **Throw-point conversion to structured `RuntimeError`-payload**
 //   (compiler:    a/b на 0, arr[i] out-of-bounds, etc.) остаётся отдельной
@@ -117,23 +116,31 @@ export type ReadBufferError
     | UnexpectedEnd { wanted int, available int }
 
 
-// DEFER (Plan 62.C → Plan 62.F edition cleanup):
-//
-// `type RuntimeNoneError` (unit-type per D85) — bootstrap parser не
-// поддерживает empty-body sum syntax (`parse_type_decl` ожидает либо
-// `|` (sum), либо `{` (record), либо `alias`/newtype; bare `type Name`
-// падает в newtype branch и парсит следующий token как type-ref).
-//
-// `RuntimeNoneError` остаётся как string-payload throw в
-// `nova_rt/effects.h:122-126`:
-//
-//     nova_throw(nova_str_from_cstr("RuntimeNoneError"));
-//
-// Никакого C-уровневого `Nova_RuntimeNoneError` типа не существует —
-// `expr!!` на None просто бросает строку. Декларация перенесётся сюда
-// когда parser получит empty-sum syntax (D-block addition в
-// spec/decisions/03-syntax.md).
-//
-// Закомментированная форма (для documentation):
-//   #stable(since = "0.1")
-//   export type RuntimeNoneError
+// ──────────────────────────────────────────────────────────────────────────
+// Option-unwrap error (D85)
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Ошибка разворачивания пустого `Option`. Бросается оператором `expr!!`
+/// когда `expr` — `None` (D85: `Option!!` → `throw RuntimeNoneError`).
+/// Функция, использующая `opt!!`, должна иметь `Fail[RuntimeNoneError]`
+/// в сигнатуре (см. spec/decisions/04-effects.md §D85).
+///
+/// Unit-тип (без вариантов / полей) — носит сам факт «развернули None»,
+/// полезной нагрузки нет.
+///
+/// **Bootstrap:** actual throw в `nova_rt/effects.h` — это string-payload
+/// (`nova_throw(nova_str_from_cstr("RuntimeNoneError"))`), structured
+/// `Nova_RuntimeNoneError*` payload не строится. Эта Nova-level
+/// декларация даёт type-checker'у канонический type-name для сигнатур
+/// `Fail[RuntimeNoneError]` / pattern-matching. Конверсия в structured
+/// payload отложена (тот же mechanism что у `ReadBufferError` — см.
+/// spec/decisions/08-runtime.md §«Bootstrap-ограничения»).
+///
+/// # Examples
+///
+/// ```nova
+/// fn first_word(s str) Fail[RuntimeNoneError] -> str =>
+///     s.split(" ").first()!!
+/// ```
+#stable(since = "0.1")
+export type RuntimeNoneError

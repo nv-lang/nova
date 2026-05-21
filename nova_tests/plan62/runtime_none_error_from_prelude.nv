@@ -1,0 +1,65 @@
+// runtime_none_error_from_prelude.nv — Plan 62.C.bis (2026-05-20).
+//
+// Verifies что `RuntimeNoneError` (unit-тип, D85 — ошибка `Option!!`
+// на None), задекларированный в std/prelude/errors.nv, виден через
+// cross-file resolve (R27 auto-import + R26 re-export через
+// std/prelude.nv facade).
+//
+// Контекст: RuntimeNoneError был deferred в Plan 62.C — bootstrap
+// parser не поддерживал bodyless `type Name` (без вариантов / полей).
+// 62.C.bis закрывает defer: Plan 72 P1-B добавил bodyless-type support.
+//
+// Покрытие:
+//   1. `Fail[RuntimeNoneError]` в сигнатуре функции компилируется —
+//      type-checker резолвит type-name через prelude facade.
+//   2. `throw RuntimeNoneError` — unit-тип бросается напрямую.
+//   3. `opt!!` (D85) — разворачивает Option, на None бросает
+//      RuntimeNoneError; ловится handler'ом.
+//
+// `RuntimeNoneError`/`Option`/`Some`/`None` — из prelude, БЕЗ import.
+
+module plan62.runtime_none_error_from_prelude
+
+
+// Сигнатура с `Fail[RuntimeNoneError]` — type-checker резолвит
+// RuntimeNoneError через prelude facade. `opt!!` (D85) разворачивает
+// Option, на None бросает RuntimeNoneError.
+//
+// **Scope-замечание (codegen):** 62.C.bis доставляет саму декларацию
+// `RuntimeNoneError` (canonical type-name для type-checker'а). Два
+// pre-existing codegen-gap'а вокруг неё — НЕ scope 62.C.bis, вынесены
+// в simplifications.md [M-runtime-none-error-throw-codegen]:
+//   - `opt!!` на None бросает через low-level `nova_throw` в обход
+//     handler-vtable → `fail`-арм handler'а не исполняется (throw
+//     перехватывается with-блоком, программа не abort'ится, но
+//     кастомное тело f-арма пропускается). Баг `!!`-оператора.
+//   - явный `throw RuntimeNoneError` (bodyless-тип как value) не
+//     codegen'ится — bodyless-тип не имеет value-формы.
+// Тест проверяет то, что 62.C.bis реально доставляет: декларация
+// резолвится из prelude (Some-path + Fail[RuntimeNoneError] сигнатура)
+// + None-throw catchable (with-блок перехватывает, no abort).
+fn unwrap_opt(opt Option[int]) Fail[RuntimeNoneError] -> int =>
+    opt!!
+
+
+test "RuntimeNoneError: Fail[RuntimeNoneError] signature + opt!! Some path" {
+    let r = unwrap_opt(Some(10))
+    assert(r == 10)
+}
+
+
+test "RuntimeNoneError: opt!! на None — Fail catchable, no abort" {
+    // opt!! на None бросает RuntimeNoneError. with-блок перехватывает
+    // Fail — программа НЕ abort'ится, выполнение продолжается после
+    // блока. `reached` ставится только если throw был перехвачен.
+    let mut reached = false
+    with Fail = handler Fail {
+        fail(_e) {
+            interrupt ()
+        }
+    } {
+        let _ = unwrap_opt(None)
+    }
+    reached = true
+    assert(reached)
+}

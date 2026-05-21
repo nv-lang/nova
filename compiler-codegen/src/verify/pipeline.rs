@@ -249,6 +249,21 @@ impl VerificationPipeline {
             let sort = type_to_sort(&p.ty);
             backend.declare_var(&p.name, sort.clone());
             backend.declare_var(&format!("_old_{}", p.name), sort);
+            // Plan 33.8 Ф.1.4: `nat` — неотрицательный `int`. Без аксиомы
+            // `nat >= 0` верификатор считал бы nat-параметр любым целым
+            // (включая отрицательные) → ложные counterexample'ы и unsound
+            // рассуждение о свойствах, опирающихся на неотрицательность.
+            if type_ref_is_nat(&p.ty) {
+                for vname in [p.name.clone(), format!("_old_{}", p.name)] {
+                    backend.assert(Assertion {
+                        formula: SmtTerm::App(">=".into(), vec![
+                            SmtTerm::Var(vname),
+                            SmtTerm::IntLit(0),
+                        ]),
+                        label: Some("nat_nonneg".into()),
+                    });
+                }
+            }
         }
 
         // Plan 33.3 Р¤.9: РґР»СЏ РєР°Р¶РґРѕРіРѕ СЌС„С„РµРєС‚Р° РІ СЃРёРіРЅР°С‚СѓСЂРµ fn СЂРµРіРёСЃС‚СЂРёСЂСѓРµРј
@@ -2752,6 +2767,13 @@ pub(super) fn find_exists_var(e: &crate::ast::Expr) -> Option<String> {
         }
         _ => None,
     }
+}
+
+/// Plan 33.8 Ф.1.4: тип `nat` (неотрицательный int). `type_to_sort`
+/// мэпит `nat` в `SortRef::Int`, теряя неотрицательность — её
+/// восстанавливает аксиома `nat >= 0` в `verify_fn`.
+fn type_ref_is_nat(ty: &TypeRef) -> bool {
+    matches!(ty, TypeRef::Named { path, .. } if path.len() == 1 && path[0] == "nat")
 }
 
 pub(super) fn type_to_sort(ty: &TypeRef) -> SortRef {
