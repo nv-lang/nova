@@ -1,0 +1,12 @@
+// EXPECT_COMPILE_ERROR 2 import error
+//
+// Plan 81 Ф.8.2: multi-error recovery. Резолв импортов НЕ прерывается
+// на первой ошибке — оба несуществующих модуля репортятся в одном
+// прогоне («2 import error(s)»). Раньше виден был только первый.
+
+module nova_tests.plan81.multi_import_error_neg
+
+import nova_tests.plan81.no_such_module_a
+import nova_tests.plan81.no_such_module_b
+
+fn run() -> int => 0
