@@ -1,6 +1,12 @@
 # План 06: `Iter[T]` protocol в codegen — общий `for-in`
 
-**Статус:** активный, не начат.
+**Статус:** ✅ ВЫПОЛНЕНО. Ф.1-Ф.3 + Ф.5 закрыты (`emit_for` Case 3 —
+Iter[T] protocol fallback, tuple-destructuring, implicit `.iter()`;
+тесты `nova_tests/syntax/for_iter*.nv`). Ф.4 (sweep ad-hoc
+`chars()`/`bytes()`/`split()`-обходок) сознательно отложен — не входил
+в acceptance, eager-конверсия в массивы продолжает работать.
+Шапка-метка обновлена 2026-05-21 (аудит план-статусов: была
+устаревшая «не начат», хотя фича реализована давно).
 **Дата создания:** 2026-05-08.
 **Зависимости:** [D58](../../spec/decisions/03-syntax.md#d58) — спека уже
 описывает `Iter[T]` и implicit `.iter()` для `for-in`.
