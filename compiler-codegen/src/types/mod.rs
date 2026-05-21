@@ -612,7 +612,7 @@ impl<'a> TypeCheckCtx<'a> {
         // Примитивы — арность 0 (`int[X]` / `bool[T]` — ошибка).
         for prim in [
             "int", "i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64",
-            "uint", "f32", "f64", "str", "bool", "byte", "char",
+            "uint", "f32", "f64", "str", "bool", "char",
         ] {
             arity.entry(prim.to_string())
                 .or_insert(ArityInfo { count: 0, decl_span: None });
@@ -1929,7 +1929,7 @@ impl<'a> TypeCheckCtx<'a> {
                 }
                 match name.as_str() {
                     "int" | "i8" | "i16" | "i32" | "i64" | "u8" | "u16"
-                    | "u32" | "u64" | "uint" | "byte" => TyCat::Int,
+                    | "u32" | "u64" | "uint" => TyCat::Int,
                     "f32" | "f64" => TyCat::Float,
                     "bool" => TyCat::Bool,
                     "str" => TyCat::Str,
@@ -3007,7 +3007,7 @@ impl<'a> BoundCtx<'a> {
         if matches!(concrete_name.as_str(),
             "int" | "i8" | "i16" | "i32" | "i64"
             | "u8" | "u16" | "u32" | "u64"
-            | "f32" | "f64" | "bool" | "char" | "byte"
+            | "f32" | "f64" | "bool" | "char"
             // Plan 76: `never` — bottom-тип, vacuously удовлетворяет любому bound.
             | "str" | "any" | "never") {
             return;
@@ -3781,7 +3781,7 @@ impl NameResCtx {
             "u8", "u16", "u32", "u64",
             "f32", "f64", "uint", "size",
             // Other primitives.
-            "bool", "str", "byte", "char", "unit", "any",
+            "bool", "str", "char", "unit", "any",
             // Plan 76: `never` — bottom-тип (uninhabited, 0 значений),
             // строчный встроенный примитив. Subtype любого `T`. Как и
             // остальные примитивы (`int`/`bool`/...) — НЕ объявляется в
@@ -4801,7 +4801,6 @@ pub fn ty_of_ref(tr: &TypeRef) -> Ty {
             Some("f32") | Some("f64") => Ty::Float,
             Some("str") => Ty::Str,
             Some("bool") => Ty::Bool,
-            Some("byte") => Ty::Int,
             // Plan 76: bottom-тип `never` — строчный встроенный примитив.
             Some("never") => Ty::Never,
             Some(name) => Ty::Named(name.to_string()),
@@ -8558,7 +8557,7 @@ impl MapLitCtx {
             name.as_str(),
             "int" | "i8" | "i16" | "i32" | "i64"
                 | "u8" | "u16" | "u32" | "u64"
-                | "f32" | "f64" | "bool" | "char" | "byte" | "str"
+                | "f32" | "f64" | "bool" | "char" | "str"
                 // Plan 76: `never` — bottom-тип (uninhabited), vacuously primitive.
                 | "never"
         ) {

@@ -25,7 +25,7 @@ static-функций на типе.
 Перегрузка работает по **четырём осям**:
 
 1. **По receiver-типу** — `fn int @m()` и `fn str @m()` — разные методы.
-2. **По типам аргументов** — `fn f(s str)` и `fn f(b []byte)` — разные функции.
+2. **По типам аргументов** — `fn f(s str)` и `fn f(b []u8)` — разные функции.
 3. **По типу результата** — `fn Celsius @into() -> Fahrenheit` и `fn Celsius @into() -> Kelvin` — выбираются по ожидаемому типу из контекста.
 4. **По арности** — `fn exit(code int)` и `fn exit(code int, msg str)` — разное число параметров.
 
@@ -157,7 +157,7 @@ param-types suffix: `Nova_T_method_m__nova_str`, `Nova_T_method_m__nova_int`.
   работает в bootstrap-codegen через `method_overloads` registry +
   C-name mangling по param types.
 - ✅ **instance** overload по типу аргумента (`@write(str)` vs
-  `@write([]byte)`).
+  `@write([]u8)`).
 - ✅ **arity** overload (`@log(msg)` vs `@log(level, msg)`).
 - ✅ Одноимённые методы на разных типах (`Box1.make()` vs `Box2.make()`)
   не конфликтуют — multi-key registry `(type, name) → Vec<Sig>`.

@@ -72,8 +72,8 @@ export external fn str @gt(other str) -> bool
 // Lexicographic greater-or-equal. Также вызывается оператором `>=`.
 export external fn str @ge(other str) -> bool
 
-// UTF-8 bytes как []byte (copy).
-export external fn str @bytes() -> []byte
+// UTF-8 bytes как []u8 (copy).
+export external fn str @bytes() -> []u8
 
 // Codepoints как []char (eager). Future: Iter[char] для лениво.
 export external fn str @chars() -> []char
