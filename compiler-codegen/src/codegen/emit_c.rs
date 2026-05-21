@@ -1238,24 +1238,12 @@ impl CEmitter {
                 }
             }
         }
-        // Pre-populate sum_schemas with built-in Option type.
-        //
-        // Plan 62.A.bis Ф.4 (2026-05-21): legacy hardcoded
-        // `sum_schemas["Result"]` УДАЛЁН. Result полностью
-        // мономорфизирован (Plan 59 Ф.7.5 increment 2) — `Result[T, E]`
-        // → `NovaRes_<ok>_<err>*`, pattern_bind_typed / pattern_cond
-        // резолвят (T,E) через `novares_ok_err` на mono-типе scrutinee
-        // (включая nested `Some(Ok/Err(..))` — фикс Plan 59 commit
-        // `2b184a3c06a`). Erased baseline-инстанс
-        // `NovaRes_nova_int_nova_str` hand-defined в `nova_rt/array.h`.
-        // См. docs/plans/59-tuple-monomorphization.md.
-        {
-            let mut opt_variants = HashMap::new();
-            opt_variants.insert("Some".to_string(), vec!["nova_int".to_string()]);
-            opt_variants.insert("None".to_string(), vec![]);
-            self.sum_schemas.insert("Option".to_string(), opt_variants.clone());
-            self.sum_schemas.insert("NovaOpt_nova_int".to_string(), opt_variants);
-        }
+        // Plan 78 Ф.2 (2026-05-22): pre-populate `sum_schemas["Option"]` /
+        // `["NovaOpt_nova_int"]` УДАЛЁН. Option полностью мономорфизирован
+        // (Plan 14/59) — `NovaOpt_<T>` value-struct; pattern-matching
+        // резолвит variants через mono-тип scrutinee, не через legacy
+        // `sum_schemas`. (Result-pre-populate удалён ещё Plan 62.A.bis Ф.4 —
+        // тот же приём; см. docs/plans/78-prelude-codegen-single-source.md.)
 
         // D26 prelude: Error — record для quick errors с msg.
         // Декларирован в spec/decisions/08-runtime.md; runtime тип
@@ -1290,6 +1278,16 @@ impl CEmitter {
         // TypeMismatch(str), AssertFailed(str), NoHandler(str).
         // Конструкторы — `nova_make_RuntimeError_<Variant>` в nova_rt/array.h.
         {
+            // Plan 78 Ф.2 (2026-05-22): pre-populate `sum_schemas
+            // ["RuntimeError"]` — **оставлен** (honest-defer). Эмпирическое
+            // удаление дало 2 CC-FAIL (`plan62/runtime_error_from_prelude`,
+            // `runtime/error_runtime_error` — `initializing 'nova_int'`):
+            // RuntimeError — non-generic value-type с record-вариантами,
+            // его pattern-matching call-sites читают legacy `sum_schemas`,
+            // а не sum-schema-registry. Чистая миграция требует перевода
+            // RuntimeError-read-сайтов на `lookup_sum_schema` (отдельная
+            // фокус-работа — остаток Plan 78 Ф.2). Option/NovaOpt
+            // pre-populate удалён успешно (см. выше).
             let mut rt_variants: HashMap<String, Vec<String>> = HashMap::new();
             rt_variants.insert("DivByZero".to_string(), vec![]);
             rt_variants.insert("Overflow".to_string(), vec![]);
