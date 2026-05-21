@@ -4672,6 +4672,10 @@ Sub-plans 35.A-E:
 - **Приоритет:** M (Z3 работает; CI coverage — отдельная задача).
 
 ### [V2] Loop invariants парсятся, но не сохраняются в AST
+> **✅ СУПЕРСЕДЕД (аудит Plan 33.8, 2026-05-21):** закрыто. `ExprKind::For`/
+> `While`/`Loop` имеют поля `invariants: Vec<Expr>` + `decreases` (Plan 33.4,
+> см. закрытый `[V14]`); SMT havoc + preservation + decreases — реализованы
+> (Plan 33.5 Ф.2). Запись устарела и сохранена для истории.
 - **Где:** `parser::skip_loop_clauses` в `parse_while`/`parse_for`/`parse_loop`.
 - **Что упрощено:** `invariant <expr>` и `decreases <expr>` между
   loop-header и body парсятся и игнорируются — программист может писать
@@ -4685,6 +4689,9 @@ Sub-plans 35.A-E:
 - **Приоритет:** M — depends on [V1] (без Z3 не имеет смысла).
 
 ### [V3] Composition требует #pure, но purity не выводится автоматически
+> **✅ СУПЕРСЕДЕД (аудит Plan 33.8, 2026-05-21):** закрыто. SCC-инференс
+> чистоты по call-graph реализован в Plan 33.5 Ф.3 (`inferred_pure` /
+> `collect_pure_fns` в `pipeline.rs`). Запись устарела, сохранена для истории.
 - **Где:** `types::ContractCtx::pure_fn_names`.
 - **Что упрощено:** Composition (вызов user fn в контрактах) разрешён
   только если у fn есть явный `#pure` атрибут. SCC-inference по
@@ -4825,6 +4832,42 @@ Sub-plans 35.A-E:
 - **Остаток:** нет. V20 полностью закрыт (V1 + V2).
 - **Дата закрытия:** V1 — 2026-05-20; V2 — 2026-05-21.
 
+### [V23] ✅ Verifier soundness hardening — ЗАКРЫТО Plan 33.8 (2026-05-21)
+- **Где:** `compiler-codegen/src/verify/pipeline.rs`, `codegen/emit_c.rs`,
+  `nova_rt/effects.h`, `lints.rs`, `ast/mod.rs`, `spec/decisions/04-effects.md`.
+- **Контекст:** аудит «с чистого листа» при закрытии Plan 33.7 нашёл 3
+  SOUNDNESS-CRITICAL дыры — места, где верификатор объявлял контракт
+  «доказан», хотя в рантайме он мог быть ложным.
+- **Что закрыто:**
+  * **Переполнение `int`** (Ф.1). `int` (i64) переполнялся молча (C-UB),
+    а верификатор кодировал `int` безграничным Z3 Int → `ensures result==a+b`
+    «доказывался», в release проверка стиралась, рантайм переполнялся.
+    Фикс: переполнение `int` → `panic` (`nova_int_checked_add/sub/mul` через
+    `__builtin_*_overflow` → `nv_panic`). Паника делает безграничную
+    кодировку sound (функция либо вернёт истинный результат, либо умрёт).
+    `nat` — аксиома `nat >= 0`. Спека `04-effects.md` исправлена.
+  * **Сохранение инварианта цикла** (Ф.2). `verify_loop_preservation`
+    havoc-моделировала только присваивания первого уровня; составные
+    `*=`/`/=`, вложенные в if/блок/цикл, повторные — переменная замораживалась
+    → ложный `Proven`. Фикс: `loop_body_model_incomplete` — тело вне
+    sound-envelope → fail-safe `Warning`, не `Proven`.
+  * **`assume`** (Ф.3). Обещанный линт `trust-introduced` не существовал;
+    AST-комментарий лгал про SMT-интеграцию. Фикс: линт реализован;
+    комментарий честный (SMT-интеграция `assume` — V2, наивная была бы
+    unsound в не-flow-sensitive модели).
+- **Остаток (V2, НЕ soundness — оптимизация/полнота):**
+  * Ф.1.3 — overflow-VC для `int` в верификаторе (предупреждать «возможна
+    паника» + стирать panic-check где доказано). Оптимизация: дыра уже
+    закрыта паникой.
+  * Ф.2.2 — моделировать условные/составные присваивания в циклах через
+    `ite` (доказывать такие циклы, а не честно warning'ать). Полнота.
+  * `assume` SMT-интеграция — требует flow-sensitive верификации.
+- **Тесты:** 8 новых (`loop_cond_assign_w2402`, `loop_compound_assign_w2402`,
+  `assume_trust_introduced_warn`, `int_overflow_add_panic`,
+  `int_overflow_mul_panic`, `int_arith_no_overflow_positive` + 2 unit-теста
+  `lints.rs`). Полный `nova_tests`: 931 PASS; contracts: 291 PASS / 0 FAIL.
+- **Дата закрытия:** 2026-05-21.
+
 ### [ЗАКР 2026-05-16] pipeline.rs монолит — handler code в отдельный модуль [Ф.2.1]
 - **Закрыто (Plan 33.6 Ф.2.1, 2026-05-16, commit ddc11f2e):**
   * `compiler-codegen/src/verify/handler_exec.rs` — 689 строк handler verification:
@@ -4920,7 +4963,9 @@ Sub-plans 35.A-E:
 - Нет учёта aliasing binders (id в action и id в view считаются одинаковыми).
 - **Приоритет:** L — покрывает 90% паттернов; сложные случаи → `#trusted`.
 
-### [V15] Generic axioms — Unknown в SMT encoding (2026-05-15)
+### [V21] Generic axioms — Unknown в SMT encoding (2026-05-15)
+> **Перенумеровано из `[V15]`** (аудит Plan 33.8, 2026-05-21): тег `[V15]`
+> уже занят закрытой записью «Frame SMT axiom». Эта запись — ОТКРЫТА.
 - **Где:** `compiler-codegen/src/verify/pipeline.rs::encode_axiom`.
 - **Что:** `axiom foo[T](id T) => ...` с generic binder возвращает
   `Unknown(NotAttempted)` без SMT verification.
@@ -4931,7 +4976,9 @@ Sub-plans 35.A-E:
 - **Приоритет:** M — generic axioms используются в стандартных
   алгоритмических паттернах (sorted arrays, set membership).
 
-### [V16] post(Action)(view) — block-body handlers не поддержаны
+### [V22] post(Action)(view) — block-body handlers не поддержаны
+> **Перенумеровано из `[V16]`** (аудит Plan 33.8, 2026-05-21): тег `[V16]`
+> уже занят закрытой записью «BinderType enum». Эта запись — ОТКРЫТА.
 - **Где:** `compiler-codegen/src/verify/pipeline.rs::verify_post_axiom_with_handler`.
 - **Что:** handler method с `block { ... }` body вместо `=> expr` пропускается
   (continue) в V1 верификации static axioms. В Ф.6 post-symbolic-exec —
@@ -7468,7 +7515,8 @@ condition � ��������� ����� render_expr recursion.
 **������:** If � body � contract � �������� (������ condition ? a : b �����
 ����� if a > b { a } else { b } � ensures). Body content rare �������� ���
 verification (ensures ���� �� ���� boolean condition).
-**��� ������:** �������� ender_block(b) ������� ���������� render'��
+**��� ������:** �������� 
+ender_block(b) ������� ���������� render'��
 last expression block'�. ~30 LOC. ������ ���������.
 **���������:** L.
 
@@ -7768,7 +7816,8 @@ Audit-triggered closure tech debt ����� �.26:
 **�.27.1 closed:** Workspace handler matrix non-functional > ������ works
 cross-file ����� populate_handler_matrix_workspace.
 
-**�.27.2 closed:** ender_expr _ => "..." placeholder > �����������
+**�.27.2 closed:** 
+ender_expr _ => "..." placeholder > �����������
 coverage (Index, If, SelfAccess, InterpolatedStr, TurboFish) + helpful
 <kind> fallback ������ anonymous.
 
@@ -7992,11 +8041,13 @@ Total ~190-280 LOC. P3 — local quality-of-life fixes. Implementation
 ## Plan 45 �.30+�.31.1 simplifications (2026-05-16)
 
 ### HTML output single-page (no multi-page split)
-**���:** ender_html.rs. **��� ��������:** ��� modules � ����� HTML.
+**���:** 
+ender_html.rs. **��� ��������:** ��� modules � ����� HTML.
 **��� ������:** �.31.4 � file-per-module.
 
 ### HTML ��� JS / search index
-**���:** ender_html.rs. **��� ��������:** Pure HTML5+CSS3, no lunr.
+**���:** 
+ender_html.rs. **��� ��������:** Pure HTML5+CSS3, no lunr.
 **��� ������:** �.31.2 � generate search-index.json + lunr bundle.
 
 ### HTML ��� dark mode
@@ -8004,7 +8055,8 @@ Total ~190-280 LOC. P3 — local quality-of-life fixes. Implementation
 **��� ������:** �.31.3 � CSS variables + prefers-color-scheme media query.
 
 ### Intra-doc link rewrite ����� text substitute
-**���:** ender_html.rs::rewrite_and_escape. **��� ��������:** Plain replace.
+**���:** 
+ender_html.rs::rewrite_and_escape. **��� ��������:** Plain replace.
 **��� ������:** CommonMark-aware parser (~300 LOC).
 
 ### External crate URL template � single placeholder
@@ -10105,42 +10157,66 @@ G/H). ~3700 LOC implementation cumulative.
   option_or_missing_arg_neg.nv (EXPECT_COMPILE_ERROR — arity ловится).
 
 ### [M-legacy-sum-schemas-retained] (UNBLOCKED — Plan 62.A.bis Ф.4 готов к исполнению)
-- **Где:** `compiler-codegen/src/codegen/` — hardcoded `sum_schemas` +
-  `sum_schema_registry.rs::init_hardcoded_baseline()`.
-- **Что упрощено:** legacy hardcoded `sum_schemas` НЕ удалён —
-  сохранён как ABI-compat fallback под слоёным registry. Plan 62.A.bis
-  планировал Ф.4 = полное удаление.
-- **Почему:** `nova_rt/array.h` value-type helpers зависят от точного
-  hardcoded ABI; удаление безопасно только после Plan 59 sum-mono.
-- **Как чинить:** Plan 59 Ф.7.5 → удалить baseline, registry становится
-  единственным источником схем.
+- **Где:** `emit_c.rs` — pre-populated `sum_schemas["Result"]`
+  (~line 1128); `pattern_bind_typed` / `pattern_cond`.
+- **Что упрощено:** legacy hardcoded `sum_schemas["Result"]` НЕ удалён.
+- **Почему (исходно):** Plan 62.A.bis Ф.4 deferred до Plan 59 sum-mono.
+- **Уточнение 2026-05-21:** Plan 59 Ф.7.5 increment 2 закрыт (Result
+  полностью мономорфизирован — `NovaRes_<ok>_<err>*`). Попытка
+  удалить `sum_schemas["Result"]` вскрыла **остаточную зависимость**:
+  nested-pattern `match opt { Some(Err(e)) => ... }` (Option[Result
+  [T,E]]) типизировал inner-variant payload через
+  `sum_schemas["Result"]` в `pattern_bind_typed`, а НЕ через
+  `NovaRes_<T>_<E>` mono / `novares_ok_err`. `result_ok_inner_types`
+  механизм покрывал только `Pattern::Tuple` sub-pattern + `Ok`,
+  не `Err` / plain `Ident`.
+- **✅ Follow-up сделан 2026-05-21 (Plan 59 пост-фикс, коммит
+  `2b184a3c06a`):** Option-ветки `pattern_bind_typed` / `pattern_cond`
+  регистрируют C-тип Result-payload (`NovaRes_<n>*`) в `var_types` на
+  access path — recursive pattern-match для nested `Some(Ok/Err(..))`
+  резолвит (T,E) через `novares_ok_err`, не через legacy
+  `sum_schemas["Result"]`. Проверено: с удалённым `sum_schemas
+  ["Result"]` insert полный прогон 883 PASS / 0 FAIL дважды подряд.
+- **Остаток:** удаление самого `sum_schemas["Result"]` insert
+  (~line 1128) + чистка `init_hardcoded_baseline` — чистая задача
+  Plan 62.A.bis Ф.4. Hardcoded fallback для pattern-match уже
+  недостижим. Insert оставлен по договорённости как scope 62.A.bis.
 - **Приоритет:** L — дублирование без функционального вреда (registry
-  имеет приоритет, baseline только fallback).
-- **Update 2026-05-21 (Plan 59 Ф.7.5 increment 2):** блокер снят.
-  Legacy `Nova_Result` устранён (переименован в
-  `NovaRes_nova_int_nova_str`, шаг E поглощён D3 — коммит `238b2eb`).
-  `nova_rt/array.h` value-type helpers больше не завязаны на единое
-  hardcoded Result-представление. Само удаление hardcoded
-  `sum_schemas` baseline — теперь чистая задача Plan 62.A.bis Ф.4
-  (передана агенту 62.A.bis).
-- **Update 2026-05-21 (пост-фикс, коммит `2b184a3c06a`):** закрыт
-  последний gap, мешавший удалению `sum_schemas["Result"]` —
-  `pattern_bind_typed`/`pattern_cond` для nested Result-variant
-  payload (`Some(Ok/Err(..))`) резолвят (T,E) через `novares_ok_err`
-  на `NovaRes_<n>*`, не через hardcoded fallback. Проверено: с
-  удалённым `sum_schemas["Result"]` insert полный прогон 883 PASS /
-  0 FAIL. Plan 62.A.bis Ф.4 полностью разблокирован — fallback для
-  pattern-match недостижим.
+  имеет приоритет, baseline только fallback; build зелёный).
 
-### [M-runtime-none-error-deferred] (DEFER — Plan 62.C → Plan 72 P1-B)
-- **Где:** `std/prelude/errors.nv` — отсутствует `type RuntimeNoneError`.
-- **Что упрощено:** `RuntimeNoneError` не мигрирован в prelude —
-  парсер не принимает `type X` без тела (empty-sum / marker type).
-- **Почему:** парсер требует ≥1 вариант после `type Name`; пустой
-  sum-type — отдельная синтаксическая фича.
-- **Как чинить:** Plan 72 P1-B — empty-sum syntax (`type Never` /
-  `type RuntimeNoneError` без тела).
-- **Приоритет:** L — единственный тип ошибки, не блокирует prelude.
+### [M-runtime-none-error-deferred] ✅ RESOLVED (Plan 62.C.bis, 2026-05-20)
+- **Где:** `std/prelude/errors.nv` + `std/prelude.nv` facade.
+- **Что было упрощено:** `RuntimeNoneError` (unit-тип, D85 — ошибка
+  `Option!!` на None) не был задекларирован в prelude.
+- **Почему (было):** bootstrap parser не принимал bodyless `type X`
+  (без вариантов / полей).
+- **Закрыто 2026-05-20 (Plan 62.C.bis):** Plan 72 P1-B добавил
+  bodyless-type support в parser. `type RuntimeNoneError` задеклариро-
+  ван в errors.nv + re-export через facade. PRELUDE_VERSION 8 → 9.
+  Тест `plan62/runtime_none_error_from_prelude`. `Never` НЕ мигрирован
+  (bottom-тип → строчный keyword `never`, Plan 75 cleanup).
+
+### [M-runtime-none-error-throw-codegen] (DEFER — Plan 19 C7 / codegen)
+- **Где:** `nova_rt/effects.h` `nova_throw_runtime_none_error` + `!!`
+  codegen; bodyless-type value codegen.
+- **Что упрощено:** два codegen-gap'а вокруг `RuntimeNoneError`
+  (декларация в prelude есть, но полное использование ограничено):
+  1. `opt!!` на None бросает через low-level `nova_throw` (string
+     payload) в обход handler-vtable — `with Fail = handler { fail
+     {...} }` перехватывает throw (программа не abort'ится), но тело
+     `fail`-арма НЕ исполняется. Explicit `throw "x"` invoke'ит
+     vtable корректно — `!!` использует другой путь.
+  2. Явный `throw RuntimeNoneError` (bodyless-тип как value-выражение)
+     не codegen'ится — bodyless-тип не имеет value-формы (`use of
+     undeclared identifier 'RuntimeNoneError'`).
+- **Почему:** `!!`-оператор (Plan 19 C7) эмитит runtime-helper вместо
+  handler-vtable invocation; bodyless-тип не получает синтезированной
+  unit-value константы.
+- **Как чинить:** (1) `!!`-codegen должен invoke'ить `_nova_handler_
+  Fail->fail(ctx, payload)` как explicit `throw`. (2) Синтезировать
+  unit-value для bodyless-типов (как у unit-вариантов sum-типов).
+- **Приоритет:** L — `opt!!` Some-path + catchability работают;
+  declaration резолвится; gap'ы тангенциальны к prelude-миграции.
 
 ### [M-tryfrom-tryinto-deferred] ✅ RESOLVED (Plan 62.E.bis, 2026-05-20)
 - **Где:** `std/prelude/protocols.nv` + `std/prelude.nv` facade.

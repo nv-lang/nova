@@ -1118,6 +1118,14 @@ impl CEmitter {
             }
         }
         // Pre-populate sum_schemas with built-in Option and Result types.
+        //
+        // Plan 62.A.bis Ф.4 (2026-05-21): попытка удалить hardcoded
+        // `Result` sum_schema вскрыла регрессию — nested-pattern
+        // `match opt { Some(Err(e)) => ... }` типизирует inner-variant
+        // payload через `sum_schemas["Result"]` в `pattern_bind_typed`
+        // (~line 18183), не через `NovaRes_<T>_<E>` mono / `novares_ok_err`.
+        // Удаление отложено до фикса этого пути в Plan 59 Result-mono.
+        // См. [M-legacy-sum-schemas-retained] в simplifications.md.
         {
             let mut opt_variants = HashMap::new();
             opt_variants.insert("Some".to_string(), vec!["nova_int".to_string()]);
@@ -10953,6 +10961,18 @@ impl CEmitter {
                 }
                 let l = self.emit_expr_with_target_type(left, target_ty_c)?;
                 let r = self.emit_expr_with_target_type(right, target_ty_c)?;
+                // Plan 33.8 Ф.1.2: знаковая `int` Add/Sub/Mul → checked-форма.
+                if lty == "nova_int" && rty == "nova_int" {
+                    let checked = match op {
+                        BinOp::Add => Some("nova_int_checked_add"),
+                        BinOp::Sub => Some("nova_int_checked_sub"),
+                        BinOp::Mul => Some("nova_int_checked_mul"),
+                        _ => None,
+                    };
+                    if let Some(helper) = checked {
+                        return Ok(format!("{}({}, {})", helper, l, r));
+                    }
+                }
                 let op_str = match op {
                     BinOp::Add => "+",  BinOp::Sub => "-",
                     BinOp::Mul => "*",  BinOp::Div => "/",
@@ -11477,6 +11497,21 @@ impl CEmitter {
                     BinOp::Implies => return Ok(format!("((!({})) || ({}))", l, r)),
                     BinOp::Iff => return Ok(format!("(({}) == ({}))", l, r)),
                     _ => {}
+                }
+                // Plan 33.8 Ф.1.2: знаковая `int` Add/Sub/Mul → checked-форма
+                // (паника при переполнении, spec 04-effects.md). Только для
+                // безграничного `nova_int`; sized-типы (wrap, Plan 33.7) и
+                // прочее эмитятся обычным C-оператором.
+                if lty == "nova_int" && rty == "nova_int" {
+                    let checked = match op {
+                        BinOp::Add => Some("nova_int_checked_add"),
+                        BinOp::Sub => Some("nova_int_checked_sub"),
+                        BinOp::Mul => Some("nova_int_checked_mul"),
+                        _ => None,
+                    };
+                    if let Some(helper) = checked {
+                        return Ok(format!("{}({}, {})", helper, l, r));
+                    }
                 }
                 let op_str = match op {
                     BinOp::Add => "+",  BinOp::Sub => "-",
