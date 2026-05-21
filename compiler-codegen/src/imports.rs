@@ -364,6 +364,19 @@ fn resolve_one(
                         suggestion,
                     )
                 }
+                ResolveErr::CaseMismatch { requested, actual } => anyhow!(
+                    "module path case mismatch: import declares `{}` but on \
+                     disk the name is `{}`\n  \
+                     imported from: module `{}`\n  \
+                     hint: module paths must match file/folder names \
+                     case-sensitively (Plan 81 Ф.4) — code that resolves on \
+                     Windows/macOS would fail on Linux. Fix the import to \
+                     `{}`.",
+                    requested,
+                    actual,
+                    importing,
+                    actual,
+                ),
             }
         })?;
 
@@ -918,6 +931,48 @@ pub(crate) enum ResolveErr {
     NotFound,
     /// `X.nv` и `X/` (с direct .nv) сосуществуют — ambiguous.
     Ambiguous { file: PathBuf, folder: PathBuf },
+    /// Plan 81 Ф.4: путь импорта не совпадает по регистру с именем
+    /// файла/папки на диске. На case-insensitive ФС (Windows, macOS
+    /// default) такой импорт резолвится, но код непортируем на Linux.
+    CaseMismatch { requested: String, actual: String },
+}
+
+/// Plan 81 Ф.4: сверка регистра резолвнутого пути с запрошенным.
+///
+/// На case-insensitive ФС `import Foo.Bar` находит `foo/bar.nv`.
+/// Канонизируем путь (на Windows `canonicalize` возвращает реальный
+/// регистр диска) и сверяем последние `parts.len()` компонент с
+/// запрошенными сегментами. `is_file` — у файла последний компонент
+/// несёт расширение `.nv`, у папки — нет.
+///
+/// Возвращает `Some((requested, actual))` при расхождении; `None` —
+/// если совпало или проверить нельзя (canonicalize не удался, путь
+/// короче запрошенного — консервативно: не ошибка).
+fn verify_case(path: &Path, parts: &[String], is_file: bool) -> Option<(String, String)> {
+    let canon = std::fs::canonicalize(path).ok()?;
+    let comps: Vec<String> = canon
+        .components()
+        .filter_map(|c| match c {
+            std::path::Component::Normal(s) => s.to_str().map(str::to_string),
+            _ => None,
+        })
+        .collect();
+    if comps.len() < parts.len() {
+        return None;
+    }
+    let tail = &comps[comps.len() - parts.len()..];
+    for (i, part) in parts.iter().enumerate() {
+        let on_disk = &tail[i];
+        let actual: &str = if is_file && i == parts.len() - 1 {
+            on_disk.strip_suffix(".nv").unwrap_or(on_disk)
+        } else {
+            on_disk.as_str()
+        };
+        if actual != part {
+            return Some((part.clone(), actual.to_string()));
+        }
+    }
+    None
 }
 
 fn resolve_module_paths(
@@ -1052,6 +1107,12 @@ fn resolve_module_paths(
         }
 
         if file_exists {
+            // Plan 81 Ф.4: сверка регистра пути с диском.
+            if let Some((requested, actual)) =
+                verify_case(&single_file, parts, true)
+            {
+                return Err(ResolveErr::CaseMismatch { requested, actual });
+            }
             return Ok(vec![single_file]);
         }
 
@@ -1093,6 +1154,12 @@ fn resolve_module_paths(
                 })
                 .collect();
             if !peers.is_empty() {
+                // Plan 81 Ф.4: сверка регистра пути с диском (папка).
+                if let Some((requested, actual)) =
+                    verify_case(&folder, parts, false)
+                {
+                    return Err(ResolveErr::CaseMismatch { requested, actual });
+                }
                 peers.sort();
                 return Ok(peers);
             }
