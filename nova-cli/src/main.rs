@@ -967,6 +967,7 @@ fn ensure_entry_peer_path(module: &mut nova_codegen::ast::Module, file_path: &Pa
         items_here: module.items.clone(),
         imported_item_names: std::collections::HashSet::new(),
         is_entry_module: true,
+        module_name: module.name.clone(),
     });
 }
 
