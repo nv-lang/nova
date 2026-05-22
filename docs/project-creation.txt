@@ -17719,3 +17719,14 @@ Suite: 1021 PASS / 0 FAIL.
 Plan 83.1 (M:N-инфраструктура) ЗАКРЫТ ЦЕЛИКОМ — Ф.1 worker-count
 resolver, Ф.2 NOVA_MAXPROCS, Ф.3 runtime.maxprocs() + init-тюнер
 (D136), Ф.4 lazy worker-пул + auto-shutdown (D137), Ф.5 thread-budget.
+
+### Plan 83.3 — Ф.0 аудит эффекта Blocking (✅)
+
+Аудит: эффект `Blocking` (D50) — известное имя в type-checker'е
+(suspend-эффект, запрещён в realtime), парсится в сигнатурах. Но
+codegen-dispatch'а НЕТ (операции инлайн), `uv_queue_work` не
+используется, ни одна функция в std/examples/nova_tests не помечена
+`Blocking`. Вывод: Plan 83.3 (threadpool-offload) — greenfield-фича
+целиком, включая первых потребителей эффекта; ~6-8 dev-days, отдельная
+сфокусированная работа. Ф.0 закрыта, точка интеграции зафиксирована в
+плане; Ф.1-Ф.5 не начаты.
