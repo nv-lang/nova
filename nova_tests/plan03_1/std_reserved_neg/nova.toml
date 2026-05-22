@@ -1,0 +1,10 @@
+# Plan 03.1 Ф.3 fixture — `std` объявлен в `[dependencies]` (запрещено).
+[package]
+name = "std_reserved_pkg"
+version = "0.1.0"
+
+[lib]
+src = "."
+
+[dependencies]
+std = { path = "../somewhere" }

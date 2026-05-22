@@ -1,0 +1,10 @@
+// Plan 03.1 Ф.3 NEGATIVE — ключ `[dependencies]` (`wrongkey`) не
+// совпадает с `[package].name` зависимости (`realname`).
+// EXPECT_COMPILE_ERROR не совпадает
+module nm_consumer.name_mismatch_test
+
+import wrongkey.thing.{val}
+
+test "unreachable" {
+    assert(true)
+}

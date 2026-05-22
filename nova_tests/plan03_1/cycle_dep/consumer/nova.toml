@@ -1,0 +1,10 @@
+# Plan 03.1 Ф.3 fixture — потребитель, входящий в межпакетный цикл.
+[package]
+name = "cyc_consumer"
+version = "0.1.0"
+
+[lib]
+src = "."
+
+[dependencies]
+cyc_a_pkg = { path = "../cyc_a_pkg" }

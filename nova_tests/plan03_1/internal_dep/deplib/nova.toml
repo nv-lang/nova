@@ -1,0 +1,9 @@
+# Plan 03.1 Ф.3 fixture — зависимость `deplib_int` с `internal/`-модулем.
+[package]
+name = "deplib_int"
+version = "0.1.0"
+
+[lib]
+src = "."
+
+[dependencies]

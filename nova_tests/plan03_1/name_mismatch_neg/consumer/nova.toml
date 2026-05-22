@@ -1,0 +1,11 @@
+# Plan 03.1 Ф.3 fixture — ключ `[dependencies]` (`wrongkey`) НЕ совпадает
+# с `[package].name` зависимости (`realname`).
+[package]
+name = "nm_consumer"
+version = "0.1.0"
+
+[lib]
+src = "."
+
+[dependencies]
+wrongkey = { path = "../realname" }
