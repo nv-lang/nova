@@ -133,6 +133,22 @@ fn parse_dep_source(raw_val: &str) -> DepSource {
     }
 }
 
+/// Plan 03.1 Ф.4: директория ближайшего вверх по дереву `nova.toml` —
+/// корень пакета, которому принадлежит `file`. `None` — файл не входит
+/// ни в один пакет.
+pub fn find_package_dir(file: &Path) -> Option<PathBuf> {
+    let abs = std::fs::canonicalize(file).ok()?;
+    let mut dir = abs.parent()?.to_path_buf();
+    loop {
+        if dir.join("nova.toml").is_file() {
+            return Some(dir);
+        }
+        if !dir.pop() {
+            return None;
+        }
+    }
+}
+
 /// Найти nova.toml в parent dirs и извлечь package_name + source_root.
 /// Возвращает None если nova.toml не найден ни в одной parent dir
 /// (значит файл не часть пакета — без enforcement).
