@@ -18168,3 +18168,39 @@ _regression (регресс-гварды: pointer-семантика и records 
 Ф.3 — simplifications.md (`[M-iflet-match-boxed-sum-ptr]` ✅ ЗАКРЫТО);
 spec правок не требует (for-in + if-let по sum уже валидны по типам,
 семантика не менялась); README + plan-doc статусы.
+
+==================================================================
+## Plan 03.4 — effect-aware tooling: nova info (Ф.1-Ф.4 ✅, 2026-05-22)
+==================================================================
+
+Четвёртый под-план экосистемы пакетов (после ✅ 03.1, 03.2) —
+автономно-кодируемый Nova-уникальный срез (Plan 03 §4: эффекты в
+менеджере пакетов). Ветка plan-3.4, worktree nova-p3-deps.
+
+- Ф.1 (effect_surface.rs): EffectSurface + compute(&DocTree) —
+  агрегирует doc::effect_matrix всех модулей в effect-surface
+  публичного API + разбивка «эффект → функции». CLI nova info
+  <PATH|dep-name> (cmd_info): резолв цели (путь / dep-name / git-
+  checkout), парс → doc::build_workspace → strip_private → compute;
+  вывод human + --format json. Источник — объявленные эффекты
+  публичных сигнатур (D28) → surface точна без межпроцедурного анализа.
+- Ф.2: nova info <A> --diff <B> — added/removed эффекты между
+  effect-surface двух версий (supply-chain сигнал). --fail-on-new —
+  ненулевой exit при новых эффектах (CI-gate). info_surface выделен
+  в helper.
+- Ф.3 (capability-confined deps): Dependency.forbid; parse_inline_table
+  сделан bracket-aware; effect_surface::check_forbidden — для
+  зависимости с forbid вычисляет её surface, валит сборку при
+  нарушении. cmd_build вызывает после lockfile::sync. Граница в типах,
+  не в рантайме — сильнее Deno-permissions.
+- Ф.4: spec D-блок D140 (effect-aware зависимости); docs/nova-cli.md
+  + .ru.md (nova info).
+
+publish/search/audit — registry-gated (03.3) / нужна OSV-БД, вне scope
+(simplifications.md: M-03.4-registry-gated-cmds). Фундамент — doc::
+effect_matrix (Plan 45).
+
+Тесты: 6 unit effect_surface + manifest forbid-тесты + end-to-end
+(nova info, --diff, nova build с forbid-нарушением). Suite: 1058 PASS
+/ 0 FAIL — 0 регрессий. Plan 03.4 ✅ ЗАКРЫТ. Plan 03: 03.1 ✅ 03.2 ✅
+03.4 ✅; остаются 03.3/03.5/03.6 (registry-инфраструктура).

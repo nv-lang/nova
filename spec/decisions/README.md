@@ -19,7 +19,7 @@
 | 04 | [04-effects.md](04-effects.md) | Fail, Io, Db, handlers, with-блоки, interrupt, forbid, realtime, ?, `Handler[E, IRT]`, contracts (#pure/axiom/trusted), axiom binder, Fail payload | D2, D3, D4, D11, D12, D18, D25, D28, D31, D61, D62, D63, D64, D65, D67, D68, D85, D86, D87, D115, D118, D120 |
 | 05 | [05-memory.md](05-memory.md) | Managed GC, escape analysis, regions | D6, D21 (cancelled) |
 | 06 | [06-concurrency.md](06-concurrency.md) | Fiber runtime, structured concurrency, spawn, detach, supervised(cancel:), channels (Channel revision capability-split), select, handler scoping, park/wake API, implicit main-scope, fiber stack allocation, work-stealing scheduler, preemption | D14, D50, D71, D75, D79, D80, D91, D92, D93, D97, D98, D103 |
-| 07 | [07-modules.md](07-modules.md) | Модули, импорты (включая селективный `import X.{A, B}` и `export import` re-export), видимость, package tooling, `_module.nv`, межпакетные зависимости, version-диапазоны | D5, D29, D47, D78, D100, D138, D139 |
+| 07 | [07-modules.md](07-modules.md) | Модули, импорты (включая селективный `import X.{A, B}` и `export import` re-export), видимость, package tooling, `_module.nv`, межпакетные зависимости, version-диапазоны, effect-aware deps | D5, D29, D47, D78, D100, D138, D139, D140 |
 | 08 | [08-runtime.md](08-runtime.md) | Panic, capability, deployment, prelude, From/Into, TryFrom, math, Mem, assert, primitive built-ins (hash/eq/ord) | D7, D13, D26, D41, D70 (replaced → D73), D73, D74, D76, D77, D81, D109 |
 | 09 | [09-tooling.md](09-tooling.md) | Тесты, контракты, форматирование, CLI, EXPECT-маркеры, conditional compilation, `#doc`, doc-attrs, doc-tests, JSON schema, contracts verifier (assume/quantifiers/cache/Z3), bench DSL | D24, D89, D95, D99, D101, D105, D106, D107, D111, D112, D113, D114, D116, D121 |
 | 10 | [10-overloading.md](10-overloading.md) | Перегрузка функций и методов: четыре оси, резолв | D84 |
@@ -70,6 +70,7 @@
 | D124 | 06-concurrency.md | Monotonic vs Timestamp — раздельные типы для wall-clock и монотонных часов |
 | D138 | 07-modules.md | Межпакетный импорт — только через объявленную `[dependencies]`-зависимость (Plan 03.1) |
 | D139 | 07-modules.md | Version-диапазоны git-зависимостей — резолв по тегам репозитория (Plan 03.2) |
+| D140 | 07-modules.md | Effect-aware зависимости — effect-surface, effect-diff, `forbid` на границе (Plan 03.4) |
 
 ## История
 
