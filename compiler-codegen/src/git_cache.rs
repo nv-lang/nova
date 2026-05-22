@@ -147,6 +147,37 @@ fn memo() -> &'static Mutex<HashMap<String, GitResolution>> {
     MEMO.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
+/// Plan 03.1 Ф.4: таблица зафиксированных в `nova.lock` commit'ов
+/// (`git-url` → `commit`). `resolve_git_dep` без явного `locked_commit`
+/// сверяется с ней — это и есть воспроизводимость из lockfile.
+fn lock_table() -> &'static Mutex<HashMap<String, String>> {
+    static T: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();
+    T.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// Plan 03.1 Ф.4: загрузить пины из `nova.lock`. После этого
+/// `resolve_git_dep` для перечисленных URL берёт зафиксированный commit
+/// (а не резолвит пин «вживую») — детерминированная сборка.
+pub fn install_lock_entries<I>(entries: I)
+where
+    I: IntoIterator<Item = (String, String)>,
+{
+    let mut t = lock_table().lock().unwrap();
+    for (url, commit) in entries {
+        t.insert(url, commit);
+    }
+}
+
+/// Plan 03.1 Ф.4 (для `nova update`): забыть зафиксированный commit для
+/// URL — следующий резолв пройдёт «вживую».
+pub fn forget_lock_entry(url: &str) {
+    lock_table().lock().unwrap().remove(url);
+}
+
+fn locked_commit_for(url: &str) -> Option<String> {
+    lock_table().lock().unwrap().get(url).cloned()
+}
+
 fn memo_key(url: &str, pin: &GitPin, locked: Option<&str>) -> String {
     format!("{}\u{0}{:?}\u{0}{}", url, pin, locked.unwrap_or(""))
 }
@@ -163,12 +194,16 @@ pub fn resolve_git_dep(
     pin: &GitPin,
     locked_commit: Option<&str>,
 ) -> Result<GitResolution> {
-    let key = memo_key(url, pin, locked_commit);
+    // Явный `locked_commit` приоритетнее; иначе — таблица из `nova.lock`.
+    let effective: Option<String> = locked_commit
+        .map(|s| s.to_string())
+        .or_else(|| locked_commit_for(url));
+    let key = memo_key(url, pin, effective.as_deref());
     if let Some(hit) = memo().lock().unwrap().get(&key).cloned() {
         return Ok(hit);
     }
     let root = git_cache_root()?;
-    let res = resolve_git_dep_in(&root, url, pin, locked_commit)?;
+    let res = resolve_git_dep_in(&root, url, pin, effective.as_deref())?;
     memo().lock().unwrap().insert(key, res.clone());
     Ok(res)
 }

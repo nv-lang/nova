@@ -14,6 +14,7 @@ pub mod imports;
 pub mod interp;
 pub mod lexer;
 pub mod lints;
+pub mod lockfile;
 pub mod manifest;
 pub mod parser;
 pub mod perf_timer;
