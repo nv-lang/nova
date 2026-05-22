@@ -343,6 +343,32 @@ fn critical(...) -> Result =>
 > empty-sum syntax), `TryFrom`/`TryInto` (Plan 62.E.bis — требует
 > Plan 56 Ф.2.7 effect-row enforcement). Bottom-тип `never` — закрыт
 > Plan 76 (строчный встроенный примитив, не требует prelude-декларации).
+>
+> **Plan 95 (закрыт 2026-05-23):** builtin sum-типы `Option`/`Result`
+> участвуют в method-monomorphization через канал «method-only mono»
+> — без регистрации в `generic_type_templates` (представление
+> `NovaOpt_<T>` / `NovaRes_<ok>_<err>*` не трогается). Pre-existing
+> `MethodRouting::DeclaredBody` (scaffold-only до Plan 95) теперь
+> реально конструируется в `init_prelude_decls_from_items` для
+> non-external методов на `Option`/`Result`, потребляется в перехватах
+> вызова `NovaOpt_` (#6 в [emit_c.rs:14160](../../compiler-codegen/src/codegen/emit_c.rs#L14160))
+> и `is_result_like` (#7). `receiver_c_type` спец-кейсит
+> `Option`/`Result` → value-тип через `current_type_subst` + сохранённые
+> `builtin_sum_type_params`. Mono-имя совпадает с формой бывшего
+> C-трамплина (`Nova_Option_method_<m>_<T_sani>` /
+> `Nova_Result_method_<m>_<n>`) → call-site mangling не меняется.
+> **Перенесены на Nova-body:** `Option.is_some`/`is_none`,
+> `Result.is_ok`/`is_err` (`=> match @ { ... }` в
+> `std/prelude/core.nv`); C-трамплины удалены из `nova_rt/array.h`,
+> lazy-emit в `register_novaopt_decl`/`register_novares_decl`, и
+> baseline-entries в `init_hardcoded_baseline`. Граница: `unwrap`
+> (Fail-dispatch), `unwrap_or`/`unwrap_or_else`/`map`/`ok_or`/`map_err`
+> (closure-applying) — **остаются** C-routed. Закрыт маркер
+> `[M-option-methods-not-mono-able]`. Plan 93 (узкий вариант
+> «is_some-Nova-body») superseded by Plan 95 — целиком поглощён Ф.4.
+> Plan 78 (prelude-codegen single-source) — узкий санкционированный
+> пересмотр Ф.1 только для чистых тег-предикатов; реестр C-routing
+> в силе.
 
 ### Правило
 

@@ -1,7 +1,10 @@
 # Plan 95 — `Option`/`Result` как generic-method-able типы (мономорфизация методов builtin sum-типов)
 
 > **Статус:** 🔵 В РАБОТЕ с 2026-05-23 (worktree `nova-p95`, ветка
-> `plan-95`). Ф.0 ✅ — GATE пройден, подход B. Ф.1–Ф.7 в работе.
+> `plan-95`). Ф.0–Ф.5 ✅, Ф.6 — таргетированные тесты ✅ (12 PASS,
+> 1 negative EXPECT_COMPILE_ERROR — все зелёные), полный `nova test`
+> в процессе. Ф.7 — spec D-блок + simplifications.md закрытие маркера
+> + Plan 78 amend выполнены. Plan 93 superseded.
 > **Приоритет:** P3 (de-magic / single-source-of-truth; разблокирует
 > Plan 93, частично питает Plan 94). Не блокер релиза 0.1, не блокер
 > self-hosting (см. Plan 93 «Связь с self-hosting»).
