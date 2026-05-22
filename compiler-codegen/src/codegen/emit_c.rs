@@ -8314,6 +8314,23 @@ impl CEmitter {
                 let sanitized = Self::sanitize_for_novaopt(&inner_c);
                 Some(format!("NovaOpt_{}", sanitized))
             }
+            // Plan 88 Ф.2.1: Result[T, E] → `NovaRes_<ok>_<err>*` — mono'd
+            // Result-репрезентация (Plan 59 Ф.7.5). Зеркало `type_ref_to_c`
+            // ветки "Result" и `apply_type_subst_to_ref` ветки Option. Без
+            // этого `Result[T,E]` уходила в generic-user-type ветку ниже и
+            // мангл'илась как `Nova_Result____<ok>__<err>` — имя, которое
+            // нигде не объявлено (CC-FAIL «unknown type name»). Typedef
+            // `NovaRes_<n>` регистрируется при emit'е самой mono'd функции
+            // (её return-тип идёт через `type_ref_to_c` → `result_repr_c_type`).
+            crate::ast::TypeRef::Named { path, generics, .. }
+                if path.last().map(|s| s.as_str()) == Some("Result") && generics.len() == 2 =>
+            {
+                let ok_c = Self::apply_type_subst_to_ref(&generics[0], subst)?;
+                let err_c = Self::apply_type_subst_to_ref(&generics[1], subst)?;
+                let ok_s = Self::sanitize_for_novaopt(&ok_c);
+                let err_s = Self::sanitize_for_novaopt(&err_c);
+                Some(format!("NovaRes_{}_{}*", ok_s, err_s))
+            }
             crate::ast::TypeRef::Array(inner, _) => {
                 // []T → NovaArray_<inner_c>*
                 let inner_c = Self::apply_type_subst_to_ref(inner, subst)?;
@@ -15032,7 +15049,15 @@ impl CEmitter {
                     //   - иначе (obj — variable / expr) → instance call;
                     //     receiver-type из обуточенного obj_ty.
                     let recv_type_name = if let ExprKind::Ident(n) = &obj.kind {
-                        if self.method_overloads.keys().any(|(t, _)| t == n) {
+                        if let Some(c_ty) = self.current_type_subst.get(n) {
+                            // Plan 88 Ф.1: `n` — type-параметр в активном
+                            // mono-контексте (`T.from(s)` внутри тела
+                            // `wrap[T From[str]]`). Резолвим `n` → concrete
+                            // Nova-тип и дальше — обычный static-dispatch.
+                            // Без этого emit'ился литеральный
+                            // `nova_fn_<n>_<method>` → undefined symbol.
+                            Some(Self::nova_type_name_from_c(c_ty))
+                        } else if self.method_overloads.keys().any(|(t, _)| t == n) {
                             // Static call.
                             Some(n.clone())
                         } else {
@@ -15056,9 +15081,12 @@ impl CEmitter {
                         }
                     };
                     if let Some(rt) = recv_type_name {
-                        // want_instance: true unless obj is Ident(known-type).
+                        // want_instance: true unless obj is Ident(known-type)
+                        // ИЛИ Ident(type-параметр в mono-контексте) — Plan 88
+                        // Ф.1.2: резолвленный typevar — это static-вызов.
                         let want_instance = !matches!(&obj.kind, ExprKind::Ident(n)
-                            if self.method_overloads.keys().any(|(t, _)| t == n));
+                            if self.current_type_subst.contains_key(n)
+                               || self.method_overloads.keys().any(|(t, _)| t == n));
                         let key = (rt.clone(), method.clone());
                         if let Some(overloads) = self.method_overloads.get(&key).cloned() {
                             let candidates: Vec<MethodSig> = overloads.into_iter()
@@ -15902,13 +15930,25 @@ impl CEmitter {
                     }
                     // Could be a static method call: `Type.method(args)`.
                     let method_name = &parts[1];
+                    // Plan 88 Ф.1: `parts[0]` может быть type-параметром
+                    // активного mono-контекста — `T.from(s)` внутри тела
+                    // `wrap[T From[str]]`. Резолвим `T` → concrete Nova-тип
+                    // (`current_type_subst[T]` хранит C-тип). Дальше —
+                    // обычный static-dispatch `Nova_<Type>_static_<method>`
+                    // (overload-aware через method_overloads ниже). Без
+                    // этого `parts.join("_")` давал литеральный
+                    // `nova_fn_<T>_<method>` → undefined symbol на линковке.
+                    let recv_seg: String = match self.current_type_subst.get(parts[0].as_str()) {
+                        Some(c_ty) => Self::nova_type_name_from_c(c_ty),
+                        None => parts[0].clone(),
+                    };
                     // Plan 11 Ф.2: используем multi-overload registry —
                     // strict resolution по типам args. Это работает и
                     // при single-overload (тогда match unique без проверки
                     // arg-types). Покрывает overload, и решает single-key
                     // last-wins проблему когда ≥2 типов имеют одноимённый
                     // static с разной сигнатурой.
-                    let key = (parts[0].clone(), method_name.clone());
+                    let key = (recv_seg.clone(), method_name.clone());
                     if let Some(overloads) = self.method_overloads.get(&key).cloned() {
                         // Только static-overloads (is_instance == false).
                         let static_overloads: Vec<MethodSig> = overloads.into_iter()
@@ -15920,15 +15960,15 @@ impl CEmitter {
                             // sentinel c_name (__mono_method__T__m) утекает в
                             // линковщик как undefined symbol.
                             if static_overloads.iter().any(|c| c.c_name.starts_with("__mono_method__")) {
-                                let recv_key = (parts[0].clone(), method_name.clone());
+                                let recv_key = (recv_seg.clone(), method_name.clone());
                                 if let Some(fn_decl) = self.mono_method_decls.get(&recv_key).cloned() {
                                     let type_subst = self.resolve_mono_type_args(&fn_decl, &[], args)
                                         .unwrap_or_else(|_| fn_decl.generics.iter()
                                             .map(|g| (g.name.clone(), "nova_str".to_string()))
                                             .collect());
-                                    let base_c_name = format!("Nova_{}_static_{}", parts[0], method_name);
+                                    let base_c_name = format!("Nova_{}_static_{}", recv_seg, method_name);
                                     let mono_name = Self::compute_mono_name(&base_c_name, &type_subst);
-                                    let rt_clone = parts[0].clone();
+                                    let rt_clone = recv_seg.clone();
                                     self.register_mono_method_instance(
                                         &fn_decl.clone(), type_subst.clone(),
                                         &mono_name.clone(), &rt_clone);
@@ -16005,8 +16045,9 @@ impl CEmitter {
                     // зарегистрированы в method_overloads, например
                     // built-in opaque типы special-case'нутые выше).
                     if let Some((type_name, false)) = self.method_receivers.get(method_name.as_str()).cloned() {
-                        // Strict match: type_name must equal parts[0].
-                        if type_name == parts[0] {
+                        // Strict match: type_name must equal receiver (Plan 88:
+                        // resolved typevar, не литеральное `parts[0]`).
+                        if type_name == recv_seg {
                             let mut arg_strs = Vec::new();
                             for a in args { arg_strs.push(self.emit_expr(a.expr())?); }
                             return Ok(format!("Nova_{}_static_{}({})", type_name, method_name, arg_strs.join(", ")));
@@ -16015,7 +16056,7 @@ impl CEmitter {
                     // D73 v2 auto-derive: `T.from(v)` when no explicit T.from
                     // exists, but `fn V @into() -> T` is defined where v: V.
                     if method_name == "from" && args.len() == 1 {
-                        let target = parts[0].clone();
+                        let target = recv_seg.clone();
                         let arg_ty = self.infer_expr_c_type(args[0].expr());
                         let arg_type = arg_ty.trim_start_matches("Nova_").trim_end_matches('*').to_string();
                         // Check that V has @into() -> T defined.
@@ -16057,7 +16098,9 @@ impl CEmitter {
                             .unwrap_or_else(|| "NovaOpt_nova_int".into());
                         return Ok(format!("(({}){{.tag = NOVA_TAG_Option_None}})", opt_ty));
                     }
-                    let parts0 = parts[0].as_str();
+                    // Plan 88 Ф.1: `recv_seg` — receiver, резолвленный из
+                    // type-параметра mono-контекста (или сам `parts[0]`).
+                    let parts0 = recv_seg.as_str();
                     let is_known_type = self.record_schemas.contains_key(parts0)
                         || self.sum_schemas.contains_key(parts0)
                         || self.generic_type_templates.contains_key(parts0)

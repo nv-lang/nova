@@ -1,0 +1,36 @@
+// Plan 88 Ф.3.1 — static-метод `T.from` на type-параметре внутри тела
+// generic-функции. Несколько инстансов одного generic.
+//
+// D72: `fn wrap[T From[str]](s str) -> T => T.from(s)` — static-вызов
+// `T.from` на type-параметре мономорфизируется (T подставляется в
+// obj-позицию static-вызова). До Plan 88 → undefined symbol nova_fn_T_from.
+
+module nova_tests.plan88.static_from
+
+
+type Name { s str }
+fn Name.from(v str) -> Name => { s: v }
+
+type Tag { label str }
+fn Tag.from(v str) -> Tag => { label: v }
+
+
+fn wrap[T From[str]](s str) -> T => T.from(s)
+
+
+test "wrap[Name] — T.from на typevar" {
+    let n = wrap[Name]("alice")
+    assert(n.s == "alice")
+}
+
+test "wrap[Tag] — другой инстанс того же generic" {
+    let t = wrap[Tag]("urgent")
+    assert(t.label == "urgent")
+}
+
+test "несколько инстансов wrap в одном тесте" {
+    let n = wrap[Name]("bob")
+    let t = wrap[Tag]("low")
+    assert(n.s == "bob")
+    assert(t.label == "low")
+}

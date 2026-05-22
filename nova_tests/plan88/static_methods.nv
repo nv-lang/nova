@@ -1,0 +1,47 @@
+// Plan 88 Ф.3.1 — static-методы `T.new` (user-defined через protocol)
+// и `T.try_from` на type-параметре. Обобщённый путь, не спец-кейс под
+// один метод `from`.
+
+module nova_tests.plan88.static_methods
+
+
+// --- T.new() — user-defined static-метод через protocol ---
+type Buildable protocol { new() -> Self }
+
+type Counter { n int }
+fn Counter.new() -> Counter => { n: 0 }
+
+type Score { points int }
+fn Score.new() -> Score => { points: 100 }
+
+fn fresh[T Buildable]() -> T => T.new()
+
+
+test "T.new() static на typevar — Counter" {
+    let c = fresh[Counter]()
+    assert(c.n == 0)
+}
+
+test "T.new() static на typevar — Score" {
+    let s = fresh[Score]()
+    assert(s.points == 100)
+}
+
+
+// --- T.try_from() — fallible static-конверсия через TryFrom-bound ---
+type Pos { v int }
+fn Pos.try_from(n int) -> Result[Pos, str] =>
+    if n >= 0 { Ok(Pos { v: n }) } else { Err("negative") }
+
+fn convert[T TryFrom[int, str]](n int) -> Result[T, str] => T.try_from(n)
+
+
+test "T.try_from на typevar — Ok-ветка" {
+    let r = convert[Pos](7)
+    assert(r.is_ok())
+}
+
+test "T.try_from на typevar — Err-ветка" {
+    let r = convert[Pos](-3)
+    assert(r.is_err())
+}
