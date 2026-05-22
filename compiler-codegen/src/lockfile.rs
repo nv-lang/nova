@@ -81,6 +81,7 @@ fn pin_str(pin: &GitPin) -> String {
         GitPin::Rev(r) => format!("rev:{}", r),
         GitPin::Tag(t) => format!("tag:{}", t),
         GitPin::Branch(b) => format!("branch:{}", b),
+        GitPin::Version(req) => format!("version:{}", req),
         GitPin::Default => "default".to_string(),
     }
 }
