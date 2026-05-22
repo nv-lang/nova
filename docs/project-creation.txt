@@ -18490,3 +18490,37 @@ method-able тип с NovaOpt_<T>/NovaRes_<...> в роли mono'd receiver»
 (~2 dev-day, отдельный план). Зафиксировано маркером
 [M-option-methods-not-mono-able] в simplifications.md. Рабочее дерево
 не менялось (кроме docs) — компилятор не трогался, регрессий нет.
+
+═══════════════════════════════════════════════════════════════════════
+Plan 95 — Option/Result как generic-method-able типы (декомпозиция)
+2026-05-23
+═══════════════════════════════════════════════════════════════════════
+
+Создан Plan 95 (docs/plans/95-builtin-sum-method-mono.md) — декомпозиция
+инфраструктуры, которую Plan 93 Ф.0 определил как реальную предпосылку
+переноса предикатов Option/Result на Nova-тело.
+
+Суть: builtin sum-типы Option/Result намеренно исключены из
+generic-method-mono (emit_c.rs:1526), потому что их представление —
+спец-value-типы NovaOpt_<T> / NovaRes_<ok>_<err>. Plan 95 строит канал
+«method-only mono» (подход B): представление НЕ трогается, добавляется
+только мономорфизация методов — Option/Result регистрируются в
+generic_type_methods (но не в generic_type_templates), receiver_c_type
+спец-кейсит их в value-тип через current_type_subst, диспетчеризация
+локализована в уже существующих перехватах вызова (#6 NovaOpt_, #7
+is_result_like) через ветку MethodRouting::DeclaredBody.
+
+Ключевое снижение риска против оценки Plan 93 Ф.0: диспетчеризация
+Option/Result-методов УЖЕ локализована в двух перехватах — не нужно
+трогать все ~10 generic-dispatch call-site'ов; DeclaredBody
+обрабатывается внутри этих двух блоков.
+
+Фазы: Ф.0 аудит+решение A/B (GATE, рекоменд. B), Ф.1 method-collection+
+routing-scaffold, Ф.2 receiver/mono-name резолвинг, Ф.3 DeclaredBody-
+dispatch, Ф.4 перенос предикатов Option (= цель Plan 93), Ф.5 перенос
+предикатов Result, Ф.6 тесты позитив+негатив, Ф.7 spec/docs.
+Оценка ~2.5-3 dev-day. Приоритет P3.
+
+Plan 93 помечен SUPERSEDED by Plan 95 (его цель = Ф.4 Plan 95).
+Маркер [M-option-methods-not-mono-able] в simplifications.md обновлён —
+ссылка на Plan 95 как план фикса. README обновлён (строки 93/94/95).
