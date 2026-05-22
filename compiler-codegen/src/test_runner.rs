@@ -1483,6 +1483,16 @@ pub struct TestBuildOpts<'a> {
     /// Plan 48 Ф.7.6: optional monomorphization-depth override (`--mono-depth=N`).
     /// `None` = use codegen default (env var NOVA_MONO_DEPTH or 500).
     pub mono_depth: Option<usize>,
+    /// Plan 83.1 Ф.5: бюджет NOVA_MAXPROCS для тестового subprocess'а.
+    /// `nova test` гоняет тест-файлы как `workers` параллельных
+    /// процессов; без бюджета каждый M:N-тест с auto-detect (`init(0)`)
+    /// поднял бы NumCPU worker'ов → NumCPU² потоков суммарно. Бюджет =
+    /// max(1, NumCPU/workers) держит общее число worker-потоков ≈ NumCPU.
+    /// Применяется к шагу запуска exe; `// ENV NOVA_MAXPROCS=...` его
+    /// переопределяет (для тестов, проверяющих сам NOVA_MAXPROCS).
+    /// Explicit `runtime.init(n>0)` тоже бьёт env (D136). `None` — не
+    /// выставлять.
+    pub maxprocs_budget: Option<u32>,
 }
 
 /// Plan 26 Ф.2: unique tmp subdir per test. Хеш от display даёт
@@ -1851,6 +1861,12 @@ pub fn run_one(opts: &TestBuildOpts) -> Outcome {
     {
         run_cmd.env("LC_ALL", "C.UTF-8");
         run_cmd.env("LANG", "C.UTF-8");
+    }
+    // Plan 83.1 Ф.5: thread-budget — NOVA_MAXPROCS для тестового exe.
+    // Ставится ДО `// ENV`-директив, чтобы тест, проверяющий сам
+    // NOVA_MAXPROCS, мог переопределить бюджет своей директивой.
+    if let Some(budget) = opts.maxprocs_budget {
+        run_cmd.env("NOVA_MAXPROCS", budget.to_string());
     }
     // Plan 83.1 Ф.2: apply `// ENV NAME=VALUE` directives to the test exe.
     for (key, val) in &env_vars {
@@ -3329,6 +3345,15 @@ pub fn run_all(opts: TestAllOpts) -> Result<Summary> {
     ));
 
     let workers = std::cmp::max(1, opts.jobs).min(total.max(1));
+
+    // Plan 83.1 Ф.5: thread-budget против NumCPU²-oversubscription.
+    // `workers` тест-процессов идут параллельно; каждому даём бюджет
+    // NOVA_MAXPROCS = max(1, NumCPU / workers), чтобы суммарное число
+    // M:N worker-потоков было ≈ NumCPU, а не NumCPU². Тесты с явным
+    // `runtime.init(n>0)` или `// ENV NOVA_MAXPROCS=...` переопределяют.
+    let maxprocs_budget: Option<u32> =
+        Some(std::cmp::max(1, default_jobs() / workers) as u32);
+
     std::thread::scope(|s| {
         for _ in 0..workers {
             let jobs = std::sync::Arc::clone(&jobs_arc);
@@ -3367,6 +3392,7 @@ pub fn run_all(opts: TestAllOpts) -> Result<Summary> {
                     gc_kind,
                     verbosity,
                     mono_depth,
+                    maxprocs_budget,
                 };
                 // Plan 26 Ф.12: retry для transient AV/linker race fails.
                 // Exponential backoff: 100ms, 200ms, 400ms.

@@ -10657,3 +10657,20 @@ Plan 52.2 и 52.3 → ✅ ЗАКРЫТЫ. Suite: 960 PASS / 0 FAIL.
   документирующий сахар).
 - **Тесты:** обнаружено в Plan 85.5 — for_loop.nv / array_iter.nv
   изначально использовали `for x int in`, переведены на inferred-форму.
+
+## Plan 83.1 Ф.5 — thread-budget (2026-05-22)
+
+### [M-83.1-budget-explicit-init-uncapped] explicit runtime.init(N) обходит бюджет
+- **Где:** test-runner — NOVA_MAXPROCS budget (`test_runner.rs`).
+- **Что упрощено:** бюджет NOVA_MAXPROCS ограничивает только тесты с
+  auto-detect (`runtime.init(0)` либо без явного init). Тест с явным
+  `runtime.init(N>0)` получает N worker'ов (explicit бьёт env — D136);
+  при `workers` параллельных таких тестах суммарно `workers × N`
+  потоков.
+- **Почему:** explicit `init(N)` — осознанный выбор теста; уважать его
+  важнее жёсткого капа. Большинство M:N-тестов с explicit init
+  используют небольшие N (2-4) — реальная oversubscription ограничена.
+- **Как чинить:** при необходимости — hard-cap explicit-N в тест-режиме
+  через отдельный механизм. Пока не нужно.
+- **Приоритет:** L — oversubscription ограничена малыми N; bench (где
+  точность критична) уже жёстко NOVA_MAXPROCS=1.
