@@ -142,6 +142,10 @@ static bool            _materialized = false;
 static int             _target_workers = 0;
 static nova_mutex_t    _init_mu;
 static bool            _init_mu_inited = false;
+/* Plan 83.1 Ф.4: auto-shutdown — nova_runtime_shutdown регистрируется
+ * через atexit() один раз при первом runtime.init. Покрывает graceful
+ * cleanup на нормальном return из main и на exit(). */
+static bool            _atexit_registered = false;
 
 /* Plan 44.5 Layer 5: main wake handle для cross-thread signal'а из
  * worker'а в main thread'а supervised_run wait-loop. Init'ится в
@@ -633,6 +637,16 @@ void nova_runtime_init(int n_workers) {
      * — валидный re-tune (последний выигрывает). */
     _target_workers = nova_runtime_resolve_maxprocs(n_workers);
     _armed = true;
+
+    /* Plan 83.1 Ф.4: auto-shutdown. Регистрируем graceful shutdown на
+     * выходе процесса — atexit покрывает нормальный return из main и
+     * exit() (для _exit/abort ОС и так освобождает потоки). Один раз;
+     * nova_runtime_shutdown идемпотентен (повторный вызов / явный
+     * runtime.shutdown() до atexit — безопасны). */
+    if (!_atexit_registered) {
+        atexit(nova_runtime_shutdown);
+        _atexit_registered = true;
+    }
     nova_mutex_unlock(&_init_mu);
 }
 
