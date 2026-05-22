@@ -86,6 +86,9 @@ int  nova_runtime_resolve_maxprocs(int explicit_n);
 
 /* Diagnostic — exposed через std.runtime.runtime. */
 int  nova_runtime_worker_count(void);
+/* Plan 83.1 Ф.3: целевое число worker'ов (резолвится и до init).
+ * worker_count() = фактически поднятые; maxprocs() = цель. */
+int  nova_runtime_maxprocs(void);
 int  nova_runtime_current_worker_id(void);  /* -1 если main thread */
 bool nova_runtime_is_initialized(void);
 

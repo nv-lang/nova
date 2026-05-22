@@ -3329,3 +3329,60 @@ Plan 65 Ф.12.3 aligns schema с реальным usage.
 - `nova_tests/plan65/f12_*` — типы не interconvertible (negative tests),
   NTP-skew resilience (mock Time effect), `close_at(Monotonic)` integration.
 
+
+## D136. M:N worker-count — порядок разрешения и `NOVA_MAXPROCS`
+
+> **Введён:** 2026-05-22 (Plan 83.1 Ф.1–Ф.3 driver). **Статус:** принят;
+> реализация в `compiler-codegen/nova_rt/runtime.c`
+> (`nova_runtime_resolve_maxprocs`). **Дополняет** D98 / D103 (M:N-рантайм).
+
+### Что
+
+Число worker-потоков M:N-рантайма резолвится из трёх источников по
+строгому приоритету:
+
+```
+explicit runtime.init(n>0)  >  ENV NOVA_MAXPROCS  >  uv_available_parallelism()
+```
+
+- **explicit** — аргумент `runtime.init(n)` при `n > 0`.
+- **`NOVA_MAXPROCS`** — переменная окружения (аналог `GOMAXPROCS` в Go).
+  Невалидное значение (не целое / ≤ 0 / overflow) → диагностика на
+  stderr + fallback на auto-detect (НЕ abort процесса).
+- **auto-detect** — `uv_available_parallelism()` (libuv 1.52, уже
+  cgroup- и affinity-aware).
+
+Результат клэмпится в **[1, 1024]**. Запрос выше потолка (любой
+источник) → клэмп до 1024 + диагностика на stderr.
+
+`runtime.maxprocs()` возвращает резолвнутую цель (даже до `runtime.init`
+и после `runtime.shutdown`); `runtime.worker_count()` — фактически
+поднятые потоки.
+
+### Почему
+
+- Паритет с Go: `GOMAXPROCS` — стандартный способ управления
+  параллелизмом; `NOVA_MAXPROCS` повторяет семантику и стиль имени
+  (`NOVA_*`, как `NOVA_TARGET_OS`).
+- `uv_available_parallelism()` уже корректен в контейнерах (cgroup-
+  квота, CPU affinity) — переизобретать через `sysconf`/`GetSystemInfo`
+  было бы регрессией по cgroup-корректности.
+- explicit > env: явный код важнее окружения. env > auto: оператор
+  деплоя может переопределить без пересборки.
+- Клэмп [1, 1024]: 1 — минимум осмысленного пула; 1024 — потолок,
+  выше которого запрос почти наверняка ошибка конфигурации, которую
+  честнее диагностировать, чем исполнять.
+
+### Известная дельта vs Go
+
+cgroup-квота читается **один раз** при резолве (на `runtime.init` либо
+первом `runtime.maxprocs()`). Go 1.25+ перечитывает квоту динамически и
+ресайзит пул на лету. Динамический re-read — followup Plan 83.x
+(требует Ф.4 lazy-spawn V2 с инкрементальным ростом пула). Для деплоев
+с фиксированным лимитом контейнера (норма) статическое чтение корректно.
+
+### Связь
+
+- Plan 83.1 (M:N-инфраструктура) — реализация.
+- Plan 83.2 — перевод M:N в дефолт (отдельное решение, gated на Plan 82).
+- D98 / D103 — M:N-рантайм (per-worker loop, preemption).

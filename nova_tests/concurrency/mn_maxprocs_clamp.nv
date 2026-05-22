@@ -1,0 +1,15 @@
+// Plan 83.1 Ф.3: clamp [1, 1024] — проверка верхней границы без спавна.
+//
+// runtime.maxprocs() прогоняет резолвер, но НЕ поднимает worker-потоки,
+// поэтому clamp-границу можно проверить без 1024 реальных OS-потоков.
+// NOVA_MAXPROCS=2000 > потолка 1024 → maxprocs() возвращает 1024 +
+// диагностику на stderr.
+// ENV NOVA_MAXPROCS=2000
+// EXPECT_STDERR clamped to NOVA_MAXPROCS limit
+
+module concurrency.mn_maxprocs_clamp
+
+test "above-limit NOVA_MAXPROCS is clamped to 1024" {
+    assert(runtime.maxprocs() == 1024)
+    assert(!runtime.is_initialized())
+}
