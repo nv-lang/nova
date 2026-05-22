@@ -8,12 +8,15 @@
 > по числу fiber'ов с Go (§3). Редакция 3 — верификация против
 > `runtime.c`/`alloc_boehm.c`/Boehm 8.2.8, GC-дизайн на проверенных API,
 > подпроблема П5 (GC↔switch атомарность).
-> **Статус:** 🟢 **Ф.0–Ф.3 ✅ ЗАВЕРШЕНЫ (2026-05-22).** Windows
+> **Статус:** 🟢 **Ф.0–Ф.5 ✅ ЗАВЕРШЕНЫ (2026-05-22).** Windows
 > fiber-стеки переведены с minicoro-default calloc на lazy-commit
 > large-reserve arena (`fiber_arena_win.c`) с полной GC-интеграцией;
 > arena сделана **M:N-safe** (cross-thread migration, multi-worker GC).
-> Полный `nova test`: **1058 PASS / 0 FAIL / 56 SKIP** — 0 регрессий.
-> Standalone-харнессы зелёные на MSVC + clang-cl.
+> Полный `nova test`: **1065 PASS / 0 FAIL / 56 SKIP** — 0 регрессий
+> (Ф.4). Context-switch бенчмарк (`f5_ctxswitch_bench.c`): **16–20
+> ns/switch** — паритет с Boost.Context, arena 0 ns к переключению
+> (Ф.5). Standalone-харнессы зелёные на MSVC + clang-cl. Остаётся
+> **Ф.6** — spec + закрытие 44.3.
 > **Ф.1 и Ф.2 слиты** — Ф.1 в одиночку регрессирует: §1.6-допущение
 > «per-thread скан корректно покрывает running fiber» ОПРОВЕРГНУТО
 > эмпирически. Ключевые находки Ф.1/Ф.2: (1) `GC_push_all` не
@@ -23,8 +26,7 @@
 > atomic bitmap, address-based cross-thread dealloc, multi-arena
 > GC-колбэк (fiber-стеки + native-стеки всех worker'ов),
 > worker-арена lifecycle. Отчёт — `82-artifacts/f1-report.md`.
-> **Следующее: Ф.4** — тест-матрица §7; **Ф.5** — context-switch
-> бенчмарк (M:N на Windows уже работает); **Ф.6** — spec + закрытие 44.3.
+> **Следующее: Ф.6** — spec D97 + закрытие 44.3 + логи.
 > **Приоритет:** P2 — Windows работает для single-thread cooperative
 > (calloc-fallback), но без lazy-commit, без overflow-detection и **без
 > какой-либо GC-интеграции fiber-стеков** (§1.5 — подтверждено
@@ -595,12 +597,35 @@ single-thread форме:
 - `mco_current_co`/`mco_status` консистентность; home-scope pinning.
 - arena-aware dealloc мигрировавшего слота (§5.3).
 
-### Ф.4 — Production test matrix (~3 дня)
+### Ф.4 — Production test matrix — ✅ ЗАВЕРШЕНА 2026-05-22
+
+> Матрица §7 покрыта: полный `nova test` (clang) — **1065 PASS / 0 FAIL
+> / 56 SKIP**, 0 регрессий; негативный тест overflow
+> (`expected_runtime/fiber_stack_overflow.nv`) — детерминированный
+> `STATUS_STACK_OVERFLOW`, PASS; standalone C-харнессы (SEH, `/GS`,
+> `/guard:cf`, alloc/grow/`__chkstk`/reuse/overflow, GC-стресс) —
+> зелёные на MSVC + clang-cl. Полный `nova test` под MSVC-toolchain
+> не запускается — pre-existing баг `/Fo`-компоновки в `test_runner.rs`
+> (D8036, вне scope Plan 82); MSVC-покрытие fiber-арены — через
+> standalone-харнессы. Отчёт — `82-artifacts/f1-report.md` §8.
 
 Полная матрица §7 — обе toolchain (clang-cl + MSVC), оба режима
 (cooperative + M:N work-stealing).
 
-### Ф.5 — Включить M:N на Windows + parity-бенчмарк (~2 дня)
+### Ф.5 — M:N на Windows + context-switch бенчмарк — ✅ ЗАВЕРШЕНА 2026-05-22
+
+> M:N на Windows **уже исполняется реально** — побочный результат
+> Ф.1–Ф.3: arena-интеграция сделала `fibers.slot_count()` ненулевым на
+> Windows (16384), honest-sentinel `0` больше не срабатывает, M:N-тесты
+> исполняют настоящий путь (concurrency 75/75 incl `mn_*`).
+> Context-switch бенчмарк — `82-artifacts/f5_ctxswitch_bench.c`:
+> **16.4 ns/switch** (clang-cl) / **20.3 ns/switch** (MSVC) на
+> arena-стеке — в классе Boost.Context (~10–20 ns); дельта arena−calloc
+> +0.08…+1.3 ns (switch аллокатор-независим). TIB-своп — слагаемое
+> единиц ns. Nova bench-DSL для замера непригоден (codegen-баг
+> `Nova_Error_static_new()` с 0 аргументов в связке `bench`+`supervised`
+> — вне scope Plan 82) → standalone C-харнесс. Отчёт —
+> `82-artifacts/f1-report.md` §9.
 
 - Сейчас M:N-тесты на Windows платформо-агностичны (honest-sentinel `0`
   через `fibers.slot_count() == 0`). Сделать так, чтобы Windows реально
