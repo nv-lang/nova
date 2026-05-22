@@ -85,6 +85,18 @@ pub fn resolve<P: DependencyProvider>(
     provider: &P,
     root_deps: &[(PkgId, VersionReq)],
 ) -> Result<Resolution, ResolveError> {
+    resolve_with_preferences(provider, root_deps, &HashMap::new())
+}
+
+/// Plan 03.2 Ф.4: вариант с `preferred` — предпочтительными версиями
+/// (обычно из `nova.lock`). Если предпочтённая версия пакета проходит
+/// все ограничения, резолвер берёт **её** (а не наибольшую) →
+/// воспроизводимость: lock держит версию, пока ограничения позволяют.
+pub fn resolve_with_preferences<P: DependencyProvider>(
+    provider: &P,
+    root_deps: &[(PkgId, VersionReq)],
+    preferred: &HashMap<PkgId, Version>,
+) -> Result<Resolution, ResolveError> {
     let mut constraints: HashMap<PkgId, Vec<Constraint>> = HashMap::new();
     for (pkg, req) in root_deps {
         constraints.entry(pkg.clone()).or_default().push(Constraint {
@@ -93,7 +105,7 @@ pub fn resolve<P: DependencyProvider>(
         });
     }
     let selected = HashMap::new();
-    let sel = solve(provider, constraints, selected)?;
+    let sel = solve(provider, constraints, selected, preferred)?;
     Ok(Resolution { selected: sel })
 }
 
@@ -104,6 +116,7 @@ fn solve<P: DependencyProvider>(
     provider: &P,
     constraints: HashMap<PkgId, Vec<Constraint>>,
     selected: HashMap<PkgId, Version>,
+    preferred: &HashMap<PkgId, Version>,
 ) -> Result<HashMap<PkgId, Version>, ResolveError> {
     // Выбрать ещё не решённый пакет. Детерминированный порядок (sorted)
     // — воспроизводимость резолва.
@@ -127,10 +140,20 @@ fn solve<P: DependencyProvider>(
         .map_err(ResolveError::Provider)?;
     versions.sort();
     versions.reverse();
-    let candidates: Vec<Version> = versions
+    let mut candidates: Vec<Version> = versions
         .into_iter()
         .filter(|v| reqs.iter().all(|c| c.req.matches(v)))
         .collect();
+
+    // Plan 03.2 Ф.4: предпочтённая (locked) версия — вперёд очереди,
+    // если она прошла все ограничения. Так lock держит версию, пока
+    // ограничения позволяют (highest-first срабатывает иначе).
+    if let Some(pref) = preferred.get(&pkg) {
+        if let Some(pos) = candidates.iter().position(|v| v == pref) {
+            let pv = candidates.remove(pos);
+            candidates.insert(0, pv);
+        }
+    }
 
     if candidates.is_empty() {
         return Err(ResolveError::Conflict(explain_no_version(provider, &pkg, reqs)));
@@ -178,7 +201,7 @@ fn solve<P: DependencyProvider>(
             continue; // backtrack — следующий кандидат
         }
 
-        match solve(provider, next_constraints, next_selected) {
+        match solve(provider, next_constraints, next_selected, preferred) {
             Ok(res) => return Ok(res),
             Err(ResolveError::Provider(m)) => return Err(ResolveError::Provider(m)),
             Err(ResolveError::Conflict(m)) => {
