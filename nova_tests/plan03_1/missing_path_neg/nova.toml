@@ -1,0 +1,10 @@
+# Plan 03.1 Ф.3 fixture — path-зависимость на несуществующую директорию.
+[package]
+name = "missing_path_pkg"
+version = "0.1.0"
+
+[lib]
+src = "."
+
+[dependencies]
+gonelib = { path = "../does_not_exist" }

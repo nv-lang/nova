@@ -559,7 +559,79 @@ fn resolve_one(
         }
     };
 
-    let resolved_paths = resolve_module_paths(&imp.path, entry_dir, repo, stdlib_dir, include_test_peers, rel_root.as_deref())
+    // Plan 03.1 Ф.3: межпакетный резолв. Если первый сегмент import-пути
+    // — объявленная `[dependencies]`-зависимость пакета импортирующего
+    // файла, резолв идёт в дереве этой зависимости (а не через repo-root).
+    // Относительный импорт (Plan 84) границу пакета не пересекает — для
+    // него dep-резолв неприменим (`rel_root.is_some()` ⇒ пропуск).
+    let dep_root: Option<PathBuf> = if rel_root.is_some() || imp.path.is_empty() {
+        None
+    } else {
+        match lookup_dependency(importer_path, &imp.path[0]) {
+            DepLookup::NotADep => None,
+            DepLookup::PathDep(root) => {
+                // Импорт из зависимости — всегда полным путём
+                // `<dep>.<module>...` (минимум 2 сегмента).
+                if imp.path.len() < 2 {
+                    return Err(anyhow!(
+                        "импорт из зависимости `{}` требует путь к модулю: \
+                         `import {}.<module>...`\n  \
+                         importing file: {}\n  \
+                         hint: голое имя пакета не адресует модуль (D29)",
+                        imp.path[0], imp.path[0], importer_path.display(),
+                    ));
+                }
+                Some(root)
+            }
+            DepLookup::GitError(msg) => return Err(anyhow!(
+                "{}\n  \
+                 importing file: {}",
+                msg, importer_path.display(),
+            )),
+            DepLookup::RegistryDep(ver) => return Err(anyhow!(
+                "зависимость `{}` задана registry-версией `{}`, но registry \
+                 ещё нет\n  \
+                 importing file: {}\n  \
+                 hint: используйте `{{ path = \"...\" }}`; registry — \
+                 Plan 03.3",
+                imp.path[0], ver, importer_path.display(),
+            )),
+            DepLookup::InvalidDep(raw) => return Err(anyhow!(
+                "некорректная запись `[dependencies]` для `{}`: {}\n  \
+                 importing file: {}\n  \
+                 hint: ожидается `{{ path = \"...\" }}` либо \
+                 `{{ git = \"...\", rev|tag|branch = \"...\" }}`",
+                imp.path[0], raw, importer_path.display(),
+            )),
+            DepLookup::PathMissing(p) => return Err(anyhow!(
+                "path-зависимость `{}` указывает на несуществующую \
+                 директорию\n  \
+                 expected:       {}\n  \
+                 importing file: {}\n  \
+                 hint: проверьте `path` в `[dependencies]`",
+                imp.path[0], p, importer_path.display(),
+            )),
+            DepLookup::NoManifest(p) => return Err(anyhow!(
+                "path-зависимость `{}`: директория не содержит `nova.toml`\n  \
+                 directory:      {}\n  \
+                 importing file: {}\n  \
+                 hint: зависимость должна быть Nova-пакетом — со своим \
+                 `nova.toml` и `[package].name`",
+                imp.path[0], p, importer_path.display(),
+            )),
+            DepLookup::NameMismatch { key, actual } => return Err(anyhow!(
+                "имя зависимости `{}` не совпадает с `[package].name` = `{}` \
+                 в её `nova.toml`\n  \
+                 importing file: {}\n  \
+                 hint: ключ в `[dependencies]` должен совпадать с именем \
+                 пакета зависимости (Plan 03.1 §3.2)",
+                key, actual, importer_path.display(),
+            )),
+            DepLookup::ConfigError(msg) => return Err(anyhow!("{}", msg)),
+        }
+    };
+
+    let resolved_paths = resolve_module_paths(&imp.path, entry_dir, repo, stdlib_dir, include_test_peers, rel_root.as_deref(), dep_root.as_deref())
         .map_err(|err| {
             // Plan 42 правило L: diagnostic quality. Plan 42.08 Ф.2: ambiguous
             // case теперь явно диагностируется.
@@ -600,6 +672,23 @@ fn resolve_one(
                             imp.path.join("."),
                             importing,
                             rr.join(imp.path.iter().collect::<PathBuf>()).display(),
+                        )
+                    } else if let Some(dr) = &dep_root {
+                        // Plan 03.1 Ф.3: импорт из зависимости не нашёлся —
+                        // сообщение про дерево зависимости, не про
+                        // candidate-roots текущего пакета.
+                        anyhow!(
+                            "cannot find module `{}` in dependency `{}`\n  \
+                             imported from: module `{}`\n  \
+                             searched in:   {}\n  \
+                             hint: проверьте, что модуль существует в дереве \
+                             зависимости `{}` (полный путь импорта — `{}`)",
+                            imp.path[1..].join("."),
+                            imp.path[0],
+                            importing,
+                            dr.join(imp.path[1..].iter().collect::<PathBuf>()).display(),
+                            imp.path[0],
+                            imp.path.join("."),
                         )
                     } else {
                     let suggestion = suggest_module_name(
@@ -645,6 +734,45 @@ fn resolve_one(
                 ),
             }
         })?;
+
+    // Plan 03.1 Ф.3: ужесточение repo-root looseness (§3.2). Если импорт
+    // НЕ относительный и НЕ через объявленную `[dependencies]`-зависимость,
+    // но резолвится в файл ДРУГОГО пакета (иной `package_root_of`), — это
+    // неявный межпакетный импорт через repo-root candidate. Запрещаем:
+    // межпакетные ссылки обязаны идти через `[dependencies]` (explicit
+    // dependency-граф). `std` — исключение (неявный stdlib-пакет).
+    if rel_root.is_none()
+        && dep_root.is_none()
+        && imp.path.first().map(|s| s != "std").unwrap_or(false)
+    {
+        if let (Some(ip), Some(rp)) = (
+            package_root_of(importer_path),
+            package_root_of(&resolved_paths[0]),
+        ) {
+            let ip_c = ip.canonicalize().unwrap_or_else(|_| ip.clone());
+            let rp_c = rp.canonicalize().unwrap_or_else(|_| rp.clone());
+            if ip_c != rp_c {
+                let importing = import_chain.last()
+                    .map(|m| m.join("."))
+                    .unwrap_or_else(|| "<entry>".to_string());
+                return Err(anyhow!(
+                    "import `{}` пересекает границу пакета без объявления в \
+                     `[dependencies]`\n  \
+                     importing package: {}\n  \
+                     resolved package:  {}\n  \
+                     importing module:  {}\n  \
+                     hint: межпакетные импорты должны быть объявлены в \
+                     `[dependencies]` (Plan 03.1 §3.2) — workspace-членство \
+                     само по себе не делает пакет импортируемым; для модулей \
+                     своего пакета используйте путь от его корня",
+                    imp.path.join("."),
+                    ip_c.display(),
+                    rp_c.display(),
+                    importing,
+                ));
+            }
+        }
+    }
 
     // Plan 84 Ф.3: peer-collision — относительный импорт, резолвящийся в
     // модуль самого импортирующего файла (self-import либо peer того же
@@ -1337,6 +1465,118 @@ fn package_root_of(file: &Path) -> Option<PathBuf> {
     }
 }
 
+/// Plan 03.1 Ф.3: результат поиска первого сегмента import-пути среди
+/// объявленных `[dependencies]` пакета импортирующего файла.
+enum DepLookup {
+    /// Имя не объявлено как зависимость — обычный intra-package резолв.
+    NotADep,
+    /// `path`- либо `git`-зависимость: source root дерева зависимости
+    /// (для `git` — внутри checkout'а в кэше, Plan 03.1 Ф.2).
+    PathDep(PathBuf),
+    /// `git`-зависимость не материализовалась (clone/fetch/checkout
+    /// упали либо пин не резолвится). Сообщение готово к показу.
+    GitError(String),
+    /// registry-версия — registry появится в Plan 03.3.
+    RegistryDep(String),
+    /// Запись `[dependencies]` синтаксически некорректна.
+    InvalidDep(String),
+    /// `path`-зависимость указывает на несуществующую директорию.
+    PathMissing(String),
+    /// Директория `path`-зависимости не содержит `nova.toml`.
+    NoManifest(String),
+    /// Имя ключа в `[dependencies]` ≠ `[package].name` зависимости.
+    NameMismatch { key: String, actual: String },
+    /// `[dependencies]` пакета содержит ошибку конфигурации
+    /// (зарезервированное имя `std`, дубль имени). Сообщение готово к показу.
+    ConfigError(String),
+}
+
+/// Plan 03.1 Ф.3: ищет `dep_name` среди `[dependencies]` пакета, которому
+/// принадлежит `importer_path` (директория ближайшего `nova.toml`).
+///
+/// - `std` — никогда не зависимость (неявный stdlib-пакет, как Rust `std`).
+/// - Для `path`-deps возвращает source root дерева зависимости.
+/// - Валидирует `[dependencies]` целиком: имя `std` зарезервировано,
+///   дубли имён запрещены (§3.2) — ошибка возвращается независимо от
+///   того, какой именно `dep_name` ищется.
+fn lookup_dependency(importer_path: &Path, dep_name: &str) -> DepLookup {
+    if dep_name == "std" {
+        return DepLookup::NotADep;
+    }
+    let Some(pkg_dir) = package_root_of(importer_path) else {
+        return DepLookup::NotADep;
+    };
+    let toml = pkg_dir.join("nova.toml");
+    let Some(manifest) = crate::manifest::parse_manifest(&toml, &pkg_dir) else {
+        return DepLookup::NotADep;
+    };
+    // Валидация `[dependencies]` целиком (§3.2) — до поиска конкретной
+    // записи: ошибка конфигурации должна сорвать любой импорт пакета.
+    let mut seen: HashSet<&str> = HashSet::new();
+    for d in &manifest.dependencies {
+        if d.name == "std" {
+            return DepLookup::ConfigError(format!(
+                "`std` — зарезервированное имя (неявный stdlib-пакет); \
+                 нельзя объявлять его в `[dependencies]`\n  \
+                 nova.toml: {}",
+                toml.display(),
+            ));
+        }
+        if !seen.insert(d.name.as_str()) {
+            return DepLookup::ConfigError(format!(
+                "зависимость `{}` объявлена в `[dependencies]` дважды\n  \
+                 nova.toml: {}",
+                d.name, toml.display(),
+            ));
+        }
+    }
+    let Some(dep) = manifest.dependencies.iter().find(|d| d.name == dep_name) else {
+        return DepLookup::NotADep;
+    };
+    match &dep.source {
+        crate::manifest::DepSource::Path(rel) => {
+            let dep_dir = pkg_dir.join(rel);
+            if !dep_dir.is_dir() {
+                return DepLookup::PathMissing(dep_dir.display().to_string());
+            }
+            finalize_dep_pkg(&dep_dir, dep_name)
+        }
+        crate::manifest::DepSource::Git { url, pin } => {
+            // Plan 03.1 Ф.2: материализуем git-зависимость в кэше и
+            // дальше резолвим её как обычный пакет на диске.
+            match crate::git_cache::resolve_git_dep(url, pin, None) {
+                Ok(res) => finalize_dep_pkg(&res.checkout, dep_name),
+                Err(e) => DepLookup::GitError(format!(
+                    "git-зависимость `{}`: {}",
+                    dep_name, e,
+                )),
+            }
+        }
+        crate::manifest::DepSource::Registry(v) => DepLookup::RegistryDep(v.clone()),
+        crate::manifest::DepSource::Invalid(raw) => DepLookup::InvalidDep(raw.clone()),
+    }
+}
+
+/// Plan 03.1 Ф.2/Ф.3: довести каталог зависимости (path-каталог либо
+/// git-checkout) до `DepLookup`: проверить наличие `nova.toml`, разобрать
+/// его и сверить `[package].name` с именем-ключом зависимости.
+fn finalize_dep_pkg(dep_dir: &Path, dep_name: &str) -> DepLookup {
+    let dep_toml = dep_dir.join("nova.toml");
+    if !dep_toml.is_file() {
+        return DepLookup::NoManifest(dep_dir.display().to_string());
+    }
+    let Some(dep_manifest) = crate::manifest::parse_manifest(&dep_toml, dep_dir) else {
+        return DepLookup::NoManifest(dep_dir.display().to_string());
+    };
+    if dep_manifest.package_name != dep_name {
+        return DepLookup::NameMismatch {
+            key: dep_name.to_string(),
+            actual: dep_manifest.package_name,
+        };
+    }
+    DepLookup::PathDep(dep_manifest.source_root)
+}
+
 fn resolve_module_paths(
     parts: &[String],
     entry_dir: &Path,
@@ -1346,6 +1586,11 @@ fn resolve_module_paths(
     // Plan 84: для относительного импорта (`./` / `../`) caller передаёт
     // вычисленную директорию-root; `None` — обычный candidate-поиск.
     rel_root: Option<&Path>,
+    // Plan 03.1 Ф.3: для импорта из объявленной `[dependencies]`-зависимости
+    // caller передаёт source root дерева зависимости; первый сегмент
+    // import-пути (имя пакета) при этом отбрасывается. `None` — обычный
+    // intra-package резолв.
+    dep_root: Option<&Path>,
 ) -> Result<Vec<PathBuf>, ResolveErr> {
     if parts.is_empty() {
         return Err(ResolveErr::NotFound);
@@ -1354,9 +1599,13 @@ fn resolve_module_paths(
 
     // Candidate search roots. Plan 84: для относительного импорта —
     // единственный root = вычисленная caller'ом директория (без
-    // candidate-поиска и без std-special-case).
+    // candidate-поиска и без std-special-case). Plan 03.1 Ф.3: для
+    // импорта из зависимости — единственный root = source root дерева
+    // зависимости (первый сегмент import-пути — имя пакета — отброшен).
     let roots: Vec<PathBuf> = if let Some(rr) = rel_root {
         vec![rr.to_path_buf()]
+    } else if let Some(dr) = dep_root {
+        vec![dr.to_path_buf()]
     } else {
         let mut rs = vec![entry_dir.to_path_buf(), repo.to_path_buf()];
         if parts[0] == "std" && parts.len() >= 2 {
@@ -1366,12 +1615,25 @@ fn resolve_module_paths(
     };
 
     for root in &roots {
-        // Translate path: для stdlib_dir мы пропускаем первый `std` segment.
+        // Translate path: для stdlib_dir пропускаем первый `std` segment;
+        // Plan 03.1 Ф.3: для dep_root пропускаем первый сегмент (имя
+        // пакета-зависимости) — файлы лежат от source root зависимости.
         let local_rel: PathBuf = if root == stdlib_dir && parts[0] == "std" {
+            parts[1..].iter().collect()
+        } else if dep_root.is_some() {
             parts[1..].iter().collect()
         } else {
             rel_path.clone()
         };
+
+        // Plan 03.1 Ф.3: `verify_case` сверяет с диском ТОЛЬКО сегменты,
+        // реально соответствующие компонентам пути. Для stdlib и для
+        // импорта из зависимости первый сегмент (`std` / имя пакета) —
+        // логический, не имя директории, и в `local_rel` он отброшен.
+        let strip_first =
+            (root == stdlib_dir && parts[0] == "std") || dep_root.is_some();
+        let verify_parts: &[String] =
+            if strip_first { &parts[1..] } else { &parts[..] };
 
         let single_file = root.join(local_rel.with_extension("nv"));
         let folder = root.join(&local_rel);
@@ -1478,7 +1740,7 @@ fn resolve_module_paths(
         if file_exists {
             // Plan 81 Ф.4: сверка регистра пути с диском.
             if let Some((requested, actual)) =
-                verify_case(&single_file, parts, true)
+                verify_case(&single_file, verify_parts, true)
             {
                 return Err(ResolveErr::CaseMismatch { requested, actual });
             }
@@ -1525,7 +1787,7 @@ fn resolve_module_paths(
             if !peers.is_empty() {
                 // Plan 81 Ф.4: сверка регистра пути с диском (папка).
                 if let Some((requested, actual)) =
-                    verify_case(&folder, parts, false)
+                    verify_case(&folder, verify_parts, false)
                 {
                     return Err(ResolveErr::CaseMismatch { requested, actual });
                 }
