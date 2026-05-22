@@ -745,9 +745,13 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
     let rt_alloc = opts.rt_dir.join(opts.gc_kind.alloc_c_name());
     let rt_effects = opts.rt_dir.join("effects.c");
     let rt_fibers = opts.rt_dir.join("fibers.c");
-    // Plan 44.2 Etap 1: fiber stack arena (Linux/macOS only — Windows
-    // compiles но содержит no-op marker; включаем для всех toolchain'ов).
+    // Plan 44.2 Etap 1: fiber stack arena POSIX (mmap). Windows-branch
+    // файла — no-op marker.
     let rt_fiber_arena = opts.rt_dir.join("fiber_arena.c");
+    // Plan 82 Ф.1: fiber stack arena Windows (VirtualAlloc lazy-commit).
+    // POSIX-branch файла — no-op marker. Оба файла линкуются всегда,
+    // каждый — пустой TU вне своей ОС.
+    let rt_fiber_arena_win = opts.rt_dir.join("fiber_arena_win.c");
     // Plan 44.2 Etap 3: cross-platform stats wrappers for std.runtime.fibers.
     let rt_fiber_stats = opts.rt_dir.join("fiber_stats.c");
     // Plan 44 Этап 0: M:N runtime (opt-in через nova_runtime_init).
@@ -938,6 +942,7 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
             c.arg(&rt_effects);
             c.arg(&rt_fibers);
             c.arg(&rt_fiber_arena);  /* Plan 44.2 Etap 1 */
+            c.arg(&rt_fiber_arena_win);  /* Plan 82 Ф.1 */
             c.arg(&rt_fiber_stats);  /* Plan 44.2 Etap 3 */
             c.arg(&rt_runtime);      /* Plan 44 Этап 0 */
             c.arg(&rt_typeid);       /* Plan 61 Ф.1 */
@@ -987,6 +992,7 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
             c.arg(&rt_effects);
             c.arg(&rt_fibers);
             c.arg(&rt_fiber_arena);  /* Plan 44.2 Etap 1 */
+            c.arg(&rt_fiber_arena_win);  /* Plan 82 Ф.1 */
             c.arg(&rt_fiber_stats);  /* Plan 44.2 Etap 3 */
             c.arg(&rt_runtime);      /* Plan 44 Этап 0 */
             c.arg(&rt_typeid);       /* Plan 61 Ф.1 */
@@ -1044,6 +1050,7 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
             c.arg(&rt_effects);
             c.arg(&rt_fibers);
             c.arg(&rt_fiber_arena);  /* Plan 44.2 Etap 1 */
+            c.arg(&rt_fiber_arena_win);  /* Plan 82 Ф.1 */
             c.arg(&rt_fiber_stats);  /* Plan 44.2 Etap 3 */
             c.arg(&rt_runtime);      /* Plan 44 Этап 0 */
             c.arg(&rt_typeid);       /* Plan 61 Ф.1 */

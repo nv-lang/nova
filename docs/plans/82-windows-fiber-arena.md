@@ -8,23 +8,22 @@
 > по числу fiber'ов с Go (§3). Редакция 3 — верификация против
 > `runtime.c`/`alloc_boehm.c`/Boehm 8.2.8, GC-дизайн на проверенных API,
 > подпроблема П5 (GC↔switch атомарность).
-> **Статус:** 🟢 Ф.0 re-diagnosis ✅ **ЗАВЕРШЕНА (2026-05-22) — GO на
-> Ф.1.** Подтверждено: §1.2, §1.3, модель §5.2, §1.6 (заголовки +
-> линковка gc.lib + win32_threads.c VirtualQuery-clamp), primitives
-> памяти, toolchain-SEH. **DECISION POINT test (a): ПУТЬ A** — ядро
-> растит non-primary minicoro-стек штатно; **обязателен патч
-> `ctx.stack_limit`** на committed_low (без него `__chkstk`-код крашит
-> на MSVC). VEH для happy-path НЕ нужен. **test (d)** — аномалия
-> Попыток 3-4 НЕ воспроизведена на standalone-реплике дизайна 44.3
-> Поп.4 (arena 256K / commit-on-first / reuse / no-decommit): объяснена
-> как баг интеграционного arena-кода, не фундаментальный блокер.
-> **test (e)** — SEH на fiber-стеках корректен и детерминирован на обеих
-> toolchain (handler-within-fiber ловит; TIB-своп даёт верные bounds;
-> `RtlVirtualUnwind`-walk bounded; cross-boundary exception → чистый
-> краш, не hang). Standalone-харнесс — `82-artifacts/` (`f0_probe.c`,
-> `f0_gc_link.c`, `f0_test_a.c`, `f0_test_d.c`, `f0_test_e.c`,
-> `f0-rediagnosis.md`). **Следующее: Ф.1** — Windows arena allocation +
-> overflow detection.
+> **Статус:** 🟢 **Ф.0 + Ф.1 + Ф.2 ✅ ЗАВЕРШЕНЫ (2026-05-22).** Windows
+> fiber-стеки переведены с minicoro-default calloc на lazy-commit
+> large-reserve arena (`fiber_arena_win.c`) с полной GC-интеграцией.
+> Полный `nova test`: **1058 PASS / 0 FAIL / 56 SKIP** — 0 регрессий.
+> Standalone-харнессы зелёные на MSVC + clang-cl.
+> **Ф.1 и Ф.2 слиты в одну поставку** — Ф.1 в одиночку регрессирует:
+> §1.6-допущение «per-thread скан корректно покрывает running fiber»
+> ОПРОВЕРГНУТО эмпирически (объект на arena-стеке fiber'а собирается GC;
+> §9-риск-3 это предусматривал). Ключевые находки Ф.1/Ф.2:
+> (1) `GC_push_all` не масштабируется — тысячи вызовов вешают Boehm на
+> ~2048 fiber'ах → `GC_push_all_eager`; (2) idle-batch decommit по
+> 32-128 GB-диапазону деградирует → послотный decommit; (3) slot_count
+> 4096→16384 (Windows). Отчёт — `82-artifacts/f1-report.md`. Артефакты:
+> `f1_arena_test.c`, `f1_gc_test.c`.
+> **Следующее: Ф.3** — cross-thread migration; **Ф.4** — тест-матрица;
+> **Ф.5** — M:N на Windows; **Ф.6** — spec + закрытие 44.3.
 > **Приоритет:** P2 — Windows работает для single-thread cooperative
 > (calloc-fallback), но без lazy-commit, без overflow-detection и **без
 > какой-либо GC-интеграции fiber-стеков** (§1.5 — подтверждено
@@ -528,7 +527,12 @@ A и завершённого на B, должен освобождаться в
 5. **Выход Ф.0:** `82-artifacts/f0-rediagnosis.md` — A или B; объяснение
    Попыток 3–4; подтверждение §1.6; go/no-go на Ф.1.
 
-### Ф.1 — Windows arena allocation + overflow detection (~3–4 дня)
+### Ф.1 — Windows arena allocation + overflow detection — ✅ ЗАВЕРШЕНА 2026-05-22
+
+> Реализовано в `fiber_arena_win.c` (путь A + патч `ctx.stack_limit`,
+> §5.1-раскладка, VEH-диагностика, послотный decommit, `FlsAlloc`).
+> **Слита с Ф.2** — Ф.1 в одиночку регрессирует (§1.6 опроверг­нут).
+> Полный отчёт + находки — `82-artifacts/f1-report.md`.
 
 `fiber_arena_win.c`:
 - `VirtualAlloc(MEM_RESERVE)` арены; lazy commit выбранным путём (A/B).
@@ -543,7 +547,19 @@ A и завершённого на B, должен освобождаться в
 - `_NOVA_MCO_DESC_INIT` Windows-ветка; `NOVA_FIBER_ARENA_ENABLED=1`.
 - `test_runner.rs`: линковать `fiber_arena_win.c` под Windows.
 
-### Ф.2 — GC integration: registry + precise push (~3–4 дня)
+### Ф.2 — GC integration: registry + precise push — ✅ ЗАВЕРШЕНА 2026-05-22 (single-thread core)
+
+> Реализован `GC_set_push_other_roots`-колбэк в `fiber_arena_win.c`:
+> precise push закоммиченных диапазонов каждого живого fiber'а +
+> native-стека main-thread'а. Реестр живых fiber'ов = `used_bits`
+> арены (отдельный интрузивный список §5.2 (1) не нужен для
+> single-thread). **Находка:** `GC_push_all` не масштабируется →
+> `GC_push_all_eager`. **Отложено в Ф.5:** обход всех per-thread арен +
+> suspended worker-стеков под M:N (см. `simplifications.md`
+> [M-82-gc-mn-deferred]). Отчёт — `82-artifacts/f1-report.md`.
+
+Исходный план фазы (registry + push) — реализован в упрощённой
+single-thread форме:
 
 - `fiber_gc_win.c`: глобальный реестр fiber'ов (§5.2 (1)); register/
   unregister-хуки в `fibers.h`/`runtime.c` под `GC_call_with_alloc_lock`.

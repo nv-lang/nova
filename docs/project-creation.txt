@@ -18278,3 +18278,63 @@ effect_matrix (Plan 45).
 (nova info, --diff, nova build с forbid-нарушением). Suite: 1058 PASS
 / 0 FAIL — 0 регрессий. Plan 03.4 ✅ ЗАКРЫТ. Plan 03: 03.1 ✅ 03.2 ✅
 03.4 ✅; остаются 03.3/03.5/03.6 (registry-инфраструктура).
+
+### Plan 82 Ф.1 + Ф.2 — Windows fiber arena + GC-интеграция (2026-05-22)
+
+Windows fiber-стеки переведены с minicoro-default calloc (fixed 56 KB,
+без guard, без GC-видимости) на lazy-commit large-reserve arena с полной
+GC-интеграцией. Новый рантайм-файл compiler-codegen/nova_rt/
+fiber_arena_win.c.
+
+Ф.1 — arena. VirtualAlloc(MEM_RESERVE) 16384 слота × 8 MB = 128 GB
+виртуального резерва на поток (нулевой commit-charge). Путь A —
+OS-native grow (после TIB-свопа minicoro-asm'а ядро растит коро-стек
+штатно). Раскладка слота §5.1: hard guard 16K reserved (backstop от
+stack-clash) / minicoro-header commit / reserved-grown / initial window
+commit + PAGE_GUARD. Патч ctx.stack_limit после mco_create
+(nova_fiber_post_create в fibers.c) — обязателен (Ф.0 test a). VEH —
+диагностика overflow (STATUS_STACK_OVERFLOW / arena-AV → «fiber stack
+overflow in slot N»). FlsAlloc-cleanup при выходе потока.
+
+Ф.2 — GC-интеграция. GC_set_push_other_roots-колбэк: на mark-фазе пушит
+закоммиченные диапазоны каждого живого fiber'а + native-стек
+main-thread'а. Реестр живых fiber'ов = used_bits арены.
+
+ГЛАВНАЯ НАХОДКА: Ф.1 в одиночку РЕГРЕССИРУЕТ. §1.6-допущение «штатный
+per-thread скан Boehm + VirtualQuery-clamp корректно покрывает running
+fiber на arena-стеке» опровергнуто эмпирически (харнесс f1_gc_test T1 —
+объект на коро-стеке собирается GC, UAF). С calloc'ом работало случайно
+(over-scan через C-heap); arena лежит в 128 GB-регионе далеко — over-scan
+не покрывает. §9-риск-3 это предусматривал. Ф.1 и Ф.2 слиты в одну
+поставку.
+
+НАХОДКА 2: GC_push_all не масштабируется — тысячи вызовов из колбэка
+переполняют Boehm mark-stack, вешают сборку на ~2048 fiber'ах (харнесс
+T4, повторял sleep_bench). Фикс: GC_push_all_eager — сканирует диапазон
+немедленно, без накопления дескрипторов. 12000 fiber'ов + GC → OK.
+
+НАХОДКА 3: idle-batch decommit по [base, high_water*slot_size) на Windows
+деградирует — VirtualFree(MEM_DECOMMIT) по 32-128 GB-диапазону при
+fiber-churn'е (sleep_bench 10k) вешал тест >160 сек. Отличие от Linux
+(madvise по NORESERVE-VMA дёшев). Фикс: послотный decommit при reuse.
+
+НАХОДКА 4: slot_count 4096 мал — sleep_bench спавнит 10k одновременных
+fiber'ов. Windows slot_count = 16384 (план §3: реальный потолок 4k-16k).
+
+Standalone-харнессы 82-artifacts/{f1_arena_test.c, f1_gc_test.c} —
+зелёные на MSVC + clang-cl (alloc/grow/__chkstk/reuse/overflow/lazy-
+commit; GC изнутри коро-стека / на глубине / round-robin / 12000
+fiber'ов + GC). Полный nova test: 1058 PASS / 0 FAIL / 56 SKIP —
+0 регрессий (все gc_*, supervised_*, channels, select_*, sleep_bench
+зелёные).
+
+Изменено: fiber_arena.h (NOVA_FIBER_ARENA_ENABLED + _WIN32, slot_count
+16384, nova_fiber_committed_low decl), fiber_arena.c (внутренний guard
+сужен до POSIX, committed_low-stub), fibers.h/.c (arena-ветка
+_NOVA_MCO_DESC_INIT + nova_fiber_post_create), runtime.c (post_create
+после spawn_global mco_create), test_runner.rs (линковка
+fiber_arena_win.c). Отчёт — 82-artifacts/f1-report.md. simplifications.md:
+D97 ✅ ЗАКРЫТО; добавлен [M-82-gc-mn-deferred] (M:N GC-coverage → Ф.5).
+
+Осталось: Ф.3 cross-thread migration, Ф.4 тест-матрица, Ф.5 M:N на
+Windows, Ф.6 spec D97 + закрытие 44.3.
