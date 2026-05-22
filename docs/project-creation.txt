@@ -17517,3 +17517,35 @@ Worktree nova-p85, ветка plan-85.
   (impl From for ...) — тесты написаны по фактическому синтаксису
   Nova (структурные протоколы, static fn T.from, без impl-блоков).
 Suite: protocols/conversion 9 PASS / 0 FAIL.
+
+=== Plan 85.4 — тестовое покрытие протоколов сравнения (2026-05-22) ===
+Worktree nova-p85, ветка plan-85.
+- Новый каталог nova_tests/protocols/comparison/ — 7 файлов:
+  hashable, equatable, comparable, ordering, display, generic_bounds
+  (позитивные, 6) + neg_no_impl (негативный, EXPECT_COMPILE_ERROR
+  does not satisfy).
+- Hashable / Equatable / Comparable / Display — user-defined impl
+  (структурные протоколы). Ordering (Less|Equal|Greater) как значение.
+  generic-bounds [T Hashable]/[T Equatable]/[T Comparable] +
+  multi-bound через именованный protocol.
+- НАЙДЕНЫ И ИСПРАВЛЕНЫ 3 codegen-бага (emit_c.rs):
+  1. char.hash() — `nova_char` отсутствовал в prim_builtin_method →
+     `.hash()` на char не находил builtin → mis-dispatch на user-метод
+     `hash` (последний в single-key реестре, Nova_UserId_method_hash)
+     → nova_char (int64) передавался как receiver-pointer → SEGFAULT.
+     Фикс: nova_char добавлен в hash/eq/lt/le/gt/ge ветки (nova_char
+     == int64 по Plan 70.3 → nova_int_hash).
+  2. == / != на типе с user-defined @eq эмитил `(l)->tag == (r)->tag`
+     (sum-type discriminant-сравнение), игнорируя D46 dispatch на @eq.
+     Для record-типов (нет поля tag) → невалидный C (CC-FAIL). Фикс:
+     перед tag-сравнением — lookup @eq в method_overloads, при наличии
+     instance-overload'а dispatch на него (== → метод, != → !метод).
+  3. apply_type_subst_to_ref возвращал None (→ caller void*) для
+     concrete non-primitive Named-типа в return-позиции generic-функции
+     (-> Ordering). На call-site результат типизировался void*, потом
+     `void*->tag` → CC-FAIL. Фикс: PascalCase-имя (D30) не-typeparam →
+     Nova_<name>* (user record/sum); lowercase не из known-списка —
+     по-прежнему None (примитив не угадываем); Self исключён.
+- Корректировка: примеры sub-плана 85.4 в Rust-стиле (impl ... for,
+  `;` в полях, `T A + B` multi-bound) — тесты по факту синтаксиса Nova.
+Suite: protocols/comparison 7 PASS / 0 FAIL.
