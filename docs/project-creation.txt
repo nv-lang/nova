@@ -17873,3 +17873,41 @@ return/break наружу из blocking{} (fix → Ф.5).
 несколько fiber'ов с offload'ом параллельно.
 
 Suite: 1036 PASS / 0 FAIL / 56 SKIP (+1 тест-файл blocking_offload_test, 0 регрессий).
+
+### Plan 83.3 Ф.2+Ф.3+Ф.5 — GC-safety + cancellation + тесты + spec — ЗАКРЫТ (2026-05-22)
+
+Закрытие Plan 83.3 целиком.
+
+Threadpool-sizing (leftover Ф.1): _nova_init_blocking_threadpool в
+eventloop.c, вызывается из nova_evloop_init до первого uv_queue_work.
+Читает NOVA_BLOCKING_THREADS (default 64) → UV_THREADPOOL_SIZE; явный
+пользовательский UV_THREADPOOL_SIZE уважается; невалидное значение →
+warning + default. libuv клампит к [1, 1024].
+
+Ф.2 GC-safety: V1 leaf-контракт зафиксирован в spec D50 §4. work_cb
+исполняется на threadpool-потоке (не Boehm-registered, не fiber) →
+тело blocking{} обязано быть leaf: без GC-аллокации, без вызовов в
+Nova-рантайм, без control-flow-escape наружу. V2 (GC-регистрация
+threadpool-потоков) отложена. Codegen не enforce'ит (V2); facet
+control-flow-escape ловится C-компилятором (return value/break/
+continue → invalid C в void _nova_blk_N). Маркер
+[M-83.3-blocking-control-flow-escape] консолидирован в V1-контракт
+[M-83.3-blocking-leaf-contract] — не отдельное упрощение.
+
+Ф.3 cancellation: механизм в Ф.1 (_nova_blocking_stop_cb + uv_cancel +
+nova_sched_register_pending). Не стартовавшая uv_work_t отменяется;
+in-flight доводится (industry-standard). after_work_cb отрабатывает
+всегда → fiber будится, дедлока нет. Семантика в spec D50 §4.
+
+Ф.5 тесты + spec:
+- blocking_pool_saturation_test.nv (// ENV NOVA_BLOCKING_THREADS=2 —
+  6 offload'ов на пул из 2 потоков → graceful queue);
+- blocking_cancel_test.nv (offload в supervised(cancel:) — без cancel
+  штатно / с cancel без дедлока / cancel после scope'а);
+- spec D50 §4 amended (Реализация Plan 83.3 + V1 leaf-контракт +
+  Cancellation), обновлена PARTIALLY-IMPLEMENTED-шапка D50.
+
+Plan 83.3 ✅ ЗАКРЫТ ЦЕЛИКОМ (Ф.0-Ф.5). Plan 83: 83.1 ✅ + 83.3 ✅;
+остаётся 83.2 (флип M:N, GATED на Plan 82).
+
+Suite: 1038 PASS / 0 FAIL / 56 SKIP (+2 тест-файла: pool_saturation + cancel, 0 регрессий).

@@ -1,0 +1,84 @@
+// blocking_cancel_test.nv — Plan 83.3 Ф.3: cancellation blocking-offload'а.
+//
+// `nova_blocking_offload` регистрирует stop_cb в pending-таблице scope'а
+// (D93). При отмене scope'а stop_cb вызывает `uv_cancel`:
+//   - не стартовавшая uv_work_t → отменяется, fiber будится с cancel;
+//   - in-flight C-вызов → НЕ прерывается (непрозрачен), доводится до
+//     конца, результат отбрасывается — industry-standard (Go/tokio).
+// В обоих случаях after_work_cb гарантированно отрабатывает → fiber
+// будится, дедлока нет.
+
+module concurrency.blocking_cancel_test
+
+fn busy(upto int) Blocking -> int {
+    let r = blocking {
+        let mut acc = 0
+        let mut i = 0
+        while i < upto {
+            acc = acc + 1
+            i = i + 1
+        }
+        acc
+    }
+    r
+}
+
+// ================================================================
+// SECTION 1: supervised(cancel:) без cancel() — blocking работает штатно
+// ================================================================
+
+test "blocking: offload in supervised(cancel:) — no cancel, runs normally" {
+    let tok = CancelToken.new()
+    let mut got = 0
+    supervised(cancel: tok) {
+        spawn { got = busy(50000) }
+    }
+    // Регистрация stop_cb в pending-таблице не ломает штатный путь.
+    assert(got == 50000)
+}
+
+// ================================================================
+// SECTION 2: cancel() + blocking-offload — без дедлока и крэша
+// ================================================================
+
+test "blocking: offload + scope cancel — after_work_cb always wakes, no deadlock" {
+    // spawn0 отменяет scope; spawn1 уводит блокирующую работу в threadpool.
+    // uv_cancel (stop_cb) отменяет не-стартовавшую работу либо позволяет
+    // in-flight доработать — after_work_cb отрабатывает в любом случае,
+    // fiber будится. Re-throw cancel'а на main приходит как nova_throw —
+    // оборачиваем в `with Fail` чтобы тест не abort'нулся.
+    let tok = CancelToken.new()
+    let mut reached_end = false
+    with Fail = handler Fail {
+        fail(_msg) {
+            interrupt ()
+        }
+    } {
+        supervised(cancel: tok) {
+            spawn { tok.cancel() }
+            spawn {
+                let _ = busy(50000)
+            }
+        }
+    }
+    // Достигли этой строки → cancel + blocking-offload завершились без
+    // дедлока (after_work_cb всегда будит fiber) и без крэша.
+    reached_end = true
+    assert(reached_end)
+}
+
+// ================================================================
+// SECTION 3: cancel ПОСЛЕ blocking-offload — токен переживает scope
+// ================================================================
+
+test "blocking: cancel() on finished scope after offload — harmless no-op" {
+    let tok = CancelToken.new()
+    let mut got = 0
+    supervised(cancel: tok) {
+        spawn { got = busy(30000) }
+    }
+    // scope завершён, токен отвязан — cancel() безвреден.
+    tok.cancel()
+    assert(got == 30000)
+    assert(tok.is_cancelled())
+}
