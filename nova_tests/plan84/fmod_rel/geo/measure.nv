@@ -1,0 +1,9 @@
+// Plan 84 Ф.5 — второй peer folder-module `geo/` (делает geo/ настоящим
+// folder-module из ≥2 peers).
+module nova_tests.plan84.fmod_rel.geo
+
+export fn tri_area(base int, height int) -> int => base * height / 2
+
+test "geo measure self-check" {
+    assert(tri_area(4, 6) == 12)
+}

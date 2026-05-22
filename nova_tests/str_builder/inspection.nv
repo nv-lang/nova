@@ -1,0 +1,131 @@
+// Plan 85.1 Ф.2 — StringBuilder non-consuming inspection.
+//
+// @starts_with(prefix) / @ends_with(suffix) / @is_empty() / @peek()
+// — все non-consuming: append после них продолжает работать.
+
+module str_builder.inspection
+
+
+// ── @is_empty ──────────────────────────────────────────────────────
+
+test "is_empty — true для свежего, false после append" {
+    let mut sb = StringBuilder.new()
+    assert(sb.is_empty())
+    sb.append("x")
+    assert(!sb.is_empty())
+}
+
+test "is_empty — append пустой строки оставляет пустым" {
+    let mut sb = StringBuilder.new()
+    sb.append("")
+    assert(sb.is_empty())
+}
+
+
+// ── @starts_with ───────────────────────────────────────────────────
+
+test "starts_with — совпадает префикс" {
+    let mut sb = StringBuilder.new()
+    sb.append("hello world")
+    assert(sb.starts_with("hello"))
+    assert(sb.starts_with("h"))
+    assert(sb.starts_with("hello world"))
+}
+
+test "starts_with — пустой префикс всегда true" {
+    let mut sb = StringBuilder.new()
+    sb.append("data")
+    assert(sb.starts_with(""))
+}
+
+test "starts_with — false при несовпадении" {
+    let mut sb = StringBuilder.new()
+    sb.append("hello world")
+    assert(!sb.starts_with("world"))
+    assert(!sb.starts_with("Hello"))      // case-sensitive
+    assert(!sb.starts_with("hello world!"))  // длиннее буфера
+}
+
+test "starts_with — Unicode префикс" {
+    let mut sb = StringBuilder.new()
+    sb.append("Привет, мир")
+    assert(sb.starts_with("Привет"))
+    assert(!sb.starts_with("привет"))     // регистр
+}
+
+
+// ── @ends_with ─────────────────────────────────────────────────────
+
+test "ends_with — совпадает суффикс" {
+    let mut sb = StringBuilder.new()
+    sb.append("hello world")
+    assert(sb.ends_with("world"))
+    assert(sb.ends_with("d"))
+    assert(sb.ends_with("hello world"))
+}
+
+test "ends_with — пустой суффикс всегда true" {
+    let mut sb = StringBuilder.new()
+    sb.append("data")
+    assert(sb.ends_with(""))
+}
+
+test "ends_with — false при несовпадении" {
+    let mut sb = StringBuilder.new()
+    sb.append("hello world")
+    assert(!sb.ends_with("hello"))
+    assert(!sb.ends_with("WORLD"))
+}
+
+test "ends_with — Unicode суффикс" {
+    let mut sb = StringBuilder.new()
+    sb.append("конец 😀")
+    assert(sb.ends_with("😀"))
+    assert(sb.ends_with(" 😀"))
+}
+
+
+// ── @peek ──────────────────────────────────────────────────────────
+
+test "peek — snapshot до append" {
+    let mut sb = StringBuilder.new()
+    sb.append("abc")
+    let snap = sb.peek()
+    assert(snap == "abc")
+}
+
+test "peek — append после peek работает" {
+    let mut sb = StringBuilder.new()
+    sb.append("abc")
+    let snap = sb.peek()
+    assert(snap == "abc")
+    sb.append("def")
+    assert(sb.into() == "abcdef")
+}
+
+test "peek — пустой буфер" {
+    let sb = StringBuilder.new()
+    assert(sb.peek() == "")
+}
+
+test "peek — Unicode контент" {
+    let mut sb = StringBuilder.new()
+    sb.append("Привет")
+    assert(sb.peek() == "Привет")
+}
+
+
+// ── non-consuming: все методы не consume буфер ────────────────────
+
+test "non-consuming — все inspection до into" {
+    let mut sb = StringBuilder.new()
+    sb.append("foo/bar")
+    let _ = sb.is_empty()
+    let _ = sb.starts_with("foo")
+    let _ = sb.ends_with("bar")
+    let _ = sb.peek()
+    let _ = sb.len()
+    let _ = sb.byte_len()
+    sb.append("/baz")                    // append после всех проверок
+    assert(sb.into() == "foo/bar/baz")
+}

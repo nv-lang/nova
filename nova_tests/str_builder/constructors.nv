@@ -1,0 +1,110 @@
+// Plan 85.1 Ф.1 — StringBuilder constructors.
+//
+// Покрывает: new(), with_capacity(0/1/100), from(str), from(char).
+// Включая edge cases: пустая строка, ASCII char, Cyrillic char.
+
+module str_builder.constructors
+
+
+// ── new() ──────────────────────────────────────────────────────────
+
+test "new() — пустой, capacity >= 16" {
+    let sb = StringBuilder.new()
+    assert(sb.len() == 0)
+    assert(sb.byte_len() == 0)
+    assert(sb.capacity() >= 16)
+    assert(sb.is_empty())
+}
+
+
+// ── with_capacity(n) ───────────────────────────────────────────────
+
+test "with_capacity(0) — пустой, валидный" {
+    let sb = StringBuilder.with_capacity(0)
+    assert(sb.len() == 0)
+    assert(sb.byte_len() == 0)
+    assert(sb.capacity() >= 0)
+    assert(sb.is_empty())
+}
+
+test "with_capacity(1) — capacity >= 1" {
+    let sb = StringBuilder.with_capacity(1)
+    assert(sb.len() == 0)
+    assert(sb.capacity() >= 1)
+}
+
+test "with_capacity(100) — capacity >= 100" {
+    let sb = StringBuilder.with_capacity(100)
+    assert(sb.len() == 0)
+    assert(sb.byte_len() == 0)
+    assert(sb.capacity() >= 100)
+}
+
+test "with_capacity(0) — append после ноль-капасити растёт" {
+    let mut sb = StringBuilder.with_capacity(0)
+    sb.append("data")
+    assert(sb.len() == 4)
+    assert(sb.byte_len() == 4)
+    assert(sb.capacity() >= 4)
+}
+
+
+// ── from(str) ──────────────────────────────────────────────────────
+
+test "from(str) — ASCII" {
+    let sb = StringBuilder.from("hello")
+    assert(sb.len() == 5)
+    assert(sb.byte_len() == 5)
+}
+
+test "from(str) — пустая строка" {
+    let sb = StringBuilder.from("")
+    assert(sb.len() == 0)
+    assert(sb.byte_len() == 0)
+    assert(sb.is_empty())
+}
+
+test "from(str) — Cyrillic codepoints vs bytes" {
+    let sb = StringBuilder.from("Привет")
+    assert(sb.len() == 6)        // 6 codepoints
+    assert(sb.byte_len() == 12)  // 2 байта на codepoint
+}
+
+test "from(str) — append продолжает с готового контента" {
+    let mut sb = StringBuilder.from("abc")
+    sb.append("def")
+    assert(sb.len() == 6)
+    assert(sb.into() == "abcdef")
+}
+
+
+// ── from(char) ─────────────────────────────────────────────────────
+
+test "from(char) — ASCII single codepoint" {
+    let sb = StringBuilder.from('A')
+    assert(sb.len() == 1)
+    assert(sb.byte_len() == 1)
+}
+
+test "from(char) — Cyrillic codepoint = 2 байта" {
+    let sb = StringBuilder.from('Я')
+    assert(sb.len() == 1)
+    assert(sb.byte_len() == 2)
+}
+
+test "from(char) — CJK codepoint = 3 байта" {
+    let sb = StringBuilder.from('中')
+    assert(sb.len() == 1)
+    assert(sb.byte_len() == 3)
+}
+
+test "from(char) — emoji codepoint = 4 байта" {
+    let sb = StringBuilder.from('😀')
+    assert(sb.len() == 1)
+    assert(sb.byte_len() == 4)
+}
+
+test "from(char) — content проверяется через into" {
+    let sb = StringBuilder.from('Z')
+    assert(sb.into() == "Z")
+}

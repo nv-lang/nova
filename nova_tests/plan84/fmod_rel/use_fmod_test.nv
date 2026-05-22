@@ -1,0 +1,8 @@
+// Plan 84 Ф.5 POSITIVE — относительный импорт folder-модуля `./geo`.
+module nova_tests.plan84.fmod_rel.use_fmod_test
+
+import ./geo.{rect_area}
+
+test "relative ./ — folder-module target" {
+    assert(rect_area(7, 6) == 42)
+}

@@ -10602,3 +10602,58 @@ Plan 52.2 и 52.3 → ✅ ЗАКРЫТЫ. Suite: 960 PASS / 0 FAIL.
   паритет), followup Plan 83.x.
 - **Приоритет:** L — программам, делающим spawn, полный пул всё равно
   нужен; экономия только на паттерне «1 spawn → 1 worker».
+## Plan 85.3 — протоколы конверсии: тестовое покрытие (2026-05-22)
+
+### [M-generic-static-method-on-typevar]
+- **Где:** `compiler-codegen/src/codegen/emit_c.rs` — монoморфизация
+  generic-функций (Plan 48).
+- **Что упрощено:** вызов static-метода на type-параметре внутри тела
+  generic-функции — `fn wrap[T From[str]](s str) -> T => T.from(s)` —
+  не мономорфизируется. Codegen эмитит литеральный `nova_fn_T_from`
+  (T не подставляется в obj-позиции static-вызова) → undefined symbol
+  на линковке. Аналогично `Result[T, E]` с type-параметром в return-
+  позиции generic-функции даёт unsubstituted `Nova_Result_...`.
+- **Что РАБОТАЕТ:** (а) bound `[T From[X]]` / `[T TryFrom[X, E]]`
+  парсится и enforced type-checker'ом (Plan 15) — тип без impl
+  отвергается диагностикой `does not satisfy`; (б) generic-функция с
+  conversion-bound инстанцируется и исполняется, если T используется
+  как value-тип (без `T.from` внутри тела); (в) instance-метод на
+  type-параметре (`it.next()` для `[T Iter[U]]`) мономорфизируется
+  корректно.
+- **Почему:** static-method dispatch через type-параметр требует
+  подстановки T в obj-позиции member-call при mono-эмиссии + mono
+  generic `Result[T, E]`. Самостоятельная задача монoморфизатора
+  (Plan 48 / followup), вне bootstrap-объёма. Уже отмечалось как
+  bootstrap-ограничение в Plan 62.E (nova_tests/plan62/
+  tryfrom_tryinto_from_prelude.nv — bound-функции «не вызываются»).
+- **Как чинить:** в `emit_c.rs` static-call resolution — при
+  `obj = Ident(n)`, где `n ∈ current_type_subst`, резолвить `n` в
+  concrete Nova-тип (`nova_type_name_from_c`) и далее обычный
+  static-dispatch; отдельно — mono `Result[T, E]` return-типа.
+- **Приоритет:** M (idiom `T.from(v)` в generic-коде; обходится
+  конверсией на call-site).
+- **Тесты:** nova_tests/protocols/conversion/generic_from_bound.nv,
+  generic_try_bound.nv (probe — bound parse + инстанцирование),
+  neg_missing_impl.nv (enforcement негатив).
+
+## Plan 85.5 — Iter[T] тестовое покрытие (2026-05-22)
+
+### [M-for-in-explicit-elem-type]
+- **Где:** bootstrap-парсер for-in (`compiler-codegen/src/parser`).
+- **Что упрощено:** синтаксис `for x TYPE in iter` (явная аннотация
+  типа loop-переменной) задокументирован в `spec/syntax.md`
+  (`for id u64 in ids`, `for x int in nums`), но bootstrap-парсер его
+  не принимает — после `for <ident>` сразу ожидает `in`
+  («expected `in`, got identifier»).
+- **Почему:** for-in парсер развивался под inferred-форму (`for x in
+  iter`); explicit-type-вариант из spec не был реализован. Все
+  существующие тесты (`nova_tests/syntax/for_iter*.nv`) используют
+  inferred-форму — drift не всплывал до Plan 85.5.
+- **Как чинить:** в parse-for после loop-pattern — если следующий
+  токен не `in`, распарсить TypeRef по правилу «name type» (D-без
+  двоеточия), затем `in`. Учесть `for mut x TYPE in` и `for (a, b) in`
+  (tuple — без поэлементных типов).
+- **Приоритет:** L (тип элемента всегда выводится; аннотация —
+  документирующий сахар).
+- **Тесты:** обнаружено в Plan 85.5 — for_loop.nv / array_iter.nv
+  изначально использовали `for x int in`, переведены на inferred-форму.
