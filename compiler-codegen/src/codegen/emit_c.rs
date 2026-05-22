@@ -16925,14 +16925,44 @@ impl CEmitter {
                 idx_tmp, idx_tmp, arr_tmp, idx_tmp
             ));
             self.indent += 1;
-            // If element type is a pointer stored as nova_int, cast back
-            if elem_ty.ends_with('*') && elem_ty != "nova_int*" {
+            // Plan 89: элемент массива со значимым sum-типом (Option —
+            // `SumAbi::ValueOptionLike`; RuntimeError — `ValueTagPayload`)
+            // хранится в слоте `NovaArray` боксированным указателем
+            // `NovaOpt_T*`. Pattern-codegen (`if let`/`match`), оператор
+            // `==`, передача в функцию и вызов метода ждут sum ПО ЗНАЧЕНИЮ
+            // → рассинхрон value↔pointer (CC-FAIL). Деболксим loop-
+            // переменную здесь, в единственной точке: `NovaOpt_T o = *ptr`.
+            // Sum'ы с pointer-семантикой (Result / user-sum —
+            // `PointerErrorLike`) и records НЕ деболксятся — их codegen
+            // уже корректно ждёт `->`.
+            let value_sum_pointee: Option<String> = if elem_ty.ends_with('*') {
+                let pointee = elem_ty.trim_end_matches('*').trim();
+                match self.sum_schema_registry.lookup_sum_for_c_type(pointee) {
+                    Some(e) if matches!(
+                        e.abi,
+                        super::sum_schema_registry::SumAbi::ValueOptionLike
+                            | super::sum_schema_registry::SumAbi::ValueTagPayload,
+                    ) => Some(pointee.to_string()),
+                    _ => None,
+                }
+            } else {
+                None
+            };
+            // If element type is a pointer stored as nova_int, cast back.
+            let binding_ty = if let Some(value_ty) = &value_sum_pointee {
+                // Plan 89 debox: слот хранит `<value_ty>*` — читаем по значению.
+                self.line(&format!("{} {} = *({}*){}->data[{}];",
+                    value_ty, binding, value_ty, arr_tmp, idx_tmp));
+                value_ty.clone()
+            } else if elem_ty.ends_with('*') && elem_ty != "nova_int*" {
                 self.line(&format!("{} {} = ({}){}->data[{}];",
                     elem_ty, binding, elem_ty, arr_tmp, idx_tmp));
+                elem_ty.clone()
             } else {
                 self.line(&format!("{} {} = {}->data[{}];", elem_ty, binding, arr_tmp, idx_tmp));
-            }
-            self.var_types.insert(binding.clone(), elem_ty.clone());
+                elem_ty.clone()
+            };
+            self.var_types.insert(binding.clone(), binding_ty);
             // Plan 55 Ф.1: array stored as NovaArray_void_p (= array of closures).
             // Register binding as fn-typed so `f()` routes through NOVA_CLOS_CALL_*.
             // Source of sig: array_param_fn_sigs (when iter is a fn-param) or by
