@@ -1,0 +1,77 @@
+// Plan 85.4 Ф.3 — Display протокол.
+//
+// `Display` (D109): `fmt(sb StringBuilder) -> ()`. User-defined через
+// `fn Type @fmt(mut sb StringBuilder) -> ()` — пишет representation
+// в переданный StringBuilder. Результат читается через `sb.into()`.
+
+module comparison.display
+
+
+type Point { x int, y int }
+
+fn Point @fmt(mut sb StringBuilder) -> () {
+    sb.append("(")
+    sb.append(str.from(@x))
+    sb.append(", ")
+    sb.append(str.from(@y))
+    sb.append(")")
+}
+
+
+test "Point @fmt — пишет representation в StringBuilder" {
+    let p = Point { x: 3, y: 4 }
+    let mut sb = StringBuilder.new()
+    p.fmt(sb)
+    assert(sb.into() == "(3, 4)")
+}
+
+test "Point @fmt — отрицательные координаты" {
+    let p = Point { x: -1, y: -20 }
+    let mut sb = StringBuilder.new()
+    p.fmt(sb)
+    assert(sb.into() == "(-1, -20)")
+}
+
+test "Point @fmt — в непустой буфер дописывает" {
+    let p = Point { x: 0, y: 0 }
+    let mut sb = StringBuilder.new()
+    sb.append("origin: ")
+    p.fmt(sb)
+    assert(sb.into() == "origin: (0, 0)")
+}
+
+
+// ── вложенный Display: тип содержит другой Display-тип ────────────
+
+type Segment { a Point, b Point }
+
+fn Segment @fmt(mut sb StringBuilder) -> () {
+    sb.append("[")
+    @a.fmt(sb)
+    sb.append(" -> ")
+    @b.fmt(sb)
+    sb.append("]")
+}
+
+test "вложенный Display — Segment делегирует Point.fmt" {
+    let seg = Segment {
+        a: Point { x: 1, y: 1 },
+        b: Point { x: 5, y: 9 },
+    }
+    let mut sb = StringBuilder.new()
+    seg.fmt(sb)
+    assert(sb.into() == "[(1, 1) -> (5, 9)]")
+}
+
+
+// ── два fmt подряд в один буфер ───────────────────────────────────
+
+test "Display — несколько объектов в один буфер" {
+    let p1 = Point { x: 1, y: 2 }
+    let p2 = Point { x: 3, y: 4 }
+    let mut sb = StringBuilder.new()
+    p1.fmt(sb)
+    sb.append(" ")
+    p2.fmt(sb)
+    assert(sb.into() == "(1, 2) (3, 4)")
+}

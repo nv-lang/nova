@@ -1,0 +1,47 @@
+// Plan 85.3 Ф.3 — generic bound `[T TryFrom[X, E]]`.
+//
+// Bound с fallible-конверсией в generic-позиции. Проверяется парсинг
+// bound'а, инстанцирование generic-функции и enforcement (T обязан
+// реализовать TryFrom[X, E]).
+//
+// ОГРАНИЧЕНИЕ (bootstrap): вызов `T.try_from(...)` ВНУТРИ generic-тела
+// + `Result[T, E]` с type-параметром T не мономорфизируются — см.
+// simplifications.md [M-generic-static-method-on-typevar]. Конверсия
+// выполняется на call-site (concrete `Pos.try_from`).
+
+module conversion.generic_try_bound
+
+
+type Pos { v int }
+
+fn Pos.try_from(n int) -> Result[Pos, str] =>
+    if n >= 0 {
+        Ok(Pos { v: n })
+    } else {
+        Err("negative")
+    }
+
+
+// Generic-функция с TryFrom-bound. T — value-тип.
+fn unwrap_or_default[T TryFrom[int, str]](r Result[T, str], dflt T) -> T =>
+    r.unwrap_or(dflt)
+
+
+test "generic TryFrom-bound — Ok через call-site try_from" {
+    let r = Pos.try_from(42)
+    let p = unwrap_or_default[Pos](r, Pos { v: -1 })
+    assert(p.v == 42)
+}
+
+test "generic TryFrom-bound — Err падает на default" {
+    let r = Pos.try_from(-5)
+    let p = unwrap_or_default[Pos](r, Pos { v: 777 })
+    assert(p.v == 777)
+}
+
+test "TryFrom-bound enforced — Pos удовлетворяет TryFrom[int, str]" {
+    // Сам факт компиляции unwrap_or_default[Pos] подтверждает, что
+    // Pos удовлетворяет bound TryFrom[int, str].
+    let r = Pos.try_from(1)
+    assert(r.is_ok())
+}

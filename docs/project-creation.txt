@@ -17508,3 +17508,142 @@ Package-scoped относительные импорты модулей. Worktre
 nova test --filter plan84: 12 PASS / 0 FAIL (end-to-end:
 codegen+run позитива, корректный отказ негатива).
 Suite: 972 PASS / 0 FAIL / 56 SKIP (полный регресс — 0 регрессий).
+=== Plan 85.1 — тестовое покрытие StringBuilder (2026-05-22) ===
+Worktree nova-p85, ветка plan-85.
+- Новый каталог nova_tests/str_builder/ — 9 файлов: constructors,
+  append_ops, metrics, clone, inspection, consume_test, unicode
+  (позитивные, 7) + neg_use_after_consume, neg_double_consume
+  (негативные, EXPECT_COMPILE_ERROR D131).
+- Покрыты все 17 методов StringBuilder: new / with_capacity /
+  from(str) / from(char), @append(str|char), @plus(str|char),
+  @len / @byte_len / @capacity / @clone, consume @into,
+  @starts_with / @ends_with / @is_empty / @peek.
+- Codegen-багов не найдено — StringBuilder уже был покрыт smoke-
+  тестами (Plan 04 / 13 / 63). Char-overload, Unicode (кириллица /
+  CJK / emoji), capacity-grow, clone-изоляция — все корректны.
+- consume.nv переименован в consume_test.nv: consume — keyword
+  (D131), не может быть сегментом module-имени (D29 keyword-collision
+  -> _test-суффикс).
+- Уточнение к плану 85.1: use-after-consume — EXPECT_COMPILE_ERROR
+  D131 (не runtime panic; D131 ловится компилятором, Plan 73).
+Suite: str_builder 9 PASS / 0 FAIL.
+
+=== Plan 85.2 — тестовое покрытие ReadBuffer / WriteBuffer (2026-05-22) ===
+Worktree nova-p85, ветка plan-85.
+- Новый каталог nova_tests/buffers/ — 11 файлов: read_nav,
+  read_integers, read_floats, read_char_str, read_oob,
+  write_constructors, write_integers, write_floats, write_misc,
+  roundtrip (позитивные, 10) + neg_read_oob (негативный,
+  EXPECT_RUNTIME_PANIC).
+- Покрыты все 44 метода ReadBuffer (from, position/remaining/
+  has_remaining/remaining_bytes, read+try_read для byte/u8/i8/u16/i16/
+  u32/i32/u64/i64 LE+BE, f32/f64 LE+BE, char, str) и все 31 метод
+  WriteBuffer (new/with_capacity/from, write_byte/bytes/zero/char/str,
+  write_u8..i64 LE+BE, write_f32/f64 LE+BE, len/capacity/clone/into).
+- roundtrip.nv — write_X -> into -> ReadBuffer.from -> read_X для
+  всех числовых типов (оба endian), char, str, bytes + гетерогенный
+  пакет.
+- Codegen-багов не найдено.
+- Уточнения по факту:
+  * WriteBuffer @into() — НЕ consume (StringBuilder @into() — consume).
+  * Fail-form OOB (read_byte за границей) внутри test-блока
+    перехватывается test-harness'ом -> тест FAIL, не процесс-panic.
+    Escape до runtime-panic требует fn main (neg_read_oob.nv).
+  * try_read_f64_* Ok-payload в bootstrap несёт int-биты; распаковка
+    через f64.from_bits(r.unwrap_or(0)).
+Suite: buffers 11 PASS / 0 FAIL.
+
+=== Plan 85.3 — тестовое покрытие протоколов конверсии (2026-05-22) ===
+Worktree nova-p85, ветка plan-85.
+- Новый каталог nova_tests/protocols/conversion/ — 9 файлов:
+  from_basic, from_multi, into_derive, try_from_ok, try_from_err,
+  try_into_test, generic_from_bound, generic_try_bound (позитивные, 8)
+  + neg_missing_impl (негативный, EXPECT_COMPILE_ERROR does not satisfy).
+- From (static fn T.from) / Into (instance @into, auto-derive из From)
+  / TryFrom (static fn T.try_from -> Result) / TryInto (instance
+  @try_into -> Result). User-defined impl от int/str/bool/f64.
+- CODEGEN-БАГ НАЙДЕН И ИСПРАВЛЕН (emit_c.rs): D73 `.into()` auto-derive
+  эмитил базовое C-имя `Nova_<T>_static_from` без overload-резолюции.
+  При нескольких `from`-overload'ах на одном типе (MyNum.from(int) +
+  from(str) + from(bool)) ВСЕ `.into()` резолвились в первый overload
+  -> передача неверного типа в параметр -> CC-FAIL. Фикс: into-derive
+  (и симметрично try_into-derive) выбирает mangled C-имя по типу
+  источника через method_overloads-реестр (sigs.len()>1 -> match по
+  param_c_types[0]). Прямые вызовы MyNum.from(x) overload-резолюцию
+  имели и до фикса — баг только в auto-derive пути.
+- ИЗВЕСТНОЕ ОГРАНИЧЕНИЕ (documented, не fixed): вызов T.from(...) на
+  type-параметре ВНУТРИ тела generic-функции не мономорфизируется
+  (emit_c.rs эмитит литеральный nova_fn_T_from). simplifications.md
+  [M-generic-static-method-on-typevar]. generic_from_bound/
+  generic_try_bound переписаны на probe — bound parse +
+  инстанцирование + enforcement (что работает); конверсия — на
+  call-site.
+- Корректировка: примеры sub-плана 85.3 были в Rust-синтаксисе
+  (impl From for ...) — тесты написаны по фактическому синтаксису
+  Nova (структурные протоколы, static fn T.from, без impl-блоков).
+Suite: protocols/conversion 9 PASS / 0 FAIL.
+
+=== Plan 85.4 — тестовое покрытие протоколов сравнения (2026-05-22) ===
+Worktree nova-p85, ветка plan-85.
+- Новый каталог nova_tests/protocols/comparison/ — 7 файлов:
+  hashable, equatable, comparable, ordering, display, generic_bounds
+  (позитивные, 6) + neg_no_impl (негативный, EXPECT_COMPILE_ERROR
+  does not satisfy).
+- Hashable / Equatable / Comparable / Display — user-defined impl
+  (структурные протоколы). Ordering (Less|Equal|Greater) как значение.
+  generic-bounds [T Hashable]/[T Equatable]/[T Comparable] +
+  multi-bound через именованный protocol.
+- НАЙДЕНЫ И ИСПРАВЛЕНЫ 3 codegen-бага (emit_c.rs):
+  1. char.hash() — `nova_char` отсутствовал в prim_builtin_method →
+     `.hash()` на char не находил builtin → mis-dispatch на user-метод
+     `hash` (последний в single-key реестре, Nova_UserId_method_hash)
+     → nova_char (int64) передавался как receiver-pointer → SEGFAULT.
+     Фикс: nova_char добавлен в hash/eq/lt/le/gt/ge ветки (nova_char
+     == int64 по Plan 70.3 → nova_int_hash).
+  2. == / != на типе с user-defined @eq эмитил `(l)->tag == (r)->tag`
+     (sum-type discriminant-сравнение), игнорируя D46 dispatch на @eq.
+     Для record-типов (нет поля tag) → невалидный C (CC-FAIL). Фикс:
+     перед tag-сравнением — lookup @eq в method_overloads, при наличии
+     instance-overload'а dispatch на него (== → метод, != → !метод).
+  3. apply_type_subst_to_ref возвращал None (→ caller void*) для
+     concrete non-primitive Named-типа в return-позиции generic-функции
+     (-> Ordering). На call-site результат типизировался void*, потом
+     `void*->tag` → CC-FAIL. Фикс: PascalCase-имя (D30) не-typeparam →
+     Nova_<name>* (user record/sum); lowercase не из known-списка —
+     по-прежнему None (примитив не угадываем); Self исключён.
+- Корректировка: примеры sub-плана 85.4 в Rust-стиле (impl ... for,
+  `;` в полях, `T A + B` multi-bound) — тесты по факту синтаксиса Nova.
+Suite: protocols/comparison 7 PASS / 0 FAIL.
+
+=== Plan 85.5 — тестовое покрытие протокола Iter[T] (2026-05-22) ===
+Worktree nova-p85, ветка plan-85.
+- Новый каталог nova_tests/protocols/iter/ — 11 файлов: custom_iter,
+  empty_iter, for_loop, early_return, nested_iter, array_iter,
+  str_iters, generic_bound, collect_generic (позитивные, 9) +
+  neg_not_iter, neg_not_iter2 (негативные, EXPECT_COMPILE_ERROR).
+- User-defined Iter (CountDown), exhaustion + idempotent-None,
+  пустой Iter, for-in (sum/count/порядок), break/continue,
+  вложенные for-in, []int/[]str for-in, str.chars()/str.bytes(),
+  generic bound [T Iter[int]] (sum_iter/count_iter/collect_all).
+- Codegen-багов в Iter-пути не найдено — Iter отлажен Plan 06/14.
+- Уточнения:
+  * str.chars()/str.bytes() возвращают []char/[]u8 (массивы, не lazy
+    Iter); for-in по ним — обычный array-обход.
+  * for x TYPE in iter (явная аннотация типа элемента) — drift:
+    задокументировано в syntax.md, bootstrap-парсер не принимает.
+    simplifications.md [M-for-in-explicit-elem-type]. Тесты — на
+    inferred-форме.
+  * neg_not_iter (int в for-in) — codegen-стадия «for-in: cannot
+    resolve iterator type», EXPECT_COMPILE_ERROR это ловит.
+Suite: protocols/iter 11 PASS / 0 FAIL.
+
+=== Plan 85 — umbrella ЗАКРЫТ (2026-05-22) ===
+Все 5 sub-plans (85.1-85.5) закрыты. 47 новых тест-файлов в
+nova_tests/{str_builder,buffers,protocols/{conversion,comparison,iter}}/.
+4 codegen-бага найдены и исправлены: (1) D73 .into() auto-derive
+игнорировал overload-резолюцию from; (2) char.hash() mis-dispatch на
+user-метод -> segfault; (3) ==/!= на типе с user @eq эмитил ->tag;
+(4) generic-функция с concrete non-primitive return (-> Ordering)
+инферилась как void*. 2 documented limitations
+([M-generic-static-method-on-typevar], [M-for-in-explicit-elem-type]).
+0 регрессий.

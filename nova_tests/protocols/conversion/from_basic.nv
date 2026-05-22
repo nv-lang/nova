@@ -1,0 +1,69 @@
+// Plan 85.3 Ф.1 — From[T] протокол: базовый user-defined impl.
+//
+// `From[T]` реализуется static-методом `fn Type.from(v T) -> Self`
+// (D73). Компилятор авто-выводит парную форму `v.into()`.
+
+module conversion.from_basic
+
+
+// ── From[f64] ──────────────────────────────────────────────────────
+
+type Celsius { value f64 }
+
+fn Celsius.from(v f64) -> Celsius => { value: v }
+
+test "Celsius.from(f64) — static-вызов" {
+    let c = Celsius.from(36.6)
+    assert(c.value == 36.6)
+}
+
+test "f64 -> Celsius через .into() — auto-derive из From" {
+    let c Celsius = (36.6).into()
+    assert(c.value == 36.6)
+}
+
+test "From[f64] — несколько значений" {
+    let zero = Celsius.from(0.0)
+    let neg = Celsius.from(-40.0)
+    assert(zero.value == 0.0)
+    assert(neg.value == -40.0)
+}
+
+
+// ── From[str] ──────────────────────────────────────────────────────
+
+type Tag { name str }
+
+fn Tag.from(s str) -> Tag => { name: s }
+
+test "Tag.from(str) — static-вызов" {
+    let t = Tag.from("urgent")
+    assert(t.name == "urgent")
+}
+
+test "str -> Tag через .into() — auto-derive из From" {
+    let t Tag = "later".into()
+    assert(t.name == "later")
+}
+
+test "From[str] — пустая строка" {
+    let t = Tag.from("")
+    assert(t.name == "")
+}
+
+
+// ── From[int] ──────────────────────────────────────────────────────
+
+type Wrapped { n int }
+
+fn Wrapped.from(v int) -> Wrapped => { n: v }
+
+test "Wrapped.from(int) — static-вызов" {
+    let w = Wrapped.from(99)
+    assert(w.n == 99)
+}
+
+test "int -> Wrapped через .into() — auto-derive" {
+    let w Wrapped = (7).into()
+    assert(w.n == 7)
+}

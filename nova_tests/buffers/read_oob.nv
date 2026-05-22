@@ -1,0 +1,96 @@
+// Plan 85.2 Ф.3 — ReadBuffer out-of-bounds (Result-form).
+//
+// try_read_* за пределами буфера → Err(UnexpectedEnd). Это безопасный
+// путь: тест проходит (exit 0), ошибка наблюдается через is_err().
+// Fail-form OOB (бросает ReadBufferError) — см. neg_read_oob.nv.
+
+module buffers.read_oob
+
+
+// ── try_read_byte / bytes OOB ──────────────────────────────────────
+
+test "try_read_byte Err — пустой буфер" {
+    let bytes []u8 = []
+    let mut rb = ReadBuffer.from(bytes)
+    assert(rb.try_read_byte().is_err())
+}
+
+test "try_read_byte Err — после исчерпания" {
+    let bytes []u8 = [0x01]
+    let mut rb = ReadBuffer.from(bytes)
+    assert(rb.try_read_byte().is_ok())   // 1-й — ок
+    assert(rb.try_read_byte().is_err())  // 2-й — буфер пуст
+}
+
+test "try_read_bytes Err — запрошено больше доступного" {
+    let bytes []u8 = [0x01, 0x02]
+    let mut rb = ReadBuffer.from(bytes)
+    assert(rb.try_read_bytes(5).is_err())
+}
+
+test "try_read_bytes Ok — ровно по размеру" {
+    let bytes []u8 = [0x01, 0x02, 0x03]
+    let mut rb = ReadBuffer.from(bytes)
+    let r = rb.try_read_bytes(3)
+    assert(r.is_ok())
+}
+
+
+// ── try_read целых OOB ─────────────────────────────────────────────
+
+test "try_read_u32_le Err — буфер короче 4 байт" {
+    let bytes []u8 = [0xFF]
+    let mut rb = ReadBuffer.from(bytes)
+    assert(rb.try_read_u32_le().is_err())
+}
+
+test "try_read_u64_be Err — буфер короче 8 байт" {
+    let bytes []u8 = [0x01, 0x02, 0x03, 0x04]
+    let mut rb = ReadBuffer.from(bytes)
+    assert(rb.try_read_u64_be().is_err())
+}
+
+test "try_read_u16_le Err — ровно 1 байт" {
+    let bytes []u8 = [0xAB]
+    let mut rb = ReadBuffer.from(bytes)
+    assert(rb.try_read_u16_le().is_err())
+}
+
+test "try_read_i32_be Err — пустой буфер" {
+    let bytes []u8 = []
+    let mut rb = ReadBuffer.from(bytes)
+    assert(rb.try_read_i32_be().is_err())
+}
+
+
+// ── частичное чтение затем OOB ─────────────────────────────────────
+
+test "OOB после успешного чтения — граница точная" {
+    let bytes []u8 = [0x01, 0x02, 0x03]
+    let mut rb = ReadBuffer.from(bytes)
+    assert(rb.try_read_u16_le().is_ok())   // потребили 2
+    assert(rb.try_read_u16_le().is_err())  // остался 1 — мало
+}
+
+test "has_remaining + try_read согласованы" {
+    let bytes []u8 = [0x01, 0x02]
+    let mut rb = ReadBuffer.from(bytes)
+    assert(!rb.has_remaining(4))
+    assert(rb.try_read_u32_le().is_err())
+}
+
+
+// ── try_read_str / char OOB ────────────────────────────────────────
+
+test "try_read_str Err — больше codepoint'ов чем есть" {
+    let mut wb = WriteBuffer.new()
+    wb.write_str("xy")
+    let mut rb = ReadBuffer.from(wb.into())
+    assert(rb.try_read_str(99).is_err())
+}
+
+test "try_read_char Err — пустой буфер" {
+    let bytes []u8 = []
+    let mut rb = ReadBuffer.from(bytes)
+    assert(rb.try_read_char().is_err())
+}
