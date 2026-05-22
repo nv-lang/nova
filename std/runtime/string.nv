@@ -15,6 +15,9 @@ export external fn str @len() -> int
 // Длина в байтах. O(1). Для FFI / буферных операций.
 export external fn str @byte_len() -> int
 
+// UTF-8 байт по индексу. O(1). Panic при выходе за границы. Plan 90 — неустранимый примитив для byte-алгоритмов (lexer/find/trim) на Nova.
+export external fn str @byte_at(i int) -> u8
+
 // True если строка пустая. O(n) через @len (codepoints); для bootstrap приемлемо.
 export fn str @is_empty() -> bool => @len() == 0
 

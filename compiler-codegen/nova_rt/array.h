@@ -92,6 +92,22 @@
         for (int64_t _i = 0; _i < a->len; _i++) { if (a->data[_i] != b->data[_i]) return 0; } \
         return 1; \
     } \
+    static void nova_array_copy_from_##T(NovaArray_##T* dst, NovaArray_##T* src) { \
+        if (src->len > dst->len) { \
+            nv_panic((nova_str){ .ptr = "copy_from: src longer than dst", \
+                                 .len = sizeof("copy_from: src longer than dst") - 1 }); } \
+        memcpy(dst->data, src->data, (size_t)(src->len) * sizeof(T)); \
+    } \
+    static void nova_array_copy_within_##T(NovaArray_##T* a, int64_t src_from, int64_t dst_from, int64_t len) { \
+        if (len < 0 || src_from < 0 || dst_from < 0 || \
+            src_from + len > a->len || dst_from + len > a->len) { \
+            nv_panic((nova_str){ .ptr = "copy_within: range out of bounds", \
+                                 .len = sizeof("copy_within: range out of bounds") - 1 }); } \
+        memmove(a->data + dst_from, a->data + src_from, (size_t)len * sizeof(T)); \
+    } \
+    static void nova_array_fill_##T(NovaArray_##T* a, T v) { \
+        for (int64_t _i = 0; _i < a->len; _i++) { a->data[_i] = v; } \
+    } \
     static inline NovaOpt_##T Nova_Option_method_or_##T(NovaOpt_##T self, NovaOpt_##T other) { \
         return self.tag == NOVA_TAG_Option_Some ? self : other; \
     }
@@ -114,6 +130,21 @@ NOVA_ARRAY_IMPL(nova_char)
 
 NOVA_ARRAY_DECL(nova_byte)
 NOVA_ARRAY_IMPL(nova_byte)
+
+/* Plan 90: compare для []u8 — memcmp-класс, lexicographic.
+ * ОДИН примитив: equality (== / eq) — частный случай (compare == 0).
+ * Только для nova_byte: memcmp byte-wise; для multi-byte T порядок был
+ * бы endianness-зависим. Возвращает -1/0/1 (модель Go/memcmp). */
+static int nova_array_compare_nova_byte(NovaArray_nova_byte* a, NovaArray_nova_byte* b) {
+    int64_t n = a->len < b->len ? a->len : b->len;
+    if (n > 0) {
+        int c = memcmp(a->data, b->data, (size_t)n);
+        if (c != 0) return c < 0 ? -1 : 1;
+    }
+    if (a->len < b->len) return -1;
+    if (a->len > b->len) return 1;
+    return 0;
+}
 
 NOVA_ARRAY_DECL(nova_bool)
 NOVA_ARRAY_IMPL(nova_bool)
