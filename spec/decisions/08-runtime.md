@@ -17,6 +17,7 @@ static-состояния.
 | [D77](#d77-tryfrom--tryinto-protocol-пара-расширение-d73-для-fallible-конверсий) | `TryFrom` / `TryInto` — расширение D73 для fallible-конверсий |
 | [D76](#d76-mem-эффект--runtime-introspection-для-leakgrowth-тестов) | `Mem` эффект — runtime introspection для leak/growth тестов |
 | [D81](#d81-assertcond-vs-debug_assertcond--build-mode-семантика) | `assert(cond)` vs `debug_assert(cond)` — build-mode семантика |
+| [D141](#d141-примитивы-доступа-к-памяти--byte_at--bulk-slice-операции) | Примитивы доступа к памяти — `byte_at` / bulk slice-операции |
 
 ---
 
@@ -3129,3 +3130,90 @@ const PRELUDE_VERSION int = 42  // → silent
   — clause syntax.
 - [Plan 62.F.bis Ф.2](../../docs/plans/62.F.bis-edition-shadow-and-runtime-effects.md)
   — implementation.
+
+---
+
+## D141. Примитивы доступа к памяти — `byte_at` / bulk slice-операции
+
+> **Plan 90.** Принято 2026-05-22.
+
+### Что
+
+Минимальный набор **безопасных** примитивов доступа к памяти, чтобы
+алгоритмы рантайма и stdlib (str-методы, буферы, парсеры) выражались на
+Nova без лишних аллокаций и без ухода в `external fn`. Сырые указатели и
+`unsafe`-режим **не вводятся** — Nova остаётся языком без указателей
+([D6](05-memory.md#d6)).
+
+### Правило
+
+**`str.byte_at`** — O(1) доступ к байту строки:
+
+```nova
+fn str @byte_at(i int) -> u8
+```
+
+Byte-indexed (не codepoint). Выход за границы (`i < 0 || i >= byte_len`)
+— `panic` ([D13](#d13-panic-vs-эффекты-что-не-является-эффектом)).
+Неустранимый примитив для data-dependent байтовых алгоритмов (лексер,
+`find`, `trim`).
+
+**Bulk slice-операции `[]T`:**
+
+```nova
+fn []T mut @copy_from(src []T)                               // memcpy
+fn []T mut @copy_within(src_from int, dst_from int, len int) // memmove (overlap-safe)
+fn []T mut @fill(v T)                                        // заполнение
+```
+
+- `copy_from` — копирует `src` в начало получателя; `src.len > dst.len`
+  → `panic`. `src` короче — хвост получателя не изменяется.
+- `copy_within` — копирование внутри одного среза, **корректно при
+  перекрытии** диапазонов (семантика `memmove`); диапазон вне границ →
+  `panic`.
+- `fill` — записывает `v` во все элементы.
+- Определены для **любого** `T` (копирование element-storage корректно
+  при non-moving GC, [D6](05-memory.md#d6)).
+
+**`compare` — один примитив сравнения `[]u8`:**
+
+```nova
+fn []u8 @compare(other []u8) -> int   // <0 / 0 / >0, лексикографически
+```
+
+memcmp-класс (byte-wise, word/SIMD-скорость). **Равенство — частный
+случай:** `a == b` ⇔ `a.compare(b) == 0`; оператор `==` и
+`lt`/`le`/`gt`/`ge` выводятся из `compare`. Отдельного `bytes_equal`
+нет. Определён только для `[]u8`: для multi-byte `T` побайтовое
+сравнение endianness-зависимо.
+
+### Почему
+
+- **Self-hosting и stdlib на Nova.** Без примитивов доступа к памяти
+  str-методы и буферы вынужденно остаются C-кодом либо аллоцируют
+  (`slice`/`bytes`). Примитивы переносят *алгоритмы* в Nova, оставляя в
+  C лишь неустранимый минимум.
+- **Безопасность сохранена.** Все примитивы bounds-checked; нет сырых
+  указателей, нет `unsafe`-keyword. Паритет с Go (`copy()`/`bytes` —
+  safe, без `unsafe`), Rust (`slice::copy_*`/`[u8]::cmp` — safe),
+  TS (typed arrays — указателей нет вовсе). FFI-граница закрыта
+  `external fn` ([D82](#d82-external-fn--функции-с-runtime-implementation))
+  и `external type` (D126) — сырой указатель в систему типов Nova не
+  попадает.
+- **`compare` — один примитив.** memcmp возвращает порядок; равенство —
+  его zero-case. Дублировать в два примитива (`equal` + `compare`)
+  преждевременно (если профайл покажет — fast-path добавится позже,
+  модель Go `bytes.Equal`).
+
+### Связь
+
+- [D6 — память managed, без указателей](05-memory.md#d6).
+- [D13 — panic](#d13-panic-vs-эффекты-что-не-является-эффектом) —
+  семантика выхода за границы.
+- [D82 — `external fn`](#d82-external-fn--функции-с-runtime-implementation),
+  D126 — `external type`: FFI-граница без сырых указателей.
+- [D117 — size-accessors `[]T`/`str`](03-syntax.md#d117-size-like-accessors-require-call-syntax)
+  — соседняя группа методов built-in-типов.
+- [Plan 90](../../docs/plans/90-memory-access-primitives.md) — реализация.
+- Ориентиры: Go `copy()`/`bytes`, Rust `slice::copy_*`/`[u8]::cmp`,
+  TS typed arrays.

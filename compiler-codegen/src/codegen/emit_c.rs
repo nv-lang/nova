@@ -14977,6 +14977,23 @@ impl CEmitter {
                             let obj_c = self.emit_expr(obj)?;
                             return Ok(format!("nova_array_pop_{}({})", elem_ty, obj_c));
                         }
+                        // Plan 90: bulk slice-операции.
+                        "copy_from" | "copy_within" | "fill" => {
+                            let obj_c = self.emit_expr(obj)?;
+                            let mut arg_strs = vec![obj_c];
+                            for a in args { arg_strs.push(self.emit_expr(a.expr())?); }
+                            self.line(&format!("nova_array_{}_{}({});",
+                                method, elem_ty, arg_strs.join(", ")));
+                            return Ok("NOVA_UNIT".into());
+                        }
+                        // Plan 90: compare — memcmp-класс, только []u8 (nova_byte).
+                        "compare" if elem_ty == "nova_byte" => {
+                            let obj_c = self.emit_expr(obj)?;
+                            let mut arg_strs = vec![obj_c];
+                            for a in args { arg_strs.push(self.emit_expr(a.expr())?); }
+                            return Ok(format!("nova_array_compare_nova_byte({})",
+                                arg_strs.join(", ")));
+                        }
                         _ => {}
                     }
                 }
@@ -20490,6 +20507,8 @@ impl CEmitter {
                 => Some("nova_str"),
             "len" | "char_len" | "byte_len" | "hash"
                 => Some("nova_int"),
+            "byte_at"  // Plan 90
+                => Some("nova_byte"),
             "find" | "rfind"
                 => Some("NovaOpt_nova_int"),
             // Iter[T] / NovaArray возврат — пока не критично для bool-check.
@@ -20523,6 +20542,7 @@ impl CEmitter {
             "chars"       => Some("nova_str_chars"),
             "char_at"     => Some("nova_str_char_at"),
             "split"       => Some("nova_str_split"),
+            "byte_at"     => Some("nova_str_byte_at"),  // Plan 90
             _ => None,
         }
     }
@@ -22323,6 +22343,10 @@ impl CEmitter {
                         return match method.as_str() {
                             "get" | "pop" => format!("NovaOpt_{}", elem_ty),
                             "push" => "nova_unit".into(),
+                            // Plan 90: bulk slice-операции — mutating, возвращают unit.
+                            "copy_from" | "copy_within" | "fill" => "nova_unit".into(),
+                            // Plan 90: compare → int (-1/0/1).
+                            "compare" => "nova_int".into(),
                             // Plan 60 / D117: size-accessor methods.
                             "len" | "capacity" => "nova_int".into(),
                             "is_empty" => "nova_bool".into(),
@@ -22366,6 +22390,8 @@ impl CEmitter {
                             "to_upper" | "to_lower" | "trim" | "slice" | "concat" => "nova_str".into(),
                             "starts_with" | "ends_with" | "contains" | "eq" => "nova_bool".into(),
                             "len" | "char_len" | "byte_len" => "nova_int".into(),
+                            // Plan 90: byte_at → u8.
+                            "byte_at" => "nova_byte".into(),
                             // Plan 71 follow-up + Plan 75: char_at → Option[char], not Option[int].
                             "char_at" => "NovaOpt_nova_char".into(),
                             "find" | "rfind" => "NovaOpt_nova_int".into(),
