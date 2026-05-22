@@ -1444,13 +1444,21 @@ impl<'a> TypeCheckCtx<'a> {
             ExprKind::Realtime { body, .. } => {
                 self.f1_block(body, gs, scope, errors)
             }
-            ExprKind::ParallelFor { iter, body, .. } => {
+            ExprKind::ParallelFor { pattern, iter, body, elem_type } => {
                 self.f1_expr(iter, gs, scope, errors);
-                self.f1_block(body, gs, scope, errors);
+                if let Some(ann) = elem_type {
+                    self.f1_check_for_elem(iter, ann, gs, scope, errors);
+                }
+                self.f1_for_body(elem_type, pattern, body, gs, scope, errors);
             }
-            ExprKind::For { iter, body, .. } => {
+            ExprKind::For { pattern, iter, body, elem_type, .. } => {
                 self.f1_expr(iter, gs, scope, errors);
-                self.f1_block(body, gs, scope, errors);
+                // Plan 87 Ф.3: явная аннотация типа элемента — checked
+                // assertion против фактического типа элемента итератора.
+                if let Some(ann) = elem_type {
+                    self.f1_check_for_elem(iter, ann, gs, scope, errors);
+                }
+                self.f1_for_body(elem_type, pattern, body, gs, scope, errors);
             }
             ExprKind::While { cond, body, .. } => {
                 self.f1_expr(cond, gs, scope, errors);
@@ -1574,6 +1582,101 @@ impl<'a> TypeCheckCtx<'a> {
                     ann.span(),
                 ),
             );
+        }
+    }
+
+    /// Plan 87 Ф.2.2: пройти тело for-in. При заданной аннотации типа
+    /// элемента (`for x TYPE in`) loop-переменная-`Ident` получает этот
+    /// тип в scope тела (save/restore — for-body не утекает в окружающий
+    /// scope). Без аннотации scope не трогаем — поведение 1:1 до Plan 87.
+    fn f1_for_body(
+        &self,
+        elem_type: &Option<TypeRef>,
+        pattern: &Pattern,
+        body: &Block,
+        gs: &HashSet<String>,
+        scope: &mut HashMap<String, TypeRef>,
+        errors: &mut Vec<Diagnostic>,
+    ) {
+        match (elem_type, pattern) {
+            (Some(ann), Pattern::Ident { name, .. }) => {
+                let saved = scope.insert(name.clone(), ann.clone());
+                self.f1_block(body, gs, scope, errors);
+                match saved {
+                    Some(prev) => { scope.insert(name.clone(), prev); }
+                    None => { scope.remove(name); }
+                }
+            }
+            _ => self.f1_block(body, gs, scope, errors),
+        }
+    }
+
+    /// Plan 87 Ф.3: проверить, что аннотация типа loop-переменной
+    /// (`for x TYPE in iter`) совместима с фактическим типом элемента
+    /// итератора. Несовпадение → E7340. Если тип элемента уверенно
+    /// вывести не удалось — проверка пропускается (Compat::Unknown-
+    /// философия Plan 79: никаких ложных срабатываний).
+    fn f1_check_for_elem(
+        &self,
+        iter: &Expr,
+        ann: &TypeRef,
+        gs: &HashSet<String>,
+        scope: &HashMap<String, TypeRef>,
+        errors: &mut Vec<Diagnostic>,
+    ) {
+        let Some(elem_tr) = self.infer_iter_elem_type(iter, scope) else {
+            return;
+        };
+        let ann_cat = self.cat_of(ann, gs);
+        let elem_cat = self.cat_of(&elem_tr, gs);
+        // Permissive на Other (generic-параметр / неизвестное / protocol)
+        // — как в `assignable`.
+        if !cat_compatible(&elem_cat, &ann_cat) {
+            errors.push(
+                Diagnostic::new(
+                    format!(
+                        "[E7340] for-in loop variable annotated as `{}`, \
+                         but the iterator yields elements of type `{}`",
+                        typeref_display(ann),
+                        typeref_display(&elem_tr),
+                    ),
+                    ann.span(),
+                )
+                .with_note_at(
+                    "iterator element type comes from here".to_string(),
+                    iter.span,
+                ),
+            );
+        }
+    }
+
+    /// Plan 87 Ф.3: best-effort вывод типа элемента for-in итератора.
+    /// `None` — вывести не удалось (проверка аннотации пропускается).
+    fn infer_iter_elem_type(
+        &self,
+        iter: &Expr,
+        scope: &HashMap<String, TypeRef>,
+    ) -> Option<TypeRef> {
+        match &iter.kind {
+            // `a..b` / `a..=b` — элементы int.
+            ExprKind::Range { .. } => Some(prim_ref("int", iter.span)),
+            // Литерал массива — тип из первого выводимого не-spread элемента.
+            ExprKind::ArrayLit(elems) => {
+                for el in elems {
+                    if let ArrayElem::Item(e) = el {
+                        if let Some(t) = self.infer_expr_type(e, scope) {
+                            return Some(t);
+                        }
+                    }
+                }
+                None
+            }
+            // Прочее: если выражение имеет тип `[]T` / `[N]T` — элемент `T`.
+            _ => match self.infer_expr_type(iter, scope)? {
+                TypeRef::Array(inner, _)
+                | TypeRef::FixedArray(_, inner, _) => Some(*inner),
+                _ => None,
+            },
         }
     }
 
@@ -4225,7 +4328,7 @@ impl NameResCtx {
                 self.walk_block(body, file_id, scope, errors);
                 scope.pop();
             }
-            ExprKind::ParallelFor { pattern, iter, body } => {
+            ExprKind::ParallelFor { pattern, iter, body, .. } => {
                 self.walk_expr(iter, file_id, scope, errors);
                 let mut bindings: HashSet<String> = HashSet::new();
                 self.collect_pattern_bindings(pattern, &mut bindings);
@@ -6505,7 +6608,7 @@ fn consume_walk_expr(ctx: &mut ConsumeCtx, e: &Expr, errors: &mut Vec<Diagnostic
 
         // ─── Циклы — пессимистично ───
         ExprKind::For { pattern, iter, body, .. }
-        | ExprKind::ParallelFor { pattern, iter, body } => {
+        | ExprKind::ParallelFor { pattern, iter, body, .. } => {
             consume_walk_expr(ctx, iter, errors);
             let mut names = Vec::new();
             consume_pattern_names(pattern, &mut names);
