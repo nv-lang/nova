@@ -23,6 +23,7 @@ package `nova`, crate `nova-cli`).
   - [`nova run`](#nova-run) — interpreter
   - [`nova add`](#nova-add) — add a dependency
   - [`nova update`](#nova-update) — re-resolve git pins
+  - [`nova info`](#nova-info) — package effect-surface
   - [`nova build`](#nova-build) — compile to native
   - [`nova test`](#nova-test) — run tests
   - [`nova test-build`](#nova-test-build) — single-test build
@@ -293,6 +294,52 @@ nova update [NAME] [--precise NAME@VERSION]
   conflict.
 - `path` dependencies have no pin — passing one is rejected with an
   explanation.
+
+---
+
+### `nova info`
+
+Show the **effect-surface** of a package — the aggregated effects of
+its public API ([Plan 03.4](plans/03.4-effect-aware-tooling.md) / D140).
+Nova-unique: in Cargo/npm you cannot tell that a dependency reaches the
+network without auditing its code.
+
+```
+nova info TARGET [--format human|json] [--diff BASE [--fail-on-new]]
+```
+
+| Flag | Description |
+|---|---|
+| `TARGET` | A package path (`.nv` file / directory) or a dependency name from the current package's `[dependencies]` |
+| `--format` | `human` (default) or `json` |
+| `--diff BASE` | Compare TARGET's effect-surface against BASE (path or dependency) — shows added/removed effects |
+| `--fail-on-new` | With `--diff`: exit non-zero if new effects appeared (CI gate against supply-chain drift) |
+
+- Effect-surface = union of effects declared on all `export` functions
+  (D28 — public functions declare effects explicitly, so the surface is
+  exact without inter-procedural analysis). Private functions are
+  excluded.
+- `--diff` is a supply-chain signal: a `Net`/`Fs` effect appearing in a
+  patch/minor release of a previously pure API is a red flag.
+
+```bash
+nova info ./mylib                    # effect-surface of a local package
+nova info somedep                    # of a declared dependency
+nova info somedep --format json
+nova info ./v2 --diff ./v1 --fail-on-new   # CI: fail if v2 added effects
+```
+
+**Capability-confined dependencies.** A dependency can be constrained
+with `forbid` in `nova.toml`:
+
+```toml
+[dependencies]
+parser = { git = "https://example.org/parser.nv", forbid = ["Net", "Fs"] }
+```
+
+`nova build` computes the dependency's effect-surface and **fails the
+build** if it uses a forbidden effect — a type-level sandbox (stronger
+than runtime permission models). See D63 / D140.
 
 ---
 

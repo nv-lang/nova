@@ -55,6 +55,7 @@ Nova-«пакет» = Go-«module» = Cargo/npm-«package». С Cargo и npm
 | [D134](#d134-symbol-mangling-v0--c-имена-свободных-функций) | Symbol mangling v0 — C-имена свободных функций |
 | [D138](#d138-межпакетный-импорт--только-через-объявленную-зависимость) | Межпакетный импорт — только через объявленную `[dependencies]`-зависимость |
 | [D139](#d139-version-диапазоны-git-зависимостей--резолв-по-тегам-репозитория) | Version-диапазоны git-зависимостей — резолв по тегам репозитория |
+| [D140](#d140-effect-aware-зависимости--effect-surface-и-forbid-на-границе) | Effect-aware зависимости — effect-surface и `forbid` на границе |
 
 ---
 
@@ -1805,3 +1806,58 @@ registry-инфраструктуры. Registry ([Plan 03.3](03-package-ecosyste
 - [Plan 03.2](../../docs/plans/03.2-version-resolution.md) — реализация
   (`semver.rs`, `resolver.rs`, `git_cache::list_versions`).
 - Ориентир: Cargo (semver, caret/tilde, pre-release-policy; PubGrub).
+
+---
+
+## D140. Effect-aware зависимости — effect-surface и `forbid` на границе
+
+**Статус:** принято, реализовано ([Plan 03.4](../../docs/plans/03.4-effect-aware-tooling.md)).
+
+**Контекст.** Nova трекает **эффекты в типах** ([D62](04-effects.md#d62)).
+Это даёт менеджеру пакетов то, чего не может ни Cargo, ни Go: в Cargo/npm
+узнать, что зависимость ходит в сеть, **невозможно** без аудита кода —
+supply-chain-атаки годами этим пользуются (внезапная сетевая активность
+в патч-релизе). Раз эффекты уже в сигнатурах — менеджер обязан их
+использовать.
+
+**Решение.** Три effect-aware-механизма поверх `[dependencies]`:
+
+- **effect-surface** — агрегированный effect-row **публичного** API
+  пакета: объединение эффектов всех `export`-функций. D28 (public fn
+  объявляет эффекты явно) делает surface точной **by construction** —
+  без межпроцедурного анализа. `nova info <pkg>` показывает surface +
+  разбивку «эффект → какие функции его вносят» (видно *откуда* `Net`).
+- **effect-diff** — разница effect-surface двух версий.
+  `nova info <new> --diff <old>` → добавленные/убранные эффекты.
+  Появление `Net`/`Fs` в minor/patch-релизе ранее «чистого» API —
+  **supply-chain red flag**; `--fail-on-new` даёт CI-gate.
+- **capability-confined deps** — `[dependencies] foo = { …,
+  forbid = ["Net", "Fs"] }`: компилятор при сборке вычисляет
+  effect-surface зависимости и **падает**, если она содержит
+  запрещённый эффект. Песочница на уровне **типов**, не рантайма —
+  строго сильнее Deno-permissions (те рантаймовые, ловят нарушение
+  только при исполнении).
+
+**Почему.** Эффект-система уже оплачена языком ([D62](04-effects.md#d62));
+effect-surface — её «бесплатное» применение в tooling'е. Это превращает
+экосистему из «догнать Cargo» в «структурно безопаснее Cargo по
+supply-chain» ([Plan 03](../../docs/plans/03-package-ecosystem-roadmap.md) §4).
+
+**Граница.** Surface — по **объявленным** эффектам публичных сигнатур;
+приватные функции в неё не входят (внешнему потребителю невидимы).
+`forbid` здесь — на **границе зависимости** (что дозволено пакету-
+зависимости), в отличие от [D63](04-effects.md#d63) `forbid { }` —
+блока в коде. effect-diff registry-эры (effect-surface в `nova.lock` /
+в метаданных registry) — [Plan 03.3](../../docs/plans/03-package-ecosystem-roadmap.md)+.
+
+### Связь
+
+- [D62](04-effects.md#d62) — эффекты в сигнатурах; фундамент D140.
+- [D63](04-effects.md#d63) — `forbid { }`-блок в коде; D140 переносит
+  `forbid` на границу зависимости.
+- [D78](#d78-package-tooling-novatoml-novalock-registry-chain-workspace)
+  — `[dependencies]`; D140 добавляет туда `forbid`-поле.
+- [Plan 03.4](../../docs/plans/03.4-effect-aware-tooling.md) — реализация
+  (`effect_surface.rs`, `nova info`).
+- [Plan 45](../../docs/plans/45-nova-doc.md) — `effect_matrix` (`nova doc`)
+  — источник per-fn эффектов.
