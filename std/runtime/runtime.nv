@@ -68,6 +68,10 @@ export external fn runtime.init(n int) -> ()
 /// Signal stop → join workers → free resources. После shutdown повторный
 /// `[runtime.init]` стартует новые workers.
 ///
+/// **Plan 83.1 Ф.4:** вызывается автоматически на выходе процесса
+/// (через `atexit` — нормальный return из main и `exit()`). Явный
+/// вызов опционален; идемпотентен.
+///
 /// # Effects
 ///
 /// Блокирует до завершения всех worker threads.

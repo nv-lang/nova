@@ -17505,3 +17505,15 @@ runtime.init больше НЕ создаёт worker-потоки — лишь A
 - simplifications: [M-83.1-lazy-spawn-v1-whole-pool] — V1 поднимает
   весь пул на первом spawn; инкрементальный рост — followup.
 Suite: 962 PASS / 0 FAIL.
+
+### Plan 83.1 — M:N-инфраструктура, Ф.4 часть 2: auto-shutdown (✅)
+
+nova_runtime_shutdown регистрируется через atexit() при первом
+runtime.init — graceful cleanup на нормальном return из main и exit()
+без обязательного явного runtime.shutdown(). Один раз (флаг
+_atexit_registered); nova_runtime_shutdown идемпотентен. atexit
+покрывает все graceful-exit пути; отдельный codegen-эпилог (упомянут в
+плане Ф.4) признан избыточным — atexit это стандартный механизм, а
+conflicting atexit/destructor'ов, которым нужен рантайм поднятым, у
+Nova нет. runtime.nv: shutdown doc обновлён.
+Suite: 962 PASS / 0 FAIL.
