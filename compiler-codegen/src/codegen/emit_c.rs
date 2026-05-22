@@ -8256,6 +8256,31 @@ impl CEmitter {
     /// Plan 48: apply a type param substitution to a TypeRef, returning a C type string.
     /// Used in infer_expr_c_type for resolving the return type of generic fn calls.
     /// Returns None if type cannot be resolved from the subst alone (e.g. non-named types).
+    /// Plan 85.4: true если `ty` упоминает любое имя из `names` (имена
+    /// generic-параметров функции). Используется чтобы отличить fully-
+    /// concrete return-тип (резолвится через `type_ref_to_c`) от типа с
+    /// неразрешёнными type-params (erased → void*).
+    fn type_ref_mentions_name(ty: &crate::ast::TypeRef, names: &[String]) -> bool {
+        use crate::ast::TypeRef;
+        match ty {
+            TypeRef::Named { path, generics, .. } => {
+                let n = path.join("_");
+                names.iter().any(|x| x == &n)
+                    || generics.iter().any(|g| Self::type_ref_mentions_name(g, names))
+            }
+            TypeRef::Array(inner, _) | TypeRef::FixedArray(_, inner, _) =>
+                Self::type_ref_mentions_name(inner, names),
+            TypeRef::Tuple(elems, _) =>
+                elems.iter().any(|e| Self::type_ref_mentions_name(e, names)),
+            TypeRef::Func { params, return_type, .. } =>
+                params.iter().any(|p| Self::type_ref_mentions_name(p, names))
+                || return_type.as_ref()
+                    .map(|r| Self::type_ref_mentions_name(r, names))
+                    .unwrap_or(false),
+            TypeRef::Unit(_) => false,
+        }
+    }
+
     fn apply_type_subst_to_ref(
         ty: &crate::ast::TypeRef,
         subst: &[(String, Option<String>)],
@@ -8267,7 +8292,10 @@ impl CEmitter {
                 if let Some((_, Some(c_ty))) = subst.iter().find(|(n, _)| n == &name) {
                     return Some(c_ty.clone());
                 }
-                // Known primitive names
+                // Known primitive names. Concrete user-types (NOT type-params)
+                // резолвятся caller'ом через `type_ref_to_c` — здесь нельзя
+                // отличить `Ordering` (user-тип) от unresolved type-param `U`
+                // без registry, поэтому только примитивы.
                 let c = match name.as_str() {
                     "int" | "i64" => "nova_int",
                     "f64" => "nova_f64",
@@ -11716,6 +11744,25 @@ impl CEmitter {
                                     self.register_mono_method_instance(&fn_decl, type_subst, &mono_name, &type_name_sum);
                                     return Ok(format!("{}({}, {})", mono_name, l, r));
                                 }
+                            }
+                        }
+                    }
+                    // D46 (Plan 85.4): `==` / `!=` на типе с user-defined
+                    // `@eq` → dispatch на метод, НЕ на tag-сравнение. Без
+                    // этого record-типы (у них нет `->tag`) давали невалидный
+                    // C, а sum-типы с кастомным `@eq` его игнорировали.
+                    if matches!(op, BinOp::Eq | BinOp::Neq) {
+                        let eq_key = (type_name_sum.clone(), "eq".to_string());
+                        if let Some(sigs) = self.method_overloads.get(&eq_key) {
+                            if let Some(sig) = sigs.iter()
+                                .find(|s| s.is_instance && s.param_c_types.len() == 1)
+                            {
+                                let call = format!("{}({}, {})", sig.c_name, l, r);
+                                return Ok(match op {
+                                    BinOp::Eq  => call,
+                                    BinOp::Neq => format!("(!{})", call),
+                                    _ => unreachable!(),
+                                });
                             }
                         }
                     }
@@ -20005,17 +20052,21 @@ impl CEmitter {
     /// Возвращает Fn(c_function_name) или BinOp(c_operator).
     fn prim_builtin_method(c_ty: &str, method: &str) -> Option<PrimBuiltin> {
         match (c_ty, method) {
-            // hash — C-функция
-            ("nova_int",  "hash") => Some(PrimBuiltin::Fn("nova_int_hash")),
+            // hash — C-функция. Plan 85.4: `nova_char` == int64 (Plan 70.3
+            // typedef) → nova_int_hash. Без этой ветки `char.hash()` не
+            // находил builtin и mis-dispatch'ился на user-метод `hash`
+            // (segfault: nova_char передавался как receiver-pointer).
+            ("nova_int" | "nova_char",  "hash") => Some(PrimBuiltin::Fn("nova_int_hash")),
             ("nova_bool", "hash") => Some(PrimBuiltin::Fn("nova_bool_hash")),
             ("nova_f64",  "hash") => Some(PrimBuiltin::Fn("nova_f64_hash")),
-            // eq — inline оператор (все скаляры)
-            ("nova_int" | "nova_bool" | "nova_f64", "eq") => Some(PrimBuiltin::BinOp("==")),
-            // lt/le/gt/ge — только упорядоченные типы (не bool)
-            ("nova_int" | "nova_f64", "lt") => Some(PrimBuiltin::BinOp("<")),
-            ("nova_int" | "nova_f64", "le") => Some(PrimBuiltin::BinOp("<=")),
-            ("nova_int" | "nova_f64", "gt") => Some(PrimBuiltin::BinOp(">")),
-            ("nova_int" | "nova_f64", "ge") => Some(PrimBuiltin::BinOp(">=")),
+            // eq — inline оператор (все скаляры; char упорядочен по codepoint).
+            ("nova_int" | "nova_bool" | "nova_f64" | "nova_char", "eq")
+                => Some(PrimBuiltin::BinOp("==")),
+            // lt/le/gt/ge — только упорядоченные типы (не bool).
+            ("nova_int" | "nova_f64" | "nova_char", "lt") => Some(PrimBuiltin::BinOp("<")),
+            ("nova_int" | "nova_f64" | "nova_char", "le") => Some(PrimBuiltin::BinOp("<=")),
+            ("nova_int" | "nova_f64" | "nova_char", "gt") => Some(PrimBuiltin::BinOp(">")),
+            ("nova_int" | "nova_f64" | "nova_char", "ge") => Some(PrimBuiltin::BinOp(">=")),
             _ => None,
         }
     }
@@ -21586,6 +21637,21 @@ impl CEmitter {
                                 if let Some(c_ty) = resolved {
                                     if !c_ty.is_empty() && c_ty != "void*" {
                                         return c_ty;
+                                    }
+                                }
+                                // Plan 85.4: `apply_type_subst_to_ref` резолвит
+                                // только type-params + примитивы. Если return-тип
+                                // — concrete user-тип БЕЗ неразрешённых type-params
+                                // (напр. `-> Ordering`), резолвим через
+                                // `type_ref_to_c` (вместо void*-эрейжера, который
+                                // ломал call-site mis-typing'ом).
+                                let generic_names: Vec<String> =
+                                    subst.iter().map(|(n, _)| n.clone()).collect();
+                                if !Self::type_ref_mentions_name(ret_ty_ref, &generic_names) {
+                                    if let Ok(c_ty) = self.type_ref_to_c(ret_ty_ref) {
+                                        if !c_ty.is_empty() && c_ty != "void*" {
+                                            return c_ty;
+                                        }
                                     }
                                 }
                                 // If return type resolution failed (e.g. generic record T),
