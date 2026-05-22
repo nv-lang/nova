@@ -10,13 +10,14 @@ module concurrency.mn_maxprocs_env
 test "NOVA_MAXPROCS resolved on auto-detect init(0)" {
     runtime.init(0)
     assert(runtime.is_initialized())
-    assert(runtime.worker_count() == 3)
+    // Ф.4: пул ленивый — проверяем целевое число через maxprocs().
+    assert(runtime.maxprocs() == 3)
     runtime.shutdown()
     assert(!runtime.is_initialized())
 }
 
 test "explicit runtime.init(n) overrides NOVA_MAXPROCS" {
     runtime.init(7)
-    assert(runtime.worker_count() == 7)
+    assert(runtime.maxprocs() == 7)
     runtime.shutdown()
 }

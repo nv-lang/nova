@@ -1,8 +1,8 @@
 // Plan 83.1 Ф.3: runtime.maxprocs() — целевое число worker-потоков.
 //
 // maxprocs() резолвит целевое число даже ДО runtime.init (в отличие от
-// worker_count(), который = 0 пока пул не поднят). После init —
-// совпадает с числом фактически поднятых worker'ов.
+// worker_count(), который = 0 пока пул не материализован). Plan 83.1
+// Ф.4: пул ленивый — после init() worker_count() == 0 до первого spawn.
 
 module concurrency.mn_maxprocs_getter
 
@@ -13,10 +13,11 @@ test "maxprocs resolves a positive target before init" {
     assert(runtime.worker_count() == 0)
 }
 
-test "maxprocs reflects explicit init(n)" {
+test "maxprocs reflects explicit init(n), pool still lazy" {
     runtime.init(4)
     assert(runtime.maxprocs() == 4)
-    assert(runtime.worker_count() == 4)
+    // Ф.4: init не материализует пул — worker_count() == 0 до spawn.
+    assert(runtime.worker_count() == 0)
     runtime.shutdown()
 }
 
