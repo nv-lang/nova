@@ -1,6 +1,6 @@
 # Plan 87 — for-in с явным типом элемента (`for x TYPE in iter`)
 
-> **Статус:** 📋 proposed 2026-05-22 (ревизия 2 — production-grade), не начат
+> **Статус:** ✅ ЗАКРЫТ 2026-05-22 (Ф.1-Ф.5; ветка `plan-87`)
 > **Приоритет:** P3 (фича опциональна, но это spec-compliance +
 > design-consistency fix, не «сахар на потом»)
 > **Оценка:** ~0.75 dev-day
@@ -148,17 +148,19 @@ Bootstrap-парсер этого **не поддерживает** — посл
 
 ## Acceptance criteria
 
-- [ ] `for x TYPE in iter` парсится и работает — примитивы, generic,
-      user record/sum, protocol-типы.
-- [ ] `for mut x TYPE in iter` работает.
-- [ ] `parallel for x TYPE in iter` работает (консистентно с `for`).
-- [ ] **Аннотация проверяется:** `for x WrongType in iter` →
-      compile error (Ф.4.5 — обязательный критерий, без него фича
-      хуже индустрии).
-- [ ] Inferred-форма `for x in iter` не сломана; `elem_type = None`
-      — поведение 1:1 как до плана.
-- [ ] Полный `nova test` — 0 новых FAIL относительно baseline.
-- [ ] `[M-for-in-explicit-elem-type]` закрыт; spec/impl drift устранён.
+- [x] `for x TYPE in iter` парсится и работает — примитивы, generic
+      (`[]T`, `Option[T]`), user Iter. _(user record/sum, protocol-типы:
+      деструктуризация боксированного sum-элемента в теле упирается в
+      pre-existing codegen-дефект `[M-iflet-match-boxed-sum-ptr]` —
+      аннотация при этом парсится/проверяется/итерация работает.)_
+- [x] `for mut x TYPE in iter` работает (`mut` съедается в `parse_for`).
+- [x] `parallel for x TYPE in iter` работает (консистентно с `for`).
+- [x] **Аннотация проверяется:** `for x WrongType in iter` →
+      compile error `E7340` (Ф.4.5 — `neg_type_mismatch.nv`).
+- [x] Inferred-форма `for x in iter` не сломана; `elem_type = None`
+      — поведение 1:1 как до плана (codegen аннотацию не потребляет).
+- [x] Полный `nova test` — 0 новых FAIL относительно baseline.
+- [x] `[M-for-in-explicit-elem-type]` закрыт; spec/impl drift устранён.
 
 ## Non-scope
 

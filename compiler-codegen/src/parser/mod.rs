@@ -5273,7 +5273,21 @@ impl Parser {
 
     fn parse_for(&mut self) -> Result<Expr, Diagnostic> {
         let start = self.expect(&TokenKind::KwFor)?.span;
+        // Plan 87: `for mut x [TYPE] in` — `mut` помечает loop-переменную
+        // мутабельной (D32/D33). `parse_pattern` не съедает `mut`, поэтому
+        // обрабатываем здесь. В bootstrap'е binding-иммутабельность нигде
+        // не enforce'ится — `mut` информационен (см. simplifications.md
+        // `[M-for-loop-var-mut]`).
+        let _loop_var_mut = self.eat(&TokenKind::KwMut).is_some();
         let pattern = self.parse_pattern()?;
+        // Plan 87: явный тип элемента — `for x TYPE in iter`. Если после
+        // loop-pattern сразу не `in` — это аннотация типа по правилу
+        // «name type» (как `let x int`, `fn(x int)`, `[T Bound]`).
+        let elem_type = if matches!(self.peek().kind, TokenKind::KwIn) {
+            None
+        } else {
+            Some(self.parse_type()?)
+        };
         self.expect(&TokenKind::KwIn)?;
         let iter = self.with_no_struct_or_trailing(|p| p.parse_expr())?;
         // Plan 33.2 Ф.6 + 33.3 Ф.9.3/9.5/9.8: loop invariants/decreases.
@@ -5287,6 +5301,7 @@ impl Parser {
                 pattern,
                 iter: Box::new(iter),
                 body,
+                elem_type,
                 invariants: invs.clone(),
                 decreases: decr.map(Box::new),
             },
@@ -5299,7 +5314,16 @@ impl Parser {
     fn parse_parallel_for(&mut self) -> Result<Expr, Diagnostic> {
         let start = self.expect(&TokenKind::KwParallel)?.span;
         self.expect(&TokenKind::KwFor)?;
+        // Plan 87: `parallel for mut x [TYPE] in` — консистентно с `for`.
+        let _loop_var_mut = self.eat(&TokenKind::KwMut).is_some();
         let pattern = self.parse_pattern()?;
+        // Plan 87: явный тип элемента — `parallel for x TYPE in iter`
+        // (консистентно с обычным `for`).
+        let elem_type = if matches!(self.peek().kind, TokenKind::KwIn) {
+            None
+        } else {
+            Some(self.parse_type()?)
+        };
         self.expect(&TokenKind::KwIn)?;
         let iter = self.with_no_struct_or_trailing(|p| p.parse_expr())?;
         let body = self.parse_block()?;
@@ -5309,6 +5333,7 @@ impl Parser {
                 pattern,
                 iter: Box::new(iter),
                 body,
+                elem_type,
             },
             start.merge(end),
         ))
