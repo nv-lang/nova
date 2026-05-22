@@ -1,0 +1,74 @@
+// Plan 85.3 Ф.2 — TryFrom[T, E]: Err-путь.
+//
+// Невалидный вход → `Err(e)`. Проверяется и дискриминация (is_err),
+// и содержимое сообщения об ошибке (Err-payload — str, не record,
+// поэтому match-binding безопасен).
+
+module conversion.try_from_err
+
+
+type Port { n int }
+
+fn Port.try_from(v int) -> Result[Port, str] =>
+    if v >= 1 && v <= 65535 {
+        Ok(Port { n: v })
+    } else {
+        Err("port out of range")
+    }
+
+
+test "try_from слишком большой -> Err" {
+    let r = Port.try_from(99999)
+    assert(r.is_err())
+}
+
+test "try_from ноль -> Err" {
+    let r = Port.try_from(0)
+    assert(r.is_err())
+}
+
+test "try_from отрицательный -> Err" {
+    let r = Port.try_from(-1)
+    assert(r.is_err())
+}
+
+test "try_from Err-дискриминация через match" {
+    let r = Port.try_from(70000)
+    let is_err = match r {
+        Ok(_) => false
+        Err(_) => true
+    }
+    assert(is_err)
+}
+
+test "try_from Err — содержимое сообщения" {
+    let r = Port.try_from(123456)
+    let msg = match r {
+        Ok(_) => ""
+        Err(e) => e
+    }
+    assert(msg == "port out of range")
+}
+
+
+// ── TryFrom от строки — Err ────────────────────────────────────────
+
+type NonEmpty { text str }
+
+fn NonEmpty.try_from(s str) -> Result[NonEmpty, str] =>
+    if s.len() > 0 {
+        Ok(NonEmpty { text: s })
+    } else {
+        Err("empty string")
+    }
+
+
+test "try_from пустой строки -> Err с сообщением" {
+    let r = NonEmpty.try_from("")
+    assert(r.is_err())
+    let msg = match r {
+        Ok(_) => ""
+        Err(e) => e
+    }
+    assert(msg == "empty string")
+}

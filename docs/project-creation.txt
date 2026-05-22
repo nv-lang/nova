@@ -17487,3 +17487,33 @@ Worktree nova-p85, ветка plan-85.
   * try_read_f64_* Ok-payload в bootstrap несёт int-биты; распаковка
     через f64.from_bits(r.unwrap_or(0)).
 Suite: buffers 11 PASS / 0 FAIL.
+
+=== Plan 85.3 — тестовое покрытие протоколов конверсии (2026-05-22) ===
+Worktree nova-p85, ветка plan-85.
+- Новый каталог nova_tests/protocols/conversion/ — 9 файлов:
+  from_basic, from_multi, into_derive, try_from_ok, try_from_err,
+  try_into_test, generic_from_bound, generic_try_bound (позитивные, 8)
+  + neg_missing_impl (негативный, EXPECT_COMPILE_ERROR does not satisfy).
+- From (static fn T.from) / Into (instance @into, auto-derive из From)
+  / TryFrom (static fn T.try_from -> Result) / TryInto (instance
+  @try_into -> Result). User-defined impl от int/str/bool/f64.
+- CODEGEN-БАГ НАЙДЕН И ИСПРАВЛЕН (emit_c.rs): D73 `.into()` auto-derive
+  эмитил базовое C-имя `Nova_<T>_static_from` без overload-резолюции.
+  При нескольких `from`-overload'ах на одном типе (MyNum.from(int) +
+  from(str) + from(bool)) ВСЕ `.into()` резолвились в первый overload
+  -> передача неверного типа в параметр -> CC-FAIL. Фикс: into-derive
+  (и симметрично try_into-derive) выбирает mangled C-имя по типу
+  источника через method_overloads-реестр (sigs.len()>1 -> match по
+  param_c_types[0]). Прямые вызовы MyNum.from(x) overload-резолюцию
+  имели и до фикса — баг только в auto-derive пути.
+- ИЗВЕСТНОЕ ОГРАНИЧЕНИЕ (documented, не fixed): вызов T.from(...) на
+  type-параметре ВНУТРИ тела generic-функции не мономорфизируется
+  (emit_c.rs эмитит литеральный nova_fn_T_from). simplifications.md
+  [M-generic-static-method-on-typevar]. generic_from_bound/
+  generic_try_bound переписаны на probe — bound parse +
+  инстанцирование + enforcement (что работает); конверсия — на
+  call-site.
+- Корректировка: примеры sub-плана 85.3 были в Rust-синтаксисе
+  (impl From for ...) — тесты написаны по фактическому синтаксису
+  Nova (структурные протоколы, static fn T.from, без impl-блоков).
+Suite: protocols/conversion 9 PASS / 0 FAIL.
