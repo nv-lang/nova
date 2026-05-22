@@ -1221,6 +1221,42 @@ pub fn parse_timeout_ms(src: &str) -> Option<Duration> {
     None
 }
 
+/// Plan 83.1 Ф.2: парсит директивы `// ENV NAME=VALUE` из первых 30
+/// строк файла. Каждая выставляет переменную окружения **только** для
+/// шага запуска тестового исполняемого файла (не для codegen/компиляции
+/// C — те детерминированы по исходнику). Несколько директив допустимы.
+///
+/// Формат строгий: `// ENV` + whitespace + `NAME=VALUE`. `NAME` не может
+/// быть пустым; `VALUE` может (тогда переменная задаётся пустой строкой).
+/// Используется для тестов рантайм-конфигурации — например
+/// `NOVA_MAXPROCS` (Plan 83.1).
+pub fn parse_env(src: &str) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    for line in src.lines().take(30) {
+        let trimmed = line.trim_start();
+        let Some(body) = trimmed.strip_prefix("//") else {
+            continue;
+        };
+        let body = body.trim_start();
+        let Some(rest) = body.strip_prefix("ENV") else {
+            continue;
+        };
+        // Требуем разделитель после `ENV`, чтобы не матчить `ENVOTHER=...`.
+        if !rest.starts_with(|c: char| c.is_whitespace()) {
+            continue;
+        }
+        let rest = rest.trim();
+        if let Some(eq) = rest.find('=') {
+            let key = rest[..eq].trim();
+            let val = rest[eq + 1..].trim();
+            if !key.is_empty() {
+                out.push((key.to_string(), val.to_string()));
+            }
+        }
+    }
+    out
+}
+
 // ---------- Plan 26 Ф.6: Outcome — typed test result ----------
 
 /// Результат одного теста. Production-grade: typed stages вместо
@@ -1537,6 +1573,10 @@ pub fn run_one(opts: &TestBuildOpts) -> Outcome {
     // Plan 27 Б.2: per-test timeout override via EXPECT_TIMEOUT_MS.
     let effective_timeout = parse_timeout_ms(&src).unwrap_or(opts.timeout);
 
+    // Plan 83.1 Ф.2: per-test env vars (// ENV NAME=VALUE) — applied to
+    // the run step only.
+    let env_vars = parse_env(&src);
+
     // Plan 27 Б.3: capture stdout/stderr на PASS при --verbose.
     let verbose = matches!(opts.verbosity, Verbosity::Verbose);
 
@@ -1806,14 +1846,15 @@ pub fn run_one(opts: &TestBuildOpts) -> Outcome {
     }
 
     // Step 3 — run с timeout.
-    // `mut` нужен только под non-Windows path (env-вызовы ниже). На
-    // Windows компилятор увидит unused-mut warning без cfg_attr.
-    #[cfg_attr(target_os = "windows", allow(unused_mut))]
     let mut run_cmd = Command::new(&exe_file);
     #[cfg(not(target_os = "windows"))]
     {
         run_cmd.env("LC_ALL", "C.UTF-8");
         run_cmd.env("LANG", "C.UTF-8");
+    }
+    // Plan 83.1 Ф.2: apply `// ENV NAME=VALUE` directives to the test exe.
+    for (key, val) in &env_vars {
+        run_cmd.env(key, val);
     }
     let run_captured = match run_with_timeout(run_cmd, effective_timeout) {
         Ok(o) => o,
@@ -3737,6 +3778,69 @@ mod tests {
             Some(ExpectMarker::RuntimePanic(p)) => assert_eq!(p, "index out of bounds"),
             other => panic!("expected RuntimePanic, got {:?}", other),
         }
+    }
+
+    // ---------- Plan 83.1 Ф.2: parse_env (`// ENV NAME=VALUE`) ----------
+
+    #[test]
+    fn parse_env_single() {
+        let src = "// ENV NOVA_MAXPROCS=3\nmodule x\n";
+        assert_eq!(parse_env(src), vec![("NOVA_MAXPROCS".into(), "3".into())]);
+    }
+
+    #[test]
+    fn parse_env_multiple() {
+        let src = "// ENV FOO=1\n// ENV BAR=two\nmodule x\n";
+        assert_eq!(
+            parse_env(src),
+            vec![
+                ("FOO".into(), "1".into()),
+                ("BAR".into(), "two".into()),
+            ]
+        );
+    }
+
+    #[test]
+    fn parse_env_empty_value() {
+        // VALUE может быть пустым — переменная задаётся пустой строкой.
+        let src = "// ENV NOVA_MAXPROCS=\nmodule x\n";
+        assert_eq!(parse_env(src), vec![("NOVA_MAXPROCS".into(), "".into())]);
+    }
+
+    #[test]
+    fn parse_env_value_with_equals() {
+        // Только первый `=` разделяет; остаток уходит в VALUE.
+        let src = "// ENV KEY=a=b=c\nmodule x\n";
+        assert_eq!(parse_env(src), vec![("KEY".into(), "a=b=c".into())]);
+    }
+
+    #[test]
+    fn parse_env_requires_separator() {
+        // `ENVOTHER` не должен матчиться как директива ENV.
+        let src = "// ENVOTHER=1\nmodule x\n";
+        assert!(parse_env(src).is_empty());
+    }
+
+    #[test]
+    fn parse_env_ignores_no_equals() {
+        let src = "// ENV JUSTNAME\nmodule x\n";
+        assert!(parse_env(src).is_empty());
+    }
+
+    #[test]
+    fn parse_env_none() {
+        let src = "module x\ntest \"t\" {}\n";
+        assert!(parse_env(src).is_empty());
+    }
+
+    #[test]
+    fn parse_env_skips_after_30_lines() {
+        let mut src = String::new();
+        for _ in 0..30 {
+            src.push('\n');
+        }
+        src.push_str("// ENV NOVA_MAXPROCS=4\n");
+        assert!(parse_env(&src).is_empty());
     }
 
     // ---------- Plan 26 Ф.17 #11: civil_from_days regression tests ----------

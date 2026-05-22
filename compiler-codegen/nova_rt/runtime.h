@@ -77,6 +77,13 @@ void nova_runtime_signal_main(void);
  * Called by codegen в exit path (либо явно через runtime.shutdown()). */
 void nova_runtime_shutdown(void);
 
+/* Plan 83.1 Ф.1+Ф.2: резолвер числа worker-потоков.
+ * Порядок: explicit runtime.init(n>0) > ENV NOVA_MAXPROCS >
+ * uv_available_parallelism(). Результат всегда в [1, 1024]. `explicit_n`
+ * <= 0 означает «не задано явно» (auto-detect). nova_runtime_init
+ * прогоняет свой аргумент через этот резолвер. */
+int  nova_runtime_resolve_maxprocs(int explicit_n);
+
 /* Diagnostic — exposed через std.runtime.runtime. */
 int  nova_runtime_worker_count(void);
 int  nova_runtime_current_worker_id(void);  /* -1 если main thread */
