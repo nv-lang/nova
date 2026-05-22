@@ -4,6 +4,10 @@
 // bench result JSON содержит `allocs_per_iter` / `allocs_total`).
 module bench.micro
 
+// Plan 82 followup: HashMap нужен явный import для корректной
+// мономорфизации в codegen (см. bench/micro/hashmap.nv).
+import std.collections.hashmap.{HashMap}
+
 type Node {
     value int
     next  Option[Node]
