@@ -18049,3 +18049,37 @@ probe-формы (T как value-тип, конверсия на call-site) на
 ✅ ЗАКРЫТО); D72/D73 правок не требуют (фикс приводит реализацию в
 соответствие с уже-корректной спекой — D72-пример не был помечен
 «недоступно»); README + plan-doc статусы.
+
+### Plan 82 Ф.0 (частично) — re-diagnosis Windows fiber arena (2026-05-22)
+
+Старт Plan 82 (Windows fiber stack arena). Ф.0 — re-diagnosis через
+standalone C-харнесс (вне рантайма Nova), каталог 82-artifacts/.
+
+Подтверждено (без сюрпризов):
+- §1.3: f0_probe.c Probe 1 — чтение MEM_RESERVE-страницы → 0xC0000005
+  ACCESS_VIOLATION. Плоский GC_add_roots поверх lazy-commit-арены
+  непереносим на Windows.
+- §5.2-модель: Probe 4 — by-byte скан ЗАКОММИЧЕННОГО окна fault-free →
+  precise push [committed_low, top] обходит §1.3-AV by construction.
+- PAGE_GUARD one-shot (Probe 3) + PAGE_NOACCESS hard-guard (Probe 2) —
+  primitives исправны.
+- §1.6: Boehm GC API — заголовки (gc.h/gc_mark.h) + линковка из
+  статической gc.lib (f0_gc_link.c) + VirtualQuery-clamp перечитан в
+  vendored win32_threads.c (GC_get_stack_min:1552) — per-thread скан
+  Windows клампится к committed RW-региону → mid-switch GC-race (П5)
+  закрыт по построению.
+
+Toolchain-находка: f0_probe.c (__try/__except) собирается MSVC cl.exe
+(ловит hardware-SEH по умолчанию) и clang-cl С ФЛАГОМ /EHa; без /EHa
+clang-cl и clang.exe hardware-AV в __try НЕ ловят. Следствие для Ф.1:
+overflow-handler обязан быть на VEH (AddVectoredExceptionHandler),
+compiler-независимом — совпадает с выбором плана §5.1.
+
+Остаётся (decision-point Ф.0, minicoro-интегрированные эксперименты):
+test (a) — растит ли ядро non-primary minicoro-стек (решение A vs B);
+test (d) — аномалия Попыток 3-4; test (e) — SEH через границу
+fiber-стека. Их нельзя торопить — ошибка дизайна харнесса даёт неверное
+архитектурное решение. Промежуточный go на продолжение Ф.0.
+
+Артефакты: 82-artifacts/{f0_probe.c, f0_gc_link.c, build.ps1,
+f0-rediagnosis.md}.
