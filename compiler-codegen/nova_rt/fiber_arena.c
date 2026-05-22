@@ -441,6 +441,12 @@ void* nova_fiber_committed_low(const void* block_ptr) {
     return NULL;
 }
 
+/* Plan 82 Ф.3 — M:N lifecycle. POSIX-арена живёт в TLS (__thread) и
+ * освобождается _arena_thread_exit_cleanup через pthread_key при выходе
+ * потока; явные thread_exit / release_retired не нужны — no-op. */
+void nova_fiber_arena_thread_exit(void) { }
+void nova_fiber_arena_release_retired(void) { }
+
 NovaFiberArenaStats nova_fiber_arena_stats(void) {
     NovaFiberArenaStats s = { 0 };
     if (_t_arena.base) {
