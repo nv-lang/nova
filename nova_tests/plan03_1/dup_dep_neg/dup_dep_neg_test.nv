@@ -1,0 +1,10 @@
+// Plan 03.1 Ф.3 NEGATIVE — зависимость `foo` объявлена в `[dependencies]`
+// дважды.
+// EXPECT_COMPILE_ERROR дважды
+module dup_dep_pkg.dup_dep_neg_test
+
+import notreal.thing.{anything}
+
+test "unreachable" {
+    assert(true)
+}

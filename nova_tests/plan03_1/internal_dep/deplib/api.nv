@@ -1,0 +1,7 @@
+// Plan 03.1 Ф.3 — публичный API зависимости `deplib_int`. Внутри
+// своего пакета `internal/` доступен (относительный импорт, Plan 84).
+module deplib_int.api
+
+import ./internal.secret.{secret_base}
+
+export fn make_token(n int) -> int => secret_base() + n

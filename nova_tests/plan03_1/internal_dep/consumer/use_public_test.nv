@@ -1,0 +1,9 @@
+// Plan 03.1 Ф.3 POSITIVE — публичный API зависимости использует свой
+// `internal/`-модуль; потребитель видит только публичную поверхность.
+module consumer_int.use_public_test
+
+import deplib_int.api.{make_token}
+
+test "межпакетный импорт: публичный API поверх internal/" {
+    assert(make_token(5) == 105)
+}
