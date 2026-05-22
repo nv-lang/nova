@@ -9,6 +9,7 @@ pub mod codegen;
 pub mod desugar;
 pub mod diag;
 pub mod doc;
+pub mod effect_surface;
 pub mod git_cache;
 pub mod imports;
 pub mod interp;
