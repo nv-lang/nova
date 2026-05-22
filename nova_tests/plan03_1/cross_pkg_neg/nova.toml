@@ -1,0 +1,10 @@
+# Plan 03.1 Ф.3 fixture — пакет без `[dependencies]`; импортирует модуль
+# чужого пакета (`nova_tests`) — должен быть отвергнут (§3.2).
+[package]
+name = "xpkg_consumer"
+version = "0.1.0"
+
+[lib]
+src = "."
+
+[dependencies]

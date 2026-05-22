@@ -1,0 +1,9 @@
+# Plan 03.1 Ф.3 fixture — зависимость с `[package].name = "realname"`.
+[package]
+name = "realname"
+version = "0.1.0"
+
+[lib]
+src = "."
+
+[dependencies]

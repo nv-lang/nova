@@ -1,0 +1,13 @@
+// Plan 03.1 Ф.3 NEGATIVE — импорт модуля чужого пакета (`nova_tests`)
+// без объявления в `[dependencies]`. §3.2: межпакетные ссылки обязаны
+// идти через `[dependencies]`; workspace-членство не делает пакет
+// импортируемым. Раньше резолвер неявно находил такой модуль через
+// repo-root — 03.1 Ф.3 эту looseness ужесточает.
+// EXPECT_COMPILE_ERROR границу пакета
+module xpkg_consumer.cross_pkg_test
+
+import nova_tests.plan03_1.shared_target.{shared_value}
+
+test "unreachable" {
+    assert(true)
+}
