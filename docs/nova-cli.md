@@ -237,7 +237,7 @@ Add a dependency to `[dependencies]` of the current package's
 `nova.toml` and update `nova.lock` ([Plan 03.1](plans/03.1-path-git-dependencies.md)).
 
 ```
-nova add NAME (--path DIR | --git URL [--tag T | --branch B | --rev R])
+nova add NAME (--path DIR | --git URL [--tag T | --branch B | --rev R | --version REQ])
 ```
 
 | Flag | Description |
@@ -248,10 +248,14 @@ nova add NAME (--path DIR | --git URL [--tag T | --branch B | --rev R])
 | `--tag T` | Git pin: tag (only with `--git`) |
 | `--branch B` | Git pin: branch (only with `--git`) |
 | `--rev R` | Git pin: commit / rev (only with `--git`) |
+| `--version REQ` | Git pin: semver range, e.g. `^1.2` (only with `--git`, [Plan 03.2](plans/03.2-version-resolution.md)) |
 
 - `--path` and `--git` are mutually exclusive; exactly one is required.
-- `--tag` / `--branch` / `--rev` are mutually exclusive; optional (no
-  pin → default branch, still recorded as an exact commit in the lock).
+- `--tag` / `--branch` / `--rev` / `--version` are mutually exclusive;
+  optional (no pin → default branch, still recorded as an exact commit
+  in the lock).
+- `--version` selects the highest matching semver tag of the repository
+  and records both the resolved version and commit in `nova.lock`.
 - Edits the `[dependencies]` section (creates it if absent). A
   duplicate name → exit `2`.
 - After editing, runs lock sync: materializes a git dependency in the
@@ -262,24 +266,31 @@ nova add NAME (--path DIR | --git URL [--tag T | --branch B | --rev R])
 ```bash
 nova add mathlib --path ../mathlib
 nova add gitlib  --git https://example.org/gitlib.nv --tag v1.0.0
+nova add libfoo  --git https://example.org/libfoo.nv --version "^1.2"
 ```
 
 ---
 
 ### `nova update`
 
-Re-resolve git pins and refresh `nova.lock`
-([Plan 03.1](plans/03.1-path-git-dependencies.md)).
+Re-resolve git dependencies and refresh `nova.lock`
+([Plan 03.1](plans/03.1-path-git-dependencies.md) /
+[03.2](plans/03.2-version-resolution.md)).
 
 ```
-nova update [NAME]
+nova update [NAME] [--precise NAME@VERSION]
 ```
 
 - `NAME` — a single git dependency to update. Omitted → all git
   dependencies.
 - Drops the targeted git entries from `nova.lock`, then re-resolves
-  them live (the current commit of the branch/tag is picked up);
-  untargeted dependencies stay pinned.
+  them: branch/tag pins pick up the current commit, `version`-range
+  pins pick the highest matching tag. Untargeted dependencies stay
+  pinned (reproducibility).
+- `--precise NAME@VERSION` — pin a `version`-range git dependency to an
+  exact version (e.g. `nova update --precise libfoo@1.2.0`). The
+  resolver must satisfy it with the rest of the tree, or fails with a
+  conflict.
 - `path` dependencies have no pin — passing one is rejected with an
   explanation.
 
