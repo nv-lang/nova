@@ -10581,3 +10581,25 @@ G/H). ~3700 LOC implementation cumulative.
 - **Тесты:** nova_tests/protocols/conversion/generic_from_bound.nv,
   generic_try_bound.nv (probe — bound parse + инстанцирование),
   neg_missing_impl.nv (enforcement негатив).
+
+## Plan 85.5 — Iter[T] тестовое покрытие (2026-05-22)
+
+### [M-for-in-explicit-elem-type]
+- **Где:** bootstrap-парсер for-in (`compiler-codegen/src/parser`).
+- **Что упрощено:** синтаксис `for x TYPE in iter` (явная аннотация
+  типа loop-переменной) задокументирован в `spec/syntax.md`
+  (`for id u64 in ids`, `for x int in nums`), но bootstrap-парсер его
+  не принимает — после `for <ident>` сразу ожидает `in`
+  («expected `in`, got identifier»).
+- **Почему:** for-in парсер развивался под inferred-форму (`for x in
+  iter`); explicit-type-вариант из spec не был реализован. Все
+  существующие тесты (`nova_tests/syntax/for_iter*.nv`) используют
+  inferred-форму — drift не всплывал до Plan 85.5.
+- **Как чинить:** в parse-for после loop-pattern — если следующий
+  токен не `in`, распарсить TypeRef по правилу «name type» (D-без
+  двоеточия), затем `in`. Учесть `for mut x TYPE in` и `for (a, b) in`
+  (tuple — без поэлементных типов).
+- **Приоритет:** L (тип элемента всегда выводится; аннотация —
+  документирующий сахар).
+- **Тесты:** обнаружено в Plan 85.5 — for_loop.nv / array_iter.nv
+  изначально использовали `for x int in`, переведены на inferred-форму.

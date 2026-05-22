@@ -1,0 +1,25 @@
+// EXPECT_COMPILE_ERROR does not satisfy
+//
+// Plan 85.5 Ф.3 — негатив: тип без @next в generic bound `[T Iter[int]]`.
+//
+// `NotIter` — именованный тип без `fn NotIter mut @next() -> Option[int]`
+// → не удовлетворяет структурно `Iter[int]` → подстановка `T = NotIter`
+// нарушает bound (D72) → compile error.
+
+module iter.neg_not_iter2
+
+
+type NotIter { x int }            // НЕ реализует @next
+
+fn sum_it[T Iter[int]](mut it T) -> int {
+    let mut s = 0
+    for n in it {
+        s = s + n
+    }
+    s
+}
+
+test "тип без @next в Iter-bound — compile error" {
+    let r = sum_it[NotIter](NotIter { x: 1 })
+    assert(r == 0)
+}
