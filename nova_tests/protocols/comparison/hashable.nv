@@ -1,0 +1,87 @@
+// Plan 85.4 Ф.1 — Hashable протокол.
+//
+// `Hashable` (D109): `hash() -> u64`. User-defined через instance-метод
+// `fn Type @hash() -> u64`. Примитивы (int/bool/char) — auto-hashable.
+
+module comparison.hashable
+
+
+type Color { r u8, g u8, b u8 }
+
+// Детерминированный hash: упаковка RGB в один u64.
+fn Color @hash() -> u64 =>
+    (@r as u64) * 65536 + (@g as u64) * 256 + (@b as u64)
+
+
+test "Color.hash — детерминизм (одно значение — один хэш)" {
+    let c = Color { r: 255, g: 0, b: 128 }
+    assert(c.hash() == c.hash())
+}
+
+test "Color.hash — повторный вызов стабилен" {
+    let c = Color { r: 10, g: 20, b: 30 }
+    let h1 = c.hash()
+    let h2 = c.hash()
+    let h3 = c.hash()
+    assert(h1 == h2)
+    assert(h2 == h3)
+}
+
+test "Color.hash — разные значения дают разный хэш" {
+    let red = Color { r: 255, g: 0, b: 0 }
+    let blue = Color { r: 0, g: 0, b: 255 }
+    assert(red.hash() != blue.hash())
+}
+
+test "Color.hash — равные значения дают равный хэш" {
+    let a = Color { r: 1, g: 2, b: 3 }
+    let b = Color { r: 1, g: 2, b: 3 }
+    assert(a.hash() == b.hash())
+}
+
+test "Color.hash — отличие в одном поле меняет хэш" {
+    let base = Color { r: 5, g: 5, b: 5 }
+    let diff_r = Color { r: 6, g: 5, b: 5 }
+    let diff_g = Color { r: 5, g: 6, b: 5 }
+    let diff_b = Color { r: 5, g: 5, b: 6 }
+    assert(base.hash() != diff_r.hash())
+    assert(base.hash() != diff_g.hash())
+    assert(base.hash() != diff_b.hash())
+}
+
+
+// ── встроенные примитивы — auto-hashable (D109) ───────────────────
+
+test "int.hash — детерминизм и различие" {
+    assert((42).hash() == (42).hash())
+    assert((42).hash() != (43).hash())
+}
+
+test "bool.hash — детерминизм и различие" {
+    assert(true.hash() == true.hash())
+    assert(false.hash() == false.hash())
+    assert(true.hash() != false.hash())
+}
+
+test "char.hash — детерминизм и различие" {
+    assert('A'.hash() == 'A'.hash())
+    assert('A'.hash() != 'B'.hash())
+}
+
+test "char.hash — Unicode codepoint" {
+    assert('Я'.hash() == 'Я'.hash())
+    assert('Я'.hash() != 'я'.hash())
+}
+
+
+// ── user-тип c одним полем ────────────────────────────────────────
+
+type UserId { value u64 }
+
+fn UserId @hash() -> u64 => @value
+
+test "UserId.hash — прокидывает поле" {
+    let u = UserId { value: 12345 }
+    assert(u.hash() == 12345)
+    assert(u.hash() == u.hash())
+}

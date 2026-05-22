@@ -1,0 +1,83 @@
+// Plan 85.4 Ф.3 — protocol-bounds в generic-функциях.
+//
+// `[T Hashable]` / `[T Equatable]` / `[T Comparable]` — instance-метод
+// протокола вызывается на type-параметре внутри generic-тела. В отличие
+// от static-методов (`T.from` — см. 85.3 ограничение), instance-метод
+// на typevar мономорфизируется корректно.
+
+module comparison.generic_bounds
+
+
+type Item { id int }
+
+fn Item @hash() -> u64 => @id as u64
+fn Item @eq(other Item) -> bool => @id == other.id
+fn Item @cmp(other Item) -> Ordering =>
+    if @id < other.id { Less }
+    else if @id > other.id { Greater }
+    else { Equal }
+
+
+// ── single bound: Hashable ────────────────────────────────────────
+
+fn same_hash[T Hashable](a T, b T) -> bool => a.hash() == b.hash()
+
+test "generic [T Hashable] — instance-dispatch на typevar" {
+    let a = Item { id: 7 }
+    let b = Item { id: 7 }
+    let c = Item { id: 9 }
+    assert(same_hash[Item](a, b))
+    assert(!same_hash[Item](a, c))
+}
+
+
+// ── single bound: Equatable ───────────────────────────────────────
+
+fn are_equal[T Equatable](a T, b T) -> bool => a.eq(b)
+
+test "generic [T Equatable] — instance-dispatch" {
+    let a = Item { id: 3 }
+    let b = Item { id: 3 }
+    let c = Item { id: 4 }
+    assert(are_equal[Item](a, b))
+    assert(!are_equal[Item](a, c))
+}
+
+
+// ── single bound: Comparable ──────────────────────────────────────
+
+fn cmp_of[T Comparable](a T, b T) -> Ordering => a.cmp(b)
+
+test "generic [T Comparable] — instance-dispatch возвращает Ordering" {
+    let lo = Item { id: 1 }
+    let hi = Item { id: 5 }
+    let is_less = match cmp_of[Item](lo, hi) {
+        Less => true
+        _ => false
+    }
+    assert(is_less)
+}
+
+
+// ── multi-bound через именованный комбинированный protocol ────────
+//
+// Nova не использует `+` для нескольких bound'ов (это Rust). Способы:
+// (а) анонимный inline `protocol { ... }` — bootstrap-парсер пока не
+// поддерживает в bound-позиции; (б) именованный protocol, объединяющий
+// несколько методов — работает.
+
+type HashEq protocol {
+    hash() -> u64
+    eq(other Self) -> bool
+}
+
+fn hash_eq_match[T HashEq](a T, b T) -> bool =>
+    a.hash() == b.hash() && a.eq(b)
+
+test "multi-bound именованный protocol — hash + eq вместе" {
+    let a = Item { id: 11 }
+    let b = Item { id: 11 }
+    let c = Item { id: 12 }
+    assert(hash_eq_match[Item](a, b))
+    assert(!hash_eq_match[Item](a, c))
+}
