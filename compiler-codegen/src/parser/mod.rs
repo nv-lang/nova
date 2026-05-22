@@ -2598,6 +2598,14 @@ impl Parser {
             } else {
                 EffectOpKind::Operation
             };
+            // Plan 97 (Q-static-method-protocol resolved): leading `.` в
+            // protocol-теле помечает метод **статическим** (симметрично D35
+            // `fn Type.name`). Bare-имя остаётся instance (backwards-compat —
+            // `Iter.next()`, `Hashable.hash()` и пр. без изменений).
+            // Для effect-методов leading `.` тоже парсится, но семантически
+            // некорректен — type-checker отвергнёт (followup); парсер
+            // принимает универсально.
+            let is_static = self.eat(&TokenKind::Dot).is_some();
             let (name, name_span) = self.parse_ident()?;
             // Plan 15 (D72): generics — declaration form с optional bounds.
             let generics: Vec<GenericParam> = if matches!(self.peek().kind, TokenKind::LBracket) {
@@ -2665,6 +2673,7 @@ impl Parser {
                 span: name_span.merge(end),
                 kind: op_kind,
                 contracts,
+                is_static,
             });
             self.skip_newlines();
         }
