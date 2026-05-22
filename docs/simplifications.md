@@ -10697,6 +10697,9 @@ Plan 52.2 и 52.3 → ✅ ЗАКРЫТЫ. Suite: 960 PASS / 0 FAIL.
 - **Приоритет:** M (ломает идиому деструктуризации Option/Result прямо
   в теле for-in; обходится `.iter()`/индексным доступом).
 - **Обнаружено:** Plan 87 Ф.4.2 (тест `explicit_generic.nv`).
+- **План исправления:** `docs/plans/89-iflet-match-boxed-sum-ptr.md`
+  (Plan 89, proposed) — Ф.0 аудит value/pointer-боксинга + decision
+  point, Ф.1 реализация, Ф.2 тесты, Ф.3 docs.
 
 ## Plan 83.1 Ф.5 — thread-budget (2026-05-22)
 
