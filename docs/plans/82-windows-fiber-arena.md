@@ -12,12 +12,21 @@
 > fiber-стеки переведены с minicoro-default calloc на lazy-commit
 > large-reserve arena (`fiber_arena_win.c`) с полной GC-интеграцией;
 > arena сделана **M:N-safe** (cross-thread migration, multi-worker GC).
-> Полный `nova test`: **1065 PASS / 0 FAIL / 56 SKIP** — 0 регрессий
-> (Ф.4). Context-switch бенчмарк (`f5_ctxswitch_bench.c`): **16–20
-> ns/switch** — паритет с Boost.Context, arena 0 ns к переключению
-> (Ф.5). spec D97 ред. 2, Plan 44.3 → superseded (Ф.6).
+> Полный `nova test` (clang): **1065 PASS / 0 FAIL / 56 SKIP** — 0
+> регрессий (Ф.4). Context-switch бенчмарк (`f5_ctxswitch_bench.c`):
+> **16–20 ns/switch** — паритет с Boost.Context, arena 0 ns к
+> переключению (Ф.5). spec D97 ред. 2, Plan 44.3 → superseded (Ф.6).
 > Standalone-харнессы зелёные на MSVC + clang-cl. Опциональная
 > Linux-унификация на registry+push — honest-defer отдельной задачей.
+>
+> **Followup (2026-05-23):** оба пункта `simplifications.md`
+> закрыты. **`nova test --toolchain msvc`** теперь работает —
+> **1049 PASS / 16 FAIL / 56 SKIP** (старт 0/753): починены `/Fo`,
+> C1041 PDB, C2065 GCC-builtin (через force-инклюд `nova_msvc_compat.h`)
+> + targeted codegen-фиксы (struct-cast, empty-record, fail-loudly).
+> Bench `Nova_Error_static_new()` — корень в missing-import
+> `bench/micro/*.nv`; fix + codegen `E_UNKNOWN_TYPE_METHOD` strict-check.
+> См. `[M-82-msvc-novatest]` / `[M-82-bench-c-harness]`.
 > **Ф.1 и Ф.2 слиты** — Ф.1 в одиночку регрессирует: §1.6-допущение
 > «per-thread скан корректно покрывает running fiber» ОПРОВЕРГНУТО
 > эмпирически. Ключевые находки Ф.1/Ф.2: (1) `GC_push_all` не
