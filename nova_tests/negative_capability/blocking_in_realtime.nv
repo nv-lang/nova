@@ -1,0 +1,19 @@
+// EXPECT_COMPILE_ERROR cannot use `blocking { ... }` inside `realtime`
+//
+// Plan 83.3 Ф.4.1 (D64): `blocking { }` — suspend-операция (эффект
+// `Blocking` в списке realtime-suspend-эффектов). `realtime { }`
+// гарантирует отсутствие suspend'а, поэтому `blocking` внутри него —
+// compile error. Функция объявляет эффект `Blocking`, так что
+// effect-проверка проходит — срабатывает именно realtime-запрет.
+
+module negative_capability.blocking_in_realtime
+
+fn rt_blocking(n int) Blocking -> int {
+    let mut r = 0
+    let _ = realtime {
+        blocking {
+            r = n + 1
+        }
+    }
+    r
+}

@@ -1387,6 +1387,11 @@ pub enum ExprKind {
     /// `detach { body }` — fire-and-forget, global supervisor (D50).
     /// Requires `Detach` effect in the enclosing function's signature.
     Detach(Block),
+    /// `blocking { body }` — Plan 83.3 (D50): leaf-блокирующая работа
+    /// (FFI/syscall) уводится в libuv threadpool, fiber паркуется,
+    /// M:N-worker свободен. Requires `Blocking` effect in the enclosing
+    /// function's signature; запрещён внутри `realtime { }` (D64).
+    Blocking(Block),
     /// `throw expr` в позиции expression (D25/D65). Обрабатывается как
     /// эффект `Fail.fail(msg)`, тип `never`. В codegen эмитируется как
     /// `(Nova_Fail_fail(msg), zero<T>)` — comma-expression, dummy после

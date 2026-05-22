@@ -686,7 +686,7 @@ impl DesugarCtx {
             ExprKind::Loop { body, .. } => self.desugar_block(body),
             ExprKind::Block(b) => self.desugar_block(b),
             ExprKind::Spawn(x) => self.desugar_expr(x),
-            ExprKind::Detach(b) => self.desugar_block(b),
+            ExprKind::Detach(b) | ExprKind::Blocking(b) => self.desugar_block(b),
             ExprKind::Supervised { body, cancel } => {
                 self.desugar_block(body);
                 if let Some(c) = cancel { self.desugar_expr(c); }

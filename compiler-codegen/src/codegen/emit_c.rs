@@ -5161,6 +5161,32 @@ impl CEmitter {
         Ok("NOVA_UNIT".to_string())
     }
 
+    /// Emit `blocking { body }` — Plan 83.3 (D50) leaf-blocking primitive.
+    ///
+    /// **Ф.4.1 bootstrap:** body executes inline in the caller's stack —
+    /// semantically correct, but the M:N-worker is NOT freed while the
+    /// blocking work runs. This is an explicit, plan-tracked intermediate
+    /// state: Ф.4.2 replaces this with a real offload to the libuv
+    /// threadpool via `nova_blocking_offload` (block-extraction by the
+    /// `emit_spawn` template). Mirrors `emit_detach`'s inline shape.
+    fn emit_blocking(&mut self, body: &Block) -> Result<String, String> {
+        // Wrap in a C block so any locals introduced by the body don't leak.
+        self.line("{");
+        self.indent += 1;
+        let block_id = self.enter_defer_scope(body, false);
+        for stmt in &body.stmts {
+            self.emit_stmt(stmt)?;
+        }
+        if let Some(trailing) = &body.trailing {
+            let v = self.emit_expr(trailing)?;
+            self.line(&format!("(void)({});", v));
+        }
+        self.leave_defer_scope(block_id);
+        self.indent -= 1;
+        self.line("}");
+        Ok("NOVA_UNIT".to_string())
+    }
+
     /// Pre-scan the module for HandlerLit and Spawn nodes; emit file-scope forward decls.
     fn emit_handler_forward_decls(&mut self, module: &Module) -> Result<(), String> {
         let mut h_ctr = 0usize; // handler_counter
@@ -5284,7 +5310,7 @@ impl CEmitter {
             }
             ExprKind::Unary { operand, .. } => self.scan_expr_fwd(operand, h, s)?,
             ExprKind::Supervised { body, .. } => self.scan_block_fwd(body, h, s)?,
-            ExprKind::Detach(b) => self.scan_block_fwd(b, h, s)?,
+            ExprKind::Detach(b) | ExprKind::Blocking(b) => self.scan_block_fwd(b, h, s)?,
             _ => {}
         }
         Ok(())
@@ -5377,7 +5403,7 @@ impl CEmitter {
             ExprKind::Loop { body, .. } => Self::collect_bound_names_block(body, out),
             ExprKind::With { body, .. } => Self::collect_bound_names_block(body, out),
             ExprKind::Supervised { body, .. } => Self::collect_bound_names_block(body, out),
-            ExprKind::Detach(body) => Self::collect_bound_names_block(body, out),
+            ExprKind::Detach(body) | ExprKind::Blocking(body) => Self::collect_bound_names_block(body, out),
             ExprKind::Select { arms } => {
                 for arm in arms {
                     if let SelectOp::Recv { binding: Some(b), .. } = &arm.op {
@@ -5565,7 +5591,7 @@ impl CEmitter {
                 Self::collect_idents_block(body, out);
                 if let Some(c) = cancel { Self::collect_idents_expr(c, out); }
             }
-            ExprKind::Detach(b) => Self::collect_idents_block(b, out),
+            ExprKind::Detach(b) | ExprKind::Blocking(b) => Self::collect_idents_block(b, out),
             ExprKind::Select { arms } => {
                 for arm in arms {
                     match &arm.op {
@@ -12658,6 +12684,9 @@ impl CEmitter {
             ExprKind::Detach(body) => {
                 self.emit_detach(body)
             }
+            ExprKind::Blocking(body) => {
+                self.emit_blocking(body)
+            }
             ExprKind::ParallelFor { pattern, iter, body } => {
                 self.emit_parallel_for(pattern, iter, body)
             }
@@ -19166,7 +19195,7 @@ impl CEmitter {
             }
             ExprKind::Lambda { body, .. } => Self::collect_free_idents(body, out),
             ExprKind::TupleLit(elems) => { for e in elems { Self::collect_free_idents(e, out); } }
-            ExprKind::Detach(b) => {
+            ExprKind::Detach(b) | ExprKind::Blocking(b) => {
                 for s in &b.stmts { Self::collect_free_idents_stmt(s, out); }
                 if let Some(t) = &b.trailing { Self::collect_free_idents(t, out); }
             }
@@ -19312,7 +19341,7 @@ impl CEmitter {
             ExprKind::TupleLit(elems) => {
                 for e in elems { Self::collect_truly_free_idents(e, bound, out); }
             }
-            ExprKind::Detach(b) => {
+            ExprKind::Detach(b) | ExprKind::Blocking(b) => {
                 Self::collect_truly_free_idents_block(b, bound, out);
             }
             ExprKind::Supervised { body, cancel } => {
@@ -22502,7 +22531,7 @@ impl CEmitter {
             ExprKind::WhileLet { .. } => "nova_unit".into(),
             ExprKind::Loop { .. } => "nova_unit".into(),
             ExprKind::Supervised { .. } => "nova_unit".into(),
-            ExprKind::Detach(_) => "nova_unit".into(),
+            ExprKind::Detach(_) | ExprKind::Blocking(_) => "nova_unit".into(),
             ExprKind::TaggedTemplate { .. } => "nova_str".into(),
             // Plan 39 Issue A: With-блок тип = T_body. Если trailing == None
             // (body заканчивается throw/return/interrupt statement'ом), смотрим

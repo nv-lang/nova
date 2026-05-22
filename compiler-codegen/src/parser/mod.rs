@@ -4378,6 +4378,7 @@ impl Parser {
             TokenKind::KwSupervised => self.parse_supervised(),
             TokenKind::KwParallel => self.parse_parallel_for(),
             TokenKind::KwDetach => self.parse_detach(),
+            TokenKind::KwBlocking => self.parse_blocking(),
             TokenKind::KwThrow => {
                 // D25/D65: `throw expr` as expression (type never).
                 // Stmt-level throw уже обрабатывается parse_stmt_or_expr;
@@ -4741,6 +4742,7 @@ impl Parser {
             TokenKind::KwSupervised => "supervised",
             TokenKind::KwParallel => "parallel",
             TokenKind::KwDetach => "detach",
+            TokenKind::KwBlocking => "blocking",
             TokenKind::KwInterrupt => "interrupt",
             TokenKind::KwForbid => "forbid",
             TokenKind::KwRealtime => "realtime",
@@ -5833,6 +5835,15 @@ impl Parser {
         let block = self.parse_block()?;
         let end = block.span;
         Ok(Expr::new(ExprKind::Detach(block), start.merge(end)))
+    }
+
+    /// `blocking { body }` — Plan 83.3 (D50): leaf-блокирующая работа
+    /// уводится в libuv threadpool. Зеркало `parse_detach` — block-примитив.
+    fn parse_blocking(&mut self) -> Result<Expr, Diagnostic> {
+        let start = self.expect(&TokenKind::KwBlocking)?.span;
+        let block = self.parse_block()?;
+        let end = block.span;
+        Ok(Expr::new(ExprKind::Blocking(block), start.merge(end)))
     }
 
     /// `forbid X1, X2, ... { body }` — capability sandbox (D63).

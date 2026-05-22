@@ -254,7 +254,7 @@ fn walk_children(e: &mut Expr, sigs: &Sigs) {
         ExprKind::Loop { body, .. } => normalize_block(body, sigs),
         ExprKind::Block(b) => normalize_block(b, sigs),
         ExprKind::Spawn(x) => normalize_expr(x, sigs),
-        ExprKind::Detach(b) => normalize_block(b, sigs),
+        ExprKind::Detach(b) | ExprKind::Blocking(b) => normalize_block(b, sigs),
         ExprKind::Supervised { body, cancel } => {
             normalize_block(body, sigs);
             if let Some(c) = cancel { normalize_expr(c, sigs); }

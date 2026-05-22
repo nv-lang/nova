@@ -93,6 +93,10 @@ pub enum TokenKind {
     KwSupervised,
     KwParallel,
     KwDetach,
+    /// Plan 83.3 (D50): `blocking { body }` — увод leaf-блокирующей
+    /// работы (FFI/syscall) в libuv threadpool, чтобы не пинить
+    /// M:N-worker. Требует эффект `Blocking` в сигнатуре enclosing-fn.
+    KwBlocking,
     /// Q-char-literals: 'a' / '\n' / '\u{1F600}' — Unicode codepoint
     Char(u32),
     KwInterrupt,
@@ -230,6 +234,7 @@ impl TokenKind {
             TokenKind::KwSupervised => "`supervised`",
             TokenKind::KwParallel => "`parallel`",
             TokenKind::KwDetach => "`detach`",
+            TokenKind::KwBlocking => "`blocking`",
             TokenKind::Char(_) => "char literal",
             TokenKind::KwInterrupt => "`interrupt`",
             TokenKind::KwForbid => "`forbid`",
