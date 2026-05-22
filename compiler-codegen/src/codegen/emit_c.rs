@@ -665,6 +665,31 @@ pub struct CEmitter {
     /// Plan 48 Ф.3: methods per generic type template.
     /// Key = base type name, value = Vec of FnDecl for that type's methods.
     generic_type_methods: HashMap<String, Vec<crate::ast::FnDecl>>,
+    /// Plan 95 Ф.1.1: type-parameter names for builtin sum-types
+    /// (`Option`/`Result`) that participate in method-mono **without**
+    /// being registered as generic templates. Captured from
+    /// `Item::Type(t)` at section 1a (where `t.name == "Option"|"Result"`
+    /// is `continue`-skipped from `generic_type_templates`). Used by
+    /// `receiver_c_type` to resolve the value-type form `NovaOpt_<T>` /
+    /// `NovaRes_<ok>_<err>` from `current_type_subst` keyed by these names
+    /// — see Plan 95 Ф.2.1.
+    ///
+    /// Example: after scanning `type Option[T] | Some(T) | None` →
+    /// `{"Option": ["T"]}`. For `type Result[T, E]` → `{"Result":
+    /// ["T", "E"]}`.
+    builtin_sum_type_params: HashMap<String, Vec<String>>,
+    /// Plan 95 Ф.2.4: forward declarations for monomorphized Nova-body
+    /// methods on `Option`/`Result`. **Separate buffer from
+    /// `mono_fwd_decls`** because the signature carries `NovaOpt_<T>` /
+    /// `NovaRes_<ok>_<err>*` by-value/by-pointer — types that are lazy-
+    /// declared at the `/*__NOVAOPT_TYPEDEFS__*/` / `/*__NOVARES_TYPEDEFS__*/`
+    /// placeholders (file position Y), AFTER the standard
+    /// `/*__MONO_FWD_DECLS__*/` placeholder (file position X < Y).
+    /// Emitting a fwd-decl referencing `NovaOpt_<T>` by-value at position X
+    /// → CC-fail `incomplete type`. This buffer is spliced at a NEW
+    /// placeholder `/*__BUILTIN_SUM_METHOD_FWD_DECLS__*/` (file position
+    /// Z, with X < Y < Z < body-emit position).
+    builtin_sum_method_fwd_decls: String,
     /// Plan 48 Ф.3: buffer for generic type instance definitions.
     /// Emitted separately and spliced into output before fn definitions via marker.
     generic_type_defs_buf: String,
@@ -932,6 +957,8 @@ impl CEmitter {
             generic_type_worklist: std::cell::RefCell::new(Vec::new()),
             emitted_generic_type_instances: HashSet::new(),
             generic_type_methods: HashMap::new(),
+            builtin_sum_type_params: HashMap::new(),
+            builtin_sum_method_fwd_decls: String::new(),
             generic_type_defs_buf: String::new(),
             generic_type_instance_info: std::cell::RefCell::new(HashMap::new()),
             // Plan 48 Ф.7.6: NOVA_MONO_DEPTH env var still honored as a
@@ -1523,7 +1550,18 @@ impl CEmitter {
                     // Nova_Result* infra — не регистрируем как generic
                     // template. Error не generic (record), не попадает
                     // в эту ветку.
+                    //
+                    // Plan 95 Ф.1.1: но захватываем имена type-параметров
+                    // ДО `continue`, чтобы `receiver_c_type` мог
+                    // разрезолвить `NovaOpt_<T>` / `NovaRes_<ok>_<err>` для
+                    // mono'd методов на builtin sum-типах
+                    // (canonical source — type-decl, не receiver).
                     if t.name == "Option" || t.name == "Result" {
+                        let param_names: Vec<String> = t.generics.iter()
+                            .map(|g| g.name.clone())
+                            .collect();
+                        self.builtin_sum_type_params
+                            .insert(t.name.clone(), param_names);
                         continue;
                     }
                     // Plan 62.E (`std/prelude/collections.nv` 2026-05-18) +
@@ -1552,10 +1590,21 @@ impl CEmitter {
             }
         }
         // 1a2. Collect FnDecls for methods on generic types (needed for Ф.3 dispatch).
+        //
+        // Plan 95 Ф.1.1: also collect **Nova-body** methods on builtin sum
+        // types (`Option`/`Result`) — they participate in method-mono via
+        // the «method-only» channel even though their representation is
+        // `NovaOpt_<T>` / `NovaRes_<...>` (not a generic template).
+        // `external fn` methods stay C-routed (their bodies live in
+        // `array.h` / `register_novaopt_decl` lazy-emit) and are filtered
+        // out here — collecting them would shadow C dispatch for no gain.
         for item in &module.items {
             if let Item::Fn(f) = item {
                 if let Some(recv) = &f.receiver {
-                    if self.generic_types.contains(&recv.type_name) {
+                    let is_generic = self.generic_types.contains(&recv.type_name);
+                    let is_builtin_mono_sum = !f.is_external
+                        && self.builtin_sum_type_params.contains_key(&recv.type_name);
+                    if is_generic || is_builtin_mono_sum {
                         self.generic_type_methods
                             .entry(recv.type_name.clone())
                             .or_default()
@@ -2270,7 +2319,17 @@ impl CEmitter {
                                             .cloned()
                                     })
                             } else {
-                                None
+                                // Plan 95 Ф.1.1: builtin sum-types (`Option`/
+                                // `Result`) — `recv_type` in worklist-key is
+                                // already the base name itself (`"Option"`,
+                                // `"Result"`), they are not registered in
+                                // `generic_type_instance_info`, so `base_opt`
+                                // is `None` here. For user generic types
+                                // `recv_type` is mangled — `.get(mangled)`
+                                // returns `None`, no harm.
+                                self.generic_type_methods.get(recv_type)
+                                    .and_then(|ms| ms.iter().find(|m| m.name == mname))
+                                    .cloned()
                             };
                             if let Some(fn_decl) = fn_decl_opt {
                                 let rt = recv_type.to_string();
@@ -2333,6 +2392,24 @@ impl CEmitter {
                 novares_typedefs)
         };
         self.out = self.out.replace("/*__NOVARES_TYPEDEFS__*/", &novares_replacement);
+        // Plan 95 Ф.2.4: splice forward-deklarations mono'd builtin-sum-
+        // method'ов. ПОСЛЕ NovaOpt/NovaRes typedef splice'ей — сигнатуры
+        // могут содержать NovaOpt_<T> (by-value, complete-type required)
+        // или NovaRes_<n>* (pointer, forward-typedef достаточно).
+        let builtin_sum_fwd = self.builtin_sum_method_fwd_decls.clone();
+        let builtin_sum_fwd_replacement = if builtin_sum_fwd.is_empty() {
+            String::new()
+        } else {
+            format!(
+                "/* Plan 95 Ф.2.4: forward decls для mono'd Nova-body \
+                 методов на Option/Result (placed after NovaOpt/NovaRes \
+                 typedefs — by-value/by-pointer signature requires \
+                 complete/forward typedef visible). */\n{}",
+                builtin_sum_fwd)
+        };
+        self.out = self.out.replace(
+            "/*__BUILTIN_SUM_METHOD_FWD_DECLS__*/",
+            &builtin_sum_fwd_replacement);
         // Plan 48 Ф.3: splice generic type instance definitions
         let generic_type_defs = std::mem::take(&mut self.generic_type_defs_buf);
         self.out = self.out.replace("/*__GENERIC_TYPE_DEFS__*/", &generic_type_defs);
@@ -2803,6 +2880,14 @@ impl CEmitter {
         // typedef'ов. ПОСЛЕ NovaOpt-маркера — NovaRes-структуры ссылаются
         // на NovaOpt_<ok>/<err> (return-типы ok()/err()).
         self.line("/*__NOVARES_TYPEDEFS__*/");
+        // Plan 95 Ф.2.4: маркер для splice'а forward-deklarations
+        // mono'd Option/Result-method'ов. **ПОСЛЕ** NovaOpt/NovaRes typedef
+        // маркеров — сигнатура содержит `NovaOpt_<T>` by-value / `NovaRes_<n>*`,
+        // им нужны complete-typedef и forward-typedef соответственно.
+        // Standard `/*__MONO_FWD_DECLS__*/` маркер (file position X) идёт
+        // ДО NovaOpt маркера (file position Y) — fwd-decl там → CC-fail
+        // `incomplete type`. См. `builtin_sum_method_fwd_decls`.
+        self.line("/*__BUILTIN_SUM_METHOD_FWD_DECLS__*/");
         self.line("");
     }
 
@@ -5796,6 +5881,18 @@ impl CEmitter {
         if f.name == "main" {
             return Ok(());
         }
+        // Plan 95 Ф.3: Nova-body метод на builtin sum-типе
+        // (`Option`/`Result`) эмитится **только** через method-only
+        // mono channel (per-T в `register_mono_method_instance` /
+        // `emit_monomorphized_method`). Регулярный fwd-decl эмитил бы
+        // erased `Nova_Option*` (incomplete type — Plan 93 Ф.0 root
+        // cause). Skip — call-site через перехват `NovaOpt_` (#6) /
+        // `is_result_like` (#7) роутит в `DeclaredBody`-ветку.
+        if let Some(recv) = &f.receiver {
+            if matches!(recv.type_name.as_str(), "Option" | "Result") {
+                return Ok(());
+            }
+        }
         // Plan 11 Follow-up (2026-05-17): Methods на receiver-generic типах
         // (e.g. `Container[T].new(...)`) регистрируем в **отдельной** карте
         // self_method_decls для Self.method() fast-path (mono enrollment).
@@ -7020,6 +7117,52 @@ impl CEmitter {
         }
     }
 
+    /// Plan 95 Ф.2.1: C type приёмника для builtin sum-типов
+    /// (`Option`/`Result`), участвующих в method-mono через
+    /// «method-only»-канал. Резолвится через `current_type_subst` (заполнен
+    /// `register_mono_method_instance` / `emit_monomorphized_method` перед
+    /// `receiver_c_type` call'ом) + сохранённые в Ф.1.1
+    /// `builtin_sum_type_params` имена type-параметров типа.
+    ///
+    /// `NovaOpt_<sani(T)>` для Option — **value-тип** (без `*`); приёмник
+    /// идёт по значению, как `NovaOpt_` повсюду в codegen'е.
+    ///
+    /// `NovaRes_<ok>_<err>*` для Result — **pointer**; согласовано с
+    /// `is_result_like` / трамплинами `Nova_Result_method_*(NovaRes_<n>* r)`.
+    ///
+    /// Fallback (subst отсутствует — не должно случиться вне mono-контекста,
+    /// defensive): legacy `Nova_<T>*` → CC-fail loud (Plan 79: no silent
+    /// fallback).
+    fn builtin_sum_receiver_c_type(&self, type_name: &str) -> String {
+        let params = match self.builtin_sum_type_params.get(type_name) {
+            Some(p) => p,
+            None => return format!("Nova_{}*", type_name),
+        };
+        match (type_name, params.len()) {
+            ("Option", 1) => {
+                let t_c = match self.current_type_subst.get(&params[0]) {
+                    Some(t) => t.clone(),
+                    None => return format!("Nova_{}*", type_name),
+                };
+                format!("NovaOpt_{}", Self::sanitize_for_novaopt(&t_c))
+            }
+            ("Result", 2) => {
+                let ok_c = match self.current_type_subst.get(&params[0]) {
+                    Some(t) => t.clone(),
+                    None => return format!("Nova_{}*", type_name),
+                };
+                let err_c = match self.current_type_subst.get(&params[1]) {
+                    Some(t) => t.clone(),
+                    None => return format!("Nova_{}*", type_name),
+                };
+                format!("NovaRes_{}_{}*",
+                    Self::sanitize_for_novaopt(&ok_c),
+                    Self::sanitize_for_novaopt(&err_c))
+            }
+            _ => format!("Nova_{}*", type_name),
+        }
+    }
+
     /// C type for receiver-typed parameter (D35 v2: receiver may be a primitive).
     /// Returns the C type to use for `nova_self`. Primitives are passed by value;
     /// records/sums by pointer.
@@ -7030,6 +7173,12 @@ impl CEmitter {
             "f64" => "nova_f64".to_string(),
             "bool" => "nova_bool".to_string(),
             "str" => "nova_str".to_string(),
+            // Plan 95 Ф.2.1: builtin sum-types (`Option`/`Result`) с
+            // method-mono каналом — value-тип `NovaOpt_<T>` / pointer
+            // `NovaRes_<ok>_<err>*` (см. `builtin_sum_receiver_c_type`).
+            // Без этого спец-кейса `format!("Nova_{}*", "Option")` =
+            // `Nova_Option*` (incomplete type) — корень Plan 93 Ф.0 CC-fail'а.
+            "Option" | "Result" => self.builtin_sum_receiver_c_type(type_name),
             other => {
                 // Extension methods on array types: []T, []str, []int, etc.
                 if let Some(elem_ty) = other.strip_prefix("[]") {
@@ -8753,10 +8902,18 @@ impl CEmitter {
         }
         let params_str = if parts.is_empty() { "void".to_string() } else { parts.join(", ") };
         // Forward decl
-        self.mono_fwd_decls.push_str(&format!(
-            "static {} {}({});\n",
-            ret_c, mono_name, params_str
-        ));
+        //
+        // Plan 95 Ф.2.4: для builtin sum-типов (`Option`/`Result`) сигнатура
+        // содержит `NovaOpt_<T>` (by-value) / `NovaRes_<n>*` (pointer) —
+        // routing fwd-decl в `builtin_sum_method_fwd_decls` чтобы splice'ить
+        // его ПОСЛЕ NovaOpt/NovaRes typedef placeholder'ов (file order:
+        // typedefs Y < fwd-decl Z < body P). Иначе CC-fail `incomplete type`.
+        let fwd_decl = format!("static {} {}({});\n", ret_c, mono_name, params_str);
+        if matches!(recv_type, "Option" | "Result") {
+            self.builtin_sum_method_fwd_decls.push_str(&fwd_decl);
+        } else {
+            self.mono_fwd_decls.push_str(&fwd_decl);
+        }
         // Enqueue for body emission — prefix __method__TYPE::name so worklist drain can route
         let worklist_key = format!("__method__{}::{}", recv_type, fn_decl.name);
         self.mono_worklist.push((worklist_key, type_subst, mono_name.to_string()));
@@ -9755,6 +9912,16 @@ impl CEmitter {
         }
         if f.name == "main" {
             return self.emit_nova_main(f);
+        }
+        // Plan 95 Ф.3: parallel со skip в `emit_fn_forward_decl` — тело
+        // Nova-body метода на builtin sum-типе эмитится **только** через
+        // worklist drain (`emit_monomorphized_method`) per-T. Регулярный
+        // emit использовал бы erased `Nova_Option*` (incomplete) и
+        // конфликтовал бы с правильным mono-эмитом по C-имени.
+        if let Some(recv) = &f.receiver {
+            if matches!(recv.type_name.as_str(), "Option" | "Result") {
+                return Ok(());
+            }
         }
         // Plan 33.3 Ф.9.1: collect ghost-var names в body для runtime-check
         // skip в assert_static/assume/loop-invariant.
@@ -14059,6 +14226,61 @@ impl CEmitter {
                             }
                             return Ok(format!("{}({})", c_name, parts.join(", ")));
                         }
+                        // Plan 95 Ф.3.1: DeclaredBody — Nova-body метод на
+                        // builtin Option. Регистрируем mono-инстанс per-T и
+                        // эмитим вызов. Имя mono'd-функции совпадает с
+                        // формой трамплина (`Nova_Option_method_<m>_<T_sani>`),
+                        // поэтому удаление трамплинов (Ф.4.2) обязано
+                        // лэндиться в одном коммите с переносом тела
+                        // (`is_some`/`is_none` в `core.nv`), иначе
+                        // C-redefinition. Probe-методы (с другими именами)
+                        // коллизии не имеют.
+                        if let Some(super::sum_schema_registry::MethodRouting::DeclaredBody {
+                            has_nova_body: true,
+                        }) = &routing {
+                            // FnDecl собран в Ф.1.1 в `generic_type_methods`.
+                            let fn_decl = self.generic_type_methods
+                                .get("Option")
+                                .and_then(|ms| ms.iter().find(|m| m.name == method.as_str()))
+                                .cloned();
+                            if let Some(fn_decl) = fn_decl {
+                                // Recover real C-type для T из `novaopt_value_types`
+                                // (хранит mapping sanitized→real). Для примитивов
+                                // (`nova_int`/`nova_str`/...) map не содержит
+                                // (они pre-decl'ы в array.h, marked seen ДО
+                                // `novaopt_value_types.insert`); fallback —
+                                // sanitized form == real (для primitives совпадает).
+                                let real_t = self.novaopt_value_types.borrow()
+                                    .get(&elem_ty)
+                                    .cloned()
+                                    .unwrap_or_else(|| elem_ty.clone());
+                                let param_names = self.builtin_sum_type_params
+                                    .get("Option").cloned().unwrap_or_default();
+                                // Type-subst: для Option один параметр (T).
+                                // Если param_names пуст (defensive — type-decl
+                                // не отсканирована) — пропускаем DeclaredBody
+                                // и fall through к inline. Loud при отсутствии
+                                // в production не должно случаться.
+                                if !param_names.is_empty() {
+                                    let type_subst: Vec<(String, String)> =
+                                        vec![(param_names[0].clone(), real_t.clone())];
+                                    let mono_name = format!(
+                                        "Nova_Option_method_{}_{}",
+                                        method.as_str(), elem_ty);
+                                    self.register_mono_method_instance(
+                                        &fn_decl, type_subst, &mono_name, "Option");
+                                    let obj_c = self.emit_expr(obj)?;
+                                    let mut parts = vec![obj_c];
+                                    for a in args {
+                                        parts.push(self.emit_expr(a.expr())?);
+                                    }
+                                    return Ok(format!("{}({})", mono_name, parts.join(", ")));
+                                }
+                            }
+                            // Fall through (defensive: routing говорит DeclaredBody,
+                            // но FnDecl / type-params не нашлись — нижестоящий
+                            // inline / error path даст диагностику loud).
+                        }
                         // Inline-sentinel methods + DeclaredBody fall through
                         // к match блокам ниже (preserve Fail-effected dispatch
                         // и closure-applying inline emit per Open Q #5).
@@ -14241,6 +14463,57 @@ impl CEmitter {
                                 parts.push(self.emit_expr(a.expr())?);
                             }
                             return Ok(format!("{}({})", c_name, parts.join(", ")));
+                        }
+                        // Plan 95 Ф.3.2: DeclaredBody для Result — параллель
+                        // Option-ветки (#6). Type-subst заполняется (T, E)
+                        // через `novares_ok_err`; mono-name использует ту же
+                        // схему что и трамплин (`result_method_c_name` →
+                        // `Nova_Result_method_<m>_<n>` где n = `<ok>_<err>`)
+                        // → удаление трамплинов (Ф.5.2) обязано лэндиться с
+                        // переносом тела (`is_ok`/`is_err`), C-redefinition
+                        // иначе.
+                        if let Some(super::sum_schema_registry::MethodRouting::DeclaredBody {
+                            has_nova_body: true,
+                        }) = &routing {
+                            let fn_decl = self.generic_type_methods
+                                .get("Result")
+                                .and_then(|ms| ms.iter().find(|m| m.name == method.as_str()))
+                                .cloned();
+                            if let Some(fn_decl) = fn_decl {
+                                // Recover (ok_c, err_c) из mono'd `NovaRes_<n>*`.
+                                // Legacy `Nova_Result*` — fallback erased
+                                // `nova_int_nova_str` (consistent с
+                                // `result_method_c_name` semantics).
+                                let (ok_c, err_c) = self.novares_ok_err(&obj_ty)
+                                    .unwrap_or_else(|| (
+                                        "nova_int".to_string(),
+                                        "nova_str".to_string(),
+                                    ));
+                                let param_names = self.builtin_sum_type_params
+                                    .get("Result").cloned().unwrap_or_default();
+                                if param_names.len() == 2 {
+                                    let type_subst: Vec<(String, String)> = vec![
+                                        (param_names[0].clone(), ok_c.clone()),
+                                        (param_names[1].clone(), err_c.clone()),
+                                    ];
+                                    // mono-name = `result_method_c_name`-обычная
+                                    // схема: префикс из baseline c_name
+                                    // + `_<n>` суффикс через `novares_name`.
+                                    let base = format!("Nova_Result_method_{}",
+                                        method.as_str());
+                                    let mono_name = self.result_method_c_name(
+                                        &obj_ty, &base);
+                                    self.register_mono_method_instance(
+                                        &fn_decl, type_subst, &mono_name, "Result");
+                                    let obj_c = self.emit_expr(obj)?;
+                                    let mut parts = vec![obj_c];
+                                    for a in args {
+                                        parts.push(self.emit_expr(a.expr())?);
+                                    }
+                                    return Ok(format!("{}({})", mono_name, parts.join(", ")));
+                                }
+                            }
+                            // Defensive fall through.
                         }
                         // Inline-sentinel + DeclaredBody fall through.
                         let obj_c = self.emit_expr(obj)?;
