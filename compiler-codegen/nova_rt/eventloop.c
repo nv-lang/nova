@@ -34,8 +34,46 @@ __declspec(thread) uv_loop_t* _nova_current_loop = NULL;
 __thread uv_loop_t* _nova_current_loop = NULL;
 #endif
 
+/* Plan 83.3 Ф.1: blocking-offload threadpool sizing.
+ *
+ * libuv's default threadpool is 4 threads — мало для blocking-FFI
+ * offload (Plan 83.3: blocking { } уводит работу в этот пул). Читаем
+ * NOVA_BLOCKING_THREADS и пробрасываем в UV_THREADPOOL_SIZE — libuv
+ * читает его лениво при первом uv_queue_work через uv_once. Поэтому
+ * выставлять обязательно ДО первого blocking-offload'а; nova_evloop_init
+ * вызывается из main-prelude задолго до user-кода.
+ *
+ * Уважаем уже выставленный пользователем UV_THREADPOOL_SIZE. Default —
+ * 64 (паритет с spec D50 §4). Невалидный NOVA_BLOCKING_THREADS →
+ * warning + default. libuv сам клампит к [1, 1024]. */
+static void _nova_init_blocking_threadpool(void) {
+    char probe[16];
+    size_t probelen = sizeof(probe);
+    if (uv_os_getenv("UV_THREADPOOL_SIZE", probe, &probelen) != UV_ENOENT) {
+        return;  /* пользователь уже задал — не перетираем */
+    }
+    const char* size = "64";
+    char nbuf[16];
+    const char* n = getenv("NOVA_BLOCKING_THREADS");
+    if (n && *n) {
+        char* end = NULL;
+        long v = strtol(n, &end, 10);
+        if (end && *end == '\0' && v >= 1 && v <= 1024) {
+            snprintf(nbuf, sizeof(nbuf), "%ld", v);
+            size = nbuf;
+        } else {
+            fprintf(stderr,
+                "nova: warning: invalid NOVA_BLOCKING_THREADS='%s' "
+                "(expected integer 1..1024), using default 64\n", n);
+        }
+    }
+    uv_os_setenv("UV_THREADPOOL_SIZE", size);
+}
+
 void nova_evloop_init(void) {
     if (_evloop_state != 0) return;  /* idempotent */
+    /* Plan 83.3 Ф.1: до создания loop'а и первого uv_queue_work. */
+    _nova_init_blocking_threadpool();
     _evloop = uv_default_loop();
     if (!_evloop) {
         fprintf(stderr, "nova: uv_default_loop() returned NULL\n");

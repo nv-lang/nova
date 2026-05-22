@@ -1,0 +1,56 @@
+// blocking_pool_saturation_test.nv — Plan 83.3 Ф.5: пул-насыщение.
+// ENV NOVA_BLOCKING_THREADS=2
+//
+// Больше одновременных blocking-offload'ов, чем потоков в threadpool →
+// libuv ставит лишние uv_work_t в очередь. Проверяем: насыщение
+// деградирует graceful (очередь, не дедлок) — все fiber'ы доводят
+// блокирующую работу до конца с корректным результатом.
+//
+// Пул сжат до 2 потоков через NOVA_BLOCKING_THREADS=2; 6 fiber'ов
+// одновременно уводят работу — 2 исполняются, 4 ждут в очереди.
+
+module concurrency.blocking_pool_saturation_test
+
+// leaf CPU-работа: возвращает upto (acc инкрементится upto раз).
+fn busy(upto int) Blocking -> int {
+    let r = blocking {
+        let mut acc = 0
+        let mut i = 0
+        while i < upto {
+            acc = acc + 1
+            i = i + 1
+        }
+        acc
+    }
+    r
+}
+
+test "blocking: pool saturation — offloads > pool size, graceful queue" {
+    let mut total = 0
+    supervised {
+        // 6 fiber'ов, пул из 2 потоков → 4 в очереди.
+        // Результат busy(N) кладётся в local ДО прибавления к total —
+        // иначе park внутри busy() между чтением total и записью дал бы
+        // lost-update (cooperative-suspension race).
+        spawn { let r = busy(40000); total = total + r }
+        spawn { let r = busy(40000); total = total + r }
+        spawn { let r = busy(40000); total = total + r }
+        spawn { let r = busy(40000); total = total + r }
+        spawn { let r = busy(40000); total = total + r }
+        spawn { let r = busy(40000); total = total + r }
+    }
+    // Все 6 offload'ов завершились (нет дедлока) с корректным результатом.
+    assert(total == 240000)
+}
+
+test "blocking: saturation with mixed work sizes" {
+    let mut total = 0
+    supervised {
+        spawn { let r = busy(10000); total = total + r }
+        spawn { let r = busy(20000); total = total + r }
+        spawn { let r = busy(30000); total = total + r }
+        spawn { let r = busy(40000); total = total + r }
+        spawn { let r = busy(50000); total = total + r }
+    }
+    assert(total == 150000)
+}

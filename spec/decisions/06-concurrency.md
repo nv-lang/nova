@@ -231,10 +231,11 @@ inverse-маркером.
 > 📋 **PARTIALLY IMPLEMENTED IN [D71](#d71-bootstrap-concurrency-runtime).**
 > Bootstrap'ом реализованы: `supervised`, `parallel for`, `detach`
 > (default SyncDetach handler — sync inline), `Time.sleep` как
-> yield-point. Capture-by-value для immutable scalars. Не реализованы:
-> `race`, `select`, `cancel_scope`, `with_timeout`, `blocking`, реальный
-> async-detach (OS-thread + global supervisor), эффект `Detach` в
-> effect-system, cancellation/error-propagation между fibers.
+> yield-point, `blocking { }` (Plan 83.3 — libuv-threadpool offload,
+> см. §4 «Реализация»). Capture-by-value для immutable scalars. Не
+> реализованы: `race`, `select`, `cancel_scope`, `with_timeout`,
+> реальный async-detach (OS-thread + global supervisor), эффект
+> `Detach` в effect-system, cancellation/error-propagation между fibers.
 
 ### Что
 
@@ -378,21 +379,76 @@ fn read_file_sync(path str) Blocking Fail[IoError] -> []u8 =>
 
 `blocking { ... }`:
 - syntactic primitive языка,
-- передаёт текущий fiber на отдельный ОС-поток из blocking-pool,
+- уводит тело на отдельный ОС-поток из blocking-pool, fiber паркуется,
 - worker scheduler'а возвращается в общий пул, обслуживает другие
   fiber'ы,
-- когда C-код вернулся — fiber возвращается в обычный pool worker'а,
-- requires эффект `Blocking` в сигнатуре.
+- когда C-код вернулся — fiber резюмится на своём home-worker'е,
+- **отдаёт значение** trailing-выражения тела (`let data = blocking
+  { c_read() }`),
+- requires эффект `Blocking` в сигнатуре enclosing-функции.
 
 `Blocking`-эффект:
 - виден в сигнатуре (caller знает «может заблокировать поток»),
 - **запрещён внутри `realtime { }`-блока** ([D64](04-effects.md#d64)) —
   блок гарантирует не-suspension, а blocking-pool вызывает suspend
-  на ОС-потоке,
-- handler можно подменить (тесты, mock C-вызова).
+  на ОС-потоке.
 
-Размер blocking-pool — runtime-конфиг (`NOVA_BLOCKING_POOL`,
-default 64). Если пул заполнен — fiber ждёт в очереди.
+Размер blocking-pool — runtime-конфиг (`NOVA_BLOCKING_THREADS`,
+default 64). Если пул заполнен — fiber ждёт в очереди (graceful, не
+дедлок).
+
+##### Реализация: Plan 83.3 (2026-05-22)
+
+Bootstrap-runtime реализует `blocking { }` через **libuv threadpool**
+(`uv_queue_work`) — процесс-глобальный пул ОС-потоков:
+
+1. fiber вызывает `blocking { }` → runtime пакует тело в `uv_work_t`,
+   `uv_queue_work` на loop home-worker'а;
+2. fiber **паркуется** (park/wake [D93](#d93), тот же путь, что
+   `Time.sleep`) — worker свободен, берёт другой fiber;
+3. `work_cb` исполняется на threadpool-потоке — делает блокирующую
+   работу;
+4. `after_work_cb` на loop'е home-worker'а **будит** fiber с результатом;
+5. fiber резюмится со значением тела.
+
+`NOVA_BLOCKING_THREADS` (default 64) пробрасывается в
+`UV_THREADPOOL_SIZE` в runtime-прологе (`nova_evloop_init`); явный
+пользовательский `UV_THREADPOOL_SIZE` уважается.
+
+**`blocking { }` — примитив, не handler-эффект.** В отличие от `detach`
+(`with Detach = SyncDetach`), `blocking { }` не диспетчеризуется через
+handler: контекст-чувствительный codegen всегда либо offload'ит (в
+fiber-контексте), либо выполняет тело inline (на main-потоке — нет
+worker'а пинить). `Blocking` в сигнатуре — требование декларации, не
+точка подмены.
+
+##### V1 leaf-контракт (GC-safety)
+
+`work_cb` исполняется на threadpool-потоке, который **не**
+Boehm-GC-registered и **не** является fiber'ом. Поэтому **V1-контракт**:
+тело `blocking { }` обязано быть **leaf** — FFI/syscall без
+
+- GC-аллокации (`GC_malloc` с не-registered потока — UB),
+- вызовов обратно в Nova-рантайм,
+- control-flow-escape наружу (`return`/`break`/`continue`/`throw`,
+  пересекающих границу `blocking { }`).
+
+Покрывает основной use-case — блокирующий FFI. **V2** (followup):
+GC-регистрация threadpool-потоков (`GC_register_my_thread` once-per-
+thread) разрешит произвольный Nova-код под `Blocking`; отложена —
+V1 достаточно для целевого паритета.
+
+##### Cancellation
+
+- **Не стартовавшая** `uv_work_t` отменяется `uv_cancel()` → fiber
+  будится с cancel.
+- **In-flight** блокирующая работа **не прерывается** — C-вызов
+  непрозрачен и доводится до конца, результат отбрасывается, бросается
+  cancel. Это **industry-standard**: Go не прерывает блокирующий
+  cgo-вызов, tokio не отменяет running `spawn_blocking`. В обоих
+  случаях `after_work_cb` отрабатывает → fiber гарантированно будится.
+- Интеграция с `CancelToken` ([D75](#d75)) / supervised-cancel — через
+  `stop_cb`, зарегистрированный в pending-таблице scope'а.
 
 `Detach` и `Blocking` могут комбинироваться:
 ```nova
