@@ -20,10 +20,11 @@ module concurrency.mn_runtime_cpu_workload
 
 test "deque integration: init + shutdown без crash" {
     runtime.init(4)
-    assert(runtime.worker_count() == 4)
-
-    // Workers idle (нет spawn_global) — должны блокироваться на uv_run.
-    // Layer 5 actual workload — после Layer 3 (per-worker libuv loop).
+    // Plan 83.1 Ф.4: init только ARM'ит рантайм — пул материализуется
+    // лениво на первом spawn. Без spawn worker_count() == 0,
+    // maxprocs() == зафиксированная цель.
+    assert(runtime.maxprocs() == 4)
+    assert(runtime.worker_count() == 0)
     runtime.shutdown()
     assert(!runtime.is_initialized())
 }
@@ -32,7 +33,7 @@ test "deque integration: 2 workers idempotent cycle" {
     let mut i = 0
     while i < 3 {
         runtime.init(2)
-        assert(runtime.worker_count() == 2)
+        assert(runtime.maxprocs() == 2)
         runtime.shutdown()
         assert(runtime.worker_count() == 0)
         i = i + 1

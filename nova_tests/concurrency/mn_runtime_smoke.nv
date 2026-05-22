@@ -1,17 +1,14 @@
 // Plan 44.1 (Plan 44 Этап 0): smoke test для M:N runtime infrastructure.
 //
 // Минимальный verification что multi-thread runtime может:
-//   1. Initialize N workers.
-//   2. Report worker_count() correctly.
+//   1. ARM'иться через runtime.init (зафиксировать целевое число).
+//   2. Report maxprocs() / worker_count() / is_initialized() корректно.
 //   3. Graceful shutdown без deadlock/crash.
 //
-// Real workload distribution — Plan 45+. Сейчас просто infrastructure
-// liveness check.
-//
-// Plan 83.1 Ф.3: повторный runtime.init при уже поднятом пуле —
-// диагностируемый no-op (не молчаливый). Срабатывает в тесте
-// "second init while running ..." ниже.
-// EXPECT_STDERR one-shot tuner
+// Plan 83.1 Ф.4: пул ленивый — runtime.init только ARM'ит рантайм;
+// worker-потоки поднимаются на первом spawn. Материализация и
+// diagnosed-no-op повторного init — см. mn_lazy_spawn.nv /
+// mn_init_after_materialize.nv.
 
 module concurrency.mn_runtime_smoke
 
@@ -24,7 +21,9 @@ test "runtime not initialized by default" {
 test "init + shutdown lifecycle (2 workers)" {
     runtime.init(2)
     assert(runtime.is_initialized())
-    assert(runtime.worker_count() == 2)
+    assert(runtime.maxprocs() == 2)
+    // Пул ленивый: без spawn worker-потоки не подняты.
+    assert(runtime.worker_count() == 0)
     // main thread не worker.
     assert(runtime.current_worker_id() == -1)
 
@@ -33,20 +32,19 @@ test "init + shutdown lifecycle (2 workers)" {
     assert(runtime.worker_count() == 0)
 }
 
-test "second init while running is a diagnosed no-op" {
-    // Plan 83.1 Ф.3: runtime.init — одноразовый тюнер. Повторный вызов
-    // при уже поднятом пуле диагностируется на stderr и игнорируется
-    // (пул не пересоздаётся — worker_count остаётся прежним).
+test "repeated init before first spawn re-tunes the target" {
+    // Plan 83.1 Ф.4: runtime.init — тюнер; до материализации пула
+    // (до первого spawn) повторный вызов валиден и переопределяет цель.
     runtime.init(1)
-    runtime.init(99)  // diagnosed no-op
-    assert(runtime.worker_count() == 1)
+    runtime.init(99)
+    assert(runtime.maxprocs() == 99)
     runtime.shutdown()
 }
 
 test "init auto-detect (n=0)" {
     runtime.init(0)
     assert(runtime.is_initialized())
-    // worker_count > 0 (uv_available_parallelism)
-    assert(runtime.worker_count() > 0)
+    // auto-detect (uv_available_parallelism) → maxprocs() > 0.
+    assert(runtime.maxprocs() > 0)
     runtime.shutdown()
 }

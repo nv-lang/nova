@@ -10584,3 +10584,21 @@ negative-тест `negative_user_from_pairs_shadows.nv`. Не блокер, вн
 этой closure.
 
 Plan 52.2 и 52.3 → ✅ ЗАКРЫТЫ. Suite: 960 PASS / 0 FAIL.
+
+## Plan 83.1 Ф.4 — lazy worker-пул (2026-05-22)
+
+### [M-83.1-lazy-spawn-v1-whole-pool] первый spawn поднимает ВЕСЬ пул
+- **Где:** `compiler-codegen/nova_rt/runtime.c` — `_materialize_pool`.
+- **Что упрощено:** lazy-spawn V1 — на первом worker-bound spawn
+  поднимается сразу весь пул `maxprocs` worker-потоков. Программа с
+  единственным spawn получает `NumCPU` потоков (Go поднял бы ~1-2 `M`
+  и рос бы инкрементально по нагрузке).
+- **Почему:** инкрементальный рост пула требует отдельной
+  инфраструктуры (per-worker spawn-on-demand + балансировка). V1
+  «весь пул на первом spawn» закрывает главную цель — hello-world без
+  spawn остаётся однопоточным (0 worker-потоков, 0 sysmon) — простым
+  и корректным способом.
+- **Как чинить:** V2 — инкрементальный рост пула (полный Go-`M`-
+  паритет), followup Plan 83.x.
+- **Приоритет:** L — программам, делающим spawn, полный пул всё равно
+  нужен; экономия только на паттерне «1 spawn → 1 worker».

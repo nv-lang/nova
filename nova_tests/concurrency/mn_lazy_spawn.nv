@@ -1,0 +1,35 @@
+// Plan 83.1 Ф.4: lazy worker-пул. runtime.init только ARM'ит рантайм
+// (фиксирует целевое число worker'ов); реальные worker-потоки
+// поднимаются лениво на первом worker-bound spawn. Программа без
+// spawn идёт на одном главном потоке — 0 worker-потоков, 0 sysmon.
+module concurrency.mn_lazy_spawn
+
+test "init arms but does not materialize the pool" {
+    runtime.init(3)
+    assert(runtime.is_initialized())       // armed
+    assert(runtime.maxprocs() == 3)        // цель зафиксирована
+    assert(runtime.worker_count() == 0)    // потоки ещё НЕ подняты
+    runtime.shutdown()
+    assert(!runtime.is_initialized())
+}
+
+test "first spawn materializes the pool" {
+    runtime.init(2)
+    assert(runtime.worker_count() == 0)    // до spawn — пул не поднят
+    let mut x = 0
+    supervised {
+        spawn { x = 7 }
+    }
+    assert(x == 7)
+    // После первого spawn пул материализован.
+    assert(runtime.worker_count() == 2)
+    runtime.shutdown()
+}
+
+test "no spawn → pool never materialized" {
+    runtime.init(4)
+    // Программа без spawn — worker_count() остаётся 0 всё время.
+    assert(runtime.worker_count() == 0)
+    runtime.shutdown()
+    assert(runtime.worker_count() == 0)
+}

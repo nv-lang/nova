@@ -17478,3 +17478,30 @@ Suite: 960 PASS / 0 FAIL.
 точность тест по-прежнему измеряет (max_dev/avg). Пре-существующий
 флейк, не связан с Ф.4 (тест не использует runtime.init; проходит 3/3
 изолированно).
+
+### Plan 83.1 — M:N-инфраструктура, Ф.4 lazy worker-пул (✅)
+
+runtime.init больше НЕ создаёт worker-потоки — лишь ARM'ит рантайм.
+- runtime.c: split init → arm + lazy materialize. Состояние: _armed
+  (init вызван), _materialized (пул поднят), _target_workers
+  (резолвнутая цель). _materialize_pool() создаёт worker-потоки +
+  sysmon; вызывается лениво из _ensure_materialized() на первом
+  worker-bound spawn (через spawn_global). shutdown: armed-но-не-
+  материализован → просто disarm (join'ить нечего).
+- Семантика: worker_count()=0 до первого spawn; maxprocs()=цель с
+  момента init; is_initialized()=armed. runtime.init до материализации
+  — валидный re-tune (последний выигрывает); после — диагностируемый
+  no-op на stderr.
+- Hello-world / программа с init без spawn — 0 worker-потоков, 0 sysmon.
+- Спека: D137 (06-concurrency.md) — ленивая материализация + init-как-
+  тюнер. runtime.nv: header + init doc обновлены.
+- Миграция тестов: worker_count() после init без spawn → maxprocs()
+  (mn_runtime_smoke, mn_runtime_cpu_workload, mn_runtime_init_shutdown_
+  cycles, runtime_init, mn_maxprocs_env/getter/invalid_env).
+- Тесты: позитивный mn_lazy_spawn.nv (init arms но не материализует /
+  first spawn materializes пул=N / no-spawn → 0 потоков); негативный
+  mn_init_after_materialize.nv (init после материализации пула →
+  диагностика на stderr, EXPECT_STDERR).
+- simplifications: [M-83.1-lazy-spawn-v1-whole-pool] — V1 поднимает
+  весь пул на первом spawn; инкрементальный рост — followup.
+Suite: 962 PASS / 0 FAIL.

@@ -129,9 +129,17 @@ static mco_coro* _worker_yielded_pop(NovaWorker* w) {
 /* ── Runtime state ─────────────────────────────────────────────── */
 
 static NovaWorker*     _workers = NULL;
-static int             _n_workers = 0;
+static int             _n_workers = 0;          /* materialized worker count */
 static nova_atomic_int _round_robin = 0;
-static bool            _initialized = false;
+/* Plan 83.1 Ф.4: lazy worker-пул. `_armed` — runtime.init() вызван
+ * (M:N запрошен); `_materialized` — пул-потоки реально подняты (лениво,
+ * на первом worker-bound spawn). `_target_workers` — резолвнутое число
+ * worker'ов, зафиксированное на init/re-tune. До первого spawn пул не
+ * существует: hello-world без spawn идёт на одном главном потоке,
+ * 0 worker-потоков, 0 sysmon. */
+static bool            _armed = false;
+static bool            _materialized = false;
+static int             _target_workers = 0;
 static nova_mutex_t    _init_mu;
 static bool            _init_mu_inited = false;
 
@@ -602,28 +610,40 @@ void nova_runtime_init(int n_workers) {
         _init_mu_inited = true;
     }
     nova_mutex_lock(&_init_mu);
-    if (_initialized) {
-        /* Plan 83.1 Ф.3: runtime.init — одноразовый тюнер. Повторный вызов
-         * при уже поднятом пуле — баг конфигурации; диагностируем громко
-         * (не молчаливый no-op, который маскировал бы баг), но не abort'им
-         * — существующий пул корректен и продолжает работать. */
+    if (_materialized) {
+        /* Plan 83.1 Ф.3/Ф.4: runtime.init — одноразовый тюнер, валиден
+         * только ДО первого spawn (до материализации пула). Пул уже
+         * поднят → init опоздал; диагностируем громко (не молчаливый
+         * no-op, маскирующий баг конфигурации), но не abort'им —
+         * существующий пул корректен. */
         fprintf(stderr,
-                "nova: runtime.init() ignored — M:N runtime already running "
-                "(%d workers); runtime.init is a one-shot tuner, call it once "
-                "before any spawn\n", _n_workers);
+                "nova: runtime.init() ignored — M:N pool already materialized "
+                "(%d workers); runtime.init is a one-shot tuner, call it "
+                "before the first spawn\n", _n_workers);
         nova_mutex_unlock(&_init_mu);
         return;
     }
 
-    /* Plan 52 Ф.22: SipHash seed init. Idempotent — может быть уже
-     * inited через lazy nova_hash_seed_ensure_init. Здесь — explicit
-     * upfront чтобы runtime_init гарантировал готовность hash до
-     * первого worker spawn. */
+    /* Plan 52 Ф.22: SipHash seed init upfront — готовность hash до пула. */
     nova_hash_seed_ensure_init();
 
-    /* Plan 83.1 Ф.1+Ф.2: единая точка разрешения числа worker'ов
-     * (explicit > NOVA_MAXPROCS > auto-detect; клэмп [1, 1024]). */
-    n_workers = nova_runtime_resolve_maxprocs(n_workers);
+    /* Plan 83.1 Ф.1+Ф.2: резолв числа worker'ов (explicit > NOVA_MAXPROCS
+     * > auto-detect; клэмп [1, 1024]). Ф.4: лишь ЗАПОМИНАЕМ цель — потоки
+     * поднимутся лениво на первом spawn. Повторный init до материализации
+     * — валидный re-tune (последний выигрывает). */
+    _target_workers = nova_runtime_resolve_maxprocs(n_workers);
+    _armed = true;
+    nova_mutex_unlock(&_init_mu);
+}
+
+/* Plan 83.1 Ф.4: материализация worker-пула — собственно создание
+ * worker-потоков + sysmon. Вызывается ЛЕНИВО при первом worker-bound
+ * spawn (через _ensure_materialized). PRECONDITION: _init_mu удержан,
+ * _armed == true, _materialized == false. Вызывается только с главного
+ * потока — до материализации программа однопоточна. */
+static void _materialize_pool(void) {
+    int n_workers = _target_workers;
+    if (n_workers < 1) n_workers = 1;  /* defensive — резолвер уже клэмпит */
 
 #ifdef NOVA_GC_THREADS_REGISTER
     /* Boehm требует разрешения explicit thread registration ПЕРЕД
@@ -718,14 +738,34 @@ void nova_runtime_init(int n_workers) {
         nova_abool_store(&_sysmon_running, false);
     }
 
-    _initialized = true;
+    _materialized = true;
+}
+
+/* Plan 83.1 Ф.4: гарантирует, что пул материализован. Fast-path без
+ * lock'а — после материализации `_materialized` навсегда true (до
+ * shutdown). Вызывается из spawn-путей; первый spawn поднимает пул. */
+static void _ensure_materialized(void) {
+    if (_materialized) return;
+    nova_mutex_lock(&_init_mu);
+    if (!_materialized && _armed) {
+        _materialize_pool();
+    }
     nova_mutex_unlock(&_init_mu);
 }
 
 void nova_runtime_shutdown(void) {
     if (!_init_mu_inited) return;
     nova_mutex_lock(&_init_mu);
-    if (!_initialized) {
+    if (!_armed) {
+        nova_mutex_unlock(&_init_mu);
+        return;
+    }
+    if (!_materialized) {
+        /* Plan 83.1 Ф.4: armed, но пул так и не материализован (программа
+         * вызвала runtime.init, но ни разу не сделала spawn). Потоков нет
+         * — join'ить нечего, просто disarm. */
+        _armed = false;
+        _target_workers = 0;
         nova_mutex_unlock(&_init_mu);
         return;
     }
@@ -767,7 +807,9 @@ void nova_runtime_shutdown(void) {
     free(_workers);
     _workers = NULL;
     _n_workers = 0;
-    _initialized = false;
+    _materialized = false;
+    _armed = false;
+    _target_workers = 0;
 
     nova_mutex_unlock(&_init_mu);
 }
@@ -775,16 +817,18 @@ void nova_runtime_shutdown(void) {
 /* ── Spawn ────────────────────────────────────────────────────── */
 
 void nova_runtime_spawn_global(void (*entry)(mco_coro*), void* user) {
-    if (!_initialized || _n_workers == 0) {
-        /* Fallback: single-thread spawn в current scope. */
+    if (!_armed) {
+        /* M:N не запрошен (нет runtime.init) — single-thread spawn. */
         if (_nova_active_scope) {
             nova_fiber_spawn_into(_nova_active_scope, entry, user);
         } else {
-            fprintf(stderr, "nova: runtime_spawn_global: not initialized + no active scope\n");
+            fprintf(stderr, "nova: runtime_spawn_global: not armed + no active scope\n");
             abort();
         }
         return;
     }
+    /* Plan 83.1 Ф.4: первый worker-bound spawn материализует пул. */
+    _ensure_materialized();
 
     int idx = (int)((uint32_t)nova_aint_inc(&_round_robin) % (uint32_t)_n_workers);
     NovaWorker* target = &_workers[idx];
@@ -825,10 +869,9 @@ void nova_runtime_spawn_into(struct NovaFiberQueue* scope,
         fprintf(stderr, "nova: runtime_spawn_into: NULL scope\n");
         abort();
     }
-    if (!_initialized || _n_workers == 0) {
-        /* Fallback — fall through к normal spawn в active scope.
-         * Это safety net; codegen эмитит conditional check, но если
-         * runtime caller вызовет напрямую без init — degraded behavior. */
+    if (!_armed) {
+        /* M:N не запрошен — fallback на single-thread spawn в scope.
+         * Safety net; codegen эмитит conditional check (is_initialized). */
         nova_fiber_spawn_into((NovaFiberQueue*)scope, entry, user);
         return;
     }
@@ -851,6 +894,9 @@ void nova_runtime_signal_main(void) {
 
 /* ── Diagnostic ───────────────────────────────────────────────── */
 
+/* Фактически поднятые worker-потоки. Plan 83.1 Ф.4: 0 до первого spawn
+ * (пул ленивый), даже если runtime.init() уже вызван — для целевого
+ * числа см. nova_runtime_maxprocs(). */
 int nova_runtime_worker_count(void) {
     return _n_workers;
 }
@@ -868,7 +914,9 @@ int nova_runtime_worker_count(void) {
 static int _maxprocs_cache = 0;  /* 0 = ещё не резолвилось */
 
 int nova_runtime_maxprocs(void) {
-    if (_initialized) return _n_workers;
+    /* Plan 83.1 Ф.4: armed → возвращаем зафиксированную цель (потоки
+     * могут быть ещё не подняты). Иначе резолвим default + кэшируем. */
+    if (_armed) return _target_workers;
     if (_maxprocs_cache == 0) {
         _maxprocs_cache = nova_runtime_resolve_maxprocs(0);
     }
@@ -879,6 +927,9 @@ int nova_runtime_current_worker_id(void) {
     return _current_worker_id;
 }
 
+/* Plan 83.1 Ф.4: «M:N запрошен» — runtime.init() вызван (пул может быть
+ * ещё не материализован — это lazy). worker_count() == 0 до первого
+ * spawn даже при is_initialized() == true. */
 bool nova_runtime_is_initialized(void) {
-    return _initialized;
+    return _armed;
 }
