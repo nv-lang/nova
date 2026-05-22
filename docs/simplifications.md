@@ -10690,21 +10690,32 @@ Plan 52.2 и 52.3 → ✅ ЗАКРЫТЫ. Suite: 960 PASS / 0 FAIL.
   произвольный Nova-код под `Blocking`.
 - **Приоритет:** L — V1 достаточно для целевого паритета (FFI-offload).
 
-## Plan 83.3 Ф.4.1 — примитив blocking { } (2026-05-22)
+## Plan 83.3 Ф.4.1/Ф.4.2 — примитив blocking { } (2026-05-22)
 
-### [M-83.3-blocking-inline-bootstrap] Ф.4.1: emit_blocking — тело inline
+### [M-83.3-blocking-inline-bootstrap] ✅ СНЯТО в Ф.4.2 (2026-05-22)
+Ф.4.1 эмитил тело `blocking { }` inline (worker не освобождался) —
+явный plan-tracked промежуток. Ф.4.2 заменил его реальным offload'ом:
+`emit_blocking` через block-extraction → `nova_blocking_offload` +
+context-sensitive fiber-vs-main ветка. Worker теперь свободен под
+блокирующей нагрузкой (тест `blocking_offload_test.nv` это доказывает).
+Упрощение устранено — маркер закрыт.
+
+### [M-83.3-blocking-control-flow-escape] Ф.4.2: codegen не enforce'ит leaf-контракт
 - **Где:** `compiler-codegen/src/codegen/emit_c.rs` — `emit_blocking`.
-- **Что упрощено:** bootstrap-codegen эмитит тело `blocking { }` inline
-  в стеке caller'а (как `emit_detach`/SyncDetach). M:N-worker НЕ
-  освобождается на время блокирующей работы.
-- **Почему:** Ф.4.1 закрывает синтаксис + type-check и проверяет, что
-  примитив парсится и выполняется. Реальный offload в libuv threadpool
-  требует emit_spawn-style block-extraction — отдельная единица Ф.4.2.
-- **Как чинить:** Ф.4.2 — `emit_blocking` через block-extraction
-  (capture-анализ → ctx-struct → `_nova_blk_N(void*)` →
-  `nova_blocking_offload`) + context-sensitive fiber-vs-main ветка.
-- **Приоритет:** M — семантически корректно, но цель плана (worker не
-  пинится под блокирующей нагрузкой) достигается только Ф.4.2.
+- **Что упрощено:** тело `blocking { }` экстрагируется в отдельную
+  C-функцию `_nova_blk_N`. `return`/`break`/`continue`, пересекающие
+  границу `blocking { }` наружу, при offload'е семантически некорректны
+  (сработают внутри `_nova_blk_N`, а не enclosing-fn/loop). Codegen это
+  НЕ диагностирует.
+- **Почему:** V1-контракт `Blocking` (D50) уже требует тело-leaf —
+  FFI/syscall без control-flow-escape; реалистичные `blocking`-тела не
+  делают return/break наружу. Полная диагностика — отдельная
+  type-checker-проверка (по образцу `check_defer_body` с
+  loop/fn-depth-трекингом).
+- **Как чинить:** Ф.5 — type-checker-guard, запрещающий control-flow
+  наружу из `blocking { }` (как у `defer` body).
+- **Приоритет:** L — V1-контракт документирует ограничение; нарушение
+  требует заведомо невалидного `blocking`-тела.
 
 ---
 

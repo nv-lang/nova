@@ -17835,3 +17835,41 @@ Suite: 1024 PASS / 0 FAIL / 56 SKIP (было 1021 — +3 новых теста,
 (git_cache/lockfile unit + git_dep_e2e + lockfile_repro +
 insert_dependency). Suite: 983 PASS / 0 FAIL / 56 SKIP — 0
 регрессий.
+
+### Plan 83.3 Ф.4.2 — codegen-offload blocking { } → libuv threadpool (2026-05-22)
+
+Замена inline-bootstrap (Ф.4.1) на реальный увод работы в threadpool.
+emit_blocking переписан: block-extraction по образцу emit_spawn, но
+проще — тело не fiber и не scheduled, обычная leaf-функция.
+
+emit_blocking:
+- capture-анализ (collect_idents_block + collect_bound_names_block) →
+  ctx-struct NovaBlkCtx_nova_blk_N (захваты by-value/by-pointer как у
+  spawn + поле _nova_result);
+- сгенерированная static void _nova_blk_N(void* _blk_arg) — распаковка
+  ctx, тело с capture-rewriting'ом (переиспользует current_spawn_
+  captures), результат в _c->_nova_result;
+- на месте blocking{}: stack-local ctx (offload синхронен с точки
+  зрения fiber'а — стек-кадр переживает park) + заполнение захватов;
+- context-sensitive: if (mco_running()) → nova_blocking_offload (fiber:
+  worker свободен), else → _nova_blk_N(&ctx) inline (main-поток).
+
+Forward-decl _nova_blk_N + ctx-struct typedef эмитятся прямо в
+lambda_forward_decls из emit_blocking — без правки scan-фазы
+(blocking_counter чисто emit-side; textual fwd-decl counter-sync'а не
+требует, работает и в mono-context).
+
+Result-passing: blocking{} отдаёт значение trailing expr тела —
+infer_expr_c_type split'нут (Blocking ≠ Detach, infer'ит тип тела).
+
+V1 leaf-safety проверена: nova_preempt_check на threadpool-потоке —
+no-op (_nova_preempt_ptr это TLS, NULL вне fiber'а). Новый маркер
+[M-83.3-blocking-control-flow-escape] — codegen не enforce'ит запрет
+return/break наружу из blocking{} (fix → Ф.5).
+
+Тесты: concurrency/blocking_offload_test.nv — offload в fiber'е
+(result-passing), worker НЕ запинен (sibling-fiber выставляет marker
+пока A запаркован → A видит 1, не 0), inline на main-потоке,
+несколько fiber'ов с offload'ом параллельно.
+
+Suite: 1036 PASS / 0 FAIL / 56 SKIP (+1 тест-файл blocking_offload_test, 0 регрессий).
