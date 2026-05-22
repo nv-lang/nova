@@ -28,7 +28,7 @@
 //!
 //! Хранилище: `<repo>/target/.nova-cache/<key>.c`. v1 без eviction —
 //! каталог можно удалить вручную (`target/` — disposable). Отключается
-//! через `NOVA_NO_CACHE=1`; пропускается при `--keep-artifacts` (там
+//! через `NOVA_CACHE=0`; пропускается при `--keep-artifacts` (там
 //! нужен полный набор промежуточных артефактов реальной сборки).
 
 use nova_codegen::ast::PeerFile;
@@ -41,9 +41,11 @@ pub fn cache_dir(repo: &Path) -> PathBuf {
     repo.join("target").join(".nova-cache")
 }
 
-/// Активен ли кэш сборки? Отключается `NOVA_NO_CACHE=1`.
+/// Активен ли кэш сборки? Включён по умолчанию; отключается
+/// `NOVA_CACHE=0` (также принимаются `off` / `false`).
 pub fn cache_enabled() -> bool {
-    !matches!(std::env::var("NOVA_NO_CACHE"), Ok(v) if v == "1" || v == "true")
+    !matches!(std::env::var("NOVA_CACHE").as_deref(),
+              Ok("0") | Ok("off") | Ok("false"))
 }
 
 /// Вычислить content-addressed ключ для сгенерированного `.c`.
