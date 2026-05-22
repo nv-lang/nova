@@ -8727,7 +8727,11 @@ fn simple_types_compatible(a: &TypeRef, b: &TypeRef) -> bool {
 /// `desugar_module` (читает inferred K/V для turbofish).
 pub fn annotate_map_literals(module: &mut Module) {
     let ctx = MapLitCtx::build(module);
-    let mut ann = MapLitAnnotator { ctx, fn_generics: HashSet::new() };
+    let mut ann = MapLitAnnotator {
+        ctx,
+        fn_generics: HashSet::new(),
+        var_types: HashMap::new(),
+    };
     ann.walk_module(module);
     // Plan 42.4 / Plan 52 Ф.7: peer_files несут per-peer копии items для
     // name resolution. Десугаринг обходит и peer_files.items_here, поэтому
@@ -8744,6 +8748,11 @@ struct MapLitAnnotator {
     ctx: MapLitCtx,
     /// Generic-параметры текущей функции — для permissive Hashable.
     fn_generics: HashSet<String>,
+    /// Plan 52.x: типы let-биндингов и параметров текущего item'а.
+    /// Нужны для классификации all-spread литералов `[...a, ...b]` без
+    /// аннотации: чтобы отличить map-spread от array-spread, нужен тип
+    /// spread-источника. Сбрасывается на границе каждого item'а.
+    var_types: HashMap<String, TypeRef>,
 }
 
 impl MapLitAnnotator {
@@ -8766,6 +8775,11 @@ impl MapLitAnnotator {
                             }
                         }
                     }
+                    // Plan 52.x: свежий var-scope на функцию + параметры.
+                    self.var_types.clear();
+                    for p in &f.params {
+                        self.var_types.insert(p.name.clone(), p.ty.clone());
+                    }
                     let return_ty = f.return_type.clone();
                     match &mut f.body {
                         FnBody::Expr(e) => self.walk_expr(e, return_ty.as_ref()),
@@ -8775,11 +8789,13 @@ impl MapLitAnnotator {
                 }
                 Item::Test(t) => {
                     self.fn_generics.clear();
+                    self.var_types.clear();
                     self.walk_block(&mut t.body);
                 }
                 // Plan 57: bench body — аннотируем все три раздела.
                 Item::Bench(b) => {
                     self.fn_generics.clear();
+                    self.var_types.clear();
                     for s in &mut b.setup {
                         self.walk_stmt(s);
                     }
@@ -8790,11 +8806,13 @@ impl MapLitAnnotator {
                 }
                 Item::Const(c) => {
                     self.fn_generics.clear();
+                    self.var_types.clear();
                     let ty = c.ty.clone();
                     self.walk_expr(&mut c.value, ty.as_ref());
                 }
                 Item::Let(l) => {
                     self.fn_generics.clear();
+                    self.var_types.clear();
                     let ty = l.ty.clone();
                     self.walk_expr(&mut l.value, ty.as_ref());
                 }
@@ -8818,6 +8836,35 @@ impl MapLitAnnotator {
             Stmt::Let(d) => {
                 let ty = d.ty.clone();
                 self.walk_expr(&mut d.value, ty.as_ref());
+                // Plan 52.x: запоминаем тип биндинга для классификации
+                // all-spread литералов `[...a, ...b]` без аннотации.
+                if let Pattern::Ident { name, .. } = &d.pattern {
+                    if let Some(bt) = &d.ty {
+                        self.var_types.insert(name.clone(), bt.clone());
+                    } else if let ExprKind::MapLit {
+                        inferred_key: Some(k),
+                        inferred_value: Some(v),
+                        inferred_target_type,
+                        ..
+                    } = &d.value.kind
+                    {
+                        // Без аннотации, но значение — выведенный map-литерал.
+                        let path = inferred_target_type
+                            .clone()
+                            .unwrap_or_else(|| vec!["HashMap".to_string()]);
+                        self.var_types.insert(
+                            name.clone(),
+                            TypeRef::Named {
+                                path,
+                                generics: vec![k.clone(), v.clone()],
+                                span: d.value.span,
+                            },
+                        );
+                    } else {
+                        // Неизвестный тип — снять устаревший entry (shadowing).
+                        self.var_types.remove(name);
+                    }
+                }
             }
             Stmt::Assign { target, value, .. } => {
                 self.walk_expr(target, None);
@@ -8838,7 +8885,50 @@ impl MapLitAnnotator {
         }
     }
 
+    /// Plan 52.x: для all-spread `ArrayLit` (`[...a, ...b]`) без expected-
+    /// типа выводит map-тип из типов spread-источников. Возвращает
+    /// `Some(HashMap-тип)` только если ВСЕ источники — `Ident`-ы
+    /// #from_pairs-типа; иначе это array-spread `[...arr1, ...arr2]` —
+    /// возвращаем `None`, классификация остаётся прежней (массив).
+    fn infer_map_type_from_spreads(&self, kind: &ExprKind) -> Option<TypeRef> {
+        let ExprKind::ArrayLit(elems) = kind else {
+            return None;
+        };
+        if elems.is_empty() {
+            return None;
+        }
+        let mut first: Option<TypeRef> = None;
+        for el in elems {
+            let ArrayElem::Spread(s) = el else {
+                return None;
+            };
+            let ExprKind::Ident(name) = &s.kind else {
+                return None;
+            };
+            let ty = self.var_types.get(name)?;
+            if !self.ctx.expected_is_from_pairs(ty) {
+                return None;
+            }
+            if first.is_none() {
+                first = Some(ty.clone());
+            }
+        }
+        first
+    }
+
     fn walk_expr(&mut self, e: &mut Expr, expected: Option<&TypeRef>) {
+        // Plan 52.x: all-spread `[...a, ...b]` без expected-типа —
+        // синтезируем map-тип из spread-источников, чтобы конверсия
+        // ArrayLit→MapLit ниже и inference K/V сработали (без этого
+        // spread двух map'ов без аннотации мис-классифицируется как
+        // массив → `b->len` на HashMap → CC-FAIL).
+        let synth_expected: Option<TypeRef> = if expected.is_none() {
+            self.infer_map_type_from_spreads(&e.kind)
+        } else {
+            None
+        };
+        let expected = expected.or(synth_expected.as_ref());
+
         // Plan 52.3 Ф.1: empty `[]` в позиции #from_pairs-типа конвертим
         // в empty MapLit. Codegen ArrayLit пустой → array (CC-FAIL для
         // HashMap-target). MapLit пустой → with_capacity(0) — пустая мапа.
