@@ -17757,3 +17757,32 @@ greenfield по всем слоям компилятора, а не «codegen-м
 (тело инлайн, как SyncDetach у detach) + позитивный/негативные тесты;
 Ф.4.2 — реальный codegen-offload (emit_blocking через block-extraction
 + nova_blocking_offload). Пофайловая карта обеих — план 83.3 §7.
+
+### Plan 83.3 Ф.4.1 — примитив blocking { }: синтаксис + typecheck + bootstrap-codegen (2026-05-22)
+
+Greenfield-примитив `blocking { body }` (D50) по всем слоям компилятора.
+Прецедент синтаксиса — `detach { }`.
+
+Лексер: токен KwBlocking + keyword "blocking". AST: ExprKind::Blocking(Block).
+Парсер: parse_blocking (зеркало parse_detach) + dispatch + name-table.
+
+Type-checker: новое поле CapState.declared_effects — имена эффектов
+сигнатуры enclosing-функции, заполняется в walk_fn_body из f.effects.
+`blocking { }` → две проверки: (1) требует Blocking в declared_effects
+(иначе compile error); (2) запрещён внутри realtime { } (D64) — Blocking
+в списке realtime-suspend-эффектов. "Blocking" добавлен в builtin-type-set
+(резолвится в сигнатурах `fn ... Blocking -> ...`). Ветки Blocking во всех
+AST-обходах type-checker'а (12 точек, мерж с Detach).
+
+Codegen (bootstrap): emit_blocking — тело inline (как emit_detach):
+worker НЕ освобождается — явный plan-tracked промежуток до Ф.4.2.
+Ветки ExprKind::Blocking в scan_expr_fwd/collect_*/emit_expr/infer-type.
+
+Прочие проходы: interp (exec inline), lints/callnorm/desugar (recursion),
+verify/encode (Unsupported в контрактах).
+
+Тесты: concurrency/blocking_test.nv (12 позитивных кейсов — value-passing,
+capture, mutation record-field, control flow, nested, arrays) +
+negative_capability/blocking_no_effect.nv + blocking_in_realtime.nv.
+
+Suite: 1024 PASS / 0 FAIL / 56 SKIP (было 1021 — +3 новых теста, 0 регрессий).

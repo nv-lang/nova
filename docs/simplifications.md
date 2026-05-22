@@ -10689,3 +10689,19 @@ Plan 52.2 и 52.3 → ✅ ЗАКРЫТЫ. Suite: 960 PASS / 0 FAIL.
   once-per-thread для threadpool-потоков через TLS-флаг → разрешит
   произвольный Nova-код под `Blocking`.
 - **Приоритет:** L — V1 достаточно для целевого паритета (FFI-offload).
+
+## Plan 83.3 Ф.4.1 — примитив blocking { } (2026-05-22)
+
+### [M-83.3-blocking-inline-bootstrap] Ф.4.1: emit_blocking — тело inline
+- **Где:** `compiler-codegen/src/codegen/emit_c.rs` — `emit_blocking`.
+- **Что упрощено:** bootstrap-codegen эмитит тело `blocking { }` inline
+  в стеке caller'а (как `emit_detach`/SyncDetach). M:N-worker НЕ
+  освобождается на время блокирующей работы.
+- **Почему:** Ф.4.1 закрывает синтаксис + type-check и проверяет, что
+  примитив парсится и выполняется. Реальный offload в libuv threadpool
+  требует emit_spawn-style block-extraction — отдельная единица Ф.4.2.
+- **Как чинить:** Ф.4.2 — `emit_blocking` через block-extraction
+  (capture-анализ → ctx-struct → `_nova_blk_N(void*)` →
+  `nova_blocking_offload`) + context-sensitive fiber-vs-main ветка.
+- **Приоритет:** M — семантически корректно, но цель плана (worker не
+  пинится под блокирующей нагрузкой) достигается только Ф.4.2.

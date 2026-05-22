@@ -912,6 +912,12 @@ impl Interpreter {
                 // Production-runtime запустит на глобальном supervisor'е.
                 self.exec_block_flow(body, env)
             }
+            ExprKind::Blocking(body) => {
+                // Plan 83.3 (D50): в интерпретаторе `blocking { }` исполняется
+                // inline — нет M:N-worker'а, который можно было бы запинить.
+                // Codegen-pipeline уводит работу в libuv threadpool (Ф.4.2).
+                self.exec_block_flow(body, env)
+            }
             ExprKind::Throw(value) => {
                 // D25/D65: throw в expression-position. В интерпретаторе
                 // делегируем к stmt-механизму через Flow::Throw.

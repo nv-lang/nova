@@ -534,6 +534,9 @@ pub fn encode_expr_with_ctx(e: &Expr, ctx: &EncodeCtx) -> Result<SmtTerm, Encodi
         ExprKind::Detach(_) => Err(EncodingError::Unsupported(
             "`detach { ... }` (concurrency primitive) в контракте не поддерживается; \
              контракты должны быть pure expressions без spawn/detach".into())),
+        ExprKind::Blocking(_) => Err(EncodingError::Unsupported(
+            "`blocking { ... }` (concurrency primitive) в контракте не поддерживается; \
+             контракты должны быть pure expressions без blocking-offload".into())),
         ExprKind::Throw(_) => Err(EncodingError::Unsupported(
             "`throw expr` (error-throw) в контракте не поддерживается; \
              используйте `requires` для предусловий вместо throw в expression".into())),

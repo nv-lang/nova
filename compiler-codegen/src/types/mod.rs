@@ -1055,7 +1055,7 @@ impl<'a> TypeCheckCtx<'a> {
             },
             ExprKind::ClosureFull(sb) => self.walk_fn_sig_body(sb, gs, errors),
             ExprKind::Spawn(body) => self.walk_expr(body, gs, errors),
-            ExprKind::Detach(body) => self.walk_block(body, gs, errors),
+            ExprKind::Detach(body) | ExprKind::Blocking(body) => self.walk_block(body, gs, errors),
             ExprKind::Supervised { body, cancel } => {
                 if let Some(c) = cancel {
                     self.walk_expr(c, gs, errors);
@@ -1431,7 +1431,7 @@ impl<'a> TypeCheckCtx<'a> {
                 self.f1_fn_sig_body(sb, gs, scope, errors)
             }
             ExprKind::Spawn(body) => self.f1_expr(body, gs, scope, errors),
-            ExprKind::Detach(body) => self.f1_block(body, gs, scope, errors),
+            ExprKind::Detach(body) | ExprKind::Blocking(body) => self.f1_block(body, gs, scope, errors),
             ExprKind::Supervised { body, cancel } => {
                 if let Some(c) = cancel {
                     self.f1_expr(c, gs, scope, errors);
@@ -2430,7 +2430,7 @@ impl<'a> BoundCtx<'a> {
                 FnBody::External => {}
             },
             ExprKind::Spawn(body) => self.walk_expr(body, scope, errors),
-            ExprKind::Detach(body) => self.walk_block(body, scope, errors),
+            ExprKind::Detach(body) | ExprKind::Blocking(body) => self.walk_block(body, scope, errors),
             ExprKind::Supervised { body, cancel } => {
                 if let Some(c) = cancel { self.walk_expr(c, scope, errors); }
                 self.walk_block(body, scope, errors);
@@ -3135,6 +3135,11 @@ struct CapState {
     /// РСЃРїРѕР»СЊР·СѓРµС‚СЃСЏ РґР»СЏ D63 forbid-handler-ban: `with X` РІРЅСѓС‚СЂРё
     /// `forbid X` вЂ” compile error.
     with_handler_stack: Vec<String>,
+    /// Plan 83.3 (D50): имена эффектов, объявленных в сигнатуре
+    /// enclosing-функции. `blocking { }` требует наличия `Blocking`
+    /// в этом наборе. Заполняется один раз при входе в `walk_fn_body`;
+    /// у `test`-блоков остаётся пустым (нет сигнатуры).
+    declared_effects: HashSet<String>,
 }
 
 impl CapState {
@@ -3222,6 +3227,16 @@ impl<'a> CapabilityCtx<'a> {
     }
 
     fn walk_fn_body(&self, f: &FnDecl, state: &mut CapState, errors: &mut Vec<Diagnostic>) {
+        // Plan 83.3 (D50): зафиксировать объявленные эффекты сигнатуры —
+        // `blocking { }` в теле требует среди них `Blocking`. Имя эффекта —
+        // последний segment Named-path (`std.io.Blocking` → `Blocking`).
+        for ef in &f.effects {
+            if let TypeRef::Named { path, .. } = ef {
+                if let Some(last) = path.last() {
+                    state.declared_effects.insert(last.clone());
+                }
+            }
+        }
         match &f.body {
             FnBody::Expr(e) => self.walk_expr(e, state, errors),
             FnBody::Block(b) => self.walk_block(b, state, errors),
@@ -3441,6 +3456,36 @@ impl<'a> CapabilityCtx<'a> {
             },
             ExprKind::Spawn(body) => self.walk_expr(body, state, errors),
             ExprKind::Detach(body) => self.walk_block(body, state, errors),
+            ExprKind::Blocking(body) => {
+                // Plan 83.3 (D50): `blocking { }` — leaf-блокирующая работа,
+                // уводится в libuv threadpool, suspend'ит fiber.
+                // (1) Запрещён внутри `realtime { }` (D64): suspend-эффект
+                //     `Blocking` есть в realtime_suspend_effect-списке.
+                if state.realtime_active {
+                    errors.push(Diagnostic::new(
+                        "cannot use `blocking { ... }` inside `realtime` block (D64): \
+                         blocking work suspends the fiber while it is offloaded to the \
+                         libuv threadpool. Hint: realtime guarantees no suspension — \
+                         move the `blocking` block out of the `realtime` block."
+                            .to_string(),
+                        e.span,
+                    ));
+                }
+                // (2) Требует эффект `Blocking` в сигнатуре enclosing-функции
+                //     (как `detach` → `Detach` по D50). У `test`-блоков
+                //     declared_effects пуст → `blocking` должен быть обёрнут
+                //     в `fn ... Blocking -> ...`.
+                if !state.declared_effects.contains("Blocking") {
+                    errors.push(Diagnostic::new(
+                        "`blocking { ... }` requires the `Blocking` effect declared in the \
+                         enclosing function's signature (D50). Fix: add `Blocking` to the \
+                         effect list — `fn name(...) Blocking -> ...`."
+                            .to_string(),
+                        e.span,
+                    ));
+                }
+                self.walk_block(body, state, errors);
+            }
             ExprKind::Supervised { body, cancel } => {
                 if let Some(c) = cancel { self.walk_expr(c, state, errors); }
                 self.walk_block(body, state, errors);
@@ -3861,6 +3906,9 @@ impl NameResCtx {
             "Fail",
             // Detach effect-type РґР»СЏ detach {} expression (D50).
             "Detach",
+            // Plan 83.3: Blocking effect-type для blocking {} expression
+            // (D50) — увод leaf-блокирующей работы в libuv threadpool.
+            "Blocking",
             // CancelToken вЂ” caller-owned cancellation handle (D75 revised,
             // Plan 47). Builtin type: `CancelToken.new()` РєРѕРЅСЃС‚СЂСѓРєС‚РѕСЂ +
             // С‚РёРї РїР°СЂР°РјРµС‚СЂР° `cancel CancelToken`. РњРµС‚РѕРґС‹ (cancel/is_cancelled/
@@ -4420,7 +4468,7 @@ impl NameResCtx {
                 self.walk_expr(end, file_id, scope, errors);
             }
             ExprKind::Spawn(body) => self.walk_expr(body, file_id, scope, errors),
-            ExprKind::Detach(body) => {
+            ExprKind::Detach(body) | ExprKind::Blocking(body) => {
                 self.walk_block(body, file_id, scope, errors);
             }
             ExprKind::Supervised { body, cancel } => {
@@ -4923,6 +4971,7 @@ fn is_suspend_expr_kind(kind: &ExprKind) -> bool {
         | ExprKind::Spawn(_)
         | ExprKind::Supervised { .. }
         | ExprKind::Detach(_)
+        | ExprKind::Blocking(_)
     )
 }
 
@@ -5529,7 +5578,7 @@ fn walk_expr_for_handler_lits(e: &Expr, never_ops: &HashSet<(String, String)>, e
         ExprKind::Forbid { body, .. } | ExprKind::Realtime { body, .. } => {
             walk_block_for_handler_lits(body, never_ops, errors);
         }
-        ExprKind::Detach(b) => walk_block_for_handler_lits(b, never_ops, errors),
+        ExprKind::Detach(b) | ExprKind::Blocking(b) => walk_block_for_handler_lits(b, never_ops, errors),
         ExprKind::Supervised { body, cancel } => {
             if let Some(c) = cancel { walk_expr_for_handler_lits(c, never_ops, errors); }
             walk_block_for_handler_lits(body, never_ops, errors);
@@ -6536,7 +6585,7 @@ fn consume_walk_expr(ctx: &mut ConsumeCtx, e: &Expr, errors: &mut Vec<Diagnostic
         ExprKind::Forbid { body, .. } | ExprKind::Realtime { body, .. } => {
             consume_walk_block(ctx, body, errors);
         }
-        ExprKind::Detach(b) => consume_walk_isolated_block(ctx, &[], b, errors),
+        ExprKind::Detach(b) | ExprKind::Blocking(b) => consume_walk_isolated_block(ctx, &[], b, errors),
         ExprKind::Spawn(inner) => consume_walk_isolated_expr(ctx, &[], inner, errors),
 
         // ─── Литералы-агрегаты ───
@@ -6778,7 +6827,7 @@ fn walk_expr_for_defers(e: &Expr, fn_effects: &HashMap<String, Vec<TypeRef>>, er
         }
         ExprKind::With { body, .. } | ExprKind::Forbid { body, .. }
         | ExprKind::Realtime { body, .. }
-        | ExprKind::Detach(body) => {
+        | ExprKind::Detach(body) | ExprKind::Blocking(body) => {
             walk_block_for_defers(body, fn_effects, errors);
         }
         ExprKind::Supervised { body, cancel } => {
@@ -6914,9 +6963,10 @@ fn check_defer_body_inner(e: &Expr, kw: &str, fn_effects: &HashMap<String, Vec<T
         }
         // Suspend constructs by AST-form.
         ExprKind::Spawn(_) | ExprKind::Supervised { .. } | ExprKind::Detach(_)
+        | ExprKind::Blocking(_)
         | ExprKind::ParallelFor { .. } => {
             errors.push(Diagnostic::new(
-                format!("suspend operation (`spawn`/`supervised`/`detach`/`parallel for`) \
+                format!("suspend operation (`spawn`/`supervised`/`detach`/`blocking`/`parallel for`) \
                          is not allowed inside `{}` body (D90): defer must be fast cleanup.", kw),
                 e.span,
             ));
@@ -8214,7 +8264,7 @@ impl MapLitCtx {
             ExprKind::Loop { body, .. } => self.walk_block(body, errors),
             ExprKind::Block(b) => self.walk_block(b, errors),
             ExprKind::Spawn(x) => self.walk_expr(x, None, errors),
-            ExprKind::Detach(b) => self.walk_block(b, errors),
+            ExprKind::Detach(b) | ExprKind::Blocking(b) => self.walk_block(b, errors),
             ExprKind::Supervised { body, cancel } => {
                 self.walk_block(body, errors);
                 if let Some(c) = cancel { self.walk_expr(c, None, errors); }
@@ -9134,7 +9184,7 @@ impl MapLitAnnotator {
             ExprKind::Loop { body, .. } => self.walk_block(body),
             ExprKind::Block(b) => self.walk_block(b),
             ExprKind::Spawn(x) => self.walk_expr(x, None),
-            ExprKind::Detach(b) => self.walk_block(b),
+            ExprKind::Detach(b) | ExprKind::Blocking(b) => self.walk_block(b),
             ExprKind::Supervised { body, cancel } => {
                 self.walk_block(body);
                 if let Some(c) = cancel { self.walk_expr(c, None); }

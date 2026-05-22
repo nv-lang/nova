@@ -545,7 +545,7 @@ fn collect_expr(e: &Expr, out: &mut HashSet<String>) {
         },
         ExprKind::ClosureFull(sb) => collect_fn_sig_body(sb, out),
         ExprKind::Spawn(body) => collect_expr(body, out),
-        ExprKind::Detach(body) => collect_block(body, out),
+        ExprKind::Detach(body) | ExprKind::Blocking(body) => collect_block(body, out),
         ExprKind::Supervised { body, cancel } => {
             if let Some(c) = cancel {
                 collect_expr(c, out);
@@ -1087,7 +1087,7 @@ fn walk_expr_lints(e: &Expr, out: &mut Vec<LintWarning>) {
         ExprKind::Loop { body, .. } => walk_block_lints(body, out),
         ExprKind::Block(b) => walk_block_lints(b, out),
         ExprKind::Spawn(x) => walk_expr_lints(x, out),
-        ExprKind::Detach(b) => walk_block_lints(b, out),
+        ExprKind::Detach(b) | ExprKind::Blocking(b) => walk_block_lints(b, out),
         ExprKind::Supervised { body, cancel } => {
             walk_block_lints(body, out);
             if let Some(c) = cancel { walk_expr_lints(c, out); }
