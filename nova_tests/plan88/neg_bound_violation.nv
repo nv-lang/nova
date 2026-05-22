@@ -1,0 +1,22 @@
+// EXPECT_COMPILE_ERROR does not satisfy
+//
+// Plan 88 Ф.3.3 — НЕГАТИВ: bound-violation остаётся compile-error
+// (Plan 15 / D72 enforcement не сломан фиксом static-dispatch).
+//
+// `wrap` требует `[T From[str]]`. `NoConv` не реализует
+// `fn NoConv.from(s str)` → подстановка `T = NoConv` нарушает bound →
+// compile error ДО codegen (static-dispatch на typevar даже не
+// достигается).
+
+module nova_tests.plan88.neg_bound_violation
+
+
+type NoConv { x int }            // НЕ реализует From[str]
+
+fn wrap[T From[str]](s str) -> T => T.from(s)
+
+
+test "тип без From[str] в generic bound — compile error" {
+    let bad = wrap[NoConv]("oops")
+    assert(bad.x == 0)
+}
