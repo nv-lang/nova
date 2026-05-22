@@ -1,0 +1,35 @@
+// Plan 89 Ф.2.4 — РЕГРЕСС-ГВАРД: `[]Result[T,E]` элемент.
+//
+// `Result` — pointer-семантика (`SumAbi::PointerErrorLike`): элемент
+// массива уже хранится указателем, codegen pattern-match использует
+// `->`. Фикс Plan 89 деболксит ТОЛЬКО value-семантику (Option) — Result
+// деболкситься НЕ должен. Этот тест ловит ошибочное расширение фикса
+// на pointer-семантику sum'ов.
+
+module nova_tests.plan89.result_elem_regression
+
+
+test "for-in []Result + if let Ok" {
+    let rs []Result[int, str] = [Ok(1), Err("e"), Ok(3), Ok(8)]
+    let mut sum = 0
+    for r in rs {
+        if let Ok(v) = r {
+            sum = sum + v
+        }
+    }
+    assert(sum == 12)
+}
+
+test "for-in []Result + match" {
+    let rs []Result[int, str] = [Ok(10), Err("bad"), Ok(5)]
+    let mut oks = 0
+    let mut errs = 0
+    for r in rs {
+        match r {
+            Ok(_) => { oks = oks + 1 }
+            Err(_) => { errs = errs + 1 }
+        }
+    }
+    assert(oks == 2)
+    assert(errs == 1)
+}
