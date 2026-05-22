@@ -143,6 +143,14 @@ enum Cmd {
         /// Формат вывода.
         #[arg(long, default_value = "human", value_parser = ["human", "json"])]
         format: String,
+        /// Plan 03.4 Ф.2: сравнить effect-surface с базовым
+        /// пакетом/версией (путь либо имя зависимости).
+        #[arg(long, value_name = "PATH|dep")]
+        diff: Option<String>,
+        /// С `--diff`: ненулевой exit-код, если появились новые
+        /// эффекты (CI-gate против supply-chain).
+        #[arg(long = "fail-on-new", requires = "diff")]
+        fail_on_new: bool,
     },
     /// Plan 45 / D107: produce documentation for a Nova source file.
     ///
@@ -2784,11 +2792,11 @@ fn cmd_update(name: Option<&str>, precise: Option<&str>) -> Result<()> {
     Ok(())
 }
 
-/// Plan 03.4 Ф.1: `nova info` — effect-surface пакета/зависимости.
-///
-/// `target` — путь (.nv-файл / каталог) либо имя зависимости из
-/// `[dependencies]` текущего пакета.
-fn cmd_info(target: &str, format: &str) -> Result<()> {
+/// Plan 03.4: резолвит цель `nova info` (путь либо имя зависимости) в
+/// effect-surface публичного API + имя пакета.
+fn info_surface(
+    target: &str,
+) -> Result<(nova_codegen::effect_surface::EffectSurface, String)> {
     // --- резолв цели в каталог/файл пакета ---------------------------
     let path = Path::new(target);
     let (pkg_root, default_name): (PathBuf, String) = if path.exists() {
@@ -2877,6 +2885,57 @@ fn cmd_info(target: &str, format: &str) -> Result<()> {
     } else {
         default_name
     };
+    Ok((surface, pkg_name))
+}
+
+/// Plan 03.4 Ф.1/Ф.2: `nova info` — effect-surface пакета (и
+/// effect-diff с `--diff`).
+fn cmd_info(
+    target: &str,
+    format: &str,
+    diff: Option<&str>,
+    fail_on_new: bool,
+) -> Result<()> {
+    let (surface, pkg_name) = info_surface(target)?;
+
+    // --- Ф.2: effect-diff с базовой целью ---------------------------
+    if let Some(base_target) = diff {
+        let (base, base_name) = info_surface(base_target)?;
+        let d = nova_codegen::effect_surface::diff(&base, &surface);
+        if format == "json" {
+            let out = serde_json::json!({
+                "package": pkg_name,
+                "base": base_name,
+                "added": d.added,
+                "removed": d.removed,
+            });
+            println!("{}", serde_json::to_string_pretty(&out)?);
+        } else {
+            println!(
+                "{} {} (база: {})",
+                bold("Effect-diff:"),
+                pkg_name,
+                base_name,
+            );
+            if d.is_empty() {
+                println!("  без изменений — effect-surface идентична");
+            } else {
+                for e in &d.added {
+                    println!("  {} {}  — новый эффект", green("+"), e);
+                }
+                for e in &d.removed {
+                    println!("  {} {}  — убран", yellow("-"), e);
+                }
+            }
+        }
+        if fail_on_new && !d.added.is_empty() {
+            return Err(anyhow!(
+                "effect-diff: появились новые эффекты ({}) — требуется ревью",
+                d.added.join(", "),
+            ));
+        }
+        return Ok(());
+    }
 
     if format == "json" {
         let by_effect: serde_json::Map<String, serde_json::Value> = surface
@@ -4293,7 +4352,9 @@ fn run() -> ExitCode {
             version.as_deref(),
         ),
         Cmd::Update { name, precise } => cmd_update(name.as_deref(), precise.as_deref()),
-        Cmd::Info { target, format } => cmd_info(&target, &format),
+        Cmd::Info { target, format, diff, fail_on_new } => {
+            cmd_info(&target, &format, diff.as_deref(), fail_on_new)
+        }
         Cmd::Doc { file, format, json_schema, include_private, run_doc_tests, check, watch, coverage, coverage_threshold, jobs, diff, scrape_examples, strict, mutate_contracts, real_exec, output_dir } => {
             // Plan 45 Ф.24.10: --diff old.json new.json
             // cmd_doc_diff uses process::exit for severity codes; propagate Err.
