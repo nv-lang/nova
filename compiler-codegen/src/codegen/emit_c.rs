@@ -21187,14 +21187,10 @@ impl CEmitter {
                  return r; }}\n",
                 n = name));
         }
-        buf.push_str(&format!(
-            "static inline nova_bool Nova_Result_method_is_ok_{n}(NovaRes_{n}* r) {{ \
-             return r->tag == NOVA_TAG_Result_Ok; }}\n",
-            n = name));
-        buf.push_str(&format!(
-            "static inline nova_bool Nova_Result_method_is_err_{n}(NovaRes_{n}* r) {{ \
-             return r->tag == NOVA_TAG_Result_Err; }}\n",
-            n = name));
+        // Plan 95 Ф.5.2: `is_ok` / `is_err` УБРАНЫ — перенесены на
+        // Nova-body в `std/prelude/core.nv`, mono'd через DeclaredBody-
+        // dispatch + worklist drain. Тот же C-symbol → C-redefinition
+        // collision если оставить здесь.
         buf.push_str(&format!(
             "static inline {ok} Nova_Result_method_unwrap_or_{n}(NovaRes_{n}* r, {ok} default_v) {{ \
              return r->tag == NOVA_TAG_Result_Ok ? r->payload.Ok._0 : default_v; }}\n",
