@@ -18200,3 +18200,45 @@ _regression (регресс-гварды: pointer-семантика и records 
 Ф.3 — simplifications.md (`[M-iflet-match-boxed-sum-ptr]` ✅ ЗАКРЫТО);
 spec правок не требует (for-in + if-let по sum уже валидны по типам,
 семантика не менялась); README + plan-doc статусы.
+
+### Plan 82 Ф.0 — ЗАВЕРШЕНА: test (d) + test (e), GO на Ф.1 (2026-05-22)
+
+Дозакрыты оставшиеся проверки Ф.0 (re-diagnosis Windows fiber arena).
+
+test (d) — аномалия Попыток 3-4 (44.3 «main_yield TIMEOUT 60+ сек»).
+Standalone-харнесс 82-artifacts/f0_test_d.c — точная реплика дизайна
+44.3 Попытки 4: arena 256K слотов на VirtualAlloc(MEM_RESERVE), guard
+16K у низа слота, commit usable-региона при первом alloc слота
+(committed_bits), bitmap free-list + reuse, без decommit. minicoro
+MCO_USE_ASM на этих слотах + round-robin-планировщик (ядро main_yield).
+Watchdog-поток (20с) детектит hang, счётчик раундов — soft-livelock.
+Под-тесты T1 (main_yield-аналог), T2 (20000 циклов slot reuse), T3
+(10 пачек × 32 корутины churn), T4 (deep overflow в child-процессе).
+РЕЗУЛЬТАТ (MSVC + clang-cl): аномалия НЕ воспроизведена — корутины
+round-robin'ятся без hang'а, slot reuse без утечки слотов, T4 overflow
+→ чистый AV (не hang). Объяснение TIMEOUT 44.3: баг интеграционного
+arena-кода (44.3 Поп.3 сам наблюдал fiber_arena exhausted → slot-leak),
+не фундаментальный блокер minicoro/Windows; root cause Попытки 4 («TIB
+не свопается») опровергнут ещё §1.1-1.2.
+
+test (e) — SEH через границу fiber-стека. Харнесс 82-artifacts/
+f0_test_e.c. E1: __try/__except внутри корутины ловит hardware-AV на
+коро-стеке. E2: minicoro свопает NT_TIB.StackBase/StackLimit на
+коро-стек (SEH-bounds верны). E4: ручной RtlLookupFunctionEntry +
+RtlVirtualUnwind-walk изнутри fiber'а — 5 кадров, Rsp не выходит за
+[StackLimit,StackBase), walk терминируется по poison-RA _mco_makectx'а.
+E3 (child): exception, не пойманное на коро-стеке, НЕ перехватывается
+__try вокруг mco_resume — чистый детерминированный краш кодом
+исключения, без hang'а. Паритет с native Windows fibers (SEH per-stack,
+границу switch не переходит).
+
+ИТОГ Ф.0: GO на Ф.1 — путь A + обязательный патч ctx.stack_limit. Все
+5 проверок (a-e) закрыты, остаточные риски плана §9 сняты/понижены.
+Обязательные требования к Ф.1: (1) патч ctx.stack_limit = committed_low
+после mco_create; (2) §5.1-раскладка — движущаяся PAGE_GUARD-вершина
+над minicoro-header'ом; (3) overflow-handler через VEH, не __try;
+(4) GC — registry + precise push, 0 плоских GC_add_roots поверх арены.
+
+Артефакты: 82-artifacts/{f0_test_d.c, f0_test_e.c}, build.ps1
+переписан ASCII-only (PowerShell 5.1 без BOM ломался на кириллице),
+f0-rediagnosis.md §6-8 (финал). Plan-doc 82 — статус Ф.0 ✅ ЗАВЕРШЕНА.
