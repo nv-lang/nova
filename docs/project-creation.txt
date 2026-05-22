@@ -17549,3 +17549,36 @@ Worktree nova-p85, ветка plan-85.
 - Корректировка: примеры sub-плана 85.4 в Rust-стиле (impl ... for,
   `;` в полях, `T A + B` multi-bound) — тесты по факту синтаксиса Nova.
 Suite: protocols/comparison 7 PASS / 0 FAIL.
+
+=== Plan 85.5 — тестовое покрытие протокола Iter[T] (2026-05-22) ===
+Worktree nova-p85, ветка plan-85.
+- Новый каталог nova_tests/protocols/iter/ — 11 файлов: custom_iter,
+  empty_iter, for_loop, early_return, nested_iter, array_iter,
+  str_iters, generic_bound, collect_generic (позитивные, 9) +
+  neg_not_iter, neg_not_iter2 (негативные, EXPECT_COMPILE_ERROR).
+- User-defined Iter (CountDown), exhaustion + idempotent-None,
+  пустой Iter, for-in (sum/count/порядок), break/continue,
+  вложенные for-in, []int/[]str for-in, str.chars()/str.bytes(),
+  generic bound [T Iter[int]] (sum_iter/count_iter/collect_all).
+- Codegen-багов в Iter-пути не найдено — Iter отлажен Plan 06/14.
+- Уточнения:
+  * str.chars()/str.bytes() возвращают []char/[]u8 (массивы, не lazy
+    Iter); for-in по ним — обычный array-обход.
+  * for x TYPE in iter (явная аннотация типа элемента) — drift:
+    задокументировано в syntax.md, bootstrap-парсер не принимает.
+    simplifications.md [M-for-in-explicit-elem-type]. Тесты — на
+    inferred-форме.
+  * neg_not_iter (int в for-in) — codegen-стадия «for-in: cannot
+    resolve iterator type», EXPECT_COMPILE_ERROR это ловит.
+Suite: protocols/iter 11 PASS / 0 FAIL.
+
+=== Plan 85 — umbrella ЗАКРЫТ (2026-05-22) ===
+Все 5 sub-plans (85.1-85.5) закрыты. 47 новых тест-файлов в
+nova_tests/{str_builder,buffers,protocols/{conversion,comparison,iter}}/.
+4 codegen-бага найдены и исправлены: (1) D73 .into() auto-derive
+игнорировал overload-резолюцию from; (2) char.hash() mis-dispatch на
+user-метод -> segfault; (3) ==/!= на типе с user @eq эмитил ->tag;
+(4) generic-функция с concrete non-primitive return (-> Ordering)
+инферилась как void*. 2 documented limitations
+([M-generic-static-method-on-typevar], [M-for-in-explicit-elem-type]).
+0 регрессий.

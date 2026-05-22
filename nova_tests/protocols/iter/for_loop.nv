@@ -1,0 +1,61 @@
+// Plan 85.5 Ф.2 — Iter[T]: for-in обход user-итератора.
+//
+// for-in диспатчится на `mut @next()` структурно (D58). Loop-переменная
+// — immutable binding на каждой итерации.
+
+module iter.for_loop
+
+
+type CountDown { mut current int }
+
+fn CountDown.new(start int) -> CountDown => { current: start }
+
+fn CountDown mut @next() -> Option[int] {
+    if @current <= 0 {
+        None
+    } else {
+        let v = @current
+        @current = @current - 1
+        Some(v)
+    }
+}
+
+
+test "for-in over CountDown — сумма" {
+    let mut sum = 0
+    let cd = CountDown.new(4)
+    for n in cd {
+        sum = sum + n
+    }
+    assert(sum == 10)        // 4+3+2+1
+}
+
+test "for-in over CountDown — счётчик итераций" {
+    let mut count = 0
+    let cd = CountDown.new(7)
+    for _ in cd {
+        count = count + 1
+    }
+    assert(count == 7)
+}
+
+test "for-in over CountDown — одна итерация" {
+    let mut last = -1
+    let cd = CountDown.new(1)
+    for n in cd {
+        last = n
+    }
+    assert(last == 1)
+}
+
+test "for-in — порядок значений (по убыванию)" {
+    let mut first = 0
+    let mut seen = 0
+    let cd = CountDown.new(3)
+    for n in cd {
+        if seen == 0 { first = n }
+        seen = seen + 1
+    }
+    assert(first == 3)       // первый yield — стартовое значение
+    assert(seen == 3)
+}
