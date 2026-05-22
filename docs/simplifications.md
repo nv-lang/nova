@@ -10975,63 +10975,92 @@ Single-thread cooperative (текущий Windows-режим): GC-модель *
 
 ## [M-82-msvc-novatest] Plan 82 — полный `nova test` под MSVC не запускается (2026-05-22)
 
-### Что ограничено
+### ✅ ЗАКРЫТО Plan 82 followup (2026-05-23)
+
+Корень — **три блокера**, починены отдельными коммитами:
+
+1. **`/Fo` D8036.** `Command::arg()` уже экранирует args для CreateProcess
+   по правилам MSVC CRT; ручные `\"` в `format!("/Fo\"{}\\\\\"")` попадали
+   в argv буквально — cl.exe видел кавычку как часть имени директории.
+   Убраны кавычки у `/I`, `/Fo`, `/Fe` и lib-путей (`commit
+   331e852db05`).
+2. **C1041 PDB contention.** `/Zi` создаёт `vcXXX.pdb` в cwd; 16
+   параллельных cl.exe конкурируют за один файл. Заменено на `/Z7`
+   (CodeView в .obj, без shared PDB — стандарт для параллельных
+   билдов).
+3. **C2065 / C2061 GCC-builtin.** runtime (`sync.h` §Tier-1 — clang)
+   использует `__atomic_*`, `__builtin_*`, `_Alignas`; cl.exe их не
+   знает. `nova_rt/nova_msvc_compat.h` (force-инклюд `/FI`, no-op под
+   `__clang__`) предоставляет полный compat-слой через `_Interlocked*`
+   / `_BitScan*` / `__rdtsc` / `__declspec(align)` (`commit d5a79129b44`).
+4. Targeted codegen-фиксы для struct-cast (tuple-destructure, array-push)
+   и empty-record (`char _empty_record_marker`) — `commit 11a1ada777a`.
+
+Полный `nova test --toolchain msvc`: **1049 PASS / 16 FAIL / 56 SKIP**
+(старт: 0/753). Остаётся: 3 CC-FAIL parallel-build flakiness в contracts
+(C1083 «cannot open compiler-created file» — resource contention при
+16 параллельных cl.exe; разные тесты падают между прогонами); 12
+NEG-WRONG-CC-MSG (негативные тесты сверяются с clang-специфичными
+текстами ошибок — MSVC формулирует иначе; это **тест-spec issue**, не
+codegen-баг); 1 RUN-FAIL plan65/f5_sub_ms_precision (timing flake).
+
+### Историческое содержимое (до 2026-05-23)
 
 Plan 82 §7 предписывал тест-матрицу «на обеих toolchain (clang-cl +
-MSVC)». Полный `nova test` под **clang** — ✅ 1065 PASS / 0 FAIL / 56
-SKIP. Под **MSVC-toolchain** `nova test` НЕ запускается: `test_runner.rs`
-неверно компонует аргумент `/Fo` для `cl.exe` → D8036 на ~753 тестах.
-
-### Почему это НЕ упрощение Plan 82
-
-Баг **pre-existing**, в `test_runner.rs`, существовал до Plan 82 и
-затрагивает ВЕСЬ suite (не fiber-арену). Его починка — отдельная
-test-harness задача, вне scope «Windows fiber arena».
-
-### Чем MSVC-покрытие обеспечено фактически
-
-fiber-арена покрыта под MSVC standalone C-харнессами — компилируются и
-проходят `cl.exe` штатно: `f0_test_e` (SEH через границу fiber-стека),
-`f1_arena_test` (alloc/grow/`__chkstk`/reuse/overflow/lazy-commit),
-`f1_gc_test` (GC-стресс), `f5_ctxswitch_bench` (context-switch). Пункты
-матрицы §7 — SEH, `/GS`, `/guard:cf`, overflow, GC, lazy-commit — все
-проверены на MSVC через харнессы.
-
-### Как чинить
-
-Отдельная задача — починка `/Fo`-компоновки `cl.exe` в `test_runner.rs`;
-тогда полный `nova test` пойдёт и под MSVC.
-
-### Приоритет — M (test-infra, не блокер Plan 82).
+MSVC)». Полный `nova test` под **MSVC-toolchain** НЕ запускался:
+`test_runner.rs` неверно компоновал аргумент `/Fo` для `cl.exe` → D8036
+на ~753 тестах. fiber-арену покрывали standalone C-харнессы под MSVC.
 
 ---
 
 ## [M-82-bench-c-harness] Plan 82 Ф.5 — context-switch бенч на C, не Nova bench-DSL (2026-05-22)
 
-### Что
+### ⚠ ЧАСТИЧНО ЗАКРЫТО Plan 82 followup (2026-05-23)
 
-Plan 82 §6 Ф.5 предписывал бенчмарк в `bench/micro/` (Nova bench-DSL).
-Фактически замер — standalone C-харнесс `82-artifacts/
-f5_ctxswitch_bench.c`.
+**Root cause выявлен и устранён**, но связка `bench{measure}+supervised`
+всё ещё упирается в ОТДЕЛЬНЫЕ pre-existing баги bench-DSL.
 
-### Почему
+Что было: `nova bench run` на любом файле в `bench/micro/` падал с
+`Nova_Error_static_new()` 0-arg. Диагноз 2026-05-22 («связка
+bench+supervised в codegen») оказался не полным.
 
-Nova bench-DSL для этого замера непригоден: связка `bench { measure }`
-+ `supervised` (нужен для spawn fiber'ов) упирается в codegen-баг —
-`Nova_Error_static_new()` вызывается с 0 аргументов вместо 1. Баг — в
-codegen, **вне scope** Plan 82.
+**Истинная цепочка** (выявлена 2026-05-23):
+1. `bench/micro/hashmap.nv` и `bench/micro/gc.nv` забывали
+   `import std.collections.hashmap.{HashMap}`.
+2. Codegen, не найдя `HashMap` в типовых реестрах, тихо роутил `.new()`
+   через single-key fallback `method_receivers["new"] = ("Error", false)`
+   (зарегистрирован для `Error.new(msg)` на ред. 1 D26 prelude) →
+   эмитил `Nova_Error_static_new()` с тем количеством аргументов, что
+   user написал в Nova-коде (0 у `HashMap.new()`).
+3. Все sibling-бенчи в том же модуле страдали при компиляции.
 
-### Деливерабл выполнен
+**Fixed:**
+ - Source: `import HashMap` добавлен в hashmap.nv/gc.nv (`commit b9ac2d8f1a2`).
+ - Codegen: strict-check в method_receivers-fallback — для static-формы
+   `Type.m(...)` obj обязан матчить зарегистрированный type_name; иначе
+   `E_UNKNOWN_TYPE_METHOD` с подсказкой про `import` (`commit
+   11a1ada777a`). Silent fallback закрыт.
+ - Regression-guard: `bench/micro/supervised_spawn.nv` — позитивный
+   smoke «bench + concurrency» (компилируется в C без скрытого Error-
+   fallback'а; то есть конкретно ЭТА связка теперь не теряет тип).
 
-Ф.5 требовала «измерить cost `mco_resume`/`mco_yield`». C-харнесс это
-делает напрямую и точнее (QPC + `__rdtsc`-калибровка, серия 7 trials),
-на РЕАЛЬНОМ `fiber_arena_win.c` — в духе f0/f1 харнессов. Результат —
-16–20 ns/switch, паритет с Boost.Context. Форма артефакта отличается от
-§6-формулировки; измерение и вывод — полны.
+### Что ОСТАЛОСЬ открытым (отдельная задача)
 
-### Как чинить
+`bench{measure}+supervised{spawn}` всё равно не доходит до запуска —
+дальше за фоллбэком вскрываются ДВА **pre-existing** bench-DSL бага,
+никак не связанных с Plan 82:
+- **multi-emission spawn-fn**: bench-DSL эмитит measure-body ТРИ раза
+  (warmup/calibration/sample-loop) с уникальными счётчиками
+  `_nova_spawn_N`, но forward-declarations нумеруются иначе → линкер
+  жалуется на undeclared `_nova_spawn_2`.
+- **NovaOpt[T] mono mismatch**: `Node.next: Option[Node]` в gc.nv внутри
+  measure-body эмитится как `NovaOpt_nova_int` вместо
+  `NovaOpt_Nova_Node_p` — потеря type-substitution через bench-DSL.
 
-После починки codegen-бага `Nova_Error_static_new()` 0-arg бенч можно
-переписать в Nova bench-DSL (опционально — замер уже есть).
+Это самостоятельный bench-DSL refactor — outside scope Plan 82
+followup. Ф.5 deliverable (cost mco_resume/yield) уже измерен C-харнессом
+точнее (QPC + __rdtsc, 7 trials, реальный `fiber_arena_win.c`, 16–20
+ns/switch — паритет с Boost.Context). Перенос замера в Nova-DSL —
+косметический, не функциональный.
 
-### Приоритет — L (деливерабл достигнут; форма артефакта).
+### Приоритет — L (деливерабл Ф.5 достигнут; bench-DSL multi-emission — отдельная задача).
