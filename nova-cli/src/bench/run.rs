@@ -155,6 +155,11 @@ pub fn run(opts: BenchRunOpts) -> Result<i32> {
 
     // Setup env for the bench process.
     let mut cmd = std::process::Command::new(&exe_file);
+    // Plan 83.1 Ф.5: микро-бенчи по умолчанию single-worker — M:N-шум
+    // (work-stealing, sysmon-preemption) искажает single-thread-замеры.
+    // Бенч, которому нужен M:N-параллелизм, делает явный runtime.init(N)
+    // — explicit бьёт env (D136).
+    cmd.env("NOVA_MAXPROCS", "1");
     if let Some(ref f) = opts.filter {
         cmd.env("NOVA_BENCH_FILTER", f);
     }

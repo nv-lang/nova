@@ -17695,3 +17695,27 @@ user-метод -> segfault; (3) ==/!= на типе с user @eq эмитил ->
 инферилась как void*. 2 documented limitations
 ([M-generic-static-method-on-typevar], [M-for-in-explicit-elem-type]).
 0 регрессий.
+
+### Plan 83.1 — M:N-инфраструктура, Ф.5 thread-budget (✅) — Plan 83.1 ЗАКРЫТ
+
+Закрытие NumCPU²-oversubscription в nova test / bench.
+- test-runner: каждому тестовому subprocess'у выставляется
+  NOVA_MAXPROCS = max(1, NumCPU/workers), где workers — фактическая
+  параллельность прогона. Суммарное число M:N worker-потоков ≈ NumCPU,
+  не NumCPU². Поле TestBuildOpts.maxprocs_budget; применяется в run_one
+  ДО `// ENV`-директив (тест, проверяющий сам NOVA_MAXPROCS, его
+  переопределяет), не мешает explicit runtime.init(n>0) (D136).
+  Single-file `nova test <file>` — budget=None (один процесс).
+- bench-runner (bench/run.rs): микро-бенчам NOVA_MAXPROCS=1 — M:N-шум
+  (work-stealing, sysmon) искажает single-thread-замеры. Бенч с явным
+  runtime.init(N) опт-инит M:N. profile/hyperfine-пути — вне scope Ф.5
+  (специализированные инструменты).
+- Эффект измерен: concurrency-сьют slowest-тесты ускорились ~1.5-3×
+  (sleep_leak_check 37s→24s) — меньше thread-contention.
+- spec: новых D нет — NOVA_MAXPROCS зафиксирован D136; Ф.5 — tooling-
+  инфраструктура, использующая его.
+Suite: 1021 PASS / 0 FAIL.
+
+Plan 83.1 (M:N-инфраструктура) ЗАКРЫТ ЦЕЛИКОМ — Ф.1 worker-count
+resolver, Ф.2 NOVA_MAXPROCS, Ф.3 runtime.maxprocs() + init-тюнер
+(D136), Ф.4 lazy worker-пул + auto-shutdown (D137), Ф.5 thread-budget.
