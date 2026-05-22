@@ -1,0 +1,11 @@
+# Plan 03.1 Ф.3 fixture — зависимость `foo` объявлена дважды (запрещено).
+[package]
+name = "dup_dep_pkg"
+version = "0.1.0"
+
+[lib]
+src = "."
+
+[dependencies]
+foo = { path = "../foo_a" }
+foo = { path = "../foo_b" }

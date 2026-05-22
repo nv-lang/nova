@@ -1,0 +1,10 @@
+# Plan 03.1 Ф.3 fixture — git-зависимость (резолв — Plan 03.1 Ф.2).
+[package]
+name = "git_dep_pkg"
+version = "0.1.0"
+
+[lib]
+src = "."
+
+[dependencies]
+remotelib = { git = "https://example.org/remotelib.nv", tag = "v1.0.0" }
