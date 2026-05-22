@@ -1,0 +1,66 @@
+// Plan 85.5 Ф.2 — Iter[T]: ранний выход (break/continue) из for-in.
+
+module iter.early_return
+
+
+type CountDown { mut current int }
+
+fn CountDown.new(start int) -> CountDown => { current: start }
+
+fn CountDown mut @next() -> Option[int] {
+    if @current <= 0 {
+        None
+    } else {
+        let v = @current
+        @current = @current - 1
+        Some(v)
+    }
+}
+
+
+test "break — выход из for-in после N итераций" {
+    let mut seen = 0
+    let cd = CountDown.new(100)
+    for _ in cd {
+        seen = seen + 1
+        if seen == 3 {
+            break
+        }
+    }
+    assert(seen == 3)
+}
+
+test "break — по значению из итератора" {
+    let mut last = -1
+    let cd = CountDown.new(10)
+    for n in cd {
+        last = n
+        if n == 7 {
+            break
+        }
+    }
+    assert(last == 7)
+}
+
+test "continue — пропуск итераций" {
+    let mut sum = 0
+    let cd = CountDown.new(6)
+    for n in cd {
+        if n == 3 {
+            continue
+        }
+        sum = sum + n
+    }
+    // 6+5+4+2+1 = 18 (3 пропущено)
+    assert(sum == 18)
+}
+
+test "break на первой итерации" {
+    let mut count = 0
+    let cd = CountDown.new(50)
+    for _ in cd {
+        count = count + 1
+        break
+    }
+    assert(count == 1)
+}
