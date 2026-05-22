@@ -20959,13 +20959,16 @@ impl CEmitter {
             sani = sanitized, body = cmp_body);
         self.novaopt_typedefs_buf.borrow_mut().push_str(&eq_fn);
 
-        // Plan 39 Issue A: auto-gen Option methods is_some / is_none /
-        // unwrap_or — для скаляров эти helper'ы есть в array.h (nova_int,
-        // nova_str). Для остальных генерируем здесь чтобы codegen мог
-        // вызывать `.is_some()` / `.is_none()` / `.unwrap_or(default)`.
+        // Plan 39 Issue A / Plan 95 Ф.4.2: auto-gen Option `unwrap_or` для
+        // не-runtime типов (нужен для `.unwrap_or(default)`).
+        //
+        // **`is_some` / `is_none` УБРАНЫ** (Plan 95 Ф.4.2): перенесены на
+        // Nova-body в `std/prelude/core.nv`, mono'd Nova_Option_method_
+        // is_some_<T> эмитится через DeclaredBody-dispatch + worklist drain.
+        // C-redefinition collision при оставлении lazy-emit (тот же C-name).
+        //
         // nova_int + nova_str: runtime array.h provides methods.
         // nova_f64 + nova_f32: runtime array.h provides methods (Plan 70.4).
-        // nova_char + nova_byte + nova_bool: lazy-generated here (below).
         // Plan 70.4 Ф.2: sized-int types — array.h provides methods.
         let sized_int_in_runtime = matches!(sanitized,
             "int32_t" | "int16_t" | "int8_t" | "uint32_t" | "uint16_t" | "uint64_t");
@@ -20973,9 +20976,7 @@ impl CEmitter {
             && sanitized != "nova_f64" && sanitized != "nova_f32"
             && !sized_int_in_runtime {
             let methods = format!(
-                "static inline nova_bool Nova_Option_method_is_some_{sani}(NovaOpt_{sani} o) {{ return o.tag == NOVA_TAG_Option_Some; }}\n\
-                 static inline nova_bool Nova_Option_method_is_none_{sani}(NovaOpt_{sani} o) {{ return o.tag == NOVA_TAG_Option_None; }}\n\
-                 static inline {cty} Nova_Option_method_unwrap_or_{sani}(NovaOpt_{sani} o, {cty} default_v) {{ return o.tag == NOVA_TAG_Option_Some ? o.value : default_v; }}\n",
+                "static inline {cty} Nova_Option_method_unwrap_or_{sani}(NovaOpt_{sani} o, {cty} default_v) {{ return o.tag == NOVA_TAG_Option_Some ? o.value : default_v; }}\n",
                 sani = sanitized, cty = c_ty);
             self.novaopt_typedefs_buf.borrow_mut().push_str(&methods);
         }
