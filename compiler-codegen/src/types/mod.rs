@@ -3073,6 +3073,15 @@ fn realtime_suspend_effect(name: &str) -> bool {
     matches!(name, "Net" | "Fs" | "Db" | "Time" | "Blocking")
 }
 
+/// Plan 83.3 Ф.6: эффекты, запрещённые в теле `blocking { }`. Тело
+/// исполняется на libuv-threadpool-потоке без fiber/event-loop-
+/// контекста — async-I/O-эффекты (Net/Fs/Db/Time) там сломаны.
+/// `Blocking` сюда НЕ входит: вложенный `blocking` на threadpool-
+/// потоке исполняется inline (`mco_running()` == false) — безвреден.
+fn blocking_body_forbidden_effect(name: &str) -> bool {
+    matches!(name, "Net" | "Fs" | "Db" | "Time")
+}
+
 /// Plan 16: hardcoded whitelist callee-name'РѕРІ, РєРѕС‚РѕСЂС‹Рµ **Р°Р»Р»РѕС†РёСЂСѓСЋС‚**
 /// РІ managed heap (Рё РїРѕС‚РѕРјСѓ Р·Р°РїСЂРµС‰РµРЅС‹ РІ `realtime nogc { ... }`).
 /// РРґРµРЅС‚РёС„РёРєР°С†РёСЏ РїРѕ mangled C-name pattern + РїРѕ РІС‹СЃРѕРєРѕСѓСЂРѕРІРЅРµРІС‹Рј
@@ -3140,6 +3149,14 @@ struct CapState {
     /// в этом наборе. Заполняется один раз при входе в `walk_fn_body`;
     /// у `test`-блоков остаётся пустым (нет сигнатуры).
     declared_effects: HashSet<String>,
+    /// Plan 83.3 Ф.6 (D50): True внутри тела `blocking { }`. Тело
+    /// исполняется на libuv-threadpool-потоке без fiber-контекста и
+    /// без GC-регистрации — поэтому проверяется как `nogc`
+    /// (`realtime_nogc` тоже выставляется) + бан suspend-эффектов
+    /// Net/Fs/Db/Time (V1 leaf-контракт). Отдельный флаг, НЕ
+    /// `realtime_active` — иначе вложенный `blocking` отвергался бы
+    /// как «`blocking` внутри `realtime`».
+    blocking_body_active: bool,
 }
 
 impl CapState {
@@ -3484,7 +3501,20 @@ impl<'a> CapabilityCtx<'a> {
                         e.span,
                     ));
                 }
+                // (3) Plan 83.3 Ф.6: тело исполняется на libuv-threadpool-
+                //     потоке (не fiber, не GC-registered) → проверяем как
+                //     nogc (запрет alloc-вызовов) + бан suspend-эффектов
+                //     Net/Fs/Db/Time. V1 leaf-контракт (D50 §4) становится
+                //     enforced'ным. Отдельный флаг blocking_body_active —
+                //     НЕ realtime_active, иначе вложенный `blocking`
+                //     отвергался бы как «blocking внутри realtime».
+                let prev_blk = state.blocking_body_active;
+                let prev_nogc = state.realtime_nogc;
+                state.blocking_body_active = true;
+                state.realtime_nogc = true;
                 self.walk_block(body, state, errors);
+                state.blocking_body_active = prev_blk;
+                state.realtime_nogc = prev_nogc;
             }
             ExprKind::Supervised { body, cancel } => {
                 if let Some(c) = cancel { self.walk_expr(c, state, errors); }
@@ -3586,6 +3616,21 @@ impl<'a> CapabilityCtx<'a> {
                         e.span,
                     ));
                 }
+                // Plan 83.3 Ф.6: тело `blocking { }` идёт на threadpool-потоке
+                // без fiber/event-loop — async-I/O-эффекты там сломаны.
+                if state.blocking_body_active && blocking_body_forbidden_effect(head) {
+                    errors.push(Diagnostic::new(
+                        format!(
+                            "cannot use suspend-effect `{}` inside `blocking {{ ... }}` body \
+                             (Plan 83.3 V1 leaf-contract, D50 §4): {}.{} needs the \
+                             fiber/event-loop context, which the libuv threadpool thread \
+                             does not have. Hint: `blocking` is for genuinely-blocking C \
+                             calls — do async I/O outside the `blocking` block.",
+                            head, head, &path[1]
+                        ),
+                        e.span,
+                    ));
+                }
             }
         }
         // 2. Free-fn call: lookup callee.effects.
@@ -3616,16 +3661,32 @@ impl<'a> CapabilityCtx<'a> {
             }
         }
         // 4. Plan 16 Р¤.4: nogc alloc-fn check.
+        //    Plan 83.3 Ф.6: тело `blocking { }` тоже nogc (threadpool-поток
+        //    не GC-registered) — context-aware сообщение.
         if state.realtime_nogc && nogc_blacklisted_call(&path) {
-            errors.push(Diagnostic::new(
-                format!(
-                    "cannot allocate inside `realtime nogc` block (D64): `{}` allocates \
-                     on managed heap. Hint: use `region {{ ... }}` for arena-allocations, \
-                     or move the allocation outside the `realtime nogc` block.",
-                    path.join(".")
-                ),
-                e.span,
-            ));
+            if state.blocking_body_active && !state.realtime_active {
+                errors.push(Diagnostic::new(
+                    format!(
+                        "cannot allocate inside `blocking {{ ... }}` body (Plan 83.3 \
+                         V1 leaf-contract, D50 §4): `{}` allocates on the managed heap, \
+                         but the body runs on a libuv threadpool thread that is not \
+                         GC-registered. Hint: move the allocation outside the \
+                         `blocking` block.",
+                        path.join(".")
+                    ),
+                    e.span,
+                ));
+            } else {
+                errors.push(Diagnostic::new(
+                    format!(
+                        "cannot allocate inside `realtime nogc` block (D64): `{}` allocates \
+                         on managed heap. Hint: use `region {{ ... }}` for arena-allocations, \
+                         or move the allocation outside the `realtime nogc` block.",
+                        path.join(".")
+                    ),
+                    e.span,
+                ));
+            }
         }
     }
 
@@ -3669,6 +3730,21 @@ impl<'a> CapabilityCtx<'a> {
                          no fiber-suspension; effects {} block.",
                         callee_label, name,
                         "Net/Fs/Db/Time/Blocking suspend the fiber and are forbidden inside realtime"
+                    ),
+                    span,
+                ));
+            }
+            // Plan 83.3 Ф.6: тело `blocking { }` идёт на threadpool-потоке
+            // без fiber/event-loop-контекста — async-I/O-эффекты сломаны.
+            if state.blocking_body_active && blocking_body_forbidden_effect(name) {
+                errors.push(Diagnostic::new(
+                    format!(
+                        "function `{}` requires suspend-effect `{}`, cannot be called \
+                         inside `blocking {{ ... }}` body (Plan 83.3 V1 leaf-contract, \
+                         D50 §4): the libuv threadpool thread has no fiber/event-loop \
+                         context for `{}`. Hint: `blocking` is for genuinely-blocking \
+                         C calls — do async I/O outside it.",
+                        callee_label, name, name
                     ),
                     span,
                 ));

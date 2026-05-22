@@ -429,14 +429,29 @@ Boehm-GC-registered и **не** является fiber'ом. Поэтому **V1
 тело `blocking { }` обязано быть **leaf** — FFI/syscall без
 
 - GC-аллокации (`GC_malloc` с не-registered потока — UB),
-- вызовов обратно в Nova-рантайм,
-- control-flow-escape наружу (`return`/`break`/`continue`/`throw`,
+- вызовов обратно в Nova-рантайм (нет fiber/event-loop-контекста),
+- control-flow-escape наружу (`return`/`break`/`continue`,
   пересекающих границу `blocking { }`).
+
+**Проверяется компилятором (Plan 83.3 Ф.6).** Тело `blocking { }`
+type-check'ается как `nogc` + бан suspend-эффектов:
+- alloc-вызовы (`[]T.new`, `HashMap.new`, `StringBuilder.new`,
+  `str.from`, ...) внутри `blocking { }` → compile error;
+- вызов функции/эффект-операции с эффектом `Net`/`Fs`/`Db`/`Time`
+  внутри `blocking { }` → compile error (нужен event-loop, которого
+  на threadpool-потоке нет).
+
+Остаётся documented-риском, **не** enforced'ным: `nogc`-проверка —
+консервативный whitelist (не ловит user-record-литералы); `throw`/`?`
+(`Fail`-эффект) — `throw` делает `longjmp` без fail-frame на
+threadpool-потоке. Спековый пример `blocking { c_read_file(path) }` с
+`Fail[IoError]` под V1 безопасен только если FFI сигналит ошибку
+возвратом (Result), а не Nova-`throw`.
 
 Покрывает основной use-case — блокирующий FFI. **V2** (followup):
 GC-регистрация threadpool-потоков (`GC_register_my_thread` once-per-
-thread) разрешит произвольный Nova-код под `Blocking`; отложена —
-V1 достаточно для целевого паритета.
+thread) разрешит произвольный Nova-код под `Blocking` (включая alloc и
+`throw`); отложена — V1 достаточно для целевого паритета.
 
 ##### Cancellation
 
