@@ -2,10 +2,12 @@
 # Plan 84: Относительные импорты `./` / `../` — package-scoped (D29 rev-4)
 
 > **Создан:** 2026-05-22.
-> **Статус:** ✅ ЗАКРЫТ 2026-05-22 — Ф.1–Ф.6 (worktree nova-p84, ветка
-> `plan-84`). Парсер `./`/`../` + резолвер re-rooting + package-boundary
-> + relative-aware диагностика + spec D29 rev-4 + 13 фикстур
-> `nova_tests/plan84/` (все чисты на `nova check`).
+> **Статус:** ✅ ЗАКРЫТ 2026-05-22 — Ф.1–Ф.6, смёржен в `main` (`4db1b62`)
+> + follow-up peer-collision (`1ba7571`). Парсер `./`/`../` + резолвер
+> re-rooting + package-boundary + диагностика (escape-boundary /
+> not-found / peer-collision) + spec D29 rev-4 + 14 фикстур
+> `nova_tests/plan84/`. **`nova test --filter plan84`: 12 PASS / 0 FAIL**
+> (end-to-end: codegen+run позитива, корректный отказ негатива).
 > **Приоритет:** P2 — эргономика модулей; решение автора языка
 > (ревизия D29).
 > **Тип:** языковая фича — лексер/парсер + резолвер + spec.
