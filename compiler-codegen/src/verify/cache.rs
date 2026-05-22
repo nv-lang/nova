@@ -54,7 +54,7 @@ impl CachedResult {
 pub struct ContractCache {
     /// Директория для файлов кэша.
     cache_dir: PathBuf,
-    /// Включён ли кэш (выключен если `NOVA_NO_CACHE=1` или dir недоступна).
+    /// Включён ли кэш (выключен если `NOVA_CACHE=0` или dir недоступна).
     enabled: bool,
 }
 
@@ -62,7 +62,8 @@ impl ContractCache {
     /// Создать cache в `<target_dir>/contracts-cache/`.
     pub fn new(target_dir: &Path) -> Self {
         let cache_dir = target_dir.join("contracts-cache");
-        let enabled = if std::env::var("NOVA_NO_CACHE").as_deref() == Ok("1") {
+        let enabled = if matches!(std::env::var("NOVA_CACHE").as_deref(),
+                                  Ok("0") | Ok("off") | Ok("false")) {
             false
         } else {
             match fs::create_dir_all(&cache_dir) {
