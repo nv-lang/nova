@@ -125,6 +125,8 @@ fn pin_specs(pin: &GitPin) -> Vec<String> {
         GitPin::Rev(r) => vec![r.clone()],
         GitPin::Tag(t) => vec![format!("refs/tags/{}", t), t.clone()],
         GitPin::Branch(b) => vec![format!("refs/heads/{}", b), b.clone()],
+        // Plan 03.2: Version резолвится отдельным путём (выбор тега).
+        GitPin::Version(_) => Vec::new(),
         GitPin::Default => vec!["HEAD".to_string()],
     }
 }
@@ -135,8 +137,35 @@ fn pin_label(pin: &GitPin) -> String {
         GitPin::Rev(r) => format!("rev `{}`", r),
         GitPin::Tag(t) => format!("tag `{}`", t),
         GitPin::Branch(b) => format!("branch `{}`", b),
+        GitPin::Version(req) => format!("версия `{}`", req),
         GitPin::Default => "ветка по умолчанию".to_string(),
     }
+}
+
+/// Plan 03.2: выбрать тег репозитория с наибольшей semver-версией,
+/// удовлетворяющей `req`. Возвращает имя тега (не commit). Теги,
+/// не парсящиеся как semver, пропускаются.
+fn select_version_tag(db: &Path, req: &crate::semver::VersionReq) -> Option<String> {
+    let out = run_git(&["tag", "--list"], Some(db)).ok()?;
+    let mut best: Option<(crate::semver::Version, String)> = None;
+    for line in out.lines() {
+        let tag = line.trim();
+        if tag.is_empty() {
+            continue;
+        }
+        if let Ok(ver) = crate::semver::Version::parse_tag(tag) {
+            if req.matches(&ver) {
+                let better = match &best {
+                    Some((bv, _)) => ver > *bv,
+                    None => true,
+                };
+                if better {
+                    best = Some((ver, tag.to_string()));
+                }
+            }
+        }
+    }
+    best.map(|(_, t)| t)
 }
 
 /// Memo на процесс: `(url, pin)` → уже выполненный резолв. Резолвер
@@ -211,16 +240,11 @@ pub fn resolve_git_dep(
 /// Ядро `resolve_git_dep` с явным корнем кэша — без memo и без
 /// `git_cache_root()`. Прямой вызов — из тестов (изолированный
 /// temp-кэш, без глобального `NOVA_HOME`).
-pub fn resolve_git_dep_in(
-    cache_root: &Path,
-    url: &str,
-    pin: &GitPin,
-    locked_commit: Option<&str>,
-) -> Result<GitResolution> {
+/// Гарантировать bare-клон репозитория в кэше. Возвращает путь к нему
+/// и флаг «уже существовал до вызова» (свежий клон fetch'ить не нужно).
+fn ensure_db(cache_root: &Path, url: &str) -> Result<(PathBuf, bool)> {
     let rid = repo_id(url);
     let db = cache_root.join("db").join(format!("{}.git", rid));
-
-    // --- 1. bare-клон репозитория (один раз) ---------------------------
     let db_existed = db.is_dir();
     if !db_existed {
         if offline() {
@@ -242,6 +266,50 @@ pub fn resolve_git_dep_in(
         )
         .with_context(|| format!("clone git-зависимости `{}`", url))?;
     }
+    Ok((db, db_existed))
+}
+
+/// Plan 03.2: semver-теги репозитория — источник версий для резолва.
+/// Возвращает `(version, tag-name)`, отсортировано по возрастанию
+/// версии. Не-semver теги пропускаются.
+pub fn list_versions(url: &str) -> Result<Vec<(crate::semver::Version, String)>> {
+    let root = git_cache_root()?;
+    list_versions_in(&root, url)
+}
+
+/// Ядро `list_versions` с явным корнем кэша (для тестов).
+pub fn list_versions_in(
+    cache_root: &Path,
+    url: &str,
+) -> Result<Vec<(crate::semver::Version, String)>> {
+    let (db, db_existed) = ensure_db(cache_root, url)?;
+    // Новые теги могли появиться upstream.
+    if db_existed && !offline() {
+        let _ = run_git(&["fetch", "--quiet", "--tags", "--prune", "origin"], Some(&db));
+    }
+    let out = run_git(&["tag", "--list"], Some(&db))?;
+    let mut vers: Vec<(crate::semver::Version, String)> = Vec::new();
+    for line in out.lines() {
+        let tag = line.trim();
+        if tag.is_empty() {
+            continue;
+        }
+        if let Ok(v) = crate::semver::Version::parse_tag(tag) {
+            vers.push((v, tag.to_string()));
+        }
+    }
+    vers.sort_by(|a, b| a.0.cmp(&b.0));
+    Ok(vers)
+}
+
+pub fn resolve_git_dep_in(
+    cache_root: &Path,
+    url: &str,
+    pin: &GitPin,
+    locked_commit: Option<&str>,
+) -> Result<GitResolution> {
+    // --- 1. bare-клон репозитория (один раз) ---------------------------
+    let (db, db_existed) = ensure_db(cache_root, url)?;
 
     // --- 2. определить целевой commit ---------------------------------
     let commit = if let Some(locked) = locked_commit {
@@ -262,6 +330,30 @@ pub fn resolve_git_dep_in(
         } else {
             locked.to_string()
         }
+    } else if let GitPin::Version(req) = pin {
+        // Plan 03.2: semver-диапазон — теги репозитория источник версий.
+        // Новый подходящий тег мог появиться upstream → fetch (как ветка),
+        // кроме offline и свежего клона.
+        if db_existed && !offline() {
+            run_git(&["fetch", "--quiet", "--tags", "--prune", "origin"], Some(&db))
+                .with_context(|| format!("fetch git-зависимости `{}`", url))?;
+        }
+        let tag = select_version_tag(&db, req).ok_or_else(|| {
+            anyhow!(
+                "git-зависимость `{}`: ни один тег не подходит под версию `{}`{}",
+                url,
+                req,
+                if offline() { " (offline — fetch запрещён)" } else { "" },
+            )
+        })?;
+        rev_parse(&db, &format!("refs/tags/{}", tag))
+            .or_else(|| rev_parse(&db, &tag))
+            .ok_or_else(|| {
+                anyhow!(
+                    "git-зависимость `{}`: тег `{}` не резолвится в commit",
+                    url, tag,
+                )
+            })?
     } else {
         // Резолв пина «вживую».
         let specs = pin_specs(pin);
@@ -303,7 +395,7 @@ pub fn resolve_git_dep_in(
     };
 
     // --- 3. checkout рабочего дерева на commit'е -----------------------
-    let checkout = cache_root.join("co").join(&rid).join(&commit);
+    let checkout = cache_root.join("co").join(repo_id(url)).join(&commit);
     if !checkout.is_dir() {
         if let Some(parent) = checkout.parent() {
             std::fs::create_dir_all(parent).with_context(|| {
@@ -481,6 +573,85 @@ mod tests {
         )
         .expect_err("missing repo must fail");
         assert!(err.to_string().contains("clone"), "err: {}", err);
+        fs::remove_dir_all(&cache).ok();
+    }
+
+    /// Plan 03.2: git-репо с несколькими semver-тегами. Возвращает
+    /// (путь, [(tag, commit)]).
+    fn make_multi_tag_repo(name: &str, tags: &[&str]) -> (PathBuf, Vec<(String, String)>) {
+        let dir = std::env::temp_dir().join(format!(
+            "nova_git_mt_{}_{}_{}",
+            name,
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        let d = dir.to_string_lossy().to_string();
+        fs::write(
+            dir.join("nova.toml"),
+            "[package]\nname = \"gitlib\"\nversion = \"0.1.0\"\n[lib]\nsrc = \".\"\n",
+        )
+        .unwrap();
+        run_git(&["init", "--quiet", &d], None).unwrap();
+        run_git(&["-C", &d, "config", "user.email", "t@t"], None).unwrap();
+        run_git(&["-C", &d, "config", "user.name", "t"], None).unwrap();
+        let mut out = Vec::new();
+        for (i, tag) in tags.iter().enumerate() {
+            fs::write(dir.join("calc.nv"), format!("module gitlib.calc\n\nexport fn v() -> int => {}\n", i)).unwrap();
+            run_git(&["-C", &d, "add", "-A"], None).unwrap();
+            run_git(&["-C", &d, "commit", "--quiet", "-m", tag], None).unwrap();
+            run_git(&["-C", &d, "tag", tag], None).unwrap();
+            let commit = run_git(&["-C", &d, "rev-parse", "HEAD"], None).unwrap();
+            out.push((tag.to_string(), commit));
+        }
+        (dir, out)
+    }
+
+    #[test]
+    fn resolve_by_version_range() {
+        use crate::semver::VersionReq;
+        let (src, tags) = make_multi_tag_repo(
+            "verrange",
+            &["v1.0.0", "v1.1.0", "v1.2.0", "v2.0.0"],
+        );
+        let cache = temp_cache("verrange");
+        let url = src.to_string_lossy().to_string();
+        let commit_of = |t: &str| {
+            tags.iter().find(|(tag, _)| tag == t).map(|(_, c)| c.clone()).unwrap()
+        };
+
+        // ^1.0 → наибольший в 1.x → v1.2.0.
+        let r = resolve_git_dep_in(
+            &cache, &url, &GitPin::Version(VersionReq::parse("^1.0").unwrap()), None,
+        )
+        .expect("resolve ^1.0");
+        assert_eq!(r.commit, commit_of("v1.2.0"), "^1.0 → v1.2.0");
+
+        // ~1.1 → >=1.1.0,<1.2.0 → v1.1.0.
+        let r = resolve_git_dep_in(
+            &cache, &url, &GitPin::Version(VersionReq::parse("~1.1").unwrap()), None,
+        )
+        .expect("resolve ~1.1");
+        assert_eq!(r.commit, commit_of("v1.1.0"), "~1.1 → v1.1.0");
+
+        // * → наибольший вообще → v2.0.0.
+        let r = resolve_git_dep_in(
+            &cache, &url, &GitPin::Version(VersionReq::parse("*").unwrap()), None,
+        )
+        .expect("resolve *");
+        assert_eq!(r.commit, commit_of("v2.0.0"), "* → v2.0.0");
+
+        // ^3.0 → нет подходящего тега → ошибка.
+        let err = resolve_git_dep_in(
+            &cache, &url, &GitPin::Version(VersionReq::parse("^3.0").unwrap()), None,
+        )
+        .expect_err("^3.0 must fail");
+        assert!(err.to_string().contains("тег не подходит"), "err: {}", err);
+
+        fs::remove_dir_all(&src).ok();
         fs::remove_dir_all(&cache).ok();
     }
 }
