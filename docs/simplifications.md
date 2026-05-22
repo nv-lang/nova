@@ -10970,3 +10970,41 @@ Single-thread cooperative (текущий Windows-режим): GC-модель *
   кейс 5): доказуемо-внутри-границ доступ → эмит без проверки. Отдельная
   оптимизация, не блокер; `unsafe`-keyword не вводится.
 - **Приоритет** — L.
+
+## Plan 93 Ф.0 — Option-методы не мономорфизируемы (2026-05-22)
+
+### [M-option-methods-not-mono-able] builtin Option/Result вне generic-method-mono
+- **Где:** `compiler-codegen/src/codegen/emit_c.rs:1526-1528` —
+  `if t.name == "Option" || t.name == "Result" { continue; }` —
+  намеренное (Plan 62.A) исключение из `generic_types` /
+  `generic_type_templates`.
+- **Что:** на builtin `Option`/`Result` **нельзя объявить
+  Nova-тельный метод** (`fn Option[T] @m() => ...`). Probe (Plan 93
+  Ф.0): `fn Option[T] @my_present() => match @ { ... }` → CC-FAIL
+  `incomplete definition of type 'Nova_Option'`. У `Option` двойная
+  codegen-идентичность: спец-value-тип `NovaOpt_<T>` (`array.h` +
+  `register_novaopt_decl`) И generic-template — **не связаны**:
+  method-mono выдаёт `Nova_Option*`/`Nova_Option____<T>`, а реальный
+  тип — `NovaOpt_<T>`. User-generic-sum'ы (`type Maybe[T] | ...`)
+  Nova-тельные методы поддерживают (probe `pu_sum` PASS) — дыра именно
+  в builtin `Option`/`Result`.
+- **Почему:** Plan 62.A зафиксировал `Option`/`Result` как спец-типы
+  (`NovaOpt_<T>` value + `Nova_Result*`/`NovaRes_<n>`); generic-template-
+  регистрация конфликтовала бы с `drain_generic_type_worklist`
+  (`Nova_Option____<T>` heap-form ≠ runtime helper signatures).
+- **Последствие:** методы `Option`/`Result` (`is_some`/`is_none`/
+  `unwrap`/…) обязаны быть `external fn` + C-трамплины
+  (`Nova_Option_method_*` в `array.h` / `register_novaopt_decl`).
+  Перенести их на Nova-тело (Plan 93 — `is_some`/`is_none`) нельзя без
+  этой инфраструктуры.
+- **Как чинить:** «Option/Result как generic-method-able тип с
+  `NovaOpt_<T>`/`NovaRes_<…>` в роли mono'd receiver» — спец-кейс
+  сквозь ~8 связанных codegen-точек (`receiver_c_type`,
+  `compute_generic_type_c_name`, `generic_type_methods`/`templates`,
+  `drain_generic_type_worklist`, mono-worklist, `register_novaopt_decl`,
+  `sum_schema_registry` routing, снятие `NovaOpt_`-перехвата). Отдельная
+  инфраструктурная инициатива (~2 dev-day).
+- **Приоритет:** L — функционального выигрыша нет (C-трамплин и
+  Nova-`match @` дают идентичный код); ценность только de-magic /
+  single-source. Блокирует Plan 93.
+- **Обнаружено:** Plan 93 Ф.0 (аудит, 2026-05-22).
