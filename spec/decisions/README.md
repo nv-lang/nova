@@ -14,9 +14,9 @@
 | # | Файл | Что внутри | D-решения |
 |---|---|---|---|
 | 01 | [01-philosophy.md](01-philosophy.md) | Цели, парадигма, AI-first | D1, D9, D10 |
-| 02 | [02-types.md](02-types.md) | Record, sum-type, protocol, generic, поля, bounds, ghost state, hybrid dispatch, tuple mono | D15, D17, D32, D36, D39, D42, D52, D53, D55, D66, D72, D110, D119, D122, D123 |
-| 03 | [03-syntax.md](03-syntax.md) | Объявления, литералы, операторы, методы, парсинг, defer/errdefer, атрибуты `#name`, default generics, select, named params, map-literal, doc-comments, size accessors | D16, D19, D20, D22, D23, D27, D30, D33, D34, D35, D37, D38, D40, D43, D44, D45, D46, D48, D49, D54, D58, D59, D60, D69, D82, D83, D88, D90, D94, D96, D102, D104, D108, D117 |
-| 04 | [04-effects.md](04-effects.md) | Fail, Io, Db, handlers, with-блоки, interrupt, forbid, realtime, ?, `Handler[E, IRT]`, contracts (#pure/axiom/trusted), axiom binder, Fail payload | D2, D3, D4, D11, D12, D18, D25, D28, D31, D61, D62, D63, D64, D65, D67, D68, D85, D86, D87, D115, D118, D120 |
+| 02 | [02-types.md](02-types.md) | Record, sum-type, protocol, generic, поля, bounds, ghost state, hybrid dispatch, tuple mono, symmetry decl↔literal | D15, D17, D32, D36, D39, D42, D52, D53, D55, D66, D72, D110, D119, D122, D123, D142 |
+| 03 | [03-syntax.md](03-syntax.md) | Объявления, литералы, операторы, методы, парсинг, defer/errdefer, атрибуты `#name`, default generics, select, named params, map-literal, doc-comments, size accessors, static-dot в protocol | D16, D19, D20, D22, D23, D27, D30, D33, D34, D35, D37, D38, D40, D43, D44, D45, D46, D48, D49, D54, D58, D59, D60, D69, D82, D83, D88, D90, D94, D96, D102, D104, D108, D117, D143 |
+| 04 | [04-effects.md](04-effects.md) | Fail, Io, Db, effect-литерал, with-блоки, interrupt, forbid, realtime, ?, `Effect[E, IRT]`, contracts (#pure/axiom/trusted), axiom binder, Fail payload | D2, D3, D4, D11, D12, D18, D25, D28, D31, D61, D62, D63, D64, D65, D67, D68, D85, D86, D87, D115, D118, D120 |
 | 05 | [05-memory.md](05-memory.md) | Managed GC, escape analysis, regions | D6, D21 (cancelled) |
 | 06 | [06-concurrency.md](06-concurrency.md) | Fiber runtime, structured concurrency, spawn, detach, supervised(cancel:), channels (Channel revision capability-split), select, handler scoping, park/wake API, implicit main-scope, fiber stack allocation, work-stealing scheduler, preemption | D14, D50, D71, D75, D79, D80, D91, D92, D93, D97, D98, D103 |
 | 07 | [07-modules.md](07-modules.md) | Модули, импорты (включая селективный `import X.{A, B}` и `export import` re-export), видимость, package tooling, `_module.nv`, межпакетные зависимости, version-диапазоны, effect-aware deps | D5, D29, D47, D78, D100, D138, D139, D140 |
@@ -72,6 +72,8 @@
 | D139 | 07-modules.md | Version-диапазоны git-зависимостей — резолв по тегам репозитория (Plan 03.2) |
 | D140 | 07-modules.md | Effect-aware зависимости — effect-surface, effect-diff, `forbid` на границе (Plan 03.4) |
 | D141 | 08-runtime.md | Примитивы доступа к памяти — `str.byte_at`, bulk slice-операции `[]T`, `compare` (Plan 90) |
+| D142 | 02-types.md | Симметрия effect/protocol declaration ↔ literal — keyword `handler`→`effect`, `Handler[E,IRT]`→`Effect[E,IRT]`, анонимный protocol-литерал, capture-rules (Plan 97) |
+| D143 | 03-syntax.md | Static-method префикс `.method()` в `type X protocol { ... }` теле — симметрия с D35 instance-методом `fn T.method()` (Plan 97) |
 
 ## История
 

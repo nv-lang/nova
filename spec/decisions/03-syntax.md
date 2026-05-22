@@ -5655,3 +5655,111 @@ Rust-уровень точности **без borrows / lifetimes** — пове
 - [D66](02-types.md#d66) — `Self` (referential тип); `-> @` — его
   value-level уточнение «именно receiver».
 - [D35](#d35) — методы инстанса.
+
+---
+
+## D143. Static-метод в `protocol {}` через leading-точку
+
+> **Plan 97.** Принято 2026-05-23. Закрывает `Q-static-method-protocol`
+> (был в [D58](#d58) разделе открытых вопросов).
+
+### Что
+
+В теле `protocol {}` метод объявленный с **leading-точкой**
+(`.method(args) -> Ret`) — **статический** (D35: ожидаемая реализация
+`fn Type.method(...)`); метод без префикса (`method(args) -> Ret`) —
+**instance** (ожидаемая реализация `fn Type @method(...)`).
+
+```nova
+type From[T] protocol {
+    .from(t T) -> Self        // static — Type.from(v)
+}
+
+type Hashable protocol {
+    hash() -> u64             // instance — value.hash()
+}
+
+type Builder[T] protocol {
+    .new() -> Self            // static — Type.new()
+    @push(item T) -> @        // instance, mutating, fluent return (D132)
+}
+```
+
+### Правило
+
+#### Синтаксическое различение
+
+```
+protocol-method := [ "#pure" ] [ "." | "@" ]? ident generics? "(" params? ")" effects? ret? contracts?
+```
+
+- **`.name(...)`** — static-метод (симметрично D35 `fn Type.name`).
+- **`@name(...)`** — instance-метод (явный маркер, симметрично D35
+  `fn Type @name`). Bare-имя `name(...)` остаётся **instance** по
+  умолчанию (backwards-compat).
+- Static + instance с одинаковым именем в одном протоколе —
+  **запрещены** (parse error «duplicate method `foo` in protocol»).
+
+#### Matching типа против протокола
+
+При проверке «тип `T` удовлетворяет protocol `P`»:
+
+- Для `is_static = true` метода `P` — ищется `fn T.method(...)`
+  (D35 static-форма, регистрируется компилятором среди статиков).
+- Для `is_static = false` (instance) — ищется `fn T @method(...)`
+  (D35 instance-форма, регистрируется среди методов receiver-типа).
+
+Несовпадение static/instance — **compile error** «type T does not
+satisfy P: method `foo` declared `.foo` (static) but T provides
+instance `@foo`» (либо обратное). Это hardening аналогичный Plan 79;
+вводится постепенно — на момент Plan 97 Ф.1 matching остаётся
+структурно ленивым (см. [`[M-protocol-static-enforcement-deferred]`](../../docs/simplifications.md)).
+
+#### Backwards-compat
+
+Все существующие протоколы (`Iter`/`Hashable`/`Equatable`/`Comparable`/
+`Display`/`Into`/`TryInto`) написаны bare → остаются instance без
+изменений. Меняются только `From`/`TryFrom` в `std/prelude/protocols.nv`
+(их методы `.from`/`.try_from` — static).
+
+### Почему
+
+- **D35 симметрия**: реализация `fn Type.name(...)` — статический
+  метод (точка); реализация `fn Type @name(...)` — instance (`@`).
+  Декларация в протоколе должна **те же маркеры** использовать; без
+  этого `From.from(t T) -> Self` неотличимо от instance, что
+  противоречит D35.
+- **Самодокументированность прелюдии**: `From[T] protocol { .from(t T)
+  -> Self }` сразу читается «статический фабричный метод»; без точки —
+  неоднозначно.
+- **Spec hint**: `D58` раздел открытых вопросов уже предложил именно
+  `.method()`-префикс (см. `Q-static-method-protocol` до резолва);
+  Plan 97 этот hint реализует.
+- **Bare = instance** (а не «требовать `@` явно») — backwards-compat:
+  существующие протоколы не переписываются. Явный `@`-префикс —
+  Q-open `Q-protocol-method-prefix` (followup, не блокер).
+
+### Что отвергнуто
+
+- **`static method(...)` keyword** — отвергнут (нет `static` в Nova,
+  противоречит D35 «точка для static»).
+- **`[static]` атрибут** — несимметричен D35 и громоздок.
+- **Инференция static из «возвращает Self без self-параметра»** —
+  фрагильно (`fn into() -> U` тоже без явного self-параметра,
+  но instance).
+- **`@method` обязательный для instance** — отвергнут ради backwards-
+  compat. Может вернуться как optional symmetry-маркер (Q-open).
+
+### Связь
+
+- [D35](#d35) — реализация: static через `.`, instance через `@`.
+  D143 — декларация в протоколе через те же маркеры.
+- [D58](#d58) — раздел открытых вопросов; `Q-static-method-protocol`
+  закрывается этим D-блоком.
+- [D53](02-types.md#d53) — protocol declaration (контейнер для D143).
+- [D142](02-types.md#d142) — symmetry effect/protocol declaration ↔
+  literal (соседний D-блок Plan 97).
+- [D77](08-runtime.md#d77) — `From`/`TryFrom` 4-way auto-derive
+  (главные потребители static в протоколах).
+- [Plan 97](../../docs/plans/97-protocol-effect-syntax-symmetry.md) Ф.1 —
+  имплементация (parser + AST `is_static`).

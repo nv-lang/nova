@@ -2454,14 +2454,25 @@ record), [D52](decisions/02-types.md#d52) (sum-варианты), [D19](decision
 
 ## Q-static-method-protocol. Static-методы в protocol через `.name()`-префикс
 
-> ⏸ **DEFERRED — нужен Q-bounds первым** (Plan 17 Ф.3, 2026-05-08).
-> **Rationale:** static-протоколы блокируют generic `collect`/`from_iter`,
-> но для практического использования сначала нужны generic bounds
-> (`[T Bound]`) — без них `Out.from_iter(@)` нечем ограничить тип
-> Out. Plan 15 решает D72 bounds enforcement; после него вернуться
-> к Q-static-method-protocol.
-> **Trigger:** Plan 15 закрыт + ≥2 use-case'а на generic
-> collect/from_iter в stdlib.
+> ✅ **РЕШЕНО 2026-05-22 (Plan 97).** Принято предложение из этого
+> вопроса: static-методы в `type X protocol { ... }` маркируются
+> **точка-префиксом** `.name()`, по симметрии с
+> [D35](decisions/03-syntax.md#d35) (`fn Type.name(...)` в реализации).
+> Формализовано в [D143](decisions/03-syntax.md#d143) (parse rule,
+> matching rules, backwards-compat: bare имя — instance, как было).
+> Реализовано в Plan 97 Ф.1 (parser + AST `EffectMethod.is_static`).
+> Применено в prelude: `From[T] { .from(t T) }`, `TryFrom[T, E]
+> { .try_from(t T) -> Result[Self, E] }` (см. `std/prelude/protocols.nv`).
+>
+> **Note on hard runtime-enforcement:** парсер принимает `.name()`,
+> AST хранит `is_static: bool`. Type-checker строгое сопоставление
+> static↔instance при satisfaction-проверке — **deferred** (Plan 15
+> Ф.5+ или отдельный follow-up). См.
+> `docs/simplifications.md#m-protocol-static-enforcement-deferred`.
+>
+> Историческое DEFER (предыдущее) — снято: Plan 15 закрыт, Plan 59
+> мономорфизировал Result, что покрывает основные use-case'ы
+> (`From`/`Into`/`TryFrom`/`TryInto`).
 
 **Контекст.** [D42](decisions/02-types.md#d42)/[D53](decisions/02-types.md#d53)
 описывают protocol с **instance-методами** (без префикса):
@@ -5524,6 +5535,33 @@ core rendering +15-25%). Это **самая большая** «бесплатн
 ---
 
 ## Q-keyword-symmetry. Симметрия keyword'ов в declaration и literal: `effect`/`protocol` vs `handler`
+
+> ✅ **РЕШЕНО 2026-05-22 (Plan 97).** Вариант **4** (полная симметрия)
+> принят и зафиксирован в [D142](decisions/02-types.md#d142):
+>
+> 1. **(B)** keyword `handler` снят, литерал эффекта пишется через
+>    `effect X { ops }`. Builtin тип `Handler[E, IRT]` переименован
+>    в `Effect[E, IRT]` (см. [D87](decisions/04-effects.md#d87)
+>    «Plan 97 amendment»).
+> 2. **(D)** анонимный protocol-литерал введён — `protocol X { ops }`
+>    в expression-position для one-off implementations (Channel-style
+>    capability-split factory pattern). Type-position также получил
+>    `protocol { sig* }` (анонимный protocol-тип в bound'ах /
+>    параметрах), см. [D53 §628](decisions/02-types.md#d53) и Plan 15
+>    `[P-15-anon-protocol-bound]` (снят).
+>
+> Реализовано в Plan 97 Ф.2 (anon-protocol type-position), Ф.3
+> (handler→effect rename, lexer/parser/prelude/sweep), Ф.4
+> (protocol-literal expression). Clean break — backwards-compat
+> намеренно не сохраняется.
+>
+> **Решающий аргумент:** capability-split factory pattern окупает
+> вариант 4, а симметрия declaration↔literal согласована с D52/D53
+> (kind-token система) и D61/D87 (effect позиционная dispatch'ация).
+>
+> Историческое обсуждение оставлено ниже как справка.
+
+---
 
 **Контекст.** Сейчас Nova использует **разные keyword'ы** для
 declaration и literal-формы одной сущности:
