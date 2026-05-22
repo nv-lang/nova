@@ -1,0 +1,68 @@
+// Plan 85.5 Ф.2 — Iter[T]: str.chars() и str.bytes() в for-in.
+//
+// `str.chars() -> []char` — codepoint'ы; `str.bytes() -> []u8` —
+// сырые UTF-8 байты. Оба итерируются обычным for-in (массивы).
+
+module iter.str_iters
+
+
+test "str.chars() — обход codepoint'ов ASCII" {
+    let mut count = 0
+    for c in "hello".chars() {
+        count = count + 1
+    }
+    assert(count == 5)
+}
+
+test "str.chars() — Unicode codepoint'ы (не байты)" {
+    let mut count = 0
+    for c in "Привет".chars() {
+        count = count + 1
+    }
+    assert(count == 6)       // 6 codepoint'ов
+}
+
+test "str.chars() — значения codepoint'ов" {
+    let cs = "Abc".chars()
+    assert(cs.len() == 3)
+    assert(cs[0] == 'A')
+    assert(cs[1] == 'b')
+    assert(cs[2] == 'c')
+}
+
+test "str.chars() — первый и последний Unicode codepoint" {
+    let cs = "Привет".chars()
+    assert(cs[0] == 'П')
+    assert(cs[5] == 'т')
+}
+
+test "str.bytes() — сырые UTF-8 байты" {
+    let mut count = 0
+    for b in "Hi".bytes() {
+        count = count + 1
+    }
+    assert(count == 2)
+}
+
+test "str.bytes() — Unicode даёт больше байт чем codepoint'ов" {
+    let bs = "Я".bytes()
+    assert(bs.len() == 2)        // 'Я' — 2 байта UTF-8
+    assert(bs[0] == 0xD0)
+    assert(bs[1] == 0xAF)
+}
+
+test "str.chars() — пустая строка" {
+    let mut count = 0
+    for c in "".chars() {
+        count = count + 1
+    }
+    assert(count == 0)
+}
+
+test "str.chars() — сумма codepoint-значений" {
+    let mut sum = 0
+    for c in "ABC".chars() {
+        sum = sum + (c as int)
+    }
+    assert(sum == 198)          // 65 + 66 + 67
+}

@@ -1,0 +1,56 @@
+// Plan 85.5 Ф.3 — Iter[T]: generic bound `[T Iter[int]]`.
+//
+// Instance-метод `next()` диспатчится на type-параметре через mono
+// (работает — в отличие от static-методов, см. 85.3 ограничение).
+
+module iter.generic_bound
+
+
+type CountDown { mut current int }
+
+fn CountDown.new(start int) -> CountDown => { current: start }
+
+fn CountDown mut @next() -> Option[int] {
+    if @current <= 0 {
+        None
+    } else {
+        let v = @current
+        @current = @current - 1
+        Some(v)
+    }
+}
+
+
+// Generic-функция с Iter[int]-bound — for-in по type-параметру.
+fn sum_iter[T Iter[int]](mut it T) -> int {
+    let mut total = 0
+    for n in it {
+        total = total + n
+    }
+    total
+}
+
+// Подсчёт элементов.
+fn count_iter[T Iter[int]](mut it T) -> int {
+    let mut n = 0
+    for _ in it {
+        n = n + 1
+    }
+    n
+}
+
+
+test "generic [T Iter[int]] — sum_iter с CountDown" {
+    let r = sum_iter[CountDown](CountDown.new(5))
+    assert(r == 15)          // 5+4+3+2+1
+}
+
+test "generic [T Iter[int]] — count_iter" {
+    let r = count_iter[CountDown](CountDown.new(8))
+    assert(r == 8)
+}
+
+test "generic [T Iter[int]] — пустой итератор" {
+    let r = sum_iter[CountDown](CountDown.new(0))
+    assert(r == 0)
+}

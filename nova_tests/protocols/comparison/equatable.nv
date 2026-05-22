@@ -1,0 +1,70 @@
+// Plan 85.4 Ф.1 — Equatable протокол.
+//
+// `Equatable` (D109): `eq(other Self) -> bool`. User-defined через
+// `fn Type @eq(other Type) -> bool`. `@eq` — также метод оператора
+// `==` (D46); `!=` выводится автоматически.
+
+module comparison.equatable
+
+
+type Point { x int, y int }
+
+fn Point @eq(other Point) -> bool => @x == other.x && @y == other.y
+
+
+test "eq — рефлексивность: x.eq(x)" {
+    let p = Point { x: 3, y: 4 }
+    assert(p.eq(p))
+}
+
+test "eq — равные значения" {
+    let a = Point { x: 1, y: 2 }
+    let b = Point { x: 1, y: 2 }
+    assert(a.eq(b))
+}
+
+test "eq — неравенство" {
+    let a = Point { x: 1, y: 2 }
+    let b = Point { x: 9, y: 2 }
+    assert(!a.eq(b))
+}
+
+test "eq — симметрия: a.eq(b) == b.eq(a)" {
+    let a = Point { x: 5, y: 5 }
+    let b = Point { x: 5, y: 5 }
+    let c = Point { x: 7, y: 1 }
+    assert(a.eq(b) == b.eq(a))
+    assert(a.eq(c) == c.eq(a))
+}
+
+test "eq — транзитивность: a==b, b==c => a==c" {
+    let a = Point { x: 2, y: 2 }
+    let b = Point { x: 2, y: 2 }
+    let c = Point { x: 2, y: 2 }
+    assert(a.eq(b))
+    assert(b.eq(c))
+    assert(a.eq(c))
+}
+
+
+// ── оператор == / != через @eq (D46) ──────────────────────────────
+
+test "оператор == использует @eq" {
+    let a = Point { x: 10, y: 20 }
+    let b = Point { x: 10, y: 20 }
+    assert(a == b)
+}
+
+test "оператор == — false для разных" {
+    let a = Point { x: 0, y: 0 }
+    let b = Point { x: 0, y: 1 }
+    assert(!(a == b))
+}
+
+test "оператор != выводится из @eq" {
+    let a = Point { x: 1, y: 1 }
+    let b = Point { x: 2, y: 2 }
+    let same = Point { x: 1, y: 1 }
+    assert(a != b)
+    assert(!(a != same))
+}

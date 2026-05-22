@@ -1,0 +1,20 @@
+// EXPECT_COMPILE_ERROR does not satisfy
+//
+// Plan 85.4 Ф.3 — негатив: тип без @hash в Hashable-bound.
+//
+// `needs_hash` требует `[T Hashable]`. `NoHash` — именованный тип без
+// `fn NoHash @hash()` (D109: именованные типы должны реализовать hash
+// явно, auto-derive только для примитивов) → подстановка `T = NoHash`
+// нарушает bound → compile error.
+
+module comparison.neg_no_impl
+
+
+type NoHash { x int }            // НЕ реализует @hash
+
+fn needs_hash[T Hashable](v T) -> u64 => v.hash()
+
+test "тип без @hash в Hashable-bound — compile error" {
+    let bad = needs_hash[NoHash](NoHash { x: 1 })
+    assert(bad == 0)
+}
