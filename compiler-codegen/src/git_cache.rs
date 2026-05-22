@@ -240,16 +240,11 @@ pub fn resolve_git_dep(
 /// Ядро `resolve_git_dep` с явным корнем кэша — без memo и без
 /// `git_cache_root()`. Прямой вызов — из тестов (изолированный
 /// temp-кэш, без глобального `NOVA_HOME`).
-pub fn resolve_git_dep_in(
-    cache_root: &Path,
-    url: &str,
-    pin: &GitPin,
-    locked_commit: Option<&str>,
-) -> Result<GitResolution> {
+/// Гарантировать bare-клон репозитория в кэше. Возвращает путь к нему
+/// и флаг «уже существовал до вызова» (свежий клон fetch'ить не нужно).
+fn ensure_db(cache_root: &Path, url: &str) -> Result<(PathBuf, bool)> {
     let rid = repo_id(url);
     let db = cache_root.join("db").join(format!("{}.git", rid));
-
-    // --- 1. bare-клон репозитория (один раз) ---------------------------
     let db_existed = db.is_dir();
     if !db_existed {
         if offline() {
@@ -271,6 +266,50 @@ pub fn resolve_git_dep_in(
         )
         .with_context(|| format!("clone git-зависимости `{}`", url))?;
     }
+    Ok((db, db_existed))
+}
+
+/// Plan 03.2: semver-теги репозитория — источник версий для резолва.
+/// Возвращает `(version, tag-name)`, отсортировано по возрастанию
+/// версии. Не-semver теги пропускаются.
+pub fn list_versions(url: &str) -> Result<Vec<(crate::semver::Version, String)>> {
+    let root = git_cache_root()?;
+    list_versions_in(&root, url)
+}
+
+/// Ядро `list_versions` с явным корнем кэша (для тестов).
+pub fn list_versions_in(
+    cache_root: &Path,
+    url: &str,
+) -> Result<Vec<(crate::semver::Version, String)>> {
+    let (db, db_existed) = ensure_db(cache_root, url)?;
+    // Новые теги могли появиться upstream.
+    if db_existed && !offline() {
+        let _ = run_git(&["fetch", "--quiet", "--tags", "--prune", "origin"], Some(&db));
+    }
+    let out = run_git(&["tag", "--list"], Some(&db))?;
+    let mut vers: Vec<(crate::semver::Version, String)> = Vec::new();
+    for line in out.lines() {
+        let tag = line.trim();
+        if tag.is_empty() {
+            continue;
+        }
+        if let Ok(v) = crate::semver::Version::parse_tag(tag) {
+            vers.push((v, tag.to_string()));
+        }
+    }
+    vers.sort_by(|a, b| a.0.cmp(&b.0));
+    Ok(vers)
+}
+
+pub fn resolve_git_dep_in(
+    cache_root: &Path,
+    url: &str,
+    pin: &GitPin,
+    locked_commit: Option<&str>,
+) -> Result<GitResolution> {
+    // --- 1. bare-клон репозитория (один раз) ---------------------------
+    let (db, db_existed) = ensure_db(cache_root, url)?;
 
     // --- 2. определить целевой commit ---------------------------------
     let commit = if let Some(locked) = locked_commit {
@@ -356,7 +395,7 @@ pub fn resolve_git_dep_in(
     };
 
     // --- 3. checkout рабочего дерева на commit'е -----------------------
-    let checkout = cache_root.join("co").join(&rid).join(&commit);
+    let checkout = cache_root.join("co").join(repo_id(url)).join(&commit);
     if !checkout.is_dir() {
         if let Some(parent) = checkout.parent() {
             std::fs::create_dir_all(parent).with_context(|| {
