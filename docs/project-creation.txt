@@ -18236,3 +18236,21 @@ effect_matrix (Plan 45).
 (nova info, --diff, nova build СЃ forbid-РЅР°СЂСѓС€РµРЅРёРµРј). Suite: 1058 PASS
 / 0 FAIL вЂ” 0 СЂРµРіСЂРµСЃСЃРёР№. Plan 03.4 вњ… Р—РђРљР Р«Рў. Plan 03: 03.1 вњ… 03.2 вњ…
 03.4 вњ…; РѕСЃС‚Р°СЋС‚СЃСЏ 03.3/03.5/03.6 (registry-РёРЅС„СЂР°СЃС‚СЂСѓРєС‚СѓСЂР°).
+
+=== Plan 90 — примитивы доступа к памяти (2026-05-22) ===
+
+byte_at / bulk slice-операции / compare — для миграции рантайма и
+stdlib-алгоритмов на Nova без лишних аллокаций и external fn.
+
+Ф.0 аудит (GATE): вариант A — safe-only. unsafe-keyword и сырые
+указатели НЕ вводятся (D6 сохранён); 6 кейсов сырого указателя покрыты
+external fn / external type / to_bits / BCE.
+Ф.1 spec D141. Ф.2 рантайм C: nova_str_byte_at (nova_rt.h);
+nova_array_copy_from/copy_within/fill в макросе NOVA_ARRAY_IMPL
+(array.h); nova_array_compare_nova_byte (memcmp). Ф.3 codegen + registry
+(str @byte_at -> std/runtime/string.nv). Ф.4 — 6 фикстур
+nova_tests/plan90/.
+
+Worktree nova-p90, ветка plan-90. Полный nova test: 1064 PASS / 0 FAIL
+(9 RUN-FAIL — флака параллельного прогона, переподтверждены PASS при
+--jobs 1). Plan 90 (Ф.0-Ф.5) ЗАКРЫТ.
