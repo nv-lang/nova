@@ -17468,3 +17468,43 @@ methods с pattern-match) оказались уже сняты Plan 55.4/55.5/56
   Plan 52.2/52.3 → ЗАКРЫТЫ (README + шапки); simplifications
   closure-секция.
 Suite: 960 PASS / 0 FAIL.
+
+
+==================================================================
+2026-05-22 — Plan 84: относительные импорты ./ /../ (D29 rev-4)
+==================================================================
+
+Package-scoped относительные импорты модулей. Worktree nova-p84 /
+ветка plan-84, смёржена в main (4db1b62) + follow-up peer-collision
+(1ba7571). Реализована автономно по фазам Ф.1-Ф.6.
+
+- Ф.1 парсер: AST ImportAnchor { Package | Relative{up} } + поле
+  Import.anchor; parse_import_anchor — ./ = Dot Slash (up=0),
+  ../xN = DotDot Slash xN (up=N); ./ затем ../ → ошибка парсера.
+- Ф.2 резолвер: resolve_one вычисляет rel_root = директория
+  importing-файла, поднятая на up уровней; package_root_of
+  (ближайший nova.toml) — граница: ../ за корень пакета →
+  compile-error. resolve_module_paths получил параметр rel_root
+  (при Some — единственный root, без candidate-поиска и std-special).
+- Ф.3 диагностика: escape-boundary, filesystem-boundary,
+  relative-aware not-found, peer-collision (относительный импорт,
+  резолвящийся в модуль самого импортирующего файла — self-import
+  либо peer того же folder-модуля).
+- Ф.4+Ф.5: 14 фикстур nova_tests/plan84/ — позитив (./ сосед,
+  ../ родитель, ./ folder-module, export import ./inner) + негатив
+  EXPECT_COMPILE_ERROR (граница пакета, not-found, ./ +../,
+  self-import). Аудит взаимодействий: folder-module + re-export —
+  фикстурами; internal/ rule H + cycle-detection — общая
+  canonical-path машинерия, без изменений.
+- Ф.6 spec D29 rev-4: подраздел «Относительные импорты ./ /../»
+  (синтаксис, package-scoping, дискриминатор, граница пакета,
+  примирение с AI-first); синхронизированы Plan 81 / README.
+
+Дизайн: scoped (Rust-модель super/self) — относительно внутри
+пакета, полный путь наружу; между Go (нет относительных) и TS
+(безграничные). Префикс ./ /../ — синтаксический дискриминатор,
+неоднозначности нет by construction.
+
+nova test --filter plan84: 12 PASS / 0 FAIL (end-to-end:
+codegen+run позитива, корректный отказ негатива).
+Suite: 972 PASS / 0 FAIL / 56 SKIP (полный регресс — 0 регрессий).
