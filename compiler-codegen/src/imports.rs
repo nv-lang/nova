@@ -583,13 +583,10 @@ fn resolve_one(
                 }
                 Some(root)
             }
-            DepLookup::GitDep(url) => return Err(anyhow!(
-                "git-зависимость `{}` ещё не зафетчена\n  \
-                 url:            {}\n  \
-                 importing file: {}\n  \
-                 hint: git-резолв подключается в Plan 03.1 Ф.2 (fetch + \
-                 кэш); пока поддержаны только `path`-зависимости",
-                imp.path[0], url, importer_path.display(),
+            DepLookup::GitError(msg) => return Err(anyhow!(
+                "{}\n  \
+                 importing file: {}",
+                msg, importer_path.display(),
             )),
             DepLookup::RegistryDep(ver) => return Err(anyhow!(
                 "зависимость `{}` задана registry-версией `{}`, но registry \
@@ -1473,10 +1470,12 @@ fn package_root_of(file: &Path) -> Option<PathBuf> {
 enum DepLookup {
     /// Имя не объявлено как зависимость — обычный intra-package резолв.
     NotADep,
-    /// `path`-зависимость: source root дерева зависимости.
+    /// `path`- либо `git`-зависимость: source root дерева зависимости
+    /// (для `git` — внутри checkout'а в кэше, Plan 03.1 Ф.2).
     PathDep(PathBuf),
-    /// `git`-зависимость — резолв через fetch+кэш (Plan 03.1 Ф.2). Несёт URL.
-    GitDep(String),
+    /// `git`-зависимость не материализовалась (clone/fetch/checkout
+    /// упали либо пин не резолвится). Сообщение готово к показу.
+    GitError(String),
     /// registry-версия — registry появится в Plan 03.3.
     RegistryDep(String),
     /// Запись `[dependencies]` синтаксически некорректна.
@@ -1540,26 +1539,42 @@ fn lookup_dependency(importer_path: &Path, dep_name: &str) -> DepLookup {
             if !dep_dir.is_dir() {
                 return DepLookup::PathMissing(dep_dir.display().to_string());
             }
-            let dep_toml = dep_dir.join("nova.toml");
-            if !dep_toml.is_file() {
-                return DepLookup::NoManifest(dep_dir.display().to_string());
-            }
-            let Some(dep_manifest) = crate::manifest::parse_manifest(&dep_toml, &dep_dir)
-            else {
-                return DepLookup::NoManifest(dep_dir.display().to_string());
-            };
-            if dep_manifest.package_name != dep_name {
-                return DepLookup::NameMismatch {
-                    key: dep_name.to_string(),
-                    actual: dep_manifest.package_name,
-                };
-            }
-            DepLookup::PathDep(dep_manifest.source_root)
+            finalize_dep_pkg(&dep_dir, dep_name)
         }
-        crate::manifest::DepSource::Git { url, .. } => DepLookup::GitDep(url.clone()),
+        crate::manifest::DepSource::Git { url, pin } => {
+            // Plan 03.1 Ф.2: материализуем git-зависимость в кэше и
+            // дальше резолвим её как обычный пакет на диске.
+            match crate::git_cache::resolve_git_dep(url, pin, None) {
+                Ok(res) => finalize_dep_pkg(&res.checkout, dep_name),
+                Err(e) => DepLookup::GitError(format!(
+                    "git-зависимость `{}`: {}",
+                    dep_name, e,
+                )),
+            }
+        }
         crate::manifest::DepSource::Registry(v) => DepLookup::RegistryDep(v.clone()),
         crate::manifest::DepSource::Invalid(raw) => DepLookup::InvalidDep(raw.clone()),
     }
+}
+
+/// Plan 03.1 Ф.2/Ф.3: довести каталог зависимости (path-каталог либо
+/// git-checkout) до `DepLookup`: проверить наличие `nova.toml`, разобрать
+/// его и сверить `[package].name` с именем-ключом зависимости.
+fn finalize_dep_pkg(dep_dir: &Path, dep_name: &str) -> DepLookup {
+    let dep_toml = dep_dir.join("nova.toml");
+    if !dep_toml.is_file() {
+        return DepLookup::NoManifest(dep_dir.display().to_string());
+    }
+    let Some(dep_manifest) = crate::manifest::parse_manifest(&dep_toml, dep_dir) else {
+        return DepLookup::NoManifest(dep_dir.display().to_string());
+    };
+    if dep_manifest.package_name != dep_name {
+        return DepLookup::NameMismatch {
+            key: dep_name.to_string(),
+            actual: dep_manifest.package_name,
+        };
+    }
+    DepLookup::PathDep(dep_manifest.source_root)
 }
 
 fn resolve_module_paths(
