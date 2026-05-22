@@ -270,6 +270,15 @@ static void _worker_main(void* arg) {
      * to "the worker I'm currently on" — survives work-stealing migration. */
     _nova_preempt_ptr = &w->preempt_flag;
 
+    /* Plan 82 Ф.3: создать fiber-арену этого worker'а заранее. Это
+     * регистрирует её (и native-стек worker'а) в глобальном списке арен
+     * → GC-колбэк (fiber_arena_win.c) сканирует fiber-стеки И
+     * «подвешенный» scheduler-стек КАЖДОГО worker'а, не только тех, что
+     * успели сделать spawn. */
+#if NOVA_FIBER_ARENA_ENABLED
+    nova_fiber_arena_init();
+#endif
+
     while (!nova_abool_load(&w->stop)) {
         /* (0) Service the worker's libuv loop non-blockingly EVERY iteration.
          *
@@ -447,6 +456,14 @@ static void _worker_main(void* arg) {
     /* Plan 44.7: worker thread exiting — its preempt_flag (in NovaWorker,
      * freed by shutdown) must not be dereferenced again. */
     _nova_preempt_ptr = NULL;
+
+    /* Plan 82 Ф.3: отвязать TLS-указатель арены ДО GC_unregister — пока
+     * поток ещё GC-зарегистрирован, STW его suspend'ит, исключая гонку с
+     * GC-колбэком, обходящим список арен. Память арены освободит
+     * nova_runtime_shutdown::nova_fiber_arena_release_retired после join. */
+#if NOVA_FIBER_ARENA_ENABLED
+    nova_fiber_arena_thread_exit();
+#endif
 
 #ifdef NOVA_GC_THREADS_REGISTER
     GC_unregister_my_thread();
@@ -692,6 +709,18 @@ static void _materialize_pool(void) {
     _n_workers = n_workers;
     nova_aint_init(&_round_robin, 0);
 
+#ifdef NOVA_GC_BOEHM
+    /* Plan 82 Ф.3 (§П3): NovaWorker-массив calloc'нут (C-heap, не GC).
+     * Каждый w->scope (NovaFiberQueue) держит указатели на nova_alloc'-
+     * нутые GC-массивы (fibers / fiber_ctx / fiber_effect_snapshot / …).
+     * Без явного root они достижимы лишь из не-сканируемой C-heap →
+     * premature collect → UAF. Один GC_add_roots на весь worker-массив
+     * (НЕ per-fiber — лимит MAX_ROOT_SETS не задет). Снимается в
+     * nova_runtime_shutdown перед free(_workers). */
+    GC_add_roots(_workers,
+                 (char*)_workers + (size_t)n_workers * sizeof(NovaWorker));
+#endif
+
     for (int i = 0; i < n_workers; i++) {
         NovaWorker* w = &_workers[i];
         w->id = i;
@@ -804,6 +833,13 @@ void nova_runtime_shutdown(void) {
         uv_thread_join(&_workers[i].thread);
     }
 
+    /* Plan 82 Ф.3: worker-потоки join'нуты (мертвы) — освободить их
+     * fiber-арены. Эксклюзивный момент: исполняется только main, обход
+     * списка арен GC-колбэком/find_arena не конкурирует. */
+#if NOVA_FIBER_ARENA_ENABLED
+    nova_fiber_arena_release_retired();
+#endif
+
     /* Cleanup. */
     for (int i = 0; i < _n_workers; i++) {
         NovaWorker* w = &_workers[i];
@@ -818,6 +854,11 @@ void nova_runtime_shutdown(void) {
         w->yielded = NULL;
     }
 
+#ifdef NOVA_GC_BOEHM
+    /* Plan 82 Ф.3: снять GC-root worker-массива до его free. */
+    GC_remove_roots(_workers,
+                    (char*)_workers + (size_t)_n_workers * sizeof(NovaWorker));
+#endif
     free(_workers);
     _workers = NULL;
     _n_workers = 0;

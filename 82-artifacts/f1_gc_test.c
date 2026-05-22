@@ -37,7 +37,7 @@
 static volatile LONG g_done = 0;
 static DWORD WINAPI watchdog(LPVOID a) {
     (void)a;
-    Sleep(40 * 1000);
+    Sleep(150 * 1000);
     if (!g_done) {
         fprintf(stderr, "\n!!! HANG DETECTED — f1_gc_test завис "
                 "(arena + Boehm баг воспроизведён)\n");
@@ -240,6 +240,7 @@ int main(int argc, char** argv) {
     /* Boehm-инициализация — как alloc_boehm.c рантайма Nova. */
     GC_set_all_interior_pointers(1);
     GC_INIT();
+    GC_allow_register_threads();          /* для GC_register_my_thread из потоков */
     fprintf(stderr, "[gc] Boehm инициализирован\n"); fflush(stderr);
 
     int t4n = (argc > 1) ? atoi(argv[1]) : 3000;

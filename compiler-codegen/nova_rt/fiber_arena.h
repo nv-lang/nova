@@ -134,6 +134,19 @@ bool nova_fiber_arena_contains(const void* ptr);
  * POSIX-реализация возвращает NULL (патч не нужен — kernel demand-paging). */
 void* nova_fiber_committed_low(const void* block_ptr);
 
+/* Plan 82 Ф.3 — M:N lifecycle (Windows arena — heap-структуры в
+ * глобальном append-only списке; каждый поток имеет свою арену).
+ *
+ * nova_fiber_arena_thread_exit — worker-поток зовёт перед
+ *   GC_unregister_my_thread: обнуляет TLS-указатель (структура арены
+ *   остаётся в списке для GC-обхода до shutdown).
+ * nova_fiber_arena_release_retired — nova_runtime_shutdown зовёт ПОСЛЕ
+ *   join всех worker'ов: освобождает арены завершившихся worker-потоков
+ *   (эксклюзивный момент — гонок с GC-обходом нет).
+ * POSIX — no-op (арена в TLS, освобождается pthread_key при выходе потока). */
+void nova_fiber_arena_thread_exit(void);
+void nova_fiber_arena_release_retired(void);
+
 #endif /* NOVA_FIBER_ARENA_ENABLED */
 
 #endif /* NOVA_RT_FIBER_ARENA_H */

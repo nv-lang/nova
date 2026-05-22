@@ -18338,3 +18338,57 @@ D97 ✅ ЗАКРЫТО; добавлен [M-82-gc-mn-deferred] (M:N GC-coverage 
 
 Осталось: Ф.3 cross-thread migration, Ф.4 тест-матрица, Ф.5 M:N на
 Windows, Ф.6 spec D97 + закрытие 44.3.
+
+### Plan 82 Ф.3 — M:N-safe Windows fiber arena (2026-05-22)
+
+fiber_arena_win.c переработан целиком для M:N (cross-thread migration,
+multi-worker GC). Ф.1+Ф.2 покрывали single-thread cooperative; Ф.3 —
+несколько worker-потоков с work-stealing.
+
+Heap-арены в глобальном append-only списке. Раньше арена жила в
+TLS-структуре (__declspec(thread)); под M:N этого мало — &arena
+становится dangling после выхода потока, а GC-колбэку и cross-thread
+dealloc нужен доступ к чужим аренам. Теперь арена — calloc-структура,
+TLS хранит лишь указатель; все арены — в глобальном списке
+_nova_fw_arena_list (link под CRITICAL_SECTION; обход lock-free,
+append-only — узлы во время работы не удаляются).
+
+Atomic bitmap. used_bits мутируется atomically — _interlockedbittestand
+set64 (alloc, владелец) / reset64 (dealloc, любой поток); slots_active
+— _Interlocked{Inc,Dec}rement64. dirty_bits/high_water — только владелец
+→ plain. Lock-free, без per-arena lock'а в горячем пути.
+
+Address-based cross-thread dealloc (§5.3). nova_fiber_dealloc находит
+арену-владельца ПО АДРЕСУ (_nova_fw_find_arena — обход списка), не по
+TLS. Fiber, мигрировавший A→B и завершённый на B, освобождает слот в
+арене A. То же — committed_low, arena_contains, VEH (multi-arena).
+
+Multi-arena GC-колбэк. _nova_fw_gc_push_other_roots обходит ВСЕ арены:
+fiber-стеки каждого worker'а + native scheduler-стек каждого потока
+(per-arena native_base). Опровергает §1.6 на полную: GC с любого
+worker'а видит fiber-стеки всех остальных.
+
+runtime.c: _worker_main создаёт арену worker'а в старте
+(nova_fiber_arena_init — регистрирует native-стек worker'а для
+GC-обхода); nova_fiber_arena_thread_exit перед GC_unregister_my_thread;
+nova_runtime_shutdown освобождает worker-арены
+(nova_fiber_arena_release_retired) ПОСЛЕ join всех worker'ов —
+эксклюзивный момент, гонок с обходом нет. _materialize_pool добавляет
+GC_add_roots(_workers, ...) — NovaWorker-массив calloc'нут (C-heap, не
+GC), w->scope держит указатели на nova_alloc-массивы (fiber_ctx/...);
+без явного root они собрались бы (§П3). GC_remove_roots в shutdown.
+
+Изменено: fiber_arena_win.c (переписан), fiber_arena.h (декларации
+nova_fiber_arena_thread_exit/release_retired), fiber_arena.c (POSIX
+no-op stubs), runtime.c (worker arena lifecycle + GC_add_roots).
+
+Верификация: nova test concurrency 75 PASS / 0 FAIL (вкл. все mn_*,
+parallel_for*, mn_runtime_init_shutdown_cycles); полный nova test
+1058 PASS / 0 FAIL / 56 SKIP — 0 регрессий. Standalone-харнесс
+f1_gc_test.c оставлен single-thread (T1-T4) — multi-thread под-тесты
+упирались в harness-специфику ручного управления Boehm-потоками без
+libuv-структуры worker'а; multi-worker GC валидируется nova test M:N.
+
+simplifications.md: [M-82-gc-mn-deferred] ✅ ЗАКРЫТ. Отчёт —
+82-artifacts/f1-report.md §7. Осталось: Ф.4 тест-матрица, Ф.5
+context-switch бенчмарк, Ф.6 spec D97 + закрытие 44.3.
