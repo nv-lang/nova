@@ -10604,37 +10604,36 @@ Plan 52.2 и 52.3 → ✅ ЗАКРЫТЫ. Suite: 960 PASS / 0 FAIL.
   нужен; экономия только на паттерне «1 spawn → 1 worker».
 ## Plan 85.3 — протоколы конверсии: тестовое покрытие (2026-05-22)
 
-### [M-generic-static-method-on-typevar]
+### [M-generic-static-method-on-typevar] ✅ ЗАКРЫТО (Plan 88, 2026-05-22)
 - **Где:** `compiler-codegen/src/codegen/emit_c.rs` — монoморфизация
   generic-функций (Plan 48).
-- **Что упрощено:** вызов static-метода на type-параметре внутри тела
-  generic-функции — `fn wrap[T From[str]](s str) -> T => T.from(s)` —
-  не мономорфизируется. Codegen эмитит литеральный `nova_fn_T_from`
-  (T не подставляется в obj-позиции static-вызова) → undefined symbol
-  на линковке. Аналогично `Result[T, E]` с type-параметром в return-
-  позиции generic-функции даёт unsubstituted `Nova_Result_...`.
-- **Что РАБОТАЕТ:** (а) bound `[T From[X]]` / `[T TryFrom[X, E]]`
-  парсится и enforced type-checker'ом (Plan 15) — тип без impl
-  отвергается диагностикой `does not satisfy`; (б) generic-функция с
-  conversion-bound инстанцируется и исполняется, если T используется
-  как value-тип (без `T.from` внутри тела); (в) instance-метод на
-  type-параметре (`it.next()` для `[T Iter[U]]`) мономорфизируется
-  корректно.
-- **Почему:** static-method dispatch через type-параметр требует
-  подстановки T в obj-позиции member-call при mono-эмиссии + mono
-  generic `Result[T, E]`. Самостоятельная задача монoморфизатора
-  (Plan 48 / followup), вне bootstrap-объёма. Уже отмечалось как
-  bootstrap-ограничение в Plan 62.E (nova_tests/plan62/
-  tryfrom_tryinto_from_prelude.nv — bound-функции «не вызываются»).
-- **Как чинить:** в `emit_c.rs` static-call resolution — при
-  `obj = Ident(n)`, где `n ∈ current_type_subst`, резолвить `n` в
-  concrete Nova-тип (`nova_type_name_from_c`) и далее обычный
-  static-dispatch; отдельно — mono `Result[T, E]` return-типа.
-- **Приоритет:** M (idiom `T.from(v)` в generic-коде; обходится
-  конверсией на call-site).
-- **Тесты:** nova_tests/protocols/conversion/generic_from_bound.nv,
-  generic_try_bound.nv (probe — bound parse + инстанцирование),
-  neg_missing_impl.nv (enforcement негатив).
+- **Что упрощено было:** вызов static-метода на type-параметре внутри
+  тела generic-функции — `fn wrap[T From[str]](s str) -> T => T.from(s)`
+  — не мономорфизировался. Codegen эмитил литеральный `nova_fn_T_from`
+  (T не подставлялся в obj-позиции static-вызова) → undefined symbol
+  на линковке. `Result[T, E]` с type-параметром в return-позиции
+  generic-функции мангл'ился `Nova_Result____<ok>__<err>` вместо
+  объявленного `NovaRes_<ok>_<err>` → CC-FAIL «unknown type name».
+- **Как починено (Plan 88):** Ф.0 аудит (8 probe-фикстур) выделил два
+  дефекта. **D1** — Path-обработчик static-call (`emit_c.rs`,
+  ветка `parts.len() == 2`): `T.from` парсится как `Path(["T","from"])`;
+  добавлен резолв `parts[0] ∈ current_type_subst` → concrete
+  Nova-тип (`recv_seg`), дальше overload-aware static-dispatch
+  `Nova_<Type>_static_<method>`. **D2** — `apply_type_subst_to_ref`
+  получила спец-ветку для `Result[T,E]` → `NovaRes_<ok>_<err>*`
+  (зеркало ветки `Option`). Аналогичный резолв добавлен и в
+  Member-обработчик (`recv_type_name`). `Option[T]`/`[]T`/`Box[T]`
+  return-позиции — уже работали (Ф.0 подтвердил), не трогались.
+- **Результат:** D72-канонический `fn func[K, T From[K]](v K) -> T =>
+  T.from(v)` компилируется/линкуется/работает (Rust-паритет).
+  `T.from`/`T.try_from`/`T.new` (user-defined) на typevar — все
+  работают (обобщённый путь). Soundness: до фикса все отказы были
+  loud (link/CC-FAIL), silent-wrong не было.
+- **Тесты:** `nova_tests/plan88/` (static_from / static_methods /
+  d72_canonical / result_return / neg_bound_violation);
+  `nova_tests/protocols/conversion/generic_from_bound.nv` +
+  `generic_try_bound.nv` переписаны с probe-формы на прямой
+  `T.from` / `T.try_from` внутри generic-тела.
 
 ## Plan 85.5 — Iter[T] тестовое покрытие (2026-05-22)
 
