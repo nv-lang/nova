@@ -1,0 +1,30 @@
+// Plan 88 Ф.2.1 — type-параметр в return-позиции generic-функции:
+// `Result[T, E]` и `Option[T]` мономорфизируются (T подставляется,
+// C-имя резолвится в concrete `NovaRes_<ok>_<err>` / `NovaOpt_<T>`).
+//
+// До Plan 88: `Result[T,E]` в return давал unsubstituted-mangle
+// `Nova_Result____<ok>__<err>` (CC-FAIL «unknown type name»).
+
+module nova_tests.plan88.result_return
+
+
+fn ok_of[T](x T) -> Result[T, str] => Ok(x)
+fn some_of[T](x T) -> Option[T] => Some(x)
+
+
+test "generic fn → Result[T, E] мономорфизируется" {
+    let r = ok_of[int](42)
+    assert(r.is_ok())
+}
+
+test "generic fn → Option[T] мономорфизируется" {
+    let o = some_of[int](7)
+    assert(o == Some(7))
+}
+
+test "Result[T,E] return — несколько инстансов" {
+    let ri = ok_of[int](1)
+    let rs = ok_of[str]("x")
+    assert(ri.is_ok())
+    assert(rs.is_ok())
+}
