@@ -1,0 +1,52 @@
+// Plan 85.3 Ф.3 — generic bound `[T From[X]]`.
+//
+// D72: имя протокола в bound-позиции generic-параметра. Здесь
+// проверяется: (1) bound парсится; (2) generic-функция с From-bound
+// инстанцируется и работает; (3) bound enforced — `T` обязан
+// реализовать `From[X]` (негатив — neg_missing_impl.nv).
+//
+// ОГРАНИЧЕНИЕ (bootstrap): вызов `T.from(...)` ВНУТРИ тела generic-
+// функции (где `T` — type-параметр) не мономорфизируется — см.
+// simplifications.md [M-generic-static-method-on-typevar]. Поэтому
+// конверсия здесь выполняется на call-site (concrete `Name.from`),
+// а type-параметр используется как обычный value-тип.
+
+module conversion.generic_from_bound
+
+
+type Name { s str }
+fn Name.from(v str) -> Name => { s: v }
+
+type Boxed { n int }
+fn Boxed.from(v int) -> Boxed => { n: v }
+
+
+// Generic-функция с From[str]-bound. T — value-тип; bound проверяется
+// type-checker'ом на call-site (T обязан реализовать From[str]).
+fn pick[T From[str]](a T, b T, use_first bool) -> T =>
+    if use_first { a } else { b }
+
+// Generic-функция с From[int]-bound.
+fn identity[T From[int]](x T) -> T => x
+
+
+test "generic From[str]-bound — инстанцирование + первая ветка" {
+    let r = pick[Name](Name.from("alpha"), Name.from("beta"), true)
+    assert(r.s == "alpha")
+}
+
+test "generic From[str]-bound — вторая ветка" {
+    let r = pick[Name](Name.from("x"), Name.from("y"), false)
+    assert(r.s == "y")
+}
+
+test "generic From[int]-bound — identity" {
+    let b = identity[Boxed](Boxed.from(99))
+    assert(b.n == 99)
+}
+
+test "From-bound satisfied — конверсия через .into() на call-site" {
+    let made Name = "made".into()
+    let r = pick[Name](made, Name.from("other"), true)
+    assert(r.s == "made")
+}

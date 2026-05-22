@@ -1,9 +1,21 @@
 # Plan 85 — Полное тестовое покрытие встроенных типов и протоколов
 
-> **Статус:** 📋 proposed 2026-05-22, не начат
+> **Статус:** ✅ ЗАКРЫТ 2026-05-22 (85.1–85.5)
 > **Приоритет:** P1
 > **Оценка:** ~2 недели (5 sub-plans параллельно или последовательно)
 > **Зависимости:** Plan 75 (str coverage — паттерны тестирования) ✅
+>
+> **Итог:** все 5 sub-plans закрыты. 47 новых тест-файлов в
+> `nova_tests/{str_builder,buffers,protocols/{conversion,comparison,iter}}/`.
+> Найдено и **исправлено 4 codegen-бага**:
+> 1. D73 `.into()` auto-derive игнорировал overload-резолюцию `from`.
+> 2. `char.hash()` mis-dispatch на user-метод → segfault.
+> 3. `==`/`!=` на типе с user `@eq` эмитил `->tag` вместо dispatch.
+> 4. generic-функция с concrete non-primitive return (`-> Ordering`)
+>    инферилась как `void*` на call-site.
+>
+> Documented limitations: `[M-generic-static-method-on-typevar]`,
+> `[M-for-in-explicit-elem-type]`. Регрессий — 0.
 
 ## Зачем
 
@@ -32,10 +44,10 @@
 
 ## Acceptance criteria
 
-- [ ] Каждый метод каждого типа — ≥1 тест
-- [ ] Каждый Err/None-путь — отдельный тест
-- [ ] Все найденные codegen-баги — либо исправлены, либо documented
-- [ ] `nova test` — 0 новых FAIL относительно baseline
+- [x] Каждый метод каждого типа — ≥1 тест
+- [x] Каждый Err/None-путь — отдельный тест
+- [x] Все найденные codegen-баги — 4 исправлены; 2 ограничения documented
+- [x] `nova test` — 0 новых FAIL относительно baseline (958 → 1005)
 
 ## Non-scope
 

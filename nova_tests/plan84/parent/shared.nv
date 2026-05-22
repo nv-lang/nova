@@ -1,0 +1,8 @@
+// Plan 84 Ф.5 — модуль уровнем выше, импортируется через `../shared`.
+module nova_tests.plan84.parent.shared
+
+export fn base() -> int => 100
+
+test "shared self-check" {
+    assert(base() == 100)
+}

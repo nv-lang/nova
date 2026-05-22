@@ -1,0 +1,67 @@
+// Plan 85.3 Ф.1 — From[T]: один тип, несколько источников.
+//
+// Один тип может реализовать `From` от нескольких типов-источников
+// (overload static-метода `from` по типу аргумента, D84). Каждый
+// порождает свою auto-derived форму `.into()`.
+
+module conversion.from_multi
+
+
+type MyNum { val int }
+
+// From[int] — прямое значение.
+fn MyNum.from(v int) -> MyNum => { val: v }
+
+// From[str] — длина строки в codepoint'ах.
+fn MyNum.from(s str) -> MyNum => { val: s.len() }
+
+// From[bool] — 1 или 0.
+fn MyNum.from(b bool) -> MyNum => { val: if b { 1 } else { 0 } }
+
+
+test "From[int] — прямое значение" {
+    let n = MyNum.from(42)
+    assert(n.val == 42)
+}
+
+test "From[str] — длина строки" {
+    let n = MyNum.from("hello")
+    assert(n.val == 5)
+}
+
+test "From[str] — Unicode длина codepoint'ов" {
+    let n = MyNum.from("Привет")
+    assert(n.val == 6)
+}
+
+test "From[bool] — true -> 1" {
+    let n = MyNum.from(true)
+    assert(n.val == 1)
+}
+
+test "From[bool] — false -> 0" {
+    let n = MyNum.from(false)
+    assert(n.val == 0)
+}
+
+test "overload разрешается по типу аргумента" {
+    let from_int = MyNum.from(100)
+    let from_str = MyNum.from("ab")
+    let from_bool = MyNum.from(true)
+    assert(from_int.val == 100)
+    assert(from_str.val == 2)
+    assert(from_bool.val == 1)
+}
+
+
+// ── auto-derive .into() для каждого источника ─────────────────────
+
+test "int -> MyNum через .into()" {
+    let n MyNum = (7).into()
+    assert(n.val == 7)
+}
+
+test "str -> MyNum через .into()" {
+    let n MyNum = "xyz".into()
+    assert(n.val == 3)
+}

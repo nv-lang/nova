@@ -1,0 +1,19 @@
+// EXPECT_COMPILE_ERROR does not satisfy
+//
+// Plan 85.3 Ф.3 — негатив: тип без From[str] в bound-позиции.
+//
+// `wrap` требует `[T From[str]]`. `NoFrom` не реализует
+// `fn NoFrom.from(s str)` → подстановка `T = NoFrom` нарушает bound
+// (D72) → compile error.
+
+module conversion.neg_missing_impl
+
+
+type NoFrom { x int }            // НЕ реализует From[str]
+
+fn wrap[T From[str]](s str) -> T => T.from(s)
+
+test "тип без From[str] в generic bound — compile error" {
+    let bad = wrap[NoFrom]("oops")    // ← ОШИБКА: NoFrom does not satisfy From[str]
+    assert(bad.x == 0)
+}

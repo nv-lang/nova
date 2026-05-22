@@ -1,0 +1,35 @@
+// Plan 85.5 Ф.1 — Iter[T]: пустой итератор.
+//
+// Итератор, который сразу отдаёт None — for-in тело не выполняется
+// ни разу.
+
+module iter.empty_iter
+
+
+type EmptyIter { placeholder int }
+
+fn EmptyIter.new() -> EmptyIter => { placeholder: 0 }
+
+fn EmptyIter mut @next() -> Option[int] => None
+
+
+test "empty iter — next() сразу None" {
+    let mut e = EmptyIter.new()
+    assert(e.next() == None)
+}
+
+test "empty iter — повторный next() остаётся None" {
+    let mut e = EmptyIter.new()
+    assert(e.next() == None)
+    assert(e.next() == None)
+    assert(e.next() == None)
+}
+
+test "empty iter — for-in тело не выполняется" {
+    let mut count = 0
+    let e = EmptyIter.new()
+    for _ in e {
+        count = count + 1
+    }
+    assert(count == 0)
+}
