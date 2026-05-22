@@ -39,7 +39,11 @@
 
 use crate::git_cache;
 use crate::manifest::{DepSource, GitPin};
+use crate::resolver::{self, DependencyProvider, PkgId};
+use crate::semver::{Version, VersionReq};
 use anyhow::{anyhow, bail, Context, Result};
+use std::cell::RefCell;
+use std::collections::HashMap;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
@@ -339,6 +343,10 @@ pub fn sync(entry_pkg_dir: &Path) -> Result<Vec<LockedDep>> {
     if let Some(ex) = &existing {
         git_cache::install_lock_entries(ex.git_pins());
     }
+    // Plan 03.2 Ф.3: согласованный резолв версионных git-зависимостей
+    // (`version = "^1.2"`) — до обхода графа, чтобы collect_dep_graph
+    // взял зафиксированные резолвером commit'ы.
+    resolve_version_deps(entry_pkg_dir)?;
     let graph = collect_dep_graph(entry_pkg_dir)?;
     // Не плодим `nova.lock` на ровном месте: пустой граф и файла ещё нет
     // — фиксировать нечего. Если lock уже был (зависимости убрали) —
@@ -395,6 +403,136 @@ pub fn update(entry_pkg_dir: &Path, only: Option<&str>) -> Result<Vec<LockedDep>
             .with_context(|| format!("запись {}", path.display()))?;
     }
     sync(entry_pkg_dir)
+}
+
+// ---------------------------------------------------------------------
+// Plan 03.2 Ф.3 — git-backed DependencyProvider + интеграция резолвера.
+// ---------------------------------------------------------------------
+
+/// `DependencyProvider` поверх git: версии пакета — semver-теги
+/// репозитория, зависимости версии — `[dependencies]` из `nova.toml` на
+/// соответствующем теге. `PkgId` = git-URL.
+///
+/// `resolve_git_dep_in` вызывается напрямую (в обход lock-таблицы) —
+/// провайдер обязан видеть РЕАЛЬНЫЕ теги, а не зафиксированный commit.
+struct GitProvider {
+    /// url → (version, tag-name), отсортировано — кэш `list_versions`.
+    versions: RefCell<HashMap<String, Vec<(Version, String)>>>,
+    /// (url, version) → зависимости — кэш разобранных `nova.toml`.
+    deps: RefCell<HashMap<(String, String), Vec<(PkgId, VersionReq)>>>,
+}
+
+impl GitProvider {
+    fn new() -> GitProvider {
+        GitProvider {
+            versions: RefCell::new(HashMap::new()),
+            deps: RefCell::new(HashMap::new()),
+        }
+    }
+
+    fn versions_with_tags(&self, url: &str) -> Result<Vec<(Version, String)>, String> {
+        if let Some(c) = self.versions.borrow().get(url) {
+            return Ok(c.clone());
+        }
+        let vs = git_cache::list_versions(url).map_err(|e| e.to_string())?;
+        self.versions.borrow_mut().insert(url.to_string(), vs.clone());
+        Ok(vs)
+    }
+
+    fn tag_of(&self, url: &str, ver: &Version) -> Result<String, String> {
+        self.versions_with_tags(url)?
+            .into_iter()
+            .find(|(v, _)| v == ver)
+            .map(|(_, t)| t)
+            .ok_or_else(|| format!("версия {} пакета `{}` не найдена среди тегов", ver, url))
+    }
+
+    /// Точный commit выбранной версии — для записи в lock-таблицу.
+    fn commit_of(&self, url: &str, ver: &Version) -> Result<String> {
+        let tag = self.tag_of(url, ver).map_err(|e| anyhow!(e))?;
+        let root = git_cache::git_cache_root()?;
+        let res = git_cache::resolve_git_dep_in(&root, url, &GitPin::Tag(tag), None)?;
+        Ok(res.commit)
+    }
+}
+
+impl DependencyProvider for GitProvider {
+    fn available_versions(&self, pkg: &PkgId) -> Result<Vec<Version>, String> {
+        Ok(self
+            .versions_with_tags(pkg)?
+            .into_iter()
+            .map(|(v, _)| v)
+            .collect())
+    }
+
+    fn dependencies(
+        &self,
+        pkg: &PkgId,
+        ver: &Version,
+    ) -> Result<Vec<(PkgId, VersionReq)>, String> {
+        let key = (pkg.clone(), ver.to_string());
+        if let Some(c) = self.deps.borrow().get(&key) {
+            return Ok(c.clone());
+        }
+        let tag = self.tag_of(pkg, ver)?;
+        let root = git_cache::git_cache_root().map_err(|e| e.to_string())?;
+        let res = git_cache::resolve_git_dep_in(&root, pkg, &GitPin::Tag(tag), None)
+            .map_err(|e| e.to_string())?;
+        let toml = res.checkout.join("nova.toml");
+        let manifest = crate::manifest::parse_manifest(&toml, &res.checkout)
+            .ok_or_else(|| {
+                format!("git-пакет `{}`@{}: нет `[package]` в nova.toml", pkg, ver)
+            })?;
+        // В граф версий идут только версионные git-зависимости; path /
+        // точечные git-deps резолвятся обычным обходом collect_dep_graph.
+        let mut out = Vec::new();
+        for d in &manifest.dependencies {
+            if let DepSource::Git { url, pin: GitPin::Version(req) } = &d.source {
+                out.push((url.clone(), req.clone()));
+            }
+        }
+        self.deps.borrow_mut().insert(key, out.clone());
+        Ok(out)
+    }
+}
+
+/// Plan 03.2 Ф.3: согласованно разрешить версионные git-зависимости
+/// пакета `entry_pkg_dir` и зафиксировать выбранные commit'ы в
+/// `git_cache`-таблице пинов — дальше `collect_dep_graph` берёт именно
+/// их (одна версия на пакет на всё дерево).
+///
+/// Реагирует только на `{ git = "...", version = "..." }`-зависимости;
+/// при их отсутствии — no-op.
+fn resolve_version_deps(entry_pkg_dir: &Path) -> Result<()> {
+    let toml = entry_pkg_dir.join("nova.toml");
+    let Some(manifest) = crate::manifest::parse_manifest(&toml, entry_pkg_dir) else {
+        return Ok(());
+    };
+    let root_version_deps: Vec<(PkgId, VersionReq)> = manifest
+        .dependencies
+        .iter()
+        .filter_map(|d| match &d.source {
+            DepSource::Git { url, pin: GitPin::Version(req) } => {
+                Some((url.clone(), req.clone()))
+            }
+            _ => None,
+        })
+        .collect();
+    if root_version_deps.is_empty() {
+        return Ok(());
+    }
+    let provider = GitProvider::new();
+    let resolution = resolver::resolve(&provider, &root_version_deps)
+        .map_err(|e| anyhow!("резолв версий git-зависимостей:\n  {}", e))?;
+    let mut entries: Vec<(String, String)> = Vec::new();
+    for (url, ver) in &resolution.selected {
+        let commit = provider
+            .commit_of(url, ver)
+            .with_context(|| format!("commit версии {} пакета `{}`", ver, url))?;
+        entries.push((url.clone(), commit));
+    }
+    git_cache::install_lock_entries(entries);
+    Ok(())
 }
 
 #[cfg(test)]
