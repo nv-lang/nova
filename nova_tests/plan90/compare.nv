@@ -1,0 +1,29 @@
+// Plan 90 Ф.4.2 — []u8.compare: memcmp-класс, один примитив.
+// equality (== 0) — частный случай.
+
+module nova_tests.plan90.compare
+
+
+test "compare — равно / меньше / больше" {
+    let a []u8 = [1, 2, 3]
+    let b []u8 = [1, 2, 3]
+    let c []u8 = [1, 2, 4]
+    assert(a.compare(b) == 0)
+    assert(a.compare(c) < 0)
+    assert(c.compare(a) > 0)
+}
+
+test "compare — разная длина (префиксное отношение)" {
+    let pre []u8 = [1, 2]
+    let full []u8 = [1, 2, 3]
+    assert(pre.compare(full) < 0)
+    assert(full.compare(pre) > 0)
+}
+
+test "compare — пустой срез" {
+    let empty []u8 = []
+    let one []u8 = [0]
+    assert(empty.compare(empty) == 0)
+    assert(empty.compare(one) < 0)
+    assert(one.compare(empty) > 0)
+}
