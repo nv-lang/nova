@@ -715,15 +715,13 @@ static inline nova_bool nova_result_eq(NovaRes_nova_int_nova_str* a, NovaRes_nov
     return nova_str_eq(a->payload.Err._0, b->payload.Err._0);
 }
 
-/* ---- D26 Result methods: is_ok / is_err / unwrap_or / ok ----
+/* ---- D26 Result methods: unwrap_or / ok ----
  * Plan 59 Ф.7.5 D3: суффикс `_nova_int_nova_str` — инстанс семейства
- * `Nova_Result_method_*_<n>`. Back-compat алиасы без суффикса ниже. */
-static inline nova_bool Nova_Result_method_is_ok_nova_int_nova_str(NovaRes_nova_int_nova_str* r) {
-    return r->tag == NOVA_TAG_Result_Ok;
-}
-static inline nova_bool Nova_Result_method_is_err_nova_int_nova_str(NovaRes_nova_int_nova_str* r) {
-    return r->tag == NOVA_TAG_Result_Err;
-}
+ * `Nova_Result_method_*_<n>`. Back-compat алиасы без суффикса ниже.
+ *
+ * Plan 95 Ф.5.2: `is_ok` / `is_err` УДАЛЕНЫ — перенесены на Nova-body
+ * в std/prelude/core.nv; mono'd через DeclaredBody-dispatch + worklist
+ * drain. C-redefinition collision (тот же C-symbol) если оставить. */
 static inline nova_int Nova_Result_method_unwrap_or_nova_int_nova_str(NovaRes_nova_int_nova_str* r, nova_int default_v) {
     return r->tag == NOVA_TAG_Result_Ok ? r->payload.Ok._0 : default_v;
 }
@@ -736,9 +734,8 @@ static inline NovaOpt_nova_int Nova_Result_method_ok_nova_int_nova_str(NovaRes_n
     }
     return o;
 }
-/* Back-compat алиасы (шаг E удалит). */
-#define Nova_Result_method_is_ok     Nova_Result_method_is_ok_nova_int_nova_str
-#define Nova_Result_method_is_err    Nova_Result_method_is_err_nova_int_nova_str
+/* Back-compat алиасы (шаг E удалит). is_ok/is_err алиасы убраны —
+ * Plan 95 Ф.5.2 (Nova-body перенос). */
 #define Nova_Result_method_unwrap_or Nova_Result_method_unwrap_or_nova_int_nova_str
 #define Nova_Result_method_ok        Nova_Result_method_ok_nova_int_nova_str
 

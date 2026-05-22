@@ -411,15 +411,11 @@ impl SumSchemaRegistry {
 
         // Method routing для Result — mirror emit_c.rs:11727-11854.
         // Non-per-T (single trampoline принимает nova_int compromise).
+        //
+        // Plan 95 Ф.5.2: `is_ok` / `is_err` УДАЛЕНЫ — перенесены на
+        // Nova-body в std/prelude/core.nv, routing регистрируется как
+        // `DeclaredBody` через `init_prelude_decls_from_items`.
         let mut result_methods = HashMap::new();
-        result_methods.insert("is_ok".to_string(), MethodRouting::HardcodedRuntimeFn {
-            c_name: "Nova_Result_method_is_ok".to_string(),
-            is_per_t: false,
-        });
-        result_methods.insert("is_err".to_string(), MethodRouting::HardcodedRuntimeFn {
-            c_name: "Nova_Result_method_is_err".to_string(),
-            is_per_t: false,
-        });
         result_methods.insert("ok".to_string(), MethodRouting::HardcodedRuntimeFn {
             c_name: "Nova_Result_method_ok".to_string(),
             is_per_t: false,
