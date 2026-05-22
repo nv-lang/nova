@@ -10674,3 +10674,18 @@ Plan 52.2 и 52.3 → ✅ ЗАКРЫТЫ. Suite: 960 PASS / 0 FAIL.
   через отдельный механизм. Пока не нужно.
 - **Приоритет:** L — oversubscription ограничена малыми N; bench (где
   точность критична) уже жёстко NOVA_MAXPROCS=1.
+
+## Plan 83.3 Ф.1 — runtime blocking-offload (2026-05-22)
+
+### [M-83.3-blocking-leaf-contract] V1: blocking-работа обязана быть leaf
+- **Где:** `compiler-codegen/nova_rt/fibers.h` — `nova_blocking_offload`.
+- **Что упрощено:** `work_cb` выполняется на потоке libuv threadpool,
+  не зарегистрированном в Boehm GC и не являющемся fiber'ом. V1-контракт
+  (D50): blocking-работа (`fn`) — leaf: FFI/syscall без GC-аллокации и
+  без вызовов обратно в Nova-рантайм.
+- **Почему:** покрывает основной use-case (блокирующий FFI). GC-
+  регистрация threadpool-потоков — отдельная инфраструктура.
+- **Как чинить:** V2 (Plan 83.3 Ф.2 followup) — `GC_register_my_thread`
+  once-per-thread для threadpool-потоков через TLS-флаг → разрешит
+  произвольный Nova-код под `Blocking`.
+- **Приоритет:** L — V1 достаточно для целевого паритета (FFI-offload).
