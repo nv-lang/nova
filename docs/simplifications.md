@@ -10584,3 +10584,43 @@ negative-тест `negative_user_from_pairs_shadows.nv`. Не блокер, вн
 этой closure.
 
 Plan 52.2 и 52.3 → ✅ ЗАКРЫТЫ. Suite: 960 PASS / 0 FAIL.
+
+---
+
+## Plan 03.1 — path/git-зависимости (2026-05-22)
+
+### [M-03.1-no-sha256-tree-hash] nova.lock пинит commit без sha256 дерева
+
+- **Где** — `compiler-codegen/src/lockfile.rs`, формат `nova.lock`.
+- **Что упрощено** — `git`-записи lockfile содержат `commit`, но НЕ
+  отдельный `sha256` дерева исходников (D78 §3.3 его упоминал).
+- **Почему** — git-commit сам по себе криптографически адресует дерево:
+  подменить содержимое без смены commit'а нельзя (паритет с многолетним
+  поведением `Cargo.lock`). Отдельный sha256 защищал бы лишь от
+  SHA-1-collision-атаки на git-сервер. Bootstrap-компилятор намеренно
+  без сторонних crate-зависимостей (`compiler-codegen/Cargo.toml`:
+  только `clap` + `anyhow`) — собственная крипто-реализация это
+  отдельный осознанный концерн, не «попутно».
+- **Как чинить** — Plan 03.4 (supply-chain hardening): sha256/BLAKE3
+  дерева + подписи + transparency log + `nova audit`. Формат `nova.lock`
+  forward-совместим (неизвестные ключи игнорируются) — поле добавляется
+  без format-break.
+- **Приоритет** — L (commit-пин уже tamper-evident для практической
+  модели угроз).
+
+### [M-03.1-deferred-resolution] нет version-ranges / registry / SAT
+
+- **Где** — резолюция зависимостей в целом.
+- **Что упрощено** — `[dependencies]` поддерживает `path`/`git` и
+  парсит registry-версию `"1.2"`, но version-ranges (`^1.2`),
+  SAT/pubgrub-резолюцию и central registry **не** делает.
+- **Почему** — для `path`/`git` источник пинится точно (путём либо
+  commit'ом), SAT-resolver не нужен by construction. Это декомпозиция
+  Plan 03, а не срезанный угол: 03.1 **полностью** закрывает резолюцию
+  `path`/`git` (resolution + lockfile + reproducibility).
+- **Как чинить** — Plan 03.2 (version-ranges + pubgrub), Plan 03.3
+  (registry). registry-форма в `[dependencies]` уже парсится → 03.3
+  не ломает формат.
+- **Приоритет** — L (отдельные под-планы с собственным scope).
+
+Plan 03.1 (Ф.1–Ф.6) → ✅ ЗАКРЫТ. Suite: 983 PASS / 0 FAIL.

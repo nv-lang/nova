@@ -1,17 +1,20 @@
-//! D78 path/module enforcement.
+//! D78 path/module enforcement + `[dependencies]` (Plan 03.1).
 //!
-//! Walk parent dirs от файла, ищем `nova.toml`. Из него извлекаем:
-//!   - `[package].name` (default: dir name)
-//!   - `[lib].src` (default: "src")
+//! Walk parent dirs от файла, ищем `nova.toml`. Из него извлекаем
+//! `[package].name`, `[package].edition`, `[lib].enforce-stability` и
+//! `[dependencies]`.
 //!
-//! Source root = nova.toml dir + (`[lib].src` или `src/`).
-//! Expected module = `<package>.<rel-path-from-src-without-ext>`.
+//! **Source root = корень пакета** (директория `nova.toml`). D78
+//! (2026-05-22): отдельной `src/` и настройки `[lib] src` больше нет;
+//! `[lib] src`, если задан в legacy-манифесте, ещё уважается.
+//! Expected module = `<package>.<rel-path-from-package-root-without-ext>`.
 //!
 //! Если файл лежит **вне** source root — пропускаем enforcement (это
 //! может быть test, example, scratch — не часть пакета).
 //!
-//! Минимальный TOML-парсер: ищем только `name = "..."` в `[package]` и
-//! `src = "..."` в `[lib]`. Не подтягиваем full TOML crate ради bootstrap'а.
+//! Минимальный TOML-парсер (без full TOML crate ради bootstrap'а):
+//! `key = "..."` по секциям + array-of-tables не нужен (`[dependencies]`
+//! — плоская секция `name = <spec>`).
 
 use std::path::{Path, PathBuf};
 
@@ -235,7 +238,10 @@ pub fn parse_manifest(toml_path: &Path, dir: &Path) -> Option<Manifest> {
     }
 
     let pkg = package_name?;
-    let src_subdir = lib_src.unwrap_or_else(|| "src".to_string());
+    // D78 (2026-05-22): source root = корень пакета. Отдельной `src/`
+    // и настройки `[lib] src` больше нет — default `.`. `[lib] src`,
+    // если задан в legacy-манифесте, ещё уважается (back-compat).
+    let src_subdir = lib_src.unwrap_or_else(|| ".".to_string());
     let source_root = if src_subdir == "." {
         dir.to_path_buf()
     } else {

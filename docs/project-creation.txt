@@ -17508,3 +17508,51 @@ Package-scoped относительные импорты модулей. Worktre
 nova test --filter plan84: 12 PASS / 0 FAIL (end-to-end:
 codegen+run позитива, корректный отказ негатива).
 Suite: 972 PASS / 0 FAIL / 56 SKIP (полный регресс — 0 регрессий).
+
+==================================================================
+## Plan 03.1 — path/git-зависимости (Ф.1–Ф.6 ✅, 2026-05-22)
+==================================================================
+
+Первый исполнимый срез экосистемы пакетов: внешние зависимости
+через `path` и `git` + воспроизводимый `nova.lock`. Без registry,
+без version-ranges, без SAT — это декомпозиция (03.2/03.3/03.4),
+не упрощение. Ветка plan-3-deps, worktree nova-p3-deps.
+
+- Ф.1 (manifest.rs): парсинг секции [dependencies] — типы
+  Dependency / DepSource { Path | Git{url,pin} | Registry | Invalid }
+  / GitPin { Rev|Tag|Branch|Default }; quote-aware inline-таблицы.
+- Ф.2 (git_cache.rs): материализация git-зависимостей —
+  resolve_git_dep(url,pin,locked) → bare-клон в $NOVA_HOME/git/db,
+  worktree-checkout по точному commit'у в co/<repo-id>/<commit>.
+  Резолв rev/tag/branch/default через git rev-parse; offline-режим
+  NOVA_OFFLINE; process-memo. git-зависимость сворачивается в
+  обычный path-резолв через checkout.
+- Ф.3 (imports.rs): межпакетный резолв — lookup_dependency ищет
+  первый сегмент import-пути среди [dependencies], dep_root
+  проброшен в resolve_module_paths. Ужесточена repo-root looseness
+  (§3.2): импорт в чужой пакет без [dependencies] отвергается.
+  Cross-package cycle detection переиспользует module-name-keyed
+  механизм; rule H internal/ через границу пакета — по filesystem-
+  containment; verify_case сделан dep-aware (логический первый
+  сегмент не сверяется с именем директории).
+- Ф.4 (lockfile.rs): nova.lock — формат (version + [[package]]),
+  collect_dep_graph (транзитивный обход, package-cycle detection),
+  sync из nova build. git_cache lock-таблица пинов: git-branch-
+  зависимость не «уезжает» после первого sync. commit как
+  integrity-пин (git-commit криптографически адресует дерево).
+- Ф.5 (main.rs): CLI nova add / nova update — правка
+  [dependencies] в nova.toml + обновление nova.lock; update
+  снимает целевые git-пины и пере-резолвит.
+- Ф.6: spec D78 — раздел «Реализация: Plan 03.1»; manifest.rs
+  приведён к D78 (source root = корень пакета, default src → ".");
+  docs/nova-cli.md + .ru.md — nova add / update, NOVA_HOME/OFFLINE.
+
+Дизайн: explicit dependency-граф (Cargo-модель) — workspace-
+членство само по себе пакет импортируемым НЕ делает; std —
+неявное исключение. Отложено: sha256-хэш дерева + подписи + SBOM
+(03.4), version-ranges + SAT/pubgrub (03.2), registry (03.3).
+
+Тесты: 11 фикстур nova_tests/plan03_1/ + 18 Rust-тестов
+(git_cache/lockfile unit + git_dep_e2e + lockfile_repro +
+insert_dependency). Suite: 983 PASS / 0 FAIL / 56 SKIP — 0
+регрессий.
