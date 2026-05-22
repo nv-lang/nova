@@ -24,7 +24,10 @@ test "runtime.is_initialized: bool" {
 test "runtime.init и shutdown: идемпотентный цикл" {
     runtime.init(1)
     assert(runtime.is_initialized() == true)
-    assert(runtime.worker_count() >= 1)
+    // Plan 83.1 Ф.4: пул ленивый — maxprocs() = цель, worker_count() = 0
+    // до первого spawn.
+    assert(runtime.maxprocs() == 1)
+    assert(runtime.worker_count() == 0)
     runtime.shutdown()
     assert(runtime.is_initialized() == false)
     assert(runtime.worker_count() == 0)
@@ -49,6 +52,7 @@ test "runtime.yield: не падает вне fiber контекста" {
 test "runtime.init(0): auto-detect workers" {
     runtime.init(0)
     assert(runtime.is_initialized() == true)
-    assert(runtime.worker_count() >= 1)
+    // Plan 83.1 Ф.4: auto-detect → maxprocs() >= 1 (worker_count() ленив).
+    assert(runtime.maxprocs() >= 1)
     runtime.shutdown()
 }

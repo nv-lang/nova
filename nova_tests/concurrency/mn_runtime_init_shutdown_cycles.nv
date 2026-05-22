@@ -14,8 +14,9 @@ test "5 init/shutdown cycles + main sleep between" {
     let mut i = 0
     while i < 5 {
         runtime.init(2)
-        assert(runtime.worker_count() == 2)
-        // Workers idle — main thread может выполняться независимо.
+        // Plan 83.1 Ф.4: пул ленивый — без spawn worker'ы не подняты.
+        assert(runtime.maxprocs() == 2)
+        // Main thread может выполняться независимо.
         Time.sleep(2)
         runtime.shutdown()
         assert(runtime.worker_count() == 0)

@@ -15,42 +15,51 @@
 // значение → диагностика + fallback на auto-detect.
 //
 // API:
-//   runtime.init(n)          // поднять worker-пул (0 = auto/NOVA_MAXPROCS)
+//   runtime.init(n)          // ARM рантайм (0 = auto/NOVA_MAXPROCS)
 //   runtime.shutdown()       // graceful join всех worker'ов
 //   runtime.maxprocs()       // целевое число worker'ов (резолвится и до init)
-//   runtime.worker_count()   // фактически поднятые worker'ы (0 если не поднят)
-//   runtime.is_initialized() // bool — M:N-пул активен?
+//   runtime.worker_count()   // фактически поднятые worker'ы (0 до первого spawn)
+//   runtime.is_initialized() // bool — M:N запрошен (runtime.init вызван)?
 //   runtime.current_worker_id() // id worker'а (-1 = main thread)
 //   runtime.yield()          // кооперативный yield
 //
-// `runtime.init` — **одноразовый тюнер**: вызывается один раз до первого
-// spawn. Повторный вызов при уже поднятом пуле — диагностируемый no-op
-// (не молчаливый — баг конфигурации не маскируется). `runtime.shutdown()`
-// останавливает пул; после него `runtime.init` снова валиден.
+// **Lazy worker-пул (Plan 83.1 Ф.4, D137):** `runtime.init` НЕ создаёт
+// потоки сразу — лишь ARM'ит рантайм и фиксирует целевое число.
+// Worker-потоки + sysmon материализуются лениво на первом `spawn`.
+// Программа без `spawn` идёт на одном главном потоке. `runtime.init` —
+// **одноразовый тюнер**: до первого spawn повторный вызов валидно
+// переопределяет цель; после материализации пула — диагностируемый
+// no-op на stderr. `runtime.shutdown()` останавливает пул; после него
+// `runtime.init` снова валиден.
 
 module runtime.runtime
 
 
 // ─── runtime namespace ──────────────────────────────────────────
 
-/// Инициализировать M:N runtime с `n` worker threads.
+/// ARM M:N runtime с целевым числом `n` worker threads.
 ///
-/// `n = 0` → auto-detect через `uv_available_parallelism()`. Idempotent —
-/// повторный вызов no-op если runtime уже запущен.
+/// `n = 0` → auto-detect (`NOVA_MAXPROCS` / `uv_available_parallelism()`).
 ///
-/// Каждый worker имеет:
+/// **Lazy (Plan 83.1 Ф.4, D137):** `init` НЕ создаёт worker-потоки — лишь
+/// фиксирует целевое число. Пул материализуется на первом `spawn`. До
+/// первого spawn повторный `init` валидно переопределяет цель; после
+/// материализации `init` — диагностируемый no-op на stderr.
+///
+/// Каждый worker (после материализации) имеет:
 /// - собственный libuv event loop;
 /// - собственный fiber scope (worker-local push queue);
 /// - собственную fiber arena (Plan 44.2 Linux/macOS — lazily init per thread).
 ///
 /// # Effects
 ///
-/// Порождает `n` OS threads.
+/// Сам по себе потоков не порождает — пул поднимается на первом `spawn`.
 ///
 /// # See Also
 ///
 /// - `[runtime.shutdown]` — остановить workers
-/// - `[runtime.worker_count]` — текущее число workers
+/// - `[runtime.maxprocs]` — целевое число workers
+/// - `[runtime.worker_count]` — фактически поднятые workers
 #stable(since = "0.1")
 export external fn runtime.init(n int) -> ()
 

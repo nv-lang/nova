@@ -11,8 +11,8 @@ module concurrency.mn_maxprocs_invalid_env
 test "invalid NOVA_MAXPROCS falls back to auto-detect" {
     runtime.init(0)
     assert(runtime.is_initialized())
-    // fallback на auto-detect → worker_count > 0.
-    assert(runtime.worker_count() > 0)
+    // fallback на auto-detect → maxprocs() > 0 (пул ленивый, Ф.4).
+    assert(runtime.maxprocs() > 0)
     runtime.shutdown()
     assert(!runtime.is_initialized())
 }
