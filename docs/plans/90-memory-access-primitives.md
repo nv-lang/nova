@@ -1,6 +1,6 @@
 # Plan 90 — примитивы доступа к памяти (`byte_at`, bulk slice-операции) + аудит FFI / `unsafe`
 
-> **Статус:** 📋 proposed 2026-05-22 (production-grade), не начат
+> **Статус:** 🟡 в работе 2026-05-22 (worktree `nova-p90`, ветка `plan-90`) — Ф.0 ✅ (вариант A, safe-only)
 > **Приоритет:** P2 (enabler для миграции рантайма/stdlib на Nova и
 > высокопроизводительного байт-кода; текущий обход — поэлементный цикл,
 > лишние аллокации или `external fn` в C)
@@ -216,9 +216,65 @@ TS — полноценный язык **без сырых указателей*
 
 ## Итог Ф.0
 
-> Заполняется по результатам аудита: подтверждённый набор примитивов;
-> таблица «кейс сырого указателя → механизм / реальный gap»; выбор
-> A/B по Ф.0.3 + обоснование; контракт границ Ф.0.4. До аудита пусто.
+> Аудит выполнен 2026-05-22.
+
+### Ф.0.1 — подтверждённый набор примитивов
+
+| Примитив | Сигнатура | Назначение |
+|---|---|---|
+| `byte_at` | `fn str @byte_at(i int) -> u8` | O(1) чтение байта `str` для data-dependent сканов |
+| `compare` | `fn []u8 @compare(other []u8) -> int` | memcmp-класс, lexicographic; **один** примитив |
+| `copy_from` | `fn []T mut @copy_from(src []T)` | memcpy distinct-срезов |
+| `copy_within` | `fn []T mut @copy_within(src_from int, dst_from int, len int)` | memmove (overlap-safe) |
+| `fill` | `fn []T mut @fill(v T)` | memset/element-fill |
+
+`==`/`eq` для `[]u8` — **частный случай** `compare` (`compare == 0`);
+отдельного `bytes_equal` нет. Существующий `nova_array_eq` сохраняется
+для `[]T` (поэлементный) — `compare` добавляется только для `[]u8`.
+
+### Ф.0.2 — аудит `unsafe` / сырых указателей (6 кейсов)
+
+| Кейс сырого указателя | Механизм Nova | Gap? |
+|---|---|---|
+| 1. C-функция возвращает `void*`/`FILE*`/handle | `external type` (D126) — указатель спрятан | нет |
+| 2. Передача буфера в C, пишущий в него | `external fn` (D82): C получает `NovaArray_u8*` | нет |
+| 3. Pointer arithmetic (обход буфера) | `[]u8`/`str` + индекс / `byte_at` | нет |
+| 4. Reinterpret-cast | `to_bits`/`from_bits` (D74) + `WriteBuffer` | нет |
+| 5. Unchecked indexing ради perf | bounds-check elimination в компиляторе (модель Go) — отдельная оптимизация, не `unsafe` | нет (отложено как opt) |
+| 6. Ручной `malloc`/`free` | противоречит D6 managed GC — не нужен | нет |
+
+Сверка: Rust `unsafe`+`*mut T` — нишевый путь, обычный код — safe-срезы;
+Go `copy()`/`bytes` — **без `unsafe`**; TS — **сырых указателей нет
+вообще** и язык полноценен. У Nova FFI-граница закрыта `external fn` +
+`external type`.
+
+### Ф.0.3 — Decision: **вариант A (safe-only)**
+
+`unsafe`-keyword и сырые указатели **не вводятся**. Все 6 кейсов
+покрыты существующими механизмами (`external fn`/`external type`/
+`to_bits`) либо компиляторной оптимизацией (BCE, кейс 5). Введение
+сырых указателей нарушило бы D6 (язык без указателей, AI-first) при
+нулевой доказанной выгоде. Случай 5 (BCE) — отдельная оптимизация,
+маркер в `simplifications.md`, не блокер.
+
+### Ф.0.4 — контракт
+
+- **OOB → `panic`** (консистентно с индексацией массива; не `Fail` —
+  выход за границы это баг, не recoverable-ошибка).
+- `byte_at` → `u8`, **bounds-checked panic**, `static inline` (без
+  per-call Option-оверхеда; вызывающий и так в цикле проверяет границу).
+- `compare` → `int` (`<0`/`0`/`>0`, модель Go/`memcmp`). Sum
+  `Ordering` отвергнут: примитив рантайма проще как `int`; Nova-сторона
+  при желании смапит. `==` = `compare == 0`.
+- `copy_from`: `src.len()` обязан совпасть с `dst.len()` или быть ≤ —
+  **mismatch → `panic`** (модель Rust `copy_from_slice`; явный отказ
+  лучше тихого min-копирования Go).
+- `copy_within`/`fill`: OOB-диапазон → `panic`.
+- `compare` — только `[]u8` (`memcmp`-семантика byte-wise; для
+  multi-byte `T` побайтовое сравнение endianness-зависимо → неверный
+  порядок, поэтому не делаем). `copy_from`/`copy_within`/`fill` —
+  для **любого** `T` (копирование element-storage sound при
+  non-moving GC, D6).
 
 ## Acceptance criteria
 
