@@ -1,6 +1,9 @@
 # Plan 93 — `Option.is_some`/`is_none` как Nova-методы (`DeclaredBody` routing)
 
-> **Статус:** 📋 proposed 2026-05-22, не начат
+> **Статус:** 🔵 Ф.0 ВЫПОЛНЕН — **GATE-STOP 2026-05-22** (ветка
+> `plan-93`). Ф.1–Ф.4 заблокированы: аудит показал, что чистая
+> реализация требует инфраструктуры «Option/Result в generic-method-
+> mono» — отдельная инициатива. См. «Итог Ф.0».
 > **Приоритет:** P3 (de-magic / single-source-of-truth; функционального
 > выигрыша нет — корректность не меняется, это чистота прелюдии)
 > **Оценка:** ~1.5–2 dev-day (бóльшая часть — инфраструктура
@@ -156,23 +159,103 @@ fn Option[T] @is_none() -> bool => match @ { Some(_) => false, None => true }
 
 ## Итог Ф.0
 
-> Заполняется по результатам аудита: подтверждение per-T mono Nova-тела,
-> пофайловая карта `DeclaredBody`-пути, фиксация границы (что
-> переносится / что остаётся C) + обоснование. До аудита раздел пуст.
+Аудит проведён 2026-05-22 (worktree `nova-p93`). Probe-фикстуры +
+чтение кода.
+
+### Probe-результаты
+
+| Probe | Что | Результат |
+|---|---|---|
+| `pu_sum` | user generic-sum `type Maybe[T] \| Just(T) \| Nope` + `fn Maybe[T] @present() => match @ { Just(_) => true, Nope => false }` | ✅ **PASS** — generic-method-mono с `match @`-телом для user sum-типов работает |
+| `pu_opt` | user-метод `fn Option[T] @my_present() => match @ { Some(_) => true, None => false }` на builtin `Option` | ❌ **CC-FAIL** — `incomplete definition of type 'Nova_Option'` |
+
+### Корень (доказан чтением кода)
+
+`Option`/`Result` **намеренно исключены** из generic-type-механизма —
+`emit_c.rs:1526-1528`:
+
+```rust
+// Plan 62.A: Option/Result handled via NovaOpt_<T> / Nova_Result* infra
+// — не регистрируем как generic template. ... drain_generic_type_worklist
+// создал бы Nova_Option____<T> heap-allocated form, не совпадающий с
+// runtime helper signatures.
+if t.name == "Option" || t.name == "Result" { continue; }
+```
+
+Следствие цепочкой:
+- `Option` нет в `generic_types` → метод `fn Option[T] @m()` не попадает
+  в `generic_type_methods` (`emit_c.rs:1558`) → идёт в non-generic
+  method-путь → `receiver_c_type("Option")` (`emit_c.rs:7056`) →
+  `format!("Nova_{}*", "Option")` = **`Nova_Option*`** — тип, который
+  как struct **никогда не определяется** (реальная репрезентация
+  `Option` — спец-value-struct `NovaOpt_<T>`). → `incomplete type` →
+  CC-FAIL.
+- `Option` имеет **двойную codegen-идентичность**: спец-value-тип
+  `NovaOpt_<T>` (`register_novaopt_decl`, `nova_rt/array.h`) И —
+  потенциально — generic-template. Они **не связаны**: mono-путь
+  выдаёт `Nova_Option____<T>` / `Nova_Option*`, реальный тип —
+  `NovaOpt_<T>`.
+
+### Что потребовала бы полная реализация
+
+Связать `NovaOpt_<T>`-идентичность `Option` с generic-method-mono — это
+не точечный фикс, а спец-кейс `Option`/`Result`, протянутый сквозь
+**~8 связанных мест** codegen'а: исключение `1526`, `receiver_c_type`,
+`compute_generic_type_c_name`, `generic_types`/`generic_type_templates`/
+`generic_type_methods` регистрация, `drain_generic_type_worklist`
+(чтобы НЕ эмитил конфликтующий `Nova_Option____<T>`), mono-worklist,
+координация с `register_novaopt_decl` lazy-emit + `sum_schema_registry`
+routing + снятие `obj_ty.starts_with("NovaOpt_")`-перехвата + удаление
+трамплинов из `array.h`. На **самом используемом типе языка**, с
+риском регрессий по всему suite.
+
+### Decision point (Ф.0.3) — GATE НЕ ПРОЙДЕН, re-scope
+
+Plan 93 Ф.0.3 явно предусматривал: «если Ф.0 покажет, что
+`DeclaredBody`-путь требует непропорционально много работы — re-scope
+(зафиксировать)». Ф.0 это показал:
+
+- **Объём/риск:** ~8 связанных codegen-точек на самом используемом
+  типе, риск регрессий — **непропорционально**.
+- **Выигрыш:** **нулевой функциональный** — `match @` компилируется в
+  тот же `o.tag == NOVA_TAG_Option_Some`, что и трамплин.
+- **Конфликт решения:** разворачивает Plan 78 Ф.1 (method_routing —
+  легитимный C-реестр) ради косметики.
+
+**Вывод: Plan 93 в формулировке «is_some Nova-телом» — GATE-STOP.**
+Не выполнять Ф.1–Ф.4 как «быстрый перенос» нельзя (это было бы
+упрощением: либо хак, либо рискованная неконтролируемая хирургия
+most-used типа). Реальная предпосылка — **«Option/Result как
+generic-method-able тип с `NovaOpt_<T>`/`NovaRes_<…>` в роли mono'd
+receiver»** — самостоятельная инфраструктурная инициатива (плановый
+масштаб ~2 dev-day, отдельный план). До неё Plan 93 **заблокирован**.
+
+Зафиксировано маркером `[M-option-methods-not-mono-able]` в
+`docs/simplifications.md`.
+
+> **Status после Ф.0:** GATE-STOP. Ф.1–Ф.4 заблокированы до
+> инфраструктуры «Option в generic-method-mono». Это честный исход
+> production-grade аудита, не отказ от качества: реализация без
+> инфраструктуры = упрощение, которое запрещено.
 
 ## Acceptance criteria
 
-- [ ] `Option.is_some()` / `is_none()` — Nova-тело в
-      `std/prelude/core.nv` (`=> match @ { ... }`), не `external fn`.
-- [ ] Вызов `opt.is_some()` идёт через Nova-тело (проверено по
-      сгенерированному C), не через C-трамплин.
-- [ ] C-трамплины `Nova_Option_method_is_some_<T>` / `_is_none_<T>`
-      удалены — зеркала не осталось (single-source).
-- [ ] Работает для `Option[int]`/`[str]`/`[char]`/`Option[user]`,
-      в for-in над `[]Option[T]`, в generic-теле.
-- [ ] Полный `nova test` — 0 новых FAIL.
-- [ ] `unwrap`/`unwrap_or`/`map`/`ok_or` и пр. — **не затронуты**
-      (остаются C-routed; раскол зафиксирован в «Итог Ф.0»).
+> Ф.0 завершён GATE-STOP'ом — критерии Ф.1–Ф.4 ниже **не достигнуты
+> и заблокированы** до инфраструктуры «Option в generic-method-mono»
+> (см. «Итог Ф.0»). Критерий самого Ф.0 — выполнен.
+
+- [x] **Ф.0:** root cause `is_some`-как-Nova-тело установлен и доказан
+      (probe `pu_opt` CC-FAIL + `emit_c.rs:1526` исключение Option из
+      generic-механизма); decision point отработал.
+- [ ] ~~`Option.is_some()`/`is_none()` — Nova-тело в core.nv~~ —
+      заблокировано (требует инфраструктуры).
+- [ ] ~~Вызов `opt.is_some()` через Nova-тело~~ — заблокировано.
+- [ ] ~~C-трамплины удалены~~ — заблокировано.
+- [ ] ~~Работает для всех `Option[T]`~~ — заблокировано.
+- [ ] ~~Полный `nova test` — 0 новых FAIL~~ — N/A (Ф.1–Ф.4 не
+      выполнялись; рабочее дерево не менялось, кроме docs).
+- [x] `unwrap`/`unwrap_or`/`map`/`ok_or` — не затронуты (Ф.1–Ф.4 не
+      выполнялись).
 
 ## Non-scope
 
