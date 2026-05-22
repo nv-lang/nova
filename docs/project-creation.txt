@@ -18524,3 +18524,36 @@ dispatch, Ф.4 перенос предикатов Option (= цель Plan 93), 
 Plan 93 помечен SUPERSEDED by Plan 95 (его цель = Ф.4 Plan 95).
 Маркер [M-option-methods-not-mono-able] в simplifications.md обновлён —
 ссылка на Plan 95 как план фикса. README обновлён (строки 93/94/95).
+
+═══════════════════════════════════════════════════════════════════════
+Plan 95 Ф.0 — Аудит + GATE-решение (подход B)
+2026-05-23 (worktree d:/Sources/nv-lang/nova-p95, ветка plan-95)
+═══════════════════════════════════════════════════════════════════════
+
+Карта точек #1-#11 сверена; обнаружены 2 уточнения:
+
+1. Исключение Option/Result есть в ДВУХ местах emit_c.rs (1526 и 2083) —
+   секции 1a и 1d. Оба сохраняем (представление не трогается).
+
+2. (НОВОЕ #12) drain mono-worklist (emit_c.rs:2262-2274) ищет FnDecl
+   через generic_type_methods[base] только если base_opt разрезолвлен
+   через generic_type_instance_info — для builtin Option/Result
+   recv_type = "Option" сразу базовое имя, в generic_type_instance_info
+   его нет → base_opt = None → fn_decl не находится, тело не эмитится.
+   Фикс: финальный fallback generic_type_methods.get(recv_type) в drain.
+
+3. Mono-имя выбрано как форма существующего трамплина
+   (Nova_Option_method_<m>_<T>) — следствие: удаление трамплинов
+   обязано лэндиться В ОДНОМ КОММИТЕ с переносом тела (C-redefinition
+   collision). Инфра Ф.1-Ф.3 разрабатывается на probe-методе с другим
+   именем (my_present) — коллизии нет.
+
+Decision points:
+- Ф.0.2 → подход B (method-only mono). Подход A отвергнут — конфликт
+  с register_novaopt_decl + is_generic_call void*-boxing path.
+- Ф.0.3 → граница без изменений: только is_some/is_none/is_ok/is_err.
+- Ф.0.4 → Result IN-SCOPE (NovaRes_-перехват — точная параллель).
+- Ф.0.5 → match @ над NovaOpt_<T> в mono'd теле использует существующий
+  Option-match codegen (тот же, что if let Some(x) = opt).
+
+GATE пройден — переход к Ф.1.
