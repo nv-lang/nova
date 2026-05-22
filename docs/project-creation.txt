@@ -18622,3 +18622,79 @@ GATE-результат Plan 93 Ф.0 ОПРОВЕРГНУТ конструкти
 dispatch, #12 drain fallback, +новый fwd-decl-buffer для ordering).
 Подход B (method-only mono, представление не трогается) — корректный
 production-grade вариант.
+
+═══════════════════════════════════════════════════════════════════════
+Plan 95 Ф.4 — Перенос Option.is_some/is_none на Nova-body
+2026-05-23 (worktree d:/Sources/nv-lang/nova-p95)
+═══════════════════════════════════════════════════════════════════════
+
+- std/prelude/core.nv: external fn → Nova-тело `=> match @ { ... }`
+  для is_some / is_none.
+- nova_rt/array.h: удалены все 12 трамплинов is_some/is_none для
+  примитивов (nova_int/str/char/byte/f64/f32 + sized-ints).
+- emit_c.rs register_novaopt_decl: убран lazy-emit is_some/is_none
+  для не-primitive T.
+- sum_schema_registry.rs init_hardcoded_baseline: записи is_some/is_none
+  убраны из option_methods (routing — через DeclaredBody/prelude scan).
+- Обновлены 2 существующих unit-теста реестра.
+- nova_tests/plan95/option_predicates_migrated.nv — 6 позитив-тестов
+  (int/str/char/user-record/[]Option/nested Option[Option]). PASS.
+
+═══════════════════════════════════════════════════════════════════════
+Plan 95 Ф.5 — Перенос Result.is_ok/is_err на Nova-body
+2026-05-23 (worktree d:/Sources/nv-lang/nova-p95)
+═══════════════════════════════════════════════════════════════════════
+
+- std/prelude/core.nv: Nova-тело для is_ok / is_err.
+- nova_rt/array.h: удалены трамплины + back-compat #define-алиасы.
+- emit_c.rs register_novares_decl: убран lazy-emit is_ok/is_err
+  для mono'd NovaRes_<n>.
+- sum_schema_registry.rs init_hardcoded_baseline: убраны is_ok/is_err
+  из result_methods.
+- nova_tests/plan95/result_predicates_migrated.nv — 3 позитив-теста.
+
+Подход B доказан на ВТОРОМ builtin типе: инфра обобщается с нулевой
+маржинальной стоимостью (тот же DeclaredBody-routing, тот же
+register_mono_method_instance, тот же match-codegen).
+
+═══════════════════════════════════════════════════════════════════════
+Plan 95 Ф.6 — Тесты позитив + негатив; Plan 98 заведён
+2026-05-23 (worktree d:/Sources/nv-lang/nova-p95)
+═══════════════════════════════════════════════════════════════════════
+
+Добавлены тест-фикстуры в nova_tests/plan95/:
+- probe_option_method_nova_body.nv (Ф.3 валидация инфры, my_present)
+- probe_result_method_nova_body.nv (Ф.3 валидация Result, my_succeeded)
+- option_predicates_migrated.nv (Ф.4 — 6 тестов на is_some/is_none)
+- result_predicates_migrated.nv (Ф.5 — 3 теста на is_ok/is_err)
+- option_in_generic_fn.nv (Ф.6 — generic-fn с turbofish'ем)
+- option_method_undefined_body_fail.nv (Ф.6 — негатив,
+  EXPECT_COMPILE_ERROR — undefined symbol в Nova-теле метода
+  должен падать loud, не silent)
+
+Все 6 plan95 фикстур PASS (включая 1 negative).
+
+Discovery в Ф.6: `fn check[T](o Option[T])` требует turbofish
+(`check[int](a)`) — infer_type_param_binding (emit_c.rs:8480) не
+выводит T из generic-параметризованных типов (Option/Result/user-
+generics). Это широкий gap, выходит за scope Plan 95. Заведён
+Plan 98 («Free-fn generic type-param inference») — подход A:
+infer_type_param_binding → метод `&self` + резолв через
+novaopt_value_types/novares_ok_err/generic_type_instance_info.
+~1.5 dev-day, P2.
+
+═══════════════════════════════════════════════════════════════════════
+Plan 95 Ф.7 — Spec / D-блок / docs / закрытие маркера
+2026-05-23 (worktree d:/Sources/nv-lang/nova-p95)
+═══════════════════════════════════════════════════════════════════════
+
+- spec/decisions/08-runtime.md: добавлен блок «Plan 95 (закрыт
+  2026-05-23)» — описание канала method-only mono, MethodRouting::
+  DeclaredBody активный variant, перенесённые методы, граница.
+- docs/simplifications.md: маркер [M-option-methods-not-mono-able]
+  помечен ✅ ЗАКРЫТО Plan 95 с резолюцией.
+- docs/plans/78-prelude-codegen-single-source.md: добавлен аменд
+  2026-05-23 (Plan 95) — узкий пересмотр Ф.1 для чистых тег-
+  предикатов; реестр в силе для C-only методов (unwrap/map/etc).
+- docs/plans/95-builtin-sum-method-mono.md: статус обновлён.
+- README уже содержит Plan 95 (предыдущий коммит на main).
