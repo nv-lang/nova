@@ -39,7 +39,11 @@
 
 use crate::git_cache;
 use crate::manifest::{DepSource, GitPin};
+use crate::resolver::{self, DependencyProvider, PkgId};
+use crate::semver::{Version, VersionReq};
 use anyhow::{anyhow, bail, Context, Result};
+use std::cell::RefCell;
+use std::collections::HashMap;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
@@ -49,11 +53,13 @@ pub enum LockedSource {
     /// `path`-зависимость: путь как записан в `nova.toml` (относительный).
     Path { path: String },
     /// `git`-зависимость: URL, исходный пин (информативно / для
-    /// `nova update`) и резолвнутый точный commit.
+    /// `nova update`), резолвнутый точный commit и — для `version`-пина
+    /// (Plan 03.2) — выбранная semver-версия (`None` для rev/tag/branch).
     Git {
         url: String,
         pin: String,
         commit: String,
+        version: Option<String>,
     },
 }
 
@@ -81,6 +87,7 @@ fn pin_str(pin: &GitPin) -> String {
         GitPin::Rev(r) => format!("rev:{}", r),
         GitPin::Tag(t) => format!("tag:{}", t),
         GitPin::Branch(b) => format!("branch:{}", b),
+        GitPin::Version(req) => format!("version:{}", req),
         GitPin::Default => "default".to_string(),
     }
 }
@@ -103,10 +110,13 @@ impl LockFile {
                     s.push_str("source = \"path\"\n");
                     s.push_str(&format!("path = \"{}\"\n", path));
                 }
-                LockedSource::Git { url, pin, commit } => {
+                LockedSource::Git { url, pin, commit, version } => {
                     s.push_str("source = \"git\"\n");
                     s.push_str(&format!("git = \"{}\"\n", url));
                     s.push_str(&format!("pin = \"{}\"\n", pin));
+                    if let Some(v) = version {
+                        s.push_str(&format!("version = \"{}\"\n", v));
+                    }
                     s.push_str(&format!("commit = \"{}\"\n", commit));
                 }
             }
@@ -177,6 +187,21 @@ impl LockFile {
             })
             .collect()
     }
+
+    /// Plan 03.2 Ф.4: `(url, version)` git-записей с зафиксированной
+    /// semver-версией — для seed'а preferred-версий резолвера
+    /// (воспроизводимость: lock держит версию).
+    pub fn git_versions(&self) -> Vec<(String, Version)> {
+        self.packages
+            .iter()
+            .filter_map(|p| match &p.source {
+                LockedSource::Git { url, version: Some(v), .. } => {
+                    Version::parse(v).ok().map(|ver| (url.clone(), ver))
+                }
+                _ => None,
+            })
+            .collect()
+    }
 }
 
 /// Собрать `LockedDep` из пар ключ-значение записи `[[package]]`.
@@ -198,6 +223,7 @@ fn record_to_dep(fields: &[(String, String)]) -> Result<LockedDep> {
                     anyhow!("nova.lock: git-запись `{}` без `commit`", name)
                 })?
                 .to_string(),
+            version: get("version").map(|s| s.to_string()),
         },
         other => bail!("nova.lock: запись `{}` с неизвестным source `{}`", name, other),
     };
@@ -227,6 +253,16 @@ pub fn load(pkg_dir: &Path) -> Result<Option<LockFile>> {
 /// (с учётом уже загруженной lock-таблицы). Diamond-зависимости —
 /// один раз. Цикл зависимостей пакетов (A→B→A) → ошибка.
 pub fn collect_dep_graph(entry_pkg_dir: &Path) -> Result<Vec<LockedDep>> {
+    collect_dep_graph_ex(entry_pkg_dir, &HashMap::new())
+}
+
+/// Plan 03.2 Ф.4: вариант с картой `url → resolved-version` (от
+/// `resolve_version_deps`) — записи `git`-deps в графе получают поле
+/// `version`.
+pub fn collect_dep_graph_ex(
+    entry_pkg_dir: &Path,
+    resolved_versions: &HashMap<String, String>,
+) -> Result<Vec<LockedDep>> {
     let mut out: Vec<LockedDep> = Vec::new();
     let mut seen: HashSet<PathBuf> = HashSet::new();
     // Стек cycle-detection засеян entry-пакетом — цикл, замыкающийся
@@ -238,7 +274,7 @@ pub fn collect_dep_graph(entry_pkg_dir: &Path) -> Result<Vec<LockedDep>> {
     .map(|m| m.package_name)
     .unwrap_or_else(|| "<entry>".to_string());
     let mut stack: Vec<(String, PathBuf)> = vec![(entry_name, canon(entry_pkg_dir))];
-    visit_pkg(entry_pkg_dir, &mut out, &mut seen, &mut stack)?;
+    visit_pkg(entry_pkg_dir, &mut out, &mut seen, &mut stack, resolved_versions)?;
     out.sort_by(|a, b| a.name.cmp(&b.name));
     Ok(out)
 }
@@ -252,6 +288,7 @@ fn visit_pkg(
     out: &mut Vec<LockedDep>,
     seen: &mut HashSet<PathBuf>,
     stack: &mut Vec<(String, PathBuf)>,
+    resolved_versions: &HashMap<String, String>,
 ) -> Result<()> {
     let toml = pkg_dir.join("nova.toml");
     let Some(manifest) = crate::manifest::parse_manifest(&toml, pkg_dir) else {
@@ -278,7 +315,7 @@ fn visit_pkg(
                         source: LockedSource::Path { path: rel.clone() },
                     });
                     stack.push((dep.name.clone(), c));
-                    visit_pkg(&dep_dir, out, seen, stack)?;
+                    visit_pkg(&dep_dir, out, seen, stack, resolved_versions)?;
                     stack.pop();
                 }
             }
@@ -294,10 +331,13 @@ fn visit_pkg(
                             url: url.clone(),
                             pin: pin_str(pin),
                             commit: res.commit.clone(),
+                            // Plan 03.2 Ф.4: resolved-версия для
+                            // version-пинов (resolve_version_deps).
+                            version: resolved_versions.get(url).cloned(),
                         },
                     });
                     stack.push((dep.name.clone(), c));
-                    visit_pkg(&res.checkout, out, seen, stack)?;
+                    visit_pkg(&res.checkout, out, seen, stack, resolved_versions)?;
                     stack.pop();
                 }
             }
@@ -334,11 +374,30 @@ fn check_cycle(
 ///
 /// Вызывается из `nova build`. Возвращает собранный граф.
 pub fn sync(entry_pkg_dir: &Path) -> Result<Vec<LockedDep>> {
+    sync_ex(entry_pkg_dir, &[])
+}
+
+/// Ядро `sync` с дополнительными корневыми ограничениями `extra_root`
+/// (`nova update --precise` передаёт сюда точное `=X`).
+fn sync_ex(
+    entry_pkg_dir: &Path,
+    extra_root: &[(PkgId, VersionReq)],
+) -> Result<Vec<LockedDep>> {
     let existing = load(entry_pkg_dir)?;
+    // Plan 03.2 Ф.4: предпочтительные версии из существующего lock —
+    // воспроизводимость (резолвер держит зафиксированную версию).
+    let mut preferred: HashMap<PkgId, Version> = HashMap::new();
     if let Some(ex) = &existing {
         git_cache::install_lock_entries(ex.git_pins());
+        for (url, ver) in ex.git_versions() {
+            preferred.insert(url, ver);
+        }
     }
-    let graph = collect_dep_graph(entry_pkg_dir)?;
+    // Plan 03.2 Ф.3: согласованный резолв версионных git-зависимостей
+    // (`version = "^1.2"`) — до обхода графа, чтобы collect_dep_graph
+    // взял зафиксированные резолвером commit'ы и версии.
+    let resolved = resolve_version_deps(entry_pkg_dir, &preferred, extra_root)?;
+    let graph = collect_dep_graph_ex(entry_pkg_dir, &resolved)?;
     // Не плодим `nova.lock` на ровном месте: пустой граф и файла ещё нет
     // — фиксировать нечего. Если lock уже был (зависимости убрали) —
     // перезаписываем, чтобы он отражал актуальное состояние.
@@ -373,6 +432,14 @@ pub fn load_pins(entry_pkg_dir: &Path) -> Result<()> {
 /// затем `sync` — снятые с пина зависимости резолвятся «вживую» (берётся
 /// текущий commit ветки/тега), остальные остаются зафиксированными.
 pub fn update(entry_pkg_dir: &Path, only: Option<&str>) -> Result<Vec<LockedDep>> {
+    drop_git_locks(entry_pkg_dir, only)?;
+    sync(entry_pkg_dir)
+}
+
+/// Снять git-записи из `nova.lock`: `only = Some(name)` — одну, `None`
+/// — все. Path-deps не затрагиваются. Снятая с пина зависимость при
+/// следующем `sync` пере-резолвится «вживую».
+fn drop_git_locks(entry_pkg_dir: &Path, only: Option<&str>) -> Result<()> {
     if let Some(existing) = load(entry_pkg_dir)? {
         let kept: Vec<LockedDep> = existing
             .packages
@@ -393,7 +460,166 @@ pub fn update(entry_pkg_dir: &Path, only: Option<&str>) -> Result<Vec<LockedDep>
         std::fs::write(&path, trimmed.render())
             .with_context(|| format!("запись {}", path.display()))?;
     }
-    sync(entry_pkg_dir)
+    Ok(())
+}
+
+/// Plan 03.2 Ф.4 (`nova update --precise`): пере-резолвить зависимость
+/// `dep_name` (git-URL `dep_url`) на **точную** версию `version`.
+/// Резолвер обязан её выполнить (с учётом транзитивных ограничений)
+/// либо упасть с конфликтом.
+pub fn update_precise(
+    entry_pkg_dir: &Path,
+    dep_name: &str,
+    dep_url: &str,
+    version: &Version,
+) -> Result<Vec<LockedDep>> {
+    // Снять текущий пин целевой зависимости — иначе старая версия
+    // осталась бы preferred.
+    drop_git_locks(entry_pkg_dir, Some(dep_name))?;
+    let exact = VersionReq::parse(&format!("={}", version))
+        .map_err(|e| anyhow!("некорректная версия `{}`: {}", version, e))?;
+    sync_ex(entry_pkg_dir, &[(dep_url.to_string(), exact)])
+}
+
+// ---------------------------------------------------------------------
+// Plan 03.2 Ф.3 — git-backed DependencyProvider + интеграция резолвера.
+// ---------------------------------------------------------------------
+
+/// `DependencyProvider` поверх git: версии пакета — semver-теги
+/// репозитория, зависимости версии — `[dependencies]` из `nova.toml` на
+/// соответствующем теге. `PkgId` = git-URL.
+///
+/// `resolve_git_dep_in` вызывается напрямую (в обход lock-таблицы) —
+/// провайдер обязан видеть РЕАЛЬНЫЕ теги, а не зафиксированный commit.
+struct GitProvider {
+    /// url → (version, tag-name), отсортировано — кэш `list_versions`.
+    versions: RefCell<HashMap<String, Vec<(Version, String)>>>,
+    /// (url, version) → зависимости — кэш разобранных `nova.toml`.
+    deps: RefCell<HashMap<(String, String), Vec<(PkgId, VersionReq)>>>,
+}
+
+impl GitProvider {
+    fn new() -> GitProvider {
+        GitProvider {
+            versions: RefCell::new(HashMap::new()),
+            deps: RefCell::new(HashMap::new()),
+        }
+    }
+
+    fn versions_with_tags(&self, url: &str) -> Result<Vec<(Version, String)>, String> {
+        if let Some(c) = self.versions.borrow().get(url) {
+            return Ok(c.clone());
+        }
+        let vs = git_cache::list_versions(url).map_err(|e| e.to_string())?;
+        self.versions.borrow_mut().insert(url.to_string(), vs.clone());
+        Ok(vs)
+    }
+
+    fn tag_of(&self, url: &str, ver: &Version) -> Result<String, String> {
+        self.versions_with_tags(url)?
+            .into_iter()
+            .find(|(v, _)| v == ver)
+            .map(|(_, t)| t)
+            .ok_or_else(|| format!("версия {} пакета `{}` не найдена среди тегов", ver, url))
+    }
+
+    /// Точный commit выбранной версии — для записи в lock-таблицу.
+    fn commit_of(&self, url: &str, ver: &Version) -> Result<String> {
+        let tag = self.tag_of(url, ver).map_err(|e| anyhow!(e))?;
+        let root = git_cache::git_cache_root()?;
+        let res = git_cache::resolve_git_dep_in(&root, url, &GitPin::Tag(tag), None)?;
+        Ok(res.commit)
+    }
+}
+
+impl DependencyProvider for GitProvider {
+    fn available_versions(&self, pkg: &PkgId) -> Result<Vec<Version>, String> {
+        Ok(self
+            .versions_with_tags(pkg)?
+            .into_iter()
+            .map(|(v, _)| v)
+            .collect())
+    }
+
+    fn dependencies(
+        &self,
+        pkg: &PkgId,
+        ver: &Version,
+    ) -> Result<Vec<(PkgId, VersionReq)>, String> {
+        let key = (pkg.clone(), ver.to_string());
+        if let Some(c) = self.deps.borrow().get(&key) {
+            return Ok(c.clone());
+        }
+        let tag = self.tag_of(pkg, ver)?;
+        let root = git_cache::git_cache_root().map_err(|e| e.to_string())?;
+        let res = git_cache::resolve_git_dep_in(&root, pkg, &GitPin::Tag(tag), None)
+            .map_err(|e| e.to_string())?;
+        let toml = res.checkout.join("nova.toml");
+        let manifest = crate::manifest::parse_manifest(&toml, &res.checkout)
+            .ok_or_else(|| {
+                format!("git-пакет `{}`@{}: нет `[package]` в nova.toml", pkg, ver)
+            })?;
+        // В граф версий идут только версионные git-зависимости; path /
+        // точечные git-deps резолвятся обычным обходом collect_dep_graph.
+        let mut out = Vec::new();
+        for d in &manifest.dependencies {
+            if let DepSource::Git { url, pin: GitPin::Version(req) } = &d.source {
+                out.push((url.clone(), req.clone()));
+            }
+        }
+        self.deps.borrow_mut().insert(key, out.clone());
+        Ok(out)
+    }
+}
+
+/// Plan 03.2 Ф.3/Ф.4: согласованно разрешить версионные git-зависимости
+/// пакета `entry_pkg_dir`, зафиксировать выбранные commit'ы в
+/// `git_cache`-таблице пинов и вернуть карту `url → resolved-version`
+/// (для `version`-поля `nova.lock`).
+///
+/// `preferred` — версии из существующего `nova.lock`: резолвер держит
+/// их, пока ограничения позволяют (воспроизводимость). Реагирует только
+/// на `{ git = "...", version = "..." }`-зависимости; иначе — no-op.
+fn resolve_version_deps(
+    entry_pkg_dir: &Path,
+    preferred: &HashMap<PkgId, Version>,
+    extra_root: &[(PkgId, VersionReq)],
+) -> Result<HashMap<String, String>> {
+    let toml = entry_pkg_dir.join("nova.toml");
+    let Some(manifest) = crate::manifest::parse_manifest(&toml, entry_pkg_dir) else {
+        return Ok(HashMap::new());
+    };
+    let mut root_version_deps: Vec<(PkgId, VersionReq)> = manifest
+        .dependencies
+        .iter()
+        .filter_map(|d| match &d.source {
+            DepSource::Git { url, pin: GitPin::Version(req) } => {
+                Some((url.clone(), req.clone()))
+            }
+            _ => None,
+        })
+        .collect();
+    // Plan 03.2 Ф.4: `nova update --precise` — дополнительное точное
+    // ограничение (`=X`); резолвер обязан его выполнить либо упасть.
+    root_version_deps.extend(extra_root.iter().cloned());
+    if root_version_deps.is_empty() {
+        return Ok(HashMap::new());
+    }
+    let provider = GitProvider::new();
+    let resolution =
+        resolver::resolve_with_preferences(&provider, &root_version_deps, preferred)
+            .map_err(|e| anyhow!("резолв версий git-зависимостей:\n  {}", e))?;
+    let mut entries: Vec<(String, String)> = Vec::new();
+    let mut versions: HashMap<String, String> = HashMap::new();
+    for (url, ver) in &resolution.selected {
+        let commit = provider
+            .commit_of(url, ver)
+            .with_context(|| format!("commit версии {} пакета `{}`", ver, url))?;
+        entries.push((url.clone(), commit));
+        versions.insert(url.clone(), ver.to_string());
+    }
+    git_cache::install_lock_entries(entries);
+    Ok(versions)
 }
 
 #[cfg(test)]
@@ -409,8 +635,9 @@ mod tests {
                     name: "gitlib".into(),
                     source: LockedSource::Git {
                         url: "https://x.org/g.nv".into(),
-                        pin: "tag:v1.0.0".into(),
+                        pin: "version:^1.0".into(),
                         commit: "a".repeat(40),
+                        version: Some("1.4.2".into()),
                     },
                 },
                 LockedDep {
@@ -449,6 +676,7 @@ mod tests {
                         url: "u".into(),
                         pin: "default".into(),
                         commit: "c".into(),
+                        version: None,
                     },
                 },
                 LockedDep {

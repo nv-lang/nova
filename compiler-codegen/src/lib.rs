@@ -18,6 +18,8 @@ pub mod lockfile;
 pub mod manifest;
 pub mod parser;
 pub mod perf_timer;
+pub mod resolver;
+pub mod semver;
 pub mod test_runner;
 pub mod types;
 pub mod verify;
