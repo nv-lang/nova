@@ -1,0 +1,29 @@
+// Plan 89 Ф.2.2 — `match` по боксированному Option-элементу массива.
+
+module nova_tests.plan89.match_option_elem
+
+
+test "for-in []Option + match Some/None" {
+    let opts []Option[int] = [Some(10), None, Some(5)]
+    let mut sum = 0
+    for o in opts {
+        let add = match o {
+            Some(v) => v
+            None => 100
+        }
+        sum = sum + add
+    }
+    assert(sum == 115)
+}
+
+test "match по элементу — извлечение значения" {
+    let opts []Option[int] = [Some(2), Some(4), None]
+    let mut product = 1
+    for o in opts {
+        match o {
+            Some(v) => { product = product * v }
+            None => {}
+        }
+    }
+    assert(product == 8)
+}

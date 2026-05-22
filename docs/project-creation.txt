@@ -18156,3 +18156,47 @@ fiber-стека (частичные данные уже есть — SEH вну
 работает, через границу switch — нет).
 
 Артефакт: 82-artifacts/f0_test_a.c + обновлён f0-rediagnosis.md §5-7.
+
+### Plan 89 — деструктуризация боксированного sum-элемента
+
+`for o in []Option[int] { if let Some(v) = o }` падал CC-FAIL — Nova
+строго хуже Go/Rust/TS (деструктуризация optional-элемента коллекции
+есть везде). Дефект обнаружен Plan 87 Ф.4.2 (`[M-iflet-match-boxed-
+sum-ptr]`). Чисто codegen.
+
+Ф.0 — аудит-GATE. 8 probe-фикстур для всех контекстов потребления
+боксированного sum-элемента for-in. Результат: затронут **только
+`Option`** — единственный sum со value-семантикой
+(`SumAbi::ValueOptionLike`, struct `NovaOpt_T`). При хранении в массиве
+элемент боксируется в `NovaOpt_T*`; **5** контекстов потребления
+loop-переменной (`if let`, `match`, `==`, передача в функцию, вызов
+метода `o.is_some()`) ждут sum по значению → рассинхрон value↔pointer
+→ CC-FAIL. `Result`/user-sum (pointer-семантика `PointerErrorLike`,
+`Nova_X*` heap) и records (genuine heap-pointer) — probe'ы PASS, не
+затронуты. Soundness: все 5 отказов loud (CC-FAIL), silent-wrong нет.
+
+Decision point Ф.0.4 — подход A (разбокс в `emit_for`). Аудит показал,
+что дефект шире pattern-match (== / fn-arg / method-call тоже сломаны)
+→ подход B (deref только в `IfLet`/`emit_match`) был бы неполным.
+Подход A связывает loop-переменную значением в единственной точке.
+
+Ф.1 — `emit_for` Case 2: если элемент массива — указатель на sum со
+value-семантикой (критерий `SumSchemaRegistry::lookup_sum_for_c_type
+(pointee).abi ∈ {ValueOptionLike, ValueTagPayload}`), связываем
+loop-переменную разбоксованным значением `NovaOpt_T o = *(NovaOpt_T*)
+data[i]` вместо указателя. Pointer-семантика sum'ов (Result/user-sum)
+и records под критерий не попадают — не деболксятся. Критерий взят из
+готового `sum_schema_registry` (без хардкода prefix-чеков) — подсказка
+из смежной разведки в plan-doc.
+
+Ф.2 — `nova_tests/plan89/` 7 фикстур: iflet/match/eq_and_method/fnarg
+(Option — позитив, все 5 контекстов) + result/user_sum/record
+_regression (регресс-гварды: pointer-семантика и records НЕ
+деболксятся). EXPECT_COMPILE_ERROR-теста нет — Plan 89 не добавляет
+диагностик; негативное покрытие — это don't-debox-Result/Record
+регресс-гварды. Полный `nova test`: 1058 PASS / 0 FAIL / 56 SKIP —
+0 регрессий.
+
+Ф.3 — simplifications.md (`[M-iflet-match-boxed-sum-ptr]` ✅ ЗАКРЫТО);
+spec правок не требует (for-in + if-let по sum уже валидны по типам,
+семантика не менялась); README + plan-doc статусы.

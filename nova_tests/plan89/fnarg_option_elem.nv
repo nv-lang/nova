@@ -1,0 +1,34 @@
+// Plan 89 Ф.2.3 — передача боксированного Option-элемента массива
+// в функцию, ожидающую `Option[T]` по значению.
+
+module nova_tests.plan89.fnarg_option_elem
+
+
+fn unwrap_or_zero(o Option[int]) -> int =>
+    match o {
+        Some(v) => v
+        None => 0
+    }
+
+fn is_present(o Option[int]) -> bool => o.is_some()
+
+
+test "for-in []Option + передача элемента в fn" {
+    let opts []Option[int] = [Some(7), None, Some(3), Some(20)]
+    let mut sum = 0
+    for o in opts {
+        sum = sum + unwrap_or_zero(o)
+    }
+    assert(sum == 30)
+}
+
+test "for-in []Option + элемент в fn-предикат" {
+    let opts []Option[int] = [Some(1), None, Some(3)]
+    let mut count = 0
+    for o in opts {
+        if is_present(o) {
+            count = count + 1
+        }
+    }
+    assert(count == 2)
+}

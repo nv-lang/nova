@@ -1,0 +1,41 @@
+// Plan 89 Ф.2.3 — оператор `==` и вызов метода на боксированном
+// Option-элементе массива.
+//
+// Эти контексты ломались тем же дефектом, что if-let/match (sum
+// ожидается по значению, элемент — указатель). Подход A (разбокс в
+// emit_for) чинит их вместе с pattern-match одной точкой.
+
+module nova_tests.plan89.eq_and_method
+
+
+test "for-in []Option + оператор ==" {
+    let opts []Option[int] = [Some(1), None, Some(1), Some(2)]
+    let mut ones = 0
+    for o in opts {
+        if o == Some(1) {
+            ones = ones + 1
+        }
+    }
+    assert(ones == 2)
+}
+
+test "for-in []Option + метод .is_some() / .is_none()" {
+    let opts []Option[int] = [Some(1), None, Some(3), None, Some(5)]
+    let mut present = 0
+    let mut absent = 0
+    for o in opts {
+        if o.is_some() { present = present + 1 }
+        if o.is_none() { absent = absent + 1 }
+    }
+    assert(present == 3)
+    assert(absent == 2)
+}
+
+test "for-in []Option + метод .unwrap_or()" {
+    let opts []Option[int] = [Some(7), None, Some(3)]
+    let mut sum = 0
+    for o in opts {
+        sum = sum + o.unwrap_or(0)
+    }
+    assert(sum == 10)
+}
