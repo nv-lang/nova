@@ -580,6 +580,28 @@ fn resolve_one(
                     folder.display(),
                 ),
                 ResolveErr::NotFound => {
+                    // Plan 84: для относительного импорта — сообщение про
+                    // конкретную директорию, не про candidate-roots.
+                    if let Some(rr) = &rel_root {
+                        let prefix_str = match &imp.anchor {
+                            crate::ast::ImportAnchor::Relative { up } if *up == 0 =>
+                                "./".to_string(),
+                            crate::ast::ImportAnchor::Relative { up } =>
+                                "../".repeat(*up as usize),
+                            crate::ast::ImportAnchor::Package => String::new(),
+                        };
+                        anyhow!(
+                            "cannot find module `{}{}` (relative import)\n  \
+                             imported from: module `{}`\n  \
+                             searched in:   {}\n  \
+                             hint: модуль не найден в этой директории — \
+                             проверьте имя и число `../`",
+                            prefix_str,
+                            imp.path.join("."),
+                            importing,
+                            rr.join(imp.path.iter().collect::<PathBuf>()).display(),
+                        )
+                    } else {
                     let suggestion = suggest_module_name(
                         &imp.path,
                         entry_dir,
@@ -606,6 +628,7 @@ fn resolve_one(
                         },
                         suggestion,
                     )
+                    }
                 }
                 ResolveErr::CaseMismatch { requested, actual } => anyhow!(
                     "module path case mismatch: import declares `{}` but on \
