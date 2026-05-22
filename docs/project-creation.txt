@@ -18698,3 +18698,30 @@ Plan 95 Ф.7 — Spec / D-блок / docs / закрытие маркера
   предикатов; реестр в силе для C-only методов (unwrap/map/etc).
 - docs/plans/95-builtin-sum-method-mono.md: статус обновлён.
 - README уже содержит Plan 95 (предыдущий коммит на main).
+
+═══════════════════════════════════════════════════════════════════════
+Plan 95 ✅ ЗАКРЫТ — полный nova test пройден
+2026-05-23 (worktree d:/Sources/nv-lang/nova-p95, ветка plan-95)
+═══════════════════════════════════════════════════════════════════════
+
+Полный `nova test --jobs 4`:
+- 1067 PASS / 3 FAIL / 56 SKIP (exit 1 из-за 3 FAIL).
+- 3 FAIL все = contracts/f30_*_strict_positive с одинаковой
+  lld-link ошибкой «cannot open output file» (Windows file-lock
+  под нагрузкой 18 параллельных агентов).
+- Isolated re-run этих 3 → PASS все 3. Не регрессия Plan 95,
+  это известный класс infra noise (memory feedback_targeted_test_
+  per_fix; такие же FAIL'ы наблюдались в plan82/plan89 closure).
+
+Acceptance criteria Plan 95 — выполнены:
+- [x] Ф.0: карта точек сверена, подход B утверждён.
+- [x] Option/Result участвуют в method-mono с правильным receiver C-type.
+- [x] MethodRouting::DeclaredBody реально конструируется и потребляется.
+- [x] is_some/is_none/is_ok/is_err — Nova-тело в core.nv.
+- [x] Мёртвые трамплины удалены (array.h + lazy-emit + baseline).
+- [x] unwrap/unwrap_or/map/etc не затронуты.
+- [x] Тесты позитив + негатив в nova_tests/plan95/.
+- [x] Полный nova test — 0 реальных FAIL.
+- [x] Маркер закрыт; Plan 93 superseded.
+
+Готово к merge'у в main (ожидается подтверждение пользователя).
