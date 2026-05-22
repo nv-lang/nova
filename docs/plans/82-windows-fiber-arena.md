@@ -9,12 +9,15 @@
 > `runtime.c`/`alloc_boehm.c`/Boehm 8.2.8, GC-дизайн на проверенных API,
 > подпроблема П5 (GC↔switch атомарность).
 > **Статус:** 🟡 Ф.0 re-diagnosis В РАБОТЕ (2026-05-22). Подтверждено:
-> §1.2, §1.3 (Probe 1: read MEM_RESERVE → AV), модель §5.2 (Probe 4 +
-> VirtualQuery-clamp), §1.6 (заголовки + линковка gc.lib + win32_threads.c),
-> primitives памяти, toolchain-SEH (находка: VEH обязателен — clang-cl
-> без `/EHa` не ловит hardware-SEH). Standalone-харнесс — `82-artifacts/`.
-> Остаётся: test (a) decision-point A/B, test (d) аномалия Попыток 3-4,
-> test (e) SEH через границу fiber-стека (minicoro-интегрированные).
+> §1.2, §1.3, модель §5.2, §1.6 (заголовки + линковка gc.lib +
+> win32_threads.c VirtualQuery-clamp), primitives памяти, toolchain-SEH.
+> **DECISION POINT test (a) РЕШЁН: ПУТЬ A** — ядро растит non-primary
+> minicoro-стек штатно; **обязателен патч `ctx.stack_limit`** на
+> committed_low (без него `__chkstk`-код крашит на MSVC). VEH для
+> happy-path НЕ нужен. Standalone-харнесс — `82-artifacts/`
+> (`f0_probe.c`, `f0_gc_link.c`, `f0_test_a.c`, `f0-rediagnosis.md`).
+> Остаётся: test (d) аномалия Попыток 3-4, test (e) SEH через границу
+> fiber-стека.
 > **Приоритет:** P2 — Windows работает для single-thread cooperative
 > (calloc-fallback), но без lazy-commit, без overflow-detection и **без
 > какой-либо GC-интеграции fiber-стеков** (§1.5 — подтверждено
