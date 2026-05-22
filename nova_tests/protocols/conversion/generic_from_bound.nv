@@ -1,15 +1,11 @@
-// Plan 85.3 Ф.3 — generic bound `[T From[X]]`.
+// Plan 85.3 Ф.3 / Plan 88 — generic bound `[T From[X]]` + прямой
+// static-вызов `T.from(...)` внутри тела generic-функции.
 //
-// D72: имя протокола в bound-позиции generic-параметра. Здесь
-// проверяется: (1) bound парсится; (2) generic-функция с From-bound
-// инстанцируется и работает; (3) bound enforced — `T` обязан
-// реализовать `From[X]` (негатив — neg_missing_impl.nv).
-//
-// ОГРАНИЧЕНИЕ (bootstrap): вызов `T.from(...)` ВНУТРИ тела generic-
-// функции (где `T` — type-параметр) не мономорфизируется — см.
-// simplifications.md [M-generic-static-method-on-typevar]. Поэтому
-// конверсия здесь выполняется на call-site (concrete `Name.from`),
-// а type-параметр используется как обычный value-тип.
+// D72: имя протокола в bound-позиции generic-параметра. Static-метод
+// `from` вызывается ПРЯМО на type-параметре `T` внутри generic-тела —
+// мономорфизируется (Plan 88: `T` подставляется в obj-позицию
+// static-вызова). Bound enforced — `T` обязан реализовать `From[X]`
+// (негатив — neg_missing_impl.nv).
 
 module conversion.generic_from_bound
 
@@ -21,32 +17,24 @@ type Boxed { n int }
 fn Boxed.from(v int) -> Boxed => { n: v }
 
 
-// Generic-функция с From[str]-bound. T — value-тип; bound проверяется
-// type-checker'ом на call-site (T обязан реализовать From[str]).
-fn pick[T From[str]](a T, b T, use_first bool) -> T =>
-    if use_first { a } else { b }
+// Generic-функция со static-вызовом `T.from` на type-параметре.
+fn make[T From[str]](s str) -> T => T.from(s)
 
-// Generic-функция с From[int]-bound.
-fn identity[T From[int]](x T) -> T => x
+// From[int]-bound — `T.from(int)`.
+fn make_int[T From[int]](x int) -> T => T.from(x)
 
 
-test "generic From[str]-bound — инстанцирование + первая ветка" {
-    let r = pick[Name](Name.from("alpha"), Name.from("beta"), true)
+test "generic From[str]-bound — T.from внутри generic-тела" {
+    let r = make[Name]("alpha")
     assert(r.s == "alpha")
 }
 
-test "generic From[str]-bound — вторая ветка" {
-    let r = pick[Name](Name.from("x"), Name.from("y"), false)
-    assert(r.s == "y")
+test "generic From[str]-bound — повторный инстанс" {
+    let r = make[Name]("beta")
+    assert(r.s == "beta")
 }
 
-test "generic From[int]-bound — identity" {
-    let b = identity[Boxed](Boxed.from(99))
+test "generic From[int]-bound — T.from(int)" {
+    let b = make_int[Boxed](99)
     assert(b.n == 99)
-}
-
-test "From-bound satisfied — конверсия через .into() на call-site" {
-    let made Name = "made".into()
-    let r = pick[Name](made, Name.from("other"), true)
-    assert(r.s == "made")
 }

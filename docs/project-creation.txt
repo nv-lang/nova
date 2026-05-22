@@ -17806,3 +17806,55 @@ greenfield по всем слоям компилятора, а не «codegen-м
 (git_cache/lockfile unit + git_dep_e2e + lockfile_repro +
 insert_dependency). Suite: 983 PASS / 0 FAIL / 56 SKIP — 0
 регрессий.
+
+### Plan 88 — generic static-method dispatch на type-параметре
+
+Закрыт spec-долг D72: канонический пример спеки
+`fn func[K, T From[K]](v K) -> T => T.from(v)` не работал. Static-вызов
+`T.from` на type-параметре внутри тела generic-функции не
+мономорфизировался. Планка плана — Rust-паритет (Go/TS структурно не
+умеют assoc-функции type-параметра).
+
+Ф.0 — ОБЯЗАТЕЛЬНЫЙ аудит-GATE. 8 probe-фикстур через `nova build`/
+`nova test` выделили **два дефекта**: D1 — static-call на typevar
+(`T.from`/`T.try_from`/`T.make` → `nova_fn_T_<m>` undefined symbol,
+link-error); D2 — `Result[T,E]` в return-позиции (мангл'ился
+`Nova_Result____<ok>__<err>` вместо объявленного `NovaRes_<ok>_<err>`,
+CC-FAIL). `Option[T]`/`[]T`/`Box[T]` return-позиции — probe'ы показали,
+что они УЖЕ работают → Ф.2.2 неприменима, выносить в Plan 54-lineage
+нечего. Soundness-check (Ф.0.4): все 5 отказов loud (3 link + 2
+CC-FAIL), silent-wrong нет — 3 рабочих случая дают корректный runtime.
+
+Ф.1 — static-call на typevar. Корень: `T.from(s)` парсится как
+`Path(["T","from"])`; Path-обработчик `emit_c.rs` проверял `parts[0]`
+только против реестров concrete-типов → typevar не распознавался →
+fallback `nova_fn_<parts.join("_")>`. Фикс: ввёл `recv_seg` —
+резолв `parts[0] ∈ current_type_subst` → concrete Nova-тип
+(`nova_type_name_from_c`). Дальше — обычный overload-aware
+static-dispatch через `method_overloads` (`Nova_<Type>_static_<m>`).
+Покрывает ВСЕ static-методы (`from`/`try_from`/`new`/user-defined) —
+обобщённый путь, не спец-кейс. Тот же резолв продублирован в
+Member-обработчике (`recv_type_name`) для консистентности.
+
+Ф.2 — `Result[T,E]` в return-позиции. Корень: `apply_type_subst_to_ref`
+(резолв return-типа call-site) имела спец-ветку для `Option`, но не
+для `Result` → `Result` уходил в generic-user-type ветку с
+мангл-схемой `Nova_<base>____<args>`. Фикс: спец-ветка `Result[T,E]`
+→ `NovaRes_<ok>_<err>*` (зеркало `type_ref_to_c[Result]` и
+`apply_type_subst_to_ref[Option]`). Typedef регистрируется при emit'е
+самой mono'd функции.
+
+Ф.3 — `nova_tests/plan88/` 5 фикстур: static_from (`T.from`, неск.
+инстансов), static_methods (`T.new` user-defined + `T.try_from`),
+d72_canonical (`func[K, T From[K]]` двойной typevar), result_return
+(`Result[T,E]`/`Option[T]` return), neg_bound_violation
+(bound-violation остаётся compile-error — Plan 15 D72 не сломан).
+`generic_from_bound.nv` + `generic_try_bound.nv` переписаны с
+probe-формы (T как value-тип, конверсия на call-site) на прямой
+`T.from`/`T.try_from` внутри generic-тела. Полный `nova test`:
+1037 PASS / 0 FAIL / 56 SKIP — 0 регрессий.
+
+Ф.4 — simplifications.md (`[M-generic-static-method-on-typevar]`
+✅ ЗАКРЫТО); D72/D73 правок не требуют (фикс приводит реализацию в
+соответствие с уже-корректной спекой — D72-пример не был помечен
+«недоступно»); README + plan-doc статусы.
