@@ -14928,7 +14928,19 @@ impl CEmitter {
                             .map(|(t, _)| t.clone());
                         if let Some(target_type) = target {
                             let obj_c = self.emit_expr(obj)?;
-                            return Ok(format!("Nova_{}_static_from({})", target_type, obj_c));
+                            // D73 + D84 (Plan 85.3): `from` может быть
+                            // overloaded — выбрать mangled C-имя по типу
+                            // источника (recv_ty), иначе все `.into()`
+                            // на один target резолвятся в первый overload.
+                            let c_name = self.method_overloads
+                                .get(&(target_type.clone(), "from".to_string()))
+                                .filter(|sigs| sigs.len() > 1)
+                                .and_then(|sigs| sigs.iter()
+                                    .find(|s| s.param_c_types.first()
+                                        .map(|t| t == &recv_ty).unwrap_or(false))
+                                    .map(|s| s.c_name.clone()))
+                                .unwrap_or_else(|| format!("Nova_{}_static_from", target_type));
+                            return Ok(format!("{}({})", c_name, obj_c));
                         }
                     }
                 }
@@ -14946,7 +14958,17 @@ impl CEmitter {
                             .map(|(t, _)| t.clone());
                         if let Some(target_type) = target {
                             let obj_c = self.emit_expr(obj)?;
-                            return Ok(format!("Nova_{}_static_try_from({})", target_type, obj_c));
+                            // D77 + D84 (Plan 85.3): overload-aware mangling,
+                            // симметрично `from` выше.
+                            let c_name = self.method_overloads
+                                .get(&(target_type.clone(), "try_from".to_string()))
+                                .filter(|sigs| sigs.len() > 1)
+                                .and_then(|sigs| sigs.iter()
+                                    .find(|s| s.param_c_types.first()
+                                        .map(|t| t == &recv_ty).unwrap_or(false))
+                                    .map(|s| s.c_name.clone()))
+                                .unwrap_or_else(|| format!("Nova_{}_static_try_from", target_type));
+                            return Ok(format!("{}({})", c_name, obj_c));
                         }
                     }
                 }
