@@ -10676,29 +10676,26 @@ Plan 52.2 и 52.3 → ✅ ЗАКРЫТЫ. Suite: 960 PASS / 0 FAIL.
   лишь возможность диагностировать `for x in xs { x = ... }` как ошибку).
 - **Тесты:** `nova_tests/plan87/explicit_mut.nv` (`for mut x int in`).
 
-### [M-iflet-match-boxed-sum-ptr] if-let/match по боксированному sum-элементу
-- **Где:** codegen `emit_c.rs` — `IfLet` / `WhileLet` / `emit_match`.
-- **Что:** когда scrutinee — указатель на sum-тип со value-семантикой
-  (`NovaOpt_T*`/`NovaResult_T*` — так хранится элемент `[]Option[T]`),
-  pattern-codegen эмитит `.tag`/`.value` (доступ как к значению) →
-  CC-FAIL «member reference type ... is a pointer; did you mean `->`».
-- **Воспроизведение:** `for o in opts { if let Some(v) = o {...} }` для
-  `opts []Option[int]` — падает И с аннотацией, И без неё (codegen
-  аннотацию не потребляет — дефект pre-existing, не регрессия Plan 87).
-- **Почему не чинится в Plan 87:** это дефект value/pointer-модели
-  codegen'а для боксированных sum-элементов массива + pattern-match;
-  Plan 87 — про синтаксис аннотации (parser + type-checker), codegen
-  намеренно нетронут. Корректный фикс требует отличать «sum-значение,
-  боксированное в указатель» от «record/настоящий указатель».
-- **Как чинить:** в `emit_for` деболксить sum-элементы массива в
-  value-binding (`NovaOpt_T o = *(NovaOpt_T*)data[i]`), либо в
-  pattern-codegen деференсить pointer-to-value-sum scrutinee.
-- **Приоритет:** M (ломает идиому деструктуризации Option/Result прямо
-  в теле for-in; обходится `.iter()`/индексным доступом).
-- **Обнаружено:** Plan 87 Ф.4.2 (тест `explicit_generic.nv`).
-- **План исправления:** `docs/plans/89-iflet-match-boxed-sum-ptr.md`
-  (Plan 89, proposed) — Ф.0 аудит value/pointer-боксинга + decision
-  point, Ф.1 реализация, Ф.2 тесты, Ф.3 docs.
+### [M-iflet-match-boxed-sum-ptr] ✅ ЗАКРЫТО (Plan 89, 2026-05-22)
+- **Где:** codegen `emit_c.rs` — `emit_for` (Case 2, связывание элемента
+  массива).
+- **Что было:** элемент `[]Option[T]` хранится в слоте `NovaArray`
+  боксированным указателем `NovaOpt_T*`; `emit_for` связывал
+  loop-переменную как указатель, а все контексты потребления (`if let`/
+  `match`, оператор `==`, передача в функцию, вызов метода `o.is_some()`)
+  ждут sum **по значению** → рассинхрон value↔pointer → CC-FAIL.
+- **Как починено (Plan 89):** Ф.0 аудит (8 probe-фикстур) показал —
+  затронут **только `Option`** (единственный sum со value-семантикой
+  `ValueOptionLike`); `Result`/user-sum (pointer-семантика) и records
+  работали. Выбран подход A: `emit_for` деболксит value-семантику
+  sum-элемента — связывает loop-переменную **значением**
+  (`NovaOpt_T o = *(NovaOpt_T*)data[i]`) в единственной точке → чинит
+  все 5 контекстов сразу. Критерий — `SumSchemaRegistry::
+  lookup_sum_for_c_type(pointee).abi ∈ {ValueOptionLike, ValueTagPayload}`
+  (pointer-семантика `PointerErrorLike` и records не деболксятся).
+- **Тесты:** `nova_tests/plan89/` — iflet/match/eq_and_method/fnarg
+  (Option, позитив) + result/user_sum/record _regression (регресс-
+  гварды: pointer-семантика не деболксится).
 
 ## Plan 83.1 Ф.5 — thread-budget (2026-05-22)
 
