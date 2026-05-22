@@ -1,0 +1,18 @@
+// EXPECT_COMPILE_ERROR allocate inside `blocking { ... }` body
+//
+// Plan 83.3 Ф.6 (D50 §4 V1 leaf-контракт): тело `blocking { }`
+// исполняется на libuv-threadpool-потоке, не зарегистрированном в
+// Boehm GC. GC-аллокация (`GC_malloc`) с такого потока — undefined
+// behavior. Компилятор проверяет тело как `nogc` — alloc-вызовы
+// (`[]T.new`, `HashMap.new`, `StringBuilder.new`, `str.from`, ...)
+// внутри `blocking { }` → compile error.
+
+module negative_capability.blocking_body_alloc_rejected
+
+fn bad() Blocking -> int {
+    let r = blocking {
+        let xs = []int.new()    // ❌ GC-аллокация в теле blocking
+        xs.len()
+    }
+    r
+}
