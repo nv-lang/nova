@@ -10678,17 +10678,25 @@ Plan 52.2 и 52.3 → ✅ ЗАКРЫТЫ. Suite: 960 PASS / 0 FAIL.
 ## Plan 83.3 Ф.1 — runtime blocking-offload (2026-05-22)
 
 ### [M-83.3-blocking-leaf-contract] V1: blocking-работа обязана быть leaf
-- **Где:** `compiler-codegen/nova_rt/fibers.h` — `nova_blocking_offload`.
+- **Где:** `compiler-codegen/nova_rt/fibers.h` — `nova_blocking_offload`;
+  type-checker `compiler-codegen/src/types/mod.rs`.
 - **Что упрощено:** `work_cb` выполняется на потоке libuv threadpool,
   не зарегистрированном в Boehm GC и не являющемся fiber'ом. V1-контракт
-  (D50): blocking-работа (`fn`) — leaf: FFI/syscall без GC-аллокации и
-  без вызовов обратно в Nova-рантайм.
-- **Почему:** покрывает основной use-case (блокирующий FFI). GC-
-  регистрация threadpool-потоков — отдельная инфраструктура.
-- **Как чинить:** V2 (Plan 83.3 Ф.2 followup) — `GC_register_my_thread`
-  once-per-thread для threadpool-потоков через TLS-флаг → разрешит
-  произвольный Nova-код под `Blocking`.
-- **Приоритет:** L — V1 достаточно для целевого паритета (FFI-offload).
+  (D50): blocking-работа — leaf: FFI/syscall без GC-аллокации и без
+  вызовов обратно в Nova-рантайм.
+- **Статус enforcement (обновлено Ф.6, 2026-05-22):** **частично
+  проверяется компилятором** — тело `blocking { }` type-check'ается
+  как `nogc` (бан alloc-вызовов) + бан suspend-эффектов Net/Fs/Db/Time.
+  НЕ проверяется: `throw`/`?` (`Fail`-эффект — `longjmp` без fail-frame
+  на threadpool-потоке), а `nogc`-whitelist консервативен (не ловит
+  user-record-литералы). Эти остатки — documented-риск в spec D50 §4.
+- **Почему остаток:** полный enforcement (`Fail`-бан + произвольный
+  Nova-код) требует V2.
+- **Как чинить:** V2 — `GC_register_my_thread` once-per-thread для
+  threadpool-потоков + fail-frame на threadpool-потоке → разрешит
+  произвольный Nova-код под `Blocking` (alloc + throw).
+- **Приоритет:** L — V1 + Ф.6-enforcement достаточны для целевого
+  паритета (FFI-offload); крашащие случаи (alloc, async-I/O) ловятся.
 
 ## Plan 83.3 Ф.4.1/Ф.4.2 — примитив blocking { } (2026-05-22)
 

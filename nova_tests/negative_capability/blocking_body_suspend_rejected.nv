@@ -1,0 +1,22 @@
+// EXPECT_COMPILE_ERROR inside `blocking { ... }` body
+//
+// Plan 83.3 Ф.6 (D50 §4 V1 leaf-контракт): тело `blocking { }` идёт
+// на libuv-threadpool-потоке без fiber/event-loop-контекста.
+// Suspend-эффекты (Net/Fs/Db/Time) — это async-I/O Nova, им нужен
+// event-loop; на threadpool-потоке они сломаны. Вызов функции с
+// таким эффектом внутри `blocking { }` → compile error.
+
+module negative_capability.blocking_body_suspend_rejected
+
+type Net effect {
+    fetch(url str) -> str
+}
+
+fn http_get(url str) Net -> str => Net.fetch(url)
+
+fn bad() Blocking -> str {
+    let r = blocking {
+        http_get("/api")        // ❌ suspend-эффект Net в теле blocking
+    }
+    r
+}
