@@ -112,14 +112,17 @@ enum Cmd {
         #[arg(long, value_name = "URL")]
         git: Option<String>,
         /// Git-пин: тег (только с --git).
-        #[arg(long, requires = "git", conflicts_with_all = ["branch", "rev"])]
+        #[arg(long, requires = "git", conflicts_with_all = ["branch", "rev", "version"])]
         tag: Option<String>,
         /// Git-пин: ветка (только с --git).
-        #[arg(long, requires = "git", conflicts_with_all = ["tag", "rev"])]
+        #[arg(long, requires = "git", conflicts_with_all = ["tag", "rev", "version"])]
         branch: Option<String>,
         /// Git-пин: commit / rev (только с --git).
-        #[arg(long, requires = "git", conflicts_with_all = ["tag", "branch"])]
+        #[arg(long, requires = "git", conflicts_with_all = ["tag", "branch", "version"])]
         rev: Option<String>,
+        /// Plan 03.2: git-пин semver-диапазоном (`^1.2`) — только с --git.
+        #[arg(long, requires = "git", conflicts_with_all = ["tag", "branch", "rev"])]
+        version: Option<String>,
     },
     /// Plan 03.1 Ф.5 / 03.2 Ф.4: пере-резолвить git-зависимости и
     /// обновить nova.lock. Без аргумента — все git-зависимости.
@@ -2630,6 +2633,7 @@ fn cmd_add(
     tag: Option<&str>,
     branch: Option<&str>,
     rev: Option<&str>,
+    version: Option<&str>,
 ) -> Result<()> {
     let pkg_dir = package_dir_from_cwd().ok_or_else(|| {
         usage_err("`nova add` запускается внутри Nova-пакета (нет nova.toml)")
@@ -2647,10 +2651,11 @@ fn cmd_add(
     let value = match (path, git) {
         (Some(p), None) => format!("{{ path = \"{}\" }}", p),
         (None, Some(url)) => {
-            let pin = match (tag, branch, rev) {
-                (Some(t), _, _) => format!(", tag = \"{}\"", t),
-                (_, Some(b), _) => format!(", branch = \"{}\"", b),
-                (_, _, Some(r)) => format!(", rev = \"{}\"", r),
+            let pin = match (tag, branch, rev, version) {
+                (Some(t), _, _, _) => format!(", tag = \"{}\"", t),
+                (_, Some(b), _, _) => format!(", branch = \"{}\"", b),
+                (_, _, Some(r), _) => format!(", rev = \"{}\"", r),
+                (_, _, _, Some(v)) => format!(", version = \"{}\"", v),
                 _ => String::new(),
             };
             format!("{{ git = \"{}\"{} }}", url, pin)
@@ -4129,13 +4134,14 @@ fn run() -> ExitCode {
             &skip,
         ),
         Cmd::Run { file } => cmd_run(&file),
-        Cmd::Add { name, path, git, tag, branch, rev } => cmd_add(
+        Cmd::Add { name, path, git, tag, branch, rev, version } => cmd_add(
             &name,
             path.as_deref(),
             git.as_deref(),
             tag.as_deref(),
             branch.as_deref(),
             rev.as_deref(),
+            version.as_deref(),
         ),
         Cmd::Update { name, precise } => cmd_update(name.as_deref(), precise.as_deref()),
         Cmd::Doc { file, format, json_schema, include_private, run_doc_tests, check, watch, coverage, coverage_threshold, jobs, diff, scrape_examples, strict, mutate_contracts, real_exec, output_dir } => {
