@@ -17468,3 +17468,13 @@ methods с pattern-match) оказались уже сняты Plan 55.4/55.5/56
   Plan 52.2/52.3 → ЗАКРЫТЫ (README + шапки); simplifications
   closure-секция.
 Suite: 960 PASS / 0 FAIL.
+
+### fix(test) — sleep_precision_bench load-tolerance (2026-05-22)
+
+Под `nova test --jobs 16` (16 параллельных тест-процессов) wakeup-
+латентность `Time.sleep` определяется планировщиком ОС, не таймером —
+`sleep(50) precision` изредка флейкал на tight-bound (130ms per-iter).
+Введён `LOAD_SLACK=250`: hard-assert ловит грубый баг (sleep застрял),
+точность тест по-прежнему измеряет (max_dev/avg). Пре-существующий
+флейк, не связан с Ф.4 (тест не использует runtime.init; проходит 3/3
+изолированно).
