@@ -4959,7 +4959,7 @@ impl CEmitter {
                 span,
             };
             let for_expr = Expr::new(
-                ExprKind::For { pattern: pattern.clone(), iter: Box::new(iter.clone()), body: for_body, invariants: vec![], decreases: None },
+                ExprKind::For { pattern: pattern.clone(), iter: Box::new(iter.clone()), body: for_body, elem_type: None, invariants: vec![], decreases: None },
                 span,
             );
             let supervised_block = Block { stmts: vec![Stmt::Expr(for_expr)], trailing: None, span };
@@ -4985,7 +4985,7 @@ impl CEmitter {
                     span,
                 };
                 let for_expr = Expr::new(
-                    ExprKind::For { pattern: pattern.clone(), iter: Box::new(iter.clone()), body: for_body, invariants: vec![], decreases: None },
+                    ExprKind::For { pattern: pattern.clone(), iter: Box::new(iter.clone()), body: for_body, elem_type: None, invariants: vec![], decreases: None },
                     span,
                 );
                 let supervised_block = Block { stmts: vec![Stmt::Expr(for_expr)], trailing: None, span };
@@ -5017,7 +5017,7 @@ impl CEmitter {
                     let spawn_expr = Expr::new(ExprKind::Spawn(Box::new(spawn_body_expr)), span);
                     let for_body = Block { stmts: vec![Stmt::Expr(spawn_expr)], trailing: None, span };
                     let for_expr = Expr::new(
-                        ExprKind::For { pattern: pattern.clone(), iter: Box::new(iter.clone()), body: for_body, invariants: vec![], decreases: None },
+                        ExprKind::For { pattern: pattern.clone(), iter: Box::new(iter.clone()), body: for_body, elem_type: None, invariants: vec![], decreases: None },
                         span,
                     );
                     let supervised_block = Block { stmts: vec![Stmt::Expr(for_expr)], trailing: None, span };
@@ -5064,7 +5064,7 @@ impl CEmitter {
                     span,
                 };
                 let for_expr = Expr::new(
-                    ExprKind::For { pattern: pattern.clone(), iter: Box::new(iter.clone()), body: for_body, invariants: vec![], decreases: None },
+                    ExprKind::For { pattern: pattern.clone(), iter: Box::new(iter.clone()), body: for_body, elem_type: None, invariants: vec![], decreases: None },
                     span,
                 );
                 let supervised_block = Block { stmts: vec![Stmt::Expr(for_expr)], trailing: None, span };
@@ -12658,7 +12658,11 @@ impl CEmitter {
             ExprKind::Detach(body) => {
                 self.emit_detach(body)
             }
-            ExprKind::ParallelFor { pattern, iter, body } => {
+            ExprKind::ParallelFor { pattern, iter, body, .. } => {
+                // Plan 87: `elem_type` — checked assertion, проверена в type-check
+                // (Ф.3). Codegen использует собственную inference-машинерию
+                // (array_element_types / Iter-protocol next_sig) — для валидной
+                // программы результат идентичен (поведение 1:1).
                 self.emit_parallel_for(pattern, iter, body)
             }
             ExprKind::TaggedTemplate { parts, args, .. } => {
