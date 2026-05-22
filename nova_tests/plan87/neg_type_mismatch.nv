@@ -1,0 +1,18 @@
+// EXPECT_COMPILE_ERROR E7340
+//
+// Plan 87 Ф.4.5 — НЕГАТИВ (ядро плана): аннотация типа loop-переменной
+// не совпадает с фактическим типом элемента итератора.
+//
+// `for x str in [1, 2, 3]` — элементы массива имеют тип `int`, аннотация
+// говорит `str`. Без проверки это был бы тихий рассинхрон (фича хуже
+// индустрии — Go/Rust/TS аннотацию loop-переменной не дают вовсе).
+// Plan 87 Ф.3 ловит это compile-error'ом E7340.
+
+module nova_tests.plan87.neg_type_mismatch
+
+
+test "for x str in int array — annotation mismatch" {
+    for x str in [1, 2, 3] {
+        let _ = x
+    }
+}

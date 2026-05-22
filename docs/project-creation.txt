@@ -17911,3 +17911,55 @@ Plan 83.3 ✅ ЗАКРЫТ ЦЕЛИКОМ (Ф.0-Ф.5). Plan 83: 83.1 ✅ + 83.3 
 остаётся 83.2 (флип M:N, GATED на Plan 82).
 
 Suite: 1038 PASS / 0 FAIL / 56 SKIP (+2 тест-файла: pool_saturation + cancel, 0 регрессий).
+
+### Plan 87 — for-in с явным типом элемента (`for x TYPE in iter`)
+
+`spec/syntax.md` документировал аннотацию типа loop-переменной
+(`for id u64 in ids`, `for x int in nums`), но bootstrap-парсер её не
+принимал — spec/impl drift + дыра в дизайн-консистентности (Nova
+аннотирует тип по правилу «name type» везде — `let x int`, `fn(x int)`,
+`[T Bound]` — кроме for-in). Plan 87 закрыл исключение.
+
+Ф.1 — AST: `ExprKind::For` и `ParallelFor` получили поле
+`elem_type: Option<TypeRef>` (`None` — inferred-форма, поведение до
+плана). Парсер: `parse_for`/`parse_parallel_for` после loop-pattern —
+если следующий токен не `in`, парсят `TypeRef` по правилу «name type».
+`mut` (`for mut x TYPE in`) съедается явно в `parse_for` —
+`parse_pattern` его не обрабатывает; в bootstrap binding-иммутабельность
+нигде не enforce'ится, поэтому `mut` информационен (маркер
+`[M-for-loop-var-mut]`).
+
+Ф.2 — обновлены match-сайты `For`/`ParallelFor` (desugar/lints/callnorm/
+interp/types/verify/emit_c). Codegen аннотацию НЕ потребляет: она —
+checked assertion, проверенная в type-check (Ф.3); для валидной
+программы Ф.3 гарантирует совпадение → codegen использует собственную
+inference-машинерию, поведение 1:1 с inferred-формой.
+
+Ф.3 (ядро) — type-checker (Plan 79 `f1`-проход): при заданной
+аннотации `infer_iter_elem_type` выводит фактический тип элемента
+итератора (range → int; array literal → тип первого элемента; `[]T` →
+T) и сверяет с аннотацией через категорийную assignability (`cat_of`/
+`cat_compatible`). Несовпадение → новый код `E7340`. Не удалось вывести
+тип элемента → проверка пропускается (Compat::Unknown-философия Plan 79
+— без ложных срабатываний). Аннотированная loop-переменная-`Ident`
+получает свой тип в scope тела (save/restore).
+
+Ф.4 — `nova_tests/plan87/` 6 фикстур: explicit_primitive (int/u8/char/
+range), explicit_generic (str / `[][]int` / `Option[int]`), explicit_mut
+(`for mut x int`), explicit_custom_iter (user Iter[int] + `parallel
+for`), neg_type_mismatch (`for x str in [1,2,3]` → E7340),
+neg_bad_syntax (мусор между pattern и `in`). Полный `nova test`:
+1027 PASS / 0 FAIL / 56 SKIP (baseline 1021 + 6 новых).
+
+Обнаружен pre-existing codegen-дефект `[M-iflet-match-boxed-sum-ptr]`:
+`if let`/`match` по боксированному sum-элементу массива
+(`for o in opts { if let Some(v) = o }` для `[]Option[T]`) даёт CC-FAIL
+(`.tag` на указателе). Воспроизводится И с аннотацией, И без неё —
+codegen аннотацию не потребляет → это не регрессия Plan 87, а
+независимый дефект value/pointer-модели; задокументирован, вынесен в
+будущий codegen-план.
+
+Ф.5 — spec/syntax.md (раздел циклов: «аннотация проверяется
+компилятором», пример `for mut id u64 in ids`); simplifications.md
+(`[M-for-in-explicit-elem-type]` → ✅ ЗАКРЫТО, +`[M-for-loop-var-mut]`,
++`[M-iflet-match-boxed-sum-ptr]`); README + plan-doc статусы.
