@@ -1,10 +1,12 @@
 // Plan 44.2 R8 P41-3: fibers.compact() API smoke test.
+// Plan 82 Ф.1: arena активна и на Windows.
 //
-// На Linux/macOS arena активна — compact() выполняет MADV_DONTNEED
-// на free slots. После compact() slot_count и slots_active НЕ меняются;
-// меняется только physical RSS (не наблюдаемо через API).
+// Linux/macOS: compact() выполняет MADV_DONTNEED на free slots.
+// Windows: compact() выполняет VirtualFree(MEM_DECOMMIT) на free slots.
+// После compact() slot_count и slots_active НЕ меняются; меняется только
+// physical commit/RSS (не наблюдаемо через API).
 //
-// На Windows arena off — compact() no-op.
+// Платформы без arena — compact() no-op.
 
 module concurrency.fiber_arena_compact
 

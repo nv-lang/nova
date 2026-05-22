@@ -1,11 +1,13 @@
 // Plan 44.2 Этап 3: smoke test для std.runtime.fibers introspection.
+// Plan 82 Ф.1: arena теперь активна и на Windows (fiber_arena_win.c) —
+// Windows идёт по тому же пути, что Linux/macOS.
 //
 // Verify что `fibers.*` API доступен и возвращает sane values:
-//   - На Linux/macOS arena активна → slot_count > 0, slots_active растёт
-//     после spawn'a fibers.
-//   - На Windows arena off → все возвращают 0 (honest sentinel).
+//   - Linux/macOS/Windows: arena активна → slot_count > 0, slots_active
+//     растёт после spawn'a fibers.
+//   - Платформы без arena (NOVA_FIBER_ARENA_ENABLED=0): всё возвращает 0.
 //
-// Тест должен PASS на обеих платформах — branching через slot_count == 0.
+// Тест PASS на всех платформах — branching через slot_count == 0.
 
 module concurrency.fiber_arena_stats
 
@@ -13,12 +15,12 @@ module concurrency.fiber_arena_stats
 test "fibers introspection API доступен" {
     let slots = fibers.slot_count()
     if slots == 0 {
-        // Windows: arena off. Все API должны симметрично вернуть 0.
+        // Платформа без arena. Все API симметрично возвращают 0.
         assert(fibers.virtual_reserved() == 0)
         assert(fibers.slots_active() == 0)
         assert(fibers.high_water() == 0)
     } else {
-        // Linux/macOS: arena активна. virtual_reserved = slot_count *
+        // arena активна (Linux/macOS/Windows). virtual_reserved = slot_count *
         // slot_size + guard; slot_count >= 4096 (production sizing).
         assert(fibers.virtual_reserved() > 0)
         assert(slots >= 4096)
@@ -33,13 +35,13 @@ test "spawn увеличивает slots_active под arena" {
 
     supervised {
         spawn {
-            // Inside fiber. На Linux/macOS slot allocated в arena.
+            // Inside fiber — slot allocated в arena (все платформы с arena).
             let now_active = fibers.slots_active()
             if fibers.slot_count() > 0 {
                 // Arena активна — slot для этого fiber'a должен быть учтён.
                 assert(now_active > before_active)
             } else {
-                // Windows fallback — всегда 0.
+                // Платформа без arena — всегда 0.
                 assert(now_active == 0)
             }
         }

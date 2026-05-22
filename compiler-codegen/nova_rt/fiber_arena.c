@@ -8,7 +8,11 @@
 
 #include "fiber_arena.h"
 
-#if NOVA_FIBER_ARENA_ENABLED
+/* Plan 82 Ф.1: внутренний guard сужен с NOVA_FIBER_ARENA_ENABLED до
+ * явного POSIX-условия. NOVA_FIBER_ARENA_ENABLED теперь true и на
+ * Windows (Windows-реализация — fiber_arena_win.c); этот файл — строго
+ * POSIX-путь, на Windows компилируется в пустой TU. */
+#if defined(__linux__) || defined(__APPLE__)
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -429,6 +433,14 @@ bool nova_fiber_arena_contains(const void* ptr) {
            (const char*)ptr <  _t_arena.base + _t_arena.virtual_size;
 }
 
+/* Plan 82 Ф.1: POSIX не нуждается в патче ctx.stack_limit — mmap
+ * MAP_NORESERVE даёт kernel demand-paging без __chkstk-проблемы. NULL
+ * → nova_fiber_post_create (fibers.c) пропускает патч. */
+void* nova_fiber_committed_low(const void* block_ptr) {
+    (void)block_ptr;
+    return NULL;
+}
+
 NovaFiberArenaStats nova_fiber_arena_stats(void) {
     NovaFiberArenaStats s = { 0 };
     if (_t_arena.base) {
@@ -440,11 +452,11 @@ NovaFiberArenaStats nova_fiber_arena_stats(void) {
     return s;
 }
 
-#else /* NOVA_FIBER_ARENA_ENABLED == 0 — Windows or unsupported */
+#else /* не POSIX — Windows (fiber_arena_win.c) или unsupported */
 
-/* No-op stub for unsupported platforms. fiber_arena.h declarations
- * absent под этой ветке, but we keep a translation unit to satisfy
- * the build (no need to conditionally compile .c file inclusion). */
+/* Пустой TU. На Windows arena-реализацию несёт fiber_arena_win.c; на
+ * unsupported-платформах NOVA_FIBER_ARENA_ENABLED == 0 и API не
+ * объявлен. Файл всегда в списке линковки — отдельный маркер-тип. */
 typedef int _nova_fiber_arena_disabled_marker;
 
-#endif /* NOVA_FIBER_ARENA_ENABLED */
+#endif /* POSIX */

@@ -858,6 +858,7 @@ void nova_runtime_spawn_global(void (*entry)(mco_coro*), void* user) {
         fprintf(stderr, "nova: runtime_spawn_global: mco_create failed (%d)\n", (int)r);
         abort();
     }
+    nova_fiber_post_create(co);  /* Plan 82 Ф.1: patch ctx.stack_limit (Windows) */
     if (!nova_deque_push(&target->deque, co)) {
         fprintf(stderr, "nova: runtime_spawn_global: deque_push failed\n");
         mco_destroy(co);

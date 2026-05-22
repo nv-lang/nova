@@ -1,7 +1,7 @@
 // Тесты std.runtime.fibers — fiber arena introspection API.
-// На Windows arena отключена → всё возвращает 0 (honest sentinel).
-// На Linux/macOS → slot_count > 0.
-// Тесты используют differential-pattern: if fibers.slot_count() == 0 { skip }.
+// Plan 82 Ф.1: arena активна на Linux/macOS/Windows → slot_count > 0.
+// Платформы без arena (NOVA_FIBER_ARENA_ENABLED=0) → всё возвращает 0.
+// Тесты используют differential-pattern: if fibers.slot_count() == 0 { ... }.
 
 module runtime.fibers_introspect
 
@@ -32,15 +32,15 @@ test "fibers.compact: не падает" {
     assert(true)
 }
 
-test "fibers: на Windows всё = 0, на Linux slot_count > 0" {
+test "fibers: arena-платформы дают slot_count > 0, иначе всё = 0" {
     let sc = fibers.slot_count()
     if sc == 0 {
-        // Windows — arena off, честный sentinel
+        // Платформа без arena — честный sentinel
         assert(fibers.virtual_reserved() == 0)
         assert(fibers.slots_active() == 0)
         assert(fibers.high_water() == 0)
     } else {
-        // Linux/macOS — arena активна
+        // arena активна (Linux/macOS/Windows — Plan 82 Ф.1)
         assert(fibers.virtual_reserved() > 0)
         assert(fibers.slot_count() > 0)
     }
