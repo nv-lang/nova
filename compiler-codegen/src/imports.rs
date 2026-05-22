@@ -159,6 +159,7 @@ pub fn resolve_imports_inline_ex(
                     is_export: false,
                     span: crate::diag::Span::dummy(),
                     doc_attrs: Vec::new(),
+                    anchor: crate::ast::ImportAnchor::Package,
                 });
             }
             // Empty list `partial_prelude()` — НИЧЕГО не auto-import'им
@@ -200,6 +201,7 @@ pub fn resolve_imports_inline_ex(
                                 is_export: false,
                                 span: crate::diag::Span::dummy(),
                                 doc_attrs: Vec::new(),
+                                anchor: crate::ast::ImportAnchor::Package,
                             });
                             edition_pin_used = true;
                         }
@@ -216,6 +218,7 @@ pub fn resolve_imports_inline_ex(
                         is_export: false,
                         span: crate::diag::Span::dummy(),
                         doc_attrs: Vec::new(),
+                        anchor: crate::ast::ImportAnchor::Package,
                     });
                 }
             }
