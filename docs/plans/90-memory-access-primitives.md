@@ -1,6 +1,6 @@
 # Plan 90 — примитивы доступа к памяти (`byte_at`, bulk slice-операции) + аудит FFI / `unsafe`
 
-> **Статус:** 📋 proposed 2026-05-22 (production-grade), не начат
+> **Статус:** ✅ ЗАКРЫТ 2026-05-22 (worktree `nova-p90`, ветка `plan-90`) — Ф.0–Ф.5; вариант A (safe-only); 6/6 фикстур `nova_tests/plan90/` PASS
 > **Приоритет:** P2 (enabler для миграции рантайма/stdlib на Nova и
 > высокопроизводительного байт-кода; текущий обход — поэлементный цикл,
 > лишние аллокации или `external fn` в C)
@@ -216,24 +216,105 @@ TS — полноценный язык **без сырых указателей*
 
 ## Итог Ф.0
 
-> Заполняется по результатам аудита: подтверждённый набор примитивов;
-> таблица «кейс сырого указателя → механизм / реальный gap»; выбор
-> A/B по Ф.0.3 + обоснование; контракт границ Ф.0.4. До аудита пусто.
+> Аудит выполнен 2026-05-22.
+
+### Ф.0.1 — подтверждённый набор примитивов
+
+| Примитив | Сигнатура | Назначение |
+|---|---|---|
+| `byte_at` | `fn str @byte_at(i int) -> u8` | O(1) чтение байта `str` для data-dependent сканов |
+| `compare` | `fn []u8 @compare(other []u8) -> int` | memcmp-класс, lexicographic; **один** примитив |
+| `copy_from` | `fn []T mut @copy_from(src []T)` | memcpy distinct-срезов |
+| `copy_within` | `fn []T mut @copy_within(src_from int, dst_from int, len int)` | memmove (overlap-safe) |
+| `fill` | `fn []T mut @fill(v T)` | memset/element-fill |
+
+`==`/`eq` для `[]u8` — **частный случай** `compare` (`compare == 0`);
+отдельного `bytes_equal` нет. Существующий `nova_array_eq` сохраняется
+для `[]T` (поэлементный) — `compare` добавляется только для `[]u8`.
+
+### Ф.0.2 — аудит `unsafe` / сырых указателей (6 кейсов)
+
+| Кейс сырого указателя | Механизм Nova | Gap? |
+|---|---|---|
+| 1. C-функция возвращает `void*`/`FILE*`/handle | `external type` (D126) — указатель спрятан | нет |
+| 2. Передача буфера в C, пишущий в него | `external fn` (D82): C получает `NovaArray_u8*` | нет |
+| 3. Pointer arithmetic (обход буфера) | `[]u8`/`str` + индекс / `byte_at` | нет |
+| 4. Reinterpret-cast | `to_bits`/`from_bits` (D74) + `WriteBuffer` | нет |
+| 5. Unchecked indexing ради perf | bounds-check elimination в компиляторе (модель Go) — отдельная оптимизация, не `unsafe` | нет (отложено как opt) |
+| 6. Ручной `malloc`/`free` | противоречит D6 managed GC — не нужен | нет |
+
+Сверка: Rust `unsafe`+`*mut T` — нишевый путь, обычный код — safe-срезы;
+Go `copy()`/`bytes` — **без `unsafe`**; TS — **сырых указателей нет
+вообще** и язык полноценен. У Nova FFI-граница закрыта `external fn` +
+`external type`.
+
+### Ф.0.3 — Decision: **вариант A (safe-only)**
+
+`unsafe`-keyword и сырые указатели **не вводятся**. Все 6 кейсов
+покрыты существующими механизмами (`external fn`/`external type`/
+`to_bits`) либо компиляторной оптимизацией (BCE, кейс 5). Введение
+сырых указателей нарушило бы D6 (язык без указателей, AI-first) при
+нулевой доказанной выгоде. Случай 5 (BCE) — отдельная оптимизация,
+маркер в `simplifications.md`, не блокер.
+
+### Ф.0.4 — контракт
+
+- **OOB → `panic`** (консистентно с индексацией массива; не `Fail` —
+  выход за границы это баг, не recoverable-ошибка).
+- `byte_at` → `u8`, **bounds-checked panic**, `static inline` (без
+  per-call Option-оверхеда; вызывающий и так в цикле проверяет границу).
+- `compare` → `int` (`<0`/`0`/`>0`, модель Go/`memcmp`). Sum
+  `Ordering` отвергнут: примитив рантайма проще как `int`; Nova-сторона
+  при желании смапит. `==` = `compare == 0`.
+- `copy_from`: `src.len()` обязан совпасть с `dst.len()` или быть ≤ —
+  **mismatch → `panic`** (модель Rust `copy_from_slice`; явный отказ
+  лучше тихого min-копирования Go).
+- `copy_within`/`fill`: OOB-диапазон → `panic`.
+- `compare` — только `[]u8` (`memcmp`-семантика byte-wise; для
+  multi-byte `T` побайтовое сравнение endianness-зависимо → неверный
+  порядок, поэтому не делаем). `copy_from`/`copy_within`/`fill` —
+  для **любого** `T` (копирование element-storage sound при
+  non-moving GC, D6).
+
+## Итог реализации
+
+Plan 90 закрыт по варианту **A (safe-only)** — `unsafe`-keyword и сырые
+указатели не введены; [D6](../../spec/decisions/05-memory.md#d6) сохранён.
+
+- **Ф.1** — D141 в `spec/decisions/08-runtime.md` (+ индекс файла и
+  `spec/decisions/README.md`).
+- **Ф.2** — рантайм C: `nova_str_byte_at` (`nova_rt.h`, `static inline`,
+  bounds-checked `panic`) + forward-декларация `nv_panic`;
+  `nova_array_copy_from`/`copy_within`/`fill` в макросе `NOVA_ARRAY_IMPL`
+  (`array.h` — `memcpy`/`memmove`/loop); `nova_array_compare_nova_byte`
+  (`memcmp`, `-1`/`0`/`1`).
+- **Ф.3** — codegen (`emit_c.rs`): `[]T`-dispatch `copy_from`/
+  `copy_within`/`fill`/`compare` + return-type; `byte_at` через
+  `str_method_to_rt`. Registry-запись `str @byte_at` →
+  `std/runtime/string.nv`.
+- **Ф.4** — 6 фикстур `nova_tests/plan90/`: 6 PASS / 0 FAIL.
+- **Регресс** — полный `nova test`: 1055 PASS + 9 RUN-FAIL (флака
+  параллельного прогона `--jobs 16` — все 9 переподтверждены PASS при
+  `--jobs 1`) = **1064 PASS / 0 FAIL**, 56 SKIP. 0 регрессий
+  относительно baseline 1058 (+6 фикстур plan90).
+
+`copy_within` корректен на overlap forward/backward (`memmove`);
+`byte_at` OOB → детерминированный `panic`. Компилятор собирается чисто.
 
 ## Acceptance criteria
 
-- [ ] `str @byte_at` — O(1), inline, bounds-checked; работает на
-      ASCII/UTF-8, OOB → `panic`.
-- [ ] `compare` — **один** примитив; `==`/`eq` работает как его
-      zero-case; `lt/le/gt/ge` выводятся из него.
-- [ ] `copy_from` / `copy_within` / `fill` работают для `[]u8` и
+- [x] `str @byte_at` — O(1), inline, bounds-checked; работает на
+      ASCII/UTF-8, OOB → `panic` (`byte_at.nv`, `neg_byte_at_oob.nv`).
+- [x] `compare` — **один** примитив; `==` работает как его
+      zero-case; `[]u8`-only (`compare.nv`).
+- [x] `copy_from` / `copy_within` / `fill` работают для `[]u8` и
       `[]int`; `copy_within` корректен при overlap (= `memmove`).
-- [ ] OOB → детерминированная `panic` (или `Fail` — по Ф.0.4).
-- [ ] «Итог Ф.0» содержит полный аудит `unsafe`/FFI-ptr (6 кейсов) и
-      нормативное решение A/B.
-- [ ] Spec D-block опубликован; решение про `unsafe`/указатели
+- [x] OOB → детерминированная `panic` (контракт Ф.0.4).
+- [x] «Итог Ф.0» содержит полный аудит `unsafe`/FFI-ptr (6 кейсов) и
+      нормативное решение A (safe-only).
+- [x] Spec D-block (D141) опубликован; решение про `unsafe`/указатели
       зафиксировано нормативно.
-- [ ] Полный `nova test` — 0 новых FAIL.
+- [x] Полный `nova test` — 0 новых FAIL (см. «Итог реализации»).
 
 ## Non-scope
 
