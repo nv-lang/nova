@@ -8,22 +8,23 @@
 > по числу fiber'ов с Go (§3). Редакция 3 — верификация против
 > `runtime.c`/`alloc_boehm.c`/Boehm 8.2.8, GC-дизайн на проверенных API,
 > подпроблема П5 (GC↔switch атомарность).
-> **Статус:** 🟢 **Ф.0 + Ф.1 + Ф.2 ✅ ЗАВЕРШЕНЫ (2026-05-22).** Windows
+> **Статус:** 🟢 **Ф.0–Ф.3 ✅ ЗАВЕРШЕНЫ (2026-05-22).** Windows
 > fiber-стеки переведены с minicoro-default calloc на lazy-commit
-> large-reserve arena (`fiber_arena_win.c`) с полной GC-интеграцией.
+> large-reserve arena (`fiber_arena_win.c`) с полной GC-интеграцией;
+> arena сделана **M:N-safe** (cross-thread migration, multi-worker GC).
 > Полный `nova test`: **1058 PASS / 0 FAIL / 56 SKIP** — 0 регрессий.
 > Standalone-харнессы зелёные на MSVC + clang-cl.
-> **Ф.1 и Ф.2 слиты в одну поставку** — Ф.1 в одиночку регрессирует:
-> §1.6-допущение «per-thread скан корректно покрывает running fiber»
-> ОПРОВЕРГНУТО эмпирически (объект на arena-стеке fiber'а собирается GC;
-> §9-риск-3 это предусматривал). Ключевые находки Ф.1/Ф.2:
-> (1) `GC_push_all` не масштабируется — тысячи вызовов вешают Boehm на
-> ~2048 fiber'ах → `GC_push_all_eager`; (2) idle-batch decommit по
-> 32-128 GB-диапазону деградирует → послотный decommit; (3) slot_count
-> 4096→16384 (Windows). Отчёт — `82-artifacts/f1-report.md`. Артефакты:
-> `f1_arena_test.c`, `f1_gc_test.c`.
-> **Следующее: Ф.3** — cross-thread migration; **Ф.4** — тест-матрица;
-> **Ф.5** — M:N на Windows; **Ф.6** — spec + закрытие 44.3.
+> **Ф.1 и Ф.2 слиты** — Ф.1 в одиночку регрессирует: §1.6-допущение
+> «per-thread скан корректно покрывает running fiber» ОПРОВЕРГНУТО
+> эмпирически. Ключевые находки Ф.1/Ф.2: (1) `GC_push_all` не
+> масштабируется → `GC_push_all_eager`; (2) idle-batch decommit
+> деградирует → послотный; (3) slot_count 4096→16384 (Windows).
+> **Ф.3** — arena переработана для M:N: heap-арены в глобальном списке,
+> atomic bitmap, address-based cross-thread dealloc, multi-arena
+> GC-колбэк (fiber-стеки + native-стеки всех worker'ов),
+> worker-арена lifecycle. Отчёт — `82-artifacts/f1-report.md`.
+> **Следующее: Ф.4** — тест-матрица §7; **Ф.5** — context-switch
+> бенчмарк (M:N на Windows уже работает); **Ф.6** — spec + закрытие 44.3.
 > **Приоритет:** P2 — Windows работает для single-thread cooperative
 > (calloc-fallback), но без lazy-commit, без overflow-detection и **без
 > какой-либо GC-интеграции fiber-стеков** (§1.5 — подтверждено
@@ -576,7 +577,18 @@ single-thread форме:
   с живыми данными на своём стеке; (б) GC во время work-stealing
   миграции → объект жив после resume (нет UAF), сканер не падает (нет AV).
 
-### Ф.3 — Cross-thread migration correctness (~2 дня)
+### Ф.3 — Cross-thread migration correctness — ✅ ЗАВЕРШЕНА 2026-05-22
+
+> arena переработана для M:N (`fiber_arena_win.c`): heap-арены в
+> глобальном append-only списке, TLS — лишь указатель; atomic bitmap
+> (`_interlockedbittestandset/reset64`); **address-based** dealloc /
+> committed_low / contains / VEH (арена-владелец по адресу — §5.3);
+> multi-arena GC-колбэк (fiber-стеки + native scheduler-стеки ВСЕХ
+> worker'ов — §П3); worker-арена lifecycle (`runtime.c::_worker_main`
+> создаёт + `nova_fiber_arena_thread_exit`; shutdown — `release_retired`
+> после join); `GC_add_roots(_workers)` (§П3 — scope-массивы). Полный
+> `nova test` 1058/0/56, concurrency 75/75 incl M:N. `[M-82-gc-mn-
+> deferred]` ✅ ЗАКРЫТ. Отчёт — `82-artifacts/f1-report.md` §7.
 
 - fiber A → steal → B: TIB B корректен, SEH, guard-page, GC-видимость
   через реестр.

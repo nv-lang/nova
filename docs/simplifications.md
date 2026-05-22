@@ -10905,6 +10905,17 @@ Plan 03.4 (Ф.1–Ф.4, effect-срез) → ✅ ЗАКРЫТ. Suite: 1058 PASS 
 
 ## [M-82-gc-mn-deferred] Windows fiber-arena GC-coverage — single-thread only (2026-05-22)
 
+### ✅ ЗАКРЫТО — Plan 82 Ф.3 (2026-05-22)
+
+Plan 82 Ф.3 переработал `fiber_arena_win.c` для M:N: арены — heap-
+структуры в глобальном append-only списке (TLS хранит указатель);
+GC-колбэк обходит ВСЕ арены и пушит fiber-стеки + native scheduler-стеки
+КАЖДОГО worker'а; cross-thread dealloc address-based; `used_bits` —
+atomic. `runtime.c` создаёт арену каждого worker'а и регистрирует её
+native-стек, добавляет `GC_add_roots(_workers)` (§П3). Полный
+`nova test` 1058/0/56, concurrency 75/75 incl `mn_*`/`parallel_for`.
+Все 4 пункта «что отсутствует» ниже — закрыты. Историческая запись:
+
 ### Что упрощено
 
 Plan 82 Ф.2 реализовал GC-интеграцию Windows fiber-арены через
