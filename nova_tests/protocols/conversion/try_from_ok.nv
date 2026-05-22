@@ -1,0 +1,73 @@
+// Plan 85.3 Ф.2 — TryFrom[T, E]: Ok-путь.
+//
+// `TryFrom[T, E]` реализуется static-методом
+// `fn Type.try_from(v T) -> Result[Self, E]` (D77, migration path b —
+// Result вместо Fail-effect). Здесь — успешные конверсии.
+//
+// Note: payload Ok достаётся через `r.unwrap_or(default)`, не через
+// `match Ok(p) => p.field` (последнее — pre-existing codegen-баг
+// [M-result-record-payload-match], Plan 59).
+
+module conversion.try_from_ok
+
+
+type Port { n int }
+
+fn Port.try_from(v int) -> Result[Port, str] =>
+    if v >= 1 && v <= 65535 {
+        Ok(Port { n: v })
+    } else {
+        Err("port out of range")
+    }
+
+
+test "try_from валидный порт -> Ok" {
+    let r = Port.try_from(8080)
+    assert(r.is_ok())
+}
+
+test "try_from -> Ok, значение payload корректно" {
+    let r = Port.try_from(443)
+    let p = r.unwrap_or(Port { n: 0 })
+    assert(p.n == 443)
+}
+
+test "try_from нижняя граница (1) -> Ok" {
+    let r = Port.try_from(1)
+    assert(r.is_ok())
+    assert(r.unwrap_or(Port { n: 0 }).n == 1)
+}
+
+test "try_from верхняя граница (65535) -> Ok" {
+    let r = Port.try_from(65535)
+    assert(r.is_ok())
+    assert(r.unwrap_or(Port { n: 0 }).n == 65535)
+}
+
+test "try_from Ok-дискриминация через match" {
+    let r = Port.try_from(3000)
+    let ok = match r {
+        Ok(_) => true
+        Err(_) => false
+    }
+    assert(ok)
+}
+
+
+// ── TryFrom от строки ──────────────────────────────────────────────
+
+type NonEmpty { text str }
+
+fn NonEmpty.try_from(s str) -> Result[NonEmpty, str] =>
+    if s.len() > 0 {
+        Ok(NonEmpty { text: s })
+    } else {
+        Err("empty string")
+    }
+
+
+test "try_from непустой строки -> Ok" {
+    let r = NonEmpty.try_from("hello")
+    assert(r.is_ok())
+    assert(r.unwrap_or(NonEmpty { text: "x" }).text == "hello")
+}

@@ -1,0 +1,60 @@
+// Plan 85.5 Ф.2 — Iter[T]: вложенные for-in (два итератора сразу).
+
+module iter.nested_iter
+
+
+type CountDown { mut current int }
+
+fn CountDown.new(start int) -> CountDown => { current: start }
+
+fn CountDown mut @next() -> Option[int] {
+    if @current <= 0 {
+        None
+    } else {
+        let v = @current
+        @current = @current - 1
+        Some(v)
+    }
+}
+
+
+test "вложенный for-in — произведение длин" {
+    let mut total = 0
+    let outer = CountDown.new(3)
+    for _ in outer {
+        let inner = CountDown.new(2)
+        for _ in inner {
+            total = total + 1
+        }
+    }
+    assert(total == 6)       // 3 outer × 2 inner
+}
+
+test "вложенный for-in — сумма произведений" {
+    let mut sum = 0
+    let outer = CountDown.new(3)
+    for a in outer {
+        let inner = CountDown.new(3)
+        for b in inner {
+            sum = sum + a * b
+        }
+    }
+    // (3+2+1) * (3+2+1) = 6 * 6 = 36
+    assert(sum == 36)
+}
+
+test "вложенный for-in — break внутреннего не трогает внешний" {
+    let mut outer_count = 0
+    let mut inner_count = 0
+    let outer = CountDown.new(4)
+    for _ in outer {
+        outer_count = outer_count + 1
+        let inner = CountDown.new(10)
+        for _ in inner {
+            inner_count = inner_count + 1
+            break
+        }
+    }
+    assert(outer_count == 4)
+    assert(inner_count == 4)     // по одному на каждый внешний проход
+}

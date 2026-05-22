@@ -1,0 +1,14 @@
+// EXPECT_COMPILE_ERROR for-in: cannot resolve iterator type
+//
+// Plan 85.5 Ф.3 — негатив: примитив (int) в for-in.
+//
+// `int` не имеет `@next` / `@iter` → не удовлетворяет Iter[T] (D58) →
+// for-in не может разрешить iterator-тип → compile error.
+
+module iter.neg_not_iter
+
+test "int в for-in — compile error" {
+    for x in 42 {
+        let _ = x
+    }
+}

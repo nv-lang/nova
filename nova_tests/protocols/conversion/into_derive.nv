@@ -1,0 +1,57 @@
+// Plan 85.3 Ф.1 — Into[U]: auto-derive и обе формы пары From/Into.
+//
+// D73: программист пишет ОДНУ сторону пары, компилятор синтезирует
+// вторую. Здесь — обе ситуации:
+//   (a) написан `Type.from(v)` → авто-доступен `v.into()`;
+//   (b) написан `Type @into()` → авто-доступен `Target.from(v)`.
+
+module conversion.into_derive
+
+
+// ── (a) написан from → into синтезируется ─────────────────────────
+
+type Meters { v f64 }
+type Feet { v f64 }
+
+fn Feet.from(m Meters) -> Feet => { v: m.v * 3.28084 }
+
+test "into() выводится из .from — аннотация даёт целевой тип" {
+    let f Feet = (Meters { v: 1.0 }).into()
+    assert(f.v == 3.28084)
+}
+
+test "from() и into() дают идентичный результат" {
+    let m = Meters { v: 10.0 }
+    let via_from = Feet.from(m)
+    let via_into Feet = m.into()
+    assert(via_from.v == via_into.v)
+}
+
+
+// ── (b) написан @into → from синтезируется ────────────────────────
+
+type Id { raw int }
+
+fn Id @into() -> str => "id-" + str.from(@raw)
+
+test "@into() — explicit instance-вызов" {
+    let id = Id { raw: 5 }
+    let s str = id.into()
+    assert(s == "id-5")
+}
+
+test "str.from(Id) выводится из @into" {
+    let id = Id { raw: 77 }
+    let s = str.from(id)
+    assert(s == "id-77")
+}
+
+
+// ── into() в return-позиции — целевой тип из -> T ─────────────────
+
+fn to_feet(m Meters) -> Feet => m.into()
+
+test "into() в return-позиции функции" {
+    let f = to_feet(Meters { v: 2.0 })
+    assert(f.v == 6.56168)
+}

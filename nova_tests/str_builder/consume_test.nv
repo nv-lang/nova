@@ -1,0 +1,68 @@
+// Plan 85.1 Ф.3 — StringBuilder consume @into() -> str (позитив).
+//
+// @into() — consume-метод (D131): финализирует буфер в str.
+// Негативная сторона (use-after-consume = compile error) — см.
+// neg_use_after_consume.nv / neg_double_consume.nv.
+//
+// Имя файла — `consume_test` (не `consume`): `consume` — keyword (D131).
+
+module str_builder.consume_test
+
+
+test "into — ASCII content" {
+    let mut sb = StringBuilder.new()
+    sb.append("hello world")
+    let s = sb.into()
+    assert(s == "hello world")
+    assert(s.len() == 11)
+}
+
+test "into — пустой буфер даёт пустую строку" {
+    let sb = StringBuilder.new()
+    let s = sb.into()
+    assert(s == "")
+    assert(s.len() == 0)
+}
+
+test "into — Unicode паритет len с str" {
+    let mut sb = StringBuilder.new()
+    sb.append("Привет")
+    let cp_before = sb.len()
+    let s = sb.into()
+    // D26 школа B: str.len — codepoint count, совпадает с sb.len() до consume.
+    assert(s.len() == cp_before)
+    assert(s.len() == 6)
+}
+
+test "into — после from(str)" {
+    let sb = StringBuilder.from("preloaded")
+    assert(sb.into() == "preloaded")
+}
+
+test "into — после from(char)" {
+    let sb = StringBuilder.from('Я')
+    assert(sb.into() == "Я")
+}
+
+test "into — после chaining" {
+    let mut sb = StringBuilder.new()
+    sb.append("a").append("b").append("c")
+    assert(sb.into() == "abc")
+}
+
+test "into — emoji сохраняется" {
+    let mut sb = StringBuilder.new()
+    sb.append("done ")
+    sb.append('🎉')
+    let s = sb.into()
+    assert(s == "done 🎉")
+    assert(s.len() == 6)        // d,o,n,e,space,🎉
+}
+
+test "into — результат можно использовать дальше" {
+    let mut sb = StringBuilder.new()
+    sb.append("XYZ")
+    let s = sb.into()
+    assert(s.starts_with("X"))
+    assert(s.ends_with("Z"))
+}
