@@ -10220,8 +10220,17 @@ G/H). ~3700 LOC implementation cumulative.
   C-функциями в `nova_rt/array.h`). НЕ хардкод-зеркало декларации, НЕ
   подлежит удалению. «Отдельная задача» (рефактор method-routing) —
   снята: routing легитимен. Переклассифицирующий doc-комментарий —
-  в `sum_schema_registry.rs::init_hardcoded_baseline`. Остаётся Plan 78
-  Ф.2 — `variants`-зеркало (`sum_schemas` pre-populate).
+  в `sum_schema_registry.rs::init_hardcoded_baseline`.
+- **Plan 78 Ф.2 (2026-05-22) — variant-зеркало устранено.** Хардкод
+  pre-populate `sum_schemas` в `emit_c.rs` для **Option** /
+  **NovaOpt_nova_int** / **RuntimeError** удалён. Option — variants
+  резолвятся через mono-тип `NovaOpt_<T>`. RuntimeError — ветка
+  `RUNTIME_DEFINED_TYPES` в `emit_type_decl` теперь строит sum-schema
+  + record-variant-метаданные **из декларации `std/prelude/errors.nv`**
+  (C-struct по-прежнему из `nova_rt/array.h`). Result-зеркало убрано
+  ещё Plan 62.A.bis Ф.4. **Зеркало вариантов prelude-sum-типов в
+  codegen ликвидировано целиком.** Прогон 954 PASS / 0 FAIL.
+  **Plan 78 ЗАКРЫТ** (Ф.1–Ф.5) — маркер полностью разрешён.
 
 ### [M-runtime-none-error-deferred] ✅ RESOLVED (Plan 62.C.bis, 2026-05-20)
 - **Где:** `std/prelude/errors.nv` + `std/prelude.nv` facade.

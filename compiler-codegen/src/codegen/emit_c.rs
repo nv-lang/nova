@@ -1273,40 +1273,12 @@ impl CEmitter {
             self.record_schemas.insert("ChannelPair".to_string(), cp_schema);
         }
 
-        // D26 prelude: RuntimeError — sum-тип встроенных runtime-сбоев.
-        // Variants (D65): DivByZero, Overflow, IndexOutOfBounds {index,length},
-        // TypeMismatch(str), AssertFailed(str), NoHandler(str).
-        // Конструкторы — `nova_make_RuntimeError_<Variant>` в nova_rt/array.h.
-        {
-            // Plan 78 Ф.2 (2026-05-22): pre-populate `sum_schemas
-            // ["RuntimeError"]` — **оставлен** (honest-defer). Эмпирическое
-            // удаление дало 2 CC-FAIL (`plan62/runtime_error_from_prelude`,
-            // `runtime/error_runtime_error` — `initializing 'nova_int'`):
-            // RuntimeError — non-generic value-type с record-вариантами,
-            // его pattern-matching call-sites читают legacy `sum_schemas`,
-            // а не sum-schema-registry. Чистая миграция требует перевода
-            // RuntimeError-read-сайтов на `lookup_sum_schema` (отдельная
-            // фокус-работа — остаток Plan 78 Ф.2). Option/NovaOpt
-            // pre-populate удалён успешно (см. выше).
-            let mut rt_variants: HashMap<String, Vec<String>> = HashMap::new();
-            rt_variants.insert("DivByZero".to_string(), vec![]);
-            rt_variants.insert("Overflow".to_string(), vec![]);
-            rt_variants.insert("IndexOutOfBounds".to_string(),
-                vec!["nova_int".to_string(), "nova_int".to_string()]);
-            rt_variants.insert("TypeMismatch".to_string(), vec!["nova_str".to_string()]);
-            rt_variants.insert("AssertFailed".to_string(), vec!["nova_str".to_string()]);
-            rt_variants.insert("NoHandler".to_string(), vec!["nova_str".to_string()]);
-            self.sum_schemas.insert("RuntimeError".to_string(), rt_variants);
-            // IndexOutOfBounds — record-variant; field order для constructor.
-            self.record_variant_field_order.insert(
-                "RuntimeError::IndexOutOfBounds".to_string(),
-                vec!["index".to_string(), "length".to_string()],
-            );
-            self.record_variant_field_types.insert(
-                "RuntimeError::IndexOutOfBounds::index".to_string(), "nova_int".into());
-            self.record_variant_field_types.insert(
-                "RuntimeError::IndexOutOfBounds::length".to_string(), "nova_int".into());
-        }
+        // Plan 78 Ф.2 (2026-05-22): хардкод pre-populate `sum_schemas
+        // ["RuntimeError"]` + `record_variant_field_*` для IndexOutOfBounds
+        // УДАЛЁН. RuntimeError объявлен в `std/prelude/errors.nv` —
+        // `emit_type_decl` (RUNTIME_DEFINED_TYPES ветка) строит sum-schema
+        // и record-variant-метаданные из этой декларации. Единственный
+        // источник правды — `.nv`, без хардкод-зеркала.
 
         // Pre-register Fail as a built-in effect (D25 / D62 / D65).
         // Operation: `fail(msg str) -> nova_unit`. `throw expr` desugars to
@@ -5976,10 +5948,45 @@ impl CEmitter {
             "StringBuilder", "WriteBuffer", "ReadBuffer",
         ];
         if RUNTIME_DEFINED_TYPES.contains(&t.name.as_str()) {
-            // Plan 62.A: skip emission — type defined in runtime. Schema
-            // registration через init_pre_populated_schemas. Methods
-            // (если есть) handled через codegen special-case dispatch
-            // (emit_c.rs:11567+) либо runtime helpers.
+            // Plan 62.A: skip emission — C struct + constructors живут в
+            // nova_rt/*.h. Но Plan 78 Ф.2 (2026-05-22): для runtime-
+            // defined **sum-типов** (RuntimeError) codegen'у всё равно
+            // нужна sum-schema (payload-типы вариантов) для
+            // pattern-matching. Регистрируем её ИЗ ДЕКЛАРАЦИИ
+            // (`std/prelude/errors.nv`) — это убирает хардкод-зеркало
+            // pre-populate `sum_schemas["RuntimeError"]` в `emit_module`.
+            // (Option/Result schema — через mono-типы, не сюда.)
+            if let TypeDeclKind::Sum(variants) = &t.kind {
+                if !variants.is_empty() && !self.sum_schemas.contains_key(&t.name) {
+                    let mut schema: HashMap<String, Vec<String>> = HashMap::new();
+                    for v in variants {
+                        let field_types: Vec<String> = match &v.kind {
+                            SumVariantKind::Unit => Vec::new(),
+                            SumVariantKind::Tuple(types) => types.iter()
+                                .map(|ty| self.type_ref_to_c(ty)
+                                    .unwrap_or_else(|_| "void*".into()))
+                                .collect(),
+                            SumVariantKind::Record(fields) => {
+                                let mut fts = Vec::new();
+                                for f in fields {
+                                    let c_ty = self.type_ref_to_c(&f.ty)
+                                        .unwrap_or_else(|_| "void*".into());
+                                    self.record_variant_field_types.insert(
+                                        format!("{}::{}::{}", t.name, v.name, f.name),
+                                        c_ty.clone());
+                                    fts.push(c_ty);
+                                }
+                                self.record_variant_field_order.insert(
+                                    format!("{}::{}", t.name, v.name),
+                                    fields.iter().map(|f| f.name.clone()).collect());
+                                fts
+                            }
+                        };
+                        schema.insert(v.name.clone(), field_types);
+                    }
+                    self.sum_schemas.insert(t.name.clone(), schema);
+                }
+            }
             return Ok(());
         }
         // Plan 48 Ф.3: generic types are emitted in erased form (void* for type-param fields)
