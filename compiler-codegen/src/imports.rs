@@ -646,6 +646,30 @@ fn resolve_one(
             }
         })?;
 
+    // Plan 84 Ф.3: peer-collision — относительный импорт, резолвящийся в
+    // модуль самого импортирующего файла (self-import либо peer того же
+    // folder-модуля). Peers делят namespace — импорт избыточен и почти
+    // наверняка ошибка. Диагностируем ДО cycle/mismatch-ошибок.
+    if rel_root.is_some() {
+        if let (Some(imp_mod), Some(res_mod)) = (
+            extract_declared_module(importer_path),
+            extract_declared_module(&resolved_paths[0]),
+        ) {
+            if imp_mod == res_mod {
+                return Err(anyhow!(
+                    "relative import резолвится в модуль `{}` — это модуль \
+                     самого импортирующего файла\n  \
+                     importing file: {}\n  \
+                     hint: файл уже принадлежит этому модулю; peer-файлы \
+                     folder-модуля делят namespace — импорт между ними не \
+                     нужен (Plan 84 / D29)",
+                    res_mod,
+                    importer_path.display(),
+                ));
+            }
+        }
+    }
+
     // Plan 42 правило H + Plan 42.17 Ф.4: `internal/` boundary —
     // **filesystem-containment** check. `<owner>/internal/...` импортируем
     // ТОЛЬКО из файлов физически под `<owner>/`. Проверяем по реальному
