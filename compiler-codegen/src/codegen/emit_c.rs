@@ -3774,6 +3774,12 @@ impl CEmitter {
                 // приоритезирует совместимость с `[]T`-кодом.
                 self.type_ref_to_c(&TypeRef::Array(inner.clone(), *span))
             }
+            // Plan 97 Ф.2 (D142): анонимный protocol-тип в позиции
+            // value/return — value-erased к void* (как named protocol
+            // через `protocol_types` set выше). Структурная проверка
+            // satisfaction'а — в type-checker'е, codegen работает с
+            // dynamic value-ом (managed pointer).
+            TypeRef::Protocol { .. } => Ok("void*".into()),
         }
     }
 
@@ -7103,6 +7109,20 @@ impl CEmitter {
                 }
                 if let Some(r) = return_type { Self::collect_typeref_names(r, out, vtable_out); }
             }
+            // Plan 97 Ф.2 (D142): анонимный protocol-тип не вводит
+            // именованных type-зависимостей — методы внутри ссылаются
+            // на `Self` и тип-параметры окружения; собственного
+            // C-struct'а у protocol нет (void*).
+            TypeRef::Protocol { methods, .. } => {
+                for m in methods {
+                    for p in &m.params {
+                        Self::collect_typeref_names(&p.ty, out, vtable_out);
+                    }
+                    if let Some(rt) = &m.return_type {
+                        Self::collect_typeref_names(rt, out, vtable_out);
+                    }
+                }
+            }
             TypeRef::Unit(_) => {}
         }
     }
@@ -7124,6 +7144,14 @@ impl CEmitter {
                 params.iter().any(|t| Self::type_ref_uses_any_type_param(t, type_params))
                     || return_type.as_ref().map_or(false, |t| Self::type_ref_uses_any_type_param(t, type_params))
             }
+            // Plan 97 Ф.2: anon-protocol сам по себе не type-param;
+            // его методы могут ссылаться на type-param'ы окружения —
+            // рекурсивно проверяем.
+            TypeRef::Protocol { methods, .. } => methods.iter().any(|m| {
+                m.params.iter().any(|p| Self::type_ref_uses_any_type_param(&p.ty, type_params))
+                    || m.return_type.as_ref()
+                        .map_or(false, |t| Self::type_ref_uses_any_type_param(t, type_params))
+            }),
             TypeRef::Unit(_) => false,
         }
     }
@@ -8643,6 +8671,16 @@ impl CEmitter {
                 || return_type.as_ref()
                     .map(|r| Self::type_ref_mentions_name(r, names))
                     .unwrap_or(false),
+            // Plan 97 Ф.2: methods могут ссылаться на type-параметры
+            // окружения (например, `[T protocol { @lt(other Self) -> bool }]`
+            // не упоминает T в protocol-теле, но методы более сложных
+            // inline-protocol'ов могут — рекурсивно проверяем).
+            TypeRef::Protocol { methods, .. } => methods.iter().any(|m| {
+                m.params.iter().any(|p| Self::type_ref_mentions_name(&p.ty, names))
+                    || m.return_type.as_ref()
+                        .map(|r| Self::type_ref_mentions_name(r, names))
+                        .unwrap_or(false)
+            }),
             TypeRef::Unit(_) => false,
         }
     }

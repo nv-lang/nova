@@ -3372,7 +3372,8 @@ Plan 15 (generic bounds, D72) фазы Ф.1-Ф.3, Ф.5 уже реализова
 
 ### Trade-offs
 
-- **Anonymous protocol bound** `[T protocol { ... }]` не добавлен — `parse_type` не принимает keyword `protocol` в позиции типа. Откладывается до отдельной задачи (D53 §628 inline protocol-литералы).
+- ~~**Anonymous protocol bound** `[T protocol { ... }]` не добавлен — `parse_type` не принимает keyword `protocol` в позиции типа. Откладывается до отдельной задачи (D53 §628 inline protocol-литералы).~~
+  **CLOSED Plan 97 Ф.2 (2026-05-22, D142).** `parse_type` теперь принимает `protocol { method-sig* }` как 4-ю форму после `[]T`, `(A,B)`, `fn() -> T`. Введён `TypeRef::Protocol { methods, span }` variant. `check_satisfaction_against_methods` обобщён на anon-bound (один проход кода для named + anonymous). Фикстуры `nova_tests/plan97/pos_anon_protocol_bound.nv` + `pos_anon_protocol_param.nv` + `neg_anon_protocol_missing_method.nv` — pass.
 - **Wrong-return-type** не тестируется как отдельный кейс — текущий BoundCtx match'ит по name + arity, return type игнорируется. Полная sig-сверка с `Self → T` substitution — будущая фаза. Negative `bound_missing_method_rejected` фиксирует arity-mismatch, что покрывает большую часть случаев.
 
 ### Файлы

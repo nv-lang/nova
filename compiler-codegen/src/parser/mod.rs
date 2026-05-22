@@ -3319,6 +3319,20 @@ impl Parser {
                     span: start.merge(end),
                 })
             }
+            // Plan 97 Ф.2 (D53 §628 / D142): анонимный protocol-тип в
+            // позиции типа — `protocol { method-sig* }`. Body парсится
+            // тем же `parse_effect_methods`, что и named-protocol — это
+            // даёт `.method` static-dot из Ф.1 "автоматом".
+            TokenKind::KwProtocol => {
+                self.bump();
+                self.expect(&TokenKind::LBrace)?;
+                let methods = self.parse_effect_methods()?;
+                let end = self.expect(&TokenKind::RBrace)?.span;
+                Ok(TypeRef::Protocol {
+                    methods,
+                    span: start.merge(end),
+                })
+            }
             _ => Err(Diagnostic::new(
                 format!("expected type, got {}", self.peek().kind.name()),
                 start,
