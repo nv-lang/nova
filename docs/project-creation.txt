@@ -18530,3 +18530,91 @@ overflow-детекцией (guard-page → STATUS_STACK_OVERFLOW) и M:N-safe
 ареной (cross-thread migration, multi-worker GC, atomic bitmap). Plan
 44.3 (4 провала 2026-05-13/14, опровергнутый диагноз) — superseded.
 Worktree nova-p79, ветка plan-81-hardening.
+
+### Plan 82 followup — два бага «MSVC nova test» и «bench Nova_Error_static_new» (2026-05-23)
+
+Пользователь попросил починить два пункта simplifications.md
+([M-82-msvc-novatest], [M-82-bench-c-harness]) production-grade.
+Worktree nova-p79, ветка plan-81-hardening.
+
+Bug 1 — полный nova test --toolchain msvc — три блокера, починены:
+
+1. /Fo D8036 (test_runner.rs). Command::arg() уже экранирует args для
+   CreateProcess по правилам MSVC CRT; ручные кавычки в format!()
+   попадали в argv буквально → cl.exe видел '"' как часть имени
+   директории. Убраны кавычки у /I/Fo/Fe и lib-путей; PathBuf-аргументы
+   как есть.
+
+2. C1041 PDB contention (test_runner.rs). /Zi создаёт vcXXX.pdb в cwd;
+   16 параллельных cl.exe конкурируют за один файл. Заменено на /Z7
+   (CodeView в .obj, без shared PDB).
+
+3. C2065/C2061 GCC-builtin (nova_rt/nova_msvc_compat.h, новый файл).
+   sync.h §Tier-1 — clang; cl.exe не имеет __atomic_*, __builtin_*,
+   _Alignas. Compat-слой force-инклюдится /FI в каждый TU под cl.exe
+   (под clang-cl no-op через __clang__-guard). Предоставляет 7
+   __atomic_*-builtin'ов через _Interlocked* на x64 (TSO-модель:
+   aligned ≤8B атомарны, loads=acquire/stores=release бесплатно,
+   только SEQ_CST store нужен xchg для StoreLoad); диспатч sizeof-based
+   (_Generic требует /std:c11, что ломает codegen-овский struct-cast
+   extension). __builtin_expect/ctzll/readcyclecounter/_overflow_ll
+   через _BitScanForward64/__rdtsc/__128bit-multiply. _Alignas →
+   __declspec(align). Корректность: над-сильный порядок никогда не
+   слабее запрошенного.
+
+4. Targeted codegen-фиксы (emit_c.rs):
+   - tuple-destructuring: let (k, v) = tup эмитил (struct)(tup.f0) —
+     struct-cast валиден GCC extension, MSVC C2440. Для struct fty —
+     без cast'а.
+   - nova_array_push: array-literal push эмитил
+     nova_array_push_<elem>(arr, (elem)(v)) — та же C2440. Для struct
+     elem_ty — без cast'а.
+   - empty record: type Marker { } → struct {} — стандарт требует ≥1
+     поле; добавлен char _empty_record_marker.
+   - fail-loudly: method_receivers — single-key last-wins; для STATIC-
+     метода Type.m(...) lookup мог попасть в зарегистрированный по
+     умолчанию Error.new при missing-import. Strict-check: obj должен
+     матчить type_name; иначе E_UNKNOWN_TYPE_METHOD с подсказкой про
+     import.
+
+5. bench.h: _Generic в NOVA_BENCH_OPAQUE_PRIM работал под /std:c11,
+   но без него ломал permissive-режим. Guard __STDC_VERSION__ >=
+   201112L — fallback на no-op.
+
+Результат: полный nova test --toolchain msvc — 1049 PASS / 16 FAIL /
+56 SKIP (старт: 0/753). Clang baseline сохранён: 1065 PASS / 0 FAIL /
+56 SKIP — 0 регрессий.
+
+Остаются 16 MSVC-фейлов: 3 CC-FAIL — parallel-build flakes в contracts
+(C1083 «cannot open compiler-created file», resource contention 16
+cl.exe), 12 NEG-WRONG-CC-MSG — негативные тесты со clang-специфичными
+текстами ошибок (тест-spec issue, не codegen), 1 RUN-FAIL timing-flake.
+Все три категории — не codegen-баги, отдельные задачи.
+
+Bug 2 — Nova_Error_static_new() с 0 аргументов в bench+supervised:
+
+Root cause выявлен (не тот, что в первой диагностике 2026-05-22).
+bench/micro/hashmap.nv и bench/micro/gc.nv забывали
+`import std.collections.hashmap.{HashMap}`. Codegen, не найдя HashMap,
+тихо роутил .new() через method_receivers["new"] = Error fallback,
+эмитил Nova_Error_static_new() с user-given числом аргументов (0 для
+HashMap.new()). Все sibling-бенчи в модуле страдали при компиляции.
+
+Fixed: (1) import добавлен в hashmap.nv/gc.nv. (2) Codegen strict-check
+(см. fail-loudly выше). (3) bench/micro/supervised_spawn.nv — позитивный
+regression-guard «bench + concurrency».
+
+Остаётся открытым (отдельная задача, не Plan 82): bench-DSL multi-
+emission эмитит measure-body ТРИ раза (warmup/calib/sample-loop) с
+уникальными счётчиками spawn-fn-имён; forward-declarations нумеруются
+несогласованно → undeclared `_nova_spawn_2`. И NovaOpt[T] mono-mismatch
+в bench-DSL для Node.next:Option[Node] (теряется type-substitution).
+Зафиксировано в simplifications.md [M-82-bench-c-harness] как honest
+followup. Деливерабл Ф.5 (cost mco_resume/yield) уже измерен C-харнессом
+точнее.
+
+Коммиты:
+ - 331e852db05  fix test_runner MSVC (/Fo, /Z7, /FI compat)
+ - d5a79129b44  feat nova_msvc_compat.h + bench.h guard
+ - 11a1ada777a  fix codegen targeted struct-cast + empty-record + fail-loudly
+ - b9ac2d8f1a2  fix bench/micro imports + supervised_spawn regression-guard
