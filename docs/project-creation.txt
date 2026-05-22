@@ -18124,3 +18124,35 @@ DependencyProvider абстрагирует источник — 03.3 (registry)
 + 4 e2e (git_dep_e2e, lockfile_repro, version_resolve_e2e,
 version_lock_repro). Suite: 1038 PASS / 0 FAIL / 56 SKIP — 0 регрессий.
 Plan 03.2 ✅ ЗАКРЫТ. Plan 03: 03.1 ✅ + 03.2 ✅; остаются 03.3-03.6.
+
+### Plan 82 Ф.0 test (a) — decision-point РЕШЁН: путь A + патч StackLimit (2026-05-22)
+
+minicoro-интегрированный харнесс 82-artifacts/f0_test_a.c — корутина
+minicoro (MCO_USE_ASM) на VirtualAlloc(MEM_RESERVE)-стеке с lazy-commit-
+раскладкой [reserved][committed MARGIN][PAGE_GUARD][committed WINDOW];
+рекурсия растит стек через guard. Детекция A/B: VEH-счётчик (guard-fault,
+обработанный ядром IN-KERNEL, в user-mode не доставляется → путь A).
+
+ВЕРДИКТ: ПУТЬ A — ядро Windows растит non-primary minicoro-стек штатно,
+VEH для happy-path не нужен. Рекурсия растила committed-регион на
++120-128K, VEH ни разу не сработал (MSVC + clang-cl).
+
+КЛЮЧЕВАЯ НАХОДКА — патч ctx.stack_limit ОБЯЗАТЕЛЕН. minicoro
+_mco_makectx (minicoro.h:765) ставит ctx->stack_limit = stack_base (низ
+региона). У настоящего CreateFiber-стека StackLimit = фактический
+committed-low. С minicoro-дефолтом функции с кадром >1 страницы
+(компилятор эмитит __chkstk) КРАШАТ процесс на MSVC. Патч одной строкой
+после mco_create — ((_mco_context*)co->context)->ctx.stack_limit =
+committed_low — делает minicoro-стек неотличимым от CreateFiber-стека;
+__chkstk-код растёт штатно на обеих toolchain. Это плановый §5.1 «путь A
+с патчем ctx.stack_limit», уточнено: патч обязателен, не опционален.
+
+f0_test_a.c самооркеструемый — default-прогон спавнит __chkstk-под-
+прогоны отдельными процессами (child-crash не убивает родителя).
+
+Промежуточный go/no-go: GO на Ф.1, путь A + патч StackLimit. Остаётся
+в Ф.0: test (d) аномалия Попыток 3-4, test (e) SEH через границу
+fiber-стека (частичные данные уже есть — SEH внутри коро-стека
+работает, через границу switch — нет).
+
+Артефакт: 82-artifacts/f0_test_a.c + обновлён f0-rediagnosis.md §5-7.
