@@ -834,6 +834,15 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
             // умолчанию (/OPT:REF) — секции дают линкеру гранулярность.
             flags.push("-ffunction-sections".to_string());
             flags.push("-fdata-sections".to_string());
+            // Plan 82 Ф.5: release-mode добавляет -flto; LLVM LTO требует
+            // LLVM-линкера. Без -fuse-ld=lld clang на Windows падает
+            // «error: LTO requires -fuse-ld=lld» (MSVC link.exe не умеет
+            // LLVM LTO). Чинит `nova bench` и `nova test --mode release`
+            // на Windows; lld поставляется в комплекте LLVM.
+            #[cfg(target_os = "windows")]
+            if matches!(opts.mode, Mode::Release) {
+                flags.push("-fuse-ld=lld".to_string());
+            }
             // Plan 44.2 P41-5 + audit round 5: stack-clash protection (CVE-2017-1000366).
             // -fstack-clash-protection inserts page-by-page probing on stack frames
             // >4KB, preventing skip past single guard page in one SP subtraction.
