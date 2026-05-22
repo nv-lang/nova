@@ -1,0 +1,20 @@
+// Plan 82 followup (2026-05-23): smoke-бенч «bench + concurrency».
+//
+// Покрывает связку `bench { measure { … } }` + `supervised { spawn }` —
+// исходно эта пара упиралась в codegen-фоллбэк
+// `Nova_Error_static_new()` из-за того, что sibling-бенчи (hashmap.nv,
+// gc.nv) забывали `import HashMap`, а codegen тихо подменял неизвестный
+// `.new()` на Error-конструктор. Импорты восстановлены; codegen дополнен
+// fail-loudly-проверкой; этот бенч — позитивный regression-guard.
+module bench.micro
+
+bench "supervised spawn smoke" {
+    measure {
+        supervised {
+            spawn {
+                bench.opaque(1 + 2)
+            }
+        }
+        bench.elements(1)
+    }
+}

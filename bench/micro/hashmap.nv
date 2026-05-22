@@ -1,6 +1,11 @@
 // Plan 57: HashMap micro-benches.
 module bench.micro
 
+// Plan 82 followup: без явного import codegen не резолвит
+// `HashMap[int,int].new()` и до fail-loudly-фикса тихо падал на
+// `Nova_Error_static_new()`. Import — единственное правильное место.
+import std.collections.hashmap.{HashMap}
+
 bench "hashmap insert n=1000" {
     measure {
         let mut m = HashMap[int, int].new()
