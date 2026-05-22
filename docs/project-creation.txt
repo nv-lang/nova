@@ -17462,3 +17462,28 @@ Worktree nova-p85, ветка plan-85.
 - Уточнение к плану 85.1: use-after-consume — EXPECT_COMPILE_ERROR
   D131 (не runtime panic; D131 ловится компилятором, Plan 73).
 Suite: str_builder 9 PASS / 0 FAIL.
+
+=== Plan 85.2 — тестовое покрытие ReadBuffer / WriteBuffer (2026-05-22) ===
+Worktree nova-p85, ветка plan-85.
+- Новый каталог nova_tests/buffers/ — 11 файлов: read_nav,
+  read_integers, read_floats, read_char_str, read_oob,
+  write_constructors, write_integers, write_floats, write_misc,
+  roundtrip (позитивные, 10) + neg_read_oob (негативный,
+  EXPECT_RUNTIME_PANIC).
+- Покрыты все 44 метода ReadBuffer (from, position/remaining/
+  has_remaining/remaining_bytes, read+try_read для byte/u8/i8/u16/i16/
+  u32/i32/u64/i64 LE+BE, f32/f64 LE+BE, char, str) и все 31 метод
+  WriteBuffer (new/with_capacity/from, write_byte/bytes/zero/char/str,
+  write_u8..i64 LE+BE, write_f32/f64 LE+BE, len/capacity/clone/into).
+- roundtrip.nv — write_X -> into -> ReadBuffer.from -> read_X для
+  всех числовых типов (оба endian), char, str, bytes + гетерогенный
+  пакет.
+- Codegen-багов не найдено.
+- Уточнения по факту:
+  * WriteBuffer @into() — НЕ consume (StringBuilder @into() — consume).
+  * Fail-form OOB (read_byte за границей) внутри test-блока
+    перехватывается test-harness'ом -> тест FAIL, не процесс-panic.
+    Escape до runtime-panic требует fn main (neg_read_oob.nv).
+  * try_read_f64_* Ok-payload в bootstrap несёт int-биты; распаковка
+    через f64.from_bits(r.unwrap_or(0)).
+Suite: buffers 11 PASS / 0 FAIL.
