@@ -3005,6 +3005,9 @@ fn cmd_test_build(
         gc_kind,
         verbosity: test_runner::Verbosity::Normal,
         mono_depth,
+        // Plan 83.1 Ф.5: single-file run — один процесс, нет
+        // oversubscription, бюджет не нужен.
+        maxprocs_budget: None,
     };
 
     test_runner::install_cancel_handler();
