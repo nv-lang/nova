@@ -335,14 +335,15 @@ impl SumSchemaRegistry {
         // placeholder c_name `"<inline>"`; Phase 4 будет refactor чтобы
         // inline methods были спец routing variant.
         let mut option_methods = HashMap::new();
-        option_methods.insert("is_some".to_string(), MethodRouting::HardcodedRuntimeFn {
-            c_name: "Nova_Option_method_is_some".to_string(),
-            is_per_t: true,
-        });
-        option_methods.insert("is_none".to_string(), MethodRouting::HardcodedRuntimeFn {
-            c_name: "Nova_Option_method_is_none".to_string(),
-            is_per_t: true,
-        });
+        // Plan 95 Ф.4.2: `is_some` / `is_none` УДАЛЕНЫ из baseline —
+        // перенесены на Nova-body в std/prelude/core.nv. Routing для них
+        // регистрируется через `init_prelude_decls_from_items` как
+        // `MethodRouting::DeclaredBody { has_nova_body: true }`. Сохранение
+        // baseline-entry создало бы dead-but-defensive shadow, который
+        // в edge-case'е (prelude не загружен — теоретически невозможно,
+        // R27 auto-import) мог бы маршрутизировать вызов в удалённый
+        // C-трамплин → undefined symbol. Loud-fail «method not found»
+        // лучше silent miscompilation.
         option_methods.insert("unwrap_or".to_string(), MethodRouting::HardcodedRuntimeFn {
             c_name: "Nova_Option_method_unwrap_or".to_string(),
             is_per_t: true,
@@ -1296,12 +1297,18 @@ mod tests {
         let mut reg = SumSchemaRegistry::new();
         reg.init_hardcoded_baseline();
 
-        // Option.is_some — per-T trampoline.
-        let r = reg.lookup_method_routing("Option", "is_some")
-            .expect("Option.is_some must be routed");
+        // Plan 95 Ф.4.2: is_some УДАЛЕНО из baseline — перенесено на
+        // Nova-body. Без prelude scan'а baseline-only lookup → None
+        // (DeclaredBody-entry регистрируется через `init_prelude_decls_
+        // from_items`, не здесь). Verify Option.unwrap_or как пример
+        // оставшегося per-T trampoline.
+        assert!(reg.lookup_method_routing("Option", "is_some").is_none(),
+            "is_some убран из baseline — регистрируется DeclaredBody через prelude scan");
+        let r = reg.lookup_method_routing("Option", "unwrap_or")
+            .expect("Option.unwrap_or must be routed");
         match r {
             MethodRouting::HardcodedRuntimeFn { c_name, is_per_t } => {
-                assert_eq!(c_name, "Nova_Option_method_is_some");
+                assert_eq!(c_name, "Nova_Option_method_unwrap_or");
                 assert!(*is_per_t);
             }
             other => panic!("expected HardcodedRuntimeFn, got {:?}", other),
@@ -1476,15 +1483,14 @@ mod tests {
             other => panic!("expected HardcodedRuntimeFn, got {:?}", other),
         }
 
-        // is_some тоже должен быть findable (был и в Hardcoded, и в Prelude).
-        let routing = reg.lookup_method_routing("Option", "is_some").unwrap();
-        match routing {
-            MethodRouting::HardcodedRuntimeFn { c_name, is_per_t } => {
-                assert_eq!(c_name, "Nova_Option_method_is_some");
-                assert!(*is_per_t);
-            }
-            other => panic!("expected HardcodedRuntimeFn for is_some, got {:?}", other),
-        }
+        // Plan 95 Ф.4.2: `is_some` УДАЛЁН из baseline (перенесён на
+        // Nova-body, регистрируется через DeclaredBody). Для external
+        // декларации без baseline-entry routing не регистрируется
+        // (inheritance-conservative — см. комментарий в
+        // init_prelude_decls_from_items). lookup → None.
+        let routing = reg.lookup_method_routing("Option", "is_some");
+        assert!(routing.is_none(),
+            "is_some убран из baseline (Plan 95) — external декларация без baseline-entry не регистрирует routing");
     }
 
     /// Plan 62.A follow-up: Result method declaration → Prelude Result

@@ -151,16 +151,20 @@ export type Error {
 
 /// True если Option содержит значение.
 ///
-/// **Bootstrap**: routes к `Nova_Option_method_is_some_<T>` trampoline
-/// (per-T monomorphization). См. registry method_routing → HardcodedRuntimeFn.
+/// **Plan 95 Ф.4.1**: Nova-body метод (`match @`). Compiles в тот же
+/// `o.tag == NOVA_TAG_Option_Some` что и прежний C-трамплин
+/// `Nova_Option_method_is_some_<T>` — функциональной разницы нет.
+/// Ценность — de-magic / single-source-of-truth: «что делает is_some»
+/// читается прямо здесь, не в C-рантайме. Маршрутизация — через
+/// `MethodRouting::DeclaredBody` в `sum_schema_registry`.
 #stable(since = "0.1")
-external fn Option[T] @is_some() -> bool
+fn Option[T] @is_some() -> bool => match @ { Some(_) => true, None => false }
 
 /// True если Option пустой (None).
 ///
-/// **Bootstrap**: routes к `Nova_Option_method_is_none_<T>` trampoline.
+/// **Plan 95 Ф.4.1**: см. `is_some` — параллельный перенос.
 #stable(since = "0.1")
-external fn Option[T] @is_none() -> bool
+fn Option[T] @is_none() -> bool => match @ { Some(_) => false, None => true }
 
 /// Возвращает значение или fail'ит если None. Идиома для случаев когда
 /// программист **гарантирует** что значение есть (prove'ил выше).
