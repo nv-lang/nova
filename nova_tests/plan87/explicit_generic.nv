@@ -1,0 +1,45 @@
+// Plan 87 Ф.4.2 — for-in с явным типом элемента: generic-типы и str.
+//
+// Аннотация работает для generic-типов (`[]T`, `Option[T]`) и для `str`
+// — случаев, где тип элемента не всегда очевиден из источника.
+//
+// ПРИМЕЧАНИЕ: деструктуризация боксированного sum-элемента прямо в теле
+// for-in (`for o Option[int] in opts { if let Some(v) = o { ... } }`)
+// упирается в отдельный pre-existing codegen-дефект value/pointer-модели
+// (см. docs/simplifications.md `[M-iflet-match-boxed-sum-ptr]`) — он не
+// связан с аннотацией типа и здесь не воспроизводится: тест проверяет
+// именно фичу Plan 87 (parse + type-check + итерация аннотированного
+// generic-элемента).
+
+module nova_tests.plan87.explicit_generic
+
+
+test "for s str in string array" {
+    let words []str = ["alpha", "beta"]
+    let mut total_len = 0
+    for s str in words {
+        total_len = total_len + s.len()
+    }
+    assert(total_len == 9)
+}
+
+test "for row []int in [][]int — generic []T, вложенный for" {
+    let matrix [][]int = [[1, 2], [3, 4], [5]]
+    let mut total = 0
+    for row []int in matrix {
+        for x int in row {
+            total = total + x
+        }
+    }
+    assert(total == 15)
+}
+
+test "for o Option[int] in []Option[int] — аннотация generic-элемента" {
+    let opts []Option[int] = [Some(1), None, Some(3)]
+    let mut count = 0
+    for o Option[int] in opts {
+        let _ = o
+        count = count + 1
+    }
+    assert(count == 3)
+}
