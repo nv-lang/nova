@@ -134,6 +134,16 @@ enum Cmd {
         #[arg(long, value_name = "NAME@VERSION", conflicts_with = "name")]
         precise: Option<String>,
     },
+    /// Plan 03.4: effect-surface пакета — агрегированные эффекты его
+    /// публичного API («использует Net, Fs»).
+    Info {
+        /// Путь к пакету (.nv-файл / каталог) либо имя зависимости из
+        /// `[dependencies]` текущего пакета.
+        target: String,
+        /// Формат вывода.
+        #[arg(long, default_value = "human", value_parser = ["human", "json"])]
+        format: String,
+    },
     /// Plan 45 / D107: produce documentation for a Nova source file.
     ///
     /// MVP: one file at a time, output to stdout. Supported formats:
@@ -2774,6 +2784,145 @@ fn cmd_update(name: Option<&str>, precise: Option<&str>) -> Result<()> {
     Ok(())
 }
 
+/// Plan 03.4 Ф.1: `nova info` — effect-surface пакета/зависимости.
+///
+/// `target` — путь (.nv-файл / каталог) либо имя зависимости из
+/// `[dependencies]` текущего пакета.
+fn cmd_info(target: &str, format: &str) -> Result<()> {
+    // --- резолв цели в каталог/файл пакета ---------------------------
+    let path = Path::new(target);
+    let (pkg_root, default_name): (PathBuf, String) = if path.exists() {
+        let p = path
+            .canonicalize()
+            .map_err(|e| usage_err(format!("{}: {}", target, e)))?;
+        let name = p
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or(target)
+            .to_string();
+        (p, name)
+    } else {
+        // Не путь → имя зависимости текущего пакета.
+        let pkg_dir = package_dir_from_cwd().ok_or_else(|| {
+            usage_err(format!(
+                "`{}` — не путь и не внутри Nova-пакета (нет nova.toml для \
+                 поиска зависимости)",
+                target,
+            ))
+        })?;
+        let manifest = nova_codegen::manifest::parse_manifest(
+            &pkg_dir.join("nova.toml"),
+            &pkg_dir,
+        )
+        .ok_or_else(|| usage_err("nova.toml без секции [package]"))?;
+        let dep = manifest
+            .dependencies
+            .iter()
+            .find(|d| d.name == target)
+            .ok_or_else(|| {
+                usage_err(format!(
+                    "`{}` — не путь и не объявленная зависимость",
+                    target,
+                ))
+            })?;
+        let dir = match &dep.source {
+            nova_codegen::manifest::DepSource::Path(rel) => pkg_dir.join(rel),
+            nova_codegen::manifest::DepSource::Git { url, pin } => {
+                nova_codegen::git_cache::resolve_git_dep(url, pin, None)
+                    .map_err(|e| anyhow!("git-зависимость `{}`: {}", target, e))?
+                    .checkout
+            }
+            _ => {
+                return Err(usage_err(format!(
+                    "зависимость `{}` — registry-версия; `nova info` для \
+                     registry появится с Plan 03.3",
+                    target,
+                )))
+            }
+        };
+        (dir, target.to_string())
+    };
+
+    // --- собрать .nv-файлы пакета ------------------------------------
+    let mut files: Vec<PathBuf> = Vec::new();
+    if pkg_root.is_file() {
+        files.push(pkg_root.clone());
+    } else {
+        walk_nv_files(&pkg_root, &mut files)?;
+    }
+    if files.is_empty() {
+        bail!("в `{}` не найдено .nv-файлов", pkg_root.display());
+    }
+    files.sort();
+
+    // --- парс модулей -----------------------------------------------
+    let mut modules: Vec<nova_codegen::ast::Module> = Vec::new();
+    for f in &files {
+        let src = read_file(f)?;
+        let m = nova_codegen::parser::parse(&src)
+            .map_err(|d| anyhow!("{}", d.render(&src, &f.to_string_lossy())))?;
+        modules.push(m);
+    }
+
+    // --- effect-surface публичного API ------------------------------
+    let mut tree = nova_codegen::doc::build_workspace(&modules);
+    nova_codegen::doc::strip_private(&mut tree);
+    let surface = nova_codegen::effect_surface::compute(&tree);
+
+    // Имя пакета — из nova.toml, иначе имя цели.
+    let pkg_name = if pkg_root.is_dir() {
+        nova_codegen::manifest::parse_manifest(&pkg_root.join("nova.toml"), &pkg_root)
+            .map(|m| m.package_name)
+            .unwrap_or(default_name)
+    } else {
+        default_name
+    };
+
+    if format == "json" {
+        let by_effect: serde_json::Map<String, serde_json::Value> = surface
+            .by_effect
+            .iter()
+            .map(|(k, v)| (k.clone(), serde_json::json!(v)))
+            .collect();
+        let out = serde_json::json!({
+            "package": pkg_name,
+            "public_fns": surface.total_public_fns,
+            "effectful_fns": surface.effectful_fns,
+            "effect_surface": surface.effects,
+            "by_effect": by_effect,
+        });
+        println!("{}", serde_json::to_string_pretty(&out)?);
+        return Ok(());
+    }
+
+    // human
+    println!("{} {}", bold("Пакет:"), pkg_name);
+    println!(
+        "Публичный API: {} функц., {} с эффектами",
+        surface.total_public_fns, surface.effectful_fns,
+    );
+    println!();
+    if surface.is_pure() {
+        println!(
+            "{} ∅ — публичный API без эффектов (pure)",
+            bold("Effect-surface:"),
+        );
+    } else {
+        println!("{} {}", bold("Effect-surface:"), surface.effects.join(", "));
+        let width = surface.effects.iter().map(|e| e.chars().count()).max().unwrap_or(0);
+        for eff in &surface.effects {
+            let fns = surface.by_effect.get(eff).cloned().unwrap_or_default();
+            println!(
+                "  {:<width$}  ← {}",
+                eff,
+                fns.join(", "),
+                width = width,
+            );
+        }
+    }
+    Ok(())
+}
+
 fn cmd_build(
     path: &Path,
     output: Option<&Path>,
@@ -4144,6 +4293,7 @@ fn run() -> ExitCode {
             version.as_deref(),
         ),
         Cmd::Update { name, precise } => cmd_update(name.as_deref(), precise.as_deref()),
+        Cmd::Info { target, format } => cmd_info(&target, &format),
         Cmd::Doc { file, format, json_schema, include_private, run_doc_tests, check, watch, coverage, coverage_threshold, jobs, diff, scrape_examples, strict, mutate_contracts, real_exec, output_dir } => {
             // Plan 45 Ф.24.10: --diff old.json new.json
             // cmd_doc_diff uses process::exit for severity codes; propagate Err.
