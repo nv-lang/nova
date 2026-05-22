@@ -17442,3 +17442,29 @@ API reshape: runtime.init → опциональный тюнер + getter runti
   shutdown). mn_runtime_smoke «init idempotent» → «second init
   diagnosed no-op» + EXPECT_STDERR.
 Suite: 958 PASS / 0 FAIL (956 + 2).
+
+### Plan 52.x — закрытие mono-pass блокеров (✅)
+
+Аудит-сессия. «Блокеры» Plan 52.2/52.3 (mono-pass для generic helper-
+methods с pattern-match) оказались уже сняты Plan 55.4/55.5/56/59 —
+документация устарела и вводила в заблуждение. Проверено тестами:
+- @clone() / @merge_from() / HashMap.from() работают. mono-pass
+  corruption снята Plan 55.4 (save/restore current_fn_return_ty +
+  protocol whitelist), name-collision — Plan 55.5, @clone codegen —
+  Plan 56, idiomatic refactor — Plan 59 Ф.7.2.
+- map-spread [...m, k:v] работает (Plan 55 spread-инфраструктура).
+- Edge-case: all-spread [...a, ...b] без аннотации мис-
+  классифицировался парсером как array (нет k: для disambiguation,
+  типов парсер не знает). Фикс: MapLitAnnotator трекает типы let-
+  биндингов и параметров, для all-spread ArrayLit без expected-типа
+  выводит map-тип из spread-источников (infer_map_type_from_spreads)
+  → конверсия в MapLit. Array-spread [...arr1,...arr2] не затронут
+  (массивы не #from_pairs).
+- Регрессионное покрытие добавлено (раньше отсутствовало — plan55/
+  f4_hashmap_clone_method вопреки имени .clone() не вызывает):
+  map_literals/positive_clone_merge.nv (4 теста) + positive_spread.nv
+  (5 форм spread).
+- Docs: hashmap.nv stale-комментарий исправлен; 3 M-52 маркера → ✅;
+  Plan 52.2/52.3 → ЗАКРЫТЫ (README + шапки); simplifications
+  closure-секция.
+Suite: 960 PASS / 0 FAIL.

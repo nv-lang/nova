@@ -377,22 +377,14 @@ export fn HashMap[K, V] mut @clear() {
 }
 
 
-// Plan 52.3 Ф.2/Ф.3: HashMap.@clone() / @merge_from — DEFERRED.
-//
-// Investigation: попытка добавить generic helper-method с pattern-match
-// триггерит mono pass для **всего** HashMap chain (@maybe_grow, etc).
-// В @maybe_grow выражение `if used < threshold { return }` правильно
-// типизировано как bool, но check_bool_condition в codegen для mono'd
-// контекста получает cond_ty=nova_int (а не nova_bool), и
-// current_fn_return_ty = "nova_int" вместо unit. Это указывает на
-// **mono-pass corruption** в передаче type-context между helper-methods.
-//
-// Регрессия при попытке: 522 → 501 PASS (-21), 25 → 48 FAIL (+23).
-//
-// Это глубокая mono-pass issue требующая отдельной investigation
-// (Plan 48 followup). Spread `[...m, k: v]` ждёт closure этого.
-//
-// Workaround в bootstrap: HashMap.from(array_of_pairs).
+// Plan 52.x / 55 / 56 — closure: @clone() / @merge_from() (объявлены
+// выше) РАБОТАЮТ. mono-pass corruption, мешавшая generic helper-methods
+// с pattern-match, устранена Plan 55.4 (save/restore current_fn_return_ty
+// + protocol-method whitelist) + 55.5 (mono name-collision). Plan 56
+// разблокировал @clone codegen, Plan 59 Ф.7.2 переписал тело на
+// idiomatic `for (k, v)`. Map-spread `[...m, k: v]` тоже работает
+// (Plan 55 spread-инфраструктура). Regression-покрытие:
+// nova_tests/map_literals/positive_clone_merge.nv + positive_spread.nv.
 
 
 /// Вернуть значение по ключу, или вставить `fallback()` и вернуть его.
