@@ -100,6 +100,33 @@ enum Cmd {
     Run {
         file: PathBuf,
     },
+    /// Plan 03.1 Ф.5: добавить зависимость в `[dependencies]` nova.toml
+    /// текущего пакета и обновить nova.lock.
+    Add {
+        /// Имя зависимости (должно совпадать с `[package].name` пакета).
+        name: String,
+        /// Локальная path-зависимость: путь к каталогу пакета.
+        #[arg(long, value_name = "DIR", conflicts_with = "git")]
+        path: Option<String>,
+        /// Git-зависимость: URL репозитория.
+        #[arg(long, value_name = "URL")]
+        git: Option<String>,
+        /// Git-пин: тег (только с --git).
+        #[arg(long, requires = "git", conflicts_with_all = ["branch", "rev"])]
+        tag: Option<String>,
+        /// Git-пин: ветка (только с --git).
+        #[arg(long, requires = "git", conflicts_with_all = ["tag", "rev"])]
+        branch: Option<String>,
+        /// Git-пин: commit / rev (только с --git).
+        #[arg(long, requires = "git", conflicts_with_all = ["tag", "branch"])]
+        rev: Option<String>,
+    },
+    /// Plan 03.1 Ф.5: пере-резолвить git-пины зависимостей и обновить
+    /// nova.lock. Без аргумента — все git-зависимости.
+    Update {
+        /// Имя зависимости для обновления (опционально — иначе все git).
+        name: Option<String>,
+    },
     /// Plan 45 / D107: produce documentation for a Nova source file.
     ///
     /// MVP: one file at a time, output to stdout. Supported formats:
@@ -2531,6 +2558,172 @@ fn nova_doc_embedded_schema() -> &'static str {
     nova_codegen::doc::schema::schema_v1()
 }
 
+/// Plan 03.1 Ф.5: каталог Nova-пакета, в котором запущена команда —
+/// ближайший вверх от cwd `nova.toml`. `None` — не внутри пакета.
+fn package_dir_from_cwd() -> Option<PathBuf> {
+    let mut dir = std::env::current_dir().ok()?;
+    loop {
+        if dir.join("nova.toml").is_file() {
+            return Some(dir);
+        }
+        if !dir.pop() {
+            return None;
+        }
+    }
+}
+
+/// Plan 03.1 Ф.5: вставить запись `name = <value>` в секцию
+/// `[dependencies]` текста `nova.toml`. Если секции нет — создаётся в
+/// конце файла. Дубль имени → ошибка.
+fn insert_dependency(text: &str, name: &str, value: &str) -> Result<String> {
+    let lines: Vec<&str> = text.lines().collect();
+    let mut dep_header: Option<usize> = None;
+    let mut in_deps = false;
+    for (i, raw) in lines.iter().enumerate() {
+        let t = raw.trim();
+        if t.starts_with('[') {
+            in_deps = t == "[dependencies]";
+            if in_deps {
+                dep_header = Some(i);
+            }
+            continue;
+        }
+        if in_deps {
+            if let Some((k, _)) = t.split_once('=') {
+                if k.trim() == name {
+                    return Err(usage_err(format!(
+                        "зависимость `{}` уже объявлена в [dependencies] — \
+                         правьте nova.toml вручную либо используйте `nova update`",
+                        name,
+                    )));
+                }
+            }
+        }
+    }
+    let new_line = format!("{} = {}", name, value);
+    let mut out: Vec<String> = lines.iter().map(|s| s.to_string()).collect();
+    match dep_header {
+        Some(idx) => out.insert(idx + 1, new_line),
+        None => {
+            if out.last().map(|l| !l.is_empty()).unwrap_or(false) {
+                out.push(String::new());
+            }
+            out.push("[dependencies]".to_string());
+            out.push(new_line);
+        }
+    }
+    let mut result = out.join("\n");
+    result.push('\n');
+    Ok(result)
+}
+
+/// Plan 03.1 Ф.5: `nova add` — добавить зависимость в `nova.toml`
+/// текущего пакета и обновить `nova.lock`.
+fn cmd_add(
+    name: &str,
+    path: Option<&str>,
+    git: Option<&str>,
+    tag: Option<&str>,
+    branch: Option<&str>,
+    rev: Option<&str>,
+) -> Result<()> {
+    let pkg_dir = package_dir_from_cwd().ok_or_else(|| {
+        usage_err("`nova add` запускается внутри Nova-пакета (нет nova.toml)")
+    })?;
+    let toml_path = pkg_dir.join("nova.toml");
+    // Только пакет (с `[package]`), не голый workspace-манифест.
+    if nova_codegen::manifest::parse_manifest(&toml_path, &pkg_dir).is_none() {
+        return Err(usage_err(format!(
+            "{} не содержит секции [package] — `nova add` правит пакет, \
+             не workspace",
+            toml_path.display(),
+        )));
+    }
+
+    let value = match (path, git) {
+        (Some(p), None) => format!("{{ path = \"{}\" }}", p),
+        (None, Some(url)) => {
+            let pin = match (tag, branch, rev) {
+                (Some(t), _, _) => format!(", tag = \"{}\"", t),
+                (_, Some(b), _) => format!(", branch = \"{}\"", b),
+                (_, _, Some(r)) => format!(", rev = \"{}\"", r),
+                _ => String::new(),
+            };
+            format!("{{ git = \"{}\"{} }}", url, pin)
+        }
+        (None, None) => {
+            return Err(usage_err(
+                "укажите источник зависимости: --path <DIR> либо --git <URL>",
+            ))
+        }
+        (Some(_), Some(_)) => unreachable!("clap conflicts_with path/git"),
+    };
+
+    let text = read_file(&toml_path)?;
+    let updated = insert_dependency(&text, name, &value)?;
+    std::fs::write(&toml_path, &updated)
+        .map_err(|e| anyhow!("запись {}: {}", toml_path.display(), e))?;
+    println!(
+        "{} `{}` → {}",
+        green("added:"),
+        name,
+        toml_path.display(),
+    );
+
+    // Обновить nova.lock (материализует git-зависимость, фиксирует commit).
+    nova_codegen::lockfile::sync(&pkg_dir)
+        .map_err(|e| anyhow!("nova.lock не обновлён: {}", e))?;
+    println!("{} nova.lock обновлён", green("locked:"));
+    Ok(())
+}
+
+/// Plan 03.1 Ф.5: `nova update` — пере-резолвить git-пины и обновить
+/// `nova.lock`.
+fn cmd_update(name: Option<&str>) -> Result<()> {
+    let pkg_dir = package_dir_from_cwd().ok_or_else(|| {
+        usage_err("`nova update` запускается внутри Nova-пакета (нет nova.toml)")
+    })?;
+    let toml_path = pkg_dir.join("nova.toml");
+    let manifest = nova_codegen::manifest::parse_manifest(&toml_path, &pkg_dir)
+        .ok_or_else(|| {
+            usage_err(format!(
+                "{} не содержит секции [package]",
+                toml_path.display(),
+            ))
+        })?;
+    // Если указано имя — проверить, что это объявленная git-зависимость.
+    if let Some(n) = name {
+        match manifest.dependencies.iter().find(|d| d.name == n) {
+            None => {
+                return Err(usage_err(format!(
+                    "зависимость `{}` не объявлена в [dependencies]",
+                    n,
+                )))
+            }
+            Some(d) => {
+                if !matches!(d.source, nova_codegen::manifest::DepSource::Git { .. }) {
+                    return Err(usage_err(format!(
+                        "зависимость `{}` не git — у path-зависимостей нет \
+                         пина, обновлять нечего",
+                        n,
+                    )));
+                }
+            }
+        }
+    }
+    let graph = nova_codegen::lockfile::update(&pkg_dir, name)
+        .map_err(|e| anyhow!("обновление зависимостей: {}", e))?;
+    match name {
+        Some(n) => println!("{} git-пин `{}` пере-резолвлен", green("updated:"), n),
+        None => println!(
+            "{} git-пины пере-резолвлены ({} зависимост(и) в графе)",
+            green("updated:"),
+            graph.len(),
+        ),
+    }
+    Ok(())
+}
+
 fn cmd_build(
     path: &Path,
     output: Option<&Path>,
@@ -2578,6 +2771,18 @@ fn cmd_build(
             .map_err(|d| anyhow!("{}", d.render(&src, &path_str)))?
     };
     check_module_path(&path, &module)?;
+
+    // Plan 03.1 Ф.4: синхронизировать `nova.lock` пакета entry-файла —
+    // зафиксировать граф зависимостей (path/git) для воспроизводимой
+    // сборки. Запускается ДО резолва импортов: материализует git-deps в
+    // кэше и загружает зафиксированные commit'ы, которыми затем
+    // пользуется резолвер. Файл без пакета (нет `nova.toml`) —
+    // зависимостей нет, шаг пропускается.
+    if let Some(pkg_dir) = nova_codegen::manifest::find_package_dir(&path) {
+        let _t = nova_codegen::perf_timer::PerfTimer::new("dep-lock");
+        nova_codegen::lockfile::sync(&pkg_dir)
+            .map_err(|e| anyhow!("резолюция зависимостей (nova.lock): {}", e))?;
+    }
 
     // Plan 35 Ф.1 MVP: cross-file resolve через inline expansion.
     {
@@ -3879,6 +4084,15 @@ fn run() -> ExitCode {
             &skip,
         ),
         Cmd::Run { file } => cmd_run(&file),
+        Cmd::Add { name, path, git, tag, branch, rev } => cmd_add(
+            &name,
+            path.as_deref(),
+            git.as_deref(),
+            tag.as_deref(),
+            branch.as_deref(),
+            rev.as_deref(),
+        ),
+        Cmd::Update { name } => cmd_update(name.as_deref()),
         Cmd::Doc { file, format, json_schema, include_private, run_doc_tests, check, watch, coverage, coverage_threshold, jobs, diff, scrape_examples, strict, mutate_contracts, real_exec, output_dir } => {
             // Plan 45 Ф.24.10: --diff old.json new.json
             // cmd_doc_diff uses process::exit for severity codes; propagate Err.
@@ -3966,5 +4180,40 @@ fn run() -> ExitCode {
                 ExitCode::FAILURE  // = 1
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod plan03_1_tests {
+    use super::insert_dependency;
+
+    #[test]
+    fn insert_into_existing_section() {
+        let t = "[package]\nname = \"x\"\n[dependencies]\nfoo = { path = \"../foo\" }\n";
+        let out = insert_dependency(t, "bar", "{ path = \"../bar\" }").unwrap();
+        assert!(out.contains("bar = { path = \"../bar\" }"), "out: {}", out);
+        assert!(out.contains("foo = { path = \"../foo\" }"), "foo сохранён");
+    }
+
+    #[test]
+    fn create_section_when_absent() {
+        let t = "[package]\nname = \"x\"\n";
+        let out = insert_dependency(t, "bar", "{ git = \"u\", tag = \"v1\" }").unwrap();
+        assert!(out.contains("[dependencies]"), "секция создана: {}", out);
+        assert!(out.contains("bar = { git = \"u\", tag = \"v1\" }"));
+    }
+
+    #[test]
+    fn duplicate_is_error() {
+        let t = "[dependencies]\nfoo = { path = \"../foo\" }\n";
+        assert!(insert_dependency(t, "foo", "{ path = \"../x\" }").is_err());
+    }
+
+    #[test]
+    fn duplicate_check_scoped_to_dependencies() {
+        // Ключ `foo` в [package] не блокирует зависимость `foo`.
+        let t = "[package]\nfoo = \"bar\"\n[dependencies]\n";
+        let out = insert_dependency(t, "foo", "{ path = \"../foo\" }").unwrap();
+        assert!(out.contains("foo = { path = \"../foo\" }"), "out: {}", out);
     }
 }

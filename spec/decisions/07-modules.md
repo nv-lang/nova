@@ -989,6 +989,11 @@ source = "path+../local-lib"                # для local — без hash
 Без префикса формат был бы неоднозначным. С префиксом — однозначно
 для tooling'а и для человека.
 
+> **Реализация (Plan 03.1).** Пример выше — целевой формат registry-
+> эпохи. Реализованное подмножество (`path`/`git`-deps) использует
+> раздельные поля вместо комбинированного `source`-префикса — точный
+> формат см. в разделе «Реализация: Plan 03.1» ниже.
+
 #### Resolution — SAT с lockfile
 
 Используется **SAT-алгоритм** (стандарт индустрии 2020+: Cargo, npm,
@@ -1245,6 +1250,57 @@ attribute parser).
 4. **Backward-compat lockfile format.** Поле `version = 1` — для
    будущих миграций. v2 lockfile должен парситься старым tooling'ом
    с понятным error'ом.
+
+### Реализация: Plan 03.1 (`path`/`git`-зависимости)
+
+D78 выше описывает **полный** целевой tooling-стек. Реализован пока
+**первый срез** — [Plan 03.1](../../docs/plans/03.1-path-git-dependencies.md):
+`path`- и `git`-зависимости (без registry, без version-ranges, без SAT).
+
+**Что работает:**
+
+- Парсинг `[dependencies]`: `{ path = "..." }`, `{ git = "...",
+  rev|tag|branch = "..." }`, и `"<version>"` (registry-форма — парсится,
+  но **не резолвится** до Plan 03.3).
+- Межпакетный резолв: первый сегмент import-пути — имя объявленной
+  зависимости; модуль резолвится в её дереве правилами D29. Импорт чужого
+  пакета **обязан** идти через `[dependencies]` — workspace-членство само
+  по себе пакет импортируемым не делает (explicit dependency-граф).
+  `std` — неявное исключение. `internal/` (rule H) зависимости снаружи
+  недоступен.
+- `git`-зависимости: bare-клон + worktree-checkout по commit'у в кэше
+  (`$NOVA_HOME/git` либо `~/.nova/git`); offline-режим `NOVA_OFFLINE=1`.
+- `nova add` / `nova update` — правка `[dependencies]` + `nova.lock`.
+
+**Фактический формат `nova.lock` (v1, реализованное подмножество)** —
+раздельные поля вместо комбинированного `source`-префикса; registry-
+записи (с `hash`) добавит Plan 03.3:
+
+```toml
+version = 1
+
+[[package]]
+name = "mathlib"
+source = "path"
+path = "../mathlib"
+
+[[package]]
+name = "gitlib"
+source = "git"
+git = "https://example.org/gitlib.nv"
+pin = "tag:v1.0.0"
+commit = "a1b2c3d4e5f6..."          # точный commit — integrity-пин
+```
+
+`git`-commit криптографически адресует дерево исходников — это и есть
+tamper-evidence 03.1 (паритет с `Cargo.lock`). Отдельный `sha256` дерева,
+подписи и SBOM — supply-chain hardening Plan 03.4. `path`-deps без
+hash-пина (локальны, мутабельны). Неизвестные ключи парсер игнорирует —
+формат расширяется без breaking change.
+
+**Отложено:** version-ranges + SAT/pubgrub (Plan 03.2), central registry
+(Plan 03.3), `nova audit` / effect-surface / capability-confined deps
+(Plan 03.4), `[dev-dependencies]`, `[features]`-резолюция.
 
 ### Связь
 

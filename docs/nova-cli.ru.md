@@ -20,6 +20,8 @@ package `nova`, crate `nova-cli`).
 - [Команды](#команды)
   - [`nova check`](#nova-check) — type-check
   - [`nova run`](#nova-run) — интерпретатор
+  - [`nova add`](#nova-add) — добавить зависимость
+  - [`nova update`](#nova-update) — пере-резолвить git-пины
   - [`nova build`](#nova-build) — компиляция в native
   - [`nova test`](#nova-test) — запуск тестов
   - [`nova test-build`](#nova-test-build) — единичный тест-build
@@ -226,6 +228,60 @@ nova run FILE
 - `FILE` — путь к `.nv`-файлу с `fn main`
 - Под капотом — `nova_codegen::interp::Interpreter`
 - Аналогично `nova-codegen run`
+
+---
+
+### `nova add`
+
+Добавить зависимость в `[dependencies]` `nova.toml` текущего пакета и
+обновить `nova.lock` ([Plan 03.1](plans/03.1-path-git-dependencies.md)).
+
+```
+nova add NAME (--path DIR | --git URL [--tag T | --branch B | --rev R])
+```
+
+| Флаг | Описание |
+|---|---|
+| `NAME` | Имя зависимости — должно совпадать с `[package].name` пакета-зависимости |
+| `--path DIR` | Локальная path-зависимость (другой пакет на диске) |
+| `--git URL` | Git-зависимость (URL репозитория) |
+| `--tag T` | Git-пин: тег (только с `--git`) |
+| `--branch B` | Git-пин: ветка (только с `--git`) |
+| `--rev R` | Git-пин: commit / rev (только с `--git`) |
+
+- `--path` и `--git` взаимоисключающие; ровно один обязателен.
+- `--tag` / `--branch` / `--rev` взаимоисключающие; опциональны (без
+  пина — ветка по умолчанию, в lock всё равно пишется точный commit).
+- Правит секцию `[dependencies]` (создаёт при отсутствии). Дубль имени
+  → exit `2`.
+- После правки запускает lock-sync: материализует git-зависимость в
+  кэше и пишет резолвнутый commit в `nova.lock`.
+- Работает только внутри пакета (`nova.toml` с `[package]`), не на
+  голом `[workspace]`-манифесте.
+
+```bash
+nova add mathlib --path ../mathlib
+nova add gitlib  --git https://example.org/gitlib.nv --tag v1.0.0
+```
+
+---
+
+### `nova update`
+
+Пере-резолвить git-пины и обновить `nova.lock`
+([Plan 03.1](plans/03.1-path-git-dependencies.md)).
+
+```
+nova update [NAME]
+```
+
+- `NAME` — конкретная git-зависимость для обновления. Без аргумента —
+  все git-зависимости.
+- Снимает целевые git-записи из `nova.lock`, затем пере-резолвит их
+  «вживую» (берётся текущий commit ветки/тега); остальные остаются
+  зафиксированными.
+- `path`-зависимости пинов не имеют — такой аргумент отвергается с
+  пояснением.
 
 ---
 
@@ -918,6 +974,8 @@ nova bench dashboard [--history-branch BRANCH] [--out DIR] [--max-entries N] [--
 |---|---|---|
 | `NOVA_CODEGEN` | (зарезервировано) | Override пути к `nova-codegen` binary |
 | `NOVA_MONO_DEPTH` | `build`, `test`, `test-build`, `bench` | Лимит monomorphization-инстанциаций (default 500) |
+| `NOVA_HOME` | `add`, `build` (git-deps) | Корень кэша git-зависимостей; default `~/.nova` (кэш в `<NOVA_HOME>/git`) |
+| `NOVA_OFFLINE` | `add`, `build` (git-deps) | `=1` → запрет сети (clone/fetch); сборка только из готового кэша |
 | `NOVA_SMT_BACKEND` | `contracts` | SMT-backend (`trivial`, `z3`) |
 | `NOVA_PERF_TIMER` | `bench corpus` (auto-set) | Включает `__PERF__` маркеры в компиляторе |
 | `NOVA_PERF_TIMER_AGGREGATE` | `bench corpus` | Aggregate `__PERF__` по проходам |
