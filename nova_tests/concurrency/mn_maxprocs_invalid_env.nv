@@ -1,0 +1,18 @@
+// Plan 83.1 Ф.2: невалидный NOVA_MAXPROCS → диагностика + fallback.
+//
+// Мусорное значение НЕ abort'ит процесс: печатается понятная
+// диагностика на stderr, резолвер делает fallback на auto-detect
+// (uv_available_parallelism) — рантайм всё равно поднимается.
+// ENV NOVA_MAXPROCS=banana
+// EXPECT_STDERR invalid NOVA_MAXPROCS
+
+module concurrency.mn_maxprocs_invalid_env
+
+test "invalid NOVA_MAXPROCS falls back to auto-detect" {
+    runtime.init(0)
+    assert(runtime.is_initialized())
+    // fallback на auto-detect → worker_count > 0.
+    assert(runtime.worker_count() > 0)
+    runtime.shutdown()
+    assert(!runtime.is_initialized())
+}

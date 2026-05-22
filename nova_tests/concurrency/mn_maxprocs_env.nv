@@ -1,0 +1,22 @@
+// Plan 83.1 Ф.2: NOVA_MAXPROCS env-переменная.
+//
+// При runtime.init(0) (auto-detect) число worker'ов берётся из
+// NOVA_MAXPROCS. Явный аргумент runtime.init(n>0) переопределяет env —
+// порядок разрешения Plan 83 §3 П6: explicit > ENV > auto-detect.
+// ENV NOVA_MAXPROCS=3
+
+module concurrency.mn_maxprocs_env
+
+test "NOVA_MAXPROCS resolved on auto-detect init(0)" {
+    runtime.init(0)
+    assert(runtime.is_initialized())
+    assert(runtime.worker_count() == 3)
+    runtime.shutdown()
+    assert(!runtime.is_initialized())
+}
+
+test "explicit runtime.init(n) overrides NOVA_MAXPROCS" {
+    runtime.init(7)
+    assert(runtime.worker_count() == 7)
+    runtime.shutdown()
+}

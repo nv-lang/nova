@@ -17384,3 +17384,32 @@ Honest-defer применялся как промежуточный шаг: Ф.2
 сначала отложен после 2 CC-FAIL, затем доведён со второго подхода
 (диагноз: `emit_type_decl` делал полный `return` для RUNTIME_DEFINED;
 фикс — строить schema из декларации).
+
+### Plan 83.1 — M:N-инфраструктура, Ф.1+Ф.2 (✅)
+
+Worker-count resolution + NOVA_MAXPROCS.
+- Единый резолвер `nova_runtime_resolve_maxprocs` в `runtime.c`.
+  Порядок (Plan 83 §3 П6): explicit `runtime.init(n>0)` > ENV
+  `NOVA_MAXPROCS` > `uv_available_parallelism()` (cgroup+affinity-
+  aware, libuv 1.52 — не переизобретаем через sysconf/GetSystemInfo).
+  Клэмп [1, 1024]: запрос выше потолка (любой источник) → клэмп +
+  диагностика на stderr. Невалидный `NOVA_MAXPROCS` (мусор/0/overflow)
+  → понятная диагностика + fallback на auto-detect, без abort.
+- Резолвер поведенчески идентичен старому коду для всех существующих
+  init-вызовов (тот же worker count) — нулевой риск регрессии.
+- test-runner: новая директива `// ENV NAME=VALUE` — per-test env-
+  переменные для шага запуска тестового exe (раньше env-зависимых
+  тестов не было; нужна для проверки NOVA_MAXPROCS). 8 unit-тестов
+  `parse_env`.
+- Тесты: `mn_maxprocs_env.nv` (NOVA_MAXPROCS=3 → init(0)=3, init(7)=7
+  — explicit бьёт env), `mn_maxprocs_invalid_env.nv` (мусор →
+  диагностика + fallback). Clamp-граница >1024 интеграционно
+  тестируется в Ф.3 через `runtime.maxprocs()` — резолв без спавна
+  1024 потоков (1024-поточный тест душит соседей под параллельной
+  нагрузкой full-suite — ровно та oversubscription, что закрывает Ф.5).
+- Дефолт остаётся opt-in: 83.1 ничего не «раздаёт».
+- Спека: D-решение по worker-count config (+ cgroup-followup дельта vs
+  Go) отложено на Ф.3 (API reshape — естественный дом). Маркеры
+  M-83.1-cgroup-static-read / M-83.1-maxprocs-clamp-fixed в
+  simplifications.md.
+Suite: 956 PASS / 0 FAIL (954 baseline + 2).
