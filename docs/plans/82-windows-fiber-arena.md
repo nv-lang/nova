@@ -8,15 +8,16 @@
 > по числу fiber'ов с Go (§3). Редакция 3 — верификация против
 > `runtime.c`/`alloc_boehm.c`/Boehm 8.2.8, GC-дизайн на проверенных API,
 > подпроблема П5 (GC↔switch атомарность).
-> **Статус:** 🟢 **Ф.0–Ф.5 ✅ ЗАВЕРШЕНЫ (2026-05-22).** Windows
+> **Статус:** ✅ **ЗАКРЫТ ЦЕЛИКОМ (Ф.0–Ф.6, 2026-05-22).** Windows
 > fiber-стеки переведены с minicoro-default calloc на lazy-commit
 > large-reserve arena (`fiber_arena_win.c`) с полной GC-интеграцией;
 > arena сделана **M:N-safe** (cross-thread migration, multi-worker GC).
 > Полный `nova test`: **1065 PASS / 0 FAIL / 56 SKIP** — 0 регрессий
 > (Ф.4). Context-switch бенчмарк (`f5_ctxswitch_bench.c`): **16–20
 > ns/switch** — паритет с Boost.Context, arena 0 ns к переключению
-> (Ф.5). Standalone-харнессы зелёные на MSVC + clang-cl. Остаётся
-> **Ф.6** — spec + закрытие 44.3.
+> (Ф.5). spec D97 ред. 2, Plan 44.3 → superseded (Ф.6).
+> Standalone-харнессы зелёные на MSVC + clang-cl. Опциональная
+> Linux-унификация на registry+push — honest-defer отдельной задачей.
 > **Ф.1 и Ф.2 слиты** — Ф.1 в одиночку регрессирует: §1.6-допущение
 > «per-thread скан корректно покрывает running fiber» ОПРОВЕРГНУТО
 > эмпирически. Ключевые находки Ф.1/Ф.2: (1) `GC_push_all` не
@@ -26,7 +27,8 @@
 > atomic bitmap, address-based cross-thread dealloc, multi-arena
 > GC-колбэк (fiber-стеки + native-стеки всех worker'ов),
 > worker-арена lifecycle. Отчёт — `82-artifacts/f1-report.md`.
-> **Следующее: Ф.6** — spec D97 + закрытие 44.3 + логи.
+> **План закрыт.** Остаточный followup — опциональная Linux-унификация
+> (§5.2, Ф.6) — вынесена в отдельную задачу.
 > **Приоритет:** P2 — Windows работает для single-thread cooperative
 > (calloc-fallback), но без lazy-commit, без overflow-detection и **без
 > какой-либо GC-интеграции fiber-стеков** (§1.5 — подтверждено
@@ -635,7 +637,20 @@ single-thread форме:
   Go switch ~десятки ns. Цель — не хуже Linux-asm-пути; измерить дельту
   TIB-свопа честно.
 
-### Ф.6 — spec + закрытие 44.3 + (опц.) Linux-унификация (~1 день)
+### Ф.6 — spec + закрытие 44.3 — ✅ ЗАВЕРШЕНА 2026-05-22
+
+> spec D97 (`06-concurrency.md`) переписан в **ред. 2**: Windows-секция
+> — `VirtualAlloc` lazy-commit arena вместо calloc; диагноз 44.3
+> «fundamentally blocked» опровергнут; registry+push GC-модель
+> зафиксирована; introspection «0 на Windows» снято; bootstrap-status +
+> «что отвергнуто» дополнены. Plan 44.3 → шапка **SUPERSEDED BY Plan
+> 82**, битая ссылка `82-windows-fiber-tib-unblock.md` исправлена.
+> `docs/plans/README.md` (Plan 82 ✅, 44.3 superseded, строка Plan 44),
+> `docs/project-creation.txt`, `docs/simplifications.md`
+> (`[M-82-msvc-novatest]`, `[M-82-bench-c-harness]`),
+> `nova-private/discussion-log.md` — обновлены. **Опциональная
+> Linux-унификация — honest-defer отдельной задачей** (требует полного
+> прогона на Linux, недоступного из текущего окружения).
 
 - D97 (`06-concurrency.md`) — Windows-стратегия; «growable» →
   «lazy-commit large-reserve»; зафиксировать registry+push GC-модель.
