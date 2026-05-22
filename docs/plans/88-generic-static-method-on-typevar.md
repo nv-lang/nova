@@ -1,6 +1,6 @@
 # Plan 88 — generic static-method dispatch на type-параметре
 
-> **Статус:** 📋 proposed 2026-05-22 (ревизия 2 — production-grade), не начат
+> **Статус:** ✅ ЗАКРЫТ 2026-05-22 (Ф.0-Ф.4; ветка `plan-88`)
 > **Приоритет:** P2 (idiom `T.from(v)` в generic-коде; пока обходится
 > конверсией на call-site, но это spec-обещание D72)
 > **Оценка:** ~1.5–2 dev-day (включая обязательный аудит Ф.0)
@@ -170,28 +170,67 @@ Static-метод на typevar — почти наверняка не единс
 
 ## Кластер по итогам Ф.0
 
-> Заполняется по результатам аудита Ф.0 — таблица «симптом → стадия
-> отказа (parse / typecheck / codegen / link / silent-wrong) →
-> закрывает Plan 88 / вынесено в Plan 54-lineage + обоснование».
-> До аудита раздел пуст.
+Аудит проведён 2026-05-22 — 8 probe-фикстур (`_audit/*.nv`, временные),
+прогон через `nova build`/`nova test`. Результаты:
+
+| Probe | Случай | Симптом | Стадия | Решение |
+|---|---|---|---|---|
+| `pa_from` | `T.from(s)` в generic-теле | `lld-link: undefined symbol nova_fn_T_from` | **link** | Plan 88 Ф.1 |
+| `pa_usermake` | user `T.make()` (protocol со static-методом) | `lld-link: undefined symbol nova_fn_T_make` | **link** | Plan 88 Ф.1 |
+| `pa_tryfrom` | `T.try_from(n)` + return `Result[T,str]` | `unknown type name 'Nova_Result____Nova_Pos_p__nova_str'` (Result-имя падает первым, до link) | **codegen** | Plan 88 Ф.1 + Ф.2 |
+| `pc_nested` | двойной typevar `[K, T From[K]]`, `T.from(v)` | `lld-link: undefined symbol nova_fn_T_from` | **link** | Plan 88 Ф.1 |
+| `pb_result_ret` | `Result[T,E]` в return-позиции | `unknown type name 'Nova_Result____nova_int__nova_str'` (объявлен `NovaRes_nova_int_nova_str`) | **codegen** | Plan 88 Ф.2 |
+| `pb_option_ret` | `Option[T]` в return-позиции | ✅ компилируется, линкуется, runtime-assert проходит | OK | — (уже работает) |
+| `pb_arr_ret` | `[]T` в return-позиции | ✅ компилируется, линкуется, runtime-assert проходит | OK | — (уже работает) |
+| `pb_box_ret` | generic record `Box[T]` в return-позиции | ✅ компилируется, линкуется, runtime-assert проходит | OK | — (уже работает) |
+
+**Два дефекта:**
+
+- **D1 — static-call на typevar.** `obj = Ident(T)`, где `T` —
+  type-параметр активного mono-контекста: codegen эмитит литеральный
+  `nova_fn_<T>_<method>` → undefined symbol на линковке. Затрагивает
+  `T.from` / `T.try_from` / `T.make` (и любой static-метод). Корень —
+  `recv_type_name` в `emit_c.rs` не резолвит `T ∈ current_type_subst`.
+  → **Ф.1.**
+- **D2 — `Result[T,E]` в return-позиции.** `T` подставляется корректно
+  (C-имена содержат `nova_int`/`Nova_Pos_p`), но return-тип мангл'ится
+  `Nova_Result____<ok>__<err>` (generic-user-type схема), тогда как
+  mono'd Result-структура объявлена `NovaRes_<ok>_<err>` (Plan 59
+  Ф.7.5). Имя-рассинхрон → CC-FAIL «unknown type name». Корень —
+  `apply_type_subst_to_ref` имеет спец-ветку для `Option`, но не для
+  `Result`. → **Ф.2.1.**
+
+**Soundness (Ф.0.4):** все 5 отказов — **loud** (3× link-error, 2×
+CC-FAIL). Ни одного silent-wrong: 3 рабочих случая (`Option[T]`/`[]T`/
+`Box[T]` return) дают корректный runtime (assert'ы проходят). Дыры
+soundness нет.
+
+**Decision point (Ф.0.6):** Plan 88 закрывает D1 (Ф.1) + D2 (Ф.2.1).
+`Option[T]` return — **уже работает**, делать нечего. `[]T`-return и
+generic-record `Box[T]`-return — **уже работают** (probe'ы PASS) →
+выносить в Plan 54-lineage **нечего**: Ф.2.2 неприменима (нет дефекта).
+Объём Ф.1/Ф.2 финализирован: Ф.1 = static-call typevar resolution;
+Ф.2 = `apply_type_subst_to_ref` спец-ветка `Result`.
 
 ## Acceptance criteria
 
-- [ ] D72-канонический пример `fn func[K, T From[K]](v K) -> T =>
+- [x] D72-канонический пример `fn func[K, T From[K]](v K) -> T =>
       T.from(v)` + вызов с turbofish — компилируется, линкуется,
-      корректно работает (Rust-паритет).
-- [ ] `T.from` / `T.try_from` / `T.new` на type-параметре внутри
-      generic-тела — все работают (обобщённый путь, не спец-кейс).
-- [ ] generic-функция с `Result[T,E]` / `Option[T]` return-типом
-      мономорфизируется (Ф.2.1 — безусловно).
-- [ ] overload `from` на резолвленном typevar выбирает верный
-      mangled-symbol (Ф.1.4).
-- [ ] `generic_from_bound.nv` / `generic_try_bound.nv` переписаны на
+      корректно работает (Rust-паритет). _(plan88/d72_canonical.nv)_
+- [x] `T.from` / `T.try_from` / `T.new` на type-параметре внутри
+      generic-тела — все работают (обобщённый путь через `recv_seg`,
+      не спец-кейс). _(plan88/static_from.nv, static_methods.nv)_
+- [x] generic-функция с `Result[T,E]` / `Option[T]` return-типом
+      мономорфизируется. _(plan88/result_return.nv)_
+- [x] overload `from` на резолвленном typevar выбирает верный
+      mangled-symbol — через `method_overloads` strict-match (Ф.1.4).
+- [x] `generic_from_bound.nv` / `generic_try_bound.nv` переписаны на
       прямой `T.from` / `T.try_from` внутри generic-тела — probe-форма
       устранена.
-- [ ] Soundness: нет silent-wrong кодогенерации (Ф.0.4 подтверждён).
-- [ ] Полный `nova test` — 0 новых FAIL.
-- [ ] `[M-generic-static-method-on-typevar]` закрыт; D72-пример
+- [x] Soundness: нет silent-wrong кодогенерации (Ф.0.4 — все 5
+      отказов были loud: link / CC-FAIL).
+- [x] Полный `nova test` — 0 новых FAIL.
+- [x] `[M-generic-static-method-on-typevar]` закрыт; D72-пример
       работает в реализации.
 
 ## Non-scope

@@ -10604,59 +10604,101 @@ Plan 52.2 и 52.3 → ✅ ЗАКРЫТЫ. Suite: 960 PASS / 0 FAIL.
   нужен; экономия только на паттерне «1 spawn → 1 worker».
 ## Plan 85.3 — протоколы конверсии: тестовое покрытие (2026-05-22)
 
-### [M-generic-static-method-on-typevar]
+### [M-generic-static-method-on-typevar] ✅ ЗАКРЫТО (Plan 88, 2026-05-22)
 - **Где:** `compiler-codegen/src/codegen/emit_c.rs` — монoморфизация
   generic-функций (Plan 48).
-- **Что упрощено:** вызов static-метода на type-параметре внутри тела
-  generic-функции — `fn wrap[T From[str]](s str) -> T => T.from(s)` —
-  не мономорфизируется. Codegen эмитит литеральный `nova_fn_T_from`
-  (T не подставляется в obj-позиции static-вызова) → undefined symbol
-  на линковке. Аналогично `Result[T, E]` с type-параметром в return-
-  позиции generic-функции даёт unsubstituted `Nova_Result_...`.
-- **Что РАБОТАЕТ:** (а) bound `[T From[X]]` / `[T TryFrom[X, E]]`
-  парсится и enforced type-checker'ом (Plan 15) — тип без impl
-  отвергается диагностикой `does not satisfy`; (б) generic-функция с
-  conversion-bound инстанцируется и исполняется, если T используется
-  как value-тип (без `T.from` внутри тела); (в) instance-метод на
-  type-параметре (`it.next()` для `[T Iter[U]]`) мономорфизируется
-  корректно.
-- **Почему:** static-method dispatch через type-параметр требует
-  подстановки T в obj-позиции member-call при mono-эмиссии + mono
-  generic `Result[T, E]`. Самостоятельная задача монoморфизатора
-  (Plan 48 / followup), вне bootstrap-объёма. Уже отмечалось как
-  bootstrap-ограничение в Plan 62.E (nova_tests/plan62/
-  tryfrom_tryinto_from_prelude.nv — bound-функции «не вызываются»).
-- **Как чинить:** в `emit_c.rs` static-call resolution — при
-  `obj = Ident(n)`, где `n ∈ current_type_subst`, резолвить `n` в
-  concrete Nova-тип (`nova_type_name_from_c`) и далее обычный
-  static-dispatch; отдельно — mono `Result[T, E]` return-типа.
-- **Приоритет:** M (idiom `T.from(v)` в generic-коде; обходится
-  конверсией на call-site).
-- **Тесты:** nova_tests/protocols/conversion/generic_from_bound.nv,
-  generic_try_bound.nv (probe — bound parse + инстанцирование),
-  neg_missing_impl.nv (enforcement негатив).
+- **Что упрощено было:** вызов static-метода на type-параметре внутри
+  тела generic-функции — `fn wrap[T From[str]](s str) -> T => T.from(s)`
+  — не мономорфизировался. Codegen эмитил литеральный `nova_fn_T_from`
+  (T не подставлялся в obj-позиции static-вызова) → undefined symbol
+  на линковке. `Result[T, E]` с type-параметром в return-позиции
+  generic-функции мангл'ился `Nova_Result____<ok>__<err>` вместо
+  объявленного `NovaRes_<ok>_<err>` → CC-FAIL «unknown type name».
+- **Как починено (Plan 88):** Ф.0 аудит (8 probe-фикстур) выделил два
+  дефекта. **D1** — Path-обработчик static-call (`emit_c.rs`,
+  ветка `parts.len() == 2`): `T.from` парсится как `Path(["T","from"])`;
+  добавлен резолв `parts[0] ∈ current_type_subst` → concrete
+  Nova-тип (`recv_seg`), дальше overload-aware static-dispatch
+  `Nova_<Type>_static_<method>`. **D2** — `apply_type_subst_to_ref`
+  получила спец-ветку для `Result[T,E]` → `NovaRes_<ok>_<err>*`
+  (зеркало ветки `Option`). Аналогичный резолв добавлен и в
+  Member-обработчик (`recv_type_name`). `Option[T]`/`[]T`/`Box[T]`
+  return-позиции — уже работали (Ф.0 подтвердил), не трогались.
+- **Результат:** D72-канонический `fn func[K, T From[K]](v K) -> T =>
+  T.from(v)` компилируется/линкуется/работает (Rust-паритет).
+  `T.from`/`T.try_from`/`T.new` (user-defined) на typevar — все
+  работают (обобщённый путь). Soundness: до фикса все отказы были
+  loud (link/CC-FAIL), silent-wrong не было.
+- **Тесты:** `nova_tests/plan88/` (static_from / static_methods /
+  d72_canonical / result_return / neg_bound_violation);
+  `nova_tests/protocols/conversion/generic_from_bound.nv` +
+  `generic_try_bound.nv` переписаны с probe-формы на прямой
+  `T.from` / `T.try_from` внутри generic-тела.
 
 ## Plan 85.5 — Iter[T] тестовое покрытие (2026-05-22)
 
-### [M-for-in-explicit-elem-type]
+### [M-for-in-explicit-elem-type] ✅ ЗАКРЫТО (Plan 87, 2026-05-22)
 - **Где:** bootstrap-парсер for-in (`compiler-codegen/src/parser`).
 - **Что упрощено:** синтаксис `for x TYPE in iter` (явная аннотация
   типа loop-переменной) задокументирован в `spec/syntax.md`
   (`for id u64 in ids`, `for x int in nums`), но bootstrap-парсер его
-  не принимает — после `for <ident>` сразу ожидает `in`
+  не принимал — после `for <ident>` сразу ожидал `in`
   («expected `in`, got identifier»).
 - **Почему:** for-in парсер развивался под inferred-форму (`for x in
   iter`); explicit-type-вариант из spec не был реализован. Все
   существующие тесты (`nova_tests/syntax/for_iter*.nv`) используют
   inferred-форму — drift не всплывал до Plan 85.5.
-- **Как чинить:** в parse-for после loop-pattern — если следующий
-  токен не `in`, распарсить TypeRef по правилу «name type» (D-без
-  двоеточия), затем `in`. Учесть `for mut x TYPE in` и `for (a, b) in`
-  (tuple — без поэлементных типов).
-- **Приоритет:** L (тип элемента всегда выводится; аннотация —
-  документирующий сахар).
-- **Тесты:** обнаружено в Plan 85.5 — for_loop.nv / array_iter.nv
-  изначально использовали `for x int in`, переведены на inferred-форму.
+- **Как починено (Plan 87):** `ExprKind::For`/`ParallelFor` получили
+  поле `elem_type: Option<TypeRef>`; `parse_for`/`parse_parallel_for`
+  после loop-pattern парсят TypeRef если следующий токен не `in`.
+  Type-checker (Plan 79 `f1`-проход) сверяет аннотацию с фактическим
+  типом элемента итератора — несовпадение → `E7340` (новый код).
+  Codegen аннотацию не потребляет (checked assertion; для валидной
+  программы Ф.3 гарантирует совпадение — поведение 1:1).
+- **Тесты:** `nova_tests/plan87/` — explicit_primitive / explicit_generic
+  / explicit_mut / explicit_custom_iter (позитив) + neg_type_mismatch
+  (E7340) + neg_bad_syntax (негатив).
+
+### [M-for-loop-var-mut] `for mut x` в bootstrap не отличается от `for x`
+- **Где:** парсер for-in (`parse_for`/`parse_parallel_for`) + AST.
+- **Что упрощено:** `mut` в `for mut x in iter` (D32/D33 — мутабельная
+  loop-переменная) парсится и съедается, но в AST не сохраняется —
+  `for mut x in` и `for x in` дают идентичное дерево.
+- **Почему:** binding-иммутабельность в bootstrap нигде не enforce'ится
+  (нет диагностики «cannot assign to immutable binding» ни для `let`,
+  ни для loop-переменных); C-локали всегда мутабельны → переприсваивание
+  в теле компилируется в обоих случаях. Хранить `is_mut`-флаг, который
+  никто не читает — мёртвый вес.
+- **Как чинить:** когда появится enforcement иммутабельности binding'ов
+  (отдельный план) — добавить `loop_var_mut: bool` в `ExprKind::For`/
+  `ParallelFor` и читать его в этом проходе.
+- **Приоритет:** L (поведение корректно — `for mut x` работает; теряется
+  лишь возможность диагностировать `for x in xs { x = ... }` как ошибку).
+- **Тесты:** `nova_tests/plan87/explicit_mut.nv` (`for mut x int in`).
+
+### [M-iflet-match-boxed-sum-ptr] if-let/match по боксированному sum-элементу
+- **Где:** codegen `emit_c.rs` — `IfLet` / `WhileLet` / `emit_match`.
+- **Что:** когда scrutinee — указатель на sum-тип со value-семантикой
+  (`NovaOpt_T*`/`NovaResult_T*` — так хранится элемент `[]Option[T]`),
+  pattern-codegen эмитит `.tag`/`.value` (доступ как к значению) →
+  CC-FAIL «member reference type ... is a pointer; did you mean `->`».
+- **Воспроизведение:** `for o in opts { if let Some(v) = o {...} }` для
+  `opts []Option[int]` — падает И с аннотацией, И без неё (codegen
+  аннотацию не потребляет — дефект pre-existing, не регрессия Plan 87).
+- **Почему не чинится в Plan 87:** это дефект value/pointer-модели
+  codegen'а для боксированных sum-элементов массива + pattern-match;
+  Plan 87 — про синтаксис аннотации (parser + type-checker), codegen
+  намеренно нетронут. Корректный фикс требует отличать «sum-значение,
+  боксированное в указатель» от «record/настоящий указатель».
+- **Как чинить:** в `emit_for` деболксить sum-элементы массива в
+  value-binding (`NovaOpt_T o = *(NovaOpt_T*)data[i]`), либо в
+  pattern-codegen деференсить pointer-to-value-sum scrutinee.
+- **Приоритет:** M (ломает идиому деструктуризации Option/Result прямо
+  в теле for-in; обходится `.iter()`/индексным доступом).
+- **Обнаружено:** Plan 87 Ф.4.2 (тест `explicit_generic.nv`).
+- **План исправления:** `docs/plans/89-iflet-match-boxed-sum-ptr.md`
+  (Plan 89, proposed) — Ф.0 аудит value/pointer-боксинга + decision
+  point, Ф.1 реализация, Ф.2 тесты, Ф.3 docs.
 
 ## Plan 83.1 Ф.5 — thread-budget (2026-05-22)
 
