@@ -603,6 +603,14 @@ void nova_runtime_init(int n_workers) {
     }
     nova_mutex_lock(&_init_mu);
     if (_initialized) {
+        /* Plan 83.1 Ф.3: runtime.init — одноразовый тюнер. Повторный вызов
+         * при уже поднятом пуле — баг конфигурации; диагностируем громко
+         * (не молчаливый no-op, который маскировал бы баг), но не abort'им
+         * — существующий пул корректен и продолжает работать. */
+        fprintf(stderr,
+                "nova: runtime.init() ignored — M:N runtime already running "
+                "(%d workers); runtime.init is a one-shot tuner, call it once "
+                "before any spawn\n", _n_workers);
         nova_mutex_unlock(&_init_mu);
         return;
     }
@@ -845,6 +853,26 @@ void nova_runtime_signal_main(void) {
 
 int nova_runtime_worker_count(void) {
     return _n_workers;
+}
+
+/* Plan 83.1 Ф.3: целевое число worker'ов (аналог Go runtime.GOMAXPROCS(-1)).
+ * Отличается от worker_count(): maxprocs() — ЦЕЛЬ (резолвится и до
+ * runtime.init, и после shutdown), worker_count() — фактически поднятые
+ * потоки (с lazy-spawn Ф.4 это 0 пока не было первого spawn).
+ *
+ * Если пул поднят — возвращает реальное число. Иначе резолвит цель
+ * (NOVA_MAXPROCS / auto-detect) и кэширует: target детерминирован, а
+ * кэш не даёт повторно печатать clamp/invalid-диагностику на каждом
+ * вызове getter'а. Race на первой инициализации кэша безвреден —
+ * резолвер детерминирован, оба потока запишут одно значение. */
+static int _maxprocs_cache = 0;  /* 0 = ещё не резолвилось */
+
+int nova_runtime_maxprocs(void) {
+    if (_initialized) return _n_workers;
+    if (_maxprocs_cache == 0) {
+        _maxprocs_cache = nova_runtime_resolve_maxprocs(0);
+    }
+    return _maxprocs_cache;
 }
 
 int nova_runtime_current_worker_id(void) {

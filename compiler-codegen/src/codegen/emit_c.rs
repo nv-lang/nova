@@ -14515,6 +14515,10 @@ impl CEmitter {
                             "worker_count" if args.is_empty() => {
                                 return Ok("((nova_int)nova_runtime_worker_count())".to_string());
                             }
+                            // Plan 83.1 Ф.3: целевое число worker'ов.
+                            "maxprocs" if args.is_empty() => {
+                                return Ok("((nova_int)nova_runtime_maxprocs())".to_string());
+                            }
                             "is_initialized" if args.is_empty() => {
                                 return Ok("((nova_bool)nova_runtime_is_initialized())".to_string());
                             }
@@ -21763,7 +21767,8 @@ impl CEmitter {
                         if n == "runtime" {
                             return match method.as_str() {
                                 "init" | "shutdown" => "nova_int".into(),
-                                "worker_count" | "current_worker_id" => "nova_int".into(),
+                                "worker_count" | "current_worker_id"
+                                | "maxprocs" => "nova_int".into(),
                                 "is_initialized" => "nova_bool".into(),
                                 _ => "nova_int".into(),
                             };
