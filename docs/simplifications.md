@@ -10700,22 +10700,20 @@ context-sensitive fiber-vs-main ветка. Worker теперь свободен
 блокирующей нагрузкой (тест `blocking_offload_test.nv` это доказывает).
 Упрощение устранено — маркер закрыт.
 
-### [M-83.3-blocking-control-flow-escape] Ф.4.2: codegen не enforce'ит leaf-контракт
-- **Где:** `compiler-codegen/src/codegen/emit_c.rs` — `emit_blocking`.
-- **Что упрощено:** тело `blocking { }` экстрагируется в отдельную
-  C-функцию `_nova_blk_N`. `return`/`break`/`continue`, пересекающие
-  границу `blocking { }` наружу, при offload'е семантически некорректны
-  (сработают внутри `_nova_blk_N`, а не enclosing-fn/loop). Codegen это
-  НЕ диагностирует.
-- **Почему:** V1-контракт `Blocking` (D50) уже требует тело-leaf —
-  FFI/syscall без control-flow-escape; реалистичные `blocking`-тела не
-  делают return/break наружу. Полная диагностика — отдельная
-  type-checker-проверка (по образцу `check_defer_body` с
-  loop/fn-depth-трекингом).
-- **Как чинить:** Ф.5 — type-checker-guard, запрещающий control-flow
-  наружу из `blocking { }` (как у `defer` body).
-- **Приоритет:** L — V1-контракт документирует ограничение; нарушение
-  требует заведомо невалидного `blocking`-тела.
+### Control-flow-escape наружу из blocking { } — часть V1 leaf-контракта
+Тело `blocking { }` экстрагируется в отдельную C-функцию `_nova_blk_N`.
+`return`/`break`/`continue`, пересекающие границу `blocking { }` наружу,
+семантически некорректны при offload'е. Это **facet того же V1
+leaf-контракта** (см. [M-83.3-blocking-leaf-contract] выше) — тело
+обязано быть leaf, без control-flow-escape; зафиксировано в spec D50 §4.
+
+Не отдельное упрощение: enforcement всего V1-контракта (no GC-alloc,
+no runtime-calls, no escape) — единообразно V2. На практике C-компилятор
+ловит `return <value>` (→ возврат значения из `void`-функции),
+`break`/`continue` вне цикла — это invalid C в `_nova_blk_N`, build
+падает. Полностью «тихий» остаётся лишь голый `return` (unit) —
+астрономически редкий в leaf-FFI-теле. Маркер не заводится: контракт
+покрыт [M-83.3-blocking-leaf-contract] + spec D50 §4.
 
 ---
 
