@@ -159,6 +159,7 @@ pub fn resolve_imports_inline_ex(
                     is_export: false,
                     span: crate::diag::Span::dummy(),
                     doc_attrs: Vec::new(),
+                    anchor: crate::ast::ImportAnchor::Package,
                 });
             }
             // Empty list `partial_prelude()` — НИЧЕГО не auto-import'им
@@ -200,6 +201,7 @@ pub fn resolve_imports_inline_ex(
                                 is_export: false,
                                 span: crate::diag::Span::dummy(),
                                 doc_attrs: Vec::new(),
+                                anchor: crate::ast::ImportAnchor::Package,
                             });
                             edition_pin_used = true;
                         }
@@ -216,6 +218,7 @@ pub fn resolve_imports_inline_ex(
                         is_export: false,
                         span: crate::diag::Span::dummy(),
                         doc_attrs: Vec::new(),
+                        anchor: crate::ast::ImportAnchor::Package,
                     });
                 }
             }
@@ -507,7 +510,56 @@ fn resolve_one(
 
     // Plan 42 Ф.2: resolve module to list of peer files (or single file
     // for legacy single-file modules).
-    let resolved_paths = resolve_module_paths(&imp.path, entry_dir, repo, stdlib_dir, include_test_peers)
+    // Plan 84: относительный импорт (`./` / `../`) — root резолва =
+    // директория importing-файла, поднятая на `up` уровней; строго в
+    // пределах своего пакета (директория ближайшего `nova.toml`).
+    let rel_root: Option<PathBuf> = match &imp.anchor {
+        crate::ast::ImportAnchor::Package => None,
+        crate::ast::ImportAnchor::Relative { up } => {
+            let importing = import_chain.last()
+                .map(|m| m.join("."))
+                .unwrap_or_else(|| "<entry>".to_string());
+            let prefix_str = if *up == 0 {
+                "./".to_string()
+            } else {
+                "../".repeat(*up as usize)
+            };
+            let base = importer_path.parent().ok_or_else(|| anyhow!(
+                "relative import `{}{}`: importing file has no parent directory",
+                prefix_str, imp.path.join("."),
+            ))?;
+            let pkg_root = package_root_of(importer_path)
+                .unwrap_or_else(|| repo.to_path_buf());
+            let mut dir = base.to_path_buf();
+            for _ in 0..*up {
+                match dir.parent() {
+                    Some(p) => dir = p.to_path_buf(),
+                    None => return Err(anyhow!(
+                        "relative import `{}{}` выходит за границу файловой системы\n  \
+                         importing module: {}\n  \
+                         hint: слишком много `../`",
+                        prefix_str, imp.path.join("."), importing,
+                    )),
+                }
+            }
+            let dir_canon = dir.canonicalize().unwrap_or_else(|_| dir.clone());
+            let pkg_canon = pkg_root.canonicalize().unwrap_or_else(|_| pkg_root.clone());
+            if !dir_canon.starts_with(&pkg_canon) {
+                return Err(anyhow!(
+                    "relative import `{}{}` выходит за границу пакета\n  \
+                     importing module: {}\n  \
+                     package root:     {}\n  \
+                     hint: относительный импорт (`./` / `../`) не может выйти за \
+                     корень своего пакета — для межпакетных ссылок используйте \
+                     полный путь от корня (Plan 84 / D29)",
+                    prefix_str, imp.path.join("."), importing, pkg_canon.display(),
+                ));
+            }
+            Some(dir)
+        }
+    };
+
+    let resolved_paths = resolve_module_paths(&imp.path, entry_dir, repo, stdlib_dir, include_test_peers, rel_root.as_deref())
         .map_err(|err| {
             // Plan 42 правило L: diagnostic quality. Plan 42.08 Ф.2: ambiguous
             // case теперь явно диагностируется.
@@ -528,6 +580,28 @@ fn resolve_one(
                     folder.display(),
                 ),
                 ResolveErr::NotFound => {
+                    // Plan 84: для относительного импорта — сообщение про
+                    // конкретную директорию, не про candidate-roots.
+                    if let Some(rr) = &rel_root {
+                        let prefix_str = match &imp.anchor {
+                            crate::ast::ImportAnchor::Relative { up } if *up == 0 =>
+                                "./".to_string(),
+                            crate::ast::ImportAnchor::Relative { up } =>
+                                "../".repeat(*up as usize),
+                            crate::ast::ImportAnchor::Package => String::new(),
+                        };
+                        anyhow!(
+                            "cannot find module `{}{}` (relative import)\n  \
+                             imported from: module `{}`\n  \
+                             searched in:   {}\n  \
+                             hint: модуль не найден в этой директории — \
+                             проверьте имя и число `../`",
+                            prefix_str,
+                            imp.path.join("."),
+                            importing,
+                            rr.join(imp.path.iter().collect::<PathBuf>()).display(),
+                        )
+                    } else {
                     let suggestion = suggest_module_name(
                         &imp.path,
                         entry_dir,
@@ -554,6 +628,7 @@ fn resolve_one(
                         },
                         suggestion,
                     )
+                    }
                 }
                 ResolveErr::CaseMismatch { requested, actual } => anyhow!(
                     "module path case mismatch: import declares `{}` but on \
@@ -1225,26 +1300,46 @@ fn verify_case(path: &Path, parts: &[String], is_file: bool) -> Option<(String, 
     None
 }
 
+/// Plan 84: корень пакета, содержащего `file` — директория ближайшего
+/// `nova.toml` на уровне `file` или выше. Это граница для относительных
+/// импортов: цепочка `../` не может подняться выше этой директории.
+fn package_root_of(file: &Path) -> Option<PathBuf> {
+    let mut dir = file.parent()?;
+    loop {
+        if dir.join("nova.toml").is_file() {
+            return Some(dir.to_path_buf());
+        }
+        dir = dir.parent()?;
+    }
+}
+
 fn resolve_module_paths(
     parts: &[String],
     entry_dir: &Path,
     repo: &Path,
     stdlib_dir: &Path,
     include_test_peers: bool,
+    // Plan 84: для относительного импорта (`./` / `../`) caller передаёт
+    // вычисленную директорию-root; `None` — обычный candidate-поиск.
+    rel_root: Option<&Path>,
 ) -> Result<Vec<PathBuf>, ResolveErr> {
     if parts.is_empty() {
         return Err(ResolveErr::NotFound);
     }
     let rel_path: PathBuf = parts.iter().collect();
 
-    // Candidate search roots — same order as resolve_import_path.
-    let mut roots: Vec<PathBuf> = vec![
-        entry_dir.to_path_buf(),
-        repo.to_path_buf(),
-    ];
-    if parts[0] == "std" && parts.len() >= 2 {
-        roots.push(stdlib_dir.to_path_buf());
-    }
+    // Candidate search roots. Plan 84: для относительного импорта —
+    // единственный root = вычисленная caller'ом директория (без
+    // candidate-поиска и без std-special-case).
+    let roots: Vec<PathBuf> = if let Some(rr) = rel_root {
+        vec![rr.to_path_buf()]
+    } else {
+        let mut rs = vec![entry_dir.to_path_buf(), repo.to_path_buf()];
+        if parts[0] == "std" && parts.len() >= 2 {
+            rs.push(stdlib_dir.to_path_buf());
+        }
+        rs
+    };
 
     for root in &roots {
         // Translate path: для stdlib_dir мы пропускаем первый `std` segment.

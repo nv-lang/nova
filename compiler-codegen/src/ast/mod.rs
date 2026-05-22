@@ -206,6 +206,17 @@ pub struct ImportItem {
     pub span: Span,
 }
 
+/// Plan 84: якорь импорта — абсолютный (от корня пакета) или относительный.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ImportAnchor {
+    /// Абсолютный — путь от корня пакета (bare `import a.b.c`). Default.
+    Package,
+    /// Относительный (Plan 84) — `./` (`up == 0`, директория импортирующего
+    /// файла) либо `../`×n (`up == n`, n уровней вверх). Резолвится
+    /// относительно директории файла, строго в пределах своего пакета.
+    Relative { up: u32 },
+}
+
 #[derive(Debug, Clone)]
 pub struct Import {
     pub path: Vec<String>,
@@ -222,6 +233,8 @@ pub struct Import {
     /// Plan 45 Ф.24.11: doc-attrs on import/re-export.
     /// Currently: DocInline, DocNoInline (controls inline rendering in nova doc).
     pub doc_attrs: Vec<DocAttr>,
+    /// Plan 84: относительный/абсолютный якорь резолва пути импорта.
+    pub anchor: ImportAnchor,
 }
 
 /// Top-level декларация в модуле.

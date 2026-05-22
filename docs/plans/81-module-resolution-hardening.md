@@ -159,7 +159,8 @@ MVP оставил «честные пропуски» трёх сортов: **
 ## Что НЕ входит
 
 **Отклонено спекой (не недоработки):**
-- Относительные пути `import ../sibling` — D29 (import всегда full path).
+- Относительные пути `./`/`../` — на момент Plan 81 отклонены; **позже
+  добавлены** package-scoped формой в D29 rev-4 (см. [Plan 84](84-relative-imports.md)).
 - Wildcard `import X.Y.*` — R25 spec-rejected (D29/D5).
 - pub-гранулярность / field-level visibility — R28 ❌ D5, D47.
 
