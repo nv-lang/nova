@@ -41,19 +41,22 @@ package `nova`, crate `nova-cli`).
 ## Quickstart
 
 ```bash
-# Внутри Nova-проекта (рядом есть nova.toml):
+# Внутри Nova-проекта (рядом есть nova.toml). Модули лежат в корне
+# пакета — директории `src/` нет (D78).
 nova check                       # type-check всего workspace
-nova check src/                  # рекурсивно по директории
-nova check src/lib.nv            # одиночный файл
+nova check encoding/             # рекурсивно по директории
+nova check lib.nv                # одиночный файл
 
 nova run hello.nv                # запустить через интерпретатор
+nova add mathlib --path ../mathlib   # добавить зависимость, обновить nova.lock
+nova info mathlib                # effect-surface зависимости
 nova build app.nv -o app         # скомпилировать в native binary
 nova test                        # запустить все nova_tests/
 nova test --filter basics        # подмножество по подстроке
 
-nova doc src/lib.nv              # markdown в stdout
-nova doc src/ --format json      # JSON-схема D107
-nova doc src/ --check --strict   # CI-валидация документации
+nova doc lib.nv                  # markdown в stdout
+nova doc . --format json         # JSON-схема D107
+nova doc . --check --strict      # CI-валидация документации
 
 nova bench run bench.nv          # запустить бенчмарки
 nova contracts verify foo.nv     # SMT-верификация контрактов
@@ -202,15 +205,15 @@ nova check [PATHS...] [--jobs N] [-q|-v] [--list] [--format human|short]
 
 `--format short`:
 ```
-src/lib.nv: ok
-src/foo.nv:42:5: error: type mismatch
+lib.nv: ok
+parser.nv:42:5: error: type mismatch
 ```
 
 `--format human` (default):
 ```
-ok: src/lib.nv
-FAIL: src/foo.nv
-  src/foo.nv:42:5: type mismatch
+ok: lib.nv
+FAIL: parser.nv
+  parser.nv:42:5: type mismatch
 ```
 
 **JSON / SARIF / JUnit** форматы зарезервированы под sub-plan 36.A,
@@ -582,7 +585,7 @@ nova doc-query JSON_FILE [QUERY]
 **Примеры:**
 
 ```bash
-nova doc src/ --format json > out.json
+nova doc . --format json > out.json
 nova doc-query out.json "kind=fn,capability=pure"
 nova doc-query out.json "name=add,has-contracts=true"
 nova doc-query out.json "module-prefix=std,effect=Fs"
