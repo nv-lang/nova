@@ -340,7 +340,7 @@ Per-test events и summary — в stdout (для wrapper-скриптов).
 
 | Var | Эффект |
 |---|---|
-| `NOVA_NO_CACHE=1` | Отключить SMT-кэш контрактов (Plan 33.3 Ф.12) |
+| `NOVA_CACHE=0` | Отключить кэши: SMT-кэш контрактов (Plan 33.3 Ф.12) + build-кэш `.c` (Plan 81 Ф.9). Принимаются также `off`/`false` |
 | `NOVA_PERF_TIMER=1` | Включить `__PERF__` маркеры в компиляторе (per-pass timing) |
 | `NOVA_MONO_DEPTH=N` | Лимит monomorphization-инстанциаций (default 500, [Plan 48](plans/48-closures-in-generics.md) Ф.7.6) |
 | `NOVA_DEBUG_MONO=1` | Verbose debug-print mono-instances (диагностика поломок codegen) |

@@ -2589,7 +2589,7 @@ fn cmd_build(
     // (выше) известен полный набор исходных файлов сборки. При
     // байт-идентичных входах переиспользуем сгенерированный `.c`, минуя
     // type-check / effects / lints / desugar / callnorm / codegen.
-    // Отключается NOVA_NO_CACHE=1; пропускается при --keep-artifacts
+    // Отключается NOVA_CACHE=0; пропускается при --keep-artifacts
     // (debug-режим — нужен полный набор реальных промежуточных артефактов).
     let cache_key: Option<String> =
         if build_cache::cache_enabled() && !keep_artifacts {
