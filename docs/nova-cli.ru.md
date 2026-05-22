@@ -237,7 +237,7 @@ nova run FILE
 обновить `nova.lock` ([Plan 03.1](plans/03.1-path-git-dependencies.md)).
 
 ```
-nova add NAME (--path DIR | --git URL [--tag T | --branch B | --rev R])
+nova add NAME (--path DIR | --git URL [--tag T | --branch B | --rev R | --version REQ])
 ```
 
 | Флаг | Описание |
@@ -248,10 +248,14 @@ nova add NAME (--path DIR | --git URL [--tag T | --branch B | --rev R])
 | `--tag T` | Git-пин: тег (только с `--git`) |
 | `--branch B` | Git-пин: ветка (только с `--git`) |
 | `--rev R` | Git-пин: commit / rev (только с `--git`) |
+| `--version REQ` | Git-пин: semver-диапазон, напр. `^1.2` (только с `--git`, [Plan 03.2](plans/03.2-version-resolution.md)) |
 
 - `--path` и `--git` взаимоисключающие; ровно один обязателен.
-- `--tag` / `--branch` / `--rev` взаимоисключающие; опциональны (без
-  пина — ветка по умолчанию, в lock всё равно пишется точный commit).
+- `--tag` / `--branch` / `--rev` / `--version` взаимоисключающие;
+  опциональны (без пина — ветка по умолчанию, в lock всё равно пишется
+  точный commit).
+- `--version` выбирает наибольший подходящий semver-тег репозитория и
+  пишет в `nova.lock` и версию, и commit.
 - Правит секцию `[dependencies]` (создаёт при отсутствии). Дубль имени
   → exit `2`.
 - После правки запускает lock-sync: материализует git-зависимость в
@@ -262,24 +266,31 @@ nova add NAME (--path DIR | --git URL [--tag T | --branch B | --rev R])
 ```bash
 nova add mathlib --path ../mathlib
 nova add gitlib  --git https://example.org/gitlib.nv --tag v1.0.0
+nova add libfoo  --git https://example.org/libfoo.nv --version "^1.2"
 ```
 
 ---
 
 ### `nova update`
 
-Пере-резолвить git-пины и обновить `nova.lock`
-([Plan 03.1](plans/03.1-path-git-dependencies.md)).
+Пере-резолвить git-зависимости и обновить `nova.lock`
+([Plan 03.1](plans/03.1-path-git-dependencies.md) /
+[03.2](plans/03.2-version-resolution.md)).
 
 ```
-nova update [NAME]
+nova update [NAME] [--precise NAME@VERSION]
 ```
 
 - `NAME` — конкретная git-зависимость для обновления. Без аргумента —
   все git-зависимости.
-- Снимает целевые git-записи из `nova.lock`, затем пере-резолвит их
-  «вживую» (берётся текущий commit ветки/тега); остальные остаются
-  зафиксированными.
+- Снимает целевые git-записи из `nova.lock`, затем пере-резолвит:
+  branch/tag-пины берут текущий commit, `version`-диапазоны — наибольший
+  подходящий тег. Остальные остаются зафиксированными
+  (воспроизводимость).
+- `--precise NAME@VERSION` — зафиксировать `version`-диапазонную
+  git-зависимость на точной версии (напр. `nova update --precise
+  libfoo@1.2.0`). Резолвер обязан согласовать её с остальным деревом,
+  иначе — конфликт.
 - `path`-зависимости пинов не имеют — такой аргумент отвергается с
   пояснением.
 
