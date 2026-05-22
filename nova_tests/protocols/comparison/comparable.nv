@@ -1,0 +1,105 @@
+// Plan 85.4 Ф.2 — Comparable протокол.
+//
+// `Comparable` (D109): `cmp(other Self) -> Ordering`. User-defined
+// через `fn Type @cmp(other Type) -> Ordering`. `Ordering` — prelude
+// sum-тип `Less | Equal | Greater`.
+
+module comparison.comparable
+
+
+type Priority { level int }
+
+fn Priority @cmp(other Priority) -> Ordering =>
+    if @level < other.level {
+        Less
+    } else if @level > other.level {
+        Greater
+    } else {
+        Equal
+    }
+
+
+test "cmp — Less" {
+    let a = Priority { level: 1 }
+    let b = Priority { level: 5 }
+    let r = match a.cmp(b) {
+        Less => "less"
+        Equal => "equal"
+        Greater => "greater"
+    }
+    assert(r == "less")
+}
+
+test "cmp — Equal" {
+    let a = Priority { level: 3 }
+    let b = Priority { level: 3 }
+    let r = match a.cmp(b) {
+        Less => "less"
+        Equal => "equal"
+        Greater => "greater"
+    }
+    assert(r == "equal")
+}
+
+test "cmp — Greater" {
+    let a = Priority { level: 9 }
+    let b = Priority { level: 2 }
+    let r = match a.cmp(b) {
+        Less => "less"
+        Equal => "equal"
+        Greater => "greater"
+    }
+    assert(r == "greater")
+}
+
+test "cmp — антисимметрия: a<b => b>a" {
+    let a = Priority { level: 1 }
+    let b = Priority { level: 2 }
+    let ab = match a.cmp(b) {
+        Less => true
+        _ => false
+    }
+    let ba = match b.cmp(a) {
+        Greater => true
+        _ => false
+    }
+    assert(ab)
+    assert(ba)
+}
+
+test "cmp — рефлексивность: x.cmp(x) == Equal" {
+    let p = Priority { level: 42 }
+    let r = match p.cmp(p) {
+        Equal => true
+        _ => false
+    }
+    assert(r)
+}
+
+test "cmp — отрицательные уровни" {
+    let a = Priority { level: -5 }
+    let b = Priority { level: -1 }
+    let r = match a.cmp(b) {
+        Less => true
+        _ => false
+    }
+    assert(r)
+}
+
+
+// ── транзитивность порядка ────────────────────────────────────────
+
+fn is_less(a Priority, b Priority) -> bool =>
+    match a.cmp(b) {
+        Less => true
+        _ => false
+    }
+
+test "cmp — транзитивность: a<b, b<c => a<c" {
+    let a = Priority { level: 1 }
+    let b = Priority { level: 5 }
+    let c = Priority { level: 10 }
+    assert(is_less(a, b))
+    assert(is_less(b, c))
+    assert(is_less(a, c))
+}

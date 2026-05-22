@@ -1,0 +1,103 @@
+// Plan 85.2 Ф.4 — WriteBuffer конструкторы и метрики.
+//
+// new() / with_capacity(n) / from([]u8) / @len / @capacity / @clone.
+
+module buffers.write_constructors
+
+
+// ── new ────────────────────────────────────────────────────────────
+
+test "new — пустой, capacity >= 16" {
+    let wb = WriteBuffer.new()
+    assert(wb.len() == 0)
+    assert(wb.capacity() >= 16)
+}
+
+
+// ── with_capacity ──────────────────────────────────────────────────
+
+test "with_capacity(0) — валиден, len 0" {
+    let wb = WriteBuffer.with_capacity(0)
+    assert(wb.len() == 0)
+    assert(wb.capacity() >= 0)
+}
+
+test "with_capacity(256) — capacity >= 256" {
+    let wb = WriteBuffer.with_capacity(256)
+    assert(wb.len() == 0)
+    assert(wb.capacity() >= 256)
+}
+
+
+// ── from([]u8) ─────────────────────────────────────────────────────
+
+test "from([]u8) — преднаполненный буфер" {
+    let bytes []u8 = [0x11, 0x22, 0x33]
+    let wb = WriteBuffer.from(bytes)
+    assert(wb.len() == 3)
+}
+
+test "from([]u8) — пустой массив" {
+    let bytes []u8 = []
+    let wb = WriteBuffer.from(bytes)
+    assert(wb.len() == 0)
+}
+
+test "from([]u8) — append продолжает после готовых байт" {
+    let bytes []u8 = [0xAA]
+    let mut wb = WriteBuffer.from(bytes)
+    wb.write_byte(0xBB)
+    let arr = wb.into()
+    assert(arr.len() == 2)
+    assert(arr[0] == 0xAA)
+    assert(arr[1] == 0xBB)
+}
+
+
+// ── @len ───────────────────────────────────────────────────────────
+
+test "len растёт с каждым write" {
+    let mut wb = WriteBuffer.new()
+    assert(wb.len() == 0)
+    wb.write_byte(1)
+    assert(wb.len() == 1)
+    wb.write_u32_le(0)
+    assert(wb.len() == 5)
+}
+
+
+// ── @capacity ──────────────────────────────────────────────────────
+
+test "capacity >= len, растёт при переполнении" {
+    let mut wb = WriteBuffer.with_capacity(4)
+    wb.write_u64_le(0)             // 8 байт > cap 4
+    assert(wb.len() == 8)
+    assert(wb.capacity() >= 8)
+    assert(wb.capacity() >= wb.len())
+}
+
+
+// ── @clone ─────────────────────────────────────────────────────────
+
+test "clone — мутация клона не влияет на оригинал" {
+    let mut a = WriteBuffer.new()
+    a.write_u32_be(0x12345678)
+    let mut b = a.clone()
+    b.write_u32_be(0xAABBCCDD)
+    assert(a.len() == 4)
+    assert(b.len() == 8)
+}
+
+test "clone — содержимое идентично на момент копии" {
+    let mut a = WriteBuffer.new()
+    a.write_str("hello")
+    let b = a.clone()
+    assert(a.into() == b.into())
+}
+
+test "clone пустого буфера" {
+    let a = WriteBuffer.new()
+    let b = a.clone()
+    assert(b.len() == 0)
+    assert(b.into().len() == 0)
+}

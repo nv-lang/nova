@@ -1,0 +1,179 @@
+// Plan 85.2 Ф.4 — WriteBuffer запись целых чисел.
+//
+// write_byte / write_u8 / write_i8 + u16/i16/u32/i32/u64/i64 LE+BE.
+// Проверка точного порядка байт в @into().
+
+module buffers.write_integers
+
+
+// ── 1-байтовые ─────────────────────────────────────────────────────
+
+test "write_byte — порядок и значения" {
+    let mut wb = WriteBuffer.new()
+    wb.write_byte(0x41)
+    wb.write_byte(0xFF)
+    let a = wb.into()
+    assert(a.len() == 2)
+    assert(a[0] == 0x41)
+    assert(a[1] == 0xFF)
+}
+
+test "write_u8" {
+    let mut wb = WriteBuffer.new()
+    wb.write_u8(0x00)
+    wb.write_u8(0xFF)
+    let a = wb.into()
+    assert(a[0] == 0x00)
+    assert(a[1] == 0xFF)
+}
+
+test "write_i8 — отрицательное значение" {
+    let mut wb = WriteBuffer.new()
+    wb.write_i8(-1)               // 0xFF
+    wb.write_i8(-128)             // 0x80
+    let a = wb.into()
+    assert(a[0] == 0xFF)
+    assert(a[1] == 0x80)
+}
+
+
+// ── u16 LE / BE ────────────────────────────────────────────────────
+
+test "write_u16_le — младший байт первым" {
+    let mut wb = WriteBuffer.new()
+    wb.write_u16_le(0x1234)
+    let a = wb.into()
+    assert(a[0] == 0x34)
+    assert(a[1] == 0x12)
+}
+
+test "write_u16_be — старший байт первым" {
+    let mut wb = WriteBuffer.new()
+    wb.write_u16_be(0x1234)
+    let a = wb.into()
+    assert(a[0] == 0x12)
+    assert(a[1] == 0x34)
+}
+
+
+// ── i16 LE / BE ────────────────────────────────────────────────────
+
+test "write_i16_le — отрицательное" {
+    let mut wb = WriteBuffer.new()
+    wb.write_i16_le(-1)           // 0xFFFF
+    let a = wb.into()
+    assert(a[0] == 0xFF)
+    assert(a[1] == 0xFF)
+}
+
+test "write_i16_be — отрицательное" {
+    let mut wb = WriteBuffer.new()
+    wb.write_i16_be(-2)           // 0xFFFE
+    let a = wb.into()
+    assert(a[0] == 0xFF)
+    assert(a[1] == 0xFE)
+}
+
+
+// ── u32 LE / BE ────────────────────────────────────────────────────
+
+test "write_u32_le 0xDEADBEEF" {
+    let mut wb = WriteBuffer.new()
+    wb.write_u32_le(0xDEADBEEF)
+    let a = wb.into()
+    assert(a[0] == 0xEF)
+    assert(a[1] == 0xBE)
+    assert(a[2] == 0xAD)
+    assert(a[3] == 0xDE)
+}
+
+test "write_u32_be 0xDEADBEEF" {
+    let mut wb = WriteBuffer.new()
+    wb.write_u32_be(0xDEADBEEF)
+    let a = wb.into()
+    assert(a[0] == 0xDE)
+    assert(a[1] == 0xAD)
+    assert(a[2] == 0xBE)
+    assert(a[3] == 0xEF)
+}
+
+
+// ── i32 LE / BE ────────────────────────────────────────────────────
+
+test "write_i32_le -1 — все байты 0xFF" {
+    let mut wb = WriteBuffer.new()
+    wb.write_i32_le(-1)
+    let a = wb.into()
+    assert(a[0] == 0xFF)
+    assert(a[1] == 0xFF)
+    assert(a[2] == 0xFF)
+    assert(a[3] == 0xFF)
+}
+
+test "write_i32_be -1 — все байты 0xFF" {
+    let mut wb = WriteBuffer.new()
+    wb.write_i32_be(-1)
+    let a = wb.into()
+    assert(a[0] == 0xFF)
+    assert(a[3] == 0xFF)
+}
+
+
+// ── u64 LE / BE ────────────────────────────────────────────────────
+
+test "write_u64_le — 8 байт, порядок LE" {
+    let mut wb = WriteBuffer.new()
+    wb.write_u64_le(0x0102030405060708)
+    let a = wb.into()
+    assert(a.len() == 8)
+    assert(a[0] == 0x08)
+    assert(a[7] == 0x01)
+}
+
+test "write_u64_be — 8 байт, порядок BE" {
+    let mut wb = WriteBuffer.new()
+    wb.write_u64_be(0x0102030405060708)
+    let a = wb.into()
+    assert(a.len() == 8)
+    assert(a[0] == 0x01)
+    assert(a[7] == 0x08)
+}
+
+
+// ── i64 LE / BE ────────────────────────────────────────────────────
+
+test "write_i64_le — отрицательное" {
+    let mut wb = WriteBuffer.new()
+    wb.write_i64_le(-1)
+    let a = wb.into()
+    assert(a.len() == 8)
+    assert(a[0] == 0xFF)
+    assert(a[7] == 0xFF)
+}
+
+test "write_i64_be — отрицательное" {
+    let mut wb = WriteBuffer.new()
+    wb.write_i64_be(-1)
+    let a = wb.into()
+    assert(a.len() == 8)
+    assert(a[0] == 0xFF)
+    assert(a[7] == 0xFF)
+}
+
+
+// ── смешанная последовательность ───────────────────────────────────
+
+test "несколько integer-записей подряд — суммарная длина" {
+    let mut wb = WriteBuffer.new()
+    wb.write_byte(0x01)           // 1
+    wb.write_u16_be(0x0203)       // 2
+    wb.write_u32_be(0x04050607)   // 4
+    wb.write_u64_be(0x08090A0B0C0D0E0F)  // 8
+    let a = wb.into()
+    assert(a.len() == 15)
+    assert(a[0] == 0x01)
+    assert(a[1] == 0x02)
+    assert(a[3] == 0x04)
+    assert(a[7] == 0x08)
+    assert(a[14] == 0x0F)
+}

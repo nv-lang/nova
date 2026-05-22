@@ -1,0 +1,71 @@
+// Plan 85.1 Ф.2 — StringBuilder @clone() — изоляция копии.
+//
+// @clone() создаёт независимую копию (deep copy buffer). Мутация
+// клона не влияет на оригинал и наоборот.
+
+module str_builder.clone
+
+
+test "clone — мутация клона не влияет на оригинал" {
+    let mut a = StringBuilder.new()
+    a.append("hello")
+    let mut b = a.clone()
+    b.append(" world")
+    assert(a.len() == 5)         // оригинал не изменён
+    assert(b.len() == 11)
+    assert(a.byte_len() == 5)
+    assert(b.byte_len() == 11)
+}
+
+test "clone — мутация оригинала не влияет на клон" {
+    let mut a = StringBuilder.new()
+    a.append("base")
+    let b = a.clone()
+    a.append("-extra")
+    assert(a.len() == 10)
+    assert(b.len() == 4)         // клон не изменён
+}
+
+test "clone — содержимое идентично на момент копирования" {
+    let mut a = StringBuilder.from("snapshot")
+    let b = a.clone()
+    assert(a.into() == "snapshot")
+    assert(b.into() == "snapshot")
+}
+
+test "clone пустого — пустой клон" {
+    let a = StringBuilder.new()
+    let b = a.clone()
+    assert(b.is_empty())
+    assert(b.len() == 0)
+}
+
+test "clone с Unicode — codepoints сохранены" {
+    let mut a = StringBuilder.new()
+    a.append("Привет 😀")
+    let mut b = a.clone()
+    assert(b.len() == a.len())
+    assert(b.byte_len() == a.byte_len())
+    b.append("!")
+    assert(b.len() == a.len() + 1)
+}
+
+test "clone клона — двойная копия независима" {
+    let mut a = StringBuilder.from("a")
+    let mut b = a.clone()
+    b.append("b")
+    let mut c = b.clone()
+    c.append("c")
+    assert(a.into() == "a")
+    assert(b.into() == "ab")
+    assert(c.into() == "abc")
+}
+
+test "clone — оба независимо до consume" {
+    let mut a = StringBuilder.from("x")
+    let mut b = a.clone()
+    a.append("1")
+    b.append("2")
+    assert(a.into() == "x1")
+    assert(b.into() == "x2")
+}

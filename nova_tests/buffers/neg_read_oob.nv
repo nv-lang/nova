@@ -1,0 +1,21 @@
+// EXPECT_RUNTIME_PANIC unhandled Fail: ReadBuffer.UnexpectedEnd
+//
+// Plan 85.2 Ф.3 — негатив: Fail-form чтение за границей буфера.
+//
+// `read_byte()` (Fail[ReadBufferError]) на пустом буфере бросает
+// ReadBufferError. Без user-handler'а throw из `main` доходит до
+// runtime panic-frame → `nova: unhandled Fail: ReadBuffer.UnexpectedEnd:
+// wanted N, available M`. Безопасная (Result-form) сторона OOB — см.
+// read_oob.nv.
+//
+// Используется `fn main` (не `test`-блок): unhandled Fail внутри
+// `test`-блока перехватывается test-harness'ом и помечает тест FAIL,
+// а не процесс-panic — escape до runtime требует main-flow.
+
+module buffers.neg_read_oob
+
+fn main() Io Fail[ReadBufferError] -> () {
+    let bytes []u8 = []
+    let mut rb = ReadBuffer.from(bytes)
+    let _ = rb.read_byte()            // ← throw: буфер пуст
+}
