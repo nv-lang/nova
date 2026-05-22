@@ -537,6 +537,7 @@ impl DesugarCtx {
                             pattern: Pattern::Ident { name: k_name, span },
                             iter: Box::new(keys_call),
                             body: for_body,
+                            elem_type: None,
                             invariants: vec![],
                             decreases: None,
                         },

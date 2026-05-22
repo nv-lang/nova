@@ -17945,3 +17945,107 @@ enforced'ится компилятором. spec D50 §4 amended. Plan 83.3 ✅ 
 (Ф.0-Ф.6).
 
 Suite: 1040 PASS / 0 FAIL / 56 SKIP (+2 негативных теста, 0 регрессий).
+
+### Plan 87 — for-in с явным типом элемента (`for x TYPE in iter`)
+
+`spec/syntax.md` документировал аннотацию типа loop-переменной
+(`for id u64 in ids`, `for x int in nums`), но bootstrap-парсер её не
+принимал — spec/impl drift + дыра в дизайн-консистентности (Nova
+аннотирует тип по правилу «name type» везде — `let x int`, `fn(x int)`,
+`[T Bound]` — кроме for-in). Plan 87 закрыл исключение.
+
+Ф.1 — AST: `ExprKind::For` и `ParallelFor` получили поле
+`elem_type: Option<TypeRef>` (`None` — inferred-форма, поведение до
+плана). Парсер: `parse_for`/`parse_parallel_for` после loop-pattern —
+если следующий токен не `in`, парсят `TypeRef` по правилу «name type».
+`mut` (`for mut x TYPE in`) съедается явно в `parse_for` —
+`parse_pattern` его не обрабатывает; в bootstrap binding-иммутабельность
+нигде не enforce'ится, поэтому `mut` информационен (маркер
+`[M-for-loop-var-mut]`).
+
+Ф.2 — обновлены match-сайты `For`/`ParallelFor` (desugar/lints/callnorm/
+interp/types/verify/emit_c). Codegen аннотацию НЕ потребляет: она —
+checked assertion, проверенная в type-check (Ф.3); для валидной
+программы Ф.3 гарантирует совпадение → codegen использует собственную
+inference-машинерию, поведение 1:1 с inferred-формой.
+
+Ф.3 (ядро) — type-checker (Plan 79 `f1`-проход): при заданной
+аннотации `infer_iter_elem_type` выводит фактический тип элемента
+итератора (range → int; array literal → тип первого элемента; `[]T` →
+T) и сверяет с аннотацией через категорийную assignability (`cat_of`/
+`cat_compatible`). Несовпадение → новый код `E7340`. Не удалось вывести
+тип элемента → проверка пропускается (Compat::Unknown-философия Plan 79
+— без ложных срабатываний). Аннотированная loop-переменная-`Ident`
+получает свой тип в scope тела (save/restore).
+
+Ф.4 — `nova_tests/plan87/` 6 фикстур: explicit_primitive (int/u8/char/
+range), explicit_generic (str / `[][]int` / `Option[int]`), explicit_mut
+(`for mut x int`), explicit_custom_iter (user Iter[int] + `parallel
+for`), neg_type_mismatch (`for x str in [1,2,3]` → E7340),
+neg_bad_syntax (мусор между pattern и `in`). Полный `nova test`:
+1027 PASS / 0 FAIL / 56 SKIP (baseline 1021 + 6 новых).
+
+Обнаружен pre-existing codegen-дефект `[M-iflet-match-boxed-sum-ptr]`:
+`if let`/`match` по боксированному sum-элементу массива
+(`for o in opts { if let Some(v) = o }` для `[]Option[T]`) даёт CC-FAIL
+(`.tag` на указателе). Воспроизводится И с аннотацией, И без неё —
+codegen аннотацию не потребляет → это не регрессия Plan 87, а
+независимый дефект value/pointer-модели; задокументирован, вынесен в
+будущий codegen-план.
+
+Ф.5 — spec/syntax.md (раздел циклов: «аннотация проверяется
+компилятором», пример `for mut id u64 in ids`); simplifications.md
+(`[M-for-in-explicit-elem-type]` → ✅ ЗАКРЫТО, +`[M-for-loop-var-mut]`,
++`[M-iflet-match-boxed-sum-ptr]`); README + plan-doc статусы.
+
+### Plan 88 — generic static-method dispatch на type-параметре
+
+Закрыт spec-долг D72: канонический пример спеки
+`fn func[K, T From[K]](v K) -> T => T.from(v)` не работал. Static-вызов
+`T.from` на type-параметре внутри тела generic-функции не
+мономорфизировался. Планка плана — Rust-паритет (Go/TS структурно не
+умеют assoc-функции type-параметра).
+
+Ф.0 — ОБЯЗАТЕЛЬНЫЙ аудит-GATE. 8 probe-фикстур через `nova build`/
+`nova test` выделили **два дефекта**: D1 — static-call на typevar
+(`T.from`/`T.try_from`/`T.make` → `nova_fn_T_<m>` undefined symbol,
+link-error); D2 — `Result[T,E]` в return-позиции (мангл'ился
+`Nova_Result____<ok>__<err>` вместо объявленного `NovaRes_<ok>_<err>`,
+CC-FAIL). `Option[T]`/`[]T`/`Box[T]` return-позиции — probe'ы показали,
+что они УЖЕ работают → Ф.2.2 неприменима, выносить в Plan 54-lineage
+нечего. Soundness-check (Ф.0.4): все 5 отказов loud (3 link + 2
+CC-FAIL), silent-wrong нет — 3 рабочих случая дают корректный runtime.
+
+Ф.1 — static-call на typevar. Корень: `T.from(s)` парсится как
+`Path(["T","from"])`; Path-обработчик `emit_c.rs` проверял `parts[0]`
+только против реестров concrete-типов → typevar не распознавался →
+fallback `nova_fn_<parts.join("_")>`. Фикс: ввёл `recv_seg` —
+резолв `parts[0] ∈ current_type_subst` → concrete Nova-тип
+(`nova_type_name_from_c`). Дальше — обычный overload-aware
+static-dispatch через `method_overloads` (`Nova_<Type>_static_<m>`).
+Покрывает ВСЕ static-методы (`from`/`try_from`/`new`/user-defined) —
+обобщённый путь, не спец-кейс. Тот же резолв продублирован в
+Member-обработчике (`recv_type_name`) для консистентности.
+
+Ф.2 — `Result[T,E]` в return-позиции. Корень: `apply_type_subst_to_ref`
+(резолв return-типа call-site) имела спец-ветку для `Option`, но не
+для `Result` → `Result` уходил в generic-user-type ветку с
+мангл-схемой `Nova_<base>____<args>`. Фикс: спец-ветка `Result[T,E]`
+→ `NovaRes_<ok>_<err>*` (зеркало `type_ref_to_c[Result]` и
+`apply_type_subst_to_ref[Option]`). Typedef регистрируется при emit'е
+самой mono'd функции.
+
+Ф.3 — `nova_tests/plan88/` 5 фикстур: static_from (`T.from`, неск.
+инстансов), static_methods (`T.new` user-defined + `T.try_from`),
+d72_canonical (`func[K, T From[K]]` двойной typevar), result_return
+(`Result[T,E]`/`Option[T]` return), neg_bound_violation
+(bound-violation остаётся compile-error — Plan 15 D72 не сломан).
+`generic_from_bound.nv` + `generic_try_bound.nv` переписаны с
+probe-формы (T как value-тип, конверсия на call-site) на прямой
+`T.from`/`T.try_from` внутри generic-тела. Полный `nova test`:
+1037 PASS / 0 FAIL / 56 SKIP — 0 регрессий.
+
+Ф.4 — simplifications.md (`[M-generic-static-method-on-typevar]`
+✅ ЗАКРЫТО); D72/D73 правок не требуют (фикс приводит реализацию в
+соответствие с уже-корректной спекой — D72-пример не был помечен
+«недоступно»); README + plan-doc статусы.

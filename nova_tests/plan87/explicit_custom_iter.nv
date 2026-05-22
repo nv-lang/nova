@@ -1,0 +1,38 @@
+// Plan 87 Ф.4.4 — for-in с явным типом элемента: пользовательский
+// Iter[T] и `parallel for`.
+
+module nova_tests.plan87.explicit_custom_iter
+
+
+type CountDown { mut current int }
+
+fn CountDown.new(start int) -> CountDown => { current: start }
+
+fn CountDown mut @next() -> Option[int] {
+    if @current <= 0 {
+        None
+    } else {
+        let v = @current
+        @current = @current - 1
+        Some(v)
+    }
+}
+
+
+test "for x int in user Iter[int]" {
+    let mut total = 0
+    for x int in CountDown.new(4) {
+        total = total + x
+    }
+    assert(total == 10)
+}
+
+test "parallel for x int in array literal" {
+    let results []int = parallel for x int in [1, 2, 3] {
+        x * x
+    }
+    assert(results.len() == 3)
+    assert(results[0] == 1)
+    assert(results[1] == 4)
+    assert(results[2] == 9)
+}

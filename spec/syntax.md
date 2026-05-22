@@ -707,11 +707,21 @@ Occupied { key: k, value }      // key переименовано в k, value с
 for x in list { ... }            // x — immutable binding на каждой итерации
 for mut x in list { ... }         // x можно мутировать в теле
 for x int in nums { ... }         // явный тип элемента
+for mut id u64 in ids { ... }     // mut + явный тип элемента
 for (i, x) in list.enumerate() { ... }   // индекс через метод
 
 while cond { ... }                // условный цикл
 loop { ... }                      // бесконечный, выход через break/return
 ```
+
+**Явный тип элемента — `for x TYPE in iter`** — опционален и следует
+универсальному правилу «name type» (как `let x int`, `fn(x int)`,
+`[T Bound]`). Аннотация **проверяется компилятором**: если `TYPE` не
+совпадает с фактическим типом элемента итератора — compile error. Это
+делает её *checked assertion* (фиксирует ожидание; смена типа источника
+→ loud error), а не молчаливым документирующим сахаром. Go/Rust/TS
+аннотацию loop-переменной не дают вовсе — Nova получает её как строгий
+проверяемый superset.
 
 Переменная в `for x in iter` — **immutable binding** (как `let` без
 `mut`), на каждой итерации получает **новое значение**. В теле блока
