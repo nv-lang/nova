@@ -24,6 +24,9 @@ pub enum GitPin {
     Rev(String),
     Tag(String),
     Branch(String),
+    /// Plan 03.2: semver-диапазон — версия выбирается среди тегов
+    /// репозитория (наибольший подходящий semver-тег).
+    Version(crate::semver::VersionReq),
     /// Пин не указан — резолвится в default-ветку (lockfile фиксирует commit).
     Default,
 }
@@ -113,12 +116,35 @@ fn parse_dep_source(raw_val: &str) -> DepSource {
         if let Some(p) = get("path") {
             DepSource::Path(p)
         } else if let Some(url) = get("git") {
+            // Plan 03.2: пины rev/tag/branch/version взаимоисключающи.
+            let pin_count = ["rev", "tag", "branch", "version"]
+                .iter()
+                .filter(|k| get(k).is_some())
+                .count();
+            if pin_count > 1 {
+                return DepSource::Invalid(format!(
+                    "git-зависимость: пины rev/tag/branch/version \
+                     взаимоисключающи (указано {})",
+                    pin_count,
+                ));
+            }
             let pin = if let Some(r) = get("rev") {
                 GitPin::Rev(r)
             } else if let Some(t) = get("tag") {
                 GitPin::Tag(t)
             } else if let Some(b) = get("branch") {
                 GitPin::Branch(b)
+            } else if let Some(vr) = get("version") {
+                // Plan 03.2: semver-диапазон по тегам репозитория.
+                match crate::semver::VersionReq::parse(&vr) {
+                    Ok(req) => GitPin::Version(req),
+                    Err(e) => {
+                        return DepSource::Invalid(format!(
+                            "git-зависимость: некорректный version `{}`: {}",
+                            vr, e,
+                        ))
+                    }
+                }
             } else {
                 GitPin::Default
             };
@@ -645,5 +671,40 @@ mod parse_tests {
         let m = parse_manifest(&path, &dir).expect("parse");
         assert!(!m.enforce_stability, "flag только в [lib], не в [package]");
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Plan 03.2: `{ git = "...", version = "^1.2" }` → GitPin::Version.
+    #[test]
+    fn dep_git_version_pin() {
+        let src = parse_dep_source("{ git = \"https://x.org/g.nv\", version = \"^1.2\" }");
+        match src {
+            DepSource::Git { pin: GitPin::Version(req), .. } => {
+                assert!(req.matches(&crate::semver::Version::new(1, 5, 0)));
+                assert!(!req.matches(&crate::semver::Version::new(2, 0, 0)));
+            }
+            other => panic!("ожидался GitPin::Version, получено {:?}", other),
+        }
+    }
+
+    /// Plan 03.2: пины git взаимоисключающи — tag + version → Invalid.
+    #[test]
+    fn dep_git_conflicting_pins_invalid() {
+        let src = parse_dep_source(
+            "{ git = \"https://x.org/g.nv\", tag = \"v1\", version = \"^1.2\" }",
+        );
+        match src {
+            DepSource::Invalid(msg) => assert!(
+                msg.contains("взаимоисключ"),
+                "msg: {}", msg,
+            ),
+            other => panic!("ожидался Invalid, получено {:?}", other),
+        }
+    }
+
+    /// Plan 03.2: некорректный version-диапазон → Invalid.
+    #[test]
+    fn dep_git_bad_version_invalid() {
+        let src = parse_dep_source("{ git = \"https://x.org/g.nv\", version = \"^x.y\" }");
+        assert!(matches!(src, DepSource::Invalid(_)), "получено {:?}", src);
     }
 }
