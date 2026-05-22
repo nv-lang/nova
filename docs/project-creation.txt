@@ -18453,3 +18453,80 @@ nova_tests/plan90/.
 Worktree nova-p90, ����� plan-90. ������ nova test: 1064 PASS / 0 FAIL
 (9 RUN-FAIL � ����� ������������� �������, ���������������� PASS ���
 --jobs 1). Plan 90 (�.0-�.5) ������.
+
+### Plan 82 Ф.4 — production тест-матрица (2026-05-22)
+
+Матрица §7 плана покрыта на двух уровнях. Nova-уровень: полный nova test
+(clang) — 1065 PASS / 0 FAIL / 56 SKIP, 0 регрессий (baseline вырос с
+1058 после merge main). C-уровень: standalone-харнессы f0_test_e (SEH),
+f1_arena_test, f1_gc_test — зелёные на MSVC + clang-cl.
+
+Негативный тест overflow: nova_tests/expected_runtime/
+fiber_stack_overflow.nv — безграничная рекурсия в spawn'нутом fiber'е →
+детерминированный STATUS_STACK_OVERFLOW (Windows VEH) / SIGSEGV (POSIX).
+Директива EXPECT_RUNTIME_PANIC. Паритет с Go/Rust guard-page-abort;
+строго лучше прежнего Windows — minicoro calloc-стек переполнялся тихо.
+
+Граница покрытия — честно: полный nova test под MSVC-toolchain не
+запускается (pre-existing баг /Fo-компоновки cl.exe в test_runner.rs,
+D8036 — вне scope Plan 82, затрагивает весь suite). MSVC-покрытие
+fiber-арены — через standalone C-харнессы. Зафиксировано в
+simplifications.md [M-82-msvc-novatest].
+
+Фикс test_runner.rs: -fuse-ld=lld для release-сборок на Windows
+(release добавляет -flto; LLVM LTO требует LLVM-линкера). Чинит
+nova test --mode release и nova bench. Верифицировано: deep_spawn
+--mode release PASS.
+
+Изменено: test_runner.rs. Добавлено: expected_runtime/
+fiber_stack_overflow.nv.
+
+### Plan 82 Ф.5 — context-switch бенчмарк (2026-05-22)
+
+M:N на Windows уже исполняется реально — побочный результат Ф.1-Ф.3:
+arena-интеграция сделала fibers.slot_count() ненулевым (16384), honest-
+sentinel 0 больше не срабатывает, M:N-тесты идут настоящим путём.
+
+Артефакт: 82-artifacts/f5_ctxswitch_bench.c — standalone C-харнесс на
+реальном fiber_arena_win.c. Nova bench-DSL непригоден: связка
+bench{measure} + supervised упирается в codegen-баг Nova_Error_static_
+new() с 0 аргументов (вне scope Plan 82 — simplifications.md
+[M-82-bench-c-harness]). Замеряет round-trip switch (arena + calloc) и
+spawn-lifecycle; серия 7 trials, таймер QPC + __rdtsc-калибровка.
+
+Результаты: один _mco_switch на arena-стеке — 16.4 ns (clang-cl) /
+20.3 ns (MSVC), ~52/~65 тактов. В классе Boost.Context jump_fcontext
+(~10-20 ns). Дельта arena-calloc +0.08..+1.3 ns — переключение
+аллокатор-независимо (switch — только asm-блок _mco_switch + TIB-своп
+4 полей); arena 0 ns к переключению. Spawn-lifecycle: arena ~17 us,
+calloc ~1 us — известный трейд (tight create-destroy churn'ит один
+слот, послотный decommit+commit ~4 syscall'а); switch — горячий путь —
+не затронут. build.ps1: f5 собирается обеими toolchain.
+
+### Plan 82 Ф.6 — spec D97 + закрытие 44.3 (2026-05-22) — PLAN 82 ЗАКРЫТ
+
+spec D97 (spec/decisions/06-concurrency.md) ред. 2: Windows-секция
+переписана — VirtualAlloc lazy-commit arena вместо calloc; диагноз 44.3
+«Windows fundamentally blocked» опровергнут (minicoro asm свопает TIB
+всё время — git-археология §1.2); GC-модель registry+push зафиксирована;
+introspection «0 на Windows» снято; bootstrap-status + «что отвергнуто»
+дополнены (плоский GC_add_roots на Windows, MCO_USE_FIBERS).
+
+Plan 44.3 → шапка SUPERSEDED BY Plan 82; битая ссылка
+82-windows-fiber-tib-unblock.md → 82-windows-fiber-arena.md починена.
+docs/plans/README.md: Plan 82 ✅ ЗАКРЫТ, 44.3 superseded, строка Plan 44.
+
+Acceptance Plan 82 (§8) выполнен: Windows исполняет M:N без hang;
+overflow → детерминированная ошибка; GC-модель строго корректна (0
+GC_add_roots на fiber-арену, сканер не читает reserved-память);
+lazy-commit измеримо работает; потолок стека 8 MB (>> 56 KB);
+context-switch 16-20 ns (не медленнее ориентиров); §1.5-долг закрыт
+(первая корректная GC-интеграция fiber-стеков на Windows); 0 регрессий.
+
+ИТОГ Plan 82 (Ф.0-Ф.6): Windows fiber-стеки переведены с minicoro-
+default calloc на lazy-commit large-reserve arena (fiber_arena_win.c) с
+полной GC-интеграцией (push_other_roots-колбэк), детерминированной
+overflow-детекцией (guard-page → STATUS_STACK_OVERFLOW) и M:N-safe
+ареной (cross-thread migration, multi-worker GC, atomic bitmap). Plan
+44.3 (4 провала 2026-05-13/14, опровергнутый диагноз) — superseded.
+Worktree nova-p79, ветка plan-81-hardening.

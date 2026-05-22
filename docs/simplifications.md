@@ -10970,3 +10970,68 @@ Single-thread cooperative (текущий Windows-режим): GC-модель *
   кейс 5): доказуемо-внутри-границ доступ → эмит без проверки. Отдельная
   оптимизация, не блокер; `unsafe`-keyword не вводится.
 - **Приоритет** — L.
+
+---
+
+## [M-82-msvc-novatest] Plan 82 — полный `nova test` под MSVC не запускается (2026-05-22)
+
+### Что ограничено
+
+Plan 82 §7 предписывал тест-матрицу «на обеих toolchain (clang-cl +
+MSVC)». Полный `nova test` под **clang** — ✅ 1065 PASS / 0 FAIL / 56
+SKIP. Под **MSVC-toolchain** `nova test` НЕ запускается: `test_runner.rs`
+неверно компонует аргумент `/Fo` для `cl.exe` → D8036 на ~753 тестах.
+
+### Почему это НЕ упрощение Plan 82
+
+Баг **pre-existing**, в `test_runner.rs`, существовал до Plan 82 и
+затрагивает ВЕСЬ suite (не fiber-арену). Его починка — отдельная
+test-harness задача, вне scope «Windows fiber arena».
+
+### Чем MSVC-покрытие обеспечено фактически
+
+fiber-арена покрыта под MSVC standalone C-харнессами — компилируются и
+проходят `cl.exe` штатно: `f0_test_e` (SEH через границу fiber-стека),
+`f1_arena_test` (alloc/grow/`__chkstk`/reuse/overflow/lazy-commit),
+`f1_gc_test` (GC-стресс), `f5_ctxswitch_bench` (context-switch). Пункты
+матрицы §7 — SEH, `/GS`, `/guard:cf`, overflow, GC, lazy-commit — все
+проверены на MSVC через харнессы.
+
+### Как чинить
+
+Отдельная задача — починка `/Fo`-компоновки `cl.exe` в `test_runner.rs`;
+тогда полный `nova test` пойдёт и под MSVC.
+
+### Приоритет — M (test-infra, не блокер Plan 82).
+
+---
+
+## [M-82-bench-c-harness] Plan 82 Ф.5 — context-switch бенч на C, не Nova bench-DSL (2026-05-22)
+
+### Что
+
+Plan 82 §6 Ф.5 предписывал бенчмарк в `bench/micro/` (Nova bench-DSL).
+Фактически замер — standalone C-харнесс `82-artifacts/
+f5_ctxswitch_bench.c`.
+
+### Почему
+
+Nova bench-DSL для этого замера непригоден: связка `bench { measure }`
++ `supervised` (нужен для spawn fiber'ов) упирается в codegen-баг —
+`Nova_Error_static_new()` вызывается с 0 аргументов вместо 1. Баг — в
+codegen, **вне scope** Plan 82.
+
+### Деливерабл выполнен
+
+Ф.5 требовала «измерить cost `mco_resume`/`mco_yield`». C-харнесс это
+делает напрямую и точнее (QPC + `__rdtsc`-калибровка, серия 7 trials),
+на РЕАЛЬНОМ `fiber_arena_win.c` — в духе f0/f1 харнессов. Результат —
+16–20 ns/switch, паритет с Boost.Context. Форма артефакта отличается от
+§6-формулировки; измерение и вывод — полны.
+
+### Как чинить
+
+После починки codegen-бага `Nova_Error_static_new()` 0-arg бенч можно
+переписать в Nova bench-DSL (опционально — замер уже есть).
+
+### Приоритет — L (деливерабл достигнут; форма артефакта).
