@@ -265,6 +265,10 @@ pub struct CEmitter {
     handler_counter: usize,
     /// Monotonic counter for spawn expressions — stable IDs for pre-scan matching
     spawn_counter: usize,
+    /// Plan 83.3 Ф.4.2: monotonic counter for `blocking { }` extracted bodies.
+    /// Emit-side only (no pre-scan) — forward-decl emitted into
+    /// `lambda_forward_decls` directly from `emit_blocking`.
+    blocking_counter: usize,
     /// Monotonic counter for supervised scopes — used to name local NovaFiberQueue variables.
     supervised_counter: usize,
     /// When inside a `supervised { }` scope, holds the C name of the local NovaFiberQueue.
@@ -798,6 +802,7 @@ impl CEmitter {
             tmp_counter: 0,
             handler_counter: 0,
             spawn_counter: 0,
+            blocking_counter: 0,
             supervised_counter: 0,
             current_scope_queue: None,
             current_spawn_captures: None,
@@ -5161,30 +5166,177 @@ impl CEmitter {
         Ok("NOVA_UNIT".to_string())
     }
 
-    /// Emit `blocking { body }` — Plan 83.3 (D50) leaf-blocking primitive.
+    /// Emit `blocking { body }` — Plan 83.3 Ф.4.2 (D50): real threadpool
+    /// offload. Block-extraction по образцу `emit_spawn`, но проще — тело
+    /// не fiber и не scheduled, а обычная leaf-функция для libuv
+    /// threadpool:
+    ///  1. capture-анализ свободных переменных тела → ctx-struct;
+    ///  2. сгенерированная `void _nova_blk_N(void*)` распаковывает ctx,
+    ///     выполняет тело, пишет результат в `_c->_nova_result`;
+    ///  3. на месте `blocking { }`: stack-local ctx + context-sensitive
+    ///     ветка — в fiber'е `nova_blocking_offload` (worker свободен на
+    ///     время блокирующей работы), на main-потоке тело inline (нет
+    ///     worker'а пинить);
+    ///  4. значение `blocking { }` = `ctx._nova_result` (тип тела).
     ///
-    /// **Ф.4.1 bootstrap:** body executes inline in the caller's stack —
-    /// semantically correct, but the M:N-worker is NOT freed while the
-    /// blocking work runs. This is an explicit, plan-tracked intermediate
-    /// state: Ф.4.2 replaces this with a real offload to the libuv
-    /// threadpool via `nova_blocking_offload` (block-extraction by the
-    /// `emit_spawn` template). Mirrors `emit_detach`'s inline shape.
+    /// ctx — stack-local текущего C-кадра: `nova_blocking_offload`
+    /// синхронен с точки зрения fiber'а (паркует его до завершения
+    /// work_cb), стек-кадр fiber'а (mco-coroutine) переживает park —
+    /// `&ctx`, переданный на threadpool-поток, остаётся валиден.
+    ///
+    /// V1-контракт (D50, [M-83.3-blocking-leaf-contract]): тело — leaf
+    /// (FFI/syscall без GC-аллокации и без control-flow-escape наружу).
     fn emit_blocking(&mut self, body: &Block) -> Result<String, String> {
-        // Wrap in a C block so any locals introduced by the body don't leak.
-        self.line("{");
+        let blk_id = format!("_nova_blk_{}", self.blocking_counter);
+        self.blocking_counter += 1;
+
+        // Тип результата = тип trailing expr тела (как у block-expr).
+        let result_ty = body.trailing.as_ref()
+            .map(|e| self.infer_expr_c_type(e))
+            .unwrap_or_else(|| "nova_unit".into());
+        let has_result = result_ty != "nova_unit";
+
+        // ─── capture-анализ (по образцу emit_spawn) ───
+        let mut refs: Vec<String> = Vec::new();
+        Self::collect_idents_block(body, &mut refs);
+        refs.sort();
+        refs.dedup();
+        let mut bound: HashSet<String> = HashSet::new();
+        Self::collect_bound_names_block(body, &mut bound);
+
+        // Захват: immutable scalar → by-value (snapshot), иначе by-pointer
+        // (shared mutation видна после wake). Тот же критерий, что у spawn.
+        let mut captures: Vec<(String, String, bool)> = Vec::new();
+        for name in refs {
+            if bound.contains(&name) { continue; }
+            if let Some(ty) = self.var_types.get(&name).cloned() {
+                let is_scalar = matches!(ty.as_str(),
+                    "nova_int" | "nova_bool" | "nova_f64" | "nova_f32" | "nova_byte");
+                let is_mut = self.var_mutable.contains(&name);
+                let by_value = is_scalar && !is_mut;
+                captures.push((name, ty, by_value));
+            }
+        }
+
+        let ctx_ty = format!("NovaBlkCtx_{}", &blk_id[1..]); // strip leading _
+        let ctx_var = format!("{}_ctx", blk_id);
+
+        // ─── ctx-struct typedef + work-fn forward-decl → lambda_forward_decls ───
+        // (file scope, flushed before fn definitions — виден и на месте
+        //  blocking{}, и в deferred_impls'е с телом _nova_blk_N).
+        let _ = writeln!(self.lambda_forward_decls, "typedef struct {{");
+        for (cap, ty, by_value) in &captures {
+            if *by_value {
+                let _ = writeln!(self.lambda_forward_decls, "    {} {};", ty, cap);
+            } else {
+                let _ = writeln!(self.lambda_forward_decls, "    {}* {};", ty, cap);
+            }
+        }
+        if has_result {
+            let _ = writeln!(self.lambda_forward_decls, "    {} _nova_result;", result_ty);
+        }
+        let _ = writeln!(self.lambda_forward_decls, "}} {};", ctx_ty);
+        let _ = writeln!(self.lambda_forward_decls,
+            "static void {}(void* _blk_arg);", blk_id);
+
+        // ─── ctx-инстанс на стеке текущего кадра + заполнение захватов ───
+        self.line(&format!("{} {};", ctx_ty, ctx_var));
+        for (cap, _, by_value) in &captures {
+            // Если cap сам — захват enclosing-fiber'а (spawn/blocking),
+            // поле outer-ctx это T (by-value) либо T* (by-pointer).
+            let is_outer_cap = self.current_spawn_captures.as_ref()
+                .map(|s| s.contains(cap)).unwrap_or(false);
+            let outer_by_value = self.current_spawn_capture_by_value.as_ref()
+                .map(|s| s.contains(cap)).unwrap_or(false);
+            let access_outer = if is_outer_cap {
+                if outer_by_value { format!("_c->{}", cap) }
+                else { format!("(*_c->{})", cap) }
+            } else {
+                cap.clone()
+            };
+            let address_outer = if is_outer_cap {
+                if outer_by_value { format!("&_c->{}", cap) }
+                else { format!("_c->{}", cap) }
+            } else {
+                format!("&{}", cap)
+            };
+            if *by_value {
+                self.line(&format!("{}.{} = {};", ctx_var, cap, access_outer));
+            } else {
+                self.line(&format!("{}.{} = {};", ctx_var, cap, address_outer));
+            }
+        }
+
+        // ─── context-sensitive вызов ───
+        // В fiber'е (mco_running) — offload на libuv threadpool: fiber
+        // паркуется, worker свободен. На main-потоке нет worker'а пинить
+        // → тело выполняется inline тем же _nova_blk_N.
+        self.line("if (mco_running()) {");
         self.indent += 1;
-        let block_id = self.enter_defer_scope(body, false);
+        self.line(&format!(
+            "nova_blocking_offload(_nova_active_scope, _nova_active_slot, {}, &{});",
+            blk_id, ctx_var));
+        self.indent -= 1;
+        self.line("} else {");
+        self.indent += 1;
+        self.line(&format!("{}(&{});", blk_id, ctx_var));
+        self.indent -= 1;
+        self.line("}");
+
+        // ─── эмиссия тела work-функции в deferred_impls ───
+        let saved_out    = std::mem::take(&mut self.out);
+        let saved_indent = self.indent;
+        self.indent = 0;
+
+        self.line(&format!("static void {}(void* _blk_arg) {{", blk_id));
+        self.indent += 1;
+        self.line(&format!("{}* _c = ({}*)_blk_arg;", ctx_ty, ctx_ty));
+        // _c может быть unused (нет захватов и нет результата) — глушим.
+        self.line("(void)_c;");
+
+        // Активировать capture-rewriting: ExprKind::Ident → `_c->name`
+        // (by-value) либо `(*_c->name)` (by-pointer). Переиспользуем тот
+        // же механизм, что у spawn-тел.
+        let mut cap_set: HashSet<String> = HashSet::new();
+        let mut cap_by_value: HashSet<String> = HashSet::new();
+        for (cap, _, by_value) in &captures {
+            cap_set.insert(cap.clone());
+            if *by_value { cap_by_value.insert(cap.clone()); }
+        }
+        let prev_caps = std::mem::replace(&mut self.current_spawn_captures, Some(cap_set));
+        let prev_by_value = std::mem::replace(
+            &mut self.current_spawn_capture_by_value, Some(cap_by_value));
+
+        let blk_block_id = self.enter_defer_scope(body, false);
         for stmt in &body.stmts {
             self.emit_stmt(stmt)?;
         }
         if let Some(trailing) = &body.trailing {
             let v = self.emit_expr(trailing)?;
-            self.line(&format!("(void)({});", v));
+            if has_result {
+                let rty = result_ty.clone();
+                Self::emit_assign_typed(self, "_c->_nova_result", &rty, &v);
+            } else {
+                self.line(&format!("(void)({});", v));
+            }
         }
-        self.leave_defer_scope(block_id);
+        self.leave_defer_scope(blk_block_id);
+
+        self.current_spawn_captures = prev_caps;
+        self.current_spawn_capture_by_value = prev_by_value;
         self.indent -= 1;
         self.line("}");
-        Ok("NOVA_UNIT".to_string())
+        self.line("");
+
+        let blk_code = std::mem::replace(&mut self.out, saved_out);
+        self.deferred_impls.push_str(&blk_code);
+        self.indent = saved_indent;
+
+        if has_result {
+            Ok(format!("{}._nova_result", ctx_var))
+        } else {
+            Ok("NOVA_UNIT".to_string())
+        }
     }
 
     /// Pre-scan the module for HandlerLit and Spawn nodes; emit file-scope forward decls.
@@ -22531,7 +22683,14 @@ impl CEmitter {
             ExprKind::WhileLet { .. } => "nova_unit".into(),
             ExprKind::Loop { .. } => "nova_unit".into(),
             ExprKind::Supervised { .. } => "nova_unit".into(),
-            ExprKind::Detach(_) | ExprKind::Blocking(_) => "nova_unit".into(),
+            ExprKind::Detach(_) => "nova_unit".into(),
+            // Plan 83.3 Ф.4.2: `blocking { }` отдаёт значение trailing
+            // expr тела (как block-expr); без trailing — unit.
+            ExprKind::Blocking(b) => {
+                b.trailing.as_ref()
+                    .map(|e| self.infer_expr_c_type(e))
+                    .unwrap_or_else(|| "nova_unit".into())
+            }
             ExprKind::TaggedTemplate { .. } => "nova_str".into(),
             // Plan 39 Issue A: With-блок тип = T_body. Если trailing == None
             // (body заканчивается throw/return/interrupt statement'ом), смотрим
