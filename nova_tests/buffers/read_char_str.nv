@@ -1,0 +1,134 @@
+// Plan 85.2 Ф.3 — ReadBuffer чтение char и str.
+//
+// read_char / try_read_char / read_str(n) / try_read_str(n).
+// n у read_str — количество codepoint'ов. Невалидный UTF-8 → Err.
+
+module buffers.read_char_str
+
+
+// ── read_char (Fail-form) ──────────────────────────────────────────
+
+test "read_char ASCII" {
+    let mut wb = WriteBuffer.new()
+    wb.write_char('A')
+    let mut rb = ReadBuffer.from(wb.into())
+    assert(rb.read_char() == 'A')
+}
+
+test "read_char Cyrillic — 2-байтовый codepoint" {
+    let mut wb = WriteBuffer.new()
+    wb.write_char('Я')
+    let mut rb = ReadBuffer.from(wb.into())
+    assert(rb.read_char() == 'Я')
+}
+
+test "read_char CJK — 3-байтовый codepoint" {
+    let mut wb = WriteBuffer.new()
+    wb.write_char('中')
+    let mut rb = ReadBuffer.from(wb.into())
+    assert(rb.read_char() == '中')
+}
+
+test "read_char emoji — 4-байтовый codepoint" {
+    let mut wb = WriteBuffer.new()
+    wb.write_char('😀')
+    let mut rb = ReadBuffer.from(wb.into())
+    assert(rb.read_char() == '😀')
+}
+
+test "read_char — несколько подряд, разная ширина" {
+    let mut wb = WriteBuffer.new()
+    wb.write_char('A')
+    wb.write_char('Я')
+    wb.write_char('中')
+    let mut rb = ReadBuffer.from(wb.into())
+    assert(rb.read_char() == 'A')
+    assert(rb.read_char() == 'Я')
+    assert(rb.read_char() == '中')
+    assert(rb.remaining() == 0)
+}
+
+
+// ── try_read_char (Result-form) ────────────────────────────────────
+
+test "try_read_char Ok" {
+    let mut wb = WriteBuffer.new()
+    wb.write_char('Z')
+    let mut rb = ReadBuffer.from(wb.into())
+    let r = rb.try_read_char()
+    assert(r.is_ok())
+}
+
+test "try_read_char Err — пустой буфер" {
+    let bytes []u8 = []
+    let mut rb = ReadBuffer.from(bytes)
+    assert(rb.try_read_char().is_err())
+}
+
+test "try_read_char Err — невалидный UTF-8 lead-байт" {
+    let bytes []u8 = [0xFF]
+    let mut rb = ReadBuffer.from(bytes)
+    assert(rb.try_read_char().is_err())
+}
+
+test "try_read_char Err — оборванный многобайтный codepoint" {
+    let bytes []u8 = [0xD0]          // lead 2-байтового, без continuation
+    let mut rb = ReadBuffer.from(bytes)
+    assert(rb.try_read_char().is_err())
+}
+
+
+// ── read_str (Fail-form) ───────────────────────────────────────────
+
+test "read_str ASCII — n codepoint'ов" {
+    let mut wb = WriteBuffer.new()
+    wb.write_str("Hello")
+    let mut rb = ReadBuffer.from(wb.into())
+    assert(rb.read_str(5) == "Hello")
+}
+
+test "read_str Unicode — n codepoint'ов (не байт)" {
+    let mut wb = WriteBuffer.new()
+    wb.write_str("Привет")
+    let mut rb = ReadBuffer.from(wb.into())
+    assert(rb.read_str(6) == "Привет")
+}
+
+test "read_str — пустая строка n=0" {
+    let mut wb = WriteBuffer.new()
+    wb.write_str("data")
+    let mut rb = ReadBuffer.from(wb.into())
+    assert(rb.read_str(0) == "")
+}
+
+test "read_str — частичное чтение" {
+    let mut wb = WriteBuffer.new()
+    wb.write_str("abcdef")
+    let mut rb = ReadBuffer.from(wb.into())
+    assert(rb.read_str(3) == "abc")
+    assert(rb.read_str(3) == "def")
+}
+
+
+// ── try_read_str (Result-form) ─────────────────────────────────────
+
+test "try_read_str Ok" {
+    let mut wb = WriteBuffer.new()
+    wb.write_str("ok")
+    let mut rb = ReadBuffer.from(wb.into())
+    let r = rb.try_read_str(2)
+    assert(r.is_ok())
+}
+
+test "try_read_str Err — запрошено больше чем есть" {
+    let mut wb = WriteBuffer.new()
+    wb.write_str("ab")
+    let mut rb = ReadBuffer.from(wb.into())
+    assert(rb.try_read_str(10).is_err())
+}
+
+test "try_read_str Err — невалидный UTF-8" {
+    let bytes []u8 = [0xFF, 0xFE]
+    let mut rb = ReadBuffer.from(bytes)
+    assert(rb.try_read_str(1).is_err())
+}
