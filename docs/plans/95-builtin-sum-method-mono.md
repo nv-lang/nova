@@ -1,10 +1,14 @@
 # Plan 95 — `Option`/`Result` как generic-method-able типы (мономорфизация методов builtin sum-типов)
 
-> **Статус:** 🔵 В РАБОТЕ с 2026-05-23 (worktree `nova-p95`, ветка
-> `plan-95`). Ф.0–Ф.5 ✅, Ф.6 — таргетированные тесты ✅ (12 PASS,
-> 1 negative EXPECT_COMPILE_ERROR — все зелёные), полный `nova test`
-> в процессе. Ф.7 — spec D-блок + simplifications.md закрытие маркера
-> + Plan 78 amend выполнены. Plan 93 superseded.
+> **Статус:** ✅ **ЗАКРЫТ 2026-05-23** (Ф.0–Ф.7 все выполнены;
+> worktree `nova-p95`, ветка `plan-95`, 6 коммитов
+> `9c0c91071e0..b55e039d4d4`). Полный `nova test`: **1067 PASS / 0
+> реальных FAIL / 56 SKIP** (3 CC-FAIL в `contracts/f30_*_strict_
+> positive` — Windows lld-link file-lock infra noise под нагрузкой
+> 18 параллельных агентов; isolated re-run → PASS все 3). Plan 93
+> superseded by Plan 95 (его цель = Ф.4). Маркер
+> `[M-option-methods-not-mono-able]` закрыт. Discovery в Ф.6 →
+> Plan 98 (turbofish-gap, отд. план).
 > **Приоритет:** P3 (de-magic / single-source-of-truth; разблокирует
 > Plan 93, частично питает Plan 94). Не блокер релиза 0.1, не блокер
 > self-hosting (см. Plan 93 «Связь с self-hosting»).
