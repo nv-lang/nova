@@ -1239,6 +1239,9 @@ pub enum ExprKind {
         pattern: Pattern,
         iter: Box<Expr>,
         body: Block,
+        /// Plan 87: явная аннотация типа элемента — `for x TYPE in iter`.
+        /// `None` — тип элемента выводится (поведение до Plan 87).
+        elem_type: Option<TypeRef>,
         /// Plan 33.4 D.0.3: loop invariants (SMT + runtime).
         invariants: Vec<Expr>,
         /// Plan 33.4 D.0.3: well-founded termination measure.
@@ -1250,6 +1253,8 @@ pub enum ExprKind {
         pattern: Pattern,
         iter: Box<Expr>,
         body: Block,
+        /// Plan 87: явная аннотация типа элемента — `parallel for x TYPE in iter`.
+        elem_type: Option<TypeRef>,
     },
     While {
         cond: Box<Expr>,

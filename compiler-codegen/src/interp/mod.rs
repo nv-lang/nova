@@ -918,7 +918,7 @@ impl Interpreter {
                 let v = self.eval_expr_value(value, env)?;
                 Ok(Flow::Throw(v))
             }
-            ExprKind::ParallelFor { pattern, iter, body } => {
+            ExprKind::ParallelFor { pattern, iter, body, .. } => {
                 // В bootstrap'е parallel for ≡ обычный for (sequential).
                 // Codegen раскрывает в supervised + spawn для реального параллелизма.
                 let iter_v = self.eval_expr_value(iter, env)?;
