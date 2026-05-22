@@ -1,0 +1,126 @@
+// Plan 85.1 Ф.1 — StringBuilder append + plus операторы.
+//
+// Покрывает: @append(str), @append(char) ASCII/Unicode/emoji,
+// @plus(str)/@plus(char), chaining, пустой append.
+
+module str_builder.append_ops
+
+
+// ── @append(str) ───────────────────────────────────────────────────
+
+test "append(str) — несколько частей" {
+    let mut sb = StringBuilder.new()
+    sb.append("hello")
+    sb.append(" ")
+    sb.append("world")
+    assert(sb.len() == 11)
+    assert(sb.into() == "hello world")
+}
+
+test "append(str) — пустой append не меняет буфер" {
+    let mut sb = StringBuilder.new()
+    sb.append("abc")
+    sb.append("")
+    assert(sb.len() == 3)
+    assert(sb.byte_len() == 3)
+    assert(sb.into() == "abc")
+}
+
+test "append(str) — пустой в пустой остаётся пустым" {
+    let mut sb = StringBuilder.new()
+    sb.append("")
+    assert(sb.is_empty())
+}
+
+
+// ── @append(char) ──────────────────────────────────────────────────
+
+test "append(char) — ASCII" {
+    let mut sb = StringBuilder.new()
+    sb.append('A')
+    sb.append('B')
+    sb.append('C')
+    assert(sb.len() == 3)
+    assert(sb.byte_len() == 3)
+    assert(sb.into() == "ABC")
+}
+
+test "append(char) — Cyrillic 2 байта" {
+    let mut sb = StringBuilder.new()
+    sb.append('П')
+    sb.append('р')
+    assert(sb.len() == 2)
+    assert(sb.byte_len() == 4)
+}
+
+test "append(char) — emoji 4 байта" {
+    let mut sb = StringBuilder.new()
+    sb.append('😀')
+    assert(sb.len() == 1)
+    assert(sb.byte_len() == 4)
+}
+
+test "append(char) — смешанные ширины codepoint'ов" {
+    let mut sb = StringBuilder.new()
+    sb.append('A')      // 1 байт
+    sb.append('Я')      // 2 байта
+    sb.append('中')     // 3 байта
+    sb.append('😀')     // 4 байта
+    assert(sb.len() == 4)
+    assert(sb.byte_len() == 10)
+}
+
+
+// ── append(str) + append(char) вперемешку ─────────────────────────
+
+test "append str и char вперемешку" {
+    let mut sb = StringBuilder.new()
+    sb.append("hi")
+    sb.append(' ')
+    sb.append("there")
+    sb.append('!')
+    assert(sb.len() == 9)
+    assert(sb.into() == "hi there!")
+}
+
+
+// ── chaining (@append возвращает receiver) ────────────────────────
+
+test "chaining append().append().append()" {
+    let mut sb = StringBuilder.new()
+    sb.append("a").append("b").append("c")
+    assert(sb.len() == 3)
+    assert(sb.into() == "abc")
+}
+
+test "chaining str + char вперемешку" {
+    let mut sb = StringBuilder.new()
+    sb.append("x").append('y').append("z")
+    assert(sb.into() == "xyz")
+}
+
+
+// ── @plus оператор `+` ─────────────────────────────────────────────
+
+test "sb + str через @plus" {
+    let mut sb = StringBuilder.new()
+    sb + "foo"
+    sb + "bar"
+    assert(sb.byte_len() == 6)
+    assert(sb.into() == "foobar")
+}
+
+test "sb + char через @plus" {
+    let mut sb = StringBuilder.new()
+    sb + 'A'
+    sb + 'B'
+    assert(sb.len() == 2)
+    assert(sb.into() == "AB")
+}
+
+test "sb + char — UTF-8 multi-byte" {
+    let mut sb = StringBuilder.new()
+    sb = sb + 'Я' + '中'
+    assert(sb.len() == 2)
+    assert(sb.byte_len() == 5)
+}

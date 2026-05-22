@@ -1,0 +1,15 @@
+// EXPECT_COMPILE_ERROR D131
+//
+// Plan 85.1 Ф.3 — негатив: append после consume @into().
+//
+// `@into()` помечен `consume` (D131) — после финализации StringBuilder
+// недоступен. Повторное использование ловится КОМПИЛЯТОРОМ.
+
+module str_builder.neg_use_after_consume
+
+test "append после into — use-after-consume" {
+    let mut sb = StringBuilder.new()
+    sb.append("hello")
+    let _ = sb.into()                 // consume
+    sb.append(" world")               // ← ОШИБКА D131
+}
