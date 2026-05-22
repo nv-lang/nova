@@ -963,32 +963,63 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
             c.env_clear().envs(env.iter().cloned());
             match opts.mode {
                 Mode::Dev => {
-                    c.args(["/nologo", "/W0", "/Od", "/Zi"]);
+                    // /Z7 (а НЕ /Zi): CodeView в .obj без PDB. /Zi
+                    // создаёт vc<N>.pdb в cwd (cl-проектная PDB); при
+                    // параллельном `nova test` (16 jobs) все cl.exe'ы
+                    // лезут в одну PDB → C1041 «cannot open program
+                    // database». /Z7 даёт ту же отладочную информацию
+                    // без shared-PDB contention (стандартное решение
+                    // для параллельных билдов: Ninja/MSBuild делают
+                    // также для unity-сборок).
+                    c.args(["/nologo", "/W0", "/Od", "/Z7"]);
                     // Plan 33.1 Ф.4: runtime contract checks в debug сборке.
                     c.arg("/DNOVA_CONTRACTS_RUNTIME=1");
                 }
                 Mode::Release => { c.args(["/nologo", "/W0", "/O2", "/DNDEBUG"]); }
             }
+            // /std: НЕ задаём. MSVC default («Microsoft C») — permissive
+            // C99+/C11+ с расширениями: codegen эмитит struct-cast
+            // `(nova_str)(x)` (GCC/Clang extension), валидный в permissive
+            // mode, но в strict /std:c11 → C2440 «cannot convert struct».
+            // compat-header диспатчит по `sizeof`, не по `_Generic` —
+            // работает без /std:c11.
+            // Plan 82 followup: GCC/Clang builtin compat для cl.exe.
+            // Runtime использует __atomic_* / __builtin_*-builtin'ы (sync.h
+            // Tier-1 — clang); MSVC их не имеет → C2065. /FI force-инклюдит
+            // compat-header в КАЖДЫЙ TU (генерированный тест-код + nova_rt
+            // .c) до любых других include'ов; macros/inline-функции
+            // отображают GCC builtin'ы на _Interlocked* / _BitScan* / rdtsc.
+            // Под clang-cl (`__clang__` defined) compat-header — no-op.
+            c.arg("/FI").arg(opts.rt_dir.join("nova_msvc_compat.h"));
             // Plan 81 Ф.7.1: /Gy — function-level linking (каждая функция
             // в свой COMDAT); link.exe /OPT:REF (default в release) удаляет
             // неиспользуемые. MSVC-эквивалент -ffunction-sections.
             c.arg("/Gy");
             // Plan 44.5: NOVA_GC_BOEHM + GC_THREADS — Boehm compiled with -DGC_THREADS;
             // client must define it too for GC_register_my_thread API (M:N workers).
+            // ВАЖНО: кавычки в аргументы НЕ добавляем вручную. `Command`
+            // сам экранирует каждый аргумент для CreateProcess по правилам
+            // MSVC CRT (см. clang-ветку — там пути передаются «сырыми»).
+            // Ручная кавычка `/Fo"path\\"` попадёт в argv буквально → cl.exe
+            // видит кавычку как часть имени → D8036 «invalid /Fo». Путь с
+            // пробелом обрабатывается экранированием Command автоматически.
             if opts.gc_kind == GcKind::Boehm {
                 c.arg("/DNOVA_GC_BOEHM");
                 c.arg("/DGC_THREADS");
-                c.arg(format!("/I\"{}\"", vcpkg_include.display()));
+                c.arg(format!("/I{}", vcpkg_include.display()));
             }
-            c.arg(format!("/I\"{}\"", opts.cg_include.display()));
-            c.arg(format!("/Fo\"{}\\\\\"", opts.obj_dir.display()));
-            c.arg(format!("/Fe\"{}\"", opts.exe_file.display()));
+            c.arg(format!("/I{}", opts.cg_include.display()));
+            // /Fo с завершающим '\' → cl.exe трактует как директорию
+            // (каждый .obj по имени исходника); без '\' — как имя файла,
+            // что с несколькими source-файлами даёт D8036.
+            c.arg(format!("/Fo{}\\", opts.obj_dir.display()));
+            c.arg(format!("/Fe{}", opts.exe_file.display()));
             // Plan 22: libuv for MSVC.
             if let (Some(inc_path), Some(lib_path), Some(evloop)) =
                 (&libuv_include, &libuv_lib, &libuv_eventloop)
             {
                 c.arg("/DNOVA_USE_LIBUV=1");
-                c.arg(format!("/I\"{}\"", inc_path.display()));
+                c.arg(format!("/I{}", inc_path.display()));
                 c.arg(evloop);
                 c.arg(lib_path);
                 #[cfg(target_os = "windows")]
@@ -1008,8 +1039,10 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
             // Plan 27 Ф.1: Boehm link flags for MSVC (after sources, before /link).
             if opts.gc_kind == GcKind::Boehm {
                 c.arg("/link");
-                c.arg(format!("\"{}\\gc.lib\"", vcpkg_lib.display()));
-                c.arg(format!("\"{}\\atomic_ops.lib\"", vcpkg_lib.display()));
+                // PathBuf-аргумент — Command экранирует сам; ручные кавычки
+                // не нужны (и вредны, см. комментарий к /Fo выше).
+                c.arg(vcpkg_lib.join("gc.lib"));
+                c.arg(vcpkg_lib.join("atomic_ops.lib"));
             }
             c
         }
