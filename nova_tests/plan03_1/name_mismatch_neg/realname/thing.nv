@@ -1,0 +1,4 @@
+// Plan 03.1 Ф.3 — модуль зависимости `realname`.
+module realname.thing
+
+export fn val() -> int => 7

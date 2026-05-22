@@ -1,19 +1,53 @@
-//! D78 path/module enforcement.
+//! D78 path/module enforcement + `[dependencies]` (Plan 03.1).
 //!
-//! Walk parent dirs от файла, ищем `nova.toml`. Из него извлекаем:
-//!   - `[package].name` (default: dir name)
-//!   - `[lib].src` (default: "src")
+//! Walk parent dirs от файла, ищем `nova.toml`. Из него извлекаем
+//! `[package].name`, `[package].edition`, `[lib].enforce-stability` и
+//! `[dependencies]`.
 //!
-//! Source root = nova.toml dir + (`[lib].src` или `src/`).
-//! Expected module = `<package>.<rel-path-from-src-without-ext>`.
+//! **Source root = корень пакета** (директория `nova.toml`). D78
+//! (2026-05-22): отдельной `src/` и настройки `[lib] src` больше нет;
+//! `[lib] src`, если задан в legacy-манифесте, ещё уважается.
+//! Expected module = `<package>.<rel-path-from-package-root-without-ext>`.
 //!
 //! Если файл лежит **вне** source root — пропускаем enforcement (это
 //! может быть test, example, scratch — не часть пакета).
 //!
-//! Минимальный TOML-парсер: ищем только `name = "..."` в `[package]` и
-//! `src = "..."` в `[lib]`. Не подтягиваем full TOML crate ради bootstrap'а.
+//! Минимальный TOML-парсер (без full TOML crate ради bootstrap'а):
+//! `key = "..."` по секциям + array-of-tables не нужен (`[dependencies]`
+//! — плоская секция `name = <spec>`).
 
 use std::path::{Path, PathBuf};
+
+/// Plan 03.1: git-пин зависимости.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GitPin {
+    Rev(String),
+    Tag(String),
+    Branch(String),
+    /// Пин не указан — резолвится в default-ветку (lockfile фиксирует commit).
+    Default,
+}
+
+/// Plan 03.1: источник внешней зависимости.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DepSource {
+    /// Локальная path-зависимость: директория другого пакета.
+    Path(String),
+    /// Git-зависимость; pin — rev/tag/branch.
+    Git { url: String, pin: GitPin },
+    /// Версия из registry (registry — Plan 03.3; пока не резолвится).
+    Registry(String),
+    /// Некорректная запись (ни `path`, ни `git`, ни версия) — хранит
+    /// сырое значение для диагностики на этапе резолва.
+    Invalid(String),
+}
+
+/// Plan 03.1: одна запись `[dependencies]`.
+#[derive(Debug, Clone)]
+pub struct Dependency {
+    pub name: String,
+    pub source: DepSource,
+}
 
 #[derive(Debug, Clone)]
 pub struct Manifest {
@@ -39,6 +73,83 @@ pub struct Manifest {
     /// Test/example/bench paths игнорируют этот flag (см.
     /// `doc::lints::LintConfig::fixture_dirs`) — там lint всегда skip'ается.
     pub enforce_stability: bool,
+    /// Plan 03.1: внешние зависимости из `[dependencies]`. Пусто, если
+    /// секция отсутствует.
+    pub dependencies: Vec<Dependency>,
+}
+
+/// Plan 03.1: quote-aware разбор тела inline-таблицы TOML
+/// (`key = "v", key2 = "v2"`) — запятая внутри `"..."` не разделяет.
+fn parse_inline_table(body: &str) -> Vec<(String, String)> {
+    let mut parts: Vec<String> = Vec::new();
+    let mut cur = String::new();
+    let mut in_str = false;
+    for ch in body.chars() {
+        match ch {
+            '"' => { in_str = !in_str; cur.push(ch); }
+            ',' if !in_str => { parts.push(std::mem::take(&mut cur)); }
+            _ => cur.push(ch),
+        }
+    }
+    parts.push(cur);
+    parts.iter()
+        .filter_map(|p| {
+            let (k, v) = p.split_once('=')?;
+            let k = k.trim();
+            if k.is_empty() { return None; }
+            Some((k.to_string(), v.trim().trim_matches('"').to_string()))
+        })
+        .collect()
+}
+
+/// Plan 03.1: разобрать значение записи `[dependencies]`.
+/// `"1.2"` → Registry; `{ path = "..." }` → Path; `{ git = "...", tag/rev/branch }`
+/// → Git; иначе → Invalid (диагностируется при резолве).
+fn parse_dep_source(raw_val: &str) -> DepSource {
+    let v = raw_val.trim();
+    if let Some(inner) = v.strip_prefix('{').and_then(|s| s.strip_suffix('}')) {
+        let fields = parse_inline_table(inner.trim());
+        let get = |k: &str| fields.iter().find(|(fk, _)| fk == k).map(|(_, fv)| fv.clone());
+        if let Some(p) = get("path") {
+            DepSource::Path(p)
+        } else if let Some(url) = get("git") {
+            let pin = if let Some(r) = get("rev") {
+                GitPin::Rev(r)
+            } else if let Some(t) = get("tag") {
+                GitPin::Tag(t)
+            } else if let Some(b) = get("branch") {
+                GitPin::Branch(b)
+            } else {
+                GitPin::Default
+            };
+            DepSource::Git { url, pin }
+        } else {
+            DepSource::Invalid(v.to_string())
+        }
+    } else {
+        let ver = v.trim_matches('"').to_string();
+        if ver.is_empty() {
+            DepSource::Invalid(v.to_string())
+        } else {
+            DepSource::Registry(ver)
+        }
+    }
+}
+
+/// Plan 03.1 Ф.4: директория ближайшего вверх по дереву `nova.toml` —
+/// корень пакета, которому принадлежит `file`. `None` — файл не входит
+/// ни в один пакет.
+pub fn find_package_dir(file: &Path) -> Option<PathBuf> {
+    let abs = std::fs::canonicalize(file).ok()?;
+    let mut dir = abs.parent()?.to_path_buf();
+    loop {
+        if dir.join("nova.toml").is_file() {
+            return Some(dir);
+        }
+        if !dir.pop() {
+            return None;
+        }
+    }
 }
 
 /// Найти nova.toml в parent dirs и извлечь package_name + source_root.
@@ -68,6 +179,7 @@ pub fn parse_manifest(toml_path: &Path, dir: &Path) -> Option<Manifest> {
     let mut lib_src: Option<String> = None;
     let mut edition: Option<String> = None;
     let mut enforce_stability: bool = false;
+    let mut dependencies: Vec<Dependency> = Vec::new();
     let mut section: &str = "";
 
     for raw in text.lines() {
@@ -79,9 +191,10 @@ pub fn parse_manifest(toml_path: &Path, dir: &Path) -> Option<Manifest> {
             // [section] or [[section]]
             let inner = line.trim_start_matches('[').trim_end_matches(']');
             section = match inner {
-                "package" => "package",
-                "lib"     => "lib",
-                _         => "",  // ignore other sections
+                "package"      => "package",
+                "lib"          => "lib",
+                "dependencies" => "dependencies",
+                _              => "",  // ignore other sections
             };
             // Note: `&'static str` can't be assigned from a String slice;
             // we work around with hardcoded match arms. Section names we
@@ -97,6 +210,15 @@ pub fn parse_manifest(toml_path: &Path, dir: &Path) -> Option<Manifest> {
             // Strip trailing inline comment ` # ...`. TOML allows `key = true # comment`.
             let raw_val = raw_val.split('#').next().unwrap_or("").trim();
             let str_val = raw_val.trim_matches('"').to_string();
+            // Plan 03.1: [dependencies] — key = имя зависимости, val =
+            // "version" | { path = "..." } | { git = "...", rev/tag/branch }.
+            if section == "dependencies" {
+                dependencies.push(Dependency {
+                    name: key.to_string(),
+                    source: parse_dep_source(raw_val),
+                });
+                continue;
+            }
             match (section, key) {
                 ("package", "name") => package_name = Some(str_val),
                 // Plan 62.F.bis Ф.1: `[package].edition = "2026.05"` pin
@@ -116,7 +238,10 @@ pub fn parse_manifest(toml_path: &Path, dir: &Path) -> Option<Manifest> {
     }
 
     let pkg = package_name?;
-    let src_subdir = lib_src.unwrap_or_else(|| "src".to_string());
+    // D78 (2026-05-22): source root = корень пакета. Отдельной `src/`
+    // и настройки `[lib] src` больше нет — default `.`. `[lib] src`,
+    // если задан в legacy-манифесте, ещё уважается (back-compat).
+    let src_subdir = lib_src.unwrap_or_else(|| ".".to_string());
     let source_root = if src_subdir == "." {
         dir.to_path_buf()
     } else {
@@ -127,6 +252,7 @@ pub fn parse_manifest(toml_path: &Path, dir: &Path) -> Option<Manifest> {
         source_root,
         edition,
         enforce_stability,
+        dependencies,
     })
 }
 

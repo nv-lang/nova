@@ -21,6 +21,8 @@ package `nova`, crate `nova-cli`).
 - [Commands](#commands)
   - [`nova check`](#nova-check) — type-check
   - [`nova run`](#nova-run) — interpreter
+  - [`nova add`](#nova-add) — add a dependency
+  - [`nova update`](#nova-update) — re-resolve git pins
   - [`nova build`](#nova-build) — compile to native
   - [`nova test`](#nova-test) — run tests
   - [`nova test-build`](#nova-test-build) — single-test build
@@ -226,6 +228,60 @@ nova run FILE
 - `FILE` — path to a `.nv` file with `fn main`
 - Backed by `nova_codegen::interp::Interpreter`
 - Equivalent to `nova-codegen run`
+
+---
+
+### `nova add`
+
+Add a dependency to `[dependencies]` of the current package's
+`nova.toml` and update `nova.lock` ([Plan 03.1](plans/03.1-path-git-dependencies.md)).
+
+```
+nova add NAME (--path DIR | --git URL [--tag T | --branch B | --rev R])
+```
+
+| Flag | Description |
+|---|---|
+| `NAME` | Dependency name — must equal the `[package].name` of the depended-on package |
+| `--path DIR` | Local path dependency (another package on disk) |
+| `--git URL` | Git dependency (repository URL) |
+| `--tag T` | Git pin: tag (only with `--git`) |
+| `--branch B` | Git pin: branch (only with `--git`) |
+| `--rev R` | Git pin: commit / rev (only with `--git`) |
+
+- `--path` and `--git` are mutually exclusive; exactly one is required.
+- `--tag` / `--branch` / `--rev` are mutually exclusive; optional (no
+  pin → default branch, still recorded as an exact commit in the lock).
+- Edits the `[dependencies]` section (creates it if absent). A
+  duplicate name → exit `2`.
+- After editing, runs lock sync: materializes a git dependency in the
+  cache and writes the resolved commit to `nova.lock`.
+- Must run inside a package (a `nova.toml` with `[package]`), not on a
+  bare `[workspace]` manifest.
+
+```bash
+nova add mathlib --path ../mathlib
+nova add gitlib  --git https://example.org/gitlib.nv --tag v1.0.0
+```
+
+---
+
+### `nova update`
+
+Re-resolve git pins and refresh `nova.lock`
+([Plan 03.1](plans/03.1-path-git-dependencies.md)).
+
+```
+nova update [NAME]
+```
+
+- `NAME` — a single git dependency to update. Omitted → all git
+  dependencies.
+- Drops the targeted git entries from `nova.lock`, then re-resolves
+  them live (the current commit of the branch/tag is picked up);
+  untargeted dependencies stay pinned.
+- `path` dependencies have no pin — passing one is rejected with an
+  explanation.
 
 ---
 
@@ -920,6 +976,8 @@ Generates `index.html` + `bench-<safe>.html` per bench + `data.json`.
 |---|---|---|
 | `NOVA_CODEGEN` | (reserved) | Override path to `nova-codegen` binary |
 | `NOVA_MONO_DEPTH` | `build`, `test`, `test-build`, `bench` | Monomorphization-instantiation depth limit (default 500) |
+| `NOVA_HOME` | `add`, `build` (git deps) | Root for the git dependency cache; default `~/.nova` (cache under `<NOVA_HOME>/git`) |
+| `NOVA_OFFLINE` | `add`, `build` (git deps) | `=1` → forbid network (clone/fetch); build only from the existing cache |
 | `NOVA_SMT_BACKEND` | `contracts` | SMT backend (`trivial`, `z3`) |
 | `NOVA_PERF_TIMER` | `bench corpus` (auto-set) | Enables `__PERF__` markers in the compiler |
 | `NOVA_PERF_TIMER_AGGREGATE` | `bench corpus` | Aggregate `__PERF__` across passes |
