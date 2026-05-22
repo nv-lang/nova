@@ -712,6 +712,14 @@ pub struct EffectMethod {
     /// Используются в Ф.5.2 для верификации Liskov-подобия handler'ов.
     /// Пустые = нет spec-контрактов (handler принимается без проверки).
     pub contracts: Vec<Contract>,
+    /// Plan 97 (D58 amend, `Q-static-method-protocol` resolved): метод
+    /// объявлен как **статический** в protocol-теле через leading-точку
+    /// (`.method(...)`); реализация ожидается через D35 `fn Type.method`.
+    /// Для bare-имён (`method(...)`) — `false` (instance, backwards-compat).
+    /// Для effect-методов всегда `false` (у эффектов нет static — это
+    /// handler-actions через runtime stack). Hard-enforcement static↔
+    /// instance mismatch — followup (см. plan97/Ф.0.4).
+    pub is_static: bool,
 }
 
 /// Plan 33.3 Ф.9 (D24): Operation vs PureView для effect-метода.
