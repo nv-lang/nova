@@ -121,11 +121,15 @@ enum Cmd {
         #[arg(long, requires = "git", conflicts_with_all = ["tag", "branch"])]
         rev: Option<String>,
     },
-    /// Plan 03.1 Ф.5: пере-резолвить git-пины зависимостей и обновить
-    /// nova.lock. Без аргумента — все git-зависимости.
+    /// Plan 03.1 Ф.5 / 03.2 Ф.4: пере-резолвить git-зависимости и
+    /// обновить nova.lock. Без аргумента — все git-зависимости.
     Update {
         /// Имя зависимости для обновления (опционально — иначе все git).
         name: Option<String>,
+        /// Plan 03.2: зафиксировать точную версию —
+        /// `nova update --precise foo@1.2.3`.
+        #[arg(long, value_name = "NAME@VERSION", conflicts_with = "name")]
+        precise: Option<String>,
     },
     /// Plan 45 / D107: produce documentation for a Nova source file.
     ///
@@ -2679,7 +2683,7 @@ fn cmd_add(
 
 /// Plan 03.1 Ф.5: `nova update` — пере-резолвить git-пины и обновить
 /// `nova.lock`.
-fn cmd_update(name: Option<&str>) -> Result<()> {
+fn cmd_update(name: Option<&str>, precise: Option<&str>) -> Result<()> {
     let pkg_dir = package_dir_from_cwd().ok_or_else(|| {
         usage_err("`nova update` запускается внутри Nova-пакета (нет nova.toml)")
     })?;
@@ -2691,6 +2695,47 @@ fn cmd_update(name: Option<&str>) -> Result<()> {
                 toml_path.display(),
             ))
         })?;
+
+    // `--precise NAME@VERSION` — зафиксировать точную версию git-deps.
+    if let Some(spec) = precise {
+        let (pname, vstr) = spec.rsplit_once('@').ok_or_else(|| {
+            usage_err(format!(
+                "--precise: ожидается формат NAME@VERSION, получено `{}`",
+                spec,
+            ))
+        })?;
+        let version = nova_codegen::semver::Version::parse(vstr)
+            .map_err(|e| usage_err(format!("--precise: {}", e)))?;
+        let dep = manifest
+            .dependencies
+            .iter()
+            .find(|d| d.name == pname)
+            .ok_or_else(|| {
+                usage_err(format!(
+                    "зависимость `{}` не объявлена в [dependencies]",
+                    pname,
+                ))
+            })?;
+        let url = match &dep.source {
+            nova_codegen::manifest::DepSource::Git { url, .. } => url.clone(),
+            _ => {
+                return Err(usage_err(format!(
+                    "--precise применим только к git-зависимости (`{}` — нет)",
+                    pname,
+                )))
+            }
+        };
+        nova_codegen::lockfile::update_precise(&pkg_dir, pname, &url, &version)
+            .map_err(|e| anyhow!("обновление зависимостей: {}", e))?;
+        println!(
+            "{} `{}` зафиксирован на версии {}",
+            green("updated:"),
+            pname,
+            version,
+        );
+        return Ok(());
+    }
+
     // Если указано имя — проверить, что это объявленная git-зависимость.
     if let Some(n) = name {
         match manifest.dependencies.iter().find(|d| d.name == n) {
@@ -4092,7 +4137,7 @@ fn run() -> ExitCode {
             branch.as_deref(),
             rev.as_deref(),
         ),
-        Cmd::Update { name } => cmd_update(name.as_deref()),
+        Cmd::Update { name, precise } => cmd_update(name.as_deref(), precise.as_deref()),
         Cmd::Doc { file, format, json_schema, include_private, run_doc_tests, check, watch, coverage, coverage_threshold, jobs, diff, scrape_examples, strict, mutate_contracts, real_exec, output_dir } => {
             // Plan 45 Ф.24.10: --diff old.json new.json
             // cmd_doc_diff uses process::exit for severity codes; propagate Err.
