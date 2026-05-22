@@ -1,0 +1,6 @@
+// Plan 03.1 Ф.3 — модуль path-зависимости `mathlib`.
+module mathlib.calc
+
+export fn add(a int, b int) -> int => a + b
+
+export fn mul(a int, b int) -> int => a * b

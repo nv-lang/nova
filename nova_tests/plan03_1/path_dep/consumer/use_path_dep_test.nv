@@ -1,0 +1,11 @@
+// Plan 03.1 Ф.3 POSITIVE — импорт из path-зависимости `mathlib`.
+// `[dependencies] mathlib = { path = "../mathlib" }`; первый сегмент
+// import-пути — имя пакета-зависимости, резолв идёт в её дереве.
+module pd_consumer.use_path_dep_test
+
+import mathlib.calc.{add, mul}
+
+test "path-зависимость: функции из mathlib" {
+    assert(add(40, 2) == 42)
+    assert(mul(6, 7) == 42)
+}

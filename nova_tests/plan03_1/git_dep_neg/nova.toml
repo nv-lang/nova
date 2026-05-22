@@ -1,0 +1,11 @@
+# Plan 03.1 Ф.2 fixture — git-зависимость с заведомо несуществующим
+# репозиторием: `file://`-URL → git clone падает быстро, без сети.
+[package]
+name = "git_dep_pkg"
+version = "0.1.0"
+
+[lib]
+src = "."
+
+[dependencies]
+remotelib = { git = "file:///nonexistent/__nova_no_such_repo__.git", tag = "v1.0.0" }

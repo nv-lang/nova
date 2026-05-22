@@ -104,7 +104,7 @@ Supply-chain — главная проблема пакетных менедже
 
 | # | Файл | Что | Зависимость | Когда |
 |---|---|---|---|---|
-| **03.1** | [03.1-path-git-dependencies.md](03.1-path-git-dependencies.md) | `path`- и `git`-зависимости в bootstrap-компиляторе + `nova.lock` для них. **Без registry, без self-host.** | нет | **можно сейчас** |
+| **03.1** | [03.1-path-git-dependencies.md](03.1-path-git-dependencies.md) | `path`- и `git`-зависимости в bootstrap-компиляторе + `nova.lock` для них. **Без registry, без self-host.** | нет | ✅ **ЗАКРЫТ** 2026-05-22 |
 | **03.2** | `03.2-version-resolution.md` (план) | PubGrub resolver + version-ranged deps (`^1.2`) + `nova update`. | 03.1 | после 03.1 |
 | **03.3** | `03.3-registry-protocol.md` (план) | HTTP registry protocol + content-addressing + подпись + transparency log (§5). | 03.2 | после 03.2 |
 | **03.4** | `03.4-nova-cli-package-cmds.md` (план) | `nova add`/`publish`/`update`/`search`/`info`/`audit` + effect-surface/effect-diff (§4). | 03.1–03.3 | параллельно 03.2/03.3 |
