@@ -3244,8 +3244,15 @@ for x in it { ... }                  // it уже Iter[T], без двойног
   — отдельный вопрос Q-type-as-value.
 - **`@`-префикс в protocol-методах** (симметрия с реализацией) —
   Q-protocol-method-prefix.
-- **Static-метод в protocol через `.method()`-префикс** —
-  Q-static-method-protocol.
+- ~~**Static-метод в protocol через `.method()`-префикс**~~ —
+  ✅ **RESOLVED** Plan 97 (2026-05-23). Leading-точка `.method(args) -> Ret`
+  в `protocol {}` теле помечает метод **статическим** (симметрично D35
+  `fn Type.name`); реализация ожидается через `fn Type.method(...)`.
+  Bare-имя `method(args)` остаётся **instance** (backwards-compat: все
+  существующие протоколы `Iter`/`Hashable`/`Equatable`/`Comparable`/
+  `Display`/`Into`/`TryInto` без изменений). `From`/`TryFrom` обновлены
+  под новый синтаксис (`.from(t T) -> Self`/`.try_from(t T) ->
+  Result[Self,E]`). Hard-enforcement static↔instance mismatch — followup.
 
 ---
 
