@@ -17442,3 +17442,23 @@ API reshape: runtime.init → опциональный тюнер + getter runti
   shutdown). mn_runtime_smoke «init idempotent» → «second init
   diagnosed no-op» + EXPECT_STDERR.
 Suite: 958 PASS / 0 FAIL (956 + 2).
+
+=== Plan 85.1 — тестовое покрытие StringBuilder (2026-05-22) ===
+Worktree nova-p85, ветка plan-85.
+- Новый каталог nova_tests/str_builder/ — 9 файлов: constructors,
+  append_ops, metrics, clone, inspection, consume_test, unicode
+  (позитивные, 7) + neg_use_after_consume, neg_double_consume
+  (негативные, EXPECT_COMPILE_ERROR D131).
+- Покрыты все 17 методов StringBuilder: new / with_capacity /
+  from(str) / from(char), @append(str|char), @plus(str|char),
+  @len / @byte_len / @capacity / @clone, consume @into,
+  @starts_with / @ends_with / @is_empty / @peek.
+- Codegen-багов не найдено — StringBuilder уже был покрыт smoke-
+  тестами (Plan 04 / 13 / 63). Char-overload, Unicode (кириллица /
+  CJK / emoji), capacity-grow, clone-изоляция — все корректны.
+- consume.nv переименован в consume_test.nv: consume — keyword
+  (D131), не может быть сегментом module-имени (D29 keyword-collision
+  -> _test-суффикс).
+- Уточнение к плану 85.1: use-after-consume — EXPECT_COMPILE_ERROR
+  D131 (не runtime panic; D131 ловится компилятором, Plan 73).
+Suite: str_builder 9 PASS / 0 FAIL.

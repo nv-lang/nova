@@ -1,0 +1,91 @@
+// Plan 85.1 Ф.3 — StringBuilder Unicode-покрытие.
+//
+// Кириллица, CJK и emoji во всех методах: byte_len > len для
+// многобайтных, starts_with/ends_with на codepoint-границах.
+
+module str_builder.unicode
+
+
+test "Cyrillic — byte_len вдвое больше len" {
+    let mut sb = StringBuilder.new()
+    sb.append("Программирование")
+    assert(sb.len() == 16)        // 16 codepoints
+    assert(sb.byte_len() == 32)   // 2 байта на codepoint
+}
+
+test "CJK — byte_len втрое больше len" {
+    let mut sb = StringBuilder.new()
+    sb.append("中文字符")
+    assert(sb.len() == 4)
+    assert(sb.byte_len() == 12)
+}
+
+test "emoji — byte_len вчетверо больше len" {
+    let mut sb = StringBuilder.new()
+    sb.append("😀😁😂")
+    assert(sb.len() == 3)
+    assert(sb.byte_len() == 12)
+}
+
+test "смешанный скрипт — точный подсчёт" {
+    let mut sb = StringBuilder.new()
+    sb.append("ASCII")            // 5 cp, 5 b
+    sb.append("Кир")              // 3 cp, 6 b
+    sb.append("中")               // 1 cp, 3 b
+    sb.append('😀')               // 1 cp, 4 b
+    assert(sb.len() == 10)
+    assert(sb.byte_len() == 18)
+}
+
+test "Unicode — starts_with на codepoint-границе" {
+    let mut sb = StringBuilder.new()
+    sb.append("日本語テキスト")
+    assert(sb.starts_with("日本"))
+    assert(sb.starts_with("日本語"))
+    assert(!sb.starts_with("本"))
+}
+
+test "Unicode — ends_with на codepoint-границе" {
+    let mut sb = StringBuilder.new()
+    sb.append("текст конца 🎉")
+    assert(sb.ends_with("🎉"))
+    assert(sb.ends_with("конца 🎉"))
+}
+
+test "Unicode — append(char) по одному codepoint'у" {
+    let mut sb = StringBuilder.new()
+    sb.append('П')
+    sb.append('р')
+    sb.append('и')
+    sb.append('в')
+    sb.append('е')
+    sb.append('т')
+    assert(sb.len() == 6)
+    assert(sb.byte_len() == 12)
+    assert(sb.into() == "Привет")
+}
+
+test "Unicode — clone сохраняет многобайтные codepoint'ы" {
+    let mut a = StringBuilder.new()
+    a.append("Ёлка 🎄 中")
+    let b = a.clone()
+    assert(b.len() == a.len())
+    assert(b.byte_len() == a.byte_len())
+    assert(b.into() == "Ёлка 🎄 中")
+}
+
+test "Unicode — peek возвращает многобайтный контент" {
+    let mut sb = StringBuilder.new()
+    sb.append("Тест")
+    assert(sb.peek() == "Тест")
+    sb.append(" 😀")
+    assert(sb.into() == "Тест 😀")
+}
+
+test "Unicode — into паритет codepoint count со str" {
+    let mut sb = StringBuilder.new()
+    sb.append("Привет, 世界 😀")
+    let n = sb.len()
+    let s = sb.into()
+    assert(s.len() == n)
+}
