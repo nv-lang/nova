@@ -79,16 +79,19 @@ static inline void _nova_gc_add_fiber_roots(mco_coro* co)    { (void)co; }
 static inline void _nova_gc_remove_fiber_roots(mco_coro* co) { (void)co; }
 
 /* Plan 44.2 Etap 1 — fiber stack arena (Linux/macOS).
+ * Plan 82 Ф.1 — Windows присоединён к arena-пути.
  *
  * Wire minicoro's alloc_cb/dealloc_cb to nova_fiber_alloc/dealloc, которые
- * берут стек из per-thread mmap'нутой арены вместо calloc. На Windows
- * остаёмся на дефолтном calloc-пути (Plan 44.3 — открытый).
+ * берут стек из per-thread арены вместо calloc. POSIX — fiber_arena.c
+ * (mmap MAP_NORESERVE); Windows — fiber_arena_win.c (VirtualAlloc
+ * lazy-commit). Раньше Windows шёл на minicoro default calloc (fixed
+ * 56 KB, без guard, без GC-видимости fiber-стеков).
  *
  * Stack size: slot_usable (= slot_size − guard) минус минимальный
  * mco_desc header overhead. Реальный header < 1KB на amd64; 8KB
  * закладывается с запасом. */
 #define _NOVA_MCO_HEADER_OVERHEAD 8192
-#if (defined(__linux__) || defined(__APPLE__))
+#if (defined(__linux__) || defined(__APPLE__) || defined(_WIN32))
   #include "fiber_arena.h"
   #if NOVA_FIBER_ARENA_ENABLED
     static inline mco_desc _nova_mco_desc_init_arena(void (*entry)(mco_coro*)) {
@@ -108,6 +111,15 @@ static inline void _nova_gc_remove_fiber_roots(mco_coro* co) { (void)co; }
   #define _NOVA_MCO_DESC_INIT(entry) (mco_desc_init((entry), 0))
 #endif
 
+/* Plan 82 Ф.1: post-create hook. Вызывается после КАЖДОГО mco_create.
+ * На Windows патчит ctx.stack_limit корутины на committed-low слота
+ * arena — обязательно для lazy-commit (иначе __chkstk-код с кадром
+ * >1 страницы крашит на MSVC; Ф.0 test a, decision-point). No-op на
+ * POSIX и при отключённой arena. Определена в fibers.c — нужен доступ
+ * к minicoro-внутреннему типу _mco_context (виден только в TU с
+ * MINICORO_IMPL). */
+void nova_fiber_post_create(mco_coro* co);
+
 /* Run a fiber to completion and return its result.
  * entry      : the generated spawn wrapper function
  * user       : pointer to a NovaSpawnCtx_N stack struct (captures)
@@ -122,6 +134,7 @@ static inline void nova_fiber_run(void (*entry)(mco_coro*), void* user) {
         fprintf(stderr, "nova: fiber create failed (%d)\n", (int)r);
         abort();
     }
+    nova_fiber_post_create(co);  /* Plan 82 Ф.1: patch ctx.stack_limit (Windows) */
     _nova_gc_add_fiber_roots(co);
     r = mco_resume(co);
     if (r != MCO_SUCCESS) {
@@ -955,6 +968,7 @@ static inline void nova_fiber_spawn_into(NovaFiberQueue* q,
         fprintf(stderr, "nova: fiber create failed (%d)\n", (int)r);
         abort();
     }
+    nova_fiber_post_create(co);  /* Plan 82 Ф.1: patch ctx.stack_limit (Windows) */
     _nova_gc_add_fiber_roots(co);
     q->fibers[q->count]    = co;
     q->fiber_ctx[q->count] = user;            /* GC root: SpawnCtx reachable via managed array */

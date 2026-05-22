@@ -47,7 +47,11 @@
 #include <stddef.h>
 #include <stdbool.h>
 
-#if defined(__linux__) || defined(__APPLE__)
+/* Plan 82 Ф.1: Windows присоединён к arena-пути. POSIX-реализация —
+ * fiber_arena.c (mmap); Windows — fiber_arena_win.c (VirtualAlloc lazy-
+ * commit). Оба файла компилируются на всех платформах, каждый — пустой
+ * TU вне своей ОС; линкуются всегда. API ниже — общий. */
+#if defined(__linux__) || defined(__APPLE__) || defined(_WIN32)
   #define NOVA_FIBER_ARENA_ENABLED 1
 #else
   #define NOVA_FIBER_ARENA_ENABLED 0
@@ -69,6 +73,12 @@
  * остаёмся 4096. */
 #if defined(__SIZEOF_POINTER__) && __SIZEOF_POINTER__ < 8
   #define NOVA_FIBER_SLOT_COUNT   16                 /* 16 × 8MB = 128 MB virtual (32-bit) */
+#elif defined(_WIN32)
+  /* Plan 82 Ф.1: Windows — 16384 слотов (128 GB virtual reserve, на
+   * 64-bit тривиально). 4096 не вмещал stress-нагрузки (sleep_bench —
+   * 10k одновременных fiber'ов); план §3 называет реальный потолок
+   * «4k-16k concurrent fibers per process». */
+  #define NOVA_FIBER_SLOT_COUNT   16384
 #else
   #define NOVA_FIBER_SLOT_COUNT   4096               /* 4096 × 8MB = 32GB virtual per thread (64-bit) */
 #endif
@@ -116,6 +126,13 @@ void  nova_fiber_dealloc(void* ptr, size_t size, void* allocator_data);
 
 /* Check whether ptr is inside this thread's arena (для assertions). */
 bool nova_fiber_arena_contains(const void* ptr);
+
+/* Plan 82 Ф.1 (Windows): committed-low начального окна стека слота,
+ * содержащего block_ptr (== указатель из nova_fiber_alloc == mco_coro*).
+ * fibers.c пишет это в ctx.stack_limit после mco_create — обязательный
+ * патч для lazy-commit (иначе __chkstk-код крашит на MSVC, Ф.0 test a).
+ * POSIX-реализация возвращает NULL (патч не нужен — kernel demand-paging). */
+void* nova_fiber_committed_low(const void* block_ptr);
 
 #endif /* NOVA_FIBER_ARENA_ENABLED */
 

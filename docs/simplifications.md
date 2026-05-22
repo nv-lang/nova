@@ -6171,6 +6171,20 @@ opt-in capability.
 
 ## D97: гибридная fiber stack allocation — Windows на calloc остаётся (2026-05-12)
 
+### ✅ ЗАКРЫТО — Plan 82 Ф.1/Ф.2 (2026-05-22)
+
+Windows fiber-стеки переведены с minicoro-default calloc на lazy-commit
+large-reserve arena (`fiber_arena_win.c`) с полной GC-интеграцией
+(`GC_set_push_other_roots`-колбэк, precise push). Растущие стеки
+(OS-native grow, путь A), guard-pages + детерминированная
+overflow-детекция, GC-видимость всех fiber-стеков — реализованы.
+`std.runtime.fibers` introspection на Windows возвращает реальные
+значения. Полный `nova test`: 1058 PASS / 0 FAIL — 0 регрессий.
+Отчёт — `82-artifacts/f1-report.md`. Остаётся (Plan 82 Ф.5):
+multi-worker M:N GC-coverage — см. `[M-82-gc-mn-deferred]` ниже.
+
+Историческая запись об упрощении (теперь не действует):
+
 ### Что упрощено
 
 Plan 44.2 ввёл per-thread mmap arena с lazy commit + active-range GC root
@@ -10886,3 +10900,42 @@ Plan 03.2 (Ф.1–Ф.5) → ✅ ЗАКРЫТ. Suite: 1038 PASS / 0 FAIL.
 - **Приоритет** — L.
 
 Plan 03.4 (Ф.1–Ф.4, effect-срез) → ✅ ЗАКРЫТ. Suite: 1058 PASS / 0 FAIL.
+
+---
+
+## [M-82-gc-mn-deferred] Windows fiber-arena GC-coverage — single-thread only (2026-05-22)
+
+### Что упрощено
+
+Plan 82 Ф.2 реализовал GC-интеграцию Windows fiber-арены через
+`GC_set_push_other_roots`-колбэк (`fiber_arena_win.c`). Колбэк на
+mark-фазе пушит закоммиченные диапазоны живых fiber'ов + native-стек
+main-thread'а. Реализация **корректна для single-thread cooperative**
+(текущий режим Windows — M:N на Windows ещё не включён).
+
+### Что отсутствует (для M:N)
+
+- Колбэк читает `_t_arena` — арену **collector-потока**. Под M:N
+  (несколько worker'ов, у каждого своя per-thread арена) колбэк увидит
+  только арену потока, запустившего сборку → fiber-стеки чужих арен не
+  просканируются. Нужен обход ВСЕХ per-thread арен (глобальный список
+  арен либо §5.2-реестр).
+- Suspended worker native-стеки (§5.2 (3), §П3.3) — колбэк пушит только
+  main-thread'а native-стек. Под M:N каждый worker, крутящий fiber,
+  имеет «подвешенный» native-стек со scope-переменными.
+- VEH-overflow-handler проверяет арену через `_t_arena` (per-thread) —
+  cross-thread overflow даст generic-краш без «slot N».
+- Реестр живых fiber'ов = `used_bits` арены; мутации alloc/dealloc под
+  M:N потребуют `GC_call_with_alloc_lock`-дисциплины (§5.2 (1)).
+
+### Когда вернуться
+
+Plan 82 Ф.5 — включение M:N на Windows. Gated: до Ф.5 Windows
+single-thread cooperative, и текущая GC-модель корректна и достаточна.
+
+### Что НЕ упрощено
+
+Single-thread cooperative (текущий Windows-режим): GC-модель **полна и
+корректна** — running fiber, suspended fibers, native scheduler-стек
+покрыты; полный `nova test` 1058 PASS / 0 FAIL подтверждает.
+**Приоритет** — гейт Ф.5, не самостоятельная задача.

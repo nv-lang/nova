@@ -9,7 +9,9 @@
 #   f0_gc_link.c -- Boehm GC API link test against gc.lib (clang-cl)
 #   f0_test_a.c  -- decision point path A vs B (MSVC + clang-cl)
 #   f0_test_d.c  -- attempts 3-4 anomaly re-diagnosis (MSVC + clang-cl)
-#   f0_test_e.c  -- SEH across fiber-stack boundary (MSVC + clang-cl)
+#   f0_test_e.c     -- SEH across fiber-stack boundary (MSVC + clang-cl)
+#   f1_arena_test.c -- standalone test of fiber_arena_win.c (no Boehm)
+#   f1_gc_test.c    -- fiber_arena_win.c + Boehm GC integration
 #
 # clang-cl MUST carry /EHa: without it __try/__except does not catch
 # hardware SEH (see f0-rediagnosis.md section 3).
@@ -48,5 +50,23 @@ cmd /c "call `"$vc`" >nul 2>&1 && cl /nologo /O1 /W3 f0_test_e.c /Fe:f0_test_e_m
 Write-Host '=== f0_test_e.c -- clang-cl ===' -ForegroundColor Cyan
 cmd /c "call `"$vc`" >nul 2>&1 && `"$cl`" /O1 /EHa /W3 f0_test_e.c /Fe:f0_test_e_clangcl.exe /Fo:f0_test_e_clangcl.obj"
 
+# Plan 82 F.1 -- standalone test of the real fiber_arena_win.c.
+$fa = '..\compiler-codegen\nova_rt\fiber_arena_win.c'
+
+Write-Host '=== f1_arena_test.c + fiber_arena_win.c -- MSVC ===' -ForegroundColor Cyan
+cmd /c "call `"$vc`" >nul 2>&1 && cl /nologo /O1 /W3 /Fe:f1_arena_test_msvc.exe f1_arena_test.c $fa"
+
+Write-Host '=== f1_arena_test.c + fiber_arena_win.c -- clang-cl ===' -ForegroundColor Cyan
+cmd /c "call `"$vc`" >nul 2>&1 && `"$cl`" /O1 /EHa /W3 /Fe:f1_arena_test_clangcl.exe f1_arena_test.c $fa"
+
+# f1_gc_test -- fiber_arena_win.c with Boehm GC integration active
+# (NOVA_GC_BOEHM). Validates the GC push-callback (GC_push_all_eager)
+# at thousands of fibers. Pass a fiber count as argv[1] (default 3000).
+Write-Host '=== f1_gc_test.c + fiber_arena_win.c + Boehm -- MSVC ===' -ForegroundColor Cyan
+cmd /c "call `"$vc`" >nul 2>&1 && cl /nologo /O1 /W3 /DGC_NOT_DLL /DGC_THREADS /DNOVA_GC_BOEHM /I`"$gc\include`" /Fe:f1_gc_test_msvc.exe f1_gc_test.c $fa /link /libpath:`"$gc\lib`" gc.lib atomic_ops.lib"
+
+Write-Host '=== f1_gc_test.c + fiber_arena_win.c + Boehm -- clang-cl ===' -ForegroundColor Cyan
+cmd /c "call `"$vc`" >nul 2>&1 && `"$cl`" /O1 /EHa /W3 /DGC_NOT_DLL /DGC_THREADS /DNOVA_GC_BOEHM /I`"$gc\include`" /Fe:f1_gc_test_clangcl.exe f1_gc_test.c $fa /link /libpath:`"$gc\lib`" gc.lib atomic_ops.lib"
+
 Remove-Item *.obj -ErrorAction SilentlyContinue
-Write-Host '=== built. probe/gc_link/test_a/test_d/test_e ===' -ForegroundColor Green
+Write-Host '=== built. f0_* + f1_arena_test + f1_gc_test ===' -ForegroundColor Green
