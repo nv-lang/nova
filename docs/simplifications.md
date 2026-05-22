@@ -11117,3 +11117,30 @@ ns/switch — паритет с Boost.Context). Перенос замера в N
 косметический, не функциональный.
 
 ### Приоритет — L (деливерабл Ф.5 достигнут; bench-DSL multi-emission — отдельная задача).
+
+---
+
+### [M-protocol-static-enforcement-deferred] Plan 97 — нет hard-enforcement static↔instance в protocol-методе
+
+- **Где** — `compiler-codegen/src/types/mod.rs` структурное матчинг
+  типа против protocol-методов.
+- **Что упрощено** — Plan 97 ввёл синтаксис `.method()` для static в
+  `protocol {}` теле (`is_static` флаг на `EffectMethod`). Type-checker
+  при матчинге type ↔ protocol **не проверяет** соответствие
+  `is_static` декларации протокола и `is_static` реализации:
+  `protocol { .from(t T) -> Self }` может быть «удовлетворён» как
+  `fn T.from(t T)` (D35 static, корректно), так и `fn T @from(t T)`
+  (D35 instance, некорректно) — оба матчатся структурно.
+- **Почему** — текущий matching уже структурно ленив (matches и
+  `method_table` для instance, и `fn_decls` для static). Plan 97
+  закрывает spec-Q-static-method-protocol на **синтаксис**;
+  enforcement — отдельная hardening-линия (analog Plan 79 typecheck
+  hardening «no silent fallback»), требует переработки matching-пути.
+- **Как чинить** — отдельный план «protocol static/instance strict»:
+  при матчинге типа против `protocol { .method }` искать
+  именно `fn Type.method` (D35-static, в `fn_decls`); для bare
+  protocol-метода — `fn Type @method` (D35-instance, в `method_table`).
+  Несовпадение → compile error E???? (analog mismatch-errors Plan 79).
+- **Приоритет** — L. На корректность не влияет (структура методов уже
+  совпадает в стdlib и user-коде); только защищает от ошибочных
+  реализаций.
