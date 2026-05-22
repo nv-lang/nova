@@ -17312,3 +17312,75 @@ Plan 33.8 Ф.1-Ф.5: ✅ soundness ЗАКРЫТ (2026-05-21).
 Нужен soundness-regression-suite + Z3↔CVC5 cross-check.
 
 Plan 33.8: ✅ soundness ЗАКРЫТ полностью (Ф.1-Ф.6, 2026-05-21).
+
+## Plan 81 + Plan 69 + Plan 78 — закрытие (2026-05-22)
+
+Сессия закрыла три плана целиком, все смёржены в `main`
+(merge-commit `6b8ae1a98c7` для 81+69, далее fast-forward для 78).
+Worktree `nova-p79`, ветка `plan-81-hardening`.
+
+### Plan 81 — Module-resolution hardening (Ф.1–Ф.11 ✅)
+
+До этой сессии: Ф.1–Ф.6 + Ф.7.1 + Ф.8. В сессии добиты:
+- Ф.10 entry-folder-module peer-isolation (`5ab86a498ea`) — resolver
+  `resolve_imports_inline_ex` детектит, что сам компилируемый entry —
+  peer folder-module, собирает sibling peers (distinct `file_id`,
+  `is_entry_module=true`), мёрджит их items включая `Item::Test`,
+  резолвит import'ы каждого peer'а в его visible-scope (Rule C);
+  prelude резолвится один раз и разделяется всей группой.
+  `manifest::check_module_path` стал folder-module-aware (канонический
+  public `imports::is_folder_module_peer`).
+- Ф.7.2 compiler-level reachability DCE свободных функций
+  (`076d84fa7ba`) — `compute_dead_free_fns`: worklist достижимости от
+  корней (`main`, refs всех non-candidate items, экспортируемые fn);
+  недостижимые мономорфные свободные функции не эмитятся в `.c`. DCE
+  привязан к `fn main` (no-main модуль = библиотека → keep all —
+  держит negative-фикстуры рабочими). Method-level compiler-DCE
+  декомпозирован в отдельный инкремент.
+- Ф.9 content-addressed build cache (`96210b30900`) — `nova build`
+  кэширует `.c` по хэшу(исходники + отпечаток exe компилятора + cfg +
+  target + mono-depth); попадание минует type-check/codegen.
+  Хранилище `target/.nova-cache/`; `NOVA_NO_CACHE=1` отключает.
+- Ф.11 spec/README sync (`2b8346fed95`) — D5 enforcement-нота,
+  simplifications-маркеры, README → Plan 81 ЗАКРЫТ.
+- interp-fix (`50b1f7fec2a`): `run_interp_named` помечен `#[ignore]` —
+  treewalk-interp deprecated (падает на prelude `external fn`,
+  пре-существующий баг вне Plan 81).
+Suite: 956 PASS / 0 FAIL.
+
+### Plan 69 — Удалить тип `byte` → канонический `u8` (✅)
+
+Коммиты `82dd49fd66a` + `0605a6bd5d9`. `byte` убран как встроенный
+тип Nova: компилятор (type-checker 6 мест, parser, codegen + verify),
+spec (02/03/08/10-decisions), std (`runtime_registry.rs` + регенерация
+runtime-стабов, `collections.nv`), nova_tests. C-typedef `nova_byte`
+(uint8_t) сохранён как внутреннее имя codegen — не пользовательская
+поверхность. Тег `bytes` (D48) и слово «byte» в прозе не тронуты.
+2 alias-фикстуры (`plan70_4/f5,f8`) удалены. Spec D125.
+Suite: 954 PASS / 0 FAIL.
+
+### Plan 78 — Prelude codegen single-source (Ф.1–Ф.5 ✅)
+
+Коммиты `5bae53648d8`, `32675d9e374`, `83d5268be9a`, `4c65c5fc8fa`.
+- Ф.1.0 design выявил: `method_routing` нельзя механически вывести
+  из `.nv`-деклараций (контрпример `Result.ok()` vs `err()` —
+  неразличимые сигнатуры `-> Option[...]`, но первый трамплин, второй
+  inline).
+- Ф.1 (вариант 2, решение владельца плана): `method_routing`
+  переклассифицирован как легитимный реестр C-реализации (того же
+  класса, что `runtime_registry.rs`), не хардкод-зеркало.
+- Ф.2: хардкод-зеркало `sum_schemas` pre-populate для Option /
+  RuntimeError устранено. RuntimeError — ветка `RUNTIME_DEFINED_TYPES`
+  в `emit_type_decl` теперь строит sum-schema + record-variant-
+  метаданные из декларации `std/prelude/errors.nv`.
+- Ф.3: print/println → deferred на Plan 68.
+- Ф.4: panic/exit/assert аудит — legitimate codegen (expression-
+  position lowering для Never/void-fns), не prelude-зеркало.
+Suite: 954 PASS / 0 FAIL.
+
+Процессный урок: design-фаза Plan 78 Ф.1.0 выявила скрытый объём
+(routing невыводим из сигнатур) — ровно для этого design-фаза нужна.
+Honest-defer применялся как промежуточный шаг: Ф.2-RuntimeError
+сначала отложен после 2 CC-FAIL, затем доведён со второго подхода
+(диагноз: `emit_type_decl` делал полный `return` для RUNTIME_DEFINED;
+фикс — строить schema из декларации).
