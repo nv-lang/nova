@@ -1,23 +1,36 @@
-// Plan 44.5 Layer 5 acceptance: actual M:N parallelism доказан через
-// `runtime.current_worker_id()` distribution — fibers actually run на
-// разных workers (не idle).
+// Plan 44.5 Layer 5 + Plan 92 — M:N parallelism: spawned fibers
+// выполняются на worker-пуле, и work-stealing распределяет их по
+// нескольким worker'ам.
 //
 // **Compute-only:** spawn body не использует Time.sleep/Channel.recv
-// (park/wake migration к worker scope — отдельный milestone, требует
-// TLS-swap entry function + slot allocation в worker scope).
+// (park/wake migration к worker scope — отдельный milestone).
 //
-// Acceptance:
-//   - 16 fibers spawn'аются под supervised в M:N mode (runtime.init(4)).
-//   - Каждый записывает worker_id в собственный slot (race-free, mut int
-//     captured by reference).
-//   - Все slots должны быть >= 0 (fibers actually ran на workers, не на
-//     main thread где worker_id == -1).
-//   - >= 2 distinct worker_id'ов (round-robin distribution фактически
-//     работает — не all одного worker'а).
+// Тест проверяет ДВЕ величины разной природы (Plan 92 Ф.0):
+//
+//   (1) ВЫПОЛНЕНИЕ — контракт рантайма, **детерминирован**: все 16
+//       fibers отрабатывают на worker-потоках (`worker_id >= 0`, не
+//       main-thread `-1`). Проверяется `assert` КАЖДУЮ попытку.
+//
+//   (2) РАСПРЕДЕЛЕНИЕ — эвристика планировщика, **НЕ контракт**:
+//       work-stealing раскидывает fibers по >1 worker'у. Под
+//       CPU-starvation worker-потоков ОС один worker законно может
+//       выполнить все 16 tiny-fibers (Plan 92 Ф.0: под устойчивой
+//       нагрузкой одиночный `on_w0 < 16` падал 66/100 — это валидное
+//       поведение work-stealing, не баг). Поэтому распределение
+//       проверяется **статистически** — до 20 независимых batch'ей с
+//       early-break (как только распределение замечено — стоп): рабочий
+//       планировщик распределяет batch с подавляющей вероятностью
+//       (в реальном прогоне `nova test` `p >= 0.99` → обычно хватает
+//       1-2 batch'ей; false-fail = `(1-p)^20` ничтожен); полностью
+//       сломанный round-robin не распределит НИ ОДИН batch → все 20
+//       попыток впустую → детерминированный fail. Это корректный
+//       способ проверки вероятностного свойства (ср. Go
+//       `TestGoroutineParallelism`), не упрощение. Early-break держит
+//       стоимость теста на уровне исходного (обычно 1 batch).
 
 module nova_tests.concurrency.mn_runtime_actual_workload
 
-test "M:N: 16 fibers distributed на 4 workers" {
+test "M:N: 16 fibers выполняются на worker-пуле + распределяются" {
     runtime.init(4)
 
     // 16 mut slots — each spawn writes own slot's worker_id.
@@ -26,67 +39,91 @@ test "M:N: 16 fibers distributed на 4 workers" {
     let mut w08 = -1; let mut w09 = -1; let mut w10 = -1; let mut w11 = -1
     let mut w12 = -1; let mut w13 = -1; let mut w14 = -1; let mut w15 = -1
 
-    supervised {
-        spawn { w00 = runtime.current_worker_id() }
-        spawn { w01 = runtime.current_worker_id() }
-        spawn { w02 = runtime.current_worker_id() }
-        spawn { w03 = runtime.current_worker_id() }
-        spawn { w04 = runtime.current_worker_id() }
-        spawn { w05 = runtime.current_worker_id() }
-        spawn { w06 = runtime.current_worker_id() }
-        spawn { w07 = runtime.current_worker_id() }
-        spawn { w08 = runtime.current_worker_id() }
-        spawn { w09 = runtime.current_worker_id() }
-        spawn { w10 = runtime.current_worker_id() }
-        spawn { w11 = runtime.current_worker_id() }
-        spawn { w12 = runtime.current_worker_id() }
-        spawn { w13 = runtime.current_worker_id() }
-        spawn { w14 = runtime.current_worker_id() }
-        spawn { w15 = runtime.current_worker_id() }
+    let mut attempt = 0
+    let mut distributed = false
+
+    while attempt < 20 {
+        // Сброс слотов перед каждым независимым batch'ем.
+        w00 = -1; w01 = -1; w02 = -1; w03 = -1
+        w04 = -1; w05 = -1; w06 = -1; w07 = -1
+        w08 = -1; w09 = -1; w10 = -1; w11 = -1
+        w12 = -1; w13 = -1; w14 = -1; w15 = -1
+
+        supervised {
+            spawn { w00 = runtime.current_worker_id() }
+            spawn { w01 = runtime.current_worker_id() }
+            spawn { w02 = runtime.current_worker_id() }
+            spawn { w03 = runtime.current_worker_id() }
+            spawn { w04 = runtime.current_worker_id() }
+            spawn { w05 = runtime.current_worker_id() }
+            spawn { w06 = runtime.current_worker_id() }
+            spawn { w07 = runtime.current_worker_id() }
+            spawn { w08 = runtime.current_worker_id() }
+            spawn { w09 = runtime.current_worker_id() }
+            spawn { w10 = runtime.current_worker_id() }
+            spawn { w11 = runtime.current_worker_id() }
+            spawn { w12 = runtime.current_worker_id() }
+            spawn { w13 = runtime.current_worker_id() }
+            spawn { w14 = runtime.current_worker_id() }
+            spawn { w15 = runtime.current_worker_id() }
+        }
+
+        // (1) КОНТРАКТ (детерминирован): все 16 fibers отработали на
+        // worker'ах — каждый slot >= 0 (а не -1 = main-thread).
+        // Проверяется каждую попытку: реальная потеря работы или
+        // выполнение на main вместо worker'а — мгновенный fail.
+        let total_ran =
+            (if w00 >= 0 { 1 } else { 0 }) +
+            (if w01 >= 0 { 1 } else { 0 }) +
+            (if w02 >= 0 { 1 } else { 0 }) +
+            (if w03 >= 0 { 1 } else { 0 }) +
+            (if w04 >= 0 { 1 } else { 0 }) +
+            (if w05 >= 0 { 1 } else { 0 }) +
+            (if w06 >= 0 { 1 } else { 0 }) +
+            (if w07 >= 0 { 1 } else { 0 }) +
+            (if w08 >= 0 { 1 } else { 0 }) +
+            (if w09 >= 0 { 1 } else { 0 }) +
+            (if w10 >= 0 { 1 } else { 0 }) +
+            (if w11 >= 0 { 1 } else { 0 }) +
+            (if w12 >= 0 { 1 } else { 0 }) +
+            (if w13 >= 0 { 1 } else { 0 }) +
+            (if w14 >= 0 { 1 } else { 0 }) +
+            (if w15 >= 0 { 1 } else { 0 })
+        assert(total_ran == 16)
+
+        // (2) РАСПРЕДЕЛЕНИЕ (статистически): не все 16 на worker 0.
+        let on_w0 =
+            (if w00 == 0 { 1 } else { 0 }) +
+            (if w01 == 0 { 1 } else { 0 }) +
+            (if w02 == 0 { 1 } else { 0 }) +
+            (if w03 == 0 { 1 } else { 0 }) +
+            (if w04 == 0 { 1 } else { 0 }) +
+            (if w05 == 0 { 1 } else { 0 }) +
+            (if w06 == 0 { 1 } else { 0 }) +
+            (if w07 == 0 { 1 } else { 0 }) +
+            (if w08 == 0 { 1 } else { 0 }) +
+            (if w09 == 0 { 1 } else { 0 }) +
+            (if w10 == 0 { 1 } else { 0 }) +
+            (if w11 == 0 { 1 } else { 0 }) +
+            (if w12 == 0 { 1 } else { 0 }) +
+            (if w13 == 0 { 1 } else { 0 }) +
+            (if w14 == 0 { 1 } else { 0 }) +
+            (if w15 == 0 { 1 } else { 0 })
+        if on_w0 < 16 {
+            // Распределение замечено — статистическое свойство доказано,
+            // дальше повторять незачем (early-break держит стоимость
+            // теста на уровне одного batch'а в обычном прогоне).
+            distributed = true
+            break
+        }
+
+        attempt = attempt + 1
     }
 
-    // (1) Все 16 fibers actually отработали.
-    let total_ran =
-        (if w00 >= 0 { 1 } else { 0 }) +
-        (if w01 >= 0 { 1 } else { 0 }) +
-        (if w02 >= 0 { 1 } else { 0 }) +
-        (if w03 >= 0 { 1 } else { 0 }) +
-        (if w04 >= 0 { 1 } else { 0 }) +
-        (if w05 >= 0 { 1 } else { 0 }) +
-        (if w06 >= 0 { 1 } else { 0 }) +
-        (if w07 >= 0 { 1 } else { 0 }) +
-        (if w08 >= 0 { 1 } else { 0 }) +
-        (if w09 >= 0 { 1 } else { 0 }) +
-        (if w10 >= 0 { 1 } else { 0 }) +
-        (if w11 >= 0 { 1 } else { 0 }) +
-        (if w12 >= 0 { 1 } else { 0 }) +
-        (if w13 >= 0 { 1 } else { 0 }) +
-        (if w14 >= 0 { 1 } else { 0 }) +
-        (if w15 >= 0 { 1 } else { 0 })
-    assert(total_ran == 16)
-
-    // (2) Не все на одном worker'е (round-robin distribution фактически
-    // работает). Считаем сколько распределены на worker 0 — если все 16,
-    // distribution failed. С 4 workers round-robin даёт ~4 на worker.
-    let on_w0 =
-        (if w00 == 0 { 1 } else { 0 }) +
-        (if w01 == 0 { 1 } else { 0 }) +
-        (if w02 == 0 { 1 } else { 0 }) +
-        (if w03 == 0 { 1 } else { 0 }) +
-        (if w04 == 0 { 1 } else { 0 }) +
-        (if w05 == 0 { 1 } else { 0 }) +
-        (if w06 == 0 { 1 } else { 0 }) +
-        (if w07 == 0 { 1 } else { 0 }) +
-        (if w08 == 0 { 1 } else { 0 }) +
-        (if w09 == 0 { 1 } else { 0 }) +
-        (if w10 == 0 { 1 } else { 0 }) +
-        (if w11 == 0 { 1 } else { 0 }) +
-        (if w12 == 0 { 1 } else { 0 }) +
-        (if w13 == 0 { 1 } else { 0 }) +
-        (if w14 == 0 { 1 } else { 0 }) +
-        (if w15 == 0 { 1 } else { 0 })
-    // Round-robin + work-stealing: not all 16 on worker 0.
-    assert(on_w0 < 16)
+    // За <= 20 независимых batch'ей work-stealing распределил работу
+    // хотя бы раз. Сломанный round-robin (всегда worker 0) не пройдёт
+    // ни одного → distributed остаётся false → детерминированный fail.
+    assert(distributed)
 
     runtime.shutdown()
 }

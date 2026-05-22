@@ -148,6 +148,19 @@ fn str_runtime() -> Vec<RuntimeFn> {
             doc: "Длина в байтах. O(1). Для FFI / буферных операций.",
         nova_body: None,
     },
+        // Plan 90: O(1) доступ к байту — примитив для str-алгоритмов на Nova.
+        RuntimeFn {
+            module: "std.runtime.string",
+            receiver: Some("str"),
+            is_static: false, is_mut: false, is_consume: false,
+            name: "byte_at",
+            params: &[("i", "int")],
+            return_ty: "u8",
+            effects: &[],
+            c_name: "nova_str_byte_at",
+            doc: "UTF-8 байт по индексу. O(1). Panic при выходе за границы. Plan 90 — неустранимый примитив для byte-алгоритмов (lexer/find/trim) на Nova.",
+            nova_body: None,
+        },
         // Plan 75: @is_empty — логичный спутник @len; у всех коллекций есть, у str не было.
         RuntimeFn {
             module: "std.runtime.string",
