@@ -54,8 +54,23 @@ typedef struct {
     size_t      len;
 } nova_str;
 
+/* Plan 90: forward-декларация nv_panic (определён `static inline` в
+ * effects.h, который включается в nova_rt.h ПОСЛЕ array.h). Нужна для
+ * bounds-check в nova_str_byte_at и bulk slice-операциях array.h. */
+static void nv_panic(nova_str);
+
 static inline nova_str nova_str_from_cstr(const char* s) {
     return (nova_str){ s, strlen(s) };
+}
+
+/* Plan 90: O(1) доступ к байту строки. bounds-checked → panic.
+ * Неустранимый примитив для str-алгоритмов на Nova (lexer/find/trim). */
+static inline nova_byte nova_str_byte_at(nova_str s, int64_t i) {
+    if (i < 0 || (size_t)i >= s.len) {
+        nv_panic((nova_str){ .ptr = "str.byte_at: index out of bounds",
+                             .len = sizeof("str.byte_at: index out of bounds") - 1 });
+    }
+    return (nova_byte)(unsigned char)s.ptr[i];
 }
 
 /* ---- String methods ---- */
