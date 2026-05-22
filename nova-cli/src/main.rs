@@ -2579,6 +2579,18 @@ fn cmd_build(
     };
     check_module_path(&path, &module)?;
 
+    // Plan 03.1 Ф.4: синхронизировать `nova.lock` пакета entry-файла —
+    // зафиксировать граф зависимостей (path/git) для воспроизводимой
+    // сборки. Запускается ДО резолва импортов: материализует git-deps в
+    // кэше и загружает зафиксированные commit'ы, которыми затем
+    // пользуется резолвер. Файл без пакета (нет `nova.toml`) —
+    // зависимостей нет, шаг пропускается.
+    if let Some(pkg_dir) = nova_codegen::manifest::find_package_dir(&path) {
+        let _t = nova_codegen::perf_timer::PerfTimer::new("dep-lock");
+        nova_codegen::lockfile::sync(&pkg_dir)
+            .map_err(|e| anyhow!("резолюция зависимостей (nova.lock): {}", e))?;
+    }
+
     // Plan 35 Ф.1 MVP: cross-file resolve через inline expansion.
     {
         let _t = nova_codegen::perf_timer::PerfTimer::new("imports-resolve");
