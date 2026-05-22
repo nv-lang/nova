@@ -365,6 +365,37 @@ pub fn load_pins(entry_pkg_dir: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Plan 03.1 Ф.5 (`nova update`): пере-резолвить git-пины зависимостей.
+/// `only = Some(name)` — обновить одну зависимость; `None` — все
+/// git-зависимости. `path`-deps пинов не имеют — не затрагиваются.
+///
+/// Реализация: снять целевые git-записи из существующего `nova.lock`,
+/// затем `sync` — снятые с пина зависимости резолвятся «вживую» (берётся
+/// текущий commit ветки/тега), остальные остаются зафиксированными.
+pub fn update(entry_pkg_dir: &Path, only: Option<&str>) -> Result<Vec<LockedDep>> {
+    if let Some(existing) = load(entry_pkg_dir)? {
+        let kept: Vec<LockedDep> = existing
+            .packages
+            .into_iter()
+            .filter(|p| match &p.source {
+                LockedSource::Git { .. } => match only {
+                    Some(n) => p.name != n,
+                    None => false,
+                },
+                LockedSource::Path { .. } => true,
+            })
+            .collect();
+        let trimmed = LockFile {
+            version: LOCK_VERSION,
+            packages: kept,
+        };
+        let path = lock_path(entry_pkg_dir);
+        std::fs::write(&path, trimmed.render())
+            .with_context(|| format!("запись {}", path.display()))?;
+    }
+    sync(entry_pkg_dir)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
