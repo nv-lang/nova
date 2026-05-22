@@ -536,6 +536,41 @@ impl Parser {
         Ok(parts)
     }
 
+    /// Plan 84: распознаёт относительный префикс импорта.
+    /// `./` (= `Dot Slash`) — директория импортирующего файла (`up == 0`);
+    /// `../`×n (= `DotDot Slash` ×n) — n уровней вверх. Без префикса —
+    /// `ImportAnchor::Package` (абсолютный путь от корня пакета).
+    fn parse_import_anchor(&mut self) -> Result<crate::ast::ImportAnchor, Diagnostic> {
+        use crate::ast::ImportAnchor;
+        let peek2_slash = |p: &Self| -> bool {
+            p.pos + 1 < p.tokens.len()
+                && matches!(p.tokens[p.pos + 1].kind, TokenKind::Slash)
+        };
+        // `./` — директория текущего файла.
+        if matches!(self.peek().kind, TokenKind::Dot) && peek2_slash(self) {
+            self.bump(); // .
+            self.bump(); // /
+            if matches!(self.peek().kind, TokenKind::DotDot) && peek2_slash(self) {
+                return Err(Diagnostic::new(
+                    "после `./` не может идти `../` — пишите `../` напрямую",
+                    self.peek().span,
+                ));
+            }
+            return Ok(ImportAnchor::Relative { up: 0 });
+        }
+        // `../`+ — n уровней вверх.
+        if matches!(self.peek().kind, TokenKind::DotDot) && peek2_slash(self) {
+            let mut up: u32 = 0;
+            while matches!(self.peek().kind, TokenKind::DotDot) && peek2_slash(self) {
+                self.bump(); // ..
+                self.bump(); // /
+                up += 1;
+            }
+            return Ok(ImportAnchor::Relative { up });
+        }
+        Ok(ImportAnchor::Package)
+    }
+
     // ─── module-level attributes ─────────────────────────────────────────
 
     /// Plan 42.16 Ф.2: парсит module-level атрибуты ПЕРЕД `module`
@@ -828,6 +863,8 @@ impl Parser {
         // `use` будет использоваться для embedding (D39), но в bootstrap
         // мы не различаем.
         self.bump();
+        // Plan 84: относительный префикс `./` / `../` перед путём.
+        let anchor = self.parse_import_anchor()?;
         let path = self.parse_dotted_path()?;
         // Optional `.{Item1, Item2 as Alias, ...}` — selective items.
         // Префикс — `.` (= Dot), затем `{`. parse_dotted_path остановился на
@@ -900,7 +937,7 @@ impl Parser {
         }
         self.expect_newline_or_eof()?;
         let span = start.merge(self.tokens[self.pos.saturating_sub(1)].span);
-        Ok(Import { path, items, alias, is_export, span, doc_attrs })
+        Ok(Import { path, items, alias, is_export, span, doc_attrs, anchor })
     }
 
     // ─── top-level items ─────────────────────────────────────────────────
