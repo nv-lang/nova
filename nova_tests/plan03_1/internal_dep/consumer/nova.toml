@@ -1,0 +1,10 @@
+# Plan 03.1 Ф.3 fixture — потребитель зависимости `deplib_int`.
+[package]
+name = "consumer_int"
+version = "0.1.0"
+
+[lib]
+src = "."
+
+[dependencies]
+deplib_int = { path = "../deplib" }

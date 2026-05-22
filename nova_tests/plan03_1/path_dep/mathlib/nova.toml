@@ -1,0 +1,9 @@
+# Plan 03.1 Ф.3 fixture — path-зависимость `mathlib`.
+[package]
+name = "mathlib"
+version = "0.1.0"
+
+[lib]
+src = "."
+
+[dependencies]

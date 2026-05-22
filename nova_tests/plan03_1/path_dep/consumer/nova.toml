@@ -1,0 +1,10 @@
+# Plan 03.1 Ф.3 fixture — потребитель path-зависимости `mathlib`.
+[package]
+name = "pd_consumer"
+version = "0.1.0"
+
+[lib]
+src = "."
+
+[dependencies]
+mathlib = { path = "../mathlib" }

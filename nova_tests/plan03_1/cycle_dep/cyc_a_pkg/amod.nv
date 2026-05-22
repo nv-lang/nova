@@ -1,0 +1,6 @@
+// Plan 03.1 Ф.3 — участник межпакетного цикла A→B→A.
+module cyc_a_pkg.amod
+
+import cyc_b_pkg.bmod.{b_val}
+
+export const a_val int = 1

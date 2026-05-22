@@ -1,0 +1,10 @@
+// Plan 03.1 Ф.3 — обычный модуль пакета `nova_tests`. Служит мишенью
+// для negative-теста `cross_pkg_neg` (импорт чужого пакета без
+// `[dependencies]`) и сам по себе — валидный проходящий тест.
+module nova_tests.plan03_1.shared_target
+
+export fn shared_value() -> int => 42
+
+test "shared_target self-check" {
+    assert(shared_value() == 42)
+}

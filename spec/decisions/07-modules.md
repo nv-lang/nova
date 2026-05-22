@@ -52,6 +52,8 @@ Nova-«пакет» = Go-«module» = Cargo/npm-«package». С Cargo и npm
 | [D99](#d99-conditional-compilation-filename-suffix--cfg) | Conditional compilation: filename suffix + `#cfg` |
 | [D100](#d100-_modulenv-peer--module-config-convention) | `_module.nv` peer — module-config convention |
 | [D101](#d101-doc-attribute--module-level-inline-documentation) | `#doc` attribute — module-level inline documentation |
+| [D134](#d134-symbol-mangling-v0--c-имена-свободных-функций) | Symbol mangling v0 — C-имена свободных функций |
+| [D138](#d138-межпакетный-импорт--только-через-объявленную-зависимость) | Межпакетный импорт — только через объявленную `[dependencies]`-зависимость |
 
 ---
 
@@ -989,6 +991,11 @@ source = "path+../local-lib"                # для local — без hash
 Без префикса формат был бы неоднозначным. С префиксом — однозначно
 для tooling'а и для человека.
 
+> **Реализация (Plan 03.1).** Пример выше — целевой формат registry-
+> эпохи. Реализованное подмножество (`path`/`git`-deps) использует
+> раздельные поля вместо комбинированного `source`-префикса — точный
+> формат см. в разделе «Реализация: Plan 03.1» ниже.
+
 #### Resolution — SAT с lockfile
 
 Используется **SAT-алгоритм** (стандарт индустрии 2020+: Cargo, npm,
@@ -1246,6 +1253,58 @@ attribute parser).
    будущих миграций. v2 lockfile должен парситься старым tooling'ом
    с понятным error'ом.
 
+### Реализация: Plan 03.1 (`path`/`git`-зависимости)
+
+D78 выше описывает **полный** целевой tooling-стек. Реализован пока
+**первый срез** — [Plan 03.1](../../docs/plans/03.1-path-git-dependencies.md):
+`path`- и `git`-зависимости (без registry, без version-ranges, без SAT).
+
+**Что работает:**
+
+- Парсинг `[dependencies]`: `{ path = "..." }`, `{ git = "...",
+  rev|tag|branch = "..." }`, и `"<version>"` (registry-форма — парсится,
+  но **не резолвится** до Plan 03.3).
+- Межпакетный резолв: первый сегмент import-пути — имя объявленной
+  зависимости; модуль резолвится в её дереве правилами D29. Импорт чужого
+  пакета **обязан** идти через `[dependencies]` — workspace-членство само
+  по себе пакет импортируемым не делает (explicit dependency-граф).
+  `std` — неявное исключение. `internal/` (rule H) зависимости снаружи
+  недоступен. Правило видимости формализовано отдельным решением —
+  [D138](#d138-межпакетный-импорт--только-через-объявленную-зависимость).
+- `git`-зависимости: bare-клон + worktree-checkout по commit'у в кэше
+  (`$NOVA_HOME/git` либо `~/.nova/git`); offline-режим `NOVA_OFFLINE=1`.
+- `nova add` / `nova update` — правка `[dependencies]` + `nova.lock`.
+
+**Фактический формат `nova.lock` (v1, реализованное подмножество)** —
+раздельные поля вместо комбинированного `source`-префикса; registry-
+записи (с `hash`) добавит Plan 03.3:
+
+```toml
+version = 1
+
+[[package]]
+name = "mathlib"
+source = "path"
+path = "../mathlib"
+
+[[package]]
+name = "gitlib"
+source = "git"
+git = "https://example.org/gitlib.nv"
+pin = "tag:v1.0.0"
+commit = "a1b2c3d4e5f6..."          # точный commit — integrity-пин
+```
+
+`git`-commit криптографически адресует дерево исходников — это и есть
+tamper-evidence 03.1 (паритет с `Cargo.lock`). Отдельный `sha256` дерева,
+подписи и SBOM — supply-chain hardening Plan 03.4. `path`-deps без
+hash-пина (локальны, мутабельны). Неизвестные ключи парсер игнорирует —
+формат расширяется без breaking change.
+
+**Отложено:** version-ranges + SAT/pubgrub (Plan 03.2), central registry
+(Plan 03.3), `nova audit` / effect-surface / capability-confined deps
+(Plan 03.4), `[dev-dependencies]`, `[features]`-резолюция.
+
 ### Связь
 
 - [D29](#d29-модули-и-импорты) — модули, иерархия, импорты. D78
@@ -1253,6 +1312,9 @@ attribute parser).
   внешние пакеты.
 - [D26](08-runtime.md#d26) — prelude. D78 описывает opt-out.
 - [D30](03-syntax.md#d30) — конвенции имён модулей и файлов.
+- [D138](#d138-межпакетный-импорт--только-через-объявленную-зависимость)
+  — расширяет D78: правило видимости межпакетного импорта (только через
+  объявленную `[dependencies]`-зависимость).
 - [D64](04-effects.md#d64) — `realtime { }` блок; prelude opt-out
   полезен для real-time uses.
 - [std/data/semver.nv](../../std/data/semver.nv) —
@@ -1614,3 +1676,65 @@ fallback на legacy `nova_fn_<name>`.
 - [Plan 48](../../docs/plans/48-closures-in-generics.md) — mono-кодирование.
 - [Plan 03](../../docs/plans/03-package-ecosystem-roadmap.md) — multi-crate
   будущее, где модульный mangling строго обязателен.
+
+---
+
+## D138. Межпакетный импорт — только через объявленную зависимость
+
+**Статус:** принято, реализовано ([Plan 03.1](../../docs/plans/03.1-path-git-dependencies.md) Ф.3).
+
+**Контекст.** Первый сегмент import-пути — имя пакета ([D29](#d29-модули-и-импорты)).
+До [Plan 03.1](../../docs/plans/03.1-path-git-dependencies.md) резолвер
+искал модули по repo-root: модуль **любого** пакета в дереве находился
+неявно. В monorepo это значило, что член workspace мог импортировать
+другого члена, **не объявляя** зависимости от него. Looseness: неявный
+dependency-граф, засорённый namespace, нет единой точки для версии и
+ограничений зависимости.
+
+**Решение.** Импорт, чей первый сегмент резолвится в файл **другого
+пакета** (иной корень `nova.toml`), требует, чтобы этот пакет был
+**явно объявлен** в `[dependencies]` импортирующего пакета.
+
+- **Workspace-членство само по себе импортируемости не даёт** (модель
+  Cargo, не Go). `[workspace] members` группирует пакеты для сборки и
+  единого `nova.lock` — но `import` между ними всё равно проходит через
+  `[dependencies]` (обычно `{ path = "..." }`).
+- **`std` — неявное исключение:** стандартная библиотека доступна без
+  записи в `[dependencies]` (как Rust `std`). Машинерия D138 — для
+  **не-`std`** пакетов.
+- Импорт чужого пакета мимо `[dependencies]` — **ошибка компиляции** с
+  указанием обоих пакетов и подсказкой объявить зависимость.
+- Внутри своего пакета межмодульный импорт не затронут: путь от корня
+  пакета либо относительный `./` / `../` ([D29](#d29-модули-и-импорты)
+  rev-4) — `package_root_of` тот же.
+- `internal/`-граница ([D29](#d29-модули-и-импорты) rule H) соблюдается
+  и через границу пакета: `dep.internal.*` снаружи недоступен.
+
+**Почему.**
+
+- **Explicit dependency-граф — AI-first.** Откуда взялся импортируемый
+  символ — видно прямо в манифесте, без сканирования дерева. Агент
+  (и человек) читает `[dependencies]` и знает полную внешнюю поверхность.
+- **Гигиена namespace.** Член workspace, от которого ты не зависишь, не
+  должен быть случайно импортируемым — иначе любой пакет «видит» все
+  остальные.
+- **Единая точка истины.** Версия, `forbid`-ограничения (capability-
+  confined deps, Plan 03.4), effect-surface зависимости — привязаны к
+  одной записи `[dependencies]`.
+
+**Коллизия имён.** Объявленная зависимость и локальный модуль с
+одинаковым первым сегментом — выигрывает зависимость (объявление
+явное). Имя `std` в `[dependencies]` запрещено (зарезервировано).
+Дубликат имени зависимости — ошибка конфигурации.
+
+### Связь
+
+- [D78](#d78-package-tooling-novatoml-novalock-registry-chain-workspace)
+  — `nova.toml` / `[dependencies]` / workspace; D138 фиксирует **правило
+  видимости** межпакетного импорта поверх формата D78.
+- [D29](#d29-модули-и-импорты) — модули, импорты, `internal/` rule H,
+  относительные импорты.
+- [Plan 03.1](../../docs/plans/03.1-path-git-dependencies.md) — реализация
+  (`lookup_dependency` + ужесточение repo-root резолва).
+- [Plan 84](../../docs/plans/84-relative-imports.md) — относительные
+  импорты package-scoped; межпакетное — всегда полный путь.
