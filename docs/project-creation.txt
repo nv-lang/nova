@@ -17730,3 +17730,19 @@ codegen-dispatch'а НЕТ (операции инлайн), `uv_queue_work` не
 целиком, включая первых потребителей эффекта; ~6-8 dev-days, отдельная
 сфокусированная работа. Ф.0 закрыта, точка интеграции зафиксирована в
 плане; Ф.1-Ф.5 не начаты.
+
+### Plan 83.3 — Ф.1 runtime-механизм blocking-offload (✅ runtime-часть)
+
+nova_blocking_offload в fibers.h — увод leaf-блокирующей работы на libuv
+threadpool (uv_queue_work), park fiber'а, освобождение worker'а. Wake —
+из after_work_cb на home-worker'е. Переиспользует park/wake D93 (как
+Time.sleep); проще sleep'а — uv_work_t это request, не handle, без
+close-dance. Cancel: uv_cancel отменяет не-стартовавшую работу,
+in-flight доводится (industry-standard — Go не прерывает cgo, tokio не
+отменяет running spawn_blocking); stop_cb → NOVA_STOP_ASYNC. V1-контракт:
+blocking-работа — leaf (work_cb на не-Boehm-registered потоке).
+Build-verified (static inline — компилируется начисто, 0 регрессий).
+Ф.4 (codegen-обвязка blocking{} — emit_spawn-style block-extraction) +
+lexer/parser/AST/typecheck — отдельная сфокусированная сессия; полная
+карта реализации в плане 83.3 §7.
+Suite: 1021 PASS / 0 FAIL.

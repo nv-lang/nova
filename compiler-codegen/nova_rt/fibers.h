@@ -1543,6 +1543,103 @@ static inline void _nova_sleep_via_libuv(NovaFiberQueue* scope, int slot,
     }
 }
 
+/* ─── Plan 83.3 Ф.1: `Blocking`-эффект → libuv threadpool offload ───
+ *
+ * Genuinely-blocking работа (FFI в блокирующие C-библиотеки, syscall'ы
+ * вне uv_fs) выполненная инлайн на worker'е пинит весь worker — теряется
+ * один `P` (Plan 83 §3 П1/П2). Решение: увести работу в libuv threadpool
+ * (uv_queue_work), запарковать fiber, освободить worker.
+ *
+ * Переиспользует park/wake D93 (тот же путь, что Time.sleep). Отличие от
+ * sleep: uv_work_t — это REQUEST, не handle → не нужен uv_close-dance.
+ * После after_work_cb libuv с request'ом закончил.
+ *
+ * Lifecycle:
+ *   START → uv_queue_work → register_pending → park
+ *     (work_cb на threadpool-потоке делает блокирующую работу)
+ *     → after_work_cb на loop'е worker'а-владельца: done=true, wake
+ *     → fiber резюмится, sanity-check done, unregister + return
+ *   cancel:
+ *     cancel_all_pending → stop_cb: uv_cancel (отменяет ТОЛЬКО
+ *       не-стартовавшую работу), return ASYNC
+ *     → after_work_cb всё равно отработает (status=UV_ECANCELED либо 0)
+ *       → wake; fiber видит cancel_requested → throw
+ *
+ * V1-контракт (D50, Plan 83.3 Ф.2): `fn` — LEAF: FFI/syscall без
+ * GC-аллокации и без вызовов обратно в Nova-рантайм (work_cb идёт на
+ * потоке, не зарегистрированном в Boehm и не являющемся fiber'ом). */
+
+typedef struct {
+    NovaFiberQueue* scope;
+    int             slot;
+    uv_work_t       work;
+    void          (*fn)(void*);  /* leaf-работа (V1) */
+    void*           arg;
+    bool            done;        /* after_work_cb отработал */
+} NovaBlockingState;
+
+/* Выполняется на потоке libuv threadpool. НЕ Boehm-registered, НЕ fiber.
+ * V1: `fn` обязан быть leaf (см. контракт выше). */
+static void _nova_blocking_work_cb(uv_work_t* req) {
+    NovaBlockingState* st = (NovaBlockingState*)req->data;
+    st->fn(st->arg);
+}
+
+/* Выполняется обратно на loop'е submitting worker'а (libuv threadpool
+ * процесс-глобален, after_work_cb приходит на тот loop, что submit'ил).
+ * Будит запаркованный fiber. `status` == UV_ECANCELED если работа была
+ * отменена до старта — fiber всё равно будится (сам проверит cancel). */
+static void _nova_blocking_after_cb(uv_work_t* req, int status) {
+    (void)status;
+    NovaBlockingState* st = (NovaBlockingState*)req->data;
+    st->done = true;
+    nova_sched_wake(st->scope, st->slot);
+}
+
+/* stop_cb для cancel-integration (D93 ASYNC contract). uv_cancel
+ * отменяет работу ТОЛЬКО если она ещё не подхвачена threadpool-потоком;
+ * in-flight C-вызов непрозрачен и доводится до конца — industry-standard
+ * (Go не прерывает блокирующий cgo, tokio не отменяет running
+ * spawn_blocking). В обоих случаях after_work_cb отработает → wake. */
+static NovaStopMode _nova_blocking_stop_cb(void* handle) {
+    uv_work_t* req = (uv_work_t*)handle;
+    uv_cancel((uv_req_t*)req);  /* best-effort; result игнорируем */
+    return NOVA_STOP_ASYNC;
+}
+
+/* Fiber-context blocking offload. Уводит leaf-блокирующую `fn` на libuv
+ * threadpool, паркует fiber, освобождает worker до завершения работы.
+ * PRECONDITION: вызывается из fiber-контекста (scope/slot валидны). */
+static inline void nova_blocking_offload(NovaFiberQueue* scope, int slot,
+                                          void (*fn)(void*), void* arg) {
+    NovaBlockingState st = {
+        .scope = scope,
+        .slot  = slot,
+        .fn    = fn,
+        .arg   = arg,
+        .done  = false,
+    };
+    st.work.data = &st;
+    int rc = uv_queue_work(nova_current_loop(), &st.work,
+                           _nova_blocking_work_cb, _nova_blocking_after_cb);
+    if (rc != 0) {
+        fprintf(stderr, "nova: FATAL uv_queue_work failed: %s\n",
+                uv_strerror(rc));
+        abort();
+    }
+    /* Register для cancel-wake (D93). */
+    nova_sched_register_pending(scope, slot, &st.work, _nova_blocking_stop_cb);
+    /* Один park на весь lifecycle. after_work_cb выполняется только когда
+     * worker loop крутит uv_run — т.е. строго после этого park'а. */
+    nova_sched_park(scope, slot);
+    nova_sched_unregister_pending(scope, slot);
+    if (!st.done) {
+        fprintf(stderr,
+            "nova: FATAL blocking wake before after_work_cb — D93 protocol bug\n");
+        abort();
+    }
+}
+
 /* Default impl: context-sensitive sleep (D71 + Plan 22 F2 libuv mandatory).
  *  - In fiber: park-on-uv_timer (Plan 22 Ф.4, D93)
  *  - On main inside supervised body → drain queue + bounded uv_run.
