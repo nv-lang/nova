@@ -18557,3 +18557,68 @@ Decision points:
   Option-match codegen (тот же, что if let Some(x) = opt).
 
 GATE пройден — переход к Ф.1.
+
+═══════════════════════════════════════════════════════════════════════
+Plan 95 Ф.1-Ф.3 — Инфраструктура method-only mono для Option/Result
+2026-05-23 (worktree d:/Sources/nv-lang/nova-p95)
+═══════════════════════════════════════════════════════════════════════
+
+Ф.1 method-collection + routing:
+- Поле builtin_sum_type_params: HashMap<String, Vec<String>> на CEmitter
+  захватывает имена type-параметров (`T` для Option, `T`,`E` для Result)
+  в секции 1a ДО continue-skip из generic_type_templates.
+- Цикл сбора методов (emit_c.rs:1568) расширен: Nova-body методы на
+  Option/Result собираются в generic_type_methods (но НЕ в
+  generic_type_templates — представление NovaOpt_<T> сохраняется).
+- Drain mono-worklist (emit_c.rs:2280) получил fallback на
+  generic_type_methods.get(recv_type) для builtin типов (point #12 Ф.0).
+- init_prelude_decls_from_items: non-external методы Option/Result →
+  routing MethodRouting::DeclaredBody { has_nova_body: true } (override
+  baseline HardcodedRuntimeFn). External методы остаются C-routed.
+- Unit-тесты: test_init_prelude_decls_from_items_nova_body_overrides_*
+  для Option + Result (2 новых, оба зелёные).
+
+Ф.2 receiver-type + mono-name:
+- Хелпер builtin_sum_receiver_c_type резолвит NovaOpt_<sani(T)> /
+  NovaRes_<ok>_<err>* из current_type_subst через сохранённые
+  builtin_sum_type_params. Defensive fallback Nova_<T>* при отсутствии
+  subst (loud CC-fail).
+- receiver_c_type спец-кейсит "Option"/"Result" → builtin helper.
+- Mono-name = форма трамплина (Nova_Option_method_<m>_<T_sani> /
+  Nova_Result_method_<m>_<n> через result_method_c_name) — call-site
+  mangling не меняется → следствие: удаление трамплинов обязано
+  лэндиться в одном коммите с переносом тела (Ф.4/Ф.5).
+- Новое поле builtin_sum_method_fwd_decls + placeholder
+  __BUILTIN_SUM_METHOD_FWD_DECLS__ ПОСЛЕ NovaOpt/NovaRes typedef
+  placeholder'ов. Без этого fwd-decl с NovaOpt_<T> by-value падает
+  с incomplete type (typedef эмитится позже в файле).
+- register_mono_method_instance роутит fwd-decl в этот buffer для
+  builtin типов; user типы — в стандартный mono_fwd_decls.
+
+Ф.3 dispatch:
+- DeclaredBody-ветка в перехвате NovaOpt_ (emit_c.rs:~14225) — находит
+  FnDecl, recover real T через novaopt_value_types, type_subst через
+  param_names, register_mono_method_instance + emit вызова.
+- Параллельная DeclaredBody-ветка в перехвате is_result_like
+  (emit_c.rs:~14245) — type_subst (T,E) через novares_ok_err.
+- В emit_fn_forward_decl и emit_fn — skip для non-external методов
+  Option/Result: они эмитятся ТОЛЬКО через mono channel. Без этого
+  регулярный fwd-decl эмитил erased Nova_Option* (incomplete) и
+  ломал CC.
+
+Probe-фикстуры (Ф.6 placeholder, валидация инфры):
+- nova_tests/plan95/probe_option_method_nova_body.nv:
+  fn Option[T] @my_present() => match @ { Some(_) => true, None => false }
+  — 2 теста (Option[int], Option[str]) → PASS.
+- nova_tests/plan95/probe_result_method_nova_body.nv:
+  fn Result[T,E] @my_succeeded() => match @ { Ok(_) => true, Err(_) => false }
+  — 1 тест (Result[int,str]) → PASS.
+
+Регрессия: plan62 (36/0), plan89 (7/0) зелёные.
+
+GATE-результат Plan 93 Ф.0 ОПРОВЕРГНУТ конструктивно: «~8 codegen-точек,
+непропорциональная работа» — фактически локализована в ~5 связанных
+точках (#1 collect, #2 routing, #3 receiver_c_type, #4/#5 mono, #6/#7
+dispatch, #12 drain fallback, +новый fwd-decl-buffer для ordering).
+Подход B (method-only mono, представление не трогается) — корректный
+production-grade вариант.
