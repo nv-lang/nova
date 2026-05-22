@@ -22,6 +22,7 @@ package `nova`, crate `nova-cli`).
   - [`nova run`](#nova-run) — интерпретатор
   - [`nova add`](#nova-add) — добавить зависимость
   - [`nova update`](#nova-update) — пере-резолвить git-пины
+  - [`nova info`](#nova-info) — effect-surface пакета
   - [`nova build`](#nova-build) — компиляция в native
   - [`nova test`](#nova-test) — запуск тестов
   - [`nova test-build`](#nova-test-build) — единичный тест-build
@@ -293,6 +294,51 @@ nova update [NAME] [--precise NAME@VERSION]
   иначе — конфликт.
 - `path`-зависимости пинов не имеют — такой аргумент отвергается с
   пояснением.
+
+---
+
+### `nova info`
+
+Показать **effect-surface** пакета — агрегированные эффекты его
+публичного API ([Plan 03.4](plans/03.4-effect-aware-tooling.md) / D140).
+Nova-уникальное: в Cargo/npm узнать, что зависимость ходит в сеть, без
+аудита кода невозможно.
+
+```
+nova info TARGET [--format human|json] [--diff BASE [--fail-on-new]]
+```
+
+| Флаг | Описание |
+|---|---|
+| `TARGET` | Путь к пакету (`.nv`-файл / каталог) либо имя зависимости из `[dependencies]` текущего пакета |
+| `--format` | `human` (default) или `json` |
+| `--diff BASE` | Сравнить effect-surface TARGET с BASE (путь либо зависимость) — добавленные/убранные эффекты |
+| `--fail-on-new` | С `--diff`: ненулевой exit-код при появлении новых эффектов (CI-gate против supply-chain) |
+
+- Effect-surface = объединение эффектов всех `export`-функций (D28 —
+  публичные функции объявляют эффекты явно → surface точна без
+  межпроцедурного анализа). Приватные функции не входят.
+- `--diff` — supply-chain сигнал: `Net`/`Fs` в patch/minor-релизе ранее
+  «чистого» API — красный флаг.
+
+```bash
+nova info ./mylib                    # effect-surface локального пакета
+nova info somedep                    # объявленной зависимости
+nova info somedep --format json
+nova info ./v2 --diff ./v1 --fail-on-new   # CI: падение, если v2 добавил эффекты
+```
+
+**Capability-confined зависимости.** Зависимость можно ограничить через
+`forbid` в `nova.toml`:
+
+```toml
+[dependencies]
+parser = { git = "https://example.org/parser.nv", forbid = ["Net", "Fs"] }
+```
+
+`nova build` вычисляет effect-surface зависимости и **валит сборку**,
+если она использует запрещённый эффект — песочница на уровне типов
+(сильнее рантаймовых permission-моделей). См. D63 / D140.
 
 ---
 
