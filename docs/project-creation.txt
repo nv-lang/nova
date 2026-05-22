@@ -17413,3 +17413,32 @@ Worker-count resolution + NOVA_MAXPROCS.
   M-83.1-cgroup-static-read / M-83.1-maxprocs-clamp-fixed в
   simplifications.md.
 Suite: 956 PASS / 0 FAIL (954 baseline + 2).
+
+### Plan 83.1 — M:N-инфраструктура, Ф.3 (✅)
+
+API reshape: runtime.init → опциональный тюнер + getter runtime.maxprocs.
+- runtime.maxprocs() — целевое число worker'ов (аналог Go
+  GOMAXPROCS(-1)). Резолвится через nova_runtime_resolve_maxprocs даже
+  до runtime.init; кэшируется (резолвер детерминирован — кэш не даёт
+  спамить clamp/invalid-диагностику на каждом вызове getter'а).
+  Отличается от worker_count(): maxprocs = цель, worker_count =
+  фактически поднятые потоки.
+- runtime.init при уже поднятом пуле — диагностируемый no-op на stderr,
+  не молчаливый (раньше — тихий idempotent no-op, маскировал бы баг
+  конфигурации). Не abort: существующий пул корректен. runtime.init —
+  одноразовый тюнер.
+- Заголовок std/runtime/runtime.nv переписан production-honest: убрано
+  «opt-in proof of concept / не для production» (M:N прошёл Plan 44.x
+  hardening — channels/work-stealing/preemption/fiber-arena);
+  документирован порядок разрешения worker-count + NOVA_MAXPROCS.
+  Добавлена декларация runtime.maxprocs().
+- Спека: D136 (06-concurrency.md) — worker-count resolution order +
+  NOVA_MAXPROCS + clamp [1,1024] + известная дельта vs Go (статическое
+  чтение cgroup-квоты, Go 1.25 — динамическое).
+- emit_c.rs: dispatch + type-infer для runtime.maxprocs().
+- Тесты: mn_maxprocs_clamp (clamp-граница через maxprocs() — резолв
+  БЕЗ спавна 1024 потоков; тот тест, что в Ф.1+Ф.2 был отложен из-за
+  oversubscription), mn_maxprocs_getter (maxprocs до/после init/
+  shutdown). mn_runtime_smoke «init idempotent» → «second init
+  diagnosed no-op» + EXPECT_STDERR.
+Suite: 958 PASS / 0 FAIL (956 + 2).

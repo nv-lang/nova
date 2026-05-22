@@ -1,0 +1,29 @@
+// Plan 83.1 Ф.3: runtime.maxprocs() — целевое число worker-потоков.
+//
+// maxprocs() резолвит целевое число даже ДО runtime.init (в отличие от
+// worker_count(), который = 0 пока пул не поднят). После init —
+// совпадает с числом фактически поднятых worker'ов.
+
+module concurrency.mn_maxprocs_getter
+
+test "maxprocs resolves a positive target before init" {
+    assert(!runtime.is_initialized())
+    assert(runtime.maxprocs() > 0)
+    // worker_count = 0 пока пул не поднят, maxprocs() — цель.
+    assert(runtime.worker_count() == 0)
+}
+
+test "maxprocs reflects explicit init(n)" {
+    runtime.init(4)
+    assert(runtime.maxprocs() == 4)
+    assert(runtime.worker_count() == 4)
+    runtime.shutdown()
+}
+
+test "maxprocs stays resolvable after shutdown" {
+    runtime.init(2)
+    runtime.shutdown()
+    assert(!runtime.is_initialized())
+    // после shutdown — снова цель по умолчанию (auto-detect), > 0.
+    assert(runtime.maxprocs() > 0)
+}

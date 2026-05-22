@@ -7,6 +7,11 @@
 //
 // Real workload distribution — Plan 45+. Сейчас просто infrastructure
 // liveness check.
+//
+// Plan 83.1 Ф.3: повторный runtime.init при уже поднятом пуле —
+// диагностируемый no-op (не молчаливый). Срабатывает в тесте
+// "second init while running ..." ниже.
+// EXPECT_STDERR one-shot tuner
 
 module concurrency.mn_runtime_smoke
 
@@ -28,9 +33,12 @@ test "init + shutdown lifecycle (2 workers)" {
     assert(runtime.worker_count() == 0)
 }
 
-test "init idempotent" {
+test "second init while running is a diagnosed no-op" {
+    // Plan 83.1 Ф.3: runtime.init — одноразовый тюнер. Повторный вызов
+    // при уже поднятом пуле диагностируется на stderr и игнорируется
+    // (пул не пересоздаётся — worker_count остаётся прежним).
     runtime.init(1)
-    runtime.init(99)  // ignored — already initialized
+    runtime.init(99)  // diagnosed no-op
     assert(runtime.worker_count() == 1)
     runtime.shutdown()
 }

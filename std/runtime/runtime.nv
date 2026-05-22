@@ -1,29 +1,32 @@
-// std/runtime/runtime.nv — M:N runtime control API (Plan 44).
+// std/runtime/runtime.nv — M:N runtime control API.
 //
-// **Status: opt-in proof of concept.** Bootstrap default остаётся
-// single-threaded cooperative. M:N активируется через `runtime.init(n)`.
+// M:N-рантайм Nova — production-grade: work-stealing scheduler
+// (Plan 44.5), preemption (Plan 44.7), per-worker libuv loop (D98),
+// hardened channels (Plan 44.1), fiber arena (Plan 44.2). Сейчас он
+// **opt-in**: параллелизм включается вызовом `runtime.init`. Перевод
+// M:N в дефолт — Plan 83.2.
 //
 // **NOT auto-gen.** Hardcoded namespace `runtime.*` через emit_c.rs.
 //
+// Число worker-потоков (Plan 83.1, порядок разрешения):
+//   explicit runtime.init(n>0)  >  ENV NOVA_MAXPROCS  >  auto-detect
+//   (uv_available_parallelism — cgroup+affinity-aware).
+// Клэмп [1, 1024]. `NOVA_MAXPROCS` — аналог `GOMAXPROCS`; невалидное
+// значение → диагностика + fallback на auto-detect.
+//
 // API:
-//   import std.runtime.runtime
+//   runtime.init(n)          // поднять worker-пул (0 = auto/NOVA_MAXPROCS)
+//   runtime.shutdown()       // graceful join всех worker'ов
+//   runtime.maxprocs()       // целевое число worker'ов (резолвится и до init)
+//   runtime.worker_count()   // фактически поднятые worker'ы (0 если не поднят)
+//   runtime.is_initialized() // bool — M:N-пул активен?
+//   runtime.current_worker_id() // id worker'а (-1 = main thread)
+//   runtime.yield()          // кооперативный yield
 //
-//   runtime.init(n)        // start n worker threads (0 = auto-detect)
-//   runtime.shutdown()     // graceful join all workers
-//   runtime.worker_count() // currently running workers
-//   runtime.is_initialized() // bool — multi-thread active?
-//
-// **Каноническая граница использования:**
-// До `runtime.init()` — single-thread cooperative (default Nova).
-// После — M:N через worker pool. `runtime.shutdown()` восстанавливает
-// single-thread state (workers joined, resources freed).
-//
-// Use cases (Plan 44.1 (Plan 44 Этап 0)):
-// - Smoke test что infrastructure работает.
-// - Diagnostic поверх runtime'а (worker counts, current id).
-//
-// **Не предназначен для production использования** в Этапе 0 — bootstrap
-// scheduler не параметризован per-worker libuv loop (Plan 45+).
+// `runtime.init` — **одноразовый тюнер**: вызывается один раз до первого
+// spawn. Повторный вызов при уже поднятом пуле — диагностируемый no-op
+// (не молчаливый — баг конфигурации не маскируется). `runtime.shutdown()`
+// останавливает пул; после него `runtime.init` снова валиден.
 
 module runtime.runtime
 
@@ -74,9 +77,26 @@ export external fn runtime.shutdown() -> ()
 /// # See Also
 ///
 /// - `[runtime.init]` — запустить runtime
+/// - `[runtime.maxprocs]` — целевое (а не фактическое) число worker'ов
 /// - `[runtime.is_initialized]` — bool-проверка
 #stable(since = "0.1")
 export external fn runtime.worker_count() -> int
+
+/// Целевое число worker-потоков (аналог Go `runtime.GOMAXPROCS(-1)`).
+///
+/// Отличается от `[runtime.worker_count]`: `maxprocs()` — **цель**
+/// (резолвится из `NOVA_MAXPROCS` / auto-detect даже до `runtime.init`),
+/// `worker_count()` — фактически поднятые потоки.
+///
+/// Порядок разрешения: explicit `runtime.init(n)` > ENV `NOVA_MAXPROCS`
+/// > `uv_available_parallelism()`. Результат всегда в диапазоне [1, 1024].
+///
+/// # See Also
+///
+/// - `[runtime.worker_count]` — фактически поднятые worker'ы
+/// - `[runtime.init]` — запустить runtime
+#stable(since = "0.1")
+export external fn runtime.maxprocs() -> int
 
 /// Проверить, активен ли M:N runtime.
 ///
