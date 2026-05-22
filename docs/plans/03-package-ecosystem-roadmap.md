@@ -107,7 +107,7 @@ Supply-chain — главная проблема пакетных менедже
 | **03.1** | [03.1-path-git-dependencies.md](03.1-path-git-dependencies.md) | `path`- и `git`-зависимости в bootstrap-компиляторе + `nova.lock` для них. **Без registry, без self-host.** | нет | ✅ **ЗАКРЫТ** 2026-05-22 |
 | **03.2** | [03.2-version-resolution.md](03.2-version-resolution.md) | semver-диапазоны (`^1.2`) + backtracking-резолвер + `nova update`. | 03.1 | ✅ **ЗАКРЫТ** 2026-05-22 |
 | **03.3** | `03.3-registry-protocol.md` (план) | HTTP registry protocol + content-addressing + подпись + transparency log (§5). | 03.2 | после 03.2 |
-| **03.4** | [03.4-effect-aware-tooling.md](03.4-effect-aware-tooling.md) | `nova info` + effect-surface + effect-diff + capability-confined deps (§4 — Nova-уникальное). `publish`/`search`/`audit` — registry-gated. | 03.1, 03.2 | 🟡 **в работе** (effect-срез) |
+| **03.4** | [03.4-effect-aware-tooling.md](03.4-effect-aware-tooling.md) | `nova info` + effect-surface + effect-diff + capability-confined deps (§4 — Nova-уникальное). `publish`/`search`/`audit` — registry-gated. | 03.1, 03.2 | ✅ **ЗАКРЫТ** 2026-05-22 (effect-срез) |
 | **03.5** | `03.5-registry-hosting.md` (план) | `nova-registry.org` — хостинг, UI, CDN, policy-документы. Инфраструктура. | 03.3, 03.4 | после кода |
 | **03.6** | `03.6-stdlib-delivery-and-first-libs.md` (план) | Решение «stdlib vendored vs пакет» + первые community-библиотеки. | 03.5 | последним |
 
