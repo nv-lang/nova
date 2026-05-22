@@ -1,241 +1,148 @@
-# Plan 03: Package ecosystem roadmap
+// SPDX-License-Identifier: MIT OR Apache-2.0
+# Plan 03: Package ecosystem — roadmap-индекс
 
-Детализированный план постройки экосистемы пакетов Nova — от
-self-hosted compiler до публичного registry с опубликованными
-библиотеками.
-
-Дополняет [01-roadmap-v0.1.md](01-roadmap-v0.1.md) (общий roadmap
-по версиям компилятора). Здесь — конкретно про **пакетный менеджмент,
-registry и self-hosting** как зависимый от чего-либо набор задач.
-
-Spec-уровень — [D78](../../spec/decisions/07-modules.md#d78) (manifest,
-lockfile, registry chain, workspace, package tooling).
-
----
-
-## Текущее состояние (2026-05-07)
-
-- ✅ **Spec D78** написан: `nova.toml`, `nova.lock` format, registry
-  chain, workspace.
-- ✅ **Workspace структура** реализована: корневой `nova.toml` + per-
-  member `nova.toml` (`std/`, `examples/`, `nova_tests/`).
-- ✅ **Module path = file path** enforcement (D78) — bootstrap
-  компилятор уже должен это проверять.
-- ❌ `[registry]` секция убрана из корневого `nova.toml` —
-  преждевременна (placeholder URL без инфраструктуры за ним).
-- ❌ `nova` CLI с `add`/`publish`/`update` командами — не написан.
-- ❌ Lockfile resolution (SAT-алгоритм) — не реализован.
-- ❌ Registry HTTP-протокол — не описан.
-- ❌ `nova-registry.org` — домен не куплен, инфраструктуры нет.
-- ❌ Опубликованных пакетов — ноль.
-
-Сейчас **единственный способ зависимости** — `path = "../foo"` или
-`git = "https://..."` (когда tooling поддержит). Зависимостей с
-versioning через registry — нет и не будет до полного roadmap'а
-ниже.
+> **Создан:** 2026-05-07. **Редакция 2** (2026-05-22): production-grade
+> переработка — честное сравнение с Cargo/npm/Go-mod/Deno/pip,
+> Nova-уникальный угол (effect-aware зависимости), production security-
+> модель, **декомпозиция** на под-планы 03.1–03.6.
+> **Статус:** roadmap-индекс. **Приоритет:** P3 — после bootstrap/stdlib;
+> **но 03.1 (`path`/`git`-зависимости) можно делать раньше** (§6).
+> **Spec:** [D78](../../spec/decisions/07-modules.md#d78) (`nova.toml`,
+> `nova.lock`, registry chain, workspace).
 
 ---
 
-## Roadmap
+## 1. Что
 
-### Шаг 1. Self-hosted compiler
+Экосистема пакетов Nova: от зависимостей внутри одного дерева исходников
+до публичного registry с подписанными, верифицируемыми библиотеками.
+Дополняет [Plan 01](01-roadmap-v0.1.md) (roadmap по версиям компилятора).
 
-**Зависит от:** v2.0+ из [01-roadmap-v0.1.md](01-roadmap-v0.1.md).
+## 2. Текущее состояние (2026-05-22)
 
-Bootstrap-Rust компилятор переписывается на Nova. Нужно для того,
-чтобы:
+- ✅ **Spec D78** — `nova.toml`, формат `nova.lock`, registry chain,
+  workspace.
+- ✅ **Workspace** — корневой `nova.toml` + per-member (`std/`,
+  `examples/`, `nova_tests/`).
+- ✅ **Module path = file path** enforcement (D78, Plan 81).
+- ❌ **Внешние зависимости** — нет вообще. `path`/`git`-deps не
+  резолвятся; `nova.lock` не генерируется.
+- ❌ `nova add`/`publish`/`update`/`search` — нет.
+- ❌ Version resolution (SAT/PubGrub) — нет.
+- ❌ Registry HTTP-протокол / `nova-registry.org` — нет.
 
-1. Сам `nova` CLI (с командами `add`/`publish`/`update`) был
-   написан на Nova — иначе экосистема не self-contained.
-2. Compiler-API (parse, type-check, codegen) был доступен из
-   Nova-кода — для linter'ов, formatter'ов, IDE-плагинов.
+Единственная единица сборки сейчас — один workspace без внешних deps.
 
-**Критерий готовности:** `nova` CLI собирается из Nova-исходников
-и проходит все тесты `nova_tests/`.
+## 3. Честное сравнение с индустрией
 
-### Шаг 2. `nova` CLI с базовыми командами
+| Аспект | Cargo (Rust) | npm (JS) | Go modules | Deno | pip (Python) | **Nova — цель** |
+|---|---|---|---|---|---|---|
+| Источники deps | registry + path + git | registry + path + git | git/proxy (decentralized) | URL/JSR | registry + VCS | registry + `path` + `git` |
+| Version resolution | PubGrub | npm SAT (semver) | MVS (minimal version selection) | — | backtracking | PubGrub (доказан в Cargo) |
+| Lockfile | `Cargo.lock` | `package-lock.json` | `go.sum` | `deno.lock` | `requirements`/`uv.lock` | `nova.lock` (D78) |
+| Immutable releases | да | да (но npm unpublish issues) | да (через proxy+sumdb) | content-addr | да | **да — content-addressed** |
+| Подпись/transparency | minisign (опц.) | provenance (новое) | **sumdb (transparency log)** | — | PEP 458 (медленно) | **sumdb-стиль log** (§5) |
+| Security advisories | RUSTSEC + `cargo audit` | npm audit / GHSA | govulncheck | — | OSV / `pip-audit` | OSV-совместимая БД + `nova audit` |
+| Видимость supply-chain поведения | ❌ (нельзя узнать, что crate начал ходить в сеть) | ❌ | ❌ | permission-флаги **рантайма** | ❌ | ✅ **эффекты в типах** (§4) |
+| Air-gapped / vendoring | `cargo vendor` | offline mirror | `GOPROXY`+vendor | — | devpi/wheelhouse | mirror-friendly registry |
 
-**Зависит от:** Шага 1.
+**Что берём:** PubGrub (как Cargo — доказанный resolver), content-
+addressed immutable releases, sumdb-стиль transparency log (как Go —
+сильнейшая supply-chain защита из мейнстрима), OSV-совместимые advisory.
+**Чего избегаем:** npm-стиль `unpublish` (ломал экосистему), глубокие
+транзитивные деревья без дедупликации.
 
-Команды для работы с пакетами:
+## 4. Nova-уникальный угол — где Nova может быть **лучше** Cargo/Go
 
-```bash
-nova new my-project           # создать новый проект (nova.toml + src/)
-nova add foo@^1.2             # добавить зависимость в nova.toml
-nova add foo --path ../foo    # path-зависимость
-nova add foo --git URL        # git-зависимость
-nova update                   # обновить nova.lock
-nova update foo               # обновить только foo
-nova remove foo               # убрать зависимость
-nova publish                  # опубликовать пакет в registry
-nova search keyword           # искать в registry
-nova info foo                 # info про конкретный пакет
-```
+Nova трекает **эффекты в типах** (D62) и **capabilities** (`forbid`,
+D63). Менеджер пакетов языка с эффект-системой умеет то, чего не может
+ни один мейнстрим:
 
-**Критерий готовности:** `nova add foo --path ../foo` + `nova build`
-работают в self-hosted режиме на тестовом проекте; `nova publish`
-имеет dry-run mode.
+- **Effect-surface зависимости видна.** `nova info foo` показывает
+  агрегированный effect-row публичного API пакета: «`foo` использует
+  `Net`, `Fs`». В Cargo/npm узнать, что библиотека ходит в сеть,
+  **невозможно** без аудита кода.
+- **Effect-diff как supply-chain сигнал.** Minor-バージيونный bump,
+  добавивший `Net` в ранее чистую функцию, — **красный флаг**. `nova`
+  показывает effect-diff при `update`; CI может на него падать. Это
+  ловит ровно тот класс атак (внезапная сетевая активность в патч-
+  релизе), который годами бьёт npm/PyPI.
+- **Capability-confined зависимости.** Проект объявляет в `nova.toml`
+  границу: `foo` может использовать только `Db`, но не `Net`/`Fs` —
+  компилятор **enforce'ит** (через `forbid` на границе пакета).
+  Зависимость в песочнице на уровне типов, не рантайма (сильнее
+  Deno-permissions — те рантаймовые).
+- **Верифицированные контракты.** Пакет может поставлять контракты
+  (Plan 33); registry фиксирует verification-статус — «эта версия
+  прошла SMT-проверку».
 
-### Шаг 3. Lockfile resolution (SAT-алгоритм)
+Это превращает экосистему из «догнать Cargo» в «структурно безопаснее
+Cargo по supply-chain». Дизайн `nova.toml`/`nova.lock`/registry (под-
+планы ниже) обязан с самого начала закладывать поля под effect-surface
+и capability-границы.
 
-**Зависит от:** Шага 2 (CLI должен куда-то писать `nova.lock`).
+## 5. Production security-модель (обязательна, не v2)
 
-D78 описывает формат `nova.lock` (TOML, version 1, packages с
-hash'ами и source-URL'ами). Нужно реализовать **SAT resolver**:
-алгоритм который из набора deps + version-ranges в `nova.toml`
-выводит конкретный set версий.
+Supply-chain — главная проблема пакетных менеджеров последнего
+десятилетия. Закладывается в дизайн сразу:
 
-Варианты:
-- **PubGrub** (Dart, готовая Rust-реализация в `pubgrub` crate) —
-  это используется Cargo с 2023, доказано работает. Можно portировать
-  на Nova когда self-hosted.
-- **Plain backtracking** — проще, медленнее, достаточно для small
-  scale.
+- **Content-addressed immutable releases.** Каждая версия — sha256;
+  `nova.lock` фиксирует хеш. Опубликованную версию нельзя подменить
+  (никакого npm-`unpublish`).
+- **Подписанные релизы + transparency log.** Append-only auditable log
+  (Go sumdb / Sigstore-стиль): скомпрометированный registry не может
+  тихо подменить пакет — расхождение с логом ловится. `nova.lock`
+  пишет и хеш, и log-inclusion-proof.
+- **`nova audit`** — OSV-совместимая БД advisory; падает на known-CVE
+  в дереве зависимостей.
+- **Effect-diff** (§4) — Nova-уникальный слой supply-chain контроля.
+- **Typosquatting-policy** + namespace-резервирование на registry.
+- **Mirror/vendoring** — air-gapped (банки, гос): любой может поднять
+  proxy/mirror.
 
-**Критерий готовности:** `nova update` строит `nova.lock` для
-проекта с 5+ зависимостями за <1с. `nova build` использует
-`nova.lock` (не пересчитывает версии каждый раз).
+## 6. Декомпозиция на под-планы
 
-### Шаг 4. Registry HTTP-протокол
+| # | Файл | Что | Зависимость | Когда |
+|---|---|---|---|---|
+| **03.1** | [03.1-path-git-dependencies.md](03.1-path-git-dependencies.md) | `path`- и `git`-зависимости в bootstrap-компиляторе + `nova.lock` для них. **Без registry, без self-host.** | нет | **можно сейчас** |
+| **03.2** | `03.2-version-resolution.md` (план) | PubGrub resolver + version-ranged deps (`^1.2`) + `nova update`. | 03.1 | после 03.1 |
+| **03.3** | `03.3-registry-protocol.md` (план) | HTTP registry protocol + content-addressing + подпись + transparency log (§5). | 03.2 | после 03.2 |
+| **03.4** | `03.4-nova-cli-package-cmds.md` (план) | `nova add`/`publish`/`update`/`search`/`info`/`audit` + effect-surface/effect-diff (§4). | 03.1–03.3 | параллельно 03.2/03.3 |
+| **03.5** | `03.5-registry-hosting.md` (план) | `nova-registry.org` — хостинг, UI, CDN, policy-документы. Инфраструктура. | 03.3, 03.4 | после кода |
+| **03.6** | `03.6-stdlib-delivery-and-first-libs.md` (план) | Решение «stdlib vendored vs пакет» + первые community-библиотеки. | 03.5 | последним |
 
-**Зависит от:** Шагов 2 и 3 (CLI и lockfile уже умеют работать
-с зависимостями).
+В этой редакции **создан под-план 03.1**; 03.2–03.6 — слоты, плановые
+файлы пишутся по мере подхода очереди (как делалось для 33.x/44.x).
 
-Описать в spec'е (новый D-decision или расширение D78) HTTP API
-registry:
+## 7. Порядок и гейтинг — коррекция редакции 1
 
-```
-GET /api/v1/packages/<name>/versions
-  → list версий с metadata + content-hash
+**Self-hosting — НЕ блокер экосистемы.** Редакция 1 ставила «Шаг 1:
+self-hosted compiler» первым и гейтила всё на нём. Это неверно — и сам
+раздел «Trade-offs» редакции 1 себе противоречил («можно написать CLI
+на Rust заранее»). Коррекция:
 
-GET /api/v1/packages/<name>/<version>/manifest
-  → nova.toml пакета (для resolution)
+- Функциональность менеджера пакетов (`path`/`git`-deps, lockfile,
+  resolver, registry-клиент) делается в **bootstrap-Rust** `nova` CLI —
+  **сейчас**, без self-host.
+- Self-hosting (Plan 01, v2.0+) — про то, **на каком языке написан
+  инструмент** (догфудинг), а не про то, **что он умеет**. Когда
+  компилятор self-hosted — команды портируются на Nova. Это
+  ортогонально, не prerequisite.
+- → **03.1 можно начинать в любой момент** — он разблокирует
+  multi-package разработку (напр. сайт [Plan 64](64-nova-lang-website.md)
+  зависит от `std` как от пакета) задолго до v2.0.
 
-GET /api/v1/packages/<name>/<version>/archive.tar.gz
-  → тарбол с исходниками + lockfile
+## 8. Связь
 
-POST /api/v1/packages/<name>/<version>
-  → publish (требует API token)
-```
-
-**Принципы:**
-
-- **Content-addressable.** Каждая версия имеет sha256-хеш, lockfile
-  его фиксирует. Нельзя подменить опубликованную версию (immutable
-  releases) — как Cargo / npm.
-- **Минимализм.** Никаких user-аккаунтов в protocol — auth через
-  API tokens. UI-сторона registry — отдельная задача.
-- **Mirror-friendly.** Любой может стянуть весь registry и поднять
-  proxy (для air-gapped / closed-network — банки, гос).
-
-**Критерий готовности:** Reference-implementation registry на
-любом языке (Go/Rust для скорости старта); `nova` CLI умеет с ним
-говорить через chain в `[registry]` секции `nova.toml`.
-
-### Шаг 5. Запуск `nova-registry.org`
-
-**Зависит от:** Шага 4.
-
-Инфраструктурный шаг, не код:
-
-- Купить домен `nova-registry.org` (или альтернативу).
-- Поднять hosting (хосты + база + storage для тарболов).
-- Написать политики: ToS, DMCA, security-policy (RUSTSEC-аналог),
-  policy для squatting'а имён.
-- Реализовать UI: web-страница пакета (как crates.io), search,
-  download stats.
-- CDN для тарболов.
-- Backup strategy.
-
-**Критерий готовности:** `https://nova-registry.org` доступен,
-`nova publish` работает на реальный URL, есть policy документы.
-
-### Шаг 6. Первые библиотеки публикуются
-
-**Зависит от:** Шагов 1–5.
-
-Что публикуется первым:
-
-1. **Сам `std/`** — но это спорно: stdlib обычно идёт **с
-   компилятором**, не как опциональная зависимость. Решается
-   позже: либо vendored в `nova` бинарь (Rust-style `std`),
-   либо первый пакет в registry (Python-style `pip install ...`).
-2. **Community-либы из `examples/`** — кандидатами были
-   аспирационные либы (которые сейчас в `std/` черновиками), если
-   они выйдут из stdlib и станут community-пакетами.
-3. **Прикладные:** HTTP frameworks (Express-аналог), ORM, CLI
-   helpers, etc. — пишут community.
-
-**Критерий готовности:** На `nova-registry.org` хотя бы 10
-useful пакетов от 3+ разных авторов; `nova add` на типичный
-Nova-проект ставит 3-5 deps без проблем.
-
----
-
-## Зависимости между шагами
-
-```
-Шаг 1 (self-host)  ──┐
-                     ├──► Шаг 2 (CLI)  ──► Шаг 3 (lockfile)  ──┐
-                     │                                          ├──► Шаг 4 (HTTP-protocol)
-                     │                                          │             │
-                     │                                          │             ▼
-                     │                                          │       Шаг 5 (запуск registry)
-                     │                                          │             │
-                     │                                          │             ▼
-                     │                                          │       Шаг 6 (первые либы)
-```
-
-Шаги 1–4 — **код**, могут идти параллельно частично (CLI можно
-писать с заглушками registry, lockfile отдельно). Шаги 5–6 —
-**инфраструктура и community**, нужны после кода.
-
-## Параллельные задачи
-
-- **Module-resolution в bootstrap'е.** Сейчас бутстрап-компилятор
-  знает только path-импорты в одном workspace. Расширить на
-  `git`/`registry`-resolution **до** Шага 1 не нужно — пока
-  работаем в одном workspace, registry не нужен.
-- **`std/` vs registry.** Решить как stdlib доставляется (см. Шаг 6
-  пункт 1) — это отдельный D-decision, спекулятивный.
-- **Security model.** Cargo/npm имели проблемы supply-chain атак
-  (typosquatting, malicious updates). Подумать о signed releases
-  / binary transparency log как Go modules sumdb.
-
----
-
-## Trade-offs / упрощения
-
-- **Шаги 1 и 2 объединить?** Технически self-host нужен только
-  чтобы `nova` CLI был на Nova. Можно написать CLI на Rust
-  заранее (как сейчас bootstrap-compiler) и потом portировать.
-  **Рекомендация:** не объединять — self-host даёт более чистый
-  набор API для CLI.
-- **PubGrub vs backtracking.** PubGrub сложнее, но работает быстрее
-  на больших dep-графах. Для первого release достаточно простого
-  backtracking; PubGrub — оптимизация когда dep-graphs реальных
-  пользователей этого потребуют.
-- **Registry на хостинге vs distributed.** Cargo/npm — централизованный
-  registry. Go modules — distributed (любой git URL). Для Nova
-  централизованный проще; distributed как backup option (через
-  `git = "..."` в `nova.toml`).
-
----
-
-## Когда начинать
-
-**Не сейчас.** Текущий приоритет — **bootstrap-compiler** (Rust,
-v0.1–v1.0), потом **stdlib** (что уже идёт), потом **self-host**.
-Package ecosystem — после v2.0+.
-
-В spec'е D78 описан формат **уже сейчас** — это правильно:
-формат стабильный с самого начала, infrastructure догоняет.
-
-## Связанные документы
-
-- [01-roadmap-v0.1.md](01-roadmap-v0.1.md) — общий roadmap; v0.6
-  упоминает «Package manager», v2.0+ — self-hosting.
-- [spec/decisions/07-modules.md → D78](../../spec/decisions/07-modules.md#d78)
-  — формат `nova.toml`, `nova.lock`, registry chain, workspace.
-- [spec/decisions/01-philosophy.md → D10](../../spec/decisions/01-philosophy.md#d10)
-  — AI-first как обоснование явных манифестов и lockfile'ов.
+- [Plan 01](01-roadmap-v0.1.md) — общий roadmap; self-hosting (v2.0+).
+- [D78](../../spec/decisions/07-modules.md#d78) — `nova.toml`/`nova.lock`/
+  registry chain/workspace; дизайн полей расширяется под §4 (effect-
+  surface, capability-границы).
+- [D62](../../spec/decisions/04-effects.md) / D63 — эффекты и `forbid` —
+  фундамент Nova-уникального §4.
+- [Plan 33](33-contracts-implementation.md) ✅ — контракты; verification-
+  статус в registry (§4).
+- [Plan 81](81-module-resolution-hardening.md) ✅ — резолв модулей внутри
+  дерева; 03.1 надстраивается над ним для **межпакетного** резолва.
+- Ориентиры: Cargo (PubGrub, immutable), Go modules (sumdb transparency),
+  Deno (permissions — рантаймовые; Nova — типовые), npm (чего избегать).

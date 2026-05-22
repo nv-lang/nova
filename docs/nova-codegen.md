@@ -340,7 +340,7 @@ Per-test events and summary — to stdout (so wrappers can stream stdout).
 
 | Var | Effect |
 |---|---|
-| `NOVA_NO_CACHE=1` | Disable SMT contracts cache (Plan 33.3 Ф.12) |
+| `NOVA_CACHE=0` | Disable caches: SMT contracts (Plan 33.3 Ф.12) + build `.c` cache (Plan 81 Ф.9). `off`/`false` also accepted |
 | `NOVA_PERF_TIMER=1` | Enable `__PERF__` markers in the compiler (per-pass timing) |
 | `NOVA_MONO_DEPTH=N` | Monomorphization-instantiation depth limit (default 500, [Plan 48](plans/48-closures-in-generics.md) Ф.7.6) |
 | `NOVA_DEBUG_MONO=1` | Verbose debug print of mono instances (codegen diagnostics) |
