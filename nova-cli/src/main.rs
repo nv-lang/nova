@@ -3040,6 +3040,9 @@ fn cmd_build(
         let _t = nova_codegen::perf_timer::PerfTimer::new("dep-lock");
         nova_codegen::lockfile::sync(&pkg_dir)
             .map_err(|e| anyhow!("резолюция зависимостей (nova.lock): {}", e))?;
+        // Plan 03.4 Ф.3: capability-confined deps — проверить, что
+        // зависимости с `forbid` не используют запрещённые эффекты.
+        nova_codegen::effect_surface::check_forbidden(&pkg_dir)?;
     }
 
     // Plan 35 Ф.1 MVP: cross-file resolve через inline expansion.

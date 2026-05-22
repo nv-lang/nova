@@ -50,6 +50,10 @@ pub enum DepSource {
 pub struct Dependency {
     pub name: String,
     pub source: DepSource,
+    /// Plan 03.4 Ф.3: capability-confined dep — `forbid = ["Net", "Fs"]`.
+    /// Запрещённые эффекты: компилятор проверяет, что effect-surface
+    /// зависимости их не содержит. Пусто — ограничений нет.
+    pub forbid: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -81,16 +85,22 @@ pub struct Manifest {
     pub dependencies: Vec<Dependency>,
 }
 
-/// Plan 03.1: quote-aware разбор тела inline-таблицы TOML
-/// (`key = "v", key2 = "v2"`) — запятая внутри `"..."` не разделяет.
+/// Plan 03.1 / 03.4: quote- и bracket-aware разбор тела inline-таблицы
+/// TOML (`key = "v", key2 = ["a", "b"]`) — запятая внутри `"..."` либо
+/// `[...]` не разделяет поля.
 fn parse_inline_table(body: &str) -> Vec<(String, String)> {
     let mut parts: Vec<String> = Vec::new();
     let mut cur = String::new();
     let mut in_str = false;
+    let mut depth: i32 = 0; // вложенность `[ ]` (массив-значение)
     for ch in body.chars() {
         match ch {
             '"' => { in_str = !in_str; cur.push(ch); }
-            ',' if !in_str => { parts.push(std::mem::take(&mut cur)); }
+            '[' if !in_str => { depth += 1; cur.push(ch); }
+            ']' if !in_str => { depth -= 1; cur.push(ch); }
+            ',' if !in_str && depth == 0 => {
+                parts.push(std::mem::take(&mut cur));
+            }
             _ => cur.push(ch),
         }
     }
@@ -160,6 +170,28 @@ fn parse_dep_source(raw_val: &str) -> DepSource {
             DepSource::Registry(ver)
         }
     }
+}
+
+/// Plan 03.4 Ф.3: разобрать `forbid = ["Net", "Fs"]` из inline-таблицы
+/// зависимости. Пусто, если поля нет либо запись — не inline-таблица.
+fn parse_dep_forbid(raw_val: &str) -> Vec<String> {
+    let v = raw_val.trim();
+    let Some(inner) = v.strip_prefix('{').and_then(|s| s.strip_suffix('}')) else {
+        return Vec::new();
+    };
+    let fields = parse_inline_table(inner.trim());
+    let Some((_, arr)) = fields.iter().find(|(k, _)| k == "forbid") else {
+        return Vec::new();
+    };
+    let arr = arr.trim();
+    let Some(items) = arr.strip_prefix('[').and_then(|s| s.strip_suffix(']')) else {
+        return Vec::new();
+    };
+    items
+        .split(',')
+        .map(|s| s.trim().trim_matches('"').to_string())
+        .filter(|s| !s.is_empty())
+        .collect()
 }
 
 /// Plan 03.1 Ф.4: директория ближайшего вверх по дереву `nova.toml` —
@@ -242,6 +274,7 @@ pub fn parse_manifest(toml_path: &Path, dir: &Path) -> Option<Manifest> {
                 dependencies.push(Dependency {
                     name: key.to_string(),
                     source: parse_dep_source(raw_val),
+                    forbid: parse_dep_forbid(raw_val),
                 });
                 continue;
             }
@@ -706,5 +739,28 @@ mod parse_tests {
     fn dep_git_bad_version_invalid() {
         let src = parse_dep_source("{ git = \"https://x.org/g.nv\", version = \"^x.y\" }");
         assert!(matches!(src, DepSource::Invalid(_)), "получено {:?}", src);
+    }
+
+    /// Plan 03.4: `forbid = [...]` парсится; bracket-aware split не
+    /// ломает соседние поля (`git` резолвится корректно рядом с массивом).
+    #[test]
+    fn dep_forbid_parsed() {
+        let raw = "{ git = \"https://x.org/g.nv\", tag = \"v1\", forbid = [\"Net\", \"Fs\"] }";
+        assert_eq!(parse_dep_forbid(raw), vec!["Net".to_string(), "Fs".to_string()]);
+        // Запятая внутри [...] не должна разорвать поле git/tag.
+        match parse_dep_source(raw) {
+            DepSource::Git { url, pin } => {
+                assert_eq!(url, "https://x.org/g.nv");
+                assert_eq!(pin, GitPin::Tag("v1".to_string()));
+            }
+            other => panic!("ожидался Git, получено {:?}", other),
+        }
+    }
+
+    /// Plan 03.4: без `forbid` — пустой список.
+    #[test]
+    fn dep_forbid_absent_empty() {
+        assert!(parse_dep_forbid("{ path = \"../foo\" }").is_empty());
+        assert!(parse_dep_forbid("\"1.2\"").is_empty());
     }
 }
