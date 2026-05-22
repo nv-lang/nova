@@ -844,6 +844,22 @@ impl<'a> TypeCheckCtx<'a> {
                     self.walk_typeref(rt, gs, errors);
                 }
             }
+            // Plan 97 Ф.2 (D142): анонимный protocol-тип — рекурсивно
+            // walk через сигнатуры методов; arity-checking применяется к
+            // ссылкам внутри param-/return-/effect-типов.
+            TypeRef::Protocol { methods, .. } => {
+                for m in methods {
+                    for p in &m.params {
+                        self.walk_typeref(&p.ty, gs, errors);
+                    }
+                    for e in &m.effects {
+                        self.walk_typeref(e, gs, errors);
+                    }
+                    if let Some(rt) = &m.return_type {
+                        self.walk_typeref(rt, gs, errors);
+                    }
+                }
+            }
             TypeRef::Unit(_) => {}
         }
     }
@@ -2068,6 +2084,12 @@ impl<'a> TypeCheckCtx<'a> {
                 TyCat::Array(Box::new(self.cat_of_depth(inner, gs, depth + 1)))
             }
             TypeRef::Tuple(_, _) | TypeRef::Func { .. } => TyCat::Other,
+            // Plan 97 Ф.2 (D142): анонимный protocol-тип — структурный
+            // контракт. Конформность проверяется отдельно
+            // (`check_satisfaction` + inline-protocol case), для
+            // category-based assignability — `Other` (permissive, чтобы
+            // любой concrete-тип не отвергался).
+            TypeRef::Protocol { .. } => TyCat::Other,
             TypeRef::Unit(_) => TyCat::Unit,
         }
     }
@@ -2186,6 +2208,29 @@ fn typeref_display(tr: &TypeRef) -> String {
                 .map(|t| typeref_display(t))
                 .unwrap_or_else(|| "()".to_string());
             format!("fn({}) -> {}", ps.join(", "), rt)
+        }
+        // Plan 97 Ф.2 (D142): анонимный protocol — компактное отображение
+        // через сигнатуры. В диагностике пользователю важно отличить
+        // anon-protocol от других видов типа.
+        TypeRef::Protocol { methods, .. } => {
+            let sigs: Vec<String> = methods
+                .iter()
+                .map(|m| {
+                    let prefix = if m.is_static { "." } else { "" };
+                    let ps: Vec<String> = m
+                        .params
+                        .iter()
+                        .map(|p| typeref_display(&p.ty))
+                        .collect();
+                    let rt = m
+                        .return_type
+                        .as_ref()
+                        .map(|t| format!(" -> {}", typeref_display(t)))
+                        .unwrap_or_default();
+                    format!("{}{}({}){}", prefix, m.name, ps.join(", "), rt)
+                })
+                .collect();
+            format!("protocol {{ {} }}", sigs.join("; "))
         }
         TypeRef::Unit(_) => "()".to_string(),
     }
@@ -3068,6 +3113,11 @@ impl<'a> BoundCtx<'a> {
 
     /// Plan 15 Р¤.3: РїСЂРѕРІРµСЂРёС‚СЊ, С‡С‚Рѕ concrete-С‚РёРї СѓРґРѕРІР»РµС‚РІРѕСЂСЏРµС‚ bound'Сѓ
     /// (protocol-С‚РёРїСѓ). РџСЂРё РЅРµСЃРѕРѕС‚РІРµС‚СЃС‚РІРёРё вЂ” R5.3 diagnostic.
+    ///
+    /// Plan 97 Ф.2 (D142): bound может быть **анонимным** inline-protocol
+    /// (`[T protocol { method-sig* }]`) — методы проверяются «по месту»
+    /// без регистрации в `protocol_specs`. Закрывает Plan 15
+    /// `[P-15-anon-protocol-bound]`.
     fn check_satisfaction(
         &self,
         concrete: &TypeRef,
@@ -3077,6 +3127,19 @@ impl<'a> BoundCtx<'a> {
         span: Span,
         errors: &mut Vec<Diagnostic>,
     ) {
+        // Plan 97 Ф.2: inline-protocol bound — методы прямо в TypeRef.
+        if let TypeRef::Protocol { methods, .. } = bound {
+            self.check_satisfaction_against_methods(
+                concrete,
+                methods,
+                None, // anon — нет имени
+                type_param_name,
+                fn_name,
+                span,
+                errors,
+            );
+            return;
+        }
         let bound_name = match bound {
             TypeRef::Named { path, .. } if path.len() == 1 => path[0].clone(),
             _ => return, // complex bounds (Hashable[K], etc.) вЂ” РѕС‚РґРµР»СЊРЅР°СЏ Р·Р°РґР°С‡Р°
@@ -3121,37 +3184,78 @@ impl<'a> BoundCtx<'a> {
             // formal check'Р° РЅРµ РґРµР»Р°РµРј (best-effort permissive).
             return;
         };
+        // Plan 97 Ф.2: shared satisfaction-логика с anon-вариантом.
+        self.check_satisfaction_against_methods(
+            concrete,
+            *spec_methods,
+            Some(&bound_name),
+            type_param_name,
+            fn_name,
+            span,
+            errors,
+        );
+    }
+
+    /// Plan 97 Ф.2 (D142): общая satisfaction-логика для named и anonymous
+    /// protocol-bound'ов. `bound_name = Some(...)` — named (показывается
+    /// в diagnostic); `None` — inline `[T protocol { ... }]`, рендерим
+    /// как `protocol{...}`.
+    fn check_satisfaction_against_methods(
+        &self,
+        concrete: &TypeRef,
+        required: &[EffectMethod],
+        bound_name: Option<&str>,
+        type_param_name: &str,
+        fn_name: &str,
+        span: Span,
+        errors: &mut Vec<Diagnostic>,
+    ) {
+        let concrete_name = match concrete {
+            TypeRef::Named { path, .. } if path.len() == 1 => path[0].clone(),
+            _ => return,
+        };
+        if matches!(concrete_name.as_str(),
+            "int" | "i8" | "i16" | "i32" | "i64"
+            | "u8" | "u16" | "u32" | "u64"
+            | "f32" | "f64" | "bool" | "char"
+            | "str" | "any" | "never") {
+            return;
+        }
         let empty: HashMap<String, Vec<&FnDecl>> = HashMap::new();
         let concrete_methods = self.method_table.get(&concrete_name).unwrap_or(&empty);
         let mut missing: Vec<String> = Vec::new();
-        for required in *spec_methods {
-            // Match РїРѕ РёРјРµРЅРё Рё arity. РџРѕР»РЅР°СЏ sig-СЃРІРµСЂРєР° СЃ Selfв†’T вЂ”
-            // РґР°Р»СЊРЅРµР№С€Р°СЏ Р·Р°РґР°С‡Р° (Р¤.5).
-            let found = concrete_methods.get(&required.name).map(|fns| {
-                fns.iter().any(|f| f.params.len() == required.params.len())
+        for req in required {
+            let found = concrete_methods.get(&req.name).map(|fns| {
+                fns.iter().any(|f| f.params.len() == req.params.len())
             }).unwrap_or(false);
             if !found {
-                let sig = render_method_sig(&required.name, &required.params, &required.return_type);
-                missing.push(sig);
+                let sig = render_method_sig(&req.name, &req.params, &req.return_type);
+                let prefix = if req.is_static { "." } else { "" };
+                missing.push(format!("{}{}", prefix, sig));
             }
         }
-        if !missing.is_empty() {
-            // R5.3 СЃС‚СЂСѓРєС‚СѓСЂРёСЂРѕРІР°РЅРЅС‹Р№ AI-first diagnostic.
-            let mut msg = format!(
-                "type `{}` does not satisfy `{}` bound (in call to `{}[{} {}]`).\n\n  `{}` requires:\n",
-                concrete_name, bound_name, fn_name, type_param_name, bound_name, bound_name);
-            for required in *spec_methods {
-                msg.push_str(&format!(
-                    "    {}\n",
-                    render_method_sig(&required.name, &required.params, &required.return_type)));
-            }
-            msg.push_str(&format!("\n  `{}` is missing: {}\n", concrete_name, missing.join(", ")));
+        if missing.is_empty() {
+            return;
+        }
+        let bound_display = bound_name
+            .map(|n| n.to_string())
+            .unwrap_or_else(|| "<anonymous protocol>".to_string());
+        let mut msg = format!(
+            "type `{}` does not satisfy `{}` bound (in call to `{}[{} {}]`).\n\n  `{}` requires:\n",
+            concrete_name, bound_display, fn_name, type_param_name, bound_display, bound_display);
+        for req in required {
+            let prefix = if req.is_static { "." } else { "" };
             msg.push_str(&format!(
-                "\n  fix: РґРѕР±Р°РІРёС‚СЊ РЅРµРґРѕСЃС‚Р°СЋС‰РёРµ РјРµС‚РѕРґС‹ РґР»СЏ С‚РёРїР° `{}`. \
-                 РЎРј. spec/decisions/02-types.md#d72.",
-                concrete_name));
-            errors.push(Diagnostic::new(msg, span));
+                "    {}{}\n",
+                prefix,
+                render_method_sig(&req.name, &req.params, &req.return_type)));
         }
+        msg.push_str(&format!("\n  `{}` is missing: {}\n", concrete_name, missing.join(", ")));
+        msg.push_str(&format!(
+            "\n  fix: добавить недостающие методы для типа `{}`. \
+             См. spec/decisions/02-types.md#d72 и #d142 (anonymous protocol).",
+            concrete_name));
+        errors.push(Diagnostic::new(msg, span));
     }
 }
 
@@ -4840,6 +4944,20 @@ fn render_type_ref(t: &TypeRef) -> String {
             let r = return_type.as_ref().map(|t| format!(" -> {}", render_type_ref(t))).unwrap_or_default();
             format!("fn({}){}", p.join(", "), r)
         }
+        // Plan 97 Ф.2 (D142): анонимный protocol-тип — пишется через
+        // render_method_sig, чтобы R5.3 diagnostic'и видели полную
+        // сигнатуру inline-protocol bound'а.
+        TypeRef::Protocol { methods, .. } => {
+            let sigs: Vec<String> = methods
+                .iter()
+                .map(|m| {
+                    let prefix = if m.is_static { "." } else { "" };
+                    let full = render_method_sig(&m.name, &m.params, &m.return_type);
+                    format!("{}{}", prefix, full)
+                })
+                .collect();
+            format!("protocol {{ {} }}", sigs.join("; "))
+        }
         TypeRef::Unit(_) => "()".to_string(),
     }
 }
@@ -5057,6 +5175,10 @@ pub fn ty_of_ref(tr: &TypeRef) -> Ty {
                 })
                 .collect(),
         },
+        // Plan 97 Ф.2 (D142): анонимный protocol-тип — структурный
+        // контракт. Для baseline-ty system ty_of_ref сводим к Ty::Any
+        // (permissive); satisfaction-check выполняется отдельно.
+        TypeRef::Protocol { .. } => Ty::Any,
         TypeRef::Unit(_) => Ty::Unit,
     }
 }
@@ -5391,6 +5513,27 @@ fn check_effect_axioms(module: &Module, errors: &mut Vec<Diagnostic>) {
                 }
                 TypeRef::Array(t, _) => format!("[]{}", type_key(t)),
                 TypeRef::FixedArray(n, t, _) => format!("[{}]{}", n, type_key(t)),
+                // Plan 97 Ф.2 (D142): анонимный protocol — структурный
+                // ключ через method-имена + аriт'и. Полная сигнатура с
+                // type_key рекурсивно даёт стабильный ключ для overload
+                // disambiguation.
+                TypeRef::Protocol { methods, .. } => {
+                    let ms: Vec<String> = methods
+                        .iter()
+                        .map(|m| {
+                            let prefix = if m.is_static { "." } else { "" };
+                            let ps: Vec<String> =
+                                m.params.iter().map(|p| type_key(&p.ty)).collect();
+                            let ret = m
+                                .return_type
+                                .as_ref()
+                                .map(type_key)
+                                .unwrap_or_default();
+                            format!("{}{}({})->{}", prefix, m.name, ps.join(","), ret)
+                        })
+                        .collect();
+                    format!("protocol{{{}}}", ms.join(";"))
+                }
                 TypeRef::Unit(_) => "()".to_string(),
             }
         }
@@ -8850,6 +8993,10 @@ fn typeref_render(t: &TypeRef) -> String {
         }
         TypeRef::Unit(_) => "()".to_string(),
         TypeRef::Func { .. } => "fn(...)".to_string(),
+        // Plan 97 Ф.2 (D142): анонимный protocol-тип. В Plan 52
+        // coercion-диагностиках достаточно компактного маркера;
+        // полный pretty-print — в `typeref_display`.
+        TypeRef::Protocol { methods, .. } => format!("protocol {{...{} sigs}}", methods.len()),
     }
 }
 

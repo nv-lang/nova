@@ -182,11 +182,17 @@ inference):
 
 **Не покрыто (не поддерживается парсером bootstrap):**
 
-- Anonymous protocol bound `[T protocol { @lt(o Self) -> bool }]` —
+- ~~Anonymous protocol bound `[T protocol { @lt(o Self) -> bool }]` —
   `parse_type` не принимает `protocol` keyword в позиции типа (matches
   только Named/Array/Tuple/Func). Отложено до отдельной задачи
   (требует расширения грамматики типов; D53 §628 анонимные
-  protocol-литералы).
+  protocol-литералы).~~
+- **CLOSED Plan 97 Ф.2 (2026-05-22, D142).** `parse_type` теперь
+  принимает `protocol { method-sig* }` как 4-ю форму типа. AST
+  получил `TypeRef::Protocol { methods, span }`,
+  `check_satisfaction_against_methods` обобщён на named + anonymous.
+  Тесты: `nova_tests/plan97/pos_anon_protocol_bound.nv` (pos),
+  `neg_anon_protocol_missing_method.nv` (neg).
 
 **Итого:** 6 позитивных + 3 негативных = 9 тестов покрытия Plan 15.
 

@@ -353,6 +353,22 @@ fn collect_tr(tr: &TypeRef, out: &mut HashSet<String>) {
                 collect_tr(rt, out);
             }
         }
+        // Plan 97 Ф.2 (D142): анонимный protocol-тип — рекурсивно
+        // собираем имена из сигнатур методов (params/return). Само
+        // protocol-имя анонимно — добавлять нечего.
+        TypeRef::Protocol { methods, .. } => {
+            for m in methods {
+                for p in &m.params {
+                    collect_tr(&p.ty, out);
+                }
+                if let Some(rt) = &m.return_type {
+                    collect_tr(rt, out);
+                }
+                for e in &m.effects {
+                    collect_tr(e, out);
+                }
+            }
+        }
         TypeRef::Unit(_) => {}
     }
 }

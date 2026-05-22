@@ -908,6 +908,17 @@ pub enum TypeRef {
         return_type: Option<Box<TypeRef>>,
         span: Span,
     },
+    /// Plan 97 Ф.2 (D53 §628, D142): анонимный protocol-тип в позиции
+    /// типа — `protocol { method-sig* }`. Используется в:
+    /// - параметре (`fn f(x protocol { close() -> () })`),
+    /// - возвращаемом типе,
+    /// - generic-bound (`fn min[T protocol { @lt(...) -> bool }]`).
+    /// Body — переиспользует парсер named-protocol-тела
+    /// (`parse_effect_methods`); `EffectMethod.is_static` поддерживается.
+    Protocol {
+        methods: Vec<EffectMethod>,
+        span: Span,
+    },
     /// `()` unit
     Unit(Span),
 }
@@ -920,6 +931,7 @@ impl TypeRef {
             | TypeRef::FixedArray(_, _, span)
             | TypeRef::Tuple(_, span)
             | TypeRef::Func { span, .. }
+            | TypeRef::Protocol { span, .. }
             | TypeRef::Unit(span) => *span,
         }
     }

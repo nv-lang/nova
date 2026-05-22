@@ -589,6 +589,27 @@ fn write_typeref_structural(w: &mut JsonWriter, ty: &crate::ast::TypeRef) {
                 w.field_str("source", &source);
             });
         }
+        // Plan 97 Ф.2 (D142): анонимный protocol-тип. JSON-схема —
+        // kind=anon_protocol + список method-сигнатур (renderiroval'ная
+        // строка). Для backward-compat и tooling'а — простой вариант.
+        TypeRef::Protocol { methods, .. } => {
+            let source = super::collector::render_type_for_doc(ty);
+            w.field_object("structural_type", |w| {
+                w.field_str("kind", "anon_protocol");
+                w.field_str("source", &source);
+                w.field_array("methods", |w| {
+                    for m in methods {
+                        let line = format!(
+                            "{}{}/{}",
+                            if m.is_static { "." } else { "" },
+                            m.name,
+                            m.params.len()
+                        );
+                        w.array_str(&line);
+                    }
+                });
+            });
+        }
     }
 }
 

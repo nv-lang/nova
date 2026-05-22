@@ -799,6 +799,30 @@ fn render_type(ty: &crate::ast::TypeRef) -> String {
                 .unwrap_or_else(|| "()".to_string());
             format!("fn({}){} -> {}", p, eff, r)
         }
+        // Plan 97 Ф.2 (D142): анонимный protocol-тип — `protocol { sig* }`.
+        // Render — упрощённый, методы перечисляются через `;`. Полный
+        // pretty-print с эффектами/generics — задача render_method_sig.
+        TypeRef::Protocol { methods, .. } => {
+            let sigs: Vec<String> = methods
+                .iter()
+                .map(|m| {
+                    let prefix = if m.is_static { "." } else { "" };
+                    let params = m
+                        .params
+                        .iter()
+                        .map(|p| format!("{} {}", p.name, render_type(&p.ty)))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    let ret = m
+                        .return_type
+                        .as_ref()
+                        .map(|t| format!(" -> {}", render_type(t)))
+                        .unwrap_or_default();
+                    format!("{}{}({}){}", prefix, m.name, params, ret)
+                })
+                .collect();
+            format!("protocol {{ {} }}", sigs.join("; "))
+        }
         TypeRef::Unit(_) => "()".to_string(),
     }
 }
