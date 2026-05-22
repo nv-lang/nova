@@ -710,7 +710,7 @@ Nova имеет два бэкенда верификации:
 | Бэкенд | Активируется | Возможности |
 |---|---|---|
 | **Trivial** | по умолчанию | Constant-folding, линейные bounds на единичных binary ops. Быстрый, без зависимости Z3. |
-| **Z3** | `--smt-backend=z3` или `NOVA_SMT_BACKEND=z3` | Полный LIA + EUF + bounded arrays. Обязателен для opaque/reveal, сложных арифметических цепочек, loop invariants. |
+| **Z3** | env `NOVA_SMT_BACKEND=z3`, либо флаг `--backend z3` у `nova contracts verify` | Полный LIA + EUF + bounded arrays. Обязателен для opaque/reveal, сложных арифметических цепочек, loop invariants. |
 
 Тесты, требующие Z3, используют маркер `// REQUIRES_SMT_BACKEND z3` —
 test runner пропускает их при отсутствии Z3.
