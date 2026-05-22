@@ -18,6 +18,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <errno.h>
+#include <limits.h>
 
 #ifndef NOVA_USE_LIBUV
 #  error "Plan 44 requires NOVA_USE_LIBUV — libuv mandatory for M:N"
@@ -517,6 +519,80 @@ void nova_hash_seed_ensure_init(void) {
     nova_mutex_unlock(&_hash_seed_mu);
 }
 
+/* ── Plan 83.1 Ф.1+Ф.2: worker-count resolution ────────────────────
+ *
+ * Резолвер числа worker-потоков. Порядок разрешения (Plan 83 §3 П6):
+ *
+ *   explicit runtime.init(n>0)  >  ENV NOVA_MAXPROCS  >  uv_available_parallelism()
+ *
+ * `uv_available_parallelism()` (libuv 1.52) уже cgroup+affinity-aware —
+ * НЕ переизобретаем через sysconf/GetSystemInfo (это была бы регрессия
+ * по cgroup-корректности в контейнерах).
+ *
+ * Клэмп [NOVA_MAXPROCS_MIN, NOVA_MAXPROCS_MAX]. Запрос выше потолка
+ * (любой источник) → клэмп до потолка + диагностический warning на
+ * stderr. Динамический re-read cgroup-квоты во время работы (Go 1.25) —
+ * followup; зафиксировано как известная дельта vs Go в 06-concurrency.md. */
+
+#define NOVA_MAXPROCS_MIN 1
+#define NOVA_MAXPROCS_MAX 1024
+
+/* Клэмпит `n` в [MIN, MAX]. При срабатывании верхнего потолка печатает
+ * диагностику — `source` называет того, кто запросил завышенное число. */
+static int _nova_clamp_maxprocs(int n, const char* source) {
+    if (n > NOVA_MAXPROCS_MAX) {
+        fprintf(stderr,
+                "nova: %s requested %d workers, clamped to NOVA_MAXPROCS limit %d\n",
+                source, n, NOVA_MAXPROCS_MAX);
+        return NOVA_MAXPROCS_MAX;
+    }
+    if (n < NOVA_MAXPROCS_MIN) return NOVA_MAXPROCS_MIN;
+    return n;
+}
+
+/* Парсит env-переменную NOVA_MAXPROCS. Возврат:
+ *   > 0  — валидное значение (до клэмпа);
+ *   0    — переменная не задана;
+ *   -1   — задана, но невалидна (диагностика уже напечатана).
+ * Невалидное значение НЕ abort'ит процесс — резолвер делает fallback на
+ * auto-detect (Plan 83.1 Ф.2: «понятная диагностика + fallback»). */
+static int _nova_parse_maxprocs_env(void) {
+    const char* env = getenv("NOVA_MAXPROCS");
+    if (!env || env[0] == '\0') return 0;
+    errno = 0;
+    char* end = NULL;
+    long v = strtol(env, &end, 10);
+    /* Разрешаем хвостовой whitespace, но не прочий мусор. */
+    while (*end == ' ' || *end == '\t' || *end == '\r' || *end == '\n') end++;
+    if (end == env || *end != '\0' || errno != 0 || v < 1 || v > INT_MAX) {
+        fprintf(stderr,
+                "nova: invalid NOVA_MAXPROCS=\"%s\" (expected integer >= 1); "
+                "falling back to auto-detect\n", env);
+        return -1;
+    }
+    return (int)v;
+}
+
+/* Резолвит итоговое число worker'ов из трёх источников по приоритету.
+ * `explicit_n` — аргумент runtime.init (<= 0 означает «не задано явно»,
+ * т.е. auto-detect). Всегда возвращает значение в [MIN, MAX]. */
+int nova_runtime_resolve_maxprocs(int explicit_n) {
+    /* (1) Явный аргумент runtime.init(n>0) — высший приоритет. */
+    if (explicit_n > 0) {
+        return _nova_clamp_maxprocs(explicit_n, "runtime.init");
+    }
+    /* (2) ENV NOVA_MAXPROCS. */
+    int env_n = _nova_parse_maxprocs_env();
+    if (env_n > 0) {
+        return _nova_clamp_maxprocs(env_n, "NOVA_MAXPROCS");
+    }
+    /* env_n == 0 (не задано) либо -1 (невалидно — диагностика напечатана):
+     * (3) авто-детект, cgroup+affinity-aware. */
+    int auto_n = (int)uv_available_parallelism();
+    if (auto_n < 1) auto_n = 1;
+    return _nova_clamp_maxprocs(auto_n, "uv_available_parallelism");
+}
+
 /* ── Init / shutdown ──────────────────────────────────────────── */
 
 void nova_runtime_init(int n_workers) {
@@ -537,10 +613,9 @@ void nova_runtime_init(int n_workers) {
      * первого worker spawn. */
     nova_hash_seed_ensure_init();
 
-    if (n_workers <= 0) {
-        n_workers = (int)uv_available_parallelism();
-        if (n_workers <= 0) n_workers = 1;
-    }
+    /* Plan 83.1 Ф.1+Ф.2: единая точка разрешения числа worker'ов
+     * (explicit > NOVA_MAXPROCS > auto-detect; клэмп [1, 1024]). */
+    n_workers = nova_runtime_resolve_maxprocs(n_workers);
 
 #ifdef NOVA_GC_THREADS_REGISTER
     /* Boehm требует разрешения explicit thread registration ПЕРЕД
