@@ -18453,3 +18453,40 @@ nova_tests/plan90/.
 Worktree nova-p90, ����� plan-90. ������ nova test: 1064 PASS / 0 FAIL
 (9 RUN-FAIL � ����� ������������� �������, ���������������� PASS ���
 --jobs 1). Plan 90 (�.0-�.5) ������.
+
+### Plan 93 Ф.0 — Option.is_some/is_none Nova-телом: GATE-STOP
+
+Цель Plan 93 — перенести Option-предикаты is_some/is_none с C-трамплинов
+на Nova-тело (`fn Option[T] @is_some() => match @ { Some(_) => true,
+None => false }`) в std/prelude/core.nv. Ф.0 — обязательный аудит-GATE.
+
+Probe-фикстуры: pu_sum (user generic-sum `type Maybe[T] | Just(T) |
+Nope` + метод `@present() => match @ {...}`) → PASS — generic-method-
+mono с `match @`-телом для user sum-типов работает. pu_opt (user-метод
+`fn Option[T] @my_present() => match @ {...}` на builtin Option) →
+CC-FAIL `incomplete definition of type 'Nova_Option'`.
+
+Корень доказан чтением кода: emit_c.rs:1526-1528 намеренно (Plan 62.A)
+исключает Option/Result из generic-type-механизма — их репрезентация
+спец-value-тип NovaOpt_<T>, регистрация generic-template конфликтовала
+бы с drain_generic_type_worklist (создал бы Nova_Option____<T> heap-form
+≠ runtime helper signatures). Следствие: Option нет в generic_types →
+метод не попадает в generic_type_methods → non-generic путь →
+receiver_c_type("Option") → "Nova_Option*" — тип, который как struct
+никогда не определяется → incomplete type → CC-FAIL.
+
+Decision point Ф.0.3 — GATE НЕ ПРОЙДЕН, re-scope. Чистая реализация
+требует связать NovaOpt_<T>-идентичность Option с generic-method-mono
+— спец-кейс сквозь ~8 связанных codegen-точек на самом используемом
+типе языка, с риском регрессий по всему suite, при НУЛЕВОМ
+функциональном выигрыше (match @ компилируется в тот же
+`o.tag == NOVA_TAG_Option_Some`, что и трамплин), разворачивая решение
+Plan 78 Ф.1. Forcing Ф.1-Ф.4 как «быстрый перенос» был бы упрощением
+(хак либо рискованная неконтролируемая хирургия) — запрещено.
+
+Итог: Ф.0 выполнен честно, Ф.1-Ф.4 заблокированы. Реальная предпосылка
+— отдельная инфраструктурная инициатива «Option/Result как generic-
+method-able тип с NovaOpt_<T>/NovaRes_<...> в роли mono'd receiver»
+(~2 dev-day, отдельный план). Зафиксировано маркером
+[M-option-methods-not-mono-able] в simplifications.md. Рабочее дерево
+не менялось (кроме docs) — компилятор не трогался, регрессий нет.
