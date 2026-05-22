@@ -1,0 +1,217 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+# Plan 91 — std MVP для релиза 0.1
+
+> **Статус:** 📋 proposed 2026-05-22, не начат
+> **Приоритет:** P0 — блокер публичного релиза 0.1
+> **Оценка:** крупная (~3–5 недель работы codegen-агента),
+> декомпозируется по модулям; точная оценка — после Ф.0
+> **Зависимости:** Plan 14 ✅ (codegen-gaps), Plan 34 ✅ (std type-check
+> 45/45), Plan 35 ✅ (cross-file resolve MVP), Plan 15 ✅ (D72 generic
+> bounds), Plan 87/88/89 ✅ (точечные codegen-блокеры)
+> **Источник:** `std/STATUS.md` — std не компилируется в exe;
+> [Plan 01](01-roadmap-v0.1.md) — roadmap релиза 0.1.
+
+## Зачем
+
+`std/STATUS.md` (на 2026-05-09): std-файлы **не компилируются** в
+нативный exe — type-check мягче codegen, до `nova build` доходит
+~3/50. Без рабочей стандартной библиотеки на Nova нельзя написать
+нетривиальную программу → публичный релиз 0.1 бессмыслен, адопшен
+языка закрыт.
+
+Plan 18 ([18-stdlib-roadmap.md](18-stdlib-roadmap.md)) описывает
+полную stdlib (fs/net/http/sync через libuv) — это горизонт
+0.2–0.4. Plan 91 уже — про **минимально достаточный** набор для
+релиза 0.1: алгоритмическое ядро std, которое **уже написано** в
+`std/` и требует не нового кода, а **снятия codegen-блокеров**.
+
+Это критический путь к 0.1. Не новые фичи языка — доведение
+написанного до компиляции.
+
+## Scope — что входит в «std MVP»
+
+Не вся std. Минимальный набор, позволяющий написать реальную
+программу (CLI-утилита, обработка данных в памяти, демонстрация
+эффектов/handler'ов). Дизайн модулей берётся по мотивам Rust / Go /
+TS, как и просит источник.
+
+| Домен | Модули MVP | Ориентир |
+|---|---|---|
+| Опционал / ошибки | `Option`, `Result` + комбинаторы (`map`/`unwrap_or`/`?`) | Rust |
+| Коллекции | `Vec`, `HashMap`, `HashSet` | Rust |
+| Текст | split / join / trim / pad / parse чисел; форматирование через `str.from` + интерполяцию `"${}"` | Go `strings`, TS |
+| Сортировка / поиск | `sort[T Ord]`, `sort_by`, `binary_search`, `min`/`max` | Go `slices`, Rust |
+| JSON | encode / decode | TS |
+| Время | `Instant`, `Duration` (без календаря и tz) | Go `time` |
+| Математика | базовые функции (`abs`/`min`/`max`/`pow`/`sqrt`/округления) | общее |
+
+**Явно отложено за пределы Plan 91** (Plan 18, релизы 0.2+):
+
+- `fs` / `io` / `os` — файловый и системный ввод-вывод (libuv,
+  крупная отдельная работа);
+- `net` / `http` — сеть (libuv);
+- `sync` — `Atomic`/`Mutex`/`WaitGroup` (Plan 18 Шаг 1);
+- `crypto`, `checksums`, `regex`, `encoding` (кроме base64 — опц.),
+  `data/sql`, `markdown`, `url`, полноценный календарь времени;
+- остальные «аспирационные» модули `std/`.
+
+Getting-started для 0.1 строится на алгоритмическом ядре + эффектах
+с in-memory handler'ами (как killer-пример из README — `Db` через
+`in_memory_db`), без файлов и сети. Это сильнее как демонстрация и
+не зависит от libuv.
+
+## Метод
+
+std-код написан — блокеры на стороне codegen. План закрывает блокеры
+**группами по модулям**, в порядке «сколько MVP-модулей разблокирует».
+После каждой группы — `nova test --include-stdlib` без новых FAIL.
+
+Алгоритм для каждого MVP-модуля:
+1. `nova build std/<...>.nv` → зафиксировать конкретный codegen/CC
+   блокер (не доверять STATUS.md — он от 2026-05-09, устарел).
+2. Закрыть блокер в `compiler-codegen/` (parser / type-checker /
+   `emit_c.rs` / `nova_rt/`).
+3. Conformance-тест на модуль (раздел Ф.5) — реальный use-case.
+4. Повторять до `→ exe` PASS.
+
+## Декомпозиция
+
+### Ф.0 — Re-baseline (GATE, ~0.5 д)
+
+STATUS.md и таблица «Накопленные блокеры std/» из
+[Plan 14](14-stdlib-codegen-gaps.md) — от 2026-05-09, более 50
+планов назад. Plan 15/35/87/88/89 могли закрыть часть блокеров
+попутно. **Нельзя планировать по устаревшим данным.**
+
+- **Ф.0.1** Прогнать `nova test --include-stdlib` + поштучно
+  `nova build` по каждому файлу из MVP-набора. Зафиксировать
+  **актуальный** pass-rate (`check` / `→ exe`) и **актуальный**
+  список блокеров с точными ошибками.
+- **Ф.0.2** Сгруппировать блокеры по природе (parser / type-checker /
+  codegen / runtime / CC-stage) и по числу разблокируемых
+  MVP-модулей. Это authoritative-список — он, а не STATUS.md,
+  управляет фазами Ф.1–Ф.4.
+- **Ф.0.3** Обновить `std/STATUS.md` под актуальное состояние;
+  пометить дату.
+- **Ф.0.4** Decision point: уточнить порядок Ф.1–Ф.4 и оценку
+  трудоёмкости по результату Ф.0.2.
+
+### Ф.1 — Коллекции: `Vec`, `HashMap`, `HashSet` (ядро)
+
+Самые востребованные модули — закрывают наибольшую долю реального
+кода. Известные кандидаты-блокеры (подтвердить/опровергнуть в Ф.0):
+
+- generic specialization при monomorphization (`set.nv` —
+  type-erased `Iter[T]` без concrete `next`);
+- array-type mangling (`vec.nv` — malformed `Nova_[]T*` вместо
+  `NovaArray_<T>*`);
+- protocol-bound dispatch D72 для generic-erased `K.eq`/`K.hash`
+  (`hashmap.nv`);
+- tuple type system — mixed-type `(K, V)` (все поля `_NovaTupleN`
+  захардкожены в `nova_int`).
+
+Acceptance: `Vec`, `HashMap`, `HashSet` компилируются `→ exe` и
+проходят conformance-тесты Ф.5.
+
+### Ф.2 — Текст и форматирование
+
+Строковые утилиты (`text/`): split/join/trim/pad, парсинг чисел.
+Часть операций уже в runtime-stdlib (Plan 13) — Ф.2 закрывает то,
+что написано на Nova поверх. Форматирование — через `str.from(v)`
+(D73) + интерполяцию `"${}"` (Plan 17 ✅), без `Display`/`Debug`.
+
+### Ф.3 — JSON
+
+`json` encode/decode. Зависит от Ф.1 (`HashMap`, `Vec`) и Ф.2.
+Известный кандидат-блокер: pattern composition в tuple/list
+(«expected pattern, got `,`» — группа B STATUS.md). Conformance —
+round-trip encode→decode.
+
+### Ф.4 — Время, математика, сортировка
+
+`time` (`Instant`, `Duration` — без календаря), `math` (базовые
+функции; кандидат-блокер — отсутствующие методы `f64.ln`/`.sqrt`,
+группа L STATUS.md), `sort` (`sort[T Ord]`/`binary_search`).
+
+### Ф.5 — Conformance-тесты MVP
+
+Для каждого MVP-модуля — тест в `nova_tests/` в форме **реального
+use-case целиком**, не микро-проверки:
+
+- `Vec`/`HashMap`/`HashSet`: построение, обход, типовые операции,
+  смешанные типы значений;
+- `json`: round-trip encode→decode нетривиального документа;
+- `text`: парсинг строкового ввода в структуры;
+- `sort`: сортировка + `binary_search`, property-стиль (отсортировано
+  ⇒ найдено);
+- `time`/`math`: типовые вычисления.
+
+Прогон в codegen-канале (`nova test`) обязателен — это release-путь.
+Interp-канал — желательно (урок Plan 14 Ф.6: проверять оба канала).
+
+### Ф.6 — Getting-started + примеры релиза
+
+- **Ф.6.1** Программа getting-started, работающая end-to-end на
+  MVP-std: установка → `nova run` → небольшая реальная программа
+  (CLI или обработка данных в памяти + демонстрация эффектов с
+  in-memory handler'ом).
+- **Ф.6.2** 5–7 примеров в `examples/`, которые компилируются и
+  запускаются на MVP-std (прогнать все — 0 FAIL).
+- **Ф.6.3** Английский quick-start (README + getting-started;
+  полную спеку не переводить).
+
+### Ф.7 — Карантин не-MVP модулей + release-checklist
+
+Релиз 0.1 не должен поставлять десятки модулей, которые не
+компилируются.
+
+- **Ф.7.1** Не-MVP «аспирационные» модули `std/` — явно отделить:
+  каталог `std/experimental/` либо явные маркеры статуса +
+  MVP-набор, зафиксированный в `std/nova.toml`. Решение — в Ф.0.4.
+- **Ф.7.2** `std/STATUS.md` — финальная актуализация: что входит в
+  0.1, что отложено в Plan 18.
+- **Ф.7.3** `docs/plans/README.md` — статус Plan 91; `docs/plans/01-roadmap-v0.1.md`
+  — отметка готовности std-части 0.1.
+- **Ф.7.4** `docs/project-creation.txt` +
+  `nova-private/discussion-log.md` — записи.
+
+## Acceptance criteria
+
+- [ ] Ф.0 дал актуальный (не из STATUS.md-2026-05-09) список
+      блокеров; `std/STATUS.md` обновлён.
+- [ ] MVP-набор (`Option`/`Result`, `Vec`, `HashMap`, `HashSet`,
+      `text`, `sort`, `json`, `time`, `math`) компилируется
+      `nova build → exe` без ошибок.
+- [ ] Каждый MVP-модуль имеет conformance-тест в форме реального
+      use-case; все проходят в codegen-канале.
+- [ ] Программа getting-started собирается и запускается на MVP-std
+      end-to-end.
+- [ ] Все примеры в `examples/` компилируются и запускаются —
+      0 FAIL.
+- [ ] Не-MVP модули `std/` отделены так, что 0.1 не поставляет
+      некомпилируемый код.
+- [ ] Полный `nova test` — 0 новых FAIL относительно baseline.
+
+## Non-scope
+
+- `fs`/`io`/`net`/`http`/`os`/`sync` — Plan 18, релизы 0.2–0.4
+  (требуют libuv, отдельная крупная работа).
+- `crypto`/`checksums`/`regex`/`encoding`/`sql`/`markdown`/`url`,
+  полноценный календарь и timezones.
+- Новые фичи языка и D-блоки. Plan 91 — только доведение
+  написанного std-кода до компиляции, не расширение языка.
+- Self-hosting stdlib на Nova — Plan 90 / горизонт v2.0+.
+
+## Связь с другими планами
+
+- [14-stdlib-codegen-gaps.md](14-stdlib-codegen-gaps.md) — закрытые
+  codegen-gaps + таблица «Накопленные блокеры std/» (база для Ф.0,
+  но устарела — Ф.0 её перепроверяет).
+- [18-stdlib-roadmap.md](18-stdlib-roadmap.md) — полная stdlib
+  (fs/net/http/sync); Plan 91 — её MVP-подмножество для 0.1.
+- [34-stdlib-typecheck-and-compile-fix.md](34-stdlib-typecheck-and-compile-fix.md)
+  — std type-check 45/45 (предусловие Ф.0).
+- [35-cross-file-resolve.md](35-cross-file-resolve.md) — cross-file
+  resolve (нужен для `collections/`, импортирующих `HashMap`).
+- [01-roadmap-v0.1.md](01-roadmap-v0.1.md) — roadmap 0.1; Plan 91
+  закрывает его std-часть.
