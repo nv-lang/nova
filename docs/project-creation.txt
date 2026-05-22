@@ -18083,3 +18083,44 @@ fiber-стека. Их нельзя торопить — ошибка дизай
 
 Артефакты: 82-artifacts/{f0_probe.c, f0_gc_link.c, build.ps1,
 f0-rediagnosis.md}.
+
+==================================================================
+## Plan 03.2 — version resolution: semver + backtracking (Ф.1-Ф.5 ✅, 2026-05-22)
+==================================================================
+
+Второй под-план экосистемы пакетов (после ✅ 03.1): версионные
+диапазоны для git-зависимостей + резолвер. Ветка plan-3.2, worktree
+nova-p3-deps.
+
+- Ф.1 (semver.rs): semver 2.0.0 — Version (parse/parse_tag/Ord с
+  prerelease-precedence), VersionReq (^/~/wildcard/comparators/exact;
+  голая версия ≡ caret; pre-release-policy как у Cargo; intersect).
+  Чистый bootstrap-Rust модуль без crate-зависимостей.
+- Ф.2: GitPin::Version(VersionReq) — `{ git = URL, version = "^1.2" }`;
+  пины rev/tag/branch/version взаимоисключащи. git_cache::list_versions
+  — semver-теги репозитория как вселенная версий; select_version_tag.
+- Ф.3 (resolver.rs): backtracking-резолвер — DependencyProvider-трейт,
+  resolve() (DFS, highest-version-first, распространение ограничений,
+  откат при конфликте, диагностика). git-backed GitProvider (версии =
+  теги, deps = nova.toml на теге). resolve_version_deps интегрирован
+  в lockfile::sync — согласованный резолв до обхода графа. НЕ полный
+  PubGrub (CDCL-обучение — followup registry-эры; backtracking
+  корректен и полон).
+- Ф.4: nova.lock поле version (resolved semver рядом с commit);
+  resolve_with_preferences — preferred-версии из существующего lock →
+  воспроизводимость (повторный sync не двигает версию). nova update
+  [pkg] пере-резолвит; nova update --precise NAME@VERSION — точная
+  фиксация (=VERSION-ограничение в резолвер).
+- Ф.5: nova add --git URL --version "^1.2"; spec D-блок D139
+  (version-диапазоны git-зависимостей, резолв по тегам); D78
+  «Реализация» расширена; docs/nova-cli.md + .ru.md.
+
+Дизайн: вселенная версий — git-теги (источник, доступный без registry);
+DependencyProvider абстрагирует источник — 03.3 (registry) подключит
+свой без переписывания резолвера. Cargo для git-deps диапазонов не
+даёт — Nova строго мощнее (git-dep живёт «на ветке версий» с lock).
+
+Тесты: 21 unit (semver 12 + resolver 9 + git_cache/manifest/lockfile)
++ 4 e2e (git_dep_e2e, lockfile_repro, version_resolve_e2e,
+version_lock_repro). Suite: 1038 PASS / 0 FAIL / 56 SKIP — 0 регрессий.
+Plan 03.2 ✅ ЗАКРЫТ. Plan 03: 03.1 ✅ + 03.2 ✅; остаются 03.3-03.6.
