@@ -708,7 +708,7 @@ Nova has two verification backends:
 | Backend | Activated by | Capabilities |
 |---|---|---|
 | **Trivial** | default | Constant-folding, linear bounds on single binary ops. Fast, no Z3 dependency. |
-| **Z3** | `--smt-backend=z3` or `NOVA_SMT_BACKEND=z3` | Full LIA + EUF + bounded arrays. Required for opaque/reveal, complex arithmetic chains, loop invariants. |
+| **Z3** | env `NOVA_SMT_BACKEND=z3`, or the `--backend z3` flag on `nova contracts verify` | Full LIA + EUF + bounded arrays. Required for opaque/reveal, complex arithmetic chains, loop invariants. |
 
 Tests that require Z3 use the marker `// REQUIRES_SMT_BACKEND z3` —
 the test runner skips them when Z3 is unavailable.
