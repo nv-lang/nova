@@ -8,16 +8,23 @@
 > по числу fiber'ов с Go (§3). Редакция 3 — верификация против
 > `runtime.c`/`alloc_boehm.c`/Boehm 8.2.8, GC-дизайн на проверенных API,
 > подпроблема П5 (GC↔switch атомарность).
-> **Статус:** 🟡 Ф.0 re-diagnosis В РАБОТЕ (2026-05-22). Подтверждено:
-> §1.2, §1.3, модель §5.2, §1.6 (заголовки + линковка gc.lib +
-> win32_threads.c VirtualQuery-clamp), primitives памяти, toolchain-SEH.
-> **DECISION POINT test (a) РЕШЁН: ПУТЬ A** — ядро растит non-primary
-> minicoro-стек штатно; **обязателен патч `ctx.stack_limit`** на
-> committed_low (без него `__chkstk`-код крашит на MSVC). VEH для
-> happy-path НЕ нужен. Standalone-харнесс — `82-artifacts/`
-> (`f0_probe.c`, `f0_gc_link.c`, `f0_test_a.c`, `f0-rediagnosis.md`).
-> Остаётся: test (d) аномалия Попыток 3-4, test (e) SEH через границу
-> fiber-стека.
+> **Статус:** 🟢 Ф.0 re-diagnosis ✅ **ЗАВЕРШЕНА (2026-05-22) — GO на
+> Ф.1.** Подтверждено: §1.2, §1.3, модель §5.2, §1.6 (заголовки +
+> линковка gc.lib + win32_threads.c VirtualQuery-clamp), primitives
+> памяти, toolchain-SEH. **DECISION POINT test (a): ПУТЬ A** — ядро
+> растит non-primary minicoro-стек штатно; **обязателен патч
+> `ctx.stack_limit`** на committed_low (без него `__chkstk`-код крашит
+> на MSVC). VEH для happy-path НЕ нужен. **test (d)** — аномалия
+> Попыток 3-4 НЕ воспроизведена на standalone-реплике дизайна 44.3
+> Поп.4 (arena 256K / commit-on-first / reuse / no-decommit): объяснена
+> как баг интеграционного arena-кода, не фундаментальный блокер.
+> **test (e)** — SEH на fiber-стеках корректен и детерминирован на обеих
+> toolchain (handler-within-fiber ловит; TIB-своп даёт верные bounds;
+> `RtlVirtualUnwind`-walk bounded; cross-boundary exception → чистый
+> краш, не hang). Standalone-харнесс — `82-artifacts/` (`f0_probe.c`,
+> `f0_gc_link.c`, `f0_test_a.c`, `f0_test_d.c`, `f0_test_e.c`,
+> `f0-rediagnosis.md`). **Следующее: Ф.1** — Windows arena allocation +
+> overflow detection.
 > **Приоритет:** P2 — Windows работает для single-thread cooperative
 > (calloc-fallback), но без lazy-commit, без overflow-detection и **без
 > какой-либо GC-интеграции fiber-стеков** (§1.5 — подтверждено
@@ -486,7 +493,14 @@ A и завершённого на B, должен освобождаться в
 
 ## 6. Фазы
 
-### Ф.0 — Re-diagnosis (decision point, ~2–3 дня)
+### Ф.0 — Re-diagnosis (decision point, ~2–3 дня) — ✅ ЗАВЕРШЕНА 2026-05-22
+
+> Итог: **GO на Ф.1, путь A + обязательный патч `ctx.stack_limit`.** Все
+> 5 проверок (a-e) закрыты; §1.2/§1.3/§1.6/§5.2-модель подтверждены на
+> сборке; аномалия Попыток 3-4 объяснена (баг интеграционного кода, не
+> блокер); SEH детерминирован. Полный отчёт — `82-artifacts/
+> f0-rediagnosis.md` §8. Артефакты: `f0_probe.c`, `f0_gc_link.c`,
+> `f0_test_a.c`, `f0_test_d.c`, `f0_test_e.c`.
 
 Изолированный **standalone C-харнесс** (вне рантайма Nova), в отличие от
 4 интеграционных провалов 44.3.
