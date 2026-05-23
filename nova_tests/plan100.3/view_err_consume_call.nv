@@ -1,0 +1,23 @@
+// EXPECT_COMPILE_ERROR D146
+//
+// Plan 100.3 (D146): через view-param нельзя вызывать consume-метод.
+// view = read-only borrow; consume нарушит invariant ownership'а.
+
+module nova_tests.plan100_3.view_err_consume_call
+
+type Transaction consume {
+    id int,
+}
+
+fn Transaction consume @commit() -> () { () }
+
+fn f(t view Transaction) -> () {
+    // ОШИБКА D146-consume-via-view: попытка consume через view.
+    t.commit()
+}
+
+test "view-param + consume-method call — error" {
+    consume tx = Transaction { id: 1 }
+    f(view tx)
+    tx.commit()
+}
