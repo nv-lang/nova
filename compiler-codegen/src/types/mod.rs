@@ -2463,6 +2463,9 @@ impl<'a> BoundCtx<'a> {
         self.check_call_bounds(e, scope, errors);
         // Plan 46 (D102): argument binding diagnostics.
         self.check_call_argbind(e, scope, errors);
+        // Plan 97.1 hardening: `box.method()` для protocol-typed var —
+        // method обязан быть в protocol_specs[<Proto>].
+        self.check_protocol_method_call(e, scope, errors);
         match &e.kind {
             ExprKind::Call { func, args, trailing } => {
                 self.walk_expr(func, scope, errors);
@@ -2738,6 +2741,72 @@ impl<'a> BoundCtx<'a> {
                 ));
             }
         }
+    }
+
+    /// Plan 97.1 hardening (D142): Nova-side enforcement для
+    /// `obj.method(args)` где `obj` — переменная типа named protocol.
+    /// Метод должен быть в `protocol_specs[<Proto>]`; иначе compile error
+    /// (раньше эта ошибка ловилась только на C-side как
+    /// `no member named 'X' in struct NovaVtable_<Proto>`).
+    ///
+    /// Закрывает silent miscompile риск для пользовательской опечатки
+    /// `l.nonexistent()` на protocol-typed value.
+    fn check_protocol_method_call(
+        &self,
+        e: &Expr,
+        scope: &HashMap<String, TypeRef>,
+        errors: &mut Vec<Diagnostic>,
+    ) {
+        let ExprKind::Call { func, .. } = &e.kind else { return; };
+        // Снять turbofish если есть.
+        let func = match &func.kind {
+            ExprKind::TurboFish { base, .. } => base.as_ref(),
+            _ => func.as_ref(),
+        };
+        let (obj, method_name, member_span) = match &func.kind {
+            ExprKind::Member { obj, name } => (obj.as_ref(), name.clone(), func.span),
+            _ => return,
+        };
+        // Resolve obj-тип через scope (только для простых Ident'ов; deeper
+        // resolution — это задача codegen-уровня inference).
+        let obj_ty = match &obj.kind {
+            ExprKind::Ident(n) => match scope.get(n) {
+                Some(t) => t.clone(),
+                None => return,
+            },
+            _ => return,
+        };
+        // Extract protocol-name (named type, не generic-bound here).
+        let proto_name = match &obj_ty {
+            TypeRef::Named { path, generics, .. }
+                if generics.is_empty() && path.len() == 1 =>
+            {
+                path[0].clone()
+            }
+            _ => return,
+        };
+        // Skip non-protocol type bindings.
+        let Some(spec_methods) = self.protocol_specs.get(&proto_name) else { return; };
+        // Method обязан быть в protocol-spec.
+        let known: bool = spec_methods.iter().any(|m| m.name == method_name);
+        if known { return; }
+        // Compose listing of known methods для R5.3 hint.
+        let known_methods: Vec<String> = spec_methods.iter().map(|m| m.name.clone()).collect();
+        let listing = if known_methods.is_empty() {
+            "<no methods>".to_string()
+        } else {
+            known_methods.join(", ")
+        };
+        errors.push(Diagnostic::new(
+            format!(
+                "unknown method `.{}()` on protocol-typed value (declared protocol `{}` \
+                 has no such method). Declared methods: [{}].\n  \
+                 fix: rename call to one of the declared methods, or add `{}` to the protocol \
+                 declaration (`type {} protocol {{ ... }}`).\n  \
+                 (Plan 97.1 hardening — D142 / [M-protocol-method-name-shadowing] enforcement.)",
+                method_name, proto_name, listing, method_name, proto_name),
+            member_span,
+        ));
     }
 
     /// Plan 15 Р¤.3: РїСЂРѕРІРµСЂРёС‚СЊ bound'С‹ РЅР° РєРѕРЅРєСЂРµС‚РЅРѕРј call-site.
@@ -3187,6 +3256,15 @@ impl<'a> BoundCtx<'a> {
     fn infer_arg_ty(e: &Expr, scope: &HashMap<String, TypeRef>) -> Option<TypeRef> {
         match &e.kind {
             ExprKind::Ident(name) => scope.get(name).cloned(),
+            // Plan 97.1 hardening (D142): protocol-литерал имеет тип
+            // именованного protocol'а — это позволяет let-binding
+            // получить корректный тип в scope (для последующего
+            // check_protocol_method_call enforcement'а).
+            ExprKind::ProtocolLit { proto_name, .. } => Some(TypeRef::Named {
+                path: proto_name.clone(),
+                generics: Vec::new(),
+                span: e.span,
+            }),
             ExprKind::RecordLit { type_name: Some(name), .. } => Some(TypeRef::Named {
                 path: name.clone(),
                 generics: Vec::new(),
