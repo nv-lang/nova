@@ -8,6 +8,9 @@
 // Plan 83.4.5.1 (2026-05-23): cooperative select+cancel test — armed
 // multi-worker double-resume race blocks select+timer cleanup interaction.
 //
+// Plan 83.4.5.8 (2026-05-24): directive RESTORED — test inherently
+// cooperative-dependent (ordering / handler-scoping / timing semantics).
+// Armed M:N changes execution model. Followup: rewrite under M:N semantics.
 // ENV NOVA_NO_AUTOARM=1
 
 module plan65.f10_select_cancel_propagation
