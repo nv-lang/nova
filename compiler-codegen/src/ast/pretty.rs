@@ -170,9 +170,9 @@ fn write_expr(out: &mut String, e: &Expr) {
             out.push_str(" { ... }");
         }
         ExprKind::Range { start, end, inclusive } => {
-            write_expr(out, start);
+            if let Some(s) = start { write_expr(out, s); }
             out.push_str(if *inclusive { "..=" } else { ".." });
-            write_expr(out, end);
+            if let Some(e) = end { write_expr(out, e); }
         }
         ExprKind::Forall { var, range, body } => {
             let _ = write!(out, "forall {} in ", var);

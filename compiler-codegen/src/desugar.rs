@@ -700,8 +700,8 @@ impl DesugarCtx {
                 if let Some(x) = opt { self.desugar_expr(x); }
             }
             ExprKind::Range { start, end, .. } => {
-                self.desugar_expr(start);
-                self.desugar_expr(end);
+                if let Some(s) = start { self.desugar_expr(s); }
+                if let Some(e) = end { self.desugar_expr(e); }
             }
             ExprKind::InterpolatedStr { parts } => {
                 for p in parts.iter_mut() {

@@ -879,8 +879,21 @@ impl Interpreter {
                 Ok(Flow::Interrupt(v))
             }
             ExprKind::Range { start, end, inclusive } => {
-                let s = self.eval_expr_value(start, env)?;
-                let e = self.eval_expr_value(end, env)?;
+                // Plan 96 Ф.2 — интерпретатор не поддерживает open-ended Range
+                // как первоклассное значение (bounded-substitution делается в
+                // codegen на slice-site). Type-checker отвергает open-ended
+                // вне slice-context (Ф.3); если сюда дошёл с None — это
+                // material для type-checker'а, диагностика.
+                let start_expr = start.as_deref().ok_or_else(|| Diagnostic::new(
+                    "interpreter does not support open-ended Range as a value (use bounded form a..b)",
+                    expr.span,
+                ))?;
+                let end_expr = end.as_deref().ok_or_else(|| Diagnostic::new(
+                    "interpreter does not support open-ended Range as a value (use bounded form a..b)",
+                    expr.span,
+                ))?;
+                let s = self.eval_expr_value(start_expr, env)?;
+                let e = self.eval_expr_value(end_expr, env)?;
                 let (s, e) = match (s, e) {
                     (Value::Int(s), Value::Int(e)) => (s, e),
                     _ => {

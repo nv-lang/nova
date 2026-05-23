@@ -267,7 +267,8 @@ fn walk_children(e: &mut Expr, sigs: &Sigs) {
             if let Some(x) = opt { normalize_expr(x, sigs); }
         }
         ExprKind::Range { start, end, .. } => {
-            normalize_expr(start, sigs); normalize_expr(end, sigs);
+            if let Some(s) = start { normalize_expr(s, sigs); }
+            if let Some(e) = end { normalize_expr(e, sigs); }
         }
         ExprKind::ArrayLit(elems) => {
             for el in elems.iter_mut() {
