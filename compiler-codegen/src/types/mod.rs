@@ -1117,8 +1117,8 @@ impl<'a> TypeCheckCtx<'a> {
                 }
             }
             ExprKind::Range { start, end, .. } => {
-                self.walk_expr(start, gs, errors);
-                self.walk_expr(end, gs, errors);
+                if let Some(s) = start { self.walk_expr(s, gs, errors); }
+                if let Some(e) = end { self.walk_expr(e, gs, errors); }
             }
             ExprKind::Throw(inner) => self.walk_expr(inner, gs, errors),
             ExprKind::Interrupt(opt) => {
@@ -1508,8 +1508,8 @@ impl<'a> TypeCheckCtx<'a> {
                 }
             }
             ExprKind::Range { start, end, .. } => {
-                self.f1_expr(start, gs, scope, errors);
-                self.f1_expr(end, gs, scope, errors);
+                if let Some(s) = start { self.f1_expr(s, gs, scope, errors); }
+                if let Some(e) = end { self.f1_expr(e, gs, scope, errors); }
             }
             ExprKind::Throw(inner) => self.f1_expr(inner, gs, scope, errors),
             ExprKind::Interrupt(opt) => {
@@ -2621,8 +2621,8 @@ impl<'a> BoundCtx<'a> {
                 }
             }
             ExprKind::Range { start, end, .. } => {
-                self.walk_expr(start, scope, errors);
-                self.walk_expr(end, scope, errors);
+                if let Some(s) = start { self.walk_expr(s, scope, errors); }
+                if let Some(e) = end { self.walk_expr(e, scope, errors); }
             }
             ExprKind::Throw(e) => self.walk_expr(e, scope, errors),
             ExprKind::Interrupt(opt) => {
@@ -3861,8 +3861,8 @@ impl<'a> CapabilityCtx<'a> {
                 }
             }
             ExprKind::Range { start, end, .. } => {
-                self.walk_expr(start, state, errors);
-                self.walk_expr(end, state, errors);
+                if let Some(s) = start { self.walk_expr(s, state, errors); }
+                if let Some(e) = end { self.walk_expr(e, state, errors); }
             }
             ExprKind::Throw(e) => self.walk_expr(e, state, errors),
             ExprKind::Interrupt(opt) => {
@@ -4852,8 +4852,8 @@ impl NameResCtx {
                 self.walk_block(body, file_id, scope, errors);
             }
             ExprKind::Range { start, end, .. } => {
-                self.walk_expr(start, file_id, scope, errors);
-                self.walk_expr(end, file_id, scope, errors);
+                if let Some(s) = start { self.walk_expr(s, file_id, scope, errors); }
+                if let Some(e) = end { self.walk_expr(e, file_id, scope, errors); }
             }
             ExprKind::Spawn(body) => self.walk_expr(body, file_id, scope, errors),
             ExprKind::Detach(body) | ExprKind::Blocking(body) => {
@@ -5218,7 +5218,8 @@ fn has_throw_in_expr(e: &Expr) -> bool {
         ExprKind::Lambda { .. } => false,
             // Lambda has its own scope; throw inside lambda вЂ” РµС‘ СЌС„С„РµРєС‚С‹, РЅРµ С‚РµРєСѓС‰РµР№ fn.
         ExprKind::Range { start, end, .. } =>
-            has_throw_in_expr(start) || has_throw_in_expr(end),
+            start.as_deref().map_or(false, has_throw_in_expr)
+                || end.as_deref().map_or(false, has_throw_in_expr),
         ExprKind::TupleLit(elems) => elems.iter().any(has_throw_in_expr),
         ExprKind::ArrayLit(elems) => elems.iter().any(|el| match el {
             ArrayElem::Item(e) => has_throw_in_expr(e),
@@ -6056,8 +6057,8 @@ fn walk_expr_for_handler_lits(e: &Expr, never_ops: &HashSet<(String, String)>, e
             walk_expr_for_handler_lits(obj, never_ops, errors);
         }
         ExprKind::Range { start, end, .. } => {
-            walk_expr_for_handler_lits(start, never_ops, errors);
-            walk_expr_for_handler_lits(end, never_ops, errors);
+            if let Some(s) = start { walk_expr_for_handler_lits(s, never_ops, errors); }
+            if let Some(e) = end { walk_expr_for_handler_lits(e, never_ops, errors); }
         }
         ExprKind::ArrayLit(elems) => {
             for el in elems {
@@ -6907,8 +6908,8 @@ fn consume_walk_expr(ctx: &mut ConsumeCtx, e: &Expr, errors: &mut Vec<Diagnostic
             if let Some(v) = opt { consume_walk_expr(ctx, v, errors); }
         }
         ExprKind::Range { start, end, .. } => {
-            consume_walk_expr(ctx, start, errors);
-            consume_walk_expr(ctx, end, errors);
+            if let Some(s) = start { consume_walk_expr(ctx, s, errors); }
+            if let Some(e) = end { consume_walk_expr(ctx, e, errors); }
         }
 
         // ─── `a ?? b` — `b` исполняется условно ───
@@ -7310,8 +7311,8 @@ fn walk_expr_for_defers(e: &Expr, fn_effects: &HashMap<String, Vec<TypeRef>>, er
         ExprKind::TurboFish { base, .. } => walk_expr_for_defers(base, fn_effects, errors),
         ExprKind::Lambda { body, .. } | ExprKind::Interrupt(Some(body)) => walk_expr_for_defers(body, fn_effects, errors),
         ExprKind::Range { start, end, .. } => {
-            walk_expr_for_defers(start, fn_effects, errors);
-            walk_expr_for_defers(end, fn_effects, errors);
+            if let Some(s) = start { walk_expr_for_defers(s, fn_effects, errors); }
+            if let Some(e) = end { walk_expr_for_defers(e, fn_effects, errors); }
         }
         ExprKind::ArrayLit(elems) => {
             for el in elems {
@@ -7558,8 +7559,8 @@ fn walk_defer_subexprs(e: &Expr, kw: &str, fn_effects: &HashMap<String, Vec<Type
         ExprKind::Member { obj, .. } | ExprKind::Index { obj, .. } => check_defer_body_inner(obj, kw, fn_effects, ctx, errors),
         ExprKind::TurboFish { base, .. } => check_defer_body_inner(base, kw, fn_effects, ctx, errors),
         ExprKind::Range { start, end, .. } => {
-            check_defer_body_inner(start, kw, fn_effects, ctx, errors);
-            check_defer_body_inner(end, kw, fn_effects, ctx, errors);
+            if let Some(s) = start { check_defer_body_inner(s, kw, fn_effects, ctx, errors); }
+            if let Some(e) = end { check_defer_body_inner(e, kw, fn_effects, ctx, errors); }
         }
         ExprKind::ArrayLit(elems) => {
             for el in elems {
@@ -8717,8 +8718,8 @@ impl MapLitCtx {
                 if let Some(x) = opt { self.walk_expr(x, None, errors); }
             }
             ExprKind::Range { start, end, .. } => {
-                self.walk_expr(start, None, errors);
-                self.walk_expr(end, None, errors);
+                if let Some(s) = start { self.walk_expr(s, None, errors); }
+                if let Some(e) = end { self.walk_expr(e, None, errors); }
             }
             ExprKind::InterpolatedStr { parts } => {
                 for p in parts {
@@ -9642,8 +9643,8 @@ impl MapLitAnnotator {
                 if let Some(x) = opt { self.walk_expr(x, None); }
             }
             ExprKind::Range { start, end, .. } => {
-                self.walk_expr(start, None);
-                self.walk_expr(end, None);
+                if let Some(s) = start { self.walk_expr(s, None); }
+                if let Some(e) = end { self.walk_expr(e, None); }
             }
             ExprKind::InterpolatedStr { parts } => {
                 for p in parts.iter_mut() {

@@ -638,9 +638,13 @@ pub fn term_contains_var(t: &SmtTerm, var_name: &str) -> bool {
 }
 
 /// D.1.3: извлечь lo и hi из Range-выражения.
+/// Plan 96 Ф.2 — quantifier Range требует обе границы (bounded set);
+/// open-ended (`a..`/`..b`/`..`) — error.
 fn extract_range(e: &Expr) -> Result<(&Expr, &Expr), EncodingError> {
     match &e.kind {
-        ExprKind::Range { start, end, .. } => Ok((start, end)),
+        ExprKind::Range { start: Some(s), end: Some(en), .. } => Ok((s, en)),
+        ExprKind::Range { .. } => Err(EncodingError::Unsupported(
+            "quantifier range must be bounded (lo..hi); open-ended Range not allowed in quantifiers".into())),
         _ => Err(EncodingError::Unsupported(
             "quantifier range must be lo..hi expression".into())),
     }

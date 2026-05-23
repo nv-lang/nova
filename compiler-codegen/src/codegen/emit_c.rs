@@ -5133,6 +5133,12 @@ impl CEmitter {
 
         match &iter.kind {
             ExprKind::Range { start, end, inclusive } => {
+                // Plan 96 Ф.2 — для `parallel for` нужны обе границы; open-ended
+                // не имеет смысла. Type-checker отвергает open-ended вне slice-context.
+                let start = start.as_deref().ok_or_else(||
+                    "parallel for: open-ended Range without start bound (Plan 96)".to_string())?;
+                let end = end.as_deref().ok_or_else(||
+                    "parallel for: open-ended Range without end bound (Plan 96)".to_string())?;
                 let s = self.emit_expr(start)?;
                 let e = self.emit_expr(end)?;
                 let plus_one = if *inclusive { " + 1" } else { "" };
@@ -5818,8 +5824,8 @@ impl CEmitter {
                 }
             }
             ExprKind::Range { start, end, .. } => {
-                Self::collect_idents_expr(start, out);
-                Self::collect_idents_expr(end, out);
+                if let Some(s) = start { Self::collect_idents_expr(s, out); }
+                if let Some(e) = end { Self::collect_idents_expr(e, out); }
             }
             ExprKind::Lambda { body, .. } => Self::collect_idents_expr(body, out),
             ExprKind::TupleLit(elems) => {
@@ -12569,6 +12575,14 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                 // Inclusive `..=N` — эмитим как `start..end+1` (полу-
                 // открытый эквивалент). Range type не имеет inclusive
                 // поля (std/collections/range.nv:30 — `{start, end}`).
+                //
+                // Plan 96 Ф.2 — materialize требует обе границы. Open-ended
+                // допустим только в slice-index context (Ф.4); type-checker
+                // отвергает open-ended раньше для всех остальных позиций.
+                let start = start.as_deref().ok_or_else(||
+                    "Range materialize: open-ended Range without start bound (Plan 96 Ф.2)".to_string())?;
+                let end = end.as_deref().ok_or_else(||
+                    "Range materialize: open-ended Range without end bound (Plan 96 Ф.2)".to_string())?;
                 let s = self.emit_expr(start)?;
                 let e = self.emit_expr(end)?;
                 if self.record_schemas.contains_key("Range") {
@@ -17377,6 +17391,13 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
         // Case 1: `for i in start..end`
         if let ExprKind::Range { start, end, inclusive } = &iter.kind {
             let binding = self.pattern_binding(pattern)?;
+            // Plan 96 Ф.2 — for-in требует обе границы. Type-checker отвергает
+            // open-ended Range вне slice-context раньше; здесь — внутренний
+            // error если каким-то путём open-ended Range попал в for-loop.
+            let start = start.as_deref().ok_or_else(||
+                "for-in: open-ended Range without start bound (Plan 96 Ф.2)".to_string())?;
+            let end = end.as_deref().ok_or_else(||
+                "for-in: open-ended Range without end bound (Plan 96 Ф.2)".to_string())?;
             let s = self.emit_expr(start)?;
             let e = self.emit_expr(end)?;
             let cmp = if *inclusive { "<=" } else { "<" };

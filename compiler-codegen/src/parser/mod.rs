@@ -3797,7 +3797,37 @@ impl Parser {
         Ok(left)
     }
 
+    /// Plan 96 Ф.2 — поддержка 5 форм Range:
+    ///   `a..b` / `a..=b` (closed-form, D58)
+    ///   `a..` (open-end, Plan 96 D144)
+    ///   `..b` / `..=b` (open-start, D144)
+    ///   `..` (full, D144)
+    /// Open-ended формы допустимы синтаксически везде; type-checker
+    /// ограничивает их slice-context'ом (`arr[range]`).
     fn parse_range(&mut self) -> Result<Expr, Diagnostic> {
+        // Открывающее `..` / `..=` без left-operand — open-start форма.
+        let prefix_start_span = self.peek().span;
+        let prefix_dotdot = matches!(self.peek().kind, TokenKind::DotDot | TokenKind::DotDotEq);
+        if prefix_dotdot {
+            let inclusive = matches!(self.peek().kind, TokenKind::DotDotEq);
+            self.bump();
+            // После `..` / `..=` — либо expression (`..b`), либо конец (`..`
+            // следующий токен — `]`/`)`/`,`/EOF).
+            let end_opt = if self.range_end_follows() {
+                Some(Box::new(self.parse_add()?))
+            } else {
+                None
+            };
+            let span = match &end_opt {
+                Some(e) => prefix_start_span.merge(e.span),
+                None => prefix_start_span,
+            };
+            return Ok(Expr::new(
+                ExprKind::Range { start: None, end: end_opt, inclusive },
+                span,
+            ));
+        }
+
         let left = self.parse_add()?;
         let inclusive = match self.peek().kind {
             TokenKind::DotDot => false,
@@ -3805,16 +3835,43 @@ impl Parser {
             _ => return Ok(left),
         };
         self.bump();
-        let right = self.parse_add()?;
-        let span = left.span.merge(right.span);
+        // После `expr ..` / `expr ..=` — либо expression (`a..b`), либо
+        // конец (`a..` без правой границы).
+        let right_opt = if self.range_end_follows() {
+            Some(Box::new(self.parse_add()?))
+        } else {
+            None
+        };
+        let span = match &right_opt {
+            Some(r) => left.span.merge(r.span),
+            None => left.span,
+        };
         Ok(Expr::new(
             ExprKind::Range {
-                start: Box::new(left),
-                end: Box::new(right),
+                start: Some(Box::new(left)),
+                end: right_opt,
                 inclusive,
             },
             span,
         ))
+    }
+
+    /// Plan 96 Ф.2 — есть ли expression после `..` / `..=`?
+    /// Возвращает `false` если следующий токен — конец range-expression
+    /// в контексте: `]`/`)`/`,`/`{`/`;`/EOF/`=>`/etc.
+    fn range_end_follows(&self) -> bool {
+        !matches!(
+            self.peek().kind,
+            TokenKind::RBracket
+                | TokenKind::RParen
+                | TokenKind::Comma
+                | TokenKind::LBrace
+                | TokenKind::RBrace
+                | TokenKind::Semicolon
+                | TokenKind::Eof
+                | TokenKind::FatArrow
+                | TokenKind::Newline
+        )
     }
 
     fn parse_add(&mut self) -> Result<Expr, Diagnostic> {

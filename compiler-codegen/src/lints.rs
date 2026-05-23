@@ -606,8 +606,8 @@ fn collect_expr(e: &Expr, out: &mut HashSet<String>) {
             }
         }
         ExprKind::Range { start, end, .. } => {
-            collect_expr(start, out);
-            collect_expr(end, out);
+            if let Some(s) = start { collect_expr(s, out); }
+            if let Some(e) = end { collect_expr(e, out); }
         }
         ExprKind::Throw(i) => collect_expr(i, out),
         ExprKind::Interrupt(opt) => {
@@ -1120,7 +1120,8 @@ fn walk_expr_lints(e: &Expr, out: &mut Vec<LintWarning>) {
             if let Some(x) = opt { walk_expr_lints(x, out); }
         }
         ExprKind::Range { start, end, .. } => {
-            walk_expr_lints(start, out); walk_expr_lints(end, out);
+            if let Some(s) = start { walk_expr_lints(s, out); }
+            if let Some(e) = end { walk_expr_lints(e, out); }
         }
         ExprKind::InterpolatedStr { parts } => {
             for p in parts {

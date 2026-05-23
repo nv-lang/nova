@@ -1388,10 +1388,17 @@ pub enum ExprKind {
         nogc: bool,
         body: Block,
     },
-    /// `range expr (a..b)` — D58 (генерируется как обычный вызов `Range.exclusive`)
+    /// Range-expression — D58 (closed-form `a..b`/`a..=b`) + D144 (open-ended
+    /// `a..`/`..b`/`..`, Plan 96 Ф.2).
+    ///
+    /// `start` / `end` — `Option`: `None` означает «без явной границы»
+    /// (требуется bounded context — slice-index, D144). Closed-form (оба
+    /// `Some`) допустимы везде: for-loop, materialize, slice. Open-ended
+    /// (любой `None`) — **только** в slice-position `arr[range]`; вне
+    /// slice-context type-checker эмитит ошибку (D144).
     Range {
-        start: Box<Expr>,
-        end: Box<Expr>,
+        start: Option<Box<Expr>>,
+        end: Option<Box<Expr>>,
         inclusive: bool,
     },
     /// D.1.3: универсальный квантор в контрактах.

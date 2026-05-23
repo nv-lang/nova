@@ -1,0 +1,12 @@
+// EXPECT_COMPILE_ERROR open-ended Range
+//
+// Plan 96 Ф.2 — негатив: open-ended Range в `let` (materialize как Range
+// value) → compile error. Range struct требует обе границы; open-ended
+// допустим только при немедленном использовании в slice-index.
+
+module nova_tests.plan96.neg_range_open_in_let
+
+fn main() -> () {
+    let r = 1..
+    let _ = r
+}
