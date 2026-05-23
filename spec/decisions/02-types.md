@@ -4048,3 +4048,146 @@ named type».
   имплементация.
 - Ориентиры: Java/Kotlin (anonymous interface), TS (object-literal
   structurally), Koka/Eff (handler-literal).
+
+---
+
+## D144. Sub-slice views РґР»СЏ `[]T` Рё `str` вЂ” `arr[a..b]` / `s[a..b]`
+
+> **Р�СЃС‚РѕС‡РЅРёРє:** Plan 96 (2026-05-23). Р—Р°РєСЂС‹РІР°РµС‚ Q-array-slicing,
+> Q-array-api.5, D27 В§1663 drift (В«РЎР»Р°Р№СЃРёРЅРі РѕС‚Р»РѕР¶РµРЅВ»), D27 В§1632 drift
+> (raw `arr[i]` Р±РµР· bounds-check). **Р—Р°РІРёСЃРёС‚ РѕС‚** [D6](05-memory.md#d6)
+> non-moving GC; [D58](03-syntax.md#d58) Range; [D27](03-syntax.md#d27)
+> `[]T` API; [Plan 90 / D141](08-runtime.md#d141) bulk-ops.
+
+### РЎРµРјР°РЅС‚РёРєР° вЂ” sub-slice view
+
+`arr[range]` РіРґРµ `range : Range` РІРѕР·РІСЂР°С‰Р°РµС‚ **view** вЂ” РЅРѕРІС‹Р№
+24-Р±Р°Р№С‚РѕРІС‹Р№ header `NovaArray_T*` СЃ `data = orig->data + from`,
+`len = cap = to - from`. **Р‘РµР· РєРѕРїРёРё РґР°РЅРЅС‹С… backing'Р°** (O(1) creation).
+
+`str[range]` РІРѕР·РІСЂР°С‰Р°РµС‚ codepoint-indexed view (РґРІСѓС…РїСЂРѕС…РѕРґРЅС‹Р№ walk
+UTF-8 в†’ byte offsets; structurally РёРґРµРЅС‚РёС‡РЅРѕ `nova_str_slice`, РЅРѕ СЃ
+**panic РїСЂРё OOB** РІРјРµСЃС‚Рѕ clamp).
+
+### 5 С„РѕСЂРј Range (Rust `RangeBounds` parity)
+
+| Р¤РѕСЂРјР° | РЎРµРјР°РЅС‚РёРєР° | Open-ended? |
+|---|---|---|
+| `arr[a..b]` | exclusive: `[a, b)` | РЅРµС‚ |
+| `arr[a..=b]` | inclusive: `[a, b]` | РЅРµС‚ |
+| `arr[a..]` | РѕС‚ `a` РґРѕ РєРѕРЅС†Р° | РґР° (end = `len`) |
+| `arr[..b]` | РѕС‚ РЅР°С‡Р°Р»Р° РґРѕ `b` | РґР° (start = 0) |
+| `arr[..]` | РІРµСЃСЊ РјР°СЃСЃРёРІ | РґР° |
+
+Open-ended С„РѕСЂРјС‹ вЂ” **С‚РѕР»СЊРєРѕ РІ slice-context** (`arr[range]`). Р’
+materialize / for-loop / quantifier / parallel-for РѕРЅРё РѕС‚РІРµСЂРіР°СЋС‚СЃСЏ
+СЃ compile-time diagnostic В«open-ended Range without bound (Plan 96)В».
+
+### Single-type design
+
+`[]T` вЂ” **РѕРґРёРЅ** С‚РёРї РґР»СЏ owner Рё view. РќРµС‚ `Slice[T]` (Rust-РјРѕРґРµР»СЊ
+СЂР°Р·РґРµР»СЊРЅС‹С… С‚РёРїРѕРІ). View РїРµСЂРµРґР°С‘С‚СЃСЏ РІ С„СѓРЅРєС†РёСЋ Р¶РґСѓС‰СѓСЋ `[]T` Р±РµР·
+РґРѕРїРѕР»РЅРёС‚РµР»СЊРЅРѕР№ РєРѕРЅРІРµСЂСЃРёРё.
+
+### `cap == len` invariant
+
+View РёРјРµРµС‚ `cap == len == to - from`. Push РЅР° view в†’ realloc (РєР°Рє
+РѕР±С‹С‡РЅРѕ РїСЂРё exhausted cap) в†’ view **silent detach** РѕС‚ parent.
+Parent backing **РЅРёРєРѕРіРґР°** РЅРµ РјРѕР»С‡Р° РїРµСЂРµР·Р°РїРёСЃС‹РІР°РµС‚СЃСЏ вЂ” СЌС‚Рѕ СѓСЃС‚СЂР°РЅСЏРµС‚
+Go-`append`-footgun Р±РµР· borrow checker'Р°.
+
+```nova
+let mut parent = [1, 2, 3, 4, 5]
+let mut view = parent[1..4]   \ view: [2, 3, 4]
+view.push(99)                  \ realloc; view detached
+\ parent == [1, 2, 3, 4, 5]   вЂ” РќР• Р·Р°С‚СЂРѕРЅСѓС‚
+\ view == [2, 3, 4, 99]
+```
+
+### Mut-СЃРµРјР°РЅС‚РёРєР°
+
+`mut`-view С‚РѕР»СЊРєРѕ РѕС‚ `mut`-РёСЃС‚РѕС‡РЅРёРєР°. Р§РµСЂРµР· `mut`-view write РёРґС‘С‚ РІ
+**shared backing** вЂ” РёР·РјРµРЅРµРЅРёСЏ РІРёРґРЅС‹ parent. РќРµСЃРєРѕР»СЊРєРѕ `mut`-view
+РѕРґРЅРѕРіРѕ backing'Р° **СЂР°Р·СЂРµС€РµРЅС‹** (РєР°Рє РІ Go); caller responsibility,
+РЅРёРєР°РєРѕРіРѕ borrow checker'Р°.
+
+### Iterator invalidation
+
+`for x in view` вЂ” `len` Р±РµСЂС‘С‚СЃСЏ snapshot'РѕРј РІ РЅР°С‡Р°Р»Рµ С†РёРєР»Р° (Go-style).
+Push РЅР° parent РІРѕ РІСЂРµРјСЏ РёС‚РµСЂР°С†РёРё view'Р° **РЅРµ РІРёРґРµРЅ** view'Сѓ: parent
+СЂРµР°Р»Р»РѕС†РёСЂСѓРµС‚, view РїСЂРѕРґРѕР»Р¶Р°РµС‚ СѓРєР°Р·С‹РІР°С‚СЊ РЅР° СЃС‚Р°СЂС‹Р№ backing С‡РµСЂРµР·
+interior-pointer.
+
+### GC requirement вЂ” interior pointers stable
+
+**РќРµРѕР±С…РѕРґРёРјРѕРµ СѓСЃР»РѕРІРёРµ:** runtime РіР°СЂР°РЅС‚РёСЂСѓРµС‚ stable interior pointers
+(non-moving GC, D6). View С…СЂР°РЅРёС‚ `data = backing->data + from` вЂ” СЌС‚Рѕ
+СѓРєР°Р·Р°С‚РµР»СЊ **РІРЅСѓС‚СЂСЊ** backing'Р°; Boehm (`GC_set_all_interior_pointers(1)`)
+РґРµСЂР¶РёС‚ backing alive РїРѕ interior-ptr.
+
+Р›СЋР±Р°СЏ Р±СѓРґСѓС‰Р°СЏ Р·Р°РјРµРЅР° GC-backend РЅР° moving GC С‚СЂРµР±СѓРµС‚ РѕРґРЅРѕРІСЂРµРјРµРЅРЅРѕР№
+Р·Р°РјРµРЅС‹ slice-РїСЂРµРґСЃС‚Р°РІР»РµРЅРёСЏ (separate header struct + ptr-update on
+move). Р­С‚Рѕ Р·Р°РєСЂРµРїР»СЏРµС‚СЃСЏ Р·РґРµСЃСЊ РєР°Рє РЅРѕСЂРјР°С‚РёРІРЅС‹Р№ invariant.
+
+### Bounds-check
+
+- `from < 0` в†’ panic
+- `to < from` в†’ panic
+- `to > len` в†’ panic (РґР»СЏ str вЂ” `to > total_codepoints`)
+- Empty slice (`arr[a..a]`) в†’ РІР°Р»РёРґРµРЅ
+- РћС‚СЂРёС†Р°С‚РµР»СЊРЅС‹Рµ РёРЅРґРµРєСЃС‹ в†’ panic, **РЅРµ** Python-style wrap
+
+РЎРѕРѕР±С‰РµРЅРёРµ panic'Р°: `"array: slice [N..M] out of bounds for length L"`
+(РїР°СЂРёС‚РµС‚ СЃ Go/Rust).
+
+### РўР°РєР¶Рµ: raw `arr[i]` bounds-check (D27 В§1632 drift)
+
+D144 РѕРґРЅРѕРІСЂРµРјРµРЅРЅРѕ С„РёРєСЃРёСЂСѓРµС‚ pre-existing drift: codegen `arr[i]`
+**С‚РµРїРµСЂСЊ** СЌРјРёС‚РёС‚ runtime bounds-check (СЂР°РЅСЊС€Рµ СЌРјРёС‚РёР» РіРѕР»С‹Р№
+`(arr)->data[i]` вЂ” controlled buffer overflow РЅР° Р·Р°РїРёСЃСЊ, UB РЅР° С‡С‚РµРЅРёРµ).
+РЎРѕРѕР±С‰РµРЅРёРµ: `"array: index N out of bounds for length L"`.
+
+### Concurrency / M:N
+
+Slice-view = shared mut backing РјРµР¶РґСѓ fiber'Р°РјРё РІ M:N runtime =
+**С„РѕСЂРјР°Р»СЊРЅРѕ UB РїРѕ [D79](06-concurrency.md#d79)**. Р’ D71 single-threaded
+bootstrap вЂ” OK РїРѕ С„Р°РєС‚Сѓ. РџРµСЂРµРґР°С‡Р° view С‡РµСЂРµР· `Channel[]T]` РёР»Рё
+spawn-capture РІ M:N вЂ” **inherits D79 disclaimer**.
+
+### Header layout
+
+24 Р±Р°Р№С‚Р° (`ptr + len + cap`) вЂ” С‚РѕС‚ Р¶Рµ С‡С‚Рѕ Сѓ owner. РќРµ РѕРїС‚РёРјРёР·РёСЂРѕРІР°РЅРѕ
+РґРѕ 16 Р±Р°Р№С‚ (РєРѕС‚РѕСЂРѕРµ С‚СЂРµР±РѕРІР°Р»Рѕ Р±С‹ РѕС‚РґРµР»СЊРЅРѕРіРѕ С‚РёРїР° `Slice[T]` вЂ” РѕС‚РІРµСЂРіРЅСѓС‚Рѕ
+single-type-design'РѕРј).
+
+### `str[a..b]` вЂ” bracket syntax РґР»СЏ СЃС‚СЂРѕРє
+
+Bracket-С„РѕСЂРјР° СѓРЅРёС„РёС†РёСЂСѓРµС‚ idiom: `arr[a..b]` в‰Ў `str[a..b]`.
+Codepoint-indexed (РєР°Рє СЃСѓС‰РµСЃС‚РІСѓСЋС‰РёР№ `nova_str_slice` РјРµС‚РѕРґ).
+**Panic РїСЂРё OOB** (consistent СЃ `arr[a..b]`).
+
+РЎС‚Р°СЂС‹Р№ `s.slice(a, b)` РјРµС‚РѕРґ вЂ” **СЃРѕС…СЂР°РЅСЏРµС‚СЃСЏ** СЃ clamp-СЃРµРјР°РЅС‚РёРєРѕР№
+РґР»СЏ backwards-compat; align РЅР° panic РѕС‚РєР»Р°РґС‹РІР°РµС‚СЃСЏ РІ Plan 94
+(СЃРј. `[P-str-slice-clamp-vs-panic]` РІ `docs/simplifications.md`).
+
+### Verified РїСЂРѕС‚РёРІ
+
+- Go `s[a:b]` вЂ” РїР°СЂРёС‚РµС‚, **Р±РµР· append-footgun**.
+- Rust `&[T]` вЂ” Р±Р»РёР·РєРѕ, **Р±РµР· borrow checker** (caller responsibility
+  РґР»СЏ multi-mut).
+- TypeScript `TypedArray.subarray` вЂ” РїР°СЂРёС‚РµС‚.
+- Swift `ArraySlice<T>` вЂ” **Р±РµР· CoW-disconnect** (view СЃСЂР°Р·Сѓ РІРёРґРёС‚ mut).
+- Python `memoryview` вЂ” РїР°СЂРёС‚РµС‚.
+
+### РЎРІСЏР·СЊ
+
+- [D6](05-memory.md#d6) вЂ” non-moving GC; interior-ptr invariant
+  Р°РјРµРЅРґРёС‚СЃСЏ Р·РґРµСЃСЊ.
+- [D27](03-syntax.md#d27) вЂ” `[]T` API; В§1632 bounds-check (D144 С‡РёРЅРёС‚
+  drift); В§1663 В«РЎР»Р°Р№СЃРёРЅРі РѕС‚Р»РѕР¶РµРЅВ» (D144 Р·Р°РєСЂС‹РІР°РµС‚).
+- [D58](03-syntax.md#d58) вЂ” Range-Р»РёС‚РµСЂР°Р»С‹; D144 СЂР°СЃС€РёСЂСЏРµС‚ РґРѕ 5 С„РѕСЂРј
+  (open-ended).
+- [D79](06-concurrency.md#d79) вЂ” shared mut РјРµР¶РґСѓ fiber'Р°РјРё = UB
+  РІ M:N; slice inherits.
+- [D141](08-runtime.md#d141) вЂ” Plan 90 bulk-ops; СЂР°Р±РѕС‚Р°СЋС‚ РЅР° view
+  Р°РІС‚РѕРјР°С‚РёС‡РµСЃРєРё.
