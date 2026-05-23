@@ -1,0 +1,14 @@
+// Plan 99 Ф.0.2: probe method-level generic + closure-applying
+// на Option-методе. Подтверждаем, что инфра уже работает (или
+// выявляем точный gap).
+
+module nova_tests.plan99_probe.my_map_probe
+
+fn Option[T] @my_map[U](f fn(T) -> U) -> Option[U]
+  => match @ { Some(v) => Some(f(v)), None => None }
+
+test "probe: Option.my_map(|x| str.from(x)) — T=int, U=str" {
+    let a Option[int] = Some(42)
+    let s = a.my_map(|x| str.from(x))
+    assert(s.is_some())
+}

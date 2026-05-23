@@ -11366,3 +11366,39 @@ Plan 83.2 §4 «Compiled-программа без единого `runtime.*` в
 **при явном `runtime.init`**.
 
 ### Приоритет — M (P2-feature; инфраструктура готова, активация ждёт runtime fixes).
+
+## [M-option-result-closure-methods-deferred] Plan 99 Ф.0 — Closure-applying Option/Result методы (re-scope 2026-05-23)
+
+- **Где:** `compiler-codegen/src/codegen/emit_c.rs` — Option DeclaredBody
+  dispatch (`:14910+`), Result DeclaredBody dispatch (`:15148+`),
+  Option/Result inference (`:23215+`/`:23227+`); 6 inline emit-блоков
+  (`Option.unwrap_or_else`/`map`/`ok_or`, `Result.unwrap_or_else`/`map`/
+  `map_err`) в emit_c.rs.
+- **Что:** `Option.unwrap_or_else`/`map[U]`/`ok_or[E]`,
+  `Result.unwrap_or_else`/`map[U]`/`map_err[F]` **не переносимы** на
+  Nova-body Plan 95 infrastructure без расширения DeclaredBody-dispatch
+  на method-level generics + integration с `method_extra_subst`
+  inference (`:~16058`, currently только user-generic). Probe
+  (`nova_tests/plan99_probe/my_map_probe.nv`) показал unresolved
+  `Nova_U` placeholder в типах match-веток. mono_name без U-суффикса —
+  name collision risk между `Option[int].map[str]` и `Option[int].
+  map[int]`.
+- **Почему:** Plan 95 DeclaredBody-dispatch минимально достаточен для
+  match-only методов (Plan 95 + 95.bis = 9/14). Для closure-applying
+  с method-level generic нужен дополнительный pass инференции +
+  расширение mono-name + lazy-emit для U-Option.
+- **Последствие:** 6 closure-applying методов остаются inline-emit
+  в codegen (текущий механизм работает корректно для всех существующих
+  use-cases). Документация для пользователей: эти 6 методов C-routed,
+  не Nova-body.
+- **Как чинить:** **Plan 99** (proposed 2026-05-23, re-scope Ф.0).
+  ~3.5–4 dev-day. Requires: extract `method_extra_subst` helper,
+  integrate в Option/Result DeclaredBody, extend mono_name suffix,
+  fix `infer_expr_c_type` для Option/Result method-level inference,
+  lazy-emit `NovaOpt_<U>`. Plan 98 ✅ (закрыт 2026-05-23) — base
+  inference готов.
+- **Приоритет:** L — функционального выигрыша нет (inline emit и
+  Nova-body дают идентичный C); ценность только de-magic / single-
+  source-of-truth (14/14 builtin Option/Result методов на Nova).
+- **Обнаружено:** Plan 99 Ф.0 probe (2026-05-23). **План фикса:**
+  Plan 99 Ф.1–Ф.6 (re-scope подтверждён).

@@ -1,6 +1,45 @@
 # Plan 99 — Closure-applying Option/Result методы на Nova-body
 
-> **Статус:** 📋 proposed 2026-05-23, не начат.
+> **Статус:** 🔵 Ф.0 ВЫПОЛНЕН — **re-scope 2026-05-23** (worktree
+> `nova-p99`). Probe `Option[T] @my_map[U](f fn(T)->U) -> Option[U]`
+> (`nova_tests/plan99_probe/my_map_probe.nv`) подтвердил:
+>
+> - Block 1 (closure-codegen) — **уже работает** через существующую
+>   `NovaClosBase` + `fn_param_sigs` + cast machinery
+>   (`emit_c.rs:13983+`). `emit_monomorphized_method` корректно
+>   регистрирует fn-typed params в `fn_param_sigs` с mono'd
+>   сигнатурой. Никакой новой closure-codegen инфры не требуется.
+> - **Block 2** (method-level generic `[U]` в DeclaredBody-dispatch) —
+>   текущий Option DeclaredBody (`emit_c.rs:14910+`) **не запускает**
+>   `method_extra_subst` inference; логика закодирована только для
+>   user-generic dispatch (`emit_c.rs:~16058`). Probe-output показал
+>   unresolved `Nova_U` placeholder в типах match-веток и cast-
+>   сигнатуре закрытой closure. mono_name = `_nova_int` (без
+>   U-суффикса) → name collision risk.
+> - **Block 3** (контекстный variant-constructor): зависит от Block 2.
+>
+> **Re-scope:** для production-grade Plan 99 нужно:
+> 1. Extract `method_extra_subst` логику в helper и intergrate в
+>    Option/Result DeclaredBody dispatch (2 места).
+> 2. Расширить `mono_name` с `Nova_Option_method_<m>_<T>` на
+>    `Nova_Option_method_<m>_<T>_<U>_<F>...` (включая method-level
+>    generics).
+> 3. `infer_expr_c_type` для Option/Result-методов (`emit_c.rs:23215+`,
+>    `:23227+`) — хардкодит без method-level inference; нужно
+>    учитывать U/F/E для `map`/`map_err`/`ok_or`.
+> 4. `register_novaopt_decl(sani(U), U)` lazy-emit для return-Option-
+>    типа при mono-эмиссии метода.
+> 5. Удалить **6 inline emit-блоков** (`Option.unwrap_or_else`/`map`/
+>    `ok_or`, `Result.unwrap_or_else`/`map`/`map_err`) в emit_c.rs
+>    **одним коммитом** с переносом тел в core.nv (C-redefinition
+>    collision на mono'd C-имени).
+>
+> Реалистичная оценка — **3.5–4 dev-day** с тестами и регрессией
+> (proposal'овые 2.5–3 — недооценка). Ф.1–Ф.6 **не выполнены**;
+> требуется отдельная плановая сессия. Plan 99 остаётся **GATED**:
+> Plan 98 ✅ (закрыт 2026-05-23) разблокировал inference, но Block 2/3
+> implementation = отдельная инициатива. Маркер
+> `[M-option-result-closure-methods-deferred]` в `docs/simplifications.md`.
 > **Приоритет:** P3 (de-magic / single-source, как Plan 95 / 95.bis).
 > **Оценка:** ~2.5–3 dev-day (3 разных инфра-блокера; больше Plan 95.bis).
 > **Зависимости (HARD):**
