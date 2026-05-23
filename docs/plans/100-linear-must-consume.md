@@ -134,11 +134,11 @@ Plan 100 (umbrella, this doc)
 | **100.1** | [100.1-core-must-consume.md](100.1-core-must-consume.md) | type-level `consume`, field-aware flow (с nested-paths D5.2), binding-form, D1–D10 + D5.1, 17 фикстур, pilot mock | Plan 73/77/95 |
 | **100.2** | [100.2-generic-propagation.md](100.2-generic-propagation.md) | `[T consume]` generic bound, `[]T` consume-aware iteration, HashMap/Option/Result propagation, stdlib migration audit, 15 фикстур | 100.1 |
 | **100.3** | [100.3-borrow-and-view.md](100.3-borrow-and-view.md) | `view T` read-only borrow без lifetime, `match view` deep peek, closure capture analysis (consume / view), 12 фикстур | 100.1 |
-| **100.4** | [100.4-cleanup-on-failure.md](100.4-cleanup-on-failure.md) (**sub-umbrella**) | Production-grade defer/errdefer rework — amend D90 системно через 5 sub-sub-plan'ов: 100.4.1 failable body (D136), 100.4.2 async/suspend (D137), 100.4.3 okdefer + reason-aware (D138), 100.4.4 multi-defer + panic composition (D139), 100.4.5 consume-integration final (D140) | 100.1, Plan 20/49 |
-| **100.5** | [100.5-ffi-external-integration.md](100.5-ffi-external-integration.md) | `external consume fn` для C-runtime; opaque types + capability (Plan 16); pilot File/Mutex/Socket integration с FFI; defensive helpers; 18 фикстур (D141) | 100.1, Plan 16/62.D.bis |
-| **100.6** | [100.6-cross-module-integration.md](100.6-cross-module-integration.md) | consume-маркер через границы модулей/пакетов; mangling включает consume-bit (extends Plan 81); `nova.toml` consume-contracts; Plan 03 `nova audit` integration; 15 фикстур (D142) | 100.1, Plan 35/81/03/42 |
-| **100.7** | [100.7-stdlib-migration-playbook.md](100.7-stdlib-migration-playbook.md) | Full stdlib audit; `nova consume-migrate` CLI tool; edition versioning; **4 pilot migrations** (File/Mutex/TcpSocket/Transaction) end-to-end; 20+5 фикстур (D143) | ALL 100.1-6 |
-| **100.8** | [100.8-performance-ide-tooling.md](100.8-performance-ide-tooling.md) | Compile-time bench budget (<5%); LSP quick fixes (12 error codes); hover info; `nova doc` integration; `nova consume-analyze` CLI; diagnostic format spec; 15 фикстур (D144) | 100.1 (parallel with 100.2-7) |
+| **100.4** | [100.4-cleanup-on-failure.md](100.4-cleanup-on-failure.md) (**sub-umbrella**) | Production-grade defer/errdefer rework — amend D90 системно через 5 sub-sub-plan'ов: 100.4.1 failable body (D147), 100.4.2 async/suspend (D148), 100.4.3 okdefer + reason-aware (D149), 100.4.4 multi-defer + panic composition (D150), 100.4.5 consume-integration final (D151) | 100.1, Plan 20/49 |
+| **100.5** | [100.5-ffi-external-integration.md](100.5-ffi-external-integration.md) | `external consume fn` для C-runtime; opaque types + capability (Plan 16); pilot File/Mutex/Socket integration с FFI; defensive helpers; 18 фикстур (D152) | 100.1, Plan 16/62.D.bis |
+| **100.6** | [100.6-cross-module-integration.md](100.6-cross-module-integration.md) | consume-маркер через границы модулей/пакетов; mangling включает consume-bit (extends Plan 81); `nova.toml` consume-contracts; Plan 03 `nova audit` integration; 15 фикстур (D153) | 100.1, Plan 35/81/03/42 |
+| **100.7** | [100.7-stdlib-migration-playbook.md](100.7-stdlib-migration-playbook.md) | Full stdlib audit; `nova consume-migrate` CLI tool; edition versioning; **4 pilot migrations** (File/Mutex/TcpSocket/Transaction) end-to-end; 20+5 фикстур (D154) | ALL 100.1-6 |
+| **100.8** | [100.8-performance-ide-tooling.md](100.8-performance-ide-tooling.md) | Compile-time bench budget (<5%); LSP quick fixes (12 error codes); hover info; `nova doc` integration; `nova consume-analyze` CLI; diagnostic format spec; 15 фикстур (D155) | 100.1 (parallel with 100.2-7) |
 
 ## Acceptance (umbrella, across все 8 sub-plan'ов)
 
@@ -187,7 +187,7 @@ Plan 100 (umbrella, this doc)
       format spec consistent.
 - [ ] **Полный `nova test`** → 0 регрессий.
 - [ ] **Spec sweep**: D131 (Plan 73), D132 (Plan 77), D90 (Plan 20),
-      D85 (Plan 49), D133-D144 (Plan 100 family) — все cross-ref'ы
+      D85 (Plan 49), D133-D155 (Plan 100 family) — все cross-ref'ы
       согласованы.
 
 ## Risks (cross-cutting)
@@ -209,9 +209,9 @@ Plan 100 (umbrella, this doc)
    часть. **Митигация:** 100.4 переиспользует Plan 49 cancel-routing
    инфру; не вводит новые механизмы.
 
-4. **Spec D-block коллизии.** Резервируем **D133-D144** (12 D-blocks):
-   D133 (100.1), D134 (100.2), D135 (100.3), D136-D140 (100.4.1-5),
-   D141 (100.5), D142 (100.6), D143 (100.7), D144 (100.8). **Митигация:**
+4. **Spec D-block коллизии.** Резервируем **D133-D155** (12 D-blocks):
+   D133 (100.1), D145 (100.2), D146 (100.3), D147-D151 (100.4.1-5),
+   D152 (100.5), D153 (100.6), D154 (100.7), D155 (100.8). **Митигация:**
    проверка перед каждым sub-plan'ом start'ом; spec-team coordination.
 
 5. **Performance overhead.** Field-aware tracking + nested paths +
