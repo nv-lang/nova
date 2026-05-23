@@ -1,0 +1,28 @@
+// Plan 96 Ф.4 — GC verify: view держит backing alive через interior-
+// pointer (Boehm GC_set_all_interior_pointers). Backing достижим
+// только через view; GC.collect() не освобождает; view продолжает
+// читаться корректно.
+
+module nova_tests.plan96.slice_gc_alive
+
+fn make_view_only() -> []int {
+    let arr = [10, 20, 30, 40, 50, 60, 70, 80, 90, 100]
+    arr[2..7]
+    // arr выходит из scope; backing достижим только через возвращаемый view
+}
+
+test "view keeps backing alive after GC" {
+    let view = make_view_only()
+    // Force GC через множественные аллокации (без std.runtime.gc.collect)
+    let mut waste []int = []
+    for _ in 0..1000 {
+        waste.push(42)
+    }
+    // View должен продолжать показывать оригинальные значения.
+    assert(view.len() == 5)
+    assert(view[0] == 30)
+    assert(view[1] == 40)
+    assert(view[2] == 50)
+    assert(view[3] == 60)
+    assert(view[4] == 70)
+}

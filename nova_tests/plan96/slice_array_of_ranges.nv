@@ -1,0 +1,22 @@
+// Plan 96 G15 edge case — []Range индексируется Range:
+// ranges[0..1] → возвращает []Range (Range index)
+// Dispatch по типу index'а корректно различает Range vs int.
+//
+// Note: `ranges[0].start` (доступ к полю элемента) сейчас падает
+// на pre-existing []Range erasure (H3 — array_element_types
+// propagation, не Plan 96 scope). Поэтому тест проверяет только
+// что slice работает; element-field access — TODO.
+
+module nova_tests.plan96.slice_array_of_ranges
+
+test "array of Range — Range slice returns slice" {
+    let ranges []Range = [0..5, 10..20, 30..40, 50..60]
+    let sub = ranges[1..3]
+    assert(sub.len() == 2)
+}
+
+test "array of Range — open-end slice" {
+    let ranges []Range = [0..5, 10..20, 30..40]
+    let tail = ranges[1..]
+    assert(tail.len() == 2)
+}
