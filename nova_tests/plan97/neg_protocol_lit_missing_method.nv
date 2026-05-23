@@ -1,0 +1,20 @@
+// EXPECT_COMPILE_ERROR missing required instance methods
+//
+// Plan 97 Ф.4 (D142) — protocol-литерал без обязательного метода
+// → type-checker diagnostic «missing required instance methods».
+
+module nova_tests.plan97.neg_protocol_lit_missing_method
+
+
+type TwoMethod protocol {
+    foo() -> ()
+    bar() -> ()
+}
+
+
+test "literal без bar" {
+    let l = protocol TwoMethod {
+        foo() => ()
+        // bar отсутствует — должна быть compile ошибка
+    }
+}

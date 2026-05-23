@@ -13009,6 +13009,41 @@ impl CEmitter {
             ExprKind::HandlerLit { effect_name, methods } => {
                 self.emit_handler_lit(effect_name, methods)
             }
+            // Plan 97 Ф.4 (D142): protocol-литерал. Codegen pиggy-back
+            // на `emit_handler_lit`, поскольку runtime-репрезентация
+            // protocol-value — это тот же closure-bundle с vtable
+            // (значение = указатель на NovaVtable_<Proto> + ctx),
+            // как у handler-литерала. Diff с эффектом: protocol
+            // НЕ устанавливается через `with`; значение передаётся
+            // как обычная переменная и метод вызывается через
+            // структурный/vtable dispatch (Plan 56 D122 hybrid).
+            //
+            // **Bootstrap-ограничение [M-protocol-literal-method-dispatch-deferred]:**
+            // method-call `value.method()` на protocol-typed-value
+            // (`Locker.lock()` где `Locker` — named protocol)
+            // диспатчится только через **statically-resolved** path
+            // (когда compiler знает concrete-тип через mono). Полная
+            // vtable-dispatch на anonymous-instance литерала требует
+            // дополнительной инфраструктуры (Plan 56 D122 vtable
+            // companion для anon-instance) — это followup. Пока
+            // protocol-литерал работает для **factory return** +
+            // **subsequent statically-typed dispatch на concrete
+            // type-alias** path'е.
+            ExprKind::ProtocolLit { proto_name, methods } => {
+                // Защитная инвокация emit_handler_lit с именем
+                // протокола. Если protocol зарегистрирован в
+                // `effect_schemas` (что bootstrap пока не делает
+                // для protocol-only типов), методы эмитятся
+                // корректно. Иначе emit_handler_lit использует
+                // `unwrap_or_else(|| (vec![], \"nova_unit\".into()))`
+                // → методы получают void* parameter signatures —
+                // достаточно для allocation, но method-call'ы
+                // через нерегистрированную схему получат int slots.
+                // Это согласовано с TypeRef::Protocol → void* в
+                // type-position (Ф.2): значение opaque, structural
+                // check на boundary.
+                self.emit_handler_lit(proto_name, methods)
+            }
             ExprKind::Interrupt(val) => {
                 // Plan 39 Issue A: choose slot by value category.
                 //   - IntLike/UnitVoid → nova_interrupt(int_val)

@@ -4435,6 +4435,13 @@ impl Parser {
             // expression-position `effect IDENT { ... }` всегда literal,
             // т.к. declaration `type X effect {...}` начинается с `type`.
             TokenKind::KwEffect => self.parse_handler_lit(),
+            // Plan 97 Ф.4 (D142): protocol-литерал в expression-position
+            // — `protocol IDENT { method-impl* }`. Disambig от
+            // type-position `protocol { sig* }` (Ф.2, без IDENT) — для
+            // expr-position обязательно имя именованного протокола.
+            // Anonymous protocol-литерал в expr — не разрешён (нет
+            // контракта для structural check'а).
+            TokenKind::KwProtocol => self.parse_protocol_lit(),
             TokenKind::KwForbid => self.parse_forbid(),
             TokenKind::KwRealtime => self.parse_realtime(),
             TokenKind::KwSelect => self.parse_select(),
@@ -5746,6 +5753,47 @@ impl Parser {
         };
         Ok(Expr::new(
             ExprKind::Interrupt(value),
+            start.merge(end),
+        ))
+    }
+
+    /// Plan 97 Ф.4 (D142): `protocol ProtoName { method-impl* }` — value-
+    /// литерал, реализующий контракт named-protocol'а (один-в-один по
+    /// сигнатуре, structural check в type-checker'е). Парсер
+    /// переиспользует body-парсер handler-методов (parse_handler_methods).
+    /// Disambig от type-position `protocol { sig* }` (Ф.2): expr-position
+    /// требует IDENT после keyword'а.
+    fn parse_protocol_lit(&mut self) -> Result<Expr, Diagnostic> {
+        let start = self.expect(&TokenKind::KwProtocol)?.span;
+        if !matches!(self.peek().kind, TokenKind::Ident(_)) {
+            return Err(Diagnostic::new(
+                "expected named protocol after `protocol` in expression-position \
+                 (anonymous protocol-literal in expression is not allowed; \
+                 D142 requires a named protocol contract for structural check). \
+                 Use `protocol ProtoName { method-impl* }`.",
+                self.peek().span,
+            ));
+        }
+        let mut path = vec![self.parse_ident()?.0];
+        while matches!(self.peek().kind, TokenKind::Dot)
+            && matches!(self.peek_at(1).kind, TokenKind::Ident(_))
+        {
+            self.bump();
+            path.push(self.parse_ident()?.0);
+        }
+        // Опциональные generic-параметры (Iter[T], FromIter[T], etc.)
+        if matches!(self.peek().kind, TokenKind::LBracket) {
+            let _ = self.parse_type_args()?;
+        }
+        self.expect(&TokenKind::LBrace)?;
+        self.skip_newlines();
+        let methods = self.parse_handler_methods()?;
+        let end = self.expect(&TokenKind::RBrace)?.span;
+        Ok(Expr::new(
+            ExprKind::ProtocolLit {
+                proto_name: path,
+                methods,
+            },
             start.merge(end),
         ))
     }

@@ -521,9 +521,13 @@ pub fn encode_expr_with_ctx(e: &Expr, ctx: &EncodeCtx) -> Result<SmtTerm, Encodi
             Err(EncodingError::Unsupported(
                 "concurrency-конструкция в контракте не поддерживается".into()))
         }
-        ExprKind::With { .. } | ExprKind::HandlerLit { .. } => {
+        // Plan 97 Ф.4 (D142): protocol-литерал в контракте — той же
+        // природы, что with/handler-литерал; SMT-encoder не поддерживает.
+        ExprKind::With { .. }
+        | ExprKind::HandlerLit { .. }
+        | ExprKind::ProtocolLit { .. } => {
             Err(EncodingError::Unsupported(
-                "with/handler в контракте не поддерживается".into()))
+                "with/effect-литерал/protocol-литерал в контракте не поддерживается".into()))
         }
         ExprKind::Interrupt(_) | ExprKind::Forbid { .. } | ExprKind::Realtime { .. } => {
             Err(EncodingError::Unsupported(

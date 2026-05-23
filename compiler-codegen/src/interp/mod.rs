@@ -847,10 +847,11 @@ impl Interpreter {
                 }))
             }
             ExprKind::With { bindings, body } => self.eval_with(bindings, body, env),
-            ExprKind::HandlerLit {
-                effect_name,
-                methods,
-            } => {
+            // Plan 97 Ф.4 (D142): protocol-литерал — в interpreter'е
+            // обрабатывается тождественно handler-литералу (closure-
+            // bundle с захватом env). Field name отличается, делегируем.
+            ExprKind::HandlerLit { effect_name, methods }
+            | ExprKind::ProtocolLit { proto_name: effect_name, methods } => {
                 let mut map = HashMap::new();
                 for m in methods {
                     map.insert(m.name.clone(), m.clone());
