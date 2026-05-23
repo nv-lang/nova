@@ -1,0 +1,33 @@
+// Plan 96 Ф.5 D-push-detach — позитив: push на view → realloc →
+// view детачится от parent (cap == len model). Parent НЕ модифицируется.
+// Это критическое отличие от Go-`append`-footgun'а (silent write в
+// чужой backing): у нас `cap == len` гарантирует, что push всегда
+// реаллоцирует и view становится independent.
+
+module nova_tests.plan96.slice_push_detaches
+
+test "push on view detaches from parent backing" {
+    let mut parent []int = [1, 2, 3, 4, 5]
+    let mut view = parent[1..4]
+    view.push(99)
+    // Parent unchanged: doubling alloc'ит новый backing для view.
+    assert(parent.len() == 5)
+    assert(parent[0] == 1)
+    assert(parent[1] == 2)
+    assert(parent[2] == 3)
+    assert(parent[3] == 4)
+    assert(parent[4] == 5)
+    // View grew independently.
+    assert(view.len() == 4)
+    assert(view[0] == 2)
+    assert(view[3] == 99)
+}
+
+test "view doesn't share post-detach writes" {
+    let mut parent []int = [10, 20, 30, 40, 50]
+    let mut view = parent[1..4]
+    view.push(99)            // detach
+    view[0] = 777            // write to detached backing
+    assert(parent[1] == 20)  // parent NOT touched
+    assert(view[0] == 777)
+}

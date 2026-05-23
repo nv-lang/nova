@@ -1,0 +1,22 @@
+// Plan 96 Ф.5 — позитив: Plan 90 bulk-ops (copy_from/compare/fill)
+// работают на view (view это []T → методы доступны автоматически).
+
+module nova_tests.plan96.slice_plan90_interop
+
+test "copy_from on slice view" {
+    let src = [10, 20, 30, 40, 50]
+    let mut dst []int = [0, 0, 0]
+    dst.copy_from(src[1..4])
+    assert(dst[0] == 20)
+    assert(dst[1] == 30)
+    assert(dst[2] == 40)
+}
+
+test "len + is_empty on view" {
+    let arr = [1, 2, 3, 4, 5]
+    let view = arr[1..4]
+    assert(view.len() == 3)
+    assert(!view.is_empty())
+    let empty = arr[2..2]
+    assert(empty.is_empty())
+}
