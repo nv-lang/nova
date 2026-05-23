@@ -1616,6 +1616,23 @@ Index-доступ. Параллельно с этим, multi-arg внутри `
 call-site / receiver-type), но AST сохраняет `type_args` для будущих
 этапов inference. Тесты — `nova_tests/types/generics.nv`.
 
+**Plan 98 (закрыт 2026-05-23):** type-argument inference расширена на
+generic-параметризованные типы в позиции param. До Plan 98
+`infer_type_param_binding` (`emit_c.rs`) выводил `T` только из голого
+`T` и `[]T` — `Option[T]` / `Result[T,E]` / пользовательские
+`Box[T]`/`HashMap[K,V]` молча игнорировались → каждый generic-helper,
+принимающий generic-тип, **требовал turbofish** (`check[int](a)`
+вместо естественного `check(a)`). Хуже Rust/Go/TS, где это базовая
+unification. Plan 98 конвертировал функцию из associated `fn` в метод
+`&self` + добавил три рекурсивные ветки: `Option[T]` (recovery из
+`NovaOpt_<sani>` через `novaopt_value_types`), `Result[T,E]`
+(`novares_ok_err`), user-generic (через `generic_type_instance_info`).
+**Граница (known limitation):** `[]Option[T]` / `[]Result[T,E]`
+(массив generic-элементов) пока **НЕ** выводится — codegen эрейзит
+element type в `receiver_type_c_ident` (`NovaArray_nova_int*` для
+не-примитивов), теряя generic-инфу до inference; отдельный gap, не
+scope Plan 98. Тесты — `nova_tests/plan98/`.
+
 ### Built-in API для `[]T` (Plan 17 Ф.1, закрывает Q-array-api)
 
 `[]T` — встроенный тип, **не** запись stdlib (`Vec[T]` нет). Граница

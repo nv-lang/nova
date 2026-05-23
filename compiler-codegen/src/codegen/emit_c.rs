@@ -8307,7 +8307,7 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
             .collect();
         for (field_ty, arg) in field_types.iter().zip(args.iter()) {
             let arg_c = self.infer_expr_c_type(arg.expr());
-            Self::infer_type_param_binding(field_ty, &arg_c, &mut subst);
+            self.infer_type_param_binding(field_ty, &arg_c, &mut subst);
         }
         // 5. Require every generic param resolved.
         let type_args_c: Vec<String> = subst.iter()
@@ -8361,13 +8361,13 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
         for (param, arg) in fn_decl.params.iter().zip(args.iter()) {
             if !matches!(param.ty, crate::ast::TypeRef::Array(..)) {
                 let arg_c = self.infer_expr_c_type(arg.expr());
-                Self::infer_type_param_binding(&param.ty, &arg_c, &mut subst);
+                self.infer_type_param_binding(&param.ty, &arg_c, &mut subst);
             }
         }
         for (param, arg) in fn_decl.params.iter().zip(args.iter()) {
             if matches!(param.ty, crate::ast::TypeRef::Array(..)) {
                 let arg_c = self.infer_expr_c_type(arg.expr());
-                Self::infer_type_param_binding(&param.ty, &arg_c, &mut subst);
+                self.infer_type_param_binding(&param.ty, &arg_c, &mut subst);
             }
         }
         // Source 2b: for fn-typed params, infer return type T from closure arg body.
@@ -8392,7 +8392,7 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                     _ => String::new(),
                 };
                 if !closure_ret_c.is_empty() {
-                    Self::infer_type_param_binding(ret_ty_ref.as_ref(), &closure_ret_c, &mut subst);
+                    self.infer_type_param_binding(ret_ty_ref.as_ref(), &closure_ret_c, &mut subst);
                 }
             }
         }
@@ -8443,7 +8443,7 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                                 if slot.1.as_deref() == Some("void_p") { slot.1 = None; }
                             }
                         }
-                        Self::infer_type_param_binding(ret_ty_ref.as_ref(), &closure_ret_c, &mut subst);
+                        self.infer_type_param_binding(ret_ty_ref.as_ref(), &closure_ret_c, &mut subst);
                     }
                 }
             }
@@ -8460,7 +8460,7 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                 if let ExprKind::Ident(name) = &arg.expr().kind {
                     if let Some((_, ret_c)) = self.fn_param_sigs.get(name) {
                         if !ret_c.is_empty() && ret_c != "void*" && ret_c != "nova_unit" {
-                            Self::infer_type_param_binding(ret_ty_ref.as_ref(), ret_c, &mut subst);
+                            self.infer_type_param_binding(ret_ty_ref.as_ref(), ret_c, &mut subst);
                         }
                     }
                 }
@@ -8481,7 +8481,7 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                 if let Some(iargs) = instance_args {
                     if iargs.len() == generics.len() {
                         for (gen_ty, c_ty) in generics.iter().zip(iargs.iter()) {
-                            Self::infer_type_param_binding(gen_ty, c_ty, &mut subst);
+                            self.infer_type_param_binding(gen_ty, c_ty, &mut subst);
                         }
                     }
                 }
@@ -8576,7 +8576,7 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
         // Source 3: infer from current_fn_return_ty vs fn return type
         if let Some(ref ret_ty) = fn_decl.return_type {
             if let Some(ref actual_ret) = self.current_fn_return_ty {
-                Self::infer_type_param_binding(ret_ty, actual_ret, &mut subst);
+                self.infer_type_param_binding(ret_ty, actual_ret, &mut subst);
             }
         }
         // Collect results — error on unresolved
@@ -8615,8 +8615,21 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
         Ok(result)
     }
 
-    /// Plan 48 Ф.0: match param_typeref against concrete_c, bind type params in subst.
+    /// Plan 48 Ф.0 / Plan 98 Ф.1: match param_typeref against concrete_c,
+    /// bind type params in subst.
+    ///
+    /// **Plan 98 Ф.1 (2026-05-23):** конвертирован из associated `fn` в
+    /// метод `&self` — нужен доступ к `novaopt_value_types` /
+    /// `novares_value_types` / `generic_type_instance_info` для recovery
+    /// реальных C-типов из mangled/sanitized форм. Добавлены три новые
+    /// ветки рекурсии: Option[T], Result[T,E], user-generic Box[T]/
+    /// HashMap[K,V]/etc. Раньше эти param-формы молча игнорировались →
+    /// каждый generic-helper, принимающий generic-тип, **требовал
+    /// turbofish** (`check[int](a)` вместо естественного `check(a)`).
+    /// Теперь inference recurses сквозь generic-параметризованные типы —
+    /// паритет с Rust/Go-style unification.
     fn infer_type_param_binding(
+        &self,
         param_ty: &crate::ast::TypeRef,
         concrete_c: &str,
         subst: &mut Vec<(String, Option<String>)>,
@@ -8639,7 +8652,56 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                     .strip_prefix("NovaArray_")
                     .and_then(|s| s.strip_suffix('*'))
                 {
-                    Self::infer_type_param_binding(inner, inner_c, subst);
+                    self.infer_type_param_binding(inner, inner_c, subst);
+                }
+            }
+            // Plan 98 Ф.1: Option[T] / Result[T,E] / user-generic types
+            // в позиции param — извлекаем concrete type-args из
+            // mangled/sanitized form concrete_c и рекурсивно bind'аем.
+            crate::ast::TypeRef::Named { path, generics, .. } if !generics.is_empty() => {
+                let nova_name = path.join("_");
+                match nova_name.as_str() {
+                    // Option[T]: concrete_c = "NovaOpt_<sani>" (или "NovaOpt_<sani>*")
+                    "Option" if generics.len() == 1 => {
+                        let stripped = concrete_c.trim_end_matches('*').trim();
+                        if let Some(sani) = stripped.strip_prefix("NovaOpt_") {
+                            // Recovery: novaopt_value_types map'ит sanitized
+                            // в реальный c_ty (`Nova_Foo_p` → `Nova_Foo*`).
+                            // Для примитивов (`nova_int`/etc) sanitized ==
+                            // real, fallback на сам sanitized — корректно.
+                            let real_t = self.novaopt_value_types.borrow()
+                                .get(sani).cloned()
+                                .unwrap_or_else(|| sani.to_string());
+                            self.infer_type_param_binding(&generics[0], &real_t, subst);
+                        }
+                    }
+                    // Result[T,E]: concrete_c = "NovaRes_<ok>_<err>*"
+                    "Result" if generics.len() == 2 => {
+                        if let Some((ok_c, err_c)) = self.novares_ok_err(concrete_c) {
+                            self.infer_type_param_binding(&generics[0], &ok_c, subst);
+                            self.infer_type_param_binding(&generics[1], &err_c, subst);
+                        }
+                    }
+                    // User generic types (Box[T], HashMap[K,V], etc):
+                    // concrete_c = "Nova_<base>____<arg1>__<arg2>...*"
+                    // (mangled через compute_generic_type_c_name). Lookup в
+                    // generic_type_instance_info → (base, type_args_c).
+                    _ => {
+                        let stripped = concrete_c.trim_end_matches('*').trim();
+                        let instance_info = self.generic_type_instance_info.borrow();
+                        if let Some((base, type_args)) = instance_info.get(stripped) {
+                            // Sanity: base должен соответствовать
+                            // nova_name (защита от cross-type match'а
+                            // при коллизии mangled-имени).
+                            if base == &nova_name && type_args.len() == generics.len() {
+                                let type_args_owned = type_args.clone();
+                                drop(instance_info);
+                                for (g_ty, arg_c) in generics.iter().zip(type_args_owned.iter()) {
+                                    self.infer_type_param_binding(g_ty, arg_c, subst);
+                                }
+                            }
+                        }
+                    }
                 }
             }
             // fn(..)->T: skip (closure C type doesn't encode return type directly)
@@ -16010,7 +16072,7 @@ _cp++; \
                                                 ExprKind::ClosureLight { .. } | ExprKind::ClosureFull(_));
                                             if !is_closure {
                                                 let arg_c = self.infer_expr_c_type(arg.expr());
-                                                Self::infer_type_param_binding(&param.ty, &arg_c, &mut subst_slots);
+                                                self.infer_type_param_binding(&param.ty, &arg_c, &mut subst_slots);
                                             }
                                         }
                                         // Step 2: ClosureLight args с typed param context.
@@ -16053,7 +16115,7 @@ _cp++; \
                                                 }
                                             }
                                             if !closure_ret_c.is_empty() && closure_ret_c != "void*" {
-                                                Self::infer_type_param_binding(
+                                                self.infer_type_param_binding(
                                                     &ret_ty_ref, &closure_ret_c, &mut subst_slots);
                                             }
                                         }
@@ -21016,7 +21078,7 @@ _cp++; \
                     ExprKind::ClosureLight { .. } | ExprKind::ClosureFull(_));
                 if !is_closure {
                     let arg_c = self.infer_expr_c_type(arg.expr());
-                    Self::infer_type_param_binding(&param.ty, &arg_c, &mut subst);
+                    self.infer_type_param_binding(&param.ty, &arg_c, &mut subst);
                 }
             }
             // Step 2: ClosureLight — bind params в RefCell override, recurse в body.
@@ -21067,7 +21129,7 @@ _cp++; \
                 }
                 drop(overrides);
                 if !closure_ret_c.is_empty() && closure_ret_c != "void*" {
-                    Self::infer_type_param_binding(&ret_ty_ref, &closure_ret_c, &mut subst);
+                    self.infer_type_param_binding(&ret_ty_ref, &closure_ret_c, &mut subst);
                 }
             }
             // Restore prior type subst overrides.
@@ -22438,7 +22500,7 @@ _cp++; \
                                 }
                                 for (param, arg) in fn_decl.params.iter().zip(args.iter()) {
                                     let arg_c = self.infer_expr_c_type(arg.expr());
-                                    Self::infer_type_param_binding(&param.ty, &arg_c, &mut subst);
+                                    self.infer_type_param_binding(&param.ty, &arg_c, &mut subst);
                                 }
                                 // Source 2b: for fn-typed params, infer T from closure body return type.
                                 // `body fn() -> T` + closure `|| 42` → T = nova_int.
@@ -22462,7 +22524,7 @@ _cp++; \
                                             _ => String::new(),
                                         };
                                         if !closure_ret_c.is_empty() {
-                                            Self::infer_type_param_binding(ret_ty_ref.as_ref(), &closure_ret_c, &mut subst);
+                                            self.infer_type_param_binding(ret_ty_ref.as_ref(), &closure_ret_c, &mut subst);
                                         }
                                     }
                                 }
@@ -22475,7 +22537,7 @@ _cp++; \
                                         if let ExprKind::Ident(name) = &arg.expr().kind {
                                             if let Some((_, ret_c)) = self.fn_param_sigs.get(name) {
                                                 if !ret_c.is_empty() && ret_c != "void*" && ret_c != "nova_unit" {
-                                                    Self::infer_type_param_binding(ret_ty_ref.as_ref(), ret_c, &mut subst);
+                                                    self.infer_type_param_binding(ret_ty_ref.as_ref(), ret_c, &mut subst);
                                                 }
                                             }
                                         }
