@@ -263,6 +263,10 @@ pub struct CEmitter {
     tmp_counter: usize,
     /// Monotonic counter for handler literals — used to generate stable, predictable IDs
     handler_counter: usize,
+    /// Plan 97.1 Ф.2 (D142): monotonic counter for protocol literals
+    /// (`protocol Name { ... }` в expression-position). Stable IDs для
+    /// synthetic ctx struct, free fn methods, vtable instance.
+    protocol_lit_counter: usize,
     /// Monotonic counter for spawn expressions — stable IDs for pre-scan matching
     spawn_counter: usize,
     /// Plan 83.3 Ф.4.2: monotonic counter for `blocking { }` extracted bodies.
@@ -826,6 +830,7 @@ impl CEmitter {
             indent: 0,
             tmp_counter: 0,
             handler_counter: 0,
+            protocol_lit_counter: 0,
             spawn_counter: 0,
             blocking_counter: 0,
             supervised_counter: 0,
@@ -1533,6 +1538,34 @@ impl CEmitter {
                         "typedef struct NovaVtable_{0} NovaVtable_{0};\n", name));
                 }
             }
+        }
+
+        // Plan 97.1 Ф.2 (D142): pre-register non-generic protocol-методы
+        // в `protocol_method_registry`. Generic-protocol'ы регистрируются
+        // в loop ниже (с t.generics.is_empty() == false), но non-generic
+        // (`type Locker protocol { ... }` без [T]) тоже нужны для
+        // emit_protocol_lit (protocol-литерал в expression-position).
+        let mut non_generic_protocols: Vec<String> = Vec::new();
+        for item in &module.items {
+            if let Item::Type(t) = item {
+                if t.generics.is_empty() {
+                    if let crate::ast::TypeDeclKind::Protocol(methods) = &t.kind {
+                        self.protocol_types.insert(t.name.clone());
+                        self.protocol_method_registry.insert(
+                            t.name.clone(),
+                            (Vec::new(), methods.clone()),
+                        );
+                        non_generic_protocols.push(t.name.clone());
+                    }
+                }
+            }
+        }
+        // Plan 97.1 Ф.3 (D142): pre-emit NovaVtable_<Proto> + NovaBox_<Proto>
+        // typedef'ы для non-generic protocol'ов. Это делает их доступными
+        // в type_ref_to_c (которая `&self`-only и не может вызывать
+        // emit_protocol_box_typedef on-demand).
+        for proto_name in non_generic_protocols {
+            let _ = self.emit_protocol_box_typedef(&proto_name, &[]);
         }
 
         // 1a. Pre-populate generic_types + generic_type_templates BEFORE emit_type_decl
@@ -2871,6 +2904,11 @@ impl CEmitter {
         // nova_int slot) — fit структуры >8 байт. Placed ПОСЛЕ user-type
         // fwd decls — tuple elements могут быть `Nova_X*` (pointer), которым
         // достаточно incomplete typedef.
+        //
+        // Plan 97.1 Ф.3 (D142): для tuple'ов содержащих `NovaBox_<Proto>`
+        // (protocol-литералы capability-split factory) — NovaBox typedef'ы
+        // эмитятся в `user_type_fwd_decls` (предшествующий marker),
+        // **до** этого tuple marker — порядок safe.
         self.line("/*__MONO_TUPLE_TYPEDEFS__*/");
         // Plan 14 Ф.1: маркер для splice'а typedef'ов NovaOpt_<T> (для T
         // без NOVA_ARRAY_DECL в runtime). Заполняется в `register_novaopt_decl`
@@ -3283,8 +3321,8 @@ impl CEmitter {
         type_args: &[String],   // concrete C types for each protocol type param
         concrete_c_ty: &str,    // C type of the assigned value, e.g. "Nova_IntCounter*"
     ) -> Option<(String, String)> {  // (vtable_instance_name, box_c_type)
-        // Require at least one type arg and a pointer concrete type (Nova_X*).
-        if type_args.is_empty() { return None; }
+        // Plan 97.1 Ф.1 (D142): non-generic protocols → empty type_args OK.
+        // Concrete тип всё равно pointer (Nova_X* — implementer record).
         if !concrete_c_ty.ends_with('*') { return None; }
 
         // Derive the concrete struct name from the C type ("Nova_IntCounter*" → "IntCounter").
@@ -3295,14 +3333,23 @@ impl CEmitter {
             .to_string();
         if concrete_name.is_empty() { return None; }
 
-        // Mangle type args for use in identifiers.
-        let args_mangled: String = type_args.iter()
-            .map(|t| Self::sanitize_c_for_ident(t))
-            .collect::<Vec<_>>()
-            .join("_");
+        // Plan 97.1 Ф.1: mangling без args-суффикса для non-generic.
+        let args_mangled: String = if type_args.is_empty() {
+            String::new()
+        } else {
+            type_args.iter()
+                .map(|t| Self::sanitize_c_for_ident(t))
+                .collect::<Vec<_>>()
+                .join("_")
+        };
+        let suffix = if args_mangled.is_empty() {
+            String::new()
+        } else {
+            format!("_{}", args_mangled)
+        };
 
-        let vtable_struct = format!("NovaVtable_{}_{}", proto_name, args_mangled);
-        let vtable_instance = format!("_vt_{}_{}__{}", proto_name, args_mangled, concrete_name);
+        let vtable_struct = format!("NovaVtable_{}{}", proto_name, suffix);
+        let vtable_instance = format!("_vt_{}{}__{}", proto_name, suffix, concrete_name);
 
         // Emit (or reuse) the vtable struct + NovaBox typedef. Concrete-type
         // independent — shared across every implementer of this protocol.
@@ -3325,7 +3372,7 @@ impl CEmitter {
             let mut field_inits = Vec::new();
             for m in &methods {
                 let thunk_name = format!(
-                    "_thunk_{}_{}_{}__{}", proto_name, args_mangled, m.name, concrete_name
+                    "_thunk_{}{}_{}__{}", proto_name, suffix, m.name, concrete_name
                 );
                 let ret_c = m.return_type.as_ref()
                     .and_then(|rt| self.type_ref_to_c(rt).ok())
@@ -3376,13 +3423,36 @@ impl CEmitter {
         proto_name: &str,
         type_args: &[String],
     ) -> Option<String> {
-        if type_args.is_empty() { return None; }
-        let args_mangled: String = type_args.iter()
-            .map(|t| Self::sanitize_c_for_ident(t))
-            .collect::<Vec<_>>()
-            .join("_");
-        let vtable_struct = format!("NovaVtable_{}_{}", proto_name, args_mangled);
-        let box_c_type = format!("NovaBox_{}_{}", proto_name, args_mangled);
+        // Plan 97.1 Ф.3 (D142): skip protocols, vtable struct которых
+        // уже определён в `nova_rt/vtables.h` (`Hashable`, `Comparable`,
+        // `Display`). Эмиссия typedef'а второй раз → C redefinition.
+        // Эти protocol'ы ВСЁ РАВНО получают NovaBox_<X> typedef (одно
+        // определение в generic_type_defs_buf — runtime даёт только
+        // NovaVtable_<X>, не NovaBox).
+        const RT_VTABLE_PROTOCOLS: &[&str] = &["Hashable", "Comparable", "Display"];
+        let rt_has_vtable = type_args.is_empty()
+            && RT_VTABLE_PROTOCOLS.contains(&proto_name);
+
+        // Plan 97.1 Ф.1 (D142): non-generic protocols (`type Locker protocol
+        // { ... }` без [T]) теперь тоже эмитят vtable + box. Это нужно для
+        // protocol-литерала (`protocol Locker { lock() => ... }`) и для
+        // унифицированного dispatch'а на protocol-typed value.
+        // Mangling без args-суффикса для non-generic.
+        let args_mangled: String = if type_args.is_empty() {
+            String::new()
+        } else {
+            type_args.iter()
+                .map(|t| Self::sanitize_c_for_ident(t))
+                .collect::<Vec<_>>()
+                .join("_")
+        };
+        let suffix = if args_mangled.is_empty() {
+            String::new()
+        } else {
+            format!("_{}", args_mangled)
+        };
+        let vtable_struct = format!("NovaVtable_{}{}", proto_name, suffix);
+        let box_c_type = format!("NovaBox_{}{}", proto_name, suffix);
         // Need the protocol method registry to lay out the vtable struct.
         let (type_params, methods) = self.protocol_method_registry.get(proto_name)?.clone();
         if self.emitted_vtable_types.contains(&vtable_struct) {
@@ -3396,29 +3466,61 @@ impl CEmitter {
             .map(|(k, v)| (k.clone(), v.clone()))
             .collect();
         let old_subst = std::mem::replace(&mut self.current_type_subst, subst);
+        // Plan 97.1 Ф.4 (D142): pre-compute param C types per method (для
+        // overload-mangling, analog emit_effect_type). Если protocol имеет
+        // overloaded methods (e.g. `get(key str)` + `get(key int)` —
+        // Plan 33.3), field-name'ы должны быть mangled с param-type-suffix,
+        // иначе C `duplicate member 'get'`.
+        let method_param_c: Vec<(String, Vec<String>)> = methods.iter().map(|m| {
+            let pts: Vec<String> = m.params.iter()
+                .filter_map(|p| self.type_ref_to_c(&p.ty).ok())
+                .collect();
+            (m.name.clone(), pts)
+        }).collect();
+        let all_method_pairs: Vec<(&str, &[String])> = method_param_c.iter()
+            .map(|(n, p)| (n.as_str(), p.as_slice()))
+            .collect();
         let mut fields = String::new();
-        for m in &methods {
+        for (m, (_, param_c_types)) in methods.iter().zip(method_param_c.iter()) {
             let ret_c = m.return_type.as_ref()
                 .and_then(|rt| self.type_ref_to_c(rt).ok())
                 .unwrap_or_else(|| "nova_unit".to_string());
-            let extra_params: Vec<String> = m.params.iter()
-                .filter_map(|p| self.type_ref_to_c(&p.ty).ok())
-                .collect();
             let params_str = std::iter::once("void*".to_string())
-                .chain(extra_params.iter().cloned())
+                .chain(param_c_types.iter().cloned())
                 .collect::<Vec<_>>()
                 .join(", ");
-            fields.push_str(&format!("    {} (*{})({}); \n", ret_c, m.name, params_str));
+            let mangled_name = Self::mangle_op(&m.name, param_c_types, &all_method_pairs);
+            fields.push_str(&format!("    {} (*{})({}); \n", ret_c, mangled_name, params_str));
         }
         self.current_type_subst = old_subst;
-        // Vtable struct typedef.
-        self.generic_type_defs_buf.push_str(&format!(
-            "/* Plan 72 P3-B: vtable for {} instantiated with {} */\n\
-             typedef struct {vts} {{\n{fields}}} {vts};\n",
-            proto_name, args_mangled, vts = vtable_struct, fields = fields
-        ));
+        // Vtable struct typedef (skip если runtime уже даёт его).
+        let args_desc = if args_mangled.is_empty() {
+            "(non-generic)".to_string()
+        } else {
+            args_mangled.clone()
+        };
+        // Plan 97.1 Ф.4 (D142): для non-generic protocol (empty type_args)
+        // — typedef'ы эмитим в `user_type_fwd_decls` (preamble marker,
+        // splice'ится ОЧЕНЬ рано, перед mono'd tuple typedefs). Tuple'ы
+        // вида `(Reader, Writer)` из capability-split factory ссылаются
+        // на `NovaBox_<Proto>` — должны видеть typedef.
+        // Generic-protocol'ы (Plan 72 P3-B) — оставляем generic_type_defs_buf
+        // (исходный behavior, не ломаем).
+        let target_buf: &mut String = if type_args.is_empty() {
+            &mut self.user_type_fwd_decls
+        } else {
+            &mut self.generic_type_defs_buf
+        };
+        if !rt_has_vtable {
+            target_buf.push_str(&format!(
+                "/* Plan 72 P3-B / Plan 97.1: vtable for {} instantiated with {} */\n\
+                 typedef struct {vts} {{\n{fields}}} {vts};\n",
+                proto_name, args_desc, vts = vtable_struct, fields = fields
+            ));
+        }
         // Fat-pointer box struct typedef: { void* data; const VT* vtable; }.
-        self.generic_type_defs_buf.push_str(&format!(
+        // Эмитим всегда — runtime даёт только VT, не Box.
+        target_buf.push_str(&format!(
             "typedef struct {{ void* data; const {vts}* vtable; }} {box};\n",
             vts = vtable_struct, box = box_c_type
         ));
@@ -3615,6 +3717,21 @@ impl CEmitter {
                         if self.protocol_types.contains(&name)
                             || path.last().map(|s| self.protocol_types.contains(s)).unwrap_or(false)
                         {
+                            // Plan 97.1 Ф.3 (D142): non-generic protocol-typed
+                            // value-position → `NovaBox_<Proto>` fat-pointer
+                            // (вместо `void*`). Generic protocol'ы (`Iter[T]`,
+                            // `Hashable[K]` etc.) — оставить `void*`, т.к. их
+                            // box-форма для concrete type-args обрабатывается
+                            // отдельным path'ом (Plan 72 P3-B
+                            // `protocol_box_c_type_for`).
+                            // Typedef'ы pre-эмитятся в emit_module после
+                            // регистрации protocol_method_registry — здесь
+                            // только возвращаем имя.
+                            if generics.is_empty() {
+                                let proto_name = path.last().cloned()
+                                    .unwrap_or_else(|| name.clone());
+                                return Ok(format!("NovaBox_{}", proto_name));
+                            }
                             return Ok("void*".into());
                         }
                         // Check if it's a type alias — return the aliased type directly (no *)
@@ -4629,6 +4746,252 @@ impl CEmitter {
         self.indent = saved_indent;
 
         Ok(result_ptr)
+    }
+
+    /// Plan 97.1 Ф.2 (D142): codegen для protocol-литерала
+    /// `protocol Name { method-impl* }`.
+    ///
+    /// Подход A (synthetic concrete + Plan 56 D122 box-pattern):
+    /// 1. Allocate synthetic ctx struct `NovaCtx_<lit_id>` с capture-полями
+    ///    (idents, упоминаемые в method bodies но не входящие в method-params).
+    /// 2. Эмитить vtable struct `NovaVtable_<Proto>` через расширенный
+    ///    `emit_protocol_box_typedef` (Ф.1; работает с empty type_args).
+    /// 3. Heap-allocate `NovaVtable_<Proto>*` instance + patch field-указатели
+    ///    на synthetic free fn methods.
+    /// 4. Эмитить method-bodies как `static <ret> _proto_lit_<id>_impl_<m>(void* _ctx, args) { ... }`
+    ///    в `deferred_impls` (file-scope), unpacking captures через `_c->cap`.
+    /// 5. Возврат `NovaBox_<Proto>` fat-pointer `{ .data = ctx, .vtable = vt }`.
+    ///
+    /// Method dispatch на полученный value (`box.method(args)`) уже работает
+    /// через Plan 72 P3-B path (см. emit_call / Member-dispatch).
+    fn emit_protocol_lit(
+        &mut self,
+        proto_path: &[String],
+        methods: &[HandlerMethod],
+    ) -> Result<String, String> {
+        let proto = proto_path.join("_");
+        let lit_id = self.protocol_lit_counter;
+        self.protocol_lit_counter += 1;
+        let lit_name = format!("_nova_proto_lit_{}", lit_id);
+        let ctx_struct = format!("NovaCtx_{}", lit_name);
+
+        // ---- Эмитить vtable struct + box typedef через расширенный helper ----
+        let box_c_type = self.emit_protocol_box_typedef(&proto, &[])
+            .ok_or_else(|| format!(
+                "protocol `{}` not registered in protocol_method_registry — \
+                 cannot emit literal (Plan 97.1 Ф.2)", proto))?;
+        let vtable_struct = format!("NovaVtable_{}", proto);
+
+        // ---- Получить method signatures из protocol_method_registry ----
+        let (_type_params, proto_methods) = self.protocol_method_registry.get(&proto)
+            .ok_or_else(|| format!("protocol `{}` not in registry", proto))?
+            .clone();
+
+        // ---- Captures (free vars not in method params; mirrors emit_handler_lit) ----
+        let mut all_captures: Vec<(String, String)> = Vec::new();
+        for m in methods {
+            let method_param_names: std::collections::HashSet<String> =
+                m.params.iter().map(|p| p.name.clone()).collect();
+            let refs = Self::collect_idents_in_handler_method(m);
+            for name in refs {
+                if method_param_names.contains(&name) { continue; }
+                if all_captures.iter().any(|(n, _)| n == &name) { continue; }
+                if let Some(ty) = self.var_types.get(&name).cloned() {
+                    all_captures.push((name, ty));
+                }
+            }
+        }
+
+        // Pointer-types stored directly; scalar/struct types stored as
+        // pointer-to (mutation visible to caller).
+        let capture_ptr_tys: Vec<String> = all_captures.iter().map(|(_, cap_ty)| {
+            if cap_ty.ends_with('*') { cap_ty.clone() } else { format!("{}*", cap_ty) }
+        }).collect();
+
+        // ---- Эмитить ctx struct typedef в lambda_forward_decls
+        // (file-scope, splice'ится ДО fn definitions). Это делает ctx struct
+        // visible и в test fn body (где аллокация), и в impl fn body
+        // (file-scope, в deferred_impls после fn).
+        let _ = writeln!(self.lambda_forward_decls, "typedef struct {{");
+        for ((cap_name, _), ptr_ty) in all_captures.iter().zip(capture_ptr_tys.iter()) {
+            let _ = writeln!(self.lambda_forward_decls, "    {} {};", ptr_ty, cap_name);
+        }
+        if all_captures.is_empty() {
+            let _ = writeln!(self.lambda_forward_decls, "    char _dummy;");
+        }
+        let _ = writeln!(self.lambda_forward_decls, "}} {};", ctx_struct);
+
+        // ---- Heap-allocate vtable + ctx ----
+        let vtable_var = format!("{}_vtable", lit_name);
+        let ctx_var = format!("{}_ctx", lit_name);
+        self.line(&format!(
+            "{vts}* {vt} = ({vts}*)nova_alloc(sizeof({vts}));",
+            vts = vtable_struct, vt = vtable_var
+        ));
+        self.line(&format!(
+            "{ctx_ty}* {ctx} = ({ctx_ty}*)nova_alloc(sizeof({ctx_ty}));",
+            ctx_ty = ctx_struct, ctx = ctx_var
+        ));
+        for ((cap_name, cap_ty), _ptr_ty) in all_captures.iter().zip(capture_ptr_tys.iter()) {
+            if cap_ty.ends_with('*') {
+                self.line(&format!("{ctx}->{cap} = {cap};", ctx = ctx_var, cap = cap_name));
+            } else {
+                self.line(&format!("{ctx}->{cap} = &{cap};", ctx = ctx_var, cap = cap_name));
+            }
+        }
+        // Patch vtable fields → impl functions.
+        for m in methods {
+            let fn_name = format!("{}_impl_{}", lit_name, m.name);
+            self.line(&format!("{vt}->{m} = {fn};",
+                vt = vtable_var, m = m.name, fn = fn_name));
+        }
+
+        // ---- Forward decls of impl functions в lambda_forward_decls ----
+        // (file-scope, до fn definitions; необходимо чтобы test fn body
+        // могла ссылаться на `_proto_lit_N_impl_m` в vt-patching).
+        for m in methods {
+            // Найти proto method signature для return type + param types.
+            let proto_m = proto_methods.iter().find(|pm| pm.name == m.name);
+            let ret_c = proto_m
+                .and_then(|pm| pm.return_type.as_ref())
+                .and_then(|rt| self.type_ref_to_c(rt).ok())
+                .unwrap_or_else(|| "nova_unit".to_string());
+            let mut fn_params = vec!["void* _ctx".to_string()];
+            for (i, p) in m.params.iter().enumerate() {
+                let pty = proto_m
+                    .and_then(|pm| pm.params.get(i))
+                    .and_then(|pp| self.type_ref_to_c(&pp.ty).ok())
+                    .unwrap_or_else(|| "nova_int".into());
+                fn_params.push(format!("{} {}", pty, p.name));
+            }
+            let fn_name = format!("{}_impl_{}", lit_name, m.name);
+            let _ = writeln!(self.lambda_forward_decls,
+                "static {ret} {fn}({params});",
+                ret = ret_c, fn = fn_name, params = fn_params.join(", ")
+            );
+        }
+
+        // ---- Return box value ----
+        let box_var = self.fresh_tmp();
+        self.line(&format!(
+            "{box_ty} {box_v} = ({box_ty}){{ .data = (void*){ctx}, .vtable = {vt} }};",
+            box_ty = box_c_type, box_v = box_var, ctx = ctx_var, vt = vtable_var
+        ));
+
+        // ---- Emit impl function bodies в deferred_impls ----
+        // Strategy (mirrors emit_handler_lit): swap out, emit, swap back.
+        let saved_out = std::mem::take(&mut self.out);
+        let saved_indent = self.indent;
+        self.indent = 0;
+
+        for m in methods {
+            let proto_m = proto_methods.iter().find(|pm| pm.name == m.name);
+            let ret_c = proto_m
+                .and_then(|pm| pm.return_type.as_ref())
+                .and_then(|rt| self.type_ref_to_c(rt).ok())
+                .unwrap_or_else(|| "nova_unit".to_string());
+
+            let mut fn_params = vec!["void* _ctx".to_string()];
+            let mut method_param_types: Vec<(String, String)> = Vec::new();
+            for (i, p) in m.params.iter().enumerate() {
+                let pty = proto_m
+                    .and_then(|pm| pm.params.get(i))
+                    .and_then(|pp| self.type_ref_to_c(&pp.ty).ok())
+                    .unwrap_or_else(|| "nova_int".into());
+                fn_params.push(format!("{} {}", pty, p.name));
+                method_param_types.push((p.name.clone(), pty));
+            }
+            let fn_name = format!("{}_impl_{}", lit_name, m.name);
+
+            self.line(&format!(
+                "static {ret} {fn}({params}) {{",
+                ret = ret_c, fn = fn_name, params = fn_params.join(", ")
+            ));
+            self.indent += 1;
+
+            // Register method params in var_types для infer_expr_c_type.
+            let saved_params: Vec<(String, Option<String>)> = method_param_types.iter()
+                .map(|(n, t)| (n.clone(), self.var_types.insert(n.clone(), t.clone())))
+                .collect();
+
+            // Unpack context: macros для capture-доступа.
+            self.line(&format!("{ctx}* _c = ({ctx}*)_ctx;", ctx = ctx_struct));
+            for (cap_name, cap_ty) in &all_captures {
+                if cap_ty.ends_with('*') {
+                    self.line(&format!("#define {cap} (_c->{cap})", cap = cap_name));
+                } else {
+                    self.line(&format!("#define {cap} (*_c->{cap})", cap = cap_name));
+                }
+            }
+
+            match &m.body {
+                HandlerMethodBody::Expr(e) => {
+                    let v = self.emit_expr(e)?;
+                    if ret_c == "nova_unit" {
+                        self.line(&format!("(void)({}); return NOVA_UNIT;", v));
+                    } else if v == "NOVA_UNIT" {
+                        let zero = Self::zero_literal_for_type(&ret_c);
+                        self.line(&format!("return {};", zero));
+                    } else {
+                        self.line(&format!("return {};", v));
+                    }
+                }
+                HandlerMethodBody::Block(b) => {
+                    let pm_block_id = self.enter_defer_scope(b, false);
+                    for stmt in &b.stmts {
+                        self.emit_stmt(stmt)?;
+                    }
+                    let last_is_return = b.stmts.last()
+                        .map(|s| matches!(s, Stmt::Return { .. }))
+                        .unwrap_or(false);
+                    if let Some(trailing) = &b.trailing {
+                        let v = self.emit_expr(trailing)?;
+                        self.leave_defer_scope(pm_block_id);
+                        if ret_c == "nova_unit" {
+                            self.line(&format!("(void)({}); return NOVA_UNIT;", v));
+                        } else if v == "NOVA_UNIT" {
+                            let zero = Self::zero_literal_for_type(&ret_c);
+                            self.line(&format!("return {};", zero));
+                        } else {
+                            self.line(&format!("return {};", v));
+                        }
+                    } else if last_is_return {
+                        self.leave_defer_scope(pm_block_id);
+                    } else if ret_c == "nova_unit" {
+                        self.leave_defer_scope(pm_block_id);
+                        self.line("return NOVA_UNIT;");
+                    } else {
+                        self.leave_defer_scope(pm_block_id);
+                        let zero = Self::zero_literal_for_type(&ret_c);
+                        self.line(&format!("return {};", zero));
+                    }
+                }
+            }
+
+            // Undef capture macros.
+            for (cap_name, _) in &all_captures {
+                self.line(&format!("#undef {}", cap_name));
+            }
+
+            // Restore var_types для method params.
+            for (name, prev) in saved_params {
+                match prev {
+                    Some(old) => { self.var_types.insert(name, old); }
+                    None => { self.var_types.remove(&name); }
+                }
+            }
+
+            self.indent -= 1;
+            self.line("}");
+            self.line("");
+        }
+
+        // Move emitted impl functions в deferred_impls (file-scope).
+        let impl_code = std::mem::replace(&mut self.out, saved_out);
+        self.deferred_impls.push_str(&impl_code);
+        self.indent = saved_indent;
+
+        Ok(box_var)
     }
 
     // ---- spawn ----
@@ -13094,40 +13457,15 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
             ExprKind::HandlerLit { effect_name, methods } => {
                 self.emit_handler_lit(effect_name, methods)
             }
-            // Plan 97 Ф.4 (D142): protocol-литерал. Codegen pиggy-back
-            // на `emit_handler_lit`, поскольку runtime-репрезентация
-            // protocol-value — это тот же closure-bundle с vtable
-            // (значение = указатель на NovaVtable_<Proto> + ctx),
-            // как у handler-литерала. Diff с эффектом: protocol
-            // НЕ устанавливается через `with`; значение передаётся
-            // как обычная переменная и метод вызывается через
-            // структурный/vtable dispatch (Plan 56 D122 hybrid).
-            //
-            // **Bootstrap-ограничение [M-protocol-literal-method-dispatch-deferred]:**
-            // method-call `value.method()` на protocol-typed-value
-            // (`Locker.lock()` где `Locker` — named protocol)
-            // диспатчится только через **statically-resolved** path
-            // (когда compiler знает concrete-тип через mono). Полная
-            // vtable-dispatch на anonymous-instance литерала требует
-            // дополнительной инфраструктуры (Plan 56 D122 vtable
-            // companion для anon-instance) — это followup. Пока
-            // protocol-литерал работает для **factory return** +
-            // **subsequent statically-typed dispatch на concrete
-            // type-alias** path'е.
+            // Plan 97.1 Ф.2 (D142): protocol-литерал
+            // (`protocol Name { method-impl* }` в expression-position).
+            // Производит `NovaBox_<Proto>` fat-pointer (`{ data, vtable }`)
+            // через synthetic ctx struct + free fn methods +
+            // emit_protocol_box_typedef (расширенный в Ф.1 на non-generic).
+            // Method dispatch (`box.method(args)`) работает автоматически
+            // через Plan 72 P3-B box-pattern (emit_call Member-dispatch).
             ExprKind::ProtocolLit { proto_name, methods } => {
-                // Защитная инвокация emit_handler_lit с именем
-                // протокола. Если protocol зарегистрирован в
-                // `effect_schemas` (что bootstrap пока не делает
-                // для protocol-only типов), методы эмитятся
-                // корректно. Иначе emit_handler_lit использует
-                // `unwrap_or_else(|| (vec![], \"nova_unit\".into()))`
-                // → методы получают void* parameter signatures —
-                // достаточно для allocation, но method-call'ы
-                // через нерегистрированную схему получат int slots.
-                // Это согласовано с TypeRef::Protocol → void* в
-                // type-position (Ф.2): значение opaque, structural
-                // check на boundary.
-                self.emit_handler_lit(proto_name, methods)
+                self.emit_protocol_lit(proto_name, methods)
             }
             ExprKind::Interrupt(val) => {
                 // Plan 39 Issue A: choose slot by value category.
@@ -22088,6 +22426,11 @@ _cp++; \
             ExprKind::HandlerLit { effect_name, .. } => {
                 // handler Switch { ... } has type NovaVtable_Switch*
                 format!("NovaVtable_{}*", effect_name.join("_"))
+            }
+            // Plan 97.1 Ф.3 (D142): protocol-литерал имеет тип
+            // `NovaBox_<Proto>` fat-pointer (см. emit_protocol_lit).
+            ExprKind::ProtocolLit { proto_name, .. } => {
+                format!("NovaBox_{}", proto_name.join("_"))
             }
             ExprKind::Call { func, args, .. } => {
                 // D38 turbofish прозрачен для inference — но extract type_args

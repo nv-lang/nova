@@ -1,0 +1,23 @@
+// Plan 97.1 Ф.2 (D142) — protocol-литерал создаётся как значение.
+//
+// Проверяет: parser → AST `ExprKind::ProtocolLit` → codegen
+// `emit_protocol_lit` (synthetic ctx + free fn methods + vtable
+// allocation + NovaBox fat-pointer). Allocation должна работать
+// без CC-FAIL.
+
+module nova_tests.plan97.pos_protocol_lit_basic
+
+
+export type Runnable protocol {
+    run() -> ()
+}
+
+
+test "protocol-литерал создаётся и присваивается" {
+    let r = protocol Runnable {
+        run() => ()
+    }
+    // Bootstrap: значение создано, allocation работает.
+    // Method-dispatch (r.run()) — следующая фаза (Ф.3).
+    assert(true)
+}
