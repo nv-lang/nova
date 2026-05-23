@@ -18958,7 +18958,7 @@ neg_dot_at_mixed) PASS.
   ту же логику что HandlerLit (alias-биндинг полей).
 * Codegen: emit_expr arm → emit_handler_lit (piggyback). Runtime
   vtable struct для protocol-only типов deferred —
-  [M-protocol-literal-codegen-deferred] (приоритет M, план Plan 100).
+  [M-protocol-literal-codegen-deferred] (приоритет M, подплан Plan 97.1).
 * 3 negative фикстуры (missing_method, static_method, unknown) PASS.
 * Positive runtime-fixture отложена с codegen.
 
@@ -18975,7 +18975,18 @@ neg_dot_at_mixed) PASS.
 Состояние: 5 коммитов на ветке plan-97 (39c138ae824, 69baaf148eb,
 d5aa5bcc4c2, d4b82d95f9d, de73650c04c). Готов к merge в main
 после финального полного регресса. Capability-split factory
-pattern parser+type-check работают; codegen ждёт Plan 100.
+pattern parser+type-check работают; codegen ждёт подплан Plan 97.1.
+
+================================================================
+[2026-05-23] Plan 97.1 (подплан Plan 97, не начат):
+**Protocol-literal codegen — vtable struct + dispatch.**
+Закрывает [M-protocol-literal-codegen-deferred].
+* План: docs/plans/97.1-protocol-literal-codegen.md (~2-3 dev-day).
+* Approach A (synthetic concrete struct + reuse Plan 56 D122
+  emit_protocol_vtable_companion инфры).
+* Ф.0 GATE design, Ф.1 vtable infra, Ф.2 emit_protocol_lit,
+  Ф.3 dispatch, Ф.4 фикстуры pos/neg, Ф.5 close.
+* Разблокирует capability-split factory pattern для stdlib Plan 18.
 
 ================================================================
 2026-05-23 вЂ” Plan 96 Р—РђРљР Р«Рў: sub-slice views РґР»СЏ []T Рё str
