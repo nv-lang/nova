@@ -9,11 +9,12 @@
 > которой Nova уступает Rust / Kotlin / Rust-async-Drop. Эта редакция
 > закрывает их **полностью** через декомпозицию на 4 sub-plan'а.
 >
-> **Статус umbrella:** 📋 roadmap, не начат. 4 sub-plan'а (100.1
-> foundation, 100.2–100.4 параллелизуемы после 100.1); 100.4 — sub-
-> umbrella с 5 sub-sub-plan'ами. **~27 dev-day total** (5 + 4 + 4 + 14
-> на 100.1/2/3/4 соответственно; vs ~4–6 у bootstrap — цена production-
-> grade).
+> **Статус umbrella:** 📋 roadmap, не начат. **Ред. 3 (2026-05-23):
+> добавлены 100.5/100.6/100.7/100.8 для cross-cutting production
+> needs** (FFI / cross-module / migration playbook / IDE tooling).
+> 8 sub-plan'ов общим объёмом ~43 dev-day; 100.4 — sub-umbrella с 5
+> sub-sub-plan'ами. 100.1 foundation blocks все; 100.2-6 + 100.8
+> параллелизуемы после; 100.7 — финал (depends на all).
 >
 > **Зависимости:** [Plan 73](73-consume-qualifier.md) ✅ (D131 affine
 > foundation), [Plan 77](77-fluent-return.md) ✅ (D132 `-> @` sound
@@ -77,48 +78,71 @@ Bootstrap Plan 100 (D1–D10 + D5.1) — это **100.1 core** из текуще
 | 4 | `defer`/`errdefer` conditional consume не tracked | Rust `Drop` гарантия + Kotlin `use{}` | **100.4** |
 | 5 | Async-cancel propagation через consume-var | Rust async `Drop` + Plan 49 | **100.4** |
 
-Плюс ещё **2 не-defer'а bootstrap'а**, которые в production должны
-работать чище:
+Плюс ещё **2 не-defer'а bootstrap'а**:
 
 | # | Изъян | Закрывает |
 |---|---|---|
 | 6 | Collection `[]T` consume-elements не iterated | **100.2** |
 | 7 | Nested field paths (`@.state.tx.commit()`) — только direct в bootstrap | **100.1** (расширяется) |
 
-## Декомпозиция
+И **4 cross-cutting gap'а production-grade** (выявлены Ред. 3, 2026-05-23):
+
+| # | Gap | Уступка кому | Закрывает |
+|---|---|---|---|
+| 8 | FFI / external integration (consume не пересекает C-границу) | Rust unsafe-with-contract / Plan 18 stdlib требует | **100.5** |
+| 9 | Cross-module / cross-package consume — visibility, mangling, version contracts | Rust pub Drop + Cargo / Plan 03 ecosystem | **100.6** |
+| 10 | Stdlib migration — playbook + real pilot (не только mock) | Rust editions / Plan 18 deployment | **100.7** |
+| 11 | Developer experience — bench budget, LSP quick fixes, hover, `nova doc` | Rust-analyzer / IntelliJ / TS tsserver | **100.8** |
+
+## Декомпозиция (Ред. 3 — production-grade)
 
 ```
 Plan 100 (umbrella, this doc)
-├── 100.1 Core static analysis (foundation; ~5 dev-day)
+├── 100.1 Core static analysis (foundation; ~5 dev-day) ── BLOCKS ALL
 │      ↓
-│   ├──────────────────────────────────┬─────────────────────────────┐
-│   ↓                                  ↓                             ↓
-├── 100.2 Generic + Collections   ├── 100.3 Borrow/view          ├── 100.4 Cleanup-on-failure
-│   propagation (~4 dev-day)       │   (~4 dev-day)               │   (defer/errdefer/async/cancel)
-│                                  │                              │   (~4 dev-day)
-└────────────────────────────────────────────────────────────────────┘
-                                   ↓
-                              Production-ready
+│   ├──────────────────┬─────────────────┬───────────────┬─────────────────┬─────────────────┐
+│   ↓                  ↓                 ↓               ↓                 ↓                 ↓
+├── 100.2 Generic    ├── 100.3 Borrow ├── 100.4         ├── 100.5 FFI    ├── 100.6 Cross-  ├── 100.8 Perf
+│   Propagation       │   view T         Cleanup-on-     │   external      │   module +       │   IDE + tools
+│   (~4 dev-day)      │   (~4 dev-day)   failure umbrella│   (~4 dev-day)  │   visibility     │   (~3 dev-day)
+│                     │                  (~14 dev-day)   │                  │   + mangling     │
+│                     │                  ├── 100.4.1 (~3)│                  │   (~3 dev-day)   │
+│                     │                  ├── 100.4.2 (~3)│                  │                  │
+│                     │                  ├── 100.4.3 (~2)│                  │                  │
+│                     │                  ├── 100.4.4 (~3)│                  │                  │
+│                     │                  └── 100.4.5 (~3)│                  │                  │
+└─────────────────────────────────────────────────────────────────────────────────────────────┘
+                                          ↓
+                                  100.7 Stdlib migration playbook
+                                  (~3 dev-day; depends on ALL above)
+                                          ↓
+                                  PRODUCTION-DEPLOYED
 ```
 
 Граф зависимостей:
 - **100.1** — foundation, blocks все остальные.
-- **100.2 / 100.3 / 100.4** — параллелизуемы после 100.1, не зависят
-  друг от друга (но best-practice — реализовывать в порядке 100.2 →
-  100.3 → 100.4 для итеративной полноты).
+- **100.2 / 100.3 / 100.4 / 100.5 / 100.6 / 100.8** — параллелизуемы
+  после 100.1.
+- **100.7** — финал; depends на ALL 100.1-6 (100.8 параллелен 100.7).
+
+**Total scope:** ~43 dev-day. Production-grade, без bootstrap-упрощений.
 
 ### Sub-plan'ы
 
-| # | Файл | Скоп | Owner deps |
+| # | Файл | Скоп | Deps |
 |---|---|---|---|
-| **100.1** | [100.1-core-must-consume.md](100.1-core-must-consume.md) | type-level `consume`, field-aware flow (с nested-paths), binding-form, D1–D10 + D5.1, 17 фикстур, pilot mock Transaction | Plan 73/77/95 |
-| **100.2** | [100.2-generic-propagation.md](100.2-generic-propagation.md) | `[T consume]` generic bound, `[]T consume`-aware iteration (`for tx in vec` consume каждое), HashMap/Option/Result propagation, stdlib migration, 15 фикстур | 100.1 |
-| **100.3** | [100.3-borrow-and-view.md](100.3-borrow-and-view.md) | `view T` (read-only borrow без lifetime; scope-only), `match view @file` deep peek, closure capture analysis (`consume` / `view` qualifiers), 12 фикстур | 100.1 |
-| **100.4** | [100.4-cleanup-on-failure.md](100.4-cleanup-on-failure.md) (**umbrella**) | Production-grade defer/errdefer rework — amend D90 системно через **5 sub-sub-plan'ов**: 100.4.1 failable body (D136 + Plan 49 composition), 100.4.2 async/suspend body (D137 cancel-safe), 100.4.3 okdefer + reason-aware (D138), 100.4.4 multi-defer LIFO error accumulation + panic composition (D139), 100.4.5 consume-integration final (D140). ~14 dev-day | 100.1, Plan 20/49 |
+| **100.1** | [100.1-core-must-consume.md](100.1-core-must-consume.md) | type-level `consume`, field-aware flow (с nested-paths D5.2), binding-form, D1–D10 + D5.1, 17 фикстур, pilot mock | Plan 73/77/95 |
+| **100.2** | [100.2-generic-propagation.md](100.2-generic-propagation.md) | `[T consume]` generic bound, `[]T` consume-aware iteration, HashMap/Option/Result propagation, stdlib migration audit, 15 фикстур | 100.1 |
+| **100.3** | [100.3-borrow-and-view.md](100.3-borrow-and-view.md) | `view T` read-only borrow без lifetime, `match view` deep peek, closure capture analysis (consume / view), 12 фикстур | 100.1 |
+| **100.4** | [100.4-cleanup-on-failure.md](100.4-cleanup-on-failure.md) (**sub-umbrella**) | Production-grade defer/errdefer rework — amend D90 системно через 5 sub-sub-plan'ов: 100.4.1 failable body (D136), 100.4.2 async/suspend (D137), 100.4.3 okdefer + reason-aware (D138), 100.4.4 multi-defer + panic composition (D139), 100.4.5 consume-integration final (D140) | 100.1, Plan 20/49 |
+| **100.5** | [100.5-ffi-external-integration.md](100.5-ffi-external-integration.md) | `external consume fn` для C-runtime; opaque types + capability (Plan 16); pilot File/Mutex/Socket integration с FFI; defensive helpers; 18 фикстур (D141) | 100.1, Plan 16/62.D.bis |
+| **100.6** | [100.6-cross-module-integration.md](100.6-cross-module-integration.md) | consume-маркер через границы модулей/пакетов; mangling включает consume-bit (extends Plan 81); `nova.toml` consume-contracts; Plan 03 `nova audit` integration; 15 фикстур (D142) | 100.1, Plan 35/81/03/42 |
+| **100.7** | [100.7-stdlib-migration-playbook.md](100.7-stdlib-migration-playbook.md) | Full stdlib audit; `nova consume-migrate` CLI tool; edition versioning; **4 pilot migrations** (File/Mutex/TcpSocket/Transaction) end-to-end; 20+5 фикстур (D143) | ALL 100.1-6 |
+| **100.8** | [100.8-performance-ide-tooling.md](100.8-performance-ide-tooling.md) | Compile-time bench budget (<5%); LSP quick fixes (12 error codes); hover info; `nova doc` integration; `nova consume-analyze` CLI; diagnostic format spec; 15 фикстур (D144) | 100.1 (parallel with 100.2-7) |
 
-## Acceptance (umbrella, across все 4 sub-plan'а)
+## Acceptance (umbrella, across все 8 sub-plan'ов)
 
-После закрытия всех 4 sub-plan'ов:
+После закрытия всех 8 sub-plan'ов:
 
 - [ ] **Compile-time guarantee:** ни одна consume-переменная не может
       утечь незакрытой ни на одном code-path'е (включая return / panic /
@@ -148,13 +172,23 @@ Plan 100 (umbrella, this doc)
       scope; tx гарантированно не утекает.
 - [ ] **Cross-language parity matrix** (см. выше) — каждая строка
       «✅ Nova» подтверждена ≥1 фикстурой.
-- [ ] **Pilot stdlib migration** — `Transaction`, `File`, `Connection`,
-      `Lock-guard` мигрированы на consume-семантику (планируется в
-      рамках Plan 18 stdlib MVP; Plan 100 umbrella готовит инфру).
+- [ ] **FFI integration (100.5):** `external consume fn` работает;
+      pilot stdlib types (File / Mutex / Socket) через FFI с
+      capability checking (Plan 16).
+- [ ] **Cross-module / cross-package (100.6):** consume-маркер visible
+      через `export`/`import`; mangling содержит consume-bit; `nova.toml`
+      consume-contracts; `nova audit` ловит cross-version break.
+- [ ] **Stdlib migration (100.7):** 4 pilot types (File, Mutex,
+      TcpSocket, Transaction) migrated end-to-end. `nova consume-migrate`
+      CLI работает. Edition versioning preserves backward-compat.
+- [ ] **Performance + tooling (100.8):** check_consume overhead < 5%
+      от baseline. LSP quick fixes для всех 12 error codes. `nova doc`
+      renders consume-types. `nova consume-analyze` для CI. Diagnostic
+      format spec consistent.
 - [ ] **Полный `nova test`** → 0 регрессий.
 - [ ] **Spec sweep**: D131 (Plan 73), D132 (Plan 77), D90 (Plan 20),
-      D85 (Plan 49), D133 (Plan 100.1), D134 (Plan 100.2), D135 (Plan
-      100.3), D136 (Plan 100.4) — все cross-ref'ы согласованы.
+      D85 (Plan 49), D133-D144 (Plan 100 family) — все cross-ref'ы
+      согласованы.
 
 ## Risks (cross-cutting)
 
@@ -175,9 +209,10 @@ Plan 100 (umbrella, this doc)
    часть. **Митигация:** 100.4 переиспользует Plan 49 cancel-routing
    инфру; не вводит новые механизмы.
 
-4. **Spec D-block коллизии.** Резервируем D133 (100.1) / D134 (100.2)
-   / D135 (100.3) / D136 (100.4). **Митигация:** проверка перед
-   каждым sub-plan'ом start'ом.
+4. **Spec D-block коллизии.** Резервируем **D133-D144** (12 D-blocks):
+   D133 (100.1), D134 (100.2), D135 (100.3), D136-D140 (100.4.1-5),
+   D141 (100.5), D142 (100.6), D143 (100.7), D144 (100.8). **Митигация:**
+   проверка перед каждым sub-plan'ом start'ом; spec-team coordination.
 
 5. **Performance overhead.** Field-aware tracking + nested paths +
    collection-aware iteration — расширение `check_consume` pass'а.
