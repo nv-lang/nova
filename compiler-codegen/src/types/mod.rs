@@ -1132,7 +1132,8 @@ impl<'a> TypeCheckCtx<'a> {
                 self.walk_expr(range, gs, errors);
                 self.walk_expr(body, gs, errors);
             }
-            ExprKind::HandlerLit { methods, .. } => {
+            // Plan 97 Ф.4 (D142): protocol-литерал — walk идентичен.
+            ExprKind::HandlerLit { methods, .. } | ExprKind::ProtocolLit { methods, .. } => {
                 for m in methods {
                     match &m.body {
                         HandlerMethodBody::Expr(e) => self.walk_expr(e, gs, errors),
@@ -1524,7 +1525,9 @@ impl<'a> TypeCheckCtx<'a> {
                 self.f1_expr(range, gs, scope, errors);
                 self.f1_expr(body, gs, scope, errors);
             }
-            ExprKind::HandlerLit { methods, .. } => {
+            // Plan 97 Ф.4 (D142): protocol-литерал — f1_expr walk
+            // идентичен.
+            ExprKind::HandlerLit { methods, .. } | ExprKind::ProtocolLit { methods, .. } => {
                 for m in methods {
                     match &m.body {
                         HandlerMethodBody::Expr(e) => {
@@ -2631,11 +2634,109 @@ impl<'a> BoundCtx<'a> {
                 self.walk_expr(range, scope, errors);
                 self.walk_expr(body, scope, errors);
             }
+            // Plan 97 Ф.4 (D142): protocol-литерал — structural-check
+            // относительно объявленного протокола (instance-only).
+            ExprKind::ProtocolLit { proto_name, methods } => {
+                self.check_protocol_lit(proto_name, methods, e.span, errors);
+            }
             // Р›РёС‚РµСЂР°Р»С‹ / ident'С‹ / handler-Р»РёС‚РµСЂР°Р»С‹ вЂ” Р±РµР· СЂРµРєСѓСЂСЃРёРё РІ bound-РїСЂРѕРІРµСЂРєРµ.
             ExprKind::IntLit(_) | ExprKind::FloatLit(_) | ExprKind::BoolLit(_)
             | ExprKind::StrLit(_) | ExprKind::CharLit(_) | ExprKind::UnitLit
             | ExprKind::Ident(_) | ExprKind::Path(_) | ExprKind::SelfAccess
             | ExprKind::HandlerLit { .. } => {}
+        }
+    }
+
+    /// Plan 97 Ф.4 (D142): структурная проверка protocol-литерала.
+    ///
+    /// 1. Resolve `proto_name` в registered protocol через `protocol_specs`.
+    ///    Если не найден — error (unknown protocol).
+    /// 2. Каждый impl-метод должен соответствовать **instance**-методу
+    ///    протокола (по имени + arity). Реализация **static**-метода
+    ///    (декларированного с `.method`) в protocol-литерале запрещена
+    ///    (static — `Type.method` D35, у литерала нет «своего типа»).
+    /// 3. Каждый instance-метод протокола должен быть реализован — иначе
+    ///    «missing method» error.
+    fn check_protocol_lit(
+        &self,
+        proto_name: &[String],
+        methods: &[HandlerMethod],
+        span: Span,
+        errors: &mut Vec<Diagnostic>,
+    ) {
+        let name = match proto_name.last() {
+            Some(n) => n.clone(),
+            None => return,
+        };
+        let Some(spec_methods) = self.protocol_specs.get(&name) else {
+            // Unknown protocol — diagnostic с hint'ом про D142.
+            // Permissive если effect (effect-литерал, не protocol-литерал).
+            if !self.effect_decls.contains_key(&name) {
+                errors.push(Diagnostic::new(
+                    format!(
+                        "unknown protocol `{}` in protocol-literal — must be a declared \
+                         `type {} protocol {{ ... }}` (D142 / Plan 97 Ф.4). \
+                         If you meant an effect-literal, use `effect {} {{ ... }}` instead.",
+                        name, name, name),
+                    span,
+                ));
+            }
+            return;
+        };
+        // Static-method-impl rejection (Ф.4.3).
+        for spec_m in *spec_methods {
+            if spec_m.is_static {
+                // Если literal реализует static-метод (по имени), diagnostic.
+                if methods.iter().any(|im| im.name == spec_m.name) {
+                    errors.push(Diagnostic::new(
+                        format!(
+                            "static method `.{}` cannot be implemented in protocol-literal \
+                             — static methods belong to a type (D35: `fn Type.{}(...)`), \
+                             not to an instance. Declare a named `type Impl {{ ... }}` with \
+                             `fn Impl.{}(...)` and pass an instance of `Impl` instead.",
+                            spec_m.name, spec_m.name, spec_m.name),
+                        span,
+                    ));
+                }
+            }
+        }
+        // Structural-match: каждый instance-метод протокола должен быть реализован.
+        let mut missing: Vec<String> = Vec::new();
+        for spec_m in *spec_methods {
+            if spec_m.is_static {
+                continue;
+            }
+            let found = methods.iter().any(|im|
+                im.name == spec_m.name && im.params.len() == spec_m.params.len());
+            if !found {
+                missing.push(format!(
+                    "{}({})",
+                    spec_m.name,
+                    spec_m.params.iter().map(|p| p.name.clone()).collect::<Vec<_>>().join(", ")));
+            }
+        }
+        if !missing.is_empty() {
+            errors.push(Diagnostic::new(
+                format!(
+                    "protocol-literal `protocol {} {{ ... }}` is missing required instance methods: {}. \
+                     The protocol contract declared `{}` requires every instance method to be \
+                     implemented (D142 / Plan 97 Ф.4 structural conformance).",
+                    name, missing.join(", "), name),
+                span,
+            ));
+        }
+        // Extra-method warning: реализация unknown-имени.
+        for im in methods {
+            let in_proto = spec_methods.iter().any(|s| s.name == im.name);
+            if !in_proto {
+                errors.push(Diagnostic::new(
+                    format!(
+                        "protocol-literal implements method `{}` not declared in protocol `{}` \
+                         (D142 / Plan 97 Ф.4). Method names must match the contract.",
+                        im.name, name),
+                    im.span,
+                ));
+            }
         }
     }
 
@@ -3776,7 +3877,8 @@ impl<'a> CapabilityCtx<'a> {
             ExprKind::IntLit(_) | ExprKind::FloatLit(_) | ExprKind::BoolLit(_)
             | ExprKind::StrLit(_) | ExprKind::CharLit(_) | ExprKind::UnitLit
             | ExprKind::Ident(_) | ExprKind::Path(_) | ExprKind::SelfAccess
-            | ExprKind::HandlerLit { .. } => {}
+            | ExprKind::HandlerLit { .. }
+            | ExprKind::ProtocolLit { .. } => {}
         }
     }
 
@@ -4728,8 +4830,10 @@ impl NameResCtx {
                 }
                 self.walk_block(body, file_id, scope, errors);
             }
-            ExprKind::HandlerLit { methods, .. } => {
-                // РљР°Р¶РґС‹Р№ method вЂ” handler-op СЃ СЃРѕР±СЃС‚РІРµРЅРЅС‹Рј scope params.
+            // Plan 97 Ф.4 (D142): protocol-литерал — name-resolution
+            // walk идентичен handler-литералу.
+            ExprKind::HandlerLit { methods, .. } | ExprKind::ProtocolLit { methods, .. } => {
+                // РљР°Р¶РґС‹Р№ method вЂ” op СЃ СЃРѕР±СЃС‚РІРµРЅРЅС‹Рј scope params.
                 for m in methods {
                     let mut frame: HashSet<String> = HashSet::new();
                     for p in &m.params { frame.insert(p.name.clone()); }
@@ -5811,6 +5915,18 @@ fn walk_block_for_handler_lits(b: &Block, never_ops: &HashSet<(String, String)>,
 
 fn walk_expr_for_handler_lits(e: &Expr, never_ops: &HashSet<(String, String)>, errors: &mut Vec<Diagnostic>) {
     match &e.kind {
+        // Plan 97 Ф.4 (D142): protocol-литерал — never-op check'и
+        // на nor сейчас не специфицированы для protocol'ов (D61
+        // §1430-1434 — только handler/effect-op'ы). Рекурсивно walk'аем
+        // в bodies, но never-op assertion не применяется.
+        ExprKind::ProtocolLit { methods, .. } => {
+            for m in methods {
+                match &m.body {
+                    HandlerMethodBody::Expr(ex) => walk_expr_for_handler_lits(ex, never_ops, errors),
+                    HandlerMethodBody::Block(b) => walk_block_for_handler_lits(b, never_ops, errors),
+                }
+            }
+        }
         ExprKind::HandlerLit { effect_name, methods } => {
             // effect_name вЂ” Vec<String>, РїРѕСЃР»РµРґРЅРёР№ РєРѕРјРїРѕРЅРµРЅС‚ = effect's last name.
             let eff_last = effect_name.last().cloned().unwrap_or_default();
@@ -6960,7 +7076,8 @@ fn consume_walk_expr(ctx: &mut ConsumeCtx, e: &Expr, errors: &mut Vec<Diagnostic
             let names: Vec<String> = sig.params.iter().map(|p| p.name.clone()).collect();
             consume_walk_fnbody_isolated(ctx, &names, &sig.body, errors);
         }
-        ExprKind::HandlerLit { methods, .. } => {
+        // Plan 97 Ф.4 (D142): protocol-литерал — consume-walk идентичен.
+        ExprKind::HandlerLit { methods, .. } | ExprKind::ProtocolLit { methods, .. } => {
             for m in methods {
                 let names: Vec<String> = m.params.iter().map(|p| p.name.clone()).collect();
                 match &m.body {
@@ -8627,7 +8744,8 @@ impl MapLitCtx {
                 for b in bindings { self.walk_expr(&b.handler, None, errors); }
                 self.walk_block(body, errors);
             }
-            ExprKind::HandlerLit { methods, .. } => {
+            // Plan 97 Ф.4 (D142): protocol-литерал — walk идентичен.
+            ExprKind::HandlerLit { methods, .. } | ExprKind::ProtocolLit { methods, .. } => {
                 for m in methods {
                     match &m.body {
                         HandlerMethodBody::Expr(x) => self.walk_expr(x, None, errors),
@@ -9551,7 +9669,8 @@ impl MapLitAnnotator {
                 for b in bindings.iter_mut() { self.walk_expr(&mut b.handler, None); }
                 self.walk_block(body);
             }
-            ExprKind::HandlerLit { methods, .. } => {
+            // Plan 97 Ф.4 (D142): protocol-литерал — walk-mut идентичен.
+            ExprKind::HandlerLit { methods, .. } | ExprKind::ProtocolLit { methods, .. } => {
                 for m in methods.iter_mut() {
                     match &mut m.body {
                         HandlerMethodBody::Expr(x) => self.walk_expr(x, None),

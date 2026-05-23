@@ -317,7 +317,9 @@ fn walk_children(e: &mut Expr, sigs: &Sigs) {
             for b in bindings.iter_mut() { normalize_expr(&mut b.handler, sigs); }
             normalize_block(body, sigs);
         }
-        ExprKind::HandlerLit { methods, .. } => {
+        // Plan 97 Ф.4 (D142): protocol-литерал — call-нормализация
+        // тел методов идентична handler-литералу.
+        ExprKind::HandlerLit { methods, .. } | ExprKind::ProtocolLit { methods, .. } => {
             for m in methods.iter_mut() {
                 match &mut m.body {
                     HandlerMethodBody::Expr(x) => normalize_expr(x, sigs),

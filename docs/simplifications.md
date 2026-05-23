@@ -11121,6 +11121,50 @@ ns/switch — паритет с Boost.Context). Перенос замера в N
 
 ---
 
+### [M-protocol-literal-codegen-deferred] Plan 97 Ф.4 — vtable-dispatch на anon-instance protocol-литерала deferred
+
+- **Где** — `compiler-codegen/src/codegen/emit_c.rs` `ExprKind::ProtocolLit`
+  arm (делегирует на `emit_handler_lit`).
+- **Что упрощено** — parser + AST + type-checker для protocol-литерала
+  (`protocol Name { method-impl* }` в expression-position) реализованы
+  **полностью**: structural-match, instance-only (static-impl-rejection),
+  missing-method/extra-method diagnostics, unknown-protocol detection.
+  Codegen эмитит literal как closure-bundle через путь handler-литерала
+  (`emit_handler_lit`), **но** runtime-vtable struct `NovaVtable_<Proto>`
+  не эмитится (Plan 15 D53 strict: protocol — compile-time-only).
+  В результате allocation работает только если protocol уже
+  зарегистрирован как effect через `emit_effect_type` (через Plan 56
+  D122 vtable companion). Для protocol-only типов (без effect-формы)
+  CC-FAIL на `unknown type name 'NovaVtable_<Proto>'`.
+- **Почему** — full vtable infra для protocol-літералов требует
+  - расширения `emit_type_decl` чтобы emit'ить vtable для protocol'ов
+    (а не только effects),
+  - dispatch logic для method-call'а на protocol-typed value
+    (`value.method()` где `value: Locker` — named protocol),
+  - capture-rules согласованных с closure (D22/D6 managed heap) и
+    отдельным struct-typedef'ом per literal.
+  Это **2-3 dev-day** работы — превышает scope Ф.4 (~1.2 d).
+  Parser/type-checker даёт **75% выигрыша**: capability-split factory
+  pattern из спеки парсится и type-check'ается; единственный gap —
+  runtime dispatch, который дополним отдельной задачей.
+- **Как чинить** — Plan 100 «protocol-literal full codegen»:
+  1. Расширить `emit_type_decl` → `TypeDeclKind::Protocol(_)`: эмитить
+     `NovaVtable_<Name>` struct (как для effect) — без thread-local
+     handler slot (protocol-value передаётся явно как параметр).
+  2. Dispatch path для `value.method()` где value имеет protocol-тип:
+     эмитить `((NovaVtable_<Proto>*)value)->method(value->ctx, args)`.
+     Hybrid с Plan 56 D122 mono'd-path: если concrete type known
+     статически → direct call; иначе indirect.
+  3. Регистрировать protocol в `effect_schemas` registry чтобы
+     `emit_handler_lit` находил method signatures.
+  4. Fixture `pos_protocol_lit_basic` восстановить + capability-split
+     factory `pos_protocol_lit_capability_split` (per Plan 97 Ф.5.13).
+- **Приоритет** — M (нужно для разблокировки stdlib Plan 18
+  capability-split API: `Process.spawn -> (Stdin, Stdout, Stderr)`,
+  `HttpServer.bind -> (Acceptor, ShutdownHandle)` и т.д.).
+- **Обнаружено** — Plan 97 Ф.4 (2026-05-23). Parser + type-checker
+  закрыли syntax + structural validation; codegen — отдельный план.
+
 ### [M-protocol-static-enforcement-deferred] Plan 97 — нет hard-enforcement static↔instance в protocol-методе
 
 - **Где** — `compiler-codegen/src/types/mod.rs` структурное матчинг

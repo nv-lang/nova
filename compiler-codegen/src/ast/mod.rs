@@ -1353,9 +1353,21 @@ pub enum ExprKind {
         bindings: Vec<WithBinding>,
         body: Block,
     },
-    /// Handler-литерал: `EffectName { op(p) => ... ; ... }`
+    /// Handler-литерал: `effect EffectName { op(p) => ... ; ... }`
+    /// (Plan 97 Ф.3: keyword `handler` → `effect`).
     HandlerLit {
         effect_name: Vec<String>,
+        methods: Vec<HandlerMethod>,
+    },
+    /// Plan 97 Ф.4 (D142): protocol-литерал в expression-position —
+    /// value, реализующий контракт named-protocol'а. Записывается как
+    /// `protocol ProtoName { method-impl* }`. Семантика — closure-bundle
+    /// (D22 capture-rules, managed heap D6) для one-off реализаций
+    /// (capability-split factory pattern). **Instance-only**: static
+    /// методы не могут быть в литерале (static — `Type.method` D35,
+    /// у литерала нет «своего типа»).
+    ProtocolLit {
+        proto_name: Vec<String>,
         methods: Vec<HandlerMethod>,
     },
     /// `interrupt v` — досрочное завершение всего with-блока (D61).
