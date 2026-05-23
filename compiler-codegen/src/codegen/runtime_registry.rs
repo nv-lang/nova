@@ -246,18 +246,9 @@ fn str_runtime() -> Vec<RuntimeFn> {
             doc: "Codepoint по индексу (codepoint-indexed). None при OOB.",
         nova_body: None,
     },
-        RuntimeFn {
-            module: "std.runtime.string",
-            receiver: Some("str"),
-            is_static: false, is_mut: false, is_consume: false,
-            name: "slice",
-            params: &[("from", "int"), ("to", "int")],
-            return_ty: "str",
-            effects: &[],
-            c_name: "nova_str_slice",
-            doc: "Codepoint-indexed slice (D26 школа B).",
-        nova_body: None,
-    },
+        // Plan 96.1: метод @slice удалён в пользу bracket-формы s[a..b]
+        // (Plan 96 D-str-slice, D9 «один очевидный путь»). Bracket-form
+        // codegen — emit_c.rs ExprKind::Index с Range index → nova_str_slice_panic.
         RuntimeFn {
             module: "std.runtime.string",
             receiver: Some("str"),
