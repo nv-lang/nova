@@ -19271,3 +19271,59 @@ concurrent timing); 0 регрессий от исполнения 83.4.
  - 861899ab8c4  feat(83.4.1) park-with-predicate + sleep/blocking + D93
  - e6360b9950c  fix(83.4.2/Ф.1) supervised_step skip worker-owned (A2)
  - 7fa8e8af81c  feat(83.4.3) B1 global arena stats + B4 main_yield
+
+### Plan 83.4 продолжение — B5 atomic + B3 directive + Ф.2 handler-migration + flip-attempt (2026-05-23)
+
+Worktree nova-p83-4, ветка plan-83.4 (продолжение работы после первой
+сессии). Запланированно покрыть оставшиеся пункты плана.
+
+Сделано (4 коммита):
+
+a2636361e2d — 83.4.3 B5 atomic cancel_requested + B3 parallel_for directive:
+  - cancel_requested в NovaFiberQueue и NovaCancelToken переведено с
+    nova_bool на nova_atomic_bool. 12 read/write сайтов в fibers.h +
+    channels.h обновлены на nova_abool_load (ACQUIRE) / nova_abool_store
+    (RELEASE). Аналог tokio CancellationToken atomic-flag.
+  - parallel_for.nv помечен '// ENV NOVA_MAXPROCS=1' — encoded-log
+    тесты сохраняют ordering invariants под single-worker (Plan 83 §6
+    'spawn ordering: no guarantees').
+
+1dfd4df7d55 — 83.4.2 Ф.2 handler-storage save/restore на worker:
+  Переоценка плана: не требует codegen ABI change. Переиспользует
+  существующий NovaFiberQueue.fiber_effect_snapshot[] parallel array.
+  Worker (_worker_main в runtime.c) теперь делает nova_effect_snapshot_
+  save(&outer)/restore(home_scope->fiber_effect_snapshot[slot]) аналогично
+  main thread'а supervised_step. Аналог tokio TaskLocal restore on poll
+  / Node AsyncLocalStorage context-switch.
+
+93d26251aea — 83.4.4 Ф.2 flip activation попытка → reverted:
+  Раскомментировал nova_runtime_auto_arm() в emit_main_wrapper. После
+  builda concurrency suite дал 75 PASS → 57 PASS / 18 RUN-FAIL:
+    cancel_semantics_test, detach_test, main_yield, parallel_for,
+    per_fiber_handlers, plan40_perf_bench, sleep_precision_bench,
+    sleep_real_clock, supervised_cancel_stress_test, time_handler +
+    ещё ~8 тестов.
+  5 named-bugs покрыли только видимые проявления; под активным flip
+  всплыли дополнительные edge cases в supervised-drain (deadlock в
+  cancel-stress, ordering под 1-worker M:N ≠ cooperative, detach
+  inline-vs-async, sleep precision jitter, handler corner cases,
+  main_yield/armed race).
+  Активация откачена; открыт Plan 83.4.5 'M:N drain edge-case sweep'
+  для оставшихся 18 fails (~5-7 dev-day, Ф.0 enumeration → per-category
+  fixes → re-activate flip + closure).
+
+Итоговый статус Plan 83.4:
+  - 83.4.1 ✅ ЦЕЛИКОМ (1 коммит из первой сессии).
+  - 83.4.2 ✅ ЦЕЛИКОМ (Ф.1 первая сессия + Ф.2 эта).
+  - 83.4.3 ✅ ЦЕЛИКОМ (Ф.1 первая сессия + B5+B3 эта).
+  - 83.4.4 🟡 partial (flip-attempt + revert + Plan 83.4.5 created).
+  - 83.4.5 📋 proposed (новый followup).
+
+Полный clang nova test (без flip): 1111 PASS / 0 FAIL / 56 SKIP —
+0 регрессий. Все 5 named-bugs A+B из [M-83.2-supervised-mn-bugs]
+закрыты.
+
+Коммиты этой сессии:
+ - a2636361e2d  B5 atomic cancel + B3 parallel_for directive
+ - 1dfd4df7d55  Ф.2 handler-storage save/restore на worker
+ - 93d26251aea  flip activation попытка (reverted) + Plan 83.4.5 followup

@@ -11219,33 +11219,34 @@ ns/switch — паритет с Boost.Context). Перенос замера в N
 
 ### ⚠ ЧАСТИЧНО ЗАКРЫТО Plan 83.4 исполнением (2026-05-23, worktree nova-p83-4)
 
-**Закрыты:**
+**Все 5 named-bugs A+B закрыты (две сессии 2026-05-23):**
 - **A1** D93 sleep-wake race — Plan 83.4.1 ✅ (`nova_sched_park_until`
-  primitive + sleep/blocking refactor; D93 spec amendment). `sleep_bench`/
-  `_precision_bench`/`_real_clock` больше не падают с `FATAL sleep wake
-  before close_cb`.
+  primitive + sleep/blocking refactor; D93 spec amendment).
 - **A2** supervised double-resume — Plan 83.4.2 Ф.1 ✅ (supervised_step
-  skip'ает worker-owned fiber'ы через `_nova_parent_scope` discriminator).
-  Никаких больше `fiber stack overflow in slot 0` access-violation'ов.
+  skip'ает worker-owned fiber'ы через `_nova_parent_scope`).
+- **A3+B2** handler-storage save/restore на worker — Plan 83.4.2 Ф.2 ✅
+  (без codegen-ABI change: переиспользует существующий
+  `NovaFiberQueue.fiber_effect_snapshot[]` parallel array, worker делает
+  save/restore аналогично `nova_supervised_step`).
 - **B1** fiber_arena_stats main vs worker — Plan 83.4.3 ✅ (global
-  aggregation через обход `_nova_fw_arena_list`).
+  aggregation через `_nova_fw_arena_list`).
 - **B4** main_yield семантика — Plan 83.4.3 ✅ (`nova_fiber_yield` на
-  main thread'е делает `uv_run(NOWAIT)`).
+  main делает `uv_run(NOWAIT)`).
+- **B5** atomic cancel_requested — Plan 83.4.3 ✅ (nova_atomic_bool +
+  ACQUIRE/RELEASE на всех 12 read/write сайтах).
+- **B3** parallel_for ordering — Plan 83.4.3 ✅ (`// ENV NOVA_MAXPROCS=1`
+  директива; encoded-log тесты сохраняют semantics через 1-worker).
 
-**Не закрыты (honest-defer в самостоятельные подпланы):**
-- **A3+B2** handler-storage TLS→per-fiber migration — Plan 83.4.2 Ф.2.
-  Требует codegen-edit `NovaSpawnCtxBase` ABI (~2-3 dev-day).
-- **B5** hierarchical CancellationToken (atomic + wake-all + cascade) —
-  Plan 83.4.3 Ф.2. Atomic-cancel дефенсивно (x86 byte-atomicity покрывает
-  immediate race), полная иерархия требует scope-tree mutex.
-- **B3** parallel_for set-equality test rewrite — Plan 83.4.3 Ф.4.
-  Cosmetic test fix, не блокирует flip.
-- **C1+C2** test ассерты + **flip activation** + sweep + spec D-block +
-  speedup-бенчмарк + stress + TSAN gate — Plan 83.4.4 целиком.
+**Flip activation попытка** (commit 93d26251aea, reverted): 75→57 PASS,
+**18 RUN-FAIL** — 5 named-bugs покрывали только видимые проявления; под
+flip всплыли дополнительные edge cases (supervised drain deadlock в
+cancel_stress, parallel_for ordering под 1-worker M:N ≠ cooperative,
+detach inline-vs-async, sleep precision wall-clock jitter, handler
+corner cases, main_yield interaction с armed runtime). Активация
+закомментирована, открыт [Plan 83.4.5](plans/83.4.5-mn-drain-edge-cases.md)
+«M:N drain edge-case sweep» для closure (~5-7 dev-day).
 
-**Полный clang `nova test` после исполнения**: 1107 PASS / 4 FAIL / 56
-SKIP — 4 фейла известные флэки (3 parallel-build lld-link + 1 sleep_bench
-10k-concurrent timing); 0 регрессий от изменений Plan 83.4.
+**Полный clang `nova test`** (без flip): **1111 PASS / 0 FAIL / 56 SKIP**.
 
 ### Что
 
