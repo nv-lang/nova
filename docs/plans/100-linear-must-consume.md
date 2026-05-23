@@ -213,6 +213,35 @@ Compiler ловит реальные баги:
 - наивный close-then-open с error-path: `@file.close(); @file =
   File.open()?` → error если open Err (@file Consumed, не rebinded).
 
+#### D5.1 — assignment в Live consume-поле запрещён
+
+Прямое присваивание `@field = expr` в consume-поле разрешено **только**
+когда `@field` в состоянии `Consumed`. Если поле `Live` — compile error
+E (D133-assign-live-field) с suggestion «consume the existing value
+first via `<consume-method>()`». Защита от silent overwrite старого
+consume-значения (gateway к утечке — поле было Live, его перетёрли, GC
+собрал в неопределённом состоянии).
+
+```nova
+fn Service mut @overwrite_naive() {
+    @file = File.open()?              // ❌ E (D133-assign-live-field):
+                                      //    @file Live, перезапись затёрла бы
+                                      //    старый File без close.
+}
+
+fn Service mut @overwrite_correct() {
+    @file.close()                     // сначала consume старое
+    @file = File.open()?              // ✅ теперь @file Consumed → assign OK
+}
+```
+
+Та же логика применима и к **локальным переменным** consume-типа:
+повторный `consume tx = expr` в том же scope'е (в форме reassignment)
+без предшествующего consume старой `tx` — ошибка. Re-binding через
+shadow (`let tx = ...; let tx = ...`) — отдельный случай (см. D2 +
+[Plan 73 alias-tracking](73-consume-qualifier.md)): первый `tx` должен
+быть consumed до shadow.
+
 ### D6 — generic-заразность
 
 `type_is_consume(TypeRef)` — рекурсивная функция:
@@ -361,8 +390,11 @@ Acceptance: документ `docs/plans/100-artifacts/gate.md` фиксируе
   - exit non-consume метода → consume-fields должны быть Live →
     error E (D133-field-not-restored).
   - exit consume-метода → consume-fields могут быть Consumed.
-- **Assign в consume-поле** разрешён только когда поле уже Consumed
-  (force explicit consume before replace, D5 пример reopen).
+- **Assign в Live consume-поле / locals** (D5.1) → error E (D133-
+  assign-live-field) с suggestion «consume the existing value first».
+  Покрывает: `@field = expr` в record-методе при `@field` Live; ре-
+  ассайн локальной consume-var (`consume tx = ...; consume tx = ...`)
+  без consume старой.
 - **Match на consume-value** — считается consume-операцией; pattern-
   bindings внутри arm'ов — независимые linear-binding'и, обязаны
   consumed в arm'е (D6 для Option[Transaction]).
@@ -393,7 +425,7 @@ reopen; negative: forget, partial, branch-forget, field-not-restored)
 
 ### Ф.6 — Тесты pos/neg (~0.5 dev-day)
 
-`nova_tests/plan100/` (~16 фикстур):
+`nova_tests/plan100/` (~17 фикстур):
 
 **Позитивные (8):**
 - `consume_ok_commit.nv` — `consume tx = begin(); tx.commit()`.
@@ -408,7 +440,7 @@ reopen; negative: forget, partial, branch-forget, field-not-restored)
 - `consume_ok_option_field.nv` — `consume file Option[File]`, match-
   based replacement.
 
-**Негативные (8) (EXPECT_COMPILE_ERROR D133):**
+**Негативные (9) (EXPECT_COMPILE_ERROR D133):**
 - `consume_err_forget.nv` — `consume tx = begin()` без consume-метода.
 - `consume_err_branch_forget.nv` — `if cond { tx.commit() }`.
 - `consume_err_loop_forget.nv` — `loop { consume tx = begin() }`.
@@ -421,8 +453,11 @@ reopen; negative: forget, partial, branch-forget, field-not-restored)
 - `consume_err_type_marker.nv` — record с consume-полем, но без
   `consume` на type-decl.
 - `consume_err_panic_path.nv` — `consume tx = begin(); panic("x")`.
+- `consume_err_assign_to_live_field.nv` — D5.1: `mut @overwrite() {
+  @file = File.open()? }` без предшествующего `@file.close()`; покрывает
+  silent-overwrite gateway.
 
-Acceptance: 8 pos PASS, 8 neg дают expected E (D133); полный `nova
+Acceptance: 8 pos PASS, 9 neg дают expected E (D133); полный `nova
 test` → 0 регрессий с baseline.
 
 ### Ф.7 — Docs + close (~0.3 dev-day)
@@ -455,13 +490,16 @@ test` → 0 регрессий с baseline.
       (D7).
 - [ ] Consume-поле в record'е — transitive (record сам consume), field-
       aware flow внутри методов (D5): mut-метод reopen pattern работает.
+- [ ] Assign в Live consume-поле / повторный `consume tx = ...` без
+      предшествующего consume → compile error E (D133-assign-live-field)
+      с suggestion (D5.1).
 - [ ] `Option[Transaction]` / `Box[Transaction]` / user-generic с
       consume-arg — автоматически consume через generic-заразность
       (D6); никакого Option-специфичного кода.
 - [ ] `consume` + `-> @` на одном методе → parse error (D8).
 - [ ] D131 affine остаётся доступным; `consume` без type-level
       `consume` работает как раньше (forget OK).
-- [ ] Pilot `nova_tests/plan100/` — 8 pos + 8 neg PASS как expected.
+- [ ] Pilot `nova_tests/plan100/` — 8 pos + 9 neg PASS как expected.
 - [ ] Полный `nova test` → 0 регрессий vs baseline (~1130 PASS на
       момент старта).
 - [ ] Spec D133 опубликован; cross-ref'ы D131/D132/D75 ✅.
