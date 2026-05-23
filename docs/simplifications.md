@@ -11399,7 +11399,32 @@ Plan 83.2 §4 «Compiled-программа без единого `runtime.*` в
 
 ### Приоритет — M (P2-feature; инфраструктура готова, активация ждёт runtime fixes).
 
-## [M-option-result-closure-methods-deferred] Plan 99 Ф.0 — Closure-applying Option/Result методы (re-scope 2026-05-23)
+## [M-option-result-closure-methods-deferred] ✅ ЗАКРЫТО Plan 99 (2026-05-23)
+
+> **Резолюция (Plan 99, worktree `nova-p99-impl`):** декомпозирован
+> на 4 sub-plan'а 99.1/99.2/99.3/99.4 + 2 hardening fix'а в финале.
+> Foundation (99.1): `resolve_method_level_subst` helper extracted из
+> user-generic dispatch + integration в Option/Result DeclaredBody с
+> расширенным mono_name `_<T>_<U>...`, `register_novaopt_decl(U)`
+> lazy-emit, `infer_method_level_return_for_sum` для `&self` inference.
+> Contextual ctors (99.2 + followup): bare `None` использует
+> `current_fn_return_ty`; `Ok(v)`/`Err(e)` берут (T,E) из rt; bare
+> `Some(v)` использует ARG-type (`infer_expr_c_type(arg)`) — fix
+> sub-expr cases где `Some('/')` сравнивается с `s.char_at(i)` в
+> `Option[int]`-returning fn'е (plan11_followup f13/f16/f17). Atomic
+> migration (99.3): 6 commits per-method (`Option.map[U]`/
+> `unwrap_or_else`/`ok_or[E]`, `Result.map[U]`/`map_err[F]`/
+> `unwrap_or_else`) + param-rename `f` → `default_fn`/`map_fn`/
+> `err_fn` (fix shadowing user-fn'ов с именем `f` —
+> регрессия `contracts/trivial_congruence_positive`). Tests (99.4):
+> 8 фикстур plan99/ (6 positive + 2 negative). **15 / 17 Option/
+> Result-методов на Nova-body** (7 Option + 8 Result); C-routed
+> остаются только `Option.unwrap` и `Result.unwrap` (Plan 61
+> lineage — typed `Fail[E]` effect). Паритет Rust `Option::<T>::
+> map<U, F: FnOnce(T)->U>`. Полный nova test: 1141 PASS / 0 FAIL /
+> 56 SKIP. Block-ниже оставлен исторически как точка discovery.
+
+## [M-option-result-closure-methods-deferred-OLD] (history) Plan 99 Ф.0 — re-scope discovery (2026-05-23)
 
 - **Где:** `compiler-codegen/src/codegen/emit_c.rs` — Option DeclaredBody
   dispatch (`:14910+`), Result DeclaredBody dispatch (`:15148+`),

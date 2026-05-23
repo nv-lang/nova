@@ -1,0 +1,36 @@
+// Plan 99.3 Ф.1: Option.map[U] на Nova-body (`match @ { Some(v)
+// => Some(f(v)), None => None }`). Full mono per (T, U).
+
+module nova_tests.plan99.option_map_migrated
+
+type User { id int, name str }
+
+test "Option[int].map int→int (T==U)" {
+    let a Option[int] = Some(21)
+    let m = a.map(|x| x * 2)
+    assert(m.unwrap_or(0) == 42)
+}
+
+test "Option[int].map int→str (T≠U)" {
+    let a Option[int] = Some(7)
+    let s = a.map(|x| str.from(x))
+    assert(s.unwrap_or("") == "7")
+}
+
+test "Option[str].map str→int (str→primitive)" {
+    let a Option[str] = Some("hello")
+    let len = a.map(|s| s.byte_len())
+    assert(len.unwrap_or(0) == 5)
+}
+
+test "Option.map на None — closure не вызывается" {
+    let a Option[int] = None
+    let s = a.map(|x| str.from(x))
+    assert(s.is_none())
+}
+
+test "Option.map chain" {
+    let a Option[int] = Some(5)
+    let m = a.map(|x| x * 2).map(|y| str.from(y))
+    assert(m.unwrap_or("") == "10")
+}
