@@ -3283,8 +3283,8 @@ impl CEmitter {
         type_args: &[String],   // concrete C types for each protocol type param
         concrete_c_ty: &str,    // C type of the assigned value, e.g. "Nova_IntCounter*"
     ) -> Option<(String, String)> {  // (vtable_instance_name, box_c_type)
-        // Require at least one type arg and a pointer concrete type (Nova_X*).
-        if type_args.is_empty() { return None; }
+        // Plan 97.1 Ф.1 (D142): non-generic protocols → empty type_args OK.
+        // Concrete тип всё равно pointer (Nova_X* — implementer record).
         if !concrete_c_ty.ends_with('*') { return None; }
 
         // Derive the concrete struct name from the C type ("Nova_IntCounter*" → "IntCounter").
@@ -3295,14 +3295,23 @@ impl CEmitter {
             .to_string();
         if concrete_name.is_empty() { return None; }
 
-        // Mangle type args for use in identifiers.
-        let args_mangled: String = type_args.iter()
-            .map(|t| Self::sanitize_c_for_ident(t))
-            .collect::<Vec<_>>()
-            .join("_");
+        // Plan 97.1 Ф.1: mangling без args-суффикса для non-generic.
+        let args_mangled: String = if type_args.is_empty() {
+            String::new()
+        } else {
+            type_args.iter()
+                .map(|t| Self::sanitize_c_for_ident(t))
+                .collect::<Vec<_>>()
+                .join("_")
+        };
+        let suffix = if args_mangled.is_empty() {
+            String::new()
+        } else {
+            format!("_{}", args_mangled)
+        };
 
-        let vtable_struct = format!("NovaVtable_{}_{}", proto_name, args_mangled);
-        let vtable_instance = format!("_vt_{}_{}__{}", proto_name, args_mangled, concrete_name);
+        let vtable_struct = format!("NovaVtable_{}{}", proto_name, suffix);
+        let vtable_instance = format!("_vt_{}{}__{}", proto_name, suffix, concrete_name);
 
         // Emit (or reuse) the vtable struct + NovaBox typedef. Concrete-type
         // independent — shared across every implementer of this protocol.
@@ -3325,7 +3334,7 @@ impl CEmitter {
             let mut field_inits = Vec::new();
             for m in &methods {
                 let thunk_name = format!(
-                    "_thunk_{}_{}_{}__{}", proto_name, args_mangled, m.name, concrete_name
+                    "_thunk_{}{}_{}__{}", proto_name, suffix, m.name, concrete_name
                 );
                 let ret_c = m.return_type.as_ref()
                     .and_then(|rt| self.type_ref_to_c(rt).ok())
@@ -3376,13 +3385,26 @@ impl CEmitter {
         proto_name: &str,
         type_args: &[String],
     ) -> Option<String> {
-        if type_args.is_empty() { return None; }
-        let args_mangled: String = type_args.iter()
-            .map(|t| Self::sanitize_c_for_ident(t))
-            .collect::<Vec<_>>()
-            .join("_");
-        let vtable_struct = format!("NovaVtable_{}_{}", proto_name, args_mangled);
-        let box_c_type = format!("NovaBox_{}_{}", proto_name, args_mangled);
+        // Plan 97.1 Ф.1 (D142): non-generic protocols (`type Locker protocol
+        // { ... }` без [T]) теперь тоже эмитят vtable + box. Это нужно для
+        // protocol-литерала (`protocol Locker { lock() => ... }`) и для
+        // унифицированного dispatch'а на protocol-typed value.
+        // Mangling без args-суффикса для non-generic.
+        let args_mangled: String = if type_args.is_empty() {
+            String::new()
+        } else {
+            type_args.iter()
+                .map(|t| Self::sanitize_c_for_ident(t))
+                .collect::<Vec<_>>()
+                .join("_")
+        };
+        let suffix = if args_mangled.is_empty() {
+            String::new()
+        } else {
+            format!("_{}", args_mangled)
+        };
+        let vtable_struct = format!("NovaVtable_{}{}", proto_name, suffix);
+        let box_c_type = format!("NovaBox_{}{}", proto_name, suffix);
         // Need the protocol method registry to lay out the vtable struct.
         let (type_params, methods) = self.protocol_method_registry.get(proto_name)?.clone();
         if self.emitted_vtable_types.contains(&vtable_struct) {
@@ -3412,10 +3434,15 @@ impl CEmitter {
         }
         self.current_type_subst = old_subst;
         // Vtable struct typedef.
+        let args_desc = if args_mangled.is_empty() {
+            "(non-generic)".to_string()
+        } else {
+            args_mangled.clone()
+        };
         self.generic_type_defs_buf.push_str(&format!(
-            "/* Plan 72 P3-B: vtable for {} instantiated with {} */\n\
+            "/* Plan 72 P3-B / Plan 97.1: vtable for {} instantiated with {} */\n\
              typedef struct {vts} {{\n{fields}}} {vts};\n",
-            proto_name, args_mangled, vts = vtable_struct, fields = fields
+            proto_name, args_desc, vts = vtable_struct, fields = fields
         ));
         // Fat-pointer box struct typedef: { void* data; const VT* vtable; }.
         self.generic_type_defs_buf.push_str(&format!(
