@@ -6922,6 +6922,61 @@ impl CEmitter {
     /// Если field-name коллизирует с C reserved-keyword'ом — добавим
     /// префикс `nv_`. Применяется ко **всем** field-emission точкам:
     /// struct decl, record-literal, member-access, pattern match.
+    /// Plan 96 Ф.1 — bounds-checked array element access.
+    ///
+    /// Wraps `(obj)->data[idx]` в GNU statement-expression с runtime
+    /// bounds-check: при `idx < 0 || idx >= len` вызывается
+    /// `nv_panic_index_oob` (defined в array.h). Сохраняет lvalue-семантику —
+    /// результат может быть как rvalue, так и target присваивания.
+    ///
+    /// До Plan 96 codegen эмитил `(obj)->data[idx]` без проверки —
+    /// controlled buffer overflow на запись, UB на чтение (D27 §1632 drift).
+    ///
+    /// `obj_expr` и `idx_expr` — уже emit'нутые подвыражения. Тип obj
+    /// выводится через `__typeof__` (Clang/GCC) — корректно работает с
+    /// erasure-кейсами, где статический C-тип не совпадает с runtime
+    /// типом (self-field, array-of-arrays via erased nova_int).
+    /// Каждое подвыражение вычисляется **один** раз (захват в `_a`/`_i`).
+    ///
+    /// Форма `*({ ... &_a->data[_i]; })` — statement-expression возвращает
+    /// pointer (rvalue), затем `*` deref'ит в lvalue. Это обходит Clang-
+    /// ограничение «stmt-expr is not lvalue» (GCC принимает stmt-expr-as-lvalue
+    /// напрямую, Clang — нет). Pointer-deref всегда lvalue в обоих компиляторах.
+    fn emit_bchk_array_access(
+        obj_expr: &str,
+        idx_expr: &str,
+    ) -> String {
+        format!(
+            "(*({{ __typeof__({o}) _a = ({o}); nova_int _i = ({i}); \
+if (__builtin_expect(_i < 0 || _i >= _a->len, 0)) nv_panic_index_oob(_i, _a->len); \
+&_a->data[_i]; }}))",
+            o = obj_expr, i = idx_expr,
+        )
+    }
+
+    /// Plan 96 Ф.1 — bounds-checked array access for arr[i][j] double-indexing.
+    /// Bounds-check on outer (idx_outer) AND inner (idx_inner). Inner array
+    /// is reached via cast `(inner_arr_ty)(outer->data[idx_outer])` —
+    /// element-type erasure (nested arrays stored as nova_int).
+    /// Возвращает `*(...&...->data[i])` (см. emit_bchk_array_access для
+    /// обоснования формы).
+    fn emit_bchk_double_array_access(
+        inner_arr_ty: &str,
+        outer_expr: &str,
+        outer_idx_expr: &str,
+        inner_idx_expr: &str,
+    ) -> String {
+        format!(
+            "(*({{ __typeof__({oe}) _ao = ({oe}); nova_int _io = ({oi}); \
+if (__builtin_expect(_io < 0 || _io >= _ao->len, 0)) nv_panic_index_oob(_io, _ao->len); \
+{ity} _ai = ({ity})(_ao->data[_io]); nova_int _ii = ({ii}); \
+if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai->len); \
+&_ai->data[_ii]; }}))",
+            ity = inner_arr_ty,
+            oe = outer_expr, oi = outer_idx_expr, ii = inner_idx_expr,
+        )
+    }
+
     /// Иначе генерируется invalid C (`nova_int char;`).
     ///
     /// `n` это C-keyword? Список — стандартный C99 + popular extensions.
@@ -13200,6 +13255,11 @@ impl CEmitter {
             ExprKind::Index { obj, index } => {
                 let obj_ty = self.infer_expr_c_type(obj);
                 let i = self.emit_expr(index)?;
+                // Plan 96 Ф.1 — каждая ветка эмитит bounds-checked access
+                // через emit_bchk_array_access (raw `(o)->data[i]` запрещён;
+                // D27 §1632: panic при OOB). Helper использует statement-expr,
+                // сохраняет lvalue-семантику для `arr[i] = v`.
+                //
                 // D109: monomorphized @field[idx] — obj_ty may be "nova_int" (erased record
                 // schema not registered for concrete instance), but array_element_types has
                 // the concrete pointer type. Emit cast form directly, before obj_ty check.
@@ -13208,7 +13268,8 @@ impl CEmitter {
                         let key = format!("(nova_self->{})", Self::mangle_field_name(field));
                         if let Some(elem_ty) = self.array_element_types.get(&key).cloned() {
                             let o = self.emit_expr(obj)?;
-                            return Ok(format!("(({})({}->data[{}]))", elem_ty, o, i));
+                            let bchk = Self::emit_bchk_array_access(&o, &i);
+                            return Ok(format!("(({})({}))", elem_ty, bchk));
                         }
                     }
                 }
@@ -13226,11 +13287,13 @@ impl CEmitter {
                     if let Some(ref inner_ty) = inner_elem_ty {
                         if inner_ty.starts_with("NovaArray_") {
                             // array-of-arrays: cast the element and get data pointer
-                            return Ok(format!("(({})({}->data[{}]))", inner_ty, o, i));
+                            let bchk = Self::emit_bchk_array_access(&o, &i);
+                            return Ok(format!("(({})({}))", inner_ty, bchk));
                         }
                         if inner_ty.ends_with('*') {
                             // array-of-record-pointers: cast element to real pointer type
-                            return Ok(format!("(({})({}->data[{}]))", inner_ty, o, i));
+                            let bchk = Self::emit_bchk_array_access(&o, &i);
+                            return Ok(format!("(({})({}))", inner_ty, bchk));
                         }
                     }
                     // Check if array stores boxed nova_str* elements
@@ -13238,10 +13301,11 @@ impl CEmitter {
                         .map(|n| self.str_box_arrays.contains(n))
                         .unwrap_or(false);
                     if is_str_boxed {
-                        return Ok(format!("(*(nova_str*)(({})->data[{}]))", o, i));
+                        let bchk = Self::emit_bchk_array_access(&o, &i);
+                        return Ok(format!("(*(nova_str*)({}))", bchk));
                     }
                     // Default: NovaArray_nova_int element — raw data access
-                    Ok(format!("({})->data[{}]", o, i))
+                    Ok(Self::emit_bchk_array_access(&o, &i))
                 } else if let ExprKind::Index { obj: outer_arr, index: outer_idx } = &obj.kind {
                     // Double-indexing: arr[i][j] where arr[i] is a nova_int storing a NovaArray_*
                     // Check if the outer array has element type tracking
@@ -13252,14 +13316,19 @@ impl CEmitter {
                         if inner_ty.starts_with("NovaArray_") {
                             let outer_o = self.emit_expr(outer_arr)?;
                             let outer_i = self.emit_expr(outer_idx)?;
-                            // (inner_ty)(outer_o->data[outer_i])->data[i]
-                            return Ok(format!("((({})({}->data[{}]))->data[{}])", inner_ty, outer_o, outer_i, i));
+                            // Plan 96 Ф.1 — bounds-check на оба уровня
+                            return Ok(Self::emit_bchk_double_array_access(
+                                &inner_ty, &outer_o, &outer_i, &i,
+                            ));
                         }
                     }
                     let o = self.emit_expr(obj)?;
+                    // Fallback `(o)[i]` — не NovaArray, нет ->len поля; bounds-check
+                    // невозможен generically. Оставлен un-checked (исторический путь).
                     Ok(format!("({})[{}]", o, i))
                 } else {
                     let o = self.emit_expr(obj)?;
+                    // Fallback `(o)[i]` — см. выше.
                     Ok(format!("({})[{}]", o, i))
                 }
             }
