@@ -15254,35 +15254,8 @@ _cp++; \
                             // contextual Some/None ctors. Full mono per
                             // (T, U) — паритет Rust. Inline emit удалён
                             // (был T==U-only через NovaClos_ii hardcode).
-                            // D26 prelude: Option.ok_or(e).
-                            // Some(v) → Ok(v), None → Err(e).
-                            "ok_or" => {
-                                if let Some(arg) = args.first() {
-                                    let e = self.emit_expr(arg.expr())?;
-                                    let tmp = self.fresh_tmp();
-                                    self.line(&format!("NovaOpt_{} {} = {};", elem_ty, tmp, obj_c));
-                                    let out = self.fresh_tmp();
-                                    // Plan 59 Ф.7.5 D1c: dual-mode producer
-                                    // (Option.ok_or → Result). Ok-payload
-                                    // `(nova_int)` cast — для legacy
-                                    // `Nova_Result*`; mono Ok-тип — D3.
-                                    let res_c_ty = self.result_repr_c_type(
-                                        "nova_int", "nova_str");
-                                    let ok_ctor = self.result_ctor_name(&res_c_ty, "Ok");
-                                    let err_ctor = self.result_ctor_name(&res_c_ty, "Err");
-                                    self.line(&format!("{} {};", res_c_ty, out));
-                                    self.line(&format!("if ({}.tag == NOVA_TAG_Option_Some) {{", tmp));
-                                    self.indent += 1;
-                                    self.line(&format!("{} = {}((nova_int){}.value);", out, ok_ctor, tmp));
-                                    self.indent -= 1;
-                                    self.line("} else {");
-                                    self.indent += 1;
-                                    self.line(&format!("{} = {}({});", out, err_ctor, e));
-                                    self.indent -= 1;
-                                    self.line("}");
-                                    return Ok(out);
-                                }
-                            }
+                            // Plan 99.3 Ф.3: Option.ok_or[E](e) →
+                            // Nova-body. Mono per (T, E) — паритет Rust.
                             _ => {}
                         }
                     }
