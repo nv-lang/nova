@@ -11123,6 +11123,9 @@ ns/switch — паритет с Boost.Context). Перенос замера в N
 
 ### [M-protocol-literal-codegen-deferred] Plan 97 Ф.4 — vtable-dispatch на anon-instance protocol-литерала deferred
 
+> **Merged в main 2026-05-23 (merge 3ef21279795).** Plan 97 ✅ закрыт;
+> codegen-deferred маркер остаётся актуальным до Plan 100.
+
 - **Где** — `compiler-codegen/src/codegen/emit_c.rs` `ExprKind::ProtocolLit`
   arm (делегирует на `emit_handler_lit`).
 - **Что упрощено** — parser + AST + type-checker для protocol-литерала
