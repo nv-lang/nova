@@ -19410,3 +19410,43 @@ concurrent timing); 0 регрессий от исполнения 83.4.
  - 861899ab8c4  feat(83.4.1) park-with-predicate + sleep/blocking + D93
  - e6360b9950c  fix(83.4.2/Ф.1) supervised_step skip worker-owned (A2)
  - 7fa8e8af81c  feat(83.4.3) B1 global arena stats + B4 main_yield
+═══════════════════════════════════════════════════════════════════════
+Plan 98 ✅ ЗАКРЫТ — Free-fn generic type-param inference
+2026-05-23 (worktree d:/Sources/nv-lang/nova-p98, ветка plan-98)
+═══════════════════════════════════════════════════════════════════════
+
+Подход A (рекомендованный в Ф.0): infer_type_param_binding
+конвертирован из associated fn в метод &self. Добавлены 3 ветки
+recursive inference:
+1. Option[T]: strip "NovaOpt_<sani>" → recovery real T через
+   novaopt_value_types map (sanitized→real_c_ty).
+2. Result[T,E]: novares_ok_err(c_ty) → (ok_c, err_c) рекурсия.
+3. User-generic Box[T]/HashMap[K,V]/etc: generic_type_instance_info
+   lookup → (base, type_args_c) рекурсия с sanity-check base match.
+
+16 call-sites обновлены `Self:: → self.` (sed-replace в emit_c.rs).
+
+Тесты nova_tests/plan98/:
+- option_param_inference.nv (4 теста: int/str/char/User)
+- result_param_inference.nv (1 тест)
+- nested_option_inference.nv (1 тест: Option[Option[T]] recursion)
+- turbofish_still_works.nv (2 теста: []int back-compat)
+- option_param_conflicting_neg.nv (1 negative: undefined-symbol loud-fail)
+Все 5 PASS (1 negative).
+
+Регрессия 10 крит. подпапок (plan48/55/59/62/88/89/95/95.bis/basics/
+generics): 127/0 cumulative.
+
+Known limitation: []Option[T] / []Result[T,E] (массив generic-
+элементов) не выводится — codegen в receiver_type_c_ident эрейзит
+element type для не-примитивов до уровня nova_int, теряя generic-инфу
+ДО inference. Отдельный gap (NovaArray element-type tracking), не
+scope Plan 98. Документировано в turbofish_still_works.nv и в spec
+D38 amendment.
+
+Spec/docs:
+- spec/decisions/03-syntax.md D38: добавлен Plan 98 amendment с
+  описанием расширения inference и known limitation.
+- README обновится при merge.
+
+Готово к merge'у в main.
