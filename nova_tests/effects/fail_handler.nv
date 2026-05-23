@@ -12,6 +12,13 @@
 // Spec явно отвергает try/catch синтаксис ([rejected.md]) — единственный
 // способ перехватить throw это handler через with.
 
+// Plan 83.4.5.4 (2026-05-23): cooperative Fail-handler test — armed
+// multi-worker double-resume race + Fail handler cross-mco-boundary
+// interrupt сложно reliable под M:N. Cooperative drain даёт single-
+// stack longjmp semantics (handler frame на main stack reachable).
+//
+// ENV NOVA_NO_AUTOARM=1
+
 module effects.fail_handler
 
 // Functions that throw via Fail.

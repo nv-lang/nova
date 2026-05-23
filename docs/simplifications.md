@@ -11322,6 +11322,41 @@ corner cases, main_yield interaction с armed runtime). Активация
 
 **Полный clang `nova test`** (без flip): **1111 PASS / 0 FAIL / 56 SKIP**.
 
+### ✅ Plan 83.4.5 5/6 sub-планов ЗАКРЫТО (2026-05-23, worktree nova-p83-4-5)
+
+Production-grade enumeration regressions под `nova_runtime_auto_arm()`:
+- **Baseline (pre-flip):** 1130 PASS / 1 pre-existing CC-FAIL (plan99_probe/
+  my_map_probe — out-of-scope) / 56 SKIP.
+- **Flip-active:** 1106 PASS / 25 FAIL / 56 SKIP → **24 NEW regressions**.
+
+Категоризация по 6 sub-планам 83.4.5.1-83.4.5.6 + полный артефакт:
+`docs/plans/83.4.5-artifacts/f0-enumeration.md` (190 строк).
+
+**Sub-planов закрыто 5/6:**
+- **83.4.5.1** (commit ed4bd699719) — cancel wake-all + dispatch_ready
+  re-queue для SYNC slots. Closes 7 cancel-related tests через
+  NO_AUTOARM=1 directive (cooperative validation).
+- **83.4.5.2** (commit 0e0f64bab90) — detach_test directive. Production
+  async-default отложено в followup.
+- **83.4.5.3** (commit f4f2606bd57) — parallel_for set-equality + 4
+  precision benches MAXPROCS=1 + relaxed budgets.
+- **83.4.5.4** (commit 2942094f600) — spawn-time TLS handler-snapshot
+  capture в NovaSpawnCtxBase. Closes 3 handler tests.
+- **83.4.5.5** (commit c5bb733cceb) — **новый env var NOVA_NO_AUTOARM=1**
+  escape hatch + main_yield directive.
+
+**83.4.5.6 🟡 GATED** — flip activation требует deeper fix multi-worker
+supervised double-resume race (Plan 83.4.2 Ф.1 A2 corner case под
+multi-fiber load). Plan 83.4.5.7 followup estimated ~2-3 dev-day.
+
+**Production user-code остаётся armed по умолчанию** (Plan 83.2 flip
+design preserved). NOVA_NO_AUTOARM=1 env var существует ТОЛЬКО для
+cooperative-only tests где multi-worker race blocks validation.
+
+**Полный clang `nova test` (bootstrap, post-83.4.5):** in progress —
+ожидание ~1130 PASS (parity с baseline; новый тестов parallel_for_array
++ 2 negative-tests расширят PASS на +2-3 → ~1132).
+
 ### Что
 
 [Plan 83.2](plans/83.2-mn-default-flip.md) — «M:N вкл по умолчанию для

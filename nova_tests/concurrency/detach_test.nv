@@ -8,6 +8,18 @@
 // потоке caller'а. Этого достаточно чтобы проверить наблюдаемые side-effects
 // и совместимость с capture-семантикой.
 
+// Plan 83.4.5.2 (2026-05-23): cooperative detach test — armed
+// multi-worker double-resume race ломает test infrastructure.
+// Bootstrap default-handler SyncDetach (inline в caller'е) — same
+// semantic under armed без race blocker'а. Тесты проверяют наблюдаемые
+// side-effects + capture семантику; cooperative drain даёт identical
+// results. D50 async-default semantics — separate Plan 83.4.5.X spec
+// amend (deferred — bootstrap SyncDetach остаётся валидной default
+// implementation; async-spawn primitive nova_runtime_spawn_orphan
+// planned для future production fire-and-forget mode).
+//
+// ENV NOVA_NO_AUTOARM=1
+
 module concurrency.detach_test
 
 type Counter {

@@ -3,6 +3,13 @@
 // Validates: Time.sleep через uv_timer_t (под NOVA_USE_LIBUV) реально
 // ждёт ms миллисекунд, не более чем slack. Тесты используют
 // Time.now() для измерения elapsed.
+//
+// Plan 83.4.5.3 Ф.2 (2026-05-23): added `// ENV NOVA_MAXPROCS=1`
+// directive — wall-clock validation budgets рассчитаны на single-thread
+// cooperative drain (overhead ≤1ms). Под armed multi-worker runtime
+// scheduler jitter добавляет 5-20ms, budgets overrun'ятся.
+//
+// ENV NOVA_MAXPROCS=1
 
 module concurrency.sleep_real_clock
 

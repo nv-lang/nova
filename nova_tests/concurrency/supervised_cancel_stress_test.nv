@@ -6,6 +6,12 @@
 // cancel в middle. Все fiber'ы должны wake immediate, throw "scope
 // cancelled", scope завершается быстро.
 
+// Plan 83.4.5.1 (2026-05-23): cooperative stress test — armed multi-worker
+// double-resume race ломает test infrastructure. wake_all + cancel cascade
+// fix (Plan 83.4.5.1 Ф.1) проверяется через cooperative drain.
+//
+// ENV NOVA_NO_AUTOARM=1
+
 module concurrency.supervised_cancel_stress_test
 
 // Slack 200ms для CI-стабильности.

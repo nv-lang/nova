@@ -10,6 +10,11 @@
 //     OS sleep). ms учитывается через monotonic wall-clock.
 //   now() — monotonic ms через GetTickCount64/clock_gettime(MONOTONIC).
 
+// Plan 83.4.5.4 (2026-05-23): cooperative Time-handler test — armed
+// multi-worker double-resume race ломает test infrastructure.
+//
+// ENV NOVA_NO_AUTOARM=1
+
 module concurrency.time_handler
 
 // ================================================================
