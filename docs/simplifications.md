@@ -11499,3 +11499,24 @@ Plan 83.2 §4 «Compiled-программа без единого `runtime.*` в
   source-of-truth (14/14 builtin Option/Result методов на Nova).
 - **Обнаружено:** Plan 99 Ф.0 probe (2026-05-23). **План фикса:**
   Plan 99 Ф.1–Ф.6 (re-scope подтверждён).
+
+## [M-bare-typevar-receiver-grammar-gap] Plan 101 — `fn[T]` префикс не реализован (2026-05-24)
+
+- **Где:** Nova grammar. Receiver-position в method-declaration не
+  имеет способа объявить generic typevar, если receiver — bare `T`,
+  `[]T` или tuple `(T, U)` (нет именованного generic-типа со своими
+  `[…]` скобками).
+- **Симптом:** парсер silently принимает `fn T @func[U](a U) -> (T, U) => (@, a)`
+  (трактует `T` как имя конкретного типа `T`); type-check мягкий и
+  пропускает; codegen падает с CC-FAIL — `Nova_T*` undefined. Probe-
+  фикстура: `nova_tests/plan101/probe/` (в Plan 101 Ф.0).
+- **Почему важно:** generic methods на `[]T` (array methods как
+  `@push`/`@append` для пользователей), bare typevar (`@identity()`),
+  tuple-receiver — невозможны. Это grammar completeness gap.
+- **Решение (proposed):** Plan 101 — narrow `fn[T]` префикс по
+  правилам D145.
+- **Spec:** [D145](../../spec/decisions/02-types.md#d145-fnt-префикс--generic-declaration-для-bare-typevar-receiverов).
+- **Приоритет — P3** (de-magic / grammar completeness; не блокер 0.1).
+- **Обнаружено:** обсуждение 2026-05-24 + probe-фикстура. **План фикса:**
+  Plan 101 Ф.0–Ф.5 (~2 dev-day).
+

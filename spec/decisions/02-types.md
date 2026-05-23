@@ -4100,143 +4100,271 @@ Capture-rules:
 
 ---
 
-## D144. Sub-slice views РґР»СЏ `[]T` Рё `str` вЂ” `arr[a..b]` / `s[a..b]`
+## D144. Sub-slice views для `[]T` и `str` — `arr[a..b]` / `s[a..b]`
 
-> **Р�СЃС‚РѕС‡РЅРёРє:** Plan 96 (2026-05-23). Р—Р°РєСЂС‹РІР°РµС‚ Q-array-slicing,
-> Q-array-api.5, D27 В§1663 drift (В«РЎР»Р°Р№СЃРёРЅРі РѕС‚Р»РѕР¶РµРЅВ»), D27 В§1632 drift
-> (raw `arr[i]` Р±РµР· bounds-check). **Р—Р°РІРёСЃРёС‚ РѕС‚** [D6](05-memory.md#d6)
+> **Источник:** Plan 96 (2026-05-23). Закрывает Q-array-slicing,
+> Q-array-api.5, D27 §1663 drift («Слайсинг отложен»), D27 §1632 drift
+> (raw `arr[i]` без bounds-check). **Зависит от** [D6](05-memory.md#d6)
 > non-moving GC; [D58](03-syntax.md#d58) Range; [D27](03-syntax.md#d27)
 > `[]T` API; [Plan 90 / D141](08-runtime.md#d141) bulk-ops.
 
-### РЎРµРјР°РЅС‚РёРєР° вЂ” sub-slice view
+### Семантика — sub-slice view
 
-`arr[range]` РіРґРµ `range : Range` РІРѕР·РІСЂР°С‰Р°РµС‚ **view** вЂ” РЅРѕРІС‹Р№
-24-Р±Р°Р№С‚РѕРІС‹Р№ header `NovaArray_T*` СЃ `data = orig->data + from`,
-`len = cap = to - from`. **Р‘РµР· РєРѕРїРёРё РґР°РЅРЅС‹С… backing'Р°** (O(1) creation).
+`arr[range]` где `range : Range` возвращает **view** — новый
+24-байтовый header `NovaArray_T*` с `data = orig->data + from`,
+`len = cap = to - from`. **Без копии данных backing'а** (O(1) creation).
 
-`str[range]` РІРѕР·РІСЂР°С‰Р°РµС‚ codepoint-indexed view (РґРІСѓС…РїСЂРѕС…РѕРґРЅС‹Р№ walk
-UTF-8 в†’ byte offsets; structurally РёРґРµРЅС‚РёС‡РЅРѕ `nova_str_slice`, РЅРѕ СЃ
-**panic РїСЂРё OOB** РІРјРµСЃС‚Рѕ clamp).
+`str[range]` возвращает codepoint-indexed view (двухпроходный walk
+UTF-8 → byte offsets; structurally идентично `nova_str_slice`, но с
+**panic при OOB** вместо clamp).
 
-### 5 С„РѕСЂРј Range (Rust `RangeBounds` parity)
+### 5 форм Range (Rust `RangeBounds` parity)
 
-| Р¤РѕСЂРјР° | РЎРµРјР°РЅС‚РёРєР° | Open-ended? |
+| Форма | Семантика | Open-ended? |
 |---|---|---|
-| `arr[a..b]` | exclusive: `[a, b)` | РЅРµС‚ |
-| `arr[a..=b]` | inclusive: `[a, b]` | РЅРµС‚ |
-| `arr[a..]` | РѕС‚ `a` РґРѕ РєРѕРЅС†Р° | РґР° (end = `len`) |
-| `arr[..b]` | РѕС‚ РЅР°С‡Р°Р»Р° РґРѕ `b` | РґР° (start = 0) |
-| `arr[..]` | РІРµСЃСЊ РјР°СЃСЃРёРІ | РґР° |
+| `arr[a..b]` | exclusive: `[a, b)` | нет |
+| `arr[a..=b]` | inclusive: `[a, b]` | нет |
+| `arr[a..]` | от `a` до конца | да (end = `len`) |
+| `arr[..b]` | от начала до `b` | да (start = 0) |
+| `arr[..]` | весь массив | да |
 
-Open-ended С„РѕСЂРјС‹ вЂ” **С‚РѕР»СЊРєРѕ РІ slice-context** (`arr[range]`). Р’
-materialize / for-loop / quantifier / parallel-for РѕРЅРё РѕС‚РІРµСЂРіР°СЋС‚СЃСЏ
-СЃ compile-time diagnostic В«open-ended Range without bound (Plan 96)В».
+Open-ended формы — **только в slice-context** (`arr[range]`). В
+materialize / for-loop / quantifier / parallel-for они отвергаются
+с compile-time diagnostic «open-ended Range without bound (Plan 96)».
 
 ### Single-type design
 
-`[]T` вЂ” **РѕРґРёРЅ** С‚РёРї РґР»СЏ owner Рё view. РќРµС‚ `Slice[T]` (Rust-РјРѕРґРµР»СЊ
-СЂР°Р·РґРµР»СЊРЅС‹С… С‚РёРїРѕРІ). View РїРµСЂРµРґР°С‘С‚СЃСЏ РІ С„СѓРЅРєС†РёСЋ Р¶РґСѓС‰СѓСЋ `[]T` Р±РµР·
-РґРѕРїРѕР»РЅРёС‚РµР»СЊРЅРѕР№ РєРѕРЅРІРµСЂСЃРёРё.
+`[]T` — **один** тип для owner и view. Нет `Slice[T]` (Rust-модель
+раздельных типов). View передаётся в функцию ждущую `[]T` без
+дополнительной конверсии.
 
 ### `cap == len` invariant
 
-View РёРјРµРµС‚ `cap == len == to - from`. Push РЅР° view в†’ realloc (РєР°Рє
-РѕР±С‹С‡РЅРѕ РїСЂРё exhausted cap) в†’ view **silent detach** РѕС‚ parent.
-Parent backing **РЅРёРєРѕРіРґР°** РЅРµ РјРѕР»С‡Р° РїРµСЂРµР·Р°РїРёСЃС‹РІР°РµС‚СЃСЏ вЂ” СЌС‚Рѕ СѓСЃС‚СЂР°РЅСЏРµС‚
-Go-`append`-footgun Р±РµР· borrow checker'Р°.
+View имеет `cap == len == to - from`. Push на view → realloc (как
+обычно при exhausted cap) → view **silent detach** от parent.
+Parent backing **никогда** не молча перезаписывается — это устраняет
+Go-`append`-footgun без borrow checker'а.
 
 ```nova
 let mut parent = [1, 2, 3, 4, 5]
 let mut view = parent[1..4]   \ view: [2, 3, 4]
 view.push(99)                  \ realloc; view detached
-\ parent == [1, 2, 3, 4, 5]   вЂ” РќР• Р·Р°С‚СЂРѕРЅСѓС‚
+\ parent == [1, 2, 3, 4, 5]   — НЕ затронут
 \ view == [2, 3, 4, 99]
 ```
 
-### Mut-СЃРµРјР°РЅС‚РёРєР°
+### Mut-семантика
 
-`mut`-view С‚РѕР»СЊРєРѕ РѕС‚ `mut`-РёСЃС‚РѕС‡РЅРёРєР°. Р§РµСЂРµР· `mut`-view write РёРґС‘С‚ РІ
-**shared backing** вЂ” РёР·РјРµРЅРµРЅРёСЏ РІРёРґРЅС‹ parent. РќРµСЃРєРѕР»СЊРєРѕ `mut`-view
-РѕРґРЅРѕРіРѕ backing'Р° **СЂР°Р·СЂРµС€РµРЅС‹** (РєР°Рє РІ Go); caller responsibility,
-РЅРёРєР°РєРѕРіРѕ borrow checker'Р°.
+`mut`-view только от `mut`-источника. Через `mut`-view write идёт в
+**shared backing** — изменения видны parent. Несколько `mut`-view
+одного backing'а **разрешены** (как в Go); caller responsibility,
+никакого borrow checker'а.
 
 ### Iterator invalidation
 
-`for x in view` вЂ” `len` Р±РµСЂС‘С‚СЃСЏ snapshot'РѕРј РІ РЅР°С‡Р°Р»Рµ С†РёРєР»Р° (Go-style).
-Push РЅР° parent РІРѕ РІСЂРµРјСЏ РёС‚РµСЂР°С†РёРё view'Р° **РЅРµ РІРёРґРµРЅ** view'Сѓ: parent
-СЂРµР°Р»Р»РѕС†РёСЂСѓРµС‚, view РїСЂРѕРґРѕР»Р¶Р°РµС‚ СѓРєР°Р·С‹РІР°С‚СЊ РЅР° СЃС‚Р°СЂС‹Р№ backing С‡РµСЂРµР·
+`for x in view` — `len` берётся snapshot'ом в начале цикла (Go-style).
+Push на parent во время итерации view'а **не виден** view'у: parent
+реаллоцирует, view продолжает указывать на старый backing через
 interior-pointer.
 
-### GC requirement вЂ” interior pointers stable
+### GC requirement — interior pointers stable
 
-**РќРµРѕР±С…РѕРґРёРјРѕРµ СѓСЃР»РѕРІРёРµ:** runtime РіР°СЂР°РЅС‚РёСЂСѓРµС‚ stable interior pointers
-(non-moving GC, D6). View С…СЂР°РЅРёС‚ `data = backing->data + from` вЂ” СЌС‚Рѕ
-СѓРєР°Р·Р°С‚РµР»СЊ **РІРЅСѓС‚СЂСЊ** backing'Р°; Boehm (`GC_set_all_interior_pointers(1)`)
-РґРµСЂР¶РёС‚ backing alive РїРѕ interior-ptr.
+**Необходимое условие:** runtime гарантирует stable interior pointers
+(non-moving GC, D6). View хранит `data = backing->data + from` — это
+указатель **внутрь** backing'а; Boehm (`GC_set_all_interior_pointers(1)`)
+держит backing alive по interior-ptr.
 
-Р›СЋР±Р°СЏ Р±СѓРґСѓС‰Р°СЏ Р·Р°РјРµРЅР° GC-backend РЅР° moving GC С‚СЂРµР±СѓРµС‚ РѕРґРЅРѕРІСЂРµРјРµРЅРЅРѕР№
-Р·Р°РјРµРЅС‹ slice-РїСЂРµРґСЃС‚Р°РІР»РµРЅРёСЏ (separate header struct + ptr-update on
-move). Р­С‚Рѕ Р·Р°РєСЂРµРїР»СЏРµС‚СЃСЏ Р·РґРµСЃСЊ РєР°Рє РЅРѕСЂРјР°С‚РёРІРЅС‹Р№ invariant.
+Любая будущая замена GC-backend на moving GC требует одновременной
+замены slice-представления (separate header struct + ptr-update on
+move). Это закрепляется здесь как нормативный invariant.
 
 ### Bounds-check
 
-- `from < 0` в†’ panic
-- `to < from` в†’ panic
-- `to > len` в†’ panic (РґР»СЏ str вЂ” `to > total_codepoints`)
-- Empty slice (`arr[a..a]`) в†’ РІР°Р»РёРґРµРЅ
-- РћС‚СЂРёС†Р°С‚РµР»СЊРЅС‹Рµ РёРЅРґРµРєСЃС‹ в†’ panic, **РЅРµ** Python-style wrap
+- `from < 0` → panic
+- `to < from` → panic
+- `to > len` → panic (для str — `to > total_codepoints`)
+- Empty slice (`arr[a..a]`) → валиден
+- Отрицательные индексы → panic, **не** Python-style wrap
 
-РЎРѕРѕР±С‰РµРЅРёРµ panic'Р°: `"array: slice [N..M] out of bounds for length L"`
-(РїР°СЂРёС‚РµС‚ СЃ Go/Rust).
+Сообщение panic'а: `"array: slice [N..M] out of bounds for length L"`
+(паритет с Go/Rust).
 
-### РўР°РєР¶Рµ: raw `arr[i]` bounds-check (D27 В§1632 drift)
+### Также: raw `arr[i]` bounds-check (D27 §1632 drift)
 
-D144 РѕРґРЅРѕРІСЂРµРјРµРЅРЅРѕ С„РёРєСЃРёСЂСѓРµС‚ pre-existing drift: codegen `arr[i]`
-**С‚РµРїРµСЂСЊ** СЌРјРёС‚РёС‚ runtime bounds-check (СЂР°РЅСЊС€Рµ СЌРјРёС‚РёР» РіРѕР»С‹Р№
-`(arr)->data[i]` вЂ” controlled buffer overflow РЅР° Р·Р°РїРёСЃСЊ, UB РЅР° С‡С‚РµРЅРёРµ).
-РЎРѕРѕР±С‰РµРЅРёРµ: `"array: index N out of bounds for length L"`.
+D144 одновременно фиксирует pre-existing drift: codegen `arr[i]`
+**теперь** эмитит runtime bounds-check (раньше эмитил голый
+`(arr)->data[i]` — controlled buffer overflow на запись, UB на чтение).
+Сообщение: `"array: index N out of bounds for length L"`.
 
 ### Concurrency / M:N
 
-Slice-view = shared mut backing РјРµР¶РґСѓ fiber'Р°РјРё РІ M:N runtime =
-**С„РѕСЂРјР°Р»СЊРЅРѕ UB РїРѕ [D79](06-concurrency.md#d79)**. Р’ D71 single-threaded
-bootstrap вЂ” OK РїРѕ С„Р°РєС‚Сѓ. РџРµСЂРµРґР°С‡Р° view С‡РµСЂРµР· `Channel[]T]` РёР»Рё
-spawn-capture РІ M:N вЂ” **inherits D79 disclaimer**.
+Slice-view = shared mut backing между fiber'ами в M:N runtime =
+**формально UB по [D79](06-concurrency.md#d79)**. В D71 single-threaded
+bootstrap — OK по факту. Передача view через `Channel[]T]` или
+spawn-capture в M:N — **inherits D79 disclaimer**.
 
 ### Header layout
 
-24 Р±Р°Р№С‚Р° (`ptr + len + cap`) вЂ” С‚РѕС‚ Р¶Рµ С‡С‚Рѕ Сѓ owner. РќРµ РѕРїС‚РёРјРёР·РёСЂРѕРІР°РЅРѕ
-РґРѕ 16 Р±Р°Р№С‚ (РєРѕС‚РѕСЂРѕРµ С‚СЂРµР±РѕРІР°Р»Рѕ Р±С‹ РѕС‚РґРµР»СЊРЅРѕРіРѕ С‚РёРїР° `Slice[T]` вЂ” РѕС‚РІРµСЂРіРЅСѓС‚Рѕ
-single-type-design'РѕРј).
+24 байта (`ptr + len + cap`) — тот же что у owner. Не оптимизировано
+до 16 байт (которое требовало бы отдельного типа `Slice[T]` — отвергнуто
+single-type-design'ом).
 
-### `str[a..b]` вЂ” bracket syntax РґР»СЏ СЃС‚СЂРѕРє
+### `str[a..b]` — bracket syntax для строк
 
-Bracket-С„РѕСЂРјР° СѓРЅРёС„РёС†РёСЂСѓРµС‚ idiom: `arr[a..b]` в‰Ў `str[a..b]`.
-Codepoint-indexed (РєР°Рє СЃСѓС‰РµСЃС‚РІСѓСЋС‰РёР№ `nova_str_slice` РјРµС‚РѕРґ).
-**Panic РїСЂРё OOB** (consistent СЃ `arr[a..b]`).
+Bracket-форма унифицирует idiom: `arr[a..b]` ≡ `str[a..b]`.
+Codepoint-indexed (как существующий `nova_str_slice` метод).
+**Panic при OOB** (consistent с `arr[a..b]`).
 
-РЎС‚Р°СЂС‹Р№ `s.slice(a, b)` РјРµС‚РѕРґ вЂ” **СЃРѕС…СЂР°РЅСЏРµС‚СЃСЏ** СЃ clamp-СЃРµРјР°РЅС‚РёРєРѕР№
-РґР»СЏ backwards-compat; align РЅР° panic РѕС‚РєР»Р°РґС‹РІР°РµС‚СЃСЏ РІ Plan 94
-(СЃРј. `[P-str-slice-clamp-vs-panic]` РІ `docs/simplifications.md`).
+Старый `s.slice(a, b)` метод — **сохраняется** с clamp-семантикой
+для backwards-compat; align на panic откладывается в Plan 94
+(см. `[P-str-slice-clamp-vs-panic]` в `docs/simplifications.md`).
 
-### Verified РїСЂРѕС‚РёРІ
+### Verified против
 
-- Go `s[a:b]` вЂ” РїР°СЂРёС‚РµС‚, **Р±РµР· append-footgun**.
-- Rust `&[T]` вЂ” Р±Р»РёР·РєРѕ, **Р±РµР· borrow checker** (caller responsibility
-  РґР»СЏ multi-mut).
-- TypeScript `TypedArray.subarray` вЂ” РїР°СЂРёС‚РµС‚.
-- Swift `ArraySlice<T>` вЂ” **Р±РµР· CoW-disconnect** (view СЃСЂР°Р·Сѓ РІРёРґРёС‚ mut).
-- Python `memoryview` вЂ” РїР°СЂРёС‚РµС‚.
+- Go `s[a:b]` — паритет, **без append-footgun**.
+- Rust `&[T]` — близко, **без borrow checker** (caller responsibility
+  для multi-mut).
+- TypeScript `TypedArray.subarray` — паритет.
+- Swift `ArraySlice<T>` — **без CoW-disconnect** (view сразу видит mut).
+- Python `memoryview` — паритет.
 
-### РЎРІСЏР·СЊ
+### Связь
 
-- [D6](05-memory.md#d6) вЂ” non-moving GC; interior-ptr invariant
-  Р°РјРµРЅРґРёС‚СЃСЏ Р·РґРµСЃСЊ.
-- [D27](03-syntax.md#d27) вЂ” `[]T` API; В§1632 bounds-check (D144 С‡РёРЅРёС‚
-  drift); В§1663 В«РЎР»Р°Р№СЃРёРЅРі РѕС‚Р»РѕР¶РµРЅВ» (D144 Р·Р°РєСЂС‹РІР°РµС‚).
-- [D58](03-syntax.md#d58) вЂ” Range-Р»РёС‚РµСЂР°Р»С‹; D144 СЂР°СЃС€РёСЂСЏРµС‚ РґРѕ 5 С„РѕСЂРј
+- [D6](05-memory.md#d6) — non-moving GC; interior-ptr invariant
+  амендится здесь.
+- [D27](03-syntax.md#d27) — `[]T` API; §1632 bounds-check (D144 чинит
+  drift); §1663 «Слайсинг отложен» (D144 закрывает).
+- [D58](03-syntax.md#d58) — Range-литералы; D144 расширяет до 5 форм
   (open-ended).
-- [D79](06-concurrency.md#d79) вЂ” shared mut РјРµР¶РґСѓ fiber'Р°РјРё = UB
-  РІ M:N; slice inherits.
-- [D141](08-runtime.md#d141) вЂ” Plan 90 bulk-ops; СЂР°Р±РѕС‚Р°СЋС‚ РЅР° view
-  Р°РІС‚РѕРјР°С‚РёС‡РµСЃРєРё.
+- [D79](06-concurrency.md#d79) — shared mut между fiber'ами = UB
+  в M:N; slice inherits.
+- [D141](08-runtime.md#d141) — Plan 90 bulk-ops; работают на view
+  автоматически.
+
+## D145. `fn[T]` префикс — generic-declaration для bare-typevar receiver'ов
+
+> **Status:** proposed (spec, 2026-05-24). Реализация — [Plan 101](../../docs/plans/101-fn-prefix-generic-decl.md).
+> Расширяет [D119](#d119-method-level-type-parameters-в-generic-methods).
+
+### Что
+
+Generic-параметры функции вводятся через скобки `[…]`. Они могут появиться
+в **трёх местах**, каждое — своя роль:
+
+1. **На именованном generic-типе в receiver-позиции** — `Option[T]`,
+   `HashMap[K, V]`, `Result[T, E]`. Скобки на receiver-type одновременно
+   декларируют typevars в function scope и используют их как параметры
+   type-конструктора. Existing форма (Plan 48 / D119).
+2. **На имени метода** — `@map[U]`, `@map_err[F]`. Method-level generics,
+   независимы от receiver'а. Existing (D119).
+3. **На префиксе `fn[…]`** (новое в D145) — narrow-use, **только когда
+   receiver содержит typevars, которые невозможно ввести через (1)**:
+   bare typevar (`fn[T] T @identity()`), array-of-typevar
+   (`fn[T] []T @append(a T)`), tuple-of-bare-typevars
+   (`fn[T, U] (T, U) @swap()`), function-type receiver и т.п.
+
+### Правило
+
+```ebnf
+FnDecl     ::= "fn" GenericPrefix? ReceiverType? "@" MethodName MethodGenerics?
+               "(" Params ")" ReturnType? Body
+GenericPrefix ::= "[" GenericName ("," GenericName)* "]"
+                  // Только typevars, не покрытые (1)/(2)
+```
+
+**Conflict rule:** typevar в `fn[…]`, который ТАКЖЕ покрыт (1) — compile
+error («`fn[T] Option[T] @map` — T уже введён через `Option[T]`, удалите
+из `fn[…]`»). Принцип «одна декларация в одном месте».
+
+**Naming rule:** одно имя — один generic во всей сигнатуре (existing
+convention, унаследована из D119; в `fn (T, Option[T]) @method` оба T —
+один и тот же typevar, T вводится в первом `(1)`-eligible месте —
+`Option[T]`).
+
+### Примеры (allowed)
+
+```nova
+// (1) — без изменений, fn[…] не нужен
+fn Option[T] @map[U](f fn(T) -> U) -> Option[U] => match @ { Some(v) => Some(f(v)), None => None }
+fn HashMap[K, V] @keys() -> []K => ...
+fn Result[T, E] @ok() -> Option[T] => match @ { Ok(v) => Some(v), Err(_) => None }
+
+// (1+1) — композит из named generic'ов; T введён в Option[T] (первый use)
+fn (Option[T], Result[T, E]) @combine() => ...
+fn []Option[T] @first() -> Option[T] => @[0]
+
+// (3) — нужен fn[…]
+fn[T]    T   @identity()                      -> T      => @
+fn[T]    []T @append(a T)                              => @push(a)
+fn[T, U] (T, U) @swap()                       -> (U, T) => (@.1, @.0)
+fn[T]    [][]T @flatten()                     -> []T    => ...
+
+// (Mix, Опция A) — T bare → fn[T]; U через Option[U]
+fn[T] (T, Option[U]) @pair() -> (T, U) => ...
+```
+
+### Примеры (rejected)
+
+```nova
+// Дублирование (1) + (3) — error
+fn[T] Option[T] @map() => ...
+// error: typevar `T` уже введён через `Option[T]` — удалите из `fn[…]`
+
+// Лишний в fn[…] — error
+fn[T, X] []T @append(a T) => ...
+// error: typevar `X` объявлен в `fn[…]`, но не используется
+
+// Bare T без fn[…] — error
+fn T @func() -> T => @
+// error: typevar `T` не объявлен; добавьте `fn[T]` префикс
+```
+
+### Decision tree (для парсера)
+
+При парсинге `fn[…]?`-префикса:
+
+1. Если `fn[X1, ..., Xn]` присутствует — собрать список Xi в pre-decl set.
+2. Сканировать receiver-type на typevars. Для каждого встреченного имени:
+   - Если имя — параметр в `[…]`-скобках named generic типа в receiver
+     position — это **(1)-decl-site**.
+   - Если имя не покрыто (1) — должно быть в pre-decl set из (3),
+     иначе error.
+3. После прохода: каждый Xi из pre-decl set должен быть **использован**
+   в receiver (как bare T, или элемент `[]T`, или slot tuple); иначе error.
+4. Method-level generics в `@method[…]` — independent (2)-decl-site.
+
+### Backward-compat
+
+- **Existing форма `fn Generic[T] @method[U]` НЕ меняется** — D119
+  остаётся active, D145 только расширяет grammar для случаев, где
+  существующая форма не покрывает (bare/array/tuple receiver).
+- **Существующие тесты не требуют изменений** — D145 строго аддитивно.
+- Migration к explicit `fn[T] Generic[T] @method[U]` форме — **не
+  обязательна** (даже не предлагается; existing форма короче).
+
+### Параллель индустрии
+
+- **Rust:** `impl<T> Vec<T> { fn push<U>(&mut self, x: U) }` —
+  `<T>` после `impl` = decl, `Vec<T>` = use, `<U>` после `push` = decl.
+  Nova D145 paritет: `fn[T] []T @push[U](x U)`.
+- **C++:** `template<typename T> void func(T x)` — `template<>` префикс
+  как Nova `fn[…]`.
+- **TypeScript:** `function <T>(x: T): T` — generics префикс перед
+  argument list, как Nova `fn[…]` перед receiver.
+- **Java/Kotlin:** `<T> void method(T x)` — то же. Nova согласуется.
+
+### Lineage
+
+- Plan 48 ([Q-method-level-generic](../open-questions.md), D119) — ввёл
+  method-level generics, частично закрыл Q-generic-receiver-method.
+- Plan 88 (static-method-on-typevar) — ввёл methods на generic typevars
+  user-defined; D145 закрывает оставшийся пробел grammar для bare T в
+  receiver-позиции.
+
+### См. также
+
+- [D119](#d119-method-level-type-parameters-в-generic-methods) — receiver-
+  level + method-level generic dispatch.
+- [Plan 101](../../docs/plans/101-fn-prefix-generic-decl.md) — реализация
+  D145 (parser → type-checker → tests → spec → close).
+
