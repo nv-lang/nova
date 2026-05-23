@@ -11023,7 +11023,6 @@ Single-thread cooperative (текущий Windows-режим): GC-модель *
 - **Обнаружено:** Plan 93 Ф.0 (аудит, 2026-05-22). **План фикса:**
   Plan 95 (2026-05-23).
 
-
 ---
 
 ## [M-82-msvc-novatest] Plan 82 — полный `nova test` под MSVC не запускается (2026-05-22)
@@ -11213,3 +11212,84 @@ ns/switch — паритет с Boost.Context). Перенос замера в N
   Рё user-РєРѕРґРµ; align в†’ panic Р±С‹Р» Р±С‹ breaking.
 - **РљР°Рє С‡РёРЅРёС‚СЊ:** Plan 94 (str-РјРµС‚РѕРґС‹ РЅР° Nova) вЂ” align РјРµС‚РѕРґ РЅР° panic.
 - **РџСЂРёРѕСЂРёС‚РµС‚:** L вЂ” С„СѓРЅРєС†РёРѕРЅР°Р»СЊРЅС‹Р№ paritРµС‚ (РѕР±Р° РІР°СЂРёР°РЅС‚Р° СЂР°Р±РѕС‚Р°СЋС‚).
+
+---
+
+## [M-83.2-supervised-mn-bugs] Plan 83.2 — full M:N default flip отложен (2026-05-23)
+
+### Что
+
+[Plan 83.2](plans/83.2-mn-default-flip.md) — «M:N вкл по умолчанию для
+compiled-бинарей» (паритет Go `GOMAXPROCS=NumCPU` / tokio multi-thread):
+программа без явного `runtime.init()` должна автоматически использовать
+все ядра при fiber-нагрузке. Ф.0 readiness gate был зелёным
+(Plan 82+83.1+83.3 ✅, GC-safety multi-worker ✅, race-audit clean,
+75/75 mn_* concurrency); но Ф.1 «one обозримое изменение» оказался
+не таким.
+
+### Что СДЕЛАНО (commit b72ce59b475, 0af6e6ba482)
+
+Инфраструктура default-on M:N подготовлена:
+- `nova_runtime_auto_arm()` public API (runtime.h/runtime.c) —
+  идемпотентный аналог `runtime.init(0)` без обязательности явного
+  вызова. Резолвит maxprocs (`NOVA_MAXPROCS` env → `uv_available_parallelism`),
+  помечает `_armed=true`, регистрирует `atexit`. Пул потоков НЕ
+  материализуется (это делает первый spawn) — hello-world без spawn
+  по-прежнему 0 worker-потоков.
+- `_auto_arm_if_needed()` встроен защитно в `nova_runtime_spawn_global`
+  и `nova_runtime_spawn_into` — для случая когда auto_arm вызовут позже
+  (например через codegen-emit при будущей активации).
+
+### Что НЕ СДЕЛАНО (требует отдельной серии фиксов)
+
+`nova_runtime_auto_arm()` в `int main()` codegen-emit (одна строка в
+`emit_c.rs::emit_main_wrapper` — закомментирована). Активация вскрывает
+**9+ pre-existing M:N багов**, проявлявшихся до 83.2 только при
+explicit `runtime.init`:
+
+1. **D93 sleep-wake protocol race** — `nova: FATAL sleep wake before
+   close_cb (stage=0)` в `sleep_bench`/`sleep_precision_bench`/
+   `sleep_real_clock`. `timer_cb` запускает `close_cb` асинхронно;
+   при M:N drain wake приходит до завершения `close_cb`. Park/wake
+   state machine (Plan 93) под M:N имеет окно гонки.
+2. **supervised-drain double-resume** — `fiber stack overflow in slot 0
+   (access violation in fiber arena)` в `supervised_errors`,
+   `supervised_cancel_stress_test`. Main thread drain пытается
+   resume'нуть fiber'а который уже стащил worker (work-stealing race).
+3. **per-fiber handlers под M:N** — `inner with в spawn перекрывает
+   outer для своего fiber — outer_seen == 111` в `per_fiber_handlers`.
+   Handler-scope-snapshot save/restore не учитывает worker-context-switch.
+4. **fiber_arena_stats на main vs worker** — main thread query не
+   видит worker-allocated slot'ов (per-thread арена). API нуждается в
+   global aggregation либо в honest «вернёт 0 если не на worker».
+5. **time_handler в M:N** — handler-storage swap не синхронизирован
+   с worker'ами.
+6. **parallel_for ordering** — 9/14 sub-тестов падают; encoded log
+   tests опираются на single-thread порядок исполнения.
+7. **main_yield семантика** — `runtime.yield()` на main теряет fiber
+   когда runtime armed (роут конфликтует).
+8. **cancel_semantics_test** — cancellation propagation через worker
+   boundary имеет окно гонки.
+9. **mn_runtime_smoke test 1** + **mn_maxprocs_getter** — тесты
+   проверяют `!is_initialized()` на старте; контракт меняется при
+   auto-arm в main(). Лёгкая правка ассертов.
+
+Категории: (1-5) — runtime M:N баги, требующие фиксов park/wake +
+supervised drain + handler scoping; (6-8) — функциональные баги в
+M:N edge cases; (9) — тестовые ассерты под новый контракт.
+
+### Когда вернуться
+
+Каждый из (1-8) — самостоятельный 1-2 dev-day fix, накопительно ~2
+dev-week careful M:N runtime work. Активация флипа в main()-codegen
+— одна строка, **после** закрытия (1-8). Под текущим состоянием:
+`runtime.init(n)` остаётся канонической точкой включения M:N для
+compiled-бинарей.
+
+### Acceptance, который останется недостигнут до full flip
+
+Plan 83.2 §4 «Compiled-программа без единого `runtime.*` вызова
+использует все CPU при fiber-нагрузке» — не выполнен. M:N работает
+**при явном `runtime.init`**.
+
+### Приоритет — M (P2-feature; инфраструктура готова, активация ждёт runtime fixes).

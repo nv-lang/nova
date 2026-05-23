@@ -37,6 +37,12 @@ typedef struct NovaWorker NovaWorker;
  * вызов no-op. Если n=0 → автодетект через uv_available_parallelism. */
 void nova_runtime_init(int n_workers);
 
+/* Plan 83.2 Ф.1: auto-arm рантайма без указания n. Эквивалент
+ * `nova_runtime_init(0)`, но семантически разделён — вызывается
+ * codegen-эмитом ON START любой compiled-программы (в main()) для
+ * default-on M:N. Идемпотентен; пул не материализуется до spawn. */
+void nova_runtime_auto_arm(void);
+
 /* Spawn fiber на следующий worker (round-robin). Используется для
  * top-level work distribution. Within-fiber spawn пока остаётся через
  * existing nova_fiber_spawn_into — на текущий scope.

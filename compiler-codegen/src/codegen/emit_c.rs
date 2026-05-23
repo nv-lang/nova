@@ -4743,6 +4743,13 @@ impl CEmitter {
         self.line(&format!("{ctx}->_nova_worker_slot = -1;", ctx = ctx_var));
         // Plan 44.5 Layer 5: implicit M:N — runtime initialized → push в worker
         // deque; иначе single-thread path unchanged.
+        // Plan 83.2 Ф.1 примечание: чтобы supervised{spawn} попал в M:N
+        // ветку без явного runtime.init, codegen основной программы
+        // (emit_main_function) теперь вызывает _auto_arm_if_needed() в
+        // самом начале main — runtime армится при старте программы,
+        // is_initialized() возвращает true ниже, идём по M:N пути.
+        // Hello-world без spawn остаётся 0 worker-потоков (пул лениво
+        // материализуется только в _ensure_materialized из spawn-пути).
         self.line("if (nova_runtime_is_initialized()) {");
         self.indent += 1;
         self.line(&format!("{ctx}->_nova_parent_scope = &{q};",
@@ -10619,6 +10626,15 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
         self.line("int main(void) {");
         self.indent += 1;
         self.line("nova_gc_init();");
+        // Plan 83.2 Ф.1 примечание (2026-05-23): авто-арм рантайма
+        // здесь (через `nova_runtime_auto_arm()`) делал бы M:N путь
+        // дефолтным для supervised{spawn} без явного runtime.init —
+        // но вскрывает 9+ pre-existing M:N багов (D93 sleep-wake race,
+        // per-fiber handler scoping, parallel_for ordering, etc.) в
+        // supervised drain / scheduler. Каждый — самостоятельный
+        // 1-2-day fix. Полный флип отложен до их закрытия;
+        // инфраструктура (`nova_runtime_auto_arm` + auto-arm в
+        // spawn_global/spawn_into) подготовлена.
         // Plan 22 Ф.2: глобальный event loop. Под NOVA_USE_LIBUV даёт
         // настоящий uv_default_loop, иначе — stub no-op. Idempotent.
         self.line("nova_evloop_init();");
