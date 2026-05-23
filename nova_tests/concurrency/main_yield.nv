@@ -8,6 +8,22 @@
 //
 // This test set verifies REAL coroutine interleaving where the supervised
 // body itself participates in the cooperative dance.
+//
+// Plan 83.4.5.5 Ф.1 (2026-05-23): added `// ENV NOVA_NO_AUTOARM=1`
+// directive — полностью отключает auto-arm. Под armed runtime
+// supervised body's spawn → worker deque (work-stealing), supervised_step
+// на main скипает worker-owned fibers (Plan 83.4.2 Ф.1 A2 fix) →
+// `Time.sleep(0)` на main НЕ продвигает fibers → encoded-log ordering
+// ломается (main yield по сути no-op). Эти тесты specifically проверяют
+// **cooperative interleaving semantics** — spawn в scope queue + main
+// yield drives queue. Под NO_AUTOARM spawn идёт через
+// nova_fiber_spawn_into → main scope queue → cooperative drain. Bootstrap
+// и flip-active runs тогда дают identical execution-order.
+//
+// Cross-runtime: tokio `current_thread` runtime — closest equivalent
+// (single-thread cooperative); Node всегда cooperative single-thread.
+//
+// ENV NOVA_NO_AUTOARM=1
 
 module concurrency.main_yield
 
