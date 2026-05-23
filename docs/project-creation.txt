@@ -19590,3 +19590,45 @@ Total ~3 dev-day. Прежняя оценка 3.5-4 (Ф.0 re-scope) была pes
 - README.md обновлён с строкой Plan 99 + 4 sub-row'а.
 
 Готов к взятию в работу sub-plan'а 99.1.
+
+
+================================================================
+[2026-05-23] Plan 97.1 hardening ✅ — production-grade улучшения
+(worktree d:/Sources/nv-lang/nova-p97-1, ветка plan-97-1-hd):
+
+После merge Plan 97.1 + followup — добавлены 3 hardening улучшения,
+закрывающие потенциальные silent miscompile / runtime bug пути.
+
+2 коммита на ветке plan-97-1-hd:
+
+* 0a8d0f0307b — Nova-side enforcement + capture-mode + GC stress:
+  - check_protocol_method_call в BoundCtx walk (types/mod.rs);
+    method обязан быть в protocol_specs[<Proto>], иначе compile
+    error R5.3. Раньше silent miscompile риск (только C-side).
+  - infer_arg_ty: ProtocolLit arm → Named protocol type
+    (для let-binding в scope).
+  - emit_protocol_lit capture-mode разделение:
+    * heap obj / mut scalar → by-pointer (alias);
+    * immutable scalar (fn param / let) → by-value snapshot.
+    Критично для factory pattern (literal returned past fn exit).
+  - Macros respect mode (by-value: direct field, by-pointer: deref).
+  - 2 новые фикстуры plan97/:
+    * neg_protocol_lit_call_undefined — Nova-side compile error
+      для unknown method на protocol-typed value.
+    * pos_protocol_lit_gc_stress — factory make_adder в цикле 1000×
+      + 3 параллельных literals с разными captures.
+
+* 2d204cf7050 — docs(simplifications) hardening секция.
+
+* d028531505f — merge в main.
+
+**Регресс в worktree:** PASS 1127 / FAIL 1 (pre-existing plan99_probe
+intentional gap) / SKIP 56.
+
+**На main после merge:** plan97 20/20 PASS smoke.
+
+**Plan 97 + 97.1 + followup + hardening — все закрыто.**
+
+С baseline 1083 PASS (post-Plan 97 merge) — суммарно +44 новых PASS
+по всем followup стадиям. Capability-split factory pattern из D142
+работает end-to-end с production-grade type-safety.
