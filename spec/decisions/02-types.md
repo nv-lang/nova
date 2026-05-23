@@ -901,12 +901,12 @@ Plan 15 D53 strict-mode (Plan 15 Ф.5) ввёл различие protocol/effect
   как bound — compile error c hint'ом «`X` is an effect, not a
   protocol — declare as `type X protocol {…}`».
 - Анонимные protocol-литералы в позиции типа (`fn close(c protocol {
-  close() -> () })`, §628 этой секции) — **реализуется в Plan 97 Ф.2**
-  через новый `TypeRef::Protocol(ProtocolSig)` variant. До закрытия
-  Plan 97 в bootstrap'е работает только именованная форма
-  (`fn close(c Closer)` с предварительно объявленным `type Closer
-  protocol { ... }`). См. также [D142](#d142) (symmetry effect ↔
-  protocol declaration/literal).
+  close() -> () })`, §628 этой секции) — ✅ **реализованы в Plan 97 Ф.2**
+  через новый `TypeRef::Protocol(ProtocolSig)` variant.
+- Protocol-литералы в expression-position (`let l = protocol Name { ops }`)
+  с runtime vtable + dispatch — ✅ **реализованы в Plan 97.1**
+  (codegen vtable struct + `emit_protocol_lit` + Plan 56 D122 box-pattern).
+  См. также [D142](#d142).
 
 ---
 
@@ -4031,7 +4031,11 @@ named type».
 ### Связь
 
 - [D53](#d53) — protocol declaration; D53 §628 (анон-protocol в
-  type-position) **реализуется** этим D-блоком (Plan 97 Ф.2).
+  type-position) ✅ реализовано (Plan 97 Ф.2).
+- **Protocol-литерал codegen** — value `protocol Name { ops }`
+  с runtime vtable + dispatch — ✅ реализовано в подплане Plan 97.1
+  (`emit_protocol_lit` + расширенный Plan 56 D122 box-pattern).
+  Capability-split factory pattern работает end-to-end.
 - [D61](04-effects.md#d61) — handler-литерал; **rename** keyword
   `handler` → `effect` (Plan 97 Ф.3).
 - [D87](04-effects.md#d87) — `Effect[E, IRT]`; **rename** в

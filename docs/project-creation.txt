@@ -19178,3 +19178,111 @@ Followup-задача — закрыть 9 M:N багов supervised-drain layer
  - 0c0bfd915b2  docs(plan83.2/Ф.0): readiness gate
  - 0af6e6ba482  feat(plan83.2/Ф.1): default-on M:N — auto-arm на spawn
  - b72ce59b475  feat(plan83.2/Ф.1): инфраструктура default-on M:N — nova_runtime_auto_arm
+
+
+================================================================
+[2026-05-23] Plan 97.1 ✅ ЗАКРЫТ (worktree nova-p97-1, ветка plan-97-1):
+**Protocol-literal codegen** — runtime vtable struct + dispatch для
+`protocol Name { method-impl* }` в expression-position. Закрывает
+[M-protocol-literal-codegen-deferred] (открыт в Plan 97 Ф.4).
+
+Approach A (synthetic concrete struct + reuse Plan 56 D122
+emit_protocol_vtable_companion + Plan 72 P3-B box-pattern).
+
+5 коммитов на ветке plan-97-1:
+
+* Ф.0 GATE — 48acee5624f
+  Approach A vs B зафиксирован; design probe — emit_protocol_vtable_companion
+  работает для (proto, args, concrete) — переиспользуем.
+
+* Ф.1 extend infra — 2282d6343fb
+  emit_protocol_box_typedef / emit_protocol_vtable_companion теперь
+  принимают empty type_args (non-generic protocols).
+  Mangling без args-суффикса: NovaVtable_Locker / NovaBox_Locker.
+  Plan 72 P3-B regression: 16/16 PASS.
+
+* Ф.2 emit_protocol_lit — 3e36ed54fa0
+  Synthetic NovaCtx_<lit_id> struct + free fn methods +
+  heap-allocated NovaVtable + NovaBox fat-pointer. Forward decls в
+  lambda_forward_decls (file-scope, до fn definitions). Impl bodies
+  в deferred_impls (после fn). Captures с pointer/scalar distinction
+  (mirrors emit_handler_lit). protocol_lit_counter для stable IDs.
+  Pre-register non-generic protocols в protocol_method_registry
+  (раньше только generic). infer_expr_c_type для ProtocolLit →
+  NovaBox_<Proto>.
+  Фикстура: pos_protocol_lit_basic — PASS.
+
+* Ф.3 method dispatch — 8e024d43647
+  type_ref_to_c для non-generic protocol-typed value в позиции
+  значения → NovaBox_<Proto> (был void*). Pre-emit
+  NovaVtable_<Proto>/NovaBox_<Proto> typedef'ы для всех зарегистрированных
+  non-generic protocol'ов. Skip emission для runtime-defined
+  (Hashable/Comparable/Display из nova_rt/vtables.h).
+  Фикстуры: pos_protocol_lit_dispatch (literal+метод), pos_protocol_lit_capability_split
+  (D142 use-case: Cell.new(initial) -> (Reader, Writer)).
+
+* Ф.4 overload + tuple ordering + closure_capture — 65661ea106f
+  Apply overload-mangling (mangle_op) — фиксит C 'duplicate member'
+  для protocol'ов с overloaded methods (Plan 33.3).
+  type_args.is_empty() путь → user_type_fwd_decls (раньше в
+  generic_type_defs_buf после tuple typedef'ов; вызывало unknown type).
+  __MONO_TUPLE_TYPEDEFS__ marker остался в preamble (раньше я
+  временно переносил — порождало 22 регрессии).
+  Фикстура: pos_protocol_lit_closure_capture (mutable capture +
+  mutation visible).
+
+**Регресс nova test-all в worktree:**
+PASS 1111 / FAIL 0 (real) / SKIP 56.
+
+4 FAIL — известные flake:
+* 3 × lld-link cannot open output file (Windows AV-lock в %Temp%).
+* 1 × concurrency/sleep_bench (timing-dependent production-scale).
+
+Все PASS изолированно при re-run. Zero real regression.
+
+С baseline 1083 PASS (post-Plan 97 merge) — **+28 новых PASS**.
+
+**simplifications.md:**
+
+* [M-protocol-literal-codegen-deferred] ✅ ЗАКРЫТ Plan 97.1.
+* Новый [M-protocol-method-name-shadowing] — edge case с
+  method-name collision (e.g. `next` совпадает с `Iter.next`);
+  приоритет L, workaround = переименовать метод. Обнаружено в
+  фикстуре closure_capture; reproduced с CC-FAIL
+  `initializing NovaOpt_nova_int with incompatible NovaInt`.
+
+**Spec/Doc обновления:**
+
+* spec/decisions/02-types.md D53 bootstrap-status: protocol-literal
+  codegen ✅ реализован в Plan 97.1.
+* spec/decisions/02-types.md D142 «Связь» — добавлена строка
+  Protocol-литерал codegen ✅ реализован.
+* docs/plans/97-protocol-effect-syntax-symmetry.md — Followup секция
+  обновлена «✅ закрыт Plan 97.1»; [M-protocol-literal-codegen-deferred] снят.
+* docs/plans/97.1-protocol-literal-codegen.md — статус ✅ ЗАКРЫТ,
+  5 коммитов перечислены.
+* docs/plans/README.md — Plan 97.1 row → ✅ ЗАКРЫТ; Plan 97 row
+  followup-маркер обновлён.
+
+**Capability-split factory pattern (use-case D142) работает end-to-end:**
+
+```nova
+type Reader protocol { read() -> int }
+type Writer protocol { write(v int) -> () }
+
+fn Cell.new(initial int) -> (Reader, Writer) {
+    let state = Cell { value: initial }
+    let r = protocol Reader { read() => state.value }
+    let w = protocol Writer { write(v) { state.value = v } }
+    (r, w)
+}
+
+// Caller: let (r, w) = Cell.new(10); w.write(99); r.read() → 99
+```
+
+Разблокирует stdlib Plan 18 capability-split API'и:
+* Process.spawn -> (Stdin, Stdout, Stderr)
+* HttpServer.bind -> (Acceptor, ShutdownHandle)
+* Db.transaction -> (TxReader, TxWriter, Commit)
+
+Готов к merge plan-97-1 → main после финального регресса.
