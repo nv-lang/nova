@@ -193,12 +193,12 @@ external fn Option[T] @unwrap_or_else(f fn() -> T) -> T
 
 /// Применяет `f` к содержимому Some, возвращает Some(f(v)). None пропускает.
 ///
-/// **Bootstrap**: inline emit (`<inline>` sentinel). Closure cast через
-/// `NovaClos_ii` layout — same-T `(T) -> T`. Generic U≠T в bootstrap
-/// не поддерживается полноценно (codegen использует elem_ty для обеих
-/// сторон). См. `emit_c.rs:11800+` Option.map block.
+/// **Plan 99.3 Ф.1**: Nova-body через `DeclaredBody`-routing. Full
+/// mono per (T, U) — паритет с Rust `Option::<T>::map<U, F>(...)`.
+/// Inline-emit `NovaClos_ii` cast убран (см. `emit_c.rs` Option.map).
 #stable(since = "0.1")
-external fn Option[T] @map[U](f fn(T) -> U) -> Option[U]
+fn Option[T] @map[U](f fn(T) -> U) -> Option[U]
+  => match @ { Some(v) => Some(f(v)), None => None }
 
 /// `Some(v) -> Ok(v)`, `None -> Err(err)`. Полезно для conversion
 /// Option в Result-чейн.

@@ -15270,36 +15270,12 @@ _cp++; \
                                     return Ok(result);
                                 }
                             }
-                            // D26 prelude: Option.map(f).
-                            // Some(v) → Some(f(v)), None → None.
-                            "map" => {
-                                if let Some(arg) = args.first() {
-                                    let f = self.emit_expr(arg.expr())?;
-                                    let tmp = self.fresh_tmp();
-                                    self.line(&format!("NovaOpt_{} {} = {};", elem_ty, tmp, obj_c));
-                                    let out = self.fresh_tmp();
-                                    self.line(&format!("NovaOpt_{} {};", elem_ty, out));
-                                    self.line(&format!("if ({}.tag == NOVA_TAG_Option_Some) {{", tmp));
-                                    self.indent += 1;
-                                    // Closure (T → T): берём `nova_int(*)(void*, nova_int)`
-                                    // signature через ручной cast (NovaClos_ii layout
-                                    // совпадает в bootstrap'е для одинаковых-T-параметров).
-                                    let mapped = self.fresh_tmp();
-                                    self.line(&format!(
-                                        "{} {} = (({}(*)(void*, {}))(((NovaClos_ii*)({}))->fn))(((NovaClos_ii*)({}))->env, {}.value);",
-                                        elem_ty, mapped, elem_ty, elem_ty, f, f, tmp));
-                                    self.line(&format!("{}.tag = NOVA_TAG_Option_Some;", out));
-                                    self.line(&format!("{}.value = {};", out, mapped));
-                                    self.indent -= 1;
-                                    self.line("} else {");
-                                    self.indent += 1;
-                                    self.line(&format!("{}.tag = NOVA_TAG_Option_None;", out));
-                                    self.line(&format!("{}.value = 0;", out));
-                                    self.indent -= 1;
-                                    self.line("}");
-                                    return Ok(out);
-                                }
-                            }
+                            // Plan 99.3 Ф.1: Option.map(f) → Nova-body
+                            // в core.nv через DeclaredBody-dispatch +
+                            // Plan 99.1 method-level generic + Plan 99.2
+                            // contextual Some/None ctors. Full mono per
+                            // (T, U) — паритет Rust. Inline emit удалён
+                            // (был T==U-only через NovaClos_ii hardcode).
                             // D26 prelude: Option.ok_or(e).
                             // Some(v) → Ok(v), None → Err(e).
                             "ok_or" => {
