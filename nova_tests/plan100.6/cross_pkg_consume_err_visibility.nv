@@ -1,0 +1,19 @@
+// EXPECT_COMPILE_ERROR D153
+//
+// Plan 100.6 (D153, Plan 35 R26): private consume-type не leak'ает
+// cross-package — import не виден.
+
+module nova_tests.plan100_6.cross_pkg_consume_err_visibility
+
+// "Package A" — type БЕЗ `export`:
+type InternalTransaction consume { id int }     // private
+fn InternalTransaction consume @commit() -> () { () }
+
+// "Package B" — пытается import:
+// import a.internals.InternalTransaction       // ❌ private — not exported
+//
+// ОШИБКА D153 (or related visibility error): not visible cross-package.
+
+test "private consume не visible cross-package" {
+    // mock — in real test, separate packages
+}

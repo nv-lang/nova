@@ -1,0 +1,20 @@
+// Plan 100.4.3 (D149): defer |result| — reason-aware форма с pattern.
+
+module nova_tests.plan100_4_3.defer_with_result_ok_pattern_match
+
+fn process(n int) Fail[str] -> int {
+    defer |result| {
+        match result {
+            Ok(v)    => println("success ${v}"),
+            Err(e)   => println("error ${e}"),
+            Panic(m) => println("panic ${m}"),
+        }
+    }
+    if n > 0 { return n }
+    throw "negative"
+}
+
+test "defer |result| pattern-match на exit-reason" {
+    process(42)                                  // Ok(42)
+    process(-1)                                  // Err("negative")
+}
