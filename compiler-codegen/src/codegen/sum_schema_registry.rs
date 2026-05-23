@@ -358,10 +358,9 @@ impl SumSchemaRegistry {
             c_name: "<inline>".to_string(),
             is_per_t: false,
         });
-        option_methods.insert("map".to_string(), MethodRouting::HardcodedRuntimeFn {
-            c_name: "<inline>".to_string(),
-            is_per_t: false,
-        });
+        // Plan 99.3 Ф.1: Option.map УБРАН — перенесён на Nova-body
+        // в std/prelude/core.nv; routing → DeclaredBody через
+        // init_prelude_decls_from_items override.
         option_methods.insert("ok_or".to_string(), MethodRouting::HardcodedRuntimeFn {
             c_name: "<inline>".to_string(),
             is_per_t: false,
