@@ -12,19 +12,22 @@
 
 Запуск через `.\run_tests.ps1 -IncludeStdlib`.
 
-## Текущий статус (2026-05-09, post-Plan 14 Ф.1+Ф.6, paused)
+## Текущий статус (2026-05-23, post-Plan 95 / 95.bis / 99 / 98 — ~50 планов после 2026-05-09 baseline)
 
-- **nova_tests:** 91/91 PASS.
-- **std type-check (`nova check`):** 50/50 PASS — type-checker мягче codegen.
-- **std compile→exe:** требует sweep после Ф.1+Ф.6 (Option[T] full refactor + variadic). Изначальные 3/50 могли подняться, но вскрылись новые блокеры — см. ниже.
-- Plan 14 paused: ✅ Ф.1, Ф.2, Ф.3, Ф.4, Ф.6, Ф.7. Остаётся **Ф.5** (cross-file resolve, низкий ROI) — [docs/plans/14-stdlib-codegen-gaps.md](../docs/plans/14-stdlib-codegen-gaps.md).
-- **Накопленные блокеры std/** (вскрылись после Ф.1) — generic specialization, array-type mangling, Fail-method return propagation, protocol-bound dispatch (D72, нужен Plan 15), tuple type system, Ф.7-bis. Описаны в Plan 14, секция «Накопленные блокеры std/». Каждый — отдельная задача, возможно объединение в Plan 19.
+- **nova_tests:** 1141 PASS / 0 FAIL / 56 SKIP (после Plan 99 merge `c48b85c4859`).
+- **std type-check (`nova check std/`):** **44 PASS / 12 FAIL** (regression vs 50/50 заявленных 2026-05-09). 12 файлов не проходят даже type-check. Типичная ошибка — D52 §2 «избыточная форма поля `name: name` — требуется shorthand `name`» (формат поля стал строже после ~50 планов компилятор-эволюции). Полный список + категоризация — нужен прогон `nova check std/`. **Это первый шаг Plan 91 Ф.0 re-baseline.**
+- **std compile→exe:** не измерено в этой ревизии STATUS.md — требует прогон `.\run_tests.ps1 -IncludeStdlib`.
+- Plan 14 закрыт: ✅ Ф.1, Ф.2, Ф.3, Ф.4, Ф.6, Ф.7 (paused; Ф.5 cross-file resolve низкий ROI).
+- **Plan 95 ✅ + 95.bis ✅ + 99 ✅** (Option/Result методы на Nova-body) — 15 / 17 builtin методов теперь на Nova-body (было 0). Уменьшило поверхность generic-specialization-блокеров.
+- **Plan 98 ✅** (free-fn generic type-param inference для Option[T]/Result[T,E]/user-generics) — turbofish больше не обязателен на generic-helper'ах, принимающих generic-типы.
+- **Накопленные блокеры std/** (исторически вскрылись после Ф.1): generic specialization (частично снято Plan 95/99), array-type mangling, Fail-method return propagation, protocol-bound dispatch (D72, нужен Plan 15), tuple type system, Ф.7-bis. Списки B-M ниже — историческая хронология; новый baseline требует прогон + категоризацию.
 - Stdlib roadmap (что писать после разблокировки): [docs/plans/18-stdlib-roadmap.md](../docs/plans/18-stdlib-roadmap.md).
+- **MVP для релиза 0.1:** [docs/plans/91-stdlib-mvp-for-0.1.md](../docs/plans/91-stdlib-mvp-for-0.1.md) — Ф.0 re-baseline = первый шаг.
 
 Список ниже — историческая хронология раундов 1-5 (закрытые блокеры) +
 оставшиеся группы блокеров для приоритезации новых compiler-задач.
-**Группы B-M ниже могут быть частично устаревшими** (после Ф.1/Ф.6) — нужен
-полный прогон `.\run_tests.ps1 -IncludeStdlib` для актуализации.
+**Группы B-M ниже частично устарели** (~50 планов после 2026-05-09 baseline) — для актуализации нужен
+полный прогон `.\run_tests.ps1 -IncludeStdlib` + категоризация 12 текущих type-check FAIL.
 
 ## Закрытые блокеры
 
