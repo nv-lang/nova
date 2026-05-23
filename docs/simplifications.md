@@ -11119,9 +11119,11 @@ ns/switch — паритет с Boost.Context). Перенос замера в N
 
 ---
 
-### [M-protocol-literal-codegen-deferred] ✅ ЗАКРЫТ Plan 97.1 (2026-05-23) — vtable-dispatch на protocol-литерале
+### [M-protocol-literal-codegen-deferred] ✅ ЗАКРЫТ Plan 97.1 (2026-05-23, merge b09a8c1b3e5) — vtable-dispatch на protocol-литерале
 
-> **CLOSED 2026-05-23 by Plan 97.1** (worktree `nova-p97-1`, ветка `plan-97-1`).
+> **CLOSED 2026-05-23 by Plan 97.1** (worktree `nova-p97-1`, ветка
+> `plan-97-1`, merged в main коммитом `b09a8c1b3e5`).
+> Регресс на main после merge: **PASS 1114 / FAIL 0 (real) / SKIP 56**.
 > Protocol-литерал теперь полностью работает в codegen:
 > * `emit_protocol_lit` создаёт synthetic ctx struct + free fn methods
 >   + heap-allocated NovaVtable + NovaBox fat-pointer.
