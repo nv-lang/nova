@@ -381,3 +381,10 @@ Compile-time проверка — основной механизм. В C-ран
   receiver/param-квалификатор.
 - `std/runtime/string_builder.nv` — `StringBuilder consume @into()`,
   первый потребитель D131.
+- [02-types.md → D133](02-types.md#d133) — type-level `consume` (Plan
+  100.1, proposed 2026-05-23) — расширение D131 с противоположной
+  стороны: «инстансы обязаны быть consumed на каждом code-path'е».
+  D131 = affine (≤1 раз; забыть OK); D133 = must-consume (≥1 раз;
+  забыть → compile error). Foundation для Plan 100 family (D145-D155
+  — generic propagation, borrow/view, defer/errdefer integration, FFI,
+  cross-module, migration, IDE tooling).

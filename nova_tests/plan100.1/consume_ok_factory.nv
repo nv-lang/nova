@@ -1,0 +1,25 @@
+// Plan 100.1 (D133, D9): `let tx = ...` форма — обязательство передаётся
+// caller'у через return.
+//
+// `let tx = begin(); return tx` — обязательство уходит наверх. Caller
+// получает Live consume-binding и обязан его закрыть.
+
+module nova_tests.plan100_1.consume_ok_factory
+
+type Transaction consume {
+    id int,
+}
+
+fn Transaction consume @commit() -> () { () }
+fn Transaction consume @rollback() -> () { () }
+
+// Factory с `let tx` формой — strict «обязан передать наверх».
+fn factory() -> Transaction {
+    let tx = Transaction { id: 99 }
+    return tx                                  // tx Returned — OK
+}
+
+test "factory возвращает consume-instance; caller закрывает" {
+    consume tx = factory()
+    tx.commit()
+}

@@ -1,0 +1,38 @@
+// Plan 100.1 (D133, D4 transitivity): record с consume-полем — сам
+// consume-type (explicit double-marker).
+//
+// `type TxState consume { consume tx Transaction, writes []Write }`.
+// Consume-метод record'а consume'ит поле через `@tx.commit()` — covered.
+
+module nova_tests.plan100_1.consume_ok_record_field
+
+type Write {
+    value int,
+}
+
+type Transaction consume {
+    id int,
+}
+
+fn Transaction consume @commit() -> () { () }
+fn Transaction consume @rollback() -> () { () }
+
+// Record с consume-полем — обязан быть declared `consume` (D4).
+type TxState consume {
+    consume tx Transaction,
+    writes []Write,
+}
+
+// Consume-метод record'а: на exit'е consume-поля могут быть Consumed (D5).
+fn TxState consume @commit() -> () {
+    @tx.commit()                               // @.tx → Consumed ✅
+}
+
+fn TxState consume @rollback() -> () {
+    @tx.rollback()                             // @.tx → Consumed ✅
+}
+
+test "record consume-полем + consume-метод record'а" {
+    consume state = TxState { tx: Transaction { id: 1 }, writes: [] }
+    state.commit()
+}

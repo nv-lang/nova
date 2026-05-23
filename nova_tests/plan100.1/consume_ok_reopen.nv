@@ -1,0 +1,37 @@
+// Plan 100.1 (D133, D5 field-aware flow): reopen pattern в mut-методе.
+//
+// Field-aware flow позволяет close + rebind в одном mut-методе:
+// на exit'е mut-метода consume-поля обязаны быть Live (invariant).
+// Compiler tracks: close → Consumed → rebind → Live. ✅
+
+module nova_tests.plan100_1.consume_ok_reopen
+
+type File consume {
+    fd int,
+}
+
+fn File consume @close() -> () { () }
+
+fn File_open(path int) -> File => File { fd: path }
+
+type Service consume {
+    consume file File,
+}
+
+fn Service consume @shutdown() -> () {
+    @file.close()                              // @.file → Consumed (record closes)
+}
+
+// Reopen pattern: close старый файл, rebind на новый.
+// На exit'е mut-метода @.file должен быть Live.
+fn Service mut @reopen(new_path int) -> () {
+    @file.close()                              // @.file → Consumed
+    @file = File_open(new_path)                // rebind — @.file → Live
+    // exit mut-метода: @.file Live ✅ (invariant preserved)
+}
+
+test "Service reopen — close + rebind в одном mut-методе" {
+    consume svc = Service { file: File_open(1) }
+    svc.reopen(2)                              // mut-метод, svc Live после
+    svc.shutdown()                             // consume-метод, svc Consumed
+}
