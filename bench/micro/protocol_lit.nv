@@ -1,0 +1,80 @@
+// Plan 97.1 bench — protocol-литерал dispatch performance.
+//
+// Quantitative validation Approach A (synthetic struct + NovaBox
+// fat-pointer + vtable companion).
+//
+// Метрики:
+// - Литерал creation cost (allocation NovaVtable + ctx).
+// - Метод dispatch cost (indirect call через vtable->method).
+// - Сравнение vs direct method call (baseline).
+
+module bench.micro
+
+
+type Counter protocol {
+    bump() -> int
+}
+
+
+type Cell {
+    mut value int
+}
+
+
+fn Cell @direct_bump() -> int {
+    @value = @value + 1
+    @value
+}
+
+
+fn make_counter(start int) -> Counter {
+    let state = Cell { value: start }
+    protocol Counter {
+        bump() {
+            state.value = state.value + 1
+            state.value
+        }
+    }
+}
+
+
+bench "direct method call (baseline)" {
+    measure {
+        let c = Cell { value: 0 }
+        let mut total = 0
+        let mut i = 0
+        while i < 10000 {
+            total = bench.opaque(total + c.direct_bump())
+            i = i + 1
+        }
+        bench.elements(10000)
+    }
+}
+
+
+bench "protocol-литерал dispatch через NovaBox vtable" {
+    measure {
+        let c = make_counter(0)
+        let mut total = 0
+        let mut i = 0
+        while i < 10000 {
+            total = bench.opaque(total + c.bump())
+            i = i + 1
+        }
+        bench.elements(10000)
+    }
+}
+
+
+bench "literal creation overhead (factory) 1000x" {
+    measure {
+        let mut sum = 0
+        let mut i = 0
+        while i < 1000 {
+            let c = make_counter(i)
+            sum = bench.opaque(sum + c.bump())
+            i = i + 1
+        }
+        bench.elements(1000)
+    }
+}
