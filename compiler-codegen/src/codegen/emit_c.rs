@@ -14329,30 +14329,38 @@ _cp++; \
             }
             // Plan 99.2 Ф.1-Ф.3: contextual variant constructors.
             // Bare `Some(v)`/`None`/`Ok(v)`/`Err(e)` в expr-position
-            // используют `current_fn_return_ty` для выбора mono-
-            // репрезентации (typed compound literal). Параллель existing
-            // path forms (`Option.Some(v)` :17251, `Option.None` :17264).
+            // — typed compound literal.
             //
-            // Иначе bare ctors всегда возвращают legacy `NovaOpt_nova_int`
-            // / `Nova_Result*` (hardcoded в array.h:276 и similar) —
-            // broken для не-(int, str) cases (Plan 99 G5/G6).
-            //
-            // Fallback на legacy если `current_fn_return_ty` не matches
-            // target sum-type (backward-compat).
+            // Some(v): ARG-type-priority (как path-form :17288 и helper
+            //   :17339) — arg даёт inner type. Использование
+            //   `current_fn_return_ty` ломает sub-expr cases типа
+            //   `s.char_at(i) == Some('/')` в `Option[int]`-returning
+            //   fn'е (plan11_followup f13/f16/f17): arg=char, rt=int
+            //   → wrapper должен быть NovaOpt_nova_char, не _nova_int.
+            // None: rt-priority — context даёт inner type (нет arg).
+            // Ok(v)/Err(e): rt-priority — нужен BOTH (T,E); arg даёт
+            //   только одну сторону, вторая берётся из rt. Fallback на
+            //   legacy flow если rt не Result-like.
+            if name == "Some" && args.len() == 1 {
+                let arg_ty = self.infer_expr_c_type(args[0].expr());
+                let arg_v = self.emit_expr(args[0].expr())?;
+                if !arg_ty.is_empty() && arg_ty != "void*" {
+                    let sanitized = Self::sanitize_for_novaopt(&arg_ty);
+                    self.register_novaopt_decl(&sanitized, &arg_ty);
+                    return Ok(format!(
+                        "((NovaOpt_{}){{.tag = NOVA_TAG_Option_Some, .value = ({})}})",
+                        sanitized, arg_v));
+                }
+                // arg_ty erased/void* — fall through к legacy
+                // (nova_make_Option_Some helper @ :17339).
+            }
             if let Some(rt) = self.current_fn_return_ty.clone() {
-                // Option.Some(v) / None — context `-> Option[X]` = NovaOpt_<X>.
-                if (name == "Some" || name == "None") && rt.starts_with("NovaOpt_") {
+                // None — context `-> Option[X]` = NovaOpt_<X>.
+                if name == "None" && args.is_empty() && rt.starts_with("NovaOpt_") {
                     let sani = &rt["NovaOpt_".len()..];
-                    if name == "Some" && args.len() == 1 {
-                        let arg_v = self.emit_expr(args[0].expr())?;
-                        return Ok(format!(
-                            "((NovaOpt_{}){{.tag = NOVA_TAG_Option_Some, .value = ({})}})",
-                            sani, arg_v));
-                    } else if name == "None" && args.is_empty() {
-                        return Ok(format!(
-                            "((NovaOpt_{}){{.tag = NOVA_TAG_Option_None}})",
-                            sani));
-                    }
+                    return Ok(format!(
+                        "((NovaOpt_{}){{.tag = NOVA_TAG_Option_None}})",
+                        sani));
                 }
                 // Ok(v) / Err(e) — context `-> Result[T, E]` = NovaRes_<n>*.
                 if (name == "Ok" || name == "Err") && Self::is_result_like(&rt) {
