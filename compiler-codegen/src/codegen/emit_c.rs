@@ -15245,31 +15245,9 @@ _cp++; \
                                 self.line("}");
                                 return Ok(format!("({}.value)", tmp));
                             }
-                            // D26 prelude: Option.unwrap_or_else(f).
-                            // Some(v) → v, None → f() (zero-arg closure).
-                            "unwrap_or_else" => {
-                                if let Some(arg) = args.first() {
-                                    let f = self.emit_expr(arg.expr())?;
-                                    let tmp = self.fresh_tmp();
-                                    self.line(&format!("NovaOpt_{} {} = {};", elem_ty, tmp, obj_c));
-                                    let result = self.fresh_tmp();
-                                    self.line(&format!("{} {};", elem_ty, result));
-                                    self.line(&format!("if ({}.tag == NOVA_TAG_Option_Some) {{", tmp));
-                                    self.indent += 1;
-                                    self.line(&format!("{} = {}.value;", result, tmp));
-                                    self.indent -= 1;
-                                    self.line("} else {");
-                                    self.indent += 1;
-                                    // Closure без аргументов (() → T): NovaClos_vi
-                                    // (signature `T(*)(void*)`).
-                                    self.line(&format!(
-                                        "{} = (({}(*)(void*))(((NovaClos_vi*)({}))->fn))(((NovaClos_vi*)({}))->env);",
-                                        result, elem_ty, f, f));
-                                    self.indent -= 1;
-                                    self.line("}");
-                                    return Ok(result);
-                                }
-                            }
+                            // Plan 99.3 Ф.2: Option.unwrap_or_else(f) →
+                            // Nova-body в core.nv через DeclaredBody +
+                            // closure invoke через NovaClosBase cast.
                             // Plan 99.3 Ф.1: Option.map(f) → Nova-body
                             // в core.nv через DeclaredBody-dispatch +
                             // Plan 99.1 method-level generic + Plan 99.2
