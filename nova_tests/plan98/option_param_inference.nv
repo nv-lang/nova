@@ -1,0 +1,49 @@
+// Plan 98 Ф.2.1: type-param inference из Option[T] параметра.
+//
+// До Plan 98: `fn check[T](o Option[T])` требовал turbofish
+// (`check[int](a)` вместо `check(a)`), потому что
+// infer_type_param_binding игнорировал Option[T] в позиции param.
+// После Plan 98: T выводится из NovaOpt_<sani> → реальный c_ty
+// через novaopt_value_types.
+
+module nova_tests.plan98.option_param_inference
+
+type User { id int, name str }
+
+fn check[T](o Option[T]) -> bool => o.is_some()
+
+fn extract[T](o Option[T], default_v T) -> T => o.unwrap_or(default_v)
+
+test "Option[int] param inference — без turbofish" {
+    let a Option[int] = Some(42)
+    let b Option[int] = None
+    assert(check(a))
+    assert(!check(b))
+    assert(extract(a, 0) == 42)
+    assert(extract(b, 99) == 99)
+}
+
+test "Option[str] param inference" {
+    let s1 Option[str] = Some("hello")
+    let s2 Option[str] = None
+    assert(check(s1))
+    assert(extract(s1, "default") == "hello")
+    assert(extract(s2, "default") == "default")
+}
+
+test "Option[char] param inference" {
+    let c1 Option[char] = Some('A')
+    let c2 Option[char] = None
+    assert(check(c1))
+    assert(extract(c1, 'Z') == 'A')
+    assert(extract(c2, 'Z') == 'Z')
+}
+
+test "Option[User] param inference — non-primitive" {
+    let u1 Option[User] = Some(User { id: 1, name: "Alice" })
+    let u2 Option[User] = None
+    let default_u = User { id: 0, name: "default" }
+    assert(check(u1))
+    assert(extract(u1, default_u).id == 1)
+    assert(extract(u2, default_u).id == 0)
+}
