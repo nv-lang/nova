@@ -1154,8 +1154,8 @@ type IdGen effect {
 }
 
 // Handler — обычная функция, возвращающая handler-литерал
-fn counter_id_gen(c mut Counter) -> Handler[IdGen] =>
-    handler IdGen {
+fn counter_id_gen(c mut Counter) -> Effect[IdGen] =>
+    effect IdGen {
         fresh() {
             c.count += 1
             c.count

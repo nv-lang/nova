@@ -3646,9 +3646,9 @@ type Float protocol {
 
 > ✅ **ЗАКРЫТО → [D88](decisions/03-syntax.md#d88-default-значения-generic-параметров)** (2026-05-10).
 > Триггер — [D87](decisions/04-effects.md#d87-handlere-irt--параметризация-handler-типом-interruptа)
-> `Handler[E, IRT = never]`: тип handler'а должен сообщать о
+> `Effect[E, IRT = never]`: тип handler'а должен сообщать о
 > возможности `interrupt`, но обратная совместимость требует
-> `Handler[E] ≡ Handler[E, never]` через default. Это и есть real
+> `Effect[E] ≡ Effect[E, never]` через default. Это и есть real
 > consumer, которого ждали.
 >
 > Принят синтаксис из текущего раздела as-is: `[T = f64]`,
@@ -5044,8 +5044,8 @@ type Random effect {
 }
 
 // Pre-defined handlers
-fn seeded(seed u64) -> Handler[Random]      // PRNG с фиксированным seed
-fn secure() -> Handler[Random]               // CSPRNG для production
+fn seeded(seed u64) -> Effect[Random]      // PRNG с фиксированным seed
+fn secure() -> Effect[Random]               // CSPRNG для production
 
 // Time — Unix-timestamp + sleep
 type Time effect {
@@ -5055,8 +5055,8 @@ type Time effect {
 }
 
 // Pre-defined handlers
-fn fixed_ms(ms u64) -> Handler[Time]         // время заморожено
-fn system_clock() -> Handler[Time]            // реальные часы OS
+fn fixed_ms(ms u64) -> Effect[Time]         // время заморожено
+fn system_clock() -> Effect[Time]            // реальные часы OS
 ```
 
 **Use cases:**
@@ -5540,7 +5540,7 @@ core rendering +15-25%). Это **самая большая** «бесплатн
 > принят и зафиксирован в [D142](decisions/02-types.md#d142):
 >
 > 1. **(B)** keyword `handler` снят, литерал эффекта пишется через
->    `effect X { ops }`. Builtin тип `Handler[E, IRT]` переименован
+>    `effect X { ops }`. Builtin тип `Effect[E, IRT]` переименован
 >    в `Effect[E, IRT]` (см. [D87](decisions/04-effects.md#d87)
 >    «Plan 97 amendment»).
 > 2. **(D)** анонимный protocol-литерал введён — `protocol X { ops }`
@@ -5572,7 +5572,7 @@ type Cron effect   { run() -> () }
 type Fan  protocol { run() -> () }
 
 // Literal (только для effect):
-let h = handler Cron { run() => () }       // keyword `handler`, не `effect`
+let h = effect Cron { run() => () }       // keyword `handler`, не `effect`
 let p = ???                                 // для protocol — нет literal-формы вообще
 ```
 
@@ -5588,7 +5588,7 @@ let p = protocol Fan  { run() => () }      // новый — anonymous protocol-
 **Развилка 1 — `effect` vs `handler` для литерала эффекта:**
 
 - **(A) Оставить `handler` (текущее).** Точнее в expression-position:
-  чтение `let h = handler Logger { ... }` сразу говорит «это
+  чтение `let h = effect Logger { ... }` сразу говорит «это
   **обработчик** эффекта, не сам эффект». `effect Logger { ... }`
   может вводить в заблуждение: «это значение типа эффекта Logger?»
 - **(B) Переименовать на `effect`.** Симметрия с declaration
@@ -5619,13 +5619,13 @@ Old assumption «protocols обычно reusable» — **частично вер
 случай **частым** в concurrency- и I/O-API.
 
 **Важная аналогия:** Nova **уже** имеет anonymous protocol-impl —
-это `handler Logger { ... }` для эффектов. Эффект структурно тот же
+это `effect Logger { ... }` для эффектов. Эффект структурно тот же
 контракт (набор методов с сигнатурами) что и protocol. Различия:
 
 | | Effect | Protocol |
 |---|---|---|
 | Структура контракта | методы (operations) | методы |
-| Anonymous literal | `handler X { ... }` ✅ есть | нет (текущее) |
+| Anonymous literal | `effect X { ... }` ✅ есть | нет (текущее) |
 | Применяется в | `with X = h { ... }` | parameter / generic-bound |
 | Типичный use-case | **one-off** (mock в тесте, transaction) | **reusable** (Hashable, Iter) |
 
@@ -5667,8 +5667,8 @@ Old assumption «protocols обычно reusable» — **частично вер
 
 | Язык | Effect-literal/handler | Anonymous protocol/interface |
 |---|---|---|
-| Nova (current) | `handler X { ... }` | нет |
-| Koka | `with handler X { ... }` | нет |
+| Nova (current) | `effect X { ... }` | нет |
+| Koka | `with effect X { ... }` | нет |
 | Eff | `handler { ... }` | нет |
 | Java | — (нет effect system) | `new Runnable() { ... }` ✓ |
 | Kotlin | — (нет effect system) | `object : Runnable { ... }` ✓ |

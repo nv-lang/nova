@@ -981,7 +981,7 @@ queued fibers видели бы только последнее значение
   monotonic ms (GetTickCount64 на Win, clock_gettime на POSIX);
   `Time.sleep(ms>0)` ждёт реально через yield-loop с deadline в fiber/
   scope-context'е, native OS sleep на top-level. `Time.sleep(0)` — один
-  yield (compatibility-режим). User override через `with Time = handler
+  yield (compatibility-режим). User override через `with Time = effect
   Time { ... } { body }` — работает (тесты `46_time_handler.nv`).
   Что НЕ закрыто: production-timer-wheel (sleeping fiber'ы съедают CPU
   yield-проверками — бизнес-логика этого не видит, это оптимизация).
@@ -1674,13 +1674,13 @@ binding.
 
 ```nova
 fn use_clock_100() -> int {
-    with Time = handler Time { sleep(_) => () now() => 100 } {
+    with Time = effect Time { sleep(_) => () now() => 100 } {
         Time.now()                   // ВСЕГДА 100, независимо от других fiber'ов
     }
 }
 
 fn use_clock_200() -> int {
-    with Time = handler Time { sleep(_) => () now() => 200 } {
+    with Time = effect Time { sleep(_) => () now() => 200 } {
         Time.now()                   // ВСЕГДА 200
     }
 }
@@ -1694,12 +1694,12 @@ supervised {
 Inheritance + override:
 
 ```nova
-with Time = handler Time { ... now() => 42 } {
+with Time = effect Time { ... now() => 42 } {
     supervised {
         spawn {
             assert(Time.now() == 42)         // наследовал outer
 
-            with Time = handler Time { ... now() => 999 } {
+            with Time = effect Time { ... now() => 999 } {
                 assert(Time.now() == 999)    // inner override виден только здесь
             }
 
@@ -1912,7 +1912,7 @@ static void process(HandlerFrame_X* x_frame) {
 
 **Минусы:**
 - Требует **полную мономорфизацию по effect-rows** в compiler'е.
-- `Handler[X]` как first-class value (`fn make() -> Handler[X]`) сложнее —
+- `Effect[X]` как first-class value (`fn make() -> Effect[X]`) сложнее —
   нужен fallback dynamic dispatch когда handler передан как value.
 - Dependent на static effect-resolution; rank-2 effect polymorphism
   усложняется.

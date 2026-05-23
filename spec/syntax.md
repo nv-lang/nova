@@ -440,7 +440,7 @@ f64.try_parse(s str) -> Option[f64]
 - `Error` — record `{ msg str }` для `throw err`
 - `RuntimeError` — sum bottom-уровневых runtime-ошибок
 - `RuntimeNoneError` — unit-тип, бросается через `expr!!` на `Option` ([D85](decisions/04-effects.md#d85))
-- `Handler[E]` — first-class тип handler'а эффекта
+- `Effect[E]` — first-class тип handler'а эффекта
 - `From[T]` — protocol со static-методом `from(v T) -> Self`
   ([D73](decisions/08-runtime.md#d73))
 - `Into[T]` — protocol с instance-методом `@into() -> T`
@@ -1095,7 +1095,7 @@ fn process(x int) Logger -> int {
 }
 
 // handler — обычное значение через keyword `handler` (D61)
-let console = handler Logger {
+let console = effect Logger {
     log(msg) => println("[LOG] ${msg}")
 }
 
