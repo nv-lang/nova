@@ -1,6 +1,14 @@
 # Plan 95 — `Option`/`Result` как generic-method-able типы (мономорфизация методов builtin sum-типов)
 
-> **Статус:** 📋 proposed 2026-05-23, не начат.
+> **Статус:** ✅ **ЗАКРЫТ 2026-05-23** (Ф.0–Ф.7 все выполнены;
+> worktree `nova-p95`, ветка `plan-95`, 6 коммитов
+> `9c0c91071e0..b55e039d4d4`). Полный `nova test`: **1067 PASS / 0
+> реальных FAIL / 56 SKIP** (3 CC-FAIL в `contracts/f30_*_strict_
+> positive` — Windows lld-link file-lock infra noise под нагрузкой
+> 18 параллельных агентов; isolated re-run → PASS все 3). Plan 93
+> superseded by Plan 95 (его цель = Ф.4). Маркер
+> `[M-option-methods-not-mono-able]` закрыт. Discovery в Ф.6 →
+> Plan 98 (turbofish-gap, отд. план).
 > **Приоритет:** P3 (de-magic / single-source-of-truth; разблокирует
 > Plan 93, частично питает Plan 94). Не блокер релиза 0.1, не блокер
 > self-hosting (см. Plan 93 «Связь с self-hosting»).
@@ -141,6 +149,72 @@ mono-машинерию, не разворачивает Plan 62.A. Ключев
   Option-match-codegen без новых веток — проверить, что
   `emit_monomorphized_method` регистрирует `nova_self` в `var_types`
   как `NovaOpt_<T>` и match-диспетчер это подхватывает.
+
+## Итог Ф.0 (выполнено 2026-05-23, worktree `nova-p95`)
+
+Аудит проведён чтением кода (`emit_c.rs`, `sum_schema_registry.rs`,
+`ast/mod.rs`). Карта точек подтверждена; обнаружены **2 уточнения**.
+
+### Сверка карты точек
+
+- **#1** — исключение `Option`/`Result` из generic-механизма
+  существует в **двух** местах: `emit_c.rs:1526` (секция 1a — до
+  `generic_types` + `generic_type_templates`) **и** `emit_c.rs:2083`
+  (секция 1d — до `generic_types`). Оба сохраняем (представление не
+  трогаем). Метод-коллекшн (#2) — `emit_c.rs:1555`.
+- **#3** `receiver_c_type` — `emit_c.rs:7026`; **#4**
+  `emit_monomorphized_method` — `:8766`; **#5**
+  `register_mono_method_instance` — `:8684`; **#6** перехват
+  `NovaOpt_` — `:14015`; **#7** перехват Result (`is_result_like`) —
+  `:14204`; **#8** `register_novaopt_decl` — `:20651`;
+  **#9** `register_novares_decl` — `:20852`.
+- `Receiver` (`ast/mod.rs:499`) содержит `generics: Vec<TypeRef>` —
+  имена type-параметров приёмника доступны.
+- `current_type_subst` — значения суть **C-типы** (не Nova-типы);
+  `register_novaopt_decl` хранит `novaopt_value_types[sanitized] →
+  real_c_ty`; `novares_ok_err(c_ty) → (ok_c, err_c)`.
+
+### Уточнение 1 (новая точка #12) — drain mono-worklist
+
+`emit_c.rs:2262-2274`: drain `__method__TYPE::name` ищет `FnDecl` через
+`mono_method_decls[key]` → fallback `generic_type_methods[base]` **только
+если** `base_opt` разрезолвился через `generic_type_instance_info`. Для
+builtin `Option`/`Result` `recv_type` в worklist-ключе = уже базовое имя
+(`"Option"`), `generic_type_instance_info` его не содержит → `base_opt =
+None` → `FnDecl` **не находится**, тело не эмитится. **Фикс:** добавить в
+drain финальный fallback `generic_type_methods.get(recv_type)` напрямую
+(для user-типов `recv_type` — mangled, `.get` вернёт `None`, безвредно).
+
+### Уточнение 2 — collision имён mono'd функции и трамплина
+
+Mono-имя выбрано как форма существующего трамплина
+(`Nova_Option_method_<m>_<sani(T)>` / `Nova_Result_method_<m>_<n>`) —
+чтобы call-site mangling не менялся. Следствие: эмиссия Nova-тела с этим
+именем **конфликтует** с трамплином того же имени (C-redefinition). →
+Удаление трамплинов (Ф.4.2 / Ф.5.2) обязано лэндиться **в одном
+коммите** с переносом тела (Ф.4.1 / Ф.5.1), не отдельным «безопасным»
+шагом. Инфра-фазы Ф.1–Ф.3 разрабатываются на probe-методе с **другим**
+именем (`my_present`) — коллизии нет.
+
+### Decision points
+
+- **Ф.0.2 → подход B** (method-only mono). Подтверждён чтением:
+  представление `NovaOpt_<T>`/`NovaRes_<…>` не трогается; диспетчеризация
+  локализована в перехватах #6/#7; подход A (template-регистрация)
+  отвергнут — конфликт с `register_novaopt_decl` + `is_generic_call`
+  void*-boxing path (комментарий `emit_c.rs:2076`).
+- **Ф.0.3 → граница без изменений**: переносятся только
+  `is_some`/`is_none`/`is_ok`/`is_err`.
+- **Ф.0.4 → Result in-scope**: `NovaRes_`-перехват (#7) — точная
+  параллель `NovaOpt_` (#6); маржинальная стоимость мала. Ф.5 включена.
+- **Ф.0.5 → подтверждено**: `emit_monomorphized_method:8822` регистрирует
+  `nova_self` в `var_types` как `recv_c`; при `recv_c = NovaOpt_<T>` /
+  `NovaRes_<…>*` `match @` использует существующий Option/Result-match-
+  codegen (тот же, что `if let Some(x) = opt` — компилируется повсеместно).
+
+**GATE ПРОЙДЕН — подход B, переходим к Ф.1.** Probe-патч из Ф.0.2 не
+делается отдельным выбросом: инфра Ф.1–Ф.3 = и есть «минимальный патч»,
+верифицируется probe-фикстурой (`my_present`) в конце Ф.3.
 
 ### Ф.1 — Method-collection + routing-scaffold (~0.4 д)
 
