@@ -1,0 +1,30 @@
+// EXPECT_COMPILE_ERROR D133
+//
+// Plan 100.1 (D133): consume только на одной branch — MaybeConsumed
+// на join → error.
+//
+// `if cond { tx.commit() }` без else — tx Live на else-path. Branch join:
+// Live ⊔ Consumed = MaybeConsumed. На exit'е → E (D133-not-consumed).
+
+module nova_tests.plan100_1.consume_err_branch_forget
+
+type Transaction consume {
+    id int,
+}
+
+fn Transaction consume @commit() -> () { () }
+fn Transaction consume @rollback() -> () { () }
+
+fn begin() -> Transaction => Transaction { id: 1 }
+
+test "consume только на then-branch — ошибка MaybeConsumed" {
+    let condition = true
+    consume tx = begin()
+    if condition {
+        tx.commit()
+        // then: tx Consumed
+    }
+    // else (implicit): tx Live
+    // join: Live ⊔ Consumed = MaybeConsumed
+    // ОШИБКА D133-not-consumed: tx MaybeConsumed на exit'е.
+}

@@ -3845,6 +3845,302 @@ Rust's `usize`). Bootstrap-grade alias.
 
 ---
 
+## D133. `type X consume` — обязательная consume-семантика (must-be-consumed)
+
+> **Plan 100.1.** Принято 2026-05-23 (proposed; implementation pending).
+> Extends [D131](05-memory.md#d131) affine `consume` qualifier.
+
+### Что
+
+Квалификатор `consume` на **type-decl**. Помечает, что инстансы такого
+типа **обязаны** быть потреблены до выхода из scope'а на каждом code-
+path'е. Compile error если live consume-переменная остаётся на exit-
+point'е.
+
+```nova
+type Transaction consume { id int }
+type File consume { fd i32 }
+type Lock consume { mutex *Mutex }
+```
+
+Расширяет [D131](05-memory.md#d131) с противоположной стороны:
+
+| Свойство | D131 affine `consume` (Plan 73) | D133 type-level `consume` (Plan 100.1) |
+|---|---|---|
+| Потребить ≤1 раз | ✅ enforce | ✅ enforce (наследуется) |
+| Потребить ≥1 раз (обязательно) | ❌ забыть OK | ✅ enforce — must-be-consumed |
+| Помечается на | receiver / param метода | **type-decl** + поле + binding |
+
+Канонический use-case — `Transaction.@commit() / .@rollback()`,
+`File.@close()`, lock-guard `.@release()`.
+
+### Синтаксис
+
+`consume` стоит **после имени типа**, перед `{`:
+
+```nova
+type Transaction consume {                    // type-decl marker
+    id int,
+}
+
+fn Transaction consume @commit() -> ()         // consume-method (D131)
+fn Transaction consume @rollback() -> ()
+```
+
+`consume` на type-decl + хотя бы один consume-метод (D131) — обязательное
+сочетание (compile error: «consume-type требует ≥1 consume-method»).
+
+### Правило — must-consume на каждом exit-path'е
+
+Compiler проводит **flow-sensitive** анализ (расширение Plan 73 D131
+`check_consume` pass'а). Для каждой переменной consume-типа отслеживается
+`VarState`:
+
+- **`Live`** — значение доступно, обязательство активно.
+- **`Consumed`** — значение потреблено (через consume-метод / consume-
+  параметр / `return`).
+- **`MaybeConsumed`** — потреблено лишь на части путей (branch join).
+
+На каждой **точке выхода** scope'а проход по active consume-переменным:
+- `Live` или `MaybeConsumed` → **compile error E (D133-not-consumed)**
+  с указанием консьюм-методов.
+- `Consumed` → OK.
+
+Точки выхода:
+- конец function body (последний statement);
+- `return expr` — все live consume-vars (кроме возвращаемой) → error;
+- `panic` / `expr!!` / `expr?` / unwinding-paths;
+- `loop break`;
+- branch join `if`/`match` — `Live ⊔ Consumed = MaybeConsumed`.
+
+`defer` / `errdefer` могут покрывать обязательство (см. **D147+** Plan
+100.4 family).
+
+### Что считается consume
+
+| Действие | Эффект на VarState |
+|---|---|
+| `tx.commit()` — вызов consume-метода | `tx` → `Consumed` |
+| `f(tx)` где `f(consume tx Tx)` | `tx` → `Consumed` |
+| `return tx` (тип consume) | `tx` → `Returned` (передача caller'у) |
+| `record.field = tx` где field declared consume | `tx` → `Moved` (в record) |
+| `f(tx)` где `f` без `consume` qualifier | ❌ compile error E (D133-move-to-non-consume) |
+| `let _ = tx` (silent drop) | ❌ compile error (suppress not allowed) |
+
+### Заразность через поля + explicit double-marker
+
+Record/sum, имеющий поле consume-типа, **обязан** быть объявлен
+`consume`:
+
+```nova
+type TxState consume {                         // ← ОБЯЗАТЕЛЬНО
+    consume tx Transaction,                    // ← ОБЯЗАТЕЛЬНО (тип = consume)
+    writes []Write,                            // обычное поле
+}
+```
+
+Compiler enforces consistency:
+- consume-поле без `consume`-маркера → error E (D133-field-marker-missing);
+- consume-маркер на field без `consume` на type-decl → error
+  E (D133-type-marker-missing);
+- `consume` на type-decl без ≥1 consume-поля и без consume-методов →
+  error E (D133-empty-consume).
+
+### Field-aware flow внутри методов record'а
+
+`@field` отслеживается как независимый VarState slot. На exit'е метода:
+
+| Тип метода | consume-поля должны быть |
+|---|---|
+| `fn X consume @method(...)` | `Consumed` (record closes) |
+| `fn X mut @method(...)` | **`Live`** (invariant preserved) |
+| `fn X @method(...)` (regular) | **`Live`** (invariant preserved) |
+
+Это позволяет реальные паттерны (rotate / reopen / replace):
+
+```nova
+type Service consume {
+    consume file File,
+}
+
+fn Service mut @reopen() -> Result[(), OpenErr] {
+    let new_file = File.open()?                // сначала добываем замену
+    @file.close()                               // только теперь закрываем старое
+    @file = new_file                            // rebind — @file опять Live
+}                                               // mut exit: @file Live ✅
+```
+
+Compiler ловит реальные баги:
+- забытый rebind на ветке → exit MaybeConsumed → error.
+- early return без rebind → error.
+- наивный close-then-open с error-path (`@file.close(); @file = open()?`)
+  → error если open Err (@file Consumed, не rebinded).
+
+### Assign в Live consume-поле / locals — запрещено
+
+Прямое присваивание `@field = expr` разрешено **только** когда `@field`
+уже `Consumed`. Иначе compile error E (D133-assign-live-field) с
+suggestion «consume the existing value first via `<consume-method>()`».
+Защита от silent overwrite старого consume-значения.
+
+```nova
+fn Service mut @overwrite_naive() {
+    @file = File.open()?                       // ❌ @file Live, silent overwrite
+}
+
+fn Service mut @overwrite_correct() {
+    @file.close()
+    @file = File.open()?                       // ✅ @file Consumed → assign OK
+}
+```
+
+То же для локальных consume-var: повторный `consume tx = ...` без
+consume старой — error. Re-binding через shadow — отдельный случай
+(Plan 73 alias-tracking).
+
+### Nested field paths
+
+Multi-level field tracking — `ConsumeCtx` хранит state по произвольно
+глубокому пути `@.f1.f2.f3`:
+
+```nova
+type Inner consume { consume tx Transaction }
+type Outer consume { consume inner Inner }
+
+fn Outer mut @commit_inner() {
+    @inner.tx.commit()                         // deep path consume; @.inner.tx → Consumed
+    @inner = Inner.new()                       // rebind inner
+}
+```
+
+Реализация — `ConsumeCtx::states: HashMap<FieldPath, VarState>` где
+`FieldPath = Vec<String>`.
+
+### Заразность через generic-args
+
+`type_is_consume(TypeRef)` — рекурсивная функция (общая, не Option-
+специфичная):
+
+- тип в `LinearityRegistry` (объявлен `consume`)?
+- record/sum с ≥1 consume-полем?
+- generic-wrap `G[T1, ..., Tn]` — хотя бы один `Ti` consume?
+- generic-param `T` (без bound) — false (bootstrap silent-ignore;
+  закрывается **D145** Plan 100.2 через `[T consume]` bound).
+
+`Option[Transaction]` / `Result[Transaction, E]` / `Box[Transaction]` /
+user `Wrapper[Transaction]` — все автоматически consume через wrap.
+**Никакого Option-специфичного хардкода** — общее правило для любого
+generic-wrapper'а.
+
+### Read-only access (non-consume параметр)
+
+```nova
+fn print_id(tx Transaction) {                  // без `consume` — read-only
+    println(tx.id)                              // ✅ чтение поля
+    tx.commit()                                 // ❌ consume-метод — error
+    finish(tx)                                  // ❌ передача в consume-param — error
+    storage.last = tx                           // ❌ store-в-поле — error
+    return tx                                   // ❌ возврат — error (не владеешь)
+    let f = || tx.commit()                      // ❌ closure capture с consume — error (D146)
+    let local = tx                              // ✅ alias (Plan 73 alias-tracking)
+}
+```
+
+Правило: read-only param = только чтение + alias. Identity-функция
+требует явного `consume tx Transaction` параметра.
+
+Глубокий peek (`match @file { Some(f) => f.id, ... }` для consume-
+Option) — невозможен в D133; закрывается **D146** Plan 100.3 через
+`view T`.
+
+### `consume` + `-> @` несовместимы
+
+`fn Tx consume @prepare() -> @ { ... }` → **parse error**. Противоречие
+между «забираю целиком» и «возвращаю тот же объект» (D132 fluent-
+return).
+
+### Binding-level: `consume tx` vs `let tx`
+
+Две формы привязки для consume-типов (strict, без or-or):
+
+```nova
+consume tx = begin()                           // strict: ОБЯЗАН закрыть здесь
+                                               //          (return / в record-вверх — error)
+
+let tx = begin()                               // strict: ОБЯЗАН передать наверх
+                                               //          (return / consume-param / в record-вверх).
+                                               //          Закрывать локально — error.
+```
+
+Декларация intent'а с compiler-checked гарантией.
+
+### Runtime mental model (Option-projection, не ABI)
+
+Концептуально consume-тип проецируется в `Option[T]`-space:
+- `Live` ≡ `Some(t)`.
+- `Consumed` ≡ `None`.
+- `MaybeConsumed` ≡ branch-зависимо.
+
+Это **mental model** для spec/docs. **Реализация остаётся pragmatic**
+(D131-style):
+- pointer-based consume: NULL = None (zero overhead);
+- value consume: zero-out fields после consume;
+- compile-time `check_consume` — основной механизм; runtime null-deref
+  panic — defense-in-depth.
+
+User-facing pattern-match `match tx { Some(t) => ... }` для runtime-
+проверки **не вводится** — ослабит compile-time гарантии.
+
+### Что отвергнуто
+
+- **Universal affine/linear для всех `let`** — отвергнуто в [D75
+  §«Compile-time token-scope enforcement»](06-concurrency.md#d75): «это
+  Rust borrow checker ради одной фичи, несоразмерно для GC-языка».
+  D133 — opt-in per-type, не default.
+- **Suppress-механизм `let _ = v`** — anti-Rust `#[must_use]` gateway.
+  Единственный канал — consume-метод. Если «иногда хочу забыть» — знак,
+  что тип неправильно помечен `consume`.
+- **Drop-method auto-cleanup** (Rust-style RAII) — размывает выбор
+  commit/rollback. D133 требует **явный** consume-метод.
+- **Pattern-match destructure consume-record** (`let { tx } = state`)
+  — ломает encapsulation (consume-поле уходит в независимый linear-
+  binding). Вынос через явный consume-метод record'а: `fn TxState
+  consume @into_parts() -> (Transaction, []Write) => (@tx, @writes)`.
+
+### Сравнение с другими языками
+
+| Свойство | Rust | TS (ES2024) | Kotlin | Go | Nova D133 |
+|---|---|---|---|---|---|
+| Compile-time enforcement | ⚠️ `#[must_use]` warning, suppressable | ❌ runtime via dispose | ❌ runtime via `use{}` | ❌ | ✅ **error** |
+| Suppress escape hatch | ✅ `mem::forget(v)` / `let _ = v` | n/a | n/a | n/a | ❌ **by design** |
+| Distinct cleanup methods (commit/rollback) | ⚠️ enum-в-Drop, awkward | ⚠️ single `dispose` | ⚠️ `use{}` block | ⚠️ convention | ✅ **native** (consume-методы) |
+| Lifetime / borrow-checker cost | ❌ есть | n/a | n/a | n/a | ✅ нет (поверх GC) |
+
+D133 строже Rust на suppress (нет `mem::forget`), expressive Rust на
+distinct cleanup methods. Не требует lifetime'ов / move-семантики.
+
+### Связь
+
+- [D131](05-memory.md#d131) — affine `consume` foundation. D133 —
+  extension on type-decl level.
+- [D132](03-syntax.md#d132) — `-> @` fluent-return; sound builder-chain
+  alias через `-> @` нужен для consume-checker'а builder API.
+- [D75](06-concurrency.md#d75) — почему universal consume отвергнут.
+- [D90](03-syntax.md#d90) — `defer` / `errdefer` foundation; интеграция
+  через Plan 100.4 family (D147-D151).
+- [D85](04-effects.md#d85) — kinded throws, cancel-routing;
+  взаимодействие через D151 Plan 100.4.5.
+- D145 Plan 100.2 — generic `[T consume]` strict-mode bound.
+- D146 Plan 100.3 — `view T` read-only borrow для deep peek.
+- D147-D151 Plan 100.4.1-5 — defer/errdefer integration для cleanup-
+  on-failure.
+- D152 Plan 100.5 — FFI `external consume fn`.
+- D153 Plan 100.6 — cross-module consume visibility + mangling.
+- D154 Plan 100.7 — stdlib migration playbook.
+- D155 Plan 100.8 — performance + IDE tooling.
+
+---
+
 ## D135. Type-checker completeness — «no silent fallback» на уровне типов
 
 **Статус:** принято, реализовано ([Plan 79](../../docs/plans/79-typecheck-hardening-no-silent-fallback.md)).
