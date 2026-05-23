@@ -3683,9 +3683,14 @@ for/detach автоматически распределяется на дост
 4. **Escape hatch.** Два режима:
    - `NOVA_MAXPROCS=1` — один worker (deterministic single-thread под
      M:N machinery; полезно для precision-bench'ей).
-   - `NOVA_NO_AUTOARM=1` — полный bootstrap mode (runtime never armed,
+   - `NOVA_AUTOARM=0` — полный bootstrap mode (runtime never armed,
      spawn идёт через cooperative scope queue; полезно для tests,
-     specifically проверяющих cooperative-only semantics).
+     specifically проверяющих cooperative-only semantics). Plan
+     83.4.5.9 (2026-05-24): renamed из legacy `NOVA_NO_AUTOARM=1`
+     ради positive env-name convention (без двойного отрицания).
+     Принимаются значения "0" / "false" / "no" / "n" / "f"
+     (case-insensitive); unset либо "1" / "true" / другое → default
+     (armed enabled).
 
 5. **Worker blocking ban.** Worker НЕ делает блокирующую работу
    inline — все FFI / syscall'ы обязаны быть в `blocking { … }`
@@ -3694,7 +3699,7 @@ for/detach автоматически распределяется на дост
 6. **Spawn ordering — НЕ специфицирован** (Go-паритет: "Spawn ordering:
    no guarantees"). Tests, опирающиеся на specific scheduler order,
    должны использовать set-equality assertions либо escape hatch
-   `NOVA_NO_AUTOARM=1`.
+   `NOVA_AUTOARM=0`.
 
 7. **Cancellation** — hierarchical через scope-tree (Plan 83.4.5.1
    `nova_scope_cancel_wake_all` + cancel_all_pending dispatch_ready

@@ -19,7 +19,7 @@
 //
 // Plan 83.4.5.8 (2026-05-24): directive RESTORED — armed M:N still deadlocks
 // в этом тесте (deeper cancel-flow race remains). Followup investigation.
-// ENV NOVA_NO_AUTOARM=1
+// ENV NOVA_AUTOARM=0
 
 module concurrency.supervised_cancel_test
 
