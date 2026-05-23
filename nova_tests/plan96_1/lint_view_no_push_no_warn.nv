@@ -1,0 +1,13 @@
+// Plan 96.1 Ф.1 — regression-pos: slice-view БЕЗ push — no warning.
+// Index-assignment через view ([0] = x) и чтение — не вызывают lint.
+
+module nova_tests.plan96_1.lint_view_no_push_no_warn
+
+test "slice-view without push doesn't trigger lint" {
+    let mut parent []int = [10, 20, 30, 40, 50]
+    let mut view = parent[1..4]
+    view[0] = 100
+    assert(view[0] == 100)
+    assert(parent[1] == 100)
+    assert(view.len() == 3)
+}
