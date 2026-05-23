@@ -11122,7 +11122,7 @@ ns/switch — паритет с Boost.Context). Перенос замера в N
 ### [M-protocol-literal-codegen-deferred] Plan 97 Ф.4 — vtable-dispatch на anon-instance protocol-литерала deferred
 
 > **Merged в main 2026-05-23 (merge 3ef21279795).** Plan 97 ✅ закрыт;
-> codegen-deferred маркер остаётся актуальным до Plan 100.
+> codegen-deferred маркер остаётся актуальным до Plan 97.1.
 
 - **Где** — `compiler-codegen/src/codegen/emit_c.rs` `ExprKind::ProtocolLit`
   arm (делегирует на `emit_handler_lit`).
@@ -11148,7 +11148,7 @@ ns/switch — паритет с Boost.Context). Перенос замера в N
   Parser/type-checker даёт **75% выигрыша**: capability-split factory
   pattern из спеки парсится и type-check'ается; единственный gap —
   runtime dispatch, который дополним отдельной задачей.
-- **Как чинить** — Plan 100 «protocol-literal full codegen»:
+- **Как чинить** — Plan 97.1 «protocol-literal full codegen»:
   1. Расширить `emit_type_decl` → `TypeDeclKind::Protocol(_)`: эмитить
      `NovaVtable_<Name>` struct (как для effect) — без thread-local
      handler slot (protocol-value передаётся явно как параметр).
