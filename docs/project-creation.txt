@@ -19770,3 +19770,43 @@ FINAL CUMULATIVE Plan 97.1 (все этапы main/fu/hd/final/prod):
 С baseline 1083 (post-Plan 97) → +46 cumulative PASS.
 
 Plan 97 + 97.1 ПОЛНОСТЬЮ ЗАВЕРШЕНЫ.
+
+═══════════════════════════════════════════════════════════════════════
+Plan 99.1 ✅ — method-level generic в DeclaredBody (foundation)
+2026-05-23 (worktree d:/Sources/nv-lang/nova-p99-impl, ветка plan-99-impl)
+═══════════════════════════════════════════════════════════════════════
+
+Ф.1: Extract `method_extra_subst` (~110 строк) из emit_c.rs:16386-16494
+в reusable helper `resolve_method_level_subst(&mut self, fn_decl, args,
+receiver_subst, diag_context) -> Result<Vec<(String,String)>, String>`.
+Refactor user-generic dispatch — call helper вместо inline. Regression
+plan48/55/59/62/88/89/95/95.bis/98/basics/generics — 64/0.
+
+Ф.2: Option DeclaredBody dispatch (Plan 95 Ф.3.1) extended:
+- Call resolve_method_level_subst (G1 fix).
+- mono_name через compute_mono_name с method-level suffix (G3 fix).
+- ensure_novaopt_decls_for_typeref(return_type) для lazy-emit
+  NovaOpt_<U> typedef (G4 fix).
+- infer_method_level_return_for_sum в infer_expr_c_type для best-
+  effort return-type resolution (G7 fix).
+
+Ф.3: Result DeclaredBody — analog pattern.
+
+Ф.4: Probe `nova_tests/plan99_probe/my_map_probe.nv` — 3 теста PASS:
+- Option[int].my_map(|x| str.from(x)) — T=int, U=str.
+- Option[int].my_map(|x| x * 2) — T=int, U=int.
+- Option[int].my_map с None — closure не вызывается.
+
+Regression 10 крит. подпапок: 113/0.
+
+Новые helpers в emit_c.rs:
+- resolve_method_level_subst (extracted, ~130 lines).
+- ensure_novaopt_decls_for_typeref (recursive walk на TypeRef →
+  register_novaopt_decl / register_novares_decl).
+- infer_method_level_return_for_sum (read-only inference для
+  &self-context infer_expr_c_type, degraded closure handling).
+
+Закрытые gaps: G1, G2, G3, G4, G7.
+Открытые на 99.2: G5, G6. На 99.3: G8.
+
+Готово к Plan 99.2.
