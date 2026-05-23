@@ -3,6 +3,7 @@
 
 #include "alloc.h"
 #include <stdint.h>
+#include <stdio.h>   /* snprintf — Plan 96 Ф.1 nv_panic_index_oob diagnostic */
 #include <string.h>
 
 /*
@@ -827,5 +828,38 @@ static inline Nova_RuntimeError* nova_make_RuntimeError_NoHandler(nova_str msg) 
  * NOVA_ARRAY_IMPL generates or_<T> for int/char/byte/bool/f64/f32/sized-ints.
  * nova_str needs explicit because NOVA_ARRAY_IMPL is not instantiated for it. */
 static inline NovaOpt_nova_str Nova_Option_method_or_nova_str(NovaOpt_nova_str s, NovaOpt_nova_str o) { return s.tag == NOVA_TAG_Option_Some ? s : o; }
+
+/* Plan 96 Ф.1 — bounds-check для raw arr[i] (D27 §1632 drift fix).
+ *
+ * До Plan 96 codegen эмитил `(arr)->data[i]` без проверки границ —
+ * controlled buffer overflow на запись, UB на чтение. D27 §1632 спека
+ * требовала panic при OOB. Wrapper форматирует диагностику и вызывает
+ * nv_panic (D13 — смерть текущего fiber'а). Сообщение формата
+ * "array: index N out of bounds for length L" — паритет с Go/Rust.
+ *
+ * Allocation через nova_alloc — Boehm thread-safe; panic-path, cost
+ * нерелевантен; буфер становится GC-mature после nv_panic (longjmp/exit).
+ */
+static inline void nv_panic_index_oob(nova_int idx, nova_int len) {
+    char* buf = (char*)nova_alloc(96);
+    int n = snprintf(buf, 96,
+        "array: index %lld out of bounds for length %lld",
+        (long long)idx, (long long)len);
+    if (n < 0) n = 0;
+    if (n > 95) n = 95;
+    nv_panic((nova_str){ .ptr = buf, .len = (size_t)n });
+}
+
+/* Plan 96 Ф.4 — bounds-check для slice creation (arr[a..b]).
+ * Отдельное сообщение от raw-index OOB — диапазон вместо одного индекса. */
+static inline void nv_panic_slice_oob(nova_int from, nova_int to, nova_int len) {
+    char* buf = (char*)nova_alloc(112);
+    int n = snprintf(buf, 112,
+        "array: slice [%lld..%lld] out of bounds for length %lld",
+        (long long)from, (long long)to, (long long)len);
+    if (n < 0) n = 0;
+    if (n > 111) n = 111;
+    nv_panic((nova_str){ .ptr = buf, .len = (size_t)n });
+}
 
 #endif /* NOVA_RT_ARRAY_H */

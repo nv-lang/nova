@@ -1,0 +1,14 @@
+// EXPECT_RUNTIME_PANIC array: index 100 out of bounds for length 3
+//
+// Plan 96 Ф.1 — негатив: чтение arr[i] при i >= len → panic.
+// До Plan 96 codegen эмитил raw `arr->data[100]` (UB read).
+//
+// `fn main` (не `test`-блок): panic должен дойти до runtime-frame
+// (внутри test-блока он перехватывается harness'ом).
+
+module nova_tests.plan96.neg_index_oob_read
+
+fn main() -> () {
+    let arr = [1, 2, 3]
+    let _ = arr[100]
+}

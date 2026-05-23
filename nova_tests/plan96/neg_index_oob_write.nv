@@ -1,0 +1,12 @@
+// EXPECT_RUNTIME_PANIC array: index 5 out of bounds for length 3
+//
+// Plan 96 Ф.1 — негатив: запись arr[i] = v при i >= len → panic.
+// До Plan 96 codegen эмитил raw `arr->data[5] = v` (controlled buffer
+// overflow на запись — silent corruption соседних аллокаций).
+
+module nova_tests.plan96.neg_index_oob_write
+
+fn main() -> () {
+    let mut arr []int = [1, 2, 3]
+    arr[5] = 99
+}
