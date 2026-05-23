@@ -11322,6 +11322,31 @@ corner cases, main_yield interaction с armed runtime). Активация
 
 **Полный clang `nova test`** (без flip): **1111 PASS / 0 FAIL / 56 SKIP**.
 
+### ✅ Plan 83.4.5 Ф.0 enumeration ЗАВЕРШЁН (2026-05-23, worktree nova-p83-4-5, commit d7eaee60674)
+
+Production-grade enumeration regressions под `nova_runtime_auto_arm()`:
+- **Baseline (pre-flip):** 1130 PASS / 1 pre-existing CC-FAIL (plan99_probe/
+  my_map_probe — out-of-scope) / 56 SKIP.
+- **Flip-active:** 1106 PASS / 25 FAIL / 56 SKIP → **24 NEW regressions**
+  (выявлены 6 дополнительных vs 18 предсказанных в первом attempt).
+
+Breakdown:
+- **11 TIMEOUTs** (drain hang / deadlock) — supervised_cancel_*,
+  cancel_latency_bench, deep_*, gc_*, sleep_bench, select_timer_stress,
+  assert_in_fiber, mono_spawn_closure_smoke
+- **13 RUN-FAILs** — cancel_semantics_test, main_yield, mn_runtime_smoke/
+  mn_maxprocs_getter (C1+C2 ассерты), parallel_for, per_fiber_handlers,
+  time_handler, fail_handler, plan65/f7+f10+f11a, sleep_precision_bench,
+  sleep_real_clock
+
+Категоризация по 6 sub-планам 83.4.5.1-83.4.5.6 + полный артефакт:
+`docs/plans/83.4.5-artifacts/f0-enumeration.md` (190 строк).
+
+`detach_test` УШЁЛ из fail-list (был в 18 первого attempt — re-investigate
+в 83.4.5.2 confirm-step).
+
+Next: 83.4.5.3 (test-suite cleanup, low-risk, test-side only).
+
 ### Что
 
 [Plan 83.2](plans/83.2-mn-default-flip.md) — «M:N вкл по умолчанию для
