@@ -2027,3 +2027,196 @@ Boolean. Любое не-`true` значение трактуется как `fa
 - Plan 71 — implementation.
 - [docs/idioms/stability-tiers.md](../../docs/idioms/stability-tiers.md)
   — pragmatic guide.
+
+---
+
+## D154. Consume-types migration policy — `nova consume-migrate` + editions
+
+> **Plan 100.7.** Принято 2026-05-23 (proposed). Migration playbook
+> для type-level consume (D133-D153). Integrates с D124 edition
+> versioning.
+
+### Что
+
+`nova consume-migrate <path>` CLI subcommand для assisted migration
+existing stdlib-типов на `consume`-семантику. Edition-versioning
+preserves backward-compat.
+
+### CLI subcommand
+
+```
+$ nova consume-migrate std/io/file.nv
+
+Analyzing std/io/file.nv...
+Suggestions:
+  Line 5: type File { ... }
+    → Suggestion: type File consume { ... }
+    Reason: file_open returns File, file_close consumes; resource type.
+
+  Line 12: fn File @close() -> Result[(), IoErr]
+    → Suggestion: fn File consume @close() -> Result[(), IoErr]
+    Reason: close is consume-method (terminal).
+
+Apply (y/n/manual)?
+```
+
+Modes: `--dry-run` / `--apply` / `--interactive`.
+
+### Edition-versioning (D124 integration)
+
+```toml
+[package]
+edition = "2026"                                # pre-consume era; legacy API
+# vs
+edition = "2027"                                # post-consume; migrated API
+```
+
+`std/prelude/<edition>.nv` resolver (Plan 62.F.bis D124) picks correct
+stdlib version per package edition.
+
+### Deprecation cycle
+
+```nova
+// Edition 2027 (new):
+external consume fn nova_file_open(path str) -> File
+fn File consume @close() -> Result[(), IoErr]
+
+// Legacy shim для edition 2026:
+#[deprecated_since("2027.1", replacement = "use `consume f = File.open()` + defer close")]
+fn File.open_legacy(path str) -> File
+```
+
+### Pilot migration scope (4 типа)
+
+Plan 100.7 — полная migration 4 high-priority типов: File / Mutex /
+TcpSocket / Transaction (mock). Каждый — 5 probes (open-use-close /
+parallel / error / cancel / cross-fiber).
+
+### Сравнение
+
+| Migration scenario | Rust | Kotlin | TS | Go | Nova D154 |
+|---|---|---|---|---|---|
+| Migration tooling automated | ⚠️ `cargo fix` partial | ⚠️ IDE-based | ⚠️ ESLint autofix | ⚠️ `gofmt -r` | ✅ `nova consume-migrate` |
+| Edition-versioning native | ✅ 2015→2018→2021→2024 | ❌ | ❌ | ❌ | ✅ **D124 editions** |
+| Deprecation cycle | ⚠️ warning | ⚠️ @Deprecated | ⚠️ JSDoc | ✅ `// Deprecated:` | ✅ `#[deprecated_since]` + edition |
+| Cross-package contract | ⚠️ semver convention | ⚠️ Maven | ⚠️ semver | ⚠️ go.mod | ✅ **D153** |
+
+### Связь
+
+- [D133](02-types.md#d133) — type-level consume.
+- [D124](08-runtime.md#d124), [D125](08-runtime.md#d125) — edition
+  versioning ✅.
+- [D153](02-types.md#d153) — cross-package contracts.
+- Plan 18 — real stdlib (after pilots).
+- Plan 28, Plan 36 — CLI infra.
+
+---
+
+## D155. Consume-types developer experience — performance, IDE, docs
+
+> **Plan 100.8.** Принято 2026-05-23 (proposed). Cross-cutting нормы:
+> compile-time budget + LSP API + diagnostic format spec.
+
+### Что
+
+Production-grade developer experience для consume-types (Plan 100
+family):
+
+1. **Compile-time performance budget** — `check_consume` pass overhead
+   < 5% от total `nova check` time.
+2. **LSP quick fixes** для всех 12 Plan 100 error codes.
+3. **Hover info** с consume status + coverage analysis.
+4. **`nova doc` integration** — `[consume]` badges, Resource lifecycle.
+5. **`nova consume-analyze` CLI** — standalone diagnostic.
+6. **Structured diagnostic format spec** — error-code + ranges +
+   suggestions + notes; JSON-консьюмabel.
+
+### Compile-time performance budget
+
+| Metric | Budget |
+|---|---|
+| `check_consume` pass standalone | < 5% от total `nova check` time |
+| Memory overhead | < 10MB per 100k SLOC project |
+| Worst-case complexity | O(N × depth) — depth = nested field-paths |
+| Incremental compilation | per-fn basis |
+
+Verification — Plan 57 bench framework (D121).
+
+### LSP quick fixes (12 error codes)
+
+| Diagnostic | Quick fix |
+|---|---|
+| E (D133-not-consumed) | "Add consume-method call or errdefer" |
+| E (D133-field-marker-missing) | "Add `consume` to field declaration" |
+| E (D133-type-marker-missing) | "Add `consume` to type-decl line" |
+| E (D133-assign-live-field) | "Add `.consume()` before assignment" |
+| E (D145-strict-forget) | "Consume value or remove `[T consume]` bound" |
+| E (D146-consume-via-view) | "Use `consume` qualifier instead of `view`" |
+| E (D146-view-escape-return) | "Return value (not view)" |
+| E (D147-defer-fail-not-in-sig) | "Add `Fail[E]` to fn signature" |
+| E (D151-uncovered-success-path) | "Add `tx.commit()` or `okdefer { tx.commit() }`" |
+| E (D151-uncovered-error-path) | "Add `errdefer { tx.rollback() }`" |
+| E (D152-missing-cap) | "Add `needs Fs` (or appropriate cap)" |
+| E (D153-cross-pkg-visibility) | "Add `export` to type-decl in source package" |
+
+Machine-applicable edits через D102 suggestion format.
+
+### Hover info format
+
+```
+consume tx: Transaction
+  Status: Live (consume obligation pending)
+  Type defined in: a/types.nv:5 (package 'a' v1.0)
+  Consume methods:
+    .commit() -> Result[(), CommitErr]
+    .rollback() -> Result[(), RollbackErr]
+  Coverage:
+    Line 7: `errdefer { tx.rollback() }` covers error-path
+    Success path: NOT COVERED (suggest okdefer or explicit commit)
+```
+
+### Diagnostic format spec
+
+```
+error[D133-not-consumed]: consume value not consumed before scope exit
+   ╭─[file.nv:8:5]
+ 5 │     consume tx = begin()
+   │     ━━━━━━━━━━━━━━━━━━━━ consume binding declared here
+ 8 │ }
+   │ ━ scope exit; tx still Live
+   ╰─
+   note: type `Transaction` declared `consume` at types.nv:3
+   help: consume via:
+         .commit() -> Result[(), CommitErr]   (success path)
+         .rollback() -> Result[(), RollbackErr] (cleanup)
+   suggestion (machine-applicable):
+         + errdefer { tx.rollback() }
+         + tx.commit()?
+```
+
+JSON variant — D107 schema extension.
+
+### `nova doc` integration (D104-D107)
+
+- Type-decl badge: `[consume]` next to type name.
+- Methods: `[consume]` annotation на consume-methods.
+- Section "Resource lifecycle" — open/use/close pattern.
+- Links to `docs/idiom/<type>-resource.md`.
+
+### Сравнение
+
+| Capability | Rust + rust-analyzer | Kotlin + IntelliJ | TS + tsserver | Go + gopls | Nova D155 |
+|---|---|---|---|---|---|
+| Quick-fix «add consume» | ✅ rust-analyzer | ✅ inspections | ⚠️ suggestions | ⚠️ limited | ✅ LSP quick fixes |
+| Hover info с ownership | ✅ borrow info | ✅ context | ⚠️ type only | ⚠️ type only | ✅ consume status |
+| Compile-time check perf | ⚠️ ~ms/ksloc | ⚠️ ~ms/ksloc | ⚠️ ~ms/ksloc | ⚠️ fast | ✅ bench < 5% |
+| Doc generation с ownership | ✅ rustdoc traits | ⚠️ KDoc | ⚠️ TSDoc | ⚠️ godoc | ✅ `nova doc` D155 |
+
+### Связь
+
+- [D102](03-syntax.md#d102) — structured suggestion format.
+- [D104](#d104), [D105](#d105), [D107](#d107) — doc-comments + JSON
+  schema.
+- [D121](#d121) — bench DSL (Plan 57).
+- D133-D154 — Plan 100 family error codes.
+- Plan 28, Plan 36 — nova-cli infra.

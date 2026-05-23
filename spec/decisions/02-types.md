@@ -4319,6 +4319,255 @@ Nova **превосходит Rust** на одной оси — backward-compat:
 
 ---
 
+## D152. `external consume fn` — FFI consume через C-границу
+
+> **Plan 100.5.** Принято 2026-05-23 (proposed). Extends [D82](08-runtime.md#d82)
+> `external fn` + [D126](03-syntax.md#d126) `external type` + [D63](04-effects.md#d63)
+> capability.
+
+### Что
+
+Маркер `consume` на `external fn` declaration — consume-семантика
+пересекает C-границу. Поддерживает оба направления: **return-side**
+(C-функция возвращает consume-obligation) и **param-side** (C-функция
+consume'ит передаваемый ресурс).
+
+```nova
+// Return-side: caller-owns consume-obligation
+external consume fn nova_file_open(path str) -> File
+    needs Fs                                    // capability required (D152 D3)
+
+// Param-side: callee-consumes
+external fn nova_file_close(consume f File) -> ()
+
+// Combined в opaque types
+external type File consume                     // D126 opaque + D133 consume
+external type Mutex consume
+external type Socket consume
+```
+
+### Зачем
+
+Без D152 существующие `external fn` не интегрированы с consume-
+семантикой (Plan 100.1 D133). Plan 18 stdlib (File, Mutex, Socket,
+Connection) не может быть consume-типами — leaks остаются runtime-only
+checks.
+
+### Capability requirement (D3)
+
+`external consume fn` **обязан** declare capability:
+
+```nova
+external consume fn nova_file_open(path str) -> File
+    needs Fs                                    // ОБЯЗАТЕЛЬНО
+
+external consume fn nova_socket_accept(srv ServerSocket) -> ClientSocket
+    needs Net
+```
+
+Marker `external consume` = «touch raw OS resource + carry consume
+obligation» — combine'ит две responsibility'и в одной декларации.
+Если не declare cap → compile error E (D152-missing-cap).
+
+### C runtime defensive helpers
+
+C-side `nova_file_close(consume f File)` обязан:
+- `nv_consume_validate(f)` — assert `f != NULL` на entry.
+- После работы — `memset` поля `File*` в zero / NULL (defense-in-depth
+  per D131 Plan 73 pattern).
+
+Это даёт двойную защиту: compile-time (D133 check_consume) + runtime
+(NULL-deref panic на use-after-consume).
+
+### Generic-заразность через FFI
+
+`Result[File, IoErr]` / `Option[Mutex]` / etc. — generic-заразность из
+D133 D6 работает уравномерно: если return-type wraps consume-type через
+generic, wrapper consume.
+
+```nova
+external consume fn nova_open() -> Result[File, IoErr]
+//                                ^^^^^^^^^^^^^^^^^^^ — Result consume
+//                                                       через generic-arg.
+// Caller обязан consume Result (через match Ok-arm с consume File).
+```
+
+### Vacuous marker — warning
+
+```nova
+external consume fn nova_get_pid() -> int       // ❌ W (D152-vacuous-consume)
+//                                    ^^^ — int не consume, нет param consume
+```
+
+Force'ит honesty о contract'е.
+
+### Cross-fiber FFI safety
+
+FFI-call может суспендиться (libuv async I/O). Plan 47/22/49 fiber infra
+preserves consume-state через migration; D152 verify через runtime tests
+(Plan 100.5 Ф.6).
+
+### Сравнение
+
+| Capability | Rust | Kotlin/JNI | Go cgo | TS Node N-API | Nova D152 |
+|---|---|---|---|---|---|
+| Ownership через FFI | ✅ `unsafe fn` + manual | ⚠️ manual | ⚠️ manual | ⚠️ manual | ✅ **declaration native** |
+| Auto-close на panic при FFI handle | ✅ через Drop wrapper | ⚠️ try-finally | ⚠️ defer | ⚠️ try-finally | ✅ **через D151** |
+| Capability tracking | ⚠️ `unsafe fn` | ⚠️ manual | ⚠️ manual | n/a | ✅ **D63 native** |
+| `unsafe` keyword нужен | ✅ да | n/a | n/a | n/a | ❌ **нет** (D6) |
+
+Nova **превосходит Rust** — нет `unsafe` keyword (D6 «no unsafe» +
+capability tracking через D63).
+
+### Связь
+
+- [D82](08-runtime.md#d82) — `external fn` foundation; D152 расширяет.
+- [D126](03-syntax.md#d126) — `external type` opaque; combine'ится с
+  `consume`.
+- [D63](04-effects.md#d63), [D64](04-effects.md#d64) — capability
+  enforcement.
+- [D131](#d131-через-link), [D133](#d133) — consume foundation.
+- [Plan 18](../../docs/plans/18-stdlib-roadmap.md) — основной consumer
+  (File/Mutex/Socket migration).
+
+---
+
+## D153. Cross-module consume — visibility + mangling + package contracts
+
+> **Plan 100.6.** Принято 2026-05-23 (proposed). Extends [D26](07-modules.md#d26)
+> visibility + [D134](07-modules.md#d134) mangling v0 + Plan 03 package
+> ecosystem.
+
+### Что
+
+consume-маркер (D133) — **part of exported type signature**. Visibility
+(D26, D47 Plan 35 R26) propagates marker. Symbol mangling (extends
+D134 Plan 81) включает **consume-bit** — ловит cross-version ABI break.
+Plan 03 `nova audit` verifies cross-package consume-contracts.
+
+### Cross-package visibility
+
+```nova
+// package A, module a/types.nv
+export type Transaction consume {
+    id int,
+}
+```
+
+```nova
+// package B, module b/main.nv
+import a.types.Transaction
+
+fn main() {
+    consume tx = Transaction { id: 1 }          // ✅ consume-marker visible
+    tx.commit()
+}
+```
+
+`consume` propagates через `export` + `import`. Plan 35 R26 (visibility
+enforcement) — без special-case'ов; consume — обычный type-attribute.
+
+### Mangling extension (D134 amend)
+
+Plan 81 D134 определил symbol-mangling v0:
+```
+nova_fn_<pkg>_<mod>_<name>_<param-types>_<return-type>
+```
+
+D153 amend:
+```
+nova_fn_<pkg>_<mod>_<name>_<consume-bit>_<param-types>_<return-type>
+                          ^^^^^^^^^^^^^^^
+                          `c` если consume-маркер на type-decl, `_` иначе
+```
+
+Это ловит ABI mismatch — package A v1.0 имеет `Transaction consume`,
+v2.0 убрал marker; linker ловит cross-version mismatch на load.
+
+### Re-export через `export import` (Plan 42.09)
+
+```nova
+// package B re-exports A.Transaction
+export import a.types.{Transaction}
+```
+
+Re-export **preserves** consume-marker. Plan 42.09 уже работает; D153
+verifies.
+
+### Folder-modules (Plan 42) + relative imports (Plan 84)
+
+consume-types работают идентично в folder-modules + relative imports:
+не вводятся special-case rules. Plan 42 / Plan 84 уже работают; D153
+verifies.
+
+### Package version contracts (Plan 03)
+
+`nova.toml` consume-contracts:
+
+```toml
+[package]
+name = "my_lib"
+version = "1.0.0"
+
+[exports.consume_types]
+Transaction = "1.0"                             // consume contract v1
+File = "1.0"
+```
+
+Cross-version compat:
+- v1.0 → v1.x — consume-status unchanged.
+- v1.x → v2.0 — consume-status может change (major-bump required).
+
+`nova audit` (Plan 03.4) verifies — ловит «v1 → v1.1 breaking change»
+unauthorized.
+
+### Cross-module diagnostic
+
+```
+error: consume value `tx` (type a::Transaction) not consumed
+  note: type defined in package 'a' v1.0 at a/types.nv:5
+  note: consume via .commit() or .rollback() (declared in 'a')
+```
+
+Includes package origin, version, consume-method hint.
+
+### Private consume не leak
+
+```nova
+type InternalCache consume { ... }              // no `export`
+// usable только в этом package; cross-package — invisible
+```
+
+Plan 35 R26 — без special-case'ов.
+
+### Сравнение
+
+| Capability | Rust | Kotlin/Java | Go | TS | Nova D153 |
+|---|---|---|---|---|---|
+| Pub visibility consume-маркера | ✅ pub Drop visible | ⚠️ AutoCloseable interface | ⚠️ exported method | ⚠️ TS types | ✅ **D153 propagation** |
+| ABI mangling включает ownership-info | ✅ через type | ⚠️ via signature | ❌ | n/a | ✅ **consume-bit** |
+| Cross-package consume contracts | ✅ Cargo + Rust types | ⚠️ Maven coordinates | ⚠️ go modules | ⚠️ npm types | ✅ **`nova.toml`** |
+| Re-export preserves marker | ✅ через `pub use` | n/a | n/a | n/a | ✅ Plan 42.09 |
+
+Nova **matches Rust** на всех осях; **превосходит** на consume-bit-in-
+mangling (ловит silent ABI mismatch которого Rust не видит через
+type-id alone).
+
+### Связь
+
+- [D26](07-modules.md#d26), [D47](07-modules.md#d47), Plan 35 R26 —
+  visibility foundation.
+- [D134](07-modules.md#d134) — mangling v0 (Plan 81); D153 extends.
+- [D29](07-modules.md#d29) — modules + folder-modules.
+- [D126](03-syntax.md#d126) — opaque types; cross-package consume может
+  быть opaque.
+- [D131](#d131-через-link), [D133](#d133) — consume foundation.
+- Plan 03 / Plan 03.4 — package ecosystem, `nova audit`.
+- Plan 42, Plan 42.09, Plan 84 — folder-modules, re-export, relative
+  imports.
+
+---
+
 ## D135. Type-checker completeness — «no silent fallback» на уровне типов
 
 **Статус:** принято, реализовано ([Plan 79](../../docs/plans/79-typecheck-hardening-no-silent-fallback.md)).
