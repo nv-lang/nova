@@ -1,0 +1,20 @@
+// Plan 97.1 Ф.3 (D142) — method dispatch на protocol-литерале.
+//
+// Проверяет: после создания литерала вызов метода `r.run()`
+// диспатчится через vtable companion (Plan 72 P3-B).
+
+module nova_tests.plan97.pos_protocol_lit_dispatch
+
+
+export type Counter protocol {
+    incr() -> int
+}
+
+
+test "protocol-литерал + dispatch метода" {
+    let r = protocol Counter {
+        incr() => 42
+    }
+    let v = r.incr()
+    assert(v == 42)
+}

@@ -1545,6 +1545,7 @@ impl CEmitter {
         // в loop ниже (с t.generics.is_empty() == false), но non-generic
         // (`type Locker protocol { ... }` без [T]) тоже нужны для
         // emit_protocol_lit (protocol-литерал в expression-position).
+        let mut non_generic_protocols: Vec<String> = Vec::new();
         for item in &module.items {
             if let Item::Type(t) = item {
                 if t.generics.is_empty() {
@@ -1554,9 +1555,17 @@ impl CEmitter {
                             t.name.clone(),
                             (Vec::new(), methods.clone()),
                         );
+                        non_generic_protocols.push(t.name.clone());
                     }
                 }
             }
+        }
+        // Plan 97.1 Ф.3 (D142): pre-emit NovaVtable_<Proto> + NovaBox_<Proto>
+        // typedef'ы для non-generic protocol'ов. Это делает их доступными
+        // в type_ref_to_c (которая `&self`-only и не может вызывать
+        // emit_protocol_box_typedef on-demand).
+        for proto_name in non_generic_protocols {
+            let _ = self.emit_protocol_box_typedef(&proto_name, &[]);
         }
 
         // 1a. Pre-populate generic_types + generic_type_templates BEFORE emit_type_decl
@@ -2168,6 +2177,11 @@ impl CEmitter {
 
         // Plan 48 Ф.3: placeholder for generic type instance definitions (filled after drain).
         self.line("/*__GENERIC_TYPE_DEFS__*/");
+        // Plan 97.1 Ф.3 (D142): mono'd tuple typedefs marker — placed AFTER
+        // GENERIC_TYPE_DEFS so that tuples containing `NovaBox_<Proto>`
+        // (Plan 72 P3-B + protocol-literals) see those typedefs defined.
+        // See preamble comment for rationale.
+        self.line("/*__MONO_TUPLE_TYPEDEFS__*/");
 
         // 2. Forward declarations for all functions (types are now known)
         for item in &module.items {
@@ -2889,13 +2903,13 @@ impl CEmitter {
         // в finalize per-E vtable + TLS slot + throw entry для each registered
         // E type (через `per_e_fail_types`).
         self.line("/*__PER_E_FAIL_DECLS__*/");
-        // Plan 59: mono'd tuple struct typedefs — splice marker; replaced
-        // в finalize. Layout: typedef struct { T1 f0; T2 f1; ... }
-        // _NovaTuple____<T1>__<T2>__...;. Real types (e.g. nova_str, не
-        // nova_int slot) — fit структуры >8 байт. Placed ПОСЛЕ user-type
-        // fwd decls — tuple elements могут быть `Nova_X*` (pointer), которым
-        // достаточно incomplete typedef.
-        self.line("/*__MONO_TUPLE_TYPEDEFS__*/");
+        // Plan 59: mono'd tuple struct typedefs — splice marker.
+        // Plan 97.1 Ф.3 (D142): marker **moved** в emit_module после
+        // `__GENERIC_TYPE_DEFS__`, потому что tuple'ы из protocol-литералов
+        // (`(Reader, Writer)`) могут включать `NovaBox_<Proto>` typedefs,
+        // которые эмитятся в `generic_type_defs_buf`. Если оставить marker
+        // здесь (в preamble — раньше GENERIC), tuple typedef появлялся бы
+        // РАНЬШЕ NovaBox typedef → C-fail unknown type. См. emit_module body.
         // Plan 14 Ф.1: маркер для splice'а typedef'ов NovaOpt_<T> (для T
         // без NOVA_ARRAY_DECL в runtime). Заполняется в `register_novaopt_decl`
         // в registration order (innermost first); splice'ится в финальный
@@ -3409,6 +3423,16 @@ impl CEmitter {
         proto_name: &str,
         type_args: &[String],
     ) -> Option<String> {
+        // Plan 97.1 Ф.3 (D142): skip protocols, vtable struct которых
+        // уже определён в `nova_rt/vtables.h` (`Hashable`, `Comparable`,
+        // `Display`). Эмиссия typedef'а второй раз → C redefinition.
+        // Эти protocol'ы ВСЁ РАВНО получают NovaBox_<X> typedef (одно
+        // определение в generic_type_defs_buf — runtime даёт только
+        // NovaVtable_<X>, не NovaBox).
+        const RT_VTABLE_PROTOCOLS: &[&str] = &["Hashable", "Comparable", "Display"];
+        let rt_has_vtable = type_args.is_empty()
+            && RT_VTABLE_PROTOCOLS.contains(&proto_name);
+
         // Plan 97.1 Ф.1 (D142): non-generic protocols (`type Locker protocol
         // { ... }` без [T]) теперь тоже эмитят vtable + box. Это нужно для
         // protocol-литерала (`protocol Locker { lock() => ... }`) и для
@@ -3457,18 +3481,21 @@ impl CEmitter {
             fields.push_str(&format!("    {} (*{})({}); \n", ret_c, m.name, params_str));
         }
         self.current_type_subst = old_subst;
-        // Vtable struct typedef.
+        // Vtable struct typedef (skip если runtime уже даёт его).
         let args_desc = if args_mangled.is_empty() {
             "(non-generic)".to_string()
         } else {
             args_mangled.clone()
         };
-        self.generic_type_defs_buf.push_str(&format!(
-            "/* Plan 72 P3-B / Plan 97.1: vtable for {} instantiated with {} */\n\
-             typedef struct {vts} {{\n{fields}}} {vts};\n",
-            proto_name, args_desc, vts = vtable_struct, fields = fields
-        ));
+        if !rt_has_vtable {
+            self.generic_type_defs_buf.push_str(&format!(
+                "/* Plan 72 P3-B / Plan 97.1: vtable for {} instantiated with {} */\n\
+                 typedef struct {vts} {{\n{fields}}} {vts};\n",
+                proto_name, args_desc, vts = vtable_struct, fields = fields
+            ));
+        }
         // Fat-pointer box struct typedef: { void* data; const VT* vtable; }.
+        // Эмитим всегда — runtime даёт только VT, не Box.
         self.generic_type_defs_buf.push_str(&format!(
             "typedef struct {{ void* data; const {vts}* vtable; }} {box};\n",
             vts = vtable_struct, box = box_c_type
@@ -3666,6 +3693,21 @@ impl CEmitter {
                         if self.protocol_types.contains(&name)
                             || path.last().map(|s| self.protocol_types.contains(s)).unwrap_or(false)
                         {
+                            // Plan 97.1 Ф.3 (D142): non-generic protocol-typed
+                            // value-position → `NovaBox_<Proto>` fat-pointer
+                            // (вместо `void*`). Generic protocol'ы (`Iter[T]`,
+                            // `Hashable[K]` etc.) — оставить `void*`, т.к. их
+                            // box-форма для concrete type-args обрабатывается
+                            // отдельным path'ом (Plan 72 P3-B
+                            // `protocol_box_c_type_for`).
+                            // Typedef'ы pre-эмитятся в emit_module после
+                            // регистрации protocol_method_registry — здесь
+                            // только возвращаем имя.
+                            if generics.is_empty() {
+                                let proto_name = path.last().cloned()
+                                    .unwrap_or_else(|| name.clone());
+                                return Ok(format!("NovaBox_{}", proto_name));
+                            }
                             return Ok("void*".into());
                         }
                         // Check if it's a type alias — return the aliased type directly (no *)
