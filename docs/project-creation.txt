@@ -19410,3 +19410,48 @@ concurrent timing); 0 регрессий от исполнения 83.4.
  - 861899ab8c4  feat(83.4.1) park-with-predicate + sleep/blocking + D93
  - e6360b9950c  fix(83.4.2/Ф.1) supervised_step skip worker-owned (A2)
  - 7fa8e8af81c  feat(83.4.3) B1 global arena stats + B4 main_yield
+
+
+================================================================
+[2026-05-23] Plan 97.1 followup (worktree nova-p97-1, ветка plan-97-1-fu):
+**Production-grade close edge case'ов** Plan 97.1 Ф.4.
+
+3 коммита на ветке plan-97-1-fu:
+
+* 16b99a9475f — fix [M-protocol-method-name-shadowing]
+  NovaBox-aware приоритет infer_expr_c_type: для Member-call на
+  obj типа NovaBox_<Proto>, return-type метода берётся **первым
+  делом** из protocol_method_registry[<Proto>] (full mangle +
+  base name fallback). Раньше — silent miscompile, если method-name
+  совпадал со stdlib protocol'ом (e.g. `Iter.next` → NovaOpt_T
+  вместо T → CC-FAIL initializing nova_int with NovaOpt_nova_int).
+  Guard-фикстура pos_protocol_lit_method_name_shadowing.
+
+* b3d0af8a3a1 — Ф.4.4 фикстура pos_protocol_lit_with_anon_param
+  Cross-test Ф.2 (anon protocol type-position) + Ф.4 (literal value):
+  fn принимает named protocol-typed value, caller передаёт literal.
+  Использует closure-capture для проверки mutation visibility
+  между вызовами.
+
+* 267559f9b93 — docs (закрытие маркера в simplifications).
+
+**Регресс nova test-all в worktree:**
+**PASS 1120 / FAIL 0 / SKIP 56.**
+
+С baseline 1114 PASS (post-Plan 97.1 merge на main) — +6 новых PASS
+(plan97 17 → 19 фикстур: +shadowing guard + with_anon_param; plus
+other regressions исчезли благодаря shadowing fix'у).
+
+**Закрытые маркеры:**
+* [M-protocol-method-name-shadowing] ✅ ЗАКРЫТ.
+
+**Edge cases оставшиеся** (документированы в plan-doc):
+* Negative фикстура `neg_protocol_lit_call_undefined.nv` (вызов
+  unknown метода на literal) — type-checker не ловит это на стадии
+  Nova (uses NovaBox void* fat-pointer); C-компилятор ловит как
+  `no member named 'X' in struct NovaVtable_<Proto>`. EXPECT_COMPILE_ERROR
+  marker не matches на C-error. Документировать как acceptable
+  trade-off либо расширить test-runner на CC-ERROR markers
+  (отдельная задача).
+
+Готов к merge plan-97-1-fu → main.
