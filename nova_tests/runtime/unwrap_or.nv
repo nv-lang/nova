@@ -38,7 +38,7 @@ test "Some.unwrap" {
 
 test "None.unwrap throws Fail (caught)" {
     let mut caught = false
-    with Fail = handler Fail {
+    with Fail = effect Fail {
         fail(_msg) {
             caught = true
             interrupt ()
@@ -96,7 +96,7 @@ test "Ok.unwrap" {
 
 test "Err.unwrap throws Fail with err message" {
     let mut caught_msg = ""
-    with Fail = handler Fail {
+    with Fail = effect Fail {
         fail(msg) {
             caught_msg = msg
             interrupt ()

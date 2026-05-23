@@ -23,7 +23,7 @@ test "re-throw из inner handler dispatch'ится на outer handler" {
     let mut inner_called = false
     let mut outer_called = false
     // Outer handler — финальный catch через interrupt.
-    with Fail = handler Fail {
+    with Fail = effect Fail {
         fail(_msg) {
             outer_called = true
             interrupt ()
@@ -31,7 +31,7 @@ test "re-throw из inner handler dispatch'ится на outer handler" {
     } {
         // Inner handler — помечает + re-throw'ит. D65 правило 3:
         // throw в handler-body → outer handler (skip current).
-        with Fail = handler Fail {
+        with Fail = effect Fail {
             fail(msg) {
                 inner_called = true
                 throw msg               // re-throw — должен идти к outer
@@ -61,13 +61,13 @@ test "re-throw из inner handler dispatch'ится на outer handler" {
 test "errdefer + re-throw + outer interrupt — errdefer skip" {
     let mut cleaned_up = 0
     let mut outer_called = false
-    with Fail = handler Fail {
+    with Fail = effect Fail {
         fail(_msg) {
             outer_called = true
             interrupt ()
         }
     } {
-        with Fail = handler Fail {
+        with Fail = effect Fail {
             fail(msg) {
                 throw msg               // re-throw → outer handler
             }
@@ -94,19 +94,19 @@ test "трёхуровневый re-throw: каждый handler пропуска
     let mut level1 = false
     let mut level2 = false
     let mut level3 = false
-    with Fail = handler Fail {
+    with Fail = effect Fail {
         fail(_msg) {
             level3 = true
             interrupt ()
         }
     } {
-        with Fail = handler Fail {
+        with Fail = effect Fail {
             fail(msg) {
                 level2 = true
                 throw msg
             }
         } {
-            with Fail = handler Fail {
+            with Fail = effect Fail {
                 fail(msg) {
                     level1 = true
                     throw msg

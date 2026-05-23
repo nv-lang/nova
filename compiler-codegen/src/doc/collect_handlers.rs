@@ -177,13 +177,14 @@ fn build_effect_index(
 /// Извлекает имена effects из pattern'ов `handler <Name>` в source.
 /// Возвращает Vec<String> — каждый Name это либо `"Foo"` либо `"mod.Foo"`.
 ///
-/// **Pattern.** `handler` keyword, затем whitespace, затем identifier
-/// (possibly with `.` для qualified path). Word-boundary check на старте
-/// (избегает `subhandler`).
+/// **Pattern.** `effect` keyword (был `handler` до Plan 97 Ф.3 / D142),
+/// затем whitespace, затем identifier (possibly with `.` для qualified
+/// path). Word-boundary check на старте (избегает `effective`).
 fn find_handler_literals(source: &str) -> Vec<String> {
     let mut out = Vec::new();
     let bytes = source.as_bytes();
-    let kw = b"handler";
+    // Plan 97 Ф.3 (D142): `handler` keyword retired → `effect`.
+    let kw = b"effect";
     let mut i = 0;
     while i + kw.len() <= bytes.len() {
         if &bytes[i..i + kw.len()] == kw {

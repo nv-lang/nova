@@ -16,7 +16,7 @@ type Db effect {
 
 test "handler с branching под #verify даёт E2402" {
     let mut store = 0
-    with #verify Db = handler Db {
+    with #verify Db = effect Db {
         SetBalance(id, amount) {
             if amount >= 0 {
                 store = amount  // branching — V1 не поддерживает

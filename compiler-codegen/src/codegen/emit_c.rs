@@ -1483,7 +1483,8 @@ impl CEmitter {
                 "int", "i64", "i32", "i16", "i8",
                 "u64", "u32", "u16", "u8",
                 "f64", "f32", "bool", "str", "char",
-                "Option", "Result", "Self", "Handler", "CancelToken",
+                // Plan 97 Ф.3 (D142): `Handler` → `Effect`.
+                "Option", "Result", "Self", "Effect", "CancelToken",
                 // Plan 76: bottom-тип `never` — строчный встроенный примитив.
                 "never", "Error",
                 // Plan 62.C: RuntimeError имеет real struct в array.h
@@ -3589,8 +3590,10 @@ impl CEmitter {
                             Err("Self type used outside receiver context (free function or top-level expression). Self valid only внутри `fn Type[..].method(...)` или `fn Type[..] @method(...)`.".into())
                         }
                     }
-                    "Handler" => {
-                        // Handler[EffectName] → NovaVtable_EffectName*
+                    // Plan 97 Ф.3 (D142): builtin `Handler` → `Effect`.
+                    // `Effect[EffectName]` → NovaVtable_EffectName* (тот же
+                    // runtime vtable, только имя type-конструктора другое).
+                    "Effect" => {
                         if let Some(g) = generics.first() {
                             if let TypeRef::Named { path: eff_path, .. } = g {
                                 return Ok(format!("NovaVtable_{}*", eff_path.join("_")));
@@ -7078,8 +7081,9 @@ impl CEmitter {
             TypeRef::Named { path, generics, .. } => {
                 let name = path.last().cloned();
                 if let Some(n) = &name {
-                    // Handler[X] → X is a vtable name, not a struct name
-                    if n == "Handler" {
+                    // Plan 97 Ф.3 (D142): `Handler` → `Effect`.
+                    // `Effect[X]` → X is a vtable name, not a struct name.
+                    if n == "Effect" {
                         if let Some(TypeRef::Named { path: gpath, .. }) = generics.first() {
                             if let Some(eff) = gpath.last() { vtable_out.insert(eff.clone()); }
                         }

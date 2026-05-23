@@ -10,7 +10,7 @@ type Branchy effect {
 }
 
 test "liskov encoding fail → W2402" {
-    with #verify Branchy = handler Branchy {
+    with #verify Branchy = effect Branchy {
         classify(x) => x
     } {
         let r = Branchy.classify(5)

@@ -17,7 +17,7 @@ fn check() -> int
 }
 
 test "static axiom Unknown → W2402" {
-    with #verify Counter = handler Counter {
+    with #verify Counter = effect Counter {
         value() => 1
     } {
         assert(check() == 42)

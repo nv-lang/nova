@@ -55,7 +55,7 @@ test "tok.cancel() изнутри — peer на следующем yield не в
     // в with Fail чтобы тест не abort'нулся.
     let tok = CancelToken.new()
     let mut peer_completed = false
-    with Fail = handler Fail {
+    with Fail = effect Fail {
         fail(_msg) {
             interrupt ()
         }

@@ -2,7 +2,7 @@
 //
 // Особенности D61:
 //   - `effect` keyword (вместо устаревшего `protocol`)
-//   - `handler X { ... }` keyword для handler-литерала
+//   - `effect X { ... }` keyword для handler-литерала
 //   - `return v` или финальное выражение в handler-method
 //   - `interrupt v` для досрочного завершения with-блока
 
@@ -26,7 +26,7 @@ fn count_three() Counter -> int {
 fn main() {
     // Базовый случай: handler с состоянием через return
     let mut state = 0
-    with Counter = handler Counter {
+    with Counter = effect Counter {
         next() {
             state += 1
             return state
@@ -37,7 +37,7 @@ fn main() {
     }
 
     // D61: interrupt прерывает with-блок
-    let r = with Switch = handler Switch {
+    let r = with Switch = effect Switch {
         flip() {
             interrupt 999       // вместо bool отдаём int как результат всего with
         }
@@ -48,7 +48,7 @@ fn main() {
     println("interrupt result = ", r)    // 999
 
     // D61: handler-значение через переменную, прямой вызов h.op
-    let switcher = handler Switch {
+    let switcher = effect Switch {
         flip() => true
     }
     let b = switcher.flip()              // прямой вызов, минуя with

@@ -11,7 +11,7 @@ type Db effect {
 
 test "trusted handler for axiom-bearing effect type-checks" {
     let mut store = 0
-    with #trusted Db = handler Db {
+    with #trusted Db = effect Db {
         SetBalance(id, amount) { store = amount }
         balance(id) => store
     } {

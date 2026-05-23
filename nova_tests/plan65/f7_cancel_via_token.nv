@@ -29,7 +29,7 @@ const SLACK_MS   i64 = 1500
 test "tok.cancel() closes a pending close_after timer (no leak)" {
     let tok = CancelToken.new()
     let t0 = Time.now()
-    with Fail = handler Fail {
+    with Fail = effect Fail {
         fail(_msg) => interrupt ()
     } {
         supervised(cancel: tok) {

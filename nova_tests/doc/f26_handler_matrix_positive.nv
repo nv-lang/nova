@@ -1,5 +1,5 @@
 // Plan 45 Ф.26.2 / Ф.23.4: Handler matrix (Effect → callers).
-// Позитивный тест: функции с `handler Effect { ... }` literals компилируются
+// Позитивный тест: функции с `effect Effect { ... }` literals компилируются
 // и runtime работает корректно. Doc-pipeline scan'ит handler literals и
 // populate'ит Effect.handlers — это проверяется cargo integration tests.
 // Здесь — runtime correctness handlers.
@@ -22,7 +22,7 @@ export type Logger effect {
 /// Function — single handler usage.
 export fn count_to(n int) -> int {
     let mut c = 0
-    with #trusted Counter = handler Counter {
+    with #trusted Counter = effect Counter {
         incr() { c = c + 1 }
         get() => c
     } {
@@ -39,11 +39,11 @@ export fn count_to(n int) -> int {
 export fn count_and_log(n int) -> int {
     let mut c = 0
     let mut last_msg = ""
-    with #trusted Counter = handler Counter {
+    with #trusted Counter = effect Counter {
         incr() { c = c + 1 }
         get() => c
     } {
-        with #trusted Logger = handler Logger {
+        with #trusted Logger = effect Logger {
             log(msg) { last_msg = msg }
             last() => last_msg
         } {
@@ -61,7 +61,7 @@ export fn count_and_log(n int) -> int {
 /// Helper — reuses Counter handler in second caller.
 export fn count_twice(n int) -> int {
     let mut c = 0
-    with #trusted Counter = handler Counter {
+    with #trusted Counter = effect Counter {
         incr() { c = c + 1 }
         get() => c
     } {

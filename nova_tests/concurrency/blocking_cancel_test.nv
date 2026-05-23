@@ -49,7 +49,7 @@ test "blocking: offload + scope cancel — after_work_cb always wakes, no deadlo
     // оборачиваем в `with Fail` чтобы тест не abort'нулся.
     let tok = CancelToken.new()
     let mut reached_end = false
-    with Fail = handler Fail {
+    with Fail = effect Fail {
         fail(_msg) {
             interrupt ()
         }

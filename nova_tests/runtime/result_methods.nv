@@ -138,7 +138,7 @@ test "Result.unwrap — Ok(v) → v" {
 test "Result.unwrap — Err(e) бросает Fail с msg" {
     // Fail-handler ловит msg из Err.
     let mut caught = ""
-    with Fail = handler Fail {
+    with Fail = effect Fail {
         fail(msg) {
             caught = msg
             interrupt ()

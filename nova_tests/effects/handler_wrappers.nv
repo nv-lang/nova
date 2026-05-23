@@ -51,7 +51,7 @@ fn with_resource_safe(id int, t Tracker, body fn(int) -> int) Fail[str] -> int {
     t.opened = t.opened + 1
     let mut caught = ""
     let mut had_throw = false
-    let result = with Fail[str] = handler Fail[str] {
+    let result = with Fail[str] = effect Fail[str] {
         fail(msg) {
             caught = msg
             had_throw = true
@@ -104,7 +104,7 @@ test "with_resource_naive: throw в body — closed НЕ инкрементир�
     // Демонстрация ПОЧЕМУ нужна safe-обёртка: naive-версия течёт.
     let t = Tracker { opened: 0, closed: 0 }
     let mut caught_msg = ""
-    let _ = with Fail[str] = handler Fail[str] {
+    let _ = with Fail[str] = effect Fail[str] {
         fail(msg) {
             caught_msg = msg
             interrupt 0
@@ -120,7 +120,7 @@ test "with_resource_naive: throw в body — closed НЕ инкрементир�
 test "with_resource_safe: throw в body — cleanup вызывается + re-throw" {
     let t = Tracker { opened: 0, closed: 0 }
     let mut caught_msg = ""
-    let _ = with Fail[str] = handler Fail[str] {
+    let _ = with Fail[str] = effect Fail[str] {
         fail(msg) {
             caught_msg = msg
             interrupt 0

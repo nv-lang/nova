@@ -534,8 +534,9 @@ fn arity_exempt(name: &str) -> bool {
         name,
         // referential / top / bottom
         "Self" | "any" | "never" | "Never"
-        // Fail[E] ≡ bare Fail (D65); Handler[E] ≡ Handler[E, never] (D88)
-        | "Fail" | "Handler"
+        // Fail[E] ≡ bare Fail (D65); Effect[E] ≡ Effect[E, never] (D88)
+        // Plan 97 Ф.3 (D142): `Handler` → `Effect`.
+        | "Fail" | "Effect"
         // built-in эффекты с параметрами — не объявлены как Item::Type,
         // в таблицу не попадут; перечислены явно для ясности
         | "Ask" | "Alloc"

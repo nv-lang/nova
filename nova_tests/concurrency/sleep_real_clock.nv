@@ -76,7 +76,7 @@ test "Time.sleep(0) is fast yield" {
 
 test "sleep handler override works (mock)" {
     let mut calls = 0
-    let mock = handler Time {
+    let mock = effect Time {
         sleep(ms) { calls += 1; return () }
         now()     => 12345
     }

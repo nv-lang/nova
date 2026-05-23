@@ -62,7 +62,7 @@ test "Time.timer_fired increments on natural fire" {
 test "Time.timer_cancelled increments on cancel-token cleanup" {
     let before = Time.timer_cancelled()
     let tok = CancelToken.new()
-    with Fail = handler Fail {
+    with Fail = effect Fail {
         fail(_msg) => interrupt ()
     } {
         supervised(cancel: tok) {

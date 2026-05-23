@@ -14,7 +14,7 @@ type Db effect {
 
 test "post action view symbolic exec" {
     let mut store = 0
-    with #verify Db = handler Db {
+    with #verify Db = effect Db {
         SetBalance(id, amount) { store = amount }
         balance(id) => store
     } {

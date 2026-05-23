@@ -25,7 +25,7 @@ fn check_positive(n int) -> int {
 test "throw in match-arm — handler catches" {
     let mut caught = ""
     let mut got = -1
-    with Fail = handler Fail {
+    with Fail = effect Fail {
         fail(msg) {
             caught = msg
             interrupt ()
@@ -38,7 +38,7 @@ test "throw in match-arm — handler catches" {
 
 test "throw in match-arm — happy path returns value" {
     let mut got = -1
-    with Fail = handler Fail {
+    with Fail = effect Fail {
         fail(_msg) { interrupt () }
     } {
         got = check_positive(5)
@@ -62,7 +62,7 @@ fn assert_not_zero(n int) -> int {
 
 test "throw before fall-through statement" {
     let mut caught = ""
-    with Fail = handler Fail {
+    with Fail = effect Fail {
         fail(msg) {
             caught = msg
             interrupt ()
@@ -75,7 +75,7 @@ test "throw before fall-through statement" {
 
 test "throw before fall-through — happy path" {
     let mut got = -1
-    with Fail = handler Fail {
+    with Fail = effect Fail {
         fail(_msg) { interrupt () }
     } {
         got = assert_not_zero(7)
@@ -99,7 +99,7 @@ test "throw before fall-through — happy path" {
 
 test "?? throw — Some-ветка НЕ выполняет throw (short-circuit)" {
     let mut caught_msg = ""
-    with Fail = handler Fail {
+    with Fail = effect Fail {
         fail(msg) {
             caught_msg = msg
             interrupt ()
@@ -116,7 +116,7 @@ test "?? throw — Some-ветка НЕ выполняет throw (short-circuit)
 
 test "?? throw — None-ветка реально бросает" {
     let mut caught_msg = ""
-    with Fail = handler Fail {
+    with Fail = effect Fail {
         fail(msg) {
             caught_msg = msg
             interrupt ()
@@ -131,7 +131,7 @@ test "?? throw — None-ветка реально бросает" {
 
 test "?? throw в цепочке lookup'ов" {
     let mut last_thrown = ""
-    with Fail = handler Fail {
+    with Fail = effect Fail {
         fail(msg) {
             last_thrown = msg
             interrupt ()

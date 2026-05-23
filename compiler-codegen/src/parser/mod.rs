@@ -4225,6 +4225,23 @@ impl Parser {
                 let is_forall = kw == "forall";
                 self.parse_quantifier(is_forall)
             }
+            // Plan 97 Ф.3 (D142): hint при `handler IDENT {` —
+            // legacy literal-форма, снята clean-break'ом. Подсказка
+            // должна указывать на новый `effect IDENT { ... }`.
+            TokenKind::Ident(ref kw)
+                if kw == "handler"
+                    && matches!(self.peek_at(1).kind, TokenKind::Ident(_))
+                    && matches!(self.peek_at(2).kind, TokenKind::LBrace) =>
+            {
+                let span = self.peek().span;
+                return Err(Diagnostic::new(
+                    "`handler` keyword removed (Plan 97 / D142) — use `effect X { ... }` \
+                     instead. Migration: replace `handler EffectName { ops }` with \
+                     `effect EffectName { ops }`. Builtin type `Handler[E, IRT]` also \
+                     renamed to `Effect[E, IRT]`.",
+                    span,
+                ));
+            }
             TokenKind::Ident(_) => {
                 // Простой идентификатор. Dot-цепочки `.field`/`.method`
                 // обрабатываются в parse_postfix как Member access — это
@@ -4413,7 +4430,11 @@ impl Parser {
                 let span = start_span.merge(value.span);
                 Ok(Expr::new(ExprKind::Throw(Box::new(value)), span))
             }
-            TokenKind::KwHandler => self.parse_handler_lit(),
+            // Plan 97 Ф.3 (D142): литерал handler'а через keyword `effect`
+            // (тот же, что в declaration — disambig по позиции). В
+            // expression-position `effect IDENT { ... }` всегда literal,
+            // т.к. declaration `type X effect {...}` начинается с `type`.
+            TokenKind::KwEffect => self.parse_handler_lit(),
             TokenKind::KwForbid => self.parse_forbid(),
             TokenKind::KwRealtime => self.parse_realtime(),
             TokenKind::KwSelect => self.parse_select(),
@@ -4740,7 +4761,6 @@ impl Parser {
             TokenKind::KwType => "type",
             TokenKind::KwProtocol => "protocol",
             TokenKind::KwEffect => "effect",
-            TokenKind::KwHandler => "handler",
             TokenKind::KwAlias => "alias",
             TokenKind::KwLet => "let",
             TokenKind::KwConst => "const",
@@ -5730,10 +5750,13 @@ impl Parser {
         ))
     }
 
-    /// `handler EffectName { ops }` — keyword-форма handler-литерала (D61).
+    /// `effect EffectName { ops }` — keyword-форма handler-литерала
+    /// (D61, переименована Plan 97 Ф.3 / D142: `handler` → `effect`).
     /// Реиспользует существующую логику парсинга handler-method'ов.
+    /// Внутреннее имя AST-узла `HandlerLit` сохранено (рефакторинг
+    /// имён — отдельный noise; семантика та же).
     fn parse_handler_lit(&mut self) -> Result<Expr, Diagnostic> {
-        let start = self.expect(&TokenKind::KwHandler)?.span;
+        let start = self.expect(&TokenKind::KwEffect)?.span;
         // Имя эффекта — dotted path, опционально с generic-параметрами.
         let mut path = vec![self.parse_ident()?.0];
         while matches!(self.peek().kind, TokenKind::Dot)
@@ -7391,37 +7414,35 @@ mod tests {
         assert!(t.generics[0].default.is_some());
     }
 
-    // ─── Plan 19, C9 (D87): Handler[E, IRT] ──────────────────────
+    // ─── Plan 19, C9 (D87) → Plan 97 Ф.3 (D142): Effect[E, IRT] ────
 
     #[test]
-    fn handler_two_param_generic() {
-        // `Handler[Logger, int]` — двухпараметрический generic
-        // (E + IRT). Парсер trustы любое количество type-args через
-        // обычный type-parsing path.
+    fn effect_two_param_generic() {
+        // `Effect[Logger, int]` — двухпараметрический generic
+        // (E + IRT). Plan 97 Ф.3 (D142): renamed from `Handler`.
         let m = parse_or_panic(
-            "fn make_h() -> Handler[Logger, int] => some_handler\n"
+            "fn make_h() -> Effect[Logger, int] => some_handler\n"
         );
         let Item::Fn(f) = &m.items[0] else { panic!() };
         let Some(TypeRef::Named { path, generics, .. }) = &f.return_type else {
             panic!("expected named return type, got {:?}", f.return_type);
         };
-        assert_eq!(path, &vec!["Handler".to_string()]);
+        assert_eq!(path, &vec!["Effect".to_string()]);
         assert_eq!(generics.len(), 2);
     }
 
     #[test]
-    fn handler_single_param_default_irt() {
-        // `Handler[E]` ≡ `Handler[E, never]` через D88 default.
-        // Парсится как одноаргументный generic (default подставляется
-        // в monomorphization, а не на parse-стадии).
+    fn effect_single_param_default_irt() {
+        // `Effect[E]` ≡ `Effect[E, never]` через D88 default.
+        // Plan 97 Ф.3 (D142): renamed from `Handler`.
         let m = parse_or_panic(
-            "fn make_h() -> Handler[Logger] => some_handler\n"
+            "fn make_h() -> Effect[Logger] => some_handler\n"
         );
         let Item::Fn(f) = &m.items[0] else { panic!() };
         let Some(TypeRef::Named { path, generics, .. }) = &f.return_type else {
             panic!()
         };
-        assert_eq!(path, &vec!["Handler".to_string()]);
+        assert_eq!(path, &vec!["Effect".to_string()]);
         assert_eq!(generics.len(), 1);
     }
 

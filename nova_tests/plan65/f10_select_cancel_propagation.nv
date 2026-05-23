@@ -16,7 +16,7 @@ test "select close_after — cancel wakes select and closes timer" {
     let tok = CancelToken.new()
     let (tx, rx) = Channel.new[i64](1)
     let t0 = Time.now()
-    with Fail = handler Fail {
+    with Fail = effect Fail {
         fail(_msg) => interrupt ()
     } {
         supervised(cancel: tok) {

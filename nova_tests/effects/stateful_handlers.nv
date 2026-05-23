@@ -8,7 +8,7 @@
 //    обращается к state через метод record'а (closure-capture record'а
 //    самого).
 //
-// Полный паттерн D68 «type T { mut x int }; fn T @as_handler() -> Handler[E]»
+// Полный паттерн D68 «type T { mut x int }; fn T @as_handler() -> Effect[E]»
 // с использованием `s.as_handler()` в `with` — ломается в bootstrap-парсере
 // (см. docs/known-issues-bootstrap.md «with X = factory()»).
 // Для тестов используем альтернативный синтаксис.
@@ -23,7 +23,7 @@ type Counter effect {
 
 test "closure capture — state в let mut" {
     let mut counter = 0
-    with Counter = handler Counter {
+    with Counter = effect Counter {
         next() {
             counter += 1
             return counter
@@ -42,7 +42,7 @@ test "closure capture — state в let mut" {
 
 test "closure capture — state переживает несколько with-блоков" {
     let mut counter = 100
-    with Counter = handler Counter {
+    with Counter = effect Counter {
         next() {
             counter += 10
             return counter
@@ -54,7 +54,7 @@ test "closure capture — state переживает несколько with-б�
     let mid = counter
     assert(mid == 120)
 
-    with Counter = handler Counter {
+    with Counter = effect Counter {
         next() {
             counter += 1
             return counter
@@ -78,7 +78,7 @@ fn CounterState @inc_and_get() -> int {
 
 test "record + @method — handler ссылается через closure на record" {
     let s = CounterState { value: 0 }
-    with Counter = handler Counter {
+    with Counter = effect Counter {
         next() => s.inc_and_get()
     } {
         let a = Counter.next()
@@ -94,7 +94,7 @@ test "record + @method — handler ссылается через closure на re
 
 test "record state — несколько handler'ов на один state" {
     let s = CounterState { value: 0 }
-    let h1 = handler Counter {
+    let h1 = effect Counter {
         next() => s.inc_and_get()
     }
     with Counter = h1 {
@@ -104,7 +104,7 @@ test "record state — несколько handler'ов на один state" {
     let after_h1 = s.value
     assert(after_h1 == 2)
 
-    let h2 = handler Counter {
+    let h2 = effect Counter {
         next() => s.inc_and_get()
     }
     with Counter = h2 {
@@ -117,7 +117,7 @@ test "record state — несколько handler'ов на один state" {
 
 // === Handler-фабрика как свободная функция (caller передаёт state) ===
 
-fn make_counter_starting(start_state CounterState) -> Handler[Counter] => handler Counter {
+fn make_counter_starting(start_state CounterState) -> Effect[Counter] => effect Counter {
     next() => start_state.inc_and_get()
 }
 
@@ -142,10 +142,10 @@ type Reset effect {
 
 test "два эффекта на один state" {
     let s = CounterState { value: 0 }
-    let h_counter = handler Counter {
+    let h_counter = effect Counter {
         next() => s.inc_and_get()
     }
-    let h_reset = handler Reset {
+    let h_reset = effect Reset {
         reset() {
             s.value = 0
             return ()
