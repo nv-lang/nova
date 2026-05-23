@@ -14496,13 +14496,21 @@ impl CEmitter {
                                         (param_names[0].clone(), ok_c.clone()),
                                         (param_names[1].clone(), err_c.clone()),
                                     ];
-                                    // mono-name = `result_method_c_name`-обычная
-                                    // схема: префикс из baseline c_name
-                                    // + `_<n>` суффикс через `novares_name`.
-                                    let base = format!("Nova_Result_method_{}",
-                                        method.as_str());
-                                    let mono_name = self.result_method_c_name(
-                                        &obj_ty, &base);
+                                    // Plan 95.bis Ф.2: mono-name **всегда
+                                    // суффиксированный** (даже для legacy
+                                    // `Nova_Result*`). Иначе #define-алиасы
+                                    // в array.h (`Nova_Result_method_unwrap_or
+                                    // → _nova_int_nova_str`) подменяли бы
+                                    // имя в теле моей Nova-функции эмитимой
+                                    // под коротким именем → C-redefinition
+                                    // с моно-эмиссией под суффиксированным.
+                                    // Для legacy `Nova_Result*` суффикс
+                                    // резолвится в канонический bootstrap
+                                    // `nova_int_nova_str` (тот же fallback).
+                                    let suffix = Self::novares_name(&ok_c, &err_c);
+                                    let mono_name = format!(
+                                        "Nova_Result_method_{}_{}",
+                                        method.as_str(), suffix);
                                     self.register_mono_method_instance(
                                         &fn_decl, type_subst, &mono_name, "Result");
                                     let obj_c = self.emit_expr(obj)?;
@@ -14516,39 +14524,13 @@ impl CEmitter {
                             // Defensive fall through.
                         }
                         // Inline-sentinel + DeclaredBody fall through.
+                        // Plan 95.bis Ф.2: ветка `err` УБРАНА — теперь
+                        // routing через DeclaredBody (Plan 95.bis Ф.1 — Nova-
+                        // body в core.nv). Inline-эмит сохранялся для
+                        // (T,E)-aware boxing — Nova-body эмитит то же самое
+                        // через mono'd register_novaopt_decl path.
                         let obj_c = self.emit_expr(obj)?;
                         match method.as_str() {
-                            // D26 prelude: Result.err() → Option[E].
-                            // Plan 59 Ф.7.5 D3: (T,E)-aware — возвращает
-                            // `NovaOpt_<err_s>` с реальным Err-типом в
-                            // `.value` (раньше хардкод `NovaOpt_nova_int`
-                            // с boxed `nova_str*` → mismatch с inference
-                            // `NovaOpt_<err_ident>`). `NovaOpt_<err_s>`
-                            // регистрируется через register_novaopt_decl.
-                            "err" => {
-                                let tmp = self.fresh_tmp();
-                                // Plan 59 Ф.7.5 D4: строгая (T,E)-резолюция.
-                                let (_, err_c) = self.resolve_result_te_strict(
-                                    obj, &obj_ty, "err")?;
-                                let err_s = Self::sanitize_for_novaopt(&err_c);
-                                self.register_novaopt_decl(&err_s, &err_c);
-                                let opt_ty = format!("NovaOpt_{}", err_s);
-                                // dual-mode var-decl.
-                                self.line(&format!("{} {} = {};", obj_ty, tmp, obj_c));
-                                let opt_tmp = self.fresh_tmp();
-                                self.line(&format!("{} {};", opt_ty, opt_tmp));
-                                self.line(&format!("if ({}->tag == NOVA_TAG_Result_Err) {{", tmp));
-                                self.indent += 1;
-                                self.line(&format!("{}.tag = NOVA_TAG_Option_Some;", opt_tmp));
-                                self.line(&format!("{}.value = {}->payload.Err._0;", opt_tmp, tmp));
-                                self.indent -= 1;
-                                self.line("} else {");
-                                self.indent += 1;
-                                self.line(&format!("{}.tag = NOVA_TAG_Option_None;", opt_tmp));
-                                self.indent -= 1;
-                                self.line("}");
-                                return Ok(opt_tmp);
-                            }
                             // D26 prelude: Result.unwrap_or_else(f). Err →
                             // f(e), Ok(v) → v. f это closure (nova_str → T).
                             // Plan 72 P1-C: use actual T type for result variable.
@@ -20959,27 +20941,13 @@ impl CEmitter {
             sani = sanitized, body = cmp_body);
         self.novaopt_typedefs_buf.borrow_mut().push_str(&eq_fn);
 
-        // Plan 39 Issue A / Plan 95 Ф.4.2: auto-gen Option `unwrap_or` для
-        // не-runtime типов (нужен для `.unwrap_or(default)`).
+        // Plan 95.bis Ф.2: lazy-emit `unwrap_or` для не-runtime типов —
+        // УБРАН. Метод перенесён на Nova-body в `std/prelude/core.nv`;
+        // mono'd Nova_Option_method_unwrap_or_<T> с тем же C-именем
+        // эмитится через DeclaredBody-dispatch + worklist drain.
+        // C-redefinition collision при оставлении lazy-emit.
         //
-        // **`is_some` / `is_none` УБРАНЫ** (Plan 95 Ф.4.2): перенесены на
-        // Nova-body в `std/prelude/core.nv`, mono'd Nova_Option_method_
-        // is_some_<T> эмитится через DeclaredBody-dispatch + worklist drain.
-        // C-redefinition collision при оставлении lazy-emit (тот же C-name).
-        //
-        // nova_int + nova_str: runtime array.h provides methods.
-        // nova_f64 + nova_f32: runtime array.h provides methods (Plan 70.4).
-        // Plan 70.4 Ф.2: sized-int types — array.h provides methods.
-        let sized_int_in_runtime = matches!(sanitized,
-            "int32_t" | "int16_t" | "int8_t" | "uint32_t" | "uint16_t" | "uint64_t");
-        if sanitized != "nova_int" && sanitized != "nova_str"
-            && sanitized != "nova_f64" && sanitized != "nova_f32"
-            && !sized_int_in_runtime {
-            let methods = format!(
-                "static inline {cty} Nova_Option_method_unwrap_or_{sani}(NovaOpt_{sani} o, {cty} default_v) {{ return o.tag == NOVA_TAG_Option_Some ? o.value : default_v; }}\n",
-                sani = sanitized, cty = c_ty);
-            self.novaopt_typedefs_buf.borrow_mut().push_str(&methods);
-        }
+        // (Раньше тут также генерились is_some/is_none — Plan 95 Ф.4.2.)
     }
 
     /// Plan 59 Ф.7.5: резолвит (T, E) generics `Result[T,E]` в concrete
@@ -21187,26 +21155,13 @@ impl CEmitter {
                  return r; }}\n",
                 n = name));
         }
-        // Plan 95 Ф.5.2: `is_ok` / `is_err` УБРАНЫ — перенесены на
-        // Nova-body в `std/prelude/core.nv`, mono'd через DeclaredBody-
-        // dispatch + worklist drain. Тот же C-symbol → C-redefinition
-        // collision если оставить здесь.
-        buf.push_str(&format!(
-            "static inline {ok} Nova_Result_method_unwrap_or_{n}(NovaRes_{n}* r, {ok} default_v) {{ \
-             return r->tag == NOVA_TAG_Result_Ok ? r->payload.Ok._0 : default_v; }}\n",
-            n = name, ok = ok_c));
-        buf.push_str(&format!(
-            "static inline NovaOpt_{oks} Nova_Result_method_ok_{n}(NovaRes_{n}* r) {{ \
-             NovaOpt_{oks} o; if (r->tag == NOVA_TAG_Result_Ok) {{ \
-             o.tag = NOVA_TAG_Option_Some; o.value = r->payload.Ok._0; }} \
-             else {{ o.tag = NOVA_TAG_Option_None; }} return o; }}\n",
-            n = name, oks = ok_s));
-        buf.push_str(&format!(
-            "static inline NovaOpt_{errs} Nova_Result_method_err_{n}(NovaRes_{n}* r) {{ \
-             NovaOpt_{errs} o; if (r->tag == NOVA_TAG_Result_Err) {{ \
-             o.tag = NOVA_TAG_Option_Some; o.value = r->payload.Err._0; }} \
-             else {{ o.tag = NOVA_TAG_Option_None; }} return o; }}\n",
-            n = name, errs = err_s));
+        // Plan 95.bis Ф.2: lazy-emit `unwrap_or` / `ok` / `err` УБРАН —
+        // перенесены на Nova-body в `std/prelude/core.nv`, mono'd через
+        // DeclaredBody-dispatch + worklist drain. C-redefinition
+        // collision если оставить.
+        //
+        // (Также Plan 95 Ф.5.2: `is_ok` / `is_err` — тот же канал.)
+        let _ = ok_s; let _ = err_s;
     }
 
 

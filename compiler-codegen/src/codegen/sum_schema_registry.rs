@@ -344,10 +344,12 @@ impl SumSchemaRegistry {
         // R27 auto-import) мог бы маршрутизировать вызов в удалённый
         // C-трамплин → undefined symbol. Loud-fail «method not found»
         // лучше silent miscompilation.
-        option_methods.insert("unwrap_or".to_string(), MethodRouting::HardcodedRuntimeFn {
-            c_name: "Nova_Option_method_unwrap_or".to_string(),
-            is_per_t: true,
-        });
+        // Plan 95.bis Ф.2: `unwrap_or` и `or` УБРАНЫ — перенесены на
+        // Nova-body в std/prelude/core.nv; routing получает
+        // DeclaredBody через `init_prelude_decls_from_items` (он
+        // переопределяет inherited baseline). Если оставить здесь
+        // HardcodedRuntimeFn — Prelude override всё равно выигрывает
+        // precedence, но baseline-mention вводит в заблуждение.
         option_methods.insert("unwrap".to_string(), MethodRouting::HardcodedRuntimeFn {
             c_name: "<inline>".to_string(),
             is_per_t: false,
@@ -363,10 +365,6 @@ impl SumSchemaRegistry {
         option_methods.insert("ok_or".to_string(), MethodRouting::HardcodedRuntimeFn {
             c_name: "<inline>".to_string(),
             is_per_t: false,
-        });
-        option_methods.insert("or".to_string(), MethodRouting::HardcodedRuntimeFn {
-            c_name: "Nova_Option_method_or".to_string(),
-            is_per_t: true,
         });
 
         self.register_schema(SumSchemaEntry {
@@ -416,18 +414,9 @@ impl SumSchemaRegistry {
         // Nova-body в std/prelude/core.nv, routing регистрируется как
         // `DeclaredBody` через `init_prelude_decls_from_items`.
         let mut result_methods = HashMap::new();
-        result_methods.insert("ok".to_string(), MethodRouting::HardcodedRuntimeFn {
-            c_name: "Nova_Result_method_ok".to_string(),
-            is_per_t: false,
-        });
-        result_methods.insert("err".to_string(), MethodRouting::HardcodedRuntimeFn {
-            c_name: "<inline>".to_string(),
-            is_per_t: false,
-        });
-        result_methods.insert("unwrap_or".to_string(), MethodRouting::HardcodedRuntimeFn {
-            c_name: "Nova_Result_method_unwrap_or".to_string(),
-            is_per_t: false,
-        });
+        // Plan 95.bis Ф.2: `ok`, `err`, `unwrap_or` УБРАНЫ — перенесены
+        // на Nova-body в std/prelude/core.nv; routing → DeclaredBody
+        // через init_prelude_decls_from_items.
         result_methods.insert("unwrap_or_else".to_string(), MethodRouting::HardcodedRuntimeFn {
             c_name: "<inline>".to_string(),
             is_per_t: false,
