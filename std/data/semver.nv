@@ -37,7 +37,7 @@
 //   - `str.starts_with(prefix str) -> bool`
 //   - `str.contains(needle str) -> bool`
 //   - `str.find(needle str) -> Option[int]` — позиция или None
-//   - `str.slice(from int, to int) -> str`
+//   - `str[from int..to int] -> str`
 //   - `u64.try_from(s str) -> Result[u64, ParseIntError]` (D77)
 //     Option получаем через `.ok()`: `u64.try_from(s).ok()`.
 // Все они стандартные str/int операции, не нуждаются в char-литералах.
@@ -159,12 +159,12 @@ export fn Version.from(s str) Fail[ParseVersionError] -> Self {
     // Pre: после "-", но "-" может быть в build identifier'е, поэтому
     // обрабатываем сначала split по "+", потом по "-" в первой части.
     let (left, build_str) = match s.find("+") {
-        Some(i) => (s.slice(0, i), s.slice(i + 1, s.len()))
+        Some(i) => (s[0..i], s[i + 1..s.len()])
         None    => (s, "")
     }
 
     let (core, pre_str) = match left.find("-") {
-        Some(i) => (left.slice(0, i), left.slice(i + 1, left.len()))
+        Some(i) => (left[0..i], left[i + 1..left.len()])
         None    => (left, "")
     }
 

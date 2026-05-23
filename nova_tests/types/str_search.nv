@@ -116,8 +116,8 @@ test "split-by-find: parse 'key:value'" {
     let s = "user:42"
     let i = s.find(":").unwrap_or(-1)
     assert(i == 4)
-    let key = s.slice(0, i)
-    let val = s.slice(i + 1, s.len())
+    let key = s[0..i]
+    let val = s[i + 1..s.len()]
     assert(key == "user")
     assert(val == "42")
 }
@@ -126,8 +126,8 @@ test "split-by-rfind: get last segment of path" {
     let path = "/usr/local/bin/nova"
     let i = path.rfind("/").unwrap_or(-1)
     assert(i == 14)
-    let dir = path.slice(0, i)
-    let name = path.slice(i + 1, path.len())
+    let dir = path[0..i]
+    let name = path[i + 1..path.len()]
     assert(dir == "/usr/local/bin")
     assert(name == "nova")
 }
@@ -138,30 +138,30 @@ test "split-by-rfind: get last segment of path" {
 
 test "slice: full range == original" {
     let s = "hello"
-    let r = s.slice(0, s.len())
+    let r = s[0..s.len()]
     assert(r == "hello")
 }
 
 test "slice: empty slice (a == b)" {
     let s = "hello"
-    let r = s.slice(2, 2)
+    let r = s[2..2]
     assert(r == "")
     assert(r.len() == 0)
 }
 
 test "slice: middle" {
-    let r = "hello world".slice(6, 11)
+    let r = "hello world"[6..11]
     assert(r == "world")
 }
 
 test "slice: from start" {
-    let r = "hello".slice(0, 3)
+    let r = "hello"[0..3]
     assert(r == "hel")
 }
 
 test "slice: to end" {
     let s = "hello"
-    let r = s.slice(2, s.len())
+    let r = s[2..s.len()]
     assert(r == "llo")
 }
 
@@ -238,9 +238,9 @@ test "rfind: Cyrillic returns codepoint offset" {
 test "slice: Cyrillic codepoint indices" {
     let s = "Привет мир"
     // codepoints: П(0) р(1) и(2) в(3) е(4) т(5) ' '(6) м(7) и(8) р(9)
-    let hello = s.slice(0, 6)      // "Привет"
+    let hello = s[0..6]      // "Привет"
     assert(hello == "Привет")
-    let world = s.slice(7, 10)     // "мир"
+    let world = s[7..10]     // "мир"
     assert(world == "мир")
 }
 
@@ -248,15 +248,15 @@ test "split-by-find with Cyrillic" {
     let s = "ключ:значение"        // 'ключ'(0..4) + ':'(4) + 'значение'(5..13)
     let i = s.find(":").unwrap_or(-1)
     assert(i == 4)                 // codepoint offset
-    let key = s.slice(0, i)
-    let val = s.slice(i + 1, s.len())
+    let key = s[0..i]
+    let val = s[i + 1..s.len()]
     assert(key == "ключ")
     assert(val == "значение")
 }
 
 test "slice across emoji boundary" {
     let s = "ab😀cd"                // codepoints: a(0) b(1) 😀(2) c(3) d(4)
-    let r = s.slice(2, 3)
+    let r = s[2..3]
     assert(r == "😀")
     assert(r.byte_len() == 4)      // emoji = 4 bytes
     assert(r.len() == 1)             // 1 codepoint

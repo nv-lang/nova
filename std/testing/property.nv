@@ -205,8 +205,8 @@ export fn StrGen @shrink(value str) -> Iter[str] {
     let len = value.len
     if len > 0 {
         steps.push("")                                  // пустая строка
-        if len > 1 { steps.push(value.slice(0, len / 2)) }    // половина
-        if len > 1 { steps.push(value.slice(0, len - 1)) }    // на 1 короче
+        if len > 1 { steps.push(value[0..len / 2]) }    // половина
+        if len > 1 { steps.push(value[0..len - 1]) }    // на 1 короче
     }
     steps.iter()
 }
