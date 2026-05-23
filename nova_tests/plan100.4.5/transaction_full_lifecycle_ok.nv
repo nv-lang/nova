@@ -1,0 +1,49 @@
+// Plan 100.4.5 (D151) — canonical full Transaction lifecycle pattern.
+//
+// Combines:
+//   - D133 type-level consume
+//   - D147 failable cleanup body
+//   - D149 errdefer + okdefer symmetric pair
+//   - D151 check_consume integration
+//
+// errdefer для rollback, okdefer для commit — оба failable. Exhaustive
+// cover для всех exit-paths.
+
+module nova_tests.plan100_4_5.transaction_full_lifecycle_ok
+
+type OrderErr { msg str }
+type CommitErr { msg str }
+type RollbackErr { msg str }
+
+type Transaction consume {
+    id int,
+}
+
+fn Transaction consume @commit() Fail[CommitErr] -> () { () }
+fn Transaction consume @rollback() Fail[RollbackErr] -> () { () }
+
+type Db { }
+fn Db @begin() -> Transaction => Transaction { id: 1 }
+
+type Order { id int }
+type Receipt { id int }
+
+fn db_insert(data int) Fail[OrderErr] -> Order => Order { id: data }
+fn db_notify(o Order) Fail[OrderErr] -> () { () }
+
+// Canonical Transaction lifecycle:
+fn process_order(data int) Fail -> Receipt {
+    let db = Db { }
+    consume tx = db.begin()
+    errdefer { tx.rollback()? }                 // failable rollback
+    okdefer  { tx.commit()?   }                 // failable commit
+    let order = db_insert(data)?
+    db_notify(order)?
+    return Receipt { id: order.id }
+    // success: okdefer fires → commit
+    // error: errdefer fires → rollback (composite если rollback fails)
+}
+
+test "Transaction full lifecycle — errdefer + okdefer + failable cleanup" {
+    let r = process_order(42)
+}
