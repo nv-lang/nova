@@ -59,6 +59,11 @@ typedef struct {
  * bounds-check в nova_str_byte_at и bulk slice-операциях array.h. */
 static void nv_panic(nova_str);
 
+/* Plan 96 Ф.4 — forward-декларация nv_panic_slice_oob (определён
+ * static inline в array.h, который включается в nova_rt.h ПОСЛЕ
+ * этой точки). Нужна для bounds-check в nova_str_slice_panic. */
+static void nv_panic_slice_oob(nova_int from, nova_int to, nova_int len);
+
 static inline nova_str nova_str_from_cstr(const char* s) {
     return (nova_str){ s, strlen(s) };
 }
@@ -121,6 +126,46 @@ static inline nova_str nova_str_trim(nova_str s) {
     while (start < end && (unsigned char)s.ptr[start] <= ' ') start++;
     while (end > start && (unsigned char)s.ptr[end-1] <= ' ') end--;
     return (nova_str){ s.ptr + start, end - start };
+}
+
+/* Plan 96 Ф.4 — codepoint-indexed slice с panic-семантикой для
+ * bracket-form `s[a..b]`. Отличается от `s.slice(a, b)` метода тем,
+ * что OOB вызывает nv_panic (consistent с arr[a..b]); метод
+ * `s.slice` оставлен с clamp-семантикой (D27 §1632 backwards-compat;
+ * align→panic откладывается в Plan 94, см. [P-str-slice-clamp-vs-panic]). */
+static inline nova_str nova_str_slice_panic(nova_str s, nova_int from, nova_int to) {
+    /* Count total codepoints для validation. */
+    nova_int total_cp = 0;
+    for (size_t i = 0; i < s.len; ) {
+        unsigned char b = (unsigned char)s.ptr[i];
+        if      (b < 0x80) i += 1;
+        else if ((b & 0xE0) == 0xC0) i += 2;
+        else if ((b & 0xF0) == 0xE0) i += 3;
+        else if ((b & 0xF8) == 0xF0) i += 4;
+        else                          i += 1;
+        total_cp++;
+    }
+    if (from < 0 || to < from || to > total_cp) {
+        nv_panic_slice_oob(from, to, total_cp);
+    }
+    /* Walk UTF-8 to find byte offsets для codepoint-indices. */
+    size_t byte_from = 0, byte_to = s.len;
+    nova_int cp = 0;
+    nova_bool found_from = (from == 0);
+    for (size_t i = 0; i < s.len; ) {
+        if (cp == from && !found_from) { byte_from = i; found_from = 1; }
+        if (cp == to) { byte_to = i; break; }
+        unsigned char b = (unsigned char)s.ptr[i];
+        if      (b < 0x80) i += 1;
+        else if ((b & 0xE0) == 0xC0) i += 2;
+        else if ((b & 0xF0) == 0xE0) i += 3;
+        else if ((b & 0xF8) == 0xF0) i += 4;
+        else                          i += 1;
+        cp++;
+    }
+    if (cp < to) byte_to = s.len;
+    if (byte_from > byte_to) byte_from = byte_to;
+    return (nova_str){ s.ptr + byte_from, byte_to - byte_from };
 }
 
 /* nova_str_slice — D26 codepoint-indexed slice (school B).

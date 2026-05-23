@@ -13268,6 +13268,65 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
             }
             ExprKind::Index { obj, index } => {
                 let obj_ty = self.infer_expr_c_type(obj);
+
+                // Plan 96 Ф.4 — dispatch по типу index.
+                // Range-index → slice path: nova_array_slice_<T>(obj, from, to)
+                // или nova_str_slice_panic(obj, from, to). Open-ended границы
+                // подставляются из len-выражения.
+                if let ExprKind::Range { start, end, inclusive } = &index.kind {
+                    let o = self.emit_expr(obj)?;
+                    // Plan 96 Ф.4.4 — emit_range_bounds: open-ended → подставить
+                    // (0, len) / (start, len) / (0, end) / (start, end[+1]).
+                    let len_expr = if obj_ty == "nova_str" {
+                        // Для str у нас len в кодпоинтах; nova_str_slice_panic
+                        // считает их сам. Для open-ended здесь подставим SIZE_MAX-
+                        // равноценный — функция clamp'нет до total_cp на panic-check.
+                        // Безопаснее: подсчёт codepoint-count через временную.
+                        // Но проще: если open-end, пропустить "to" в виде INT64_MAX —
+                        // нет, лучше использовать встроенный счётчик в slice_panic
+                        // (он валидирует to <= total_cp). Используем INT64_MAX как
+                        // sentinel который функция отвергнет — НЕТ, это сломает
+                        // user-OOB-test. Правильно: пройти счётчик через runtime call.
+                        // Для bootstrap проще: запретить open-ended для str-slice.
+                        // Это decision — задокументируем как known limitation.
+                        // Пока — emit как nova_str_byte_at-style цикл подсчёта.
+                        format!("({{ nova_str _s = ({}); nova_int _cp = 0; \
+for (size_t _i = 0; _i < _s.len; ) {{ \
+unsigned char _b = (unsigned char)_s.ptr[_i]; \
+if (_b < 0x80) _i += 1; \
+else if ((_b & 0xE0) == 0xC0) _i += 2; \
+else if ((_b & 0xF0) == 0xE0) _i += 3; \
+else if ((_b & 0xF8) == 0xF0) _i += 4; \
+else _i += 1; \
+_cp++; \
+}} _cp; }})", o)
+                    } else if obj_ty.starts_with("NovaArray_") {
+                        format!("({})->len", o)
+                    } else {
+                        return Err(format!("slice on unsupported type {} (Plan 96)", obj_ty));
+                    };
+                    let from_expr = match start.as_deref() {
+                        Some(s) => self.emit_expr(s)?,
+                        None => "((nova_int)0LL)".to_string(),
+                    };
+                    let to_expr = match (end.as_deref(), *inclusive) {
+                        (Some(e), false) => self.emit_expr(e)?,
+                        (Some(e), true) => {
+                            let e_str = self.emit_expr(e)?;
+                            format!("(({}) + ((nova_int)1LL))", e_str)
+                        }
+                        (None, _) => len_expr.clone(),
+                    };
+                    if obj_ty == "nova_str" {
+                        return Ok(format!("nova_str_slice_panic({}, {}, {})", o, from_expr, to_expr));
+                    } else if let Some(elem) = obj_ty.strip_prefix("NovaArray_") {
+                        let elem = elem.trim_end_matches('*').trim();
+                        return Ok(format!("nova_array_slice_{}({}, {}, {})", elem, o, from_expr, to_expr));
+                    } else {
+                        return Err(format!("slice on unsupported type {} (Plan 96)", obj_ty));
+                    }
+                }
+
                 let i = self.emit_expr(index)?;
                 // Plan 96 Ф.1 — каждая ветка эмитит bounds-checked access
                 // через emit_bchk_array_access (raw `(o)->data[i]` запрещён;
@@ -21994,7 +22053,19 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                 }
                 "nova_int".into()
             }
-            ExprKind::Index { obj, .. } => {
+            ExprKind::Index { obj, index } => {
+                // Plan 96 Ф.3 — dispatch по типу index:
+                //   arr[Range] → []T (тот же NovaArray-pointer тип что у obj)
+                //   str[Range] → str
+                //   arr[int]   → T (element)
+                //   str[int]   → char (если char-indexing уже есть, иначе caller-side error)
+                let obj_ty_pre = self.infer_expr_c_type(obj);
+                if matches!(index.kind, ExprKind::Range { .. }) {
+                    // Slice path — result type совпадает с obj (single-type design,
+                    // D-single-type). Для str — тот же "nova_str", для []T —
+                    // тот же "NovaArray_T*".
+                    return obj_ty_pre;
+                }
                 // arr[i] → element type of arr.
                 // Check array_element_types first (pointer-stomped elements override).
                 if let ExprKind::Ident(name) = &obj.kind {
@@ -22019,8 +22090,7 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                     }
                 }
                 // Если obj — NovaArray_T*, элемент имеет тип T (из имени).
-                let obj_ty = self.infer_expr_c_type(obj);
-                if let Some(elem) = obj_ty.strip_prefix("NovaArray_") {
+                if let Some(elem) = obj_ty_pre.strip_prefix("NovaArray_") {
                     let elem = elem.trim_end_matches('*').trim();
                     return elem.to_string();
                 }

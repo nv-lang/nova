@@ -1,0 +1,44 @@
+// Plan 96 Ф.4 — позитив: базовый sub-slice view arr[a..b].
+// View разделяет backing с parent (single-type design, D-single-type).
+// `cap == len` для view → push реаллокает и детачится (D-cap-len).
+
+module nova_tests.plan96.slice_basic
+
+test "basic sub-slice — len + element access" {
+    let arr = [10, 20, 30, 40, 50]
+    let view = arr[1..4]
+    assert(view.len() == 3)
+    assert(view[0] == 20)
+    assert(view[1] == 30)
+    assert(view[2] == 40)
+}
+
+test "inclusive range slice" {
+    let arr = [10, 20, 30, 40, 50]
+    let view = arr[1..=3]
+    assert(view.len() == 3)
+    assert(view[0] == 20)
+    assert(view[2] == 40)
+}
+
+test "empty slice arr[a..a]" {
+    let arr = [10, 20, 30]
+    let view = arr[1..1]
+    assert(view.len() == 0)
+    assert(view.is_empty())
+}
+
+test "slice from start arr[0..n]" {
+    let arr = [1, 2, 3, 4, 5]
+    let view = arr[0..3]
+    assert(view.len() == 3)
+    assert(view[0] == 1)
+}
+
+test "slice to end arr[a..len]" {
+    let arr = [1, 2, 3, 4, 5]
+    let view = arr[2..5]
+    assert(view.len() == 3)
+    assert(view[0] == 3)
+    assert(view[2] == 5)
+}
