@@ -410,10 +410,7 @@ impl SumSchemaRegistry {
         // Plan 95.bis Ф.2: `ok`, `err`, `unwrap_or` УБРАНЫ — перенесены
         // на Nova-body в std/prelude/core.nv; routing → DeclaredBody
         // через init_prelude_decls_from_items.
-        result_methods.insert("unwrap_or_else".to_string(), MethodRouting::HardcodedRuntimeFn {
-            c_name: "<inline>".to_string(),
-            is_per_t: false,
-        });
+        // Plan 99.3 Ф.4: Result.unwrap_or_else УБРАН — на Nova-body.
         result_methods.insert("map".to_string(), MethodRouting::HardcodedRuntimeFn {
             c_name: "<inline>".to_string(),
             is_per_t: false,

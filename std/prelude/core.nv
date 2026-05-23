@@ -283,10 +283,12 @@ fn Result[T, E] @unwrap_or(default_v T) -> T => match @ { Ok(v) => v, Err(_) => 
 
 /// Возвращает Ok-значение или результат `f(e)` (lazy default от error).
 ///
-/// **Bootstrap**: inline emit (`<inline>` sentinel). Closure cast через
-/// `NovaClos_ii` layout — `(E) -> T`.
+/// **Plan 99.3 Ф.4**: Nova-body. Closure invoke `f(e)` через
+/// NovaClosBase + cast — паритет Rust `Result::<T,E>::unwrap_or_else<F:
+/// FnOnce(E) -> T>(self, op: F) -> T`.
 #stable(since = "0.1")
-external fn Result[T, E] @unwrap_or_else(f fn(E) -> T) -> T
+fn Result[T, E] @unwrap_or_else(f fn(E) -> T) -> T
+  => match @ { Ok(v) => v, Err(e) => f(e) }
 
 /// Применяет `f` к Ok-значению: `Ok(v) -> Ok(f(v))`, `Err(e)` пропускает.
 ///
