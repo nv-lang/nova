@@ -11500,23 +11500,40 @@ Plan 83.2 §4 «Compiled-программа без единого `runtime.*` в
 - **Обнаружено:** Plan 99 Ф.0 probe (2026-05-23). **План фикса:**
   Plan 99 Ф.1–Ф.6 (re-scope подтверждён).
 
-## [M-bare-typevar-receiver-grammar-gap] Plan 101 — `fn[T]` префикс не реализован (2026-05-24)
+## [M-receiver-generic-incompleteness] Plan 101 — `fn[T]` prefix + bounds + protocol composition не реализованы (2026-05-24)
 
-- **Где:** Nova grammar. Receiver-position в method-declaration не
-  имеет способа объявить generic typevar, если receiver — bare `T`,
-  `[]T` или tuple `(T, U)` (нет именованного generic-типа со своими
-  `[…]` скобками).
-- **Симптом:** парсер silently принимает `fn T @func[U](a U) -> (T, U) => (@, a)`
-  (трактует `T` как имя конкретного типа `T`); type-check мягкий и
-  пропускает; codegen падает с CC-FAIL — `Nova_T*` undefined. Probe-
-  фикстура: `nova_tests/plan101/probe/` (в Plan 101 Ф.0).
-- **Почему важно:** generic methods на `[]T` (array methods как
-  `@push`/`@append` для пользователей), bare typevar (`@identity()`),
-  tuple-receiver — невозможны. Это grammar completeness gap.
-- **Решение (proposed):** Plan 101 — narrow `fn[T]` префикс по
-  правилам D145.
-- **Spec:** [D145](../../spec/decisions/02-types.md#d145-fnt-префикс--generic-declaration-для-bare-typevar-receiverов).
-- **Приоритет — P3** (de-magic / grammar completeness; не блокер 0.1).
-- **Обнаружено:** обсуждение 2026-05-24 + probe-фикстура. **План фикса:**
-  Plan 101 Ф.0–Ф.5 (~2 dev-day).
+> **Ред. 3 (2026-05-24):** complete rewrite после 3-iteration design
+> discussion. Ред. 1 описывала narrow `fn[T]` only. Ред. 2 ошибочно
+> ввела implicit T (моя misinterpretation). Финал: explicit `fn[T]`
+> prefix везде где receiver без carrier, + bounds через D72, + multi-
+> bound `+`, + protocol composition `use Foo`.
+
+**Реальный bug:** `std/collections/vec.nv` (7 методов pattern
+`fn []T @method[U]`) написан как-если-бы T дженерик. Парсер
+silently трактует T как именованный тип, codegen падает →
+vec.nv не компилируется в exe → Plan 91 (std MVP) blocked.
+
+**Решение — Plan 101 (5 sub-plan'ов):**
+- **101.1** (P1, ~2.5 dev-day) — core `fn[T]` grammar + codegen +
+  vec.nv migration. Disambiguation matrix + 4 error codes.
+  **Unblocks Plan 91 collections.**
+- **101.2** (P2, ~0.5 dev-day) — bound integration `fn[T Hashable]`
+  reuse D72.
+- **101.3** (P3, ~1 dev-day) — multi-bound `[T A + B]`. Закрывает
+  [Q-multi-bound](../../spec/open-questions.md#q-multi-bound).
+- **101.4** (P2, ~1 dev-day) — protocol composition `use Foo`.
+  Закрывает D53 §«Открытые вопросы» — Composition protocol'ов.
+- **101.5** (P1 closing, ~1 dev-day) — stdlib audit + LSP quick-fixes
+  + close.
+
+**Spec:** [D145](../../spec/decisions/02-types.md#d145-fnt-префикс--receiver-generic-decl--bounds-plan-101).
+
+**Future (out of Plan 101):** [Q-representation-bound](../../spec/open-questions.md#q-representation-bound)
+— concrete-type bounds (`fn[T int]` для newtype `type UserId int`,
+`fn[T User]` для record-embed). Plan 102 future.
+
+**Приоритет — P1** (101.1 + 101.5 blocker Plan 91 std MVP; 101.2/3/4 — P2/P3).
+
+**Обнаружено:** design discussion 2026-05-24 + vec.nv discovery.
+**План фикса:** Plan 101 + 5 sub-plan'ов (~6 dev-day total).
 
