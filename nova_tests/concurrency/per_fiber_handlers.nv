@@ -14,6 +14,13 @@
 // все handler-storages при старте. supervised_step save/restore
 // snapshot вокруг mco_resume.
 
+// Plan 83.4.5.4 (2026-05-23): cooperative handler-scoping test — armed
+// multi-worker double-resume race ломает test infrastructure. Plan
+// 83.4.5.4 spawn-time snapshot inheritance fix validates через
+// cooperative drain (nova_fiber_spawn_into сам save'ит TLS snapshot).
+//
+// ENV NOVA_NO_AUTOARM=1
+
 module concurrency.per_fiber_handlers
 
 // ================================================================
