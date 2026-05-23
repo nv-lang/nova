@@ -4802,11 +4802,25 @@ impl CEmitter {
             }
         }
 
-        // Pointer-types stored directly; scalar/struct types stored as
-        // pointer-to (mutation visible to caller).
-        let capture_ptr_tys: Vec<String> = all_captures.iter().map(|(_, cap_ty)| {
-            if cap_ty.ends_with('*') { cap_ty.clone() } else { format!("{}*", cap_ty) }
+        // Plan 97.1 hardening (D142): capture-mode разделение —
+        // * pointer-types (already heap) → by-pointer (alias).
+        // * mutable scalar (`let mut`) → by-pointer (mutation visible).
+        // * immutable scalar (function param / `let`) → **by-value**
+        //   snapshot. Это критично для **factory pattern** где literal
+        //   возвращается за пределы fn — stack-local pointer бы dangling.
+        // capture_modes[i] == true → by-pointer; false → by-value.
+        let capture_modes: Vec<bool> = all_captures.iter().map(|(name, cap_ty)| {
+            if cap_ty.ends_with('*') { return true; }
+            self.var_mutable.contains(name)
         }).collect();
+        let capture_ptr_tys: Vec<String> = all_captures.iter().zip(capture_modes.iter())
+            .map(|((_, cap_ty), &by_ptr)| {
+                if by_ptr {
+                    if cap_ty.ends_with('*') { cap_ty.clone() } else { format!("{}*", cap_ty) }
+                } else {
+                    cap_ty.clone()   // by-value, storage = cap_ty directly
+                }
+            }).collect();
 
         // ---- Эмитить ctx struct typedef в lambda_forward_decls
         // (file-scope, splice'ится ДО fn definitions). Это делает ctx struct
@@ -4832,11 +4846,21 @@ impl CEmitter {
             "{ctx_ty}* {ctx} = ({ctx_ty}*)nova_alloc(sizeof({ctx_ty}));",
             ctx_ty = ctx_struct, ctx = ctx_var
         ));
-        for ((cap_name, cap_ty), _ptr_ty) in all_captures.iter().zip(capture_ptr_tys.iter()) {
-            if cap_ty.ends_with('*') {
-                self.line(&format!("{ctx}->{cap} = {cap};", ctx = ctx_var, cap = cap_name));
+        for (((cap_name, _), _ptr_ty), &by_ptr) in all_captures.iter()
+            .zip(capture_ptr_tys.iter()).zip(capture_modes.iter())
+        {
+            if by_ptr {
+                // Pointer-type (heap obj) или mutable scalar — by-pointer.
+                // Для scalar: storage `T*` хранит `&local`.
+                let cap_ty = &all_captures.iter().find(|(n, _)| n == cap_name).unwrap().1;
+                if cap_ty.ends_with('*') {
+                    self.line(&format!("{ctx}->{cap} = {cap};", ctx = ctx_var, cap = cap_name));
+                } else {
+                    self.line(&format!("{ctx}->{cap} = &{cap};", ctx = ctx_var, cap = cap_name));
+                }
             } else {
-                self.line(&format!("{ctx}->{cap} = &{cap};", ctx = ctx_var, cap = cap_name));
+                // By-value snapshot: copy current value.
+                self.line(&format!("{ctx}->{cap} = {cap};", ctx = ctx_var, cap = cap_name));
             }
         }
         // Patch vtable fields → impl functions.
@@ -4915,12 +4939,20 @@ impl CEmitter {
                 .collect();
 
             // Unpack context: macros для capture-доступа.
+            // Plan 97.1 hardening: capture_modes управляет deref'ом —
+            // by-pointer (heap obj / mut scalar) — pointer access;
+            // by-value (immutable scalar snapshot) — direct field access.
             self.line(&format!("{ctx}* _c = ({ctx}*)_ctx;", ctx = ctx_struct));
-            for (cap_name, cap_ty) in &all_captures {
-                if cap_ty.ends_with('*') {
-                    self.line(&format!("#define {cap} (_c->{cap})", cap = cap_name));
+            for ((cap_name, cap_ty), &by_ptr) in all_captures.iter().zip(capture_modes.iter()) {
+                if by_ptr {
+                    if cap_ty.ends_with('*') {
+                        self.line(&format!("#define {cap} (_c->{cap})", cap = cap_name));
+                    } else {
+                        self.line(&format!("#define {cap} (*_c->{cap})", cap = cap_name));
+                    }
                 } else {
-                    self.line(&format!("#define {cap} (*_c->{cap})", cap = cap_name));
+                    // By-value snapshot: direct field access (no deref).
+                    self.line(&format!("#define {cap} (_c->{cap})", cap = cap_name));
                 }
             }
 

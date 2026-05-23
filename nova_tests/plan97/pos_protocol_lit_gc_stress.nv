@@ -1,0 +1,41 @@
+// Plan 97.1 hardening (D142): GC stress — allocate много protocol-литералов
+// в цикле, проверить что GC корректно cleanup'ает их (no leak, no UAF).
+//
+// Production-grade: capability-split factories могут вызываться много раз
+// (e.g. per-request); GC overhead не должен расти линейно.
+
+module nova_tests.plan97.pos_protocol_lit_gc_stress
+
+
+export type Increment protocol {
+    apply(x int) -> int
+}
+
+
+fn make_adder(delta int) -> Increment {
+    protocol Increment {
+        apply(x) => x + delta
+    }
+}
+
+
+test "много protocol-литералов через factory (GC stress)" {
+    let mut total = 0
+    for i in 0..1000 {
+        let add_i = make_adder(i)
+        total = total + add_i.apply(0)
+    }
+    // sum(0..1000) = 999*1000/2 = 499500
+    assert(total == 499500)
+}
+
+
+test "захват разных state в литералах не путается" {
+    let lit_5 = make_adder(5)
+    let lit_10 = make_adder(10)
+    let lit_99 = make_adder(99)
+    assert(lit_5.apply(0) == 5)
+    assert(lit_10.apply(0) == 10)
+    assert(lit_99.apply(0) == 99)
+    assert(lit_5.apply(100) == 105)
+}
