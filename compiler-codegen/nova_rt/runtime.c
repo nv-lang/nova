@@ -149,13 +149,14 @@ static bool            _atexit_registered = false;
 
 /* Plan 83.2 Ф.1 (2026-05-23): default-on M:N. До 83.2 пул armиtся
  * только явным `nova_runtime_init()`; без него spawn-пути падали на
- * single-thread cooperative-fallback. С 83.2 — auto-arm на первом
- * worker-bound spawn (round-robin spawn_global или supervised
- * spawn_into). Эквивалент `nova_runtime_init(0)`: резолв maxprocs
- * (NOVA_MAXPROCS env → uv_available_parallelism), _armed=true,
- * atexit-регистрация. Hello-world без spawn — никогда не вызывает
- * spawn-путь → 0 worker'ов (Plan 83.2 §4 acceptance). Идемпотентно,
- * thread-safe через _init_mu. */
+ * single-thread cooperative-fallback. С 83.2 — auto-arm на старте
+ * программы (через nova_runtime_auto_arm() из codegen-emit main())
+ * + защитный auto-arm на каждом spawn-входе. Эквивалент
+ * `nova_runtime_init(0)`: резолв maxprocs (NOVA_MAXPROCS env →
+ * uv_available_parallelism), _armed=true, atexit-регистрация.
+ * Hello-world без spawn — `_armed=true`, но `_materialized=false`
+ * (пул не поднят) → 0 worker-потоков (Plan 83.2 §4 acceptance).
+ * Идемпотентно, thread-safe через _init_mu. */
 static void _auto_arm_if_needed(void) {
     if (_armed) return;
     if (!_init_mu_inited) {
@@ -173,6 +174,11 @@ static void _auto_arm_if_needed(void) {
         }
     }
     nova_mutex_unlock(&_init_mu);
+}
+
+/* Public entry — Plan 83.2 Ф.1 codegen-emit'нутый вызов в main() */
+void nova_runtime_auto_arm(void) {
+    _auto_arm_if_needed();
 }
 
 /* Plan 44.5 Layer 5: main wake handle для cross-thread signal'а из

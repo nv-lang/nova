@@ -2,9 +2,19 @@
 //
 // M:N-рантайм Nova — production-grade: work-stealing scheduler
 // (Plan 44.5), preemption (Plan 44.7), per-worker libuv loop (D98),
-// hardened channels (Plan 44.1), fiber arena (Plan 44.2). Сейчас он
-// **opt-in**: параллелизм включается вызовом `runtime.init`. Перевод
-// M:N в дефолт — Plan 83.2.
+// hardened channels (Plan 44.1), fiber arena (Plan 44.2 POSIX +
+// Plan 82 Windows). Сейчас он **opt-in**: параллелизм включается
+// вызовом `runtime.init`.
+//
+// **Plan 83.2 Ф.1 (2026-05-23) — инфраструктура для default-on M:N
+// подготовлена**, но не активирована: `nova_runtime_auto_arm()` API
+// + auto-arm в `nova_runtime_spawn_global` / `nova_runtime_spawn_into`.
+// Codegen-emit в main() пока не вызывает auto-arm — полный флип
+// упирается в pre-existing M:N баги в `supervised`-drain / D93
+// sleep-wake / per-fiber handlers, которые до Plan 83.2 проявлялись
+// только под explicit `runtime.init` и теперь требуют отдельной серии
+// фиксов (каждый ~1-2 dev-day). См. `83.2-artifacts/f0-readiness.md`
+// и followup-секцию `simplifications.md`.
 //
 // **NOT auto-gen.** Hardcoded namespace `runtime.*` через emit_c.rs.
 //
