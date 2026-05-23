@@ -5785,3 +5785,515 @@ instance `@foo`» (либо обратное). Это hardening аналогич
   (главные потребители static в протоколах).
 - [Plan 97](../../docs/plans/97-protocol-effect-syntax-symmetry.md) Ф.1 —
   имплементация (parser + AST `is_static`).
+
+---
+
+## D147. Failable cleanup body — `Fail` effect разрешён в defer/errdefer
+
+> **Plan 100.4.1.** Принято 2026-05-23 (proposed; implementation pending).
+> **Amend [D90](#d90) §4** — снимает ограничение «defer body INFALLIBLE».
+
+### Что
+
+`defer { ... }` и `errdefer { ... }` body теперь может содержать `Fail`-
+effect (вызов failable consume-метода / любой Fail-action). Cleanup-fail
+**композируется** с propagating error через [D85](04-effects.md#d85) /
+[D118](04-effects.md#d118) multi-error infrastructure: каждая ошибка
+сохраняется в chain (primary + suppressed), caller получает composite
+через `MultiError`.
+
+```nova
+fn process() Fail[Err] -> () {
+    consume tx = begin()
+    defer { tx.commit() }                       // commit may fail — теперь валидно
+    do_work()                                    // may throw Err1
+    // Если do_work fails:
+    //   1. unwinding starts
+    //   2. defer fires — tx.commit() fails Err2
+    //   3. composite: { primary: Err1, suppressed: [Err2] }
+    //   4. caller получает composite через Fail[Err]
+}
+```
+
+### Зачем
+
+D90 §4 (Plan 20) запретил `Fail`-effect в defer-body как защита от
+тихого поглощения ошибок. Это работало для simple cleanup (log,
+mutex.unlock), но **блокирует production resource-management**:
+
+- `Transaction.commit()` / `.rollback()` — failable (network drop,
+  deadlock, constraint violation).
+- `File.close()` — может fail (disk error).
+- `Socket.shutdown()` — может fail.
+- `Connection.disconnect()` — может fail.
+
+Без D147 каждый такой cleanup — 6-строчный handler-wrap, что не
+production-grade ergonomics. D147 force'ит explicit Fail в fn-sig
+(compile-time visibility), а composition handles runtime.
+
+### Изменение D90 §4
+
+```
+БЫЛО:  defer body не должно иметь Fail effect; обернуть в handler.
+СТАЛО: defer body может иметь Fail effect; ошибка композируется через
+       Plan 49 multi-error. Enclosing fn-sig ОБЯЗАН declare Fail[E].
+```
+
+### Правила composition (3 сценария)
+
+**A. Defer-fail на normal exit:**
+```nova
+fn process() Fail[Err] -> () {
+    consume tx = begin()
+    defer { tx.commit() }                       // may fail
+    do_work()                                    // success
+}
+// Exit: defer fires; commit может throw — caller получает Fail.
+```
+
+**B. Defer-fail во время error-propagation:**
+```nova
+fn process() Fail[Err] -> () {
+    consume tx = begin()
+    defer { tx.commit() }
+    do_work()?                                   // throws Err1
+    // defer fires during unwinding:
+    //   tx.commit() fails CommitErr → composite
+    //   { primary: Err1, suppressed: [CommitErr] }
+}
+```
+
+**C. Multiple defers, each can fail** — детально в [D150](#d150)
+(Plan 100.4.4 multi-defer accumulation).
+
+### `MultiError` API
+
+```nova
+type MultiError {
+    primary: Err,
+    suppressed: []Err,                          // в порядке firing (LIFO)
+}
+
+fn MultiError @primary() -> Err
+fn MultiError @suppressed() -> []Err
+fn MultiError @fmt_chain() -> str
+```
+
+Caller inspect:
+```nova
+match process() {
+    Ok(_) => Log.info("done"),
+    Err(MultiError { primary, suppressed }) => {
+        Log.error("primary: ${primary}")
+        for s in suppressed { Log.error("  suppressed: ${s}") }
+    }
+}
+```
+
+### Compile-time visibility — fn-sig обязан Fail[E]
+
+```nova
+fn process() -> () {                            // ❌ нет Fail[E]
+    defer { tx.commit() }                       // ❌ Fail[CommitErr] body
+}
+// E (D147-defer-fail-not-in-sig): add `Fail[CommitErr]` к fn-sig.
+```
+
+Force'ит explicit visibility в API.
+
+### Diagnostic format
+
+```
+error: composite error during scope exit
+  primary error:
+    Err1 ("operation failed")  at do_work (process.nv:12)
+  suppressed during defer LIFO (in order of firing):
+    [1] CommitErr ("network timeout")  at tx.commit() in defer (process.nv:14)
+    [2] Err3 ("disk full")  at tx1.commit() in defer (process.nv:13)
+```
+
+### Сравнение
+
+| Capability | Go | Rust | TS (ES2024) | Java | Nova D147 |
+|---|---|---|---|---|---|
+| Cleanup body может fail | ✅ (return err) | ❌ panic-in-Drop = abort | ✅ Symbol.dispose throws | ✅ AutoCloseable.close throws | ✅ **Plan 49 composition** |
+| Error composition при cleanup-fail-mid-error | ⚠️ manual | ❌ abort | ✅ SuppressedError chain | ✅ addSuppressed | ✅ **MultiError tree** |
+| Visibility в сигнатуре | ⚠️ method-by-method | n/a | ⚠️ TS types | ⚠️ throws-list | ✅ **`Fail[E]` effect** |
+
+Nova **matches Java/TS** на composition; **превосходит Rust** (no
+double-panic-abort) + Go (нет manual `defer` error-handling).
+
+### Backward-compat
+
+Existing handler-wrap код продолжает работать. D147 — расширение
+capabilities, не breaking change.
+
+### Связь
+
+- [D90](#d90) §4 — amend'аем.
+- [D85](04-effects.md#d85), [D118](04-effects.md#d118) — composition
+  infrastructure.
+- [D131](05-memory.md#d131), [D133](02-types.md#d133) — consume foundation.
+- [D148](#d148), [D149](#d149), [D150](#d150), [D151](#d151) — sibling
+  sub-sub-plans Plan 100.4 family.
+
+---
+
+## D148. Async/suspend в cleanup body — cancel-safe
+
+> **Plan 100.4.2.** Принято 2026-05-23 (proposed). **Amend [D90](#d90)
+> §5** — снимает «no-suspend».
+
+### Что
+
+`defer`/`errdefer` body теперь может содержать suspend-операции
+(`Time.sleep`, `Channel.recv`, `Net.*`, `Fs.*`). **Cancel-safe
+semantics**: cleanup completes-then-cancel-propagates (runtime shield'ит
+cleanup от cancel signal до его завершения).
+
+```nova
+fn process() -> () {
+    consume socket = open_socket()
+    defer { socket.graceful_close() }           // includes Net.* — теперь валидно
+    do_io()
+}
+// Exit + pending cancel:
+//   1. graceful_close может suspend (FIN+ACK).
+//   2. cleanup completes (shielded).
+//   3. cancel propagates AFTER cleanup.
+```
+
+### Запрещено
+
+`spawn` / `parallel for` в defer body — error E (D148-spawn-in-defer).
+Создание новых fiber'ов в cleanup → leak supervised hierarchy.
+
+### Изменение D90 §5
+
+```
+БЫЛО:  defer body NO-SUSPEND (Time.sleep, Channel.recv, Net.* запрещены).
+СТАЛО: suspend разрешён; cancel-safe (cleanup completes-then-propagates);
+       spawn/parallel for остаются запрещены.
+```
+
+### `Time.timeout` для bounded cleanup
+
+```nova
+defer {
+    with Time.timeout(5_s) {
+        socket.graceful_close()                 // если >5s — abort
+    }
+}
+```
+
+(Полная реализация Plan 22 libuv async — already ✅.)
+
+### Сравнение
+
+| Capability | Rust | TS | Kotlin | Nova D148 |
+|---|---|---|---|---|
+| Async cleanup body | ⏳ Rust 2024+ work-in-progress | ✅ await using | ✅ coroutine use{} | ✅ **defer body suspend** |
+| Cancel-safe (cleanup completes first) | ⚠️ manual shielded | ✅ AbortSignal | ✅ `withContext(NonCancellable)` | ✅ **shield-by-default** |
+
+### Связь
+
+- [D90](#d90) §5 — amend'аем.
+- [D147](#d147) — failable cleanup (parallel).
+- [D85](04-effects.md#d85) — cancel-routing foundation.
+- [Plan 22](../../docs/plans/22-sleep-libuv-integration.md) ✅ — async
+  foundation.
+
+---
+
+## D149. `okdefer` + reason-aware `defer |result|`
+
+> **Plan 100.4.3.** Принято 2026-05-23 (proposed). Новые scope-level
+> statements; complement к D90 defer/errdefer family.
+
+### Что
+
+Два новых construct'а:
+
+1. **`okdefer { ... }`** — complement к `errdefer`. Выполняется только
+   на **success-path** (normal exit / `return expr`); skipped при
+   throw/panic/interrupt. Симметризует defer-family.
+
+2. **`defer |result| { ... }`** — reason-aware форма. Body имеет доступ
+   к exit-reason через pattern `result` (`Ok(value)` / `Err(e)` / `Panic(m)`).
+
+### Использование
+
+```nova
+consume tx = begin()
+errdefer { tx.rollback() }                      // error path → rollback
+okdefer  { tx.commit() }                        // success path → commit
+do_work()?
+// На обоих paths tx covered — exhaustive coverage.
+```
+
+```nova
+defer |result| {
+    match result {
+        Ok(value) => Log.info("success: ${value}"),
+        Err(e)    => Log.error("failed: ${e}"),
+        Panic(m)  => Log.fatal("panic: ${m}"),
+    }
+}
+```
+
+### Триггерные правила
+
+| Exit-path | `defer` | `errdefer` | `okdefer` |
+|---|---|---|---|
+| Normal end-of-scope | ✅ | ❌ | ✅ |
+| `return expr` (без error) | ✅ | ❌ | ✅ |
+| `throw err` / `expr?` / `expr!!` | ✅ | ✅ | ❌ |
+| `panic(msg)` | ✅ | ✅ | ❌ |
+| `interrupt v` (после D151 amend) | ✅ | ✅ | ❌ |
+| `exit(code)` | ❌ | ❌ | ❌ |
+
+okdefer + errdefer — **exhaustive** (один и только один срабатывает
+при non-exit() exit'е).
+
+### Mixed LIFO
+
+```nova
+defer A
+okdefer B
+errdefer C
+okdefer D
+defer E
+```
+
+- Normal exit LIFO: `E → D → B → A` (defer + okdefer; errdefer skipped).
+- Error exit LIFO: `E → C → A` (defer + errdefer; okdefer skipped).
+
+### Сравнение
+
+**Unique среди GC-языков** — никто не имеет success-only cleanup
+distinction:
+
+| Capability | Go | Rust | TS | Kotlin | Nova D149 |
+|---|---|---|---|---|---|
+| Success-only cleanup | ❌ | ❌ | ❌ | ❌ | ✅ `okdefer` |
+| Reason-aware cleanup | ❌ | ❌ | ❌ | ⚠️ try-finally manual | ✅ `defer \|result\|` |
+| Symmetric defer family | ❌ | ❌ | ❌ | ❌ | ✅ defer + errdefer + okdefer |
+
+### Связь
+
+- [D90](#d90) — defer/errdefer foundation.
+- [D147](#d147) — failable body может Fail в okdefer тоже.
+- [D148](#d148) — suspend body тоже.
+- [D151](#d151) — consume-integration uses okdefer для commit-on-success.
+
+---
+
+## D150. Multi-defer LIFO error accumulation + panic-in-defer composition
+
+> **Plan 100.4.4.** Принято 2026-05-23 (proposed). Extends [D147](#d147)
+> composition на multi-defer + panic. **Amend [D90](#d90) §«panic»**.
+
+### Что
+
+1. **Multi-defer LIFO continues после partial failure.** Если defer N
+   fail'ит → defer N-1 still runs (все N attempted; errors accumulate
+   в Plan 49 multi-error chain). **Превосходит Rust** уверенно (no
+   abort + all cleanups attempted).
+2. **Panic в defer body композируется** с propagating через Plan 49
+   multi-error — **нет Rust-style double-panic-abort**.
+
+### LIFO с partial failure
+
+```nova
+fn process() Fail[MultiErr] -> () {
+    defer A_runs                                // fail E_a
+    defer B_runs                                // fail E_b
+    defer C_runs                                // success
+    body                                         // fail E_main
+}
+// Exit semantics:
+//   1. body throws E_main
+//   2. C_runs — success; no contribution
+//   3. B_runs — fails E_b; suppressed
+//   4. A_runs — fails E_a; suppressed (LIFO continues!)
+//   5. caller получает MultiError {
+//        primary: E_main,
+//        suppressed: [E_b, E_a]                // LIFO order: first to fail = first
+//      }
+```
+
+### Panic-in-defer composition
+
+```nova
+fn process() Fail[Err] -> () {
+    defer { panic("cleanup broken") }
+    do_fails()?                                  // throws Err1
+}
+// Exit:
+//   1. body throws Err1
+//   2. unwinding starts
+//   3. defer fires — panic("cleanup broken")
+//   4. panic composes с Err1 → composite { primary: Err1, suppressed: [Panic("cleanup broken")] }
+//   5. propagation continues with composed error
+```
+
+**Никаких abort'ов.** Plan 49 multi-error already supports panic-as-
+throw; D150 расширяет composition на panic.
+
+### Defer-stack runtime structure
+
+```
+for entry in stack.reverse() {
+    let result = run_defer_body(entry)
+    match result {
+        Ok(())   => continue
+        Err(e)   => { propagating = compose(propagating, e); continue }
+        Panic(m) => { propagating = compose(propagating, Panic(m)); continue }
+    }
+}
+throw propagating
+```
+
+LIFO walk **completes** даже при ошибках. Rust does NOT do this.
+
+### Diagnostic — chain visibility
+
+```
+error: composite error during scope exit
+  primary error:
+    Err1 ("operation failed")  at do_work (process.nv:12)
+  suppressed during defer LIFO:
+    [1] Err_B ("cleanup B failed")  at B_cleanup() in defer (process.nv:10)
+    [2] Err_A ("cleanup A failed")  at A_cleanup() in defer (process.nv:8)
+    [3] Panic("cleanup C broken")  at panic() in defer (process.nv:11)
+```
+
+### Сравнение
+
+| Capability | Go | Rust | TS | Kotlin | Java | Nova D150 |
+|---|---|---|---|---|---|---|
+| Multi-cleanup LIFO continues после partial fail | ⚠️ defer continues errors lost | ❌ first-panic-abort | ✅ SuppressedError | ⚠️ partial | ✅ addSuppressed | ✅ **Plan 49 multi-error** |
+| Panic в cleanup body | ✅ recover() | ❌ **double-panic-abort** | ⚠️ SuppressedError | ⚠️ try-catch | ⚠️ silent if not addSuppressed | ✅ **composition + no abort** |
+| All N cleanups attempted | ⚠️ depends | ❌ first-Drop-only-tries | ⚠️ depends | ✅ try-finally chain | ✅ try-with-resources | ✅ **guaranteed** |
+
+Nova **превосходит Rust уверенно** (no double-panic-abort + all
+cleanups attempted) + matches TS/Java на composition + превосходит
+на visibility (effect-typed).
+
+### Связь
+
+- [D90](#d90) §«panic» — amend'аем.
+- [D147](#d147) — failable cleanup foundation.
+- [D85](04-effects.md#d85) — multi-error composition.
+- [D151](#d151) — consume-integration uses D150 для multi-consume failures.
+
+---
+
+## D151. Consume-integration final — check_consume + defer-family + cancel
+
+> **Plan 100.4.5.** Принято 2026-05-23 (proposed). **Amend [D90](#d90)
+> §7** (`interrupt` triggers errdefer). Финал Plan 100.4 umbrella.
+
+### Что
+
+`check_consume` pass (D133) распознаёт `defer`/`errdefer`/`okdefer`
+как покрывающие consume-vars на соответствующих exit-paths:
+
+| Statement | Покрывает consume на path'е |
+|---|---|
+| `defer { tx.commit() }` | **все exit-paths** (success, error, panic, interrupt) |
+| `errdefer { tx.rollback() }` | **error-paths** (throw, panic, interrupt — amend D90 §7) |
+| `okdefer { tx.commit() }` | **success-path** (normal exit, return) |
+
+### Amend D90 §7
+
+```
+БЫЛО:  errdefer triggers on throw + panic; NOT on interrupt.
+СТАЛО: errdefer triggers on throw + panic + INTERRUPT (за исключением exit()).
+```
+
+Логика: errdefer = «exit без normal completion». throw/panic/interrupt
+— все «abnormal» exits относительно success-path. Backward-compat
+impact — handler-flow user-code: errdefer'ы now fire on interrupt.
+Plan 100.4.5 Ф.0 GATE audit'ит existing fixtures.
+
+### Multiple defers на одну consume-var
+
+```nova
+consume tx = begin()
+errdefer { tx.rollback() }                      // error path
+okdefer  { tx.commit() }                        // success path
+do_work()?
+// tx covered: error (errdefer) + success (okdefer) = exhaustive
+```
+
+### Double-cover — error
+
+```nova
+consume tx = begin()
+okdefer { tx.commit() }
+tx.commit()                                      // ❌ E (D151-double-cover):
+                                                 //    okdefer already commits.
+```
+
+### Partial coverage — error
+
+```nova
+consume tx = begin()
+errdefer { tx.rollback() }
+do_work()?
+// ❌ E (D151-not-consumed-on-path): success path tx Live (no okdefer/commit).
+```
+
+### Supervised cancel + consume cleanup
+
+```nova
+supervised(cancel: tok) {
+    spawn {
+        consume tx = begin()
+        errdefer { tx.rollback() }              // покрывает cancel-path после D90 §7 amend
+        long_op()                                // may cancel
+        tx.commit()
+    }
+}
+// На cancel: errdefer fires → tx.rollback() runs (cancel-shielded по D148);
+// rollback completes; fiber dies; supervised continues unwinding.
+```
+
+### Async-await preservation
+
+```nova
+fn process() Fail Async -> () {
+    consume tx = begin()
+    errdefer { tx.rollback() }
+    await long_async_op()                       // suspend; may cancel
+    tx.commit()
+}
+// Pre-await:  tx Live, errdefer registered.
+// Post-await: tx still Live.
+// Cancel-during-await: errdefer fires → tx Consumed via rollback.
+```
+
+### Canonical Transaction lifecycle
+
+```nova
+fn process_order(data Data) Fail[OrderErr] Db -> Receipt {
+    consume tx = Db.begin()
+    errdefer { tx.rollback()? }                 // failable rollback (D147)
+    okdefer  { tx.commit()?   }                 // failable commit (D147)
+    let order = Db.insert(data)?
+    let receipt = Db.notify(order)?
+    return receipt                               // okdefer fires → commit
+}
+// Error: errdefer fires → rollback (composite если rollback fails)
+// Success: okdefer fires → commit (throw если commit fails)
+```
+
+### Связь
+
+- [D90](#d90) §7 — amend'аем.
+- [D131](05-memory.md#d131), [D133](02-types.md#d133) — consume foundation.
+- [D147](#d147), [D148](#d148), [D149](#d149), [D150](#d150) —
+  precondition (Plan 100.4 family).
+- [Plan 49](../../docs/plans/49-cancel-throw-routing.md) — cancel-routing.
+- [Plan 47](../../docs/plans/47-supervised-cancel.md) — supervised.
