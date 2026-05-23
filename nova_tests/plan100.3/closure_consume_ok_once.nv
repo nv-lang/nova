@@ -1,0 +1,21 @@
+// Plan 100.3 (D146): consume-closure (FnOnce-equivalent).
+//
+// Closure-body вызывает consume-метод на captured var → closure становится
+// consume-closure: invoke = consume, повторный invoke → error.
+// Если closure не invoked — на scope-exit обязан Consumed (invoked / passed).
+
+module nova_tests.plan100_3.closure_consume_ok_once
+
+type Transaction consume {
+    id int,
+}
+
+fn Transaction consume @commit() -> () { () }
+
+test "consume-closure (FnOnce) — invoke ровно один раз" {
+    consume tx = Transaction { id: 1 }
+    let commit_it = || tx.commit()             // consume-closure
+    commit_it()                                 // ✅ tx Consumed, closure Consumed
+    // tx Consumed; нельзя использовать.
+    // closure Consumed; нельзя invoke повторно.
+}

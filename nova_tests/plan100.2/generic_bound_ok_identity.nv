@@ -1,0 +1,21 @@
+// Plan 100.2 (D145): identity-функция с strict consume bound.
+//
+// `fn id[T consume](consume x T) -> T => x` — input передан consume,
+// output возвращён naverh. T tracked strictly: внутри id silent-forget
+// невозможен.
+
+module nova_tests.plan100_2.generic_bound_ok_identity
+
+type Transaction consume {
+    id int,
+}
+
+fn Transaction consume @commit() -> () { () }
+
+fn id[T consume](consume x T) -> T => x
+
+test "id[T consume] — identity passthrough" {
+    consume tx = Transaction { id: 42 }
+    consume tx2 = id(tx)
+    tx2.commit()
+}

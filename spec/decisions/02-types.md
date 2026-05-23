@@ -4141,6 +4141,184 @@ distinct cleanup methods. Не требует lifetime'ов / move-семант�
 
 ---
 
+## D145. Generic `[T consume]` bound + collection-aware iteration
+
+> **Plan 100.2.** Принято 2026-05-23 (proposed; implementation pending).
+> Extends [D133](#d133) на generic-код. Closes silent-leak hole для
+> consume-T в generic-функциях.
+
+### Что
+
+Bound `[T consume]` на generic-параметр — opt-in **strict mode**: внутри
+generic-body параметр `T` трактуется как possibly-consume; silent-forget
+T-значения → compile error. Backward-compat: generic-функции **без**
+bound сохраняют silent-ignore behavior (Plan 100.1 default), чтобы
+existing stdlib generic-код продолжал работать.
+
+```nova
+// Strict mode — compiler enforces strict consume handling внутри:
+fn box[T consume](consume x T) -> Box[T] => Box { val: x }
+
+// Без bound — silent-ignore:
+fn drop[T](x T) -> ()                          // silent forget если T consume
+```
+
+Плюс — **collection-aware iteration**: `for tx in vec { ... }` где
+`vec []Transaction` consume'ит каждый element в arm-теле.
+
+### Зачем
+
+Без D145 generic-код имеет дыру:
+
+```nova
+type Transaction consume { id int }
+fn Transaction consume @commit() -> ()
+
+fn first[T](pair (T, T)) -> T => pair.0       // silent leak pair.1 если T=consume
+
+consume tx1 = Transaction { id: 1 }
+consume tx2 = Transaction { id: 2 }
+consume chosen = first((tx1, tx2))             // tx2 уехала в first и потерялась
+chosen.commit()
+// tx2 LEAK — compiler молчит.
+```
+
+Это самый серьёзный hole D133 bootstrap'а — именно generic-helpers есть
+в каждой stdlib. Rust решает через `Move` trait + ownership; D145 решает
+через **`[T consume]` bound** + collection-aware iteration.
+
+### Синтаксис bound
+
+```nova
+fn box[T consume](consume x T) -> Box[T]
+fn map[T consume, U consume](items []T, f fn(consume T) -> U) -> []U
+fn id[T consume](consume x T) -> T => x
+```
+
+`consume` — bound в generic-position, мирится с другими bounds (`[T Iter[U]]`
+из D72) — но **bootstrap не поддерживает комбинации** (`[T consume +
+Clone]` — parse error; будущее расширение).
+
+### Strict mode внутри `[T consume]` body
+
+Внутри функции с `[T consume]` bound параметр `T` трактуется как
+possibly-consume; compiler обращается строго:
+
+| Действие с T-значением | Без bound | С `[T consume]` |
+|---|---|---|
+| `let _ = x` (silent drop) | ✅ OK | ❌ error E (D145-strict-forget) |
+| передача в non-consume fn | ⚠️ silently | ❌ error |
+| destructure tuple, discard part | ⚠️ silently | ❌ error |
+| `return x` | ✅ | ✅ (передача наверх) |
+| передача в `consume` fn-param | ✅ | ✅ (consume) |
+
+Force'ит honest API. Чтобы legitimately drop элемент — нужен явный
+`consume`-параметр для drop:
+
+```nova
+fn first[T consume](consume a T, consume drop_b T) -> T => a
+//                              ^^^^^^^^^^^^^^^^^^ — caller обязан передать
+//                                                   drop_b как consume; внутри
+//                                                   first drop_b силен забыть
+//                                                   (это локальный binding).
+```
+
+### Backward-compat и migration policy
+
+- **Default = silent-ignore** для generic-functions без bound (Plan
+  100.1 behavior preserved). Иначе сломается весь stdlib generic-код.
+- **Opt-in `[T consume]`** для функций, которые хотят strict mode.
+- **Migration:** stdlib generic-functions (Plan 17/26/30/52/57
+  collection API) — постепенно аннотируются `[T consume]` через `nova
+  consume-migrate` CLI (Plan 100.7).
+
+### Collection-aware iteration
+
+`for x in []T` где `type_is_consume(T)` — каждый `x` в arm'е считается
+Live linear, обязан Consumed/Returned в arm-теле:
+
+```nova
+consume tx1 = begin()
+consume tx2 = begin()
+consume tx3 = begin()
+let txs = [tx1, tx2, tx3]                      // []Transaction — generic-заразность (D133 D6)
+
+for tx in txs {
+    tx.commit()                                // каждый element consume'ится ✅
+}
+// vec считается Consumed после for ✅
+```
+
+Loop-handling pragmatic: после `for`-block весь vec considered Consumed
+(даже если break early). Каждый `tx` в теле проверяется стандартным
+`check_consume`.
+
+### Generic propagation для HOF (map/filter/fold)
+
+```nova
+fn map[T consume, U consume](items []T, f fn(consume T) -> U) -> []U
+fn filter[T consume](items []T, f fn(view T) -> bool) -> []T
+fn fold[T consume, U consume](items []T, init U, f fn(consume U, consume T) -> U) -> U
+```
+
+Все три требуют `[T consume]` (и `[U consume]` где нужно). Compiler
+enforces consume-handling в `f` body через generic-bound propagation.
+`filter` использует `view T` (D146 Plan 100.3) для read-only inspection.
+
+### HashMap / user-generic propagation
+
+`type_is_consume` рекурсивно (D133 D6): wrapper'ы с consume-arg сами
+становятся consume:
+
+```nova
+let mut tx_map HashMap[str, Transaction] = HashMap.new()
+                                               // ↑ Transaction consume → HashMap consume
+                                               //   через generic-заразность
+tx_map.insert("a", begin())                    // V value insert; HashMap инкапсулирует
+// На scope-exit tx_map должен быть Consumed (через consume-метод HashMap).
+```
+
+HashMap (и другие collection API) — должны аннотировать `[V consume]`
+на методах, манипулирующих consume-values (`insert`, `remove`, `get`).
+Migration audit — часть Plan 100.7.
+
+### Runtime cost
+
+**Zero.** Все проверки compile-time. Runtime-представление generic'ов
+не меняется. Bound `[T consume]` — type-level only, не влияет на
+codegen mono'd functions.
+
+### Сравнение
+
+| Capability | Go | Rust | TS | Kotlin | Nova D145 |
+|---|---|---|---|---|---|
+| Generic linear bound | n/a | ✅ `T: Move` (default) | n/a | n/a | ✅ **`[T consume]`** opt-in |
+| Detection «generic drops linear arg» | n/a | ✅ compile-error | n/a | n/a | ✅ |
+| Backward-compat: generic без bound | n/a | n/a | n/a | n/a | ✅ **silent-ignore остаётся** |
+| `Vec<T>` ownership iteration | n/a | ✅ | n/a | n/a | ✅ `for tx in vec` |
+
+Nova **превосходит Rust** на одной оси — backward-compat: generic
+без bound сохраняет existing behavior; opt-in strict — choice.
+
+### Что отвергнуто
+
+- **`[T consume + Clone]` combined bound** — bootstrap parse-error;
+  будущее расширение (комбинация с другими D72 bounds).
+- **`[T !consume]` anti-bound** — не вводится; нет use-case в
+  bootstrap.
+- **Variance** linear-typed wrappers — отдельный план (общая variance
+  system).
+
+### Связь
+
+- [D133](#d133) — foundation type-level consume; D145 — generic-уровень.
+- [D72](#d72) — generic bounds `[T Protocol]`; D145 идиоматически близок.
+- [D146](05-memory.md#d146) — `view T` (Plan 100.3); `filter`-style HOF
+  использует view для read-only inspection.
+- D147-D151 (Plan 100.4 family) — defer/errdefer integration; orthogonal.
+
+---
+
 ## D135. Type-checker completeness — «no silent fallback» на уровне типов
 
 **Статус:** принято, реализовано ([Plan 79](../../docs/plans/79-typecheck-hardening-no-silent-fallback.md)).

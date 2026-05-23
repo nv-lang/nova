@@ -1,0 +1,23 @@
+// EXPECT_COMPILE_ERROR D145
+//
+// Plan 100.2 (D145): silent-leak в generic-коде с `[T consume]` bound.
+//
+// `fn first[T consume](pair (T, T)) -> T => pair.0` — strict mode:
+// pair.1 силен потерян → error E (D145-strict-forget).
+//
+// Без bound (Plan 100.1 silent-ignore) этот код бы прошёл. С bound
+// compiler ловит реальный leak.
+
+module nova_tests.plan100_2.generic_bound_err_first_drop
+
+// ❌ strict mode: pair.1 не consumed → error.
+fn first[T consume](pair (T, T)) -> T => pair.0
+//                                       ↑ pair.1 силен потерян
+// ОШИБКА D145-strict-forget: pair.1 не consumed внутри generic-body.
+// Suggest: add explicit `consume drop_b T` param, или используй map/zip.
+
+test "silent-leak ловится с consume bound" {
+    let pair_int = (1, 2)
+    let result = first(pair_int)
+    assert(result == 1)
+}
