@@ -1,8 +1,11 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 # Plan 96 — sub-slice views для `[]T` (production-grade, paritет/лучше Go/Rust/TS)
 
-> **Статус:** 📋 proposed 2026-05-23, rev. 2 (production-grade rewrite после
-> аудита 2026-05-23), не начат
+> **Статус:** ✅ **ЗАКРЫТ 2026-05-23** (Ф.1-Ф.7 на ветке `plan-96`;
+> regression 1081+ PASS / 0 FAIL; 23 теста plan96). Lint
+> `W_VIEW_PUSH_DETACH` отложен ([P-plan96-lint-deferred] в
+> simplifications.md) — push-detach **поведение** работает корректно,
+> lint — добавление warning без блокировки функционала.
 > **Приоритет:** P2 (закрывает Q-array-slicing + D27 §1663 drift + D27
 > bounds-check drift; разблокирует stdlib алгоритмы и убирает offset-
 > параметры Plan 90)

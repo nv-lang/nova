@@ -30,6 +30,7 @@ GC внутри выключен. Явный `region { ... }` нужен для 
 │ Managed heap (default)                                  │
 │   - Concurrent GC (паузы <1ms)                          │
 │   - Generational, non-moving для FFI                    │
+│   - Stable interior pointers (необходимо для D144 slice)│
 │   - Escape analysis: что не утекает — на стеке/в арене  │
 │   - Никаких префиксов в коде                            │
 │   - Циклы освобождаются автоматически                   │

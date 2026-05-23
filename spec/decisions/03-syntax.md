@@ -1660,8 +1660,10 @@ diagnostic подсказывает rename `.capacity()`.
 запросу use-case'ов; формальный D-block не нужен, любой `fn []T
 @method` валиден по D35).
 
-**Слайсинг `xs[a..b]`** — отложен (Q-array-slicing). Сейчас у `[]T`
-нет range-индексирования.
+**Слайсинг `xs[a..b]`** — реализовано Plan 96 (см. [D144](02-types.md#d144)).
+Поддержаны 5 форм Range: `a..b`, `a..=b`, `a..`, `..b`, `..` (Rust
+`RangeBounds` parity). Возвращает sub-slice view (`cap == len`, push →
+realloc → silent detach). OOB → `panic` (D13).
 
 **Embed `use []T`** — допустим по D39 (имя поля обязательно):
 
@@ -3073,7 +3075,10 @@ D44, D52). D54 фиксирует семантику явно: `as` — compile-
 взаимно поддерживают друг друга:
 
 1. **`a..b` и `a..=b` — литералы Range** в любой expression-позиции
-   (не только в `for`).
+   (не только в `for`). **Open-ended формы `a..`, `..b`, `..=b`, `..`** —
+   расширение Plan 96 ([D144](02-types.md#d144)): **только** в slice-
+   context (`arr[range]`). В materialize / for-loop / quantifier /
+   parallel-for — compile-error (нужна bounded форма).
 2. **`Iter[T]`** — структурный protocol в prelude (D26):
    `protocol { mut next() -> Option[T] }`. Любой тип с таким методом
    — итератор.
