@@ -11138,31 +11138,27 @@ ns/switch — паритет с Boost.Context). Перенос замера в N
 > * Capability-split factory pattern (`Lock.new() -> (Locker, Unlocker)`)
 >   работает end-to-end (commit 8e024d43647 + предшествующие).
 
-### [M-protocol-method-name-shadowing] Plan 97.1 Ф.4 — method-name collision между protocol-литералом и stdlib protocol'ом
+### [M-protocol-method-name-shadowing] ✅ ЗАКРЫТ Plan 97.1-fu (2026-05-23) — method-name collision между protocol-литералом и stdlib protocol'ом
 
-- **Где** — `compiler-codegen/src/codegen/emit_c.rs` method-call dispatch
-  для `box.method()` на `NovaBox_<Proto>`-типизированном значении.
-- **Что упрощено** — если protocol-литерал использует method-name,
-  совпадающий с другим stdlib-protocol'ом (например `Iter.next`),
-  emit_call может неверно резолвить return-type через ту шкалу
-  (`NovaOpt_<T>` вместо `<T>`). Это даёт CC-FAIL вида
-  `initializing 'NovaOpt_nova_int' with an expression of incompatible type`.
-- **Почему** — Member-call type inference scan'ит method tables всех
-  типов по имени; правильно искать в `protocol_method_registry[Proto]`
-  для box-typed receivers, что требует chains type-tracking
-  (var → NovaBox_<Proto> → Proto → methods).
-- **Workaround** — переименовать method чтобы избежать collision с
-  builtin protocols (Iter/Hashable/Comparable/Display/Equatable/etc).
-  В фикстуре `pos_protocol_lit_closure_capture` использован `advance`
-  вместо `next`.
-- **Как чинить** — emit_call для `box.method()` приоритезирует
-  protocol_method_registry lookup перед method_table'ами; нужен chain
-  receiver-type → protocol-name (новый buffer `var_protocol_type`).
-- **Приоритет** — L. Редкий edge case (большинство protocol'ов имеют
-  уникальные method names); workaround = переименовать method в
-  literal.
-- **Обнаружено** — Plan 97.1 Ф.4 (2026-05-23) в фикстуре
-  `pos_protocol_lit_closure_capture.nv`.
+- **CLOSED 2026-05-23 by Plan 97.1 followup** (commit `16b99a9475f`,
+  ветка `plan-97-1-fu`).
+- **Где** — `compiler-codegen/src/codegen/emit_c.rs` `infer_expr_c_type`
+  для `Call { func: Member { obj, name } }` где `obj: NovaBox_<Proto>`.
+- **Что было** — return-type метода брался из общих `method_overloads`
+  (где мог оказаться homonymous метод другого типа — e.g. `Iter.next ->
+  Option[T]`), вместо правильного `protocol_method_registry[<Proto>]`.
+  Давало CC-FAIL `initializing 'NovaOpt_nova_int' with incompatible
+  'nova_int'` — silent miscompile риск.
+- **Fix:** в `infer_expr_c_type` добавлен **priority lookup**: если
+  `obj_ty` имеет prefix `NovaBox_`, return-type метода берётся
+  **первым делом** из `protocol_method_registry[<Proto>]`
+  (с fallback по mangle: full `Iter_nova_int` → base `Iter`).
+  Метод resolved correctly до любых других candidate paths.
+- **Guard regression-фикстура:** `pos_protocol_lit_method_name_shadowing.nv`
+  — `protocol CounterPlain { next() -> int }` (имя совпадает с
+  `Iter.next() -> Option[T]`), `c.next()` корректно возвращает `int`.
+- **Регресс:** plan97 17/17 PASS, plan72 (P3-B box-dispatch) 16/16 PASS —
+  никаких поломок.
 
 - **Где** — `compiler-codegen/src/codegen/emit_c.rs` `ExprKind::ProtocolLit`
   arm (делегирует на `emit_handler_lit`).
