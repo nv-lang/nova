@@ -1383,7 +1383,18 @@ static inline void nova_supervised_run_cancel(NovaFiberQueue* q,
  */
 static inline void nova_fiber_yield(void) {
     mco_coro* co = mco_running();
-    if (!co) return;
+    if (!co) {
+        /* Plan 83.4.3 (2026-05-23) — B4 fix: yield на main thread.
+         * Раньше — silent no-op. Теперь — один turn libuv loop'а
+         * (UV_RUN_NOWAIT) даёт прогресс pending I/O / async-events /
+         * scheduler-wake'ам. Это паритет с Node `setImmediate(cb)` /
+         * Go `runtime.Gosched()` semantics on the main goroutine.
+         * Безопасно: uv_run libuv поддерживает re-entrancy (drain-цикл
+         * supervised_run сам может вызвать yield → не блокируется). */
+        uv_loop_t* loop = nova_evloop();
+        if (loop) uv_run(loop, UV_RUN_NOWAIT);
+        return;
+    }
     /* Cooperative cancellation check. _nova_active_scope set by step.
      * Plan 49 Ф.2: бросаем kind=CANCEL (вместо USER) и тащим причину
      * из bound token'а scope'а (если есть). Это позволяет supervised_run
