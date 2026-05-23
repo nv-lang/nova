@@ -11,8 +11,8 @@
 
 use crate::ast::{
     ArrayElem, Block, ClosureBody, ElseBranch, Expr, ExprKind, FnBody, FnDecl,
-    HandlerMethodBody, Import, Item, MatchArmBody, Module, Stmt, TypeDeclKind,
-    TypeRef,
+    HandlerMethodBody, Import, Item, MatchArmBody, Module, Pattern, Stmt,
+    TypeDeclKind, TypeRef,
 };
 use crate::diag::{Diagnostic, Span};
 use std::collections::HashSet;
@@ -36,6 +36,9 @@ pub fn lint_module(m: &Module) -> Vec<LintWarning> {
                 check_assume_trust(f, &mut warnings);
                 check_assert_static_unverified(f, &mut warnings);
                 check_protocol_in_effect_position(f, &protocol_names, &effect_names, &mut warnings);
+                // Plan 96.1 Ф.1: W_VIEW_PUSH_DETACH — warning при push на
+                // slice-view binding (let X = arr[range]; X.push(...)).
+                lint_view_push_detach(f, &mut warnings);
                 // Plan 52 Ф.2: map-литерал lints (dup-key, NaN-key) —
                 // требуют обхода выражений внутри тела функции.
                 match &f.body {
@@ -1005,6 +1008,132 @@ fn walk_stmt_lints(s: &Stmt, out: &mut Vec<LintWarning>) {
         Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => walk_expr_lints(expr, out),
         // Plan 33.3 Ф.13: Apply/Calc — proof-statements, spec-only.
         Stmt::Apply { .. } | Stmt::Calc { .. } | Stmt::Reveal { .. } => {}
+    }
+}
+
+/// Plan 96.1 Ф.1 — W_VIEW_PUSH_DETACH lint.
+///
+/// Detects pattern: `let X = obj[Range]; ...; X.push(...)`.
+/// Warning explains, что push на slice-view с `cap == len` реаллокает
+/// и детачится от parent backing'а; parent НЕ модифицируется (anti-
+/// Go-append-footgun, но silent surprise).
+///
+/// Per-function walker maintains HashMap<binding_name, span_of_binding>
+/// of slice-view bindings (RHS = `Index { obj, index: Range }`). При
+/// встрече `X.push(...)` на tracked X — emit warning.
+///
+/// Closes `[P-plan96-lint-deferred]` from Plan 96.
+fn lint_view_push_detach(f: &FnDecl, out: &mut Vec<LintWarning>) {
+    let mut slice_views: std::collections::HashMap<String, crate::diag::Span> =
+        std::collections::HashMap::new();
+    match &f.body {
+        FnBody::Expr(e) => walk_view_push_expr(e, &mut slice_views, out),
+        FnBody::Block(b) => walk_view_push_block(b, &mut slice_views, out),
+        FnBody::External => {}
+    }
+}
+
+fn walk_view_push_block(
+    b: &Block,
+    slice_views: &mut std::collections::HashMap<String, crate::diag::Span>,
+    out: &mut Vec<LintWarning>,
+) {
+    for s in &b.stmts {
+        walk_view_push_stmt(s, slice_views, out);
+    }
+    if let Some(t) = &b.trailing {
+        walk_view_push_expr(t, slice_views, out);
+    }
+}
+
+fn walk_view_push_stmt(
+    s: &Stmt,
+    slice_views: &mut std::collections::HashMap<String, crate::diag::Span>,
+    out: &mut Vec<LintWarning>,
+) {
+    match s {
+        // Track let-binding'ов с RHS = Index{obj, index: Range}.
+        Stmt::Let(d) => {
+            if let ExprKind::Index { index, .. } = &d.value.kind {
+                if matches!(index.kind, ExprKind::Range { .. }) {
+                    // Single-name pattern: `let X = arr[a..b]`.
+                    if let Pattern::Ident { name, .. } = &d.pattern {
+                        slice_views.insert(name.clone(), d.value.span);
+                    }
+                }
+            }
+            walk_view_push_expr(&d.value, slice_views, out);
+        }
+        Stmt::Expr(e) => walk_view_push_expr(e, slice_views, out),
+        Stmt::Assign { target, value, .. } => {
+            walk_view_push_expr(target, slice_views, out);
+            walk_view_push_expr(value, slice_views, out);
+        }
+        Stmt::Return { value: Some(v), .. } => walk_view_push_expr(v, slice_views, out),
+        Stmt::Throw { value, .. } => walk_view_push_expr(value, slice_views, out),
+        Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. } => {
+            walk_view_push_expr(body, slice_views, out);
+        }
+        Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => {
+            walk_view_push_expr(expr, slice_views, out);
+        }
+        _ => {}
+    }
+}
+
+fn walk_view_push_expr(
+    e: &Expr,
+    slice_views: &mut std::collections::HashMap<String, crate::diag::Span>,
+    out: &mut Vec<LintWarning>,
+) {
+    match &e.kind {
+        // Detect: X.push(...) where X is a tracked slice-view.
+        ExprKind::Call { func, .. } => {
+            if let ExprKind::Member { obj, name } = &func.kind {
+                if name == "push" {
+                    if let ExprKind::Ident(var_name) = &obj.kind {
+                        if let Some(&view_span) = slice_views.get(var_name) {
+                            out.push(LintWarning {
+                                rule: "W_VIEW_PUSH_DETACH",
+                                diag: crate::diag::Diagnostic::new(
+                                    format!(
+                                        "W_VIEW_PUSH_DETACH: mut view's push detaches from \
+                                         parent backing; parent NOT modified. View `{}` \
+                                         was created from slice expression (Plan 96 \
+                                         D-cap-len, D144). Use parent directly to grow, \
+                                         or convert view to independent array first.",
+                                        var_name
+                                    ),
+                                    e.span,
+                                ).with_note_at(
+                                    format!("`{}` bound here from slice", var_name),
+                                    view_span,
+                                ),
+                            });
+                        }
+                    }
+                }
+            }
+            // Recurse into func and args для nested matches.
+            walk_view_push_expr(func, slice_views, out);
+            // Args walk: skip — push args usually don't contain new view bindings.
+        }
+        ExprKind::Block(b) => walk_view_push_block(b, slice_views, out),
+        ExprKind::If { cond, then, else_ } => {
+            walk_view_push_expr(cond, slice_views, out);
+            walk_view_push_block(then, slice_views, out);
+            if let Some(eb) = else_ {
+                match eb {
+                    ElseBranch::Block(b) => walk_view_push_block(b, slice_views, out),
+                    ElseBranch::If(if_expr) => walk_view_push_expr(if_expr, slice_views, out),
+                }
+            }
+        }
+        ExprKind::For { body, .. } | ExprKind::While { body, .. } => {
+            walk_view_push_block(body, slice_views, out);
+        }
+        // Other expression kinds — обычный обход (упрощённо).
+        _ => {}
     }
 }
 
