@@ -9176,13 +9176,38 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                 self.infer_type_param_binding(&param.ty, &arg_c, &mut subst_slots);
             }
         }
-        // Step 2: ClosureLight args — pre-infer closure return type с
-        // typed `var_types` context для closure params.
+        // Step 2: closure args (`ClosureLight` `|x| ...` или `ClosureFull`
+        // `fn(x int) -> int => ...`) — pre-infer closure return type.
+        // Для ClosureFull return-type explicit, не нужен var_types-binding.
+        // Для ClosureLight — bind closure params в `var_types` для
+        // typed body inference (substituted через current_type_subst).
         for (param, arg) in fn_decl.params.iter().zip(args.iter()) {
             let (fp, ret_ty_ref) =
                 if let crate::ast::TypeRef::Func { params: fp, return_type: Some(rt), .. } = &param.ty {
                     (fp.clone(), rt.clone())
                 } else { continue };
+            // ClosureFull — explicit return-type, можно использовать напрямую.
+            if let ExprKind::ClosureFull(fsb) = &arg.expr().kind {
+                // Bind param types если method-level в `fp` (fn(T) -> U).
+                if let Ok(closure_param_tys) = fsb.params.iter()
+                    .map(|p| self.type_ref_to_c(&p.ty))
+                    .collect::<Result<Vec<_>, _>>()
+                {
+                    for (fp_ty, arg_c) in fp.iter().zip(closure_param_tys.iter()) {
+                        self.infer_type_param_binding(fp_ty, arg_c, &mut subst_slots);
+                    }
+                }
+                if let Some(ret_ty) = &fsb.return_type {
+                    if let Ok(ret_c) = self.type_ref_to_c(ret_ty) {
+                        if !ret_c.is_empty() && ret_c != "void*" {
+                            self.infer_type_param_binding(
+                                &ret_ty_ref, &ret_c, &mut subst_slots);
+                        }
+                    }
+                }
+                continue;
+            }
+            // ClosureLight — нужен tmp var_types binding для body inference.
             let (closure_params, body_expr) = match &arg.expr().kind {
                 ExprKind::ClosureLight { params, body } => {
                     let body_e = match body {
