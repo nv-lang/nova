@@ -19450,3 +19450,39 @@ Spec/docs:
 - README обновится при merge.
 
 Готово к merge'у в main.
+
+═══════════════════════════════════════════════════════════════════════
+Plan 99 Ф.0 — Probe + re-scope (worktree nova-p99, ветка plan-99)
+2026-05-23
+═══════════════════════════════════════════════════════════════════════
+
+Probe нашёл, что Plan 99 scope в plan-doc'е был недооценён:
+
+- Block 1 (closure-codegen): УЖЕ работает через NovaClosBase +
+  fn_param_sigs + cast. Никаких изменений не нужно.
+- Block 2 (method-level generic [U] в DeclaredBody): требует extract
+  method_extra_subst helper + integrate в Option/Result dispatch.
+  Сейчас Option/Result DeclaredBody (Plan 95 Ф.3) **не запускает**
+  inference для method-level generics — собран только для user-
+  generic dispatch.
+- Block 3 (контекстный variant-constructor): зависит от Block 2.
+
+Probe `my_map_probe.nv` (Option.my_map[U]) output:
+- NovaOpt_Nova_U_p _nv_match;  ← unresolved U placeholder
+- (Nova_U*(*)(void*, nova_int))((NovaClosBase*)f)->fn  ← unresolved
+- mono_name = Nova_Option_method_my_map_nova_int (без U-суффикса)
+
+Дополнительно нужно:
+- Расширить mono_name на Nova_Option_method_<m>_<T>_<U>_<F>... 
+- Fix infer_expr_c_type (хардкод без method-level inference).
+- lazy-emit NovaOpt_<U> для return-Option-типа.
+- Удалить 6 inline emit-блоков ОДНИМ commit'ом с переносом тел
+  (C-redefinition risk).
+
+Re-scope: ~3.5-4 dev-day (proposal 2.5-3 = недооценка). Plan 99
+остаётся GATED (Plan 98 ✅ разблокировал base inference, Block 2/3
+implementation = отдельная инициатива).
+
+Маркер [M-option-result-closure-methods-deferred] в simplifications.md.
+
+Plan 99 Ф.1-Ф.6 НЕ выполнены — требуют отдельной плановой сессии.
