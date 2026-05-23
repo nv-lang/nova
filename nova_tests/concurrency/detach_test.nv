@@ -1,24 +1,18 @@
 // 40_detach.nv — D50 `detach { body }` fire-and-forget primitive.
 //
-// Spec: detach запускает body как fiber переживающий caller'а, привязан
-// к глобальному supervisor'у (default LogAndDrop). Требует эффекта Detach
-// в сигнатуре.
+// Spec D50 (revised 2026-05-23, Plan 83.4.5.2 Ф.4): detach запускает body
+// как orphan fiber переживающий caller'а, привязан к глобальному
+// LogAndDrop fail-handler. Default handler — AsyncDetach (fire-and-forget
+// на worker pool / cooperative orphan scope, не inline в caller'е).
 //
-// Bootstrap default-handler = SyncDetach: body исполняется inline в
-// потоке caller'а. Этого достаточно чтобы проверить наблюдаемые side-effects
-// и совместимость с capture-семантикой.
-
-// Plan 83.4.5.2 (2026-05-23): cooperative detach test — armed
-// multi-worker double-resume race ломает test infrastructure.
-// Bootstrap default-handler SyncDetach (inline в caller'е) — same
-// semantic under armed без race blocker'а. Тесты проверяют наблюдаемые
-// side-effects + capture семантику; cooperative drain даёт identical
-// results. D50 async-default semantics — separate Plan 83.4.5.X spec
-// amend (deferred — bootstrap SyncDetach остаётся валидной default
-// implementation; async-spawn primitive nova_runtime_spawn_orphan
-// planned для future production fire-and-forget mode).
+// Cross-runtime: паритет Go `go fn()`, tokio `tokio::spawn` без JoinHandle,
+// Kotlin `GlobalScope.launch { … }`.
 //
-// ENV NOVA_NO_AUTOARM=1
+// Plan 83.4.5.2 Ф.3 (2026-05-23): тесты переписаны на explicit-sync
+// через `runtime.drain_orphans()` — analog Go `sync.WaitGroup.Wait()`
+// для anonymous-spawn'ов. До flip-activation: bootstrap orphan scope
+// (cooperative drain). После flip + Plan 83.4.5.7 race fix: worker pool
+// fire-and-forget.
 
 module concurrency.detach_test
 
@@ -29,20 +23,22 @@ type Counter {
 fn make_counter(v int) -> Counter => { val: v }
 
 // ================================================================
-// SECTION 1: базовое исполнение
+// SECTION 1: базовое исполнение (с explicit-sync через drain_orphans)
 // ================================================================
 
-test "detach: body executes (mutation visible)" {
+test "detach: body executes (visible after drain_orphans)" {
     let mut x = 0
     detach {
         x = 42
     }
+    runtime.drain_orphans()
     assert(x == 42)
 }
 
 test "detach: empty body is no-op" {
     let mut touched = false
     detach { touched = true }
+    runtime.drain_orphans()
     assert(touched)
 }
 
@@ -52,6 +48,7 @@ test "detach: trailing expr value is discarded (fire-and-forget)" {
         log = 7
         99   // discarded
     }
+    runtime.drain_orphans()
     assert(log == 7)
 }
 
@@ -63,6 +60,7 @@ test "detach: captures immutable int" {
     let n = 21
     let mut result = 0
     detach { result = n * 2 }
+    runtime.drain_orphans()
     assert(result == 42)
 }
 
@@ -71,6 +69,7 @@ test "detach: captures multiple vars" {
     let b = 5
     let mut c = 0
     detach { c = a * a + b * b }
+    runtime.drain_orphans()
     assert(c == 34)
 }
 
@@ -79,6 +78,7 @@ test "detach: mutates captured record field" {
     detach {
         counter.val = counter.val + 5
     }
+    runtime.drain_orphans()
     assert(counter.val == 15)
 }
 
@@ -96,6 +96,7 @@ test "detach with if inside" {
             tag = -1
         }
     }
+    runtime.drain_orphans()
     assert(tag == 1)
 }
 
@@ -108,66 +109,69 @@ test "detach with while inside" {
             i += 1
         }
     }
+    runtime.drain_orphans()
     assert(acc == 15)
 }
 
 // ================================================================
-// SECTION 4: detach внутри supervised — НЕ участвует в scope queue
+// SECTION 4: detach внутри supervised — orphan (НЕ участвует в scope queue)
 // ================================================================
 
-test "detach inside supervised: runs but not part of scope schedule" {
-    // detach живёт мимо scope. В bootstrap-SyncDetach он исполняется inline
-    // в той точке где встречен — то есть до того как supervised закроется.
-    // Пишем порядок выполнения через encoded log.
-    let mut log = 0
+test "detach inside supervised: orphan body completes after drain" {
+    // detach живёт мимо scope. AsyncDetach (D50 revised): orphan body
+    // НЕ участвует в supervised drain — completes asynchronously.
+    // Каждый spawn внутри supervised drained scope'ом; orphan — global.
+    let mut detach_flag = 0
+    let mut spawn_sum = 0
     supervised {
-        println("main: 1"); log = log * 10 + 1   // before any spawn
         detach {
-            println("detach: 2 (inline)"); log = log * 10 + 2
+            detach_flag = 1
         }
         spawn {
-            println("  spawn A: 3"); log = log * 10 + 3
-            Time.sleep(0)
-            println("  spawn A: 5"); log = log * 10 + 5
+            spawn_sum += 10
         }
         spawn {
-            println("  spawn B: 4"); log = log * 10 + 4
-            Time.sleep(0)
-            println("  spawn B: 6"); log = log * 10 + 6
+            spawn_sum += 20
         }
     }
-    println("detach-in-supervised log = ", log)
-    // Order: 1 (sync), 2 (detach inline), then supervised runs queue:
-    //   spawn A: 3, yield → spawn B: 4, yield → A: 5 → B: 6
-    // Encoded: 1,2,3,4,5,6 → 123456
-    assert(log == 123456)
+    // После scope-exit: spawn'ы drained (spawn_sum == 30 гарантировано).
+    // Orphan detach МОЖЕТ ещё не отработать — drain explicit.
+    assert(spawn_sum == 30)
+    runtime.drain_orphans()
+    assert(detach_flag == 1)
 }
 
 // ================================================================
-// SECTION 5: nested detach
+// SECTION 5: nested detach (both orphans)
 // ================================================================
 
-test "detach inside detach: both run inline" {
-    let mut order = 0
+test "detach inside detach: оба orphan, completeness assertion" {
+    // AsyncDetach: outer detach spawns orphan, inner detach (внутри outer's
+    // body) тоже spawns orphan. Оба завершаются после drain.
+    let mut outer_done = 0
+    let mut inner_done = 0
     detach {
-        println("outer detach: 1"); order = order * 10 + 1
+        outer_done = 1
         detach {
-            println("  inner detach: 2"); order = order * 10 + 2
+            inner_done = 1
         }
-        println("outer detach: 3"); order = order * 10 + 3
     }
-    println("nested detach order = ", order)
-    // 1, 2 (inner detach inline), 3 → 123
-    assert(order == 123)
+    runtime.drain_orphans()
+    assert(outer_done == 1)
+    assert(inner_done == 1)
 }
 
-test "detach: multiple detaches preserve sequential order" {
-    let mut log = 0
-    detach { println("detach #1"); log = log * 10 + 1 }
-    detach { println("detach #2"); log = log * 10 + 2 }
-    detach { println("detach #3"); log = log * 10 + 3 }
-    println("multi detach log = ", log)
-    assert(log == 123)
+test "detach: multiple detaches all complete (set-equality)" {
+    // AsyncDetach: 3 orphan fibers. Order не специфицирован (Go semantics
+    // — spawn ordering undef). Проверяем completeness через sum.
+    let mut sum = 0
+    detach { sum += 1 }
+    detach { sum += 2 }
+    detach { sum += 4 }
+    runtime.drain_orphans()
+    // 1 + 2 + 4 = 7. Bitmask-style проверка — каждый orphan уникально
+    // contributed к sum, доказывает все 3 executed.
+    assert(sum == 7)
 }
 
 // ================================================================
@@ -184,17 +188,43 @@ test "detach mutates array via captured ref" {
             i += 1
         }
     }
+    runtime.drain_orphans()
     assert(sum == 60)
 }
 
-test "detach can be used outside any scope (unlike spawn-without-supervised)" {
-    // detach по спеке D50 не требует scope. Spawn вне supervised — legacy
-    // (по спеке должна быть compile error). Detach же привязан к глобальному
-    // supervisor'у, поэтому валиден везде где вызывается функция с эффектом
-    // Detach в сигнатуре. В bootstrap'е эффект-проверка отключена, так что
-    // detach просто работает где угодно.
+test "detach: usable outside supervised (orphan semantic)" {
+    // detach по спеке D50 не требует scope (vs spawn — spawn вне
+    // supervised — compile error). Detach привязан к global orphan pool,
+    // поэтому валиден везде где вызывается функция с эффектом Detach
+    // в сигнатуре.
     let mut x = 100
     detach { x = x + 1 }
     detach { x = x * 2 }
-    assert(x == 202)
+    runtime.drain_orphans()
+    // Order между orphans НЕ детерминирован (D50 + Plan 83 §6). Два возможных
+    // outcome'а: (x+1)*2 = 202, OR (x*2)+1 = 201. Проверяем что один из них.
+    assert(x == 202 || x == 201)
+}
+
+// ================================================================
+// SECTION 7: NEGATIVE — drain_orphans idempotent
+// ================================================================
+
+test "drain_orphans negative: empty pool — no-op" {
+    // Никаких detach'ей. drain_orphans должен быть no-op (быстрый return).
+    let mut sentinel = 0
+    runtime.drain_orphans()
+    sentinel = 1
+    assert(sentinel == 1)
+}
+
+test "drain_orphans negative: повторный вызов — idempotent" {
+    // После первого drain orphan pool empty. Второй drain — no-op.
+    let mut x = 0
+    detach { x = 5 }
+    runtime.drain_orphans()
+    assert(x == 5)
+    // Второй drain — empty pool, no-op.
+    runtime.drain_orphans()
+    assert(x == 5)
 }
