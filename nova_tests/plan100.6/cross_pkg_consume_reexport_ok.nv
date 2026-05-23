@@ -1,0 +1,20 @@
+// Plan 100.6 (D153): re-export consume через `export import` (Plan 42.09).
+// Marker сохраняется через chain A → B → C.
+
+module nova_tests.plan100_6.cross_pkg_consume_reexport_ok
+
+// "Package A":
+export type Transaction consume { id int }
+export fn Transaction consume @commit() -> () { () }
+export fn begin() -> Transaction => Transaction { id: 1 }
+
+// "Package B" — re-exports от A:
+// export import a.types.{Transaction, begin}     // в реальном коде
+
+// "Package C" — imports Transaction через chain:
+// import b.facade.Transaction
+
+test "re-export preserves consume-marker через chain" {
+    consume tx = begin()
+    tx.commit()
+}
