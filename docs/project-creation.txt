@@ -19839,3 +19839,37 @@ Hook добавлен в `emit_call` после `print/println` intercept.
 legacy paths (без typed contextual return) не изменились.
 
 Готово к Plan 99.3.
+
+═══════════════════════════════════════════════════════════════════════
+Plan 99.3 + 99.4 ✅ — все 6 closure-applying методов на Nova-body
+2026-05-23 (worktree d:/Sources/nv-lang/nova-p99-impl)
+═══════════════════════════════════════════════════════════════════════
+
+99.3 — atomic per-method migration (6 commits):
+- Ф.1 Option.map[U] (commit c583978e80a)
+- Ф.2 Option.unwrap_or_else
+- Ф.3 Option.ok_or[E]
+- Ф.4 Result.unwrap_or_else
+- Ф.5 Result.map[U] + ClosureFull arg fix (commit 059d0ab1595 fixup)
+- Ф.6 Result.map_err[F]
+
+Regression на каждом шаге 6-7 крит. подпапок: 0 delta.
+
+99.4 — tests + spec + close:
+- 8 фикстур plan99/ (6 positive + 2 negative): option_map_migrated,
+  option_unwrap_or_else_migrated, option_ok_or_migrated,
+  result_unwrap_or_else_migrated, result_map_migrated,
+  result_map_err_migrated, option_map_wrong_closure_arity_neg,
+  option_ok_or_missing_arg_neg. Все 8/0.
+- spec/decisions/08-runtime.md: блок «Plan 99 (закрыт 2026-05-23)».
+- Plan 78 amend — финальный (14/14 Option/Result на Nova).
+- simplifications.md: маркер [M-option-result-closure-methods-
+  deferred] ✅ ЗАКРЫТО Plan 99.
+- master Plan 99 doc + 4 sub-plan'а — статус ✅ ЗАКРЫТ.
+
+ИТОГ:
+14/14 builtin Option/Result-методов на Nova-body. Реестр C-routing
+только для `unwrap` (Plan 61 lineage). Паритет Rust full mono
+per (T, U) + closure через NovaClosBase + cast.
+
+Полный nova test — в процессе.
