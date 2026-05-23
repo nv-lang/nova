@@ -109,9 +109,6 @@
     static void nova_array_fill_##T(NovaArray_##T* a, T v) { \
         for (int64_t _i = 0; _i < a->len; _i++) { a->data[_i] = v; } \
     } \
-    static inline NovaOpt_##T Nova_Option_method_or_##T(NovaOpt_##T self, NovaOpt_##T other) { \
-        return self.tag == NOVA_TAG_Option_Some ? self : other; \
-    } \
     /* Plan 96 Ф.4 — sub-slice view `arr[a..b]`. O(1): новый header (24 байта)
      * с data = orig->data + from (interior pointer); len = cap = to - from
      * (D-cap-len: push на view → realloc → silent detach, parent НЕ затронут).
@@ -128,6 +125,10 @@
         v->cap  = to - from; /* D-cap-len: push → realloc → detach */ \
         return v; \
     }
+/* Plan 95.bis Ф.2: Nova_Option_method_or_<T> убран из NOVA_ARRAY_IMPL —
+ * перенесён на Nova-body в std/prelude/core.nv. Routing через
+ * MethodRouting::DeclaredBody → mono'd Nova_Option_method_or_<T> с тем
+ * же C-именем (C-redefinition collision если оставить здесь). */
 
 /* ---- Default instantiations for primitive arrays.
  *
@@ -301,14 +302,8 @@ static inline nova_bool nova_opt_eq_nova_char(NovaOpt_nova_char a, NovaOpt_nova_
     if (a.tag == NOVA_TAG_Option_None) return 1;
     return a.value == b.value;
 }
-/* Plan 70.3/70.4: nova_char Option methods. unwrap_or kept (C-routed,
- * Plan 95 out-of-scope). is_some/is_none — REMOVED (Plan 95 Ф.4.2):
- * перенесены на Nova-тело в std/prelude/core.nv, dispatch через
- * MethodRouting::DeclaredBody → mono'd Nova_Option_method_is_some_nova_char
- * с тем же C-именем. C-redefinition collision если оставить здесь. */
-static inline nova_char Nova_Option_method_unwrap_or_nova_char(NovaOpt_nova_char o, nova_char dv) {
-    return o.tag == NOVA_TAG_Option_Some ? o.value : dv;
-}
+/* Plan 95.bis Ф.2: unwrap_or → Nova-body (std/prelude/core.nv).
+ * is_some/is_none — Plan 95 Ф.4.2. Все три убраны. */
 static inline nova_bool nova_opt_eq_nova_str(NovaOpt_nova_str a, NovaOpt_nova_str b) {
     if (a.tag != b.tag) return 0;
     if (a.tag == NOVA_TAG_Option_None) return 1;
@@ -331,20 +326,14 @@ static inline nova_bool nova_opt_eq_nova_byte(NovaOpt_nova_byte a, NovaOpt_nova_
     if (a.tag == NOVA_TAG_Option_None) return 1;
     return a.value == b.value;
 }
-/* Plan 95 Ф.4.2: is_some/is_none → Nova-body (см. core.nv). */
-static inline nova_byte Nova_Option_method_unwrap_or_nova_byte(NovaOpt_nova_byte o, nova_byte dv) {
-    return o.tag == NOVA_TAG_Option_Some ? o.value : dv;
-}
+/* Plan 95 Ф.4.2 + 95.bis Ф.2: is_some/is_none + unwrap_or → Nova-body. */
 static inline nova_bool nova_opt_eq_nova_f64(NovaOpt_nova_f64 a, NovaOpt_nova_f64 b) {
     if (a.tag != b.tag) return 0;
     if (a.tag == NOVA_TAG_Option_None) return 1;
     return a.value == b.value;
 }
-/* D26 Option methods for nova_f64. Plan 95 Ф.4.2: is_some/is_none →
- * Nova-body (см. std/prelude/core.nv). */
-static inline nova_f64 Nova_Option_method_unwrap_or_nova_f64(NovaOpt_nova_f64 o, nova_f64 default_v) {
-    return o.tag == NOVA_TAG_Option_Some ? o.value : default_v;
-}
+/* D26 Option methods for nova_f64. Plan 95 Ф.4.2 + 95.bis Ф.2:
+ * is_some/is_none + unwrap_or → Nova-body. */
 /* Plan 70.4: nova_f32 Option constructors/eq mirror nova_f64. */
 static inline NovaOpt_nova_f32 nova_make_NovaOpt_nova_f32_Some(nova_f32 v) {
     NovaOpt_nova_f32 r; r.tag = NOVA_TAG_Option_Some; r.value = v; return r;
@@ -357,11 +346,8 @@ static inline nova_bool nova_opt_eq_nova_f32(NovaOpt_nova_f32 a, NovaOpt_nova_f3
     if (a.tag == NOVA_TAG_Option_None) return 1;
     return a.value == b.value;
 }
-/* Plan 70.4: D26 Option methods for nova_f32. Plan 95 Ф.4.2: is_some/
- * is_none → Nova-body. */
-static inline nova_f32 Nova_Option_method_unwrap_or_nova_f32(NovaOpt_nova_f32 o, nova_f32 default_v) {
-    return o.tag == NOVA_TAG_Option_Some ? o.value : default_v;
-}
+/* Plan 70.4: D26 Option methods for nova_f32. Plan 95 Ф.4.2 + 95.bis
+ * Ф.2: is_some/is_none + unwrap_or → Nova-body. */
 
 /* Plan 70.4 Ф.2: sized-int Option constructors/eq/methods — one block per type. */
 static inline NovaOpt_int32_t nova_make_NovaOpt_int32_t_Some(int32_t v) {
@@ -375,8 +361,7 @@ static inline nova_bool nova_opt_eq_int32_t(NovaOpt_int32_t a, NovaOpt_int32_t b
     if (a.tag == NOVA_TAG_Option_None) return 1;
     return a.value == b.value;
 }
-/* Plan 95 Ф.4.2: is_some/is_none → Nova-body. */
-static inline int32_t Nova_Option_method_unwrap_or_int32_t(NovaOpt_int32_t o, int32_t dv) { return o.tag == NOVA_TAG_Option_Some ? o.value : dv; }
+/* Plan 95 Ф.4.2 + 95.bis Ф.2: is_some/is_none + unwrap_or → Nova-body. */
 
 static inline NovaOpt_int16_t nova_make_NovaOpt_int16_t_Some(int16_t v) {
     NovaOpt_int16_t r; r.tag = NOVA_TAG_Option_Some; r.value = v; return r;
@@ -389,8 +374,7 @@ static inline nova_bool nova_opt_eq_int16_t(NovaOpt_int16_t a, NovaOpt_int16_t b
     if (a.tag == NOVA_TAG_Option_None) return 1;
     return a.value == b.value;
 }
-/* Plan 95 Ф.4.2: is_some/is_none → Nova-body. */
-static inline int16_t Nova_Option_method_unwrap_or_int16_t(NovaOpt_int16_t o, int16_t dv) { return o.tag == NOVA_TAG_Option_Some ? o.value : dv; }
+/* Plan 95 Ф.4.2 + 95.bis Ф.2: is_some/is_none + unwrap_or → Nova-body. */
 
 static inline NovaOpt_int8_t nova_make_NovaOpt_int8_t_Some(int8_t v) {
     NovaOpt_int8_t r; r.tag = NOVA_TAG_Option_Some; r.value = v; return r;
@@ -403,8 +387,7 @@ static inline nova_bool nova_opt_eq_int8_t(NovaOpt_int8_t a, NovaOpt_int8_t b) {
     if (a.tag == NOVA_TAG_Option_None) return 1;
     return a.value == b.value;
 }
-/* Plan 95 Ф.4.2: is_some/is_none → Nova-body. */
-static inline int8_t Nova_Option_method_unwrap_or_int8_t(NovaOpt_int8_t o, int8_t dv) { return o.tag == NOVA_TAG_Option_Some ? o.value : dv; }
+/* Plan 95 Ф.4.2 + 95.bis Ф.2: is_some/is_none + unwrap_or → Nova-body. */
 
 static inline NovaOpt_uint32_t nova_make_NovaOpt_uint32_t_Some(uint32_t v) {
     NovaOpt_uint32_t r; r.tag = NOVA_TAG_Option_Some; r.value = v; return r;
@@ -417,8 +400,7 @@ static inline nova_bool nova_opt_eq_uint32_t(NovaOpt_uint32_t a, NovaOpt_uint32_
     if (a.tag == NOVA_TAG_Option_None) return 1;
     return a.value == b.value;
 }
-/* Plan 95 Ф.4.2: is_some/is_none → Nova-body. */
-static inline uint32_t Nova_Option_method_unwrap_or_uint32_t(NovaOpt_uint32_t o, uint32_t dv) { return o.tag == NOVA_TAG_Option_Some ? o.value : dv; }
+/* Plan 95 Ф.4.2 + 95.bis Ф.2: is_some/is_none + unwrap_or → Nova-body. */
 
 static inline NovaOpt_uint16_t nova_make_NovaOpt_uint16_t_Some(uint16_t v) {
     NovaOpt_uint16_t r; r.tag = NOVA_TAG_Option_Some; r.value = v; return r;
@@ -431,8 +413,7 @@ static inline nova_bool nova_opt_eq_uint16_t(NovaOpt_uint16_t a, NovaOpt_uint16_
     if (a.tag == NOVA_TAG_Option_None) return 1;
     return a.value == b.value;
 }
-/* Plan 95 Ф.4.2: is_some/is_none → Nova-body. */
-static inline uint16_t Nova_Option_method_unwrap_or_uint16_t(NovaOpt_uint16_t o, uint16_t dv) { return o.tag == NOVA_TAG_Option_Some ? o.value : dv; }
+/* Plan 95 Ф.4.2 + 95.bis Ф.2: is_some/is_none + unwrap_or → Nova-body. */
 
 static inline NovaOpt_uint64_t nova_make_NovaOpt_uint64_t_Some(uint64_t v) {
     NovaOpt_uint64_t r; r.tag = NOVA_TAG_Option_Some; r.value = v; return r;
@@ -445,22 +426,18 @@ static inline nova_bool nova_opt_eq_uint64_t(NovaOpt_uint64_t a, NovaOpt_uint64_
     if (a.tag == NOVA_TAG_Option_None) return 1;
     return a.value == b.value;
 }
-/* Plan 95 Ф.4.2: is_some/is_none → Nova-body. */
-static inline uint64_t Nova_Option_method_unwrap_or_uint64_t(NovaOpt_uint64_t o, uint64_t dv) { return o.tag == NOVA_TAG_Option_Some ? o.value : dv; }
+/* Plan 95 Ф.4.2 + 95.bis Ф.2: is_some/is_none + unwrap_or → Nova-body. */
 
-/* ---- D26 Option methods: unwrap_or ---- (Plan 95 Ф.4.2: is_some/is_none
- * перенесены на Nova-body в std/prelude/core.nv; C-redefinition collision
- * с mono'd Nova_Option_method_is_some_<T> по тому же C-имени.) */
-static inline nova_int Nova_Option_method_unwrap_or_nova_int(NovaOpt_nova_int o, nova_int default_v) {
-    return o.tag == NOVA_TAG_Option_Some ? o.value : default_v;
-}
-/* nova_str-specialized variants — avoid name clash; codegen dispatches by elem type */
-static inline nova_str Nova_Option_method_unwrap_or_nova_str(NovaOpt_nova_str o, nova_str default_v) {
-    return o.tag == NOVA_TAG_Option_Some ? o.value : default_v;
-}
-/* Note: @unwrap() throws Fail on None — реализация в codegen через
+/* ---- D26 Option methods ---- (Plan 95 Ф.4.2 is_some/is_none + 95.bis
+ * Ф.2 unwrap_or + or — все перенесены на Nova-body в std/prelude/core.nv,
+ * dispatch через MethodRouting::DeclaredBody с тем же C-именем
+ * Nova_Option_method_<m>_<T_sani>. C-redefinition collision если
+ * оставить здесь.)
+ *
+ * Note: @unwrap() throws Fail on None — реализация в codegen через
  * Nova_Fail_fail (effects.h инклюдится после array.h в nova_rt.h);
  * codegen emits inline check + fail call. */
+
 
 /* ---- D26 string search: find / rfind (codepoint-offsets, school B) ---- *
  *
@@ -739,22 +716,13 @@ static inline nova_bool nova_result_eq(NovaRes_nova_int_nova_str* a, NovaRes_nov
  * Plan 95 Ф.5.2: `is_ok` / `is_err` УДАЛЕНЫ — перенесены на Nova-body
  * в std/prelude/core.nv; mono'd через DeclaredBody-dispatch + worklist
  * drain. C-redefinition collision (тот же C-symbol) если оставить. */
-static inline nova_int Nova_Result_method_unwrap_or_nova_int_nova_str(NovaRes_nova_int_nova_str* r, nova_int default_v) {
-    return r->tag == NOVA_TAG_Result_Ok ? r->payload.Ok._0 : default_v;
-}
-static inline NovaOpt_nova_int Nova_Result_method_ok_nova_int_nova_str(NovaRes_nova_int_nova_str* r) {
-    NovaOpt_nova_int o;
-    if (r->tag == NOVA_TAG_Result_Ok) {
-        o.tag = NOVA_TAG_Option_Some; o.value = r->payload.Ok._0;
-    } else {
-        o.tag = NOVA_TAG_Option_None; o.value = 0;
-    }
-    return o;
-}
-/* Back-compat алиасы (шаг E удалит). is_ok/is_err алиасы убраны —
- * Plan 95 Ф.5.2 (Nova-body перенос). */
-#define Nova_Result_method_unwrap_or Nova_Result_method_unwrap_or_nova_int_nova_str
-#define Nova_Result_method_ok        Nova_Result_method_ok_nova_int_nova_str
+/* Plan 95.bis Ф.2: unwrap_or + ok трамплины + back-compat алиасы
+ * убраны — перенесены на Nova-body в std/prelude/core.nv через
+ * MethodRouting::DeclaredBody. Mono'd C-имя
+ * Nova_Result_method_<m>_<n> эмитится из Nova-body; legacy
+ * `Nova_Result*` callsites не существуют (Plan 59 mono'd всё).
+ * is_ok/is_err — Plan 95 Ф.5.2. err — был inline emit
+ * (emit_c.rs:11903+), теперь Nova-body. */
 
 /* Plan 08 Ф.1: D73/D77 prelude конверсии (str↔numeric, char↔str, etc.).
  * Подключаем здесь — после определения nova_alloc (alloc.h) и nova_str
@@ -840,10 +808,10 @@ static inline Nova_RuntimeError* nova_make_RuntimeError_NoHandler(nova_str msg) 
     return e;
 }
 
-/* Plan 62.B: Nova_Option_method_or_nova_str — explicit specialization.
- * NOVA_ARRAY_IMPL generates or_<T> for int/char/byte/bool/f64/f32/sized-ints.
- * nova_str needs explicit because NOVA_ARRAY_IMPL is not instantiated for it. */
-static inline NovaOpt_nova_str Nova_Option_method_or_nova_str(NovaOpt_nova_str s, NovaOpt_nova_str o) { return s.tag == NOVA_TAG_Option_Some ? s : o; }
+/* Plan 95.bis Ф.2: Nova_Option_method_or_nova_str — explicit
+ * specialization тоже убрана. Метод or перенесён на Nova-body в
+ * std/prelude/core.nv; mono'd Nova_Option_method_or_<T> с тем же
+ * C-именем эмитится из Nova-body через MethodRouting::DeclaredBody. */
 
 /* Plan 96 Ф.1 — bounds-check для raw arr[i] (D27 §1632 drift fix).
  *

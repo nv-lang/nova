@@ -1,0 +1,18 @@
+// EXPECT_COMPILE_ERROR plan95bis_no_such_fn
+//
+// Plan 95.bis Ф.3.2 (negative): Nova-body метод на Option с обращением
+// к несуществующему символу падает loud на этапе Nova
+// type-check/codegen (Plan 79 invariant — no silent fallback).
+//
+// Параллель `option_method_undefined_body_fail.nv` (Plan 95 Ф.6.2) —
+// убеждаемся, что Plan 95.bis перенос предикатов не вводит silent
+// fallback path для builtin Option-методов.
+
+module nova_tests.plan95bis.unwrap_or_wrong_arg_type_neg
+
+fn Option[T] @plan95bis_probe() -> bool => plan95bis_no_such_fn()
+
+test "Plan 95.bis: Nova-body метод с undefined-symbol — loud-fail" {
+    let a Option[int] = Some(1)
+    assert(a.plan95bis_probe())
+}
