@@ -1,0 +1,46 @@
+// Plan 97.1 Ф.3 (D142) — capability-split factory pattern.
+//
+// Каноничный use-case из D142: factory возвращает несколько
+// связанных capabilities как разные protocol-литералы над одним
+// state. Без anonymous protocol-литерала пришлось бы объявлять
+// два отдельных named-типа-обёртки.
+
+module nova_tests.plan97.pos_protocol_lit_capability_split
+
+
+export type Reader protocol {
+    read() -> int
+}
+
+export type Writer protocol {
+    write(v int) -> ()
+}
+
+
+type Cell {
+    mut value int
+}
+
+
+fn Cell.new(initial int) -> (Reader, Writer) {
+    let state = Cell { value: initial }
+    let r = protocol Reader {
+        read() => state.value
+    }
+    let w = protocol Writer {
+        write(v) {
+            state.value = v
+        }
+    }
+    (r, w)
+}
+
+
+test "capability-split factory pattern" {
+    let (r, w) = Cell.new(10)
+    let initial = r.read()
+    assert(initial == 10)
+    w.write(99)
+    let after = r.read()
+    assert(after == 99)
+}

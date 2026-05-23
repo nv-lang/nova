@@ -9,10 +9,10 @@
 > - Ф.3 clean-break rename — `d5aa5bcc4c2`
 > - Ф.4 protocol-literal parser/AST/type-check — `d4b82d95f9d`
 > - Ф.6 spec sweep — `de73650c04c`
-> **Deferred:** [M-protocol-literal-codegen-deferred] — runtime vtable
-> для protocol-only типов отложен в подплан **[Plan 97.1](97.1-protocol-literal-codegen.md)**
-> (followup, ~2-3 dev-day); все остальные элементы (parser, type-checker,
-> capability-split factory parser + structural verify) — production-grade.
+> **Followup ✅ закрыт:** runtime vtable codegen реализован в подплане
+> **[Plan 97.1](97.1-protocol-literal-codegen.md)** (2026-05-23);
+> capability-split factory pattern теперь работает end-to-end.
+> `[M-protocol-literal-codegen-deferred]` снят.
 > **Приоритет:** P2 (закрывает два открытых вопроса спеки одной
 > согласованной итерацией; разблокирует capability-split factory
 > pattern для stdlib Plan 18)
