@@ -1,0 +1,27 @@
+// Plan 95.bis Ф.3.1: Result.unwrap_or — Nova-body migration.
+//
+// Прежний Nova_Result_method_unwrap_or_nova_int_nova_str + back-compat
+// `#define Nova_Result_method_unwrap_or → _nova_int_nova_str` ЗАМЕНЁНЫ
+// на Nova-body `=> match @ { Ok(v) => v, Err(_) => default }`.
+// Mono-name всегда суффиксирован (Plan 95.bis Ф.2 dispatch fix).
+
+module nova_tests.plan95bis.result_unwrap_or_migrated
+
+test "Result.unwrap_or — Ok → v" {
+    let ok_r Result[int, str] = Ok(7)
+    assert(ok_r.unwrap_or(0) == 7)
+}
+
+test "Result.unwrap_or — Err → default" {
+    let err_r Result[int, str] = Err("oops")
+    assert(err_r.unwrap_or(42) == 42)
+}
+
+test "Result.unwrap_or — composition with is_ok/is_err (Plan 95 Ф.5)" {
+    let ok_r Result[int, str] = Ok(7)
+    let err_r Result[int, str] = Err("oops")
+    assert(ok_r.is_ok())
+    assert(err_r.is_err())
+    assert(!ok_r.is_err())
+    assert(!err_r.is_ok())
+}

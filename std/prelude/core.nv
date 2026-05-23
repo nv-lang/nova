@@ -177,9 +177,11 @@ external fn Option[T] @unwrap() Fail[Error] -> T
 
 /// Возвращает значение или `default` если None.
 ///
-/// **Bootstrap**: routes к `Nova_Option_method_unwrap_or_<T>` trampoline.
+/// **Plan 95.bis Ф.1**: Nova-body (`match @`). Семантически тот же
+/// `o.tag == Some ? o.value : default`, что и прежний C-трамплин
+/// `Nova_Option_method_unwrap_or_<T>`. De-magic / single-source.
 #stable(since = "0.1")
-external fn Option[T] @unwrap_or(default T) -> T
+fn Option[T] @unwrap_or(default_v T) -> T => match @ { Some(v) => v, None => default_v }
 
 /// Возвращает значение или результат `f()` (lazy default).
 ///
@@ -210,13 +212,10 @@ external fn Option[T] @ok_or[E](err E) -> Result[T, E]
 /// `Some(v) -> Some(v)`, `None -> other`. Возвращает другой Option если
 /// текущий пустой (fallback chain).
 ///
-/// **Bootstrap**: routes к `Nova_Option_method_or_<T>` per-T trampoline
-/// (Plan 62.B, 2026-05-20). Trampoline определён в `nova_rt/array.h`
-/// через `NOVA_ARRAY_IMPL` macro + explicit специализации для всех
-/// primitive T (nova_int, nova_str, nova_char, nova_byte, nova_f32,
-/// nova_f64, sized-ints).
+/// **Plan 95.bis Ф.1**: Nova-body (`match @`) поверх инфры Plan 95.
+/// Тот же tag-check, что и прежний `NOVA_ARRAY_IMPL`-trampoline.
 #stable(since = "0.1")
-external fn Option[T] @or(other Option[T]) -> Option[T]
+fn Option[T] @or(other Option[T]) -> Option[T] => match @ { Some(v) => Some(v), None => other }
 
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -274,9 +273,10 @@ external fn Result[T, E] @unwrap() Fail[E] -> T
 
 /// Возвращает Ok-значение или `default` если Err.
 ///
-/// **Bootstrap**: routes к `Nova_Result_method_unwrap_or` trampoline.
+/// **Plan 95.bis Ф.1**: Nova-body (`match @`). Параллель с
+/// `Option.unwrap_or` — `r->tag == Ok ? r->payload.Ok._0 : default`.
 #stable(since = "0.1")
-external fn Result[T, E] @unwrap_or(default T) -> T
+fn Result[T, E] @unwrap_or(default_v T) -> T => match @ { Ok(v) => v, Err(_) => default_v }
 
 /// Возвращает Ok-значение или результат `f(e)` (lazy default от error).
 ///
@@ -302,15 +302,15 @@ external fn Result[T, E] @map_err[F](f fn(E) -> F) -> Result[T, F]
 
 /// `Ok(v) -> Some(v)`, `Err(_) -> None`. Discards error.
 ///
-/// **Bootstrap**: routes к `Nova_Result_method_ok` trampoline.
+/// **Plan 95.bis Ф.1**: Nova-body. Тот же tag-check + `NovaOpt_<T>`
+/// constructor, что и прежний `Nova_Result_method_ok_<n>` trampoline.
 #stable(since = "0.1")
-external fn Result[T, E] @ok() -> Option[T]
+fn Result[T, E] @ok() -> Option[T] => match @ { Ok(v) => Some(v), Err(_) => None }
 
 /// `Err(e) -> Some(e)`, `Ok(_) -> None`. Discards Ok-value.
 ///
-/// **Bootstrap**: inline emit (`<inline>` sentinel). Boxes nova_str
-/// payload в heap-allocated `nova_str*` для совместимости с
-/// `NovaOpt_nova_int.value` представлением. См. `emit_c.rs:11903+`
-/// Result.err block.
+/// **Plan 95.bis Ф.1**: Nova-body, зеркально `ok()`. Прежний inline
+/// emit в codegen (`emit_c.rs:11903+`) с heap-boxed payload удалён —
+/// mono'd Nova-body эмитит правильный `NovaOpt_<E>` напрямую.
 #stable(since = "0.1")
-external fn Result[T, E] @err() -> Option[E]
+fn Result[T, E] @err() -> Option[E] => match @ { Ok(_) => None, Err(e) => Some(e) }

@@ -1,0 +1,38 @@
+// Plan 95.bis Ф.3.1: Option.unwrap_or — Nova-body migration verification.
+//
+// Прежний C-трамплин Nova_Option_method_unwrap_or_<T> заменён на
+// Nova-body `=> match @ { Some(v) => v, None => default }`,
+// мономорфизируется через MethodRouting::DeclaredBody с тем же C-именем.
+
+module nova_tests.plan95bis.option_unwrap_or_migrated
+
+type User { id int, name str }
+
+test "Option[int].unwrap_or" {
+    let some_i Option[int] = Some(42)
+    let none_i Option[int] = None
+    assert(some_i.unwrap_or(0) == 42)
+    assert(none_i.unwrap_or(99) == 99)
+}
+
+test "Option[str].unwrap_or" {
+    let some_s Option[str] = Some("hello")
+    let none_s Option[str] = None
+    assert(some_s.unwrap_or("default") == "hello")
+    assert(none_s.unwrap_or("default") == "default")
+}
+
+test "Option[char].unwrap_or" {
+    let some_c Option[char] = Some('A')
+    let none_c Option[char] = None
+    assert(some_c.unwrap_or('Z') == 'A')
+    assert(none_c.unwrap_or('Z') == 'Z')
+}
+
+test "Option[User].unwrap_or — non-primitive (lazy-emit path)" {
+    let some_u Option[User] = Some(User { id: 1, name: "Alice" })
+    let none_u Option[User] = None
+    let default_u = User { id: 0, name: "default" }
+    assert(some_u.unwrap_or(default_u).id == 1)
+    assert(none_u.unwrap_or(default_u).id == 0)
+}
