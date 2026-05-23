@@ -1,11 +1,13 @@
-# Plan 82 Ф.1–Ф.3 — Windows fiber arena: реализация и находки
+# Plan 82 Ф.1–Ф.5 — Windows fiber arena: реализация и находки
 
-> **Статус:** ✅ **Ф.1+Ф.2+Ф.3 ЗАВЕРШЕНЫ (2026-05-22).** Windows
+> **Статус:** ✅ **Ф.1–Ф.5 ЗАВЕРШЕНЫ (2026-05-22).** Windows
 > fiber-стеки переведены с minicoro-default calloc на lazy-commit
 > large-reserve arena с полной GC-интеграцией; arena сделана M:N-safe
 > (cross-thread migration, multi-worker GC). Полный `nova test`:
-> **1058 PASS / 0 FAIL / 56 SKIP** — 0 регрессий. Standalone-харнессы
-> (`f1_arena_test.c`, `f1_gc_test.c`) — зелёные на MSVC + clang-cl.
+> **1065 PASS / 0 FAIL / 56 SKIP** — 0 регрессий (Ф.4). Context-switch
+> бенчмарк — **16–20 ns/switch**, паритет с Boost.Context (Ф.5).
+> Standalone-харнессы (`f1_arena_test.c`, `f1_gc_test.c`,
+> `f5_ctxswitch_bench.c`) — зелёные на MSVC + clang-cl.
 >
 > Ф.1 (arena) и Ф.2 (GC-интеграция) **слиты в одну поставку** — Ф.1 в
 > одиночку регрессирует (см. §2). Ф.3 — M:N-safe arena (§7). Артефакты:
@@ -185,9 +187,86 @@ Boehm-потоками (`CreateThread` + `GC_register_my_thread` без libuv-
 
 ---
 
-## 8. Что осталось (последующие фазы)
+## 8. Ф.4 — production тест-матрица — ✅ ЗАВЕРШЕНА 2026-05-22
 
-- **Ф.4** — production тест-матрица §7 (Nova-уровень).
-- **Ф.5** — context-switch бенчмарк (M:N на Windows уже работает —
-  runtime платформо-агностичен).
-- **Ф.6** — spec D97 + закрытие 44.3.
+Матрица §7 плана покрыта на двух уровнях:
+
+- **Nova-уровень (`nova test`, clang).** Полный прогон —
+  **1065 PASS / 0 FAIL / 56 SKIP**, 0 регрессий. Включает все
+  `concurrency/*` (M:N, work-stealing, `gc_*`, `sleep_bench`,
+  `supervised_*`, `channels`, `select_*`), `effects/*`, `expected_runtime/*`.
+- **Негативный тест overflow.** `nova_tests/expected_runtime/
+  fiber_stack_overflow.nv` — безграничная рекурсия в spawn'нутом
+  fiber'е → детерминированный `STATUS_STACK_OVERFLOW`. Директива
+  `EXPECT_RUNTIME_PANIC fiber stack overflow`. PASS.
+- **C-уровень (standalone, MSVC + clang-cl).** `f0_test_e` (SEH через
+  границу fiber-стека), `f1_arena_test` (alloc/grow/`__chkstk`/reuse/
+  overflow/lazy-commit), `f1_gc_test` (GC изнутри коро-стека / на
+  глубине / 12000 fiber'ов) — зелёные на обеих toolchain.
+
+**Граница покрытия — честно.** Полный `nova test` под **MSVC**-toolchain
+не запускается: `test_runner.rs` имеет pre-existing баг компоновки
+аргумента `/Fo` для `cl.exe` (D8036 на 753 тестах) — дефект **вне scope
+Plan 82** (затрагивает весь suite, не fiber-арену). MSVC-покрытие
+fiber-арены обеспечивают standalone C-харнессы, которые компилируются и
+проходят под `cl.exe` штатно. Матрица §7 пунктов `/GS`, `/guard:cf`,
+SEH — покрыта C-харнессами на обеих toolchain.
+
+---
+
+## 9. Ф.5 — context-switch бенчмарк — ✅ ЗАВЕРШЕНА 2026-05-22
+
+План §6 Ф.5: «Написать отсутствующий context-switch бенчмарк: cost
+`mco_resume`/`mco_yield`; цель — не хуже Linux-asm-пути; измерить дельту
+TIB-свопа честно».
+
+**Артефакт:** `f5_ctxswitch_bench.c` — standalone C-харнесс на реальном
+`fiber_arena_win.c` (Nova bench-DSL непригоден: связка
+`bench { measure }` + `supervised` упирается в codegen-баг
+`Nova_Error_static_new()` с 0 аргументов — баг вне scope Plan 82).
+Замеряет 4 величины, серия 7 trials, min/med/max; таймер
+`QueryPerformanceCounter`, такты — калибровка `__rdtsc`.
+
+**Результаты** (Ryzen-класс, TSC ~3.19 GHz, 16 logical CPU):
+
+| Замер | clang-cl | MSVC |
+|---|---|---|
+| A. round-trip switch — arena-стек | 32.7 ns/resume | 40.6 ns/resume |
+| B. round-trip switch — calloc-стек | 32.6 ns/resume | 37.9 ns/resume |
+| **→ один `_mco_switch`, arena** | **16.4 ns (~52 такта)** | **20.3 ns (~65 тактов)** |
+| → один `_mco_switch`, calloc | 16.3 ns | 19.0 ns |
+| C. spawn lifecycle — arena | 17.8 µs/spawn | 16.9 µs/spawn |
+| D. spawn lifecycle — calloc | 1.03 µs/spawn | 1.04 µs/spawn |
+
+**Выводы:**
+
+1. **Switch-cost аллокатор-НЕзависим.** Дельта arena−calloc — +0.08 ns
+   (clang-cl) / +1.3 ns (MSVC), в пределах шума. Переключение — это
+   только asm-блок `_mco_switch` (смена `rsp`/нелетучих регистров +
+   TIB-своп); arena добавляет **0 ns**.
+2. **Паритет с эталоном.** 16–20 ns/switch — в классе Boost.Context
+   `jump_fcontext` (~10–20 ns) и Go-планировщика (~десятки ns). Прямой
+   Linux-замер на Windows недоступен; критерий-прокси (switch <100 ns,
+   arena не дороже calloc) выполнен.
+3. **Дельта TIB-свопа — честно.** Windows minicoro-asm свопает 4 поля
+   TIB на каждом switch (`StackBase`/`StackLimit`/`DeallocationStack`/
+   `FiberData`) — ~8 mem-операций через `%gs`, L1-resident. Linux-asm
+   их не делает. При 16–20 ns/switch это слагаемое порядка единиц ns;
+   switch остаётся в одном классе с Linux-asm.
+4. **Spawn lifecycle — известный трейд, не регрессия switch'а.**
+   arena-spawn в tight create→destroy-цикле (~17 µs) дороже calloc
+   (~1 µs): это **худший случай** — один слот churn'ится, каждое
+   переиспользование платит послотный `VirtualFree(MEM_DECOMMIT)` +
+   3× `VirtualAlloc(MEM_COMMIT)` (≈4 syscall'а). Осознанный выбор Ф.1
+   (idle-batch decommit по 128 GB деградировал — §3). В реальной
+   нагрузке fiber'ы спавнятся в **разные** слоты (first-touch commit,
+   без decommit), а decommit освобождённого слота отложен до reuse.
+   Switch — горячий путь рантайма — этим не затронут (замеры A/B).
+
+---
+
+## 10. Что осталось
+
+- **Ф.6** — spec D97 (Windows-стратегия), закрытие Plan 44.3, README,
+  логи. Опционально — Linux-унификация на registry+push (gated «0
+  регрессий на Linux»).

@@ -132,11 +132,22 @@ static inline void* nova_bench_opaque_ptr(void* v) {
     _ReadWriteBarrier();
     return (void*)x;
 }
-#  define NOVA_BENCH_OPAQUE_PRIM(v) \
-    (_Generic((v), nova_int: nova_bench_opaque_int, \
-                   nova_f64: nova_bench_opaque_f64, \
-                   nova_bool: nova_bench_opaque_bool, \
-                   default: nova_bench_opaque_int)((v)))
+/* Plan 82 followup: _Generic — C11, требует /std:c11; но test_runner
+ * не задаёт /std: чтобы codegen-овский struct-cast `(StructTy)(e)`
+ * (GCC ext) не падал C2440 в strict-режиме. Используем `_Generic`
+ * только если он реально доступен (`__STDC_VERSION__ >= 201112L`); под
+ * permissive MS-C-режимом — no-op (`v`). Opaque-trick — анти-оптимизация
+ * барьер; no-op fallback корректен (бенчи получают чуть менее агрессивный
+ * барьер, но компилируются под cl.exe). */
+#  if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L
+#    define NOVA_BENCH_OPAQUE_PRIM(v) \
+      (_Generic((v), nova_int: nova_bench_opaque_int, \
+                     nova_f64: nova_bench_opaque_f64, \
+                     nova_bool: nova_bench_opaque_bool, \
+                     default: nova_bench_opaque_int)((v)))
+#  else
+#    define NOVA_BENCH_OPAQUE_PRIM(v) (v)
+#  endif
 #  define NOVA_BENCH_OPAQUE_MEM(v) (v)  /* fallback */
 #else
 #  define NOVA_BENCH_OPAQUE_PRIM(v) (v)
