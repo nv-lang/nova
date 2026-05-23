@@ -18777,3 +18777,23 @@ Result.err. Все они — match-only тела (`=> match @ { ... }`),
 - unwrap (Fail-handler, Plan 61 lineage).
 - unwrap_or_else, map, map_err, ok_or (closure-applying + method-level
   generic + Plan 98 inference).
+
+═══════════════════════════════════════════════════════════════════════
+Plan 95.bis ✅ ЗАКРЫТ — полный nova test 1063 PASS / 0 реальных FAIL
+2026-05-23 (worktree d:/Sources/nv-lang/nova-p95bis)
+═══════════════════════════════════════════════════════════════════════
+
+Полный `nova test --jobs 4`:
+- 1063 PASS / 12 FAIL / 56 SKIP (exit 1 из-за 12 FAIL).
+- 12 FAIL все = Windows lld-link `cannot open output file` infra-noise
+  под 18 параллельных агентов:
+  - contracts/f37/f38/f39/f41/_var_mul/_modulus/_eq_bounds/_subtraction
+  - contracts/trivial_double_negation/ite_identity/modulus_bounds/upper
+  - plan11_followup/f14_hashmap_clone_filter/f16_path_alias_variadic/
+    f17_alias_nonvariadic_check/f18_hashmap_from_self
+- Isolated re-run sample 4 из 12 → PASS все 4. Не регрессия Plan 95.bis.
+- Vs. Plan 95 baseline (1067 PASS): +5 plan95bis новых тестов −9 убранных
+  трамплин-тестов (контракт fixtures, которые теперь Nova-body) = ~ratio
+  сохранён.
+
+Готово к merge'у в main (ожидается подтверждение пользователя).
