@@ -79,6 +79,40 @@ void nova_runtime_spawn_into(struct NovaFiberQueue* scope,
  * если runtime не initialized (main wake handle отсутствует). */
 void nova_runtime_signal_main(void);
 
+/* Plan 83.4.5.2 Ф.1 (2026-05-23): orphan fiber spawn — fire-and-forget
+ * без bound supervised-scope. Production-grade default для D50
+ * `detach { body }` (паритет с Go `go fn()` / tokio::spawn / Kotlin
+ * GlobalScope.launch).
+ *
+ * Semantics:
+ *   - Под armed runtime → push в worker deque (как nova_runtime_spawn_global,
+ *     но не tracking pending_remote какого-либо scope'а — fiber truly
+ *     orphan).
+ *   - Под bootstrap (`_armed == false`) → cooperative fallback в global
+ *     orphan-scope; drain через atexit (nova_runtime_drain_orphans).
+ *   - LogAndDrop fail semantic (Plan 50): orphan fiber's unhandled
+ *     errors → fprintf stderr + не abort (caller уже вернулся).
+ *
+ * Caller (codegen): emit аналогично emit_spawn — alloc heap-managed ctx
+ * с capture'ами, передаёт fn pointer на generated entry-функцию.
+ * Возвращается мгновенно — body's side-effects не гарантированы видимы
+ * сразу после вызова caller'у (контракт fire-and-forget).
+ *
+ * Cross-runtime parity:
+ *   - Go `go fn()` → runtime.newproc → goroutine scheduler runq.
+ *   - tokio `tokio::spawn(future)` → multi-thread executor task queue.
+ *   - Kotlin `GlobalScope.launch { … }` → truly detached coroutine.
+ *   - Node `setImmediate(cb)` → event-loop queue (single-thread analog).
+ */
+void nova_runtime_spawn_orphan(void (*entry)(mco_coro*), void* user);
+
+/* Plan 83.4.5.2 Ф.1 (2026-05-23): drain orphan-scope synchronously.
+ * Используется в test-suite для explicit-sync (как Go `sync.WaitGroup`)
+ * + atexit вызывает автоматически. Idempotent: empty orphan scope —
+ * no-op. После drain orphan scope reset к empty (можно snadily spawn'ить
+ * new orphans, drain снова). */
+void nova_runtime_drain_orphans(void);
+
 /* Graceful shutdown — signal all workers, join, free resources.
  * Called by codegen в exit path (либо явно через runtime.shutdown()). */
 void nova_runtime_shutdown(void);

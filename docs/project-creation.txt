@@ -20102,3 +20102,76 @@ Cumulative effect: +5 sub-planов закрыто из Plan 83.4.5 roadmap (5/6 
 Plan 83.4.5.6 (flip closure) deferred per blocker; cooperative-mode
 validation для всех 24 regressions established.
 
+
+================================================================
+[2026-05-23] Plan 83.4.5 followup ✅ — AsyncDetach + D138 spec + Plan 83.4.5.7 comprehensive
+(worktree D:/Sources/nv-lang/nova-p83-4-5-fu, ветка plan-83-4-5-followup):
+
+Дополнительная production-grade работа после Plan 83.4.5 closure
+(commit b6afffc8cc2 merge). Закрывает всё что НЕ зависит от Plan 83.4.5.7
+multi-worker race blocker'а.
+
+**Plan 83.4.5.2 Ф.1-Ф.4 AsyncDetach production-grade implementation:**
+
+Раньше (Plan 83.4.5.2 test-only) — directive workaround. Теперь —
+production-grade D50 §3.1 amend:
+
+* runtime.h + runtime.c:
+  - new `nova_runtime_spawn_orphan(entry, ctx)` primitive — orphan
+    fiber spawn (no scope binding). Armed → worker deque round-robin
+    через spawn_global. Bootstrap → global `_nova_orphan_scope`
+    cooperative queue.
+  - new `nova_runtime_drain_orphans()` — drain orphan scope sync.
+    atexit auto-registration + explicit API.
+  - bugfix: mutex deadlock в drain (inner-detach из outer body →
+    re-lock) — fixed by removing mutex from drain (single-thread under
+    bootstrap; armed runtime workers НЕ зовут drain).
+
+* std/runtime/runtime.nv: new `export external fn
+  runtime.drain_orphans() -> ()` — analog Go `sync.WaitGroup.Wait()`
+  для anonymous spawns. Используется для explicit-sync в тестах.
+
+* emit_c.rs::emit_detach — REWRITTEN:
+  - Раньше: inline body в C block — SyncDetach implicit.
+  - Теперь: capture analysis + ctx struct с NovaSpawnCtxBase prefix +
+    entry function с LogAndDrop fail-frame + nova_alloc(ctx) +
+    nova_runtime_spawn_orphan(entry, ctx). Plan 83.4.5.4 spawn-time
+    snapshot capture применяется (handler inheritance).
+
+* detach_test.nv — REWRITTEN на explicit-sync через runtime.
+  drain_orphans():
+  - 15 sub-tests (vs 14 старых) — Section 1-6 mig'нуто, Section 7
+    добавлен (negative drain_orphans idempotent tests).
+  - All 15 PASS under bootstrap.
+
+**Spec D-blocks:**
+
+* D50 §3.1 amend — "Default detach semantic — AsyncDetach (Plan
+  83.4.5.2 Ф.4)". Описывает runtime routing (armed/bootstrap),
+  drain_orphans API, LogAndDrop, handler inheritance, SyncDetach legacy.
+
+* D138 — NEW DRAFT D-block "Default-on M:N runtime — production
+  semantics (Plan 83.4.5.6 Ф.3)". 9-rule semantic spec для default-on
+  M:N (Go GOMAXPROCS / tokio multi-thread / Kotlin Dispatchers.Default
+  parity). GATED на Plan 83.4.5.7 race fix. Cross-runtime parity table.
+
+**Plan 83.4.5.7 comprehensive update:**
+
+Раньше был placeholder (~200 строк). Теперь — full roadmap для
+следующего агента (~470 строк):
+- Раздел 4: что было пробовано в Plan 83.4.5.1-5 (все 4 sub-plan'а
+  detailed).
+- Раздел 5: ПОЧЕМУ Plan 83.4.2 Ф.1 A2 fix НЕДОСТАТОЧЕН (3 hypotheses
+  A/B/C — spawn-time race, concurrent worker preamble, supervised body
+  + worker concurrent).
+- Раздел 6: рекомендуемый design (atomic state machine + atomic slot
+  alloc + test cleanup + closure).
+- Раздел 7: anti-patterns (что НЕ делать — 7 пунктов).
+- Раздел 12: start-here checklist для следующего агента.
+- Раздел 13: full list файлов, изменённых в Plan 83.4.5 — чтобы не
+  делать ту же работу дважды.
+
+Bootstrap regression test: in progress (ожидание ~1132 PASS — +1-2 от
+1130 baseline за счёт sleep_bench iteration reduction не сломавшего
+ничего, parallel_for_array OK, detach_test +1 sub-test).
+

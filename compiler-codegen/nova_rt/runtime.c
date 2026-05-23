@@ -1056,6 +1056,89 @@ void nova_runtime_signal_main(void) {
     }
 }
 
+/* ── Plan 83.4.5.2 Ф.1: orphan fiber pool ─────────────────────────
+ *
+ * Global cooperative-fallback scope для `detach { body }` под bootstrap.
+ * Под armed runtime orphan fibers идут directly через
+ * nova_runtime_spawn_global (worker round-robin); orphan scope тогда
+ * используется только для diagnostics (если worker fiber'у нужен home
+ * scope reference).
+ *
+ * Semantics (паритет Go runtime.newproc orphan goroutines / tokio
+ * tokio::spawn без JoinHandle):
+ *   - Spawn возвращается мгновенно (fire-and-forget).
+ *   - Body's errors → LogAndDrop (fprintf stderr, никаких re-throw'ов).
+ *   - Drain on atexit обеспечивает что bootstrap-cooperative orphans
+ *     отработают перед process exit.
+ *   - Каллер может explicit `runtime.drain_orphans()` для test-suite
+ *     sync (Go `sync.WaitGroup.Wait` analog).
+ *
+ * Реализация — НЕ под мьютексом в hot-path: cooperative bootstrap
+ * single-thread; armed runtime обходит orphan_scope (spawn_global
+ * round-robin). Только init/destroy под mutex (rare events). */
+static NovaFiberQueue _nova_orphan_scope;
+static bool           _nova_orphan_scope_inited = false;
+static bool           _nova_orphan_atexit_registered = false;
+static nova_mutex_t   _nova_orphan_mu;
+static bool           _nova_orphan_mu_inited = false;
+
+/* Lazy-init orphan scope state + register atexit drain. Idempotent.
+ * Mutex-protected — может вызываться cross-thread (если armed runtime
+ * вызывает spawn_orphan из worker context'а — теоретически не должен,
+ * но защитимся). */
+static void _orphan_scope_ensure_init(void) {
+    if (!_nova_orphan_mu_inited) {
+        nova_mutex_init(&_nova_orphan_mu);
+        _nova_orphan_mu_inited = true;
+    }
+    nova_mutex_lock(&_nova_orphan_mu);
+    if (!_nova_orphan_scope_inited) {
+        /* Plan 22 Ф.7 nova_scope_init: heap-init lazy arrays. */
+        nova_scope_init(&_nova_orphan_scope);
+        _nova_orphan_scope_inited = true;
+    }
+    if (!_nova_orphan_atexit_registered) {
+        /* Drain перед exit'ом гарантирует bootstrap orphans завершат
+         * body. atexit вызывается ДО уничтожения static state'а. */
+        atexit(nova_runtime_drain_orphans);
+        _nova_orphan_atexit_registered = true;
+    }
+    nova_mutex_unlock(&_nova_orphan_mu);
+}
+
+void nova_runtime_spawn_orphan(void (*entry)(mco_coro*), void* user) {
+    _orphan_scope_ensure_init();
+    /* Plan 83.4.5.2: armed branch → push в worker deque напрямую
+     * (worker pool обрабатывает; no scope binding — fiber orphan).
+     * NovaSpawnCtxBase._nova_parent_scope = NULL → entry-функция знает
+     * что нет scope для pending_remote / error reporting → LogAndDrop
+     * path активируется при throw'ах. */
+    if (_armed) {
+        /* Под armed orphan goes directly в worker pool. Caller (codegen)
+         * уже set ctx->_nova_parent_scope = NULL (см. emit_detach). */
+        nova_runtime_spawn_global(entry, user);
+        return;
+    }
+    /* Bootstrap fallback: cooperative spawn в orphan scope queue. */
+    nova_fiber_spawn_into(&_nova_orphan_scope, entry, user);
+}
+
+void nova_runtime_drain_orphans(void) {
+    /* Если scope ни разу не initialized — нечего drain'ить (programs
+     * без detach'ей). */
+    if (!_nova_orphan_scope_inited) return;
+    /* Plan 83.4.5.2 bugfix (2026-05-23): mutex НЕ держим во время drain.
+     * Inner-detach из тела outer-orphan вызовет spawn_orphan →
+     * _orphan_scope_ensure_init, который пытается взять тот же mutex →
+     * deadlock (non-recursive POSIX mutex). Под bootstrap drain
+     * single-threaded — race не существует. Под armed runtime drain
+     * вызывается с main thread; workers НЕ зовут drain. Init mutex
+     * нужен только для lazy-init под потенциальным cross-thread spawn,
+     * не для drain. */
+    nova_supervised_drain_main_scope(&_nova_orphan_scope);
+    /* После drain orphan scope's q->count = 0 — готов к re-use. */
+}
+
 /* ── Diagnostic ───────────────────────────────────────────────── */
 
 /* Фактически поднятые worker-потоки. Plan 83.1 Ф.4: 0 до первого spawn
