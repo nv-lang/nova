@@ -344,6 +344,23 @@ fn critical(...) -> Result =>
 > Plan 56 Ф.2.7 effect-row enforcement). Bottom-тип `never` — закрыт
 > Plan 76 (строчный встроенный примитив, не требует prelude-декларации).
 >
+> **Plan 99 (закрыт 2026-05-23):** последние 6 closure-applying
+> Option/Result-методов перенесены на Nova-body в `std/prelude/core.nv`:
+> `Option.map[U]`, `Option.unwrap_or_else`, `Option.ok_or[E]`,
+> `Result.map[U]`, `Result.map_err[F]`, `Result.unwrap_or_else`.
+> **14/14 Option/Result методов на Nova** — остаётся только `unwrap`
+> C-routed (Plan 61 lineage). Декомпозирован на 4 sub-plan'а:
+> Plan 99.1 (foundation — method-level generic в DeclaredBody:
+> extract `resolve_method_level_subst` helper, mono_name с
+> method-level suffix, `register_novaopt_decl(U)` lazy-emit,
+> `infer_method_level_return_for_sum` для `infer_expr_c_type`);
+> Plan 99.2 (contextual variant constructors — bare `Some(v)`/
+> `None`/`Ok(v)`/`Err(e)` используют `current_fn_return_ty` для
+> typed compound literal); Plan 99.3 (atomic per-method migration —
+> 6 commits с regression-gate); Plan 99.4 (comprehensive tests +
+> spec + close). Closure invoke через `NovaClosBase` + explicit
+> cast — паритет Rust `FnOnce`-mono.
+>
 > **Plan 95.bis (закрыт 2026-05-23):** расширение Plan 95 — ещё 5
 > «чистых» Option/Result-методов перенесены на Nova-body в
 > `std/prelude/core.nv`: `Option.unwrap_or`, `Option.or`,
