@@ -66,12 +66,10 @@
 - **Остаток (Plan 48 V2 followups):** `within[T]` / `race[T]` заблокированы
   spawn closure-capture в mono pipeline — [M-spawn-closure-capture-mono].
 
-### [C7] Index выражения — прямое разыменование без bounds check
+### [C7] Index выражения — прямое разыменование без bounds check ✅ RESOLVED Plan 96 Ф.1
 - **Где:** `emit_c.rs` → `ExprKind::Index`
-- **Что упрощено:** `arr[i]` генерируется как `arr[i]` (через указатель или массив C). Нет bounds checking.
-- **Почему:** Добавит overhead. В прототипе допустимо.
-- **Как чинить:** Выражение вида `nova_bounds_check(arr, i)` или через .get().
-- **Приоритет:** L
+- **Что было:** `arr[i]` генерировался как голый `(arr)->data[i]` — controlled buffer overflow на запись, UB на чтение; противоречие D27 §1632 «panic при OOB».
+- **Как починено (Plan 96 Ф.1, 2026-05-23):** `emit_bchk_array_access` хелпер — все 5 паттернов (self-access cast / array-of-arrays / array-of-record-ptrs / str-box / default + double-indexing) обернуты в GNU statement-expression с bounds-check; форма `*({ ... &_a->data[_i]; })` обходит Clang-ограничение «stmt-expr is not lvalue». `nv_panic_index_oob(idx, len)` wrapper в `array.h` форматирует сообщение «array: index N out of bounds for length L». 4 теста pos/neg в `nova_tests/plan96/`; full regression 1087 PASS / 0 FAIL.
 
 ### [C8] println — тип аргумента через infer_expr_c_type ✅ RESOLVED Plan 67
 - **Где:** `emit_c.rs` → `make_print_call` / `infer_print_helper`
@@ -11192,3 +11190,25 @@ ns/switch — паритет с Boost.Context). Перенос замера в N
 - **Приоритет** — L. На корректность не влияет (структура методов уже
   совпадает в стdlib и user-коде); только защищает от ошибочных
   реализаций.
+
+### [P-plan96-lint-deferred] Plan 96 вЂ” lint W_VIEW_PUSH_DETACH РѕС‚Р»РѕР¶РµРЅ
+- **Р“РґРµ:** Plan 96 Р¤.5 (D-push-detach).
+- **Р§С‚Рѕ РѕС‚Р»РѕР¶РµРЅРѕ:** type-checker lint `W_VIEW_PUSH_DETACH` РґР»СЏ РїР°С‚С‚РµСЂРЅР°
+  `let mut view = arr[range]; view.push(...)` вЂ” warning В«mut view's
+  push detaches from parent backing; parent NOT modifiedВ».
+- **РџРѕС‡РµРјСѓ:** push-detach **behavior** СЂР°Р±РѕС‚Р°РµС‚ РєРѕСЂСЂРµРєС‚РЅРѕ (cap==len
+  model РіР°СЂР°РЅС‚РёСЂСѓРµС‚ realloc в†’ detach, parent РќР• Р·Р°С‚СЂРѕРЅСѓС‚). Lint вЂ”
+  С‚РѕР»СЊРєРѕ usability-improvement, РЅРµ Р±Р»РѕРєРёСЂСѓРµС‚ С„СѓРЅРєС†РёРѕРЅР°Р».
+- **РљР°Рє С‡РёРЅРёС‚СЊ:** `compiler-codegen/src/lints.rs` вЂ” walker С‚СЂРµРєР°РµС‚
+  РїРµСЂРµРјРµРЅРЅС‹Рµ СЃ RHS=Index{obj,index:Range}; РїСЂРё `.push(...)` в†’ warning.
+  ~50-80 LOC.
+- **РџСЂРёРѕСЂРёС‚РµС‚:** L вЂ” С„СѓРЅРєС†РёРѕРЅР°Р»СЊРЅРѕСЃС‚СЊ СЂР°Р±РѕС‚Р°РµС‚, lint вЂ” nice-to-have.
+
+### [P-str-slice-clamp-vs-panic] str.slice РјРµС‚РѕРґ вЂ” clamp vs panic mismatch
+- **Р“РґРµ:** `compiler-codegen/nova_rt/nova_rt.h` (`nova_str_slice`).
+- **Р§С‚Рѕ:** `nova_str_slice(s, from, to)` РјРµС‚РѕРґ вЂ” OOB **clamp**. РќРѕРІС‹Р№
+  `s[a..b]` bracket-form (Plan 96 D-str-slice) вЂ” **panic**. Inconsistency.
+- **РџРѕС‡РµРјСѓ:** backwards-compat вЂ” `s.slice(a, b)` РёСЃРїРѕР»СЊР·СѓРµС‚СЃСЏ РІ std
+  Рё user-РєРѕРґРµ; align в†’ panic Р±С‹Р» Р±С‹ breaking.
+- **РљР°Рє С‡РёРЅРёС‚СЊ:** Plan 94 (str-РјРµС‚РѕРґС‹ РЅР° Nova) вЂ” align РјРµС‚РѕРґ РЅР° panic.
+- **РџСЂРёРѕСЂРёС‚РµС‚:** L вЂ” С„СѓРЅРєС†РёРѕРЅР°Р»СЊРЅС‹Р№ paritРµС‚ (РѕР±Р° РІР°СЂРёР°РЅС‚Р° СЂР°Р±РѕС‚Р°СЋС‚).

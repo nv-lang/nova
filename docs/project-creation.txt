@@ -18976,3 +18976,55 @@ neg_dot_at_mixed) PASS.
 d5aa5bcc4c2, d4b82d95f9d, de73650c04c). Готов к merge в main
 после финального полного регресса. Capability-split factory
 pattern parser+type-check работают; codegen ждёт Plan 100.
+
+================================================================
+2026-05-23 вЂ” Plan 96 Р—РђРљР Р«Рў: sub-slice views РґР»СЏ []T Рё str
+================================================================
+
+Plan 96 (rev. 2 РїРѕСЃР»Рµ production-grade Р°СѓРґРёС‚Р°) вЂ” closed Р¤.1-Р¤.7 РЅР°
+РІРµС‚РєРµ plan-96 (rebased РЅР° main РїРѕСЃР»Рµ Plan 97 merge). Sub-slice views
+СЂРµР°Р»РёР·РѕРІР°РЅС‹: arr[a..b] / str[a..b] СЃ 5 С„РѕСЂРјР°РјРё Range (Rust
+RangeBounds parity), single-type design, cap == len в†’ push-detach,
+codegen + runtime + spec.
+
+РљРѕРјРјРёС‚С‹ (РїРѕСЃР»Рµ rebase РЅР° main):
+- da6233cf75e Р¤.1 вЂ” bounds-check РґР»СЏ raw arr[i] (D27 В§1632 drift fix)
+- 468a7417189 Р¤.2 вЂ” open-ended Range AST + parser + 27-site migration
+- (e63cfdd5ca9 в†’ cherry-picked) Р¤.3+Р¤.4 вЂ” runtime nova_array_slice_<T>
+  + nova_str_slice_panic + codegen dispatch
+- (e4f25eee563 в†’ cherry-picked) Р¤.5+Р¤.6 вЂ” push-detach + GC stress +
+  Plan90-interop + fn-passing (6 С‚РµСЃС‚РѕРІ)
+- 09b6a78541d Р¤.7 вЂ” spec D144 + amend D6/D27/D58 + close
+  Q-array-slicing + Plan 96 Р—РђРљР Р«Рў
+
+РўРµСЃС‚С‹ nova_tests/plan96/ (23):
+- Р¤.1 bounds-check: boundary_ok, neg_index_oob_read/write/negative (4)
+- Р¤.2 Range parsing: range_closed_unchanged + 2 neg (3)
+- Р¤.3+Р¤.4 slice: slice_basic, slice_mut, slice_open_ended,
+  slice_of_slice, slice_iter_for, str_slice_basic, 4 neg-slice (10)
+- Р¤.5+Р¤.6: slice_push_detaches, slice_gc_alive, slice_array_of_ranges,
+  slice_plan90_interop, slice_function_passing, slice_byte_array (6)
+
+Spec sweep:
+- РќРѕРІС‹Р№ D144 (02-types.md) вЂ” slice-view semantics + raw bounds-check
+- D27 В§1663 amended вЂ” В«РЎР»Р°Р№СЃРёРЅРі РѕС‚Р»РѕР¶РµРЅВ» в†’ СЃСЃС‹Р»РєР° РЅР° D144
+- D58 amended вЂ” open-ended С„РѕСЂРјС‹ Range РІ slice-context
+- D6 amended вЂ” stable interior pointers (РЅРѕСЂРјР°С‚РёРІРЅС‹Р№ invariant РґР»СЏ D144)
+- README D-index updated СЃ D144
+- Q-array-slicing / Q-array-api.5 closed в†’ СЃСЃС‹Р»РєРё РЅР° D144
+
+Р РµРіСЂРµСЃСЃ worktree РґРѕ rebase: 1087 PASS / 0 FAIL / 56 SKIP.
+
+РЎРёРјРїР»РёС„РёРєР°С†РёРё:
+- [C7] Index Р±РµР· bounds-check вњ… RESOLVED Plan 96 Р¤.1
+- [P-plan96-lint-deferred] вЂ” W_VIEW_PUSH_DETACH lint РѕС‚Р»РѕР¶РµРЅ
+  (push-detach behavior СЂР°Р±РѕС‚Р°РµС‚, lint вЂ” warning Р±РµР· Р±Р»РѕРєРёСЂРѕРІРєРё)
+- [P-str-slice-clamp-vs-panic] вЂ” РјРµС‚РѕРґ s.slice СЃРѕС…СЂР°РЅСЏРµС‚ clamp;
+  align в†’ Plan 94
+
+Decisions implemented (11):
+- D-single-type, D-cap-len, D-open-ended (5 С„РѕСЂРј Range)
+- D-mut-rule, D-fiber (D79 disclaimer), D-iter-snap
+- D-push-detach (lint deferred), D-neg-panic, D-empty-ok
+- D-header (24 Р±Р°Р№С‚Р°), D-str-slice
+- D-cap-pow2 (verified вЂ” РЅРµ РЅР°СЂСѓС€Р°РµС‚ doubling)
