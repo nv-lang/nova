@@ -335,14 +335,15 @@ impl SumSchemaRegistry {
         // placeholder c_name `"<inline>"`; Phase 4 будет refactor чтобы
         // inline methods были спец routing variant.
         let mut option_methods = HashMap::new();
-        option_methods.insert("is_some".to_string(), MethodRouting::HardcodedRuntimeFn {
-            c_name: "Nova_Option_method_is_some".to_string(),
-            is_per_t: true,
-        });
-        option_methods.insert("is_none".to_string(), MethodRouting::HardcodedRuntimeFn {
-            c_name: "Nova_Option_method_is_none".to_string(),
-            is_per_t: true,
-        });
+        // Plan 95 Ф.4.2: `is_some` / `is_none` УДАЛЕНЫ из baseline —
+        // перенесены на Nova-body в std/prelude/core.nv. Routing для них
+        // регистрируется через `init_prelude_decls_from_items` как
+        // `MethodRouting::DeclaredBody { has_nova_body: true }`. Сохранение
+        // baseline-entry создало бы dead-but-defensive shadow, который
+        // в edge-case'е (prelude не загружен — теоретически невозможно,
+        // R27 auto-import) мог бы маршрутизировать вызов в удалённый
+        // C-трамплин → undefined symbol. Loud-fail «method not found»
+        // лучше silent miscompilation.
         option_methods.insert("unwrap_or".to_string(), MethodRouting::HardcodedRuntimeFn {
             c_name: "Nova_Option_method_unwrap_or".to_string(),
             is_per_t: true,
@@ -410,15 +411,11 @@ impl SumSchemaRegistry {
 
         // Method routing для Result — mirror emit_c.rs:11727-11854.
         // Non-per-T (single trampoline принимает nova_int compromise).
+        //
+        // Plan 95 Ф.5.2: `is_ok` / `is_err` УДАЛЕНЫ — перенесены на
+        // Nova-body в std/prelude/core.nv, routing регистрируется как
+        // `DeclaredBody` через `init_prelude_decls_from_items`.
         let mut result_methods = HashMap::new();
-        result_methods.insert("is_ok".to_string(), MethodRouting::HardcodedRuntimeFn {
-            c_name: "Nova_Result_method_is_ok".to_string(),
-            is_per_t: false,
-        });
-        result_methods.insert("is_err".to_string(), MethodRouting::HardcodedRuntimeFn {
-            c_name: "Nova_Result_method_is_err".to_string(),
-            is_per_t: false,
-        });
         result_methods.insert("ok".to_string(), MethodRouting::HardcodedRuntimeFn {
             c_name: "Nova_Result_method_ok".to_string(),
             is_per_t: false,
@@ -583,21 +580,23 @@ impl SumSchemaRegistry {
 
         for sum_name in prelude_sum_names {
             // Соберём все methods, объявленные на этом sum-type в items'ах.
-            let methods: Vec<String> = items.iter().filter_map(|it| {
-                if let Item::Fn(f) = it {
-                    if !f.is_external {
-                        return None;
-                    }
-                    if let Some(recv) = &f.receiver {
-                        if recv.type_name == sum_name {
-                            return Some(f.name.clone());
-                        }
-                    }
+            // Разделяем на external (C-routing inherited from baseline) и
+            // non-external (Nova-body — Plan 95 Ф.1.2, override routing
+            // на `DeclaredBody`).
+            let mut external_methods: Vec<String> = Vec::new();
+            let mut nova_body_methods: Vec<String> = Vec::new();
+            for it in items {
+                let Item::Fn(f) = it else { continue; };
+                let Some(recv) = &f.receiver else { continue; };
+                if recv.type_name != sum_name { continue; }
+                if f.is_external {
+                    external_methods.push(f.name.clone());
+                } else {
+                    nova_body_methods.push(f.name.clone());
                 }
-                None
-            }).collect();
+            }
 
-            if methods.is_empty() {
+            if external_methods.is_empty() && nova_body_methods.is_empty() {
                 // Этот sum-type не задекларирован в файле — оставляем только
                 // HardcodedBaseline (skip Prelude registration). Это поддерживает
                 // partial declarations (если файл declar'ит только часть methods,
@@ -629,23 +628,28 @@ impl SumSchemaRegistry {
             // inheritance.
             let mut prelude_routing = baseline.method_routing.clone();
 
-            // Для каждого declared method убедимся, что routing entry
-            // существует. Если метод declared в файле, но не в Hardcoded
-            // routing map'е (e.g. `or` / `and_then` / `filter` — declared
-            // for documentation, но без codegen support) — добавляем
-            // placeholder `<inline>` чтобы dispatch fall through к
-            // existing inline блокам / error reporting. Без этого
-            // `lookup_method_routing` вернёт None и тесты которые НЕ
-            // используют этот method продолжают работать, но если кто-то
-            // его вызовет — будет fall through к default path.
+            // Plan 95 Ф.1.2: для non-external (Nova-body) methods —
+            // **override** routing на `DeclaredBody`. Inherited baseline
+            // routing (e.g. `HardcodedRuntimeFn` для `is_some`) перебивается:
+            // call-site через `lookup_method_routing` получит `DeclaredBody`
+            // вместо `HardcodedRuntimeFn` → перехват `NovaOpt_` (#6) /
+            // `is_result_like` (#7) пойдёт в новую ветку, которая
+            // monomorphизирует Nova-тело per-T вместо вызова C-трамплина.
+            //
+            // External methods — routing унаследован из baseline (точно
+            // то, что было до декларации), behavior-preserving.
             //
             // Bootstrap-conservative: НЕ добавляем routing entry для
-            // unknown method'ов — оставляем lookup'ы возвращать None.
-            // Это значит declaration `external fn Option @or(...)` без
-            // codegen support даст «method or not found» при call вместо
-            // искажённого dispatch'а. Точно то поведение что было до
-            // декларации.
-            let _ = &mut prelude_routing; // silence unused-mut warning
+            // unknown external method'ов — оставляем lookup'ы возвращать
+            // None (declaration `external fn Option @or(...)` без codegen
+            // support даст «method or not found» при call вместо
+            // искажённого dispatch'а).
+            for m in &nova_body_methods {
+                prelude_routing.insert(
+                    m.clone(),
+                    MethodRouting::DeclaredBody { has_nova_body: true },
+                );
+            }
 
             self.register_schema(SumSchemaEntry {
                 nova_name: sum_name.to_string(),
@@ -1289,12 +1293,18 @@ mod tests {
         let mut reg = SumSchemaRegistry::new();
         reg.init_hardcoded_baseline();
 
-        // Option.is_some — per-T trampoline.
-        let r = reg.lookup_method_routing("Option", "is_some")
-            .expect("Option.is_some must be routed");
+        // Plan 95 Ф.4.2: is_some УДАЛЕНО из baseline — перенесено на
+        // Nova-body. Без prelude scan'а baseline-only lookup → None
+        // (DeclaredBody-entry регистрируется через `init_prelude_decls_
+        // from_items`, не здесь). Verify Option.unwrap_or как пример
+        // оставшегося per-T trampoline.
+        assert!(reg.lookup_method_routing("Option", "is_some").is_none(),
+            "is_some убран из baseline — регистрируется DeclaredBody через prelude scan");
+        let r = reg.lookup_method_routing("Option", "unwrap_or")
+            .expect("Option.unwrap_or must be routed");
         match r {
             MethodRouting::HardcodedRuntimeFn { c_name, is_per_t } => {
-                assert_eq!(c_name, "Nova_Option_method_is_some");
+                assert_eq!(c_name, "Nova_Option_method_unwrap_or");
                 assert!(*is_per_t);
             }
             other => panic!("expected HardcodedRuntimeFn, got {:?}", other),
@@ -1469,15 +1479,14 @@ mod tests {
             other => panic!("expected HardcodedRuntimeFn, got {:?}", other),
         }
 
-        // is_some тоже должен быть findable (был и в Hardcoded, и в Prelude).
-        let routing = reg.lookup_method_routing("Option", "is_some").unwrap();
-        match routing {
-            MethodRouting::HardcodedRuntimeFn { c_name, is_per_t } => {
-                assert_eq!(c_name, "Nova_Option_method_is_some");
-                assert!(*is_per_t);
-            }
-            other => panic!("expected HardcodedRuntimeFn for is_some, got {:?}", other),
-        }
+        // Plan 95 Ф.4.2: `is_some` УДАЛЁН из baseline (перенесён на
+        // Nova-body, регистрируется через DeclaredBody). Для external
+        // декларации без baseline-entry routing не регистрируется
+        // (inheritance-conservative — см. комментарий в
+        // init_prelude_decls_from_items). lookup → None.
+        let routing = reg.lookup_method_routing("Option", "is_some");
+        assert!(routing.is_none(),
+            "is_some убран из baseline (Plan 95) — external декларация без baseline-entry не регистрирует routing");
     }
 
     /// Plan 62.A follow-up: Result method declaration → Prelude Result
@@ -1542,6 +1551,139 @@ mod tests {
                 assert!(!*is_per_t, "Result methods — non-per-T в bootstrap'е");
             }
             other => panic!("expected HardcodedRuntimeFn non-per-T, got {:?}", other),
+        }
+    }
+
+    /// **Plan 95 Ф.1.2**: Nova-body метод на `Option`/`Result` (с `body !=
+    /// FnBody::External`, `is_external == false`) → routing должен быть
+    /// **`DeclaredBody`** (override baseline `HardcodedRuntimeFn`). Не
+    /// перенесённые методы того же типа продолжают возвращать унаследованный
+    /// `HardcodedRuntimeFn` (behavior-preserving).
+    #[test]
+    fn test_init_prelude_decls_from_items_nova_body_overrides_to_declared_body() {
+        use crate::ast::{
+            FnDecl, FnBody, Item, Receiver, ReceiverKind, RealtimeAttr,
+            VerifyMode, Purity, Expr, ExprKind,
+        };
+        use crate::diag::Span;
+
+        let mk_fn = |name: &str, recv_type: &str, external: bool| FnDecl {
+            doc: None, doc_attrs: vec![], is_export: false,
+            is_external: external,
+            name: name.to_string(),
+            receiver: Some(Receiver {
+                type_name: recv_type.to_string(),
+                generics: vec![],
+                kind: ReceiverKind::Instance,
+                mutable: false, consume: false,
+                span: Span::default(),
+            }),
+            generics: vec![], params: vec![], effects: vec![],
+            return_type: None, returns_receiver: false,
+            // Stub Nova-body для теста — `=> false` (контент не важен,
+            // важно только `is_external == false` и `body != External`).
+            body: if external { FnBody::External } else {
+                FnBody::Expr(Expr::new(
+                    ExprKind::BoolLit(false), Span::default()
+                ))
+            },
+            span: Span::default(),
+            realtime_attr: RealtimeAttr::None,
+            contracts: vec![], reads: vec![], modifies: vec![],
+            decreases: None, verify_mode: VerifyMode::Default,
+            verify_timeout_ms: None, purity: Purity::Unknown,
+            is_trusted: false, fuel: None,
+            is_opaque: false, no_overflow: false,
+        };
+
+        let mut reg = SumSchemaRegistry::new();
+        reg.init_hardcoded_baseline();
+
+        // Mix: Option.is_some — Nova-body (мигрированный), Option.unwrap —
+        // external (остаётся C-routed).
+        let items = vec![
+            Item::Fn(mk_fn("is_some", "Option", false)),
+            Item::Fn(mk_fn("unwrap", "Option", true)),
+        ];
+
+        reg.init_prelude_decls_from_items(&items);
+
+        // Sanity: Prelude entry зарегистрирован.
+        let entry = reg.lookup_sum_schema("Option").expect("Option resolves");
+        assert_eq!(entry.source, SchemaSource::DeclaredFromPrelude);
+
+        // is_some — **override на DeclaredBody**.
+        let routing = reg.lookup_method_routing("Option", "is_some")
+            .expect("is_some routing must exist");
+        match routing {
+            MethodRouting::DeclaredBody { has_nova_body } => {
+                assert!(*has_nova_body, "Nova-body метод → has_nova_body = true");
+            }
+            other => panic!(
+                "expected DeclaredBody for migrated is_some, got {:?}", other),
+        }
+
+        // unwrap — НЕ переопределён, остаётся HardcodedRuntimeFn (наследован).
+        // Baseline routing для unwrap — `<inline>` sentinel (Fail-dispatch),
+        // важно что это **не** DeclaredBody — Plan 95 не трогает unwrap.
+        let routing = reg.lookup_method_routing("Option", "unwrap")
+            .expect("unwrap routing must exist");
+        assert!(matches!(routing, MethodRouting::HardcodedRuntimeFn { .. }),
+            "external method `unwrap` остаётся C-routed (не DeclaredBody), got {:?}",
+            routing);
+
+        // unwrap_or — вообще не declared в items, но в Hardcoded routing
+        // map'е — findable через inheritance (нерегрессионный sanity).
+        let routing = reg.lookup_method_routing("Option", "unwrap_or")
+            .expect("unwrap_or routing inherited from baseline");
+        assert!(matches!(routing, MethodRouting::HardcodedRuntimeFn { .. }));
+    }
+
+    /// **Plan 95 Ф.1.2 (Result)**: Nova-body `is_ok` на `Result` → `DeclaredBody`.
+    #[test]
+    fn test_init_prelude_decls_from_items_result_nova_body_overrides() {
+        use crate::ast::{
+            FnDecl, FnBody, Item, Receiver, ReceiverKind, RealtimeAttr,
+            VerifyMode, Purity, Expr, ExprKind,
+        };
+        use crate::diag::Span;
+
+        let res_is_ok = FnDecl {
+            doc: None, doc_attrs: vec![], is_export: false,
+            is_external: false,
+            name: "is_ok".to_string(),
+            receiver: Some(Receiver {
+                type_name: "Result".to_string(),
+                generics: vec![],
+                kind: ReceiverKind::Instance,
+                mutable: false, consume: false,
+                span: Span::default(),
+            }),
+            generics: vec![], params: vec![], effects: vec![],
+            return_type: None, returns_receiver: false,
+            body: FnBody::Expr(Expr::new(
+                ExprKind::BoolLit(false), Span::default()
+            )),
+            span: Span::default(),
+            realtime_attr: RealtimeAttr::None,
+            contracts: vec![], reads: vec![], modifies: vec![],
+            decreases: None, verify_mode: VerifyMode::Default,
+            verify_timeout_ms: None, purity: Purity::Unknown,
+            is_trusted: false, fuel: None,
+            is_opaque: false, no_overflow: false,
+        };
+
+        let mut reg = SumSchemaRegistry::new();
+        reg.init_hardcoded_baseline();
+        reg.init_prelude_decls_from_items(&vec![Item::Fn(res_is_ok)]);
+
+        let routing = reg.lookup_method_routing("Result", "is_ok")
+            .expect("is_ok routing must exist");
+        match routing {
+            MethodRouting::DeclaredBody { has_nova_body } => {
+                assert!(*has_nova_body);
+            }
+            other => panic!("expected DeclaredBody for is_ok, got {:?}", other),
         }
     }
 

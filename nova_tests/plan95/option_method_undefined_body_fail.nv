@@ -1,0 +1,18 @@
+// EXPECT_COMPILE_ERROR not_a_real_function
+//
+// Plan 95 Ф.6.2: негатив — Nova-body метод на builtin Option
+// с обращением к несуществующему символу должен падать **loud** на
+// этапе type-check/codegen, а НЕ silently прокидываться через
+// defensive-fallback `Nova_Option*` (Plan 79 «no silent fallback»).
+// Этот тест блокирует регрессию: если в `receiver_c_type` или
+// dispatch DeclaredBody-ветка тихо отойдёт от mono'd Nova_Option* —
+// undefined symbol будет проигнорирован → silent miscompilation.
+
+module nova_tests.plan95.option_method_undefined_body_fail
+
+fn Option[T] @whoops() -> bool => not_a_real_function_xyz()
+
+test "compile-error не достигнет рантайма" {
+    let a Option[int] = Some(1)
+    assert(a.whoops())
+}

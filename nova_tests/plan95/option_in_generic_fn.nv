@@ -1,0 +1,40 @@
+// Plan 95 Ф.6.1: позитив-тест — `is_some`/`is_none` в generic-функции
+// с [T]-bound. Перенесённые на Nova-body предикаты должны работать в
+// generic-context: monomorphizer должен раскрыть и Option и метод
+// per-T одинаково.
+
+module nova_tests.plan95.option_in_generic_fn
+
+fn check_some[T](o Option[T]) -> bool => o.is_some()
+fn check_none[T](o Option[T]) -> bool => o.is_none()
+
+test "generic-fn is_some — Option[int]" {
+    let a Option[int] = Some(1)
+    let b Option[int] = None
+    // Turbofish обязателен — codegen не выводит T из `Option[T]`-параметра
+    // (известный gap; см. fn_array_generic_smoke). Сам метод is_some
+    // (Plan 95 Ф.4) от этого ограничения независим.
+    assert(check_some[int](a))
+    assert(!check_some[int](b))
+    assert(!check_none[int](a))
+    assert(check_none[int](b))
+}
+
+test "generic-fn is_some — Option[str]" {
+    let a Option[str] = Some("hi")
+    let b Option[str] = None
+    assert(check_some[str](a))
+    assert(check_none[str](b))
+}
+
+fn check_ok[T, E](r Result[T, E]) -> bool => r.is_ok()
+fn check_err[T, E](r Result[T, E]) -> bool => r.is_err()
+
+test "generic-fn is_ok — Result[int, str]" {
+    let a Result[int, str] = Ok(1)
+    let b Result[int, str] = Err("no")
+    assert(check_ok[int, str](a))
+    assert(check_err[int, str](b))
+    assert(!check_ok[int, str](b))
+    assert(!check_err[int, str](a))
+}
