@@ -10975,7 +10975,7 @@ Single-thread cooperative (текущий Windows-режим): GC-модель *
 
 ### [M-option-methods-not-mono-able] ✅ ЗАКРЫТО Plan 95 (2026-05-23) — было: builtin Option/Result вне generic-method-mono
 
-> **Резолюция (Plan 95, merge `<TBD>`):** инфраструктура «method-only
+> **Резолюция (Plan 95, merge `2ec4cb6369d`):** инфраструктура «method-only
 > mono» для builtin sum-типов реализована — `Option`/`Result` участвуют
 > в method-monomorphization без регистрации в `generic_type_templates`
 > (представление `NovaOpt_<T>`/`NovaRes_<…>*` сохранено).
