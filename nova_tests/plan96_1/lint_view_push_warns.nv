@@ -1,0 +1,13 @@
+// EXPECT_COMPILE_WARNING W_VIEW_PUSH_DETACH
+//
+// Plan 96.1 Ф.1 — позитив для W_VIEW_PUSH_DETACH lint:
+// push на mut-view детачится от parent backing'а (cap == len). Lint
+// предупреждает программиста, что parent НЕ модифицируется.
+
+module nova_tests.plan96_1.lint_view_push_warns
+
+fn main() -> () {
+    let mut parent []int = [1, 2, 3, 4, 5]
+    let mut view = parent[1..4]
+    view.push(99)
+}

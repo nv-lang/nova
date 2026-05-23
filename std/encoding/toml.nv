@@ -310,7 +310,7 @@ fn TomlParser mut @parse_number() Fail[ParseTomlError] -> TomlValue {
             _ => break
         }
     }
-    let text = @input.slice(start, @pos)
+    let text = @input[start..@pos]
     if has_dot || has_exp {
         match f64.try_from(text) {
             Ok(f)  => TomlFloat(f)
