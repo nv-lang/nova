@@ -10971,9 +10971,24 @@ Single-thread cooperative (текущий Windows-режим): GC-модель *
   оптимизация, не блокер; `unsafe`-keyword не вводится.
 - **Приоритет** — L.
 
-## Plan 93 Ф.0 — Option-методы не мономорфизируемы (2026-05-22)
+## Plan 93 Ф.0 — Option-методы не мономорфизируемы (2026-05-22) → ✅ ЗАКРЫТО Plan 95 (2026-05-23)
 
-### [M-option-methods-not-mono-able] builtin Option/Result вне generic-method-mono
+### [M-option-methods-not-mono-able] ✅ ЗАКРЫТО Plan 95 (2026-05-23) — было: builtin Option/Result вне generic-method-mono
+
+> **Резолюция (Plan 95, merge `<TBD>`):** инфраструктура «method-only
+> mono» для builtin sum-типов реализована — `Option`/`Result` участвуют
+> в method-monomorphization без регистрации в `generic_type_templates`
+> (представление `NovaOpt_<T>`/`NovaRes_<…>*` сохранено).
+> `MethodRouting::DeclaredBody` теперь реально конструируется в
+> `init_prelude_decls_from_items` и потребляется в перехватах вызова
+> `NovaOpt_` / `is_result_like`. Применено к `Option.is_some`/`is_none` +
+> `Result.is_ok`/`is_err` (`=> match @ { ... }` в `std/prelude/core.nv`);
+> C-трамплины удалены из `nova_rt/array.h` и
+> `register_novaopt_decl`/`register_novares_decl`. Plan 93 superseded
+> by Plan 95 (его цель = Ф.4 Plan 95). См. spec D-block в
+> [spec/decisions/08-runtime.md](../spec/decisions/08-runtime.md)
+> «Plan 95 (закрыт 2026-05-23)». Block-выше оставлен исторически как
+> запись о точке обнаружения.
 - **Где:** `compiler-codegen/src/codegen/emit_c.rs:1526-1528` —
   `if t.name == "Option" || t.name == "Result" { continue; }` —
   намеренное (Plan 62.A) исключение из `generic_types` /

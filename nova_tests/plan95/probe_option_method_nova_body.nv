@@ -1,0 +1,28 @@
+// Plan 95 Ф.3 probe: Nova-body метод на builtin `Option` через
+// «method-only mono»-канал (`DeclaredBody`-routing).
+//
+// До Plan 95: компиляция падала с `incomplete type Nova_Option`
+// (Plan 93 Ф.0 probe `pu_opt`). После Plan 95: метод
+// мономорфизируется per-T, приёмник — `NovaOpt_<T>` by-value,
+// тело — обычный `match @`. Имя метода (`my_present`) выбрано
+// не-конфликтующим с трамплинами `is_some`/`is_none` — инфраструктура
+// тестируется ДО переноса самих предикатов (Ф.4 коммитится отдельно
+// и удаляет трамплины).
+
+module nova_tests.plan95.probe_option_method_nova_body
+
+fn Option[T] @my_present() -> bool => match @ { Some(_) => true, None => false }
+
+test "Option[int] @my_present — Some/None" {
+    let a Option[int] = Some(42)
+    let b Option[int] = None
+    assert(a.my_present())
+    assert(!b.my_present())
+}
+
+test "Option[str] @my_present — Some/None" {
+    let a Option[str] = Some("hi")
+    let b Option[str] = None
+    assert(a.my_present())
+    assert(!b.my_present())
+}

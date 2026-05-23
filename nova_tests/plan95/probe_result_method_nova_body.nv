@@ -1,0 +1,17 @@
+// Plan 95 Ф.3 probe: Nova-body метод на builtin `Result` через
+// «method-only mono»-канал (`DeclaredBody`-routing).
+//
+// Параллель `probe_option_method_nova_body.nv` для Result.
+// Имя `my_succeeded` — не-конфликтующее с трамплинами `is_ok`/`is_err`
+// (Ф.5 коммитится отдельно и удаляет трамплины).
+
+module nova_tests.plan95.probe_result_method_nova_body
+
+fn Result[T, E] @my_succeeded() -> bool => match @ { Ok(_) => true, Err(_) => false }
+
+test "Result[int, str] @my_succeeded — Ok/Err" {
+    let a Result[int, str] = Ok(42)
+    let b Result[int, str] = Err("oops")
+    assert(a.my_succeeded())
+    assert(!b.my_succeeded())
+}
