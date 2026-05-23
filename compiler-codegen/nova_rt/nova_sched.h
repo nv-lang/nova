@@ -201,6 +201,43 @@ static inline nova_bool nova_sched_is_parked(NovaFiberQueue* scope, int slot) {
     return st && slot < st->capacity && st->parked[slot];
 }
 
+/* ─── Plan 83.4.1 (2026-05-23): park-with-predicate ──────────────
+ *
+ * Industry-standard pattern для spurious-wake-resilient park:
+ * POSIX `pthread_cond_wait(cv, mu)` + caller-loop,
+ * C++ `std::condition_variable::wait(lock, pred)`,
+ * Go runtime `gopark(unlockf, ...)`,
+ * tokio `Notify` + `Notified::poll`.
+ *
+ * Контракт: park возвращается **только** когда `pred(ctx)` вернёт `true`.
+ * Spurious wake (включая M:N drain-quiescence-wake до завершения
+ * close_cb для D93-async-handle'ов) автоматически re-park'ится в loop'е.
+ *
+ * Memory ordering: предикат-функция ОБЯЗАНА читать опубликованное
+ * состояние с ACQUIRE-ordering (через `nova_aint_load(...,ACQUIRE)` и
+ * аналоги), а wake-сайт ОБЯЗАН опубликовать «predicate-affecting»
+ * состояние с RELEASE-ordering ДО `nova_sched_wake`. Park-instance
+ * (`nova_sched_park`) делает `mco_yield`, который flush'ит регистры
+ * и работает как compiler-barrier.
+ *
+ * Fast-path: если `pred` уже вернул `true` при входе, park не делается.
+ *
+ * Если `pred == NULL` — legacy single-shot park (равно `nova_sched_park`).
+ * Это для backward-compat сайтов, где caller сам делает predicate-recheck. */
+
+typedef nova_bool (*NovaParkPredicate)(void* ctx);
+
+static inline void nova_sched_park_until(NovaFiberQueue* scope, int slot,
+                                          NovaParkPredicate pred, void* ctx) {
+    if (pred && pred(ctx)) return;       /* fast-path: condition уже выполнено */
+    for (;;) {
+        nova_sched_park(scope, slot);
+        if (!pred) return;               /* legacy single-shot */
+        if (pred(ctx)) return;           /* predicate satisfied */
+        /* spurious wake → re-park */
+    }
+}
+
 /* ─── Cancel-integration ──────────────────────────────────────── */
 
 /* Регистрация handle + stop_cb для cancel-wake. ОБЯЗАТЕЛЬНО перед park'ом
