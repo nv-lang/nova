@@ -969,6 +969,12 @@ typedef struct {
     NovaFailFrame*       _nova_saved_fail_top;
     NovaInterruptFrame*  _nova_saved_interrupt_top;
     NovaFiberQueue*      _nova_fiber_scope;
+    /* Plan 83.4.5.4 (2026-05-23): spawn-time TLS handler-snapshot capture
+     * для inheritance в worker'е. Saved BEFORE nova_runtime_spawn_into на
+     * parent-thread'е (TLS handlers видимы). Worker preamble adopts it в
+     * fiber_effect_snapshot[slot]. NULL для single-thread spawn path
+     * (nova_fiber_spawn_into сам save'ит). */
+    NovaEffectSnapshot*  _nova_init_snapshot;
 } NovaSpawnCtxBase;
 
 /* Forward-decl для использования из spawn_into. */

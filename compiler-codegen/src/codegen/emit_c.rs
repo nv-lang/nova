@@ -5149,12 +5149,23 @@ impl CEmitter {
         self.indent += 1;
         self.line(&format!("{ctx}->_nova_parent_scope = &{q};",
             ctx = ctx_var, q = queue));
+        // Plan 83.4.5.4 (2026-05-23): spawn-time TLS handler-snapshot capture
+        // на parent thread'е — fiber inherit'ит outer `with X = h` биндинги.
+        // Worker preamble adopts эту allocation в fiber_effect_snapshot[slot].
+        self.line(&format!("{ctx}->_nova_init_snapshot = (NovaEffectSnapshot*)nova_alloc(sizeof(NovaEffectSnapshot));",
+            ctx = ctx_var));
+        self.line(&format!("nova_effect_snapshot_save({ctx}->_nova_init_snapshot);",
+            ctx = ctx_var));
         self.line(&format!("nova_runtime_spawn_into(&{q}, {id}, {ctx});",
             q = queue, id = spawn_id, ctx = ctx_var));
         self.indent -= 1;
         self.line("} else {");
         self.indent += 1;
         self.line(&format!("{ctx}->_nova_parent_scope = NULL;", ctx = ctx_var));
+        // Single-thread path: nova_fiber_spawn_into внутри себя save'ит
+        // snapshot directly в q->fiber_effect_snapshot[count] (line 1009-1011
+        // в fibers.h). Init_snapshot тут не нужен.
+        self.line(&format!("{ctx}->_nova_init_snapshot = NULL;", ctx = ctx_var));
         self.line(&format!("nova_fiber_spawn_into(&{q}, {id}, {ctx});",
             q = queue, id = spawn_id, ctx = ctx_var));
         self.indent -= 1;
@@ -5188,6 +5199,15 @@ impl CEmitter {
         // NULL before preamble runs (_nova_worker_slot == -1 guards that path).
         let _ = writeln!(self.lambda_forward_decls,
             "    NovaFiberQueue* _nova_fiber_scope;");
+        // Plan 83.4.5.4 (2026-05-23): spawn-time TLS handler-snapshot capture.
+        // Allocated + saved BEFORE nova_runtime_spawn_into на parent thread'е
+        // (где TLS handlers видимы). Worker preamble adopts его в
+        // fiber_effect_snapshot[slot] чтобы fiber видел inherited handler-state
+        // (Node AsyncLocalStorage / Kotlin CoroutineContext semantics).
+        // NULL для single-thread spawn (nova_fiber_spawn_into сам save'ит
+        // directly в scope's parallel array).
+        let _ = writeln!(self.lambda_forward_decls,
+            "    NovaEffectSnapshot* _nova_init_snapshot;");
         // User capture fields follow base fields.
         for (cap, ty, by_value) in &captures {
             if *by_value {
@@ -5243,6 +5263,16 @@ impl CEmitter {
         self.line("_nova_active_slot = nova_scope_alloc_slot(_nova_active_scope, _co);");
         self.line("_c->_nova_worker_slot = _nova_active_slot;");
         self.line("_c->_nova_fiber_scope = _nova_active_scope;");
+        // Plan 83.4.5.4 (2026-05-23): adopt spawn-time captured snapshot
+        // в worker's home scope's fiber_effect_snapshot[slot]. Worker loop
+        // restore'ит из него перед mco_resume → fiber видит parent's TLS
+        // handler-state inherited.
+        self.line("if (_c->_nova_init_snapshot && _nova_active_slot >= 0) {");
+        self.indent += 1;
+        self.line("_nova_active_scope->fiber_effect_snapshot[_nova_active_slot] = _c->_nova_init_snapshot;");
+        self.line("_c->_nova_init_snapshot = NULL;"); /* ownership transferred */
+        self.indent -= 1;
+        self.line("}");
         self.indent -= 1;
         self.line("} else {");
         self.indent += 1;
