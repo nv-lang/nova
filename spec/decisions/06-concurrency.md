@@ -17,6 +17,7 @@ structured-concurrency примитивы есть в языке, и как па
 | [D91](#d91-channel-revision--capability-split-на-chanwriter--chanreader) | `Channel` revision: capability-split на `ChanWriter[T]` / `ChanReader[T]`; `send`→`bool`; `tx.clone()` multi-writer ✅ |
 | [D94](#d94-select--multiplexed-channel-operations) | `select { ... }` — финальный синтаксис: `Some(v) = rx =>`, `ChanReader.close_after(Duration)` для timeout ✅ реализован (Plan 31 ✅; Plan 44.1 Ф.3 hardening; Plan 65 — Duration-typed API revision) |
 | [D124](#d124-monotonic-vs-timestamp--раздельные-типы-для-wall-clock-и-монотонных-часов) | Monotonic vs Timestamp — раздельные типы для wall-clock и монотонных часов |
+| [D138](#d138-default-on-mn-runtime--production-semantics-plan-83456-ф3-draft-2026-05-23) | 📋 DRAFT — Default-on M:N runtime production semantics (GATED на 83.4.5.7) |
 
 ---
 
@@ -230,12 +231,17 @@ inverse-маркером.
 >
 > 📋 **PARTIALLY IMPLEMENTED IN [D71](#d71-bootstrap-concurrency-runtime).**
 > Bootstrap'ом реализованы: `supervised`, `parallel for`, `detach`
-> (default SyncDetach handler — sync inline), `Time.sleep` как
-> yield-point, `blocking { }` (Plan 83.3 — libuv-threadpool offload,
-> см. §4 «Реализация»). Capture-by-value для immutable scalars. Не
-> реализованы: `race`, `select`, `cancel_scope`, `with_timeout`,
-> реальный async-detach (OS-thread + global supervisor), эффект
-> `Detach` в effect-system, cancellation/error-propagation между fibers.
+> (Plan 83.4.5.2 Ф.4 amend — **default AsyncDetach** через
+> `nova_runtime_spawn_orphan` primitive: armed runtime → worker pool
+> fire-and-forget; bootstrap cooperative → global orphan scope drained
+> on atexit либо через `runtime.drain_orphans()` explicit-sync API),
+> `Time.sleep` как yield-point, `blocking { }` (Plan 83.3 — libuv-
+> threadpool offload, см. §4 «Реализация»). Capture-by-value для
+> immutable scalars. Не реализованы: `race`, `select`, `cancel_scope`,
+> `with_timeout`, эффект `Detach` в effect-system (всё ещё runtime-
+> primitive), cancellation/error-propagation между fibers (для
+> non-orphan). Orphan errors → LogAndDrop в caller's stderr,
+> non-propagate.
 
 ### Что
 
@@ -362,6 +368,47 @@ with Detach = SyncDetach {
 Глобальный default-handler `Detach` — `LogAndDrop`: throw из detached-
 fiber'а логируется как warning, panic — как critical (с D13 семантикой
 «fiber мёртв»).
+
+#### 3.1. Default detach semantic — AsyncDetach (Plan 83.4.5.2 Ф.4, 2026-05-23)
+
+`detach { body }` под production runtime (armed M:N либо bootstrap
+cooperative) — **fire-and-forget на orphan fiber** (паритет Go `go fn()`,
+tokio `tokio::spawn` без JoinHandle, Kotlin `GlobalScope.launch { … }`).
+
+Runtime routing:
+- **armed M:N runtime** (`runtime.is_initialized() == true`): orphan body
+  push'ится в worker deque через `nova_runtime_spawn_orphan` →
+  `nova_runtime_spawn_global` (round-robin worker assignment). Caller
+  возвращается мгновенно; body выполнится на одном из worker'ов.
+- **bootstrap cooperative** (default до Plan 83.2 flip): orphan body
+  push'ится в global `_nova_orphan_scope` queue; drain'ится через
+  `nova_supervised_drain_main_scope` либо на `atexit`, либо явным
+  вызовом `runtime.drain_orphans()`.
+
+`runtime.drain_orphans()` — stdlib-API (analog Go `sync.WaitGroup.Wait()`
+для anonymous-spawn'ов). Используется test-suite'ом для explicit-sync
+между `detach { side_effect }` и assert; production-кодом редко
+требуется (caller обычно не ждёт fire-and-forget).
+
+```nova
+// Test pattern — explicit sync:
+let mut x = 0
+detach { x = 42 }
+runtime.drain_orphans()    // wait для orphan body completion
+assert(x == 42)            // OK
+```
+
+LogAndDrop errors (как и до 83.4.5.2): orphan body throw →
+`fprintf(stderr, ...)` + fiber dies cleanly. Caller не abort'ится;
+другие orphans + main flow продолжают.
+
+Handler inheritance: orphan fiber видит outer `with X = h` биндинги
+captured на spawn-time (Plan 83.4.5.4 spawn-time TLS snapshot — паритет
+Node `AsyncLocalStorage`, Kotlin `CoroutineContext.Element`).
+
+Bootstrap `SyncDetach` (inline в caller'е) — legacy semantic; всё ещё
+работает через `with Detach = SyncDetach { … }` для test-mocking
+patterns. AsyncDetach — production default.
 
 #### 4. `blocking { ... }` для синхронных C-вызовов
 
@@ -3584,3 +3631,129 @@ V1: на первом spawn поднимается **весь** пул `maxprocs
 - D136 — резолв числа worker'ов (explicit > NOVA_MAXPROCS > auto).
 - Plan 83.1 Ф.4 — реализация; Ф.5 — thread-budget для nova test/bench.
 - Plan 83.2 — флип M:N в дефолт.
+
+---
+
+## D138. Default-on M:N runtime — production semantics (Plan 83.4.5.6 Ф.3, draft 2026-05-23)
+
+> 📋 **DRAFT — semantic specification; activation GATED на Plan 83.4.5.7
+> (multi-worker supervised double-resume race fix). D-block описывает
+> intended behavior после fix'а; имплементация уже подготовлена
+> (`nova_runtime_auto_arm()` + escape hatch + cancel wake-all + handler
+> inheritance + AsyncDetach default), но flip activation в codegen-emit
+> отложен.**
+
+### Что
+
+Compiled Nova-программы (Plan 83.2 flip) запускают M:N runtime **по
+умолчанию** — паритет с Go (`GOMAXPROCS=NumCPU`), tokio multi-thread
+runtime, Kotlin `Dispatchers.Default`. Hello-world без spawn не платит
+за worker-потоки (lazy pool), но любая supervised{spawn}/parallel
+for/detach автоматически распределяется на доступные ядра.
+
+### Правило
+
+1. **Default model.** Compiled binary — armed M:N по умолчанию. `nova run`
+   (интерпретатор) остаётся однопоточным.
+
+2. **Worker-count resolution** (D136 паритет):
+   - explicit `runtime.init(n>0)` побеждает;
+   - иначе `NOVA_MAXPROCS` env var;
+   - иначе `uv_available_parallelism()` (cgroup/affinity-aware).
+   Клэмп `[1, 1024]`.
+
+3. **Lazy worker pool** (D137 паритет). Workers поднимаются на первом
+   spawn; hello-world без spawn = 0 worker threads.
+
+4. **Escape hatch.** Два режима:
+   - `NOVA_MAXPROCS=1` — один worker (deterministic single-thread под
+     M:N machinery; полезно для precision-bench'ей).
+   - `NOVA_NO_AUTOARM=1` — полный bootstrap mode (runtime never armed,
+     spawn идёт через cooperative scope queue; полезно для tests,
+     specifically проверяющих cooperative-only semantics).
+
+5. **Worker blocking ban.** Worker НЕ делает блокирующую работу
+   inline — все FFI / syscall'ы обязаны быть в `blocking { … }`
+   (D50 §4; Plan 83.3 V1-контракт).
+
+6. **Spawn ordering — НЕ специфицирован** (Go-паритет: "Spawn ordering:
+   no guarantees"). Tests, опирающиеся на specific scheduler order,
+   должны использовать set-equality assertions либо escape hatch
+   `NOVA_NO_AUTOARM=1`.
+
+7. **Cancellation** — hierarchical через scope-tree (Plan 83.4.5.1
+   `nova_scope_cancel_wake_all` + cancel_all_pending dispatch_ready
+   re-queue для SYNC slots; tokio `CancellationToken.notify_waiters`
+   паритет). Token-tree cascade через `linked[]` (Plan 49). Atomic
+   cancel_requested flag (Plan 83.4.3 B5).
+
+8. **Detach (D50 §3.1 amend, Plan 83.4.5.2)** — fire-and-forget на
+   worker pool через `nova_runtime_spawn_orphan` (Go `go fn()` /
+   tokio::spawn без JoinHandle / Kotlin GlobalScope.launch паритет).
+   LogAndDrop fail-handler. Sync через `runtime.drain_orphans()`
+   (Go sync.WaitGroup.Wait analog).
+
+9. **Per-fiber state** — handler-snapshot per fiber (Plan 83.4.2 Ф.2
+   worker save/restore + Plan 83.4.5.4 spawn-time TLS inheritance —
+   Node `AsyncLocalStorage.run`, Kotlin `CoroutineContext.Element`
+   auto-inherit паритет). Snapshot travels с fiber'ом cross-worker
+   через work-stealing migration.
+
+### Почему
+
+- Default-on M:N — production-grade ожидание для современного
+  concurrent runtime'а. Все референсные runtimes (Go, tokio, Kotlin)
+  default к multi-thread; user opt-out, не opt-in.
+- Lazy pool — нулевая цена для не-конкурентных программ. Hello-world
+  не платит за worker-потоки.
+- Escape hatches (MAXPROCS=1, NO_AUTOARM=1) — для test-suite specific
+  needs без compromising production default.
+- Spawn ordering unspecified — позволяет work-stealing scheduler
+  максимальную свободу для CPU-affinity / load-balancing.
+
+### Cross-runtime parity таблица
+
+| Aspect | Go | tokio | Kotlin | Node | Nova цель |
+|---|---|---|---|---|---|
+| Default model | M:N | M:N (multi-thread) | M:N (Dispatchers.Default) | single-thread | M:N |
+| Worker count | GOMAXPROCS | tokio::main(...) | Dispatchers.Default = NumCPU | n/a | NOVA_MAXPROCS |
+| Lazy pool | M materialized on demand | task spawn → executor | Coroutine first launch | n/a | first spawn |
+| Cancel | context.Done close | CancellationToken | Job.cancel cascade | AbortController | scope-tree + token-tree |
+| Detach | go fn() | tokio::spawn (no JoinHandle) | GlobalScope.launch | setImmediate | nova_runtime_spawn_orphan |
+| Per-fiber state | goroutine context | task_local! | CoroutineContext.Element | AsyncLocalStorage | fiber_effect_snapshot |
+| Wake parked | runtime.gopark | Notify | JobSupport | n/a | nova_scope_cancel_wake_all |
+
+### Связь
+
+- [D14](#d14-fiber-runtime--невидимая-инфраструктура) — fiber runtime
+  фундамент.
+- [D50](#d50-concurrency-model-spawn-detach-blocking) §3.1 — detach
+  semantic amend (AsyncDetach).
+- [D71](#d71-bootstrap-concurrency-runtime) — bootstrap baseline.
+- [D80](#d80-handler-scoping-per-fiber) — per-fiber handler scoping.
+- [D93](#d93-park-wake--нормативный-runtime-primitive-для-блокирующих-операций) — park/wake D-block.
+- [D136](#d136-mn-worker-count--порядок-разрешения-и-nova_maxprocs) +
+  [D137](#d137-mn--ленивая-материализация-пула-runtime-init-как-тюнер)
+  — worker resolution + lazy pool.
+- Plan 83.2 — flip-default activation.
+- Plan 83.4.5.6 — closure target.
+- Plan 83.4.5.7 — multi-worker race fix (GATED dependency).
+
+### Acceptance
+
+- Compiled binary без `runtime.init()` использует все CPU при
+  fiber-нагрузке.
+- Hello-world без spawn — 0 worker threads.
+- `NOVA_MAXPROCS=N` env var корректно clamp'ит worker count.
+- `NOVA_NO_AUTOARM=1` env var полностью отключает auto-arm (bootstrap
+  mode).
+- 24 NEW regressions из Plan 83.4.5 Ф.0 enumeration все PASS под
+  default-on M:N (после Plan 83.4.5.7 race fix).
+- Speedup vs single-thread ≥3.0× на CPU-bound parallel_for (4 cores).
+
+### Статус
+
+📋 **DRAFT** — спецификация intended behavior. Имплементация
+подготовлена (Plan 83.4.5.1-5 ✅). Activation в codegen-emit GATED
+на Plan 83.4.5.7 multi-worker double-resume race fix. После fix'а
++ Plan 83.4.5.6 закроет roadmap Plan 83.

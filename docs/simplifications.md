@@ -11336,8 +11336,10 @@ Production-grade enumeration regressions под `nova_runtime_auto_arm()`:
 - **83.4.5.1** (commit ed4bd699719) — cancel wake-all + dispatch_ready
   re-queue для SYNC slots. Closes 7 cancel-related tests через
   NO_AUTOARM=1 directive (cooperative validation).
-- **83.4.5.2** (commit 0e0f64bab90) — detach_test directive. Production
-  async-default отложено в followup.
+- **83.4.5.2** Ф.0 directive (commit 0e0f64bab90) + Ф.1-Ф.4 production
+  (followup commit TBD): AsyncDetach default через
+  `nova_runtime_spawn_orphan` + `runtime.drain_orphans()` API. D50 §3.1
+  amend. detach_test 15/15 PASS bootstrap.
 - **83.4.5.3** (commit f4f2606bd57) — parallel_for set-equality + 4
   precision benches MAXPROCS=1 + relaxed budgets.
 - **83.4.5.4** (commit 2942094f600) — spawn-time TLS handler-snapshot
