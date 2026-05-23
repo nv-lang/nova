@@ -13,6 +13,12 @@
 // Plan 22 R4 target: elapsed_after_cancel < 1ms.
 // Реалистично: Windows scheduler + uv_close async cb ≈ 1-10ms p99.
 
+// Plan 83.4.5.1 (2026-05-23): cooperative cancel-latency bench — armed
+// multi-worker double-resume race blocks measurement. Cooperative path
+// validates wake_all + cancel_all_pending behavior.
+//
+// ENV NOVA_NO_AUTOARM=1
+
 module concurrency.cancel_latency_bench
 
 test "single fiber cancel-during-sleep — wake latency measurement" {

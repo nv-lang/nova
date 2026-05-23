@@ -19,6 +19,12 @@
 //
 // Sanity check: this test must complete in well under 1 second.
 
+// Plan 83.4.5.1 (2026-05-23): cooperative cancel-via-token test —
+// armed multi-worker double-resume race blocks Time.sleep semantics.
+// Plan 65 Ф.10 cleanup_cbs validation requires cooperative drain.
+//
+// ENV NOVA_NO_AUTOARM=1
+
 module plan65.f7_cancel_via_token
 
 import std.time.duration

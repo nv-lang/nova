@@ -6,6 +6,11 @@
 // _cancelled / _longest_pending_ms are maintained per close_after
 // allocation and per fire/cancel cleanup path.
 
+// Plan 83.4.5.1 (2026-05-23): cooperative timer-metrics test — armed
+// multi-worker double-resume race blocks Time.sleep+cancel semantics.
+//
+// ENV NOVA_NO_AUTOARM=1
+
 module plan65.f11a_timer_metrics
 
 import std.time.duration

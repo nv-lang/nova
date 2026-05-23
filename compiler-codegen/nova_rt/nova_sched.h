@@ -265,6 +265,55 @@ static inline void nova_sched_unregister_pending(NovaFiberQueue* scope, int slot
     }
 }
 
+/* ─── Cancel wake-all (Plan 83.4.5.1, 2026-05-23) ─────────────────────
+ *
+ * Walks scope's slots; для каждого parked fiber'а вызывает
+ * `nova_sched_wake` который clears parked-flag + (если scope под M:N)
+ * вызывает `dispatch_ready` callback для re-queue в worker deque.
+ *
+ * Применяется ПОСЛЕ `nova_sched_cancel_all_pending` в cancel-flow для
+ * обработки слотов, где stop_cb был SYNC либо bare-park (parked-флаг
+ * cleared cancel_all_pending'ом, но dispatch_ready НЕ был вызван →
+ * worker под M:N не знает что fiber готов к re-pop).
+ *
+ * Также покрывает fiber'ы parked через `nova_sched_park_until` predicate
+ * loop'е без registered stop_cb — `_is_done_or_cancelled` predicate на
+ * след. iter увидит `cancel_requested` и вернёт true → park exit'ит.
+ *
+ * Idempotent: parked[slot]==false на момент входа → no-op для этого slot'а.
+ *
+ * Memory ordering: caller (nova_cancel_token_cancel_reason) публикует
+ * `cancel_requested = true` через atomic-store (Plan 83.4.3 B5)
+ * ДО этого вызова. Каждый fiber on park-loop check'ает
+ * `cancel_requested` ACQUIRE-load'ом → видит флаг.
+ *
+ * Cross-runtime parity:
+ *   - Go `context/context.go::cancelCtx.cancel` — closes `done` channel
+ *     (broadcast to all waiters).
+ *   - tokio `CancellationTokenState::cancel` → `notify_waiters()` —
+ *     unparks all wakers зарегистрированных через `cancelled().await`.
+ *   - Kotlin `JobSupport.cancelInternal` — iterates child list, cancels each.
+ */
+static inline void nova_scope_cancel_wake_all(NovaFiberQueue* scope) {
+    if (!scope) return;
+    NovaSchedState* st = nova_sched_find_state(scope);
+    if (!st) return;
+    int n = scope->count < st->capacity ? scope->count : st->capacity;
+    for (int i = 0; i < n; i++) {
+        /* Idempotent: parked[slot]==false → wake — no-op (clears flag
+         * commit, dispatch_ready возможно re-push'ит running fiber'а
+         * в deque, но Chase-Lev push owner-thread'ом — safe). nova_sched_wake
+         * проверяет mco_status != MCO_DEAD ДО dispatch — terminated fibers
+         * skip'нутся.
+         *
+         * Под bootstrap (scope->dispatch_ready == NULL) — pure flag-clear.
+         * Под M:N (dispatch_ready != NULL) — push в worker deque. */
+        if (st->parked[i]) {
+            nova_sched_wake(scope, i);
+        }
+    }
+}
+
 /* ─── Cancel-flow integration: вызывается из nova_cancel_token_cancel ── */
 
 /* Trigger all pending stop_cb's for scope. Cancel-during-park flow по D93:
@@ -292,14 +341,19 @@ static inline void nova_sched_cancel_all_pending(NovaFiberQueue* scope) {
         if (st->pending_stop_cb[i] && st->pending_handle[i]) {
             NovaStopMode mode = st->pending_stop_cb[i](st->pending_handle[i]);
             if (mode == NOVA_STOP_SYNC) {
-                st->parked[i] = false;  /* SYNC: unpark immediate */
+                /* SYNC: unpark immediate + dispatch_ready re-queue в worker
+                 * deque (если scope под M:N). Plan 83.4.5.1 fix: до этого
+                 * только parked[i]=false — worker не знал, fiber остался
+                 * не-re-popped → drain hang. nova_sched_wake чистит флаг +
+                 * dispatch'ит. */
+                nova_sched_wake(scope, i);
             }
             /* ASYNC: НЕ unpark'аем — backend сделает wake через close_cb
              * (для sleep) либо waitlist-removal callback (для channels). */
         } else if (st->parked[i]) {
             /* Park без registered stop_cb (bare park) — unpark
-             * unconditional, нет handle для cleanup'а. */
-            st->parked[i] = false;
+             * unconditional + dispatch_ready. */
+            nova_sched_wake(scope, i);
         }
     }
 }

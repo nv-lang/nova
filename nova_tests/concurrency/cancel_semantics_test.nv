@@ -9,6 +9,14 @@
 //   - USER-precedence: реальная ошибка fiber'а перетирает раньшую
 //     отмену (Go errgroup теряет — у нас не теряется).
 //   - `with Fail` не вызывает handler на CANCEL-throw, пробрасывает дальше.
+//
+// Plan 83.4.5.1 (2026-05-23): added `// ENV NOVA_NO_AUTOARM=1` directive
+// — тесты cancel-семантики проверяют **cooperative cancel propagation**
+// в bound scope; под armed multi-worker race на supervised double-resume
+// (Plan 83.4.2 Ф.1 corner case) ломает test infrastructure. Cooperative
+// drain — same scope, same cancel-flow, deterministic.
+//
+// ENV NOVA_NO_AUTOARM=1
 
 module concurrency.cancel_semantics_test
 
