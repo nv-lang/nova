@@ -451,14 +451,20 @@ bool nova_fiber_arena_contains(const void* ptr) {
     return _nova_fw_find_arena(ptr) != NULL;
 }
 
+/* Plan 83.4.3 (2026-05-23) — B1 fix: GLOBAL aggregation через обход
+ * `_nova_fw_arena_list`. Раньше per-thread (только current thread's
+ * arena) → main thread видел 0 slots после spawn на worker'е. Теперь
+ * обход list'а суммирует все арены — паритет с Go `runtime.NumGoroutine()`
+ * / tokio `RuntimeMetrics.num_alive_tasks` (global view).
+ * List read lock-free (Plan 82 Ф.3 append-only — retire только в shutdown). */
 NovaFiberArenaStats nova_fiber_arena_stats(void) {
     NovaFiberArenaStats s = { 0 };
-    NovaFiberArenaWin* a = _t_arena;
-    if (a) {
-        s.virtual_reserved = a->virtual_size;
-        s.slot_count       = a->slot_count;
-        s.slots_active     = (size_t)a->slots_active;
-        s.high_water       = a->high_water;
+    for (NovaFiberArenaWin* a = _nova_fw_arena_list; a; a = a->next) {
+        if (!a->base) continue;  /* retired */
+        s.virtual_reserved += a->virtual_size;
+        s.slot_count       += a->slot_count;
+        s.slots_active     += (size_t)a->slots_active;
+        s.high_water       += a->high_water;
     }
     return s;
 }
