@@ -15466,37 +15466,8 @@ _cp++; \
                             // Plan 99.3 Ф.5: Result.map[U](f) → Nova-body.
                             // Full mono per (T, U, E). Closure invoke
                             // через NovaClosBase + cast.
-                            // D26 prelude: Result.map_err(f). Err(e) → Err(f(e)),
-                            // Ok остаётся. f это closure (nova_str → nova_str).
-                            "map_err" => {
-                                if let Some(arg) = args.first() {
-                                    let f = self.emit_expr(arg.expr())?;
-                                    let tmp = self.fresh_tmp();
-                                    // Plan 59 Ф.7.5 D1a: dual-mode var-decl
-                                    // + dual-mode `Err`-конструктор.
-                                    self.line(&format!("{} {} = {};", obj_ty, tmp, obj_c));
-                                    let out = self.fresh_tmp();
-                                    self.line(&format!("{} {};", obj_ty, out));
-                                    self.line(&format!("if ({}->tag == NOVA_TAG_Result_Err) {{", tmp));
-                                    self.indent += 1;
-                                    // Closure (nova_str → nova_str): сигнатура
-                                    // не в стандартных NOVA_CLOS_CALL_*, делаем
-                                    // ручной cast fn-указателя.
-                                    let new_err = self.fresh_tmp();
-                                    self.line(&format!(
-                                        "nova_str {} = ((nova_str(*)(void*, nova_str))(((NovaClos_ii*)({}))->fn))(((NovaClos_ii*)({}))->env, {}->payload.Err._0);",
-                                        new_err, f, f, tmp));
-                                    let err_ctor = self.result_ctor_name(&obj_ty, "Err");
-                                    self.line(&format!("{} = {}({});", out, err_ctor, new_err));
-                                    self.indent -= 1;
-                                    self.line("} else {");
-                                    self.indent += 1;
-                                    self.line(&format!("{} = {};", out, tmp));
-                                    self.indent -= 1;
-                                    self.line("}");
-                                    return Ok(out);
-                                }
-                            }
+                            // Plan 99.3 Ф.6: Result.map_err[F](f) →
+                            // Nova-body. Full mono per (T, E, F).
                             "unwrap" => {
                                 // Plan 72 P1-C: cast payload.Ok._0 to actual T type.
                                 // Plan 59 Ф.7.5 D4: строгая (T,E)-резолюция.

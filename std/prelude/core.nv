@@ -301,10 +301,12 @@ fn Result[T, E] @map[U](f fn(T) -> U) -> Result[U, E]
 
 /// Применяет `f` к Err-payload: `Err(e) -> Err(f(e))`, `Ok(v)` пропускает.
 ///
-/// **Bootstrap**: inline emit (`<inline>` sentinel). Generic F≠E в
-/// bootstrap не поддерживается полноценно (mono Err=nova_str).
+/// **Plan 99.3 Ф.6**: Nova-body. Full mono per (T, E, F) — паритет
+/// Rust `Result::<T,E>::map_err<F2, O: FnOnce(E) -> F2>(self, op: O)
+/// -> Result<T, F2>`.
 #stable(since = "0.1")
-external fn Result[T, E] @map_err[F](f fn(E) -> F) -> Result[T, F]
+fn Result[T, E] @map_err[F](f fn(E) -> F) -> Result[T, F]
+  => match @ { Ok(v) => Ok(v), Err(e) => Err(f(e)) }
 
 /// `Ok(v) -> Some(v)`, `Err(_) -> None`. Discards error.
 ///

@@ -412,10 +412,7 @@ impl SumSchemaRegistry {
         // через init_prelude_decls_from_items.
         // Plan 99.3 Ф.4: Result.unwrap_or_else УБРАН — на Nova-body.
         // Plan 99.3 Ф.5: Result.map УБРАН — на Nova-body.
-        result_methods.insert("map_err".to_string(), MethodRouting::HardcodedRuntimeFn {
-            c_name: "<inline>".to_string(),
-            is_per_t: false,
-        });
+        // Plan 99.3 Ф.6: Result.map_err УБРАН — на Nova-body.
         result_methods.insert("unwrap".to_string(), MethodRouting::HardcodedRuntimeFn {
             c_name: "<inline>".to_string(),
             is_per_t: false,
