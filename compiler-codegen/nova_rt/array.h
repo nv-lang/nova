@@ -111,6 +111,22 @@
     } \
     static inline NovaOpt_##T Nova_Option_method_or_##T(NovaOpt_##T self, NovaOpt_##T other) { \
         return self.tag == NOVA_TAG_Option_Some ? self : other; \
+    } \
+    /* Plan 96 Ф.4 — sub-slice view `arr[a..b]`. O(1): новый header (24 байта)
+     * с data = orig->data + from (interior pointer); len = cap = to - from
+     * (D-cap-len: push на view → realloc → silent detach, parent НЕ затронут).
+     * GC: backing держится через interior-pointer (Boehm GC_set_all_interior_pointers).
+     * Bounds: from < 0 || to < from || to > len → nv_panic (D-neg-panic).
+     * Empty slice (from == to) валиден (D-empty-ok). */ \
+    static NovaArray_##T* nova_array_slice_##T(NovaArray_##T* a, int64_t from, int64_t to) { \
+        if (from < 0 || to < from || to > a->len) { \
+            nv_panic_slice_oob(from, to, a->len); \
+        } \
+        NovaArray_##T* v = (NovaArray_##T*)nova_alloc(sizeof(NovaArray_##T)); \
+        v->data = a->data + from; /* interior pointer */ \
+        v->len  = to - from; \
+        v->cap  = to - from; /* D-cap-len: push → realloc → detach */ \
+        return v; \
     }
 
 /* ---- Default instantiations for primitive arrays.
