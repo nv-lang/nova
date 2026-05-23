@@ -68,5 +68,13 @@ cmd /c "call `"$vc`" >nul 2>&1 && cl /nologo /O1 /W3 /DGC_NOT_DLL /DGC_THREADS /
 Write-Host '=== f1_gc_test.c + fiber_arena_win.c + Boehm -- clang-cl ===' -ForegroundColor Cyan
 cmd /c "call `"$vc`" >nul 2>&1 && `"$cl`" /O1 /EHa /W3 /DGC_NOT_DLL /DGC_THREADS /DNOVA_GC_BOEHM /I`"$gc\include`" /Fe:f1_gc_test_clangcl.exe f1_gc_test.c $fa /link /libpath:`"$gc\lib`" gc.lib atomic_ops.lib"
 
+# Plan 82 F.5 -- context-switch microbenchmark on the real
+# fiber_arena_win.c. No Boehm needed: switch cost is GC-independent.
+Write-Host '=== f5_ctxswitch_bench.c + fiber_arena_win.c -- MSVC ===' -ForegroundColor Cyan
+cmd /c "call `"$vc`" >nul 2>&1 && cl /nologo /O2 /W3 /Fe:f5_ctxswitch_bench_msvc.exe f5_ctxswitch_bench.c $fa"
+
+Write-Host '=== f5_ctxswitch_bench.c + fiber_arena_win.c -- clang-cl ===' -ForegroundColor Cyan
+cmd /c "call `"$vc`" >nul 2>&1 && `"$cl`" /O2 /EHa /W3 /Fe:f5_ctxswitch_bench_clangcl.exe f5_ctxswitch_bench.c $fa"
+
 Remove-Item *.obj -ErrorAction SilentlyContinue
-Write-Host '=== built. f0_* + f1_arena_test + f1_gc_test ===' -ForegroundColor Green
+Write-Host '=== built. f0_* + f1_arena_test + f1_gc_test + f5_ctxswitch_bench ===' -ForegroundColor Green
