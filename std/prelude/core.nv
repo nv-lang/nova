@@ -185,11 +185,12 @@ fn Option[T] @unwrap_or(default_v T) -> T => match @ { Some(v) => v, None => def
 
 /// Возвращает значение или результат `f()` (lazy default).
 ///
-/// **Bootstrap**: inline emit (`<inline>` sentinel). Closure cast через
-/// `NovaClos_vi` layout — zero-arg closure `() -> T`. См.
-/// `emit_c.rs:11775+` Option.unwrap_or_else block.
+/// **Plan 99.3 Ф.2**: Nova-body. Closure invoke через NovaClosBase
+/// + cast — паритет Rust `Option::<T>::unwrap_or_else<F: FnOnce()
+/// -> T>(self, f: F) -> T`.
 #stable(since = "0.1")
-external fn Option[T] @unwrap_or_else(f fn() -> T) -> T
+fn Option[T] @unwrap_or_else(f fn() -> T) -> T
+  => match @ { Some(v) => v, None => f() }
 
 /// Применяет `f` к содержимому Some, возвращает Some(f(v)). None пропускает.
 ///
