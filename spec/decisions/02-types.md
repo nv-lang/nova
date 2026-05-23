@@ -4337,33 +4337,60 @@ Plan 102 (future).
 
 #### Protocol composition (Plan 101.4 — закрывает D53 open question)
 
-Protocols могут embed'ить друг друга через `use Type` keyword (параллель
-D39 record-embed):
+Protocols composed через `+` operator — symmetric с multi-bound
+(101.3) `[T A + B]`. Composition валиден в **type-decl** и
+**type-annotation** position. **Literal-position — composition
+ОТВЕРГНУТА** (см. ниже).
 
 ```nova
-type Reader protocol {
-    read(buf []u8) -> int
-}
+type Reader protocol { read(buf []u8) -> int }
+type Writer protocol { write(buf []u8) -> int }
 
-type Writer protocol {
-    write(buf []u8) -> int
-}
-
-type ReadWriter protocol {
-    use Reader        // embed — все methods Reader включены
-    use Writer        // embed — все methods Writer включены
+// 1. Type-decl с composition:
+type ReadWriter protocol Reader + Writer {
     close() -> ()     // own method
 }
 
-// Использование как bound:
+// 2. Pure composition без own methods:
+type Streamable protocol Reader + Writer + Closeable
+
+// 3. Anonymous-composition в type-position (extension D53):
+fn process(rw protocol Reader + Writer) { ... }
+fn process(rw protocol Reader + Writer { close() -> () }) { ... }
+
+// 4. Использование как bound — symmetric с 101.3:
 fn[T ReadWriter] []T @process() => ...
-// эквивалентно fn[T Reader + Writer] []T @process() (Plan 101.3)
+// эквивалентно fn[T Reader + Writer] []T @process()
 ```
 
-Disambiguation в `protocol { ... }` body:
-- `use TypeName` — embed (parallel D39).
-- `name(args) -> ret` — method signature (БЕЗ `@` — protocol decl, не
-  type method; receiver — implicit Self).
+**Literal-composition — отвергнута:**
+
+```nova
+// ОТВЕРГНУТО:
+let v = protocol Reader + Writer {
+    read(buf) => impl1
+    write(buf) => impl2
+}
+// ERROR E_LITERAL_ANONYMOUS_COMPOSITION
+// «anonymous protocol composition not allowed in literal;
+//  declare a named protocol first via `type Name protocol A + B`»
+
+// Workflow: extract в named type:
+type MyRW protocol Reader + Writer
+let v = protocol MyRW {
+    read(buf) => impl1
+    write(buf) => impl2
+}
+```
+
+**Почему literal-composition отвергнута:** смешивает type-construction
+(`A + B` intersection) с value-construction (`{ … }` impl body),
+когнитивно нагружено. Industry-aligned — Rust/Go/Java/Kotlin/Scala
+не разрешают anonymous-composition в literals.
+
+Disambiguation: после `type Name protocol` парсер ожидает либо
+`{ ... }` (no composition), либо `IDENT (+ IDENT)*` (composition),
+затем optional `{ ... }` body.
 
 ### Многократное использование одного имени
 
