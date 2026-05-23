@@ -2355,6 +2355,23 @@ int nova_sched_count_ready(NovaFiberQueue* scope);
 обеспечивает это естественно. Под M:N ([Plan 44](../../docs/plans/44-mn-runtime-roadmap.md))
 потребуется memory fence перед yield'ом.
 
+**1a. Park-with-predicate** (Plan 83.4.1, ред. 2026-05-23). Новые
+блокирующие операции под M:N **обязаны** использовать
+`nova_sched_park_until(scope, slot, pred, ctx)` вместо bare
+`nova_sched_park`. Park возвращается ТОЛЬКО когда `pred(ctx) → true`;
+spurious wake (включая M:N drain-quiescence-wake до завершения
+async close_cb / after_work_cb) автоматически re-park'ится в loop'е.
+Memory ordering contract: предикат-функция читает опубликованное
+состояние с **ACQUIRE**-ordering; wake-сайт публикует predicate-
+affecting состояние с **RELEASE**-ordering ДО `nova_sched_wake`.
+Это индустриальный паттерн: POSIX `pthread_cond_wait` + caller-loop,
+C++ `std::condition_variable::wait(lock, pred)`, Go `gopark(unlockf)`,
+tokio `Notify::notified()`. Existing sites: sleep-park
+(`_nova_sleep_via_libuv`) и blocking-offload (`nova_blocking_offload`)
+обновлены в Plan 83.4.1; bare `nova_sched_park` остаётся для
+legacy/caller-loop сценариев (channels park_with_unlock + `BaseWaiter.
+fired` recheck по Plan 44.1 R2 C6).
+
 **2. Wake idempotent.** Повторный wake без park'а между ними — no-op.
 Это упрощает callback'и: libuv `uv_close` cleanup может вызвать wake
 после нормального wake, нужно быть устойчивыми.

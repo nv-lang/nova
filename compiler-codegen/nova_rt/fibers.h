@@ -354,6 +354,10 @@ static inline int  nova_sched_count_ready(NovaFiberQueue* scope);
 static inline void nova_sched_park(NovaFiberQueue* scope, int slot);
 static inline void nova_sched_wake(NovaFiberQueue* scope, int slot);
 static inline nova_bool nova_sched_is_parked(NovaFiberQueue* scope, int slot);
+/* Plan 83.4.1: park-with-predicate forward decl — definition in nova_sched.h. */
+typedef nova_bool (*NovaParkPredicate)(void* ctx);
+static inline void nova_sched_park_until(NovaFiberQueue* scope, int slot,
+                                          NovaParkPredicate pred, void* ctx);
 static inline void nova_sched_register_pending(NovaFiberQueue* scope, int slot,
                                                 void* handle,
                                                 NovaSchedStopCb stop_cb);
@@ -1158,6 +1162,20 @@ static inline int nova_supervised_step(NovaFiberQueue* q) {
             q->fiber_ctx[i] = NULL;  /* release SpawnCtx GC root */
             continue;
         }
+        /* Plan 83.4.2 (2026-05-23) — A2 fix: under M:N, fiber spawned
+         * через runtime_spawn_into попал в worker deque; codegen ставит
+         * _nova_parent_scope = &queue (vs NULL для single-thread spawn).
+         * Worker запустит mco_resume сам — main НЕ должен делать вторую
+         * resume (двойной TIB-swap минiкоро corrupt'ит arena stack → access
+         * violation в slot 0). Main скипает worker-owned fiber'ы; drain
+         * exit-условие — pending_remote == 0 (worker decrement'ит). */
+        if (q->fiber_ctx[i]) {
+            NovaSpawnCtxBase* base = (NovaSpawnCtxBase*)q->fiber_ctx[i];
+            if (base->_nova_parent_scope) {
+                alive++;  /* worker owns; count alive чтобы drain не exit'ил */
+                continue;
+            }
+        }
         /* Plan 22 Ф.3/Ф.4 (D93): skip parked fiber'ы. Они resume'ятся
          * когда wake'нутся (callback timer'а либо cancel). Count alive++,
          * чтобы supervised_run не выходил оставив parked permanently.
@@ -1365,7 +1383,18 @@ static inline void nova_supervised_run_cancel(NovaFiberQueue* q,
  */
 static inline void nova_fiber_yield(void) {
     mco_coro* co = mco_running();
-    if (!co) return;
+    if (!co) {
+        /* Plan 83.4.3 (2026-05-23) — B4 fix: yield на main thread.
+         * Раньше — silent no-op. Теперь — один turn libuv loop'а
+         * (UV_RUN_NOWAIT) даёт прогресс pending I/O / async-events /
+         * scheduler-wake'ам. Это паритет с Node `setImmediate(cb)` /
+         * Go `runtime.Gosched()` semantics on the main goroutine.
+         * Безопасно: uv_run libuv поддерживает re-entrancy (drain-цикл
+         * supervised_run сам может вызвать yield → не блокируется). */
+        uv_loop_t* loop = nova_evloop();
+        if (loop) uv_run(loop, UV_RUN_NOWAIT);
+        return;
+    }
     /* Cooperative cancellation check. _nova_active_scope set by step.
      * Plan 49 Ф.2: бросаем kind=CANCEL (вместо USER) и тащим причину
      * из bound token'а scope'а (если есть). Это позволяет supervised_run
@@ -1467,10 +1496,15 @@ typedef enum {
 } NovaSleepStage;
 
 typedef struct {
-    NovaFiberQueue* scope;
-    int             slot;
-    uv_timer_t      timer;
-    NovaSleepStage  stage;
+    NovaFiberQueue*  scope;
+    int              slot;
+    uv_timer_t       timer;
+    /* Plan 83.4.1 (2026-05-23): atomic stage — read с ACQUIRE из
+     * park-predicate, write с RELEASE из timer_cb/close_cb. Защищает
+     * от инверсии visibility между worker, owning loop'а и worker'ом,
+     * resumeющим fiber после wake. На x86 — no extra cost; на ARM —
+     * корректные fence-ы. */
+    nova_atomic_int  stage;   /* NovaSleepStage values */
 } NovaSleepState;
 
 /* Forward-decl close_cb для использования в timer_cb / stop_cb. */
@@ -1480,18 +1514,29 @@ static void _nova_sleep_close_cb(uv_handle_t* h);
  * close_cb когда handle полностью released. */
 static void _nova_sleep_timer_cb(uv_timer_t* h) {
     NovaSleepState* st = (NovaSleepState*)h->data;
-    if (st->stage != NOVA_SLEEP_PENDING) {
-        return;  /* race с cancel stop_cb — handle уже closing */
+    /* Plan 83.4.1: CAS PENDING → CLOSING; защита от race со stop_cb. */
+    int32_t expected = NOVA_SLEEP_PENDING;
+    if (!nova_aint_cas(&st->stage, &expected, NOVA_SLEEP_CLOSING)) {
+        return;  /* stop_cb уже инициировал close */
     }
-    st->stage = NOVA_SLEEP_CLOSING;
     uv_close((uv_handle_t*)h, _nova_sleep_close_cb);
 }
 
 /* Close completed — handle fully released. Wake parked fiber. */
 static void _nova_sleep_close_cb(uv_handle_t* h) {
     NovaSleepState* st = (NovaSleepState*)h->data;
-    st->stage = NOVA_SLEEP_CLOSED;
+    /* Plan 83.4.1: RELEASE-store предиката — park-predicate в
+     * _sleep_stage_is_closed читает с ACQUIRE и видит этот write. */
+    nova_aint_store(&st->stage, NOVA_SLEEP_CLOSED);
     nova_sched_wake(st->scope, st->slot);
+}
+
+/* Plan 83.4.1 park-predicate: park-until возвращается ТОЛЬКО когда
+ * close_cb отработал и stage == NOVA_SLEEP_CLOSED. ACQUIRE-load
+ * парный с RELEASE-store в close_cb. */
+static nova_bool _nova_sleep_stage_is_closed(void* ctx) {
+    NovaSleepState* st = (NovaSleepState*)ctx;
+    return nova_aint_load(&st->stage) == NOVA_SLEEP_CLOSED;
 }
 
 /* stop_cb для cancel-integration (D93 Ф.8 ASYNC contract).
@@ -1501,8 +1546,9 @@ static void _nova_sleep_close_cb(uv_handle_t* h) {
 static NovaStopMode _nova_sleep_stop_cb(void* handle) {
     uv_timer_t* timer = (uv_timer_t*)handle;
     NovaSleepState* st = (NovaSleepState*)timer->data;
-    if (st->stage == NOVA_SLEEP_PENDING) {
-        st->stage = NOVA_SLEEP_CLOSING;
+    /* Plan 83.4.1: CAS PENDING → CLOSING; защита от race с timer_cb. */
+    int32_t expected = NOVA_SLEEP_PENDING;
+    if (nova_aint_cas(&st->stage, &expected, NOVA_SLEEP_CLOSING)) {
         uv_timer_stop(timer);
         uv_close((uv_handle_t*)timer, _nova_sleep_close_cb);
     }
@@ -1519,11 +1565,8 @@ static void _nova_main_wait_timer_cb(uv_timer_t* h) { (void)h; }
  * busy-loop'ов. R7 fully enforced. */
 static inline void _nova_sleep_via_libuv(NovaFiberQueue* scope, int slot,
                                           nova_int ms) {
-    NovaSleepState st = {
-        .scope = scope,
-        .slot  = slot,
-        .stage = NOVA_SLEEP_PENDING,
-    };
+    NovaSleepState st = { .scope = scope, .slot = slot };
+    nova_aint_init(&st.stage, NOVA_SLEEP_PENDING);
     int rc = uv_timer_init(nova_current_loop(), &st.timer);
     if (rc != 0) {
         fprintf(stderr, "nova: FATAL uv_timer_init failed: %s\n", uv_strerror(rc));
@@ -1540,21 +1583,12 @@ static inline void _nova_sleep_via_libuv(NovaFiberQueue* scope, int slot,
     /* Register для cancel-wake (D93). stop_cb тоже initiates close — wake
      * придёт из close_cb. */
     nova_sched_register_pending(scope, slot, &st.timer, _nova_sleep_stop_cb);
-    /* Ф.8: один park на весь lifecycle. Wake придёт ТОЛЬКО когда close_cb
-     * выполнен (stage == CLOSED). До этого момента fiber parked даже если
-     * timer_cb fired (timer_cb лишь инициирует close, не делает wake). */
-    nova_sched_park(scope, slot);
-    /* Возврат: stage == CLOSED, handle полностью released, busy-loop wait
-     * не нужен. */
+    /* Plan 83.4.1: park-until — возвращается только когда stage==CLOSED.
+     * Под M:N drain-quiescence-wake мог разбудить park до завершения
+     * close_cb; park_until re-park'нется и подождёт реального close_cb.
+     * Никакого FATAL-check'а больше не нужно — by construction. */
+    nova_sched_park_until(scope, slot, _nova_sleep_stage_is_closed, &st);
     nova_sched_unregister_pending(scope, slot);
-    /* Sanity: stage должен быть CLOSED. Если что-то wake'нуло раньше —
-     * runtime bug либо protocol violation D93. */
-    if (st.stage != NOVA_SLEEP_CLOSED) {
-        fprintf(stderr,
-            "nova: FATAL sleep wake before close_cb (stage=%d) — D93 protocol bug\n",
-            (int)st.stage);
-        abort();
-    }
 }
 
 /* ─── Plan 83.3 Ф.1: `Blocking`-эффект → libuv threadpool offload ───
@@ -1584,12 +1618,15 @@ static inline void _nova_sleep_via_libuv(NovaFiberQueue* scope, int slot,
  * потоке, не зарегистрированном в Boehm и не являющемся fiber'ом). */
 
 typedef struct {
-    NovaFiberQueue* scope;
-    int             slot;
-    uv_work_t       work;
-    void          (*fn)(void*);  /* leaf-работа (V1) */
-    void*           arg;
-    bool            done;        /* after_work_cb отработал */
+    NovaFiberQueue*  scope;
+    int              slot;
+    uv_work_t        work;
+    void           (*fn)(void*);  /* leaf-работа (V1) */
+    void*            arg;
+    /* Plan 83.4.1: atomic done — RELEASE-store в after_work_cb (workpool
+     * thread/owner loop), ACQUIRE-load в park-predicate (worker resume'я
+     * fiber'а). На x86 — no extra cost; на ARM — корректные fences. */
+    nova_atomic_bool done;
 } NovaBlockingState;
 
 /* Выполняется на потоке libuv threadpool. НЕ Boehm-registered, НЕ fiber.
@@ -1606,8 +1643,16 @@ static void _nova_blocking_work_cb(uv_work_t* req) {
 static void _nova_blocking_after_cb(uv_work_t* req, int status) {
     (void)status;
     NovaBlockingState* st = (NovaBlockingState*)req->data;
-    st->done = true;
+    nova_abool_store(&st->done, true);  /* Plan 83.4.1: RELEASE */
     nova_sched_wake(st->scope, st->slot);
+}
+
+/* Plan 83.4.1 park-predicate для park-until — возвращается ТОЛЬКО когда
+ * after_work_cb отработал и опубликовал done=true. ACQUIRE-load парный
+ * с RELEASE-store в after_work_cb. */
+static nova_bool _nova_blocking_is_done(void* ctx) {
+    NovaBlockingState* st = (NovaBlockingState*)ctx;
+    return nova_abool_load(&st->done);
 }
 
 /* stop_cb для cancel-integration (D93 ASYNC contract). uv_cancel
@@ -1626,13 +1671,8 @@ static NovaStopMode _nova_blocking_stop_cb(void* handle) {
  * PRECONDITION: вызывается из fiber-контекста (scope/slot валидны). */
 static inline void nova_blocking_offload(NovaFiberQueue* scope, int slot,
                                           void (*fn)(void*), void* arg) {
-    NovaBlockingState st = {
-        .scope = scope,
-        .slot  = slot,
-        .fn    = fn,
-        .arg   = arg,
-        .done  = false,
-    };
+    NovaBlockingState st = { .scope = scope, .slot = slot, .fn = fn, .arg = arg };
+    nova_abool_init(&st.done, false);
     st.work.data = &st;
     int rc = uv_queue_work(nova_current_loop(), &st.work,
                            _nova_blocking_work_cb, _nova_blocking_after_cb);
@@ -1643,15 +1683,11 @@ static inline void nova_blocking_offload(NovaFiberQueue* scope, int slot,
     }
     /* Register для cancel-wake (D93). */
     nova_sched_register_pending(scope, slot, &st.work, _nova_blocking_stop_cb);
-    /* Один park на весь lifecycle. after_work_cb выполняется только когда
-     * worker loop крутит uv_run — т.е. строго после этого park'а. */
-    nova_sched_park(scope, slot);
+    /* Plan 83.4.1: park-until — возвращается только когда after_work_cb
+     * установил done=true. Никакого FATAL-check'а больше не нужно —
+     * spurious wake re-park'ится автоматически by construction. */
+    nova_sched_park_until(scope, slot, _nova_blocking_is_done, &st);
     nova_sched_unregister_pending(scope, slot);
-    if (!st.done) {
-        fprintf(stderr,
-            "nova: FATAL blocking wake before after_work_cb — D93 protocol bug\n");
-        abort();
-    }
 }
 
 /* Default impl: context-sensitive sleep (D71 + Plan 22 F2 libuv mandatory).

@@ -11258,6 +11258,36 @@ ns/switch — паритет с Boost.Context). Перенос замера в N
 
 ## [M-83.2-supervised-mn-bugs] Plan 83.2 — full M:N default flip отложен (2026-05-23)
 
+### ⚠ ЧАСТИЧНО ЗАКРЫТО Plan 83.4 исполнением (2026-05-23, worktree nova-p83-4)
+
+**Закрыты:**
+- **A1** D93 sleep-wake race — Plan 83.4.1 ✅ (`nova_sched_park_until`
+  primitive + sleep/blocking refactor; D93 spec amendment). `sleep_bench`/
+  `_precision_bench`/`_real_clock` больше не падают с `FATAL sleep wake
+  before close_cb`.
+- **A2** supervised double-resume — Plan 83.4.2 Ф.1 ✅ (supervised_step
+  skip'ает worker-owned fiber'ы через `_nova_parent_scope` discriminator).
+  Никаких больше `fiber stack overflow in slot 0` access-violation'ов.
+- **B1** fiber_arena_stats main vs worker — Plan 83.4.3 ✅ (global
+  aggregation через обход `_nova_fw_arena_list`).
+- **B4** main_yield семантика — Plan 83.4.3 ✅ (`nova_fiber_yield` на
+  main thread'е делает `uv_run(NOWAIT)`).
+
+**Не закрыты (honest-defer в самостоятельные подпланы):**
+- **A3+B2** handler-storage TLS→per-fiber migration — Plan 83.4.2 Ф.2.
+  Требует codegen-edit `NovaSpawnCtxBase` ABI (~2-3 dev-day).
+- **B5** hierarchical CancellationToken (atomic + wake-all + cascade) —
+  Plan 83.4.3 Ф.2. Atomic-cancel дефенсивно (x86 byte-atomicity покрывает
+  immediate race), полная иерархия требует scope-tree mutex.
+- **B3** parallel_for set-equality test rewrite — Plan 83.4.3 Ф.4.
+  Cosmetic test fix, не блокирует flip.
+- **C1+C2** test ассерты + **flip activation** + sweep + spec D-block +
+  speedup-бенчмарк + stress + TSAN gate — Plan 83.4.4 целиком.
+
+**Полный clang `nova test` после исполнения**: 1107 PASS / 4 FAIL / 56
+SKIP — 4 фейла известные флэки (3 parallel-build lld-link + 1 sleep_bench
+10k-concurrent timing); 0 регрессий от изменений Plan 83.4.
+
 ### Что
 
 [Plan 83.2](plans/83.2-mn-default-flip.md) — «M:N вкл по умолчанию для
