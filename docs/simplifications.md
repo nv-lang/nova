@@ -11119,10 +11119,48 @@ ns/switch — паритет с Boost.Context). Перенос замера в N
 
 ---
 
-### [M-protocol-literal-codegen-deferred] Plan 97 Ф.4 — vtable-dispatch на anon-instance protocol-литерала deferred
+### [M-protocol-literal-codegen-deferred] ✅ ЗАКРЫТ Plan 97.1 (2026-05-23) — vtable-dispatch на protocol-литерале
 
-> **Merged в main 2026-05-23 (merge 3ef21279795).** Plan 97 ✅ закрыт;
-> codegen-deferred маркер остаётся актуальным до Plan 97.1.
+> **CLOSED 2026-05-23 by Plan 97.1** (worktree `nova-p97-1`, ветка `plan-97-1`).
+> Protocol-литерал теперь полностью работает в codegen:
+> * `emit_protocol_lit` создаёт synthetic ctx struct + free fn methods
+>   + heap-allocated NovaVtable + NovaBox fat-pointer.
+> * `emit_protocol_box_typedef`/`_vtable_companion` расширены на
+>   non-generic protocol'ы (Ф.1).
+> * `type_ref_to_c` для non-generic protocol-typed value возвращает
+>   `NovaBox_<Proto>` (унифицированный dispatch path: literal + assignment).
+> * Tuple typedef marker перенесён после GENERIC_TYPE_DEFS (Ф.3) для
+>   tuple'ов вида `(Reader, Writer)` из capability-split factory.
+> * Skip vtable typedef для runtime-defined (Hashable/Comparable/Display
+>   в `nova_rt/vtables.h`) — иначе C redefinition.
+> * Capability-split factory pattern (`Lock.new() -> (Locker, Unlocker)`)
+>   работает end-to-end (commit 8e024d43647 + предшествующие).
+
+### [M-protocol-method-name-shadowing] Plan 97.1 Ф.4 — method-name collision между protocol-литералом и stdlib protocol'ом
+
+- **Где** — `compiler-codegen/src/codegen/emit_c.rs` method-call dispatch
+  для `box.method()` на `NovaBox_<Proto>`-типизированном значении.
+- **Что упрощено** — если protocol-литерал использует method-name,
+  совпадающий с другим stdlib-protocol'ом (например `Iter.next`),
+  emit_call может неверно резолвить return-type через ту шкалу
+  (`NovaOpt_<T>` вместо `<T>`). Это даёт CC-FAIL вида
+  `initializing 'NovaOpt_nova_int' with an expression of incompatible type`.
+- **Почему** — Member-call type inference scan'ит method tables всех
+  типов по имени; правильно искать в `protocol_method_registry[Proto]`
+  для box-typed receivers, что требует chains type-tracking
+  (var → NovaBox_<Proto> → Proto → methods).
+- **Workaround** — переименовать method чтобы избежать collision с
+  builtin protocols (Iter/Hashable/Comparable/Display/Equatable/etc).
+  В фикстуре `pos_protocol_lit_closure_capture` использован `advance`
+  вместо `next`.
+- **Как чинить** — emit_call для `box.method()` приоритезирует
+  protocol_method_registry lookup перед method_table'ами; нужен chain
+  receiver-type → protocol-name (новый buffer `var_protocol_type`).
+- **Приоритет** — L. Редкий edge case (большинство protocol'ов имеют
+  уникальные method names); workaround = переименовать method в
+  literal.
+- **Обнаружено** — Plan 97.1 Ф.4 (2026-05-23) в фикстуре
+  `pos_protocol_lit_closure_capture.nv`.
 
 - **Где** — `compiler-codegen/src/codegen/emit_c.rs` `ExprKind::ProtocolLit`
   arm (делегирует на `emit_handler_lit`).
