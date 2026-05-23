@@ -5,6 +5,11 @@
 // (on_select_lost + cancel_resource_cb) race-safely cooperate via the
 // `cancelled` flag on NovaAfterState.
 
+// Plan 83.4.5.1 (2026-05-23): cooperative select+cancel test — armed
+// multi-worker double-resume race blocks select+timer cleanup interaction.
+//
+// ENV NOVA_NO_AUTOARM=1
+
 module plan65.f10_select_cancel_propagation
 
 import std.time.duration
