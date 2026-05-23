@@ -15438,62 +15438,9 @@ _cp++; \
                         match method.as_str() {
                             // Plan 99.3 Ф.4: Result.unwrap_or_else(f) →
                             // Nova-body. Mono per (T, E) — паритет Rust.
-                            // D26 prelude: Result.map(f). Ok(v) → Ok(f(v)),
-                            // Err(e) → Err(e). f это closure `fn(T) -> U`.
-                            "map" => {
-                                if let Some(arg) = args.first() {
-                                    // Plan 62.B: closure C-сигнатура. Bootstrap
-                                    // Result Ok-slot — nova_int, но closure-литерал
-                                    // может иметь distinct typedef (nova_bool/
-                                    // nova_char, Plan 70.3). Manual fn-pointer cast
-                                    // по фактическим типам лямбды — без него
-                                    // `NOVA_CLOS_CALL_ii` (int-layout) на
-                                    // nova_bool-closure даёт calling-convention
-                                    // mismatch (garbage в верхних байтах).
-                                    // ClosureLight (untyped) → фоллбэк на tracked
-                                    // Result Ok-type / nova_int.
-                                    // Plan 59 Ф.7.5 D4: closure-сигнатура —
-                                    // приоритет; иначе строгая (T,E)-
-                                    // резолюция (param_c = Ok-тип, ret_c
-                                    // консервативно = Ok-тип). Тихий
-                                    // `(nova_int, nova_int)` default убран.
-                                    let (param_c, ret_c) = match self
-                                        .typed_closure_c_sig(arg.expr())
-                                    {
-                                        Some(sig) => sig,
-                                        None => {
-                                            let (ok_c, _) = self
-                                                .resolve_result_te_strict(
-                                                    obj, &obj_ty, "map")?;
-                                            (ok_c.clone(), ok_c)
-                                        }
-                                    };
-                                    let f = self.emit_expr(arg.expr())?;
-                                    let tmp = self.fresh_tmp();
-                                    // Plan 59 Ф.7.5 D1a: dual-mode var-decl
-                                    // + dual-mode `Ok`-конструктор.
-                                    self.line(&format!("{} {} = {};", obj_ty, tmp, obj_c));
-                                    let out = self.fresh_tmp();
-                                    self.line(&format!("{} {};", obj_ty, out));
-                                    self.line(&format!("if ({}->tag == NOVA_TAG_Result_Ok) {{", tmp));
-                                    self.indent += 1;
-                                    let mapped = self.fresh_tmp();
-                                    let arg_val = Self::cast_from_nova_int(
-                                        &format!("{}->payload.Ok._0", tmp), &param_c);
-                                    self.line(&format!(
-                                        "{rc} {m} = (({rc}(*)(void*, {pc}))(((NovaClos_ii*)({f}))->fn))(((NovaClos_ii*)({f}))->env, {av});",
-                                        rc = ret_c, pc = param_c, m = mapped, f = f, av = arg_val));
-                                    let ok_ctor = self.result_ctor_name(&obj_ty, "Ok");
-                                    self.line(&format!("{} = {}((nova_int){});", out, ok_ctor, mapped));
-                                    self.indent -= 1;
-                                    self.line("} else {");
-                                    self.indent += 1;
-                                    self.line(&format!("{} = {};", out, tmp));
-                                    self.indent -= 1;
-                                    self.line("}");
-                                    return Ok(out);
-                                }
-                            }
+                            // Plan 99.3 Ф.5: Result.map[U](f) → Nova-body.
+                            // Full mono per (T, U, E). Closure invoke
+                            // через NovaClosBase + cast.
                             // D26 prelude: Result.map_err(f). Err(e) → Err(f(e)),
                             // Ok остаётся. f это closure (nova_str → nova_str).
                             "map_err" => {

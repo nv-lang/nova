@@ -292,11 +292,12 @@ fn Result[T, E] @unwrap_or_else(f fn(E) -> T) -> T
 
 /// Применяет `f` к Ok-значению: `Ok(v) -> Ok(f(v))`, `Err(e)` пропускает.
 ///
-/// **Bootstrap**: inline emit (`<inline>` sentinel). Generic U≠T в
-/// bootstrap не поддерживается полноценно (codegen использует mono
-/// Ok=nova_int для обеих сторон).
+/// **Plan 99.3 Ф.5**: Nova-body. Full mono per (T, U, E) — паритет
+/// Rust `Result::<T,E>::map<U, F: FnOnce(T) -> U>(self, op: F)
+/// -> Result<U, E>`.
 #stable(since = "0.1")
-external fn Result[T, E] @map[U](f fn(T) -> U) -> Result[U, E]
+fn Result[T, E] @map[U](f fn(T) -> U) -> Result[U, E]
+  => match @ { Ok(v) => Ok(f(v)), Err(e) => Err(e) }
 
 /// Применяет `f` к Err-payload: `Err(e) -> Err(f(e))`, `Ok(v)` пропускает.
 ///
