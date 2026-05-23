@@ -1,0 +1,28 @@
+// Plan 98 Ф.2.1: Plan 98 inference back-compat — turbofish-форма
+// продолжает работать (не ломаем существующий код).
+//
+// Note: `[]Option[T]` параметр сейчас НЕ выводит T без turbofish —
+// codegen эрейзит element type `[]<sani>` для не-примитивов
+// (`receiver_type_c_ident` default `nova_int`), теряя Option-инфу.
+// Это отдельный gap (NovaArray element-type tracking) — НЕ scope
+// Plan 98. Plan 98 закрывает прямой `Option[T]` / `Result[T,E]` param.
+// Простой `[]int` (примитивный element) inference работает.
+
+module nova_tests.plan98.turbofish_still_works
+
+fn first_or[T](items []T, default_v T) -> T {
+    for x in items {
+        return x
+    }
+    default_v
+}
+
+test "[]int — inference работает (примитив)" {
+    let xs []int = [10, 20, 30]
+    assert(first_or(xs, 0) == 10)
+}
+
+test "[]int — turbofish тоже работает (back-compat)" {
+    let xs []int = [10, 20, 30]
+    assert(first_or[int](xs, 0) == 10)
+}

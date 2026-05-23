@@ -1,6 +1,13 @@
 # Plan 98 — Free-fn generic type-param inference на generic-типах (Option/Result/user-generics)
 
-> **Статус:** 📋 proposed 2026-05-23, не начат.
+> **Статус:** ✅ **ЗАКРЫТ 2026-05-23** (worktree `nova-p98`, ветка
+> `plan-98`). Ф.0–Ф.3 все выполнены. Подход A (метод `&self` + резолв
+> через `novaopt_value_types`/`novares_value_types`/
+> `generic_type_instance_info`). 16 call-sites обновлены
+> (`Self:: → self.`). 5 фикстур в `nova_tests/plan98/` (4 pos + 1 neg)
+> — PASS. Регрессия 10 крит. подпапок: 127/0. **Known limitation:**
+> `[]Option[T]` / `[]Result[T,E]` не выводится (codegen эрейзит element
+> type до inference — отдельный gap, не scope).
 > **Приоритет:** P2 (UX-дыра: `fn check[T](o Option[T])` требует turbofish
 > `check[int](a)` вместо естественного `check(a)`. Раздражает в каждом
 > generic-helper'е; не блокер фич, но систематически портит читаемость
