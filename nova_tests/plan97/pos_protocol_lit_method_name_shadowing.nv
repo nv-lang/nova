@@ -1,0 +1,34 @@
+// Plan 97.1 followup [M-protocol-method-name-shadowing] — closed regression.
+//
+// Раньше: protocol-литерал с method-name совпадающим со stdlib
+// protocol'ом (e.g. `Iter.next`) → return-type incorrectly resolved
+// to NovaOpt_T вместо T → CC-FAIL `initializing 'NovaOpt_nova_int'
+// with incompatible 'nova_int'`.
+//
+// После followup-fix'а: infer_expr_c_type для box.method() приоритезирует
+// `protocol_method_registry[<Proto>]` lookup (а не общие method_overloads).
+// Этот тест — guard от регрессии.
+
+module nova_tests.plan97.pos_protocol_lit_method_name_shadowing
+
+
+// Имя метода `next` НАМЕРЕННО совпадает с stdlib `Iter.next`.
+// Семантика разная: наш next возвращает int, не Option[int].
+export type CounterPlain protocol {
+    next() -> int
+}
+
+
+test "protocol-литерал с method-name shadowing stdlib" {
+    let mut state = 0
+    let c = protocol CounterPlain {
+        next() {
+            state = state + 1
+            state
+        }
+    }
+    let a = c.next()
+    let b = c.next()
+    assert(a == 1)
+    assert(b == 2)
+}
