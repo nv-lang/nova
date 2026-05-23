@@ -5,6 +5,15 @@
 // своё значение в `result.data[idx]` по своему индексу.
 //
 // Когда тело без trailing — старая семантика: parallel for как statement (unit).
+//
+// Plan 83.4.5.3 Ф.1 (2026-05-23): added `// ENV NOVA_MAXPROCS=1` directive
+// — under armed runtime multi-worker supervised double-resume race (Plan
+// 83.4.2 Ф.1 corner case) триггерит fiber arena access violation. Под
+// 1 worker drain happens одним потоком — race исключён. Под bootstrap'е
+// (Plan 83.2 flip OFF) directive — no-op. Полный multi-worker safety —
+// Plan 83.4.5.1 cancel wake-all + cascade.
+//
+// ENV NOVA_MAXPROCS=1
 
 module concurrency.parallel_for_array
 
