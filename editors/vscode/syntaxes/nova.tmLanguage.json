@@ -158,11 +158,11 @@
                 },
                 {
                     "name": "storage.modifier.nova",
-                    "match": "\\b(mut|readonly)\\b"
+                    "match": "\\b(mut|readonly|consume)\\b"
                 },
                 {
                     "name": "variable.language.self.nova",
-                    "match": "@[a-z_][a-zA-Z0-9_]*|@(?![a-zA-Z_])"
+                    "match": "@"
                 },
                 {
                     "name": "constant.language.boolean.nova",
