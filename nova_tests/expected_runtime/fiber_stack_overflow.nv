@@ -1,0 +1,32 @@
+// EXPECT_RUNTIME_PANIC fiber stack overflow
+//
+// Plan 82 Ф.4 — детерминированная overflow-детекция fiber-стека.
+//
+// Fiber с безграничной рекурсией упирается в guard-страницу слота
+// arena → arena-handler печатает «fiber stack overflow in slot N» и
+// процесс детерминированно падает:
+//   - Windows: VEH ловит STATUS_STACK_OVERFLOW (fiber_arena_win.c);
+//   - Linux/macOS: SIGSEGV-handler (_arena_sigsegv_handler).
+//
+// Паритет с Go / Rust (guard-page-abort) и СТРОГО лучше прежнего
+// Windows-поведения — minicoro-default calloc-стек переполнялся ТИХО
+// (порча соседней heap-памяти, недетерминированный сбой).
+//
+// `deep` рекурсирует НЕ в хвостовой позиции (вызов followed by `x + y`)
+// — гарантированно настоящие стек-кадры даже под оптимизацией.
+
+module expected_runtime.fiber_stack_overflow
+
+fn deep(n int) -> int {
+    let x = n + 1
+    let y = deep(x)
+    return x + y
+}
+
+fn main() {
+    supervised {
+        spawn {
+            let _ = deep(0)
+        }
+    }
+}

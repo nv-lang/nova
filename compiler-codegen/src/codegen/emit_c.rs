@@ -3222,6 +3222,15 @@ impl CEmitter {
     /// Plan 72 P1-C: emit a C cast expression that reinterprets a `nova_int`
     /// storage slot as `target_ty`. For pointer types uses intptr_t relay;
     /// for nova_f64 uses a union bit-cast; for other scalars a direct cast.
+    ///
+    /// Plan 82 followup примечание (2026-05-23): для struct-target'ов
+    /// `(StructTy)(value)` — GCC/Clang extension, под MSVC = C2440.
+    /// Однако blanket-guard «struct → no cast» здесь регрессирует
+    /// clang-тесты (enum/nova_unit/etc. ловятся как struct по эвристике
+    /// is_struct_c_type, а C-cast нужен). Возможно ВСЕ struct-target
+    /// callsite'ы — codegen-bug-via-extension, но fixed targeted-fixes
+    /// на конкретных сайтах (tuple-field, array_push) безопаснее
+    /// blanket-guard'а. Здесь оставляем `(T)(v)` как было.
     fn cast_from_nova_int(value: &str, target_ty: &str) -> String {
         if target_ty == "nova_int" { return value.to_string(); }
         if target_ty == "nova_f64" {
@@ -3231,6 +3240,28 @@ impl CEmitter {
             return format!("({})(intptr_t)({})", target_ty, value);
         }
         format!("({})({})", target_ty, value)
+    }
+
+    /// Plan 82 followup (MSVC compat): true для C-типов, которые в
+    /// emit-выводе представлены `struct`-формой (а не scalar typedef).
+    /// Скаляры белый список: nova_int/bool/char/f32/f64 + intN_t/uintN_t
+    /// + `void`/`size_t`/`intptr_t`. Всё прочее (nova_str, _NovaTuple_*,
+    /// Nova_*-records, NovaBox_*-protocol boxes, NovaOpt_*-monomorphs,
+    /// NovaArr_*/NovaTbl_* и т.п.) — структуры; C-cast `(StructTy)(e)` —
+    /// GCC/Clang extension, под MSVC cl.exe → C2440. Используется в
+    /// `cast_from_nova_int` для подавления struct-cast эмиссии.
+    fn is_struct_c_type(ty: &str) -> bool {
+        match ty {
+            // Скаляры из nova_rt.h (typedef'ы примитивов).
+            "nova_int" | "nova_bool" | "nova_char"
+            | "nova_f32" | "nova_f64"
+            | "int8_t" | "int16_t" | "int32_t" | "int64_t"
+            | "uint8_t" | "uint16_t" | "uint32_t" | "uint64_t"
+            | "intptr_t" | "uintptr_t" | "size_t" | "ssize_t"
+            | "ptrdiff_t" | "void" | "char" | "int" | "long"
+            | "long long" | "short" | "unsigned" | "_Bool" | "bool" => false,
+            _ => true,
+        }
     }
 
     /// Plan 72 P3-B (updated): generate vtable struct typedef, NovaBox typedef,
@@ -6692,6 +6723,14 @@ impl CEmitter {
         self.line(&format!("typedef struct Nova_{0} Nova_{0};", name));
         self.line(&format!("struct Nova_{} {{", name));
         self.indent += 1;
+        // Plan 82 followup: пустой record (`type Marker { }`) — C
+        // стандарт требует хотя бы одного именованного члена; GCC/Clang
+        // допускают пустой struct как extension, MSVC отвергает (C2016).
+        // Эмитим dummy-field для нулевых fields — паритет с empty-sum
+        // (`char _dummy;` в union, см. emit_sum_type).
+        if fields.is_empty() {
+            self.line("char _empty_record_marker;");
+        }
         for f in fields {
             let ty_c = self.type_ref_to_c(&f.ty)?;
             schema.insert(f.name.clone(), ty_c.clone());
@@ -12338,6 +12377,13 @@ impl CEmitter {
                                             return Ok(format!("(({})({}{}{}))", elem_ty, o, accessor, field_name));
                                         }
                                     } else {
+                                        // Plan 82 followup: для struct-elem_ty (nova_str и т.п.)
+                                        // tuple-поле уже хранит правильный тип (мономорф-tuple);
+                                        // C-cast `(StructTy)(t.fN)` — GCC ext, под MSVC C2440.
+                                        // Без cast'а семантика идентична — t.fN типизировано.
+                                        if Self::is_struct_c_type(elem_ty) {
+                                            return Ok(format!("({}{}{})", o, accessor, field_name));
+                                        }
                                         return Ok(format!("(({})({}{}{}))", elem_ty, o, accessor, field_name));
                                     }
                                 }
@@ -15932,6 +15978,37 @@ impl CEmitter {
                 }
 
                 if let Some((type_name, is_instance)) = self.method_receivers.get(method).cloned() {
+                    // Plan 82 followup (2026-05-23, fail-loudly): single-key
+                    // method_receivers — last-wins fallback. Для STATIC-метода
+                    // (`Type.m(...)`) обязана быть проверка, что зарегистрированный
+                    // type_name совпадает с тем, что НА КОЛЛ-САЙТЕ. Иначе
+                    // missing-import-вариант `HashMap[T,T].new()` (HashMap
+                    // неизвестен codegen'у) ТИХО роутится в `Nova_Error_static_new`
+                    // (т.к. method_receivers["new"] = "Error"). Это давало
+                    // криптичные CC-FAIL'ы вместо ясного «unknown type».
+                    //
+                    // Strict check: для static-формы obj — это Ident/Path
+                    // на тип-имя; должно равняться type_name.
+                    if !is_instance {
+                        let obj_ident = match &obj.kind {
+                            ExprKind::Ident(s) => Some(s.as_str().to_string()),
+                            ExprKind::Path(parts) => parts.last().cloned(),
+                            _ => None,
+                        };
+                        if let Some(name) = obj_ident.as_ref() {
+                            if name != &type_name {
+                                return Err(format!(
+                                    "[E_UNKNOWN_TYPE_METHOD] `{ty}.{m}(...)` — \
+                                     тип `{ty}` неизвестен codegen'у (нет import \
+                                     или typedef). Single-key fallback на \
+                                     `{reg}.{m}` отвергнут — strict-mode. \
+                                     Подсказка: добавить `import` для `{ty}` \
+                                     (например `import std.collections.hashmap.{{HashMap}}`).",
+                                    ty = name, m = method, reg = type_name,
+                                ));
+                            }
+                        }
+                    }
                     let is_generic_type = self.generic_types.contains(&type_name);
                     let safe_type = Self::receiver_type_c_ident(&type_name);
                     if is_instance {
@@ -17310,6 +17387,12 @@ impl CEmitter {
                                 self.line(&format!("{} {} = *(({}*)(intptr_t){}.f{});",
                                     base_ty, name, base_ty, tup_tmp, i));
                                 self.var_types.insert(name.clone(), base_ty.to_string());
+                            } else if Self::is_struct_c_type(&fty) {
+                                // Plan 82 followup: tuple-поле уже типа fty
+                                // (мономорф); `(StructTy)(t.fN)` под MSVC = C2440.
+                                self.line(&format!("{} {} = {}.f{};",
+                                    fty, name, tup_tmp, i));
+                                self.var_types.insert(name.clone(), fty.clone());
                             } else {
                                 self.line(&format!("{} {} = ({})({}.f{});",
                                     fty, name, fty, tup_tmp, i));
@@ -18738,11 +18821,21 @@ impl CEmitter {
                         let heap_tmp = self.fresh_tmp();
                         self.line(&format!("{}* {} = ({}*)nova_alloc(sizeof({}));", ety, heap_tmp, ety, ety));
                         self.line(&format!("*{} = {};", heap_tmp, v));
+                        // heap_tmp — указатель `ety*`; cast в elem_ty осмыслен
+                        // (pointer-cast в C валиден всегда). Оставляем.
                         self.line(&format!("nova_array_push_{}({}, ({})({})  );",
                             elem_ty, tmp, elem_ty, heap_tmp));
                     } else {
-                        self.line(&format!("nova_array_push_{}({}, ({})({}));",
-                            elem_ty, tmp, elem_ty, v));
+                        // Plan 82 followup: для struct-elem_ty (nova_str, etc.)
+                        // выражение `v` уже типа elem_ty — C-cast `(StructTy)(v)`
+                        // под MSVC = C2440. Без cast'а семантика идентична.
+                        if Self::is_struct_c_type(elem_ty) {
+                            self.line(&format!("nova_array_push_{}({}, {});",
+                                elem_ty, tmp, v));
+                        } else {
+                            self.line(&format!("nova_array_push_{}({}, ({})({}));",
+                                elem_ty, tmp, elem_ty, v));
+                        }
                     }
                 }
                 ArrayElem::Spread(expr) => {
