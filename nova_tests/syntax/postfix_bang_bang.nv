@@ -18,7 +18,7 @@ fn pipeline_throw(s str) Fail -> int {
 }
 
 test "!!: Ok(v) разворачивается в v" {
-    with Fail = handler Fail {
+    with Fail = effect Fail {
         fail(_) => interrupt -1
     } {
         let r = pipeline_throw("ok")
@@ -27,7 +27,7 @@ test "!!: Ok(v) разворачивается в v" {
 }
 
 test "!!: Err(e) бросает через Fail" {
-    with Fail = handler Fail {
+    with Fail = effect Fail {
         fail(_) => interrupt -1
     } {
         let r = pipeline_throw("bad")

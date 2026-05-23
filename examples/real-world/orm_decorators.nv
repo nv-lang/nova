@@ -2,14 +2,14 @@
 //
 // **Главная демонстрация Nova-эффектов**: cross-cutting concerns
 // (soft-delete, audit, read/write splitting) реализуются как обычные
-// функции, возвращающие декорированный Handler[Db]. Бизнес-код в
+// функции, возвращающие декорированный Effect[Db]. Бизнес-код в
 // `orm_demo.nv` остаётся **неизменным** — handler просто подменяется в
 // `with`-блоке.
 //
 // В Java/Spring это потребовало бы AOP-аннотаций с reflection.
 // В Python — декораторов на уровне ORM-класса.
 // В Go — explicit DI и middleware-цепочек на каждой repo-методе.
-// В Nova — handler-функция, обычная high-order function над `Handler[Db]`.
+// В Nova — handler-функция, обычная high-order function над `Effect[Db]`.
 //
 // Используемые фичи:
 // - [D11](../spec/decisions/04-effects.md#d11) `with X = h { ... }`
@@ -44,7 +44,7 @@ use std.sql                              // Sql, Db, DbRow, DbError
 //   UPDATE/INSERT проходят как есть.
 // - `in_transaction` — пробрасываем неизменно (вложенная композиция
 //   handler'ов работает прозрачно).
-export fn with_soft_delete(real Handler[Db]) -> Handler[Db] => handler Db {
+export fn with_soft_delete(real Effect[Db]) -> Effect[Db] => effect Db {
     query(q) {
         // SELECT: добавляем фильтр. Простая реализация — `with_filter`
         // конкатенирует AND. Реальная stdlib-версия делала бы parsing,
@@ -89,7 +89,7 @@ export fn with_soft_delete(real Handler[Db]) -> Handler[Db] => handler Db {
 // Это **prosthet-aspect**: audit decision не размазана по всем repo'ам,
 // а сконцентрирована в одной функции. И отключается в тестах
 // тривиально — оборачиваем `with Db = postgres_handler` (без декоратора).
-export fn with_audit(real Handler[Db], current_user_id u64) -> Handler[Db] => handler Db {
+export fn with_audit(real Effect[Db], current_user_id u64) -> Effect[Db] => effect Db {
     query(q) => real.query(q)                     // SELECT не аудируем
     exec(q) {
         let result = real.exec(q)
@@ -134,7 +134,7 @@ fn write_audit_entry(user_id u64, q Sql, affected int) Detach -> () {
 // иначе read-after-write rounds-trip'ы будут видеть устаревшие данные
 // (replica lag). Поэтому транзакционный body запускается с **под-handler'ом**,
 // у которого query тоже идёт на primary.
-export fn with_read_replica(primary Handler[Db], replica Handler[Db]) -> Handler[Db] => handler Db {
+export fn with_read_replica(primary Effect[Db], replica Effect[Db]) -> Effect[Db] => effect Db {
     query(q) => replica.query(q)
     exec(q)  => primary.exec(q)
     in_transaction(b) {
@@ -162,8 +162,8 @@ export fn with_read_replica(primary Handler[Db], replica Handler[Db]) -> Handler
 // - `with_read_replica` — на самом верху, маршрутизирует по типу
 //   операции **до** того, как остальные декораторы что-то делают
 //   с запросом.
-export fn build_db(primary Handler[Db], replica Handler[Db], current_user_id u64)
-    -> Handler[Db] {
+export fn build_db(primary Effect[Db], replica Effect[Db], current_user_id u64)
+    -> Effect[Db] {
     let with_sd_primary = with_soft_delete(primary)
     let with_sd_replica = with_soft_delete(replica)
     let with_audited    = with_audit(with_sd_primary, current_user_id)
@@ -204,7 +204,7 @@ export fn build_db(primary Handler[Db], replica Handler[Db], current_user_id u64
 // ради того, чтобы убедиться, что decorator переписал SQL правильно.
 type CapturedQuery { template str, args []SqlValue }
 
-fn capturing_handler(log mut []CapturedQuery) -> Handler[Db] => handler Db {
+fn capturing_handler(log mut []CapturedQuery) -> Effect[Db] => effect Db {
     query(q) {
         log.push({ template: q.template, args: q.args })
         []
@@ -282,7 +282,7 @@ test "audit: каждый exec пишется в detach-задачу" {
 
     // Перехватываем Detach, чтобы посчитать audit'ы. В реальном тесте
     // мы бы заменили AuditDb handler.
-    with Detach = handler Detach {
+    with Detach = effect Detach {
         run(body) {
             audit_count += 1
             // НЕ запускаем тело — для теста достаточно счётчика.
@@ -305,7 +305,7 @@ test "compose: soft-delete + audit + read-replica" {
     let mut replica_log []CapturedQuery = []
     let mut audit_count = 0
 
-    with Detach = handler Detach {
+    with Detach = effect Detach {
         run(body) { audit_count += 1 }
     } {
         let composed = with_read_replica(

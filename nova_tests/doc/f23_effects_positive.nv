@@ -30,7 +30,7 @@ export fn count_to(n int) Counter -> int {
 
 test "log with handler — void result" {
     let mut calls = 0
-    with Logger = handler Logger {
+    with Logger = effect Logger {
         log(msg str) {
             calls = calls + 1
             return ()
@@ -44,7 +44,7 @@ test "log with handler — void result" {
 
 test "count_to basic" {
     let mut n = 0
-    let result = with Counter = handler Counter {
+    let result = with Counter = effect Counter {
         tick() { n = n + 1; return () }
         get() { return n }
     } {
@@ -55,7 +55,7 @@ test "count_to basic" {
 
 test "count_to zero" {
     let mut n = 0
-    let result = with Counter = handler Counter {
+    let result = with Counter = effect Counter {
         tick() { n = n + 1; return () }
         get() { return n }
     } {
@@ -67,11 +67,11 @@ test "count_to zero" {
 test "effects compose sequentially" {
     let mut log_count = 0
     let mut cnt = 0
-    with Logger = handler Logger {
+    with Logger = effect Logger {
         log(_msg str) { log_count = log_count + 1; return () }
     } {
         log_message("start")
-        let inner = with Counter = handler Counter {
+        let inner = with Counter = effect Counter {
             tick() { cnt = cnt + 1; return () }
             get() { return cnt }
         } {

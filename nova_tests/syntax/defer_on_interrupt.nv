@@ -18,7 +18,7 @@ module syntax.defer_on_interrupt
 test "defer срабатывает на interrupt-path" {
     let mut defer_fired = false
     let mut handled = false
-    with Fail = handler Fail {
+    with Fail = effect Fail {
         fail(_msg) {
             handled = true
             interrupt ()
@@ -43,7 +43,7 @@ test "defer срабатывает на interrupt-path" {
 test "errdefer не срабатывает на interrupt-path (handled exit)" {
     let mut errdefer_fired = false
     let mut handled = false
-    with Fail = handler Fail {
+    with Fail = effect Fail {
         fail(_msg) {
             handled = true
             interrupt ()
@@ -67,7 +67,7 @@ test "errdefer не срабатывает на interrupt-path (handled exit)" {
 test "defer + errdefer + interrupt — только defer" {
     let mut defer_fired = false
     let mut errdefer_fired = false
-    with Fail = handler Fail {
+    with Fail = effect Fail {
         fail(_msg) {
             interrupt ()
         }
@@ -91,7 +91,7 @@ test "несколько defer'ов на interrupt — LIFO" {
     let mut order_a = 0
     let mut order_b = 0
     let mut order_c = 0
-    with Fail = handler Fail {
+    with Fail = effect Fail {
         fail(_msg) {
             interrupt ()
         }

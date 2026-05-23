@@ -51,7 +51,7 @@ test "effectful protocol method via generic bound" {
 test "effectful protocol method — Fail caught by handler" {
     let v = Validator { min: 10 }
     let mut caught = ""
-    with Fail = handler Fail {
+    with Fail = effect Fail {
         fail(msg) {
             caught = msg
             interrupt ()

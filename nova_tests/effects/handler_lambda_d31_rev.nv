@@ -22,7 +22,7 @@ fn make_msg() Logger -> str {
 
 test "handler-лямбда: handler-литерал baseline" {
     let mut captured = ""
-    with Logger = handler Logger {
+    with Logger = effect Logger {
         log(msg) {
             captured = msg
             return ()

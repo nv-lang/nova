@@ -1,0 +1,32 @@
+// Plan 97 Ф.3 (D142) — литерал handler'а через keyword `effect`
+// (clean break: `handler` keyword снят).
+//
+// Проверяет: парсер принимает `let h = effect X { ops }`, `with X = h`
+// работает, прямой вызов `X.op()` диспатчится корректно.
+
+module nova_tests.plan97.pos_effect_literal_basic
+
+
+type Logger effect {
+    log(msg str) -> ()
+}
+
+
+test "effect-литерал в let-биндинге + with" {
+    let h = effect Logger {
+        log(msg) => ()
+    }
+    with Logger = h {
+        Logger.log("hello")
+    }
+}
+
+
+test "несколько с-with блоков с одним литералом" {
+    let h = effect Logger {
+        log(msg) => ()
+    }
+    let r1 = with Logger = h { 1 }
+    let r2 = with Logger = h { 2 }
+    assert(r1 + r2 == 3)
+}

@@ -2,7 +2,7 @@ module nova_tests.plan61.debug_single_fail
 
 test "simple fail handler with interrupt" {
     let mut caught = ""
-    with Fail = handler Fail {
+    with Fail = effect Fail {
         fail(msg) {
             caught = msg
             interrupt ()

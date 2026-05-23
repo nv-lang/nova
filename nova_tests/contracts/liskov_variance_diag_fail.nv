@@ -22,7 +22,7 @@ type Clamp effect {
 }
 
 test "liskov variance diagnostic" {
-    with #verify Clamp = handler Clamp {
+    with #verify Clamp = effect Clamp {
         clamp_low(x, lo, n) => x
     } {
         let r = Clamp.clamp_low(0, 5, 10)

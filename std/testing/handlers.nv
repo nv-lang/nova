@@ -10,14 +10,14 @@
 // API:
 //
 //   // PRNG с фиксированным seed — xoshiro256++ quality.
-//   fn seeded(seed u64) -> Handler[Random]
+//   fn seeded(seed u64) -> Effect[Random]
 //
 //   // Time зафиксирован на одном моменте; sleep — no-op.
-//   fn fixed_ms(ms u64) -> Handler[Time]
+//   fn fixed_ms(ms u64) -> Effect[Time]
 //
 //   // Mutable test clock: sleep(d) продвигает время на d.
 //   // Полезно для rate_limiter/retry/cron тестов где нужно advance.
-//   fn mut_clock(start_ms u64) -> Handler[Time]
+//   fn mut_clock(start_ms u64) -> Effect[Time]
 //
 // Использование:
 //
@@ -113,7 +113,7 @@ fn rotl64(x u64, k int) -> u64 =>
 /// }
 /// ```
 #stable(since = "0.1")
-export fn seeded(seed u64) -> Handler[Random] {
+export fn seeded(seed u64) -> Effect[Random] {
     // Расширяем 64-bit seed → 4×u64 state через splitmix64.
     let mut z = seed
     z = splitmix64_step(z); let mut s0 = z
@@ -125,7 +125,7 @@ export fn seeded(seed u64) -> Handler[Random] {
     let mut buf_remaining = 0
     let mut buf u64 = 0
 
-    handler Random {
+    effect Random {
         u64() {
             // xoshiro256++ step.
             let result = rotl64(s0 + s3, 23) + s0
@@ -177,8 +177,8 @@ export fn seeded(seed u64) -> Handler[Random] {
 /// `Time` handler с fixed timestamp. `sleep(d)` — no-op. Для тестов где
 /// продвижение времени не нужно (uuid v7, jwt exp checks).
 #stable(since = "0.1")
-export fn fixed_ms(ms u64) -> Handler[Time] {
-    handler Time {
+export fn fixed_ms(ms u64) -> Effect[Time] {
+    effect Time {
         now_ms() => ms
         now_ns() => ms * 1_000_000
         now() => Timestamp.from_unix_millis(ms as i64)
@@ -192,9 +192,9 @@ export fn fixed_ms(ms u64) -> Handler[Time] {
 ///
 /// Sub-ms durations округляются floor.
 #stable(since = "0.1")
-export fn mut_clock(start_ms u64) -> Handler[Time] {
+export fn mut_clock(start_ms u64) -> Effect[Time] {
     let mut current_ms = start_ms
-    handler Time {
+    effect Time {
         now_ms() => current_ms
         now_ns() => current_ms * 1_000_000
         now() => Timestamp.from_unix_millis(current_ms as i64)
