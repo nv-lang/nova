@@ -19796,3 +19796,46 @@ nova bench run (separate command, не в standard test-all).
 
 Plan 97.1 ПОЛНОСТЬЮ ЗАВЕРШЕН с полным production-grade покрытием +
 performance baseline.
+
+
+================================================================
+[2026-05-23] Plan 83.4.5 Ф.0 enumeration ✅ — flip-active failure catalog
+(worktree D:/Sources/nv-lang/nova-p83-4-5, ветка plan-83-4-5, commit d7eaee60674):
+
+Production-grade enumeration regressions под `nova_runtime_auto_arm()`
+активацией для Plan 83.4.5 closure:
+
+**Baseline (pre-flip):** 1130 PASS / 1 pre-existing CC-FAIL (plan99_probe/
+my_map_probe — out-of-scope) / 56 SKIP.
+
+**Flip-active:** 1106 PASS / 25 FAIL / 56 SKIP → **24 NEW regressions**
+(vs 18 предсказанных в umbrella — выявлены 6 дополнительных через
+полное enumeration).
+
+Breakdown:
+* 11 TIMEOUTs (drain hang / deadlock) — supervised_cancel_*,
+  cancel_latency_bench, deep_*, gc_*, sleep_bench, select_timer_stress,
+  assert_in_fiber, mono_spawn_closure_smoke
+* 13 RUN-FAILs (partial pass'ы) — cancel_semantics_test, main_yield,
+  mn_runtime_smoke/mn_maxprocs_getter (C1+C2 ассерты), parallel_for,
+  per_fiber_handlers, time_handler, effects/fail_handler, plan65/f7+
+  f10+f11a, sleep_precision_bench, sleep_real_clock
+
+Категоризация по sub-планам:
+* 83.4.5.1 (cancel wake-all + cascade): 7 тестов (4 RUN-FAIL + 3 TIMEOUT)
+* 83.4.5.2 (detach M:N): 0 — `detach_test` ушёл из fail-list,
+  re-investigate
+* 83.4.5.3 (test-suite cleanup): 6 тестов
+* 83.4.5.4 (handler-scoping nested): 3 теста (per_fiber_handlers
+  подтверждает spawn-time TLS inheritance bug)
+* 83.4.5.5 (main_yield): 1 тест
+* 83.4.5.6 (flip closure): C1+C2 mn_* ассерты + 4 unclassified
+  TIMEOUTs (могут быть симптомами 83.4.5.1)
+
+Артефакт: docs/plans/83.4.5-artifacts/f0-enumeration.md (190 строк
+с полной таблицей tests + root-cause hypotheses).
+
+REVERT auto_arm: emit_c.rs:11116 строка осталась в comment-form для
+sequential execution Ф.1-Ф.5; финальная активация в 83.4.5.6 GATED.
+
+Следующий шаг: 83.4.5.3 (test-suite cleanup, lowest-risk, test-side only).
