@@ -121,8 +121,9 @@ AI-first языка «видно из сигнатуры» важнее экон
 - Plan 73 `[M-consume-method-result-alias]` — sound alias через
   builder-chain.
 - `nova doc` — пометка fluent-методов.
-- [Plan 100](100-linear-must-consume.md) — linear `must-consume`
-  (D133, proposed 2026-05-23; см. §«Потенциал лучше Rust» выше).
+- [Plan 100](100-linear-must-consume.md) — type-level `consume`
+  (must-be-consumed; D133, design finalized 2026-05-23; см. §«Потенциал
+  лучше Rust» выше — «linear» в type-theory смысле).
 
 ## Фазы (после выбора варианта; ориентир для B)
 
