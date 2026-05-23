@@ -19770,3 +19770,29 @@ FINAL CUMULATIVE Plan 97.1 (все этапы main/fu/hd/final/prod):
 С baseline 1083 (post-Plan 97) → +46 cumulative PASS.
 
 Plan 97 + 97.1 ПОЛНОСТЬЮ ЗАВЕРШЕНЫ.
+
+================================================================
+[2026-05-23] Plan 97.1 bench ✅ — micro-bench для protocol-литерал dispatch
+(worktree d:/Sources/nv-lang/nova-p97-1, ветка plan-97-1-bench, merge 8593b8cba4a):
+
+bench/micro/protocol_lit.nv — 3 bench-case'а для quantitative
+validation Approach A:
+* baseline: direct fn Cell @direct_bump() 10000 итераций.
+* protocol-литерал dispatch через NovaBox vtable 10000 итераций.
+* literal creation overhead (factory) 1000x — measures vtable+ctx
+  allocation cost.
+
+Use case: data для проектирования stdlib Plan 18 capability-split
+API (когда выбирать protocol-литерал vs hand-written struct + methods).
+
+Bench parsed корректно через nova check; measurement run через
+nova bench run (separate command, не в standard test-all).
+
+**FINAL CUMULATIVE Plan 97.1 (6 этапов):**
+* 6 веток: plan-97-1, plan-97-1-fu, plan-97-1-hd, plan-97-1-final, plan-97-1-prod, plan-97-1-bench.
+* 13 коммитов + 6 merges + 2 fill-hash commits.
+* 13 фикстур plan97/ + 1 bench.
+* 2 закрытых маркера.
+
+Plan 97.1 ПОЛНОСТЬЮ ЗАВЕРШЕН с полным production-grade покрытием +
+performance baseline.
