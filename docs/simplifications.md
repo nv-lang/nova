@@ -11499,3 +11499,67 @@ Plan 83.2 §4 «Compiled-программа без единого `runtime.*` в
   source-of-truth (14/14 builtin Option/Result методов на Nova).
 - **Обнаружено:** Plan 99 Ф.0 probe (2026-05-23). **План фикса:**
   Plan 99 Ф.1–Ф.6 (re-scope подтверждён).
+
+### [M-83.4.5.7-foundational] Plan 83.4.5.7 Ф.1 done; flip activation deferred к Plan 83.4.5.8 (2026-05-23)
+
+- **Где:** `compiler-codegen/nova_rt/fibers.h`,
+  `compiler-codegen/nova_rt/runtime.c`,
+  `compiler-codegen/nova_rt/nova_sched.h`,
+  `compiler-codegen/src/codegen/emit_c.rs::emit_spawn`,
+  `emit_detach`, `emit_main_wrapper`.
+- **Что:** Plan 83.4.5.7 Ф.1 — atomic fiber state machine — ✅ ЗАКРЫТ
+  (foundational). Ф.3 (remove 12 NOVA_NO_AUTOARM directives) + Ф.4
+  (flip activation) — ❌ ОТЛОЖЕНЫ до Plan 83.4.5.8.
+
+  **Ф.1 delivered:**
+  - NovaSpawnCtxBase +1 field `nova_atomic_int _nova_fiber_state` со
+    state constants IDLE/RUNNING/PARKED/DEAD.
+  - CAS guards вокруг mco_resume в `_worker_main` main + cleanup loops
+    (защита от concurrent double-resume race — Windows TIB swap
+    conflict / POSIX context corruption).
+  - Atomic-bool CAS на parked flag в nova_sched_wake (idempotent
+    wake — только winner dispatches; защита от double-push race
+    через cancel_wake_all + close_cb).
+  - state PARKED store в nova_sched_park / park_with_unlock.
+  - `nova_runtime_shutdown()` call ДО `nova_evloop_close()` в
+    emit_main_wrapper (защита от uv_async_send на CLOSING handle
+    assertion abort).
+  - `nova_scope_pin_ctx` call в nova_runtime_spawn_into.
+  - SEQ_CST fence перед deque push в spawn_global (defensive против
+    cross-thread push, нарушающего Chase-Lev single-owner contract).
+
+- **Почему flip активация отложена:** во время diagnostic'а discovered
+  NEW BLOCKER — **ctx memory visibility под armed M:N**.
+
+  Worker thread reads `_c->_nova_parent_scope == NULL` хотя main
+  thread выставил `&scope`. Raw memory dump показывает entire
+  NovaSpawnCtxBase struct reads as zero on worker side несмотря на
+  main's writes. Same virtual address, different values.
+
+  Hypothesis: Boehm GC race либо `fiber_arena_win.c::_nova_fw_gc_push_other_roots`
+  coverage gap — GC marks ctx unreachable между main's write и
+  worker's read → block zeroed на sweep либо stale TLB. Симптом:
+  spawn entry skip'ает preamble + epilogue → never dec pending_remote
+  → main hang в supervised_run_impl wait-loop'е (`alive=0 remote=1`
+  forever).
+
+- **Bootstrap verification:** ВСЕ 1141 тестов PASS, 0 FAIL, 56 SKIP.
+  ≥1130 acceptance MET. Concurrency suite 75/75 PASS.
+
+- **Как чинить (Plan 83.4.5.8 — TBD):** диагностика Boehm root coverage
+  для ctx на Windows arena. Возможные подходы:
+  1. GC_malloc_uncollectable для ctx (uncollectable allocation),
+     free после fiber complete.
+  2. Расширение `_nova_fw_gc_push_other_roots` на ctx tracking
+     (через ctx_pins linked-list или separate registry).
+  3. Switch spawn_global cross-thread push с Chase-Lev deque на
+     mutex-protected pending queue (как wake_pending) — single-owner
+     contract preserved.
+  4. Debug: GC_get_heap_size + GC_gcollect tracing — verify ctx
+     gets reclaimed между main's write и worker's read.
+
+- **Приоритет:** P2 — blocker для Plan 83.4.5.6 (flip activation).
+  Plan 83.4.5.7 Ф.1 — foundational, valuable как defensive code даже
+  без flip активации (idempotent wake + state machine ready). Plan
+  83.4.5.8 estimate: ~2-3 dev-day для root cause + fix + retest 12
+  директив + flip activation.
