@@ -4049,9 +4049,54 @@ named type».
 - [Q-keyword-symmetry](../open-questions.md) — закрывается этим
   D-блоком.
 - [Plan 97](../../docs/plans/97-protocol-effect-syntax-symmetry.md) —
-  имплементация.
+  имплементация parser + AST + type-checker.
+- [Plan 97.1](../../docs/plans/97.1-protocol-literal-codegen.md) —
+  runtime codegen (vtable + dispatch) + followup-hardening
+  (Nova-side enforcement, capture-mode by-value snapshot для factory,
+  shadowing fix, scan_fwd recurse, GC stress, multi-method, nested).
 - Ориентиры: Java/Kotlin (anonymous interface), TS (object-literal
   structurally), Koka/Eff (handler-literal).
+
+### Canonical example — capability-split factory pattern
+
+Use-case D142, разблокированный Plan 97.1 codegen'ом:
+
+```nova
+type Reader protocol { read() -> int }
+type Writer protocol { write(v int) -> () }
+
+type Cell { mut value int }
+
+fn Cell.new(initial int) -> (Reader, Writer) {
+    let state = Cell { value: initial }
+    let r = protocol Reader { read() => state.value }
+    let w = protocol Writer { write(v) { state.value = v } }
+    (r, w)
+}
+
+// caller:
+let (r, w) = Cell.new(10)
+let initial = r.read()    // 10
+w.write(99)
+let after = r.read()      // 99 — shared state через protocol-литералы
+```
+
+Реализация (Plan 97.1 emit_protocol_lit, Approach A):
+1. Литерал `protocol Reader { read() => state.value }` создаёт
+   synthetic struct `Nova_ProtoLit_<N>` с capture-field `state`.
+2. Free fn `Nova_ProtoLit_<N>_method_read(self, ...)` использует
+   `self->state->value`.
+3. Allocate `NovaVtable_Reader*` + ctx; patch vt->read = impl_fn.
+4. Возврат `NovaBox_Reader { .data = ctx, .vtable = vt }`
+   (fat-pointer pattern Plan 56 D122).
+
+Method dispatch `r.read()` → `r.vtable->read(r.data)` — стандартный
+vtable indirect call.
+
+Capture-rules:
+- Heap obj / `let mut` → by-pointer (alias, mutation visible).
+- Immutable scalar / fn-param → by-value snapshot (factory-safe,
+  survives fn exit).
 
 ---
 
