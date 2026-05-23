@@ -15436,38 +15436,8 @@ _cp++; \
                         // через mono'd register_novaopt_decl path.
                         let obj_c = self.emit_expr(obj)?;
                         match method.as_str() {
-                            // D26 prelude: Result.unwrap_or_else(f). Err →
-                            // f(e), Ok(v) → v. f это closure (nova_str → T).
-                            // Plan 72 P1-C: use actual T type for result variable.
-                            "unwrap_or_else" => {
-                                if let Some(arg) = args.first() {
-                                    // Plan 59 Ф.7.5 D4: строгая (T,E)-резолюция.
-                                    let (ok_c_ty, _) = self.resolve_result_te_strict(
-                                        obj, &obj_ty, "unwrap_or_else")?;
-                                    let f = self.emit_expr(arg.expr())?;
-                                    let tmp = self.fresh_tmp();
-                                    // Plan 59 Ф.7.5 D1a: dual-mode var-decl.
-                                    self.line(&format!("{} {} = {};", obj_ty, tmp, obj_c));
-                                    let result = self.fresh_tmp();
-                                    self.line(&format!("{} {};", ok_c_ty, result));
-                                    self.line(&format!("if ({}->tag == NOVA_TAG_Result_Ok) {{", tmp));
-                                    self.indent += 1;
-                                    let cast_ok = Self::cast_from_nova_int(
-                                        &format!("{}->payload.Ok._0", tmp), &ok_c_ty);
-                                    self.line(&format!("{} = {};", result, cast_ok));
-                                    self.indent -= 1;
-                                    self.line("} else {");
-                                    self.indent += 1;
-                                    // Closure (nova_str → T): cast return to T.
-                                    let clos_call = format!(
-                                        "((nova_int(*)(void*, nova_str))(((NovaClos_ii*)({f}))->fn))(((NovaClos_ii*)({f}))->env, {tmp}->payload.Err._0)");
-                                    let cast_err = Self::cast_from_nova_int(&clos_call, &ok_c_ty);
-                                    self.line(&format!("{} = {};", result, cast_err));
-                                    self.indent -= 1;
-                                    self.line("}");
-                                    return Ok(result);
-                                }
-                            }
+                            // Plan 99.3 Ф.4: Result.unwrap_or_else(f) →
+                            // Nova-body. Mono per (T, E) — паритет Rust.
                             // D26 prelude: Result.map(f). Ok(v) → Ok(f(v)),
                             // Err(e) → Err(e). f это closure `fn(T) -> U`.
                             "map" => {

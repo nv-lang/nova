@@ -1,0 +1,21 @@
+// Plan 99.3 Ф.4: Result.unwrap_or_else lazy recovery.
+
+module nova_tests.plan99.result_unwrap_or_else_migrated
+
+test "Result[int,str].unwrap_or_else — Ok skip closure" {
+    let r Result[int, str] = Ok(42)
+    let v = r.unwrap_or_else(|e| 0)
+    assert(v == 42)
+}
+
+test "Result[int,str].unwrap_or_else — Err invokes f(e)" {
+    let r Result[int, str] = Err("boom")
+    let v = r.unwrap_or_else(|e| e.byte_len())
+    assert(v == 4)
+}
+
+test "Result[str,int].unwrap_or_else — reversed E type" {
+    let r Result[str, int] = Err(99)
+    let s = r.unwrap_or_else(|n| str.from(n))
+    assert(s == "99")
+}
