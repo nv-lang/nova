@@ -204,11 +204,13 @@ fn Option[T] @map[U](f fn(T) -> U) -> Option[U]
 /// `Some(v) -> Ok(v)`, `None -> Err(err)`. Полезно для conversion
 /// Option в Result-чейн.
 ///
-/// **Bootstrap**: inline emit (`<inline>` sentinel). См. `emit_c.rs:11830+`
-/// Option.ok_or block — emit'ит `nova_make_Result_Ok(value)` /
-/// `nova_make_Result_Err(err)`.
+/// **Plan 99.3 Ф.3**: Nova-body. Mono per (T, E) — Plan 99.2
+/// contextual `Ok(v)`/`Err(err)` ctors используют return-type
+/// `Result[T, E]` для typed `NovaRes_<T>_<E>*`. Паритет Rust
+/// `Option::<T>::ok_or<E>(self, err: E) -> Result<T, E>`.
 #stable(since = "0.1")
-external fn Option[T] @ok_or[E](err E) -> Result[T, E]
+fn Option[T] @ok_or[E](err E) -> Result[T, E]
+  => match @ { Some(v) => Ok(v), None => Err(err) }
 
 /// `Some(v) -> Some(v)`, `None -> other`. Возвращает другой Option если
 /// текущий пустой (fallback chain).
