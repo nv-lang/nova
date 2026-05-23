@@ -344,6 +344,25 @@ fn critical(...) -> Result =>
 > Plan 56 Ф.2.7 effect-row enforcement). Bottom-тип `never` — закрыт
 > Plan 76 (строчный встроенный примитив, не требует prelude-декларации).
 >
+> **Plan 95.bis (закрыт 2026-05-23):** расширение Plan 95 — ещё 5
+> «чистых» Option/Result-методов перенесены на Nova-body в
+> `std/prelude/core.nv`: `Option.unwrap_or`, `Option.or`,
+> `Result.unwrap_or`, `Result.ok`, `Result.err`. Удалены все
+> соответствующие C-трамплины из `nova_rt/array.h` (включая
+> `NOVA_ARRAY_IMPL`-macro entry `Nova_Option_method_or_<T>` + explicit
+> `_nova_str` специализация, `Nova_Result_method_unwrap_or_<n>`,
+> `Nova_Result_method_ok_<n>` + back-compat `#define`-алиасы) и
+> lazy-emit в `register_novaopt_decl`/`register_novares_decl`. Также
+> удалён inline emit `Result.err()` в codegen (Plan 59 Ф.7.5 D3 —
+> теперь Nova-body эмитит boxed payload сам через mono'd
+> `register_novaopt_decl` path). Result `DeclaredBody`-dispatch
+> доработан: mono-имя **всегда суффиксированный**
+> (`Nova_Result_method_<m>_<n>`), даже для legacy `Nova_Result*`
+> obj_ty, чтобы избежать C-redefinition. Граница не изменилась:
+> `unwrap` (Fail-handler, Plan 61), `unwrap_or_else`/`map`/`map_err`/
+> `ok_or` (closure-applying + method-level generic + Plan 98
+> inference) — остаются C-routed.
+>
 > **Plan 95 (закрыт 2026-05-23):** builtin sum-типы `Option`/`Result`
 > участвуют в method-monomorphization через канал «method-only mono»
 > — без регистрации в `generic_type_templates` (представление

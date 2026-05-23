@@ -18725,3 +18725,55 @@ Acceptance criteria Plan 95 — выполнены:
 - [x] Маркер закрыт; Plan 93 superseded.
 
 Готово к merge'у в main (ожидается подтверждение пользователя).
+
+═══════════════════════════════════════════════════════════════════════
+Plan 95.bis — Перенос 5 «чистых» Option/Result-методов на Nova-body
+2026-05-23 (worktree d:/Sources/nv-lang/nova-p95bis, ветка plan-95.bis)
+═══════════════════════════════════════════════════════════════════════
+
+После закрытия Plan 95 пользователь спросил «что мешает другим
+Option/Result-методам». Анализ показал 5 готовых к переносу без новой
+инфры: Option.unwrap_or, Option.or, Result.unwrap_or, Result.ok,
+Result.err. Все они — match-only тела (`=> match @ { ... }`),
+инфра Plan 95 их обрабатывает.
+
+Ф.1 — core.nv:
+- 5 методов external fn → Nova-body.
+- Параметр `default T` → `default_v T` (C-keyword `default`).
+
+Ф.2 — удалены C-трамплины:
+- array.h: NOVA_ARRAY_IMPL macro `Nova_Option_method_or_<T>` (10
+  primitives), explicit `_nova_str` специализация, 12 `unwrap_or_<T>`
+  для всех primitive типов, `Nova_Result_method_unwrap_or_nova_int_
+  nova_str` + `_ok_nova_int_nova_str` + back-compat `#define`-алиасы.
+- register_novaopt_decl: lazy-emit `unwrap_or` для не-primitive.
+- register_novares_decl: lazy-emit `unwrap_or`/`ok`/`err` для NovaRes_<n>.
+- init_hardcoded_baseline: убраны записи Option.unwrap_or/or +
+  Result.unwrap_or/ok/err.
+- Inline emit `Result.err()` (emit_c.rs:14528+ Plan 59 Ф.7.5 D3)
+  удалён — Nova-body эмитит boxed Err payload через mono'd
+  register_novaopt_decl path сам.
+- Result DeclaredBody-dispatch: mono-name **всегда суффиксированный**
+  (`Nova_Result_method_<m>_<n>`), даже для legacy Nova_Result* obj_ty.
+  Иначе #define-алиасы (которые мы оставили бы) подменили бы имя в
+  теле Nova-функции → C-redefinition.
+
+Ф.3 — тесты nova_tests/plan95bis/:
+- option_unwrap_or_migrated.nv (4 теста: int/str/char/User-record)
+- option_or_migrated.nv (4 теста: chain, both-None, first-wins, fallback)
+- result_unwrap_or_migrated.nv (3 теста)
+- result_ok_err_migrated.nv (2 теста: ok-projection, err-projection)
+- unwrap_or_wrong_arg_type_neg.nv (1 negative: Nova-body метод с
+  undefined symbol → loud-fail, Plan 79 invariant)
+- Все 5 PASS (1 negative).
+
+Регрессия — критические подпапки:
+- plan62: 36/0, plan89: 7/0, plan95: 6/0, plan59: 29/0, basics: 8/0,
+  buffers: 11/0, contracts: 250/0 → 347/0 cumulative.
+
+Полный nova test — в процессе.
+
+Граница (не входит в Plan 95.bis):
+- unwrap (Fail-handler, Plan 61 lineage).
+- unwrap_or_else, map, map_err, ok_or (closure-applying + method-level
+  generic + Plan 98 inference).
