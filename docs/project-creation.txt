@@ -19178,3 +19178,44 @@ Followup-задача — закрыть 9 M:N багов supervised-drain layer
  - 0c0bfd915b2  docs(plan83.2/Ф.0): readiness gate
  - 0af6e6ba482  feat(plan83.2/Ф.1): default-on M:N — auto-arm на spawn
  - b72ce59b475  feat(plan83.2/Ф.1): инфраструктура default-on M:N — nova_runtime_auto_arm
+
+================================================================
+2026-05-23 вЂ” Plan 96.1 Р—РђРљР Р«Рў: lint + СѓРґР°Р»РµРЅРёРµ str.@slice
+================================================================
+
+Followup Plan 96 Р·Р°РєСЂС‹Р» РѕР±Р° deferred-РјР°СЂРєРµСЂР° РѕРґРЅРѕР№ РёС‚РµСЂР°С†РёРµР№ РЅР°
+РІРµС‚РєРµ plan-96.1 (5 РєРѕРјРјРёС‚РѕРІ).
+
+РљРѕРјРјРёС‚С‹:
+- a5917ab2c98 docs(plan96.1): СЃРѕР·РґР°РЅ РїР»Р°РЅ
+- 68bc9f70cad Р¤.1 W_VIEW_PUSH_DETACH lint + 3 С‚РµСЃС‚Р°
+- b3fc1c334bb Р¤.2+Р¤.3 audit ~60 call-sites + migration s.slice в†’ s[a..b]
+  РІ 15 С„Р°Р№Р»Р°С… (std/, examples/, nova_tests/)
+- 0a3a48c1aa0 Р¤.4 СѓРґР°Р»РёС‚СЊ runtime nova_str_slice + external fn @slice
+  + str_method_to_rt mapping + RuntimeFn-Р·Р°РїРёСЃСЊ
+- (РїСЂРµРґСЃС‚РѕРёС‚) Р¤.5 spec + logs + Р¤.6 merge
+
+Р�Р·РјРµРЅРµРЅРёСЏ:
+1. W_VIEW_PUSH_DETACH lint (compiler-codegen/src/lints.rs):
+   per-function walker С‚СЂРµРєР°РµС‚ Р±РёРЅРґРёРЅРіРё let X = arr[range],
+   РїСЂРё X.push(...) в†’ emit warning. 3 С‚РµСЃС‚Р° pos/neg РІ nova_tests/plan96_1/.
+2. РЈРґР°Р»С‘РЅ str.@slice РјРµС‚РѕРґ вЂ” bracket-only s[a..b]:
+   - 60 call-sites РјРёРіСЂРёСЂРѕРІР°РЅС‹ (15 С„Р°Р№Р»РѕРІ): std/crypto/bcrypt, std/testing/
+     property, std/math/complex, std/path/path, std/text/markdown_minimal,
+     std/data/semver_range, std/data/semver, std/encoding/{json,ini,toml,url},
+     examples/real-world/orm_demo, nova_tests/types/str_search,
+     nova_tests/str/slice_oob (РїРµСЂРµРїРёСЃР°РЅ РїРѕРґ bracket+panic semantics).
+   - РЈРґР°Р»РµРЅС‹: nova_str_slice (clamp) РёР· nova_rt.h; external fn РІ string.nv;
+     str_method_to_rt mapping РІ emit_c.rs; RuntimeFn-Р·Р°РїРёСЃСЊ РІ runtime_registry.rs.
+   - Spec D26 (08-runtime.md): РѕР±РЅРѕРІР»РµРЅРѕ РѕРїРёСЃР°РЅРёРµ str-API вЂ” slice С‡РµСЂРµР·
+     bracket-form s[a..b], panic РїСЂРё OOB. Р—Р°РєСЂС‹РІР°РµС‚ D9 violation.
+
+РЎРёРјРїР»РёС„РёРєР°С†РёРё:
+- [P-plan96-lint-deferred] вњ… RESOLVED Plan 96.1 Р¤.1
+- [P-str-slice-clamp-vs-panic] вњ… RESOLVED Plan 96.1 Р¤.2-Р¤.4
+
+Convergence СЃ Rust/Go/Swift/Python (bracket-only for str slicing).
+
+Р РµРіСЂРµСЃСЃ РїРѕСЃР»Рµ Р¤.1-Р¤.4: nova_tests/str (11 PASS), str_search (PASS),
+plan96 (23 PASS), plan96_1 lint-tests (3 PASS). Р¤РёРЅР°Р»СЊРЅС‹Р№ РїРѕР»РЅС‹Р№
+СЂРµРіСЂРµСЃСЃ вЂ” РїРѕСЃР»Рµ Р¤.5 commit.
