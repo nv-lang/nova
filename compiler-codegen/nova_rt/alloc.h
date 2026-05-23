@@ -19,6 +19,27 @@ void* nova_alloc(size_t size);
 void  nova_retain(void* ptr);
 void  nova_release(void* ptr);
 
+/* Plan 83.4.5.8 (2026-05-24): uncollectable allocation для cross-thread
+ * объектов которые могут стать GC-unreachable между write и read despite
+ * conceptual reachability (Boehm conservative scan miss). Manually freed
+ * via nova_free_uncollectable.
+ *
+ * Use case: SpawnCtx под armed M:N — main thread alloc'ит + write'ит
+ * fields, worker thread читает; promise GC-reachability через
+ * `co->user_data` в arena-rooted memory empirically fails on Windows
+ * (entire struct reads as zero). Uncollectable обходит race полностью.
+ *
+ * CONTRACT: nova_alloc_uncollectable MUST return zeroed memory (same
+ * как nova_alloc). Caller MUST explicitly free через nova_free_uncollectable
+ * чтобы избежать leak.
+ *
+ * Under Boehm: GC_malloc_uncollectable — внутренне tracked but не подверг
+ * sweep. Memory persists until explicit GC_free.
+ * Under malloc backend: identical to nova_alloc + free.
+ * Under RC backend: identical to nova_alloc + nova_release. */
+void* nova_alloc_uncollectable(size_t size);
+void  nova_free_uncollectable(void* ptr);
+
 /* Instrumentation — available in all alloc implementations.
  * nova_gc_alloc_count : total allocations since nova_gc_init
  * nova_gc_free_count  : total frees/releases since nova_gc_init

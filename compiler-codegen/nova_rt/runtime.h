@@ -110,8 +110,28 @@ void nova_runtime_spawn_orphan(void (*entry)(mco_coro*), void* user);
  * Используется в test-suite для explicit-sync (как Go `sync.WaitGroup`)
  * + atexit вызывает автоматически. Idempotent: empty orphan scope —
  * no-op. После drain orphan scope reset к empty (можно snadily spawn'ить
- * new orphans, drain снова). */
+ * new orphans, drain снова).
+ *
+ * Plan 83.4.5.8 (2026-05-24): под armed M:N drain также ждёт worker-pool
+ * orphan fibers через `_nova_orphan_scope.pending_remote` counter. */
 void nova_runtime_drain_orphans(void);
+
+/* Plan 83.4.5.8 (2026-05-24): return pointer на global orphan-tracking
+ * scope. Используется emit_detach codegen чтобы track armed-spawned
+ * orphans через scope.pending_remote (как emit_spawn для supervised
+ * children). Lazy-init: вызовите _orphan_scope_ensure_init() (через
+ * nova_runtime_drain_orphans или first spawn_orphan) перед первым
+ * use.
+ *
+ * NULL если scope ещё не initialized. Caller MUST вызвать spawn_orphan
+ * хотя бы раз (либо явный init helper) перед взятием pointer'а. */
+struct NovaFiberQueue;
+struct NovaFiberQueue* nova_runtime_orphan_scope(void);
+
+/* Plan 83.4.5.8 (2026-05-24): explicit init orphan scope (без spawn).
+ * Используется emit_detach codegen чтобы получить scope reference
+ * безопасно даже если detach is first call. Idempotent. */
+void nova_runtime_orphan_scope_init(void);
 
 /* Graceful shutdown — signal all workers, join, free resources.
  * Called by codegen в exit path (либо явно через runtime.shutdown()). */
