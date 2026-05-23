@@ -197,8 +197,15 @@ typedef struct {
      * Other fibers see this on their next yield-point and throw "cancelled"
      * (cooperative cancellation — D50).
      * Plan 49 Ф.2: cancel_reason_ptr — причина из bound token'а, копируется
-     * при cancel(). Используется nova_fiber_yield для throw'а CANCEL+reason. */
-    nova_bool       cancel_requested;
+     * при cancel(). Используется nova_fiber_yield для throw'а CANCEL+reason.
+     *
+     * Plan 83.4.3/B5 (2026-05-23): nova_atomic_bool — под M:N main thread
+     * (token.cancel()) пишет, worker fiber'ы читают на каждом yield. На x86
+     * byte-load атомарен; на ARM нужны acquire/release fences для visibility.
+     * ACQUIRE-load в nova_abool_load + RELEASE-store в nova_abool_store
+     * гарантирует happens-before между cancel() и yield-check на любой
+     * memory-модели. Аналог tokio CancellationToken atomic-flag. */
+    nova_atomic_bool cancel_requested;
     void*           cancel_reason_ptr;    /* box'нутый T (TLV-owned), NULL если без причины */
     /* Pending interrupt: when a fiber's handler-method calls `interrupt v`
      * but the matching with-frame lives on main-stack (not in fiber), we
@@ -422,7 +429,7 @@ static inline void nova_scope_init(NovaFiberQueue* q) {
     q->fiber_error = NULL;
     q->fiber_did_throw = NULL;
     q->first_error = NULL;
-    q->cancel_requested = false;
+    nova_abool_init(&q->cancel_requested, false);  /* Plan 83.4.3/B5 */
     q->interrupt_pending = false;
     q->interrupt_via_ptr = false;
     q->interrupt_value = 0;
@@ -545,7 +552,9 @@ static inline void nova_scope_pin_ctx(NovaFiberQueue* scope, void* ctx) {
 typedef void (*NovaCancelResourceCb)(void* handle);
 
 typedef struct NovaCancelToken {
-    nova_bool                 cancel_requested;  /* intent: был ли cancel() */
+    /* Plan 83.4.3/B5: atomic intent-flag — cancel() пишет (любой поток),
+     * is_cancelled() читает. ACQUIRE-load + RELEASE-store. */
+    nova_atomic_bool          cancel_requested;
     NovaFiberQueue*           bound_scope;       /* live scope, либо NULL */
     struct NovaCancelToken**  linked;            /* cascade children (GC array) */
     int                       linked_count;
@@ -597,8 +606,8 @@ static inline void nova_cancel_token_bind(NovaCancelToken* t, NovaFiberQueue* q)
     /* cancel-before-bind: pending intent пробрасывается в новый scope.
      * Plan 49 Ф.2: reason тоже копируется чтобы nova_fiber_yield увидел
      * её при throw'е CANCEL. */
-    if (t->cancel_requested) {
-        q->cancel_requested = true;
+    if (nova_abool_load(&t->cancel_requested)) {
+        nova_abool_store(&q->cancel_requested, true);
         q->cancel_reason_ptr = t->reason_ptr;
         nova_sched_cancel_all_pending(q);
     }
@@ -629,7 +638,7 @@ static inline int nova_cancel_token_register_resource(NovaCancelToken* t,
                                                       void* handle,
                                                       NovaCancelResourceCb cb) {
     if (!t || !cb || !handle) return -1;
-    if (t->cancel_requested) {
+    if (nova_abool_load(&t->cancel_requested)) {
         /* Late registration: token уже cancelled — выполняем cleanup
          * сразу, не записываем в список. */
         cb(handle);
@@ -671,8 +680,8 @@ static inline void nova_cancel_token_unregister_resource(NovaCancelToken* t, int
  * (first-cancel-wins) — как в Go context.Cause. */
 static inline void nova_cancel_token_cancel_reason(NovaCancelToken* t, void* reason_ptr) {
     if (!t) return;
-    if (t->cancel_requested) return;          /* idempotent — first-cancel-wins */
-    t->cancel_requested = true;
+    if (nova_abool_load(&t->cancel_requested)) return;  /* idempotent — first-cancel-wins */
+    nova_abool_store(&t->cancel_requested, true);
     t->reason_ptr = reason_ptr;
     t->has_reason = true;
     /* Plan 65 Ф.10: invoke registered cancel-resource cleanup callbacks
@@ -690,7 +699,7 @@ static inline void nova_cancel_token_cancel_reason(NovaCancelToken* t, void* rea
         }
     }
     if (t->bound_scope) {
-        t->bound_scope->cancel_requested = true;
+        nova_abool_store(&t->bound_scope->cancel_requested, true);
         /* Plan 49 Ф.2: пропагируем reason в scope queue чтобы nova_fiber_yield
          * увидел причину при throw'е CANCEL. */
         t->bound_scope->cancel_reason_ptr = reason_ptr;
@@ -727,7 +736,7 @@ static inline void nova_cancel_token_cancel(NovaCancelToken* t) {
  * cancel() на этом токене» — независимо от bind-состояния. */
 static inline nova_bool nova_cancel_token_is_cancelled(NovaCancelToken* t) {
     if (!t) return false;
-    return t->cancel_requested;
+    return nova_abool_load(&t->cancel_requested);
 }
 
 /* Plan 49 Ф.1: возвращает box'нутую причину отмены или NULL если отмена
@@ -832,7 +841,7 @@ static inline void nova_cancel_token_bind_cascade(NovaCancelToken* tok,
     }
     other->linked_count++;
     /* Если other уже отменён — пробрасываем немедленно (same-type). */
-    if (other->cancel_requested) {
+    if (nova_abool_load(&other->cancel_requested)) {
         nova_cancel_token_cancel_reason(tok, other->reason_ptr);
     }
 }
@@ -884,7 +893,7 @@ static inline void nova_cancel_token_bind_cascade_typed(
     other->linked_converters[other->linked_count] = converter;
     other->linked_count++;
     /* Если other уже отменён — applied конвертер немедленно. */
-    if (other->cancel_requested) {
+    if (nova_abool_load(&other->cancel_requested)) {
         void* converted = other->reason_ptr;
         if (converter && other->reason_ptr) {
             converted = converter(other->reason_ptr);
@@ -1060,7 +1069,7 @@ static inline void nova_fiber_report_error_kinded(const char* msg,
     }
     /* USER errors також сигналят cancel_requested (peer fibers пробудятся
      * и выйдут через CANCEL); CANCEL errors не сбрасывают чужие USER'ы. */
-    q->cancel_requested = true;
+    nova_abool_store(&q->cancel_requested, true);
 }
 
 /* Backward-compatible wrapper для existing codegen — старый report_error
@@ -1103,7 +1112,7 @@ static inline void nova_fiber_report_atomic_kinded(NovaFiberQueue* parent,
                               (const void*)msg)) {
                 parent->first_error_atomic_kind = kind;
                 parent->first_error_atomic_reason = reason_ptr;
-                parent->cancel_requested = true;
+                nova_abool_store(&parent->cancel_requested, true);
                 return;
             }
             /* CAS failed → loop: someone else wrote first, re-evaluate. */
@@ -1399,7 +1408,7 @@ static inline void nova_fiber_yield(void) {
      * Plan 49 Ф.2: бросаем kind=CANCEL (вместо USER) и тащим причину
      * из bound token'а scope'а (если есть). Это позволяет supervised_run
      * (Ф.3) различать отмену от реальной ошибки и не пробрасывать наружу. */
-    if (_nova_active_scope && _nova_active_scope->cancel_requested) {
+    if (_nova_active_scope && nova_abool_load(&_nova_active_scope->cancel_requested)) {
         void* reason = _nova_active_scope->cancel_reason_ptr;
         nova_throw_cancel_reason(
             nova_str_from_cstr("scope cancelled"),
