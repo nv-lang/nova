@@ -5916,6 +5916,26 @@ impl CEmitter {
                         "static {ret} {fn}({params});",
                         ret = ret_ty, fn = fn_name, params = fn_params.join(", ")
                     ));
+                    // Recurse в method body — могут содержать nested
+                    // HandlerLit/Spawn.
+                    match &m.body {
+                        HandlerMethodBody::Expr(e) => self.scan_expr_fwd(e, h, s)?,
+                        HandlerMethodBody::Block(b) => self.scan_block_fwd(b, h, s)?,
+                    }
+                }
+            }
+            // Plan 97.1 final hardening (D142): ProtocolLit emission
+            // не использует handler_counter (отдельный protocol_lit_counter)
+            // — здесь только **recurse** в method bodies для catch nested
+            // HandlerLit/Spawn. Forward-decl самих impl-функций эмитится
+            // прямо в emit_protocol_lit в lambda_forward_decls (не нужен
+            // pre-scan, IDs локально-monotonic).
+            ExprKind::ProtocolLit { methods, .. } => {
+                for m in methods {
+                    match &m.body {
+                        HandlerMethodBody::Expr(e) => self.scan_expr_fwd(e, h, s)?,
+                        HandlerMethodBody::Block(b) => self.scan_block_fwd(b, h, s)?,
+                    }
                 }
             }
             ExprKind::Spawn(body) => {
