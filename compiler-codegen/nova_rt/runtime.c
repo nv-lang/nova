@@ -157,16 +157,19 @@ static bool            _atexit_registered = false;
  * Hello-world без spawn — `_armed=true`, но `_materialized=false`
  * (пул не поднят) → 0 worker-потоков (Plan 83.2 §4 acceptance).
  * Идемпотентно, thread-safe через _init_mu. */
-static bool _nova_no_autoarm_env(void);  /* fwd-decl, def ниже */
+static bool _nova_autoarm_env_disabled(void);  /* fwd-decl, def ниже */
 
 static void _auto_arm_if_needed(void) {
     if (_armed) return;
-    /* Plan 83.4.5.5 (2026-05-23): escape hatch — NOVA_NO_AUTOARM=1
+    /* Plan 83.4.5.9 (2026-05-24): escape hatch — `NOVA_AUTOARM=0`
      * полностью отключает auto-arm даже на spawn-fallback. User-кодовая
      * `runtime.init(n)` явная не задействует _auto_arm_if_needed (она
      * сама себе arm'ит) — так что explicit user не блокируется этим
-     * env-флагом. */
-    if (_nova_no_autoarm_env()) return;
+     * env-флагом. Convention: positive env-name (`AUTOARM`) с inverted
+     * semantics; `=0`/`=false`/`=no` disables. Replaces legacy
+     * `NOVA_NO_AUTOARM=1` (Plan 83.4.5.5; renamed Plan 83.4.5.9 для
+     * избавления от двойного отрицания в env-name). */
+    if (_nova_autoarm_env_disabled()) return;
     if (!_init_mu_inited) {
         nova_mutex_init(&_init_mu);
         _init_mu_inited = true;
@@ -184,8 +187,14 @@ static void _auto_arm_if_needed(void) {
     nova_mutex_unlock(&_init_mu);
 }
 
-/* Plan 83.4.5.5 Ф.1 (2026-05-23): escape hatch для cooperative-зависимых
- * тестов. Когда `NOVA_NO_AUTOARM=1` задан в env, `nova_runtime_auto_arm()`
+/* Plan 83.4.5.9 Ф.1 (2026-05-24): escape hatch для cooperative-зависимых
+ * тестов. Convention: positive env-name (`NOVA_AUTOARM`) с inverted
+ * semantics — `=0`/`=false`/`=no` disables auto-arm. Replaces legacy
+ * `NOVA_NO_AUTOARM=1` (Plan 83.4.5.5; renamed чтобы избавиться от
+ * двойного отрицания в env-name; "не использовать инвертированных
+ * имен в env" — project convention 2026-05-24).
+ *
+ * Когда `NOVA_AUTOARM=0` задан в env, `nova_runtime_auto_arm()`
  * становится no-op — runtime НЕ армится автоматически. spawn-codegen
  * под `is_initialized() == false` route fiber'ы в main scope queue
  * (cooperative drain), а не в worker deque (work-stealing). Это
@@ -193,27 +202,33 @@ static void _auto_arm_if_needed(void) {
  * round-robin ordering через `main_yield + Time.sleep(0)` патерн
  * (концептуально аналог Node `setImmediate` semantics).
  *
- * Tests с `// ENV NOVA_NO_AUTOARM=1` будут работать одинаково на
+ * Tests с `// ENV NOVA_AUTOARM=0` будут работать одинаково на
  * armed-default builds и bootstrap. Production user-code остаётся armed
- * (default). Phenotype escape hatch — same idea как `NOVA_MAXPROCS=1`
- * directive для single-worker fallback, но более radical (полный bootstrap
- * mode).
+ * (default — unset либо `NOVA_AUTOARM=1`). Phenotype escape hatch —
+ * same idea как `NOVA_MAXPROCS=1` directive для single-worker fallback,
+ * но более radical (полный bootstrap mode).
  *
  * Cross-runtime parity: Go runtime НЕТ analog (нет cooperative-only mode);
  * tokio `current_thread` runtime — closest equivalent (single-thread async);
- * Node — всегда cooperative single-thread. */
-static bool _nova_no_autoarm_env(void) {
-    const char* env = getenv("NOVA_NO_AUTOARM");
-    if (!env || env[0] == '\0') return false;
-    /* Принимаем "1", "true", "yes" (case-insensitive первая буква). */
-    return (env[0] == '1' || env[0] == 't' || env[0] == 'T'
-            || env[0] == 'y' || env[0] == 'Y');
+ * Node — всегда cooperative single-thread.
+ *
+ * Returns true если env заполнен AND равно "0"/"false"/"no" (либо
+ * варианты "f"/"F"/"n"/"N" — case-insensitive первая буква).
+ * Иначе (unset / "1" / "true" / garbage) returns false — auto-arm
+ * enabled (default per D138). */
+static bool _nova_autoarm_env_disabled(void) {
+    const char* env = getenv("NOVA_AUTOARM");
+    if (!env || env[0] == '\0') return false;  /* unset → enabled (default) */
+    /* "0", "false", "no", "n", "f" (case-insensitive) → disable. */
+    return (env[0] == '0' || env[0] == 'f' || env[0] == 'F'
+            || env[0] == 'n' || env[0] == 'N');
 }
 
 /* Public entry — Plan 83.2 Ф.1 codegen-emit'нутый вызов в main().
- * Plan 83.4.5.5: respect NOVA_NO_AUTOARM=1 escape hatch. */
+ * Plan 83.4.5.9: respect `NOVA_AUTOARM=0` escape hatch (positive
+ * env-name; replaces legacy `NOVA_NO_AUTOARM=1`). */
 void nova_runtime_auto_arm(void) {
-    if (_nova_no_autoarm_env()) return;
+    if (_nova_autoarm_env_disabled()) return;
     _auto_arm_if_needed();
 }
 
