@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# Strip "Co-Authored-By: Claude ..." trailers from commit messages.
+# Repo policy: do not advertise AI co-authorship in git history.
+sed -i '/^Co-Authored-By: Claude/d' "$1"
+
+# Drop any trailing blank lines left behind.
+sed -i -e :a -e '/^$/{$d;N;ba' -e '}' "$1"
