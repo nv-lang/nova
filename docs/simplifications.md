@@ -11191,6 +11191,10 @@ ns/switch — паритет с Boost.Context). Перенос замера в N
 **Регресс в worktree:** PASS 1127 / FAIL 1 (pre-existing
 plan99_probe — intentional gap) / SKIP 56.
 
+**Merge в main:** `d028531505f` (2026-05-23). Финальный регресс
+на main: **PASS 1127 / FAIL 1 (pre-existing plan99_probe) / SKIP 56** —
+zero реальных регрессий.
+
 - **Где** — `compiler-codegen/src/codegen/emit_c.rs` `ExprKind::ProtocolLit`
   arm (делегирует на `emit_handler_lit`).
 - **Что упрощено** — parser + AST + type-checker для protocol-литерала
