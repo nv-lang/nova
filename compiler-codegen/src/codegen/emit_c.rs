@@ -22554,6 +22554,36 @@ _cp++; \
                         }
                     }
                 }
+                // Plan 97.1 followup [M-protocol-method-name-shadowing]:
+                // если obj — NovaBox-typed variable, return-тип метода
+                // должен браться из `protocol_method_registry[<Proto>]`,
+                // а не из general method_overloads (где может оказаться
+                // homonymous метод из другого типа — e.g. `Iter.next`
+                // returns `Option[T]`, а user-defined `protocol Counter
+                // { incr() -> int }` ожидает `int`).
+                if let ExprKind::Member { obj, name: method_name } = &func.kind {
+                    let obj_ty = self.infer_expr_c_type(obj);
+                    if let Some(proto_name) = obj_ty.strip_prefix("NovaBox_") {
+                        // proto_name может быть с args-mangling, e.g.
+                        // "Iter_nova_int". Сначала пробуем full mangle,
+                        // потом base (split on '_').
+                        let candidate_keys: Vec<String> = std::iter::once(proto_name.to_string())
+                            .chain(proto_name.split('_').next().map(String::from).into_iter())
+                            .collect();
+                        for key in &candidate_keys {
+                            if let Some((_type_params, methods)) =
+                                self.protocol_method_registry.get(key.as_str()).cloned()
+                            {
+                                if let Some(m) = methods.iter().find(|m| m.name == *method_name) {
+                                    let ret_c = m.return_type.as_ref()
+                                        .and_then(|rt| self.type_ref_to_c(rt).ok())
+                                        .unwrap_or_else(|| "nova_unit".to_string());
+                                    return ret_c;
+                                }
+                            }
+                        }
+                    }
+                }
                 // Plan 11 Ф.1-Ф.3: multi-overload infer. Если func — Path/Member
                 // call на known receiver-type, ищем в method_overloads. Это
                 // решает single-key last-wins для одноимённых методов.
