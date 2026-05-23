@@ -11138,10 +11138,12 @@ ns/switch — паритет с Boost.Context). Перенос замера в N
 > * Capability-split factory pattern (`Lock.new() -> (Locker, Unlocker)`)
 >   работает end-to-end (commit 8e024d43647 + предшествующие).
 
-### [M-protocol-method-name-shadowing] ✅ ЗАКРЫТ Plan 97.1-fu (2026-05-23) — method-name collision между protocol-литералом и stdlib protocol'ом
+### [M-protocol-method-name-shadowing] ✅ ЗАКРЫТ Plan 97.1-fu (2026-05-23, merge da99ea8bd6b) — method-name collision между protocol-литералом и stdlib protocol'ом
 
 - **CLOSED 2026-05-23 by Plan 97.1 followup** (commit `16b99a9475f`,
-  ветка `plan-97-1-fu`).
+  ветка `plan-97-1-fu`, merge в main `da99ea8bd6b`).
+- **Регресс на main:** PASS 1125 / 1 pre-existing FAIL (plan99_probe
+  intentional gap, не от Plan 97.1) / SKIP 56.
 - **Где** — `compiler-codegen/src/codegen/emit_c.rs` `infer_expr_c_type`
   для `Call { func: Member { obj, name } }` где `obj: NovaBox_<Proto>`.
 - **Что было** — return-type метода брался из общих `method_overloads`
