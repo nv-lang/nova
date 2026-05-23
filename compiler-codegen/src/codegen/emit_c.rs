@@ -5213,6 +5213,13 @@ impl CEmitter {
         // directly в scope's parallel array).
         let _ = writeln!(self.lambda_forward_decls,
             "    NovaEffectSnapshot* _nova_init_snapshot;");
+        // Plan 83.4.5.7 (2026-05-23): atomic fiber state machine. nova_alloc
+        // zero-init → starts as NOVA_FIBER_STATE_IDLE. Field MUST be last
+        // in NovaSpawnCtxBase prefix (must match fibers.h NovaSpawnCtxBase
+        // layout exactly — runtime.c worker loop cast'ает user_data к
+        // NovaSpawnCtxBase* и читает _nova_fiber_state по фиксированному offset).
+        let _ = writeln!(self.lambda_forward_decls,
+            "    nova_atomic_int _nova_fiber_state;");
         // User capture fields follow base fields.
         for (cap, ty, by_value) in &captures {
             if *by_value {
@@ -5789,6 +5796,10 @@ impl CEmitter {
             "    NovaFiberQueue* _nova_fiber_scope;");
         let _ = writeln!(self.lambda_forward_decls,
             "    NovaEffectSnapshot* _nova_init_snapshot;");
+        // Plan 83.4.5.7 (2026-05-23): atomic fiber state machine — see
+        // NovaSpawnCtxBase в fibers.h. MUST match layout exactly.
+        let _ = writeln!(self.lambda_forward_decls,
+            "    nova_atomic_int _nova_fiber_state;");
         for (cap, ty, by_value) in &captures {
             if *by_value {
                 let _ = writeln!(self.lambda_forward_decls, "    {} {};", ty, cap);
@@ -11500,12 +11511,19 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
         // плане критичных pre-existing M:N багов закрыты. Однако
         // активация (раскомментировать `nova_runtime_auto_arm()` ниже)
         // даёт 18 RUN-FAIL под clang nova test — fixes покрыли A1+A2+
-        // A3+B2+B5+B4 но осталось >10 более глубоких M:N edge cases
-        // (deadlock в supervised_cancel_stress, parallel_for ordering
-        // под 1-worker M:N != cooperative, detach semantics, sleep_*
-        // precision benches, и т.д.). Honest-defer в самостоятельный
-        // followup-план «Plan 83.4.5: M:N drain edge-case sweep».
-        // self.line("nova_runtime_auto_arm();");
+        // A3+B2+B5+B4 но осталось >10 более глубоких M:N edge cases.
+        //
+        // Plan 83.4.5.7 (2026-05-23): atomic fiber state machine добавлен
+        // (NovaSpawnCtxBase._nova_fiber_state + CAS guards в _worker_main /
+        // supervised_step / nova_sched_wake). Защищает от двойного resume
+        // race. НО flip activation НЕ закрыта в этом плане: discovered NEW
+        // blocker — ctx memory visibility между main thread и worker (Boehm
+        // GC race либо arena root coverage gap на Windows fiber_arena_win.c).
+        // Симптом: worker reads `_c->_nova_parent_scope == NULL` хотя main
+        // set его. Эпилог fiber'а skip'ается → pending_remote stays > 0 →
+        // main hang в supervised_run_impl. Followup-план Plan 83.4.5.8
+        // (TBD: ctx GC reachability under M:N).
+        self.line("// nova_runtime_auto_arm();");
         // Plan 22 Ф.2: глобальный event loop. Под NOVA_USE_LIBUV даёт
         // настоящий uv_default_loop, иначе — stub no-op. Idempotent.
         self.line("nova_evloop_init();");
@@ -11539,6 +11557,17 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
         self.line("nova_supervised_drain_main_scope(&_nova_main_scope);");
         self.line("_nova_active_scope = NULL;");
         self.line("_nova_active_slot  = -1;");
+        // Plan 83.4.5.7 Ф.4 (2026-05-23): explicit runtime.shutdown ДО
+        // evloop.close. Под armed M:N worker'ы могут быть ещё активны после
+        // drain (e.g. pending uv_async_send в полёте). evloop.close → close
+        // _main_wake handle → следующий worker's signal_main → uv_async_send
+        // на CLOSING handle → libuv assertion abort.
+        // Shutdown сигналит stop + join'ит workers + cleanup'ит — после него
+        // workers не вызывают signal_main. Идемпотентен; под bootstrap
+        // (_armed == false) — no-op. Под armed: atexit-registered shutdown
+        // тоже сработает (idempotent), но мы хотим SYNCHRONOUS shutdown
+        // перед evloop_close.
+        self.line("nova_runtime_shutdown();");
         // Plan 22 Ф.2: graceful shutdown event loop'а перед GC shutdown.
         // Закрывает active handles, drain pending callbacks. Под stub'ом —
         // no-op.
