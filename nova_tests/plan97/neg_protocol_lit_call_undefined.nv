@@ -1,0 +1,21 @@
+// EXPECT_COMPILE_ERROR unknown method
+//
+// Plan 97.1 hardening (D142): вызов несуществующего method на
+// protocol-typed value (typo) — Nova-side type-checker diagnostic.
+// Раньше ловилось только C-side как `no member in NovaVtable_<X>`;
+// сейчас ловится на Nova-этапе с readable hint.
+
+module nova_tests.plan97.neg_protocol_lit_call_undefined
+
+
+type Single protocol {
+    only() -> int
+}
+
+
+test "вызов method не объявленного в protocol — Nova error" {
+    let l = protocol Single {
+        only() => 7
+    }
+    let _ = l.nonexistent()   // ← `.nonexistent()` отсутствует в Single
+}
