@@ -1,7 +1,18 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 # Plan 97 — protocol/effect syntax: `.method` static + анон-литерал + `handler` → `effect` rename
 
-> **Статус:** 📋 proposed 2026-05-23, не начат
+> **Статус:** ✅ ЗАКРЫТ 2026-05-23 (Ф.0/Ф.1/Ф.2/Ф.3 + Ф.4 partial + Ф.6 spec sweep)
+> **Регресс:** `nova test-all` — **PASS: 1076  FAIL: 0  SKIP: 56**
+> **Коммиты (ветка `plan-97`):**
+> - Ф.0 spec — `39c138ae824` D142+D143 + amendments
+> - Ф.2 anon-protocol type-position — `69baaf148eb`
+> - Ф.3 clean-break rename — `d5aa5bcc4c2`
+> - Ф.4 protocol-literal parser/AST/type-check — `d4b82d95f9d`
+> - Ф.6 spec sweep — `de73650c04c`
+> **Deferred:** [M-protocol-literal-codegen-deferred] — runtime vtable
+> для protocol-only типов отложен в Plan 100 (followup); все остальные
+> элементы (parser, type-checker, capability-split factory parser
+> + structural verify) — production-grade.
 > **Приоритет:** P2 (закрывает два открытых вопроса спеки одной
 > согласованной итерацией; разблокирует capability-split factory
 > pattern для stdlib Plan 18)
