@@ -157,16 +157,19 @@ static bool            _atexit_registered = false;
  * Hello-world без spawn — `_armed=true`, но `_materialized=false`
  * (пул не поднят) → 0 worker-потоков (Plan 83.2 §4 acceptance).
  * Идемпотентно, thread-safe через _init_mu. */
-static bool _nova_no_autoarm_env(void);  /* fwd-decl, def ниже */
+static bool _nova_autoarm_env_disabled(void);  /* fwd-decl, def ниже */
 
 static void _auto_arm_if_needed(void) {
     if (_armed) return;
-    /* Plan 83.4.5.5 (2026-05-23): escape hatch — NOVA_NO_AUTOARM=1
+    /* Plan 83.4.5.9 (2026-05-24): escape hatch — `NOVA_AUTOARM=0`
      * полностью отключает auto-arm даже на spawn-fallback. User-кодовая
      * `runtime.init(n)` явная не задействует _auto_arm_if_needed (она
      * сама себе arm'ит) — так что explicit user не блокируется этим
-     * env-флагом. */
-    if (_nova_no_autoarm_env()) return;
+     * env-флагом. Convention: positive env-name (`AUTOARM`) с inverted
+     * semantics; `=0`/`=false`/`=no` disables. Replaces legacy
+     * `NOVA_NO_AUTOARM=1` (Plan 83.4.5.5; renamed Plan 83.4.5.9 для
+     * избавления от двойного отрицания в env-name). */
+    if (_nova_autoarm_env_disabled()) return;
     if (!_init_mu_inited) {
         nova_mutex_init(&_init_mu);
         _init_mu_inited = true;
@@ -184,8 +187,14 @@ static void _auto_arm_if_needed(void) {
     nova_mutex_unlock(&_init_mu);
 }
 
-/* Plan 83.4.5.5 Ф.1 (2026-05-23): escape hatch для cooperative-зависимых
- * тестов. Когда `NOVA_NO_AUTOARM=1` задан в env, `nova_runtime_auto_arm()`
+/* Plan 83.4.5.9 Ф.1 (2026-05-24): escape hatch для cooperative-зависимых
+ * тестов. Convention: positive env-name (`NOVA_AUTOARM`) с inverted
+ * semantics — `=0`/`=false`/`=no` disables auto-arm. Replaces legacy
+ * `NOVA_NO_AUTOARM=1` (Plan 83.4.5.5; renamed чтобы избавиться от
+ * двойного отрицания в env-name; "не использовать инвертированных
+ * имен в env" — project convention 2026-05-24).
+ *
+ * Когда `NOVA_AUTOARM=0` задан в env, `nova_runtime_auto_arm()`
  * становится no-op — runtime НЕ армится автоматически. spawn-codegen
  * под `is_initialized() == false` route fiber'ы в main scope queue
  * (cooperative drain), а не в worker deque (work-stealing). Это
@@ -193,27 +202,33 @@ static void _auto_arm_if_needed(void) {
  * round-robin ordering через `main_yield + Time.sleep(0)` патерн
  * (концептуально аналог Node `setImmediate` semantics).
  *
- * Tests с `// ENV NOVA_NO_AUTOARM=1` будут работать одинаково на
+ * Tests с `// ENV NOVA_AUTOARM=0` будут работать одинаково на
  * armed-default builds и bootstrap. Production user-code остаётся armed
- * (default). Phenotype escape hatch — same idea как `NOVA_MAXPROCS=1`
- * directive для single-worker fallback, но более radical (полный bootstrap
- * mode).
+ * (default — unset либо `NOVA_AUTOARM=1`). Phenotype escape hatch —
+ * same idea как `NOVA_MAXPROCS=1` directive для single-worker fallback,
+ * но более radical (полный bootstrap mode).
  *
  * Cross-runtime parity: Go runtime НЕТ analog (нет cooperative-only mode);
  * tokio `current_thread` runtime — closest equivalent (single-thread async);
- * Node — всегда cooperative single-thread. */
-static bool _nova_no_autoarm_env(void) {
-    const char* env = getenv("NOVA_NO_AUTOARM");
-    if (!env || env[0] == '\0') return false;
-    /* Принимаем "1", "true", "yes" (case-insensitive первая буква). */
-    return (env[0] == '1' || env[0] == 't' || env[0] == 'T'
-            || env[0] == 'y' || env[0] == 'Y');
+ * Node — всегда cooperative single-thread.
+ *
+ * Returns true если env заполнен AND равно "0"/"false"/"no" (либо
+ * варианты "f"/"F"/"n"/"N" — case-insensitive первая буква).
+ * Иначе (unset / "1" / "true" / garbage) returns false — auto-arm
+ * enabled (default per D138). */
+static bool _nova_autoarm_env_disabled(void) {
+    const char* env = getenv("NOVA_AUTOARM");
+    if (!env || env[0] == '\0') return false;  /* unset → enabled (default) */
+    /* "0", "false", "no", "n", "f" (case-insensitive) → disable. */
+    return (env[0] == '0' || env[0] == 'f' || env[0] == 'F'
+            || env[0] == 'n' || env[0] == 'N');
 }
 
 /* Public entry — Plan 83.2 Ф.1 codegen-emit'нутый вызов в main().
- * Plan 83.4.5.5: respect NOVA_NO_AUTOARM=1 escape hatch. */
+ * Plan 83.4.5.9: respect `NOVA_AUTOARM=0` escape hatch (positive
+ * env-name; replaces legacy `NOVA_NO_AUTOARM=1`). */
 void nova_runtime_auto_arm(void) {
-    if (_nova_no_autoarm_env()) return;
+    if (_nova_autoarm_env_disabled()) return;
     _auto_arm_if_needed();
 }
 
@@ -467,8 +482,29 @@ static void _worker_main(void* arg) {
         w->preempt_flag = 0;
         __atomic_store_n(&w->current_fiber_start, uv_hrtime(), __ATOMIC_RELAXED);
 
+        /* Plan 83.4.5.7 (2026-05-23): atomic state guard для double-resume race.
+         * CAS IDLE→RUNNING — winner runs mco_resume, loser skips. Loser case:
+         * cross-worker steal race (one worker stole, owner также пытается popнуть
+         * через wake_pending duplicate-push race) или concurrent wake-during-running
+         * (см. NovaSpawnCtxBase doc выше). Без guard'а — TIB swap conflict
+         * (Windows) / context corruption (POSIX) → access violation в fiber arena.
+         *
+         * Loser обязан НЕ trogать co (другой thread держит контекст). Restore
+         * outer TLS, continue loop.
+         *
+         * NB: для FIRST RUN — fiber's state IDLE (from nova_alloc zero-init),
+         * CAS трivially succeeds. Race materialization только для re-pop'ов
+         * (wake + wake = double-push, или steal race на edge-case). */
+        bool _nova_state_owned = true;  /* default — non-MCO_SUSPENDED branch */
         if (mco_status(co) == MCO_SUSPENDED) {
-            mco_resume(co);
+            _nova_state_owned = (bool)nova_fiber_state_cas(
+                co, NOVA_FIBER_STATE_IDLE, NOVA_FIBER_STATE_RUNNING);
+            if (_nova_state_owned) {
+                mco_resume(co);
+            }
+            /* else: другой thread держит RUNNING. Skip mco_resume — но всё
+             * равно нужно restore outer TLS ниже + дать другому owner'у
+             * dispose'нуть fiber. Don't touch co. */
         }
 
         /* Fiber returned to the loop — clear the overrun timestamp so an
@@ -506,7 +542,7 @@ static void _worker_main(void* arg) {
          * the scope used by the fiber in nova_sched_park_with_unlock, which
          * captures _nova_active_scope (restored to _nova_fiber_scope above). */
         bool fiber_is_parked = false;
-        if (mco_status(co) == MCO_SUSPENDED) {
+        if (_nova_state_owned && mco_status(co) == MCO_SUSPENDED) {
             NovaFiberQueue* check_scope = (base && base->_nova_fiber_scope)
                                           ? base->_nova_fiber_scope : &w->scope;
             int act_slot = base ? base->_nova_worker_slot : _nova_active_slot;
@@ -522,8 +558,51 @@ static void _worker_main(void* arg) {
             fn(arg);
         }
 
+        /* Plan 83.4.5.7 (2026-05-23): state transitions для current owner.
+         * Если мы НЕ owned (CAS lost) — другой thread сейчас держит RUNNING,
+         * он сам сделает dispose. Просто continue.
+         *
+         * EXCEPTION: co already DEAD upon worker pop (rare — re-popped after
+         * mco_destroy by some path). Still need to skip — base может быть
+         * освобождён GC'ем уже. */
+        if (!_nova_state_owned) {
+            if (mco_status(co) == MCO_DEAD) {
+                /* Co was DEAD before we even tried CAS. mco_resume не вызван,
+                 * другой thread уже destroyed. Skip. */
+            }
+            continue;
+        }
+
         if (mco_status(co) == MCO_DEAD) {
+            /* Plan 83.4.5.8 (2026-05-24): grab ctx pointer ДО mco_destroy
+             * (destroy frees co, не ctx — separate allocations). All ctx
+             * allocated через nova_alloc_uncollectable под armed M:N
+             * (codegen emit_spawn / emit_detach choice based on
+             * nova_runtime_is_initialized()). Free здесь — гарантирует
+             * lifecycle ends точно когда fiber finishes. */
+            NovaSpawnCtxBase* dead_ctx = (NovaSpawnCtxBase*)mco_get_user_data(co);
+            /* Also grab init_snapshot pointer (may be NULL — already consumed
+             * by preamble OR cooperative path). Snapshot moved в
+             * scope->fiber_effect_snapshot[slot] которое GC-managed (под
+             * armed scope's fiber_effect_snapshot array — nova_alloc'd),
+             * но snapshot itself был nova_alloc_uncollectable. После
+             * fiber DEAD никто не держит ссылку, можно free.
+             *
+             * Snapshot adoption: codegen preamble делает
+             *   scope->fiber_effect_snapshot[slot] = _c->_nova_init_snapshot;
+             *   _c->_nova_init_snapshot = NULL;
+             * Так что _c->_nova_init_snapshot читается NULL здесь
+             * (already transferred). Snapshot живёт в scope's array
+             * пока scope alive → eventually freed когда scope's
+             * uncollectable count reaches zero. К сожалению snapshot
+             * никто не free'ит explicitly — it would leak under armed.
+             * V1 tradeoff: snapshots leak per fiber. V2 followup —
+             * хранить параллельный массив "uncollectable" в scope. */
+            nova_fiber_state_store(co, NOVA_FIBER_STATE_DEAD);
             mco_destroy(co);
+            if (dead_ctx) {
+                nova_free_uncollectable(dead_ctx);
+            }
         } else if (mco_status(co) == MCO_SUSPENDED) {
             /* Yielded: if parked (timer/channel wait) → dispatch_ready re-queues.
              * If not parked (cooperative yield via preemption or runtime.yield)
@@ -531,23 +610,41 @@ static void _worker_main(void* arg) {
              * make the worker immediately re-pop the same fiber, starving every
              * peer below it (Plan 44.7). */
             if (fiber_is_parked) {
-                /* Parked: let dispatch_ready handle requeueing when wake fires. */
+                /* Parked: nova_sched_park уже store'ил PARKED state. dispatch_ready
+                 * (через wake CAS PARKED→IDLE) handle'ит requeue + state-transition. */
             } else {
+                /* Voluntary yield: RUNNING → IDLE; push в yielded-FIFO. */
+                nova_fiber_state_store(co, NOVA_FIBER_STATE_IDLE);
                 _worker_yielded_push(w, co);
             }
         }
     }
 
-    /* Cleanup — drain remaining items в deque + yielded-FIFO (Plan 44.7). */
+    /* Cleanup — drain remaining items в deque + yielded-FIFO (Plan 44.7).
+     * Plan 83.4.5.7 (2026-05-23): CAS-guard для double-resume race.
+     * Plan 83.4.5.8 (2026-05-24): free uncollectable ctx после mco_destroy. */
     while (true) {
         mco_coro* co = (mco_coro*)nova_deque_pop(&w->deque);
         if (!co) co = _worker_yielded_pop(w);
         if (!co) break;
         if (mco_status(co) == MCO_SUSPENDED) {
-            mco_resume(co);
+            if (nova_fiber_state_cas(co, NOVA_FIBER_STATE_IDLE,
+                                          NOVA_FIBER_STATE_RUNNING)) {
+                mco_resume(co);
+                if (mco_status(co) == MCO_DEAD) {
+                    nova_fiber_state_store(co, NOVA_FIBER_STATE_DEAD);
+                } else {
+                    nova_fiber_state_store(co, NOVA_FIBER_STATE_IDLE);
+                }
+            }
+            /* else: другой owner. Skip. */
         }
         if (mco_status(co) == MCO_DEAD) {
+            NovaSpawnCtxBase* dead_ctx = (NovaSpawnCtxBase*)mco_get_user_data(co);
             mco_destroy(co);
+            if (dead_ctx) {
+                nova_free_uncollectable(dead_ctx);
+            }
         }
     }
     _nova_active_slot = -1;
@@ -1004,12 +1101,18 @@ void nova_runtime_spawn_global(void (*entry)(mco_coro*), void* user) {
         abort();
     }
     nova_fiber_post_create(co);  /* Plan 82 Ф.1: patch ctx.stack_limit (Windows) */
+    /* Plan 83.4.5.7 (2026-05-23): SEQ_CST fence перед cross-thread deque push.
+     * spawn_global вызывается main thread'ом, но deque принадлежит worker'у.
+     * Chase-Lev push designed для single-owner: main → target's deque
+     * нарушает контракт. Fence гарантирует видимость main's writes на ctx
+     * fields (`_nova_parent_scope` etc.) до того, как worker's deque pop
+     * (single-owner pop, RELAXED loads) их прочитает. */
+    __atomic_thread_fence(__ATOMIC_SEQ_CST);
     if (!nova_deque_push(&target->deque, co)) {
         fprintf(stderr, "nova: runtime_spawn_global: deque_push failed\n");
         mco_destroy(co);
         abort();
     }
-
     nova_aint_inc(&target->pending_count);
     uv_async_send(&target->wake_handle);
 }
@@ -1029,6 +1132,13 @@ void nova_runtime_spawn_into(struct NovaFiberQueue* scope,
         fprintf(stderr, "nova: runtime_spawn_into: NULL scope\n");
         abort();
     }
+    /* Plan 83.4.5.7 (2026-05-23): pin SpawnCtx в parent scope's ctx_pins
+     * для GC reachability. Без pin'а — ctx достижим только через worker
+     * deque slot (malloc'd, не GC-scanned) → Boehm может collect/zero
+     * fields ДО worker resume. Симптом: worker reads ctx->_nova_parent_scope
+     * == NULL → spawn entry skip'ает preamble + epilogue → main hang в
+     * supervised_run_impl wait-loop'е (pending_remote stays > 0). */
+    nova_scope_pin_ctx((NovaFiberQueue*)scope, user);
     /* Plan 83.2 Ф.1: auto-arm на первом spawn (default-on M:N).
      * supervised{} использует этот путь через codegen — каждый spawn
      * внутри supervised теперь идёт через worker pool. */
@@ -1121,6 +1231,22 @@ void nova_runtime_spawn_orphan(void (*entry)(mco_coro*), void* user) {
     }
     /* Bootstrap fallback: cooperative spawn в orphan scope queue. */
     nova_fiber_spawn_into(&_nova_orphan_scope, entry, user);
+}
+
+/* Plan 83.4.5.8 (2026-05-24): explicit init для orphan scope.
+ * Lazy-init guard повторно использует _orphan_scope_ensure_init. */
+void nova_runtime_orphan_scope_init(void) {
+    _orphan_scope_ensure_init();
+}
+
+/* Plan 83.4.5.8 (2026-05-24): public pointer на orphan scope.
+ * Returns NULL если scope ещё не initialized. Используется codegen
+ * emit_detach под armed: set ctx->_nova_parent_scope =
+ * nova_runtime_orphan_scope() чтобы fiber tracking шёл через
+ * pending_remote counter (как supervised children). */
+struct NovaFiberQueue* nova_runtime_orphan_scope(void) {
+    if (!_nova_orphan_scope_inited) return NULL;
+    return (struct NovaFiberQueue*)&_nova_orphan_scope;
 }
 
 void nova_runtime_drain_orphans(void) {

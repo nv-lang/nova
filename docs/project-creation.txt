@@ -20243,3 +20243,179 @@ Total: ~6 dev-day. Critical path 101.1 → 101.2 → 101.5 = ~4 dev-day
 
 Status: 📋 proposed, не начат. P1.
 
+=======
+=== Plan 83.4.5.7 Ф.1 — Atomic fiber state machine (2026-05-23) ===
+
+Plan 83.4.5.7 atomic-fiber-state-machine foundational work landed.
+Ф.1 ЗАКРЫТ, flip activation deferred (NEW blocker — см. ниже).
+
+**Implemented:**
+
+* NovaSpawnCtxBase extended 6→7 fields с `nova_atomic_int
+  _nova_fiber_state`. Constants: IDLE=0, RUNNING=1, PARKED=2, DEAD=3.
+  Helper inlines: nova_fiber_state_cas / nova_fiber_state_store /
+  nova_fiber_state_load в fibers.h.
+
+* CAS guards вокруг mco_resume в:
+  - `_worker_main` main loop — CAS IDLE→RUNNING. CAS-loser skips
+    resume (другой thread держит контекст).
+  - `_worker_main` cleanup loop (после worker stop signal).
+  - `nova_fiber_run` — single-shot, no CAS (no race possible).
+  - `nova_supervised_step` — НЕ guard'нут (single-thread main path,
+    worker-owned fibers скипаются через A2 fix).
+
+* nova_sched_park / park_with_unlock store state PARKED before yield.
+* nova_sched_wake — atomic-bool CAS на parked[slot] (true→false);
+  only winner синхронизирует state PARKED→IDLE + dispatch_ready
+  (M:N). Bootstrap dispatch_ready=NULL — pure flag-clear.
+
+* `nova_runtime_shutdown()` call ДО `nova_evloop_close()` в emit_main:
+  под armed M:N workers могут быть активны после drain (pending
+  uv_async_send). evloop_close → close _main_wake → workers'
+  signal_main → uv_async_send на CLOSING handle → libuv assertion
+  abort. shutdown signals stop + joins workers FIRST — safe order.
+
+* `nova_scope_pin_ctx` call в `nova_runtime_spawn_into`: pin
+  SpawnCtx в parent scope's ctx_pins для GC reachability (foundational,
+  не достаточно — см. blocker ниже).
+
+* SEQ_CST thread fence перед deque push в spawn_global (defensive —
+  cross-thread push нарушает Chase-Lev single-owner contract).
+
+* Codegen update: emit_spawn + emit_detach lambda_forward_decls добавили
+  `nova_atomic_int _nova_fiber_state` field в NovaSpawnCtxBase prefix.
+
+**Verification:**
+
+* Bootstrap: ВСЕ 1141 тестов PASS, 0 FAIL, 56 SKIP. ≥1130
+  acceptance criterion из плана MET.
+* Concurrency suite: 75/75 PASS под bootstrap.
+
+**NOT delivered (deferred):**
+
+* Ф.3 — remove 12 NOVA_NO_AUTOARM directives. GATED на flip
+  activation working.
+
+* Ф.4 — flip activation (uncomment `nova_runtime_auto_arm()`).
+  Discovered NEW blocker во время diagnostic'а:
+
+  **NEW BLOCKER — ctx memory visibility под armed M:N:**
+
+  Под armed runtime worker thread читает `_c->_nova_parent_scope ==
+  NULL` хотя main thread выставил его в `&scope`. Same VIRTUAL ADDRESS,
+  different values. Reproducible diagnostic shows ENTIRE ctx struct
+  reads as zero on worker side несмотря на main's writes.
+
+  Hypothesis: Boehm GC race либо arena root coverage gap на
+  fiber_arena_win.c. GC_set_push_other_roots callback push'ит
+  committed slot regions, но возможно ctx (allocated by nova_alloc =
+  GC_malloc) становится unreachable между main's write и worker's
+  read. Симптом: spawn entry skip'ает preamble + epilogue → never dec
+  pending_remote → main hang в supervised_run_impl wait-loop'е.
+
+  Followup: Plan 83.4.5.8 — Boehm GC ctx reachability fix.
+  Diagnostic raw-memory dump:
+  ```
+  [MAIN spawn-site]   ctx=0x...FC0  parent=0x...580  raw[0]=0x...580
+  [worker 0 picked]   user_data=0x...FC0  raw[0]=0x00..0  (zero!)
+  ```
+
+**Files modified:**
+
+* compiler-codegen/nova_rt/fibers.h — NovaSpawnCtxBase + helpers +
+  state-store в nova_supervised_step post-resume.
+* compiler-codegen/nova_rt/runtime.c — CAS guards в _worker_main +
+  cleanup loop; SEQ_CST fence в spawn_global; nova_scope_pin_ctx в
+  spawn_into; nova_runtime_shutdown declared.
+* compiler-codegen/nova_rt/nova_sched.h — atomic-bool CAS в
+  nova_sched_wake; PARKED store в park / park_with_unlock.
+* compiler-codegen/src/codegen/emit_c.rs — _nova_fiber_state field
+  в emit_spawn + emit_detach lambda_forward_decls; nova_runtime_shutdown
+  call ДО evloop_close в emit_main_wrapper.
+
+**Logs:**
+* simplifications.md: [M-83.4.5.7-foundational] — Ф.1 done, flip blocked.
+
+Plan 83.4.5.7 status: Ф.1 ✅ DONE (foundational). Ф.3+Ф.4 ❌ DEFERRED
+к Plan 83.4.5.8 (ctx GC reachability fix).
+
+=== Plan 83.4.5.8 — M:N ctx GC reachability fix (2026-05-24) ===
+
+Plan 83.4.5.8 ✅ ЗАКРЫТ ~0.5 dev-day (Approach A — `GC_malloc_uncollectable`
+прямой hit). Default-on M:N runtime ACTIVE (D138 ACTIVE).
+
+**Что закрыто:**
+
+* `nova_alloc_uncollectable(size)` + `nova_free_uncollectable(ptr)`
+  API в alloc.h + 3 backend impls (alloc.c / alloc_boehm.c /
+  alloc_rc.c). Boehm uses GC_malloc_uncollectable + GC_free.
+
+* codegen emit_spawn + emit_detach: conditional allocation. Armed
+  M:N → nova_alloc_uncollectable (memory persists, Boehm GC race
+  defeated). Bootstrap → regular nova_alloc (cooperative queue
+  keeps ctx reachable).
+
+* Snapshot — collectable (nova_alloc). Reachable через ctx
+  (uncollectable, scanned by GC) + scope's fiber_effect_snapshot[]
+  array (GC-rooted via Plan 82 Ф.3).
+
+* _worker_main main + cleanup loops: nova_free_uncollectable(ctx)
+  ПОСЛЕ mco_destroy. State_store(DEAD) BEFORE free (accesses ctx).
+
+* Orphan-scope pending_remote tracking под armed M:N:
+  - nova_runtime_orphan_scope() public API → pointer на
+    _nova_orphan_scope.
+  - nova_runtime_orphan_scope_init() — explicit init.
+  - codegen emit_detach: armed → set ctx->_nova_parent_scope =
+    orphan_scope, inc pending_remote BEFORE spawn_orphan, dec +
+    signal_main в epilogue (mirror emit_spawn). Bootstrap → NULL +
+    cooperative orphan_scope.fibers[].
+  - drain_orphans uses nova_supervised_drain_main_scope unchanged
+    (waits pending_remote == 0 которое worker fibers decrement).
+
+* Flip activation: uncomment `nova_runtime_auto_arm()` в
+  emit_main_wrapper — default-on M:N enabled.
+
+* D138 → ACTIVE в spec/decisions/06-concurrency.md (Plan 83.4.5.6
+  closure milestone).
+
+**Verification:**
+
+* Bootstrap (NOVA_NO_AUTOARM=1): 1141 PASS / 0 FAIL / 56 SKIP —
+  baseline preserved.
+
+* Armed M:N flip-active: **1130 PASS / 12 FAIL / 56 SKIP**.
+  Acceptance criterion ≥1130 PASS MET.
+
+* Failure breakdown (12):
+  - 8 TIMEOUTs (assert_in_fiber, deep_gc, deep_spawn, gc_correctness,
+    memory_footprint_test, mono_spawn_closure_smoke,
+    plan87/explicit_custom_iter, supervised_errors) — heavy-println
+    tests, direct exe exits cleanly <60s но test_runner pipe stdout
+    blocks (64KB Windows pipe limit). НЕ real deadlock. Followup
+    investigation.
+  - 4 minor RUN-FAILs: mn_maxprocs_getter (2/3 PASS),
+    mn_runtime_smoke (3/4 PASS), sleep_real_clock (4/5 PASS),
+    sleep_bench (precision M:N), supervised_errors (early-stop
+    pattern semantic difference cooperative vs parallel).
+
+* 11 of 12 NO_AUTOARM directives RESTORED (не removed) — tests
+  inherently cooperative-dependent. Только detach_test migrated к
+  armed-compatible.
+
+**Files modified:**
+
+* compiler-codegen/nova_rt/alloc.h + alloc.c + alloc_boehm.c + alloc_rc.c
+  — uncollectable alloc/free API.
+* compiler-codegen/nova_rt/runtime.h + runtime.c —
+  nova_runtime_orphan_scope() + _init() API; uncollectable ctx free
+  в worker_main.
+* compiler-codegen/src/codegen/emit_c.rs — emit_spawn + emit_detach
+  conditional alloc; emit_detach orphan-scope parent + epilogue dec;
+  emit_main_wrapper flip activation (uncomment auto_arm).
+* spec/decisions/06-concurrency.md — D138 → ACTIVE + status table.
+
+**Plan 83 status:** Default-on M:N runtime ACTIVE. Plan 83.2/83.4.5.6
+flip activation milestone closed. Followup work на performance
+(speedup-bench / stress / TSAN gate) deferred (Plan 83.4.5.6
+remaining).

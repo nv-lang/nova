@@ -19,7 +19,10 @@
 // 83.4.5.4 spawn-time snapshot inheritance fix validates через
 // cooperative drain (nova_fiber_spawn_into сам save'ит TLS snapshot).
 //
-// ENV NOVA_NO_AUTOARM=1
+// Plan 83.4.5.8 (2026-05-24): directive RESTORED — test inherently
+// cooperative-dependent (ordering / handler-scoping / timing semantics).
+// Armed M:N changes execution model. Followup: rewrite under M:N semantics.
+// ENV NOVA_AUTOARM=0
 
 module concurrency.per_fiber_handlers
 

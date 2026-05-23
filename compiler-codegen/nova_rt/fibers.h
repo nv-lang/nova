@@ -136,6 +136,9 @@ static inline void nova_fiber_run(void (*entry)(mco_coro*), void* user) {
     }
     nova_fiber_post_create(co);  /* Plan 82 Ф.1: patch ctx.stack_limit (Windows) */
     _nova_gc_add_fiber_roots(co);
+    /* Plan 83.4.5.7: no CAS guard здесь — nova_fiber_run is one-shot,
+     * single thread, no concurrent resume race. State machine helpers
+     * defined ниже после NovaSpawnCtxBase (forward-order). */
     r = mco_resume(co);
     if (r != MCO_SUCCESS) {
         fprintf(stderr, "nova: fiber resume failed (%d)\n", (int)r);
@@ -963,6 +966,33 @@ static inline NovaCancelToken* nova_cancel_token_merge2(
  * correct (home) scope/slot. Without this, the channel waiter records the
  * wrong scope, nova_sched_wake finds scope->fibers[slot]=NULL, dispatch_ready
  * is never called, and the fiber hangs permanently (deadlock). */
+/* Plan 83.4.5.7 (2026-05-23): atomic fiber state machine для защиты от
+ * concurrent mco_resume race (Windows TIB swap conflict / POSIX context
+ * corruption) на armed multi-worker runtime.
+ *
+ * Race scenario до этого fix'а:
+ *   1. Fiber F parked на channel.recv (parked[slot]=true).
+ *   2. Sender A: nova_sched_wake(scope, slot) → parked[slot]=false →
+ *      dispatch_ready(co) → push F в worker deque.
+ *   3. Concurrent cancel: nova_scope_cancel_wake_all → reads parked[slot]
+ *      stale-true → nova_sched_wake → dispatch_ready(co) → push F AGAIN.
+ *   4. Worker pops F twice → mco_resume(F) on two iterations → TIB swap
+ *      conflict / fiber arena slot 0 corruption → access violation.
+ *
+ * Fix: per-fiber atomic state. Wake — CAS PARKED→IDLE; только winner
+ * вызывает dispatch_ready (push в deque). Worker — CAS IDLE→RUNNING
+ * перед mco_resume; CAS-loser SKIP'ает resume.
+ *
+ * Cross-runtime reference:
+ *   - Go runtime/proc.go::casgstatus — CAS на g.atomicstatus.
+ *   - tokio task/state.rs::transition_to_running — bit-packed atomic
+ *     с RUNNING/NOTIFIED/JOIN_INTEREST/COMPLETE bits.
+ *   - Kotlin JobSupport.state_ — atomic CAS на job states. */
+#define NOVA_FIBER_STATE_IDLE    0  /* suspended, NOT in any deque/wake-queue */
+#define NOVA_FIBER_STATE_RUNNING 1  /* mco_resume in-progress on some thread */
+#define NOVA_FIBER_STATE_PARKED  2  /* park called; waiting for wake */
+#define NOVA_FIBER_STATE_DEAD    3  /* mco_status==DEAD; never resume */
+
 typedef struct {
     NovaFiberQueue*      _nova_parent_scope;
     int                  _nova_worker_slot;
@@ -975,7 +1005,37 @@ typedef struct {
      * fiber_effect_snapshot[slot]. NULL для single-thread spawn path
      * (nova_fiber_spawn_into сам save'ит). */
     NovaEffectSnapshot*  _nova_init_snapshot;
+    /* Plan 83.4.5.7 (2026-05-23): atomic state machine. nova_alloc
+     * zero-init → starts as NOVA_FIBER_STATE_IDLE (= 0). State machine
+     * documented above. */
+    nova_atomic_int      _nova_fiber_state;
 } NovaSpawnCtxBase;
+
+/* Plan 83.4.5.7: helper — CAS fiber state. Returns true if CAS succeeded.
+ * Safe для co без NovaSpawnCtxBase (legacy nova_fiber_run): base==NULL
+ * → returns true (no atomic guard available, but single-shot fibers
+ * doesn't have race window). */
+static inline nova_bool nova_fiber_state_cas(mco_coro* co, int32_t from, int32_t to) {
+    if (!co) return false;
+    NovaSpawnCtxBase* base = (NovaSpawnCtxBase*)mco_get_user_data(co);
+    if (!base) return true;  /* legacy fiber без base — no guard */
+    int32_t expected = from;
+    return nova_aint_cas(&base->_nova_fiber_state, &expected, to);
+}
+
+static inline void nova_fiber_state_store(mco_coro* co, int32_t state) {
+    if (!co) return;
+    NovaSpawnCtxBase* base = (NovaSpawnCtxBase*)mco_get_user_data(co);
+    if (!base) return;
+    nova_aint_store(&base->_nova_fiber_state, state);
+}
+
+static inline int32_t nova_fiber_state_load(mco_coro* co) {
+    if (!co) return NOVA_FIBER_STATE_IDLE;
+    NovaSpawnCtxBase* base = (NovaSpawnCtxBase*)mco_get_user_data(co);
+    if (!base) return NOVA_FIBER_STATE_IDLE;
+    return nova_aint_load(&base->_nova_fiber_state);
+}
 
 /* Forward-decl для использования из spawn_into. */
 static inline void nova_sched_grow_state(NovaFiberQueue* scope, int new_cap);
@@ -1228,7 +1288,27 @@ static inline int nova_supervised_step(NovaFiberQueue* q) {
         if (q->fiber_effect_snapshot[i]) {
             nova_effect_snapshot_restore(q->fiber_effect_snapshot[i]);
         }
+        /* Plan 83.4.5.7 (2026-05-23): supervised_step под bootstrap — single
+         * thread, no concurrent mco_resume race. CAS guard НЕ нужен здесь.
+         * Под armed M:N main thread СКИПАЕТ worker-owned fibers (A2 fix
+         * выше: parent_scope != NULL → continue), так что mco_resume here
+         * РЕДКАЯ ветка (только для non-worker-owned fibers — главным
+         * образом single-thread fallback фaйберы).
+         *
+         * Still need state-store post-resume для PARKED transition viability
+         * (wake's CAS PARKED→IDLE требует видимое PARKED state'а). */
         mco_result r = mco_resume(co);
+        /* Plan 83.4.5.7: state restore. DEAD если mco terminated, иначе
+         * IDLE (готов к next resume). RELEASE-store видим через ACQUIRE-load
+         * на следующий wake/resume. */
+        if (mco_status(co) == MCO_DEAD) {
+            nova_fiber_state_store(co, NOVA_FIBER_STATE_DEAD);
+        } else if (sched_st && i < sched_st->capacity && sched_st->parked[i]) {
+            /* Fiber запарковался во время resume'а. nova_sched_park уже
+             * store'ил PARKED — НЕ overwrite'ить здесь. */
+        } else {
+            nova_fiber_state_store(co, NOVA_FIBER_STATE_IDLE);
+        }
         /* Save fiber's current handler state back (с учётом изменений
          * сделанных fiber'ом во время выполнения — `with`-блоков push/pop). */
         if (q->fiber_effect_snapshot[i]) {

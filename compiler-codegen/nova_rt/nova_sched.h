@@ -116,6 +116,10 @@ static inline void nova_sched_park(NovaFiberQueue* scope, int slot) {
         fprintf(stderr, "nova: nova_sched_park: not in fiber context\n");
         abort();
     }
+    /* Plan 83.4.5.7 (2026-05-23): RUNNING → PARKED state transition. Wake
+     * (либо same либо cross-thread) CAS-clear'ит PARKED→IDLE и push'ит в
+     * deque. RELEASE-store видим через wake's ACQUIRE-load на CAS. */
+    nova_fiber_state_store(co, NOVA_FIBER_STATE_PARKED);
     mco_yield(co);
 }
 
@@ -170,6 +174,13 @@ static inline void nova_sched_park_with_unlock(NovaFiberQueue* scope, int slot,
      * fiber to its deque AND wake_pending → double-push → double-resume → crash. */
     _nova_park_unlock_fn  = unlock_fn;
     _nova_park_unlock_arg = unlock_arg;
+    /* Plan 83.4.5.7 (2026-05-23): RUNNING → PARKED. Set BEFORE yield so что
+     * wake-сайт (CAS PARKED→IDLE) видит правильное state. Order:
+     *   1. Store PARKED (RELEASE).
+     *   2. mco_yield — control returns to scheduler.
+     *   3. Scheduler calls unlock_fn — only NOW cross-thread waker can run.
+     *   4. Waker CAS PARKED→IDLE: видит state'у published в шаге 1. */
+    nova_fiber_state_store(co, NOVA_FIBER_STATE_PARKED);
     mco_yield(co);
     /* Fiber resumed: clear deferred state (scheduler already called fn). */
     _nova_park_unlock_fn  = NULL;
@@ -180,16 +191,55 @@ static inline void nova_sched_park_with_unlock(NovaFiberQueue* scope, int slot,
  *
  * Plan 44.5 Layer 5 park/wake: если scope->dispatch_ready != NULL (M:N
  * worker scope), вызывает его чтобы re-queue fiber в worker deque.
- * Single-thread: dispatch_ready == NULL — main loop resume'ит fiber сам. */
+ * Single-thread: dispatch_ready == NULL — main loop resume'ит fiber сам.
+ *
+ * Plan 83.4.5.7 (2026-05-23): atomic CAS guard PARKED→IDLE. Только
+ * winner вызывает dispatch_ready. Защищает от double-wake → double-push →
+ * double-resume race. Без guard'а:
+ *   T1: close_cb fires → nova_sched_wake → parked[slot]=false → push.
+ *   T2: cancel_wake_all reads stale parked[slot]=true → wake → push AGAIN.
+ *   Worker pops twice → concurrent mco_resume → fiber arena slot
+ *   corruption (Windows TIB swap conflict / POSIX context double-swap).
+ *
+ * Bootstrap (single-thread): без atomic тоже работает (один thread). CAS
+ * стоит ~10ns — приемлемо для wake hot path. */
 static inline void nova_sched_wake(NovaFiberQueue* scope, int slot) {
     if (!scope || slot < 0 || slot >= scope->count) return;
     NovaSchedState* st = nova_sched_find_state(scope);
-    if (st && slot < st->capacity) st->parked[slot] = false;
-    /* M:N dispatch: push woken fiber back to worker deque. */
-    if (scope->dispatch_ready && slot < scope->count) {
+    /* Plan 83.4.5.7 (2026-05-23): atomic-bool exchange parked flag.
+     * Idempotent guard: только winner CAS true→false делает dispatch.
+     * Замените на CAS-on-state в будущей итерации когда state machine
+     * рассинхронизация исключена. Под bootstrap (single-thread) сюда
+     * race не приходит. Под armed M:N — wake может приходить cross-thread
+     * (close_cb + cancel_wake_all). __atomic_exchange гарантирует только
+     * один thread видит true → false → dispatches. */
+    bool was_parked = false;
+    if (st && slot < st->capacity) {
+        bool expected = true;
+        was_parked = __atomic_compare_exchange_n(
+            (volatile bool*)&st->parked[slot], &expected, false,
+            false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE);
+    }
+    /* M:N dispatch: push woken fiber back to worker deque.
+     * Под bootstrap dispatch_ready==NULL — pure parked-flag clear. */
+    if (was_parked && scope->dispatch_ready && slot < scope->count) {
         mco_coro* co = scope->fibers[slot];
         if (co && mco_status(co) != MCO_DEAD) {
+            /* Sync state PARKED→IDLE для нового CAS guard в mco_resume sites. */
+            nova_fiber_state_store(co, NOVA_FIBER_STATE_IDLE);
             scope->dispatch_ready(scope->dispatch_ctx, co);
+        }
+    } else if (!was_parked) {
+        /* parked was already false — может быть double-wake. Skip dispatch. */
+    } else {
+        /* Bootstrap path: was_parked=true but dispatch_ready=NULL.
+         * supervised_step видит cleared parked[i] и resume'ит fiber.
+         * Sync state для consistency. */
+        if (slot < scope->count) {
+            mco_coro* co = scope->fibers[slot];
+            if (co && mco_status(co) != MCO_DEAD) {
+                nova_fiber_state_store(co, NOVA_FIBER_STATE_IDLE);
+            }
         }
     }
 }
