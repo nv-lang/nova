@@ -14302,6 +14302,50 @@ _cp++; \
                 // делается внутри emit_println.
                 return self.emit_println(args, name == "println");
             }
+            // Plan 99.2 Ф.1-Ф.3: contextual variant constructors.
+            // Bare `Some(v)`/`None`/`Ok(v)`/`Err(e)` в expr-position
+            // используют `current_fn_return_ty` для выбора mono-
+            // репрезентации (typed compound literal). Параллель existing
+            // path forms (`Option.Some(v)` :17251, `Option.None` :17264).
+            //
+            // Иначе bare ctors всегда возвращают legacy `NovaOpt_nova_int`
+            // / `Nova_Result*` (hardcoded в array.h:276 и similar) —
+            // broken для не-(int, str) cases (Plan 99 G5/G6).
+            //
+            // Fallback на legacy если `current_fn_return_ty` не matches
+            // target sum-type (backward-compat).
+            if let Some(rt) = self.current_fn_return_ty.clone() {
+                // Option.Some(v) / None — context `-> Option[X]` = NovaOpt_<X>.
+                if (name == "Some" || name == "None") && rt.starts_with("NovaOpt_") {
+                    let sani = &rt["NovaOpt_".len()..];
+                    if name == "Some" && args.len() == 1 {
+                        let arg_v = self.emit_expr(args[0].expr())?;
+                        return Ok(format!(
+                            "((NovaOpt_{}){{.tag = NOVA_TAG_Option_Some, .value = ({})}})",
+                            sani, arg_v));
+                    } else if name == "None" && args.is_empty() {
+                        return Ok(format!(
+                            "((NovaOpt_{}){{.tag = NOVA_TAG_Option_None}})",
+                            sani));
+                    }
+                }
+                // Ok(v) / Err(e) — context `-> Result[T, E]` = NovaRes_<n>*.
+                if (name == "Ok" || name == "Err") && Self::is_result_like(&rt) {
+                    if let Some((ok_c, err_c)) = self.novares_ok_err(&rt) {
+                        self.register_novares_decl(&ok_c, &err_c);
+                        let suffix = Self::novares_name(&ok_c, &err_c);
+                        if name == "Ok" && args.len() == 1 {
+                            let arg_v = self.emit_expr(args[0].expr())?;
+                            return Ok(format!(
+                                "nova_make_NovaRes_{}_Ok({})", suffix, arg_v));
+                        } else if name == "Err" && args.len() == 1 {
+                            let arg_v = self.emit_expr(args[0].expr())?;
+                            return Ok(format!(
+                                "nova_make_NovaRes_{}_Err({})", suffix, arg_v));
+                        }
+                    }
+                }
+            }
         }
 
         // Plan 72 P3-B [M-protocol-param-free-fn-only]: if the callee has

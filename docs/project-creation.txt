@@ -19810,3 +19810,32 @@ Regression 10 крит. подпапок: 113/0.
 Открытые на 99.2: G5, G6. На 99.3: G8.
 
 Готово к Plan 99.2.
+
+═══════════════════════════════════════════════════════════════════════
+Plan 99.2 ✅ — Contextual variant constructors
+2026-05-23 (worktree d:/Sources/nv-lang/nova-p99-impl)
+═══════════════════════════════════════════════════════════════════════
+
+Bare `Some(v)`/`None`/`Ok(v)`/`Err(e)` (Ident form) в expr-position
+теперь используют `current_fn_return_ty` для выбора mono-репрезентации:
+
+- `Some(v)` с return `-> Option[X]` → `(NovaOpt_<X>){.tag=Some, .value=v}`.
+- `None` с return `-> Option[X]` → `(NovaOpt_<X>){.tag=None}`.
+- `Ok(v)`/`Err(e)` с return `-> Result[T, E]` → `nova_make_NovaRes_<n>_Ok/Err(v)`
+  где n = `<ok_sani>_<err_sani>` (registered via `register_novares_decl`).
+
+Fallback на legacy `nova_make_<X>_<V>` если `current_fn_return_ty`
+None/не matches target sum-type (backward-compat).
+
+Hook добавлен в `emit_call` после `print/println` intercept.
+
+Закрытые gaps: G5, G6.
+
+Тесты nova_tests/plan99_2_ctor/ — 2/0:
+- option_ctor_in_body.nv (5 тестов: int/str/char/User non-prim/None)
+- result_ctor_in_body.nv (4 теста: Ok/Err с разными T/E + reversed)
+
+Регрессия 9 крит. подпапок: 108/0. Backward-compat подтверждён —
+legacy paths (без typed contextual return) не изменились.
+
+Готово к Plan 99.3.
