@@ -168,35 +168,11 @@ static inline nova_str nova_str_slice_panic(nova_str s, nova_int from, nova_int 
     return (nova_str){ s.ptr + byte_from, byte_to - byte_from };
 }
 
-/* nova_str_slice — D26 codepoint-indexed slice (school B).
- * `from` и `to` — codepoint-индексы. Обходим UTF-8 чтобы найти
- * соответствующие byte-offset'ы. Возвращаем view (не копия). */
-static inline nova_str nova_str_slice(nova_str s, nova_int from, nova_int to) {
-    if (from < 0) from = 0;
-    if (to < from) to = from;
-    /* Walk UTF-8 to find byte offsets for codepoint indices. */
-    size_t byte_from = 0, byte_to = s.len;
-    nova_int cp = 0;
-    nova_bool found_from = (from == 0);
-    for (size_t i = 0; i < s.len; ) {
-        if (cp == from && !found_from) { byte_from = i; found_from = 1; }
-        if (cp == to) { byte_to = i; break; }
-        unsigned char b = (unsigned char)s.ptr[i];
-        if      (b < 0x80) i += 1;
-        else if ((b & 0xE0) == 0xC0) i += 2;
-        else if ((b & 0xF0) == 0xE0) i += 3;
-        else if ((b & 0xF8) == 0xF0) i += 4;
-        else                          i += 1;   /* invalid — skip */
-        cp++;
-    }
-    if (!found_from) {
-        /* from > total codepoints */
-        return (nova_str){ s.ptr + s.len, 0 };
-    }
-    if (cp < to) byte_to = s.len;   /* to >= total codepoints — clamp */
-    if (byte_from > byte_to) byte_from = byte_to;
-    return (nova_str){ s.ptr + byte_from, byte_to - byte_from };
-}
+/* Plan 96.1: `nova_str_slice` (clamp-семантика, D26) удалён.
+ * Используйте `nova_str_slice_panic` (выше) — bracket-form `s[a..b]`
+ * codepoint-indexed view с **panic** при OOB (consistent с `arr[a..b]`).
+ * Convergence с Rust/Go/Swift/Python (bracket-only). D9 «один очевидный
+ * путь». Closes [P-str-slice-clamp-vs-panic]. */
 
 /* nova_str_concat: concatenate two strings, allocates via nova_alloc */
 static inline nova_str nova_str_concat(nova_str a, nova_str b) {
