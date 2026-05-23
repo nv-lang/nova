@@ -1,0 +1,33 @@
+// Plan 97.1 Ф.4 (D142) — protocol-литерал с closure-capture mutable state.
+//
+// Проверяет: capture-rules согласованы с closure (D22/D6 managed heap).
+// Mutation `let mut counter` через метод литерала должна быть visible
+// при последующих вызовах.
+
+module nova_tests.plan97.pos_protocol_lit_closure_capture
+
+
+export type Incrementer protocol {
+    advance() -> int
+}
+
+
+test "mutable capture, mutation visible через несколько вызовов" {
+    let mut counter = 0
+    let it = protocol Incrementer {
+        advance() {
+            counter = counter + 1
+            counter
+        }
+    }
+    let a = it.advance()
+    let b = it.advance()
+    let c = it.advance()
+    assert(a == 1)
+    assert(b == 2)
+    assert(c == 3)
+    // External mutation also visible:
+    counter = 100
+    let d = it.advance()
+    assert(d == 101)
+}

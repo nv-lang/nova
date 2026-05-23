@@ -2177,11 +2177,6 @@ impl CEmitter {
 
         // Plan 48 Ф.3: placeholder for generic type instance definitions (filled after drain).
         self.line("/*__GENERIC_TYPE_DEFS__*/");
-        // Plan 97.1 Ф.3 (D142): mono'd tuple typedefs marker — placed AFTER
-        // GENERIC_TYPE_DEFS so that tuples containing `NovaBox_<Proto>`
-        // (Plan 72 P3-B + protocol-literals) see those typedefs defined.
-        // See preamble comment for rationale.
-        self.line("/*__MONO_TUPLE_TYPEDEFS__*/");
 
         // 2. Forward declarations for all functions (types are now known)
         for item in &module.items {
@@ -2903,13 +2898,18 @@ impl CEmitter {
         // в finalize per-E vtable + TLS slot + throw entry для each registered
         // E type (через `per_e_fail_types`).
         self.line("/*__PER_E_FAIL_DECLS__*/");
-        // Plan 59: mono'd tuple struct typedefs — splice marker.
-        // Plan 97.1 Ф.3 (D142): marker **moved** в emit_module после
-        // `__GENERIC_TYPE_DEFS__`, потому что tuple'ы из protocol-литералов
-        // (`(Reader, Writer)`) могут включать `NovaBox_<Proto>` typedefs,
-        // которые эмитятся в `generic_type_defs_buf`. Если оставить marker
-        // здесь (в preamble — раньше GENERIC), tuple typedef появлялся бы
-        // РАНЬШЕ NovaBox typedef → C-fail unknown type. См. emit_module body.
+        // Plan 59: mono'd tuple struct typedefs — splice marker; replaced
+        // в finalize. Layout: typedef struct { T1 f0; T2 f1; ... }
+        // _NovaTuple____<T1>__<T2>__...;. Real types (e.g. nova_str, не
+        // nova_int slot) — fit структуры >8 байт. Placed ПОСЛЕ user-type
+        // fwd decls — tuple elements могут быть `Nova_X*` (pointer), которым
+        // достаточно incomplete typedef.
+        //
+        // Plan 97.1 Ф.3 (D142): для tuple'ов содержащих `NovaBox_<Proto>`
+        // (protocol-литералы capability-split factory) — NovaBox typedef'ы
+        // эмитятся в `user_type_fwd_decls` (предшествующий marker),
+        // **до** этого tuple marker — порядок safe.
+        self.line("/*__MONO_TUPLE_TYPEDEFS__*/");
         // Plan 14 Ф.1: маркер для splice'а typedef'ов NovaOpt_<T> (для T
         // без NOVA_ARRAY_DECL в runtime). Заполняется в `register_novaopt_decl`
         // в registration order (innermost first); splice'ится в финальный
@@ -3466,19 +3466,31 @@ impl CEmitter {
             .map(|(k, v)| (k.clone(), v.clone()))
             .collect();
         let old_subst = std::mem::replace(&mut self.current_type_subst, subst);
+        // Plan 97.1 Ф.4 (D142): pre-compute param C types per method (для
+        // overload-mangling, analog emit_effect_type). Если protocol имеет
+        // overloaded methods (e.g. `get(key str)` + `get(key int)` —
+        // Plan 33.3), field-name'ы должны быть mangled с param-type-suffix,
+        // иначе C `duplicate member 'get'`.
+        let method_param_c: Vec<(String, Vec<String>)> = methods.iter().map(|m| {
+            let pts: Vec<String> = m.params.iter()
+                .filter_map(|p| self.type_ref_to_c(&p.ty).ok())
+                .collect();
+            (m.name.clone(), pts)
+        }).collect();
+        let all_method_pairs: Vec<(&str, &[String])> = method_param_c.iter()
+            .map(|(n, p)| (n.as_str(), p.as_slice()))
+            .collect();
         let mut fields = String::new();
-        for m in &methods {
+        for (m, (_, param_c_types)) in methods.iter().zip(method_param_c.iter()) {
             let ret_c = m.return_type.as_ref()
                 .and_then(|rt| self.type_ref_to_c(rt).ok())
                 .unwrap_or_else(|| "nova_unit".to_string());
-            let extra_params: Vec<String> = m.params.iter()
-                .filter_map(|p| self.type_ref_to_c(&p.ty).ok())
-                .collect();
             let params_str = std::iter::once("void*".to_string())
-                .chain(extra_params.iter().cloned())
+                .chain(param_c_types.iter().cloned())
                 .collect::<Vec<_>>()
                 .join(", ");
-            fields.push_str(&format!("    {} (*{})({}); \n", ret_c, m.name, params_str));
+            let mangled_name = Self::mangle_op(&m.name, param_c_types, &all_method_pairs);
+            fields.push_str(&format!("    {} (*{})({}); \n", ret_c, mangled_name, params_str));
         }
         self.current_type_subst = old_subst;
         // Vtable struct typedef (skip если runtime уже даёт его).
@@ -3487,8 +3499,20 @@ impl CEmitter {
         } else {
             args_mangled.clone()
         };
+        // Plan 97.1 Ф.4 (D142): для non-generic protocol (empty type_args)
+        // — typedef'ы эмитим в `user_type_fwd_decls` (preamble marker,
+        // splice'ится ОЧЕНЬ рано, перед mono'd tuple typedefs). Tuple'ы
+        // вида `(Reader, Writer)` из capability-split factory ссылаются
+        // на `NovaBox_<Proto>` — должны видеть typedef.
+        // Generic-protocol'ы (Plan 72 P3-B) — оставляем generic_type_defs_buf
+        // (исходный behavior, не ломаем).
+        let target_buf: &mut String = if type_args.is_empty() {
+            &mut self.user_type_fwd_decls
+        } else {
+            &mut self.generic_type_defs_buf
+        };
         if !rt_has_vtable {
-            self.generic_type_defs_buf.push_str(&format!(
+            target_buf.push_str(&format!(
                 "/* Plan 72 P3-B / Plan 97.1: vtable for {} instantiated with {} */\n\
                  typedef struct {vts} {{\n{fields}}} {vts};\n",
                 proto_name, args_desc, vts = vtable_struct, fields = fields
@@ -3496,7 +3520,7 @@ impl CEmitter {
         }
         // Fat-pointer box struct typedef: { void* data; const VT* vtable; }.
         // Эмитим всегда — runtime даёт только VT, не Box.
-        self.generic_type_defs_buf.push_str(&format!(
+        target_buf.push_str(&format!(
             "typedef struct {{ void* data; const {vts}* vtable; }} {box};\n",
             vts = vtable_struct, box = box_c_type
         ));
