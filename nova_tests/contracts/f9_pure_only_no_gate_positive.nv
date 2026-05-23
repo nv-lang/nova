@@ -11,7 +11,7 @@ type Db effect {
 
 test "no gate without axiom" {
     let mut store = 0
-    with Db = handler Db {
+    with Db = effect Db {
         SetBalance(id, amount) { store = amount }
         balance(id) => store
     } {

@@ -901,8 +901,12 @@ Plan 15 D53 strict-mode (Plan 15 Ф.5) ввёл различие protocol/effect
   как bound — compile error c hint'ом «`X` is an effect, not a
   protocol — declare as `type X protocol {…}`».
 - Анонимные protocol-литералы в позиции типа (`fn close(c protocol {
-  close() -> () })`, §628 этой секции) — пока **не реализованы** в
-  bootstrap'е; требует нового `TypeRef::Protocol(...)` variant'а.
+  close() -> () })`, §628 этой секции) — **реализуется в Plan 97 Ф.2**
+  через новый `TypeRef::Protocol(ProtocolSig)` variant. До закрытия
+  Plan 97 в bootstrap'е работает только именованная форма
+  (`fn close(c Closer)` с предварительно объявленным `type Closer
+  protocol { ... }`). См. также [D142](#d142) (symmetry effect ↔
+  protocol declaration/literal).
 
 ---
 
@@ -2988,7 +2992,7 @@ generic-bound):
 fn run[T Db](handler T) -> ()         // ОШИБКА: Db — effect, не bound-protocol
 ```
 
-Если нужно «принимает Handler[Db]» — пишется явно: `fn run(h Handler[Db])`.
+Если нужно «принимает Effect[Db]» — пишется явно: `fn run(h Effect[Db])`.
 
 #### Bound на типах (не функциях)
 
@@ -3906,3 +3910,141 @@ TS: у TS `any` молча гасит ошибки — в Nova такого пу
 - [D73](08-runtime.md#d73) / [D77](08-runtime.md#d77) — `into`/`try_into` синтез.
 - Plan 79 — родительский план (этот блок).
 - Plan 37 — newtype/alias `as`-cast строгость (смежная, отдельная).
+
+---
+
+## D142. protocol/effect declaration ↔ literal symmetry
+
+> **Plan 97.** Принято 2026-05-23. Объединяет `Q-keyword-symmetry`
+> (`open-questions.md`) с `Q-static-method-protocol` (D58).
+
+### Что
+
+Декларация и литерал и для **протоколов**, и для **эффектов** —
+**симметричны** по ключевым словам:
+
+```nova
+// Declaration:
+type Cron effect   { run() -> () }
+type Fan  protocol { run() -> () }
+
+// Literal (значение, реализующее контракт):
+let h = effect   Cron { run() => spawn_cron() }   // value of type Effect[Cron]
+let p = protocol Fan  { run() => spin_blades() }  // value реализующее Fan
+```
+
+Раньше литерал эффекта писался ключевым словом `handler`, а
+литерала протокола **не было**. Теперь:
+
+- литерал эффекта — `effect X { ... }` (тот же keyword, что в
+  declaration);
+- литерал протокола — `protocol X { ... }` (тот же keyword, что в
+  declaration);
+- встроенный тип `Handler[E, IRT]` → **`Effect[E, IRT]`**
+  (`Effect[E]` ≡ `Effect[E, Never]` через [D88](03-syntax.md#d88)
+  default).
+
+**Clean break** — старое ключевое слово `handler` (литерал) **удалено**
+без `deprecated`-алиаса; парсер при встрече выдаёт diagnostic
+«`handler` keyword removed; use `effect` (D142)».
+
+### Правило
+
+#### Декларация (без изменений)
+
+```nova
+type Db   effect   { query(q str) -> [str] }
+type Hash protocol { hash() -> u64 }
+```
+
+#### Литерал — symmetry
+
+```nova
+// effect-литерал (value)
+let h = effect Db {
+    query(q) => mock_rows()
+}
+with Db = h { ... }
+
+// protocol-литерал (value реализующий контракт) — instance-only
+let l = protocol Locker { lock() => state.lock() }
+```
+
+#### Анонимный protocol в type-position (D53 §628)
+
+```nova
+fn close_all(items []protocol { close() -> () }) {
+    for it in items { it.close() }
+}
+
+fn min[T protocol { @lt(other Self) -> bool }](xs []T) -> Option[T] => ...
+```
+
+Body анонимного protocol — **тот же синтаксис**, что у named: bare-имена =
+instance; leading-точка `.method` = static ([D143](03-syntax.md#d143)).
+
+#### protocol-литерал: **instance-only**
+
+Static-методы — это методы **типа** (`Type.method`, [D35](03-syntax.md#d35));
+у литерала нет «своего типа» (анонимная impl). Попытка реализовать
+static в protocol-литерале → diagnostic «static methods cannot be
+implemented in protocol-literal; they belong to a type (D35) — use a
+named type».
+
+#### Capture-rules
+
+Закрытие над окружающим scope'ом — **как обычное closure**
+([D22](03-syntax.md#d22) / [D6](05-memory.md#d6) managed heap). Никаких
+особых правил поверх closure не вводится.
+
+### Почему
+
+- **Симметрия снижает когнитивный налог.** Один keyword из declaration
+  работает и в literal — нет «двух жаргонов» (`handler` vs `protocol`
+  vs `effect`).
+- **Анонимный protocol-литерал** разблокирует pattern «capability-split
+  factory» — `Lock.new() -> (Locker, Unlocker)` без двух named-обёрток.
+  Кандидаты в stdlib Plan 18: `Process.spawn`, `HttpServer.bind`,
+  `Db.transaction`.
+- **Symmetry побеждает локальную точность.** `let h = effect X { ... }`
+  читается чуть точнее как «handler», но `protocol X { ... }`-литерал
+  всё равно нужен — приходится либо ввести ещё keyword, либо
+  унифицировать. Унификация чище.
+- **Clean break без deprecated** — текущая база `.nv` маленькая (~30
+  файлов); миграция атомарным sweep'ом дешевле двух-keyword'ового
+  периода + последующей чистки.
+
+### Что отвергнуто
+
+- **`Protocol[P]` first-class тип** — отвергнут как избыточный. Для
+  эффектов `Effect[E, IRT]` нужен, потому что **значение** эффекта
+  передаётся в `with X = h` (нужна типизация значения). У протоколов
+  «значение, реализующее контракт» — это **тип** реализации; обёртка
+  не нужна. Тривиальный `alias` решит, если когда-нибудь понадобится
+  (Q-protocol-type-wrapping).
+- **`deprecated handler` alias** — отвергнут (clean break, ~30 файлов
+  миграции).
+- **Static в protocol-литерале** — отвергнут (нет «своего типа»; см.
+  [D35](03-syntax.md#d35)).
+- **Изменение семантики handler'ов** — нет, только rename keyword'ов.
+
+### Связь
+
+- [D53](#d53) — protocol declaration; D53 §628 (анон-protocol в
+  type-position) **реализуется** этим D-блоком (Plan 97 Ф.2).
+- [D61](04-effects.md#d61) — handler-литерал; **rename** keyword
+  `handler` → `effect` (Plan 97 Ф.3).
+- [D87](04-effects.md#d87) — `Effect[E, IRT]`; **rename** в
+  `Effect[E, IRT]` (Plan 97 Ф.3).
+- [D88](03-syntax.md#d88) — default generics (`Effect[E]` ≡
+  `Effect[E, Never]`).
+- [D143](03-syntax.md#d143) — `.method`-префикс для static в
+  protocol-body (закрывает Q-static-method-protocol).
+- [D35](03-syntax.md#d35) — static vs instance методы.
+- [D22](03-syntax.md#d22) — closure capture-rules.
+- [Q-keyword-symmetry](../open-questions.md) — закрывается этим
+  D-блоком.
+- [Plan 97](../../docs/plans/97-protocol-effect-syntax-symmetry.md) —
+  имплементация.
+- Ориентиры: Java/Kotlin (anonymous interface), TS (object-literal
+  structurally), Koka/Eff (handler-literal).

@@ -77,7 +77,7 @@ test "select: data wins supervised(cancel:) race" {
     let mut error_seen = false
 
     let tok = CancelToken.new()
-    with Fail = handler Fail {
+    with Fail = effect Fail {
         fail(_msg) {
             error_seen = true
             interrupt ()

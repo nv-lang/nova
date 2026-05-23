@@ -1,0 +1,24 @@
+// Plan 97 Ф.3 (D142) — builtin тип `Handler[E, IRT]` переименован
+// в `Effect[E, IRT]`. Проверяет: `Effect[E]` ≡ `Effect[E, never]`
+// (через D88 default); функция, возвращающая `Effect[E]` —
+// корректно типизирована.
+
+module nova_tests.plan97.pos_effect_type_alias
+
+
+type Logger effect {
+    log(msg str) -> ()
+}
+
+
+fn console_logger() -> Effect[Logger] => effect Logger {
+    log(msg) => ()
+}
+
+
+test "Effect[E] alias return type" {
+    let h = console_logger()
+    with Logger = h {
+        Logger.log("ok")
+    }
+}

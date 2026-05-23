@@ -22,7 +22,7 @@ import std.time.duration
 
 test "close_after delegates to mock Time handler — sleep is invoked" {
     let mut sleep_calls = 0
-    let mock = handler Time {
+    let mock = effect Time {
         sleep(_d) => { sleep_calls = sleep_calls + 1; () }
         now()    => 0
         now_ms() => 0
@@ -42,7 +42,7 @@ test "close_after delegates to mock Time handler — sleep is invoked" {
 
 test "close_after through mock handler — multiple invocations counted" {
     let mut sleep_calls = 0
-    let mock = handler Time {
+    let mock = effect Time {
         sleep(_d) => { sleep_calls = sleep_calls + 1; () }
         now()    => 0
         now_ms() => 0

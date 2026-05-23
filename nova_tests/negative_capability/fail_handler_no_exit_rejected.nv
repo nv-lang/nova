@@ -13,7 +13,7 @@ module negative_capability.fail_handler_no_exit_rejected
 
 test "handler без exit-control должен fail compile" {
     let mut x = 0
-    with Fail = handler Fail {
+    with Fail = effect Fail {
         fail(_msg) {
             // ❌ Нет interrupt / throw / panic / exit — body completes
             //    normally. По D61 это compile error.

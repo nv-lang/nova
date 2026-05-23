@@ -14,7 +14,7 @@ type Db effect {
 
 test "handler без attribute → error" {
     let mut store = 0
-    with Db = handler Db {
+    with Db = effect Db {
         SetBalance(id, amount) { store = amount }
         balance(id) => store
     } {

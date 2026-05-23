@@ -92,7 +92,7 @@ type Counter effect {
 
 test "effect методы используют обычные типы (не Self) для return" {
     let mut s = 0
-    with Counter = handler Counter {
+    with Counter = effect Counter {
         next() {
             s += 1
             return s

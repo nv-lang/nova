@@ -9,7 +9,7 @@ type Multiplier effect {
 }
 
 test "liskov handler positive" {
-    with #verify Multiplier = handler Multiplier {
+    with #verify Multiplier = effect Multiplier {
         twice(x) => x * 2
     } {
         let r = Multiplier.twice(5)

@@ -30,7 +30,7 @@ test "Error.new в throw-контексте" {
     // Error.new(msg) можно бросить через throw — handler ловит
     // string-payload (потому что bootstrap throw — nova_str).
     let mut caught = ""
-    with Fail = handler Fail {
+    with Fail = effect Fail {
         fail(msg) {
             caught = msg
             interrupt ()

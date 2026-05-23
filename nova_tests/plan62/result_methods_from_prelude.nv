@@ -77,7 +77,7 @@ test "Result.unwrap returns Ok value" {
 
 test "Result.unwrap throws Fail on Err" {
     let mut caught = ""
-    with Fail = handler Fail {
+    with Fail = effect Fail {
         fail(msg) {
             caught = msg
             interrupt ()

@@ -1,0 +1,36 @@
+// Plan 97 Ф.4 — обновлённый протокол From[T] с .from работает.
+//
+// Регресс-позитив: protocols.nv From[T] теперь объявлен с .from(t T)
+// (leading-точка, static). Реализация через fn Type.from — D35.
+// Проверяем: реализация компилируется, вызов работает, Into[U]
+// auto-derive продолжает работать.
+
+module nova_tests.plan97.pos_from_with_dot
+
+
+type Fahrenheit {
+    value f64
+}
+
+type Celsius {
+    value f64
+}
+
+// From[Fahrenheit] для Celsius — реализация через D35 static.
+fn Celsius.from(f Fahrenheit) -> Celsius =>
+    { value: (f.value - 32.0) * 5.0 / 9.0 }
+
+
+test "From[Fahrenheit] для Celsius — прямой Celsius.from(f) работает" {
+    let f = Fahrenheit { value: 212.0 }
+    let c = Celsius.from(f)
+    // 212F = 100C
+    assert(c.value > 99.9 && c.value < 100.1)
+}
+
+test "Into[Celsius] auto-derive из From[Fahrenheit]" {
+    let f = Fahrenheit { value: 32.0 }
+    let c Celsius = f.into()
+    // 32F = 0C
+    assert(c.value > -0.01 && c.value < 0.01)
+}

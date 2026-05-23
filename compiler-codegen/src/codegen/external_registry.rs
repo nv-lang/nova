@@ -279,6 +279,11 @@ impl ExternalRegistry {
             TypeRef::Tuple(elems, _) => Ok(format!("_NovaTuple{}", elems.len())),
             TypeRef::Func { .. } => Ok("void*".into()),
             TypeRef::FixedArray(_, inner, _) => Self::type_ref_to_c(inner, recv),
+            // Plan 97 Ф.2 (D142): анонимный protocol-тип в external-fn
+            // сигнатуре не имеет concrete C-репрезентации — value-erased.
+            // External-FFI обычно не использует protocol-параметры, но
+            // arm нужен для exhaustiveness.
+            TypeRef::Protocol { .. } => Ok("void*".into()),
         }
     }
 

@@ -1,0 +1,21 @@
+// EXPECT_COMPILE_ERROR does not satisfy
+//
+// Plan 97 Ф.2 (D142) — concrete тип не удовлетворяет inline-protocol bound'у:
+// `WithoutClose` не имеет метода `close()`, поэтому подстановка
+// `T = WithoutClose` в `[T protocol { close() -> () }]` должна давать
+// compile error от check_satisfaction_against_methods.
+
+module nova_tests.plan97.neg_anon_protocol_missing_method
+
+
+type WithoutClose {
+    name str
+}
+
+fn need_closer[T protocol { close() -> () }](x T) -> () => x.close()
+
+
+test "missing-method" {
+    let w = WithoutClose { name: "n" }
+    need_closer(w)   // ❌ WithoutClose не имеет close()
+}

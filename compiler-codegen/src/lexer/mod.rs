@@ -600,7 +600,11 @@ impl<'a> Lexer<'a> {
             "fn" => TokenKind::KwFn,
             "type" => TokenKind::KwType,
             "effect" => TokenKind::KwEffect,
-            "handler" => TokenKind::KwHandler,
+            // Plan 97 Ф.3 (D142): keyword `handler` снят (clean break).
+            // Литерал handler'а пишется через `effect X { ... }`
+            // (тот же keyword, что и в declaration `type X effect { ... }`).
+            // Дисамбигуация — позиция (см. parser/parse_atom).
+            // `handler` теперь обычный идентификатор.
             "alias" => TokenKind::KwAlias,
             "let" => TokenKind::KwLet,
             "const" => TokenKind::KwConst,

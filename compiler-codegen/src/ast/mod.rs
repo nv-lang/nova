@@ -712,6 +712,14 @@ pub struct EffectMethod {
     /// Используются в Ф.5.2 для верификации Liskov-подобия handler'ов.
     /// Пустые = нет spec-контрактов (handler принимается без проверки).
     pub contracts: Vec<Contract>,
+    /// Plan 97 (D58 amend, `Q-static-method-protocol` resolved): метод
+    /// объявлен как **статический** в protocol-теле через leading-точку
+    /// (`.method(...)`); реализация ожидается через D35 `fn Type.method`.
+    /// Для bare-имён (`method(...)`) — `false` (instance, backwards-compat).
+    /// Для effect-методов всегда `false` (у эффектов нет static — это
+    /// handler-actions через runtime stack). Hard-enforcement static↔
+    /// instance mismatch — followup (см. plan97/Ф.0.4).
+    pub is_static: bool,
 }
 
 /// Plan 33.3 Ф.9 (D24): Operation vs PureView для effect-метода.
@@ -900,6 +908,17 @@ pub enum TypeRef {
         return_type: Option<Box<TypeRef>>,
         span: Span,
     },
+    /// Plan 97 Ф.2 (D53 §628, D142): анонимный protocol-тип в позиции
+    /// типа — `protocol { method-sig* }`. Используется в:
+    /// - параметре (`fn f(x protocol { close() -> () })`),
+    /// - возвращаемом типе,
+    /// - generic-bound (`fn min[T protocol { @lt(...) -> bool }]`).
+    /// Body — переиспользует парсер named-protocol-тела
+    /// (`parse_effect_methods`); `EffectMethod.is_static` поддерживается.
+    Protocol {
+        methods: Vec<EffectMethod>,
+        span: Span,
+    },
     /// `()` unit
     Unit(Span),
 }
@@ -912,6 +931,7 @@ impl TypeRef {
             | TypeRef::FixedArray(_, _, span)
             | TypeRef::Tuple(_, span)
             | TypeRef::Func { span, .. }
+            | TypeRef::Protocol { span, .. }
             | TypeRef::Unit(span) => *span,
         }
     }
@@ -1333,9 +1353,21 @@ pub enum ExprKind {
         bindings: Vec<WithBinding>,
         body: Block,
     },
-    /// Handler-литерал: `EffectName { op(p) => ... ; ... }`
+    /// Handler-литерал: `effect EffectName { op(p) => ... ; ... }`
+    /// (Plan 97 Ф.3: keyword `handler` → `effect`).
     HandlerLit {
         effect_name: Vec<String>,
+        methods: Vec<HandlerMethod>,
+    },
+    /// Plan 97 Ф.4 (D142): protocol-литерал в expression-position —
+    /// value, реализующий контракт named-protocol'а. Записывается как
+    /// `protocol ProtoName { method-impl* }`. Семантика — closure-bundle
+    /// (D22 capture-rules, managed heap D6) для one-off реализаций
+    /// (capability-split factory pattern). **Instance-only**: static
+    /// методы не могут быть в литерале (static — `Type.method` D35,
+    /// у литерала нет «своего типа»).
+    ProtocolLit {
+        proto_name: Vec<String>,
         methods: Vec<HandlerMethod>,
     },
     /// `interrupt v` — досрочное завершение всего with-блока (D61).

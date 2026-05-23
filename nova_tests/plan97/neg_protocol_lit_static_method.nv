@@ -1,0 +1,21 @@
+// EXPECT_COMPILE_ERROR static method
+//
+// Plan 97 Ф.4.3 (D142) — попытка реализовать static-метод протокола
+// в protocol-литерале → diagnostic «static methods cannot be
+// implemented in protocol-literal».
+
+module nova_tests.plan97.neg_protocol_lit_static_method
+
+
+type WithStatic protocol {
+    .make(x int) -> Self
+    run() -> ()
+}
+
+
+test "literal реализует static .make — запрещено" {
+    let l = protocol WithStatic {
+        make(x) => ()       // ❌ static — не имеет value-level реализации
+        run() => ()
+    }
+}
