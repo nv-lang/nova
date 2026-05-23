@@ -19531,3 +19531,62 @@ other regressions исчезли благодаря shadowing fix'у).
   (отдельная задача).
 
 Готов к merge plan-97-1-fu → main.
+
+═══════════════════════════════════════════════════════════════════════
+Plan 99 — re-audit + декомпозиция на 4 sub-plan'а
+2026-05-23 (main, doc-only)
+═══════════════════════════════════════════════════════════════════════
+
+После запроса пользователя «перепроверь с чистого листа и улучши план
+99 без упрощений как для прода и не хуже Go/Rust/TS» сделан clean-slate
+audit:
+
+КЛЮЧЕВЫЕ НАХОДКИ (re-audit):
+1. Closure invoke arbitrary fn(T)->U — УЖЕ работает через
+   NovaClosBase + explicit cast (emit_c.rs:14321-14336).
+2. fn_param_sigs registration в emit_monomorphized_method — работает.
+3. method_extra_subst inference (lines 16386-16494) — robust + mature,
+   но только для user-generic dispatch; нужно extract в helper.
+4. Contextual return-type infra (current_fn_return_ty) — есть;
+   используется Option.None path form (:17264); нужно extend на
+   bare Some/Ok/Err.
+5. register_novaopt_decl(U) — вызывается Option.Some(v) path form
+   (:17256); mechanism готов.
+6. Plan 98 inference — закрыт (recursion через Option[T]/Result[T,E]/
+   user-generics).
+
+REAL gaps (Plan 99 work):
+G1. Option DeclaredBody (:14910+) не запускает method_extra_subst.
+G2. Result DeclaredBody (:15148+) — same.
+G3. mono_name без method-level suffix → name collision risk.
+G4. register_novaopt_decl(U) не triggered для return-Option.
+G5. Bare Some(v) Ident-form всегда NovaOpt_nova_int.
+G6. Bare Ok(v)/Err(e) defaults nova_int/nova_str.
+G7. infer_expr_c_type хардкодит без method-level inference.
+G8. 6 inline emit-блоков (нужно atomic-delete с миграцией).
+
+ДЕКОМПОЗИЦИЯ на 4 sub-plan'а:
+- 99.1 (~1.5 d): method-level generic infra в DeclaredBody (G1-G4, G7).
+- 99.2 (~0.5 d): contextual variant ctors (G5, G6). Независим от 99.1.
+- 99.3 (~0.5 d): atomic per-method migration 6 методов (G8).
+  Зависит 99.1+99.2.
+- 99.4 (~0.5 d): comprehensive tests + spec + close.
+  Зависит 99.3.
+
+Total ~3 dev-day. Прежняя оценка 3.5-4 (Ф.0 re-scope) была pessimistic
+— clean-slate audit показал, что бо́льшая часть инфры уже есть.
+
+СРАВНЕНИЕ Go/Rust/TS:
+- Rust: full mono per (T,U) через FnOnce — gold standard. Nova: паритет.
+- Go: free function Map[T,U]. Nova: метод, паритет/лучше (instance call).
+- TS: type-erased runtime. Nova: full mono — лучше runtime perf.
+
+Создано 5 файлов:
+- docs/plans/99-...md (master, переписан с audit-секцией)
+- docs/plans/99.1-method-level-generic-in-declared-body.md
+- docs/plans/99.2-contextual-variant-constructors.md
+- docs/plans/99.3-migrate-6-closure-methods.md
+- docs/plans/99.4-tests-spec-docs-close.md
+- README.md обновлён с строкой Plan 99 + 4 sub-row'а.
+
+Готов к взятию в работу sub-plan'а 99.1.
