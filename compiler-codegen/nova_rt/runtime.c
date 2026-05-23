@@ -394,12 +394,27 @@ static void _worker_main(void* arg) {
         NovaFiberQueue*     outer_scope     = _nova_active_scope;
         NovaFailFrame*      outer_fail      = _nova_fail_top;
         NovaInterruptFrame* outer_interrupt = _nova_interrupt_top;
+        /* Plan 83.4.2 Ф.2 (2026-05-23): per-fiber handler-snapshot
+         * save/restore на worker (A3+B2 fix). Раньше worker НЕ менял
+         * TLS handler-state перед mco_resume — fiber видел handler'ы
+         * предыдущего fiber'а / worker'а. Аналог tokio TaskLocal
+         * restore on poll / Node AsyncLocalStorage context-switch. */
+        NovaEffectSnapshot outer_effects;
+        nova_effect_snapshot_save(&outer_effects);
         if (base && base->_nova_worker_slot >= 0 && base->_nova_fiber_scope) {
             /* Preamble already ran: restore home scope + saved TLS. */
             _nova_active_scope  = base->_nova_fiber_scope;
             _nova_active_slot   = base->_nova_worker_slot;
             _nova_fail_top      = base->_nova_saved_fail_top;
             _nova_interrupt_top = base->_nova_saved_interrupt_top;
+            /* Plan 83.4.2 Ф.2: restore fiber's handler-snapshot из home
+             * scope (parallel array). Codegen эмитит snapshot init на
+             * spawn (nova_alloc'нутый NovaEffectSnapshot). */
+            NovaFiberQueue* fscope = base->_nova_fiber_scope;
+            int fslot = base->_nova_worker_slot;
+            if (fslot < fscope->count && fscope->fiber_effect_snapshot[fslot]) {
+                nova_effect_snapshot_restore(fscope->fiber_effect_snapshot[fslot]);
+            }
         } else if (base) {
             /* Before preamble (first run): restore saved fail/interrupt but
              * leave _nova_active_scope as this worker's scope (preamble will
@@ -428,10 +443,23 @@ static void _worker_main(void* arg) {
         if (base) {
             base->_nova_saved_fail_top      = _nova_fail_top;
             base->_nova_saved_interrupt_top = _nova_interrupt_top;
+            /* Plan 83.4.2 Ф.2: save fiber's current handler-state (с учётом
+             * with-блоков push/pop сделанных fiber'ом во время выполнения)
+             * обратно в home scope's snapshot. */
+            if (base->_nova_fiber_scope && base->_nova_worker_slot >= 0) {
+                NovaFiberQueue* fscope = base->_nova_fiber_scope;
+                int fslot = base->_nova_worker_slot;
+                if (fslot < fscope->count && fscope->fiber_effect_snapshot[fslot]) {
+                    nova_effect_snapshot_save(fscope->fiber_effect_snapshot[fslot]);
+                }
+            }
         }
         _nova_active_scope  = outer_scope;
         _nova_fail_top      = outer_fail;
         _nova_interrupt_top = outer_interrupt;
+        /* Plan 83.4.2 Ф.2: restore outer worker's effect state (для следующего
+         * fiber'а или idle worker loop'а). */
+        nova_effect_snapshot_restore(&outer_effects);
 
         /* Plan 44.5 Layer 5 deferred-unlock: check parked state BEFORE releasing
          * the channel/sleep mutex. This captures parked[slot]=true while no
