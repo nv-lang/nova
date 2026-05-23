@@ -360,8 +360,8 @@ fn split_re_im(body str) -> Option[(str, str)] {
             // Не часть экспоненты `1e-5`?
             let prev = body.char_at(i - 1)
             if prev != 'e' && prev != 'E' {
-                let re_s = body.slice(0, i)
-                let im_s = body.slice(i, body.len())
+                let re_s = body[0..i]
+                let im_s = body[i..body.len()]
                 return Some((re_s, im_s))
             }
         }

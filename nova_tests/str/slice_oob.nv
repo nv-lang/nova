@@ -1,24 +1,24 @@
-// slice_oob.nv — Plan 75 Ф.6
-// @slice OOB: clamp behaviour.
+// slice_oob.nv — Plan 96.1
+// s[a..b] bracket-form для str — panic при OOB (D9 один очевидный путь,
+// согласовано с arr[a..b]). До Plan 96.1 был метод @slice с clamp;
+// удалён в пользу bracket'а (Plan 96.1 Ф.4).
 
 module str.slice_oob
 
 test "slice normal range" {
-    assert("hello".slice(0, 3) == "hel")
+    assert("hello"[0..3] == "hel")
 }
 
 test "slice full string" {
-    assert("abc".slice(0, 3) == "abc")
+    assert("abc"[0..3] == "abc")
 }
 
 test "slice empty range" {
-    assert("abc".slice(1, 1) == "")
+    assert("abc"[1..1] == "")
 }
 
-test "slice clamp: to > len returns up to end" {
-    assert("abc".slice(0, 100) == "abc")
-}
-
-test "slice clamp: from > len returns empty" {
-    assert("abc".slice(10, 20) == "")
+test "slice open-ended" {
+    assert("hello"[2..] == "llo")
+    assert("hello"[..3] == "hel")
+    assert("abc"[..] == "abc")
 }

@@ -21115,7 +21115,9 @@ _cp++; \
             "to_upper"    => Some("nova_str_to_upper"),
             "to_lower"    => Some("nova_str_to_lower"),
             "trim"        => Some("nova_str_trim"),
-            "slice"       => Some("nova_str_slice"),
+            // Plan 96.1: метод @slice удалён в пользу bracket-формы `s[a..b]`
+            // (D9 один очевидный путь). Если этот mapping вернёт Some для
+            // "slice" — type-checker не найдёт external fn, выдаст error.
             "concat"      => Some("nova_str_concat"),
             "eq"          => Some("nova_str_eq"),
             "lt"          => Some("nova_str_lt"),

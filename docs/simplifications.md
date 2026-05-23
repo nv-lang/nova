@@ -11191,27 +11191,30 @@ ns/switch — паритет с Boost.Context). Перенос замера в N
   совпадает в стdlib и user-коде); только защищает от ошибочных
   реализаций.
 
-### [P-plan96-lint-deferred] Plan 96 вЂ” lint W_VIEW_PUSH_DETACH РѕС‚Р»РѕР¶РµРЅ
-- **Р“РґРµ:** Plan 96 Р¤.5 (D-push-detach).
-- **Р§С‚Рѕ РѕС‚Р»РѕР¶РµРЅРѕ:** type-checker lint `W_VIEW_PUSH_DETACH` РґР»СЏ РїР°С‚С‚РµСЂРЅР°
-  `let mut view = arr[range]; view.push(...)` вЂ” warning В«mut view's
-  push detaches from parent backing; parent NOT modifiedВ».
-- **РџРѕС‡РµРјСѓ:** push-detach **behavior** СЂР°Р±РѕС‚Р°РµС‚ РєРѕСЂСЂРµРєС‚РЅРѕ (cap==len
-  model РіР°СЂР°РЅС‚РёСЂСѓРµС‚ realloc в†’ detach, parent РќР• Р·Р°С‚СЂРѕРЅСѓС‚). Lint вЂ”
-  С‚РѕР»СЊРєРѕ usability-improvement, РЅРµ Р±Р»РѕРєРёСЂСѓРµС‚ С„СѓРЅРєС†РёРѕРЅР°Р».
-- **РљР°Рє С‡РёРЅРёС‚СЊ:** `compiler-codegen/src/lints.rs` вЂ” walker С‚СЂРµРєР°РµС‚
-  РїРµСЂРµРјРµРЅРЅС‹Рµ СЃ RHS=Index{obj,index:Range}; РїСЂРё `.push(...)` в†’ warning.
-  ~50-80 LOC.
-- **РџСЂРёРѕСЂРёС‚РµС‚:** L вЂ” С„СѓРЅРєС†РёРѕРЅР°Р»СЊРЅРѕСЃС‚СЊ СЂР°Р±РѕС‚Р°РµС‚, lint вЂ” nice-to-have.
+### [P-plan96-lint-deferred] Plan 96 — lint W_VIEW_PUSH_DETACH ✅ RESOLVED Plan 96.1 Ф.1
+- **Где:** Plan 96 Ф.5 (D-push-detach).
+- **Что было отложено:** type-checker lint `W_VIEW_PUSH_DETACH` для
+  паттерна `let mut view = arr[range]; view.push(...)` — warning «mut
+  view's push detaches from parent backing; parent NOT modified».
+- **Как починено (Plan 96.1 Ф.1, 2026-05-23):** `lint_view_push_detach`
+  в `compiler-codegen/src/lints.rs` — per-function walker трекает
+  биндинги с RHS=Index{obj, index: Range}, при `X.push(...)` на tracked X
+  → emit W_VIEW_PUSH_DETACH warning с note `X bound here from slice`.
+  3 теста pos/neg в `nova_tests/plan96_1/`.
 
-### [P-str-slice-clamp-vs-panic] str.slice РјРµС‚РѕРґ вЂ” clamp vs panic mismatch
-- **Р“РґРµ:** `compiler-codegen/nova_rt/nova_rt.h` (`nova_str_slice`).
-- **Р§С‚Рѕ:** `nova_str_slice(s, from, to)` РјРµС‚РѕРґ вЂ” OOB **clamp**. РќРѕРІС‹Р№
-  `s[a..b]` bracket-form (Plan 96 D-str-slice) вЂ” **panic**. Inconsistency.
-- **РџРѕС‡РµРјСѓ:** backwards-compat вЂ” `s.slice(a, b)` РёСЃРїРѕР»СЊР·СѓРµС‚СЃСЏ РІ std
-  Рё user-РєРѕРґРµ; align в†’ panic Р±С‹Р» Р±С‹ breaking.
-- **РљР°Рє С‡РёРЅРёС‚СЊ:** Plan 94 (str-РјРµС‚РѕРґС‹ РЅР° Nova) вЂ” align РјРµС‚РѕРґ РЅР° panic.
-- **РџСЂРёРѕСЂРёС‚РµС‚:** L вЂ” С„СѓРЅРєС†РёРѕРЅР°Р»СЊРЅС‹Р№ paritРµС‚ (РѕР±Р° РІР°СЂРёР°РЅС‚Р° СЂР°Р±РѕС‚Р°СЋС‚).
+### [P-str-slice-clamp-vs-panic] str.@slice метод — clamp vs panic mismatch ✅ RESOLVED Plan 96.1 Ф.2-Ф.4
+- **Где:** `compiler-codegen/nova_rt/nova_rt.h` (`nova_str_slice`).
+- **Что было:** `nova_str_slice(s, from, to)` метод — OOB **clamp**.
+  Новый `s[a..b]` bracket-form (Plan 96 D-str-slice) — **panic**.
+  Inconsistency + D9 violation (два способа делать одно).
+- **Как починено (Plan 96.1 Ф.2-Ф.4, 2026-05-23):** аудит ~60 call-sites
+  (`std/`, `nova_tests/`, `examples/`) выявил 0 clamp-зависимостей —
+  миграция safe. Метод `@slice` удалён полностью: runtime `nova_str_slice`
+  (clamp) убран из `nova_rt.h`; `external fn str @slice` убран из
+  `std/runtime/string.nv`; mapping `str_method_to_rt` + RuntimeFn-запись
+  в `runtime_registry.rs` удалены. Все call-sites мигрированы на
+  bracket-form `s[a..b]`. Convergence с Rust/Go/Swift/Python (bracket-
+  only). D26 spec обновлён.
 
 ---
 

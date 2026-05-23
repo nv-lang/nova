@@ -102,8 +102,8 @@ export fn Bcrypt.verify(password str, hash_str str) -> bool {
 
     let combined = parts[3]
     if combined.len() < 53 { return false }    // 22 salt + 31 hash
-    let salt_b64 = combined.slice(0, 22)
-    let hash_b64 = combined.slice(22, combined.len())
+    let salt_b64 = combined[0..22]
+    let hash_b64 = combined[22..]
 
     let salt = match bcrypt_base64_decode(salt_b64) {
         Some(b) if b.len() == SALT_LEN => b

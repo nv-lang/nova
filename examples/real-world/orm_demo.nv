@@ -335,7 +335,7 @@ export fn Repo[T] @fetch_page(after Option[u64], size int)
 
     if items.len() > size {
         // size + 1 строка — есть следующая. Обрезаем хвост.
-        let trimmed = items.slice(0, size)
+        let trimmed = items[0..size]
         let last_id = @id_of(trimmed[size - 1])
         Page { items: trimmed, next_cursor: Some(last_id) }
     } else {

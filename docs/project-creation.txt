@@ -19205,3 +19205,36 @@ params), нужен для inference U через `infer_type_param_binding`
 Status: proposed, GATED on Plan 98, P3.
 После Plan 99 → 14/14 Option/Result-методов на Nova (остаётся
 только `unwrap` — Plan 61 Fail-handler).
+
+================================================================
+2026-05-23 вЂ” Plan 96.1 Р—РђРљР Р«Рў: lint + СѓРґР°Р»РµРЅРёРµ str.@slice
+================================================================
+
+Followup Plan 96 Р·Р°РєСЂС‹Р» РѕР±Р° deferred-РјР°СЂРєРµСЂР° РѕРґРЅРѕР№ РёС‚РµСЂР°С†РёРµР№ РЅР°
+РІРµС‚РєРµ plan-96.1 (5 РєРѕРјРјРёС‚РѕРІ, merge 3114843a13c).
+
+РљРѕРјРјРёС‚С‹:
+- a5917ab2c98 docs(plan96.1): СЃРѕР·РґР°РЅ РїР»Р°РЅ
+- 68bc9f70cad Р¤.1 W_VIEW_PUSH_DETACH lint + 3 С‚РµСЃС‚Р°
+- b3fc1c334bb Р¤.2+Р¤.3 audit ~60 call-sites + migration s.slice в†’ s[a..b]
+- 0a3a48c1aa0 Р¤.4 СѓРґР°Р»РёС‚СЊ runtime nova_str_slice + external fn @slice
+- 689717fff13 Р¤.5 spec D26 + simplifications RESOLVED
+
+Р�Р·РјРµРЅРµРЅРёСЏ:
+1. W_VIEW_PUSH_DETACH lint (compiler-codegen/src/lints.rs):
+   per-function walker С‚СЂРµРєР°РµС‚ Р±РёРЅРґРёРЅРіРё let X = arr[range], РїСЂРё
+   X.push(...) в†’ emit warning. 3 С‚РµСЃС‚Р° pos/neg РІ nova_tests/plan96_1/.
+2. РЈРґР°Р»С‘РЅ str.@slice РјРµС‚РѕРґ вЂ” bracket-only s[a..b]:
+   - 60 call-sites РјРёРіСЂРёСЂРѕРІР°РЅС‹ РІ 15 С„Р°Р№Р»Р°С… (std/, examples/, nova_tests/)
+   - РЈРґР°Р»РµРЅС‹: nova_str_slice (clamp) РёР· nova_rt.h; external fn @slice;
+     str_method_to_rt mapping; RuntimeFn-Р·Р°РїРёСЃСЊ
+   - Spec D26 (08-runtime.md): РѕРїРёСЃР°РЅРёРµ str-API РѕР±РЅРѕРІР»РµРЅРѕ вЂ” slice
+     С‡РµСЂРµР· bracket-form s[a..b], panic РїСЂРё OOB. D9 violation Р·Р°РєСЂС‹С‚.
+
+РЎРёРјРїР»РёС„РёРєР°С†РёРё:
+- [P-plan96-lint-deferred] вњ… RESOLVED Plan 96.1 Р¤.1
+- [P-str-slice-clamp-vs-panic] вњ… RESOLVED Plan 96.1 Р¤.2-Р¤.4
+
+Convergence СЃ Rust/Go/Swift/Python (bracket-only for str slicing).
+
+Р РµРіСЂРµСЃСЃ С„РёРЅР°Р»: 1114 PASS / 0 FAIL / 56 SKIP.
