@@ -11422,7 +11422,10 @@ Plan 83.2 §4 «Compiled-программа без единого `runtime.*` в
 > остаются только `Option.unwrap` и `Result.unwrap` (Plan 61
 > lineage — typed `Fail[E]` effect). Паритет Rust `Option::<T>::
 > map<U, F: FnOnce(T)->U>`. Полный nova test: 1141 PASS / 0 FAIL /
-> 56 SKIP. Block-ниже оставлен исторически как точка discovery.
+> 56 SKIP. Merge: c48b85c4859 (plan-99-impl → main, 2026-05-23, 12
+> коммитов: 99.1 foundation, 99.2 ctors, 99.3 6 per-method +
+> ClosureFull fixup, 99.4 docs, 2 hardening fix'а, docs final).
+> Block-ниже оставлен исторически как точка discovery.
 
 ## [M-option-result-closure-methods-deferred-OLD] (history) Plan 99 Ф.0 — re-scope discovery (2026-05-23)
 
