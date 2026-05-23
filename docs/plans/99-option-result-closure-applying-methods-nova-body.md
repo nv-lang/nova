@@ -1,248 +1,232 @@
-# Plan 99 — Closure-applying Option/Result методы на Nova-body
+# Plan 99 — Closure-applying Option/Result методы на Nova-body (master)
 
-> **Статус:** 🔵 Ф.0 ВЫПОЛНЕН — **re-scope 2026-05-23** (worktree
-> `nova-p99`). Probe `Option[T] @my_map[U](f fn(T)->U) -> Option[U]`
-> (`nova_tests/plan99_probe/my_map_probe.nv`) подтвердил:
->
-> - Block 1 (closure-codegen) — **уже работает** через существующую
->   `NovaClosBase` + `fn_param_sigs` + cast machinery
->   (`emit_c.rs:13983+`). `emit_monomorphized_method` корректно
->   регистрирует fn-typed params в `fn_param_sigs` с mono'd
->   сигнатурой. Никакой новой closure-codegen инфры не требуется.
-> - **Block 2** (method-level generic `[U]` в DeclaredBody-dispatch) —
->   текущий Option DeclaredBody (`emit_c.rs:14910+`) **не запускает**
->   `method_extra_subst` inference; логика закодирована только для
->   user-generic dispatch (`emit_c.rs:~16058`). Probe-output показал
->   unresolved `Nova_U` placeholder в типах match-веток и cast-
->   сигнатуре закрытой closure. mono_name = `_nova_int` (без
->   U-суффикса) → name collision risk.
-> - **Block 3** (контекстный variant-constructor): зависит от Block 2.
->
-> **Re-scope:** для production-grade Plan 99 нужно:
-> 1. Extract `method_extra_subst` логику в helper и intergrate в
->    Option/Result DeclaredBody dispatch (2 места).
-> 2. Расширить `mono_name` с `Nova_Option_method_<m>_<T>` на
->    `Nova_Option_method_<m>_<T>_<U>_<F>...` (включая method-level
->    generics).
-> 3. `infer_expr_c_type` для Option/Result-методов (`emit_c.rs:23215+`,
->    `:23227+`) — хардкодит без method-level inference; нужно
->    учитывать U/F/E для `map`/`map_err`/`ok_or`.
-> 4. `register_novaopt_decl(sani(U), U)` lazy-emit для return-Option-
->    типа при mono-эмиссии метода.
-> 5. Удалить **6 inline emit-блоков** (`Option.unwrap_or_else`/`map`/
->    `ok_or`, `Result.unwrap_or_else`/`map`/`map_err`) в emit_c.rs
->    **одним коммитом** с переносом тел в core.nv (C-redefinition
->    collision на mono'd C-имени).
->
-> Реалистичная оценка — **3.5–4 dev-day** с тестами и регрессией
-> (proposal'овые 2.5–3 — недооценка). Ф.1–Ф.6 **не выполнены**;
-> требуется отдельная плановая сессия. Plan 99 остаётся **GATED**:
-> Plan 98 ✅ (закрыт 2026-05-23) разблокировал inference, но Block 2/3
-> implementation = отдельная инициатива. Маркер
-> `[M-option-result-closure-methods-deferred]` в `docs/simplifications.md`.
-> **Приоритет:** P3 (de-magic / single-source, как Plan 95 / 95.bis).
-> **Оценка:** ~2.5–3 dev-day (3 разных инфра-блокера; больше Plan 95.bis).
+> **Статус:** 📋 RE-AUDIT 2026-05-23 — план переписан после clean-slate
+> аудита; декомпозирован на 4 sub-plan'а (99.1–99.4) для атомарной
+> verifiability. Каждый sub-plan = verifiable shipment unit с
+> регрессионной чисткой.
+> **Приоритет:** P3 (de-magic / single-source — паритет Plan 95/95.bis).
+> **Оценка (re-audit):** ~3 dev-day (1.5+0.5+0.5+0.5). Прежняя оценка
+> 2.5–3 была близка, но без декомпозиции — non-atomic shipping risk.
 > **Зависимости (HARD):**
-> - [Plan 95](95-builtin-sum-method-mono.md) ✅ (канал «method-only mono» для builtin sum-типов);
-> - [Plan 95.bis](95.bis-option-result-pure-methods-nova-body.md) ✅
->   (расширение скоупа на match-only методы);
-> - **[Plan 98](98-free-fn-generic-type-param-inference.md) — БЛОКЕР**
->   (infer_type_param_binding должен выводить `T` из `Option[T]`/
->   `Result[T,E]`-параметров, иначе return-type `Option[U]`/`Result[U,E]`
->   не резолвится).
-> **Источник:** обсуждение 2026-05-23 после Plan 95.bis — «остальные 5
-> closure-applying методов».
+> - [Plan 95](95-builtin-sum-method-mono.md) ✅ — канал `DeclaredBody`-
+>   mono для builtin sum-типов.
+> - [Plan 95.bis](95.bis-option-result-pure-methods-nova-body.md) ✅ —
+>   расширение скоупа на match-only методы.
+> - [Plan 98](98-free-fn-generic-type-param-inference.md) ✅ —
+>   `infer_type_param_binding` рекурсирует сквозь `Option[T]`/
+>   `Result[T,E]`/user-generics (нужно для inference U из closure-arg).
+> **Источник:** Plan 95.bis closing + clean-slate re-audit 2026-05-23.
 
-## Зачем
+## Цель
 
-Plan 95 + Plan 95.bis перенесли **9 из 14** Option/Result-методов
-на Nova-body. Остаётся **5 closure-applying методов**, которые
-выразимы на Nova одной строкой, но требуют связки трёх инфра-блокеров:
+После Plan 99: **14/14 Option/Result-методов на Nova-body**
+в `std/prelude/core.nv`. Остаётся только `unwrap` (Fail-handler,
+Plan 61 lineage).
 
 | Метод | Тело на Nova |
 |---|---|
-| `Option.unwrap_or_else(f fn()->T)` | `=> match @ { Some(v) => v, None => f() }` |
+| `Option.unwrap_or_else(f fn()->T) -> T` | `=> match @ { Some(v) => v, None => f() }` |
 | `Option.map[U](f fn(T)->U) -> Option[U]` | `=> match @ { Some(v) => Some(f(v)), None => None }` |
 | `Option.ok_or[E](err E) -> Result[T, E]` | `=> match @ { Some(v) => Ok(v), None => Err(err) }` |
 | `Result.unwrap_or_else(f fn(E)->T) -> T` | `=> match @ { Ok(v) => v, Err(e) => f(e) }` |
 | `Result.map[U](f fn(T)->U) -> Result[U, E]` | `=> match @ { Ok(v) => Ok(f(v)), Err(e) => Err(e) }` |
 | `Result.map_err[F](f fn(E)->F) -> Result[T, F]` | `=> match @ { Ok(v) => Ok(v), Err(e) => Err(f(e)) }` |
 
-После Plan 99 на Nova-body будет **14 из 14** Option/Result-методов
-(остаётся только `unwrap` — Fail-handler, см. Plan 61).
+## Clean-slate аудит (2026-05-23) — что есть, чего нет
 
-## Не входит в Plan 99
+### ✅ Что УЖЕ работает (re-audit находки)
 
-- **`Option.unwrap`** / **`Result.unwrap`** — требуют `fail()` в обычном
-  Nova (effect handler-dispatch, Plan 61 lineage). Тело
-  `=> match @ { Some(v) => v, None => fail("called unwrap on None") }`
-  возможно только когда `fail()` лоуэрит на handler-dispatch без
-  компилятор-магии. Отдельный план (Plan 100/Plan 61.bis).
+| Инфра | Где | Готовность |
+|---|---|---|
+| Closure invoke для arbitrary `fn(T)->U` | `emit_c.rs:14321-14336` — NovaClosBase + explicit cast `(ret(*)(void*, params))((NovaClosBase*)f)->fn)(env, args)` | ✅ Production. Используется для всех non-shortcut signature combos. |
+| `fn_param_sigs` registration в mono методе | `emit_monomorphized_method` инсертит fn-typed params с mono'd sig | ✅ Работает (Plan 48). |
+| `method_extra_subst` inference (T,U) из closure-args | `emit_c.rs:16386-16494` — user-generic dispatch | ✅ Robust + mature, но **только для user-generic** dispatch. |
+| Contextual return-type | `current_fn_return_ty` set в `emit_monomorphized_method`. Использует `Option.None` (path-form, `:17264`) | ✅ Mechanism exists, **extend нужно** на bare `Some`/`Ok`/`Err`. |
+| `register_novaopt_decl` для arbitrary T | Plan 14 Ф.1 + Plan 95.bis. Вызывается из `Option.Some(v)` path form (`:17256`). | ✅ Готово. |
+| Plan 98 inference | `Option[T]`/`Result[T,E]`/user-generics в позиции param | ✅ Закрыт. |
 
-## Три блокера (decision points)
+### ❌ Что НЕ работает (real gaps)
 
-### Блокер 1 — Closure-applying codegen
+| Гэп | Где | Что делать |
+|---|---|---|
+| **G1.** Option DeclaredBody dispatch не запускает `method_extra_subst` | `emit_c.rs:14910-14964` | Integrate (Plan 99.1). |
+| **G2.** Result DeclaredBody dispatch — same | `emit_c.rs:15148+` | Integrate (Plan 99.1). |
+| **G3.** mono_name не включает method-level type-args | `format!("Nova_Option_method_{}_{}", m, T)` (без U) | Расширить: `_{T}_{U}_{F}...` (Plan 99.1). |
+| **G4.** `register_novaopt_decl(U)` / `register_novares_decl` не вызывается для return-types с method-level generics | DeclaredBody dispatch | Trigger в dispatch (Plan 99.1). |
+| **G5.** Bare `Some(v)` Ident-form всегда возвращает `NovaOpt_nova_int` | `emit_c.rs:14060` `find_variant_compat` → `nova_make_Option_Some` (hardcoded `nova_int → NovaOpt_nova_int` в `array.h:276`) | Use `current_fn_return_ty` если `NovaOpt_<X>` (Plan 99.2). |
+| **G6.** Bare `Ok(v)`/`Err(e)` defaults к `nova_int/nova_str` | `emit_c.rs:14362-14378` | Use `is_result_like(current_fn_return_ty)` (Plan 99.2). |
+| **G7.** `infer_expr_c_type` для Option/Result methods хардкодит без method-level | `emit_c.rs:23215+`/`:23227+` — `"map" \| "or" => NovaOpt_<elem_ty>` | Учитывать U через method-level inference (Plan 99.1). |
+| **G8.** 6 inline emit-блоков в `emit_c.rs` (`Option.map`/`unwrap_or_else`/`ok_or`, `Result.map`/`map_err`/`unwrap_or_else`) | `:15008`, `:15249`, etc. | Удалить atomic с миграцией (Plan 99.3). |
 
-В теле метода: `f(v)` где `f: fn(T) -> U` — параметр функционального
-типа. Currently `emit_c.rs:14080+` (`Option.map` inline) использует
-**hardcoded** cast:
+## Сравнение с Go / Rust / TS
 
-```c
-((U(*)(void*, T))(((NovaClos_ii*)(f))->fn))(((NovaClos_ii*)(f))->env, v)
-```
+| Язык | Closure-applying методы |
+|---|---|
+| **Rust** | `Option::<T>::map<U, F: FnOnce(T) -> U>(self, f: F) -> Option<U>` — full mono per (T, U). Zero-cost (FnOnce — unique type). `Some(x)` infers из return-type. **Gold standard.** |
+| **Go** | `func Map[T, U any](o Option[T], f func(T) U) Option[U]` — free function (нет методов на generic-типах). Mono'd per (T,U). Closure — heap-allocated `{fn, env}` (как NovaClosBase). Inference unifies полностью. |
+| **TS** | `function map<T, U>(o: T \| undefined, f: (x: T) => U): U \| undefined` — type-erased at runtime. Closure = JS function. |
+| **Nova (сейчас)** | Bootstrap-mono: `Option.map` hardcode T==U primitive (NovaClos_ii). Для T≠U или non-primitive — broken. **Хуже Rust/Go**. |
+| **Nova (цель Plan 99)** | Full mono per (T, U) — паритет Rust. Closure через NovaClosBase + explicit cast (одна indirection vs Rust's zero-cost — bootstrap-acceptable; Plan 11 Ф.x потом оптимизирует). Inference унифицирует closure-arg → U. |
 
-`NovaClos_ii` — фиксированный layout `{void* fn; void* env}` для одинаковых-
-T-параметров (bootstrap-mono). Для произвольной сигнатуры `fn(T)->U` —
-нет надёжной маршрутизации; работает только когда `T==U` примитивный.
+## Декомпозиция — 4 sub-plan'а
 
-**Что нужно:** sound closure-invoke механизм:
-- **(A)** Универсальный shape `NovaClos_<sig>` для каждой mono'd
-  сигнатуры (хешированный mangling). Codegen для `f(v)` подбирает
-  shape по статическому типу `f`.
-- **(B)** Vtable-style: `f` всегда `void*` указатель на heap-allocated
-  `{fn_ptr, env_ptr, sig_descriptor}`; invoke через runtime helper
-  `nova_closure_call_1(f, v)` с тип-чеком sig_descriptor.
+### [Plan 99.1](99.1-method-level-generic-in-declared-body.md) — Method-level generic в DeclaredBody (foundation)
 
-Plan 99 Ф.0 решает A vs B. Recommended **A** (zero-cost, аналог Rust
-`FnOnce`/`Fn`-моно). B — fallback если A непропорционально сложно.
+**Цель:** инфраструктура. НЕ трогает Nova code, НЕ мигрирует методы.
+После 99.1: probe `fn Option[T] @my_map[U](f fn(T)->U) -> Option[U]
+=> match @ { Some(v) => Some(f(v)), None => None }` компилируется и
+работает.
 
-### Блокер 2 — Method-level generic в DeclaredBody dispatch
+- **Ф.1** Extract `method_extra_subst` (`:16386-16494`) в reusable
+  helper `fn resolve_method_level_subst(&mut self, fn_decl, args,
+  receiver_subst) -> Result<Vec<(String,String)>, String>`. Refactor
+  user-generic dispatch использовать helper. Regression на
+  `nova_tests/plan48_mpm/`, `generics/`.
+- **Ф.2** Integrate в Option DeclaredBody (`:14910+`):
+  - Call helper для method-level inference (если `fn_decl.generics`
+    непуст).
+  - Extend `type_subst` с method extras.
+  - mono_name: `Nova_Option_method_<m>_<T_sani>` →
+    `Nova_Option_method_<m>_<T_sani>[_<U_sani>...]`
+    через `Self::compute_mono_name`.
+  - `register_novaopt_decl(sani(U), U)` для U-typed return-Option.
+  - Fix `infer_expr_c_type` для Option methods (`:23215+`) — учитывать
+    method-level inferred U через preview-inference.
+- **Ф.3** Integrate в Result DeclaredBody (`:15148+`) — параллельно
+  Ф.2, с `register_novares_decl(U, err_c)`.
+- **Ф.4** Probe `my_map[U]` + `my_result_map[U]` — PASS.
+- **Ф.5** Регрессия + commit.
 
-`Option.map[U](f fn(T)->U) -> Option[U]` — метод имеет **собственный**
-type-параметр `[U]` (не от receiver'а). Текущий
-`DeclaredBody`-dispatch (Plan 95 Ф.3 / Plan 95.bis) формирует
-`type_subst` только для **receiver type-params** (T, или T+E для Result).
+**Acceptance:** probe-методы (с другими именами, не сталкивающиеся с
+inline emit) на Option/Result с method-level generic компилируются и
+выполняются корректно для T≠U.
 
-**Что нужно:** расширить dispatch чтобы:
-1. Обнаружить method-level generics в `fn_decl.generics`.
-2. Вывести `U` из call-site: `opt.map(f)` где `f : fn(int)->str` →
-   `U = str` (через `infer_type_param_binding` на `fn`-typed param).
-   → Зависит от **Plan 98** (currently `infer_type_param_binding`
-   работает только для голого T и []T).
-3. Добавить `(U, str)` в `type_subst` рядом с `(T, int)`.
-4. mono-name: `Nova_Option_method_map_<T>_<U>` (новая схема —
-   нужно сверить с существующим naming для user-generic-methods,
-   Plan 48 `emit_monomorphized_method` уже поддерживает method-level
-   generics в mono-name).
+### [Plan 99.2](99.2-contextual-variant-constructors.md) — Contextual variant constructors
 
-### Блокер 3 — Контекстный return-type для variant constructors
+**Цель:** `Some(v)`/`None`/`Ok(v)`/`Err(e)` (bare Ident form) в
+expression-position учитывают `current_fn_return_ty` для выбора
+mono-репрезентации. Независимый sub-plan.
 
-В теле `=> Some(f(v))` Some-variant конструируется. Currently
-`Some(x)` inference смотрит на тип `x`. Для `Option.map[U]` →
-`Some(f(v))` — `f(v) : U`, конструктор должен быть для `Option[U]`,
-не `Option[T]` (receiver).
+- **Ф.1** `Some(v)` bare (`:14060` chain): когда
+  `current_fn_return_ty.starts_with("NovaOpt_")`, эмитить typed
+  compound literal `(NovaOpt_<X>){.tag=Some, .value=v}` вместо
+  `nova_make_Option_Some(v)`. Параллель `Option.Some(v)` path form
+  на `:17251`.
+- **Ф.2** `None` bare — extract type из `current_fn_return_ty`
+  (analog path form на `:17264`).
+- **Ф.3** `Ok(v)`/`Err(e)` bare (`:14362-14378`): когда
+  `is_result_like(current_fn_return_ty)`, использовать
+  `novares_ok_err(current_fn_return_ty)` для (T,E) типов вместо
+  defaults `nova_int/nova_str`.
+- **Ф.4** Тесты — small Nova fixtures с explicit `-> Option[U]` /
+  `-> Result[U,E]` return annotation, bare `Some/None/Ok/Err` в body.
+  Verify mono'd ctor.
 
-**Что нужно:** контекстная инференция от return-type аннотации
-`fn Option[T] @map[U](...) -> Option[U]`. Plan 95 mono'd method body
-имеет return-type `NovaOpt_<U_resolved>`. Конструктор `Some(...)` в
-body должен использовать этот же тип.
+**Acceptance:** non-receiver-typed variant constructor в body — паритет
+с path form. `Some(f(v))` в `map[U] -> Option[U]` body эмитит mono'd
+`NovaOpt_<U>` constructor.
 
-Похожее уже есть для `Result.ok()` (Plan 95.bis Ф.5) — там
-`Some(v) -> Option[T]` где T — receiver. Для `map` — `Some(f(v)) ->
-Option[U]` где U — method-level. Расширение существующего механизма.
+### [Plan 99.3](99.3-migrate-6-closure-methods.md) — Migrate 6 closure-applying methods (consumer)
 
-## Декомпозиция
+**Зависит:** 99.1 ✅ + 99.2 ✅.
 
-### Ф.0 — Audit + decision A/B closure-codegen + Plan 98 gate (~0.4 д) — GATE
+**Atomic shipping (C-redefinition risk):** каждый метод =
+**один коммит** с парой (core.nv migration + delete inline emit block
+в emit_c.rs). Метод-за-методом с регрессией.
 
-- **Ф.0.1** Проверить, что Plan 98 ✅ ЗАКРЫТ (turbofish gap).
-  Если нет — Plan 99 GATED.
-- **Ф.0.2** Decision: closure-codegen подход A (per-sig mono shape)
-  vs B (runtime vtable). Probe минимальным патчем — `fn Option[T]
-  @my_map[U](f fn(T)->U) -> Option[U] => match @ { Some(v) => Some(f(v)),
-  None => None }` на `Option[int].my_map(|x| str.from(x))`.
-- **Ф.0.3** Метод-level generic в DeclaredBody dispatch — проверить,
-  что Plan 48 `method_extra_subst` логика переиспользуется для
-  builtin sum-типов; если нет — оценить delta.
-- **Ф.0.4** Контекстный variant-constructor для `Some(f(v))` /
-  `Ok(f(v))` / `Err(f(e))` — проверить, что Plan 95.bis механизм
-  расширяется на method-level U/F/E.
+- **Ф.1** `Option.map` — core.nv тело + удалить `:15008-15034`. Regression
+  plan62/89/95/95.bis/json/std.
+- **Ф.2** `Option.unwrap_or_else` — analog.
+- **Ф.3** `Option.ok_or` — analog (+ test Option→Result projection).
+- **Ф.4** `Result.unwrap_or_else` — analog.
+- **Ф.5** `Result.map` — analog.
+- **Ф.6** `Result.map_err` — analog.
 
-### Ф.1 — Closure-codegen инфра (~1.0 д)
+**GATE на каждой Ф:** если regression non-trivial — STOP, document,
+don't ship broken.
 
-- Реализация по подходу A или B из Ф.0.2.
-- Sound `f(v)` для произвольной mono'd сигнатуры `fn(T)->U`.
-- Тесты: closure-call в обычной user-generic-функции (выделенные
-  фикстуры).
+### [Plan 99.4](99.4-tests-spec-docs.md) — Comprehensive tests + spec + docs + close
 
-### Ф.2 — Method-level generic в DeclaredBody (~0.5 д)
-
-- Расширение dispatch в перехватах `NovaOpt_`/`is_result_like`:
-  обнаружение `fn_decl.generics`, инференция через
-  `infer_type_param_binding` (Plan 98), расширение `type_subst`.
-- Mono-name схема: `Nova_<Sum>_method_<m>_<recv_T>_<method_U>` —
-  сверить с naming для user-generic-methods.
-
-### Ф.3 — Контекстный return-constructor (~0.3 д)
-
-- Variant-construct в body учитывает return-type аннотацию метода.
-- `register_novaopt_decl(U)` / `register_novares_decl(U, E)` для
-  return-типов с method-level type-params.
-
-### Ф.4 — Перенос 6 методов в core.nv (~0.2 д)
-
-- `Option.unwrap_or_else`/`map`/`ok_or` → Nova-body.
-- `Result.unwrap_or_else`/`map`/`map_err` → Nova-body.
-- Удалены: inline emit в `emit_c.rs` (`unwrap_or_else`/`map`/etc
-  блоки), `method_routing` entries (если есть — большинство уже
-  `<inline>`-sentinel, тоже убрать).
-
-### Ф.5 — Тесты позитив + негатив (~0.3 д)
-
-- `nova_tests/plan99/`:
-  - `option_map_migrated.nv` — `Option[int].map(|x| x*2)`,
-    `Option[int].map(|x| str.from(x))` (T≠U), на str/char/record.
-  - `option_ok_or_migrated.nv` — `Option → Result` projection с
-    разными E типами.
-  - `option_unwrap_or_else_migrated.nv` — lazy default.
-  - `result_map_migrated.nv` — `Result[T,E].map(|x| ...)`.
-  - `result_map_err_migrated.nv` — Err-side transform.
-  - `result_unwrap_or_else_migrated.nv`.
-  - Negative: closure-arg с неверной сигнатурой (`|x| x` для
-    `f fn(int)->str`) → loud compile error (type-check, не CC).
-
-### Ф.6 — Регрессия + spec/docs (~0.3 д)
-
+- Comprehensive positive + negative tests в `nova_tests/plan99/`:
+  - `option_map_typed.nv` — int→str, str→char, User→int.
+  - `option_unwrap_or_else_lazy.nv` — lazy default invocation.
+  - `option_ok_or_to_result.nv` — Option→Result(T,E) с разными E.
+  - `result_map_ok_transform.nv`.
+  - `result_map_err_transform.nv`.
+  - `result_unwrap_or_else_recovery.nv`.
+  - **Negative:** wrong closure sig (type-check loud-fail), wrong U
+    arg type, missing method-level type (turbofish needed message).
 - Полный `nova test` — 0 новых FAIL.
-- spec `08-runtime.md` — расширить Plan 95.bis блок до Plan 99 (14/14
-  методов).
-- Plan 78 amend — расширить (теперь весь builtin Option/Result в
-  Nova, кроме `unwrap`).
-- README + project-creation + discussion-log.
+- spec `08-runtime.md` — расширить Plan 95.bis блок до Plan 99 (14/14).
+- Plan 78 amend — финальный (после Plan 99 реестр C-routing только
+  для `unwrap`).
+- Plan 61 lineage / `unwrap` — отдельный план (out-of-scope).
+- README, project-creation, discussion-log.
+- Маркер `[M-option-result-closure-methods-deferred]` в simplifications
+  → ✅ ЗАКРЫТО.
 
-## Acceptance criteria
+## Acceptance criteria (master)
 
-- [ ] **Ф.0**: Plan 98 ✅; closure-codegen подход утверждён (A рек.);
-      probe `my_map` компилируется и работает.
-- [ ] Closure-applying codegen sound для произвольной `fn(T)->U`.
-- [ ] Method-level generic в DeclaredBody — `Option.map[U]` mono'd
-      per-(T, U).
-- [ ] Контекстный variant-constructor — `Some(f(v))` в `map[U]` body
-      → `Option[U]`, не `Option[T]`.
-- [ ] 6 методов — Nova-body в `core.nv`; inline emits в codegen
+- [ ] **Plan 99.1** ✅ — method-level generic в DeclaredBody, probe
+      `my_map[U]` работает.
+- [ ] **Plan 99.2** ✅ — bare `Some`/`Ok`/`Err` используют
+      `current_fn_return_ty`.
+- [ ] **Plan 99.3** ✅ — 6 методов мигрированы atomic; inline emits
       удалены.
-- [ ] Тесты позитив + негатив; полный `nova test` — 0 новых FAIL.
-- [ ] **14 из 14** Option/Result-методов на Nova (остаётся только
-      `unwrap` — Plan 61 lineage).
+- [ ] **Plan 99.4** ✅ — full nova test 0 regressions; spec/docs/logs.
+- [ ] **14 из 14** Option/Result-методов на Nova-body (только `unwrap`
+      C-routed — Plan 61).
+- [ ] Никакой деградации vs Rust: full mono per (T,U); closure через
+      NovaClosBase + cast = одна indirection (Plan 11 follow-up
+      optimize).
 
 ## Non-scope
 
-- **`Option.unwrap`** / **`Result.unwrap`** — Plan 61 (Fail-handler).
-- **Универсальный closure-runtime** (D75 full) — Plan 99 берёт
-  минимально достаточный механизм для Option/Result, не закрывает
-  D75 целиком. Если Ф.0.2 → подход A, многое из D75 может
-  переиспользоваться/откладываться.
+- **`unwrap`** — Plan 61 (Fail-handler dispatch). Отдельная линия.
+- **Universal D75 closure ABI** — Plan 99 берёт subset через
+  NovaClosBase; не закрывает D75 целиком.
+- **Zero-cost закрытий** (FnOnce trait unique-type) — Rust-level
+  оптимизация; Plan 11 Ф.x follow-up.
 
 ## Связь с другими планами
 
-- **Plan 95** ✅ — фундамент (method-only mono для builtin sum-типов).
-- **Plan 95.bis** ✅ — расширение на match-only методы.
-- **Plan 98** — БЛОКЕР (turbofish/inference для generic-typed params
-  необходим для Plan 99 Ф.0.4 и Ф.2).
-- **Plan 61** — параллельный (Fail-handler для `unwrap`); закроет
-  последний 14-й метод.
-- **Plan 78** — узкий пересмотр Ф.1: Plan 99 расширяет до 14/14
-  builtin Option/Result методов; реестр C-routing остаётся только
-  для `unwrap` после Plan 61.
-- **D75** (closure ABI) — Ф.0.2 решает: Plan 99 берёт подмножество
-  или строит свой минимум.
+- **Plan 95** ✅ — фундамент (DeclaredBody channel).
+- **Plan 95.bis** ✅ — match-only методы (9/14).
+- **Plan 98** ✅ — inference recursion (нужен для 99.1 Ф.2/Ф.3).
+- **Plan 61** — `unwrap` Fail-handler (parallel, закроет 14-й метод).
+- **Plan 78** — узкий пересмотр Ф.1; Plan 99 расширяет до 14/14
+  builtin Option/Result; реестр C-routing → только `unwrap`.
+- **D75** — closure ABI; Plan 99 берёт минимум, не закрывает целиком.
+- **Plan 48** — фундамент `method_extra_subst` (helper extract в 99.1).
+
+## Riski + mitigation
+
+1. **C-redefinition collision** при удалении inline emit ≠ atomic
+   с миграцией — mitigation: 99.3 = atomic per-method (core.nv +
+   inline-delete в одном коммите).
+2. **Bare ctor backward-compat** (99.2) — старый код вне Option/Result
+   методов не должен сломаться; mitigation: change только когда
+   `current_fn_return_ty` matches Option/Result; иначе legacy path.
+3. **Method-level mono name collisions** (99.1) — `Option[int].map[str]`
+   vs `Option[int].map[int]` — без U-suffix collide; mitigation:
+   `compute_mono_name` правильно extends.
+4. **fn_param_sigs scoping** — `f` в body должен быть зарегистрирован
+   на entrance в body и снят на exit; `emit_monomorphized_method`
+   уже корректно save/restore'ит (Plan 48). Mitigation: verification
+   tests.
+
+## Реалистичная оценка
+
+- Plan 99.1: 1.5 dev-day (helper extract + 2 dispatch integrations
+  + register_novaXX_decl + mono_name + infer_expr_c_type fix).
+- Plan 99.2: 0.5 dev-day (4 контролируемых изменения + small tests).
+- Plan 99.3: 0.5 dev-day (6 atomic per-method shipping).
+- Plan 99.4: 0.5 dev-day (comprehensive tests + spec + docs).
+
+**Total: ~3 dev-day** (с гранулярной регрессией на каждом шаге).
+
+> Прежняя оценка 3.5–4 dev-day (Ф.0 re-scope) была pessimistic —
+> clean-slate audit показал, что бо́льшая часть инфры уже есть
+> (closure invoke + fn_param_sigs + method_extra_subst + contextual
+> return-type + register_novaopt_decl). Реальная работа = integration
+> + 4 точечных fix + atomic migration.
