@@ -19205,3 +19205,69 @@ params), нужен для inference U через `infer_type_param_binding`
 Status: proposed, GATED on Plan 98, P3.
 После Plan 99 → 14/14 Option/Result-методов на Nova (остаётся
 только `unwrap` — Plan 61 Fail-handler).
+
+### Plan 83.4 исполнение — park-with-predicate + A2 fix + B1+B4 (2026-05-23)
+
+Worktree nova-p83-4, ветка plan-83.4. После production-grade rewrite
+Plan 83.4 (umbrella + 4 sub-plan) в ред. 2 — исполнение части плана.
+
+Сделано:
+
+83.4.1 ЦЕЛИКОМ (commit 861899ab8c4) — park-with-predicate primitive:
+  - nova_sched_park_until(scope, slot, pred_fn, ctx) в nova_sched.h —
+    индустриальный паттерн (POSIX cond_wait + caller-loop, C++
+    cond_var::wait(pred), Go gopark unlockf, tokio Notify). Fast-path:
+    pred true → no park. Loop: park, re-check, re-park если spurious.
+    NULL pred = legacy single-shot (== nova_sched_park).
+  - sleep refactor (Ф.2/A1): _nova_sleep_via_libuv использует
+    park_until(_sleep_stage_is_closed). stage поле → nova_atomic_int с
+    CAS PENDING→CLOSING + ACQUIRE-load в predicate / RELEASE-store в
+    close_cb. FATAL-check sleep-protocol удалён — by-construction
+    unreachable. Закрывает 'FATAL sleep wake before close_cb' bug A1.
+  - blocking refactor (Ф.3): nova_blocking_offload аналогично —
+    done → nova_atomic_bool + park_until(_blocking_is_done).
+  - audit (Ф.4): channels уже park_with_unlock + BaseWaiter.fired
+    recheck (Plan 44.1 R2 C6); sync_primitives Mutex/Once/WaitGroup
+    тоже park_with_unlock. Все park-сайты OK.
+  - D93 spec amendment (Ф.5): добавлен пункт 1a 'Park-with-predicate'
+    в spec/decisions/06-concurrency.md §Семантика с memory ordering
+    contract и cross-runtime references.
+
+83.4.2 Ф.1 (commit e6360b9950c) — A2 supervised double-resume fix:
+  supervised_step (fibers.h:1135+) теперь skip'ает fiber'ы у которых
+  fiber_ctx[i] имеет _nova_parent_scope != NULL (worker owns). Раньше
+  под M:N main thread итерировал scope.fibers[] и тоже делал mco_resume
+  параллельно с worker'ом → двойной TIB-swap minicoro corrupt'ил
+  arena-stack → access violation в slot 0. Теперь main скипает worker-
+  owned, считает их alive (drain-exit условие — pending_remote==0).
+
+83.4.3 B1+B4 (commit 7fa8e8af81c):
+  - B1 global arena stats: nova_fiber_arena_stats теперь aggregates
+    через обход _nova_fw_arena_list (Plan 82 Ф.3 multi-arena append-
+    only list). Main thread видит global slots_active = sum по всем
+    worker-аренам. Аналог Go runtime.NumGoroutine / tokio
+    RuntimeMetrics.num_alive_tasks.
+  - B4 main_yield: nova_fiber_yield на main thread'е раньше был silent
+    no-op; теперь делает uv_run(loop, UV_RUN_NOWAIT) — один turn libuv,
+    pending I/O / async-events получают прогресс. Аналог Node
+    setImmediate / Go runtime.Gosched.
+
+Honest-defer (не закрыто, требует отдельной серии работ):
+  - 83.4.2 Ф.2 — handler-storage migration TLS→NovaSpawnCtxBase.handler_
+    snapshot[]. Требует codegen-edit emit_c.rs (NovaSpawnCtxBase ABI
+    change), ~2-3 dev-day. Закрывает A3+B2.
+  - 83.4.3 Ф.2/B5 — hierarchical CancellationToken с atomic + wake-all
+    + parent-child cascade. Текущий plain cancel_requested работает на
+    x86 (byte-atomicity); ARM/full hierarchy — followup.
+  - 83.4.3 Ф.4/B3 — parallel_for test set-equality rewrite. Cosmetic.
+  - 83.4.4 целиком — test ассерты + flip activation + sweep + spec
+    D-block + speedup-бенчмарк + stress + TSAN. Gated на 83.4.2 Ф.2.
+
+Полный clang nova test: 1107 PASS / 4 FAIL / 56 SKIP — 4 фейла
+известные флэки (3 parallel-build lld-link + 1 sleep_bench 10k-
+concurrent timing); 0 регрессий от исполнения 83.4.
+
+Коммиты:
+ - 861899ab8c4  feat(83.4.1) park-with-predicate + sleep/blocking + D93
+ - e6360b9950c  fix(83.4.2/Ф.1) supervised_step skip worker-owned (A2)
+ - 7fa8e8af81c  feat(83.4.3) B1 global arena stats + B4 main_yield
