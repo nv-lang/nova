@@ -1,0 +1,32 @@
+// Plan 100.4.5 (D151): errdefer + okdefer exhaustive cover — оба
+// paths consume covered defer-family, нет explicit commit/rollback.
+
+module nova_tests.plan100_4_5.errdefer_okdefer_exhaustive_cover_ok
+
+type Transaction consume {
+    id int,
+}
+
+fn Transaction consume @commit() -> () { () }
+fn Transaction consume @rollback() -> () { () }
+
+fn begin() -> Transaction => Transaction { id: 1 }
+
+fn do_work(should_fail bool) Fail[str] -> () {
+    if should_fail { throw "fail" }
+}
+
+fn process(should_fail bool) Fail[str] -> () {
+    consume tx = begin()
+    errdefer { tx.rollback() }                  // error path cover
+    okdefer  { tx.commit() }                    // success path cover
+    do_work(should_fail)?
+    // На success: okdefer fires → commit
+    // На error: errdefer fires → rollback
+    // check_consume (D151): tx exhaustively covered, no explicit needed
+}
+
+test "errdefer + okdefer exhaustive — no explicit needed" {
+    process(false)                              // okdefer fires
+    process(true)                               // errdefer fires
+}

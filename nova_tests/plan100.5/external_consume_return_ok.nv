@@ -1,0 +1,32 @@
+// Plan 100.5 (D152): external consume fn — return-side. C-функция
+// возвращает consume-obligation, caller owns.
+
+module nova_tests.plan100_5.external_consume_return_ok
+
+type IoErr { msg str }
+
+// Opaque consume type — D126 + D133.
+external type File consume
+
+// External fn возвращает consume File. Capability `needs Fs` обязателен.
+external consume fn nova_file_open(path str) -> Result[File, IoErr]
+    needs Fs
+
+external fn nova_file_close(consume f File) -> ()
+    needs Fs
+
+// Nova-side consume-method wrapper.
+fn File consume @close() -> () {
+    nova_file_close(@)                          // передача в external consume-param
+}
+
+test "external consume fn return — caller owns; close через wrapper" {
+    let r = nova_file_open("foo.txt")
+    match r {
+        Ok(f) => {
+            consume file = f                    // consume-binding
+            file.close()
+        }
+        Err(_) => println("open failed"),
+    }
+}
