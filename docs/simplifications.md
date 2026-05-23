@@ -11162,6 +11162,35 @@ ns/switch — паритет с Boost.Context). Перенос замера в N
 - **Регресс:** plan97 17/17 PASS, plan72 (P3-B box-dispatch) 16/16 PASS —
   никаких поломок.
 
+### Plan 97.1 hardening (2026-05-23, commit 0a8d0f0307b, ветка plan-97-1-hd) — production-grade улучшения
+
+После merge Plan 97.1 + followup — добавлены 3 hardening улучшения,
+закрывающие потенциальные silent miscompile / runtime bug пути:
+
+1. **Nova-side enforcement** для `obj.method()` где obj — protocol-typed
+   variable: новый `check_protocol_method_call` в BoundCtx walk. Method
+   обязан быть в `protocol_specs[<Proto>]`, иначе compile error с
+   R5.3 hint о доступных методах. Раньше ловилось только C-side как
+   `no member named 'X' in struct NovaVtable_<Proto>`. Закрывает
+   silent miscompile риск для пользовательских опечаток.
+   `infer_arg_ty` расширен ProtocolLit arm → let-binding получает
+   правильный Named-protocol type.
+
+2. **Capture-mode разделение** в `emit_protocol_lit`: pointer-types
+   (heap obj) и mutable scalars (`let mut`) — by-pointer; **immutable
+   scalars** (function param, `let`) — **by-value snapshot**. Критично
+   для **factory pattern**, где literal возвращается за пределы fn —
+   раньше pointer на stack-local stayed dangling. Macros respect mode:
+   by-value → direct field access, by-pointer → deref.
+
+3. **GC-stress positive фикстура** `pos_protocol_lit_gc_stress`:
+   factory `make_adder(delta) -> Increment` вызывается 1000 раз в
+   цикле; 3 параллельных literals (5/10/99) с разными captures —
+   captures не путаются, GC корректно cleanup.
+
+**Регресс в worktree:** PASS 1127 / FAIL 1 (pre-existing
+plan99_probe — intentional gap) / SKIP 56.
+
 - **Где** — `compiler-codegen/src/codegen/emit_c.rs` `ExprKind::ProtocolLit`
   arm (делегирует на `emit_handler_lit`).
 - **Что упрощено** — parser + AST + type-checker для protocol-литерала
