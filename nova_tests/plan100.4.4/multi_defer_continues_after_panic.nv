@@ -1,0 +1,28 @@
+// Plan 100.4.4 (D150): panic в defer N не останавливает LIFO —
+// defer N-1, N-2 still run.
+
+module nova_tests.plan100_4_4.multi_defer_continues_after_panic
+
+type ErrA { tag str }
+type ErrC { tag str }
+
+fn cleanup_a() Fail[ErrA] -> () { throw ErrA { tag: "A failed" } }
+fn cleanup_c() Fail[ErrC] -> () { throw ErrC { tag: "C failed" } }
+
+fn process() Fail -> () {
+    defer { cleanup_a() }                       // outer (runs LAST LIFO)
+    defer { panic("middle defer broken") }      // middle — panic
+    defer { cleanup_c() }                       // inner (runs FIRST)
+    // body — success exit
+    // LIFO unwinding (success exit triggers defer):
+    //   1. cleanup_c() fails ErrC → suppressed [C]
+    //   2. middle defer panics → suppressed [C, Panic]
+    //      LIFO CONTINUES (Rust would abort here)
+    //   3. cleanup_a() fails ErrA → suppressed [C, Panic, A]
+    //   4. throw composite (no original primary on success exit → first
+    //      cleanup-fail = primary)
+}
+
+test "panic в defer N — LIFO continues для N-1" {
+    process()
+}

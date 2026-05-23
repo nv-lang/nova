@@ -1,0 +1,17 @@
+// EXPECT_COMPILE_ERROR D152
+//
+// Plan 100.5 (D152): external consume fn ОБЯЗАН declare capability.
+// Без needs-clause → error D152-missing-cap.
+
+module nova_tests.plan100_5.external_consume_err_missing_cap
+
+external type File consume
+
+// ❌ Нет needs-clause — error D152-missing-cap.
+// Suggest: add `needs Fs` (или подходящая cap).
+external consume fn nova_file_open(path str) -> File
+    // missing `needs Fs`
+
+test "external consume fn без cap — error" {
+    let f = nova_file_open("x")
+}

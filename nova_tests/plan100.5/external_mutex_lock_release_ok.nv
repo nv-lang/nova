@@ -1,0 +1,25 @@
+// Plan 100.5 (D152): pilot Mutex lock-guard pattern через FFI.
+// Lock automatically released via defer.
+
+module nova_tests.plan100_5.external_mutex_lock_release_ok
+
+external type Mutex consume
+external type LockGuard consume
+
+external consume fn nova_mutex_lock(view m Mutex) -> LockGuard needs Sys
+external fn nova_lock_release(consume g LockGuard) -> () needs Sys
+
+fn LockGuard consume @release() -> () {
+    nova_lock_release(@)
+}
+
+fn critical_section(view m Mutex) -> int {
+    consume guard = nova_mutex_lock(m)
+    defer { guard.release() }                   // unlock на любом exit-path
+    // critical work...
+    42
+}
+
+test "Mutex lock-guard pattern + defer release" {
+    // mutex setup would be here; mock
+}

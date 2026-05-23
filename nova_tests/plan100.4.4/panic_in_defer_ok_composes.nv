@@ -1,0 +1,22 @@
+// Plan 100.4.4 (D150): panic в defer body — композируется с propagating
+// через Plan 49, НЕ Rust-style double-panic-abort.
+
+module nova_tests.plan100_4_4.panic_in_defer_ok_composes
+
+type WorkErr { msg str }
+
+fn process() Fail[WorkErr] -> () {
+    defer { panic("cleanup broken") }           // panic в defer
+    throw WorkErr { msg: "body" }                // body throws сначала
+    // Unwinding:
+    //   1. body throws WorkErr
+    //   2. defer fires — panic("cleanup broken")
+    //   3. panic composes с WorkErr (Plan 49 multi-error)
+    //   4. composite: { primary: WorkErr, suppressed: [Panic("cleanup broken")] }
+    //   5. propagation continues (НЕ abort)
+}
+
+test "panic in defer composes с propagating, no abort" {
+    let r = process()
+    // r — composite error.
+}
