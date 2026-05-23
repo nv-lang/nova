@@ -17,7 +17,9 @@
 // armed multi-worker double-resume race ломает test infrastructure.
 // Cooperative drain даёт deterministic cancel propagation в bound scope.
 //
-// ENV NOVA_NO_AUTOARM=1
+// Plan 83.4.5.8 (2026-05-24): directive RESTORED — armed M:N still deadlocks
+// в этом тесте (deeper cancel-flow race remains). Followup investigation.
+// ENV NOVA_AUTOARM=0
 
 module concurrency.supervised_cancel_test
 

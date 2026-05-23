@@ -23,7 +23,7 @@
 // Cross-runtime: tokio `current_thread` runtime — closest equivalent
 // (single-thread cooperative); Node всегда cooperative single-thread.
 //
-// ENV NOVA_NO_AUTOARM=1
+// ENV NOVA_AUTOARM=0
 
 module concurrency.main_yield
 

@@ -17,7 +17,7 @@
 // multi-worker double-resume race blocks measurement. Cooperative path
 // validates wake_all + cancel_all_pending behavior.
 //
-// ENV NOVA_NO_AUTOARM=1
+// ENV NOVA_AUTOARM=0
 
 module concurrency.cancel_latency_bench
 

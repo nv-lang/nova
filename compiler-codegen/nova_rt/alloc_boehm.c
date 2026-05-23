@@ -105,6 +105,36 @@ void* nova_alloc(size_t size) {
     return p;
 }
 
+/* Plan 83.4.5.8 (2026-05-24): uncollectable allocation — backing
+ * via GC_malloc_uncollectable. Под Boehm с GC_THREADS такая память
+ * никогда не reclaimed sweep'ом + автоматически scanned for pointers
+ * (поведение GC_malloc, но с persisted lifetime).
+ *
+ * Use case — SpawnCtx под armed M:N: main thread alloc + write
+ * fields; worker thread reads через mco_get_user_data. GC race
+ * между write и read (даже с ctx_pins) на Windows fiber arena
+ * приводит к worker-side reading zeros. Uncollectable полностью
+ * обходит проблему — memory гарантированно сохраняется до явного
+ * free.
+ *
+ * Contract: zero-initialized (GC_malloc_uncollectable returns
+ * zero-init memory per Boehm API). Caller MUST nova_free_uncollectable
+ * для избежания leak. */
+void* nova_alloc_uncollectable(size_t size) {
+    void* p = GC_malloc_uncollectable(size);
+    if (!p) {
+        fprintf(stderr, "nova: out of memory (uncollectable)\n");
+        abort();
+    }
+    _alloc_count++;
+    return p;
+}
+
+void nova_free_uncollectable(void* ptr) {
+    if (!ptr) return;
+    GC_free(ptr);
+}
+
 /* RC ops are no-ops under Boehm — GC traces references automatically */
 void nova_retain(void* ptr)  { (void)ptr; }
 void nova_release(void* ptr) { (void)ptr; }

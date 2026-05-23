@@ -60,6 +60,28 @@ void nova_release(void* ptr) {
     }
 }
 
+/* Plan 83.4.5.8 (2026-05-24): uncollectable allocation. Под RC backend
+ * identical to nova_alloc, free через nova_free_uncollectable. */
+void* nova_alloc_uncollectable(size_t size) {
+    NovaRcHeader* h = (NovaRcHeader*)malloc(HEADER_SIZE + size);
+    if (!h) {
+        fprintf(stderr, "nova: out of memory (uncollectable)\n");
+        abort();
+    }
+    h->refcount = 1;
+    void* p = HEADER_TO_PTR(h);
+    memset(p, 0, size);
+    _alloc_count++;
+    return p;
+}
+
+void nova_free_uncollectable(void* ptr) {
+    if (!ptr) return;
+    NovaRcHeader* h = PTR_TO_HEADER(ptr);
+    free(h);
+    _free_count++;
+}
+
 size_t nova_gc_alloc_count(void) { return _alloc_count; }
 size_t nova_gc_free_count(void)  { return _free_count; }
 size_t nova_gc_live_count(void)  { return _alloc_count - _free_count; }

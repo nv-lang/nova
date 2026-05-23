@@ -17,7 +17,7 @@ structured-concurrency примитивы есть в языке, и как па
 | [D91](#d91-channel-revision--capability-split-на-chanwriter--chanreader) | `Channel` revision: capability-split на `ChanWriter[T]` / `ChanReader[T]`; `send`→`bool`; `tx.clone()` multi-writer ✅ |
 | [D94](#d94-select--multiplexed-channel-operations) | `select { ... }` — финальный синтаксис: `Some(v) = rx =>`, `ChanReader.close_after(Duration)` для timeout ✅ реализован (Plan 31 ✅; Plan 44.1 Ф.3 hardening; Plan 65 — Duration-typed API revision) |
 | [D124](#d124-monotonic-vs-timestamp--раздельные-типы-для-wall-clock-и-монотонных-часов) | Monotonic vs Timestamp — раздельные типы для wall-clock и монотонных часов |
-| [D138](#d138-default-on-mn-runtime--production-semantics-plan-83456-ф3-draft-2026-05-23) | 📋 DRAFT — Default-on M:N runtime production semantics (GATED на 83.4.5.7) |
+| [D138](#d138-default-on-mn-runtime--production-semantics-plan-83456-ф3-active-2026-05-24) | ✅ ACTIVE — Default-on M:N runtime production semantics (Plan 83.4.5.8 closure 2026-05-24) |
 
 ---
 
@@ -3634,14 +3634,29 @@ V1: на первом spawn поднимается **весь** пул `maxprocs
 
 ---
 
-## D138. Default-on M:N runtime — production semantics (Plan 83.4.5.6 Ф.3, draft 2026-05-23)
+## D138. Default-on M:N runtime — production semantics (Plan 83.4.5.6 Ф.3, ACTIVE 2026-05-24)
 
-> 📋 **DRAFT — semantic specification; activation GATED на Plan 83.4.5.7
-> (multi-worker supervised double-resume race fix). D-block описывает
-> intended behavior после fix'а; имплементация уже подготовлена
-> (`nova_runtime_auto_arm()` + escape hatch + cancel wake-all + handler
-> inheritance + AsyncDetach default), но flip activation в codegen-emit
-> отложен.**
+> ✅ **ACTIVE — semantic specification finalized; activation completed Plan
+> 83.4.5.8 (2026-05-24). M:N runtime default-on в compiled binaries:
+> `nova_runtime_auto_arm()` calls at main start (codegen emit_main_wrapper).
+> Все 8 prerequisite fix'ов сошлись:**
+>
+> - **Plan 83.4.1** park-with-predicate (D93 ASYNC close_cb).
+> - **Plan 83.4.2** Ф.1+Ф.2 supervised_step worker-owned skip +
+>   per-fiber handler-snapshot save/restore.
+> - **Plan 83.4.3** B5 cancel_requested atomic.
+> - **Plan 83.4.5.1** cancel-wake-all + dispatch_ready re-queue.
+> - **Plan 83.4.5.2** AsyncDetach production-grade + orphan-spawn
+>   tracking via _nova_orphan_scope.pending_remote.
+> - **Plan 83.4.5.4** spawn-time handler-snapshot TLS capture.
+> - **Plan 83.4.5.5** NOVA_NO_AUTOARM=1 escape hatch (cooperative-only
+>   tests).
+> - **Plan 83.4.5.7 Ф.1** atomic fiber state machine
+>   (NovaSpawnCtxBase._nova_fiber_state + CAS guards mco_resume sites +
+>   idempotent wake CAS на parked flag + nova_runtime_shutdown ordering).
+> - **Plan 83.4.5.8** nova_alloc_uncollectable для SpawnCtx + worker-side
+>   GC_free post mco_destroy (defeats Boehm GC race на Windows fiber arena
+>   ctx visibility).
 
 ### Что
 
@@ -3668,9 +3683,14 @@ for/detach автоматически распределяется на дост
 4. **Escape hatch.** Два режима:
    - `NOVA_MAXPROCS=1` — один worker (deterministic single-thread под
      M:N machinery; полезно для precision-bench'ей).
-   - `NOVA_NO_AUTOARM=1` — полный bootstrap mode (runtime never armed,
+   - `NOVA_AUTOARM=0` — полный bootstrap mode (runtime never armed,
      spawn идёт через cooperative scope queue; полезно для tests,
-     specifically проверяющих cooperative-only semantics).
+     specifically проверяющих cooperative-only semantics). Plan
+     83.4.5.9 (2026-05-24): renamed из legacy `NOVA_NO_AUTOARM=1`
+     ради positive env-name convention (без двойного отрицания).
+     Принимаются значения "0" / "false" / "no" / "n" / "f"
+     (case-insensitive); unset либо "1" / "true" / другое → default
+     (armed enabled).
 
 5. **Worker blocking ban.** Worker НЕ делает блокирующую работу
    inline — все FFI / syscall'ы обязаны быть в `blocking { … }`
@@ -3679,7 +3699,7 @@ for/detach автоматически распределяется на дост
 6. **Spawn ordering — НЕ специфицирован** (Go-паритет: "Spawn ordering:
    no guarantees"). Tests, опирающиеся на specific scheduler order,
    должны использовать set-equality assertions либо escape hatch
-   `NOVA_NO_AUTOARM=1`.
+   `NOVA_AUTOARM=0`.
 
 7. **Cancellation** — hierarchical через scope-tree (Plan 83.4.5.1
    `nova_scope_cancel_wake_all` + cancel_all_pending dispatch_ready

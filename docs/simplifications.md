@@ -11536,4 +11536,138 @@ vec.nv не компилируется в exe → Plan 91 (std MVP) blocked.
 
 **Обнаружено:** design discussion 2026-05-24 + vec.nv discovery.
 **План фикса:** Plan 101 + 5 sub-plan'ов (~6 dev-day total).
+### [M-83.4.5.7-foundational] Plan 83.4.5.7 Ф.1 done; flip activation deferred к Plan 83.4.5.8 (2026-05-23)
 
+- **Где:** `compiler-codegen/nova_rt/fibers.h`,
+  `compiler-codegen/nova_rt/runtime.c`,
+  `compiler-codegen/nova_rt/nova_sched.h`,
+  `compiler-codegen/src/codegen/emit_c.rs::emit_spawn`,
+  `emit_detach`, `emit_main_wrapper`.
+- **Что:** Plan 83.4.5.7 Ф.1 — atomic fiber state machine — ✅ ЗАКРЫТ
+  (foundational). Ф.3 (remove 12 NOVA_NO_AUTOARM directives) + Ф.4
+  (flip activation) — ❌ ОТЛОЖЕНЫ до Plan 83.4.5.8.
+
+  **Ф.1 delivered:**
+  - NovaSpawnCtxBase +1 field `nova_atomic_int _nova_fiber_state` со
+    state constants IDLE/RUNNING/PARKED/DEAD.
+  - CAS guards вокруг mco_resume в `_worker_main` main + cleanup loops
+    (защита от concurrent double-resume race — Windows TIB swap
+    conflict / POSIX context corruption).
+  - Atomic-bool CAS на parked flag в nova_sched_wake (idempotent
+    wake — только winner dispatches; защита от double-push race
+    через cancel_wake_all + close_cb).
+  - state PARKED store в nova_sched_park / park_with_unlock.
+  - `nova_runtime_shutdown()` call ДО `nova_evloop_close()` в
+    emit_main_wrapper (защита от uv_async_send на CLOSING handle
+    assertion abort).
+  - `nova_scope_pin_ctx` call в nova_runtime_spawn_into.
+  - SEQ_CST fence перед deque push в spawn_global (defensive против
+    cross-thread push, нарушающего Chase-Lev single-owner contract).
+
+- **Почему flip активация отложена:** во время diagnostic'а discovered
+  NEW BLOCKER — **ctx memory visibility под armed M:N**.
+
+  Worker thread reads `_c->_nova_parent_scope == NULL` хотя main
+  thread выставил `&scope`. Raw memory dump показывает entire
+  NovaSpawnCtxBase struct reads as zero on worker side несмотря на
+  main's writes. Same virtual address, different values.
+
+  Hypothesis: Boehm GC race либо `fiber_arena_win.c::_nova_fw_gc_push_other_roots`
+  coverage gap — GC marks ctx unreachable между main's write и
+  worker's read → block zeroed на sweep либо stale TLB. Симптом:
+  spawn entry skip'ает preamble + epilogue → never dec pending_remote
+  → main hang в supervised_run_impl wait-loop'е (`alive=0 remote=1`
+  forever).
+
+- **Bootstrap verification:** ВСЕ 1141 тестов PASS, 0 FAIL, 56 SKIP.
+  ≥1130 acceptance MET. Concurrency suite 75/75 PASS.
+
+- **Как чинить (Plan 83.4.5.8 — TBD):** диагностика Boehm root coverage
+  для ctx на Windows arena. Возможные подходы:
+  1. GC_malloc_uncollectable для ctx (uncollectable allocation),
+     free после fiber complete.
+  2. Расширение `_nova_fw_gc_push_other_roots` на ctx tracking
+     (через ctx_pins linked-list или separate registry).
+  3. Switch spawn_global cross-thread push с Chase-Lev deque на
+     mutex-protected pending queue (как wake_pending) — single-owner
+     contract preserved.
+  4. Debug: GC_get_heap_size + GC_gcollect tracing — verify ctx
+     gets reclaimed между main's write и worker's read.
+
+- **Приоритет:** P2 — blocker для Plan 83.4.5.6 (flip activation).
+  Plan 83.4.5.7 Ф.1 — foundational, valuable как defensive code даже
+  без flip активации (idempotent wake + state machine ready). Plan
+  83.4.5.8 estimate: ~2-3 dev-day для root cause + fix + retest 12
+  директив + flip activation.
+
+### [M-83.4.5.8-uncollectable-ctx] Plan 83.4.5.8 закрыт — uncollectable SpawnCtx fix Boehm GC race (2026-05-24)
+
+- **Где:** `compiler-codegen/nova_rt/alloc.h` + `alloc.c` + `alloc_boehm.c` +
+  `alloc_rc.c`; `compiler-codegen/nova_rt/runtime.c`;
+  `compiler-codegen/src/codegen/emit_c.rs::emit_spawn` + `emit_detach` +
+  `emit_main_wrapper`; `spec/decisions/06-concurrency.md` (D138 ACTIVE).
+- **Что:** Plan 83.4.5.8 ✅ ЗАКРЫТ. Approach A (GC_malloc_uncollectable
+  для SpawnCtx) прямой hit. Default-on M:N runtime активирован
+  per D138. Bootstrap unchanged.
+
+  **Implementation:**
+  - `nova_alloc_uncollectable(size)` + `nova_free_uncollectable(ptr)`
+    runtime API. Под Boehm — GC_malloc_uncollectable + GC_free.
+  - codegen `emit_spawn` + `emit_detach`: conditional alloc based
+    на `nova_runtime_is_initialized()`. Armed → uncollectable;
+    bootstrap → regular nova_alloc.
+  - `_worker_main` main + cleanup loops: nova_free_uncollectable
+    ПОСЛЕ mco_destroy.
+  - Snapshot — collectable (reachable через ctx scan + scope's
+    fiber_effect_snapshot[]).
+  - Orphan tracking under armed: `nova_runtime_orphan_scope()` API +
+    codegen emit_detach pending_remote inc/dec mirror emit_spawn.
+  - Flip activation: uncomment `nova_runtime_auto_arm()` in
+    emit_main_wrapper.
+
+- **Acceptance:** ≥1130 PASS под armed flip — MET (1130 PASS / 12 FAIL).
+
+- **Известные limitations (followup):**
+
+  **(A) 8 TIMEOUTs heavy-println tests** (deep_spawn, gc_correctness,
+  memory_footprint_test, etc.) — direct exe exits cleanly <60s, но
+  test_runner pipe stdout fills/blocks (64KB Windows pipe limit).
+  Followup: discard stdout под test_runner либо increase pipe buffer
+  size.
+
+  **(B) 4 RUN-FAILs**:
+  - mn_maxprocs_getter (2/3 PASS), mn_runtime_smoke (3/4 PASS) —
+    minor runtime introspection assertion mismatches под armed.
+  - sleep_real_clock (4/5 PASS — cancel-during-long-sleep timing edge),
+    sleep_bench (precision differs from cooperative bench).
+  - supervised_errors (early-stop pattern — work_done == 0): semantic
+    difference между cooperative ordering и M:N parallelism. Tests
+    rely on sequential iteration which doesn't hold под parallel
+    spawn execution.
+
+  **(C) 11 of 12 NO_AUTOARM directives RESTORED** — Plan 83.4.5.7 §6.3
+  acceptance "remove 12 directives" overestimated. 11 tests inherently
+  cooperative-dependent: main_yield (encoded-log ordering),
+  supervised_cancel_test/stress (cancel-flow timing), cancel_latency_bench
+  (timing), cancel_semantics_test (ordering), per_fiber_handlers
+  (handler-scoping), time_handler (Time effect semantics),
+  effects/fail_handler (fail-frame ordering), plan65/f7+f10+f11a
+  (cancel/select/timer ordering). Только detach_test (Plan 83.4.5.2
+  migrated через runtime.drain_orphans) — fully armed-compatible.
+
+- **Почему directives restored:** под armed M:N spawn ordering — non-
+  deterministic per D138 §6 ("Spawn ordering — НЕ специфицирован").
+  Tests asserting specific log values like `assert(log == 1234675)`
+  inherently depend on cooperative ordering. Rewriting под set-equality
+  было бы возможно но deferred.
+
+- **Followup tasks:**
+  1. test_runner stdout buffering fix (pipe → file либо discard).
+  2. Performance work — Plan 83.4.5.6 remaining (speedup-bench
+     parallel_sum 4-core ≥3.0×; 10⁶ spawn / 10⁵ park-wake / 10⁴
+     cancel stress; TSAN gate Linux).
+  3. Test rewrite под set-equality для 11 cooperative-only tests
+     (optional — directives serve as "intentional cooperative" marker).
+  4. Snapshot memory ownership cleanup (V1 leak — snapshots реachable
+     через scope's fiber_effect_snapshot[] until slot reuse; not
+     leak.

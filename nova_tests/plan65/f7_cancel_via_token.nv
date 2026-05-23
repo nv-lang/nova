@@ -23,7 +23,10 @@
 // armed multi-worker double-resume race blocks Time.sleep semantics.
 // Plan 65 Ф.10 cleanup_cbs validation requires cooperative drain.
 //
-// ENV NOVA_NO_AUTOARM=1
+// Plan 83.4.5.8 (2026-05-24): directive RESTORED — test inherently
+// cooperative-dependent (ordering / handler-scoping / timing semantics).
+// Armed M:N changes execution model. Followup: rewrite under M:N semantics.
+// ENV NOVA_AUTOARM=0
 
 module plan65.f7_cancel_via_token
 
