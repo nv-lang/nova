@@ -559,8 +559,35 @@ static void _worker_main(void* arg) {
         }
 
         if (mco_status(co) == MCO_DEAD) {
+            /* Plan 83.4.5.8 (2026-05-24): grab ctx pointer ДО mco_destroy
+             * (destroy frees co, не ctx — separate allocations). All ctx
+             * allocated через nova_alloc_uncollectable под armed M:N
+             * (codegen emit_spawn / emit_detach choice based on
+             * nova_runtime_is_initialized()). Free здесь — гарантирует
+             * lifecycle ends точно когда fiber finishes. */
+            NovaSpawnCtxBase* dead_ctx = (NovaSpawnCtxBase*)mco_get_user_data(co);
+            /* Also grab init_snapshot pointer (may be NULL — already consumed
+             * by preamble OR cooperative path). Snapshot moved в
+             * scope->fiber_effect_snapshot[slot] которое GC-managed (под
+             * armed scope's fiber_effect_snapshot array — nova_alloc'd),
+             * но snapshot itself был nova_alloc_uncollectable. После
+             * fiber DEAD никто не держит ссылку, можно free.
+             *
+             * Snapshot adoption: codegen preamble делает
+             *   scope->fiber_effect_snapshot[slot] = _c->_nova_init_snapshot;
+             *   _c->_nova_init_snapshot = NULL;
+             * Так что _c->_nova_init_snapshot читается NULL здесь
+             * (already transferred). Snapshot живёт в scope's array
+             * пока scope alive → eventually freed когда scope's
+             * uncollectable count reaches zero. К сожалению snapshot
+             * никто не free'ит explicitly — it would leak under armed.
+             * V1 tradeoff: snapshots leak per fiber. V2 followup —
+             * хранить параллельный массив "uncollectable" в scope. */
             nova_fiber_state_store(co, NOVA_FIBER_STATE_DEAD);
             mco_destroy(co);
+            if (dead_ctx) {
+                nova_free_uncollectable(dead_ctx);
+            }
         } else if (mco_status(co) == MCO_SUSPENDED) {
             /* Yielded: if parked (timer/channel wait) → dispatch_ready re-queues.
              * If not parked (cooperative yield via preemption or runtime.yield)
@@ -579,7 +606,8 @@ static void _worker_main(void* arg) {
     }
 
     /* Cleanup — drain remaining items в deque + yielded-FIFO (Plan 44.7).
-     * Plan 83.4.5.7 (2026-05-23): CAS-guard для double-resume race. */
+     * Plan 83.4.5.7 (2026-05-23): CAS-guard для double-resume race.
+     * Plan 83.4.5.8 (2026-05-24): free uncollectable ctx после mco_destroy. */
     while (true) {
         mco_coro* co = (mco_coro*)nova_deque_pop(&w->deque);
         if (!co) co = _worker_yielded_pop(w);
@@ -597,7 +625,11 @@ static void _worker_main(void* arg) {
             /* else: другой owner. Skip. */
         }
         if (mco_status(co) == MCO_DEAD) {
+            NovaSpawnCtxBase* dead_ctx = (NovaSpawnCtxBase*)mco_get_user_data(co);
             mco_destroy(co);
+            if (dead_ctx) {
+                nova_free_uncollectable(dead_ctx);
+            }
         }
     }
     _nova_active_slot = -1;
@@ -1184,6 +1216,22 @@ void nova_runtime_spawn_orphan(void (*entry)(mco_coro*), void* user) {
     }
     /* Bootstrap fallback: cooperative spawn в orphan scope queue. */
     nova_fiber_spawn_into(&_nova_orphan_scope, entry, user);
+}
+
+/* Plan 83.4.5.8 (2026-05-24): explicit init для orphan scope.
+ * Lazy-init guard повторно использует _orphan_scope_ensure_init. */
+void nova_runtime_orphan_scope_init(void) {
+    _orphan_scope_ensure_init();
+}
+
+/* Plan 83.4.5.8 (2026-05-24): public pointer на orphan scope.
+ * Returns NULL если scope ещё не initialized. Используется codegen
+ * emit_detach под armed: set ctx->_nova_parent_scope =
+ * nova_runtime_orphan_scope() чтобы fiber tracking шёл через
+ * pending_remote counter (как supervised children). */
+struct NovaFiberQueue* nova_runtime_orphan_scope(void) {
+    if (!_nova_orphan_scope_inited) return NULL;
+    return (struct NovaFiberQueue*)&_nova_orphan_scope;
 }
 
 void nova_runtime_drain_orphans(void) {

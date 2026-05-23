@@ -25,6 +25,24 @@ void* nova_alloc(size_t size) {
     return p;
 }
 
+/* Plan 83.4.5.8 (2026-05-24): uncollectable allocation. Под malloc-backend
+ * identical to nova_alloc + free. */
+void* nova_alloc_uncollectable(size_t size) {
+    void* p = calloc(1, size);
+    if (!p) {
+        fprintf(stderr, "nova: out of memory (uncollectable)\n");
+        abort();
+    }
+    _alloc_count++;
+    return p;
+}
+
+void nova_free_uncollectable(void* ptr) {
+    if (!ptr) return;
+    free(ptr);
+    _free_count++;
+}
+
 /* RC stubs — no-ops in malloc mode (no free, so free_count stays 0). */
 void nova_retain(void* ptr)  { (void)ptr; }
 void nova_release(void* ptr) { (void)ptr; }

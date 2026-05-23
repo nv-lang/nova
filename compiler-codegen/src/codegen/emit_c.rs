@@ -5087,9 +5087,21 @@ impl CEmitter {
 
         // Heap-alloc the ctx — each spawn inside a loop iteration needs its own ctx,
         // and the queue holds them until scope-exit. nova_alloc returns zeroed memory.
+        //
+        // Plan 83.4.5.8 (2026-05-24): conditional allocation. Под armed M:N
+        // используем nova_alloc_uncollectable — GC race на Windows fiber arena
+        // приводит к worker-side zeros despite ctx_pins / arena root coverage
+        // (см. Plan 83.4.5.8 §4). Uncollectable allocation persists до
+        // явного nova_free_uncollectable в worker_main post-mco_destroy
+        // (см. runtime.c::_worker_main). Под bootstrap (`_armed == false`)
+        // используем regular nova_alloc — fiber лежит в q->fiber_ctx[]
+        // (GC-managed array, scope on main stack → GC roots).
         let ctx_var = format!("{}_ctx", spawn_id);
-        self.line(&format!("{ty}* {var} = ({ty}*)nova_alloc(sizeof({ty}));",
-            ty = ctx_ty, var = ctx_var));
+        self.line(&format!("nova_bool _nova_is_init_{ctr} = nova_runtime_is_initialized();",
+            ctr = self.spawn_counter - 1));
+        self.line(&format!(
+            "{ty}* {var} = ({ty}*)(_nova_is_init_{ctr} ? nova_alloc_uncollectable(sizeof({ty})) : nova_alloc(sizeof({ty})));",
+            ty = ctx_ty, var = ctx_var, ctr = self.spawn_counter - 1));
 
         for (cap, _, by_value) in &captures {
             // If cap is itself a capture of the *enclosing* fiber, the outer ctx field
@@ -5150,13 +5162,20 @@ impl CEmitter {
         // is_initialized() возвращает true ниже, идём по M:N пути.
         // Hello-world без spawn остаётся 0 worker-потоков (пул лениво
         // материализуется только в _ensure_materialized из spawn-пути).
-        self.line("if (nova_runtime_is_initialized()) {");
+        // Plan 83.4.5.8: используем cached _nova_is_init_N для consistency
+        // с allocation выбором (см. above).
+        self.line(&format!("if (_nova_is_init_{ctr}) {{", ctr = self.spawn_counter - 1));
         self.indent += 1;
         self.line(&format!("{ctx}->_nova_parent_scope = &{q};",
             ctx = ctx_var, q = queue));
         // Plan 83.4.5.4 (2026-05-23): spawn-time TLS handler-snapshot capture
         // на parent thread'е — fiber inherit'ит outer `with X = h` биндинги.
         // Worker preamble adopts эту allocation в fiber_effect_snapshot[slot].
+        // Plan 83.4.5.8 (2026-05-24): snapshot — collectable (nova_alloc).
+        // Reachable через ctx (uncollectable, scanned by GC) до preamble,
+        // через scope->fiber_effect_snapshot[slot] (scope в worker struct,
+        // GC-rooted via Plan 82 Ф.3) после preamble. GC reclaim'ит когда
+        // slot reused либо worker shutdown.
         self.line(&format!("{ctx}->_nova_init_snapshot = (NovaEffectSnapshot*)nova_alloc(sizeof(NovaEffectSnapshot));",
             ctx = ctx_var));
         self.line(&format!("nova_effect_snapshot_save({ctx}->_nova_init_snapshot);",
@@ -5884,6 +5903,27 @@ impl CEmitter {
         self.indent -= 1;
         self.line("}");
 
+        // Plan 83.4.5.8 (2026-05-24): orphan epilogue — dec pending_remote
+        // + signal_main + free uncollectable slot (если был). Под armed
+        // detach'ы tracked через _nova_orphan_scope.pending_remote чтобы
+        // runtime.drain_orphans() мог wait их завершения (как
+        // supervised_run_impl wait wait для children). Под bootstrap
+        // parent_scope = NULL → этот блок пропускается; cooperative
+        // queue (orphan_scope.fibers[]) drain'ится через
+        // nova_supervised_drain_main_scope.
+        self.line("if (_c->_nova_parent_scope) {");
+        self.indent += 1;
+        self.line("if (_c->_nova_worker_slot >= 0) {");
+        self.indent += 1;
+        self.line("nova_scope_free_slot(_nova_active_scope, _c->_nova_worker_slot);");
+        self.line("_nova_active_slot = -1;");
+        self.indent -= 1;
+        self.line("}");
+        self.line("(void)nova_aint_fetch_sub_release(&_c->_nova_parent_scope->pending_remote);");
+        self.line("nova_runtime_signal_main();");
+        self.indent -= 1;
+        self.line("}");
+
         self.indent -= 1;
         self.line("}");
 
@@ -5899,8 +5939,37 @@ impl CEmitter {
         // ── Call site: heap-alloc ctx, fill captures, spawn_orphan ──
         // ctx должен пережить caller — heap (GC-tracked). Plan 82 fiber arena
         // независим от user-managed heap.
-        self.line(&format!("{ctx_ty}* {ctx_var} = ({ctx_ty}*)nova_alloc(sizeof({ctx_ty}));"));
+        //
+        // Plan 83.4.5.8 (2026-05-24): conditional allocation. Под armed M:N
+        // используем nova_alloc_uncollectable (см. emit_spawn для rationale —
+        // worker-side reading ctx fields через mco_get_user_data видит zeros
+        // если ctx становится GC-unreachable между main's write и worker's
+        // read). Под bootstrap (`_armed == false`) — regular nova_alloc;
+        // orphan scope's q->fiber_ctx[] держит ctx reachable.
+        self.line(&format!(
+            "nova_bool _nova_is_init_detach_{ctr} = nova_runtime_is_initialized();",
+            ctr = self.detach_counter - 1));
+        self.line(&format!(
+            "{ctx_ty}* {ctx_var} = ({ctx_ty}*)(_nova_is_init_detach_{ctr} ? nova_alloc_uncollectable(sizeof({ctx_ty})) : nova_alloc(sizeof({ctx_ty})));",
+            ctr = self.detach_counter - 1));
+        // Plan 83.4.5.8 (2026-05-24): под armed M:N orphan tracked через
+        // _nova_orphan_scope.pending_remote — drain_orphans ждёт worker-pool
+        // orphan'ов. Под bootstrap: parent_scope = NULL (orphan_scope handles
+        // через nova_fiber_spawn_into → q->fibers[] queue). Init orphan scope
+        // явно чтобы получить valid pointer.
+        self.line(&format!(
+            "if (_nova_is_init_detach_{ctr}) {{", ctr = self.detach_counter - 1));
+        self.indent += 1;
+        self.line("nova_runtime_orphan_scope_init();");
+        self.line(&format!("{ctx_var}->_nova_parent_scope = nova_runtime_orphan_scope();"));
+        /* Inc pending_remote BEFORE spawn (consistency w/ emit_spawn). */
+        self.line(&format!("nova_aint_inc(&{ctx_var}->_nova_parent_scope->pending_remote);"));
+        self.indent -= 1;
+        self.line("} else {");
+        self.indent += 1;
         self.line(&format!("{ctx_var}->_nova_parent_scope = NULL;"));  // orphan!
+        self.indent -= 1;
+        self.line("}");
         self.line(&format!("{ctx_var}->_nova_worker_slot = -1;"));
         self.line(&format!("{ctx_var}->_nova_saved_fail_top = NULL;"));
         self.line(&format!("{ctx_var}->_nova_saved_interrupt_top = NULL;"));
@@ -5909,7 +5978,11 @@ impl CEmitter {
         // Plan 83.4.5.4: capture parent TLS snapshot for handler inheritance.
         // Под bootstrap nova_fiber_spawn_into внутри spawn_orphan тоже save'ит
         // snapshot — но codegen-init его ноль'ит, чтобы избежать double-save.
-        self.line("if (nova_runtime_is_initialized()) {");
+        // Plan 83.4.5.8: snapshot тоже uncollectable под armed.
+        // Plan 83.4.5.8: snapshot — collectable, reachable через ctx
+        // (uncollectable, scanned) и scope's fiber_effect_snapshot[].
+        self.line(&format!(
+            "if (_nova_is_init_detach_{ctr}) {{", ctr = self.detach_counter - 1));
         self.indent += 1;
         self.line(&format!("{ctx_var}->_nova_init_snapshot = (NovaEffectSnapshot*)nova_alloc(sizeof(NovaEffectSnapshot));"));
         self.line(&format!("nova_effect_snapshot_save({ctx_var}->_nova_init_snapshot);"));
@@ -11506,24 +11579,27 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
         self.line("int main(void) {");
         self.indent += 1;
         self.line("nova_gc_init();");
-        // Plan 83.4.4 Ф.2 (2026-05-23) flip-activation попытка: после
-        // Plan 83.4.1 + 83.4.2 Ф.1+Ф.2 + 83.4.3 — все 5 названных в
-        // плане критичных pre-existing M:N багов закрыты. Однако
-        // активация (раскомментировать `nova_runtime_auto_arm()` ниже)
-        // даёт 18 RUN-FAIL под clang nova test — fixes покрыли A1+A2+
-        // A3+B2+B5+B4 но осталось >10 более глубоких M:N edge cases.
+        // Plan 83.4.5.8 Ф.0 (2026-05-24): flip activation. Atomic state
+        // machine из Plan 83.4.5.7 Ф.1 + uncollectable SpawnCtx allocation
+        // из Plan 83.4.5.8 → default-on M:N runtime активен по D138.
+        // Все 5 предшествующих fix'ов сошлись:
+        //   - Plan 83.4.1: park-with-predicate (D93 ASYNC close_cb).
+        //   - Plan 83.4.2 Ф.1+Ф.2: supervised_step worker-owned skip +
+        //     per-fiber handler-snapshot save/restore.
+        //   - Plan 83.4.3 B5: cancel_requested atomic.
+        //   - Plan 83.4.5.1: cancel-wake-all + dispatch_ready re-queue.
+        //   - Plan 83.4.5.2: AsyncDetach production-grade + orphan-spawn.
+        //   - Plan 83.4.5.4: spawn-time handler-snapshot TLS capture.
+        //   - Plan 83.4.5.5: NOVA_NO_AUTOARM=1 escape hatch (cooperative).
+        //   - Plan 83.4.5.7 Ф.1: atomic fiber state machine + CAS guards
+        //     mco_resume sites + idempotent wake CAS на parked flag +
+        //     nova_runtime_shutdown ordering pre evloop_close.
+        //   - Plan 83.4.5.8: nova_alloc_uncollectable для SpawnCtx +
+        //     init_snapshot под armed M:N (defeats GC race на Windows
+        //     fiber arena ctx visibility).
         //
-        // Plan 83.4.5.7 (2026-05-23): atomic fiber state machine добавлен
-        // (NovaSpawnCtxBase._nova_fiber_state + CAS guards в _worker_main /
-        // supervised_step / nova_sched_wake). Защищает от двойного resume
-        // race. НО flip activation НЕ закрыта в этом плане: discovered NEW
-        // blocker — ctx memory visibility между main thread и worker (Boehm
-        // GC race либо arena root coverage gap на Windows fiber_arena_win.c).
-        // Симптом: worker reads `_c->_nova_parent_scope == NULL` хотя main
-        // set его. Эпилог fiber'а skip'ается → pending_remote stays > 0 →
-        // main hang в supervised_run_impl. Followup-план Plan 83.4.5.8
-        // (TBD: ctx GC reachability under M:N).
-        self.line("// nova_runtime_auto_arm();");
+        // Runtime активируется default-on per D138.
+        self.line("nova_runtime_auto_arm();");
         // Plan 22 Ф.2: глобальный event loop. Под NOVA_USE_LIBUV даёт
         // настоящий uv_default_loop, иначе — stub no-op. Idempotent.
         self.line("nova_evloop_init();");
