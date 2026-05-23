@@ -9124,6 +9124,136 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
         }
     }
 
+    /// Plan 99.1 Ф.1: resolve method-level type-param substitutions для
+    /// generic method (с собственными `[U]`/`[F]`/`[E]` после receiver T).
+    ///
+    /// Extract'нут из Plan 48 method-param mono логики (была inline в
+    /// user-generic dispatch). Используется как user-generic'ом, так и
+    /// builtin Option/Result `DeclaredBody`-dispatch (Plan 99.1 Ф.2/Ф.3).
+    ///
+    /// Algorithm (двухстадийный):
+    /// 1. **Non-closure args** — standard `infer_type_param_binding`
+    ///    (Plan 98 расширенный) для каждого param/arg pair.
+    /// 2. **ClosureLight args** — pre-infer closure return type
+    ///    с typed `var_types` для closure params (substituted через
+    ///    `current_type_subst`). Без этого `x: T` в `|x| ...` defaults
+    ///    к `nova_int` и method-level U не resolved.
+    ///
+    /// Loud-error при unresolved method-level type-params (Plan 48 Ф.9 /
+    /// D119) с указанием на param-position для diagnostic.
+    ///
+    /// `current_type_subst` save'ится/restore'ится локально (вход с
+    /// `receiver_subst`, выход — оригинальное состояние). Возвращает
+    /// `Vec<(name, c_ty)>` отфильтрованный (пустые / `void*` отброшены).
+    fn resolve_method_level_subst(
+        &mut self,
+        fn_decl: &crate::ast::FnDecl,
+        args: &[CallArg],
+        receiver_subst: &[(String, String)],
+        diag_context: &str,
+    ) -> Result<Vec<(String, String)>, String> {
+        if fn_decl.generics.is_empty() {
+            return Ok(Vec::new());
+        }
+        // Set receiver-only subst как окружающий контекст для
+        // type_ref_to_c / infer_expr_c_type вызовов внутри.
+        let saved_outer = std::mem::replace(
+            &mut self.current_type_subst,
+            receiver_subst.iter().cloned().collect(),
+        );
+        // Type-param slots, initially None.
+        let mut subst_slots: Vec<(String, Option<String>)> =
+            fn_decl.generics.iter()
+                .map(|g| (g.name.clone(), None))
+                .collect();
+        // Step 1: non-closure args через standard inference (Plan 98 +
+        // user-generic existing behavior).
+        for (param, arg) in fn_decl.params.iter().zip(args.iter()) {
+            let is_closure = matches!(arg.expr().kind,
+                ExprKind::ClosureLight { .. } | ExprKind::ClosureFull(_));
+            if !is_closure {
+                let arg_c = self.infer_expr_c_type(arg.expr());
+                self.infer_type_param_binding(&param.ty, &arg_c, &mut subst_slots);
+            }
+        }
+        // Step 2: ClosureLight args — pre-infer closure return type с
+        // typed `var_types` context для closure params.
+        for (param, arg) in fn_decl.params.iter().zip(args.iter()) {
+            let (fp, ret_ty_ref) =
+                if let crate::ast::TypeRef::Func { params: fp, return_type: Some(rt), .. } = &param.ty {
+                    (fp.clone(), rt.clone())
+                } else { continue };
+            let (closure_params, body_expr) = match &arg.expr().kind {
+                ExprKind::ClosureLight { params, body } => {
+                    let body_e = match body {
+                        crate::ast::ClosureBody::Expr(e) => (**e).clone(),
+                        crate::ast::ClosureBody::Block(b) => Expr::new(
+                            ExprKind::Block(b.clone()), b.span,
+                        ),
+                    };
+                    (params.clone(), body_e)
+                }
+                _ => continue,
+            };
+            // Tmp var_types: bind closure params к substituted fn-param types.
+            let inner_ptys: Vec<String> = fp.iter()
+                .map(|t| self.type_ref_to_c(t).map_err(|e| self.err_no_int_fallback(
+                    "closure param type binding",
+                    &e,
+                )))
+                .collect::<Result<Vec<_>, _>>()?;
+            let saved_var_types: Vec<(String, Option<String>)> =
+                closure_params.iter().zip(inner_ptys.iter())
+                .map(|(cp, c_ty)| (cp.name.clone(),
+                    self.var_types.insert(cp.name.clone(), c_ty.clone())))
+                .collect();
+            let closure_ret_c = self.infer_expr_c_type(&body_expr);
+            // Restore var_types.
+            for (name, prev) in saved_var_types {
+                match prev {
+                    Some(old) => { self.var_types.insert(name, old); }
+                    None => { self.var_types.remove(&name); }
+                }
+            }
+            if !closure_ret_c.is_empty() && closure_ret_c != "void*" {
+                self.infer_type_param_binding(
+                    &ret_ty_ref, &closure_ret_c, &mut subst_slots);
+            }
+        }
+        // Restore outer subst — все inference-эффекты завершены.
+        self.current_type_subst = saved_outer;
+        // Plan 48 Ф.9 / D119: diagnose unresolved method-level type-params
+        // ДО return — silent drop'a быть не должно.
+        for (name, resolved) in &subst_slots {
+            if resolved.is_none() {
+                let positions: Vec<String> = fn_decl.params.iter()
+                    .enumerate()
+                    .filter_map(|(i, p)| {
+                        let mut names = std::collections::HashSet::new();
+                        Self::collect_typeref_names(&p.ty, &mut names,
+                            &mut std::collections::HashSet::new());
+                        if names.contains(name) {
+                            Some(format!("param `{}` (#{i})", p.name))
+                        } else { None }
+                    })
+                    .collect();
+                let where_used = if positions.is_empty() {
+                    " (only in return type — provide arg whose type binds it)".to_string()
+                } else {
+                    format!(" — appears in {}", positions.join(", "))
+                };
+                return Err(format!(
+                    "cannot infer method-level type argument `{name}` for `{diag_context}`{where_used}; \
+                     provide a closure/arg whose type fixes `{name}`",
+                ));
+            }
+        }
+        Ok(subst_slots.into_iter()
+            .filter_map(|(n, c)| c.map(|c| (n, c)))
+            .filter(|(_, c)| !c.is_empty() && c != "void*")
+            .collect())
+    }
+
     /// Plan 56 followup: compute real array element type для произвольной
     /// глубины field-access chains (`obj.f1.f2.f3.field[i]` где `field` —
     /// array of mono'd struct pointers).
@@ -14997,11 +15127,50 @@ _cp++; \
                                 // и fall through к inline. Loud при отсутствии
                                 // в production не должно случаться.
                                 if !param_names.is_empty() {
-                                    let type_subst: Vec<(String, String)> =
+                                    let mut type_subst: Vec<(String, String)> =
                                         vec![(param_names[0].clone(), real_t.clone())];
-                                    let mono_name = format!(
+                                    // Plan 99.1 Ф.2: method-level generic
+                                    // inference (`Option.map[U]`, `Option.
+                                    // ok_or[E]`). Extract'нутый helper resolve_
+                                    // method_level_subst запускает per-(T,U/E)
+                                    // inference из call-site args + closure
+                                    // return types. Loud-fail при unresolved
+                                    // method-level type-param (D119).
+                                    let method_extras = self.resolve_method_level_subst(
+                                        &fn_decl, args, &type_subst,
+                                        &format!("Option.{}", method.as_str()),
+                                    )?;
+                                    for entry in &method_extras {
+                                        type_subst.push(entry.clone());
+                                    }
+                                    // Plan 99.1 Ф.2: mono_name суффикс с
+                                    // method-level type-args. Без этого
+                                    // `Option[int].map[str]` и `Option[int].
+                                    // map[int]` коллизятся в одном C-имени
+                                    // `Nova_Option_method_map_nova_int`.
+                                    let base_name = format!(
                                         "Nova_Option_method_{}_{}",
                                         method.as_str(), elem_ty);
+                                    let mono_name = if method_extras.is_empty() {
+                                        base_name
+                                    } else {
+                                        Self::compute_mono_name(&base_name, &method_extras)
+                                    };
+                                    // Plan 99.1 Ф.2: trigger register_novaopt_
+                                    // decl(U) для return-Option-типа (e.g.
+                                    // `map[U] -> Option[U]`). Без этого
+                                    // mono'd body refers to NovaOpt_<U>
+                                    // typedef который ещё не emit'ну.
+                                    {
+                                        let saved = std::mem::replace(
+                                            &mut self.current_type_subst,
+                                            type_subst.iter().cloned().collect(),
+                                        );
+                                        if let Some(ret) = &fn_decl.return_type {
+                                            self.ensure_novaopt_decls_for_typeref(ret);
+                                        }
+                                        self.current_type_subst = saved;
+                                    }
                                     self.register_mono_method_instance(
                                         &fn_decl, type_subst, &mono_name, "Option");
                                     let obj_c = self.emit_expr(obj)?;
@@ -15227,10 +15396,22 @@ _cp++; \
                                 let param_names = self.builtin_sum_type_params
                                     .get("Result").cloned().unwrap_or_default();
                                 if param_names.len() == 2 {
-                                    let type_subst: Vec<(String, String)> = vec![
+                                    let mut type_subst: Vec<(String, String)> = vec![
                                         (param_names[0].clone(), ok_c.clone()),
                                         (param_names[1].clone(), err_c.clone()),
                                     ];
+                                    // Plan 99.1 Ф.3: method-level generic
+                                    // inference (`Result.map[U]`/`map_err[F]`/
+                                    // `unwrap_or_else`). Identical pattern с
+                                    // Option-веткой (Plan 99.1 Ф.2). Loud-fail
+                                    // при unresolved method-level type-param.
+                                    let method_extras = self.resolve_method_level_subst(
+                                        &fn_decl, args, &type_subst,
+                                        &format!("Result.{}", method.as_str()),
+                                    )?;
+                                    for entry in &method_extras {
+                                        type_subst.push(entry.clone());
+                                    }
                                     // Plan 95.bis Ф.2: mono-name **всегда
                                     // суффиксированный** (даже для legacy
                                     // `Nova_Result*`). Иначе #define-алиасы
@@ -15239,13 +15420,31 @@ _cp++; \
                                     // имя в теле моей Nova-функции эмитимой
                                     // под коротким именем → C-redefinition
                                     // с моно-эмиссией под суффиксированным.
-                                    // Для legacy `Nova_Result*` суффикс
-                                    // резолвится в канонический bootstrap
-                                    // `nova_int_nova_str` (тот же fallback).
+                                    //
+                                    // Plan 99.1 Ф.3: + method-level suffix
+                                    // (`_<U>...`) после `_<ok>_<err>`.
                                     let suffix = Self::novares_name(&ok_c, &err_c);
-                                    let mono_name = format!(
+                                    let base_name = format!(
                                         "Nova_Result_method_{}_{}",
                                         method.as_str(), suffix);
+                                    let mono_name = if method_extras.is_empty() {
+                                        base_name
+                                    } else {
+                                        Self::compute_mono_name(&base_name, &method_extras)
+                                    };
+                                    // Plan 99.1 Ф.3: register NovaOpt/NovaRes
+                                    // typedefs для return-типа (e.g.
+                                    // `Result.map[U] -> Result[U, E]`).
+                                    {
+                                        let saved = std::mem::replace(
+                                            &mut self.current_type_subst,
+                                            type_subst.iter().cloned().collect(),
+                                        );
+                                        if let Some(ret) = &fn_decl.return_type {
+                                            self.ensure_novaopt_decls_for_typeref(ret);
+                                        }
+                                        self.current_type_subst = saved;
+                                    }
                                     self.register_mono_method_instance(
                                         &fn_decl, type_subst, &mono_name, "Result");
                                     let obj_c = self.emit_expr(obj)?;
@@ -16437,115 +16636,15 @@ _cp++; \
                                     .zip(type_args_c.iter())
                                     .map(|(g, c)| (g.name.clone(), c.clone()))
                                     .collect();
-                                // Plan 48 method-param mono (Plan 63 followup, 2026-05-17 EOD):
-                                // method может иметь собственные type params (`@map[U]`).
-                                // Resolve U из call-site args + closure return types.
-                                //
-                                // Step 1: resolve_mono_type_args для non-closure args.
-                                // Step 2: для ClosureLight args paired с Func params —
-                                // pre-infer closure return type с typed var_types для
-                                // params (substituted через current_type_subst). Без этого
-                                // x: T в `|x| ...` defaults к nova_int и method-level U
-                                // не resolved.
-                                let method_extra_subst: Vec<(String, String)> =
-                                    if !fn_decl.generics.is_empty() {
-                                        let saved_outer = std::mem::replace(
-                                            &mut self.current_type_subst,
-                                            type_subst.iter().cloned().collect(),
-                                        );
-                                        // Type-param slots, initially None.
-                                        let mut subst_slots: Vec<(String, Option<String>)> =
-                                            fn_decl.generics.iter()
-                                                .map(|g| (g.name.clone(), None))
-                                                .collect();
-                                        // Step 1: non-closure args через standard inference.
-                                        for (param, arg) in fn_decl.params.iter().zip(args.iter()) {
-                                            let is_closure = matches!(arg.expr().kind,
-                                                ExprKind::ClosureLight { .. } | ExprKind::ClosureFull(_));
-                                            if !is_closure {
-                                                let arg_c = self.infer_expr_c_type(arg.expr());
-                                                self.infer_type_param_binding(&param.ty, &arg_c, &mut subst_slots);
-                                            }
-                                        }
-                                        // Step 2: ClosureLight args с typed param context.
-                                        for (param, arg) in fn_decl.params.iter().zip(args.iter()) {
-                                            let (fp, ret_ty_ref) =
-                                                if let crate::ast::TypeRef::Func { params: fp, return_type: Some(rt), .. } = &param.ty {
-                                                    (fp.clone(), rt.clone())
-                                                } else { continue };
-                                            let (closure_params, body_expr) = match &arg.expr().kind {
-                                                ExprKind::ClosureLight { params, body } => {
-                                                    let body_e = match body {
-                                                        crate::ast::ClosureBody::Expr(e) => (**e).clone(),
-                                                        crate::ast::ClosureBody::Block(b) => Expr::new(
-                                                            ExprKind::Block(b.clone()), b.span,
-                                                        ),
-                                                    };
-                                                    (params.clone(), body_e)
-                                                }
-                                                _ => continue,
-                                            };
-                                            // Tmp var_types: bind closure params to substituted fn-param types.
-                                            // Plan 70 PhaseA2: strict — closure params binding в fn_param_sigs.
-                                            let inner_ptys: Vec<String> = fp.iter()
-                                                .map(|t| self.type_ref_to_c(t).map_err(|e| self.err_no_int_fallback(
-                                                    "closure param type binding",
-                                                    &e,
-                                                )))
-                                                .collect::<Result<Vec<_>, _>>()?;
-                                            let saved_var_types: Vec<(String, Option<String>)> =
-                                                closure_params.iter().zip(inner_ptys.iter())
-                                                .map(|(cp, c_ty)| (cp.name.clone(),
-                                                    self.var_types.insert(cp.name.clone(), c_ty.clone())))
-                                                .collect();
-                                            let closure_ret_c = self.infer_expr_c_type(&body_expr);
-                                            // Restore var_types.
-                                            for (name, prev) in saved_var_types {
-                                                match prev {
-                                                    Some(old) => { self.var_types.insert(name, old); }
-                                                    None => { self.var_types.remove(&name); }
-                                                }
-                                            }
-                                            if !closure_ret_c.is_empty() && closure_ret_c != "void*" {
-                                                self.infer_type_param_binding(
-                                                    &ret_ty_ref, &closure_ret_c, &mut subst_slots);
-                                            }
-                                        }
-                                        self.current_type_subst = saved_outer;
-                                        // Plan 48 Ф.9 / D119: diagnose any unresolved
-                                        // method-level type params after inference. Без
-                                        // этого они silently dropped → Nova_U_p leak в
-                                        // emitted C (`Nova_Wrapper____Nova_U_p*` undefined).
-                                        for (name, resolved) in &subst_slots {
-                                            if resolved.is_none() {
-                                                let positions: Vec<String> = fn_decl.params.iter()
-                                                    .enumerate()
-                                                    .filter_map(|(i, p)| {
-                                                        let mut names = std::collections::HashSet::new();
-                                                        Self::collect_typeref_names(&p.ty, &mut names,
-                                                            &mut std::collections::HashSet::new());
-                                                        if names.contains(name) {
-                                                            Some(format!("param `{}` (#{i})", p.name))
-                                                        } else { None }
-                                                    })
-                                                    .collect();
-                                                let where_used = if positions.is_empty() {
-                                                    " (only in return type — provide arg whose type binds it)".to_string()
-                                                } else {
-                                                    format!(" — appears in {}", positions.join(", "))
-                                                };
-                                                return Err(format!(
-                                                    "cannot infer method-level type argument `{name}` for generic method `{}.{}`{}; \
-                                                     provide a closure/arg whose type fixes `{name}`",
-                                                    rt_trimmed, method, where_used
-                                                ));
-                                            }
-                                        }
-                                        subst_slots.into_iter()
-                                            .filter_map(|(n, c)| c.map(|c| (n, c)))
-                                            .filter(|(_, c)| !c.is_empty() && c != "void*")
-                                            .collect()
-                                    } else { Vec::new() };
+                                // Plan 99.1 Ф.1: extract'нуто в
+                                // `resolve_method_level_subst` helper (Plan 48
+                                // method-param mono логика). Identical behavior;
+                                // helper переиспользуется builtin Option/Result
+                                // `DeclaredBody`-dispatch (Plan 99.1 Ф.2/Ф.3).
+                                let method_extra_subst = self.resolve_method_level_subst(
+                                    &fn_decl, args, &type_subst,
+                                    &format!("{}.{}", rt_trimmed, method),
+                                )?;
                                 let has_method_subst = !method_extra_subst.is_empty();
                                 for entry in method_extra_subst {
                                     type_subst.push(entry);
@@ -21694,6 +21793,135 @@ _cp++; \
     /// registers innermost types раньше outer'а, что даёт правильный
     /// topological order: `NovaOpt_X` стоит до `NovaOpt_NovaOpt_X` в
     /// файле (последний зависит от первого).
+    /// Plan 99.1 Ф.2/Ф.3: best-effort method-level inference для
+    /// `infer_expr_c_type` (`&self`-context — нельзя мутировать
+    /// `var_types`). Возвращает Some(resolved_c_ty) для return-типа
+    /// builtin Option/Result method (с possible method-level generics);
+    /// None — если метод не в `generic_type_methods` или return-type
+    /// не резолвится (fallback к hardcoded match'у).
+    ///
+    /// Степень аппроксимации:
+    /// - **Non-closure args**: standard `infer_expr_c_type` (точно).
+    /// - **Closure args**: closure body type инферится **без**
+    ///   pre-binding `var_types` (degraded — работает для большинства
+    ///   common-case `|x| str.from(x)`, `|x| Some(x)` где body
+    ///   independent от x type). Иначе degrade gracefully на None.
+    ///
+    /// Для full-precision (с pre-binding) используется `&mut self`
+    /// version `resolve_method_level_subst` в DeclaredBody-dispatch.
+    fn infer_method_level_return_for_sum(
+        &self,
+        sum_name: &str,
+        method: &str,
+        args: &[CallArg],
+        receiver_subst: &[(String, String)],
+    ) -> Option<String> {
+        let fn_decl = self.generic_type_methods.get(sum_name)?
+            .iter().find(|m| m.name == method)?.clone();
+        // Если метод без method-level generics — receiver_subst достаточен.
+        // Apply к return_type.
+        let ret_ty_ref = fn_decl.return_type.as_ref()?;
+        let mut subst_slots: Vec<(String, Option<String>)> = receiver_subst
+            .iter()
+            .map(|(n, c)| (n.clone(), Some(c.clone())))
+            .collect();
+        for g in &fn_decl.generics {
+            if !subst_slots.iter().any(|(n, _)| n == &g.name) {
+                subst_slots.push((g.name.clone(), None));
+            }
+        }
+        // Step 1: non-closure args через standard inference.
+        for (param, arg) in fn_decl.params.iter().zip(args.iter()) {
+            let is_closure = matches!(arg.expr().kind,
+                ExprKind::ClosureLight { .. } | ExprKind::ClosureFull(_));
+            if !is_closure {
+                let arg_c = self.infer_expr_c_type(arg.expr());
+                self.infer_type_param_binding(&param.ty, &arg_c, &mut subst_slots);
+            }
+        }
+        // Step 2: closure args — degraded inference (без var_types binding).
+        // Body inferится с пустым context'ом; для common-case (`|x|
+        // str.from(x)` где return-type определяется только функцией) —
+        // работает; для cases где x-type meaningful — fallback default.
+        for (param, arg) in fn_decl.params.iter().zip(args.iter()) {
+            let (_fp, ret_ty_ref_closure) =
+                if let crate::ast::TypeRef::Func { params: fp, return_type: Some(rt), .. } = &param.ty {
+                    (fp.clone(), rt.clone())
+                } else { continue };
+            let body_expr = match &arg.expr().kind {
+                ExprKind::ClosureLight { body, .. } => {
+                    match body {
+                        crate::ast::ClosureBody::Expr(e) => (**e).clone(),
+                        crate::ast::ClosureBody::Block(b) => Expr::new(
+                            ExprKind::Block(b.clone()), b.span,
+                        ),
+                    }
+                }
+                _ => continue,
+            };
+            let closure_ret_c = self.infer_expr_c_type(&body_expr);
+            if !closure_ret_c.is_empty() && closure_ret_c != "void*" {
+                self.infer_type_param_binding(
+                    &ret_ty_ref_closure, &closure_ret_c, &mut subst_slots);
+            }
+        }
+        // Резолв return-type через apply_type_subst_to_ref.
+        // Слоты: только resolved (Some).
+        Self::apply_type_subst_to_ref(ret_ty_ref, &subst_slots)
+    }
+
+    /// Plan 99.1 Ф.2: рекурсивно обойти TypeRef и зарегистрировать
+    /// все встретившиеся `Option[X]` / `Result[X, Y]` типы через
+    /// `register_novaopt_decl` / `register_novares_decl` — резолвится
+    /// под текущим `current_type_subst`.
+    ///
+    /// Нужен для DeclaredBody-dispatch с method-level generics
+    /// (например, `Option.map[U] -> Option[U]`): mono'd body
+    /// reference'ит `NovaOpt_<U>` typedef, который должен быть emit'ну
+    /// ДО body. Без этого CC-FAIL "undefined NovaOpt_<...>".
+    ///
+    /// Идемпотентен (через `seen` в `register_novaopt_decl`/
+    /// `register_novares_decl`).
+    fn ensure_novaopt_decls_for_typeref(&self, ty: &crate::ast::TypeRef) {
+        use crate::ast::TypeRef;
+        match ty {
+            TypeRef::Named { path, generics, .. } => {
+                let name = path.join("_");
+                if name == "Option" && generics.len() == 1 {
+                    if let Ok(c) = self.type_ref_to_c(&generics[0]) {
+                        if !c.is_empty() && c != "void*" {
+                            let sani = Self::sanitize_for_novaopt(&c);
+                            self.register_novaopt_decl(&sani, &c);
+                        }
+                    }
+                } else if name == "Result" && generics.len() == 2 {
+                    if let (Ok(ok), Ok(err)) = (
+                        self.type_ref_to_c(&generics[0]),
+                        self.type_ref_to_c(&generics[1]),
+                    ) {
+                        if !ok.is_empty() && ok != "void*" && !err.is_empty() && err != "void*" {
+                            self.register_novares_decl(&ok, &err);
+                        }
+                    }
+                }
+                // Recurse в generics — nested Option[Option[T]] / Result-of-Result.
+                for g in generics { self.ensure_novaopt_decls_for_typeref(g); }
+            }
+            TypeRef::Array(inner, _) | TypeRef::FixedArray(_, inner, _) => {
+                self.ensure_novaopt_decls_for_typeref(inner);
+            }
+            TypeRef::Tuple(elems, _) => {
+                for e in elems { self.ensure_novaopt_decls_for_typeref(e); }
+            }
+            TypeRef::Func { params, return_type, .. } => {
+                for p in params { self.ensure_novaopt_decls_for_typeref(p); }
+                if let Some(rt) = return_type { self.ensure_novaopt_decls_for_typeref(rt); }
+            }
+            TypeRef::Unit(_) => {}
+            TypeRef::Protocol { .. } => {} // не sum-тип
+        }
+    }
+
     fn register_novaopt_decl(&self, sanitized: &str, c_ty: &str) {
         let mut seen = self.novaopt_decls_seen.borrow_mut();
         if seen.contains(sanitized) { return; }
@@ -23296,6 +23524,17 @@ _cp++; \
                             .trim_end_matches('*')
                             .trim()
                             .to_string();
+                        // Plan 99.1 Ф.2: для Nova-body методов с
+                        // method-level generic (`map[U]`/`ok_or[E]`)
+                        // используем `infer_method_level_return_for_sum`
+                        // — резолвит return-тип через FnDecl + closure-
+                        // arg return type. Hardcoded match ниже —
+                        // fallback для legacy inline-emit методов.
+                        if let Some(resolved) = self.infer_method_level_return_for_sum(
+                            "Option", method.as_str(), args, &[("T".to_string(), elem_ty.clone())])
+                        {
+                            return resolved;
+                        }
                         return match method.as_str() {
                             "is_some" | "is_none" => "nova_bool".into(),
                             "unwrap_or" | "unwrap" | "unwrap_or_else" => elem_ty,
@@ -23314,6 +23553,15 @@ _cp++; \
                             .unwrap_or_else(|| ("nova_int".into(), "nova_str".into()));
                         let ok_ident = Self::sanitize_c_for_ident(&ok_c);
                         let err_ident = Self::sanitize_c_for_ident(&err_c);
+                        // Plan 99.1 Ф.3: для Nova-body методов с
+                        // method-level generic (`map[U]`/`map_err[F]`/etc).
+                        if let Some(resolved) = self.infer_method_level_return_for_sum(
+                            "Result", method.as_str(), args,
+                            &[("T".to_string(), ok_c.clone()),
+                              ("E".to_string(), err_c.clone())])
+                        {
+                            return resolved;
+                        }
                         return match method.as_str() {
                             "is_ok" | "is_err" => "nova_bool".into(),
                             "unwrap" | "unwrap_or" | "unwrap_or_else" => ok_c,
