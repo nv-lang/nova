@@ -355,6 +355,8 @@ static inline NovaSchedState* nova_sched_find_state(NovaFiberQueue* scope) {
 static inline NovaSchedState* nova_sched_get_state(NovaFiberQueue* scope);
 static inline void nova_sched_drop_state(NovaFiberQueue* scope);
 static inline void nova_sched_cancel_all_pending(NovaFiberQueue* scope);
+/* Plan 83.4.5.1 (2026-05-23): forward decl, definition in nova_sched.h. */
+static inline void nova_scope_cancel_wake_all(NovaFiberQueue* scope);
 static inline int  nova_sched_count_alive(NovaFiberQueue* scope);
 static inline int  nova_sched_count_parked(NovaFiberQueue* scope);
 static inline int  nova_sched_count_ready(NovaFiberQueue* scope);
@@ -704,8 +706,21 @@ static inline void nova_cancel_token_cancel_reason(NovaCancelToken* t, void* rea
          * увидел причину при throw'е CANCEL. */
         t->bound_scope->cancel_reason_ptr = reason_ptr;
         /* Plan 22 Ф.4 (D93): wake all parked fiber'ов через registered
-         * stop_cb's — immediate, не дожидаясь следующего yield-point'а. */
+         * stop_cb's — immediate, не дожидаясь следующего yield-point'а.
+         *
+         * Plan 83.4.5.1 (2026-05-23): cancel_all_pending теперь зовёт
+         * nova_sched_wake (вместо просто parked=false) → SYNC slots тоже
+         * получают dispatch_ready re-queue. */
         nova_sched_cancel_all_pending(t->bound_scope);
+        /* Plan 83.4.5.1 Ф.1: defense-in-depth wake_all — покрывает any
+         * parked slot ASYNC handle которого ещё не закрылся (close_cb
+         * запланирован, но fiber-side cancel-check может среагировать
+         * раньше через predicate park_until → cancel_requested =true
+         * заставит predicate exit'нуться). Идемпотентно: parked-флаги уже
+         * cleared cancel_all_pending'ом для SYNC+bare; ASYNC slot'ы
+         * остаются parked, на них wake_all сделает dispatch_ready —
+         * predicate re-check вернёт true → exit. */
+        nova_scope_cancel_wake_all(t->bound_scope);
     }
     /* Каскад: отменяем все linked-токены (kill-switch composition).
      * Plan 49 Ф.6 cross-type: если для link есть converter — применяем
@@ -954,6 +969,12 @@ typedef struct {
     NovaFailFrame*       _nova_saved_fail_top;
     NovaInterruptFrame*  _nova_saved_interrupt_top;
     NovaFiberQueue*      _nova_fiber_scope;
+    /* Plan 83.4.5.4 (2026-05-23): spawn-time TLS handler-snapshot capture
+     * для inheritance в worker'е. Saved BEFORE nova_runtime_spawn_into на
+     * parent-thread'е (TLS handlers видимы). Worker preamble adopts it в
+     * fiber_effect_snapshot[slot]. NULL для single-thread spawn path
+     * (nova_fiber_spawn_into сам save'ит). */
+    NovaEffectSnapshot*  _nova_init_snapshot;
 } NovaSpawnCtxBase;
 
 /* Forward-decl для использования из spawn_into. */

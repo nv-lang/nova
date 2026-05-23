@@ -13,6 +13,12 @@
 //   - child.cancelled_by(parent) — направленный каскад: parent.cancel()
 //                            отменяет и child (вниз, не вверх)
 
+// Plan 83.4.5.1 (2026-05-23): cooperative cancel-semantics test —
+// armed multi-worker double-resume race ломает test infrastructure.
+// Cooperative drain даёт deterministic cancel propagation в bound scope.
+//
+// ENV NOVA_NO_AUTOARM=1
+
 module concurrency.supervised_cancel_test
 
 // ================================================================

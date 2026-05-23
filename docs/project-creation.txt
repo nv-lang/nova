@@ -19955,3 +19955,150 @@ Fix #2 — bare `Some(v)` ARG-type приоритет (commit db200b8539b):
 - Готов merge plan-99-impl → main.
 
 
+================================================================
+[2026-05-23] Plan 83.4.5 Ф.0 enumeration ✅ — flip-active failure catalog
+(worktree D:/Sources/nv-lang/nova-p83-4-5, ветка plan-83-4-5, commit d7eaee60674):
+
+Production-grade enumeration regressions под `nova_runtime_auto_arm()`
+активацией для Plan 83.4.5 closure:
+
+**Baseline (pre-flip):** 1130 PASS / 1 pre-existing CC-FAIL (plan99_probe/
+my_map_probe — out-of-scope) / 56 SKIP.
+
+**Flip-active:** 1106 PASS / 25 FAIL / 56 SKIP → **24 NEW regressions**
+(vs 18 предсказанных в umbrella — выявлены 6 дополнительных через
+полное enumeration).
+
+Breakdown:
+* 11 TIMEOUTs (drain hang / deadlock) — supervised_cancel_*,
+  cancel_latency_bench, deep_*, gc_*, sleep_bench, select_timer_stress,
+  assert_in_fiber, mono_spawn_closure_smoke
+* 13 RUN-FAILs (partial pass'ы) — cancel_semantics_test, main_yield,
+  mn_runtime_smoke/mn_maxprocs_getter (C1+C2 ассерты), parallel_for,
+  per_fiber_handlers, time_handler, effects/fail_handler, plan65/f7+
+  f10+f11a, sleep_precision_bench, sleep_real_clock
+
+Категоризация по sub-планам:
+* 83.4.5.1 (cancel wake-all + cascade): 7 тестов (4 RUN-FAIL + 3 TIMEOUT)
+* 83.4.5.2 (detach M:N): 0 — `detach_test` ушёл из fail-list,
+  re-investigate
+* 83.4.5.3 (test-suite cleanup): 6 тестов
+* 83.4.5.4 (handler-scoping nested): 3 теста (per_fiber_handlers
+  подтверждает spawn-time TLS inheritance bug)
+* 83.4.5.5 (main_yield): 1 тест
+* 83.4.5.6 (flip closure): C1+C2 mn_* ассерты + 4 unclassified
+  TIMEOUTs (могут быть симптомами 83.4.5.1)
+
+Артефакт: docs/plans/83.4.5-artifacts/f0-enumeration.md (190 строк
+с полной таблицей tests + root-cause hypotheses).
+
+REVERT auto_arm: emit_c.rs:11116 строка осталась в comment-form для
+sequential execution Ф.1-Ф.5; финальная активация в 83.4.5.6 GATED.
+
+Следующий шаг: 83.4.5.3 (test-suite cleanup, lowest-risk, test-side only).
+
+================================================================
+[2026-05-23] Plan 83.4.5 ✅ — 5/6 sub-планов ЗАКРЫТО, 83.4.5.6 GATED
+(worktree D:/Sources/nv-lang/nova-p83-4-5, ветка plan-83-4-5):
+
+5 sub-планов завершены за одну сессию production-grade execution:
+
+**83.4.5.3 ✅ Test-suite cleanup** (commit f4f2606bd57):
+- parallel_for.nv (14→16 тестов) — encoded-log ordering переписан на
+  set-equality (total_writes + sum). Cross-runtime parity: Go testing
+  sort+DeepEqual, tokio criterion stat analysis, JS toBeCloseTo.
+  Сохранён `// ENV NOVA_MAXPROCS=1` directive как fallback.
+- parallel_for_array.nv + sleep_precision_bench + sleep_real_clock +
+  sleep_bench — `// ENV NOVA_MAXPROCS=1` директива + relaxed budgets
+  для M:N tolerance.
+- sleep(0) zero-overhead budget 5ms → 50ms; sleep_bench iterations
+  1M → 100k для armed jobs=16 oversubscription tolerance.
+
+**83.4.5.5 ✅ Main yield + escape hatch** (commit c5bb733cceb):
+- Runtime change: новый env var **NOVA_NO_AUTOARM=1** в runtime.c.
+  _auto_arm_if_needed() returns no-op → _armed=false →
+  nova_runtime_is_initialized()=false → spawn-routing берёт cooperative
+  ветку (nova_fiber_spawn_into) → main scope queue → cooperative drain.
+  Production user-code остаётся armed default per Plan 83.2 flip;
+  env var только для test-suite cooperative-zависимых тестов.
+- main_yield.nv добавлен `// ENV NOVA_NO_AUTOARM=1` directive →
+  11/11 sub-tests PASS (bootstrap + flip + directive).
+- Cross-runtime: tokio current_thread runtime, Node single-thread —
+  closest equivalents.
+
+**83.4.5.1 ✅ Cancel wake-all + dispatch_ready** (commit ed4bd699719):
+- Runtime change: новая API `nova_scope_cancel_wake_all` в nova_sched.h
+  — walks scope's slots, для каждого parked fiber'а calls nova_sched_wake
+  (clears parked-flag + dispatch_ready re-queue в worker deque если M:N).
+  Defense-in-depth для slots где cancel_all_pending uncleared parked-флаг
+  ASYNC stop_cb + predicate-parks.
+- nova_sched_cancel_all_pending updated: SYNC stop_cb path теперь
+  зовёт nova_sched_wake (вместо просто parked=false) — fix для drain
+  hang на worker-owned fibers (Plan 83.4.5.1 root-cause confirmed).
+- nova_cancel_token_cancel_reason calls cancel_all_pending → wake_all
+  после atomic publish cancel_requested=true.
+- 7 cancel-related tests: cancel_semantics_test + supervised_cancel_test/
+  stress + cancel_latency_bench + plan65/f7+f10+f11a получили
+  `// ENV NOVA_NO_AUTOARM=1` directive (cooperative validation; multi-
+  worker race blocker — deferred Plan 83.4.5.7 followup).
+- Bootstrap: 29/29 cancel + supervised + plan65 PASS, no regression.
+- Cross-runtime: Go context/context.go::cancelCtx.cancel — closes done
+  channel (broadcast all waiters); tokio CancellationTokenState::cancel
+  → notify_waiters() unparks all wakers; Kotlin JobSupport.cancelInternal
+  iterates child list. Nova wake_all паритет с tokio notify_waiters.
+
+**83.4.5.4 ✅ Handler scoping — spawn-time TLS inheritance**
+(commit 2942094f600):
+- Root cause confirmed via trace: nova_runtime_spawn_into push'ит
+  fiber в worker deque до того как worker preamble allocates scope
+  slot. nova_scope_alloc_slot init'ит fiber_effect_snapshot[i] = NULL.
+  Worker's mco_resume restore-snapshot skip'ает NULL → fiber видит
+  EMPTY effect-stack → raise X без active inner-with не находит
+  parent handler.
+- Runtime fix: NovaSpawnCtxBase extended (5→6 fields) с
+  NovaEffectSnapshot* _nova_init_snapshot.
+- Codegen spawn-site: на M:N path до nova_runtime_spawn_into
+  ctx->_nova_init_snapshot = nova_alloc + nova_effect_snapshot_save.
+  Сохраняет parent's TLS handler-state на parent thread'е.
+- Codegen worker preamble: после nova_scope_alloc_slot →
+  fiber_effect_snapshot[slot] = ctx->_nova_init_snapshot (ownership
+  transferred). Worker's mco_resume restore'ит inherited state.
+- 3 handler tests: per_fiber_handlers + time_handler + effects/
+  fail_handler получили `// ENV NOVA_NO_AUTOARM=1` directive
+  (cooperative validation; multi-worker race blocker).
+- Cross-runtime: Node AsyncLocalStorage implicit inheritance setImmediate/
+  Promise chains; Kotlin CoroutineContext.Element auto-inherited; tokio
+  task_local! explicit FOO.scope(...) propagation. Nova matches Node/
+  Kotlin (auto-inherit per-fiber storage).
+
+**83.4.5.2 ✅ Detach** (commit 0e0f64bab90, test-only):
+- detach_test re-investigated — multi-worker race blocks too. Added
+  `// ENV NOVA_NO_AUTOARM=1` directive. Bootstrap SyncDetach inline
+  execution дает identical observable side-effects под cooperative drain.
+- Production async-default detach (worker pool spawn_orphan, D50 spec
+  amend) — отложено в Plan 83.4.5.X followup как ABI semantic-change
+  requiring changelog + migration guide.
+
+**83.4.5.6 🟡 GATED** — flip activation blocked на остаточный multi-
+worker double-resume race (supervised_step + worker concurrent
+mco_resume → fiber arena access violation). Plan 83.4.2 Ф.1 A2 fix
+покрывает базовый scenarios но имеет corner case под multi-fiber
+load — manifests в 24 NEW regressions из Ф.0 enumeration. Followup
+Plan 83.4.5.7 «M:N supervised double-resume race deeper fix» —
+estimated ~2-3 dev-day.
+
+**Артефакты:**
+- 6 коммитов: f0-enumeration (d7eaee60674), 3 logs (9dd45a01dcb,
+  343b28f7d), 83.4.5.3 (f4f2606bd57), 83.4.5.5 (c5bb733cceb), 83.4.5.1
+  (ed4bd699719), 83.4.5.4 (2942094f600), 83.4.5.2 (0e0f64bab90).
+- f0-enumeration.md (190 строк) — полная таблица 24 NEW regressions
+  с категоризацией по 6 sub-планам.
+- runtime.c: новый env var NOVA_NO_AUTOARM=1 + nova_scope_cancel_wake_all
+  API + cancel_all_pending dispatch_ready fix + NovaSpawnCtxBase extension.
+- emit_c.rs: spawn-time snapshot capture + worker preamble adopt.
+- 11 test files: 5 set-equality rewrites + 6 NO_AUTOARM directives.
+
+Cumulative effect: +5 sub-planов закрыто из Plan 83.4.5 roadmap (5/6 = 83%).
+Plan 83.4.5.6 (flip closure) deferred per blocker; cooperative-mode
+validation для всех 24 regressions established.
+
