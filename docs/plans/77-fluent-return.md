@@ -106,7 +106,8 @@ Nova — **безопасность Rust + простота Go**.
 В паре с fluent-return открывается *linear* «must-consume» — значение,
 которое ОБЯЗАНО быть consumed до конца scope (например `Transaction`
 обязан `.commit()` или `.rollback()`). Rust такое не enforce'ит
-(`#[must_use]` — лишь warning). Это отдельный возможный план.
+(`#[must_use]` — лишь warning). Оформлено как [Plan 100](100-linear-must-consume.md)
+(D133, proposed 2026-05-23).
 
 ## Рекомендация
 
@@ -120,7 +121,8 @@ AI-first языка «видно из сигнатуры» важнее экон
 - Plan 73 `[M-consume-method-result-alias]` — sound alias через
   builder-chain.
 - `nova doc` — пометка fluent-методов.
-- Возможный будущий план: linear `must-consume` (см. выше).
+- [Plan 100](100-linear-must-consume.md) — linear `must-consume`
+  (D133, proposed 2026-05-23; см. §«Потенциал лучше Rust» выше).
 
 ## Фазы (после выбора варианта; ориентир для B)
 

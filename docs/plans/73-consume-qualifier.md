@@ -34,6 +34,13 @@
 > `simplifications.md` `[M-consume-method-result-alias]` /
 > `[M-consume-receiver-type-best-effort]`.
 >
+> **Расширение «противоположной стороны»:** D131 = *affine* (≤1 раз;
+> забыть OK). [Plan 100](100-linear-must-consume.md) (D133, proposed
+> 2026-05-23) добавляет *linear* `must-consume` — instance некоторого
+> типа **обязан** быть consumed до scope exit'а (Transaction.commit/
+> rollback паттерн). Opt-in per-type; reuse того же `check_consume`
+> pass'а + alias-tracking.
+>
 > **Цель:** добавить в Nova compile-time проверку логической линейности.
 > Некоторые типы (`StringBuilder`) после определённых вызовов (`into()`)
 > инвалидируются. Сейчас это защищается только runtime-флагом — нужна
