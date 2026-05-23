@@ -1,0 +1,26 @@
+// Plan 100.4.2 (D148): Time.timeout в defer для bounded cleanup.
+
+module nova_tests.plan100_4_2.defer_with_timeout_ok
+
+type Socket consume { fd int }
+
+fn Socket consume @graceful_close() Time -> () {
+    Time.sleep(100)                              // simulate I/O
+}
+
+fn open_socket() -> Socket => Socket { fd: 1 }
+
+fn process() Time Fail -> () {
+    consume sock = open_socket()
+    defer {
+        with Time.timeout(5_s) {                // bounded cleanup — 5s max
+            sock.graceful_close()
+        }
+        // если timeout — fail composes (D147)
+    }
+    println("network work")
+}
+
+test "defer + Time.timeout — bounded cleanup" {
+    process()
+}
