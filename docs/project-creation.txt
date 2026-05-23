@@ -19178,3 +19178,30 @@ Followup-задача — закрыть 9 M:N багов supervised-drain layer
  - 0c0bfd915b2  docs(plan83.2/Ф.0): readiness gate
  - 0af6e6ba482  feat(plan83.2/Ф.1): default-on M:N — auto-arm на spawn
  - b72ce59b475  feat(plan83.2/Ф.1): инфраструктура default-on M:N — nova_runtime_auto_arm
+
+═══════════════════════════════════════════════════════════════════════
+Plan 99 — Closure-applying Option/Result методы (план заведён)
+2026-05-23 (main, doc-only)
+═══════════════════════════════════════════════════════════════════════
+
+После Plan 95.bis (9 из 14 Option/Result-методов на Nova-body) заведён
+Plan 99 под оставшиеся 6 closure-applying методов: Option.unwrap_or_else
+/map[U]/ok_or[E], Result.unwrap_or_else/map[U]/map_err[F].
+
+Три блокера (decision points в Ф.0):
+1. Sound closure-applying codegen для произвольной fn(T)->U
+   (currently hardcoded NovaClos_ii/vi только для T==U примитивов).
+   Подход A — per-sig mono shape (рек., Rust-style); B — runtime
+   vtable + tip-descriptor.
+2. Method-level generic [U]/[F]/[E] в DeclaredBody-dispatch
+   (расширение Plan 48 method_extra_subst на builtin sum-типы).
+3. Контекстный variant-constructor — `Some(f(v))` в map[U] должен
+   резолвиться как Option[U], не Option[T] от receiver.
+
+Жёсткий блокер: Plan 98 (turbofish/inference для generic-typed
+params), нужен для inference U через `infer_type_param_binding`
+на fn-arg.
+
+Status: proposed, GATED on Plan 98, P3.
+После Plan 99 → 14/14 Option/Result-методов на Nova (остаётся
+только `unwrap` — Plan 61 Fail-handler).
