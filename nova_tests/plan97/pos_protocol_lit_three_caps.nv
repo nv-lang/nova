@@ -1,0 +1,69 @@
+// Plan 97.1 final-prod — расширенная capability-split demo:
+// Cell разделяется на 3 capability (Reader, Writer, Resetter)
+// над общим state. Реальный production-grade pattern для split-API.
+//
+// Это canonical use-case из D142, который разблокирует stdlib Plan 18
+// типа Process.spawn -> (Stdin, Stdout, Stderr) etc.
+
+module nova_tests.plan97.pos_protocol_lit_three_caps
+
+
+export type Reader protocol { read() -> int }
+export type Writer protocol { write(v int) -> () }
+export type Resetter protocol { reset() -> () }
+
+
+type Cell {
+    mut value int
+}
+
+
+fn Cell.split(initial int) -> (Reader, Writer, Resetter) {
+    let state = Cell { value: initial }
+    let r = protocol Reader { read() => state.value }
+    let w = protocol Writer { write(v) { state.value = v } }
+    let z = protocol Resetter { reset() { state.value = 0 } }
+    (r, w, z)
+}
+
+
+test "3-way capability split: read/write/reset over shared state" {
+    let (r, w, z) = Cell.split(42)
+    assert(r.read() == 42)
+    w.write(100)
+    assert(r.read() == 100)
+    w.write(7)
+    assert(r.read() == 7)
+    z.reset()
+    assert(r.read() == 0)
+}
+
+
+test "несколько factory вызовов: state изолирован" {
+    let (r1, w1, _) = Cell.split(1)
+    let (r2, w2, _) = Cell.split(2)
+    assert(r1.read() == 1)
+    assert(r2.read() == 2)
+    w1.write(100)
+    w2.write(200)
+    assert(r1.read() == 100)
+    assert(r2.read() == 200)
+}
+
+
+// Передача capability отдельно в helpers — minimal-contract dispatch.
+fn drain_writes(w Writer, values []int) -> () {
+    for v in values {
+        w.write(v)
+    }
+}
+
+
+fn observe(r Reader) -> int => r.read()
+
+
+test "capability передаётся в helpers с minimal contract" {
+    let (r, w, _) = Cell.split(0)
+    drain_writes(w, [10, 20, 30])
+    assert(observe(r) == 30)
+}
