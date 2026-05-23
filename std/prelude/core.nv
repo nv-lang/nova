@@ -185,29 +185,32 @@ fn Option[T] @unwrap_or(default_v T) -> T => match @ { Some(v) => v, None => def
 
 /// Возвращает значение или результат `f()` (lazy default).
 ///
-/// **Bootstrap**: inline emit (`<inline>` sentinel). Closure cast через
-/// `NovaClos_vi` layout — zero-arg closure `() -> T`. См.
-/// `emit_c.rs:11775+` Option.unwrap_or_else block.
+/// **Plan 99.3 Ф.2**: Nova-body.
 #stable(since = "0.1")
-external fn Option[T] @unwrap_or_else(f fn() -> T) -> T
+fn Option[T] @unwrap_or_else(default_fn fn() -> T) -> T
+  => match @ { Some(v) => v, None => default_fn() }
 
-/// Применяет `f` к содержимому Some, возвращает Some(f(v)). None пропускает.
+/// Применяет `map_fn` к содержимому Some, возвращает Some(map_fn(v)). None пропускает.
 ///
-/// **Bootstrap**: inline emit (`<inline>` sentinel). Closure cast через
-/// `NovaClos_ii` layout — same-T `(T) -> T`. Generic U≠T в bootstrap
-/// не поддерживается полноценно (codegen использует elem_ty для обеих
-/// сторон). См. `emit_c.rs:11800+` Option.map block.
+/// **Plan 99.3 Ф.1**: Nova-body через `DeclaredBody`-routing. Full
+/// mono per (T, U) — паритет с Rust `Option::<T>::map<U, F>(...)`.
+/// Inline-emit `NovaClos_ii` cast убран (см. `emit_c.rs` Option.map).
+/// Param-name `map_fn` (не `f`) — избегаем shadowing user-функций с
+/// именем `f` (см. `contracts/trivial_congruence_positive`).
 #stable(since = "0.1")
-external fn Option[T] @map[U](f fn(T) -> U) -> Option[U]
+fn Option[T] @map[U](map_fn fn(T) -> U) -> Option[U]
+  => match @ { Some(v) => Some(map_fn(v)), None => None }
 
 /// `Some(v) -> Ok(v)`, `None -> Err(err)`. Полезно для conversion
 /// Option в Result-чейн.
 ///
-/// **Bootstrap**: inline emit (`<inline>` sentinel). См. `emit_c.rs:11830+`
-/// Option.ok_or block — emit'ит `nova_make_Result_Ok(value)` /
-/// `nova_make_Result_Err(err)`.
+/// **Plan 99.3 Ф.3**: Nova-body. Mono per (T, E) — Plan 99.2
+/// contextual `Ok(v)`/`Err(err)` ctors используют return-type
+/// `Result[T, E]` для typed `NovaRes_<T>_<E>*`. Паритет Rust
+/// `Option::<T>::ok_or<E>(self, err: E) -> Result<T, E>`.
 #stable(since = "0.1")
-external fn Option[T] @ok_or[E](err E) -> Result[T, E]
+fn Option[T] @ok_or[E](err E) -> Result[T, E]
+  => match @ { Some(v) => Ok(v), None => Err(err) }
 
 /// `Some(v) -> Some(v)`, `None -> other`. Возвращает другой Option если
 /// текущий пустой (fallback chain).
@@ -278,27 +281,33 @@ external fn Result[T, E] @unwrap() Fail[E] -> T
 #stable(since = "0.1")
 fn Result[T, E] @unwrap_or(default_v T) -> T => match @ { Ok(v) => v, Err(_) => default_v }
 
-/// Возвращает Ok-значение или результат `f(e)` (lazy default от error).
+/// Возвращает Ok-значение или результат `default_fn(e)` (lazy default от error).
 ///
-/// **Bootstrap**: inline emit (`<inline>` sentinel). Closure cast через
-/// `NovaClos_ii` layout — `(E) -> T`.
+/// **Plan 99.3 Ф.4**: Nova-body. Closure invoke `default_fn(e)` через
+/// NovaClosBase + cast — паритет Rust `Result::<T,E>::unwrap_or_else<F:
+/// FnOnce(E) -> T>(self, op: F) -> T`. Param-name `default_fn` (не
+/// `f`) — избегаем shadowing user-функций (см. Option.map).
 #stable(since = "0.1")
-external fn Result[T, E] @unwrap_or_else(f fn(E) -> T) -> T
+fn Result[T, E] @unwrap_or_else(default_fn fn(E) -> T) -> T
+  => match @ { Ok(v) => v, Err(e) => default_fn(e) }
 
-/// Применяет `f` к Ok-значению: `Ok(v) -> Ok(f(v))`, `Err(e)` пропускает.
+/// Применяет `map_fn` к Ok-значению: `Ok(v) -> Ok(map_fn(v))`, `Err(e)` пропускает.
 ///
-/// **Bootstrap**: inline emit (`<inline>` sentinel). Generic U≠T в
-/// bootstrap не поддерживается полноценно (codegen использует mono
-/// Ok=nova_int для обеих сторон).
+/// **Plan 99.3 Ф.5**: Nova-body. Full mono per (T, U, E) — паритет
+/// Rust `Result::<T,E>::map<U, F: FnOnce(T) -> U>(self, op: F)
+/// -> Result<U, E>`. Param-name `map_fn` (не `f`) — см. Option.map.
 #stable(since = "0.1")
-external fn Result[T, E] @map[U](f fn(T) -> U) -> Result[U, E]
+fn Result[T, E] @map[U](map_fn fn(T) -> U) -> Result[U, E]
+  => match @ { Ok(v) => Ok(map_fn(v)), Err(e) => Err(e) }
 
-/// Применяет `f` к Err-payload: `Err(e) -> Err(f(e))`, `Ok(v)` пропускает.
+/// Применяет `err_fn` к Err-payload: `Err(e) -> Err(err_fn(e))`, `Ok(v)` пропускает.
 ///
-/// **Bootstrap**: inline emit (`<inline>` sentinel). Generic F≠E в
-/// bootstrap не поддерживается полноценно (mono Err=nova_str).
+/// **Plan 99.3 Ф.6**: Nova-body. Full mono per (T, E, F) — паритет
+/// Rust `Result::<T,E>::map_err<F2, O: FnOnce(E) -> F2>(self, op: O)
+/// -> Result<T, F2>`. Param-name `err_fn` (не `f`) — см. Option.map.
 #stable(since = "0.1")
-external fn Result[T, E] @map_err[F](f fn(E) -> F) -> Result[T, F]
+fn Result[T, E] @map_err[F](err_fn fn(E) -> F) -> Result[T, F]
+  => match @ { Ok(v) => Ok(v), Err(e) => Err(err_fn(e)) }
 
 /// `Ok(v) -> Some(v)`, `Err(_) -> None`. Discards error.
 ///

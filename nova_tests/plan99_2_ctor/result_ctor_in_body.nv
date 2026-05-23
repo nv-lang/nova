@@ -1,0 +1,36 @@
+// Plan 99.2 Ф.4: contextual `Ok(v)`/`Err(e)` (bare ident form)
+// в expr-position эмитят typed `nova_make_NovaRes_<n>_Ok/Err(v)`
+// для return-type `-> Result[T, E]`, вместо legacy
+// `nova_make_Result_Ok/Err` (которая возвращает `Nova_Result*` с
+// erased (nova_int, nova_str)).
+
+module nova_tests.plan99_2_ctor.result_ctor_in_body
+
+fn make_ok_int_str() -> Result[int, str] => Ok(42)
+fn make_err_int_str() -> Result[int, str] => Err("oops")
+fn make_ok_str_int() -> Result[str, int] => Ok("hello")
+fn make_err_str_int() -> Result[str, int] => Err(99)
+
+test "Ok(int) с Result[int, str] context" {
+    let r = make_ok_int_str()
+    assert(r.is_ok())
+    assert(r.unwrap_or(0) == 42)
+}
+
+test "Err(str) с Result[int, str] context" {
+    let r = make_err_int_str()
+    assert(r.is_err())
+    assert(r.unwrap_or(99) == 99)
+}
+
+test "Ok(str) с Result[str, int] context (reversed)" {
+    let r = make_ok_str_int()
+    assert(r.is_ok())
+    assert(r.unwrap_or("") == "hello")
+}
+
+test "Err(int) с Result[str, int] context (reversed)" {
+    let r = make_err_str_int()
+    assert(r.is_err())
+    assert(r.unwrap_or("default") == "default")
+}

@@ -9124,6 +9124,161 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
         }
     }
 
+    /// Plan 99.1 Ф.1: resolve method-level type-param substitutions для
+    /// generic method (с собственными `[U]`/`[F]`/`[E]` после receiver T).
+    ///
+    /// Extract'нут из Plan 48 method-param mono логики (была inline в
+    /// user-generic dispatch). Используется как user-generic'ом, так и
+    /// builtin Option/Result `DeclaredBody`-dispatch (Plan 99.1 Ф.2/Ф.3).
+    ///
+    /// Algorithm (двухстадийный):
+    /// 1. **Non-closure args** — standard `infer_type_param_binding`
+    ///    (Plan 98 расширенный) для каждого param/arg pair.
+    /// 2. **ClosureLight args** — pre-infer closure return type
+    ///    с typed `var_types` для closure params (substituted через
+    ///    `current_type_subst`). Без этого `x: T` в `|x| ...` defaults
+    ///    к `nova_int` и method-level U не resolved.
+    ///
+    /// Loud-error при unresolved method-level type-params (Plan 48 Ф.9 /
+    /// D119) с указанием на param-position для diagnostic.
+    ///
+    /// `current_type_subst` save'ится/restore'ится локально (вход с
+    /// `receiver_subst`, выход — оригинальное состояние). Возвращает
+    /// `Vec<(name, c_ty)>` отфильтрованный (пустые / `void*` отброшены).
+    fn resolve_method_level_subst(
+        &mut self,
+        fn_decl: &crate::ast::FnDecl,
+        args: &[CallArg],
+        receiver_subst: &[(String, String)],
+        diag_context: &str,
+    ) -> Result<Vec<(String, String)>, String> {
+        if fn_decl.generics.is_empty() {
+            return Ok(Vec::new());
+        }
+        // Set receiver-only subst как окружающий контекст для
+        // type_ref_to_c / infer_expr_c_type вызовов внутри.
+        let saved_outer = std::mem::replace(
+            &mut self.current_type_subst,
+            receiver_subst.iter().cloned().collect(),
+        );
+        // Type-param slots, initially None.
+        let mut subst_slots: Vec<(String, Option<String>)> =
+            fn_decl.generics.iter()
+                .map(|g| (g.name.clone(), None))
+                .collect();
+        // Step 1: non-closure args через standard inference (Plan 98 +
+        // user-generic existing behavior).
+        for (param, arg) in fn_decl.params.iter().zip(args.iter()) {
+            let is_closure = matches!(arg.expr().kind,
+                ExprKind::ClosureLight { .. } | ExprKind::ClosureFull(_));
+            if !is_closure {
+                let arg_c = self.infer_expr_c_type(arg.expr());
+                self.infer_type_param_binding(&param.ty, &arg_c, &mut subst_slots);
+            }
+        }
+        // Step 2: closure args (`ClosureLight` `|x| ...` или `ClosureFull`
+        // `fn(x int) -> int => ...`) — pre-infer closure return type.
+        // Для ClosureFull return-type explicit, не нужен var_types-binding.
+        // Для ClosureLight — bind closure params в `var_types` для
+        // typed body inference (substituted через current_type_subst).
+        for (param, arg) in fn_decl.params.iter().zip(args.iter()) {
+            let (fp, ret_ty_ref) =
+                if let crate::ast::TypeRef::Func { params: fp, return_type: Some(rt), .. } = &param.ty {
+                    (fp.clone(), rt.clone())
+                } else { continue };
+            // ClosureFull — explicit return-type, можно использовать напрямую.
+            if let ExprKind::ClosureFull(fsb) = &arg.expr().kind {
+                // Bind param types если method-level в `fp` (fn(T) -> U).
+                if let Ok(closure_param_tys) = fsb.params.iter()
+                    .map(|p| self.type_ref_to_c(&p.ty))
+                    .collect::<Result<Vec<_>, _>>()
+                {
+                    for (fp_ty, arg_c) in fp.iter().zip(closure_param_tys.iter()) {
+                        self.infer_type_param_binding(fp_ty, arg_c, &mut subst_slots);
+                    }
+                }
+                if let Some(ret_ty) = &fsb.return_type {
+                    if let Ok(ret_c) = self.type_ref_to_c(ret_ty) {
+                        if !ret_c.is_empty() && ret_c != "void*" {
+                            self.infer_type_param_binding(
+                                &ret_ty_ref, &ret_c, &mut subst_slots);
+                        }
+                    }
+                }
+                continue;
+            }
+            // ClosureLight — нужен tmp var_types binding для body inference.
+            let (closure_params, body_expr) = match &arg.expr().kind {
+                ExprKind::ClosureLight { params, body } => {
+                    let body_e = match body {
+                        crate::ast::ClosureBody::Expr(e) => (**e).clone(),
+                        crate::ast::ClosureBody::Block(b) => Expr::new(
+                            ExprKind::Block(b.clone()), b.span,
+                        ),
+                    };
+                    (params.clone(), body_e)
+                }
+                _ => continue,
+            };
+            // Tmp var_types: bind closure params к substituted fn-param types.
+            let inner_ptys: Vec<String> = fp.iter()
+                .map(|t| self.type_ref_to_c(t).map_err(|e| self.err_no_int_fallback(
+                    "closure param type binding",
+                    &e,
+                )))
+                .collect::<Result<Vec<_>, _>>()?;
+            let saved_var_types: Vec<(String, Option<String>)> =
+                closure_params.iter().zip(inner_ptys.iter())
+                .map(|(cp, c_ty)| (cp.name.clone(),
+                    self.var_types.insert(cp.name.clone(), c_ty.clone())))
+                .collect();
+            let closure_ret_c = self.infer_expr_c_type(&body_expr);
+            // Restore var_types.
+            for (name, prev) in saved_var_types {
+                match prev {
+                    Some(old) => { self.var_types.insert(name, old); }
+                    None => { self.var_types.remove(&name); }
+                }
+            }
+            if !closure_ret_c.is_empty() && closure_ret_c != "void*" {
+                self.infer_type_param_binding(
+                    &ret_ty_ref, &closure_ret_c, &mut subst_slots);
+            }
+        }
+        // Restore outer subst — все inference-эффекты завершены.
+        self.current_type_subst = saved_outer;
+        // Plan 48 Ф.9 / D119: diagnose unresolved method-level type-params
+        // ДО return — silent drop'a быть не должно.
+        for (name, resolved) in &subst_slots {
+            if resolved.is_none() {
+                let positions: Vec<String> = fn_decl.params.iter()
+                    .enumerate()
+                    .filter_map(|(i, p)| {
+                        let mut names = std::collections::HashSet::new();
+                        Self::collect_typeref_names(&p.ty, &mut names,
+                            &mut std::collections::HashSet::new());
+                        if names.contains(name) {
+                            Some(format!("param `{}` (#{i})", p.name))
+                        } else { None }
+                    })
+                    .collect();
+                let where_used = if positions.is_empty() {
+                    " (only in return type — provide arg whose type binds it)".to_string()
+                } else {
+                    format!(" — appears in {}", positions.join(", "))
+                };
+                return Err(format!(
+                    "cannot infer method-level type argument `{name}` for `{diag_context}`{where_used}; \
+                     provide a closure/arg whose type fixes `{name}`",
+                ));
+            }
+        }
+        Ok(subst_slots.into_iter()
+            .filter_map(|(n, c)| c.map(|c| (n, c)))
+            .filter(|(_, c)| !c.is_empty() && c != "void*")
+            .collect())
+    }
+
     /// Plan 56 followup: compute real array element type для произвольной
     /// глубины field-access chains (`obj.f1.f2.f3.field[i]` где `field` —
     /// array of mono'd struct pointers).
@@ -14172,6 +14327,58 @@ _cp++; \
                 // делается внутри emit_println.
                 return self.emit_println(args, name == "println");
             }
+            // Plan 99.2 Ф.1-Ф.3: contextual variant constructors.
+            // Bare `Some(v)`/`None`/`Ok(v)`/`Err(e)` в expr-position
+            // — typed compound literal.
+            //
+            // Some(v): ARG-type-priority (как path-form :17288 и helper
+            //   :17339) — arg даёт inner type. Использование
+            //   `current_fn_return_ty` ломает sub-expr cases типа
+            //   `s.char_at(i) == Some('/')` в `Option[int]`-returning
+            //   fn'е (plan11_followup f13/f16/f17): arg=char, rt=int
+            //   → wrapper должен быть NovaOpt_nova_char, не _nova_int.
+            // None: rt-priority — context даёт inner type (нет arg).
+            // Ok(v)/Err(e): rt-priority — нужен BOTH (T,E); arg даёт
+            //   только одну сторону, вторая берётся из rt. Fallback на
+            //   legacy flow если rt не Result-like.
+            if name == "Some" && args.len() == 1 {
+                let arg_ty = self.infer_expr_c_type(args[0].expr());
+                let arg_v = self.emit_expr(args[0].expr())?;
+                if !arg_ty.is_empty() && arg_ty != "void*" {
+                    let sanitized = Self::sanitize_for_novaopt(&arg_ty);
+                    self.register_novaopt_decl(&sanitized, &arg_ty);
+                    return Ok(format!(
+                        "((NovaOpt_{}){{.tag = NOVA_TAG_Option_Some, .value = ({})}})",
+                        sanitized, arg_v));
+                }
+                // arg_ty erased/void* — fall through к legacy
+                // (nova_make_Option_Some helper @ :17339).
+            }
+            if let Some(rt) = self.current_fn_return_ty.clone() {
+                // None — context `-> Option[X]` = NovaOpt_<X>.
+                if name == "None" && args.is_empty() && rt.starts_with("NovaOpt_") {
+                    let sani = &rt["NovaOpt_".len()..];
+                    return Ok(format!(
+                        "((NovaOpt_{}){{.tag = NOVA_TAG_Option_None}})",
+                        sani));
+                }
+                // Ok(v) / Err(e) — context `-> Result[T, E]` = NovaRes_<n>*.
+                if (name == "Ok" || name == "Err") && Self::is_result_like(&rt) {
+                    if let Some((ok_c, err_c)) = self.novares_ok_err(&rt) {
+                        self.register_novares_decl(&ok_c, &err_c);
+                        let suffix = Self::novares_name(&ok_c, &err_c);
+                        if name == "Ok" && args.len() == 1 {
+                            let arg_v = self.emit_expr(args[0].expr())?;
+                            return Ok(format!(
+                                "nova_make_NovaRes_{}_Ok({})", suffix, arg_v));
+                        } else if name == "Err" && args.len() == 1 {
+                            let arg_v = self.emit_expr(args[0].expr())?;
+                            return Ok(format!(
+                                "nova_make_NovaRes_{}_Err({})", suffix, arg_v));
+                        }
+                    }
+                }
+            }
         }
 
         // Plan 72 P3-B [M-protocol-param-free-fn-only]: if the callee has
@@ -14997,11 +15204,50 @@ _cp++; \
                                 // и fall through к inline. Loud при отсутствии
                                 // в production не должно случаться.
                                 if !param_names.is_empty() {
-                                    let type_subst: Vec<(String, String)> =
+                                    let mut type_subst: Vec<(String, String)> =
                                         vec![(param_names[0].clone(), real_t.clone())];
-                                    let mono_name = format!(
+                                    // Plan 99.1 Ф.2: method-level generic
+                                    // inference (`Option.map[U]`, `Option.
+                                    // ok_or[E]`). Extract'нутый helper resolve_
+                                    // method_level_subst запускает per-(T,U/E)
+                                    // inference из call-site args + closure
+                                    // return types. Loud-fail при unresolved
+                                    // method-level type-param (D119).
+                                    let method_extras = self.resolve_method_level_subst(
+                                        &fn_decl, args, &type_subst,
+                                        &format!("Option.{}", method.as_str()),
+                                    )?;
+                                    for entry in &method_extras {
+                                        type_subst.push(entry.clone());
+                                    }
+                                    // Plan 99.1 Ф.2: mono_name суффикс с
+                                    // method-level type-args. Без этого
+                                    // `Option[int].map[str]` и `Option[int].
+                                    // map[int]` коллизятся в одном C-имени
+                                    // `Nova_Option_method_map_nova_int`.
+                                    let base_name = format!(
                                         "Nova_Option_method_{}_{}",
                                         method.as_str(), elem_ty);
+                                    let mono_name = if method_extras.is_empty() {
+                                        base_name
+                                    } else {
+                                        Self::compute_mono_name(&base_name, &method_extras)
+                                    };
+                                    // Plan 99.1 Ф.2: trigger register_novaopt_
+                                    // decl(U) для return-Option-типа (e.g.
+                                    // `map[U] -> Option[U]`). Без этого
+                                    // mono'd body refers to NovaOpt_<U>
+                                    // typedef который ещё не emit'ну.
+                                    {
+                                        let saved = std::mem::replace(
+                                            &mut self.current_type_subst,
+                                            type_subst.iter().cloned().collect(),
+                                        );
+                                        if let Some(ret) = &fn_decl.return_type {
+                                            self.ensure_novaopt_decls_for_typeref(ret);
+                                        }
+                                        self.current_type_subst = saved;
+                                    }
                                     self.register_mono_method_instance(
                                         &fn_decl, type_subst, &mono_name, "Option");
                                     let obj_c = self.emit_expr(obj)?;
@@ -15032,90 +15278,17 @@ _cp++; \
                                 self.line("}");
                                 return Ok(format!("({}.value)", tmp));
                             }
-                            // D26 prelude: Option.unwrap_or_else(f).
-                            // Some(v) → v, None → f() (zero-arg closure).
-                            "unwrap_or_else" => {
-                                if let Some(arg) = args.first() {
-                                    let f = self.emit_expr(arg.expr())?;
-                                    let tmp = self.fresh_tmp();
-                                    self.line(&format!("NovaOpt_{} {} = {};", elem_ty, tmp, obj_c));
-                                    let result = self.fresh_tmp();
-                                    self.line(&format!("{} {};", elem_ty, result));
-                                    self.line(&format!("if ({}.tag == NOVA_TAG_Option_Some) {{", tmp));
-                                    self.indent += 1;
-                                    self.line(&format!("{} = {}.value;", result, tmp));
-                                    self.indent -= 1;
-                                    self.line("} else {");
-                                    self.indent += 1;
-                                    // Closure без аргументов (() → T): NovaClos_vi
-                                    // (signature `T(*)(void*)`).
-                                    self.line(&format!(
-                                        "{} = (({}(*)(void*))(((NovaClos_vi*)({}))->fn))(((NovaClos_vi*)({}))->env);",
-                                        result, elem_ty, f, f));
-                                    self.indent -= 1;
-                                    self.line("}");
-                                    return Ok(result);
-                                }
-                            }
-                            // D26 prelude: Option.map(f).
-                            // Some(v) → Some(f(v)), None → None.
-                            "map" => {
-                                if let Some(arg) = args.first() {
-                                    let f = self.emit_expr(arg.expr())?;
-                                    let tmp = self.fresh_tmp();
-                                    self.line(&format!("NovaOpt_{} {} = {};", elem_ty, tmp, obj_c));
-                                    let out = self.fresh_tmp();
-                                    self.line(&format!("NovaOpt_{} {};", elem_ty, out));
-                                    self.line(&format!("if ({}.tag == NOVA_TAG_Option_Some) {{", tmp));
-                                    self.indent += 1;
-                                    // Closure (T → T): берём `nova_int(*)(void*, nova_int)`
-                                    // signature через ручной cast (NovaClos_ii layout
-                                    // совпадает в bootstrap'е для одинаковых-T-параметров).
-                                    let mapped = self.fresh_tmp();
-                                    self.line(&format!(
-                                        "{} {} = (({}(*)(void*, {}))(((NovaClos_ii*)({}))->fn))(((NovaClos_ii*)({}))->env, {}.value);",
-                                        elem_ty, mapped, elem_ty, elem_ty, f, f, tmp));
-                                    self.line(&format!("{}.tag = NOVA_TAG_Option_Some;", out));
-                                    self.line(&format!("{}.value = {};", out, mapped));
-                                    self.indent -= 1;
-                                    self.line("} else {");
-                                    self.indent += 1;
-                                    self.line(&format!("{}.tag = NOVA_TAG_Option_None;", out));
-                                    self.line(&format!("{}.value = 0;", out));
-                                    self.indent -= 1;
-                                    self.line("}");
-                                    return Ok(out);
-                                }
-                            }
-                            // D26 prelude: Option.ok_or(e).
-                            // Some(v) → Ok(v), None → Err(e).
-                            "ok_or" => {
-                                if let Some(arg) = args.first() {
-                                    let e = self.emit_expr(arg.expr())?;
-                                    let tmp = self.fresh_tmp();
-                                    self.line(&format!("NovaOpt_{} {} = {};", elem_ty, tmp, obj_c));
-                                    let out = self.fresh_tmp();
-                                    // Plan 59 Ф.7.5 D1c: dual-mode producer
-                                    // (Option.ok_or → Result). Ok-payload
-                                    // `(nova_int)` cast — для legacy
-                                    // `Nova_Result*`; mono Ok-тип — D3.
-                                    let res_c_ty = self.result_repr_c_type(
-                                        "nova_int", "nova_str");
-                                    let ok_ctor = self.result_ctor_name(&res_c_ty, "Ok");
-                                    let err_ctor = self.result_ctor_name(&res_c_ty, "Err");
-                                    self.line(&format!("{} {};", res_c_ty, out));
-                                    self.line(&format!("if ({}.tag == NOVA_TAG_Option_Some) {{", tmp));
-                                    self.indent += 1;
-                                    self.line(&format!("{} = {}((nova_int){}.value);", out, ok_ctor, tmp));
-                                    self.indent -= 1;
-                                    self.line("} else {");
-                                    self.indent += 1;
-                                    self.line(&format!("{} = {}({});", out, err_ctor, e));
-                                    self.indent -= 1;
-                                    self.line("}");
-                                    return Ok(out);
-                                }
-                            }
+                            // Plan 99.3 Ф.2: Option.unwrap_or_else(f) →
+                            // Nova-body в core.nv через DeclaredBody +
+                            // closure invoke через NovaClosBase cast.
+                            // Plan 99.3 Ф.1: Option.map(f) → Nova-body
+                            // в core.nv через DeclaredBody-dispatch +
+                            // Plan 99.1 method-level generic + Plan 99.2
+                            // contextual Some/None ctors. Full mono per
+                            // (T, U) — паритет Rust. Inline emit удалён
+                            // (был T==U-only через NovaClos_ii hardcode).
+                            // Plan 99.3 Ф.3: Option.ok_or[E](e) →
+                            // Nova-body. Mono per (T, E) — паритет Rust.
                             _ => {}
                         }
                     }
@@ -15227,10 +15400,22 @@ _cp++; \
                                 let param_names = self.builtin_sum_type_params
                                     .get("Result").cloned().unwrap_or_default();
                                 if param_names.len() == 2 {
-                                    let type_subst: Vec<(String, String)> = vec![
+                                    let mut type_subst: Vec<(String, String)> = vec![
                                         (param_names[0].clone(), ok_c.clone()),
                                         (param_names[1].clone(), err_c.clone()),
                                     ];
+                                    // Plan 99.1 Ф.3: method-level generic
+                                    // inference (`Result.map[U]`/`map_err[F]`/
+                                    // `unwrap_or_else`). Identical pattern с
+                                    // Option-веткой (Plan 99.1 Ф.2). Loud-fail
+                                    // при unresolved method-level type-param.
+                                    let method_extras = self.resolve_method_level_subst(
+                                        &fn_decl, args, &type_subst,
+                                        &format!("Result.{}", method.as_str()),
+                                    )?;
+                                    for entry in &method_extras {
+                                        type_subst.push(entry.clone());
+                                    }
                                     // Plan 95.bis Ф.2: mono-name **всегда
                                     // суффиксированный** (даже для legacy
                                     // `Nova_Result*`). Иначе #define-алиасы
@@ -15239,13 +15424,31 @@ _cp++; \
                                     // имя в теле моей Nova-функции эмитимой
                                     // под коротким именем → C-redefinition
                                     // с моно-эмиссией под суффиксированным.
-                                    // Для legacy `Nova_Result*` суффикс
-                                    // резолвится в канонический bootstrap
-                                    // `nova_int_nova_str` (тот же fallback).
+                                    //
+                                    // Plan 99.1 Ф.3: + method-level suffix
+                                    // (`_<U>...`) после `_<ok>_<err>`.
                                     let suffix = Self::novares_name(&ok_c, &err_c);
-                                    let mono_name = format!(
+                                    let base_name = format!(
                                         "Nova_Result_method_{}_{}",
                                         method.as_str(), suffix);
+                                    let mono_name = if method_extras.is_empty() {
+                                        base_name
+                                    } else {
+                                        Self::compute_mono_name(&base_name, &method_extras)
+                                    };
+                                    // Plan 99.1 Ф.3: register NovaOpt/NovaRes
+                                    // typedefs для return-типа (e.g.
+                                    // `Result.map[U] -> Result[U, E]`).
+                                    {
+                                        let saved = std::mem::replace(
+                                            &mut self.current_type_subst,
+                                            type_subst.iter().cloned().collect(),
+                                        );
+                                        if let Some(ret) = &fn_decl.return_type {
+                                            self.ensure_novaopt_decls_for_typeref(ret);
+                                        }
+                                        self.current_type_subst = saved;
+                                    }
                                     self.register_mono_method_instance(
                                         &fn_decl, type_subst, &mono_name, "Result");
                                     let obj_c = self.emit_expr(obj)?;
@@ -15266,125 +15469,13 @@ _cp++; \
                         // через mono'd register_novaopt_decl path.
                         let obj_c = self.emit_expr(obj)?;
                         match method.as_str() {
-                            // D26 prelude: Result.unwrap_or_else(f). Err →
-                            // f(e), Ok(v) → v. f это closure (nova_str → T).
-                            // Plan 72 P1-C: use actual T type for result variable.
-                            "unwrap_or_else" => {
-                                if let Some(arg) = args.first() {
-                                    // Plan 59 Ф.7.5 D4: строгая (T,E)-резолюция.
-                                    let (ok_c_ty, _) = self.resolve_result_te_strict(
-                                        obj, &obj_ty, "unwrap_or_else")?;
-                                    let f = self.emit_expr(arg.expr())?;
-                                    let tmp = self.fresh_tmp();
-                                    // Plan 59 Ф.7.5 D1a: dual-mode var-decl.
-                                    self.line(&format!("{} {} = {};", obj_ty, tmp, obj_c));
-                                    let result = self.fresh_tmp();
-                                    self.line(&format!("{} {};", ok_c_ty, result));
-                                    self.line(&format!("if ({}->tag == NOVA_TAG_Result_Ok) {{", tmp));
-                                    self.indent += 1;
-                                    let cast_ok = Self::cast_from_nova_int(
-                                        &format!("{}->payload.Ok._0", tmp), &ok_c_ty);
-                                    self.line(&format!("{} = {};", result, cast_ok));
-                                    self.indent -= 1;
-                                    self.line("} else {");
-                                    self.indent += 1;
-                                    // Closure (nova_str → T): cast return to T.
-                                    let clos_call = format!(
-                                        "((nova_int(*)(void*, nova_str))(((NovaClos_ii*)({f}))->fn))(((NovaClos_ii*)({f}))->env, {tmp}->payload.Err._0)");
-                                    let cast_err = Self::cast_from_nova_int(&clos_call, &ok_c_ty);
-                                    self.line(&format!("{} = {};", result, cast_err));
-                                    self.indent -= 1;
-                                    self.line("}");
-                                    return Ok(result);
-                                }
-                            }
-                            // D26 prelude: Result.map(f). Ok(v) → Ok(f(v)),
-                            // Err(e) → Err(e). f это closure `fn(T) -> U`.
-                            "map" => {
-                                if let Some(arg) = args.first() {
-                                    // Plan 62.B: closure C-сигнатура. Bootstrap
-                                    // Result Ok-slot — nova_int, но closure-литерал
-                                    // может иметь distinct typedef (nova_bool/
-                                    // nova_char, Plan 70.3). Manual fn-pointer cast
-                                    // по фактическим типам лямбды — без него
-                                    // `NOVA_CLOS_CALL_ii` (int-layout) на
-                                    // nova_bool-closure даёт calling-convention
-                                    // mismatch (garbage в верхних байтах).
-                                    // ClosureLight (untyped) → фоллбэк на tracked
-                                    // Result Ok-type / nova_int.
-                                    // Plan 59 Ф.7.5 D4: closure-сигнатура —
-                                    // приоритет; иначе строгая (T,E)-
-                                    // резолюция (param_c = Ok-тип, ret_c
-                                    // консервативно = Ok-тип). Тихий
-                                    // `(nova_int, nova_int)` default убран.
-                                    let (param_c, ret_c) = match self
-                                        .typed_closure_c_sig(arg.expr())
-                                    {
-                                        Some(sig) => sig,
-                                        None => {
-                                            let (ok_c, _) = self
-                                                .resolve_result_te_strict(
-                                                    obj, &obj_ty, "map")?;
-                                            (ok_c.clone(), ok_c)
-                                        }
-                                    };
-                                    let f = self.emit_expr(arg.expr())?;
-                                    let tmp = self.fresh_tmp();
-                                    // Plan 59 Ф.7.5 D1a: dual-mode var-decl
-                                    // + dual-mode `Ok`-конструктор.
-                                    self.line(&format!("{} {} = {};", obj_ty, tmp, obj_c));
-                                    let out = self.fresh_tmp();
-                                    self.line(&format!("{} {};", obj_ty, out));
-                                    self.line(&format!("if ({}->tag == NOVA_TAG_Result_Ok) {{", tmp));
-                                    self.indent += 1;
-                                    let mapped = self.fresh_tmp();
-                                    let arg_val = Self::cast_from_nova_int(
-                                        &format!("{}->payload.Ok._0", tmp), &param_c);
-                                    self.line(&format!(
-                                        "{rc} {m} = (({rc}(*)(void*, {pc}))(((NovaClos_ii*)({f}))->fn))(((NovaClos_ii*)({f}))->env, {av});",
-                                        rc = ret_c, pc = param_c, m = mapped, f = f, av = arg_val));
-                                    let ok_ctor = self.result_ctor_name(&obj_ty, "Ok");
-                                    self.line(&format!("{} = {}((nova_int){});", out, ok_ctor, mapped));
-                                    self.indent -= 1;
-                                    self.line("} else {");
-                                    self.indent += 1;
-                                    self.line(&format!("{} = {};", out, tmp));
-                                    self.indent -= 1;
-                                    self.line("}");
-                                    return Ok(out);
-                                }
-                            }
-                            // D26 prelude: Result.map_err(f). Err(e) → Err(f(e)),
-                            // Ok остаётся. f это closure (nova_str → nova_str).
-                            "map_err" => {
-                                if let Some(arg) = args.first() {
-                                    let f = self.emit_expr(arg.expr())?;
-                                    let tmp = self.fresh_tmp();
-                                    // Plan 59 Ф.7.5 D1a: dual-mode var-decl
-                                    // + dual-mode `Err`-конструктор.
-                                    self.line(&format!("{} {} = {};", obj_ty, tmp, obj_c));
-                                    let out = self.fresh_tmp();
-                                    self.line(&format!("{} {};", obj_ty, out));
-                                    self.line(&format!("if ({}->tag == NOVA_TAG_Result_Err) {{", tmp));
-                                    self.indent += 1;
-                                    // Closure (nova_str → nova_str): сигнатура
-                                    // не в стандартных NOVA_CLOS_CALL_*, делаем
-                                    // ручной cast fn-указателя.
-                                    let new_err = self.fresh_tmp();
-                                    self.line(&format!(
-                                        "nova_str {} = ((nova_str(*)(void*, nova_str))(((NovaClos_ii*)({}))->fn))(((NovaClos_ii*)({}))->env, {}->payload.Err._0);",
-                                        new_err, f, f, tmp));
-                                    let err_ctor = self.result_ctor_name(&obj_ty, "Err");
-                                    self.line(&format!("{} = {}({});", out, err_ctor, new_err));
-                                    self.indent -= 1;
-                                    self.line("} else {");
-                                    self.indent += 1;
-                                    self.line(&format!("{} = {};", out, tmp));
-                                    self.indent -= 1;
-                                    self.line("}");
-                                    return Ok(out);
-                                }
-                            }
+                            // Plan 99.3 Ф.4: Result.unwrap_or_else(f) →
+                            // Nova-body. Mono per (T, E) — паритет Rust.
+                            // Plan 99.3 Ф.5: Result.map[U](f) → Nova-body.
+                            // Full mono per (T, U, E). Closure invoke
+                            // через NovaClosBase + cast.
+                            // Plan 99.3 Ф.6: Result.map_err[F](f) →
+                            // Nova-body. Full mono per (T, E, F).
                             "unwrap" => {
                                 // Plan 72 P1-C: cast payload.Ok._0 to actual T type.
                                 // Plan 59 Ф.7.5 D4: строгая (T,E)-резолюция.
@@ -16437,115 +16528,15 @@ _cp++; \
                                     .zip(type_args_c.iter())
                                     .map(|(g, c)| (g.name.clone(), c.clone()))
                                     .collect();
-                                // Plan 48 method-param mono (Plan 63 followup, 2026-05-17 EOD):
-                                // method может иметь собственные type params (`@map[U]`).
-                                // Resolve U из call-site args + closure return types.
-                                //
-                                // Step 1: resolve_mono_type_args для non-closure args.
-                                // Step 2: для ClosureLight args paired с Func params —
-                                // pre-infer closure return type с typed var_types для
-                                // params (substituted через current_type_subst). Без этого
-                                // x: T в `|x| ...` defaults к nova_int и method-level U
-                                // не resolved.
-                                let method_extra_subst: Vec<(String, String)> =
-                                    if !fn_decl.generics.is_empty() {
-                                        let saved_outer = std::mem::replace(
-                                            &mut self.current_type_subst,
-                                            type_subst.iter().cloned().collect(),
-                                        );
-                                        // Type-param slots, initially None.
-                                        let mut subst_slots: Vec<(String, Option<String>)> =
-                                            fn_decl.generics.iter()
-                                                .map(|g| (g.name.clone(), None))
-                                                .collect();
-                                        // Step 1: non-closure args через standard inference.
-                                        for (param, arg) in fn_decl.params.iter().zip(args.iter()) {
-                                            let is_closure = matches!(arg.expr().kind,
-                                                ExprKind::ClosureLight { .. } | ExprKind::ClosureFull(_));
-                                            if !is_closure {
-                                                let arg_c = self.infer_expr_c_type(arg.expr());
-                                                self.infer_type_param_binding(&param.ty, &arg_c, &mut subst_slots);
-                                            }
-                                        }
-                                        // Step 2: ClosureLight args с typed param context.
-                                        for (param, arg) in fn_decl.params.iter().zip(args.iter()) {
-                                            let (fp, ret_ty_ref) =
-                                                if let crate::ast::TypeRef::Func { params: fp, return_type: Some(rt), .. } = &param.ty {
-                                                    (fp.clone(), rt.clone())
-                                                } else { continue };
-                                            let (closure_params, body_expr) = match &arg.expr().kind {
-                                                ExprKind::ClosureLight { params, body } => {
-                                                    let body_e = match body {
-                                                        crate::ast::ClosureBody::Expr(e) => (**e).clone(),
-                                                        crate::ast::ClosureBody::Block(b) => Expr::new(
-                                                            ExprKind::Block(b.clone()), b.span,
-                                                        ),
-                                                    };
-                                                    (params.clone(), body_e)
-                                                }
-                                                _ => continue,
-                                            };
-                                            // Tmp var_types: bind closure params to substituted fn-param types.
-                                            // Plan 70 PhaseA2: strict — closure params binding в fn_param_sigs.
-                                            let inner_ptys: Vec<String> = fp.iter()
-                                                .map(|t| self.type_ref_to_c(t).map_err(|e| self.err_no_int_fallback(
-                                                    "closure param type binding",
-                                                    &e,
-                                                )))
-                                                .collect::<Result<Vec<_>, _>>()?;
-                                            let saved_var_types: Vec<(String, Option<String>)> =
-                                                closure_params.iter().zip(inner_ptys.iter())
-                                                .map(|(cp, c_ty)| (cp.name.clone(),
-                                                    self.var_types.insert(cp.name.clone(), c_ty.clone())))
-                                                .collect();
-                                            let closure_ret_c = self.infer_expr_c_type(&body_expr);
-                                            // Restore var_types.
-                                            for (name, prev) in saved_var_types {
-                                                match prev {
-                                                    Some(old) => { self.var_types.insert(name, old); }
-                                                    None => { self.var_types.remove(&name); }
-                                                }
-                                            }
-                                            if !closure_ret_c.is_empty() && closure_ret_c != "void*" {
-                                                self.infer_type_param_binding(
-                                                    &ret_ty_ref, &closure_ret_c, &mut subst_slots);
-                                            }
-                                        }
-                                        self.current_type_subst = saved_outer;
-                                        // Plan 48 Ф.9 / D119: diagnose any unresolved
-                                        // method-level type params after inference. Без
-                                        // этого они silently dropped → Nova_U_p leak в
-                                        // emitted C (`Nova_Wrapper____Nova_U_p*` undefined).
-                                        for (name, resolved) in &subst_slots {
-                                            if resolved.is_none() {
-                                                let positions: Vec<String> = fn_decl.params.iter()
-                                                    .enumerate()
-                                                    .filter_map(|(i, p)| {
-                                                        let mut names = std::collections::HashSet::new();
-                                                        Self::collect_typeref_names(&p.ty, &mut names,
-                                                            &mut std::collections::HashSet::new());
-                                                        if names.contains(name) {
-                                                            Some(format!("param `{}` (#{i})", p.name))
-                                                        } else { None }
-                                                    })
-                                                    .collect();
-                                                let where_used = if positions.is_empty() {
-                                                    " (only in return type — provide arg whose type binds it)".to_string()
-                                                } else {
-                                                    format!(" — appears in {}", positions.join(", "))
-                                                };
-                                                return Err(format!(
-                                                    "cannot infer method-level type argument `{name}` for generic method `{}.{}`{}; \
-                                                     provide a closure/arg whose type fixes `{name}`",
-                                                    rt_trimmed, method, where_used
-                                                ));
-                                            }
-                                        }
-                                        subst_slots.into_iter()
-                                            .filter_map(|(n, c)| c.map(|c| (n, c)))
-                                            .filter(|(_, c)| !c.is_empty() && c != "void*")
-                                            .collect()
-                                    } else { Vec::new() };
+                                // Plan 99.1 Ф.1: extract'нуто в
+                                // `resolve_method_level_subst` helper (Plan 48
+                                // method-param mono логика). Identical behavior;
+                                // helper переиспользуется builtin Option/Result
+                                // `DeclaredBody`-dispatch (Plan 99.1 Ф.2/Ф.3).
+                                let method_extra_subst = self.resolve_method_level_subst(
+                                    &fn_decl, args, &type_subst,
+                                    &format!("{}.{}", rt_trimmed, method),
+                                )?;
                                 let has_method_subst = !method_extra_subst.is_empty();
                                 for entry in method_extra_subst {
                                     type_subst.push(entry);
@@ -21694,6 +21685,135 @@ _cp++; \
     /// registers innermost types раньше outer'а, что даёт правильный
     /// topological order: `NovaOpt_X` стоит до `NovaOpt_NovaOpt_X` в
     /// файле (последний зависит от первого).
+    /// Plan 99.1 Ф.2/Ф.3: best-effort method-level inference для
+    /// `infer_expr_c_type` (`&self`-context — нельзя мутировать
+    /// `var_types`). Возвращает Some(resolved_c_ty) для return-типа
+    /// builtin Option/Result method (с possible method-level generics);
+    /// None — если метод не в `generic_type_methods` или return-type
+    /// не резолвится (fallback к hardcoded match'у).
+    ///
+    /// Степень аппроксимации:
+    /// - **Non-closure args**: standard `infer_expr_c_type` (точно).
+    /// - **Closure args**: closure body type инферится **без**
+    ///   pre-binding `var_types` (degraded — работает для большинства
+    ///   common-case `|x| str.from(x)`, `|x| Some(x)` где body
+    ///   independent от x type). Иначе degrade gracefully на None.
+    ///
+    /// Для full-precision (с pre-binding) используется `&mut self`
+    /// version `resolve_method_level_subst` в DeclaredBody-dispatch.
+    fn infer_method_level_return_for_sum(
+        &self,
+        sum_name: &str,
+        method: &str,
+        args: &[CallArg],
+        receiver_subst: &[(String, String)],
+    ) -> Option<String> {
+        let fn_decl = self.generic_type_methods.get(sum_name)?
+            .iter().find(|m| m.name == method)?.clone();
+        // Если метод без method-level generics — receiver_subst достаточен.
+        // Apply к return_type.
+        let ret_ty_ref = fn_decl.return_type.as_ref()?;
+        let mut subst_slots: Vec<(String, Option<String>)> = receiver_subst
+            .iter()
+            .map(|(n, c)| (n.clone(), Some(c.clone())))
+            .collect();
+        for g in &fn_decl.generics {
+            if !subst_slots.iter().any(|(n, _)| n == &g.name) {
+                subst_slots.push((g.name.clone(), None));
+            }
+        }
+        // Step 1: non-closure args через standard inference.
+        for (param, arg) in fn_decl.params.iter().zip(args.iter()) {
+            let is_closure = matches!(arg.expr().kind,
+                ExprKind::ClosureLight { .. } | ExprKind::ClosureFull(_));
+            if !is_closure {
+                let arg_c = self.infer_expr_c_type(arg.expr());
+                self.infer_type_param_binding(&param.ty, &arg_c, &mut subst_slots);
+            }
+        }
+        // Step 2: closure args — degraded inference (без var_types binding).
+        // Body inferится с пустым context'ом; для common-case (`|x|
+        // str.from(x)` где return-type определяется только функцией) —
+        // работает; для cases где x-type meaningful — fallback default.
+        for (param, arg) in fn_decl.params.iter().zip(args.iter()) {
+            let (_fp, ret_ty_ref_closure) =
+                if let crate::ast::TypeRef::Func { params: fp, return_type: Some(rt), .. } = &param.ty {
+                    (fp.clone(), rt.clone())
+                } else { continue };
+            let body_expr = match &arg.expr().kind {
+                ExprKind::ClosureLight { body, .. } => {
+                    match body {
+                        crate::ast::ClosureBody::Expr(e) => (**e).clone(),
+                        crate::ast::ClosureBody::Block(b) => Expr::new(
+                            ExprKind::Block(b.clone()), b.span,
+                        ),
+                    }
+                }
+                _ => continue,
+            };
+            let closure_ret_c = self.infer_expr_c_type(&body_expr);
+            if !closure_ret_c.is_empty() && closure_ret_c != "void*" {
+                self.infer_type_param_binding(
+                    &ret_ty_ref_closure, &closure_ret_c, &mut subst_slots);
+            }
+        }
+        // Резолв return-type через apply_type_subst_to_ref.
+        // Слоты: только resolved (Some).
+        Self::apply_type_subst_to_ref(ret_ty_ref, &subst_slots)
+    }
+
+    /// Plan 99.1 Ф.2: рекурсивно обойти TypeRef и зарегистрировать
+    /// все встретившиеся `Option[X]` / `Result[X, Y]` типы через
+    /// `register_novaopt_decl` / `register_novares_decl` — резолвится
+    /// под текущим `current_type_subst`.
+    ///
+    /// Нужен для DeclaredBody-dispatch с method-level generics
+    /// (например, `Option.map[U] -> Option[U]`): mono'd body
+    /// reference'ит `NovaOpt_<U>` typedef, который должен быть emit'ну
+    /// ДО body. Без этого CC-FAIL "undefined NovaOpt_<...>".
+    ///
+    /// Идемпотентен (через `seen` в `register_novaopt_decl`/
+    /// `register_novares_decl`).
+    fn ensure_novaopt_decls_for_typeref(&self, ty: &crate::ast::TypeRef) {
+        use crate::ast::TypeRef;
+        match ty {
+            TypeRef::Named { path, generics, .. } => {
+                let name = path.join("_");
+                if name == "Option" && generics.len() == 1 {
+                    if let Ok(c) = self.type_ref_to_c(&generics[0]) {
+                        if !c.is_empty() && c != "void*" {
+                            let sani = Self::sanitize_for_novaopt(&c);
+                            self.register_novaopt_decl(&sani, &c);
+                        }
+                    }
+                } else if name == "Result" && generics.len() == 2 {
+                    if let (Ok(ok), Ok(err)) = (
+                        self.type_ref_to_c(&generics[0]),
+                        self.type_ref_to_c(&generics[1]),
+                    ) {
+                        if !ok.is_empty() && ok != "void*" && !err.is_empty() && err != "void*" {
+                            self.register_novares_decl(&ok, &err);
+                        }
+                    }
+                }
+                // Recurse в generics — nested Option[Option[T]] / Result-of-Result.
+                for g in generics { self.ensure_novaopt_decls_for_typeref(g); }
+            }
+            TypeRef::Array(inner, _) | TypeRef::FixedArray(_, inner, _) => {
+                self.ensure_novaopt_decls_for_typeref(inner);
+            }
+            TypeRef::Tuple(elems, _) => {
+                for e in elems { self.ensure_novaopt_decls_for_typeref(e); }
+            }
+            TypeRef::Func { params, return_type, .. } => {
+                for p in params { self.ensure_novaopt_decls_for_typeref(p); }
+                if let Some(rt) = return_type { self.ensure_novaopt_decls_for_typeref(rt); }
+            }
+            TypeRef::Unit(_) => {}
+            TypeRef::Protocol { .. } => {} // не sum-тип
+        }
+    }
+
     fn register_novaopt_decl(&self, sanitized: &str, c_ty: &str) {
         let mut seen = self.novaopt_decls_seen.borrow_mut();
         if seen.contains(sanitized) { return; }
@@ -23296,6 +23416,17 @@ _cp++; \
                             .trim_end_matches('*')
                             .trim()
                             .to_string();
+                        // Plan 99.1 Ф.2: для Nova-body методов с
+                        // method-level generic (`map[U]`/`ok_or[E]`)
+                        // используем `infer_method_level_return_for_sum`
+                        // — резолвит return-тип через FnDecl + closure-
+                        // arg return type. Hardcoded match ниже —
+                        // fallback для legacy inline-emit методов.
+                        if let Some(resolved) = self.infer_method_level_return_for_sum(
+                            "Option", method.as_str(), args, &[("T".to_string(), elem_ty.clone())])
+                        {
+                            return resolved;
+                        }
                         return match method.as_str() {
                             "is_some" | "is_none" => "nova_bool".into(),
                             "unwrap_or" | "unwrap" | "unwrap_or_else" => elem_ty,
@@ -23314,6 +23445,15 @@ _cp++; \
                             .unwrap_or_else(|| ("nova_int".into(), "nova_str".into()));
                         let ok_ident = Self::sanitize_c_for_ident(&ok_c);
                         let err_ident = Self::sanitize_c_for_ident(&err_c);
+                        // Plan 99.1 Ф.3: для Nova-body методов с
+                        // method-level generic (`map[U]`/`map_err[F]`/etc).
+                        if let Some(resolved) = self.infer_method_level_return_for_sum(
+                            "Result", method.as_str(), args,
+                            &[("T".to_string(), ok_c.clone()),
+                              ("E".to_string(), err_c.clone())])
+                        {
+                            return resolved;
+                        }
                         return match method.as_str() {
                             "is_ok" | "is_err" => "nova_bool".into(),
                             "unwrap" | "unwrap_or" | "unwrap_or_else" => ok_c,

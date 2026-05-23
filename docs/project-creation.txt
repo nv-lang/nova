@@ -19796,3 +19796,162 @@ nova bench run (separate command, не в standard test-all).
 
 Plan 97.1 ПОЛНОСТЬЮ ЗАВЕРШЕН с полным production-grade покрытием +
 performance baseline.
+
+═══════════════════════════════════════════════════════════════════════
+Plan 99.1 ✅ — method-level generic в DeclaredBody (foundation)
+2026-05-23 (worktree d:/Sources/nv-lang/nova-p99-impl, ветка plan-99-impl)
+═══════════════════════════════════════════════════════════════════════
+
+Ф.1: Extract `method_extra_subst` (~110 строк) из emit_c.rs:16386-16494
+в reusable helper `resolve_method_level_subst(&mut self, fn_decl, args,
+receiver_subst, diag_context) -> Result<Vec<(String,String)>, String>`.
+Refactor user-generic dispatch — call helper вместо inline. Regression
+plan48/55/59/62/88/89/95/95.bis/98/basics/generics — 64/0.
+
+Ф.2: Option DeclaredBody dispatch (Plan 95 Ф.3.1) extended:
+- Call resolve_method_level_subst (G1 fix).
+- mono_name через compute_mono_name с method-level suffix (G3 fix).
+- ensure_novaopt_decls_for_typeref(return_type) для lazy-emit
+  NovaOpt_<U> typedef (G4 fix).
+- infer_method_level_return_for_sum в infer_expr_c_type для best-
+  effort return-type resolution (G7 fix).
+
+Ф.3: Result DeclaredBody — analog pattern.
+
+Ф.4: Probe `nova_tests/plan99_probe/my_map_probe.nv` — 3 теста PASS:
+- Option[int].my_map(|x| str.from(x)) — T=int, U=str.
+- Option[int].my_map(|x| x * 2) — T=int, U=int.
+- Option[int].my_map с None — closure не вызывается.
+
+Regression 10 крит. подпапок: 113/0.
+
+Новые helpers в emit_c.rs:
+- resolve_method_level_subst (extracted, ~130 lines).
+- ensure_novaopt_decls_for_typeref (recursive walk на TypeRef →
+  register_novaopt_decl / register_novares_decl).
+- infer_method_level_return_for_sum (read-only inference для
+  &self-context infer_expr_c_type, degraded closure handling).
+
+Закрытые gaps: G1, G2, G3, G4, G7.
+Открытые на 99.2: G5, G6. На 99.3: G8.
+
+Готово к Plan 99.2.
+
+═══════════════════════════════════════════════════════════════════════
+Plan 99.2 ✅ — Contextual variant constructors
+2026-05-23 (worktree d:/Sources/nv-lang/nova-p99-impl)
+═══════════════════════════════════════════════════════════════════════
+
+Bare `Some(v)`/`None`/`Ok(v)`/`Err(e)` (Ident form) в expr-position
+теперь используют `current_fn_return_ty` для выбора mono-репрезентации:
+
+- `Some(v)` с return `-> Option[X]` → `(NovaOpt_<X>){.tag=Some, .value=v}`.
+- `None` с return `-> Option[X]` → `(NovaOpt_<X>){.tag=None}`.
+- `Ok(v)`/`Err(e)` с return `-> Result[T, E]` → `nova_make_NovaRes_<n>_Ok/Err(v)`
+  где n = `<ok_sani>_<err_sani>` (registered via `register_novares_decl`).
+
+Fallback на legacy `nova_make_<X>_<V>` если `current_fn_return_ty`
+None/не matches target sum-type (backward-compat).
+
+Hook добавлен в `emit_call` после `print/println` intercept.
+
+Закрытые gaps: G5, G6.
+
+Тесты nova_tests/plan99_2_ctor/ — 2/0:
+- option_ctor_in_body.nv (5 тестов: int/str/char/User non-prim/None)
+- result_ctor_in_body.nv (4 теста: Ok/Err с разными T/E + reversed)
+
+Регрессия 9 крит. подпапок: 108/0. Backward-compat подтверждён —
+legacy paths (без typed contextual return) не изменились.
+
+Готово к Plan 99.3.
+
+═══════════════════════════════════════════════════════════════════════
+Plan 99.3 + 99.4 ✅ — все 6 closure-applying методов на Nova-body
+2026-05-23 (worktree d:/Sources/nv-lang/nova-p99-impl)
+═══════════════════════════════════════════════════════════════════════
+
+99.3 — atomic per-method migration (6 commits):
+- Ф.1 Option.map[U] (commit c583978e80a)
+- Ф.2 Option.unwrap_or_else
+- Ф.3 Option.ok_or[E]
+- Ф.4 Result.unwrap_or_else
+- Ф.5 Result.map[U] + ClosureFull arg fix (commit 059d0ab1595 fixup)
+- Ф.6 Result.map_err[F]
+
+Regression на каждом шаге 6-7 крит. подпапок: 0 delta.
+
+99.4 — tests + spec + close:
+- 8 фикстур plan99/ (6 positive + 2 negative): option_map_migrated,
+  option_unwrap_or_else_migrated, option_ok_or_migrated,
+  result_unwrap_or_else_migrated, result_map_migrated,
+  result_map_err_migrated, option_map_wrong_closure_arity_neg,
+  option_ok_or_missing_arg_neg. Все 8/0.
+- spec/decisions/08-runtime.md: блок «Plan 99 (закрыт 2026-05-23)».
+- Plan 78 amend — финальный (14/14 Option/Result на Nova).
+- simplifications.md: маркер [M-option-result-closure-methods-
+  deferred] ✅ ЗАКРЫТО Plan 99.
+- master Plan 99 doc + 4 sub-plan'а — статус ✅ ЗАКРЫТ.
+
+ИТОГ:
+15 / 17 builtin Option/Result-методов на Nova-body (7 Option + 8
+Result). Реестр C-routing только для `Option.unwrap` и `Result.
+unwrap` (Plan 61 lineage — typed `Fail[E]` effect). Паритет Rust
+full mono per (T, U) + closure через NovaClosBase + cast.
+
+═══════════════════════════════════════════════════════════════════════
+Plan 99 finalization (2026-05-23, продолжение того же дня)
+2 hardening fix'а + закрытие
+═══════════════════════════════════════════════════════════════════════
+
+Fix #1 — param-rename `f` → distinct names (commit a87e3c45058):
+  После initial migration regression на
+  `contracts/trivial_congruence_positive`:
+    «обязательный параметр `x` не передан».
+  Bisection показал, что shadowing случается при `f` как имени
+  closure-параметра в body метода — конфликт с user-функциями
+  `fn f(...)` в тестовых модулях. Renamed:
+  - Option.unwrap_or_else: f → default_fn
+  - Option.map[U]: f → map_fn
+  - Result.unwrap_or_else: f → default_fn
+  - Result.map[U]: f → map_fn
+  - Result.map_err[F]: f → err_fn
+  - Option.ok_or использует param `err` (без коллизии — оставлен).
+
+Fix #2 — bare `Some(v)` ARG-type приоритет (commit db200b8539b):
+  После Plan 99.2 commit 444511fdea bare `Some('/')` в sub-expr
+  position строил wrapper `NovaOpt_nova_int` (по rt fn'а), вместо
+  `NovaOpt_nova_char` (по arg type). Это ломало:
+  - plan11_followup/f13_path_join_normalize_positive — CC-FAIL
+  - plan11_followup/f16_path_alias_variadic_positive — CC-FAIL
+  - plan11_followup/f17_alias_nonvariadic_check — CC-FAIL
+  Источник: `find_last_slash(s str) -> Option[int]` содержал
+  `if s.char_at(i) == Some('/') { ... }` — `Some('/')` это
+  comparison-operand, не return-value, поэтому ARG type определяет
+  wrapper, не rt. Fix: bare `Some(v)` теперь использует
+  `infer_expr_c_type(arg)` параллельно с path-form
+  `Option.Some(v)` (line 17288) и helper `nova_make_Option_Some`
+  (line 17339). `None` остаётся rt-based (нет arg).
+  `Ok(v)`/`Err(e)` остаются rt-based (нужен BOTH (T,E)).
+
+ИТОГ FINAL:
+- Полный nova test: 1141 PASS / 0 FAIL / 56 SKIP. Зелёный.
+- spec/decisions/08-runtime.md: Plan 99 D-block updated.
+- docs/simplifications.md: marker M-option-result-closure-methods-
+  deferred — приписан followup-history (2 fix'а).
+- 11 коммитов в plan-99-impl ветке:
+    bb04949bb32  feat(plan99.1): foundation
+    444511fdea4  feat(plan99.2): contextual variant ctors
+    c583978e80a  feat(plan99.3 Ф.1): Option.map[U]
+    7216d9cb570  feat(plan99.3 Ф.2): Option.unwrap_or_else
+    51ca27d52b2  feat(plan99.3 Ф.3): Option.ok_or[E]
+    75e760eac37  feat(plan99.3 Ф.4): Result.unwrap_or_else
+    496ec0bbb5f  feat(plan99.3 Ф.5): Result.map[U]
+    059d0ab1595  fix(plan99.3 Ф.5): ClosureFull arg support
+    335676cdfb5  feat(plan99.3 Ф.6): Result.map_err[F]
+    569a745ccdd  docs(plan99.4): negative tests + spec + close
+    a87e3c45058  fix(plan99.3): rename closure-param `f`
+    db200b8539b  fix(plan99.2): bare `Some(v)` использует ARG type
+- Готов merge plan-99-impl → main.
+
+

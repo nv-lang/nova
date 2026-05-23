@@ -1,0 +1,11 @@
+// EXPECT_COMPILE_ERROR
+//
+// Plan 99.4 Ф.2 negative: closure с неверной арностью (2 params
+// вместо 1) для `Option.map(f fn(T)->U)` → loud compile-error.
+
+module nova_tests.plan99.option_map_wrong_closure_arity_neg
+
+test "wrong arity in closure-arg" {
+    let o Option[int] = Some(42)
+    let _x = o.map(|x, y| x + y)
+}

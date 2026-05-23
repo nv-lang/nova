@@ -1,9 +1,10 @@
 # Plan 99 — Closure-applying Option/Result методы на Nova-body (master)
 
-> **Статус:** 📋 RE-AUDIT 2026-05-23 — план переписан после clean-slate
-> аудита; декомпозирован на 4 sub-plan'а (99.1–99.4) для атомарной
-> verifiability. Каждый sub-plan = verifiable shipment unit с
-> регрессионной чисткой.
+> **Статус:** ✅ **ЗАКРЫТ 2026-05-23** (worktree `nova-p99-impl`,
+> ветка `plan-99-impl`). Все 4 sub-plan'а 99.1/99.2/99.3/99.4 ✅.
+> **14/14 Option/Result-методов на Nova-body** (только `unwrap`
+> C-routed — Plan 61 lineage). 9 коммитов с регрессионной чисткой
+> на каждом per-method шаге Plan 99.3.
 > **Приоритет:** P3 (de-magic / single-source — паритет Plan 95/95.bis).
 > **Оценка (re-audit):** ~3 dev-day (1.5+0.5+0.5+0.5). Прежняя оценка
 > 2.5–3 была близка, но без декомпозиции — non-atomic shipping risk.
