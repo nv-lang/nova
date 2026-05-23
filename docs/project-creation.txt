@@ -19100,3 +19100,70 @@ Plan 95.bis ✅ ЗАКРЫТ — полный nova test 1063 PASS / 0 реаль
   сохранён.
 
 Готово к merge'у в main (ожидается подтверждение пользователя).
+
+### Plan 83.2 — флип дефолта M:N: Ф.0 ✅ + Ф.1 инфраструктура ✅, full flip отложен (2026-05-23)
+
+Worktree nova-p83, ветка plan-83-2. Цель — паритет с Go GOMAXPROCS=
+NumCPU / tokio multi-thread: compiled-программа без явного runtime.init
+автоматически использует все ядра.
+
+Ф.0 readiness gate — все жёсткие предусловия в main: Plan 82 ✅
+(Windows fiber arena), Plan 83.1 ✅ (resolve_maxprocs, lazy materialize,
+atexit), Plan 83.3 ✅ (Blocking → libuv threadpool), GC-safety
+multi-worker ✅. Race-audit clean (Plan 92 закрыл flaky
+mn_runtime_actual_workload). Soak/stress на existing concurrency 75/75
+incl. mn_* + parallel_for + gc_*. Документ — 83.2-artifacts/f0-readiness.md.
+
+Ф.1 — попытка «одного обозримого изменения». Реализация (commit
+b72ce59b475 + 0af6e6ba482):
+
+  - nova_runtime_auto_arm() public API (runtime.h/runtime.c) —
+    идемпотентный эквивалент runtime.init(0): резолвит maxprocs
+    (NOVA_MAXPROCS env → uv_available_parallelism), помечает
+    _armed=true, регистрирует atexit. Пул потоков НЕ материализуется
+    — это делает первый spawn. Hello-world без spawn по-прежнему
+    0 worker-потоков.
+  - _auto_arm_if_needed() встроен защитно в nova_runtime_spawn_global
+    и nova_runtime_spawn_into.
+
+Активация флипа (вызов nova_runtime_auto_arm в main() codegen) — одна
+строка в emit_c.rs::emit_main_wrapper, закомментирована. Прямая попытка
+активации вскрыла 9+ pre-existing M:N багов в supervised-drain / D93
+sleep-wake / per-fiber handlers, проявлявшихся до 83.2 только при
+explicit runtime.init и теперь требующих отдельных таргетных фиксов
+(каждый ~1-2 dev-day, накопительно ~2 dev-week careful M:N runtime work).
+
+Конкретные баги (детально — simplifications.md [M-83.2-supervised-mn-
+bugs]):
+  1. D93 sleep-wake race (sleep_bench/sleep_precision_bench/
+     sleep_real_clock — FATAL sleep wake before close_cb)
+  2. supervised-drain double-resume (fiber stack overflow in slot 0)
+  3. per-fiber handlers под M:N (inner with не перекрывает outer)
+  4. fiber_arena_stats main vs worker (per-thread арена не видит
+     worker-allocated slot'ов)
+  5. time_handler в M:N (storage swap не синхронизирован)
+  6. parallel_for ordering (encoded log тесты)
+  7. main_yield семантика
+  8. cancel_semantics_test (propagation через worker boundary)
+  9. mn_runtime_smoke test 1 + mn_maxprocs_getter (test-assertion
+     адаптация под новый контракт)
+
+Полный clang nova test после Ф.1 commit: 1071 PASS / 0 FAIL / 56 SKIP
+— 0 регрессий (без активации флипа). Активация даёт 19 RUN-FAIL.
+
+Status:
+  - Plan 83.2 Ф.0 ✅ ЗАКРЫТО.
+  - Plan 83.2 Ф.1 ✅ инфраструктура; ⏸ full flip ждёт фиксов (1-8).
+  - Plan 83.2 Ф.2 ⏸ (зависит от full flip).
+  - Plan 83.2 Ф.3 ⏸ (зависит от full flip).
+
+Plan 83.2 НЕ закрыт целиком — честная партиальная поставка.
+runtime.init(n) остаётся канонической точкой M:N для compiled-бинарей.
+
+Followup-задача — закрыть 9 M:N багов supervised-drain layer
+(самостоятельный план).
+
+Коммиты в plan-83-2 (НЕ смёржено в main):
+ - 0c0bfd915b2  docs(plan83.2/Ф.0): readiness gate
+ - 0af6e6ba482  feat(plan83.2/Ф.1): default-on M:N — auto-arm на spawn
+ - b72ce59b475  feat(plan83.2/Ф.1): инфраструктура default-on M:N — nova_runtime_auto_arm

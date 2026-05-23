@@ -147,6 +147,40 @@ static bool            _init_mu_inited = false;
  * cleanup на нормальном return из main и на exit(). */
 static bool            _atexit_registered = false;
 
+/* Plan 83.2 Ф.1 (2026-05-23): default-on M:N. До 83.2 пул armиtся
+ * только явным `nova_runtime_init()`; без него spawn-пути падали на
+ * single-thread cooperative-fallback. С 83.2 — auto-arm на старте
+ * программы (через nova_runtime_auto_arm() из codegen-emit main())
+ * + защитный auto-arm на каждом spawn-входе. Эквивалент
+ * `nova_runtime_init(0)`: резолв maxprocs (NOVA_MAXPROCS env →
+ * uv_available_parallelism), _armed=true, atexit-регистрация.
+ * Hello-world без spawn — `_armed=true`, но `_materialized=false`
+ * (пул не поднят) → 0 worker-потоков (Plan 83.2 §4 acceptance).
+ * Идемпотентно, thread-safe через _init_mu. */
+static void _auto_arm_if_needed(void) {
+    if (_armed) return;
+    if (!_init_mu_inited) {
+        nova_mutex_init(&_init_mu);
+        _init_mu_inited = true;
+    }
+    nova_mutex_lock(&_init_mu);
+    if (!_armed) {
+        nova_hash_seed_ensure_init();
+        _target_workers = nova_runtime_resolve_maxprocs(0);
+        _armed = true;
+        if (!_atexit_registered) {
+            atexit(nova_runtime_shutdown);
+            _atexit_registered = true;
+        }
+    }
+    nova_mutex_unlock(&_init_mu);
+}
+
+/* Public entry — Plan 83.2 Ф.1 codegen-emit'нутый вызов в main() */
+void nova_runtime_auto_arm(void) {
+    _auto_arm_if_needed();
+}
+
 /* Plan 44.5 Layer 5: main wake handle для cross-thread signal'а из
  * worker'а в main thread'а supervised_run wait-loop. Init'ится в
  * nova_runtime_init на nova_evloop (main thread's default loop). */
@@ -872,8 +906,14 @@ void nova_runtime_shutdown(void) {
 /* ── Spawn ────────────────────────────────────────────────────── */
 
 void nova_runtime_spawn_global(void (*entry)(mco_coro*), void* user) {
+    /* Plan 83.2 Ф.1: auto-arm на первом spawn (default-on M:N). */
+    _auto_arm_if_needed();
     if (!_armed) {
-        /* M:N не запрошен (нет runtime.init) — single-thread spawn. */
+        /* Plan 83.2 Ф.1 примечание: ветка теоретически достижима только
+         * если _auto_arm_if_needed разпал (resolve_maxprocs OOM), что не
+         * происходит на текущем коде — clamp [1,1024] всегда возвращает
+         * валидное число. Оставлено как safety net на случай поломки
+         * резолвера. */
         if (_nova_active_scope) {
             nova_fiber_spawn_into(_nova_active_scope, entry, user);
         } else {
@@ -925,9 +965,13 @@ void nova_runtime_spawn_into(struct NovaFiberQueue* scope,
         fprintf(stderr, "nova: runtime_spawn_into: NULL scope\n");
         abort();
     }
+    /* Plan 83.2 Ф.1: auto-arm на первом spawn (default-on M:N).
+     * supervised{} использует этот путь через codegen — каждый spawn
+     * внутри supervised теперь идёт через worker pool. */
+    _auto_arm_if_needed();
     if (!_armed) {
-        /* M:N не запрошен — fallback на single-thread spawn в scope.
-         * Safety net; codegen эмитит conditional check (is_initialized). */
+        /* Safety net (см. spawn_global): теоретически недостижимо после
+         * _auto_arm_if_needed. */
         nova_fiber_spawn_into((NovaFiberQueue*)scope, entry, user);
         return;
     }
