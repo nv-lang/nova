@@ -348,18 +348,26 @@ fn critical(...) -> Result =>
 > Option/Result-методов перенесены на Nova-body в `std/prelude/core.nv`:
 > `Option.map[U]`, `Option.unwrap_or_else`, `Option.ok_or[E]`,
 > `Result.map[U]`, `Result.map_err[F]`, `Result.unwrap_or_else`.
-> **14/14 Option/Result методов на Nova** — остаётся только `unwrap`
-> C-routed (Plan 61 lineage). Декомпозирован на 4 sub-plan'а:
+> **15 / 17 Option/Result методов на Nova-body** (7 Option + 8
+> Result), C-routed остаются только `Option.unwrap` и
+> `Result.unwrap` (Plan 61 lineage — typed `Fail[E]` effect).
+> Декомпозирован на 4 sub-plan'а:
 > Plan 99.1 (foundation — method-level generic в DeclaredBody:
 > extract `resolve_method_level_subst` helper, mono_name с
 > method-level suffix, `register_novaopt_decl(U)` lazy-emit,
 > `infer_method_level_return_for_sum` для `infer_expr_c_type`);
-> Plan 99.2 (contextual variant constructors — bare `Some(v)`/
-> `None`/`Ok(v)`/`Err(e)` используют `current_fn_return_ty` для
-> typed compound literal); Plan 99.3 (atomic per-method migration —
-> 6 commits с regression-gate); Plan 99.4 (comprehensive tests +
-> spec + close). Closure invoke через `NovaClosBase` + explicit
-> cast — паритет Rust `FnOnce`-mono.
+> Plan 99.2 (contextual variant constructors — bare `None` использует
+> `current_fn_return_ty`; `Ok(v)`/`Err(e)` берут (T,E) из rt; bare
+> `Some(v)` использует ARG-type через `infer_expr_c_type(arg)`
+> чтобы sub-expr контексты — `s.char_at(i) == Some('/')` в
+> `Option[int]`-fn — не строили `NovaOpt_<rt's_X>` для arg иного
+> типа); Plan 99.3 (atomic per-method migration — 6 commits с
+> regression-gate); Plan 99.4 (comprehensive tests + spec + close).
+> Closure invoke через `NovaClosBase` + explicit cast — паритет
+> Rust `FnOnce`-mono. Param-naming: closure-параметры
+> `default_fn`/`map_fn`/`err_fn` (не `f`) — избегаем shadowing
+> user-функций (см. `contracts/trivial_congruence_positive`
+> регрессию). Полный nova test: 1141 PASS / 0 FAIL / 56 SKIP.
 >
 > **Plan 95.bis (закрыт 2026-05-23):** расширение Plan 95 — ещё 5
 > «чистых» Option/Result-методов перенесены на Nova-body в
