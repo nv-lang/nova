@@ -37,7 +37,7 @@ fn process(x int) Logger -> int {
 }
 
 // handler — обычное значение через `handler` keyword
-let console = handler Logger {
+let console = effect Logger {
     log(msg) => println("[LOG] ${msg}")
 }
 
@@ -76,7 +76,7 @@ value» для `Fail` запрещена.
 ```nova
 test "process logs correctly" {
     let mut buf = []
-    let collect = handler Logger {
+    let collect = effect Logger {
         log(msg) { buf.push(msg); return () }
     }
     with Logger = collect {
@@ -96,7 +96,7 @@ type Db effect {
     exec(q Sql)  -> ()
 }
 
-fn transactional(real Handler[Db]) -> Handler[Db] => handler Db {
+fn transactional(real Effect[Db]) -> Effect[Db] => effect Db {
     query(q) => return real.query(q)
     exec(q)  { staged.push(q); return () }
 }
@@ -734,7 +734,7 @@ fn transfer(from AccountId, to AccountId, amount money)
 и читает локально:
 
 ```nova
-fn replicated(nodes [Node], quorum int, real Handler[Db]) -> Handler[Db] => handler Db {
+fn replicated(nodes [Node], quorum int, real Effect[Db]) -> Effect[Db] => effect Db {
     query(q) => return real.query(q)    // чтения локальны
     exec(q) {                             // записи на все узлы
         let acks = parallel for node in nodes {
@@ -749,7 +749,7 @@ fn replicated(nodes [Node], quorum int, real Handler[Db]) -> Handler[Db] => hand
 **2. Идемпотентность.** Handler, кеширующий результат по ключу:
 
 ```nova
-fn idempotent_by(tx_id str, real Handler[Db]) -> Handler[Db] => handler Db {
+fn idempotent_by(tx_id str, real Effect[Db]) -> Effect[Db] => effect Db {
     query(q) => return real.query(q)
     exec(q)  => match Cache.get(tx_id) {
         Some(cached) => return cached         // повтор — вернуть кеш
@@ -768,7 +768,7 @@ fn idempotent_by(tx_id str, real Handler[Db]) -> Handler[Db] => handler Db {
 и повторяющий вызов:
 
 ```nova
-fn retry(max_attempts int, real Handler[Net]) -> Handler[Net, Response] => handler Net {
+fn retry(max_attempts int, real Effect[Net]) -> Effect[Net, Response] => effect Net {
     get(url) {
         let mut attempt = 0
         loop {
@@ -790,7 +790,7 @@ fn retry(max_attempts int, real Handler[Net]) -> Handler[Net, Response] => handl
 handler'ов:
 
 ```nova
-fn exactly_once(tx_id str, log PersistentLog, real Handler[Db]) -> Handler[Db] {
+fn exactly_once(tx_id str, log PersistentLog, real Effect[Db]) -> Effect[Db] {
     let logged = with_log(log, real)              // пишет в WAL до Db
     idempotent_by(tx_id, logged)                  // и кеширует результат
 }
@@ -804,7 +804,7 @@ WAL гарантирует, что операция не потеряется п
 стандартном наборе), оборачивающий каждую операцию в span:
 
 ```nova
-fn traced(real Handler[Db]) -> Handler[Db] => handler Db {
+fn traced(real Effect[Db]) -> Effect[Db] => effect Db {
     query(sql, args) => Trace.span("db.query", { "sql": sql }) {
         return real.query(sql, args)
     }

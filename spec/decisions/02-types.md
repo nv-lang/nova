@@ -2992,7 +2992,7 @@ generic-bound):
 fn run[T Db](handler T) -> ()         // ОШИБКА: Db — effect, не bound-protocol
 ```
 
-Если нужно «принимает Handler[Db]» — пишется явно: `fn run(h Handler[Db])`.
+Если нужно «принимает Effect[Db]» — пишется явно: `fn run(h Effect[Db])`.
 
 #### Bound на типах (не функциях)
 
@@ -4006,7 +4006,7 @@ named type».
   factory» — `Lock.new() -> (Locker, Unlocker)` без двух named-обёрток.
   Кандидаты в stdlib Plan 18: `Process.spawn`, `HttpServer.bind`,
   `Db.transaction`.
-- **Symmetry побеждает локальную точность.** `let h = handler X { ... }`
+- **Symmetry побеждает локальную точность.** `let h = effect X { ... }`
   читается чуть точнее как «handler», но `protocol X { ... }`-литерал
   всё равно нужен — приходится либо ввести ещё keyword, либо
   унифицировать. Унификация чище.
@@ -4034,7 +4034,7 @@ named type».
   type-position) **реализуется** этим D-блоком (Plan 97 Ф.2).
 - [D61](04-effects.md#d61) — handler-литерал; **rename** keyword
   `handler` → `effect` (Plan 97 Ф.3).
-- [D87](04-effects.md#d87) — `Handler[E, IRT]`; **rename** в
+- [D87](04-effects.md#d87) — `Effect[E, IRT]`; **rename** в
   `Effect[E, IRT]` (Plan 97 Ф.3).
 - [D88](03-syntax.md#d88) — default generics (`Effect[E]` ≡
   `Effect[E, Never]`).
