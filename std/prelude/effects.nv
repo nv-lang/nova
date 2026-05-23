@@ -83,8 +83,8 @@ module prelude.effects
 /// // Lambda-форма (D31): inferred Fail[E] handler.
 /// with Fail[E] = |e| { panic("got {}", e) } { body }
 ///
-/// // Explicit handler-форма (D55): full Handler[Fail[E]] declaration.
-/// with Fail[E] = handler Fail[E] { fail(e) => panic("...") } { body }
+/// // Explicit handler-форма (D55): full Effect[Fail[E]] declaration.
+/// with Fail[E] = effect Fail[E] { fail(e) => panic("...") } { body }
 /// ```
 ///
 /// **Default handler:** runtime устанавливает `Nova_Fail_fail` который
@@ -108,7 +108,7 @@ export type Fail[E] effect {
 /// `Time.now()` / `Time.sleep(ms)` дают monotonic clock и
 /// fiber-suspension через runtime. В тестах handler-override:
 /// ```nova
-/// with Time = handler Time { sleep(ms) {} now() { 12345 } } {
+/// with Time = effect Time { sleep(ms) {} now() { 12345 } } {
 ///     // время "замерло" — sleep noop, now() возвращает fixed value
 ///     run_test_with_fixed_clock()
 /// }

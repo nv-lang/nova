@@ -725,7 +725,9 @@ impl DesugarCtx {
                 for b in bindings.iter_mut() { self.desugar_expr(&mut b.handler); }
                 self.desugar_block(body);
             }
-            ExprKind::HandlerLit { methods, .. } => {
+            // Plan 97 Ф.4 (D142): protocol-литерал — desugar тел методов
+            // идентично handler-литералу.
+            ExprKind::HandlerLit { methods, .. } | ExprKind::ProtocolLit { methods, .. } => {
                 for m in methods.iter_mut() {
                     match &mut m.body {
                         HandlerMethodBody::Expr(x) => self.desugar_expr(x),

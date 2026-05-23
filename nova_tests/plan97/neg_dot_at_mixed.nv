@@ -1,0 +1,13 @@
+// EXPECT_COMPILE_ERROR expected identifier, got `@`
+//
+// Plan 97 Ф.4 negative: `.@method(...)` в protocol-теле — после
+// съедания leading-точки парсер ожидает идентификатор имени метода;
+// `@` не идентификатор → parse error. Это базовая защита: смешение
+// static-маркера (точка) и instance-маркера (`@`) недопустимо.
+
+module nova_tests.plan97.neg_dot_at_mixed
+
+
+type Bad protocol {
+    .@method() -> int
+}

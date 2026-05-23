@@ -2454,14 +2454,25 @@ record), [D52](decisions/02-types.md#d52) (sum-варианты), [D19](decision
 
 ## Q-static-method-protocol. Static-методы в protocol через `.name()`-префикс
 
-> ⏸ **DEFERRED — нужен Q-bounds первым** (Plan 17 Ф.3, 2026-05-08).
-> **Rationale:** static-протоколы блокируют generic `collect`/`from_iter`,
-> но для практического использования сначала нужны generic bounds
-> (`[T Bound]`) — без них `Out.from_iter(@)` нечем ограничить тип
-> Out. Plan 15 решает D72 bounds enforcement; после него вернуться
-> к Q-static-method-protocol.
-> **Trigger:** Plan 15 закрыт + ≥2 use-case'а на generic
-> collect/from_iter в stdlib.
+> ✅ **РЕШЕНО 2026-05-22 (Plan 97).** Принято предложение из этого
+> вопроса: static-методы в `type X protocol { ... }` маркируются
+> **точка-префиксом** `.name()`, по симметрии с
+> [D35](decisions/03-syntax.md#d35) (`fn Type.name(...)` в реализации).
+> Формализовано в [D143](decisions/03-syntax.md#d143) (parse rule,
+> matching rules, backwards-compat: bare имя — instance, как было).
+> Реализовано в Plan 97 Ф.1 (parser + AST `EffectMethod.is_static`).
+> Применено в prelude: `From[T] { .from(t T) }`, `TryFrom[T, E]
+> { .try_from(t T) -> Result[Self, E] }` (см. `std/prelude/protocols.nv`).
+>
+> **Note on hard runtime-enforcement:** парсер принимает `.name()`,
+> AST хранит `is_static: bool`. Type-checker строгое сопоставление
+> static↔instance при satisfaction-проверке — **deferred** (Plan 15
+> Ф.5+ или отдельный follow-up). См.
+> `docs/simplifications.md#m-protocol-static-enforcement-deferred`.
+>
+> Историческое DEFER (предыдущее) — снято: Plan 15 закрыт, Plan 59
+> мономорфизировал Result, что покрывает основные use-case'ы
+> (`From`/`Into`/`TryFrom`/`TryInto`).
 
 **Контекст.** [D42](decisions/02-types.md#d42)/[D53](decisions/02-types.md#d53)
 описывают protocol с **instance-методами** (без префикса):
@@ -3635,9 +3646,9 @@ type Float protocol {
 
 > ✅ **ЗАКРЫТО → [D88](decisions/03-syntax.md#d88-default-значения-generic-параметров)** (2026-05-10).
 > Триггер — [D87](decisions/04-effects.md#d87-handlere-irt--параметризация-handler-типом-interruptа)
-> `Handler[E, IRT = never]`: тип handler'а должен сообщать о
+> `Effect[E, IRT = never]`: тип handler'а должен сообщать о
 > возможности `interrupt`, но обратная совместимость требует
-> `Handler[E] ≡ Handler[E, never]` через default. Это и есть real
+> `Effect[E] ≡ Effect[E, never]` через default. Это и есть real
 > consumer, которого ждали.
 >
 > Принят синтаксис из текущего раздела as-is: `[T = f64]`,
@@ -5033,8 +5044,8 @@ type Random effect {
 }
 
 // Pre-defined handlers
-fn seeded(seed u64) -> Handler[Random]      // PRNG с фиксированным seed
-fn secure() -> Handler[Random]               // CSPRNG для production
+fn seeded(seed u64) -> Effect[Random]      // PRNG с фиксированным seed
+fn secure() -> Effect[Random]               // CSPRNG для production
 
 // Time — Unix-timestamp + sleep
 type Time effect {
@@ -5044,8 +5055,8 @@ type Time effect {
 }
 
 // Pre-defined handlers
-fn fixed_ms(ms u64) -> Handler[Time]         // время заморожено
-fn system_clock() -> Handler[Time]            // реальные часы OS
+fn fixed_ms(ms u64) -> Effect[Time]         // время заморожено
+fn system_clock() -> Effect[Time]            // реальные часы OS
 ```
 
 **Use cases:**
@@ -5525,6 +5536,33 @@ core rendering +15-25%). Это **самая большая** «бесплатн
 
 ## Q-keyword-symmetry. Симметрия keyword'ов в declaration и literal: `effect`/`protocol` vs `handler`
 
+> ✅ **РЕШЕНО 2026-05-22 (Plan 97).** Вариант **4** (полная симметрия)
+> принят и зафиксирован в [D142](decisions/02-types.md#d142):
+>
+> 1. **(B)** keyword `handler` снят, литерал эффекта пишется через
+>    `effect X { ops }`. Builtin тип `Effect[E, IRT]` переименован
+>    в `Effect[E, IRT]` (см. [D87](decisions/04-effects.md#d87)
+>    «Plan 97 amendment»).
+> 2. **(D)** анонимный protocol-литерал введён — `protocol X { ops }`
+>    в expression-position для one-off implementations (Channel-style
+>    capability-split factory pattern). Type-position также получил
+>    `protocol { sig* }` (анонимный protocol-тип в bound'ах /
+>    параметрах), см. [D53 §628](decisions/02-types.md#d53) и Plan 15
+>    `[P-15-anon-protocol-bound]` (снят).
+>
+> Реализовано в Plan 97 Ф.2 (anon-protocol type-position), Ф.3
+> (handler→effect rename, lexer/parser/prelude/sweep), Ф.4
+> (protocol-literal expression). Clean break — backwards-compat
+> намеренно не сохраняется.
+>
+> **Решающий аргумент:** capability-split factory pattern окупает
+> вариант 4, а симметрия declaration↔literal согласована с D52/D53
+> (kind-token система) и D61/D87 (effect позиционная dispatch'ация).
+>
+> Историческое обсуждение оставлено ниже как справка.
+
+---
+
 **Контекст.** Сейчас Nova использует **разные keyword'ы** для
 declaration и literal-формы одной сущности:
 
@@ -5534,7 +5572,7 @@ type Cron effect   { run() -> () }
 type Fan  protocol { run() -> () }
 
 // Literal (только для effect):
-let h = handler Cron { run() => () }       // keyword `handler`, не `effect`
+let h = effect Cron { run() => () }       // keyword `handler`, не `effect`
 let p = ???                                 // для protocol — нет literal-формы вообще
 ```
 
@@ -5550,7 +5588,7 @@ let p = protocol Fan  { run() => () }      // новый — anonymous protocol-
 **Развилка 1 — `effect` vs `handler` для литерала эффекта:**
 
 - **(A) Оставить `handler` (текущее).** Точнее в expression-position:
-  чтение `let h = handler Logger { ... }` сразу говорит «это
+  чтение `let h = effect Logger { ... }` сразу говорит «это
   **обработчик** эффекта, не сам эффект». `effect Logger { ... }`
   может вводить в заблуждение: «это значение типа эффекта Logger?»
 - **(B) Переименовать на `effect`.** Симметрия с declaration
@@ -5581,13 +5619,13 @@ Old assumption «protocols обычно reusable» — **частично вер
 случай **частым** в concurrency- и I/O-API.
 
 **Важная аналогия:** Nova **уже** имеет anonymous protocol-impl —
-это `handler Logger { ... }` для эффектов. Эффект структурно тот же
+это `effect Logger { ... }` для эффектов. Эффект структурно тот же
 контракт (набор методов с сигнатурами) что и protocol. Различия:
 
 | | Effect | Protocol |
 |---|---|---|
 | Структура контракта | методы (operations) | методы |
-| Anonymous literal | `handler X { ... }` ✅ есть | нет (текущее) |
+| Anonymous literal | `effect X { ... }` ✅ есть | нет (текущее) |
 | Применяется в | `with X = h { ... }` | parameter / generic-bound |
 | Типичный use-case | **one-off** (mock в тесте, transaction) | **reusable** (Hashable, Iter) |
 
@@ -5629,8 +5667,8 @@ Old assumption «protocols обычно reusable» — **частично вер
 
 | Язык | Effect-literal/handler | Anonymous protocol/interface |
 |---|---|---|
-| Nova (current) | `handler X { ... }` | нет |
-| Koka | `with handler X { ... }` | нет |
+| Nova (current) | `effect X { ... }` | нет |
+| Koka | `with effect X { ... }` | нет |
 | Eff | `handler { ... }` | нет |
 | Java | — (нет effect system) | `new Runnable() { ... }` ✓ |
 | Kotlin | — (нет effect system) | `object : Runnable { ... }` ✓ |

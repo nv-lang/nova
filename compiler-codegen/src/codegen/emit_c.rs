@@ -1483,7 +1483,8 @@ impl CEmitter {
                 "int", "i64", "i32", "i16", "i8",
                 "u64", "u32", "u16", "u8",
                 "f64", "f32", "bool", "str", "char",
-                "Option", "Result", "Self", "Handler", "CancelToken",
+                // Plan 97 Ф.3 (D142): `Handler` → `Effect`.
+                "Option", "Result", "Self", "Effect", "CancelToken",
                 // Plan 76: bottom-тип `never` — строчный встроенный примитив.
                 "never", "Error",
                 // Plan 62.C: RuntimeError имеет real struct в array.h
@@ -3589,8 +3590,10 @@ impl CEmitter {
                             Err("Self type used outside receiver context (free function or top-level expression). Self valid only внутри `fn Type[..].method(...)` или `fn Type[..] @method(...)`.".into())
                         }
                     }
-                    "Handler" => {
-                        // Handler[EffectName] → NovaVtable_EffectName*
+                    // Plan 97 Ф.3 (D142): builtin `Handler` → `Effect`.
+                    // `Effect[EffectName]` → NovaVtable_EffectName* (тот же
+                    // runtime vtable, только имя type-конструктора другое).
+                    "Effect" => {
                         if let Some(g) = generics.first() {
                             if let TypeRef::Named { path: eff_path, .. } = g {
                                 return Ok(format!("NovaVtable_{}*", eff_path.join("_")));
@@ -3774,6 +3777,12 @@ impl CEmitter {
                 // приоритезирует совместимость с `[]T`-кодом.
                 self.type_ref_to_c(&TypeRef::Array(inner.clone(), *span))
             }
+            // Plan 97 Ф.2 (D142): анонимный protocol-тип в позиции
+            // value/return — value-erased к void* (как named protocol
+            // через `protocol_types` set выше). Структурная проверка
+            // satisfaction'а — в type-checker'е, codegen работает с
+            // dynamic value-ом (managed pointer).
+            TypeRef::Protocol { .. } => Ok("void*".into()),
         }
     }
 
@@ -7072,8 +7081,9 @@ impl CEmitter {
             TypeRef::Named { path, generics, .. } => {
                 let name = path.last().cloned();
                 if let Some(n) = &name {
-                    // Handler[X] → X is a vtable name, not a struct name
-                    if n == "Handler" {
+                    // Plan 97 Ф.3 (D142): `Handler` → `Effect`.
+                    // `Effect[X]` → X is a vtable name, not a struct name.
+                    if n == "Effect" {
                         if let Some(TypeRef::Named { path: gpath, .. }) = generics.first() {
                             if let Some(eff) = gpath.last() { vtable_out.insert(eff.clone()); }
                         }
@@ -7103,6 +7113,20 @@ impl CEmitter {
                 }
                 if let Some(r) = return_type { Self::collect_typeref_names(r, out, vtable_out); }
             }
+            // Plan 97 Ф.2 (D142): анонимный protocol-тип не вводит
+            // именованных type-зависимостей — методы внутри ссылаются
+            // на `Self` и тип-параметры окружения; собственного
+            // C-struct'а у protocol нет (void*).
+            TypeRef::Protocol { methods, .. } => {
+                for m in methods {
+                    for p in &m.params {
+                        Self::collect_typeref_names(&p.ty, out, vtable_out);
+                    }
+                    if let Some(rt) = &m.return_type {
+                        Self::collect_typeref_names(rt, out, vtable_out);
+                    }
+                }
+            }
             TypeRef::Unit(_) => {}
         }
     }
@@ -7124,6 +7148,14 @@ impl CEmitter {
                 params.iter().any(|t| Self::type_ref_uses_any_type_param(t, type_params))
                     || return_type.as_ref().map_or(false, |t| Self::type_ref_uses_any_type_param(t, type_params))
             }
+            // Plan 97 Ф.2: anon-protocol сам по себе не type-param;
+            // его методы могут ссылаться на type-param'ы окружения —
+            // рекурсивно проверяем.
+            TypeRef::Protocol { methods, .. } => methods.iter().any(|m| {
+                m.params.iter().any(|p| Self::type_ref_uses_any_type_param(&p.ty, type_params))
+                    || m.return_type.as_ref()
+                        .map_or(false, |t| Self::type_ref_uses_any_type_param(t, type_params))
+            }),
             TypeRef::Unit(_) => false,
         }
     }
@@ -8643,6 +8675,16 @@ impl CEmitter {
                 || return_type.as_ref()
                     .map(|r| Self::type_ref_mentions_name(r, names))
                     .unwrap_or(false),
+            // Plan 97 Ф.2: methods могут ссылаться на type-параметры
+            // окружения (например, `[T protocol { @lt(other Self) -> bool }]`
+            // не упоминает T в protocol-теле, но методы более сложных
+            // inline-protocol'ов могут — рекурсивно проверяем).
+            TypeRef::Protocol { methods, .. } => methods.iter().any(|m| {
+                m.params.iter().any(|p| Self::type_ref_mentions_name(&p.ty, names))
+                    || m.return_type.as_ref()
+                        .map(|r| Self::type_ref_mentions_name(r, names))
+                        .unwrap_or(false)
+            }),
             TypeRef::Unit(_) => false,
         }
     }
@@ -12966,6 +13008,41 @@ impl CEmitter {
             }
             ExprKind::HandlerLit { effect_name, methods } => {
                 self.emit_handler_lit(effect_name, methods)
+            }
+            // Plan 97 Ф.4 (D142): protocol-литерал. Codegen pиggy-back
+            // на `emit_handler_lit`, поскольку runtime-репрезентация
+            // protocol-value — это тот же closure-bundle с vtable
+            // (значение = указатель на NovaVtable_<Proto> + ctx),
+            // как у handler-литерала. Diff с эффектом: protocol
+            // НЕ устанавливается через `with`; значение передаётся
+            // как обычная переменная и метод вызывается через
+            // структурный/vtable dispatch (Plan 56 D122 hybrid).
+            //
+            // **Bootstrap-ограничение [M-protocol-literal-method-dispatch-deferred]:**
+            // method-call `value.method()` на protocol-typed-value
+            // (`Locker.lock()` где `Locker` — named protocol)
+            // диспатчится только через **statically-resolved** path
+            // (когда compiler знает concrete-тип через mono). Полная
+            // vtable-dispatch на anonymous-instance литерала требует
+            // дополнительной инфраструктуры (Plan 56 D122 vtable
+            // companion для anon-instance) — это followup. Пока
+            // protocol-литерал работает для **factory return** +
+            // **subsequent statically-typed dispatch на concrete
+            // type-alias** path'е.
+            ExprKind::ProtocolLit { proto_name, methods } => {
+                // Защитная инвокация emit_handler_lit с именем
+                // протокола. Если protocol зарегистрирован в
+                // `effect_schemas` (что bootstrap пока не делает
+                // для protocol-only типов), методы эмитятся
+                // корректно. Иначе emit_handler_lit использует
+                // `unwrap_or_else(|| (vec![], \"nova_unit\".into()))`
+                // → методы получают void* parameter signatures —
+                // достаточно для allocation, но method-call'ы
+                // через нерегистрированную схему получат int slots.
+                // Это согласовано с TypeRef::Protocol → void* в
+                // type-position (Ф.2): значение opaque, structural
+                // check на boundary.
+                self.emit_handler_lit(proto_name, methods)
             }
             ExprKind::Interrupt(val) => {
                 // Plan 39 Issue A: choose slot by value category.

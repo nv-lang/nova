@@ -502,7 +502,7 @@ export fn transfer_balance(from_id UserId, to_id UserId, amount i64)
 //
 // Реальный test-handler разбирал бы SQL полноценно (через парсер); здесь
 // упрощённо ради демонстрации.
-fn in_memory_db_handler(storage mut HashMap[u64, DbRow]) -> Handler[Db] => handler Db {
+fn in_memory_db_handler(storage mut HashMap[u64, DbRow]) -> Effect[Db] => effect Db {
     query(q) {
         // SELECT WHERE id = ?
         if q.template.contains("WHERE id = ?") {
@@ -646,7 +646,7 @@ test "transfer rolls back on throw" {
     let mut commits = 0
     let mut rollbacks = 0
 
-    let captured = with Db = handler Db {
+    let captured = with Db = effect Db {
         query(q)  => []                     // всегда пусто → NotFound
         exec(q)   => 0
         in_transaction(b) {
@@ -678,7 +678,7 @@ test "update_versioned throws Conflict on version mismatch" {
     seed_user(storage, 1, "alice", "a@example.com", 100)
 
     // exec возвращает 0 affected rows → handler сообщит "не совпала версия".
-    let captured = with Db = handler Db {
+    let captured = with Db = effect Db {
         query(q) {
             match storage.get(1) {
                 Some(r) => [r]

@@ -1,0 +1,26 @@
+// Plan 97 Ф.2 (D142) — анонимный protocol-тип в позиции generic-bound.
+//
+// Закрывает Plan 15 [P-15-anon-protocol-bound]: bound `[T protocol { ... }]`
+// без отдельного `type X protocol {...}`-объявления.
+
+module nova_tests.plan97.pos_anon_protocol_bound
+
+
+type Box {
+    value int
+}
+
+fn Box @show() -> str => "Box(${@value})"
+
+
+// `T` ограничен inline-protocol'ом `{ show() -> str }`. `Box` структурно
+// удовлетворяет. Type-checker должен принять. Bare-форма (без `@`) —
+// в protocol-теле метод всегда instance (D53 Plan 17 Ф.1).
+fn print_one[T protocol { show() -> str }](x T) -> str => x.show()
+
+
+test "inline-protocol bound удовлетворён структурно" {
+    let b = Box { value: 7 }
+    let s = print_one(b)
+    assert(s == "Box(7)")
+}

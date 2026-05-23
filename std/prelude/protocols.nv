@@ -67,20 +67,22 @@ import std.prelude.core.{Ordering}
 
 /// Конверсия `T → Self` (D73, spec/decisions/08-runtime.md#d73).
 ///
-/// Реализация: `fn Foo @from(t T) -> Foo => ...`. Auto-derive `Into[Self]`
-/// для `T` если `From[T]` объявлен на `Self`.
+/// `from` — **статический** метод (D35: `fn Type.from(...)`); в
+/// protocol-теле помечается leading-точкой (Plan 97, резолв
+/// `Q-static-method-protocol`). Реализация: `fn Foo.from(t T) -> Foo => ...`.
+/// Auto-derive `Into[Self]` для `T` если `From[T]` объявлен на `Self`.
 ///
 /// # Examples
 ///
 /// ```nova
 /// type Celsius { value f64 }
-/// fn Celsius @from(f Fahrenheit) -> Celsius =>
+/// fn Celsius.from(f Fahrenheit) -> Celsius =>
 ///     Celsius { value: (f.value - 32.0) * 5.0 / 9.0 }
 /// // Авто-доступно: Fahrenheit.into() -> Celsius
 /// ```
 #stable(since = "0.1")
 export type From[T] protocol {
-    from(t T) -> Self
+    .from(t T) -> Self
 }
 
 /// Конверсия `Self → U` — instance method (D73).
@@ -98,20 +100,29 @@ export type Into[U] protocol {
     into() -> U
 }
 
-// Plan 72 P2-A (2026-05-19): TryFrom / TryInto unblocked via migration path (b).
+// TryFrom / TryInto — Result-форма по `try_`-prefix convention.
 //
-// Original blocker (Plan 62.E, 2026-05-18): `Fail[E]` effect row in protocol
-// methods is prohibited by Plan 56 Ф.2.7 enforcement — no vtable for effects.
+// Конвенция Nova: `try_X` ↔ `Result[T, E]`, `X` ↔ `Fail[E]`-эффект (см.
+// std/runtime/read_buffer.nv — пары `read_byte`/`try_read_byte` и т.д.).
+// `try_from`/`try_into` именованы под эту конвенцию → возвращают Result.
+// Fail-форма (`from`/`into` с `Fail[E]`) — auto-derived из Result-формы
+// механизмом **D77 4-way auto-derive** (`compiler-codegen/src/codegen/emit_c.rs`
+// — `try_from_targets` / `from_targets`); см. также spec D77.
 //
-// Resolution: use `Result[Self, E]` return type instead of `Fail[E]` effect row.
-// Callers must explicitly match/unwrap the Result instead of using try-propagation ("?").
-// This is idiomatic for fallible protocol-bound dispatch until Plan 56 Ф.2.7 is extended.
+// Note: Plan 56 Ф.2.7 (запрет эффектов в protocol-методах) **снят**
+// 2026-05-20 (D122 amended) — эффекты в protocol-методах теперь
+// разрешены. Result-форма у `TryFrom`/`TryInto` остаётся не как
+// workaround, а как естественная семантика `try_`-prefix convention.
 
 /// Fallible конверсия `T → Self`, возвращает `Result[Self, E]`.
 ///
-/// Имплементируйте на типах, которые могут быть построены из `T` с возможностью ошибки.
-/// Автоматически даёт `T.try_from(v)` (D77). Принят migration path (b) Plan 62.E.bis:
-/// `Result[Self, E]` вместо `Fail[E]` effect row (Plan 56 Ф.2.7 ограничение).
+/// Имплементируйте на типах, которые могут быть построены из `T` с
+/// возможностью ошибки. Автоматически даёт `T.try_from(v)` (D77).
+/// `try_from` — **статический** метод (D35: `fn Type.try_from(...)`),
+/// в protocol-теле помечается leading-точкой (Plan 97).
+///
+/// `Result[Self, E]`-возврат — по `try_`-prefix convention; Fail-форма
+/// (`fn Type.from(t T) Fail[E] -> Self`) auto-derive'ится через D77.
 ///
 /// # Examples
 ///
@@ -124,14 +135,14 @@ export type Into[U] protocol {
 /// ```
 #stable(since = "0.1")
 export type TryFrom[T, E] protocol {
-    try_from(t T) -> Result[Self, E]
+    .try_from(t T) -> Result[Self, E]
 }
 
 /// Fallible конверсия `Self → U`, возвращает `Result[U, E]`.
 ///
-/// Автоматически реализуется через `TryFrom`: если `U TryFrom[Self, E]`,
-/// то `v.try_into()` эквивалентен `U.try_from(v)`.
-/// Принят migration path (b) Plan 62.E.bis.
+/// `try_into` — instance-метод (без leading-точки). Автоматически
+/// реализуется через `TryFrom`: если `U TryFrom[Self, E]`, то
+/// `v.try_into()` эквивалентен `U.try_from(v)` (D77).
 #stable(since = "0.1")
 export type TryInto[U, E] protocol {
     try_into() -> Result[U, E]

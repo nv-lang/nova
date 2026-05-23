@@ -9,7 +9,7 @@ type Flag effect {
 }
 
 test "static axiom verification под #verify компилируется" {
-    with #verify Flag = handler Flag {
+    with #verify Flag = effect Flag {
         enabled() => false
     } {
         assert(Flag.enabled() == false)

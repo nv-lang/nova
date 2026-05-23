@@ -1,0 +1,22 @@
+// EXPECT_COMPILE_ERROR `handler` keyword removed
+//
+// Plan 97 Ф.3 (D142) — keyword `handler` снят clean-break'ом.
+// При попытке использовать старую форму парсер выдаёт diagnostic
+// с указанием миграционного пути.
+
+module nova_tests.plan97.neg_old_handler_keyword
+
+
+type Logger effect {
+    log(msg str) -> ()
+}
+
+
+test "старый handler keyword больше не парсится" {
+    let h = handler Logger {
+        log(msg) => ()
+    }
+    with Logger = h {
+        Logger.log("x")
+    }
+}

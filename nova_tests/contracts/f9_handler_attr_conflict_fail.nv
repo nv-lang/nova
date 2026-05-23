@@ -9,7 +9,7 @@ type Db effect {
 }
 
 test "conflicting attributes" {
-    with #verify #trusted Db = handler Db {
+    with #verify #trusted Db = effect Db {
         balance(id) => 0
     } {
         let _ = Db.balance(1)

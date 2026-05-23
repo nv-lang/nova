@@ -353,6 +353,22 @@ fn collect_tr(tr: &TypeRef, out: &mut HashSet<String>) {
                 collect_tr(rt, out);
             }
         }
+        // Plan 97 Ф.2 (D142): анонимный protocol-тип — рекурсивно
+        // собираем имена из сигнатур методов (params/return). Само
+        // protocol-имя анонимно — добавлять нечего.
+        TypeRef::Protocol { methods, .. } => {
+            for m in methods {
+                for p in &m.params {
+                    collect_tr(&p.ty, out);
+                }
+                if let Some(rt) = &m.return_type {
+                    collect_tr(rt, out);
+                }
+                for e in &m.effects {
+                    collect_tr(e, out);
+                }
+            }
+        }
         TypeRef::Unit(_) => {}
     }
 }
@@ -611,7 +627,11 @@ fn collect_expr(e: &Expr, out: &mut HashSet<String>) {
             collect_expr(range, out);
             collect_expr(body, out);
         }
-        ExprKind::HandlerLit { effect_name, methods } => {
+        // Plan 97 Ф.4 (D142): protocol-литерал — collect-name walk
+        // идентичен handler-литералу. Field name отличается (effect_name
+        // / proto_name) — паттерн-биндинг через alias.
+        ExprKind::HandlerLit { effect_name, methods }
+        | ExprKind::ProtocolLit { proto_name: effect_name, methods } => {
             for seg in effect_name {
                 out.insert(seg.clone());
             }
@@ -1124,7 +1144,8 @@ fn walk_expr_lints(e: &Expr, out: &mut Vec<LintWarning>) {
             for b in bindings { walk_expr_lints(&b.handler, out); }
             walk_block_lints(body, out);
         }
-        ExprKind::HandlerLit { methods, .. } => {
+        // Plan 97 Ф.4 (D142): protocol-литерал — lint-walk идентичен.
+        ExprKind::HandlerLit { methods, .. } | ExprKind::ProtocolLit { methods, .. } => {
             for m in methods {
                 match &m.body {
                     HandlerMethodBody::Expr(x) => walk_expr_lints(x, out),

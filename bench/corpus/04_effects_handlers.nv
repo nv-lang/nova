@@ -46,32 +46,32 @@ fn audit_action(action str) Audit Logger -> () {
 
 fn main() Io -> () {
     // 8 handler literals — each emits its own ctx struct + impl fn.
-    let console = handler Logger {
+    let console = effect Logger {
         log(msg) => println("[LOG] ${msg}")
     }
-    let null_log = handler Logger {
+    let null_log = effect Logger {
         log(_msg) => ()
     }
     let mut count_val = 0
-    let counter = handler Counter {
+    let counter = effect Counter {
         incr() => { count_val = count_val + 1 }
         get()  => count_val
     }
-    let zero_counter = handler Counter {
+    let zero_counter = effect Counter {
         incr() => ()
         get()  => 0
     }
-    let in_memory_cache = handler Cache[str, int] {
+    let in_memory_cache = effect Cache[str, int] {
         fetch(_k)    => None
         store(_k, _v) => ()
     }
-    let always_42 = handler Random {
+    let always_42 = effect Random {
         next_int() => 42
     }
-    let stdout_audit = handler Audit {
+    let stdout_audit = effect Audit {
         record(event) => println("AUDIT: ${event}")
     }
-    let silent_audit = handler Audit {
+    let silent_audit = effect Audit {
         record(_event) => ()
     }
 

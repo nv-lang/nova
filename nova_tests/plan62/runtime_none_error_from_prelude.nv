@@ -53,7 +53,7 @@ test "RuntimeNoneError: opt!! на None — Fail catchable, no abort" {
     // Fail — программа НЕ abort'ится, выполнение продолжается после
     // блока. `reached` ставится только если throw был перехвачен.
     let mut reached = false
-    with Fail = handler Fail {
+    with Fail = effect Fail {
         fail(_e) {
             interrupt ()
         }

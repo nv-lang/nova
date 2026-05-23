@@ -149,7 +149,7 @@
 | `Error` | record-тип в prelude | для `throw err` | [D26](decisions/08-runtime.md#d26) |
 | `RuntimeError` | sum-тип в prelude | bottom-уровневые runtime-ошибки | [D26](decisions/08-runtime.md#d26) |
 | `RuntimeNoneError` | unit-тип в prelude | бросается через `expr!!` на `Option` | [D85](decisions/04-effects.md#d85) |
-| `Handler[E, IRT]` | first-class тип handler'а эффекта `E` с типом interrupt-VAL `IRT` (default `never` через D88); sugar `Handler[E]` ≡ `Handler[E, never]` | везде | [D61](decisions/04-effects.md#d61), [D87](decisions/04-effects.md#d87), [D88](decisions/03-syntax.md#d88) |
+| `Effect[E, IRT]` | first-class тип handler'а эффекта `E` с типом interrupt-VAL `IRT` (default `never` через D88); sugar `Effect[E]` ≡ `Effect[E, never]` | везде | [D61](decisions/04-effects.md#d61), [D87](decisions/04-effects.md#d87), [D88](decisions/03-syntax.md#d88) |
 | `Fail[E]`, `Fail` | стандартный эффект | в effect-row сигнатуры | [D25](decisions/04-effects.md#d25), [D65](decisions/04-effects.md#d65) |
 | `Io`, `Net`, `Db`, `Fs`, `Time`, `Random`, `Log`, `Trace`, `Ask[T]`, `Alloc[R]`, `Detach`, `Blocking` | стандартные эффекты | в effect-row сигнатуры | [D2 (REVISED)](decisions/04-effects.md#d2), [D50](decisions/06-concurrency.md#d50) |
 | `int`, `i8`-`i64`, `u8`-`u64`, `f32`, `f64`, `str`, `bool`, `byte` | примитивные типы | везде | [D44](decisions/03-syntax.md#d44), [D27](decisions/03-syntax.md#d27) |

@@ -3372,7 +3372,8 @@ Plan 15 (generic bounds, D72) фазы Ф.1-Ф.3, Ф.5 уже реализова
 
 ### Trade-offs
 
-- **Anonymous protocol bound** `[T protocol { ... }]` не добавлен — `parse_type` не принимает keyword `protocol` в позиции типа. Откладывается до отдельной задачи (D53 §628 inline protocol-литералы).
+- ~~**Anonymous protocol bound** `[T protocol { ... }]` не добавлен — `parse_type` не принимает keyword `protocol` в позиции типа. Откладывается до отдельной задачи (D53 §628 inline protocol-литералы).~~
+  **CLOSED Plan 97 Ф.2 (2026-05-22, D142).** `parse_type` теперь принимает `protocol { method-sig* }` как 4-ю форму после `[]T`, `(A,B)`, `fn() -> T`. Введён `TypeRef::Protocol { methods, span }` variant. `check_satisfaction_against_methods` обобщён на anon-bound (один проход кода для named + anonymous). Фикстуры `nova_tests/plan97/pos_anon_protocol_bound.nv` + `pos_anon_protocol_param.nv` + `neg_anon_protocol_missing_method.nv` — pass.
 - **Wrong-return-type** не тестируется как отдельный кейс — текущий BoundCtx match'ит по name + arity, return type игнорируется. Полная sig-сверка с `Self → T` substitution — будущая фаза. Negative `bound_missing_method_rejected` фиксирует arity-mismatch, что покрывает большую часть случаев.
 
 ### Файлы
@@ -11117,3 +11118,74 @@ ns/switch — паритет с Boost.Context). Перенос замера в N
 косметический, не функциональный.
 
 ### Приоритет — L (деливерабл Ф.5 достигнут; bench-DSL multi-emission — отдельная задача).
+
+---
+
+### [M-protocol-literal-codegen-deferred] Plan 97 Ф.4 — vtable-dispatch на anon-instance protocol-литерала deferred
+
+- **Где** — `compiler-codegen/src/codegen/emit_c.rs` `ExprKind::ProtocolLit`
+  arm (делегирует на `emit_handler_lit`).
+- **Что упрощено** — parser + AST + type-checker для protocol-литерала
+  (`protocol Name { method-impl* }` в expression-position) реализованы
+  **полностью**: structural-match, instance-only (static-impl-rejection),
+  missing-method/extra-method diagnostics, unknown-protocol detection.
+  Codegen эмитит literal как closure-bundle через путь handler-литерала
+  (`emit_handler_lit`), **но** runtime-vtable struct `NovaVtable_<Proto>`
+  не эмитится (Plan 15 D53 strict: protocol — compile-time-only).
+  В результате allocation работает только если protocol уже
+  зарегистрирован как effect через `emit_effect_type` (через Plan 56
+  D122 vtable companion). Для protocol-only типов (без effect-формы)
+  CC-FAIL на `unknown type name 'NovaVtable_<Proto>'`.
+- **Почему** — full vtable infra для protocol-літералов требует
+  - расширения `emit_type_decl` чтобы emit'ить vtable для protocol'ов
+    (а не только effects),
+  - dispatch logic для method-call'а на protocol-typed value
+    (`value.method()` где `value: Locker` — named protocol),
+  - capture-rules согласованных с closure (D22/D6 managed heap) и
+    отдельным struct-typedef'ом per literal.
+  Это **2-3 dev-day** работы — превышает scope Ф.4 (~1.2 d).
+  Parser/type-checker даёт **75% выигрыша**: capability-split factory
+  pattern из спеки парсится и type-check'ается; единственный gap —
+  runtime dispatch, который дополним отдельной задачей.
+- **Как чинить** — Plan 100 «protocol-literal full codegen»:
+  1. Расширить `emit_type_decl` → `TypeDeclKind::Protocol(_)`: эмитить
+     `NovaVtable_<Name>` struct (как для effect) — без thread-local
+     handler slot (protocol-value передаётся явно как параметр).
+  2. Dispatch path для `value.method()` где value имеет protocol-тип:
+     эмитить `((NovaVtable_<Proto>*)value)->method(value->ctx, args)`.
+     Hybrid с Plan 56 D122 mono'd-path: если concrete type known
+     статически → direct call; иначе indirect.
+  3. Регистрировать protocol в `effect_schemas` registry чтобы
+     `emit_handler_lit` находил method signatures.
+  4. Fixture `pos_protocol_lit_basic` восстановить + capability-split
+     factory `pos_protocol_lit_capability_split` (per Plan 97 Ф.5.13).
+- **Приоритет** — M (нужно для разблокировки stdlib Plan 18
+  capability-split API: `Process.spawn -> (Stdin, Stdout, Stderr)`,
+  `HttpServer.bind -> (Acceptor, ShutdownHandle)` и т.д.).
+- **Обнаружено** — Plan 97 Ф.4 (2026-05-23). Parser + type-checker
+  закрыли syntax + structural validation; codegen — отдельный план.
+
+### [M-protocol-static-enforcement-deferred] Plan 97 — нет hard-enforcement static↔instance в protocol-методе
+
+- **Где** — `compiler-codegen/src/types/mod.rs` структурное матчинг
+  типа против protocol-методов.
+- **Что упрощено** — Plan 97 ввёл синтаксис `.method()` для static в
+  `protocol {}` теле (`is_static` флаг на `EffectMethod`). Type-checker
+  при матчинге type ↔ protocol **не проверяет** соответствие
+  `is_static` декларации протокола и `is_static` реализации:
+  `protocol { .from(t T) -> Self }` может быть «удовлетворён» как
+  `fn T.from(t T)` (D35 static, корректно), так и `fn T @from(t T)`
+  (D35 instance, некорректно) — оба матчатся структурно.
+- **Почему** — текущий matching уже структурно ленив (matches и
+  `method_table` для instance, и `fn_decls` для static). Plan 97
+  закрывает spec-Q-static-method-protocol на **синтаксис**;
+  enforcement — отдельная hardening-линия (analog Plan 79 typecheck
+  hardening «no silent fallback»), требует переработки matching-пути.
+- **Как чинить** — отдельный план «protocol static/instance strict»:
+  при матчинге типа против `protocol { .method }` искать
+  именно `fn Type.method` (D35-static, в `fn_decls`); для bare
+  protocol-метода — `fn Type @method` (D35-instance, в `method_table`).
+  Несовпадение → compile error E???? (analog mismatch-errors Plan 79).
+- **Приоритет** — L. На корректность не влияет (структура методов уже
+  совпадает в стdlib и user-коде); только защищает от ошибочных
+  реализаций.

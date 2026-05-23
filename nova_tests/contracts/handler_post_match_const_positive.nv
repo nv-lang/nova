@@ -15,7 +15,7 @@ type Setter effect {
 
 test "handler match-branching const patterns" {
     let mut store = 0
-    with #verify Setter = handler Setter {
+    with #verify Setter = effect Setter {
         SetByCode(c) {
             match c {
                 0 => store = 0,

@@ -11,7 +11,7 @@ type Counter effect {
 
 test "#trusted handler passes gate" {
     let mut n = 0
-    with #trusted Counter = handler Counter {
+    with #trusted Counter = effect Counter {
         Increment() { n = n + 1 }
         value() => n
     } {

@@ -16,7 +16,7 @@ type Flag effect {
 
 test "handler if-branching post-axiom" {
     let mut store = false
-    with #verify Flag = handler Flag {
+    with #verify Flag = effect Flag {
         SetFlag(v) {
             if v {
                 store = true

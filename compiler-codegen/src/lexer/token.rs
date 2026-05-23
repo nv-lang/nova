@@ -64,7 +64,8 @@ pub enum TokenKind {
     KwType,
     KwProtocol,
     KwEffect,
-    KwHandler,
+    // Plan 97 Ф.3 (D142): `KwHandler` снят (clean break). Литерал
+    // handler'а — `effect X { ... }`. См. parse_atom + parse_handler_lit.
     KwAlias,
     KwLet,
     KwConst,
@@ -206,7 +207,6 @@ impl TokenKind {
             TokenKind::KwType => "`type`",
             TokenKind::KwProtocol => "`protocol`",
             TokenKind::KwEffect => "`effect`",
-            TokenKind::KwHandler => "`handler`",
             TokenKind::KwAlias => "`alias`",
             TokenKind::KwLet => "`let`",
             TokenKind::KwConst => "`const`",
