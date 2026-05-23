@@ -144,6 +144,28 @@ export external fn runtime.is_initialized() -> bool
 #stable(since = "0.1")
 export external fn runtime.current_worker_id() -> int
 
+/// Plan 83.4.5.2 Ф.2 (2026-05-23): Drain orphan fiber pool synchronously.
+///
+/// `detach { body }` под D50 — fire-and-forget primitive. Orphan fibers
+/// исполняются в global orphan-scope (bootstrap cooperative) либо worker
+/// pool (armed M:N). Drain forces synchronous completion всех pending
+/// orphan'ов — analog Go `sync.WaitGroup.Wait()` для anonymous-spawn'ов.
+///
+/// Используется:
+/// - В test-suite для explicit-sync между `detach { side_effect }` и
+///   последующим assert. Альтернатива — channel-based sync.
+/// - На graceful shutdown (atexit регистрирует автоматический drain — но
+///   user может вызвать раньше, например после batch-detach'ей).
+///
+/// Idempotent: empty orphan pool — no-op (быстрый return).
+///
+/// # See Also
+///
+/// - `detach { body }` — D50 fire-and-forget spawn primitive.
+/// - `[supervised]` — structured-concurrency alternative с automatic join.
+#stable(since = "0.1")
+export external fn runtime.drain_orphans() -> ()
+
 /// Кооперативный yield — suspend текущего fiber, дать run другим.
 ///
 /// В single-thread режиме: эквивалентен resume scheduler'а.

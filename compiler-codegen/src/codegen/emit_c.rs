@@ -273,6 +273,10 @@ pub struct CEmitter {
     /// Emit-side only (no pre-scan) — forward-decl emitted into
     /// `lambda_forward_decls` directly from `emit_blocking`.
     blocking_counter: usize,
+    /// Plan 83.4.5.2 Ф.2: monotonic counter for orphan `detach { }` extracted
+    /// bodies. Используется аналогично spawn_counter но префиксует
+    /// orphan-fiber entry function names как _nova_detach_N.
+    detach_counter: usize,
     /// Monotonic counter for supervised scopes — used to name local NovaFiberQueue variables.
     supervised_counter: usize,
     /// When inside a `supervised { }` scope, holds the C name of the local NovaFiberQueue.
@@ -833,6 +837,7 @@ impl CEmitter {
             protocol_lit_counter: 0,
             spawn_counter: 0,
             blocking_counter: 0,
+            detach_counter: 0,
             supervised_counter: 0,
             current_scope_queue: None,
             current_spawn_captures: None,
@@ -5711,10 +5716,140 @@ impl CEmitter {
     /// Bootstrap default handler is SyncDetach: body executes inline in the caller's
     /// stack, no fiber, no scheduler. Production runtime would route to a global
     /// supervisor on a separate OS thread (with LogAndDrop default panic policy).
+    /// Plan 83.4.5.2 Ф.2 (2026-05-23): `detach { body }` — production-grade
+    /// fire-and-forget на orphan fiber (D50 AsyncDetach default).
+    ///
+    /// Архитектура (паритет Go `go fn()` / tokio::spawn без JoinHandle):
+    /// 1. Capture-анализ (как у emit_spawn): immutable scalars by-value,
+    ///    остальное by-pointer.
+    /// 2. Ctx-struct с NovaSpawnCtxBase prefix + capture fields →
+    ///    `lambda_forward_decls` (file scope).
+    /// 3. Entry function `_nova_detach_N(mco_coro*)` — body wrapped в
+    ///    LogAndDrop fail-frame (errors logged to stderr, не propagate'ятся).
+    /// 4. На call site: heap-alloc ctx (GC-tracked), set captures, set
+    ///    _nova_parent_scope=NULL (orphan!), captures init_snapshot для
+    ///    handler inheritance, вызов `nova_runtime_spawn_orphan(entry, ctx)`.
+    /// 5. Возвращается NOVA_UNIT мгновенно — caller не ждёт.
+    ///
+    /// Runtime routing (см. runtime.c::nova_runtime_spawn_orphan):
+    ///   - armed → push в worker deque (parent_scope=NULL → LogAndDrop в
+    ///     fiber's fail-handler без scope.report_error).
+    ///   - bootstrap → cooperative spawn в global `_nova_orphan_scope`,
+    ///     drained on atexit либо explicit `runtime.drain_orphans()`.
+    ///
+    /// Cross-runtime parity:
+    ///   - Go `go fn()` — runtime.newproc, fiber goes to scheduler runq,
+    ///     orphan'е errors → goroutine panic propagate process-wide
+    ///     (Nova: LogAndDrop вместо panic, D50 spec).
+    ///   - tokio `tokio::spawn(future)` без JoinHandle — multi-thread
+    ///     executor, error в task — implicit drop.
+    ///   - Kotlin `GlobalScope.launch { … }` — truly detached coroutine.
+    ///   - Node `setImmediate(cb)` — single-thread event-loop queue.
     fn emit_detach(&mut self, body: &Block) -> Result<String, String> {
-        // Wrap in a C block so any locals introduced by the body don't leak.
-        self.line("{");
+        let detach_id = format!("_nova_detach_{}", self.detach_counter);
+        self.detach_counter += 1;
+
+        // ── Capture-анализ (по образцу emit_spawn) ──
+        let mut refs: Vec<String> = Vec::new();
+        Self::collect_idents_block(body, &mut refs);
+        refs.sort();
+        refs.dedup();
+        let mut bound: HashSet<String> = HashSet::new();
+        Self::collect_bound_names_block(body, &mut bound);
+
+        let mut captures: Vec<(String, String, bool)> = Vec::new();
+        for name in refs {
+            if bound.contains(&name) { continue; }
+            if let Some(ty) = self.var_types.get(&name).cloned() {
+                let is_scalar = matches!(ty.as_str(),
+                    "nova_int" | "nova_bool" | "nova_f64" | "nova_f32" | "nova_byte");
+                let is_mut = self.var_mutable.contains(&name);
+                let by_value = is_scalar && !is_mut;
+                captures.push((name, ty, by_value));
+            }
+        }
+
+        let ctx_ty  = format!("NovaDetachCtx_{}", &detach_id[1..]);
+        let ctx_var = format!("{}_ctx", detach_id);
+
+        // ── Ctx-struct typedef + entry forward-decl → lambda_forward_decls ──
+        // NovaSpawnCtxBase prefix (6 fields) — required so worker loop в
+        // runtime.c корректно cast'ает user_data к NovaSpawnCtxBase* и
+        // обрабатывает handler-snapshot adopt (Plan 83.4.5.4).
+        let _ = writeln!(self.lambda_forward_decls, "typedef struct {{");
+        let _ = writeln!(self.lambda_forward_decls,
+            "    NovaFiberQueue* _nova_parent_scope;");
+        let _ = writeln!(self.lambda_forward_decls,
+            "    int _nova_worker_slot;");
+        let _ = writeln!(self.lambda_forward_decls,
+            "    NovaFailFrame* _nova_saved_fail_top;");
+        let _ = writeln!(self.lambda_forward_decls,
+            "    NovaInterruptFrame* _nova_saved_interrupt_top;");
+        let _ = writeln!(self.lambda_forward_decls,
+            "    NovaFiberQueue* _nova_fiber_scope;");
+        let _ = writeln!(self.lambda_forward_decls,
+            "    NovaEffectSnapshot* _nova_init_snapshot;");
+        for (cap, ty, by_value) in &captures {
+            if *by_value {
+                let _ = writeln!(self.lambda_forward_decls, "    {} {};", ty, cap);
+            } else {
+                let _ = writeln!(self.lambda_forward_decls, "    {}* {};", ty, cap);
+            }
+        }
+        let _ = writeln!(self.lambda_forward_decls, "}} {};", ctx_ty);
+        let _ = writeln!(self.lambda_forward_decls,
+            "static void {}(mco_coro* _co);", detach_id);
+
+        // ── Entry function body в deferred_impls ──
+        let saved_out = std::mem::take(&mut self.out);
+        let saved_indent = self.indent;
+        self.indent = 0;
+
+        self.line(&format!("static void {}(mco_coro* _co) {{", detach_id));
         self.indent += 1;
+        self.line(&format!("{ctx}* _c = ({ctx}*)mco_get_user_data(_co);", ctx = ctx_ty));
+
+        // Worker preamble (M:N path): alloc home scope slot + adopt init_snapshot.
+        // Single-thread path: parent_scope == NULL → skip; orphan fiber's
+        // home scope (для cooperative) — global _nova_orphan_scope, который
+        // nova_fiber_spawn_into добавил в подложку queue.
+        self.line("if (_c->_nova_parent_scope) {");
+        self.indent += 1;
+        self.line("_nova_active_slot = nova_scope_alloc_slot(_nova_active_scope, _co);");
+        self.line("_c->_nova_worker_slot = _nova_active_slot;");
+        self.line("_c->_nova_fiber_scope = _nova_active_scope;");
+        self.line("if (_c->_nova_init_snapshot && _nova_active_slot >= 0) {");
+        self.indent += 1;
+        self.line("_nova_active_scope->fiber_effect_snapshot[_nova_active_slot] = _c->_nova_init_snapshot;");
+        self.line("_c->_nova_init_snapshot = NULL;");
+        self.indent -= 1;
+        self.line("}");
+        self.indent -= 1;
+        self.line("} else {");
+        self.indent += 1;
+        self.line("_c->_nova_worker_slot = -1;");
+        self.indent -= 1;
+        self.line("}");
+
+        // Capture rewriting context — ExprKind::Ident → `(*_c->name)` / `_c->name`.
+        let mut cap_set: HashSet<String> = HashSet::new();
+        let mut cap_by_value: HashSet<String> = HashSet::new();
+        for (cap, _, by_value) in &captures {
+            cap_set.insert(cap.clone());
+            if *by_value { cap_by_value.insert(cap.clone()); }
+        }
+        let prev_caps = std::mem::replace(&mut self.current_spawn_captures, Some(cap_set));
+        let prev_by_value = std::mem::replace(
+            &mut self.current_spawn_capture_by_value, Some(cap_by_value));
+
+        // LogAndDrop fail-frame: D50 detach errors → log to stderr, не propagate.
+        // (vs emit_spawn где error report'ится в parent scope для scope-wide
+        // first_error+kind propagation — orphan не имеет parent scope.)
+        self.line("NovaFailFrame _ff;");
+        self.line("nova_fail_push(&_ff);");
+        self.line("if (setjmp(_ff.jmp) == 0) {");
+        self.indent += 1;
+
         let block_id = self.enter_defer_scope(body, false);
         for stmt in &body.stmts {
             self.emit_stmt(stmt)?;
@@ -5724,8 +5859,80 @@ impl CEmitter {
             self.line(&format!("(void)({});", v));
         }
         self.leave_defer_scope(block_id);
+
+        self.line("nova_fail_pop();");
+        self.indent -= 1;
+        self.line("} else {");
+        self.indent += 1;
+        self.line("nova_fail_pop();");
+        // LogAndDrop: print error to stderr (per D50), fiber exits cleanly.
+        // Не вызываем nova_fiber_report_error — orphan нет parent scope для
+        // propagation; errors не должны abort'ить процесс (другие orphans
+        // / main flow продолжают).
+        self.line("fprintf(stderr, \"nova: detach orphan fiber error (LogAndDrop): %.*s\\n\", (int)_ff.error_msg.len, _ff.error_msg.ptr ? _ff.error_msg.ptr : \"<no message>\");");
         self.indent -= 1;
         self.line("}");
+
+        self.indent -= 1;
+        self.line("}");
+
+        self.current_spawn_captures = prev_caps;
+        self.current_spawn_capture_by_value = prev_by_value;
+
+        // Move entry-fn body to deferred_impls, restore main out.
+        let entry_fn_text = std::mem::take(&mut self.out);
+        self.indent = saved_indent;
+        self.out = saved_out;
+        self.deferred_impls.push_str(&entry_fn_text);
+
+        // ── Call site: heap-alloc ctx, fill captures, spawn_orphan ──
+        // ctx должен пережить caller — heap (GC-tracked). Plan 82 fiber arena
+        // независим от user-managed heap.
+        self.line(&format!("{ctx_ty}* {ctx_var} = ({ctx_ty}*)nova_alloc(sizeof({ctx_ty}));"));
+        self.line(&format!("{ctx_var}->_nova_parent_scope = NULL;"));  // orphan!
+        self.line(&format!("{ctx_var}->_nova_worker_slot = -1;"));
+        self.line(&format!("{ctx_var}->_nova_saved_fail_top = NULL;"));
+        self.line(&format!("{ctx_var}->_nova_saved_interrupt_top = NULL;"));
+        self.line(&format!("{ctx_var}->_nova_fiber_scope = NULL;"));
+
+        // Plan 83.4.5.4: capture parent TLS snapshot for handler inheritance.
+        // Под bootstrap nova_fiber_spawn_into внутри spawn_orphan тоже save'ит
+        // snapshot — но codegen-init его ноль'ит, чтобы избежать double-save.
+        self.line("if (nova_runtime_is_initialized()) {");
+        self.indent += 1;
+        self.line(&format!("{ctx_var}->_nova_init_snapshot = (NovaEffectSnapshot*)nova_alloc(sizeof(NovaEffectSnapshot));"));
+        self.line(&format!("nova_effect_snapshot_save({ctx_var}->_nova_init_snapshot);"));
+        self.indent -= 1;
+        self.line("} else {");
+        self.indent += 1;
+        self.line(&format!("{ctx_var}->_nova_init_snapshot = NULL;"));
+        self.indent -= 1;
+        self.line("}");
+
+        // Capture setup (как у emit_spawn — handles nested-capture rewriting).
+        for (cap, _, by_value) in &captures {
+            let is_outer_cap = self.current_spawn_captures.as_ref()
+                .map(|s| s.contains(cap)).unwrap_or(false);
+            let outer_by_value = self.current_spawn_capture_by_value.as_ref()
+                .map(|s| s.contains(cap)).unwrap_or(false);
+            let access_outer = if is_outer_cap {
+                if outer_by_value { format!("_c->{}", cap) }
+                else { format!("(*_c->{})", cap) }
+            } else { cap.clone() };
+            let address_outer = if is_outer_cap {
+                if outer_by_value { format!("&_c->{}", cap) }
+                else { format!("_c->{}", cap) }
+            } else { format!("&{}", cap) };
+            if *by_value {
+                self.line(&format!("{ctx_var}->{cap} = {access_outer};"));
+            } else {
+                self.line(&format!("{ctx_var}->{cap} = {address_outer};"));
+            }
+        }
+
+        // Fire-and-forget — caller continues without waiting.
+        self.line(&format!("nova_runtime_spawn_orphan({detach_id}, {ctx_var});"));
+
         Ok("NOVA_UNIT".to_string())
     }
 
@@ -15887,6 +16094,10 @@ _cp++; \
                             }
                             "yield" if args.is_empty() => {
                                 return Ok("(nova_fiber_yield(), (nova_int)0LL)".to_string());
+                            }
+                            // Plan 83.4.5.2 Ф.2: drain orphan fiber pool.
+                            "drain_orphans" if args.is_empty() => {
+                                return Ok("(nova_runtime_drain_orphans(), (nova_int)0LL)".to_string());
                             }
                             _ => {}
                         }
