@@ -19743,3 +19743,30 @@ D142 работает end-to-end с:
 * By-value capture для factory (Plan 97.1 hd).
 * GC stress validated 1000-цикл (Plan 97.1 hd).
 * Multi-method, nested, spec-example coverage (Plan 97.1 final).
+
+================================================================
+[2026-05-23] Plan 97.1 production-grade fixture ✅ — canonical 3-way capability split
+(worktree d:/Sources/nv-lang/nova-p97-1, ветка plan-97-1-prod):
+
+Финальная фикстура для production-grade демонстрации D142 use-case:
+* Cell.split(initial) -> (Reader, Writer, Resetter)
+* 3 capability над общим state через protocol-литералы
+* Helpers с minimal contract (drain_writes, observe)
+
+Reference для stdlib Plan 18 API.
+
+plan97 на main: 23/23 PASS (включая новую фикстуру).
+
+Коммит: 98352ba5ca5 + merge f3094da5ed3.
+
+================================================================
+FINAL CUMULATIVE Plan 97.1 (все этапы main/fu/hd/final/prod):
+* 5 веток: plan-97-1, plan-97-1-fu, plan-97-1-hd, plan-97-1-final, plan-97-1-prod
+* 12 коммитов + 5 merges в main + 2 fill-hash commits
+* 13 фикстур plan97/ (9 positive + 4 negative)
+* 2 закрытых маркера
+* Регресс на main: 1129 PASS / 1 pre-existing FAIL / 56 SKIP
+
+С baseline 1083 (post-Plan 97) → +46 cumulative PASS.
+
+Plan 97 + 97.1 ПОЛНОСТЬЮ ЗАВЕРШЕНЫ.
