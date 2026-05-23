@@ -401,7 +401,7 @@ fn Lexer mut @read_number() Fail[ParseJsonError] -> f64 {
         }
         _ => throw InvalidNumber {
             line: start_line, col: start_col,
-            text: @input.slice(start, @pos)
+            text: @input[start..@pos]
         }
     }
 
@@ -411,7 +411,7 @@ fn Lexer mut @read_number() Fail[ParseJsonError] -> f64 {
         if !is_digit_opt(@peek()) {
             throw InvalidNumber {
                 line: start_line, col: start_col,
-                text: @input.slice(start, @pos)
+                text: @input[start..@pos]
             }
         }
         while is_digit_opt(@peek()) { @advance() }
@@ -428,7 +428,7 @@ fn Lexer mut @read_number() Fail[ParseJsonError] -> f64 {
             if !is_digit_opt(@peek()) {
                 throw InvalidNumber {
                     line: start_line, col: start_col,
-                    text: @input.slice(start, @pos)
+                    text: @input[start..@pos]
                 }
             }
             while is_digit_opt(@peek()) { @advance() }
@@ -436,7 +436,7 @@ fn Lexer mut @read_number() Fail[ParseJsonError] -> f64 {
         _ => ()
     }
 
-    let text = @input.slice(start, @pos)
+    let text = @input[start..@pos]
     match f64.try_parse(text) {
         Some(n) => n
         None    => throw InvalidNumber {

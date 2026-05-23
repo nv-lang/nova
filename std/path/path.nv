@@ -54,7 +54,7 @@ export fn Path.join(...parts []str) -> str {
         // часть передаётся отдельной строкой без своего trailing slash.)
         if !first { buf.append('/') }
         let cleaned = if !first && part.starts_with("/") {
-            part.slice(1, part.len())
+            part[1..part.len()]
         } else {
             part
         }
@@ -78,11 +78,11 @@ export fn Path.join(...parts []str) -> str {
 #stable(since = "0.1")
 export fn Path.parent(p str) -> Option[str] {
     if p.len() == 0 || p == "/" { return None }
-    let trimmed = if p.ends_with("/") { p.slice(0, p.len() - 1) } else { p }
+    let trimmed = if p.ends_with("/") { p[0..p.len() - 1] } else { p }
     match find_last_slash(trimmed) {
         None => None
         Some(0) => Some("/")          // "/foo" → "/"
-        Some(i) => Some(trimmed.slice(0, i))
+        Some(i) => Some(trimmed[0..i])
     }
 }
 
@@ -100,13 +100,13 @@ export fn Path.parent(p str) -> Option[str] {
 #stable(since = "0.1")
 export fn Path.basename(p str) -> str {
     let trimmed = if p.ends_with("/") && p.len() > 1 {
-        p.slice(0, p.len() - 1)
+        p[0..p.len() - 1]
     } else {
         p
     }
     match find_last_slash(trimmed) {
         None    => trimmed
-        Some(i) => trimmed.slice(i + 1, trimmed.len())
+        Some(i) => trimmed[i + 1..trimmed.len()]
     }
 }
 
@@ -133,7 +133,7 @@ export fn Path.extension(p str) -> Option[str] {
     match find_last_dot(base) {
         None    => None
         Some(0) => None    // dotfile (".bashrc") — без extension
-        Some(i) => Some(base.slice(i + 1, base.len()))
+        Some(i) => Some(base[i + 1..base.len()])
     }
 }
 

@@ -81,7 +81,7 @@ export fn Markdown.to_html(md str) -> str {
             while level < 6 && line.char_at(level) == Some('#') {
                 level += 1
             }
-            let text = line.slice(level, line.len()).trim()
+            let text = line[level..line.len()].trim()
             buf.append("<h" + str.from(level) + ">")
             buf.append(render_inline(text))
             buf.append("</h" + str.from(level) + ">\n")
@@ -98,7 +98,7 @@ export fn Markdown.to_html(md str) -> str {
                 in_list = true
             }
             buf.append("<li>")
-            buf.append(render_inline(line.slice(2, line.len())))
+            buf.append(render_inline(line[2..line.len()]))
             buf.append("</li>\n")
             i += 1
             continue
@@ -154,7 +154,7 @@ fn render_inline(s str) -> str {
             while end < s.len() && s.char_at(end) != Some('`') { end += 1 }
             if end < s.len() {
                 buf.append("<code>")
-                buf.append(escape_html(s.slice(start, end)))
+                buf.append(escape_html(s[start..end]))
                 buf.append("</code>")
                 i = end + 1
                 continue
@@ -171,7 +171,7 @@ fn render_inline(s str) -> str {
             }
             if end + 1 < s.len() {
                 buf.append("<strong>")
-                buf.append(escape_html(s.slice(start, end)))
+                buf.append(escape_html(s[start..end]))
                 buf.append("</strong>")
                 i = end + 2
                 continue
@@ -185,7 +185,7 @@ fn render_inline(s str) -> str {
             while end < s.len() && s.char_at(end) != Some('*') { end += 1 }
             if end < s.len() {
                 buf.append("<em>")
-                buf.append(escape_html(s.slice(start, end)))
+                buf.append(escape_html(s[start..end]))
                 buf.append("</em>")
                 i = end + 1
                 continue
@@ -201,8 +201,8 @@ fn render_inline(s str) -> str {
                         let close_paren_opt = find_in(s, ')', close_bracket + 2)
                         match close_paren_opt {
                             Some(close_paren) => {
-                                let text = s.slice(i + 1, close_bracket)
-                                let url = s.slice(close_bracket + 2, close_paren)
+                                let text = s[i + 1..close_bracket]
+                                let url = s[close_bracket + 2..close_paren]
                                 buf.append("<a href=\"")
                                 buf.append(escape_html(url))
                                 buf.append("\">")
