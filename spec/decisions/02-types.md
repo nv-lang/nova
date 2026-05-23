@@ -4241,130 +4241,204 @@ Codepoint-indexed (как существующий `nova_str_slice` метод).
 - [D141](08-runtime.md#d141) — Plan 90 bulk-ops; работают на view
   автоматически.
 
-## D145. `fn[T]` префикс — generic-declaration для bare-typevar receiver'ов
 
-> **Status:** proposed (spec, 2026-05-24). Реализация — [Plan 101](../../docs/plans/101-fn-prefix-generic-decl.md).
-> Расширяет [D119](#d119-method-level-type-parameters-в-generic-methods).
+## D145. `fn[T]` префикс — receiver-generic decl + bounds (Plan 101)
+
+> **Status:** proposed (spec, 2026-05-24, ред. 3).
+> Реализация — [Plan 101](../../docs/plans/101-receiver-generic-prefix.md)
+> roadmap + 5 sub-plan'ов (101.1/2/3/4/5). Расширяет
+> [D72](#d72-generic-bounds-через-t-protocol--protocol-как-тип)
+> (`[T Bound]` syntax) на новую позицию + закрывает open question
+> по protocol composition (D53).
+>
+> **Ред. 3 (2026-05-24):** complete rewrite после critical review.
+> Ред. 1 описывала narrow `fn[T]` only. Ред. 2 ошибочно ввела
+> implicit-T (моя misinterpretation D35). Ред. 3 — finalized design:
+> **никакого implicit T**, `fn[T]` префикс обязателен везде где
+> receiver не имеет carrier-brackets, + bounds через existing D72,
+> + multi-bound `+`, + protocol composition `use Foo`.
 
 ### Что
 
-Generic-параметры функции вводятся через скобки `[…]`. Они могут появиться
-в **трёх местах**, каждое — своя роль:
+Generic-параметры функции в receiver-position декларируются по
+**одному из двух механизмов**, в зависимости от формы receiver'а:
 
-1. **На именованном generic-типе в receiver-позиции** — `Option[T]`,
-   `HashMap[K, V]`, `Result[T, E]`. Скобки на receiver-type одновременно
-   декларируют typevars в function scope и используют их как параметры
-   type-конструктора. Existing форма (Plan 48 / D119).
-2. **На имени метода** — `@map[U]`, `@map_err[F]`. Method-level generics,
-   независимы от receiver'а. Existing (D119).
-3. **На префиксе `fn[…]`** (новое в D145) — narrow-use, **только когда
-   receiver содержит typevars, которые невозможно ввести через (1)**:
-   bare typevar (`fn[T] T @identity()`), array-of-typevar
-   (`fn[T] []T @append(a T)`), tuple-of-bare-typevars
-   (`fn[T, U] (T, U) @swap()`), function-type receiver и т.п.
+1. **Carrier-brackets на named generic-типе** — existing
+   [D119](#d119-method-level-type-parameters-в-generic-methods):
+   - `fn Option[T] @map[U]` — T в `Option[T]` декларирует T.
+   - `fn HashMap[K, V] @keys()` — K, V в `HashMap[K, V]`.
+   - `fn Result[T, E] @ok()` — T, E.
+   - **С bound (D72):** `fn HashMap[K Hashable, V] @from_pairs(...)`.
+2. **`fn[T]` префикс** (новое, D145) — для receiver'ов **без carrier
+   brackets**: bare T, `[]T`, tuple `(T, U)`, composite без carrier:
+   - `fn[T] T @identity() -> T => @` — bare typevar.
+   - `fn[T] []T @map[U](f fn(T) -> U) -> []U => ...` — array.
+   - `fn[T, U] (T, U) @swap() -> (U, T) => (@.1, @.0)` — tuple.
+   - `fn[T Hashable] []T @dedup() -> []T => ...` — bounds через D72.
+   - `fn[T A + B] []T @method() => ...` — multi-bound через `+` (Plan 101.3).
 
 ### Правило
 
-```ebnf
-FnDecl     ::= "fn" GenericPrefix? ReceiverType? "@" MethodName MethodGenerics?
-               "(" Params ")" ReturnType? Body
-GenericPrefix ::= "[" GenericName ("," GenericName)* "]"
-                  // Только typevars, не покрытые (1)/(2)
-```
+#### Когда `fn[T]` обязателен
 
-**Conflict rule:** typevar в `fn[…]`, который ТАКЖЕ покрыт (1) — compile
-error («`fn[T] Option[T] @map` — T уже введён через `Option[T]`, удалите
-из `fn[…]`»). Принцип «одна декларация в одном месте».
+`fn[T1, ..., Tn]` префикс **обязателен** для каждого typevar в
+receiver-position, который **не декларируется через carrier-brackets**
+именованного generic-типа. Конкретно:
 
-**Naming rule:** одно имя — один generic во всей сигнатуре (existing
-convention, унаследована из D119; в `fn (T, Option[T]) @method` оба T —
-один и тот же typevar, T вводится в первом `(1)`-eligible месте —
-`Option[T]`).
+| Receiver-shape | Carrier? | `fn[T]` нужен? |
+|---|---|---|
+| `Option[T]`, `HashMap[K, V]` | да named-brackets | нет |
+| `[]T` | нет — `[]` not bracket-decl | да `fn[T] []T` |
+| `T` bare | нет | да `fn[T] T` |
+| `(T, U)` tuple | нет — tuple-parens not bracket-decl | да `fn[T, U] (T, U)` |
+| `(T, Option[U])` mix | T нет, U через Option | да `fn[T] (T, Option[U])` |
+| `[]Option[T]` composite | T через Option[T] | нет |
 
-### Примеры (allowed)
+#### Запрет дублирования
 
-```nova
-// (1) — без изменений, fn[…] не нужен
-fn Option[T] @map[U](f fn(T) -> U) -> Option[U] => match @ { Some(v) => Some(f(v)), None => None }
-fn HashMap[K, V] @keys() -> []K => ...
-fn Result[T, E] @ok() -> Option[T] => match @ { Ok(v) => Some(v), Err(_) => None }
-
-// (1+1) — композит из named generic'ов; T введён в Option[T] (первый use)
-fn (Option[T], Result[T, E]) @combine() => ...
-fn []Option[T] @first() -> Option[T] => @[0]
-
-// (3) — нужен fn[…]
-fn[T]    T   @identity()                      -> T      => @
-fn[T]    []T @append(a T)                              => @push(a)
-fn[T, U] (T, U) @swap()                       -> (U, T) => (@.1, @.0)
-fn[T]    [][]T @flatten()                     -> []T    => ...
-
-// (Mix, Опция A) — T bare → fn[T]; U через Option[U]
-fn[T] (T, Option[U]) @pair() -> (T, U) => ...
-```
-
-### Примеры (rejected)
+`fn[T]` **запрещён** для typevar, который ТАКЖЕ декларируется через
+carrier-brackets:
 
 ```nova
-// Дублирование (1) + (3) — error
-fn[T] Option[T] @map() => ...
-// error: typevar `T` уже введён через `Option[T]` — удалите из `fn[…]`
-
-// Лишний в fn[…] — error
-fn[T, X] []T @append(a T) => ...
-// error: typevar `X` объявлен в `fn[…]`, но не используется
-
-// Bare T без fn[…] — error
-fn T @func() -> T => @
-// error: typevar `T` не объявлен; добавьте `fn[T]` префикс
+fn[K Hashable, V] HashMap[K, V] @method   // ERROR E_DUPLICATE_GENERIC_DECL
+// K, V уже декларированы через HashMap[K, V]; используй
+// fn HashMap[K Hashable, V] @method
 ```
 
-### Decision tree (для парсера)
+#### Disambiguation: bare T vs named type
 
-При парсинге `fn[…]?`-префикса:
+| `fn`-prefix | Receiver | `type T` в scope? | Result |
+|---|---|---|---|
+| — | `T` | да | OK — метод на named T (D35 status quo) |
+| — | `T` | нет | error `E_BARE_TYPEVAR_NEEDS_PREFIX` |
+| `[T]` | `T` | нет | OK — generic, T = typevar |
+| `[T]` | `T` | да | error `E_PREFIX_SHADOWS_NAMED_TYPE` |
+| — | `[]T` | да или нет | parse OK — но если есть named T, T = named (silent miscompile risk; см. ниже) |
+| `[T]` | `[]T` | да или нет | OK — explicit prefix wins, T = fn-generic |
 
-1. Если `fn[X1, ..., Xn]` присутствует — собрать список Xi в pre-decl set.
-2. Сканировать receiver-type на typevars. Для каждого встреченного имени:
-   - Если имя — параметр в `[…]`-скобках named generic типа в receiver
-     position — это **(1)-decl-site**.
-   - Если имя не покрыто (1) — должно быть в pre-decl set из (3),
-     иначе error.
-3. После прохода: каждый Xi из pre-decl set должен быть **использован**
-   в receiver (как bare T, или элемент `[]T`, или slot tuple); иначе error.
-4. Method-level generics в `@method[…]` — independent (2)-decl-site.
+**Critical:** `fn []T @method` без `fn[T]` префикса и без `type T в scope` —
+**type-check error**: «`T` не объявлен ни через carrier-brackets, ни через
+`fn[T]` префикс, ни как named type». Закрывает silent-miscompile gap
+(vec.nv pre-Plan-101 поведение).
+
+#### Bound syntax (через D72)
+
+```nova
+fn[T Hashable] []T @dedup() -> []T => ...
+fn[T A + B] []T @method() => ...                    // multi-bound (Plan 101.3)
+fn[K Hashable, V] (K, V) @key_value() -> (K, V) => @
+fn[T From[K], K] T @construct_from(v K) -> T => T.from(v)   // parametric protocol
+```
+
+**Bound = только protocol-тип** (D72). Concrete-type bounds (`fn[T int]`,
+`fn[T User]`) — **отдельный open question**
+[Q-representation-bound](../open-questions.md#q-representation-bound),
+Plan 102 (future).
+
+#### Protocol composition (Plan 101.4 — закрывает D53 open question)
+
+Protocols могут embed'ить друг друга через `use Type` keyword (параллель
+D39 record-embed):
+
+```nova
+type Reader protocol {
+    read(buf []u8) -> int
+}
+
+type Writer protocol {
+    write(buf []u8) -> int
+}
+
+type ReadWriter protocol {
+    use Reader        // embed — все methods Reader включены
+    use Writer        // embed — все methods Writer включены
+    close() -> ()     // own method
+}
+
+// Использование как bound:
+fn[T ReadWriter] []T @process() => ...
+// эквивалентно fn[T Reader + Writer] []T @process() (Plan 101.3)
+```
+
+Disambiguation в `protocol { ... }` body:
+- `use TypeName` — embed (parallel D39).
+- `name(args) -> ret` — method signature (БЕЗ `@` — protocol decl, не
+  type method; receiver — implicit Self).
+
+### Многократное использование одного имени
+
+Одно имя — один generic во всей сигнатуре (existing D119 / D72 convention):
+
+```nova
+fn[T] (T, T) @duplicate(a T) -> (T, T) => (a, a)   // T дважды → один T
+fn[T] [][]T @flatten() -> []T => ...                // T в receiver и return — один T
+```
 
 ### Backward-compat
 
-- **Existing форма `fn Generic[T] @method[U]` НЕ меняется** — D119
-  остаётся active, D145 только расширяет grammar для случаев, где
-  существующая форма не покрывает (bare/array/tuple receiver).
-- **Существующие тесты не требуют изменений** — D145 строго аддитивно.
-- Migration к explicit `fn[T] Generic[T] @method[U]` форме — **не
-  обязательна** (даже не предлагается; existing форма короче).
+- **100% преserve** для existing `fn Option[T] @map[U]`, `fn HashMap[K, V] @keys`,
+  `fn Result[T, E] @ok`, `fn HashMap[K Hashable, V] @method` — D145
+  строго аддитивно.
+- **`std/collections/vec.nv`** содержит 7 методов pattern `fn []T @method[U]`
+  (написан как-если-бы T дженерик). Это **bug** — T silently трактуется
+  как named type, codegen падает. **Plan 101.1 включает migration**
+  vec.nv → `fn[T] []T @method[U]`.
 
-### Параллель индустрии
+### Параллель индустрии — таблица
 
-- **Rust:** `impl<T> Vec<T> { fn push<U>(&mut self, x: U) }` —
-  `<T>` после `impl` = decl, `Vec<T>` = use, `<U>` после `push` = decl.
-  Nova D145 paritет: `fn[T] []T @push[U](x U)`.
-- **C++:** `template<typename T> void func(T x)` — `template<>` префикс
-  как Nova `fn[…]`.
-- **TypeScript:** `function <T>(x: T): T` — generics префикс перед
-  argument list, как Nova `fn[…]` перед receiver.
-- **Java/Kotlin:** `<T> void method(T x)` — то же. Nova согласуется.
+| Lang | Synтакс для array-method | Bound syntax |
+|---|---|---|
+| Rust | `impl<T> Vec<T> { fn map<U> }` | `<T: A + B>` |
+| Go | `func (v Vec[T]) Map[U]` | `[T A \| B]` (union, не intersection!) |
+| TypeScript | `function map<T, U>(arr: T[], f)` | `T extends A & B` |
+| Kotlin | `fun <T, U> Array<T>.map(f)` | `<T : A>` + `where T : B` |
+| Scala 3 | `extension [T](arr: Array[T]) def map[U]` | `T <: A & B` |
+| Java | `<T, U> U[] map(T[] arr, ...)` | `<T extends A & B>` |
+| **Nova D145** | `fn[T] []T @map[U]` | `[T A + B]` (Rust-style `+`) |
+
+**Nova edge:**
+
+1. **Cleanest receiver syntax** — `fn[T] []T @map` короче Rust
+   `impl<T> Vec<T> { fn map<U> }` (2 nested blocks → 1 line).
+2. **Bound syntax без двоеточия** — `[T Hashable]` (D72) — параллель
+   Nova `name type` convention (params, fields, let).
+3. **Multi-bound `+` familiar** — Rust audience узнаёт.
+4. **Protocol composition через `use`** — параллель D39 record-embed,
+   единое правило.
+5. **Loud disambiguation** — `E_BARE_TYPEVAR_NEEDS_PREFIX` /
+   `E_PREFIX_SHADOWS_NAMED_TYPE` явные, не silent miscompile.
+6. **Future-proof** — `Q-representation-bound` открыт для extension на
+   concrete-type bounds (Plan 102).
 
 ### Lineage
 
-- Plan 48 ([Q-method-level-generic](../open-questions.md), D119) — ввёл
-  method-level generics, частично закрыл Q-generic-receiver-method.
-- Plan 88 (static-method-on-typevar) — ввёл methods на generic typevars
-  user-defined; D145 закрывает оставшийся пробел grammar для bare T в
-  receiver-позиции.
+- Plan 48 / D119 — method-level + receiver-via-carrier generics.
+- Plan 72 / D72 — bound syntax `[T Bound]` (free fn + type-decl). D145
+  переиспользует в новой позиции (`fn[T Bound]` prefix).
+- Plan 88 — static-method-on-typevar.
+- Plan 99 — Option/Result closure-applying на Nova-body (paritет).
+- D39 — `use Type` embed для records. D145 переиспользует pattern для
+  protocol composition (Plan 101.4).
+- D53 — `type X protocol { ... }`. D145 закрывает open question
+  «Composition protocol'ов» через 101.4.
 
 ### См. также
 
-- [D119](#d119-method-level-type-parameters-в-generic-methods) — receiver-
-  level + method-level generic dispatch.
-- [Plan 101](../../docs/plans/101-fn-prefix-generic-decl.md) — реализация
-  D145 (parser → type-checker → tests → spec → close).
-
+- [D72](#d72-generic-bounds-через-t-protocol--protocol-как-тип) — bound syntax.
+- [D119](#d119-method-level-type-parameters-в-generic-methods).
+- [D39](#d39-embed-и-delegation-use-name-type-alias-обязателен) — `use` для embed.
+- [D53](#d53-унификация-protocol-под-type-protocol-как-kind-токен) — protocol decl.
+- [Plan 101 master](../../docs/plans/101-receiver-generic-prefix.md)
+  + 5 sub-plan'ов:
+  - [101.1](../../docs/plans/101.1-fn-prefix-core.md) — core `fn[T]`
+    grammar + codegen + vec.nv migration (P1, blocker Plan 91).
+  - [101.2](../../docs/plans/101.2-bound-integration.md) — bound
+    integration `fn[T Hashable]`.
+  - [101.3](../../docs/plans/101.3-multi-bound.md) — multi-bound
+    `[T A + B]`, closes Q-multi-bound.
+  - [101.4](../../docs/plans/101.4-protocol-composition.md) — protocol
+    embedding `use Foo`, closes D53 open question.
+  - [101.5](../../docs/plans/101.5-stdlib-audit-close.md) — stdlib
+    audit + LSP + close.
+- [Q-representation-bound](../open-questions.md#q-representation-bound)
+  — concrete-type bounds (newtype/embed-aware), Plan 102 future.

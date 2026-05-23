@@ -6368,6 +6368,103 @@ Go `context` package, Rust `tokio::task_local!`, TC39 `AsyncContext`.
 
 ---
 
+## Q-multi-bound. Intersection-multi-bound syntax `[T A + B]`
+
+> 🟡 **PROPOSED — Plan 101.3 (closes this).** Закрывается через `+`-syntax
+> в `[T Bound1 + Bound2 + ...]`. Параллель Rust `<T: A + B>`.
+
+**Контекст.** [D72](decisions/02-types.md#d72) §«Multiple bounds»
+сейчас требует anonymous-protocol или named-composition:
+
+```nova
+fn cache[T protocol { hash() -> u64, eq(other Self) -> bool }](xs []T) -> ...
+// или
+type HashableEq protocol { hash() -> u64, eq(other Self) -> bool }
+fn cache[T HashableEq](xs []T) -> ...
+```
+
+[Q-bounds](#q-bounds-синтаксис-bounds-на-дженериках-если-будут)
+§«Тонкие места 1» оставило открытым inline-syntax для multi-bound.
+
+**Решение (Plan 101.3 proposal):** `[T A + B]` — intersection-bounds
+через `+`, параллель Rust. **`+` выбран** vs `&` (TS) потому что:
+- Familiar для Rust-программистов (Nova target audience overlaps).
+- Не конфликтует с `,` (multi-param separator) и `&` (bitwise).
+- `[…]` — pure type context, no arithmetic possible → unambiguous.
+
+Применим везде где D72 bound допустим: free fn (`fn dedup[T A + B]`),
+type-decl (`type Cache[K A + B, V]`), `fn[T]` prefix (`fn[T A + B] []T @method`).
+
+**Параллель индустрии:** Rust `+`, TS `&`, Kotlin `where` clause, Go
+embedded composition. Nova `+` совпадает с Rust.
+
+**Status:** **proposed** в Plan 101.3 (P3, ~1 dev-day). Закроется как
+часть Plan 101 closure.
+
+**См. также:** [D72](decisions/02-types.md#d72),
+[D145](decisions/02-types.md#d145), [Plan 101.3](../docs/plans/101.3-multi-bound.md).
+
+---
+
+## Q-representation-bound. Concrete-type bounds (`fn[T int]`, `fn[T User]`)
+
+> 🟡 **PROPOSED — Plan 102 future (out of scope Plan 101).**
+
+**Контекст.** [D72](decisions/02-types.md#d72) фиксирует «bound — это
+protocol-тип». Concrete types — newtype'ы (`type UserId u64` per D52),
+records (`type User { ... }`) — **не могут** быть bound'ами.
+
+```nova
+type UserId u64        // D52 newtype
+fn[T u64] []T @method   // currently ❌ — u64 не protocol
+
+type User { id u64, name str }
+type Profile { use user User, avatar Url }   // D39 embed (not subtype)
+fn[T User] T @method                          // currently ❌
+```
+
+**Use cases:**
+1. **Newtype-aware bounds:** UserId/SessionId/OrderId все — `u64`
+   newtype'ы; хочется generic method для всех «u64-representable»:
+   `fn[T : repr u64] []T @sum() -> u64`.
+2. **Embed-aware bounds:** Profile embeds User (D39); хочется generic
+   method для всех «User-embedding» record'ов:
+   `fn[T : has User] T @greet() -> str`.
+
+**Дизайн options:**
+
+1. **Auto-derived protocol from concrete-type shape:**
+   - Record `type User { id u64, name str }` auto-derives protocol
+     `User-shape { id() -> u64, name() -> str }`.
+   - `fn[T User]` ≡ `fn[T User-shape]` (structural conformance).
+   - Profile (via D39 embed) auto-satisfies через delegated accessors.
+2. **Explicit representation-bound:** `fn[T : repr u64]` —
+   T's runtime representation = u64.
+3. **Explicit embed-bound:** `fn[T : has User]` — T contains User
+   field (record-only).
+4. **Combination:** все три.
+
+**Cross-language precedent:** Nova-уникальная — Rust/Go/TS/Kotlin/Scala
+все требуют explicit trait/protocol/interface declaration. Auto-derive
+from record-shape — это **Nova edge** opportunity.
+
+**Risks:**
+- Compiler must walk type-tree для shape-matching.
+- Может ввести silent matches («user думал что не satisfies, а satisfies»).
+- Дизайн compatibility с D17 «no inheritance».
+
+**Status:** **proposed для Plan 102** (post Plan 101). Отдельная design
+phase Ф.0 нужна — это значительное расширение semantic model. P3
+(polish over correctness).
+
+**Источник:** обсуждение 2026-05-24 во время Plan 101 design.
+
+**См. также:** [D72](decisions/02-types.md#d72),
+[D145](decisions/02-types.md#d145), [D52](decisions/02-types.md#d52)
+(newtype), [D39](decisions/02-types.md#d39) (record-embed).
+
+---
+
 ## Финальное напоминание
 
 Прежде чем продолжать **дизайн**, прочитай:

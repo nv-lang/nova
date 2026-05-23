@@ -20202,3 +20202,44 @@ README: новая строка Plan 101 после 100.8.
 
 Status: 📋 proposed, не начат. P3 (grammar completeness, не блокер 0.1).
 
+
+═══════════════════════════════════════════════════════════════════════
+Plan 101 — Ред. 3 (2026-05-24, design rewrite после critical review)
+═══════════════════════════════════════════════════════════════════════
+
+Discovery: std/collections/vec.nv (7 методов pattern `fn []T @method[U]`)
+написан как-если-бы T дженерик. Парсер silently трактует T как
+именованный тип, codegen падает. → vec.nv не компилируется в exe →
+Plan 91 std MVP blocked.
+
+Design discussion прошёл 3 iterations:
+- Ред. 1 — narrow `fn[T]` префикс только для bare T (D145 v1).
+- Ред. 2 — misinterpretation: думал что D35 implies implicit T для
+  `fn []T @method` через §«Stdlib extensions». User clarified: НЕТ,
+  это просто illustration, не normative rule.
+- Ред. 3 (final) — explicit `fn[T]` prefix везде где receiver
+  без carrier-brackets (`[]T`, bare T, tuple). Никакого implicit.
+  + reuse D72 bound syntax (`fn[T Hashable]`).
+  + multi-bound `[T A + B]` (Rust `+` syntax).
+  + protocol composition `use Foo` (closes D53 open question).
+
+Cleanup: удалены неправильные Plan 101 docs (4 sub-plan + master) от
+Ред. 2. D145 в spec переписан Ред. 3.
+
+Декомпозиция Ред. 3 — 5 sub-plan'ов:
+- 101.1 (P1, ~2.5 dev-day) — core grammar + codegen + vec.nv migration
+  + disambiguation matrix + 4 error codes.
+- 101.2 (P2, ~0.5 dev-day) — bound integration `fn[T Hashable]`.
+- 101.3 (P3, ~1 dev-day) — multi-bound `[T A + B]` — closes Q-multi-bound.
+- 101.4 (P2, ~1 dev-day) — protocol composition `use Foo` — closes D53.
+- 101.5 (P1 closing, ~1 dev-day) — audit + LSP + close.
+
+Plus новый Q-representation-bound в open-questions — concrete-type
+bounds (`fn[T int]` для newtype, `fn[T User]` для record-embed) —
+Plan 102 future.
+
+Total: ~6 dev-day. Critical path 101.1 → 101.2 → 101.5 = ~4 dev-day
+(unblocks Plan 91 collections).
+
+Status: 📋 proposed, не начат. P1.
+
