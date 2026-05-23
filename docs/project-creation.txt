@@ -19688,3 +19688,58 @@ a2636361e2d — 83.4.3 B5 atomic cancel_requested + B3 parallel_for directive:
  - a2636361e2d  B5 atomic cancel + B3 parallel_for directive
  - 1dfd4df7d55  Ф.2 handler-storage save/restore на worker
  - 93d26251aea  flip activation попытка (reverted) + Plan 83.4.5 followup
+
+
+================================================================
+[2026-05-23] Plan 97.1 final hardening ✅ — scan_fwd recurse + multi-method + nested + spec example
+(worktree d:/Sources/nv-lang/nova-p97-1, ветка plan-97-1-final):
+
+После Plan 97.1 main/fu/hd — финальные production-grade улучшения,
+закрывающие тихий bug + добавляющие comprehensive coverage и
+canonical spec example.
+
+3 коммита (1 merge):
+
+* d531fc186ae — bug-fix scan_expr_fwd для ProtocolLit + 2 фикстуры:
+  - scan_expr_fwd: добавлены arms для HandlerLit (recurse в method
+    bodies) и ProtocolLit (recurse в method bodies). Был тихий bug —
+    nested HandlerLit/Spawn внутри method body protocol-литерала
+    пропускались pre-emit scan'ом → missing forward-decl в edge cases.
+    Не triggered existing тестами, но мог дать production bug.
+  - pos_protocol_lit_multi_method: Storage protocol с 5 методами
+    (get/put/has/size/clear), разные сигнатуры (str/int/bool/unit
+    returns + 0/1/2 params); dispatch через box проверен на всех.
+  - pos_protocol_lit_nested: Maker.make() возвращает inner Adder
+    literal с capture x из outer fn-param; nested allocation handle
+    by GC.
+
+* 40ab2820c32 — spec D142 canonical example:
+  - Полный capability-split factory pattern code-snippet
+    (Cell.new -> (Reader, Writer)).
+  - Описание реализации (synthetic struct, free fn methods,
+    vtable allocation, NovaBox fat-pointer, capture-rules
+    by-pointer/by-value).
+  - Reference для пользователей и для stdlib Plan 18.
+
+* 02bce0e455a — merge plan-97-1-final → main.
+
+**Регресс в worktree:** PASS 1129 / FAIL 1 (pre-existing plan99_probe
+intentional gap) / SKIP 56. С baseline 1127 (post-hd) — +2 PASS.
+
+**Cumulative по всем Plan 97.1 этапам (main/fu/hd/final):**
+* 11 коммитов на 4 ветках (plan-97-1, plan-97-1-fu, plan-97-1-hd, plan-97-1-final).
+* 4 merges в main.
+* 12 фикстур plan97/ (8 positive + 4 negative; раньше 5 Plan 97 era).
+* 2 закрытых маркера ([M-protocol-literal-codegen-deferred],
+  [M-protocol-method-name-shadowing]).
+* Регресс на main растёт с 1083 (post-Plan 97) до 1129 — +46 PASS.
+
+**Plan 97.1 ПОЛНОСТЬЮ ЗАКРЫТ.** Capability-split factory pattern из
+D142 работает end-to-end с:
+* Parser + AST + type-checker (Plan 97).
+* Codegen vtable + dispatch (Plan 97.1 main).
+* NovaBox-aware infer (shadowing fix — Plan 97.1 fu).
+* Nova-side enforcement (typed-method-call check — Plan 97.1 hd).
+* By-value capture для factory (Plan 97.1 hd).
+* GC stress validated 1000-цикл (Plan 97.1 hd).
+* Multi-method, nested, spec-example coverage (Plan 97.1 final).
