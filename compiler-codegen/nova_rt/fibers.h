@@ -1162,6 +1162,20 @@ static inline int nova_supervised_step(NovaFiberQueue* q) {
             q->fiber_ctx[i] = NULL;  /* release SpawnCtx GC root */
             continue;
         }
+        /* Plan 83.4.2 (2026-05-23) — A2 fix: under M:N, fiber spawned
+         * через runtime_spawn_into попал в worker deque; codegen ставит
+         * _nova_parent_scope = &queue (vs NULL для single-thread spawn).
+         * Worker запустит mco_resume сам — main НЕ должен делать вторую
+         * resume (двойной TIB-swap минiкоро corrupt'ит arena stack → access
+         * violation в slot 0). Main скипает worker-owned fiber'ы; drain
+         * exit-условие — pending_remote == 0 (worker decrement'ит). */
+        if (q->fiber_ctx[i]) {
+            NovaSpawnCtxBase* base = (NovaSpawnCtxBase*)q->fiber_ctx[i];
+            if (base->_nova_parent_scope) {
+                alive++;  /* worker owns; count alive чтобы drain не exit'ил */
+                continue;
+            }
+        }
         /* Plan 22 Ф.3/Ф.4 (D93): skip parked fiber'ы. Они resume'ятся
          * когда wake'нутся (callback timer'а либо cancel). Count alive++,
          * чтобы supervised_run не выходил оставив parked permanently.
