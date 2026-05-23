@@ -10,6 +10,19 @@
 // encoded log: каждая итерация делает несколько шагов с Time.sleep(0)
 // между ними, и порядок записей в log проверяется assert'ом.
 //
+// Plan 83.4.3/B3 (2026-05-23): тесты используют encoded-log с
+// конкретными ordering-assertions (например `assert(log == 121212)`),
+// которые опираются на детерминированный round-robin cooperative
+// scheduler. Под М:N work-stealing порядок исполнения fiber'ов
+// **недетерминирован by design** (Plan 83 spec §6 — "Spawn ordering:
+// no guarantees"). Поэтому файл прибит к single-worker через
+// NOVA_MAXPROCS=1 — это сохраняет round-robin invariants без отказа
+// от параллельной семантики на уровне fiber'ов. Реальные M:N parallel-
+// for performance-bench'и — отдельный файл (см. 83.4.4 Ф.4 speedup-
+// bench, bench/micro/parallel_*).
+//
+// ENV NOVA_MAXPROCS=1
+//
 // Println'ы внутри fiber bodies — для визуальной диагностики при ручном
 // запуске бинаря (test runner их не показывает).
 

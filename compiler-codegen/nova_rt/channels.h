@@ -425,7 +425,7 @@ static inline NovaOpt_nova_int nova_chan_reader_recv(Nova_ChanReader* rx) {
      * stop_cb without acquiring the lock; we observe it now.
      * Plan 49 Ф.2: kind=CANCEL + reason из scope (если bound token дал её),
      * чтобы supervised_run различил отмену от реальной ошибки. */
-    if (sc->cancel_requested) {
+    if (nova_abool_load(&sc->cancel_requested)) {
         if (w->channel) _nova_waiter_unlink_locked(w);
         nova_mutex_unlock(&st->mu);
         nova_throw_cancel_reason(
@@ -591,7 +591,7 @@ static inline nova_bool nova_chan_writer_send(Nova_ChanWriter* tx, nova_int v) {
 
     /* Plan 49 Ф.2: kind=CANCEL + reason — отмена не должна re-throw'иться
      * как Fail в supervised_run. */
-    if (sc->cancel_requested) {
+    if (nova_abool_load(&sc->cancel_requested)) {
         if (w->channel) _nova_waiter_unlink_locked(w);
         nova_mutex_unlock(&st->mu);
         nova_throw_cancel_reason(
@@ -1025,7 +1025,7 @@ static inline void nova_select_park(SelectCtx* ctx) {
     }
 
     /* Plan 49 Ф.2: kind=CANCEL (select-сайт). */
-    if (scope->cancel_requested) {
+    if (nova_abool_load(&scope->cancel_requested)) {
         nova_throw_cancel_reason(
             nova_str_from_cstr("scope cancelled"),
             scope->cancel_reason_ptr);
