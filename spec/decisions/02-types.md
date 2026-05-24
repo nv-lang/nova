@@ -2895,6 +2895,23 @@ fn fold[T, Acc](xs Iter[T], init Acc, f fn(Acc, T) -> Acc) -> Acc
 //      ^^^^^^ ни T, ни Acc bound'а не имеют
 ```
 
+#### `fn[T] ReceiverType @method` префикс (Plan 101.1 partial, 2026-05-24)
+
+Generic-параметры также декларируются через **`fn[T]` префикс** —
+для receiver'ов без carrier-brackets (`[]T`, bare T, tuple). Параллель
+[D145](#d145-fnt-префикс--receiver-generic-decl--bounds-plan-101).
+Bound syntax из D72 применим в этой позиции — `fn[T Hashable] []T @method`.
+
+```nova
+fn[T] []T @map[U](f fn(T) -> U) -> []U          // T через fn[T] (нет carrier)
+fn[T Hashable] []T @dedup() -> []T              // bound в fn[T] (D72 + Plan 101.2)
+```
+
+**Plan 101.1 status (2026-05-24):** parser + базовый codegen работают
+для `[]int` element type. Codegen mono-per-T для других element-types
+(`[]str`, `[]User`) — известная limitation, marker
+`[M-fn-prefix-int-only-mono]`, deferred ~4-6h follow-up.
+
 #### Порядок объявления параметров
 
 Generic-параметры читаются **слева направо**. Имя в bound'е должно
@@ -4244,12 +4261,30 @@ Codepoint-indexed (как существующий `nova_str_slice` метод).
 
 ## D145. `fn[T]` префикс — receiver-generic decl + bounds (Plan 101)
 
-> **Status:** proposed (spec, 2026-05-24, ред. 3).
+> **Status:** PARTIAL — Plan 101.1 parser + int-mono codegen ✅ (2026-05-24,
+> ред. 3 + impl ред. 4). Plan 101.2/3/4/5 + array mono-per-T codegen — pending
+> follow-up sessions.
 > Реализация — [Plan 101](../../docs/plans/101-receiver-generic-prefix.md)
 > roadmap + 5 sub-plan'ов (101.1/2/3/4/5). Расширяет
 > [D72](#d72-generic-bounds-через-t-protocol--protocol-как-тип)
 > (`[T Bound]` syntax) на новую позицию + закрывает open question
 > по protocol composition (D53).
+>
+> **Реализовано (Plan 101.1 partial, 2026-05-24):**
+> - Parser: `fn[T] ReceiverType @method` синтаксис.
+> - Codegen mono dispatch для `fn[T] []T @method` — **только `[]int`
+>   element type** (int-mono fallback). Other element types (`[]str`,
+>   `[]User`) — marker [M-fn-prefix-int-only-mono] (deferred ~4-6h).
+> - vec.nv migration: 7 методов работают (int-array tests PASS).
+>
+> **НЕ реализовано (deferred):**
+> - Type-checker disambiguation (4 error codes) — Plan 101.1 Ф.2.
+> - Mono-per-T codegen для non-int array elements — Plan 101.1 Ф.3 ext.
+> - Bare-T receiver dispatch — Plan 101.3.
+> - Bound integration `fn[T Hashable]` runtime — Plan 101.2.
+> - Multi-bound `[T A + B]` — Plan 101.3.
+> - Protocol composition `use A, B` — Plan 101.4.
+> - Stdlib audit + LSP — Plan 101.5.
 >
 > **Ред. 3 (2026-05-24):** complete rewrite после critical review.
 > Ред. 1 описывала narrow `fn[T]` only. Ред. 2 ошибочно ввела
