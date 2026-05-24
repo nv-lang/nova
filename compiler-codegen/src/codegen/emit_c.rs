@@ -17085,12 +17085,62 @@ _cp++; \
                         if let Some(element_c) = stripped.strip_prefix("NovaArray_").map(|s| s.to_string()) {
                             let key = (type_name.clone(), method.to_string());
                             if let Some(fn_decl) = self.mono_method_decls.get(&key).cloned() {
-                                // 1. Compute T subst (первый generic).
-                                let mut type_subst: Vec<(String, String)> = Vec::new();
-                                if let Some(first_g) = fn_decl.generics.first() {
-                                    type_subst.push((first_g.name.clone(), element_c.clone()));
+                                // 1. Compute full type_subst:
+                                //    - T (первый generic, receiver typevar) → element_c
+                                //      pre-bound.
+                                //    - Method-level (U, Acc, ...) → inferred from args
+                                //      (closure return type) inline (resolve_mono_type_args
+                                //      возвращает Err когда T not inferable from args).
+                                let mut subst_pending: Vec<(String, Option<String>)> = fn_decl.generics.iter()
+                                    .enumerate()
+                                    .map(|(i, g)| {
+                                        let init = if i == 0 { Some(element_c.clone()) } else { None };
+                                        (g.name.clone(), init)
+                                    })
+                                    .collect();
+                                // Infer remaining via closure return + arg type matching.
+                                for (param, arg) in fn_decl.params.iter().zip(args.iter()) {
+                                    // Source 2: arg type → param type binding.
+                                    let arg_c = self.infer_expr_c_type(arg.expr());
+                                    self.infer_type_param_binding(&param.ty, &arg_c, &mut subst_pending);
+                                    // Source 2b: closure return → fn-typed param return.
+                                    if let crate::ast::TypeRef::Func { return_type: Some(ret_ty_ref), .. } = &param.ty {
+                                        let closure_ret_c = match &arg.expr().kind {
+                                            crate::ast::ExprKind::ClosureLight { body, .. } => match body {
+                                                crate::ast::ClosureBody::Expr(e) => self.infer_expr_c_type(e),
+                                                crate::ast::ClosureBody::Block(b) => b.trailing.as_ref()
+                                                    .map(|e| self.infer_expr_c_type(e))
+                                                    .unwrap_or_default(),
+                                            },
+                                            _ => String::new(),
+                                        };
+                                        if !closure_ret_c.is_empty() && closure_ret_c != "void*" {
+                                            self.infer_type_param_binding(ret_ty_ref.as_ref(), &closure_ret_c, &mut subst_pending);
+                                        }
+                                    }
                                 }
-                                let mono_name = format!("Nova_{}_method_{}", stripped, method);
+                                // Finalize: extract bound, fallback nova_int для unbound.
+                                let type_subst: Vec<(String, String)> = subst_pending.into_iter()
+                                    .map(|(n, c)| (n, c.unwrap_or_else(|| "nova_int".to_string())))
+                                    .collect();
+                                // Mangle mono name with all type-subst beyond first
+                                // (Plan 99 pattern). T is already in receiver
+                                // (stripped = "NovaArray_<element_c>"), so suffix
+                                // only method-level generics (U, Acc, ...).
+                                let base_mono = format!("Nova_{}_method_{}", stripped, method);
+                                let mono_name = if type_subst.len() <= 1 {
+                                    base_mono
+                                } else {
+                                    let suffix: String = type_subst.iter().skip(1)
+                                        .map(|(_, c)| {
+                                            let s = c.trim_end_matches('*').trim()
+                                                .replace('*', "_p")
+                                                .replace(' ', "_");
+                                            format!("____{}", s)
+                                        })
+                                        .collect();
+                                    format!("{}{}", base_mono, suffix)
+                                };
                                 let recv_type = type_name.clone();
                                 // 2. Register mono instance for body emission per-T.
                                 self.register_mono_method_instance(
