@@ -20419,3 +20419,68 @@ Plan 83.4.5.8 ✅ ЗАКРЫТ ~0.5 dev-day (Approach A — `GC_malloc_uncollect
 flip activation milestone closed. Followup work на performance
 (speedup-bench / stress / TSAN gate) deferred (Plan 83.4.5.6
 remaining).
+
+=== Plan 83.4.5.9 + 83.4.5.6 partial closure (2026-05-24) ===
+
+**Plan 83.4.5.9 ✅ ЗАКРЫТ — rename NOVA_NO_AUTOARM → NOVA_AUTOARM
+(positive env-name convention):**
+
+User feedback: "не использовать инвертированных имен в env".
+Hard rename:
+- Runtime helper `_nova_no_autoarm_env()` → `_nova_autoarm_env_disabled()`.
+- getenv("NOVA_NO_AUTOARM") → getenv("NOVA_AUTOARM").
+- Inverted accepted values: "0"/"false"/"no"/"n"/"f" → disable.
+- 11 test directives `// ENV NOVA_NO_AUTOARM=1` → `// ENV NOVA_AUTOARM=0`.
+- Spec D138 §4 + §6 — escape hatch text updated.
+- Plan 83.4.5.9 doc (new).
+Verification: bootstrap + armed M:N both PASS.
+
+**Plan 83.4.5.6 partial closure — infrastructure landed, perf
+acceptance NOT yet met:**
+
+Ф.4 speedup-bench (`bench/m_n/parallel_speedup.nv`):
+- parallel for 16 × fib(33) — измеряет parallel-for vs sequential.
+- Empirical (AMD Ryzen 16-core, Windows 11): parallel = 518ms,
+  sequential = 345ms. Parallel SLOWER (0.66×). Acceptance ≥3.0×
+  НЕ MET. Followup: profile worker-pool startup latency на Windows.
+- Discovered codegen bug: `emit_handler_forward_decls` не сканировал
+  Item::Bench bodies → spawn-fwd decls пропускались для bench с
+  parallel-for; CC-FAIL. Fix added — bench setup/measure_body/
+  teardown + groups scan. **CRITICAL: measure_body эмитится emit_bench
+  ТРИ РАЗА** (warmup + calibration + sample loops); pre-scan
+  reflects тот же 3× expansion в s_ctr увеличении.
+
+Ф.5 stress harnesses (`nova_tests/plan83_4_5_6_stress/`):
+- spawn_stress_10k.nv — 1K spawn no-op (V1; full 10⁶ deferred —
+  Windows armed overhead ~180ms/spawn timing out).
+- park_wake_stress.nv — 100 fibers × Time.sleep(1).
+- cancel_stress.nv — 10 supervised(cancel:) с sleep-cancel race.
+- All 3 PASS under `// ENV NOVA_AUTOARM=0` (cooperative). Under
+  armed exhibit timing issues — followup Plan 83.4.5.10 perf work.
+
+Ф.5 TSAN gate (`scripts/tsan_concurrency.sh` + `tsan_suppressions.txt`):
+- Linux-only script (Windows clang без TSAN runtime).
+- Suppressions для Boehm GC + libuv internals + minicoro context-swap.
+- Acceptance: 0 reported races — followup execution на Linux runner.
+
+**Files added:**
+- `bench/m_n/parallel_speedup.nv` — speedup-bench fixture.
+- `nova_tests/plan83_4_5_6_stress/spawn_stress_10k.nv`.
+- `nova_tests/plan83_4_5_6_stress/park_wake_stress.nv`.
+- `nova_tests/plan83_4_5_6_stress/cancel_stress.nv`.
+- `scripts/tsan_concurrency.sh`.
+- `scripts/tsan_suppressions.txt`.
+- `docs/plans/83.4.5.9-rename-noautoarm-env.md`.
+
+**Files modified:**
+- `compiler-codegen/nova_rt/runtime.c` — env-var rename + 3 call sites.
+- `compiler-codegen/src/codegen/emit_c.rs` — emit_handler_forward_decls
+  +Item::Bench (3× measure_body scan).
+- `spec/decisions/06-concurrency.md` — D138 §4 + §6 escape hatch text.
+- `docs/plans/README.md` — 83.4.5.6 PARTIAL status.
+- `docs/plans/83.4.5.6-flip-reactivation-and-closure.md` — status header.
+- 11 nova_tests/*.nv — directive rename.
+
+Plan 83 status: Default-on M:N runtime ACTIVE (Plan 83.4.5.8).
+Infrastructure for production-readiness sign-off landed. Performance
+acceptance + Linux TSAN execution — followup work.

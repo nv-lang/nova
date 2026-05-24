@@ -11671,3 +11671,47 @@ vec.nv не компилируется в exe → Plan 91 (std MVP) blocked.
   4. Snapshot memory ownership cleanup (V1 leak — snapshots реachable
      через scope's fiber_effect_snapshot[] until slot reuse; not
      leak.
+
+### [M-83.4.5.6-perf-acceptance] Plan 83.4.5.6 partial closure — perf acceptance НЕ MET (2026-05-24)
+
+- **Где:** `bench/m_n/parallel_speedup.nv`, `nova_tests/plan83_4_5_6_stress/`.
+- **Что:** Plan 83.4.5.6 §6.4 acceptance:
+  - **≥3.0× speedup** на 4-core parallel_sum vs MAXPROCS=1 — **НЕ MET**
+    (measured 0.66× на 16-core Windows). Followup investigation:
+    profile worker-pool startup latency, work-stealing balance,
+    Boehm GC contention.
+  - **10⁶ spawn / 10⁵ park-wake / 10⁴ cancel stress** — partial
+    (V1: 10³ / 10² / 10¹). Под armed Windows worker-pool overhead
+    ~180ms/spawn timing out 10K+. Stress tests verify correctness
+    через `// ENV NOVA_AUTOARM=0` (cooperative) — all PASS.
+  - **TSAN gate Linux 0 races** — script delivered
+    (`scripts/tsan_concurrency.sh`); execution на Linux runner —
+    followup (Windows-only dev environment).
+
+- **Почему:** flip activation closed default-on M:N runtime
+  semantics + correctness (D138 ACTIVE). Performance work для
+  production-readiness sign-off — separate concern.
+
+- **Hypothesis для perf gap:**
+  1. Worker pool startup latency (uv_thread_create × 16) — ~50-100ms
+     одноразово, dominates ms-scale workloads.
+  2. spawn-to-fiber-start overhead (mco_create + arena alloc +
+     ctx_pins + uv_async_send) — ~10-100µs vs cooperative ~1µs.
+  3. Boehm GC contention под multi-worker (GC_THREADS lock).
+  4. Work-stealing imbalance — Chase-Lev deque round-robin не
+     scatters short workloads efficiently.
+  5. fiber arena per-thread allocation (Plan 82) — VirtualAlloc
+     lazy-commit overhead на Windows.
+
+- **Last commit:** Plan 83.4.5.6 partial closure work
+  (см. commits после 83.4.5.9).
+
+- **Как чинить (Plan 83.4.5.10? — TBD):** ~2-3 dev-day.
+  Priorities:
+  1. Profile spawn-to-fiber-ready latency (perf trace).
+  2. Investigate Boehm GC contention под multi-worker.
+  3. Try fewer larger spawns (parallel_for array-mode) vs many small.
+  4. Linux comparison — Windows-specific overhead?
+
+- **Приоритет:** P2 — correctness landed; perf optimization for
+  production readiness.
