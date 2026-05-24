@@ -11500,8 +11500,15 @@ Plan 83.2 §4 «Compiled-программа без единого `runtime.*` в
 - **Обнаружено:** Plan 99 Ф.0 probe (2026-05-23). **План фикса:**
   Plan 99 Ф.1–Ф.6 (re-scope подтверждён).
 
-## [M-receiver-generic-incompleteness] Plan 101 — `fn[T]` prefix + bounds + protocol composition не реализованы (2026-05-24)
+## [M-receiver-generic-incompleteness] Plan 101 — `fn[T]` prefix + bounds + protocol composition (2026-05-24, partial)
 
+> **PROGRESS update 2026-05-24 ред. 4 (implementation session):**
+> Plan 101.1 partial реализован: parser `fn[T] ReceiverType @method`
+> работает + vec.nv migrated (7 методов, int-only). Codegen mono per-T
+> для non-int element types — отложен в [M-fn-prefix-int-only-mono]
+> (см. ниже). Остальные phases (Ф.2 type-check errors, 101.2-5
+> sub-plans) — pending follow-up.
+>
 > **Ред. 3 (2026-05-24):** complete rewrite после 3-iteration design
 > discussion. Ред. 1 описывала narrow `fn[T]` only. Ред. 2 ошибочно
 > ввела implicit T (моя misinterpretation). Финал: explicit `fn[T]`
@@ -11715,3 +11722,35 @@ vec.nv не компилируется в exe → Plan 91 (std MVP) blocked.
 
 - **Приоритет:** P2 — correctness landed; perf optimization for
   production readiness.
+
+## [M-fn-prefix-int-only-mono] `fn[T] []T @method` codegen mono-per-T только для int (2026-05-24)
+
+**Где:** `compiler-codegen/src/codegen/emit_c.rs:11086-11093` —
+array-extension-methods path выходит через `emit_generic_method_erased`
+с default `nova_int` receiver-type. Mono per actual T (`[]str`,
+`[]User`) не выполняется.
+
+**Симптом:** `fn[T] []T @method` (Plan 101.1 syntax) работает
+корректно только для `[]int`-receivers. Для других element-types
+codegen эмитит `Nova_NovaArray_nova_int_method_<m>` (default mono),
+что приводит к CC-FAIL — type mismatch с actual
+`NovaArray_nova_str*` argument.
+
+**Affected:**
+- `[1,2,3].map(...)` — ✅ работает.
+- `["a","b"].map(...)` / `[]MyRecord.filter(...)` — ❌ CC-FAIL.
+- vec.nv внутренние тесты — ✅ PASS (все используют `[]int`).
+- nova_tests/plan101_1/vec_str_elements.nv (removed) —
+  изначально провалился из-за этого.
+
+**Fix scope:** mono per receiver-T для array extensions —
+~4-6 hours codegen работы:
+- Mangling `Nova_NovaArray_<T>_method_<m>` per T.
+- Worklist registration для каждой мономорфизации.
+- Call-site dispatch resolution с actual receiver-type.
+
+**Приоритет — P2** (vec.nv stdlib работает для основного int-case;
+другие element types — отложенная nice-to-have для полноценного Plan 91 std MVP).
+
+**Обнаружено:** Plan 101.1 Ф.5 verification 2026-05-24. **План фикса:**
+Plan 101.1 Ф.3 follow-up OR Plan 101.5 stdlib audit.
