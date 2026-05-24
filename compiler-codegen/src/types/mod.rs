@@ -743,6 +743,24 @@ impl<'a> TypeCheckCtx<'a> {
                     ));
                 }
             }
+            // Plan 101.1 B4 (Ф.2 E_PREFIX_SHADOWS_NAMED_TYPE):
+            // Detect `fn[T] T @method` + `type T { ... }` в scope. fn-prefix
+            // shadows named type — ambiguous. Loud error suggests rename.
+            for g in &fd.generics {
+                if self.types.contains_key(&g.name) {
+                    errors.push(Diagnostic::new(
+                        format!(
+                            "[E_PREFIX_SHADOWS_NAMED_TYPE] `fn[{tn}] ...` — \
+                             generic `{tn}` shadows named type `{tn}` in scope \
+                             (Plan 101.1 / D145). Rename one:\n  \
+                             - rename prefix generic: `fn[T2] {tn} @{m}(...)` (use named T)\n  \
+                             - rename named type: `type {tn}_New {{ ... }}` (free up T)",
+                            tn = g.name, m = fd.name
+                        ),
+                        r.span,
+                    ));
+                }
+            }
             // Plan 101.1 B3 (Ф.2 E_DUPLICATE_GENERIC_DECL):
             // Detect `fn[K, V] HashMap[K, V] @method` — generics в `fn[…]`
             // дублируют carrier-brackets `Name[K, V]`. Удалите fn-prefix
