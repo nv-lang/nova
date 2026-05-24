@@ -28,7 +28,7 @@ test "log(tx) без consume qualifier — call-site error" {
     consume tx = begin()
     // ОШИБКА D133-move-to-non-consume: передача в non-consume param.
     // Suggest: добавить `consume` qualifier на log's tx param,
-    // или (после Plan 100.3) использовать `log(view tx)`.
+    // или (после Plan 100.3) использовать `log(tx)`.
     log(tx)
     tx.commit()
 }

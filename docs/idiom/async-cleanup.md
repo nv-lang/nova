@@ -24,7 +24,7 @@
 fn process() Fs Time -> () {
     consume conn = open_connection()?
     defer { conn.graceful_drain() }             // suspend-able (D159)
-    do_io(view conn)?
+    do_io(conn)?
 }
 ```
 

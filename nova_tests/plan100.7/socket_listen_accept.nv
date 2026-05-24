@@ -7,8 +7,8 @@ type IoErr { msg str }
 external type ServerSocket consume
 external type ClientSocket consume
 
-external consume fn nova_tcp_listen(port int) -> Result[ServerSocket, IoErr] needs Net
-external consume fn nova_tcp_accept(view srv ServerSocket) -> Result[ClientSocket, IoErr] needs Net
+external fn nova_tcp_listen(port int) -> Result[ServerSocket, IoErr] needs Net
+external fn nova_tcp_accept(view srv ServerSocket) -> Result[ClientSocket, IoErr] needs Net
 external fn nova_tcp_close_server(consume s ServerSocket) -> () needs Net
 external fn nova_tcp_close_client(consume c ClientSocket) Time -> () needs Net
 
@@ -26,7 +26,7 @@ fn serve(port int) Fail[IoErr] Net Time -> () {
     let r = nova_tcp_listen(port)?
     consume srv = r
     defer { srv.close() }
-    handle_one(view srv)?
+    handle_one(srv)?
 }
 
 test "TcpSocket pilot lifecycle" {

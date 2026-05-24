@@ -1,8 +1,8 @@
-// Plan 100.1 (D133, D9): `let tx = ...` форма — обязательство передаётся
-// caller'у через return.
+// Plan 100.1 (D133): factory function — consume-binding обязателен
+// для ownership; return передаёт наверх.
 //
-// `let tx = begin(); return tx` — обязательство уходит наверх. Caller
-// получает Live consume-binding и обязан его закрыть.
+// `consume tx = ...; return tx` — обязательство передаётся caller'у.
+// Caller получает Live consume-binding и обязан его закрыть/передать.
 
 module nova_tests.plan100_1.consume_ok_factory
 
@@ -13,9 +13,9 @@ type Transaction consume {
 fn Transaction consume @commit() -> () { () }
 fn Transaction consume @rollback() -> () { () }
 
-// Factory с `let tx` формой — strict «обязан передать наверх».
+// Factory с consume-bindingом (mandatory keyword для ownership).
 fn factory() -> Transaction {
-    let tx = Transaction { id: 99 }
+    consume tx = Transaction { id: 99 }
     return tx                                  // tx Returned — OK
 }
 

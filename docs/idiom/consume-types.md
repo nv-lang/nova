@@ -151,12 +151,12 @@ print_id(tx)                                    // ❌ D133-move-to-non-consume
 Для production-grade read-only — используй `view T` (Plan 100.3 D157):
 
 ```nova
-fn print_id(tx view Transaction) -> () {
+fn print_id(tx Transaction) -> () {
     println(tx.id)
 }
 
 consume tx = begin()
-print_id(view tx)                               // ✅ borrow OK
+print_id(tx)                               // ✅ borrow OK
 tx.commit()                                     // ✅ tx Live после
 ```
 
@@ -166,7 +166,7 @@ tx.commit()                                     // ✅ tx Live после
 type Service consume { consume file Option[File] }
 
 fn Service @file_id() -> Option[int] {
-    match view @file {                          // ← D157 view-match
+    match @file {                          // ← D157 view-match
         Some(f) => Some(f.fd),                  // f: view File, не Consumed
         None => None,
     }
@@ -228,7 +228,7 @@ commit/rollback choice важен.
 - [D157](../../spec/decisions/05-memory.md#d157) — `view T` borrow.
 - [D158-D162](../../spec/decisions/03-syntax.md#d158) — defer/errdefer/
   okdefer family.
-- [D163](../../spec/decisions/02-types.md#d163) — FFI `external consume fn`.
+- [D163](../../spec/decisions/02-types.md#d163) — FFI `external fn`.
 - [D164](../../spec/decisions/02-types.md#d164) — cross-module.
 
 ## Source plan

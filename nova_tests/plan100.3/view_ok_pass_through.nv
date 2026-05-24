@@ -8,15 +8,15 @@ type Transaction consume {
 
 fn Transaction consume @commit() -> () { () }
 
-fn log_id(t view Transaction) -> () { println(t.id) }
+fn log_id(t Transaction) -> () { println(t.id) }
 
-fn print_and_log(t view Transaction) -> () {
+fn print_and_log(t Transaction) -> () {
     println("processing")
     log_id(t)                                    // ✅ view-передача в view-param
 }
 
 test "view pass-through через view-funcs" {
     consume tx = Transaction { id: 5 }
-    print_and_log(view tx)
+    print_and_log(tx)
     tx.commit()                                  // tx Live после view-uses
 }

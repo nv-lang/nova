@@ -7,7 +7,7 @@ module nova_tests.plan100_5.external_consume_err_double_pass
 
 external type File consume
 
-external consume fn nova_file_open(path str) -> File needs Fs
+external fn nova_file_open(path str) -> File needs Fs
 external fn nova_file_close(consume f File) -> () needs Fs
 
 test "double pass в external consume-param — use-after-consume" {

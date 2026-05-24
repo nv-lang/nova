@@ -20,12 +20,12 @@
 ## Базовый pattern
 
 ```nova
-fn print_id(tx view Transaction) -> () {
+fn print_id(tx Transaction) -> () {
     println(tx.id)                              // ✅ чтение поля
 }
 
 consume tx = begin()
-print_id(view tx)                               // ✅ view-передача
+print_id(tx)                               // ✅ view-передача
 tx.commit()                                     // ✅ tx Live после
 ```
 
@@ -37,7 +37,7 @@ type Service consume {
 }
 
 fn Service @file_id() -> Option[int] {
-    match view @file {                          // ← view-match
+    match @file {                          // ← view-match
         Some(f) => Some(f.fd),                  // f: view File — read-only
         None => None,
     }
@@ -93,13 +93,13 @@ let v = view tx                                 // ❌ scope-check сложно;
 
 ✅ **OK — view только в expression-position:**
 ```nova
-print_id(view tx)                               // ✅ в call expression
-match view @file { ... }                        // ✅ в match expression
+print_id(tx)                               // ✅ в call expression
+match @file { ... }                        // ✅ в match expression
 ```
 
 ❌ **Return view наружу:**
 ```nova
-fn id_view(t view Transaction) -> view Transaction {
+fn id_view(t Transaction) -> Transaction {
     return t                                    // ❌ escape — error D157
 }
 ```

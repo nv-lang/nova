@@ -7,7 +7,7 @@ type IoErr { msg str }
 
 external type File consume
 
-external consume fn nova_file_open(path str) -> Result[File, IoErr] needs Fs
+external fn nova_file_open(path str) -> Result[File, IoErr] needs Fs
 external fn nova_file_close(consume f File) Fail[IoErr] -> () needs Fs
 
 fn File consume @close() Fail[IoErr] -> () {
@@ -18,7 +18,7 @@ fn process(path str) Fail -> () {
     let r = nova_file_open(path)?
     consume file = r
     defer { file.close() }                      // failable cleanup (D158)
-    // do_io(view file) — use without consume (D157)
+    // do_io(file) — use without consume (D157)
 }
 
 test "FFI consume File + defer cleanup" {
