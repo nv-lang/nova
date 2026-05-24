@@ -16870,7 +16870,19 @@ _cp++; \
                                 // Plan 48: sentinel detection for generic methods with own type params.
                                 if candidates.iter().any(|c| c.c_name.starts_with("__mono_method__")) {
                                     let recv_key = (rt.clone(), method.clone());
-                                    if let Some(fn_decl) = self.mono_method_decls.get(&recv_key).cloned() {
+                                    // Plan 101.1: для array-ext receivers, mono_method_decls
+                                    // key — это recv.type_name "[]T", не rt "NovaArray_<X>".
+                                    // Fallback lookup по "[]T" с попыткой extract element-type
+                                    // из rt для T-subst.
+                                    let fn_decl_opt = self.mono_method_decls.get(&recv_key).cloned()
+                                        .or_else(|| {
+                                            if rt.starts_with("NovaArray_") {
+                                                self.mono_method_decls.get(&("[]T".to_string(), method.clone())).cloned()
+                                            } else {
+                                                None
+                                            }
+                                        });
+                                    if let Some(fn_decl) = fn_decl_opt {
                                         let type_subst = self.resolve_mono_type_args(&fn_decl, &[], args)
                                             .unwrap_or_else(|_| fn_decl.generics.iter()
                                                 .map(|g| (g.name.clone(), "nova_str".to_string()))
