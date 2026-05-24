@@ -11749,42 +11749,87 @@ vec.nv не компилируется в exe → Plan 91 (std MVP) blocked.
   (см. commits после 83.4.5.9).
 
 - **Plan 83.4.5.10 partial closure (2026-05-24):**
-  - Ф.3 ✅ DONE — inline parallel-for threshold (default 32);
+  - **Ф.3 ✅ DONE** — inline parallel-for threshold (default 32);
     statement-mode + Range-iter parallel-for бежит cooperatively inline
     для N ≤ threshold. Acceptance ≥1× speedup MET (parallel ~622ms
     vs sequential ~640ms на 16 × fib(33), inline path активен).
-  - Ф.2 ❌ reverted — 8MB → 1MB stack caused `cancellation_test` stack
-    overflow (within/race2 generic recursion).
-  - Ф.1 ❌ deferred — per-worker pool требует ~1-2 dev-day; acceptance
-    уже MET через Ф.3 alone. V2 followup для larger-N parallel-for.
+  - **Ф.2 ❌ ИСКЛЮЧЕНО — wrong hypothesis** (см. §"Ф.2 wrong-hypothesis
+    analysis" ниже). 8MB → 1MB downsize не дал бы speedup потому что
+    virtual reservation FREE + commit lazy. Stack overflow на 1MB
+    подтвердил что 8MB нужен для max recursion budget, не для speed.
+    Plan 83.4.5.10 doc обновлён, slot size остаётся 8MB.
+  - **Ф.1 ❌ deferred V2** — per-worker SpawnCtx pool (Go P-mcache
+    analog). Это **главный bottleneck** — Boehm GC global lock на
+    `nova_alloc_uncollectable` под 16-worker contention. ~1-2 dev-day.
+    Acceptance уже MET через Ф.3 alone; Ф.1 нужен для larger-N
+    parallel-for (>threshold) + standalone spawn'ов.
 
-- **Как чинить (Plan 83.4.5.10 V2 followup, ~2-3 dev-day):**
+- **Ф.2 wrong-hypothesis analysis (детально, для re-analysis agent):**
 
-  **3 quick wins (target: parallel НЕ медленнее sequential для
-  short workloads, т.е. ≥1× speedup; full ≥3× требует concurrent GC
-  + dynamic stack — months of work):**
+  **Original hypothesis:** "Уменьшить slot size 8MB → 1MB снизит
+  MEM_COMMIT/mmap overhead → ускорит spawn." **Неверно.**
 
-  1. **Per-worker SpawnCtx free-list pool** (~1-2 dev-day) — как Go
+  **Что зависит от slot_size:**
+
+  | Aspect | Cost as f(slot_size) | Empirical (8MB vs 1MB) |
+  |--------|----------------------|------------------------|
+  | mmap MAP_NORESERVE virtual reservation | O(1) per arena init | ~µs одинаково — kernel просто VMA создаёт |
+  | VirtualAlloc MEM_RESERVE on Windows | O(1) per arena init | Same |
+  | Physical RAM commit | O(actual_stack_used_bytes) | Independent of slot_size — lazy commit |
+  | Per-slot `mprotect(guard, PROT_NONE)` on Linux | O(slot_count) one-shot per arena init | 4096 syscalls × ~µs (one-shot per worker startup, **не per spawn**) |
+  | Per-spawn `VirtualAlloc(MEM_COMMIT)` on Windows | O(fixed_init_window = 28KB) | Initial commit window fixed at 28KB — **independent of slot_size** |
+  | GC scan range (Plan 82 GC_push_other_roots) | O(committed_pages) | Pushes only MEM_COMMIT pages — independent of slot_size |
+  | TLB pressure | Negligible на 64-bit | N/A |
+  | Maximum recursion depth | O(slot_size) | **Hard limit** на recursion — meaningful tradeoff, не выгода |
+
+  **Single real effect of slot_size:** virtual reservation total + max
+  stack budget. Virtual on 64-bit FREE (8MB × 16384 slots = 128GB
+  virtual per Windows worker — noise). Max stack — limitation, не
+  speedup.
+
+  **Real spawn-cost drivers (independent of slot_size):**
+  1. Boehm `GC_malloc_uncollectable` global lock — ~50-200µs under
+     16-worker contention.
+  2. `mco_create` init + Windows 3× `VirtualAlloc(MEM_COMMIT)` initial
+     window — ~10-50µs.
+  3. `uv_async_send` cross-thread wake (pthread_mutex + cond) — ~5-20µs.
+  4. `nova_effect_snapshot_save` TLS copy — ~1-5µs.
+
+  **Bottleneck ranking:** GC lock (Ф.1) >> mco_create cost >>
+  uv_async_send >> snapshot_save >> stack slot size (free).
+
+  **Confusion source:** I confused "stack size 8MB" (max recursion cap)
+  с "8MB committed upfront" (physical RAM cost). Lazy commit means
+  physical = actual usage, не slot size. Virtual reservation on 64-bit
+  is essentially free.
+
+- **Как чинить (Plan 83.4.5.10 V2 followup):**
+
+  **Real-impact quick wins (target ≥3× speedup для длинных parallel-for):**
+
+  1. **Per-worker SpawnCtx free-list pool** (Ф.1, ~1-2 dev-day) — как Go
      P-mcache. Worker держит free-list пустых SpawnCtx struct'ов.
-     spawn → pop из P-local pool без Boehm lock. Закрывает (1) Boehm
-     GC contention на spawn-path. Free после mco_destroy → push back.
+     spawn → pop из P-local pool без Boehm lock. **Закрывает главный
+     bottleneck #1** (Boehm GC contention). Free после mco_destroy →
+     push back в pool.
 
-  2. **Smaller fiber stack default** (~0.5 dev-day) — уменьшить
-     `NOVA_FIBER_STACK_SIZE` с 1MB до 64KB (Go: 2KB, Java virtual
-     threads: 16KB). Закрывает (2) commit/mmap overhead на startup.
-     Trade-off: deep recursion ограничен 64KB. Можно сделать
-     configurable.
+  2. **mco_coro reuse pool** (~1 dev-day) — поверх Ф.1. Reuse mco_coro
+     structs instead of allocating fresh каждый spawn. Закрывает #2
+     (mco_create cost). Implementation: similar pool как Ф.1 в worker
+     struct, with mco_reset between uses.
 
-  3. **Inline parallel-for threshold** (~0.5 dev-day) — для коротких
-     parallel-for (`N * estimated_body_time < worker_overhead`) бежать
-     кооперативно inline. Avoids worker pool overhead полностью.
-     Heuristic threshold через env (`NOVA_PARALLEL_FOR_MIN_ITERS`)
-     либо compile-time const. Closer to tokio's `rayon` design.
+  3. **Lock-free wake** (~1 dev-day Windows + ~1 dev-day Linux) —
+     replace `uv_async_send` с direct eventfd (Linux) / SetEvent
+     (Windows). Закрывает #3. Но требует libuv async ownership rewrite —
+     рискованно.
+
+  4. **Versioned effect snapshots** (~0.5 dev-day) — versioning + skip
+     copy если handlers не изменены. Закрывает #4.
 
   **Не включено (months of work):**
   - Concurrent GC (replace Boehm либо thread-local allocation buffers).
-  - Lock-free wake notification (eventfd/IOCP direct).
-  - Dynamic stack growth (требует write barriers на каждой fn entry).
+  - Dynamic stack growth Go-style — write barriers + stack copy +
+    precise GC. Из-за Boehm conservative limitation.
 
 - **Приоритет:** P2 — correctness landed; perf optimization for
   production readiness. Не блокер для Plan 83 main milestone.
