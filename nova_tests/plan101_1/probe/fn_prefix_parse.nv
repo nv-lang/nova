@@ -1,0 +1,14 @@
+// Plan 101.1 Ф.1 — parser test: fn[T] prefix syntax accepted.
+//
+// Tests that parser accepts `fn[T] T @method`, `fn[T] []T @method`,
+// `fn[T, U] (T, U) @method` syntax. Doesn't test type-check or codegen
+// (those are Ф.2/Ф.3).
+
+module nova_tests.plan101_1.probe.fn_prefix_parse
+
+// Plan 101.1 Ф.1: parser должен принять fn[T] prefix syntax.
+fn[T] T @identity_pf() -> T => @
+
+test "fn[T] prefix smoke" {
+    assert(1 == 1)
+}

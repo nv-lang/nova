@@ -1,0 +1,24 @@
+// Plan 101.1 Ф.5 — positive: fn[T] []T @map[U] T=U case.
+//
+// NOTE: T≠U для `[]T @map[U]` (например map int → str) сейчас имеет
+// codegen-limitation: return-type `[]U` не правильно mono'дится
+// независимо от receiver T. Требует extension Plan 48/D119 method-level
+// dispatch для array methods (отдельная codegen фаза).
+//
+// Этот тест покрывает T=U case (working).
+
+module nova_tests.plan101_1.vec_map_int_str
+
+fn[T] []T @my_map_same(f fn(T) -> T) -> []T {
+    let mut out []T = []T.with_capacity(@len())
+    for x in @ { out.push(f(x)) }
+    out
+}
+
+test "fn[T] []T @map T → T (T=U same type)" {
+    let v []int = [10, 20, 30]
+    let plus_one = v.my_map_same(|x| x + 1)
+    assert(plus_one.len() == 3)
+    assert(plus_one.get(0) == Some(11))
+    assert(plus_one.get(2) == Some(31))
+}
