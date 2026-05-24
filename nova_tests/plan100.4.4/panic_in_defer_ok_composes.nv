@@ -1,4 +1,4 @@
-// Plan 100.4.4 (D150): panic в defer body — композируется с propagating
+// Plan 100.4.4 (D161): panic в defer body — композируется с propagating
 // через Plan 49, НЕ Rust-style double-panic-abort.
 
 module nova_tests.plan100_4_4.panic_in_defer_ok_composes

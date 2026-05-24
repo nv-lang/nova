@@ -1,4 +1,4 @@
-// Plan 100.3 (D146): basic view T — read-only borrow для чтения полей.
+// Plan 100.3 (D157): basic view T — read-only borrow для чтения полей.
 //
 // `fn print_id(t view Transaction)` — view-param. Source `tx` остаётся
 // Live после вызова; функция читает поле без consume.

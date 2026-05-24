@@ -1,4 +1,4 @@
-// Plan 100.4.5 (D151): supervised + spawn + cancel — errdefer fires
+// Plan 100.4.5 (D162): supervised + spawn + cancel — errdefer fires
 // на cancel-path, consume cleanup гарантирован.
 
 module nova_tests.plan100_4_5.supervised_spawn_cancel_errdefer_ok

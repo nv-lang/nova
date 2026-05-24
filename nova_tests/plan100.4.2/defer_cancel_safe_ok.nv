@@ -1,4 +1,4 @@
-// Plan 100.4.2 (D148): cancel-safe cleanup — cleanup completes-then-
+// Plan 100.4.2 (D159): cancel-safe cleanup — cleanup completes-then-
 // cancel-propagates (runtime shield'ит cleanup от cancel signal).
 
 module nova_tests.plan100_4_2.defer_cancel_safe_ok
@@ -18,7 +18,7 @@ fn process(cancel CancelToken) -> () {
     supervised(cancel: cancel) {
         spawn {
             consume c = open_conn()
-            defer { c.drain() }                 // suspend-able cleanup (D148)
+            defer { c.drain() }                 // suspend-able cleanup (D159)
             // long_op...
             // outer может cancel в любой момент
             // cleanup completes ПЕРВЫМ, cancel propagates AFTER

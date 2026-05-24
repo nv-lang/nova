@@ -1,4 +1,4 @@
-// Plan 100.5 (D152): pilot Mutex lock-guard pattern через FFI.
+// Plan 100.5 (D163): pilot Mutex lock-guard pattern через FFI.
 // Lock automatically released via defer.
 
 module nova_tests.plan100_5.external_mutex_lock_release_ok

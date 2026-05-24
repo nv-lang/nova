@@ -1,4 +1,4 @@
-// Plan 100.7 (D154) pilot Transaction — rollback on error path.
+// Plan 100.7 (D165) pilot Transaction — rollback on error path.
 
 module nova_tests.plan100_7.tx_rollback
 

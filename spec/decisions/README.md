@@ -76,17 +76,17 @@
 | D143 | 03-syntax.md | Static-method префикс `.method()` в `type X protocol { ... }` теле — симметрия с D35 instance-методом `fn T.method()` (Plan 97) |
 | D144 | 02-types.md | Sub-slice views `arr[a..b]` / `str[a..b]` — `cap == len` model, 5 форм Range (RangeBounds parity), bounds-check для raw `arr[i]` (Plan 96) |
 | D133 | 02-types.md | type-level `consume` — обязательная consume-семантика (Plan 100.1, proposed); расширяет D131 affine с противоположной стороны (must-be-consumed). Foundation Plan 100 family |
-| D145 | 02-types.md | Generic `[T consume]` bound + collection-aware iteration (Plan 100.2, proposed); закрывает silent-leak в generic-коде; backward-compat — silent-ignore без bound |
-| D146 | 05-memory.md | `view T` — read-only borrow без lifetime (Plan 100.3, proposed); scope-only semantics; `match view` deep peek; closure capture analysis (consume-closure / view-closure) |
-| D147 | 03-syntax.md | Failable cleanup body (Plan 100.4.1, proposed) — amend D90 §4; defer/errdefer body может Fail; Plan 49 multi-error composition |
-| D148 | 03-syntax.md | Async/suspend в cleanup body (Plan 100.4.2, proposed) — amend D90 §5; cancel-safe semantics; spawn/parallel for запрещены |
-| D149 | 03-syntax.md | `okdefer` + reason-aware `defer \|result\|` (Plan 100.4.3, proposed); complement к errdefer; mixed LIFO defer family |
-| D150 | 03-syntax.md | Multi-defer LIFO error accumulation + panic-in-defer composition (Plan 100.4.4, proposed) — amend D90 §«panic»; LIFO continues после partial failure; no Rust double-panic-abort |
-| D151 | 03-syntax.md | Consume-integration final (Plan 100.4.5, proposed) — amend D90 §7; check_consume распознаёт defer/errdefer/okdefer cover; interrupt теперь триггерит errdefer |
-| D152 | 02-types.md | `external consume fn` — FFI consume через C-границу (Plan 100.5, proposed); + opaque types + capability tracking |
-| D153 | 02-types.md | Cross-module consume — visibility, mangling-bit extension Plan 81 D134, package contracts (Plan 100.6, proposed) |
-| D154 | 09-tooling.md | Consume-types migration policy — `nova consume-migrate` CLI + edition versioning (Plan 100.7, proposed) |
-| D155 | 09-tooling.md | Consume-types developer experience — perf budget <5%, LSP quick fixes (12 error codes), hover info, `nova doc` integration, structured diagnostic format (Plan 100.8, proposed) |
+| D156 | 02-types.md | Generic `[T consume]` bound + collection-aware iteration (Plan 100.2, proposed); закрывает silent-leak в generic-коде; backward-compat — silent-ignore без bound |
+| D157 | 05-memory.md | `view T` — read-only borrow без lifetime (Plan 100.3, proposed); scope-only semantics; `match view` deep peek; closure capture analysis (consume-closure / view-closure) |
+| D158 | 03-syntax.md | Failable cleanup body (Plan 100.4.1, proposed) — amend D90 §4; defer/errdefer body может Fail; Plan 49 multi-error composition |
+| D159 | 03-syntax.md | Async/suspend в cleanup body (Plan 100.4.2, proposed) — amend D90 §5; cancel-safe semantics; spawn/parallel for запрещены |
+| D160 | 03-syntax.md | `okdefer` + reason-aware `defer \|result\|` (Plan 100.4.3, proposed); complement к errdefer; mixed LIFO defer family |
+| D161 | 03-syntax.md | Multi-defer LIFO error accumulation + panic-in-defer composition (Plan 100.4.4, proposed) — amend D90 §«panic»; LIFO continues после partial failure; no Rust double-panic-abort |
+| D162 | 03-syntax.md | Consume-integration final (Plan 100.4.5, proposed) — amend D90 §7; check_consume распознаёт defer/errdefer/okdefer cover; interrupt теперь триггерит errdefer |
+| D163 | 02-types.md | `external consume fn` — FFI consume через C-границу (Plan 100.5, proposed); + opaque types + capability tracking |
+| D164 | 02-types.md | Cross-module consume — visibility, mangling-bit extension Plan 81 D134, package contracts (Plan 100.6, proposed) |
+| D165 | 09-tooling.md | Consume-types migration policy — `nova consume-migrate` CLI + edition versioning (Plan 100.7, proposed) |
+| D166 | 09-tooling.md | Consume-types developer experience — perf budget <5%, LSP quick fixes (12 error codes), hover info, `nova doc` integration, structured diagnostic format (Plan 100.8, proposed) |
 
 ## История
 

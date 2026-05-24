@@ -1,4 +1,4 @@
-// Plan 100.7 (D154): pilot Transaction migration — commit on success.
+// Plan 100.7 (D165): pilot Transaction migration — commit on success.
 // Probe 1 of 5: happy-path.
 
 module nova_tests.plan100_7.tx_commit

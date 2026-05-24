@@ -1,6 +1,6 @@
-// EXPECT_COMPILE_ERROR D145
+// EXPECT_COMPILE_ERROR D156
 //
-// Plan 100.2 (D145): for-loop iteration body — каждый tx обязан Consumed.
+// Plan 100.2 (D156): for-loop iteration body — каждый tx обязан Consumed.
 // Branch только на одной ветке → MaybeConsumed на arm exit → error.
 
 module nova_tests.plan100_2.for_consume_err_branch_forget
@@ -23,7 +23,7 @@ test "for + branch только на then — каждая iteration теряе�
             // then: tx Consumed
         }
         // else (implicit): tx Live
-        // ОШИБКА D145-strict-forget: tx MaybeConsumed на arm-exit
+        // ОШИБКА D156-strict-forget: tx MaybeConsumed на arm-exit
         // (не covered обеими ветками).
     }
 }

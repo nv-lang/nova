@@ -1,4 +1,4 @@
-// Plan 100.4.1 (D147): caller inspects composite via MultiError API.
+// Plan 100.4.1 (D158): caller inspects composite via MultiError API.
 
 module nova_tests.plan100_4_1.multi_error_inspect_ok
 
@@ -25,7 +25,7 @@ test "caller inspects MultiError chain" {
     match inner() {
         Ok(_) => println("unreachable"),
         Err(e) => {
-            // e — MultiError; .primary() / .suppressed() API (D147).
+            // e — MultiError; .primary() / .suppressed() API (D158).
             println("primary: ${e.primary()}")
             for s in e.suppressed() {
                 println("  suppressed: ${s}")

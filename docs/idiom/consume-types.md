@@ -2,7 +2,7 @@
 # Consume-типы — canonical patterns
 
 > Practical guide для type-level `consume`-семантики (Plan 100 family,
-> D133-D155). Foundational idiom для production resource-management в
+> D133-D166). Foundational idiom для production resource-management в
 > Nova.
 
 ## Когда писать `type X consume`
@@ -41,7 +41,7 @@ fn process_order(data Data) Fail[OrderErr] Db -> Receipt {
 Exhaustive cover для consume-обязательства через **defer-family**:
 - success path → `okdefer` (commit)
 - error path → `errdefer` (rollback)
-- failable cleanup composes через D147 Plan 49 multi-error.
+- failable cleanup composes через D158 Plan 49 multi-error.
 
 ### Альтернатива — explicit commit на success
 
@@ -148,7 +148,7 @@ print_id(tx)                                    // ❌ D133-move-to-non-consume
                                                 //    (callee не declares consume)
 ```
 
-Для production-grade read-only — используй `view T` (Plan 100.3 D146):
+Для production-grade read-only — используй `view T` (Plan 100.3 D157):
 
 ```nova
 fn print_id(tx view Transaction) -> () {
@@ -166,7 +166,7 @@ tx.commit()                                     // ✅ tx Live после
 type Service consume { consume file Option[File] }
 
 fn Service @file_id() -> Option[int] {
-    match view @file {                          // ← D146 view-match
+    match view @file {                          // ← D157 view-match
         Some(f) => Some(f.fd),                  // f: view File, не Consumed
         None => None,
     }
@@ -198,7 +198,7 @@ Opt-in strict через `[T consume]`:
 
 ```nova
 fn box[T consume](consume x T) -> Box[T] => Box { val: x }
-// Strict mode: silent-forget T → error D145-strict-forget.
+// Strict mode: silent-forget T → error D156-strict-forget.
 
 fn first[T consume](pair (T, T)) -> T => pair.0
 // ❌ pair.1 силен потерян → error.
@@ -224,12 +224,12 @@ commit/rollback choice важен.
 - [D131](../../spec/decisions/05-memory.md#d131) — affine consume (Plan 73).
 - [D132](../../spec/decisions/03-syntax.md#d132) — `-> @` fluent-return.
 - [D133](../../spec/decisions/02-types.md#d133) — type-level consume.
-- [D145](../../spec/decisions/02-types.md#d145) — generic `[T consume]`.
-- [D146](../../spec/decisions/05-memory.md#d146) — `view T` borrow.
-- [D147-D151](../../spec/decisions/03-syntax.md#d147) — defer/errdefer/
+- [D156](../../spec/decisions/02-types.md#d156) — generic `[T consume]`.
+- [D157](../../spec/decisions/05-memory.md#d157) — `view T` borrow.
+- [D158-D162](../../spec/decisions/03-syntax.md#d158) — defer/errdefer/
   okdefer family.
-- [D152](../../spec/decisions/02-types.md#d152) — FFI `external consume fn`.
-- [D153](../../spec/decisions/02-types.md#d153) — cross-module.
+- [D163](../../spec/decisions/02-types.md#d163) — FFI `external consume fn`.
+- [D164](../../spec/decisions/02-types.md#d164) — cross-module.
 
 ## Source plan
 

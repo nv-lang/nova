@@ -1,4 +1,4 @@
-// Plan 100.5 (D152): external consume fn param-side — caller передаёт
+// Plan 100.5 (D163): external consume fn param-side — caller передаёт
 // consume-var; callee owns transfer.
 
 module nova_tests.plan100_5.external_consume_param_ok

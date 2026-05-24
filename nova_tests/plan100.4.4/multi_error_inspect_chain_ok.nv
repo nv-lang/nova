@@ -1,4 +1,4 @@
-// Plan 100.4.4 (D150): MultiError API — caller inspects chain.
+// Plan 100.4.4 (D161): MultiError API — caller inspects chain.
 
 module nova_tests.plan100_4_4.multi_error_inspect_chain_ok
 

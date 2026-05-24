@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 # Multi-cleanup errors — MultiError chain inspection
 
-> Practical guide для [D150](../../spec/decisions/03-syntax.md#d150)
-> + [D147](../../spec/decisions/03-syntax.md#d147) (Plan 100.4.4 +
+> Practical guide для [D161](../../spec/decisions/03-syntax.md#d161)
+> + [D158](../../spec/decisions/03-syntax.md#d158) (Plan 100.4.4 +
 > 100.4.1). Когда несколько cleanup'ов могут fail одновременно.
 
 ## Сценарий
@@ -14,11 +14,11 @@ LIFO unwinding запускает каждый cleanup → каждый може
 fn process() Fail -> () {
     consume tx1 = begin()
     consume tx2 = begin()
-    defer { tx2.commit() }                      // (D147 failable)
+    defer { tx2.commit() }                      // (D158 failable)
     defer { tx1.commit() }
     do_work()?                                   // throws Err_main
 
-    // LIFO unwinding (D150):
+    // LIFO unwinding (D161):
     //   1. body throws Err_main
     //   2. tx1.commit() fails Err1 → suppressed [Err1]
     //   3. tx2.commit() fails Err2 → suppressed [Err1, Err2]
@@ -68,7 +68,7 @@ match process() {
 }
 ```
 
-## Panic в defer body — тоже composes (D150)
+## Panic в defer body — тоже composes (D161)
 
 ```nova
 fn process() Fail -> () {
@@ -155,7 +155,7 @@ fn main() -> () {
 
 ## Сравнение
 
-| Capability | Rust | TS | Java | Nova D150 |
+| Capability | Rust | TS | Java | Nova D161 |
 |---|---|---|---|---|
 | Multi-cleanup LIFO continues | ❌ first-panic = abort | ✅ SuppressedError | ✅ addSuppressed | ✅ **all attempted** |
 | Panic в cleanup composes | ❌ double-panic-abort | ⚠️ SuppressedError | ⚠️ try-catch | ✅ **MultiError + no abort** |
@@ -168,9 +168,9 @@ effect-typed `Fail[E]`.
 
 ## Связь
 
-- [D150](../../spec/decisions/03-syntax.md#d150) — multi-defer LIFO +
+- [D161](../../spec/decisions/03-syntax.md#d161) — multi-defer LIFO +
   panic composition.
-- [D147](../../spec/decisions/03-syntax.md#d147) — failable cleanup
+- [D158](../../spec/decisions/03-syntax.md#d158) — failable cleanup
   foundation.
 - [D85](../../spec/decisions/04-effects.md#d85),
   [D118](../../spec/decisions/04-effects.md#d118) — Plan 49 multi-error

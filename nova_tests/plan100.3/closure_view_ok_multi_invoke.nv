@@ -1,4 +1,4 @@
-// Plan 100.3 (D146): view-closure (FnMut/Fn analog) — multiple invokes OK.
+// Plan 100.3 (D157): view-closure (FnMut/Fn analog) — multiple invokes OK.
 
 module nova_tests.plan100_3.closure_view_ok_multi_invoke
 

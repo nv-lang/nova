@@ -1,4 +1,4 @@
-// Plan 100.2 (D145): backward-compat — generic без `[T consume]` bound
+// Plan 100.2 (D156): backward-compat — generic без `[T consume]` bound
 // продолжает работать как раньше (silent-ignore).
 //
 // `fn drop[T](x T) -> ()` — без bound, silent-ignore. При T=int

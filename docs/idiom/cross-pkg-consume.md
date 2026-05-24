@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 # Cross-package consume — visibility, mangling, contracts
 
-> Practical guide для [D153](../../spec/decisions/02-types.md#d153)
+> Practical guide для [D164](../../spec/decisions/02-types.md#d164)
 > (Plan 100.6). Как consume-маркер работает через границы модулей и
 > пакетов.
 
@@ -58,7 +58,7 @@ Caller обязан consume через match Ok-arm.
 
 ## Mangling — consume-bit (extends D134 Plan 81)
 
-Plan 81 D134 определил symbol mangling v0. D153 amend — add **consume-bit**:
+Plan 81 D134 определил symbol mangling v0. D164 amend — add **consume-bit**:
 
 ```
 nova_fn_<pkg>_<mod>_<name>_<consume-bit>_<param-types>_<return-type>
@@ -144,11 +144,11 @@ ABI mismatch, linker error.
 
 ## Связь
 
-- [D153](../../spec/decisions/02-types.md#d153) — cross-module consume.
+- [D164](../../spec/decisions/02-types.md#d164) — cross-module consume.
 - [D26](../../spec/decisions/07-modules.md#d26),
   [D47](../../spec/decisions/07-modules.md#d47) — visibility foundation.
 - [D134](../../spec/decisions/07-modules.md#d134) — mangling v0
-  (Plan 81); D153 extends.
+  (Plan 81); D164 extends.
 - [D133](../../spec/decisions/02-types.md#d133) — consume foundation.
 - Plan 03 / Plan 03.4 — package ecosystem; `nova audit`.
 - Plan 42, Plan 42.09, Plan 84 — folder-modules, re-export, relative.

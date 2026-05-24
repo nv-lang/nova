@@ -1,4 +1,4 @@
-// Plan 100.4.3 (D149): okdefer — выполняется только на success-path.
+// Plan 100.4.3 (D160): okdefer — выполняется только на success-path.
 
 module nova_tests.plan100_4_3.okdefer_ok_success_path
 

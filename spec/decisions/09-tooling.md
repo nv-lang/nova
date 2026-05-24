@@ -2030,10 +2030,10 @@ Boolean. Любое не-`true` значение трактуется как `fa
 
 ---
 
-## D154. Consume-types migration policy — `nova consume-migrate` + editions
+## D165. Consume-types migration policy — `nova consume-migrate` + editions
 
 > **Plan 100.7.** Принято 2026-05-23 (proposed). Migration playbook
-> для type-level consume (D133-D153). Integrates с D124 edition
+> для type-level consume (D133-D164). Integrates с D124 edition
 > versioning.
 
 ### Что
@@ -2094,25 +2094,25 @@ parallel / error / cancel / cross-fiber).
 
 ### Сравнение
 
-| Migration scenario | Rust | Kotlin | TS | Go | Nova D154 |
+| Migration scenario | Rust | Kotlin | TS | Go | Nova D165 |
 |---|---|---|---|---|---|
 | Migration tooling automated | ⚠️ `cargo fix` partial | ⚠️ IDE-based | ⚠️ ESLint autofix | ⚠️ `gofmt -r` | ✅ `nova consume-migrate` |
 | Edition-versioning native | ✅ 2015→2018→2021→2024 | ❌ | ❌ | ❌ | ✅ **D124 editions** |
 | Deprecation cycle | ⚠️ warning | ⚠️ @Deprecated | ⚠️ JSDoc | ✅ `// Deprecated:` | ✅ `#[deprecated_since]` + edition |
-| Cross-package contract | ⚠️ semver convention | ⚠️ Maven | ⚠️ semver | ⚠️ go.mod | ✅ **D153** |
+| Cross-package contract | ⚠️ semver convention | ⚠️ Maven | ⚠️ semver | ⚠️ go.mod | ✅ **D164** |
 
 ### Связь
 
 - [D133](02-types.md#d133) — type-level consume.
 - [D124](08-runtime.md#d124), [D125](08-runtime.md#d125) — edition
   versioning ✅.
-- [D153](02-types.md#d153) — cross-package contracts.
+- [D164](02-types.md#d164) — cross-package contracts.
 - Plan 18 — real stdlib (after pilots).
 - Plan 28, Plan 36 — CLI infra.
 
 ---
 
-## D155. Consume-types developer experience — performance, IDE, docs
+## D166. Consume-types developer experience — performance, IDE, docs
 
 > **Plan 100.8.** Принято 2026-05-23 (proposed). Cross-cutting нормы:
 > compile-time budget + LSP API + diagnostic format spec.
@@ -2150,14 +2150,14 @@ Verification — Plan 57 bench framework (D121).
 | E (D133-field-marker-missing) | "Add `consume` to field declaration" |
 | E (D133-type-marker-missing) | "Add `consume` to type-decl line" |
 | E (D133-assign-live-field) | "Add `.consume()` before assignment" |
-| E (D145-strict-forget) | "Consume value or remove `[T consume]` bound" |
-| E (D146-consume-via-view) | "Use `consume` qualifier instead of `view`" |
-| E (D146-view-escape-return) | "Return value (not view)" |
-| E (D147-defer-fail-not-in-sig) | "Add `Fail[E]` to fn signature" |
-| E (D151-uncovered-success-path) | "Add `tx.commit()` or `okdefer { tx.commit() }`" |
-| E (D151-uncovered-error-path) | "Add `errdefer { tx.rollback() }`" |
-| E (D152-missing-cap) | "Add `needs Fs` (or appropriate cap)" |
-| E (D153-cross-pkg-visibility) | "Add `export` to type-decl in source package" |
+| E (D156-strict-forget) | "Consume value or remove `[T consume]` bound" |
+| E (D157-consume-via-view) | "Use `consume` qualifier instead of `view`" |
+| E (D157-view-escape-return) | "Return value (not view)" |
+| E (D158-defer-fail-not-in-sig) | "Add `Fail[E]` to fn signature" |
+| E (D162-uncovered-success-path) | "Add `tx.commit()` or `okdefer { tx.commit() }`" |
+| E (D162-uncovered-error-path) | "Add `errdefer { tx.rollback() }`" |
+| E (D163-missing-cap) | "Add `needs Fs` (or appropriate cap)" |
+| E (D164-cross-pkg-visibility) | "Add `export` to type-decl in source package" |
 
 Machine-applicable edits через D102 suggestion format.
 
@@ -2205,12 +2205,12 @@ JSON variant — D107 schema extension.
 
 ### Сравнение
 
-| Capability | Rust + rust-analyzer | Kotlin + IntelliJ | TS + tsserver | Go + gopls | Nova D155 |
+| Capability | Rust + rust-analyzer | Kotlin + IntelliJ | TS + tsserver | Go + gopls | Nova D166 |
 |---|---|---|---|---|---|
 | Quick-fix «add consume» | ✅ rust-analyzer | ✅ inspections | ⚠️ suggestions | ⚠️ limited | ✅ LSP quick fixes |
 | Hover info с ownership | ✅ borrow info | ✅ context | ⚠️ type only | ⚠️ type only | ✅ consume status |
 | Compile-time check perf | ⚠️ ~ms/ksloc | ⚠️ ~ms/ksloc | ⚠️ ~ms/ksloc | ⚠️ fast | ✅ bench < 5% |
-| Doc generation с ownership | ✅ rustdoc traits | ⚠️ KDoc | ⚠️ TSDoc | ⚠️ godoc | ✅ `nova doc` D155 |
+| Doc generation с ownership | ✅ rustdoc traits | ⚠️ KDoc | ⚠️ TSDoc | ⚠️ godoc | ✅ `nova doc` D166 |
 
 ### Связь
 
@@ -2218,5 +2218,5 @@ JSON variant — D107 schema extension.
 - [D104](#d104), [D105](#d105), [D107](#d107) — doc-comments + JSON
   schema.
 - [D121](#d121) — bench DSL (Plan 57).
-- D133-D154 — Plan 100 family error codes.
+- D133-D165 — Plan 100 family error codes.
 - Plan 28, Plan 36 — nova-cli infra.

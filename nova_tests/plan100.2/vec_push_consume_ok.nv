@@ -1,4 +1,4 @@
-// Plan 100.2 (D145): `vec.push(consume tx)` — стандартный consume через D131.
+// Plan 100.2 (D156): `vec.push(consume tx)` — стандартный consume через D131.
 //
 // Push'ит consume-tx в vec; vec становится consume-collection (через
 // generic-заразность D133 D6). На scope exit vec обязан consumed
