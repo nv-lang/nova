@@ -1,0 +1,24 @@
+# Plan 83.4.5.6 Ф.5 (2026-05-24): TSAN suppressions для known false
+# positives либо deliberate races (Boehm GC, libuv internals).
+#
+# Format per ThreadSanitizer docs:
+#   race:<func-substring>
+#   race:<file-substring>
+#   deadlock:<func-substring>
+
+# Boehm GC has internal races on its heap structures — these are
+# protected via Boehm's own locking model, not TSAN-tractable.
+race:GC_malloc
+race:GC_register_finalizer
+race:GC_gcollect
+race:GC_size_map
+
+# libuv internal threads — handled by libuv's own thread-pool API,
+# external to Nova runtime correctness.
+race:uv__work_done
+race:uv__queue_work
+
+# minicoro internals — coroutine swap touches TIB/registers; TSAN
+# may flag legitimate context-switch operations.
+race:_mco_jumpin
+race:_mco_jumpout

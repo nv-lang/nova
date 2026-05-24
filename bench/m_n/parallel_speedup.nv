@@ -1,0 +1,79 @@
+// Plan 83.4.5.6 Ф.4 (2026-05-24): parallel speedup bench для default-on M:N
+// runtime activation acceptance.
+//
+// Назначение: измерить speedup parallel CPU-bound workload между
+// `NOVA_MAXPROCS=1` (single worker, baseline) и multi-worker (default —
+// uv_available_parallelism). Acceptance: ≥3.0× speedup на 4+ ядрах.
+//
+// Bench infrastructure: один и тот же bench запускается дважды через
+// внешний driver:
+//   1. NOVA_MAXPROCS=1 ./bench.exe → baseline median.
+//   2. (unset) ./bench.exe → multi-worker median.
+//   speedup = baseline / multi.
+//
+// Cross-runtime reference:
+//   - Go: `go test -bench=. -cpu=1,N` (built-in).
+//   - tokio: `tokio_bench/parallel_*` через criterion + tokio::runtime
+//     builder.
+//   - Kotlin: kotlinx-benchmark + Dispatchers.Default.
+//
+// CPU workload: `fib(33)` * 16 fibers через `parallel for`. fib(33) ≈
+// ~30ms на современном CPU (release build).
+//
+// Empirical (2026-05-24, AMD Ryzen 16-core, Windows 11 release):
+//   - Sequential 16 × fib(33): ~345 ms median.
+//   - Parallel for, armed (default M:N, 16 workers): ~518 ms median.
+//   - Parallel for, NOVA_MAXPROCS=1 (single worker): ~520 ms median.
+//
+// Observed speedup ≈ 0.66× (parallel SLOWER than sequential). Plan
+// 83.4.5.6 §6.4 acceptance ≥3.0× NOT yet met. Diagnostic followup
+// hypotheses:
+//   1. Worker pool startup latency dominates fib(33) (~5ms) — bench
+//      calibration runs 1 iter, doesn't amortize startup.
+//   2. parallel-for desugar wraps в supervised+spawn → pushes to deque
+//      одного worker'а (round-robin counter не balance'ит для 1 iter).
+//      Work-stealing срабатывает только при >1 iter long-enough.
+//   3. Boehm GC contention (uncollectable allocations per spawn).
+//   4. fiber arena per-thread allocation cost dominates.
+//
+// V2 followup (Plan 83.4.5.10? deferred):
+//   - Profile spawn-to-fiber-start latency.
+//   - Try bigger workload (fib(40) ≈ 1s each) to amortize overhead.
+//   - Try parallel_for на array-mode (potential parallel-friendly path).
+//   - Linux perf comparison (Windows может быть особенно медленным на
+//     thread create).
+module bench.m_n
+
+// CPU-bound recursive Fibonacci (no tail-call). Plain integer math;
+// no heap alloc, no I/O — pure computation, scales with cores.
+// NB: имя `fib_speedup_workload` (не просто `fib`) чтобы избежать
+// collision с `bench/micro/arith.nv::fib` (same module bench.micro).
+fn fib_speedup_workload(n int) -> int {
+    if n < 2 { return n }
+    fib_speedup_workload(n - 1) + fib_speedup_workload(n - 2)
+}
+
+bench "parallel_speedup: 16 × fib(30) parallel for" {
+    measure {
+        supervised {
+            parallel for _i in 0..16 {
+                bench.opaque(fib_speedup_workload(33))
+            }
+        }
+        bench.elements(16)
+    }
+}
+
+// Sequential baseline для сравнения (тот же workload без parallel).
+// Под MAXPROCS=1 cooperative drain даёт overhead ≈ sequential. Под
+// multi-worker — speedup относительно sequential measure.
+bench "parallel_speedup: 16 × fib(30) sequential" {
+    measure {
+        let mut i = 0
+        while i < 16 {
+            bench.opaque(fib_speedup_workload(33))
+            i = i + 1
+        }
+        bench.elements(16)
+    }
+}
