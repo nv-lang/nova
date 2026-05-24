@@ -1,0 +1,11 @@
+// C7 — lowercase generic name `fn[t]` → parse error / convention error.
+//
+// EXPECT_COMPILE_ERROR
+
+module nova_tests.plan101_1.negative.lowercase_prefix_neg
+
+fn[t] t @bad() -> t => @
+
+test "should error" {
+    assert(1 == 1)
+}
