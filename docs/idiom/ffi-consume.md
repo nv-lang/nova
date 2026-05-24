@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-# FFI consume — `external consume fn` для C-runtime
+# FFI consume — `external fn` для C-runtime
 
 > Practical guide для [D163](../../spec/decisions/02-types.md#d163)
 > (Plan 100.5). Как объявлять FFI-функции, которые carry consume-
@@ -13,7 +13,7 @@ external type File consume
 
 // External fn возвращает consume-File; caller owns.
 // Capability обязателен (D63 + D163 D3).
-external consume fn nova_file_open(path str) -> Result[File, IoErr]
+external fn nova_file_open(path str) -> Result[File, IoErr]
     needs Fs
 
 // External fn consume'ит File; callee owns transfer.
@@ -41,7 +41,7 @@ fn process(path str) Fail[IoErr] Fs -> () {
 
 ✅ **Capability declaration** (D163 D3):
 ```nova
-external consume fn nova_X() -> Y needs <Cap>   // обязательно
+external fn nova_X() -> Y needs <Cap>   // обязательно
 ```
 Без `needs` — error D163-missing-cap.
 
@@ -58,7 +58,7 @@ external type Socket consume
 
 ❌ **`consume` маркер без consume return/param** — vacuous:
 ```nova
-external consume fn nova_get_pid() -> int       // ❌ W (D163-vacuous-consume)
+external fn nova_get_pid() -> int       // ❌ W (D163-vacuous-consume)
 ```
 
 ❌ **Передача consume-var дважды**:
@@ -80,7 +80,7 @@ record FileCache { f File }                     // ❌ если File consume,
 заразность (D133 D6):
 
 ```nova
-external consume fn nova_open() -> Result[File, IoErr] needs Fs
+external fn nova_open() -> Result[File, IoErr] needs Fs
 //                                ^^^^^^^^^^^^^^^^^^^ Result consume через
 //                                                     File arg.
 // Caller обязан consume Result (через match Some-arm или explicit).
@@ -109,7 +109,7 @@ capability declaration tracks privilege.
 
 ## Связь
 
-- [D163](../../spec/decisions/02-types.md#d163) — `external consume fn`.
+- [D163](../../spec/decisions/02-types.md#d163) — `external fn`.
 - [D82](../../spec/decisions/08-runtime.md#d82) — `external fn` foundation.
 - [D126](../../spec/decisions/03-syntax.md#d126) — `external type`
   opaque.

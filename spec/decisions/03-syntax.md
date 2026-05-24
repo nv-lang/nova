@@ -6055,6 +6055,44 @@ defer |result| {
 okdefer + errdefer — **exhaustive** (один и только один срабатывает
 при non-exit() exit'е).
 
+### Exit-path определяется в start, НЕ retro-fires
+
+Если `okdefer { tx.commit() }` запустился (success-path) и `commit()`
+fail'ит — exit-path **остаётся success**. errdefer того же scope'а
+**НЕ fires** ретро-активно. Failure okdefer'а propagates через D158/
+D161 multi-error composition (composite { primary: cleanup-fail }).
+
+```nova
+consume tx = begin()
+errdefer { tx.rollback() }
+okdefer { tx.commit() }
+do_work()
+// normal exit → exit-path = SUCCESS
+// okdefer fires → commit fails Err1
+// errdefer SKIPPED (success exit-path не retro-changes на error)
+// Err1 propagates через D158 composition
+```
+
+**Почему так:** (1) tx уже Consumed через commit (failed or not) — rollback
+on Consumed = error; (2) commit-failure не означает «rollback safe»
+(may have partial DB state); (3) Предсказуемая семантика: exit-path
+fixed at start.
+
+Если programmer хочет «rollback-if-commit-fails»:
+
+```nova
+okdefer {
+    with Fail = handler {
+        fail(e) {
+            tx.rollback()?
+            throw e
+        }
+    } {
+        tx.commit()
+    }
+}
+```
+
 ### Mixed LIFO
 
 ```nova
@@ -6242,8 +6280,17 @@ tx.commit()                                      // ❌ E (D162-double-cover):
 consume tx = begin()
 errdefer { tx.rollback() }
 do_work()?
-// ❌ E (D162-not-consumed-on-path): success path tx Live (no okdefer/commit).
+// ❌ E (D162-not-consumed-on-path): success path tx Live.
+// Suggest: добавить `okdefer { tx.commit() }` или explicit `tx.commit()`.
 ```
+
+### Exit-path fixed at start (НЕ retro-fire)
+
+См. **D160 §«Exit-path определяется в start, НЕ retro-fires»** —
+если okdefer fail'ит на success-path, errdefer **не** fires
+дополнительно. Failure composes через D158/D161 multi-error
+composition. Exit-path определяется в начале unwinding'а и не
+меняется по ходу defer-execution.
 
 ### Supervised cancel + consume cleanup
 

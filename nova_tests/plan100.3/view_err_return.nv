@@ -10,7 +10,7 @@ type Transaction consume {
 }
 
 // ❌ Попытка вернуть view — escape-error.
-fn id_view(t view Transaction) -> view Transaction {
+fn id_view(t Transaction) -> Transaction {
     // ОШИБКА D157-view-escape-return: view не может escape scope source'а.
     // Suggest: use `consume t` instead of `view t` для true identity.
     return t
@@ -18,5 +18,5 @@ fn id_view(t view Transaction) -> view Transaction {
 
 test "view return — error" {
     consume tx = Transaction { id: 1 }
-    let result = id_view(view tx)
+    let result = id_view(tx)
 }

@@ -1,4 +1,4 @@
-// Plan 100.3 (D157): `match view <expr>` — deep peek в Option[ConsumeType].
+// Plan 100.3 (D157): `match <expr>` — deep peek в Option[ConsumeType].
 //
 // Без D157 этот pattern невозможен в Plan 100.1 — match destructive,
 // arm-binding'и Live linear, обязан consumed в arm. D157 решает через
@@ -25,14 +25,14 @@ fn Service consume @shutdown() -> () {
 
 // Deep peek через view-match: получить fd без consume File.
 fn Service @file_id() -> Option[int] {
-    match view @file {                          // ← view-match
+    match @file {                          // ← view-match
         Some(f) => Some(f.fd),                  // f: view File, read-only
         None => None,
     }
     // @file остаётся Live (не Consumed) ✅
 }
 
-test "match view @file — deep peek без consume" {
+test "match @file — deep peek без consume" {
     consume svc = Service { file: Some(File { fd: 7 }) }
     let id = svc.file_id()
     assert(id == Some(7))

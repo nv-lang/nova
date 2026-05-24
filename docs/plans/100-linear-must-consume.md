@@ -56,7 +56,7 @@ effect-typed cleanup через Plan 49).
 | Field-aware tracking в record'ах | n/a | ✅ через `&mut` | ❌ | ❌ | ✅ **D5 field-aware flow** (100.1) |
 | Nested field paths (`@.state.tx.commit()`) | n/a | ✅ | ❌ | ❌ | ✅ **многоуровневый tracker** (100.1) |
 | Pattern destructure consume-типа | n/a | ✅ через move | n/a | n/a | ✅ **через consume-метод record'а** (100.1) |
-| Deep peek в `Option[ConsumeType]` без consume | n/a | ✅ `match &opt { Some(f) => f }` | n/a | n/a | ✅ **`match view @file`** (100.3) |
+| Deep peek в `Option[ConsumeType]` без consume | n/a | ✅ `match &opt { Some(f) => f }` | n/a | n/a | ✅ **`match @file`** (100.3) |
 | Lifetime / borrow-checker cognitive cost | ✅ нет | ❌ есть | ✅ нет | ✅ нет | ✅ **нет (GC + scope-only view)** |
 
 **Свод:** Nova matches Rust по всем 16 capabilities; **превосходит** на
@@ -135,7 +135,7 @@ Plan 100 (umbrella, this doc)
 | **100.2** | [100.2-generic-propagation.md](100.2-generic-propagation.md) | `[T consume]` generic bound, `[]T` consume-aware iteration, HashMap/Option/Result propagation, stdlib migration audit, 15 фикстур | 100.1 |
 | **100.3** | [100.3-borrow-and-view.md](100.3-borrow-and-view.md) | `view T` read-only borrow без lifetime, `match view` deep peek, closure capture analysis (consume / view), 12 фикстур | 100.1 |
 | **100.4** | [100.4-cleanup-on-failure.md](100.4-cleanup-on-failure.md) (**sub-umbrella**) | Production-grade defer/errdefer rework — amend D90 системно через 5 sub-sub-plan'ов: 100.4.1 failable body (D158), 100.4.2 async/suspend (D159), 100.4.3 okdefer + reason-aware (D160), 100.4.4 multi-defer + panic composition (D161), 100.4.5 consume-integration final (D162) | 100.1, Plan 20/49 |
-| **100.5** | [100.5-ffi-external-integration.md](100.5-ffi-external-integration.md) | `external consume fn` для C-runtime; opaque types + capability (Plan 16); pilot File/Mutex/Socket integration с FFI; defensive helpers; 18 фикстур (D163) | 100.1, Plan 16/62.D.bis |
+| **100.5** | [100.5-ffi-external-integration.md](100.5-ffi-external-integration.md) | `external fn` для C-runtime; opaque types + capability (Plan 16); pilot File/Mutex/Socket integration с FFI; defensive helpers; 18 фикстур (D163) | 100.1, Plan 16/62.D.bis |
 | **100.6** | [100.6-cross-module-integration.md](100.6-cross-module-integration.md) | consume-маркер через границы модулей/пакетов; mangling включает consume-bit (extends Plan 81); `nova.toml` consume-contracts; Plan 03 `nova audit` integration; 15 фикстур (D164) | 100.1, Plan 35/81/03/42 |
 | **100.7** | [100.7-stdlib-migration-playbook.md](100.7-stdlib-migration-playbook.md) | Full stdlib audit; `nova consume-migrate` CLI tool; edition versioning; **4 pilot migrations** (File/Mutex/TcpSocket/Transaction) end-to-end; 20+5 фикстур (D165) | ALL 100.1-6 |
 | **100.8** | [100.8-performance-ide-tooling.md](100.8-performance-ide-tooling.md) | Compile-time bench budget (<5%); LSP quick fixes (12 error codes); hover info; `nova doc` integration; `nova consume-analyze` CLI; diagnostic format spec; 15 фикстур (D166) | 100.1 (parallel with 100.2-7) |
@@ -157,7 +157,7 @@ Plan 100 (umbrella, this doc)
       `vec: []Transaction` consume'ит каждый element; `vec.push(consume
       tx)` integration с D131; `vec.map`, `vec.filter` через `[T
       consume]` bound работают.
-- [ ] **Read-only borrow:** `match view @file { Some(f) => println(f.id),
+- [ ] **Read-only borrow:** `match @file { Some(f) => println(f.id),
       None => () }` peek'ает без consume; `view` propagates scope-only
       (без lifetime); compile-error если `view`-binding outlives source.
 - [ ] **Closure capture:** `let f = || tx.commit()` — compiler знает,
@@ -172,7 +172,7 @@ Plan 100 (umbrella, this doc)
       scope; tx гарантированно не утекает.
 - [ ] **Cross-language parity matrix** (см. выше) — каждая строка
       «✅ Nova» подтверждена ≥1 фикстурой.
-- [ ] **FFI integration (100.5):** `external consume fn` работает;
+- [ ] **FFI integration (100.5):** `external fn` работает;
       pilot stdlib types (File / Mutex / Socket) через FFI с
       capability checking (Plan 16).
 - [ ] **Cross-module / cross-package (100.6):** consume-маркер visible

@@ -11,13 +11,13 @@ type Transaction consume {
 
 fn Transaction consume @commit() -> () { () }
 
-fn f(t view Transaction) -> () {
+fn f(t Transaction) -> () {
     // ОШИБКА D157-consume-via-view: попытка consume через view.
     t.commit()
 }
 
 test "view-param + consume-method call — error" {
     consume tx = Transaction { id: 1 }
-    f(view tx)
+    f(tx)
     tx.commit()
 }

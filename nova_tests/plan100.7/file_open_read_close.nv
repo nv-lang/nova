@@ -7,7 +7,7 @@ type IoErr { msg str }
 
 external type File consume
 
-external consume fn nova_file_open(path str) -> Result[File, IoErr] needs Fs
+external fn nova_file_open(path str) -> Result[File, IoErr] needs Fs
 external fn nova_file_close(consume f File) -> () needs Fs
 external fn nova_file_read_all(view f File) -> Result[str, IoErr] needs Fs
 
@@ -17,7 +17,7 @@ fn read_config(path str) Fail[IoErr] Fs -> str {
     let r = nova_file_open(path)?
     consume f = r
     defer { f.close() }                          // covered (D158 + D162)
-    let data = nova_file_read_all(view f)?       // view-borrow для чтения (D157)
+    let data = nova_file_read_all(f)?       // view-borrow для чтения (D157)
     return data
 }
 

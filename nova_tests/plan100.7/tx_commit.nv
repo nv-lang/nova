@@ -26,7 +26,7 @@ fn process_order(db Db, data int) Fail -> Receipt {
     consume tx = db.begin()
     errdefer { tx.rollback()? }
     okdefer  { tx.commit()? }
-    let receipt = db_insert(view tx, data)?
+    let receipt = db_insert(tx, data)?
     return receipt
 }
 
