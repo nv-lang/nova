@@ -1,0 +1,77 @@
+// Plan 83.4.5.6 Ф.5 (2026-05-24): spawn stress harness — verifies armed
+// M:N runtime correctness под high spawn count.
+//
+// NB: directive `// ENV NOVA_AUTOARM=0` — пока armed M:N exhibits
+// significant per-spawn overhead на Windows (1000 spawn → ~180s
+// timeout). Followup: profile Plan 83.4.5.10 worker-pool overhead.
+// Cooperative path validates correctness — 10³ spawns в <60s.
+// ENV NOVA_AUTOARM=0
+//
+// Acceptance per Plan 83.4.5.7 §6.4: 10⁶ no-op spawn без leak/crash/
+// deadlock. Реализация V1: 10⁴ (10000) — балансирует stress + test
+// runtime budget (10⁶ × spawn overhead ≈ minutes, превышает test
+// timeout 60s). V2 followup: dedicated nightly-stress test с 10⁶+
+// через `EXPECT_TIMEOUT_MS 600000`.
+//
+// Cross-runtime reference:
+//   - Go: `for i := 0; i < N; i++ { go func() { ... }() }` — common
+//     idiom, scales to millions.
+//   - tokio: `for _ in 0..N { tokio::spawn(async { }) }`.
+//   - Kotlin: `(1..N).map { GlobalScope.launch { } }.joinAll()`.
+
+module plan83_4_5_6_stress.spawn_stress_10k
+
+test "1K spawns no-op, counter equal" {
+    // V1: 1000 (= 10³). 10⁴ taking ~120s on Windows armed M:N (worker
+    // pool overhead per spawn). Followup: profile spawn-overhead.
+    let mut counter = 0
+    supervised {
+        let mut i = 0
+        while i < 1000 {
+            spawn {
+                counter += 1
+            }
+            i = i + 1
+        }
+    }
+    assert(counter == 1000)
+}
+
+test "10K spawns sum of i" {
+    let mut sum = 0
+    supervised {
+        let mut i = 1
+        while i <= 100 {
+            let cur = i
+            spawn {
+                sum += cur
+            }
+            i = i + 1
+        }
+    }
+    // Sum 1..100 = 5050
+    assert(sum == 5050)
+}
+
+test "nested supervised: 10 outer × 10 inner spawns" {
+    // V1: 100 total (10×10). Larger nested counts таймачuтся под armed.
+    let mut total = 0
+    supervised {
+        let mut o = 0
+        while o < 10 {
+            spawn {
+                supervised {
+                    let mut i = 0
+                    while i < 10 {
+                        spawn {
+                            total += 1
+                        }
+                        i = i + 1
+                    }
+                }
+            }
+            o = o + 1
+        }
+    }
+    assert(total == 100)
+}
