@@ -1181,8 +1181,8 @@ record-coercion матчила бы `{ debug: ... }` против **полей s
    материализуется (литерал — только синтаксис):
    ```nova
    { let mut _m0 = HashMap[str, V].with_capacity(n)
-     let _ = _m0.@insert("debug", true)
-     let _ = _m0.@insert("verbose", false)
+     let _ = _m0.insert("debug", true)
+     let _ = _m0.insert("verbose", false)
      _m0 }
    ```
 5. **Пустой `{}` — это НЕ пустая мапа.** `{}` всегда парсится как пустой
@@ -3208,7 +3208,7 @@ Generic-bound method call'ы dispatch'аются по hybrid strategy:
 
 ### Bootstrap status (2026-05-16)
 
-- ✅ Mono path для bound methods works (HashMap.@clone() пример).
+- ✅ Mono path для bound methods works (HashMap.clone() пример).
 - ✅ Vtable runtime infrastructure готова (`NovaVtable_Hashable`,
   `NovaVtable_Comparable`, `NovaVtable_Display` + 4 primitive K
   vtables: int/bool/u8/f64/str).
@@ -3871,8 +3871,8 @@ type Lock consume { mutex *Mutex }
 | Потребить ≥1 раз (обязательно) | ❌ забыть OK | ✅ enforce — must-be-consumed |
 | Помечается на | receiver / param метода | **type-decl** + поле + binding |
 
-Канонический use-case — `Transaction.@commit() / .@rollback()`,
-`File.@close()`, lock-guard `.@release()`.
+Канонический use-case — `Transaction.commit() / .rollback()`,
+`File.close()`, lock-guard `.release()`.
 
 ### Синтаксис
 
@@ -4078,8 +4078,8 @@ fn close(consume tx Transaction)               // consume (transfer; tx → Cons
 |---|---|
 | `tx.field` (read) | ✅ |
 | `tx.regular_method()` | ✅ |
-| `t.@mut_method()` | ❌ (нужен `mut tx`) |
-| `t.@consume_method()` | ❌ E (D133-consume-via-view) |
+| `t.mut_method()` | ❌ (нужен `mut tx`) |
+| `t.consume_method()` | ❌ E (D133-consume-via-view) |
 | передача в view-param другой fn | ✅ |
 | передача в `consume`-param | ❌ E (D133-move-via-view) |
 | передача в `mut`-param | ❌ (нужен `mut tx`) |
@@ -4377,7 +4377,7 @@ accumulation gracefully handles partial-consumed state).
 - `vec.pop() -> Option[T]` — single-element consume (Option auto-
   consume через D133 D6 generic-заразность).
 - `vec.drain() -> Iter[T]` — consume через iterator.
-- `vec.@into_first() -> T` consume-method record'а возвращает один
+- `vec.into_first() -> T` consume-method record'а возвращает один
   элемент (consume rest internally).
 
 stdlib audit (Plan 100.7) аннотирует эти методы с `[T consume]` bound.

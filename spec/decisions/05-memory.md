@@ -360,7 +360,7 @@ consume — уже use-after-consume).
 ### Runtime defense-in-depth
 
 Compile-time проверка — основной механизм. В C-рантайме consume-методы
-дополнительно зануляют внутреннее состояние (`StringBuilder.@into()`
+дополнительно зануляют внутреннее состояние (`StringBuilder.into()`
 обнуляет `data`/`len`/`cap`); если статическая проверка обойдена,
 следующий доступ fail-fast'ит через assert, а не молча портит данные.
 Прежний runtime-флаг `consumed` удалён — его роль закрыта D131.
@@ -437,11 +437,11 @@ mandatory `consume` keyword).
 fn print_id(tx Transaction) {                  // view (default)
     println(tx.id)                              // ✅ read
     tx.commit()                                 // ❌ consume через view
-    tx.@reopen()                                // ❌ mut через view
+    tx.reopen()                                // ❌ mut через view
 }
 
 fn modify(mut tx Transaction) {                 // mut-view
-    tx.@reopen()                                // ✅ mut OK
+    tx.reopen()                                // ✅ mut OK
     tx.commit()                                 // ❌ consume через mut-view
 }
 
