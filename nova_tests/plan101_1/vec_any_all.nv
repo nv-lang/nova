@@ -1,0 +1,27 @@
+// Plan 101.1 Ф.5 — positive: fn[T] []T @any/all predicates.
+
+module nova_tests.plan101_1.vec_any_all
+
+fn[T] []T @my_any(pred fn(T) -> bool) -> bool {
+    for x in @ { if pred(x) { return true } }
+    false
+}
+
+fn[T] []T @my_all(pred fn(T) -> bool) -> bool {
+    for x in @ { if !pred(x) { return false } }
+    true
+}
+
+test "fn[T] []T @any/@all non-empty" {
+    let v []int = [1, 2, 3]
+    assert(v.my_any(|x| x > 2))
+    assert(!v.my_any(|x| x > 10))
+    assert(v.my_all(|x| x > 0))
+    assert(!v.my_all(|x| x > 1))
+}
+
+test "fn[T] []T @any/@all empty (vacuous truth)" {
+    let v []int = []
+    assert(!v.my_any(|x| x > 0))
+    assert(v.my_all(|x| x > 0))
+}
