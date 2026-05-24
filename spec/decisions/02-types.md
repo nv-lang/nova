@@ -4337,60 +4337,87 @@ Plan 102 (future).
 
 #### Protocol composition (Plan 101.4 — закрывает D53 open question)
 
-Protocols composed через `+` operator — symmetric с multi-bound
-(101.3) `[T A + B]`. Composition валиден в **type-decl** и
-**type-annotation** position. **Literal-position — composition
-ОТВЕРГНУТА** (см. ниже).
+Protocols composed через `use A, B` keyword **внутри protocol body**.
+Параллель D39 record-embed (same keyword, разная семантика). Composition
+валиден в **type-decl** и **anonymous type-position**.
+**Literal-position — composition ОТВЕРГНУТА** (см. ниже).
 
 ```nova
 type Reader protocol { read(buf []u8) -> int }
 type Writer protocol { write(buf []u8) -> int }
 
-// 1. Type-decl с composition:
-type ReadWriter protocol Reader + Writer {
-    close() -> ()     // own method
+// 1. Multi-composition в type-decl:
+type ReadWriter protocol {
+    use Reader, Writer       // embed
+    close() -> ()            // own method
 }
 
-// 2. Pure composition без own methods:
-type Streamable protocol Reader + Writer + Closeable
+// 2. Single-composition (естественно, без ambiguity):
+type ReadExt protocol {
+    use Reader
+    job() -> ()
+}
 
-// 3. Anonymous-composition в type-position (extension D53):
-fn process(rw protocol Reader + Writer) { ... }
-fn process(rw protocol Reader + Writer { close() -> () }) { ... }
+// 3. Pure composition без own methods:
+type Streamable protocol {
+    use Reader, Writer, Closeable
+}
 
-// 4. Использование как bound — symmetric с 101.3:
+// 4. Mix anywhere в block — order independent:
+type Complex protocol {
+    init() -> ()
+    use Reader
+    helper() -> int
+    use Writer
+}
+
+// 5. Anonymous-composition в type-position (extension D53):
+fn process(rw protocol { use Reader, Writer }) { ... }
+
+// 6. Использование как bound — composed protocol работает как named:
 fn[T ReadWriter] []T @process() => ...
-// эквивалентно fn[T Reader + Writer] []T @process()
+// эквивалентно fn[T Reader + Writer] []T @process() (101.3 multi-bound)
 ```
+
+**Семантика:**
+- `use A, B, C` — flatten method-signatures из A, B, C в этот protocol.
+- Resulting method-set = union(A, B, C, own_methods).
+- Multiple `use`-statements аккумулируются: `use A, B; use C` ≡ `use A, B, C`.
+- T satisfies composed-protocol ⟺ T has все methods из union.
 
 **Literal-composition — отвергнута:**
 
 ```nova
-// ОТВЕРГНУТО:
-let v = protocol Reader + Writer {
+// ❌ ОТВЕРГНУТО:
+let v = protocol Foo {
+    use Reader               // error: E_LITERAL_COMPOSITION_NOT_ALLOWED
     read(buf) => impl1
-    write(buf) => impl2
+    close() => impl2
 }
-// ERROR E_LITERAL_ANONYMOUS_COMPOSITION
-// «anonymous protocol composition not allowed in literal;
-//  declare a named protocol first via `type Name protocol A + B`»
 
 // Workflow: extract в named type:
-type MyRW protocol Reader + Writer
+type MyRW protocol { use Reader, Writer }
 let v = protocol MyRW {
-    read(buf) => impl1
+    read(buf)  => impl1
     write(buf) => impl2
 }
 ```
 
-**Почему literal-composition отвергнута:** смешивает type-construction
-(`A + B` intersection) с value-construction (`{ … }` impl body),
-когнитивно нагружено. Industry-aligned — Rust/Go/Java/Kotlin/Scala
-не разрешают anonymous-composition в literals.
+**Почему literal-composition отвергнута:** literal — value-construction
+(impls), composition — type-level operation. Смешивать слои когнитивно
+нагружено. Industry-aligned — Rust/Go/Java/Kotlin/Scala не разрешают
+anonymous-composition в literals.
 
-Disambiguation: после `type Name protocol` парсер ожидает либо
-`{ ... }` (no composition), либо `IDENT (+ IDENT)*` (composition),
-затем optional `{ ... }` body.
+**Asymmetry с multi-bound (101.3) `[T A + B]` оправдана:** разные
+contexts — multi-bound = use-site intersection при satisfaction-check;
+protocol composition = decl-time method-set union. Разные scopes,
+разные операторы.
+
+**Differences vs D39 (record-embed):**
+- D39 record `use name Type` (field-form, runtime delegation+field).
+- D53+ protocol `use Type[, Type]*` (нет field, compile-time method-set union).
+- Same keyword `use` — same intuition «include this stuff». Parser
+  распознаёт по контексту (record-body vs protocol-body).
 
 ### Многократное использование одного имени
 
