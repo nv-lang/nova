@@ -66,7 +66,14 @@
  * 4k-16k concurrent fibers per process.
  *
  * Slots reused через bitmap free-list — реальный peak ограничен только
- * concurrent (не cumulative) fibers per worker thread. */
+ * concurrent (не cumulative) fibers per worker thread.
+ *
+ * Plan 83.4.5.10 Ф.2 (2026-05-24): attempted 8MB → 1MB downsize —
+ * REVERTED back to 8MB. cancellation_test (within[T]/race2[T] generic
+ * monomorphized nested recursion) сразу overflow'ит на 1MB. Возможно
+ * minicoro internal stack overhead + Boehm GC reserves bigger чем
+ * expected. V2 followup — выяснить точный stack budget per test и
+ * выбрать минимально-достаточный slot size (~2MB?). */
 #define NOVA_FIBER_STACK_SIZE     (8 * 1024 * 1024)  /* 8MB per slot (demand-paged via MAP_NORESERVE) */
 /* Plan 44.2 audit R8 (2026-05-13): 32-bit address space недостаточен для
  * 8 GB virtual. Downsize до 64 slots × 2MB = 128 MB на 32-bit. На 64-bit
