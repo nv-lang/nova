@@ -1797,6 +1797,20 @@ impl Parser {
         let start = self.peek().span;
         self.expect(&TokenKind::KwFn)?;
 
+        // Plan 101.1 / D145: `fn[T] ReceiverType @method` префикс — generic
+        // declaration для receiver'ов без carrier-brackets (`[]T`, bare T,
+        // tuple `(T, U)`). Detection: `[` сразу после `fn` + identifier (НЕ `]`,
+        // т.к. `[]T` — slice-receiver case ниже).
+        //
+        // Example: `fn[T] []T @push(a T) { ... }` — T декларирован prefix'ом,
+        // потом используется в `[]T` receiver и `(a T)` param.
+        let mut prefix_generics: Vec<GenericParam> = Vec::new();
+        if matches!(self.peek().kind, TokenKind::LBracket)
+            && !matches!(self.peek_at(1).kind, TokenKind::RBracket)
+        {
+            prefix_generics = self.parse_generic_decl_params()?;
+        }
+
         // Special case: receiver `[]T` (slice-receiver, vec.nv style D38).
         // `fn []T @method(...)` — парсим как receiver type_name="[]T", где T —
         // generic param. Первый idеntifier синтезируется из bracket'ов
@@ -1904,6 +1918,21 @@ impl Parser {
         if receiver.is_some() && matches!(self.peek().kind, TokenKind::LBracket) {
             let method_generics_decl = self.parse_generic_decl_params()?;
             fn_generics.extend(method_generics_decl);
+        }
+
+        // Plan 101.1 / D145: `fn[T]` prefix-generics добавляются в общий
+        // fn_generics список **перед** receiver-generics и method-generics
+        // — они декларируют typevars для receiver-position (`[]T`, bare T,
+        // tuple) где carrier-brackets не работают.
+        //
+        // Conflict detection (E_DUPLICATE_GENERIC_DECL) — выполняется в
+        // type-checker (Plan 101.1 Ф.2): если prefix и receiver-carrier
+        // декларируют одно имя — error.
+        if !prefix_generics.is_empty() {
+            // Prepend: prefix generics declared first lexically.
+            let mut combined = prefix_generics;
+            combined.append(&mut fn_generics);
+            fn_generics = combined;
         }
 
         // (params)

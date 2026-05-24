@@ -1,0 +1,13 @@
+// Plan 101.1 Ф.0 probe — `fn (T, U) @method` без fn[T, U] префикса.
+//
+// Pre-fix: parser unclear (tuple-receiver parsing). Post-fix: type-check error.
+//
+// EXPECT_COMPILE_ERROR: tuple receiver typevars require `fn[T, U]` prefix
+
+module plan101_1.probe.tuple_no_prefix_pre
+
+fn (T, U) @swap() -> (U, T) => (@.1, @.0)
+
+test "tuple receiver no prefix — should error" {
+    // never reaches
+}
