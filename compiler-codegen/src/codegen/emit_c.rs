@@ -6750,30 +6750,30 @@ impl CEmitter {
             return Ok(());
         }
         // Plan 48: Generic methods with own type params → store for monomorphization.
-        // Exception: array extension methods ([]T receivers) never get monomorphized;
-        // they fall through to the regular forward decl path below.
+        // Plan 101.1: array extension methods ([]T receivers) ALSO go to mono
+        // pipeline когда T — это fn-prefix-generic (`fn[T] []T @method`).
+        // Без этого dispatch на non-int receivers (e.g., `[]str`) ломается
+        // — body эмитится один раз с default nova_int, и call-site
+        // dispatch ищет несуществующую `NovaArray_nova_str_method_<m>` функцию.
         if !f.generics.is_empty() {
             if let Some(recv) = &f.receiver {
-                let is_array_ext = recv.type_name.starts_with("[]");
-                if !is_array_ext {
-                    self.mono_method_decls.insert((recv.type_name.clone(), f.name.clone()), f.clone());
-                    // Register sentinel MethodSig so call sites can find and mono-route this method.
-                    let sentinel_name = format!("__mono_method__{}__{}", recv.type_name, f.name);
-                    let sig = MethodSig {
-                        param_c_types: vec![],
-                        return_c_type: "void*".to_string(),
-                        is_instance: !matches!(f.receiver.as_ref().map(|r| &r.kind),
-                            Some(crate::ast::ReceiverKind::Static)),
-                        is_external: false,
-                        is_delegated: false,
-                        c_name: sentinel_name,
-                        variadic_last: false,
-                    };
-                    let key = (recv.type_name.clone(), f.name.clone());
-                    self.method_overloads.entry(key).or_default().push(sig);
-                    return Ok(());
-                }
-                // is_array_ext: fall through to regular forward decl below.
+                // Регистрируем все generic methods (включая `[]T`-ext) в mono_method_decls.
+                self.mono_method_decls.insert((recv.type_name.clone(), f.name.clone()), f.clone());
+                // Register sentinel MethodSig so call sites can find and mono-route this method.
+                let sentinel_name = format!("__mono_method__{}__{}", recv.type_name, f.name);
+                let sig = MethodSig {
+                    param_c_types: vec![],
+                    return_c_type: "void*".to_string(),
+                    is_instance: !matches!(f.receiver.as_ref().map(|r| &r.kind),
+                        Some(crate::ast::ReceiverKind::Static)),
+                    is_external: false,
+                    is_delegated: false,
+                    c_name: sentinel_name,
+                    variadic_last: false,
+                };
+                let key = (recv.type_name.clone(), f.name.clone());
+                self.method_overloads.entry(key).or_default().push(sig);
+                return Ok(());
             } else {
                 // Free generic fn: already handled above.
                 return Ok(());
@@ -8101,7 +8101,8 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
             other => {
                 // Extension methods on array types: []T, []str, []int, etc.
                 if let Some(elem_ty) = other.strip_prefix("[]") {
-                    let c_elem = match elem_ty {
+                    let c_elem_owned: String;
+                    let c_elem: &str = match elem_ty {
                         "str"  => "nova_str",
                         "bool" => "nova_bool",
                         "f64"  => "nova_f64",
@@ -8117,7 +8118,19 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                         "u64"  => "uint64_t",
                         // Plan 70.5: uint = alias u64.
                         "uint" => "uint64_t",
-                        _ => "nova_int", // int/i64/erased T
+                        // Plan 101.1: T (generic typevar) — check current_type_subst
+                        // для mono'd context (`fn[T] []T @method` body).
+                        // Без этого fallback на nova_int → wrong type для
+                        // non-int T при mono per-T emission.
+                        _ => {
+                            if let Some(c_ty) = self.current_type_subst.get(elem_ty) {
+                                let trimmed = c_ty.trim_end_matches('*').trim();
+                                c_elem_owned = trimmed.to_string();
+                                &c_elem_owned
+                            } else {
+                                "nova_int" // int/i64/erased T fallback
+                            }
+                        }
                     };
                     return format!("NovaArray_{}*", c_elem);
                 }
@@ -17066,11 +17079,30 @@ _cp++; \
                     // method-registry хранит type_name="[]T" → receiver_type_c_ident
                     // даёт fallback "NovaArray_nova_int". При actual non-int
                     // receiver (e.g., `names []str`) это приводит к wrong dispatch.
-                    // Override safe_type через actual receiver C-type из obj expr.
+                    // Override safe_type через actual receiver C-type из obj expr
+                    // ПЛЮС register mono instance для body emission per-T.
                     let safe_type = if type_name.starts_with("[]") && is_instance {
                         let obj_ty = self.infer_expr_c_type(obj);
                         let stripped = obj_ty.trim_end_matches('*').trim().to_string();
                         if stripped.starts_with("NovaArray_") {
+                            // Register mono instance for this concrete T,
+                            // чтобы body Nova_NovaArray_<T>_method_<m> was emitted.
+                            if let Some(fn_decl) = self.mono_method_decls
+                                .get(&(type_name.clone(), method.to_string())).cloned()
+                            {
+                                let element_c = stripped.trim_start_matches("NovaArray_").to_string();
+                                // T (первый generic) → element_c. Method-level
+                                // U, Acc остаются как есть (будут resolved later
+                                // через arg type inference).
+                                let mut type_subst: Vec<(String, String)> = Vec::new();
+                                if let Some(first_g) = fn_decl.generics.first() {
+                                    type_subst.push((first_g.name.clone(), element_c.clone()));
+                                }
+                                let mono_name = format!("Nova_{}_method_{}", stripped, method);
+                                let recv_type = type_name.clone();
+                                self.register_mono_method_instance(
+                                    &fn_decl, type_subst, &mono_name, &recv_type);
+                            }
                             stripped
                         } else {
                             Self::receiver_type_c_ident(&type_name)
