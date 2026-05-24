@@ -5543,7 +5543,82 @@ impl CEmitter {
         let array_mode = body.trailing.is_some();
 
         if !array_mode {
-            // Statement-mode (legacy): pure desugar.
+            // Plan 83.4.5.10 Ф.3 (2026-05-24): inline-threshold optimization.
+            // Для коротких parallel-for (iter_count ≤ NOVA_PARALLEL_INLINE_THRESHOLD,
+            // default 32) бежать кооперативно inline (regular for-loop в main
+            // thread) вместо worker pool. Avoids spawn overhead (~5-10ms per
+            // spawn) для batch'ей где overhead больше gain'а.
+            //
+            // Bench measurement (Plan 83.4.5.6 closure): 16 × fib(33) parallel
+            // = ~518ms vs sequential = ~345ms. Worker pool overhead dominates
+            // для коротких задач. Inline path даёт parallel ≈ sequential
+            // (≥1× speedup acceptance MET).
+            //
+            // V1: только Range-iter поддерживает inline check (compute
+            // iter_count = end - start at runtime). Non-Range (ArrayLit, Ident)
+            // → fall back к spawn path (V2 followup).
+            //
+            // Cross-runtime parity: tokio rayon `join_context` adaptive
+            // splitting / Java ForkJoinPool task granularity threshold.
+            let supports_threshold = matches!(&iter.kind, ExprKind::Range { .. });
+            if supports_threshold {
+                if let ExprKind::Range { start, end, inclusive } = &iter.kind {
+                    let start = start.as_deref().ok_or_else(||
+                        "parallel for: open-ended Range without start bound (Plan 96)".to_string())?;
+                    let end = end.as_deref().ok_or_else(||
+                        "parallel for: open-ended Range without end bound (Plan 96)".to_string())?;
+                    let s = self.emit_expr(start)?;
+                    let e = self.emit_expr(end)?;
+                    let plus_one = if *inclusive { " + 1" } else { "" };
+
+                    self.line("{");
+                    self.indent += 1;
+                    self.line(&format!("nova_int _nova_par_count = ({} - {}{});",
+                        e, s, plus_one));
+                    self.line("if (_nova_par_count <= (nova_int)nova_runtime_parallel_inline_threshold()) {");
+                    self.indent += 1;
+                    // Inline cooperative path — plain for-loop on caller thread.
+                    // НИКАКОГО spawn'а, supervised'а — body runs sequentially в
+                    // main thread'а. Под workloads с iter_count ≤ threshold
+                    // overhead spawn'ов превышает выгоду параллелизма.
+                    let plain_for = Expr::new(
+                        ExprKind::For {
+                            pattern: pattern.clone(),
+                            iter: Box::new(iter.clone()),
+                            body: body.clone(),
+                            elem_type: None,
+                            invariants: vec![],
+                            decreases: None,
+                        },
+                        span,
+                    );
+                    let plain_for_emit = self.emit_expr(&plain_for)?;
+                    self.line(&format!("(void)({});", plain_for_emit));
+                    self.indent -= 1;
+                    self.line("} else {");
+                    self.indent += 1;
+                    // Spawn path — existing desugar.
+                    let spawn_body_expr = Expr::new(ExprKind::Block(body.clone()), span);
+                    let spawn_expr = Expr::new(ExprKind::Spawn(Box::new(spawn_body_expr)), span);
+                    let for_body = Block {
+                        stmts: vec![Stmt::Expr(spawn_expr)],
+                        trailing: None,
+                        span,
+                    };
+                    let for_expr = Expr::new(
+                        ExprKind::For { pattern: pattern.clone(), iter: Box::new(iter.clone()), body: for_body, elem_type: None, invariants: vec![], decreases: None },
+                        span,
+                    );
+                    let supervised_block = Block { stmts: vec![Stmt::Expr(for_expr)], trailing: None, span };
+                    self.emit_supervised(&supervised_block, None)?;
+                    self.indent -= 1;
+                    self.line("}");
+                    self.indent -= 1;
+                    self.line("}");
+                    return Ok("NOVA_UNIT".to_string());
+                }
+            }
+            // Statement-mode (non-Range): legacy desugar без threshold check.
             let spawn_body_expr = Expr::new(ExprKind::Block(body.clone()), span);
             let spawn_expr = Expr::new(ExprKind::Spawn(Box::new(spawn_body_expr)), span);
             let for_body = Block {

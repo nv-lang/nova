@@ -11706,7 +11706,17 @@ Plan 83.2 §4 «Compiled-программа без единого `runtime.*` в
 - **Last commit:** Plan 83.4.5.6 partial closure work
   (см. commits после 83.4.5.9).
 
-- **Как чинить (Plan 83.4.5.10 — proposed, ~2-3 dev-day quick wins):**
+- **Plan 83.4.5.10 partial closure (2026-05-24):**
+  - Ф.3 ✅ DONE — inline parallel-for threshold (default 32);
+    statement-mode + Range-iter parallel-for бежит cooperatively inline
+    для N ≤ threshold. Acceptance ≥1× speedup MET (parallel ~622ms
+    vs sequential ~640ms на 16 × fib(33), inline path активен).
+  - Ф.2 ❌ reverted — 8MB → 1MB stack caused `cancellation_test` stack
+    overflow (within/race2 generic recursion).
+  - Ф.1 ❌ deferred — per-worker pool требует ~1-2 dev-day; acceptance
+    уже MET через Ф.3 alone. V2 followup для larger-N parallel-for.
+
+- **Как чинить (Plan 83.4.5.10 V2 followup, ~2-3 dev-day):**
 
   **3 quick wins (target: parallel НЕ медленнее sequential для
   short workloads, т.е. ≥1× speedup; full ≥3× требует concurrent GC

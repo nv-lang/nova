@@ -57,7 +57,10 @@ bench "parallel_speedup: 16 × fib(30) parallel for" {
     measure {
         supervised {
             parallel for _i in 0..16 {
-                bench.opaque(fib_speedup_workload(33))
+                // `let _ = …` — делает body statement-mode (vs array-mode
+                // когда body trailing — expression). Statement-mode
+                // подпадает под Plan 83.4.5.10 Ф.3 inline-threshold.
+                let _r = bench.opaque(fib_speedup_workload(33))
             }
         }
         bench.elements(16)

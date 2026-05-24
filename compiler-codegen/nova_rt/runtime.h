@@ -133,6 +133,21 @@ struct NovaFiberQueue* nova_runtime_orphan_scope(void);
  * безопасно даже если detach is first call. Idempotent. */
 void nova_runtime_orphan_scope_init(void);
 
+/* Plan 83.4.5.10 Ф.3 (2026-05-24): inline-threshold для parallel-for.
+ * Для коротких parallel-for (`iter_count <= threshold`) кооперативный
+ * inline-emit избегает worker pool overhead (Boehm GC lock +
+ * mco_create + uv_async_send × N). Heuristic threshold через env
+ * `NOVA_PARALLEL_INLINE_THRESHOLD` либо default = 32.
+ *
+ * Параллель tokio rayon adaptive splitting / Java ForkJoinPool granularity
+ * threshold. Trade-off: loses parallelism для small batches, но overhead
+ * выигрыша для них negative.
+ *
+ * Cache'ируется на первом вызове (race-tolerant — все threads
+ * converge к одному значению; intermediate -1 → ещё один getenv).
+ * Lock-free read после warm-up. */
+long nova_runtime_parallel_inline_threshold(void);
+
 /* Graceful shutdown — signal all workers, join, free resources.
  * Called by codegen в exit path (либо явно через runtime.shutdown()). */
 void nova_runtime_shutdown(void);
