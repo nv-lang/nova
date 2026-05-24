@@ -1,0 +1,11 @@
+// Plan 101.1 B3 C3 negative — `fn[T] Option[T] @method` — T уже в carrier.
+//
+// EXPECT_COMPILE_ERROR: [E_DUPLICATE_GENERIC_DECL]
+
+module nova_tests.plan101_1.negative.duplicate_generic_decl_neg
+
+fn[T] Option[T] @bad_dup() -> T => match @ { Some(v) => v, None => @ }
+
+test "should error" {
+    assert(1 == 1)
+}
