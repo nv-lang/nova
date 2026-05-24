@@ -1915,7 +1915,12 @@ impl CEmitter {
                     // (recv.type_name starts with "[]") are not user-defined generic types and
                     // never get monomorphized — register them with erased types instead.
                     let is_array_ext = recv.type_name.starts_with("[]");
-                    if !f.generics.is_empty() && !is_array_ext {
+                    // Plan 101.1: bare-T receiver (`fn[T] T @method`) — type_name
+                    // = single-uppercase typevar. Register тоже for call-site
+                    // dispatch detection.
+                    let is_bare_typevar = recv.type_name.len() <= 2
+                        && recv.type_name.chars().all(|c| c.is_ascii_uppercase());
+                    if !f.generics.is_empty() && !is_array_ext && !is_bare_typevar {
                         continue;
                     }
                     // Plan 48 Ф.3: methods on generic receiver types are registered here for
@@ -6825,30 +6830,30 @@ impl CEmitter {
             return Ok(());
         }
         // Plan 48: Generic methods with own type params → store for monomorphization.
-        // Exception: array extension methods ([]T receivers) never get monomorphized;
-        // they fall through to the regular forward decl path below.
+        // Plan 101.1: array extension methods ([]T receivers) ALSO go to mono
+        // pipeline когда T — это fn-prefix-generic (`fn[T] []T @method`).
+        // Без этого dispatch на non-int receivers (e.g., `[]str`) ломается
+        // — body эмитится один раз с default nova_int, и call-site
+        // dispatch ищет несуществующую `NovaArray_nova_str_method_<m>` функцию.
         if !f.generics.is_empty() {
             if let Some(recv) = &f.receiver {
-                let is_array_ext = recv.type_name.starts_with("[]");
-                if !is_array_ext {
-                    self.mono_method_decls.insert((recv.type_name.clone(), f.name.clone()), f.clone());
-                    // Register sentinel MethodSig so call sites can find and mono-route this method.
-                    let sentinel_name = format!("__mono_method__{}__{}", recv.type_name, f.name);
-                    let sig = MethodSig {
-                        param_c_types: vec![],
-                        return_c_type: "void*".to_string(),
-                        is_instance: !matches!(f.receiver.as_ref().map(|r| &r.kind),
-                            Some(crate::ast::ReceiverKind::Static)),
-                        is_external: false,
-                        is_delegated: false,
-                        c_name: sentinel_name,
-                        variadic_last: false,
-                    };
-                    let key = (recv.type_name.clone(), f.name.clone());
-                    self.method_overloads.entry(key).or_default().push(sig);
-                    return Ok(());
-                }
-                // is_array_ext: fall through to regular forward decl below.
+                // Регистрируем все generic methods (включая `[]T`-ext) в mono_method_decls.
+                self.mono_method_decls.insert((recv.type_name.clone(), f.name.clone()), f.clone());
+                // Register sentinel MethodSig so call sites can find and mono-route this method.
+                let sentinel_name = format!("__mono_method__{}__{}", recv.type_name, f.name);
+                let sig = MethodSig {
+                    param_c_types: vec![],
+                    return_c_type: "void*".to_string(),
+                    is_instance: !matches!(f.receiver.as_ref().map(|r| &r.kind),
+                        Some(crate::ast::ReceiverKind::Static)),
+                    is_external: false,
+                    is_delegated: false,
+                    c_name: sentinel_name,
+                    variadic_last: false,
+                };
+                let key = (recv.type_name.clone(), f.name.clone());
+                self.method_overloads.entry(key).or_default().push(sig);
+                return Ok(());
             } else {
                 // Free generic fn: already handled above.
                 return Ok(());
@@ -8174,9 +8179,18 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
             // `Nova_Option*` (incomplete type) — корень Plan 93 Ф.0 CC-fail'а.
             "Option" | "Result" => self.builtin_sum_receiver_c_type(type_name),
             other => {
+                // Plan 101.1: bare typevar receiver (`fn[T] T @method`) —
+                // resolve T via current_type_subst при mono-emission.
+                // Без этого receiver_c_type("T") → "Nova_T*" (placeholder).
+                if other.len() <= 2 && other.chars().all(|c| c.is_ascii_uppercase()) {
+                    if let Some(c_ty) = self.current_type_subst.get(other) {
+                        return c_ty.clone();
+                    }
+                }
                 // Extension methods on array types: []T, []str, []int, etc.
                 if let Some(elem_ty) = other.strip_prefix("[]") {
-                    let c_elem = match elem_ty {
+                    let c_elem_owned: String;
+                    let c_elem: &str = match elem_ty {
                         "str"  => "nova_str",
                         "bool" => "nova_bool",
                         "f64"  => "nova_f64",
@@ -8192,7 +8206,19 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                         "u64"  => "uint64_t",
                         // Plan 70.5: uint = alias u64.
                         "uint" => "uint64_t",
-                        _ => "nova_int", // int/i64/erased T
+                        // Plan 101.1: T (generic typevar) — check current_type_subst
+                        // для mono'd context (`fn[T] []T @method` body).
+                        // Без этого fallback на nova_int → wrong type для
+                        // non-int T при mono per-T emission.
+                        _ => {
+                            if let Some(c_ty) = self.current_type_subst.get(elem_ty) {
+                                let trimmed = c_ty.trim_end_matches('*').trim();
+                                c_elem_owned = trimmed.to_string();
+                                &c_elem_owned
+                            } else {
+                                "nova_int" // int/i64/erased T fallback
+                            }
+                        }
                     };
                     return format!("NovaArray_{}*", c_elem);
                 }
@@ -17137,7 +17163,184 @@ _cp++; \
                         }
                     }
                     let is_generic_type = self.generic_types.contains(&type_name);
-                    let safe_type = Self::receiver_type_c_ident(&type_name);
+                    // Plan 101.1: bare-T receiver mono dispatch для `fn[T] T @method`.
+                    // type_name = "T" (typevar), нет real Nova type. Resolve T из
+                    // obj's actual type, mono-dispatch.
+                    if is_instance && type_name.len() <= 2
+                        && type_name.chars().all(|c| c.is_ascii_uppercase())
+                        && self.mono_method_decls.contains_key(&(type_name.clone(), method.to_string()))
+                    {
+                        let key = (type_name.clone(), method.to_string());
+                        if let Some(fn_decl) = self.mono_method_decls.get(&key).cloned() {
+                            let obj_ty = self.infer_expr_c_type(obj);
+                            // Strip pointer; use as concrete T.
+                            let concrete_t = obj_ty.trim_end_matches('*').trim().to_string();
+                            if !concrete_t.is_empty() && concrete_t != "void" {
+                                let mut type_subst: Vec<(String, String)> = Vec::new();
+                                if let Some(first_g) = fn_decl.generics.first() {
+                                    type_subst.push((first_g.name.clone(), concrete_t.clone()));
+                                }
+                                let mono_name = format!("Nova_{}_method_{}", concrete_t, method);
+                                let recv_type = type_name.clone();
+                                self.register_mono_method_instance(
+                                    &fn_decl, type_subst, &mono_name, &recv_type);
+                                let obj_c = self.emit_expr(obj)?;
+                                let mut arg_strs = vec![obj_c];
+                                for a in args {
+                                    arg_strs.push(self.emit_expr(a.expr())?);
+                                }
+                                return Ok(format!("{}({})", mono_name, arg_strs.join(", ")));
+                            }
+                        }
+                    }
+                    // Plan 101.1: array-ext mono dispatch для `fn[T] []T @method`
+                    // с full mono per-T (parser dispatch + body emission +
+                    // closure-aware args). Без этого ветка closure type inference
+                    // в `|n| n.method()` defaults to nova_int (wrong для non-int).
+                    if type_name.starts_with("[]") && is_instance {
+                        let obj_ty = self.infer_expr_c_type(obj);
+                        let stripped = obj_ty.trim_end_matches('*').trim().to_string();
+                        if let Some(element_c) = stripped.strip_prefix("NovaArray_").map(|s| s.to_string()) {
+                            let key = (type_name.clone(), method.to_string());
+                            if let Some(fn_decl) = self.mono_method_decls.get(&key).cloned() {
+                                // 1. Compute full type_subst:
+                                //    - T (первый generic, receiver typevar) → element_c
+                                //      pre-bound.
+                                //    - Method-level (U, Acc, ...) → inferred from args
+                                //      (closure return type) inline (resolve_mono_type_args
+                                //      возвращает Err когда T not inferable from args).
+                                let mut subst_pending: Vec<(String, Option<String>)> = fn_decl.generics.iter()
+                                    .enumerate()
+                                    .map(|(i, g)| {
+                                        let init = if i == 0 { Some(element_c.clone()) } else { None };
+                                        (g.name.clone(), init)
+                                    })
+                                    .collect();
+                                // Infer remaining via closure return + arg type matching.
+                                for (param, arg) in fn_decl.params.iter().zip(args.iter()) {
+                                    // Source 2: arg type → param type binding.
+                                    let arg_c = self.infer_expr_c_type(arg.expr());
+                                    self.infer_type_param_binding(&param.ty, &arg_c, &mut subst_pending);
+                                    // Source 2b: closure return → fn-typed param return.
+                                    if let crate::ast::TypeRef::Func { return_type: Some(ret_ty_ref), .. } = &param.ty {
+                                        let closure_ret_c = match &arg.expr().kind {
+                                            crate::ast::ExprKind::ClosureLight { body, .. } => match body {
+                                                crate::ast::ClosureBody::Expr(e) => self.infer_expr_c_type(e),
+                                                crate::ast::ClosureBody::Block(b) => b.trailing.as_ref()
+                                                    .map(|e| self.infer_expr_c_type(e))
+                                                    .unwrap_or_default(),
+                                            },
+                                            _ => String::new(),
+                                        };
+                                        if !closure_ret_c.is_empty() && closure_ret_c != "void*" {
+                                            self.infer_type_param_binding(ret_ty_ref.as_ref(), &closure_ret_c, &mut subst_pending);
+                                        }
+                                    }
+                                }
+                                // Finalize: extract bound, fallback nova_int для unbound.
+                                let type_subst: Vec<(String, String)> = subst_pending.into_iter()
+                                    .map(|(n, c)| (n, c.unwrap_or_else(|| "nova_int".to_string())))
+                                    .collect();
+                                // Mangle mono name with all type-subst beyond first
+                                // (Plan 99 pattern). T is already in receiver
+                                // (stripped = "NovaArray_<element_c>"), so suffix
+                                // only method-level generics (U, Acc, ...).
+                                let base_mono = format!("Nova_{}_method_{}", stripped, method);
+                                let mono_name = if type_subst.len() <= 1 {
+                                    base_mono
+                                } else {
+                                    let suffix: String = type_subst.iter().skip(1)
+                                        .map(|(_, c)| {
+                                            let s = c.trim_end_matches('*').trim()
+                                                .replace('*', "_p")
+                                                .replace(' ', "_");
+                                            format!("____{}", s)
+                                        })
+                                        .collect();
+                                    format!("{}{}", base_mono, suffix)
+                                };
+                                let recv_type = type_name.clone();
+                                // 2. Register mono instance for body emission per-T.
+                                self.register_mono_method_instance(
+                                    &fn_decl, type_subst.clone(), &mono_name, &recv_type);
+                                // 3. Set current_type_subst для closure-arg type
+                                //    resolution (`pred fn(T) -> bool` → fn(nova_str) -> bool).
+                                let saved_subst = std::mem::replace(
+                                    &mut self.current_type_subst,
+                                    type_subst.iter().cloned().collect(),
+                                );
+                                // 4. Emit args с closure context. ClosureLight
+                                //    (inline `|x| ...` literal) → call emit_lambda
+                                //    directly с context_param_tys для proper
+                                //    type inference внутри body (Plan 48 pattern).
+                                let obj_c = self.emit_expr(obj)?;
+                                let mut arg_strs = vec![obj_c];
+                                for (param_decl, a) in fn_decl.params.iter().zip(args.iter()) {
+                                    if let crate::ast::TypeRef::Func { params: fp, return_type, .. } = &param_decl.ty {
+                                        // Substituted closure param types (T → element_c).
+                                        let inner_ptys: Vec<String> = fp.iter()
+                                            .map(|t| self.type_ref_to_c(t).unwrap_or_else(|_| "nova_int".into()))
+                                            .collect();
+                                        let inner_ret = match return_type.as_ref() {
+                                            Some(t) => self.type_ref_to_c(t).unwrap_or_else(|_| "nova_unit".into()),
+                                            None => "nova_unit".into(),
+                                        };
+                                        // Inline closure (ClosureLight): emit_lambda
+                                        // с context_param_tys.
+                                        if let crate::ast::ExprKind::ClosureLight { params: cl_params, body } = &a.expr().kind {
+                                            let legacy_params: Vec<LambdaParam> = cl_params
+                                                .iter()
+                                                .map(|p| LambdaParam { name: p.name.clone(), ty: None, span: p.span })
+                                                .collect();
+                                            let body_expr: Expr = match body {
+                                                crate::ast::ClosureBody::Expr(e) => (**e).clone(),
+                                                crate::ast::ClosureBody::Block(b) => Expr::new(
+                                                    crate::ast::ExprKind::Block(b.clone()),
+                                                    b.span,
+                                                ),
+                                            };
+                                            let ctx: Vec<(String, String)> = inner_ptys.iter()
+                                                .map(|t| (t.clone(), String::new()))
+                                                .collect();
+                                            let v = self.emit_lambda(&legacy_params, &body_expr, Some(&ctx), None)?;
+                                            arg_strs.push(v);
+                                        } else {
+                                            // Variable closure — fn_param_sigs hook (chained calls).
+                                            let prev_sig = self.fn_param_sigs.insert(
+                                                param_decl.name.clone(), (inner_ptys, inner_ret));
+                                            let v = self.emit_expr(a.expr())?;
+                                            match prev_sig {
+                                                Some(old) => { self.fn_param_sigs.insert(param_decl.name.clone(), old); }
+                                                None => { self.fn_param_sigs.remove(&param_decl.name); }
+                                            }
+                                            arg_strs.push(v);
+                                        }
+                                    } else {
+                                        arg_strs.push(self.emit_expr(a.expr())?);
+                                    }
+                                }
+                                // Extra args beyond fn_decl.params length.
+                                for a in args.iter().skip(fn_decl.params.len()) {
+                                    arg_strs.push(self.emit_expr(a.expr())?);
+                                }
+                                self.current_type_subst = saved_subst;
+                                return Ok(format!("{}({})", mono_name, arg_strs.join(", ")));
+                            }
+                        }
+                    }
+                    // Fallback на legacy dispatch (для int-arrays без mono_method_decls
+                    // entry — happens когда vec.nv pre-101.1 без fn[T] migration).
+                    let safe_type = if type_name.starts_with("[]") && is_instance {
+                        let obj_ty = self.infer_expr_c_type(obj);
+                        let stripped = obj_ty.trim_end_matches('*').trim().to_string();
+                        if stripped.starts_with("NovaArray_") {
+                            stripped
+                        } else {
+                            Self::receiver_type_c_ident(&type_name)
+                        }
+                    } else {
+                        Self::receiver_type_c_ident(&type_name)
+                    };
                     if is_instance {
                         let obj_c = self.emit_expr(obj)?;
                         let mut arg_strs = vec![obj_c];
@@ -24007,18 +24210,65 @@ _cp++; \
                     if obj_ty.starts_with("NovaArray_") {
                         let elem_ty = obj_ty.strip_prefix("NovaArray_").unwrap_or("nova_int")
                             .trim_end_matches('*').trim();
-                        return match method.as_str() {
-                            "get" | "pop" => format!("NovaOpt_{}", elem_ty),
-                            "push" => "nova_unit".into(),
+                        match method.as_str() {
+                            "get" | "pop" => return format!("NovaOpt_{}", elem_ty),
+                            "push" => return "nova_unit".into(),
                             // Plan 90: bulk slice-операции — mutating, возвращают unit.
-                            "copy_from" | "copy_within" | "fill" => "nova_unit".into(),
+                            "copy_from" | "copy_within" | "fill" => return "nova_unit".into(),
                             // Plan 90: compare → int (-1/0/1).
-                            "compare" => "nova_int".into(),
+                            "compare" => return "nova_int".into(),
                             // Plan 60 / D117: size-accessor methods.
-                            "len" | "capacity" => "nova_int".into(),
-                            "is_empty" => "nova_bool".into(),
-                            _ => "nova_int".into(),
-                        };
+                            "len" | "capacity" => return "nova_int".into(),
+                            "is_empty" => return "nova_bool".into(),
+                            _ => {
+                                // Plan 101.1: user-extension array method
+                                // (fn[T] []T @method...). Поиск в mono_method_decls
+                                // по ключу ("[]T", method) — return type substitute
+                                // T → elem_ty.
+                                let key = ("[]T".to_string(), method.clone());
+                                if let Some(fn_decl) = self.mono_method_decls.get(&key) {
+                                    if let Some(ret_ty) = &fn_decl.return_type {
+                                        if let Some(t_name) = fn_decl.generics.first().map(|g| g.name.clone()) {
+                                            // Manual substitute T в return type.
+                                            // Simpler: pattern-match common shapes.
+                                            use crate::ast::TypeRef;
+                                            match ret_ty {
+                                                TypeRef::Named { path, generics: _, .. }
+                                                    if path.len() == 1 && path[0] == t_name =>
+                                                {
+                                                    // Return type is bare T → elem_ty.
+                                                    return elem_ty.to_string();
+                                                }
+                                                TypeRef::Array(inner, _) => {
+                                                    // Return []T → NovaArray_<elem_ty>*.
+                                                    if let TypeRef::Named { path, .. } = inner.as_ref() {
+                                                        if path.len() == 1 && path[0] == t_name {
+                                                            return format!("NovaArray_{}*", elem_ty);
+                                                        }
+                                                    }
+                                                }
+                                                TypeRef::Named { path, generics, .. }
+                                                    if path.len() == 1 && path[0] == "Option" && generics.len() == 1 =>
+                                                {
+                                                    // Return Option[T] → NovaOpt_<elem_ty>.
+                                                    if let TypeRef::Named { path: ipath, .. } = &generics[0] {
+                                                        if ipath.len() == 1 && ipath[0] == t_name {
+                                                            return format!("NovaOpt_{}", elem_ty);
+                                                        }
+                                                    }
+                                                }
+                                                _ => {}
+                                            }
+                                        }
+                                        // Не T-зависимый return — type_ref_to_c напрямую.
+                                        if let Ok(c_ty) = self.type_ref_to_c(ret_ty) {
+                                            return c_ty;
+                                        }
+                                    }
+                                }
+                                return "nova_int".into();
+                            }
+                        }
                     }
                     // D74 math methods on f64/f32 — return f64 (most) or bool (predicates).
                     if obj_ty == "nova_f64" || obj_ty == "nova_f32" {
