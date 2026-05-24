@@ -1,6 +1,6 @@
-// EXPECT_COMPILE_ERROR D151
+// EXPECT_COMPILE_ERROR D162
 //
-// Plan 100.4.5 (D151): errdefer alone — success path tx Live не covered.
+// Plan 100.4.5 (D162): errdefer alone — success path tx Live не covered.
 // Compiler ловит partial cover.
 
 module nova_tests.plan100_4_5.errdefer_only_err_no_commit_path
@@ -21,7 +21,7 @@ fn process() Fail[str] -> () {
     errdefer { tx.rollback() }                  // только error path
     do_work()?
     // ❌ success path: tx Live, no commit, no okdefer.
-    // ОШИБКА D151-not-consumed-on-path: success path uncovered.
+    // ОШИБКА D162-not-consumed-on-path: success path uncovered.
     // Suggest: add `tx.commit()` или `okdefer { tx.commit() }`.
 }
 

@@ -1,6 +1,6 @@
-// EXPECT_COMPILE_ERROR D151
+// EXPECT_COMPILE_ERROR D162
 //
-// Plan 100.4.5 (D151): double-cover — okdefer + explicit commit на
+// Plan 100.4.5 (D162): double-cover — okdefer + explicit commit на
 // success-path = double-consume.
 
 module nova_tests.plan100_4_5.double_cover_err_explicit_plus_okdefer
@@ -18,7 +18,7 @@ fn process() Fail[str] -> () {
     consume tx = begin()
     errdefer { tx.rollback() }
     okdefer { tx.commit() }                     // ← okdefer commit
-    // ❌ ОШИБКА D151-double-cover:
+    // ❌ ОШИБКА D162-double-cover:
     //    success path — и okdefer commit, и explicit commit ниже = двойной consume.
     //    Suggest: remove либо explicit commit, либо okdefer.
     tx.commit()                                  // explicit — conflict

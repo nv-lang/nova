@@ -2,8 +2,8 @@
 # Cleanup-on-failure — defer/errdefer/okdefer для consume-resources
 
 > Practical guide для Plan 100.4 family
-> ([D147](../../spec/decisions/03-syntax.md#d147)–
-> [D151](../../spec/decisions/03-syntax.md#d151)). Production-grade
+> ([D158](../../spec/decisions/03-syntax.md#d158)–
+> [D162](../../spec/decisions/03-syntax.md#d162)). Production-grade
 > resource cleanup на всех code-path'ах.
 
 ## Defer family — semantic recap
@@ -11,7 +11,7 @@
 | Statement | Срабатывает на |
 |---|---|
 | `defer { ... }` | **все** exit-paths (success / error / panic / interrupt) |
-| `errdefer { ... }` | **error-paths**: throw, panic, interrupt (после D151 amend) |
+| `errdefer { ... }` | **error-paths**: throw, panic, interrupt (после D162 amend) |
 | `okdefer { ... }` | **success-path**: normal exit, return expr |
 
 LIFO order. Mixed family — каждое срабатывает по своему predicate'у.
@@ -21,17 +21,17 @@ LIFO order. Mixed family — каждое срабатывает по своем
 ```nova
 fn process_order(data Data) Fail[OrderErr] Db -> Receipt {
     consume tx = db.begin()
-    errdefer { tx.rollback()? }                 // error → rollback (D147 failable)
-    okdefer  { tx.commit()?   }                 // success → commit (D149 + D147)
+    errdefer { tx.rollback()? }                 // error → rollback (D158 failable)
+    okdefer  { tx.commit()?   }                 // success → commit (D160 + D158)
     let order = db.insert(data)?
     db.notify(order)?
     return Receipt { id: order.id }
 }
 ```
 
-Exhaustive cover (D151): errdefer + okdefer — оба exit-paths covered
+Exhaustive cover (D162): errdefer + okdefer — оба exit-paths covered
 без explicit commit/rollback в body. Failable cleanup composes
-автоматически (D147 → Plan 49 multi-error).
+автоматически (D158 → Plan 49 multi-error).
 
 ## Когда что использовать
 
@@ -74,7 +74,7 @@ fn process() Fail[Err] -> () {
 }
 ```
 
-## Async cleanup (D148)
+## Async cleanup (D159)
 
 `defer` body может suspend (Time.sleep, Channel.recv, Net.*):
 
@@ -88,10 +88,10 @@ fn process() Fs Time -> () {
 ```
 
 Cancel-safe: если outer scope cancelled mid-cleanup, **cleanup
-completes ПЕРВЫМ**, cancel propagates AFTER. Без D148 graceful close
+completes ПЕРВЫМ**, cancel propagates AFTER. Без D159 graceful close
 сокета или DB-connection невозможен.
 
-## Failable cleanup composition (D147)
+## Failable cleanup composition (D158)
 
 Когда cleanup сам fails:
 
@@ -109,7 +109,7 @@ fn process() Fail[Err] -> () {
 }
 ```
 
-`fn-sig` обязан declare `Fail[E]` — D147 enforces compile-time
+`fn-sig` обязан declare `Fail[E]` — D158 enforces compile-time
 visibility.
 
 Caller inspects composite:
@@ -126,7 +126,7 @@ match process() {
 }
 ```
 
-## Multi-defer LIFO + partial failure (D150)
+## Multi-defer LIFO + partial failure (D161)
 
 ```nova
 fn process() Fail -> () {
@@ -145,7 +145,7 @@ fn process() Fail -> () {
 
 **Превосходит Rust** — нет `panic_in_drop = double-panic-abort`.
 
-## Panic в defer body (D150)
+## Panic в defer body (D161)
 
 Panic в defer body **композируется** с propagating (Plan 49 multi-error),
 **не abort**:
@@ -163,17 +163,17 @@ fn process() Fail -> () {
 
 ## Что НЕ делать
 
-❌ **`spawn` в defer body** — error D148-spawn-in-defer (leak supervised
+❌ **`spawn` в defer body** — error D159-spawn-in-defer (leak supervised
 hierarchy).
 
 ❌ **`return` / `throw` / `break` top-level в defer body** (D90 §6
 unchanged) — defer is part of exit, не hijack.
 
 ❌ **Double-cover** — `okdefer { commit }` + explicit `tx.commit()` →
-error D151-double-cover.
+error D162-double-cover.
 
 ❌ **Partial cover** — `errdefer { rollback }` без okdefer/explicit
-commit → error D151-not-consumed-on-path (success uncovered).
+commit → error D162-not-consumed-on-path (success uncovered).
 
 ❌ **Cleanup без `Time.timeout`** для potentially-long cleanups —
 infinite-hang risk. Программист обязан bound через `Time.timeout`:
@@ -190,14 +190,14 @@ defer {
 
 - [D90](../../spec/decisions/03-syntax.md#d90) — defer/errdefer
   foundation (Plan 20).
-- [D147](../../spec/decisions/03-syntax.md#d147) — failable cleanup
+- [D158](../../spec/decisions/03-syntax.md#d158) — failable cleanup
   body.
-- [D148](../../spec/decisions/03-syntax.md#d148) — async/suspend.
-- [D149](../../spec/decisions/03-syntax.md#d149) — okdefer + reason-
+- [D159](../../spec/decisions/03-syntax.md#d159) — async/suspend.
+- [D160](../../spec/decisions/03-syntax.md#d160) — okdefer + reason-
   aware.
-- [D150](../../spec/decisions/03-syntax.md#d150) — multi-defer
+- [D161](../../spec/decisions/03-syntax.md#d161) — multi-defer
   accumulation + panic composition.
-- [D151](../../spec/decisions/03-syntax.md#d151) — consume-integration.
+- [D162](../../spec/decisions/03-syntax.md#d162) — consume-integration.
 - [D85](../../spec/decisions/04-effects.md#d85) — Plan 49 cancel-routing
   + multi-error composition.
 - [consume-types idiom](consume-types.md) — canonical consume patterns.

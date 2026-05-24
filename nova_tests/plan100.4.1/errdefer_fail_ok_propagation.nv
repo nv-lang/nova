@@ -1,4 +1,4 @@
-// Plan 100.4.1 (D147): errdefer fail во время propagation — composes
+// Plan 100.4.1 (D158): errdefer fail во время propagation — composes
 // с primary.
 
 module nova_tests.plan100_4_1.errdefer_fail_ok_propagation

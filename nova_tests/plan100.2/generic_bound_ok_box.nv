@@ -1,4 +1,4 @@
-// Plan 100.2 (D145): generic `[T consume]` bound + consume-param.
+// Plan 100.2 (D156): generic `[T consume]` bound + consume-param.
 //
 // `fn box[T consume](consume x T) -> Box[T]` — strict mode: внутри
 // box compiler tracks T как possibly-consume. x передаётся в Box-field

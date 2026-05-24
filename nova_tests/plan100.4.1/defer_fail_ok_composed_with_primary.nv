@@ -1,4 +1,4 @@
-// Plan 100.4.1 (D147): defer-fail во время error-propagation —
+// Plan 100.4.1 (D158): defer-fail во время error-propagation —
 // composite-error через Plan 49 MultiError.
 
 module nova_tests.plan100_4_1.defer_fail_ok_composed_with_primary
@@ -23,7 +23,7 @@ fn do_work_that_fails() Fail[WorkErr] -> () {
 // fn-sig объявляет оба Fail (union или composite).
 fn process() Fail -> () {
     consume tx = begin()
-    defer { tx.commit() }                       // failable cleanup (D147)
+    defer { tx.commit() }                       // failable cleanup (D158)
     do_work_that_fails()?                        // throws WorkErr
     // Unwinding:
     //   defer fires; tx.commit() throws CommitErr

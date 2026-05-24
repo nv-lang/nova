@@ -1,4 +1,4 @@
-// Plan 100.2 (D145): HashMap[K, V consume] propagation — V consume,
+// Plan 100.2 (D156): HashMap[K, V consume] propagation — V consume,
 // HashMap сам становится consume через generic-заразность.
 
 module nova_tests.plan100_2.hashmap_consume_value_ok

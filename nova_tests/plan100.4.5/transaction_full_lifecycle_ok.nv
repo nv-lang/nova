@@ -1,10 +1,10 @@
-// Plan 100.4.5 (D151) — canonical full Transaction lifecycle pattern.
+// Plan 100.4.5 (D162) — canonical full Transaction lifecycle pattern.
 //
 // Combines:
 //   - D133 type-level consume
-//   - D147 failable cleanup body
-//   - D149 errdefer + okdefer symmetric pair
-//   - D151 check_consume integration
+//   - D158 failable cleanup body
+//   - D160 errdefer + okdefer symmetric pair
+//   - D162 check_consume integration
 //
 // errdefer для rollback, okdefer для commit — оба failable. Exhaustive
 // cover для всех exit-paths.

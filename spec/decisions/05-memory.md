@@ -385,13 +385,13 @@ Compile-time проверка — основной механизм. В C-ран
   100.1, proposed 2026-05-23) — расширение D131 с противоположной
   стороны: «инстансы обязаны быть consumed на каждом code-path'е».
   D131 = affine (≤1 раз; забыть OK); D133 = must-consume (≥1 раз;
-  забыть → compile error). Foundation для Plan 100 family (D145-D155
+  забыть → compile error). Foundation для Plan 100 family (D156-D166
   — generic propagation, borrow/view, defer/errdefer integration, FFI,
   cross-module, migration, IDE tooling).
 
 ---
 
-## D146. `view T` — read-only borrow без lifetime (scope-only)
+## D157. `view T` — read-only borrow без lifetime (scope-only)
 
 > **Plan 100.3.** Принято 2026-05-23 (proposed; implementation pending).
 > Closes deep-peek hole + closure capture analysis для consume-типов
@@ -423,7 +423,7 @@ tx.commit()                                    // ✅ tx Live после
    arm даёт Live linear `f`, обязан consumed). `match view @file`
    peek'ает inside Option без consume.
 2. **Closure capture** consume-var — D133 bootstrap-permissive
-   (closure считается «может consume», silent escape возможен). D146
+   (closure считается «может consume», silent escape возможен). D157
    вводит explicit `view`/`consume`-capture taxonomy (FnMut/FnOnce
    analog).
 
@@ -445,13 +445,13 @@ callback) — достаточно.
 |---|---|---|
 | `t.field` (read) | ✅ | ✅ |
 | `t.regular_method()` (no mut/consume) | ✅ | ✅ |
-| `t.@mut_method()` | ❌ E (D146-mut-via-view) | ❌ (D7) |
-| `t.@consume_method()` | ❌ E (D146-consume-via-view) | ❌ (D7) |
+| `t.@mut_method()` | ❌ E (D157-mut-via-view) | ❌ (D7) |
+| `t.@consume_method()` | ❌ E (D157-consume-via-view) | ❌ (D7) |
 | передача в `view`-param другой fn | ✅ | ✅ |
 | передача в `consume`-param | ❌ | ❌ (D7) |
-| store в поле | ❌ E (D146-view-escape-store) | ❌ (D7) |
-| return | ❌ E (D146-view-escape-return) | ❌ (D7) |
-| capture в closure, returned | ❌ E (D146-view-escape-closure) | ❌ (D7) |
+| store в поле | ❌ E (D157-view-escape-store) | ❌ (D7) |
+| return | ❌ E (D157-view-escape-return) | ❌ (D7) |
+| capture в closure, returned | ❌ E (D157-view-escape-closure) | ❌ (D7) |
 | capture в closure, invoked в-scope | ✅ | ✅ |
 
 `view` **строже** D7 read-only-param: запрещает даже mut-методы
@@ -525,7 +525,7 @@ fn outer2() {
 ```
 
 **Escape detection:** closure capturing `view` не может escape scope'а
-source'а (return / store) — error E (D146-view-escape-closure).
+source'а (return / store) — error E (D157-view-escape-closure).
 
 **Consume-closure (FnOnce)**: invoke ровно один раз; если не вызван —
 closure Live на scope-exit, обязан consumed (invoked / passed). Иначе
@@ -549,7 +549,7 @@ extension.
 
 ### Сравнение
 
-| Capability | Rust | TS | Kotlin | Nova D146 |
+| Capability | Rust | TS | Kotlin | Nova D157 |
 |---|---|---|---|---|
 | Read-only borrow | ✅ `&T` | ❌ | ❌ | ✅ **`view T`** |
 | Mutable borrow | ✅ `&mut T` | n/a | n/a | ❌ **не вводим** |
@@ -575,8 +575,8 @@ Nova **превосходит Rust** на одной оси — отсутств
 ### Связь
 
 - [D131](#d131) — affine consume foundation.
-- [D133](02-types.md#d133) — type-level consume; D146 — read-only access.
-- [D145](02-types.md#d145) — generic `[T consume]` bound; `filter`-style
+- [D133](02-types.md#d133) — type-level consume; D157 — read-only access.
+- [D156](02-types.md#d156) — generic `[T consume]` bound; `filter`-style
   HOF использует view.
 - [D75](06-concurrency.md#d75) — почему borrow-checker отвергнут.
 

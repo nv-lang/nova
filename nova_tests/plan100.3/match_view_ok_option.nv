@@ -1,7 +1,7 @@
-// Plan 100.3 (D146): `match view <expr>` — deep peek в Option[ConsumeType].
+// Plan 100.3 (D157): `match view <expr>` — deep peek в Option[ConsumeType].
 //
-// Без D146 этот pattern невозможен в Plan 100.1 — match destructive,
-// arm-binding'и Live linear, обязан consumed в arm. D146 решает через
+// Без D157 этот pattern невозможен в Plan 100.1 — match destructive,
+// arm-binding'и Live linear, обязан consumed в arm. D157 решает через
 // view-match: arm-binding'и — view, source остаётся Live.
 
 module nova_tests.plan100_3.match_view_ok_option

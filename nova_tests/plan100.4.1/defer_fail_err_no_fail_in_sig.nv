@@ -1,6 +1,6 @@
-// EXPECT_COMPILE_ERROR D147
+// EXPECT_COMPILE_ERROR D158
 //
-// Plan 100.4.1 (D147): defer body имеет Fail[E] effect, но enclosing
+// Plan 100.4.1 (D158): defer body имеет Fail[E] effect, но enclosing
 // fn-sig не объявил Fail[E] → compile error.
 //
 // Force'ит explicit visibility cleanup-fail в API.
@@ -22,7 +22,7 @@ fn begin() -> Transaction => Transaction { id: 1 }
 // ❌ fn-sig без Fail[E].
 fn process() -> () {                            // ← no Fail в sig
     consume tx = begin()
-    // ОШИБКА D147-defer-fail-not-in-sig: defer body имеет Fail[CommitErr],
+    // ОШИБКА D158-defer-fail-not-in-sig: defer body имеет Fail[CommitErr],
     // но enclosing fn не declares Fail. Suggest: add `Fail[CommitErr]` к sig.
     defer { tx.commit() }
 }

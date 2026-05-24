@@ -1,13 +1,13 @@
-// EXPECT_COMPILE_ERROR D152
+// EXPECT_COMPILE_ERROR D163
 //
-// Plan 100.5 (D152): external consume fn ОБЯЗАН declare capability.
-// Без needs-clause → error D152-missing-cap.
+// Plan 100.5 (D163): external consume fn ОБЯЗАН declare capability.
+// Без needs-clause → error D163-missing-cap.
 
 module nova_tests.plan100_5.external_consume_err_missing_cap
 
 external type File consume
 
-// ❌ Нет needs-clause — error D152-missing-cap.
+// ❌ Нет needs-clause — error D163-missing-cap.
 // Suggest: add `needs Fs` (или подходящая cap).
 external consume fn nova_file_open(path str) -> File
     // missing `needs Fs`

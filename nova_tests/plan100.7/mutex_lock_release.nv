@@ -1,4 +1,4 @@
-// Plan 100.7 (D154): pilot Mutex Lock-guard migration.
+// Plan 100.7 (D165): pilot Mutex Lock-guard migration.
 // Probe 1 of 5: basic lock/release.
 
 module nova_tests.plan100_7.mutex_lock_release

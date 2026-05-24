@@ -1,4 +1,4 @@
-// Plan 100.4.1 (D147): errdefer fails только когда error-path triggers.
+// Plan 100.4.1 (D158): errdefer fails только когда error-path triggers.
 
 module nova_tests.plan100_4_1.errdefer_fail_ok_only_on_error
 

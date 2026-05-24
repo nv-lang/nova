@@ -1,4 +1,4 @@
-// Plan 100.2 (D145): passing T inside generic body to consume-param fn.
+// Plan 100.2 (D156): passing T inside generic body to consume-param fn.
 
 module nova_tests.plan100_2.generic_bound_ok_pass_consume
 

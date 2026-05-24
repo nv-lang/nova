@@ -1,4 +1,4 @@
-// Plan 100.6 (D153) + (D133 D6 generic-заразность): Result[a.Transaction, IoErr]
+// Plan 100.6 (D164) + (D133 D6 generic-заразность): Result[a.Transaction, IoErr]
 // через границу пакетов — generic propagation работает.
 
 module nova_tests.plan100_6.cross_pkg_generic_consume_ok

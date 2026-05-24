@@ -1,4 +1,4 @@
-// Plan 100.4.3 (D149): mixed defer/errdefer/okdefer LIFO ordering.
+// Plan 100.4.3 (D160): mixed defer/errdefer/okdefer LIFO ordering.
 
 module nova_tests.plan100_4_3.mixed_defer_family_lifo
 

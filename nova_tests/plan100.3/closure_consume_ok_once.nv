@@ -1,4 +1,4 @@
-// Plan 100.3 (D146): consume-closure (FnOnce-equivalent).
+// Plan 100.3 (D157): consume-closure (FnOnce-equivalent).
 //
 // Closure-body вызывает consume-метод на captured var → closure становится
 // consume-closure: invoke = consume, повторный invoke → error.

@@ -1,4 +1,4 @@
-// Plan 100.4.4 (D150): panic в defer N не останавливает LIFO —
+// Plan 100.4.4 (D161): panic в defer N не останавливает LIFO —
 // defer N-1, N-2 still run.
 
 module nova_tests.plan100_4_4.multi_defer_continues_after_panic

@@ -1,4 +1,4 @@
-// Plan 100.4.5 (D151): await не consume; errdefer пересекает await.
+// Plan 100.4.5 (D162): await не consume; errdefer пересекает await.
 
 module nova_tests.plan100_4_5.await_preservation_with_consume_ok
 

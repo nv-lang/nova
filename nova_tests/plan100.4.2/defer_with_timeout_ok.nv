@@ -1,4 +1,4 @@
-// Plan 100.4.2 (D148): Time.timeout в defer для bounded cleanup.
+// Plan 100.4.2 (D159): Time.timeout в defer для bounded cleanup.
 
 module nova_tests.plan100_4_2.defer_with_timeout_ok
 
@@ -16,7 +16,7 @@ fn process() Time Fail -> () {
         with Time.timeout(5_s) {                // bounded cleanup — 5s max
             sock.graceful_close()
         }
-        // если timeout — fail composes (D147)
+        // если timeout — fail composes (D158)
     }
     println("network work")
 }

@@ -1,4 +1,4 @@
-// Plan 100.4.3 (D149): defer |result| — reason-aware форма с pattern.
+// Plan 100.4.3 (D160): defer |result| — reason-aware форма с pattern.
 
 module nova_tests.plan100_4_3.defer_with_result_ok_pattern_match
 

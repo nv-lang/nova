@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 # `view T` — read-only borrow без lifetime
 
-> Practical guide для [D146](../../spec/decisions/05-memory.md#d146)
+> Practical guide для [D157](../../spec/decisions/05-memory.md#d157)
 > view-borrow механизма (Plan 100.3). Scope-only borrow для consume-
 > типов; без Rust lifetime'ов.
 
@@ -45,7 +45,7 @@ fn Service @file_id() -> Option[int] {
 }
 ```
 
-Без D146 этот pattern невозможен (D133 match destructive).
+Без D157 этот pattern невозможен (D133 match destructive).
 
 ## Closure capture — view vs consume
 
@@ -76,12 +76,12 @@ Compiler определяет автоматически по операциям
 |---|---|---|
 | `t.field` (read) | ✅ | ✅ |
 | `t.regular_method()` | ✅ | ✅ |
-| `t.@mut_method()` | ❌ E (D146-mut-via-view) | ✅ |
-| `t.@consume_method()` | ❌ E (D146-consume-via-view) | ✅ |
+| `t.@mut_method()` | ❌ E (D157-mut-via-view) | ✅ |
+| `t.@consume_method()` | ❌ E (D157-consume-via-view) | ✅ |
 | передача в `view`-param | ✅ | ✅ |
 | передача в `consume`-param | ❌ | ✅ (consume) |
-| store в поле | ❌ E (D146-view-escape-store) | ✅ |
-| return | ❌ E (D146-view-escape-return) | ✅ |
+| store в поле | ❌ E (D157-view-escape-store) | ✅ |
+| return | ❌ E (D157-view-escape-return) | ✅ |
 
 ## Что нельзя делать
 
@@ -100,7 +100,7 @@ match view @file { ... }                        // ✅ в match expression
 ❌ **Return view наружу:**
 ```nova
 fn id_view(t view Transaction) -> view Transaction {
-    return t                                    // ❌ escape — error D146
+    return t                                    // ❌ escape — error D157
 }
 ```
 
@@ -114,7 +114,7 @@ field-aware flow D133 D5 покрывают.
 
 ## Связь
 
-- [D146](../../spec/decisions/05-memory.md#d146) — `view T` spec.
+- [D157](../../spec/decisions/05-memory.md#d157) — `view T` spec.
 - [D133](../../spec/decisions/02-types.md#d133) — type-level consume foundation.
 - [D131](../../spec/decisions/05-memory.md#d131) — affine consume D7
   read-only mode.

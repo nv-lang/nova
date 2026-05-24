@@ -1,6 +1,6 @@
-// EXPECT_COMPILE_ERROR D146
+// EXPECT_COMPILE_ERROR D157
 //
-// Plan 100.3 (D146): view-binding не может escape scope через return.
+// Plan 100.3 (D157): view-binding не может escape scope через return.
 // Identity-функция требует явного consume, не view.
 
 module nova_tests.plan100_3.view_err_return
@@ -11,7 +11,7 @@ type Transaction consume {
 
 // ❌ Попытка вернуть view — escape-error.
 fn id_view(t view Transaction) -> view Transaction {
-    // ОШИБКА D146-view-escape-return: view не может escape scope source'а.
+    // ОШИБКА D157-view-escape-return: view не может escape scope source'а.
     // Suggest: use `consume t` instead of `view t` для true identity.
     return t
 }

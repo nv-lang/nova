@@ -1,9 +1,9 @@
-// Plan 100.8 (D155): LSP quick fix для D151-uncovered-error-path —
+// Plan 100.8 (D166): LSP quick fix для D162-uncovered-error-path —
 // suggest «add errdefer { tx.rollback() }».
 //
-// EXPECT_COMPILE_ERROR D151-uncovered-error-path
+// EXPECT_COMPILE_ERROR D162-uncovered-error-path
 //
-// Expected diagnostic + machine-applicable suggestion (per D155 format):
+// Expected diagnostic + machine-applicable suggestion (per D166 format):
 //   suggestion: "Add `errdefer { tx.rollback() }`"
 //   edit:
 //     + errdefer { tx.rollback() }
@@ -22,12 +22,12 @@ fn do_work() Fail[str] -> () { () }
 
 fn process() Fail[str] -> () {
     consume tx = begin()
-    // ❌ ОШИБКА D151-uncovered-error-path: errdefer missing.
+    // ❌ ОШИБКА D162-uncovered-error-path: errdefer missing.
     // LSP quick fix suggests: "Add `errdefer { tx.rollback() }`".
     do_work()?
     tx.commit()
 }
 
-test "LSP quick-fix для D151-uncovered-error-path" {
+test "LSP quick-fix для D162-uncovered-error-path" {
     process()
 }

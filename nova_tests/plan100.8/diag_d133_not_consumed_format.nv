@@ -1,9 +1,9 @@
-// Plan 100.8 (D155): error D133-not-consumed имеет structured format
+// Plan 100.8 (D166): error D133-not-consumed имеет structured format
 // per spec (error-code + ranges + suggestions + notes).
 //
 // EXPECT_COMPILE_ERROR D133-not-consumed
 //
-// Expected diagnostic format (structured per D155):
+// Expected diagnostic format (structured per D166):
 //   error[D133-not-consumed]: consume value not consumed before scope exit
 //      ╭─[diag_d133_not_consumed_format.nv:LINE:COL]
 //    L │     consume tx = begin()
@@ -30,8 +30,8 @@ fn Transaction consume @rollback() -> () { () }
 
 fn begin() -> Transaction => Transaction { id: 1 }
 
-test "diagnostic format consistency D155" {
+test "diagnostic format consistency D166" {
     consume tx = begin()
     // ОШИБКА D133-not-consumed: tx Live на exit.
-    // Format должен соответствовать D155 spec.
+    // Format должен соответствовать D166 spec.
 }

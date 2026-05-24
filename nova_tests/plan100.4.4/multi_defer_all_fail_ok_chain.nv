@@ -1,4 +1,4 @@
-// Plan 100.4.4 (D150): 3 defers all fail — composite chain length 3,
+// Plan 100.4.4 (D161): 3 defers all fail — composite chain length 3,
 // LIFO continues после partial failure (Rust-superior — no abort).
 
 module nova_tests.plan100_4_4.multi_defer_all_fail_ok_chain

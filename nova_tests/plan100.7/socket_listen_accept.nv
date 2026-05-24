@@ -1,4 +1,4 @@
-// Plan 100.7 (D154) pilot TcpSocket — listen / accept / graceful close.
+// Plan 100.7 (D165) pilot TcpSocket — listen / accept / graceful close.
 
 module nova_tests.plan100_7.socket_listen_accept
 
@@ -18,7 +18,7 @@ fn ClientSocket consume @graceful_close() Time -> () { nova_tcp_close_client(@) 
 fn handle_one(view srv ServerSocket) Fail[IoErr] Net Time -> () {
     let r = nova_tcp_accept(srv)?
     consume client = r
-    defer { client.graceful_close() }           // async cleanup (D148)
+    defer { client.graceful_close() }           // async cleanup (D159)
     // serve client...
 }
 

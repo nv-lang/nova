@@ -1,4 +1,4 @@
-// Plan 100.4.5 (D151): canonical pattern — errdefer cover'ит consume на
+// Plan 100.4.5 (D162): canonical pattern — errdefer cover'ит consume на
 // error-path; explicit commit на success-path.
 
 module nova_tests.plan100_4_5.errdefer_cover_consume_ok
@@ -17,7 +17,7 @@ fn do_work() Fail[str] -> () { () }
 // Canonical pattern:
 //   - errdefer cover'ит error-path (rollback)
 //   - explicit commit на success-path
-//   - check_consume распознаёт оба пути (D151)
+//   - check_consume распознаёт оба пути (D162)
 fn process() Fail[str] -> () {
     consume tx = begin()
     errdefer { tx.rollback() }                  // error-path cover

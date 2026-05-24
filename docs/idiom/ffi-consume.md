@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 # FFI consume — `external consume fn` для C-runtime
 
-> Practical guide для [D152](../../spec/decisions/02-types.md#d152)
+> Practical guide для [D163](../../spec/decisions/02-types.md#d163)
 > (Plan 100.5). Как объявлять FFI-функции, которые carry consume-
 > obligation через C-границу.
 
@@ -12,7 +12,7 @@
 external type File consume
 
 // External fn возвращает consume-File; caller owns.
-// Capability обязателен (D63 + D152 D3).
+// Capability обязателен (D63 + D163 D3).
 external consume fn nova_file_open(path str) -> Result[File, IoErr]
     needs Fs
 
@@ -32,18 +32,18 @@ fn File consume @close() -> () {
 fn process(path str) Fail[IoErr] Fs -> () {
     let r = nova_file_open(path)?
     consume f = r
-    defer { f.close() }                         // D147 cleanup
+    defer { f.close() }                         // D158 cleanup
     // use f...
 }
 ```
 
 ## Что обязательно
 
-✅ **Capability declaration** (D152 D3):
+✅ **Capability declaration** (D163 D3):
 ```nova
 external consume fn nova_X() -> Y needs <Cap>   // обязательно
 ```
-Без `needs` — error D152-missing-cap.
+Без `needs` — error D163-missing-cap.
 
 ✅ **Opaque type через `external type X consume`** (D126):
 ```nova
@@ -58,7 +58,7 @@ external type Socket consume
 
 ❌ **`consume` маркер без consume return/param** — vacuous:
 ```nova
-external consume fn nova_get_pid() -> int       // ❌ W (D152-vacuous-consume)
+external consume fn nova_get_pid() -> int       // ❌ W (D163-vacuous-consume)
 ```
 
 ❌ **Передача consume-var дважды**:
@@ -92,7 +92,7 @@ Plan 100.7 предусматривает 4 pilot migrations:
 
 - `std/io/file.nv` — File consume + open/read/close.
 - `std/sync/mutex.nv` — Mutex + Lock-guard.
-- `std/net/tcp.nv` — TcpSocket с graceful close (Plan 100.4.2 D148
+- `std/net/tcp.nv` — TcpSocket с graceful close (Plan 100.4.2 D159
   async/suspend cleanup).
 - `std/db/transaction.nv` — Transaction commit/rollback.
 
@@ -109,7 +109,7 @@ capability declaration tracks privilege.
 
 ## Связь
 
-- [D152](../../spec/decisions/02-types.md#d152) — `external consume fn`.
+- [D163](../../spec/decisions/02-types.md#d163) — `external consume fn`.
 - [D82](../../spec/decisions/08-runtime.md#d82) — `external fn` foundation.
 - [D126](../../spec/decisions/03-syntax.md#d126) — `external type`
   opaque.

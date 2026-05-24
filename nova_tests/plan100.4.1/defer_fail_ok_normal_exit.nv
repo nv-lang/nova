@@ -1,4 +1,4 @@
-// Plan 100.4.1 (D147): defer body может Fail; на normal exit fail
+// Plan 100.4.1 (D158): defer body может Fail; на normal exit fail
 // propagates как обычный Fail.
 
 module nova_tests.plan100_4_1.defer_fail_ok_normal_exit
@@ -15,10 +15,10 @@ fn Transaction consume @commit() Fail[CommitErr] -> () { () }
 
 fn begin() -> Transaction => Transaction { id: 1 }
 
-// fn-sig объявляет Fail[CommitErr] — D147 enforces visibility.
+// fn-sig объявляет Fail[CommitErr] — D158 enforces visibility.
 fn process() Fail[CommitErr] -> () {
     consume tx = begin()
-    defer { tx.commit() }                       // failable commit в defer body — D147
+    defer { tx.commit() }                       // failable commit в defer body — D158
     // do_work — success path
     // На exit: defer fires; commit может Fail → propagates через Fail[CommitErr]
 }

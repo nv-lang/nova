@@ -1,6 +1,6 @@
-// EXPECT_COMPILE_ERROR D145
+// EXPECT_COMPILE_ERROR D156
 //
-// Plan 100.2 (D145): generic с `[T consume]` bound + consume-param —
+// Plan 100.2 (D156): generic с `[T consume]` bound + consume-param —
 // callee обязан что-то сделать с x. Просто принять и забыть → error.
 
 module nova_tests.plan100_2.generic_bound_err_forget
@@ -12,7 +12,7 @@ type Transaction consume {
 fn Transaction consume @commit() -> () { () }
 
 // ❌ Strict mode: x принят как consume, но не consumed внутри.
-// ОШИБКА D145-strict-forget на exit'е fn body.
+// ОШИБКА D156-strict-forget на exit'е fn body.
 fn drop[T consume](consume x T) -> () {
     // ничего не делаем с x → forget
 }

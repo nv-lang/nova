@@ -1,4 +1,4 @@
-// Plan 100.5 (D152): external consume fn — return-side. C-функция
+// Plan 100.5 (D163): external consume fn — return-side. C-функция
 // возвращает consume-obligation, caller owns.
 
 module nova_tests.plan100_5.external_consume_return_ok
