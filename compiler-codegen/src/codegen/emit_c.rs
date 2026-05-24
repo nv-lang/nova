@@ -23979,18 +23979,65 @@ _cp++; \
                     if obj_ty.starts_with("NovaArray_") {
                         let elem_ty = obj_ty.strip_prefix("NovaArray_").unwrap_or("nova_int")
                             .trim_end_matches('*').trim();
-                        return match method.as_str() {
-                            "get" | "pop" => format!("NovaOpt_{}", elem_ty),
-                            "push" => "nova_unit".into(),
+                        match method.as_str() {
+                            "get" | "pop" => return format!("NovaOpt_{}", elem_ty),
+                            "push" => return "nova_unit".into(),
                             // Plan 90: bulk slice-операции — mutating, возвращают unit.
-                            "copy_from" | "copy_within" | "fill" => "nova_unit".into(),
+                            "copy_from" | "copy_within" | "fill" => return "nova_unit".into(),
                             // Plan 90: compare → int (-1/0/1).
-                            "compare" => "nova_int".into(),
+                            "compare" => return "nova_int".into(),
                             // Plan 60 / D117: size-accessor methods.
-                            "len" | "capacity" => "nova_int".into(),
-                            "is_empty" => "nova_bool".into(),
-                            _ => "nova_int".into(),
-                        };
+                            "len" | "capacity" => return "nova_int".into(),
+                            "is_empty" => return "nova_bool".into(),
+                            _ => {
+                                // Plan 101.1: user-extension array method
+                                // (fn[T] []T @method...). Поиск в mono_method_decls
+                                // по ключу ("[]T", method) — return type substitute
+                                // T → elem_ty.
+                                let key = ("[]T".to_string(), method.clone());
+                                if let Some(fn_decl) = self.mono_method_decls.get(&key) {
+                                    if let Some(ret_ty) = &fn_decl.return_type {
+                                        if let Some(t_name) = fn_decl.generics.first().map(|g| g.name.clone()) {
+                                            // Manual substitute T в return type.
+                                            // Simpler: pattern-match common shapes.
+                                            use crate::ast::TypeRef;
+                                            match ret_ty {
+                                                TypeRef::Named { path, generics: _, .. }
+                                                    if path.len() == 1 && path[0] == t_name =>
+                                                {
+                                                    // Return type is bare T → elem_ty.
+                                                    return elem_ty.to_string();
+                                                }
+                                                TypeRef::Array(inner, _) => {
+                                                    // Return []T → NovaArray_<elem_ty>*.
+                                                    if let TypeRef::Named { path, .. } = inner.as_ref() {
+                                                        if path.len() == 1 && path[0] == t_name {
+                                                            return format!("NovaArray_{}*", elem_ty);
+                                                        }
+                                                    }
+                                                }
+                                                TypeRef::Named { path, generics, .. }
+                                                    if path.len() == 1 && path[0] == "Option" && generics.len() == 1 =>
+                                                {
+                                                    // Return Option[T] → NovaOpt_<elem_ty>.
+                                                    if let TypeRef::Named { path: ipath, .. } = &generics[0] {
+                                                        if ipath.len() == 1 && ipath[0] == t_name {
+                                                            return format!("NovaOpt_{}", elem_ty);
+                                                        }
+                                                    }
+                                                }
+                                                _ => {}
+                                            }
+                                        }
+                                        // Не T-зависимый return — type_ref_to_c напрямую.
+                                        if let Ok(c_ty) = self.type_ref_to_c(ret_ty) {
+                                            return c_ty;
+                                        }
+                                    }
+                                }
+                                return "nova_int".into();
+                            }
+                        }
                     }
                     // D74 math methods on f64/f32 — return f64 (most) or bool (predicates).
                     if obj_ty == "nova_f64" || obj_ty == "nova_f32" {
