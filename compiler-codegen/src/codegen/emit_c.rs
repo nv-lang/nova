@@ -17062,7 +17062,22 @@ _cp++; \
                         }
                     }
                     let is_generic_type = self.generic_types.contains(&type_name);
-                    let safe_type = Self::receiver_type_c_ident(&type_name);
+                    // Plan 101.1: для array-ext methods `fn[T] []T @method`,
+                    // method-registry хранит type_name="[]T" → receiver_type_c_ident
+                    // даёт fallback "NovaArray_nova_int". При actual non-int
+                    // receiver (e.g., `names []str`) это приводит к wrong dispatch.
+                    // Override safe_type через actual receiver C-type из obj expr.
+                    let safe_type = if type_name.starts_with("[]") && is_instance {
+                        let obj_ty = self.infer_expr_c_type(obj);
+                        let stripped = obj_ty.trim_end_matches('*').trim().to_string();
+                        if stripped.starts_with("NovaArray_") {
+                            stripped
+                        } else {
+                            Self::receiver_type_c_ident(&type_name)
+                        }
+                    } else {
+                        Self::receiver_type_c_ident(&type_name)
+                    };
                     if is_instance {
                         let obj_c = self.emit_expr(obj)?;
                         let mut arg_strs = vec![obj_c];

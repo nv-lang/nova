@@ -16,9 +16,9 @@ fn[T] []T @my_filter(pred fn(T) -> bool) -> []T {
 
 test "T=str filter on string-array" {
     let names []str = ["a", "bb", "ccc", "dddd"]
-    let long = names.my_filter(|n| n.len() > 1)
-    assert(long.len() == 3)
-    assert(long.get(0) == Some("bb"))
+    let long_ones = names.my_filter(|n| n.len() > 1)
+    assert(long_ones.len() == 3)
+    assert(long_ones.get(0) == Some("bb"))
 }
 
 test "T=str map T → int (len)" {
