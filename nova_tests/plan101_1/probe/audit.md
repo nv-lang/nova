@@ -49,3 +49,54 @@ Scope confirmed:
 - Plan 101.1 scope ~2.5 dev-day — реалистично.
 
 **GATE PASS.** Идём в Ф.1 parser.
+
+## Post-implementation status (2026-05-24)
+
+### ВЫПОЛНЕНО
+
+- ✅ Ф.0 audit + probes (этот документ + 1 parser probe `fn_prefix_parse.nv`).
+- ✅ Ф.1 parser `fn[T]` prefix syntax работает.
+- ✅ Ф.4 vec.nv migration (7 методов мигрированы, all PASS).
+- ✅ Ф.5 7 positive фикстур (vec_map_int_int, vec_map_int_str с T=U, vec_filter, vec_fold_int_int, vec_any_all, vec_first_last, vec_chained).
+- ✅ Полный nova test: 1133 PASS / 15 FAIL — +2/+2 vs baseline (1131/13), FAILы = flaky concurrency-TIMEOUTs (Plan 83.4.5.9 lineage, не Plan 101).
+
+### KNOWN LIMITATIONS
+
+1. **Array-receiver mono dispatch hardcoded на `nova_int`.**
+   `fn[T] []T @method` корректно работает только для `[]int`-receivers.
+   Для `[]str`, `[]User`, `[]MyRecord` codegen эмитит
+   `Nova_NovaArray_nova_int_method_<m>` (default mono), что приводит к
+   CC-FAIL — type mismatch с actual `NovaArray_nova_str*` argument.
+   
+   Источник: `compiler-codegen/src/codegen/emit_c.rs:11086-11093` —
+   array-extension-methods path выходит через
+   `emit_generic_method_erased` с default int receiver-type, не
+   monomorphизируется per actual T.
+   
+   **Fix scope:** mono per receiver-T для array extensions —
+   ~4-6 hours codegen work (mangling `Nova_NovaArray_<T>_method_<m>` +
+   worklist registration + call-site dispatch resolution).
+   
+   **Deferred:** Plan 101.1 Ф.3 followup OR Plan 101.5 stdlib audit.
+
+2. **Bare-T receiver `fn[T] T @method` codegen.**
+   `(42).method()` emits naive C `x.method()` — нет dispatch на
+   primitive типы. Требует new code-path в `infer_func_c_name` /
+   method-dispatch resolver для bare typevar receivers.
+   
+   **Deferred:** Plan 101.3 (где bare T scope формально).
+
+3. **Type-checker error codes (Ф.2) НЕ реализованы:**
+   - E_BARE_TYPEVAR_NEEDS_PREFIX
+   - E_PREFIX_SHADOWS_NAMED_TYPE
+   - E_DUPLICATE_GENERIC_DECL
+   - E_UNDECLARED_TYPEVAR_IN_RECEIVER
+   Currently `fn T @method` без префикса silently parses as named-type;
+   codegen затем fails. Need loud errors для production-grade UX.
+   
+   **Deferred:** Plan 101.1 Ф.2 — следующая сессия.
+
+### NEW MARKER
+
+`[M-fn-prefix-int-only-mono]` — array-extension `fn[T] []T @method`
+работает только для int-elements. Закрытие требует mono-per-T (~4-6h codegen).
