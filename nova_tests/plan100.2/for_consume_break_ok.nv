@@ -15,7 +15,7 @@ test "for + break — обе arm-ветки consume" {
     consume tx2 = Transaction { id: 2 }
     consume tx3 = Transaction { id: 3 }
     let txs = [tx1, tx2, tx3]
-    for tx in txs {
+    for consume tx in txs {
         if tx.id == 2 {
             tx.commit()
             break                                // arm consume + break OK

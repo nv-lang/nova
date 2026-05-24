@@ -17,7 +17,7 @@ test "for + branch только на then — каждая iteration теряе�
     consume tx2 = Transaction { id: 2 }
     let txs = [tx1, tx2]
     let condition = true
-    for tx in txs {
+    for consume tx in txs {
         if condition {
             tx.commit()
             // then: tx Consumed

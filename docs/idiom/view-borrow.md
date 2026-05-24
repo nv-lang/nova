@@ -51,7 +51,7 @@ type Service consume {
 
 fn Service @file_id() -> Option[int] {
     match @file {                          // ← view-match
-        Some(f) => Some(f.fd),                  // f: view File — read-only
+        Some(f) => Some(f.fd),                  // f: view-bound, read-only (no consume keyword)
         None => None,
     }
     // @.file остаётся Live (не Consumed) ✅
@@ -125,7 +125,7 @@ fn store(t Transaction, cache mut Cache) {
 
 ## Связь
 
-- [D157](../../spec/decisions/05-memory.md#d157) — `view T` spec.
+- [D157](../../spec/decisions/05-memory.md#d157) — implicit view default + closure capture + match consume.
 - [D133](../../spec/decisions/02-types.md#d133) — type-level consume foundation.
 - [D131](../../spec/decisions/05-memory.md#d131) — affine consume D7
   read-only mode.
