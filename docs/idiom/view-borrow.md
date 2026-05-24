@@ -1,20 +1,33 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-# `view T` — read-only borrow без lifetime
+# View borrow — read-only access (implicit default)
 
 > Practical guide для [D157](../../spec/decisions/05-memory.md#d157)
-> view-borrow механизма (Plan 100.3). Scope-only borrow для consume-
-> типов; без Rust lifetime'ов.
+> implicit view default model (Plan 100.3, Ред. 2 2026-05-24). Scope-
+> only borrow для consume-типов; без Rust lifetime'ов; **без `view T`
+> keyword'а** — view это absence of `consume`/`mut` qualifier.
 
-## Когда писать `view T`
+## Mental model — 3 mode'а
 
-✅ **Использовать `view T` когда:**
-- Hellper-функция читает поля consume-value без consume.
+Везде где есть «binding source» (param / for / match / if-let / let-
+alias) единое правило:
+
+| Form | Mode | Что |
+|---|---|---|
+| **no qualifier** | view | read-only borrow |
+| `mut` | mut-view | + mut-методы |
+| `consume` | transfer | ownership |
+
+## Когда «view» (default — без qualifier'а)
+
+✅ **Default view mode когда:**
+- Helper-функция читает поля consume-value без consume.
 - Pattern-match'ишь `Option[ConsumeType]` без consume (deep peek).
 - Closure captures consume-var read-only (multi-invoke OK).
+- Alias-binding для inspection (`let alias = tx`).
 
-❌ **НЕ использовать `view T` когда:**
-- Функция владеет ресурсом → `consume t` param.
-- Метод mutates state → `mut @method` на consume-record.
+❌ **НЕ view (использовать `mut` или `consume`):**
+- Функция владеет ресурсом → `consume t Transaction` param.
+- Метод mutates state → `mut t Transaction` param.
 - Identity-функция возвращает то, что приняла → `consume t` + `return t`.
 
 ## Базовый pattern
@@ -70,47 +83,45 @@ commit_it()                                      // ❌ use-after-consume
 
 Compiler определяет автоматически по операциям в body.
 
-## Правила доступа через view
+## Правила доступа — 3 mode'а
 
-| Действие | `view T` | `consume t T` |
-|---|---|---|
-| `t.field` (read) | ✅ | ✅ |
-| `t.regular_method()` | ✅ | ✅ |
-| `t.@mut_method()` | ❌ E (D157-mut-via-view) | ✅ |
-| `t.@consume_method()` | ❌ E (D157-consume-via-view) | ✅ |
-| передача в `view`-param | ✅ | ✅ |
-| передача в `consume`-param | ❌ | ✅ (consume) |
-| store в поле | ❌ E (D157-view-escape-store) | ✅ |
-| return | ❌ E (D157-view-escape-return) | ✅ |
+| Действие | view (no qualifier) | `mut t` | `consume t` |
+|---|---|---|---|
+| `t.field` (read) | ✅ | ✅ | ✅ |
+| `t.regular_method()` | ✅ | ✅ | ✅ |
+| `t.mut_method()` | ❌ E (D133-mut-via-view) | ✅ | ✅ |
+| `t.consume_method()` | ❌ E (D133-consume-via-view) | ❌ | ✅ |
+| передача в view-param | ✅ | ✅ | ✅ |
+| передача в `consume`-param | ❌ | ❌ | ✅ |
+| store в поле | ❌ E (D133-view-escape-store) | ❌ | ✅ |
+| return (escape) | ❌ E (D133-view-escape-return) | ❌ | ✅ |
 
 ## Что нельзя делать
 
-❌ **Bind view к локальной переменной** (bootstrap-ограничение):
+❌ **Stop using `view T` keyword** — keyword отвергнут в Ред. 2.
+Default `tx Transaction` (без qualifier) уже view:
 ```nova
-let v = view tx                                 // ❌ scope-check сложно;
-                                                //    bootstrap не поддержано
+fn print_id(tx Transaction) { ... }             // ✅ view (default)
+fn print_id(tx view Transaction) { ... }        // ❌ no such keyword
 ```
 
-✅ **OK — view только в expression-position:**
-```nova
-print_id(tx)                               // ✅ в call expression
-match @file { ... }                        // ✅ в match expression
-```
-
-❌ **Return view наружу:**
+❌ **Return value из view-param-функции наружу:**
 ```nova
 fn id_view(t Transaction) -> Transaction {
-    return t                                    // ❌ escape — error D157
+    return t                                    // ❌ view не escape;
+                                                //    нужно (consume t Transaction)
 }
 ```
 
-❌ **Store view в record:**
+❌ **Store consume-value через view binding:**
 ```nova
-record Cache { v view Transaction }             // ❌ view не storable
+fn store(t Transaction, cache mut Cache) {
+    cache.last = t                              // ❌ view не storable
+}
 ```
 
-❌ **Mutable borrow (`mut view T`)** — не вводится; mut-методы D131 +
-field-aware flow D133 D5 покрывают.
+❌ **Mutable view alias-binding в bootstrap** — `let mut alias = tx`
+работает (D7), но scope-only — не может escape.
 
 ## Связь
 
