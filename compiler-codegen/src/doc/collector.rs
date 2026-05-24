@@ -533,7 +533,7 @@ fn collect_type(module_path: &[String], t: &TypeDecl) -> DocItem {
             // `collect_handlers` pass (workspace mode). Default empty.
             ItemKind::Effect { methods: sigs, axioms, handlers: Vec::new() }
         }
-        TypeDeclKind::Protocol(methods) => {
+        TypeDeclKind::Protocol { methods, .. } => {
             let sigs = methods
                 .iter()
                 .map(|m| ProtocolMethodSig {

@@ -1,0 +1,19 @@
+// Plan 101.4 — negative: циклическая композиция `A use B use A`.
+//
+// EXPECT_COMPILE_ERROR: [E_PROTOCOL_EMBED_CYCLE]
+
+module nova_tests.plan101_4.negative.compose_cycle_neg
+
+type Alpha protocol {
+    use Beta
+    a() -> int
+}
+
+type Beta protocol {
+    use Alpha
+    b() -> int
+}
+
+test "should error" {
+    assert(1 == 1)
+}

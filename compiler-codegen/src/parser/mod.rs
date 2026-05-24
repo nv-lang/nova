@@ -2404,7 +2404,11 @@ impl Parser {
             TokenKind::KwProtocol => {
                 self.bump();
                 self.expect(&TokenKind::LBrace)?;
-                let methods = self.parse_effect_methods()?;
+                // Plan 101.4 (D145 Ред. 5): protocol composition. Парсим
+                // `use TypeName` items (могут быть несколько, перед/после
+                // методов; для V1 — в любом месте тела). Остальное —
+                // обычные method-signatures.
+                let (methods, embeds) = self.parse_protocol_body()?;
                 // Plan 33.3 Ф.9 (refactor): protocol также может содержать
                 // axioms. Verification impl-handler'а отложена на V2
                 // (#verify_impl / #trusted_impl) — в V1 axioms в protocol
@@ -2412,7 +2416,7 @@ impl Parser {
                 // декларирует axiom). Symmetry с #trusted handler'ами.
                 effect_axioms = self.parse_effect_axioms()?;
                 self.expect(&TokenKind::RBrace)?;
-                TypeDeclKind::Protocol(methods)
+                TypeDeclKind::Protocol { methods, embeds }
             }
             TokenKind::KwAlias => {
                 self.bump();
@@ -2606,6 +2610,19 @@ impl Parser {
             if let TokenKind::Ident(n) = &self.peek().kind {
                 if n == "axiom" { break; }
             }
+            // Plan 101.4: `use` keyword внутри method-loop означает попытку
+            // объявить embed после метода (в protocol-теле) или невалидно
+            // в effect/handler контексте — в обоих случаях указываем на
+            // позиционное ограничение для protocol composition.
+            if matches!(self.peek().kind, TokenKind::KwUse) {
+                let sp = self.peek().span;
+                return Err(Diagnostic::new(
+                    "[E_PROTOCOL_EMBED_AFTER_METHOD] `use TypeName` items must \
+                     appear at the start of a protocol body, before any method \
+                     signatures. In effect bodies `use` is not allowed at all.",
+                    sp,
+                ));
+            }
             // Plan 33.3 Ф.9 (refactor): `#pure` атрибут перед operation.
             // Раньше использовался keyword `pure_view` — заменили на `#pure`
             // для consistency с другими `#`-атрибутами Nova.
@@ -2707,6 +2724,51 @@ impl Parser {
             self.skip_newlines();
         }
         Ok(methods)
+    }
+
+    /// Plan 101.4 (D145 Ред. 5): protocol composition. Парсит тело
+    /// `protocol { ... }`. Сначала собирает leading `use TypeName` items
+    /// (embed'ы другого protocol'а), затем стандартные method-signatures
+    /// через `parse_effect_methods`. `use`-items должны идти В НАЧАЛЕ
+    /// тела (перед методами и axiom'ами) — упрощает грамматику и читаемость.
+    /// Если `use` встречается ПОСЛЕ метода — diagnostic.
+    /// Distinguishing `use TypeName` от метода с именем `use`: после
+    /// `use` обязан идти Ident-тип, а не `(`. Если `use(` — это бы был
+    /// метод (нестандартно, и `use` зарезервирован под embed-кейс).
+    fn parse_protocol_body(
+        &mut self,
+    ) -> Result<(Vec<EffectMethod>, Vec<TypeRef>), Diagnostic> {
+        let mut embeds = Vec::new();
+        self.skip_newlines();
+        // Leading `use TypeName` items. `use` — keyword (TokenKind::KwUse).
+        // После `use` обязан идти Ident (имя типа). Distinguishing от
+        // top-level `use` импорта — здесь мы строго внутри `protocol { ... }`,
+        // поэтому семантика однозначна: embed-protocol.
+        loop {
+            if matches!(self.peek().kind, TokenKind::KwUse)
+                && matches!(self.peek_at(1).kind, TokenKind::Ident(_))
+            {
+                self.bump(); // consume `use`
+                let ty = self.parse_type()?;
+                embeds.push(ty);
+                self.skip_newlines();
+                continue;
+            }
+            break;
+        }
+        let methods = self.parse_effect_methods()?;
+        // Forbid `use` after methods — for clarity.
+        self.skip_newlines();
+        if matches!(self.peek().kind, TokenKind::KwUse) {
+            let sp = self.peek().span;
+            return Err(Diagnostic::new(
+                "[E_PROTOCOL_EMBED_AFTER_METHOD] `use TypeName` items must \
+                 appear at the start of a protocol body, before any method \
+                 signatures",
+                sp,
+            ));
+        }
+        Ok((methods, embeds))
     }
 
     /// Plan 33.3 Ф.9: `axiom <name>(binders) => <formula>` внутри effect-блока.

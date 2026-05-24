@@ -639,7 +639,21 @@ pub enum TypeDeclKind {
     /// Используется как:
     ///   - bound в generic params `[T Protocol]` (D72);
     ///   - тип значения (existential), `fn f(x Hashable) -> ...`.
-    Protocol(Vec<EffectMethod>),
+    ///
+    /// Plan 101.4 (D145 Ред. 5): protocol composition через `use P` items
+    /// в теле — `type ReadWriter protocol { use Reader  use Writer }`.
+    /// `embeds` — список TypeRef'ов (всегда Named-форм с указателем на
+    /// другой `TypeDeclKind::Protocol`). Type-checker flatten'ит embeds:
+    /// все методы embedded protocol'а считаются методами outer'а
+    /// (через `flatten_protocol_methods`). При duplicate signatures —
+    /// ошибка `[E_PROTOCOL_EMBED_DUPLICATE]`; при non-protocol target —
+    /// `[E_PROTOCOL_EMBED_NOT_PROTOCOL]`; при cycle — `[E_PROTOCOL_EMBED_CYCLE]`.
+    Protocol {
+        methods: Vec<EffectMethod>,
+        /// Embedded protocols (`use Reader`, `use Writer`). Empty для
+        /// плоских (не-composed) protocol'ов — backward-compat.
+        embeds: Vec<TypeRef>,
+    },
     /// `type NewType u64` — newtype (D52)
     Newtype(TypeRef),
     /// `type Name alias OtherType` (D52)

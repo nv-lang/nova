@@ -351,6 +351,13 @@ pub fn check_module(module: &Module) -> Result<ModuleEnv, Vec<Diagnostic>> {
     // method_table (РјРµС‚РѕРґС‹ РєР°Р¶РґРѕРіРѕ concrete-С‚РёРїР°). Р—Р°С‚РµРј С…РѕРґРёРј РїРѕ
     // РІСЃРµРј call-СЃР°Р№С‚Р°Рј РІ bodies, РґР»СЏ generic-РІС‹Р·РѕРІРѕРІ СЃ bounds
     // РїСЂРѕРІРµСЂСЏРµРј satisfaction concrete-Р°СЂРіСѓРјРµРЅС‚РѕРІ.
+    // Plan 101.4 (D145 Ред. 5): protocol-composition validation —
+    // embed target существует и есть protocol; нет cycle; нет duplicate
+    // signature collision при flatten'е. Запускается ДО BoundCtx::build
+    // чтобы errors на cycle не превращались в infinite recursion внутри
+    // flatten_dfs (хотя у flatten_dfs есть `seen`-guard — safety belt).
+    check_protocol_embeds(module, &mut errors);
+
     let bound_ctx = BoundCtx::build(module);
     bound_ctx.check_module(module, &mut errors);
 
@@ -912,7 +919,7 @@ impl<'a> TypeCheckCtx<'a> {
                     }
                 }
             }
-            TypeDeclKind::Effect(methods) | TypeDeclKind::Protocol(methods) => {
+            TypeDeclKind::Effect(methods) => {
                 for m in methods {
                     let mut ms = gs.clone();
                     for g in &m.generics {
@@ -927,6 +934,27 @@ impl<'a> TypeCheckCtx<'a> {
                     for e in &m.effects {
                         self.walk_typeref(e, &ms, errors);
                     }
+                }
+            }
+            TypeDeclKind::Protocol { methods, embeds } => {
+                for m in methods {
+                    let mut ms = gs.clone();
+                    for g in &m.generics {
+                        ms.insert(g.name.clone());
+                    }
+                    for p in &m.params {
+                        self.walk_typeref(&p.ty, &ms, errors);
+                    }
+                    if let Some(rt) = &m.return_type {
+                        self.walk_typeref(rt, &ms, errors);
+                    }
+                    for e in &m.effects {
+                        self.walk_typeref(e, &ms, errors);
+                    }
+                }
+                // Plan 101.4: validate embedded protocol type references.
+                for e in embeds {
+                    self.walk_typeref(e, &gs, errors);
                 }
             }
             TypeDeclKind::Newtype(tr) => self.walk_typeref(tr, &gs, errors),
@@ -2246,7 +2274,7 @@ impl<'a> TypeCheckCtx<'a> {
                             // (забота D72 bound-checker'а), opaque —
                             // непрозрачен: любой concrete-тип потенциально
                             // совместим → permissive.
-                            TypeDeclKind::Protocol(_)
+                            TypeDeclKind::Protocol { .. }
                             | TypeDeclKind::Effect(_)
                             | TypeDeclKind::Opaque => TyCat::Other,
                         },
@@ -2438,6 +2466,206 @@ fn arity_diag(name: &str, info: &ArityInfo, actual: usize, span: Span) -> Diagno
     }
 }
 
+/// Plan 101.4 (D145 Ред. 5): protocol composition validation.
+///
+/// Проверяет три инварианта на `type X protocol { use Y  use Z  ... }`:
+///   1. **E_PROTOCOL_EMBED_NOT_PROTOCOL** — target типа `use TypeName`
+///      объявлен, но это НЕ `TypeDeclKind::Protocol` (effect/record/sum/
+///      alias/newtype). Embed работает только между protocol'ами.
+///   2. **E_PROTOCOL_EMBED_UNKNOWN** — target не объявлен ни как protocol,
+///      ни как любой другой тип (typo / forgotten import).
+///   3. **E_PROTOCOL_EMBED_CYCLE** — `A use B use C use A` — циклическая
+///      композиция. Detect через DFS.
+///   4. **E_PROTOCOL_EMBED_DUPLICATE** — после flatten'а ≥2 метода с
+///      одинаковым (name, arity) сигнатурой пришли из разных embed-путей
+///      (или direct + embedded). Разрешено если строго совпадают; иначе
+///      ambiguity, должна быть resolved direct-override'ом (V1 — error;
+///      override-механизм — V2/D145 Ред. 6).
+fn check_protocol_embeds(module: &Module, errors: &mut Vec<Diagnostic>) {
+    use std::collections::{HashMap, HashSet};
+    // Collect protocol declarations + map of all type names → kind hint.
+    let mut proto_map: HashMap<String, (&Vec<EffectMethod>, &Vec<TypeRef>, Span)> = HashMap::new();
+    let mut type_kinds: HashMap<String, &'static str> = HashMap::new();
+    for item in &module.items {
+        if let Item::Type(t) = item {
+            let kind_name = match &t.kind {
+                TypeDeclKind::Protocol { .. } => "protocol",
+                TypeDeclKind::Effect(_) => "effect",
+                TypeDeclKind::Record(_) => "record",
+                TypeDeclKind::Sum(_) => "sum",
+                TypeDeclKind::Alias(_) => "alias",
+                TypeDeclKind::Newtype(_) => "newtype",
+                TypeDeclKind::Opaque => "opaque",
+            };
+            type_kinds.insert(t.name.clone(), kind_name);
+            if let TypeDeclKind::Protocol { methods, embeds } = &t.kind {
+                proto_map.insert(t.name.clone(), (methods, embeds, t.span));
+            }
+        }
+    }
+    // 1+2: validate each embed reference.
+    for (proto_name, (_methods, embeds, _span)) in &proto_map {
+        for emb in embeds.iter() {
+            let TypeRef::Named { path, span: emb_span, .. } = emb else {
+                errors.push(Diagnostic::new(
+                    format!(
+                        "[E_PROTOCOL_EMBED_NOT_NAMED] `use` in protocol `{}` body \
+                         requires a named protocol type (e.g. `use Reader`); \
+                         complex type expressions are not allowed here",
+                        proto_name
+                    ),
+                    emb.span(),
+                ));
+                continue;
+            };
+            let Some(emb_name) = path.last() else { continue };
+            // Self-embed `use Self` или `use <SelfName>` — circular trivially.
+            if emb_name == proto_name {
+                errors.push(Diagnostic::new(
+                    format!(
+                        "[E_PROTOCOL_EMBED_CYCLE] protocol `{}` cannot embed itself \
+                         (`use {}`)",
+                        proto_name, emb_name
+                    ),
+                    *emb_span,
+                ));
+                continue;
+            }
+            match type_kinds.get(emb_name) {
+                None => {
+                    errors.push(Diagnostic::new(
+                        format!(
+                            "[E_PROTOCOL_EMBED_UNKNOWN] unknown type `{}` in \
+                             `use {}` (protocol `{}` body) — type not declared \
+                             in module or via import",
+                            emb_name, emb_name, proto_name
+                        ),
+                        *emb_span,
+                    ));
+                }
+                Some(&"protocol") => { /* OK */ }
+                Some(other) => {
+                    errors.push(Diagnostic::new(
+                        format!(
+                            "[E_PROTOCOL_EMBED_NOT_PROTOCOL] `use {}` in protocol \
+                             `{}` body — `{}` is a {}, not a protocol. Protocol \
+                             composition (D145 Ред. 5) requires `use <Protocol>`",
+                            emb_name, proto_name, emb_name, other
+                        ),
+                        *emb_span,
+                    ));
+                }
+            }
+        }
+    }
+    // 3: cycle detection via DFS coloring (white/gray/black).
+    #[derive(Clone, Copy, PartialEq)]
+    enum Color { White, Gray, Black }
+    let mut color: HashMap<String, Color> = proto_map.keys()
+        .map(|n| (n.clone(), Color::White)).collect();
+    fn dfs_cycle(
+        node: &str,
+        proto_map: &HashMap<String, (&Vec<EffectMethod>, &Vec<TypeRef>, Span)>,
+        color: &mut HashMap<String, Color>,
+        path: &mut Vec<String>,
+        errors: &mut Vec<Diagnostic>,
+    ) {
+        let cur = *color.get(node).unwrap_or(&Color::White);
+        if cur == Color::Black { return; }
+        if cur == Color::Gray {
+            // Cycle: path contains `node` earlier.
+            let cycle_start = path.iter().position(|n| n == node).unwrap_or(0);
+            let cycle_names: Vec<String> = path[cycle_start..].to_vec();
+            let cycle_str = format!("{} → {}", cycle_names.join(" → "), node);
+            // Use embed-span of first protocol in cycle if available.
+            let span = proto_map.get(&cycle_names[0])
+                .map(|(_, _, s)| *s).unwrap_or_default();
+            errors.push(Diagnostic::new(
+                format!(
+                    "[E_PROTOCOL_EMBED_CYCLE] cyclic protocol composition: {}",
+                    cycle_str
+                ),
+                span,
+            ));
+            return;
+        }
+        color.insert(node.to_string(), Color::Gray);
+        path.push(node.to_string());
+        if let Some((_, embeds, _)) = proto_map.get(node) {
+            for emb in embeds.iter() {
+                if let TypeRef::Named { path: p, .. } = emb {
+                    if let Some(n) = p.last() {
+                        if proto_map.contains_key(n) {
+                            dfs_cycle(n, proto_map, color, path, errors);
+                        }
+                    }
+                }
+            }
+        }
+        path.pop();
+        color.insert(node.to_string(), Color::Black);
+    }
+    // Iterate sorted for deterministic diagnostic order.
+    let mut names: Vec<String> = proto_map.keys().cloned().collect();
+    names.sort();
+    for name in &names {
+        if *color.get(name).unwrap_or(&Color::White) == Color::White {
+            let mut path = Vec::new();
+            dfs_cycle(name, &proto_map, &mut color, &mut path, errors);
+        }
+    }
+    // 4: duplicate-method detection after flatten.
+    // Flatten без cycle (cycle уже reported) — guard через max-depth.
+    fn flatten_with_origin(
+        name: &str,
+        proto_map: &HashMap<String, (&Vec<EffectMethod>, &Vec<TypeRef>, Span)>,
+        seen: &mut HashSet<String>,
+        out: &mut Vec<(String, String, usize)>, // (origin_proto, method_name, arity)
+        origin: &str,
+    ) {
+        if !seen.insert(name.to_string()) { return; }
+        let Some((methods, embeds, _)) = proto_map.get(name) else { return; };
+        for m in methods.iter() {
+            out.push((origin.to_string(), m.name.clone(), m.params.len()));
+        }
+        for emb in embeds.iter() {
+            if let TypeRef::Named { path: p, .. } = emb {
+                if let Some(n) = p.last() {
+                    flatten_with_origin(n, proto_map, seen, out, n);
+                }
+            }
+        }
+    }
+    for (proto_name, (_, _, span)) in &proto_map {
+        let mut entries = Vec::new();
+        let mut seen = HashSet::new();
+        flatten_with_origin(proto_name, &proto_map, &mut seen, &mut entries, proto_name);
+        // Group by (name, arity). >1 distinct origins → duplicate.
+        let mut sig_origins: HashMap<(String, usize), Vec<String>> = HashMap::new();
+        for (orig, mname, arity) in entries {
+            sig_origins.entry((mname, arity)).or_default().push(orig);
+        }
+        for ((mname, arity), origins) in sig_origins {
+            // Уникальные источники (один и тот же origin >1 раз не считается).
+            let unique: HashSet<String> = origins.iter().cloned().collect();
+            if unique.len() > 1 {
+                let mut sources: Vec<String> = unique.into_iter().collect();
+                sources.sort();
+                errors.push(Diagnostic::new(
+                    format!(
+                        "[E_PROTOCOL_EMBED_DUPLICATE] method `{}/{}` in protocol \
+                         `{}` is provided by multiple embedded protocols: {}. \
+                         Protocol composition (D145 Ред. 5) does not yet support \
+                         override; remove one embed or define the method directly.",
+                        mname, arity, proto_name, sources.join(", ")
+                    ),
+                    *span,
+                ));
+            }
+        }
+    }
+}
+
 /// Plan 15 (D72): registry РґР»СЏ bound enforcement.
 ///
 /// `protocol_specs`: РґР»СЏ РєР°Р¶РґРѕРіРѕ `type Foo protocol { ... }` вЂ” СЃРїРёСЃРѕРє
@@ -2451,7 +2679,12 @@ fn arity_diag(name: &str, info: &ArityInfo, actual: usize, span: Span) -> Diagno
 struct BoundCtx<'a> {
     /// Plan 15 D53 strict: С‚РѕР»СЊРєРѕ protocol-kind С‚РёРїРѕРІ. Effect-kind
     /// СЃСЋРґР° РЅРµ РїРѕРїР°РґР°РµС‚ вЂ” effects РЅРµ СЂР°Р·СЂРµС€РµРЅС‹ РєР°Рє D72 bounds.
-    protocol_specs: HashMap<String, &'a [EffectMethod]>,
+    ///
+    /// Plan 101.4 (D145 Ред. 5): значение — **flattened** список методов:
+    /// direct + recursive embedded protocol methods. Поэтому owned `Vec`,
+    /// а не borrow в AST (синтетическая копия после embed-expansion).
+    /// Flatten построен в `BoundCtx::build` через DFS с cycle-protection.
+    protocol_specs: HashMap<String, Vec<EffectMethod>>,
     /// Plan 15 D53 strict: effect-kind С‚РёРїС‹. РСЃРїРѕР»СЊР·СѓРµС‚СЃСЏ РґР»СЏ
     /// РґРёС„С„РµСЂРµРЅС†РёРёСЂРѕРІР°РЅРЅРѕРіРѕ error-СЃРѕРѕР±С‰РµРЅРёСЏ, РµСЃР»Рё РёС… РїС‹С‚Р°СЋС‚СЃСЏ
     /// РёСЃРїРѕР»СЊР·РѕРІР°С‚СЊ РєР°Рє bound (В«`Db` is an effect, not a protocolВ»).
@@ -2471,7 +2704,9 @@ struct BoundCtx<'a> {
 
 impl<'a> BoundCtx<'a> {
     fn build(module: &'a Module) -> Self {
-        let mut protocol_specs = HashMap::new();
+        // Plan 101.4: direct = name → (own methods, embed-typerefs).
+        // Используется для flatten DFS ниже.
+        let mut direct: HashMap<String, (Vec<EffectMethod>, Vec<TypeRef>)> = HashMap::new();
         let mut fn_decls: HashMap<String, Vec<&FnDecl>> = HashMap::new();
         let mut method_table: HashMap<String, HashMap<String, Vec<&FnDecl>>> = HashMap::new();
         let mut sum_variant_names: std::collections::HashSet<String> = std::collections::HashSet::new();
@@ -2484,8 +2719,11 @@ impl<'a> BoundCtx<'a> {
                     // bound (D72); effect-kind в†’ РѕС‚РґРµР»СЊРЅС‹Р№ registry РґР»СЏ
                     // РґРёР°РіРЅРѕСЃС‚РёРєРё В«used as bound but it's an effectВ».
                     match &t.kind {
-                        TypeDeclKind::Protocol(methods) => {
-                            protocol_specs.insert(t.name.clone(), methods.as_slice());
+                        TypeDeclKind::Protocol { methods, embeds } => {
+                            direct.insert(
+                                t.name.clone(),
+                                (methods.clone(), embeds.clone()),
+                            );
                         }
                         TypeDeclKind::Effect(_) => {
                             effect_decls.insert(t.name.clone(), t);
@@ -2514,6 +2752,41 @@ impl<'a> BoundCtx<'a> {
                 }
                 _ => {}
             }
+        }
+
+        // Plan 101.4 flatten: для каждого protocol'а собираем полный
+        // список методов = direct ∪ recursively-embedded. Cycle-protection
+        // через `seen` — если протокол повторно встречается в DFS, его
+        // методы НЕ добавляются повторно (silent skip; error diagnostic —
+        // в `check_protocol_embeds` отдельно). Duplicate-method конфликты
+        // тоже только в check_protocol_embeds; здесь — bag-union.
+        fn flatten_dfs(
+            name: &str,
+            direct: &HashMap<String, (Vec<EffectMethod>, Vec<TypeRef>)>,
+            seen: &mut std::collections::HashSet<String>,
+            out: &mut Vec<EffectMethod>,
+        ) {
+            if !seen.insert(name.to_string()) {
+                return;
+            }
+            let Some((methods, embeds)) = direct.get(name) else { return; };
+            for m in methods {
+                out.push(m.clone());
+            }
+            for e in embeds {
+                if let TypeRef::Named { path, .. } = e {
+                    if let Some(emb_name) = path.last() {
+                        flatten_dfs(emb_name, direct, seen, out);
+                    }
+                }
+            }
+        }
+        let mut protocol_specs: HashMap<String, Vec<EffectMethod>> = HashMap::new();
+        for name in direct.keys() {
+            let mut out = Vec::new();
+            let mut seen = std::collections::HashSet::new();
+            flatten_dfs(name, &direct, &mut seen, &mut out);
+            protocol_specs.insert(name.clone(), out);
         }
 
         BoundCtx { protocol_specs, effect_decls, fn_decls, method_table, sum_variant_names }
@@ -2860,7 +3133,7 @@ impl<'a> BoundCtx<'a> {
             return;
         };
         // Static-method-impl rejection (Ф.4.3).
-        for spec_m in *spec_methods {
+        for spec_m in spec_methods.iter() {
             if spec_m.is_static {
                 // Если literal реализует static-метод (по имени), diagnostic.
                 if methods.iter().any(|im| im.name == spec_m.name) {
@@ -2878,7 +3151,7 @@ impl<'a> BoundCtx<'a> {
         }
         // Structural-match: каждый instance-метод протокола должен быть реализован.
         let mut missing: Vec<String> = Vec::new();
-        for spec_m in *spec_methods {
+        for spec_m in spec_methods.iter() {
             if spec_m.is_static {
                 continue;
             }
@@ -3540,7 +3813,7 @@ impl<'a> BoundCtx<'a> {
         // Plan 97 Ф.2: shared satisfaction-логика с anon-вариантом.
         self.check_satisfaction_against_methods(
             concrete,
-            *spec_methods,
+            spec_methods.as_slice(),
             Some(&bound_name),
             type_param_name,
             fn_name,
@@ -5838,7 +6111,8 @@ fn check_effect_axioms(module: &Module, errors: &mut Vec<Diagnostic>) {
         // РїСЂРёРјРµРЅСЏСЋС‚СЃСЏ Рё Рє effect, Рё Рє protocol (РІ РѕР±РѕРёС… РјРѕР¶РЅРѕ РѕР±СЉСЏРІР»СЏС‚СЊ
         // #pure ops Рё axioms).
         let methods = match &td.kind {
-            TypeDeclKind::Effect(m) | TypeDeclKind::Protocol(m) => m,
+            TypeDeclKind::Effect(m) => m,
+            TypeDeclKind::Protocol { methods, .. } => methods,
             _ => continue,
         };
 

@@ -20631,3 +20631,91 @@ Marker [M-fn-prefix-int-only-mono]: PARTIAL CLOSURE.
 - Bare-T receivers ✅ работают.
 - T≠U with default-int T — единственная оставшаяся edge case.
 
+
+========================================================================
+2026-05-24 — PLAN 101 Group D: Plan 101.4 protocol composition (use)
+========================================================================
+
+ВЕТКА: plan-101v4 (worktree nova-p101)
+
+Цель: реализовать `type ReadWriter protocol { use Reader  use Writer }`
+композицию из D145 Ред. 5. Type satisfies ReadWriter ⇔ satisfies каждый
+embedded protocol. Никаких runtime-vtable изменений (protocol'ы — compile-
+time-only), только AST + type-check.
+
+DECOMPOSITION (atomic, per user feedback "декомпозируй задачи"):
+
+D1a — AST refactor: TypeDeclKind::Protocol(Vec<EffectMethod>) →
+      Protocol { methods: Vec<EffectMethod>, embeds: Vec<TypeRef> }.
+      11 use-sites обновлены (codegen/emit_c, lints, parser, doc/collector,
+      types/mod). Named-field вариант, для не-composed protocol'ов
+      embeds=[] — backward-compat.
+
+D1b — Parser: parse_protocol_body() обёртка вокруг parse_effect_methods,
+      собирает leading `use TypeName` items (KwUse — keyword, не Ident).
+      Запрещает interleaving (use после метода = E_PROTOCOL_EMBED_AFTER_METHOD,
+      генерируется в самом parse_effect_methods если встречает KwUse).
+
+D2 — Type-check flatten + 4 диагностики:
+     - BoundCtx::build flatten'ит embedded protocol methods через DFS
+       с seen-guard (cycle protection). protocol_specs стал owned
+       Vec<EffectMethod> (вместо &'a [EffectMethod]).
+     - check_protocol_embeds(module) — отдельный pass:
+       * E_PROTOCOL_EMBED_UNKNOWN — embed target не объявлен.
+       * E_PROTOCOL_EMBED_NOT_PROTOCOL — target есть, но record/sum/
+         alias/newtype/effect/opaque.
+       * E_PROTOCOL_EMBED_CYCLE — DFS coloring (white/gray/black) + self-embed.
+       * E_PROTOCOL_EMBED_DUPLICATE — flatten приносит метод (name,arity)
+         из >1 distinct origins. Override-механизм отложен (V2/D145 Ред. 6).
+       * E_PROTOCOL_EMBED_NOT_NAMED — `use <complex type>` запрещено,
+         только Named.
+     - check_protocol_embeds вызывается ДО BoundCtx::build, чтобы errors
+       были видны даже если flatten собирался бы выполнить рекурсию
+       (хотя у flatten_dfs тоже seen-guard).
+
+D3 — 10 тестов плана 101_4:
+     POSITIVE (4):
+     - compose_basic.nv — Reader + Writer → ReadWriter, MyFile satisfies.
+     - compose_transitive.nv — Closeable use Reader; CloseableReader use
+       Closeable. Handle satisfies через цепочку.
+     - compose_mix_direct.nv — ReadCloseLogger = Reader + Closeable +
+       собственный log(). Device satisfies all three sources.
+     - compose_independent_concretes.nv — два concrete-типа (IntBox, Tag)
+       проходят один composed-bound (HashSize = Hashable_ + Sized_).
+
+     NEGATIVE (6):
+     - compose_cycle_neg — Alpha use Beta use Alpha → E_PROTOCOL_EMBED_CYCLE.
+     - compose_self_embed_neg — SelfRef use SelfRef → E_PROTOCOL_EMBED_CYCLE.
+     - compose_not_protocol_neg — use Record → E_PROTOCOL_EMBED_NOT_PROTOCOL.
+     - compose_unknown_neg — use NonExistentType → E_PROTOCOL_EMBED_UNKNOWN.
+     - compose_duplicate_neg — ProtoA::same + ProtoB::same → E_PROTOCOL_EMBED_DUPLICATE.
+     - compose_use_after_method_neg — `m() -> int  use SomeProto` →
+       E_PROTOCOL_EMBED_AFTER_METHOD.
+
+     Все 10 PASS.
+
+REGRESSION (full nova test после D):
+- 1158 PASS / 14 FAIL / 56 SKIP.
+- 14 fails = 13 pre-existing concurrency timeouts/run-fails (M:N runtime
+  flake на Windows, unrelated) + 1 plan101_1/vec_map_int_str (known
+  T≠U edge case, see Plan 101.1 entry above).
+- Group D НЕ ввела ни одной новой failure'ы — refactor чистый.
+
+Файлы:
+- compiler-codegen/src/ast/mod.rs (TypeDeclKind::Protocol struct change)
+- compiler-codegen/src/parser/mod.rs (parse_protocol_body + KwUse guard
+  в parse_effect_methods)
+- compiler-codegen/src/types/mod.rs (BoundCtx flatten + check_protocol_embeds)
+- compiler-codegen/src/codegen/emit_c.rs (Protocol pattern updates ×3)
+- compiler-codegen/src/lints.rs (Protocol pattern updates ×2)
+- compiler-codegen/src/doc/collector.rs (Protocol pattern update)
+- nova_tests/plan101_4/{compose_basic,compose_transitive,compose_mix_direct,
+  compose_independent_concretes}.nv
+- nova_tests/plan101_4/negative/{compose_cycle,compose_self_embed,
+  compose_not_protocol,compose_unknown,compose_duplicate,
+  compose_use_after_method}_neg.nv
+
+NEXT: Group E — Plan 101.3 multi-bound `[T A + B]`. AST refactor
+GenericParam.bound Option<TypeRef> → bounds Vec<TypeRef>. После — закрыть
+Plan 101 (101.5: stdlib audit, LSP quick-fixes, merge в main).
+

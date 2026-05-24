@@ -11502,6 +11502,19 @@ Plan 83.2 §4 «Compiled-программа без единого `runtime.*` в
 
 ## [M-receiver-generic-incompleteness] Plan 101 — `fn[T]` prefix + bounds + protocol composition (2026-05-24, partial)
 
+> **PROGRESS update 2026-05-24 ред. 5 (Group D done — protocol composition):**
+> **101.4 (protocol composition `use TypeName`) ✅ ЗАКРЫТ** —
+> AST extend (TypeDeclKind::Protocol { methods, embeds }), parser
+> parse_protocol_body, type-check flatten DFS + 4 diagnostic codes
+> (E_PROTOCOL_EMBED_{UNKNOWN, NOT_PROTOCOL, CYCLE, DUPLICATE,
+> AFTER_METHOD, NOT_NAMED}). 10/10 plan101_4 tests PASS.
+> Regression: 1158/14 (14 fails = 13 pre-existing concurrency
+> flake + 1 vec_map_int_str known edge). Группа не ввела ни одной
+> новой failure'ы.
+>
+> Остаётся: 101.2 (bound integration smoke), 101.3 (multi-bound A+B),
+> 101.5 (stdlib audit + close + merge), + vec_map_int_str fix.
+>
 > **PROGRESS update 2026-05-24 ред. 4 (implementation session):**
 > Plan 101.1 partial реализован: parser `fn[T] ReceiverType @method`
 > работает + vec.nv migrated (7 методов, int-only). Codegen mono per-T
