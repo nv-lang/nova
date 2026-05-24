@@ -11836,3 +11836,88 @@ Plan 83.2 §4 «Compiled-программа без единого `runtime.*` в
 - **Приоритет:** P3 — warning-only, no functional impact на
   current tests; cleanup issue. Production deployment Linux может
   накапливать leak.
+
+### [M-83-audit-2026-05-24] Plan 83 full re-analysis — gap inventory + decomposition (2026-05-24)
+
+- **Где:** `docs/plans/83-audit-2026-05-24.md` + sub-plans
+  `83.5`–`83.13`.
+
+- **Что:** Полный переанализ Plan 83 с чистого листа после `/loop`
+  завершения 83.4.5.6/7/8/9/10. Делегировано двум агентам — internal
+  code-аудит (1328 LOC runtime.c + 1942 LOC fibers.h + связанные)
+  + external comparison (Go proc.go, Tokio runtime docs, Kotlin
+  coroutines, Node Worker, Boehm scale.html). Найдено 9 production
+  gaps, декомпозировано на 9 новых планов:
+
+  | # | Файл | Приоритет | Effort | Что закрывает |
+  |---|------|-----------|--------|---------------|
+  | 83.5 | boehm-thread-local-alloc | P0 | 1d | Single biggest perf win (2-5× spawn) |
+  | 83.6 | spawn-ctx-pool | P0 | 1-2d | Go P-mcache аналог |
+  | 83.7 | runnext-lifo-slot | P1 | 0.5d | Handler-chain cache-warmth |
+  | 83.8 | direct-wake | P1 | 1w | eventfd/SetEvent <1µs wake |
+  | 83.9 | stress-armed-production | P0 | 2d | Real armed stress (10⁶/10⁵/10⁴) |
+  | 83.10 | negative-concurrency-tests | P0 | 2d | 149 tests → 1 negative gap |
+  | 83.11 | deadline-effect | P2 | 3d | Differentiator: compile-time deadline |
+  | 83.12 | async-net-stdlib | P0 | 1w | Production blocker: TCP/UDP |
+  | 83.13 | precise-gc-roadmap | P3 research | 2-3d | Long-horizon Boehm replacement |
+
+- **Почему упущено:**
+  - **Boehm THREAD_LOCAL_ALLOC** — Plan 27 / 44.2 focus был correctness
+    (GC roots, fiber arena, STW). Performance Boehm build-chain не
+    investigated. Plan 83.4.5.10 §2 правильно identified Boehm GC lock
+    как primary bottleneck, но fix proposed только через Nova-level pool
+    (Ф.1), не через Boehm own thread-local alloc — cheaper и
+    orthogonal win.
+  - **Stress тесты cooperative** — Plan 83.4.5.6 partial closure
+    (perf acceptance НЕ MET). Перевод stress в `NOVA_AUTOARM=0` был
+    workaround для overhead — закрыт когда 83.5+83.6 закроют overhead.
+  - **Negative tests gap** — concurrency directory исторически рос на
+    positive functionality validation. EXPECT_PANIC / EXPECT_RUNTIME_ERROR
+    coverage не systematic.
+  - **Async net stdlib** — Plan 18 P0 stated "unblocked" в Plan 42.12
+    closure notes, но actual implementation deferred. Backend язык без
+    TCP — hypothetical, не production.
+  - **runnext slot / direct wake** — known Go/Tokio patterns, не
+    surfaced потому что correctness work poглощал внимание.
+
+- **Сравнение с Go/Tokio/Kotlin/Node (highlights):**
+
+  | Axis | Nova rank | Notes |
+  |------|-----------|-------|
+  | Spawn cost | 5/5 ❌ | 100-1000× slower than Go |
+  | Allocator | 5/5 ❌ | Boehm global lock (fix: 83.5) |
+  | Wake latency | 4/5 ⚠ | uv_async_send 5-20µs (fix: 83.8) |
+  | Cancel typing | 1/5 ✅ | typed `CancelToken[T]` лучше всех |
+  | Blocking effect | 1/5 ✅ | compile-time enforcement лучше всех |
+  | Structured conc | 1/5 ✅ | first-class `supervised{}` |
+  | Effect-aware | 1/5 ✅✅ | unique — никого больше |
+  | Verified contracts | 1/5 ✅✅ | unique — Plan 33 SMT |
+
+- **Production-readiness statement:**
+  - **Correctness:** ✅ landed (D138 ACTIVE, supervised + cancel + handlers
+    work correctly).
+  - **Performance:** 🟡 baseline established (≥1× MET через inline
+    threshold); production target ≥3× requires 83.5+83.6.
+  - **Stress validation:** ❌ gap — cooperative-only (fix: 83.9).
+  - **Negative coverage:** ❌ gap — 1/149 tests (fix: 83.10).
+  - **Production blocker:** async net/socket stdlib (fix: 83.12).
+
+- **Recommended order:**
+  1. 83.5 (cheap, unblocks 83.9 stress)
+  2. 83.6 (orthogonal к 83.5, both compound)
+  3. 83.9 (real stress validation после 83.5+83.6 close overhead)
+  4. 83.10 (parallel — independent)
+  5. 83.12 (production blocker, independent)
+  6. 83.7, 83.8 (incremental perf)
+  7. 83.11 (differentiator)
+  8. 83.13 (research only, async)
+
+- **Re-analysis source:** этот entry создан после "перепроверь с
+  чистого листа все ли сделано по плану 83* без упрощений (как для прода)?"
+  task. Документ для будущих re-analysis agents — детальные tests +
+  acceptance + дизайн в sub-plan files.
+
+- **Last commit:** TBD (commit после write этого entry).
+
+- **Приоритет:** P0 для 83.5/6/9/10/12; P1 для 83.7/8; P2 для 83.11;
+  P3 research для 83.13.
