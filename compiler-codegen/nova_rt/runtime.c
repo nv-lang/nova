@@ -1239,6 +1239,26 @@ void nova_runtime_orphan_scope_init(void) {
     _orphan_scope_ensure_init();
 }
 
+/* Plan 83.4.5.10 Ф.3 (2026-05-24): cached inline-threshold для parallel-for.
+ * Race-tolerant lazy init — multiple threads converge к одному значению;
+ * intermediate -1 → один extra getenv (harmless). После warm-up — lock-free
+ * read одной memory location. */
+long nova_runtime_parallel_inline_threshold(void) {
+    static long _cached_threshold = -1;
+    long v = _cached_threshold;
+    if (v >= 0) return v;
+    const char* env = getenv("NOVA_PARALLEL_INLINE_THRESHOLD");
+    if (env && env[0] != '\0') {
+        char* end = NULL;
+        long parsed = strtol(env, &end, 10);
+        v = (end != env && parsed >= 0) ? parsed : 32;
+    } else {
+        v = 32;  /* default: ~16-32 worker overhead × default 16-32 short iters */
+    }
+    _cached_threshold = v;
+    return v;
+}
+
 /* Plan 83.4.5.8 (2026-05-24): public pointer на orphan scope.
  * Returns NULL если scope ещё не initialized. Используется codegen
  * emit_detach под armed: set ctx->_nova_parent_scope =
