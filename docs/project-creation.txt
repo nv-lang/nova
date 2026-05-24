@@ -20484,3 +20484,93 @@ acceptance NOT yet met:**
 Plan 83 status: Default-on M:N runtime ACTIVE (Plan 83.4.5.8).
 Infrastructure for production-readiness sign-off landed. Performance
 acceptance + Linux TSAN execution — followup work.
+
+═══════════════════════════════════════════════════════════════════════
+Plan 101.1 Ф.0-Ф.1 — `fn[T]` prefix parser (started 2026-05-24)
+worktree d:/Sources/nv-lang/nova-p101 / ветка plan-101
+═══════════════════════════════════════════════════════════════════════
+
+Autonomous session начало execution Plan 101. Реалистичный scope для
+одной сессии: Ф.0 (audit + probes) + Ф.1 (parser change). Ф.2-Ф.6 +
+sub-plans 101.2-5 — multi-session работа (>10 hours compiler-internals).
+
+ВЫПОЛНЕНО:
+
+Ф.0 — GATE audit:
+- Audit: pattern `fn []T @method` найден только в std/collections/vec.nv
+  (7 методов: map[U], filter, fold[Acc], any, all, first, last).
+- Pattern `fn T @method` (bare) и `fn (T, U) @method` (tuple) — нет
+  use sites.
+- Probe фикстуры в nova_tests/plan101_1/probe/: audit.md + 4 .nv probes.
+
+Ф.1 — Parser grammar extension:
+- compiler-codegen/src/parser/mod.rs `parse_fn` — detection `fn[T]` prefix
+  (LBracket + identifier ≠ RBracket).
+- Префикс-generics парсятся через `parse_generic_decl_params()` (D72
+  reuse — bound syntax automatically supported).
+- Prepend в FnDecl.generics (declared first lexically).
+- Existing `fn []T` (slice-receiver D38) detection не сломан:
+  `[` + `]` (empty) trigger'ит старый path.
+
+vec.nv migration (preview Ф.4):
+- 7 методов переписаны `fn []T @method` → `fn[T] []T @method`.
+- Type-check PASS.
+- Codegen всё ещё CC-FAIL — но НЕ из-за parser, из-за pre-existing
+  `E_SIZE_ACCESSOR_FIELD` (Plan 60 / D117 — `@len` deprecated;
+  отдельный fix не относится к Plan 101).
+
+Regression (parser change non-breaking):
+- nova_tests/basics: 8/0
+- nova_tests/plan99: 8/0
+- nova_tests/plan95: 6/0
+- nova_tests/plan98: 5/0
+
+Baseline (pre-Plan 101): 1131 PASS / 13 FAIL / 56 SKIP. 13 FAIL —
+pre-existing concurrency TIMEOUTs из Plan 83.4.5.9 M:N flip
+activation, не Plan 101.
+
+НЕ ВЫПОЛНЕНО (требует multi-session):
+
+Ф.2 — Type-checker disambiguation (4 error codes):
+- E_BARE_TYPEVAR_NEEDS_PREFIX
+- E_PREFIX_SHADOWS_NAMED_TYPE
+- E_DUPLICATE_GENERIC_DECL
+- E_UNDECLARED_TYPEVAR_IN_RECEIVER
+- Нужны loud errors с suggestions для каждого. Требует понимания
+  type-checker architecture, scope-resolution rules, error-emission.
+- ~2-4 hours focused работы.
+
+Ф.3 — Codegen dispatch для `fn[T]` methods:
+- emit_c.rs: новый code path для array-T mono dispatch (mono per T).
+- Mono-name generation `Nova___Array____<T>_method_<m>____<U>`.
+- Receiver-c-type resolution для `[]T` где T — fn-prefix-generic.
+- Registration в worklist, body emission с substituted T.
+- ~4-6 hours focused работы (самая сложная фаза).
+
+Ф.4 — vec.nv migration codegen verification:
+- vec.nv должен компилироваться → exe. Требует:
+  - Ф.3 codegen ✓
+  - Pre-existing fix `@len` → `@len()` (или amend Plan 60 на `@field`-access).
+
+Ф.5 — Tests (12 pos + 8 neg):
+- Positive: array_map_int_int, array_map_int_str, array_filter,
+  array_fold_*, array_any_all, array_first_last_option, array_chained,
+  array_record_element, array_nested, bare_t_identity, tuple_swap,
+  composite_mix.
+- Negative: bare_t_no_prefix_neg, array_t_no_prefix_neg,
+  prefix_shadows_named_neg, duplicate_carrier_neg, unused_prefix_neg,
+  empty_prefix_parse_neg, duplicate_name_parse_neg,
+  lowercase_prefix_parse_neg.
+- Зависят от Ф.2/Ф.3.
+
+Ф.6 — Spec D-block amend + close:
+- D72 amend: «bound syntax also applies в fn[T Bound] prefix (D145)».
+- Plan 101.1 → ✅ ЗАКРЫТ + merge hash.
+- README + marker + Plan 91 update.
+
+Sub-plans 101.2-5 — также pending (зависят от 101.1 completion).
+
+STATUS: Ф.0 + Ф.1 ✅ committed. Ф.2-Ф.6 + sub-plans 101.2-5 — future
+sessions. Все docs (master, sub-plans, D145, marker, Q-markers)
+актуальны и готовы — реализация осталась.
+
