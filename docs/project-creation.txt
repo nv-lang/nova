@@ -20567,3 +20567,144 @@ Followup: investigate cross-thread dealloc routing.
   для specific workloads.
 - 8MB virtual stack per slot обоснован cancellation_test stack
   budget (within[T]/race2[T] mono recursion). Don't downsize.
+
+================================================================================
+2026-05-24 (full re-analysis Plan 83 — audit + decomposition session)
+================================================================================
+
+**User request:** "перепроверь с чистого листа все ли сделано по плану 83*
+без упрощений (как для прода)? или есть что улучшить в плане, есть что-то,
+что в go, rust, ts, kotlin сделано лучше? что можно сделать лучше у нас,
+чем в go, rust, ts, kotlin? что можно сейчас улучшить или исправить?
+декомпозируй задачи при необходимости. Не забудь запланировать позитивные
+и негативные тесты, написать критерии приемки."
+
+Задача — full re-analysis Plan 83 после `/loop` execution 83.4.5.6/7/8/9/10.
+
+**Approach:**
+1. Read existing docs (Plan 83 roadmap-index, 83.2, 83.4.5.10 wrong-hypothesis
+   post-mortem, simplifications [M-83.*] entries).
+2. Parallel delegation 2 агентам:
+   - **Explore-агент:** internal code-audit (runtime.c 1328 LOC, fibers.h
+     1942 LOC, alloc_boehm.c 158 LOC, etc) — 12-section structured report
+     с file:line citations.
+   - **General-purpose agent:** external comparison — Go/Tokio/Kotlin/Node —
+     scheduler, allocator, wake, preemption, cancel, structured concurrency,
+     blocking offload, GC. Production sources cited (Go HACKING, Tokio docs,
+     Boehm scale.html, etc).
+3. Synthesize findings → decomposition document + 9 sub-plans.
+
+**Code-audit findings (Explore):**
+- Spawn hot-path PRODUCTION-GRADE (CAS guards, SEQ_CST fences, Chase-Lev correct).
+- Worker main loop MATURE (TLS save/restore complete, CAS guards Plan 83.4.5.7).
+- Park/wake + cancel PRODUCTION-GRADE (atomic ACQ_REL, wake-all idempotent).
+- GC integration SOLID но с известными упрощениями:
+  - `nova_alloc_uncollectable` через `GC_malloc_uncollectable` (correct).
+  - `GC_push_other_roots` для fiber arena (correct).
+  - **HOWEVER: Boehm THREAD_LOCAL_ALLOC НЕ enabled** — global lock на
+    каждый alloc. Verified Grep alloc_boehm.c.
+- Preemption FUNCTIONAL (sysmon + safepoints).
+- Effect snapshot работает + silent overflow >32 эффектов.
+- Fiber arena (Linux mmap + Windows VirtualAlloc lazy-commit) PRODUCTION.
+  Known issues: P41-3 (overcommit detection) + [M-82-linux-arena-dealloc].
+- Detach/orphan scope PRODUCTION.
+- Shutdown ordering correct (sysmon first).
+- NovaWorker missing per-worker SpawnCtx pool (Plan 83.4.5.10 Ф.1 deferred).
+
+**External comparison findings (general-purpose):**
+
+| Axis | Nova rank | Comment |
+|------|-----------|---------|
+| Spawn cost | 5/5 ❌ | 100-1000× slower than Go |
+| Allocator | 5/5 ❌ | Boehm global lock (fix: 83.5) |
+| Wake latency | 4/5 ⚠ | uv_async_send 5-20µs (fix: 83.8) |
+| Preemption | 2/5 ✓ | finer-grained checkpoints than Tokio |
+| Cancel typing | 1/5 ✅ | typed `CancelToken[T]` лучше всех |
+| Structured conc | 1/5 ✅ | first-class `supervised{}` |
+| Blocking offload | 1/5 ✅ | compile-time `Blocking` effect |
+| Effect-aware | 1/5 ✅✅ | unique — никого больше |
+| Verified contracts | 1/5 ✅✅ | unique — Plan 33 SMT |
+
+**Sources cited:**
+- Go scheduler nghiant3223 2025
+- Go async preemption (Vincent Blanchon)
+- Tokio runtime docs (LIFO slot, work stealing, spawn_blocking)
+- Tokio preemption blog (128-op budget, not 256 как ранее в Nova docs)
+- Kotlin dispatchers + state-machine compilation
+- Boehm GC scale.html (THREAD_LOCAL_ALLOC, GC_REDIRECT_TO_LOCAL)
+- JEP 453 Structured Concurrency (Java Loom)
+
+**Decomposed new plans (P0/P1/P2/P3):**
+
+| # | Plan | P | Effort | What |
+|---|------|---|--------|------|
+| 83.5 | boehm-thread-local-alloc | P0 | 1d | 2-5× spawn speedup (cheapest win!) |
+| 83.6 | spawn-ctx-pool | P0 | 1-2d | Go P-mcache аналог, 2× speedup |
+| 83.7 | runnext-lifo-slot | P1 | 0.5d | Handler-chain cache-warm |
+| 83.8 | direct-wake (eventfd/SetEvent) | P1 | 1w | wake <1µs |
+| 83.9 | stress-armed-production | P0 | 2d | 10⁶/10⁵/10⁴ real armed |
+| 83.10 | negative-concurrency-tests | P0 | 2d | 1 → ≥20 negative tests |
+| 83.11 | deadline-effect | P2 | 3d | Differentiator: compile-time deadline |
+| 83.12 | async-net-stdlib | P0 | 1w | Production blocker: TCP/UDP |
+| 83.13 | precise-gc-roadmap | P3 research | 2-3d | Long-horizon Boehm replacement |
+
+**Key insights for future agents:**
+
+1. **Plan 83.5 NOT MENTIONED ANYWHERE BEFORE.** External agent нашёл —
+   Boehm-own `THREAD_LOCAL_ALLOC` build flag + `GC_thr_init()`. Самый
+   дешёвый perf win (1 day для 2-5× speedup). Nova's Plan 83.4.5.10
+   focused на Nova-level pool (Ф.1) и пропустил Boehm-level fix
+   полностью. **Critical finding.**
+
+2. **Stress тесты обманчивы.** Plan 83.4.5.6 §6.4 acceptance "10⁶ spawn
+   / 10⁵ park-wake / 10⁴ cancel" реализовано 10³/10²/10¹ под cooperative
+   path (`NOVA_AUTOARM=0`). Это не production armed validation. Plan 83.9
+   закрывает gap после 83.5+83.6 закрытия perf overhead.
+
+3. **149 concurrency tests, 1 negative test.** Production-grade quality
+   assurance требует EXPECT_PANIC/RUNTIME_ERROR/COMPILE_ERROR coverage.
+   Plan 83.10 закрывает gap.
+
+4. **Async TCP/UDP отсутствует.** Plan 18 P0 stated unblocked в Plan 42.12
+   notes, но actual implementation deferred. Backend язык без TCP =
+   hypothetical. Plan 83.12 фиксит.
+
+5. **Nova differentiators (production-defensible):**
+   - typed CancelToken[T] + From-cascade
+   - compile-time Blocking effect (no "забыл spawn_blocking" bug)
+   - effect-aware supervised scope (Plan 03.4 surface)
+   - verified contracts на async code (Plan 33.x)
+   - cgroup-aware default (Plan 83.1)
+   - finer-grained preemption checkpoints than Tokio
+
+6. **Bottleneck order (post-83.5+83.6):**
+   GC lock (83.5) >> SpawnCtx alloc (83.6) >> mco_create cost >>
+   uv_async_send (83.8) >> snapshot_save >> stack slot size (FREE)
+
+7. **`docs/plans/83-audit-2026-05-24.md`** — top-level audit doc + decomp
+   table. Sub-plans `83.5`–`83.13` — detailed designs + acceptance +
+   positive/negative tests.
+
+**Total decomposed work: ~3-4 dev-week (P0+P1) + 3-5 dev-day (P2) +
+research week (P3).**
+
+**Files created (commit pending):**
+- `docs/plans/83-audit-2026-05-24.md` (audit + decomposition)
+- `docs/plans/83.5-boehm-thread-local-alloc.md`
+- `docs/plans/83.6-spawn-ctx-pool.md`
+- `docs/plans/83.7-runnext-lifo-slot.md`
+- `docs/plans/83.8-direct-wake.md`
+- `docs/plans/83.9-stress-armed-production.md`
+- `docs/plans/83.10-negative-concurrency-tests.md`
+- `docs/plans/83.11-deadline-effect.md`
+- `docs/plans/83.12-async-net-stdlib.md`
+- `docs/plans/83.13-precise-gc-roadmap.md`
+
+**Files updated:**
+- `docs/plans/README.md` — 10 new rows для 83-audit + 83.5-83.13.
+- `docs/simplifications.md` — `[M-83-audit-2026-05-24]` entry.
+- `docs/project-creation.txt` — этот блок.
+
+**No code changes** — research/planning deliverable only. Implementation —
+future plans (recommended order: 83.5 → 83.6 → 83.9/83.10/83.12 parallel
+→ 83.7 → 83.8 → 83.11 → 83.13 research).
