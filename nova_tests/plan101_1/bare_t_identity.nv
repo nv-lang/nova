@@ -1,0 +1,15 @@
+// Plan 101.1 Ф.5 — positive: bare T receiver через fn[T] prefix.
+
+module nova_tests.plan101_1.bare_t_identity
+
+fn[T] T @bare_identity() -> T => @
+
+test "bare T identity int" {
+    let x = 42
+    assert(x.bare_identity() == 42)
+}
+
+test "bare T identity str" {
+    let s = "hello"
+    assert(s.bare_identity() == "hello")
+}
