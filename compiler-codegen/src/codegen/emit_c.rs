@@ -1915,7 +1915,12 @@ impl CEmitter {
                     // (recv.type_name starts with "[]") are not user-defined generic types and
                     // never get monomorphized — register them with erased types instead.
                     let is_array_ext = recv.type_name.starts_with("[]");
-                    if !f.generics.is_empty() && !is_array_ext {
+                    // Plan 101.1: bare-T receiver (`fn[T] T @method`) — type_name
+                    // = single-uppercase typevar. Register тоже for call-site
+                    // dispatch detection.
+                    let is_bare_typevar = recv.type_name.len() <= 2
+                        && recv.type_name.chars().all(|c| c.is_ascii_uppercase());
+                    if !f.generics.is_empty() && !is_array_ext && !is_bare_typevar {
                         continue;
                     }
                     // Plan 48 Ф.3: methods on generic receiver types are registered here for
@@ -8099,6 +8104,14 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
             // `Nova_Option*` (incomplete type) — корень Plan 93 Ф.0 CC-fail'а.
             "Option" | "Result" => self.builtin_sum_receiver_c_type(type_name),
             other => {
+                // Plan 101.1: bare typevar receiver (`fn[T] T @method`) —
+                // resolve T via current_type_subst при mono-emission.
+                // Без этого receiver_c_type("T") → "Nova_T*" (placeholder).
+                if other.len() <= 2 && other.chars().all(|c| c.is_ascii_uppercase()) {
+                    if let Some(c_ty) = self.current_type_subst.get(other) {
+                        return c_ty.clone();
+                    }
+                }
                 // Extension methods on array types: []T, []str, []int, etc.
                 if let Some(elem_ty) = other.strip_prefix("[]") {
                     let c_elem_owned: String;
@@ -17075,6 +17088,36 @@ _cp++; \
                         }
                     }
                     let is_generic_type = self.generic_types.contains(&type_name);
+                    // Plan 101.1: bare-T receiver mono dispatch для `fn[T] T @method`.
+                    // type_name = "T" (typevar), нет real Nova type. Resolve T из
+                    // obj's actual type, mono-dispatch.
+                    if is_instance && type_name.len() <= 2
+                        && type_name.chars().all(|c| c.is_ascii_uppercase())
+                        && self.mono_method_decls.contains_key(&(type_name.clone(), method.to_string()))
+                    {
+                        let key = (type_name.clone(), method.to_string());
+                        if let Some(fn_decl) = self.mono_method_decls.get(&key).cloned() {
+                            let obj_ty = self.infer_expr_c_type(obj);
+                            // Strip pointer; use as concrete T.
+                            let concrete_t = obj_ty.trim_end_matches('*').trim().to_string();
+                            if !concrete_t.is_empty() && concrete_t != "void" {
+                                let mut type_subst: Vec<(String, String)> = Vec::new();
+                                if let Some(first_g) = fn_decl.generics.first() {
+                                    type_subst.push((first_g.name.clone(), concrete_t.clone()));
+                                }
+                                let mono_name = format!("Nova_{}_method_{}", concrete_t, method);
+                                let recv_type = type_name.clone();
+                                self.register_mono_method_instance(
+                                    &fn_decl, type_subst, &mono_name, &recv_type);
+                                let obj_c = self.emit_expr(obj)?;
+                                let mut arg_strs = vec![obj_c];
+                                for a in args {
+                                    arg_strs.push(self.emit_expr(a.expr())?);
+                                }
+                                return Ok(format!("{}({})", mono_name, arg_strs.join(", ")));
+                            }
+                        }
+                    }
                     // Plan 101.1: array-ext mono dispatch для `fn[T] []T @method`
                     // с full mono per-T (parser dispatch + body emission +
                     // closure-aware args). Без этого ветка closure type inference
