@@ -11710,18 +11710,84 @@ vec.nv не компилируется в exe → Plan 91 (std MVP) blocked.
   5. fiber arena per-thread allocation (Plan 82) — VirtualAlloc
      lazy-commit overhead на Windows.
 
+- **Linux comparison done (2026-05-24, WSL2 16-core AMD Ryzen 5800H):**
+  - Linux armed default: parallel = 683ms, sequential = 441ms,
+    speedup **0.65×**.
+  - Linux NOVA_MAXPROCS=1: parallel = 755ms, sequential = 372ms,
+    speedup **0.49×**.
+  - Windows armed default: parallel = 518ms, sequential = 345ms,
+    speedup **0.66×**.
+  - **Заключение: проблема НЕ Windows-специфика.** Linux показывает
+    идентично-плохой speedup. Это фундаментальный overhead M:N runtime
+    для коротких задач (~30ms workload не амортизирует worker pool
+    cost).
+
+- **Go runtime сравнение (2026-05-24):**
+
+  | Метрика                 | Go runtime                  | Наш Nova                            |
+  |-------------------------|------------------------------|-------------------------------------|
+  | Spawn cost              | ~50-100ns (~200 CPU cycles)  | ~10-100µs (100-1000× slower)        |
+  | Starting stack          | 2 KB (grows on-demand)       | ~1 MB (fixed arena slot)            |
+  | Alloc fast path         | Per-P mcache (lock-free)     | Boehm GC_malloc (global lock)       |
+  | Wake notification       | futex/eventfd (direct atomic)| uv_async_send (mutex+signal)        |
+  | GC                      | Concurrent, write barriers   | Boehm STW                           |
+  | Goroutine struct        | ~336 bytes                   | SpawnCtx + mco_coro + 1MB arena slot|
+
+  **Корневые причины Nova медлительности:**
+  1. Boehm `GC_malloc` под global lock — каждый spawn = global GC mutex.
+  2. Fiber stack 1MB upfront — Go берёт 2KB. У нас MEM_COMMIT cost
+     на Windows + mmap cost на Linux.
+  3. `uv_async_send` overhead — Go использует прямой futex/eventfd.
+     Мы через libuv mutex + signal.
+
+  References:
+  - https://internals-for-interns.com/posts/go-runtime-scheduler/
+  - https://internals-for-interns.com/posts/go-memory-allocator/
+  - https://nghiant3223.github.io/2025/06/03/memory_allocation_in_go.html
+
 - **Last commit:** Plan 83.4.5.6 partial closure work
   (см. commits после 83.4.5.9).
 
-- **Как чинить (Plan 83.4.5.10? — TBD):** ~2-3 dev-day.
-  Priorities:
-  1. Profile spawn-to-fiber-ready latency (perf trace).
-  2. Investigate Boehm GC contention под multi-worker.
-  3. Try fewer larger spawns (parallel_for array-mode) vs many small.
-  4. Linux comparison — Windows-specific overhead?
+- **Plan 83.4.5.10 partial closure (2026-05-24):**
+  - Ф.3 ✅ DONE — inline parallel-for threshold (default 32);
+    statement-mode + Range-iter parallel-for бежит cooperatively inline
+    для N ≤ threshold. Acceptance ≥1× speedup MET (parallel ~622ms
+    vs sequential ~640ms на 16 × fib(33), inline path активен).
+  - Ф.2 ❌ reverted — 8MB → 1MB stack caused `cancellation_test` stack
+    overflow (within/race2 generic recursion).
+  - Ф.1 ❌ deferred — per-worker pool требует ~1-2 dev-day; acceptance
+    уже MET через Ф.3 alone. V2 followup для larger-N parallel-for.
+
+- **Как чинить (Plan 83.4.5.10 V2 followup, ~2-3 dev-day):**
+
+  **3 quick wins (target: parallel НЕ медленнее sequential для
+  short workloads, т.е. ≥1× speedup; full ≥3× требует concurrent GC
+  + dynamic stack — months of work):**
+
+  1. **Per-worker SpawnCtx free-list pool** (~1-2 dev-day) — как Go
+     P-mcache. Worker держит free-list пустых SpawnCtx struct'ов.
+     spawn → pop из P-local pool без Boehm lock. Закрывает (1) Boehm
+     GC contention на spawn-path. Free после mco_destroy → push back.
+
+  2. **Smaller fiber stack default** (~0.5 dev-day) — уменьшить
+     `NOVA_FIBER_STACK_SIZE` с 1MB до 64KB (Go: 2KB, Java virtual
+     threads: 16KB). Закрывает (2) commit/mmap overhead на startup.
+     Trade-off: deep recursion ограничен 64KB. Можно сделать
+     configurable.
+
+  3. **Inline parallel-for threshold** (~0.5 dev-day) — для коротких
+     parallel-for (`N * estimated_body_time < worker_overhead`) бежать
+     кооперативно inline. Avoids worker pool overhead полностью.
+     Heuristic threshold через env (`NOVA_PARALLEL_FOR_MIN_ITERS`)
+     либо compile-time const. Closer to tokio's `rayon` design.
+
+  **Не включено (months of work):**
+  - Concurrent GC (replace Boehm либо thread-local allocation buffers).
+  - Lock-free wake notification (eventfd/IOCP direct).
+  - Dynamic stack growth (требует write barriers на каждой fn entry).
 
 - **Приоритет:** P2 — correctness landed; perf optimization for
-  production readiness.
+  production readiness. Не блокер для Plan 83 main milestone.
 
 ## [M-fn-prefix-int-only-mono] `fn[T] []T @method` codegen mono-per-T только для int (2026-05-24)
 
@@ -11754,3 +11820,48 @@ codegen эмитит `Nova_NovaArray_nova_int_method_<m>` (default mono),
 
 **Обнаружено:** Plan 101.1 Ф.5 verification 2026-05-24. **План фикса:**
 Plan 101.1 Ф.3 follow-up OR Plan 101.5 stdlib audit.
+
+### [M-82-linux-arena-dealloc] Plan 82 fiber arena — `fiber_dealloc ptr outside arena` warnings на Linux (2026-05-24)
+
+- **Где:** `compiler-codegen/nova_rt/fiber_arena.c` (POSIX mmap path).
+- **Что:** Под Linux (WSL2 + Ubuntu 22.04, glibc 2.35, clang-15) при
+  выполнении bench `parallel_speedup.nv` выводятся warnings:
+  ```
+  nova: fiber_dealloc ptr outside arena (0x72972e804000)
+  nova: fiber_dealloc ptr outside arena (0x72972e004000)
+  nova: fiber_dealloc ptr outside arena (0x72972d804000)
+  ...
+  ```
+
+  Pointer'ы передаваемые в `nova_fiber_dealloc` не попадают в active
+  arena range (видимо retired arena либо misrouted pointer). На
+  Windows аналогичных warnings нет — Windows fiber_arena_win.c имеет
+  собственный VirtualQuery-based dispatch (не та же кодовая база).
+
+- **Почему:** discovered как side-effect Plan 83.4.5.6 closure
+  testing — запуск speedup bench под Docker Linux показал stderr
+  warnings до bench output. Точная root cause не investigated.
+
+  Hypothesis:
+  1. Worker thread exit race — fiber arena retired до того, как
+     fiber's dealloc callback fired.
+  2. Cross-arena dealloc — fiber stack из arena A dealloc'ается из
+     arena B context (e.g., после work-stealing thread migration).
+  3. Plan 83.4.5.8 uncollectable ctx free order — мы free'им ctx
+     в worker_main после mco_destroy, но fiber stack belongs to
+     mco_coro arena — possible race с arena retirement.
+
+- **Последствие:** warning-only (process не abort'ает); fiber's
+  stack memory **likely leaks** на Linux (dealloc skip'ается).
+  Под Windows такого нет — другой path.
+
+- **Как чинить (followup Plan 83.4.5.11? либо followup к Plan 82):**
+  - Investigate cross-thread dealloc routing в fiber_arena.c POSIX.
+  - Verify Plan 82 retired arena list — fiber stacks должны быть
+    routed к correct arena via TLS-pointer cache.
+  - Add diagnostic — print arena base/limit per fiber-alloc, match
+    on dealloc.
+
+- **Приоритет:** P3 — warning-only, no functional impact на
+  current tests; cleanup issue. Production deployment Linux может
+  накапливать leak.
