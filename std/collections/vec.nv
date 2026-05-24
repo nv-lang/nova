@@ -42,7 +42,7 @@ module collections.vec
 /// assert(v.map(|x| x * 2) == [2, 4, 6])
 /// ```
 #stable(since = "0.1")
-export fn []T @map[U](f fn(T) -> U) -> []U {
+export fn[T] []T @map[U](f fn(T) -> U) -> []U {
     let mut out []U = []U.with_capacity(@len)
     for x in @ {                          // implicit iter (D58)
         out.push(f(x))
@@ -60,7 +60,7 @@ export fn []T @map[U](f fn(T) -> U) -> []U {
 /// assert(v.filter(|x| x % 2 == 0) == [2, 4])
 /// ```
 #stable(since = "0.1")
-export fn []T @filter(pred fn(T) -> bool) -> []T {
+export fn[T] []T @filter(pred fn(T) -> bool) -> []T {
     let mut out []T = []
     for x in @ {
         if pred(x) { out.push(x) }
@@ -79,7 +79,7 @@ export fn []T @filter(pred fn(T) -> bool) -> []T {
 /// assert(v.fold(0, |acc, x| acc + x) == 10)
 /// ```
 #stable(since = "0.1")
-export fn []T @fold[Acc](init Acc, f fn(Acc, T) -> Acc) -> Acc {
+export fn[T] []T @fold[Acc](init Acc, f fn(Acc, T) -> Acc) -> Acc {
     let mut acc = init
     for x in @ {
         acc = f(acc, x)
@@ -98,7 +98,7 @@ export fn []T @fold[Acc](init Acc, f fn(Acc, T) -> Acc) -> Acc {
 /// assert(!v.any(|x| x > 10))
 /// ```
 #stable(since = "0.1")
-export fn []T @any(pred fn(T) -> bool) -> bool {
+export fn[T] []T @any(pred fn(T) -> bool) -> bool {
     for x in @ {
         if pred(x) { return true }
     }
@@ -115,7 +115,7 @@ export fn []T @any(pred fn(T) -> bool) -> bool {
 /// assert(v.all(|x| x % 2 == 0))
 /// ```
 #stable(since = "0.1")
-export fn []T @all(pred fn(T) -> bool) -> bool {
+export fn[T] []T @all(pred fn(T) -> bool) -> bool {
     for x in @ {
         if !pred(x) { return false }
     }
@@ -130,7 +130,7 @@ export fn []T @all(pred fn(T) -> bool) -> bool {
 /// assert(v.first() == Some(10))
 /// ```
 #stable(since = "0.1")
-export fn []T @first() -> Option[T] =>
+export fn[T] []T @first() -> Option[T] =>
     if @len == 0 { None } else { Some(@[0]) }
 
 /// Последний элемент через `Option[T]`. `None` если пусто.
@@ -141,7 +141,7 @@ export fn []T @first() -> Option[T] =>
 /// assert(v.last() == Some(30))
 /// ```
 #stable(since = "0.1")
-export fn []T @last() -> Option[T] =>
+export fn[T] []T @last() -> Option[T] =>
     if @len == 0 { None } else { Some(@[@len - 1]) }
 
 

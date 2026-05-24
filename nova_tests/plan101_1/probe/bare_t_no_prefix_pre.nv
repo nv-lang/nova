@@ -1,0 +1,15 @@
+// Plan 101.1 Ф.0 probe — `fn T @method` без `fn[T]` префикса.
+//
+// Pre-fix: parser silently принимает T как имя типа; codegen падает.
+// Post-fix: type-check error `E_BARE_TYPEVAR_NEEDS_PREFIX` с suggestion
+// «add `fn[T]` prefix OR define `type T` в scope».
+//
+// EXPECT_COMPILE_ERROR: bare typevar `T` receiver requires `fn[T]` prefix
+
+module plan101_1.probe.bare_t_no_prefix_pre
+
+fn T @identity() -> T => @
+
+test "bare T receiver no prefix — should error" {
+    // never reaches — compile error expected
+}

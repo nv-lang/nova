@@ -1,0 +1,20 @@
+// Plan 101.1 Ф.0 probe — pre-fix baseline.
+//
+// vec.nv `fn []T @map[U]` declaration → type-check PASS (мягкий),
+// но codegen падает с CC-FAIL (Nova_T undefined) при попытке use.
+//
+// Post-fix (после implementation Plan 101.1):
+// - vec.nv migrated to `fn[T] []T @map[U]` — должно работать.
+// - Этот тест демонстрирует use case.
+
+module plan101_1.probe.vec_map_pre
+
+import collections.vec
+
+test "vec.map int → int (pre-fix expected CC-FAIL; post-fix PASS)" {
+    let v []int = [1, 2, 3]
+    let doubled = v.map(|x| x * 2)
+    assert(doubled.len() == 3)
+    assert(doubled.get(0) == Some(2))
+    assert(doubled.get(2) == Some(6))
+}
