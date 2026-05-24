@@ -11921,3 +11921,56 @@ Plan 83.2 §4 «Compiled-программа без единого `runtime.*` в
 
 - **Приоритет:** P0 для 83.5/6/9/10/12; P1 для 83.7/8; P2 для 83.11;
   P3 research для 83.13.
+
+### [M-83.5-wrong-hypothesis-rejected] Plan 83.5 (Boehm TL_ALLOC) — REJECTED same-day verification (2026-05-24)
+
+- **Где:** `docs/plans/83.5-boehm-thread-local-alloc.md` (post-mortem
+  replaces original proposed plan).
+
+- **Что:** Audit-агент в Plan 83 re-analysis (2026-05-24) утверждал что
+  Boehm `THREAD_LOCAL_ALLOC` не включён → 2-5× spawn speedup при
+  включении. **Verified false** во время implementation в worktree
+  nova-p83-5 (same day):
+
+  1. **vcpkg buildtree CMakeCache.txt:** `enable_thread_local_alloc:BOOL=ON`
+     (Boehm 8.2.12 defaults — 4 thread options все default ON).
+  2. **Installed gc.lib symbols:** `grep -ao 'GC_thr_init\|GC_init_thread_local'
+     gc.lib` — оба present.
+  3. **Boehm auto-init:** `GC_register_my_thread_inner` (win32_threads.c:851/3194)
+     автоматически вызывает `GC_init_thread_local(&me->tlfs)` для
+     thread'а. Nova **уже** вызывает `GC_register_my_thread` в каждом
+     worker init (runtime.c:335-343).
+  4. **`GC_REDIRECT_TO_LOCAL` не нужен в Boehm 8.x** — deprecated/removed.
+     Был в 7.x era. Сейчас redirect automatic.
+  5. **Spawn-cost bottleneck = `GC_malloc_uncollectable`** (Plan 83.4.5.8),
+     **by Boehm design** идёт через global lock независимо от TL_ALLOC
+     (uncollectable allocs persistent через collections; thread-local
+     cache не applicable).
+
+- **Implication:**
+  - Plan 83.5 невозможно реализовать — нечего делать, TL_ALLOC already on.
+  - Real spawn-cost fix = **только Plan 83.6** (per-worker SpawnCtx pool
+    bypasses GC_malloc_uncollectable entirely).
+  - Audit-doc §6.1 marked REJECTED, recommended order updated.
+
+- **Lessons learned для future audits:** не полагаться на static analysis
+  client defines + "common knowledge" Boehm phrasing. Verify installed
+  library binary через `grep symbol_name actual_lib_file` +
+  build CMakeCache. См. Plan 83.5 post-mortem §6 для protocol.
+
+- **Pattern:** это **второй wrong-hypothesis** в Plan 83 series. Первый —
+  Plan 83.4.5.10 Ф.2 (stack size reduction). Оба made claim без
+  empirical pre-verification.
+
+- **Files modified (same-day correction):**
+  - `docs/plans/83.5-boehm-thread-local-alloc.md` — full post-mortem
+    rewrite (REJECTED status + lessons learned + audit protocol).
+  - `docs/plans/83-audit-2026-05-24.md` — §6.1 + §1 marked REJECTED.
+  - `docs/plans/README.md` — 83.5 row updated к REJECTED.
+  - `docs/simplifications.md` — этот entry.
+
+- **Pivoted action:** Plan 83.6 (per-worker SpawnCtx pool) — actual P0
+  fix. Worktree nova-p83-5 → можно reuse для 83.6 либо удалить.
+
+- **Приоритет:** P3 — info entry, не блокер. Post-mortem для future
+  reference + lessons learned.

@@ -20708,3 +20708,80 @@ research week (P3).**
 **No code changes** — research/planning deliverable only. Implementation —
 future plans (recommended order: 83.5 → 83.6 → 83.9/83.10/83.12 parallel
 → 83.7 → 83.8 → 83.11 → 83.13 research).
+
+================================================================================
+2026-05-24 (Plan 83.5 — REJECTED same-day, wrong hypothesis)
+================================================================================
+
+**User picked Plan 83.5** (Boehm THREAD_LOCAL_ALLOC) как "next step" после
+audit. Создан worktree `nova-p83-5` (branch plan-83-5 from plan-83-4-5-7).
+
+**Verification во время implementation revealed wrong hypothesis:**
+
+1. Checked Boehm 8.2.12 CMakeLists defaults:
+   ```
+   option(enable_thread_local_alloc "..." ON)   # default ON
+   option(enable_parallel_mark "..." ON)        # default ON
+   option(enable_threads "..." ON)              # default ON
+   ```
+   All thread options default ON.
+
+2. vcpkg buildtree CMakeCache.txt (x64-windows-static-rel):
+   `enable_thread_local_alloc:BOOL=ON` — verified applied.
+
+3. Installed gc.lib symbols:
+   `grep -ao 'GC_thr_init\|GC_init_thread_local' gc.lib` — both present.
+
+4. Boehm internals (win32_threads.c:851, 3194): `GC_register_my_thread`
+   автоматически вызывает `GC_init_thread_local(&me->tlfs)`.
+
+5. Nova **уже** вызывает `GC_register_my_thread` в каждом worker init
+   (runtime.c:335-343, per Plan 44.5).
+
+**Wrong premise:** TL_ALLOC уже active для regular `GC_malloc`. Audit-агент
+сделал claim основанный на static reading client `alloc_boehm.c`, не
+verified installed library binary.
+
+**Real spawn-cost bottleneck:** `GC_malloc_uncollectable` (Plan 83.4.5.8),
+который **by Boehm design идёт через global lock** независимо от TL_ALLOC.
+Uncollectable allocs persistent across collections — thread-local cache
+не applicable.
+
+**Real fix:** **только Plan 83.6** (per-worker SpawnCtx pool) — обходит
+GC_malloc_uncollectable hot path entirely.
+
+**Files modified (same-day correction):**
+- `docs/plans/83.5-boehm-thread-local-alloc.md` — full post-mortem
+  rewrite (REJECTED status + lessons learned + audit protocol).
+- `docs/plans/83-audit-2026-05-24.md` — §6.1 + §1 marked REJECTED.
+- `docs/plans/README.md` — 83.5 row updated к REJECTED.
+- `docs/simplifications.md` — `[M-83.5-wrong-hypothesis-rejected]` entry.
+
+**Pattern recognition:** Это **второй wrong-hypothesis** в Plan 83 series:
+- Plan 83.4.5.10 Ф.2 (stack size 8MB→1MB) — REJECTED 2026-05-24
+- Plan 83.5 (Boehm TL_ALLOC) — REJECTED 2026-05-24
+
+Both made performance claims без empirical pre-verification против actual
+installed library/system state.
+
+**Lessons learned (для future audits — добавлено в Plan 83.5 post-mortem §6):**
+1. Static claim → "X is off because grep didn't find Y in our code".
+2. **Required next step:** grep symbol_name actual installed library
+   binary. CMake cache. Config files installed by build.
+3. **If claim survives binary verification → proceed.** Otherwise mark
+   REJECTED + post-mortem (Plan 83.4.5.10 Ф.2 / Plan 83.5 style).
+
+**Re-analysis agent notes:**
+- НЕ полагаться на verbal audit claims без empirical verification.
+- Boehm 8.x thread-local alloc — automatic через `GC_register_my_thread`.
+  Никаких client-side defines не required.
+- Spawn-cost = `GC_malloc_uncollectable` global lock (by design Boehm).
+  Только Plan 83.6 (per-worker SpawnCtx pool) bypasses this path.
+- Other audit gaps (83.7/8/9/10/11/12/13) — НЕ verified empirically,
+  may have similar issues. Recommend pre-verification before starting.
+
+**Recommended next:** Plan 83.6 (per-worker SpawnCtx pool). Worktree
+nova-p83-5 либо reuse для 83.6 либо удалить.
+
+**No code changes этой session** — только plan correction + post-mortem.
+Verification protocol applied — saved ~1 dev-day futile work.
