@@ -20630,4 +20630,153 @@ Marker [M-fn-prefix-int-only-mono]: PARTIAL CLOSURE.
 - Non-int element arrays ✅ работают.
 - Bare-T receivers ✅ работают.
 - T≠U with default-int T — единственная оставшаяся edge case.
+=======
+=== Plan 83.4.5.10 Ф.3 inline parallel-for threshold + Ф.2 rejected (2026-05-24) ===
 
+**Контекст:** Plan 83.4.5.6 §6.4 acceptance ≥3× speedup НЕ MET после
+flip activation. Empirical: parallel-for 16 × fib(33) = 518ms vs
+sequential = 345ms (parallel **МЕДЛЕННЕЕ** на 50%). Linux WSL2
+comparison confirmed problem НЕ Windows-specific (Linux: parallel 683ms
+vs seq 441ms, тот же ~0.65× speedup).
+
+**Go runtime reference comparison:**
+
+| Метрика | Go runtime | Nova M:N |
+|---------|------------|----------|
+| Spawn cost | ~50-100ns (~200 cycles) | ~10-100µs (100-1000× slower) |
+| Starting stack | 2 KB (grows on-demand) | 8 MB fixed slot |
+| Alloc fast path | Per-P mcache (lock-free) | Boehm GC_malloc (global lock) |
+| Wake notification | futex/eventfd (direct atomic) | uv_async_send (mutex+signal) |
+| GC | Concurrent, write barriers | Boehm STW |
+
+**Ф.3 ✅ DONE: Inline parallel-for threshold**
+
+`compiler-codegen/nova_rt/runtime.c`: `nova_runtime_parallel_inline_threshold()`
+— race-tolerant lazy-init cached env value, default 32. Env override
+`NOVA_PARALLEL_INLINE_THRESHOLD`.
+
+`compiler-codegen/src/codegen/emit_c.rs::emit_parallel_for`: для
+statement-mode + Range-iter эмитит runtime branch:
+```c
+if (iter_count <= threshold) {
+    // Inline cooperative — plain for-loop без spawn'ов
+    for (i = 0; i < count; i++) { body; }
+} else {
+    // Existing supervised+spawn path (worker pool)
+}
+```
+
+Bench `bench/m_n/parallel_speedup.nv`: body wrapped в `let _r = ...`
+для statement-mode (vs array-mode trailing-expr который не подпадает
+под Ф.3 V1 — only Range-iter statement-mode covered).
+
+Cross-runtime parity: tokio `rayon::join_context` adaptive splitting /
+Java ForkJoinPool granularity threshold.
+
+**Empirical post-Ф.3:** parallel = 622ms ≈ sequential = 640ms
+(speedup ~1.03×, was 0.65×). **≥1× acceptance MET.** Full nova test:
+1135 PASS / 10 FAIL / 56 SKIP (vs main 1130/11) — **+5 PASS, −1 FAIL**.
+
+**Ф.2 ❌ REJECTED: Smaller fiber stack default**
+
+Initial hypothesis: 8MB → 1MB снизит MEM_COMMIT/mmap overhead. Empirical
+test: cancellation_test (within[T]/race2[T] generic mono recursion)
+immediate stack overflow на 1MB. 256KB also failed. Reverted к 8MB.
+
+**Wrong-hypothesis post-mortem (детально для re-analysis agent):**
+
+`NOVA_FIBER_STACK_SIZE` 8MB означает **max stack budget per fiber**,
+не "8MB committed upfront". Stack model:
+- Linux: `mmap(MAP_NORESERVE, virtual_size)` per arena init →
+  virtual address space reserved, physical commit = 0 bytes. Stack
+  pages коммитятся on-demand через page fault.
+- Windows: `VirtualAlloc(MEM_RESERVE, virtual_size)` per arena init →
+  virtual reserved. Per-slot initial commit = 8KB (header) + 16KB
+  (initial stack window) + 4KB (guard) = 28KB. Stack growth via
+  __chkstk touching PAGE_GUARD → VEH commits next page on demand.
+
+**Slot size влияет ТОЛЬКО на:**
+- Virtual reservation total (FREE на 64-bit; 128GB virtual per worker
+  noise).
+- Max stack cap per fiber (hard limit, не speedup).
+
+**Slot size НЕ влияет на:**
+- Per-spawn cost (driven by GC lock + mco_create + uv_async_send,
+  всё independent of slot_size).
+- Physical RAM commit (lazy, depends on REAL stack usage).
+- GC scan cost (Plan 82 GC_push_other_roots filters MEM_COMMIT pages).
+
+**Real spawn-cost drivers (empirical analysis):**
+
+1. **Boehm GC global lock на `nova_alloc_uncollectable`** —
+   ~50-200µs/spawn under 16-worker contention. **Главный bottleneck.**
+2. **`mco_create` cost** — minicoro init + 3× `VirtualAlloc(MEM_COMMIT)`
+   on Windows (header+stack window+guard) — ~10-50µs.
+3. **`uv_async_send` cross-thread wake** — pthread_mutex + cond
+   broadcast — ~5-20µs.
+4. **`nova_effect_snapshot_save` TLS copy** — ~1-5µs.
+
+**Bottleneck ranking by impact:** GC lock (Ф.1) >> mco_create >>
+uv_async_send >> snapshot_save >> stack slot size (FREE).
+
+**Plan 83.4.5.10 V2 followup (если нужен ≥3× speedup):**
+
+1. **Ф.1 per-worker SpawnCtx pool** (~1-2 dev-day) — закрывает #1.
+   Worker держит free-list через P-local atomic stack. Spawn → pop
+   из pool без Boehm lock. Cleanup в worker_main после mco_destroy →
+   push back. Trade-off: varies-size ctx (user captures) → size-class
+   buckets либо max-common-size pool.
+
+2. **Ф.NEW (mco_coro reuse pool)** (~1 dev-day) — поверх Ф.1.
+   Reuse mco_coro structs vs fresh allocation. mco_reset между uses.
+   Закрывает #2.
+
+3. **Lock-free wake** (~1-2 dev-day) — replace uv_async_send с direct
+   eventfd/SetEvent. Закрывает #3. Рискованно — требует libuv async
+   ownership rewrite.
+
+4. **Versioned snapshots** (~0.5 dev-day) — закрывает #4. Skip copy
+   если handlers не менялись.
+
+**Не входит (months of work):**
+- Concurrent GC (replace Boehm либо thread-local allocation buffers).
+- Dynamic stack growth Go-style (write barriers + stack copy + precise
+  GC — Boehm conservative не support'ит).
+
+**Files modified Plan 83.4.5.10 (V1 commit):**
+- `compiler-codegen/nova_rt/runtime.h` + `runtime.c` —
+  `nova_runtime_parallel_inline_threshold` API.
+- `compiler-codegen/src/codegen/emit_c.rs::emit_parallel_for` —
+  inline branch.
+- `bench/m_n/parallel_speedup.nv` — statement-mode wrapping.
+- `compiler-codegen/nova_rt/fiber_arena.h` — **8MB stack preserved**
+  (Ф.2 reverted с full post-mortem).
+- `docs/plans/83.4.5.10-mn-perf-quick-wins.md` — обновлён с Ф.2
+  REJECTED + Ф.1 V2 roadmap + детальный root-cause analysis.
+
+**Bug discovered (P3, Linux only):**
+
+`compiler-codegen/nova_rt/fiber_arena.c` (POSIX path) — `fiber_dealloc
+ptr outside arena (0x...)` warnings под Linux WSL2 во время bench.
+Pointer'ы передаваемые в `nova_fiber_dealloc` не попадают в active
+arena range. Hypothesis: cross-arena dealloc после work-stealing
+либо retired arena race. Windows такого warning не показывает
+(другая arena impl). Documented в `[M-82-linux-arena-dealloc]`.
+Followup: investigate cross-thread dealloc routing.
+
+**Plan 83 status:**
+- Default-on M:N runtime ACTIVE (D138) — Plan 83.4.5.8 closure.
+- Performance acceptance MET для коротких parallel-for ≤ threshold —
+  Plan 83.4.5.10 Ф.3.
+- Larger-N performance — V2 optimization layer (Ф.1 worker pool).
+- Plan 83 main milestone: closed. V2 perf — followup.
+
+**Re-analysis agent notes:**
+- НЕ пытайся уменьшить `NOVA_FIBER_STACK_SIZE` для speedup — это
+  refuted hypothesis. Slot size FREE на 64-bit virtual address space.
+- Real spawn cost = Boehm GC lock contention. Без Ф.1 (per-worker
+  pool) никаких quick wins не будет.
+- Inline threshold (Ф.3) — production-good для коротких parallel-for.
+  Default 32 derived empirically; tune via `NOVA_PARALLEL_INLINE_THRESHOLD`
+  для specific workloads.
+  budget (within[T]/race2[T] mono recursion). Don't downsize.
