@@ -100,3 +100,26 @@ Scope confirmed:
 
 `[M-fn-prefix-int-only-mono]` — array-extension `fn[T] []T @method`
 работает только для int-elements. Закрытие требует mono-per-T (~4-6h codegen).
+
+## Autonomous session #3 update (2026-05-24 ред. 3)
+
+REAL codegen работы выполнено. 9 PASS / 1 FAIL plan101_1 (vs prior 7 PASS / 3 FAIL).
+
+✅ Restored vec_str_elements + bare_t_identity (no simplifications).
+✅ vec_str_elements PASS — non-int array works end-to-end.
+✅ bare_t_identity PASS — bare-T receiver dispatch works.
+❌ vec_map_int_str — T≠U with default-int T edge case.
+
+Real codegen fixes shipped:
+1. Mono per-T body emission for array-ext methods (mono_method_decls integration).
+2. Receiver C-type substitution для bare-T + array-T (current_type_subst lookup).
+3. Closure type inference for inline closures (emit_lambda context_param_tys).
+4. Return-type inference at let-binding via mono_method_decls.
+5. Bare-T receiver call-site dispatch (Nova_<T>_method_<m>).
+6. method_receivers registration extended на bare-typevar receivers.
+
+**[M-fn-prefix-int-only-mono] STATUS:** PARTIAL CLOSURE.
+- Non-int element arrays (`[]str`, `[]User`, etc.) ✅ работают.
+- Bare-T receivers ✅ работают.
+- T≠U methods where T=default-int (vec_map_int_str case) — единственная
+  оставшаяся edge case (some other dispatch path bypasses mono branch).
