@@ -1,0 +1,19 @@
+// Plan 101.4 — negative: `use TypeName` ДОЛЖЕН идти в начале тела,
+// перед методами. Запрещаем interleaving для читаемости.
+//
+// EXPECT_COMPILE_ERROR: [E_PROTOCOL_EMBED_AFTER_METHOD]
+
+module nova_tests.plan101_4.negative.compose_use_after_method_neg
+
+type SomeProto protocol {
+    other() -> int
+}
+
+type BadProto protocol {
+    m() -> int
+    use SomeProto
+}
+
+test "should error" {
+    assert(1 == 1)
+}

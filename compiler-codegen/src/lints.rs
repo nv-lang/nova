@@ -273,8 +273,7 @@ pub(crate) fn collect_used_names(items: &[Item], out: &mut HashSet<String>) {
                             }
                         }
                     }
-                    TypeDeclKind::Effect(methods)
-                    | TypeDeclKind::Protocol(methods) => {
+                    TypeDeclKind::Effect(methods) => {
                         for mth in methods {
                             for p in &mth.params {
                                 collect_tr(&p.ty, out);
@@ -285,6 +284,23 @@ pub(crate) fn collect_used_names(items: &[Item], out: &mut HashSet<String>) {
                             for e in &mth.effects {
                                 collect_tr(e, out);
                             }
+                        }
+                    }
+                    TypeDeclKind::Protocol { methods, embeds } => {
+                        for mth in methods {
+                            for p in &mth.params {
+                                collect_tr(&p.ty, out);
+                            }
+                            if let Some(rt) = &mth.return_type {
+                                collect_tr(rt, out);
+                            }
+                            for e in &mth.effects {
+                                collect_tr(e, out);
+                            }
+                        }
+                        // Plan 101.4: embedded protocols reference other named types
+                        for e in embeds {
+                            collect_tr(e, out);
                         }
                     }
                     TypeDeclKind::Newtype(tr) | TypeDeclKind::Alias(tr) => {
@@ -1447,7 +1463,7 @@ fn collect_protocol_names(m: &Module) -> HashSet<String> {
     ].iter().map(|s| s.to_string()).collect();
     for item in &m.items {
         if let Item::Type(td) = item {
-            if matches!(td.kind, TypeDeclKind::Protocol(_)) {
+            if matches!(td.kind, TypeDeclKind::Protocol { .. }) {
                 names.insert(td.name.clone());
             }
         }

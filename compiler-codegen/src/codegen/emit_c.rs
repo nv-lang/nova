@@ -1554,7 +1554,7 @@ impl CEmitter {
         for item in &module.items {
             if let Item::Type(t) = item {
                 if t.generics.is_empty() {
-                    if let crate::ast::TypeDeclKind::Protocol(methods) = &t.kind {
+                    if let crate::ast::TypeDeclKind::Protocol { methods, .. } = &t.kind {
                         self.protocol_types.insert(t.name.clone());
                         self.protocol_method_registry.insert(
                             t.name.clone(),
@@ -1611,7 +1611,7 @@ impl CEmitter {
                     // `Nova_Iter*` для protocol-typed parameters → CC-FAIL
                     // `unknown type name 'Nova_Iter'` (regression от merge'а
                     // main↔plan-62-main).
-                    if let crate::ast::TypeDeclKind::Protocol(methods) = &t.kind {
+                    if let crate::ast::TypeDeclKind::Protocol { methods, .. } = &t.kind {
                         self.protocol_types.insert(t.name.clone());
                         // Plan 72 P3-B: register method signatures for vtable generation.
                         let type_params: Vec<String> = t.generics.iter()
@@ -7405,7 +7405,7 @@ impl CEmitter {
             // Self в protocol-методе ломал vtable (Nova_Self*
             // undefined). Без vtable type_ref_to_c для protocol-методов
             // вообще не вызывается.
-            TypeDeclKind::Protocol(_) => {}
+            TypeDeclKind::Protocol { .. } => {}
             // Plan 62.D.bis (D126): unreachable — early-return on top
             // of emit_type_decl уже отфильтровал Opaque kind. Branch
             // present для exhaustiveness; semantically meaningful no-op.

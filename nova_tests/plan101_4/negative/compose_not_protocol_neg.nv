@@ -1,0 +1,19 @@
+// Plan 101.4 — negative: `use TypeName` где TypeName это record/sum/
+// alias, не protocol.
+//
+// EXPECT_COMPILE_ERROR: [E_PROTOCOL_EMBED_NOT_PROTOCOL]
+
+module nova_tests.plan101_4.negative.compose_not_protocol_neg
+
+type Record1 {
+    x int
+}
+
+type BadProto protocol {
+    use Record1
+    m() -> int
+}
+
+test "should error" {
+    assert(1 == 1)
+}
