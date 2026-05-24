@@ -743,6 +743,49 @@ impl<'a> TypeCheckCtx<'a> {
                     ));
                 }
             }
+            // Plan 101.1 C8 (Ф.2 E_UNUSED_PREFIX_TYPEVAR):
+            // Каждый prefix-generic должен использоваться в receiver/params/return.
+            // Если объявлен но не используется — error.
+            {
+                let mut referenced: HashSet<String> = HashSet::new();
+                // Collect from receiver type-name (bare T case).
+                let tn_rec = r.type_name.as_str();
+                if tn_rec.len() <= 2 && tn_rec.chars().all(|c| c.is_ascii_uppercase()) {
+                    referenced.insert(tn_rec.to_string());
+                }
+                // Collect from receiver type generics (`[]T`, Option[T], etc.).
+                for tr in &r.generics {
+                    Self::collect_named_idents(tr, &mut referenced);
+                }
+                // Array element if receiver is []T.
+                if let Some(elem) = r.type_name.strip_prefix("[]") {
+                    if elem.len() <= 2 && elem.chars().all(|c| c.is_ascii_uppercase()) {
+                        referenced.insert(elem.to_string());
+                    }
+                }
+                // Collect from params.
+                for p in &fd.params {
+                    Self::collect_named_idents(&p.ty, &mut referenced);
+                }
+                // Collect from return type.
+                if let Some(rt) = &fd.return_type {
+                    Self::collect_named_idents(rt, &mut referenced);
+                }
+                // Check each fd.generics — must be referenced.
+                for g in &fd.generics {
+                    if !referenced.contains(&g.name) {
+                        errors.push(Diagnostic::new(
+                            format!(
+                                "[E_UNUSED_PREFIX_TYPEVAR] generic `{name}` declared в \
+                                 `fn[…]` prefix но не используется в receiver, params, \
+                                 или return type (Plan 101.1 / D145). Удалите из prefix.",
+                                name = g.name
+                            ),
+                            r.span,
+                        ));
+                    }
+                }
+            }
             // Plan 101.1 B4 (Ф.2 E_PREFIX_SHADOWS_NAMED_TYPE):
             // Detect `fn[T] T @method` + `type T { ... }` в scope. fn-prefix
             // shadows named type — ambiguous. Loud error suggests rename.
@@ -958,6 +1001,39 @@ impl<'a> TypeCheckCtx<'a> {
                     }
                 }
             }
+            TypeRef::Unit(_) => {}
+        }
+    }
+
+    /// Plan 101.1 C8: collect all Named-type identifiers referenced
+    /// anywhere в typeref recursively. Used для unused-prefix-generic
+    /// detection (compare against fd.generics names).
+    fn collect_named_idents(tr: &TypeRef, out: &mut HashSet<String>) {
+        match tr {
+            TypeRef::Named { path, generics, .. } => {
+                if let Some(name) = path.last() {
+                    out.insert(name.clone());
+                }
+                for g in generics {
+                    Self::collect_named_idents(g, out);
+                }
+            }
+            TypeRef::Array(inner, _) => Self::collect_named_idents(inner, out),
+            TypeRef::FixedArray(_, inner, _) => Self::collect_named_idents(inner, out),
+            TypeRef::Tuple(items, _) => {
+                for it in items {
+                    Self::collect_named_idents(it, out);
+                }
+            }
+            TypeRef::Func { params, return_type, .. } => {
+                for p in params {
+                    Self::collect_named_idents(p, out);
+                }
+                if let Some(rt) = return_type {
+                    Self::collect_named_idents(rt, out);
+                }
+            }
+            TypeRef::Protocol { methods: _, .. } => {}
             TypeRef::Unit(_) => {}
         }
     }
