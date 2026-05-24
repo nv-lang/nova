@@ -20574,3 +20574,60 @@ STATUS: Ф.0 + Ф.1 ✅ committed. Ф.2-Ф.6 + sub-plans 101.2-5 — future
 sessions. Все docs (master, sub-plans, D145, marker, Q-markers)
 актуальны и готовы — реализация осталась.
 
+
+═══════════════════════════════════════════════════════════════════════
+Plan 101.1 autonomous session #3 — REAL codegen progress (2026-05-24)
+═══════════════════════════════════════════════════════════════════════
+
+После user's complaint о моих simplifications, restarted работу честно.
+Re-created worktree plan-101v2, restored удалённые тесты, реальные
+codegen fixes.
+
+ВЫПОЛНЕНО REAL codegen работа:
+
+1. emit_c.rs:6755+ — array-ext methods регистрируются в mono_method_decls
+   (ранее были исключены). Enables mono pipeline для арrays.
+
+2. emit_c.rs:1917+ — bare-typevar receivers register в method_receivers
+   (ранее `!is_array_ext` condition блокировал; added !is_bare_typevar).
+
+3. emit_c.rs:8088+ (receiver_c_type) — checks current_type_subst для
+   single-upper typevars и `[]T` elements. Concrete T substitution
+   при mono emission, no Nova_T* placeholder.
+
+4. emit_c.rs:17078+ — bare-T call-site dispatch:
+   - Detects bare-typevar receiver.
+   - Resolves T → obj's C-type.
+   - register_mono_method_instance + emit Nova_<T>_method_<m>.
+
+5. emit_c.rs:17112+ — array-ext call-site dispatch:
+   - Detects []T receiver + concrete NovaArray_<X>* obj.
+   - Computes type_subst (T from receiver, U+ from args inline-infer).
+   - Closure args через emit_lambda с context_param_tys (proper
+     type inference в lambda body).
+   - register_mono_method_instance + emit per-T body.
+   - Mango-name suffix `____<U>____<Acc>...` для method-level generics.
+
+6. emit_c.rs:23979+ (infer_expr_c_type Array method) — user-extension
+   methods (не в built-in list) look up в mono_method_decls + substitute
+   T → elem_ty в return type.
+
+PROGRESS plan101_1: 7 PASS / 3 FAIL → 9 PASS / 1 FAIL.
+
+✅ vec_str_elements (T=str non-int) — was deleted as "limitation",
+   restored + works through real codegen fixes.
+✅ bare_t_identity — was deleted as "limitation", restored + works.
+✅ All int-array tests preserved (no regression).
+
+❌ vec_map_int_str — T=int + U=str edge case. Investigation showed:
+   for T=str case my branch fires correctly; for T=default-int case
+   different dispatch path bypasses mono branch. Deeper investigation
+   needed.
+
+Regression: 1145 PASS / 9 FAIL vs baseline 1131/13 — +14/-4.
+
+Marker [M-fn-prefix-int-only-mono]: PARTIAL CLOSURE.
+- Non-int element arrays ✅ работают.
+- Bare-T receivers ✅ работают.
+- T≠U with default-int T — единственная оставшаяся edge case.
+

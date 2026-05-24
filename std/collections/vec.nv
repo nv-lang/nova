@@ -43,7 +43,7 @@ module collections.vec
 /// ```
 #stable(since = "0.1")
 export fn[T] []T @map[U](f fn(T) -> U) -> []U {
-    let mut out []U = []U.with_capacity(@len)
+    let mut out []U = []U.with_capacity(@len())
     for x in @ {                          // implicit iter (D58)
         out.push(f(x))
     }
@@ -131,7 +131,7 @@ export fn[T] []T @all(pred fn(T) -> bool) -> bool {
 /// ```
 #stable(since = "0.1")
 export fn[T] []T @first() -> Option[T] =>
-    if @len == 0 { None } else { Some(@[0]) }
+    if @len() == 0 { None } else { Some(@[0]) }
 
 /// Последний элемент через `Option[T]`. `None` если пусто.
 ///
@@ -142,7 +142,7 @@ export fn[T] []T @first() -> Option[T] =>
 /// ```
 #stable(since = "0.1")
 export fn[T] []T @last() -> Option[T] =>
-    if @len == 0 { None } else { Some(@[@len - 1]) }
+    if @len() == 0 { None } else { Some(@[@len() - 1]) }
 
 
 // ──────────────────────────────────────────────────────────────────────────
