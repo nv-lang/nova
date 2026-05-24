@@ -700,6 +700,29 @@ impl<'a> TypeCheckCtx<'a> {
                 }
             }
         }
+        // Plan 101.1 B1 (Ф.2 E_UNDECLARED_TYPEVAR_IN_RECEIVER):
+        // Detect `fn []T @method` где T — single-uppercase letter без
+        // `fn[T]` префикса (не в gs). Это silent miscompile в old codegen
+        // (defaults T=nova_int). Loud error suggests `fn[T]` prefix fix.
+        if let Some(r) = &fd.receiver {
+            if r.type_name.starts_with("[]") {
+                let elem = &r.type_name[2..];
+                let is_single_upper = elem.len() <= 2
+                    && elem.chars().all(|c| c.is_ascii_uppercase());
+                if is_single_upper && !gs.contains(elem) {
+                    errors.push(Diagnostic::new(
+                        format!(
+                            "[E_UNDECLARED_TYPEVAR_IN_RECEIVER] `fn []{elem} @{m}` — \
+                             typevar `{elem}` не объявлен. Добавьте `fn[{elem}]` префикс \
+                             (Plan 101.1 / D145):\n  \
+                             fn[{elem}] []{elem} @{m}(...) -> ...",
+                            elem = elem, m = fd.name
+                        ),
+                        r.span,
+                    ));
+                }
+            }
+        }
         // Bounds и defaults generic-параметров.
         for g in &fd.generics {
             if let Some(b) = &g.bound {
