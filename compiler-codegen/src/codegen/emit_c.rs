@@ -6201,6 +6201,50 @@ impl CEmitter {
             match item {
                 Item::Fn(f) => self.scan_fn_fwd(f, &mut h_ctr, &mut s_ctr)?,
                 Item::Test(t) => self.scan_block_fwd(&t.body, &mut h_ctr, &mut s_ctr)?,
+                // Plan 83.4.5.6 Ф.4 (2026-05-24): pre-scan bench bodies для
+                // spawn-fwd decls. Без этого `bench "..." { measure { supervised
+                // { parallel for ... } } }` падает на CC-FAIL — `_nova_spawn_N`
+                // undeclared (тело функции в deferred_impls после call site'а).
+                //
+                // CRITICAL: emit_bench эмитит `measure_body` **ТРИ РАЗА**
+                // (warmup loop + calibration + sample collection — см.
+                // emit_c.rs::emit_bench). Каждый emit инкрементит
+                // self.spawn_counter → 1 spawn в source даёт 3 spawn_ids в
+                // generated C. Pre-scan ДОЛЖЕН отражать ту же 3× expansion,
+                // иначе s_ctr/spawn_counter рассинхронизируются и fwd-decls
+                // не покрывают позднейшие spawn_ids. Setup/teardown
+                // эмитятся один раз — single scan каждый.
+                Item::Bench(b) => {
+                    for stmt in &b.setup {
+                        self.scan_stmt_fwd(stmt, &mut h_ctr, &mut s_ctr)?;
+                    }
+                    // 3× measure_body — emit_bench warmup + calibration + sample.
+                    // Plan 83.4.5.6 V1 limitation: triple-scan может вызвать
+                    // pre-existing type-cache mishaps в record/Option codegen
+                    // (см. bench/micro/gc.nv — Nova_Node.next тип теряется
+                    // если scan повторяется). V2: либо emit_bench refactor
+                    // на 1×measure, либо scan-skip помечать generics.
+                    for _ in 0..3 {
+                        self.scan_block_fwd(&b.measure_body, &mut h_ctr, &mut s_ctr)?;
+                    }
+                    for stmt in &b.teardown {
+                        self.scan_stmt_fwd(stmt, &mut h_ctr, &mut s_ctr)?;
+                    }
+                    for group in &b.groups {
+                        for case in &group.cases {
+                            for stmt in &case.setup {
+                                self.scan_stmt_fwd(stmt, &mut h_ctr, &mut s_ctr)?;
+                            }
+                            // 3× case.measure_body — same rationale.
+                            for _ in 0..3 {
+                                self.scan_block_fwd(&case.measure_body, &mut h_ctr, &mut s_ctr)?;
+                            }
+                            for stmt in &case.teardown {
+                                self.scan_stmt_fwd(stmt, &mut h_ctr, &mut s_ctr)?;
+                            }
+                        }
+                    }
+                }
                 _ => {}
             }
         }
