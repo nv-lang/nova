@@ -148,15 +148,16 @@ print_id(tx)                                    // ❌ D133-move-to-non-consume
                                                 //    (callee не declares consume)
 ```
 
-Для production-grade read-only — используй `view T` (Plan 100.3 D157):
+Для production-grade read-only — просто **не пиши `consume` qualifier**
+(view-default по D157, Plan 100.3 Ред. 2 — keyword `view T` отвергнут):
 
 ```nova
-fn print_id(tx Transaction) -> () {
+fn print_id(tx Transaction) -> () {             // default view (no qualifier)
     println(tx.id)
 }
 
 consume tx = begin()
-print_id(tx)                               // ✅ borrow OK
+print_id(tx)                                    // ✅ view-передача
 tx.commit()                                     // ✅ tx Live после
 ```
 
@@ -225,7 +226,7 @@ commit/rollback choice важен.
 - [D132](../../spec/decisions/03-syntax.md#d132) — `-> @` fluent-return.
 - [D133](../../spec/decisions/02-types.md#d133) — type-level consume.
 - [D156](../../spec/decisions/02-types.md#d156) — generic `[T consume]`.
-- [D157](../../spec/decisions/05-memory.md#d157) — `view T` borrow.
+- [D157](../../spec/decisions/05-memory.md#d157) — implicit view default + closure capture + match consume.
 - [D158-D162](../../spec/decisions/03-syntax.md#d158) — defer/errdefer/
   okdefer family.
 - [D163](../../spec/decisions/02-types.md#d163) — FFI `external fn`.
