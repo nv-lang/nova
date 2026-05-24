@@ -722,6 +722,27 @@ impl<'a> TypeCheckCtx<'a> {
                     ));
                 }
             }
+            // Plan 101.1 B2 (Ф.2 E_BARE_TYPEVAR_NEEDS_PREFIX):
+            // Detect `fn T @method` где T — bare single-uppercase letter
+            // (not array, not other shape) без `fn[T]` prefix. Allowed only
+            // если T in gs (declared via prefix) OR T — named type (но
+            // type-check error elsewhere). Distinct from B1 (which targets `[]T`).
+            let tn = r.type_name.as_str();
+            if tn.len() <= 2 && tn.chars().all(|c| c.is_ascii_uppercase()) {
+                if !gs.contains(tn) && !self.types.contains_key(tn) {
+                    errors.push(Diagnostic::new(
+                        format!(
+                            "[E_BARE_TYPEVAR_NEEDS_PREFIX] `fn {tn} @{m}` — \
+                             bare typevar `{tn}` receiver требует `fn[{tn}]` префикс \
+                             (Plan 101.1 / D145):\n  \
+                             fn[{tn}] {tn} @{m}(...) -> ...\n  \
+                             OR declare `type {tn} {{ ... }}` если intended named type.",
+                            tn = tn, m = fd.name
+                        ),
+                        r.span,
+                    ));
+                }
+            }
         }
         // Bounds и defaults generic-параметров.
         for g in &fd.generics {
