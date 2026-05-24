@@ -743,6 +743,41 @@ impl<'a> TypeCheckCtx<'a> {
                     ));
                 }
             }
+            // Plan 101.1 B3 (Ф.2 E_DUPLICATE_GENERIC_DECL):
+            // Detect `fn[K, V] HashMap[K, V] @method` — generics в `fn[…]`
+            // дублируют carrier-brackets `Name[K, V]`. Удалите fn-prefix
+            // OR удалите из carrier.
+            //
+            // Collect carrier-declared generics (single-upper names from
+            // receiver.generics) and check if any fn-prefix-generic
+            // (fd.generics from prefix) duplicates them.
+            let carrier_decls: HashSet<String> = r.generics.iter()
+                .filter_map(|tr| {
+                    if let TypeRef::Named { path, .. } = tr {
+                        if path.len() == 1 {
+                            let n = &path[0];
+                            if n.len() <= 2 && n.chars().all(|c| c.is_ascii_uppercase()) {
+                                return Some(n.clone());
+                            }
+                        }
+                    }
+                    None
+                })
+                .collect();
+            for g in &fd.generics {
+                if carrier_decls.contains(&g.name) {
+                    errors.push(Diagnostic::new(
+                        format!(
+                            "[E_DUPLICATE_GENERIC_DECL] generic `{tn}` уже введён через \
+                             receiver `{rn}[{ts}]` — удалите из `fn[…]` префикса \
+                             (Plan 101.1 / D145):\n  \
+                             fn {rn}[{ts}] @{m}(...)  // без fn[{tn}]",
+                            tn = g.name, rn = r.type_name, ts = r.generics.iter().map(|t| format!("{:?}", t)).collect::<Vec<_>>().join(", "), m = fd.name
+                        ),
+                        r.span,
+                    ));
+                }
+            }
         }
         // Bounds и defaults generic-параметров.
         for g in &fd.generics {
