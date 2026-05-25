@@ -21155,3 +21155,41 @@ H4 (NEXT): merge plan-101v4 → main.
 
 Tests: 11 plan101_4 + 6 plan101_3 + 2 plan101_2 + 17 plan101_1 = 36
 PASS / 1 FAIL (vec_map_int_str). Полная nova test = 1171/9 (8 flake).
+
+================================================================
+[2026-05-25] Plan 100.3 D9 — closure dyru про consume-rvalue в arg-position
+================================================================
+
+Discovery (user pushback): «consume результат функции нельзя передать
+в параметр view другой функции, это предусмотрено?». Audit показал —
+**дыра в Ред. 2**: D9 100.1 регулирует binding-form (`let tx = …` →
+error, обязателен `consume tx = …`), но **expression-statement без
+LHS** не покрыт. Сценарий `show(make_tx())` где `show(t Tx)` —
+view-param: flow-checker трекает variables по имени → temporary без
+имени → нет slot'а в `ConsumeCtx` → exit-gate его не увидит → ресурс
+утечёт молча.
+
+**Резолюшн D9 в Plan 100.3 (commit 6071c42a927):**
+
+| Callee param | OK? | Логика |
+|---|---|---|
+| `f(consume t Tx)` | ✅ | ownership напрямую; callee обязан consume |
+| `f(t Tx)` view-default | ❌ E (D133-consume-rvalue-in-view) | view не consume'нет — leak |
+| `f(mut t Tx)` | ❌ E (D133-consume-rvalue-in-mut-view) | то же — mut-view не consume'нет |
+
+Diagnostic hint: «привяжи через `consume name = make_tx()`».
+Цепочки `g(f(make_tx()))` — рекурсивно по правилу для каждого
+param'а.
+
+**Файлы:**
+- `spec/decisions/02-types.md` — новая sub-section §«Consume-rvalue
+  в arg-position» + 2 row'а в таблицу §«Что считается consume».
+- `docs/plans/100.3-borrow-and-view.md` — новое decision D9 + 2
+  фикстуры в test-table (8 pos / 6 neg) + acceptance criterion.
+- `nova_tests/plan100.3/view_err_rvalue_in_view.nv` (neg, EXPECT D133).
+- `nova_tests/plan100.3/consume_ok_rvalue_to_consume_param.nv` (pos).
+
+**Status:** spec/docs/fixtures — ✅ closed. Implementation D9 пойдёт
+вместе с Plan 100.3 Ф.3 (type-checker view propagation) — тривиальное
+расширение на фоне основного flow analysis. Часть общего
+[M-100-impl-deferred] (~43 dev-day на весь Plan 100).
