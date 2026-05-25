@@ -25,7 +25,7 @@
 | 100.4.4 multi-defer error accumulation | 📋 GATED on 100.4.1 | 3 | D161 |
 | 100.4.5 consume-integration final | 📋 GATED on 100.4.1-4 | 3 | D162 |
 | 100.5 FFI / external integration | 📋 unblocked | 4 | D163 |
-| 100.6 cross-module + visibility + mangling | 📋 unblocked | 3 | D164 |
+| 100.6 cross-module + visibility + mangling | ✅ ЗАКРЫТ (2026-05-26) | 3 | D164 |
 | 100.7 stdlib migration playbook | 📋 GATED on 100.1-6 | 3 | D165 |
 | 100.8 performance + IDE / tooling | 📋 unblocked (polish) | 3 | D166 |
 

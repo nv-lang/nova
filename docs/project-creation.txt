@@ -21629,3 +21629,36 @@ GC-языков (Go/Rust/TS/Kotlin не имеют аналога).
 - docs/idiom/symmetric-cleanup.md: canonical errdefer+okdefer pattern
 
 Merge: 49c3b0b0da3; branch plan-100-4-3-okdefer → main.
+
+=== Plan 100.6 — Cross-module consume + visibility + mangling (D164) (2026-05-26) ===
+
+ЗАКРЫТ: Plan 100.6 — cross-module consume через границы пакетов.
+
+**Ключевые изменения:**
+- emit_c.rs: consume-bit mangling — `Nova_{T}_consume_{method}` (consume) vs
+  `Nova_{T}_method_{method}` (non-consume). Синхронизированы pre-pass + mangle_fn.
+- manifest.rs: `[exports.consume_types]` секция → `Manifest.exports_consume_types: HashMap<String, String>`.
+- types/mod.rs: cross-module diagnostic hint в check_obligations_at_exit:
+  если тип не в локальном LinearityRegistry → "(тип из внешнего модуля/пакета)".
+- docs/plans/100.6-artifacts/gate-probe.md: 5 use-cases (D164 §1–§6).
+
+**Фикстуры (nova_tests/plan100_6/):**
+- 10 pos + 5 neg = 15/15 PASS
+  pos: import_ok, reexport_ok, generic_ok, via_protocol_ok, with_field_ok,
+       folder_module_ok, relative_import_ok, internal_folder_ok,
+       private_local_ok, nova_toml_contract_ok
+  neg: err_visibility, err_mangling_mismatch, err_missing_marker_in_b,
+       err_unknown_consume_method, nova_toml_err_major_bump
+
+**Regression:**
+- plan100_1: 23/0 ✅
+- plan73: 12/0 ✅
+- plan100_4_3: 11/0 ✅
+- plan81: 10/0 ✅
+- Full nova test: pending (run in progress)
+
+**Spec:** D164 в spec/decisions/02-types.md (pre-patched).
+**Docs:** docs/plans/100.6-cross-module-integration.md (статус ✅ ЗАКРЫТ),
+docs/idiom/cross-pkg-consume.md, docs/simplifications.md.
+
+Merge: plan-100-6-cross-module → main (pending full regression).

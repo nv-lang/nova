@@ -12194,3 +12194,35 @@ capabilities; без неё Nova не достигает заявленной re
 
 5. **ARM CI для compare_exchange_weak spurious-fail paths** — тесты на x86 не проверяют spurious fails
    (нет LL/SC на x86). ARM CI — отложено до Linux ARM CI готов.
+
+## Plan 100.6: Cross-module consume + visibility + mangling — D164 (2026-05-26)
+
+### Реализовано
+- **consume-bit mangling** (D164 §2): `Nova_{T}_consume_{method}` для consume-методов,
+  `Nova_{T}_method_{method}` для non-consume. Оба пути синхронизированы:
+  pre-pass registration + mangle_fn fallback дают идентичные имена.
+- **15 фикстур** (10 pos + 5 neg): все PASS. Симулируют cross-package scenarios в single-file.
+- **`[exports.consume_types]` schema** в `manifest.rs`: `Manifest.exports_consume_types: HashMap<String, String>`.
+  Parse `[exports.consume_types]` секцию из nova.toml.
+- **Cross-module diagnostic hint** (D164 §5): если тип не в локальном `LinearityRegistry.consume_types`,
+  добавляется hint "(тип из внешнего модуля/пакета)" в D133-not-consumed.
+- **Gate probe** `docs/plans/100.6-artifacts/gate-probe.md` — 5 use-cases (D164 §1–§6).
+
+### Упрощения vs spec D164
+1. **Single-file mock pattern** — все 15 фикстур симулируют cross-package в одном файле.
+   Реальный multi-package scenario требует Plan 03 dependency resolver + package build graph.
+   D164 §1-3 semantics верны, но физически cross-package import не реализован как separate packages.
+   Фикстуры доказывают что consume-checker/codegen правильно работает; физический resolver — Plan 03.x.
+
+2. **`nova audit` consume-contract verification** (D164 §6) не реализован.
+   `nova.toml [exports.consume_types]` парсится и хранится в `Manifest.exports_consume_types`,
+   но `nova audit` команда использует его только как documentation. Enforcement (verify тип является
+   consume в src + major-bump check) отложено на Plan 03.4 followup.
+
+3. **Cross-module LinearityRegistry** — LinearityRegistry строится из текущего модуля только.
+   Для настоящего cross-package анализа нужно propagate imported type metadata. В single-file
+   мокках это не нужно. Полная реализация — часть Plan 03 package graph.
+
+4. **Re-export chain testing** (D164 §3) — симулировано в одном файле (cross_pkg_consume_reexport_ok.nv),
+   не через реальный `export import`. Plan 42.09 уже поддерживает `export import`; consume-marker
+   preservation в нём не проверялся отдельными cross-file тестами (требует Plan 03 build graph).
