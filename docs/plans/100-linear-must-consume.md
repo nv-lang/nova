@@ -10,7 +10,7 @@
 > закрывает их **полностью** через декомпозицию на 4 sub-plan'а.
 >
 > **Статус umbrella:** 🟡 **IN PROGRESS** — 100.1 ✅ ЗАКРЫТ 2026-05-25;
-> 100.2-100.8 📋 roadmap. **Ред. 3 (2026-05-23):
+> 100.2 ✅ ЗАКРЫТ 2026-05-26; 100.3-100.8 📋 roadmap. **Ред. 3 (2026-05-23):
 > добавлены 100.5/100.6/100.7/100.8 для cross-cutting production
 > needs** (FFI / cross-module / migration playbook / IDE tooling).
 > 8 sub-plan'ов общим объёмом ~43 dev-day; 100.4 — sub-umbrella с 5

@@ -11995,7 +11995,14 @@ Plan 101.1 Ф.3 follow-up OR Plan 101.5 stdlib audit.
 > **100.1 ✅ ЗАКРЫТ 2026-05-25** (merge `ab60167f3e5`): parser + AST (`type T consume`
 > + `consume` field/binding qualifiers), LinearityRegistry (marker checks
 > D133), ConsumeCtx flow analysis (D3/D5/D5.1/D5.2/D7) — 23/23 plan100_1
-> PASS, 0 regressions. 100.2–100.8 остаются ниже.
+> PASS, 0 regressions.
+>
+> **100.2 ✅ ЗАКРЫТ 2026-05-26** (merge TBD): AST `GenericParam { consume_bound }` +
+> `ExprKind::For { iter_consume }`, parser `[T consume]` + `for consume x in`, ConsumeCtx
+> `consume_bound_generics` + D156-strict-forget + D156-iter-not/maybe-consumed — 17/17
+> plan100_2 PASS, 0 regressions (plan100_1 23/0, plan73 12/0, plan100_4_3 11/0).
+>
+> **100.3–100.8 остаются ниже.**
 
 **Где:** pipeline `parser → type-checker → consume-checker → codegen → runtime`; 100.1 реализован, остальные sub-plans отложены.
 
