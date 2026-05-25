@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 # План 18: Stdlib roadmap для Nova
 
-> ⚠️ **СТАТУС: DRAFT, не финализирован.** Не использовать как авторитет
-> для реализации. Q1–Q8 открыты (см. ниже) — требуют решения перед
-> утверждением плана. Финализация = снятие этого баннера + переход
-> статуса в "active" в [README.md](README.md).
+> ⚠️ **СТАТУС: PARTIALLY ACTIVE** (обновлено 2026-05-25). Шаг 1
+> (`std.sync`) ✅ зашиплен — формализуется отдельно [Plan 103](103-sync-primitives-spec-formalization.md)
+> (D167). Шаги 2-4 (fs/os/net) перенесены в [Plan 91](91-stdlib-mvp-for-0.1.md)
+> std MVP roadmap (на горизонте 0.2–0.4). Шаг 5 (RwLock/Semaphore) —
+> отдельные планы по запросу. Q1–Q8 ниже — частично актуальны (Q3
+> частично закрыт Plan 34, Q5 закрыт через декомпозицию в Plan 14/15/35).
 
 **Дата создания:** 2026-05-09 (rev 3, переосмысление под spec/decisions).
 **Цель:** определить, что из stdlib Rust/Go нужно Nova под backend/CLI нишу, расставить приоритеты P0/P1/P2 и зафиксировать дизайн-решения **поверх** built-in эффектов и concurrency-примитивов спеки. Не план реализации — план направления.
@@ -138,12 +140,28 @@ closure-rev + D85 error-ops). Работа codegen-агента.
 > Plan 18 статус: DRAFT → продвигается к **active**. Ниже — конкретные
 > шаги в порядке приоритета. Каждый шаг = отдельный коммит/sub-plan.
 
-### Шаг 1 — std.sync (M:N-correct примитивы) — HIGH
+### Шаг 1 — std.sync (M:N-correct примитивы) — ✅ ЗАКРЫТО (формализация: Plan 103)
 
-**Почему сейчас:** M:N runtime работает (Plan 44.5). Shared mut между
+> ✅ **Зашиплено.** `std/runtime/sync.nv` + `compiler-codegen/nova_rt/sync_primitives.h`.
+> Формализация в spec — отдельный [Plan 103](103-sync-primitives-spec-formalization.md)
+> (D167). Реальный состав отличается от исходного дизайна ниже:
+>
+> | Дизайн (ниже) | Реализация (sync.nv) | Причина |
+> |---|---|---|
+> | `Atomic[T]` generic | `AtomicInt` + `AtomicBool` моно-типы | generic specialization для primitive T ограничен ([M-fn-prefix-int-only-mono]) |
+> | `Mutex[T]` data-carrying | `Mutex` без `T` (Go-style) | проще, M:N-safe; data-carrying — отдельный design Q |
+> | `WaitGroup` | ✅ как планировалось | — |
+> | (не было) | `Once` (run/done barrier) | exactly-once добавлен в Шаг 1 scope |
+> | `RwLock`, `Semaphore` | НЕ реализованы | перенесено в Шаг 5 |
+>
+> Memory ordering жёстко acq_rel/acquire/release (configurable
+> ordering — отдельный план). Mutex fair-FIFO, NOT reentrant; Once с
+> acquire fast-path; WaitGroup Go-style (add happens-before wait).
+
+**Почему сейчас (исторически):** M:N runtime работает (Plan 44.5). Shared mut между
 workers без синхронизации = UB. std.sync нужен для честного M:N кода.
 
-Реализация:
+Реализация (исходный дизайн — оставлен для истории; реальный shipped — см. Plan 103 D167):
 
 **`Atomic[T]`** — через C11 `_Atomic` / MSVC `_InterlockedExchange*`.
 ```nova
@@ -177,7 +195,7 @@ export external fn WaitGroup.@wait() -> ()   // park until count == 0
 Тесты: atomic increment от N workers (final sum = N × iterations),
 mutex producer-consumer, waitgroup join N fibers.
 
-### Шаг 2 — std.fs базовый (File read/write) — MEDIUM
+### Шаг 2 — std.fs базовый (File read/write) — MEDIUM (→ Plan 91 / релиз 0.2+)
 
 **`File.open`, `File.read`, `File.write`, `File.close`** через
 libuv `uv_fs_open/read/write/close` с park/wake integration
@@ -188,7 +206,7 @@ Blocking-pool для sync path (отдельный thread pool в libuv).
 
 Тест: write temp file → read back → assert content. Cross-platform.
 
-### Шаг 3 — std.os.args / env — SMALL
+### Шаг 3 — std.os.args / env — SMALL (→ Plan 91 / релиз 0.2+)
 
 ```nova
 export external fn os.args() -> []str
@@ -199,7 +217,7 @@ export external fn os.exit(code int) -> ()
 Runtime: `argc/argv` через main thread init; `getenv` / `GetEnvironmentVariable`.
 Нет libuv: синхронные системные вызовы.
 
-### Шаг 4 — std.net (TCP echo server) — MEDIUM-HIGH
+### Шаг 4 — std.net (TCP echo server) — MEDIUM-HIGH (→ Plan 91 / релиз 0.2+)
 
 `TcpListener.bind(addr)` + `TcpStream.dial(addr)` через libuv `uv_tcp_*`.
 accept loop → spawn fiber per connection → park/wake на read/write.
@@ -207,10 +225,15 @@ accept loop → spawn fiber per connection → park/wake на read/write.
 **Это первый end-to-end network test Nova.** Если работает —
 языковой server на Nova возможен.
 
-### Шаг 5 — std.sync остаток (Once, RwLock, Semaphore) — LOWER
+### Шаг 5 — std.sync остаток (RwLock, Semaphore) — DEFERRED
 
-После Шаг 1 + 2 проверки покажут что ещё нужно. Эти нужны
-для продвинутых паттернов (lazy singleton, read-heavy data).
+> **Обновление 2026-05-25:** `Once` перенесён в Шаг 1 и зашиплен (см.
+> [Plan 103](103-sync-primitives-spec-formalization.md) D167).
+> Остались `RwLock` и `Semaphore` — отложены до конкретного use case.
+> Когда возникнет — отдельный sub-plan (103.1 / 103.2 candidate).
+
+Эти нужны для продвинутых паттернов (read-heavy data, bounded
+concurrency).
 
 ### Блокеры которые нужно закрыть ДО шагов выше
 
@@ -241,3 +264,5 @@ accept loop → spawn fiber per connection → park/wake на read/write.
 - [17-q-resolutions.md](17-q-resolutions.md) — string interpolation (Plan 17 ✅) — основа для `str.from(v)` в форматировании
 - [34-stdlib-typecheck-and-compile-fix.md](34-stdlib-typecheck-and-compile-fix.md) — текущий регресс stdlib type-check + `std.testing` handlers (активный)
 - [35-cross-file-resolve.md](35-cross-file-resolve.md) — Ф.5 из Plan 14, вынесена самостоятельно
+- [91-stdlib-mvp-for-0.1.md](91-stdlib-mvp-for-0.1.md) — std MVP для релиза 0.1 (Option/Result/Vec/HashMap/HashSet/sort/json/time/math); наследует Шаги 2-4 этого плана для релизов 0.2+
+- [103-sync-primitives-spec-formalization.md](103-sync-primitives-spec-formalization.md) — формализация Шаг 1 (D167)
