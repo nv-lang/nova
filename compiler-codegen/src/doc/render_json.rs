@@ -197,12 +197,14 @@ fn write_item(w: &mut JsonWriter, it: &DocItem) {
         }
     });
     // Plan 45 Ф.23.3 / D63/D64: capabilities — alphabetical:
-    // allow_transit (a) < forbid (f) < pure_fn (p) < realtime (r) < realtime_nogc (rn).
+    // allow_transit (a) < consume (c) < forbid (f) < pure_fn (p) < realtime (r) < realtime_nogc (rn).
     w.field_object("capabilities", |w| {
         // Plan 45 Ф.26.3 / D63: allow_transit (escape hatches из forbid-блока).
         w.field_array("allow_transit", |w| {
             for e in &it.capabilities.allow_transit { w.array_str(e); }
         });
+        // Plan 100.8 / D166: consume — must-be-consumed type marker (D133).
+        w.field_bool("consume", it.capabilities.consume);
         w.field_array("forbid", |w| {
             for f in &it.capabilities.forbid { w.array_str(f); }
         });

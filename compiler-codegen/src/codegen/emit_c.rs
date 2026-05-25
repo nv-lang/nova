@@ -317,6 +317,13 @@ pub struct CEmitter {
     /// Names of variables declared as `let mut` (mutable) — used by spawn-capture
     /// to decide between copy-by-value (immutable scalar) and capture-by-pointer.
     var_mutable: HashSet<String>,
+    /// Plan 100.8 (D166) C-codegen fix: variables that were pre-declared
+    /// (hoisted) before a setjmp handler in `enter_defer_scope` because they
+    /// are referenced in an errdefer/defer body. When `emit_stmt` encounters the
+    /// corresponding `Stmt::Let`, it emits only the assignment (no type), since
+    /// the declaration was already emitted above the setjmp. The name is removed
+    /// from this set on first use so sibling scopes with the same name work normally.
+    hoisted_let_vars: HashSet<String>,
     /// Plan 72 P0 (E7201): variables whose declared Nova type is a protocol type
     /// (erased to void*). Maps var_name → protocol type name for diagnostics.
     /// Used to detect method calls on erased protocol values at compile time.
@@ -861,6 +868,7 @@ impl CEmitter {
             type_subst_overrides: RefCell::new(HashMap::new()),
             pattern_binding_overrides: RefCell::new(HashMap::new()),
             var_mutable: HashSet::new(),
+            hoisted_let_vars: HashSet::new(),
             protocol_vars: HashMap::new(),
             result_type_params: HashMap::new(),
             fn_result_type_params: HashMap::new(),
@@ -12018,6 +12026,47 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
             self.line(&format!("int {} = 0;", var));
             idx += 1;
         }
+        // Plan 100.8 (D166) C-codegen fix: hoist Let bindings referenced in
+        // errdefer/defer bodies so they're declared BEFORE the setjmp handler.
+        // In C, a variable's scope starts at its declaration; if an errdefer
+        // handler references `tx` but `consume tx = begin()` is emitted AFTER
+        // the setjmp, clang/gcc reject it as "use of undeclared identifier".
+        // Fix: pre-declare as `type* name = NULL;` (pointer) or `type name = 0;`
+        // (scalar). The real `emit_stmt` for `Stmt::Let` then emits only the
+        // assignment, and removes from `hoisted_let_vars`.
+        {
+            let mut errdefer_refs: HashSet<String> = HashSet::new();
+            for entry in &entries {
+                // Collect from ALL defer kinds (errdefer, plain, with-result)
+                // since any of them could reference a variable before declaration.
+                Self::collect_free_idents(&entry.body, &mut errdefer_refs);
+            }
+            if !errdefer_refs.is_empty() {
+                for s in &block.stmts {
+                    if let Stmt::Let(decl) = s {
+                        if let crate::ast::Pattern::Ident { name, .. } = &decl.pattern {
+                            if errdefer_refs.contains(name.as_str())
+                                && !self.hoisted_let_vars.contains(name.as_str())
+                            {
+                                // Infer C type for the pre-declaration.
+                                let c_ty = if let Some(ty) = &decl.ty {
+                                    self.type_ref_to_c(ty).unwrap_or_else(|_| "void*".to_string())
+                                } else {
+                                    let inf = self.infer_expr_c_type(&decl.value);
+                                    if inf == "__none_ambiguous__" || inf.is_empty() {
+                                        "void*".to_string()
+                                    } else { inf }
+                                };
+                                // Null/zero initializer based on type.
+                                let init = if c_ty.ends_with('*') { "NULL" } else { "0" };
+                                self.line(&format!("{} {} = {};  /* hoisted for errdefer */", c_ty, name, init));
+                                self.hoisted_let_vars.insert(name.clone());
+                            }
+                        }
+                    }
+                }
+            }
+        }
         let failframe_var = format!("_defer_{}_ff", block_id);
         let failframe_popped_var = format!("_defer_{}_ff_popped", block_id);
         // Plan 20 Ф.8 follow-up (3): fail-frame нужен ВСЕГДА когда есть
@@ -12529,11 +12578,23 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                     self.result_ok_inner_types.insert(binding.clone(), inner_ty);
                 }
                 // Plan 72 P3-B (fat pointer): protocol-typed var → NovaBox init.
+                // Plan 100.8 fix: if binding was hoisted (pre-declared before setjmp),
+                // emit assignment-only (no type) to avoid C redeclaration error.
+                let is_hoisted = self.hoisted_let_vars.remove(&binding);
                 if let Some((vtable_instance, box_c_type)) = &protocol_box {
-                    self.line(&format!(
-                        "{} {} = {{ .data = (void*)({}), .vtable = &{} }};",
-                        box_c_type, binding, val, vtable_instance
-                    ));
+                    if is_hoisted {
+                        self.line(&format!(
+                            "{} = {{ .data = (void*)({}), .vtable = &{} }};",
+                            binding, val, vtable_instance
+                        ));
+                    } else {
+                        self.line(&format!(
+                            "{} {} = {{ .data = (void*)({}), .vtable = &{} }};",
+                            box_c_type, binding, val, vtable_instance
+                        ));
+                    }
+                } else if is_hoisted {
+                    self.line(&format!("{} = {};", binding, val));
                 } else {
                     self.line(&format!("{} {} = {};", ty_c, binding, val));
                 }

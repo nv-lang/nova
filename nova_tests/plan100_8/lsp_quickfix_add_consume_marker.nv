@@ -1,0 +1,22 @@
+// Plan 100.8 (D166) pos #2: LSP quick fix для добавления consume-marker на type-decl.
+// Demonstrates: consume type with methods ready for IDE quick-fix injection.
+//
+// The LSP quick fix `D133-type-marker-missing` suggests adding `consume` keyword
+// to a type declaration when a consume field is present but the type is not marked.
+//
+// This fixture verifies: a properly-declared consume type compiles without errors.
+
+module nova_tests.plan100_8.lsp_quickfix_add_consume_marker
+
+// Correctly declared consume type — no D133-type-marker-missing error.
+type Buffer consume { data str; size int }
+
+fn Buffer consume @flush() -> () { () }
+fn Buffer consume @discard() -> () { () }
+
+fn make_buffer(s str) -> Buffer => { data: s; size: s.len() }
+
+test "consume type with marker — compiles clean (LSP quick fix target)" {
+    consume buf = make_buffer("hello")
+    buf.flush()
+}
