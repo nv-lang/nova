@@ -33,6 +33,22 @@ typedef enum {
     NOVA_THROW_USER_TYPED = 2,  /* Plan 61 Ф.2: typed user throw payload */
 } NovaThrowKind;
 
+/* Plan 100.4.1 (D158): Suppressed-chain node для multi-error composition.
+ * Cleanup-fail во время propagation НЕ заменяет primary error — он
+ * appended в chain'е. Caller инспектирует через MultiError API
+ * (.suppressed() returns chain в order firing). LIFO для multi-defer'ов.
+ *
+ * Storage: GC-managed (nova_alloc). Chain owned by NovaFailFrame's
+ * error_suppressed head pointer; на frame pop chain переноситcя в
+ * outer frame через nova_rethrow_with_suppressed. */
+typedef struct NovaErrorChain {
+    nova_str               msg;
+    NovaThrowKind          kind;
+    void*                  user_payload;
+    NovaTypeId             user_type_id;
+    struct NovaErrorChain* next;
+} NovaErrorChain;
+
 typedef struct NovaFailFrame {
     jmp_buf            jmp;
     nova_str           error_msg;
@@ -40,6 +56,7 @@ typedef struct NovaFailFrame {
     void*              error_reason_ptr;   /* Plan 49 typed cancel */
     void*              error_user_payload; /* Plan 61 Ф.2 typed user payload */
     NovaTypeId         error_user_type_id; /* Plan 61 Ф.2 NovaTypeId of payload */
+    NovaErrorChain*    error_suppressed;   /* Plan 100.4.1 D158 — head of suppressed chain (NULL = no chain) */
     struct NovaFailFrame* prev;
 } NovaFailFrame;
 
@@ -60,12 +77,17 @@ static inline void nova_fail_pop(void) {
 }
 
 /* Throw: store error, longjmp to nearest handler.
- * Plan 49 Ф.0: stamp kind=USER, reason=NULL (default — обычная ошибка). */
+ * Plan 49 Ф.0: stamp kind=USER, reason=NULL (default — обычная ошибка).
+ * Plan 100.4.1 (D158): reset error_suppressed chain (fresh throw НЕ несёт
+ * прошлые suppressed). Chain populated runtime'ом во время defer-cleanup
+ * через nv_compose_suppressed; transferred к outer frame через
+ * nova_rethrow_with_suppressed. */
 static inline void nova_throw(nova_str msg) {
     if (_nova_fail_top) {
         _nova_fail_top->error_msg = msg;
         _nova_fail_top->error_kind = NOVA_THROW_USER;
         _nova_fail_top->error_reason_ptr = NULL;
+        _nova_fail_top->error_suppressed = NULL;
         longjmp(_nova_fail_top->jmp, 1);
     }
     /* No handler: abort. Plan 20 Ф.8 follow-up: flush stdout перед
@@ -86,6 +108,7 @@ static inline void nova_throw_cancel(nova_str msg) {
         _nova_fail_top->error_msg = msg;
         _nova_fail_top->error_kind = NOVA_THROW_CANCEL;
         _nova_fail_top->error_reason_ptr = NULL;
+        _nova_fail_top->error_suppressed = NULL;  /* D158 */
         longjmp(_nova_fail_top->jmp, 1);
     }
     fflush(stdout);
@@ -102,6 +125,7 @@ static inline void nova_throw_cancel_reason(nova_str msg, void* reason_ptr) {
         _nova_fail_top->error_msg = msg;
         _nova_fail_top->error_kind = NOVA_THROW_CANCEL;
         _nova_fail_top->error_reason_ptr = reason_ptr;
+        _nova_fail_top->error_suppressed = NULL;  /* D158 */
         longjmp(_nova_fail_top->jmp, 1);
     }
     fflush(stdout);
@@ -110,7 +134,106 @@ static inline void nova_throw_cancel_reason(nova_str msg, void* reason_ptr) {
     abort();
 }
 
-#define NOVA_TRY(frame)   (nova_fail_push(&(frame)), setjmp((frame).jmp) == 0)
+/* ---- Plan 100.4.1 (D158): failable cleanup body — multi-error composition ----
+ *
+ * `nv_compose_suppressed(primary_frame, ...)` — appends a secondary error
+ * (the one thrown by failable defer/errdefer/okdefer body) к chain'у
+ * primary_frame->error_suppressed. Allocated в GC heap (chain выживает
+ * scope unwinding в outer frame через nova_rethrow_with_suppressed).
+ *
+ * Generated C pattern (emit_defer для failable body):
+ *
+ *   NovaFailFrame _defer_frame; nova_fail_push(&_defer_frame);
+ *   _defer_frame.error_suppressed = NULL;
+ *   if (setjmp(_defer_frame.jmp) == 0) {
+ *       <defer body>
+ *       nova_fail_pop();
+ *   } else {
+ *       nova_fail_pop();
+ *       if (_unwinding && _nova_fail_top) {
+ *           nv_compose_suppressed(_nova_fail_top,
+ *                                  _defer_frame.error_msg,
+ *                                  _defer_frame.error_kind,
+ *                                  _defer_frame.error_user_payload,
+ *                                  _defer_frame.error_user_type_id);
+ *       } else {
+ *           nova_throw_typed(_defer_frame.error_msg,
+ *                            _defer_frame.error_user_payload,
+ *                            _defer_frame.error_user_type_id);
+ *       }
+ *   }
+ *
+ * `_unwinding` — codegen-emitted local флаг, set'нут когда fn's outer
+ * fail-frame caught error и идёт cleanup-chain (LIFO defer execution).
+ */
+static inline void nv_compose_suppressed(NovaFailFrame* primary,
+                                          nova_str msg,
+                                          NovaThrowKind kind,
+                                          void* user_payload,
+                                          NovaTypeId tid) {
+    if (!primary) return;
+    NovaErrorChain* node = (NovaErrorChain*)nova_alloc(sizeof(NovaErrorChain));
+    node->msg          = msg;
+    node->kind         = kind;
+    node->user_payload = user_payload;
+    node->user_type_id = tid;
+    node->next         = primary->error_suppressed;
+    primary->error_suppressed = node;
+}
+
+/* `nova_rethrow_with_suppressed(frame)` — re-throw из inner frame в outer,
+ * preserving (transferring ownership) of error_suppressed chain. Called
+ * после `setjmp(_fn_frame.jmp) != 0` обработки — когда вся cleanup-chain
+ * complete и нужно continue propagation upward. Frame's contents copied
+ * to outer fail-frame; chain pointer transferred (single owner).
+ *
+ * `frame` уже popped (nova_fail_pop called); _nova_fail_top points to outer. */
+static inline void nova_rethrow_with_suppressed(NovaFailFrame* frame) {
+    if (_nova_fail_top) {
+        _nova_fail_top->error_msg          = frame->error_msg;
+        _nova_fail_top->error_kind         = frame->error_kind;
+        _nova_fail_top->error_reason_ptr   = frame->error_reason_ptr;
+        _nova_fail_top->error_user_payload = frame->error_user_payload;
+        _nova_fail_top->error_user_type_id = frame->error_user_type_id;
+        _nova_fail_top->error_suppressed   = frame->error_suppressed;
+        longjmp(_nova_fail_top->jmp, 1);
+    }
+    /* No outer fail-frame — abort с dump (primary + chain). */
+    fflush(stdout);
+    fprintf(stderr, "nova: unhandled Fail (D158 composite): %.*s\n",
+        (int)frame->error_msg.len, frame->error_msg.ptr);
+    {
+        NovaErrorChain* c = frame->error_suppressed;
+        int i = 1;
+        while (c) {
+            fprintf(stderr, "  suppressed [%d]: %.*s\n", i, (int)c->msg.len, c->msg.ptr);
+            c = c->next;
+            i++;
+        }
+    }
+    abort();
+}
+
+/* Accessors для MultiError prelude — count + indexed access на chain.
+ * Caller (codegen MultiError @suppressed()) uses этих для materialize'а
+ * Nova-side []Err array. */
+static inline int nova_failframe_suppressed_count(const NovaFailFrame* frame) {
+    if (!frame) return 0;
+    int n = 0;
+    const NovaErrorChain* c = frame->error_suppressed;
+    while (c) { n++; c = c->next; }
+    return n;
+}
+
+static inline NovaErrorChain* nova_failframe_suppressed_at(const NovaFailFrame* frame, int idx) {
+    if (!frame) return NULL;
+    NovaErrorChain* c = frame->error_suppressed;
+    int i = 0;
+    while (c && i < idx) { c = c->next; i++; }
+    return c;
+}
+
+#define NOVA_TRY(frame)   (nova_fail_push(&(frame)), (frame).error_suppressed = NULL, setjmp((frame).jmp) == 0)
 #define NOVA_CATCH(frame) (nova_fail_pop(), (frame).error_msg)
 /* Plan 49 Ф.0: kind/reason accessors — read AFTER setjmp returned non-zero. */
 #define NOVA_CATCH_KIND(frame)   ((frame).error_kind)
@@ -567,6 +690,7 @@ static inline nova_unit nova_throw_typed(nova_str msg_repr,
         _nova_fail_top->error_reason_ptr   = NULL;
         _nova_fail_top->error_user_payload = payload;
         _nova_fail_top->error_user_type_id = tid;
+        _nova_fail_top->error_suppressed   = NULL;  /* Plan 100.4.1 D158 */
     }
     /* Step 2: erased typed slot. */
     if (_nova_handler_Fail_any) {
