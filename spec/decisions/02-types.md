@@ -3939,11 +3939,14 @@ Compiler проводит **flow-sensitive** анализ (расширение 
 |---|---|
 | `tx.commit()` — вызов consume-метода | `tx` → `Consumed` |
 | `f(tx)` где `f(consume tx Tx)` — consume-param | `tx` → `Consumed` |
+| `f(make_tx())` где `f(consume t Tx)` — rvalue → consume-param | rvalue ownership передаётся напрямую (без binding) ✅ |
 | `return tx` (тип consume) | `tx` → `Returned` (передача caller'у) |
 | `record.field = tx` где field declared consume | `tx` → `Moved` (в record) |
 | `consume new_owner = tx` (transfer alias) | `tx` → `Consumed`, `new_owner` → `Live` |
 | `f(tx)` где `f(tx Tx)` — view-param (no qualifier) | `tx` остаётся `Live` (callee — view-borrow) |
+| `f(make_tx())` где `f(t Tx)` — rvalue → view-param | ❌ E (D133-consume-rvalue-in-view) |
 | `f(tx)` где `f(mut tx Tx)` — mut-view-param | `tx` остаётся `Live` (callee — mut-borrow) |
+| `f(make_tx())` где `f(mut t Tx)` — rvalue → mut-view-param | ❌ E (D133-consume-rvalue-in-mut-view) |
 | `let alias = tx` — view-alias | оба в alias-class (Plan 73); consume любого инвалидирует |
 | `let mut alias = tx` — mut-view-alias | то же + mut-методы через alias |
 | `let _ = tx` (silent drop) | ❌ compile error D133-suppress-not-allowed |
@@ -4114,6 +4117,36 @@ fn close(consume tx Transaction)               // consume (transfer; tx → Cons
 Полный ownership-transfer. Callee/binding обязан consumed до scope-
 exit'а через один из 5 механизмов (см. §«Когда consume binding
 считается удовлетворённым»).
+
+#### Consume-rvalue в arg-position (без binding)
+
+Прямой call `f(make_tx())`, где `make_tx() -> Tx consume` возвращает
+fresh consume-owner, **без сохранения через `consume name = …`** —
+правила по qualifier'у callee-param:
+
+| Callee param | OK? |
+|---|---|
+| `f(consume t Tx)` — consume-param | ✅ ownership передаётся напрямую; callee обязан consumed внутри |
+| `f(t Tx)` — view-param (default) | ❌ E (D133-consume-rvalue-in-view) |
+| `f(mut t Tx)` — mut-view-param | ❌ E (D133-consume-rvalue-in-mut-view) |
+
+**Почему запрет на view / mut-view:** view/mut-view-param **не
+consume'нят** callee-стороной. После возврата из `f` rvalue остаётся
+не consumed и не bound к локальной переменной → flow-checker не имеет
+slot'а в `ConsumeCtx` для tracking'а → must-consume gate его не
+увидит → ресурс утечёт молча. Запрет — единственное безопасное
+правило: consume-value требует именованного owner'а либо немедленной
+передачи ownership через consume-param.
+
+**Hint в diagnostic:** «привяжи через `consume name = make_tx()`,
+затем `f(name)`; после consume-method/consume-param/return name
+будет Consumed». Альтернатива — заменить sig `f` на consume-param,
+если callee действительно должен потребить.
+
+**Цепочки** (`g(f(make_tx()))`) — рекурсивно: rvalue-результат `f`
+анализируется по тому же правилу для соответствующего param'а `g`.
+Если `f` возвращает consume-value, а `g`-param это view → error на
+внешнем вызове.
 
 #### Глубокий peek без consume
 

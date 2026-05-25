@@ -1,0 +1,21 @@
+// Plan 100.3 (D133): consume-rvalue → consume-param разрешён без
+// промежуточного binding. Ownership передаётся напрямую; callee
+// обязан consumed внутри.
+
+module nova_tests.plan100_3.consume_ok_rvalue_to_consume_param
+
+type Transaction consume {
+    id int,
+}
+
+fn Transaction consume @commit() -> () { () }
+
+fn begin() -> Transaction => Transaction { id: 42 }
+
+fn close(consume t Transaction) -> () {        // consume-param
+    t.commit()                                  // ownership consumed внутри
+}
+
+test "consume-rvalue → consume-param без binding" {
+    close(begin())                              // ✅ direct transfer
+}
