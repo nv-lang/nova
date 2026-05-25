@@ -1,0 +1,15 @@
+// EXPECT_RUNTIME_PANIC user-error
+//
+// Plan 83.10 (2026-05-25): Plan 49 Ф.3+Ф.5 — supervised body USER throw
+// re-thrown на main flow; без enclosing `with Fail` handler → panic
+// process. Validates kind-aware re-throw + USER-precedence.
+
+module plan83_10.supervised_throw_no_catch_panic
+
+fn main() {
+    supervised {
+        spawn {
+            throw "user-error"
+        }
+    }
+}

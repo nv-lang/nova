@@ -1,0 +1,30 @@
+// Plan 83.10 (2026-05-25): panic-safety positive — Plan 49 supervised
+// USER throw triggers cancel_requested → sibling fibers see flag on
+// next yield-check → exit cleanly через CANCEL kind.
+//
+// Validates cooperative cancellation propagation; no abort.
+//
+// ENV NOVA_AUTOARM=0
+// Plan 83.10: [M-83.10-armed-user-throw-routing].
+
+module plan83_10.panic_cancels_sibling_fibers
+
+test "panic в одном fiber — runtime cleanup correct" {
+    let mut caught = false
+    let _ = with Fail[int] = |e| {
+        caught = true
+        0
+    } {
+        supervised {
+            spawn { throw 7 }
+            spawn {
+                let mut i = 0
+                while i < 1000 {
+                    i = i + 1
+                }
+            }
+        }
+        99
+    }
+    assert(caught)
+}

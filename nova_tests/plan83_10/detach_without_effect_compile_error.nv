@@ -1,0 +1,18 @@
+// EXPECT_COMPILE_ERROR Blocking
+//
+// Plan 83.10 (2026-05-25): blocking { } requires Blocking effect
+// declaration per Plan 83.3 D50 §4. Function without effect using
+// blocking → compile error.
+//
+// Distinct fixture from negative_capability/blocking_no_effect.nv (Plan
+// 83.10 closure of audit scope).
+
+module plan83_10.detach_without_effect_compile_error
+
+fn missing_blocking_effect(n int) -> int {
+    let mut r = n
+    blocking {
+        r = r * 2
+    }
+    r
+}

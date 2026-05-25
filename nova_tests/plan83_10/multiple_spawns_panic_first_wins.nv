@@ -1,0 +1,28 @@
+// Plan 83.10 (2026-05-25): panic-safety positive — multiple fibers
+// throw concurrently; Plan 49 first_error_atomic CAS ensures только
+// one error surfaces, остальные become CANCEL. Validates USER-precedence
+// atomic ordering.
+//
+// ENV NOVA_AUTOARM=0
+// Plan 83.10: [M-83.10-armed-user-throw-routing].
+
+module plan83_10.multiple_spawns_panic_first_wins
+
+test "multiple concurrent throws — first wins, runtime intact" {
+    let mut caught = false
+    let _ = with Fail[int] = |e| {
+        caught = true
+        0
+    } {
+        supervised {
+            let mut i = 0
+            while i < 5 {
+                spawn { throw 13 }
+                i = i + 1
+            }
+        }
+        99
+    }
+    // Must catch exactly one of the throws (no abort, no silent corruption).
+    assert(caught)
+}

@@ -1,0 +1,21 @@
+// EXPECT_RUNTIME_PANIC stack overflow
+//
+// Plan 83.10 (2026-05-25): infinite recursion в spawn body должна
+// triggering fiber arena stack guard page (Plan 82 8MB slot + 16KB
+// guard) → readable abort, не SIGSEGV. Validates Plan 82 stack-overflow
+// detection.
+
+module plan83_10.fiber_deep_recursion_panic
+
+fn recurse(n int) -> int {
+    let v = n + 1
+    recurse(v) + v
+}
+
+fn main() {
+    supervised {
+        spawn {
+            let _r = recurse(0)
+        }
+    }
+}

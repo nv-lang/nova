@@ -1,0 +1,11 @@
+// EXPECT_RUNTIME_PANIC capacity
+//
+// Plan 83.10 (2026-05-25): negative-capacity Channel — runtime contract
+// violation, expect panic with readable message. Closes coverage gap
+// alongside existing channel_zero_capacity_panic.nv (Plan 40 B9).
+
+module plan83_10.channel_negative_capacity_panic
+
+fn main() {
+    let _ = Channel.new(-5)
+}

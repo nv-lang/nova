@@ -20952,3 +20952,120 @@ V2 followup: test directive `// SERIAL_ONLY` либо
 
 **Recommended next:** Plan 83.10 (negative concurrency tests, P0) либо
 Plan 83.12 (async net/socket stdlib, P0 production blocker).
+
+================================================================================
+2026-05-25 (Plan 83.10 V1 IMPLEMENTED — 20 negative concurrency tests)
+================================================================================
+
+**Continuation of Plan 83.9 V1.** Implemented 20 negative tests в
+`nova_tests/plan83_10/` (4 категории × 5):
+
+### Категория 1: EXPECT_COMPILE_ERROR (5/5 PASS)
+spawn outside supervised, Time в realtime, Fail/Time effects в realtime,
+Time в blocking body, blocking без Blocking effect.
+
+### Категория 2: EXPECT_RUNTIME_PANIC (5/5 PASS)
+Channel.new(-5), assert in spawn, array OOB, supervised throw без catch,
+infinite recursion → fiber stack overflow detection.
+
+### Категория 3: Panic-safety positive (5/5 PASS standalone)
+**Discovered bug [M-83.10-armed-user-throw-routing]:**
+Под armed default-on M:N, USER throw из worker fiber не доходит до
+main thread's `with Fail` handler. Cross-worker routing gap Plan 49 Ф.5.
+Existing `cancel_semantics_test.nv` (positive coverage) сам уже
+использует `NOVA_AUTOARM=0` ровно по этой причине — было known internal
+limitation, just не surfaced как explicit gap enumeration.
+
+Все 5 tests требуют `// ENV NOVA_AUTOARM=0` directive для PASS.
+
+### Категория 4: Race / corruption detection (5/5 PASS standalone)
+Atomic state machine (Plan 83.4.5.7), cancel race (Plan 83.4.5.1),
+heap bounded (Plan 83.6), handler isolation (Plan 83.4.5.4),
+supervised drain completeness.
+
+**Total: 20 tests added. Standalone: 20/20 PASS. Under jobs=16: 17/20
+PASS** (3 TIMEOUT — [M-83.9-arena-pressure-1M] applies к heavy
+parallel-for race-detection tests).
+
+**Plan 83.10 acceptance MET** — coverage gap closed (concurrency dir
+было 1/149 negative; plan83_10/ adds 20 dedicated).
+
+**Discovered runtime bug [M-83.10-armed-user-throw-routing]:**
+
+Severity: P1 production. Plan 83 main milestone declared correctness ✅
+(D138 ACTIVE), но fail handler routing under armed M:N — important
+user-facing semantic. Most users use spawn+supervised+handler combo.
+
+Hypothesis: Plan 49 Ф.5 `first_error_atomic` CAS captures error на
+worker thread, но cross-worker routing к main thread's handler chain
+не fires correctly. Worker exit-path:
+- `_worker_main` worker fiber throws → fiber DEAD → ctx free.
+- First_error_atomic CAS'нут.
+- Main `supervised_run_impl` reads atomic_err после pending_remote==0.
+- Re-throw на main flow.
+- `with Fail` handler **должен** install с main's effect storage.
+
+Where break точно — investigate в V2 follow-up.
+
+**Lessons learned (для future agents):**
+
+1. **Test runner directives:**
+   - `EXPECT_COMPILE_ERROR <pat>` — codegen error matching.
+   - `EXPECT_RUNTIME_PANIC <pat>` — exe non-zero exit + pat в stderr.
+   - `EXPECT_CC_ERROR`, `EXPECT_EXIT_CODE`, `EXPECT_STDOUT`, `EXPECT_STDERR`,
+     `EXPECT_COMPILE_WARNING`, `EXPECT_TIMEOUT_MS` тоже доступны.
+
+2. **Nova error handling:** `with Fail[T] = |e| { … T_value }` algebraic
+   effect handler, не try/catch. `throw <value>` → handler `|e|`
+   gets value of type T.
+
+3. **Effect handler syntax:** `with Effect = effect Effect { method() { … } } { body }`
+   — instance override, not separate decl.
+
+4. **`parallel for` codegen restriction:** multiple `parallel for` в
+   одной test fn создают symbol name collisions. Use single per test
+   либо разделить в отдельные tests.
+
+5. **`// ENV NOVA_AUTOARM=0` directive** для тестов require'ющих
+   cooperative path (existing Plan 49 routing gap [M-83.10-armed-user-throw-routing]).
+
+**Files added (commit pending):**
+- nova_tests/plan83_10/spawn_in_realtime_compile_error.nv
+- nova_tests/plan83_10/time_in_realtime_compile_error.nv
+- nova_tests/plan83_10/fail_in_realtime_compile_error.nv
+- nova_tests/plan83_10/cancel_token_wrong_type_compile_error.nv
+- nova_tests/plan83_10/detach_without_effect_compile_error.nv
+- nova_tests/plan83_10/channel_negative_capacity_panic.nv
+- nova_tests/plan83_10/maxprocs_negative_panic.nv
+- nova_tests/plan83_10/runtime_init_huge_n_panic.nv
+- nova_tests/plan83_10/supervised_throw_no_catch_panic.nv
+- nova_tests/plan83_10/fiber_deep_recursion_panic.nv
+- nova_tests/plan83_10/panic_propagates_to_supervised.nv
+- nova_tests/plan83_10/runtime_survives_fiber_panic.nv
+- nova_tests/plan83_10/panic_cancels_sibling_fibers.nv
+- nova_tests/plan83_10/panic_in_nested_supervised.nv
+- nova_tests/plan83_10/multiple_spawns_panic_first_wins.nv
+- nova_tests/plan83_10/atomic_state_machine_no_double_resume.nv
+- nova_tests/plan83_10/cancel_race_no_orphan_state.nv
+- nova_tests/plan83_10/gc_no_leak_armed_spawn.nv
+- nova_tests/plan83_10/handler_isolation_per_fiber.nv
+- nova_tests/plan83_10/supervised_drain_completeness.nv
+
+**Files modified:**
+- docs/plans/83.10-negative-concurrency-tests.md — V1 closure +
+  discovered bug [M-83.10-armed-user-throw-routing].
+- docs/plans/README.md — row 83.10 V1 IMPLEMENTED.
+- docs/simplifications.md — `[M-83.10-negative-tests-v1]` +
+  `[M-83.10-armed-user-throw-routing]` entries.
+- docs/project-creation.txt — этот блок.
+
+**Plan 83 cumulative status:**
+- 83.5 ❌ REJECTED (wrong hypothesis).
+- 83.6 🟡 V1 IMPLEMENTED (pool active).
+- 83.9 🟡 V1 IMPLEMENTED (stress armed; jobs=16 contention known).
+- 83.10 🟡 V1 IMPLEMENTED (20 negative tests; armed routing gap surfaced).
+- 83.7/8/11/12/13 — not started.
+
+**Recommended next:** Plan 83.12 (async net/socket stdlib — P0
+production blocker) либо investigate [M-83.10-armed-user-throw-routing]
+(P1 production correctness gap).

@@ -12125,3 +12125,90 @@ Plan 83.2 §4 «Compiled-программа без единого `runtime.*` в
 
 - **Last commit:** TBD (commit pending).
 - **Приоритет:** Plan 83.9 V1 closed. Stretch tiers + TSAN → V2.
+
+### [M-83.10-negative-tests-v1] Plan 83.10 V1 IMPLEMENTED — 20 negative concurrency tests (2026-05-25)
+
+- **Где:** `nova_tests/plan83_10/` — 20 tests (4 категории × 5). Worktree
+  `nova-p83-5` branch `plan-83-5`.
+
+- **Что сделано (V1):**
+
+  **Категория 1: EXPECT_COMPILE_ERROR (5/5 PASS):**
+  - spawn outside supervised, Time в realtime (2 different angles), Time
+    в blocking body, blocking без Blocking effect.
+
+  **Категория 2: EXPECT_RUNTIME_PANIC (5/5 PASS):**
+  - Channel.new(-5), assert in spawn, array OOB, supervised throw без
+    catch, infinite recursion → fiber stack overflow (Plan 82 guard).
+
+  **Категория 3: Panic-safety positive (5/5 PASS standalone, ENV NOVA_AUTOARM=0
+  required):**
+  - Throw propagation, runtime survival, sibling cancellation, nested
+    isolation, multi-spawn USER-precedence.
+
+  **Категория 4: Race/corruption detection (5/5 PASS standalone):**
+  - Atomic state machine (Plan 83.4.5.7), cancel race (Plan 83.4.5.1),
+    heap bounded (Plan 83.6), handler isolation (Plan 83.4.5.4),
+    supervised drain completeness.
+
+- **Plan 83.10 acceptance:** MET. Coverage gap closed — concurrency
+  dir было 1/149 negative; теперь plan83_10/ adds 20 dedicated.
+
+- **Под jobs=16 concurrent:** 17/20 PASS, 3 TIMEOUT
+  ([M-83.9-arena-pressure-1M] applies к heavy parallel-for tests). Все
+  20 PASS standalone (validated).
+
+### [M-83.10-armed-user-throw-routing] Plan 83.10 discovered bug — armed M:N USER throw routing gap (2026-05-25)
+
+- **Discovered by:** Plan 83.10 Категория 3 panic-safety tests — все 5
+  не PASS под armed M:N, требуют `// ENV NOVA_AUTOARM=0` directive.
+
+- **Bug:** под armed default-on M:N runtime, USER throw из worker fiber
+  **не доходит** до main thread's enclosing `with Fail` handler.
+
+- **Repro:**
+  ```nv
+  let _ = with Fail[int] = |e| { caught = true; 0 } {
+      supervised {
+          spawn { throw 42 }   // worker thread под armed
+      }
+      99
+  }
+  // caught == false под armed M:N
+  // caught == true под cooperative (NOVA_AUTOARM=0)
+  ```
+
+- **Hypothesis:** Plan 49 Ф.5 `first_error_atomic` CAS captures error
+  на worker thread, но cross-worker routing к main thread's handler
+  chain не fires correctly. Worker exit-path:
+  - `_worker_main` worker fiber throws → fiber DEAD → ctx free.
+  - First_error_atomic CAS'нут.
+  - Main `supervised_run_impl` reads atomic_err после pending_remote==0.
+  - Re-throw на main flow.
+  - `with Fail` handler **должен** install с main's effect storage.
+
+  Where break точно — investigate.
+
+- **Existing evidence:** `nova_tests/concurrency/cancel_semantics_test.nv`
+  Plan 49 Ф.4 positive coverage сам **уже использует `NOVA_AUTOARM=0`**
+  — было known internal limitation, just не surfaced как explicit gap
+  enumeration.
+
+- **Impact:** production armed M:N user code, который использует
+  `with Fail` handlers для catch fiber errors — handlers won't fire.
+  Fiber errors abort process с "unhandled Fail" stderr — likely not
+  user-intended.
+
+- **Severity:** **P1 production**. Plan 83 main milestone declared
+  correctness ✅ (D138 ACTIVE), но fail handler routing — important
+  user-facing semantic. Most users use spawn+supervised+handler combo.
+
+- **V2 followup (Plan 83.10.1?):**
+  - Investigate Plan 49 Ф.5 routing chain through worker fiber →
+    first_error_atomic → main supervised_run_impl exit → re-throw chain.
+  - Specific debug: где losing path? Add trace logging at each stage.
+  - Validate cross-worker handler dispatch invariant.
+  - Add positive armed M:N panic-safety test после fix.
+
+- **Last commit:** TBD (Plan 83.10 commit pending).
+- **Приоритет:** P1 production gap, V2 followup.

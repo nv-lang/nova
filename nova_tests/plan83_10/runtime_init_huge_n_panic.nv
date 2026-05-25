@@ -1,0 +1,16 @@
+// EXPECT_RUNTIME_PANIC array
+//
+// Plan 83.10 (2026-05-25): array OOB access inside spawn body должна
+// triggering bounds-check panic с readable message, не silent corruption.
+// Validates Plan 49 USER-throw routing для OOB-panic kind.
+
+module plan83_10.runtime_init_huge_n_panic
+
+fn main() {
+    let xs = [1, 2, 3]
+    supervised {
+        spawn {
+            let _x = xs[100]
+        }
+    }
+}

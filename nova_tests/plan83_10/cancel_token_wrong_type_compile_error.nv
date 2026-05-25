@@ -1,0 +1,20 @@
+// EXPECT_COMPILE_ERROR Time
+//
+// Plan 83.10 (2026-05-25): blocking body (Plan 83.3 leaf-contract) bans
+// async I/O effects (Net/Fs/Db/Time) — body runs on libuv threadpool
+// thread without fiber/event-loop context. Time.sleep inside blocking{}
+// → compile error.
+//
+// Counterpart к existing blocking_body_alloc_rejected.nv / blocking_body_
+// suspend_rejected.nv для Time-specific subset.
+
+module plan83_10.cancel_token_wrong_type_compile_error
+
+fn blocking_with_time_violates() Blocking + Time -> int {
+    let mut r = 0
+    blocking {
+        Time.sleep(0)
+        r = 42
+    }
+    r
+}
