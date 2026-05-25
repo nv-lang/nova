@@ -11910,3 +11910,74 @@ Plan 101.1 Ф.3 follow-up OR Plan 101.5 stdlib audit.
 - **Приоритет:** P3 — warning-only, no functional impact на
   current tests; cleanup issue. Production deployment Linux может
   накапливать leak.
+
+## [M-100-impl-deferred] Plan 100 family — implementation отложена (spec/docs/fixtures landed) (2026-05-25)
+
+**Где:** весь pipeline `parser → type-checker → consume-checker → codegen → runtime`.
+
+**Что закрыто (Ред. 2 production-grade, merge `d7464176352`):**
+- Spec: 12 D-блоков — D133 (type-level consume foundation), D156-D166
+  (generic propagation, view-borrow, defer/errdefer/okdefer семейство,
+  FFI, cross-module, migration policy, perf/IDE/tooling).
+- Plan-docs: umbrella 100 + 8 sub-plans (100.1-100.8) + 5 sub-sub-plans
+  (100.4.1-100.4.5) = 13 docs, all Ред. 2 view-default model.
+- Idiom docs: 7 штук (consume-types, view-borrow, ffi-consume,
+  cross-pkg-consume, async-cleanup, multi-cleanup-errors,
+  cleanup-on-failure).
+- Фикстуры: ~80 (pos+neg) в `nova_tests/plan100.1..100.8`.
+
+**Что НЕ сделано (implementation phase):**
+- Parser: `type Transaction consume {...}`, `consume tx = ...` binding,
+  `consume fn`/`mut` param qualifiers, `view`/`mut`/`consume` в for/match/
+  if-let, `okdefer`/`errdefer fail` keywords, `external fn` без consume
+  prefix (type-driven).
+- Type-checker: 3-режимный borrow tracking (view-default / mut-view /
+  consume), Live-linear flow analysis, field-aware consume (D5/D5.1/D5.2
+  reopen pattern), generic `[T consume]` bound propagation,
+  external fn type-driven consume inference.
+- Consume-checker: must-be-consumed на каждом code-path'е, defer/errdefer/
+  okdefer family scheduling, multi-defer LIFO error accumulation +
+  panic composition (no Rust-style double-panic-abort), failable
+  cleanup body + suspend/async cleanup.
+- Codegen: errdefer-trigger на interrupt/cancel, exit-path fixed at
+  start, async cleanup yield safety.
+- Diagnostics: D133 "not consumed" error format, LSP hover
+  consume-status, LSP quickfix "add errdefer" — 3 фикстуры в
+  plan100.8 проверяют ожидаемый output.
+
+**Почему:** spec+contract зафиксирован первым (Ред. 2 production-
+grade), чтобы implementation шла против чёткого описания. Реализация
+требует interactive compile-test-fix цикла; autonomous batch без
+iteration рискует silent semantic bugs.
+
+**Объём:** ~43 dev-day по оценке в plan-doc'ах. Декомпозиция:
+- 100.1 (foundation, parser + type-checker + consume-checker) ~5-7 dev-day
+- 100.2 (generic propagation) ~3-4 dev-day
+- 100.3 (borrow/view modes) ~4-5 dev-day
+- 100.4 family (defer/errdefer/okdefer) ~12-15 dev-day (5 sub-sub-plans)
+- 100.5 (FFI/external) ~3-4 dev-day
+- 100.6 (cross-module) ~3-4 dev-day
+- 100.7 (stdlib migration playbook execution) ~5-7 dev-day
+- 100.8 (perf/IDE/LSP) ~4-5 dev-day
+
+**Также отложено:**
+- ~160 дополнительных фикстур (100.2/3: ~14; 100.4.*: ~75;
+  100.5-100.8: ~73) — current 80 покрывают canonical patterns,
+  edge-case coverage наращивается по мере implementation каждого
+  sub-plan'а.
+- 12 GATE probe artifacts (per-sub-plan GATE Ф.0 audit) —
+  будут написаны в начале каждой implementation сессии.
+
+**Как чинить:** последовательно начать с Plan 100.1 (foundation).
+Без 100.1 остальные sub-plans не могут стартовать (зависят от
+parser/type-checker core).
+
+**Приоритет — P1** (core language feature, превосходит Rust по 4
+capabilities; без неё Nova не достигает заявленной resource-safety
+гарантии).
+
+**Связанные markers:**
+- [[M-fn-prefix-int-only-mono]] — Plan 101 prefix-generics, не
+  зависят от Plan 100.
+- [[M-receiver-generic-incompleteness]] — Plan 101 protocol
+  composition `use Foo`, ортогонально Plan 100.
