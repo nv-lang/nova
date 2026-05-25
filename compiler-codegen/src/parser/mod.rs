@@ -2744,13 +2744,19 @@ impl Parser {
         // После `use` обязан идти Ident (имя типа). Distinguishing от
         // top-level `use` импорта — здесь мы строго внутри `protocol { ... }`,
         // поэтому семантика однозначна: embed-protocol.
+        // Поддерживается comma-separated: `use Reader, Writer` (D145 spec),
+        // и линия-на-use: `use Reader\n  use Writer` (более читаемо).
         loop {
             if matches!(self.peek().kind, TokenKind::KwUse)
                 && matches!(self.peek_at(1).kind, TokenKind::Ident(_))
             {
                 self.bump(); // consume `use`
-                let ty = self.parse_type()?;
-                embeds.push(ty);
+                embeds.push(self.parse_type()?);
+                // Comma-list continuation: `use A, B, C`.
+                while self.eat(&TokenKind::Comma).is_some() {
+                    self.skip_newlines();
+                    embeds.push(self.parse_type()?);
+                }
                 self.skip_newlines();
                 continue;
             }
