@@ -20852,3 +20852,52 @@ effect-typed cleanup-fail, нет lifetime overhead). Без borrow-checker'а.
 может идти против чёткого описания.
 
 Ветка plan-100-impl готова к merge / review. PR создаётся отдельно.
+
+## Plan 103 — `std.runtime.sync` spec formalization (proposal, 2026-05-25)
+
+**Контекст:** аудит обнаружил, что `std/runtime/sync.nv` зашиплены
+production-grade `AtomicInt`/`AtomicBool`/`Mutex`/`WaitGroup`/`Once`
+(Plan 18 Шаг 1, помечены `#stable(since = "0.1")`), но в спеке три
+противоречивых утверждения:
+- `06-concurrency.md` §1531 «Mutex / Atomic — НЕ в spec» (устарело);
+- `open-questions.md` Q12.4 v1.0-плана «Mutex, RwLock, Atomic[T] как
+  stdlib-типы» (запланировано);
+- `open-questions.md` Q9 «точные API — открыто».
+
+То есть Plan 18 Шаг 1 — это **выполнение Q12.4 v1.0**, а не нарушение
+спеки. Но §1531 и §641 остались как устаревшие декларации «не делаем».
+
+**Что зафиксировано (proposal):** Plan 103 закрывает spec-drift через
+новый D-блок **D167** (`spec/decisions/06-concurrency.md` после D79
+Channels), переписывание §1531-1597 как «stdlib, не prelude» с
+сохранением owner-actor pattern как preferred default, закрытие Q9 /
+Q12.4 в части `AtomicInt`/`AtomicBool`/`Mutex`/`WaitGroup`/`Once`
+(RwLock/Semaphore/Atomic[T]-generic остаются открытыми).
+
+**Отличия реализации от исходного Plan 18 design (фиксируется в D167):**
+- `AtomicInt` + `AtomicBool` моно-типы вместо `Atomic[T]` generic
+  (generic ограничен `[M-fn-prefix-int-only-mono]`).
+- `Mutex` без `T` (Go-style) вместо `Mutex[T]` data-carrying (Rust-style).
+- `Once` добавлен в Шаг 1 scope (не было в исходном дизайне).
+- `RwLock`/`Semaphore` НЕ реализованы — перенесено в Шаг 5
+  (отдельные планы по запросу).
+
+**Декомпозиция Plan 103:** Ф.0 audit consistency
+(sync.nv ↔ sync_primitives.h ↔ D167) / Ф.1 D167 draft / Ф.2 §1531
+rewrite / Ф.3 open-questions cleanup / Ф.4 Plan 18 update /
+Ф.5 README / Ф.6 logs. Оценка ~1-1.5 dev-day. Только документация
+(возможны мелкие fix-ы в Ф.0).
+
+**Коллизия номеров:** Plan 102 зарезервирован в Plan 101 row под
+Q-representation-bound (concrete-type bounds). Новый план получил
+номер **103**, не 102.
+
+**Plan 18 status:** «proposal, не начат» → **PARTIALLY ACTIVE**:
+- Шаг 1 (std.sync) ✅ зашиплен — формализация Plan 103.
+- Шаги 2-4 (fs/os/net) → Plan 91 (std MVP, релизы 0.2+).
+- Шаг 5 (RwLock/Semaphore) — отдельные планы по запросу.
+
+**Файлы:** `docs/plans/103-sync-primitives-spec-formalization.md`
+(новый), `docs/plans/18-stdlib-roadmap.md` (Шаг 1 ✅ блок + статус
+PARTIALLY ACTIVE), `docs/plans/README.md` (Plan 18 row update +
+Plan 103 row added).
