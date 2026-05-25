@@ -3777,3 +3777,76 @@ for/detach автоматически распределяется на дост
 подготовлена (Plan 83.4.5.1-5 ✅). Activation в codegen-emit GATED
 на Plan 83.4.5.7 multi-worker double-resume race fix. После fix'а
 + Plan 83.4.5.6 закроет roadmap Plan 83.
+
+## D167. Memory ordering & happens-before между fiber'ами
+
+> **Статус:** 📋 DRAFT (Plan 103.1 2026-05-25). Финальная редакция — Plan 103.7.
+
+### Что
+
+`MemOrdering` enum (5 вариантов) экспонирует C11/GCC `__ATOMIC_*` ordering
+constants на Nova-уровне. Используется с `fence()` (Plan 103.1) и будущими
+atomic operations с explicit ordering (Plan 103.2+). Контракт
+happens-before между fiber'ами через paired Acquire/Release.
+
+**Типы**: `MemOrdering` в `std/runtime/sync` — НЕ путать с prelude `Ordering`
+(three-way comparison: Less|Equal|Greater).
+
+### Варианты MemOrdering
+
+| Вариант | C constant | Семантика | Valid для |
+|---|---|---|---|
+| `Relaxed` | `__ATOMIC_RELAXED` | Только атомарность; нет happens-before | load, store, RMW, fence (no-op) |
+| `Acquire` | `__ATOMIC_ACQUIRE` | Все subsequent ops happen-after prior Release | load, RMW, fence |
+| `Release` | `__ATOMIC_RELEASE` | Все prior ops happen-before subsequent Acquire | store, RMW, fence |
+| `AcqRel`  | `__ATOMIC_ACQ_REL` | Acquire+Release combined | RMW, fence |
+| `SeqCst`  | `__ATOMIC_SEQ_CST` | Total order на всех SeqCst ops | все ops |
+
+**Default ordering** (Plan 103.2+ simple-overload методы): `SeqCst` — безопасно
+для всех use cases, переопределяется через `_ordered` overloads для
+perf-critical кода (design decision M1).
+
+### fence(MemOrdering) семантика
+
+- `fence(MemOrdering.Relaxed)`: no-op (валиден синтаксически, нет ordering-эффекта)
+- `fence(MemOrdering.Acquire)`: sequenced ordering point для последующих loads/stores
+- `fence(MemOrdering.Release)`: sequenced ordering point для предыдущих loads/stores
+- `fence(MemOrdering.AcqRel)`: combination
+- `fence(MemOrdering.SeqCst)`: total-order participation
+
+### Validation правила (compile-time, Plan 103.2+)
+
+| Operation | Запрещённые | Error code |
+|---|---|---|
+| load | Release, AcqRel | `E_INVALID_ORDERING_LOAD` |
+| store | Acquire, AcqRel | `E_INVALID_ORDERING_STORE` |
+| fence | — (все валидны; Relaxed = no-op) | — |
+| RMW (swap, CAS, fetch_*) | — | — (Plan 103.2) |
+
+Validation — compile-time при literal ordering (типичный случай: `MemOrdering.Acquire`).
+Runtime-value ordering (let ord = pick()) → fallback runtime panic.
+
+### Memory model contract
+
+**Bootstrap-runtime** (single-fiber, single-threaded fiber pool):
+All ordering variants are semantically equivalent — sequenced-before covers all.
+`MemOrdering.Relaxed` и `MemOrdering.SeqCst` имеют идентичные эффекты.
+
+**M:N runtime** (Plan 23, Plan 83.x): Full C11 memory model via `__atomic_*` GCC/Clang
+builtins (cross-platform: Linux, macOS, Windows/Clang). Happens-before между fiber'ами
+через paired Acquire/Release.
+
+**Performance note**: x86 имеет strong memory model (TSO); большинство
+ordering барьеров дёшевы (load-acquire ≈ plain load, SeqCst store ≈ MFENCE).
+ARM64 — более explicit барьеры (DMB LD/ST/ISH); Relaxed vs Acquire savings
+значительны для hot-path counters (~1-2ns per op).
+
+### Связи
+
+- D14, D50 (fiber runtime) — D167 specifies memory model для D14 production-runtime
+- D79 (Channels) — channel send/recv → implicit happens-before (Go-style); see D91/D94
+- D138 (Default-on M:N) — производительность зависит от корректного ordering
+- Plan 103.1 — реализация MemOrdering enum + fence(MemOrdering) + codegen helper
+- Plan 103.2 — AtomicX.load(MemOrdering) / .store(v, MemOrdering) / RMW overloads
+- Plan 103.7 — финальная редакция D167
+
