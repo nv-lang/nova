@@ -135,17 +135,21 @@ impl LspProcess {
 
     // ── High-level LSP round-trips ───────────────────────────────────────────
 
-    /// Send a request with params and read exactly one response; assert `id` matches.
+    /// Read messages until we get one with `id == expected_id` (skips notifications).
+    fn read_response_id(&mut self, expected_id: u64) -> serde_json::Value {
+        loop {
+            let msg = self.read_response();
+            if msg.get("id").and_then(|v| v.as_u64()) == Some(expected_id) {
+                return msg;
+            }
+            // Skip over server-initiated notifications (e.g., publishDiagnostics).
+        }
+    }
+
+    /// Send a request with params and read the matching response (skips notifications).
     fn request(&mut self, method: &str, params: serde_json::Value) -> serde_json::Value {
         let id = self.send_request(method, params);
-        let resp = self.read_response();
-        assert_eq!(
-            resp["id"].as_u64(),
-            Some(id),
-            "response id mismatch — expected {id}, got: {}",
-            resp["id"]
-        );
-        resp
+        self.read_response_id(id)
     }
 
     /// Send a request **without** a `params` field and read the response.
@@ -161,14 +165,7 @@ impl LspProcess {
             "id": id,
             "method": method,
         }));
-        let resp = self.read_response();
-        assert_eq!(
-            resp["id"].as_u64(),
-            Some(id),
-            "response id mismatch — expected {id}, got: {}",
-            resp["id"]
-        );
-        resp
+        self.read_response_id(id)
     }
 
     /// Send a minimal but spec-compliant `initialize` request.
@@ -247,9 +244,9 @@ impl Drop for LspProcess {
 /// - No `error` field (success path)
 /// - `result.serverInfo.name` == "nova-lsp"
 /// - `result.capabilities.positionEncoding` == "utf-16"
-/// - `result.capabilities.textDocumentSync` == 1  (Full, per LSP spec enum)
+/// - `result.capabilities.textDocumentSync.change` == 2  (Incremental, Plan 104.1.Ф.4)
 #[test]
-fn pos1_initialize_returns_full_sync_capabilities() {
+fn pos1_initialize_returns_incremental_sync_capabilities() {
     let mut lsp = LspProcess::spawn();
     let resp = lsp.initialize();
 
@@ -276,12 +273,14 @@ fn pos1_initialize_returns_full_sync_capabilities() {
         result["capabilities"]["positionEncoding"]
     );
 
-    // textDocumentSync: Full == 1 (TextDocumentSyncKind enum in LSP spec)
+    // Plan 104.1.Ф.4: textDocumentSync is now an Options object with
+    // change == 2 (Incremental, TextDocumentSyncKind enum in LSP spec).
     let sync = &result["capabilities"]["textDocumentSync"];
+    let change_kind = &sync["change"];
     assert_eq!(
-        *sync,
-        serde_json::json!(1),
-        "expected textDocumentSync kind 1 (Full), got: {sync}"
+        *change_kind,
+        serde_json::json!(2),
+        "expected textDocumentSync.change == 2 (Incremental), got: {sync}"
     );
 }
 

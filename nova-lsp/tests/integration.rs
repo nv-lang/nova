@@ -154,6 +154,25 @@ impl AsyncLspProcess {
 
     // ── High-level helpers ───────────────────────────────────────────────────
 
+    /// Read messages until one with matching `id` arrives (skips notifications).
+    async fn read_response_id(&mut self, expected_id: u64, deadline: Duration) -> serde_json::Value {
+        let start = std::time::Instant::now();
+        loop {
+            let remaining = deadline.checked_sub(start.elapsed()).unwrap_or(Duration::ZERO);
+            if remaining.is_zero() {
+                panic!("timeout waiting for response id={expected_id}");
+            }
+            let msg = self
+                .read_response_timeout(remaining)
+                .await
+                .unwrap_or_else(|| panic!("timeout/EOF waiting for response id={expected_id}"));
+            if msg.get("id").and_then(|v| v.as_u64()) == Some(expected_id) {
+                return msg;
+            }
+            // Skip notifications (no id field) or mismatched ids.
+        }
+    }
+
     async fn request_no_params(&mut self, method: &str) -> serde_json::Value {
         let id = self.next_id;
         self.next_id += 1;
@@ -163,16 +182,7 @@ impl AsyncLspProcess {
             "method": method,
         }))
         .await;
-        let resp = self
-            .read_response_timeout(Duration::from_secs(5))
-            .await
-            .unwrap_or_else(|| panic!("no response to '{method}' within 5s"));
-        assert_eq!(
-            resp["id"].as_u64(),
-            Some(id),
-            "response id mismatch for '{method}': {resp}"
-        );
-        resp
+        self.read_response_id(id, Duration::from_secs(10)).await
     }
 
     async fn initialize(&mut self) {
@@ -187,11 +197,7 @@ impl AsyncLspProcess {
             }),
         )
         .await;
-        let resp = self
-            .read_response_timeout(Duration::from_secs(5))
-            .await
-            .expect("no initialize response within 5s");
-        assert_eq!(resp["id"].as_u64(), Some(id));
+        let resp = self.read_response_id(id, Duration::from_secs(10)).await;
         assert!(resp.get("error").is_none(), "initialize failed: {resp}");
         self.send_notification("initialized", serde_json::json!({}))
             .await;

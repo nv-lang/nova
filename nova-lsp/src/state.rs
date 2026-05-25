@@ -2,11 +2,16 @@
 //!
 //! Plan 104.0.1: empty WorkspaceState stub.
 //! Plan 104.0.3: full implementation — DashMap<Url, ParsedFile> document cache.
-//! Plan 104.1:   adds compiler diagnostics cache + background recheck channel.
+//! Plan 104.1:   adds Debouncer, workspace root, cancellation support.
+
+use std::path::PathBuf;
+use std::sync::Mutex;
 
 use dashmap::DashMap;
 use ropey::Rope;
 use tower_lsp::lsp_types::Url;
+
+use crate::debouncer::Debouncer;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Data model
@@ -14,21 +19,18 @@ use tower_lsp::lsp_types::Url;
 
 /// A cached open document (one entry per URI in `WorkspaceState::docs`).
 ///
-/// `text` is stored as a `Rope` rather than a plain `String` because:
-/// - Rope provides O(log n) slice/insert, important for large files.
-/// - `ropey::Rope` is UTF-8–aware; its character-index API maps naturally
-///   to LSP UTF-16 position arithmetic (Plan 104.2+ hover / goto-def).
+/// `text` is stored as a `Rope` because:
+/// - Rope provides O(log n) slice/insert for large files.
+/// - `ropey::Rope` UTF-8 API maps naturally to LSP UTF-16 position arithmetic.
 ///
-/// V1 (Plan 104.0.3): the Rope is rebuilt entirely on each `didChange` (Full
-///   sync).  Incremental edits (TextDocumentSyncKind::Incremental) arrive in
-///   Plan 104.6 V2 when we switch to passing `range` deltas into `Rope::remove`
-///   / `Rope::insert`.
+/// Plan 104.1.Ф.4: switch to `TextDocumentSyncKind::Incremental` — Rope is
+/// updated via `apply_changes` range-deltas in `did_change`.
 #[derive(Debug)]
 pub struct ParsedFile {
     /// Full document text.
     pub text: Rope,
     /// Client-assigned document version (monotonically increasing per document).
-    /// Used for version conflict detection (Plan 104.1+).
+    /// Passed back in `publishDiagnostics` for outdated-suppression.
     pub version: i32,
 }
 
@@ -36,33 +38,60 @@ pub struct ParsedFile {
 // WorkspaceState
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Shared workspace state: open document cache + (Plan 104.1+) compiler cache.
+/// Shared workspace state: open document cache + debouncer + workspace root.
 ///
-/// One instance is created at server startup and shared (behind `Arc`) across
+/// One instance created at server startup and shared (behind `Arc`) across
 /// all LSP handler futures.
 ///
 /// # Concurrency
 ///
-/// Fields use `DashMap` rather than `Mutex<HashMap>` to allow concurrent reads
-/// with minimal contention: `didOpen`, `didChange`, and `didClose` events can
-/// arrive in rapid succession (e.g., when the editor saves multiple files).
-/// `DashMap` uses per-shard `RwLock`, so concurrent reads to _different_ shards
-/// proceed in parallel, and writes only lock a single shard.
-#[derive(Debug, Default)]
+/// `docs` uses `DashMap` (per-shard RwLock) for fine-grained concurrency.
+/// `workspace_root` is write-once (set in `initialize`) behind a `Mutex`.
+/// `debouncer` is `Clone`-able and internally uses `Arc<Mutex<…>>`.
+#[derive(Debug)]
 pub struct WorkspaceState {
     /// Open document cache: file URI → last-known (text, version).
-    ///
-    /// Populated by `didOpen`, updated by `didChange`, cleaned up by `didClose`.
-    /// In Plan 104.1, hover / diagnostic recheck also reads this map.
     pub docs: DashMap<Url, ParsedFile>,
+
+    /// Debouncer for compile tasks — coalesces rapid edits per URI.
+    pub debouncer: Debouncer,
+
+    /// Workspace root path, set from `initialize` rootUri / workspaceFolders.
+    /// `None` until `initialize` is received.
+    pub workspace_root: Mutex<Option<PathBuf>>,
+}
+
+impl Default for WorkspaceState {
+    fn default() -> Self {
+        Self {
+            docs: DashMap::new(),
+            debouncer: Debouncer::default(),
+            workspace_root: Mutex::new(None),
+        }
+    }
+}
+
+impl WorkspaceState {
+    /// Cancel all pending debounce tasks — called on shutdown.
+    pub fn cancel_all(&self) {
+        self.debouncer.cancel_all();
+    }
+
+    /// Get workspace root, if set.
+    pub fn workspace_root(&self) -> Option<PathBuf> {
+        self.workspace_root.lock().unwrap().clone()
+    }
+
+    /// Set workspace root from an LSP URI.
+    pub fn set_workspace_root_from_uri(&self, uri: &Url) {
+        if let Ok(path) = uri.to_file_path() {
+            *self.workspace_root.lock().unwrap() = Some(path);
+        }
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Unit tests
-//
-// These tests exercise the data-model layer directly (WorkspaceState + ParsedFile)
-// without spawning a process.  They are complementary to the integration tests
-// in `tests/document_cache.rs`, which verify the LSP protocol handlers.
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -111,7 +140,6 @@ mod tests {
             },
         );
 
-        // Simulate didChange (full sync: replace whole text)
         {
             let mut file = state
                 .docs
@@ -153,15 +181,11 @@ mod tests {
     // ── neg1 ─────────────────────────────────────────────────────────────────
 
     /// neg1: get_mut on a non-existent URI returns None (no panic, no insertion).
-    ///
-    /// This mirrors the didChange-on-unopened-file path in server.rs: if the
-    /// document isn't in the cache, we skip silently rather than crashing.
     #[test]
     fn neg1_change_on_nonexistent_is_noop() {
         let state = WorkspaceState::default();
         let uri = uri("nope.nv");
 
-        // Should not panic
         assert!(
             state.docs.get_mut(&uri).is_none(),
             "get_mut on absent key must return None"
@@ -175,10 +199,6 @@ mod tests {
     // ── neg2 ─────────────────────────────────────────────────────────────────
 
     /// neg2: Opening the same URI twice — second insert overwrites the first.
-    ///
-    /// DashMap::insert returns the old value; the server logs a warning and
-    /// overwrites (see server.rs did_open).  This test verifies the overwrite
-    /// semantic at the data-model level.
     #[test]
     fn neg2_open_twice_overwrites() {
         let state = WorkspaceState::default();
@@ -207,10 +227,6 @@ mod tests {
     // ── edge cases ───────────────────────────────────────────────────────────
 
     /// Rope correctly handles multi-byte UTF-8: emoji, Cyrillic, CJK.
-    ///
-    /// This matters for LSP position encoding (UTF-16 column numbers vs
-    /// UTF-8 byte offsets).  Ropey is UTF-8 native and exposes both
-    /// char-index and byte-index APIs; Plan 104.2 will use char_to_utf16_cu().
     #[test]
     fn rope_multibyte_unicode_preserved() {
         let state = WorkspaceState::default();
@@ -248,10 +264,9 @@ mod tests {
         assert_eq!(file.text.to_string(), "");
     }
 
-    /// URI with percent-encoded characters (e.g., spaces, Cyrillic paths).
+    /// URI with percent-encoded characters.
     #[test]
     fn uri_with_percent_encoding() {
-        // Windows paths with spaces or non-ASCII dirs are percent-encoded by editors
         let state = WorkspaceState::default();
         let uri = Url::parse("file:///C:/My%20Project/main.nv").expect("valid URI");
 

@@ -6,7 +6,7 @@
 use nova_codegen::diag::Diagnostic as NovaDiag;
 use ropey::Rope;
 use tower_lsp::lsp_types::{
-    Diagnostic, DiagnosticRelatedInformation, DiagnosticSeverity, Location, NumberOrString,
+    Diagnostic, DiagnosticRelatedInformation, DiagnosticSeverity, Location,
     Position, Range, Url,
 };
 
