@@ -1,0 +1,31 @@
+// Plan 83.6 (2026-05-25): pool overflow / heap-bounded test.
+//
+// Spawn N > POOL_MAX (256) ctx'ов; verify excess идёт через Boehm fallback
+// без leak. Heap growth bounded: pool capacity + Boehm overhead.
+//
+// Pool: 256 entries × 4 classes × 16 workers × max 512B = 8MB total.
+//
+// ALLOC_REQUIRES boehm
+
+module plan83_6.spawn_pool_overflow_bounded
+
+test "pool overflow N=2000 — heap bounded" {
+    gc.collect()
+    let baseline = gc.heap_size()
+
+    // 2000 fibers via parallel-for. Pool max ~4096 entries cap
+    // distributed. Excess freed через Boehm. Verify no unbounded leak.
+    let xs = parallel for i in 0..2000 { i }
+    assert(xs[1999] == 1999)
+    assert(xs[0] == 0)
+
+    gc.collect()
+    let heap_after = gc.heap_size()
+
+    let growth = if heap_after > baseline { heap_after - baseline } else { 0 }
+    println("baseline=${baseline} after=${heap_after} growth=${growth}")
+    // Bound: 8MB cap pool + reasonable Boehm overhead + result array.
+    // Actual growth должно быть < 32MB (very generous bound — includes
+    // returned array of 2000 ints + scope state + pool retention).
+    assert(growth < 32 * 1024 * 1024)
+}

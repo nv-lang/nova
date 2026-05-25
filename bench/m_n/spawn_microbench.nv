@@ -1,0 +1,30 @@
+// Plan 83.6 (2026-05-24): pure spawn-cost microbench.
+//
+// Measures throughput of 1000 no-op spawn'ов под armed M:N. Pool win
+// visible здесь потому что compute per fiber = 0; overhead = 100% time.
+//
+// Acceptance Plan 83.6: spawn throughput ≥10⁵/sec на 16-core (current
+// baseline ~10³). Pool pop = ~50ns CAS, vs Boehm GC_malloc_uncollectable
+// global lock = ~100-500ns under contention.
+//
+// Cross-runtime reference:
+//   - Go: goroutine spawn ~50-100ns → ~10⁷/sec single thread.
+//   - tokio: task spawn <100ns → ~10⁷/sec.
+//   - Nova (pre-83.6 baseline): ~10-100µs → ~10³-10⁴/sec.
+
+module bench_m_n.spawn_microbench
+
+bench "100 no-op spawn throughput" {
+    measure {
+        let n = 100
+        let mut counter = 0
+        supervised {
+            let mut i = 0
+            while i < n {
+                spawn { counter += 1 }
+                i = i + 1
+            }
+        }
+        let _r = bench.opaque(counter)
+    }
+}

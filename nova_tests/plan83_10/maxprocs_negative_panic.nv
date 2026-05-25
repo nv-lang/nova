@@ -1,0 +1,15 @@
+// EXPECT_RUNTIME_PANIC unhandled Fail
+//
+// Plan 83.10 (2026-05-25): assertion failure внутри fiber should
+// produce readable panic message, not silent corruption. Validates
+// nova_fiber_report_error path для assert-failed kind.
+
+module plan83_10.maxprocs_negative_panic
+
+fn main() {
+    supervised {
+        spawn {
+            assert(1 + 1 == 3)
+        }
+    }
+}

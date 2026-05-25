@@ -88,7 +88,68 @@ struct NovaWorker {
     int               yielded_count;
     int               yielded_cap;
     int               yielded_head;
+    /* Plan 83.7 (2026-05-25): runnext LIFO priority slot. Single-slot
+     * priority queue для cache-warm handler chains (Go runtime
+     * runnext + tokio LIFO slot parity).
+     *
+     * Same-worker wake (timer fire, channel send из owner-thread fiber)
+     * stores fiber here вместо deque tail. Worker loop pops runnext
+     * первым → woken fiber resumes immediately, instruction cache
+     * + data cache warm от previous fiber.
+     *
+     * Option B (Tokio-style): NOT stealable — only owner thread reads
+     * runnext. Max cache-warmth. Imbalanced workloads helped through
+     * existing deque steal (Plan 44.5).
+     *
+     * Access: owner-thread-only (dispatch_ready owner-branch guarded
+     * by _current_worker_id == w->id). Plain pointer — no atomic.
+     * NULL = empty. */
+    mco_coro*         runnext;
+    /* Plan 83.6 (2026-05-24): per-worker SpawnCtx pool (Go P-mcache аналог).
+     * 4 size classes (64/128/256/512 bytes — покрывают ~90% spawn-sites).
+     * Larger contexts → Boehm fallback (rare).
+     *
+     * Lock-free: single owner (this worker thread). Other threads НЕ должны
+     * push/pop. Cross-worker fiber move keeps base->_nova_pool_size — free
+     * goes к worker'у который сейчас держит fiber'у (его TLS = this worker).
+     *
+     * INTRUSIVE list: free buffer первые sizeof(void*) bytes — next pointer
+     * (overlaying NovaSpawnCtxBase._nova_parent_scope field). На acquire
+     * pop, memset zeros весь buffer ДО возврата caller'у. Это критично —
+     * избегает дополнительных GC_malloc_uncollectable calls per pool op
+     * (которые defeats purpose pool'а).
+     *
+     * spawn_pool_free[cls] — head of intrusive singly-linked free list.
+     * spawn_pool_count[cls] — current length (capped NOVA_SPAWN_POOL_MAX_PER_CLASS).
+     *
+     * Memory: max 256 entries × 4 classes × 512 bytes = 512KB per worker.
+     * 16 workers × 512KB = 8MB total. Acceptable cap. */
+    void*             spawn_pool_free[4];   /* intrusive: head ptr к freed buffer */
+    int               spawn_pool_count[4];
 };
+
+/* 4 size classes covering 64/128/256/512 byte contexts. Empirical: most
+ * spawn-sites have ≤3 captures (≤ ~80 bytes). 256+ class catches closures
+ * с many captures. > 512 falls back to direct Boehm path.
+ *
+ * Index: 0=64, 1=128, 2=256, 3=512. */
+#define NOVA_SPAWN_POOL_SIZE_CLASSES 4
+static const size_t _nova_spawn_pool_class_size[NOVA_SPAWN_POOL_SIZE_CLASSES] = {
+    64, 128, 256, 512
+};
+
+/* Pool capacity per size class per worker. 256 × 4 × 16 workers × 512B max
+ * = 8 MB total — bounded. Excess returns go к direct Boehm free (slow
+ * path; rare under steady-state pool hit). */
+#define NOVA_SPAWN_POOL_MAX_PER_CLASS 256
+
+/* Pick size class index или -1 если size > 512. */
+static int _nova_spawn_pool_class(size_t size) {
+    for (int i = 0; i < NOVA_SPAWN_POOL_SIZE_CLASSES; i++) {
+        if (size <= _nova_spawn_pool_class_size[i]) return i;
+    }
+    return -1;
+}
 
 /* Plan 44.7: timeslice до preemption. Go использует 10ms. */
 #define NOVA_PREEMPT_SLICE_NS 10000000ULL
@@ -125,6 +186,10 @@ static mco_coro* _worker_yielded_pop(NovaWorker* w) {
     if (w->yielded_count == 0) w->yielded_head = 0;
     return co;
 }
+
+/* Plan 83.6: pool acquire/release implementations defined later в этом
+ * TU (после _workers + _current_worker_id TLS declarations). Public API
+ * declared в runtime.h (nova_spawn_pool_acquire/release). */
 
 /* ── Runtime state ─────────────────────────────────────────────── */
 
@@ -286,6 +351,128 @@ static __declspec(thread) int _current_worker_id = -1;
 static __thread int _current_worker_id = -1;
 #endif
 
+/* ── Plan 83.6: per-worker SpawnCtx pool implementation ─────────── */
+
+/* Acquire SpawnCtx из P-local pool либо Boehm fallback.
+ *
+ * Returns zero-initialized buffer of size `_nova_spawn_pool_class_size[cls]`
+ * для slot size class (>= requested size), либо exactly `size` если
+ * out of bounds (size > 512 → direct Boehm uncollectable).
+ *
+ * Fast path: lock-free pop из per-worker free list (single owner = this thread).
+ * Slow path: GC_malloc_uncollectable (rare — pool empty under contention или
+ * first spawn в worker lifecycle).
+ *
+ * Caller (codegen) НЕ требует доступа к size class: returned buffer
+ * automatically has `base->_nova_pool_size` set к class size (либо 0 если
+ * oversize fallback path). Release later использует это поле. */
+void* nova_spawn_pool_acquire(size_t size) {
+    int cls = _nova_spawn_pool_class(size);
+    if (cls < 0) {
+        /* Oversize — direct Boehm. _nova_pool_size = 0 marker (no pool route). */
+        void* p = nova_alloc_uncollectable(size);
+        if (p) {
+            NovaSpawnCtxBase* base = (NovaSpawnCtxBase*)p;
+            base->_nova_pool_size = 0;  /* mark "not from pool" */
+        }
+        return p;
+    }
+
+    int wid = _current_worker_id;
+    if (wid < 0) {
+        /* Main thread или unregistered context — fallback Boehm.
+         * Important: main thread под bootstrap calls spawn_into → codegen
+         * routes через regular nova_alloc, не сюда. _armed M:N path:
+         * caller всегда worker thread → wid >= 0. */
+        void* p = nova_alloc_uncollectable(_nova_spawn_pool_class_size[cls]);
+        if (p) {
+            NovaSpawnCtxBase* base = (NovaSpawnCtxBase*)p;
+            base->_nova_pool_size = _nova_spawn_pool_class_size[cls];
+        }
+        return p;
+    }
+
+    NovaWorker* w = &_workers[wid];
+    void* head = w->spawn_pool_free[cls];
+    if (head) {
+        /* Fast path: pop intrusive head. Lock-free — single owner.
+         * Free buffer holds next pointer в первых sizeof(void*) bytes. */
+        void* next = *(void**)head;
+        w->spawn_pool_free[cls] = next;
+        w->spawn_pool_count[cls]--;
+        /* Zero-init reused buffer. memset is cheap (~30ns for 256B на modern CPU). */
+        memset(head, 0, _nova_spawn_pool_class_size[cls]);
+        NovaSpawnCtxBase* base = (NovaSpawnCtxBase*)head;
+        base->_nova_pool_size = _nova_spawn_pool_class_size[cls];
+        return head;
+    }
+
+    /* Slow path: Boehm uncollectable. */
+    void* p = nova_alloc_uncollectable(_nova_spawn_pool_class_size[cls]);
+    if (p) {
+        NovaSpawnCtxBase* base = (NovaSpawnCtxBase*)p;
+        base->_nova_pool_size = _nova_spawn_pool_class_size[cls];
+    }
+    return p;
+}
+
+/* Release SpawnCtx back to P-local pool либо Boehm free.
+ *
+ * Fast path: pool not full → push back. Lock-free single owner.
+ * Slow path: pool capped OR oversize OR no worker thread → Boehm free.
+ *
+ * Caller passes `size` = `base->_nova_pool_size` (0 if "not from pool"
+ * → direct Boehm free). */
+void nova_spawn_pool_release(void* ctx, size_t size) {
+    if (!ctx) return;
+    if (size == 0) {
+        /* Allocation went через oversize/legacy path — direct Boehm free. */
+        nova_free_uncollectable(ctx);
+        return;
+    }
+    int cls = _nova_spawn_pool_class(size);
+    if (cls < 0) {
+        nova_free_uncollectable(ctx);
+        return;
+    }
+
+    int wid = _current_worker_id;
+    if (wid < 0) {
+        /* Main thread free path — pool not available. Direct Boehm. */
+        nova_free_uncollectable(ctx);
+        return;
+    }
+
+    NovaWorker* w = &_workers[wid];
+    if (w->spawn_pool_count[cls] >= NOVA_SPAWN_POOL_MAX_PER_CLASS) {
+        /* Pool capped — excess Boehm free. */
+        nova_free_uncollectable(ctx);
+        return;
+    }
+
+    /* Intrusive push: store next pointer в первых bytes ctx'а.
+     * No Boehm alloc — single-instruction overhead. */
+    *(void**)ctx = w->spawn_pool_free[cls];
+    w->spawn_pool_free[cls] = ctx;
+    w->spawn_pool_count[cls]++;
+}
+
+/* Plan 83.6: drain pool entries на worker shutdown. Called from
+ * nova_runtime_shutdown после worker join. Frees all retained ctx
+ * buffers через Boehm (no separate entry structs — intrusive list). */
+static void _nova_spawn_pool_drain(NovaWorker* w) {
+    for (int cls = 0; cls < NOVA_SPAWN_POOL_SIZE_CLASSES; cls++) {
+        void* head = w->spawn_pool_free[cls];
+        while (head) {
+            void* next = *(void**)head;
+            nova_free_uncollectable(head);
+            head = next;
+        }
+        w->spawn_pool_free[cls] = NULL;
+        w->spawn_pool_count[cls] = 0;
+    }
+}
+
 /* ── Worker main ──────────────────────────────────────────────── */
 
 /* uv_async callback — fires when cross-worker spawn pushes fiber.
@@ -302,8 +489,17 @@ static void _worker_async_cb(uv_async_t* h) {
 static void _worker_dispatch_ready(void* ctx, mco_coro* co) {
     NovaWorker* w = (NovaWorker*)ctx;
     if (_current_worker_id == w->id) {
-        /* Owner push: lock-free, same thread as deque owner. */
-        nova_deque_push(&w->deque, co);
+        /* Plan 83.7 (2026-05-25): owner-thread wake → runnext priority
+         * slot. Cache-warm handler chains (Go runnext + tokio LIFO slot).
+         * Previous runnext (if any) flushes к deque tail — no loss.
+         *
+         * Same-thread access guaranteed by enclosing _current_worker_id
+         * check → plain pointer, no atomic. */
+        mco_coro* prev = w->runnext;
+        w->runnext = co;
+        if (prev) {
+            nova_deque_push(&w->deque, prev);
+        }
     } else {
         /* Cross-thread: queue under mutex, wake worker's uv loop. */
         nova_mutex_lock(&w->wake_mu);
@@ -389,9 +585,20 @@ static void _worker_main(void* arg) {
 
         mco_coro* co = NULL;
 
+        /* Plan 83.7 (2026-05-25): (1.9) runnext priority slot — woken
+         * fiber from same-thread dispatch_ready (channel recv → handler
+         * spawn re-wake same-worker chain). Cache-warm vs going through
+         * deque tail. Same-thread access — plain pointer. */
+        if (w->runnext) {
+            co = w->runnext;
+            w->runnext = NULL;
+        }
+
         /* (2) Local deque — owner LIFO pop. Wait-free hot path. Свежие
          * spawn'ы + разбуженные fiber'ы (приоритет — они progress'ят). */
-        co = (mco_coro*)nova_deque_pop(&w->deque);
+        if (!co) {
+            co = (mco_coro*)nova_deque_pop(&w->deque);
+        }
 
         /* (2.5) Plan 44.7: yielded-FIFO — кооперативно вытесненные fiber'ы.
          * После deque, до steal: своя preempted-работа продвигается, но
@@ -601,7 +808,10 @@ static void _worker_main(void* arg) {
             nova_fiber_state_store(co, NOVA_FIBER_STATE_DEAD);
             mco_destroy(co);
             if (dead_ctx) {
-                nova_free_uncollectable(dead_ctx);
+                /* Plan 83.6: route через pool release. base->_nova_pool_size
+                 * decides: pool route (size > 0, push back) либо direct
+                 * Boehm free (size == 0). */
+                nova_spawn_pool_release(dead_ctx, dead_ctx->_nova_pool_size);
             }
         } else if (mco_status(co) == MCO_SUSPENDED) {
             /* Yielded: if parked (timer/channel wait) → dispatch_ready re-queues.
@@ -620,11 +830,18 @@ static void _worker_main(void* arg) {
         }
     }
 
-    /* Cleanup — drain remaining items в deque + yielded-FIFO (Plan 44.7).
+    /* Cleanup — drain remaining items в deque + yielded-FIFO + runnext
+     * (Plan 44.7, Plan 83.7).
      * Plan 83.4.5.7 (2026-05-23): CAS-guard для double-resume race.
-     * Plan 83.4.5.8 (2026-05-24): free uncollectable ctx после mco_destroy. */
+     * Plan 83.4.5.8 (2026-05-24): free uncollectable ctx после mco_destroy.
+     * Plan 83.7 (2026-05-25): drain runnext priority slot. */
     while (true) {
-        mco_coro* co = (mco_coro*)nova_deque_pop(&w->deque);
+        mco_coro* co = NULL;
+        if (w->runnext) {
+            co = w->runnext;
+            w->runnext = NULL;
+        }
+        if (!co) co = (mco_coro*)nova_deque_pop(&w->deque);
         if (!co) co = _worker_yielded_pop(w);
         if (!co) break;
         if (mco_status(co) == MCO_SUSPENDED) {
@@ -643,7 +860,8 @@ static void _worker_main(void* arg) {
             NovaSpawnCtxBase* dead_ctx = (NovaSpawnCtxBase*)mco_get_user_data(co);
             mco_destroy(co);
             if (dead_ctx) {
-                nova_free_uncollectable(dead_ctx);
+                /* Plan 83.6: pool release. */
+                nova_spawn_pool_release(dead_ctx, dead_ctx->_nova_pool_size);
             }
         }
     }
@@ -943,6 +1161,8 @@ static void _materialize_pool(void) {
         w->wake_pending       = NULL;
         w->wake_pending_count = 0;
         w->wake_pending_cap   = 0;
+        /* Plan 83.7: runnext priority slot — initially empty. */
+        w->runnext            = NULL;
 
         int rc = uv_loop_init(&w->loop);
         if (rc != 0) {
@@ -1047,6 +1267,8 @@ void nova_runtime_shutdown(void) {
         w->wake_pending = NULL;
         free(w->yielded);          /* Plan 44.7 yielded-FIFO */
         w->yielded = NULL;
+        /* Plan 83.6: drain SpawnCtx pool — free retained ctx buffers. */
+        _nova_spawn_pool_drain(w);
     }
 
 #ifdef NOVA_GC_BOEHM
