@@ -21629,3 +21629,84 @@ GC-языков (Go/Rust/TS/Kotlin не имеют аналога).
 - docs/idiom/symmetric-cleanup.md: canonical errdefer+okdefer pattern
 
 Merge: 49c3b0b0da3; branch plan-100-4-3-okdefer → main.
+
+=== Plan 100.4.1 — Failable cleanup body (D158, amend D90 §4) (2026-05-26) ===
+
+Снимает Plan 20 D90 §4 «defer body INFALLIBLE»: defer/errdefer/okdefer/
+defer-with-result body теперь может содержать Fail-throws если enclosing
+fn-sig declares Fail[E]. Иначе compile error D158-defer-fail-not-in-sig.
+
+**Реализация (Opus 4.7, ~1 сессия, 6 коммитов):**
+
+Ф.0 — gate-probe: design D1-D7 lock + Plan 49 runtime audit + 3 scenarios
+hand-verified + implementation surfaces enumerated.
+
+Ф.1 — Spec D158 amend (spec/decisions/03-syntax.md): D90 §4 amended
+«infallible» → «Fail-allowed с composition»; new sub-section «Почему
+failable body + composition» (историзировано pre-D158 reasoning);
+backward-compat handler-wrap pattern explicitly preserved; cross-ref
+spec/decisions/04-effects.md D118 §Связь добавлен.
+
+Ф.2 — Effect-checker (compiler-codegen/src/types/mod.rs):
+- DeferBodyCtx расширен полем inside_fail_handler_depth: usize.
+- check_defer_body* signatures приняли current_fn_effects: &[TypeRef].
+- Throw / Try / Bang / Call-with-Fail: разрешены если ctx.inside_fail_handler_depth > 0
+  ИЛИ has_fail_effect(current_fn_effects). Иначе D158-defer-fail-not-in-sig.
+- Interrupt — НЕ amend'ается (hijack scope-exit, не failable cleanup).
+- ExprKind::With { bindings, body } — special-cased: any binding Fail-effect
+  → increment inside_fail_handler_depth для recursive walk (backward-compat
+  handler-wrap shorthand).
+- Test body — implicit Fail[any] (test runner wraps в handler).
+
+Ф.3 — Runtime (compiler-codegen/nova_rt/effects.h):
+- New typedef NovaErrorChain (msg/kind/payload/tid/next).
+- NovaFailFrame расширен полем error_suppressed: NovaErrorChain*.
+- nv_compose_suppressed(primary, msg, kind, payload, tid) helper.
+- nova_rethrow_with_suppressed(frame) — re-throw preserving chain.
+- nova_failframe_suppressed_count / _at — MultiError accessors.
+- Все nova_throw_* reset'ят error_suppressed = NULL (fresh error).
+- NOVA_TRY macro init'ит chain после fail_push.
+
+Ф.4 — MultiError prelude (std/prelude/errors.nv):
+- type MultiError { readonly primary str; readonly suppressed []str }
+- @primary() / @suppressed() / @fmt_chain() методы.
+- Bootstrap string-based; typed payload — Plan 100.4.4/5 followup.
+
+Ф.5 — Parser fix (compiler-codegen/src/parser/mod.rs):
+- Plan 72 P1-B bodyless empty-sum (`type X` без body) — accept также
+  outer doc-comment `///` как body-end terminator. Раньше `type X\n///`
+  → ошибочно continued ожидать body.
+
+Ф.5 — Фикстуры (nova_tests/plan100_4_1/) — 18 PASS:
+  POS (12): defer_fail_ok_{normal_exit, composed_with_primary, multi_lifo_composed,
+    question_mark, nested_scope, with_explicit_throw, with_explicit_handler},
+    errdefer_fail_ok_{only_on_error, propagation},
+    multi_error_inspect_{ok, empty_chain},
+    defer_ok_no_fail_backward_compat.
+  NEG (6): defer_fail_err_{no_fail_in_sig, interrupt_in_body, return_in_body,
+    break_in_body, try_no_fail_in_sig, throw_no_fail_in_sig}.
+
+Ф.6 — Docs:
+- 100.4.1-failable-cleanup-body.md: статус → ✅ ЗАКРЫТ.
+- spec/decisions/README.md: D158 row → ✅ закрыт.
+- docs/plans/README.md + 100.4-cleanup-on-failure.md (umbrella) + 100-remaining-impl-roadmap.md: статус → ✅.
+- docs/simplifications.md: new section с markers.
+- docs/project-creation.txt: эта запись.
+
+**Regression check:**
+- nova_tests/plan100_4_1: 18/18 PASS ✅
+- nova_tests/plan100_4_3: 11/11 PASS ✅ (fix: neg_okdefer_throw_in_body
+  amended к D158)
+- nova_tests/syntax/defer*: 8/8 PASS ✅ (Plan 20 backward-compat)
+- nova_tests/plan100_1, plan73: PASS (Plan 100.1 + Plan 73 unaffected)
+
+**Bootstrap-граница (followup markers):**
+- [M-100.4.1-emit-defer-wrap] — emit_defer ещё НЕ оборачивает failable
+  defer body в NovaFailFrame setjmp для composition. Runtime infra ready;
+  Scenario A работает; Scenario B/C composite chain — primary propagates,
+  suppressed empty. Followup Plan 100.4.4.
+- [M-100.4.1-inline-handler-in-defer] — `with Fail = effect Fail { ... }`
+  ВНУТРИ defer body — codegen handler-vtable-inside-defer wiring broken.
+  Workaround — handler-wrap в отдельной fn.
+
+Branch plan-100-4-1-failable-cleanup → main (pending merge).

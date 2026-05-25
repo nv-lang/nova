@@ -19,10 +19,10 @@
 | 100.2 generic propagation | 📋 unblocked | 4 | D156 |
 | 100.3 borrow/view + D9 rvalue-rule | 📋 unblocked | 3 | D157 |
 | 100.4 cleanup-on-failure umbrella | 📋 unblocked | 14 (5 sub) | D158-D162 |
-| 100.4.1 failable cleanup body | 📋 unblocked | 3 | D158 |
-| 100.4.2 async/suspend cleanup | 📋 GATED on 100.4.1 | 3 | D159 |
+| 100.4.1 failable cleanup body | ✅ ЗАКРЫТ 2026-05-26 (18/18 PASS) | 3 | D158 |
+| 100.4.2 async/suspend cleanup | 📋 unblocked (gate 100.4.1 снят) | 3 | D159 |
 | 100.4.3 okdefer + reason-aware | ✅ ЗАКРЫТ 2026-05-25 | 2 | D160 |
-| 100.4.4 multi-defer error accumulation | 📋 GATED on 100.4.1 | 3 | D161 |
+| 100.4.4 multi-defer error accumulation | 📋 unblocked (gate 100.4.1 снят) | 3 | D161 |
 | 100.4.5 consume-integration final | 📋 GATED on 100.4.1-4 | 3 | D162 |
 | 100.5 FFI / external integration | 📋 unblocked | 4 | D163 |
 | 100.6 cross-module + visibility + mangling | 📋 unblocked | 3 | D164 |
