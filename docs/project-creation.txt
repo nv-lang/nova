@@ -20780,3 +20780,75 @@ Followup: investigate cross-thread dealloc routing.
   Default 32 derived empirically; tune via `NOVA_PARALLEL_INLINE_THRESHOLD`
   для specific workloads.
   budget (within[T]/race2[T] mono recursion). Don't downsize.
+
+================================================================
+[2026-05-23] Plan 100 family autonomous spec+fixtures+docs batch
+(worktree d:/Sources/nv-lang/nova-p100, ветка plan-100-impl, 6 коммитов,
+push в github+gitverse):
+
+Большая autonomous-сессия по Plan 100 (consume-типы) — 12 D-block
+specs + 36 фикстур + 1 idiom doc. Реализация (parser/type-checker/
+runtime) — interactive sessions с iteration.
+
+**Plan 100 family** = umbrella + 8 sub-plans + 5 sub-sub-plans = 13
+plan-doc'ов, ~43 dev-day implementation.
+
+Цель: `type Transaction consume {...}` — compile-time гарантия
+«обязательного закрытия» (must-be-consumed) на каждом code-path'е.
+Не хуже / превосходит Go/Rust/TS/Kotlin по resource-management.
+
+**6 коммитов:**
+
+* b12e4b8337e — D-block renumbering D134-D144 → D145-D155 (избежание
+  конфликтов с уже занятыми Plan 79/81/83/03/90/96/97 D-блоками). D133
+  свободен — оставлен для Plan 100.1 foundation.
+
+* 560e282efea — spec D133 (Plan 100.1 foundation) в 02-types.md (358
+  строк) + cross-ref в 05-memory.md + 17 фикстур plan100.1/ (8 pos +
+  9 neg). Включает D5 field-aware flow с reopen pattern, D5.1 assign-
+  in-Live-field protection, D5.2 nested field paths.
+
+* 0bf92222abb — spec D145 (generic [T consume] bound, Plan 100.2) в
+  02-types.md + spec D146 (view T borrow без lifetime, Plan 100.3) в
+  05-memory.md + 13 фикстур (8 plan100.2 + 5 plan100.3). D146
+  закрывает deep-peek hole в Option[ConsumeType] через match view.
+
+* f8ec6913d89 — spec D147-D151 (Plan 100.4 family — defer/errdefer
+  production-grade rework) в 03-syntax.md (5 D-blocks). Amend D90 §4
+  (failable body), §5 (async/suspend), §7 (interrupt triggers errdefer).
+  Новый okdefer keyword. Multi-defer LIFO error accumulation + panic
+  composition (no Rust-style double-panic-abort).
+
+* 95f7bbec6eb — spec D152-D155 (Plan 100.5/6/7/8 cross-cutting) в
+  02-types.md (D152 FFI, D153 cross-module) + 09-tooling.md (D154
+  migration policy, D155 perf/IDE/tooling).
+
+* cd900973303 — 6 фикстур plan100.4.* (failable cleanup, okdefer,
+  consume-integration final) + docs/idiom/consume-types.md (canonical
+  patterns).
+
+**Cross-language comparison matrix:** matches Rust на 16 capabilities;
+превосходит на 4 (non-suppressable, distinct commit/rollback methods,
+effect-typed cleanup-fail, нет lifetime overhead). Без borrow-checker'а.
+
+**Зафиксировано:**
+- 12 D-block specs (D133, D145-D155): 02-types.md / 03-syntax.md /
+  05-memory.md / 09-tooling.md.
+- 36 фикстур (21 pos + 15 neg) в plan100.1-100.4.5.
+- 1 idiom doc.
+- spec/decisions/README.md «Свежие D-решения» обновлён.
+
+**Honest defer'ы (для будущих sessions):**
+- ~160 фикстур не написано (plan100.2/3: ~14 ещё; plan100.4.*: ~75;
+  plan100.5-100.8: ~73).
+- 6 idiom docs не написано (view-borrow, ffi-consume, cross-pkg-consume,
+  async-cleanup, multi-cleanup-errors, ...).
+- 12 GATE probe artifacts не написано.
+- **Rust implementation** (parser/type-checker/runtime) — требует
+  interactive compile-test-fix цикл; autonomous без iteration рискует
+  silent semantic bugs.
+
+**Production-grade contract зафиксирован.** Implementation теперь
+может идти против чёткого описания.
+
+Ветка plan-100-impl готова к merge / review. PR создаётся отдельно.

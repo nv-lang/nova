@@ -1,0 +1,27 @@
+// Plan 100.7 (D165): pilot Mutex Lock-guard migration.
+// Probe 1 of 5: basic lock/release.
+
+module nova_tests.plan100_7.mutex_lock_release
+
+external type Mutex
+external type LockGuard consume
+
+external fn nova_mutex_lock(view m Mutex) -> LockGuard needs Sys
+external fn nova_lock_release(consume g LockGuard) -> () needs Sys
+external fn nova_mutex_new() -> Mutex needs Sys
+
+fn LockGuard consume @release() -> () { nova_lock_release(@) }
+fn Mutex.new() -> Mutex => nova_mutex_new()
+
+fn critical_section(view m Mutex) -> int {
+    consume guard = nova_mutex_lock(m)
+    defer { guard.release() }                   // auto-unlock на любом exit
+    // critical work
+    42
+}
+
+test "Mutex lock-guard pilot" {
+    let m = Mutex.new()
+    let r = critical_section(m)
+    assert(r == 42)
+}

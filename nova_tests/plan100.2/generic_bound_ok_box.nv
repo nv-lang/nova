@@ -1,0 +1,28 @@
+// Plan 100.2 (D156): generic `[T consume]` bound + consume-param.
+//
+// `fn box[T consume](consume x T) -> Box[T]` — strict mode: внутри
+// box compiler tracks T как possibly-consume. x передаётся в Box-field
+// (consume передача через field declared consume).
+
+module nova_tests.plan100_2.generic_bound_ok_box
+
+type Transaction consume {
+    id int,
+}
+
+fn Transaction consume @commit() -> () { () }
+
+type Box[T consume] consume {
+    consume val T,
+}
+
+fn Box consume @unwrap[T consume]() -> T => @val
+
+fn box[T consume](consume x T) -> Box[T] => Box { val: x }
+
+test "box[T consume] — wrap consume-value в Box[T]; Box[T] consume" {
+    consume tx = Transaction { id: 1 }
+    consume boxed = box(tx)
+    consume inner = boxed.unwrap()
+    inner.commit()
+}

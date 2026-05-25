@@ -1,0 +1,33 @@
+// Plan 100.4.5 (D162, amend D90 §7): interrupt теперь триггерит
+// errdefer (был НЕ; now YES per D162).
+
+module nova_tests.plan100_4_5.interrupt_triggers_errdefer_ok
+
+type Transaction consume {
+    id int,
+}
+
+fn Transaction consume @commit() -> () { () }
+fn Transaction consume @rollback() -> () { () }
+
+fn begin() -> Transaction => Transaction { id: 1 }
+
+type Done effect {
+    finish(v int) -> () interrupt int
+}
+
+fn process_in_handler() Done -> int {
+    consume tx = begin()
+    errdefer { tx.rollback() }                  // покрывает interrupt-path после D162
+    tx.commit()                                 // explicit success-path
+    Done.finish(42)                             // interrupt v
+    // unreachable
+    0
+}
+
+test "interrupt triggers errdefer (D90 §7 amend)" {
+    let result = with Done = handler {
+        finish(v) { interrupt v }
+    } { process_in_handler() }
+    assert(result == 42)
+}

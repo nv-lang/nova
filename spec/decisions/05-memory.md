@@ -360,7 +360,7 @@ consume — уже use-after-consume).
 ### Runtime defense-in-depth
 
 Compile-time проверка — основной механизм. В C-рантайме consume-методы
-дополнительно зануляют внутреннее состояние (`StringBuilder.@into()`
+дополнительно зануляют внутреннее состояние (`StringBuilder.into()`
 обнуляет `data`/`len`/`cap`); если статическая проверка обойдена,
 следующий доступ fail-fast'ит через assert, а не молча портит данные.
 Прежний runtime-флаг `consumed` удалён — его роль закрыта D131.
@@ -381,3 +381,219 @@ Compile-time проверка — основной механизм. В C-ран
   receiver/param-квалификатор.
 - `std/runtime/string_builder.nv` — `StringBuilder consume @into()`,
   первый потребитель D131.
+- [02-types.md → D133](02-types.md#d133) — type-level `consume` (Plan
+  100.1, proposed 2026-05-23) — расширение D131 с противоположной
+  стороны: «инстансы обязаны быть consumed на каждом code-path'е».
+  D131 = affine (≤1 раз; забыть OK); D133 = must-consume (≥1 раз;
+  забыть → compile error). Foundation для Plan 100 family (D156-D166
+  — generic propagation, borrow/view, defer/errdefer integration, FFI,
+  cross-module, migration, IDE tooling).
+
+---
+
+## D157. Implicit view default + closure capture analysis + `match consume`
+
+> **Plan 100.3.** Принято 2026-05-23 (proposed; implementation pending).
+> Финализированная модель (Ред. 2, 2026-05-24): **`view T` keyword
+> отвергнут** — view это default mode без qualifier'а везде. D157
+> формализует closure capture analysis + `match consume` syntax.
+
+### Что
+
+D133 финализирует общую модель «**view-default, consume-explicit**»
+для param / for / match / if-let / binding. D157 покрывает:
+
+1. **Closure capture analysis** — автоматическое определение consume-
+   closure (FnOnce-equivalent) vs view-closure (FnMut/Fn analog).
+2. **`match consume @expr`** explicit-consume pattern matching (D156
+   collection-aware iteration sibling).
+3. **`mut`-view rules** — что разрешено через `mut tx` qualifier
+   (mut-методы + view-rules).
+
+`view T` keyword **не существует** — попытка использовать = parse
+error «view не keyword; use no-qualifier for view default».
+
+### Зачем не Rust `&T` / explicit `view T` keyword
+
+Initial design (Ред. 1) предполагал explicit `view T` keyword (Rust
+`&T` analog). Финал (Ред. 2) — default-view везде, keyword избыточен.
+
+Преимущества default-view:
+- 🟢 Менее verbose — типичный case (read) без extra keyword'а.
+- 🟢 Симметрично с D133 везде — «no qualifier = view, `consume` =
+  transfer».
+- 🟢 Меньше new syntax surface.
+- 🟢 AI-first — explicit-ness только там где нужна (consume keyword).
+
+Цена — нет explicit-marker для view (compensated через type-rule
+mandatory `consume` keyword).
+
+### `mut tx` qualifier — view + mut
+
+Через `mut tx` qualifier (param / for / match / if-let / `let mut tx
+= existing` alias) — добавляется разрешение на mut-методы:
+
+```nova
+fn print_id(tx Transaction) {                  // view (default)
+    println(tx.id)                              // ✅ read
+    tx.commit()                                 // ❌ consume через view
+    tx.reopen()                                // ❌ mut через view
+}
+
+fn modify(mut tx Transaction) {                 // mut-view
+    tx.reopen()                                // ✅ mut OK
+    tx.commit()                                 // ❌ consume через mut-view
+}
+
+fn close(consume tx Transaction) {              // consume
+    tx.commit()                                 // ✅
+}
+```
+
+### Closure capture analysis
+
+Closure-body анализируется как функция; capture-mode определяется
+автоматически по operations:
+
+| Operations в body над captured `tx` | Capture-mode | Аналог Rust |
+|---|---|---|
+| Только read fields, non-mut non-consume methods | **view-capture** | `Fn` |
+| + mut methods | **mut-view-capture** | `FnMut` |
+| consume-method или transfer | **consume-capture** | `FnOnce` |
+
+```nova
+consume tx = begin()
+
+let logger = || println(tx.id)                  // view-capture (только read)
+logger()                                         // OK
+logger()                                         // OK, multi-invoke
+tx.commit()                                      // ✅ tx Live после
+
+consume sb = StringBuilder.new()
+let appender = || sb.append("x")                // mut-view-capture
+appender()                                       // OK
+appender()                                       // OK, multi-invoke
+sb.into()                                        // ✅ sb Live после mut-view
+
+consume tx2 = begin()
+let commit_it = || tx2.commit()                 // consume-capture (FnOnce)
+commit_it()                                      // ✅ tx2 Consumed, closure Consumed
+commit_it()                                      // ❌ use-after-consume closure
+tx2.commit()                                     // ❌ tx2 уже Consumed
+```
+
+### Closure escape rules
+
+| Capture-mode | Escape (return / store) |
+|---|---|
+| view / mut-view | ❌ E (D157-borrow-escape-closure) — borrow не может outlive source |
+| consume | ✅ — closure owns captured, может escape (becomes self-contained FnOnce) |
+
+```nova
+fn make_logger() -> ?? {
+    consume tx = begin()
+    let f = || println(tx.id)                   // view-capture
+    return f                                     // ❌ view-closure escape
+}
+
+fn make_committer() -> ?? {
+    consume tx = begin()
+    let f = || tx.commit()                       // consume-capture (FnOnce)
+    return f                                     // ✅ consume-closure owns tx; escape OK
+}
+```
+
+Consume-closure escape allowed because closure carries ownership
+(must be invoked exactly once anywhere it lives).
+
+### `match consume @expr` для explicit-consume pattern
+
+Default `match @expr` = view-match (D133): binding'и в arm'ах — view,
+source Live после match. `match consume @expr` — explicit-consume:
+binding'и в arm'ах carry ownership, source Consumed после match.
+
+```nova
+type Service consume { consume file Option[File] }
+
+fn Service @file_id() -> Option[int] {
+    match @file {                               // view-match (default)
+        Some(f) => Some(f.fd),                  // f: view File
+        None => None,
+    }
+    // @file Live ✅
+}
+
+fn Service consume @close_file() {
+    match consume @file {                       // explicit-consume match
+        Some(consume f) => f.close(),           // f: owns File, must consume in arm
+        None => (),
+    }
+    // @file Consumed ✅
+}
+```
+
+Симметрично D156 collection-aware: `for tx in vec` view, `for consume
+tx in vec` consume. То же для `if let`:
+
+```nova
+if let Some(t) = opt { println(t.id) }          // view, opt Live после
+if let consume Some(t) = opt { t.commit() }     // consume, opt Consumed после
+```
+
+### `mut`-borrow через `mut tx` qualifier (НЕ `&mut T`)
+
+`mut`-view допускается в Nova (без Rust `&mut T` aliasing strictness),
+потому что:
+- Nova GC обрабатывает aliasing-memory-safety;
+- D157 mut-view только about D131/D133 consume-invariant'ы (не data
+  race protection — это Plan 47/49 concurrency layer);
+- Single-thread (Plan 100 scope) multi-mut alias — sound;
+- Multi-fiber concurrent mut через alias-class — addressed Plan 47
+  supervised-cancel + Plan 49 cancel-routing (отдельный layer).
+
+### Runtime cost
+
+**Zero.** Default-view не вводит runtime overhead. Capture-mode
+detection — compile-time через `check_consume` pass extension. Closure
+representation — обычный `NovaClosBase` (Plan 56 D122).
+
+### Сравнение
+
+| Capability | Rust | TS | Kotlin | Nova D157 |
+|---|---|---|---|---|
+| Read-only borrow | ✅ `&T` (explicit) | ❌ | ❌ | ✅ **implicit view default** |
+| Mutable borrow | ✅ `&mut T` (exclusive) | n/a | n/a | ✅ **`mut tx` (shared OK)** |
+| Borrow в pattern matching | ✅ | n/a | n/a | ✅ **default view; `match consume` explicit** |
+| Closure capture analysis | ✅ Fn/FnMut/FnOnce | ❌ | ❌ | ✅ **automatic view / mut-view / consume** |
+| Lifetime annotations | ❌ требуются | n/a | n/a | ✅ **не требуются** (scope-only) |
+| Borrow checker cognitive cost | ❌ высокий | n/a | n/a | ✅ **минимальный** (no keyword) |
+
+Nova **превосходит Rust** на: (a) implicit view default — нет keyword;
+(b) automatic closure capture-mode detection (Rust требует явный type-
+annotation для closures); (c) нет lifetime annotations; (d) нет
+borrow-checker exclusive-mut rules.
+
+### Что отвергнуто
+
+- **`view T` explicit keyword** — финал Ред. 2: default-view не нуждается
+  в keyword'e.
+- **`&T` Rust-style** — путает с raw pointer; D6 «no pointers».
+- **Rust-style exclusive `&mut T`** — Nova GC справляется с aliasing-
+  memory-safety; единственная concurrency-protection через Plan 47/49.
+- **`let v = view tx`** (явный view-bind) — после dropping `view`
+  keyword нет смысла. Alias через `let alias = tx` (default view-alias
+  Plan 73).
+
+### Связь
+
+- [D131](#d131) — affine consume foundation.
+- [D133](02-types.md#d133) — type-level consume; D157 покрывает
+  closure capture + match consume parts D133 model.
+- [D156](02-types.md#d156) — generic + collection-aware iteration;
+  D156 и D157 — sibling sub-plans для full D133 model.
+- [D158](03-syntax.md#d158)-[D162](03-syntax.md#d162) — defer/errdefer
+  family для cleanup-on-failure (Plan 100.4 family).
+- [D75](06-concurrency.md#d75) — почему borrow-checker отвергнут.
+- [D122](02-types.md#d122) — hybrid dispatch / NovaClosBase foundation.
+
+---

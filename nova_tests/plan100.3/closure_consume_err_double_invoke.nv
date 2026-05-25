@@ -1,0 +1,21 @@
+// EXPECT_COMPILE_ERROR D157
+//
+// Plan 100.3 (D157): consume-closure (FnOnce) — повторный invoke
+// невозможен. Первый invoke = consume; closure становится Consumed.
+
+module nova_tests.plan100_3.closure_consume_err_double_invoke
+
+type Transaction consume {
+    id int,
+}
+
+fn Transaction consume @commit() -> () { () }
+
+test "consume-closure — двойной invoke даёт error" {
+    consume tx = Transaction { id: 1 }
+    let commit_it = || tx.commit()             // consume-closure
+    commit_it()                                 // ✅ первый invoke
+    // ОШИБКА D157 + D133 use-after-consume: closure уже Consumed,
+    // и tx тоже Consumed.
+    commit_it()
+}

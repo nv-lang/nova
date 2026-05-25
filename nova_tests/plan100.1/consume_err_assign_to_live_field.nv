@@ -1,0 +1,39 @@
+// EXPECT_COMPILE_ERROR D133
+//
+// Plan 100.1 (D133, D5.1): assign в Live consume-поле — silent overwrite
+// предыдущего значения → error E (D133-assign-live-field).
+//
+// `@file = File.open()?` без предшествующего `@file.close()` затёр бы
+// старый File без close → утечка. Compiler ловит assign-in-Live.
+
+module nova_tests.plan100_1.consume_err_assign_to_live_field
+
+type File consume {
+    fd int,
+}
+
+fn File consume @close() -> () { () }
+
+fn File_open(path int) -> File => File { fd: path }
+
+type Service consume {
+    consume file File,
+}
+
+fn Service consume @shutdown() -> () {
+    @file.close()
+}
+
+// ❌ Mut-метод пытается заменить @file без предварительного close.
+// Старый File потерян silent → утечка.
+fn Service mut @overwrite_naive(new_path int) -> () {
+    // ОШИБКА D133-assign-live-field: @.file Live, перезапись затёрла бы
+    // старое значение без close. Suggest: `@file.close()` перед assign.
+    @file = File_open(new_path)
+}
+
+test "Service overwrite_naive — silent-overwrite error" {
+    consume svc = Service { file: File_open(1) }
+    svc.overwrite_naive(2)
+    svc.shutdown()
+}

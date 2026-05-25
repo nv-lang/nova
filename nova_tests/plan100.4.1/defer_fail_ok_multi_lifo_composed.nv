@@ -1,0 +1,36 @@
+// Plan 100.4.1 (D158): несколько defers, каждый может Fail; composite
+// chain LIFO order.
+
+module nova_tests.plan100_4_1.defer_fail_ok_multi_lifo_composed
+
+type Err1 { msg str }
+type Err2 { msg str }
+type Err3 { msg str }
+
+type Transaction consume {
+    id int,
+}
+
+fn Transaction consume @commit() Fail[Err1] -> () { throw Err1 { msg: "tx1" } }
+fn begin() -> Transaction => Transaction { id: 1 }
+
+fn defer_a() Fail[Err2] -> () { throw Err2 { msg: "A" } }
+fn defer_b() Fail[Err3] -> () { throw Err3 { msg: "B" } }
+
+// 3 defers, body fails — composite { primary: body, suppressed: [B, A] }
+fn process() Fail -> () {
+    consume tx = begin()
+    defer { defer_a() }                         // outer (runs last LIFO)
+    defer { defer_b() }                         // inner (runs first LIFO)
+    defer { tx.commit() }                       // innermost
+    throw Err1 { msg: "body" }                  // body throws first
+    // LIFO unwinding:
+    //   tx.commit() — fails Err1 → suppressed
+    //   defer_b()    — fails Err3 → suppressed
+    //   defer_a()    — fails Err2 → suppressed
+    // composite: { primary: body Err1, suppressed: [tx.commit Err1, B, A] }
+}
+
+test "multi-defer LIFO + each fail — composite chain" {
+    process()
+}

@@ -1181,8 +1181,8 @@ record-coercion матчила бы `{ debug: ... }` против **полей s
    материализуется (литерал — только синтаксис):
    ```nova
    { let mut _m0 = HashMap[str, V].with_capacity(n)
-     let _ = _m0.@insert("debug", true)
-     let _ = _m0.@insert("verbose", false)
+     let _ = _m0.insert("debug", true)
+     let _ = _m0.insert("verbose", false)
      _m0 }
    ```
 5. **Пустой `{}` — это НЕ пустая мапа.** `{}` всегда парсится как пустой
@@ -3225,7 +3225,7 @@ Generic-bound method call'ы dispatch'аются по hybrid strategy:
 
 ### Bootstrap status (2026-05-16)
 
-- ✅ Mono path для bound methods works (HashMap.@clone() пример).
+- ✅ Mono path для bound methods works (HashMap.clone() пример).
 - ✅ Vtable runtime infrastructure готова (`NovaVtable_Hashable`,
   `NovaVtable_Comparable`, `NovaVtable_Display` + 4 primitive K
   vtables: int/bool/u8/f64/str).
@@ -3859,6 +3859,884 @@ Rust's `usize`). Bootstrap-grade alias.
 - Plan 07 — original float→int saturation
 - Plan 70.5 — parent plan (этот блок)
 - Plan 70.4 — sibling (codegen type distinction family)
+
+---
+
+## D133. `type X consume` — обязательная consume-семантика (must-be-consumed)
+
+> **Plan 100.1.** Принято 2026-05-23 (proposed; implementation pending).
+> Extends [D131](05-memory.md#d131) affine `consume` qualifier.
+
+### Что
+
+Квалификатор `consume` на **type-decl**. Помечает, что инстансы такого
+типа **обязаны** быть потреблены до выхода из scope'а на каждом code-
+path'е. Compile error если live consume-переменная остаётся на exit-
+point'е.
+
+```nova
+type Transaction consume { id int }
+type File consume { fd i32 }
+type Lock consume { mutex *Mutex }
+```
+
+Расширяет [D131](05-memory.md#d131) с противоположной стороны:
+
+| Свойство | D131 affine `consume` (Plan 73) | D133 type-level `consume` (Plan 100.1) |
+|---|---|---|
+| Потребить ≤1 раз | ✅ enforce | ✅ enforce (наследуется) |
+| Потребить ≥1 раз (обязательно) | ❌ забыть OK | ✅ enforce — must-be-consumed |
+| Помечается на | receiver / param метода | **type-decl** + поле + binding |
+
+Канонический use-case — `Transaction.commit() / .rollback()`,
+`File.close()`, lock-guard `.release()`.
+
+### Синтаксис
+
+`consume` стоит **после имени типа**, перед `{`:
+
+```nova
+type Transaction consume {                    // type-decl marker
+    id int,
+}
+
+fn Transaction consume @commit() -> ()         // consume-method (D131)
+fn Transaction consume @rollback() -> ()
+```
+
+`consume` на type-decl + хотя бы один consume-метод (D131) — обязательное
+сочетание (compile error: «consume-type требует ≥1 consume-method»).
+
+### Правило — must-consume на каждом exit-path'е
+
+Compiler проводит **flow-sensitive** анализ (расширение Plan 73 D131
+`check_consume` pass'а). Для каждой переменной consume-типа отслеживается
+`VarState`:
+
+- **`Live`** — значение доступно, обязательство активно.
+- **`Consumed`** — значение потреблено (через consume-метод / consume-
+  параметр / `return`).
+- **`MaybeConsumed`** — потреблено лишь на части путей (branch join).
+
+На каждой **точке выхода** scope'а проход по active consume-переменным:
+- `Live` или `MaybeConsumed` → **compile error E (D133-not-consumed)**
+  с указанием консьюм-методов.
+- `Consumed` → OK.
+
+Точки выхода:
+- конец function body (последний statement);
+- `return expr` — все live consume-vars (кроме возвращаемой) → error;
+- `panic` / `expr!!` / `expr?` / unwinding-paths;
+- `loop break`;
+- branch join `if`/`match` — `Live ⊔ Consumed = MaybeConsumed`.
+
+`defer` / `errdefer` могут покрывать обязательство (см. **D158+** Plan
+100.4 family).
+
+### Что считается consume
+
+| Действие | Эффект на VarState |
+|---|---|
+| `tx.commit()` — вызов consume-метода | `tx` → `Consumed` |
+| `f(tx)` где `f(consume tx Tx)` — consume-param | `tx` → `Consumed` |
+| `return tx` (тип consume) | `tx` → `Returned` (передача caller'у) |
+| `record.field = tx` где field declared consume | `tx` → `Moved` (в record) |
+| `consume new_owner = tx` (transfer alias) | `tx` → `Consumed`, `new_owner` → `Live` |
+| `f(tx)` где `f(tx Tx)` — view-param (no qualifier) | `tx` остаётся `Live` (callee — view-borrow) |
+| `f(tx)` где `f(mut tx Tx)` — mut-view-param | `tx` остаётся `Live` (callee — mut-borrow) |
+| `let alias = tx` — view-alias | оба в alias-class (Plan 73); consume любого инвалидирует |
+| `let mut alias = tx` — mut-view-alias | то же + mut-методы через alias |
+| `let _ = tx` (silent drop) | ❌ compile error D133-suppress-not-allowed |
+
+### Заразность через поля + explicit double-marker
+
+Record/sum, имеющий поле consume-типа, **обязан** быть объявлен
+`consume`:
+
+```nova
+type TxState consume {                         // ← ОБЯЗАТЕЛЬНО
+    consume tx Transaction,                    // ← ОБЯЗАТЕЛЬНО (тип = consume)
+    writes []Write,                            // обычное поле
+}
+```
+
+Compiler enforces consistency:
+- consume-поле без `consume`-маркера → error E (D133-field-marker-missing);
+- consume-маркер на field без `consume` на type-decl → error
+  E (D133-type-marker-missing);
+- `consume f int` (тип поля **не** consume) → error E (D133-marker-on-
+  non-consume) — keyword использован но не нужен.
+
+**`consume`-type БЕЗ consume-полей разрешён** — каноничный паттерн
+для opaque-resource типов (`StringBuilder consume` с runtime backing
+через `external type`; consume-method `@into()` потребляет; никаких
+consume-полей в декларации). Достаточно хотя бы одного declared
+consume-метода.
+
+### Field-aware flow внутри методов record'а
+
+`@field` отслеживается как независимый VarState slot. На exit'е метода:
+
+| Тип метода | consume-поля должны быть |
+|---|---|
+| `fn X consume @method(...)` | `Consumed` (record closes) |
+| `fn X mut @method(...)` | **`Live`** (invariant preserved) |
+| `fn X @method(...)` (regular) | **`Live`** (invariant preserved) |
+
+Это позволяет реальные паттерны (rotate / reopen / replace):
+
+```nova
+type Service consume {
+    consume file File,
+}
+
+fn Service mut @reopen() -> Result[(), OpenErr] {
+    consume new_file = File.open()?            // сначала добываем замену
+    @file.close()                               // только теперь закрываем старое
+    @file = new_file                            // rebind — @file опять Live;
+                                                //  new_file → Consumed (transfer в @file)
+}                                               // mut exit: @file Live ✅
+```
+
+Compiler ловит реальные баги:
+- забытый rebind на ветке → exit MaybeConsumed → error.
+- early return без rebind → error.
+- наивный close-then-open с error-path (`@file.close(); @file = open()?`)
+  → error если open Err (@file Consumed, не rebinded).
+
+### Assign в Live consume-поле / locals — запрещено
+
+Прямое присваивание `@field = expr` разрешено **только** когда `@field`
+уже `Consumed` (для simple-typed consume-поля) либо **все consume-sub-
+fields внутри `@field`** уже `Consumed` (для nested-consume-record-поля).
+Иначе compile error E (D133-assign-live-field).
+
+```nova
+fn Service mut @overwrite_naive() {
+    @file = File.open()?                       // ❌ @file Live, silent overwrite
+}
+
+fn Service mut @overwrite_correct() {
+    @file.close()                              // @file → Consumed
+    consume new = File.open()?
+    @file = new                                // ✅ @file Consumed → assign OK
+}
+```
+
+**Nested case** — `@inner` содержит `consume tx`; assign в `@inner`
+разрешён когда внутренний `@inner.tx` уже Consumed (recursively для
+deep nesting):
+
+```nova
+fn Outer mut @reset() {
+    @inner.tx.commit()                         // @inner.tx → Consumed;
+                                               //  @inner effectively «empty container»
+    consume new = Inner.new()
+    @inner = new                               // ✅ all consume-sub-fields Consumed
+                                               //  → @inner replace OK
+}
+```
+
+То же для локальных consume-var: повторный `consume tx = ...` без
+consume старой — error.
+
+### Nested field paths
+
+Multi-level field tracking — `ConsumeCtx` хранит state по произвольно
+глубокому пути `@f1.f2.f3`:
+
+```nova
+type Inner consume { consume tx Transaction }
+type Outer consume { consume inner Inner }
+
+fn Outer mut @commit_inner() {
+    @inner.tx.commit()                         // deep path consume; @inner.tx → Consumed
+                                               //  @inner — «empty container» (consume-sub-field Consumed)
+    consume new = Inner.new()
+    @inner = new                               // rebind inner — assign OK
+                                               //  (внутренний tx был Consumed)
+}
+```
+
+Реализация — `ConsumeCtx::states: HashMap<FieldPath, VarState>` где
+`FieldPath = Vec<String>`.
+
+### Заразность через generic-args
+
+`type_is_consume(TypeRef)` — рекурсивная функция (общая, не Option-
+специфичная):
+
+- тип в `LinearityRegistry` (объявлен `consume`)?
+- record/sum с ≥1 consume-полем?
+- generic-wrap `G[T1, ..., Tn]` — хотя бы один `Ti` consume?
+- generic-param `T` (без bound) — false (bootstrap silent-ignore;
+  закрывается **D156** Plan 100.2 через `[T consume]` bound).
+
+`Option[Transaction]` / `Result[Transaction, E]` / `Box[Transaction]` /
+user `Wrapper[Transaction]` — все автоматически consume через wrap.
+**Никакого Option-специфичного хардкода** — общее правило для любого
+generic-wrapper'а.
+
+### Три mode'а binding-position: view / mut-view / consume
+
+**Единое правило везде** (param / for / match / if-let / let-binding):
+**`consume` keyword маркирует ownership**. Без него — **view** (read-
+only borrow). `mut` — view + mutation.
+
+```nova
+fn read(tx Transaction) -> int                 // view (default; callee читает)
+fn modify(mut tx Transaction)                  // mut-view (+ mut методы)
+fn close(consume tx Transaction)               // consume (transfer; tx → Consumed)
+```
+
+#### View (default — без qualifier'а)
+
+| Действие | OK? |
+|---|---|
+| `tx.field` (read) | ✅ |
+| `tx.regular_method()` | ✅ |
+| `t.mut_method()` | ❌ (нужен `mut tx`) |
+| `t.consume_method()` | ❌ E (D133-consume-via-view) |
+| передача в view-param другой fn | ✅ |
+| передача в `consume`-param | ❌ E (D133-move-via-view) |
+| передача в `mut`-param | ❌ (нужен `mut tx`) |
+| `return tx` (escape) | ❌ E (D133-view-escape-return) |
+| store в record-field | ❌ E (D133-view-escape-store) |
+| capture в closure, returned | ❌ E (D133-view-escape-closure) |
+| `let alias = tx` (alias) | ✅ view-alias (Plan 73) |
+
+#### Mut-view (`mut tx` qualifier)
+
+То же что view, но **mut-методы разрешены**. Не consume, не escape.
+
+#### Consume (`consume tx` qualifier)
+
+Полный ownership-transfer. Callee/binding обязан consumed до scope-
+exit'а через один из 5 механизмов (см. §«Когда consume binding
+считается удовлетворённым»).
+
+#### Глубокий peek без consume
+
+```nova
+match @file {                                  // view-match (default)
+    Some(f) => f.fd,                           // f: view File, read-only
+    None => 0,
+}
+// @file остаётся Live ✅
+```
+
+См. **D157** (Plan 100.3) — match-pattern в view-mode + closure capture
+analysis.
+
+### `consume` + `-> @` несовместимы
+
+`fn Tx consume @prepare() -> @ { ... }` → **parse error**. Противоречие
+между «забираю целиком» и «возвращаю тот же объект» (D132 fluent-
+return).
+
+### Binding: `consume` keyword обязателен для ownership
+
+Для consume-типов **`consume` keyword обязателен** в LHS, когда binding
+становится Live-linear-owner:
+
+```nova
+let tx = begin()                               // ❌ ERROR D133-consume-needs-keyword:
+                                               //    consume-type требует `consume` keyword
+
+consume tx = begin()                           // ✅ initial binding — owns
+
+let alias = tx                                 // ✅ view-alias (no ownership; Plan 73)
+let mut alias = tx                             // ✅ mut-view-alias
+consume new_owner = tx                         // ✅ transfer: tx → Consumed
+```
+
+**Без `consume` keyword'а LHS = view-alias** (alias-class Plan 73,
+read-only borrow). Это симметрично param/for/match — везде «no qualifier
+= view, consume = transfer».
+
+#### Когда consume binding считается удовлетворённым
+
+Live consume-binding обязан к scope-exit'у оказаться в одном из 5
+состояний:
+
+1. **Closed locally** — `tx.commit()` (consume-метод).
+2. **Returned** — `return tx`.
+3. **Transferred** — `f(tx)` где `f(consume tx T)`.
+4. **Stored in record-field, который сам уходит наверх:**
+   ```nova
+   consume tx = begin()
+   return Wrapper { tx: tx }                  // tx → record-field, record returns
+   ```
+5. **Covered by defer/errdefer/okdefer** (D158-D162 Plan 100.4 family).
+
+Иначе error E (D133-not-consumed).
+
+### AI-first explicit-ness — почему mandatory
+
+`consume` keyword обязателен **специально** — для loud visibility:
+- 🟢 Каждое появление ownership видно с первого взгляда.
+- 🟢 Refactor-safety — добавил `consume` к типу → compiler ловит все
+  существующие `let x = T.new()` sites, force review.
+- 🟢 Единое правило симметрии с param / for / match.
+
+Verbose-ness bounded — только для consume-типов (rare; resource-
+management).
+
+### Runtime mental model (Option-projection, не ABI)
+
+Концептуально consume-тип проецируется в `Option[T]`-space:
+- `Live` ≡ `Some(t)`.
+- `Consumed` ≡ `None`.
+- `MaybeConsumed` ≡ branch-зависимо.
+
+Это **mental model** для spec/docs. **Реализация остаётся pragmatic**
+(D131-style):
+- pointer-based consume: NULL = None (zero overhead);
+- value consume: zero-out fields после consume;
+- compile-time `check_consume` — основной механизм; runtime null-deref
+  panic — defense-in-depth.
+
+User-facing pattern-match `match tx { Some(t) => ... }` для runtime-
+проверки **не вводится** — ослабит compile-time гарантии.
+
+### Что отвергнуто
+
+- **Universal affine/linear для всех `let`** — отвергнуто в [D75
+  §«Compile-time token-scope enforcement»](06-concurrency.md#d75): «это
+  Rust borrow checker ради одной фичи, несоразмерно для GC-языка».
+  D133 — opt-in per-type, не default.
+- **Suppress-механизм `let _ = v`** — anti-Rust `#[must_use]` gateway.
+  Единственный канал — consume-метод. Если «иногда хочу забыть» — знак,
+  что тип неправильно помечен `consume`.
+- **Drop-method auto-cleanup** (Rust-style RAII) — размывает выбор
+  commit/rollback. D133 требует **явный** consume-метод.
+- **Pattern-match destructure consume-record** (`let { tx } = state`)
+  — ломает encapsulation (consume-поле уходит в независимый linear-
+  binding). Вынос через явный consume-метод record'а: `fn TxState
+  consume @into_parts() -> (Transaction, []Write) => (@tx, @writes)`.
+- **Strict-mode binding-form (`let tx =` «обязан передать наверх» vs
+  `consume tx =` «обязан закрыть здесь»)** — отвергнуто (overspec,
+  refactor friction). Финальная модель: `consume` keyword mandatory
+  для ownership; `let` для consume-types = error либо view-alias (в
+  alias-position).
+- **`view T` keyword как explicit qualifier** — отвергнуто (default-
+  view достаточно). `view` mode = absence of `consume`/`mut`
+  qualifier (см. D157 Plan 100.3).
+- **Implicit `_ = tx` discard** — суррогат suppress; force compile-
+  error.
+
+### Сравнение с другими языками
+
+| Свойство | Rust | TS (ES2024) | Kotlin | Go | Nova D133 |
+|---|---|---|---|---|---|
+| Compile-time enforcement | ⚠️ `#[must_use]` warning, suppressable | ❌ runtime via dispose | ❌ runtime via `use{}` | ❌ | ✅ **error** |
+| Suppress escape hatch | ✅ `mem::forget(v)` / `let _ = v` | n/a | n/a | n/a | ❌ **by design** |
+| Distinct cleanup methods (commit/rollback) | ⚠️ enum-в-Drop, awkward | ⚠️ single `dispose` | ⚠️ `use{}` block | ⚠️ convention | ✅ **native** (consume-методы) |
+| Lifetime / borrow-checker cost | ❌ есть | n/a | n/a | n/a | ✅ нет (поверх GC) |
+
+D133 строже Rust на suppress (нет `mem::forget`), expressive Rust на
+distinct cleanup methods. Не требует lifetime'ов / move-семантики.
+
+### Связь
+
+- [D131](05-memory.md#d131) — affine `consume` foundation. D133 —
+  extension on type-decl level.
+- [D132](03-syntax.md#d132) — `-> @` fluent-return; sound builder-chain
+  alias через `-> @` нужен для consume-checker'а builder API.
+- [D75](06-concurrency.md#d75) — почему universal consume отвергнут.
+- [D90](03-syntax.md#d90) — `defer` / `errdefer` foundation; интеграция
+  через Plan 100.4 family (D158-D162).
+- [D85](04-effects.md#d85) — kinded throws, cancel-routing;
+  взаимодействие через D162 Plan 100.4.5.
+- D156 Plan 100.2 — generic `[T consume]` strict-mode bound.
+- D157 Plan 100.3 — `view T` read-only borrow для deep peek.
+- D158-D162 Plan 100.4.1-5 — defer/errdefer integration для cleanup-
+  on-failure.
+- D163 Plan 100.5 — FFI `external consume fn`.
+- D164 Plan 100.6 — cross-module consume visibility + mangling.
+- D165 Plan 100.7 — stdlib migration playbook.
+- D166 Plan 100.8 — performance + IDE tooling.
+
+---
+
+## D156. Generic `[T consume]` bound + collection-aware iteration
+
+> **Plan 100.2.** Принято 2026-05-23 (proposed; implementation pending).
+> Extends [D133](#d133) на generic-код. Closes silent-leak hole для
+> consume-T в generic-функциях.
+
+### Что
+
+Bound `[T consume]` на generic-параметр — opt-in **strict mode**: внутри
+generic-body параметр `T` трактуется как possibly-consume; silent-forget
+T-значения → compile error. Backward-compat: generic-функции **без**
+bound сохраняют silent-ignore behavior (Plan 100.1 default), чтобы
+existing stdlib generic-код продолжал работать.
+
+```nova
+// Strict mode — compiler enforces strict consume handling внутри:
+fn box[T consume](consume x T) -> Box[T] => Box { val: x }
+
+// Без bound — silent-ignore:
+fn drop[T](x T) -> ()                          // silent forget если T consume
+```
+
+Плюс — **collection-aware iteration с 3 mode'ами** (unified с D133):
+`for tx in vec` (view default) / `for mut tx in vec` (mut-view) /
+`for consume tx in vec` (consume, vec → Consumed).
+
+### Зачем
+
+Без D156 generic-код имеет дыру:
+
+```nova
+type Transaction consume { id int }
+fn Transaction consume @commit() -> ()
+
+fn first[T](pair (T, T)) -> T => pair.0       // silent leak pair.1 если T=consume
+
+consume tx1 = Transaction { id: 1 }
+consume tx2 = Transaction { id: 2 }
+consume chosen = first((tx1, tx2))             // tx2 уехала в first и потерялась
+chosen.commit()
+// tx2 LEAK — compiler молчит.
+```
+
+Это самый серьёзный hole D133 bootstrap'а — именно generic-helpers есть
+в каждой stdlib. Rust решает через `Move` trait + ownership; D156 решает
+через **`[T consume]` bound** + collection-aware iteration.
+
+### Синтаксис bound
+
+```nova
+fn box[T consume](consume x T) -> Box[T]
+fn map[T consume, U consume](items []T, f fn(consume T) -> U) -> []U
+fn id[T consume](consume x T) -> T => x
+```
+
+`consume` — bound в generic-position, мирится с другими bounds (`[T Iter[U]]`
+из D72) — но **bootstrap не поддерживает комбинации** (`[T consume +
+Clone]` — parse error; будущее расширение).
+
+### Strict mode внутри `[T consume]` body
+
+Внутри функции с `[T consume]` bound параметр `T` трактуется как
+possibly-consume; compiler обращается строго:
+
+| Действие с T-значением | Без bound | С `[T consume]` |
+|---|---|---|
+| `let _ = x` (silent drop) | ✅ OK | ❌ error E (D156-strict-forget) |
+| передача в non-consume fn | ⚠️ silently | ❌ error |
+| destructure tuple, discard part | ⚠️ silently | ❌ error |
+| `return x` | ✅ | ✅ (передача наверх) |
+| передача в `consume` fn-param | ✅ | ✅ (consume) |
+
+Force'ит honest API. Чтобы legitimately drop элемент — нужен явный
+`consume`-параметр для drop:
+
+```nova
+fn first[T consume](consume a T, consume drop_b T) -> T => a
+//                              ^^^^^^^^^^^^^^^^^^ — caller обязан передать
+//                                                   drop_b как consume; внутри
+//                                                   first drop_b силен забыть
+//                                                   (это локальный binding).
+```
+
+### Backward-compat и migration policy
+
+- **Default = silent-ignore** для generic-functions без bound (Plan
+  100.1 behavior preserved). Иначе сломается весь stdlib generic-код.
+- **Opt-in `[T consume]`** для функций, которые хотят strict mode.
+- **Migration:** stdlib generic-functions (Plan 17/26/30/52/57
+  collection API) — постепенно аннотируются `[T consume]` через `nova
+  consume-migrate` CLI (Plan 100.7).
+
+### Collection-aware iteration — 3 mode'а
+
+Симметрично D133 param/match mode'ам:
+
+```nova
+consume tx1 = begin()
+consume tx2 = begin()
+consume txs = [tx1, tx2]                       // []Transaction — generic-заразность (D133 D6)
+                                               // txs владеет (consume keyword обязателен)
+
+// View (default) — read-only, vec stays Live:
+for tx in txs {
+    println(tx.id)                             // ✅ read field
+    // tx.commit()                             // ❌ view → не consume-метод
+}
+// txs Live после for; нужно consume другим способом.
+
+// Mut-view — vec stays Live, элементы mutated in-place:
+for mut tx in txs {
+    tx.update()                                // ✅ mut method
+}
+// txs Live, элементы updated.
+
+// Consume — consume каждое, vec → Consumed:
+for consume tx in txs {
+    tx.commit()                                // ✅ consume-метод
+}
+// txs → Consumed после for ✅
+```
+
+Loop-handling pragmatic: `for consume tx in vec` помечает vec Consumed
+после loop (даже если break early — D161 multi-defer LIFO error
+accumulation gracefully handles partial-consumed state).
+
+Каждый `tx` в arm-теле проверяется стандартным `check_consume`
+правилом для соответствующего mode'а (view / mut-view / consume).
+
+### Alternative consume-methods для collection
+
+Чтобы consume collection без iteration:
+- `vec.pop() -> Option[T]` — single-element consume (Option auto-
+  consume через D133 D6 generic-заразность).
+- `vec.drain() -> Iter[T]` — consume через iterator.
+- `vec.into_first() -> T` consume-method record'а возвращает один
+  элемент (consume rest internally).
+
+stdlib audit (Plan 100.7) аннотирует эти методы с `[T consume]` bound.
+
+### Generic propagation для HOF (map/filter/fold)
+
+Closure-параметры HOF используют те же 3 mode'а через qualifier:
+
+```nova
+fn map[T consume, U consume](consume items []T, f fn(consume T) -> U) -> []U
+fn filter[T consume](consume items []T, f fn(t T) -> bool) -> []T
+//                                          ^^^ — view (default; read-only)
+fn for_each[T consume](consume items []T, f fn(consume T) -> ())
+fn modify[T consume](mut items []T, f fn(mut T) -> ())
+//                                       ^^^^ — mut-view (in-place modify)
+```
+
+`filter` использует view-closure (default) — predicate читает T без
+consume. `map` consume'ит каждое T → producer'ит U. `modify` mut-view
+для in-place.
+
+Compiler enforces consume-handling в closure-body через generic-bound
+propagation + view-default rules.
+
+### HashMap / user-generic propagation
+
+`type_is_consume` рекурсивно (D133 D6): wrapper'ы с consume-arg сами
+становятся consume:
+
+```nova
+consume tx_map = HashMap[str, Transaction].new()
+                                               // ↑ Transaction consume → HashMap consume
+                                               //   через generic-заразность
+                                               //   consume keyword обязателен (D133)
+tx_map.insert("a", consume begin())            // insert требует consume value (transfer)
+// На scope-exit tx_map должен быть Consumed (через consume-метод HashMap).
+for consume (_, tx) in tx_map.drain() {        // consume через drain-iteration
+    tx.commit()
+}
+```
+
+HashMap (и другие collection API) — должны аннотировать `[V consume]`
+на методах, манипулирующих consume-values (`insert(k K, consume v V)`,
+`remove() -> Option[V]`, `drain() -> Iter[(K, V)]`, etc.). Migration
+audit — часть Plan 100.7.
+
+### Runtime cost
+
+**Zero.** Все проверки compile-time. Runtime-представление generic'ов
+не меняется. Bound `[T consume]` — type-level only, не влияет на
+codegen mono'd functions.
+
+### Сравнение
+
+| Capability | Go | Rust | TS | Kotlin | Nova D156 |
+|---|---|---|---|---|---|
+| Generic linear bound | n/a | ✅ `T: Move` (default) | n/a | n/a | ✅ **`[T consume]`** opt-in |
+| Detection «generic drops linear arg» | n/a | ✅ compile-error | n/a | n/a | ✅ |
+| Backward-compat: generic без bound | n/a | n/a | n/a | n/a | ✅ **silent-ignore остаётся** |
+| `Vec<T>` ownership iteration | n/a | ✅ | n/a | n/a | ✅ `for tx in vec` |
+
+Nova **превосходит Rust** на одной оси — backward-compat: generic
+без bound сохраняет existing behavior; opt-in strict — choice.
+
+### Что отвергнуто
+
+- **`[T consume + Clone]` combined bound** — bootstrap parse-error;
+  будущее расширение (комбинация с другими D72 bounds).
+- **`[T !consume]` anti-bound** — не вводится; нет use-case в
+  bootstrap.
+- **Variance** linear-typed wrappers — отдельный план (общая variance
+  system).
+
+### Связь
+
+- [D133](#d133) — foundation type-level consume; D156 — generic-уровень.
+- [D72](#d72) — generic bounds `[T Protocol]`; D156 идиоматически близок.
+- [D157](05-memory.md#d157) — `view T` (Plan 100.3); `filter`-style HOF
+  использует view для read-only inspection.
+- D158-D162 (Plan 100.4 family) — defer/errdefer integration; orthogonal.
+
+---
+
+## D163. FFI consume integration — type-driven, без отдельного keyword'а
+
+> **Plan 100.5.** Принято 2026-05-23 (proposed). Ред. 2 (2026-05-24):
+> drop `external consume fn` keyword — consume-ownership определяется
+> через type, как у regular fn. Extends [D82](08-runtime.md#d82)
+> `external fn` + [D126](03-syntax.md#d126) `external type` + [D63](04-effects.md#d63)
+> capability.
+
+### Что
+
+Никакого нового keyword'а для external fn — **унифицировано с regular fn**:
+return-type carrying consume-ness (через D133 type-decl `consume`)
+автоматически передаёт ownership caller'у. `consume` keyword
+используется только на параметрах/receiver'ах (D131 semantic).
+
+```nova
+// Opaque consume-type (D126 + D133):
+external type File consume
+external type Mutex consume
+external type Socket consume
+
+// Return consume-type → caller получает ownership (через type, не keyword):
+external fn nova_file_open(path str) -> File
+    needs Fs                                    // capability required (D63)
+
+// Param-side consume — D131 semantic, тот же keyword `consume` на param:
+external fn nova_file_close(consume f File)
+    needs Fs
+
+// Result wraps consume — generic-заразность из D133 D6:
+external fn nova_open(path str) -> Result[File, IoErr]
+    needs Fs
+// Caller обязан consume Result через match-Ok-arm.
+```
+
+### Зачем drop keyword
+
+Параллель с regular fn:
+
+```nova
+fn factory() -> Transaction => Transaction.new()
+//              ^^^^^^^^^^^ — return type carries consume-ness. NO `consume`
+//                            keyword on fn declaration.
+
+fn finish(consume tx Transaction) -> () { ... }
+//        ^^^^^^^ — consume on PARAM (D131).
+```
+
+Применяем то же к external — symmetry без нового keyword'а.
+
+### Capability requirement (D63)
+
+`external fn` касающийся OS resource обязан declare capability —
+это **независимо** от consume-семантики (общее правило D63):
+
+```nova
+external fn nova_file_open(path str) -> File
+    needs Fs                                    // OS access → cap required
+
+external fn nova_socket_accept(consume srv ServerSocket) -> ClientSocket
+    needs Net
+```
+
+Capability и consume — две ortogонные concern. Capability для OS
+privilege; consume для ownership. Combined через type-decl + needs-clause.
+
+### C runtime defensive helpers
+
+C-side `nova_file_close(consume f File)` обязан:
+- `nv_consume_validate(f)` — assert `f != NULL` на entry.
+- После работы — `memset` поля `File*` в zero / NULL (defense-in-depth
+  per D131 Plan 73 pattern).
+
+Это даёт двойную защиту: compile-time (D133 check_consume) + runtime
+(NULL-deref panic на use-after-consume).
+
+### Generic-заразность через FFI — uniform
+
+```nova
+external fn nova_open() -> Result[File, IoErr] needs Fs
+//                         ^^^^^^^^^^^^^^^^^^^ — Result consume через generic-arg
+// Caller обязан consume Result (через match Ok-arm с consume File).
+```
+
+Никакого FFI-специфичного правила — общее D133 D6 generic-заразность.
+
+### Cross-fiber FFI safety
+
+FFI-call может суспендиться (libuv async I/O). Plan 47/22/49 fiber infra
+preserves consume-state через migration; D163 verify через runtime tests
+(Plan 100.5 Ф.6).
+
+### Сравнение
+
+| Capability | Rust | Kotlin/JNI | Go cgo | TS Node N-API | Nova D163 |
+|---|---|---|---|---|---|
+| Ownership через FFI | ✅ `unsafe fn` + manual contract | ⚠️ manual | ⚠️ manual | ⚠️ manual | ✅ **type-driven, без extra keyword** |
+| Auto-close на panic при FFI handle | ✅ через Drop wrapper | ⚠️ try-finally | ⚠️ defer | ⚠️ try-finally | ✅ **через D162** |
+| Capability tracking | ⚠️ `unsafe fn` | ⚠️ manual | ⚠️ manual | n/a | ✅ **D63 needs-clause** |
+| `unsafe` keyword нужен | ✅ да | n/a | n/a | n/a | ❌ **нет** (D6) |
+| Уникальный FFI-syntax | ⚠️ unsafe fn | ⚠️ JNI prefix | ⚠️ cgo annotation | ⚠️ napi macro | ✅ **унифицировано с regular fn** |
+
+Nova **превосходит Rust** — (a) нет `unsafe` keyword (D6 + D63
+capability); (b) уни­фи­цировано с regular fn (одна mental model для
+FFI и Nova-side functions).
+
+### Что отвергнуто
+
+- **`external consume fn` keyword** (Ред. 1) — избыточный, return-type
+  уже carries consume-ness. Drop в Ред. 2.
+- **Vacuous-marker warning** (Ред. 1 W D163-vacuous-consume) —
+  отпадает вместе с keyword.
+
+### Связь
+
+- [D82](08-runtime.md#d82) — `external fn` foundation; D163 расширяет.
+- [D126](03-syntax.md#d126) — `external type` opaque; combine'ится с
+  `consume`.
+- [D63](04-effects.md#d63), [D64](04-effects.md#d64) — capability
+  enforcement.
+- [D131](#d131-через-link), [D133](#d133) — consume foundation.
+- [Plan 18](../../docs/plans/18-stdlib-roadmap.md) — основной consumer
+  (File/Mutex/Socket migration).
+
+---
+
+## D164. Cross-module consume — visibility + mangling + package contracts
+
+> **Plan 100.6.** Принято 2026-05-23 (proposed). Extends [D26](07-modules.md#d26)
+> visibility + [D134](07-modules.md#d134) mangling v0 + Plan 03 package
+> ecosystem.
+
+### Что
+
+consume-маркер (D133) — **part of exported type signature**. Visibility
+(D26, D47 Plan 35 R26) propagates marker. Symbol mangling (extends
+D134 Plan 81) включает **consume-bit** — ловит cross-version ABI break.
+Plan 03 `nova audit` verifies cross-package consume-contracts.
+
+### Cross-package visibility
+
+```nova
+// package A, module a/types.nv
+export type Transaction consume {
+    id int,
+}
+```
+
+```nova
+// package B, module b/main.nv
+import a.types.Transaction
+
+fn main() {
+    consume tx = Transaction { id: 1 }          // ✅ consume-marker visible
+    tx.commit()
+}
+```
+
+`consume` propagates через `export` + `import`. Plan 35 R26 (visibility
+enforcement) — без special-case'ов; consume — обычный type-attribute.
+
+### Mangling extension (D134 amend)
+
+Plan 81 D134 определил symbol-mangling v0:
+```
+nova_fn_<pkg>_<mod>_<name>_<param-types>_<return-type>
+```
+
+D164 amend:
+```
+nova_fn_<pkg>_<mod>_<name>_<consume-bit>_<param-types>_<return-type>
+                          ^^^^^^^^^^^^^^^
+                          `c` если consume-маркер на type-decl, `_` иначе
+```
+
+Это ловит ABI mismatch — package A v1.0 имеет `Transaction consume`,
+v2.0 убрал marker; linker ловит cross-version mismatch на load.
+
+### Re-export через `export import` (Plan 42.09)
+
+```nova
+// package B re-exports A.Transaction
+export import a.types.{Transaction}
+```
+
+Re-export **preserves** consume-marker. Plan 42.09 уже работает; D164
+verifies.
+
+### Folder-modules (Plan 42) + relative imports (Plan 84)
+
+consume-types работают идентично в folder-modules + relative imports:
+не вводятся special-case rules. Plan 42 / Plan 84 уже работают; D164
+verifies.
+
+### Package version contracts (Plan 03)
+
+`nova.toml` consume-contracts:
+
+```toml
+[package]
+name = "my_lib"
+version = "1.0.0"
+
+[exports.consume_types]
+Transaction = "1.0"                             // consume contract v1
+File = "1.0"
+```
+
+Cross-version compat:
+- v1.0 → v1.x — consume-status unchanged.
+- v1.x → v2.0 — consume-status может change (major-bump required).
+
+`nova audit` (Plan 03.4) verifies — ловит «v1 → v1.1 breaking change»
+unauthorized.
+
+### Cross-module diagnostic
+
+```
+error: consume value `tx` (type a::Transaction) not consumed
+  note: type defined in package 'a' v1.0 at a/types.nv:5
+  note: consume via .commit() or .rollback() (declared in 'a')
+```
+
+Includes package origin, version, consume-method hint.
+
+### Private consume не leak
+
+```nova
+type InternalCache consume { ... }              // no `export`
+// usable только в этом package; cross-package — invisible
+```
+
+Plan 35 R26 — без special-case'ов.
+
+### Сравнение
+
+| Capability | Rust | Kotlin/Java | Go | TS | Nova D164 |
+|---|---|---|---|---|---|
+| Pub visibility consume-маркера | ✅ pub Drop visible | ⚠️ AutoCloseable interface | ⚠️ exported method | ⚠️ TS types | ✅ **D164 propagation** |
+| ABI mangling включает ownership-info | ✅ через type | ⚠️ via signature | ❌ | n/a | ✅ **consume-bit** |
+| Cross-package consume contracts | ✅ Cargo + Rust types | ⚠️ Maven coordinates | ⚠️ go modules | ⚠️ npm types | ✅ **`nova.toml`** |
+| Re-export preserves marker | ✅ через `pub use` | n/a | n/a | n/a | ✅ Plan 42.09 |
+
+Nova **matches Rust** на всех осях; **превосходит** на consume-bit-in-
+mangling (ловит silent ABI mismatch которого Rust не видит через
+type-id alone).
+
+### Связь
+
+- [D26](07-modules.md#d26), [D47](07-modules.md#d47), Plan 35 R26 —
+  visibility foundation.
+- [D134](07-modules.md#d134) — mangling v0 (Plan 81); D164 extends.
+- [D29](07-modules.md#d29) — modules + folder-modules.
+- [D126](03-syntax.md#d126) — opaque types; cross-package consume может
+  быть opaque.
+- [D131](#d131-через-link), [D133](#d133) — consume foundation.
+- Plan 03 / Plan 03.4 — package ecosystem, `nova audit`.
+- Plan 42, Plan 42.09, Plan 84 — folder-modules, re-export, relative
+  imports.
 
 ---
 

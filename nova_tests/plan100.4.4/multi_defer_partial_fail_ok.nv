@@ -1,0 +1,26 @@
+// Plan 100.4.4 (D161): 3 defers, средний fails — chain length 1
+// (только средний errored; крайние succeed).
+
+module nova_tests.plan100_4_4.multi_defer_partial_fail_ok
+
+type ErrMid { tag str }
+
+fn cleanup_ok_a() -> () { println("A done") }
+fn cleanup_fail_b() Fail[ErrMid] -> () { throw ErrMid { tag: "B failed" } }
+fn cleanup_ok_c() -> () { println("C done") }
+
+fn process() Fail -> () {
+    defer { cleanup_ok_a() }                    // outer (last LIFO)
+    defer { cleanup_fail_b() }                  // middle
+    defer { cleanup_ok_c() }                    // inner (first LIFO)
+    // body — success exit
+    // LIFO unwinding:
+    //   1. cleanup_ok_c() — success
+    //   2. cleanup_fail_b() — fails ErrMid → primary (no prior error)
+    //   3. cleanup_ok_a() — success
+    //   composite: { primary: ErrMid, suppressed: [] }
+}
+
+test "middle defer fails, outer continues" {
+    process()
+}

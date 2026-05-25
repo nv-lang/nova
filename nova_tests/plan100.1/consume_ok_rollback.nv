@@ -1,0 +1,21 @@
+// Plan 100.1 (D133): consume-methods взаимозаменяемы (commit OR rollback).
+//
+// Любой из declared consume-methods type-а удовлетворяет обязательство.
+// Programmer выбирает по situation.
+
+module nova_tests.plan100_1.consume_ok_rollback
+
+type Transaction consume {
+    id int,
+}
+
+fn Transaction consume @commit() -> () { () }
+fn Transaction consume @rollback() -> () { () }
+
+fn begin() -> Transaction => Transaction { id: 1 }
+
+test "rollback тоже валидный consume-выход" {
+    consume tx = begin()
+    tx.rollback()
+    // tx Consumed (через rollback) — OK на exit'е
+}

@@ -1,0 +1,12 @@
+// Plan 100.4.3 (D160): okdefer не выполняется при throw exit-path.
+
+module nova_tests.plan100_4_3.okdefer_skip_on_throw
+
+fn process() Fail[str] -> () {
+    okdefer { println("only on success") }
+    throw "fail"                                 // okdefer skipped
+}
+
+test "okdefer skipped при throw" {
+    let r = process()                            // okdefer не сработал
+}
