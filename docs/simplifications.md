@@ -12165,3 +12165,32 @@ capabilities; без неё Nova не достигает заявленной re
 3. **DeferWithResult runs on all paths** как plain defer (пока result не инжектируется).
    Финальное поведение (когда result injection будет готов): WithResult fires всегда
    (передаёт exit-reason в тело).
+
+## Plan 103.2: Atomics full suite — D168 (2026-05-25)
+
+### Реализовано
+- 12 sized atomic types: AtomicI8/I16/I32/I64, AtomicU8/U16/U32/U64, AtomicIsize/Usize, AtomicBool (расширен), AtomicPtr
+- 13 операций × 2 overloads (default SeqCst + MemOrdering-aware) = 26 C functions per integer type
+- ExternalRegistry last_param_suffix + method_overloads registration + arity-based fallback
+- fetch_max/fetch_min через CAS loop (нет `__atomic_fetch_max` builtin)
+- D168 draft в spec/decisions/06-concurrency.md
+- 17/17 tests PASS
+
+### Упрощения vs spec D168
+1. **AtomicPtr[T] typed generic пропущен** — `AtomicPtr` хранит `int` (= `intptr_t`) как GC-proxy.
+   Typed `AtomicPtr[T]` с GC root integration требует non-trivial codegen changes. Отложено в Plan 103.7.
+   V1 достаточен для lock-free pointer swapping когда объект удерживается через другую ссылку.
+
+2. **Strict type matching не работает для sized atomics** — arity-based fallback.
+   Nova integer literals → `nova_int`; typed atomics → `int32_t`/`uint64_t`.
+   Оба перегруженных варианта имеют разный arity (N vs N+1 параметров) — arity однозначно разрешает.
+   Plan 103.7 — proper type-narrowing solution.
+
+3. **compare_exchange_weak для AtomicPtr пропущен** — AtomicPtr.compare_exchange_weak не добавлен
+   (нет use case для адресных weak CAS без retry). Добавить в Plan 103.7 при необходимости.
+
+4. **W_NARROW_ATOMIC_OVERFLOW_RISK lint** — предупреждение при использовании AtomicI8/U8 с большими
+   константами пропущено (low priority, отложено в Plan 103.7+).
+
+5. **ARM CI для compare_exchange_weak spurious-fail paths** — тесты на x86 не проверяют spurious fails
+   (нет LL/SC на x86). ARM CI — отложено до Linux ARM CI готов.

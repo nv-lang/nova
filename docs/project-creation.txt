@@ -21448,6 +21448,49 @@ Plan 103.1 — 0 новых FAIL.
 `docs/plans/103.1-memory-ordering-api.md`, `docs/plans/103-sync-primitives-spec-formalization.md`.
 ---
 
+## 2026-05-25 — Plan 103.2 — Atomics full suite (D168)
+
+ЗАКРЫТ: Plan 103.2 — 12 sized atomic types × 13 ops + D168 spec draft.
+Merge: `69d7605cc1c`. Branch: `plan-103.2`. Worktree: `nova-p103-atomics`.
+
+### Что сделано:
+
+**12 новых типов в `std/runtime/sync.nv`:**
+AtomicI8/I16/I32/I64, AtomicU8/U16/U32/U64, AtomicIsize/Usize, AtomicBool (расширен), AtomicPtr.
+
+**13 операций на тип:**
+load / store / swap / compare_exchange / compare_exchange_weak /
+fetch_add / fetch_sub / fetch_or / fetch_and / fetch_xor / fetch_nand / fetch_max / fetch_min.
+Каждая — в двух overload'ах: default (SeqCst) и MemOrdering-aware.
+
+**ExternalRegistry fixes:**
+- `last_param_suffix` logic для overload disambiguation в `external_registry.rs`.
+- Регистрация ExternalRegistry entries в `method_overloads` (ранее только в `method_receivers`).
+- Arity-based fallback в dispatch: Nova integer literals → `nova_int`, typed atomics → `int32_t`/`uint64_t`;
+  arity (N vs N+1) однозначно разрешает перегрузки.
+- Все 12 типов добавлены в `BUILTIN_RUNTIME_TYPES` в `emit_c.rs`.
+
+**C runtime (`sync_primitives.h`):**
+- `Nova_MemOrdering` typedef перемещён перед `nova_mo_c()` (был defined после использования).
+- AtomicBool секция заменена suffix-bearing именами для всех ops.
+- AtomicPtr добавлен: `int`-proxy для GC-адресов (typed `AtomicPtr[T]` → Plan 103.7).
+- `fetch_max`/`fetch_min` через CAS loop (нет `__atomic_fetch_max` builtin'а).
+
+**Тесты (17 total: 11 positive + 6 negative) — 17/17 PASS.**
+plan103_1 (7/7) и sync (4/4) backward compat подтверждён.
+Полный suite: 1219 PASS / 78 FAIL (78 — pre-existing Plan 100.6-100.8, не связаны с Plan 103.2).
+
+**D168 draft** в `spec/decisions/06-concurrency.md`:
+API contract: 12 types × 13 ops matrix, wraparound semantics,
+AtomicPtr V1, compare_exchange vs _weak, ordering constraints.
+Final closure: Plan 103.7.
+
+Файлы: `std/runtime/sync.nv`, `compiler-codegen/nova_rt/sync_primitives.h`,
+`compiler-codegen/src/codegen/emit_c.rs`, `compiler-codegen/src/codegen/external_registry.rs`,
+`spec/decisions/06-concurrency.md`, `nova_tests/plan103_2/` (17 файлов),
+`docs/plans/103.2-atomics-full-suite.md`.
+---
+
 ## 2026-05-25 — Plan 100.1 (D133 foundation) — consume-types core static analysis
 
 ЗАКРЫТ: Plan 100.1 — core static analysis (D133) для consume-типов.
