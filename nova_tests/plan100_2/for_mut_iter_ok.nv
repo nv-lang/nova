@@ -1,0 +1,17 @@
+// Plan 100.2 (D156): `for mut tx in vec` — mutable loop variable.
+//
+// `for mut` parsed correctly (iter_consume=false, _loop_var_mut=true).
+// No consume obligation on loop variable. Uses non-consume type (int) to
+// keep test focused on `for mut` parsing semantics.
+
+module nova_tests.plan100_2.for_mut_iter_ok
+
+test "for mut — mutable binding in loop body" {
+    let items = [1, 2, 3]
+    let mut total = 0
+    for mut item in items {
+        // item is mutable; no consume obligation (non-consume element type)
+        total = total + item
+    }
+    // items stays Live; total == 6
+}

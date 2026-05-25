@@ -1,0 +1,27 @@
+// EXPECT_COMPILE_ERROR D133-move-to-non-consume
+//
+// Plan 100.2 (D156): передача T (consume-obligation) в non-consume-param fn
+// внутри [T consume] generic-body → error D133-move-to-non-consume.
+//
+// `log(x)` where log has non-consume param: x remains Live → error.
+
+module nova_tests.plan100_2.generic_bound_err_pass_non_consume
+
+type Transaction consume {
+    id int,
+}
+fn Transaction consume @commit() -> () { () }
+
+// Non-consume param (no `consume` keyword): does NOT transfer obligation.
+fn log_tx(t Transaction) -> () { () }
+
+// ❌ x is consume-obligation; log_tx has non-consume param[0] →
+// D133-move-to-non-consume at call; x still Live at exit → D133-not-consumed.
+fn log_generic[T consume](consume x T) -> () {
+    log_tx(x)                                   // ОШИБКА: non-consume param transfer
+}
+
+test "generic consume-param passed to non-consume fn — error" {
+    consume tx = Transaction { id: 5 }
+    log_generic(tx)
+}
