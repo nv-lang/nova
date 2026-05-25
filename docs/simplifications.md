@@ -11500,8 +11500,32 @@ Plan 83.2 §4 «Compiled-программа без единого `runtime.*` в
 - **Обнаружено:** Plan 99 Ф.0 probe (2026-05-23). **План фикса:**
   Plan 99 Ф.1–Ф.6 (re-scope подтверждён).
 
-## [M-receiver-generic-incompleteness] Plan 101 — `fn[T]` prefix + bounds + protocol composition (2026-05-24, partial)
+## [M-receiver-generic-incompleteness] Plan 101 — `fn[T]` prefix + bounds + protocol composition ✅ ЗАКРЫТ Plan 101.1-4 + 101.2 + 101.5 stdlib audit (2026-05-25)
 
+> **CLOSURE update 2026-05-25 ред. 7 (Plan 101.1/2/3/4 + 101.5 stdlib audit ✅):**
+> Все sub-plans закрыты кроме codegen mono-per-non-int (M-fn-prefix-int-only-mono
+> ниже как отдельный narrow marker).
+>
+> Sub-plan status:
+> - **101.1** ✅ ЗАКРЫТ — Parser `fn[T] Recv @method` + 5 disambiguation
+>   diagnostics + codegen mono для int / bare-T / non-int arrays через
+>   Plan 95 ext infra. vec.nv: 7 методов работают (int-array).
+> - **101.2** ✅ ЗАКРЫТ — Method-call bound enforcement через
+>   check_method_call_bounds (types/mod.rs). `xs.method()` где
+>   method `fn[T Bound] []T @method` теперь ловит bound violation.
+> - **101.3** ✅ ЗАКРЫТ — Multi-bound `[T A + B]`: AST refactor,
+>   parser chain, strict declaration check (E_BOUND_UNKNOWN /
+>   E_BOUND_NOT_PROTOCOL). 6 тестов.
+> - **101.4** ✅ ЗАКРЫТ — Protocol composition `use TypeName`:
+>   AST extend, parser (line-per-use + comma-separated), type-check
+>   flatten DFS + 5 диагностик. 11 тестов.
+> - **101.5** partial — stdlib audit complete (только vec.nv + standard
+>   protocols в std/prelude используют новый syntax). LSP quick-fixes
+>   отложены к V2 IDE-работе.
+>
+> Regression baseline 1171/9 (9 fails = 8 concurrency-flake + 1 vec_map_int_str
+> known edge). Никаких новых регрессий после Group D/E/G.
+>
 > **PROGRESS update 2026-05-25 ред. 6 (Group E done — multi-bound):**
 > **101.3 (multi-bound `[T A + B]`) ✅ ЗАКРЫТ** — AST refactor
 > GenericParam.bound Option<TypeRef> → bounds Vec<TypeRef>. Parser

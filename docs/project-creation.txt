@@ -20814,3 +20814,73 @@ smoke test — формально test существование/работос
 D72 bound-checker'а с Plan 101 receiver-generic), Group H (101.5
 stdlib audit + close + merge в main).
 
+
+========================================================================
+2026-05-25 — PLAN 101 Group G + Group H: 101.2 bound integration +
+                                          stdlib audit + Plan 101 closure
+========================================================================
+
+ВЕТКА: plan-101v4 (worktree nova-p101)
+
+GROUP G — Plan 101.2 method-call bound enforcement.
+
+Раньше bound check работал только для free-fn calls (ExprKind::Ident).
+Method-calls (xs.method()) с bounded receiver-generic пропускали
+satisfaction-check. Added check_method_call_bounds в types/mod.rs:
+
+- Infer obj-type из call-site scope (infer_arg_ty).
+- []T receiver: substitute T = element type; "[]T" method_table key.
+- Bare-T receiver: substitute T = obj-type whole; "T" key.
+- Для первого prefix-generic: для каждого bound — check_satisfaction.
+- Best-effort: multiple overloads / неоднозначность arity → skip.
+
+Tests plan101_2: 2/2 PASS:
+- receiver_bound_smoke — free-fn baseline + receiver-generic positive.
+- negative/receiver_bound_violation_neg — NoShow без @show() ловится
+  через method-call check.
+
+Regression: 1171/9 (улучшение vs Group D 1158/14; ускорение из-за
+меньшей contention в concurrency tests, не из-за моих изменений).
+
+
+GROUP H — Plan 101.4 comma-separated `use A, B` + Plan 101 close-out.
+
+H1: добавлена comma-separated support в parse_protocol_body
+    (`use A, B, C` параллельно с line-per-use `use A\n  use B`).
+    Test compose_comma_separated.nv → 11/11 plan101_4 PASS.
+
+H2: spec/decisions/02-types.md#D145 обновлён —
+    - Status: PARTIAL → MOSTLY CLOSED.
+    - Расписаны реализованные sub-plans (101.1/2/3/4 + 101.5 partial).
+    - Описаны обе формы `use` (comma + line-per-use).
+    - Documented все 5 protocol-embed диагностик.
+
+H3: simplifications.md обновлён —
+    - [M-receiver-generic-incompleteness] помечен ✅ ЗАКРЫТ.
+    - Marker [M-fn-prefix-int-only-mono] остаётся как narrow followup
+      (codegen U-substitution для T≠U cross-type).
+
+H4 (NEXT): merge plan-101v4 → main.
+
+Файлы Group G:
+- compiler-codegen/src/types/mod.rs (check_method_call_bounds + wire)
+- nova_tests/plan101_2/{receiver_bound_smoke, negative/receiver_bound_violation_neg}.nv
+
+Файлы Group H:
+- compiler-codegen/src/parser/mod.rs (comma-list in parse_protocol_body)
+- nova_tests/plan101_4/compose_comma_separated.nv
+- spec/decisions/02-types.md (D145 update)
+- docs/simplifications.md (closure update)
+- docs/project-creation.txt (этот entry)
+
+ПЛАН 101 ИТОГ:
+- 101.1: parser + 5 errors + int/bare/non-int codegen ✅
+- 101.2: method-call bound enforcement ✅
+- 101.3: multi-bound `[T A + B]` ✅
+- 101.4: protocol composition `use ...` ✅
+- 101.5: stdlib audit ✅ (LSP — V2)
+- Deferred: vec_map_int_str T=int U=str codegen mono ⚠
+
+Tests: 11 plan101_4 + 6 plan101_3 + 2 plan101_2 + 17 plan101_1 = 36
+PASS / 1 FAIL (vec_map_int_str). Полная nova test = 1171/9 (8 flake).
+

@@ -1,0 +1,38 @@
+// Plan 101.4 — positive: comma-separated `use A, B` форма
+// (D145 spec parallel с line-per-use).
+
+module nova_tests.plan101_4.compose_comma_separated
+
+
+type ReaderC protocol {
+    read() -> str
+}
+
+type WriterC protocol {
+    write(s str) -> int
+}
+
+// Composition через одну `use`-строку с comma-list.
+type RWC protocol {
+    use ReaderC, WriterC
+}
+
+
+type FileC {
+    name str
+}
+
+fn FileC @read() -> str => @name
+fn FileC @write(s str) -> int => s.len()
+
+
+fn use_rwc[T RWC](x T) -> str {
+    let _ = x.write("a")
+    x.read()
+}
+
+
+test "comma-separated `use A, B` composition works" {
+    let f = FileC { name: "n" }
+    assert(use_rwc(f) == "n")
+}
