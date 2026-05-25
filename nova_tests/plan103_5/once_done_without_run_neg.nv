@@ -1,0 +1,16 @@
+// Plan 103.5 — Legacy: once.done() without run() returning true → RUNTIME_PANIC.
+//
+// Nova_Once_method_done checks state != RUNNING and calls NOVA_ONCE_REPANIC,
+// which goes through nova_throw (works in Dev and Release builds).
+
+module nova_tests.plan103_5.once_done_without_run_neg
+
+// EXPECT_COMPILE_WARNING W_ONCE_RUN_DONE_DEPRECATED
+// EXPECT_RUNTIME_PANIC Once.done() called without a matching run() returning true
+
+test "Once.done() without run() panics at runtime" {
+    let once = Once.new()
+    // Call done() without ever calling run() → state is NOVA_ONCE_NEW, not
+    // NOVA_ONCE_RUNNING → Nova_Once_method_done fires NOVA_ONCE_REPANIC.
+    once.done()
+}

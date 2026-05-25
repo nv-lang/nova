@@ -1,0 +1,12 @@
+// Plan 103.5 — OnceCell.get_or_init is banned inside realtime{}.
+//
+// EXPECT_COMPILE_ERROR E_EFFECT_REALTIME_VIOLATION
+
+module nova_tests.plan103_5.oncecell_in_realtime_neg
+
+test "OnceCell.get_or_init banned in realtime block" {
+    let cell = OnceCell[int].new()
+    realtime {
+        let _ = cell.get_or_init() { 42 }
+    }
+}
