@@ -12142,6 +12142,8 @@ capabilities; без неё Nova не достигает заявленной re
   sub-plan 104.x НЕ gated. Ф.0 ✅ done: подробный sub-plan file
   `docs/plans/104.7-tree-sitter-grammar.md` (~330 строк, 7 фаз atomic ≤4h,
   10 design-решений M-7-104.7-1..10, acceptance criteria, tests breakdown,
-  risks). Workflow staging в `tools/tree-sitter-nova/` (миграция в
-  separate repo `nv-lang/tree-sitter-nova` — Ф.6). Ф.1-Ф.7 pending,
-  multi-session. Остальные sub-plans 104.0-104.6/.8/.9 ждут gate Plan 91+100.
+  risks). Repo `https://github.com/nv-lang/tree-sitter-nova` создан
+  user'ом 2026-05-25, склонирован в `d:/Sources/nv-lang/tree-sitter-nova/`
+  — работа в Ф.1-Ф.7 идёт напрямую в нём (original M-7-104.7-2 staging
+  workaround снят). Ф.1-Ф.7 pending, multi-session. Остальные sub-plans
+  104.0-104.6/.8/.9 ждут gate Plan 91+100.
