@@ -16,7 +16,7 @@
 | Plan | Статус | dev-day | D-block |
 |---|---|---|---|
 | 100.1 foundation | ✅ ЗАКРЫТ 2026-05-25 (merge `ab60167f3e5`) | 5 | D133 |
-| 100.2 generic propagation | ✅ ЗАКРЫТ 2026-05-26 (merge TBD) | 4 | D156 |
+| 100.2 generic propagation | ✅ ЗАКРЫТ 2026-05-26 (merge f79d4f28b5b) | 4 | D156 |
 | 100.3 borrow/view + D9 rvalue-rule | 📋 unblocked | 3 | D157 |
 | 100.4 cleanup-on-failure umbrella | 📋 unblocked | 14 (5 sub) | D158-D162 |
 | 100.4.1 failable cleanup body | 📋 unblocked | 3 | D158 |

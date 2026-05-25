@@ -21704,4 +21704,4 @@ Backward-compat: generic без bound сохраняет silent-ignore.
 - docs/plans/100.2-artifacts/stdlib-migration.md: migration guide для stdlib generic-функций.
 - docs/idiom/generic-consume.md: canonical [T consume] + for-consume patterns.
 
-Merge: TBD; branch plan-100-2-generic-propagation → main.
+Merge: f79d4f28b5b; branch plan-100-2-generic-propagation → main.
