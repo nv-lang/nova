@@ -21,7 +21,7 @@
 | 100.4 cleanup-on-failure umbrella | 📋 unblocked | 14 (5 sub) | D158-D162 |
 | 100.4.1 failable cleanup body | 📋 unblocked | 3 | D158 |
 | 100.4.2 async/suspend cleanup | 📋 GATED on 100.4.1 | 3 | D159 |
-| 100.4.3 okdefer + reason-aware | 📋 unblocked | 2 | D160 |
+| 100.4.3 okdefer + reason-aware | ✅ ЗАКРЫТ 2026-05-25 | 2 | D160 |
 | 100.4.4 multi-defer error accumulation | 📋 GATED on 100.4.1 | 3 | D161 |
 | 100.4.5 consume-integration final | 📋 GATED on 100.4.1-4 | 3 | D162 |
 | 100.5 FFI / external integration | 📋 unblocked | 4 | D163 |

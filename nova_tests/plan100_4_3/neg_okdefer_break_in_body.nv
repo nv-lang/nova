@@ -1,0 +1,16 @@
+// EXPECT_COMPILE_ERROR `break` is not allowed at the top level of `okdefer` body
+//
+// Plan 100.4.3 (D160): top-level `break` в okdefer body запрещён —
+// break hijack'нул бы loop окружающей функции. Same constraint что
+// и для defer/errdefer (D90 §6). `break` внутри nested loop
+// в okdefer body — разрешён.
+
+module nova_tests.plan100_4_3.neg_okdefer_break_in_body
+
+fn f() -> () {
+    for _i in [1, 2, 3] {
+        okdefer {
+            break       // ❌ break в okdefer body hijacks outer loop
+        }
+    }
+}

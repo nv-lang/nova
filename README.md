@@ -224,7 +224,9 @@ What works today (bootstrap):
 - Contracts (D24): `requires`/`ensures`/`old`/`result`/`invariant`/
   `reads`/`modifies`/`decreases`/`ghost let`/`assume`/`assert_static`.
   Bootstrap SMT через TrivialBackend (reflexive ensures); Z3 — milestone.
-- `defer` / `errdefer` cleanup (D90).
+- `defer` / `errdefer` / `okdefer` symmetric cleanup (D90/D160):
+  success-only `okdefer`, error-only `errdefer`, always `defer`;
+  reason-aware `defer |result| { ... }` form.
 - Boehm GC default with introspection API (`heap_size`, `live_count`,
   `collect`).
 

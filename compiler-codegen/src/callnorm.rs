@@ -153,7 +153,8 @@ fn normalize_stmt(s: &mut Stmt, sigs: &Sigs) {
             if let Some(v) = value { normalize_expr(v, sigs); }
         }
         Stmt::Throw { value, .. } => normalize_expr(value, sigs),
-        Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. } => normalize_expr(body, sigs),
+        Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. }
+        | Stmt::OkDefer { body, .. } | Stmt::DeferWithResult { body, .. } => normalize_expr(body, sigs),
         Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => normalize_expr(expr, sigs),
         Stmt::Break(_) | Stmt::Continue(_) => {}
         // Ф.4.1: apply — ghost, аргументы нормализуем.

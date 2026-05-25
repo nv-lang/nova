@@ -1,0 +1,13 @@
+// EXPECT_COMPILE_ERROR `throw` is not allowed inside `okdefer` body
+//
+// Plan 100.4.3 (D160): `throw` в okdefer body запрещён — defer body
+// должен быть infallible (D90 §4). okdefer body — те же ограничения.
+
+module nova_tests.plan100_4_3.neg_okdefer_throw_in_body
+
+fn f() Fail[str] -> int {
+    okdefer {
+        throw "cleanup failed"    // ❌ throw в okdefer body
+    }
+    7
+}
