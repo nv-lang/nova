@@ -43,6 +43,8 @@ clap = { version = "4", features = ["derive"] }
 [dev-dependencies]
 # Needed in integration tests that spawn child processes with async helpers
 tokio = { version = "1", features = ["full"] }
+# JSON-RPC message serialization/deserialization in lifecycle + integration tests
+serde_json = "1"
 
 [profile.release]
 opt-level = 2
