@@ -1,0 +1,23 @@
+// Plan 100.4.1 (D158): несколько defers с Fail bodies — compile pass.
+// Runtime LIFO composite chain behavior — Plan 100.4.4 (D161).
+
+module nova_tests.plan100_4_1.defer_fail_ok_multi_lifo_composed
+
+type Err1 { msg str }
+type Err2 { msg str }
+type Err3 { msg str }
+
+fn commit() Fail[Err1] -> () { () }
+fn defer_a() Fail[Err2] -> () { () }
+fn defer_b() Fail[Err3] -> () { () }
+
+// 3 failable defers — compile pass (D158); runtime LIFO chain Plan 100.4.4.
+fn process() Fail -> () {
+    defer { defer_a() }                         // outer (runs last LIFO)
+    defer { defer_b() }                         // middle
+    defer { commit() }                          // innermost (runs first LIFO)
+}
+
+test "multi-defer LIFO с Fail-bodies — compile pass" {
+    process()
+}

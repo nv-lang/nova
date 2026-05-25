@@ -2412,6 +2412,11 @@ impl Parser {
                     | TokenKind::KwImport
                     | TokenKind::KwTest
                     | TokenKind::KwModule
+                    // Plan 100.4.1 fix: outer doc-comment `///` начинает new
+                    // top-level item (attached to next decl). After bodyless
+                    // type, doc-comment следует к next type/fn — terminate
+                    // empty-sum body. Inner `//!` тоже attaches к enclosing.
+                    | TokenKind::DocComment { .. }
             );
             if is_body_end {
                 let last_span = self.tokens[self.pos.saturating_sub(1)].span;

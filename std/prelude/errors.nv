@@ -144,3 +144,74 @@ export type ReadBufferError
 /// ```
 #stable(since = "0.1")
 export type RuntimeNoneError
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Plan 100.4.1 (D158): MultiError — composite error для failable cleanup
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Composite error от **failable defer/errdefer/okdefer body** (D158).
+///
+/// Когда cleanup-fail происходит **во время propagation другой ошибки** —
+/// primary error НЕ заменяется; cleanup-error appended в chain `suppressed`.
+/// Caller инспектирует composite через `.primary()` / `.suppressed()` API.
+///
+/// # Сценарии
+///
+/// **A. Cleanup-fail на normal exit** — `MultiError { primary: cleanup_err,
+/// suppressed: [] }`. Single error; surface as обычный `Fail`.
+///
+/// **B. Cleanup-fail во время propagation primary'a** — `MultiError {
+/// primary: original_err, suppressed: [cleanup_err1, cleanup_err2, ...] }`.
+/// Caller видит root cause + cascaded cleanup failures.
+///
+/// **C. Multi-defer LIFO accumulation** — обрабатывается Plan 100.4.4 (D161).
+///
+/// # Bootstrap
+///
+/// String-based: `primary: str` + `suppressed: []str`. Runtime materialize
+/// MultiError из `NovaFailFrame.error_suppressed` chain (через
+/// `nova_failframe_suppressed_count` / `nova_failframe_suppressed_at`).
+///
+/// Production-grade typed payload (`primary: E1`, `suppressed: []E2`) —
+/// Plan 100.4.4 + 100.4.5.
+///
+/// # Examples
+///
+/// ```nova
+/// fn process() Fail[Err] -> () {
+///     consume tx = begin()
+///     defer { tx.commit() }                       // failable cleanup
+///     do_work_that_fails()?
+/// }
+///
+/// match process() {
+///     Ok(_) => Log.info("done"),
+///     Err(e) => {
+///         Log.error("primary: ${e.primary()}")
+///         for s in e.suppressed() {
+///             Log.error("  suppressed: ${s}")
+///         }
+///     }
+/// }
+/// ```
+#stable(since = "0.1")
+export type MultiError {
+    readonly primary str
+    readonly suppressed []str
+}
+
+/// Returns primary (root cause) error — what was originally thrown before
+/// cleanup chain fired.
+#stable(since = "0.1")
+fn MultiError @primary() -> str => @primary
+
+/// Returns chain of suppressed errors (cleanup-fail during propagation),
+/// in LIFO order of firing (most-recently-fired first).
+#stable(since = "0.1")
+fn MultiError @suppressed() -> []str => @suppressed
+
+/// Human-readable summary of composite — primary + numbered list of
+/// suppressed. Used by D7 diagnostic format.
+#stable(since = "0.1")
+fn MultiError @fmt_chain() -> str => @primary
