@@ -61,7 +61,7 @@
 | **Poisoning** (lock poisoned on panic) | ❌ нет | ❌ | ✅ `LockResult` | n/a | ❌ |
 | **Fairness default** | ✅ fair FIFO | unfair (runtime decides) | unfair (`parking_lot`) / fair (`std`) | n/a | unfair (`ReentrantLock(false)`) |
 | **`Mutex` reentrant default** | ❌ non-reentrant; opt-in `ReentrantMutex` | ❌ | ❌ | n/a | `ReentrantLock` default; `sync` block reentrant |
-| **Memory ordering API** | ✅ Full 5-variant Ordering enum | ❌ только seq_cst | ✅ 5-variant Ordering | ✅ implicit seq_cst | ✅ VarHandle access modes (4) |
+| **Memory ordering API** | ✅ Full 5-variant `MemOrdering` enum (103.1 ✅) | ❌ только seq_cst | ✅ 5-variant `Ordering` | ✅ implicit seq_cst | ✅ VarHandle access modes (4) |
 | **Fiber-aware park/wake** | ✅ через `nova_sched` | ✅ goroutine park | ⚠ thread-blocking | n/a (single-thread) | ✅ coroutine suspend |
 | **Realtime-safe атомики** | ✅ lock-free на leaf | ⚠ implicit | ⚠ implicit | ✅ guaranteed | ⚠ implicit |
 | **GC-aware (no scan of raw ptr)** | ✅ `AtomicPtr` через managed ref | ✅ implicit | ⚠ unsafe для `AtomicPtr<T>` | n/a | ✅ AtomicReference |
@@ -132,7 +132,7 @@ Plan 100 (`linear-must-consume.md`, P3) вводит `consume` тип-модиф
 ```
                                 ┌──────────────────────────┐
                                 │  103.1  Memory Ordering  │  foundation
-                                │   (Ordering enum + fence │  closes Q-memory-model
+                                │   (MemOrdering enum+fence│  closes Q-memory-model
                                 │   + happens-before spec) │
                                 └────────┬─────────────────┘
                                          │
@@ -190,7 +190,7 @@ Plan 100 (`linear-must-consume.md`, P3) вводит `consume` тип-модиф
 | # | Sub-plan | Scope | Зависимости | Оценка |
 |---|---|---|---|---|
 | **103.1** ✅ | [Memory ordering API](103.1-memory-ordering-api.md) | `MemOrdering { Relaxed, Acquire, Release, AcqRel, SeqCst }` enum + `fence(MemOrdering)` функция + D167 draft в spec. Закрывает Q-memory-model foundation. | — | ~1 d |
-| **103.2** | [Atomics full suite](103.2-atomics-full-suite.md) | `AtomicI8/I16/I32/I64/U8/U16/U32/U64/Usize/Isize/Bool/Ptr` — 12 типов. Каждый: `load/store/swap/compare_exchange/compare_exchange_weak` + integer-specific `fetch_add/sub/or/and/xor/max/min`. Все с `Ordering`-параметром + default-SeqCst overload. **Backward compat:** существующие `AtomicInt`/`AtomicBool` без `Ordering` → deprecated alias на `AtomicI64`/`AtomicBool` (SeqCst). | 103.1 | ~2 d |
+| **103.2** | [Atomics full suite](103.2-atomics-full-suite.md) | `AtomicI8/I16/I32/I64/U8/U16/U32/U64/Usize/Isize/Bool/Ptr` — 12 типов. Каждый: `load/store/swap/compare_exchange/compare_exchange_weak` + integer-specific `fetch_add/sub/or/and/xor/max/min`. Все с `MemOrdering`-параметром (M14d) + default-SeqCst overload. **Backward compat:** существующие `AtomicInt`/`AtomicBool` без `MemOrdering` → deprecated alias на `AtomicI64`/`AtomicBool` (SeqCst). | 103.1 ✅ | ~2 d |
 | **103.3** | [Mutex/RwLock/ReentrantMutex family](103.3-mutex-family.md) | `Mutex` (hardened): `try_lock_for(Duration)`, `is_locked()`, `with_lock(fn)`, fairness mode opt-in. `RwLock`: `read/write/try_read/try_write/try_read_for/try_write_for`, writer-priority fairness. `ReentrantMutex`: opt-in для legacy, owner-fiber tracking + counter. | 103.1, 103.2 (использует ordering для internal state), Plan 65 (Duration) | ~2 d |
 | **103.4** | [Coordination primitives](103.4-coordination-primitives.md) | `Semaphore` (bounded permits, `try_acquire_for`), `Barrier` (CyclicBarrier-style, reusable), `CountDownLatch` (one-shot vs WaitGroup), `Condvar` (wait/notify tied to Mutex, spurious wakeup contract). | 103.3 (Mutex для Condvar) | ~2 d |
 | **103.5** | [Once + Lazy + OnceCell](103.5-once-lazy-oncecell.md) | `Once` hardening: `call_once(closure)` safe API (текущий `run/done` → deprecated с migration path). `OnceCell[T]`: value-capturing one-shot init, `get_or_init(closure) -> &T`. `Lazy[T]`: auto-init on first access wrapper. | 103.1, 103.2 (для state machine atomic) | ~1.5 d |
@@ -264,6 +264,7 @@ Plan 100 (`linear-must-consume.md`, P3) вводит `consume` тип-модиф
 | **M14** | Backward compat: `AtomicInt` → alias `AtomicI64`, `AtomicBool` остаётся | Breaking rename | Pre-existing user code должен компилироваться |
 | **M14b** | Все новые declarations **`#stable(since = "0.1")`** — consistency с baseline sync.nv | Ввести `"0.2"` для всех new API | Verified 2026-05-25: `std/` имеет только `"0.1"` (sync baseline) и `"0.6"` (Plan 65 duration). Новый `"0.2"` без global decision = третий version-marker. Sub-plans drafts (103.2-103.9) содержат `"0.2"` от первого варианта — будут rewritten на `"0.1"` при их implementation start. |
 | **M14c** | Diagnostic infrastructure — **используем `compiler-codegen/src/diag.rs` напрямую** (`Diagnostic`, `Suggestion`, `Applicability`) | «Plan 50 D102 format» (ошибочная ссылка в первом варианте sub-plans) | Verified 2026-05-25: Plan 50 — про keyword-only default params, не diagnostic format. `diag.rs` уже имеет полную production infra (MachineApplicable / MaybeIncorrect / HasPlaceholders + notes + with_suggestion builder). Sub-plans 103.2-103.9 содержат «Plan 50 D102 format» ссылки — будут rewritten при implementation. |
+| **M14d** | **`MemOrdering` (не `Ordering`)** — финализированное имя enum'а | `Ordering` (как в первом draft) | Discovered 2026-05-25 при impl Plan 103.1: prelude уже имеет `Ordering { Less \| Equal \| Greater }` (three-way comparison). Sub-plans 103.2-103.9 drafts ссылаются на `Ordering` — все downstream API (`AtomicI64.load(ord MemOrdering)` etc.) **обязаны** использовать `MemOrdering`. Sub-plans будут rewritten при implementation start (как было с `since` versions M14b и diag M14c). |
 | **M15** | V1 без consume; consume guards migration — отдельный sub-plan 103.9 (GATED на Plan 100.7); `with_lock(fn)`/`with_read(fn)`/`with_permit(fn)` в V1 как preferred pattern → non-breaking при V2 | (a) ждать Plan 100, (b) V1 уже с consume gated, (c) `Mutex.lock()/unlock()` без миграции вообще | Plan 100 P3 далеко от готовности; Q9/Q12.4/Q-memory-model нужно закрыть сейчас; `with_lock` pattern минимизирует exposed bare API → V2 cleanup без breaking change большинства usage sites |
 | **M16** | Atomics НЕ получают consume никогда (даже в V2) | Atomic = resource → consume | Atomic = shared state primitive, операции не «consume'ят». Идеологический mismatch с linear-types. |
 
