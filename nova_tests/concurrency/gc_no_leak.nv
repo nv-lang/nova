@@ -166,8 +166,12 @@ test "gc no-leak: stable heap при fiber-allocations (10 циклов × 32 fi
     }
 
     println("fibers baseline=${baseline} max_growth=${max_growth} bytes")
-    // Для fiber'ов чуть более щедрая граница — minicoro stack'и
+    // Для fiber'ов более щедрая граница — minicoro stack'и
     // (~64 KB каждый) могут pool'иться отдельно от GC heap.
-    let bound = baseline
+    // Plan 83.6 (2026-05-24): per-worker SpawnCtx pool retains
+    // uncollectable buffers (256 × 4 classes × 16 workers × max 512B =
+    // 8 MB cap; per-test ~64-256 KB). Retention BOUNDED, не unbounded leak.
+    // Bound = 2 × baseline учитывает pool retention + Boehm overhead.
+    let bound = baseline * 2
     assert(max_growth < bound)
 }

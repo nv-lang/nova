@@ -5232,8 +5232,13 @@ impl CEmitter {
         let ctx_var = format!("{}_ctx", spawn_id);
         self.line(&format!("nova_bool _nova_is_init_{ctr} = nova_runtime_is_initialized();",
             ctr = self.spawn_counter - 1));
+        // Plan 83.6 (2026-05-24): под armed M:N — nova_spawn_pool_acquire
+        // (per-worker free-list pool; обходит Boehm GC_malloc_uncollectable
+        // global lock). Pool возвращает class-size buffer (≥ sizeof(ctx))
+        // зануляет память и sets base->_nova_pool_size. Под bootstrap
+        // (single-thread) — regular nova_alloc как и было.
         self.line(&format!(
-            "{ty}* {var} = ({ty}*)(_nova_is_init_{ctr} ? nova_alloc_uncollectable(sizeof({ty})) : nova_alloc(sizeof({ty})));",
+            "{ty}* {var} = ({ty}*)(_nova_is_init_{ctr} ? nova_spawn_pool_acquire(sizeof({ty})) : nova_alloc(sizeof({ty})));",
             ty = ctx_ty, var = ctx_var, ctr = self.spawn_counter - 1));
 
         for (cap, _, by_value) in &captures {
@@ -5520,7 +5525,10 @@ impl CEmitter {
         // CANCEL→USER overwrite, иначе keep).
         self.line("if (_c->_nova_parent_scope) {");
         self.indent += 1;
-        self.line("nova_fiber_report_atomic_kinded(_c->_nova_parent_scope, _ff.error_msg.ptr, _ff.error_kind, _ff.error_reason_ptr);");
+        // Plan 83.10 (2026-05-25): fix [M-83.10-armed-user-throw-routing] —
+        // typed throw payload + tid тоже propagate в atomic, чтобы main
+        // re-throw мог dispatch через nova_throw_typed handler chain.
+        self.line("nova_fiber_report_atomic_kinded(_c->_nova_parent_scope, _ff.error_msg.ptr, _ff.error_kind, _ff.error_reason_ptr, _ff.error_user_payload, _ff.error_user_type_id);");
         self.indent -= 1;
         self.line("} else {");
         self.indent += 1;
@@ -6158,8 +6166,9 @@ impl CEmitter {
         self.line(&format!(
             "nova_bool _nova_is_init_detach_{ctr} = nova_runtime_is_initialized();",
             ctr = self.detach_counter - 1));
+        // Plan 83.6 (2026-05-24): per-worker SpawnCtx pool — см. emit_spawn.
         self.line(&format!(
-            "{ctx_ty}* {ctx_var} = ({ctx_ty}*)(_nova_is_init_detach_{ctr} ? nova_alloc_uncollectable(sizeof({ctx_ty})) : nova_alloc(sizeof({ctx_ty})));",
+            "{ctx_ty}* {ctx_var} = ({ctx_ty}*)(_nova_is_init_detach_{ctr} ? nova_spawn_pool_acquire(sizeof({ctx_ty})) : nova_alloc(sizeof({ctx_ty})));",
             ctr = self.detach_counter - 1));
         // Plan 83.4.5.8 (2026-05-24): под armed M:N orphan tracked через
         // _nova_orphan_scope.pending_remote — drain_orphans ждёт worker-pool

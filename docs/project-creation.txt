@@ -21705,3 +21705,64 @@ Backward-compat: generic без bound сохраняет silent-ignore.
 - docs/idiom/generic-consume.md: canonical [T consume] + for-consume patterns.
 
 Merge: f79d4f28b5b; branch plan-100-2-generic-propagation → main.
+
+### 2026-05-26 (Plan 83.13 V1 RESEARCH DELIVERED)
+
+**Что сделано:**
+Plan 83.13 — research-only deliverable по precise GC decision для Nova
+(Boehm replacement strategy). Написан документ
+`docs/research/precise-gc-decision-2026.md` (5801 слов, 8 разделов).
+Создан worktree `nova-p83-13` (branch `plan-83-13`) от `github/plan-83-5`.
+Проведён обширный research: прочитаны 9 internal plan docs + Nova runtime
+source files (alloc_boehm.c, alloc.h, fiber_arena_win.c, fibers.h,
+runtime.c) + 10+ внешних источников (MMTk, Go GC guide, V8 concurrent
+marking, Shenandoah, ZGC, Boehm scalability, Crystal fibers+Boehm,
+LLVM GC statepoints, Ruby MMTk integration).
+
+**Содержание decision document (8 sections):**
+- Section 1: Executive summary — 3 production blockers, recommendation, timeline.
+- Section 2: Status quo problems — Boehm conservative scan, global lock
+  для uncollectable, STW O(heap), Plan 83.6 pool as limited workaround.
+- Section 3: Industry survey — 6 GC frameworks: Go (precise tri-color),
+  JVM ZGC (colored pointers+load barriers), Shenandoah (Brooks forwarding),
+  MMTk (Rust pluggable, VMBinding, Ruby 3.4+Julia), V8 Orinoco, SBCL.
+- Section 4: Nova-specific constraints — effect system, structured
+  concurrency, contracts proof, minicoro register state, FFI pin/unpin.
+- Section 5: Migration paths — Option A (MMTk, 8-14mo), Option B (Hybrid,
+  3-6mo Phase 1), Option C (Defer).
+- Section 6: Codegen prerequisites — stack maps ~3-6mo, write barriers
+  ~1-2mo, per-fiber maps ~1-2mo.
+- Section 7: Recommendation + phased post-v1.0 timeline.
+- Section 8: 20+ references (internal plans + external URLs).
+
+**Что НЕ сделано (out of scope):**
+Spike PR с MMTk binding, custom precise GC prototype, codegen stack maps
+prototype, performance microbench против Boehm baseline.
+
+**Lessons learned:**
+1. MMTk C runtime integration experimental (Ruby 3.4 = herculean effort;
+   Julia = x86_64 Linux only). Option A не реалистичен до v1.0.
+2. Crystal's GC_set_push_other_roots pattern (уже в Nova's fiber_arena_win.c)
+   — правильный подход для Boehm; extending к precise требует per-yield maps.
+3. Option B's arena pattern (Plan 82 + Plan 83.6) validated и extensible.
+4. Write barriers deploy как no-ops initially, activatable когда GC plan
+   изменится.
+
+**Files modified:**
+- docs/research/precise-gc-decision-2026.md — новый файл (5801 слов).
+- docs/plans/README.md — row 83.13 ✅ V1 RESEARCH DELIVERED.
+- docs/simplifications.md — entry [M-83.13-precise-gc-research-v1].
+- docs/project-creation.txt — этот блок.
+- nova-private/discussion-log.md — session entry (отдельный commit+push).
+
+**Plan 83 cumulative status:**
+- 83.5 ❌ REJECTED.
+- 83.6 🟡 V1 IMPLEMENTED.
+- 83.7 🟡 V1 IMPLEMENTED.
+- 83.9 🟡 V1 IMPLEMENTED.
+- 83.10 ✅ V1 + ARMED THROW ROUTING FIX.
+- 83.13 ✅ V1 RESEARCH DELIVERED (этот merge).
+- 83.8/11/12 — not started.
+
+**Recommended next:** Plan 83.12 (async net/socket stdlib P0 production
+blocker) или Option B Phase 1 (mco_coro pool + channel arenas — P2).

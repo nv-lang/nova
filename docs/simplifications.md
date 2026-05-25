@@ -12232,3 +12232,25 @@ capabilities; без неё Nova не достигает заявленной re
 
 5. **OnceCell.take() atomicity** вЂ” take() РїРѕРґ mutex РЅРµ РёСЃРїРѕР»СЊР·СѓРµС‚ atomic ops.
    Р”РѕСЃС‚Р°С‚РѕС‡РЅРѕ РґР»СЏ single-threaded take (Р·Р°РґРѕРєСѓРјРµРЅС‚РёСЂРѕРІР°РЅРѕ РІ sync.nv).
+
+### [M-83.13-precise-gc-research-v1] Plan 83.13 V1 RESEARCH DELIVERED — precise GC decision document (2026-05-26)
+
+- **Где:** `docs/research/precise-gc-decision-2026.md`. Worktree
+  `nova-p83-13`, branch `plan-83-13`.
+
+- **Что сделано (V1):**
+  - Research-only deliverable — no code changes.
+  - Decision document written: 5801 words, 8 sections.
+  - Industry survey: Go (precise tri-color concurrent, stack maps per call site, STW <1ms), JVM ZGC (colored pointers, load barriers, O(1) pause), JVM Shenandoah (Brooks forwarding pointers, concurrent compaction), MMTk (Rust pluggable framework — NoGC/MarkSweep/SemiSpace/GenCopy/Immix/GenImmix plans, used by Ruby 3.4 + Julia), V8 Orinoco (concurrent marking, 65-70% main-thread marking reduction), SBCL (tagged pointers, generational copying).
+  - Nova-specific constraints analyzed: effect system (orthogonal), structured concurrency (fiber stack GC roots via GC_push_other_roots), contracts proof (zero GC interaction), minicoro register state (precise root mapping needed for moving GC), FFI pin/unpin protocol (libuv callback refs).
+  - Codegen prerequisites estimated: precise stack maps ~3-6 months, write barriers ~1-2 months, per-fiber register maps ~1-2 months.
+  - Three migration options analyzed (A: Replace Boehm with MMTk; B: Hybrid arena expansion; C: Defer).
+
+- **Recommendation:** **Option B — Hybrid Boehm + Nova-managed arenas**, with post-v1.0 migration path to Option A (MMTk). Rationale: MMTk C runtime integration is "very experimental" (Ruby 3.4 practitioners: "herculean effort"; Julia: x86_64 Linux only); Option B delivers 60-70% of value at 20% of cost; Phase 2 codegen prerequisites built in parallel become the Option A onramp; Option C defers production blockers without fixing them.
+
+- **v1.0 GC SLA (acceptable with Option B + Boehm for user heap):**
+  - p99 STW pause < 20ms on 100 MB heap (measured territory per Plan 32).
+  - Not acceptable for 500 MB+ heap deployments → trigger Option A.
+
+- **Last commit:** `0fde227c3b5` (plan-83-13 branch → merged to main).
+- **Приоритет:** P3 (research complete); Option B Phase 1 → P2 post-v1.0.

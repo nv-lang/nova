@@ -205,6 +205,82 @@ Plan 100 (`linear-must-consume.md`, P3) вводит `consume` тип-модиф
 
 **Параллелизуется:** 103.3 и 103.5 после 103.2 готовы. 103.7 можно драфтить параллельно с 103.4 (D-блоки 167-168 не зависят от Condvar/Lazy).
 
+## Progress tracker (live)
+
+Обновляется по мере закрытия sub-plans.
+
+| # | Sub-plan | Status | Merge / commit | Tests | D-block |
+|---|---|---|---|---|---|
+| 103.1 | Memory ordering | ✅ ЗАКРЫТ 2026-05-25 | merge `6be2519b0e2` / commit `9f6b0f902c2` | 7/7 PASS (5 pos + 2 neg) | D167 draft |
+| 103.2 | Atomics full suite | ✅ ЗАКРЫТ 2026-05-25 | merge `69d7605cc1c` / commit `348b205f47f` | 17/17 PASS (11 pos + 6 neg) | D168 draft |
+| 103.3 | Mutex/RwLock/ReentrantMutex | 🟡 в работе | — | — | D169 (планируется) |
+| 103.4 | Coordination | ⏸ gated на 103.3 | — | — | D170 (планируется) |
+| 103.5 | Once/Lazy/OnceCell | 🟡 в работе | — | — | D171 (планируется) |
+| 103.6 | Realtime/Blocking enforcement | ⏸ gated на 103.2-103.5 | — | — | D172 (планируется) |
+| 103.7 | Spec D-blocks final + AI-first guidance | ⏸ gated на 103.1-103.6 | — | — | D173 NEW |
+| 103.8 | Conformance + V1 close | ⏸ gated на 103.1-103.7 | — | — | — |
+| 103.9 | Consume guards migration (V2) | ⏸ hard-gated на Plan 100.7 | — | — | D174 (планируется) |
+
+**V1 closure: 2 of 8** (103.1 ✅ + 103.2 ✅). 103.3 + 103.5 параллельно
+в работе на момент 2026-05-26.
+
+## Empirical learnings (live)
+
+Что выяснилось при impl 103.1+103.2 (обновляется по мере закрытия
+sub-plans):
+
+### 103.1 закрытие (2026-05-25)
+
+- **Naming collision discovered:** `Ordering` уже занят prelude
+  (three-way comparison `Less | Equal | Greater`). Финальное имя
+  enum'а — **`MemOrdering`**. Зафиксировано как M14d. Все downstream
+  sub-plans (103.2-103.9) обязаны использовать `MemOrdering`.
+- **Подтверждено M14b (`#stable(since = "0.1")`):** baseline sync.nv
+  имеет только `0.1` и `0.6` (Plan 65 time/duration). Новые
+  declarations 103.1 шли c `0.1` — без введения `0.2`.
+- **Подтверждено M14c (`compiler-codegen/src/diag.rs`):** Plan 50 —
+  это про keyword-only default params, **не diagnostic format**.
+  `diag.rs` имеет production-grade infra (`Diagnostic` + `Suggestion`
+  + `Applicability::MachineApplicable`). Используется напрямую.
+- **Spec D167 draft** в `06-concurrency.md` после D166 (Plan 100.8).
+  Final closure отложен в 103.7.
+
+### 103.2 закрытие (2026-05-25)
+
+- **AtomicInt → AtomicI64 alias (M14)** работает без issues.
+  Pre-existing `nova_tests/concurrency/sync_atomic.nv` PASS без
+  изменений.
+- **17/17 тестов PASS** — 11 positive + 6 negative. Превышены
+  acceptance criteria плана (≥8 pos + ≥6 neg + ≥4 property + ≥2 stress).
+- **D168 draft** в `06-concurrency.md` после D167.
+- **814+ строк** в `sync_primitives.h` — substantial mechanical
+  copy-paste от canonical AtomicI64 template. Подтверждает что
+  decision M2 (sized atomics, не generic `Atomic[T]`) правильное
+  для bootstrap-codegen.
+
+### Что подтвердилось из дизайна (M-decisions validation)
+
+- ✅ **M14b** `since = "0.1"` consistency — без проблем.
+- ✅ **M14c** `diag.rs` напрямую — без проблем.
+- ✅ **M14d** `MemOrdering` rename — discovered necessity post-design.
+- ✅ **M2** sized atomics (не generic) — оптимально для текущего
+  codegen.
+- ✅ **M14** backward compat AtomicInt — alias mechanism работает.
+
+### Что ещё validate в downstream sub-plans
+
+- **M3** non-reentrant Mutex default + opt-in ReentrantMutex (103.3
+  → проверка).
+- **M6** fair FIFO Mutex default + opt-in unfair (103.3).
+- **M7** RwLock writer-priority default (103.3).
+- **M8** closure-form `Once.call_once(fn)` primary (103.5).
+- **M9** OnceCell + Lazy distinct types (103.5).
+- **M10** Condvar tied to Mutex (103.4).
+- **M12** type-checker `realtime { }` ban (103.6 — Nova edge,
+  critical validation).
+- **M15** V1 `with_lock(fn)` preserved для V2 non-breaking migration
+  (test в 103.9 V2).
+
 ## Acceptance criteria
 
 ### V1 closure (после 103.8 — основной milestone Plan 103)

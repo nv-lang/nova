@@ -1,0 +1,36 @@
+// Plan 83.9 (2026-05-25): detach orphan drain stress armed M:N.
+//
+// N detach { … } orphan fibers + main exit → verify atexit-drain ловит
+// все orphan'ы. Validates Plan 83.4.5.2 AsyncDetach production + Plan
+// 83.4.5.8 orphan_scope.pending_remote tracking.
+//
+// Acceptance Plan 83.9 §3 §6.4: 10³ detach orphans + drain complete.
+// V1 starting: 10² baseline + 10³ stretch.
+//
+// ALLOC_REQUIRES boehm
+
+module plan83_stress_armed.orphan_drain_stress_armed
+
+test "100 detach orphans armed M:N — baseline" {
+    let mut i = 0
+    while i < 100 {
+        detach {
+            // Short body — orphan completes async на worker pool.
+            let _x = i * 2
+        }
+        i = i + 1
+    }
+    runtime.drain_orphans()
+    // All 100 must have completed by drain return — no hang.
+}
+
+test "1K detach orphans armed M:N — Plan 83.9 §6.4 acceptance" {
+    let mut i = 0
+    while i < 1000 {
+        detach {
+            let _x = i + 1
+        }
+        i = i + 1
+    }
+    runtime.drain_orphans()
+}

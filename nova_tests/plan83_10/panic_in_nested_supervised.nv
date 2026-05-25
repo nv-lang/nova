@@ -1,0 +1,37 @@
+// Plan 83.10 (2026-05-25): panic-safety positive — panic в inner
+// supervised propagates только до local handler.
+//
+// Simpler form: top-level handler wraps nested supervised (без spawn
+// wrapping handler — codegen quirk).
+//
+// Plan 83.10 fix (2026-05-25): [M-83.10-armed-user-throw-routing]
+// resolved для simple case. Этот nested case (supervised внутри spawn
+// внутри supervised) hangs/timeouts под armed M:N — separate gap
+// [M-83.10-nested-armed-routing] V2 followup.
+//
+// ENV NOVA_AUTOARM=0
+
+module plan83_10.panic_in_nested_supervised
+
+test "inner supervised panic — outer scope survives" {
+    let mut inner_caught = false
+    let mut outer_completed = false
+
+    let _ = with Fail[int] = |e| {
+        inner_caught = true
+        0
+    } {
+        supervised {
+            spawn {
+                supervised {
+                    spawn { throw 99 }
+                }
+            }
+        }
+        42
+    }
+
+    outer_completed = true
+    assert(inner_caught)
+    assert(outer_completed)
+}

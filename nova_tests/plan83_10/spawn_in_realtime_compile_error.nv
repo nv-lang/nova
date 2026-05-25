@@ -1,0 +1,18 @@
+// EXPECT_COMPILE_ERROR spawn is only allowed
+//
+// Plan 83.10 (2026-05-25): spawn { } может быть только внутри
+// `supervised { }`, `parallel for ...` или другой supervised-aware
+// construct. Free spawn вне scope → compile error.
+//
+// Validates compiler-side scope check (Plan 47/49 supervised cancel
+// invariant: every fiber owned by enclosing scope).
+
+module plan83_10.spawn_in_realtime_compile_error
+
+fn spawn_without_scope() -> int {
+    let mut counter = 0
+    spawn {
+        counter = counter + 1
+    }
+    counter
+}

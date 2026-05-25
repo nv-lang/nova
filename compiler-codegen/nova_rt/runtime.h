@@ -167,4 +167,15 @@ int  nova_runtime_maxprocs(void);
 int  nova_runtime_current_worker_id(void);  /* -1 если main thread */
 bool nova_runtime_is_initialized(void);
 
+/* Plan 83.6 (2026-05-24): per-worker SpawnCtx free-list pool. Acquire
+ * returns zero-initialized buffer (size либо class size — see runtime.c
+ * impl), automatically setting `base->_nova_pool_size`. Release routes
+ * через P-local free list либо Boehm fallback depending on availability.
+ *
+ * Codegen emit_spawn / emit_detach должен использовать pool_acquire
+ * вместо direct nova_alloc_uncollectable под armed M:N. Free path в
+ * worker_main уже использует pool_release. */
+void* nova_spawn_pool_acquire(size_t size);
+void  nova_spawn_pool_release(void* ctx, size_t size);
+
 #endif /* NOVA_RT_RUNTIME_H */

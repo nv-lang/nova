@@ -1,0 +1,41 @@
+// Plan 83.10 (2026-05-25): race detection — Plan 83.4.5.4 spawn-time
+// handler-snapshot capture. Each fiber видит свои `with Time = h`
+// bindings, не peer's handlers.
+//
+// ENV NOVA_AUTOARM=0
+// Plan 83.10: handler-scoping inherently cooperative-dependent (per-
+// fiber TLS snapshot restored at supervised_step).
+//
+// Parallel к concurrency/per_fiber_handlers.nv (existing positive test).
+// Plan 83.10 closure — explicit Plan 83.4.5.4 validation.
+
+module plan83_10.handler_isolation_per_fiber
+
+fn helper_h_100() Time -> int {
+    with Time = effect Time {
+        sleep(_ms) { return () }
+        now() { return 100 }
+    } {
+        Time.now()
+    }
+}
+
+fn helper_h_999() Time -> int {
+    with Time = effect Time {
+        sleep(_ms) { return () }
+        now() { return 999 }
+    } {
+        Time.now()
+    }
+}
+
+test "per-fiber handler isolation — different values seen" {
+    let mut a = 0
+    let mut b = 0
+    supervised {
+        spawn { a = helper_h_100() }
+        spawn { b = helper_h_999() }
+    }
+    assert(a == 100)
+    assert(b == 999)
+}

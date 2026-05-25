@@ -1,0 +1,29 @@
+// Plan 83.10 (2026-05-25): panic-safety positive — runtime survives
+// fiber panic, subsequent supervised блоки работают.
+//
+// Validates supervised cleanup invariant: throw в одной spawn не
+// permanently corrupts runtime state (workers, arena, GC roots).
+//
+// Plan 83.10 fix (2026-05-25): [M-83.10-armed-user-throw-routing]
+// resolved — typed throw payload propagates atomically.
+
+module plan83_10.runtime_survives_fiber_panic
+
+test "runtime survives panic, subsequent supervised works" {
+    let mut first_caught = false
+    let _ = with Fail[int] = |e| {
+        first_caught = true
+        0
+    } {
+        supervised {
+            spawn { throw 100 }
+        }
+        99
+    }
+    assert(first_caught)
+
+    // Runtime still functional — new supervised completes successfully.
+    let xs = parallel for i in 0..10 { i * 2 }
+    assert(xs[9] == 18)
+    assert(xs[0] == 0)
+}
