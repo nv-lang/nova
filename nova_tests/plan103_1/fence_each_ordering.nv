@@ -1,0 +1,41 @@
+// Plan 103.1 Ф.6 positive — fence() с каждым из 5 MemOrdering вариантов.
+//
+// Проверяет что fence(Relaxed)/fence(Acquire)/fence(Release)/fence(AcqRel)/
+// fence(SeqCst) компилируются и выполняются без краша. Функциональный
+// эффект fence без paired atomic-операций не наблюдаем; тест smoke-level.
+
+module nova_tests.plan103_1.fence_each_ordering
+
+test "fence(Relaxed) — no crash" {
+    fence(Relaxed)
+    assert(true)
+}
+
+test "fence(Acquire) — no crash" {
+    fence(Acquire)
+    assert(true)
+}
+
+test "fence(Release) — no crash" {
+    fence(Release)
+    assert(true)
+}
+
+test "fence(AcqRel) — no crash" {
+    fence(AcqRel)
+    assert(true)
+}
+
+test "fence(SeqCst) — no crash" {
+    fence(SeqCst)
+    assert(true)
+}
+
+test "fence все 5 вариантов в одном тесте" {
+    fence(Relaxed)
+    fence(Acquire)
+    fence(Release)
+    fence(AcqRel)
+    fence(SeqCst)
+    assert(true)
+}

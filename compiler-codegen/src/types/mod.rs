@@ -5017,6 +5017,13 @@ impl NameResCtx {
             // `nogc_blacklisted_call` (types/mod.rs:1454) сохраняет
             // name-matches как capability data — не builtins source,
             // не conflicts.
+            //
+            // Plan 103.1 Ф.6: `fence` — memory fence free function
+            // (std/runtime/sync.nv). Lowercase free fn → нужен в builtins
+            // иначе type-checker флагает «undefined identifier» для тестов
+            // без `import std.runtime.sync`. Dispatch: ExternalRegistry
+            // → nova_fn_fence (free_fn_c_name ExternalRegistry-first path).
+            "fence",
         ]
         .iter()
         .map(|s| s.to_string())
@@ -10447,4 +10454,115 @@ fn infer_unified_type<'e>(
         }
     }
     None
+}
+
+// ─── Plan 103.1 Ф.4: Ordering validation helpers ─────────────────────────
+//
+// Compile-time validation of MemOrdering arguments on atomic load/store ops.
+// Called from Plan 103.2+ method-call type-check pipeline for AtomicX.load()
+// and AtomicX.store() overloads that accept a MemOrdering parameter.
+//
+// Error codes (no central registry exists; embedded in Diagnostic message):
+//   E_INVALID_ORDERING_LOAD  — Release/AcqRel on load (only Relaxed/Acquire/SeqCst valid)
+//   E_INVALID_ORDERING_STORE — Acquire/AcqRel on store (only Relaxed/Release/SeqCst valid)
+//
+// See D167 (spec/decisions/06-concurrency.md) for semantics rationale.
+
+/// Error code for forbidden ordering on atomic load operation.
+/// Release and AcqRel are invalid for load (they provide no acquire synchronization).
+pub const E_INVALID_ORDERING_LOAD: &str = "E_INVALID_ORDERING_LOAD";
+
+/// Error code for forbidden ordering on atomic store operation.
+/// Acquire and AcqRel are invalid for store (they provide no release synchronization).
+pub const E_INVALID_ORDERING_STORE: &str = "E_INVALID_ORDERING_STORE";
+
+/// Plan 103.1 Ф.4: Extract the variant name from a MemOrdering path expression.
+/// Returns Some("Acquire") for `MemOrdering.Acquire`, None for runtime values.
+fn mem_ordering_variant(ord_expr: &Expr) -> Option<&str> {
+    use crate::ast::ExprKind;
+    if let ExprKind::Path(parts) = &ord_expr.kind {
+        if parts.len() == 2 && parts[0] == "MemOrdering" {
+            return Some(&parts[1]);
+        }
+    }
+    None
+}
+
+/// Plan 103.1 Ф.4: Validate MemOrdering argument for an atomic **load** operation.
+///
+/// Valid orderings for load: Relaxed, Acquire, SeqCst.
+/// Invalid: Release, AcqRel (these orderings make no semantic sense on a load).
+///
+/// Validation is compile-time only when the ordering is a literal constant.
+/// Runtime-value orderings are skipped (handled via runtime panic in codegen).
+///
+/// # Plan 103.2 integration
+/// Call from the method-call type-check path for `AtomicX.load(ord MemOrdering)`.
+/// Pass `ord_arg` = the MemOrdering expression argument, `span` = call-site span.
+#[allow(dead_code)]  // Called from Plan 103.2
+pub fn check_atomic_load_ordering(
+    ord_arg: &Expr,
+    span: crate::diag::Span,
+) -> Result<(), crate::diag::Diagnostic> {
+    let Some(variant) = mem_ordering_variant(ord_arg) else {
+        return Ok(()); // Runtime value — skip compile-time check
+    };
+    match variant {
+        "Release" | "AcqRel" => Err(
+            crate::diag::Diagnostic::new(
+                format!(
+                    "[{}] `MemOrdering.{}` запрещён для load; \
+                     используйте Relaxed, Acquire, или SeqCst. \
+                     Release/AcqRel не имеют семантики для load-операций.",
+                    E_INVALID_ORDERING_LOAD, variant
+                ),
+                span,
+            )
+            .with_suggestion(crate::diag::Suggestion {
+                message: "замените на Acquire (или SeqCst для simplicity)".to_string(),
+                span,
+                replacement: "MemOrdering.Acquire".to_string(),
+                applicability: crate::diag::Applicability::MaybeIncorrect,
+            })
+        ),
+        _ => Ok(()),
+    }
+}
+
+/// Plan 103.1 Ф.4: Validate MemOrdering argument for an atomic **store** operation.
+///
+/// Valid orderings for store: Relaxed, Release, SeqCst.
+/// Invalid: Acquire, AcqRel (these orderings make no semantic sense on a store).
+///
+/// # Plan 103.2 integration
+/// Call from the method-call type-check path for `AtomicX.store(v, ord MemOrdering)`.
+/// Pass `ord_arg` = the MemOrdering expression argument, `span` = call-site span.
+#[allow(dead_code)]  // Called from Plan 103.2
+pub fn check_atomic_store_ordering(
+    ord_arg: &Expr,
+    span: crate::diag::Span,
+) -> Result<(), crate::diag::Diagnostic> {
+    let Some(variant) = mem_ordering_variant(ord_arg) else {
+        return Ok(()); // Runtime value — skip compile-time check
+    };
+    match variant {
+        "Acquire" | "AcqRel" => Err(
+            crate::diag::Diagnostic::new(
+                format!(
+                    "[{}] `MemOrdering.{}` запрещён для store; \
+                     используйте Relaxed, Release, или SeqCst. \
+                     Acquire/AcqRel не имеют семантики для store-операций.",
+                    E_INVALID_ORDERING_STORE, variant
+                ),
+                span,
+            )
+            .with_suggestion(crate::diag::Suggestion {
+                message: "замените на Release (или SeqCst для simplicity)".to_string(),
+                span,
+                replacement: "MemOrdering.Release".to_string(),
+                applicability: crate::diag::Applicability::MaybeIncorrect,
+            })
+        ),
+        _ => Ok(()),
+    }
 }

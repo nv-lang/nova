@@ -1315,6 +1315,30 @@ impl CEmitter {
             self.record_schemas.insert("ChannelPair".to_string(), cp_schema);
         }
 
+        // Plan 103.1 Ф.6: Pre-register MemOrdering in sum_schemas +
+        // sum_schema_registry so test files can use `Relaxed`/`Acquire`/etc.
+        // as unqualified variant names without `import std.runtime.sync`.
+        // MemOrdering variants are unique — no collision with user types.
+        // Coordinated with NOVA_TAG_MemOrdering_* in sync_primitives.h.
+        {
+            let mem_variants = ["Relaxed", "Acquire", "Release", "AcqRel", "SeqCst"];
+            if !self.sum_schemas.contains_key("MemOrdering") {
+                let mut mem_schema: HashMap<String, Vec<String>> = HashMap::new();
+                for v in &mem_variants {
+                    mem_schema.insert(v.to_string(), Vec::new());
+                }
+                let variant_order: Vec<String> = mem_variants.iter().map(|s| s.to_string()).collect();
+                self.sum_schema_registry.register_user_sum(
+                    "MemOrdering",
+                    &mem_schema,
+                    "Nova_MemOrdering",
+                    super::sum_schema_registry::SumAbi::PointerErrorLike,
+                    &variant_order,
+                );
+                self.sum_schemas.insert("MemOrdering".to_string(), mem_schema);
+            }
+        }
+
         // Plan 78 Ф.2 (2026-05-22): хардкод pre-populate `sum_schemas
         // ["RuntimeError"]` + `record_variant_field_*` для IndexOutOfBounds
         // УДАЛЁН. RuntimeError объявлен в `std/prelude/errors.nv` —
@@ -1514,6 +1538,10 @@ impl CEmitter {
                 "ChanReader", "ChanWriter", "ChannelPair",
                 "AtomicInt", "AtomicBool", "Mutex", "WaitGroup", "Once",
                 "Timestamp",
+                // Plan 103.1: MemOrdering pre-declared in sync_primitives.h.
+                // Named forward decl `typedef struct Nova_MemOrdering Nova_MemOrdering;`
+                // would conflict with the pre-declared typedef struct.
+                "MemOrdering",
             ];
             for name in external_names {
                 if local_types.contains(&name) { continue; }
@@ -7134,19 +7162,29 @@ impl CEmitter {
             // на случай если user accidentally declared `type StringBuilder
             // { ... }` (non-Opaque kind) — мы всё равно skip'нем.
             "StringBuilder", "WriteBuffer", "ReadBuffer",
+            // Plan 103.1 Ф.3: MemOrdering pre-declared in sync_primitives.h.
+            // C struct + 5 constructors live there; skip emit_sum_type.
+            // sum_schemas + sum_schema_registry populated below for pattern
+            // matching support (`match ord { MemOrdering.Relaxed => ... }`).
+            "MemOrdering",
         ];
         if RUNTIME_DEFINED_TYPES.contains(&t.name.as_str()) {
             // Plan 62.A: skip emission — C struct + constructors живут в
             // nova_rt/*.h. Но Plan 78 Ф.2 (2026-05-22): для runtime-
-            // defined **sum-типов** (RuntimeError) codegen'у всё равно
-            // нужна sum-schema (payload-типы вариантов) для
-            // pattern-matching. Регистрируем её ИЗ ДЕКЛАРАЦИИ
-            // (`std/prelude/errors.nv`) — это убирает хардкод-зеркало
-            // pre-populate `sum_schemas["RuntimeError"]` в `emit_module`.
+            // defined **sum-типов** (RuntimeError, MemOrdering) codegen'у
+            // всё равно нужна sum-schema (payload-типы вариантов) для
+            // pattern-matching. Регистрируем её ИЗ ДЕКЛАРАЦИИ —
+            // убирает хардкод-зеркало pre-populate в `emit_module`.
             // (Option/Result schema — через mono-типы, не сюда.)
+            //
+            // Plan 103.1 Ф.3: MemOrdering также регистрируется в
+            // sum_schema_registry для find_variant_compat — иначе
+            // pattern matching через sum_schema_registry.find_variant_compat
+            // не найдёт варианты MemOrdering.
             if let TypeDeclKind::Sum(variants) = &t.kind {
                 if !variants.is_empty() && !self.sum_schemas.contains_key(&t.name) {
                     let mut schema: HashMap<String, Vec<String>> = HashMap::new();
+                    let mut variant_order: Vec<String> = Vec::new();
                     for v in variants {
                         let field_types: Vec<String> = match &v.kind {
                             SumVariantKind::Unit => Vec::new(),
@@ -7170,8 +7208,19 @@ impl CEmitter {
                                 fts
                             }
                         };
+                        variant_order.push(v.name.clone());
                         schema.insert(v.name.clone(), field_types);
                     }
+                    // Register in sum_schema_registry so find_variant_compat
+                    // can resolve variant names for pattern matching.
+                    let c_name = format!("Nova_{}", t.name);
+                    self.sum_schema_registry.register_user_sum(
+                        &t.name,
+                        &schema,
+                        &c_name,
+                        super::sum_schema_registry::SumAbi::PointerErrorLike,
+                        &variant_order,
+                    );
                     self.sum_schemas.insert(t.name.clone(), schema);
                 }
             }
@@ -8724,6 +8773,15 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
     /// синтетика (`nova_fn_main_impl`, closure-адаптеры `nova_fn_vi`
     /// и т.п.) сюда **не** идёт — она exempt.
     fn free_fn_c_name(&self, name: &str) -> String {
+        // Plan 103.1 Ф.6: ExternalRegistry builtins (fence, etc.) always
+        // use nova_fn_<name> — they live in nova_rt/*.h, not user modules.
+        // Check BEFORE fn_module_map to prevent mangled names when test
+        // files import std.runtime.sync (which would otherwise add fence
+        // to fn_module_map with path ["runtime","sync"]).
+        let ext_free_key = (String::new(), name.to_string());
+        if self.external_registry.by_key.contains_key(&ext_free_key) {
+            return format!("nova_fn_{}", name);
+        }
         match self.fn_module_map.get(name) {
             Some(modpath) if !modpath.is_empty() => {
                 Self::mangle_free_fn(modpath, name)
@@ -8768,6 +8826,39 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
             h = h.wrapping_mul(16777619);
         }
         h
+    }
+
+    /// Plan 103.1 Ф.3: Convert a Nova MemOrdering literal expression to the
+    /// corresponding `__ATOMIC_*` C constant string.
+    ///
+    /// Used in Plan 103.2+ for `atomic.load(MemOrdering.X)` / `atomic.store(v, MemOrdering.X)`
+    /// codegen — emits the literal constant directly instead of dispatching through
+    /// the `nova_fn_fence` switch. Returns None for runtime-value orderings (requires
+    /// fallback to the switch-dispatch path or a runtime assert).
+    ///
+    /// Tag values (coordinated with sync_primitives.h NOVA_TAG_MemOrdering_*):
+    ///   Relaxed=0 → __ATOMIC_RELAXED
+    ///   Acquire=1 → __ATOMIC_ACQUIRE
+    ///   Release=2 → __ATOMIC_RELEASE
+    ///   AcqRel=3  → __ATOMIC_ACQ_REL
+    ///   SeqCst=4  → __ATOMIC_SEQ_CST
+    pub fn nova_mem_ordering_to_atomic(ord_expr: &crate::ast::Expr) -> Option<&'static str> {
+        use crate::ast::ExprKind;
+        // MemOrdering.Variant is parsed as Path(["MemOrdering", "Variant"]).
+        if let ExprKind::Path(parts) = &ord_expr.kind {
+            if parts.len() == 2 && parts[0] == "MemOrdering" {
+                return match parts[1].as_str() {
+                    "Relaxed" => Some("__ATOMIC_RELAXED"),
+                    "Acquire" => Some("__ATOMIC_ACQUIRE"),
+                    "Release" => Some("__ATOMIC_RELEASE"),
+                    "AcqRel"  => Some("__ATOMIC_ACQ_REL"),
+                    "SeqCst"  => Some("__ATOMIC_SEQ_CST"),
+                    _ => None,
+                };
+            }
+        }
+        // Runtime value (variable / call result) — caller handles fallback.
+        None
     }
 
     /// Mirrors `emit_call`'s callee name resolution для Ident/Path/Member cases.
@@ -25103,5 +25194,70 @@ mod dce_tests {
             !dead.contains("target"),
             "callee referenced via `mod.target()` must stay reachable"
         );
+    }
+}
+
+#[cfg(test)]
+mod mem_ordering_tests {
+    //! Plan 103.1 Ф.3: unit-тесты nova_mem_ordering_to_atomic helper.
+    //! Acceptance: ≥5 cases (one per variant), plus None for unknown/runtime.
+    use super::CEmitter;
+    use crate::ast::{Expr, ExprKind, Span};
+
+    fn path_expr(parts: &[&str]) -> Expr {
+        Expr {
+            kind: ExprKind::Path(parts.iter().map(|s| s.to_string()).collect()),
+            span: Span::dummy(),
+        }
+    }
+
+    #[test]
+    fn relaxed_maps_to_atomic_relaxed() {
+        let e = path_expr(&["MemOrdering", "Relaxed"]);
+        assert_eq!(CEmitter::nova_mem_ordering_to_atomic(&e), Some("__ATOMIC_RELAXED"));
+    }
+
+    #[test]
+    fn acquire_maps_to_atomic_acquire() {
+        let e = path_expr(&["MemOrdering", "Acquire"]);
+        assert_eq!(CEmitter::nova_mem_ordering_to_atomic(&e), Some("__ATOMIC_ACQUIRE"));
+    }
+
+    #[test]
+    fn release_maps_to_atomic_release() {
+        let e = path_expr(&["MemOrdering", "Release"]);
+        assert_eq!(CEmitter::nova_mem_ordering_to_atomic(&e), Some("__ATOMIC_RELEASE"));
+    }
+
+    #[test]
+    fn acqrel_maps_to_atomic_acqrel() {
+        let e = path_expr(&["MemOrdering", "AcqRel"]);
+        assert_eq!(CEmitter::nova_mem_ordering_to_atomic(&e), Some("__ATOMIC_ACQ_REL"));
+    }
+
+    #[test]
+    fn seqcst_maps_to_atomic_seqcst() {
+        let e = path_expr(&["MemOrdering", "SeqCst"]);
+        assert_eq!(CEmitter::nova_mem_ordering_to_atomic(&e), Some("__ATOMIC_SEQ_CST"));
+    }
+
+    #[test]
+    fn unknown_variant_returns_none() {
+        let e = path_expr(&["MemOrdering", "Unknown"]);
+        assert_eq!(CEmitter::nova_mem_ordering_to_atomic(&e), None);
+    }
+
+    #[test]
+    fn non_mem_ordering_path_returns_none() {
+        // Bare ident (not a path) → None
+        let e = Expr { kind: ExprKind::Ident("Relaxed".to_string()), span: Span::dummy() };
+        assert_eq!(CEmitter::nova_mem_ordering_to_atomic(&e), None);
+    }
+
+    #[test]
+    fn wrong_type_prefix_returns_none() {
+        // Different enum type — no confusion with comparison Ordering
+        let e = path_expr(&["Ordering", "Less"]);
+        assert_eq!(CEmitter::nova_mem_ordering_to_atomic(&e), None);
     }
 }

@@ -1,0 +1,15 @@
+// Plan 103.1 Ф.6 negative — неизвестный вариант MemOrdering.
+//
+// EXPECT_CC_ERROR MemOrdering_NoSuchVariant
+//
+// `MemOrdering.NoSuchVariant` не существует. Codegen fall-through к
+// `parts.join("_")` → `MemOrdering_NoSuchVariant` — undeclared C identifier
+// при C-compile. Аналогично numeric_constant_unknown.nv (Plan 38 pattern).
+
+module nova_tests.plan103_1.negative.ordering_invalid_variant_neg
+
+fn bad() -> MemOrdering => MemOrdering.NoSuchVariant
+
+test "should not compile" {
+    assert(true)
+}
