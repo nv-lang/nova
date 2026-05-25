@@ -18,6 +18,7 @@ structured-concurrency примитивы есть в языке, и как па
 | [D94](#d94-select--multiplexed-channel-operations) | `select { ... }` — финальный синтаксис: `Some(v) = rx =>`, `ChanReader.close_after(Duration)` для timeout ✅ реализован (Plan 31 ✅; Plan 44.1 Ф.3 hardening; Plan 65 — Duration-typed API revision) |
 | [D124](#d124-monotonic-vs-timestamp--раздельные-типы-для-wall-clock-и-монотонных-часов) | Monotonic vs Timestamp — раздельные типы для wall-clock и монотонных часов |
 | [D138](#d138-default-on-mn-runtime--production-semantics-plan-83456-ф3-active-2026-05-24) | ✅ ACTIVE — Default-on M:N runtime production semantics (Plan 83.4.5.8 closure 2026-05-24) |
+| [D168](#d168-sized-atomic-types--api-contract-plan-1032) | Sized atomic types API contract: 12 types × 13 ops, MemOrdering-aware overloads, wraparound semantics |
 
 ---
 
@@ -3850,3 +3851,245 @@ ARM64 — более explicit барьеры (DMB LD/ST/ISH); Relaxed vs Acquire
 - Plan 103.2 — AtomicX.load(MemOrdering) / .store(v, MemOrdering) / RMW overloads
 - Plan 103.7 — финальная редакция D167
 
+---
+
+## D168. Sized atomic types — API contract (Plan 103.2)
+
+> **Status:** draft (Plan 103.2, 2026-05-25). Final closure — Plan 103.7.
+
+### Что
+
+Nova предоставляет **12 sized atomic типов** с детерминированной шириной:
+
+| Тип | Ширина | Диапазон | C-репрезентация |
+|---|---|---|---|
+| `AtomicI8` | 8 бит | −128..127 | `int8_t` |
+| `AtomicI16` | 16 бит | −32768..32767 | `int16_t` |
+| `AtomicI32` | 32 бит | −2³¹..2³¹−1 | `int32_t` |
+| `AtomicI64` | 64 бит | −2⁶³..2⁶³−1 | `int64_t` |
+| `AtomicU8` | 8 бит | 0..255 | `uint8_t` |
+| `AtomicU16` | 16 бит | 0..65535 | `uint16_t` |
+| `AtomicU32` | 32 бит | 0..2³²−1 | `uint32_t` |
+| `AtomicU64` | 64 бит | 0..2⁶⁴−1 | `uint64_t` |
+| `AtomicIsize` | платформенная | −2^(W−1)..2^(W−1)−1 | `nova_int` (= `intptr_t`) |
+| `AtomicUsize` | платформенная | 0..2^W−1 | `nova_uint` (= `uintptr_t`) |
+| `AtomicBool` | 1 логический бит | `false`/`true` | `bool` (8-битное хранение) |
+| `AtomicPtr` | платформенная | адрес | `nova_int` (GC proxy) |
+
+Все типы являются **value types в Nova**, копируются по значению при передаче в
+функцию / возврате. Семантически — **ячейки с атомарным доступом**, не
+разделяемые reference-типы. Для разделения между fiber'ами — передавать
+mutable-ссылку или хранить в heap-структуре.
+
+### Правило
+
+#### 1. Матрица операций
+
+Все 12 типов поддерживают следующие операции (обозначение: `T` — тип значения,
+`Bool` — `bool`, `Int` — `int`):
+
+| Операция | AtomicI*/U*/Isize/Usize | AtomicBool | AtomicPtr |
+|---|---|---|---|
+| `new(v T) → AtomicX` | ✓ | ✓ (`v bool`) | ✓ (`v int`) |
+| `null() → AtomicPtr` | — | — | ✓ |
+| `load() → T` | ✓ | ✓ | ✓ → `int` |
+| `load(ord MemOrdering) → T` | ✓ | ✓ | ✓ |
+| `store(v T)` | ✓ | ✓ | ✓ |
+| `store(v T, ord MemOrdering)` | ✓ | ✓ | ✓ |
+| `swap(v T) → T` | ✓ | ✓ | ✓ |
+| `swap(v T, ord MemOrdering) → T` | ✓ | ✓ | ✓ |
+| `compare_exchange(expected T, desired T) → bool` | ✓ | ✓ | ✓ |
+| `compare_exchange(exp T, des T, ord MemOrdering) → bool` | ✓ | ✓ | ✓ |
+| `compare_exchange_weak(exp T, des T) → bool` | ✓ | ✓ | — |
+| `compare_exchange_weak(exp T, des T, ord MemOrdering) → bool` | ✓ | ✓ | — |
+| `fetch_add(v T) → T` | ✓ (int/uint только) | — | — |
+| `fetch_add(v T, ord MemOrdering) → T` | ✓ | — | — |
+| `fetch_sub(v T) → T` | ✓ | — | — |
+| `fetch_sub(v T, ord MemOrdering) → T` | ✓ | — | — |
+| `fetch_or(v T) → T` | ✓ | ✓ (`v bool`) | — |
+| `fetch_or(v T, ord MemOrdering) → T` | ✓ | ✓ | — |
+| `fetch_and(v T) → T` | ✓ | ✓ | — |
+| `fetch_and(v T, ord MemOrdering) → T` | ✓ | ✓ | — |
+| `fetch_xor(v T) → T` | ✓ | ✓ | — |
+| `fetch_xor(v T, ord MemOrdering) → T` | ✓ | ✓ | — |
+| `fetch_nand(v T) → T` | ✓ | — | — |
+| `fetch_nand(v T, ord MemOrdering) → T` | ✓ | — | — |
+| `fetch_max(v T) → T` | ✓ | — | — |
+| `fetch_max(v T, ord MemOrdering) → T` | ✓ | — | — |
+| `fetch_min(v T) → T` | ✓ | — | — |
+| `fetch_min(v T, ord MemOrdering) → T` | ✓ | — | — |
+
+**Примечание по AtomicPtr:** хранит `int` (адрес GC-объекта как `intptr_t`).
+Арифметика не поддерживается (`fetch_add` нет). Typed generic form `AtomicPtr[T]`
+— Plan 103.7.
+
+#### 2. MemOrdering-aware overloads
+
+Каждая операция, принимающая `MemOrdering`, является **overload** к базовой
+операции без ordering-параметра. Обе формы — валидные публичные API:
+
+```nova
+let a = AtomicI64.new(0)
+a.store(42)                          // default: SeqCst
+a.store(42, MemOrdering.Relaxed)     // explicit: Relaxed
+let v = a.load()                     // default: SeqCst
+let v2 = a.load(MemOrdering.Acquire) // explicit: Acquire
+```
+
+**Default ordering = SeqCst** для всех операций без явного параметра. Это
+максимально безопасный выбор; производительность при нужде оптимизируется явным
+указанием Relaxed/Acquire/Release.
+
+**Ограничения (из D167):**
+- `load` не принимает `Release`, `AcqRel` → CC error (undefined C call).
+- `store` не принимает `Acquire`, `AcqRel` → CC error.
+- Эти ограничения enforced через отсутствие соответствующих C-функций в
+  `sync_primitives.h` — compiler error, не runtime.
+
+#### 3. Wraparound semantics (целочисленный overflow)
+
+**Все integer RMW операции используют модульную арифметику.** Переполнение
+не вызывает panic, trap или UB — результат определён спецификацией:
+
+```nova
+// AtomicI8 range: -128..127
+let a = AtomicI8.new(127)
+let prev = a.fetch_add(1)    // prev = 127, a.load() = -128 (wraparound)
+
+// AtomicU8 range: 0..255
+let b = AtomicU8.new(255)
+let prev2 = b.fetch_add(1)   // prev2 = 255, b.load() = 0 (wraparound)
+```
+
+Wraparound семантика идентична C `uint8_t`/`int8_t` unsigned/signed overflow
+согласно стандарту C11 `_Atomic`. Это согласовано с поведением Nova non-atomic
+integers (2's complement, no-panic overflow — Plan 101 решение).
+
+**Почему не checked overflow:** atomic increment с panic при overflow —
+бесполезен для counters, spinlocks, sequence numbers. Caller несёт
+ответственность за выбор ширины типа, достаточной для его диапазона.
+
+#### 4. AtomicPtr — proxy для GC-адресов
+
+`AtomicPtr` хранит `int` (= `intptr_t`) как GC-безопасный адрес. Это
+**не typed generic** — Plan 103.7 вводит `AtomicPtr[T]` с proper GC-tracing.
+
+V1 семантика (Plan 103.2):
+- `AtomicPtr.new(v int)` — создать из raw int (адрес).
+- `AtomicPtr.null()` — создать с значением 0 (null-адрес).
+- `load()` → `int` — прочитать адрес как int.
+- `store(v int)` — записать адрес.
+- `swap(v int)` → `int` — атомарный обмен адресов.
+- `compare_exchange(expected int, desired int)` → `bool` — CAS на адресах.
+- Arithmetic (`fetch_add`) **не поддерживается** — AtomicPtr не счётчик.
+
+**GC safety V1:** приложение несёт ответственность за то, что int-значение
+в `AtomicPtr` остаётся живым GC-объектом. V2 (Plan 103.7): `AtomicPtr[T]`
+будет GC root.
+
+#### 5. compare_exchange vs compare_exchange_weak
+
+`compare_exchange(expected, desired)` — **strong**: гарантирует успех если
+`*self == expected`. На CISC (x86/x64) реализован через `cmpxchg` — no spurious
+failures.
+
+`compare_exchange_weak(expected, desired)` — **weak**: может fail spuriously
+даже если `*self == expected`. На RISC (ARM, RISC-V) реализован через LL/SC;
+spurious fail = retry loop в caller. Более эффективен на ARM для retry loops:
+
+```nova
+// Правильный паттерн для weak CAS retry loop:
+let mut ok = false
+while !ok {
+    let cur = a.load(MemOrdering.Relaxed)
+    ok = a.compare_exchange_weak(cur, cur + 1, MemOrdering.Release)
+}
+```
+
+На x86 `compare_exchange_weak` эквивалентен `compare_exchange` (нет
+LL/SC — no spurious fails). На ARM различие значительно.
+
+### Почему
+
+1. **12 sized types вместо single `Atomic[T]` generic.** Детерминированная
+   ширина критична для lock-free алгоритмов (ABA-prevention через tagged pointer
+   требует точной ширины слова). Generic `Atomic[T]` потребовал бы мономорфизацию
+   на C-уровне; текущая реализация — 12 конкретных C-struct'ов, по одному на тип.
+
+2. **Default SeqCst + explicit ordering overloads.** Большинство кода не нуждается
+   в тонкой настройке ordering. SeqCst по умолчанию безопасен и корректен.
+   Explicit overloads — escape hatch для performance-critical hot paths (счётчики,
+   sequence numbers, SPSC queues).
+
+3. **Wraparound, не panic.** Атомарные операции применяются в tight loops
+   (fetch_add счётчики, sequence numbers). Panic при overflow сделал бы AtomicI8/U8
+   непригодными для cyclic counters. Поведение консистентно с Nova integer
+   semantics.
+
+4. **AtomicPtr как `int` в V1.** Typed `AtomicPtr[T]` требует GC root integration
+   в codegen — это non-trivial и откладывается в Plan 103.7. `int`-proxy достаточен
+   для lock-free pointer swapping где объект удерживается через другую ссылку.
+
+5. **compare_exchange_weak — отдельная операция.** На ARM разница ~30% на
+   retry-heavy workloads. Наличие обеих форм позволяет писать переносимый код с
+   оптимальными характеристиками.
+
+### Что отвергнуто
+
+- **Generic `Atomic[T]` вместо 12 конкретных типов.** Требует мономорфизации на
+  C-уровне, усложняет ExternalRegistry (нет arity-based dispatch по типу элемента).
+  Отложено в Plan 103.7+ (если вообще нужно — 12 конкретных типов покрывают
+  все стандартные use cases).
+
+- **Checked overflow для narrow types (AtomicI8).** `fetch_add` на переполненном
+  AtomicI8 → panic неожиданен для счётчиков. Wraparound — стандартная C11
+  семантика, консистентна с остальными Nova integers.
+
+- **Arity-based dispatch через Nova type system.** Nova integer literals имеют тип
+  `nova_int` (широкий), а typed atomic операции принимают `int32_t`/`uint8_t` —
+  строгое type matching не работает. Решение: arity-based fallback в codegen
+  (N vs N+1 параметров для default vs ordering overload). Plan 103.7 уточнит.
+
+- **`AtomicPtr.fetch_add(n)` — pointer arithmetic.** Небезопасно без bounds
+  checking, противоречит Nova memory safety goals. Pointer arithmetic —
+  отдельный unsafe-escaped API, не часть стандартного `AtomicPtr`.
+
+- **Единственный `compare_exchange` без weak variant.** На ARM RISC-V LL/SC
+  реализует CAS; weak variant существенно эффективнее для retry loops. Обе
+  формы — часть стандартного C11 atomic API.
+
+### Связь
+
+- [D167](#d167-memory-ordering-model--формальная-семантика-happens-before-и-memoryordering)
+  — ordering semantics, MemOrdering variants + запреты для load/store.
+- [D26](02-types.md#d26-prelude-numeric-types) — prelude numeric types (int, uint,
+  bool, u8..u64 и т.д.).
+- [D50](#d50-concurrency-model-spawn-detach-blocking) — fiber concurrency model;
+  atomic ops — примитив координации между fiber'ами.
+- [D138](#d138-default-on-mn-runtime--production-semantics-plan-83456-ф3-active-2026-05-24)
+  — production M:N runtime; атомарные операции используются внутри scheduler'а.
+- Plan 103.1 — MemOrdering enum + fence(MemOrdering) + nova_mo_c() codegen helper.
+- Plan 103.7 — D168 финальная редакция + AtomicPtr[T] typed generic.
+
+### Реализация (Plan 103.2, 2026-05-25)
+
+- `std/runtime/sync.nv`: 12 типов объявлены как `external type AtomicX`
+  с полным набором `external fn` объявлений.
+- `compiler-codegen/nova_rt/sync_primitives.h`: C реализация через
+  `__atomic_*` GCC/Clang builtins. `Nova_AtomicX` = struct с одним полем.
+  `nova_mo_c()` helper конвертирует `Nova_MemOrdering*` tag в `__ATOMIC_*` константу.
+- `compiler-codegen/src/codegen/emit_c.rs`:
+  - ExternalRegistry `last_param_suffix` logic для overload disambiguation.
+  - ExternalRegistry → `method_overloads` registration (multi-overload dispatch).
+  - Arity-based fallback: когда strict type matching fails и все кандидаты `is_external` —
+    arity alone disambiguates (N vs N+1 параметров).
+  - Все 12 типов добавлены в `BUILTIN_RUNTIME_TYPES`.
+
+### Эволюция
+
+D168 введён как draft (Plan 103.2, 2026-05-25). Final closure — Plan 103.7, где:
+- `AtomicPtr[T]` typed generic с GC root integration.
+- Lint `W_NARROW_ATOMIC_OVERFLOW_RISK` для подозрительного использования
+  narrow types (AtomicI8/U8) с большими константами.
+- ARM CI validation для `compare_exchange_weak` spurious-fail paths.
+- D173 AI-first guidance для атомарных паттернов.

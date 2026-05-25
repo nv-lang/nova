@@ -1,0 +1,57 @@
+// Plan 103.2 Ф.9 positive — AtomicI32 / AtomicI16 / AtomicI8 basic ops.
+//
+// Verifies that 32-, 16-, and 8-bit signed integer atomics compile,
+// initialize, and perform basic load/store/fetch_add correctly.
+
+module nova_tests.plan103_2.atomic_i32_i16_i8
+
+test "AtomicI32 new load store" {
+    let a = AtomicI32.new(10)
+    assert(a.load() == 10)
+    a.store(20)
+    assert(a.load() == 20)
+}
+
+test "AtomicI32 fetch_add" {
+    let a = AtomicI32.new(5)
+    let prev = a.fetch_add(3)
+    assert(prev == 5)
+    assert(a.load() == 8)
+}
+
+test "AtomicI32 compare_exchange" {
+    let a = AtomicI32.new(42)
+    let ok = a.compare_exchange(42, 100)
+    assert(ok)
+    assert(a.load() == 100)
+}
+
+test "AtomicI16 new load store" {
+    let a = AtomicI16.new(7)
+    assert(a.load() == 7)
+    a.store(14)
+    assert(a.load() == 14)
+}
+
+test "AtomicI16 fetch_add and fetch_sub" {
+    let a = AtomicI16.new(100)
+    let p1 = a.fetch_add(50)
+    let p2 = a.fetch_sub(30)
+    assert(p1 == 100)
+    assert(p2 == 150)
+    assert(a.load() == 120)
+}
+
+test "AtomicI8 new load store" {
+    let a = AtomicI8.new(1)
+    assert(a.load() == 1)
+    a.store(127)
+    assert(a.load() == 127)
+}
+
+test "AtomicI8 fetch_add" {
+    let a = AtomicI8.new(10)
+    let prev = a.fetch_add(5)
+    assert(prev == 10)
+    assert(a.load() == 15)
+}
