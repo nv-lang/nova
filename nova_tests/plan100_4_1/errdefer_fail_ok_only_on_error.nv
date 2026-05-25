@@ -1,0 +1,25 @@
+// Plan 100.4.1 (D158): errdefer body может Fail (rollback failable) —
+// compile pass. Runtime: errdefer fires только на error-path.
+
+module nova_tests.plan100_4_1.errdefer_fail_ok_only_on_error
+
+type RollbackErr { msg str }
+type WorkErr { msg str }
+
+fn commit() -> () { () }
+fn rollback() Fail[RollbackErr] -> () { () }
+
+fn process(should_fail bool) Fail -> () {
+    errdefer { rollback() }                     // failable rollback (D158)
+    if should_fail {
+        throw WorkErr { msg: "x" }              // triggers errdefer
+    }
+    commit()
+}
+
+test "errdefer с Fail body — compile pass на обоих ветках" {
+    with Fail = effect Fail { fail(_msg) { interrupt () } } {
+        process(false)                          // success: errdefer skipped
+        process(true)                           // error: errdefer fires
+    }
+}

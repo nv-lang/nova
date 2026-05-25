@@ -1,0 +1,20 @@
+// Plan 100.4.1 (D158): defer внутри nested scope — failable body inherits
+// outer fn-sig's Fail-effect (через walk_block_for_defers passes
+// current_fn_effects к recursive scopes).
+
+module nova_tests.plan100_4_1.defer_fail_ok_nested_scope
+
+type CleanupErr { msg str }
+
+fn cleanup() Fail[CleanupErr] -> () { () }
+
+fn process(cond bool) Fail[CleanupErr] -> () {
+    if cond {
+        defer { cleanup() }                     // nested scope; outer Fail in sig — D158 OK
+    }
+}
+
+test "defer в nested scope inherits outer Fail-sig" {
+    process(true)
+    process(false)
+}

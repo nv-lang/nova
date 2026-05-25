@@ -1,0 +1,26 @@
+// Plan 100.4.1 (D158): defer-fail во время error-propagation — compile
+// pass. Runtime composite chain — partial в bootstrap (Plan 100.4.4
+// followup для full composite materialize'а).
+
+module nova_tests.plan100_4_1.defer_fail_ok_composed_with_primary
+
+type WorkErr { msg str }
+type CommitErr { msg str }
+
+fn commit() Fail[CommitErr] -> () { () }
+
+fn do_work_that_fails() Fail[WorkErr] -> () {
+    throw WorkErr { msg: "operation failed" }
+}
+
+// fn-sig объявляет generic Fail (union для WorkErr | CommitErr).
+fn process() Fail -> () {
+    defer { commit() }                          // failable cleanup (D158)
+    do_work_that_fails()?                        // throws WorkErr
+}
+
+test "do_work fails + failable-defer compile pass" {
+    with Fail = effect Fail { fail(_msg) { interrupt () } } {
+        process()
+    }
+}

@@ -9,22 +9,15 @@ module nova_tests.plan100_4_1.defer_fail_err_no_fail_in_sig
 
 type CommitErr { msg str }
 
-type Transaction consume {
-    id int,
-}
-
-fn Transaction consume @commit() Fail[CommitErr] -> () {
+fn commit() Fail[CommitErr] -> () {
     throw CommitErr { msg: "x" }
 }
 
-fn begin() -> Transaction => Transaction { id: 1 }
-
 // ❌ fn-sig без Fail[E].
 fn process() -> () {                            // ← no Fail в sig
-    consume tx = begin()
     // ОШИБКА D158-defer-fail-not-in-sig: defer body имеет Fail[CommitErr],
     // но enclosing fn не declares Fail. Suggest: add `Fail[CommitErr]` к sig.
-    defer { tx.commit() }
+    defer { commit() }
 }
 
 test "defer fail без Fail в sig — error" {

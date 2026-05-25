@@ -1,0 +1,15 @@
+// Plan 100.4.1 (D158): MultiError с пустым chain — backward-compat:
+// MultiError может представлять single-error case (suppressed = []).
+// Bootstrap caller получает primary как обычно.
+
+module nova_tests.plan100_4_1.multi_error_inspect_empty_chain
+
+fn make_single() -> MultiError =>
+    { primary: "single error", suppressed: [] }
+
+test "MultiError с empty suppressed chain — backward-compat single-error" {
+    let e = make_single()
+    assert(e.primary() == "single error")
+    assert(e.suppressed().len() == 0)
+    assert(e.fmt_chain() == "single error")
+}

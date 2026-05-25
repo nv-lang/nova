@@ -1,13 +1,17 @@
-// EXPECT_COMPILE_ERROR `throw` is not allowed inside `okdefer` body
+// EXPECT_COMPILE_ERROR D158
 //
-// Plan 100.4.3 (D160): `throw` в okdefer body запрещён — defer body
-// должен быть infallible (D90 §4). okdefer body — те же ограничения.
+// Plan 100.4.1 (D158) amended Plan 100.4.3 (D160): `throw` в okdefer body
+// разрешён если enclosing fn-sig declares `Fail[E]`. Если нет — error
+// D158-defer-fail-not-in-sig.
+//
+// Этот fixture verify'ит NEG case: fn без Fail в sig + throw в okdefer.
 
 module nova_tests.plan100_4_3.neg_okdefer_throw_in_body
 
-fn f() Fail[str] -> int {
+// ❌ fn-sig без Fail.
+fn f() -> int {
     okdefer {
-        throw "cleanup failed"    // ❌ throw в okdefer body
+        throw "cleanup failed"    // ❌ D158-defer-fail-not-in-sig: throw requires Fail[E] в sig
     }
     7
 }

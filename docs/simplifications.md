@@ -12165,13 +12165,77 @@ capabilities; без неё Nova не достигает заявленной re
    DeferResult[T,E] prelude type + type-inference для T и E в точке defer-statement.
    Отложено на отдельную фазу. Текущие тесты используют `_result` (ignored).
 
-2. **okdefer body ограничен как defer/errdefer (INFALLIBLE+NO-SUSPEND)** — Plan 100.4.1
-   (failable body) и 100.4.2 (async/suspend) не реализованы. Когда они придут,
-   эти restrictions будут сняты.
+2. **okdefer body ограничен как defer/errdefer (NO-SUSPEND)** — Plan 100.4.2
+   (async/suspend) не реализован. Когда придёт, NO-SUSPEND restriction будет снят.
+   **Plan 100.4.1 (failable body, D158) ✅ закрыт 2026-05-26** — okdefer теперь
+   может содержать Fail-throws, если enclosing fn-sig объявляет Fail[E].
 
 3. **DeferWithResult runs on all paths** как plain defer (пока result не инжектируется).
    Финальное поведение (когда result injection будет готов): WithResult fires всегда
    (передаёт exit-reason в тело).
+
+## Plan 100.4.1: Failable cleanup body — D158 (2026-05-26)
+
+### Реализовано
+- Spec D158 (amend D90 §4): defer/errdefer/okdefer/defer-with-result body
+  может содержать Fail-throws (throw / ? / !! / Fail-call) если enclosing
+  fn-sig объявляет `Fail[E']`. Иначе compile error `D158-defer-fail-not-in-sig`.
+- Effect-checker (compiler-codegen/src/types/mod.rs): `check_defer_body` +
+  `check_defer_body_inner` + `check_defer_body_block` + `walk_defer_subexprs`
+  расширены параметром `current_fn_effects: &[TypeRef]` + поле
+  `DeferBodyCtx.inside_fail_handler_depth: usize` для отслеживания
+  `with Fail = effect Fail { ... }` wrap'ов (backward-compat silent suppress).
+- Runtime (compiler-codegen/nova_rt/effects.h):
+  - `NovaErrorChain` singly-linked list (msg/kind/payload/tid/next).
+  - `NovaFailFrame` расширен полем `error_suppressed: NovaErrorChain*`.
+  - `nv_compose_suppressed(primary, ...)` helper — appends к chain'у.
+  - `nova_rethrow_with_suppressed(frame)` — re-throw preserving chain.
+  - `nova_failframe_suppressed_count` / `_at` — accessors для MultiError.
+  - Все `nova_throw_*` теперь reset'ят `error_suppressed = NULL`.
+  - `NOVA_TRY` macro init'ит chain после fail_push.
+- Prelude (std/prelude/errors.nv): `type MultiError { readonly primary str;
+  readonly suppressed []str }` + методы `@primary()` / `@suppressed()` /
+  `@fmt_chain()`. Bootstrap string-based; production typed payload — Plan 100.4.4/5.
+- Parser fix (compiler-codegen/src/parser/mod.rs): bodyless empty-sum type
+  (Plan 72 P1-B) теперь правильно terminate'ится outer doc-comment `///`
+  (раньше parser ошибочно ожидал body после `type X\n\n\n///`).
+- 18 фикстур nova_tests/plan100_4_1/ (12 POS + 6 NEG), все PASS.
+
+### Упрощения vs spec D158
+
+1. **[M-100.4.1-emit-defer-wrap]** — emit_defer ещё НЕ оборачивает failable
+   defer bodies в NovaFailFrame setjmp для composition. Runtime
+   infrastructure (NovaErrorChain + nv_compose_suppressed) готова, но
+   codegen wrap отложен на followup (или Plan 100.4.4 multi-defer accumulation).
+   **Эффект:** Scenario A (defer-fail на normal exit) работает —
+   primary error propagates через outer fail-frame как обычно.
+   Scenario B/C (composite chain) — primary propagates, но suppressed chain
+   empty (cleanup-fail не композируется с propagating primary).
+   **Приоритет:** P2 — D158 valuable как checker-level enforcement
+   независимо от runtime composition; full Scenario B chain — production-
+   grade fitness, не блокирует 0.1.
+
+2. **[M-100.4.1-inline-handler-in-defer]** — `with Fail = effect Fail { ... }`
+   INLINE в defer body — codegen handler-vtable-inside-defer wiring
+   broken (undefined `_nova_handler_lit_N_impl_Fail_fail`). Existing
+   codegen для top-level with-block работает; nested-in-defer — нет.
+   **Workaround:** handler-wrap в отдельной fn вызываемой из defer
+   (см. `nova_tests/plan100_4_1/defer_fail_ok_with_explicit_handler.nv`).
+   **Приоритет:** P3 — handler-in-defer редкий pattern, workaround clean.
+
+3. **MultiError bootstrap string-based** — `primary: str` + `suppressed: []str`.
+   Production-grade typed payload (`primary: E1`, `suppressed: []E2`) — Plan
+   100.4.4 + 100.4.5 (после per-(T,E) Result mono для chain types).
+   **Приоритет:** P3 — string-based достаточно для bootstrap diagnostics;
+   typed inspection нужно для production library APIs.
+
+### Затронутые тесты
+- `nova_tests/plan100_4_1/`: **18/18 PASS** (12 POS + 6 NEG).
+- `nova_tests/plan100_4_3/neg_okdefer_throw_in_body.nv`: amended — было
+  EXPECT "throw not allowed", теперь EXPECT D158. okdefer body теперь
+  participate в D158 (D90 §4 amend universal).
+- `nova_tests/syntax/defer*`: 8/8 PASS (zero regression Plan 20 D90).
+
 
 ## Plan 103.2: Atomics full suite — D168 (2026-05-25)
 

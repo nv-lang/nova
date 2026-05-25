@@ -1,0 +1,20 @@
+// Plan 100.4.1 (D158): explicit `throw` expression в defer body —
+// разрешён если enclosing fn-sig declares Fail[E].
+
+module nova_tests.plan100_4_1.defer_fail_ok_with_explicit_throw
+
+type Err { msg str }
+
+fn cond_cleanup_failed() -> bool => false
+
+fn process() Fail[Err] -> () {
+    defer {
+        if cond_cleanup_failed() {
+            throw Err { msg: "cleanup-specific failure" }   // explicit throw в defer (D158)
+        }
+    }
+}
+
+test "explicit throw в defer body — D158 compile pass" {
+    process()
+}
