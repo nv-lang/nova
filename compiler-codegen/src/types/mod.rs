@@ -3372,9 +3372,19 @@ impl<'a> BoundCtx<'a> {
             ExprKind::TurboFish { base, type_args } => (base, type_args.as_slice()),
             _ => (func.as_ref(), &[][..]),
         };
+        // Plan 101.2 (D145 Ред. 5): method-call bound enforcement.
+        // `xs.desc()` где xs : []NoShow, desc объявлен как
+        // `fn[T Showable_] []T @desc`. Подставить T = NoShow,
+        // проверить satisfaction. Раньше check_call_bounds работал
+        // только для free-fn call'ов — method-dispatch with bounded
+        // receiver-generic не enforce'ился.
+        if let ExprKind::Member { obj, name: method_name } = &base.kind {
+            self.check_method_call_bounds(obj, method_name, e.span, scope, errors);
+            return;
+        }
         let fn_name = match &base.kind {
             ExprKind::Ident(n) => n.clone(),
-            _ => return, // РјРµС‚РѕРґС‹ Рё С‚.Рї. вЂ” РѕС‚РґРµР»СЊРЅР°СЏ Р·Р°РґР°С‡Р°
+            _ => return,
         };
         // D84: fn_decls вЂ” Vec<&FnDecl>. Р РµР·РѕР»РІ overload РїРѕ arity (С‚Рѕ, С‡С‚Рѕ
         // bound-checker РјРѕР¶РµС‚ РѕРїСЂРµРґРµР»РёС‚СЊ Р±РµР· full type-inference).
@@ -3430,6 +3440,75 @@ impl<'a> BoundCtx<'a> {
             for bound in &gp.bounds {
                 self.check_satisfaction(
                     concrete, bound, &gp.name, &fn_name, e.span, errors,
+                );
+            }
+        }
+    }
+
+    /// Plan 101.2 (D145 Ред. 5): bound enforcement для method-call
+    /// `obj.method(args)` где method объявлен с receiver-generic prefix
+    /// `fn[T Bound] []T @method` (или `fn[T Bound] T @method`). Inferим
+    /// concrete T из obj-type, для каждого bound checking satisfaction.
+    ///
+    /// **Surface**: только `fn[T] []T @method` (array-receiver) и
+    /// `fn[T] T @method` (bare-T receiver) — Plan 101.1 формы.
+    /// Tuple/Func/Map receivers — followup (V2 если нужно).
+    ///
+    /// **Best-effort**: если obj-type не resolvable или method
+    /// неоднозначен по arity — skip (silent, как и check_call_bounds
+    /// для free-fn'ов; codegen/runtime поймает на своём уровне).
+    fn check_method_call_bounds(
+        &self,
+        obj: &Expr,
+        method_name: &str,
+        span: Span,
+        scope: &HashMap<String, TypeRef>,
+        errors: &mut Vec<Diagnostic>,
+    ) {
+        // Inferим obj-type.
+        let Some(obj_ty) = Self::infer_arg_ty(obj, scope) else { return; };
+        // Определяем receiver-key и concrete substitution для T.
+        // Plan 101 surface:
+        //   []T  → key = "[]T", T = element type.
+        //   T    → key = "T",   T = obj-type whole (bare-receiver).
+        let (recv_key, concrete_t): (&str, TypeRef) = match &obj_ty {
+            TypeRef::Array(inner, _) => ("[]T", (**inner).clone()),
+            TypeRef::Named { path, .. } if path.last().map(|s| s.len()).unwrap_or(0) == 1 => {
+                // Bare-T receiver `fn[T] T @method` — но obj должен быть
+                // конкретным single-name type. Слишком permissive — skip
+                // если просто `[T]` без method_table-entry. Лучше: дождаться
+                // method-table lookup и если нашлось — substitute.
+                ("T", obj_ty.clone())
+            }
+            _ => return, // Non-array, non-single-name — skip.
+        };
+        // Lookup methods под этим receiver-key.
+        let Some(methods_for_recv) = self.method_table.get(recv_key) else { return; };
+        let Some(overloads) = methods_for_recv.get(method_name) else { return; };
+        // Take single match (skip if multiple overloads — codegen разрулит).
+        let callee: &FnDecl = match overloads.as_slice() {
+            [single] => single,
+            _ => return,
+        };
+        // Bounded generic-параметры?
+        if !callee.generics.iter().any(|g| !g.bounds.is_empty()) { return; }
+        // Substitution: для каждого generic-param с тем же именем что
+        // в receiver-type (T в []T или T в bare-T) — concrete_t. Для
+        // method-level generics (U, V, ...) — skip (нужен type-inference
+        // из args, что выходит за scope этого smoke check'а).
+        for gp in &callee.generics {
+            if gp.bounds.is_empty() { continue; }
+            // Только T matches receiver-substitution.
+            // Для recv_key="[]T" мы знаем что receiver-T это первый
+            // generic prefix (parser кладёт его первым). Для bare-T
+            // тоже первый. Substitute concrete_t для gp.name если он
+            // первый prefix-generic; для остальных — skip.
+            if callee.generics.first().map(|g| &g.name) != Some(&gp.name) {
+                continue;
+            }
+            for bound in &gp.bounds {
+                self.check_satisfaction(
+                    &concrete_t, bound, &gp.name, method_name, span, errors,
                 );
             }
         }

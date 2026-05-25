@@ -1,0 +1,30 @@
+// Plan 101.2 — negative: `fn[T Showable_] []T @method` где T не
+// удовлетворяет Showable_ (no @show()) — bound enforcement fires.
+//
+// EXPECT_COMPILE_ERROR does not satisfy `Showable_`
+
+module nova_tests.plan101_2.negative.receiver_bound_violation_neg
+
+
+type Showable_ protocol {
+    show() -> str
+}
+
+
+type NoShow {
+    n int
+}
+// NoShow специально без @show() метода.
+
+
+fn[T Showable_] []T @desc() -> str {
+    for x in @ { return x.show() }
+    "empty"
+}
+
+
+test "should error: NoShow does not satisfy Showable_" {
+    let xs []NoShow = [NoShow { n: 1 }]
+    let _ = xs.desc()
+    assert(1 == 1)
+}
