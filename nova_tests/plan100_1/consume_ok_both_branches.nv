@@ -12,7 +12,7 @@ type Transaction consume {
 fn Transaction consume @commit() -> () { () }
 fn Transaction consume @rollback() -> () { () }
 
-fn begin() -> Transaction => Transaction { id: 7 }
+fn begin() -> Transaction => { id: 7 }
 
 test "оба arm'а consume — branch join Consumed/Consumed = Consumed" {
     let condition = true

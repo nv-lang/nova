@@ -15,7 +15,7 @@ type Transaction consume {
 fn Transaction consume @commit() -> () { () }
 fn Transaction consume @rollback() -> () { () }
 
-fn begin() -> Transaction => Transaction { id: 1 }
+fn begin() -> Transaction => { id: 1 }
 
 test "consume только на then-branch — ошибка MaybeConsumed" {
     let condition = true

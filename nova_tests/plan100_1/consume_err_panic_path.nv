@@ -17,7 +17,7 @@ type Transaction consume {
 fn Transaction consume @commit() -> () { () }
 fn Transaction consume @rollback() -> () { () }
 
-fn begin() -> Transaction => Transaction { id: 1 }
+fn begin() -> Transaction => { id: 1 }
 
 test "panic между begin и commit — tx Live на panic-path" {
     consume tx = begin()

@@ -8,11 +8,6 @@ type Transaction consume {
     id int,
 }
 
-// D1 + generics: тип с generic params + consume.
-type Box consume {
-    value int,
-}
-
 fn begin() -> Transaction => { id: 1 }
 fn Transaction consume @commit() -> () { () }
 
