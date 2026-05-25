@@ -12105,8 +12105,8 @@ capabilities; без неё Nova не достигает заявленной re
     * 104.5 code actions/quick-fixes (~5 dev-day) — absorbs Plan 100.8
       Ф.2 + Plan 101 LSP V2 marker
     * 104.6 rename + format (~4 dev-day)
-    * 104.7 tree-sitter grammar (~3 dev-day, separate repo
-      `tree-sitter-nova`)
+    * 104.7 tree-sitter grammar ✅ ЗАКРЫТ 2026-05-25 (github.com/nv-lang/tree-sitter-nova
+      v0.1.0 — 84/84 fixtures, 5 query files, Helix/Zed/Neovim dist/)
     * 104.8 editor packaging (~3 dev-day)
     * 104.9 close-out (~2 dev-day)
 
