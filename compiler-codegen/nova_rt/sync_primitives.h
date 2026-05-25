@@ -1089,9 +1089,10 @@ typedef struct NovaOnceWaiter {
 
 /* ── Once ──────────────────────────────────────────────────────── */
 
-#define NOVA_ONCE_NEW     0   /* not yet started */
-#define NOVA_ONCE_RUNNING 1   /* one fiber is executing the once-body */
-#define NOVA_ONCE_DONE    2   /* body complete, state is permanent */
+#define NOVA_ONCE_NEW      0   /* not yet started */
+#define NOVA_ONCE_RUNNING  1   /* one fiber is executing the once-body */
+#define NOVA_ONCE_DONE     2   /* body complete, state is permanent */
+#define NOVA_ONCE_POISONED 3   /* call_once body panicked — subsequent calls re-panic */
 
 /* Once guarantees that a body executes exactly once even under concurrency.
  *
@@ -1172,6 +1173,18 @@ static inline nova_bool Nova_Once_method_run(Nova_Once* o) {
  * Must be called exactly once, by the fiber that received true from run(). */
 static inline nova_unit Nova_Once_method_done(Nova_Once* o) {
     nova_mutex_lock(&o->mu);
+    /* Plan 103.5: always check (not just in NOVA_DEBUG) — calling done() on a
+     * Fresh/Done/Poisoned Once is always a programming error that must surface
+     * as a Nova runtime panic (nova_throw path), not a silent no-op.
+     * NOVA_SYNC_ASSERT would be a no-op in Dev/Release builds.
+     * Note: cannot use NOVA_ONCE_REPANIC here — that macro is defined later in
+     * this file (before call_once). nova_throw / Nova_Fail_fail come from
+     * effects.h which is included before sync_primitives.h in nova_rt.h. */
+    if (o->state != NOVA_ONCE_RUNNING) {
+        nova_mutex_unlock(&o->mu);
+        Nova_Fail_fail(nova_str_from_cstr("Once.done() called without a matching run() returning true"));
+        nova_throw(nova_str_from_cstr("Once.done() called without a matching run() returning true"));
+    }
     NOVA_SYNC_ASSERT(o->state == NOVA_ONCE_RUNNING,
                      "Once.done() called without a matching run() returning true");
     /* Release-store: makes the body's side-effects visible to all callers
@@ -1186,6 +1199,175 @@ static inline nova_unit Nova_Once_method_done(Nova_Once* o) {
         w = next;
     }
     return NOVA_UNIT;
+}
+
+/* ── OnceState (Plan 103.5) ────────────────────────────────────────────
+ *
+ * Pre-declared here so Nova_Once_method_state can reference Nova_OnceState*
+ * before the generated code defines it. Tag values must match the variant
+ * ORDER declared in std/runtime/sync.nv (OnceState type):
+ *   Fresh=0  Running=1  Done=2  Poisoned=3
+ * This is coordinated with emit_c.rs (RUNTIME_DEFINED_TYPES "OnceState")
+ * and documented in D171.
+ */
+typedef enum {
+    NOVA_TAG_OnceState_Fresh    = 0,
+    NOVA_TAG_OnceState_Running  = 1,
+    NOVA_TAG_OnceState_Done     = 2,
+    NOVA_TAG_OnceState_Poisoned = 3,
+} Nova_OnceState_Tag;
+
+typedef struct Nova_OnceState Nova_OnceState;
+struct Nova_OnceState {
+    Nova_OnceState_Tag tag;
+    union { char _dummy; } payload;   /* unit-only variants — MSVC requires ≥1 member */
+};
+
+/* Constructors — normally emitted by emit_sum_type; here because OnceState
+ * is in RUNTIME_DEFINED_TYPES (emit_sum_type is skipped). */
+static inline Nova_OnceState* nova_make_OnceState_Fresh(void) {
+    Nova_OnceState* _r = (Nova_OnceState*)nova_alloc(sizeof(Nova_OnceState));
+    _r->tag = NOVA_TAG_OnceState_Fresh; return _r;
+}
+static inline Nova_OnceState* nova_make_OnceState_Running(void) {
+    Nova_OnceState* _r = (Nova_OnceState*)nova_alloc(sizeof(Nova_OnceState));
+    _r->tag = NOVA_TAG_OnceState_Running; return _r;
+}
+static inline Nova_OnceState* nova_make_OnceState_Done(void) {
+    Nova_OnceState* _r = (Nova_OnceState*)nova_alloc(sizeof(Nova_OnceState));
+    _r->tag = NOVA_TAG_OnceState_Done; return _r;
+}
+static inline Nova_OnceState* nova_make_OnceState_Poisoned(void) {
+    Nova_OnceState* _r = (Nova_OnceState*)nova_alloc(sizeof(Nova_OnceState));
+    _r->tag = NOVA_TAG_OnceState_Poisoned; return _r;
+}
+
+/* call_once(): panic-safe primary API (Plan 103.5, D171).
+ *
+ * Runs `body` exactly once. `body` is a no-arg closure: fn() -> ()
+ * whose C layout is { void* fn; void* env } (NovaClosBase).
+ *
+ * Panic-safety contract:
+ *   - If body panics: state → POISONED (permanent).
+ *   - All waiting fibers are woken; they also re-panic.
+ *   - Subsequent call_once() on a poisoned Once always re-panics.
+ *
+ * Concurrent callers while RUNNING: park (fiber) / spin (non-fiber)
+ * until the runner finishes, then return normally (DONE) or re-panic (POISONED).
+ */
+/* Plan 103.5 helper: throw a poison re-panic through the effect system
+ * (Nova_Fail_fail), then fall through to nova_throw as raw fallback.
+ * Used wherever Once/OnceCell/Lazy re-panics on poisoned state. */
+#define NOVA_ONCE_REPANIC(msg) \
+    do { \
+        Nova_Fail_fail(nova_str_from_cstr(msg)); \
+        nova_throw(nova_str_from_cstr(msg));  /* unreachable if Nova_Fail_fail throws */ \
+    } while(0)
+
+static inline nova_unit Nova_Once_method_call_once(Nova_Once* o, NovaClosBase* body) {
+    /* Fast path A: already done — no-op. */
+    int _st = __atomic_load_n(&o->state, __ATOMIC_ACQUIRE);
+    if (_st == NOVA_ONCE_DONE) return NOVA_UNIT;
+    /* Fast path B: poisoned — re-panic through effect system. */
+    if (_st == NOVA_ONCE_POISONED)
+        NOVA_ONCE_REPANIC("Once: poisoned by a previous call_once panic");
+
+    nova_mutex_lock(&o->mu);
+
+    if (o->state == NOVA_ONCE_DONE) {
+        nova_mutex_unlock(&o->mu);
+        return NOVA_UNIT;
+    }
+    if (o->state == NOVA_ONCE_POISONED) {
+        nova_mutex_unlock(&o->mu);
+        NOVA_ONCE_REPANIC("Once: poisoned by a previous call_once panic");
+    }
+    if (o->state == NOVA_ONCE_RUNNING) {
+        /* Another fiber is executing the body — wait. */
+        if (_nova_active_slot < 0) {
+            /* Non-fiber: spin until DONE or POISONED. */
+            nova_mutex_unlock(&o->mu);
+            for (;;) {
+                _nova_cpu_yield();
+                _st = __atomic_load_n(&o->state, __ATOMIC_ACQUIRE);
+                if (_st == NOVA_ONCE_DONE) return NOVA_UNIT;
+                if (_st == NOVA_ONCE_POISONED)
+                    NOVA_ONCE_REPANIC("Once: poisoned by a previous call_once panic");
+            }
+        }
+        /* Fiber: park until done() / call_once sets terminal state. */
+        NovaOnceWaiter _oc_w;
+        _oc_w.scope    = _nova_active_scope;
+        _oc_w.slot     = _nova_active_slot;
+        _oc_w.next     = o->waiters;
+        o->waiters     = &_oc_w;
+        nova_sched_park_with_unlock(_nova_active_scope, _nova_active_slot,
+                                     (void(*)(void*))nova_mutex_unlock, &o->mu);
+        /* Woken by runner — check resulting state. */
+        _st = __atomic_load_n(&o->state, __ATOMIC_ACQUIRE);
+        if (_st == NOVA_ONCE_DONE) return NOVA_UNIT;
+        NOVA_ONCE_REPANIC("Once: poisoned by a previous call_once panic");
+    }
+
+    /* state == NEW: we become the runner. */
+    o->state = NOVA_ONCE_RUNNING;
+    nova_mutex_unlock(&o->mu);
+
+    /* Run body with panic capture.
+     * Plan 103.5: temporarily clear _nova_handler_Fail so that `throw` inside
+     * the body goes through nova_throw → NOVA_TRY, not through a user-installed
+     * `with Fail { interrupt () }` handler that would bypass NOVA_TRY and leave
+     * Once stuck in RUNNING state. We re-throw via Nova_Fail_fail after state
+     * is finalized so user handlers see the panic. */
+    NovaVtable_Fail* _oc_saved_fail = _nova_handler_Fail;
+    _nova_handler_Fail = NULL;
+
+    NovaFailFrame _oc_frame;
+    nova_bool     _oc_panicked = false;
+    nova_str      _oc_msg;
+    if (NOVA_TRY(_oc_frame)) {
+        ((nova_unit(*)(void*))body->fn)(body->env);
+        nova_fail_pop(); /* success: pop our TRY frame */
+    } else {
+        _oc_panicked = true;
+        _oc_msg = NOVA_CATCH(_oc_frame); /* catch: pops frame + returns msg */
+    }
+
+    /* Restore user handler before finalizing + re-throw. */
+    _nova_handler_Fail = _oc_saved_fail;
+
+    /* Finalize state and wake all waiters. */
+    nova_mutex_lock(&o->mu);
+    __atomic_store_n(&o->state,
+                     _oc_panicked ? NOVA_ONCE_POISONED : NOVA_ONCE_DONE,
+                     __ATOMIC_RELEASE);
+    NovaOnceWaiter* _oc_waiters = o->waiters;
+    o->waiters = NULL;
+    nova_mutex_unlock(&o->mu);
+    while (_oc_waiters) {
+        NovaOnceWaiter* _oc_next = _oc_waiters->next;
+        nova_sched_wake(_oc_waiters->scope, _oc_waiters->slot);
+        _oc_waiters = _oc_next;
+    }
+
+    /* Re-throw through user handler (Nova_Fail_fail), then nova_throw fallback. */
+    if (_oc_panicked) { Nova_Fail_fail(_oc_msg); nova_throw(_oc_msg); }
+    return NOVA_UNIT;
+}
+
+/* is_completed(): returns true iff state == DONE (body ran successfully).
+ * Returns false for Fresh, Running, and Poisoned states. */
+static inline nova_bool Nova_Once_method_is_completed(Nova_Once* o) {
+    return __atomic_load_n(&o->state, __ATOMIC_ACQUIRE) == NOVA_ONCE_DONE;
+}
+
+/* state(): returns heap-allocated OnceState reflecting current state.
+ * Mapping: Fresh=0, Running=1, Done=2, Poisoned=3. */
+static inline Nova_OnceState* Nova_Once_method_state(Nova_Once* o) {
+    int _st = __atomic_load_n(&o->state, __ATOMIC_ACQUIRE);
+    Nova_OnceState* _r = (Nova_OnceState*)nova_alloc(sizeof(Nova_OnceState));
+    _r->tag = (Nova_OnceState_Tag)_st;
+    return _r;
 }
 
 /* nova_fn_fence — implements `export external fn fence(ord MemOrdering)`.
