@@ -1,323 +1,297 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-# Plan 103 — формализация `std.runtime.sync` примитивов в spec
+# Plan 103 — `std.runtime.sync` production-grade spec + API expansion (roadmap)
 
-> **Статус:** 📋 proposed 2026-05-25, не начат
-> **Приоритет:** P1 — spec-drift closure, не блокирует релиз; но без
-> формализации D-блока публичный контракт API не зафиксирован.
-> **Оценка:** малая (~1–1.5 дня), только документация и пересборка spec.
-> **Зависимости:** Plan 18 Шаг 1 ✅ (shipped sync.nv/sync_primitives.h),
-> Plan 21 ✅ (Channel revision), Plan 83.3 ✅ (Blocking).
-> **Связь:** Plan 18 (stdlib roadmap, обновляется этим планом).
+> **Статус:** 🟡 roadmap 2026-05-25, **P1** (spec-drift closure + API completeness)
+> **Приоритет:** master закрывает spec-drift; sub-plans 103.1-103.8 ранжированы по dependency.
+> **Оценка:** ~12-16 dev-day (8 sub-plans, ~1.5-2 dev-day каждый).
+> **Зависимости:** Plan 18 Шаг 1 ✅ (shipped baseline), Plan 21 ✅ (Channel — preferred default), Plan 83.3 ✅ (Blocking), Plan 82 ✅ (M:N stable), Plan 44.1 Ф.1 ✅ (sync.h backend selector + memory ordering).
+> **Связь:** Plan 18 (stdlib roadmap, наследуется этим планом), Plan 91 (std MVP — sync **не** в MVP, но обещание Q12.4 v1.0).
 
-## Зачем
+## Цель и контекст
 
-В `std/runtime/sync.nv` уже зашиплены production-grade `AtomicInt`,
-`AtomicBool`, `Mutex`, `WaitGroup`, `Once` (Plan 18 Шаг 1) — со
-`#stable(since = "0.1")` маркерами на каждом API. C-impl в
-`compiler-codegen/nova_rt/sync_primitives.h` (fair-FIFO mutex, fiber
-park/wake через `nova_sched`, acq/rel memory ordering).
+В `std/runtime/sync.nv` шиплены production-baseline `AtomicInt`/
+`AtomicBool`/`Mutex`/`WaitGroup`/`Once` (Plan 18 Шаг 1, `#stable since
+"0.1"`). В spec — три противоречивых утверждения:
 
-Spec в трёх разных местах говорит **противоречивое**:
+| Место | Утверждение | Статус |
+|---|---|---|
+| `06-concurrency.md` §1531-1597 | «Mutex / Atomic — НЕ в spec» | устарело |
+| `06-concurrency.md` §641 | «Mutex/Atomic отвергнуты в пользу channel-only» | устарело |
+| `open-questions.md` Q12.4 v1.0 §396 | «Mutex, RwLock, Atomic[T] как stdlib-типы» | обещание |
+| `open-questions.md` Q9 §274 | «Точные API — открыто» | открыто |
+| `open-questions.md` Q-memory-model §1665 | «Memory model между fibers — фиксировать в D14 production» | открыто |
+| `04-effects.md` §4302-4304 | `Atomic[int].new(0)` как canonical example | implicit promise |
 
-| Место | Что говорит |
-|---|---|
-| `06-concurrency.md` §1531–1597 «Mutex / Atomic — НЕ в spec» | «нижнеуровневые, легко misuse, не AI-friendly; owner-actor pattern закрывает 99% use case'ов» |
-| `06-concurrency.md` §641 «Открытые вопросы к D50» | «`Mutex`/`Atomic` отвергнуты в пользу channel-only модели» |
-| `open-questions.md` Q12.4 v1.0-плана (§396) | «`Mutex`, `RwLock`, `Atomic[T]` как stdlib-типы (Q12.4)» — **запланировано** |
-| `open-questions.md` Q9 (§274) | «Точные API `Mutex`, `RwLock`, `Atomic[T]` — открыто» |
-| `04-effects.md` §4302–4304 | использует `Atomic[int].new(0)` как canonical example |
+Параллельно текущий baseline — **функционально неполный** vs production-grade
+(Go `sync`, Rust `std::sync` + `parking_lot`, Java `j.u.c`, Kotlin
+`kotlinx.atomicfu` + `j.u.c`):
 
-То есть Plan 18 Шаг 1 — это **выполнение обещания Q12.4 v1.0-плана**, а
-не нарушение спеки. Но §1531–1597 и §641 остались как устаревшие
-декларации «не делаем». Plan 103 закрывает этот drift и фиксирует
-точный API.
+- **Memory orderings** в Nova-side жёстко acq_rel/acquire/release — все
+  ordering варианты есть в C-слое (`sync.h` Plan 44.1) но не exposed.
+  Industry: 5 orderings (Relaxed/Acquire/Release/AcqRel/SeqCst).
+- **Atomics:** только `AtomicInt`/`AtomicBool`. Industry: `AtomicI8`/
+  `I16`/`I32`/`I64`/`U8`/`U16`/`U32`/`U64`/`Usize`/`Isize`/`Ptr`/
+  `Bool` — каждый с полным operation suite.
+- **Atomic operations:** только `load`/`store`/`fetch_add`/`fetch_sub`/
+  `compare_exchange`/`swap`. Industry: `fetch_or`/`and`/`xor`/`max`/
+  `min`/`nand`, `compare_exchange_weak`, `fence`.
+- **Mutex extras:** нет `try_lock_for(Duration)`, нет `is_locked()`
+  observability, нет `with_lock(fn)` RAII-helper.
+- **Mutex variants:** нет `ReentrantMutex` (Java), нет `RwLock`
+  (Rust/Go/Java).
+- **Coordination:** нет `Semaphore` (Java/Tokio), нет `Barrier`
+  (Java CyclicBarrier/Rust), нет `Condvar` (Rust/Java Condition), нет
+  `CountDownLatch` (Java — частично пересекается с WaitGroup).
+- **One-shot init:** есть только `Once` с двух-шаговым `run()/done()`
+  pattern (не closure-form). Нет `OnceCell[T]` value-capturing, нет
+  `Lazy[T]` auto-init-on-first-access (Rust once_cell, Kotlin `by lazy`).
+- **Realtime/Blocking interaction** не зафиксирована: `Mutex.lock()`
+  может park → запрещён в `realtime { }`, но spec-правило отсутствует.
 
-Без D-блока:
-- публичный API `AtomicInt`/`Mutex`/`WaitGroup`/`Once` не имеет
-  spec-якоря — будущие изменения не имеют процесса согласования;
-- LSP / `nova info` не могут показать «stable since 0.1» с ссылкой;
-- противоречие в spec'е путает читателя (что верно — §1531 «не делаем»
-  или Q12.4 «делаем»?).
+Цель Plan 103: **закрыть spec-drift И достичь паритета (или превосходства)
+с Go/Rust/TS/Kotlin для concurrency primitives** — без потери
+«owner-actor pattern preferred default» позиции спеки.
 
-## Scope
+## Дизайн-философия (Nova edge)
 
-### In scope
+| Решение | Nova | Go | Rust | TS Atomics | Kotlin/Java |
+|---|---|---|---|---|---|
+| **Preferred default** | Channel (D79) + actor | Channel | Mutex/RwLock — равнозначны Channel | Только Atomics (SharedArrayBuffer) | Channel/Flow + Mutex/Atomics |
+| **Mutex data-carrying** (`Mutex<T>`) | ❌ нет — Go-style без T | ❌ | ✅ `Mutex<T>` | n/a | ❌ |
+| **Poisoning** (lock poisoned on panic) | ❌ нет | ❌ | ✅ `LockResult` | n/a | ❌ |
+| **Fairness default** | ✅ fair FIFO | unfair (runtime decides) | unfair (`parking_lot`) / fair (`std`) | n/a | unfair (`ReentrantLock(false)`) |
+| **`Mutex` reentrant default** | ❌ non-reentrant; opt-in `ReentrantMutex` | ❌ | ❌ | n/a | `ReentrantLock` default; `sync` block reentrant |
+| **Memory ordering API** | ✅ Full 5-variant Ordering enum | ❌ только seq_cst | ✅ 5-variant Ordering | ✅ implicit seq_cst | ✅ VarHandle access modes (4) |
+| **Fiber-aware park/wake** | ✅ через `nova_sched` | ✅ goroutine park | ⚠ thread-blocking | n/a (single-thread) | ✅ coroutine suspend |
+| **Realtime-safe атомики** | ✅ lock-free на leaf | ⚠ implicit | ⚠ implicit | ✅ guaranteed | ⚠ implicit |
+| **GC-aware (no scan of raw ptr)** | ✅ `AtomicPtr` через managed ref | ✅ implicit | ⚠ unsafe для `AtomicPtr<T>` | n/a | ✅ AtomicReference |
+| **Type-checker enforcement Realtime ban** | ✅ Plan 103.6 | ❌ | ❌ | ❌ | ❌ |
+| **AI-first guidance baked in spec** | ✅ D-блок «когда что использовать» | partial | partial | minimal | partial |
+| **`OnceCell`/`Lazy` value-capturing** | ✅ 103.5 | ❌ только `sync.Once` | ✅ (`once_cell` crate, stdlib in 1.70+) | ❌ | ✅ `by lazy {}` |
+| **`Semaphore`/`Barrier`/`Condvar`** | ✅ 103.4 | ⚠ через channels (idiomatic) | ✅ | ❌ | ✅ |
+| **Generic Atomic[T]** | ❌ моно (AtomicI32/U64/...) — generic codegen блокер | ❌ AtomicInt32/64 separate | ✅ generic seal | n/a | ❌ AtomicInteger/Long separate |
+| **Lock guards via linear types (`MutexGuard consume`)** | ⏳ V2 через Plan 100.7 (sub-plan 103.9, gated) | ❌ pure imperative `Lock()/Unlock()` | ✅ `MutexGuard<T>` RAII drop=unlock | n/a | ❌ `synchronized` block (lexical) |
 
-- **Новый D-блок D167** в `spec/decisions/06-concurrency.md`:
-  формализация API `AtomicInt`/`AtomicBool`/`Mutex`/`WaitGroup`/`Once`
-  с точными сигнатурами (verbatim из `std/runtime/sync.nv`), memory
-  ordering, контракты (fair-FIFO, not-reentrant, exactly-once).
-- **Переписать §1531–1597** «Mutex / Atomic — НЕ в spec» как «Mutex
-  и Atomic зашиплены через stdlib (см. D167); prelude/owner-actor
-  остаётся preferred default».
-- **Обновить §641** ссылку «Mutex/Atomic отвергнуты» → «Mutex/Atomic
-  — stdlib (D167), не prelude».
-- **Закрыть Q9 и Q12.4 в `open-questions.md`** в части
-  `Atomic`/`Mutex`/`WaitGroup`/`Once`; `RwLock`/`Semaphore`/`Atomic[T]
-  generic` остаются открытыми (см. ниже).
-- **Consistency-check:** Nova-side декларации в `sync.nv` точно
-  совпадают с C-impl в `sync_primitives.h` (имена методов,
-  arity, ordering documented), и оба совпадают с D167.
-- **Обновить Plan 18:** Шаг 1 ✅ ЗАКРЫТО (с реальным составом,
-  отличается от исходного дизайна — см. ниже), статус Plan 18
-  «proposal, не начат» → «частично выполнено, остаток — Plan 91 + 18
-  fs/net/http».
+**Nova edge** vs четырёх референсов:
+1. **AI-first guidance в spec** (когда channel vs mutex vs atomic — не tribal знание, а D-блок).
+2. **Type-checker enforcement** `realtime { }` ban на park-ing методы — none of Go/Rust/Java/Kotlin не enforce этого статически.
+3. **Fiber-aware park без OS-thread block** + GC-aware integration (managed ptr atomics).
+4. **Fair FIFO mutex default** (vs unfair как у Go/parking_lot/Java по умолчанию) — для AI-generated кода предсказуемость важнее throughput.
+5. **No poisoning** (vs Rust) — упрощает AI codegen, нет `LockResult<...>` обёртки.
+6. **No data-carrying Mutex<T>** (vs Rust) — упрощает type system, sample-style Go API.
+7. **Full Ordering API** (vs Go который скрывает) + **default = SeqCst** для simple-API methods (vs Rust где нужно указывать ordering всегда).
 
-### Out of scope
+Что **не делаем** vs industry:
+- Rust `Mutex<T>` / `RwLock<T>` data-carrying — overhead на type system, не stoit Rust pattern на Nova.
+- Rust poisoning — добавляет `LockResult` к каждому lock; усложняет AI codegen.
+- Rust `unsafe` для raw pointer atomics — Nova managed memory, `AtomicPtr` работает через GC-managed reference.
+- Java `synchronized` keyword — Mutex как value лучше.
+- Java `volatile` — `AtomicX` явно лучше.
+- Generic `Atomic[T]` для произвольных типов — текущий codegen блокер (`[M-fn-prefix-int-only-mono]`); моно-типы для primitive types достаточно.
 
-Декомпозируется в отдельные следующие планы:
+## Consume types (Plan 100) integration
 
-- **`RwLock`** — не реализован. Plan 18 Шаг 5 «std.sync остаток
-  (Once, RwLock, Semaphore)». Once реализован, RwLock и Semaphore —
-  нет. Отдельный план, когда возникнет use case.
-- **`Semaphore`** — то же.
-- **`Atomic[T]` generic** — текущая реализация моно-типы
-  (`AtomicInt`/`AtomicBool`), не generic `Atomic[T]`. Generic-версия
-  требует Plan 101 `fn[T]` mono fix (`[M-fn-prefix-int-only-mono]`)
-  + `Atomic[ptr]`/`Atomic[u64]` отдельные C-impl'ы. Отдельный план.
-- **User-configurable memory ordering** (relaxed/seq_cst/etc.) —
-  текущая impl жёстко acq_rel/acquire/release. Если возникнет need
-  для relaxed (lock-free queues) — отдельный план.
-- **Mutex с типизированной guard'ой** (Rust `Mutex<T>` data-carrying
-  стиль) — текущий `Mutex` Go-style (без `T`). Решение пользователя:
-  фиксировать как окончательный дизайн или предусмотреть migration
-  path в `Mutex[T]`. Отдельный design Q.
-- **Реализация D167 в коде** — Plan 103 только документирует уже
-  существующую реализацию. Если в Ф.4 consistency-check выявит
-  расхождения impl↔doc — fix-ы делаются inline (мелкие), либо
-  декомпозируются.
-- **Всё остальное в `std/`** (concurrency/cancellation, rate_limiter,
-  retry, timer; identifiers/ulid/uuid/snowflake; crypto/*;
-  encoding/*; data/sql; и т.д.) — отдельный аудит «есть в std, нет
-  в spec» (Plan 103 candidate, не начат).
+Plan 100 (`linear-must-consume.md`, P3) вводит `consume` тип-модификатор —
+аналог Rust linear types без lifetime. **Key insight:** consume применим
+к **resource-like** sync примитивам (lock guards, permits), **не** к
+**shared-state** atomics:
 
-## Фазы
+| Тип | Consume применим? | Почему |
+|---|---|---|
+| `AtomicI*` / `AtomicU*` / `AtomicBool` / `AtomicPtr` | ❌ нет | Shared state, не resource. Операции не «consume'ят» значение. AtomicInt живёт сколько надо, доступен из N fiber'ов одновременно. |
+| `Mutex.lock() → MutexGuard consume` | ✅ canonical | RAII drop = unlock. Защита от unlock-без-lock и double-unlock **статически**. Plan 100.7 явно перечисляет Mutex pilot. |
+| `RwLock.read/write → ReadGuard/WriteGuard consume` | ✅ да | Аналог Mutex; два distinct guard типа. |
+| `Semaphore.acquire() → Permit consume` | ✅ да | Permit drop'ает обратно в семафор; защита от забытого release. |
+| `Condvar.wait(guard) → new guard consume` | ✅ да | wait требует mutex держится; consume передаёт guard через wait. |
+| `Once.start() → OnceGuard consume` | ✅ полезно | distinct `.commit()` vs `.abort()` (Plan 100 P-преимущество). |
+| `WaitGroup` / `Barrier` / `CountDownLatch` / `OnceCell` / `Lazy` | ❌ нет | Shared coordination, не resources. |
 
-### Ф.0 — Pre-audit consistency (~0.3д)
+**Стратегия (V1 без consume + future migration sub-plan):**
 
-Перед написанием D167 проверить, что Nova-side и C-side не разошлись:
+- **V1 (Plan 103.1-103.8):** lock-family и coordination примитивы шипятся
+  с традиционным `lock()/unlock()`, `acquire()/release()` API. Plan 103
+  закрывает spec-drift сейчас, не блокируясь готовностью Plan 100 (P3).
+- **V1 mitigation:** обязательный `with_lock(fn)` / `with_read(fn)` /
+  `with_write(fn)` / `with_permit(fn)` helpers в каждом sub-plan'е —
+  closure-form preferred pattern, защищает от забытого release через
+  Plan 20 `defer`. `lock()/unlock()` остаётся как low-level escape hatch.
+- **V2 (Plan 103.9 — gated on Plan 100.7):** `Mutex.lock()` начинает
+  возвращать `MutexGuard consume`; helpers становятся thin wrappers;
+  старый bare `unlock()` deprecated с migration path. Semver-bump.
+  Sub-plan 103.9 — placeholder, не starts пока Plan 100 не готов.
 
-- **Ф.0.1** Сравнить сигнатуры в `std/runtime/sync.nv`
-  (`AtomicInt @load -> int` и т.д.) с inline C
-  `Nova_AtomicInt_method_load(const Nova_AtomicInt* a) -> nova_int` в
-  `compiler-codegen/nova_rt/sync_primitives.h`. Для каждого метода —
-  arity, types, mut-receiver, return-type. Расхождения → таблица.
-- **Ф.0.2** Сравнить memory-ordering claims в doc-comments sync.nv
-  (acquire/release/acq_rel) с реальными `__atomic_*` calls в .h.
-  Любое несоответствие фиксируется как баг.
-- **Ф.0.3** Проверить `#stable(since = "0.1")` маркеры — все ли
-  методы помечены (включая `swap`, `compare_exchange`, `try_lock`).
-- **Ф.0.4** Decision point: если расхождений нет — переходим к Ф.1.
-  Если есть мелкие — fix inline. Если крупные — отдельный
-  bug-fix plan, Plan 103 ждёт.
+**Почему V1 без consume:**
+- Plan 100 P3 (polish, ~43 dev-day, не блокер 0.1) — далеко от готовности.
+- Plan 103 P1 — Q9/Q12.4/Q-memory-model должны закрыться сейчас, не ждать.
+- API design V1 готовится к V2-non-breaking-add: с `with_lock(fn)`
+  паттерном пользователь редко видит bare `lock/unlock`, V2 migration
+  ломает мало кода.
 
-Acceptance: один краткий audit-report (можно в самом Plan 103
-appendix), нет open inconsistencies.
-
-### Ф.1 — D167 draft (~0.5д)
-
-Добавить новый D-блок в `spec/decisions/06-concurrency.md` (после D79
-Channels — концептуально соседи: D79 = channels, D167 = sync
-primitives как complement). Структура — каноническая для D-блоков:
+## Декомпозиция (9 sub-plans; V1 = 103.1-103.8, V2 = 103.9)
 
 ```
-## D167. `std.runtime.sync` — fiber-aware sync primitives (Plan 18 Шаг 1)
-
-### Что
-- `AtomicInt`, `AtomicBool`, `Mutex`, `WaitGroup`, `Once`
-- Module: `runtime.sync` (под std/runtime/, не prelude)
-- Все API: `#stable(since = "0.1")`
-
-### Правило
-[точные сигнатуры verbatim из sync.nv для каждого типа]
-
-### Memory ordering
-- Atomic load: acquire
-- Atomic store: release
-- Atomic fetch_add/sub/swap/compare_exchange: acq_rel
-- Once.run() fast path: acquire-load (DONE → terminal)
-- Once.done(): release-store
-
-### Контракты (runtime-invariants)
-- Mutex: NOT reentrant, fair FIFO, ownership transfer на unlock
-- WaitGroup: add() happens-before wait() (Go-style)
-- Once: run() returns true ⇒ done() MUST be called exactly once
-- Non-fiber path (slot < 0): spin с CPU yield hint вместо park
-
-### Почему
-- Closes Q12.4 v1.0-plan (stdlib-типы) и Q9 (точные API)
-- Owner-actor pattern (D79) остаётся preferred default — D167
-  для случаев когда actor избыточен (perf-critical counters,
-  one-shot ownership)
-- Implementation: Plan 18 Шаг 1; C-impl
-  `compiler-codegen/nova_rt/sync_primitives.h`; Nova-side
-  декларации `std/runtime/sync.nv`
-
-### Что отвергнуто (для V1)
-- `Atomic[T]` generic — пока моно-типы (AtomicInt/Bool)
-- `Mutex[T]` data-carrying (Rust-style) — выбран Go-style без `T`
-- `RwLock`, `Semaphore` — отложены до use case
-- User-configurable memory ordering — жёстко acq_rel/acquire/release
-
-### Связь
-- D79 (Channels) — preferred default; D167 — escape hatch
-- D14, D50, D71 — fiber-runtime подложка (park/wake API)
-- Plan 18 Шаг 1 — реализация
-- Plan 103 — этот план (формализация)
+                                ┌──────────────────────────┐
+                                │  103.1  Memory Ordering  │  foundation
+                                │   (Ordering enum + fence │  closes Q-memory-model
+                                │   + happens-before spec) │
+                                └────────┬─────────────────┘
+                                         │
+                  ┌──────────────────────┼──────────────────────┐
+                  ▼                      ▼                      ▼
+        ┌─────────────────┐   ┌────────────────────┐   ┌────────────────┐
+        │  103.2 Atomics  │   │  103.3 Mutex/RwLock│   │  103.5 Once /  │
+        │  full suite     │   │  /ReentrantMutex   │   │  Lazy /        │
+        │  (sized + ops + │   │  family            │   │  OnceCell      │
+        │  weak CAS +     │   │                    │   │                │
+        │  AtomicPtr)     │   └─────────┬──────────┘   └────────────────┘
+        └─────────────────┘             │
+                                        ▼
+                              ┌────────────────────┐
+                              │  103.4 Coordination│
+                              │  (Semaphore +      │
+                              │  Barrier +         │
+                              │  CountDownLatch +  │
+                              │  Condvar)          │
+                              └────────────────────┘
+                                        │
+                                        ▼
+                              ┌────────────────────────────┐
+                              │  103.6 Realtime/Blocking   │
+                              │  type-checker enforcement  │
+                              │  (orthogonal — все 103.2-5)│
+                              └────────────┬───────────────┘
+                                           │
+                  ┌────────────────────────┴───────────────────┐
+                  ▼                                            ▼
+        ┌─────────────────────────────┐         ┌─────────────────────┐
+        │  103.7  Spec D-блоки        │         │  103.8  Conformance │
+        │  D167-D173 + AI-first       │         │  + stress + litmus  │
+        │  guidance + Q closure       │         │  + audit + close    │
+        └──────────────┬──────────────┘         └──────────┬──────────┘
+                       │                                   │
+                       └───────────────┬───────────────────┘
+                                       │
+                                       ▼ V1 closed
+                       ──────────────────────────────────
+                       (V2 — gated на Plan 100.7 ready)
+                                       │
+                                       ▼
+                       ┌───────────────────────────────────┐
+                       │  103.9  Consume guards migration  │
+                       │  MutexGuard / ReadGuard /         │
+                       │  WriteGuard / Permit / OnceGuard  │
+                       │  как `consume`-типы. Plan 100.7   │
+                       │  pilot site = std.runtime.sync.   │
+                       │  Semver-bump. NO consume для      │
+                       │  atomics/WaitGroup/Barrier (M16). │
+                       └───────────────────────────────────┘
 ```
 
-Acceptance: D167 в `06-concurrency.md`, `grep "^## D167"` находит.
+| # | Sub-plan | Scope | Зависимости | Оценка |
+|---|---|---|---|---|
+| **103.1** | [Memory ordering API](103.1-memory-ordering-api.md) | `Ordering { Relaxed, Acquire, Release, AcqRel, SeqCst }` enum + `fence(Ordering)` функция + happens-before contract в spec. Закрывает Q-memory-model. Foundation для 103.2-3. | — | ~1 d |
+| **103.2** | [Atomics full suite](103.2-atomics-full-suite.md) | `AtomicI8/I16/I32/I64/U8/U16/U32/U64/Usize/Isize/Bool/Ptr` — 12 типов. Каждый: `load/store/swap/compare_exchange/compare_exchange_weak` + integer-specific `fetch_add/sub/or/and/xor/max/min`. Все с `Ordering`-параметром + default-SeqCst overload. **Backward compat:** существующие `AtomicInt`/`AtomicBool` без `Ordering` → deprecated alias на `AtomicI64`/`AtomicBool` (SeqCst). | 103.1 | ~2 d |
+| **103.3** | [Mutex/RwLock/ReentrantMutex family](103.3-mutex-family.md) | `Mutex` (hardened): `try_lock_for(Duration)`, `is_locked()`, `with_lock(fn)`, fairness mode opt-in. `RwLock`: `read/write/try_read/try_write/try_read_for/try_write_for`, writer-priority fairness. `ReentrantMutex`: opt-in для legacy, owner-fiber tracking + counter. | 103.1, 103.2 (использует ordering для internal state), Plan 65 (Duration) | ~2 d |
+| **103.4** | [Coordination primitives](103.4-coordination-primitives.md) | `Semaphore` (bounded permits, `try_acquire_for`), `Barrier` (CyclicBarrier-style, reusable), `CountDownLatch` (one-shot vs WaitGroup), `Condvar` (wait/notify tied to Mutex, spurious wakeup contract). | 103.3 (Mutex для Condvar) | ~2 d |
+| **103.5** | [Once + Lazy + OnceCell](103.5-once-lazy-oncecell.md) | `Once` hardening: `call_once(closure)` safe API (текущий `run/done` → deprecated с migration path). `OnceCell[T]`: value-capturing one-shot init, `get_or_init(closure) -> &T`. `Lazy[T]`: auto-init on first access wrapper. | 103.1, 103.2 (для state machine atomic) | ~1.5 d |
+| **103.6** | [Realtime/Blocking integration](103.6-realtime-blocking-integration.md) | Type-checker enforcement: park-ing methods (`Mutex.lock`, `Condvar.wait`, `Semaphore.acquire`, etc.) запрещены в `realtime { }`. Leaf-method allowlist (`load`, `store`, `try_lock`, `fetch_*`, `compare_exchange*`, etc.). 6 error codes. Spec contract. | 103.2, 103.3, 103.4, 103.5 (нужны типы для enforcement) | ~1.5 d |
+| **103.7** | [Spec D-blocks + AI-first guidance](103.7-spec-d-blocks.md) | **D167** memory model + ordering semantics; **D168** atomic primitives API contract; **D169** Mutex/RwLock/ReentrantMutex; **D170** Semaphore/Barrier/CountDownLatch/Condvar; **D171** Once/Lazy/OnceCell; **D172** Realtime/Blocking interaction matrix; **D173** AI-first guidance «когда channel vs mutex vs atomic vs once». Q9, Q12.4, Q-memory-model → ✅ closed. §1531 переписать. | 103.1-103.6 (фиксирует уже реализованное) | ~1.5 d |
+| **103.8** | [Conformance + stress + audit + close](103.8-conformance-and-close.md) | Cross-cutting test suite: stress (10k+ ops под M:N с 4-8 workers), litmus tests (memory ordering observable differences relaxed vs seq_cst), property tests (CAS-loop сходимость, semaphore-bounded concurrency), cross-platform validation (Windows/Linux). Pre-existing `nova_tests/concurrency/sync_*.nv` migrate на новый API. Audit consistency (sync.nv ↔ sync_primitives.h ↔ D-блоки). Plan 18 update, README, logs, master close. | 103.1-103.7 | ~1.5 d |
+| **103.9** | [Consume guards migration (V2)](103.9-consume-guards-migration.md) | **GATED on Plan 100.7 readiness.** Lock-family + Semaphore + Once API V2: `Mutex.lock() → MutexGuard consume`, `RwLock.read/write → ReadGuard/WriteGuard consume`, `Semaphore.acquire() → Permit consume`, `Once.start() → OnceGuard consume`. Старые bare `unlock()/release()/done()` deprecated с migration path (Plan 62.F edition-versioning); `with_lock(fn)`/`with_read(fn)`/etc. helpers становятся thin wrappers над guard-returning core. Semver-bump. Type contracts integrate с Plan 100 D162 (check_consume + defer-family). Spec D174 (consume integration). Cross-module migration: 4+ pilot sites в `nova_tests/concurrency/`. | 103.3, 103.4, 103.5, Plan 100.7 (gating) | ~2-2.5 d |
 
-### Ф.2 — переписать §1531–1597 «НЕ в spec» (~0.2д)
+**Critical path V1:** 103.1 → 103.2 → (103.3 ⊕ 103.5) → 103.4 → 103.6 → 103.7 → 103.8.
 
-Секция `#### Mutex / Atomic — НЕ в spec` устарела относительно
-Q12.4 v1.0-плана и Plan 18 Шаг 1. Переписать:
+**V2 (post-V1):** 103.9 gated на Plan 100.7 (`stdlib migration playbook + 4 pilot migrations` включая «Mutex+Lock-guard (std/sync)»). Plan 103.9 — placeholder в roadmap, не starts пока Plan 100.7 не готов. **API V1 спроектирован так, чтобы V2 миграция была non-breaking для `with_lock(fn)` пользователей.**
 
-- **Заголовок:** `#### Mutex / Atomic — stdlib, не prelude (D167)`
-- **Тело:**
-  - Сохранить аргументацию «owner-actor pattern закрывает 99% use
-    cases» — это всё ещё correct guidance.
-  - Заменить «не в spec» → «доступны через `std.runtime.sync` (см.
-    D167); НЕ в prelude — пользователь делает explicit `import
-    runtime.sync.{Mutex, AtomicInt}` для получения escape hatch».
-  - Сохранить counter_actor example как preferred default.
-  - Добавить параграф «когда D167-примитивы оправданы»:
-    perf-critical counters в hot path, one-shot ownership через
-    `AtomicBool.swap`, exactly-once init через `Once`.
-- Также §1594 «Что отвергнуто: Mutex / Atomic в prelude» — оставить
-  как есть (в prelude они и правда не попали), но добавить ссылку
-  «но доступны через `std.runtime.sync` (D167)».
-- §641 «Mutex/Atomic отвергнуты» в `### Открытые вопросы` D50 —
-  заменить на «`Mutex`/`Atomic`/`WaitGroup`/`Once` — stdlib через
-  `std.runtime.sync` (D167); `RwLock`/`Semaphore`/`Atomic[T] generic`
-  остаются открытыми».
-
-Acceptance: `grep "Mutex / Atomic — НЕ в spec" spec/` → no results;
-переписанная секция cross-references D167.
-
-### Ф.3 — open-questions.md cleanup (~0.2д)
-
-- **Q9** (§274 «Точные API Channel[T], Mutex, RwLock, Atomic[T]»):
-  - Channel[T] — уже закрыт D79 (отметить если не отмечено).
-  - Mutex, AtomicInt/Bool — закрыты D167 (новая ссылка).
-  - RwLock, Atomic[T] generic — остаются открытыми с пометкой
-    «Plan 18 Шаг 5 / отдельные планы».
-- **Q12.4** (§336–347 + v1.0-план §396):
-  - В резюме §272 («Остаётся открытым в Q9») — обновить:
-    `Mutex`/`AtomicInt`/`AtomicBool`/`WaitGroup`/`Once` зашиплены
-    через D167; `RwLock`/`Atomic[T] generic` остаются.
-  - В v1.0-plan §396 — пометить пункт «Mutex, RwLock, Atomic[T] как
-    stdlib-типы» как ✅ partial (Mutex + AtomicInt/Bool; RwLock/
-    generic — pending).
-- **Q12.6** уже закрыт `blocking { }` примитивом (Plan 83.3) — не
-  трогаем (вне scope Plan 103).
-
-Acceptance: Q9 / Q12.4 в open-questions.md имеют explicit статус
-«частично закрыт через D167», с ссылкой на конкретные типы.
-
-### Ф.4 — Update Plan 18 (~0.2д)
-
-- **Заголовок Plan 18:** баннер «DRAFT, не финализирован» →
-  «PARTIALLY ACTIVE — Шаг 1 ✅ закрыт через D167 (Plan 103), Шаги
-  2-4 → Plan 91 (std MVP), Шаг 5 (RwLock/Semaphore) — отдельные
-  планы по запросу».
-- **Шаг 1 — std.sync:** добавить статус-блок:
-  ```
-  > ✅ ЗАКРЫТ Plan 103 (D167, YYYY-MM-DD).
-  > Реальный состав отличается от исходного дизайна:
-  > - `AtomicInt` + `AtomicBool` (моно-типы), не `Atomic[T]` generic
-  > - `Mutex` без `T` (Go-style), не `Mutex[T]` data-carrying
-  > - `WaitGroup`, `Once` — как планировалось
-  > - `RwLock`, `Semaphore` — НЕ реализованы (Шаг 5)
-  ```
-- **Шаги 2-4:** добавить пометки «→ Plan 91 (std MVP)».
-- **Шаг 5:** оставить «отложено до use case».
-- **Связи:** добавить «[103](103-sync-primitives-spec-formalization.md)
-  — формализация Шаг 1».
-
-Acceptance: Plan 18 row отражает реальное состояние; нет
-сообщения «proposal, не начат» если Шаг 1 фактически зашиплен.
-
-### Ф.5 — plans/README.md (~0.1д)
-
-- Row Plan 18: статус с «proposal, не начат» → «частично закрыт
-  (Шаг 1 ✅ через Plan 103; Шаги 2-4 → Plan 91; Шаг 5 deferred)».
-- Добавить row Plan 103 → «✅ ЗАКРЫТ YYYY-MM-DD (D167)» (с пометкой что номер 102 зарезервирован под Q-representation-bound из Plan 101).
-
-Acceptance: README.md консистентен с Plan 18 / Plan 103 статусами.
-
-### Ф.6 — Logs + close (~0.2д)
-
-- `docs/project-creation.txt` — раздел `## Plan 103 — sync
-  primitives spec formalization` с кратким описанием, D-блок,
-  cross-references.
-- `nova-private/discussion-log.md` — нарратив-лог `## YYYY-MM-DD —
-  Plan 103 closure`: что выяснили (внутренняя противоречивость
-  spec), как закрыли (D167 + переписывание §1531 + open-questions
-  cleanup), уроки.
-- `docs/simplifications.md` — если есть marker `[M-sync-not-in-spec]`
-  или подобный — закрыть. Если нет — не создавать.
-- Закрыть Plan 103 (статус: ✅ ЗАКРЫТ YYYY-MM-DD).
+**Параллелизуется:** 103.3 и 103.5 после 103.2 готовы. 103.7 можно драфтить параллельно с 103.4 (D-блоки 167-168 не зависят от Condvar/Lazy).
 
 ## Acceptance criteria
 
-- [ ] D167 в `spec/decisions/06-concurrency.md`; `grep "^## D167"` находит.
-- [ ] D167 содержит verbatim API из `std/runtime/sync.nv` для всех 5
-      типов (AtomicInt/AtomicBool/Mutex/WaitGroup/Once).
-- [ ] Memory ordering для каждой atomic-операции явно зафиксирован
-      в D167 (acquire/release/acq_rel).
-- [ ] Контракты (NOT reentrant Mutex, fair FIFO, exactly-once Once,
-      add-before-wait WaitGroup) явно перечислены в D167.
-- [ ] `grep "Mutex / Atomic — НЕ в spec" spec/` → нет результатов.
-- [ ] Секция в §1531 переписана и cross-reference'ит D167.
-- [ ] §641 (D50 «Открытые вопросы») cross-reference'ит D167.
-- [ ] Q9 / Q12.4 в `open-questions.md` имеют статус «частично закрыт
-      через D167» с явным списком закрытого vs остающегося.
-- [ ] Plan 18 баннер DRAFT снят / заменён, Шаг 1 помечен ✅, есть
-      ссылка на Plan 103.
-- [ ] plans/README.md обновлён: Plan 18 row + новый Plan 103 row.
-- [ ] Ф.0 audit-report показал 0 расхождений между sync.nv ↔
-      sync_primitives.h ↔ D167 (или расхождения зафиксированы и
-      исправлены).
-- [ ] `nova test` без новых FAIL (Plan 103 — только документация и
-      возможно мелкие fix'ы в Ф.0; полная suite не должна сдвинуться).
+### V1 closure (после 103.8 — основной milestone Plan 103)
 
-## Non-acceptance
+- [ ] Все 8 V1 sub-plans (103.1-103.8) ✅ ЗАКРЫТЫ, merged в main.
+- [ ] **Capability parity** с Go `sync` + Rust `std::sync` (без `Mutex<T>`/poisoning из принципа): покрыты Atomic-suite, Mutex, RwLock, Once, WaitGroup, плюс Nova-added (ReentrantMutex, Semaphore, Barrier, CountDownLatch, Condvar, OnceCell, Lazy, full Ordering API).
+- [ ] **Capability matrix** (см. выше) проверена end-to-end: каждая строка имеет либо реализацию, либо явный rationale «не делаем».
+- [ ] **`grep "Mutex / Atomic — НЕ в spec" spec/`** → 0 результатов.
+- [ ] **Q9, Q12.4, Q-memory-model** в `open-questions.md` имеют explicit статус «закрыт через D167-D173» (полностью, не partial).
+- [ ] **6 D-блоков** в `spec/decisions/06-concurrency.md`: D167-D172 (technical) + D173 (AI-first guidance).
+- [ ] **Type-checker enforcement** `realtime { }` ban: 6 error codes реализованы, по 2 negative test'а на каждый.
+- [ ] **Backward compat:** существующие `AtomicInt`/`AtomicBool` deprecated-alias на `AtomicI64`/`AtomicBool` (SeqCst default); все pre-existing nova_tests passes без изменения.
+- [ ] **Conformance test suite:** ≥3 stress теста (10k+ ops, M:N 4 workers), ≥3 litmus теста (observable ordering differences), ≥5 property тестов (CAS convergence, Semaphore bounded concurrency, Barrier rendezvous, RwLock fairness, Once exactly-once), positive+negative для каждого типа.
+- [ ] **Cross-platform:** все sync тесты passes на Windows clang + Linux clang (macOS — best effort, ждёт CI).
+- [ ] **AI-first guidance:** D173 содержит decision-tree «какой примитив выбрать» (channel → mutex → atomic → once); 5 canonical patterns с anti-patterns.
+- [ ] **Plan 18** баннер обновлён, все 5 шагов имеют точный статус.
+- [ ] **`nova test` full suite** — 0 новых FAIL relative к pre-Plan-103 baseline.
 
-- Plan 103 НЕ реализует `RwLock` / `Semaphore` / `Atomic[T]` generic
-  — это отдельные планы.
-- Plan 103 НЕ переделывает существующий C-impl. Если Ф.0 находит
-  баги (например, неправильное memory ordering) — fix inline для
-  мелких, отдельный plan для крупных.
-- Plan 103 НЕ трогает другие std-модули (concurrency/, crypto/,
-  encoding/, identifiers/) — это отдельный аудит (Plan 103 candidate).
+### V2 closure (после 103.9 — gated на Plan 100.7)
 
-## Риски и mitigations
+- [ ] Plan 100.7 ✅ closed (pre-condition).
+- [ ] `Mutex.lock() → MutexGuard consume`, `RwLock.read/write → ReadGuard/WriteGuard consume`, `Semaphore.acquire() → Permit consume`, `Once.start() → OnceGuard consume` — все 4 семейства мигрированы.
+- [ ] D174 «consume integration» в `spec/decisions/06-concurrency.md`.
+- [ ] `with_lock(fn)` / `with_read(fn)` / `with_write(fn)` / `with_permit(fn)` helpers остаются — стали thin wrappers над guard-returning core; pre-existing usage compiles без изменений.
+- [ ] Bare `unlock()/release()/done()` deprecated с migration path (edition-versioned по Plan 62.F.bis); в pre-V2 edition compiles с deprecation warning, в post-V2 edition — compile error.
+- [ ] 4+ pilot sites в `nova_tests/concurrency/` мигрированы как demonstration.
+- [ ] Atomics, WaitGroup, Barrier, CountDownLatch, OnceCell, Lazy — **НЕ** мигрированы (M16).
 
-- **Риск:** Ф.0 находит крупные расхождения impl↔doc → Plan 103
-  блокируется bug-fix-плана. **Mitigation:** Ф.0 первый, decision
-  point — если risk realises, делаем bug-fix отдельным планом, D167
-  draft'им под уже-исправленную реальность.
-- **Риск:** пользователь хочет другую формулировку D167 (например,
-  Mutex[T] data-carrying как future-direction). **Mitigation:** Ф.1
-  draft → обсуждение → ревизия draft. D-блок легко правится до
-  merge'а.
-- **Риск:** spec'овая дискуссия про owner-actor vs Mutex в §1531
-  затянет фазу. **Mitigation:** сохраняем существующую аргументацию
-  (она correct), только добавляем «escape hatch через stdlib».
+## Non-acceptance (out of Plan 103)
+
+- **Generic `Atomic[T]`** (Rust seal pattern) — заблокирован `[M-fn-prefix-int-only-mono]`. Когда `fn[T]` mono закрыт (Plan 101.x) — отдельный план.
+- **`Atomic[Float64]`** (через bits transmutation) — отдельный план, edge case.
+- **STM** (software transactional memory, Haskell/Clojure) — экзотика, не nano roadmap.
+- **`Domain`-style ОС-thread isolation** (OCaml 5) — отложено Q12.7.
+- **Lock-free queues / Michael-Scott queue / hazard pointers** — это Channel impl detail, не stdlib type.
+- **`parking_lot`-style ParkLot primitive** (Rust crates) — текущий `nova_sched` park/wake достаточен.
+- **Actor framework** (Akka/Erlang) — outside scope, channel + spawn — primitives, actor — pattern.
+- **`async`/`await`** color — Nova D62 ambient, нет.
+
+## Дизайн-решения для master (фиксируются здесь, в sub-plans следуем)
+
+| # | Решение | Альтернатива | Почему |
+|---|---|---|---|
+| **M1** | `Ordering` как enum, **default = `SeqCst`** для simple-overload methods | Без default (Rust требует always) | AI-first: дефолт безопасный, опытный pisатель указывает явно |
+| **M2** | Sized atomics (`AtomicI32`, `AtomicU64`, ...) | Generic `Atomic[T]` | Codegen block + monomorphization не нужна для primitives |
+| **M3** | `Mutex` non-reentrant; `ReentrantMutex` opt-in | Reentrant default (Java) | Non-reentrant дёт deadlock-detection early; reentrant — legacy/wrap usage |
+| **M4** | `Mutex` без data-carrying | Rust `Mutex<T>` | Type-system simplicity; `defer m.unlock()` + scope разделяет lock от data |
+| **M5** | No poisoning | Rust `LockResult` | AI codegen без `match ... err =>` обёртки на каждый lock |
+| **M6** | Fair FIFO mutex default; unfair — opt-in `Mutex.new_unfair()` | Unfair default (Go/parking_lot) | AI-generated кода предсказуемость > throughput; perf-critical может opt-in |
+| **M7** | `RwLock` writer-priority default | Reader-priority (Linux pthread) | Избегаем writer starvation — общий sense для AI-кода |
+| **M8** | Closure-form `Once.call_once(fn)` primary; `run/done` deprecated alias | Только run/done | Closure form harder to misuse (нельзя забыть `done()`) |
+| **M9** | `OnceCell[T]` + `Lazy[T]` отдельные типы | Один тип с auto-init flag | Lazy — wrapper над OnceCell с `Deref`-like access, разные APIs |
+| **M10** | `Condvar` всегда привязан к `Mutex` (Rust-style) | Java `Condition` отделимый | Type-system enforced correctness — нельзя wait без mutex |
+| **M11** | `Semaphore` bounded (init permits) | Unbounded (counting) | Bounded — концерн backpressure; unbounded — counter pattern, делается через `AtomicI32` |
+| **M12** | Type-checker enforce `realtime { }` ban на park-ing | Runtime panic | Compile-time лучше; D64 уже precedent |
+| **M13** | Module `runtime.sync` (не prelude) | Prelude (`Mutex`, `AtomicInt` глобально) | Explicit import — намерение использовать low-level визуально |
+| **M14** | Backward compat: `AtomicInt` → alias `AtomicI64`, `AtomicBool` остаётся | Breaking rename | Pre-existing user code должен компилироваться |
+| **M15** | V1 без consume; consume guards migration — отдельный sub-plan 103.9 (GATED на Plan 100.7); `with_lock(fn)`/`with_read(fn)`/`with_permit(fn)` в V1 как preferred pattern → non-breaking при V2 | (a) ждать Plan 100, (b) V1 уже с consume gated, (c) `Mutex.lock()/unlock()` без миграции вообще | Plan 100 P3 далеко от готовности; Q9/Q12.4/Q-memory-model нужно закрыть сейчас; `with_lock` pattern минимизирует exposed bare API → V2 cleanup без breaking change большинства usage sites |
+| **M16** | Atomics НЕ получают consume никогда (даже в V2) | Atomic = resource → consume | Atomic = shared state primitive, операции не «consume'ят». Идеологический mismatch с linear-types. |
+
+## Risks + mitigations
+
+| Риск | Mitigation |
+|---|---|
+| **Backward compat ломается:** существующие `AtomicInt.compare_exchange(a, b) -> bool` API изменится при добавлении `Ordering` | M14 — deprecated alias `AtomicInt` = `AtomicI64`, simple-overload без Ordering (default SeqCst) сохраняет старую сигнатуру |
+| **`fn[T]` ограничение блокирует sized atomics** | Sized atomics — отдельные моно-типы (M2), не нужна generic |
+| **M:N interaction баги** | 103.8 stress tests + cross-platform validation; baseline уже M:N-safe |
+| **Spec D173 «AI-first guidance» субъективна** | Решение через decision-tree (objective rules) + 5 canonical patterns; review с пользователем перед closure |
+| **`Duration` API ещё не stable** | Plan 65 ✅ shipped `Duration` тип; используем; если нестабильно — `Instant` deadline альтернатива |
+| **Memory ordering litmus tests platform-dependent (x86 vs ARM)** | 103.8 явно покрывает; на x86 многие relaxed = seq_cst — тесты должны быть architecturally-aware |
+| **Lazy / OnceCell GC tracking** | OnceCell[T] хранит ref на T — GC сам обрабатывает; явный contract в D171 |
+| **Condvar spurious wakeup** | Industry standard — predicate-loop pattern; D170 contract + test |
 
 ## Связь с другими планами
 
-- [18-stdlib-roadmap.md](18-stdlib-roadmap.md) — Plan 18 Шаг 1
-  реализован; Plan 103 формализует. После закрытия — Plan 18
-  partial-active.
-- [21-channel-revision-implementation.md](21-channel-revision-implementation.md)
-  — Channel формализован D79 (Channels — preferred default).
-- [83.3-blocking-libuv-threadpool.md](83.3-blocking-libuv-threadpool.md)
-  — Blocking-эффект (D50 §4); D167 sync primitives — orthogonal.
-- [91-stdlib-mvp-for-0.1.md](91-stdlib-mvp-for-0.1.md) — std MVP;
-  sync не входит в MVP (см. Plan 91 Non-scope), но Plan 103 закрывает
-  spec-долг для уже зашипленного.
-- **Будущий план — std-vs-spec audit** — полный аудит std/ vs spec'а
-  (concurrency/cancellation, identifiers/ulid, crypto/*, encoding/*,
-  text/regex и т.д.). Не входит в Plan 103 scope.
+- [18-stdlib-roadmap.md](18-stdlib-roadmap.md) — Plan 18 Шаг 1 ✅ shipped; Plan 103 формализует + extends.
+- [21-channel-revision-implementation.md](21-channel-revision-implementation.md) — Channel формализован D79 (preferred default; Plan 103 — escape hatch).
+- [44.1-channel-impl.md](44.1-channel-impl.md) — Plan 44.1 Ф.1 sync.h: backend selector + memory ordering rules → база для 103.1.
+- [65-duration-type.md](65-duration-type.md) — `Duration` тип, используется в `try_lock_for` / `wait_for`.
+- [83.3-blocking-libuv-threadpool.md](83.3-blocking-libuv-threadpool.md) — `Blocking` эффект; Plan 103.6 интегрирует.
+- [91-stdlib-mvp-for-0.1.md](91-stdlib-mvp-for-0.1.md) — std MVP; sync **не** в MVP но Plan 103 закрывает spec-долг; some sync примитивы используются stdlib collections.
+- [100-linear-must-consume.md](100-linear-must-consume.md) — consume umbrella; **Plan 103.9 GATED на Plan 100.7** (Mutex pilot migration); Plan 103 V1 спроектирован для non-breaking V2 миграции.
+- [100.7-stdlib-migration-playbook.md](100.7-stdlib-migration-playbook.md) — упоминает «Mutex+Lock-guard (std/sync)» как одну из 4 pilot migrations — это и есть Plan 103.9.
+
+## Эволюция
+
+- **2026-05-25 v1 (этот доклад):** roadmap-rewrite после user-feedback «без упрощений, не хуже Go/Rust/TS/Kotlin» + «consume для AtomicInt?». Декомпозиция 9 sub-plans (V1 = 103.1-103.8 + V2 = 103.9 gated на Plan 100.7), capability matrix vs 4 эталона, 16 design-решений зафиксированы. M15 (V1 без consume + future migration) + M16 (atomics никогда не consume).
+- **v0 (commit `748a9b61623`):** initial proposal — простая 6-фазная формализация только текущего baseline. Superseded.
+
+Sub-plans ссылаются на этот master для дизайн-решений M1-M14 и общей философии.

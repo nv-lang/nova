@@ -142,9 +142,15 @@ closure-rev + D85 error-ops). Работа codegen-агента.
 
 ### Шаг 1 — std.sync (M:N-correct примитивы) — ✅ ЗАКРЫТО (формализация: Plan 103)
 
-> ✅ **Зашиплено.** `std/runtime/sync.nv` + `compiler-codegen/nova_rt/sync_primitives.h`.
-> Формализация в spec — отдельный [Plan 103](103-sync-primitives-spec-formalization.md)
-> (D167). Реальный состав отличается от исходного дизайна ниже:
+> ✅ **Baseline зашиплен.** `std/runtime/sync.nv` + `compiler-codegen/nova_rt/sync_primitives.h`.
+> Production-grade расширение + формализация в spec — [Plan 103](103-sync-primitives-spec-formalization.md)
+> (roadmap, 9 sub-plans, V1=103.1-103.8 + V2=103.9 gated на Plan 100.7).
+> V1 добавляет: full Ordering API (Relaxed/Acquire/Release/AcqRel/SeqCst),
+> sized atomics (I8-I64/U8-U64/Usize/Bool/Ptr — 12 types), RwLock, ReentrantMutex,
+> Semaphore, Barrier, CountDownLatch, Condvar, OnceCell, Lazy + closure-form
+> Once.call_once, type-checker `realtime { }` ban (Nova edge), D167-D173.
+> V2 (103.9): consume guards (MutexGuard/ReadGuard/WriteGuard/Permit/OnceGuard).
+> Реальный baseline состав отличается от исходного Plan 18 дизайна ниже:
 >
 > | Дизайн (ниже) | Реализация (sync.nv) | Причина |
 > |---|---|---|
@@ -225,15 +231,19 @@ accept loop → spawn fiber per connection → park/wake на read/write.
 **Это первый end-to-end network test Nova.** Если работает —
 языковой server на Nova возможен.
 
-### Шаг 5 — std.sync остаток (RwLock, Semaphore) — DEFERRED
+### Шаг 5 — std.sync остаток — → Plan 103 V1
 
-> **Обновление 2026-05-25:** `Once` перенесён в Шаг 1 и зашиплен (см.
-> [Plan 103](103-sync-primitives-spec-formalization.md) D167).
-> Остались `RwLock` и `Semaphore` — отложены до конкретного use case.
-> Когда возникнет — отдельный sub-plan (103.1 / 103.2 candidate).
+> **Обновление 2026-05-25:** Шаг 5 поглощён [Plan 103 V1](103-sync-primitives-spec-formalization.md):
+> - `Once` (Plan 18 Шаг 1 ✅ shipped) + `OnceCell` + `Lazy` → [Plan 103.5](103.5-once-lazy-oncecell.md).
+> - `RwLock` → [Plan 103.3](103.3-mutex-family.md) (вместе с Mutex hardening + ReentrantMutex).
+> - `Semaphore` → [Plan 103.4](103.4-coordination-primitives.md) (вместе с Barrier + CountDownLatch + Condvar).
+>
+> Plus новые типы которые Plan 18 не предусматривал: ReentrantMutex,
+> Barrier, CountDownLatch, Condvar, OnceCell, Lazy + full Ordering API
+> + 12 sized atomics + type-checker realtime/blocking enforcement (Nova edge).
 
 Эти нужны для продвинутых паттернов (read-heavy data, bounded
-concurrency).
+concurrency, epoch synchronization, lazy initialization).
 
 ### Блокеры которые нужно закрыть ДО шагов выше
 
