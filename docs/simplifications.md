@@ -12065,3 +12065,75 @@ capabilities; без неё Nova не достигает заявленной re
   зависят от Plan 100.
 - [[M-receiver-generic-incompleteness]] — Plan 101 protocol
   composition `use Foo`, ортогонально Plan 100.
+
+## [M-ide-integration-deferred] Plan 104 — production-grade LSP + tree-sitter + editor distributions (gated на Plan 91+100) (2026-05-25)
+
+- **Где:** есть только TextMate grammar (VSCode/Cursor/VSCodium/Sublime
+  через `editors/vscode/`) + handcrafted syntax plugins (Vim/Emacs).
+  LSP-сервера НЕТ совсем. tree-sitter grammar НЕТ.
+
+- **Что не работает (текущее состояние):**
+  - Hover/tooltip с типом и doc-comment'ом — НЕТ.
+  - Goto-definition (Ctrl+Click) — НЕТ.
+  - Find-references (Shift+F12) — НЕТ.
+  - Autocompletion (Ctrl+Space) — НЕТ.
+  - Quick-fixes (💡 лампочка) для ~25 error codes из Plan 100/101 — НЕТ.
+  - Rename (F2) — НЕТ.
+  - Format-on-save (`nova fmt` integration) — НЕТ.
+  - Document/workspace symbols (Ctrl+Shift+O / Ctrl+T) — НЕТ.
+  - Tree-sitter-зависимые редакторы (Zed, Helix, GitHub web, modern
+    Neovim) — вообще не поддерживаются.
+
+- **Симптом:** "писать на Nova можно, но больно" (см. memory
+  `project-plan101-status` LSP-section). Внешние пользователи без LSP
+  не приходят. Dogfooding-команда переключается между файлом и
+  терминалом по 100 раз в час.
+
+- **Откладывается:**
+  - **Plan 104** roadmap, ~33 dev-day (6-7 недель calendar single-dev),
+    10 sub-plans:
+    * 104.0 foundation crate (~2 dev-day)
+    * 104.1 diagnostics (~3 dev-day)
+    * 104.2 hover/goto/signature (~3 dev-day)
+    * 104.3 completion (~5 dev-day)
+    * 104.4 symbols/references (~3 dev-day)
+    * 104.5 code actions/quick-fixes (~5 dev-day) — absorbs Plan 100.8
+      Ф.2 + Plan 101 LSP V2 marker
+    * 104.6 rename + format (~4 dev-day)
+    * 104.7 tree-sitter grammar (~3 dev-day, separate repo
+      `tree-sitter-nova`)
+    * 104.8 editor packaging (~3 dev-day)
+    * 104.9 close-out (~2 dev-day)
+
+- **Gate (почему отложено сейчас):**
+  - Plan 91 std MVP closure pending — без стабилизации core stdlib API
+    LSP completion постоянно ломается.
+  - Plan 100 implementation pending — без landed `consume`-checker
+    quick-fixes (Plan 100.8 Ф.2) бессмысленны.
+  - Plan 101 ✅ закрыт (8 error codes готовы под quick-fixes).
+
+  Минимум 2-3 недели ожидания gate'ов; параллельно можно писать
+  sub-plan files (104.0-104.9 пока есть только master).
+
+- **Как чинить:**
+  - **Trigger:** Plan 91 + Plan 100 closed.
+  - **Старт:** 104.0 (foundation crate setup).
+  - **Critical path:** 104.0 → 104.1 → 104.2 → 104.5 → 104.6 → 104.8 → 104.9.
+  - **Parallel:** 104.3 (completion) + 104.7 (tree-sitter) могут идти
+    одновременно с critical path → -5 dev-day если есть второй contributor.
+
+- **Приоритет — P2** (gated). Если Plan 91/100 затягиваются,
+  отдельные sub-plans (104.7 tree-sitter — independent от
+  compiler-codegen API) могут стартовать раньше.
+
+- **Связанные markers (absorbed at closure):**
+  - Plan 100.8 Ф.2 (LSP quick-fixes для consume) → ✅ closes via 104.5.3.
+  - Plan 101 LSP V2 marker (8 error codes) → ✅ closes via 104.5.2.
+  - Plan 01-roadmap §165 «LSP v0.5» → ✅ closes via 104.9.
+
+- **НЕ входит в Plan 104 V1 (отдельные планы):**
+  - JetBrains native plugin (Kotlin + IntelliJ SDK) — separate plan.
+  - DAP (Debug Adapter Protocol) — после native codegen (Plan 38 LLVM
+    или mature interp-debugger).
+  - Inlay hints / semantic tokens / call hierarchy — V2 (nice-to-have).
+  - Refactorings (extract function/type) — V2 (rename в V1).

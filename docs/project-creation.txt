@@ -21330,3 +21330,76 @@ REGRESSION (post-fix):
 
 Файлы: `compiler-codegen/src/codegen/emit_c.rs`, `docs/simplifications.md`,
 `docs/project-creation.txt` (этот entry).
+
+
+========================================================================
+2026-05-25 — Plan 104 ROADMAP: Production-grade IDE integration
+========================================================================
+
+КОНТЕКСТ: Закрытие Plan 101 (2026-05-25) выявило хроническую дыру —
+LSP-сервера НЕТ совсем; есть только TextMate grammar для подсветки.
+Plan 01-roadmap §165 обещал «LSP v0.5», но конкретного плана не было.
+Plan 100.8 Ф.2 + Plan 101 LSP V2 marker — частичные обещания на LSP
+quick-fixes, но без master-плана LSP-сервера.
+
+User-request: "создадим новый план для разработки полноценной интеграции
+с IDE".
+
+User-clarified scope (через AskUserQuestion):
+- LSP scope: Production V1 (~4-6 нед) — MVP + rename + find-refs +
+  signature help + code actions + symbols + format-on-save.
+- Tree-sitter grammar: включить как sub-plan (104.7).
+- Target editors V1: VSCode/Cursor/VSCodium + Neovim/Vim + Helix/Zed
+  (JetBrains deferred separately).
+- Architecture: separate `nova-lsp` crate (НЕ subcommand nova-cli).
+
+PLAN 104 (master + decomposition):
+
+- **Master:** docs/plans/104-ide-integration.md — ~33 dev-day total,
+  10 sub-plans, P2 priority (gated на Plan 91 std MVP + Plan 100
+  implementation). 13 design-решений (M1-M13) locked.
+
+- **Sub-plans (только master, sub-plan files — defer к старту фазы):**
+  * 104.0 Foundation: nova-lsp crate skeleton + tower-lsp + JSON-RPC
+    stdio (~2 dev-day).
+  * 104.1 Diagnostics + file watching: debounced full-module recheck
+    (200ms), publishDiagnostics, multi-file workspace (~3 dev-day).
+  * 104.2 Hover + goto-def + signature help: symbol resolution,
+    type rendering, D104/D105 doc-comment surfacing (~3 dev-day).
+  * 104.3 Completion: keywords/identifiers/methods/imports/snippets,
+    type-driven после `.` (~5 dev-day, 5 sub-phases).
+  * 104.4 Document/workspace symbols + find-references (~3 dev-day).
+  * 104.5 Code actions + quick-fixes — ≥25 fixes parity с gopls
+    (absorbs Plan 100.8 Ф.2 + Plan 101 LSP V2) (~5 dev-day).
+  * 104.6 Rename + format-on-save: cross-file rename, `nova fmt`
+    integration (~4 dev-day).
+  * 104.7 Tree-sitter grammar — separate repo `tree-sitter-nova`,
+    queries (highlights/folds/indents/injections), Helix/Zed/Neovim
+    distribution (~3 dev-day).
+  * 104.8 Editor packaging: VSCode extension (TS LSP client),
+    nvim-lspconfig PR, Helix/Zed configs, install docs (~3 dev-day).
+  * 104.9 Close-out: E2E integration tests, marker closure, release
+    notes (~2 dev-day).
+
+GATE-обоснование:
+- Без Plan 91 std MVP stabilization — completion ломается при каждом
+  изменении stdlib API.
+- Без Plan 100 implementation landing — quick-fixes для consume errors
+  (12 error codes) бессмысленны.
+- Plan 101 ✅ закрыт — 8 error codes готовы под quick-fixes (104.5.2
+  имеет всё что нужно).
+
+Минимум 2-3 недели ожидания gate'ов; параллельно можно писать sub-plan
+files (104.0-104.9).
+
+Файлы:
+- docs/plans/104-ide-integration.md (новый master, ~350 строк)
+- docs/plans/README.md (Plan 104 row после Plan 103.9)
+- docs/simplifications.md (marker [M-ide-integration-deferred])
+- docs/project-creation.txt (этот entry)
+
+Связанные markers (будут absorbed в 104.5/104.9 closure):
+- [M-101-lsp-quickfixes-deferred] (был неявный в Plan 101 closure) →
+  absorbs в 104.5.2.
+- Plan 100.8 Ф.2 (LSP layer) → absorbs в 104.5.3.
+- Plan 01-roadmap §165 (LSP v0.5 обещание) → closes 104.9.
