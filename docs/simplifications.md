@@ -1,4 +1,4 @@
-# Упрощения и отложенные доработки
+﻿# Упрощения и отложенные доработки
 
 Живой список осознанных упрощений, сделанных в ходе разработки.
 Каждое упрощение попадает сюда в момент принятия решения — чтобы не потерять контекст.
@@ -12147,3 +12147,12 @@ capabilities; без неё Nova не достигает заявленной re
   — работа в Ф.1-Ф.7 идёт напрямую в нём (original M-7-104.7-2 staging
   workaround снят). Ф.1-Ф.7 pending, multi-session. Остальные sub-plans
   104.0-104.6/.8/.9 ждут gate Plan 91+100.
+
+- **Progress (2026-05-25): Sub-plan 104.0 (Foundation) ✅ ЗАКРЫТ** —
+  nova-lsp crate создан: tower-lsp 0.20 + tokio + dashmap + ropey,
+  Backend (initialize/shutdown/did_open/did_change/did_close),
+  WorkspaceState (DashMap<Url, ParsedFile>), 22/22 тестов PASS
+  (build_smoke 3 + lifecycle 3 + document_cache 5 + integration 3 +
+  state unit 8). V1 упрощения: TextDocumentSyncKind::FULL (не
+  Incremental); nova_codegen не подключён (gate 91+100 ещё не снят);
+  shutdown exit-code через AtomicBool (без kill-worker pipeline).

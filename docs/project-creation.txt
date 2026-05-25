@@ -21485,3 +21485,58 @@ NEXT (multi-session continuation):
 - nova-private/discussion-log.md (отдельный коммит)
 
 Worktree: d:/Sources/nv-lang/nova-p104 (plan-104).
+
+═══════════════════════════════════════════════════════════════════════════════
+PLAN 104.0 (Foundation): closed 2026-05-25
+═══════════════════════════════════════════════════════════════════════════════
+
+Sub-план: nova-lsp crate skeleton — LSP Foundation (Plan 104.0.1–104.0.4).
+
+Что сделано:
+- Создан standalone crate `nova-lsp/` (Cargo.toml, src/main.rs, src/lib.rs,
+  src/server.rs, src/state.rs).
+- Зависимости: tower-lsp 0.20, tokio 1.x (full), dashmap 5, ropey 1,
+  anyhow 1, tracing + tracing-subscriber 0.3, clap 4 (derive).
+- Backend struct: LanguageServer trait (initialize, initialized, shutdown,
+  did_open, did_change, did_close). ServerCapabilities: PositionEncoding
+  UTF-16, TextDocumentSyncKind::FULL.
+- WorkspaceState: DashMap<Url, ParsedFile> document cache. ParsedFile:
+  ropey::Rope + version: i32.
+- Логирование на stderr (tracing), JSON-RPC на stdout, NOVA_LSP_LOG env var.
+- CLI: `nova-lsp --help` / `--version` через clap 4 derive.
+- shutdown_requested: Arc<AtomicBool> — для корректного exit-code.
+
+Тесты (22/22 PASS):
+- nova-lsp/tests/build_smoke.rs  — binary exists, --help, --version (3 tests)
+- nova-lsp/tests/lifecycle.rs    — init caps, exit-0, dup-init (-32600) (3 tests)
+- nova-lsp/tests/document_cache.rs — did_open/change/close protocol (5 tests)
+- nova-lsp/tests/integration.rs  — e2e via tokio::process + LSP framing (3 tests)
+- nova-lsp/src/state.rs #[cfg(test)] — data-model unit tests (8 tests)
+
+Нюансы:
+- shutdown не имеет `params` в LSP spec → request_no_params() (без ключа
+  params вообще); `params: null` вызывает -32602 в tower-lsp.
+- Option<ChildStdin> обязателен в structs с Drop impl (E0509).
+- read_response возвращает Option<Value> — None при EOF (tower-lsp закрывает
+  соединение при malformed JSON).
+- neg1 (malformed JSON) проверяет exit code != 101 (no Rust panic), не ждёт
+  -32700 ответа (tower-lsp V0.20 закрывает соединение).
+
+Файлы:
+- nova-lsp/ (новый crate, 6 файлов src + 4 test файла)
+- nova-lsp/README.md (build + editor config snippets)
+- docs/plans/104-ide-integration.md (§104.0 → ✅ ЗАКРЫТ 2026-05-25)
+- docs/plans/README.md (row 104 status обновлён, row 104.0 добавлен)
+- docs/simplifications.md (Progress subnote: 104.0 ✅ закрыт)
+- docs/project-creation.txt (этот entry)
+- nova-private/discussion-log.md (отдельный коммит)
+
+Коммиты:
+- feat(plan104.0.1): nova-lsp Cargo skeleton + build_smoke tests
+- feat(plan104.0.2): Backend lifecycle handlers + lifecycle integration tests
+- feat(plan104.0.3): WorkspaceState document cache + document_cache tests
+- feat(plan104.0.4): async integration test scaffold (tokio::process e2e)
+- docs(plan104.0): close-out — logs + README sync [этот коммит]
+
+Worktree: d:/Sources/nv-lang/nova-p104 (plan-104).
+Shell cwd: d:\Sources\nv-lang\nova
