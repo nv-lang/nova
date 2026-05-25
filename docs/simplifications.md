@@ -11990,9 +11990,14 @@ Plan 101.1 Ф.3 follow-up OR Plan 101.5 stdlib audit.
   current tests; cleanup issue. Production deployment Linux может
   накапливать leak.
 
-## [M-100-impl-deferred] Plan 100 family — implementation отложена (spec/docs/fixtures landed) (2026-05-25)
+## [M-100-impl-deferred] Plan 100 family — implementation в процессе (2026-05-25)
 
-**Где:** весь pipeline `parser → type-checker → consume-checker → codegen → runtime`.
+> **100.1 ✅ ЗАКРЫТ 2026-05-25** (merge `<FILL>`): parser + AST (`type T consume`
+> + `consume` field/binding qualifiers), LinearityRegistry (marker checks
+> D133), ConsumeCtx flow analysis (D3/D5/D5.1/D5.2/D7) — 23/23 plan100_1
+> PASS, 0 regressions. 100.2–100.8 остаются ниже.
+
+**Где:** pipeline `parser → type-checker → consume-checker → codegen → runtime`; 100.1 реализован, остальные sub-plans отложены.
 
 **Что закрыто (Ред. 2 production-grade, merge `d7464176352` +
 D9 gap closure `6071c42a927`):**
