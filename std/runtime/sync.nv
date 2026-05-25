@@ -82,6 +82,757 @@ export type MemOrdering
 #stable(since = "0.1")
 export external fn fence(ord MemOrdering)
 
+// ─── AtomicI64 ───────────────────────────────────────────────────
+
+/// Lock-free 64-bit signed atomic integer.
+///
+/// Wraparound: signed overflow в fetch_add/sub — modular arithmetic
+/// (consistent с Rust default, Java AtomicLong).
+///
+/// # Default ordering
+///
+/// Methods без `MemOrdering` параметра используют `SeqCst` (M1) — safest.
+/// Для perf-critical использовать overloads с explicit [`MemOrdering`].
+///
+/// # See Also
+///
+/// - `[AtomicInt]` — deprecated alias; migrate to `AtomicI64`
+/// - `[AtomicBool]` — atomic boolean
+/// - `[MemOrdering]` — ordering parameter enum
+#stable(since = "0.1")
+export external fn AtomicI64.new(v i64) -> Self
+
+#stable(since = "0.1")
+export external fn AtomicI64 @load(ord MemOrdering) -> i64
+#stable(since = "0.1")
+export external fn AtomicI64 @load() -> i64
+
+#stable(since = "0.1")
+export external fn AtomicI64 mut @store(v i64, ord MemOrdering)
+#stable(since = "0.1")
+export external fn AtomicI64 mut @store(v i64)
+
+#stable(since = "0.1")
+export external fn AtomicI64 mut @swap(v i64, ord MemOrdering) -> i64
+#stable(since = "0.1")
+export external fn AtomicI64 mut @swap(v i64) -> i64
+
+#stable(since = "0.1")
+export external fn AtomicI64 mut @compare_exchange(expected i64, desired i64, success MemOrdering, failure MemOrdering) -> bool
+#stable(since = "0.1")
+export external fn AtomicI64 mut @compare_exchange(expected i64, desired i64) -> bool
+
+#stable(since = "0.1")
+export external fn AtomicI64 mut @compare_exchange_weak(expected i64, desired i64, success MemOrdering, failure MemOrdering) -> bool
+#stable(since = "0.1")
+export external fn AtomicI64 mut @compare_exchange_weak(expected i64, desired i64) -> bool
+
+#stable(since = "0.1")
+export external fn AtomicI64 mut @fetch_add(v i64, ord MemOrdering) -> i64
+#stable(since = "0.1")
+export external fn AtomicI64 mut @fetch_add(v i64) -> i64
+
+#stable(since = "0.1")
+export external fn AtomicI64 mut @fetch_sub(v i64, ord MemOrdering) -> i64
+#stable(since = "0.1")
+export external fn AtomicI64 mut @fetch_sub(v i64) -> i64
+
+#stable(since = "0.1")
+export external fn AtomicI64 mut @fetch_or(v i64, ord MemOrdering) -> i64
+#stable(since = "0.1")
+export external fn AtomicI64 mut @fetch_or(v i64) -> i64
+
+#stable(since = "0.1")
+export external fn AtomicI64 mut @fetch_and(v i64, ord MemOrdering) -> i64
+#stable(since = "0.1")
+export external fn AtomicI64 mut @fetch_and(v i64) -> i64
+
+#stable(since = "0.1")
+export external fn AtomicI64 mut @fetch_xor(v i64, ord MemOrdering) -> i64
+#stable(since = "0.1")
+export external fn AtomicI64 mut @fetch_xor(v i64) -> i64
+
+#stable(since = "0.1")
+export external fn AtomicI64 mut @fetch_max(v i64, ord MemOrdering) -> i64
+#stable(since = "0.1")
+export external fn AtomicI64 mut @fetch_max(v i64) -> i64
+
+#stable(since = "0.1")
+export external fn AtomicI64 mut @fetch_min(v i64, ord MemOrdering) -> i64
+#stable(since = "0.1")
+export external fn AtomicI64 mut @fetch_min(v i64) -> i64
+
+#stable(since = "0.1")
+export external fn AtomicI64 mut @fetch_nand(v i64, ord MemOrdering) -> i64
+#stable(since = "0.1")
+export external fn AtomicI64 mut @fetch_nand(v i64) -> i64
+
+// ─── AtomicI32 ───────────────────────────────────────────────────
+
+/// Lock-free 32-bit signed atomic integer.
+///
+/// Most common signed atomic; fits in single cache slot.
+/// Wraparound: signed overflow — modular arithmetic.
+#stable(since = "0.1")
+export external fn AtomicI32.new(v i32) -> Self
+
+#stable(since = "0.1")
+export external fn AtomicI32 @load(ord MemOrdering) -> i32
+#stable(since = "0.1")
+export external fn AtomicI32 @load() -> i32
+
+#stable(since = "0.1")
+export external fn AtomicI32 mut @store(v i32, ord MemOrdering)
+#stable(since = "0.1")
+export external fn AtomicI32 mut @store(v i32)
+
+#stable(since = "0.1")
+export external fn AtomicI32 mut @swap(v i32, ord MemOrdering) -> i32
+#stable(since = "0.1")
+export external fn AtomicI32 mut @swap(v i32) -> i32
+
+#stable(since = "0.1")
+export external fn AtomicI32 mut @compare_exchange(expected i32, desired i32, success MemOrdering, failure MemOrdering) -> bool
+#stable(since = "0.1")
+export external fn AtomicI32 mut @compare_exchange(expected i32, desired i32) -> bool
+
+#stable(since = "0.1")
+export external fn AtomicI32 mut @compare_exchange_weak(expected i32, desired i32, success MemOrdering, failure MemOrdering) -> bool
+#stable(since = "0.1")
+export external fn AtomicI32 mut @compare_exchange_weak(expected i32, desired i32) -> bool
+
+#stable(since = "0.1")
+export external fn AtomicI32 mut @fetch_add(v i32, ord MemOrdering) -> i32
+#stable(since = "0.1")
+export external fn AtomicI32 mut @fetch_add(v i32) -> i32
+
+#stable(since = "0.1")
+export external fn AtomicI32 mut @fetch_sub(v i32, ord MemOrdering) -> i32
+#stable(since = "0.1")
+export external fn AtomicI32 mut @fetch_sub(v i32) -> i32
+
+#stable(since = "0.1")
+export external fn AtomicI32 mut @fetch_or(v i32, ord MemOrdering) -> i32
+#stable(since = "0.1")
+export external fn AtomicI32 mut @fetch_or(v i32) -> i32
+
+#stable(since = "0.1")
+export external fn AtomicI32 mut @fetch_and(v i32, ord MemOrdering) -> i32
+#stable(since = "0.1")
+export external fn AtomicI32 mut @fetch_and(v i32) -> i32
+
+#stable(since = "0.1")
+export external fn AtomicI32 mut @fetch_xor(v i32, ord MemOrdering) -> i32
+#stable(since = "0.1")
+export external fn AtomicI32 mut @fetch_xor(v i32) -> i32
+
+#stable(since = "0.1")
+export external fn AtomicI32 mut @fetch_max(v i32, ord MemOrdering) -> i32
+#stable(since = "0.1")
+export external fn AtomicI32 mut @fetch_max(v i32) -> i32
+
+#stable(since = "0.1")
+export external fn AtomicI32 mut @fetch_min(v i32, ord MemOrdering) -> i32
+#stable(since = "0.1")
+export external fn AtomicI32 mut @fetch_min(v i32) -> i32
+
+#stable(since = "0.1")
+export external fn AtomicI32 mut @fetch_nand(v i32, ord MemOrdering) -> i32
+#stable(since = "0.1")
+export external fn AtomicI32 mut @fetch_nand(v i32) -> i32
+
+// ─── AtomicI16 ───────────────────────────────────────────────────
+
+/// Lock-free 16-bit signed atomic integer.
+///
+/// For compact counters and sized flags.
+/// Wraparound: signed overflow — modular arithmetic.
+#stable(since = "0.1")
+export external fn AtomicI16.new(v i16) -> Self
+
+#stable(since = "0.1")
+export external fn AtomicI16 @load(ord MemOrdering) -> i16
+#stable(since = "0.1")
+export external fn AtomicI16 @load() -> i16
+
+#stable(since = "0.1")
+export external fn AtomicI16 mut @store(v i16, ord MemOrdering)
+#stable(since = "0.1")
+export external fn AtomicI16 mut @store(v i16)
+
+#stable(since = "0.1")
+export external fn AtomicI16 mut @swap(v i16, ord MemOrdering) -> i16
+#stable(since = "0.1")
+export external fn AtomicI16 mut @swap(v i16) -> i16
+
+#stable(since = "0.1")
+export external fn AtomicI16 mut @compare_exchange(expected i16, desired i16, success MemOrdering, failure MemOrdering) -> bool
+#stable(since = "0.1")
+export external fn AtomicI16 mut @compare_exchange(expected i16, desired i16) -> bool
+
+#stable(since = "0.1")
+export external fn AtomicI16 mut @compare_exchange_weak(expected i16, desired i16, success MemOrdering, failure MemOrdering) -> bool
+#stable(since = "0.1")
+export external fn AtomicI16 mut @compare_exchange_weak(expected i16, desired i16) -> bool
+
+#stable(since = "0.1")
+export external fn AtomicI16 mut @fetch_add(v i16, ord MemOrdering) -> i16
+#stable(since = "0.1")
+export external fn AtomicI16 mut @fetch_add(v i16) -> i16
+
+#stable(since = "0.1")
+export external fn AtomicI16 mut @fetch_sub(v i16, ord MemOrdering) -> i16
+#stable(since = "0.1")
+export external fn AtomicI16 mut @fetch_sub(v i16) -> i16
+
+#stable(since = "0.1")
+export external fn AtomicI16 mut @fetch_or(v i16, ord MemOrdering) -> i16
+#stable(since = "0.1")
+export external fn AtomicI16 mut @fetch_or(v i16) -> i16
+
+#stable(since = "0.1")
+export external fn AtomicI16 mut @fetch_and(v i16, ord MemOrdering) -> i16
+#stable(since = "0.1")
+export external fn AtomicI16 mut @fetch_and(v i16) -> i16
+
+#stable(since = "0.1")
+export external fn AtomicI16 mut @fetch_xor(v i16, ord MemOrdering) -> i16
+#stable(since = "0.1")
+export external fn AtomicI16 mut @fetch_xor(v i16) -> i16
+
+#stable(since = "0.1")
+export external fn AtomicI16 mut @fetch_max(v i16, ord MemOrdering) -> i16
+#stable(since = "0.1")
+export external fn AtomicI16 mut @fetch_max(v i16) -> i16
+
+#stable(since = "0.1")
+export external fn AtomicI16 mut @fetch_min(v i16, ord MemOrdering) -> i16
+#stable(since = "0.1")
+export external fn AtomicI16 mut @fetch_min(v i16) -> i16
+
+#stable(since = "0.1")
+export external fn AtomicI16 mut @fetch_nand(v i16, ord MemOrdering) -> i16
+#stable(since = "0.1")
+export external fn AtomicI16 mut @fetch_nand(v i16) -> i16
+
+// ─── AtomicI8 ────────────────────────────────────────────────────
+
+/// Lock-free 8-bit signed atomic integer.
+///
+/// Byte-sized flags and narrow counters.
+/// Wraparound: i8 [-128, 127]; overflow wraps modularly (D168).
+#stable(since = "0.1")
+export external fn AtomicI8.new(v i8) -> Self
+
+#stable(since = "0.1")
+export external fn AtomicI8 @load(ord MemOrdering) -> i8
+#stable(since = "0.1")
+export external fn AtomicI8 @load() -> i8
+
+#stable(since = "0.1")
+export external fn AtomicI8 mut @store(v i8, ord MemOrdering)
+#stable(since = "0.1")
+export external fn AtomicI8 mut @store(v i8)
+
+#stable(since = "0.1")
+export external fn AtomicI8 mut @swap(v i8, ord MemOrdering) -> i8
+#stable(since = "0.1")
+export external fn AtomicI8 mut @swap(v i8) -> i8
+
+#stable(since = "0.1")
+export external fn AtomicI8 mut @compare_exchange(expected i8, desired i8, success MemOrdering, failure MemOrdering) -> bool
+#stable(since = "0.1")
+export external fn AtomicI8 mut @compare_exchange(expected i8, desired i8) -> bool
+
+#stable(since = "0.1")
+export external fn AtomicI8 mut @compare_exchange_weak(expected i8, desired i8, success MemOrdering, failure MemOrdering) -> bool
+#stable(since = "0.1")
+export external fn AtomicI8 mut @compare_exchange_weak(expected i8, desired i8) -> bool
+
+#stable(since = "0.1")
+export external fn AtomicI8 mut @fetch_add(v i8, ord MemOrdering) -> i8
+#stable(since = "0.1")
+export external fn AtomicI8 mut @fetch_add(v i8) -> i8
+
+#stable(since = "0.1")
+export external fn AtomicI8 mut @fetch_sub(v i8, ord MemOrdering) -> i8
+#stable(since = "0.1")
+export external fn AtomicI8 mut @fetch_sub(v i8) -> i8
+
+#stable(since = "0.1")
+export external fn AtomicI8 mut @fetch_or(v i8, ord MemOrdering) -> i8
+#stable(since = "0.1")
+export external fn AtomicI8 mut @fetch_or(v i8) -> i8
+
+#stable(since = "0.1")
+export external fn AtomicI8 mut @fetch_and(v i8, ord MemOrdering) -> i8
+#stable(since = "0.1")
+export external fn AtomicI8 mut @fetch_and(v i8) -> i8
+
+#stable(since = "0.1")
+export external fn AtomicI8 mut @fetch_xor(v i8, ord MemOrdering) -> i8
+#stable(since = "0.1")
+export external fn AtomicI8 mut @fetch_xor(v i8) -> i8
+
+#stable(since = "0.1")
+export external fn AtomicI8 mut @fetch_max(v i8, ord MemOrdering) -> i8
+#stable(since = "0.1")
+export external fn AtomicI8 mut @fetch_max(v i8) -> i8
+
+#stable(since = "0.1")
+export external fn AtomicI8 mut @fetch_min(v i8, ord MemOrdering) -> i8
+#stable(since = "0.1")
+export external fn AtomicI8 mut @fetch_min(v i8) -> i8
+
+#stable(since = "0.1")
+export external fn AtomicI8 mut @fetch_nand(v i8, ord MemOrdering) -> i8
+#stable(since = "0.1")
+export external fn AtomicI8 mut @fetch_nand(v i8) -> i8
+
+// ─── AtomicU64 ───────────────────────────────────────────────────
+
+/// Lock-free 64-bit unsigned atomic integer.
+///
+/// Wide unsigned counters, timestamps.
+/// Wraparound: unsigned overflow wraps modularly (D168).
+#stable(since = "0.1")
+export external fn AtomicU64.new(v u64) -> Self
+
+#stable(since = "0.1")
+export external fn AtomicU64 @load(ord MemOrdering) -> u64
+#stable(since = "0.1")
+export external fn AtomicU64 @load() -> u64
+
+#stable(since = "0.1")
+export external fn AtomicU64 mut @store(v u64, ord MemOrdering)
+#stable(since = "0.1")
+export external fn AtomicU64 mut @store(v u64)
+
+#stable(since = "0.1")
+export external fn AtomicU64 mut @swap(v u64, ord MemOrdering) -> u64
+#stable(since = "0.1")
+export external fn AtomicU64 mut @swap(v u64) -> u64
+
+#stable(since = "0.1")
+export external fn AtomicU64 mut @compare_exchange(expected u64, desired u64, success MemOrdering, failure MemOrdering) -> bool
+#stable(since = "0.1")
+export external fn AtomicU64 mut @compare_exchange(expected u64, desired u64) -> bool
+
+#stable(since = "0.1")
+export external fn AtomicU64 mut @compare_exchange_weak(expected u64, desired u64, success MemOrdering, failure MemOrdering) -> bool
+#stable(since = "0.1")
+export external fn AtomicU64 mut @compare_exchange_weak(expected u64, desired u64) -> bool
+
+#stable(since = "0.1")
+export external fn AtomicU64 mut @fetch_add(v u64, ord MemOrdering) -> u64
+#stable(since = "0.1")
+export external fn AtomicU64 mut @fetch_add(v u64) -> u64
+
+#stable(since = "0.1")
+export external fn AtomicU64 mut @fetch_sub(v u64, ord MemOrdering) -> u64
+#stable(since = "0.1")
+export external fn AtomicU64 mut @fetch_sub(v u64) -> u64
+
+#stable(since = "0.1")
+export external fn AtomicU64 mut @fetch_or(v u64, ord MemOrdering) -> u64
+#stable(since = "0.1")
+export external fn AtomicU64 mut @fetch_or(v u64) -> u64
+
+#stable(since = "0.1")
+export external fn AtomicU64 mut @fetch_and(v u64, ord MemOrdering) -> u64
+#stable(since = "0.1")
+export external fn AtomicU64 mut @fetch_and(v u64) -> u64
+
+#stable(since = "0.1")
+export external fn AtomicU64 mut @fetch_xor(v u64, ord MemOrdering) -> u64
+#stable(since = "0.1")
+export external fn AtomicU64 mut @fetch_xor(v u64) -> u64
+
+#stable(since = "0.1")
+export external fn AtomicU64 mut @fetch_max(v u64, ord MemOrdering) -> u64
+#stable(since = "0.1")
+export external fn AtomicU64 mut @fetch_max(v u64) -> u64
+
+#stable(since = "0.1")
+export external fn AtomicU64 mut @fetch_min(v u64, ord MemOrdering) -> u64
+#stable(since = "0.1")
+export external fn AtomicU64 mut @fetch_min(v u64) -> u64
+
+#stable(since = "0.1")
+export external fn AtomicU64 mut @fetch_nand(v u64, ord MemOrdering) -> u64
+#stable(since = "0.1")
+export external fn AtomicU64 mut @fetch_nand(v u64) -> u64
+
+// ─── AtomicU32 ───────────────────────────────────────────────────
+
+/// Lock-free 32-bit unsigned atomic integer.
+///
+/// Bitset slots, refcount. Most common unsigned atomic.
+/// Wraparound: unsigned overflow wraps modularly (D168).
+#stable(since = "0.1")
+export external fn AtomicU32.new(v u32) -> Self
+
+#stable(since = "0.1")
+export external fn AtomicU32 @load(ord MemOrdering) -> u32
+#stable(since = "0.1")
+export external fn AtomicU32 @load() -> u32
+
+#stable(since = "0.1")
+export external fn AtomicU32 mut @store(v u32, ord MemOrdering)
+#stable(since = "0.1")
+export external fn AtomicU32 mut @store(v u32)
+
+#stable(since = "0.1")
+export external fn AtomicU32 mut @swap(v u32, ord MemOrdering) -> u32
+#stable(since = "0.1")
+export external fn AtomicU32 mut @swap(v u32) -> u32
+
+#stable(since = "0.1")
+export external fn AtomicU32 mut @compare_exchange(expected u32, desired u32, success MemOrdering, failure MemOrdering) -> bool
+#stable(since = "0.1")
+export external fn AtomicU32 mut @compare_exchange(expected u32, desired u32) -> bool
+
+#stable(since = "0.1")
+export external fn AtomicU32 mut @compare_exchange_weak(expected u32, desired u32, success MemOrdering, failure MemOrdering) -> bool
+#stable(since = "0.1")
+export external fn AtomicU32 mut @compare_exchange_weak(expected u32, desired u32) -> bool
+
+#stable(since = "0.1")
+export external fn AtomicU32 mut @fetch_add(v u32, ord MemOrdering) -> u32
+#stable(since = "0.1")
+export external fn AtomicU32 mut @fetch_add(v u32) -> u32
+
+#stable(since = "0.1")
+export external fn AtomicU32 mut @fetch_sub(v u32, ord MemOrdering) -> u32
+#stable(since = "0.1")
+export external fn AtomicU32 mut @fetch_sub(v u32) -> u32
+
+#stable(since = "0.1")
+export external fn AtomicU32 mut @fetch_or(v u32, ord MemOrdering) -> u32
+#stable(since = "0.1")
+export external fn AtomicU32 mut @fetch_or(v u32) -> u32
+
+#stable(since = "0.1")
+export external fn AtomicU32 mut @fetch_and(v u32, ord MemOrdering) -> u32
+#stable(since = "0.1")
+export external fn AtomicU32 mut @fetch_and(v u32) -> u32
+
+#stable(since = "0.1")
+export external fn AtomicU32 mut @fetch_xor(v u32, ord MemOrdering) -> u32
+#stable(since = "0.1")
+export external fn AtomicU32 mut @fetch_xor(v u32) -> u32
+
+#stable(since = "0.1")
+export external fn AtomicU32 mut @fetch_max(v u32, ord MemOrdering) -> u32
+#stable(since = "0.1")
+export external fn AtomicU32 mut @fetch_max(v u32) -> u32
+
+#stable(since = "0.1")
+export external fn AtomicU32 mut @fetch_min(v u32, ord MemOrdering) -> u32
+#stable(since = "0.1")
+export external fn AtomicU32 mut @fetch_min(v u32) -> u32
+
+#stable(since = "0.1")
+export external fn AtomicU32 mut @fetch_nand(v u32, ord MemOrdering) -> u32
+#stable(since = "0.1")
+export external fn AtomicU32 mut @fetch_nand(v u32) -> u32
+
+// ─── AtomicU16 ───────────────────────────────────────────────────
+
+/// Lock-free 16-bit unsigned atomic integer.
+///
+/// Sized unsigned counters.
+/// Wraparound: unsigned overflow wraps modularly (D168).
+#stable(since = "0.1")
+export external fn AtomicU16.new(v u16) -> Self
+
+#stable(since = "0.1")
+export external fn AtomicU16 @load(ord MemOrdering) -> u16
+#stable(since = "0.1")
+export external fn AtomicU16 @load() -> u16
+
+#stable(since = "0.1")
+export external fn AtomicU16 mut @store(v u16, ord MemOrdering)
+#stable(since = "0.1")
+export external fn AtomicU16 mut @store(v u16)
+
+#stable(since = "0.1")
+export external fn AtomicU16 mut @swap(v u16, ord MemOrdering) -> u16
+#stable(since = "0.1")
+export external fn AtomicU16 mut @swap(v u16) -> u16
+
+#stable(since = "0.1")
+export external fn AtomicU16 mut @compare_exchange(expected u16, desired u16, success MemOrdering, failure MemOrdering) -> bool
+#stable(since = "0.1")
+export external fn AtomicU16 mut @compare_exchange(expected u16, desired u16) -> bool
+
+#stable(since = "0.1")
+export external fn AtomicU16 mut @compare_exchange_weak(expected u16, desired u16, success MemOrdering, failure MemOrdering) -> bool
+#stable(since = "0.1")
+export external fn AtomicU16 mut @compare_exchange_weak(expected u16, desired u16) -> bool
+
+#stable(since = "0.1")
+export external fn AtomicU16 mut @fetch_add(v u16, ord MemOrdering) -> u16
+#stable(since = "0.1")
+export external fn AtomicU16 mut @fetch_add(v u16) -> u16
+
+#stable(since = "0.1")
+export external fn AtomicU16 mut @fetch_sub(v u16, ord MemOrdering) -> u16
+#stable(since = "0.1")
+export external fn AtomicU16 mut @fetch_sub(v u16) -> u16
+
+#stable(since = "0.1")
+export external fn AtomicU16 mut @fetch_or(v u16, ord MemOrdering) -> u16
+#stable(since = "0.1")
+export external fn AtomicU16 mut @fetch_or(v u16) -> u16
+
+#stable(since = "0.1")
+export external fn AtomicU16 mut @fetch_and(v u16, ord MemOrdering) -> u16
+#stable(since = "0.1")
+export external fn AtomicU16 mut @fetch_and(v u16) -> u16
+
+#stable(since = "0.1")
+export external fn AtomicU16 mut @fetch_xor(v u16, ord MemOrdering) -> u16
+#stable(since = "0.1")
+export external fn AtomicU16 mut @fetch_xor(v u16) -> u16
+
+#stable(since = "0.1")
+export external fn AtomicU16 mut @fetch_max(v u16, ord MemOrdering) -> u16
+#stable(since = "0.1")
+export external fn AtomicU16 mut @fetch_max(v u16) -> u16
+
+#stable(since = "0.1")
+export external fn AtomicU16 mut @fetch_min(v u16, ord MemOrdering) -> u16
+#stable(since = "0.1")
+export external fn AtomicU16 mut @fetch_min(v u16) -> u16
+
+#stable(since = "0.1")
+export external fn AtomicU16 mut @fetch_nand(v u16, ord MemOrdering) -> u16
+#stable(since = "0.1")
+export external fn AtomicU16 mut @fetch_nand(v u16) -> u16
+
+// ─── AtomicU8 ────────────────────────────────────────────────────
+
+/// Lock-free 8-bit unsigned atomic integer (byte).
+///
+/// Byte-sized unsigned flags, bitmap bytes.
+/// Wraparound: u8 [0, 255]; overflow wraps modularly (D168).
+#stable(since = "0.1")
+export external fn AtomicU8.new(v u8) -> Self
+
+#stable(since = "0.1")
+export external fn AtomicU8 @load(ord MemOrdering) -> u8
+#stable(since = "0.1")
+export external fn AtomicU8 @load() -> u8
+
+#stable(since = "0.1")
+export external fn AtomicU8 mut @store(v u8, ord MemOrdering)
+#stable(since = "0.1")
+export external fn AtomicU8 mut @store(v u8)
+
+#stable(since = "0.1")
+export external fn AtomicU8 mut @swap(v u8, ord MemOrdering) -> u8
+#stable(since = "0.1")
+export external fn AtomicU8 mut @swap(v u8) -> u8
+
+#stable(since = "0.1")
+export external fn AtomicU8 mut @compare_exchange(expected u8, desired u8, success MemOrdering, failure MemOrdering) -> bool
+#stable(since = "0.1")
+export external fn AtomicU8 mut @compare_exchange(expected u8, desired u8) -> bool
+
+#stable(since = "0.1")
+export external fn AtomicU8 mut @compare_exchange_weak(expected u8, desired u8, success MemOrdering, failure MemOrdering) -> bool
+#stable(since = "0.1")
+export external fn AtomicU8 mut @compare_exchange_weak(expected u8, desired u8) -> bool
+
+#stable(since = "0.1")
+export external fn AtomicU8 mut @fetch_add(v u8, ord MemOrdering) -> u8
+#stable(since = "0.1")
+export external fn AtomicU8 mut @fetch_add(v u8) -> u8
+
+#stable(since = "0.1")
+export external fn AtomicU8 mut @fetch_sub(v u8, ord MemOrdering) -> u8
+#stable(since = "0.1")
+export external fn AtomicU8 mut @fetch_sub(v u8) -> u8
+
+#stable(since = "0.1")
+export external fn AtomicU8 mut @fetch_or(v u8, ord MemOrdering) -> u8
+#stable(since = "0.1")
+export external fn AtomicU8 mut @fetch_or(v u8) -> u8
+
+#stable(since = "0.1")
+export external fn AtomicU8 mut @fetch_and(v u8, ord MemOrdering) -> u8
+#stable(since = "0.1")
+export external fn AtomicU8 mut @fetch_and(v u8) -> u8
+
+#stable(since = "0.1")
+export external fn AtomicU8 mut @fetch_xor(v u8, ord MemOrdering) -> u8
+#stable(since = "0.1")
+export external fn AtomicU8 mut @fetch_xor(v u8) -> u8
+
+#stable(since = "0.1")
+export external fn AtomicU8 mut @fetch_max(v u8, ord MemOrdering) -> u8
+#stable(since = "0.1")
+export external fn AtomicU8 mut @fetch_max(v u8) -> u8
+
+#stable(since = "0.1")
+export external fn AtomicU8 mut @fetch_min(v u8, ord MemOrdering) -> u8
+#stable(since = "0.1")
+export external fn AtomicU8 mut @fetch_min(v u8) -> u8
+
+#stable(since = "0.1")
+export external fn AtomicU8 mut @fetch_nand(v u8, ord MemOrdering) -> u8
+#stable(since = "0.1")
+export external fn AtomicU8 mut @fetch_nand(v u8) -> u8
+
+// ─── AtomicIsize ─────────────────────────────────────────────────
+
+/// Lock-free platform-word signed atomic integer.
+///
+/// `int` = `i64` (Plan 70.4 D129). Platform-word signed atomic.
+/// Useful for signed indexes and offsets.
+#stable(since = "0.1")
+export external fn AtomicIsize.new(v int) -> Self
+
+#stable(since = "0.1")
+export external fn AtomicIsize @load(ord MemOrdering) -> int
+#stable(since = "0.1")
+export external fn AtomicIsize @load() -> int
+
+#stable(since = "0.1")
+export external fn AtomicIsize mut @store(v int, ord MemOrdering)
+#stable(since = "0.1")
+export external fn AtomicIsize mut @store(v int)
+
+#stable(since = "0.1")
+export external fn AtomicIsize mut @swap(v int, ord MemOrdering) -> int
+#stable(since = "0.1")
+export external fn AtomicIsize mut @swap(v int) -> int
+
+#stable(since = "0.1")
+export external fn AtomicIsize mut @compare_exchange(expected int, desired int, success MemOrdering, failure MemOrdering) -> bool
+#stable(since = "0.1")
+export external fn AtomicIsize mut @compare_exchange(expected int, desired int) -> bool
+
+#stable(since = "0.1")
+export external fn AtomicIsize mut @compare_exchange_weak(expected int, desired int, success MemOrdering, failure MemOrdering) -> bool
+#stable(since = "0.1")
+export external fn AtomicIsize mut @compare_exchange_weak(expected int, desired int) -> bool
+
+#stable(since = "0.1")
+export external fn AtomicIsize mut @fetch_add(v int, ord MemOrdering) -> int
+#stable(since = "0.1")
+export external fn AtomicIsize mut @fetch_add(v int) -> int
+
+#stable(since = "0.1")
+export external fn AtomicIsize mut @fetch_sub(v int, ord MemOrdering) -> int
+#stable(since = "0.1")
+export external fn AtomicIsize mut @fetch_sub(v int) -> int
+
+#stable(since = "0.1")
+export external fn AtomicIsize mut @fetch_or(v int, ord MemOrdering) -> int
+#stable(since = "0.1")
+export external fn AtomicIsize mut @fetch_or(v int) -> int
+
+#stable(since = "0.1")
+export external fn AtomicIsize mut @fetch_and(v int, ord MemOrdering) -> int
+#stable(since = "0.1")
+export external fn AtomicIsize mut @fetch_and(v int) -> int
+
+#stable(since = "0.1")
+export external fn AtomicIsize mut @fetch_xor(v int, ord MemOrdering) -> int
+#stable(since = "0.1")
+export external fn AtomicIsize mut @fetch_xor(v int) -> int
+
+#stable(since = "0.1")
+export external fn AtomicIsize mut @fetch_max(v int, ord MemOrdering) -> int
+#stable(since = "0.1")
+export external fn AtomicIsize mut @fetch_max(v int) -> int
+
+#stable(since = "0.1")
+export external fn AtomicIsize mut @fetch_min(v int, ord MemOrdering) -> int
+#stable(since = "0.1")
+export external fn AtomicIsize mut @fetch_min(v int) -> int
+
+#stable(since = "0.1")
+export external fn AtomicIsize mut @fetch_nand(v int, ord MemOrdering) -> int
+#stable(since = "0.1")
+export external fn AtomicIsize mut @fetch_nand(v int) -> int
+
+// ─── AtomicUsize ─────────────────────────────────────────────────
+
+/// Lock-free platform-word unsigned atomic integer.
+///
+/// `uint` = `u64` (Plan 70.5). Platform-word unsigned atomic.
+/// Useful for array indexes, buffer sizes.
+#stable(since = "0.1")
+export external fn AtomicUsize.new(v uint) -> Self
+
+#stable(since = "0.1")
+export external fn AtomicUsize @load(ord MemOrdering) -> uint
+#stable(since = "0.1")
+export external fn AtomicUsize @load() -> uint
+
+#stable(since = "0.1")
+export external fn AtomicUsize mut @store(v uint, ord MemOrdering)
+#stable(since = "0.1")
+export external fn AtomicUsize mut @store(v uint)
+
+#stable(since = "0.1")
+export external fn AtomicUsize mut @swap(v uint, ord MemOrdering) -> uint
+#stable(since = "0.1")
+export external fn AtomicUsize mut @swap(v uint) -> uint
+
+#stable(since = "0.1")
+export external fn AtomicUsize mut @compare_exchange(expected uint, desired uint, success MemOrdering, failure MemOrdering) -> bool
+#stable(since = "0.1")
+export external fn AtomicUsize mut @compare_exchange(expected uint, desired uint) -> bool
+
+#stable(since = "0.1")
+export external fn AtomicUsize mut @compare_exchange_weak(expected uint, desired uint, success MemOrdering, failure MemOrdering) -> bool
+#stable(since = "0.1")
+export external fn AtomicUsize mut @compare_exchange_weak(expected uint, desired uint) -> bool
+
+#stable(since = "0.1")
+export external fn AtomicUsize mut @fetch_add(v uint, ord MemOrdering) -> uint
+#stable(since = "0.1")
+export external fn AtomicUsize mut @fetch_add(v uint) -> uint
+
+#stable(since = "0.1")
+export external fn AtomicUsize mut @fetch_sub(v uint, ord MemOrdering) -> uint
+#stable(since = "0.1")
+export external fn AtomicUsize mut @fetch_sub(v uint) -> uint
+
+#stable(since = "0.1")
+export external fn AtomicUsize mut @fetch_or(v uint, ord MemOrdering) -> uint
+#stable(since = "0.1")
+export external fn AtomicUsize mut @fetch_or(v uint) -> uint
+
+#stable(since = "0.1")
+export external fn AtomicUsize mut @fetch_and(v uint, ord MemOrdering) -> uint
+#stable(since = "0.1")
+export external fn AtomicUsize mut @fetch_and(v uint) -> uint
+
+#stable(since = "0.1")
+export external fn AtomicUsize mut @fetch_xor(v uint, ord MemOrdering) -> uint
+#stable(since = "0.1")
+export external fn AtomicUsize mut @fetch_xor(v uint) -> uint
+
+#stable(since = "0.1")
+export external fn AtomicUsize mut @fetch_max(v uint, ord MemOrdering) -> uint
+#stable(since = "0.1")
+export external fn AtomicUsize mut @fetch_max(v uint) -> uint
+
+#stable(since = "0.1")
+export external fn AtomicUsize mut @fetch_min(v uint, ord MemOrdering) -> uint
+#stable(since = "0.1")
+export external fn AtomicUsize mut @fetch_min(v uint) -> uint
+
+#stable(since = "0.1")
+export external fn AtomicUsize mut @fetch_nand(v uint, ord MemOrdering) -> uint
+#stable(since = "0.1")
+export external fn AtomicUsize mut @fetch_nand(v uint) -> uint
+
 // ─── AtomicInt ───────────────────────────────────────────────────
 
 /// Lock-free атомарный целочисленный счётчик.
@@ -133,32 +884,125 @@ export external fn AtomicInt mut @compare_exchange(expected int, desired int) ->
 /// `swap()` полезен для one-shot ownership паттерна:
 /// `if !flag.swap(true) { /* только первый caller выполняет */ }`.
 ///
+/// Ordering-aware overloads добавлены в Plan 103.2.
+/// Methods без `MemOrdering` используют `SeqCst` (M1) — safest default.
+///
 /// # See Also
 ///
-/// - `[AtomicInt]` — атомарный integer
+/// - `[AtomicInt]` — deprecated integer atomic
+/// - `[AtomicI64]` — preferred integer atomic
 /// - `[Once]` — barrier для exactly-once execution
+/// - `[MemOrdering]` — ordering parameter enum
 #stable(since = "0.1")
 export external fn AtomicBool.new(v bool) -> Self
 
-/// Загрузить текущее значение (acquire ordering).
+/// Загрузить текущее значение с explicit ordering.
+#stable(since = "0.1")
+export external fn AtomicBool @load(ord MemOrdering) -> bool
+/// Загрузить текущее значение (SeqCst ordering).
 #stable(since = "0.1")
 export external fn AtomicBool @load() -> bool
 
-/// Записать новое значение (release ordering).
+/// Записать новое значение с explicit ordering.
+#stable(since = "0.1")
+export external fn AtomicBool mut @store(v bool, ord MemOrdering)
+/// Записать новое значение (SeqCst ordering).
 #stable(since = "0.1")
 export external fn AtomicBool mut @store(v bool)
 
-/// Compare-and-swap: если значение == `expected`, записать `desired`.
-///
-/// Возвращает `true` при успехе. Использует acq_rel ordering.
+/// Compare-and-swap с explicit orderings.
+/// Возвращает `true` при успехе.
+#stable(since = "0.1")
+export external fn AtomicBool mut @compare_exchange(expected bool, desired bool, success MemOrdering, failure MemOrdering) -> bool
+/// Compare-and-swap (SeqCst/SeqCst ordering).
+/// Возвращает `true` при успехе.
 #stable(since = "0.1")
 export external fn AtomicBool mut @compare_exchange(expected bool, desired bool) -> bool
 
-/// Атомарно установить `v`, вернуть предыдущее значение (acq_rel).
+/// Compare-and-swap weak с explicit orderings. Может spuriously fail на ARM.
+#stable(since = "0.1")
+export external fn AtomicBool mut @compare_exchange_weak(expected bool, desired bool, success MemOrdering, failure MemOrdering) -> bool
+/// Compare-and-swap weak (SeqCst/SeqCst ordering).
+#stable(since = "0.1")
+export external fn AtomicBool mut @compare_exchange_weak(expected bool, desired bool) -> bool
+
+/// Атомарно установить `v`, вернуть предыдущее значение с explicit ordering.
+#stable(since = "0.1")
+export external fn AtomicBool mut @swap(v bool, ord MemOrdering) -> bool
+/// Атомарно установить `v`, вернуть предыдущее значение (SeqCst ordering).
 ///
 /// Полезен для one-shot ownership: `if !flag.swap(true) { /* first */ }`.
 #stable(since = "0.1")
 export external fn AtomicBool mut @swap(v bool) -> bool
+
+/// Атомарный bitwise-OR, returns previous value. With explicit ordering.
+#stable(since = "0.1")
+export external fn AtomicBool mut @fetch_or(v bool, ord MemOrdering) -> bool
+/// Атомарный bitwise-OR, returns previous value (SeqCst ordering).
+#stable(since = "0.1")
+export external fn AtomicBool mut @fetch_or(v bool) -> bool
+
+/// Атомарный bitwise-AND, returns previous value. With explicit ordering.
+#stable(since = "0.1")
+export external fn AtomicBool mut @fetch_and(v bool, ord MemOrdering) -> bool
+/// Атомарный bitwise-AND, returns previous value (SeqCst ordering).
+#stable(since = "0.1")
+export external fn AtomicBool mut @fetch_and(v bool) -> bool
+
+/// Атомарный bitwise-XOR, returns previous value. With explicit ordering.
+#stable(since = "0.1")
+export external fn AtomicBool mut @fetch_xor(v bool, ord MemOrdering) -> bool
+/// Атомарный bitwise-XOR, returns previous value (SeqCst ordering).
+#stable(since = "0.1")
+export external fn AtomicBool mut @fetch_xor(v bool) -> bool
+
+// ─── AtomicPtr ───────────────────────────────────────────────────
+
+/// Lock-free atomic pointer (GC-managed reference).
+///
+/// Stores a GC-managed reference atomically. Supports CAS-based
+/// first-writer-wins patterns.
+///
+/// Note: Generic type parameter [T] planned for 103.7; current impl
+/// uses `int` as pointer-sized proxy (stores address as integer).
+/// GC tracking: AtomicPtr registers its value with GC roots on store.
+///
+/// Operations: load/store/swap/compare_exchange/compare_exchange_weak.
+/// **No** fetch_add/sub/or/and/xor (pointer arithmetic is unsafe).
+///
+/// # See Also
+///
+/// - `[AtomicI64]` — integer atomic
+/// - `[MemOrdering]` — ordering enum
+#stable(since = "0.1")
+export external fn AtomicPtr.null() -> Self
+#stable(since = "0.1")
+export external fn AtomicPtr.new(v int) -> Self
+
+#stable(since = "0.1")
+export external fn AtomicPtr @load(ord MemOrdering) -> int
+#stable(since = "0.1")
+export external fn AtomicPtr @load() -> int
+
+#stable(since = "0.1")
+export external fn AtomicPtr mut @store(v int, ord MemOrdering)
+#stable(since = "0.1")
+export external fn AtomicPtr mut @store(v int)
+
+#stable(since = "0.1")
+export external fn AtomicPtr mut @swap(v int, ord MemOrdering) -> int
+#stable(since = "0.1")
+export external fn AtomicPtr mut @swap(v int) -> int
+
+#stable(since = "0.1")
+export external fn AtomicPtr mut @compare_exchange(expected int, desired int, success MemOrdering, failure MemOrdering) -> bool
+#stable(since = "0.1")
+export external fn AtomicPtr mut @compare_exchange(expected int, desired int) -> bool
+
+#stable(since = "0.1")
+export external fn AtomicPtr mut @compare_exchange_weak(expected int, desired int, success MemOrdering, failure MemOrdering) -> bool
+#stable(since = "0.1")
+export external fn AtomicPtr mut @compare_exchange_weak(expected int, desired int) -> bool
 
 // ─── Mutex ───────────────────────────────────────────────────────
 

@@ -1,0 +1,17 @@
+// Plan 103.2 Ф.9 negative — non-existent bitwise op on AtomicU64.
+//
+// EXPECT_CC_ERROR no member named 'rotate_left'
+//
+// `a.rotate_left()` does not exist in Plan 103.2 atomic API — rotate is not
+// included. Codegen emits a member access of `rotate_left` on `Nova_AtomicU64`
+// → clang error: "no member named 'rotate_left' in 'Nova_AtomicU64'".
+
+module nova_tests.plan103_2.negative.atomic_u64_no_such_op_neg
+
+fn bad(a AtomicU64) => a.rotate_left()
+
+test "should not compile" {
+    let a = AtomicU64.new(1)
+    bad(a)
+    assert(true)
+}

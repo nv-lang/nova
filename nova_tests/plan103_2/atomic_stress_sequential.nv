@@ -1,0 +1,96 @@
+// Plan 103.2 Ф.9 stress — sequential (single-fiber) high-iteration ops.
+//
+// These are not concurrency stress tests (those require spawning fibers),
+// but they verify the runtime stability under thousands of atomic ops in
+// a tight loop: no corruption, no crash.
+//
+// Note: since clang uses __atomic_* builtins with a single-threaded call
+// site here, the ordering parameter has no observable effect beyond ensuring
+// the correct C code path is exercised.
+
+module nova_tests.plan103_2.atomic_stress_sequential
+
+test "stress: AtomicI64 10000 fetch_add/sub — net zero" {
+    let a = AtomicI64.new(0)
+    let i = 0
+    while i < 10000 {
+        a.fetch_add(1)
+        a.fetch_sub(1)
+        i = i + 1
+    }
+    assert(a.load() == 0)
+}
+
+test "stress: AtomicU64 10000 fetch_add — final value correct" {
+    let a = AtomicU64.new(0)
+    let i = 0
+    while i < 10000 {
+        a.fetch_add(1, Relaxed)
+        i = i + 1
+    }
+    assert(a.load(SeqCst) == 10000)
+}
+
+test "stress: AtomicI32 1000 fetch_or/and cycles — final value 0" {
+    let a = AtomicI32.new(0)
+    let i = 0
+    while i < 1000 {
+        a.fetch_or(0xFF)
+        a.fetch_and(0)
+        i = i + 1
+    }
+    assert(a.load() == 0)
+}
+
+test "stress: AtomicBool 5000 flip-flops via fetch_xor" {
+    let a = AtomicBool.new(false)
+    let i = 0
+    while i < 5000 {
+        a.fetch_xor(true)
+        i = i + 1
+    }
+    // 5000 flips of starting false: even count → ends false
+    assert(!a.load())
+}
+
+test "stress: AtomicI64 1000 compare_exchange retry loop — counter" {
+    let a = AtomicI64.new(0)
+    // Increment via CAS loop 100 times
+    let outer = 0
+    while outer < 100 {
+        let done = false
+        let inner = 0
+        while inner < 1000 {
+            let cur = a.load()
+            let ok = a.compare_exchange(cur, cur + 1)
+            if ok {
+                done = true
+                inner = 1000
+            }
+            inner = inner + 1
+        }
+        assert(done)
+        outer = outer + 1
+    }
+    assert(a.load() == 100)
+}
+
+test "stress: AtomicI64 fetch_max over ascending sequence" {
+    let a = AtomicI64.new(0)
+    let i = 0
+    while i < 1000 {
+        a.fetch_max(i)
+        i = i + 1
+    }
+    assert(a.load() == 999)
+}
+
+test "stress: AtomicI64 fetch_min over descending sequence" {
+    let a = AtomicI64.new(1000)
+    let i = 999
+    while i >= 0 {
+        a.fetch_min(i)
+        i = i - 1
+    }
+    assert(a.load() == 0)
+}

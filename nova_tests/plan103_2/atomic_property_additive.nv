@@ -1,0 +1,74 @@
+// Plan 103.2 Ф.9 property — additive inverse: fetch_add(n) then fetch_sub(n)
+// restores original value for all sized integer types.
+//
+// Also verifies: CAS is idempotent when applied to its own result.
+
+module nova_tests.plan103_2.atomic_property_additive
+
+/// fetch_add(n) then fetch_sub(n) must restore the original value.
+fn check_add_sub_inverse_i64(init int, delta int) -> bool {
+    let a = AtomicI64.new(init)
+    let prev = a.fetch_add(delta)
+    let prev2 = a.fetch_sub(delta)
+    let final = a.load()
+    prev == init && prev2 == init + delta && final == init
+}
+
+fn check_add_sub_inverse_i32(init int, delta int) -> bool {
+    let a = AtomicI32.new(init)
+    let prev = a.fetch_add(delta)
+    let prev2 = a.fetch_sub(delta)
+    let final = a.load()
+    prev == init && prev2 == init + delta && final == init
+}
+
+fn check_add_sub_inverse_u64(init int, delta int) -> bool {
+    let a = AtomicU64.new(init)
+    let prev = a.fetch_add(delta)
+    let prev2 = a.fetch_sub(delta)
+    let final = a.load()
+    prev == init && prev2 == init + delta && final == init
+}
+
+test "property: i64 fetch_add/sub inverse — multiple values" {
+    let pairs = [0, 1, 100, 500, 999, 10000]
+    let i = 0
+    while i < 6 {
+        let n = pairs[i]
+        assert(check_add_sub_inverse_i64(n, 1))
+        assert(check_add_sub_inverse_i64(n, n))
+        assert(check_add_sub_inverse_i64(0, n))
+        i = i + 1
+    }
+}
+
+test "property: i32 fetch_add/sub inverse" {
+    assert(check_add_sub_inverse_i32(0, 0))
+    assert(check_add_sub_inverse_i32(100, 7))
+    assert(check_add_sub_inverse_i32(1000, 999))
+}
+
+test "property: u64 fetch_add/sub inverse" {
+    assert(check_add_sub_inverse_u64(0, 1))
+    assert(check_add_sub_inverse_u64(100, 50))
+    assert(check_add_sub_inverse_u64(9999, 1))
+}
+
+test "property: CAS failure leaves value unchanged" {
+    let a = AtomicI64.new(7)
+    let v = a.load()
+    let ok = a.compare_exchange(v + 1, 0)  // wrong expected
+    assert(!ok)
+    assert(a.load() == v)
+}
+
+test "property: CAS success sets expected value" {
+    let a = AtomicI64.new(42)
+    let ok = a.compare_exchange(42, 99)
+    assert(ok)
+    assert(a.load() == 99)
+    // second CAS with old expected now fails
+    let ok2 = a.compare_exchange(42, 0)
+    assert(!ok2)
+    assert(a.load() == 99)
+}
