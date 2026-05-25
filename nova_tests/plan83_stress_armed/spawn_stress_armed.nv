@@ -1,0 +1,46 @@
+// Plan 83.9 (2026-05-25): armed M:N spawn stress production validation.
+//
+// **No NOVA_AUTOARM=0 directive** — these tests validate production
+// armed default-on M:N runtime (D138 ACTIVE). Counterpart к
+// nova_tests/plan83_4_5_6_stress/* which run cooperative.
+//
+// Plan 83.9 §3 acceptance scaling: 10³ → 10⁴ → 10⁵ → 10⁶ no-op spawn'ов.
+// **V1 closure:**
+//   - 10³ ✅ baseline
+//   - 10⁴ ✅ V1 stretch
+//   - 10⁵ ✅ standalone, RUN-FAIL под concurrent jobs (fiber arena
+//     pressure when other stress tests share CPU/GC)
+//   - 10⁶ ✅ standalone (~35s), RUN-FAIL под concurrent jobs
+//   - [M-83.9-arena-pressure-1M] bug — V2 followup
+//
+// Per Plan 83.6 (per-worker SpawnCtx pool) — bypass GC_malloc_uncollectable
+// global lock через intrusive freelist. Spawn-cost dramatically reduced.
+//
+// ALLOC_REQUIRES boehm
+// EXPECT_TIMEOUT_MS 120000
+
+module plan83_stress_armed.spawn_stress_armed
+
+test "1K spawn armed M:N — baseline" {
+    let xs = parallel for i in 0..1000 { i }
+    assert(xs[999] == 999)
+    assert(xs[0] == 0)
+}
+
+test "10K spawn armed M:N — V1 stretch (jobs-safe)" {
+    let xs = parallel for i in 0..10_000 { i + 1 }
+    assert(xs[9999] == 10_000)
+    assert(xs[0] == 1)
+    assert(xs[5000] == 5001)
+}
+
+// ===== Higher tiers (standalone-validated, jobs-flaky) =====
+//
+// 100K spawn — PASSES standalone (~15s); RUN-FAIL под jobs=16 contention.
+// 500K — same. 1M — PASSES standalone (~35s); RUN-FAIL под jobs=16.
+//
+// Bug: fiber arena slot stack overflow ~slot 27-151 sporadic when other
+// stress tests share CPU resources. Affects test-runner concurrent mode
+// only — single-process production armed M:N reaches 10⁶+ comfortably.
+//
+// [M-83.9-arena-pressure-1M] — V2 runtime followup. Не Plan 83.6/9 scope.

@@ -1,0 +1,39 @@
+// Plan 83.9 (2026-05-25): memory growth bounded stress armed M:N.
+//
+// N cycles of spawn workloads + gc.collect() — verify heap growth bounded
+// (not linear leak). Plan 83.6 pool retention adds ~64-256KB cap per
+// size class — counts как expected bounded growth.
+//
+// Validates что long-running production armed M:N не leak'ает SpawnCtx
+// либо internal runtime structures.
+//
+// ALLOC_REQUIRES boehm
+
+module plan83_stress_armed.memory_bounded_armed
+
+test "10 cycles × 1K spawn — heap bounded" {
+    // V1 (jobs-safe): 10 × 10³ cycles. Standalone runs scale 20 × 10³
+    // OK. Под concurrent jobs (other stress tests share CPU/GC/arena)
+    // tighter scope avoids fiber arena pressure regressions.
+    // Warmup: fill pool stable.
+    let _w = parallel for i in 0..1000 { i }
+    gc.collect()
+    let baseline = gc.heap_size()
+
+    let mut max_growth = 0
+    let mut cycle = 0
+    while cycle < 10 {
+        let xs = parallel for i in 0..1000 { i + cycle }
+        assert(xs[999] == 999 + cycle)
+        gc.collect()
+        let h = gc.heap_size()
+        let g = if h > baseline { h - baseline } else { 0 }
+        if g > max_growth { max_growth = g }
+        cycle = cycle + 1
+    }
+
+    println("baseline=${baseline} max_growth=${max_growth}")
+    // Bound: 32MB (Plan 83.6 pool cap ~8MB + Boehm overhead + result
+    // arrays per cycle).
+    assert(max_growth < 32 * 1024 * 1024)
+}

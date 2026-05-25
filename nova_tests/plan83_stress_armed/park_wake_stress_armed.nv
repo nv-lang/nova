@@ -1,0 +1,91 @@
+// Plan 83.9 (2026-05-25): park/wake stress armed M:N.
+//
+// Channel ping-pong N cycles — каждый cycle = send + recv = park + wake.
+// Acceptance Plan 83.9 §3 §6.4: 10⁵ park/wake cycles armed <60s.
+// V1 starting tier: smoke (100) + 1K baseline. Higher → V2 (Plan 83.8
+// direct wake еliminates uv_async_send 5-20µs overhead per cross-worker
+// wake).
+//
+// Both sender и receiver run в spawn (paired fibers) — main только
+// supervised wrapper. Avoids main-thread park semantics ambiguity.
+//
+// ALLOC_REQUIRES boehm
+
+module plan83_stress_armed.park_wake_stress_armed
+
+test "100 channel ping-pong armed M:N — smoke" {
+    let n = 100
+    let ch = Channel.new(1)
+    let mut received = 0
+    supervised {
+        spawn {
+            let mut i = 0
+            while i < n {
+                let _v = ch.rx.recv()
+                received = received + 1
+                i = i + 1
+            }
+        }
+        spawn {
+            let mut i = 0
+            while i < n {
+                ch.tx.send(i)
+                i = i + 1
+            }
+        }
+    }
+    assert(received == n)
+}
+
+test "1K channel ping-pong armed M:N — baseline" {
+    let n = 1000
+    let ch = Channel.new(1)
+    let mut received = 0
+    supervised {
+        spawn {
+            let mut i = 0
+            while i < n {
+                let _v = ch.rx.recv()
+                received = received + 1
+                i = i + 1
+            }
+        }
+        spawn {
+            let mut i = 0
+            while i < n {
+                ch.tx.send(i)
+                i = i + 1
+            }
+        }
+    }
+    assert(received == n)
+}
+
+test "10K channel ping-pong armed M:N — V1 stretch" {
+    let n = 10_000
+    let ch = Channel.new(1)
+    let mut received = 0
+    supervised {
+        spawn {
+            let mut i = 0
+            while i < n {
+                let _v = ch.rx.recv()
+                received = received + 1
+                i = i + 1
+            }
+        }
+        spawn {
+            let mut i = 0
+            while i < n {
+                ch.tx.send(i)
+                i = i + 1
+            }
+        }
+    }
+    assert(received == n)
+}
+
+// V2 ceiling probe (50K/100K) RUN-FAIL — hits uv_async_send overhead
+// либо park/wake state-machine race на high N. Plan 83.9 §6.4 specifies
+// 10⁵ park/wake acceptance; V1 partial = 10⁴ MET. Higher tiers require
+// Plan 83.8 (direct wake eventfd/SetEvent) → V2 followup.
