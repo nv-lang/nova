@@ -22,6 +22,8 @@ use std::path::{Path, PathBuf};
 use nova_codegen::diag::{Diagnostic, Span};
 use tower_lsp::lsp_types::Url;
 
+use crate::perf::PerfTimer;
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Public API
 // ─────────────────────────────────────────────────────────────────────────────
@@ -49,7 +51,9 @@ pub struct CheckResult {
 pub fn check_file(uri: &Url, text: &str) -> CheckResult {
     let source = text.to_string();
     let source_clone = source.clone();
+    let t = PerfTimer::start("check_file");
     let diagnostics = run_with_large_stack(move || check_source(&source_clone));
+    t.finish();
     CheckResult { file_uri: uri.clone(), diagnostics, source }
 }
 
@@ -62,7 +66,9 @@ pub fn check_file(uri: &Url, text: &str) -> CheckResult {
 /// V1 strategy: **full workspace recheck** — every file is re-parsed and
 /// type-checked independently.  Per-module incremental dep-graph is V2.
 pub fn check_workspace(workspace_root: &Path) -> Vec<CheckResult> {
+    let t = PerfTimer::start("check_workspace");
     let nv_files = collect_nv_files(workspace_root);
+    tracing::debug!(files = nv_files.len(), root = %workspace_root.display(), "workspace scan");
     let mut results = Vec::with_capacity(nv_files.len());
 
     for path in nv_files {
@@ -87,6 +93,7 @@ pub fn check_workspace(workspace_root: &Path) -> Vec<CheckResult> {
         results.push(CheckResult { file_uri: uri, diagnostics, source });
     }
 
+    t.finish();
     results
 }
 
