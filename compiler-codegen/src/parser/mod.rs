@@ -3566,13 +3566,32 @@ impl Parser {
         self.skip_newlines();
         while !matches!(self.peek().kind, TokenKind::RBracket) {
             let (name, name_span) = self.parse_ident()?;
+
+            // Plan 100.2 (D156): `[T consume]` — consume-bound marker.
+            // Consumes the `consume` keyword token; mutually exclusive with
+            // protocol bounds (combined `[T consume + Clone]` — deferred).
+            let mut consume_bound = false;
+            if matches!(self.peek().kind, TokenKind::KwConsume) {
+                consume_bound = true;
+                let consume_span = self.bump().span;
+                // `[T consume + Bound]` combined — deferred in Plan 100.2.
+                if matches!(self.peek().kind, TokenKind::Plus) {
+                    return Err(Diagnostic::new(
+                        "`[T consume + Bound]` combined bound is not yet supported \
+                         (Plan 100.2 §Границы). Use either `[T consume]` or \
+                         `[T Bound]` separately.".to_string(),
+                        consume_span,
+                    ));
+                }
+            }
+
             // Bound(s): если следующий токен — не `,`, `]`, `=`, парсим
             // первый bound. Plan 101.3 (D145 Ред. 5): далее цепочка
             // `+ Type` для multi-bound `[T A + B + C]` — conjunction
             // (T satisfies каждый bound). Семантически equivalent
             // `protocol { use A  use B  use C }`.
             let mut bounds: Vec<TypeRef> = Vec::new();
-            if !matches!(
+            if !consume_bound && !matches!(
                 self.peek().kind,
                 TokenKind::Comma | TokenKind::RBracket | TokenKind::Eq
             ) {
@@ -3599,6 +3618,7 @@ impl Parser {
                 name,
                 bounds,
                 default,
+                consume_bound,
                 span: name_span.merge(end_span),
             });
             if self.eat(&TokenKind::Comma).is_none() {
@@ -5582,12 +5602,16 @@ impl Parser {
 
     fn parse_for(&mut self) -> Result<Expr, Diagnostic> {
         let start = self.expect(&TokenKind::KwFor)?.span;
+        // Plan 100.2 (D156): `for consume x in iter` — consume-iteration mode.
+        // Mutually exclusive with `mut` (view and consume are different modes).
+        // Must be checked BEFORE `mut` since consume is a distinct mode.
+        let iter_consume = self.eat(&TokenKind::KwConsume).is_some();
         // Plan 87: `for mut x [TYPE] in` — `mut` помечает loop-переменную
         // мутабельной (D32/D33). `parse_pattern` не съедает `mut`, поэтому
         // обрабатываем здесь. В bootstrap'е binding-иммутабельность нигде
         // не enforce'ится — `mut` информационен (см. simplifications.md
         // `[M-for-loop-var-mut]`).
-        let _loop_var_mut = self.eat(&TokenKind::KwMut).is_some();
+        let _loop_var_mut = if !iter_consume { self.eat(&TokenKind::KwMut).is_some() } else { false };
         let pattern = self.parse_pattern()?;
         // Plan 87: явный тип элемента — `for x TYPE in iter`. Если после
         // loop-pattern сразу не `in` — это аннотация типа по правилу
@@ -5613,6 +5637,7 @@ impl Parser {
                 elem_type,
                 invariants: invs.clone(),
                 decreases: decr.map(Box::new),
+                iter_consume,
             },
             start.merge(end),
         );
