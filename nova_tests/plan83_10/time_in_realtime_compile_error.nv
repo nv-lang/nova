@@ -1,0 +1,13 @@
+// EXPECT_COMPILE_ERROR Time
+//
+// Plan 83.10 (2026-05-25): D64 realtime context bans Time effect
+// (suspend-eligible). Validates capability check для concurrency-
+// adjacent Time.sleep usage.
+
+module plan83_10.time_in_realtime_compile_error
+
+fn rt_time_violates() Time -> () {
+    let _ = realtime {
+        Time.sleep(0)
+    }
+}

@@ -1,0 +1,28 @@
+// Plan 83.10 (2026-05-25): panic-safety positive — fiber USER throw
+// propagates до enclosing `with Fail` handler.
+//
+// Validates Plan 49 Ф.3+Ф.5 kind-aware re-throw + USER-precedence
+// + handler dispatch.
+//
+// Plan 83.10 (2026-05-25): directive `// ENV NOVA_AUTOARM=0` —
+// Plan 49 with-Fail routing validates cooperative path; armed M:N USER
+// throw → handler routing has gap [M-83.10-armed-user-throw-routing]
+// — V2 followup (Plan 49 cross-worker first_error_atomic → main handler).
+// ENV NOVA_AUTOARM=0
+
+module plan83_10.panic_propagates_to_supervised
+
+test "spawn body USER throw propagates до with Fail handler" {
+    let mut caught = false
+    let r = with Fail[int] = |e| {
+        caught = true
+        0
+    } {
+        supervised {
+            spawn { throw 42 }
+        }
+        99
+    }
+    assert(caught)
+    assert(r == 0)
+}

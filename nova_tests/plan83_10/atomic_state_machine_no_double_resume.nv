@@ -1,0 +1,23 @@
+// Plan 83.10 (2026-05-25): race detection — Plan 83.4.5.7 atomic
+// fiber state machine защищает от concurrent mco_resume (RUNNING-CAS
+// guard). High-volume parallel spawn'ов validates что CAS-guard
+// fires правильно — no double-resume → no "fiber stack overflow in
+// slot N" sporadic panic.
+//
+// ALLOC_REQUIRES boehm
+// EXPECT_TIMEOUT_MS 180000
+//
+// Plan 83.10: standalone PASS. Под jobs=16 concurrent execution
+// [M-83.9-arena-pressure-1M] applies — relaxed budget.
+
+module plan83_10.atomic_state_machine_no_double_resume
+
+test "1K parallel spawn — no double-resume crash (jobs-safe)" {
+    // V1: 1K — fits jobs=16 concurrent budget. Pool + CAS guard
+    // должны выдержать. Pre-Plan 83.4.5.7 эта workload регулярно
+    // triggered access violation in slot 0 при high N.
+    let xs = parallel for i in 0..1000 { i * 2 + 1 }
+    assert(xs[999] == 1999)
+    assert(xs[0] == 1)
+    assert(xs[500] == 1001)
+}

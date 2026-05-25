@@ -1,0 +1,30 @@
+// Plan 83.10 (2026-05-25): race detection — supervised drain
+// completeness invariant. После supervised exit все spawn'нутые
+// fibers ДОЛЖНЫ have run к completion. Pool release + worker
+// mco_destroy fires exactly once per fiber.
+//
+// Single parallel-for per test (codegen restriction — multiple parallel
+// for в одной test fn collides on emitted symbol names).
+//
+// ALLOC_REQUIRES boehm
+
+module plan83_10.supervised_drain_completeness
+
+test "parallel-for 500 — every slot unique correct" {
+    let xs = parallel for i in 0..500 { i + 100 }
+    let mut seen_count = 0
+    let mut i = 0
+    while i < 500 {
+        if xs[i] == i + 100 {
+            seen_count = seen_count + 1
+        }
+        i = i + 1
+    }
+    assert(seen_count == 500)
+}
+
+test "parallel-for 100 — different test instance, no cross-leak" {
+    let ys = parallel for i in 0..100 { i + 1000 }
+    assert(ys[99] == 1099)
+    assert(ys[0] == 1000)
+}

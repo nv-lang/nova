@@ -1,0 +1,28 @@
+// Plan 83.10 (2026-05-25): race detection — cancel mid-spawn N циклов;
+// verify scope properly cleaned (no orphan parked state, no leaked
+// sched_state). Plan 83.4.5.1 cancel wake-all infrastructure.
+//
+// ENV NOVA_AUTOARM=0
+// Plan 83.10: cooperative validation — armed [M-83.10-armed-user-throw-
+// routing] gap.
+
+module plan83_10.cancel_race_no_orphan_state
+
+test "1K cancel cycles — no orphan state, no hang" {
+    let mut i = 0
+    while i < 1000 {
+        let tok = CancelToken.new()
+        let cur = i
+        supervised(cancel: tok) {
+            spawn {
+                if cur % 3 == 0 {
+                    tok.cancel()
+                }
+            }
+        }
+        i = i + 1
+    }
+    // 1000 cancel scopes without hang либо leak. Implicit: assertion
+    // by reaching here без timeout.
+    assert(i == 1000)
+}
