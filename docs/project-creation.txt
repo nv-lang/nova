@@ -21630,40 +21630,78 @@ GC-языков (Go/Rust/TS/Kotlin не имеют аналога).
 
 Merge: 49c3b0b0da3; branch plan-100-4-3-okdefer → main.
 
-=== Plan 103.5 вЂ” Once hardening + OnceCell[T] + Lazy[T] вЂ” D168 (2026-05-26) ===
+=== Plan 103.5 — Once hardening + OnceCell[T] + Lazy[T] — D168 (2026-05-26) ===
 
 Production-grade single-initialization primitives implementing the Q-memory-model
-synchronization layer for Nova's M:N scheduler.
+synchronization layer for Nova’s M:N scheduler.
 
-**Once вЂ” hardened API:**
-- `call_once(body)` вЂ” primary API, runs body exactly once, poisons on panic
-- `run()` + `done()` вЂ” deprecated pair, emits W_ONCE_RUN_DONE_DEPRECATED
-- `is_completed() -> bool` вЂ” observable state (Done state only)
+**Once — hardened API:**
+- `call_once(body)` — primary API, runs body exactly once, poisons on panic
+- `run()` + `done()` — deprecated pair, emits W_ONCE_RUN_DONE_DEPRECATED
+- `is_completed() -> bool` — observable state (Done state only)
 - `call_once` forbidden in realtime context (E_REALTIME_VIOLATION)
 - `Nova_Once_method_done`: unconditional state check via Nova_Fail_fail + nova_throw
   (fixes silent no-op in Dev builds where NOVA_SYNC_ASSERT is disabled)
 
-**OnceCell[T] вЂ” generic lazy cell:**
+**OnceCell[T] — generic lazy cell:**
 - `new() -> OnceCell[T]`, `get() -> Option[T]`, `set(v: T) -> bool`
-- `get_or_init(body) -> T` вЂ” safe re-entrant guard (panics on recursion)
-- `take() -> Option[T]` вЂ” extract and reset to uninitialized
+- `get_or_init(body) -> T` — safe re-entrant guard (panics on recursion)
+- `take() -> Option[T]` — extract and reset to uninitialized
 - Emitted as monomorphized C structs per instantiation (not static in sync_primitives.h)
 
-**Lazy[T] вЂ” eager-closure lazy value:**
-- `new(init: () -> T) -> Lazy[T]` вЂ” stores closure at construction
-- `force() -> T` вЂ” drives OnceCell.get_or_init; poisons on init panic
-- `is_forced() -> bool` вЂ” observable state predicate
+**Lazy[T] — eager-closure lazy value:**
+- `new(init: () -> T) -> Lazy[T]` — stores closure at construction
+- `force() -> T` — drives OnceCell.get_or_init; poisons on init panic
+- `is_forced() -> bool` — observable state predicate
 
-**Tests: 20/20 PASS** вЂ” 11 positive + 3 negative + 2 property + 1 stress (M:N 4-worker)
-- once_stress_mn_4workers: 16 fibers Г— 100 calls в†’ init exactly once (EXPECT_TIMEOUT_MS 150000)
-- oncecell_init_exactly_once_under_contention: 32 fibers в†’ one winner
+**Tests: 20/20 PASS** — 11 positive + 3 negative + 2 property + 1 stress (M:N 4-worker)
+- once_stress_mn_4workers: 16 fibers × 100 calls → init exactly once (EXPECT_TIMEOUT_MS 150000)
+- oncecell_init_exactly_once_under_contention: 32 fibers → one winner
 - lazy_no_double_init_prop: sequential (100 iterations); concurrent coverage in stress test
 
 **Key discoveries:**
-- NOVA_SYNC_ASSERT is #ifdef NOVA_DEBUG вЂ” no-op in Dev mode (only NOVA_CONTRACTS_RUNTIME=1)
-- nova.exe reads nova.toml from CWD вЂ” must cd to worktree for correct header resolution
+- NOVA_SYNC_ASSERT is #ifdef NOVA_DEBUG — no-op in Dev mode (only NOVA_CONTRACTS_RUNTIME=1)
+- nova.exe reads nova.toml from CWD — must cd to worktree for correct header resolution
 - Windows fiber-arena crash with parallel Lazy.force() (slot 0 access violation) when
   parallel for is the FIRST/ONLY operation; works fine after scheduler warm-up
 - EXPECT_TIMEOUT_MS N overrides per-test timeout in test_runner.rs
 
-Merge: c7f9bca1026; branch plan-103.5 в†’ main.
+Merge: c7f9bca1026; branch plan-103.5 → main.
+
+=== Plan 100.2 — generic strict-mode [T consume] + collection-aware (D156) (2026-05-26) ===
+
+Закрыт silent-leak в generic-коде: `fn first[T](pair (T,T)) -> T => pair.0` тихо
+теряло pair.1 если T=consume. После 100.2 — `[T consume]` bound активирует strict
+mode: T-значения трактуются как possibly-consume, silent-forget → compile-error D156.
+Backward-compat: generic без bound сохраняет silent-ignore.
+
+**AST:**
+- `GenericParam { name, consume_bound: bool }` — opt-in strict-flag.
+- `ExprKind::For { iter_consume: bool, ... }` — `for consume x in vec` mode.
+
+**Parser:**
+- `parse_generic_decl_params`: детектирует `KwConsume` после имени параметра.
+- `parse_for`: детектирует `for consume` vs `for mut` vs plain `for`.
+
+**Type-checker (compiler-codegen/src/types/mod.rs):**
+- `ConsumeCtx.consume_bound_generics: HashSet<String>` — set of `[T consume]` params.
+- `typeref_contains_consume_generic()` — рекурсивный обход Named/Tuple/Array для complex TypeRef.
+- Param declaration: если `typeref_contains_consume_generic` true → `declare_consume_binding`.
+- `check_obligations_at_exit`: D156-strict-forget при `consume_bound_generics.contains(ty)`.
+- Method call fallback: for-consume loop vars с None type → consume если метод — consume-method для любого known consume-type.
+- `consume_walk_consume_for()`: 2-pass pessimism analysis; loop vars как consume-obligations; post-loop iter Consumed.
+
+**Codegen (emit_c.rs):**
+- `iter_consume: false` passthrough — 6 For constructors.
+
+**Тесты (nova_tests/plan100_2/):**
+- 11 pos: identity, box, pass_consume, two_args, for_iter, for_break, for_view, for_mut, vec_push, hashmap, mixed.
+- 6 neg: first_drop, forget, pass_non_consume, skip_iteration, branch_forget, non_consume_param.
+- 17/17 PASS. Regressions: plan100_1 23/0, plan73 12/0, plan100_4_3 11/0.
+
+**Docs:**
+- docs/plans/100.2-artifacts/gate-probe.md: D156 self-check 3 use-cases.
+- docs/plans/100.2-artifacts/stdlib-migration.md: migration guide для stdlib generic-функций.
+- docs/idiom/generic-consume.md: canonical [T consume] + for-consume patterns.
+
+Merge: TBD; branch plan-100-2-generic-propagation → main.

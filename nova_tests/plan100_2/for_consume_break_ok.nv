@@ -1,27 +1,24 @@
 // Plan 100.2 (D156): for + early break — обе ветки arm body должны
 // consume tx (Consumed на любом arm-exit).
+// Uses inline Transaction literals to avoid loose consume-obligations.
 
 module nova_tests.plan100_2.for_consume_break_ok
 
 type Transaction consume {
     id int,
 }
-
 fn Transaction consume @commit() -> () { () }
 fn Transaction consume @rollback() -> () { () }
 
 test "for + break — обе arm-ветки consume" {
-    consume tx1 = Transaction { id: 1 }
-    consume tx2 = Transaction { id: 2 }
-    consume tx3 = Transaction { id: 3 }
-    let txs = [tx1, tx2, tx3]
+    let txs = [Transaction { id: 1 }, Transaction { id: 2 }, Transaction { id: 3 }]
     for consume tx in txs {
         if tx.id == 2 {
             tx.commit()
-            break                                // arm consume + break OK
+            break                                // arm consume + break OK ✅
         } else {
-            tx.rollback()                       // arm consume (other path)
+            tx.rollback()                       // arm consume (else path) ✅
         }
     }
-    // После for — vec considered Consumed (даже при break — D156 pragmatic).
+    // После for — vec considered Consumed (D156 pragmatic).
 }

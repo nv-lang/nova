@@ -1,0 +1,25 @@
+// Plan 100.2 (D156): block-form generic identity with `[T consume]` bound.
+//
+// `fn box_wrap[T consume](consume x T) -> T { x }` — FnBody::Block trailing
+// ident satisfies consume-obligation. Distinct from identity (FnBody::Expr).
+
+module nova_tests.plan100_2.generic_bound_ok_box
+
+type Transaction consume {
+    id int,
+}
+fn Transaction consume @commit() -> () { () }
+
+fn begin() -> Transaction => { id: 1 }
+
+// Block-form: trailing ident in block body — consume obligation satisfied.
+fn box_wrap[T consume](consume x T) -> T {
+    x
+}
+
+test "box_wrap — FnBody::Block trailing ident form" {
+    consume tx = begin()
+    // box_wrap has consume-param[0] → tx consumed at call.
+    // Return discarded (no `consume` let-binding → no caller obligation).
+    box_wrap(tx)
+}

@@ -1,21 +1,17 @@
-// EXPECT_COMPILE_ERROR D156
+// EXPECT_COMPILE_ERROR D156-iter-maybe-consumed
 //
 // Plan 100.2 (D156): for-loop iteration body — каждый tx обязан Consumed.
-// Branch только на одной ветке → MaybeConsumed на arm exit → error.
+// Branch только на одной ветке (no else) → MaybeConsumed на arm exit → error.
 
 module nova_tests.plan100_2.for_consume_err_branch_forget
 
 type Transaction consume {
     id int,
 }
-
 fn Transaction consume @commit() -> () { () }
-fn Transaction consume @rollback() -> () { () }
 
 test "for + branch только на then — каждая iteration теряет tx" {
-    consume tx1 = Transaction { id: 1 }
-    consume tx2 = Transaction { id: 2 }
-    let txs = [tx1, tx2]
+    let txs = [Transaction { id: 1 }, Transaction { id: 2 }]
     let condition = true
     for consume tx in txs {
         if condition {
@@ -23,7 +19,6 @@ test "for + branch только на then — каждая iteration теряе�
             // then: tx Consumed
         }
         // else (implicit): tx Live
-        // ОШИБКА D156-strict-forget: tx MaybeConsumed на arm-exit
-        // (не covered обеими ветками).
+        // ОШИБКА D156-iter-maybe-consumed: tx MaybeConsumed на arm-exit.
     }
 }
