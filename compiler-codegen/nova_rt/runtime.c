@@ -88,6 +88,23 @@ struct NovaWorker {
     int               yielded_count;
     int               yielded_cap;
     int               yielded_head;
+    /* Plan 83.7 (2026-05-25): runnext LIFO priority slot. Single-slot
+     * priority queue для cache-warm handler chains (Go runtime
+     * runnext + tokio LIFO slot parity).
+     *
+     * Same-worker wake (timer fire, channel send из owner-thread fiber)
+     * stores fiber here вместо deque tail. Worker loop pops runnext
+     * первым → woken fiber resumes immediately, instruction cache
+     * + data cache warm от previous fiber.
+     *
+     * Option B (Tokio-style): NOT stealable — only owner thread reads
+     * runnext. Max cache-warmth. Imbalanced workloads helped through
+     * existing deque steal (Plan 44.5).
+     *
+     * Access: owner-thread-only (dispatch_ready owner-branch guarded
+     * by _current_worker_id == w->id). Plain pointer — no atomic.
+     * NULL = empty. */
+    mco_coro*         runnext;
     /* Plan 83.6 (2026-05-24): per-worker SpawnCtx pool (Go P-mcache аналог).
      * 4 size classes (64/128/256/512 bytes — покрывают ~90% spawn-sites).
      * Larger contexts → Boehm fallback (rare).
@@ -472,8 +489,17 @@ static void _worker_async_cb(uv_async_t* h) {
 static void _worker_dispatch_ready(void* ctx, mco_coro* co) {
     NovaWorker* w = (NovaWorker*)ctx;
     if (_current_worker_id == w->id) {
-        /* Owner push: lock-free, same thread as deque owner. */
-        nova_deque_push(&w->deque, co);
+        /* Plan 83.7 (2026-05-25): owner-thread wake → runnext priority
+         * slot. Cache-warm handler chains (Go runnext + tokio LIFO slot).
+         * Previous runnext (if any) flushes к deque tail — no loss.
+         *
+         * Same-thread access guaranteed by enclosing _current_worker_id
+         * check → plain pointer, no atomic. */
+        mco_coro* prev = w->runnext;
+        w->runnext = co;
+        if (prev) {
+            nova_deque_push(&w->deque, prev);
+        }
     } else {
         /* Cross-thread: queue under mutex, wake worker's uv loop. */
         nova_mutex_lock(&w->wake_mu);
@@ -559,9 +585,20 @@ static void _worker_main(void* arg) {
 
         mco_coro* co = NULL;
 
+        /* Plan 83.7 (2026-05-25): (1.9) runnext priority slot — woken
+         * fiber from same-thread dispatch_ready (channel recv → handler
+         * spawn re-wake same-worker chain). Cache-warm vs going through
+         * deque tail. Same-thread access — plain pointer. */
+        if (w->runnext) {
+            co = w->runnext;
+            w->runnext = NULL;
+        }
+
         /* (2) Local deque — owner LIFO pop. Wait-free hot path. Свежие
          * spawn'ы + разбуженные fiber'ы (приоритет — они progress'ят). */
-        co = (mco_coro*)nova_deque_pop(&w->deque);
+        if (!co) {
+            co = (mco_coro*)nova_deque_pop(&w->deque);
+        }
 
         /* (2.5) Plan 44.7: yielded-FIFO — кооперативно вытесненные fiber'ы.
          * После deque, до steal: своя preempted-работа продвигается, но
@@ -793,11 +830,18 @@ static void _worker_main(void* arg) {
         }
     }
 
-    /* Cleanup — drain remaining items в deque + yielded-FIFO (Plan 44.7).
+    /* Cleanup — drain remaining items в deque + yielded-FIFO + runnext
+     * (Plan 44.7, Plan 83.7).
      * Plan 83.4.5.7 (2026-05-23): CAS-guard для double-resume race.
-     * Plan 83.4.5.8 (2026-05-24): free uncollectable ctx после mco_destroy. */
+     * Plan 83.4.5.8 (2026-05-24): free uncollectable ctx после mco_destroy.
+     * Plan 83.7 (2026-05-25): drain runnext priority slot. */
     while (true) {
-        mco_coro* co = (mco_coro*)nova_deque_pop(&w->deque);
+        mco_coro* co = NULL;
+        if (w->runnext) {
+            co = w->runnext;
+            w->runnext = NULL;
+        }
+        if (!co) co = (mco_coro*)nova_deque_pop(&w->deque);
         if (!co) co = _worker_yielded_pop(w);
         if (!co) break;
         if (mco_status(co) == MCO_SUSPENDED) {
@@ -1117,6 +1161,8 @@ static void _materialize_pool(void) {
         w->wake_pending       = NULL;
         w->wake_pending_count = 0;
         w->wake_pending_cap   = 0;
+        /* Plan 83.7: runnext priority slot — initially empty. */
+        w->runnext            = NULL;
 
         int rc = uv_loop_init(&w->loop);
         if (rc != 0) {

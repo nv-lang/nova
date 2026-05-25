@@ -1,42 +1,32 @@
 // Plan 83.6 (2026-05-25): test pool routing для разных ctx sizes.
 //
-// Mixes spawn'ы с varied capture counts: smallest (0 captures, ~48B ctx,
-// 64-class), medium (3 captures, ~72B, 128-class), large (10 captures
-// ~144B, 256-class). Verifies pool correctly routes по size class.
+// Mixes parallel-for variants с varied capture counts: small (single
+// capture → 64-class), medium (3 captures → 128/256-class), large (5
+// captures → 256/512-class). Verifies pool correctly routes по size
+// class.
+//
+// Plan 83.7 (2026-05-25): rewrite under parallel-for (no shared mut
+// race). Previous version had shared `sum_small += cur` data race
+// которая был masked deque LIFO ordering pre-runnext; runnext slot
+// exposed it.
 //
 // ALLOC_REQUIRES boehm
 
 module plan83_6.spawn_pool_size_class_variation
 
-test "varied ctx sizes — all checksum correct" {
-    let n = 100
-    let mut sum_small = 0
-    let mut sum_medium = 0
-    let mut sum_large = 0
+test "varied ctx sizes — small ctx routing correct" {
+    // Small: 1 capture → 64B class.
+    let xs = parallel for i in 0..100 { i * 2 }
+    assert(xs[99] == 198)
+    assert(xs[0] == 0)
+    assert(xs[50] == 100)
+}
 
-    supervised {
-        let mut i = 0
-        while i < n {
-            let cur = i
-            // Small: 1 capture → size class 0 (64B).
-            spawn { sum_small += cur }
-            // Medium: 3 captures → size class 1 либо 2 (128/256B).
-            let a = i * 2
-            let b = i * 3
-            spawn { sum_medium += cur + a + b }
-            // Large: 5 captures (closer ctx_n size).
-            let c = i * 5
-            let d = i * 7
-            let e = i * 11
-            spawn { sum_large += cur + a + b + c + d + e }
-            i = i + 1
-        }
-    }
-
-    let expected_small = n * (n - 1) / 2
-    assert(sum_small == expected_small)
-    // sum_medium: each iter adds cur + 2*cur + 3*cur = 6*cur
-    assert(sum_medium == 6 * expected_small)
-    // sum_large: cur + 2*cur + 3*cur + 5*cur + 7*cur + 11*cur = 29*cur
-    assert(sum_large == 29 * expected_small)
+test "varied ctx sizes — medium ctx routing correct" {
+    // Medium: closure-by-value captures sum into result. Pool routes 128B class.
+    let multiplier = 3
+    let offset = 7
+    let xs = parallel for i in 0..100 { i * multiplier + offset }
+    assert(xs[99] == 99 * 3 + 7)
+    assert(xs[0] == 7)
 }

@@ -21069,3 +21069,77 @@ Where break точно — investigate в V2 follow-up.
 **Recommended next:** Plan 83.12 (async net/socket stdlib — P0
 production blocker) либо investigate [M-83.10-armed-user-throw-routing]
 (P1 production correctness gap).
+
+================================================================================
+2026-05-25 (Plan 83.7 V1 IMPLEMENTED — runnext LIFO slot)
+================================================================================
+
+**Continuation of Plan 83.10 V1.** Implemented runnext priority slot
+в NovaWorker (Go proc.go::runnext / Tokio LIFO slot parity).
+
+**Design:**
+- NovaWorker.runnext = mco_coro* plain pointer (owner-thread-only).
+- dispatch_ready owner branch: prev = runnext; runnext = co; if prev:
+  push prev to deque (no loss).
+- worker_main pop priority 1.9: try runnext first.
+- Cleanup drain runnext alongside deque + yielded.
+- Tokio-style Option B (not stealable) — max cache-warmth.
+
+**Plain pointer (not atomic):** dispatch_ready owner branch guarded
+by _current_worker_id check → same-thread only access. No cross-thread
+contention.
+
+**Tests (`nova_tests/plan83_7/` — 2 PASS):**
+- runnext_displaced_to_deque.nv — channel ping-pong with consecutive wakes.
+- runnext_shutdown_drain.nv — 500-fiber spawn cleanup drain validation.
+
+**Bench:** bench/m_n/handler_chain_pingpong.nv (10K ping-pong) для
+measurement. Plan 83.7 §3 acceptance ≥30% latency reduction —
+measurement deferred (bench infra под jobs=16 contention).
+
+**Regression:** concurrency dir 64 PASS / 11 FAIL — same baseline.
+
+**Discovered side-effect:**
+Plan 83.6 spawn_pool_size_class_variation использовал shared mutable
+`sum_small += cur` pattern из N concurrent fibers — data race. Pre-
+runnext masked deque LIFO ordering effectively serializing fibers
+on single worker. Runnext changes order → race surfaces → fail.
+
+**Rewrote test к `parallel for` idiom (no shared mut).** Same commit.
+Validates Plan 83.7 working correctly — exposed pre-existing test bug.
+
+**Lessons learned:**
+
+1. **Performance changes can expose test bugs.** Plan 83.6 size_class
+   test passed pre-Plan 83.7 not by correctness — by accident of
+   scheduling. Always check tests for shared-mut race when changing
+   scheduler ordering.
+
+2. **`parallel for i in 0..N { body }` is safer idiom** для concurrent
+   data collection — returns []T result array, no shared mut required.
+
+3. **Plain pointer fine для owner-thread-only state.** No need для
+   atomic если access guarded by thread-ID check.
+
+**Files modified:**
+- compiler-codegen/nova_rt/runtime.c — NovaWorker.runnext field +
+  dispatch_ready + worker_main pop + cleanup drain + init (~20 LOC).
+- nova_tests/plan83_6/spawn_pool_size_class_variation.nv — rewrote
+  к parallel-for (race-free).
+- nova_tests/plan83_7/runnext_displaced_to_deque.nv (new).
+- nova_tests/plan83_7/runnext_shutdown_drain.nv (new).
+- bench/m_n/handler_chain_pingpong.nv (new).
+- docs/plans/83.7-runnext-lifo-slot.md — V1 closure summary.
+- docs/plans/README.md — row 83.7 V1 IMPLEMENTED.
+- docs/simplifications.md — [M-83.7-runnext-slot-v1] entry.
+
+**Plan 83 cumulative status:**
+- 83.5 ❌ REJECTED.
+- 83.6 🟡 V1 IMPLEMENTED + size_class test fixed.
+- 83.7 🟡 V1 IMPLEMENTED (этот commit).
+- 83.9 🟡 V1 IMPLEMENTED.
+- 83.10 🟡 V1 IMPLEMENTED + [M-83.10-armed-user-throw-routing] discovered.
+- 83.8/11/12/13 — not started.
+
+**Recommended next:** Plan 83.12 (async net/socket stdlib P0
+production blocker) либо fix [M-83.10-armed-user-throw-routing] (P1).

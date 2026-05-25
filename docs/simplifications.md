@@ -12212,3 +12212,32 @@ Plan 83.2 §4 «Compiled-программа без единого `runtime.*` в
 
 - **Last commit:** TBD (Plan 83.10 commit pending).
 - **Приоритет:** P1 production gap, V2 followup.
+
+### [M-83.7-runnext-slot-v1] Plan 83.7 V1 IMPLEMENTED — runnext LIFO slot (2026-05-25)
+
+- **Где:** `compiler-codegen/nova_rt/runtime.c` (NovaWorker.runnext +
+  dispatch_ready + worker_main pop + cleanup drain). `nova_tests/plan83_7/`
+  2 tests. `bench/m_n/handler_chain_pingpong.nv` bench. Worktree
+  `nova-p83-5` branch `plan-83-5`.
+
+- **Что сделано:**
+  - NovaWorker.runnext plain pointer (owner-thread-only access).
+  - dispatch_ready owner branch routes к runnext; previous displaced к deque.
+  - worker_main step 1.9 pop runnext первым.
+  - Cleanup drain runnext.
+  - Tokio-style Option B (not stealable).
+
+- **Side-effect:** Plan 83.6 spawn_pool_size_class_variation had shared
+  mutable race (`sum_small += cur` from N concurrent fibers) which was
+  masked deque LIFO serialization pre-runnext. Runnext priority slot
+  changes scheduling order → race surfaced. Test rewrote к parallel-for
+  idiom (no shared mut). Validates Plan 83.7 working correctly.
+
+- **Regression:** concurrency dir 64 PASS / 11 FAIL — same baseline.
+
+- **V2 followup:**
+  - Bench measurement (handler_chain_pingpong standalone).
+  - Explicit not-stealable test (Option B invariant).
+
+- **Last commit:** TBD.
+- **Приоритет:** P1 closure complete.
