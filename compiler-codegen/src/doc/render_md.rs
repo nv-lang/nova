@@ -232,6 +232,8 @@ fn render_item(it: &DocItem, link_map: &std::collections::HashMap<String, String
         if cap.realtime_nogc { badges.push("⏱ `realtime nogc`".to_string()); }
         else if cap.realtime { badges.push("⏱ `realtime`".to_string()); }
         if cap.pure_fn { badges.push("🧊 `pure`".to_string()); }
+        // Plan 100.8 / D166: [consume] badge for must-be-consumed types.
+        if cap.consume { badges.push("🔒 `[consume]`".to_string()); }
         for f in &cap.forbid { badges.push(format!("🚫 `forbid({})`", f)); }
         // Plan 45 Ф.26.3 / D63: allow_transit badges.
         for e in &cap.allow_transit { badges.push(format!("📤 `allow_transit({})`", e)); }
@@ -303,9 +305,23 @@ fn render_item(it: &DocItem, link_map: &std::collections::HashMap<String, String
         }
         ItemKind::Type(def) => {
             let _ = writeln!(out, "```nova");
-            let _ = writeln!(out, "{}", render_type_definition(&it.name, def));
+            let _ = writeln!(out, "{}", render_type_definition(&it.name, def, it.capabilities.consume));
             let _ = writeln!(out, "```");
             let _ = writeln!(out);
+            // Plan 100.8 / D166: Resource lifecycle section for consume types.
+            if it.capabilities.consume {
+                let _ = writeln!(out, "#### Resource lifecycle");
+                let _ = writeln!(out);
+                let _ = writeln!(out, "This type is **consume-typed** (D133). Every binding of type `{}` **must** be consumed before its scope exits:", it.name);
+                let _ = writeln!(out);
+                let _ = writeln!(out, "- Call a **consume-method** (annotated `fn {} consume @method`)", it.name);
+                let _ = writeln!(out, "- Pass as a **consume-parameter** to a function");
+                let _ = writeln!(out, "- Move into a **record field** that is itself `consume`");
+                let _ = writeln!(out, "- Cover error/success paths via `errdefer` / `okdefer` (D160)");
+                let _ = writeln!(out);
+                let _ = writeln!(out, "Failure to consume results in a compile error (`D133-not-consumed`). Use `errdefer {{ binding.cleanup() }}` to ensure cleanup on all paths.");
+                let _ = writeln!(out);
+            }
         }
         ItemKind::Const { ty, value } => {
             let _ = writeln!(out, "```nova");
@@ -463,11 +479,13 @@ fn render_param(p: &Param) -> String {
     s
 }
 
-fn render_type_definition(name: &str, def: &TypeDefinition) -> String {
+fn render_type_definition(name: &str, def: &TypeDefinition, consume: bool) -> String {
     let mut s = String::new();
+    // Plan 100.8 / D166: include `consume` keyword in type signature when set.
+    let consume_kw = if consume { " consume" } else { "" };
     match def {
         TypeDefinition::Record(fields) => {
-            let _ = write!(s, "type {} {{ ", name);
+            let _ = write!(s, "type {}{} {{ ", name, consume_kw);
             let fs = fields.iter().map(|f| {
                 if f.mutable { format!("mut {} {}", f.name, f.ty) }
                 else { format!("{} {}", f.name, f.ty) }
@@ -475,7 +493,7 @@ fn render_type_definition(name: &str, def: &TypeDefinition) -> String {
             let _ = write!(s, "{} }}", fs);
         }
         TypeDefinition::Sum(variants) => {
-            let _ = write!(s, "type {} =", name);
+            let _ = write!(s, "type {}{} =", name, consume_kw);
             for v in variants {
                 match &v.payload {
                     VariantPayload::Unit => { let _ = write!(s, "\n    | {}", v.name); }
@@ -490,10 +508,10 @@ fn render_type_definition(name: &str, def: &TypeDefinition) -> String {
             }
         }
         TypeDefinition::Alias(ty) => {
-            let _ = write!(s, "type {} = {}", name, ty);
+            let _ = write!(s, "type {}{} = {}", name, consume_kw, ty);
         }
         TypeDefinition::Newtype { inner } => {
-            let _ = write!(s, "type {} = newtype {}", name, inner);
+            let _ = write!(s, "type {}{} = newtype {}", name, consume_kw, inner);
         }
     }
     s

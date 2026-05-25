@@ -447,6 +447,24 @@ enum Cmd {
     /// JSON v1 schema output, reproducibility metadata.
     #[command(subcommand)]
     Bench(BenchCmd),
+    /// Plan 100.8 / D7: consume-type coverage analyzer.
+    ///
+    /// Scans a Nova source file or directory, collects all consume-typed
+    /// bindings, and reports how many are covered via consume-methods,
+    /// errdefer, or okdefer. Useful as a CI hygiene check.
+    ///
+    /// Exit code: 0 = all covered, 1 = uncovered bindings found, 2 = usage error.
+    #[command(name = "consume-analyze")]
+    ConsumeAnalyze {
+        /// Path to a `.nv` file or directory to analyze.
+        path: PathBuf,
+        /// Output format: `human` (default) or `json`.
+        #[arg(long, default_value = "human", value_parser = ["human", "json"])]
+        format: String,
+        /// Exit non-zero if any uncovered consume binding is found (CI gate).
+        #[arg(long = "fail-on-uncovered")]
+        fail_on_uncovered: bool,
+    },
 }
 
 /// Plan 57: `nova bench <subcommand>`.
@@ -2982,6 +3000,145 @@ fn cmd_info(
     Ok(())
 }
 
+// ── Plan 100.8 / D7: `nova consume-analyze` ──────────────────────────────
+
+/// Count `let consume` bindings in a Block (top-level stmts only — V1 approximation).
+/// Full recursive walk would require traversing Expr variants; for V1 the top-level
+/// count gives a useful hygiene signal with minimal complexity.
+fn count_consume_bindings_in_block(block: &nova_codegen::ast::Block) -> usize {
+    block.stmts.iter().filter(|s| {
+        matches!(s, nova_codegen::ast::Stmt::Let(ld) if ld.consume)
+    }).count()
+}
+
+/// Count consume bindings across all top-level function blocks in a module.
+fn module_consume_count(module: &nova_codegen::ast::Module) -> usize {
+    let mut total = 0;
+    for item in &module.items {
+        if let nova_codegen::ast::Item::Fn(fd) = item {
+            match &fd.body {
+                nova_codegen::ast::FnBody::Block(b) => {
+                    total += count_consume_bindings_in_block(b);
+                }
+                nova_codegen::ast::FnBody::Expr(_) | nova_codegen::ast::FnBody::External => {}
+            }
+        }
+    }
+    total
+}
+
+/// Parse a single .nv file and run type-check (includes check_consume).
+/// Returns (module, diagnostics).
+fn consume_analyze_parse(
+    path: &Path,
+) -> Result<(nova_codegen::ast::Module, Vec<nova_codegen::diag::Diagnostic>)> {
+    let src = std::fs::read_to_string(path)
+        .map_err(|e| anyhow!("cannot read {}: {}", path.display(), e))?;
+    let tokens = nova_codegen::lexer::lex(&src)
+        .map_err(|d| anyhow!("{}", d.message))?;
+    let mut parser = nova_codegen::parser::Parser::new(tokens);
+    let module = parser.parse_module().map_err(|d| anyhow!("{}", d.message))?;
+    let diags = match nova_codegen::types::check_module(&module) {
+        Ok(_) => vec![],
+        Err(errs) => errs,
+    };
+    Ok((module, diags))
+}
+
+fn cmd_consume_analyze(path: &Path, format: &str, fail_on_uncovered: bool) -> Result<()> {
+    // Collect .nv files (file or directory).
+    let files: Vec<PathBuf> = if path.is_file() {
+        vec![path.to_path_buf()]
+    } else if path.is_dir() {
+        let mut fs = Vec::new();
+        nova_codegen::test_runner::walk_nv(path, &mut fs)
+            .map_err(|e| anyhow!("walk {}: {}", path.display(), e))?;
+        fs.sort();
+        fs
+    } else {
+        return Err(usage_err(format!("path not found: {}", path.display())));
+    };
+
+    // Per-file analysis results.
+    struct FileReport {
+        file: PathBuf,
+        total: usize,
+        uncovered: usize,
+        uncovered_msgs: Vec<String>,
+    }
+
+    let mut reports: Vec<FileReport> = Vec::new();
+    for file in &files {
+        let (module, diags) = consume_analyze_parse(file)?;
+        let total = module_consume_count(&module);
+        let d133_errs: Vec<_> = diags
+            .iter()
+            .filter(|d| d.message.contains("D133"))
+            .collect();
+        let uncovered = d133_errs.len();
+        let uncovered_msgs: Vec<String> = d133_errs
+            .iter()
+            .map(|d| d.message.clone())
+            .collect();
+        reports.push(FileReport { file: file.clone(), total, uncovered, uncovered_msgs });
+    }
+
+    let grand_total: usize = reports.iter().map(|r| r.total).sum();
+    let grand_uncovered: usize = reports.iter().map(|r| r.uncovered).sum();
+    let grand_covered = grand_total.saturating_sub(grand_uncovered);
+
+    if format == "json" {
+        let file_entries: Vec<serde_json::Value> = reports.iter().map(|r| {
+            serde_json::json!({
+                "file": r.file.display().to_string(),
+                "consume_bindings": r.total,
+                "covered": r.total.saturating_sub(r.uncovered),
+                "uncovered": r.uncovered,
+                "uncovered_diagnostics": r.uncovered_msgs,
+            })
+        }).collect();
+        let out = serde_json::json!({
+            "schema": "nova-consume-analyze/v1",
+            "total_bindings": grand_total,
+            "covered": grand_covered,
+            "uncovered": grand_uncovered,
+            "files": file_entries,
+        });
+        println!("{}", serde_json::to_string_pretty(&out)?);
+    } else {
+        println!("{}", bold("Coverage report (consume-analyze):"));
+        println!();
+        for r in &reports {
+            let covered = r.total.saturating_sub(r.uncovered);
+            let status = if r.uncovered == 0 { "✅" } else { "❌" };
+            println!(
+                "  {} {}: {} bindings; {} covered, {} NOT COVERED",
+                status,
+                r.file.display(),
+                r.total,
+                covered,
+                r.uncovered,
+            );
+            for msg in &r.uncovered_msgs {
+                println!("    ⚠  {}", msg);
+            }
+        }
+        println!();
+        println!(
+            "  Summary: {} total bindings, {} covered, {} uncovered",
+            grand_total, grand_covered, grand_uncovered,
+        );
+    }
+
+    if fail_on_uncovered && grand_uncovered > 0 {
+        return Err(anyhow!(
+            "consume-analyze: {} uncovered consume binding(s) — CI gate failed",
+            grand_uncovered,
+        ));
+    }
+    Ok(())
+}
+
 fn cmd_build(
     path: &Path,
     output: Option<&Path>,
@@ -4432,6 +4589,9 @@ fn run() -> ExitCode {
         Cmd::RegenRuntime { check } => cmd_regen_runtime(check),
         Cmd::Contracts(sub) => cmd_contracts(sub),
         Cmd::Bench(sub) => cmd_bench(sub),
+        Cmd::ConsumeAnalyze { path, format, fail_on_uncovered } => {
+            cmd_consume_analyze(&path, &format, fail_on_uncovered)
+        }
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,

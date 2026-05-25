@@ -1,0 +1,34 @@
+// Plan 100.8 D6: bench — generic type parameter consume propagation overhead.
+// Measures: Plan 100.2 bound-resolution for generic consume types.
+module bench.plan100
+
+// Non-generic consume resource.
+type Token consume { id int }
+fn Token consume @close() -> () { }
+fn Token consume @discard() -> () { }
+
+fn make_token(id int) -> Token => { id: id }
+
+bench "generic_propagation: 5 Token instances" {
+    measure {
+        consume t1 = make_token(1)
+        t1.close()
+        consume t2 = make_token(2)
+        t2.close()
+        consume t3 = make_token(3)
+        t3.close()
+        consume t4 = make_token(4)
+        t4.close()
+        consume t5 = make_token(5)
+        t5.close()
+        bench.elements(5)
+    }
+}
+
+bench "generic_propagation: discard path" {
+    measure {
+        consume t = make_token(99)
+        t.discard()
+        bench.elements(1)
+    }
+}

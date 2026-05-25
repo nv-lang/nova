@@ -334,6 +334,11 @@ pub struct Capabilities {
     /// эффект разрешён даже внутри `forbid Io` блока.
     /// Empty Vec по умолчанию.
     pub allow_transit: Vec<String>,
+    /// Plan 100.8 / D166: `type X consume { ... }` — this type carries
+    /// must-be-consumed semantics (D133). Populated by `collect_type` from
+    /// `TypeDecl.consume`. Renderers emit a `[consume]` badge and a
+    /// "Resource lifecycle" section explaining ownership obligations.
+    pub consume: bool,
 }
 
 /// Plan 45 Ф.3 / D105: deprecation marker.
