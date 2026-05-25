@@ -1028,6 +1028,24 @@ pub enum Stmt {
         body: Expr,
         span: Span,
     },
+    /// D160 Plan 100.4.3: `okdefer body` — complement к errdefer.
+    /// Выполнить body ТОЛЬКО при success-path (normal end-of-scope или
+    /// `return expr`); skipped при throw/panic/interrupt. Симметризует
+    /// defer-family: errdefer=error-only, okdefer=success-only.
+    OkDefer {
+        body: Expr,
+        span: Span,
+    },
+    /// D160 Plan 100.4.3: `defer |result_binding| body` — reason-aware
+    /// форма defer. Тело выполняется на ВСЕХ exit-paths (как `defer`),
+    /// но с доступом к exit-reason через `result_binding`.
+    /// `result_binding` — имя переменной (паттерн). Её тип: DeferResult[T, E]
+    /// где T = return type, E = error type функции.
+    DeferWithResult {
+        result_binding: String,
+        body: Expr,
+        span: Span,
+    },
     /// Plan 33.2 Ф.8 (D24): `assert_static <bool>` — intermediate proof
     /// obligation. В debug — runtime check; в release — стирается.
     ///

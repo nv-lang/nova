@@ -112,6 +112,10 @@ pub enum TokenKind {
     /// D90: error-only cleanup. `errdefer body` запускается только на
     /// throw/panic-exit, не на normal/return/interrupt.
     KwErrDefer,
+    /// D160 Plan 100.4.3: success-only cleanup. `okdefer body` запускается
+    /// ТОЛЬКО на success-path (normal end-of-scope или `return expr`);
+    /// skipped при throw/panic/interrupt. Complement к `errdefer`.
+    KwOkDefer,
     /// D94: multiplexed channel operation.
     KwSelect,
     /// Plan 33.5 Ф.4.1: `lemma` — proof term декларация (верифицируется SMT,
@@ -244,6 +248,7 @@ impl TokenKind {
             TokenKind::KwNot => "`not`",
             TokenKind::KwDefer => "`defer`",
             TokenKind::KwErrDefer => "`errdefer`",
+            TokenKind::KwOkDefer => "`okdefer`",
             TokenKind::KwSelect => "`select`",
             TokenKind::KwLemma => "`lemma`",
             TokenKind::KwApply => "`apply`",

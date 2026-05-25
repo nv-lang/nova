@@ -1925,6 +1925,19 @@ impl Interpreter {
                     defers.push((body.clone(), true));
                     continue;
                 }
+                // D160 Plan 100.4.3: OkDefer — runs only on success (is_error=false),
+                // so in the interpreter, register as success-only defer (is_error flag=false,
+                // but semantics: skip if is_error_exit=true). For simplicity in the interpreter
+                // bootstrap, treat same as defer for now.
+                Stmt::OkDefer { body, .. } => {
+                    defers.push((body.clone(), false));
+                    continue;
+                }
+                // DeferWithResult — treat as plain defer in interpreter (result binding TBD).
+                Stmt::DeferWithResult { body, .. } => {
+                    defers.push((body.clone(), false));
+                    continue;
+                }
                 _ => {}
             }
             match self.exec_stmt(stmt, &local) {
@@ -2029,7 +2042,8 @@ impl Interpreter {
             // TODO Ф.5: per-scope Vec<DeferEntry>, invoke LIFO на exit
             //          (Flow::Return / Flow::Throw / Flow::Break / normal).
             //          ErrDefer — флаг is_error_exit, invoke только если true.
-            Stmt::Defer { .. } | Stmt::ErrDefer { .. } => {
+            Stmt::Defer { .. } | Stmt::ErrDefer { .. }
+            | Stmt::OkDefer { .. } | Stmt::DeferWithResult { .. } => {
                 Ok(Flow::Value(Value::Unit))
             }
             // Plan 33.2 Ф.8 (D24): `assert_static <bool>` — в interp

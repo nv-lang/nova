@@ -1,0 +1,42 @@
+// Plan 100.4.3 (D160): defer |result| — тело получает binding и выполняется.
+// Тест: binding игнорируется (_), но defer body выполняется как plain defer.
+// result-binding injection (DeferResult[T,E]) — будущая фаза.
+
+module nova_tests.plan100_4_3.defer_with_result_logs_value
+
+test "defer |_r| body выполняется — side-effect виден снаружи" {
+    let mut log_count = 0
+    let _ = {
+        defer |_r| { log_count = log_count + 1 }
+        "value"
+    }
+    assert(log_count == 1)
+}
+
+test "несколько defer |_r| — все выполняются LIFO" {
+    let mut step = 0
+    let mut first = 0
+    let mut second = 0
+    let mut third = 0
+    let _ = {
+        defer |_a| { step = step + 1; first  = step }
+        defer |_b| { step = step + 1; second = step }
+        defer |_c| { step = step + 1; third  = step }
+        0
+    }
+    assert(third  == 1)   // last registered, first fired
+    assert(second == 2)
+    assert(first  == 3)   // first registered, last fired
+}
+
+test "defer |_r| + plain defer — оба выполняются" {
+    let mut plain_fired = false
+    let mut result_fired = false
+    let _ = {
+        defer         { plain_fired  = true }
+        defer |_res|  { result_fired = true }
+        0
+    }
+    assert(plain_fired)
+    assert(result_fired)
+}

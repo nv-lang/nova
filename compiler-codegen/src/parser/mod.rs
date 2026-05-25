@@ -5056,6 +5056,7 @@ impl Parser {
             TokenKind::KwRealtime => "realtime",
             TokenKind::KwDefer => "defer",
             TokenKind::KwErrDefer => "errdefer",
+            TokenKind::KwOkDefer => "okdefer",
             TokenKind::KwSelect => "select",
             _ => return None, // не keyword — обычный путь
         };
@@ -6422,8 +6423,36 @@ impl Parser {
             }
             // D90: `defer body` — scope-level cleanup. body — expression
             // (включая block-expression `{ ... }`).
+            // D160 Plan 100.4.3: расширено `defer |result_binding| body` —
+            // reason-aware форма. Если после `defer` идёт `|ident|`, парсим
+            // DeferWithResult; иначе обычный Defer.
             TokenKind::KwDefer => {
                 self.bump();
+                // Lookahead: `defer |ident|` → DeferWithResult?
+                if matches!(self.peek().kind, TokenKind::Pipe) {
+                    // `defer |binding| body` — reason-aware form (D160).
+                    self.bump(); // consume `|`
+                    // Expect identifier for the result binding.
+                    let result_binding = match &self.peek().kind {
+                        TokenKind::Ident(n) => {
+                            let n = n.clone();
+                            self.bump();
+                            n
+                        }
+                        _ => {
+                            let span = self.peek().span;
+                            return Err(Diagnostic::new(
+                                "expected identifier after `defer |` (D160: result binding name)".to_string(),
+                                span,
+                            ));
+                        }
+                    };
+                    // Expect closing `|`.
+                    self.expect(&TokenKind::Pipe)?;
+                    let body = self.parse_expr()?;
+                    let span = start.merge(body.span);
+                    return Ok(StmtOrExpr::Stmt(Stmt::DeferWithResult { result_binding, body, span }));
+                }
                 let body = self.parse_expr()?;
                 let span = start.merge(body.span);
                 Ok(StmtOrExpr::Stmt(Stmt::Defer { body, span }))
@@ -6434,6 +6463,14 @@ impl Parser {
                 let body = self.parse_expr()?;
                 let span = start.merge(body.span);
                 Ok(StmtOrExpr::Stmt(Stmt::ErrDefer { body, span }))
+            }
+            // D160 Plan 100.4.3: `okdefer body` — complement к errdefer.
+            // Cleanup только на success-path (normal exit / return).
+            TokenKind::KwOkDefer => {
+                self.bump();
+                let body = self.parse_expr()?;
+                let span = start.merge(body.span);
+                Ok(StmtOrExpr::Stmt(Stmt::OkDefer { body, span }))
             }
             // Plan 33.2 Ф.8 (D24): `assert_static <bool>` — intermediate
             // proof obligation. Контекстный keyword (Ident в лексере).

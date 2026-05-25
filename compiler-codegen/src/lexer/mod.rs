@@ -645,6 +645,7 @@ impl<'a> Lexer<'a> {
             "realtime" => TokenKind::KwRealtime,
             "defer" => TokenKind::KwDefer,
             "errdefer" => TokenKind::KwErrDefer,
+            "okdefer" => TokenKind::KwOkDefer,
             "select" => TokenKind::KwSelect,
             "lemma" => TokenKind::KwLemma,
             // "apply" — контекстуальный keyword (не резервируем глобально, чтобы не ломать идентификаторы)
