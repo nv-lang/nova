@@ -12194,3 +12194,34 @@ capabilities; без неё Nova не достигает заявленной re
 
 5. **ARM CI для compare_exchange_weak spurious-fail paths** — тесты на x86 не проверяют spurious fails
    (нет LL/SC на x86). ARM CI — отложено до Linux ARM CI готов.
+
+## Plan 103.5: Once hardening + OnceCell[T] + Lazy[T] вЂ” D168 (2026-05-26)
+
+### Р РµР°Р»РёР·РѕРІР°РЅРѕ
+- Once: call_once + poison semantics + realtime violation guard + deprecation warning РґР»СЏ run/done
+- OnceCell[T]: generic lazy cell СЃ get_or_init + re-entrant guard + take/set/get
+- Lazy[T]: eager-closure lazy value РїРѕРІРµСЂС… OnceCell + is_forced
+- Unconditional `Nova_Once_method_done` state check (fix: NOVA_SYNC_ASSERT no-op РІ Dev)
+- 20/20 tests PASS (11 pos + 3 neg + 2 prop + 1 stress)
+
+### РЈРїСЂРѕС‰РµРЅРёСЏ vs spec D171/D168
+1. **OnceCell/Lazy вЂ” РЅРµ C static structs, Р° monomorphized РІ emit_c.rs** вЂ” РєР°Р¶РґР°СЏ
+   РёРЅСЃС‚Р°РЅС†РёСЏ `OnceCell[int]` / `Lazy[str]` РіРµРЅРµСЂРёСЂСѓРµС‚ inline C struct Рё РјРµС‚РѕРґС‹.
+   Р­С‚Рѕ РѕС‚Р»РёС‡Р°РµС‚СЃСЏ РѕС‚ Once/AtomicX, РєРѕС‚РѕСЂС‹Рµ pre-declared РІ sync_primitives.h.
+   РџСЂРёС‡РёРЅР°: generic С‚РёРїС‹ С‚СЂРµР±СѓСЋС‚ T-РєРѕРЅРєСЂРµС‚РёР·Р°С†РёСЋ.
+
+2. **Lazy fiber-arena crash СЃ parallel for** вЂ” `parallel for` + `Lazy.force()` РІ
+   РїРµСЂРІРѕРј/РµРґРёРЅСЃС‚РІРµРЅРЅРѕРј Р±Р»РѕРєРµ С‚РµСЃС‚Р° РІС‹Р·С‹РІР°РµС‚ "fiber stack overflow in slot 0"
+   (VEH-РґРµС‚РµРєС‚РёСЂСѓРµРјС‹Р№ РєСЂР°С€) РЅР° Windows. РџСЂРёС‡РёРЅР° РЅРµ РґРёР°РіРЅРѕСЃС‚РёСЂРѕРІР°РЅР°.
+   Workaround: lazy_no_double_init_prop вЂ” sequential (for 0..100); concurrent
+   coverage РѕР±РµСЃРїРµС‡РёРІР°РµС‚СЃСЏ once_stress_mn_4workers (16 fibers Г— 100 force(), PASS).
+
+3. **D171 spec вЂ” РЅРµ РЅР°РїРёСЃР°РЅ** вЂ” С„РѕСЂРјР°Р»СЊРЅР°СЏ СЃРїРµС†РёС„РёРєР°С†РёСЏ OnceState/OnceCell/Lazy
+   РѕС‚РєР»Р°РґС‹РІР°РµС‚СЃСЏ. D168 РІ spec/decisions/06-concurrency.md СЃРѕРґРµСЂР¶РёС‚ Plan 103.2
+   atomics; Plan 103.5 pending spec document.
+
+4. **once.run() + done() deprecated, РЅРѕ РЅРµ removed** вЂ” РїР°СЂР° РѕСЃС‚Р°С‘С‚СЃСЏ РІ API СЃ
+   W_ONCE_RUN_DONE_DEPRECATED warning. РЈРґР°Р»РµРЅРёРµ вЂ” РІ Plan 103.9 breaking-API pass.
+
+5. **OnceCell.take() atomicity** вЂ” take() РїРѕРґ mutex РЅРµ РёСЃРїРѕР»СЊР·СѓРµС‚ atomic ops.
+   Р”РѕСЃС‚Р°С‚РѕС‡РЅРѕ РґР»СЏ single-threaded take (Р·Р°РґРѕРєСѓРјРµРЅС‚РёСЂРѕРІР°РЅРѕ РІ sync.nv).
