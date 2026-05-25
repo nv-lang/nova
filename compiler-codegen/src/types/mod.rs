@@ -7301,6 +7301,10 @@ struct ConsumeCtx<'a> {
     /// Для consume-методов: поля должны быть Consumed на exit'е.
     /// Для не-consume методов: consume-поля должны быть Live на exit'е.
     field_states: HashMap<String, VarState>,
+    /// Plan 100.2 (D156): generic-параметры с `[T consume]` bound.
+    /// Внутри тела функции, параметры с типами из этого набора
+    /// трактуются как consume-obligations (strict-mode).
+    consume_bound_generics: HashSet<String>,
 }
 
 impl<'a> ConsumeCtx<'a> {
@@ -7313,6 +7317,7 @@ impl<'a> ConsumeCtx<'a> {
             aliases: HashMap::new(),
             consume_obligations: HashSet::new(),
             field_states: HashMap::new(),
+            consume_bound_generics: HashSet::new(),
         }
     }
 
@@ -7498,6 +7503,10 @@ impl<'a> ConsumeCtx<'a> {
                 .or_else(|| self.var_types.get(&canon))
                 .cloned()
                 .unwrap_or_default();
+            // Plan 100.2 (D156): если тип — generic из [T consume] bound,
+            // используем D156-strict-forget вместо D133-not-consumed.
+            let is_strict_generic = !ty.is_empty()
+                && self.consume_bound_generics.contains(&ty);
             match state {
                 Some(VarState::Live) => {
                     let methods = self.lin_reg.consume_methods_for(&ty);
@@ -7508,12 +7517,13 @@ impl<'a> ConsumeCtx<'a> {
                     } else {
                         format!("см. `nova doc {}`", ty)
                     };
+                    let code = if is_strict_generic { "D156-strict-forget" } else { "D133-not-consumed" };
                     errors.push(Diagnostic::new(
                         format!(
-                            "[D133-not-consumed] переменная `{}` (тип `{}`) не \
+                            "[{}] переменная `{}` (тип `{}`) не \
                              consumed до scope-exit. Добавьте вызов одного из: {}, \
                              либо `return {}`, либо передайте в consume-param.",
-                            name, ty, hint, name),
+                            code, name, ty, hint, name),
                         exit_span,
                     ));
                 }
@@ -7524,12 +7534,13 @@ impl<'a> ConsumeCtx<'a> {
                     } else {
                         methods.join(" / ")
                     };
+                    let code = if is_strict_generic { "D156-strict-forget" } else { "D133-not-consumed" };
                     errors.push(Diagnostic::new(
                         format!(
-                            "[D133-not-consumed] переменная `{}` (тип `{}`) \
+                            "[{}] переменная `{}` (тип `{}`) \
                              consumed только на части путей выполнения. На всех \
                              путях до scope-exit должен быть вызов одного из: {}.",
-                            name, ty, hint),
+                            code, name, ty, hint),
                         exit_span,
                     ).with_note_at("частичный consume здесь".to_string(), *at));
                 }
@@ -7647,6 +7658,28 @@ fn check_fluent_return(module: &Module, errors: &mut Vec<Diagnostic>) {
     }
 }
 
+/// Plan 100.2 (D156): определяет, содержит ли тип параметра generic
+/// с consume_bound. Используется для авто-обязательства при entry в
+/// функцию с `[T consume]` bound.
+fn typeref_contains_consume_generic(ty: &TypeRef, consume_generics: &HashSet<String>) -> bool {
+    if consume_generics.is_empty() { return false; }
+    match ty {
+        TypeRef::Named { path, generics, .. } => {
+            // Generic-param T в consume_generics → consume-обязательство.
+            if path.len() == 1 && consume_generics.contains(&path[0]) {
+                return true;
+            }
+            // Generic-wrap G[T] где T consume → G тоже consume.
+            generics.iter().any(|g| typeref_contains_consume_generic(g, consume_generics))
+        }
+        TypeRef::Tuple(elems, _) => {
+            elems.iter().any(|e| typeref_contains_consume_generic(e, consume_generics))
+        }
+        TypeRef::Array(inner, _) => typeref_contains_consume_generic(inner, consume_generics),
+        _ => false,
+    }
+}
+
 fn check_consume(module: &Module, errors: &mut Vec<Diagnostic>) {
     let reg = ConsumeRegistry::build(module);
     // Plan 100.1 (D133): LinearityRegistry + marker consistency.
@@ -7657,15 +7690,44 @@ fn check_consume(module: &Module, errors: &mut Vec<Diagnostic>) {
         match item {
             Item::Fn(f) => {
                 let mut ctx = ConsumeCtx::new(&reg, &lin_reg);
-                // Параметры функции — live на входе; consume-параметры
-                // внутри тела тоже просто live (consume у caller'а).
+
+                // Plan 100.2 (D156): collect `[T consume]` bound generics.
+                // Внутри тела функции параметры с такими типами —
+                // consume-obligations (strict-mode D156).
+                let consume_bound_generics: HashSet<String> = f.generics.iter()
+                    .filter(|g| g.consume_bound)
+                    .map(|g| g.name.clone())
+                    .collect();
+                ctx.consume_bound_generics = consume_bound_generics.clone();
+
+                // Параметры функции — live на входе.
+                // Plan 100.2 (D156): если функция имеет `[T consume]` generics,
+                // параметры с типом T (или содержащим T) — consume-obligations.
                 for p in &f.params {
                     let pty = match &p.ty {
                         TypeRef::Named { path, .. } if path.len() == 1 =>
                             Some(path[0].clone()),
                         _ => None,
                     };
-                    ctx.declare(&p.name, pty);
+                    // Plan 100.2: param type contains consume-bound generic → obligation.
+                    let is_consume_generic_param =
+                        typeref_contains_consume_generic(&p.ty, &consume_bound_generics);
+                    if is_consume_generic_param {
+                        // Plan 100.2 (D156): if param type is not a simple Named
+                        // (e.g. tuple `(T, T)`) but contains a consume-bound generic,
+                        // store the generic name as the type so that D156-strict-forget
+                        // is emitted (not D133) on obligation failure.
+                        let pty = pty.or_else(|| {
+                            consume_bound_generics.iter().find(|g| {
+                                let g_set: HashSet<String> =
+                                    std::iter::once((*g).clone()).collect();
+                                typeref_contains_consume_generic(&p.ty, &g_set)
+                            }).cloned()
+                        });
+                        ctx.declare_consume_binding(&p.name, pty);
+                    } else {
+                        ctx.declare(&p.name, pty);
+                    }
                 }
                 // Plan 100.1 (D133 / D5): инициализация consume-полей receiver'а.
                 if let Some(recv) = &f.receiver {
@@ -7703,6 +7765,14 @@ fn check_consume(module: &Module, errors: &mut Vec<Diagnostic>) {
                     }
                     FnBody::Expr(e) => {
                         consume_walk_expr(&mut ctx, e, errors);
+                        // Plan 100.2: FnBody::Expr trailing ident = implicit return.
+                        // If it's a consume-obligation var → mark consumed (like
+                        // consume_walk_block's trailing handling).
+                        if let ExprKind::Ident(name) = &e.kind {
+                            if ctx.consume_obligations.contains(name.as_str()) {
+                                ctx.mark_consumed(name, e.span);
+                            }
+                        }
                         ctx.check_obligations_at_exit(e.span, errors);
                     }
                     FnBody::External => {}
@@ -7969,6 +8039,94 @@ fn consume_walk_loop(ctx: &mut ConsumeCtx, loop_vars: &[String],
     }
 }
 
+/// Plan 100.2 (D156): `for consume x in iter { body }` semantics.
+/// Each loop variable is a consume-obligation; iter is Consumed after loop.
+/// Pass-2 architecture: detect outer-scope pessimism, then real walk + check.
+fn consume_walk_consume_for(
+    ctx: &mut ConsumeCtx,
+    iter: &Expr,
+    loop_var_names: &[String],
+    body: &Block,
+    errors: &mut Vec<Diagnostic>,
+) {
+    // Walk iter expression (use-after-consume check for the collection var).
+    consume_walk_expr(ctx, iter, errors);
+
+    let pre = ctx.states.clone();
+    let pre_obligations = ctx.consume_obligations.clone();
+
+    // ── Pass 1: discover which outer-scope vars get consumed in body ──
+    // (pessimistic: if consumed in body, mark maybe-consumed post-loop)
+    for n in loop_var_names {
+        ctx.declare_consume_binding(n, None);
+    }
+    let mut throwaway: Vec<Diagnostic> = Vec::new();
+    consume_walk_block(ctx, body, &mut throwaway);
+    let outer_consumed: Vec<String> = pre.keys()
+        .filter(|k| matches!(ctx.states.get(*k),
+            Some(VarState::Consumed(_)) | Some(VarState::MaybeConsumed(_))))
+        .cloned()
+        .collect();
+
+    // ── Reset for pass 2: restore + pessimistic outer-consumed ──
+    ctx.states = pre.clone();
+    for k in &outer_consumed {
+        ctx.states.insert(k.clone(), VarState::MaybeConsumed(body.span));
+    }
+    ctx.consume_obligations = pre_obligations.clone();
+
+    // ── Pass 2: real walk with error collection ──
+    for n in loop_var_names {
+        ctx.declare_consume_binding(n, None);
+    }
+    consume_walk_block(ctx, body, errors);
+
+    // ── Check loop vars BEFORE resetting state ──
+    let body_span = body.span;
+    for n in loop_var_names {
+        let canon = ctx.canonical(n);
+        let state = ctx.states.get(&canon).or_else(|| ctx.states.get(n)).cloned();
+        match state {
+            None | Some(VarState::Live) => {
+                errors.push(Diagnostic::new(
+                    format!(
+                        "[D156-iter-not-consumed] `for consume` loop variable `{}` is not \
+                         consumed in loop body. Every iteration must consume the loop variable \
+                         via a consume-method, `return`, or consume-param transfer.",
+                        n),
+                    body_span,
+                ));
+            }
+            Some(VarState::MaybeConsumed(_)) => {
+                errors.push(Diagnostic::new(
+                    format!(
+                        "[D156-iter-maybe-consumed] `for consume` loop variable `{}` is \
+                         consumed on some execution paths but not all. Every iteration must \
+                         consume the loop variable on ALL execution paths.",
+                        n),
+                    body_span,
+                ));
+            }
+            Some(VarState::Consumed(_)) => {}
+        }
+        ctx.consume_obligations.remove(n);
+    }
+
+    // ── Post-loop: restore pre state with pessimistic outer-consumed ──
+    ctx.states = pre;
+    for k in &outer_consumed {
+        ctx.states.insert(k.clone(), VarState::MaybeConsumed(body.span));
+    }
+
+    // Mark iter variable as Consumed after for-consume loop.
+    // Pragmatic (D156): even early break → iter considered Consumed.
+    if let ExprKind::Ident(name) = &iter.kind {
+        ctx.mark_consumed(name, iter.span);
+        // If the iter was a consume-obligation (e.g. `consume txs = get_vec()`),
+        // the mark_consumed above satisfies it.
+    }
+}
+
 fn consume_walk_expr(ctx: &mut ConsumeCtx, e: &Expr, errors: &mut Vec<Diagnostic>) {
     match &e.kind {
         // ─── Листья ───
@@ -8003,6 +8161,26 @@ fn consume_walk_expr(ctx: &mut ConsumeCtx, e: &Expr, errors: &mut Vec<Diagnostic
                         // потребляется.
                         if ctx.is_consume_method(&recv, method) {
                             ctx.mark_consumed(&recv, e.span);
+                        } else {
+                            // Plan 100.2 (D156): `for consume` loop var has
+                            // None type (declared without type inference).
+                            // If calling a method that IS a consume-method for
+                            // ANY registered consume type AND recv is a
+                            // consume-obligation → treat as consuming.
+                            let canon = ctx.canonical(&recv);
+                            let is_obligation = ctx.consume_obligations.contains(&recv)
+                                || ctx.consume_obligations.contains(&canon);
+                            if is_obligation
+                                && ctx.var_types.get(&canon)
+                                     .or_else(|| ctx.var_types.get(&recv)).is_none()
+                            {
+                                let is_any_consume_method = ctx.lin_reg.consume_methods
+                                    .values()
+                                    .any(|ms| ms.iter().any(|m| m == method.as_str()));
+                                if is_any_consume_method {
+                                    ctx.mark_consumed(&recv, e.span);
+                                }
+                            }
                         }
                         // consume-параметры метода.
                         if let Some(ty) = ctx.var_types.get(&ctx.canonical(&recv)).cloned() {
@@ -8257,8 +8435,19 @@ fn consume_walk_expr(ctx: &mut ConsumeCtx, e: &Expr, errors: &mut Vec<Diagnostic
         }
 
         // ─── Циклы — пессимистично ───
-        ExprKind::For { pattern, iter, body, .. }
-        | ExprKind::ParallelFor { pattern, iter, body, .. } => {
+        ExprKind::For { pattern, iter, body, iter_consume, .. } => {
+            let mut names = Vec::new();
+            consume_pattern_names(pattern, &mut names);
+            if *iter_consume {
+                // Plan 100.2 (D156): consume-iteration — each loop var is an
+                // obligation; iter marked Consumed after loop.
+                consume_walk_consume_for(ctx, iter, &names, body, errors);
+            } else {
+                consume_walk_expr(ctx, iter, errors);
+                consume_walk_loop(ctx, &names, body, errors);
+            }
+        }
+        ExprKind::ParallelFor { pattern, iter, body, .. } => {
             consume_walk_expr(ctx, iter, errors);
             let mut names = Vec::new();
             consume_pattern_names(pattern, &mut names);
