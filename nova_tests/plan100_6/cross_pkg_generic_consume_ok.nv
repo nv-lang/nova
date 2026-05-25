@@ -9,8 +9,10 @@ type IoErr { msg str }
 export type Transaction consume { id int }
 export fn Transaction consume @commit() -> () { () }
 
+fn make_tx(id int) -> Transaction => { id }
+
 // "Package B" — fn returns Result wrapping A.Transaction:
-fn try_begin() -> Result[Transaction, IoErr] => Ok(Transaction { id: 1 })
+fn try_begin() -> Result[Transaction, IoErr] => Ok(make_tx(1))
 
 test "generic-wrap consume через package boundary" {
     match try_begin() {
@@ -18,6 +20,6 @@ test "generic-wrap consume через package boundary" {
             consume tx = t                       // consume-marker propagates через Ok
             tx.commit()
         }
-        Err(_) => println("failed"),
+        Err(_) => { () }
     }
 }

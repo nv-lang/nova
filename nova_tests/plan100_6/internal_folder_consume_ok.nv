@@ -1,0 +1,34 @@
+// Plan 100.6 (D164, Plan 42.13 D29 rev-3.1): internal/ folder consume-types.
+// `internal/` contains implementation-detail consume-types accessible within
+// the package but not re-exported externally.
+//
+// Simulated mock: internal impl type + public wrapper.
+
+module nova_tests.plan100_6.internal_folder_consume_ok
+
+// "internal/cache.nv" — impl-detail consume type:
+type CacheHandle consume {
+    id int,
+}
+
+fn CacheHandle consume @invalidate() -> () { () }
+fn CacheHandle_make(id int) -> CacheHandle => { id }
+fn CacheHandle_acquire(id int) -> CacheHandle => CacheHandle_make(id)
+
+// "service.nv" — public API using internal type:
+export type CacheService consume {
+    consume handle CacheHandle,
+}
+
+export fn CacheService consume @shutdown() -> () {
+    @handle.invalidate()
+}
+
+export fn CacheService_new(id int) -> CacheService => {
+    handle: CacheHandle_acquire(id),
+}
+
+test "internal/ consume-type — lifecycle via public wrapper" {
+    consume svc = CacheService_new(42)
+    svc.shutdown()                                  // ✅ internal handle consumed
+}

@@ -1,0 +1,48 @@
+// Plan 100.6 (D164): nova.toml [exports.consume_types] contract — positive case.
+// Package declares consume-types in manifest; consumers can rely on the contract.
+//
+// nova.toml declares:
+//   [exports.consume_types]
+//   Transaction = "1.0"      # consume contract v1
+//   Resource = "1.0"
+//
+// D164: consume-status is part of the exported API. Consumers depend on it.
+// v1.x → consume-status unchanged. v1 → v2 may change (major-bump required).
+
+module nova_tests.plan100_6.nova_toml_consume_contract_ok
+
+// Declared in nova.toml [exports.consume_types] as "Transaction = 1.0":
+export type Transaction consume {
+    id int,
+    amount int,
+}
+
+export fn Transaction consume @commit() -> () { () }
+export fn Transaction consume @abort() -> () { () }
+
+fn Transaction_make(id int, amount int) -> Transaction => { id, amount }
+export fn Transaction_begin(id int, amount int) -> Transaction => Transaction_make(id, amount)
+
+// Also declared in manifest:
+export type Resource consume {
+    handle int,
+}
+
+export fn Resource consume @close() -> () { () }
+fn Resource_make(handle int) -> Resource => { handle }
+export fn Resource_open(handle int) -> Resource => Resource_make(handle)
+
+test "manifest contract — Transaction consumed via commit" {
+    consume tx = Transaction_begin(1, 100)
+    tx.commit()                                     // ✅ consume contract honoured
+}
+
+test "manifest contract — Transaction consumed via abort" {
+    consume tx = Transaction_begin(2, 50)
+    tx.abort()                                      // ✅ both consume-methods work
+}
+
+test "manifest contract — Resource closed" {
+    consume r = Resource_open(42)
+    r.close()                                       // ✅ Resource.consume = "1.0"
+}

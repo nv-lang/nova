@@ -1,0 +1,40 @@
+// Plan 100.6 (D164 + D133 D4): record в "Package B" с consume-полем из "Package A".
+// Container type в B содержит consume field типа из A.
+// Оба типа должны быть consume (D4 transitivity).
+
+module nova_tests.plan100_6.cross_pkg_consume_with_field_ok
+
+// "Package A" — resource type:
+export type Lock consume {
+    id int,
+}
+
+export fn Lock consume @release() -> () { () }
+fn Lock_make(id int) -> Lock => { id }
+export fn Lock_acquire(id int) -> Lock => Lock_make(id)
+
+// "Package B" — container с consume field из A:
+export type GuardedSection consume {
+    consume lock Lock,
+    value int,
+}
+
+export fn GuardedSection consume @exit() -> () {
+    @lock.release()                                 // consume-field consumed
+}
+
+fn GuardedSection_make(id int, v int) -> GuardedSection => {
+    lock: Lock_acquire(id),
+    value: v,
+}
+export fn GuardedSection_enter(id int, v int) -> GuardedSection => GuardedSection_make(id, v)
+
+test "cross-package consume field — lifecycle via container" {
+    consume section = GuardedSection_enter(1, 42)
+    section.exit()                                  // ✅ lock released, section consumed
+}
+
+test "second section — same lifecycle pattern" {
+    consume section = GuardedSection_enter(2, 100)
+    section.exit()                                  // ✅ D164: consume propagates via field
+}

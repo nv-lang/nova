@@ -13,7 +13,7 @@ export type Transaction consume {
 
 export fn Transaction consume @commit() -> () { () }
 export fn Transaction consume @rollback() -> () { () }
-export fn begin() -> Transaction => Transaction { id: 42 }
+export fn begin() -> Transaction => { id: 42 }
 
 // "Package B" — would import Transaction.
 test "cross-package consume — import работает; binding-form OK" {
