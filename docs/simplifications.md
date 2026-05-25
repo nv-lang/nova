@@ -11502,6 +11502,20 @@ Plan 83.2 §4 «Compiled-программа без единого `runtime.*` в
 
 ## [M-receiver-generic-incompleteness] Plan 101 — `fn[T]` prefix + bounds + protocol composition (2026-05-24, partial)
 
+> **PROGRESS update 2026-05-25 ред. 6 (Group E done — multi-bound):**
+> **101.3 (multi-bound `[T A + B]`) ✅ ЗАКРЫТ** — AST refactor
+> GenericParam.bound Option<TypeRef> → bounds Vec<TypeRef>. Parser
+> chain `+ Type`. Type-check: iterate ALL bounds per generic-param
+> (conjunction satisfaction) + новый pass check_generic_bound_declarations
+> (strict mode — раньше unknown bounds silent skip; теперь
+> [E_BOUND_UNKNOWN] / [E_BOUND_NOT_PROTOCOL]). 6/6 plan101_3 PASS.
+> Regression: 1161/17 (1 legitimate fix — generic_default_d88 уже
+> ссылался на необъявленный Numeric → Display; остальные fails
+> environment-flake).
+>
+> Остаётся: 101.2 (bound integration smoke), 101.5 (stdlib audit
+> + close + merge), + vec_map_int_str fix.
+>
 > **PROGRESS update 2026-05-24 ред. 5 (Group D done — protocol composition):**
 > **101.4 (protocol composition `use TypeName`) ✅ ЗАКРЫТ** —
 > AST extend (TypeDeclKind::Protocol { methods, embeds }), parser

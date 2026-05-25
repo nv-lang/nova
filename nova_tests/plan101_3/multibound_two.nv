@@ -1,0 +1,37 @@
+// Plan 101.3 (D145 Ред. 5) — positive: multi-bound `[T A + B]`.
+// T должен удовлетворить оба protocol'а (conjunction).
+
+module nova_tests.plan101_3.multibound_two
+
+
+type Show_ protocol {
+    show() -> str
+}
+
+type Sized_ protocol {
+    size() -> int
+}
+
+
+type Widget {
+    name str
+    weight int
+}
+
+fn Widget @show() -> str => @name
+fn Widget @size() -> int => @weight
+
+
+// Multi-bound `[T Show_ + Sized_]` — T должен иметь оба метода.
+fn describe[T Show_ + Sized_](x T) -> str {
+    let n = x.show()
+    let s = x.size()
+    "${n} (${s})"
+}
+
+
+test "multi-bound: Widget satisfies Show_ + Sized_" {
+    let w = Widget { name: "thing", weight: 42 }
+    let s = describe(w)
+    assert(s == "thing (42)")
+}

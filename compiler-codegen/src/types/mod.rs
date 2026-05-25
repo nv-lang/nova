@@ -358,6 +358,14 @@ pub fn check_module(module: &Module) -> Result<ModuleEnv, Vec<Diagnostic>> {
     // flatten_dfs (хотя у flatten_dfs есть `seen`-guard — safety belt).
     check_protocol_embeds(module, &mut errors);
 
+    // Plan 101.3 (D145 Ред. 5): generic-bound declaration validation —
+    // каждое имя bound'а в `[T A + B]` должно быть объявленным protocol'ом
+    // (или well-known stdlib alias типа Hashable/Eq/Ord/Display). Раньше
+    // bound-resolve был permissive (silent skip unknown) — Plan 101 делает
+    // strict. Pre-Plan 101 tests, ссылающиеся на неизвестные bound'ы,
+    // должны их объявить или удалить.
+    check_generic_bound_declarations(module, &mut errors);
+
     let bound_ctx = BoundCtx::build(module);
     bound_ctx.check_module(module, &mut errors);
 
@@ -849,7 +857,7 @@ impl<'a> TypeCheckCtx<'a> {
         }
         // Bounds и defaults generic-параметров.
         for g in &fd.generics {
-            if let Some(b) = &g.bound {
+            for b in &g.bounds {
                 self.walk_typeref(b, &gs, errors);
             }
             if let Some(d) = &g.default {
@@ -889,7 +897,7 @@ impl<'a> TypeCheckCtx<'a> {
             gs.insert(g.name.clone());
         }
         for g in &td.generics {
-            if let Some(b) = &g.bound {
+            for b in &g.bounds {
                 self.walk_typeref(b, &gs, errors);
             }
             if let Some(d) = &g.default {
@@ -2666,6 +2674,98 @@ fn check_protocol_embeds(module: &Module, errors: &mut Vec<Diagnostic>) {
     }
 }
 
+/// Plan 101.3 (D145 Ред. 5): валидация bound-имён в declaration
+/// generic-параметров. Для каждого `[T A + B + C]` проверяем, что
+/// каждое имя bound'а — это объявленный protocol, либо well-known
+/// stdlib-alias (Hashable/Eq/Ord/Display/Equatable/Comparable/ToStr/
+/// TryFrom/TryInto), либо primitive-имя (Q-representation-bound future).
+/// Если имя — record/sum/effect → error E_BOUND_NOT_PROTOCOL.
+/// Если имя вообще unknown → error E_BOUND_UNKNOWN.
+fn check_generic_bound_declarations(module: &Module, errors: &mut Vec<Diagnostic>) {
+    use std::collections::HashMap;
+    // Карта известных type-имён → kind hint.
+    let mut type_kinds: HashMap<String, &'static str> = HashMap::new();
+    for item in &module.items {
+        if let Item::Type(t) = item {
+            let kind_name = match &t.kind {
+                TypeDeclKind::Protocol { .. } => "protocol",
+                TypeDeclKind::Effect(_) => "effect",
+                TypeDeclKind::Record(_) => "record",
+                TypeDeclKind::Sum(_) => "sum",
+                TypeDeclKind::Alias(_) => "alias",
+                TypeDeclKind::Newtype(_) => "newtype",
+                TypeDeclKind::Opaque => "opaque",
+            };
+            type_kinds.insert(t.name.clone(), kind_name);
+        }
+    }
+    // Well-known stdlib alias names (legacy + Plan 62.E migrated).
+    let stdlib_aliases: &[&str] = &[
+        "Ord", "Eq", "ToStr", "TryFrom", "TryInto",
+        "Hashable", "Display", "Equatable", "Comparable",
+        "Iter", "From", "Into",
+    ];
+    // Primitive-имена (Q-representation-bound future):
+    let primitives: &[&str] = &[
+        "int", "i8", "i16", "i32", "i64",
+        "u8", "u16", "u32", "u64", "uint",
+        "f32", "f64", "bool", "char", "str", "any", "never",
+    ];
+    let check_bound = |b: &TypeRef, errors: &mut Vec<Diagnostic>| {
+        let TypeRef::Named { path, span, .. } = b else { return; };
+        let Some(name) = path.last() else { return; };
+        // Если у имени префикс (`std.collections.Iter`), берём последний.
+        // Allowed: protocol, alias, primitive.
+        if stdlib_aliases.contains(&name.as_str()) { return; }
+        if primitives.contains(&name.as_str()) { return; }
+        match type_kinds.get(name) {
+            Some(&"protocol") => { /* OK */ }
+            Some(&kind) => {
+                errors.push(Diagnostic::new(
+                    format!(
+                        "[E_BOUND_NOT_PROTOCOL] `{}` is a {}, not a protocol — \
+                         generic bounds must be protocol-types (D72). Consider \
+                         declaring `type {} protocol {{ ... }}` if structural \
+                         contract is intended.",
+                        name, kind, name
+                    ),
+                    *span,
+                ));
+            }
+            None => {
+                errors.push(Diagnostic::new(
+                    format!(
+                        "[E_BOUND_UNKNOWN] unknown type `{}` used as generic bound — \
+                         not a declared protocol, stdlib alias, or primitive. \
+                         Did you forget to declare/import it?",
+                        name
+                    ),
+                    *span,
+                ));
+            }
+        }
+    };
+    for item in &module.items {
+        match item {
+            Item::Fn(f) => {
+                for g in &f.generics {
+                    for b in &g.bounds {
+                        check_bound(b, errors);
+                    }
+                }
+            }
+            Item::Type(t) => {
+                for g in &t.generics {
+                    for b in &g.bounds {
+                        check_bound(b, errors);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
 /// Plan 15 (D72): registry РґР»СЏ bound enforcement.
 ///
 /// `protocol_specs`: РґР»СЏ РєР°Р¶РґРѕРіРѕ `type Foo protocol { ... }` вЂ” СЃРїРёСЃРѕРє
@@ -3291,7 +3391,7 @@ impl<'a> BoundCtx<'a> {
             _ => return, // РЅРµС‚ РѕРґРЅРѕР·РЅР°С‡РЅРѕР№ overload РїРѕ arity вЂ” РїСЂРѕРїСѓСЃРєР°РµРј
         };
         // Bounds РїСЂРёСЃСѓС‚СЃС‚РІСѓСЋС‚?
-        let has_bounds = callee.generics.iter().any(|g| g.bound.is_some());
+        let has_bounds = callee.generics.iter().any(|g| !g.bounds.is_empty());
         if !has_bounds { return; }
         // РЎРјР°С‚С‡РёРј concrete T. РЎС‚СЂР°С‚РµРіРёСЏ:
         //   - turbofish вЂ” explicit type_args[i] РґР»СЏ callee.generics[i].
@@ -3317,16 +3417,21 @@ impl<'a> BoundCtx<'a> {
             }
         }
         // Р”Р»СЏ РєР°Р¶РґРѕРіРѕ bounded generic вЂ” РїСЂРѕРІРµСЂРёС‚СЊ.
+        // Plan 101.3: multi-bound `[T A + B]` — ALL bounds должны быть
+        // satisfied (conjunction). check_satisfaction вызывается на
+        // каждом bound отдельно — каждый missing-метод выдаст diagnostic.
         for gp in &callee.generics {
-            let Some(bound) = &gp.bound else { continue; };
+            if gp.bounds.is_empty() { continue; }
             let Some(concrete) = bindings.get(&gp.name) else {
                 // Inference РЅРµ СѓРґР°Р»Р°СЃСЊ вЂ” РїСЂРѕРїСѓСЃРєР°РµРј (best-effort).
                 // Strict-mode РјРѕРі Р±С‹ С‚СЂРµР±РѕРІР°С‚СЊ explicit turbofish.
                 continue;
             };
-            self.check_satisfaction(
-                concrete, bound, &gp.name, &fn_name, e.span, errors,
-            );
+            for bound in &gp.bounds {
+                self.check_satisfaction(
+                    concrete, bound, &gp.name, &fn_name, e.span, errors,
+                );
+            }
         }
     }
 

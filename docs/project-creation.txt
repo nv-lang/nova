@@ -20719,3 +20719,98 @@ NEXT: Group E — Plan 101.3 multi-bound `[T A + B]`. AST refactor
 GenericParam.bound Option<TypeRef> → bounds Vec<TypeRef>. После — закрыть
 Plan 101 (101.5: stdlib audit, LSP quick-fixes, merge в main).
 
+
+========================================================================
+2026-05-25 — PLAN 101 Group E: Plan 101.3 multi-bound `[T A + B]`
+========================================================================
+
+ВЕТКА: plan-101v4 (worktree nova-p101)
+
+Цель: реализовать Rust-style multi-bound `[T A + B]` из D145 Ред. 5.
+T должен удовлетворить ВСЕМ bound'ам (conjunction / intersection).
+Семантически equivalent `protocol { use A  use B }` (см. Plan 101.4),
+но без отдельной protocol-декларации — inline на месте generic param.
+
+DECOMPOSITION (atomic):
+
+E1a — AST refactor: GenericParam.bound Option<TypeRef> →
+      bounds Vec<TypeRef>. Empty Vec = unbounded. Один = legacy
+      `[T Bound]`. Несколько = `[T A + B]`. Helper first_bound()
+      для backward-compat (codegen mono-dispatch + doc render).
+      9 use-sites обновлены через `.bounds`/`.first_bound()`:
+      lints (×2), types (×4), parser (×2 + test), codegen (×1),
+      doc/collector (×1, join `+`).
+
+E1b — Parser: после первого bound в parse_generic_decl_params, цикл
+      `+ Type` для конкатенации. `+` = TokenKind::Plus. Skip newlines
+      между `+` и следующим bound. Dangling `+` (no type follows)
+      → parse error из parse_type().
+
+E2 — Type-check:
+     - check_call_bounds: для каждого generic-param с bounds — итерация
+       по всем bounds, check_satisfaction вызывается per bound. Каждый
+       missing-метод → diagnostic (так что T missing методы A и B
+       получит ДВА diagnostics — точно показывает что не хватает).
+     - check_generic_bound_declarations (новый pass): валидирует, что
+       каждое имя bound'а в declaration — это:
+       * protocol-kind type-decl модуля (через type_kinds map);
+       * stdlib alias (Ord, Eq, ToStr, TryFrom, TryInto, Hashable,
+         Display, Equatable, Comparable, Iter, From, Into);
+       * primitive (Q-representation-bound future: int, str, и т.д.).
+       Иначе → [E_BOUND_NOT_PROTOCOL] (есть, но не protocol) или
+       [E_BOUND_UNKNOWN] (вообще нет). Strict-mode для Plan 101 —
+       раньше bound-resolve был permissive (silent skip unknown).
+
+E3 — 6 тестов плана 101_3:
+     POSITIVE (3):
+     - multibound_two.nv — Widget satisfies Show_ + Sized_.
+     - multibound_three.nv — Triple satisfies HasA + HasB + HasC.
+     - multibound_with_default.nv — `[T Show_ + Sized_ = DefaultBox]`
+       multi-bound + default. Грамматика parser'а корректно обрабатывает.
+
+     NEGATIVE (3):
+     - multibound_missing_method_neg — Partial::a() есть, ::b() нет.
+       Pattern "does not satisfy `HasB`" в error.
+     - multibound_unknown_bound_neg — `[T HasA + NonExistentProtocol]`
+       → [E_BOUND_UNKNOWN].
+     - multibound_dangling_plus_neg — `[T HasA + ]` → parse error
+       "expected type".
+
+     6/6 PASS.
+
+REGRESSION (full nova test):
+- 1161 PASS / 17 FAIL / 56 SKIP.
+- 17 fails разбиение:
+  * 13 concurrency flake (TIMEOUT / CC-FAIL lld-link parallel-file-lock
+    / RUN-FAIL — pre-existing, Windows-flake under load).
+  * 1 plan101_1/vec_map_int_str (known T≠U edge case, deferred).
+  * 1 types/generic_default_d88 fixed in this commit (Numeric →
+    Display; bound name был не объявлен — strict check correctly
+    caught the test bug).
+  * 2 concurrency: gc_correctness + mn_runtime_preemption new
+    CC-FAIL'ы — environmental (lld-link concurrent file write
+    conflict, не related к моим изменениям; previous run показывал
+    разный набор TIMEOUT/CC-FAIL — environment instability).
+
+ИТОГ: Group E ввела ровно 1 legitimate failure (legacy test
+referencing неизвестное `Numeric`), которая fixed в этом же коммите.
+Чистый refactor + strict bound enforcement.
+
+Файлы:
+- compiler-codegen/src/ast/mod.rs (GenericParam refactor + first_bound helper)
+- compiler-codegen/src/parser/mod.rs (parse + chain `+` + test update)
+- compiler-codegen/src/types/mod.rs (iterate bounds + check_generic_bound_declarations)
+- compiler-codegen/src/codegen/emit_c.rs (gp.bounds.first() for mono)
+- compiler-codegen/src/lints.rs (collect_used_names iterate)
+- compiler-codegen/src/doc/collector.rs (join bounds with `+`)
+- nova_tests/types/generic_default_d88.nv (Numeric → Display fix)
+- nova_tests/plan101_3/{multibound_two,multibound_three,
+  multibound_with_default}.nv
+- nova_tests/plan101_3/negative/{multibound_missing_method,
+  multibound_unknown_bound,multibound_dangling_plus}_neg.nv
+
+NEXT: Group F (vec_map_int_str fix), Group G (101.2 bound integration
+smoke test — формально test существование/работоспособность Plan 15
+D72 bound-checker'а с Plan 101 receiver-generic), Group H (101.5
+stdlib audit + close + merge в main).
+

@@ -3462,19 +3462,25 @@ impl Parser {
         self.skip_newlines();
         while !matches!(self.peek().kind, TokenKind::RBracket) {
             let (name, name_span) = self.parse_ident()?;
-            // Bound: если следующий токен — не `,`, `]`, `=`, парсим как тип.
-            let bound = if matches!(
+            // Bound(s): если следующий токен — не `,`, `]`, `=`, парсим
+            // первый bound. Plan 101.3 (D145 Ред. 5): далее цепочка
+            // `+ Type` для multi-bound `[T A + B + C]` — conjunction
+            // (T satisfies каждый bound). Семантически equivalent
+            // `protocol { use A  use B  use C }`.
+            let mut bounds: Vec<TypeRef> = Vec::new();
+            if !matches!(
                 self.peek().kind,
                 TokenKind::Comma | TokenKind::RBracket | TokenKind::Eq
             ) {
-                None
-            } else {
-                Some(self.parse_type()?)
-            };
+                bounds.push(self.parse_type()?);
+                while matches!(self.peek().kind, TokenKind::Plus) {
+                    self.bump(); // consume `+`
+                    self.skip_newlines();
+                    bounds.push(self.parse_type()?);
+                }
+            }
             // Plan 19, C10 (D88): default-значение generic'а через `=`.
-            // Грамматика: `name [bound] [= default]`. Если `=` после
-            // bound (или после name если bound отсутствует) — парсим
-            // default-тип.
+            // Грамматика: `name [bound (+ bound)*] [= default]`.
             let default = if self.eat(&TokenKind::Eq).is_some() {
                 Some(self.parse_type()?)
             } else {
@@ -3483,11 +3489,11 @@ impl Parser {
             let end_span = default
                 .as_ref()
                 .map(|t| t.span())
-                .or_else(|| bound.as_ref().map(|t| t.span()))
+                .or_else(|| bounds.last().map(|t| t.span()))
                 .unwrap_or(name_span);
             params.push(GenericParam {
                 name,
-                bound,
+                bounds,
                 default,
                 span: name_span.merge(end_span),
             });
@@ -3523,12 +3529,12 @@ impl Parser {
     fn generic_params_to_type_refs(params: Vec<GenericParam>) -> Result<Vec<TypeRef>, Diagnostic> {
         let mut out = Vec::with_capacity(params.len());
         for p in params {
-            if let Some(b) = p.bound {
+            if let Some(b) = p.bounds.first() {
                 return Err(Diagnostic::new(
                     format!(
                         "generic bound `{}` не разрешён в receiver/instantiation context — \
                          bounds допустимы только в declaration `[T Bound]`",
-                        match &b {
+                        match b {
                             TypeRef::Named { path, .. } => path.join("."),
                             _ => "<complex>".to_string(),
                         }
@@ -7583,7 +7589,7 @@ mod tests {
         );
         let Item::Fn(f) = &m.items[0] else { panic!() };
         assert_eq!(f.generics.len(), 1);
-        assert!(f.generics[0].bound.is_some());
+        assert!(!f.generics[0].bounds.is_empty());
         assert!(f.generics[0].default.is_some());
     }
 
