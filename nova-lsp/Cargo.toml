@@ -1,0 +1,54 @@
+[package]
+name = "nova-lsp"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"
+description = "Nova language LSP server — production-grade IDE integration (Plan 104)"
+publish = false
+
+[[bin]]
+name = "nova-lsp"
+path = "src/main.rs"
+
+[dependencies]
+# LSP framework: JSON-RPC routing, message dispatch, tower service middleware.
+# Used by many production Rust LSP servers (taplo-lsp, wgsl-analyzer, etc.).
+tower-lsp = "0.20"
+
+# Async runtime: multi-thread scheduler for concurrent file handling.
+tokio = { version = "1", features = ["full"] }
+
+# Lock-free concurrent hashmap: URI → ParsedFile cache (Plan 104.0.3+).
+dashmap = "5"
+
+# Efficient rope data structure for incremental text edits.
+# Handles UTF-8 multi-byte chars, large files, O(log n) slice/insert.
+ropey = "1"
+
+# Structured error handling
+anyhow = "1"
+
+# Structured logging to stderr (stdout is used for JSON-RPC transport)
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+
+# CLI argument parsing: --version, --help; future: --workspace-root
+clap = { version = "4", features = ["derive"] }
+
+# Nova compiler as library (gated 104.1+ — diagnostics phase).
+# Uncomment when Plan 104.1 lands: compiler-codegen must be stable before
+# linking it to the LSP server (see Plan 104 M-11 + dependency graph).
+# nova_codegen = { path = "../compiler-codegen", package = "nova-codegen" }
+
+[dev-dependencies]
+# Needed in integration tests that spawn child processes with async helpers
+tokio = { version = "1", features = ["full"] }
+
+[profile.release]
+opt-level = 2
+lto = "thin"
+strip = "symbols"   # lean binary for editor installer distribution
+
+[profile.dev]
+opt-level = 0
+debug = true
