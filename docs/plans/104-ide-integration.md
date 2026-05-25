@@ -129,18 +129,34 @@ Justification: full-recheck для типичного Nova-модуля (10-50 �
 
 ## Decomposition deep-dive
 
-### 104.0 — Foundation (`nova-lsp` crate setup) — ~2 dev-day
+### 104.0 — Foundation (`nova-lsp` crate setup) — ~2 dev-day ✅ ЗАКРЫТ 2026-05-25
 
 **Out:**
-- `nova-lsp/Cargo.toml` с tower-lsp + tokio + dashmap + ropey + anyhow + tracing.
-- `nova-lsp/src/main.rs` — JSON-RPC stdio entry, `tower_lsp::Server::new`.
-- `nova-lsp/src/server.rs` — `Backend` struct implementing `LanguageServer` trait (initialize/initialized/shutdown stubs).
-- `nova-lsp/src/state.rs` — `WorkspaceState` skeleton.
-- `nova-lsp/tests/integration.rs` — spawn nova-lsp в test, отправить `initialize`, проверить capabilities response.
-- Workspace `Cargo.toml` — добавить `nova-lsp` member.
-- README: «how to build + how to point VSCode at local binary».
+- `nova-lsp/Cargo.toml`: tower-lsp ^0.20, tokio ^1 (full), dashmap ^5, ropey ^1,
+  anyhow ^1, tracing ^0.1, tracing-subscriber ^0.3, clap ^4.
+- `nova-lsp/src/main.rs` — `#[tokio::main]`, tracing init to stderr (NOVA_LSP_LOG env),
+  `LspService::new(Backend::new)` + `Server::new(stdin, stdout, socket).serve()`.
+- `nova-lsp/src/server.rs` — `Backend { client, state, shutdown_requested: Arc<AtomicBool> }`;
+  `initialize()` (UTF-16, Full sync, serverInfo), `initialized()`, `shutdown()`,
+  `did_open/did_change/did_close` handlers.
+- `nova-lsp/src/state.rs` — `WorkspaceState { docs: DashMap<Url, ParsedFile> }`;
+  `ParsedFile { text: Rope, version: i32 }`.
+- `nova-lsp/README.md` — build + VSCode/Neovim/Helix editor config snippets.
 
-**Acceptance:** `cargo build -p nova-lsp` → `nova-lsp.exe`; `echo '{"jsonrpc":"2.0","id":1,"method":"initialize",...}' | nova-lsp` returns valid initialize response.
+**Tests: 22/22 PASS**
+- `tests/build_smoke.rs` (3): binary exists + --help, --version, closed-stdin graceful exit
+- `tests/lifecycle.rs` (3): initialize capabilities, full lifecycle exit-0, duplicate init → -32600
+- `tests/document_cache.rs` (5 integration + 8 unit in state.rs):
+  didOpen/didChange/didClose server-alive; neg1 unopened-change warn; neg2 double-open warn
+- `tests/integration.rs` (3): full handshake exit-0, open/change/close alive, malformed JSON no-panic
+
+**V1 simplifications (documented in simplifications.md):**
+- textDocumentSync: Full (incremental via Plan 104.6 V2)
+- nova_codegen not yet linked (gate: Plan 104.1 diagnostics)
+
+**Acceptance:** `cargo build -p nova-lsp` → `nova-lsp.exe`; full JSON-RPC handshake
+works; 22 tests pass; `echo '{"jsonrpc":"2.0","id":1,"method":"initialize",...}' | nova-lsp`
+returns valid initialize response.
 
 ### 104.1 — Diagnostics + file watching — ~3 dev-day
 
