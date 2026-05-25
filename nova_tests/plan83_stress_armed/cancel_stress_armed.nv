@@ -1,0 +1,49 @@
+// Plan 83.9 (2026-05-25): supervised cancel stress armed M:N.
+//
+// N циклов supervised(cancel: tok) { spawn { … }; tok.cancel() }.
+// Validates cancel wake-all + dispatch_ready re-queue (Plan 83.4.5.1)
+// под production armed M:N. Acceptance Plan 83.9 §3 §6.4:
+// 10⁴ cancel cycles armed <60s.
+//
+// ALLOC_REQUIRES boehm
+
+module plan83_stress_armed.cancel_stress_armed
+
+test "1K supervised cancel cycles armed M:N — baseline" {
+    let mut completed = 0
+    let mut i = 0
+    while i < 1000 {
+        let tok = CancelToken.new()
+        let cur = i
+        supervised(cancel: tok) {
+            spawn {
+                // Cancel from inside fiber — exercises wake-all path.
+                if cur % 2 == 0 {
+                    tok.cancel()
+                }
+            }
+        }
+        completed = completed + 1
+        i = i + 1
+    }
+    assert(completed == 1000)
+}
+
+test "10K supervised cancel cycles armed M:N — Plan 83.9 §6.4" {
+    let mut completed = 0
+    let mut i = 0
+    while i < 10_000 {
+        let tok = CancelToken.new()
+        let cur = i
+        supervised(cancel: tok) {
+            spawn {
+                if cur % 2 == 0 {
+                    tok.cancel()
+                }
+            }
+        }
+        completed = completed + 1
+        i = i + 1
+    }
+    assert(completed == 10_000)
+}
