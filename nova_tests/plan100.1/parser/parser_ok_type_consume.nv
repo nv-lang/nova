@@ -1,0 +1,22 @@
+// Plan 100.1 (D133 / D1): `type T consume { ... }` парсируется без ошибки.
+// Positive parser test — только parsing, flow-check ещё не enforce'ен.
+
+module parser.parser_ok_type_consume
+
+// D1: consume keyword после имени типа — type-level must-consume marker.
+type Transaction consume {
+    id int,
+}
+
+// D1 + generics: тип с generic params + consume.
+type Box consume {
+    value int,
+}
+
+fn begin() -> Transaction => { id: 1 }
+fn Transaction consume @commit() -> () { () }
+
+test "type T consume { } — парсируется" {
+    consume tx = begin()
+    tx.commit()
+}
