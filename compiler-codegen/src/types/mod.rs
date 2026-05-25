@@ -7501,8 +7501,20 @@ impl<'a> ConsumeCtx<'a> {
             match state {
                 Some(VarState::Live) => {
                     let methods = self.lin_reg.consume_methods_for(&ty);
+                    // Plan 100.6 (D164 §5): cross-module hint — если тип не
+                    // объявлен в текущем модуле, он из внешнего пакета.
+                    // Используем другой hint, чтобы не вводить в заблуждение.
+                    let is_external_type = !ty.is_empty()
+                        && !self.lin_reg.consume_types.contains(&ty);
                     let hint = if methods.is_empty() {
-                        "объявите consume-метод для этого типа".to_string()
+                        if is_external_type {
+                            format!(
+                                "вызовите consume-метод типа `{}` \
+                                 (тип из внешнего модуля/пакета)",
+                                ty)
+                        } else {
+                            "объявите consume-метод для этого типа".to_string()
+                        }
                     } else if methods.len() <= 4 {
                         methods.join(" / ")
                     } else {
@@ -7519,8 +7531,19 @@ impl<'a> ConsumeCtx<'a> {
                 }
                 Some(VarState::MaybeConsumed(at)) => {
                     let methods = self.lin_reg.consume_methods_for(&ty);
+                    // Plan 100.6 (D164 §5): cross-module hint — тип из
+                    // внешнего пакета (не в локальном LinearityRegistry).
+                    let is_external_type = !ty.is_empty()
+                        && !self.lin_reg.consume_types.contains(&ty);
                     let hint = if methods.is_empty() {
-                        "объявите consume-метод".to_string()
+                        if is_external_type {
+                            format!(
+                                "вызовите consume-метод типа `{}` \
+                                 (тип из внешнего модуля/пакета)",
+                                ty)
+                        } else {
+                            "объявите consume-метод".to_string()
+                        }
                     } else {
                         methods.join(" / ")
                     };
