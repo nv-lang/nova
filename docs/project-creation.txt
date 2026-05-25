@@ -21799,3 +21799,38 @@ blocker) или Option B Phase 1 (mco_coro pool + channel arenas — P2).
 docs/idiom/cross-pkg-consume.md, docs/simplifications.md.
 
 Merge: plan-100-6-cross-module → main (pending full regression).
+
+=== Plan 100.8 — Performance + IDE/Tooling DX — D166 (2026-05-26) ===
+
+ЗАКРЫТ: Plan 100.8 — developer experience layer поверх consume-types.
+
+**Ключевые изменения:**
+- types/mod.rs: `all_declared_consume: HashSet<String>` — D162 coverage теперь
+  корректно срабатывает даже когда обязательство уже consumed (all_declared_consume
+  не очищается, в отличие от consume_obligations).
+- types/mod.rs: machine-applicable suggestions для D133 (VarState::Live) и
+  D133 multi-path (VarState::MaybeConsumed) — errdefer + primary/cleanup методы.
+- emit_c.rs: `hoisted_let_vars: HashSet<String>` — pre-hoist consume bindings
+  referenced in errdefer bodies перед setjmp handler (C codegen fix).
+- doc/doctree.rs + collector.rs + render_md.rs + render_json.rs: `consume: bool`
+  capability — `🔒 [consume]` badge + "Resource lifecycle" section в nova doc.
+- nova-cli/src/main.rs: `ConsumeAnalyze` subcommand — coverage report + JSON output.
+
+**Фикстуры (nova_tests/plan100_8/):**
+- 15 фикстур (9 pos + 6 neg) = 15/15 PASS
+  pos: nova_doc_consume_badge, nova_doc_resource_lifecycle, bench_check_consume_within_budget,
+       consume_analyze_coverage_report, consume_analyze_json_output, diagnostic_format_consistency,
+       lsp_hover_consume_status, lsp_hover_coverage_analysis, lsp_quickfix_add_consume_marker
+  neg: diag_d133_not_consumed_format, lsp_quickfix_add_errdefer, diag_D151_multi_path_suggestion,
+       diag_D152_capability_suggest_specific, diag_D153_cross_pkg_with_source_pkg,
+       diag_D146_view_escape_suggest_alternative
+
+**Regression:** plan100_1 23/0 ✅, plan100_4_3 11/0 ✅
+
+**Bench:** bench/plan100/ — 5 bench files (check_consume_pass, nested_field_path,
+generic_propagation, cross_pkg_lookup, defer_coverage_analysis).
+
+**Spec:** D166 в docs/plans/100.8-performance-ide-tooling.md.
+**Docs:** docs/idiom/consume-developer-experience.md, docs/plans/100.8-artifacts/.
+
+Merge: 7e6b06be2e4; branch plan-100-8-tooling → main.
