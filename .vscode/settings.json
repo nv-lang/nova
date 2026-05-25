@@ -8,5 +8,9 @@
         "editor.tabSize": 4,
         "editor.insertSpaces": true,
         "editor.rulers": [80, 100]
+    },
+    "terminal.integrated.env.windows": {
+        "NOVA_GC_LIB_DIR": "D:/Sources/nv-lang/nova/compiler-codegen/vcpkg_installed/x64-windows-static/lib",
+        "NOVA_GC_INCLUDE_DIR": "D:/Sources/nv-lang/nova/compiler-codegen/vcpkg_installed/x64-windows-static/include"
     }
 }
