@@ -58,10 +58,12 @@ Caller обязан consume через match Ok-arm.
 
 ## Mangling — consume-bit (extends D134 Plan 81)
 
-Plan 81 D134 определил symbol mangling v0. D164 amend — add **consume-bit**:
+Plan 81 D134 определил symbol mangling v0 (C-level name). D164 extends — add **consume-bit** in C name:
 
 ```
-nova_fn_<pkg>_<mod>_<name>_<consume-bit>_<param-types>_<return-type>
+// consume method:     Nova_{TypeName}_consume_{method}
+// non-consume method: Nova_{TypeName}_method_{method}
+// static:             Nova_{TypeName}_static_{method}
 ```
 
 Это ловит cross-version ABI break:
@@ -70,16 +72,17 @@ nova_fn_<pkg>_<mod>_<name>_<consume-bit>_<param-types>_<return-type>
 // package A v1.0:
 export type Resource consume { ... }
 export fn Resource consume @close() -> ()
-// → nova_fn_a_resource_close_c_..._..._...
+// C name: Nova_Resource_consume_close
 
 // package A v2.0 (breaking change — убрали consume!):
 export type Resource { ... }
 export fn Resource @close() -> ()
-// → nova_fn_a_resource_close__..._..._...
+// C name: Nova_Resource_method_close  ← другое!
 ```
 
-Linker ловит mismatch на load. **Превосходит Rust** (Rust видит
-mismatch только через type-id, не через ownership).
+Linker ловит mismatch на load (consumer compiled with v1 → `Nova_Resource_consume_close`,
+provider built v2 → `Nova_Resource_method_close` — undefined symbol).
+**Превосходит Rust** (Rust видит mismatch только через type-id, не через ownership).
 
 ## Package version contracts (Plan 03)
 
