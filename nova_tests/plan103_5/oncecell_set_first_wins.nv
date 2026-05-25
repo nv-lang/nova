@@ -1,0 +1,34 @@
+// Plan 103.5 — OnceCell[T].set: first-writer-wins semantics.
+
+module nova_tests.plan103_5.oncecell_set_first_wins
+
+test "OnceCell.set: first set returns true; second returns false; value unchanged" {
+    let cell = OnceCell[int].new()
+    let r1 = cell.set(10)
+    let r2 = cell.set(20)
+
+    assert(r1 == true)
+    assert(r2 == false)
+    let v = cell.get()
+    assert(match v { Some(x) => x == 10, None => false })
+}
+
+test "OnceCell.get: returns None before init" {
+    let cell = OnceCell[int].new()
+    let v = cell.get()
+    assert(match v { Some(_) => false, None => true })
+}
+
+test "OnceCell.get: returns Some after set" {
+    let cell = OnceCell[str].new()
+    let _ = cell.set("hello")
+    let v = cell.get()
+    assert(match v { Some(s) => s == "hello", None => false })
+}
+
+test "OnceCell.is_initialized: false before set, true after" {
+    let cell = OnceCell[int].new()
+    assert(cell.is_initialized() == false)
+    let _ = cell.set(7)
+    assert(cell.is_initialized() == true)
+}

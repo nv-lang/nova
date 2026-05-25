@@ -1,0 +1,242 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Plan 18 std.sync: fiber-aware synchronization primitives.
+//
+// AtomicInt   — lock-free atomic integer (int32 precision, nova_int width).
+// AtomicBool  — lock-free atomic boolean; swap() useful for one-shot ownership.
+// Mutex       — fair FIFO fiber-aware mutex; park/wake via nova_sched.
+// WaitGroup   — counter-based rendezvous; wait() parks until count == 0.
+// Once        — exactly-once execution barrier; run()/done() pair.
+// MemOrdering — memory ordering enum for atomic ops and fences (Plan 103.1).
+// fence()     — memory fence function; ordered by MemOrdering (Plan 103.1).
+//
+// See compiler-codegen/nova_rt/sync_primitives.h for C implementations.
+
+module runtime.sync
+
+// ─── MemOrdering ─────────────────────────────────────────────────
+
+/// Memory ordering для atomic operations и fences. Контролирует
+/// happens-before отношения между операциями в разных fiber'ах.
+///
+/// Default ordering для simple-overload методов — `SeqCst` (design decision M1):
+/// безопасно для всех use cases, может быть переопределено для
+/// perf-critical кода через `_ordered` overloads (Plan 103.2+).
+///
+/// **Семантика** (D167):
+///
+/// - `Relaxed`: только атомарность операции; нет happens-before.
+///   Use case: telemetry counters, statistics. Цена: dirty reads
+///   возможны cross-fiber, но не torn writes.
+/// - `Acquire`: для load; формирует happens-before с paired Release.
+///   Use case: load shared payload after seeing flag set.
+/// - `Release`: для store; формирует happens-before с paired Acquire.
+///   Use case: publish payload before setting flag.
+/// - `AcqRel`: для RMW (swap, CAS, fetch_*); combination Acquire+Release.
+///   Use case: lock-free queue head/tail; one-shot ownership transfer.
+/// - `SeqCst`: sequentially consistent — total order на всех SeqCst
+///   операциях во всех fiber'ах. Use case: simple mental model,
+///   correctness без deep analysis. Default.
+///
+/// **Примечание**: `MemOrdering` (memory ordering) отличается от
+/// `Ordering` (three-way comparison: Less|Equal|Greater) из prelude.
+/// Разные типы, разные применения.
+///
+/// **Variant tag values** (sync_primitives.h координация):
+///   Relaxed=0  Acquire=1  Release=2  AcqRel=3  SeqCst=4
+#stable(since = "0.1")
+export type MemOrdering
+    | Relaxed
+    | Acquire
+    | Release
+    | AcqRel
+    | SeqCst
+
+/// Memory fence — sequenced ordering point без atomic operation.
+///
+/// Используется для отделения unsynchronized reads/writes от synchronized
+/// (publish/subscribe pattern, refcount-drop с deferred-free).
+///
+/// **Семантика** (D167):
+///
+/// - `fence(MemOrdering.Relaxed)`: no-op. Валиден синтаксически для
+///   consistency, но не имеет ordering эффекта (Acquire/Release нужны).
+/// - `fence(MemOrdering.Acquire)`: все subsequent reads/writes
+///   happen-after все prior Release-stores (visible-to-this-fiber).
+/// - `fence(MemOrdering.Release)`: все prior reads/writes happen-before
+///   все subsequent Acquire-loads (visible-to-other-fibers).
+/// - `fence(MemOrdering.AcqRel)`: combination Acquire+Release.
+/// - `fence(MemOrdering.SeqCst)`: total-order participation; sequenced
+///   относительно всех других SeqCst fences и SeqCst operations.
+///
+/// # Example: refcount-drop с deferred-free
+///
+/// ```nova
+/// // worker fiber:
+/// let prev = refcount.fetch_sub(1)   // Release-dec (103.2)
+/// if prev == 1 {
+///     fence(MemOrdering.Acquire)     // synchronize with all Release-decs
+///     // safe to access data — last fiber holds it
+///     destroy(data)
+/// }
+/// ```
+#stable(since = "0.1")
+export external fn fence(ord MemOrdering)
+
+// ─── AtomicInt ───────────────────────────────────────────────────
+
+/// Lock-free атомарный целочисленный счётчик.
+///
+/// Использует acquire/release ordering для всех операций.
+/// Ширина соответствует `nova_int` (platform word size).
+///
+/// # Examples
+///
+/// ```nova
+/// let counter = AtomicInt.new(0)
+/// counter.fetch_add(1)
+/// assert(counter.load() == 1)
+/// ```
+///
+/// # See Also
+///
+/// - `[AtomicBool]` — атомарный boolean
+/// - `[Mutex]` — fiber-aware mutex для non-atomic критических секций
+#stable(since = "0.1")
+export external fn AtomicInt.new(v int) -> Self
+
+/// Загрузить текущее значение (acquire ordering).
+#stable(since = "0.1")
+export external fn AtomicInt @load() -> int
+
+/// Записать новое значение (release ordering).
+#stable(since = "0.1")
+export external fn AtomicInt mut @store(v int)
+
+/// Атомарно добавить `delta`, вернуть предыдущее значение (acq_rel).
+#stable(since = "0.1")
+export external fn AtomicInt mut @fetch_add(delta int) -> int
+
+/// Атомарно вычесть `delta`, вернуть предыдущее значение (acq_rel).
+#stable(since = "0.1")
+export external fn AtomicInt mut @fetch_sub(delta int) -> int
+
+/// Compare-and-swap: если значение == `expected`, записать `desired`.
+///
+/// Возвращает `true` при успехе. Использует acq_rel ordering.
+#stable(since = "0.1")
+export external fn AtomicInt mut @compare_exchange(expected int, desired int) -> bool
+
+// ─── AtomicBool ──────────────────────────────────────────────────
+
+/// Lock-free атомарный булев флаг.
+///
+/// `swap()` полезен для one-shot ownership паттерна:
+/// `if !flag.swap(true) { /* только первый caller выполняет */ }`.
+///
+/// # See Also
+///
+/// - `[AtomicInt]` — атомарный integer
+/// - `[Once]` — barrier для exactly-once execution
+#stable(since = "0.1")
+export external fn AtomicBool.new(v bool) -> Self
+
+/// Загрузить текущее значение (acquire ordering).
+#stable(since = "0.1")
+export external fn AtomicBool @load() -> bool
+
+/// Записать новое значение (release ordering).
+#stable(since = "0.1")
+export external fn AtomicBool mut @store(v bool)
+
+/// Compare-and-swap: если значение == `expected`, записать `desired`.
+///
+/// Возвращает `true` при успехе. Использует acq_rel ordering.
+#stable(since = "0.1")
+export external fn AtomicBool mut @compare_exchange(expected bool, desired bool) -> bool
+
+/// Атомарно установить `v`, вернуть предыдущее значение (acq_rel).
+///
+/// Полезен для one-shot ownership: `if !flag.swap(true) { /* first */ }`.
+#stable(since = "0.1")
+export external fn AtomicBool mut @swap(v bool) -> bool
+
+// ─── Mutex ───────────────────────────────────────────────────────
+
+/// Fair FIFO fiber-aware mutex.
+///
+/// Park/wake через `nova_sched` — заблокированный fiber не потребляет CPU.
+/// NOT reentrant: повторный `lock()` из того же fiber'а приведёт к deadlock.
+///
+/// # Examples
+///
+/// ```nova
+/// let mu = Mutex.new()
+/// mu.lock()
+/// // critical section
+/// mu.unlock()
+/// ```
+///
+/// # See Also
+///
+/// - `[WaitGroup]` — ожидание завершения нескольких fiber'ов
+/// - `[Once]` — exactly-once execution barrier
+#stable(since = "0.1")
+export external fn Mutex.new() -> Self
+
+/// Захватить mutex. Паркует вызывающий fiber до освобождения.
+///
+/// NOT reentrant — повторный вызов из того же fiber'а deadlock.
+#stable(since = "0.1")
+export external fn Mutex mut @lock()
+
+/// Освободить mutex. Будит следующий ожидающий fiber, если есть.
+///
+/// Должен вызываться только когда mutex захвачен данным fiber'ом.
+#stable(since = "0.1")
+export external fn Mutex mut @unlock()
+
+/// Попытаться захватить mutex без блокировки.
+///
+/// Возвращает `true` если lock успешно захвачен, `false` если занят.
+#stable(since = "0.1")
+export external fn Mutex mut @try_lock() -> bool
+
+// ─── WaitGroup ───────────────────────────────────────────────────
+
+/// Counter-based rendezvous — ожидание завершения группы fiber'ов.
+///
+/// Паттерн использования: `add(n)` перед spawn, `done()` в каждом fiber'е,
+/// `wait()` в координирующем fiber'е.
+///
+/// # Examples
+///
+/// ```nova
+/// let wg = WaitGroup.new()
+/// wg.add(3)
+/// spawn { work1(); wg.done() }
+/// spawn { work2(); wg.done() }
+/// spawn { work3(); wg.done() }
+/// wg.wait()
+/// ```
+///
+/// # See Also
+///
+/// - `[Mutex]` — взаимное исключение
+/// - `[Once]` — exactly-once barrier
+#stable(since = "0.1")
+export external fn WaitGroup.new() -> Self
+
+/// Увеличить счётчик на `delta`. Вызывать перед spawn'ом workers.
+#stable(since = "0.1")
+export external fn WaitGroup mut @add(delta int)
+
+/// Уменьшить счётчик на 1. Будит все `wait()` если счётчик достиг 0.
+///
+/// Не должен вызываться больше раз, чем суммарно было передано в `add()`.
+#stable(since = "0.1")
+export external fn WaitGroup mut @done()
+
+/// Парковать вызывающий fiber до достижения счётчиком нуля.
+#stable(since = "0.1")
+export external fn WaitGroup @wait()
+

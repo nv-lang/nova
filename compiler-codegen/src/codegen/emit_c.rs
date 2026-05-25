@@ -768,6 +768,10 @@ pub struct CEmitter {
     ///
     /// См. `docs/plans/62.A.bis-sum-schema-registry.md` §«Phase 1».
     pub(crate) sum_schema_registry: super::sum_schema_registry::SumSchemaRegistry,
+    /// Plan 103.5: true when currently emitting inside a `realtime { }` block.
+    /// Used to detect blocking Once/OnceCell/Lazy method calls that may park the
+    /// fiber, which is forbidden in realtime context (E_EFFECT_REALTIME_VIOLATION).
+    in_realtime: bool,
 }
 
 /// D160 Plan 100.4.3: kind of a defer entry — determines which exit paths trigger it.
@@ -1010,6 +1014,7 @@ impl CEmitter {
                 r.init_hardcoded_baseline();
                 r
             },
+            in_realtime: false,
         }
     }
 
@@ -1694,6 +1699,62 @@ impl CEmitter {
                 }
             }
         }
+        // 1a1b. Plan 103.5: register type_decls from ExternalRegistry (sync.nv etc.).
+        //
+        // sync.nv declares:
+        //   - `export external type OnceCell[T]` / `Lazy[T]` → generic opaque types.
+        //     Register in generic_types + generic_type_templates so TurboFish dispatch
+        //     and drain_generic_type_worklist fire correctly.
+        //   - `export type OnceState | Fresh | Running | Done | Poisoned` — sum type
+        //     pre-declared in sync_primitives.h (RUNTIME_DEFINED_TYPES). Register in
+        //     sum_schemas so `is_generic_stub_c("Nova_OnceState*")` returns false and
+        //     `infer_expr_c_type` correctly infers Nova_OnceState* for once.state().
+        //
+        // These types are NOT in the compiled test module's items (they're not prelude
+        // nv files), so emit_type_decl is never called for them without this pass.
+        for type_decl in self.external_registry.type_decls.clone() {
+            match &type_decl.kind {
+                crate::ast::TypeDeclKind::Opaque => {
+                    if !type_decl.generics.is_empty() {
+                        self.generic_types.insert(type_decl.name.clone());
+                        self.generic_type_templates.entry(type_decl.name.clone())
+                            .or_insert(type_decl);
+                    }
+                }
+                crate::ast::TypeDeclKind::Sum(variants) => {
+                    // Register sum schema for pattern matching + is_generic_stub_c.
+                    if !self.sum_schemas.contains_key(&type_decl.name) {
+                        let mut schema: std::collections::HashMap<String, Vec<String>> =
+                            std::collections::HashMap::new();
+                        let mut variant_order: Vec<String> = Vec::new();
+                        for v in variants {
+                            let field_types: Vec<String> = match &v.kind {
+                                crate::ast::SumVariantKind::Unit => Vec::new(),
+                                crate::ast::SumVariantKind::Tuple(types) => types.iter()
+                                    .filter_map(|ty| self.type_ref_to_c(ty).ok())
+                                    .collect(),
+                                crate::ast::SumVariantKind::Record(fields) => fields.iter()
+                                    .filter_map(|f| self.type_ref_to_c(&f.ty).ok())
+                                    .collect(),
+                            };
+                            variant_order.push(v.name.clone());
+                            schema.insert(v.name.clone(), field_types);
+                        }
+                        let c_name = format!("Nova_{}", type_decl.name);
+                        self.sum_schema_registry.register_user_sum(
+                            &type_decl.name,
+                            &schema,
+                            &c_name,
+                            super::sum_schema_registry::SumAbi::PointerErrorLike,
+                            &variant_order,
+                        );
+                        self.sum_schemas.insert(type_decl.name.clone(), schema);
+                    }
+                }
+                _ => {}
+            }
+        }
+
         // 1a2. Collect FnDecls for methods on generic types (needed for Ф.3 dispatch).
         //
         // Plan 95 Ф.1.1: also collect **Nova-body** methods on builtin sum
@@ -6704,9 +6765,23 @@ impl CEmitter {
                 Self::collect_idents_expr(right, out);
             }
             ExprKind::Unary { operand, .. } => Self::collect_idents_expr(operand, out),
-            ExprKind::Call { func, args, .. } => {
+            ExprKind::Call { func, args, trailing, .. } => {
                 Self::collect_idents_expr(func, out);
                 for a in args { Self::collect_idents_expr(a.expr(), out); }
+                // Plan 103.5: also recurse into trailing blocks so spawn-body capture
+                // analysis picks up variables used in nested trailing closures
+                // (e.g. `once.call_once() { counter.fetch_add(1) }` inside parallel for).
+                if let Some(t) = trailing {
+                    match t {
+                        crate::ast::Trailing::Block(b) => Self::collect_idents_block(b, out),
+                        crate::ast::Trailing::Fn(f) => match &f.body {
+                            crate::ast::FnBody::Block(b) => Self::collect_idents_block(b, out),
+                            crate::ast::FnBody::Expr(e) => Self::collect_idents_expr(e, out),
+                            crate::ast::FnBody::External => {}
+                        },
+                        crate::ast::Trailing::LegacyBlockWithParams(tb) => Self::collect_idents_block(&tb.body, out),
+                    }
+                }
             }
             ExprKind::Member { obj, .. } => Self::collect_idents_expr(obj, out),
             ExprKind::Index { obj, index } => {
@@ -7213,6 +7288,10 @@ impl CEmitter {
             "AtomicU8", "AtomicU16", "AtomicU32", "AtomicU64",
             "AtomicIsize", "AtomicUsize",
             "AtomicPtr",
+            // Plan 103.5: OnceState pre-declared in sync_primitives.h.
+            // C struct + 4 constructors (Fresh/Running/Done/Poisoned) live there.
+            // sum_schemas populated below for pattern matching support.
+            "OnceState",
         ];
         if RUNTIME_DEFINED_TYPES.contains(&t.name.as_str()) {
             // Plan 62.A: skip emission — C struct + constructors живут в
@@ -10888,11 +10967,304 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                 );
                 self.sum_schemas.insert(sum_key.to_string(), sum_schema);
             }
+            TypeDeclKind::Opaque => {
+                // Plan 103.5: special runtime-backed generic types that need
+                // per-T struct + methods emitted by codegen (not fully in
+                // the runtime header, because T is generic).
+                let base_name = template.name.clone();
+                match base_name.as_str() {
+                    "OnceCell" => {
+                        let t_cty = type_subst.iter()
+                            .find(|(k, _)| k == "T")
+                            .map(|(_, v)| v.clone())
+                            .unwrap_or_else(|| "nova_int".to_string());
+                        self.emit_oncecell_instance(mangled, &t_cty);
+                    }
+                    "Lazy" => {
+                        let t_cty = type_subst.iter()
+                            .find(|(k, _)| k == "T")
+                            .map(|(_, v)| v.clone())
+                            .unwrap_or_else(|| "nova_int".to_string());
+                        self.emit_lazy_instance(mangled, &t_cty);
+                    }
+                    _ => {
+                        // Other opaque types: C struct lives in runtime header,
+                        // no per-T emission needed.
+                    }
+                }
+            }
             _ => { /* Protocol/effect/alias/newtype — not generic record/sum */ }
         }
 
         self.current_type_subst = saved_subst;
         Ok(())
+    }
+
+    /// Plan 103.5: emit monomorphized OnceCell[T] struct + all methods.
+    /// Called from emit_generic_type_instance for Opaque "OnceCell" instances.
+    /// mangled = "Nova_OnceCell____nova_int", t_cty = "nova_int".
+    fn emit_oncecell_instance(&mut self, mangled: &str, t_cty: &str) {
+        let m = mangled;
+        let opt_ty = format!("NovaOpt_{}", t_cty);
+        // Emit struct
+        self.line(&format!("/* ── OnceCell[{t}] — Plan 103.5 ───────────────────────── */", t = t_cty));
+        self.line(&format!("typedef struct {{"));
+        self.indent += 1;
+        self.line("nova_mutex_t    mu;");
+        self.line("int             state;      /* 0=EMPTY 1=RUNNING 2=DONE */");
+        self.line("NovaOnceWaiter* waiters;");
+        self.line("nova_bool       has_value;");
+        self.line(&format!("{t}         value;", t = t_cty));
+        self.indent -= 1;
+        self.line(&format!("}} {m};", m = m));
+        self.line("");
+        // static new()
+        self.line(&format!("static inline {m}* {m}_static_new(void) {{", m = m));
+        self.indent += 1;
+        self.line(&format!("{m}* _c = ({m}*)nova_alloc(sizeof({m}));", m = m));
+        self.line("nova_mutex_init(&_c->mu);");
+        self.line("_c->state = 0; _c->waiters = NULL; _c->has_value = false;");
+        self.line("return _c;");
+        self.indent -= 1;
+        self.line("}");
+        self.line("");
+        // get() -> Option[T]
+        self.line(&format!("static inline {o} {m}_method_get({m}* _c) {{", o = opt_ty, m = m));
+        self.indent += 1;
+        self.line(&format!("{o} _r;", o = opt_ty));
+        self.line("if (__atomic_load_n(&_c->has_value, __ATOMIC_ACQUIRE)) {");
+        self.indent += 1;
+        self.line("_r.tag = NOVA_TAG_Option_Some; _r.value = _c->value; return _r;");
+        self.indent -= 1;
+        self.line("}");
+        self.line(&format!("_r.tag = NOVA_TAG_Option_None; memset(&_r.value, 0, sizeof(_r.value)); return _r;"));
+        self.indent -= 1;
+        self.line("}");
+        self.line("");
+        // set(v T) -> bool
+        self.line(&format!("static inline nova_bool {m}_method_set({m}* _c, {t} _v) {{", m = m, t = t_cty));
+        self.indent += 1;
+        self.line("nova_mutex_lock(&_c->mu);");
+        self.line("if (_c->has_value) { nova_mutex_unlock(&_c->mu); return false; }");
+        self.line("_c->value = _v;");
+        self.line("__atomic_store_n(&_c->has_value, true, __ATOMIC_RELEASE);");
+        self.line("_c->state = 2;");
+        self.line("nova_mutex_unlock(&_c->mu);");
+        self.line("return true;");
+        self.indent -= 1;
+        self.line("}");
+        self.line("");
+        // get_or_init(init fn() -> T) -> T
+        self.line(&format!("static inline {t} {m}_method_get_or_init({m}* _c, NovaClosBase* _init) {{",
+            t = t_cty, m = m));
+        self.indent += 1;
+        // retry label for re-entry after init failure
+        self.line("_oc_retry:;");
+        self.line("if (__atomic_load_n(&_c->has_value, __ATOMIC_ACQUIRE)) return _c->value;");
+        self.line("nova_mutex_lock(&_c->mu);");
+        self.line("if (_c->has_value) { nova_mutex_unlock(&_c->mu); return _c->value; }");
+        self.line("if (_c->state == 1 /* RUNNING */) {");
+        self.indent += 1;
+        self.line("if (_nova_active_slot < 0) {");
+        self.indent += 1;
+        self.line("nova_mutex_unlock(&_c->mu);");
+        self.line("for (;;) {");
+        self.indent += 1;
+        self.line("_nova_cpu_yield();");
+        self.line("if (__atomic_load_n(&_c->has_value, __ATOMIC_ACQUIRE)) return _c->value;");
+        self.line("if (__atomic_load_n(&_c->state, __ATOMIC_ACQUIRE) == 0) goto _oc_retry;");
+        self.indent -= 1;
+        self.line("}");
+        self.indent -= 1;
+        self.line("}");
+        self.line("NovaOnceWaiter _oc_w; _oc_w.scope = _nova_active_scope;");
+        self.line("_oc_w.slot = _nova_active_slot; _oc_w.next = _c->waiters; _c->waiters = &_oc_w;");
+        self.line("nova_sched_park_with_unlock(_nova_active_scope, _nova_active_slot,");
+        self.line("                            (void(*)(void*))nova_mutex_unlock, &_c->mu);");
+        self.line("if (__atomic_load_n(&_c->has_value, __ATOMIC_ACQUIRE)) return _c->value;");
+        self.line("goto _oc_retry; /* init failed — retry with our own closure */");
+        self.indent -= 1;
+        self.line("}");
+        self.line("/* state == EMPTY: become runner */");
+        self.line("_c->state = 1;");
+        self.line("nova_mutex_unlock(&_c->mu);");
+        self.line("/* Run init with panic capture. */");
+        self.line("/* Plan 103.5: clear _nova_handler_Fail so throw→nova_throw→NOVA_TRY */");
+        self.line("NovaVtable_Fail* _oc_saved_fail = _nova_handler_Fail;");
+        self.line("_nova_handler_Fail = NULL;");
+        self.line("NovaFailFrame _oc_frame; nova_bool _oc_panicked = false; nova_str _oc_msg;");
+        self.line(&format!("{t} _oc_result;", t = t_cty));
+        self.line("if (NOVA_TRY(_oc_frame)) {");
+        self.indent += 1;
+        self.line(&format!("_oc_result = (({t}(*)(void*))_init->fn)(_init->env);", t = t_cty));
+        self.line("nova_fail_pop();");
+        self.indent -= 1;
+        self.line("} else {");
+        self.indent += 1;
+        self.line("_oc_panicked = true; _oc_msg = NOVA_CATCH(_oc_frame);");
+        self.indent -= 1;
+        self.line("}");
+        self.line("_nova_handler_Fail = _oc_saved_fail;");
+        self.line("nova_mutex_lock(&_c->mu);");
+        self.line("if (!_oc_panicked) {");
+        self.indent += 1;
+        self.line("_c->value = _oc_result;");
+        self.line("__atomic_store_n(&_c->has_value, true, __ATOMIC_RELEASE);");
+        self.line("_c->state = 2; /* DONE */");
+        self.indent -= 1;
+        self.line("} else { _c->state = 0; /* EMPTY — retry allowed */ }");
+        self.line("NovaOnceWaiter* _oc_wk = _c->waiters; _c->waiters = NULL;");
+        self.line("nova_mutex_unlock(&_c->mu);");
+        self.line("while (_oc_wk) { NovaOnceWaiter* _oc_nx = _oc_wk->next;");
+        self.line("    nova_sched_wake(_oc_wk->scope, _oc_wk->slot); _oc_wk = _oc_nx; }");
+        self.line("if (_oc_panicked) { Nova_Fail_fail(_oc_msg); nova_throw(_oc_msg); }");
+        self.line("return _c->value;");
+        self.indent -= 1;
+        self.line("}");
+        self.line("");
+        // take() -> Option[T]
+        self.line(&format!("static inline {o} {m}_method_take({m}* _c) {{", o = opt_ty, m = m));
+        self.indent += 1;
+        self.line("nova_mutex_lock(&_c->mu);");
+        self.line(&format!("{o} _r;", o = opt_ty));
+        self.line("if (!_c->has_value) {");
+        self.indent += 1;
+        self.line("nova_mutex_unlock(&_c->mu);");
+        self.line("_r.tag = NOVA_TAG_Option_None; memset(&_r.value, 0, sizeof(_r.value)); return _r;");
+        self.indent -= 1;
+        self.line("}");
+        self.line(&format!("{t} _v = _c->value;", t = t_cty));
+        self.line("__atomic_store_n(&_c->has_value, false, __ATOMIC_RELEASE);");
+        self.line("_c->state = 0; /* EMPTY — re-initializable */");
+        self.line("nova_mutex_unlock(&_c->mu);");
+        self.line("_r.tag = NOVA_TAG_Option_Some; _r.value = _v; return _r;");
+        self.indent -= 1;
+        self.line("}");
+        self.line("");
+        // is_initialized() -> bool
+        self.line(&format!("static inline nova_bool {m}_method_is_initialized({m}* _c) {{", m = m));
+        self.indent += 1;
+        self.line("return __atomic_load_n(&_c->has_value, __ATOMIC_ACQUIRE);");
+        self.indent -= 1;
+        self.line("}");
+        self.line("");
+    }
+
+    /// Plan 103.5: emit monomorphized Lazy[T] struct + all methods.
+    /// Called from emit_generic_type_instance for Opaque "Lazy" instances.
+    /// mangled = "Nova_Lazy____nova_int", t_cty = "nova_int".
+    fn emit_lazy_instance(&mut self, mangled: &str, t_cty: &str) {
+        let m = mangled;
+        // Emit struct — includes a stored init closure (NovaClosBase*)
+        // and a poisoned flag for Poisoned semantics (unlike OnceCell retry).
+        self.line(&format!("/* ── Lazy[{t}] — Plan 103.5 ────────────────────────────── */", t = t_cty));
+        self.line(&format!("typedef struct {{"));
+        self.indent += 1;
+        self.line("nova_mutex_t    mu;");
+        self.line("int             state;      /* 0=UNFORCED 1=RUNNING 2=FORCED */");
+        self.line("NovaOnceWaiter* waiters;");
+        self.line("nova_bool       has_value;");
+        self.line(&format!("{t}         value;", t = t_cty));
+        self.line("nova_bool       poisoned;");
+        self.line("nova_str        poison_msg;");
+        self.line("NovaClosBase*   init_clos;  /* fn() -> T, stored at new() */");
+        self.indent -= 1;
+        self.line(&format!("}} {m};", m = m));
+        self.line("");
+        // static new(init fn() -> T) -> Self
+        self.line(&format!("static inline {m}* {m}_static_new(NovaClosBase* _init) {{", m = m));
+        self.indent += 1;
+        self.line(&format!("{m}* _l = ({m}*)nova_alloc(sizeof({m}));", m = m));
+        self.line("nova_mutex_init(&_l->mu);");
+        self.line("_l->state = 0; _l->waiters = NULL; _l->has_value = false;");
+        self.line("_l->poisoned = false; _l->init_clos = _init;");
+        self.line("return _l;");
+        self.indent -= 1;
+        self.line("}");
+        self.line("");
+        // force() -> T  (Poisoned semantics — NOT retry like OnceCell)
+        self.line(&format!("static inline {t} {m}_method_force({m}* _l) {{", t = t_cty, m = m));
+        self.indent += 1;
+        self.line("/* Fast path A: already forced. */");
+        self.line("if (__atomic_load_n(&_l->has_value, __ATOMIC_ACQUIRE)) return _l->value;");
+        self.line("/* Fast path B: poisoned — re-panic through effect system. */");
+        self.line("if (__atomic_load_n(&_l->poisoned, __ATOMIC_ACQUIRE)) { Nova_Fail_fail(_l->poison_msg); nova_throw(_l->poison_msg); }");
+        self.line("nova_mutex_lock(&_l->mu);");
+        self.line("if (_l->has_value) { nova_mutex_unlock(&_l->mu); return _l->value; }");
+        self.line("if (_l->poisoned) { nova_mutex_unlock(&_l->mu); Nova_Fail_fail(_l->poison_msg); nova_throw(_l->poison_msg); }");
+        self.line("if (_l->state == 1 /* RUNNING */) {");
+        self.indent += 1;
+        self.line("if (_nova_active_slot < 0) {");
+        self.indent += 1;
+        self.line("nova_mutex_unlock(&_l->mu);");
+        self.line("for (;;) {");
+        self.indent += 1;
+        self.line("_nova_cpu_yield();");
+        self.line("if (__atomic_load_n(&_l->has_value, __ATOMIC_ACQUIRE)) return _l->value;");
+        self.line("if (__atomic_load_n(&_l->poisoned, __ATOMIC_ACQUIRE)) { Nova_Fail_fail(_l->poison_msg); nova_throw(_l->poison_msg); }");
+        self.indent -= 1;
+        self.line("}");
+        self.indent -= 1;
+        self.line("}");
+        self.line("NovaOnceWaiter _lz_w; _lz_w.scope = _nova_active_scope;");
+        self.line("_lz_w.slot = _nova_active_slot; _lz_w.next = _l->waiters; _l->waiters = &_lz_w;");
+        self.line("nova_sched_park_with_unlock(_nova_active_scope, _nova_active_slot,");
+        self.line("                            (void(*)(void*))nova_mutex_unlock, &_l->mu);");
+        self.line("if (__atomic_load_n(&_l->has_value, __ATOMIC_ACQUIRE)) return _l->value;");
+        self.line("Nova_Fail_fail(_l->poison_msg); nova_throw(_l->poison_msg); /* woken after poison */");
+        self.line("return _l->value; /* unreachable, silence compiler */");
+        self.indent -= 1;
+        self.line("}");
+        self.line("/* state == UNFORCED: we become runner */");
+        self.line("_l->state = 1;");
+        self.line("nova_mutex_unlock(&_l->mu);");
+        self.line("NovaClosBase* _lz_clos = _l->init_clos;");
+        self.line("/* Plan 103.5: clear _nova_handler_Fail so throw→nova_throw→NOVA_TRY */");
+        self.line("NovaVtable_Fail* _lz_saved_fail = _nova_handler_Fail;");
+        self.line("_nova_handler_Fail = NULL;");
+        self.line("NovaFailFrame _lz_frame; nova_bool _lz_panicked = false; nova_str _lz_msg;");
+        self.line(&format!("{t} _lz_result;", t = t_cty));
+        self.line("if (NOVA_TRY(_lz_frame)) {");
+        self.indent += 1;
+        self.line(&format!("_lz_result = (({t}(*)(void*))_lz_clos->fn)(_lz_clos->env);", t = t_cty));
+        self.line("nova_fail_pop();");
+        self.indent -= 1;
+        self.line("} else {");
+        self.indent += 1;
+        self.line("_lz_panicked = true; _lz_msg = NOVA_CATCH(_lz_frame);");
+        self.indent -= 1;
+        self.line("}");
+        self.line("_nova_handler_Fail = _lz_saved_fail;");
+        self.line("nova_mutex_lock(&_l->mu);");
+        self.line("if (!_lz_panicked) {");
+        self.indent += 1;
+        self.line("_l->value = _lz_result;");
+        self.line("__atomic_store_n(&_l->has_value, true, __ATOMIC_RELEASE);");
+        self.line("_l->state = 2;");
+        self.indent -= 1;
+        self.line("} else {");
+        self.indent += 1;
+        self.line("_l->poison_msg = _lz_msg;");
+        self.line("__atomic_store_n(&_l->poisoned, true, __ATOMIC_RELEASE);");
+        self.line("_l->state = 3; /* poisoned terminal state */");
+        self.indent -= 1;
+        self.line("}");
+        self.line("NovaOnceWaiter* _lz_wk = _l->waiters; _l->waiters = NULL;");
+        self.line("nova_mutex_unlock(&_l->mu);");
+        self.line("while (_lz_wk) { NovaOnceWaiter* _lz_nx = _lz_wk->next;");
+        self.line("    nova_sched_wake(_lz_wk->scope, _lz_wk->slot); _lz_wk = _lz_nx; }");
+        self.line("if (_lz_panicked) { Nova_Fail_fail(_lz_msg); nova_throw(_lz_msg); }");
+        self.line("return _l->value;");
+        self.indent -= 1;
+        self.line("}");
+        self.line("");
+        // is_forced() -> bool
+        self.line(&format!("static inline nova_bool {m}_method_is_forced({m}* _l) {{", m = m));
+        self.indent += 1;
+        self.line("return __atomic_load_n(&_l->has_value, __ATOMIC_ACQUIRE);");
+        self.indent -= 1;
+        self.line("}");
+        self.line("");
     }
 
     fn emit_monomorphized_fn(
@@ -14481,8 +14853,14 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                 self.emit_block_expr(body)
             }
             ExprKind::Realtime { body, .. } => {
-                // realtime block — in Phase 1 just emit as block
-                self.emit_block_expr(body)
+                // Plan 103.5: set in_realtime flag so blocking Once/OnceCell/Lazy
+                // method calls inside the body are detected and reported as
+                // E_EFFECT_REALTIME_VIOLATION compile errors.
+                let prev_in_realtime = self.in_realtime;
+                self.in_realtime = true;
+                let result = self.emit_block_expr(body);
+                self.in_realtime = prev_in_realtime;
+                result
             }
             ExprKind::Spawn(body) => {
                 self.emit_spawn(body)
@@ -14801,6 +15179,46 @@ _cp++; \
             // For simplicity: look up fn-param signature for the function being called.
             let (param_c_tys, ret_c_ty) = self.infer_trailing_block_sig(func_stripped, tb);
 
+            // Plan 103.5: Closure capture for trailing blocks.
+            // Collect free identifiers in the body, subtract locally-bound names and
+            // trailing-block params, then filter to var_types (outer scope vars).
+            // This mirrors the spawn-body capture mechanism (lines ~5140-5170) so that
+            // `{ counter.fetch_add(1) }` correctly captures `counter` from the enclosing
+            // function (or spawn body) via a heap-allocated env struct.
+            let captures: Vec<(String, String)> = {
+                let mut raw: std::collections::HashSet<String> = std::collections::HashSet::new();
+                Self::collect_free_idents_block(&tb.body, &mut raw);
+                let mut bound: std::collections::HashSet<String> = std::collections::HashSet::new();
+                Self::collect_bound_names_block(&tb.body, &mut bound);
+                for p in &tb.params { bound.insert(p.name.clone()); }
+                let mut v: Vec<(String, String)> = raw.into_iter()
+                    .filter(|n| !bound.contains(n))
+                    .filter_map(|n| self.var_types.get(&n).map(|ty| (n, ty.clone())))
+                    .collect();
+                v.sort_by_key(|(n, _)| n.clone()); // deterministic ordering
+                v
+            };
+
+            // Generate env struct typedef if needed (emitted into lambda_forward_decls
+            // so it's file-scope before all function definitions).
+            let env_struct_name: Option<String> = if captures.is_empty() {
+                None
+            } else {
+                let name = format!("NovaTBEnv_{}", id);
+                // Each field is T* (pointer-to-capture) for by-reference semantics,
+                // matching the spawn-body by-pointer capture convention. This allows
+                // assignment inside the body (e.g. `ran = ran + 1`) to update the
+                // outer variable via the #define macro below.
+                let mut td = format!("typedef struct {{ ");
+                for (cap, ty) in &captures {
+                    td.push_str(&format!("{}* {}; ", ty, cap));
+                }
+                td.push_str(&format!("}} {};", name));
+                self.lambda_forward_decls.push_str(&td);
+                self.lambda_forward_decls.push('\n');
+                Some(name)
+            };
+
             // Trailing block body function takes (void* env, params...) like closures
             let body_param_list: String = {
                 let mut parts = vec!["void* _env_ptr".to_string()];
@@ -14816,13 +15234,36 @@ _cp++; \
             self.indent = 0;
             self.line(&format!("static {} {}({}) {{", ret_c_ty, fn_name, body_param_list));
             self.indent += 1;
+            // If there are captures, extract env pointer and define macros so the body
+            // can reference outer variables by name (matching how spawn bodies work).
+            if let Some(ref env_name) = env_struct_name {
+                self.line(&format!("{}* _env = ({}*)_env_ptr;", env_name, env_name));
+                for (cap, _) in &captures {
+                    // #define cap (*_env->cap) — dereferences T* field → T
+                    // (same approach as spawn body #define macros at ~line 4742/5044).
+                    self.line(&format!("#define {} (*_env->{})", cap, cap));
+                }
+            }
             // Register trailing block params in var_types
             let saved: Vec<(String, Option<String>)> = tb.params.iter().zip(param_c_tys.iter())
                 .map(|(p, ty)| (p.name.clone(), self.var_types.insert(p.name.clone(), ty.clone())))
                 .collect();
-            // Emit body
+            // Emit body — clear current_spawn_captures so emit_expr(Ident) uses plain
+            // variable names instead of (*_c->name) direct access. The #define macros
+            // emitted above (e.g. `#define counter (*_env->counter)`) will correctly
+            // redirect captured variable access at C compile time.
+            let prev_spawn_caps = std::mem::replace(&mut self.current_spawn_captures, None);
+            let prev_spawn_by_value = std::mem::replace(&mut self.current_spawn_capture_by_value, None);
             let block = &tb.body;
             let _ = self.emit_block_stmts_trailing(block, &ret_c_ty);
+            self.current_spawn_captures = prev_spawn_caps;
+            self.current_spawn_capture_by_value = prev_spawn_by_value;
+            // Undef capture macros at end of function
+            if env_struct_name.is_some() {
+                for (cap, _) in &captures {
+                    self.line(&format!("#undef {}", cap));
+                }
+            }
             // Restore param types
             for (name, prev) in saved {
                 match prev {
@@ -14853,7 +15294,34 @@ _cp++; \
             let clos_tmp = self.fresh_tmp();
             self.line(&format!("{}* {} = ({}*)nova_alloc(sizeof({}));", clos_struct, clos_tmp, clos_struct, clos_struct));
             self.line(&format!("{}->{} = ({})({});", clos_tmp, "fn", clos_fn_ty, fn_name));
-            self.line(&format!("{}->{} = (void*)0;", clos_tmp, "env"));
+            // Set env: allocate env struct and fill if there are captures;
+            // keep env=NULL for closures with no captures (fast path).
+            if let Some(ref env_name) = env_struct_name {
+                let env_tmp = self.fresh_tmp();
+                self.line(&format!("{}* {} = ({}*)nova_alloc(sizeof({}));",
+                    env_name, env_tmp, env_name, env_name));
+                // For each captured variable, store a pointer into the env struct.
+                // If the variable is also captured by the outer spawn context (accessed
+                // as `_c->cap` which is a pointer), use `_c->cap` directly (it's already
+                // a pointer-to-T). Otherwise take address-of the local variable `&cap`.
+                for (cap, _) in &captures {
+                    let addr_expr = if let Some(ref spawn_caps) = self.current_spawn_captures {
+                        if spawn_caps.contains(cap) {
+                            // spawn captures are stored as T* in the spawn ctx struct;
+                            // _c->cap is already the pointer we need for env->cap.
+                            format!("_c->{}", cap)
+                        } else {
+                            format!("&{}", cap)
+                        }
+                    } else {
+                        format!("&{}", cap)
+                    };
+                    self.line(&format!("{}->{} = {};", env_tmp, cap, addr_expr));
+                }
+                self.line(&format!("{}->env = (void*)({});", clos_tmp, env_tmp));
+            } else {
+                self.line(&format!("{}->{} = (void*)0;", clos_tmp, "env"));
+            }
 
             // For Member/Path calls (method calls), route through emit_call so that
             // the receiver is properly prepended and method dispatch resolves correctly.
@@ -14912,8 +15380,17 @@ _cp++; \
                 .and_then(|t| self.type_ref_to_c(t).ok())
                 .unwrap_or_else(|| "nova_int".into()))
             .collect();
-        // Default return type: nova_int (most common for blocks that return values)
-        let ret_ty = "nova_int".to_string();
+        // Plan 103.5: Infer return type from block's last expression rather than defaulting to nova_int.
+        // This is needed for Lazy[T].new { body } / OnceCell[T].get_or_init { body } where T ≠ int.
+        let ret_ty = if let Some(trailing_expr) = &tb.body.trailing {
+            let inferred = self.infer_expr_c_type(trailing_expr);
+            // Use inferred type unless it's "void" (error sentinel) — fall back to nova_int.
+            if inferred != "void" { inferred } else { "nova_int".to_string() }
+        } else {
+            // Empty block body or block with only statements (no trailing expr): default nova_int
+            // (empty blocks for call_once { } will be handled by emit_block_stmts_trailing).
+            "nova_int".to_string()
+        };
         (param_tys, ret_ty)
     }
 
@@ -14944,6 +15421,13 @@ _cp++; \
                 self.line(&format!("{};", v));
                 self.leave_defer_scope(block_id);
                 self.line("return NOVA_UNIT;");
+            } else if v == "NOVA_UNIT" {
+                // Plan 103.5: trailing block returns unit but C closure type expects
+                // non-unit (e.g. nova_int for NovaClos_vi). The runtime discards the
+                // return value of fn() -> unit closures; return a zero value.
+                self.line("(void)(NOVA_UNIT);");
+                self.leave_defer_scope(block_id);
+                self.line(&format!("return ({})0;", ret_ty));
             } else {
                 let tmp = self.fresh_tmp();
                 self.line(&format!("{} {} = {};", ret_ty, tmp, v));
@@ -14954,6 +15438,10 @@ _cp++; \
             self.leave_defer_scope(block_id);
             if ret_ty == "nova_unit" {
                 self.line("return NOVA_UNIT;");
+            } else {
+                // Plan 103.5: empty body with non-unit return type (e.g. call_once { }).
+                // The runtime discards the return value; return zero.
+                self.line(&format!("return ({})0;", ret_ty));
             }
         }
         Ok(())
@@ -16257,6 +16745,34 @@ _cp++; \
                                                 .all(|(w, g)| w == g))
                                 };
                                 if let Some(decl) = chosen {
+                                    // Plan 103.5: deprecation warning for Once.run / Once.done.
+                                    // Placed here (external_registry dispatch) because run/done
+                                    // route through this path, not the method_receivers path.
+                                    if recv_ty == "Once" && (method == "run" || method == "done") {
+                                        self.warnings.borrow_mut().push(format!(
+                                            "[W_ONCE_RUN_DONE_DEPRECATED] \
+                                             `Once.{}()` is deprecated since 0.1; \
+                                             use `call_once(fn)` instead (panic-safe primary API). \
+                                             Suggestion: replace `if once.run() {{ ... once.done() }}` \
+                                             with `once.call_once {{ || ... }}`.",
+                                            method
+                                        ));
+                                    }
+                                    // Plan 103.5: realtime violation — Once.call_once, Lazy.force,
+                                    // OnceCell.get_or_init may park the fiber; forbidden inside realtime { }.
+                                    let is_realtime_blocking = (recv_ty == "Once"
+                                            && (method == "call_once" || method == "run" || method == "done"))
+                                        || (recv_ty == "Lazy" && method == "force")
+                                        || (recv_ty == "OnceCell" && method == "get_or_init");
+                                    if self.in_realtime && is_realtime_blocking {
+                                        return Err(format!(
+                                            "[E_EFFECT_REALTIME_VIOLATION] \
+                                             `{}.{}()` may block (fiber park/wait) and is \
+                                             forbidden inside `realtime {{ }}` blocks. \
+                                             Move the call outside the realtime context.",
+                                            recv_ty, method
+                                        ));
+                                    }
                                     let obj_c = self.emit_expr(obj)?;
                                     let mut full = vec![obj_c];
                                     full.extend(arg_strs);
@@ -16667,6 +17183,26 @@ _cp++; \
                                             self.register_mono_method_instance(
                                                 &fn_decl, type_subst, &method_c_name, recv_type_stripped);
                                             let _ = fake_obj_ty;
+                                            return Ok(format!("{}({})", method_c_name, arg_strs.join(", ")));
+                                        }
+                                    }
+                                    // Plan 103.5: ExternalRegistry fallback for static methods
+                                    // on generic opaque types (OnceCell[T].new(), Lazy[T].new()).
+                                    // `generic_type_methods.get(&base_name)` returns None for
+                                    // external-only types; dispatch to mangled C name directly.
+                                    if let Some(ext_decls) = self.external_registry
+                                        .lookup(&base_name, method).map(|d| d.to_vec())
+                                    {
+                                        let static_decls: Vec<_> = ext_decls.into_iter()
+                                            .filter(|d| !d.is_instance)
+                                            .collect();
+                                        if !static_decls.is_empty() {
+                                            let mut arg_strs = Vec::new();
+                                            for a in args {
+                                                arg_strs.push(self.emit_expr(a.expr())?);
+                                            }
+                                            // `mangled` already has "Nova_" prefix.
+                                            let method_c_name = format!("{}_static_{}", mangled, method);
                                             return Ok(format!("{}({})", method_c_name, arg_strs.join(", ")));
                                         }
                                     }
@@ -17413,6 +17949,42 @@ _cp++; \
                                 }
                             }
                         }
+                        // Plan 103.5: ExternalRegistry fallback for instance methods
+                        // on generic opaque types (e.g. OnceCell[T].get_or_init, Lazy[T].force).
+                        // Placed OUTSIDE `if let Some(fn_decl)` because external methods have
+                        // no Nova body, so `generic_type_methods.get(&base_name)` returns None
+                        // and method_decl is None → the inner block is never entered.
+                        if let Some(ext_decls) = self.external_registry
+                            .lookup(&base_name, method_stripped).map(|d| d.to_vec())
+                        {
+                            let inst_decls: Vec<_> = ext_decls.into_iter()
+                                .filter(|d| d.is_instance)
+                                .collect();
+                            if !inst_decls.is_empty() {
+                                // Plan 103.5: realtime violation — OnceCell.get_or_init / Lazy.force
+                                // may park the fiber; forbidden inside realtime { }.
+                                let is_blocking_method = (base_name == "OnceCell" && method_stripped == "get_or_init")
+                                    || (base_name == "Lazy" && method_stripped == "force");
+                                if self.in_realtime && is_blocking_method {
+                                    return Err(format!(
+                                        "[E_EFFECT_REALTIME_VIOLATION] \
+                                         `{}.{}()` may block (fiber park/wait) and is \
+                                         forbidden inside `realtime {{ }}` blocks. \
+                                         Move the call outside the realtime context.",
+                                        base_name, method_stripped
+                                    ));
+                                }
+                                // rt_trimmed = "OnceCell____nova_int" (no "Nova_" prefix, no "*").
+                                // C function: Nova_OnceCell____nova_int_method_get_or_init.
+                                let method_c_name = format!("Nova_{}_method_{}", rt_trimmed, method_stripped);
+                                let obj_c = self.emit_expr(obj)?;
+                                let mut arg_strs = vec![obj_c];
+                                for a in args {
+                                    arg_strs.push(self.emit_expr(a.expr())?);
+                                }
+                                return Ok(format!("{}({})", method_c_name, arg_strs.join(", ")));
+                            }
+                        }
                     }
                 }
 
@@ -17448,6 +18020,9 @@ _cp++; \
                             }
                         }
                     }
+                    // Note: Plan 103.5 deprecation warning for Once.run/done is emitted
+                    // at the external_registry dispatch site (path #1 above) — Once methods
+                    // route through there before reaching this method_receivers branch.
                     let is_generic_type = self.generic_types.contains(&type_name);
                     // Plan 101.1: bare-T receiver mono dispatch для `fn[T] T @method`.
                     // type_name = "T" (typevar), нет real Nova type. Resolve T из
@@ -23949,6 +24524,36 @@ _cp++; \
                                                 if !c_ty.is_empty() && c_ty != "void*" {
                                                     return c_ty;
                                                 }
+                                            }
+                                        }
+                                    }
+                                    // Plan 103.5: ExternalRegistry fallback for instance method
+                                    // return type inference on generic opaque types (OnceCell[T],
+                                    // Lazy[T]). `generic_type_methods.get(&base_name)` is None
+                                    // for external-only types. Substitute generic params in
+                                    // ExternalRegistry return_c_type string.
+                                    if let Some(ext_decls) = self.external_registry
+                                        .by_key.get(&(base_name.clone(), mn.clone()))
+                                    {
+                                        let inst_decls: Vec<_> = ext_decls.iter()
+                                            .filter(|d| d.is_instance == want_inst)
+                                            .collect();
+                                        if let Some(decl) = inst_decls.first() {
+                                            let raw_ret = decl.return_c_type.clone();
+                                            // Substitute generic param names (T→nova_int etc.)
+                                            // in return_c_type string.
+                                            let ret = tmpl.generics.iter()
+                                                .zip(type_args_c.iter())
+                                                .fold(raw_ret, |acc, (g, c)| {
+                                                    // Replace "Nova_T*" with concrete type
+                                                    acc.replace(&format!("Nova_{}*", g.name), c)
+                                                        // Also replace bare type param name
+                                                        .replace(&g.name, c)
+                                                });
+                                            if !ret.is_empty() && ret != "void*"
+                                                && !self.is_generic_stub_c(&ret)
+                                            {
+                                                return ret;
                                             }
                                         }
                                     }

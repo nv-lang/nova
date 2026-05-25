@@ -1,0 +1,12 @@
+// Plan 103.5 — Once.call_once is banned inside realtime{}.
+//
+// EXPECT_COMPILE_ERROR E_EFFECT_REALTIME_VIOLATION
+
+module nova_tests.plan103_5.once_call_once_in_realtime_neg
+
+test "Once.call_once banned in realtime block" {
+    let o = Once.new()
+    realtime {
+        o.call_once() { () }
+    }
+}

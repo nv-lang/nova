@@ -7,7 +7,7 @@
 //!
 //! См. spec/decisions/08-runtime.md → D82 (extended), Plan 12.
 
-use crate::ast::{FnBody, FnDecl, Item, Module, Receiver, ReceiverKind, TypeRef};
+use crate::ast::{FnBody, FnDecl, Item, Module, Receiver, ReceiverKind, TypeDecl, TypeDeclKind, TypeRef};
 use std::collections::HashMap;
 
 /// Декларация одной external-функции из builtins.nv.
@@ -46,6 +46,13 @@ pub struct ExternalRegistry {
     /// Set всех receiver-типов которые встречаются в декларациях.
     /// Используется для record_schemas init (Plan 12 Ф.2).
     pub receiver_types: Vec<String>,
+    /// Plan 103.5: TypeDecl entries from external .nv files (sync.nv etc.).
+    /// Includes both runtime-defined sum types (OnceState) and generic
+    /// opaque types (OnceCell[T], Lazy[T]). Used by emit_c.rs to register
+    /// them in generic_types/generic_type_templates/sum_schemas so that
+    /// type inference and dispatch work correctly without them being declared
+    /// in the user module.
+    pub type_decls: Vec<TypeDecl>,
 }
 
 impl ExternalRegistry {
@@ -99,6 +106,12 @@ impl ExternalRegistry {
         for (k, v) in other.by_key {
             self.by_key.entry(k).or_default().extend(v);
         }
+        // Plan 103.5: merge type_decls (sum types + generic opaque types).
+        for td in other.type_decls {
+            if !self.type_decls.iter().any(|t| t.name == td.name) {
+                self.type_decls.push(td);
+            }
+        }
         Ok(())
     }
 
@@ -141,6 +154,20 @@ impl ExternalRegistry {
                 decl.name.clone(),
             );
             reg.by_key.entry(key).or_default().push(decl);
+        }
+        // Plan 103.5: collect Item::Type declarations (sum types + generic
+        // opaque types from sync.nv) for later registration in emit_c.rs.
+        // These drive sum_schemas (OnceState), generic_types (OnceCell, Lazy),
+        // and generic_type_templates needed for dispatch + type inference.
+        for item in &module.items {
+            if let Item::Type(t) = item {
+                // Only collect sum types and opaque types relevant to codegen.
+                match &t.kind {
+                    TypeDeclKind::Sum(_) => reg.type_decls.push(t.clone()),
+                    TypeDeclKind::Opaque => reg.type_decls.push(t.clone()),
+                    _ => {}
+                }
+            }
         }
         Ok(reg)
     }
@@ -248,7 +275,30 @@ impl ExternalRegistry {
                         let _ = generics;
                         "NovaRes_nova_int_nova_str*".into()
                     }
-                    "Option" => "NovaOpt_nova_int".into(),
+                    "Option" => {
+                        // Plan 103.5: preserve inner type param for generic methods.
+                        // Option[T] in generic context → "NovaOpt_T" so that
+                        // type substitution (T → nova_str etc.) works in infer_expr_c_type.
+                        if !generics.is_empty() {
+                            if let TypeRef::Named { path, generics: ig, .. } = &generics[0] {
+                                if ig.is_empty() && path.len() == 1 {
+                                    let inner = &path[0];
+                                    // Preserve: return "NovaOpt_<inner>" regardless of whether
+                                    // inner is a type param or a concrete type. The substitution
+                                    // fold in infer_expr_c_type handles T → concrete replacement.
+                                    let inner_c = match inner.as_str() {
+                                        "int" | "i64" => "nova_int".to_string(),
+                                        "str"  => "nova_str".to_string(),
+                                        "bool" => "nova_bool".to_string(),
+                                        "char" => "nova_char".to_string(),
+                                        other  => other.to_string(), // type param like T, E, V
+                                    };
+                                    return Ok(format!("NovaOpt_{}", inner_c));
+                                }
+                            }
+                        }
+                        "NovaOpt_nova_int".into()
+                    }
                     _ => format!("Nova_{}*", name),
                 })
             }

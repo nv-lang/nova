@@ -1,0 +1,71 @@
+// Plan 103.5 — Stress: Once.call_once under high concurrency.
+//
+// 16 fibers, each calling call_once many times.
+// Init body must run exactly once total; throughput must be acceptable.
+// Cross-ref: Plan 103.8 M:N(4) scheduler.
+//
+// EXPECT_TIMEOUT_MS 150000
+
+module nova_tests.plan103_5.once_stress_mn_4workers
+
+test "Once.call_once stress: 16 fibers × 100 calls, init executes exactly once" {
+    let once = Once.new()
+    let init_count = AtomicInt.new(0)
+    let call_count = AtomicInt.new(0)
+
+    parallel for _i in 0..16 {
+        for _j in 0..100 {
+            once.call_once() {
+                init_count.fetch_add(1)
+            }
+            call_count.fetch_add(1)
+        }
+    }
+
+    assert(init_count.load() == 1)
+    assert(call_count.load() == 1600)
+    assert(once.is_completed() == true)
+}
+
+test "OnceCell stress: 16 fibers × 100 get_or_init calls, init once, value stable" {
+    let cell = OnceCell[int].new()
+    let init_count = AtomicInt.new(0)
+    let wrong_count = AtomicInt.new(0)
+
+    parallel for _i in 0..16 {
+        for _j in 0..100 {
+            let v = cell.get_or_init() {
+                init_count.fetch_add(1)
+                9999
+            }
+            if v != 9999 {
+                wrong_count.fetch_add(1)
+            }
+        }
+    }
+
+    assert(init_count.load() == 1)
+    assert(wrong_count.load() == 0)
+}
+
+test "Lazy stress: 16 fibers × 100 force calls, init once, value stable" {
+    let init_count = AtomicInt.new(0)
+    let lazy = Lazy[int].new() {
+        init_count.fetch_add(1)
+        8888
+    }
+    let wrong_count = AtomicInt.new(0)
+
+    parallel for _i in 0..16 {
+        for _j in 0..100 {
+            let v = lazy.force()
+            if v != 8888 {
+                wrong_count.fetch_add(1)
+            }
+        }
+    }
+
+    assert(init_count.load() == 1)
+    assert(wrong_count.load() == 0)
+    assert(lazy.is_forced() == true)
+}
