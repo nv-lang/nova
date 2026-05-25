@@ -12174,6 +12174,47 @@ capabilities; без неё Nova не достигает заявленной re
    Финальное поведение (когда result injection будет готов): WithResult fires всегда
    (передаёт exit-reason в тело).
 
+## Plan 100.2: Generic `[T consume]` bound + collection-aware — D156 (2026-05-26)
+
+### Реализовано
+- AST: `GenericParam { name, consume_bound: bool }` — opt-in strict-flag для
+  generic-параметра. Plus `ExprKind::For { iter_consume: bool, ... }` для
+  `for consume x in vec` syntax.
+- Parser (`parse_generic_decl_params`): детектирует `KwConsume` после имени
+  параметра — `[T consume]`. `parse_for`: детектирует `for consume` vs
+  `for mut` vs plain `for`.
+- Type-checker (`compiler-codegen/src/types/mod.rs`): `ConsumeCtx.consume_bound_generics`
+  HashSet для tracking; `typeref_contains_consume_generic` рекурсивный обход
+  Named/Tuple/Array. `check_obligations_at_exit` → D156-strict-forget при
+  consume_bound match. For-consume loop var — Consumed obligation; post-loop
+  iter — Consumed.
+- Codegen (`emit_c.rs`): `iter_consume: false` passthrough в 6 For constructors.
+- 17 фикстур (11 POS + 6 NEG) PASS. Zero regression: plan100_1 23/0,
+  plan73 12/0, plan100_4_3 11/0.
+- Idiom doc: `docs/idiom/generic-consume.md`.
+
+### Упрощения vs spec D156
+
+1. **HOF callbacks (closures) для consume-types не реализованы.** Patterns
+   типа `vec.drain(|tx| tx.commit())` где closure captures consume-binding
+   и consume'ит его внутри тела — НЕ работают в bootstrap'е. Требует
+   **Plan 100.3 (closure capture-mode analysis)** для определения когда
+   closure captures by-consume vs by-view. До 100.3 — HOF над consume-
+   collections недоступны; единственный path — `for consume x in vec`
+   loop syntax (это работает).
+   **Приоритет:** P2 — блокирует stdlib consume-aware combinators
+   (Vec.drain, HashMap.drain, channel.recv_many). Workaround = explicit loop.
+
+2. **Spec D156 — не отдельная запись в simplifications.** Spec D156
+   зафиксирован в `spec/decisions/02-types.md`, но дополнительной
+   simplification-секции про границы D156 в этом файле нет (только
+   обновлён существующий `[M-100-impl-deferred]` marker). Если потребуется
+   углубить документацию ограничений D156 — следует добавить отдельную
+   секцию по образцу `## Plan 100.6` / `## Plan 100.8`.
+
+Merge: f79d4f28b5b; branch plan-100-2-generic-propagation → main.
+
+
 ## Plan 100.4.1: Failable cleanup body — D158 (2026-05-26)
 
 ### Реализовано
