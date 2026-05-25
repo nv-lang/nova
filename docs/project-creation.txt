@@ -21156,6 +21156,7 @@ H4 (NEXT): merge plan-101v4 → main.
 Tests: 11 plan101_4 + 6 plan101_3 + 2 plan101_2 + 17 plan101_1 = 36
 PASS / 1 FAIL (vec_map_int_str). Полная nova test = 1171/9 (8 flake).
 
+
 ================================================================
 [2026-05-25] Plan 100.3 D9 — closure dyru про consume-rvalue в arg-position
 ================================================================
@@ -21263,3 +21264,69 @@ Plan 100. V2 после Plan 100.7 ready — non-breaking migration через
 - docs/plans/103.1 - 103.9 (9 sub-plans, ~2800 строк md total)
 - docs/plans/README.md (10 rows: master + 9 sub-plans)
 - docs/plans/18-stdlib-roadmap.md (Шаг 5 поглощён Plan 103)
+
+
+========================================================================
+2026-05-25 — PLAN 101 Group I: vec_map_int_str fix (закрывает M-mono)
+========================================================================
+
+ВЕТКА: plan-101-mono-fix (worktree nova-p101, from main 882fe2e2a99 +
+plan100.3 follow-up commit 6071c42a927).
+
+Цель: закрыть единственный остававшийся Plan 101 failure —
+`fn[T] []T @map[U](f fn(T)->U) -> []U` с T=int U=str (cross-type).
+Marker [M-fn-prefix-int-only-mono] был отложен ранее как ~1-2 day refactor.
+
+ROOT CAUSE (multi-layered, 4 distinct codegen bugs cascade):
+
+1. **infer_expr_c_type не находит sentinel для array-ext call:**
+   - Метод `fn[T] []T @my_map` регистрируется в method_overloads под
+     ДВУМЯ ключами: ("[]T", "my_map") → sentinel, и
+     ("NovaArray_nova_int", "my_map") → erased (default int).
+   - При `v.my_map(...)` где v : []int, lookup идёт по concrete ключу,
+     находит erased entry → c_name НЕ sentinel → возвращает прямо
+     return_c_type = "NovaArray_nova_int*" (T+U оба erased в int).
+   - **Fix:** добавлен alt-sentinel-key check — если rt.starts_with("NovaArray_"),
+     ПЕРЕД default lookup пытаемся sentinel-key ("[]T", method). Если
+     sentinel exists, идём в mono inference path вручную (pre-bind T от
+     receiver-elem; infer U от closure return).
+
+2. **Sentinel emit-time dispatch (line 16874+) тоже не fires:**
+   - Та же problem — sentinel detection ищет в candidates под concrete
+     ключом, не находит, fallback на non-mono path → call site эмитит
+     erased function без _____<U> suffix.
+   - **Fix:** has_sentinel_here || has_sentinel_alt — если alt-key
+     имеет sentinel, тоже идём в mono path. recv_type для
+     register_mono_method_instance передаётся как "[]T" (canonical key
+     для mono_method_decls; иначе worklist drain не находит fn_decl).
+
+3. **receiver_c_type("NovaArray_nova_int") → "Nova_NovaArray_nova_int*":**
+   - Когда register_mono_method_instance вызывает receiver_c_type для
+     emit fwd-decl, match arm для full NovaArray-form-name отсутствовал
+     → fallback на `Nova_{}*` префиксацию → invalid type.
+   - **Fix:** короткий shortcut в `_` arm — если other.starts_with("NovaArray_"),
+     return `format!("{}*", other)`.
+
+4. **`[]U.with_capacity(n)` static-method теряет U substitution:**
+   - В mono'd body `fn[T] []T @my_map[U] { let out []U = []U.with_capacity(...) }`,
+     emit static-call `[]U.with_capacity` доходит до match arm с `_ => "nova_int"`
+     (default для unknown elem_t). U=str в current_type_subst игнорируется.
+   - **Fix:** до match — substitute typevar через current_type_subst,
+     extract clean "nova_str"-form; добавлен arm для "nova_*" prefix.
+
+ВСЕ ЧЕТЫРЕ — single emit_c.rs change (173+/8-).
+
+REGRESSION (post-fix):
+- plan101_1: 17/1 → **18/0** ✅
+- plan101_2/3/4: без изменений (по 2/0, 6/0, 11/0).
+- Plan 101 cumulative: 36/1 → **37/0** ✅
+- Critical neighbors clean: types 21/0, plan95 6/0, plan99 8/0.
+- Full nova test: 1171/96 — 96 fails PRE-EXISTING на main (Plan 100.4+
+  fixtures landed без implementation, marker [M-100-impl-deferred]
+  в simplifications). Группа НЕ добавила ни одного нового failure.
+
+ИТОГ Plan 101: ПОЛНОСТЬЮ ЗАКРЫТ. Marker [M-fn-prefix-int-only-mono] —
+✅ ЗАКРЫТ в simplifications.md.
+
+Файлы: `compiler-codegen/src/codegen/emit_c.rs`, `docs/simplifications.md`,
+`docs/project-creation.txt` (этот entry).

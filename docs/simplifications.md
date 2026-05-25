@@ -11885,7 +11885,35 @@ vec.nv не компилируется в exe → Plan 91 (std MVP) blocked.
 - **Приоритет:** P2 — correctness landed; perf optimization for
   production readiness. Не блокер для Plan 83 main milestone.
 
-## [M-fn-prefix-int-only-mono] `fn[T] []T @method` codegen mono-per-T только для int (2026-05-24)
+## [M-fn-prefix-int-only-mono] ✅ ЗАКРЫТ 2026-05-25 (Plan 101 Group I followup)
+
+> **CLOSURE 2026-05-25:** vec_map_int_str fix landed (ветка plan-101-mono-fix).
+> Three-pronged codegen fix:
+> 1. `infer_expr_c_type` — alt-sentinel-key lookup для array-ext: rt
+>    starts_with "NovaArray_" → try sentinel-key ("[]T", method); если
+>    sentinel exists, pre-bind T = receiver-elem ВРУЧНУЮ (resolve_mono_type_args
+>    требует ВСЕ generics из args; для fn[T] []T T приходит от receiver,
+>    не args — Err otherwise). Затем infer остальные generics (U из closure
+>    return) + apply_type_subst_to_ref на return-type.
+> 2. Emit-time dispatch (line 16874+): extended sentinel detection — если
+>    concrete key не имеет sentinel но alt-key ("[]T", method) имеет,
+>    тоже идём в mono path. Register с recv_type="[]T" (canonical key
+>    для mono_method_decls), чтобы worklist drain нашёл fn_decl.
+> 3. `receiver_c_type`: добавлен NovaArray_-prefix shortcut — если other
+>    уже имеет форму "NovaArray_<elem>" (concrete instance), не
+>    префиксуем повторно Nova_ → возвращаем "{}*". Без этого fwd-decl
+>    в mono'd body содержал "Nova_NovaArray_nova_int*" (несуществующий тип).
+> 4. `[]U.with_capacity(...)` static-method: substitute U через
+>    current_type_subst в mono'd body. Без этого constructor `nova_array_new_nova_int`
+>    вызывался даже для U=str (broken array storage).
+>
+> **Tests:** vec_map_int_str → PASS. plan101_1 18/0 (was 17/1). Все
+> Plan 101 директории чистые. Critical neighbors (types, plan95, plan99) — clean.
+>
+> **Files:** `compiler-codegen/src/codegen/emit_c.rs` — 173+/8- (4 logical
+> changes, ~3 days estimate сжато до one session).
+
+## [M-fn-prefix-int-only-mono] (history) `fn[T] []T @method` codegen mono-per-T только для int (2026-05-24)
 
 **Где:** `compiler-codegen/src/codegen/emit_c.rs:11086-11093` —
 array-extension-methods path выходит через `emit_generic_method_erased`
