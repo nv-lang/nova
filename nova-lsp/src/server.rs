@@ -16,7 +16,7 @@ use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer};
 
-use crate::compiler::{check_file, run_with_large_stack};
+use crate::compiler::{check_file, check_workspace, run_with_large_stack};
 use crate::diagnostic_mapping::to_lsp;
 use crate::incremental::apply_changes;
 use crate::state::{ParsedFile, WorkspaceState};
@@ -49,65 +49,109 @@ impl Backend {
 
     /// Schedule a debounced recompile for `uri`.
     ///
-    /// On each didChange:
-    /// 1. The debouncer coalesces rapid edits (200ms default).
-    /// 2. After delay: `spawn_blocking` runs the Nova compiler.
-    /// 3. Diagnostics are mapped to LSP and published via `client.publish_diagnostics`.
+    /// Strategy (V1):
+    /// - If workspace root is set: full workspace recheck via `check_workspace`.
+    ///   Publishes diagnostics for every .nv file found.
+    /// - Otherwise: single-file check via `check_file`.
+    ///
+    /// V2 (future): per-module dep-graph to avoid rechecking unrelated files.
     fn schedule_recheck(&self, uri: Url, version: i32) {
         let client = self.client.clone();
         let state = Arc::clone(&self.state);
+        let workspace_root = self.state.workspace_root();
 
         self.state.debouncer.schedule(uri.clone(), move |token| async move {
             if token.is_cancelled() {
                 return;
             }
 
-            // Get current text from the cache.
-            let text = match state.docs.get(&uri) {
-                Some(f) => f.text.to_string(),
-                None => {
-                    tracing::warn!(uri = %uri, "recheck: document not in cache; skipping");
+            if let Some(root) = workspace_root {
+                // ── Full workspace recheck ────────────────────────────────────
+                tracing::debug!(root = %root.display(), "workspace recheck triggered");
+
+                let root_clone = root.clone();
+                let results = tokio::task::spawn_blocking(move || {
+                    run_with_large_stack(move || check_workspace(&root_clone))
+                })
+                .await;
+
+                if token.is_cancelled() {
                     return;
                 }
-            };
 
-            if token.is_cancelled() {
-                return;
-            }
+                match results {
+                    Ok(check_results) => {
+                        for cr in check_results {
+                            if token.is_cancelled() {
+                                return;
+                            }
+                            let rope = Rope::from_str(&cr.source);
+                            let lsp_diags: Vec<Diagnostic> = cr
+                                .diagnostics
+                                .iter()
+                                .map(|d| to_lsp(d, &rope, &cr.file_uri))
+                                .collect();
 
-            // Run compiler in blocking thread with large stack.
-            let uri_clone = uri.clone();
-            let result = tokio::task::spawn_blocking(move || {
-                run_with_large_stack(move || check_file(&uri_clone, &text))
-            })
-            .await;
+                            // Version only applies to the changed file.
+                            let ver = if cr.file_uri == uri { Some(version) } else { None };
 
-            if token.is_cancelled() {
-                return;
-            }
-
-            match result {
-                Ok(check_result) => {
-                    // Map Nova diagnostics → LSP diagnostics.
-                    let rope = Rope::from_str(&check_result.source);
-                    let lsp_diags: Vec<Diagnostic> = check_result
-                        .diagnostics
-                        .iter()
-                        .map(|d| to_lsp(d, &rope, &check_result.file_uri))
-                        .collect();
-
-                    tracing::debug!(
-                        uri = %uri,
-                        count = lsp_diags.len(),
-                        "publishing diagnostics"
-                    );
-
-                    client
-                        .publish_diagnostics(uri.clone(), lsp_diags, Some(version))
-                        .await;
+                            tracing::debug!(
+                                file = %cr.file_uri,
+                                count = lsp_diags.len(),
+                                "publishing workspace diagnostics"
+                            );
+                            client.publish_diagnostics(cr.file_uri, lsp_diags, ver).await;
+                        }
+                    }
+                    Err(e) => {
+                        tracing::error!(err = %e, "workspace recheck spawn_blocking failed");
+                    }
                 }
-                Err(e) => {
-                    tracing::error!(uri = %uri, err = %e, "spawn_blocking failed");
+            } else {
+                // ── Single-file check (no workspace root) ─────────────────────
+                let text = match state.docs.get(&uri) {
+                    Some(f) => f.text.to_string(),
+                    None => {
+                        tracing::warn!(uri = %uri, "recheck: document not in cache; skipping");
+                        return;
+                    }
+                };
+
+                if token.is_cancelled() {
+                    return;
+                }
+
+                let uri_clone = uri.clone();
+                let result = tokio::task::spawn_blocking(move || {
+                    run_with_large_stack(move || check_file(&uri_clone, &text))
+                })
+                .await;
+
+                if token.is_cancelled() {
+                    return;
+                }
+
+                match result {
+                    Ok(check_result) => {
+                        let rope = Rope::from_str(&check_result.source);
+                        let lsp_diags: Vec<Diagnostic> = check_result
+                            .diagnostics
+                            .iter()
+                            .map(|d| to_lsp(d, &rope, &check_result.file_uri))
+                            .collect();
+
+                        tracing::debug!(
+                            uri = %uri,
+                            count = lsp_diags.len(),
+                            "publishing single-file diagnostics"
+                        );
+                        client
+                            .publish_diagnostics(uri.clone(), lsp_diags, Some(version))
+                            .await;
+                    }
+                    Err(e) => {
+                        tracing::error!(uri = %uri, err = %e, "spawn_blocking failed");
+                    }
                 }
             }
         });
