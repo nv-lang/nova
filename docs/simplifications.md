@@ -12286,3 +12286,29 @@ capabilities; без неё Nova не достигает заявленной re
 4. **Re-export chain testing** (D164 §3) — симулировано в одном файле (cross_pkg_consume_reexport_ok.nv),
    не через реальный `export import`. Plan 42.09 уже поддерживает `export import`; consume-marker
    preservation в нём не проверялся отдельными cross-file тестами (требует Plan 03 build graph).
+
+## Plan 100.8: Performance + IDE/Tooling DX — D166 (2026-05-26)
+
+### [M-100.8-d166-tooling-dx] Plan 100.8 D166 — consume-types DX layer CLOSED
+
+- **Где:** worktree `nova-p100-8-tooling`, branch `plan-100-8-tooling`.
+  Merged: `7e6b06be2e4`, 2026-05-26.
+
+- **Что сделано:**
+  - D133/D162 machine-applicable suggestions: LSP quick-fix suggestions в check_obligations_at_exit.
+    `all_declared_consume` поле для корректного D162 fire (consume_obligations очищается, all_declared_consume — нет).
+  - C codegen fix: `hoisted_let_vars` — pre-hoist consume bindings перед setjmp handler.
+  - `nova doc`: `consume: bool` capability → `🔒 [consume]` badge + Resource lifecycle section.
+  - `nova consume-analyze` CLI subcommand: coverage report + JSON output.
+  - 15 test fixtures (9 pos + 6 neg) — 15/15 PASS.
+  - 5 bench files: bench/plan100/*.nv.
+  - docs/idiom/consume-developer-experience.md: D166 DX guide.
+
+- **Упрощения vs spec D166:**
+  1. **LSP hover info** (D3 — full hover с coverage analysis) — не реализован как отдельный
+     LSP hover handler. Тесты `lsp_hover_*` проверяют что диагностики содержат нужные данные,
+     но реальный tower-lsp hover extension для consume-статуса — часть Plan 104.0+ LSP foundation.
+  2. **Bench budget < 5%** — проверяется через acceptance tests (не реальные hyperfine измерения).
+     Реальный Performance benchmark pipeline — Plan 57 framework (пока bootstrapped).
+  3. **nova consume-analyze --module flag** — реализован как `nova consume-analyze <path>`;
+     CLI по файловому пути, не по module-name. Module resolver — Plan 03.x.
