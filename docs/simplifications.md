@@ -11992,7 +11992,7 @@ Plan 101.1 Ф.3 follow-up OR Plan 101.5 stdlib audit.
 
 ## [M-100-impl-deferred] Plan 100 family — implementation в процессе (2026-05-25)
 
-> **100.1 ✅ ЗАКРЫТ 2026-05-25** (merge `<FILL>`): parser + AST (`type T consume`
+> **100.1 ✅ ЗАКРЫТ 2026-05-25** (merge `ab60167f3e5`): parser + AST (`type T consume`
 > + `consume` field/binding qualifiers), LinearityRegistry (marker checks
 > D133), ConsumeCtx flow analysis (D3/D5/D5.1/D5.2/D7) — 23/23 plan100_1
 > PASS, 0 regressions. 100.2–100.8 остаются ниже.
