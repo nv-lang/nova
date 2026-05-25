@@ -21193,3 +21193,73 @@ param'а.
 вместе с Plan 100.3 Ф.3 (type-checker view propagation) — тривиальное
 расширение на фоне основного flow analysis. Часть общего
 [M-100-impl-deferred] (~43 dev-day на весь Plan 100).
+
+## Plan 103 — production-grade rewrite (2026-05-25)
+
+**Контекст:** initial proposal Plan 103 (commit 748a9b61623) был
+простой 6-фазной формализацией только текущего baseline sync API.
+После user-feedback «без упрощений, не хуже Go/Rust/TS/Kotlin» +
+«consume для AtomicInt?» полностью переписан как **production-grade
+roadmap** с capability matrix vs 4 эталона (Go/Rust/TS/Kotlin/Java),
+**16 design-решений** (M1-M16), и **9 sub-plans** (V1=103.1-103.8 +
+V2=103.9 gated на Plan 100.7).
+
+**Capability gaps vs industry в текущем baseline:**
+- Memory orderings жёстко acq_rel/acquire/release (C-слой sync.h
+  имеет все 5 ordering constants, не exposed).
+- Только AtomicInt/AtomicBool (industry: 12 sized types).
+- 4-6 ops per atomic (industry: 13 ops + fetch_or/and/xor/max/min).
+- Нет RwLock, ReentrantMutex, Semaphore, Barrier, CountDownLatch,
+  Condvar, OnceCell, Lazy.
+- Once с двух-шаговым run/done (industry: closure-form call_once).
+- Нет type-checker realtime/blocking enforcement.
+
+**16 design-решений (M1-M16):**
+- M1 default Ordering = SeqCst для simple overload (AI-friendly).
+- M2 sized atomics (не generic Atomic[T] — codegen блок).
+- M3 Mutex non-reentrant default; ReentrantMutex opt-in.
+- M4 Mutex без data-carrying (vs Rust Mutex<T>).
+- M5 no poisoning (vs Rust LockResult).
+- M6 fair FIFO default; unfair opt-in.
+- M7 RwLock writer-priority default (avoids starvation).
+- M8 closure-form Once.call_once(fn) primary; run/done deprecated.
+- M9 OnceCell + Lazy distinct types (different APIs).
+- M10 Condvar tied to Mutex (type-safer than Java loose Condition).
+- M11 Semaphore bounded (init permits).
+- M12 type-checker enforce realtime { } ban на park-ing (Nova edge).
+- M13 module runtime.sync (не prelude).
+- M14 backward compat: AtomicInt → AtomicI64 alias.
+- M15 V1 без consume + V2 sub-plan 103.9 (gated Plan 100.7).
+- M16 atomics НИКОГДА не consume (shared state, не resource).
+
+**9 sub-plans:**
+- 103.1 Memory ordering API foundation (Q-memory-model closure)
+- 103.2 Atomics full suite (12 sized × 13 ops)
+- 103.3 Mutex + RwLock + ReentrantMutex family
+- 103.4 Semaphore + Barrier + CountDownLatch + Condvar
+- 103.5 Once hardening + OnceCell + Lazy
+- 103.6 Realtime/Blocking type-checker integration (6 error codes,
+  ~85 method annotations)
+- 103.7 Spec D-blocks D167-D173 (D173 NEW — AI-first guidance
+  decision tree)
+- 103.8 Conformance + stress + litmus tests + audit + V1 close
+- 103.9 V2 consume guards migration (GATED on Plan 100.7;
+  MutexGuard/ReadGuard/WriteGuard/Permit/OnceGuard consume types)
+
+**Acceptance criteria разделены V1 / V2.** V1 закрывает spec-drift
+(Q9/Q12.4/Q-memory-model в open-questions) сейчас, не дожидаясь
+Plan 100. V2 после Plan 100.7 ready — non-breaking migration через
+сохранённые with_lock(fn) helpers.
+
+**4 user-interrupts во время работы** обеспечили важные дизайн-
+решения:
+- Слияние Plan 103 в Plan 101? → раздельно (разные слои).
+- Consume для AtomicInt? → нет (M16); для Mutex/Sem/Once → да
+  (M15 V1+V2).
+
+**Файлы:**
+- docs/plans/103-sync-primitives-spec-formalization.md (rewrite master,
+  ~340 строк)
+- docs/plans/103.1 - 103.9 (9 sub-plans, ~2800 строк md total)
+- docs/plans/README.md (10 rows: master + 9 sub-plans)
+- docs/plans/18-stdlib-roadmap.md (Шаг 5 поглощён Plan 103)
