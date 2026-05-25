@@ -21556,3 +21556,33 @@ Tag v0.1.0 создан и запушен.
 
 Файлы: `tree-sitter-nova/` (отдельный репо), `docs/plans/README.md` (row 104.7 ✅),
 `docs/simplifications.md` (Plan 104 IDE section), `docs/project-creation.txt` (этот entry).
+
+=== Plan 100.4.3 — okdefer + reason-aware defer |result| (D160) (2026-05-25) ===
+
+Добавлен `okdefer` keyword — complement к `errdefer`, runs ONLY на success-path
+(normal exit / return expr); skipped при throw/panic/interrupt. Также добавлена
+reason-aware форма `defer |result| { ... }` (синтаксис парсится, тело выполняется
+как plain defer; result-binding injection — будущая фаза с DeferResult[T,E]).
+
+Nova теперь имеет симметричный defer-family — уникальная возможность среди всех
+GC-языков (Go/Rust/TS/Kotlin не имеют аналога).
+
+**Изменения:**
+- Lexer: KwOkDefer + "okdefer" → keyword
+- AST: Stmt::OkDefer { body, span }, Stmt::DeferWithResult { result_binding, body, span }
+- Parser: `defer |ident| body` → DeferWithResult; `okdefer body` → OkDefer
+- Codegen (emit_c.rs): DeferKind enum (Plain/ErrDefer/OkDefer/WithResult);
+  success-path/early-return: OkDefer fires, ErrDefer skipped;
+  error-path (fail-frame): OkDefer skipped, ErrDefer fires;
+  interrupt-path: ErrDefer+OkDefer skipped, only Plain/WithResult fires
+- types/mod.rs: check_defer_body использует kw: &str (точные ошибки для okdefer)
+- Все паттерны в callnorm/desugar/lints/verify/interp расширены
+
+**Тесты (nova_tests/plan100_4_3/):**
+- 7 pos + 4 neg = 11/11 PASS
+- regression: syntax/61 PASS, negative_capability/87 PASS
+
+**Docs:**
+- docs/idiom/symmetric-cleanup.md: canonical errdefer+okdefer pattern
+
+Merge: 49c3b0b0da3; branch plan-100-4-3-okdefer → main.
