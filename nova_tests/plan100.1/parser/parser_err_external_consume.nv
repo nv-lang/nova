@@ -1,0 +1,14 @@
+// EXPECT_COMPILE_ERROR D133
+//
+// Plan 100.1 / D126 / D133: `external type X consume` — parse error.
+// external types are opaque — нет body, нет fields.
+// must-consume требует field-aware flow analysis — несовместимо с opaque.
+
+module parser.parser_err_external_consume
+
+// ❌ external + consume несовместимы.
+external type OpaqueHandle consume
+
+test "external consume — parse error" {
+    // Этот код не должен дойти до type-check.
+}

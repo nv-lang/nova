@@ -669,6 +669,7 @@ pub fn expand_bench_sweeps(module: &mut nova_codegen::ast::Module) {
                         value: int_lit,
                         span: params.span,
                         is_ghost: false,
+                        consume: false,
                     });
                     let mut new_setup = vec![let_stmt];
                     for s in &b.setup {

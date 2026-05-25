@@ -1996,6 +1996,19 @@ impl Parser {
                         at_span,
                     ));
                 }
+                // Plan 100.1 (D8 / D133): `fn T consume @m() -> @` — parse error.
+                // consume = record self-destructs, `-> @` = вернуть тот же объект.
+                // Противоречие: consume уничтожает receiver, но fluent-return
+                // хочет его вернуть. D132 + D133 несовместимы на consume-receiver.
+                if matches!(&receiver, Some(Receiver { consume: true, .. })) {
+                    return Err(Diagnostic::new(
+                        "`consume` receiver и `-> @` (fluent-return) несовместимы \
+                         (D8 / Plan 100.1 D133): consume-метод уничтожает record, \
+                         fluent-return требует его сохранить. Убери `consume` или `-> @`."
+                            .to_string(),
+                        at_span,
+                    ));
+                }
                 // Тип результата — receiver-тип; представляем как `Self`,
                 // переиспользуя всю Self-инфраструктуру type-checker/codegen.
                 Some(TypeRef::Named {
@@ -2104,6 +2117,20 @@ impl Parser {
         // `consume` идёт перед именем (как leading `mut`).
         let is_consume = if matches!(self.peek().kind, TokenKind::KwConsume) {
             self.bump();
+            // Plan 100.1 (D131 / D133): `consume mut name Type` — parse error.
+            // `consume` = ownership transfer (D131); `mut` = mutable borrow.
+            // Совмещение противоречит семантике: consume забирает ownership,
+            // mut-borrow оставляет его у caller'а. D131 запрещает комбинацию.
+            if matches!(self.peek().kind, TokenKind::KwMut) {
+                return Err(Diagnostic::new(
+                    "параметр не может быть одновременно `consume` и `mut` (D131): \
+                     `consume` = ownership transfer, `mut` = mutable borrow — \
+                     взаимоисключающие квалификаторы. Убери `mut` если нужен \
+                     ownership transfer, или замени `consume` на `mut`."
+                        .to_string(),
+                    self.peek().span,
+                ));
+            }
             true
         } else {
             false
@@ -2256,6 +2283,21 @@ impl Parser {
             Vec::new()
         };
 
+        // Plan 100.1 (D133 / D1): `type X consume { ... }` — type-level
+        // must-be-consumed marker. После имени и generics, перед body.
+        // Mutually exclusive с `external` (D126 opaque types — без body,
+        // нет point'а в consume marker).
+        let consume_marker = self.eat(&TokenKind::KwConsume).is_some();
+        if consume_marker && is_external {
+            let span = self.peek().span;
+            return Err(Diagnostic::new(
+                "external type cannot be `consume`: external types are opaque, \
+                 must-consume requires field-aware flow analysis. See D126 / D133."
+                    .to_string(),
+                span,
+            ));
+        }
+
         // Plan 62.D.bis (D126): `external type X [Generics]` — opaque type,
         // реализация в runtime. Body отсутствует — никакого `{ ... }`, `|`,
         // `effect`, `protocol`, `alias TYPE`, newtype `TYPE`. Если parser
@@ -2324,6 +2366,7 @@ impl Parser {
                 attrs,
                 invariants: Vec::new(),
                 axioms: Vec::new(),
+                consume: false,
             });
         }
         // Silence unused warning when is_external is false; name_span used только в Opaque branch.
@@ -2387,6 +2430,7 @@ impl Parser {
                     attrs,
                     invariants: Vec::new(),
                     axioms: Vec::new(),
+                    consume: false,
                 });
             }
         }
@@ -2485,6 +2529,7 @@ impl Parser {
             attrs,
             invariants,
             axioms: effect_axioms,
+            consume: consume_marker,
         })
     }
 
@@ -2498,6 +2543,19 @@ impl Parser {
                 readonly = true;
             } else if self.eat(&TokenKind::KwMut).is_some() {
                 mutable = true;
+            }
+            // Plan 100.1 (D133 / D4): `consume field T` — field-level marker для
+            // consume-typed полей. Mutually exclusive с `mut` (consume-fields
+            // меняются только через explicit replace pattern; см. D5.1).
+            let field_consume = self.eat(&TokenKind::KwConsume).is_some();
+            if field_consume && mutable {
+                return Err(Diagnostic::new(
+                    "field cannot be both `mut` and `consume`: consume-fields use \
+                     explicit replace pattern (see D5.1, Plan 100.1). Remove `mut` if \
+                     consume semantics intended, or remove `consume` for shared mutation."
+                        .to_string(),
+                    self.peek().span,
+                ));
             }
             // D39 / Plan 11 Ф.9: `use name Type` (named embed) или
             // `use _ Type` (anonymous embed).
@@ -2536,6 +2594,7 @@ impl Parser {
                 is_embed,
                 embed_anonymous: anonymous,
                 span: name_span.merge(ty.span()),
+                consume: field_consume,
             });
             // запятая или newline
             if self.eat(&TokenKind::Comma).is_some() {
@@ -2899,6 +2958,45 @@ impl Parser {
             value,
             span,
             is_ghost,
+            consume: false,
+        })
+    }
+
+    /// Plan 100.1 (D133 / D9): `consume tx = expr` — explicit ownership binding.
+    /// Парсится из `parse_stmt_or_expr` при lookahead KwConsume + Ident/KwMut.
+    fn parse_consume_let(&mut self) -> Result<LetDecl, Diagnostic> {
+        let start = self.peek().span;
+        self.expect(&TokenKind::KwConsume)?;
+        // `consume mut tx` — не валидно: consume = full transfer,
+        // mut-доступ через receiver's `mut` qualifier (D7 100.1).
+        if matches!(self.peek().kind, TokenKind::KwMut) {
+            return Err(Diagnostic::new(
+                "`consume mut tx` is not valid: consume = ownership transfer; \
+                 mut-methods accessed via receiver's `mut` qualifier (D7 100.1)."
+                    .to_string(),
+                self.peek().span,
+            ));
+        }
+        let pattern = self.parse_pattern()?;
+        // Optional type annotation between pattern and `=`.
+        let ty = if !matches!(self.peek().kind, TokenKind::Eq | TokenKind::Newline) {
+            Some(self.parse_type()?)
+        } else {
+            None
+        };
+        self.expect(&TokenKind::Eq)?;
+        self.skip_newlines();
+        let value = self.parse_expr()?;
+        let span = start.merge(value.span);
+        self.expect_newline_or_eof().ok();
+        Ok(LetDecl {
+            mutable: false,
+            pattern,
+            ty,
+            value,
+            span,
+            is_ghost: false,
+            consume: true,
         })
     }
 
@@ -5656,6 +5754,7 @@ impl Parser {
             value: d.clone(),
             span,
             is_ghost: false,
+            consume: false,
         });
         // Synthesize: assert_static (<d>) < _nova_decr_old
         let check_expr = Expr::new(
@@ -6403,6 +6502,16 @@ impl Parser {
                 let end = self.tokens[self.pos.saturating_sub(1)].span;
                 let span = start.merge(end);
                 Ok(StmtOrExpr::Stmt(Stmt::Reveal { name, span }))
+            }
+            // Plan 100.1 (D133 / D9): `consume tx = expr` binding form.
+            // Disambig vs `consume` в receiver-pos (parse_fn handles before
+            // stmt-context). Disambig vs `consume` method-arg keyword
+            // (always inside parens, handled by parse_call_args).
+            // Lookahead: `consume <ident>` или `consume mut` — не путать
+            // с `consume` как часть expression (method call на receiver).
+            TokenKind::KwConsume if matches!(self.peek_at(1).kind, TokenKind::Ident(_) | TokenKind::KwMut) => {
+                let let_decl = self.parse_consume_let()?;
+                Ok(StmtOrExpr::Stmt(Stmt::Let(let_decl)))
             }
             _ => {
                 let expr = self.parse_expr()?;

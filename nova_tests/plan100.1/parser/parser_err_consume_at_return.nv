@@ -1,0 +1,22 @@
+// EXPECT_COMPILE_ERROR D133
+//
+// Plan 100.1 (D8 / D133): `fn T consume @m() -> @` — parse error.
+// Противоречие: consume = record self-destructs,
+// `-> @` = fluent-return (возвращает тот же объект).
+// consume-метод уничтожает receiver, fluent-return хочет его вернуть — несовместимо.
+
+module parser.parser_err_consume_at_return
+
+type Builder consume {
+    data int,
+}
+
+// ❌ consume + -> @ несовместимы (D8 / D133).
+fn Builder consume @prepare() -> @ {
+    @
+}
+
+test "consume + -> @ — parse error" {
+    consume b = Builder { data: 1 }
+    b.prepare()
+}

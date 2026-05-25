@@ -1859,6 +1859,7 @@ mod tests {
                 attrs: Vec::new(),
                 invariants: Vec::new(),
                 axioms: Vec::new(),
+                consume: false,
             })).collect();
             PeerFile {
                 path: PathBuf::from("/synthetic/std/prelude/core.nv"),

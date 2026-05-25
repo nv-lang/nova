@@ -506,6 +506,7 @@ fn let_stmt(name: &str, value: Expr, span: Span) -> Stmt {
         value,
         span,
         is_ghost: false,
+        consume: false,
     })
 }
 

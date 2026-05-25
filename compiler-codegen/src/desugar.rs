@@ -225,6 +225,7 @@ impl DesugarCtx {
             value: with_capacity_call,
             span,
             is_ghost: false,
+            consume: false,
         }));
 
         // Для каждого поля: `let _ = _mN.insert("name", value_expr)`
@@ -372,6 +373,7 @@ impl DesugarCtx {
             value: with_capacity_call,
             span,
             is_ghost: false,
+            consume: false,
         }));
 
         // Plan 52 Ф.13 production-fix: explicit temp-bindings для
@@ -402,6 +404,7 @@ impl DesugarCtx {
                         value: k,
                         span,
                         is_ghost: false,
+                        consume: false,
                     }));
                     stmts.push(Stmt::Let(LetDecl {
                         mutable: false,
@@ -410,6 +413,7 @@ impl DesugarCtx {
                         value: v,
                         span,
                         is_ghost: false,
+                        consume: false,
                     }));
                     // Plan 52 Ф.21: insert_new — мапа только что создана.
                     // Plan 55 followup: если уже был spread выше, ключ мог
@@ -456,6 +460,7 @@ impl DesugarCtx {
                         value: src_map,
                         span,
                         is_ghost: false,
+                        consume: false,
                     }));
                     let k_name = format!("{}_sk{}", tmp, idx);
                     let v_name = format!("{}_sv{}", tmp, idx);
@@ -509,6 +514,7 @@ impl DesugarCtx {
                         value: unwrap_call,
                         span,
                         is_ghost: false,
+                        consume: false,
                     });
                     let insert_in_loop = Expr::new(
                         ExprKind::Call {
@@ -571,6 +577,7 @@ impl DesugarCtx {
                 value: Expr::new(ExprKind::Ident(tmp), span),
                 span,
                 is_ghost: false,
+                consume: false,
             }));
             typed
         } else {
