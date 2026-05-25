@@ -21502,3 +21502,57 @@ Plan 103.1 — 0 новых FAIL.
 `docs/plans/README.md`, `docs/plans/100-linear-must-consume.md`,
 `docs/simplifications.md`, `docs/project-creation.txt` (этот entry).
 
+
+2026-05-25 — Plan 104.7 ЗАКРЫТ: tree-sitter grammar для Nova
+
+### Что было сделано (Ф.1–Ф.7, repo: nv-lang/tree-sitter-nova):
+
+**Ф.1 Skeleton** — skeleton grammar.js (47 ключевых слов, ident, number, string,
+comments) + package.json/LICENSE/README/.gitignore + tree-sitter.json (ABI 15) +
+7 corpus fixtures.
+
+**Ф.2 Productions** — полный набор выражений (precedence tower: 15 уровней PREC),
+типов (named/array/tuple/fn/protocol), деклараций (fn/type/effect/alias/const/let/
+test/lemma/module/import) + 40 corpus fixtures.
+
+**Ф.3 Control flow + Concurrency** — for/while/loop, match, if-else,
+spawn/detach/blocking/parallel/supervised, select, with-handler, forbid, realtime,
+generics (prefix fn[T] + type params + bounds), contracts (lemma/pre/post/invariant) +
+21 corpus fixtures.
+
+**Ф.4 Queries** — 5 .scm файлов:
+- highlights.scm (keywords/types/functions/variables/literals/operators)
+  Ключевая деталь: `break`/`continue` — named nodes (break_statement/continue_statement),
+  не anonymous tokens.
+- locals.scm (scope/definition/reference для go-to-def и rename)
+- folds.scm (code folding)
+- indents.scm (indentation rules, Helix-compatible)
+- injections.scm (stub V1)
+Smoke highlight test верифицирован (`tree-sitter highlight`).
+
+**Ф.5 Test corpus expansion** — +23 edge-case fixtures → итого 84/84 (100%).
+Grammar fix: добавлен `if guard` в match_arm (зеркалит Nova parser line 5513).
+Ключевые находки:
+- `call_arg` — individual arg node (нет `arg_list` обёртки)
+- `name_pattern` обрабатывает `Some(v)` (нет отдельного constructor_pattern)
+- block последнее выражение → `expression_statement` wrapper
+
+**Ф.6 Dist + v0.1.0** — dist/helix/languages.toml, dist/zed/ (extension.toml +
+grammars/nova.toml + languages/nova/config.toml), dist/neovim/nova.lua.
+RELEASE_NOTES.md. README обновлён (status ✅ v0.1.0).
+Tag v0.1.0 создан и запушен.
+
+**Ф.7** — этот entry + simplifications.md.
+
+### Известные ограничения:
+- Selective import `import std.io.{ File, Dir }` → ERROR (dotted_path с prec.right
+  жадно захватывает `.` перед `{`). Workaround: `import std.io` + `use`.
+
+### Результат:
+- 84/84 corpus fixtures (100%)
+- 5 query files (highlights/locals/folds/indents/injections)
+- v0.1.0 tag на github.com/nv-lang/tree-sitter-nova
+- Editor configs: Helix / Zed / Neovim
+
+Файлы: `tree-sitter-nova/` (отдельный репо), `docs/plans/README.md` (row 104.7 ✅),
+`docs/simplifications.md` (Plan 104 IDE section), `docs/project-creation.txt` (этот entry).
