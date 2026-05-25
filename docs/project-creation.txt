@@ -21540,3 +21540,49 @@ Sub-план: nova-lsp crate skeleton — LSP Foundation (Plan 104.0.1–104.0.4
 
 Worktree: d:/Sources/nv-lang/nova-p104 (plan-104).
 Shell cwd: d:\Sources\nv-lang\nova
+
+=== Plan 104.1 — LSP Diagnostics production-grade (2026-05-26) ===
+
+nova-lsp: publishDiagnostics pipeline (errors-as-you-type). 9 фаз без остановок.
+
+Ф.1 nova_codegen adapter (compiler.rs): check_file/check_workspace, catch_unwind,
+     64 MiB stack thread, lib target added. Tests: 12/12.
+Ф.2 Diagnostic mapping (diagnostic_mapping.rs): Nova→LSP Diagnostic, UTF-16
+     position conversion via ropey. Cyrillic+emoji edge tests. Tests: 9+3.
+Ф.3 Debouncer (debouncer.rs): per-URI CancellationToken, 200ms delay, panic-safe,
+     std::sync::Mutex для race-free cancel_all. Tests: 4+1+3.
+Ф.4 Incremental sync (incremental.rs): apply_changes() LSP UTF-16→rope byte range.
+     Full refresh (range=None), bounds clamping. Tests: 7+3+3.
+Ф.5 publishDiagnostics (server.rs): did_open/change/close wired to debouncer+check+
+     client.publish_diagnostics. did_close → empty diags. Tests: 7/7.
+Ф.6 Workspace recheck (server.rs): full workspace scan on any change when rootUri
+     set (V1 strategy). workspace.rs: 7/7.
+Ф.7 Performance hardening (perf.rs): measure! macro + PerfTimer, instrumented
+     check_file/check_workspace. Budget tests: pos1 10-file<1s, pos2 1000 edits<100ms,
+     pos3 1000 schedule()<100ms, neg1 1MB no panic. Tests: 4/4.
+Ф.8 Memory hygiene (lifecycle_memory.rs): cancel_all on shutdown, 100 open/close
+     cycles stable state, pos/neg process tests. Tests: 5/5.
+Ф.9 Close-out: this entry + README + simplifications.
+
+Total: 91 tests PASS (was 22, +69 new).
+Breakdown: lib×42, compiler_adapter×12, publish_workflow×7, workspace×7,
+           lifecycle_memory×5, document_cache×5, perf×4, lifecycle×3,
+           integration×3, build_smoke×3.
+
+Ключевые решения:
+- TextDocumentSyncKind::Incremental (was Full in 104.0).
+- Per-URI CancellationToken (not global queue).
+- catch_unwind на compiler invocation → InternalError diagnostic.
+- spawn_blocking + 64MiB stack thread для nova_codegen.
+- std::sync::Mutex в debouncer (не tokio::sync) — race-free cancel_all.
+- tokio-util + tempfile добавлены как deps.
+
+Коммиты:
+- feat(nova-lsp): Plan 104.1.Ф.1 nova_codegen adapter + Ф.2..Ф.4 (a566aeac)
+- feat(nova-lsp): Plan 104.1.Ф.5 publishDiagnostics workflow (566f2275)
+- feat(nova-lsp): Plan 104.1.Ф.6 multi-file workspace recheck (67d60b0c)
+- feat(nova-lsp): Plan 104.1.Ф.7 performance hardening + tracing (d077efea)
+- feat(nova-lsp): Plan 104.1.Ф.8 memory hygiene + shutdown (f1c4151e)
+- docs(plan104.1): close-out — logs + README sync [этот коммит]
+
+Worktree: d:/Sources/nv-lang/nova-p104 (plan-104).
