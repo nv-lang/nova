@@ -17,7 +17,7 @@ type Transaction consume {
 fn Transaction consume @commit() -> () { () }
 fn Transaction consume @rollback() -> () { () }
 
-fn begin() -> Transaction => Transaction { id: 1 }
+fn begin() -> Transaction => { id: 1 }
 
 // `log` — non-consume param. Read-only mode без view-маркера (D157).
 fn log(tx Transaction) -> () {

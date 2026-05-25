@@ -1,0 +1,17 @@
+// Plan 100.1 (D133 / D9): `consume tx = expr` — ownership binding парсируется.
+// Positive parser test.
+
+module parser.parser_ok_consume_binding
+
+type Lock consume {
+    id int,
+}
+
+fn Lock consume @unlock() -> () { () }
+fn acquire() -> Lock => { id: 1 }
+
+test "consume tx = expr — парсируется" {
+    // D9: consume keyword в binding position = ownership transfer.
+    consume lock = acquire()
+    lock.unlock()
+}

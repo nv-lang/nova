@@ -1694,6 +1694,7 @@ mod tests {
             is_embed: false,
             embed_anonymous: false,
             span: Span::default(),
+            consume: false,
         };
         let mk_variant = |name: &str, kind: SumVariantKind| SumVariant {
             name: name.to_string(),
@@ -1725,6 +1726,7 @@ mod tests {
             attrs: vec![],
             invariants: vec![],
             axioms: vec![],
+            consume: false,
         };
         let items = vec![Item::Type(runtime_error_decl)];
 
@@ -1804,6 +1806,7 @@ mod tests {
             ]),
             span: Span::default(), attrs: vec![],
             invariants: vec![], axioms: vec![],
+            consume: false,
         };
 
         reg.init_prelude_decls_from_items(&[Item::Type(drifted_decl)]);
@@ -1846,6 +1849,7 @@ mod tests {
             readonly: false, mutable: false,
             is_embed: false, embed_anonymous: false,
             span: Span::default(),
+            consume: false,
         };
 
         let rbe_decl = TypeDecl {
@@ -1865,6 +1869,7 @@ mod tests {
             ]),
             span: Span::default(), attrs: vec![],
             invariants: vec![], axioms: vec![],
+            consume: false,
         };
 
         reg.init_prelude_decls_from_items(&[Item::Type(rbe_decl)]);

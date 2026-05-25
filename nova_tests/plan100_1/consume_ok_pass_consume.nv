@@ -13,7 +13,7 @@ type Transaction consume {
 fn Transaction consume @commit() -> () { () }
 fn Transaction consume @rollback() -> () { () }
 
-fn begin() -> Transaction => Transaction { id: 5 }
+fn begin() -> Transaction => { id: 5 }
 
 // Callee с consume-param — обязан consume внутри.
 fn finish(consume tx Transaction) -> () {
