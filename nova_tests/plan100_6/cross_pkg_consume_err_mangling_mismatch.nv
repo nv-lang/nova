@@ -1,0 +1,29 @@
+// EXPECT_COMPILE_ERROR D133-not-consumed
+//
+// Plan 100.6 (D164): ABI mismatch scenario — consume-bit в mangling ловит
+// несоответствие при изменении consume-статуса типа между версиями.
+//
+// Сценарий: Package A v1.0 — `Transaction consume`. Package A v2.0 убирает
+// `consume` без major-bump. Пакет B (скомпилированный под v1.0) ожидает
+// consume-семантику. При смене mangling в v2.0 → linker ловит mismatch.
+//
+// В single-file mock: показываем runtime-эффект — consumer забывает consume,
+// потому что "думает что v2 убрал consume-require".
+
+module nova_tests.plan100_6.cross_pkg_consume_err_mangling_mismatch
+
+// Package A v1.0 — Transaction IS consume:
+export type Transaction consume {
+    id int,
+}
+
+export fn Transaction consume @commit() -> () { () }
+export fn begin_v1() -> Transaction => { id: 1 }
+
+test "ABI mismatch — consumer forgot consume (assumed non-consume type)" {
+    consume tx = begin_v1()
+    // Consumer думает что Transaction не consume (v2 breaking change без bump).
+    // В реальности тип consume → обязан вызвать commit/abort.
+    // Это пример того, что линкер поймал бы через mangling-mismatch в ABI.
+    // Здесь: просто забыли вызвать commit → D133-not-consumed на scope-exit.
+}

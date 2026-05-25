@@ -1,0 +1,29 @@
+// EXPECT_COMPILE_ERROR D133-not-consumed
+//
+// Plan 100.6 (D164): nova.toml contract breaking change — изменение consume-статуса
+// без major-bump. Пакет A v1.1 всё ещё объявляет Transaction как consume в
+// [exports.consume_types], но consumer-B написал код "как будто" consume убрали.
+//
+// Результат: consumer-код создаёт consume-binding и ЗАБЫВАЕТ consume.
+// D164: major-bump ОБЯЗАТЕЛЕН при изменении consume-статуса типа.
+// Без major-bump consumer не знает что контракт изменился → leaks.
+
+module nova_tests.plan100_6.nova_toml_consume_contract_err_major_bump
+
+// Package A — [exports.consume_types] Transaction = "1.0"
+// Контракт: Transaction IS consume и ОСТАЁТСЯ таким в v1.x.
+export type Transaction consume {
+    id int,
+}
+
+export fn Transaction consume @commit() -> () { () }
+export fn Transaction_begin(id int) -> Transaction => { id: id }
+
+// Package B — потребитель. Предполагает что в v1.1 убрали consume (major-bump
+// не был сделан → consumer не знал об изменении).
+test "contract breaking — consumer forgets consume after assumed non-consume bump" {
+    consume tx = Transaction_begin(1)
+    // Consumer не вызывает tx.commit() — думает что v1.1 убрал require.
+    // На самом деле контракт не изменился; мажорная версия не обновлена.
+    // → D133-not-consumed: обязательство не выполнено.
+}
