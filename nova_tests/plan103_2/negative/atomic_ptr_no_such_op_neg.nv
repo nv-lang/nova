@@ -1,0 +1,18 @@
+// Plan 103.2 Ф.9 negative — non-existent static method on AtomicPtr.
+//
+// EXPECT_CC_ERROR Nova_AtomicPtr_static_from_raw_addr
+//
+// AtomicPtr does not have a `from_raw_addr()` static constructor — only
+// `null()` and `new(v int)` are defined. Codegen emits a call to
+// `Nova_AtomicPtr_static_from_raw_addr` which has no definition in
+// sync_primitives.h → linker error (undefined symbol).
+// Uses static path-form to get a predictable C name for pattern matching.
+
+module nova_tests.plan103_2.negative.atomic_ptr_no_such_op_neg
+
+fn bad() -> AtomicPtr => AtomicPtr.from_raw_addr(0)
+
+test "should not compile" {
+    let _ = bad()
+    assert(true)
+}
