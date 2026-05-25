@@ -12156,3 +12156,46 @@ capabilities; без неё Nova не достигает заявленной re
   state unit 8). V1 упрощения: TextDocumentSyncKind::FULL (не
   Incremental); nova_codegen не подключён (gate 91+100 ещё не снят);
   shutdown exit-code через AtomicBool (без kill-worker pipeline).
+
+- **Progress (2026-05-26): Sub-plan 104.1 (LSP Diagnostics) ✅ ЗАКРЫТ** —
+  9 фаз, 91 тест PASS. Implemented: nova_codegen path-dep, catch_unwind,
+  diagnostic_mapping UTF-16, debouncer per-URI CancellationToken,
+  Incremental sync, publishDiagnostics workflow, workspace recheck,
+  perf budgets, memory hygiene. V1 simplifications зафиксированы ниже.
+
+### [LSP-1] Full workspace recheck (V1 strategy)
+- **Где:** `nova-lsp/src/server.rs` `schedule_recheck`
+- **Что упрощено:** При любом didChange перепроверяются ВСЕ .nv файлы
+  в workspace (как gopls V1). Нет per-module dep-graph.
+- **Почему:** Достаточно для workspace ≤50 модулей; dep-graph требует
+  import analysis — отдельный sub-plan 104.1.X.
+- **Как чинить:** Построить `ImportGraph` через `nova_codegen::imports`,
+  перепроверять только файлы, транзитивно зависящие от изменённого.
+- **Приоритет:** M
+
+### [LSP-2] Debounce delay = 200ms (hardcoded)
+- **Где:** `nova-lsp/src/state.rs` `WorkspaceState::default()` → `Debouncer::default()`
+- **Что упрощено:** 200ms не настраивается через LSP workspace settings.
+- **Почему:** Стандартный default gopls/rust-analyzer. Достаточно для V1.
+- **Как чинить:** LSP `workspace/configuration` pull-request для `nova.debounceMs`.
+- **Приоритет:** L
+
+### [LSP-3] No file watching for filesystem edits outside editor
+- **Где:** `nova-lsp/src/server.rs`
+- **Что упрощено:** `workspace/didChangeWatchedFiles` не реализован (клиент
+  должен сам слать). Mtime polling при workspace scan не реализован.
+- **Почему:** Достаточно для editor-driven edits. External edits (git checkout,
+  cargo) видны только после editor re-open.
+- **Как чинить:** Зарегистрироваться на `workspace/didChangeWatchedFiles` в
+  `initialized` и обрабатывать Delete/Create/Change events.
+- **Приоритет:** M
+
+### [LSP-4] Nova Diagnostic has no severity/code/tags
+- **Где:** `nova-lsp/src/diagnostic_mapping.rs`
+- **Что упрощено:** Все Nova диагностики маппятся как ERROR severity.
+  Нет warning/info/hint. Нет DiagnosticTag::Unnecessary/Deprecated.
+- **Почему:** nova_codegen::Diagnostic не имеет поля severity.
+  Plan 104.1 добавляет маппинг, но источника данных нет.
+- **Как чинить:** Расширить nova_codegen::Diagnostic: добавить DiagLevel enum
+  (Error/Warning/Info) + tags. Пробросить через lints.rs.
+- **Приоритет:** M
