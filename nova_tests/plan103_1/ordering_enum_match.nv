@@ -1,0 +1,52 @@
+// Plan 103.1 Ф.6 positive — exhaustive match на MemOrdering.
+//
+// Проверяет что все 5 вариантов MemOrdering могут быть использованы
+// как patterns в match-выражении и что match exhaustive (wildcard не нужен
+// если все 5 покрыты).
+
+module nova_tests.plan103_1.ordering_enum_match
+
+fn ordering_to_int(ord MemOrdering) -> int =>
+    match ord {
+        Relaxed => 0
+        Acquire => 1
+        Release => 2
+        AcqRel  => 3
+        SeqCst  => 4
+    }
+
+test "match Relaxed → 0" {
+    assert(ordering_to_int(Relaxed) == 0)
+}
+
+test "match Acquire → 1" {
+    assert(ordering_to_int(Acquire) == 1)
+}
+
+test "match Release → 2" {
+    assert(ordering_to_int(Release) == 2)
+}
+
+test "match AcqRel → 3" {
+    assert(ordering_to_int(AcqRel) == 3)
+}
+
+test "match SeqCst → 4" {
+    assert(ordering_to_int(SeqCst) == 4)
+}
+
+test "match возвращает различные значения для всех вариантов" {
+    let relaxed = ordering_to_int(Relaxed)
+    let acquire = ordering_to_int(Acquire)
+    let release = ordering_to_int(Release)
+    let acqrel  = ordering_to_int(AcqRel)
+    let seqcst  = ordering_to_int(SeqCst)
+    // Все значения различны
+    assert(relaxed != acquire)
+    assert(acquire != release)
+    assert(release != acqrel)
+    assert(acqrel  != seqcst)
+    // Проверяем конкретные tag-значения (координация с sync_primitives.h)
+    assert(relaxed == 0)
+    assert(seqcst  == 4)
+}

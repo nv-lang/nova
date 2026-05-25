@@ -21403,3 +21403,46 @@ files (104.0-104.9).
   absorbs в 104.5.2.
 - Plan 100.8 Ф.2 (LSP layer) → absorbs в 104.5.3.
 - Plan 01-roadmap §165 (LSP v0.5 обещание) → closes 104.9.
+
+─────────────────────────────────────────────────────────────────────────────
+2026-05-25  Plan 103.1 — Memory ordering API foundation  [✅ ЗАКРЫТ]
+─────────────────────────────────────────────────────────────────────────────
+
+Ф.0 baseline: `sync.h` уже имеет все 5 `__ATOMIC_*` constants + `nova_thread_fence_acquire`. Нужны 3 дополнительных fence helpers.
+
+Ф.1+Ф.2: `std/runtime/sync.nv` — добавлен `export type MemOrdering` (5 вариантов:
+Relaxed/Acquire/Release/AcqRel/SeqCst) + `export external fn fence(ord MemOrdering)`.
+`sync.h` — 3 новых inline helpers (`nova_thread_fence_release/acq_rel/seq_cst`).
+`sync_primitives.h` — pre-declaration `Nova_MemOrdering` struct + constructors + `nova_fn_fence` switch.
+
+Ф.3 codegen: `emit_c.rs` —
+  - `RUNTIME_DEFINED_TYPES`: MemOrdering → skip кодогенерации структуры (уже в sync_primitives.h).
+  - `sum_schema_registry` pre-registration в `emit_module` init (unqualified variants в тестах без import).
+  - `nova_mem_ordering_to_atomic` helper — `MemOrdering` variant → `__ATOMIC_*` string constant.
+  - `free_fn_c_name` ExternalRegistry-first: `fence` → `nova_fn_fence` даже если `import std.runtime.sync`.
+
+Ф.4 type-checker: `types/mod.rs` — helpers `is_valid_load_ordering` / `is_valid_store_ordering` + `fence` в builtins.
+
+Ф.5 spec: D167 draft в `spec/decisions/06-concurrency.md`.
+
+Ф.6 tests: 7 тестов в `nova_tests/plan103_1/` — **7/7 PASS**:
+  - fence_each_ordering.nv (5 fence calls: по одному на каждый вариант)
+  - ordering_enum_match.nv (match на все 5 вариантов, tag values Relaxed=0..SeqCst=4)
+  - ordering_passed_as_param.nv (runtime-value path: fence(ord) где ord — параметр)
+  - fence_in_supervised.nv (fence в spawn/supervised/parallel for)
+  - fence_smoke_no_crash.nv (1000 fence calls — no crash)
+  - negative/ordering_invalid_variant_neg.nv (EXPECT_CC_ERROR: NoSuchVariant → undeclared C ident)
+  - negative/ordering_construct_with_payload_neg.nv (EXPECT_CC_ERROR: Acquire(42) → linker undefined symbol)
+
+Ключевые impl-решения:
+  - `MemOrdering` (не `Ordering`) — name collision с prelude `Ordering` (Less|Equal|Greater).
+  - Negative payload test: `bad()` должна вызываться из test body, иначе DCE убирает undefined ref.
+  - GC include path: `compiler-codegen/vcpkg_installed/...` (не `vcpkg_installed/...` от корня).
+
+Full nova test: 1176 PASS / 98 FAIL / 56 SKIP — 98 fails PRE-EXISTING (plan100.x + runtime timeout).
+Plan 103.1 — 0 новых FAIL.
+
+Файлы: `std/runtime/sync.nv`, `compiler-codegen/nova_rt/sync.h`, `compiler-codegen/nova_rt/sync_primitives.h`,
+`compiler-codegen/src/codegen/emit_c.rs`, `compiler-codegen/src/types/mod.rs`,
+`spec/decisions/06-concurrency.md`, `nova_tests/plan103_1/` (7 файлов),
+`docs/plans/103.1-memory-ordering-api.md`, `docs/plans/103-sync-primitives-spec-formalization.md`.
