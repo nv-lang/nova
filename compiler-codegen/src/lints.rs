@@ -421,7 +421,8 @@ fn collect_stmt(s: &Stmt, out: &mut HashSet<String>) {
         }
         Stmt::Throw { value, .. } => collect_expr(value, out),
         Stmt::Break(_) | Stmt::Continue(_) | Stmt::Reveal { .. } => {}
-        Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. } => {
+        Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. }
+        | Stmt::OkDefer { body, .. } | Stmt::DeferWithResult { body, .. } => {
             collect_expr(body, out)
         }
         Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => {
@@ -1020,7 +1021,8 @@ fn walk_stmt_lints(s: &Stmt, out: &mut Vec<LintWarning>) {
         }
         Stmt::Throw { value, .. } => walk_expr_lints(value, out),
         Stmt::Break(_) | Stmt::Continue(_) => {}
-        Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. } => walk_expr_lints(body, out),
+        Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. }
+        | Stmt::OkDefer { body, .. } | Stmt::DeferWithResult { body, .. } => walk_expr_lints(body, out),
         Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => walk_expr_lints(expr, out),
         // Plan 33.3 Ф.13: Apply/Calc — proof-statements, spec-only.
         Stmt::Apply { .. } | Stmt::Calc { .. } | Stmt::Reveal { .. } => {}
@@ -1087,7 +1089,8 @@ fn walk_view_push_stmt(
         }
         Stmt::Return { value: Some(v), .. } => walk_view_push_expr(v, slice_views, out),
         Stmt::Throw { value, .. } => walk_view_push_expr(value, slice_views, out),
-        Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. } => {
+        Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. }
+        | Stmt::OkDefer { body, .. } | Stmt::DeferWithResult { body, .. } => {
             walk_view_push_expr(body, slice_views, out);
         }
         Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => {
@@ -1624,7 +1627,8 @@ fn collect_marked_spans_stmt(
         Stmt::Let(ld) => collect_marked_spans_expr(&ld.value, matcher, out),
         Stmt::Return { value: Some(v), .. } => collect_marked_spans_expr(v, matcher, out),
         Stmt::Throw { value, .. } => collect_marked_spans_expr(value, matcher, out),
-        Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. } => {
+        Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. }
+        | Stmt::OkDefer { body, .. } | Stmt::DeferWithResult { body, .. } => {
             collect_marked_spans_expr(body, matcher, out)
         }
         _ => {}

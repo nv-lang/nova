@@ -1,0 +1,41 @@
+// Plan 100.4.3 (D160): okdefer — выполняется только на success-path.
+// Паттерн: errdefer+okdefer = exhaustive cover для ресурса (symmetric cleanup).
+
+module nova_tests.plan100_4_3.okdefer_ok_success_path
+
+test "okdefer срабатывает на normal exit" {
+    let mut ok_count = 0
+    let mut err_count = 0
+    let _ = {
+        errdefer { err_count = err_count + 1 }
+        okdefer  { ok_count  = ok_count  + 1 }
+        42
+    }
+    assert(ok_count == 1)
+    assert(err_count == 0)
+}
+
+test "defer + okdefer оба срабатывают на success-path" {
+    let mut defer_count = 0
+    let mut ok_count = 0
+    let _ = {
+        defer   { defer_count = defer_count + 1 }
+        okdefer { ok_count    = ok_count    + 1 }
+        0
+    }
+    assert(defer_count == 1)
+    assert(ok_count == 1)
+}
+
+test "okdefer LIFO на success-path" {
+    let mut step = 0
+    let mut first = 0
+    let mut second = 0
+    let _ = {
+        okdefer { step = step + 1; first  = step }  // registered first, fires last
+        okdefer { step = step + 1; second = step }  // registered last, fires first
+        0
+    }
+    assert(second == 1)
+    assert(first  == 2)
+}
