@@ -1,0 +1,21 @@
+// EXPECT_COMPILE_ERROR D133-not-consumed
+//
+// Plan 100.6 (D164, Plan 35 R26): private consume-type — must-consume enforced
+// locally regardless of visibility. Even private types enforce must-consume.
+// Cross-package: private type не leak'ает; но внутри пакета consume обязателен.
+
+module nova_tests.plan100_6.cross_pkg_consume_err_visibility
+
+// "Package A" — type БЕЗ `export` (private):
+type InternalTransaction consume { id int }
+fn InternalTransaction consume @commit() -> () { () }
+fn InternalTransaction consume @rollback() -> () { () }
+fn make_internal() -> InternalTransaction => { id: 99 }
+
+// Внутри пакета A: consume-semantics enforced даже для private типов.
+// "Package B" не видит этот тип, но внутри A его нельзя забыть.
+test "private consume-type — must-consume still enforced within package" {
+    consume tx = make_internal()
+    // ← забыли вызвать tx.commit() или tx.rollback()
+    // tx Live на scope-exit → D133-not-consumed
+}

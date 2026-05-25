@@ -1,0 +1,23 @@
+// EXPECT_COMPILE_ERROR D133-not-consumed
+//
+// Plan 100.6 (D164): Package B treats A's consume-type as regular — забывает
+// что тип является consume. Binding-form `consume tx = ...` корректен,
+// но consume-метод не вызван → D133-not-consumed на scope-exit.
+
+module nova_tests.plan100_6.cross_pkg_consume_err_missing_marker_in_b
+
+// "Package A" — exports consume-type:
+export type Session consume {
+    token str,
+}
+
+export fn Session consume @expire() -> () { () }
+export fn Session consume @logout() -> () { () }
+export fn Session_start(token str) -> Session => { token: token }
+
+// "Package B" — imports Session, использует consume binding но забывает consume:
+test "B forgets to consume Session — D133 error" {
+    consume sess = Session_start("abc123")
+    // Пакет B "не знает" что Session — consume type и что нужно вызвать
+    // sess.expire() или sess.logout(). Забывает — D133-not-consumed.
+}

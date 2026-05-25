@@ -2133,8 +2133,16 @@ impl CEmitter {
                     // Mangling: для первой overload — короткое имя
                     // (backward compat); для второй+ — с param-types suffix.
                     let safe_recv_name = Self::receiver_type_c_ident(&recv.type_name);
+                    // Plan 100.6 (D164): consume-bit — `consume` vs `method` prefix
+                    // ловит ABI mismatch при изменении consume-статуса метода.
+                    // consume-method: Nova_{T}_consume_{name}
+                    // regular-method: Nova_{T}_method_{name}  (backward compat)
                     let base_c_name = if is_instance {
-                        format!("Nova_{}_method_{}", safe_recv_name, f.name)
+                        if recv.consume {
+                            format!("Nova_{}_consume_{}", safe_recv_name, f.name)
+                        } else {
+                            format!("Nova_{}_method_{}", safe_recv_name, f.name)
+                        }
                     } else {
                         format!("Nova_{}_static_{}", safe_recv_name, f.name)
                     };
@@ -8089,8 +8097,16 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                 }
             }
             let safe_type = Self::receiver_type_c_ident(&recv.type_name);
+            // Plan 100.6 (D164): consume-bit in method mangling (fallback path).
+            // Must match the base_c_name formula in pre-pass registration (~line 2067).
             match recv.kind {
-                ReceiverKind::Instance => format!("Nova_{}_method_{}", safe_type, f.name),
+                ReceiverKind::Instance => {
+                    if recv.consume {
+                        format!("Nova_{}_consume_{}", safe_type, f.name)
+                    } else {
+                        format!("Nova_{}_method_{}", safe_type, f.name)
+                    }
+                }
                 ReceiverKind::Static   => format!("Nova_{}_static_{}", safe_type, f.name),
             }
         } else {

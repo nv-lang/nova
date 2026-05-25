@@ -1,0 +1,27 @@
+// EXPECT_COMPILE_ERROR D133-not-consumed
+//
+// Plan 100.6 (D164): Package B пытается вызвать только view-методы на consume-type
+// из A — view-вызов НЕ consume'нит объект. Consume-obligation остаётся.
+//
+// Ошибка D133-not-consumed: после вызова non-consume метода tx всё ещё Live.
+
+module nova_tests.plan100_6.cross_pkg_consume_err_unknown_consume_method
+
+// "Package A" — exports consume-type с consume-методами:
+export type Token consume {
+    value int,
+}
+
+export fn Token consume @revoke() -> () { () }   // consume-method: consumes token
+export fn Token @get_value() -> int => @.value   // view-method: does NOT consume
+
+export fn Token_issue(v int) -> Token => { value: v }
+
+// "Package B" — только вызывает view-метод, не consume-метод:
+test "view-only call — consume obligation remains (D133-not-consumed)" {
+    consume tok = Token_issue(999)
+    let val = tok.get_value()                       // ← view-method: tok ещё Live!
+    // val используется; но tok не consumed.
+    // Нужно tok.revoke() для consume.
+    // На scope-exit tok Live → D133-not-consumed.
+}
