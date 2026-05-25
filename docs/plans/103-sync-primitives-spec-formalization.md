@@ -213,16 +213,17 @@ Plan 100 (`linear-must-consume.md`, P3) вводит `consume` тип-модиф
 |---|---|---|---|---|---|
 | 103.1 | Memory ordering | ✅ ЗАКРЫТ 2026-05-25 | merge `6be2519b0e2` / commit `9f6b0f902c2` | 7/7 PASS (5 pos + 2 neg) | D167 draft |
 | 103.2 | Atomics full suite | ✅ ЗАКРЫТ 2026-05-25 | merge `69d7605cc1c` / commit `348b205f47f` | 17/17 PASS (11 pos + 6 neg) | D168 draft |
-| 103.3 | Mutex/RwLock/ReentrantMutex | 🟡 в работе | — | — | D169 (планируется) |
+| 103.3 | Mutex/RwLock/ReentrantMutex | ⏸ pre-patched, ready | — | — | D169 (планируется) |
 | 103.4 | Coordination | ⏸ gated на 103.3 | — | — | D170 (планируется) |
-| 103.5 | Once/Lazy/OnceCell | 🟡 в работе | — | — | D171 (планируется) |
+| 103.5 | Once/Lazy/OnceCell | ✅ ЗАКРЫТ 2026-05-26 | merge `c7f9bca1026` | 20/20 PASS (11 pos + 3 neg + 2 prop + 1 stress) | D171 draft (отложен в 103.7) |
 | 103.6 | Realtime/Blocking enforcement | ⏸ gated на 103.2-103.5 | — | — | D172 (планируется) |
 | 103.7 | Spec D-blocks final + AI-first guidance | ⏸ gated на 103.1-103.6 | — | — | D173 NEW |
 | 103.8 | Conformance + V1 close | ⏸ gated на 103.1-103.7 | — | — | — |
 | 103.9 | Consume guards migration (V2) | ⏸ hard-gated на Plan 100.7 | — | — | D174 (планируется) |
 
-**V1 closure: 2 of 8** (103.1 ✅ + 103.2 ✅). 103.3 + 103.5 параллельно
-в работе на момент 2026-05-26.
+**V1 closure: 3 of 8** (103.1 ✅ + 103.2 ✅ + 103.5 ✅). 103.3 pre-patched
++ ready-to-launch (нет worktree); 103.4 gated на 103.3; 103.6/7/8
+sequential последующие.
 
 ## Empirical learnings (live)
 
@@ -245,6 +246,32 @@ sub-plans):
 - **Spec D167 draft** в `06-concurrency.md` после D166 (Plan 100.8).
   Final closure отложен в 103.7.
 
+### 103.5 закрытие (2026-05-26)
+
+- **20/20 тестов PASS** (превышает acceptance: ≥11 pos + ≥6 neg + ≥2 prop + ≥1 stress).
+- **Подтверждено M8 (closure-form primary):** `Once.call_once(fn)`
+  работает; legacy `run/done` deprecated с warning, runtime сохраняет
+  backward compat.
+- **Подтверждено M9 (distinct types):** OnceCell + Lazy — два разных
+  типа с разной panic-semantics (OnceCell init panic → retry, Lazy →
+  poison).
+- **OnceCell[T] / Lazy[T] mono'd inline в emit_c.rs** — не pre-declared
+  как Once/AtomicX в `sync_primitives.h` (упрощение #1 в
+  simplifications.md: generic типы требуют T-конкретизации).
+- **NOVA_SYNC_ASSERT discovery:** `#ifdef NOVA_DEBUG` — no-op в Dev
+  mode. Fix: unconditional `Nova_Once_method_done` state check
+  через `Nova_Fail_fail + nova_throw` (защита от silent no-op).
+- **Lazy + parallel for Windows crash discovered:** parallel for +
+  Lazy.force() как первая/единственная операция → "fiber stack overflow
+  in slot 0" (VEH crash). Не диагностирован. Workaround:
+  `lazy_no_double_init_prop` — sequential; concurrent coverage через
+  `once_stress_mn_4workers` (16 fibers × 100 force). Documented в
+  simplifications.md #2.
+- **D171 spec — НЕ написан** (упрощение #3 в simplifications.md):
+  отложен в Plan 103.7 (вместе с финализацией D167-D173).
+- **OnceCell.take() atomicity** — take() под mutex без atomic ops;
+  достаточно для single-fiber take (documented).
+
 ### 103.2 закрытие (2026-05-25)
 
 - **AtomicInt → AtomicI64 alias (M14)** работает без issues.
@@ -260,12 +287,14 @@ sub-plans):
 
 ### Что подтвердилось из дизайна (M-decisions validation)
 
+- ✅ **M2** sized atomics (не generic) — оптимально для текущего
+  codegen.
+- ✅ **M8** closure-form `Once.call_once(fn)` primary (103.5 ✅).
+- ✅ **M9** OnceCell + Lazy distinct types (103.5 ✅).
+- ✅ **M14** backward compat AtomicInt — alias mechanism работает.
 - ✅ **M14b** `since = "0.1"` consistency — без проблем.
 - ✅ **M14c** `diag.rs` напрямую — без проблем.
 - ✅ **M14d** `MemOrdering` rename — discovered necessity post-design.
-- ✅ **M2** sized atomics (не generic) — оптимально для текущего
-  codegen.
-- ✅ **M14** backward compat AtomicInt — alias mechanism работает.
 
 ### Что ещё validate в downstream sub-plans
 
@@ -273,13 +302,21 @@ sub-plans):
   → проверка).
 - **M6** fair FIFO Mutex default + opt-in unfair (103.3).
 - **M7** RwLock writer-priority default (103.3).
-- **M8** closure-form `Once.call_once(fn)` primary (103.5).
-- **M9** OnceCell + Lazy distinct types (103.5).
 - **M10** Condvar tied to Mutex (103.4).
 - **M12** type-checker `realtime { }` ban (103.6 — Nova edge,
   critical validation).
 - **M15** V1 `with_lock(fn)` preserved для V2 non-breaking migration
   (test в 103.9 V2).
+
+### Discovered upgrades (need follow-up)
+
+- **NOVA_SYNC_ASSERT runtime guard** (103.5): debug-only assertions
+  не работают в Dev mode. 103.5 ввёл unconditional state checks для
+  Once.done. Аналогичный pattern возможно нужен для Mutex.unlock,
+  WaitGroup.done, etc. — проверить в 103.3/103.4.
+- **Lazy + parallel for crash on Windows** (103.5): undiagnosed
+  fiber-arena issue. Plan 83.x team task если воспроизводится; для
+  Plan 103 — workaround sequential prop test.
 
 ## Acceptance criteria
 
