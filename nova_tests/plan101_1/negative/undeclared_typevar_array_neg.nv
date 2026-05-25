@@ -1,0 +1,11 @@
+// Plan 101.1 B1 C1 negative — `fn []T @method` без `fn[T]` префикса.
+//
+// EXPECT_COMPILE_ERROR: [E_UNDECLARED_TYPEVAR_IN_RECEIVER]
+
+module nova_tests.plan101_1.negative.undeclared_typevar_array_neg
+
+fn []T @bad_method(x T) -> T => x
+
+test "should error" {
+    assert(1 == 1)
+}

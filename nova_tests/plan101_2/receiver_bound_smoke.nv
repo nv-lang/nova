@@ -1,0 +1,46 @@
+// Plan 101.2 (D145 Ред. 5) — smoke: receiver-generic `fn[T] ReceiverType
+// @method` интегрируется с D72 generic-bound `[T Bound]`. T в prefix
+// получает bound — type-checker enforce-ит satisfaction concrete T'а
+// в call-site.
+//
+// Это reuse Plan 15 D72 bound-checker для receiver-prefix позиции;
+// формального ввода новой машины нет — только cross-cut verification.
+
+module nova_tests.plan101_2.receiver_bound_smoke
+
+
+type Showable_ protocol {
+    show() -> str
+}
+
+
+type Item {
+    label str
+}
+
+fn Item @show() -> str => @label
+
+
+// Free-fn с bounded T (legacy form) — sanity baseline.
+fn print_one[T Showable_](x T) -> str => x.show()
+
+
+test "free-fn bounded T satisfies protocol" {
+    let i = Item { label: "alpha" }
+    assert(print_one(i) == "alpha")
+}
+
+
+// Plan 101 receiver-generic prefix `fn[T] []T @method` с bounded T
+// — composability bound + receiver-prefix.
+fn[T Showable_] []T @first_label() -> str {
+    for x in @ { return x.show() }
+    "empty"
+}
+
+
+test "fn[T Showable_] []T @method dispatch satisfies bound" {
+    let xs []Item = [Item { label: "alpha" }, Item { label: "beta" }]
+    let s = xs.first_label()
+    assert(s == "alpha")
+}

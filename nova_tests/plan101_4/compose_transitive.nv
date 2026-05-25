@@ -1,0 +1,43 @@
+// Plan 101.4 — positive: transitive embed.
+// `Closeable use Reader` + `Reader` has @read. Flatten должен поднять
+// `read` через цепочку Closeable → Reader.
+
+module nova_tests.plan101_4.compose_transitive
+
+
+type Reader protocol {
+    read() -> str
+}
+
+type Closeable protocol {
+    use Reader
+    close() -> bool
+}
+
+// CloseableReader композирует Closeable (который уже включает Reader).
+type CloseableReader protocol {
+    use Closeable
+}
+
+
+type Handle {
+    id int
+}
+
+fn Handle @read() -> str => "h${@id}"
+fn Handle @close() -> bool => true
+
+
+// T должен удовлетворить CloseableReader → flatten { read, close }.
+fn finish[T CloseableReader](x T) -> str {
+    let s = x.read()
+    let _ = x.close()
+    s
+}
+
+
+test "transitive embed: Handle satisfies through chain" {
+    let h = Handle { id: 42 }
+    let s = finish(h)
+    assert(s == "h42")
+}

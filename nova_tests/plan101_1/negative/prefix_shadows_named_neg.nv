@@ -1,0 +1,13 @@
+// Plan 101.1 B4 C4 negative — `fn[T] T @method` где есть `type T` в scope.
+//
+// EXPECT_COMPILE_ERROR: [E_PREFIX_SHADOWS_NAMED_TYPE]
+
+module nova_tests.plan101_1.negative.prefix_shadows_named_neg
+
+type T { v int }
+
+fn[T] T @bad_shadow() -> T => @
+
+test "should error" {
+    assert(1 == 1)
+}

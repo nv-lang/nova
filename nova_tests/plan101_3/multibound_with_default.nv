@@ -1,0 +1,36 @@
+// Plan 101.3 — positive: multi-bound + default. Грамматика
+// `[T A + B = Default]` — bounds list, потом `= Default`.
+
+module nova_tests.plan101_3.multibound_with_default
+
+
+type Show_ protocol {
+    show() -> str
+}
+
+type Sized_ protocol {
+    size() -> int
+}
+
+
+type DefaultBox {
+    n int
+}
+
+fn DefaultBox @show() -> str => "box${@n}"
+fn DefaultBox @size() -> int => @n
+
+
+// Multi-bound + explicit default DefaultBox.
+fn render[T Show_ + Sized_ = DefaultBox](x T) -> str {
+    let n = x.show()
+    let s = x.size()
+    "${n}/${s}"
+}
+
+
+test "multi-bound + default — explicit T DefaultBox" {
+    let b = DefaultBox { n: 9 }
+    let s = render(b)
+    assert(s == "box9/9")
+}

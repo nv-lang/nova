@@ -1,0 +1,32 @@
+// Plan 101.3 — negative: T удовлетворяет первому bound, но не второму.
+// `Partial` имеет `a()` но не имеет `b()` → satisfaction для HasB fail.
+//
+// EXPECT_COMPILE_ERROR does not satisfy `HasB`
+
+module nova_tests.plan101_3.negative.multibound_missing_method_neg
+
+
+type HasA protocol {
+    a() -> int
+}
+
+type HasB protocol {
+    b() -> int
+}
+
+
+type Partial {
+    v int
+}
+
+fn Partial @a() -> int => @v
+
+
+fn needs_both[T HasA + HasB](x T) -> int => x.a() + x.b()
+
+
+test "should error" {
+    let p = Partial { v: 1 }
+    let _ = needs_both(p)
+    assert(1 == 1)
+}

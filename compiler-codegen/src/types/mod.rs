@@ -351,6 +351,21 @@ pub fn check_module(module: &Module) -> Result<ModuleEnv, Vec<Diagnostic>> {
     // method_table (РјРµС‚РѕРґС‹ РєР°Р¶РґРѕРіРѕ concrete-С‚РёРїР°). Р—Р°С‚РµРј С…РѕРґРёРј РїРѕ
     // РІСЃРµРј call-СЃР°Р№С‚Р°Рј РІ bodies, РґР»СЏ generic-РІС‹Р·РѕРІРѕРІ СЃ bounds
     // РїСЂРѕРІРµСЂСЏРµРј satisfaction concrete-Р°СЂРіСѓРјРµРЅС‚РѕРІ.
+    // Plan 101.4 (D145 Ред. 5): protocol-composition validation —
+    // embed target существует и есть protocol; нет cycle; нет duplicate
+    // signature collision при flatten'е. Запускается ДО BoundCtx::build
+    // чтобы errors на cycle не превращались в infinite recursion внутри
+    // flatten_dfs (хотя у flatten_dfs есть `seen`-guard — safety belt).
+    check_protocol_embeds(module, &mut errors);
+
+    // Plan 101.3 (D145 Ред. 5): generic-bound declaration validation —
+    // каждое имя bound'а в `[T A + B]` должно быть объявленным protocol'ом
+    // (или well-known stdlib alias типа Hashable/Eq/Ord/Display). Раньше
+    // bound-resolve был permissive (silent skip unknown) — Plan 101 делает
+    // strict. Pre-Plan 101 tests, ссылающиеся на неизвестные bound'ы,
+    // должны их объявить или удалить.
+    check_generic_bound_declarations(module, &mut errors);
+
     let bound_ctx = BoundCtx::build(module);
     bound_ctx.check_module(module, &mut errors);
 
@@ -700,9 +715,149 @@ impl<'a> TypeCheckCtx<'a> {
                 }
             }
         }
+        // Plan 101.1 B1 (Ф.2 E_UNDECLARED_TYPEVAR_IN_RECEIVER):
+        // Detect `fn []T @method` где T — single-uppercase letter без
+        // `fn[T]` префикса (не в gs). Это silent miscompile в old codegen
+        // (defaults T=nova_int). Loud error suggests `fn[T]` prefix fix.
+        if let Some(r) = &fd.receiver {
+            if r.type_name.starts_with("[]") {
+                let elem = &r.type_name[2..];
+                let is_single_upper = elem.len() <= 2
+                    && elem.chars().all(|c| c.is_ascii_uppercase());
+                if is_single_upper && !gs.contains(elem) {
+                    errors.push(Diagnostic::new(
+                        format!(
+                            "[E_UNDECLARED_TYPEVAR_IN_RECEIVER] `fn []{elem} @{m}` — \
+                             typevar `{elem}` не объявлен. Добавьте `fn[{elem}]` префикс \
+                             (Plan 101.1 / D145):\n  \
+                             fn[{elem}] []{elem} @{m}(...) -> ...",
+                            elem = elem, m = fd.name
+                        ),
+                        r.span,
+                    ));
+                }
+            }
+            // Plan 101.1 B2 (Ф.2 E_BARE_TYPEVAR_NEEDS_PREFIX):
+            // Detect `fn T @method` где T — bare single-uppercase letter
+            // (not array, not other shape) без `fn[T]` prefix. Allowed only
+            // если T in gs (declared via prefix) OR T — named type (но
+            // type-check error elsewhere). Distinct from B1 (which targets `[]T`).
+            let tn = r.type_name.as_str();
+            if tn.len() <= 2 && tn.chars().all(|c| c.is_ascii_uppercase()) {
+                if !gs.contains(tn) && !self.types.contains_key(tn) {
+                    errors.push(Diagnostic::new(
+                        format!(
+                            "[E_BARE_TYPEVAR_NEEDS_PREFIX] `fn {tn} @{m}` — \
+                             bare typevar `{tn}` receiver требует `fn[{tn}]` префикс \
+                             (Plan 101.1 / D145):\n  \
+                             fn[{tn}] {tn} @{m}(...) -> ...\n  \
+                             OR declare `type {tn} {{ ... }}` если intended named type.",
+                            tn = tn, m = fd.name
+                        ),
+                        r.span,
+                    ));
+                }
+            }
+            // Plan 101.1 C8 (Ф.2 E_UNUSED_PREFIX_TYPEVAR):
+            // Каждый prefix-generic должен использоваться в receiver/params/return.
+            // Если объявлен но не используется — error.
+            {
+                let mut referenced: HashSet<String> = HashSet::new();
+                // Collect from receiver type-name (bare T case).
+                let tn_rec = r.type_name.as_str();
+                if tn_rec.len() <= 2 && tn_rec.chars().all(|c| c.is_ascii_uppercase()) {
+                    referenced.insert(tn_rec.to_string());
+                }
+                // Collect from receiver type generics (`[]T`, Option[T], etc.).
+                for tr in &r.generics {
+                    Self::collect_named_idents(tr, &mut referenced);
+                }
+                // Array element if receiver is []T.
+                if let Some(elem) = r.type_name.strip_prefix("[]") {
+                    if elem.len() <= 2 && elem.chars().all(|c| c.is_ascii_uppercase()) {
+                        referenced.insert(elem.to_string());
+                    }
+                }
+                // Collect from params.
+                for p in &fd.params {
+                    Self::collect_named_idents(&p.ty, &mut referenced);
+                }
+                // Collect from return type.
+                if let Some(rt) = &fd.return_type {
+                    Self::collect_named_idents(rt, &mut referenced);
+                }
+                // Check each fd.generics — must be referenced.
+                for g in &fd.generics {
+                    if !referenced.contains(&g.name) {
+                        errors.push(Diagnostic::new(
+                            format!(
+                                "[E_UNUSED_PREFIX_TYPEVAR] generic `{name}` declared в \
+                                 `fn[…]` prefix но не используется в receiver, params, \
+                                 или return type (Plan 101.1 / D145). Удалите из prefix.",
+                                name = g.name
+                            ),
+                            r.span,
+                        ));
+                    }
+                }
+            }
+            // Plan 101.1 B4 (Ф.2 E_PREFIX_SHADOWS_NAMED_TYPE):
+            // Detect `fn[T] T @method` + `type T { ... }` в scope. fn-prefix
+            // shadows named type — ambiguous. Loud error suggests rename.
+            for g in &fd.generics {
+                if self.types.contains_key(&g.name) {
+                    errors.push(Diagnostic::new(
+                        format!(
+                            "[E_PREFIX_SHADOWS_NAMED_TYPE] `fn[{tn}] ...` — \
+                             generic `{tn}` shadows named type `{tn}` in scope \
+                             (Plan 101.1 / D145). Rename one:\n  \
+                             - rename prefix generic: `fn[T2] {tn} @{m}(...)` (use named T)\n  \
+                             - rename named type: `type {tn}_New {{ ... }}` (free up T)",
+                            tn = g.name, m = fd.name
+                        ),
+                        r.span,
+                    ));
+                }
+            }
+            // Plan 101.1 B3 (Ф.2 E_DUPLICATE_GENERIC_DECL):
+            // Detect `fn[K, V] HashMap[K, V] @method` — generics в `fn[…]`
+            // дублируют carrier-brackets `Name[K, V]`. Удалите fn-prefix
+            // OR удалите из carrier.
+            //
+            // Collect carrier-declared generics (single-upper names from
+            // receiver.generics) and check if any fn-prefix-generic
+            // (fd.generics from prefix) duplicates them.
+            let carrier_decls: HashSet<String> = r.generics.iter()
+                .filter_map(|tr| {
+                    if let TypeRef::Named { path, .. } = tr {
+                        if path.len() == 1 {
+                            let n = &path[0];
+                            if n.len() <= 2 && n.chars().all(|c| c.is_ascii_uppercase()) {
+                                return Some(n.clone());
+                            }
+                        }
+                    }
+                    None
+                })
+                .collect();
+            for g in &fd.generics {
+                if carrier_decls.contains(&g.name) {
+                    errors.push(Diagnostic::new(
+                        format!(
+                            "[E_DUPLICATE_GENERIC_DECL] generic `{tn}` уже введён через \
+                             receiver `{rn}[{ts}]` — удалите из `fn[…]` префикса \
+                             (Plan 101.1 / D145):\n  \
+                             fn {rn}[{ts}] @{m}(...)  // без fn[{tn}]",
+                            tn = g.name, rn = r.type_name, ts = r.generics.iter().map(|t| format!("{:?}", t)).collect::<Vec<_>>().join(", "), m = fd.name
+                        ),
+                        r.span,
+                    ));
+                }
+            }
+        }
         // Bounds и defaults generic-параметров.
         for g in &fd.generics {
-            if let Some(b) = &g.bound {
+            for b in &g.bounds {
                 self.walk_typeref(b, &gs, errors);
             }
             if let Some(d) = &g.default {
@@ -742,7 +897,7 @@ impl<'a> TypeCheckCtx<'a> {
             gs.insert(g.name.clone());
         }
         for g in &td.generics {
-            if let Some(b) = &g.bound {
+            for b in &g.bounds {
                 self.walk_typeref(b, &gs, errors);
             }
             if let Some(d) = &g.default {
@@ -772,7 +927,7 @@ impl<'a> TypeCheckCtx<'a> {
                     }
                 }
             }
-            TypeDeclKind::Effect(methods) | TypeDeclKind::Protocol(methods) => {
+            TypeDeclKind::Effect(methods) => {
                 for m in methods {
                     let mut ms = gs.clone();
                     for g in &m.generics {
@@ -787,6 +942,27 @@ impl<'a> TypeCheckCtx<'a> {
                     for e in &m.effects {
                         self.walk_typeref(e, &ms, errors);
                     }
+                }
+            }
+            TypeDeclKind::Protocol { methods, embeds } => {
+                for m in methods {
+                    let mut ms = gs.clone();
+                    for g in &m.generics {
+                        ms.insert(g.name.clone());
+                    }
+                    for p in &m.params {
+                        self.walk_typeref(&p.ty, &ms, errors);
+                    }
+                    if let Some(rt) = &m.return_type {
+                        self.walk_typeref(rt, &ms, errors);
+                    }
+                    for e in &m.effects {
+                        self.walk_typeref(e, &ms, errors);
+                    }
+                }
+                // Plan 101.4: validate embedded protocol type references.
+                for e in embeds {
+                    self.walk_typeref(e, &gs, errors);
                 }
             }
             TypeDeclKind::Newtype(tr) => self.walk_typeref(tr, &gs, errors),
@@ -861,6 +1037,39 @@ impl<'a> TypeCheckCtx<'a> {
                     }
                 }
             }
+            TypeRef::Unit(_) => {}
+        }
+    }
+
+    /// Plan 101.1 C8: collect all Named-type identifiers referenced
+    /// anywhere в typeref recursively. Used для unused-prefix-generic
+    /// detection (compare against fd.generics names).
+    fn collect_named_idents(tr: &TypeRef, out: &mut HashSet<String>) {
+        match tr {
+            TypeRef::Named { path, generics, .. } => {
+                if let Some(name) = path.last() {
+                    out.insert(name.clone());
+                }
+                for g in generics {
+                    Self::collect_named_idents(g, out);
+                }
+            }
+            TypeRef::Array(inner, _) => Self::collect_named_idents(inner, out),
+            TypeRef::FixedArray(_, inner, _) => Self::collect_named_idents(inner, out),
+            TypeRef::Tuple(items, _) => {
+                for it in items {
+                    Self::collect_named_idents(it, out);
+                }
+            }
+            TypeRef::Func { params, return_type, .. } => {
+                for p in params {
+                    Self::collect_named_idents(p, out);
+                }
+                if let Some(rt) = return_type {
+                    Self::collect_named_idents(rt, out);
+                }
+            }
+            TypeRef::Protocol { methods: _, .. } => {}
             TypeRef::Unit(_) => {}
         }
     }
@@ -2073,7 +2282,7 @@ impl<'a> TypeCheckCtx<'a> {
                             // (забота D72 bound-checker'а), opaque —
                             // непрозрачен: любой concrete-тип потенциально
                             // совместим → permissive.
-                            TypeDeclKind::Protocol(_)
+                            TypeDeclKind::Protocol { .. }
                             | TypeDeclKind::Effect(_)
                             | TypeDeclKind::Opaque => TyCat::Other,
                         },
@@ -2265,6 +2474,298 @@ fn arity_diag(name: &str, info: &ArityInfo, actual: usize, span: Span) -> Diagno
     }
 }
 
+/// Plan 101.4 (D145 Ред. 5): protocol composition validation.
+///
+/// Проверяет три инварианта на `type X protocol { use Y  use Z  ... }`:
+///   1. **E_PROTOCOL_EMBED_NOT_PROTOCOL** — target типа `use TypeName`
+///      объявлен, но это НЕ `TypeDeclKind::Protocol` (effect/record/sum/
+///      alias/newtype). Embed работает только между protocol'ами.
+///   2. **E_PROTOCOL_EMBED_UNKNOWN** — target не объявлен ни как protocol,
+///      ни как любой другой тип (typo / forgotten import).
+///   3. **E_PROTOCOL_EMBED_CYCLE** — `A use B use C use A` — циклическая
+///      композиция. Detect через DFS.
+///   4. **E_PROTOCOL_EMBED_DUPLICATE** — после flatten'а ≥2 метода с
+///      одинаковым (name, arity) сигнатурой пришли из разных embed-путей
+///      (или direct + embedded). Разрешено если строго совпадают; иначе
+///      ambiguity, должна быть resolved direct-override'ом (V1 — error;
+///      override-механизм — V2/D145 Ред. 6).
+fn check_protocol_embeds(module: &Module, errors: &mut Vec<Diagnostic>) {
+    use std::collections::{HashMap, HashSet};
+    // Collect protocol declarations + map of all type names → kind hint.
+    let mut proto_map: HashMap<String, (&Vec<EffectMethod>, &Vec<TypeRef>, Span)> = HashMap::new();
+    let mut type_kinds: HashMap<String, &'static str> = HashMap::new();
+    for item in &module.items {
+        if let Item::Type(t) = item {
+            let kind_name = match &t.kind {
+                TypeDeclKind::Protocol { .. } => "protocol",
+                TypeDeclKind::Effect(_) => "effect",
+                TypeDeclKind::Record(_) => "record",
+                TypeDeclKind::Sum(_) => "sum",
+                TypeDeclKind::Alias(_) => "alias",
+                TypeDeclKind::Newtype(_) => "newtype",
+                TypeDeclKind::Opaque => "opaque",
+            };
+            type_kinds.insert(t.name.clone(), kind_name);
+            if let TypeDeclKind::Protocol { methods, embeds } = &t.kind {
+                proto_map.insert(t.name.clone(), (methods, embeds, t.span));
+            }
+        }
+    }
+    // 1+2: validate each embed reference.
+    for (proto_name, (_methods, embeds, _span)) in &proto_map {
+        for emb in embeds.iter() {
+            let TypeRef::Named { path, span: emb_span, .. } = emb else {
+                errors.push(Diagnostic::new(
+                    format!(
+                        "[E_PROTOCOL_EMBED_NOT_NAMED] `use` in protocol `{}` body \
+                         requires a named protocol type (e.g. `use Reader`); \
+                         complex type expressions are not allowed here",
+                        proto_name
+                    ),
+                    emb.span(),
+                ));
+                continue;
+            };
+            let Some(emb_name) = path.last() else { continue };
+            // Self-embed `use Self` или `use <SelfName>` — circular trivially.
+            if emb_name == proto_name {
+                errors.push(Diagnostic::new(
+                    format!(
+                        "[E_PROTOCOL_EMBED_CYCLE] protocol `{}` cannot embed itself \
+                         (`use {}`)",
+                        proto_name, emb_name
+                    ),
+                    *emb_span,
+                ));
+                continue;
+            }
+            match type_kinds.get(emb_name) {
+                None => {
+                    errors.push(Diagnostic::new(
+                        format!(
+                            "[E_PROTOCOL_EMBED_UNKNOWN] unknown type `{}` in \
+                             `use {}` (protocol `{}` body) — type not declared \
+                             in module or via import",
+                            emb_name, emb_name, proto_name
+                        ),
+                        *emb_span,
+                    ));
+                }
+                Some(&"protocol") => { /* OK */ }
+                Some(other) => {
+                    errors.push(Diagnostic::new(
+                        format!(
+                            "[E_PROTOCOL_EMBED_NOT_PROTOCOL] `use {}` in protocol \
+                             `{}` body — `{}` is a {}, not a protocol. Protocol \
+                             composition (D145 Ред. 5) requires `use <Protocol>`",
+                            emb_name, proto_name, emb_name, other
+                        ),
+                        *emb_span,
+                    ));
+                }
+            }
+        }
+    }
+    // 3: cycle detection via DFS coloring (white/gray/black).
+    #[derive(Clone, Copy, PartialEq)]
+    enum Color { White, Gray, Black }
+    let mut color: HashMap<String, Color> = proto_map.keys()
+        .map(|n| (n.clone(), Color::White)).collect();
+    fn dfs_cycle(
+        node: &str,
+        proto_map: &HashMap<String, (&Vec<EffectMethod>, &Vec<TypeRef>, Span)>,
+        color: &mut HashMap<String, Color>,
+        path: &mut Vec<String>,
+        errors: &mut Vec<Diagnostic>,
+    ) {
+        let cur = *color.get(node).unwrap_or(&Color::White);
+        if cur == Color::Black { return; }
+        if cur == Color::Gray {
+            // Cycle: path contains `node` earlier.
+            let cycle_start = path.iter().position(|n| n == node).unwrap_or(0);
+            let cycle_names: Vec<String> = path[cycle_start..].to_vec();
+            let cycle_str = format!("{} → {}", cycle_names.join(" → "), node);
+            // Use embed-span of first protocol in cycle if available.
+            let span = proto_map.get(&cycle_names[0])
+                .map(|(_, _, s)| *s).unwrap_or_default();
+            errors.push(Diagnostic::new(
+                format!(
+                    "[E_PROTOCOL_EMBED_CYCLE] cyclic protocol composition: {}",
+                    cycle_str
+                ),
+                span,
+            ));
+            return;
+        }
+        color.insert(node.to_string(), Color::Gray);
+        path.push(node.to_string());
+        if let Some((_, embeds, _)) = proto_map.get(node) {
+            for emb in embeds.iter() {
+                if let TypeRef::Named { path: p, .. } = emb {
+                    if let Some(n) = p.last() {
+                        if proto_map.contains_key(n) {
+                            dfs_cycle(n, proto_map, color, path, errors);
+                        }
+                    }
+                }
+            }
+        }
+        path.pop();
+        color.insert(node.to_string(), Color::Black);
+    }
+    // Iterate sorted for deterministic diagnostic order.
+    let mut names: Vec<String> = proto_map.keys().cloned().collect();
+    names.sort();
+    for name in &names {
+        if *color.get(name).unwrap_or(&Color::White) == Color::White {
+            let mut path = Vec::new();
+            dfs_cycle(name, &proto_map, &mut color, &mut path, errors);
+        }
+    }
+    // 4: duplicate-method detection after flatten.
+    // Flatten без cycle (cycle уже reported) — guard через max-depth.
+    fn flatten_with_origin(
+        name: &str,
+        proto_map: &HashMap<String, (&Vec<EffectMethod>, &Vec<TypeRef>, Span)>,
+        seen: &mut HashSet<String>,
+        out: &mut Vec<(String, String, usize)>, // (origin_proto, method_name, arity)
+        origin: &str,
+    ) {
+        if !seen.insert(name.to_string()) { return; }
+        let Some((methods, embeds, _)) = proto_map.get(name) else { return; };
+        for m in methods.iter() {
+            out.push((origin.to_string(), m.name.clone(), m.params.len()));
+        }
+        for emb in embeds.iter() {
+            if let TypeRef::Named { path: p, .. } = emb {
+                if let Some(n) = p.last() {
+                    flatten_with_origin(n, proto_map, seen, out, n);
+                }
+            }
+        }
+    }
+    for (proto_name, (_, _, span)) in &proto_map {
+        let mut entries = Vec::new();
+        let mut seen = HashSet::new();
+        flatten_with_origin(proto_name, &proto_map, &mut seen, &mut entries, proto_name);
+        // Group by (name, arity). >1 distinct origins → duplicate.
+        let mut sig_origins: HashMap<(String, usize), Vec<String>> = HashMap::new();
+        for (orig, mname, arity) in entries {
+            sig_origins.entry((mname, arity)).or_default().push(orig);
+        }
+        for ((mname, arity), origins) in sig_origins {
+            // Уникальные источники (один и тот же origin >1 раз не считается).
+            let unique: HashSet<String> = origins.iter().cloned().collect();
+            if unique.len() > 1 {
+                let mut sources: Vec<String> = unique.into_iter().collect();
+                sources.sort();
+                errors.push(Diagnostic::new(
+                    format!(
+                        "[E_PROTOCOL_EMBED_DUPLICATE] method `{}/{}` in protocol \
+                         `{}` is provided by multiple embedded protocols: {}. \
+                         Protocol composition (D145 Ред. 5) does not yet support \
+                         override; remove one embed or define the method directly.",
+                        mname, arity, proto_name, sources.join(", ")
+                    ),
+                    *span,
+                ));
+            }
+        }
+    }
+}
+
+/// Plan 101.3 (D145 Ред. 5): валидация bound-имён в declaration
+/// generic-параметров. Для каждого `[T A + B + C]` проверяем, что
+/// каждое имя bound'а — это объявленный protocol, либо well-known
+/// stdlib-alias (Hashable/Eq/Ord/Display/Equatable/Comparable/ToStr/
+/// TryFrom/TryInto), либо primitive-имя (Q-representation-bound future).
+/// Если имя — record/sum/effect → error E_BOUND_NOT_PROTOCOL.
+/// Если имя вообще unknown → error E_BOUND_UNKNOWN.
+fn check_generic_bound_declarations(module: &Module, errors: &mut Vec<Diagnostic>) {
+    use std::collections::HashMap;
+    // Карта известных type-имён → kind hint.
+    let mut type_kinds: HashMap<String, &'static str> = HashMap::new();
+    for item in &module.items {
+        if let Item::Type(t) = item {
+            let kind_name = match &t.kind {
+                TypeDeclKind::Protocol { .. } => "protocol",
+                TypeDeclKind::Effect(_) => "effect",
+                TypeDeclKind::Record(_) => "record",
+                TypeDeclKind::Sum(_) => "sum",
+                TypeDeclKind::Alias(_) => "alias",
+                TypeDeclKind::Newtype(_) => "newtype",
+                TypeDeclKind::Opaque => "opaque",
+            };
+            type_kinds.insert(t.name.clone(), kind_name);
+        }
+    }
+    // Well-known stdlib alias names (legacy + Plan 62.E migrated).
+    let stdlib_aliases: &[&str] = &[
+        "Ord", "Eq", "ToStr", "TryFrom", "TryInto",
+        "Hashable", "Display", "Equatable", "Comparable",
+        "Iter", "From", "Into",
+    ];
+    // Primitive-имена (Q-representation-bound future):
+    let primitives: &[&str] = &[
+        "int", "i8", "i16", "i32", "i64",
+        "u8", "u16", "u32", "u64", "uint",
+        "f32", "f64", "bool", "char", "str", "any", "never",
+    ];
+    let check_bound = |b: &TypeRef, errors: &mut Vec<Diagnostic>| {
+        let TypeRef::Named { path, span, .. } = b else { return; };
+        let Some(name) = path.last() else { return; };
+        // Если у имени префикс (`std.collections.Iter`), берём последний.
+        // Allowed: protocol, alias, primitive.
+        if stdlib_aliases.contains(&name.as_str()) { return; }
+        if primitives.contains(&name.as_str()) { return; }
+        match type_kinds.get(name) {
+            Some(&"protocol") => { /* OK */ }
+            Some(&kind) => {
+                errors.push(Diagnostic::new(
+                    format!(
+                        "[E_BOUND_NOT_PROTOCOL] `{}` is a {}, not a protocol — \
+                         generic bounds must be protocol-types (D72). Consider \
+                         declaring `type {} protocol {{ ... }}` if structural \
+                         contract is intended.",
+                        name, kind, name
+                    ),
+                    *span,
+                ));
+            }
+            None => {
+                errors.push(Diagnostic::new(
+                    format!(
+                        "[E_BOUND_UNKNOWN] unknown type `{}` used as generic bound — \
+                         not a declared protocol, stdlib alias, or primitive. \
+                         Did you forget to declare/import it?",
+                        name
+                    ),
+                    *span,
+                ));
+            }
+        }
+    };
+    for item in &module.items {
+        match item {
+            Item::Fn(f) => {
+                for g in &f.generics {
+                    for b in &g.bounds {
+                        check_bound(b, errors);
+                    }
+                }
+            }
+            Item::Type(t) => {
+                for g in &t.generics {
+                    for b in &g.bounds {
+                        check_bound(b, errors);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
 /// Plan 15 (D72): registry РґР»СЏ bound enforcement.
 ///
 /// `protocol_specs`: РґР»СЏ РєР°Р¶РґРѕРіРѕ `type Foo protocol { ... }` вЂ” СЃРїРёСЃРѕРє
@@ -2278,7 +2779,12 @@ fn arity_diag(name: &str, info: &ArityInfo, actual: usize, span: Span) -> Diagno
 struct BoundCtx<'a> {
     /// Plan 15 D53 strict: С‚РѕР»СЊРєРѕ protocol-kind С‚РёРїРѕРІ. Effect-kind
     /// СЃСЋРґР° РЅРµ РїРѕРїР°РґР°РµС‚ вЂ” effects РЅРµ СЂР°Р·СЂРµС€РµРЅС‹ РєР°Рє D72 bounds.
-    protocol_specs: HashMap<String, &'a [EffectMethod]>,
+    ///
+    /// Plan 101.4 (D145 Ред. 5): значение — **flattened** список методов:
+    /// direct + recursive embedded protocol methods. Поэтому owned `Vec`,
+    /// а не borrow в AST (синтетическая копия после embed-expansion).
+    /// Flatten построен в `BoundCtx::build` через DFS с cycle-protection.
+    protocol_specs: HashMap<String, Vec<EffectMethod>>,
     /// Plan 15 D53 strict: effect-kind С‚РёРїС‹. РСЃРїРѕР»СЊР·СѓРµС‚СЃСЏ РґР»СЏ
     /// РґРёС„С„РµСЂРµРЅС†РёРёСЂРѕРІР°РЅРЅРѕРіРѕ error-СЃРѕРѕР±С‰РµРЅРёСЏ, РµСЃР»Рё РёС… РїС‹С‚Р°СЋС‚СЃСЏ
     /// РёСЃРїРѕР»СЊР·РѕРІР°С‚СЊ РєР°Рє bound (В«`Db` is an effect, not a protocolВ»).
@@ -2298,7 +2804,9 @@ struct BoundCtx<'a> {
 
 impl<'a> BoundCtx<'a> {
     fn build(module: &'a Module) -> Self {
-        let mut protocol_specs = HashMap::new();
+        // Plan 101.4: direct = name → (own methods, embed-typerefs).
+        // Используется для flatten DFS ниже.
+        let mut direct: HashMap<String, (Vec<EffectMethod>, Vec<TypeRef>)> = HashMap::new();
         let mut fn_decls: HashMap<String, Vec<&FnDecl>> = HashMap::new();
         let mut method_table: HashMap<String, HashMap<String, Vec<&FnDecl>>> = HashMap::new();
         let mut sum_variant_names: std::collections::HashSet<String> = std::collections::HashSet::new();
@@ -2311,8 +2819,11 @@ impl<'a> BoundCtx<'a> {
                     // bound (D72); effect-kind в†’ РѕС‚РґРµР»СЊРЅС‹Р№ registry РґР»СЏ
                     // РґРёР°РіРЅРѕСЃС‚РёРєРё В«used as bound but it's an effectВ».
                     match &t.kind {
-                        TypeDeclKind::Protocol(methods) => {
-                            protocol_specs.insert(t.name.clone(), methods.as_slice());
+                        TypeDeclKind::Protocol { methods, embeds } => {
+                            direct.insert(
+                                t.name.clone(),
+                                (methods.clone(), embeds.clone()),
+                            );
                         }
                         TypeDeclKind::Effect(_) => {
                             effect_decls.insert(t.name.clone(), t);
@@ -2341,6 +2852,41 @@ impl<'a> BoundCtx<'a> {
                 }
                 _ => {}
             }
+        }
+
+        // Plan 101.4 flatten: для каждого protocol'а собираем полный
+        // список методов = direct ∪ recursively-embedded. Cycle-protection
+        // через `seen` — если протокол повторно встречается в DFS, его
+        // методы НЕ добавляются повторно (silent skip; error diagnostic —
+        // в `check_protocol_embeds` отдельно). Duplicate-method конфликты
+        // тоже только в check_protocol_embeds; здесь — bag-union.
+        fn flatten_dfs(
+            name: &str,
+            direct: &HashMap<String, (Vec<EffectMethod>, Vec<TypeRef>)>,
+            seen: &mut std::collections::HashSet<String>,
+            out: &mut Vec<EffectMethod>,
+        ) {
+            if !seen.insert(name.to_string()) {
+                return;
+            }
+            let Some((methods, embeds)) = direct.get(name) else { return; };
+            for m in methods {
+                out.push(m.clone());
+            }
+            for e in embeds {
+                if let TypeRef::Named { path, .. } = e {
+                    if let Some(emb_name) = path.last() {
+                        flatten_dfs(emb_name, direct, seen, out);
+                    }
+                }
+            }
+        }
+        let mut protocol_specs: HashMap<String, Vec<EffectMethod>> = HashMap::new();
+        for name in direct.keys() {
+            let mut out = Vec::new();
+            let mut seen = std::collections::HashSet::new();
+            flatten_dfs(name, &direct, &mut seen, &mut out);
+            protocol_specs.insert(name.clone(), out);
         }
 
         BoundCtx { protocol_specs, effect_decls, fn_decls, method_table, sum_variant_names }
@@ -2687,7 +3233,7 @@ impl<'a> BoundCtx<'a> {
             return;
         };
         // Static-method-impl rejection (Ф.4.3).
-        for spec_m in *spec_methods {
+        for spec_m in spec_methods.iter() {
             if spec_m.is_static {
                 // Если literal реализует static-метод (по имени), diagnostic.
                 if methods.iter().any(|im| im.name == spec_m.name) {
@@ -2705,7 +3251,7 @@ impl<'a> BoundCtx<'a> {
         }
         // Structural-match: каждый instance-метод протокола должен быть реализован.
         let mut missing: Vec<String> = Vec::new();
-        for spec_m in *spec_methods {
+        for spec_m in spec_methods.iter() {
             if spec_m.is_static {
                 continue;
             }
@@ -2826,9 +3372,19 @@ impl<'a> BoundCtx<'a> {
             ExprKind::TurboFish { base, type_args } => (base, type_args.as_slice()),
             _ => (func.as_ref(), &[][..]),
         };
+        // Plan 101.2 (D145 Ред. 5): method-call bound enforcement.
+        // `xs.desc()` где xs : []NoShow, desc объявлен как
+        // `fn[T Showable_] []T @desc`. Подставить T = NoShow,
+        // проверить satisfaction. Раньше check_call_bounds работал
+        // только для free-fn call'ов — method-dispatch with bounded
+        // receiver-generic не enforce'ился.
+        if let ExprKind::Member { obj, name: method_name } = &base.kind {
+            self.check_method_call_bounds(obj, method_name, e.span, scope, errors);
+            return;
+        }
         let fn_name = match &base.kind {
             ExprKind::Ident(n) => n.clone(),
-            _ => return, // РјРµС‚РѕРґС‹ Рё С‚.Рї. вЂ” РѕС‚РґРµР»СЊРЅР°СЏ Р·Р°РґР°С‡Р°
+            _ => return,
         };
         // D84: fn_decls вЂ” Vec<&FnDecl>. Р РµР·РѕР»РІ overload РїРѕ arity (С‚Рѕ, С‡С‚Рѕ
         // bound-checker РјРѕР¶РµС‚ РѕРїСЂРµРґРµР»РёС‚СЊ Р±РµР· full type-inference).
@@ -2845,7 +3401,7 @@ impl<'a> BoundCtx<'a> {
             _ => return, // РЅРµС‚ РѕРґРЅРѕР·РЅР°С‡РЅРѕР№ overload РїРѕ arity вЂ” РїСЂРѕРїСѓСЃРєР°РµРј
         };
         // Bounds РїСЂРёСЃСѓС‚СЃС‚РІСѓСЋС‚?
-        let has_bounds = callee.generics.iter().any(|g| g.bound.is_some());
+        let has_bounds = callee.generics.iter().any(|g| !g.bounds.is_empty());
         if !has_bounds { return; }
         // РЎРјР°С‚С‡РёРј concrete T. РЎС‚СЂР°С‚РµРіРёСЏ:
         //   - turbofish вЂ” explicit type_args[i] РґР»СЏ callee.generics[i].
@@ -2871,16 +3427,90 @@ impl<'a> BoundCtx<'a> {
             }
         }
         // Р”Р»СЏ РєР°Р¶РґРѕРіРѕ bounded generic вЂ” РїСЂРѕРІРµСЂРёС‚СЊ.
+        // Plan 101.3: multi-bound `[T A + B]` — ALL bounds должны быть
+        // satisfied (conjunction). check_satisfaction вызывается на
+        // каждом bound отдельно — каждый missing-метод выдаст diagnostic.
         for gp in &callee.generics {
-            let Some(bound) = &gp.bound else { continue; };
+            if gp.bounds.is_empty() { continue; }
             let Some(concrete) = bindings.get(&gp.name) else {
                 // Inference РЅРµ СѓРґР°Р»Р°СЃСЊ вЂ” РїСЂРѕРїСѓСЃРєР°РµРј (best-effort).
                 // Strict-mode РјРѕРі Р±С‹ С‚СЂРµР±РѕРІР°С‚СЊ explicit turbofish.
                 continue;
             };
-            self.check_satisfaction(
-                concrete, bound, &gp.name, &fn_name, e.span, errors,
-            );
+            for bound in &gp.bounds {
+                self.check_satisfaction(
+                    concrete, bound, &gp.name, &fn_name, e.span, errors,
+                );
+            }
+        }
+    }
+
+    /// Plan 101.2 (D145 Ред. 5): bound enforcement для method-call
+    /// `obj.method(args)` где method объявлен с receiver-generic prefix
+    /// `fn[T Bound] []T @method` (или `fn[T Bound] T @method`). Inferим
+    /// concrete T из obj-type, для каждого bound checking satisfaction.
+    ///
+    /// **Surface**: только `fn[T] []T @method` (array-receiver) и
+    /// `fn[T] T @method` (bare-T receiver) — Plan 101.1 формы.
+    /// Tuple/Func/Map receivers — followup (V2 если нужно).
+    ///
+    /// **Best-effort**: если obj-type не resolvable или method
+    /// неоднозначен по arity — skip (silent, как и check_call_bounds
+    /// для free-fn'ов; codegen/runtime поймает на своём уровне).
+    fn check_method_call_bounds(
+        &self,
+        obj: &Expr,
+        method_name: &str,
+        span: Span,
+        scope: &HashMap<String, TypeRef>,
+        errors: &mut Vec<Diagnostic>,
+    ) {
+        // Inferим obj-type.
+        let Some(obj_ty) = Self::infer_arg_ty(obj, scope) else { return; };
+        // Определяем receiver-key и concrete substitution для T.
+        // Plan 101 surface:
+        //   []T  → key = "[]T", T = element type.
+        //   T    → key = "T",   T = obj-type whole (bare-receiver).
+        let (recv_key, concrete_t): (&str, TypeRef) = match &obj_ty {
+            TypeRef::Array(inner, _) => ("[]T", (**inner).clone()),
+            TypeRef::Named { path, .. } if path.last().map(|s| s.len()).unwrap_or(0) == 1 => {
+                // Bare-T receiver `fn[T] T @method` — но obj должен быть
+                // конкретным single-name type. Слишком permissive — skip
+                // если просто `[T]` без method_table-entry. Лучше: дождаться
+                // method-table lookup и если нашлось — substitute.
+                ("T", obj_ty.clone())
+            }
+            _ => return, // Non-array, non-single-name — skip.
+        };
+        // Lookup methods под этим receiver-key.
+        let Some(methods_for_recv) = self.method_table.get(recv_key) else { return; };
+        let Some(overloads) = methods_for_recv.get(method_name) else { return; };
+        // Take single match (skip if multiple overloads — codegen разрулит).
+        let callee: &FnDecl = match overloads.as_slice() {
+            [single] => single,
+            _ => return,
+        };
+        // Bounded generic-параметры?
+        if !callee.generics.iter().any(|g| !g.bounds.is_empty()) { return; }
+        // Substitution: для каждого generic-param с тем же именем что
+        // в receiver-type (T в []T или T в bare-T) — concrete_t. Для
+        // method-level generics (U, V, ...) — skip (нужен type-inference
+        // из args, что выходит за scope этого smoke check'а).
+        for gp in &callee.generics {
+            if gp.bounds.is_empty() { continue; }
+            // Только T matches receiver-substitution.
+            // Для recv_key="[]T" мы знаем что receiver-T это первый
+            // generic prefix (parser кладёт его первым). Для bare-T
+            // тоже первый. Substitute concrete_t для gp.name если он
+            // первый prefix-generic; для остальных — skip.
+            if callee.generics.first().map(|g| &g.name) != Some(&gp.name) {
+                continue;
+            }
+            for bound in &gp.bounds {
+                self.check_satisfaction(
+                    &concrete_t, bound, &gp.name, method_name, span, errors,
+                );
+            }
         }
     }
 
@@ -3367,7 +3997,7 @@ impl<'a> BoundCtx<'a> {
         // Plan 97 Ф.2: shared satisfaction-логика с anon-вариантом.
         self.check_satisfaction_against_methods(
             concrete,
-            *spec_methods,
+            spec_methods.as_slice(),
             Some(&bound_name),
             type_param_name,
             fn_name,
@@ -5665,7 +6295,8 @@ fn check_effect_axioms(module: &Module, errors: &mut Vec<Diagnostic>) {
         // РїСЂРёРјРµРЅСЏСЋС‚СЃСЏ Рё Рє effect, Рё Рє protocol (РІ РѕР±РѕРёС… РјРѕР¶РЅРѕ РѕР±СЉСЏРІР»СЏС‚СЊ
         // #pure ops Рё axioms).
         let methods = match &td.kind {
-            TypeDeclKind::Effect(m) | TypeDeclKind::Protocol(m) => m,
+            TypeDeclKind::Effect(m) => m,
+            TypeDeclKind::Protocol { methods, .. } => methods,
             _ => continue,
         };
 

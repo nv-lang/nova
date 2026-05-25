@@ -1,0 +1,44 @@
+// Plan 101.4 — positive: protocol композирует embed + добавляет
+// собственные методы. Concrete type должен удовлетворить ВСЕ
+// (direct + flatten'нутые из embed'ов).
+
+module nova_tests.plan101_4.compose_mix_direct
+
+
+type Reader protocol {
+    read() -> str
+}
+
+type Closeable protocol {
+    close() -> bool
+}
+
+// ReadCloseLogger = Reader + Closeable + собственный log-метод.
+type ReadCloseLogger protocol {
+    use Reader
+    use Closeable
+    log(msg str) -> int
+}
+
+
+type Device {
+    tag str
+}
+
+fn Device @read() -> str => "dev:${@tag}"
+fn Device @close() -> bool => true
+fn Device @log(msg str) -> int => msg.len()
+
+
+fn use_dev[T ReadCloseLogger](x T) -> int {
+    let _ = x.read()
+    let _ = x.close()
+    x.log("hello")
+}
+
+
+test "embed + direct method composition" {
+    let d = Device { tag: "x" }
+    let n = use_dev(d)
+    assert(n == 5)
+}

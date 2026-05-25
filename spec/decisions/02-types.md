@@ -5139,30 +5139,46 @@ Codepoint-indexed (как существующий `nova_str_slice` метод).
 
 ## D145. `fn[T]` префикс — receiver-generic decl + bounds (Plan 101)
 
-> **Status:** PARTIAL — Plan 101.1 parser + int-mono codegen ✅ (2026-05-24,
-> ред. 3 + impl ред. 4). Plan 101.2/3/4/5 + array mono-per-T codegen — pending
-> follow-up sessions.
-> Реализация — [Plan 101](../../docs/plans/101-receiver-generic-prefix.md)
-> roadmap + 5 sub-plan'ов (101.1/2/3/4/5). Расширяет
-> [D72](#d72-generic-bounds-через-t-protocol--protocol-как-тип)
-> (`[T Bound]` syntax) на новую позицию + закрывает open question
-> по protocol composition (D53).
+> **Status:** MOSTLY CLOSED (2026-05-25, ред. 6 — Plan 101.1/2/3/4 ✅,
+> 101.5 partial). Plan 101.1 codegen для non-int mono-dispatch — единственная
+> deferred edge case (marker [M-fn-prefix-int-only-mono] в simplifications.md).
 >
-> **Реализовано (Plan 101.1 partial, 2026-05-24):**
-> - Parser: `fn[T] ReceiverType @method` синтаксис.
-> - Codegen mono dispatch для `fn[T] []T @method` — **только `[]int`
->   element type** (int-mono fallback). Other element types (`[]str`,
->   `[]User`) — marker [M-fn-prefix-int-only-mono] (deferred ~4-6h).
-> - vec.nv migration: 7 методов работают (int-array tests PASS).
+> **Реализовано (Plan 101.1–101.4 + 101.2):**
+> - **101.1** ✅ — Parser `fn[T] ReceiverType @method` + 5 disambiguation
+>   error codes (E_UNDECLARED_TYPEVAR_IN_RECEIVER, E_BARE_TYPEVAR_NEEDS_PREFIX,
+>   E_DUPLICATE_GENERIC_DECL, E_PREFIX_SHADOWS_NAMED_TYPE, E_UNUSED_PREFIX_TYPEVAR).
+>   Codegen mono `[]int` element + bare-T + non-int element (через Plan 95
+>   array-ext infrastructure). vec.nv migration: 7 методов.
+> - **101.2** ✅ — Bound integration: method-call bound enforcement
+>   (check_method_call_bounds в types/mod.rs); receiver-generic `fn[T Bound] []T @m`
+>   ловит violation на call-site `xs.m()`.
+> - **101.3** ✅ — Multi-bound `[T A + B]`: GenericParam.bound → bounds Vec,
+>   parser `+ Type` chain, type-check iterate all bounds (conjunction),
+>   strict check_generic_bound_declarations (E_BOUND_UNKNOWN /
+>   E_BOUND_NOT_PROTOCOL).
+> - **101.4** ✅ — Protocol composition `use TypeName` в protocol body:
+>   AST TypeDeclKind::Protocol { methods, embeds }, parser parse_protocol_body,
+>   type-check flatten DFS + 5 диагностик (E_PROTOCOL_EMBED_{UNKNOWN,
+>   NOT_PROTOCOL, CYCLE, DUPLICATE, AFTER_METHOD, NOT_NAMED}).
+> - **101.5 partial** — stdlib audit: только vec.nv использует fn[T] prefix
+>   (7 методов работают; non-int — deferred). HashMap/PQ/Lru используют
+>   carrier-brackets (Plan 15 D72 path, unchanged).
 >
-> **НЕ реализовано (deferred):**
-> - Type-checker disambiguation (4 error codes) — Plan 101.1 Ф.2.
-> - Mono-per-T codegen для non-int array elements — Plan 101.1 Ф.3 ext.
-> - Bare-T receiver dispatch — Plan 101.3.
-> - Bound integration `fn[T Hashable]` runtime — Plan 101.2.
-> - Multi-bound `[T A + B]` — Plan 101.3.
-> - Protocol composition `use A, B` — Plan 101.4.
-> - Stdlib audit + LSP — Plan 101.5.
+> **Deferred (followup):**
+> - vec_map_int_str — T=int U=str cross-type case (M-fn-prefix-int-only-mono).
+> - LSP quick-fixes (Plan 101.5 V2).
+>
+> **Ред. 3 (2026-05-24):** complete rewrite после critical review.
+> Ред. 1 описывала narrow `fn[T]` only. Ред. 2 ошибочно ввела
+> implicit-T (моя misinterpretation D35). Ред. 3 — finalized design:
+> **никакого implicit T**, `fn[T]` префикс обязателен везде где
+> receiver не имеет carrier-brackets, + bounds через existing D72,
+> + multi-bound `+`, + protocol composition `use Foo`.
+>
+> **Ред. 5 (2026-05-25):** Plan 101.3 (multi-bound `[T A + B]`)
+> и Plan 101.4 (protocol composition `use TypeName` — pivot от
+> earlier discussion A1 `use A, B` к более читаемому line-per-use)
+> финализированы и реализованы.
 >
 > **Ред. 3 (2026-05-24):** complete rewrite после critical review.
 > Ред. 1 описывала narrow `fn[T]` only. Ред. 2 ошибочно ввела
@@ -5297,6 +5313,20 @@ fn[T ReadWriter] []T @process() => ...
 - Resulting method-set = union(A, B, C, own_methods).
 - Multiple `use`-statements аккумулируются: `use A, B; use C` ≡ `use A, B, C`.
 - T satisfies composed-protocol ⟺ T has все methods из union.
+
+**Реализация ред. 5 (2026-05-25, Plan 101.4):**
+- Парсер поддерживает обе формы: `use A, B` (comma-list, как в spec)
+  и `use A\n  use B` (line-per-use, более читаемо в большом protocol'е).
+- Все `use`-items должны идти В НАЧАЛЕ protocol body — interleaving
+  с методами запрещён (E_PROTOCOL_EMBED_AFTER_METHOD). Это упрощает
+  чтение: сначала видишь "состав", потом "новое".
+- Type-check ловит:
+  * E_PROTOCOL_EMBED_UNKNOWN — embed target не объявлен.
+  * E_PROTOCOL_EMBED_NOT_PROTOCOL — target существует, но не protocol.
+  * E_PROTOCOL_EMBED_CYCLE — `A use B` ↔ `B use A` (или self-embed).
+  * E_PROTOCOL_EMBED_DUPLICATE — после flatten'а ≥2 method из разных
+    embed-источников с тем же (name, arity). Override-механизм отложен.
+  * E_PROTOCOL_EMBED_NOT_NAMED — `use <complex type>` запрещено.
 
 **Literal-composition — отвергнута:**
 

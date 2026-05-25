@@ -1,0 +1,34 @@
+// Plan 101.3 — positive: three bounds `[T A + B + C]`.
+
+module nova_tests.plan101_3.multibound_three
+
+
+type HasA protocol {
+    a() -> int
+}
+
+type HasB protocol {
+    b() -> int
+}
+
+type HasC protocol {
+    c() -> int
+}
+
+
+type Triple {
+    x int
+}
+
+fn Triple @a() -> int => @x * 1
+fn Triple @b() -> int => @x * 2
+fn Triple @c() -> int => @x * 3
+
+
+fn sum_abc[T HasA + HasB + HasC](v T) -> int => v.a() + v.b() + v.c()
+
+
+test "three-bound conjunction" {
+    let t = Triple { x: 5 }
+    assert(sum_abc(t) == 30)
+}

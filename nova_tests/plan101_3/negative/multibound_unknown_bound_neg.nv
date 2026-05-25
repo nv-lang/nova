@@ -1,0 +1,18 @@
+// Plan 101.3 — negative: один из multi-bound'ов не объявлен.
+//
+// EXPECT_COMPILE_ERROR [E_BOUND_UNKNOWN]
+
+module nova_tests.plan101_3.negative.multibound_unknown_bound_neg
+
+
+type HasA protocol {
+    a() -> int
+}
+
+
+fn f[T HasA + NonExistentProtocol](x T) -> int => x.a()
+
+
+test "should error" {
+    assert(1 == 1)
+}
