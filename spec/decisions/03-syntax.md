@@ -4259,28 +4259,48 @@ counter = 42
 Это симметрично closure-семантике D32 (managed heap, mut-captures
 through reference).
 
-**4. Defer body — infallible.** Тело `defer`/`errdefer` **не должно**
-иметь `Fail`-эффект:
+**4. Defer body — Fail-allowed с composition** _(amended by [D158](#d158),
+Plan 100.4.1, 2026-05-23)._ Тело `defer`/`errdefer` **может** иметь
+`Fail[E]`-эффект; cleanup-failure композируется с propagating error через
+Plan 49 multi-error infrastructure. Enclosing fn-sig **обязан** declare
+`Fail[E']` с совместимым `E ⊆ E'`.
 
 ```nova
-defer file.close()                              // ✅ если close infallible
-defer parse_config()?                            // ❌ ? requires Fail
+fn process() Fail[CommitErr] -> () {
+    consume tx = begin()
+    defer { tx.commit() }                       // ✅ Fail[CommitErr] body
+    do_work()?                                   // throws WorkErr
+    // composite: { primary: WorkErr, suppressed: [CommitErr] }
+}
 ```
 
-Если cleanup может упасть — программист **обязан** suppress'ить:
+Если defer body имеет `Fail[E]`, но enclosing fn-sig не declares Fail —
+**compile error** `D158-defer-fail-not-in-sig`. Это force'ит explicit
+visibility cleanup-fail в API.
+
+Backward-compat: handler-wrap pattern **продолжает работать** как
+opt-in shorthand для silent-suppress:
 
 ```nova
 defer {
     with Fail = handler {
         fail(e) { Log.error("cleanup failed: ${e}"); interrupt () }
     } {
-        risky_cleanup()
+        risky_cleanup()                          // Fail caught в inner with
     }
 }
 ```
 
-Это сознательно — language **запрещает** скрытое поглощение ошибок.
-Если упало — программист видит в коде.
+Подробно — composition rules, MultiError API, diagnostic format —
+[D158](#d158).
+
+**Historical (pre-D158, Plan 20 Ред. 1):** body было **infallible** —
+любой `Fail[E]` в defer body выдавал compile error. Programmer обязан
+был ручной handler-wrap. D158 (Plan 100.4.1) снял это ограничение,
+сохранив **compile-time visibility** через required fn-sig `Fail[E']`
+declaration. Скрытого поглощения ошибок по-прежнему нет: cleanup-fail
+видна either как composite-error caller'у, либо через explicit handler-
+wrap внутри defer.
 
 **5. Defer body — no-suspend.** В теле `defer`/`errdefer` **запрещены**
 suspend-операции: `Time.sleep`, `Net.*`, `Fs.*` (если читают/пишут
@@ -4293,7 +4313,7 @@ exit-семантику scope'а непредсказуемой.
 Sync-операции с эффектами (`Db.exec` для быстрого SQL, `Log.info`)
 — разрешены.
 
-**6. Top-level `return` / `throw` / `break` / `continue` в defer-body —
+**6. Top-level `return` / `break` / `continue` / `interrupt` в defer-body —
 запрещены (Вариант 3 — Plan 20 Ф.3 revised).** Нельзя hijack scope-exit
 окружающей функции/цикла через defer — defer **сам** часть exit-процесса.
 
@@ -4303,8 +4323,11 @@ Sync-операции с эффектами (`Db.exec` для быстрого S
   (`return` локален к этому fn-литералу, не к enclosing fn).
 - `break` / `continue` — разрешены внутри **nested loop** (for/while/loop)
   в defer body (локальны к этому loop'у, не к enclosing).
-- `throw` / `?` / `!!` / `interrupt` — **всегда** запрещены на любом
-  уровне (defer body должен оставаться infallible — пункт 4).
+- `interrupt` — **всегда** запрещён на любом уровне (hijack scope-exit
+  с-effect-block'а; не failable cleanup).
+- `throw` / `?` / `!!` — **разрешены** _(D158, Plan 100.4.1)_ если
+  enclosing fn-sig объявляет `Fail[E]`; cleanup-fail композируется через
+  Plan 49 multi-error (см. пункт 4 и [D158](#d158)).
 
 ```nova
 defer {
@@ -4422,22 +4445,43 @@ i = 42
 Eager arguments + lazy closures (через captures) — баланс. Это путь
 Go (которому 15 лет программистской практики симпатизируют).
 
-#### Почему infallible body
+#### Почему failable body + composition (а не infallible — historical)
+
+_Plan 20 Ред. 1 (2026-05-11) выбрал infallible body. **D158 (Plan 100.4.1,
+2026-05-23) revised** к failable + composition. Аргументы._
 
 Допустим, defer-body может падать:
 ```nova
-fn process() Fail -> () {
-    defer file.close()              // что если close бросает?
-    throw OrderError
+fn process() Fail[CommitErr] -> () {
+    consume tx = begin()
+    defer { tx.commit() }           // commit may fail
+    do_work()?                       // throws WorkErr
+    // exit: WorkErr propagating → defer fires → commit throws CommitErr → ???
 }
-// exit: throw OrderError → cleanup → file.close throws → ???
 ```
 
-Double-throw — невозможно представить корректно. Языки решают
-по-разному (suppress, abort, accumulate exceptions). Все плохо.
+Языки решают по-разному:
+- **Rust:** panic-in-Drop = `abort()` процесса. Безопасно, но programming
+  совершенно непрактичен — `tx.rollback()` который может fail = abort.
+- **Go:** defer возвращает error через named return — manual handling,
+  легко пропустить. На практике все игнорируют.
+- **TS (ES2024) / Java:** `Symbol.dispose` / `close()` throws → composite
+  `SuppressedError` / `addSuppressed()` chain. Структурированно, caller
+  видит весь chain.
 
-Nova **запрещает** failable cleanup — программист обязан handle
-явно. Это согласовано с D40 «один очевидный путь».
+**Nova D158 выбрал TS/Java-подход:** composition через `MultiError` chain.
+Plan 49 multi-error infrastructure уже даёт kinded throws + typed payload;
+D158 добавляет `nv_compose_suppressed` для chain append'а и MultiError
+prelude type для caller-side inspection.
+
+**Visibility сохранена через fn-sig:** enclosing fn-sig обязан declare
+`Fail[E']` где `E ⊆ E'` для defer body. Без этого — compile error
+`D158-defer-fail-not-in-sig`. Это сильнее Go/TS (которые не enforce'ят
+visibility в сигнатуре), сравнимо с Java checked exceptions, но без
+их verbosity — `Fail[E]` уже часть base effect-system.
+
+**Backward-compat:** handler-wrap pattern сохраняется как opt-in
+shorthand для silent suppress (см. пункт 4 example).
 
 #### Почему no-suspend
 
@@ -4457,7 +4501,10 @@ scope ждёт defer'ов всех детей, scheduling непредсказу
   без него boilerplate тот же что и без `defer`. Включаем сразу.
 - **Lazy argument evaluation** — surprise factor, eager — стандарт
   Go/Swift/Zig/D.
-- **Failable defer body** — double-throw невозможно сделать корректно.
+- **Failable defer body banned-as-such** — first revision (Plan 20)
+  запретила Fail в defer body absolutely. **Revised D158 (Plan 100.4.1):**
+  failable body разрешён с composition через Plan 49 multi-error chain
+  (`MultiError`); fn-sig обязан declare `Fail[E']`. См. пункт 4.
 - **`defer return X`** — нельзя hijack exit-значение через defer.
 - **`recover` (Go)** — поглощение panic из defer. Сложная семантика,
   не нужно в Nova (panic — смерть fiber'а, D13).

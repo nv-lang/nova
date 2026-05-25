@@ -5311,3 +5311,8 @@ extern __thread NovaVtable_Fail_any* _nova_handler_Fail_any;
 - [Plan 49](../../docs/plans/49-cancel-throw-routing.md) — симметричная
   typed-payload infra для CANCEL kanal. Plan 61 — для USER kanal. Две
   оси параллельны.
+- [D158](03-syntax.md#d158) — failable defer/errdefer body. Расширяет
+  `NovaFailFrame` полем `error_suppressed` (singly-linked `NovaErrorChain`)
+  для multi-error composition при cleanup-fail во время propagation.
+  Plan 100.4.1 (2026-05-23 proposed; runtime impl extends этот D118
+  fail-frame layout).
