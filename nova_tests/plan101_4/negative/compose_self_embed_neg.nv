@@ -1,0 +1,15 @@
+// Plan 101.4 — negative: protocol embed'ит сам себя.
+// Тривиальный cycle случай.
+//
+// EXPECT_COMPILE_ERROR: [E_PROTOCOL_EMBED_CYCLE]
+
+module nova_tests.plan101_4.negative.compose_self_embed_neg
+
+type SelfRef protocol {
+    use SelfRef
+    m() -> int
+}
+
+test "should error" {
+    assert(1 == 1)
+}

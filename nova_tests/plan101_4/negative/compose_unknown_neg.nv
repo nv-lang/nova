@@ -1,0 +1,14 @@
+// Plan 101.4 — negative: `use Unknown` где Unknown не объявлен.
+//
+// EXPECT_COMPILE_ERROR: [E_PROTOCOL_EMBED_UNKNOWN]
+
+module nova_tests.plan101_4.negative.compose_unknown_neg
+
+type BadProto protocol {
+    use NonExistentType
+    m() -> int
+}
+
+test "should error" {
+    assert(1 == 1)
+}

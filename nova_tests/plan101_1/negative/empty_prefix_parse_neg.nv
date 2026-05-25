@@ -1,0 +1,12 @@
+// C5 — empty fn[] prefix collides with `[]T` slice-receiver parser path.
+// Parser treats `fn[] T` as `fn []T` (slice-receiver). B1 fires.
+//
+// EXPECT_COMPILE_ERROR: [E_UNDECLARED_TYPEVAR_IN_RECEIVER]
+
+module nova_tests.plan101_1.negative.empty_prefix_parse_neg
+
+fn[] T @bad() -> T => @
+
+test "should error" {
+    assert(1 == 1)
+}

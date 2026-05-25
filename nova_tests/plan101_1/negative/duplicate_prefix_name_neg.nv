@@ -1,0 +1,11 @@
+// C6 — duplicate generic name `fn[T, T]` → parse error.
+//
+// EXPECT_COMPILE_ERROR
+
+module nova_tests.plan101_1.negative.duplicate_prefix_name_neg
+
+fn[T, T] T @bad() -> T => @
+
+test "should error" {
+    assert(1 == 1)
+}

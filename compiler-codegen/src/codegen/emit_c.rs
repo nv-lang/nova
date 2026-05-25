@@ -1554,7 +1554,7 @@ impl CEmitter {
         for item in &module.items {
             if let Item::Type(t) = item {
                 if t.generics.is_empty() {
-                    if let crate::ast::TypeDeclKind::Protocol(methods) = &t.kind {
+                    if let crate::ast::TypeDeclKind::Protocol { methods, .. } = &t.kind {
                         self.protocol_types.insert(t.name.clone());
                         self.protocol_method_registry.insert(
                             t.name.clone(),
@@ -1611,7 +1611,7 @@ impl CEmitter {
                     // `Nova_Iter*` для protocol-typed parameters → CC-FAIL
                     // `unknown type name 'Nova_Iter'` (regression от merge'а
                     // main↔plan-62-main).
-                    if let crate::ast::TypeDeclKind::Protocol(methods) = &t.kind {
+                    if let crate::ast::TypeDeclKind::Protocol { methods, .. } = &t.kind {
                         self.protocol_types.insert(t.name.clone());
                         // Plan 72 P3-B: register method signatures for vtable generation.
                         let type_params: Vec<String> = t.generics.iter()
@@ -7405,7 +7405,7 @@ impl CEmitter {
             // Self в protocol-методе ломал vtable (Nova_Self*
             // undefined). Без vtable type_ref_to_c для protocol-методов
             // вообще не вызывается.
-            TypeDeclKind::Protocol(_) => {}
+            TypeDeclKind::Protocol { .. } => {}
             // Plan 62.D.bis (D126): unreachable — early-return on top
             // of emit_type_decl уже отфильтровал Opaque kind. Branch
             // present для exhaustiveness; semantically meaningful no-op.
@@ -9388,7 +9388,10 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                         Some((_, Some(c))) => c.clone(),
                         _ => continue,
                     };
-                    let bound_ref = match &gp.bound {
+                    // Plan 101.3: multi-bound — для codegen mono-dispatch
+                    // используем первый bound (typical use). Дополнительные
+                    // bounds участвуют только в type-check satisfaction.
+                    let bound_ref = match gp.bounds.first() {
                         Some(b) => b,
                         None => continue,
                     };

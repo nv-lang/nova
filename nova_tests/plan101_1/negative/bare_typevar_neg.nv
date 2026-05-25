@@ -1,0 +1,11 @@
+// Plan 101.1 B2 C2 negative — `fn T @method` без `fn[T]` префикса и без named T.
+//
+// EXPECT_COMPILE_ERROR: [E_BARE_TYPEVAR_NEEDS_PREFIX]
+
+module nova_tests.plan101_1.negative.bare_typevar_neg
+
+fn T @bad_bare() -> T => @
+
+test "should error" {
+    assert(1 == 1)
+}

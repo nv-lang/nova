@@ -1,0 +1,43 @@
+// Plan 101.4 (D145 Ред. 5) — positive: protocol composition via
+// `use TypeName`. `ReadWriter` композирует `Reader` + `Writer`;
+// type satisfies `ReadWriter` iff it satisfies оба embedded protocol'а.
+
+module nova_tests.plan101_4.compose_basic
+
+
+type Reader protocol {
+    read() -> str
+}
+
+type Writer protocol {
+    write(s str) -> int
+}
+
+// Composition: ReadWriter = Reader + Writer (без своих методов).
+type ReadWriter protocol {
+    use Reader
+    use Writer
+}
+
+
+type MyFile {
+    name str
+}
+
+fn MyFile @read() -> str => "data from ${@name}"
+fn MyFile @write(s str) -> int => s.len()
+
+
+// Generic bounded функция: T должен удовлетворить ReadWriter →
+// автоматически satisfies Reader И Writer (через flatten).
+fn use_rw[T ReadWriter](x T) -> str {
+    let _ = x.write("ping")
+    x.read()
+}
+
+
+test "ReadWriter composition: MyFile satisfies both embedded protocols" {
+    let f = MyFile { name: "log.txt" }
+    let s = use_rw(f)
+    assert(s == "data from log.txt")
+}
