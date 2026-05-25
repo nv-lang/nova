@@ -1,0 +1,30 @@
+// Plan 100.6 (D164, Plan 84 D29 rev-4): relative imports — consume-marker
+// propagates correctly через `./types` import. No special-case rules:
+// relative imports treat consume identically to absolute imports.
+//
+// Simulated single-file mock: `./types.Connection` consume-type.
+
+module nova_tests.plan100_6.relative_import_consume_ok
+
+// "./types.nv" (simulated inline):
+export type Connection consume {
+    host str,
+    port int,
+}
+
+export fn Connection consume @close() -> () { () }
+
+fn Connection_make(host str, port int) -> Connection => {
+    host,
+    port,
+}
+
+export fn Connection_open(host str, port int) -> Connection => Connection_make(host, port)
+
+// "main.nv" uses relative import `./types.Connection`:
+// import ./types.{Connection, Connection_open}
+
+test "relative import — consume-marker preserved" {
+    consume conn = Connection_open("localhost", 5432)
+    conn.close()                                    // ✅ consume-marker preserved
+}

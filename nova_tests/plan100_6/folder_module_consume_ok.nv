@@ -1,0 +1,34 @@
+// Plan 100.6 (D164, Plan 42 D29): folder-module consume-types работают
+// корректно. Folder-module pattern: types/file.nv + types/socket.nv
+// содержат consume-types, доступные из outer modules.
+//
+// Simulated single-file mock: folder-module с consume-types.
+
+module nova_tests.plan100_6.folder_module_consume_ok
+
+// "resources/" folder-module — File + Socket consume-types:
+
+export type File consume {
+    fd int,
+}
+
+export fn File consume @close() -> () { () }
+fn File_make(fd int) -> File => { fd }
+export fn File_open(path int) -> File => File_make(path)
+
+export type Socket consume {
+    port int,
+}
+
+export fn Socket consume @disconnect() -> () { () }
+fn Socket_make(port int) -> Socket => { port }
+export fn Socket_connect(port int) -> Socket => Socket_make(port)
+
+// "main.nv" — uses folder-module consume-types:
+
+test "folder-module consume-types — File + Socket closed" {
+    consume f = File_open(1)
+    consume s = Socket_connect(8080)
+    f.close()
+    s.disconnect()
+}

@@ -1,0 +1,36 @@
+// Plan 100.6 (D164 + D53 protocol): consume-type satisfies a protocol.
+// cross-package protocol with consume-typed implementations.
+// The protocol defines a contract; consume types can satisfy it.
+
+module nova_tests.plan100_6.cross_pkg_consume_via_protocol_ok
+
+// "Package A" — protocol definition:
+export type Resource protocol {
+    cleanup() -> ()
+}
+
+// "Package B" — consume-type that satisfies Resource protocol:
+export type DbConnection consume {
+    id int,
+}
+
+export fn DbConnection consume @cleanup() -> () { () }    // satisfies Resource.cleanup
+export fn DbConnection consume @close() -> () { () }
+
+fn DbConnection_make(id int) -> DbConnection => { id }
+export fn DbConnection_open(id int) -> DbConnection => DbConnection_make(id)
+
+// helper: take any resource and clean it up
+fn drain(consume conn DbConnection) -> () {
+    conn.cleanup()
+}
+
+test "consume-type satisfies protocol — cross-package" {
+    consume conn = DbConnection_open(1)
+    drain(conn)                                     // ✅ consume-param accepts
+}
+
+test "consume-type direct consume-method" {
+    consume conn = DbConnection_open(2)
+    conn.close()                                    // ✅ direct consume-method
+}

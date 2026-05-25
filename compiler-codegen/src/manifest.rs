@@ -16,6 +16,7 @@
 //! `key = "..."` по секциям + array-of-tables не нужен (`[dependencies]`
 //! — плоская секция `name = <spec>`).
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 /// Plan 03.1: git-пин зависимости.
@@ -83,6 +84,21 @@ pub struct Manifest {
     /// Plan 03.1: внешние зависимости из `[dependencies]`. Пусто, если
     /// секция отсутствует.
     pub dependencies: Vec<Dependency>,
+    /// Plan 100.6 (D164 §6): `[exports.consume_types]` — пакетный контракт
+    /// на consume-статус типов. Ключ = имя типа, значение = версия контракта
+    /// (semver major-string, напр. `"1.0"`). Пусто, если секция отсутствует.
+    ///
+    /// Семантика: потребители могут полагаться на неизменность consume-статуса
+    /// типа в рамках указанной major-версии. Изменение consume-статуса без
+    /// major-bump — ABI-break (D164 §2).
+    ///
+    /// Пример в nova.toml:
+    /// ```toml
+    /// [exports.consume_types]
+    /// Transaction = "1.0"
+    /// Resource    = "1.0"
+    /// ```
+    pub exports_consume_types: HashMap<String, String>,
 }
 
 /// Plan 03.1 / 03.4: quote- и bracket-aware разбор тела inline-таблицы
@@ -238,7 +254,10 @@ pub fn parse_manifest(toml_path: &Path, dir: &Path) -> Option<Manifest> {
     let mut edition: Option<String> = None;
     let mut enforce_stability: bool = false;
     let mut dependencies: Vec<Dependency> = Vec::new();
-    let mut section: &str = "";
+    // Plan 100.6 (D164 §6): [exports.consume_types] — type_name → version_contract.
+    let mut exports_consume_types: HashMap<String, String> = HashMap::new();
+    // Section tracking: use String to support "exports.consume_types".
+    let mut section = String::new();
 
     for raw in text.lines() {
         let line = raw.trim();
@@ -246,19 +265,15 @@ pub fn parse_manifest(toml_path: &Path, dir: &Path) -> Option<Manifest> {
             continue;
         }
         if line.starts_with('[') {
-            // [section] or [[section]]
-            let inner = line.trim_start_matches('[').trim_end_matches(']');
+            // [section] or [[section]] — strip all leading/trailing `[` `]`.
+            let inner = line.trim_start_matches('[').trim_end_matches(']').trim();
             section = match inner {
-                "package"      => "package",
-                "lib"          => "lib",
-                "dependencies" => "dependencies",
-                _              => "",  // ignore other sections
-            };
-            // Note: `&'static str` can't be assigned from a String slice;
-            // we work around with hardcoded match arms. Section names we
-            // care about are fixed ("package", "lib"), so this works.
-            // Suppress unused warning on `section` reassignment.
-            let _ = section;
+                "package"              => "package",
+                "lib"                  => "lib",
+                "dependencies"         => "dependencies",
+                "exports.consume_types" => "exports.consume_types",
+                _                      => "",  // ignore other sections
+            }.to_string();
             continue;
         }
         // key = "value" or key = bool — minimal parsing.
@@ -278,7 +293,12 @@ pub fn parse_manifest(toml_path: &Path, dir: &Path) -> Option<Manifest> {
                 });
                 continue;
             }
-            match (section, key) {
+            // Plan 100.6 (D164 §6): [exports.consume_types] — type_name = "version".
+            if section == "exports.consume_types" {
+                exports_consume_types.insert(key.to_string(), str_val);
+                continue;
+            }
+            match (section.as_str(), key) {
                 ("package", "name") => package_name = Some(str_val),
                 // Plan 62.F.bis Ф.1: `[package].edition = "2026.05"` pin
                 // для prelude content. Опционально — отсутствие → rolling.
@@ -312,6 +332,7 @@ pub fn parse_manifest(toml_path: &Path, dir: &Path) -> Option<Manifest> {
         edition,
         enforce_stability,
         dependencies,
+        exports_consume_types,
     })
 }
 
