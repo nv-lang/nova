@@ -12142,3 +12142,26 @@ capabilities; без неё Nova не достигает заявленной re
     или mature interp-debugger).
   - Inlay hints / semantic tokens / call hierarchy — V2 (nice-to-have).
   - Refactorings (extract function/type) — V2 (rename в V1).
+
+## Plan 100.4.3: okdefer + defer |result| — D160 (2026-05-25)
+
+### Реализовано
+- `okdefer body` — success-only cleanup (complement к errdefer)
+- `defer |result| body` — reason-aware form (синтаксис; binding injection — future)
+- DeferKind enum в codegen: Plain/ErrDefer/OkDefer/WithResult
+- Точные error messages для каждого keyword в check_defer_body
+- 11 фикстур (7 pos + 4 neg): PASS
+
+### Упрощения vs spec D160
+1. **result-binding injection пропущена** — `defer |_result| { ... }` работает как
+   plain defer; `result` в теле не инжектируется в scope. Причина: требует
+   DeferResult[T,E] prelude type + type-inference для T и E в точке defer-statement.
+   Отложено на отдельную фазу. Текущие тесты используют `_result` (ignored).
+
+2. **okdefer body ограничен как defer/errdefer (INFALLIBLE+NO-SUSPEND)** — Plan 100.4.1
+   (failable body) и 100.4.2 (async/suspend) не реализованы. Когда они придут,
+   эти restrictions будут сняты.
+
+3. **DeferWithResult runs on all paths** как plain defer (пока result не инжектируется).
+   Финальное поведение (когда result injection будет готов): WithResult fires всегда
+   (передаёт exit-reason в тело).
