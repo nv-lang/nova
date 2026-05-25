@@ -97,7 +97,8 @@ impl LspProcess {
         }));
     }
 
-    fn read_response(&mut self) -> serde_json::Value {
+    /// Read one raw JSON-RPC message from stdout.
+    fn read_one(&mut self) -> serde_json::Value {
         let mut content_length: usize = 0;
         loop {
             let mut line = String::new();
@@ -110,10 +111,23 @@ impl LspProcess {
                 content_length = rest.trim().parse().expect("parse content-length");
             }
         }
-        assert!(content_length > 0, "response with Content-Length: 0");
+        assert!(content_length > 0, "message with Content-Length: 0");
         let mut body = vec![0u8; content_length];
         self.reader.read_exact(&mut body).expect("read body");
-        serde_json::from_slice(&body).expect("parse JSON response")
+        serde_json::from_slice(&body).expect("parse JSON")
+    }
+
+    /// Read messages until one with `id == expected_id` arrives.
+    ///
+    /// Skips over notifications (e.g., publishDiagnostics) which don't have `id`.
+    fn read_response_id(&mut self, expected_id: u64) -> serde_json::Value {
+        loop {
+            let msg = self.read_one();
+            if msg.get("id").and_then(|v| v.as_u64()) == Some(expected_id) {
+                return msg;
+            }
+            // Skip notifications / unrelated messages
+        }
     }
 
     fn request_no_params(&mut self, method: &str) -> serde_json::Value {
@@ -124,9 +138,7 @@ impl LspProcess {
             "id": id,
             "method": method,
         }));
-        let resp = self.read_response();
-        assert_eq!(resp["id"].as_u64(), Some(id), "response id mismatch");
-        resp
+        self.read_response_id(id)
     }
 
     fn initialize(&mut self) {
@@ -138,8 +150,7 @@ impl LspProcess {
                 "capabilities": {},
             }),
         );
-        let resp = self.read_response();
-        assert_eq!(resp["id"].as_u64(), Some(id));
+        let resp = self.read_response_id(id);
         assert!(resp.get("error").is_none(), "initialize failed: {resp}");
         self.send_notification("initialized", serde_json::json!({}));
     }
