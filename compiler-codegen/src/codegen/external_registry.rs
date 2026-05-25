@@ -173,12 +173,17 @@ impl ExternalRegistry {
             (Some(rt), false) => format!("Nova_{}_static_{}", rt, f.name),
             (None, _)         => format!("nova_fn_{}", f.name),
         };
-        // Suffix builder: использует Nova-type первого параметра (path[0]).
-        // []byte → "bytes", char → "char", str → "str", etc.
+        // Suffix builder: использует Nova-type ПОСЛЕДНЕГО параметра (Plan 103.2).
+        // Использование last (а не first) позволяет различать overload'ы вида:
+        //   store(v i64)  vs  store(v i64, ord MemOrdering)
+        // — оба имеют одинаковый первый параметр, но разный последний.
+        // Обратная совместимость: все существующие overload'ы однопараметровые
+        // (first == last), поэтому с-имена не меняются.
+        // []byte → "bytes", char → "char", str → "str", MemOrdering → "MemOrdering".
         let suffix = if !f.params.is_empty() {
-            match &f.params[0].ty {
-                TypeRef::Named { path, .. } if path.len() == 1 => path[0].clone(),
-                TypeRef::Array(inner, _) => match inner.as_ref() {
+            match f.params.last().map(|p| &p.ty) {
+                Some(TypeRef::Named { path, .. }) if path.len() == 1 => path[0].clone(),
+                Some(TypeRef::Array(inner, _)) => match inner.as_ref() {
                     TypeRef::Named { path, .. } if path.len() == 1 => format!("{}s", path[0]),
                     _ => "arr".into(),
                 },

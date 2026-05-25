@@ -1433,11 +1433,28 @@ impl CEmitter {
         // existing entries из prelude (Error.new etc.). Single-key
         // registry — last-wins, но prelude занят сначала.
         for (key, decls) in self.external_registry.by_key.clone().into_iter() {
-            let (recv_ty, method_name) = key;
+            let (recv_ty, method_name) = key.clone();
             if recv_ty.is_empty() { continue; }     // free fns
             if let Some(decl) = decls.first() {
                 self.method_receivers.entry(method_name)
                     .or_insert((recv_ty, decl.is_instance));
+            }
+            // Plan 103.2: also register ALL ExternalRegistry entries into
+            // method_overloads so multi-overload dispatch (line ~17000) can
+            // select the correct suffix-bearing C name.
+            // Single-overload: c_name has no suffix → same as fallback.
+            // Multi-overload: c_name has _T or _MemOrdering suffix → required.
+            for decl in &decls {
+                let sig = MethodSig {
+                    param_c_types: decl.param_c_types.clone(),
+                    return_c_type: decl.return_c_type.clone(),
+                    is_instance: decl.is_instance,
+                    is_external: true,
+                    is_delegated: false,
+                    c_name: decl.c_name.clone(),
+                    variadic_last: false,
+                };
+                self.method_overloads.entry(key.clone()).or_default().push(sig);
             }
         }
 
@@ -1542,6 +1559,11 @@ impl CEmitter {
                 // Named forward decl `typedef struct Nova_MemOrdering Nova_MemOrdering;`
                 // would conflict with the pre-declared typedef struct.
                 "MemOrdering",
+                // Plan 103.2: sized integer atomics + AtomicPtr, all pre-declared
+                // in sync_primitives.h. No local fwd-decl needed.
+                "AtomicI8", "AtomicI16", "AtomicI32", "AtomicI64",
+                "AtomicU8", "AtomicU16", "AtomicU32", "AtomicU64",
+                "AtomicIsize", "AtomicUsize", "AtomicPtr",
             ];
             for name in external_names {
                 if local_types.contains(&name) { continue; }
@@ -7168,6 +7190,13 @@ impl CEmitter {
             // sum_schemas + sum_schema_registry populated below for pattern
             // matching support (`match ord { MemOrdering.Relaxed => ... }`).
             "MemOrdering",
+            // Plan 103.2: sized atomic types — C structs + methods pre-declared
+            // in sync_primitives.h. Skip emit_type_decl (no Nova body to emit).
+            // ExternalRegistry auto-registers methods from sync.nv declarations.
+            "AtomicI8", "AtomicI16", "AtomicI32", "AtomicI64",
+            "AtomicU8", "AtomicU16", "AtomicU32", "AtomicU64",
+            "AtomicIsize", "AtomicUsize",
+            "AtomicPtr",
         ];
         if RUNTIME_DEFINED_TYPES.contains(&t.name.as_str()) {
             // Plan 62.A: skip emission — C struct + constructors живут в
@@ -17171,7 +17200,29 @@ _cp++; \
                                         .cloned().collect();
                                     if !owns.is_empty() { owns } else { strict }
                                 };
-                                let chosen = pool.into_iter().next();
+                                // Plan 103.2: arity-based fallback for external-registry
+                                // methods. Nova integer literals always have type `nova_int`
+                                // but typed atomics use `int32_t`/`uint64_t`/etc. — strict
+                                // type matching fails. Since every atomic overload pair has
+                                // distinct arity (default N-arg vs ordering N+1-arg), arity
+                                // alone is sufficient to disambiguate. Only applies when:
+                                //   - strict pool is empty (no exact match)
+                                //   - all candidates are external (is_external = true)
+                                //   - exactly ONE candidate has the matching arity
+                                let chosen = if let Some(sig) = pool.into_iter().next() {
+                                    Some(sig)
+                                } else if candidates.iter().all(|c| c.is_external) {
+                                    let arity_matches: Vec<&MethodSig> = candidates.iter()
+                                        .filter(|s| s.param_c_types.len() == arg_types.len())
+                                        .collect();
+                                    if arity_matches.len() == 1 {
+                                        Some(arity_matches[0].clone())
+                                    } else {
+                                        None
+                                    }
+                                } else {
+                                    None
+                                };
                                 if let Some(sig) = chosen {
                                     if want_instance {
                                         let obj_c = self.emit_expr(obj)?;

@@ -1,0 +1,65 @@
+// Plan 103.2 Ф.9 positive — fetch_or/and/xor/nand/max/min ops.
+//
+// fetch_max and fetch_min use a CAS-loop implementation (no __atomic_fetch_max
+// builtin in GCC/Clang). Tested with a small fixed set of values.
+
+module nova_tests.plan103_2.atomic_bitwise_maxmin
+
+test "AtomicI64 fetch_or" {
+    let a = AtomicI64.new(0b1010)
+    let prev = a.fetch_or(0b0101)
+    assert(prev == 0b1010)
+    assert(a.load() == 0b1111)
+}
+
+test "AtomicI64 fetch_and" {
+    let a = AtomicI64.new(0b1111)
+    let prev = a.fetch_and(0b1010)
+    assert(prev == 0b1111)
+    assert(a.load() == 0b1010)
+}
+
+test "AtomicI64 fetch_xor" {
+    let a = AtomicI64.new(0b1100)
+    let prev = a.fetch_xor(0b1010)
+    assert(prev == 0b1100)
+    assert(a.load() == 0b0110)
+}
+
+test "AtomicI64 fetch_max — stores larger value" {
+    let a = AtomicI64.new(10)
+    let prev = a.fetch_max(20)
+    assert(prev == 10)
+    assert(a.load() == 20)
+}
+
+test "AtomicI64 fetch_max — keeps existing when larger" {
+    let a = AtomicI64.new(100)
+    let prev = a.fetch_max(50)
+    assert(prev == 100)
+    assert(a.load() == 100)
+}
+
+test "AtomicI64 fetch_min — stores smaller value" {
+    let a = AtomicI64.new(100)
+    let prev = a.fetch_min(30)
+    assert(prev == 100)
+    assert(a.load() == 30)
+}
+
+test "AtomicI64 fetch_min — keeps existing when smaller" {
+    let a = AtomicI64.new(5)
+    let prev = a.fetch_min(50)
+    assert(prev == 5)
+    assert(a.load() == 5)
+}
+
+test "AtomicI32 fetch_or/and/xor chain" {
+    let a = AtomicI32.new(0)
+    a.fetch_or(0xFF)
+    assert(a.load() == 0xFF)
+    a.fetch_and(0x0F)
+    assert(a.load() == 0x0F)
+    a.fetch_xor(0xFF)
+    assert(a.load() == 0xF0)
+}
