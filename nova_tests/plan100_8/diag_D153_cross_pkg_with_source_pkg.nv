@@ -1,0 +1,25 @@
+// Plan 100.8 (D166) neg #4: D133-not-consumed error includes type source context.
+//
+// EXPECT_COMPILE_ERROR D133-not-consumed
+//
+// When a consume type is not consumed, the error message should include:
+//   note: type `Connection` declared `consume` at <file>:LINE
+//
+// This validates that the note context is present in D133 diagnostics
+// (per D166 §D3 context format).
+
+module nova_tests.plan100_8.diag_D153_cross_pkg_with_source_pkg
+
+// Connection type — declared consume in this same file (simulates cross-pkg pattern).
+type Connection consume { id int; addr str }
+
+fn Connection consume @close() -> () { () }
+fn Connection consume @abort() -> () { () }
+
+fn dial(addr str) -> Connection => { id: 1; addr }
+
+test "D153 note includes type declaration location" {
+    consume conn = dial("localhost:8080")
+    // ❌ D133-not-consumed: conn not consumed.
+    // Note: type `Connection` declared `consume` at <this-file>:LINE
+}

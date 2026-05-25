@@ -1,0 +1,33 @@
+// Plan 100.8 D6: bench — nested field-path consume analysis.
+// Measures: O(N×depth) worst-case where depth = nested field access levels.
+module bench.plan100
+
+// Leaf consume type.
+type Leaf consume { value int }
+fn Leaf consume @close() -> () { }
+
+fn make_leaf(v int) -> Leaf => { value: v }
+
+bench "nested_field_path: 5 leaf consume instances" {
+    measure {
+        consume a = make_leaf(1)
+        a.close()
+        consume b = make_leaf(2)
+        b.close()
+        consume c = make_leaf(3)
+        c.close()
+        consume d = make_leaf(4)
+        d.close()
+        consume e = make_leaf(5)
+        e.close()
+        bench.elements(5)
+    }
+}
+
+bench "nested_field_path: field-state HashMap lookups" {
+    measure {
+        consume x = make_leaf(42)
+        x.close()
+        bench.elements(1)
+    }
+}

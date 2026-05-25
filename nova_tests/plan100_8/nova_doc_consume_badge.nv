@@ -1,0 +1,44 @@
+// Plan 100.8 (D166) pos #5: nova doc renders consume-type with [consume] badge.
+//
+// Expected `nova doc` output for `FileHandle`:
+//   🔒 `[consume]`
+//
+//   ```nova
+//   type FileHandle consume { fd int; path str }
+//   ```
+//
+//   #### Resource lifecycle
+//   This type is **consume-typed** (D133). ...
+//
+// This fixture verifies: consume type compiles clean (doc rendering is validated
+// by the doc renderer unit test / integration, not by nova test).
+
+module nova_tests.plan100_8.nova_doc_consume_badge
+
+/// A file handle — must be closed before scope exit.
+///
+/// # Examples
+///
+/// ```nova
+/// let consume h = open("/tmp/foo")
+/// errdefer { h.close_error() }
+/// h.close_ok()
+/// ```
+///
+/// # Since
+///
+/// 0.1
+type FileHandle consume { fd int; path str }
+
+/// Close after successful write.
+fn FileHandle consume @close_ok() -> () { () }
+
+/// Close and discard on error.
+fn FileHandle consume @close_error() -> () { () }
+
+fn open(path str) -> FileHandle => { fd: 1; path }
+
+test "nova doc consume badge — consume type compiles clean" {
+    consume h = open("/tmp/x")
+    h.close_ok()
+}

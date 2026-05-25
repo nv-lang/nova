@@ -422,6 +422,8 @@ fn collect_fn(module_path: &[String], f: &FnDecl, module_forbid: &[String]) -> D
         // parser не поддерживает `#allow_transit X` attribute. Schema-stable
         // placeholder для будущего D63-completion (Plan 16/45 follow-up).
         allow_transit: Vec::new(),
+        // Plan 100.8 / D166: consume is a type-level property; fns never carry it.
+        consume: false,
     };
     DocItem {
         id,
@@ -573,6 +575,11 @@ fn collect_type(module_path: &[String], t: &TypeDecl) -> DocItem {
         // nova_rt/<name>.h" line). Bootstrap — alias-style для simplicity.
         TypeDeclKind::Opaque => ItemKind::Type(TypeDefinition::Alias("opaque".to_string())),
     };
+    // Plan 100.8 / D166: propagate consume marker from TypeDecl into Capabilities.
+    let capabilities = Capabilities {
+        consume: t.consume,
+        ..Capabilities::default()
+    };
     DocItem {
         id,
         module_path: module_path.to_vec(),
@@ -586,7 +593,7 @@ fn collect_type(module_path: &[String], t: &TypeDecl) -> DocItem {
         aliases: attrs.aliases,
         hide_doc: attrs.hide_doc,
         doc_test_handlers: attrs.doc_test_handlers,
-        capabilities: Capabilities::default(),
+        capabilities,
         kind,
         source_span: t.span,
         peer_file: None,

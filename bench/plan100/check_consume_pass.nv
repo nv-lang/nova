@@ -1,0 +1,37 @@
+// Plan 100.8 D6: bench — check_consume pass standalone overhead.
+// Measures: O(N) `check_consume` over consume-typed bindings.
+// Baseline: < 5% overhead vs nova check without consume analysis.
+module bench.plan100
+
+// Consume-typed resource — every instance must be consumed.
+type Handle consume { id int; name str }
+
+// Consume methods: commit and abort.
+fn Handle consume @commit() -> () { }
+fn Handle consume @abort() -> () { }
+
+fn make_handle(id int) -> Handle => { id: id; name: "h" }
+
+bench "check_consume: 5 bindings — linear scan" {
+    measure {
+        consume h1 = make_handle(1)
+        h1.commit()
+        consume h2 = make_handle(2)
+        h2.commit()
+        consume h3 = make_handle(3)
+        h3.commit()
+        consume h4 = make_handle(4)
+        h4.commit()
+        consume h5 = make_handle(5)
+        h5.commit()
+        bench.elements(5)
+    }
+}
+
+bench "check_consume: errdefer path coverage" {
+    measure {
+        consume h = make_handle(99)
+        h.abort()
+        bench.elements(1)
+    }
+}

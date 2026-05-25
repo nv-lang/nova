@@ -1,0 +1,40 @@
+// Plan 100.8 D6: bench — cross-module consume type lookup overhead.
+// Measures: LinearityRegistry lookup cost for distinct consume types.
+module bench.plan100
+
+type ResourceA consume { id int }
+fn ResourceA consume @release() -> () { }
+
+type ResourceB consume { handle int }
+fn ResourceB consume @close() -> () { }
+
+type ResourceC consume { fd int }
+fn ResourceC consume @dispose() -> () { }
+
+fn make_a(id int) -> ResourceA => { id: id }
+fn make_b(h int) -> ResourceB => { handle: h }
+fn make_c(fd int) -> ResourceC => { fd: fd }
+
+bench "cross_pkg_lookup: 3 distinct consume types" {
+    measure {
+        consume a = make_a(1)
+        a.release()
+        consume b = make_b(2)
+        b.close()
+        consume c = make_c(3)
+        c.dispose()
+        bench.elements(3)
+    }
+}
+
+bench "cross_pkg_lookup: registry lookup repeated" {
+    measure {
+        consume r1 = make_a(10)
+        r1.release()
+        consume r2 = make_a(11)
+        r2.release()
+        consume r3 = make_a(12)
+        r3.release()
+        bench.elements(3)
+    }
+}
