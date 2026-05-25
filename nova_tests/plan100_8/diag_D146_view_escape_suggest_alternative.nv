@@ -1,0 +1,24 @@
+// Plan 100.8 (D166) neg #5: D133-not-consumed error with single consume method
+// available as fallback suggestion.
+//
+// EXPECT_COMPILE_ERROR D133-not-consumed
+//
+// When consume type has a known consume-method, the D133 diagnostic lists it:
+//   hint: Добавьте вызов одного из: release, либо `return o`...
+//
+// This validates the single-method fallback suggestion path.
+
+module nova_tests.plan100_8.diag_D146_view_escape_suggest_alternative
+
+// Consume type with single consume method.
+type Opaque consume { handle int }
+
+fn Opaque consume @release() -> () { () }
+
+fn acquire() -> Opaque => { handle: 42 }
+
+test "D146 single-method suggestion: method name shown in hint" {
+    consume o = acquire()
+    // ❌ D133-not-consumed: `o` never consumed.
+    // Hint shows: Добавьте вызов одного из: release
+}

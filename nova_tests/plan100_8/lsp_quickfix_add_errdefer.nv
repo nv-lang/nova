@@ -16,7 +16,7 @@ type Transaction consume { id int }
 fn Transaction consume @commit() -> () { () }
 fn Transaction consume @rollback() -> () { () }
 
-fn begin() -> Transaction => Transaction { id: 1 }
+fn begin() -> Transaction => { id: 1 }
 
 fn do_work() Fail[str] -> () { () }
 

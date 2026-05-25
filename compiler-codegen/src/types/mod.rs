@@ -7296,6 +7296,11 @@ struct ConsumeCtx<'a> {
     /// Plan 100.1 (D133 / D9): локальные переменные объявленные с
     /// `consume tx = ...` — обязаны быть Consumed до scope-exit.
     consume_obligations: HashSet<String>,
+    /// Plan 100.8 (D166): accumulates ALL consume-binding names ever declared
+    /// in this scope (never cleared, unlike `consume_obligations`).  Used by
+    /// `check_d162_coverage` which runs AFTER `consume_walk_block` has already
+    /// cleared `consume_obligations` for satisfied obligations.
+    all_declared_consume: HashSet<String>,
     /// Plan 100.1 (D133 / D5): состояние consume-полей receiver'а.
     /// Ключ — имя поля (без "@."), значение — VarState.
     /// Для consume-методов: поля должны быть Consumed на exit'е.
@@ -7316,6 +7321,7 @@ impl<'a> ConsumeCtx<'a> {
             var_types: HashMap::new(),
             aliases: HashMap::new(),
             consume_obligations: HashSet::new(),
+            all_declared_consume: HashSet::new(),
             field_states: HashMap::new(),
             consume_bound_generics: HashSet::new(),
         }
@@ -7488,13 +7494,19 @@ impl<'a> ConsumeCtx<'a> {
         if name == "_" { return; }
         self.declare(name, ty);
         self.consume_obligations.insert(name.to_string());
+        // Plan 100.8 (D166): also track in all_declared_consume (never cleared).
+        self.all_declared_consume.insert(name.to_string());
     }
 
     /// Проверить, что все consume-obligations Consumed на текущем exit.
     /// `exit_span` — span точки выхода (конец scope'а / return / panic).
+    ///
+    /// Plan 100.8 (D166): enhanced с machine-applicable `Suggestion` для
+    /// LSP quick-fix integration (D166 §LSP quick fixes).
     fn check_obligations_at_exit(&self,
                                   exit_span: Span,
                                   errors: &mut Vec<Diagnostic>) {
+        use crate::diag::{Applicability, Suggestion};
         for name in &self.consume_obligations {
             let canon = self.canonical(name);
             let state = self.states.get(&canon)
@@ -7517,7 +7529,34 @@ impl<'a> ConsumeCtx<'a> {
                     } else {
                         format!("см. `nova doc {}`", ty)
                     };
+                    // Plan 100.2 (D156): D156-strict-forget для generic [T consume] vars.
                     let code = if is_strict_generic { "D156-strict-forget" } else { "D133-not-consumed" };
+                    // Plan 100.8 (D166): build machine-applicable suggestion
+                    // for LSP quick-fix. Suggest errdefer + primary commit.
+                    let suggestion_text = if methods.is_empty() {
+                        format!(
+                            "// TODO: add consume-method for `{}` then call it here",
+                            ty)
+                    } else {
+                        // Primary method = first; secondary (cleanup) = last if different.
+                        let primary = &methods[0];
+                        let cleanup = if methods.len() > 1 { Some(&methods[methods.len()-1]) } else { None };
+                        if let Some(cl) = cleanup {
+                            format!(
+                                "errdefer {{ {name}.{cl}() }}\n{name}.{primary}()",
+                                name = name, cl = cl, primary = primary)
+                        } else {
+                            format!("{name}.{primary}()", name = name, primary = primary)
+                        }
+                    };
+                    let suggestion = Suggestion {
+                        message: format!(
+                            "consume `{name}` via method ({} quick fix)",
+                            name = name, code),
+                        span: exit_span,
+                        replacement: suggestion_text,
+                        applicability: Applicability::MaybeIncorrect,
+                    };
                     errors.push(Diagnostic::new(
                         format!(
                             "[{}] переменная `{}` (тип `{}`) не \
@@ -7525,7 +7564,7 @@ impl<'a> ConsumeCtx<'a> {
                              либо `return {}`, либо передайте в consume-param.",
                             code, name, ty, hint, name),
                         exit_span,
-                    ));
+                    ).with_suggestion(suggestion));
                 }
                 Some(VarState::MaybeConsumed(at)) => {
                     let methods = self.lin_reg.consume_methods_for(&ty);
@@ -7534,15 +7573,43 @@ impl<'a> ConsumeCtx<'a> {
                     } else {
                         methods.join(" / ")
                     };
+                    // Plan 100.2 (D156): D156-strict-forget для generic [T consume] vars.
                     let code = if is_strict_generic { "D156-strict-forget" } else { "D133-not-consumed" };
+                    // Plan 100.8 (D166): multi-path suggestion — both errdefer + okdefer
+                    // (D166 §LSP quick fixes — suggestion lists both errdefer + okdefer).
+                    let suggestion_text = if methods.is_empty() {
+                        format!("// TODO: consume `{}` on all code paths", name)
+                    } else {
+                        let primary = &methods[0];
+                        let cleanup = if methods.len() > 1 { Some(&methods[methods.len()-1]) } else { None };
+                        if let Some(cl) = cleanup {
+                            format!(
+                                "errdefer {{ {name}.{cl}() }}\nokdefer {{ {name}.{primary}() }}",
+                                name = name, cl = cl, primary = primary)
+                        } else {
+                            format!(
+                                "errdefer {{ {name}.{primary}() }}\nokdefer {{ {name}.{primary}() }}",
+                                name = name, primary = primary)
+                        }
+                    };
+                    let suggestion = Suggestion {
+                        message: format!(
+                            "cover `{name}` on all paths: errdefer + okdefer ({} multi-path)",
+                            name = name, code),
+                        span: exit_span,
+                        replacement: suggestion_text,
+                        applicability: Applicability::MaybeIncorrect,
+                    };
                     errors.push(Diagnostic::new(
                         format!(
                             "[{}] переменная `{}` (тип `{}`) \
                              consumed только на части путей выполнения. На всех \
-                             путях до scope-exit должен быть вызов одного из: {}.",
+                             путях до scope-exit должен быть вызов одного из: {}. \
+                             suggestion: add errdefer + okdefer для полного покрытия.",
                             code, name, ty, hint),
                         exit_span,
-                    ).with_note_at("частичный consume здесь".to_string(), *at));
+                    ).with_note_at("частичный consume здесь".to_string(), *at)
+                     .with_suggestion(suggestion));
                 }
                 Some(VarState::Consumed(_)) | None => {}
             }
@@ -7762,6 +7829,9 @@ fn check_consume(module: &Module, errors: &mut Vec<Diagnostic>) {
                                 errors,
                             );
                         }
+                        // Plan 100.8 (D166): D162 coverage check — errdefer/okdefer
+                        // for consume vars in failable functions.
+                        check_d162_coverage(f, &ctx, b, errors, &lin_reg);
                     }
                     FnBody::Expr(e) => {
                         consume_walk_expr(&mut ctx, e, errors);
@@ -7785,6 +7855,156 @@ fn check_consume(module: &Module, errors: &mut Vec<Diagnostic>) {
                 ctx.check_obligations_at_exit(t.body.span, errors);
             }
             _ => {}
+        }
+    }
+}
+
+// ── Plan 100.8 (D166): D162 coverage check helpers ───────────────────────────
+
+/// Check if a function's effect list contains `Fail[...]` or bare `Fail`
+/// (indicating the function can throw).
+fn fn_is_failable(effects: &[TypeRef]) -> bool {
+    effects.iter().any(|e| {
+        if let TypeRef::Named { path, .. } = e {
+            path.last().map(|n| n == "Fail").unwrap_or(false)
+        } else {
+            false
+        }
+    })
+}
+
+/// Recursively scan a block for `errdefer` / `okdefer` stmts.
+/// Returns (has_errdefer, has_okdefer) — both are coarse: presence of ANY
+/// errdefer/okdefer in the direct stmts (non-nested) is sufficient for
+/// the D162 simplified check.
+fn scan_defer_coverage(b: &Block) -> (bool, bool) {
+    let mut has_errdefer = false;
+    let mut has_okdefer = false;
+    for s in &b.stmts {
+        match s {
+            Stmt::ErrDefer { .. } | Stmt::DeferWithResult { .. } => {
+                has_errdefer = true;
+            }
+            Stmt::OkDefer { .. } => {
+                has_okdefer = true;
+            }
+            _ => {}
+        }
+    }
+    (has_errdefer, has_okdefer)
+}
+
+/// Plan 100.8 (D166): Simplified D162 coverage check.
+///
+/// Emits `D162-uncovered-error-path` when a failable function (`Fail[E]`
+/// in effects) has consume bindings but no `errdefer` covering the error path.
+///
+/// This is the tooling-layer implementation of D162 (the full static-flow
+/// version lives in Plan 100.4.5; this version provides IDE-feedback via
+/// the D166 LSP quick-fix infrastructure).
+fn check_d162_coverage(
+    f: &FnDecl,
+    ctx: &ConsumeCtx,
+    block: &Block,
+    errors: &mut Vec<Diagnostic>,
+    lin_reg: &LinearityRegistry,
+) {
+    use crate::diag::{Applicability, Suggestion};
+
+    // Only check failable functions with consume bindings ever declared.
+    // Use all_declared_consume (not consume_obligations which is cleared after
+    // each block exit).  Plan 100.8 (D166) fix: check D162 even when the var
+    // is properly consumed on success path.
+    if ctx.all_declared_consume.is_empty() { return; }
+    if !fn_is_failable(&f.effects) { return; }
+
+    let (has_errdefer, has_okdefer) = scan_defer_coverage(block);
+
+    // D162-uncovered-error-path: failable function + consume binding + no errdefer.
+    if !has_errdefer {
+        for name in &ctx.all_declared_consume {
+            let canon = ctx.canonical(name);
+            let ty = ctx.var_types.get(name)
+                .or_else(|| ctx.var_types.get(&canon))
+                .cloned()
+                .unwrap_or_default();
+            let methods = lin_reg.consume_methods_for(&ty);
+            let cleanup_method = if methods.len() > 1 {
+                methods.last().cloned().unwrap_or_default()
+            } else {
+                methods.first().cloned().unwrap_or_else(|| "cleanup".to_string())
+            };
+            let suggestion = Suggestion {
+                message: format!(
+                    "add `errdefer {{ {name}.{method}() }}` to cover error-path \
+                     (D162-uncovered-error-path quick fix)",
+                    name = name, method = cleanup_method),
+                span: block.span,
+                replacement: format!(
+                    "errdefer {{ {name}.{method}() }}",
+                    name = name, method = cleanup_method),
+                applicability: Applicability::MachineApplicable,
+            };
+            errors.push(Diagnostic::new(
+                format!(
+                    "[D162-uncovered-error-path] consume binding `{}` (тип `{}`) \
+                     в failable function без `errdefer` покрытия error-path. \
+                     При throw/panic `{}` не будет cleaned up. \
+                     Добавьте `errdefer {{ {}.{}() }}`.",
+                    name, ty, name, name, cleanup_method),
+                block.span,
+            ).with_suggestion(suggestion));
+        }
+    }
+
+    // D162-uncovered-success-path: failable function + consume + has errdefer
+    // but no okdefer or explicit commit call on success path.
+    // This is a lighter warning — we just note it (MaybeIncorrect suggestion).
+    if has_errdefer && !has_okdefer {
+        // Only emit if there are consume obligations (errdefer exists but
+        // success path might be uncovered).
+        // Simplified: check if the trailing expression of the block is a
+        // consume method call (if not, suggest okdefer).
+        let success_covered = block.trailing.as_ref().map(|t| {
+            matches!(&t.kind, ExprKind::Call { func, .. }
+                if matches!(&func.kind, ExprKind::Member { .. }))
+        }).unwrap_or(false);
+        if !success_covered {
+            for name in &ctx.all_declared_consume {
+                let canon = ctx.canonical(name);
+                let ty = ctx.var_types.get(name)
+                    .or_else(|| ctx.var_types.get(&canon))
+                    .cloned()
+                    .unwrap_or_default();
+                let methods = lin_reg.consume_methods_for(&ty);
+                let primary_method = methods.first().cloned()
+                    .unwrap_or_else(|| "commit".to_string());
+                // Only emit if var is still Live at function end (errdefer present
+                // but actual consume may be missing). This is conservative —
+                // we only emit for the first uncovered var.
+                let state = ctx.states.get(&canon).or_else(|| ctx.states.get(name));
+                if !matches!(state, Some(VarState::Live)) { continue; }
+                let suggestion = Suggestion {
+                    message: format!(
+                        "add `okdefer {{ {name}.{method}() }}` or explicit call \
+                         (D162-uncovered-success-path quick fix)",
+                        name = name, method = primary_method),
+                    span: block.span,
+                    replacement: format!(
+                        "okdefer {{ {name}.{method}() }}",
+                        name = name, method = primary_method),
+                    applicability: Applicability::MaybeIncorrect,
+                };
+                errors.push(Diagnostic::new(
+                    format!(
+                        "[D162-uncovered-success-path] consume binding `{}` (тип `{}`) \
+                         имеет errdefer для error-path, но success-path может быть \
+                         не покрыт. Добавьте `okdefer {{ {}.{}() }}` или явный вызов.",
+                        name, ty, name, primary_method),
+                    block.span,
+                ).with_suggestion(suggestion));
+                break; // Only first uncovered var to avoid noise.
+            }
         }
     }
 }

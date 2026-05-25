@@ -1,0 +1,30 @@
+// Plan 100.8 (D166) pos #10: diagnostic format D5 consistency verification.
+//
+// Verifies that the standard consume workflow compiles cleanly (no spurious errors).
+// The D5 format spec requires:
+//   error[ERROR-CODE]: <message>
+//   note: <context>
+//   suggestion (machine-applicable): <edit>
+//
+// This positive fixture verifies that a correctly-structured consume usage
+// produces zero diagnostics — i.e., D133/D162 are NOT triggered when
+// consume obligations are properly fulfilled.
+
+module nova_tests.plan100_8.diagnostic_format_consistency
+
+type Lock consume { id int; name str }
+
+fn Lock consume @unlock() -> () { () }
+fn Lock consume @force_unlock() -> () { () }
+
+fn acquire_lock(name str) -> Lock => { id: 1; name }
+
+fn critical_section(name str) Fail[str] -> () {
+    consume lock = acquire_lock(name)
+    errdefer { lock.force_unlock() }  // D162 coverage: error path
+    lock.unlock()                      // D133 satisfied: explicit consume
+}
+
+test "diagnostic format: no false positives (D133+D162 both silent)" {
+    critical_section("mutex_1")
+}

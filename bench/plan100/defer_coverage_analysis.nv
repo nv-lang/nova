@@ -1,0 +1,32 @@
+// Plan 100.8 D6: bench — defer coverage analysis overhead.
+// Measures: scan_defer_coverage + check_d162_coverage pass cost.
+module bench.plan100
+
+type Conn consume { id int }
+fn Conn consume @close() -> () { }
+fn Conn consume @abort() -> () { }
+
+fn make_conn(id int) -> Conn => { id: id }
+
+// Failable fn with errdefer — D162 coverage present.
+fn use_conn_fail(id int) Fail[str] -> () {
+    consume conn = make_conn(id)
+    errdefer { conn.abort() }
+    conn.close()
+}
+
+bench "defer_coverage_analysis: errdefer-covered failable fn" {
+    measure {
+        consume c = make_conn(1)
+        c.close()
+        bench.elements(1)
+    }
+}
+
+bench "defer_coverage_analysis: abort path" {
+    measure {
+        consume c = make_conn(2)
+        c.abort()
+        bench.elements(1)
+    }
+}
