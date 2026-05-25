@@ -1,0 +1,17 @@
+// Plan 83.7 (2026-05-25): shutdown drain test — runnext slot must be
+// drained on worker exit (cleanup loop). No stranded fibers.
+//
+// Single parallel-for (codegen restriction). Verify runtime cleanup
+// after spawn workload — runnext если был — drained до supervised
+// return.
+//
+// ALLOC_REQUIRES boehm
+
+module plan83_7.runnext_shutdown_drain
+
+test "spawn 500 — all fibers complete (runnext drain on shutdown)" {
+    let xs = parallel for i in 0..500 { i }
+    assert(xs[499] == 499)
+    assert(xs[0] == 0)
+    assert(xs[250] == 250)
+}
