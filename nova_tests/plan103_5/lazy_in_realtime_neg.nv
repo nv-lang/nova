@@ -1,0 +1,12 @@
+// Plan 103.5 — Lazy.force is banned inside realtime{}.
+//
+// EXPECT_COMPILE_ERROR E_EFFECT_REALTIME_VIOLATION
+
+module nova_tests.plan103_5.lazy_in_realtime_neg
+
+test "Lazy.force banned in realtime block" {
+    let lazy = Lazy[int].new() { 42 }
+    realtime {
+        let _ = lazy.force()
+    }
+}
