@@ -8420,18 +8420,27 @@ fn check_defer_bodies(module: &Module, errors: &mut Vec<Diagnostic>) {
         }
     }
 
-    // Walk bodies С„СѓРЅРєС†РёР№ Рё С‚РµСЃС‚РѕРІ.
+    // Walk bodies С„СѓРЅРєС†РёР№ Рё С‚РµСЃС‚РѕРІ. Per-fn — передаём enclosing fn-sig
+    // effects (D158): defer body Fail-effect разрешён если fn-sig объявляет
+    // `Fail[E']`; иначе compile error D158-defer-fail-not-in-sig.
     for item in &module.items {
         match item {
             Item::Fn(f) => {
                 if let FnBody::Block(b) = &f.body {
-                    walk_block_for_defers(b, &fn_effects, errors);
+                    walk_block_for_defers(b, &fn_effects, &f.effects, errors);
                 } else if let FnBody::Expr(e) = &f.body {
-                    walk_expr_for_defers(e, &fn_effects, errors);
+                    walk_expr_for_defers(e, &fn_effects, &f.effects, errors);
                 }
             }
             Item::Test(t) => {
-                walk_block_for_defers(&t.body, &fn_effects, errors);
+                // Test body — implicit Fail[any] (test failure framework).
+                // Allow Fail в defer body как если test-fn declared Fail.
+                let test_effects: Vec<TypeRef> = vec![TypeRef::Named {
+                    path: vec!["Fail".to_string()],
+                    generics: vec![],
+                    span: t.body.span,
+                }];
+                walk_block_for_defers(&t.body, &fn_effects, &test_effects, errors);
             }
             _ => {}
         }
@@ -8441,174 +8450,186 @@ fn check_defer_bodies(module: &Module, errors: &mut Vec<Diagnostic>) {
 /// Walk block: РґР»СЏ РєР°Р¶РґРѕРіРѕ Stmt::Defer/ErrDefer вЂ” РїСЂРѕРІРµСЂРёС‚СЊ body;
 /// СЂРµРєСѓСЂСЃРёРІРЅРѕ walk РѕСЃС‚Р°Р»СЊРЅС‹Рµ stmts (С‚Р°Рј РјРѕР¶РµС‚ Р±С‹С‚СЊ РІР»РѕР¶РµРЅРЅС‹Р№ block СЃ
 /// defer'Р°РјРё).
-fn walk_block_for_defers(b: &Block, fn_effects: &HashMap<String, Vec<TypeRef>>, errors: &mut Vec<Diagnostic>) {
+///
+/// `current_fn_effects` — effect-row enclosing fn-sig (D158): defer body
+/// Fail-effect разрешён если sig объявляет `Fail[E']`. Pass-through
+/// recursive walkers; per-defer body checker делает actual gate.
+fn walk_block_for_defers(b: &Block, fn_effects: &HashMap<String, Vec<TypeRef>>, current_fn_effects: &[TypeRef], errors: &mut Vec<Diagnostic>) {
     for s in &b.stmts {
         match s {
             Stmt::Defer { body, .. } => {
-                check_defer_body(body, "defer", fn_effects, errors);
+                check_defer_body(body, "defer", fn_effects, current_fn_effects, errors);
             }
             Stmt::ErrDefer { body, .. } => {
-                check_defer_body(body, "errdefer", fn_effects, errors);
+                check_defer_body(body, "errdefer", fn_effects, current_fn_effects, errors);
             }
             // D160 Plan 100.4.3: OkDefer/DeferWithResult — same body constraints.
             Stmt::OkDefer { body, .. } => {
-                check_defer_body(body, "okdefer", fn_effects, errors);
+                check_defer_body(body, "okdefer", fn_effects, current_fn_effects, errors);
             }
             Stmt::DeferWithResult { body, .. } => {
-                check_defer_body(body, "defer |result|", fn_effects, errors);
+                check_defer_body(body, "defer |result|", fn_effects, current_fn_effects, errors);
             }
-            Stmt::Let(decl) => walk_expr_for_defers(&decl.value, fn_effects, errors),
-            Stmt::Expr(e) => walk_expr_for_defers(e, fn_effects, errors),
+            Stmt::Let(decl) => walk_expr_for_defers(&decl.value, fn_effects, current_fn_effects, errors),
+            Stmt::Expr(e) => walk_expr_for_defers(e, fn_effects, current_fn_effects, errors),
             Stmt::Assign { target, value, .. } => {
-                walk_expr_for_defers(target, fn_effects, errors);
-                walk_expr_for_defers(value, fn_effects, errors);
+                walk_expr_for_defers(target, fn_effects, current_fn_effects, errors);
+                walk_expr_for_defers(value, fn_effects, current_fn_effects, errors);
             }
             Stmt::Return { value, .. } => {
-                if let Some(v) = value { walk_expr_for_defers(v, fn_effects, errors); }
+                if let Some(v) = value { walk_expr_for_defers(v, fn_effects, current_fn_effects, errors); }
             }
-            Stmt::Throw { value, .. } => walk_expr_for_defers(value, fn_effects, errors),
-            Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => walk_expr_for_defers(expr, fn_effects, errors),
+            Stmt::Throw { value, .. } => walk_expr_for_defers(value, fn_effects, current_fn_effects, errors),
+            Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => walk_expr_for_defers(expr, fn_effects, current_fn_effects, errors),
             Stmt::Break(_) | Stmt::Continue(_) => {}
             Stmt::Apply { args, .. } => {
-                for a in args { walk_expr_for_defers(a, fn_effects, errors); }
+                for a in args { walk_expr_for_defers(a, fn_effects, current_fn_effects, errors); }
             }
             Stmt::Calc { steps, .. } => {
-                for step in steps { walk_expr_for_defers(&step.expr, fn_effects, errors); }
+                for step in steps { walk_expr_for_defers(&step.expr, fn_effects, current_fn_effects, errors); }
             }
             Stmt::Reveal { .. } => {}
         }
     }
     if let Some(t) = &b.trailing {
-        walk_expr_for_defers(t, fn_effects, errors);
+        walk_expr_for_defers(t, fn_effects, current_fn_effects, errors);
     }
 }
 
 /// Walk expression: СЂРµРєСѓСЂСЃРёРІРЅРѕ РёС‰РµРј РІР»РѕР¶РµРЅРЅС‹Рµ Р±Р»РѕРєРё СЃ defer'Р°РјРё.
 /// РЎР°Рј РїРѕ СЃРµР±Рµ expression РЅРµ РїСЂРѕРІРµСЂСЏРµС‚СЃСЏ вЂ” С‚РѕР»СЊРєРѕ nested blocks.
-fn walk_expr_for_defers(e: &Expr, fn_effects: &HashMap<String, Vec<TypeRef>>, errors: &mut Vec<Diagnostic>) {
+///
+/// `current_fn_effects` (D158) — pass-through к check_defer_body для гейта
+/// Fail-effect в defer body. Lambdas / closures **новые** scopes — у них
+/// собственные effects; для simplicity bootstrap'а consume parent
+/// fn_effects (overly-permissive: closure без Fail в свой effect-row,
+/// но defer inside может бросать; runtime errors будут поймать через
+/// type-check Outer-call-site). Production-уровневое уточнение —
+/// Plan 100.4.5 closure-as-defer.
+fn walk_expr_for_defers(e: &Expr, fn_effects: &HashMap<String, Vec<TypeRef>>, current_fn_effects: &[TypeRef], errors: &mut Vec<Diagnostic>) {
     match &e.kind {
-        ExprKind::Block(b) => walk_block_for_defers(b, fn_effects, errors),
+        ExprKind::Block(b) => walk_block_for_defers(b, fn_effects, current_fn_effects, errors),
         ExprKind::If { cond, then, else_ } => {
-            walk_expr_for_defers(cond, fn_effects, errors);
-            walk_block_for_defers(then, fn_effects, errors);
-            if let Some(ElseBranch::Block(b)) = else_ { walk_block_for_defers(b, fn_effects, errors); }
-            if let Some(ElseBranch::If(e2)) = else_ { walk_expr_for_defers(e2, fn_effects, errors); }
+            walk_expr_for_defers(cond, fn_effects, current_fn_effects, errors);
+            walk_block_for_defers(then, fn_effects, current_fn_effects, errors);
+            if let Some(ElseBranch::Block(b)) = else_ { walk_block_for_defers(b, fn_effects, current_fn_effects, errors); }
+            if let Some(ElseBranch::If(e2)) = else_ { walk_expr_for_defers(e2, fn_effects, current_fn_effects, errors); }
         }
         ExprKind::IfLet { scrutinee, then, else_, .. } => {
-            walk_expr_for_defers(scrutinee, fn_effects, errors);
-            walk_block_for_defers(then, fn_effects, errors);
-            if let Some(ElseBranch::Block(b)) = else_ { walk_block_for_defers(b, fn_effects, errors); }
-            if let Some(ElseBranch::If(e2)) = else_ { walk_expr_for_defers(e2, fn_effects, errors); }
+            walk_expr_for_defers(scrutinee, fn_effects, current_fn_effects, errors);
+            walk_block_for_defers(then, fn_effects, current_fn_effects, errors);
+            if let Some(ElseBranch::Block(b)) = else_ { walk_block_for_defers(b, fn_effects, current_fn_effects, errors); }
+            if let Some(ElseBranch::If(e2)) = else_ { walk_expr_for_defers(e2, fn_effects, current_fn_effects, errors); }
         }
         ExprKind::Match { scrutinee, arms } => {
-            walk_expr_for_defers(scrutinee, fn_effects, errors);
+            walk_expr_for_defers(scrutinee, fn_effects, current_fn_effects, errors);
             for a in arms {
                 match &a.body {
-                    MatchArmBody::Expr(e2) => walk_expr_for_defers(e2, fn_effects, errors),
-                    MatchArmBody::Block(b) => walk_block_for_defers(b, fn_effects, errors),
+                    MatchArmBody::Expr(e2) => walk_expr_for_defers(e2, fn_effects, current_fn_effects, errors),
+                    MatchArmBody::Block(b) => walk_block_for_defers(b, fn_effects, current_fn_effects, errors),
                 }
-                if let Some(g) = &a.guard { walk_expr_for_defers(g, fn_effects, errors); }
+                if let Some(g) = &a.guard { walk_expr_for_defers(g, fn_effects, current_fn_effects, errors); }
             }
         }
         ExprKind::For { iter, body, .. } | ExprKind::ParallelFor { iter, body, .. } => {
-            walk_expr_for_defers(iter, fn_effects, errors);
-            walk_block_for_defers(body, fn_effects, errors);
+            walk_expr_for_defers(iter, fn_effects, current_fn_effects, errors);
+            walk_block_for_defers(body, fn_effects, current_fn_effects, errors);
         }
         ExprKind::While { cond, body, .. } => {
-            walk_expr_for_defers(cond, fn_effects, errors);
-            walk_block_for_defers(body, fn_effects, errors);
+            walk_expr_for_defers(cond, fn_effects, current_fn_effects, errors);
+            walk_block_for_defers(body, fn_effects, current_fn_effects, errors);
         }
         ExprKind::WhileLet { scrutinee, body, .. } => {
-            walk_expr_for_defers(scrutinee, fn_effects, errors);
-            walk_block_for_defers(body, fn_effects, errors);
+            walk_expr_for_defers(scrutinee, fn_effects, current_fn_effects, errors);
+            walk_block_for_defers(body, fn_effects, current_fn_effects, errors);
         }
-        ExprKind::Loop { body, .. } => walk_block_for_defers(body, fn_effects, errors),
+        ExprKind::Loop { body, .. } => walk_block_for_defers(body, fn_effects, current_fn_effects, errors),
         ExprKind::Select { arms } => {
             for arm in arms {
                 match &arm.op {
-                    SelectOp::Recv { chan, .. } => walk_expr_for_defers(chan, fn_effects, errors),
+                    SelectOp::Recv { chan, .. } => walk_expr_for_defers(chan, fn_effects, current_fn_effects, errors),
                     SelectOp::Send { chan, value } => {
-                        walk_expr_for_defers(chan, fn_effects, errors);
-                        walk_expr_for_defers(value, fn_effects, errors);
+                        walk_expr_for_defers(chan, fn_effects, current_fn_effects, errors);
+                        walk_expr_for_defers(value, fn_effects, current_fn_effects, errors);
                     }
                     SelectOp::Default => {}
                 }
-                if let Some(g) = &arm.guard { walk_expr_for_defers(g, fn_effects, errors); }
-                walk_block_for_defers(&arm.body, fn_effects, errors);
+                if let Some(g) = &arm.guard { walk_expr_for_defers(g, fn_effects, current_fn_effects, errors); }
+                walk_block_for_defers(&arm.body, fn_effects, current_fn_effects, errors);
             }
         }
         ExprKind::With { body, .. } | ExprKind::Forbid { body, .. }
         | ExprKind::Realtime { body, .. }
         | ExprKind::Detach(body) | ExprKind::Blocking(body) => {
-            walk_block_for_defers(body, fn_effects, errors);
+            walk_block_for_defers(body, fn_effects, current_fn_effects, errors);
         }
         ExprKind::Supervised { body, cancel } => {
-            if let Some(c) = cancel { walk_expr_for_defers(c, fn_effects, errors); }
-            walk_block_for_defers(body, fn_effects, errors);
+            if let Some(c) = cancel { walk_expr_for_defers(c, fn_effects, current_fn_effects, errors); }
+            walk_block_for_defers(body, fn_effects, current_fn_effects, errors);
         }
         ExprKind::Call { func, args, trailing } => {
-            walk_expr_for_defers(func, fn_effects, errors);
+            walk_expr_for_defers(func, fn_effects, current_fn_effects, errors);
             for a in args {
-                walk_expr_for_defers(a.expr(), fn_effects, errors);
+                walk_expr_for_defers(a.expr(), fn_effects, current_fn_effects, errors);
             }
             if let Some(tr) = trailing {
                 match tr {
-                    Trailing::Block(b) => walk_block_for_defers(b, fn_effects, errors),
+                    Trailing::Block(b) => walk_block_for_defers(b, fn_effects, current_fn_effects, errors),
                     Trailing::Fn(fsb) => {
-                        if let FnBody::Block(b) = &fsb.body { walk_block_for_defers(b, fn_effects, errors); }
-                        else if let FnBody::Expr(e2) = &fsb.body { walk_expr_for_defers(e2, fn_effects, errors); }
+                        if let FnBody::Block(b) = &fsb.body { walk_block_for_defers(b, fn_effects, current_fn_effects, errors); }
+                        else if let FnBody::Expr(e2) = &fsb.body { walk_expr_for_defers(e2, fn_effects, current_fn_effects, errors); }
                     }
                     Trailing::LegacyBlockWithParams(tb) => {
-                        walk_block_for_defers(&tb.body, fn_effects, errors);
+                        walk_block_for_defers(&tb.body, fn_effects, current_fn_effects, errors);
                     }
                 }
             }
         }
-        ExprKind::Spawn(body) => walk_expr_for_defers(body, fn_effects, errors),
+        ExprKind::Spawn(body) => walk_expr_for_defers(body, fn_effects, current_fn_effects, errors),
         ExprKind::Binary { left, right, .. } => {
-            walk_expr_for_defers(left, fn_effects, errors);
-            walk_expr_for_defers(right, fn_effects, errors);
+            walk_expr_for_defers(left, fn_effects, current_fn_effects, errors);
+            walk_expr_for_defers(right, fn_effects, current_fn_effects, errors);
         }
-        ExprKind::Unary { operand, .. } => walk_expr_for_defers(operand, fn_effects, errors),
+        ExprKind::Unary { operand, .. } => walk_expr_for_defers(operand, fn_effects, current_fn_effects, errors),
         ExprKind::Try(e2) | ExprKind::Bang(e2) | ExprKind::Throw(e2) => {
-            walk_expr_for_defers(e2, fn_effects, errors);
+            walk_expr_for_defers(e2, fn_effects, current_fn_effects, errors);
         }
         ExprKind::Coalesce(a, b) => {
-            walk_expr_for_defers(a, fn_effects, errors);
-            walk_expr_for_defers(b, fn_effects, errors);
+            walk_expr_for_defers(a, fn_effects, current_fn_effects, errors);
+            walk_expr_for_defers(b, fn_effects, current_fn_effects, errors);
         }
-        ExprKind::As(e2, _) | ExprKind::Is(e2, _) => walk_expr_for_defers(e2, fn_effects, errors),
-        ExprKind::Member { obj, .. } | ExprKind::Index { obj, .. } => walk_expr_for_defers(obj, fn_effects, errors),
-        ExprKind::TurboFish { base, .. } => walk_expr_for_defers(base, fn_effects, errors),
-        ExprKind::Lambda { body, .. } | ExprKind::Interrupt(Some(body)) => walk_expr_for_defers(body, fn_effects, errors),
+        ExprKind::As(e2, _) | ExprKind::Is(e2, _) => walk_expr_for_defers(e2, fn_effects, current_fn_effects, errors),
+        ExprKind::Member { obj, .. } | ExprKind::Index { obj, .. } => walk_expr_for_defers(obj, fn_effects, current_fn_effects, errors),
+        ExprKind::TurboFish { base, .. } => walk_expr_for_defers(base, fn_effects, current_fn_effects, errors),
+        ExprKind::Lambda { body, .. } | ExprKind::Interrupt(Some(body)) => walk_expr_for_defers(body, fn_effects, current_fn_effects, errors),
         ExprKind::Range { start, end, .. } => {
-            if let Some(s) = start { walk_expr_for_defers(s, fn_effects, errors); }
-            if let Some(e) = end { walk_expr_for_defers(e, fn_effects, errors); }
+            if let Some(s) = start { walk_expr_for_defers(s, fn_effects, current_fn_effects, errors); }
+            if let Some(e) = end { walk_expr_for_defers(e, fn_effects, current_fn_effects, errors); }
         }
         ExprKind::ArrayLit(elems) => {
             for el in elems {
                 match el {
-                    ArrayElem::Item(e2) | ArrayElem::Spread(e2) => walk_expr_for_defers(e2, fn_effects, errors),
+                    ArrayElem::Item(e2) | ArrayElem::Spread(e2) => walk_expr_for_defers(e2, fn_effects, current_fn_effects, errors),
                 }
             }
         }
         ExprKind::TupleLit(elems) => {
-            for el in elems { walk_expr_for_defers(el, fn_effects, errors); }
+            for el in elems { walk_expr_for_defers(el, fn_effects, current_fn_effects, errors); }
         }
         ExprKind::RecordLit { fields, .. } => {
             for f in fields {
-                if let Some(v) = &f.value { walk_expr_for_defers(v, fn_effects, errors); }
+                if let Some(v) = &f.value { walk_expr_for_defers(v, fn_effects, current_fn_effects, errors); }
             }
         }
         // Р›СЏРјР±РґС‹ closure-full: body РІРЅСѓС‚СЂРё FnSigBody.
         ExprKind::ClosureFull(fsb) => {
-            if let FnBody::Block(b) = &fsb.body { walk_block_for_defers(b, fn_effects, errors); }
-            else if let FnBody::Expr(e2) = &fsb.body { walk_expr_for_defers(e2, fn_effects, errors); }
+            if let FnBody::Block(b) = &fsb.body { walk_block_for_defers(b, fn_effects, current_fn_effects, errors); }
+            else if let FnBody::Expr(e2) = &fsb.body { walk_expr_for_defers(e2, fn_effects, current_fn_effects, errors); }
         }
         ExprKind::ClosureLight { body, .. } => {
             match body {
-                ClosureBody::Expr(e2) => walk_expr_for_defers(e2, fn_effects, errors),
-                ClosureBody::Block(b) => walk_block_for_defers(b, fn_effects, errors),
+                ClosureBody::Expr(e2) => walk_expr_for_defers(e2, fn_effects, current_fn_effects, errors),
+                ClosureBody::Block(b) => walk_block_for_defers(b, fn_effects, current_fn_effects, errors),
             }
         }
         // РџСЂРѕСЃС‚С‹Рµ СѓР·Р»С‹ Р±РµР· РІР»РѕР¶РµРЅРЅС‹С… Р±Р»РѕРєРѕРІ.
@@ -8617,16 +8638,22 @@ fn walk_expr_for_defers(e: &Expr, fn_effects: &HashMap<String, Vec<TypeRef>>, er
 }
 
 /// Body constraint check: exit-control, Fail-effect, suspend.
-fn check_defer_body(body: &Expr, kw: &str, fn_effects: &HashMap<String, Vec<TypeRef>>, errors: &mut Vec<Diagnostic>) {
+///
+/// D158 (Plan 100.4.1): Fail в defer body разрешён, если enclosing fn-sig
+/// объявляет `Fail[E']` (passed in `current_fn_effects`) ИЛИ throw/?/!!
+/// находятся внутри `with Fail = handler { ... }` (silent suppress
+/// shorthand) — tracked через `DeferBodyCtx.inside_fail_handler_depth`.
+fn check_defer_body(body: &Expr, kw: &str, fn_effects: &HashMap<String, Vec<TypeRef>>, current_fn_effects: &[TypeRef], errors: &mut Vec<Diagnostic>) {
     // D90 Plan 20 Р¤.3 (revised): Р’Р°СЂРёР°РЅС‚ 3 вЂ” return/break/continue СЂР°Р·СЂРµС€РµРЅС‹
     // С‚РѕР»СЊРєРѕ РІРЅСѓС‚СЂРё nested loop/fn-literal РІ defer body (local control). РќР°
     // top-level defer body РѕРЅРё Р·Р°РїСЂРµС‰РµРЅС‹ вЂ” РЅРµР»СЊР·СЏ hijack scope-exit
     // РѕРєСЂСѓР¶Р°СЋС‰РµР№ С„СѓРЅРєС†РёРё/С†РёРєР»Р°.
     //
     // Ctx tracks: loop-nesting depth (break/continue ok РµСЃР»Рё >0), fn-literal
-    // depth (return ok РµСЃР»Рё >0).
-    let ctx = DeferBodyCtx { loop_depth: 0, fn_depth: 0 };
-    check_defer_body_inner(body, kw, fn_effects, &ctx, errors);
+    // depth (return ok РµСЃР»Рё >0), fail-handler-wrap depth (D158: внутри
+    // `with Fail = ... { ... }` body Fail-throws silently suppressed).
+    let ctx = DeferBodyCtx { loop_depth: 0, fn_depth: 0, inside_fail_handler_depth: 0 };
+    check_defer_body_inner(body, kw, fn_effects, current_fn_effects, &ctx, errors);
 }
 
 #[derive(Clone, Copy)]
@@ -8637,38 +8664,58 @@ struct DeferBodyCtx {
     /// РўРµРєСѓС‰Р°СЏ РіР»СѓР±РёРЅР° fn-Р»РёС‚РµСЂР°Р»РѕРІ (closure/lambda) РІРЅСѓС‚СЂРё defer body. Р•СЃР»Рё
     /// >0, `return` Р»РѕРєР°Р»РµРЅ вЂ” СЂР°Р·СЂРµС€С‘РЅ (relates С‚РѕР»СЊРєРѕ Рє Р±Р»РёР¶Р°Р№С€РµРјСѓ fn).
     fn_depth: usize,
+    /// D158 (Plan 100.4.1): depth of `with Fail = ... { ... }` wrappers
+    /// внутри defer body. Если >0, Fail-throws (`throw`/`?`/`!!` + Fail-
+    /// calls) — silently suppressed inner handler'ом, не propagate'ятся
+    /// в outer defer scope. **Backward-compat shorthand** для pre-D158
+    /// pattern: `defer { with Fail = handler { ... } { risky() } }`.
+    inside_fail_handler_depth: usize,
 }
 
-fn check_defer_body_inner(e: &Expr, kw: &str, fn_effects: &HashMap<String, Vec<TypeRef>>, ctx: &DeferBodyCtx, errors: &mut Vec<Diagnostic>) {
+fn check_defer_body_inner(e: &Expr, kw: &str, fn_effects: &HashMap<String, Vec<TypeRef>>, current_fn_effects: &[TypeRef], ctx: &DeferBodyCtx, errors: &mut Vec<Diagnostic>) {
+    // D158 gate: Fail-throws разрешены если (a) внутри `with Fail = ...`
+    // wrapper'а, ИЛИ (b) enclosing fn-sig объявляет `Fail[E']`.
+    let fail_throw_allowed = ctx.inside_fail_handler_depth > 0
+        || has_fail_effect(current_fn_effects);
+
     // РЎРЅР°С‡Р°Р»Р° РїСЂРѕРІРµСЂСЏРµРј СѓР·РµР» СЃР°Рј РїРѕ СЃРµР±Рµ.
     match &e.kind {
         // Exit-control: throw expression-form (D85 redirected via Fail).
+        // D158 (Plan 100.4.1): allow если fail_throw_allowed; иначе error D158-defer-fail-not-in-sig.
         ExprKind::Throw(_) => {
-            errors.push(Diagnostic::new(
-                format!("`throw` is not allowed inside `{}` body (D90): defer body must be infallible вЂ” \
-                         it cannot raise errors. If cleanup may fail, wrap with `with Fail = ...` handler.", kw),
-                e.span,
-            ));
+            if !fail_throw_allowed {
+                errors.push(Diagnostic::new(
+                    format!("`throw` inside `{}` body requires `Fail[E]` in enclosing fn signature (D158-defer-fail-not-in-sig). \
+                             Either (1) add `Fail[E]` to fn signature вЂ” cleanup-fail composes с propagating error через MultiError, \
+                             ИЛИ (2) wrap with `with Fail = handler {{ ... }}` for silent suppress.", kw),
+                    e.span,
+                ));
+            }
         }
-        // ? Рё !! desugar РІ throw в†’ Р·Р°РїСЂРµС‰РµРЅС‹ РїРѕ С‚РѕР№ Р¶Рµ РїСЂРёС‡РёРЅРµ (no Fail).
+        // ? Рё !! desugar РІ throw в†’ same D158 rule.
         ExprKind::Try(_) => {
-            errors.push(Diagnostic::new(
-                format!("`?` operator is not allowed inside `{}` body (D90): defer body must be infallible вЂ” \
-                         `?` requires Fail effect.", kw),
-                e.span,
-            ));
+            if !fail_throw_allowed {
+                errors.push(Diagnostic::new(
+                    format!("`?` operator inside `{}` body requires `Fail[E]` in enclosing fn signature (D158-defer-fail-not-in-sig). \
+                             Either (1) add `Fail[E]` to fn signature; ИЛИ (2) wrap with `with Fail = handler {{ ... }}`.", kw),
+                    e.span,
+                ));
+            }
         }
         ExprKind::Bang(_) => {
-            errors.push(Diagnostic::new(
-                format!("`!!` operator is not allowed inside `{}` body (D90): defer body must be infallible вЂ” \
-                         `!!` requires Fail effect.", kw),
-                e.span,
-            ));
+            if !fail_throw_allowed {
+                errors.push(Diagnostic::new(
+                    format!("`!!` operator inside `{}` body requires `Fail[E]` in enclosing fn signature (D158-defer-fail-not-in-sig). \
+                             Either (1) add `Fail[E]` to fn signature; ИЛИ (2) wrap with `with Fail = handler {{ ... }}`.", kw),
+                    e.span,
+                ));
+            }
         }
         // Interrupt вЂ” РґРѕСЃСЂРѕС‡РЅС‹Р№ exit with-Р±Р»РѕРєР°, hijack'РёС‚ scope exit-СЃРµРјР°РЅС‚РёРєСѓ.
+        // D158 НЕ amend'аем: interrupt — это hijack scope-exit, не failable cleanup.
         ExprKind::Interrupt(_) => {
             errors.push(Diagnostic::new(
-                format!("`interrupt` is not allowed inside `{}` body (D90): defer body cannot hijack scope exit.", kw),
+                format!("`interrupt` is not allowed inside `{}` body (D90 §6): defer body cannot hijack scope exit.", kw),
                 e.span,
             ));
         }
@@ -8701,6 +8748,16 @@ fn check_defer_body_inner(e: &Expr, kw: &str, fn_effects: &HashMap<String, Vec<T
                             }
                         }
                     }
+                    // D158 (Plan 100.4.1): Fail-call check вЂ” same fail_throw_allowed rule.
+                    if has_fail_effect(effs) && !fail_throw_allowed {
+                        errors.push(Diagnostic::new(
+                            format!("call to `{}` has `Fail` effect, not allowed inside `{}` body вЂ” \
+                                     enclosing fn-sig must declare `Fail[E]` (D158-defer-fail-not-in-sig). \
+                                     Either (1) add `Fail[E]` to fn signature; ИЛИ (2) wrap with `with Fail = handler {{ ... }}`.",
+                                    callee_name, kw),
+                            e.span,
+                        ));
+                    }
                 }
             }
             // Also: built-in effect ops `Time.sleep`, `Net.get`, etc. вЂ”
@@ -8725,126 +8782,139 @@ fn check_defer_body_inner(e: &Expr, kw: &str, fn_effects: &HashMap<String, Vec<T
 
     // Р РµРєСѓСЂСЃРёРІРЅРѕ РІРіР»СѓР±СЊ вЂ” РІР»РѕР¶РµРЅРЅС‹Рµ scope (block, if, etc.) РїРѕРґС‡РёРЅСЏСЋС‚СЃСЏ С‚РµРј Р¶Рµ
     // РѕРіСЂР°РЅРёС‡РµРЅРёСЏРј, С‚.Рє. РѕРЅРё С‡Р°СЃС‚СЊ defer body.
-    walk_defer_subexprs(e, kw, fn_effects, ctx, errors);
+    walk_defer_subexprs(e, kw, fn_effects, current_fn_effects, ctx, errors);
 }
 
-fn walk_defer_subexprs(e: &Expr, kw: &str, fn_effects: &HashMap<String, Vec<TypeRef>>, ctx: &DeferBodyCtx, errors: &mut Vec<Diagnostic>) {
+fn walk_defer_subexprs(e: &Expr, kw: &str, fn_effects: &HashMap<String, Vec<TypeRef>>, current_fn_effects: &[TypeRef], ctx: &DeferBodyCtx, errors: &mut Vec<Diagnostic>) {
     match &e.kind {
-        ExprKind::Block(b) => check_defer_body_block(b, kw, fn_effects, ctx, errors),
+        ExprKind::Block(b) => check_defer_body_block(b, kw, fn_effects, current_fn_effects, ctx, errors),
         ExprKind::If { cond, then, else_ } => {
-            check_defer_body_inner(cond, kw, fn_effects, ctx, errors);
-            check_defer_body_block(then, kw, fn_effects, ctx, errors);
+            check_defer_body_inner(cond, kw, fn_effects, current_fn_effects, ctx, errors);
+            check_defer_body_block(then, kw, fn_effects, current_fn_effects, ctx, errors);
             match else_ {
-                Some(ElseBranch::Block(b)) => check_defer_body_block(b, kw, fn_effects, ctx, errors),
-                Some(ElseBranch::If(e2)) => check_defer_body_inner(e2, kw, fn_effects, ctx, errors),
+                Some(ElseBranch::Block(b)) => check_defer_body_block(b, kw, fn_effects, current_fn_effects, ctx, errors),
+                Some(ElseBranch::If(e2)) => check_defer_body_inner(e2, kw, fn_effects, current_fn_effects, ctx, errors),
                 None => {}
             }
         }
         ExprKind::IfLet { scrutinee, then, else_, .. } => {
-            check_defer_body_inner(scrutinee, kw, fn_effects, ctx, errors);
-            check_defer_body_block(then, kw, fn_effects, ctx, errors);
+            check_defer_body_inner(scrutinee, kw, fn_effects, current_fn_effects, ctx, errors);
+            check_defer_body_block(then, kw, fn_effects, current_fn_effects, ctx, errors);
             match else_ {
-                Some(ElseBranch::Block(b)) => check_defer_body_block(b, kw, fn_effects, ctx, errors),
-                Some(ElseBranch::If(e2)) => check_defer_body_inner(e2, kw, fn_effects, ctx, errors),
+                Some(ElseBranch::Block(b)) => check_defer_body_block(b, kw, fn_effects, current_fn_effects, ctx, errors),
+                Some(ElseBranch::If(e2)) => check_defer_body_inner(e2, kw, fn_effects, current_fn_effects, ctx, errors),
                 None => {}
             }
         }
         ExprKind::Match { scrutinee, arms } => {
-            check_defer_body_inner(scrutinee, kw, fn_effects, ctx, errors);
+            check_defer_body_inner(scrutinee, kw, fn_effects, current_fn_effects, ctx, errors);
             for a in arms {
                 match &a.body {
-                    MatchArmBody::Expr(e2) => check_defer_body_inner(e2, kw, fn_effects, ctx, errors),
-                    MatchArmBody::Block(b) => check_defer_body_block(b, kw, fn_effects, ctx, errors),
+                    MatchArmBody::Expr(e2) => check_defer_body_inner(e2, kw, fn_effects, current_fn_effects, ctx, errors),
+                    MatchArmBody::Block(b) => check_defer_body_block(b, kw, fn_effects, current_fn_effects, ctx, errors),
                 }
-                if let Some(g) = &a.guard { check_defer_body_inner(g, kw, fn_effects, ctx, errors); }
+                if let Some(g) = &a.guard { check_defer_body_inner(g, kw, fn_effects, current_fn_effects, ctx, errors); }
             }
         }
         ExprKind::For { iter, body, .. } => {
-            check_defer_body_inner(iter, kw, fn_effects, ctx, errors);
-            let inner = DeferBodyCtx { loop_depth: ctx.loop_depth + 1, fn_depth: ctx.fn_depth };
-            check_defer_body_block(body, kw, fn_effects, &inner, errors);
+            check_defer_body_inner(iter, kw, fn_effects, current_fn_effects, ctx, errors);
+            let inner = DeferBodyCtx { loop_depth: ctx.loop_depth + 1, fn_depth: ctx.fn_depth, inside_fail_handler_depth: ctx.inside_fail_handler_depth };
+            check_defer_body_block(body, kw, fn_effects, current_fn_effects, &inner, errors);
         }
         ExprKind::While { cond, body, .. } => {
-            check_defer_body_inner(cond, kw, fn_effects, ctx, errors);
-            let inner = DeferBodyCtx { loop_depth: ctx.loop_depth + 1, fn_depth: ctx.fn_depth };
-            check_defer_body_block(body, kw, fn_effects, &inner, errors);
+            check_defer_body_inner(cond, kw, fn_effects, current_fn_effects, ctx, errors);
+            let inner = DeferBodyCtx { loop_depth: ctx.loop_depth + 1, fn_depth: ctx.fn_depth, inside_fail_handler_depth: ctx.inside_fail_handler_depth };
+            check_defer_body_block(body, kw, fn_effects, current_fn_effects, &inner, errors);
         }
         ExprKind::WhileLet { scrutinee, body, .. } => {
-            check_defer_body_inner(scrutinee, kw, fn_effects, ctx, errors);
-            let inner = DeferBodyCtx { loop_depth: ctx.loop_depth + 1, fn_depth: ctx.fn_depth };
-            check_defer_body_block(body, kw, fn_effects, &inner, errors);
+            check_defer_body_inner(scrutinee, kw, fn_effects, current_fn_effects, ctx, errors);
+            let inner = DeferBodyCtx { loop_depth: ctx.loop_depth + 1, fn_depth: ctx.fn_depth, inside_fail_handler_depth: ctx.inside_fail_handler_depth };
+            check_defer_body_block(body, kw, fn_effects, current_fn_effects, &inner, errors);
         }
         ExprKind::Loop { body, .. } => {
-            let inner = DeferBodyCtx { loop_depth: ctx.loop_depth + 1, fn_depth: ctx.fn_depth };
-            check_defer_body_block(body, kw, fn_effects, &inner, errors);
+            let inner = DeferBodyCtx { loop_depth: ctx.loop_depth + 1, fn_depth: ctx.fn_depth, inside_fail_handler_depth: ctx.inside_fail_handler_depth };
+            check_defer_body_block(body, kw, fn_effects, current_fn_effects, &inner, errors);
         }
         ExprKind::Select { arms } => {
             for arm in arms {
                 match &arm.op {
-                    SelectOp::Recv { chan, .. } => check_defer_body_inner(chan, kw, fn_effects, ctx, errors),
+                    SelectOp::Recv { chan, .. } => check_defer_body_inner(chan, kw, fn_effects, current_fn_effects, ctx, errors),
                     SelectOp::Send { chan, value } => {
-                        check_defer_body_inner(chan, kw, fn_effects, ctx, errors);
-                        check_defer_body_inner(value, kw, fn_effects, ctx, errors);
+                        check_defer_body_inner(chan, kw, fn_effects, current_fn_effects, ctx, errors);
+                        check_defer_body_inner(value, kw, fn_effects, current_fn_effects, ctx, errors);
                     }
                     SelectOp::Default => {}
                 }
-                if let Some(g) = &arm.guard { check_defer_body_inner(g, kw, fn_effects, ctx, errors); }
-                check_defer_body_block(&arm.body, kw, fn_effects, ctx, errors);
+                if let Some(g) = &arm.guard { check_defer_body_inner(g, kw, fn_effects, current_fn_effects, ctx, errors); }
+                check_defer_body_block(&arm.body, kw, fn_effects, current_fn_effects, ctx, errors);
             }
         }
-        ExprKind::With { body, .. } | ExprKind::Forbid { body, .. }
-        | ExprKind::Realtime { body, .. } => {
-            check_defer_body_block(body, kw, fn_effects, ctx, errors);
+        // D158 (Plan 100.4.1): `with Fail = handler { ... } { body }` —
+        // body inside silently suppress'ит Fail-throws (inner handler ловит
+        // их). Increment ctx.inside_fail_handler_depth для recursive check.
+        ExprKind::With { bindings, body } => {
+            let any_fail = bindings.iter().any(|b| matches!(&b.effect, TypeRef::Named { path, .. } if path.len() == 1 && path[0] == "Fail"));
+            let inner = if any_fail {
+                DeferBodyCtx {
+                    loop_depth: ctx.loop_depth,
+                    fn_depth: ctx.fn_depth,
+                    inside_fail_handler_depth: ctx.inside_fail_handler_depth + 1,
+                }
+            } else { *ctx };
+            check_defer_body_block(body, kw, fn_effects, current_fn_effects, &inner, errors);
+        }
+        ExprKind::Forbid { body, .. } | ExprKind::Realtime { body, .. } => {
+            check_defer_body_block(body, kw, fn_effects, current_fn_effects, ctx, errors);
         }
         ExprKind::Call { func, args, trailing } => {
-            check_defer_body_inner(func, kw, fn_effects, ctx, errors);
-            for a in args { check_defer_body_inner(a.expr(), kw, fn_effects, ctx, errors); }
+            check_defer_body_inner(func, kw, fn_effects, current_fn_effects, ctx, errors);
+            for a in args { check_defer_body_inner(a.expr(), kw, fn_effects, current_fn_effects, ctx, errors); }
             if let Some(tr) = trailing {
                 match tr {
-                    Trailing::Block(b) => check_defer_body_block(b, kw, fn_effects, ctx, errors),
+                    Trailing::Block(b) => check_defer_body_block(b, kw, fn_effects, current_fn_effects, ctx, errors),
                     Trailing::Fn(fsb) => {
                         // Trailing fn-literal `fn { ... }` вЂ” СЌС‚Рѕ Р»СЏРјР±РґР°; return
                         // РІРЅСѓС‚СЂРё РЅРµС‘ Р»РѕРєР°Р»РµРЅ РґР»СЏ Р»СЏРјР±РґС‹, Р° РЅРµ РґР»СЏ defer body.
-                        let inner = DeferBodyCtx { loop_depth: ctx.loop_depth, fn_depth: ctx.fn_depth + 1 };
-                        if let FnBody::Block(b) = &fsb.body { check_defer_body_block(b, kw, fn_effects, &inner, errors); }
-                        else if let FnBody::Expr(e2) = &fsb.body { check_defer_body_inner(e2, kw, fn_effects, &inner, errors); }
+                        let inner = DeferBodyCtx { loop_depth: ctx.loop_depth, fn_depth: ctx.fn_depth + 1, inside_fail_handler_depth: ctx.inside_fail_handler_depth };
+                        if let FnBody::Block(b) = &fsb.body { check_defer_body_block(b, kw, fn_effects, current_fn_effects, &inner, errors); }
+                        else if let FnBody::Expr(e2) = &fsb.body { check_defer_body_inner(e2, kw, fn_effects, current_fn_effects, &inner, errors); }
                     }
                     Trailing::LegacyBlockWithParams(tb) => {
-                        let inner = DeferBodyCtx { loop_depth: ctx.loop_depth, fn_depth: ctx.fn_depth + 1 };
-                        check_defer_body_block(&tb.body, kw, fn_effects, &inner, errors);
+                        let inner = DeferBodyCtx { loop_depth: ctx.loop_depth, fn_depth: ctx.fn_depth + 1, inside_fail_handler_depth: ctx.inside_fail_handler_depth };
+                        check_defer_body_block(&tb.body, kw, fn_effects, current_fn_effects, &inner, errors);
                     }
                 }
             }
         }
         ExprKind::Binary { left, right, .. } => {
-            check_defer_body_inner(left, kw, fn_effects, ctx, errors);
-            check_defer_body_inner(right, kw, fn_effects, ctx, errors);
+            check_defer_body_inner(left, kw, fn_effects, current_fn_effects, ctx, errors);
+            check_defer_body_inner(right, kw, fn_effects, current_fn_effects, ctx, errors);
         }
-        ExprKind::Unary { operand, .. } => check_defer_body_inner(operand, kw, fn_effects, ctx, errors),
+        ExprKind::Unary { operand, .. } => check_defer_body_inner(operand, kw, fn_effects, current_fn_effects, ctx, errors),
         ExprKind::Coalesce(a, b) => {
-            check_defer_body_inner(a, kw, fn_effects, ctx, errors);
-            check_defer_body_inner(b, kw, fn_effects, ctx, errors);
+            check_defer_body_inner(a, kw, fn_effects, current_fn_effects, ctx, errors);
+            check_defer_body_inner(b, kw, fn_effects, current_fn_effects, ctx, errors);
         }
-        ExprKind::As(e2, _) | ExprKind::Is(e2, _) => check_defer_body_inner(e2, kw, fn_effects, ctx, errors),
-        ExprKind::Member { obj, .. } | ExprKind::Index { obj, .. } => check_defer_body_inner(obj, kw, fn_effects, ctx, errors),
-        ExprKind::TurboFish { base, .. } => check_defer_body_inner(base, kw, fn_effects, ctx, errors),
+        ExprKind::As(e2, _) | ExprKind::Is(e2, _) => check_defer_body_inner(e2, kw, fn_effects, current_fn_effects, ctx, errors),
+        ExprKind::Member { obj, .. } | ExprKind::Index { obj, .. } => check_defer_body_inner(obj, kw, fn_effects, current_fn_effects, ctx, errors),
+        ExprKind::TurboFish { base, .. } => check_defer_body_inner(base, kw, fn_effects, current_fn_effects, ctx, errors),
         ExprKind::Range { start, end, .. } => {
-            if let Some(s) = start { check_defer_body_inner(s, kw, fn_effects, ctx, errors); }
-            if let Some(e) = end { check_defer_body_inner(e, kw, fn_effects, ctx, errors); }
+            if let Some(s) = start { check_defer_body_inner(s, kw, fn_effects, current_fn_effects, ctx, errors); }
+            if let Some(e) = end { check_defer_body_inner(e, kw, fn_effects, current_fn_effects, ctx, errors); }
         }
         ExprKind::ArrayLit(elems) => {
             for el in elems {
                 match el {
-                    ArrayElem::Item(e2) | ArrayElem::Spread(e2) => check_defer_body_inner(e2, kw, fn_effects, ctx, errors),
+                    ArrayElem::Item(e2) | ArrayElem::Spread(e2) => check_defer_body_inner(e2, kw, fn_effects, current_fn_effects, ctx, errors),
                 }
             }
         }
         ExprKind::TupleLit(elems) => {
-            for el in elems { check_defer_body_inner(el, kw, fn_effects, ctx, errors); }
+            for el in elems { check_defer_body_inner(el, kw, fn_effects, current_fn_effects, ctx, errors); }
         }
         ExprKind::RecordLit { fields, .. } => {
             for f in fields {
-                if let Some(v) = &f.value { check_defer_body_inner(v, kw, fn_effects, ctx, errors); }
+                if let Some(v) = &f.value { check_defer_body_inner(v, kw, fn_effects, current_fn_effects, ctx, errors); }
             }
         }
         // Lambda/closure bodies вЂ” СЌС‚Рѕ РѕС‚РґРµР»СЊРЅС‹Р№ scope РґР»СЏ defer'Р°
@@ -8859,7 +8929,7 @@ fn walk_defer_subexprs(e: &Expr, kw: &str, fn_effects: &HashMap<String, Vec<Type
     }
 }
 
-fn check_defer_body_block(b: &Block, kw: &str, fn_effects: &HashMap<String, Vec<TypeRef>>, ctx: &DeferBodyCtx, errors: &mut Vec<Diagnostic>) {
+fn check_defer_body_block(b: &Block, kw: &str, fn_effects: &HashMap<String, Vec<TypeRef>>, current_fn_effects: &[TypeRef], ctx: &DeferBodyCtx, errors: &mut Vec<Diagnostic>) {
     for s in &b.stmts {
         match s {
             Stmt::Return { span, value } => {
@@ -8872,7 +8942,7 @@ fn check_defer_body_block(b: &Block, kw: &str, fn_effects: &HashMap<String, Vec<
                     ));
                 }
                 if let Some(v) = value {
-                    check_defer_body_inner(v, kw, fn_effects, ctx, errors);
+                    check_defer_body_inner(v, kw, fn_effects, current_fn_effects, ctx, errors);
                 }
             }
             Stmt::Break(span) => {
@@ -8899,36 +8969,36 @@ fn check_defer_body_block(b: &Block, kw: &str, fn_effects: &HashMap<String, Vec<
                     *span,
                 ));
             }
-            Stmt::Let(decl) => check_defer_body_inner(&decl.value, kw, fn_effects, ctx, errors),
-            Stmt::Expr(e) => check_defer_body_inner(e, kw, fn_effects, ctx, errors),
+            Stmt::Let(decl) => check_defer_body_inner(&decl.value, kw, fn_effects, current_fn_effects, ctx, errors),
+            Stmt::Expr(e) => check_defer_body_inner(e, kw, fn_effects, current_fn_effects, ctx, errors),
             Stmt::Assign { target, value, .. } => {
-                check_defer_body_inner(target, kw, fn_effects, ctx, errors);
-                check_defer_body_inner(value, kw, fn_effects, ctx, errors);
+                check_defer_body_inner(target, kw, fn_effects, current_fn_effects, ctx, errors);
+                check_defer_body_inner(value, kw, fn_effects, current_fn_effects, ctx, errors);
             }
             // Nested defer/errdefer вЂ” СЌС‚Рѕ OK. Р­С‚Рѕ РЅРѕРІС‹Р№ scope (block),
             // defer'С‹ РІРЅСѓС‚СЂРё СЂРµРіРёСЃС‚СЂРёСЂСѓСЋС‚СЃСЏ РґР»СЏ СЌС‚РѕРіРѕ РІРЅСѓС‚СЂРµРЅРЅРµРіРѕ scope'Р°,
             // РЅРµ РґР»СЏ СЂРѕРґРёС‚РµР»СЊСЃРєРѕРіРѕ. РС… body С‚РѕР¶Рµ РїСЂРѕРІРµСЂСЏРµС‚СЃСЏ вЂ” РЅРѕ С‡РµСЂРµР·
             // РѕСЃРЅРѕРІРЅРѕР№ walk (check_defer_bodies РїСЂРѕС…РѕРґРёС‚ РїРѕ РІСЃРµРј bodies).
-            Stmt::Defer { body, .. } => check_defer_body(body, "defer", fn_effects, errors),
-            Stmt::ErrDefer { body, .. } => check_defer_body(body, "errdefer", fn_effects, errors),
+            Stmt::Defer { body, .. } => check_defer_body(body, "defer", fn_effects, current_fn_effects, errors),
+            Stmt::ErrDefer { body, .. } => check_defer_body(body, "errdefer", fn_effects, current_fn_effects, errors),
             // D160 Plan 100.4.3: OkDefer / DeferWithResult body — same constraints as defer.
-            Stmt::OkDefer { body, .. } => check_defer_body(body, "okdefer", fn_effects, errors),
-            Stmt::DeferWithResult { body, .. } => check_defer_body(body, "defer |result|", fn_effects, errors),
+            Stmt::OkDefer { body, .. } => check_defer_body(body, "okdefer", fn_effects, current_fn_effects, errors),
+            Stmt::DeferWithResult { body, .. } => check_defer_body(body, "defer |result|", fn_effects, current_fn_effects, errors),
             // Plan 33.2 Р¤.8: assert_static РІ defer body вЂ” walk expr.
-            Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => check_defer_body_inner(expr, kw, fn_effects, ctx, errors),
+            Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => check_defer_body_inner(expr, kw, fn_effects, current_fn_effects, ctx, errors),
             // Ф.4.1: apply — ghost, args walk.
             Stmt::Apply { args, .. } => {
-                for a in args { check_defer_body_inner(a, kw, fn_effects, ctx, errors); }
+                for a in args { check_defer_body_inner(a, kw, fn_effects, current_fn_effects, ctx, errors); }
             }
             // Ф.4.2: calc — ghost, шаги walk.
             Stmt::Calc { steps, .. } => {
-                for step in steps { check_defer_body_inner(&step.expr, kw, fn_effects, ctx, errors); }
+                for step in steps { check_defer_body_inner(&step.expr, kw, fn_effects, current_fn_effects, ctx, errors); }
             }
             Stmt::Reveal { .. } => {}
         }
     }
     if let Some(t) = &b.trailing {
-        check_defer_body_inner(t, kw, fn_effects, ctx, errors);
+        check_defer_body_inner(t, kw, fn_effects, current_fn_effects, ctx, errors);
     }
 }
 
