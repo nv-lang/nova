@@ -563,12 +563,17 @@ pub struct GenericParam {
     /// или `[T Bound = Default]`.
     pub default: Option<TypeRef>,
     pub span: Span,
+    /// Plan 100.2 (D156): `[T consume]` — strict-mode consume bound.
+    /// Внутри тела функции с этим bound'ом, T-typed значения трактуются
+    /// как consume-obligations (must be consumed before scope-exit).
+    /// Backward-compat: без bound — silent-ignore (D133 default).
+    pub consume_bound: bool,
 }
 
 impl GenericParam {
     /// Helper для legacy кода: если bound не нужен.
     pub fn unbounded(name: String, span: Span) -> Self {
-        Self { name, bounds: Vec::new(), default: None, span }
+        Self { name, bounds: Vec::new(), default: None, span, consume_bound: false }
     }
 
     /// Plan 101.3 helper: первый bound (legacy single-bound API).
@@ -1335,6 +1340,11 @@ pub enum ExprKind {
         invariants: Vec<Expr>,
         /// Plan 33.4 D.0.3: well-founded termination measure.
         decreases: Option<Box<Expr>>,
+        /// Plan 100.2 (D156): `for consume x in iter` — consume-iteration mode.
+        /// Each loop variable is a consume-obligation (must be consumed in body).
+        /// The iter expression itself is marked Consumed after the loop.
+        /// Default false = view-mode (iter stays Live, loop var = view borrow).
+        iter_consume: bool,
     },
     /// `parallel for x in iter { body }` — D14, fan-out body for each element.
     /// Desugars to `supervised { for x in iter { spawn { body } } }`.

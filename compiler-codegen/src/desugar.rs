@@ -547,6 +547,7 @@ impl DesugarCtx {
                             elem_type: None,
                             invariants: vec![],
                             decreases: None,
+                            iter_consume: false,
                         },
                         span,
                     );

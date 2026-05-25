@@ -1,0 +1,24 @@
+// Plan 100.2 (D156): `for tx in vec` — view mode (default).
+//
+// Regular for-loop (не `for consume`) over consume-type array: no consume
+// obligation on loop variable tx. vec stays Live (not consumed by view loop).
+// Demonstrates backward-compat: view-mode iteration unchanged from Plan 100.1.
+
+module nova_tests.plan100_2.for_view_iter_ok
+
+type Transaction consume {
+    id int,
+}
+fn Transaction consume @commit() -> () { () }
+
+test "for view — regular for, no consume obligation on tx" {
+    // `let` (not `consume`) bindings — no consume obligations.
+    let tx1 = Transaction { id: 1 }
+    let tx2 = Transaction { id: 2 }
+    let txs = [tx1, tx2]
+    for tx in txs {
+        // View mode: tx is not consume-obligation — no error if not consumed.
+        let _ = tx.id                           // read-only access ✅
+    }
+    // txs is still Live after view-loop (not consumed) ✅
+}
