@@ -1,0 +1,19 @@
+// Plan 103.1 Ф.6 negative — unit-вариант MemOrdering с payload.
+//
+// EXPECT_CC_ERROR
+//
+// `MemOrdering.Acquire(42)` — unit-вариант вызывается как функция с int
+// аргументом. Codegen эмитит вызов `Nova_MemOrdering_static_Acquire(42)`,
+// которая не существует ни в sync_primitives.h ни в сгенерированном C.
+// С флагом `-Wno-everything` clang допускает implicit decl, но линкер
+// не может resolve undefined symbol → CC error (link phase).
+// `bad()` вызывается из теста чтобы линкер не выкинул её через DCE.
+
+module nova_tests.plan103_1.negative.ordering_construct_with_payload_neg
+
+fn bad() -> MemOrdering => MemOrdering.Acquire(42)
+
+test "should not compile" {
+    let _ = bad()
+    assert(true)
+}

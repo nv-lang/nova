@@ -460,4 +460,81 @@ static inline nova_unit Nova_Once_method_done(Nova_Once* o) {
     return NOVA_UNIT;
 }
 
+/* ── MemOrdering (Plan 103.1) ──────────────────────────────────────────
+ *
+ * Pre-declared here so nova_fn_fence (below) can reference Nova_MemOrdering*
+ * before the generated code defines it. The codegen skips re-emitting
+ * MemOrdering struct/constructors (RUNTIME_DEFINED_TYPES in emit_c.rs)
+ * because this pre-declaration IS the canonical definition.
+ *
+ * Tag values must match the variant ORDER declared in std/runtime/sync.nv:
+ *   Relaxed=0  Acquire=1  Release=2  AcqRel=3  SeqCst=4
+ * This is coordinated with the codegen helper nova_mem_ordering_to_atomic
+ * (emit_c.rs Plan 103.1 Ф.3) and is documented in D167.
+ */
+typedef enum {
+    NOVA_TAG_MemOrdering_Relaxed = 0,
+    NOVA_TAG_MemOrdering_Acquire = 1,
+    NOVA_TAG_MemOrdering_Release = 2,
+    NOVA_TAG_MemOrdering_AcqRel  = 3,
+    NOVA_TAG_MemOrdering_SeqCst  = 4,
+} Nova_MemOrdering_Tag;
+
+typedef struct Nova_MemOrdering Nova_MemOrdering;
+struct Nova_MemOrdering {
+    Nova_MemOrdering_Tag tag;
+    union { char _dummy; } payload;   /* unit-only variants — MSVC requires ≥1 member */
+};
+
+/* Constructors — normally emitted by emit_sum_type; here because MemOrdering
+ * is in RUNTIME_DEFINED_TYPES (emit_sum_type is skipped). */
+static inline Nova_MemOrdering* nova_make_MemOrdering_Relaxed(void) {
+    Nova_MemOrdering* _r = (Nova_MemOrdering*)nova_alloc(sizeof(Nova_MemOrdering));
+    _r->tag = NOVA_TAG_MemOrdering_Relaxed;
+    return _r;
+}
+static inline Nova_MemOrdering* nova_make_MemOrdering_Acquire(void) {
+    Nova_MemOrdering* _r = (Nova_MemOrdering*)nova_alloc(sizeof(Nova_MemOrdering));
+    _r->tag = NOVA_TAG_MemOrdering_Acquire;
+    return _r;
+}
+static inline Nova_MemOrdering* nova_make_MemOrdering_Release(void) {
+    Nova_MemOrdering* _r = (Nova_MemOrdering*)nova_alloc(sizeof(Nova_MemOrdering));
+    _r->tag = NOVA_TAG_MemOrdering_Release;
+    return _r;
+}
+static inline Nova_MemOrdering* nova_make_MemOrdering_AcqRel(void) {
+    Nova_MemOrdering* _r = (Nova_MemOrdering*)nova_alloc(sizeof(Nova_MemOrdering));
+    _r->tag = NOVA_TAG_MemOrdering_AcqRel;
+    return _r;
+}
+static inline Nova_MemOrdering* nova_make_MemOrdering_SeqCst(void) {
+    Nova_MemOrdering* _r = (Nova_MemOrdering*)nova_alloc(sizeof(Nova_MemOrdering));
+    _r->tag = NOVA_TAG_MemOrdering_SeqCst;
+    return _r;
+}
+
+/* nova_fn_fence — implements `export external fn fence(ord MemOrdering)`.
+ *
+ * C name derived by ExternalRegistry: free function → nova_fn_fence.
+ * Parameter type MemOrdering maps to Nova_MemOrdering* (heap-pointer ABI).
+ *
+ * Semantics (D167):
+ *  Relaxed — no-op (fence is valid syntactically; has no ordering effect)
+ *  Acquire — all subsequent reads/writes happen-after all prior Release stores
+ *  Release — all prior reads/writes happen-before all subsequent Acquire loads
+ *  AcqRel  — combination Acquire + Release
+ *  SeqCst  — total order participation; sequenced relative to all SeqCst ops
+ */
+static inline nova_unit nova_fn_fence(Nova_MemOrdering* ord) {
+    switch (ord->tag) {
+        case NOVA_TAG_MemOrdering_Relaxed: /* no-op: valid syntactically */ break;
+        case NOVA_TAG_MemOrdering_Acquire: nova_thread_fence_acquire(); break;
+        case NOVA_TAG_MemOrdering_Release: nova_thread_fence_release(); break;
+        case NOVA_TAG_MemOrdering_AcqRel:  nova_thread_fence_acq_rel(); break;
+        case NOVA_TAG_MemOrdering_SeqCst:  nova_thread_fence_seq_cst(); break;
+    }
+    return NOVA_UNIT;
+}
+
 #endif /* NOVA_RT_SYNC_PRIMITIVES_H */

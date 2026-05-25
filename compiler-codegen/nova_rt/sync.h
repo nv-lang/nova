@@ -146,6 +146,21 @@ static inline void nova_thread_fence_acquire(void) {
     __atomic_thread_fence(__ATOMIC_ACQUIRE);
 }
 
+/* Plan 103.1 Ф.2: release/acq_rel/seq_cst fence helpers — симметрично
+ * nova_thread_fence_acquire. Используются в nova_fn_fence (MemOrdering
+ * dispatch) и доступны для ordering-aware рантайм-хелперов в 103.2+. */
+static inline void nova_thread_fence_release(void) {
+    __atomic_thread_fence(__ATOMIC_RELEASE);
+}
+
+static inline void nova_thread_fence_acq_rel(void) {
+    __atomic_thread_fence(__ATOMIC_ACQ_REL);
+}
+
+static inline void nova_thread_fence_seq_cst(void) {
+    __atomic_thread_fence(__ATOMIC_SEQ_CST);
+}
+
 /* Strong CAS: returns true on success (desired stored), false on failure
  * (expected обновлён до current). Use для one-shot CAS — например
  * SelectWaiter.fired transition 0→1 в wake helper iteration. */

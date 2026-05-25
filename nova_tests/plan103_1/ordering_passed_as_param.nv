@@ -1,0 +1,48 @@
+// Plan 103.1 Ф.6 positive — runtime-value path: MemOrdering как параметр.
+//
+// Проверяет что MemOrdering можно передавать как значение через функцию
+// и вызывать fence(ord) где ord — runtime-переменная, не литерал.
+// Это important для downstream Plan 103.2 где ordering передаётся в
+// atomic-операции как runtime argument.
+
+module nova_tests.plan103_1.ordering_passed_as_param
+
+/// Вызывает fence с переданным ordering — runtime-value path.
+fn use_ordering(ord MemOrdering) {
+    fence(ord)
+}
+
+/// Возвращает SeqCst — простейший constructor через функцию.
+fn default_ordering() -> MemOrdering => SeqCst
+
+/// Для теста вложенных вызовов — inner уровень.
+fn inner_fence(ord MemOrdering) { fence(ord) }
+
+/// Для теста вложенных вызовов — outer уровень.
+fn outer_fence(ord MemOrdering) { inner_fence(ord) }
+
+test "fence(ord) где ord — параметр функции" {
+    use_ordering(Relaxed)
+    use_ordering(Acquire)
+    use_ordering(Release)
+    use_ordering(AcqRel)
+    use_ordering(SeqCst)
+    assert(true)
+}
+
+test "default_ordering() возвращает SeqCst" {
+    let ord = default_ordering()
+    let tag = match ord {
+        Relaxed => 0
+        Acquire => 1
+        Release => 2
+        AcqRel  => 3
+        SeqCst  => 4
+    }
+    assert(tag == 4)
+}
+
+test "передача через несколько уровней функций" {
+    outer_fence(AcqRel)
+    assert(true)
+}

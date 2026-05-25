@@ -1,15 +1,86 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Plan 18 std.sync: fiber-aware synchronization primitives.
 //
-// AtomicInt  — lock-free atomic integer (int32 precision, nova_int width).
-// AtomicBool — lock-free atomic boolean; swap() useful for one-shot ownership.
-// Mutex      — fair FIFO fiber-aware mutex; park/wake via nova_sched.
-// WaitGroup  — counter-based rendezvous; wait() parks until count == 0.
-// Once       — exactly-once execution barrier; run()/done() pair.
+// AtomicInt   — lock-free atomic integer (int32 precision, nova_int width).
+// AtomicBool  — lock-free atomic boolean; swap() useful for one-shot ownership.
+// Mutex       — fair FIFO fiber-aware mutex; park/wake via nova_sched.
+// WaitGroup   — counter-based rendezvous; wait() parks until count == 0.
+// Once        — exactly-once execution barrier; run()/done() pair.
+// MemOrdering — memory ordering enum for atomic ops and fences (Plan 103.1).
+// fence()     — memory fence function; ordered by MemOrdering (Plan 103.1).
 //
 // See compiler-codegen/nova_rt/sync_primitives.h for C implementations.
 
 module runtime.sync
+
+// ─── MemOrdering ─────────────────────────────────────────────────
+
+/// Memory ordering для atomic operations и fences. Контролирует
+/// happens-before отношения между операциями в разных fiber'ах.
+///
+/// Default ordering для simple-overload методов — `SeqCst` (design decision M1):
+/// безопасно для всех use cases, может быть переопределено для
+/// perf-critical кода через `_ordered` overloads (Plan 103.2+).
+///
+/// **Семантика** (D167):
+///
+/// - `Relaxed`: только атомарность операции; нет happens-before.
+///   Use case: telemetry counters, statistics. Цена: dirty reads
+///   возможны cross-fiber, но не torn writes.
+/// - `Acquire`: для load; формирует happens-before с paired Release.
+///   Use case: load shared payload after seeing flag set.
+/// - `Release`: для store; формирует happens-before с paired Acquire.
+///   Use case: publish payload before setting flag.
+/// - `AcqRel`: для RMW (swap, CAS, fetch_*); combination Acquire+Release.
+///   Use case: lock-free queue head/tail; one-shot ownership transfer.
+/// - `SeqCst`: sequentially consistent — total order на всех SeqCst
+///   операциях во всех fiber'ах. Use case: simple mental model,
+///   correctness без deep analysis. Default.
+///
+/// **Примечание**: `MemOrdering` (memory ordering) отличается от
+/// `Ordering` (three-way comparison: Less|Equal|Greater) из prelude.
+/// Разные типы, разные применения.
+///
+/// **Variant tag values** (sync_primitives.h координация):
+///   Relaxed=0  Acquire=1  Release=2  AcqRel=3  SeqCst=4
+#stable(since = "0.1")
+export type MemOrdering
+    | Relaxed
+    | Acquire
+    | Release
+    | AcqRel
+    | SeqCst
+
+/// Memory fence — sequenced ordering point без atomic operation.
+///
+/// Используется для отделения unsynchronized reads/writes от synchronized
+/// (publish/subscribe pattern, refcount-drop с deferred-free).
+///
+/// **Семантика** (D167):
+///
+/// - `fence(MemOrdering.Relaxed)`: no-op. Валиден синтаксически для
+///   consistency, но не имеет ordering эффекта (Acquire/Release нужны).
+/// - `fence(MemOrdering.Acquire)`: все subsequent reads/writes
+///   happen-after все prior Release-stores (visible-to-this-fiber).
+/// - `fence(MemOrdering.Release)`: все prior reads/writes happen-before
+///   все subsequent Acquire-loads (visible-to-other-fibers).
+/// - `fence(MemOrdering.AcqRel)`: combination Acquire+Release.
+/// - `fence(MemOrdering.SeqCst)`: total-order participation; sequenced
+///   относительно всех других SeqCst fences и SeqCst operations.
+///
+/// # Example: refcount-drop с deferred-free
+///
+/// ```nova
+/// // worker fiber:
+/// let prev = refcount.fetch_sub(1)   // Release-dec (103.2)
+/// if prev == 1 {
+///     fence(MemOrdering.Acquire)     // synchronize with all Release-decs
+///     // safe to access data — last fiber holds it
+///     destroy(data)
+/// }
+/// ```
+#stable(since = "0.1")
+export external fn fence(ord MemOrdering)
 
 // ─── AtomicInt ───────────────────────────────────────────────────
 
