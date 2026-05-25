@@ -1,0 +1,33 @@
+// Plan 100.2 (D156): `[T consume]` generic function handling multiple values —
+// demonstrates generic-заразность concept without HashMap.
+//
+// Two consume-bound params passed to a multi-consume-param function.
+// Models the HashMap value-ownership pattern: V consume items must all be
+// explicitly handled, not silently dropped.
+
+module nova_tests.plan100_2.hashmap_consume_value_ok
+
+type Transaction consume {
+    id int,
+}
+fn Transaction consume @commit() -> () { () }
+
+fn begin(n int) -> Transaction => { id: n }
+
+// Concrete consume-param sink for pair of consume values.
+fn commit_pair(consume a Transaction, consume b Transaction) -> () {
+    a.commit()
+    b.commit()
+}
+
+// Generic: handles two T consume values — both obligations must be satisfied.
+fn handle_pair[T consume](consume a T, consume b T) -> () {
+    commit_pair(a, b)                           // both consumed via consume-params
+}
+
+test "generic consume propagation — pair of consume values handled" {
+    consume tx1 = begin(1)
+    consume tx2 = begin(2)
+    // handle_pair has consume-params [0, 1] → tx1, tx2 both consumed.
+    handle_pair(tx1, tx2)
+}
