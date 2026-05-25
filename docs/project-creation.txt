@@ -21403,3 +21403,85 @@ files (104.0-104.9).
   absorbs в 104.5.2.
 - Plan 100.8 Ф.2 (LSP layer) → absorbs в 104.5.3.
 - Plan 01-roadmap §165 (LSP v0.5 обещание) → closes 104.9.
+
+
+========================================================================
+2026-05-25 — Plan 104.7 Ф.0: sub-plan file написан (tree-sitter grammar)
+========================================================================
+
+КОНТЕКСТ: Plan 104 master утверждён 2026-05-25 (то же число — entry
+выше). Master отметил что 104.7 (tree-sitter grammar) — единственный
+sub-plan **НЕ gated** на Plan 91/100, может стартовать немедленно.
+User-выбор (5/25 AskUserQuestion): separate repo nv-lang/tree-sitter-nova
++ полный Ф.0-Ф.7 за несколько сессий.
+
+ВЫПОЛНЕНО Ф.0:
+
+- Worktree `nova-p104` создан на ветке `plan-104` (постоянный,
+  convention `nova-pNN`). Все Plan 104 работы будут в этом worktree.
+
+- `docs/plans/104.7-tree-sitter-grammar.md` написан (~330 строк):
+  * Header: P2, ~3 dev-day, NOT gated (единственный 104.x sub-plan
+    без gate'а), recommended model Sonnet 4.6 HIGH + Thinking ON на
+    Ф.2/Ф.3.
+  * Scope (in/out): full grammar.js mirror Nova productions; 5
+    queries (highlights/folds/indents/injections/locals); test corpus
+    ≥50 fixtures; distribution prep (Helix/Zed/Neovim configs).
+  * 10 design-решений M-7-104.7-1..10:
+    - M-7-104.7-1 separate repo `nv-lang/tree-sitter-nova` (user-confirmed)
+    - M-7-104.7-2 workflow staging в `tools/tree-sitter-nova/` (workaround
+      для "не могу создать GitHub repo")
+    - M-7-104.7-3 manual grammar mirror parser (tree-sitter JS DSL,
+      не auto-generable)
+    - M-7-104.7-4 Node tree-sitter-cli toolchain
+    - M-7-104.7-5 semver, start v0.1.0
+    - M-7-104.7-6 Helix-strictest query format (downward compat Zed/Neovim)
+    - M-7-104.7-7 TextMate-compatible scope-names (consistency с
+      existing nova.tmLanguage.json)
+    - M-7-104.7-8 NO external scanner V1 (JS DSL достаточно)
+    - M-7-104.7-9 MIT license (single, не dual — tree-sitter convention)
+    - M-7-104.7-10 CI drift-detection deferred V2
+  * Архитектура: layout `tools/tree-sitter-nova/` (grammar.js +
+    queries/ + test/corpus/ + dist/ + MIGRATION.md). Migration path
+    через git subtree split в Ф.6.
+  * Декомпозиция Ф.0-Ф.7 atomic ≤4h каждая:
+    - Ф.0 sub-plan + README + toolchain check (~0.5h) — ✅ done
+    - Ф.1 skeleton + minimal grammar (~3-4h)
+    - Ф.2 expression/type/decl productions (~4h, Thinking ON)
+    - Ф.3 control-flow/concurrency/contracts/generics (~3-4h, Thinking ON)
+    - Ф.4 queries 5 файлов (~3h)
+    - Ф.5 test corpus ≥50 fixtures (~2-3h)
+    - Ф.6 distribution prep Helix/Zed/Neovim (~2h)
+    - Ф.7 close-out logs + partial marker (~1h)
+  * Acceptance, tests breakdown (corpus + negative + property),
+    risks (8 пунктов), connections, open questions Q-104.7-1..4,
+    Appendix A (47 lexer keywords source-of-truth) + Appendix B
+    (tree-sitter CLI commands cheatsheet).
+
+- `docs/plans/README.md` — row 104.7 добавлен после row 104 (между
+  104 и Plan 19 footer notes). Status: 📋 proposed 2026-05-25, P2.
+
+- `docs/simplifications.md` — `[M-ide-integration-deferred]` marker
+  обновлён: "Progress (2026-05-25)" subnote, 104.7 sub-plan file
+  written, Ф.0 done, Ф.1-Ф.7 pending multi-session.
+
+GATING-ОБОСНОВАНИЕ (повтор для контекста):
+- Plan 104.7 — единственный sub-plan 104.x НЕ gated на Plan 91/100.
+- Tree-sitter grammar = pure syntax, не зависит от type-checker/codegen
+  API. Можно работать параллельно с любыми изменениями compiler-codegen.
+- Drift mitigated: manual sync в V1 (M-7-104.7-10), CI drift-job V2.
+
+NEXT (multi-session continuation):
+- Ф.1: tools/tree-sitter-nova/ skeleton, package.json, minimal
+  grammar.js (47 keywords + ident + numbers), `tree-sitter generate`
+  работает, 1-2 smoke fixtures. ~3-4h в отдельной сессии.
+- Ф.2-Ф.7: запланированы atomic ≤4h каждая.
+
+Файлы:
+- docs/plans/104.7-tree-sitter-grammar.md (новый, ~330 строк)
+- docs/plans/README.md (row 104.7)
+- docs/simplifications.md (Progress subnote в [M-ide-integration-deferred])
+- docs/project-creation.txt (этот entry)
+- nova-private/discussion-log.md (отдельный коммит)
+
+Worktree: d:/Sources/nv-lang/nova-p104 (plan-104).

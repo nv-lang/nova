@@ -12137,3 +12137,11 @@ capabilities; без неё Nova не достигает заявленной re
     или mature interp-debugger).
   - Inlay hints / semantic tokens / call hierarchy — V2 (nice-to-have).
   - Refactorings (extract function/type) — V2 (rename в V1).
+
+- **Progress (2026-05-25): Sub-plan 104.7 (tree-sitter) запущен** — единственный
+  sub-plan 104.x НЕ gated. Ф.0 ✅ done: подробный sub-plan file
+  `docs/plans/104.7-tree-sitter-grammar.md` (~330 строк, 7 фаз atomic ≤4h,
+  10 design-решений M-7-104.7-1..10, acceptance criteria, tests breakdown,
+  risks). Workflow staging в `tools/tree-sitter-nova/` (миграция в
+  separate repo `nv-lang/tree-sitter-nova` — Ф.6). Ф.1-Ф.7 pending,
+  multi-session. Остальные sub-plans 104.0-104.6/.8/.9 ждут gate Plan 91+100.
