@@ -11966,16 +11966,21 @@ Plan 101.1 Ф.3 follow-up OR Plan 101.5 stdlib audit.
 
 **Где:** весь pipeline `parser → type-checker → consume-checker → codegen → runtime`.
 
-**Что закрыто (Ред. 2 production-grade, merge `d7464176352`):**
-- Spec: 12 D-блоков — D133 (type-level consume foundation), D156-D166
+**Что закрыто (Ред. 2 production-grade, merge `d7464176352` +
+D9 gap closure `6071c42a927`):**
+- Spec: 12 D-блоков — D133 (type-level consume foundation, включая
+  §«Consume-rvalue в arg-position» от 2026-05-25), D156-D166
   (generic propagation, view-borrow, defer/errdefer/okdefer семейство,
   FFI, cross-module, migration policy, perf/IDE/tooling).
 - Plan-docs: umbrella 100 + 8 sub-plans (100.1-100.8) + 5 sub-sub-plans
   (100.4.1-100.4.5) = 13 docs, all Ред. 2 view-default model.
+  Plan 100.3 D9 (2026-05-25 follow-up): запрет `f(make_tx())` где
+  callee-param — view/mut-view (silent-leak prevention); ✅ для
+  consume-param (direct ownership transfer).
 - Idiom docs: 7 штук (consume-types, view-borrow, ffi-consume,
   cross-pkg-consume, async-cleanup, multi-cleanup-errors,
   cleanup-on-failure).
-- Фикстуры: ~80 (pos+neg) в `nova_tests/plan100.1..100.8`.
+- Фикстуры: ~82 (pos+neg) в `nova_tests/plan100.1..100.8` (80 + 2 за D9).
 
 **Что НЕ сделано (implementation phase):**
 - Parser: `type Transaction consume {...}`, `consume tx = ...` binding,
