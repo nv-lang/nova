@@ -119,7 +119,8 @@ impl DesugarCtx {
             }
             Stmt::Throw { value, .. } => self.desugar_expr(value),
             Stmt::Break(_) | Stmt::Continue(_) => {}
-            Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. } => self.desugar_expr(body),
+            Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. }
+            | Stmt::OkDefer { body, .. } | Stmt::DeferWithResult { body, .. } => self.desugar_expr(body),
             Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => self.desugar_expr(expr),
             // Plan 33.3 Ф.13: Apply/Calc — proof-statements внутри lemma-body.
             // Spec-only, не emit'ятся в codegen. Map-литералы внутри proof —

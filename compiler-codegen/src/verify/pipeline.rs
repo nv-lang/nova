@@ -2311,7 +2311,8 @@ fn stmt_has_assignment(s: &Stmt) -> bool {
         Stmt::Expr(e) => expr_has_assignment(e),
         Stmt::Return { value, .. } => value.as_ref().map_or(false, expr_has_assignment),
         Stmt::Throw { value, .. } => expr_has_assignment(value),
-        Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. } => expr_has_assignment(body),
+        Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. }
+        | Stmt::OkDefer { body, .. } | Stmt::DeferWithResult { body, .. } => expr_has_assignment(body),
         Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => expr_has_assignment(expr),
         Stmt::Break(_) | Stmt::Continue(_)
         | Stmt::Apply { .. } | Stmt::Calc { .. } | Stmt::Reveal { .. } => false,
@@ -4169,7 +4170,8 @@ fn collect_bv_arith_in_stmt(
         Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => {
             collect_bv_arith_in_expr(expr, ctx, scope, out);
         }
-        Stmt::Throw { value, .. } | Stmt::Defer { body: value, .. } | Stmt::ErrDefer { body: value, .. } => {
+        Stmt::Throw { value, .. } | Stmt::Defer { body: value, .. } | Stmt::ErrDefer { body: value, .. }
+        | Stmt::OkDefer { body: value, .. } | Stmt::DeferWithResult { body: value, .. } => {
             collect_bv_arith_in_expr(value, ctx, scope, out);
         }
         _ => {}
