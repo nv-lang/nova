@@ -13,7 +13,7 @@ type Transaction consume {
 fn Transaction consume @commit() -> () { () }
 fn Transaction consume @rollback() -> () { () }
 
-fn Transaction_new(n int) -> Transaction => Transaction { id: n }
+fn Transaction_new(n int) -> Transaction => { id: n }
 
 type Inner consume {
     consume tx Transaction,
@@ -23,7 +23,7 @@ fn Inner consume @commit() -> () {
     @tx.commit()                               // @.tx → Consumed
 }
 
-fn Inner_new(n int) -> Inner => Inner { tx: Transaction_new(n) }
+fn Inner_new(n int) -> Inner => { tx: Transaction_new(n) }
 
 type Outer consume {
     consume inner Inner,

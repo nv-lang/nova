@@ -13,7 +13,7 @@ type Transaction consume {
 fn Transaction consume @commit() -> () { () }
 fn Transaction consume @rollback() -> () { () }
 
-fn begin() -> Transaction => Transaction { id: 1 }
+fn begin() -> Transaction => { id: 1 }
 
 test "забыли consume — должна быть ошибка" {
     consume tx = begin()

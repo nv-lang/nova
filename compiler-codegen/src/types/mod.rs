@@ -6950,6 +6950,188 @@ enum VarState {
     MaybeConsumed(Span),
 }
 
+/// Plan 100.1 (D133 / D6): registry consume-типов модуля. Заполняется
+/// pre-pass'ом до `check_consume`. Используется `type_is_consume`
+/// для рекурсивной классификации (record-field consume-types,
+/// generic-wraps).
+///
+/// **НЕ путать с `ConsumeRegistry`** (Plan 73 D131 — registry consume-
+/// методов и consume-параметров; flat-name based).
+struct LinearityRegistry {
+    /// Имена типов, объявленных `type X consume {...}`.
+    consume_types: HashSet<String>,
+    /// Consume-методы по типу: type_name → Vec<method_name>.
+    consume_methods: HashMap<String, Vec<String>>,
+}
+
+impl LinearityRegistry {
+    fn build(module: &Module) -> Self {
+        let mut consume_types = HashSet::new();
+        let mut consume_methods: HashMap<String, Vec<String>> = HashMap::new();
+
+        for item in &module.items {
+            if let Item::Type(td) = item {
+                if td.consume {
+                    consume_types.insert(td.name.clone());
+                }
+            }
+            if let Item::Fn(fd) = item {
+                if let Some(recv) = &fd.receiver {
+                    if recv.consume {
+                        consume_methods
+                            .entry(recv.type_name.clone())
+                            .or_default()
+                            .push(fd.name.clone());
+                    }
+                }
+            }
+        }
+        LinearityRegistry { consume_types, consume_methods }
+    }
+
+    /// Plan 100.1 (D133 / D6): `type_is_consume(TypeRef)` — рекурсивно
+    /// определяет, является ли тип consume через wrap-transitivity.
+    /// Bootstrap: generic-param без bound → false (silent-ignore;
+    /// 100.2 закроет через `[T consume]`).
+    fn type_is_consume(&self, t: &TypeRef, module: &Module) -> bool {
+        match t {
+            TypeRef::Named { path, generics, .. } => {
+                // Direct consume-type.
+                let name = path.last().cloned().unwrap_or_default();
+                if self.consume_types.contains(&name) {
+                    return true;
+                }
+                // Generic wrap: Option[Transaction], Box[Tx], Wrapper[T].
+                if generics.iter().any(|a| self.type_is_consume(a, module)) {
+                    return true;
+                }
+                // Record/sum lookup: own fields consume-typed?
+                for item in &module.items {
+                    if let Item::Type(td) = item {
+                        if td.name == name {
+                            return match &td.kind {
+                                TypeDeclKind::Record(fields) =>
+                                    fields.iter().any(|f|
+                                        f.consume || self.type_is_consume(&f.ty, module)),
+                                TypeDeclKind::Sum(variants) =>
+                                    variants.iter().any(|v|
+                                        match &v.kind {
+                                            SumVariantKind::Tuple(payloads) =>
+                                                payloads.iter().any(|p|
+                                                    self.type_is_consume(p, module)),
+                                            SumVariantKind::Record(fields) =>
+                                                fields.iter().any(|f|
+                                                    f.consume || self.type_is_consume(&f.ty, module)),
+                                            SumVariantKind::Unit => false,
+                                        }),
+                                _ => false,
+                            };
+                        }
+                    }
+                }
+                false
+            }
+            TypeRef::Tuple(elems, _) =>
+                elems.iter().any(|e| self.type_is_consume(e, module)),
+            TypeRef::Array(inner, _) => self.type_is_consume(inner, module),
+            // Generic-param без bound — bootstrap silent-ignore.
+            _ => false,
+        }
+    }
+
+    /// Plan 100.1 (D133): список consume-методов для типа (для diagnostics).
+    fn consume_methods_for(&self, type_name: &str) -> Vec<String> {
+        self.consume_methods.get(type_name).cloned().unwrap_or_default()
+    }
+}
+
+/// Plan 100.1 (D133 / D4): проверка согласованности consume-маркеров
+/// на type-decl'ах и полях. Emit diagnostics:
+/// - D133-field-marker-missing: field consume-типа без `consume`.
+/// - D133-type-marker-missing: `consume field` в non-consume type.
+/// - D133-empty-consume: `type X consume {}` без consume-полей и без
+///   consume-методов.
+/// - D133-marker-on-non-consume: `consume f int` (non-consume type).
+fn check_linearity_markers(
+    module: &Module,
+    reg: &LinearityRegistry,
+    errors: &mut Vec<Diagnostic>,
+) {
+    for item in &module.items {
+        let Item::Type(td) = item else { continue; };
+
+        // Sum-types — D4 covers fields-level only для record-variants;
+        // skip for now (sum-variants могут содержать consume-payload —
+        // type_is_consume их подхватит).
+        let TypeDeclKind::Record(fields) = &td.kind else {
+            continue;
+        };
+
+        for f in fields {
+            let field_is_consume_type = reg.type_is_consume(&f.ty, module);
+
+            // 1. D133-field-marker-missing: consume-field без `consume`-маркера.
+            if field_is_consume_type && !f.consume {
+                errors.push(Diagnostic::new(
+                    format!(
+                        "[D133-field-marker-missing] field `{}` имеет consume-тип \
+                         но не помечен `consume`. Добавь `consume field {}` либо \
+                         замени тип на non-consume.",
+                        f.name, f.name),
+                    f.span,
+                ));
+            }
+            // 4. D133-marker-on-non-consume: `consume f int` где int не consume.
+            if f.consume && !field_is_consume_type {
+                errors.push(Diagnostic::new(
+                    format!(
+                        "[D133-marker-on-non-consume] поле `{}` помечено `consume` \
+                         но его тип не consume — маркер не нужен. Удали `consume` \
+                         перед полем `{}`.",
+                        f.name, f.name),
+                    f.span,
+                ));
+            }
+        }
+
+        // 2. D133-type-marker-missing: consume-field в non-consume type-decl.
+        if !td.consume && fields.iter().any(|f| f.consume) {
+            errors.push(Diagnostic::new(
+                format!(
+                    "[D133-type-marker-missing] type `{}` содержит consume-поле, \
+                     но сам не помечен `consume`. Добавь `consume` после имени: \
+                     `type {} consume {{ ... }}`.",
+                    td.name, td.name),
+                td.span,
+            ));
+        }
+
+        // 3. D133-empty-consume: `type X consume {}` без consume-полей и методов.
+        // Допускаем opaque consume-типы (StringBuilder pattern: consume-methods
+        // через external-fn, без consume-fields). Heuristic: ищем хотя бы один
+        // consume-method для этого типа.
+        if td.consume && !fields.iter().any(|f| f.consume) {
+            let has_consume_method = module.items.iter().any(|it| {
+                if let Item::Fn(fd) = it {
+                    fd.receiver.as_ref().map_or(false, |r|
+                        r.type_name == td.name && r.consume)
+                } else { false }
+            });
+            if !has_consume_method {
+                errors.push(Diagnostic::new(
+                    format!(
+                        "[D133-empty-consume] type `{}` помечен `consume` но не \
+                         имеет ни consume-полей, ни consume-методов — добавь \
+                         хотя бы один consume-method (`fn {} consume @method() -> ()`) \
+                         либо убери `consume` с type-decl.",
+                        td.name, td.name),
+                    td.span,
+                ));
+            }
+        }
+    }
+}
+
 /// Реестр consume-аннотаций: user-module + runtime-stdlib.
 struct ConsumeRegistry {
     /// `(receiver_type, method_name)` — consume-методы.
@@ -7309,6 +7491,10 @@ fn check_fluent_return(module: &Module, errors: &mut Vec<Diagnostic>) {
 
 fn check_consume(module: &Module, errors: &mut Vec<Diagnostic>) {
     let reg = ConsumeRegistry::build(module);
+    // Plan 100.1 (D133): LinearityRegistry + marker consistency.
+    let lin_reg = LinearityRegistry::build(module);
+    check_linearity_markers(module, &lin_reg, errors);
+
     for item in &module.items {
         match item {
             Item::Fn(f) => {
