@@ -1,0 +1,47 @@
+// Plan 100.1 (D133, D5.2 nested field paths): consume через multi-level
+// path `@.inner.tx.commit()`.
+//
+// ConsumeCtx хранит state по произвольно глубокому пути. Closure через
+// deep-path consume + rebind на промежуточном уровне.
+
+module nova_tests.plan100_1.consume_ok_nested_consume
+
+type Transaction consume {
+    id int,
+}
+
+fn Transaction consume @commit() -> () { () }
+fn Transaction consume @rollback() -> () { () }
+
+fn Transaction_new(n int) -> Transaction => Transaction { id: n }
+
+type Inner consume {
+    consume tx Transaction,
+}
+
+fn Inner consume @commit() -> () {
+    @tx.commit()                               // @.tx → Consumed
+}
+
+fn Inner_new(n int) -> Inner => Inner { tx: Transaction_new(n) }
+
+type Outer consume {
+    consume inner Inner,
+}
+
+fn Outer consume @commit() -> () {
+    @inner.commit()                            // вложенный consume через .commit()
+}
+
+// Mut-метод: deep-path consume + rebind на inner.
+fn Outer mut @reset_inner(n int) -> () {
+    @inner.tx.commit()                         // @.inner.tx → Consumed
+    @inner = Inner_new(n)                      // rebind @.inner — @.inner.tx Live снова
+    // exit mut: @.inner Live, @.inner.tx Live ✅ nested invariant preserved
+}
+
+test "Outer reset_inner — deep-path consume + rebind" {
+    consume outer = Outer { inner: Inner_new(1) }
+    outer.reset_inner(2)
+    outer.commit()                             // финальный consume
+}

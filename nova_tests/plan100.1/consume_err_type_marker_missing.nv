@@ -1,0 +1,31 @@
+// EXPECT_COMPILE_ERROR D133
+//
+// Plan 100.1 (D133, D4): record с consume-полем должен быть declared
+// `consume` на type-decl level.
+//
+// `type TxState { consume tx Transaction }` — field помечен, но
+// type-decl без `consume` qualifier. Compiler enforces double-marker:
+// если есть consume-поле, type сам должен быть consume.
+
+module nova_tests.plan100_1.consume_err_type_marker_missing
+
+type Transaction consume {
+    id int,
+}
+
+fn Transaction consume @commit() -> () { () }
+
+// ❌ Поле consume, но type-decl без `consume` — обязательство record'а
+// потеряется (не отслеживается на scope-exit'е).
+// ОШИБКА D133-type-marker-missing.
+type TxState {
+    consume tx Transaction,                    // marker на поле
+                                               // но type-decl без `consume` ←
+}
+
+fn TxState @do_something() -> () { () }
+
+test "consume-поле без consume на type-decl — error на type-decl" {
+    let state = TxState { tx: Transaction { id: 1 } }
+    state.do_something()
+}

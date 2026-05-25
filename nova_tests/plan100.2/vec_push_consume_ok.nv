@@ -1,0 +1,25 @@
+// Plan 100.2 (D156): `vec.push(consume tx)` — стандартный consume через D131.
+//
+// Push'ит consume-tx в vec; vec становится consume-collection (через
+// generic-заразность D133 D6). На scope exit vec обязан consumed
+// (через for-iteration или другой consume-метод).
+
+module nova_tests.plan100_2.vec_push_consume_ok
+
+type Transaction consume {
+    id int,
+}
+
+fn Transaction consume @commit() -> () { () }
+fn Transaction consume @rollback() -> () { () }
+
+test "vec.push(consume tx) + for-consume" {
+    consume tx1 = Transaction { id: 1 }
+    consume tx2 = Transaction { id: 2 }
+    let mut txs = []
+    txs.push(tx1)                              // consume-param, tx1 Consumed
+    txs.push(tx2)
+    for tx in txs {
+        tx.commit()                             // consume каждый element
+    }
+}

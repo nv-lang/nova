@@ -1,0 +1,34 @@
+// Plan 100.8 (D166): LSP hover shows consume status + coverage analysis.
+//
+// Expected hover на `tx` (D166 format):
+//   consume tx: Transaction
+//     Status: Live (consume obligation pending)
+//     Type defined in: this-file.nv:LINE (package 'this' v1.0)
+//     Consume methods:
+//       .commit() -> ()
+//       .rollback() -> ()
+//     Coverage:
+//       Line N: `errdefer { tx.rollback() }` covers error-path
+//       Success path: NOT COVERED (suggest okdefer or explicit commit)
+
+module nova_tests.plan100_8.lsp_hover_consume_status
+
+type Transaction consume { id int }
+
+fn Transaction consume @commit() -> () { () }
+fn Transaction consume @rollback() -> () { () }
+
+fn begin() -> Transaction => Transaction { id: 1 }
+
+fn do_work() Fail[str] -> () { () }
+
+fn process() Fail[str] -> () {
+    consume tx = begin()                        // hover here показывает D166 format
+    errdefer { tx.rollback() }
+    do_work()?
+    tx.commit()
+}
+
+test "LSP hover для consume-binding" {
+    process()
+}

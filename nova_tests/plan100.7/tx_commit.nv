@@ -1,0 +1,36 @@
+// Plan 100.7 (D165): pilot Transaction migration — commit on success.
+// Probe 1 of 5: happy-path.
+
+module nova_tests.plan100_7.tx_commit
+
+type Db { }
+type CommitErr { msg str }
+type RollbackErr { msg str }
+type OrderErr { msg str }
+
+type Transaction consume {
+    id int,
+}
+
+fn Transaction consume @commit() Fail[CommitErr] -> () { () }
+fn Transaction consume @rollback() Fail[RollbackErr] -> () { () }
+
+fn Db @begin() -> Transaction => Transaction { id: 1 }
+
+type Receipt { id int }
+
+fn db_insert(view t Transaction, data int) Fail[OrderErr] -> Receipt
+    => Receipt { id: data }
+
+fn process_order(db Db, data int) Fail -> Receipt {
+    consume tx = db.begin()
+    errdefer { tx.rollback()? }
+    okdefer  { tx.commit()? }
+    let receipt = db_insert(tx, data)?
+    return receipt
+}
+
+test "Transaction commit success path" {
+    let db = Db { }
+    process_order(db, 42)
+}

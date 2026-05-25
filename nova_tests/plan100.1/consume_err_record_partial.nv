@@ -1,0 +1,40 @@
+// EXPECT_COMPILE_ERROR D133
+//
+// Plan 100.1 (D133, D5 field-aware): non-consume метод record'а оставил
+// consume-поле Consumed → invariant broken.
+//
+// `fn TxState mut @broken_rollback()` — метод не consume сам, но внутри
+// делает `@tx.rollback()`. На exit'е mut-метода @.tx должен быть Live
+// (D5), но он Consumed → error.
+
+module nova_tests.plan100_1.consume_err_record_partial
+
+type Transaction consume {
+    id int,
+}
+
+fn Transaction consume @commit() -> () { () }
+fn Transaction consume @rollback() -> () { () }
+
+type TxState consume {
+    consume tx Transaction,
+}
+
+fn TxState consume @commit() -> () {
+    @tx.commit()
+}
+
+// ❌ mut-метод consume'ит поле без rebind.
+// На exit'е @.tx Consumed, но invariant требует Live.
+fn TxState mut @broken_rollback() -> () {
+    @tx.rollback()
+    // ОШИБКА D133-field-not-restored: @.tx Consumed на mut-exit.
+    // Suggest: либо rebind (`@tx = Transaction { ... }`), либо
+    // переделать метод как `consume @method` (закрывает record).
+}
+
+test "non-consume метод оставил поле Consumed — error" {
+    consume state = TxState { tx: Transaction { id: 1 } }
+    state.broken_rollback()
+    state.commit()
+}

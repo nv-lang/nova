@@ -1,0 +1,22 @@
+// Plan 100.1 (D133): consume-тип, базовый commit через consume-метод.
+//
+// `consume tx = begin()` — обязан закрыть в этом scope'е (binding-form D9).
+// `tx.commit()` — consume-метод (D131), переводит tx в Consumed.
+// На exit'е scope'а tx Consumed — нет ошибки.
+
+module nova_tests.plan100_1.consume_ok_commit
+
+type Transaction consume {
+    id int,
+}
+
+fn Transaction consume @commit() -> () { () }
+fn Transaction consume @rollback() -> () { () }
+
+fn begin() -> Transaction => Transaction { id: 42 }
+
+test "consume tx + commit — закрыт в scope'е" {
+    consume tx = begin()
+    tx.commit()
+    // tx Consumed — OK на exit'е
+}

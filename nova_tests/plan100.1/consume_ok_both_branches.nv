@@ -1,0 +1,26 @@
+// Plan 100.1 (D133): branch join — оба arm'а consume через свой метод.
+//
+// `if cond { tx.commit() } else { tx.rollback() }` — на обоих путях tx
+// Consumed. Branch join: Consumed ⊔ Consumed = Consumed. OK.
+
+module nova_tests.plan100_1.consume_ok_both_branches
+
+type Transaction consume {
+    id int,
+}
+
+fn Transaction consume @commit() -> () { () }
+fn Transaction consume @rollback() -> () { () }
+
+fn begin() -> Transaction => Transaction { id: 7 }
+
+test "оба arm'а consume — branch join Consumed/Consumed = Consumed" {
+    let condition = true
+    consume tx = begin()
+    if condition {
+        tx.commit()
+    } else {
+        tx.rollback()
+    }
+    // tx Consumed на обеих ветках — OK
+}

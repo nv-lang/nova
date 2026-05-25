@@ -1,0 +1,25 @@
+// Plan 100.1 (D133): factory function — consume-binding обязателен
+// для ownership; return передаёт наверх.
+//
+// `consume tx = ...; return tx` — обязательство передаётся caller'у.
+// Caller получает Live consume-binding и обязан его закрыть/передать.
+
+module nova_tests.plan100_1.consume_ok_factory
+
+type Transaction consume {
+    id int,
+}
+
+fn Transaction consume @commit() -> () { () }
+fn Transaction consume @rollback() -> () { () }
+
+// Factory с consume-bindingом (mandatory keyword для ownership).
+fn factory() -> Transaction {
+    consume tx = Transaction { id: 99 }
+    return tx                                  // tx Returned — OK
+}
+
+test "factory возвращает consume-instance; caller закрывает" {
+    consume tx = factory()
+    tx.commit()
+}

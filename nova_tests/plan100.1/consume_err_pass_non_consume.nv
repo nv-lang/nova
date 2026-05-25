@@ -1,0 +1,34 @@
+// EXPECT_COMPILE_ERROR D133
+//
+// Plan 100.1 (D133, D2): передача consume-var в non-consume non-receiver
+// fn-параметр — error E (D133-move-to-non-consume).
+//
+// `fn log(tx Transaction)` — параметр без `consume` qualifier означает
+// read-only mode (D7). Caller не может транзитить ownership в такую
+// функцию (нужен либо `consume tx` qualifier на callee, либо `view T`
+// в D157/Plan 100.3).
+
+module nova_tests.plan100_1.consume_err_pass_non_consume
+
+type Transaction consume {
+    id int,
+}
+
+fn Transaction consume @commit() -> () { () }
+fn Transaction consume @rollback() -> () { () }
+
+fn begin() -> Transaction => Transaction { id: 1 }
+
+// `log` — non-consume param. Read-only mode без view-маркера (D157).
+fn log(tx Transaction) -> () {
+    println(tx.id)
+}
+
+test "log(tx) без consume qualifier — call-site error" {
+    consume tx = begin()
+    // ОШИБКА D133-move-to-non-consume: передача в non-consume param.
+    // Suggest: добавить `consume` qualifier на log's tx param,
+    // или (после Plan 100.3) использовать `log(tx)`.
+    log(tx)
+    tx.commit()
+}

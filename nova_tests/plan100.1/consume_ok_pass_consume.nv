@@ -1,0 +1,27 @@
+// Plan 100.1 (D133, D2): передача в `consume`-параметр — obligation
+// переходит callee.
+//
+// `fn finish(consume tx Transaction)` — callee обязан consume внутри.
+// Caller передал — у него tx стал Consumed.
+
+module nova_tests.plan100_1.consume_ok_pass_consume
+
+type Transaction consume {
+    id int,
+}
+
+fn Transaction consume @commit() -> () { () }
+fn Transaction consume @rollback() -> () { () }
+
+fn begin() -> Transaction => Transaction { id: 5 }
+
+// Callee с consume-param — обязан consume внутри.
+fn finish(consume tx Transaction) -> () {
+    tx.commit()
+}
+
+test "передача в consume-param передаёт obligation callee" {
+    consume tx = begin()
+    finish(tx)
+    // tx Consumed (через consume-param передачу) — OK
+}

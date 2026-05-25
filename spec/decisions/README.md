@@ -75,6 +75,18 @@
 | D142 | 02-types.md | Симметрия effect/protocol declaration ↔ literal — keyword `handler`→`effect`, `Handler[E,IRT]`→`Effect[E,IRT]`, анонимный protocol-литерал, capture-rules (Plan 97) |
 | D143 | 03-syntax.md | Static-method префикс `.method()` в `type X protocol { ... }` теле — симметрия с D35 instance-методом `fn T.method()` (Plan 97) |
 | D144 | 02-types.md | Sub-slice views `arr[a..b]` / `str[a..b]` — `cap == len` model, 5 форм Range (RangeBounds parity), bounds-check для raw `arr[i]` (Plan 96) |
+| D133 | 02-types.md | type-level `consume` — обязательная consume-семантика (Plan 100.1, proposed Ред. 2 2026-05-24); расширяет D131 affine с противоположной стороны (must-be-consumed). Унифицированная модель «view-default, `consume`-explicit». Foundation Plan 100 family |
+| D156 | 02-types.md | Generic `[T consume]` bound + collection-aware iteration с 3 mode'ами (`for tx` view / `for mut tx` mut-view / `for consume tx` consume) — Plan 100.2 proposed Ред. 2 |
+| D157 | 05-memory.md | Implicit view default + closure capture analysis + `match consume` syntax (Plan 100.3, proposed Ред. 2 2026-05-24). `view T` keyword отвергнут — view это no-qualifier default везде. Automatic closure-mode detection (view / mut-view / consume) |
+| D158 | 03-syntax.md | Failable cleanup body (Plan 100.4.1, proposed) — amend D90 §4; defer/errdefer body может Fail; Plan 49 multi-error composition |
+| D159 | 03-syntax.md | Async/suspend в cleanup body (Plan 100.4.2, proposed) — amend D90 §5; cancel-safe semantics; spawn/parallel for запрещены |
+| D160 | 03-syntax.md | `okdefer` + reason-aware `defer \|result\|` (Plan 100.4.3, proposed); complement к errdefer; mixed LIFO defer family |
+| D161 | 03-syntax.md | Multi-defer LIFO error accumulation + panic-in-defer composition (Plan 100.4.4, proposed) — amend D90 §«panic»; LIFO continues после partial failure; no Rust double-panic-abort |
+| D162 | 03-syntax.md | Consume-integration final (Plan 100.4.5, proposed) — amend D90 §7; check_consume распознаёт defer/errdefer/okdefer cover; interrupt теперь триггерит errdefer |
+| D163 | 02-types.md | FFI consume integration — type-driven, без `external consume fn` keyword (Plan 100.5, proposed Ред. 2 2026-05-24). Унифицировано с regular fn: return-type carries consume-ness; `consume` keyword только на params/receivers (D131 semantic) |
+| D164 | 02-types.md | Cross-module consume — visibility, mangling-bit extension Plan 81 D134, package contracts (Plan 100.6, proposed) |
+| D165 | 09-tooling.md | Consume-types migration policy — `nova consume-migrate` CLI + edition versioning (Plan 100.7, proposed) |
+| D166 | 09-tooling.md | Consume-types developer experience — perf budget <5%, LSP quick fixes (12 error codes), hover info, `nova doc` integration, structured diagnostic format (Plan 100.8, proposed) |
 
 ## История
 

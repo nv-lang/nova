@@ -1,0 +1,30 @@
+// EXPECT_COMPILE_ERROR D133
+//
+// Plan 100.1 (D133, D4): consume-поле без `consume`-маркера на field
+// declaration — error.
+//
+// Field-тип `Transaction` — consume-тип, но field declared без
+// `consume` qualifier. Compiler enforces: tip ↔ marker consistency.
+
+module nova_tests.plan100_1.consume_err_field_marker_missing
+
+type Transaction consume {
+    id int,
+}
+
+fn Transaction consume @commit() -> () { () }
+
+// ❌ Field-тип consume, но без `consume` маркера на поле.
+// ОШИБКА D133-field-marker-missing.
+type TxState consume {
+    tx Transaction,                            // ← должно быть `consume tx Transaction`
+}
+
+fn TxState consume @commit() -> () {
+    @tx.commit()
+}
+
+test "field consume-типа без consume-маркера — error на type-decl" {
+    consume state = TxState { tx: Transaction { id: 1 } }
+    state.commit()
+}
