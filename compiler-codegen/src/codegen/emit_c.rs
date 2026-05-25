@@ -5392,7 +5392,10 @@ impl CEmitter {
         // CANCEL→USER overwrite, иначе keep).
         self.line("if (_c->_nova_parent_scope) {");
         self.indent += 1;
-        self.line("nova_fiber_report_atomic_kinded(_c->_nova_parent_scope, _ff.error_msg.ptr, _ff.error_kind, _ff.error_reason_ptr);");
+        // Plan 83.10 (2026-05-25): fix [M-83.10-armed-user-throw-routing] —
+        // typed throw payload + tid тоже propagate в atomic, чтобы main
+        // re-throw мог dispatch через nova_throw_typed handler chain.
+        self.line("nova_fiber_report_atomic_kinded(_c->_nova_parent_scope, _ff.error_msg.ptr, _ff.error_kind, _ff.error_reason_ptr, _ff.error_user_payload, _ff.error_user_type_id);");
         self.indent -= 1;
         self.line("} else {");
         self.indent += 1;

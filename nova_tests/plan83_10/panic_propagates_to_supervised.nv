@@ -4,11 +4,10 @@
 // Validates Plan 49 Ф.3+Ф.5 kind-aware re-throw + USER-precedence
 // + handler dispatch.
 //
-// Plan 83.10 (2026-05-25): directive `// ENV NOVA_AUTOARM=0` —
-// Plan 49 with-Fail routing validates cooperative path; armed M:N USER
-// throw → handler routing has gap [M-83.10-armed-user-throw-routing]
-// — V2 followup (Plan 49 cross-worker first_error_atomic → main handler).
-// ENV NOVA_AUTOARM=0
+// Plan 83.10 fix (2026-05-25): [M-83.10-armed-user-throw-routing]
+// resolved — atomic stores payload + tid; supervised_run_impl
+// re-throws через nova_throw_typed для USER_TYPED kind. Test runs
+// under armed M:N default.
 
 module plan83_10.panic_propagates_to_supervised
 

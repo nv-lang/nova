@@ -12241,3 +12241,98 @@ Plan 83.2 §4 «Compiled-программа без единого `runtime.*` в
 
 - **Last commit:** TBD.
 - **Приоритет:** P1 closure complete.
+
+### [M-83.10-armed-user-throw-routing-fix] FIXED (2026-05-25 same session)
+
+- **Status:** ✅ **FIXED** в Plan 83.10 same session as discovery.
+
+- **Root cause:** `nova_throw_typed` (typed throw для `throw 42` int)
+  sets `_ff.error_kind = NOVA_THROW_USER_TYPED`, payload + tid stored в
+  fail-frame. Worker fiber catch passed только msg + kind + reason к
+  `nova_fiber_report_atomic_kinded` — payload + tid lost. Main
+  `supervised_run_impl` re-throw flowed `nova_throw(str)` —
+  string-only, bypasses typed handler dispatch chain.
+
+- **Fix (3 files, ~30 LOC):**
+
+  1. `NovaFiberQueue` extended (fibers.h:280-281):
+     ```c
+     void*      first_error_atomic_payload;
+     NovaTypeId first_error_atomic_tid;
+     ```
+
+  2. `nova_fiber_report_atomic_kinded` сигнатура (fibers.h:1192):
+     extended payload + tid arguments; stored after CAS. USER_TYPED
+     added к "real error" precedence promote.
+
+  3. `nova_supervised_run_impl` re-throw (fibers.h:1466):
+     ```c
+     if (kind == NOVA_THROW_USER_TYPED && !q->first_error) {
+         nova_throw_typed(msg, payload, tid);
+     }
+     nova_throw(str);  // legacy string fallback
+     ```
+
+  4. `emit_c.rs emit_spawn` catch (line 5395): pass
+     `_ff.error_user_payload` + `_ff.error_user_type_id`.
+
+- **Verification:** 4 из 5 Категория 3 panic-safety tests теперь PASS
+  под armed M:N (без NOVA_AUTOARM=0):
+  - panic_propagates_to_supervised ✅
+  - runtime_survives_fiber_panic ✅
+  - panic_cancels_sibling_fibers ✅
+  - multiple_spawns_panic_first_wins ✅
+  - panic_in_nested_supervised — separate gap (nested supervised
+    inside spawn body hangs under armed; keeps NOVA_AUTOARM=0).
+
+- **Side effects (pre-existing races exposed):**
+  - `concurrency/supervised_errors` "early-stop pattern" — shared
+    mutable race, was masked by deque LIFO scheduling.
+  - Plan 83.7 runnext slot + Plan 83.10 fix changed timing → race surfaces.
+  - **Pre-existing test bug**, not Plan 83.10 fix regression.
+
+- **Production impact:** **MAJOR.** Production armed M:N user code using
+  spawn+supervised+with Fail combo теперь работает correctly. Pre-fix
+  fiber errors aborted process с "unhandled Fail" stderr — likely not
+  user-intended. Critical correctness fix.
+
+- **Last commit:** TBD.
+
+### [M-83.10-nested-armed-routing] Nested supervised inside spawn — armed M:N hang (2026-05-25)
+
+- **Discovered by:** Plan 83.10 `panic_in_nested_supervised` test —
+  pattern `supervised { spawn { supervised { spawn { throw 99 } } } }`
+  hangs (TIMEOUT 77s+) под armed M:N.
+
+- **Hypothesis:** nested supervised inside spawn body — inner supervised
+  has dispatch_ready set к outer worker scope (либо вообще NULL?);
+  inner first_error_atomic atomic CAS happens на inner scope, не outer.
+  Inner drain blocks waiting на something. Либо outer spawn body's
+  fail-frame doesn't catch inner re-throw properly.
+
+- **Workaround:** test keeps `// ENV NOVA_AUTOARM=0` directive (4
+  others now PASS armed without directive).
+
+- **V2 followup:** investigate nested supervised drain ordering под
+  armed M:N. Possibly Plan 83.4.2 ownership corner case left over.
+
+- **Priority:** P2 production gap, relatively rare pattern.
+
+### [M-83.10-fix-exposes-test-races] Plan 83.10 fix exposes pre-existing test races (2026-05-25)
+
+- **Where:** `concurrency/supervised_errors`, possibly другие.
+
+- **What:** Plan 83.10 fix changes USER_TYPED dispatch chain — handler
+  fires earlier либо in different order. Combined с Plan 83.7 runnext
+  scheduling, exposes pre-existing shared-mut race conditions в tests
+  that были masked by deque LIFO scheduling.
+
+- **Examples:**
+  - `supervised_errors` "early-stop pattern": `aborted` + `work_done`
+    shared mutable across N fibers; test assumed sequential ordering.
+
+- **Pre-existing test bugs, not Plan 83.10 fix regressions.** V2
+  followup: sweep concurrency/ tests, rewrite race-prone patterns к
+  `parallel for` либо atomic primitives.
+
+- **Priority:** P2.

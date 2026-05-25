@@ -275,6 +275,18 @@ typedef struct {
     nova_atomic_ptr first_error_atomic;
     NovaThrowKind   first_error_atomic_kind;     /* USER (default) или CANCEL */
     void*           first_error_atomic_reason;   /* box'нутый T для CANCEL */
+    /* Plan 83.10 (2026-05-25): fix [M-83.10-armed-user-throw-routing].
+     * Typed throw (NOVA_THROW_USER_TYPED) needs payload + tid для proper
+     * handler dispatch на main re-throw. Без этих полей `throw 42` под
+     * armed M:N теряет int payload — main's nova_throw(str) bypasses
+     * typed handler dispatch chain.
+     *
+     * Worker fiber catch (emit_spawn): writes payload + tid alongside
+     * msg + kind. Main supervised_run_impl reads when re-throwing —
+     * if kind == USER_TYPED → call nova_throw_typed(msg, payload, tid)
+     * instead of nova_throw(str), preserving typed handler dispatch. */
+    void*           first_error_atomic_payload;  /* Plan 83.10: typed payload */
+    NovaTypeId      first_error_atomic_tid;      /* Plan 83.10: payload type ID */
     /* Plan 44.5 Layer 5 park/wake: M:N fiber re-dispatch hook.
      * Set by runtime.c on worker scopes (в nova_runtime_init).
      * NULL = single-thread scope (main thread, test scopes) — no M:N.
@@ -448,6 +460,10 @@ static inline void nova_scope_init(NovaFiberQueue* q) {
      * forever, behaviour identical. */
     nova_aint_init(&q->pending_remote, 0);
     nova_aptr_init(&q->first_error_atomic, NULL);
+    q->first_error_atomic_kind = NOVA_THROW_USER;
+    q->first_error_atomic_reason = NULL;
+    q->first_error_atomic_payload = NULL;     /* Plan 83.10 */
+    q->first_error_atomic_tid = 0;            /* Plan 83.10 */
     q->dispatch_ready = NULL;
     q->dispatch_ctx   = NULL;
     q->ctx_pins        = NULL;
@@ -1185,10 +1201,16 @@ static inline void nova_fiber_report_error(const char* msg) {
  * NB: race: между load kind и CAS msg кто-то ещё может overwrite. Acceptable
  * (precedence — best-effort hint, не strict ordering): main reader получит
  * либо USER либо raison; CANCEL никогда не "тащит за собой" USER. */
+/* Plan 83.10 (2026-05-25): extended signature — payload + tid для
+ * typed throw routing. NULL payload + 0 tid OK для legacy USER/CANCEL
+ * (string throws). Worker catch passes _ff.error_user_payload +
+ * _ff.error_user_type_id. */
 static inline void nova_fiber_report_atomic_kinded(NovaFiberQueue* parent,
                                                    const char* msg,
                                                    NovaThrowKind kind,
-                                                   void* reason_ptr) {
+                                                   void* reason_ptr,
+                                                   void* payload,
+                                                   NovaTypeId tid) {
     if (!parent || !msg) return;
     for (;;) {
         const void* expected = nova_aptr_load(&parent->first_error_atomic);
@@ -1198,20 +1220,28 @@ static inline void nova_fiber_report_atomic_kinded(NovaFiberQueue* parent,
                               (const void*)msg)) {
                 parent->first_error_atomic_kind = kind;
                 parent->first_error_atomic_reason = reason_ptr;
+                parent->first_error_atomic_payload = payload;     /* Plan 83.10 */
+                parent->first_error_atomic_tid = tid;             /* Plan 83.10 */
                 nova_abool_store(&parent->cancel_requested, true);
                 return;
             }
             /* CAS failed → loop: someone else wrote first, re-evaluate. */
             continue;
         }
-        /* Already non-NULL: precedence check. */
-        if (parent->first_error_atomic_kind == NOVA_THROW_CANCEL
-            && kind == NOVA_THROW_USER) {
+        /* Already non-NULL: precedence check.
+         * USER and USER_TYPED both treated as "real error" priority over CANCEL. */
+        NovaThrowKind cur_kind = parent->first_error_atomic_kind;
+        bool cur_is_cancel = (cur_kind == NOVA_THROW_CANCEL);
+        bool incoming_is_real = (kind == NOVA_THROW_USER ||
+                                  kind == NOVA_THROW_USER_TYPED);
+        if (cur_is_cancel && incoming_is_real) {
             const void* exp_for_cas = expected;
             if (nova_aptr_cas(&parent->first_error_atomic, &exp_for_cas,
                               (const void*)msg)) {
                 parent->first_error_atomic_kind = kind;
                 parent->first_error_atomic_reason = reason_ptr;
+                parent->first_error_atomic_payload = payload;     /* Plan 83.10 */
+                parent->first_error_atomic_tid = tid;             /* Plan 83.10 */
                 /* cancel_requested already true; no change needed. */
                 return;
             }
@@ -1470,7 +1500,25 @@ static inline void nova_supervised_run_impl(NovaFiberQueue* q,
             /* Отмена не убегает наружу. Caller продолжает выполнение. */
             return;
         }
-        /* USER: re-throw on main-flow (back in caller's stack — safe to longjmp). */
+        /* Plan 83.10 (2026-05-25): fix [M-83.10-armed-user-throw-routing].
+         * USER_TYPED re-throw must preserve payload + tid для typed handler
+         * dispatch. Без этого `with Fail[int]` handler не fires на main thread
+         * — main's nova_throw(str) bypasses dispatch chain.
+         *
+         * Local path: payload/tid stored в q->first_error_user_payload (TBD V2)
+         * либо нужны fields на local NovaFiberQueue. V1: typed throw на main
+         * thread go через _ff.error_user_payload TLS; atomic path для worker
+         * fiber typed throw routes here.
+         *
+         * Atomic path: read payload + tid от atomic fields. */
+        if (kind == NOVA_THROW_USER_TYPED && !q->first_error) {
+            /* Cross-worker typed throw. */
+            void* payload = q->first_error_atomic_payload;
+            NovaTypeId tid = q->first_error_atomic_tid;
+            nova_throw_typed(nova_str_from_cstr(err), payload, tid);
+            /* unreachable */
+        }
+        /* USER либо USER_TYPED (local — see note above): plain nova_throw. */
         nova_throw(nova_str_from_cstr(err));
     }
 }

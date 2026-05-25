@@ -3,8 +3,8 @@
 // one error surfaces, остальные become CANCEL. Validates USER-precedence
 // atomic ordering.
 //
-// ENV NOVA_AUTOARM=0
-// Plan 83.10: [M-83.10-armed-user-throw-routing].
+// Plan 83.10 fix (2026-05-25): [M-83.10-armed-user-throw-routing]
+// resolved — armed M:N USER throw correctly invokes handler.
 
 module plan83_10.multiple_spawns_panic_first_wins
 

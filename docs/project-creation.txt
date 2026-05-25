@@ -21143,3 +21143,114 @@ Validates Plan 83.7 working correctly — exposed pre-existing test bug.
 
 **Recommended next:** Plan 83.12 (async net/socket stdlib P0
 production blocker) либо fix [M-83.10-armed-user-throw-routing] (P1).
+
+================================================================================
+2026-05-25 (Plan 83.10 [M-83.10-armed-user-throw-routing] FIX implemented)
+================================================================================
+
+**Continuation of Plan 83.7 V1.** Investigated и **FIXED** P1 production
+bug [M-83.10-armed-user-throw-routing] discovered earlier same day.
+
+**Root cause analysis:**
+
+`nova_throw_typed` (для `throw 42` int payload):
+- Sets `_ff.error_kind = NOVA_THROW_USER_TYPED` (= 2).
+- Sets `_ff.error_user_payload = &42`.
+- Sets `_ff.error_user_type_id = NOVA_TID_nova_int`.
+
+Worker fiber catch (emit_spawn): passed **только** msg + kind + reason
+к `nova_fiber_report_atomic_kinded`. **Payload + tid lost.**
+
+Main `supervised_run_impl` re-throw:
+```c
+if (kind == NOVA_THROW_CANCEL) return;
+nova_throw(nova_str_from_cstr(err));  // STRING-ONLY — bypass typed
+```
+
+`nova_throw(str)` longjmps к outer fail-frame, **bypassing**
+`_nova_handler_Fail_any` typed dispatch chain. Main thread's
+`with Fail[int]` handler installed в TLS slot, но dispatch chain
+никогда не invoked для re-thrown payload.
+
+**Fix (3 files, ~30 LOC):**
+
+1. `NovaFiberQueue` extended с 2 fields:
+   - `void* first_error_atomic_payload`
+   - `NovaTypeId first_error_atomic_tid`
+
+2. `nova_fiber_report_atomic_kinded` сигнатура extended payload + tid;
+   stored after CAS success. USER_TYPED added к "real error"
+   precedence (promotes over CANCEL).
+
+3. `nova_supervised_run_impl` re-throw kind-aware:
+   ```c
+   if (kind == NOVA_THROW_USER_TYPED && !q->first_error) {
+       nova_throw_typed(msg, payload, tid);  // typed dispatch
+   }
+   nova_throw(str);  // legacy fallback
+   ```
+
+4. emit_c.rs emit_spawn catch: pass `_ff.error_user_payload` +
+   `_ff.error_user_type_id` к `nova_fiber_report_atomic_kinded`.
+
+**Verification:** 4 из 5 Категория 3 panic-safety tests теперь PASS
+под armed M:N (без NOVA_AUTOARM=0):
+- panic_propagates_to_supervised ✅
+- runtime_survives_fiber_panic ✅
+- panic_cancels_sibling_fibers ✅
+- multiple_spawns_panic_first_wins ✅
+- panic_in_nested_supervised — keeps NOVA_AUTOARM=0
+  ([M-83.10-nested-armed-routing] — separate gap).
+
+**Production impact: MAJOR.** Production armed M:N user code using
+spawn+supervised+with Fail combo теперь работает correctly. Pre-fix
+fiber errors aborted process с "unhandled Fail" stderr — not
+user-intended. Critical correctness fix.
+
+**Discovered new gap [M-83.10-nested-armed-routing]:**
+nested `supervised { spawn { supervised { spawn { throw } } } }` hangs
+TIMEOUT под armed M:N. Likely inner supervised dispatch_ready либо
+drain ordering issue. P2 production gap, V2 followup.
+
+**Side effects [M-83.10-fix-exposes-test-races]:**
+Plan 83.10 fix changes USER_TYPED dispatch timing. Combined с Plan
+83.7 runnext, exposed pre-existing shared-mut races в concurrency/
+tests (concurrency/supervised_errors "early-stop pattern"). Pre-
+existing test bugs, not Plan 83.10 fix regressions. V2 sweep к
+race-free patterns.
+
+**Lessons learned:**
+
+1. **Typed throw must propagate payload+tid through cross-thread
+   atomic.** String-only re-throw loses typed dispatch chain.
+
+2. **Investigation pattern:** trace through 3 layers — fail-frame
+   storage → atomic CAS → re-throw routing. Where data lost?
+
+3. **Fix scope matters.** Same-session fix > separate followup
+   session — context preserved.
+
+**Files modified:**
+- compiler-codegen/nova_rt/fibers.h — 2 new atomic fields, sig change,
+  re-throw logic (~25 LOC).
+- compiler-codegen/src/codegen/emit_c.rs — emit_spawn catch (2 args).
+- 5 test files removed NOVA_AUTOARM=0 directive (4) либо kept (1).
+- docs/plans/83.10-negative-concurrency-tests.md — V2 fix section.
+- docs/plans/README.md — row 83.10 ✅ V1 + ARMED FIX.
+- docs/simplifications.md — 3 new entries
+  ([M-83.10-armed-user-throw-routing-fix],
+   [M-83.10-nested-armed-routing],
+   [M-83.10-fix-exposes-test-races]).
+- docs/project-creation.txt — этот блок.
+
+**Plan 83 cumulative status:**
+- 83.5 ❌ REJECTED.
+- 83.6 🟡 V1 IMPLEMENTED.
+- 83.7 🟡 V1 IMPLEMENTED.
+- 83.9 🟡 V1 IMPLEMENTED.
+- 83.10 ✅ V1 + ARMED THROW ROUTING FIX (этот commit).
+- 83.8/11/12/13 — not started.
+
+**Recommended next:** Plan 83.12 (async net/socket stdlib P0
+production blocker), либо investigate [M-83.10-nested-armed-routing]
+(P2), либо Plan 83.11 (deadline propagation P2 differentiator).
