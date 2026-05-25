@@ -9,7 +9,8 @@
 > которой Nova уступает Rust / Kotlin / Rust-async-Drop. Эта редакция
 > закрывает их **полностью** через декомпозицию на 4 sub-plan'а.
 >
-> **Статус umbrella:** 📋 roadmap, не начат. **Ред. 3 (2026-05-23):
+> **Статус umbrella:** 🟡 **IN PROGRESS** — 100.1 ✅ ЗАКРЫТ 2026-05-25;
+> 100.2-100.8 📋 roadmap. **Ред. 3 (2026-05-23):
 > добавлены 100.5/100.6/100.7/100.8 для cross-cutting production
 > needs** (FFI / cross-module / migration playbook / IDE tooling).
 > 8 sub-plan'ов общим объёмом ~43 dev-day; 100.4 — sub-umbrella с 5
@@ -131,7 +132,7 @@ Plan 100 (umbrella, this doc)
 
 | # | Файл | Скоп | Deps |
 |---|---|---|---|
-| **100.1** | [100.1-core-must-consume.md](100.1-core-must-consume.md) | type-level `consume`, field-aware flow (с nested-paths D5.2), binding-form, D1–D10 + D5.1, 17 фикстур, pilot mock | Plan 73/77/95 |
+| **100.1** ✅ | [100.1-core-must-consume.md](100.1-core-must-consume.md) | type-level `consume`, field-aware flow (с nested-paths D5.2), binding-form, D1–D10 + D5.1, 23 фикстур (8 pos + 9 neg + 6 parser), ЗАКРЫТ 2026-05-25 | Plan 73/77/95 |
 | **100.2** | [100.2-generic-propagation.md](100.2-generic-propagation.md) | `[T consume]` generic bound, `[]T` consume-aware iteration, HashMap/Option/Result propagation, stdlib migration audit, 15 фикстур | 100.1 |
 | **100.3** | [100.3-borrow-and-view.md](100.3-borrow-and-view.md) | `view T` read-only borrow без lifetime, `match view` deep peek, closure capture analysis (consume / view), 12 фикстур | 100.1 |
 | **100.4** | [100.4-cleanup-on-failure.md](100.4-cleanup-on-failure.md) (**sub-umbrella**) | Production-grade defer/errdefer rework — amend D90 системно через 5 sub-sub-plan'ов: 100.4.1 failable body (D158), 100.4.2 async/suspend (D159), 100.4.3 okdefer + reason-aware (D160), 100.4.4 multi-defer + panic composition (D161), 100.4.5 consume-integration final (D162) | 100.1, Plan 20/49 |

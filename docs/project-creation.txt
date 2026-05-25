@@ -21330,3 +21330,59 @@ REGRESSION (post-fix):
 
 Файлы: `compiler-codegen/src/codegen/emit_c.rs`, `docs/simplifications.md`,
 `docs/project-creation.txt` (этот entry).
+
+---
+
+## 2026-05-25 — Plan 100.1 (D133 foundation) — consume-types core static analysis
+
+ЗАКРЫТ: Plan 100.1 — core static analysis (D133) для consume-типов.
+
+### Что сделано:
+
+**Ф.0 GATE probe (commit `2ca5604dafd`):**
+- Spec self-check: 4 use-case'а D1-D10 verified против план-дока.
+
+**Ф.2 Parser + AST (commit `52462aa8b41`):**
+- `type Transaction consume { ... }` — `TypeDecl.consume` bool поле.
+- `consume field T` — `RecordField.consume` bool.
+- `consume tx = expr` — `LetDecl.consume` bool.
+- `consume` на fn-param и receiver (`fn Transaction consume @commit()`).
+- Парсер: keyword `consume` в 5 позициях без ambiguity с `consume expr`.
+- 6 parser-фикстур (3 pos + 3 neg) — все PASS.
+
+**Ф.3 LinearityRegistry (commit `f4925847b7a`):**
+- `LinearityRegistry` — per-module registry consume-types + consume-methods.
+- `check_linearity_markers()` — D133 marker checks: type без `consume` marker,
+  method без `consume` receiver.
+- Фикстуры: `nova_tests/plan100_1/` (переименовано из `plan100.1` — D29 fix).
+- Struct literal fix: `=> Transaction { id: 42 }` → `=> { id: 42 }` во всех 12 файлах.
+
+**Ф.4 ConsumeCtx flow analysis (commit `265f9df0d3b`):**
+- `ConsumeCtx` extension: `consume_obligations`, `field_states`, `var_types`.
+- `declare_consume_binding()` — регистрирует `consume tx = ...` obligation.
+- `check_obligations_at_exit()` — проверяет Live/MaybeConsumed на exit → D133-not-consumed.
+- `init_field_live()` / `mark_field_consumed()` / `mark_field_live()` — D5 field states.
+- `check_fields_at_exit()` — D5 consume-method receiver invariant.
+- D3: `panic`/`exit`/`abort` triggers obligation check at call site.
+- D5.1: assign в Live consume-поле → error.
+- D5.2: 3-level `@outer.field.method()` → marks outer MaybeConsumed.
+- D7: consume var passed to non-consume param → D133-move-to-non-consume.
+- Block-level exit check: block-local obligations проверяются при выходе из блока.
+- `Stmt::Return` satisfies consume obligations.
+
+### Результат:
+- **plan100_1**: 23/0 ✅ (8 pos + 9 neg + 6 parser).
+- **Regressions**: 0 — basics 8/0, types 21/0, syntax 59/0, plan73 12/0.
+- **Full nova test**: 79 failures — все pre-existing (68 plan100.2-8 D29-dot-dir,
+  11 concurrency flaky/timing); ни одного нового failure от Ф.4.
+
+### Ключевые fixes (AST mismatch → reality):
+- `ExprKind::SelfFieldAccess` не существует → `ExprKind::Member { obj: SelfAccess, name }`.
+- D5.2: 3-level call нужен для `@inner.tx.commit()` → marks `@inner` MaybeConsumed.
+- `return tx` → satisfies consume obligation (Stmt::Return handler).
+- Block-local obligation exit-check → catches loop-iteration forget.
+- `panic` call-site → triggers obligation check (D3 exit-point).
+
+Файлы: `compiler-codegen/src/types/mod.rs`, `nova_tests/plan100_1/*.nv`,
+`docs/plans/README.md`, `docs/plans/100-linear-must-consume.md`,
+`docs/simplifications.md`, `docs/project-creation.txt` (этот entry).
