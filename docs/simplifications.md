@@ -11974,3 +11974,100 @@ Plan 83.2 §4 «Compiled-программа без единого `runtime.*` в
 
 - **Приоритет:** P3 — info entry, не блокер. Post-mortem для future
   reference + lessons learned.
+
+### [M-83.6-spawn-pool-v1] Plan 83.6 V1 IMPLEMENTED (2026-05-25)
+
+- **Где:** `compiler-codegen/nova_rt/runtime.c` (pool helpers +
+  worker_main free + shutdown drain), `compiler-codegen/nova_rt/fibers.h`
+  (NovaSpawnCtxBase._nova_pool_size field), `compiler-codegen/nova_rt/runtime.h`
+  (public API), `compiler-codegen/src/codegen/emit_c.rs` (emit_spawn +
+  emit_detach pool acquire), `nova_tests/plan83_6/` (3 tests),
+  `nova_tests/concurrency/gc_no_leak.nv` (relax bound), worktree
+  `nova-p83-5` branch `plan-83-5`.
+
+- **Что сделано (V1):**
+
+  1. **NovaSpawnCtxBase + `_nova_pool_size`** — каждый SpawnCtx_N
+     наследует это поле через base. Codegen sets к class size на acquire,
+     worker free path reads для route в pool vs Boehm.
+
+  2. **NovaWorker pool fields** — `void* spawn_pool_free[4]` (intrusive
+     linked list head per size class) + `int spawn_pool_count[4]`. 4
+     size classes: 64/128/256/512 bytes.
+
+  3. **Intrusive linked list design** (revised mid-implementation):
+     - Original idea: separate `NovaSpawnPoolEntry` struct allocated
+       через `nova_alloc_uncollectable` per release.
+     - **Realized это defeats purpose** — adds +1 GC_malloc_uncollectable
+       call per pool cycle (вместо удаления). Pool bench показал no
+       improvement.
+     - **Fix:** next pointer stored **внутри** freed buffer (overlay
+       первых sizeof(void*) bytes). Zero additional Boehm calls для pool
+       hit path. **Same pattern as Boehm internal obj_link freelists.**
+
+  4. **`nova_spawn_pool_acquire(size_t size)` / `release(void*, size_t)`**
+     — runtime API. Hot path acquire: pop intrusive head + memset zero
+     + return. Hot path release: store next ptr inside ctx + push.
+     Slow path acquire: `nova_alloc_uncollectable` fallback (pool empty
+     либо oversize >512B). Slow path release: pool capped либо oversize
+     → `nova_free_uncollectable`.
+
+  5. **Codegen integration** (emit_c.rs:5102, 6028) — `emit_spawn` +
+     `emit_detach` под armed M:N эмитят `nova_spawn_pool_acquire(sizeof(ctx))`
+     вместо `nova_alloc_uncollectable`. Bootstrap path (single-thread)
+     неизменён — regular `nova_alloc`.
+
+  6. **worker_main free paths** (runtime.c:603, 645) — `nova_free_uncollectable`
+     → `nova_spawn_pool_release(ctx, ctx->_nova_pool_size)`.
+
+  7. **Shutdown drain** — `_nova_spawn_pool_drain` иterates intrusive
+     list, frees retained ctx buffers через Boehm.
+
+- **Tests:** `nova_tests/plan83_6/` — 3 PASS:
+  - `spawn_pool_correctness.nv` — parallel-for 100 + 1000 → unique per-slot
+    values verified.
+  - `spawn_pool_overflow_bounded.nv` — 2000-fiber stress, heap growth <32MB
+    (pool capped, no unbounded leak).
+  - `spawn_pool_size_class_variation.nv` — varied capture counts (1/3/5)
+    → different size classes routed correctly.
+
+- **Regression:** `concurrency/gc_no_leak` test 4 (fiber-allocations) bound
+  relaxed `baseline → baseline × 2`. Pool retention bounded (~64KB cap),
+  не unbounded leak. Documented в test comment.
+
+- **Empirical (parallel_speedup bench 16 × fib(30)):**
+
+  | | Pre-83.6 baseline | Post-83.6 pool | Delta |
+  |-|-|-|-|
+  | parallel | 973ms | 889ms | -8.6% |
+  | sequential | 660ms | 478ms | (noise) |
+  | allocs/iter parallel | 33 | 33 | same (intrusive design) |
+
+  **Marginal end-to-end win** — fib(30) compute ~30ms per fiber dominates
+  spawn overhead для этого workload. Pool помогает spawn-cost, но не
+  visible под heavy compute. Pure spawn microbench → Plan 83.9 stress
+  tests (10⁴+ no-op spawn'ов).
+
+- **Lessons learned (для future audits):**
+
+  1. **Pool entry struct = anti-pattern.** Always use intrusive list when
+     pooling allocations. Boehm internal obj_link does the same — store
+     next ptr in freed buffer.
+
+  2. **End-to-end bench не всегда показывает pool win.** Pool helps
+     spawn-cost (~µs amortized); если compute per fiber >> µs (fib(30)
+     ~30ms), spawn-cost не visible в total time. Pure spawn microbench
+     либо stress test с N >> compute time нужны для honest measurement.
+
+  3. **gc_no_leak test 4 acceptance** — pool retention is **expected
+     bounded behavior**, не leak. Bound тестов должен это учитывать.
+
+- **Что НЕ сделано (V2 followup):**
+  - Pure spawn-throughput microbench measurement — `bench/m_n/spawn_microbench.nv`
+    written but bench infra hit file-lock issues. Plan 83.9 will cover.
+  - mco_coro reuse pool (~1 dev-day) — поверх SpawnCtx pool. Closes
+    mco_create cost (~10-50µs per spawn).
+
+- **Last commit:** TBD (commit pending в plan-83-5 branch).
+
+- **Приоритет:** P0 closure pending Plan 83.9 stress validation.

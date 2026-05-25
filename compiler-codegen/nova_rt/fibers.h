@@ -1009,6 +1009,11 @@ typedef struct {
      * zero-init → starts as NOVA_FIBER_STATE_IDLE (= 0). State machine
      * documented above. */
     nova_atomic_int      _nova_fiber_state;
+    /* Plan 83.6 (2026-05-24): allocation size — used by free path для
+     * routing ctx обратно в P-local SpawnCtx pool. 0 means не из pool
+     * (legacy nova_alloc fallback path). Codegen sets to sizeof(SpawnCtx_N)
+     * на acquire. nova_spawn_pool_release derives size class из value. */
+    size_t               _nova_pool_size;
 } NovaSpawnCtxBase;
 
 /* Plan 83.4.5.7: helper — CAS fiber state. Returns true if CAS succeeded.

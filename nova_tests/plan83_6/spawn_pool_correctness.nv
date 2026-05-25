@@ -1,0 +1,37 @@
+// Plan 83.6 (2026-05-25): correctness test для per-worker SpawnCtx pool.
+//
+// Использует `parallel for x in range { expr }` — D71 form возвращает
+// []int с per-iteration slot. Под N > NOVA_PARALLEL_INLINE_THRESHOLD (32)
+// — реальный supervised spawn path → exercises pool acquire/release.
+//
+// Validates pool не corrupts ctx state — каждый fiber видит unique capture
+// корректно (не reused buffer от другого fiber'а).
+//
+// ALLOC_REQUIRES boehm
+
+module plan83_6.spawn_pool_correctness
+
+test "parallel for 100 — per-slot values correct (pool exercised)" {
+    let n = 100
+    let xs = parallel for i in 0..100 {
+        i * 2
+    }
+    // Verify all slots received correct values (no ctx corruption / reuse).
+    let mut i = 0
+    while i < n {
+        assert(xs[i] == i * 2)
+        i = i + 1
+    }
+}
+
+test "parallel for 1000 — pool overflow path correct" {
+    let n = 1000
+    let xs = parallel for i in 0..1000 {
+        i + 5
+    }
+    let mut i = 0
+    while i < n {
+        assert(xs[i] == i + 5)
+        i = i + 1
+    }
+}
