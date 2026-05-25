@@ -1,0 +1,19 @@
+// EXPECT_COMPILE_ERROR D158
+//
+// Plan 100.4.1 (D158): explicit `throw` в defer body без Fail[E] в fn-sig
+// — compile error.
+
+module nova_tests.plan100_4_1.defer_fail_err_throw_no_fail_in_sig
+
+type Err { msg str }
+
+// ❌ fn-sig без Fail.
+fn process() -> () {
+    defer {
+        throw Err { msg: "cleanup-fail" }       // D158: throw requires Fail в enclosing sig
+    }
+}
+
+test "throw в defer body без Fail в sig — D158 error" {
+    process()
+}

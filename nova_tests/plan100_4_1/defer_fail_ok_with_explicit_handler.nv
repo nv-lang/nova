@@ -1,0 +1,34 @@
+// Plan 100.4.1 (D158): backward-compat — handler-wrap pattern для
+// silent suppress продолжает работать. Здесь handler-wrap encapsulated
+// в отдельной fn (silent_cleanup), которая суммирует Fail в no-fail
+// signature; defer body вызывает silent_cleanup() — outer fn-sig без Fail.
+//
+// Это альтернатива inline `with Fail = ...` в defer body (которая
+// требует codegen handler-vtable-inside-defer wiring — Plan 100.4.1
+// followup).
+
+module nova_tests.plan100_4_1.defer_fail_ok_with_explicit_handler
+
+type CleanupErr { msg str }
+
+fn risky_cleanup() Fail[CleanupErr] -> () {
+    throw CleanupErr { msg: "cleanup failed" }
+}
+
+// silent_cleanup wraps risky in handler — Fail НЕ leaks.
+fn silent_cleanup() -> () {
+    with Fail = effect Fail {
+        fail(_msg) { interrupt () }
+    } {
+        risky_cleanup()
+    }
+}
+
+// process НЕ имеет Fail в sig — defer вызывает silent (already no-Fail).
+fn process() -> () {
+    defer { silent_cleanup() }                  // no Fail propagation
+}
+
+test "handler-wrap-в-fn pattern — backward-compat silent suppress" {
+    process()
+}

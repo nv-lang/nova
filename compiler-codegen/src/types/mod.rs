@@ -8963,11 +8963,20 @@ fn check_defer_body_block(b: &Block, kw: &str, fn_effects: &HashMap<String, Vec<
                     ));
                 }
             }
-            Stmt::Throw { span, .. } => {
-                errors.push(Diagnostic::new(
-                    format!("`throw` is not allowed inside `{}` body (D90): defer body must be infallible.", kw),
-                    *span,
-                ));
+            Stmt::Throw { span, value } => {
+                // D158 (Plan 100.4.1): Stmt-form `throw` (а не expr-form) — same rule
+                // как expr-form Throw в check_defer_body_inner.
+                let fail_throw_allowed = ctx.inside_fail_handler_depth > 0
+                    || has_fail_effect(current_fn_effects);
+                if !fail_throw_allowed {
+                    errors.push(Diagnostic::new(
+                        format!("`throw` inside `{}` body requires `Fail[E]` in enclosing fn signature (D158-defer-fail-not-in-sig). \
+                                 Either (1) add `Fail[E]` to fn signature вЂ” cleanup-fail composes с propagating error через MultiError, \
+                                 ИЛИ (2) wrap with `with Fail = effect Fail {{ ... }}` for silent suppress.", kw),
+                        *span,
+                    ));
+                }
+                check_defer_body_inner(value, kw, fn_effects, current_fn_effects, ctx, errors);
             }
             Stmt::Let(decl) => check_defer_body_inner(&decl.value, kw, fn_effects, current_fn_effects, ctx, errors),
             Stmt::Expr(e) => check_defer_body_inner(e, kw, fn_effects, current_fn_effects, ctx, errors),
