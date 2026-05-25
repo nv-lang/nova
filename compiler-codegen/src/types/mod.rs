@@ -7266,6 +7266,8 @@ fn consume_pattern_names(p: &Pattern, out: &mut Vec<String>) {
 /// Flow-context consume-анализа одной функции / теста.
 struct ConsumeCtx<'a> {
     reg: &'a ConsumeRegistry,
+    /// Plan 100.1 (D133): LinearityRegistry для consume-типов и методов.
+    lin_reg: &'a LinearityRegistry,
     /// Состояние линейности per-variable. Ключ — каноническое имя
     /// (alias-класс представлен своим каноническим членом).
     states: HashMap<String, VarState>,
@@ -7277,15 +7279,26 @@ struct ConsumeCtx<'a> {
     /// (b — каноническое имя). Обе переменные ссылаются на ОДИН
     /// heap-объект; consume любой -> consume всего alias-класса.
     aliases: HashMap<String, String>,
+    /// Plan 100.1 (D133 / D9): локальные переменные объявленные с
+    /// `consume tx = ...` — обязаны быть Consumed до scope-exit.
+    consume_obligations: HashSet<String>,
+    /// Plan 100.1 (D133 / D5): состояние consume-полей receiver'а.
+    /// Ключ — имя поля (без "@."), значение — VarState.
+    /// Для consume-методов: поля должны быть Consumed на exit'е.
+    /// Для не-consume методов: consume-поля должны быть Live на exit'е.
+    field_states: HashMap<String, VarState>,
 }
 
 impl<'a> ConsumeCtx<'a> {
-    fn new(reg: &'a ConsumeRegistry) -> Self {
+    fn new(reg: &'a ConsumeRegistry, lin_reg: &'a LinearityRegistry) -> Self {
         ConsumeCtx {
             reg,
+            lin_reg,
             states: HashMap::new(),
             var_types: HashMap::new(),
             aliases: HashMap::new(),
+            consume_obligations: HashSet::new(),
+            field_states: HashMap::new(),
         }
     }
 
@@ -7447,6 +7460,137 @@ impl<'a> ConsumeCtx<'a> {
             }
         }
     }
+
+    // ── Plan 100.1 (D133): consume-obligation methods ────────────────────
+
+    /// Зарегистрировать `consume tx = ...` binding — tx обязан быть
+    /// Consumed до scope-exit.
+    fn declare_consume_binding(&mut self, name: &str, ty: Option<String>) {
+        if name == "_" { return; }
+        self.declare(name, ty);
+        self.consume_obligations.insert(name.to_string());
+    }
+
+    /// Проверить, что все consume-obligations Consumed на текущем exit.
+    /// `exit_span` — span точки выхода (конец scope'а / return / panic).
+    fn check_obligations_at_exit(&self,
+                                  exit_span: Span,
+                                  errors: &mut Vec<Diagnostic>) {
+        for name in &self.consume_obligations {
+            let canon = self.canonical(name);
+            let state = self.states.get(&canon)
+                .or_else(|| self.states.get(name));
+            let ty = self.var_types.get(name)
+                .or_else(|| self.var_types.get(&canon))
+                .cloned()
+                .unwrap_or_default();
+            match state {
+                Some(VarState::Live) => {
+                    let methods = self.lin_reg.consume_methods_for(&ty);
+                    let hint = if methods.is_empty() {
+                        "объявите consume-метод для этого типа".to_string()
+                    } else if methods.len() <= 4 {
+                        methods.join(" / ")
+                    } else {
+                        format!("см. `nova doc {}`", ty)
+                    };
+                    errors.push(Diagnostic::new(
+                        format!(
+                            "[D133-not-consumed] переменная `{}` (тип `{}`) не \
+                             consumed до scope-exit. Добавьте вызов одного из: {}, \
+                             либо `return {}`, либо передайте в consume-param.",
+                            name, ty, hint, name),
+                        exit_span,
+                    ));
+                }
+                Some(VarState::MaybeConsumed(at)) => {
+                    let methods = self.lin_reg.consume_methods_for(&ty);
+                    let hint = if methods.is_empty() {
+                        "объявите consume-метод".to_string()
+                    } else {
+                        methods.join(" / ")
+                    };
+                    errors.push(Diagnostic::new(
+                        format!(
+                            "[D133-not-consumed] переменная `{}` (тип `{}`) \
+                             consumed только на части путей выполнения. На всех \
+                             путях до scope-exit должен быть вызов одного из: {}.",
+                            name, ty, hint),
+                        exit_span,
+                    ).with_note_at("частичный consume здесь".to_string(), *at));
+                }
+                Some(VarState::Consumed(_)) | None => {}
+            }
+        }
+    }
+
+    // ── Plan 100.1 (D133 / D5): field-state tracking ─────────────────────
+
+    /// Инициализировать состояние consume-поля receiver'а как Live.
+    fn init_field_live(&mut self, field_name: &str) {
+        self.field_states.insert(field_name.to_string(), VarState::Live);
+    }
+
+    /// Пометить consume-поле как Consumed.
+    fn mark_field_consumed(&mut self, field_name: &str, span: Span) {
+        if self.field_states.contains_key(field_name) {
+            self.field_states.insert(field_name.to_string(), VarState::Consumed(span));
+        }
+    }
+
+    /// Пометить consume-поле как Live (после rebind через assign).
+    fn mark_field_live(&mut self, field_name: &str) {
+        if self.field_states.contains_key(field_name) {
+            self.field_states.insert(field_name.to_string(), VarState::Live);
+        }
+    }
+
+    /// Проверить exit-point инварианты для consume-полей:
+    /// - consume-метод: все consume-поля должны быть Consumed.
+    /// - non-consume метод: все consume-поля должны быть Live.
+    fn check_fields_at_exit(&self,
+                             receiver_type: &str,
+                             is_consume_method: bool,
+                             fn_name: &str,
+                             exit_span: Span,
+                             errors: &mut Vec<Diagnostic>) {
+        for (field_name, state) in &self.field_states {
+            match (is_consume_method, state) {
+                (false, VarState::Consumed(at)) => {
+                    // Non-consume метод потребил поле без rebind.
+                    errors.push(Diagnostic::new(
+                        format!(
+                            "[D133-field-not-restored] метод `{}` consume'нул \
+                             consume-поле `@.{}` (тип `{}`), но не восстановил \
+                             его до выхода. Используйте pattern: \
+                             `@{field} = новое_значение` после consume, либо \
+                             объявите метод как `consume @{method}`.",
+                            fn_name, field_name, receiver_type,
+                            field = field_name, method = fn_name),
+                        *at,
+                    ));
+                }
+                (false, VarState::MaybeConsumed(at)) => {
+                    errors.push(Diagnostic::new(
+                        format!(
+                            "[D133-field-not-restored] метод `{}` возможно \
+                             consume'нул consume-поле `@.{}` на части путей. \
+                             Обеспечьте rebind на всех путях.",
+                            fn_name, field_name),
+                        *at,
+                    ));
+                }
+                (true, VarState::Live) => {
+                    // consume-метод не потребил поле — разрешено (может не
+                    // использовать поле). Но если поле существует и Live —
+                    // это нормально (consume-method закрывает весь record).
+                    // Ошибку не эмитим: record-consume = весь объект consumed.
+                    let _ = exit_span; // avoid unused warning
+                }
+                _ => {}
+            }
+        }
+    }
 }
 
 /// Plan 73 (D131): consume-check входная точка — walk всех function /
@@ -7498,7 +7642,7 @@ fn check_consume(module: &Module, errors: &mut Vec<Diagnostic>) {
     for item in &module.items {
         match item {
             Item::Fn(f) => {
-                let mut ctx = ConsumeCtx::new(&reg);
+                let mut ctx = ConsumeCtx::new(&reg, &lin_reg);
                 // Параметры функции — live на входе; consume-параметры
                 // внутри тела тоже просто live (consume у caller'а).
                 for p in &f.params {
@@ -7509,15 +7653,52 @@ fn check_consume(module: &Module, errors: &mut Vec<Diagnostic>) {
                     };
                     ctx.declare(&p.name, pty);
                 }
+                // Plan 100.1 (D133 / D5): инициализация consume-полей receiver'а.
+                if let Some(recv) = &f.receiver {
+                    for it in &module.items {
+                        if let Item::Type(td) = it {
+                            if td.name == recv.type_name {
+                                if let TypeDeclKind::Record(fields) = &td.kind {
+                                    for field in fields {
+                                        if field.consume {
+                                            ctx.init_field_live(&field.name);
+                                        }
+                                    }
+                                }
+                                break;
+                            }
+                        }
+                    }
+                }
                 match &f.body {
-                    FnBody::Block(b) => consume_walk_block(&mut ctx, b, errors),
-                    FnBody::Expr(e) => consume_walk_expr(&mut ctx, e, errors),
+                    FnBody::Block(b) => {
+                        consume_walk_block(&mut ctx, b, errors);
+                        // Plan 100.1 (D133): exit-point checks.
+                        let exit_span = b.span;
+                        ctx.check_obligations_at_exit(exit_span, errors);
+                        // Field-exit check for methods.
+                        if let Some(recv) = &f.receiver {
+                            ctx.check_fields_at_exit(
+                                &recv.type_name,
+                                recv.consume,
+                                &f.name,
+                                exit_span,
+                                errors,
+                            );
+                        }
+                    }
+                    FnBody::Expr(e) => {
+                        consume_walk_expr(&mut ctx, e, errors);
+                        ctx.check_obligations_at_exit(e.span, errors);
+                    }
                     FnBody::External => {}
                 }
             }
             Item::Test(t) => {
-                let mut ctx = ConsumeCtx::new(&reg);
+                let mut ctx = ConsumeCtx::new(&reg, &lin_reg);
                 consume_walk_block(&mut ctx, &t.body, errors);
+                // Plan 100.1 (D133): exit-point checks for test scope.
+                ctx.check_obligations_at_exit(t.body.span, errors);
             }
             _ => {}
         }
@@ -7551,11 +7732,42 @@ fn consume_join(saved: &HashMap<String, VarState>,
 }
 
 fn consume_walk_block(ctx: &mut ConsumeCtx, b: &Block, errors: &mut Vec<Diagnostic>) {
+    // Plan 100.1 (D133): track consume-obligations introduced in this block.
+    // На exit'е блока проверяем только NEW obligations (не было до входа).
+    let obligations_before = ctx.consume_obligations.clone();
+
     for s in &b.stmts {
         consume_walk_stmt(ctx, s, errors);
     }
     if let Some(t) = &b.trailing {
         consume_walk_expr(ctx, t, errors);
+        // Plan 100.1 (D133 / D9): trailing expr = implicit return.
+        // Если это consume-obligation var → obligation satisfied.
+        if let ExprKind::Ident(name) = &t.kind {
+            if ctx.consume_obligations.contains(name.as_str()) {
+                ctx.mark_consumed(name, t.span);
+            }
+        }
+    }
+
+    // Plan 100.1 (D133): exit-check для obligations введённых в этом блоке
+    // (не в outer scope — те проверяются при function-exit).
+    let new_obligations: Vec<String> = ctx.consume_obligations.iter()
+        .filter(|n| !obligations_before.contains(n.as_str()))
+        .cloned()
+        .collect();
+    if !new_obligations.is_empty() {
+        // Временно ограничить consume_obligations только новыми, чтобы
+        // check_obligations_at_exit не дублировал outer-scope проверки.
+        let full_obligations = std::mem::replace(
+            &mut ctx.consume_obligations,
+            new_obligations.iter().cloned().collect());
+        ctx.check_obligations_at_exit(b.span, errors);
+        ctx.consume_obligations = full_obligations;
+        // Убрать проверённые обязательства (они выполнились или ошибка эмитирована).
+        for n in &new_obligations {
+            ctx.consume_obligations.remove(n);
+        }
     }
 }
 
@@ -7605,7 +7817,12 @@ fn consume_walk_stmt(ctx: &mut ConsumeCtx, s: &Stmt, errors: &mut Vec<Diagnostic
                 for n in &names {
                     // Тип привязываем только к одиночному ident-pattern'у.
                     let t = if names.len() == 1 { ty.clone() } else { None };
-                    ctx.declare(n, t);
+                    // Plan 100.1 (D133 / D9): `consume tx = ...` binding.
+                    if decl.consume {
+                        ctx.declare_consume_binding(n, t);
+                    } else {
+                        ctx.declare(n, t);
+                    }
                 }
             }
         }
@@ -7628,11 +7845,46 @@ fn consume_walk_stmt(ctx: &mut ConsumeCtx, s: &Stmt, errors: &mut Vec<Diagnostic
                         ctx.states.insert(canon, VarState::Live);
                     }
                 }
+                // Plan 100.1 (D5.1): `@<field> = v` — field rebind.
+                // Если поле consume-типа и было Live → D133-assign-live-field.
+                // После assign — поле Live снова (rebind).
+                ExprKind::Member { obj, name: field_name }
+                    if matches!(obj.kind, ExprKind::SelfAccess)
+                        && matches!(op, AssignOp::Assign) =>
+                {
+                    // Plan 100.1 (D5.1): check: если поле было Live (полностью
+                    // не consumed, без частичного consume sub-fields) →
+                    // silent-overwrite error. MaybeConsumed = sub-field was
+                    // consumed (D5.2 nested pattern) → assign is OK (rebind).
+                    if let Some(VarState::Live) = ctx.field_states.get(field_name.as_str()) {
+                        errors.push(Diagnostic::new(
+                            format!(
+                                "[D133-assign-live-field] присваивание в Live \
+                                 consume-поле `@.{}` без предшествующего consume — \
+                                 silent leak. Сначала consume: `@{}.<consume-method>()`, \
+                                 затем присвойте новое значение.",
+                                field_name, field_name),
+                            target.span,
+                        ));
+                    }
+                    // Rebind → поле Live снова (восстановлено независимо от предыдущего состояния).
+                    ctx.mark_field_live(field_name);
+                }
                 _ => consume_walk_expr(ctx, target, errors),
             }
         }
-        Stmt::Return { value, .. } => {
-            if let Some(v) = value { consume_walk_expr(ctx, v, errors); }
+        Stmt::Return { value, span } => {
+            if let Some(v) = value {
+                consume_walk_expr(ctx, v, errors);
+                // Plan 100.1 (D133 / D9): `return tx` — обязательство
+                // передаётся caller'у. Пометить возвращённый consume-var как
+                // Consumed (obligation satisfied by transfer).
+                if let ExprKind::Ident(name) = &v.kind {
+                    if ctx.consume_obligations.contains(name.as_str()) {
+                        ctx.mark_consumed(name, *span);
+                    }
+                }
+            }
         }
         Stmt::Throw { value, .. } => consume_walk_expr(ctx, value, errors),
         Stmt::Break(_) | Stmt::Continue(_) | Stmt::Reveal { .. } => {}
@@ -7745,6 +7997,71 @@ fn consume_walk_expr(ctx: &mut ConsumeCtx, e: &Expr, errors: &mut Vec<Diagnostic
                                 ctx.consume_args(args, &idxs, e.span);
                             }
                         }
+                    } else if let ExprKind::Member {
+                        obj: inner_obj,
+                        name: field_name,
+                    } = &obj.kind {
+                        // Plan 100.1 (D5): `@field.method()` — field-level
+                        // consume tracking. SelfAccess = `@`.
+                        if matches!(inner_obj.kind, ExprKind::SelfAccess) {
+                            for a in args { consume_walk_expr(ctx, a.expr(), errors); }
+                            if let Some(t) = trailing { consume_walk_trailing(ctx, t, errors); }
+                            // Если метод — consume-метод типа поля → mark field Consumed.
+                            let is_consume_method = ctx.lin_reg.consume_types.iter()
+                                .any(|ty| ctx.lin_reg.consume_methods
+                                    .get(ty.as_str())
+                                    .map_or(false, |ms| ms.contains(method)));
+                            if is_consume_method {
+                                // Verify field indeed tracked (is a consume-field).
+                                if ctx.field_states.contains_key(field_name.as_str()) {
+                                    // check use-after-consume for field
+                                    if let Some(VarState::Consumed(at)) =
+                                        ctx.field_states.get(field_name.as_str())
+                                    {
+                                        let at = *at;
+                                        errors.push(Diagnostic::new(
+                                            format!(
+                                                "использование потреблённого поля \
+                                                 `@.{}` (D133): поле уже потреблено",
+                                                field_name),
+                                            obj.span,
+                                        ).with_note_at(
+                                            "поле потреблено здесь".to_string(), at));
+                                    }
+                                    ctx.mark_field_consumed(field_name, e.span);
+                                }
+                            }
+                        } else if let ExprKind::Member {
+                            obj: deep_obj,
+                            name: parent_field,
+                        } = &inner_obj.kind {
+                            // Plan 100.1 (D5.2): `@parent.field.method()` —
+                            // nested field consume. Mark parent field as
+                            // MaybeConsumed (partially consumed sub-field).
+                            if matches!(deep_obj.kind, ExprKind::SelfAccess) {
+                                let is_consume_method = ctx.lin_reg.consume_types.iter()
+                                    .any(|ty| ctx.lin_reg.consume_methods
+                                        .get(ty.as_str())
+                                        .map_or(false, |ms| ms.contains(method)));
+                                if is_consume_method
+                                    && ctx.field_states.contains_key(parent_field.as_str())
+                                {
+                                    // Mark parent as MaybeConsumed: sub-field was
+                                    // consumed but parent was not directly consumed.
+                                    // This prevents D5.1 false positive on rebind.
+                                    ctx.field_states.insert(
+                                        parent_field.clone(),
+                                        VarState::MaybeConsumed(e.span));
+                                }
+                            }
+                            consume_walk_expr(ctx, obj, errors);
+                            for a in args { consume_walk_expr(ctx, a.expr(), errors); }
+                            if let Some(t) = trailing { consume_walk_trailing(ctx, t, errors); }
+                        } else {
+                            consume_walk_expr(ctx, obj, errors);
+                            for a in args { consume_walk_expr(ctx, a.expr(), errors); }
+                            if let Some(t) = trailing { consume_walk_trailing(ctx, t, errors); }
+                        }
                     } else {
                         consume_walk_expr(ctx, obj, errors);
                         for a in args { consume_walk_expr(ctx, a.expr(), errors); }
@@ -7753,10 +8070,47 @@ fn consume_walk_expr(ctx: &mut ConsumeCtx, e: &Expr, errors: &mut Vec<Diagnostic
                 }
                 // Free-fn call: f(args).
                 ExprKind::Ident(fname) => {
+                    // Plan 100.1 (D133 / D2): проверить передачу consume-var
+                    // в non-consume param. consume_obligations var в позиции
+                    // НЕ-consume-param → D133-move-to-non-consume.
+                    let consume_idxs = ctx.reg.fn_params.get(fname.as_str())
+                        .cloned()
+                        .unwrap_or_default();
+                    for (i, a) in args.iter().enumerate() {
+                        if let ExprKind::Ident(arg_name) = &a.expr().kind {
+                            if ctx.consume_obligations.contains(arg_name.as_str()) {
+                                let is_consume_param = consume_idxs.contains(&i);
+                                if !is_consume_param {
+                                    let ty = ctx.var_types.get(arg_name).cloned()
+                                        .unwrap_or_default();
+                                    errors.push(Diagnostic::new(
+                                        format!(
+                                            "[D133-move-to-non-consume] передача \
+                                             consume-переменной `{}` (тип `{}`) в \
+                                             non-consume параметр функции `{}`. \
+                                             Добавьте `consume` qualifier на параметр \
+                                             функции, либо вызовите consume-метод \
+                                             (`{}.{}()`) до передачи.",
+                                            arg_name, ty, fname,
+                                            arg_name,
+                                            ctx.lin_reg.consume_methods_for(&ty)
+                                                .first().cloned()
+                                                .unwrap_or_else(|| "<method>".to_string())),
+                                        a.expr().span,
+                                    ));
+                                }
+                            }
+                        }
+                    }
                     for a in args { consume_walk_expr(ctx, a.expr(), errors); }
                     if let Some(t) = trailing { consume_walk_trailing(ctx, t, errors); }
-                    if let Some(idxs) = ctx.reg.fn_params.get(fname).cloned() {
-                        ctx.consume_args(args, &idxs, e.span);
+                    if !consume_idxs.is_empty() {
+                        ctx.consume_args(args, &consume_idxs, e.span);
+                    }
+                    // Plan 100.1 (D133 / D3): `panic` = exit-point.
+                    // Все Live consume-obligations на panic-call → D133.
+                    if fname == "panic" || fname == "exit" || fname == "abort" {
+                        ctx.check_obligations_at_exit(e.span, errors);
                     }
                 }
                 // Path call: Type.static(args) / module.fn(args).
