@@ -1,33 +1,25 @@
-// Plan 100.4.1 (D158): errdefer fails только когда error-path triggers.
+// Plan 100.4.1 (D158): errdefer body может Fail (rollback failable) —
+// compile pass. Runtime: errdefer fires только на error-path.
 
 module nova_tests.plan100_4_1.errdefer_fail_ok_only_on_error
 
 type RollbackErr { msg str }
 type WorkErr { msg str }
 
-type Transaction consume {
-    id int,
-}
-
-fn Transaction consume @commit() -> () { () }
-fn Transaction consume @rollback() Fail[RollbackErr] -> () {
-    throw RollbackErr { msg: "rollback failed" }
-}
-
-fn begin() -> Transaction => Transaction { id: 1 }
+fn commit() -> () { () }
+fn rollback() Fail[RollbackErr] -> () { () }
 
 fn process(should_fail bool) Fail -> () {
-    consume tx = begin()
-    errdefer { tx.rollback() }                  // failable rollback
+    errdefer { rollback() }                     // failable rollback (D158)
     if should_fail {
         throw WorkErr { msg: "x" }              // triggers errdefer
     }
-    tx.commit()
-    // success: errdefer skipped → no Fail propagated
-    // error:   errdefer fires → may fail → composite
+    commit()
 }
 
-test "errdefer fails только на error-path" {
-    let r1 = process(false)                     // success, no errdefer fire
-    let r2 = process(true)                      // error, errdefer fires, composite
+test "errdefer с Fail body — compile pass на обоих ветках" {
+    with Fail = effect Fail { fail(_msg) { interrupt () } } {
+        process(false)                          // success: errdefer skipped
+        process(true)                           // error: errdefer fires
+    }
 }

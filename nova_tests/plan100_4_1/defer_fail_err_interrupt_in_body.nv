@@ -1,0 +1,26 @@
+// EXPECT_COMPILE_ERROR D90
+//
+// Plan 100.4.1 (D158): interrupt в defer body — ВСЕГДА запрещён.
+// D158 НЕ amend'ает D90 §6: interrupt hijack'ит scope-exit, это не
+// failable cleanup.
+
+module nova_tests.plan100_4_1.defer_fail_err_interrupt_in_body
+
+fn process() -> int {
+    let x = with Time = effect Time {
+        sleep(_ms) { () }
+        now() { 0 }
+        now_ms() { 0 }
+        now_ns() { 0 }
+    } {
+        defer {
+            interrupt 42                        // ❌ D90 §6 — interrupt запрещён
+        }
+        100
+    }
+    x
+}
+
+test "interrupt в defer body — D90 §6 error (unchanged by D158)" {
+    process()
+}

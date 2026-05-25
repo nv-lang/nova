@@ -197,22 +197,21 @@ export type RuntimeNoneError
 /// ```
 #stable(since = "0.1")
 export type MultiError {
-    primary: str,
-    suppressed: []str,
+    readonly primary str
+    readonly suppressed []str
 }
 
 /// Returns primary (root cause) error — what was originally thrown before
 /// cleanup chain fired.
 #stable(since = "0.1")
-export fn MultiError @primary() -> str => self.primary
+fn MultiError @primary() -> str => @primary
 
 /// Returns chain of suppressed errors (cleanup-fail during propagation),
 /// in LIFO order of firing (most-recently-fired first).
 #stable(since = "0.1")
-export fn MultiError @suppressed() -> []str => self.suppressed
+fn MultiError @suppressed() -> []str => @suppressed
 
 /// Human-readable summary of composite — primary + numbered list of
 /// suppressed. Used by D7 diagnostic format.
 #stable(since = "0.1")
-export fn MultiError @fmt_chain() -> str =>
-    self.primary
+fn MultiError @fmt_chain() -> str => @primary

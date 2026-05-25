@@ -1,0 +1,16 @@
+// Plan 100.4.1 (D158): `?` operator в defer body — разрешён если
+// enclosing fn-sig declares Fail[E].
+
+module nova_tests.plan100_4_1.defer_fail_ok_question_mark
+
+type CommitErr { msg str }
+
+fn commit() Fail[CommitErr] -> () { () }
+
+fn process() Fail[CommitErr] -> () {
+    defer { commit()? }                         // ? operator в defer body (D158)
+}
+
+test "?-operator in defer body — D158 compile pass" {
+    process()
+}

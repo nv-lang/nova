@@ -1,0 +1,18 @@
+// EXPECT_COMPILE_ERROR D90
+//
+// Plan 100.4.1 (D158): top-level break в defer body — запрещён (D90 §6
+// unchanged by D158).
+
+module nova_tests.plan100_4_1.defer_fail_err_break_in_body
+
+fn process() -> () {
+    for i in 0..10 {
+        defer {
+            break                               // ❌ D90 §6 — top-level break hijacks loop
+        }
+    }
+}
+
+test "break в defer body — D90 §6 error (unchanged by D158)" {
+    process()
+}
