@@ -9388,7 +9388,10 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                         Some((_, Some(c))) => c.clone(),
                         _ => continue,
                     };
-                    let bound_ref = match &gp.bound {
+                    // Plan 101.3: multi-bound — для codegen mono-dispatch
+                    // используем первый bound (typical use). Дополнительные
+                    // bounds участвуют только в type-check satisfaction.
+                    let bound_ref = match gp.bounds.first() {
                         Some(b) => b,
                         None => continue,
                     };

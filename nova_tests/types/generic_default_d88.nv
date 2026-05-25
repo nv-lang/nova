@@ -35,8 +35,10 @@ type Pair[T = int] {
     second T
 }
 
-// Bound + default
-fn double_value[T Numeric = int](x T) -> T => x
+// Bound + default. Plan 101.3: bound должен быть declared protocol
+// или stdlib alias. Используем `Display` (std/prelude/protocols.nv)
+// — для D88 grammar-теста подойдёт любой реальный bound.
+fn double_value[T Display = int](x T) -> T => x
 
 test "generic default with bound: parser принимает `[T Bound = Default]`" {
     let r = double_value(7)

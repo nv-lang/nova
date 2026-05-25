@@ -654,7 +654,19 @@ fn build_signature(f: &FnDecl) -> Signature {
         .iter()
         .map(|g| GenericParam {
             name: g.name.clone(),
-            bound: g.bound.as_ref().map(render_type),
+            // Plan 101.3: doc render — собираем все bounds в один
+            // строковый формат `A + B` (Rust-style). Empty = None.
+            bound: if g.bounds.is_empty() {
+                None
+            } else {
+                Some(
+                    g.bounds
+                        .iter()
+                        .map(render_type)
+                        .collect::<Vec<_>>()
+                        .join(" + "),
+                )
+            },
             default: g.default.as_ref().map(render_type),
         })
         .collect();

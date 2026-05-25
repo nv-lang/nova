@@ -539,8 +539,14 @@ pub struct Param {
 
 /// Plan 15 (D72): generic-параметр с optional bound.
 ///
-/// `[T]` — `GenericParam { name: "T", bound: None }`.
-/// `[T Hashable]` — `GenericParam { name: "T", bound: Some(Hashable_TypeRef) }`.
+/// `[T]` — `GenericParam { name: "T", bounds: [] }`.
+/// `[T Hashable]` — `GenericParam { name: "T", bounds: [Hashable_TypeRef] }`.
+///
+/// Plan 101.3 (D145 Ред. 5): multi-bound `[T A + B + C]` —
+/// `bounds: [A, B, C]`. Type T должен удовлетворить ВСЕМ bound'ам
+/// (conjunction / intersection). Семантически equivalent протоколу
+/// `protocol { use A  use B  use C }` (см. Plan 101.4), но без
+/// дополнительной декларации.
 ///
 /// Bound — это protocol-тип ([D72](spec/decisions/02-types.md#d72)).
 /// Запрещены forward-references: имя в bound должно быть объявлено
@@ -548,7 +554,9 @@ pub struct Param {
 #[derive(Debug, Clone)]
 pub struct GenericParam {
     pub name: String,
-    pub bound: Option<TypeRef>,
+    /// Plan 101.3: список bound'ов (conjunction). Пустой = unbounded.
+    /// Один = `[T Bound]` (D72 legacy). Несколько = `[T A + B]`.
+    pub bounds: Vec<TypeRef>,
     /// Plan 19 C10 (D88): default-значение generic-параметра.
     /// Используется когда вызывающий код не указал T явно и
     /// inference из аргументов не дал результат. Для `[T = f64]`
@@ -560,7 +568,16 @@ pub struct GenericParam {
 impl GenericParam {
     /// Helper для legacy кода: если bound не нужен.
     pub fn unbounded(name: String, span: Span) -> Self {
-        Self { name, bound: None, default: None, span }
+        Self { name, bounds: Vec::new(), default: None, span }
+    }
+
+    /// Plan 101.3 helper: первый bound (legacy single-bound API).
+    /// Используется для backward-compat с кодом, который пока работает
+    /// только с первым bound (codegen mono-dispatch, doc render и пр.).
+    /// Когда multi-bound enforcement распространится, callers переедут
+    /// на `bounds()` итерацию.
+    pub fn first_bound(&self) -> Option<&TypeRef> {
+        self.bounds.first()
     }
 }
 

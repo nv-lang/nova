@@ -213,7 +213,7 @@ pub(crate) fn collect_used_names(items: &[Item], out: &mut HashSet<String>) {
         match item {
             Item::Fn(f) => {
                 for g in &f.generics {
-                    if let Some(b) = &g.bound {
+                    for b in &g.bounds {
                         collect_tr(b, out);
                     }
                     if let Some(d) = &g.default {
@@ -243,7 +243,7 @@ pub(crate) fn collect_used_names(items: &[Item], out: &mut HashSet<String>) {
             }
             Item::Type(td) => {
                 for g in &td.generics {
-                    if let Some(b) = &g.bound {
+                    for b in &g.bounds {
                         collect_tr(b, out);
                     }
                     if let Some(d) = &g.default {
