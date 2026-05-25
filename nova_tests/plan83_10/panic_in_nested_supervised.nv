@@ -4,8 +4,12 @@
 // Simpler form: top-level handler wraps nested supervised (без spawn
 // wrapping handler — codegen quirk).
 //
+// Plan 83.10 fix (2026-05-25): [M-83.10-armed-user-throw-routing]
+// resolved для simple case. Этот nested case (supervised внутри spawn
+// внутри supervised) hangs/timeouts под armed M:N — separate gap
+// [M-83.10-nested-armed-routing] V2 followup.
+//
 // ENV NOVA_AUTOARM=0
-// Plan 83.10: [M-83.10-armed-user-throw-routing].
 
 module plan83_10.panic_in_nested_supervised
 

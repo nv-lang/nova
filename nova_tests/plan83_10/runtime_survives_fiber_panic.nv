@@ -4,9 +4,8 @@
 // Validates supervised cleanup invariant: throw в одной spawn не
 // permanently corrupts runtime state (workers, arena, GC roots).
 //
-// ENV NOVA_AUTOARM=0
-// Plan 83.10: [M-83.10-armed-user-throw-routing] — armed routing
-// gap; cooperative path validates supervised cleanup.
+// Plan 83.10 fix (2026-05-25): [M-83.10-armed-user-throw-routing]
+// resolved — typed throw payload propagates atomically.
 
 module plan83_10.runtime_survives_fiber_panic
 
