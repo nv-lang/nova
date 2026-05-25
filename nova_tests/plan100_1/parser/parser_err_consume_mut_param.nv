@@ -1,0 +1,26 @@
+// EXPECT_COMPILE_ERROR D131
+//
+// Plan 100.1 / D131 / D133: `fn f(consume mut x T)` — parse error.
+// `consume` и `mut` mutually exclusive в param position:
+// consume = ownership transfer (read + write via consume-methods);
+// mut = mutable borrow без ownership.
+// Совмещение обоих в одном параметре — семантически противоречиво.
+
+module parser.parser_err_consume_mut_param
+
+type Token consume {
+    id int,
+}
+
+fn Token consume @close() -> () { () }
+fn make_token() -> Token => { id: 1 }
+
+// ❌ consume + mut в одном параметре — parse error.
+fn process(consume mut t Token) -> () {
+    t.close()
+}
+
+test "consume mut param — parse error" {
+    consume tok = make_token()
+    process(tok)
+}

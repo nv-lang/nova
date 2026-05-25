@@ -14,7 +14,7 @@ type File consume {
 
 fn File consume @close() -> () { () }
 
-fn File_open(path int) -> File => File { fd: path }
+fn File_open(path int) -> File => { fd: path }
 
 type Service consume {
     consume file File,

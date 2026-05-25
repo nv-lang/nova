@@ -639,6 +639,12 @@ pub struct TypeDecl {
     /// При SMT verify добавляются как глобальные `assert` в любом
     /// scope где эффект импортирован.
     pub axioms: Vec<EffectAxiom>,
+    /// Plan 100.1 (D133 / D1): `type X consume { ... }` — type-level
+    /// must-be-consumed marker. Каждый instance такого типа обязан
+    /// быть consumed до scope-exit (через consume-method, return,
+    /// consume-param, record-field-move, или defer).
+    /// Backward-compat: default false.
+    pub consume: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -702,6 +708,13 @@ pub struct RecordField {
     /// `name` — синтетический. Используется для multi-anonymous detection.
     pub embed_anonymous: bool,
     pub span: Span,
+    /// Plan 100.1 (D133 / D4): `consume field T` — field хранит
+    /// consume-typed значение. Type-decl с таким полем ДОЛЖЕН быть
+    /// сам объявлен `consume` (compile error D133-type-marker-missing
+    /// иначе). Field-type должен сам быть consume-типом (W
+    /// D133-marker-on-non-consume иначе).
+    /// Backward-compat: default false.
+    pub consume: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -843,6 +856,13 @@ pub struct LetDecl {
     /// но НЕ emit'ится в codegen (паритет с Dafny).
     /// Backward-compat: default false.
     pub is_ghost: bool,
+    /// Plan 100.1 (D133 / D9): `consume tx = expr` — explicit binding
+    /// для Live-linear ownership. Обязателен для consume-типов
+    /// (compile error D133-consume-needs-keyword иначе). Без него
+    /// `let tx = …` для consume-rvalue = parse-accepted, type-check
+    /// rejects.
+    /// Backward-compat: default false.
+    pub consume: bool,
 }
 
 #[derive(Debug, Clone)]

@@ -13,7 +13,7 @@ type Transaction consume {
 fn Transaction consume @commit() -> () { () }
 fn Transaction consume @rollback() -> () { () }
 
-fn begin() -> Transaction => Transaction { id: 42 }
+fn begin() -> Transaction => { id: 42 }
 
 test "consume tx + commit — закрыт в scope'е" {
     consume tx = begin()

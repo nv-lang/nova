@@ -2626,6 +2626,7 @@ impl CEmitter {
             value: int_lit,
             span,
             is_ghost: false,
+            consume: false,
         })
     }
 
