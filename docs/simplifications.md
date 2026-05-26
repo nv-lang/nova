@@ -12490,6 +12490,39 @@ Merge: f79d4f28b5b; branch plan-100-2-generic-propagation → main.
 - **Last commit:** `0fde227c3b5` (plan-83-13 branch → merged to main).
 - **Приоритет:** P3 (research complete); Option B Phase 1 → P2 post-v1.0.
 
+## Plan 100.4.2: Async/suspend в cleanup body — D159 (2026-05-26)
+
+### Реализовано
+- Spec D90 §5 amend: «no-suspend» → «suspend allowed»; historical
+  pre-D159 reasoning сохранён.
+- Checker change (compiler-codegen/src/types/mod.rs::check_defer_body_inner):
+  removed suspend-call ban в Call arm (`Time`/`Net`/`Fs`/`Db` callees +
+  member-access form `Time.sleep` etc.).
+- AST-level concurrency ban сохранён: `spawn` / `parallel for` /
+  `supervised` / `detach` / `blocking` — error E (D159-spawn-in-defer)
+  с обновлённым message ("leaks supervised hierarchy").
+- 11 фикстур (7 POS + 4 NEG) PASS. Zero regression: plan100_4_1 18/18,
+  plan100_4_4 17/17, plan100_4_3 11/11, syntax/defer 8/8.
+
+### Упрощения vs spec D159
+
+1. **[M-100.4.2-cancel-shielding]** (P2) — D2 cancel-safe semantics
+   (cleanup completes-then-cancel-propagates) — runtime feature, требует
+   Plan 49 cancel-routing extension + defer scope shielded-mode wrap.
+   В bootstrap defer запускается после throw, но повторный cancel signal
+   во время cleanup может interrupt'нуть его. Полная shielded gate — V2.
+
+2. **[M-100.4.2-time-timeout-integration]** (P3) — Plan 22 Time.timeout
+   уже работает в defer body; dedicated verification fixture отложен.
+
+3. **[M-100.4.2-await-preservation]** (P3) — Plan 49 cancel-routing
+   обеспечивает; dedicated fixture отложен.
+
+### Затронутые тесты
+- `nova_tests/plan100_4_2/`: **11/11 PASS** (7 POS + 4 NEG).
+- regressions all PASS (54 tests из других planов).
+
+
 ## Plan 100.4.4: Multi-defer LIFO accumulation + panic composition — D161 (2026-05-26)
 
 ### Реализовано

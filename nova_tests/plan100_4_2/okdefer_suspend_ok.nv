@@ -1,0 +1,15 @@
+// Plan 100.4.2 (D159): okdefer body suspend allowed (commit-like async).
+
+module nova_tests.plan100_4_2.okdefer_suspend_ok
+
+fn commit_async() Time -> () {
+    Time.sleep(5)
+}
+
+fn process() Time -> () {
+    okdefer { commit_async() }   // D159: suspend в okdefer — OK
+}
+
+test "okdefer suspend body — D159 compile pass" {
+    process()
+}
