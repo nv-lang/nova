@@ -22098,3 +22098,36 @@ Breakdown: lib×42, compiler_adapter×12, publish_workflow×7, workspace×7,
 - docs(plan104.1): close-out — logs + README sync [этот коммит]
 
 Worktree: d:/Sources/nv-lang/nova-p104 (plan-104).
+
+=== Plan 103.5 followup — D171 spec + fiber crash analysis (2026-05-26) ===
+
+После merge основного 103.5 в main всплыли два долга:
+1. **D171 spec не написан** (Ф.4 был в исходном плане, но контекст закончился раньше).
+2. **Windows fiber crash с `parallel for + Lazy.force()`** документирован как
+   "не диагностирован" — без проверки.
+
+Followup-сессия закрыла оба:
+
+**D171 написан** (~330 строк, spec/decisions/06-concurrency.md):
+- OnceState public sum-type (Fresh=0, Running=1, Done=2, Poisoned=3) — coordinated с C.
+- Once API: call_once / is_completed / state + deprecated run/done.
+- OnceCell[T] API: new / get / set / get_or_init / take + re-entrant guard.
+- Lazy[T] API: new (closure stored) / force / is_forced.
+- Memory ordering contract (Acquire/Release) via D167.
+- Realtime forbidden methods (E_REALTIME_VIOLATION).
+- Что отвергнуто: generic Once[T], OnceCell terminal poison, lock-free CAS-only,
+  AtomicOnceCell для primitives, OnceCell.set_if_absent / swap.
+
+**Fiber crash проанализирован** (rebuild nova.exe невозможен — std/prelude/errors.nv
+парс-фейл на stale binary; investigation через статический анализ кода):
+- VEH сообщает EXCEPTION_ACCESS_VIOLATION (не STACK_OVERFLOW) → не размер стека.
+- 8 MB stack + 16 KB guard на slot — стека хватает с огромным запасом.
+- `NovaOnceWaiter _lz_w` (24 байта) на стеке — стандартный паттерн, идентичен
+  Once.call_once + OnceCell.get_or_init (оба PASS под 16+ fibers).
+- Различие Lazy: stored init closure в `_l->init_clos` (heap env). Гипотеза
+  не подтверждена без debugger'а.
+- **Решение:** документировано как known-issue Plan 82 area (Windows fiber arena),
+  не Plan 103.5. Concurrent Lazy semantics уже покрыты once_stress_mn_4workers
+  (16 fibers × 100 force(), PASS); sequential property — отдельным тестом.
+- Дальше: Plan 82.1 follow-up — fiber-arena slot-0 first-parallel-for repro
+  с WinDbg.

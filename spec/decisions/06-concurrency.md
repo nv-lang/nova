@@ -4093,3 +4093,278 @@ D168 введён как draft (Plan 103.2, 2026-05-25). Final closure — Plan 
   narrow types (AtomicI8/U8) с большими константами.
 - ARM CI validation для `compare_exchange_weak` spurious-fail paths.
 - D173 AI-first guidance для атомарных паттернов.
+
+---
+
+## D171. Once / OnceCell / Lazy — single-initialization primitives (Plan 103.5)
+
+> **Status:** draft (Plan 103.5, 2026-05-26). Final closure — Plan 103.9 (API hygiene pass).
+
+### Что
+
+Nova предоставляет **три single-initialization примитива** для координации
+одноразовой инициализации между fiber'ами:
+
+| Тип | Назначение | Хранит значение | Init по требованию |
+|---|---|---|---|
+| `Once` | one-shot гейт без значения | — | — |
+| `OnceCell[T]` | lazy cell, set вручную или через `get_or_init` | `Option[T]` | да |
+| `Lazy[T]` | wrapper над `OnceCell[T]` с init-closure в конструкторе | `T` после force | да |
+
+Все три типа являются **value types в Nova**, передаются по reference внутри
+fiber-арены (через mutable param или heap-структуру). Семантически — **shared
+state с гарантией exactly-once init** при произвольной concurrency.
+
+### Правило
+
+#### 1. OnceState — публичный sum-type
+
+```nova
+type OnceState =
+    | Fresh       // init ещё не начат
+    | Running     // init выполняется (другим fiber'ом)
+    | Done        // init успешно завершён
+    | Poisoned    // init panicked — все последующие операции re-throw
+```
+
+Tag-значения зафиксированы (Fresh=0, Running=1, Done=2, Poisoned=3) для
+координации с C runtime (`Nova_OnceState_Tag` в `sync_primitives.h`).
+
+#### 2. Once API
+
+```nova
+type Once
+
+namespace Once {
+    fn new() -> Once
+
+    /// Выполняет body ровно один раз. Subsequent calls — no-op (DONE)
+    /// или re-throw (POISONED).
+    /// Concurrent callers: park (fiber) / spin (non-fiber) до завершения runner'а.
+    /// Запрещён в realtime context (E_REALTIME_VIOLATION).
+    fn call_once(self, body: () -> ()) throws Fail
+
+    /// Heap-allocated snapshot текущего состояния (для match / introspection).
+    fn state(self) -> OnceState
+
+    /// true ⟺ state == Done. False для Fresh, Running, Poisoned.
+    fn is_completed(self) -> bool
+
+    /// DEPRECATED (W_ONCE_RUN_DONE_DEPRECATED): use call_once.
+    /// run() возвращает true ровно одному вызывающему (становится runner'ом).
+    /// done() требует matching run()==true иначе runtime panic.
+    fn run(self) -> bool          // deprecated
+    fn done(self)                 // deprecated, throws Fail if state != Running
+}
+```
+
+**Poison semantics:** если body в `call_once` panic'ует (через `Fail` effect или
+`nova_throw`), Once переходит в `Poisoned` permanently. Все waiting fiber'ы
+просыпаются и re-throw тот же panic message. Все subsequent `call_once` тоже
+re-throw. Восстановление невозможно — Once одноразовый.
+
+#### 3. OnceCell[T] API
+
+```nova
+type OnceCell[T]
+
+namespace OnceCell {
+    fn new[T]() -> OnceCell[T]
+
+    /// None если init ещё не выполнен; Some(value) если выполнен.
+    fn get[T](self) -> Option[T]
+
+    /// Idempotent set. Возвращает true если значение было установлено первым
+    /// (winner); false если кто-то другой уже выполнил set/get_or_init.
+    fn set[T](self, v: T) -> bool
+
+    /// Если значение уже есть — вернуть его. Иначе выполнить body ровно один
+    /// раз, сохранить результат и вернуть. Re-entrant guard: рекурсивный
+    /// вызов get_or_init из тела body → runtime panic (deadlock-prevention).
+    /// Запрещён в realtime context.
+    fn get_or_init[T](self, body: () -> T) -> T throws Fail
+
+    /// Извлечь значение и сбросить состояние в Fresh. Возвращает Some(v) если
+    /// было Done; None для Fresh/Running. Poisoned cells остаются Poisoned.
+    /// Не-atomic относительно concurrent get_or_init — caller отвечает за
+    /// внешнюю синхронизацию.
+    fn take[T](self) -> Option[T]
+}
+```
+
+**Poison & retry:** в отличие от `Once`, panic в body функции `get_or_init`
+не делает cell terminally poisoned в V1. Состояние возвращается в `Fresh`,
+позволяя retry. (Plan 103.9 пересмотрит — возможно введение `Poisoned` варианта
+с явным `recover()`.)
+
+**Re-entrant guard:** если внутри body, переданного в `get_or_init`, происходит
+рекурсивный вызов `cell.get_or_init` на том же cell — runtime panic с message
+"OnceCell.get_or_init: recursive initialization". Это deadlock-prevention,
+не семантическая ошибка ленивой инициализации.
+
+#### 4. Lazy[T] API
+
+```nova
+type Lazy[T]
+
+namespace Lazy {
+    /// Сохраняет init closure для отложенного вызова. Не выполняет body.
+    fn new[T](init: () -> T) -> Lazy[T]
+
+    /// При первом вызове — выполнить init body, сохранить значение,
+    /// вернуть. Subsequent calls — вернуть кэшированное значение.
+    /// Panic в body → Poisoned (terminal); все subsequent force() re-throw.
+    /// Запрещён в realtime context.
+    fn force[T](self) -> T throws Fail
+
+    /// true ⟺ force() уже завершён успешно.
+    fn is_forced[T](self) -> bool
+}
+```
+
+**Poison semantics:** в отличие от `OnceCell.get_or_init` (retry-on-panic),
+`Lazy.force` имеет terminal Poisoned state. Panic в init closure → все
+subsequent `force()` re-throw тот же message. Восстановление невозможно.
+Различие мотивировано тем, что init closure хранится в самом Lazy и не может
+быть заменён — retry с тем же body даст тот же panic.
+
+#### 5. Memory ordering (D167 contract)
+
+Все три примитива гарантируют **Acquire/Release ordering** между init body и
+последующими read'ами:
+
+- Завершение init body **happens-before** любого `get()` / `force()` /
+  `is_completed()`, возвращающего успешный результат.
+- Запись result-значения (`OnceCell.value`, `Lazy.value`) использует
+  `__ATOMIC_RELEASE`; fast-path read — `__ATOMIC_ACQUIRE`.
+- Состояния (`Done`, `Poisoned`, `has_value`) публикуются через
+  `__atomic_store_n(..., __ATOMIC_RELEASE)` и читаются через
+  `__atomic_load_n(..., __ATOMIC_ACQUIRE)`.
+
+Это гарантирует **data-race-free** доступ к закэшированному значению без
+дополнительной синхронизации со стороны caller'а.
+
+#### 6. Realtime context forbidden
+
+`Once.call_once`, `OnceCell.get_or_init`, `Lazy.force` могут заблокировать
+вызывающий fiber (park до завершения runner'а). Это противоречит realtime
+гарантиям (bounded execution time), поэтому:
+
+```nova
+fn realtime_handler() with Realtime {
+    let v = lazy.force()       // CC error: E_REALTIME_VIOLATION
+    once.call_once { ... }     // CC error: E_REALTIME_VIOLATION
+    cell.get_or_init { 42 }    // CC error: E_REALTIME_VIOLATION
+}
+```
+
+Проверка выполняется в `emit_c.rs` через `in_realtime` флаг (D87 effect-aware
+codegen). `get()`, `set()`, `is_completed()`, `is_forced()`, `take()`,
+`state()` — разрешены (lock-free fast paths).
+
+### Почему
+
+1. **Три отдельных типа, не один.** `Once` без значения дешевле OnceCell[T]
+   когда нужен только гейт (lazy-init глобального ресурса без возврата
+   значения). `Lazy[T]` удобнее `OnceCell[T] + get_or_init` когда init body
+   известен в конструкторе. Three-tier API покрывает все стандартные use cases
+   без overhead.
+
+2. **OnceState public sum-type.** Pattern matching (`match once.state() { Done
+   => ..., Poisoned => ... }`) — идиоматичный Nova-стиль для introspection.
+   Отдельные предикаты (`is_completed`, `is_forced`) — для fast-path checks без
+   аллокации.
+
+3. **Poison terminal в Once/Lazy, retry в OnceCell.** В Once и Lazy init body
+   фиксирован (Once: каждый вызов передаёт свой body, но первый panic
+   poisonит для всех; Lazy: один body хранится в конструкторе) — retry даст
+   тот же panic. В OnceCell body передаётся каждый раз → retry с другим body
+   осмыслен. V1 поведение; Plan 103.9 пересмотрит на основе real-world usage.
+
+4. **Re-entrant guard вместо deadlock.** Рекурсивный `get_or_init` без guard'а
+   = вечный self-park. Panic с понятным message > undebuggable hang.
+
+5. **Acquire/Release explicit.** SeqCst было бы избыточно (init publishes only
+   once). Acquire/Release достаточен для happens-before между init и read,
+   с меньшим overhead на ARM (no LDAR-after-DMB-ISH).
+
+6. **Realtime forbidden, не silent slow.** `call_once` может park'нуть fiber
+   на произвольное время (зависит от length init body другого fiber'а).
+   В realtime context это violation contract'а; CC error лучше, чем missed
+   deadline в production.
+
+### Что отвергнуто
+
+- **Single generic `Once[T]` instead of Once + OnceCell + Lazy.** Усложняет
+  API (`Once[()]` для unit-case ugly), и `Lazy[T]` всё равно требуется как
+  syntactic sugar поверх stored init. Three разных типа = ясный intent.
+
+- **OnceCell poison terminal (как Lazy).** Усложняет retry-after-recover
+  паттерн; V1 retry-on-panic совместим с traditional `lazy_static` semantics
+  в других языках. Если окажется опасно — Plan 103.9 добавит `poison_mode`
+  параметр в `new()`.
+
+- **Lock-free OnceCell через CAS-only.** Реализация через `state` enum +
+  mutex + waker list проще и подходит для M:N scheduler'а с park/wake.
+  CAS-only сложнее (ABA-prevention для waker list) и не быстрее когда init
+  body длинный. Может быть пересмотрено если профилирование покажет.
+
+- **AtomicOnceCell для primitives.** Специализированная версия для
+  `int`/`bool`/`f64` без mutex (через 2-word CAS). Избыточно для V1 — общая
+  реализация с mutex достаточно быстра для типичных use cases (init
+  выполняется один раз, дальше — lock-free fast path read).
+
+- **`OnceCell.set_if_absent` / `swap`.** Лишние операции; `set` + `take` +
+  `get_or_init` покрывают все use cases. Минимальный API легче эволюционировать.
+
+### Связи
+
+- [D50](#d50-concurrency-model-spawn-detach-blocking) — fiber model;
+  Once/OnceCell/Lazy используются для lazy-init shared state между fibers.
+- [D87](#d87-effect-aware-codegen--in_realtime) — `in_realtime` flag в codegen;
+  основа для E_REALTIME_VIOLATION проверок.
+- [D167](#d167-memory-ordering--happens-before-между-fiberами) — MemOrdering
+  enum; Acquire/Release константы из этого D-block'а.
+- [D168](#d168-sized-atomic-types--api-contract-plan-1032) — sized atomics;
+  внутренние state-поля Once/OnceCell/Lazy реализованы через `__atomic_*`.
+- Plan 103.5 — реализация Once hardening + OnceCell + Lazy.
+- Plan 103.9 — final API hygiene pass: возможно удаление `run`/`done`,
+  пересмотр OnceCell poison semantics.
+
+### Реализация (Plan 103.5, 2026-05-26)
+
+- `std/runtime/sync.nv`:
+  - `external type Once` + методы (`call_once`, `is_completed`, `state`,
+    deprecated `run`/`done`).
+  - `external type OnceCell[T]` + методы (`new`, `get`, `set`, `get_or_init`,
+    `take`).
+  - `external type Lazy[T]` + методы (`new`, `force`, `is_forced`).
+  - `type OnceState = | Fresh | Running | Done | Poisoned` (declared in Nova).
+
+- `compiler-codegen/nova_rt/sync_primitives.h`:
+  - `Nova_Once` struct + `Nova_Once_method_call_once/is_completed/state` +
+    deprecated `run`/`done`.
+  - `Nova_OnceState` typedef + 4 constructor функций (`nova_make_OnceState_*`).
+  - `Nova_Once_method_done` использует unconditional state check через
+    `Nova_Fail_fail + nova_throw` (fix: NOVA_SYNC_ASSERT — no-op в Dev builds).
+
+- `compiler-codegen/src/codegen/emit_c.rs`:
+  - `emit_oncecell_instance(mangled, t_cty)` — мономорфизирует
+    `OnceCell[T]` per instantiation (struct + 5 методов).
+  - `emit_lazy_instance(mangled, t_cty)` — мономорфизирует `Lazy[T]` per
+    instantiation (struct + 2 методов; stored init closure).
+  - `in_realtime` флаг + E_REALTIME_VIOLATION для `call_once`/`get_or_init`/`force`.
+  - W_ONCE_RUN_DONE_DEPRECATED warning при использовании `run`/`done`.
+  - `"OnceState"` добавлен в `RUNTIME_DEFINED_TYPES` (skip emit_sum_type).
+
+- 20 тестов в `nova_tests/plan103_5/`: 11 positive + 3 negative + 2 property
+  + 1 stress (16 fibers × 100 calls). All PASS.
+
+### Эволюция
+
+D171 введён как draft (Plan 103.5, 2026-05-26). Final closure — Plan 103.9
+(API hygiene), где:
+- Удаление deprecated `run`/`done` (после миграционного периода).
+- Пересмотр OnceCell poison semantics на основе real-world usage.
+- Возможный typed-poison API (`recover() throws PoisonMsg`).
+- D173 AI-first guidance для init-pattern выбора (Once vs OnceCell vs Lazy).
