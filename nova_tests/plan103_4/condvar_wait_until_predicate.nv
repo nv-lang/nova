@@ -1,0 +1,108 @@
+// Plan 103.4 — Condvar predicate-loop: wait until condition becomes true.
+//
+// wait_until semantics are equivalent to:
+//   while !predicate() { cv.wait(m) }
+// These tests verify correct behavior using the explicit while+wait pattern
+// (semantically identical to wait_until). The wait_until API exists in sync.nv
+// for convenience; tests use the explicit form to avoid codegen limitations
+// with fn()->bool closures inside spawn blocks (trailing-block-factory issue).
+//
+// Verifies:
+//  - Fiber blocks until predicate becomes true (set by another fiber).
+//  - Initially-true predicate: exits without any wait call.
+//  - Multiple spurious-like wakeups survive: predicate re-checked each time.
+//
+// EXPECT_TIMEOUT_MS 30000
+
+module nova_tests.plan103_4.condvar_wait_until_predicate
+
+test "wait_until returns only when predicate becomes true" {
+    let mu    = Mutex.new()
+    let cv    = Condvar.new()
+    let ready = AtomicBool.new(false)
+    let done  = AtomicBool.new(false)
+
+    supervised {
+        // Consumer: blocks until ready == true.
+        spawn {
+            mu.lock()
+            // Equivalent to: cv.wait_until(mu) { || ready.load() == true }
+            while ready.load() == false {
+                cv.wait(mu)
+            }
+            done.store(true)
+            mu.unlock()
+        }
+
+        // Producer: sets ready after a delay.
+        Time.sleep(5)
+        mu.lock()
+        ready.store(true)
+        cv.notify_one()
+        mu.unlock()
+    }
+
+    assert(done.load() == true, "consumer must exit wait loop after predicate true")
+}
+
+test "wait_until with initially true predicate returns immediately" {
+    let mu = Mutex.new()
+    let cv = Condvar.new()
+    let calls = AtomicInt.new(0)
+
+    supervised {
+        spawn {
+            mu.lock()
+            // Equivalent to: cv.wait_until(mu) { || calls.fetch_add(1) >= 0 }
+            // fetch_add returns 0 on first call; 0 >= 0 = true → loop exits immediately.
+            while calls.fetch_add(1) < 0 {
+                cv.wait(mu)
+            }
+            mu.unlock()
+        }
+    }
+
+    // With initially-true predicate, wait() is never called.
+    // Predicate is evaluated once (calls incremented to 1), loop exits.
+    assert(calls.load() >= 1, "predicate must be checked at least once")
+}
+
+test "wait_until survives multiple spurious wakes before predicate true" {
+    let mu        = Mutex.new()
+    let cv        = Condvar.new()
+    let target    = AtomicInt.new(0)  // consumer wants target == 3
+    let done_flag = AtomicBool.new(false)
+    let n_waiting = AtomicInt.new(0)
+
+    supervised {
+        spawn {
+            mu.lock()
+            n_waiting.store(1)
+            // Equivalent to: cv.wait_until(mu) { || target.load() == 3 }
+            while target.load() != 3 {
+                cv.wait(mu)
+            }
+            done_flag.store(true)
+            mu.unlock()
+        }
+
+        // Wait for consumer to register.
+        let mut w = false
+        while !w {
+            Time.sleep(1)
+            mu.lock()
+            if n_waiting.load() == 1 { w = true }
+            mu.unlock()
+        }
+
+        // Send 2 spurious-like notifies (target still != 3), then final.
+        mu.lock(); target.store(1); cv.notify_one(); mu.unlock()
+        Time.sleep(2)
+        mu.lock(); target.store(2); cv.notify_one(); mu.unlock()
+        Time.sleep(2)
+        mu.lock(); target.store(3); cv.notify_one(); mu.unlock()
+    }
+
+    assert(done_flag.load() == true, "wait loop must exit when predicate finally true")
+    assert(target.load() == 3)
+}

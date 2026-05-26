@@ -1,0 +1,103 @@
+// Plan 103.4 — Classic producer/consumer pattern with Mutex + Condvar.
+//
+// Bounded buffer of size 1. Producer puts an item; consumer waits until
+// buffer non-empty, takes it. Verifies no item is lost or duplicated.
+//
+// Both producer and consumer run inside spawn fibers to ensure cv.wait()
+// is always called from a fiber context (not main thread, where
+// _nova_active_slot == -1 would cause park_with_unlock to abort).
+//
+// Predicate waiting uses explicit while+wait (semantically identical to
+// wait_until; avoids codegen trailing-block-factory issue).
+//
+// EXPECT_TIMEOUT_MS 30000
+
+module nova_tests.plan103_4.condvar_producer_consumer
+
+test "producer/consumer bounded buffer — 20 rounds, no lost items" {
+    let mu        = Mutex.new()
+    let not_empty = Condvar.new()
+    let not_full  = Condvar.new()
+    // Buffer: AtomicInt stores item value (0 = empty, >0 = full).
+    let buffer    = AtomicInt.new(0)
+    let consumed  = AtomicInt.new(0)
+    let n_rounds  = 20
+
+    supervised {
+        // Consumer fiber
+        spawn {
+            for _i in 0..n_rounds {
+                mu.lock()
+                // Wait until buffer has an item
+                while buffer.load() == 0 {
+                    not_empty.wait(mu)
+                }
+                let _ = buffer.store(0)   // take item
+                consumed.fetch_add(1)
+                not_full.notify_one()
+                mu.unlock()
+            }
+        }
+
+        // Producer fiber — also in spawn so cv.wait() runs in fiber context
+        spawn {
+            for i in 1..n_rounds+1 {
+                mu.lock()
+                // Wait until buffer is empty
+                while buffer.load() != 0 {
+                    not_full.wait(mu)
+                }
+                buffer.store(i)   // put item
+                not_empty.notify_one()
+                mu.unlock()
+            }
+        }
+    }
+
+    assert(consumed.load() == n_rounds,
+        "all items must be consumed exactly once")
+}
+
+test "multiple producers, single consumer — no item lost" {
+    let mu        = Mutex.new()
+    let not_empty = Condvar.new()
+    let counter   = AtomicInt.new(0)   // total produced
+    let consumed  = AtomicInt.new(0)   // total consumed
+    let done_flag = AtomicBool.new(false)
+    let n_items   = 10   // items per producer
+    let n_prod    = 3    // 3 producers
+
+    supervised {
+        // Consumer — in spawn fiber
+        spawn {
+            while consumed.load() < n_items * n_prod {
+                mu.lock()
+                // Wait until something new is produced
+                while counter.load() <= consumed.load() {
+                    not_empty.wait(mu)
+                }
+                // Consume all available
+                let avail = counter.load() - consumed.load()
+                consumed.fetch_add(avail)
+                mu.unlock()
+            }
+            done_flag.store(true)
+        }
+
+        // 3 producers — each in spawn fiber
+        for _p in 0..n_prod {
+            spawn {
+                for _i in 0..n_items {
+                    mu.lock()
+                    counter.fetch_add(1)
+                    not_empty.notify_one()
+                    mu.unlock()
+                    Time.sleep(1)
+                }
+            }
+        }
+    }
+
+    assert(done_flag.load() == true)
+    assert(consumed.load() == n_items * n_prod)
+}

@@ -1,0 +1,42 @@
+// Plan 103.4 — Condvar.wait(ReentrantMutex) → W_REENTRANT_CONDVAR_RECOMMEND.
+//
+// Using a ReentrantMutex with Condvar.wait() releases ALL recursive lock
+// levels (lock_count → 0) and re-acquires as count=1 on wake.
+// This is intentional (Java-pitfall-aware design) but surprising.
+//
+// The lint warns users to consider using Mutex for simpler semantics.
+// The code is still valid — warning does not prevent compilation or running.
+//
+// EXPECT_COMPILE_WARNING W_REENTRANT_CONDVAR_RECOMMEND
+
+module nova_tests.plan103_4.condvar_with_reentrant_warn
+
+test "Condvar.wait(ReentrantMutex) emits W_REENTRANT_CONDVAR_RECOMMEND and works" {
+    let rm   = ReentrantMutex.new()
+    let cv   = Condvar.new()
+    let done = AtomicBool.new(false)
+    let n_waiting = AtomicInt.new(0)
+
+    supervised {
+        spawn {
+            rm.lock()
+            n_waiting.store(1)
+            cv.wait(rm)  // W_REENTRANT_CONDVAR_RECOMMEND emitted here
+            // On wake: lock_count == 1 (not restored to original)
+            done.store(true)
+            rm.unlock()
+        }
+
+        // Wait for fiber to be in cv.wait
+        let mut w = false
+        while !w {
+            Time.sleep(1)
+            rm.lock()
+            if n_waiting.load() == 1 { w = true }
+            rm.unlock()
+        }
+        cv.notify_one()
+    }
+
+    assert(done.load() == true, "fiber must wake after notify_one")
+}

@@ -1,0 +1,15 @@
+// Plan 103.4 — Condvar.wait() without locking mutex first → RUNTIME_PANIC.
+//
+// Unconditional precondition check (Plan 103.4 §«Discovery from 103.5»):
+// fires in both Dev AND Release builds.
+//
+// EXPECT_RUNTIME_PANIC Condvar.wait(): mutex not locked
+
+module nova_tests.plan103_4.condvar_wait_without_lock_neg
+
+test "wait without prior mu.lock() panics" {
+    let mu = Mutex.new()
+    let cv = Condvar.new()
+    // mu is NOT locked — cv.wait(mu) must panic.
+    cv.wait(mu)
+}
