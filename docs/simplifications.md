@@ -12336,3 +12336,108 @@ Plan 83.2 §4 «Compiled-программа без единого `runtime.*` в
   `parallel for` либо atomic primitives.
 
 - **Priority:** P2.
+
+---
+
+## Plan 83.10.1 — NOVA_AUTOARM=0 Directive Sweep (2026-05-26)
+
+### [M-83.10.1-autoarm-sweep-v1] Directive sweep V1 IMPLEMENTED (2026-05-26)
+
+- **Where:** All `nova_tests/` с `// ENV NOVA_AUTOARM=0` directive.
+  Branch `plan-83-autoarm-sweep` в worktree `nova-p83-autoarm`.
+
+- **Initial count:** 18 tests с directive.
+- **Final count:** 15 tests с directive.
+- **Removed (obsolete):** 3 directives — PASS 3/3 runs under armed M:N:
+  - `concurrency/cancel_semantics_test.nv` — cancel propagation semantics now work under M:N после Plan 83.10 fix.
+  - `plan83_10/cancel_race_no_orphan_state.nv` — 1K cancel cycles (no sleep) work armed.
+  - `plan83_10/handler_isolation_per_fiber.nv` — TLS snapshot isolation works armed in this pattern.
+- **Kept (still needed):** 15 tests с актуальными комментариями:
+  - **[M-83.10.1-armed-cancel-timer-hang]** (10 tests): cancel+Time.sleep pattern
+    TIMEOUT/FAIL under armed M:N. `cancel_all_pending + uv_close` sequence
+    stalls when multiple workers race uv_run. Tests:
+    `cancel_latency_bench`, `supervised_cancel_stress_test`, `supervised_cancel_test`,
+    `f10_select_cancel_propagation`, `f11a_timer_metrics`, `f7_cancel_via_token`,
+    `plan83_4_5_6_stress/cancel_stress`, `plan83_4_5_6_stress/park_wake_stress`,
+    `plan83_4_5_6_stress/spawn_stress_10k` (overhead), `main_yield` (ordering).
+  - **[M-83.10.1-per-fiber-handler-tls-race]** (2 tests): TLS handler snapshot
+    save/restore around `mco_resume` races with worker threads under M:N.
+    Tests: `concurrency/per_fiber_handlers`, `concurrency/time_handler`.
+  - **[M-83.10.1-fail-handler-cross-mco-longjmp]** (1 test): `effects/fail_handler` —
+    `longjmp` cross-mco-boundary can't reach handler frame on different worker's stack.
+  - **[M-83.10-nested-armed-routing]** (1 test): `plan83_10/panic_in_nested_supervised` —
+    TIMEOUT nested supervised throw routing (documented pre-existing gap).
+  - **Cooperative ordering** (1 test): `concurrency/main_yield` — exact execution
+    log ordering semantics require cooperative single-thread scheduling.
+
+- **Concurrency suite result:** 62 PASS / 13 FAIL (was 61/14 baseline — improved).
+- **Plan doc:** `docs/plans/83.10.1-autoarm-directive-sweep.md`.
+- **Priority:** ✅ CLOSED (sweep complete; gaps documented for followup plans).
+
+### [M-83.10.1-armed-cancel-timer-hang] cancel+Time.sleep TIMEOUT under armed M:N
+
+- **Discovered by:** Plan 83.10.1 sweep — `cancel_latency_bench`, `supervised_cancel_test`, etc.
+
+- **What:** Tests using `supervised(cancel: tok)` with fibers in `Time.sleep(N)`
+  TIMEOUT (64s kill) under armed M:N scheduler. `tok.cancel()` → `cancel_all_pending`
+  iterates pending timer handles, calls `uv_close()` for each. Under armed M:N
+  multiple worker threads race `uv_run` — `uv_close` callbacks may not fire
+  because the worker thread running `uv_run` is not the same thread that issued
+  `uv_close`. The libuv handle cleanup stalls waiting for the next `uv_run`
+  iteration on the correct thread.
+
+- **Root cause hypothesis:** `nova_cancel_all_pending` runs on arbitrary worker
+  thread; `uv_close` requires the handle's owning loop to call `uv_run` to
+  process the close callback. Under armed M:N the loop thread may be blocked
+  waiting for new work, not in `uv_run`.
+
+- **Affected tests (10):** cancel_latency_bench, supervised_cancel_stress_test,
+  supervised_cancel_test, f10_select_cancel_propagation, f11a_timer_metrics,
+  f7_cancel_via_token, plan83_4_5_6_stress/cancel_stress,
+  plan83_4_5_6_stress/park_wake_stress, plan83_4_5_6_stress/spawn_stress_10k.
+
+- **Fix direction:** Route `cancel_all_pending + uv_close` to execute on the
+  libuv-owning thread via `uv_async_send` dispatch mechanism (cross-thread
+  safe closure submit). Alternatively: run `uv_run` from a dedicated I/O thread
+  separate from fiber workers (Plan 83.8 / threadpool-vs-ioloop split).
+
+- **Priority:** P1 — affects all cancel+sleep tests (10/18 AUTOARM directives).
+
+### [M-83.10.1-per-fiber-handler-tls-race] TLS handler snapshot race under armed M:N
+
+- **Discovered by:** Plan 83.10.1 sweep — `per_fiber_handlers`, `time_handler`.
+
+- **What:** `with Time = handler { ... } { ... }` in spawn context reads wrong
+  handler value when another worker thread races. Per-fiber TLS handler snapshot
+  is captured at spawn-time and restored around `mco_resume` in `supervised_step`,
+  but under armed M:N fibers run on arbitrary worker threads — the TLS slot
+  restoration happens on the worker, not the spawner.
+
+- **Root cause:** `supervised_step` with TLS save/restore designed for single-
+  thread cooperative execution. Under M:N workers, each fiber resumes on a
+  different thread and the TLS snapshot save/restore path in `supervised_step`
+  isn't called — the worker thread has its own TLS state.
+
+- **Fix direction:** Per-fiber handler snapshot must be applied on the executing
+  worker thread before `mco_resume` and restored after — requires mco hook or
+  worker-level snapshot apply mechanism.
+
+- **Priority:** P2 — affects 2 tests (per_fiber_handlers, time_handler).
+
+### [M-83.10.1-fail-handler-cross-mco-longjmp] Fail handler cross-mco-boundary under M:N
+
+- **Discovered by:** Plan 83.10.1 sweep — `effects/fail_handler`.
+
+- **What:** `with Fail = handler { ... }` intercepts `throw` via setjmp/longjmp.
+  Under armed M:N the `throw` from inside a fiber executes on a worker thread;
+  `longjmp` needs to jump to the handler frame on the *main* thread's stack —
+  impossible cross-thread.
+
+- **Root cause:** longjmp is stack-local; can't cross thread boundary.
+
+- **Fix direction:** Fail handler dispatch under M:N requires inter-thread
+  signaling (similar to [M-83.10-armed-user-throw-routing] fix — report error
+  to scope, re-throw on main thread). Requires extending the effect handler
+  dispatch to support cross-mco routing.
+
+- **Priority:** P2.
