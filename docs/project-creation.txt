@@ -22730,3 +22730,39 @@ Results: panic_in_nested_supervised PASS armed 3/3 (directive removed).
 3 new fixtures (plan83_10_3/) all PASS armed. Concurrency 62/13 (no regression).
 
 Plan 83.10.3 status: V1 IMPLEMENTED 2026-05-26.
+
+=== Plan 103.3 вЂ” Mutex / RwLock / ReentrantMutex family (2026-05-26) ===
+
+Implemented fiber-aware locking primitives for Nova:
+
+Mutex extensions:
+- try_lock_for(Duration) вЂ” bounded-wait via libuv uv_timer_t
+- is_locked() вЂ” best-effort observability
+- with_lock[R](fn) вЂ” closure-form preferred V1 pattern (M15)
+- new_unfair() вЂ” LIFO-leaning opt-in constructor
+- unlock() invariant: unconditional runtime panic (not NOVA_SYNC_ASSERT no-op)
+
+RwLock (new):
+- read/write/try_read/try_write/try_*_for(Duration)/read_unlock/write_unlock
+- with_read[R]/with_write[R] helpers
+- Writer-priority default (write_waiting blocks new readers в†’ no starvation)
+- Reader-priority opt-in: new_reader_priority()
+- Unlock invariants: unconditional panic for mismatched unlock
+
+ReentrantMutex (new):
+- Same surface as Mutex + lock_count() + with_lock helper
+- Owner tracking via mco_coro* (mco_running() thread-local) вЂ” NULL on main thread
+- Recursive same-fiber lock: incr count; full release when count reaches 0
+- unlock() by non-owner fiber: unconditional runtime panic
+
+Key bug fix вЂ” GC race under M:N on Windows (Boehm):
+- Root cause: first supervised{spawn{}} triggers _ensure_materialized() в†’
+  nova_scope_grow (7Г— nova_alloc) в†’ GC triggered в†’ Boehm misses sync primitive
+  pointer on main thread stack в†’ premature collection в†’ rm->locked = 0.
+- Fix: nova_alloc_uncollectable for Nova_Mutex, Nova_RwLock, Nova_ReentrantMutex
+  static_new() functions (sync_primitives.h).
+- Pattern: same as SpawnCtx GC race (alloc_boehm.c precedent).
+
+Spec: D169 draft in spec/decisions/06-concurrency.md. Final closure Plan 103.7.
+Tests: 25/25 plan103_3 PASS; 69/69 plan103 (all) PASS.
+Branch: plan-103.3
