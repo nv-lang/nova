@@ -1,0 +1,17 @@
+// EXPECT_COMPILE_ERROR D159
+//
+// Plan 100.4.2 (D159): blocking{} в defer body — error.
+
+module nova_tests.plan100_4_2.defer_err_blocking_in_body
+
+fn process() -> () {
+    defer {
+        blocking {   // ❌ D159
+            ()
+        }
+    }
+}
+
+test "blocking в defer body — D159 error" {
+    process()
+}

@@ -1,13 +1,12 @@
 // Plan 100.4.2 (D159): suspend в defer body — Time.sleep валиден.
+// D90 §5 amended — suspend operations allowed для production cleanup.
 
 module nova_tests.plan100_4_2.defer_sleep_ok
 
 fn process() Time -> () {
     defer { Time.sleep(10) }                    // suspend в cleanup — D159
-    println("body")
-    // На exit: defer fires; Time.sleep suspends; cleanup completes
 }
 
-test "defer + Time.sleep — suspend разрешён" {
+test "defer + Time.sleep — D159 suspend разрешён" {
     process()
 }

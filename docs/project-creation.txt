@@ -21991,6 +21991,61 @@ composite chain теперь полностью функциональный (ч
 
 Branch plan-100-4-4-multi-defer → main (pending merge).
 
+
+=== Plan 100.4.2 — Async/suspend в cleanup body (D159, amend D90 §5) (2026-05-26) ===
+
+Снимает Plan 20 D90 §5 «defer body NO-SUSPEND»: defer/errdefer/okdefer/
+defer-with-result body может содержать suspend operations (Time.sleep,
+Net.*, Fs.*, Db.*, Channel.recv) — для production graceful cleanup
+(socket close с FIN+ACK, DB drain, async commit). spawn / parallel for /
+supervised / detach / blocking — keep banned (leak supervised hierarchy).
+
+**Реализация (Opus 4.7, Option B — bootstrap MVP, ~30 минут после 100.4.4):**
+
+Ф.0 — gate-probe.md: checker audit + scope decision (Option B без cancel-
+shielding runtime — followup).
+
+Ф.1 — Spec D90 §5 amend (spec/decisions/03-syntax.md): «no-suspend» →
+«suspend allowed»; historical pre-D159 reasoning сохранён в комментарии;
+«Почему suspend allowed» replaces «Почему no-suspend».
+
+Ф.3 — Checker (compiler-codegen/src/types/mod.rs::check_defer_body_inner):
+- Removed suspend-call ban в Call arm (`Time`/`Net`/`Fs`/`Db` callees +
+  member-access form `Time.sleep` etc.).
+- Updated AST-level concurrency-construct ban message to D159-spawn-in-defer
+  ("leaks supervised hierarchy. Use sync suspend operations or Time.timeout
+  instead").
+
+Ф.5 — 11 фикстур (nova_tests/plan100_4_2/):
+  POS (7): defer_sleep_ok, defer_db_drain_ok, defer_with_timeout_ok,
+    defer_cancel_safe_ok, errdefer_suspend_ok, okdefer_suspend_ok,
+    defer_multiple_suspend_ok.
+  NEG (4): defer_err_{spawn, parallel_for, supervised, blocking}_in_body.
+  11/11 PASS.
+
+Ф.6 — Docs: plan/spec/README/umbrella/roadmap/simplifications/project-creation.
+
+**Regression check:**
+- nova_tests/plan100_4_2: 11/11 PASS ✅
+- nova_tests/plan100_4_1: 18/18 PASS ✅
+- nova_tests/plan100_4_4: 17/17 PASS ✅
+- nova_tests/plan100_4_3: 11/11 PASS ✅
+- nova_tests/syntax/defer*: 8/8 PASS ✅
+
+**Bootstrap-граница (followup'ы):**
+- [M-100.4.2-cancel-shielding] (P2) — runtime cancel-safe semantics
+  (cleanup completes-then-cancel-propagates). Полная shielded gate — V2.
+- [M-100.4.2-time-timeout-integration] (P3) — Plan 22 Time.timeout
+  уже работает в defer; verification fixture отложен.
+- [M-100.4.2-await-preservation] (P3) — Plan 49 cancel-routing
+  обеспечивает; fixture отложен.
+
+**Unblocks:** Plan 100.4.5 (consume-integration final, D162) — теперь все
+4 dependencies сняты (100.4.1 + 100.4.2 + 100.4.3 + 100.4.4 ✅). Plan
+100.4.5 = финал Plan 100.4 umbrella.
+
+Branch plan-100-4-2-async-cleanup → main (pending merge).
+
 ========================================================================
 2026-05-25 — Plan 104.7 Ф.0: sub-plan file написан (tree-sitter grammar)
 ========================================================================

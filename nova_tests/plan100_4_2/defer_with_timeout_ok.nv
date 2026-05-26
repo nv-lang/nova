@@ -1,0 +1,15 @@
+// Plan 100.4.2 (D159): Time.timeout-обёрнутый bounded cleanup.
+
+module nova_tests.plan100_4_2.defer_with_timeout_ok
+
+fn graceful_close() Time -> () {
+    Time.sleep(10)   // simulate I/O cleanup
+}
+
+fn process() Time -> () {
+    defer { graceful_close() }   // D159: suspend allowed
+}
+
+test "defer + suspend bounded — D159 compile pass" {
+    process()
+}

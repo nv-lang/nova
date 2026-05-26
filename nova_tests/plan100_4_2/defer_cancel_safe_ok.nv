@@ -1,0 +1,18 @@
+// Plan 100.4.2 (D159): cleanup body suspend allowed. Cancel-safe semantics
+// (cleanup completes-then-cancel-propagates) — runtime followup
+// [M-100.4.2-cancel-shielding]; bootstrap: defer runs after throw OR
+// cancel as throw тоже triggers defer cleanup.
+
+module nova_tests.plan100_4_2.defer_cancel_safe_ok
+
+fn cleanup_async() Time -> () {
+    Time.sleep(5)   // suspend-able cleanup
+}
+
+fn process() Time -> () {
+    defer { cleanup_async() }   // D159: suspend в defer — OK
+}
+
+test "defer suspend body — D159 compile pass + run" {
+    process()
+}
