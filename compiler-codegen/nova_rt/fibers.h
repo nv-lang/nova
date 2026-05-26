@@ -1745,8 +1745,17 @@ static NovaStopMode _nova_sleep_stop_cb(void* handle) {
     /* Plan 83.4.1: CAS PENDING → CLOSING; защита от race с timer_cb. */
     int32_t expected = NOVA_SLEEP_PENDING;
     if (nova_aint_cas(&st->stage, &expected, NOVA_SLEEP_CLOSING)) {
-        uv_timer_stop(timer);
-        uv_close((uv_handle_t*)timer, _nova_sleep_close_cb);
+        /* Plan 83.10.2 (2026-05-26): cross-thread safe dispatch.
+         * timer->loop may not be the current thread's loop under armed M:N
+         * (timer was created on the worker's loop, but cancel fires on main).
+         * uv_timer_stop + uv_close from a foreign thread are libuv UB — they
+         * silently corrupt the handle list or miss the close_cb entirely,
+         * leaving the fiber parked forever → TIMEOUT.
+         *
+         * Fix: defer close to timer->loop's thread via async dispatch.
+         * uv_close implies uv_timer_stop — explicit stop is not needed. */
+        nova_loop_defer_close(timer->loop, (uv_handle_t*)timer,
+                              _nova_sleep_close_cb);
     }
     /* else: timer_cb уже инициировал close — wake придёт из close_cb. */
     return NOVA_STOP_ASYNC;
