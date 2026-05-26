@@ -1,0 +1,11 @@
+// Plan 103.4 — Semaphore.new with negative permits → RUNTIME_PANIC.
+//
+// initial permits must be >= 0. Unconditional check (fires in Dev AND Release).
+//
+// EXPECT_RUNTIME_PANIC Semaphore.new: initial permits must be >= 0
+
+module nova_tests.plan103_4.semaphore_negative_init_permits_neg
+
+test "Semaphore.new(-1) panics with permits must be >= 0" {
+    let _sem = Semaphore.new(-1)
+}
