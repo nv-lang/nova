@@ -21254,3 +21254,87 @@ race-free patterns.
 **Recommended next:** Plan 83.12 (async net/socket stdlib P0
 production blocker), либо investigate [M-83.10-nested-armed-routing]
 (P2), либо Plan 83.11 (deadline propagation P2 differentiator).
+(P2), либо Plan 83.11 (deadline propagation P2 differentiator).
+
+────────────────────────────────────────────────────────────────
+Plan 82.1: Linux fiber arena cross-thread dealloc — investigation
+2026-05-26 · Sonnet 4.6 · branch: plan-82-arena-diag
+────────────────────────────────────────────────────────────────
+
+**Задача:** Investigate `fiber_dealloc ptr outside arena` warnings на
+Linux под M:N runtime. Codebase reading: fiber_arena.h/c, fibers.h,
+runtime.c. Root cause + V2 fix outline.
+
+**Root cause (confirmed):**
+
+Cross-thread dealloc: POSIX `nova_fiber_dealloc` использует TLS
+`_t_arena` для bounds-check. Под M:N + work-stealing:
+
+1. `nova_runtime_spawn_global` вызывает `mco_create` на вызывающем
+   потоке (main или worker A) → `nova_fiber_alloc` берёт слот из A's
+   TLS arena. ptr = `A._t_arena.base + slot*slot_size + guard_size`.
+
+2. Fiber push'ится в deque worker'а B (round-robin). Worker B pop'ает
+   и исполняет fiber.
+
+3. При `MCO_DEAD`: `mco_destroy(co)` → `nova_fiber_dealloc(ptr)` на B.
+   Checks B's `_t_arena`. ptr принадлежит A's arena → WARNING + early
+   return → slot в A's arena leaks (bitmap bit never cleared).
+
+Work-stealing усугубляет: fiber created on A, stolen by C → dealloc
+на C → C's TLS ≠ A's arena.
+
+**Почему Windows не затронут:**
+`fiber_arena_win.c` реализует global address-based dispatch через
+`_nova_fw_arena_list`. `nova_fiber_dealloc` Windows находит owner arena
+по адресному диапазону — cross-thread dealloc explicit handled.
+Комментарий `fiber_arena_win.c:27-31`:
+> `cross-thread dealloc находит арену-владельца ПО АДРЕСУ, не по TLS`
+
+POSIX Plan 44.2 явно откладывал это: `/* Plan 23 prep: cross-thread
+dealloc atomic bitmap (single-thread bootstrap OK). */`
+
+**V2 fix outline:**
+
+Approach A (recommended): port Windows `_nova_fw_arena_list` на POSIX:
+- Global append-only list арен (добавляется в `nova_fiber_arena_init`).
+- `_nova_find_arena_for(ptr)` — O(N_workers) address scan, lock-free.
+- `nova_fiber_dealloc`: fast path = TLS match; slow path = list scan.
+- Atomic bitmap clear (`__atomic_fetch_and`) для cross-thread safety.
+- Cleanup patch: `base = NULL` (release) после `munmap` (не `memset`).
+
+Approach B (alternative): allocation header внутри каждого слота
+(O(1), но layout changes + alignment risk).
+
+**Deliverables:**
+- Plan 82.1 → ✅ V1 INVESTIGATION DELIVERED.
+- Plan 82.2 stub created (`docs/plans/82.2-linux-arena-dealloc-fix.md`).
+- `[M-82-linux-arena-dealloc]` entry в simplifications.md обогащён:
+  root cause + reproduction + V2 approaches table.
+- README.md: rows 82.1 + 82.2 added.
+
+**Lessons learned:**
+
+1. **TLS-arena architecture фундаментально broken для cross-thread
+   dealloc.** Архитектурно правильно либо (A) global registry,
+   либо (B) per-allocation header — TLS lookup работает только при
+   alloc/dealloc на одном thread.
+
+2. **Windows impl была blueprint весь проект.** `fiber_arena_win.c`
+   решила проблему правильно с самого начала (global list + address
+   dispatch). POSIX отставал — Plan 44.2 явно отложил P41-15.
+
+3. **Plan comment «deferred to Plan 23»** — ключевой маркер для
+   investigation. `/* Plan 23 prep */` помечает all deferred known
+   issues в codebase; grep этих маркеров быстро даёт backlog.
+
+**Files modified:**
+- docs/plans/82.1-linux-arena-dealloc-investigation.md — статус
+  ✅ V1 INVESTIGATION DELIVERED.
+- docs/plans/82.2-linux-arena-dealloc-fix.md — новый (Plan 82.2 stub).
+- docs/plans/README.md — rows 82.1 + 82.2.
+- docs/simplifications.md — [M-82-linux-arena-dealloc] enriched.
+- docs/project-creation.txt — этот блок.
+
+Worktree: `d:/Sources/nv-lang/nova-p82-arena-diag`,
+branch: `plan-82-arena-diag`.
