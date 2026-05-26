@@ -1598,7 +1598,7 @@ impl CEmitter {
                 // === PLAN-103.4 PREDECLARED TYPES (alphabetical, parallel-agent) ===
                 // /* AGENT-B */ "Barrier",
                 // /* AGENT-D */ "Condvar", "WaitResult",
-                // /* AGENT-C */ "CountDownLatch",
+                /* AGENT-C */ "CountDownLatch",
                 // /* AGENT-A */ "Semaphore",
                 // === END PLAN-103.4 PREDECLARED TYPES ===
             ];
@@ -16982,8 +16982,8 @@ _cp++; \
                                         //       && (method == "wait" || method == "wait_for"
                                         //           || method == "wait_until"))
                                         // AGENT-C (CountDownLatch):
-                                        //   || (recv_ty == "CountDownLatch"
-                                        //       && (method == "await" || method == "try_await_for"))
+                                        || (recv_ty == "CountDownLatch"
+                                            && (method == "await" || method == "try_await_for"))
                                         // AGENT-A (Semaphore):
                                         //   || (recv_ty == "Semaphore"
                                         //       && (method == "acquire" || method == "acquire_n"

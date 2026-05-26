@@ -1,0 +1,68 @@
+// Plan 103.4 (Agent C) — CountDownLatch: batch count_down_n.
+//
+// Verifies:
+//   - count_down_n(k) decrements count by k
+//   - count_down_n with n > count saturates at 0 (no underflow)
+//   - concurrent batch decrement with a waiting fiber
+//
+// EXPECT_TIMEOUT_MS 15000
+
+module nova_tests.plan103_4.countdown_count_down_n
+
+test "CountDownLatch.count_down_n: decrements count by n" {
+    let latch = CountDownLatch.new(10)
+
+    assert(latch.current_count() == 10)
+
+    latch.count_down_n(3)
+    assert(latch.current_count() == 7)
+
+    latch.count_down_n(4)
+    assert(latch.current_count() == 3)
+
+    // Final batch completes the latch
+    latch.count_down_n(3)
+    assert(latch.current_count() == 0)
+    assert(latch.try_await() == true)
+
+    // await() on done latch returns immediately
+    latch.await()
+}
+
+test "CountDownLatch.count_down_n: saturating past zero does not panic" {
+    let latch = CountDownLatch.new(3)
+
+    // Decrement by more than count — must saturate at 0, not go negative
+    latch.count_down_n(100)
+    assert(latch.current_count() == 0)
+    assert(latch.try_await() == true)
+}
+
+test "CountDownLatch.count_down_n: concurrent waiter woken by batch" {
+    // 3 fibers: i=0 awaits; i=1 and i=2 each count_down_n(3) = 6 total for a count-6 latch
+    let latch = CountDownLatch.new(6)
+    let woke = AtomicInt.new(0)
+
+    // Two separate ifs (no else) to avoid if/else mixed-return-type issue.
+    parallel for i in 0..3 {
+        if i == 0 {
+            latch.await()
+            woke.fetch_add(1)
+        }
+        if i != 0 {
+            // Each of 2 workers counts down by 3 (total: 6 = initial count)
+            latch.count_down_n(3)
+        }
+    }
+
+    assert(woke.load() == 1)
+    assert(latch.current_count() == 0)
+}
+
+test "CountDownLatch.count_down_n: n=0 is no-op" {
+    let latch = CountDownLatch.new(5)
+    latch.count_down_n(0)
+    assert(latch.current_count() == 5)
+    latch.count_down_n(-1)
+    assert(latch.current_count() == 5)
+}

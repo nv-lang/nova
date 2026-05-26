@@ -1,0 +1,41 @@
+// Plan 103.4 (Agent C) — count_down() at count==0 is no-op (saturating semantic).
+//
+// Java parity: CountDownLatch is permanently open once count reaches 0.
+// Subsequent count_down() calls must be silent no-ops, never panic.
+//
+// This test verifies the saturating edge case: count_down beyond zero
+// does not corrupt state, does not panic, and try_await() stays true.
+
+module nova_tests.plan103_4.countdown_count_down_at_zero_neg
+
+test "count_down at count==0 is no-op, never panics (saturating semantic)" {
+    let latch = CountDownLatch.new(1)
+
+    // Bring count to 0
+    latch.count_down()
+    assert(latch.current_count() == 0)
+    assert(latch.try_await() == true)
+
+    // count_down beyond zero: must be silent no-op (not panic)
+    latch.count_down()
+    latch.count_down()
+    latch.count_down()
+
+    // State must still be consistent: count stays at 0
+    assert(latch.current_count() == 0)
+    assert(latch.try_await() == true)
+
+    // await() on done latch returns immediately (no block)
+    latch.await()
+}
+
+test "count_down_n at count==0 is no-op" {
+    let latch = CountDownLatch.new(2)
+    latch.count_down_n(2)
+    assert(latch.current_count() == 0)
+
+    // Batch decrement past zero: saturating no-op
+    latch.count_down_n(10)
+    assert(latch.current_count() == 0)
+    assert(latch.try_await() == true)
+}
