@@ -22802,3 +22802,79 @@ Results: Concurrency 65/10 (was 62/13 baseline). Full suite ~1154/20.
 Remaining AUTOARM=0: 5 tests (TLS race × 2, longjmp × 1, cancel-scope × 2).
 Branch: plan-83.10.2-cancel-timer-hang.
 Commit: 043e7f00024
+
+
+===============================================================================
+2026-05-27  Plan 103.4 Agent B — Barrier (CyclicBarrier)
+===============================================================================
+
+Branch: plan-103.4-bar
+Commit: 03cd41b80bb (HEAD)
+Result: 5/5 PASS  (all 5 barrier fixtures)
+
+Implementation:
+- Nova_Barrier struct: mu + parties_total + arrived_count + generation + broken
+  + FIFO waiter queue (NovaBarrierWaiter head/tail).
+- nova_alloc_uncollectable for Barrier itself (Plan 103.3 GC-race fix pattern).
+- NovaBarrierWaiter stack-allocated in each waiting fiber's call frame
+  (Plan 103.3 / WaitGroup / Once precedent).
+- 6 methods: new(parties), wait()->int, wait_with_action(fn()->())->int,
+  wait_for(Duration)->Option[int], is_broken()->bool, reset().
+
+Files:
+- compiler-codegen/nova_rt/sync_barrier.h  (NEW, 504 lines)
+- compiler-codegen/nova_rt/sync_primitives.h  (#include sync_barrier.h)
+- compiler-codegen/nova_rt/nova_sched.h  (SEQ_CST store fix)
+- compiler-codegen/src/codegen/emit_c.rs  (skip_type_decl + blocking marker)
+- std/runtime/sync.nv  (Barrier API: 6 external fn declarations)
+- nova_tests/plan103_4/*.nv  (5 fixtures)
+
+Key technical issue: __ATOMIC_RELEASE store-buffer visibility on x86
+-------------------------------------------------------------------
+
+Symptom: barrier_cyclic_reusable + barrier_wait_with_action timed out (deadlock).
+
+Root cause: nova_sched_park_with_unlock stored parked[slot]=true with
+__ATOMIC_RELEASE. On GCC/Clang/MSVC x86, RELEASE compiles to a plain MOV
+(compiler-only barrier, no hardware fence). The store goes into the CPU
+store buffer and may not be globally visible to other cores for several
+cycles. On Windows SRWLOCK release is similarly a plain store. So a
+concurrent waker on another core:
+  1. Acquires the barrier mutex (CAS — full fence).
+  2. Reads parked[slot] via CAS(true→false, ACQ_REL).
+  3. CAS observes stale false from step 1's pending store buffer.
+  4. was_parked = false → dispatch_ready not called.
+  5. Fiber remains parked forever → deadlock.
+
+Fix: __ATOMIC_RELEASE → __ATOMIC_SEQ_CST for parked[slot]=true in both
+nova_sched_park and nova_sched_park_with_unlock. SEQ_CST emits XCHG on
+x86 (implicit LOCK prefix = full serialising fence), draining the store
+buffer before the instruction completes. Identical rationale to the
+nova_sched_register_pending fix from Plan 83.10.2.
+
+Why fprintf "masked" the bug pre-fix: every fprintf call internally takes
+a CRITICAL_SECTION → LOCK CMPXCHG, which acts as an implicit full fence.
+With the debug prints removed (Plan 103.4 closure preparation), the bug
+became visible. Lesson: load-bearing fprintfs aren't synchronisation
+primitives — fix the actual memory ordering.
+
+Codegen flow understanding (for future debugging):
+- nova test uses the nova.exe nearest to its invocation (env-resolved).
+- nova.exe embeds sync.nv via include_str! at Rust compile time.
+- If sync.nv changes, nova-cli MUST be rebuilt; the existing nova.exe still
+  embeds the OLD sync.nv. For worktree development:
+    cd <worktree>/nova-cli && cargo build --release
+- Env vars for nova test in worktree (from main repo's vcpkg):
+    NOVA_GC_LIB_DIR=<main>/compiler-codegen/vcpkg_installed/x64-windows-static/lib
+    NOVA_GC_INCLUDE_DIR=<main>/compiler-codegen/vcpkg_installed/x64-windows-static/include
+  (NOT NOVA_INCLUDE_DIR — that env var name is wrong.)
+
+Codegen quirk discovered (not fixed in this commit):
+Trailing-block closures inside parallel-for fibers that capture primitive
+ints generate the env struct with `nova_int* x` but assign with
+`env->x = _c->x` (missing &). Reading *env->x then dereferences the int
+value as a pointer → access violation. Worked around in
+barrier_wait_with_action test 3 by capturing the value via an AtomicInt
+(`max_idx`) rather than the primitive `parties` directly. Underlying
+codegen bug exists in emit_c.rs trailing-block env emission for primitive
+captures — TODO for a future codegen pass.
