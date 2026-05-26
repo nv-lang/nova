@@ -1596,7 +1596,7 @@ impl CEmitter {
                 "AtomicU8", "AtomicU16", "AtomicU32", "AtomicU64",
                 "AtomicIsize", "AtomicUsize", "AtomicPtr",
                 // === PLAN-103.4 PREDECLARED TYPES (alphabetical, parallel-agent) ===
-                // /* AGENT-B */ "Barrier",
+                /* AGENT-B */ "Barrier",
                 // /* AGENT-D */ "Condvar", "WaitResult",
                 // /* AGENT-C */ "CountDownLatch",
                 // /* AGENT-A */ "Semaphore",
@@ -16974,9 +16974,9 @@ _cp++; \
                                                 || method == "with_lock"))
                                         // === PLAN-103.4 REALTIME-BLOCKING (alphabetical, parallel-agent) ===
                                         // AGENT-B (Barrier):
-                                        //   || (recv_ty == "Barrier"
-                                        //       && (method == "wait" || method == "wait_with_action"
-                                        //           || method == "wait_for"))
+                                        || (recv_ty == "Barrier"
+                                            && (method == "wait" || method == "wait_with_action"
+                                                || method == "wait_for"))
                                         // AGENT-D (Condvar):
                                         //   || (recv_ty == "Condvar"
                                         //       && (method == "wait" || method == "wait_for"

@@ -1,0 +1,12 @@
+// Plan 103.4 — Barrier: Barrier.new(0) → RUNTIME_PANIC.
+//
+// Unconditional invariant check (fires in Dev AND Release — §Discovery from 103.5).
+// parties must be >= 1.
+//
+// EXPECT_RUNTIME_PANIC Barrier.new(): parties must be >= 1
+
+module nova_tests.plan103_4.barrier_zero_parties_neg
+
+test "Barrier.new(0) panics" {
+    let _b = Barrier.new(0)
+}
