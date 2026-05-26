@@ -1586,8 +1586,8 @@ export external fn Semaphore mut @release_n(n int)
 /// ```
 #stable(since = "0.1")
 export fn Semaphore mut @with_permit[R](body fn() -> R) -> R {
-    self.acquire()
-    defer self.release()
+    @acquire()
+    defer @release()
     body()
 }
 
