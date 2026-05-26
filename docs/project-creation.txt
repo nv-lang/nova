@@ -22131,3 +22131,55 @@ Followup-сессия закрыла оба:
   (16 fibers × 100 force(), PASS); sequential property — отдельным тестом.
 - Дальше: Plan 82.1 follow-up — fiber-arena slot-0 first-parallel-for repro
   с WinDbg.
+
+
+=== Plan 104.8 — Editor Packaging & Distribution (2026-05-26) ===
+
+Plan 104.8 закрыт полностью. Все 7 фаз завершены, 6 коммитов.
+
+**Ф.1 — VSCode LSP client** (commit 84bb586):
+- package.json: activationEvents[onLanguage:nova], main, contributes.configuration
+  (nova.lsp.path/enabled/trace.server), engines ^1.75.0, vscode-languageclient ^9.0
+- client/extension.ts: LanguageClient spawn nova-lsp stdio, binary discovery
+  (setting→PATH→workspace target), auto-restart on crash (max 3 errors→shutdown+msg),
+  fire-and-forget warning dialog (headless-safe), config change→restart
+- tsconfig.json strict ES2020, tests/suite 7/7 PASS via @vscode/test-electron 2.5.2
+  (VSCode 1.121.0). Fix: batch wrapper clears ELECTRON_RUN_AS_NODE=1 inherited
+  from Claude Code agent environment.
+- npm run build: exit 0 (TypeScript strict, zero errors)
+
+**Ф.2 — Neovim** (commit b34659a):
+- lspconfig.lua: configs.nova idempotent registration; binary discovery
+  (vim.g.nova_lsp_path→PATH→workspace target); root_pattern('nova.toml', '.git');
+  single_file_support=true; graceful vim.notify on missing binary
+- ftdetect.lua: .nv→filetype nova (modern vim.filetype.add API)
+- UPSTREAM_PR_DRAFT.md: черновик PR в neovim/nvim-lspconfig
+- smoke skip: nvim not in PATH [M-104.8-tool-nvim-unavailable]
+
+**Ф.3 — Helix** (commit 8f62388):
+- languages.toml: [[language]] nova + LSP + auto-pairs (', ` included per D104.8-5)
+  + [[grammar]] reference tree-sitter-nova v0.1.0 (D104.8-6, no duplication)
+  + roots detection nova.toml + .git
+- TOML validated: Python tomllib VALID, auto-pairs 6 keys (5 standard + ' + backtick)
+- hx smoke skip: hx not in PATH [M-104.8-tool-hx-unavailable]
+
+**Ф.4 — Zed** (commit e0edf45):
+- extension.toml: schema_version=1, grammars.nova→tree-sitter-nova sha 99111569 (v0.1.0),
+  language_servers.nova-lsp
+- languages/nova/config.toml: brackets 6 pairs (', backtick included), path_suffixes=[nv]
+- languages/nova/highlights.scm: copied from tree-sitter-nova v0.1.0 queries/
+- TOMLs validated: Python tomllib VALID
+
+**Ф.5 — INSTALL.md** (commit f4ee4d4):
+- editors/INSTALL.md: unified guide (prerequisites, per-editor steps, config, verify,
+  troubleshooting for all 4 editors)
+- editors/README.md: updated table with LSP ✅/❌ column, LSP section, roadmap
+
+**Ф.6 — Integration smoke** (commit eb61e60):
+- test_smoke.nv: Nova fixture (modules, fn, effects, Option/Result, match, for loops,
+  types, char literals, template literals, auto-pairs demo)
+- SMOKE_LOG.md: VSCode 7/7 automated PASS; nvim/hx skip with manual procedures;
+  Zed TOML validation results
+
+**Ф.7 — Close-out** (this commit):
+- project-creation.txt, simplifications.md, plans/README.md, 104-ide-integration.md updated

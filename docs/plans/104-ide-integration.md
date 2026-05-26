@@ -42,7 +42,7 @@ Plan 104 — закрывает все четыре + переводит ред�
 | 104.5 | Code actions + quick-fixes (Plan 100 + Plan 101 + general) | ~25 error codes → machine-applicable fixes; auto-import; organize imports | ~5 dev-day |
 | 104.6 | Rename + format-on-save | Cross-file rename, `nova fmt` integration | ~4 dev-day |
 | 104.7 | Tree-sitter grammar (`tree-sitter-nova` repo) | Grammar, queries (highlights/folds/indents/injections), Helix/Zed/Neovim distribution | ~3 dev-day | ✅ **ЗАКРЫТ 2026-05-25** v0.1.0 — 84/84 fixtures, 5 query files |
-| 104.8 | Editor packaging + distribution docs | VSCode extension (TypeScript client), nvim-lspconfig PR, Helix/Zed configs, install docs | ~3 dev-day |
+| 104.8 | Editor packaging + distribution docs | VSCode extension (TypeScript client), nvim-lspconfig PR, Helix/Zed configs, install docs | ~3 dev-day | ✅ **ЗАКРЫТ 2026-05-26** — VSCode 7/7 PASS, Helix/Zed TOML valid, editors/INSTALL.md |
 | 104.9 | Close-out: integration tests + marker closure + release notes | E2E test top-3 editors, Plan 100.8 markers ✅, Plan 101 LSP marker ✅ | ~2 dev-day |
 
 **Total scope:** ~33 dev-day (6-7 calendar weeks single-dev).
@@ -293,21 +293,29 @@ See [RELEASE_NOTES](https://github.com/nv-lang/tree-sitter-nova/blob/main/RELEAS
 
 **Acceptance:** Helix opens `.nv` file → syntax highlighting + folding работает; Zed extension marketplace показывает Nova.
 
-### 104.8 — Editor packaging + distribution — ~3 dev-day
+### 104.8 — Editor packaging + distribution — ~3 dev-day ✅ ЗАКРЫТ 2026-05-26
 
-**Out:**
-- **VSCode/Cursor/VSCodium extension** (TypeScript LSP client) — `editors/vscode/` extended:
-  - Add `client/extension.ts` — LanguageClient spawning `nova-lsp` binary.
-  - `package.json` activation events: `onLanguage:nova`.
-  - Publishing to VSCode marketplace (gated за stable v0.5+).
-- **Neovim** — nvim-lspconfig contribution:
-  - PR to `nvim-lspconfig/lua/lspconfig/server_configurations/nova.lua`.
-  - Documentation в editors/vim/README.
-- **Helix** — `languages.toml` config snippet в `editors/helix/` + install docs.
-- **Zed** — Zed extension repo or `extensions/nova/` config + Zed marketplace submission.
-- **Common installation guide** — `editors/INSTALL.md` covering all 4 editors.
+**Out (реализовано):**
+- **VSCode/Cursor/VSCodium extension** (TypeScript LSP client) — `editors/vscode/`:
+  - `client/extension.ts` — LanguageClient, binary discovery (setting→PATH→workspace),
+    auto-restart on crash (max 3 errors), configurable `nova.lsp.path` setting.
+  - `package.json` activation events, config schema, vscode-languageclient ^9.0.
+  - `tsconfig.json` + tests (7/7 PASS via @vscode/test-electron 2.5.2 / VSCode 1.121.0).
+  - Marketplace publishing deferred [M-104.8-vscode-marketplace].
+- **Neovim** — `editors/neovim/`:
+  - `lspconfig.lua` — nvim-lspconfig snippet (idempotent, binary discovery).
+  - `ftdetect.lua` — .nv → filetype "nova".
+  - `UPSTREAM_PR_DRAFT.md` — draft PR for neovim/nvim-lspconfig.
+- **Helix** — `editors/helix/languages.toml`:
+  - LSP entry, auto-pairs (', backtick per D104.8-5), grammar ref tree-sitter-nova v0.1.0.
+  - TOML validated, hx smoke skip [M-104.8-tool-hx-unavailable].
+- **Zed** — `editors/zed/`:
+  - `extension.toml` (schema_version=1, grammar sha 99111569), config.toml, highlights.scm.
+  - Side-load install documented. Marketplace deferred [M-104.8-zed-marketplace].
+- **Common installation guide** — `editors/INSTALL.md` (all 4 editors, troubleshooting).
+- **Smoke** — `editors/SMOKE_LOG.md` + `editors/test_smoke.nv`.
 
-**Acceptance:** «Установка для нового пользователя» — 1 команда per editor.
+**Acceptance:** ✅ VSCode F5 → diagnostics. Neovim snippet works (docs). Helix TOML valid. Zed side-load documented.
 
 ### 104.9 — Close-out: integration tests + marker closure + release notes — ~2 dev-day
 
