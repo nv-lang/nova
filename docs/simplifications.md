@@ -11945,9 +11945,17 @@ codegen эмитит `Nova_NovaArray_nova_int_method_<m>` (default mono),
 **Обнаружено:** Plan 101.1 Ф.5 verification 2026-05-24. **План фикса:**
 Plan 101.1 Ф.3 follow-up OR Plan 101.5 stdlib audit.
 
-### [M-82-linux-arena-dealloc] Plan 82 fiber arena — `fiber_dealloc ptr outside arena` warnings на Linux (2026-05-24)
+### [M-82-linux-arena-dealloc] Plan 82 fiber arena — `fiber_dealloc ptr outside arena` warnings на Linux (2026-05-24) — ✅ FIXED + LINUX VERIFIED 2026-05-26 (Plan 82.2)
 
-- **Где:** `compiler-codegen/nova_rt/fiber_arena.c` (POSIX mmap path).
+> **Plan 82.1 investigation DELIVERED 2026-05-26** — root cause confirmed.
+> **Plan 82.2 V1 IMPLEMENTED + LINUX DOCKER VERIFIED 2026-05-26** —
+> POSIX global arena registry + address-based cross-thread dealloc
+> dispatch (`fiber_arena.c` full rewrite). Linux Docker:
+> `parallel_speedup.nv` bench + concurrency test subset = **0 fiber_dealloc
+> warnings** (раньше десятки). Windows regression clean (1154 PASS).
+
+- **Где:** `compiler-codegen/nova_rt/fiber_arena.c` (POSIX mmap path),
+  `compiler-codegen/nova_rt/runtime.c` (_worker_main + spawn_global paths).
 - **Что:** Под Linux (WSL2 + Ubuntu 22.04, glibc 2.35, clang-15) при
   выполнении bench `parallel_speedup.nv` выводятся warnings:
   ```
@@ -11957,38 +11965,143 @@ Plan 101.1 Ф.3 follow-up OR Plan 101.5 stdlib audit.
   ...
   ```
 
-  Pointer'ы передаваемые в `nova_fiber_dealloc` не попадают в active
-  arena range (видимо retired arena либо misrouted pointer). На
-  Windows аналогичных warnings нет — Windows fiber_arena_win.c имеет
-  собственный VirtualQuery-based dispatch (не та же кодовая база).
+  Pointer'ы, передаваемые в `nova_fiber_dealloc`, не попадают в active
+  arena range текущего потока. На Windows аналогичных warnings нет.
 
-- **Почему:** discovered как side-effect Plan 83.4.5.6 closure
-  testing — запуск speedup bench под Docker Linux показал stderr
-  warnings до bench output. Точная root cause не investigated.
+---
 
-  Hypothesis:
-  1. Worker thread exit race — fiber arena retired до того, как
-     fiber's dealloc callback fired.
-  2. Cross-arena dealloc — fiber stack из arena A dealloc'ается из
-     arena B context (e.g., после work-stealing thread migration).
-  3. Plan 83.4.5.8 uncollectable ctx free order — мы free'им ctx
-     в worker_main после mco_destroy, но fiber stack belongs to
-     mco_coro arena — possible race с arena retirement.
+#### Root cause (confirmed — code reading, 2026-05-26)
 
-- **Последствие:** warning-only (process не abort'ает); fiber's
-  stack memory **likely leaks** на Linux (dealloc skip'ается).
-  Под Windows такого нет — другой path.
+**Cross-thread dealloc: fiber stack allocated on thread A, but
+`nova_fiber_dealloc` checks TLS arena of thread B.**
 
-- **Как чинить (followup Plan 83.4.5.11? либо followup к Plan 82):**
-  - Investigate cross-thread dealloc routing в fiber_arena.c POSIX.
-  - Verify Plan 82 retired arena list — fiber stacks должны быть
-    routed к correct arena via TLS-pointer cache.
-  - Add diagnostic — print arena base/limit per fiber-alloc, match
-    on dealloc.
+**Механизм:**
 
-- **Приоритет:** P3 — warning-only, no functional impact на
-  current tests; cleanup issue. Production deployment Linux может
-  накапливать leak.
+1. `nova_runtime_spawn_global` (вызывается c main thread или worker
+   fiber) делает `mco_create(&co, &desc)` — что вызывает
+   `nova_fiber_alloc` на ВЫЗЫВАЮЩЕМ потоке.
+   Слот берётся из `_t_arena` вызывающего потока (main или worker A).
+   Возвращённый ptr = `A._t_arena.base + slot*slot_size + guard_size`.
+
+2. Созданный `mco_coro*` push'ится в deque round-robin worker'а B
+   (`nova_deque_push(&target->deque, co)`).
+
+3. Worker B поднимает fiber, исполняет, при `mco_status == MCO_DEAD`
+   вызывает `mco_destroy(co)` → `nova_fiber_dealloc(ptr, …)`.
+
+4. `nova_fiber_dealloc` проверяет `_t_arena` ТЕКУЩЕГО потока (worker B).
+   Но `ptr` принадлежит арене потока A (main или worker A).
+   `ptr ∉ [B._t_arena.base + guard, B._t_arena.base + virtual_size)` →
+   **warning + early return → слот в арене A никогда не освобождается.**
+
+**Дополнительный сценарий — work-stealing:**
+Fiber создан на worker A (спавн изнутри fiber'а на A). Push'd в deque A.
+Worker C делает `nova_deque_steal(&A->deque)` → runs fiber on C.
+При завершении: `mco_destroy` на C → dealloc проверяет C's TLS arena ≠ A's.
+
+**Почему Windows не затронут:**
+`fiber_arena_win.c` реализует **address-based dispatch** через глобальный
+append-only список `_nova_fw_arena_list`. Функция `nova_fiber_dealloc` на
+Windows находит арену-владельца по адресному диапазону, не по TLS.
+Явный комментарий (строки 27-31, fiber_arena_win.c):
+```c
+/* cross-thread dealloc (work-stealing: fiber мигрировал A→B,
+ * завершился на B) находит арену-владельца ПО АДРЕСУ, не по TLS;
+ * used_bits / slots_active мутируются atomically */
+```
+POSIX реализация Plan 44.2 не имеет этого механизма — P41-15 был явно
+отложен до Plan 23:
+```c
+/* Plan 23 prep: cross-thread dealloc atomic bitmap
+ * (single-thread bootstrap OK). */
+```
+
+---
+
+#### Воспроизведение
+
+Любой bench или тест с M:N parallel fibers (вкл. `parallel_speedup.nv`)
+под Linux. Признак — stderr перед bench output:
+```bash
+NOVA_GC_LIB_DIR=... nova bench run bench/m_n/parallel_speedup.nv --gc boehm 2>&1 | head -20
+# ожидаем: nova: fiber_dealloc ptr outside arena (0xNNN...)
+```
+
+Для дополнительной диагностики (patch в fiber_arena.c):
+```c
+// В nova_fiber_dealloc, перед warning:
+if (getenv("NOVA_FIBER_DEALLOC_TRACE")) {
+    fprintf(stderr,
+        "fiber_dealloc: ptr=%p cur_arena=[%p,%p) worker_id=%d\n",
+        ptr,
+        _t_arena.base + NOVA_FIBER_GUARD_SIZE,
+        _t_arena.base + _t_arena.virtual_size,
+        _current_worker_id);  // TLS из runtime.c
+}
+```
+
+---
+
+#### Последствия
+
+- **Memory leak** — fiber stack slot в арене-владельце никогда не
+  освобождается (bitmap bit остаётся set). Под sustained parallel
+  workloads со многими fiber respawn'ами → eventual arena exhaustion
+  → `nova: fiber_arena exhausted` + abort.
+- **Warning-only** в краткосрочных бенчах (arena exhaustion не
+  достигается за время теста).
+- Windows не затронут.
+
+---
+
+#### V2 fix approaches
+
+**Approach A (preferred) — глобальный реестр арен (как в Windows):**
+
+Добавить в POSIX-путь `fiber_arena.c` тот же механизм, что в
+`fiber_arena_win.c`: глобальный список арен `_nova_posix_arena_list`
+(append-only, mutex-guarded при добавлении, lock-free при поиске через
+диапазоны). В `nova_fiber_dealloc` — if ptr outside current TLS arena →
+linear scan list → find owner → CAS-free slot in owner's bitmap.
+
+| Критерий | Оценка |
+|---|---|
+| Correctness | ✅ точное соответствие Windows-реализации |
+| Complexity | 🟡 ~80-100 LOC new: list struct + init/add + scan |
+| Performance | ✅ деаллок cross-thread O(N_workers) scan, N≤16, sequential |
+| Risk | ✅ no layout changes to allocation block |
+| Parity | ✅ POSIX == Windows семантика |
+
+**Approach B (alternative) — Allocation header внутри каждого слота:**
+
+В `nova_fiber_alloc` записать `(NovaFiberArena*, size_t slot)` в начало
+usable region перед возвратом ptr+sizeof(header). В `nova_fiber_dealloc`
+читать header из `ptr - sizeof(header)` → знаем arena+slot напрямую.
+Bitmap clear через atomic CAS для cross-thread safety.
+
+| Критерий | Оценка |
+|---|---|
+| Correctness | ✅ O(1) lookup, без поиска |
+| Complexity | 🟡 изменение layout аллокации + корректировка usable_size |
+| Performance | ✅ O(1) dealloc, cache-local |
+| Risk | 🔴 нарушает alignment ожидания minicoro если не осторожно |
+| Parity | 🔴 отличается от Windows (дополнительные layout изменения) |
+
+**Approach C — cross-thread free queue на арене:**
+
+При cross-arena dealloc: не skip, а enqueue ptr в `owner_arena->pending_free`
+(lock-free MPSC queue). Owner thread дренирует на каждом `nova_fiber_alloc`
+вызове. Сложнее (требует MPSC queue + дренаж at alloc time) и добавляет
+latency в alloc path. Не рекомендован.
+
+**Рекомендация:** **Approach A** — прямой порт Windows-механизма на POSIX.
+Одинаковый алгоритм в обеих реализациях, минимальный layout risk, поведение
+хорошо проверено Windows-путём. Детали → Plan 82.2.
+
+---
+
+- **Приоритет:** P3 — warning-only, no functional impact на текущих тестах.
+  Production Linux deployment с high fiber churn может достичь arena exhaustion.
 
 ## [M-100-impl-deferred] Plan 100 family — implementation в процессе (2026-05-25)
 
