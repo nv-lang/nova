@@ -22766,3 +22766,39 @@ Key bug fix вЂ” GC race under M:N on Windows (Boehm):
 Spec: D169 draft in spec/decisions/06-concurrency.md. Final closure Plan 103.7.
 Tests: 25/25 plan103_3 PASS; 69/69 plan103 (all) PASS.
 Branch: plan-103.3
+
+=== Plan 83.10.2 — Armed cancel-timer-hang fix (2026-05-26) ===
+
+Root cause: three independent bugs causing cancel+Time.sleep TIMEOUT under armed M:N:
+
+1. Boehm GC aliasing in nova_scope_grow / nova_sched_grow_state:
+   Multiple nova_alloc() calls in static-inline functions. Clang keeps
+   intermediate pointers in registers (not visible to conservative GC).
+   GC trigger between calls → same address returned twice → fibers[] and
+   fiber_fail_top[] aliased. Fix: single nova_alloc(N*cap*sizeof(void*))
+   with stride offsets for sub-arrays.
+
+2. Slot-reuse guard in _nova_sleep_close_cb:
+   Stale deferred close_cbs from prior supervised iterations woke wrong
+   fiber in next iteration. Fix: NovaSleepState::co stores mco_running()
+   at timer-start; close_cb skips wake unless fibers[slot] == st->co.
+
+3. Race 2a/2b in _nova_sleep_via_libuv:
+   cancel_requested set before/after timer start → fiber parked forever.
+   Fix: early-exit (2a) + re-check after register_pending + CAS-initiated
+   uv_close (2b).
+
+4. nova_sched_wake branch bug:
+   After debug print removal, double-wake skip merged with bootstrap path.
+   Fix: explicit else if (was_parked) for bootstrap, bare else for skip.
+
+Additional:
+- NovaDeferredCloseQueue: lock-free MPSC queue for cross-thread uv_close.
+  Cancel path enqueues (handle, close_cb); worker's uv_prepare_cb drains.
+- Full debug print removal (~30 fprintf statements from 4 files).
+
+Results: Concurrency 65/10 (was 62/13 baseline). Full suite ~1154/20.
+10 cancel+sleep tests now run without AUTOARM=0 directive.
+Remaining AUTOARM=0: 5 tests (TLS race × 2, longjmp × 1, cancel-scope × 2).
+Branch: plan-83.10.2-cancel-timer-hang.
+Commit: 043e7f00024
