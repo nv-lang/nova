@@ -1,0 +1,28 @@
+# Files excluded from vsix packaging (vsce package)
+# Keep: out/, syntaxes/, language-configuration.json, package.json, README.md
+
+# Source TypeScript — not needed in packaged extension (compiled JS is in out/)
+client/
+tests/
+
+# Build config
+tsconfig.json
+tsconfig*.json
+.eslintrc*
+.prettierrc*
+
+# Dev artifacts
+.nyc_output
+coverage/
+node_modules/
+*.vsix
+
+# Version control
+.git
+.gitignore
+.github/
+
+# Misc dev files
+*.map
+CHANGELOG.md
+CONTRIBUTING.md

@@ -1,0 +1,51 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+# Nova Language — Zed language config
+# Plan 104.8.Ф.4
+
+name = "Nova"
+grammar = "nova"
+path_suffixes = ["nv"]
+line_comments = ["// "]
+block_comment = ["/* ", " */"]
+tab_size = 4
+hard_tabs = false
+autoclose_before = ";:.,=}])>"
+
+# Auto-pairs — production constraint D104.8-5:
+# Nova has char literals ('x') and tagged template literals (json`...`).
+# Both ' and ` are included.
+[[brackets]]
+start = "{"
+end = "}"
+close = true
+newline = true
+
+[[brackets]]
+start = "["
+end = "]"
+close = true
+newline = true
+
+[[brackets]]
+start = "("
+end = ")"
+close = true
+newline = true
+
+[[brackets]]
+start = "\""
+end = "\""
+close = true
+newline = false
+
+[[brackets]]
+start = "'"
+end = "'"
+close = true
+newline = false
+
+[[brackets]]
+start = "`"
+end = "`"
+close = true
+newline = false
