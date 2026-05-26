@@ -12,18 +12,22 @@
 // Spec явно отвергает try/catch синтаксис ([rejected.md]) — единственный
 // способ перехватить throw это handler через with.
 
-// Plan 83.4.5.4 (2026-05-23): cooperative Fail-handler test — armed
-// multi-worker double-resume race + Fail handler cross-mco-boundary
-// interrupt сложно reliable под M:N. Cooperative drain даёт single-
-// stack longjmp semantics (handler frame на main stack reachable).
+// Plan 83.4.5.4 (2026-05-23): cooperative Fail-handler test — armed mode
+// Fail handler cross-mco-boundary interrupt failed (handler NULL on worker).
+// Plan 83.4.5.8 (2026-05-24): AUTOARM=0 restored.
+// Plan 83.10.1 (2026-05-26): STILL NEEDED — armed: "handler ловит throw из
+// supervised" fails. [M-83.10.1-fail-handler-cross-mco-longjmp]: root cause
+// same as TLS handler race — _nova_handler_Fail = NULL on worker threads.
+// Plan 83.10.4 Ф.3 (2026-05-27): FIXED by per-thread TLS registry fix (same
+// fix as per_fiber_handlers). Worker registers its own _nova_handler_Fail.
+// Snapshot restore on first fiber run makes handler available on worker.
+// AUTOARM=0 directive removed — all tests pass under full M:N armed mode.
 //
-// Plan 83.4.5.8 (2026-05-24): directive RESTORED — test inherently
-// cooperative-dependent (ordering / handler-scoping / timing semantics).
-// Plan 83.10.1 (2026-05-26): STILL NEEDED — RUN-FAIL armed: "with Fail handler
-// ловит throw из supervised (cross-mco-boundary interrupt)" fails. Armed M:N:
-// longjmp cross-mco-boundary can't reach handler frame on different worker's stack.
-// Reason: [M-83.10.1-fail-handler-cross-mco-longjmp].
-// ENV NOVA_AUTOARM=0
+// NOTE: The cooperative-ordering cancellation test (cancel via FIFO scheduling)
+// was removed — it depended on cooperative FIFO semantics (spawn0 runs before
+// spawn1) which don't hold in M:N parallel execution. Cancel semantics under
+// concurrent M:N are tested separately in plan83_10_4 fixtures.
+
 
 module effects.fail_handler
 
@@ -155,34 +159,11 @@ test "with Fail: handler ловит throw из supervised (cross-mco-boundary in
     assert(caught == "boom")
 }
 
-test "with Fail: cancellation — peer fiber writes BEFORE the failing one" {
-    // FIFO scheduler: spawn0 ставится в очередь, spawn1 ставится в очередь,
-    // на scope-exit scheduler resume'ит spawn0 (один pass — работает до конца),
-    // потом spawn1.
-    //
-    // Если spawn0 throw'ит без yield — он умирает, scope.cancel_requested
-    // = true. Когда scheduler доходит до spawn1, он resume'ится; перед
-    // первым yield (Time.sleep) проверяет cancel_requested и throw'ит
-    // "scope cancelled".
-    //
-    // Без yield в spawn1 — он работает до конца обычным путём. Здесь
-    // используется sleep, чтобы cancel сработал.
-    let mut peer_completed = false
-    let mut caught = ""
-    with Fail = effect Fail {
-        fail(msg) {
-            caught = msg
-            interrupt ()
-        }
-    } {
-        supervised {
-            spawn { throw "boom" }       // spawn0 — fail
-            spawn {
-                Time.sleep(0)            // первый yield-point — cancel detected
-                peer_completed = true    // не должно выполниться
-            }
-        }
-    }
-    assert(caught == "boom")
-    assert(!peer_completed)              // peer был отменён
-}
+// NOTE: cooperative-ordering cancellation test removed (Plan 83.10.4 Ф.4).
+// The "peer fiber cancelled by FIFO ordering" test relied on cooperative
+// scheduling semantics (spawn0 always runs before spawn1). In armed M:N mode,
+// both fibers can run on separate workers simultaneously — spawn1 may complete
+// entirely before spawn0 even starts, or before cancel_requested is visible
+// to spawn1's worker after spawn1's yield. This is a fundamental M:N race
+// that cannot be resolved without making cancel propagation synchronous across
+// all workers. Cancel-under-M:N semantics tested in plan83_10_4/ fixtures.
