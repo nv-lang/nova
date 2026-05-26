@@ -79,7 +79,7 @@
 | D156 | 02-types.md | Generic `[T consume]` bound + collection-aware iteration с 3 mode'ами (`for tx` view / `for mut tx` mut-view / `for consume tx` consume) — Plan 100.2 proposed Ред. 2 |
 | D157 | 05-memory.md | Implicit view default + closure capture analysis + `match consume` syntax (Plan 100.3, proposed Ред. 2 2026-05-24). `view T` keyword отвергнут — view это no-qualifier default везде. Automatic closure-mode detection (view / mut-view / consume) |
 | D158 | 03-syntax.md | Failable cleanup body (Plan 100.4.1, ✅ закрыт 2026-05-26) — amend D90 §4; defer/errdefer body может Fail; Plan 49 multi-error composition; MultiError prelude type; runtime helpers nv_compose_suppressed / nova_rethrow_with_suppressed |
-| D159 | 03-syntax.md | Async/suspend в cleanup body (Plan 100.4.2, proposed) — amend D90 §5; cancel-safe semantics; spawn/parallel for запрещены |
+| D159 | 03-syntax.md | Async/suspend в cleanup body (Plan 100.4.2, ✅ закрыт 2026-05-26) — amend D90 §5; checker сняла suspend-call ban; spawn/parallel for/supervised/detach/blocking keep banned (E D159-spawn-in-defer); cancel-shielding runtime — [M-100.4.2-cancel-shielding] followup |
 | D160 | 03-syntax.md | `okdefer` + reason-aware `defer \|result\|` (Plan 100.4.3, proposed); complement к errdefer; mixed LIFO defer family |
 | D161 | 03-syntax.md | Multi-defer LIFO error accumulation + panic-in-defer composition (Plan 100.4.4, ✅ закрыт 2026-05-26) — amend D90 §«panic»; codegen per-defer NovaFailFrame wrap; LIFO continues после partial failure; no Rust double-panic-abort; closes [M-100.4.1-emit-defer-wrap] |
 | D162 | 03-syntax.md | Consume-integration final (Plan 100.4.5, proposed) — amend D90 §7; check_consume распознаёт defer/errdefer/okdefer cover; interrupt теперь триггерит errdefer |
