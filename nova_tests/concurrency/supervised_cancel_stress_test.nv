@@ -9,7 +9,9 @@
 // Plan 83.4.5.1 (2026-05-23): cooperative stress test — armed multi-worker
 // double-resume race ломает test infrastructure. wake_all + cancel cascade
 // fix (Plan 83.4.5.1 Ф.1) проверяется через cooperative drain.
-//
+// Plan 83.10.1 (2026-05-26): STILL NEEDED — TIMEOUT under armed M:N.
+// 100 fibers in Time.sleep(10_000) + tok.cancel() hangs in uv_run.
+// Same root cause as cancel_latency_bench: [M-83.10.1-armed-cancel-timer-hang].
 // ENV NOVA_AUTOARM=0
 
 module concurrency.supervised_cancel_stress_test
