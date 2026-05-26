@@ -1,0 +1,27 @@
+// EXPECT_COMPILE_ERROR D162-uncovered-success-path
+//
+// Plan 100.4.5 (D162): failable function + errdefer (cover error-path)
+// но НЕТ okdefer/explicit consume на success-path → error
+// D162-uncovered-success-path.
+
+module nova_tests.plan100_4_5.neg_failable_errdefer_no_success_cover
+
+type Transaction consume {
+    id int,
+}
+
+fn Transaction consume @commit() -> () { () }
+fn Transaction consume @rollback() -> () { () }
+
+fn begin() -> Transaction => { id: 1 }
+
+// ❌ failable + errdefer но НЕТ okdefer/commit на success-path
+fn process() Fail -> () {
+    consume tx = begin()
+    errdefer { tx.rollback() }   // cover error
+    // success exit без commit → D162-uncovered-success-path
+}
+
+test "errdefer без okdefer/commit — D162 error" {
+    process()
+}
