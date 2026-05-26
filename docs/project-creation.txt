@@ -21917,6 +21917,80 @@ spec/decisions/04-effects.md D118 §Связь добавлен.
 
 Branch plan-100-4-1-failable-cleanup → main (pending merge).
 
+
+=== Plan 100.4.4 — Multi-defer LIFO accumulation + panic-in-defer composition (D161) (2026-05-26) ===
+
+Закрывает 2 production-safety hole'а в defer-семантике:
+1. Multi-defer partial-failure — defer N fails → defer N-1 STILL RUNS (LIFO
+   continues, RUST-SUPERIOR: все N defers attempted, errors accumulate).
+2. Panic в defer body — Plan 49 composition вместо Rust-style abort.
+
+**Реализация (Opus 4.7, ~1 сессия после 100.4.1, 5 коммитов):**
+
+Ф.0 — gate-probe.md: emit_defer audit (4 cleanup paths identified),
+implementation strategy с detailed pseudocode, Option B scope decision
+(focus на leave_defer_scope + enter_defer_scope throw-path; early-exit
++ interrupt-path как followup markers).
+
+Ф.2+Ф.3 — Codegen rewrite в compiler-codegen/src/codegen/emit_c.rs:
+- `leave_defer_scope`: каждый defer body обёрнут в свой NovaFailFrame
+  setjmp envelope. Compose-state locals (_comp_msg/_kind/_payload/_tid/
+  _chain/_has): 1st fail → primary; subsequent → suppressed chain LIFO.
+  После cleanup loop + scope's frame pop: если accumulated fails →
+  longjmp к _nova_fail_top с composed payload. NULL outer → abort с dump.
+- `enter_defer_scope` throw-path cleanup: same wrap. Primary остаётся
+  scope's failframe.error_msg; defer-fails append к failframe.error_suppressed.
+  Re-throw через nova_rethrow_with_suppressed (Plan 100.4.1 helper).
+- Panic composition (Ф.3) — falls out automatically: nv_panic routes
+  через nearest _nova_fail_top = per-defer frame. NO double-panic-abort.
+
+Ф.4 — MultiError API: existing bootstrap (string-based primary + suppressed
++ @fmt_chain returning primary) достаточен; @has_panics skipped (followup
+marker [M-100.4.4-has-panics]).
+
+Ф.5 — 17 фикстур (nova_tests/plan100_4_4/):
+  POS (11): multi_defer_{all_fail_ok_chain, partial_fail_ok, continues_after_panic},
+    body_fail_defers_fail_composition, panic_in_defer_{ok_composes,
+    alone_propagates}, mixed_defer_errdefer_okdefer_lifo_with_fails,
+    multi_error_inspect_chain_ok, multi_error_fmt_chain_ok,
+    errdefer_lifo_with_failable, backward_compat_no_fail_defers.
+  NEG (6): neg_multi_defer_{throw_no_fail, interrupt_in_body,
+    return_in_body, break_in_body}, neg_mixed_{errdefer, defer_family}_throw_no_fail.
+  17/17 PASS.
+
+Ф.6 — Docs:
+- 100.4.4-multi-defer-error-accumulation.md: status → ✅ ЗАКРЫТ + bootstrap
+  followup markers documented.
+- spec/decisions/README.md: D161 row → ✅ закрыт + implementation notes.
+- docs/plans/README.md + 100.4-cleanup-on-failure.md (umbrella): ✅.
+- docs/plans/100-remaining-impl-roadmap.md: ✅.
+- docs/simplifications.md: новая section с 5 followup markers.
+- docs/project-creation.txt: эта запись.
+
+**Regression check:**
+- nova_tests/plan100_4_4: 17/17 PASS ✅
+- nova_tests/plan100_4_1: 18/18 PASS ✅ (D158 backward-compat)
+- nova_tests/plan100_4_3: 11/11 PASS ✅ (D160 okdefer backward-compat)
+- nova_tests/syntax/defer*: 8/8 PASS ✅ (Plan 20 D90 backward-compat)
+
+**Closes Plan 100.4.1 followup marker [M-100.4.1-emit-defer-wrap]** — Scenario B/C
+composite chain теперь полностью функциональный (через codegen wrap).
+
+**Bootstrap-граница (новые followup'ы):**
+- [M-100.4.4-early-exit-cleanup-wrap] — emit_early_exit_cleanup paths
+  (return/break/continue) ещё inline. Менее критично.
+- [M-100.4.4-interrupt-path-wrap] — interrupt-path cleanup inline.
+- [M-100.4.4-fmt-chain-rich] — fmt_chain rich rendering (chain entries
+  как numbered list per D7 diagnostic format).
+- [M-100.4.4-has-panics] — @has_panics() predicate не реализован.
+- [M-100.4.4-mu-chain-materialize] — Nova-side MultiError auto-materialize
+  на catch-side из NovaErrorChain* (P2 — для production library APIs).
+
+**Unblocks:** 100.4.5 (consume-integration final, D162) — теперь GATED только
+на 100.4.2 (async/suspend); 100.4.1 + 100.4.3 + 100.4.4 ✅.
+
+Branch plan-100-4-4-multi-defer → main (pending merge).
+
 ========================================================================
 2026-05-25 — Plan 104.7 Ф.0: sub-plan file написан (tree-sitter grammar)
 ========================================================================
