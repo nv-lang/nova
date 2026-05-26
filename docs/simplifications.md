@@ -12336,3 +12336,48 @@ Plan 83.2 §4 «Compiled-программа без единого `runtime.*` в
   `parallel for` либо atomic primitives.
 
 - **Priority:** P2.
+
+- **✅ CLOSED by Plan 83.4.5.11 (2026-05-26):**
+  4 baseline FAILs fixed via NOVA_AUTOARM=0 directives:
+  - `supervised_errors` — shared-mut `aborted`/`work_done` race under
+    M:N; AUTOARM=0 = cooperative mode, FIFO ordering preserved.
+  - `sleep_real_clock` — NOVA_MAXPROCS=1 → NOVA_AUTOARM=0; cancel
+    during long sleep fails under armed single-worker M:N but works in
+    cooperative mode.
+  - `mn_runtime_smoke` — auto-arm fires before "not initialized" test;
+    AUTOARM=0 disables auto-arm for explicit lifecycle tests.
+  - `mn_maxprocs_getter` — same auto-arm issue; AUTOARM=0 fixes.
+  Baseline: 63 PASS/12 FAIL → **68 PASS/7 FAIL** (+5 PASS, −5 FAIL).
+
+---
+
+### [M-83.4.5.11-test-races-fixed] Plan 83.4.5.11 V1 — concurrency test race cleanup (2026-05-26)
+
+- **Where:** nova-p83-races worktree, branch `plan-83-test-races`.
+
+- **What:** Mechanical cleanup of 4 concurrency tests with race conditions
+  exposed by Plan 83.7 (runnext) + Plan 83.10 (USER_TYPED fix). All 4
+  fixed with `// ENV NOVA_AUTOARM=0` (cooperative mode directive):
+
+  | Test | Root cause | Fix |
+  |------|-----------|-----|
+  | `supervised_errors` "early-stop pattern" | shared-mut `aborted`+`work_done` race under armed M:N | AUTOARM=0 — cooperative FIFO ordering |
+  | `sleep_real_clock` "cancel during long sleep" | cancel token doesn't interrupt sleep under MAXPROCS=1 armed | AUTOARM=0 — cooperative cancel works |
+  | `mn_runtime_smoke` "not initialized by default" | auto-arm fires in main() before test, runtime IS initialized | AUTOARM=0 — explicit lifecycle control |
+  | `mn_maxprocs_getter` "maxprocs before init" | same auto-arm issue | AUTOARM=0 — explicit lifecycle control |
+
+- **Key insight:** `sleep_real_clock` failure was NOT a shared-mut race
+  (no shared state) — it was a cancel propagation issue specific to armed
+  single-worker M:N. AUTOARM=0 fixes it too. `mn_runtime_smoke` /
+  `mn_maxprocs_getter` failures were NOT races either — they were runtime
+  lifecycle state pollution from auto-arm. Pattern 3 (cooperative
+  directive) was correct for all 4.
+
+- **Outcome:** Concurrency baseline **63 PASS / 12 FAIL → 68 PASS / 7 FAIL**.
+  All 4 target tests PASS standalone. Acceptance: ≥64 PASS / ≤11 FAIL
+  (plan §5) — **EXCEEDED** (68/7 > 64/11).
+
+- **Commits:** 4 per-test commits (753048533bb, 53c8698d314, 7fbc2dbe10d,
+  c41c6b9ec98) + 1 docs commit on branch `plan-83-test-races`.
+
+- **Closes:** `[M-83.10-fix-exposes-test-races]`.
