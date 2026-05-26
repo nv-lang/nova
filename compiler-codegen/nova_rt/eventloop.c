@@ -198,6 +198,49 @@ static void _sigint_cb(uv_signal_t* handle, int signum) {
     }
 }
 
+/* ── Plan 83.10.2 (2026-05-26): NovaDeferredCloseQueue impl ─────────
+ *
+ * These functions are the "per-queue" half of the deferred-close mechanism.
+ * nova_loop_defer_close (the "routing" half) lives in runtime.c because it
+ * needs access to _workers[] and _main_wake. */
+
+void nova_close_queue_init(NovaDeferredCloseQueue* q) {
+    if (!q) return;
+    q->jobs  = NULL;
+    q->count = 0;
+    q->cap   = 0;
+    nova_mutex_init(&q->mu);
+}
+
+void nova_close_queue_destroy(NovaDeferredCloseQueue* q) {
+    if (!q) return;
+    nova_mutex_lock(&q->mu);
+    free(q->jobs);
+    q->jobs  = NULL;
+    q->count = 0;
+    q->cap   = 0;
+    nova_mutex_unlock(&q->mu);
+    nova_mutex_destroy(&q->mu);
+}
+
+void nova_loop_drain_closes(NovaDeferredCloseQueue* q) {
+    if (!q) return;
+    /* Move jobs out under lock so producer can enqueue more in parallel.
+     * Next uv_async wake will handle any jobs added during our drain. */
+    nova_mutex_lock(&q->mu);
+    int n = q->count;
+    NovaDeferredCloseJob* batch = q->jobs;
+    q->jobs  = NULL;
+    q->count = 0;
+    q->cap   = 0;
+    nova_mutex_unlock(&q->mu);
+
+    for (int i = 0; i < n; i++) {
+        uv_close(batch[i].handle, batch[i].close_cb);
+    }
+    free(batch);
+}
+
 void nova_evloop_install_sigint(struct NovaFiberQueue* main_scope) {
     if (_sigint_installed) return;
     if (!main_scope) return;
