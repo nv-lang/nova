@@ -562,6 +562,32 @@ static void _worker_main(void* arg) {
     _nova_active_scope = &w->scope;
     _nova_active_slot  = -1;
 
+    /* Plan 83.10.4 Ф.3 [M-83.10.1-per-fiber-handler-tls-race]:
+     * Initialize per-thread effect registry for this worker.
+     *
+     * _nova_effect_registry is now __declspec(thread) / __thread so each
+     * worker gets its own zero-initialized registry. Here we populate it
+     * with THIS thread's TLS addresses (which differ from main thread's
+     * addresses — Windows TLS: each thread has distinct copy of __thread
+     * vars at TEB+offset, only OFFSET is fixed, not the absolute address).
+     *
+     * Without this registration, nova_effect_snapshot_restore() on the
+     * worker would write to the main thread's _nova_handler_* copies
+     * (those addresses were registered by nova_fn_main), leaving the
+     * worker's TLS handlers at NULL. Fiber would then see no handler.
+     *
+     * Registration order must match nova_fn_main to keep snapshot indices
+     * consistent (index 0 = Fail, index 1 = Time, ...user effects...).
+     * save/restore iterate by index, so ORDER must be the same everywhere. */
+    nova_register_effect_storage((void**)&_nova_handler_Fail);
+    nova_register_effect_storage((void**)&_nova_handler_Time);
+    /* User-defined effects registered via function pointer set by generated
+     * code in nova_fn_main. If NULL (bootstrap / missing generated fn) —
+     * only built-ins are registered (sufficient for current test suite). */
+    if (_nova_register_effects_fn) {
+        _nova_register_effects_fn();
+    }
+
     /* Plan 44.7: point this worker thread's preemption TLS at its own
      * preempt_flag. Codegen safepoints (nova_preempt_check) dereference
      * `_nova_preempt_ptr` to read the LIVE flag set by sysmon. A fiber
@@ -697,6 +723,22 @@ static void _worker_main(void* arg) {
              * allocate the home slot + set _nova_fiber_scope on first resume). */
             _nova_fail_top      = base->_nova_saved_fail_top;
             _nova_interrupt_top = base->_nova_saved_interrupt_top;
+            /* Plan 83.10.4 Ф.3 [M-83.10.1-per-fiber-handler-tls-race]: restore
+             * spawn-time handler snapshot so fiber sees parent's effect handlers
+             * on its FIRST run (before preamble). Without this, the fiber
+             * inherits the worker's current effect state (from the previously
+             * scheduled fiber) instead of its own inherited parent snapshot.
+             *
+             * Lifecycle: codegen allocs + saves init_snapshot at spawn site;
+             * preamble adopts it:
+             *   scope->fiber_effect_snapshot[slot] = _c->_nova_init_snapshot;
+             *   _c->_nova_init_snapshot = NULL;
+             * So _nova_init_snapshot is non-NULL exactly during this one first-
+             * run window, then NULL from preamble onwards (post-preamble path
+             * restores from scope->fiber_effect_snapshot[slot] instead). */
+            if (base->_nova_init_snapshot) {
+                nova_effect_snapshot_restore(base->_nova_init_snapshot);
+            }
         }
 
         /* Plan 44.7: preemption hand-off. Clear the preempt flag so each
@@ -1458,6 +1500,11 @@ static void _worker_run_one_fiber(NovaWorker* w, mco_coro* co) {
         _nova_interrupt_top = base->_nova_saved_interrupt_top;
         _nova_active_scope  = &w->scope;   /* ← critical: match _worker_main */
         _nova_active_slot   = -1;
+        /* Plan 83.10.4 Ф.3 [M-83.10.1-per-fiber-handler-tls-race]: mirrors
+         * the _worker_main fix — restore init snapshot on first run. */
+        if (base->_nova_init_snapshot) {
+            nova_effect_snapshot_restore(base->_nova_init_snapshot);
+        }
     }
 
     w->preempt_flag = 0;

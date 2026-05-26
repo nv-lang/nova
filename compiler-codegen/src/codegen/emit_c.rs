@@ -12276,6 +12276,20 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
             self.line("");
         }
 
+        // Plan 83.10.4 Ф.3 [M-83.10.1-per-fiber-handler-tls-race]:
+        // File-scope helper function emitted before main() so it can be
+        // assigned to _nova_register_effects_fn. C does not allow nested
+        // function definitions, so it must be at file scope.
+        self.line("static void _nova_register_all_effects_(void) {");
+        self.indent += 1;
+        self.line("nova_register_effect_storage((void**)&_nova_handler_Fail);");
+        self.line("nova_register_effect_storage((void**)&_nova_handler_Time);");
+        // User-defined effects — additional calls emitted here:
+        self.emit_user_effect_registrations();
+        self.indent -= 1;
+        self.line("}");
+        self.line("");
+
         self.line("int main(void) {");
         self.indent += 1;
         self.line("nova_gc_init();");
@@ -12303,16 +12317,14 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
         // Plan 22 Ф.2: глобальный event loop. Под NOVA_USE_LIBUV даёт
         // настоящий uv_default_loop, иначе — stub no-op. Idempotent.
         self.line("nova_evloop_init();");
+        // Plan 83.10.4 Ф.3 [M-83.10.1-per-fiber-handler-tls-race]:
         // Per-fiber handler scoping: register all built-in effect-storage
-        // addresses so nova_supervised_step может save/restore их в
-        // per-fiber snapshot. Без этой регистрации fiber-snapshot был бы
-        // пустой и handlers утекали бы между fibers.
-        self.line("nova_register_effect_storage((void**)&_nova_handler_Fail);");
-        self.line("nova_register_effect_storage((void**)&_nova_handler_Time);");
-        // User-defined effects регистрируются здесь же — codegen эмитит
-        // дополнительные nova_register_effect_storage(...) для каждого
-        // объявленного `type X effect { }`.
-        self.emit_user_effect_registrations();
+        // addresses. Set the function pointer so workers call it at startup,
+        // then call it for the main thread.
+        // (The file-scope helper function is emitted just before main() in
+        //  emit_main_function via emit_effects_registrar_fn.)
+        self.line("_nova_register_effects_fn = _nova_register_all_effects_;");
+        self.line("_nova_register_all_effects_();");
         // Plan 22 Ф.5 (D92): implicit main-scope. Top-level main теперь
         // имеет supervised-like scope для detach'ей, pending timer'ов и
         // background fiber'ов. Они доработают до quiescence перед exit.

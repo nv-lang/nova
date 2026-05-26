@@ -1,0 +1,103 @@
+// tls_handler_race_repro.nv — Plan 83.10.4 Ф.3 race reproduction test
+//
+// Stress-tests handler isolation under concurrent load to confirm the
+// TLS race does NOT recur after the per-thread registry fix.
+//
+// Scenario: many fibers concurrently install handlers with unique values,
+// read back their own value, and assert correctness. Under the old global
+// registry, workers would read each other's handler state and see wrong values.
+//
+// This is intentionally run WITHOUT AUTOARM=0 to exercise full M:N scheduling.
+
+module plan83_10_4.tls_handler_race_repro
+
+fn handler_value(v int) -> int {
+    with Time = effect Time {
+        sleep(_ms) { return () }
+        now() { return v }
+    } {
+        Time.now()
+    }
+}
+
+// ================================================================
+// SECTION 1: 8 fibers — each with unique handler value
+// ================================================================
+
+test "race repro: 8 concurrent fibers, unique handlers, no cross-contamination" {
+    let mut r0 = -1
+    let mut r1 = -1
+    let mut r2 = -1
+    let mut r3 = -1
+    let mut r4 = -1
+    let mut r5 = -1
+    let mut r6 = -1
+    let mut r7 = -1
+    supervised {
+        spawn { r0 = handler_value(100) }
+        spawn { r1 = handler_value(200) }
+        spawn { r2 = handler_value(300) }
+        spawn { r3 = handler_value(400) }
+        spawn { r4 = handler_value(500) }
+        spawn { r5 = handler_value(600) }
+        spawn { r6 = handler_value(700) }
+        spawn { r7 = handler_value(800) }
+    }
+    assert(r0 == 100)
+    assert(r1 == 200)
+    assert(r2 == 300)
+    assert(r3 == 400)
+    assert(r4 == 500)
+    assert(r5 == 600)
+    assert(r6 == 700)
+    assert(r7 == 800)
+}
+
+// ================================================================
+// SECTION 2: Inherited + per-fiber combined in same supervised block
+// ================================================================
+
+test "race repro: inherited outer + per-fiber override — no contamination" {
+    let mut outer0 = -1
+    let mut outer1 = -1
+    let mut inner0 = -1
+    let mut inner1 = -1
+    with Time = effect Time {
+        sleep(_ms) { return () }
+        now() { return 999 }
+    } {
+        supervised {
+            spawn { outer0 = Time.now() }           // inherits 999
+            spawn { inner0 = handler_value(111) }   // overrides to 111
+            spawn { outer1 = Time.now() }           // inherits 999
+            spawn { inner1 = handler_value(222) }   // overrides to 222
+        }
+    }
+    assert(outer0 == 999)
+    assert(outer1 == 999)
+    assert(inner0 == 111)
+    assert(inner1 == 222)
+}
+
+// ================================================================
+// SECTION 3: Outer handler survives after supervised block
+// ================================================================
+
+test "race repro: outer handler intact after supervised completes" {
+    let mut before = -1
+    let mut after = -1
+    with Time = effect Time {
+        sleep(_ms) { return () }
+        now() { return 12345 }
+    } {
+        before = Time.now()
+        supervised {
+            spawn { let _ = handler_value(1) }
+            spawn { let _ = handler_value(2) }
+            spawn { let _ = handler_value(3) }
+        }
+        after = Time.now()
+    }
+    assert(before == 12345)
+    assert(after == 12345)
+}
