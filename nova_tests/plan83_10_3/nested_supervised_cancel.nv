@@ -1,0 +1,42 @@
+// Plan 83.10.3 (2026-05-26): nested supervised with cancel token under armed M:N.
+//
+// Tests that cancel token is properly visible inside nested supervised scopes
+// when cooperative resume is used on worker thread.
+
+module plan83_10_3.nested_supervised_cancel
+
+test "nested supervised with cancel token — cancel propagates" {
+    let tok = CancelToken.new()
+    let mut inner_ran = false
+
+    supervised(cancel: tok) {
+        spawn {
+            supervised {
+                spawn {
+                    inner_ran = true
+                    tok.cancel("inner cancel")
+                }
+            }
+        }
+    }
+
+    // After supervised exits: tok was cancelled by inner spawn
+    assert(inner_ran)
+    assert(tok.is_cancelled())
+}
+
+test "nested supervised with cancel token — normal completion" {
+    let tok = CancelToken.new()
+    let mut result = 0
+
+    supervised(cancel: tok) {
+        spawn {
+            supervised {
+                spawn { result = 42 }
+            }
+        }
+    }
+
+    assert(result == 42)
+    assert(!tok.is_cancelled())
+}
