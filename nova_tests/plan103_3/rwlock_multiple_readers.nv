@@ -1,0 +1,49 @@
+// Plan 103.3 — Multiple concurrent readers on RwLock.
+//
+// 4 readers acquire simultaneously; reader_count() ≥ 2 at peak.
+//
+// EXPECT_TIMEOUT_MS 15000
+
+module nova_tests.plan103_3.rwlock_multiple_readers
+
+test "RwLock allows multiple concurrent readers" {
+    let rw = RwLock.new()
+    let shared_val = AtomicInt.new(42)
+    let active_readers = AtomicInt.new(0)
+    let max_concurrent = AtomicInt.new(0)
+    let wg = WaitGroup.new()
+    wg.add(4)
+
+    parallel for _i in 0..4 {
+        rw.read()
+        active_readers.fetch_add(1)
+        // Sample max
+        let cur = active_readers.load()
+        let prev = max_concurrent.load()
+        if cur > prev { max_concurrent.store(cur) }
+        // Read shared value
+        let v = shared_val.load()
+        assert(v == 42)
+        Time.sleep(20)
+        active_readers.fetch_add(-1)
+        rw.read_unlock()
+        wg.done()
+    }
+
+    wg.wait()
+    // At least 2 readers were concurrent (4 fibers with 20ms sleep)
+    assert(max_concurrent.load() >= 2)
+}
+
+test "RwLock reader_count() tracks active readers" {
+    let rw = RwLock.new()
+    assert(rw.reader_count() == 0)
+    rw.read()
+    assert(rw.reader_count() == 1)
+    rw.read()
+    assert(rw.reader_count() == 2)
+    rw.read_unlock()
+    assert(rw.reader_count() == 1)
+    rw.read_unlock()
+    assert(rw.reader_count() == 0)
+}

@@ -1,0 +1,45 @@
+// Plan 103.3 — Stress: 10 readers + 1 writer × 1000 iters each.
+// No deadlock, no torn reads, writer eventually progresses.
+//
+// EXPECT_TIMEOUT_MS 60000
+
+module nova_tests.plan103_3.rwlock_read_heavy_stress
+
+test "RwLock read-heavy stress: 10 readers + 1 writer, no deadlock" {
+    let rw = RwLock.new()
+    let shared = AtomicInt.new(0)
+    let torn = AtomicInt.new(0)
+    let writer_iters = AtomicInt.new(0)
+    let wg = WaitGroup.new()
+    wg.add(11)
+
+    // 10 readers
+    parallel for _i in 0..10 {
+        for _j in 0..1000 {
+            rw.read()
+            // shared is always even (writer adds 2)
+            let v = shared.load()
+            if v % 2 != 0 { torn.fetch_add(1) }
+            rw.read_unlock()
+        }
+        wg.done()
+    }
+
+    // 1 writer — must be inside supervised to avoid bare spawn error
+    supervised {
+        spawn {
+            for _j in 0..1000 {
+                rw.write()
+                let v = shared.load()
+                shared.store(v + 2)
+                rw.write_unlock()
+                writer_iters.fetch_add(1)
+            }
+            wg.done()
+        }
+    }
+
+    wg.wait()
+    assert(torn.load() == 0)
+    assert(writer_iters.load() == 1000)
+}

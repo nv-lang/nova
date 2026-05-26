@@ -1,0 +1,10 @@
+// Plan 103.3 — RwLock.write_unlock() without write() → RUNTIME_PANIC.
+//
+// EXPECT_RUNTIME_PANIC RwLock.write_unlock() called without a matching write()
+
+module nova_tests.plan103_3.rwlock_write_unlock_without_lock_neg
+
+test "write_unlock without write panics" {
+    let rw = RwLock.new()
+    rw.write_unlock()
+}

@@ -1,0 +1,23 @@
+// Plan 103.3 — ReentrantMutex: fiber B tries unlock() → RUNTIME_PANIC (owner mismatch).
+//
+// EXPECT_RUNTIME_PANIC ReentrantMutex.unlock() called by non-owner fiber or mutex not locked
+//
+// EXPECT_TIMEOUT_MS 10000
+
+module nova_tests.plan103_3.reentrant_unlock_from_wrong_fiber_neg
+
+test "unlock from non-owner fiber panics" {
+    let rm = ReentrantMutex.new()
+
+    // Main acquires lock
+    rm.lock()
+
+    // Fiber B tries to unlock — not the owner → RUNTIME_PANIC propagates through supervised
+    supervised {
+        spawn {
+            rm.unlock()  // B is not the owner → panic
+        }
+    }
+
+    rm.unlock()  // unreachable — supervised re-throws before here
+}
