@@ -388,20 +388,36 @@ static inline void nova_sched_register_pending(NovaFiberQueue* scope, int slot,
 static inline void nova_sched_unregister_pending(NovaFiberQueue* scope, int slot);
 
 /* Plan 22 Ф.7: grow scope arrays до new_cap. capacity-doubling.
- * Caller responsibility: вызывать ПЕРЕД увеличением count past capacity. */
+ * Caller responsibility: вызывать ПЕРЕД увеличением count past capacity.
+ *
+ * Plan 83.10.2 fix: SINGLE unified allocation for all 7 arrays.
+ * Previously 7 separate nova_alloc(512) calls: Boehm GC can collect an
+ * intermediate allocation if the compiler (Clang inlines this function)
+ * keeps some pointer only in a register that gets reused before the next
+ * GC_malloc call. Symptom: two arrays alias the same memory block → writing
+ * fiber_fail_top[0]=NULL overwrites fibers[0]=co → permanent park/STALE-SKIP.
+ * Fix: one GC_malloc(7*cap*8) → one pointer `big` on the stack → GC cannot
+ * alias sub-arrays because there is only ONE live pointer during alloc. */
 static inline void nova_scope_grow(NovaFiberQueue* q, int new_cap) {
     if (new_cap <= q->capacity) return;
     /* Round up to power-of-2 либо doubling. */
     int cap = q->capacity > 0 ? q->capacity : NOVA_SCOPE_INITIAL_CAP;
     while (cap < new_cap) cap *= 2;
-    /* Allocate new arrays. */
-    mco_coro**           new_fibers = (mco_coro**)nova_alloc(sizeof(mco_coro*) * cap);
-    void**               new_ctx    = (void**)nova_alloc(sizeof(void*) * cap);
-    NovaFailFrame**      new_fail_top = (NovaFailFrame**)nova_alloc(sizeof(NovaFailFrame*) * cap);
-    NovaInterruptFrame** new_interrupt_top = (NovaInterruptFrame**)nova_alloc(sizeof(NovaInterruptFrame*) * cap);
-    NovaEffectSnapshot** new_effect_snapshot = (NovaEffectSnapshot**)nova_alloc(sizeof(NovaEffectSnapshot*) * cap);
-    const char**         new_error = (const char**)nova_alloc(sizeof(const char*) * cap);
-    nova_bool**          new_did_throw = (nova_bool**)nova_alloc(sizeof(nova_bool*) * cap);
+    /* Allocate ALL 7 arrays in one GC block (see comment above).
+     * All pointers are sizeof(void*)=8 on 64-bit, stride = cap elements = cap*8 bytes. */
+    size_t stride = (size_t)cap;
+    void** big = (void**)nova_alloc(sizeof(void*) * stride * 7);
+    /* Carve up the big block into 7 sub-arrays.
+     * Boehm GC with GC_all_interior_pointers (default) keeps the block alive
+     * via ANY of these interior pointers stored in the GC-root _workers array.
+     * The block's start (big == new_fibers) is a non-interior root via q->fibers. */
+    mco_coro**           new_fibers          = (mco_coro**)          (big + stride * 0);
+    void**               new_ctx             = (void**)               (big + stride * 1);
+    NovaFailFrame**      new_fail_top        = (NovaFailFrame**)      (big + stride * 2);
+    NovaInterruptFrame** new_interrupt_top   = (NovaInterruptFrame**) (big + stride * 3);
+    NovaEffectSnapshot** new_effect_snapshot = (NovaEffectSnapshot**) (big + stride * 4);
+    const char**         new_error           = (const char**)         (big + stride * 5);
+    nova_bool**          new_did_throw       = (nova_bool**)           (big + stride * 6);
     /* Copy existing data. */
     if (q->fibers) {
         for (int i = 0; i < q->count; i++) {
@@ -424,7 +440,7 @@ static inline void nova_scope_grow(NovaFiberQueue* q, int new_cap) {
         new_error[i]           = NULL;
         new_did_throw[i]       = NULL;
     }
-    /* Swap. Old arrays — GC соберёт когда они станут unreachable. */
+    /* Swap. Old big block (if any) — GC collects when unreachable. */
     q->fibers              = new_fibers;
     q->fiber_ctx           = new_ctx;
     q->fiber_fail_top      = new_fail_top;
@@ -1716,6 +1732,13 @@ typedef enum {
 typedef struct {
     NovaFiberQueue*  scope;
     int              slot;
+    /* FIX 83.10.2: direct fiber ptr — slot-reuse race guard.
+     * Multiple stop_cb calls across test iterations accumulate deferred
+     * close_cbs in the worker's close_queue. When they drain together,
+     * stale close_cbs (from earlier iterations that reused slot=N) must
+     * NOT clear parked[slot] for the current iteration's fiber.
+     * Guard in _nova_sleep_close_cb: skip wake unless fibers[slot]==co. */
+    mco_coro*        co;
     uv_timer_t       timer;
     /* Plan 83.4.1 (2026-05-23): atomic stage — read с ACQUIRE из
      * park-predicate, write с RELEASE из timer_cb/close_cb. Защищает
@@ -1740,13 +1763,67 @@ static void _nova_sleep_timer_cb(uv_timer_t* h) {
     uv_close((uv_handle_t*)h, _nova_sleep_close_cb);
 }
 
-/* Close completed — handle fully released. Wake parked fiber. */
+/* Close completed — handle fully released. Wake parked fiber.
+ *
+ * FIX 83.10.2: Slot-reuse race guard.
+ * Under armed M:N, multiple tok.cancel() calls across nested supervised
+ * iterations (test 3: "10 nested cancels") each call stop_cb which defers
+ * a close_cb into the worker's close_queue. If the queue is not drained
+ * between iterations (e.g., the cancel fiber and sleeping fibers share the
+ * same worker), all N close_cbs accumulate and drain at once.
+ *
+ * slot=0 is reused across iterations (nova_scope_alloc_slot reuses freed
+ * slots). Close_cbs from iterations 1..N-1 are "stale" — their fiber has
+ * already completed and freed the slot. Close_cb for iteration N is the
+ * current one.
+ *
+ * Without the guard: the first stale close_cb (iter 1) fires, finds
+ *   fibers[0]=iter_N_co (current fiber), parked[0]=true (set by iter N).
+ *   nova_sched_wake clears parked[0] but can't dispatch (or dispatches
+ *   the wrong fiber). Remaining close_cbs are no-ops. iter N's fiber
+ *   is never woken → permanent TIMEOUT.
+ *
+ * Fix: compare fibers[slot] against st->co (stored at NovaSleepState
+ * creation time — points to the specific coroutine that started this
+ * particular sleep). If they differ, this is a stale close_cb → skip.
+ * Only the close_cb whose st->co matches the current slot occupant
+ * calls nova_sched_wake. */
 static void _nova_sleep_close_cb(uv_handle_t* h) {
     NovaSleepState* st = (NovaSleepState*)h->data;
     /* Plan 83.4.1: RELEASE-store предиката — park-predicate в
-     * _sleep_stage_is_closed читает с ACQUIRE и видит этот write. */
+     * _sleep_stage_is_closed читает с ACQUIRE и видит этот write.
+     * Must happen BEFORE the fibers[slot] guard so the predicate
+     * is satisfied even if dispatch happens via another path. */
     nova_aint_store(&st->stage, NOVA_SLEEP_CLOSED);
-    nova_sched_wake(st->scope, st->slot);
+
+    /* FIX 83.10.2: slot-reuse guard — skip stale close_cbs.
+     *
+     * Guard: fibers[slot] == st->co.
+     *   - co non-NULL, fibers[slot]==co  → WAKE (current owner)
+     *   - co non-NULL, fibers[slot]!=co  → STALE-SKIP (slot reused by new fiber)
+     *   - co non-NULL, fibers[slot]==NULL → STALE-SKIP (slot freed, stale cb)
+     *   - co NULL,     fibers[slot]==NULL → WAKE (current sleep from co=NULL
+     *     context; nova_sched_wake with NULL fibers[slot] is a safe no-op if
+     *     the fiber already exited before we got here — idempotent)
+     *   - co NULL,     fibers[slot]!=NULL → STALE-SKIP (stale cb, new fiber took slot)
+     *
+     * NOTE: do NOT guard with `&&st->co&&` — that incorrectly skips the
+     * co=NULL case where mco_running() happened to return NULL at sleep
+     * creation (e.g. worker scope race where fibers[slot] was concurrently
+     * freed). The pointer equality alone is the correct guard. */
+    NovaFiberQueue* scope = st ? st->scope : NULL;
+    int  slot = st ? st->slot : -1;
+    bool is_owner = (st != NULL && scope != NULL &&
+                     slot >= 0 && slot < scope->count &&
+                     scope->fibers[slot] == st->co);
+    if (!is_owner) {
+        /* Stale close_cb from an earlier iteration that reused this slot.
+         * The current occupant (iter N) will be woken by its own close_cb.
+         * Do NOT call nova_sched_wake — that would clear parked[slot] and
+         * prevent the real wake from dispatching. */
+        return;
+    }
+    nova_sched_wake(scope, slot);
 }
 
 /* Plan 83.4.1 park-predicate: park-until возвращается ТОЛЬКО когда
@@ -1811,7 +1888,11 @@ static inline void _nova_sleep_via_libuv(NovaFiberQueue* scope, int slot,
     if (nova_abool_load(&cancel_scope->cancel_requested)) {
         return;
     }
-    NovaSleepState st = { .scope = scope, .slot = slot };
+    /* FIX 83.10.2: capture the current coroutine pointer at creation time.
+     * Used by _nova_sleep_close_cb to guard against slot-reuse races where
+     * stale deferred close_cbs from prior iterations would incorrectly
+     * clear parked[slot] for the current iteration's fiber. */
+    NovaSleepState st = { .scope = scope, .slot = slot, .co = mco_running() };
     nova_aint_init(&st.stage, NOVA_SLEEP_PENDING);
     int rc = uv_timer_init(nova_current_loop(), &st.timer);
     if (rc != 0) {

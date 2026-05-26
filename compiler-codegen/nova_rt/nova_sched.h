@@ -37,17 +37,27 @@ extern "C" {
 /* ─── Park/wake state allocation ──────────────────────────────── */
 
 /* Plan 22 Ф.7: grow sched_state arrays до new_cap (синхронизируется
- * с scope.capacity). Internal API. */
+ * с scope.capacity). Internal API.
+ *
+ * Plan 83.10.2 fix: SINGLE unified allocation (same as nova_scope_grow).
+ * 3 separate nova_alloc calls exposed Boehm GC aliasing: GC can collect an
+ * intermediate allocation if its pointer is only in a register. Result:
+ * parked[] ≡ pending_stop_cb[] → writing stop_cb sets parked[slot] to the
+ * function pointer value, corrupting the CAS guard in nova_sched_wake. */
 static inline void nova_sched_grow_state(NovaFiberQueue* scope, int new_cap) {
     if (!scope || !scope->sched_state) return;
     NovaSchedState* st = scope->sched_state;
     if (new_cap <= st->capacity) return;
     int cap = st->capacity > 0 ? st->capacity : NOVA_SCOPE_INITIAL_CAP;
     while (cap < new_cap) cap *= 2;
-    /* Allocate new arrays. */
-    nova_bool*       new_parked = (nova_bool*)nova_alloc(sizeof(nova_bool) * cap);
-    void**           new_handle = (void**)nova_alloc(sizeof(void*) * cap);
-    NovaSchedStopCb* new_stop_cb = (NovaSchedStopCb*)nova_alloc(sizeof(NovaSchedStopCb) * cap);
+    /* Single unified allocation: 3 sub-arrays in one GC block.
+     * stride = cap elements × sizeof(void*) = cap×8 bytes per sub-array.
+     * nova_bool* parked uses 1 byte/entry (stride wastes 7 bytes/entry, fine). */
+    size_t stride = (size_t)cap;
+    void** big = (void**)nova_alloc(sizeof(void*) * stride * 3);
+    nova_bool*       new_parked  = (nova_bool*)(big + stride * 0);
+    void**           new_handle  = (void**)(big + stride * 1);
+    NovaSchedStopCb* new_stop_cb = (NovaSchedStopCb*)(big + stride * 2);
     /* Copy existing + init new. */
     for (int i = 0; i < cap; i++) {
         if (i < st->capacity && st->parked) {
@@ -204,7 +214,9 @@ static inline void nova_sched_park_with_unlock(NovaFiberQueue* scope, int slot,
  * Bootstrap (single-thread): без atomic тоже работает (один thread). CAS
  * стоит ~10ns — приемлемо для wake hot path. */
 static inline void nova_sched_wake(NovaFiberQueue* scope, int slot) {
-    if (!scope || slot < 0 || slot >= scope->count) return;
+    if (!scope || slot < 0 || slot >= scope->count) {
+        return;
+    }
     NovaSchedState* st = nova_sched_find_state(scope);
     /* Plan 83.4.5.7 (2026-05-23): atomic-bool exchange parked flag.
      * Idempotent guard: только winner CAS true→false делает dispatch.
@@ -229,9 +241,7 @@ static inline void nova_sched_wake(NovaFiberQueue* scope, int slot) {
             nova_fiber_state_store(co, NOVA_FIBER_STATE_IDLE);
             scope->dispatch_ready(scope->dispatch_ctx, co);
         }
-    } else if (!was_parked) {
-        /* parked was already false — может быть double-wake. Skip dispatch. */
-    } else {
+    } else if (was_parked) {
         /* Bootstrap path: was_parked=true but dispatch_ready=NULL.
          * supervised_step видит cleared parked[i] и resume'ит fiber.
          * Sync state для consistency. */
@@ -242,6 +252,7 @@ static inline void nova_sched_wake(NovaFiberQueue* scope, int slot) {
             }
         }
     }
+    /* else: was_parked=false → double-wake skip, no state change. */
 }
 
 /* True если fiber в slot сейчас parked. */
@@ -279,11 +290,15 @@ typedef nova_bool (*NovaParkPredicate)(void* ctx);
 
 static inline void nova_sched_park_until(NovaFiberQueue* scope, int slot,
                                           NovaParkPredicate pred, void* ctx) {
-    if (pred && pred(ctx)) return;       /* fast-path: condition уже выполнено */
+    if (pred && pred(ctx)) {
+        return;       /* fast-path: condition уже выполнено */
+    }
     for (;;) {
         nova_sched_park(scope, slot);
-        if (!pred) return;               /* legacy single-shot */
-        if (pred(ctx)) return;           /* predicate satisfied */
+        if (!pred) {
+            return;               /* legacy single-shot */
+        }
+        if (pred(ctx)) return;             /* predicate satisfied */
         /* spurious wake → re-park */
     }
 }
