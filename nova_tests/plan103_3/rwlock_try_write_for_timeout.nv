@@ -1,0 +1,54 @@
+// Plan 103.3 — try_write_for(50ms) when reader holds → false.
+//
+// EXPECT_TIMEOUT_MS 10000
+
+module nova_tests.plan103_3.rwlock_try_write_for_timeout
+
+import std.time.duration
+
+test "try_write_for times out while reader holds lock" {
+    let rw = RwLock.new()
+    let result = AtomicInt.new(0)  // 0=pending, 1=acquired, 2=timed_out
+
+    rw.read()
+
+    // Fiber tries try_write_for(50ms); reader is held, so it parks and times out.
+    // supervised exits after fiber completes (50ms timer fires → result=2).
+    supervised {
+        spawn {
+            let ok = rw.try_write_for(Duration.from_millis(50))
+            result.store(if ok { 1 } else { 2 })
+            if ok { rw.write_unlock() }
+        }
+    }
+
+    rw.read_unlock()
+    assert(result.load() == 2)
+}
+
+test "try_write_for succeeds when lock is free" {
+    let rw = RwLock.new()
+    let ok = rw.try_write_for(Duration.from_millis(100))
+    assert(ok == true)
+    assert(rw.is_write_locked() == true)
+    rw.write_unlock()
+    assert(rw.is_write_locked() == false)
+}
+
+test "try_read_for times out while writer holds lock" {
+    let rw = RwLock.new()
+    let result = AtomicInt.new(0)
+
+    rw.write()
+
+    supervised {
+        spawn {
+            let ok = rw.try_read_for(Duration.from_millis(50))
+            result.store(if ok { 1 } else { 2 })
+            if ok { rw.read_unlock() }
+        }
+    }
+
+    rw.write_unlock()
+    assert(result.load() == 2)
+}

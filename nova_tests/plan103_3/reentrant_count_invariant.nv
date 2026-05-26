@@ -1,0 +1,59 @@
+// Plan 103.3 — Property: lock_count() strict invariant.
+//
+// lock_count() increments on lock, decrements on unlock, 0 after balanced sequence.
+
+module nova_tests.plan103_3.reentrant_count_invariant
+
+test "lock_count invariant: balanced lock/unlock sequence" {
+    let rm = ReentrantMutex.new()
+
+    // Initial: unlocked
+    assert(rm.lock_count() == 0)
+
+    // Depth 1
+    rm.lock()
+    assert(rm.lock_count() == 1)
+
+    // Depth 2
+    rm.lock()
+    assert(rm.lock_count() == 2)
+
+    // Depth 3
+    rm.lock()
+    assert(rm.lock_count() == 3)
+
+    // Unwind
+    rm.unlock()
+    assert(rm.lock_count() == 2)
+
+    rm.unlock()
+    assert(rm.lock_count() == 1)
+
+    rm.unlock()
+    assert(rm.lock_count() == 0)  // fully released
+
+    // Second balanced sequence
+    rm.lock()
+    rm.lock()
+    rm.unlock()
+    rm.unlock()
+    assert(rm.lock_count() == 0)
+}
+
+test "lock_count() returns 0 for non-owner fiber" {
+    let rm = ReentrantMutex.new()
+    let other_count = AtomicInt.new(-1)
+
+    rm.lock()
+
+    supervised {
+        spawn {
+            // Fiber B is not the owner — lock_count() should return 0
+            other_count.store(rm.lock_count())
+        }
+    }
+
+    rm.unlock()
+
+    assert(other_count.load() == 0)
+}

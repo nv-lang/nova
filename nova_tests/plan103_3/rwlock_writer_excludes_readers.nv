@@ -1,0 +1,43 @@
+// Plan 103.3 — Writer holds lock; readers blocked (reader_count=0).
+//
+// EXPECT_TIMEOUT_MS 15000
+
+module nova_tests.plan103_3.rwlock_writer_excludes_readers
+
+test "write lock excludes readers: reader_count stays 0 while writer holds" {
+    let rw = RwLock.new()
+    let reader_saw_write = AtomicInt.new(0)  // if >0, readers got through during write
+
+    // Hold write lock
+    rw.write()
+    assert(rw.is_write_locked() == true)
+    assert(rw.reader_count() == 0)
+
+    supervised {
+        // Reader fiber: blocks until writer releases
+        spawn {
+            rw.read()
+            // When we get here, write lock must be released
+            if rw.is_write_locked() {
+                reader_saw_write.store(1)
+            }
+            rw.read_unlock()
+        }
+
+        // Main fiber inside supervised: release write lock → unblocks reader
+        assert(rw.reader_count() == 0)  // reader still blocked
+        rw.write_unlock()
+    }
+
+    // Reader got in only after write released
+    assert(reader_saw_write.load() == 0)
+}
+
+test "try_write fails when readers hold lock" {
+    let rw = RwLock.new()
+    rw.read()
+    assert(rw.try_write() == false)
+    rw.read_unlock()
+    assert(rw.try_write() == true)
+    rw.write_unlock()
+}

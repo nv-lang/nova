@@ -19,6 +19,7 @@ structured-concurrency примитивы есть в языке, и как па
 | [D124](#d124-monotonic-vs-timestamp--раздельные-типы-для-wall-clock-и-монотонных-часов) | Monotonic vs Timestamp — раздельные типы для wall-clock и монотонных часов |
 | [D138](#d138-default-on-mn-runtime--production-semantics-plan-83456-ф3-active-2026-05-24) | ✅ ACTIVE — Default-on M:N runtime production semantics (Plan 83.4.5.8 closure 2026-05-24) |
 | [D168](#d168-sized-atomic-types--api-contract-plan-1032) | Sized atomic types API contract: 12 types × 13 ops, MemOrdering-aware overloads, wraparound semantics |
+| [D169](#d169-mutex--rwlock--reentrantmutex-family-plan-1033) | `Mutex` / `RwLock` / `ReentrantMutex` family — fiber-aware locking, fair FIFO default, writer-priority RwLock, recursive ReentrantMutex |
 
 ---
 
@@ -4368,3 +4369,245 @@ D171 введён как draft (Plan 103.5, 2026-05-26). Final closure — Plan 
 - Пересмотр OnceCell poison semantics на основе real-world usage.
 - Возможный typed-poison API (`recover() throws PoisonMsg`).
 - D173 AI-first guidance для init-pattern выбора (Once vs OnceCell vs Lazy).
+
+---
+
+## D169. `Mutex` / `RwLock` / `ReentrantMutex` family (Plan 103.3)
+
+> **Status:** draft (Plan 103.3, 2026-05-26). Final closure — Plan 103.7.
+
+### Что
+
+Nova предоставляет **три fiber-aware locking примитива**:
+
+| Тип | Назначение | Reentrant | Fairness |
+|---|---|---|---|
+| `Mutex` | Взаимное исключение, baseline | ❌ (документировано) | fair FIFO default, unfair opt-in |
+| `RwLock` | Concurrent reads / exclusive write | ❌ | writer-priority default, reader-priority opt-in |
+| `ReentrantMutex` | Рекурсивный mutex для legacy-migration | ✅ | fair FIFO |
+
+Все три типа — **value types в Nova**, передаются через mutable-ссылку или
+heap-структуру внутри fiber-арены. Семантически это **blocking coordination
+primitives**: вызов `lock()` / `read()` / `write()` при наличии contention
+приостанавливает fiber (через `nova_sched_park_with_unlock`), не блокирует OS
+thread.
+
+### Правило
+
+#### 1. Mutex API
+
+```nova
+module runtime.sync
+
+/// Fair FIFO fiber-aware mutex. NOT reentrant.
+/// lock() при contention: park fiber (не блокирует OS thread).
+#stable(since = "0.1")
+export external fn Mutex.new() -> Self
+
+/// Unfair (LIFO-leaning) opt-in: лучший throughput на высоком contention,
+/// возможна starvation. Использовать только после benchmark.
+#stable(since = "0.1")
+export external fn Mutex.new_unfair() -> Self
+
+#stable(since = "0.1")
+export external fn Mutex mut @lock()
+#stable(since = "0.1")
+export external fn Mutex mut @unlock()
+#stable(since = "0.1")
+export external fn Mutex mut @try_lock() -> bool
+
+/// Попытаться получить lock в течение timeout.
+/// true — acquired; false — timeout истёк.
+/// Использует libuv uv_timer_t (Plan 22 / Plan 103.3 pattern).
+#stable(since = "0.1")
+export external fn Mutex mut @try_lock_for(timeout Duration) -> bool
+
+/// Best-effort observability. НЕ atomic test-and-set — может гонка.
+#stable(since = "0.1")
+export external fn Mutex @is_locked() -> bool
+
+/// PREFERRED V1 PATTERN. Closure-form: lock + defer unlock.
+/// Unlock выполняется даже при panic в body.
+/// V2 (Plan 103.9): тонкая обёртка над MutexGuard consume — без breaking change.
+#stable(since = "0.1")
+export fn Mutex mut @with_lock[R](body fn() -> R) -> R {
+    self.lock()
+    defer self.unlock()
+    body()
+}
+```
+
+**Unlock invariant:** `unlock()` без предшествующего `lock()` — unconditional
+runtime panic (через `Nova_Fail_fail + nova_throw`), не зависит от build mode.
+
+#### 2. RwLock API
+
+```nova
+/// Fiber-aware reader-writer lock. Writer-priority default (M7):
+/// новый writer блокирует новых читателей → no writer starvation.
+#stable(since = "0.1")
+export external fn RwLock.new() -> Self
+
+/// Reader-priority opt-in: читатели не блокируются ожидающим writer'ом.
+/// Риск: writer starvation на read-heavy workloads.
+#stable(since = "0.1")
+export external fn RwLock.new_reader_priority() -> Self
+
+#stable(since = "0.1")
+export external fn RwLock mut @read()
+#stable(since = "0.1")
+export external fn RwLock mut @read_unlock()
+#stable(since = "0.1")
+export external fn RwLock mut @try_read() -> bool
+#stable(since = "0.1")
+export external fn RwLock mut @try_read_for(timeout Duration) -> bool
+
+#stable(since = "0.1")
+export external fn RwLock mut @write()
+#stable(since = "0.1")
+export external fn RwLock mut @write_unlock()
+#stable(since = "0.1")
+export external fn RwLock mut @try_write() -> bool
+#stable(since = "0.1")
+export external fn RwLock mut @try_write_for(timeout Duration) -> bool
+
+/// best-effort снимок (не синхронизирован с reader_count)
+#stable(since = "0.1")
+export external fn RwLock @reader_count() -> int
+#stable(since = "0.1")
+export external fn RwLock @is_write_locked() -> bool
+
+#stable(since = "0.1")
+export fn RwLock mut @with_read[R](body fn() -> R) -> R {
+    self.read()
+    defer self.read_unlock()
+    body()
+}
+#stable(since = "0.1")
+export fn RwLock mut @with_write[R](body fn() -> R) -> R {
+    self.write()
+    defer self.write_unlock()
+    body()
+}
+```
+
+**Writer-priority алгоритм (default):**
+- `read()`: если `write_locked || write_waiting` → park reader; иначе incr
+  `reader_count`.
+- `write()`: set `write_waiting=true`; ждать `reader_count=0 &&
+  !write_locked` → set `write_locked=true`.
+- `write_unlock()`: `write_locked=false`; если есть ожидающие writers →
+  разбудить одного; иначе → разбудить всех readers.
+
+**Unlock invariants:** `read_unlock()` без `read()`, `write_unlock()` без
+`write()`, и `read_unlock()` после `write()` — unconditional runtime panic.
+
+#### 3. ReentrantMutex API
+
+```nova
+/// Reentrant mutex: один fiber может lock() несколько раз без deadlock.
+/// Unlock требует соответствующего количества unlock() от того же fiber'а.
+///
+/// Use case: legacy migration, callbacks-into-locked-context.
+/// Recommended default: обычный Mutex (deadlock-detection на ранней стадии).
+///
+/// Взаимодействие с Condvar (Plan 103.4): Condvar.wait() освобождает ВСЕ
+/// уровни lock (count → 0); пробуждение re-acquires с count = 1.
+/// Исходная глубина рекурсии НЕ восстанавливается.
+/// Диагностика: W_REENTRANT_CONDVAR_RECOMMEND при mix.
+#stable(since = "0.1")
+export external fn ReentrantMutex.new() -> Self
+
+#stable(since = "0.1")
+export external fn ReentrantMutex mut @lock()
+#stable(since = "0.1")
+export external fn ReentrantMutex mut @unlock()
+#stable(since = "0.1")
+export external fn ReentrantMutex mut @try_lock() -> bool
+#stable(since = "0.1")
+export external fn ReentrantMutex mut @try_lock_for(timeout Duration) -> bool
+
+/// Глубина рекурсии для текущего fiber'а; 0 если не locked этим fiber'ом.
+#stable(since = "0.1")
+export external fn ReentrantMutex @lock_count() -> int
+
+#stable(since = "0.1")
+export fn ReentrantMutex mut @with_lock[R](body fn() -> R) -> R {
+    self.lock()
+    defer self.unlock()
+    body()
+}
+```
+
+**Owner tracking:** `owner_coro = mco_running()` (thread-local `mco_coro*`
+из minicoro.h). `NULL` на main thread или вне `mco_resume`. Уникален на всём
+протяжении жизни fiber'а (не переиспользуется пока mutex locked).
+
+**Unlock invariant:** `unlock()` не от owner fiber → unconditional runtime panic.
+
+#### 4. C runtime layer
+
+Все три типа аллоцируются через `nova_alloc_uncollectable` (Boehm
+`GC_malloc_uncollectable`):
+
+```c
+static inline Nova_Mutex* Nova_Mutex_static_new(void) {
+    Nova_Mutex* m = (Nova_Mutex*)nova_alloc_uncollectable(sizeof(Nova_Mutex));
+    ...
+}
+```
+
+**Причина:** на Windows под M:N runtime первый `supervised{spawn{}}` вызывает
+`_ensure_materialized()` → `nova_scope_grow` (7× `nova_alloc`) → Boehm GC
+может не видеть pointer на sync primitive, хранящийся на стеке main thread'а,
+и произвести premature collection. `GC_malloc_uncollectable` полностью
+исключает эту проблему (объект не собирается GC, но сканируется на interior
+pointers).
+
+#### 5. Realtime context ban
+
+Методы `lock()` / `read()` / `write()` и `try_lock_for` / `try_read_for` /
+`try_write_for` — **запрещены в `realtime { }` блоках** (Plan 103.6):
+они могут park fiber, нарушая realtime-гарантию. `try_lock()` / `try_read()`
+/ `try_write()` без timeout разрешены (no park, return bool немедленно).
+
+Диагностика: `E_REALTIME_VIOLATION` (compile-time).
+
+### Отвергнутые альтернативы
+
+| Альтернатива | Причина отклонения |
+|---|---|
+| **`Mutex<T>` data-carrying** (Rust style) | M4: требует borrow checker; в Nova consume-типы (Plan 103.9) решают проблему по-другому |
+| **Mutex poisoning** (`LockResult`) | M5: сложность без реального преимущества в fiber-модели; Nova предпочитает явные `defer panic` |
+| **Upgradeable read lock** для RwLock | Сложная семантика (deadlock-risk); отдельный future plan |
+| **RwLock reader-priority по умолчанию** | Writer starvation в нагрузочных тестах; writer-priority = better default |
+| **`(scope, slot)` как ReentrantMutex owner-id** | Risk использования после fiber завершения; `mco_coro*` гарантированно валиден пока fiber активен |
+| **UUID для owner tracking** | Overhead; `mco_coro*` проще и надёжнее в контексте Nova fiber runtime |
+
+### Связь
+
+- **[D50](#d50-concurrency-model-spawn-detach-blocking)** — `supervised`,
+  `spawn`; Mutex park работает внутри supervised-дерева.
+- **[D138](#d138-default-on-mn-runtime--production-semantics-plan-83456-ф3-active-2026-05-24)** —
+  M:N runtime; uncollectable alloc fix специфичен для M:N + Windows Boehm.
+- **[D168](#d168-sized-atomic-types--api-contract-plan-1032)** —
+  AtomicI32 для `reader_count`; AtomicBool для `write_locked`.
+- **[D171](#d171-once--oncecell--lazy--single-initialization-primitives-plan-1035)** —
+  аналогичный паттерн uncollectable alloc для sync primitive structs.
+- **[Plan 103.4](../../docs/plans/103.4-coordination-primitives.md)** —
+  `Condvar` tied to `Mutex`; `W_REENTRANT_CONDVAR_RECOMMEND`.
+- **[Plan 103.6](../../docs/plans/103.6-realtime-blocking-integration.md)** —
+  `realtime { }` ban на park-ing methods.
+- **[Plan 103.7](../../docs/plans/103.7-spec-d-blocks.md)** — D169 final closure.
+- **[Plan 103.9](../../docs/plans/103.9-consume-guards-migration.md)** —
+  V2: `MutexGuard consume`; `with_lock(fn)` → non-breaking migration path.
+
+### Эволюция
+
+D169 введён как draft (Plan 103.3, 2026-05-26). Final closure — Plan 103.7.
+В V2 (Plan 103.9):
+- `MutexGuard consume` заменяет `lock()/unlock()` как primary API.
+- `with_lock(fn)` становится thin wrapper над guard — user code не меняется.
+- `W_REENTRANT_CONDVAR_RECOMMEND` переходит в E_REENTRANT_CONDVAR_ERROR если
+  статически выявимо (Plan 103.4 + checker).
+- D173 AI-first guidance: выбор Mutex vs RwLock vs ReentrantMutex по паттерну.
