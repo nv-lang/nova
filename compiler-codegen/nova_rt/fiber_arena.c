@@ -4,7 +4,18 @@
  *
  * Compiled into binary as separate TU (linked alongside alloc_boehm.c /
  * effects.c / fibers.c). Windows: this TU compiles но не используется —
- * NOVA_FIBER_ARENA_ENABLED == 0 makes everything no-op. */
+ * NOVA_FIBER_ARENA_ENABLED == 0 makes everything no-op.
+ *
+ * Plan 82.2 (2026-05-26): cross-thread dealloc support через глобальный
+ * реестр арен — порт механизма из fiber_arena_win.c. Под M:N work-
+ * stealing fiber может быть allocated на thread A (через mco_create в
+ * nova_runtime_spawn_global), а deallocated на thread B (mco_destroy в
+ * worker B'е). Раньше: TLS-based bounds check видел чужой ptr → warning +
+ * slot leak (Plan 44.2 явно отложил P41-15 «cross-thread dealloc atomic
+ * bitmap» до Plan 23). Теперь: append-only глобальный список арен;
+ * nova_fiber_dealloc fast-path = TLS match, slow-path =
+ * _nova_find_arena_for(ptr); bitmap clear через __atomic_fetch_and
+ * для cross-thread safety. Паритет с Windows fiber_arena_win.c. */
 
 #include "fiber_arena.h"
 
@@ -34,27 +45,86 @@
  * 4096 slots = 64 uint64_t words = 512 bytes bitmap. Acceptable cost. */
 #define NOVA_FIBER_BITMAP_WORDS ((NOVA_FIBER_SLOT_COUNT + 63) / 64)
 
+/* Plan 82.2: arena struct — heap-allocated (раньше __thread embedded).
+ *
+ * Структура переживает thread exit — живёт в глобальном append-only
+ * списке для cross-thread dealloc routing. Только на retire (thread
+ * exit) `base` атомарно зануляется; munmap освобождает виртуальную
+ * память, но struct sам не free'ится (другие потоки могут быть в
+ * середине list traversal).
+ *
+ * Field-level concurrency contract:
+ *  - base               : atomic store/load. NULL после retire.
+ *  - virtual_size       : write-once в init под release-store base'а;
+ *                         read-only после init.
+ *  - slot_size, slot_count : immutable после init.
+ *  - slots_active       : atomic add/sub. Owner increments на alloc,
+ *                         любой поток decrements на dealloc. Read для
+ *                         MADV gate — atomic load (best-effort).
+ *  - high_water         : owner-only write (alloc bumps); plain read OK.
+ *  - free_bits[]        : owner OR-set на alloc (RELAXED — single owner,
+ *                         no concurrent SETs), любой поток AND-clear
+ *                         на dealloc (RELEASE). Read через ACQUIRE-load.
+ *  - next_arena         : write-once при list add; read-only после. */
 struct NovaFiberArena {
-    char*    base;             /* mmap'd base address */
-    size_t   virtual_size;     /* total bytes reserved */
-    size_t   slot_size;        /* per-slot, including guard page */
+    char*    base;             /* atomic; NULL after retire */
+    size_t   virtual_size;
+    size_t   slot_size;
     size_t   slot_count;
-    size_t   slots_active;
-    size_t   high_water;       /* highest slot index ever used */
-    /* Free-list bitmap: 1 bit per slot.
-     * Bit 1 = used, bit 0 = free.
-     * Plan 23 prep: будет atomic под M:N (P41-15). Сейчас plain. */
-    uint64_t free_bits[NOVA_FIBER_BITMAP_WORDS];
+    size_t   slots_active;     /* atomic add/sub */
+    size_t   high_water;       /* owner-only mutation */
+    uint64_t free_bits[NOVA_FIBER_BITMAP_WORDS];  /* atomic ops */
+    /* Plan 82.2: link в глобальный append-only список арен. */
+    struct NovaFiberArena* next_arena;
 };
 
-static __thread NovaFiberArena _t_arena = { 0 };
+/* TLS: указатель на heap-allocated арену этого потока. NULL до
+ * nova_fiber_arena_init; никогда не free'ится после init (struct живёт
+ * в global list до конца процесса). */
+static __thread struct NovaFiberArena* _t_arena = NULL;
+
+/* Plan 82.2: global append-only arena registry для cross-thread dealloc
+ * dispatch. Чтение lock-free через ACQUIRE-load на head + next_arena
+ * pointers. Запись (per-thread init) под mutex'ом. */
+static struct NovaFiberArena* _nova_arena_list_head = NULL;
+static pthread_mutex_t _nova_arena_list_mu = PTHREAD_MUTEX_INITIALIZER;
+
 static pthread_key_t _arena_cleanup_key;
 static pthread_once_t _arena_key_once = PTHREAD_ONCE_INIT;
+
+/* Plan 82.2: find arena owning ptr — address-based dispatch. O(N_arenas)
+ * linear scan; N <= N_workers + 1 (main), typically 4-16. Lock-free
+ * read (append-only list semantics — никто не удаляет ноды). Skips
+ * retired arenas (base == NULL после _arena_thread_exit_cleanup). */
+static struct NovaFiberArena* _nova_find_arena_for(const char* p) {
+    struct NovaFiberArena* a =
+        __atomic_load_n(&_nova_arena_list_head, __ATOMIC_ACQUIRE);
+    while (a) {
+        char* base = __atomic_load_n(&a->base, __ATOMIC_ACQUIRE);
+        if (base &&
+            p >= base + NOVA_FIBER_GUARD_SIZE &&
+            p <  base + a->virtual_size) {
+            return a;
+        }
+        a = a->next_arena;
+    }
+    return NULL;
+}
+
+/* Plan 82.2: append arena в глобальный список. Mutex-guarded на запись;
+ * RELEASE-store на head гарантирует readers видят все a->* fields
+ * установленными до того, как видят `a` в списке. */
+static void _nova_arena_list_add(struct NovaFiberArena* a) {
+    pthread_mutex_lock(&_nova_arena_list_mu);
+    a->next_arena = _nova_arena_list_head;
+    __atomic_store_n(&_nova_arena_list_head, a, __ATOMIC_RELEASE);
+    pthread_mutex_unlock(&_nova_arena_list_mu);
+}
 
 /* ── Cleanup at thread exit (P41-12) ───────────────────────────── */
 
 static void _arena_thread_exit_cleanup(void* arg) {
-    NovaFiberArena* a = (NovaFiberArena*)arg;
+    struct NovaFiberArena* a = (struct NovaFiberArena*)arg;
     if (!a || !a->base) return;
 
 #ifdef NOVA_GC_BOEHM
@@ -64,11 +134,21 @@ static void _arena_thread_exit_cleanup(void* arg) {
     if (a->high_water > 0) {
         GC_remove_roots(a->base, a->base + a->high_water * a->slot_size);
     }
-    /* If no slots ever used, range was never registered — skip. */
 #endif
 
     munmap(a->base, a->virtual_size);
-    memset(a, 0, sizeof(*a));
+
+    /* Plan 82.2: atomic NULL base — marker retired для _nova_find_arena_for.
+     * Структура НЕ free'ится — остаётся в глобальном списке (другие
+     * потоки могут быть в середине list traversal). Memset selective —
+     * НЕ трогать next_arena (link в живой список). */
+    __atomic_store_n(&a->base, NULL, __ATOMIC_RELEASE);
+    a->virtual_size = 0;
+    a->slots_active = 0;
+    a->high_water = 0;
+    memset(a->free_bits, 0, sizeof(a->free_bits));
+    /* slot_size / slot_count / next_arena — оставлены: первые два immutable
+     * post-init и больше не читаются (base==NULL), next_arena — link. */
 }
 
 static void _arena_register_pthread_key(void) {
@@ -85,26 +165,36 @@ static void _arena_register_pthread_key(void) {
  * всем threads. Для не-arena SIGSEGV (например null deref в user code)
  * мы делегируем обратно default action через sigaction restore.
  *
- * Chaining: сохраняем previous SIGSEGV handler в `_prev_sigsegv` и
- * вызываем его если fault не в нашей arena (или в usable region).
- *
- * Безопасность: handler работает в signal context (async-signal-safe
- * functions only). fprintf к stderr — НЕ async-safe строго, но в
- * single-threaded crash context это commonly acceptable practice
- * (Boehm, libuv, Go runtime все делают похожее). */
+ * Plan 82.2: cross-thread fiber overflow (work-stolen fiber overflows
+ * на worker B, но stack принадлежит worker A's arena) теперь корректно
+ * диагностируется — handler ищет owner arena в глобальном списке если
+ * TLS arena не содержит fault. */
 
 static struct sigaction _prev_sigsegv;
 static bool _sigsegv_installed = false;
 
 static void _arena_sigsegv_handler(int sig, siginfo_t* info, void* uctx) {
     void* fault_addr = info ? info->si_addr : NULL;
+    struct NovaFiberArena* a = _t_arena;
+    bool in_our_range = false;
 
-    /* Не наш диапазон? Восстановим default или previous handler и re-raise. */
-    if (!_t_arena.base || !fault_addr ||
-        (char*)fault_addr <  _t_arena.base ||
-        (char*)fault_addr >= _t_arena.base + _t_arena.virtual_size) {
-        /* Delegate. Если previous был SIG_DFL — restore default и re-raise.
-         * Если был user handler — invoke его. */
+    /* Plan 82.2: сначала проверяем TLS arena (fast path); если fault
+     * не сюда — пытаемся найти owner globally (cross-thread fiber). */
+    if (a && a->base && fault_addr &&
+        (char*)fault_addr >= a->base &&
+        (char*)fault_addr <  a->base + a->virtual_size) {
+        in_our_range = true;
+    } else if (fault_addr) {
+        struct NovaFiberArena* owner =
+            _nova_find_arena_for((const char*)fault_addr);
+        if (owner) {
+            a = owner;
+            in_our_range = true;
+        }
+    }
+
+    if (!in_our_range) {
+        /* Не наш диапазон. Делегируем previous handler или default. */
         if (_prev_sigsegv.sa_flags & SA_SIGINFO) {
             if (_prev_sigsegv.sa_sigaction &&
                 _prev_sigsegv.sa_sigaction != (void*)SIG_DFL &&
@@ -118,26 +208,24 @@ static void _arena_sigsegv_handler(int sig, siginfo_t* info, void* uctx) {
             _prev_sigsegv.sa_handler(sig);
             return;
         }
-        /* No handler — restore default and re-raise. Default = process abort. */
         signal(sig, SIG_DFL);
         raise(sig);
         return;
     }
 
-    /* В arena. Какой slot? guard или usable? */
-    size_t offset      = (size_t)((char*)fault_addr - _t_arena.base);
-    size_t slot_idx    = offset / _t_arena.slot_size;
-    size_t slot_offset = offset % _t_arena.slot_size;
+    /* В arena `a`. Какой slot? guard или usable? */
+    size_t offset      = (size_t)((char*)fault_addr - a->base);
+    size_t slot_idx    = offset / a->slot_size;
+    size_t slot_offset = offset % a->slot_size;
 
-    /* fprintf не строго async-safe — но в crash context приемлемо. */
     if (slot_offset < NOVA_FIBER_GUARD_SIZE) {
         fprintf(stderr,
                 "\nnova: fiber stack overflow in slot %zu "
                 "(fault @ %p, guard @ [%p, %p))\n"
                 "Hint: increase NOVA_FIBER_STACK_SIZE or reduce recursion depth.\n",
                 slot_idx, fault_addr,
-                _t_arena.base + slot_idx * _t_arena.slot_size,
-                _t_arena.base + slot_idx * _t_arena.slot_size + NOVA_FIBER_GUARD_SIZE);
+                a->base + slot_idx * a->slot_size,
+                a->base + slot_idx * a->slot_size + NOVA_FIBER_GUARD_SIZE);
     } else {
         fprintf(stderr,
                 "\nnova: SIGSEGV in fiber arena slot %zu, offset %zu "
@@ -147,7 +235,6 @@ static void _arena_sigsegv_handler(int sig, siginfo_t* info, void* uctx) {
     }
     fflush(stderr);
 
-    /* Restore default and re-raise so core dump / debugger attach работает. */
     signal(sig, SIG_DFL);
     raise(sig);
 }
@@ -166,7 +253,8 @@ static void _arena_install_sigsegv_handler(void) {
 /* ── Init ──────────────────────────────────────────────────────── */
 
 void nova_fiber_arena_init(void) {
-    if (_t_arena.base) return;  /* already initialized */
+    /* Already initialized? (idempotent — safe to call multiple times.) */
+    if (_t_arena && _t_arena->base) return;
 
     pthread_once(&_arena_key_once, _arena_register_pthread_key);
     /* P41-6: pretty stack overflow diagnostic. Idempotent — выполнится
@@ -176,17 +264,12 @@ void nova_fiber_arena_init(void) {
     size_t slot_size = NOVA_FIBER_STACK_SIZE;
     size_t slot_count = NOVA_FIBER_SLOT_COUNT;
 
-    /* Bitmap sized via NOVA_FIBER_BITMAP_WORDS — supports up to
-     * NOVA_FIBER_SLOT_COUNT. Sanity check: slot_count must fit bitmap. */
     if (slot_count > NOVA_FIBER_BITMAP_WORDS * 64) {
         fprintf(stderr, "nova: fiber_arena slot_count exceeds bitmap capacity\n");
         abort();
     }
 
     size_t virtual_size = slot_size * slot_count;
-
-    /* Plan 44.2 P41-3 TODO: detect vm.overcommit_memory=2 and downgrade.
-     * For now (bootstrap) assume default Linux overcommit_memory ∈ {0,1}. */
 
     int prot = PROT_READ | PROT_WRITE;
     int flags = MAP_PRIVATE | MAP_ANONYMOUS;
@@ -201,16 +284,12 @@ void nova_fiber_arena_init(void) {
         abort();
     }
 
-    /* Plan 44.2 P41-14: disable Transparent Huge Pages для arena.
-     * THP upgrades 2MB-aligned VMAs to 2MB huge pages — конфликтует с
-     * lazy commit precision (entire slot would commit at once). */
+    /* Plan 44.2 P41-14: disable Transparent Huge Pages для arena. */
 #if defined(MADV_NOHUGEPAGE)
     madvise(p, virtual_size, MADV_NOHUGEPAGE);
 #endif
 
-    /* Plan 44.2 P41-5: guard page (PROT_NONE, 4KB) at bottom of every slot.
-     * Stack grows DOWN on x86/ARM, so "bottom" = lowest address = first
-     * page of each slot. Overflow → page fault → SIGSEGV. */
+    /* Plan 44.2 P41-5: guard page (PROT_NONE) at bottom of every slot. */
     for (size_t i = 0; i < slot_count; i++) {
         char* slot_base = (char*)p + i * slot_size;
         if (mprotect(slot_base, NOVA_FIBER_GUARD_SIZE, PROT_NONE) != 0) {
@@ -219,39 +298,50 @@ void nova_fiber_arena_init(void) {
         }
     }
 
-    _t_arena.base = (char*)p;
-    _t_arena.virtual_size = virtual_size;
-    _t_arena.slot_size = slot_size;
-    _t_arena.slot_count = slot_count;
-    _t_arena.slots_active = 0;
-    _t_arena.high_water = 0;
-    memset(_t_arena.free_bits, 0, sizeof(_t_arena.free_bits));
+    /* Plan 82.2: heap-allocate arena struct. calloc zero-инициализирует;
+     * никогда не free'ится — живёт в global list до конца процесса. */
+    struct NovaFiberArena* a =
+        (struct NovaFiberArena*)calloc(1, sizeof(struct NovaFiberArena));
+    if (!a) {
+        fprintf(stderr, "nova: fiber_arena state alloc failed\n");
+        abort();
+    }
+    a->virtual_size = virtual_size;
+    a->slot_size = slot_size;
+    a->slot_count = slot_count;
+    a->slots_active = 0;
+    a->high_water = 0;
+    /* free_bits, next_arena уже zero'd calloc'ом. */
+
+    /* base устанавливается RELEASE-store последним: до этого момента
+     * _nova_find_arena_for видит arena с base==NULL → skip. После store —
+     * ACQUIRE-readers видят all остальные fields. */
+    __atomic_store_n(&a->base, (char*)p, __ATOMIC_RELEASE);
+
+    /* Append в глобальный список ПОСЛЕ полной инициализации. */
+    _nova_arena_list_add(a);
+
+    _t_arena = a;
 
     /* Plan 44.2 P41-11: НЕ register full arena как GC root now —
-     * defeats lazy commit (Boehm scan reads every page → COW to zero,
-     * RSS grows to full 512MB).
-     * Active-range registration: lazy, on first slot alloc bumping
+     * active-range registration: lazy, on first slot alloc bumping
      * high_water. См. _arena_register_active_range. */
 
-    /* Register для thread-exit cleanup. */
-    pthread_setspecific(_arena_cleanup_key, &_t_arena);
+    /* Plan 82.2: pthread_setspecific принимает heap pointer (не &_t_arena).
+     * Cleanup-callback получит указатель на heap struct — корректно
+     * munmap + NULL base + сохранение next_arena в list. */
+    pthread_setspecific(_arena_cleanup_key, a);
 }
 
 /* ── Active-range GC root management (P41-11) ──────────────────── */
 
 #ifdef NOVA_GC_BOEHM
-/* Plan 44.2 audit R8 P0 (2026-05-13): __thread — per-thread tracker.
- * Без __thread thread B's `_arena_register_active_range` видит
- * `_registered_high_water = 100` от Thread A → skip'ит свою регистрацию
- * → Thread B fiber stacks НЕ зарегистрированы как Boehm root →
- * conservative scan miss → UAF под M:N (Plan 23). */
+/* Plan 44.2 audit R8 P0 (2026-05-13): __thread — per-thread tracker. */
 static __thread size_t _registered_high_water = 0;
 
-static void _arena_register_active_range(NovaFiberArena* a, size_t new_high) {
-    if (new_high <= _registered_high_water) return;  /* already covered */
+static void _arena_register_active_range(struct NovaFiberArena* a, size_t new_high) {
+    if (new_high <= _registered_high_water) return;
 
-    /* Remove old range, add new. Boehm GC_remove_roots / GC_add_roots
-     * are safe to call repeatedly. */
     if (_registered_high_water > 0) {
         GC_remove_roots(a->base, a->base + _registered_high_water * a->slot_size);
     }
@@ -259,7 +349,7 @@ static void _arena_register_active_range(NovaFiberArena* a, size_t new_high) {
     _registered_high_water = new_high;
 }
 #else
-static inline void _arena_register_active_range(NovaFiberArena* a, size_t h) {
+static inline void _arena_register_active_range(struct NovaFiberArena* a, size_t h) {
     (void)a; (void)h;
 }
 #endif
@@ -267,13 +357,16 @@ static inline void _arena_register_active_range(NovaFiberArena* a, size_t h) {
 /* ── Bitmap allocate / free ─────────────────────────────────────── */
 
 /* Find first free slot (bit 0 in free_bits). Returns slot index or
- * SIZE_MAX if none. */
-static size_t _arena_find_free_slot(NovaFiberArena* a) {
+ * SIZE_MAX if none.
+ *
+ * Plan 82.2: ACQUIRE-load на каждое слово — гарантирует видимость
+ * cross-thread released slots до того, как owner ищет free slot. */
+static size_t _arena_find_free_slot(struct NovaFiberArena* a) {
     size_t total_words = (a->slot_count + 63) / 64;
     for (size_t w = 0; w < total_words; w++) {
-        uint64_t inv = ~a->free_bits[w];
+        uint64_t word = __atomic_load_n(&a->free_bits[w], __ATOMIC_ACQUIRE);
+        uint64_t inv = ~word;
         if (inv == 0) continue;  /* word fully used */
-        /* __builtin_ctzll: count trailing zeros (Linux/macOS clang/gcc). */
         size_t bit = (size_t)__builtin_ctzll(inv);
         size_t slot = w * 64 + bit;
         if (slot >= a->slot_count) continue;  /* past end */
@@ -282,81 +375,106 @@ static size_t _arena_find_free_slot(NovaFiberArena* a) {
     return SIZE_MAX;
 }
 
-static void _arena_mark_slot_used(NovaFiberArena* a, size_t slot) {
+/* Plan 82.2: atomic OR — owner-only path (alloc на owning thread).
+ * Никто другой не делает SET одновременно (cross-thread только AND-clears
+ * другие слоты). RELAXED достаточно — happens-before гарантируется
+ * single-owner store-order. */
+static void _arena_mark_slot_used(struct NovaFiberArena* a, size_t slot) {
     size_t w = slot / 64;
     size_t b = slot % 64;
-    a->free_bits[w] |= (1ULL << b);
+    __atomic_fetch_or(&a->free_bits[w], (1ULL << b), __ATOMIC_RELAXED);
 }
 
-static void _arena_mark_slot_free(NovaFiberArena* a, size_t slot) {
+/* Plan 82.2: atomic AND — cross-thread safe (owner thread И любой
+ * worker, выполнивший mco_destroy для work-stolen fiber'а).
+ * RELEASE — clear visible перед slots_active decrement. */
+static void _arena_mark_slot_free(struct NovaFiberArena* a, size_t slot) {
     size_t w = slot / 64;
     size_t b = slot % 64;
-    a->free_bits[w] &= ~(1ULL << b);
+    __atomic_fetch_and(&a->free_bits[w], ~(1ULL << b), __ATOMIC_RELEASE);
 }
 
 /* ── minicoro alloc callbacks ──────────────────────────────────── */
 
 void* nova_fiber_alloc(size_t size, void* allocator_data) {
     (void)allocator_data;
-    if (!_t_arena.base) {
+    if (!_t_arena || !_t_arena->base) {
         nova_fiber_arena_init();
     }
+    struct NovaFiberArena* a = _t_arena;
 
     /* Caller (minicoro) запросит конкретный size; мы ignore — slot_size
      * фиксирован. Verify что requested ≤ usable region (slot - guard). */
-    size_t usable = _t_arena.slot_size - NOVA_FIBER_GUARD_SIZE;
+    size_t usable = a->slot_size - NOVA_FIBER_GUARD_SIZE;
     if (size > usable) {
         fprintf(stderr, "nova: fiber_alloc requested %zu > usable %zu (slot %zu - guard %d)\n",
-                size, usable, _t_arena.slot_size, NOVA_FIBER_GUARD_SIZE);
+                size, usable, a->slot_size, NOVA_FIBER_GUARD_SIZE);
         return NULL;  /* minicoro will handle as failure */
     }
 
-    size_t slot = _arena_find_free_slot(&_t_arena);
+    size_t slot = _arena_find_free_slot(a);
     if (slot == SIZE_MAX) {
-        /* Plan 44.2 P41-2: abort instead of calloc fallback (which would
-         * regress to _NOVA_GC_DISABLE UAF risk). Arena exhaustion is
-         * production error — log + abort. Production sizing: 256 slots.
-         * Plan 23 prep: implement arena chaining instead of abort. */
         fprintf(stderr, "nova: fiber_arena exhausted (%zu slots used)\n",
-                _t_arena.slots_active);
+                __atomic_load_n(&a->slots_active, __ATOMIC_RELAXED));
         abort();
     }
 
-    _arena_mark_slot_used(&_t_arena, slot);
-    _t_arena.slots_active++;
-    if (slot + 1 > _t_arena.high_water) {
-        _t_arena.high_water = slot + 1;
-        _arena_register_active_range(&_t_arena, _t_arena.high_water);
+    _arena_mark_slot_used(a, slot);
+    __atomic_add_fetch(&a->slots_active, 1, __ATOMIC_RELAXED);
+    if (slot + 1 > a->high_water) {
+        a->high_water = slot + 1;
+        _arena_register_active_range(a, a->high_water);
     }
 
     /* Usable region: slot_base + guard_size .. slot_base + slot_size.
      * Stack starts at slot_top (grows down). minicoro caller treats
      * returned pointer as base of stack region. */
-    return _t_arena.base + slot * _t_arena.slot_size + NOVA_FIBER_GUARD_SIZE;
+    return a->base + slot * a->slot_size + NOVA_FIBER_GUARD_SIZE;
 }
 
+/* Plan 82.2: address-based dealloc — fast path TLS arena, slow path
+ * global lookup. Под M:N work-stealing fiber может быть allocated на
+ * thread A (mco_create в nova_runtime_spawn_global on calling thread),
+ * deallocated на worker B (mco_destroy в worker B'е после fiber dies).
+ *
+ * Раньше: только TLS check → cross-thread ptr вне range → warning +
+ * skip → slot leak в A's arena (bitmap bit never cleared).
+ *
+ * Теперь: fast path = TLS bounds match (typical same-thread case);
+ * slow path = _nova_find_arena_for(p) — address-based owner lookup в
+ * глобальном списке арен. Atomic bitmap clear работает корректно
+ * cross-thread. */
 void nova_fiber_dealloc(void* ptr, size_t size, void* allocator_data) {
     (void)size; (void)allocator_data;
-    if (!ptr || !_t_arena.base) return;
+    if (!ptr) return;
 
-    /* Reverse usable_ptr → slot index.
-     * usable_ptr = base + slot * slot_size + guard_size
-     * → slot = (usable_ptr - base - guard_size) / slot_size */
     char* p = (char*)ptr;
-    if (p < _t_arena.base + NOVA_FIBER_GUARD_SIZE ||
-        p >= _t_arena.base + _t_arena.virtual_size) {
-        fprintf(stderr, "nova: fiber_dealloc ptr outside arena (%p)\n", ptr);
-        return;
+    struct NovaFiberArena* a = _t_arena;
+
+    /* Fast path: ptr в текущей TLS arena (typical case без миграции). */
+    if (a && a->base &&
+        p >= a->base + NOVA_FIBER_GUARD_SIZE &&
+        p <  a->base + a->virtual_size) {
+        /* in current arena — fall through */
+    } else {
+        /* Slow path: cross-thread dealloc — найти owner по адресу. */
+        a = _nova_find_arena_for(p);
+        if (!a) {
+            fprintf(stderr, "nova: fiber_dealloc ptr outside all arenas (%p)\n", ptr);
+            return;
+        }
     }
-    size_t offset = (size_t)(p - _t_arena.base - NOVA_FIBER_GUARD_SIZE);
-    size_t slot = offset / _t_arena.slot_size;
-    if (slot >= _t_arena.slot_count) {
+
+    /* Reverse usable_ptr → slot index using owning arena's layout. */
+    size_t offset = (size_t)(p - a->base - NOVA_FIBER_GUARD_SIZE);
+    size_t slot = offset / a->slot_size;
+    if (slot >= a->slot_count) {
         fprintf(stderr, "nova: fiber_dealloc slot index out of range\n");
         return;
     }
 
-    _arena_mark_slot_free(&_t_arena, slot);
-    _t_arena.slots_active--;
+    _arena_mark_slot_free(a, slot);
+    __atomic_sub_fetch(&a->slots_active, 1, __ATOMIC_RELAXED);
 
     /* Plan 44.2 P41-3 (R8, 2026-05-13): MADV_DONTNEED только на idle.
      *
@@ -366,20 +484,17 @@ void nova_fiber_dealloc(void* ptr, size_t size, void* allocator_data) {
      *
      * Теперь: при `slots_active == 0` (idle = весь scope завершился)
      * выполняем ОДИН madvise на весь used range [base+guard, high_water*slot].
-     * Pages этого range возвращаются ОС батчем, mmap_sem locked один раз.
      *
-     * Trade-off: между peak и idle physical pages держатся (slot pages
-     * cached в OS). Это **win**: следующий burst переиспользует pages
-     * без zero-page COW. Workload pattern Nova — supervised scope
-     * spawns burst → quiescence → next scope — идеально fits.
-     *
-     * Если pattern long-running без idle (например server с постоянно
-     * активными fibers) — manual flush через nova_fibers_compact()
-     * (см. std.runtime.fibers). */
-    if (_t_arena.slots_active == 0 && _t_arena.high_water > 0) {
+     * Plan 82.2: MADV_DONTNEED только когда dealloc на own thread
+     * (a == _t_arena). Cross-thread dealloc skip'ает MADV — owning thread
+     * сам сделает на следующем idle (free_bits cleared cross-thread'ом
+     * виден ACQUIRE-load'у в _arena_find_free_slot). */
+    if (a == _t_arena &&
+        __atomic_load_n(&a->slots_active, __ATOMIC_ACQUIRE) == 0 &&
+        a->high_water > 0) {
 #ifdef MADV_DONTNEED
-        char* range_base = _t_arena.base + NOVA_FIBER_GUARD_SIZE;
-        size_t range_size = _t_arena.high_water * _t_arena.slot_size
+        char* range_base = a->base + NOVA_FIBER_GUARD_SIZE;
+        size_t range_size = a->high_water * a->slot_size
                           - NOVA_FIBER_GUARD_SIZE;
         madvise(range_base, range_size, MADV_DONTNEED);
 #endif
@@ -390,25 +505,26 @@ void nova_fiber_dealloc(void* ptr, size_t size, void* allocator_data) {
  * workloads без natural idle. Released все free slots' physical pages
  * одним syscall. Exposed через std.runtime.fibers.compact(). */
 void nova_fiber_arena_compact(void) {
-    if (!_t_arena.base || _t_arena.high_water == 0) return;
+    if (!_t_arena || !_t_arena->base || _t_arena->high_water == 0) return;
+    struct NovaFiberArena* a = _t_arena;
 #ifdef MADV_DONTNEED
     /* Iterate bitmap, find contiguous free runs, batch MADV. */
-    size_t total_words = (_t_arena.slot_count + 63) / 64;
+    size_t total_words = (a->slot_count + 63) / 64;
     size_t run_start = SIZE_MAX;  /* sentinel — no run in progress */
     for (size_t w = 0; w < total_words; w++) {
-        uint64_t bits = _t_arena.free_bits[w];
+        uint64_t bits = __atomic_load_n(&a->free_bits[w], __ATOMIC_ACQUIRE);
         for (size_t b = 0; b < 64; b++) {
             size_t slot = w * 64 + b;
-            if (slot >= _t_arena.high_water) goto end_scan;
+            if (slot >= a->high_water) goto end_scan;
             bool used = (bits >> b) & 1;
             if (!used) {
                 if (run_start == SIZE_MAX) run_start = slot;
             } else {
                 if (run_start != SIZE_MAX) {
                     /* Flush run [run_start, slot). */
-                    char* rbase = _t_arena.base + run_start * _t_arena.slot_size
+                    char* rbase = a->base + run_start * a->slot_size
                                 + NOVA_FIBER_GUARD_SIZE;
-                    size_t rsize = (slot - run_start) * _t_arena.slot_size
+                    size_t rsize = (slot - run_start) * a->slot_size
                                  - NOVA_FIBER_GUARD_SIZE;
                     madvise(rbase, rsize, MADV_DONTNEED);
                     run_start = SIZE_MAX;
@@ -418,9 +534,9 @@ void nova_fiber_arena_compact(void) {
     }
 end_scan:
     if (run_start != SIZE_MAX) {
-        char* rbase = _t_arena.base + run_start * _t_arena.slot_size
+        char* rbase = a->base + run_start * a->slot_size
                     + NOVA_FIBER_GUARD_SIZE;
-        size_t rsize = (_t_arena.high_water - run_start) * _t_arena.slot_size
+        size_t rsize = (a->high_water - run_start) * a->slot_size
                      - NOVA_FIBER_GUARD_SIZE;
         madvise(rbase, rsize, MADV_DONTNEED);
     }
@@ -428,9 +544,9 @@ end_scan:
 }
 
 bool nova_fiber_arena_contains(const void* ptr) {
-    if (!_t_arena.base) return false;
-    return (const char*)ptr >= _t_arena.base &&
-           (const char*)ptr <  _t_arena.base + _t_arena.virtual_size;
+    if (!_t_arena || !_t_arena->base) return false;
+    return (const char*)ptr >= _t_arena->base &&
+           (const char*)ptr <  _t_arena->base + _t_arena->virtual_size;
 }
 
 /* Plan 82 Ф.1: POSIX не нуждается в патче ctx.stack_limit — mmap
@@ -441,19 +557,22 @@ void* nova_fiber_committed_low(const void* block_ptr) {
     return NULL;
 }
 
-/* Plan 82 Ф.3 — M:N lifecycle. POSIX-арена живёт в TLS (__thread) и
- * освобождается _arena_thread_exit_cleanup через pthread_key при выходе
- * потока; явные thread_exit / release_retired не нужны — no-op. */
+/* Plan 82 Ф.3 — M:N lifecycle. POSIX-арена живёт в TLS pointer + heap
+ * struct в глобальном списке; cleanup идёт через pthread_key при выходе
+ * потока (Plan 82.2: munmap + NULL base + сохранение struct в list для
+ * cross-thread dealloc traversal). Явные thread_exit / release_retired
+ * не нужны — no-op. */
 void nova_fiber_arena_thread_exit(void) { }
 void nova_fiber_arena_release_retired(void) { }
 
 NovaFiberArenaStats nova_fiber_arena_stats(void) {
     NovaFiberArenaStats s = { 0 };
-    if (_t_arena.base) {
-        s.virtual_reserved = _t_arena.virtual_size;
-        s.slot_count       = _t_arena.slot_count;
-        s.slots_active     = _t_arena.slots_active;
-        s.high_water       = _t_arena.high_water;
+    if (_t_arena && _t_arena->base) {
+        s.virtual_reserved = _t_arena->virtual_size;
+        s.slot_count       = _t_arena->slot_count;
+        s.slots_active     = __atomic_load_n(&_t_arena->slots_active,
+                                              __ATOMIC_RELAXED);
+        s.high_water       = _t_arena->high_water;
     }
     return s;
 }

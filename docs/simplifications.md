@@ -11792,10 +11792,13 @@ Plan 83.2 §4 «Compiled-программа без единого `runtime.*` в
 - **Приоритет:** P2 — correctness landed; perf optimization for
   production readiness. Не блокер для Plan 83 main milestone.
 
-### [M-82-linux-arena-dealloc] Plan 82 fiber arena — `fiber_dealloc ptr outside arena` warnings на Linux (2026-05-24)
+### [M-82-linux-arena-dealloc] Plan 82 fiber arena — `fiber_dealloc ptr outside arena` warnings на Linux (2026-05-24) — ✅ FIXED 2026-05-26 (Plan 82.2)
 
-> **Plan 82.1 investigation DELIVERED 2026-05-26** — root cause confirmed;
-> V2 fix outline → Plan 82.2.
+> **Plan 82.1 investigation DELIVERED 2026-05-26** — root cause confirmed.
+> **Plan 82.2 V1 IMPLEMENTED 2026-05-26** — POSIX global arena registry
+> + address-based cross-thread dealloc dispatch (`fiber_arena.c` full
+> rewrite). Linux runtime verification отложена (нет Linux env); Windows
+> regression clean.
 
 - **Где:** `compiler-codegen/nova_rt/fiber_arena.c` (POSIX mmap path),
   `compiler-codegen/nova_rt/runtime.c` (_worker_main + spawn_global paths).
