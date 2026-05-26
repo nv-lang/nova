@@ -1486,6 +1486,110 @@ export external fn Lazy[T] @is_forced() -> bool
 // === END PLAN-103.4 COUNTDOWNLATCH ===
 
 // === PLAN-103.4 SEMAPHORE (Agent A) ===
-// (declarations…)
+
+/// Fiber-aware counting semaphore. Bounded permits (M11).
+/// Fair FIFO waiter queue (Plan 103.3 M6 consistency).
+///
+/// # Use case
+/// - Connection pool capacity (Semaphore.new(max_connections))
+/// - Rate limiting (N concurrent requests)
+/// - Resource pool (parallel workers, bounded)
+///
+/// # Over-release (D170 §2)
+/// `release()` without a prior `acquire()` increments permits past the
+/// initial count (Java-compatible semantics).
+///
+/// # Batch API
+/// `acquire_n(n)` / `release_n(n)` for batch acquire/release of n permits
+/// atomically. FIFO fairness: if head waiter needs k > available permits,
+/// later waiters are NOT skipped (prevents large-acquire starvation).
+///
+/// # M15 V1 pattern: `with_permit { }` — preferred API
+/// Acquires, runs body, releases via `defer`. Panic-safe.
+/// V2 (Plan 103.9): wraps `Permit consume` guard.
+///
+/// # See Also
+///
+/// - `[Mutex]` — mutual exclusion (binary semaphore with ownership)
+/// - `[WaitGroup]` — count-down rendezvous
+#stable(since = "0.1")
+export external fn Semaphore.new(permits int) -> Self
+
+/// Acquire 1 permit. Parks until a permit becomes available (FIFO order).
+///
+/// # Realtime
+/// Forbidden inside `realtime { }` — may park the fiber.
+#stable(since = "0.1")
+export external fn Semaphore mut @acquire()
+
+/// Release 1 permit. Increments permit count; wakes one FIFO waiter if queued.
+///
+/// Over-release (release without prior acquire) increments permits past initial
+/// (D170 §2 — Java semantics, V1).
+#stable(since = "0.1")
+export external fn Semaphore mut @release()
+
+/// Try to acquire 1 permit without parking. Returns `true` if acquired.
+///
+/// Only succeeds if permits > 0 AND no waiters are queued (FIFO fairness).
+#stable(since = "0.1")
+export external fn Semaphore mut @try_acquire() -> bool
+
+/// Try to acquire 1 permit within `timeout`. Returns `true` if acquired.
+///
+/// Returns `false` if the timeout expires before a permit becomes available.
+/// `timeout <= Duration.zero` behaves as `try_acquire()`.
+///
+/// # Realtime
+/// Forbidden inside `realtime { }` — may park the fiber.
+#stable(since = "0.1")
+export external fn Semaphore mut @try_acquire_for(timeout Duration) -> bool
+
+/// Best-effort query of available permit count. NOT for synchronization.
+///
+/// The value may be stale by the time the caller uses it.
+/// Use for observability (metrics, debugging) only.
+#stable(since = "0.1")
+export external fn Semaphore @available_permits() -> int
+
+/// Acquire `n` permits atomically. Parks until `n` permits available (FIFO).
+///
+/// FIFO fairness: head-of-queue waiter must be satisfiable before this call
+/// can proceed. Prevents starvation.
+///
+/// Panics: `n < 1` → runtime panic (unconditional).
+///
+/// # Realtime
+/// Forbidden inside `realtime { }` — may park the fiber.
+#stable(since = "0.1")
+export external fn Semaphore mut @acquire_n(n int)
+
+/// Release `n` permits atomically. Wakes FIFO waiters that can now be satisfied.
+///
+/// Panics: `n < 1` → runtime panic (unconditional).
+#stable(since = "0.1")
+export external fn Semaphore mut @release_n(n int)
+
+/// PREFERRED PATTERN (M15 V1): acquire + body + automatic release via defer.
+///
+/// Panic-safe: `defer self.release()` runs even if body throws.
+/// V2 (Plan 103.9): becomes thin wrapper over `Permit consume` guard;
+/// user code does not change.
+///
+/// # Examples
+///
+/// ```nova
+/// let pool = Semaphore.new(5)
+/// pool.with_permit { ||
+///     do_work()
+/// }
+/// ```
+#stable(since = "0.1")
+export fn Semaphore mut @with_permit[R](body fn() -> R) -> R {
+    self.acquire()
+    defer self.release()
+    body()
+}
+
 // === END PLAN-103.4 SEMAPHORE ===
 
