@@ -1,15 +1,19 @@
 {
     "name": "nova-lang",
     "displayName": "Nova Language",
-    "description": "Syntax highlighting for the Nova programming language",
-    "version": "0.1.0",
+    "description": "Nova programming language support: syntax highlighting and LSP diagnostics",
+    "version": "0.2.0",
     "publisher": "nova-lang-local",
     "engines": {
-        "vscode": "^1.70.0"
+        "vscode": "^1.75.0"
     },
     "categories": [
         "Programming Languages"
     ],
+    "activationEvents": [
+        "onLanguage:nova"
+    ],
+    "main": "./out/client/extension",
     "contributes": {
         "languages": [
             {
@@ -30,6 +34,52 @@
                 "scopeName": "source.nova",
                 "path": "./syntaxes/nova.tmLanguage.json"
             }
-        ]
+        ],
+        "configuration": {
+            "title": "Nova",
+            "properties": {
+                "nova.lsp.path": {
+                    "type": [
+                        "string",
+                        "null"
+                    ],
+                    "default": null,
+                    "markdownDescription": "Path to the `nova-lsp` binary. If `null`, auto-detected from:\n1. User setting (this field)\n2. `PATH`\n3. Workspace `target/release/nova-lsp[.exe]`\n\nExample: `/home/user/.cargo/bin/nova-lsp`"
+                },
+                "nova.lsp.enabled": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Enable or disable the Nova LSP server. When disabled, only syntax highlighting is active."
+                },
+                "nova.lsp.trace.server": {
+                    "type": "string",
+                    "enum": [
+                        "off",
+                        "messages",
+                        "verbose"
+                    ],
+                    "default": "off",
+                    "description": "Traces the communication between VSCode and the Nova language server. For debugging."
+                }
+            }
+        }
+    },
+    "scripts": {
+        "compile": "tsc -p tsconfig.json",
+        "build": "npm run compile",
+        "watch": "tsc -watch -p tsconfig.json",
+        "pretest": "npm run compile",
+        "test": "node ./out/tests/runTests.js"
+    },
+    "dependencies": {
+        "vscode-languageclient": "^9.0.1"
+    },
+    "devDependencies": {
+        "@types/mocha": "^10.0.6",
+        "@types/node": "^20.14.0",
+        "@types/vscode": "^1.75.0",
+        "@vscode/test-electron": "^2.3.10",
+        "mocha": "^10.4.0",
+        "typescript": "^5.4.5"
     }
 }
