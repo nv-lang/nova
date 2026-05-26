@@ -291,7 +291,31 @@ static inline void nova_sched_park_until(NovaFiberQueue* scope, int slot,
 /* ─── Cancel-integration ──────────────────────────────────────── */
 
 /* Регистрация handle + stop_cb для cancel-wake. ОБЯЗАТЕЛЬНО перед park'ом
- * для cancel-correctness (D93 contract). Lazy-allocates sched_state. */
+ * для cancel-correctness (D93 contract). Lazy-allocates sched_state.
+ *
+ * Memory ordering (Plan 83.10.2 fix, iteration 2 — SEQ_CST):
+ *   SEQ_CST store on pending_stop_cb emits mfence/xchg on x86, flushing
+ *   Thread A's store buffer. This makes BOTH pending_handle (plain store
+ *   before the atomic) AND pending_stop_cb globally visible before
+ *   register_pending returns. The ACQUIRE-load in cancel_worker_fibers
+ *   then sees both fields correctly.
+ *
+ *   RELEASE was insufficient on x86: __ATOMIC_RELEASE compiles to a
+ *   plain store + compiler barrier (no mfence). Stores may remain in
+ *   Thread A's store buffer and not be visible to Thread B's ACQUIRE
+ *   load. This is NOT a happens-before violation in the C memory model —
+ *   if Thread B reads before Thread A's store is committed, the C model
+ *   says the behaviour is well-defined (Thread B simply sees the old
+ *   value). But that old value (NULL) causes the cancel to miss the
+ *   stop_cb.
+ *
+ *   Background: pending_stop_cb is written AFTER nova_scope_alloc_slot's
+ *   RELEASE store of count. The ACQUIRE on count in cancel_worker_fibers
+ *   only synchronises writes that precede the count RELEASE — not these
+ *   later writes. Without SEQ_CST on pending_stop_cb the read in
+ *   cancel_worker_fibers can return NULL when stores are still in the
+ *   store buffer (classic "heisenbug" cured by fprintf's implicit
+ *   full-fence via stdio mutex → mfence). */
 static inline void nova_sched_register_pending(NovaFiberQueue* scope, int slot,
                                                 void* handle,
                                                 NovaSchedStopCb stop_cb) {
@@ -300,18 +324,29 @@ static inline void nova_sched_register_pending(NovaFiberQueue* scope, int slot,
     if (slot >= st->capacity) {
         nova_sched_grow_state(scope, slot + 1);
     }
+    /* Write handle BEFORE stop_cb with SEQ_CST so the mfence/xchg on x86
+     * flushes Thread A's store buffer, making pending_handle AND pending_stop_cb
+     * globally visible before register_pending returns. RELEASE was insufficient
+     * on x86 (compiler-only barrier, no mfence — store stays in store buffer).
+     * The ACQUIRE-load in cancel_worker_fibers then correctly sees both fields.
+     * Plan 83.10.2 fix iteration 2. */
     st->pending_handle[slot] = handle;
-    st->pending_stop_cb[slot] = stop_cb;
+    __atomic_store(&st->pending_stop_cb[slot], &stop_cb, __ATOMIC_SEQ_CST);
 }
 
 /* Снять регистрацию. Должно вызываться ПОСЛЕ wake (любой — normal либо
- * cancel), перед cancel-check. Idempotent. */
+ * cancel), перед cancel-check. Idempotent.
+ *
+ * Memory ordering: RELEASE-clear of stop_cb ensures a concurrent
+ * cancel_worker_fibers reading ACQUIRE sees NULL and skips this slot,
+ * preventing a stale call after the fiber has already resumed. */
 static inline void nova_sched_unregister_pending(NovaFiberQueue* scope, int slot) {
     if (!scope || slot < 0) return;
     NovaSchedState* st = nova_sched_find_state(scope);
     if (st && slot < st->capacity) {
+        NovaSchedStopCb _null_cb = NULL;
+        __atomic_store(&st->pending_stop_cb[slot], &_null_cb, __ATOMIC_RELEASE);
         st->pending_handle[slot] = NULL;
-        st->pending_stop_cb[slot] = NULL;
     }
 }
 
@@ -388,8 +423,11 @@ static inline void nova_sched_cancel_all_pending(NovaFiberQueue* scope) {
      * не park'ался). */
     int n = scope->count < st->capacity ? scope->count : st->capacity;
     for (int i = 0; i < n; i++) {
-        if (st->pending_stop_cb[i] && st->pending_handle[i]) {
-            NovaStopMode mode = st->pending_stop_cb[i](st->pending_handle[i]);
+        NovaSchedStopCb _cb;
+        __atomic_load(&st->pending_stop_cb[i], &_cb, __ATOMIC_ACQUIRE);
+        void* _hdl = st->pending_handle[i];  /* visible after ACQUIRE on _cb */
+        if (_cb && _hdl) {
+            NovaStopMode mode = _cb(_hdl);
             if (mode == NOVA_STOP_SYNC) {
                 /* SYNC: unpark immediate + dispatch_ready re-queue в worker
                  * deque (если scope под M:N). Plan 83.4.5.1 fix: до этого

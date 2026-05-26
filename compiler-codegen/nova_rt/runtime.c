@@ -1533,6 +1533,67 @@ static void _worker_run_one_fiber(NovaWorker* w, mco_coro* co) {
     }
 }
 
+/* ── Plan 83.10.2 (2026-05-26): nova_runtime_cancel_worker_fibers ───
+ *
+ * Under armed M:N, fiber preamble sets _nova_active_scope = &w->scope
+ * (worker scope). Timer/channel stop_cbs are registered in &w->scope's
+ * sched_state. The supervised cancel-token is bound to the supervised
+ * scope. When tok.cancel() fires, nova_sched_cancel_all_pending(supervised_
+ * scope) finds nothing because stop_cbs live in worker scopes.
+ *
+ * This function walks all worker scopes and cancels slots where the
+ * fiber's _nova_parent_scope == target_scope. Stop_cb uses nova_loop_
+ * defer_close (Plan 83.10.2 Ф.3) so the dispatch is always on the
+ * owning loop's thread — safe for cross-thread cancel.
+ *
+ * Memory ordering (Plan 83.10.2 fix):
+ *   pending_stop_cb is written via RELEASE store in nova_sched_register_pending.
+ *   We must read it via ACQUIRE load so that if we observe a non-NULL value,
+ *   we are guaranteed to also see the pending_handle write that preceded the
+ *   RELEASE store. Without this, the compiler + CPU (on ARM in particular,
+ *   but also theoretically on x86 with compiler reordering) could observe
+ *   pending_stop_cb=NULL even after the fiber completed register_pending,
+ *   causing cancel_worker_fibers to miss the fiber → permanent park → TIMEOUT.
+ *   This is the root cause of the heisenbug where fprintf "fixed" the hang
+ *   (fprintf's stdio lock is a full memory fence). */
+void nova_runtime_cancel_worker_fibers(struct NovaFiberQueue* target_scope) {
+    /* Cast from `struct NovaFiberQueue*` (forward-declared in runtime.h) to
+     * `NovaFiberQueue*` (anonymous typedef from fibers.h) for sched helpers. */
+    NovaFiberQueue* tscope = (NovaFiberQueue*)target_scope;
+    if (!tscope || !_materialized) return;
+    for (int i = 0; i < _n_workers; i++) {
+        NovaWorker* w = &_workers[i];
+        NovaSchedState* st = nova_sched_find_state(&w->scope);
+        /* ACQUIRE-load on count pairs with the RELEASE-store in
+         * nova_scope_alloc_slot, ensuring we see fibers[slot]=co when
+         * we observe count=slot+1. */
+        int wcount = (int)__atomic_load_n(&w->scope.count, __ATOMIC_ACQUIRE);
+        if (!st) continue;
+        int n = wcount < st->capacity ? wcount : st->capacity;
+        for (int j = 0; j < n; j++) {
+            mco_coro* co = (j < wcount) ? w->scope.fibers[j] : NULL;
+            NovaSpawnCtxBase* base = co ? (NovaSpawnCtxBase*)mco_get_user_data(co) : NULL;
+            if (!co || mco_status(co) == MCO_DEAD) continue;
+            if (!base || base->_nova_parent_scope != tscope) continue;
+            /* ACQUIRE-load: pairs with RELEASE store in register_pending.
+             * Guarantees visibility of pending_handle when stop_cb != NULL. */
+            NovaSchedStopCb cb;
+            __atomic_load(&st->pending_stop_cb[j], &cb, __ATOMIC_ACQUIRE);
+            void* hdl = st->pending_handle[j];  /* visible after ACQUIRE on cb */
+            if (cb && hdl) {
+                /* ASYNC stop_cb: initiates cross-thread safe uv_close via
+                 * nova_loop_defer_close; close_cb wakes fiber afterward. */
+                cb(hdl);
+            } else if (j < st->capacity && st->parked[j]) {
+                /* Bare park (no registered stop_cb): direct dispatch_ready. */
+                nova_sched_wake(&w->scope, j);
+            }
+            /* else: fiber not yet parked; FIX 2b in _nova_sleep_via_libuv
+             * will self-initiate close after register_pending completes. */
+        }
+    }
+}
+
 /* Plan 83.10.3 (2026-05-26): pump current worker's runnext+deque for a
  * fiber belonging to scope q. Called from nova_supervised_run_impl when
  * alive==0 && pending_remote>0 on a worker thread (nested supervised case).
@@ -1632,6 +1693,10 @@ int nova_loop_defer_close(uv_loop_t* loop,
     if (!q || !wake) {
         /* Unknown loop — caller bug. Fall back to direct close as last resort
          * (best-effort; may be UB if cross-thread, but better than assert). */
+        fprintf(stderr,
+            "nova: nova_loop_defer_close: unknown loop %p (caller bug) "
+            "— falling back to direct uv_close (may be cross-thread UB)\n",
+            (void*)loop);
         uv_close(handle, close_cb);
         return -1;
     }
