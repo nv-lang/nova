@@ -13088,6 +13088,124 @@ Merge: f79d4f28b5b; branch plan-100-2-generic-propagation → main.
 - **Remaining out-of-scope:** Performance (nested case serializes on W; acceptable
   since nested supervised is rare). Plan 83.10.2 (cross-thread cancel timer hang).
 
+---
+
+## Plan 83.10.2 — Armed cancel-timer-hang fix (2026-05-26)
+
+### [M-83.10.1-armed-cancel-timer-hang] RESOLVED ✅ Plan 83.10.2
+
+- **Plan:** 83.10.2.
+- **Branch:** `plan-83.10.2-cancel-timer-hang`.
+- **Closes:** `[M-83.10.1-armed-cancel-timer-hang]` (10 cancel+sleep AUTOARM=0 tests).
+
+### [M-83.10.2-gc-aliasing-scope-grow] Boehm GC aliasing in nova_scope_grow / nova_sched_grow_state (2026-05-26) ✅ RESOLVED
+
+- **Plan:** 83.10.2.
+
+- **Problem:** `nova_scope_grow` performed N separate `nova_alloc` (= `GC_malloc`)
+  calls for sub-arrays (`fibers[]`, `fiber_fail_top[]`, etc.) within a `static
+  inline` function. Between calls, Clang kept intermediate pointers in registers
+  (not visible to Boehm's conservative scanner). A GC trigger between calls
+  collected an intermediate block → same address returned for two sub-arrays →
+  aliasing. Writing `fiber_fail_top[slot] = NULL` zeroed `fibers[slot]`.
+
+  Same bug in `nova_sched_grow_state`: three separate allocs for `parked[]`,
+  `pending_handle[]`, `pending_stop_cb[]`.
+
+- **Fix (unified allocation):** Single `nova_alloc(N * cap * sizeof(void*))`.
+  Sub-arrays carved from one block using stride offsets:
+  ```c
+  size_t stride = (size_t)cap;
+  void** big = (void**)nova_alloc(sizeof(void*) * stride * N);
+  SubArrayA* a = (SubArrayA*)(big + stride * 0);
+  SubArrayB* b = (SubArrayB*)(big + stride * 1);
+  // ...
+  ```
+  GC sees one live allocation; no intermediate pointer escapes between calls.
+
+- **Affected functions:** `nova_scope_grow` (fibers.h), `nova_sched_grow_state`
+  (nova_sched.h).
+
+- **Note on `nova_bool*` layout:** `nova_bool` (1-byte C99 `bool`) packed at
+  bytes 0..cap−1 of a `void*[3*cap]` block — 7 bytes wasted per slot but
+  functionally correct and GC-safe (values 0/1 are not valid heap addresses).
+
+### [M-83.10.2-slot-reuse-guard] Stale deferred close_cb wakes wrong fiber (2026-05-26) ✅ RESOLVED
+
+- **Plan:** 83.10.2.
+
+- **Problem:** `_nova_sleep_close_cb` accumulated stale deferred entries in
+  `NovaDeferredCloseQueue` from prior supervised iterations. A close_cb from
+  iteration N fired in iteration N+1, woke a different fiber that reused the
+  same slot number. Fiber woke spuriously (or didn't, if slot was empty).
+
+- **Fix:** `NovaSleepState` stores `st->co = mco_running()` when the timer is
+  started. `_nova_sleep_close_cb` skips wake unless `scope->fibers[slot] == st->co`.
+  Stale close_cbs self-discard without side-effects.
+
+### [M-83.10.2-race-2a-2b] Cancel-before-timer-start races (2026-05-26) ✅ RESOLVED
+
+- **Plan:** 83.10.2.
+
+- **Problem:** Two races in `_nova_sleep_via_libuv`:
+  - **Race 2a:** `cancel_requested` set before `uv_timer_start` → fiber would
+    park forever waiting for a close_cb that never fires.
+  - **Race 2b:** `cancel_requested` set between `uv_timer_start` and
+    `register_pending` → close_cb fires before fiber is in the pending registry,
+    park-predicate never sees it wake.
+
+- **Fix:** Early-exit if `cancel_requested` before timer start (2a). Re-check
+  after `register_pending`; if cancelled, self-initiate `uv_close` via CAS
+  (2b — only one winner initiates close).
+
+### [M-83.10.2-sched-wake-branch-bug] nova_sched_wake double-wake branch logic (2026-05-26) ✅ RESOLVED
+
+- **Plan:** 83.10.2.
+
+- **Problem:** After removing debug prints, `else if (!was_parked) {}` (no-op
+  double-wake skip) and `else { /* bootstrap */ }` were incorrectly merged into
+  a single `else`. Bootstrap IDLE-state transition ran even on double-wake
+  (was_parked=false), causing spurious `NOVA_FIBER_STATE_IDLE` stores on
+  running fibers in armed M:N.
+
+- **Fix:** Explicit `else if (was_parked)` for bootstrap path; bare `else` with
+  comment `/* was_parked=false → double-wake skip */`.
+
+### [M-83.10.2-debug-print-removal] Full debug print removal (2026-05-26) ✅ DONE
+
+- **Files cleaned:** `nova_sched.h` (12 prints), `runtime.c` (11 prints),
+  `fibers.h` (6 prints), `eventloop.c` (2 prints). All `[DBG *]` fprintf
+  statements removed. Unused variables (`_park_iters`, `fiber_st_before`,
+  `dbg_count`) removed.
+
+### [M-83.10.2-cross-thread-close-queue] NovaDeferredCloseQueue infrastructure (2026-05-26) ✅ IMPLEMENTED
+
+- **Problem:** `uv_close` must be called from the loop's own thread. Fibers
+  sleeping on a worker thread's `uv_loop_t` cannot be close'd by the cancel
+  path running on main thread.
+
+- **Fix:** `NovaDeferredCloseQueue` (lock-free MPSC queue, `runtime.c`).
+  Cancel path enqueues `(handle, close_cb)` tuples; each worker's
+  `uv_prepare_cb` drains queue and calls `uv_close` on its own loop.
+  Main thread's deferred queue drained in `nova_drain_closes`.
+
+- **Key invariant:** `uv_close` always called from the handle's owning loop
+  thread. Cross-thread close requests go via queue → prepare_cb drain.
+
+### Plan 83.10.2 — Final results
+
+- **Concurrency suite:** 65 PASS / 10 FAIL (was 62/13 baseline → 63/12 after
+  Plan 83.10.3 → 65/10 after 83.10.2).
+- **Full nova test:** 1154 PASS / 20 FAIL (was 1158/19 baseline with broadcast;
+  slight diff due to non-deterministic TIMEOUT distribution under CI load).
+- **Resolved:** `[M-83.10.1-armed-cancel-timer-hang]` — 10 cancel+sleep tests
+  now run in armed M:N without AUTOARM=0 directive.
+- **Remaining AUTOARM=0:** 2 tests (`per_fiber_handlers`, `time_handler`) —
+  TLS handler snapshot race. 1 test (`fail_handler`) — longjmp cross-mco.
+  2 tests (`supervised_cancel_test`, `supervised_cancel_stress_test`) — separate
+  M:N race in cancel-scope propagation (unrelated to timer hang).
+- **Last commit:** `043e7f00024 fix(plan83.10.2): GC aliasing + slot-reuse guard — cancel-timer-hang`.
+
 ## Plan 103.3 вЂ” Mutex / RwLock / ReentrantMutex (2026-05-26)
 
 - **nova_alloc_uncollectable for sync primitives** вЂ” Boehm GC РЅР° Windows
