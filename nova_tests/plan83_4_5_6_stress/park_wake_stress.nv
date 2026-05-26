@@ -1,11 +1,14 @@
 // Plan 83.4.5.6 Ф.5 (2026-05-24): park/wake stress harness.
 //
-// Directive `// ENV NOVA_AUTOARM=0` — armed M:N supervised drain после
+// `// ENV NOVA_AUTOARM=0` — armed M:N supervised drain после
 // park/wake exhibits timing issues при N>20 fibers (likely close_cb
 // scheduling backlog). Followup Plan 83.4.5.10. Cooperative validates
 // park/wake correctness — atomic state machine fully exercised because
 // nova_sched_park / nova_sched_wake idempotent contract применяется в
 // обоих режимах (атомарность не зависит от armed).
+// Plan 83.10.1 (2026-05-26): STILL NEEDED — TIMEOUT armed M:N.
+// 1000 fibers × Time.sleep stalls under multi-worker armed scheduler.
+// Root cause: [M-83.10.1-armed-cancel-timer-hang] (1000 uv_timer close paths).
 // ENV NOVA_AUTOARM=0
 //
 // Acceptance per Plan 83.4.5.7 §6.4: 10⁵ park/wake без leak/crash/

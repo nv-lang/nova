@@ -1,11 +1,14 @@
 // Plan 83.4.5.6 Ф.5 (2026-05-24): supervised cancel stress harness.
 //
-// Directive `// ENV NOVA_AUTOARM=0` — cancel-during-sleep под armed
+// `// ENV NOVA_AUTOARM=0` — cancel-during-sleep под armed
 // M:N exhibits ~50-500ms overhead per iteration (close_cb scheduling
 // + cancel_wake_all через cross-thread dispatch_ready). Followup
 // Plan 83.4.5.10 performance work. Cooperative validates cancel
 // correctness — same cancel-flow code path в обоих режимах (Plan
 // 83.4.5.1 cancel_wake_all + Plan 83.4.5.7 atomic state machine).
+// Plan 83.10.1 (2026-05-26): STILL NEEDED — RUN-FAIL armed: "10 supervised
+// cancel с sleep" fails. cancel-during-sleep hangs under armed M:N.
+// Root cause: [M-83.10.1-armed-cancel-timer-hang].
 // ENV NOVA_AUTOARM=0
 //
 // Acceptance per Plan 83.4.5.7 §6.4: 10⁴ supervised cancel без

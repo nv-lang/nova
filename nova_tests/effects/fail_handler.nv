@@ -19,7 +19,10 @@
 //
 // Plan 83.4.5.8 (2026-05-24): directive RESTORED — test inherently
 // cooperative-dependent (ordering / handler-scoping / timing semantics).
-// Armed M:N changes execution model. Followup: rewrite under M:N semantics.
+// Plan 83.10.1 (2026-05-26): STILL NEEDED — RUN-FAIL armed: "with Fail handler
+// ловит throw из supervised (cross-mco-boundary interrupt)" fails. Armed M:N:
+// longjmp cross-mco-boundary can't reach handler frame on different worker's stack.
+// Reason: [M-83.10.1-fail-handler-cross-mco-longjmp].
 // ENV NOVA_AUTOARM=0
 
 module effects.fail_handler

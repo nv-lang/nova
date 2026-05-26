@@ -23,6 +23,11 @@
 // Cross-runtime: tokio `current_thread` runtime — closest equivalent
 // (single-thread cooperative); Node всегда cooperative single-thread.
 //
+// Plan 83.10.1 (2026-05-26): STILL NEEDED — RUN-FAIL under armed M:N.
+// Tests encode exact interleaving order (log == 1234675, 123456, etc.)
+// which requires cooperative single-thread scheduling. Armed M:N workers
+// steal fibers before main's sleep(0) can drive them, breaking log order.
+// Reason: semantically cooperative — would require rewrite for M:N semantics.
 // ENV NOVA_AUTOARM=0
 
 module concurrency.main_yield

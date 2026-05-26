@@ -10,16 +10,13 @@
 //     отмену (Go errgroup теряет — у нас не теряется).
 //   - `with Fail` не вызывает handler на CANCEL-throw, пробрасывает дальше.
 //
-// Plan 83.4.5.1 (2026-05-23): added `// ENV NOVA_NO_AUTOARM=1` directive
-// — тесты cancel-семантики проверяют **cooperative cancel propagation**
-// в bound scope; под armed multi-worker race на supervised double-resume
-// (Plan 83.4.2 Ф.1 corner case) ломает test infrastructure. Cooperative
-// drain — same scope, same cancel-flow, deterministic.
-//
-// Plan 83.4.5.8 (2026-05-24): directive RESTORED — test inherently
-// cooperative-dependent (ordering / handler-scoping / timing semantics).
-// Armed M:N changes execution model. Followup: rewrite under M:N semantics.
-// ENV NOVA_AUTOARM=0
+// Plan 83.4.5.1 (2026-05-23): added cooperative directive — cancel-semantics
+// tests check cooperative cancel propagation in bound scope.
+// Plan 83.4.5.8 (2026-05-24): directive was restored.
+// Plan 83.10.1 (2026-05-26): directive OBSOLETE — 3/3 runs PASS under
+// armed M:N default after Plan 83.10 fix [M-83.10-armed-user-throw-routing].
+// (test runs under armed M:N default — Plan 83.10 fix)
+
 
 module concurrency.cancel_semantics_test
 

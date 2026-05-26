@@ -1,0 +1,37 @@
+// Plan 83.10.3 (2026-05-26): nested supervised normal completion under armed M:N.
+//
+// Tests that nested supervised { spawn { supervised { spawn { ... } } } }
+// completes correctly without TIMEOUT when cooperative resume is active.
+// All fibers run and accumulate into total via spawn captures.
+
+module plan83_10_3.nested_supervised_normal_completion
+
+test "nested supervised completes without errors" {
+    let mut total = 0
+    supervised {
+        spawn {
+            supervised {
+                spawn { total += 1 }
+                spawn { total += 2 }
+            }
+            total += 4
+        }
+    }
+    assert(total == 7)
+}
+
+test "nested supervised double-level completion" {
+    let mut count = 0
+    supervised {
+        spawn {
+            supervised {
+                spawn { count += 1 }
+            }
+            supervised {
+                spawn { count += 10 }
+            }
+            count += 100
+        }
+    }
+    assert(count == 111)
+}
