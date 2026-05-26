@@ -12700,3 +12700,66 @@ Merge: f79d4f28b5b; branch plan-100-2-generic-propagation → main.
 - **Как чинить:** Расширить nova_codegen::Diagnostic: добавить DiagLevel enum
   (Error/Warning/Info) + tags. Пробросить через lints.rs.
 - **Приоритет:** M
+
+## [M-103-lazy-parallel-windows-crash] Plan 103.5 — Lazy.force() + parallel for crash on Windows (2026-05-26)
+
+- **Где:** `nova_tests/plan103_5/lazy_no_double_init_prop.nv` (workaround
+  sequential); discovered при impl Plan 103.5 (merge `c7f9bca1026`).
+- **Что происходит:** `parallel for` + `Lazy.force()` как первая/единственная
+  операция в test → "fiber stack overflow in slot 0" (VEH-detected crash
+  на Windows). Работает fine после scheduler warm-up.
+- **Воспроизведение:** undiagnosed. Likely связано с fiber-arena slot 0
+  initialization при первом spawn'е через Lazy. Plan 82 (Windows fiber
+  arena) + Plan 83.5/83.6 (per-worker pools) — релевантный контекст.
+- **Workaround:** sequential `for 0..100` вместо parallel; concurrent
+  coverage обеспечивается `once_stress_mn_4workers.nv` (16 fibers × 100
+  force(), PASS).
+- **Как чинить:** spike investigation + minimal repro outside testing
+  framework → fix в fiber_arena_win.c slot 0 init или spawn-через-Lazy
+  pattern → re-enable parallel variant.
+- **Приоритет:** P3 (workaround стабилен; не блокер 0.1; concurrent
+  coverage альтернативой stress-теста).
+- **Related:** Plan 82, Plan 83.5/83.6, Plan 103.5.
+
+## [M-103-conditional-sync-assert] Plan 103 — NOVA_SYNC_ASSERT no-op в Dev — нужен unconditional pattern (2026-05-26)
+
+- **Где:** `compiler-codegen/nova_rt/sync_primitives.h:43-53` —
+  `NOVA_SYNC_ASSERT` под `#ifdef NOVA_DEBUG`, no-op в Dev mode.
+- **Что происходит:** Misuse sync API (double unlock, count underflow,
+  invalid state transition) → silent no-op в Dev → undefined behavior.
+  Только в Release с NOVA_DEBUG strict-assertions trigger abort.
+- **Известные affected sites (pre-103.5):**
+  - `Nova_Mutex_method_unlock` (line 236): `NOVA_SYNC_ASSERT(m->locked, ...)`.
+  - `Nova_WaitGroup_method_done` (line 298): `NOVA_SYNC_ASSERT(wg->count > 0, ...)`.
+  - `Nova_Once_method_done` (line 447) — **уже исправлено в 103.5** через
+    unconditional `Nova_Fail_fail + nova_throw`.
+- **Что чинить:** заменить debug-only `NOVA_SYNC_ASSERT` на unconditional
+  throw для всех runtime invariants в sync primitives. Pattern из 103.5
+  Once.done.
+- **Когда чинить:** в Plan 103.3 (Mutex) и Plan 103.4 (Coordination)
+  — explicitly added в plan-doc как acceptance criterion.
+- **Приоритет:** P1 (silent UB risk; affects production reliability).
+- **Related:** Plan 103.5 (discovery), Plan 103.3, Plan 103.4.
+
+## [M-simplifications-mojibake-cp1251] simplifications.md — cyrillic mojibake от cp1251 misencoding (2026-05-26)
+
+- **Где:** `docs/simplifications.md` lines 10443+ (Plan 62.A.bis section
+  и далее) — повсеместный mojibake вида "вЂ" / "Р " / "РЎРЇ" вместо
+  русских букв и em-dash.
+- **Что происходит:** один из агентов (или editor session) сохранил
+  cyrillic UTF-8 byte sequences интерпретируя их как cp1251, потом
+  re-encoded в UTF-8 → double-encoding mojibake.
+- **Affected:** примерно строки 10443-12200 (Plan 62.A.bis, 100.x,
+  103.5 sections). Свежие entries после строки 12200 (103.2, новые
+  103.5, 103-conditional-sync-assert markers) — корректный UTF-8.
+- **Как чинить:**
+  1. Backup file.
+  2. Reverse: UTF-8 bytes → cp1251 string → UTF-8 string.
+  3. Spot-check на нескольких known-broken lines.
+  4. Verify file опен без markers/regressions.
+  5. Может потребоваться `iconv` или Python script с `.encode('cp1251').decode('utf-8')`.
+- **Workaround:** content читаемый при mental cp1251 reversal; grep
+  для technical markers ([M-...]) работает (ASCII).
+- **Приоритет:** P2 (readability вред, но technical content intact;
+  grep functional). Не блокер.
+- **Related:** общая project hygiene, не sync-specific.

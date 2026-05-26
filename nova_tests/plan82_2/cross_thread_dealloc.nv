@@ -1,0 +1,43 @@
+// Plan 82.2: cross-thread dealloc fix — minimal regression guard.
+//
+// Тестирует POSIX fiber_arena cross-thread dealloc routing под M:N armed-
+// default runtime. До Plan 82.2: nova_runtime_spawn_global вызывал
+// mco_create на main thread'е (slot из main's TLS arena), но fiber
+// push'ился в worker'а → mco_destroy на worker'е → nova_fiber_dealloc
+// проверял worker's TLS arena → ptr принадлежит main's arena →
+// "fiber_dealloc ptr outside arena" warning + slot leak.
+//
+// Fix Plan 82.2: heap-allocated arena в глобальном append-only списке +
+// address-based dispatch (_nova_find_arena_for). Port Windows
+// fiber_arena_win.c mechanism на POSIX путь.
+//
+// На Windows: fiber_arena_win.c уже имел этот механизм с Plan 82
+// (2026-05-22) — этот тест на Windows = regression check.
+// На Linux: validates Plan 82.2 fix (исходный warning bug repro).
+//
+// Минимальный fixture: 1 test, lightweight, чтобы fit в default timeout.
+// Stress-side coverage — empirically через `bench/m_n/parallel_speedup.nv`
+// (см. Plan 82.2 §7 Linux Docker verification).
+
+module plan82_2.cross_thread_dealloc
+
+test "10 fibers cross-thread spawn/dealloc cycle completes correctly" {
+    // Spawn 10 fibers из main supervised scope — под armed M:N (default)
+    // каждый spawn идёт через nova_runtime_spawn_global → mco_create
+    // на main thread, push в worker deque → mco_destroy на worker.
+    // Cross-thread dealloc path exercised. Если slot leak'ался бы или
+    // dealloc skip'нул bitmap clear — eventual exhaustion, но на 10
+    // fibers симптом косвенный: тест просто должен завершиться без
+    // зависания/abort'а и mut-аккумуляция должна совпасть.
+    let mut total = 0
+    supervised {
+        let mut i = 1
+        while i <= 10 {
+            let cur = i
+            spawn { total += cur }
+            i += 1
+        }
+    }
+    // 1+2+...+10 = 55
+    assert(total == 55)
+}
