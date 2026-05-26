@@ -8,8 +8,10 @@
 // resolved для simple case. Этот nested case (supervised внутри spawn
 // внутри supervised) hangs/timeouts под armed M:N — separate gap
 // [M-83.10-nested-armed-routing] V2 followup.
-//
-// ENV NOVA_AUTOARM=0
+// Plan 83.10.1 (2026-05-26): CONFIRMED STILL NEEDED — TIMEOUT armed M:N.
+// Nested supervised throw routing not fixed by Plan 83.10 patch.
+// Plan 83.10.3 (2026-05-26): FIX — cooperative resume on worker thread.
+// NOVA_AUTOARM=0 directive removed; passes armed after nested cooperative resume.
 
 module plan83_10.panic_in_nested_supervised
 

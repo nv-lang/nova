@@ -2,12 +2,12 @@
 // handler-snapshot capture. Each fiber видит свои `with Time = h`
 // bindings, не peer's handlers.
 //
-// ENV NOVA_AUTOARM=0
-// Plan 83.10: handler-scoping inherently cooperative-dependent (per-
-// fiber TLS snapshot restored at supervised_step).
-//
-// Parallel к concurrency/per_fiber_handlers.nv (existing positive test).
-// Plan 83.10 closure — explicit Plan 83.4.5.4 validation.
+// Plan 83.10.1 (2026-05-26): directive OBSOLETE — 3/3 runs PASS under
+// armed M:N. Plan 83.10 fix [M-83.10-armed-user-throw-routing] + TLS
+// snapshot isolation via spawn-time capture work correctly under M:N.
+// Note: concurrency/per_fiber_handlers.nv still needs directive (more complex
+// handler interaction scenarios).
+// (test runs under armed M:N default — Plan 83.10 fix)
 
 module plan83_10.handler_isolation_per_fiber
 

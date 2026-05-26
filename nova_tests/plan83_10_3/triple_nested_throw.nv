@@ -1,0 +1,46 @@
+// Plan 83.10.3 (2026-05-26): triple-level nested supervised throw under armed M:N.
+//
+// Tests 3-level deep nested supervised scopes with throw propagation.
+// Verifies cooperative resume works at each nesting depth.
+
+module plan83_10_3.triple_nested_throw
+
+test "triple nested throw — outermost handler catches" {
+    let mut caught = false
+    let _ = with Fail[int] = |e| {
+        caught = true
+        0
+    } {
+        supervised {
+            spawn {
+                supervised {
+                    spawn {
+                        supervised {
+                            spawn { throw 42 }
+                        }
+                    }
+                }
+            }
+        }
+        0
+    }
+    assert(caught)
+}
+
+test "triple nested — normal completion all levels" {
+    let mut depth = 0
+    supervised {
+        spawn {
+            depth += 1
+            supervised {
+                spawn {
+                    depth += 1
+                    supervised {
+                        spawn { depth += 1 }
+                    }
+                }
+            }
+        }
+    }
+    assert(depth == 3)
+}

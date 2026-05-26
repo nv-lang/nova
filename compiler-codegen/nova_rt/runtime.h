@@ -167,6 +167,14 @@ int  nova_runtime_maxprocs(void);
 int  nova_runtime_current_worker_id(void);  /* -1 если main thread */
 bool nova_runtime_is_initialized(void);
 
+/* Plan 83.10.3 (2026-05-26): cooperative deque pump for nested supervised.
+ * When a worker is inside nova_supervised_run_impl(scope), it cannot return
+ * to _worker_main to drain its runnext/deque. This function services the
+ * worker's own deque/runnext for fibers belonging to scope, resuming them
+ * inline. If nothing found, blocks on UV_RUN_ONCE (woken by signal_main
+ * broadcast or timer). Called from nova_supervised_run_impl when on worker. */
+void nova_runtime_worker_pump_scope(struct NovaFiberQueue* scope);
+
 /* Plan 83.6 (2026-05-24): per-worker SpawnCtx free-list pool. Acquire
  * returns zero-initialized buffer (size либо class size — see runtime.c
  * impl), automatically setting `base->_nova_pool_size`. Release routes
