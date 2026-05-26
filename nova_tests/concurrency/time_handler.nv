@@ -15,7 +15,10 @@
 //
 // Plan 83.4.5.8 (2026-05-24): directive RESTORED — test inherently
 // cooperative-dependent (ordering / handler-scoping / timing semantics).
-// Armed M:N changes execution model. Followup: rewrite under M:N semantics.
+// Plan 83.10.1 (2026-05-26): STILL NEEDED — RUN-FAIL armed: Time handler TLS
+// state races with worker threads. with-Time-handler override in spawn context
+// reads wrong handler under multi-worker M:N. Same root cause as
+// [M-83.10.1-per-fiber-handler-tls-race].
 // ENV NOVA_AUTOARM=0
 
 module concurrency.time_handler
