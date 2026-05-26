@@ -7,9 +7,10 @@
 // pong cycles → runnext gets exercise displaced+restored.
 //
 // ALLOC_REQUIRES boehm
+// Plan 83.10.1 (2026-05-26): STILL NEEDED — RUN-FAIL armed M:N.
+// Channel ping-pong recv() under armed M:N races with worker thread;
+// channel routing has separate gaps (Plan 49 Ф.5 / armed channel delivery).
 // ENV NOVA_AUTOARM=0
-// Plan 83.7: channel ping-pong inherently cooperative-dependent; under
-// armed M:N current channel routing has separate gaps (Plan 49 Ф.5).
 
 module plan83_7.runnext_displaced_to_deque
 
