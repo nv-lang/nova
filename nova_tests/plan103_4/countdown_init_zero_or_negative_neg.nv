@@ -1,0 +1,13 @@
+// Plan 103.4 (Agent C) — CountDownLatch.new(0) panics.
+//
+// count must be > 0: a latch with initial count 0 would be permanently done
+// at construction with no way to count down — always a programmer error.
+//
+// EXPECT_RUNTIME_PANIC CountDownLatch.new: count must be > 0
+
+module nova_tests.plan103_4.countdown_init_zero_or_negative_neg
+
+test "CountDownLatch.new(0) panics with count must be > 0" {
+    // count=0 is invalid: latch would be trivially done at construction
+    let _ = CountDownLatch.new(0)
+}
