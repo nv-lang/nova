@@ -1,4 +1,4 @@
-#ifndef NOVA_RT_FIBERS_H
+﻿#ifndef NOVA_RT_FIBERS_H
 #define NOVA_RT_FIBERS_H
 
 /* ---- Nova fiber runtime — wraps minicoro ----
@@ -1467,8 +1467,8 @@ static inline void nova_supervised_run_impl(NovaFiberQueue* q,
              * q will never run → hang (pending_remote stays > 0 forever).
              * Fix: cooperatively drain the worker's own deque/runnext for
              * fibers belonging to q. For fibers on other workers,
-             * nova_runtime_signal_main now broadcasts to all workers so our
-             * UV_RUN_ONCE (inside pump) is woken when they complete. */
+             * pump_scope polls with UV_RUN_NOWAIT + uv_sleep(1) (1ms); no
+             * broadcast needed — outer loop re-checks pending_remote. */
             if (_nova_on_worker_thread()) {
                 nova_runtime_worker_pump_scope((struct NovaFiberQueue*)q);
             } else {
