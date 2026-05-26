@@ -82,7 +82,7 @@
 | D159 | 03-syntax.md | Async/suspend в cleanup body (Plan 100.4.2, ✅ закрыт 2026-05-26) — amend D90 §5; checker сняла suspend-call ban; spawn/parallel for/supervised/detach/blocking keep banned (E D159-spawn-in-defer); cancel-shielding runtime — [M-100.4.2-cancel-shielding] followup |
 | D160 | 03-syntax.md | `okdefer` + reason-aware `defer \|result\|` (Plan 100.4.3, proposed); complement к errdefer; mixed LIFO defer family |
 | D161 | 03-syntax.md | Multi-defer LIFO error accumulation + panic-in-defer composition (Plan 100.4.4, ✅ закрыт 2026-05-26) — amend D90 §«panic»; codegen per-defer NovaFailFrame wrap; LIFO continues после partial failure; no Rust double-panic-abort; closes [M-100.4.1-emit-defer-wrap] |
-| D162 | 03-syntax.md | Consume-integration final (Plan 100.4.5, proposed) — amend D90 §7; check_consume распознаёт defer/errdefer/okdefer cover; interrupt теперь триггерит errdefer |
+| D162 | 03-syntax.md | Consume-integration final (Plan 100.4.5, ✅ закрыт 2026-05-26 bootstrap MVP) — check_consume + d162_mark_defer_cover распознаёт defer/errdefer/okdefer cover; leverage Plan 100.8 D166; D90 §7 amend (interrupt → errdefer) — P2 BREAKING [M-100.4.5-d90-§7-interrupt-errdefer] followup |
 | D163 | 02-types.md | FFI consume integration — type-driven, без `external consume fn` keyword (Plan 100.5, proposed Ред. 2 2026-05-24). Унифицировано с regular fn: return-type carries consume-ness; `consume` keyword только на params/receivers (D131 semantic) |
 | D164 | 02-types.md | Cross-module consume — visibility, mangling-bit extension Plan 81 D134, package contracts (Plan 100.6, proposed) |
 | D165 | 09-tooling.md | Consume-types migration policy — `nova consume-migrate` CLI + edition versioning (Plan 100.7, proposed) |
