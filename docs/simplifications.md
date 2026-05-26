@@ -13228,3 +13228,22 @@ Merge: f79d4f28b5b; branch plan-100-2-generic-propagation → main.
 - **Writer-priority RwLock** вЂ” write_waiting С„Р»Р°Рі Р±Р»РѕРєРёСЂСѓРµС‚ РЅРѕРІС‹С… readers
   РїРѕРєР° РµСЃС‚СЊ РѕР¶РёРґР°СЋС‰РёР№ writer. РџСЂРµРґРѕС‚РІСЂР°С‰Р°РµС‚ writer starvation. Reader-priority
   вЂ” opt-in С‡РµСЂРµР· new_reader_priority().
+
+## Plan 103.4 (Agent C) — CountDownLatch (2026-05-27)
+
+- **include_str! compile-time embedding** — `sync.nv` вшивается в бинарник при
+  компиляции Rust-крейта. При добавлении новых объявлений в `sync.nv` в worktree
+  нужно пересобрать `nova-cli` из worktree (`cargo build` в `nova-p103-4-cdl/nova-cli/`).
+  Иначе ExternalRegistry не знает о новых типах → линкер не находит символы.
+
+- **if/else mixed return types** — паттерн `if i==0 { …; fetch_add(1) } else { count_down() }`
+  даёт CC-FAIL: ветки имеют типы `nova_int` и `nova_unit`. Кодген пытается
+  унифицировать к `nova_int`, затем кастит `nova_unit` к `nova_int` → ошибка C.
+  Фикс: два отдельных `if` без `else` — `if` без else всегда unit в Nova
+  независимо от типа тела.
+
+- **Saturating semantics** — `count_down()` при count==0 обязан быть no-op (не panic),
+  как Java CountDownLatch. `count_down_n(n)` при n<=0 или count==0 — no-op.
+  Обе функции check-and-return под mutex до любой модификации.
+
+- **Tests: 4/4 PASS.** Commit: cb146ba4be2. Branch: plan-103.4-cdl (NOT merged).
