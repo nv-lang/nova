@@ -1381,10 +1381,187 @@ void nova_runtime_spawn_into(struct NovaFiberQueue* scope,
 
 /* Plan 44.5 Layer 5: signal main thread из worker context'а.
  * No-op до runtime.init либо после shutdown — main thread в этих режимах
- * либо вообще нет (test'у без init), либо exit'ит (shutdown). */
+ * либо вообще нет (test'у без init), либо exit'ит (shutdown).
+ *
+ * Plan 83.10.3 (2026-05-26): also broadcasts to all worker loops.
+ * Required for nested supervised case: a worker inside supervised_run_impl
+ * waits on its OWN uv_loop (UV_RUN_ONCE in pump_scope). Without broadcast,
+ * that worker is never woken when a fiber completes on another worker. */
 void nova_runtime_signal_main(void) {
     if (_main_wake_inited) {
         uv_async_send(&_main_wake);
+    }
+    /* Plan 83.10.3: broadcast to all workers. uv_async_send is idempotent,
+     * thread-safe, and cheap (single atomic write + eventfd/eventpoll kick). */
+    for (int i = 0; i < _n_workers; i++) {
+        uv_async_send(&_workers[i].wake_handle);
+    }
+}
+
+/* Plan 83.10.3 (2026-05-26): run one fiber on worker w — extracted logic from
+ * _worker_main fiber-run block. Handles context save/restore, CAS guard,
+ * parked/dead/yielded post-resume transitions.
+ *
+ * Caller guarantees: co is MCO_SUSPENDED (or MCO_DEAD for safety check),
+ * and we are on worker thread w (_current_worker_id == w->id). */
+static void _worker_run_one_fiber(NovaWorker* w, mco_coro* co) {
+    NovaSpawnCtxBase* base = (NovaSpawnCtxBase*)mco_get_user_data(co);
+
+    /* Save outer TLS state (we may be inside a fiber — e.g. F_outer). */
+    NovaFiberQueue*     outer_scope     = _nova_active_scope;
+    int                 outer_slot      = _nova_active_slot;
+    NovaFailFrame*      outer_fail      = _nova_fail_top;
+    NovaInterruptFrame* outer_interrupt = _nova_interrupt_top;
+    NovaEffectSnapshot  outer_effects;
+    nova_effect_snapshot_save(&outer_effects);
+
+    if (base && base->_nova_worker_slot >= 0 && base->_nova_fiber_scope) {
+        /* Preamble already ran: restore home scope + saved TLS. */
+        _nova_active_scope  = base->_nova_fiber_scope;
+        _nova_active_slot   = base->_nova_worker_slot;
+        _nova_fail_top      = base->_nova_saved_fail_top;
+        _nova_interrupt_top = base->_nova_saved_interrupt_top;
+        NovaFiberQueue* fscope = base->_nova_fiber_scope;
+        int fslot = base->_nova_worker_slot;
+        if (fslot < fscope->count && fscope->fiber_effect_snapshot[fslot]) {
+            nova_effect_snapshot_restore(fscope->fiber_effect_snapshot[fslot]);
+        }
+    } else if (base) {
+        /* Before preamble (first run): restore saved fail/interrupt frames.
+         * Set _nova_active_scope to THIS WORKER's own scope so preamble
+         * registers the fiber correctly in w->scope (mirrors _worker_main
+         * behavior — preamble uses _nova_active_scope to alloc home slot). */
+        _nova_fail_top      = base->_nova_saved_fail_top;
+        _nova_interrupt_top = base->_nova_saved_interrupt_top;
+        _nova_active_scope  = &w->scope;   /* ← critical: match _worker_main */
+        _nova_active_slot   = -1;
+    }
+
+    w->preempt_flag = 0;
+    __atomic_store_n(&w->current_fiber_start, uv_hrtime(), __ATOMIC_RELAXED);
+
+    bool _nova_state_owned = true;
+    if (mco_status(co) == MCO_SUSPENDED) {
+        _nova_state_owned = (bool)nova_fiber_state_cas(
+            co, NOVA_FIBER_STATE_IDLE, NOVA_FIBER_STATE_RUNNING);
+        if (_nova_state_owned) {
+            mco_resume(co);
+        }
+    }
+
+    __atomic_store_n(&w->current_fiber_start, 0, __ATOMIC_RELAXED);
+
+    /* Save fiber's current TLS state back. */
+    if (base) {
+        base->_nova_saved_fail_top      = _nova_fail_top;
+        base->_nova_saved_interrupt_top = _nova_interrupt_top;
+        if (base->_nova_fiber_scope && base->_nova_worker_slot >= 0) {
+            NovaFiberQueue* fscope = base->_nova_fiber_scope;
+            int fslot = base->_nova_worker_slot;
+            if (fslot < fscope->count && fscope->fiber_effect_snapshot[fslot]) {
+                nova_effect_snapshot_save(fscope->fiber_effect_snapshot[fslot]);
+            }
+        }
+    }
+    /* Restore outer TLS. */
+    _nova_active_scope  = outer_scope;
+    _nova_active_slot   = outer_slot;
+    _nova_fail_top      = outer_fail;
+    _nova_interrupt_top = outer_interrupt;
+    nova_effect_snapshot_restore(&outer_effects);
+
+    /* Parked check + deferred unlock (mirrors _worker_main). */
+    bool fiber_is_parked = false;
+    if (_nova_state_owned && mco_status(co) == MCO_SUSPENDED) {
+        NovaFiberQueue* check_scope = (base && base->_nova_fiber_scope)
+                                      ? base->_nova_fiber_scope : &w->scope;
+        int act_slot = base ? base->_nova_worker_slot : _nova_active_slot;
+        if (act_slot >= 0) {
+            fiber_is_parked = (bool)nova_sched_is_parked(check_scope, act_slot);
+        }
+    }
+    if (_nova_park_unlock_fn) {
+        void (*fn)(void*) = _nova_park_unlock_fn;
+        void* arg         = _nova_park_unlock_arg;
+        _nova_park_unlock_fn  = NULL;
+        _nova_park_unlock_arg = NULL;
+        fn(arg);
+    }
+
+    if (!_nova_state_owned) return;  /* другой owner: skip dispose */
+
+    if (mco_status(co) == MCO_DEAD) {
+        NovaSpawnCtxBase* dead_ctx = (NovaSpawnCtxBase*)mco_get_user_data(co);
+        nova_fiber_state_store(co, NOVA_FIBER_STATE_DEAD);
+        mco_destroy(co);
+        if (dead_ctx) {
+            nova_spawn_pool_release(dead_ctx, dead_ctx->_nova_pool_size);
+        }
+    } else if (mco_status(co) == MCO_SUSPENDED) {
+        if (fiber_is_parked) {
+            /* Parked: dispatch_ready (via nova_sched_wake timer/channel cb)
+             * will re-queue when ready. No action here. */
+        } else {
+            /* Voluntary yield: push to yielded-FIFO (not deque — avoids
+             * LIFO starvation, matches _worker_main behavior). */
+            nova_fiber_state_store(co, NOVA_FIBER_STATE_IDLE);
+            _worker_yielded_push(w, co);
+        }
+    }
+}
+
+/* Plan 83.10.3 (2026-05-26): pump current worker's runnext+deque for a
+ * fiber belonging to scope q. Called from nova_supervised_run_impl when
+ * alive==0 && pending_remote>0 on a worker thread (nested supervised case).
+ *
+ * Strategy:
+ *   1. Service our UV loop (timers, async callbacks) non-blockingly.
+ *   2. Drain wake_pending queue (cross-thread fiber wakeups).
+ *   3. Pop from runnext then deque.
+ *   4a. If fiber belongs to scope q → resume inline via _worker_run_one_fiber.
+ *   4b. If fiber belongs to different scope → push back to deque (defer for
+ *       _worker_main to handle); fall through to UV_RUN_ONCE wait.
+ *   5. If deque empty → UV_RUN_ONCE to block until woken (by timer callback
+ *      or nova_runtime_signal_main broadcast when remote fiber completes). */
+void nova_runtime_worker_pump_scope(struct NovaFiberQueue* scope) {
+    int wid = _current_worker_id;
+    if (wid < 0 || wid >= _n_workers || !_workers) return;
+    NovaWorker* w = &_workers[wid];
+
+    /* (1) Service UV loop non-blockingly (timers, deferred dispatches). */
+    uv_run(&w->loop, UV_RUN_NOWAIT);
+
+    /* (2) Drain cross-thread wake_pending list into deque. */
+    nova_mutex_lock(&w->wake_mu);
+    for (int i = 0; i < w->wake_pending_count; i++) {
+        nova_deque_push(&w->deque, w->wake_pending[i]);
+    }
+    w->wake_pending_count = 0;
+    nova_mutex_unlock(&w->wake_mu);
+
+    /* (3) Pop candidate: runnext priority, then deque. */
+    mco_coro* co = NULL;
+    if (w->runnext) {
+        co = w->runnext;
+        w->runnext = NULL;
+    }
+    if (!co) co = (mco_coro*)nova_deque_pop(&w->deque);
+
+    if (!co) {
+        /* (5) Nothing ready — block until woken (timer or signal broadcast). */
+        uv_run(&w->loop, UV_RUN_ONCE);
+        return;
+    }
+
+    NovaSpawnCtxBase* base = (NovaSpawnCtxBase*)mco_get_user_data(co);
+    if (base && base->_nova_parent_scope == scope) {
+        /* (4a) Belongs to our scope — resume inline. */
+        _worker_run_one_fiber(w, co);
+    } else {
+        /* (4b) Different scope (or orphan) — push back, wait for deque to
+         * drain (another worker or the next pump iteration will handle it). */
+        nova_deque_push(&w->deque, co);
+        uv_run(&w->loop, UV_RUN_ONCE);
     }
 }
 

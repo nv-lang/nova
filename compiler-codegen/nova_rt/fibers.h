@@ -1252,6 +1252,25 @@ static inline void nova_fiber_report_atomic_kinded(NovaFiberQueue* parent,
     }
 }
 
+/* Plan 83.10.3 (2026-05-26): forward-decls — runtime.h included AFTER
+ * fibers.h in nova_rt.h. Forward-declare to allow use in fibers.h functions.
+ * Returns -1 on main thread, worker id (>=0) on worker thread. */
+int nova_runtime_current_worker_id(void);
+
+/* Plan 83.10.3 (2026-05-26): pump current worker's deque/runnext for a fiber
+ * belonging to scope q. If found and IDLE, resumes it inline (handles nested
+ * supervised case where worker can't return to its main pickup loop while in
+ * supervised_run_impl). If nothing found, blocks on UV_RUN_ONCE (woken by
+ * nova_runtime_signal_main broadcast or timer). Defined in runtime.c.
+ * forward-declared here because runtime.h comes AFTER fibers.h. */
+void nova_runtime_worker_pump_scope(struct NovaFiberQueue* scope);
+
+/* Plan 83.10.3 (2026-05-26): helper — true when running on a worker thread.
+ * Used in nova_supervised_run_impl to detect nested supervised case. */
+static inline bool _nova_on_worker_thread(void) {
+    return nova_runtime_current_worker_id() >= 0;
+}
+
 /* Single round-robin pass: resume each live fiber in the queue ONCE.
  * Returns the number of still-live fibers after the pass.
  *
@@ -1440,7 +1459,21 @@ static inline void nova_supervised_run_impl(NovaFiberQueue* q,
              * fiber'ы running на workers. Wait для них. */
             int remote = (int)nova_aint_load(&q->pending_remote);
             if (remote == 0) break;
-            uv_run(nova_current_loop(), UV_RUN_ONCE);
+            /* Plan 83.10.3 (2026-05-26): nested supervised on worker thread.
+             * When supervised_run_impl runs on a worker (fiber body calls
+             * supervised{spawn{...}}), the worker is blocked here and cannot
+             * return to its _worker_main pickup loop to drain its own
+             * runnext/deque. Fibers pushed into this worker's deque for scope
+             * q will never run → hang (pending_remote stays > 0 forever).
+             * Fix: cooperatively drain the worker's own deque/runnext for
+             * fibers belonging to q. For fibers on other workers,
+             * nova_runtime_signal_main now broadcasts to all workers so our
+             * UV_RUN_ONCE (inside pump) is woken when they complete. */
+            if (_nova_on_worker_thread()) {
+                nova_runtime_worker_pump_scope((struct NovaFiberQueue*)q);
+            } else {
+                uv_run(nova_current_loop(), UV_RUN_ONCE);
+            }
             continue;
         }
         /* alive > 0: либо есть ready fiber'ы, либо ВСЕ alive = parked.
