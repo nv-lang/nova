@@ -12322,15 +12322,32 @@ Merge: f79d4f28b5b; branch plan-100-2-generic-propagation → main.
    Р­С‚Рѕ РѕС‚Р»РёС‡Р°РµС‚СЃСЏ РѕС‚ Once/AtomicX, РєРѕС‚РѕСЂС‹Рµ pre-declared РІ sync_primitives.h.
    РџСЂРёС‡РёРЅР°: generic С‚РёРїС‹ С‚СЂРµР±СѓСЋС‚ T-РєРѕРЅРєСЂРµС‚РёР·Р°С†РёСЋ.
 
-2. **Lazy fiber-arena crash СЃ parallel for** вЂ” `parallel for` + `Lazy.force()` РІ
-   РїРµСЂРІРѕРј/РµРґРёРЅСЃС‚РІРµРЅРЅРѕРј Р±Р»РѕРєРµ С‚РµСЃС‚Р° РІС‹Р·С‹РІР°РµС‚ "fiber stack overflow in slot 0"
-   (VEH-РґРµС‚РµРєС‚РёСЂСѓРµРјС‹Р№ РєСЂР°С€) РЅР° Windows. РџСЂРёС‡РёРЅР° РЅРµ РґРёР°РіРЅРѕСЃС‚РёСЂРѕРІР°РЅР°.
-   Workaround: lazy_no_double_init_prop вЂ” sequential (for 0..100); concurrent
-   coverage РѕР±РµСЃРїРµС‡РёРІР°РµС‚СЃСЏ once_stress_mn_4workers (16 fibers Г— 100 force(), PASS).
+2. **Lazy fiber-arena crash с parallel for (followup 2026-05-26):**
+   `parallel for + lazy.force()` как **первый и единственный** блок в тест-файле
+   вызывает `EXCEPTION_ACCESS_VIOLATION` в fiber arena (VEH сообщает
+   "fiber stack overflow in slot 0 (access violation in fiber arena)").
+   - **Что НЕ виновато:** stack overflow исключён — 8 MB stack + 16 KB guard на slot,
+     `NovaOnceWaiter` (24 байта) на стеке умещается с гигантским запасом.
+     VEH-код `EXCEPTION_ACCESS_VIOLATION`, а не `EXCEPTION_STACK_OVERFLOW`.
+   - **Гипотеза:** access violation на адрес внутри arena slot 0 → stale-pointer
+     либо race вокруг slot decommit/recommit. Lazy.force() паттерн идентичен
+     Once.call_once и OnceCell.get_or_init, оба которых **passes** под 16+ fibers.
+     Различие — Lazy хранит init closure в `_l->init_clos` (heap-allocated env);
+     гипотеза о захваченном `AtomicInt` outer-scope нуждается в проверке debugger'ом.
+   - **Что подтверждено:**
+     - `oncecell_init_exactly_once_under_contention` (32 fibers) — PASS.
+     - `once_stress_mn_4workers` Lazy block (16 fibers × 100 calls) — PASS.
+     - Sequential `lazy_no_double_init_prop` (for 0..100) — PASS.
+   - **Решение:** документировано здесь как known-issue **Plan 82 area**
+     (Windows fiber arena), не Plan 103.5. Concurrent Lazy semantics покрыты
+     тестом в once_stress; sequential property покрывает exactly-once invariant.
+   - **Дальше:** Plan 82.1 follow-up (см. [M-82-bench-c-harness] частичный
+     — там же добавить fiber-arena slot-0 first-parallel-for repro и копать с WinDbg).
 
-3. **D171 spec вЂ” РЅРµ РЅР°РїРёСЃР°РЅ** вЂ” С„РѕСЂРјР°Р»СЊРЅР°СЏ СЃРїРµС†РёС„РёРєР°С†РёСЏ OnceState/OnceCell/Lazy
-   РѕС‚РєР»Р°РґС‹РІР°РµС‚СЃСЏ. D168 РІ spec/decisions/06-concurrency.md СЃРѕРґРµСЂР¶РёС‚ Plan 103.2
-   atomics; Plan 103.5 pending spec document.
+3. **D171 spec — НАПИСАН (followup 2026-05-26):** ~330 строк формальной
+   спецификации OnceState/Once/OnceCell/Lazy в `spec/decisions/06-concurrency.md`.
+   Покрывает: API, poison semantics, memory ordering (Acquire/Release), realtime
+   forbidden methods, отвергнутые альтернативы.
 
 4. **once.run() + done() deprecated, РЅРѕ РЅРµ removed** вЂ” РїР°СЂР° РѕСЃС‚Р°С‘С‚СЃСЏ РІ API СЃ
    W_ONCE_RUN_DONE_DEPRECATED warning. РЈРґР°Р»РµРЅРёРµ вЂ” РІ Plan 103.9 breaking-API pass.
