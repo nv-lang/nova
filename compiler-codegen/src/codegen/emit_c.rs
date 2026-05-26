@@ -12479,19 +12479,49 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
         self.line(&format!("if (setjmp({}.jmp) != 0) {{", failframe_var));
         self.indent += 1;
         // Error path: invoke defer + errdefer; SKIP okdefer (D160: success-only).
-        for entry in entries.iter().rev() {
+        // Plan 100.4.4 (D161): per-defer NovaFailFrame wrap; LIFO continues
+        // despite individual failures. Primary error = scope's outer fail-frame
+        // (`failframe_var`); defer-fails compose к suppressed chain.
+        let comp_chain_t = format!("_defer_{}_throw_chain", block_id);
+        self.line(&format!("NovaErrorChain* {} = {}.error_suppressed;", comp_chain_t, failframe_var));
+        for (i, entry) in entries.iter().enumerate().rev() {
             if entry.kind == DeferKind::OkDefer {
                 continue; // D160: okdefer skipped on error-path
             }
+            let df = format!("_defer_{}_{}_tdf", block_id, i);
             self.line(&format!("if ({}) {{", entry.active_var));
             self.indent += 1;
+            self.line(&format!("{} = 0;", entry.active_var));
+            self.line(&format!("NovaFailFrame {};", df));
+            self.line(&format!("nova_fail_push(&{});", df));
+            self.line(&format!("{}.error_suppressed = NULL;", df));
+            self.line(&format!("if (setjmp({}.jmp) == 0) {{", df));
+            self.indent += 1;
             let _ = self.emit_defer_body_void(&entry.body);
+            self.line("nova_fail_pop();");
+            self.indent -= 1;
+            self.line("} else {");
+            self.indent += 1;
+            self.line("nova_fail_pop();");
+            // Append к suppressed chain (primary stays = original throw).
+            self.line("NovaErrorChain* _node = (NovaErrorChain*)nova_alloc(sizeof(NovaErrorChain));");
+            self.line(&format!("_node->msg = {}.error_msg;", df));
+            self.line(&format!("_node->kind = {}.error_kind;", df));
+            self.line(&format!("_node->user_payload = {}.error_user_payload;", df));
+            self.line(&format!("_node->user_type_id = {}.error_user_type_id;", df));
+            self.line(&format!("_node->next = {};", comp_chain_t));
+            self.line(&format!("{} = _node;", comp_chain_t));
+            self.indent -= 1;
+            self.line("}");
             self.indent -= 1;
             self.line("}");
         }
         self.line("nova_fail_pop();");
         self.line(&format!("{} = 1;", failframe_popped_var));
-        self.line(&format!("nova_throw({}.error_msg);", failframe_var));
+        // Plan 100.4.4: re-throw к outer fail-frame preserving primary +
+        // composed suppressed chain (typed payload preserved через nova_rethrow_with_suppressed).
+        self.line(&format!("{}.error_suppressed = {};", failframe_var, comp_chain_t));
+        self.line(&format!("nova_rethrow_with_suppressed(&{});", failframe_var));
         self.indent -= 1;
         self.line("}");
         // Plan 20 Ф.8 (2): interrupt-path cleanup для `defer`.
@@ -12561,21 +12591,70 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
         }
         let scope = self.defer_scopes.pop().expect("defer_scopes balanced");
         debug_assert_eq!(scope.block_id, block_id);
-        // Entries: emit `if (active) { body; active = 0; }` — `= 0` чтобы
-        // долгий-jump throw-handler (если он сработает после этой точки)
-        // не вызвал defer повторно. Само-by-this-point throw уже не может
-        // случиться внутри этого block scope (мы покидаем его), но defer
-        // body выше могло иметь nested setjmp/longjmp.
+        // Plan 100.4.4 (D161): Per-defer NovaFailFrame wrap — каждый defer body
+        // в своём setjmp envelope. LIFO continues despite individual failures;
+        // failures accumulate в local compose-state, re-throw at end если any.
+        //
         // Normal exit: run Plain, OkDefer, WithResult; skip ErrDefer (error-only).
         // D160 Plan 100.4.3: okdefer fires on success-path (normal exit/return).
-        for entry in scope.entries.iter().rev() {
+        //
+        // Composition rules (D161):
+        // - 1st fail → primary; 2nd+ fails → appended to suppressed chain (LIFO order).
+        // - After all defers attempted, scope's own fail-frame popped, then если
+        //   accumulated fail → longjmp to outer (_nova_fail_top) с composed payload.
+        let comp_msg     = format!("_defer_{}_comp_msg", scope.block_id);
+        let comp_kind    = format!("_defer_{}_comp_kind", scope.block_id);
+        let comp_payload = format!("_defer_{}_comp_payload", scope.block_id);
+        let comp_tid     = format!("_defer_{}_comp_tid", scope.block_id);
+        let comp_chain   = format!("_defer_{}_comp_chain", scope.block_id);
+        let comp_has     = format!("_defer_{}_comp_has", scope.block_id);
+        self.line(&format!("nova_str {} = (nova_str){{0}};", comp_msg));
+        self.line(&format!("NovaThrowKind {} = NOVA_THROW_USER;", comp_kind));
+        self.line(&format!("void* {} = NULL;", comp_payload));
+        self.line(&format!("NovaTypeId {} = 0;", comp_tid));
+        self.line(&format!("NovaErrorChain* {} = NULL;", comp_chain));
+        self.line(&format!("int {} = 0;", comp_has));
+        for (i, entry) in scope.entries.iter().enumerate().rev() {
             if entry.kind == DeferKind::ErrDefer {
                 continue; // skip errdefer on success-path
             }
+            let df = format!("_defer_{}_{}_df", scope.block_id, i);
             self.line(&format!("if ({}) {{", entry.active_var));
             self.indent += 1;
-            let _ = self.emit_defer_body_void(&entry.body);
             self.line(&format!("{} = 0;", entry.active_var));
+            self.line(&format!("NovaFailFrame {};", df));
+            self.line(&format!("nova_fail_push(&{});", df));
+            self.line(&format!("{}.error_suppressed = NULL;", df));
+            self.line(&format!("if (setjmp({}.jmp) == 0) {{", df));
+            self.indent += 1;
+            let _ = self.emit_defer_body_void(&entry.body);
+            self.line("nova_fail_pop();");
+            self.indent -= 1;
+            self.line("} else {");
+            self.indent += 1;
+            self.line("nova_fail_pop();");
+            // Compose: first fail → primary; later fails → suppressed LIFO chain.
+            self.line(&format!("if (!{}) {{", comp_has));
+            self.indent += 1;
+            self.line(&format!("{} = 1;", comp_has));
+            self.line(&format!("{} = {}.error_msg;", comp_msg, df));
+            self.line(&format!("{} = {}.error_kind;", comp_kind, df));
+            self.line(&format!("{} = {}.error_user_payload;", comp_payload, df));
+            self.line(&format!("{} = {}.error_user_type_id;", comp_tid, df));
+            self.indent -= 1;
+            self.line("} else {");
+            self.indent += 1;
+            self.line("NovaErrorChain* _node = (NovaErrorChain*)nova_alloc(sizeof(NovaErrorChain));");
+            self.line(&format!("_node->msg = {}.error_msg;", df));
+            self.line(&format!("_node->kind = {}.error_kind;", df));
+            self.line(&format!("_node->user_payload = {}.error_user_payload;", df));
+            self.line(&format!("_node->user_type_id = {}.error_user_type_id;", df));
+            self.line(&format!("_node->next = {};", comp_chain));
+            self.line(&format!("{} = _node;", comp_chain));
+            self.indent -= 1;
+            self.line("}");
+            self.indent -= 1;
+            self.line("}");
             self.indent -= 1;
             self.line("}");
         }
@@ -12584,6 +12663,28 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
         self.line(&format!("if (!{}) {{ nova_fail_pop(); }}", scope.failframe_popped_var));
         // Plan 20 Ф.8 (2): pop interrupt-frame (всегда push'нут когда has_defer).
         self.line(&format!("if (!{}) {{ nova_interrupt_pop(); }}", scope.intframe_popped_var));
+        // Plan 100.4.4: if defer-cleanup accumulated failures — re-throw к outer
+        // с composed chain. Если нет outer fail-frame — abort с diagnostic dump.
+        self.line(&format!("if ({}) {{", comp_has));
+        self.indent += 1;
+        self.line("if (_nova_fail_top) {");
+        self.indent += 1;
+        self.line(&format!("_nova_fail_top->error_msg = {};", comp_msg));
+        self.line(&format!("_nova_fail_top->error_kind = {};", comp_kind));
+        self.line(&format!("_nova_fail_top->error_user_payload = {};", comp_payload));
+        self.line(&format!("_nova_fail_top->error_user_type_id = {};", comp_tid));
+        self.line(&format!("_nova_fail_top->error_suppressed = {};", comp_chain));
+        self.line("longjmp(_nova_fail_top->jmp, 1);");
+        self.indent -= 1;
+        self.line("} else {");
+        self.indent += 1;
+        self.line("fflush(stdout);");
+        self.line(&format!("fprintf(stderr, \"nova: defer cleanup-fail with no outer handler: %.*s\\n\", (int){}.len, {}.ptr);", comp_msg, comp_msg));
+        self.line("abort();");
+        self.indent -= 1;
+        self.line("}");
+        self.indent -= 1;
+        self.line("}");
     }
 
     /// Emit defer-cleanup for an early exit (return/break/continue) walking
