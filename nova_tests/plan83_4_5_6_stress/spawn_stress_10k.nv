@@ -1,10 +1,13 @@
 // Plan 83.4.5.6 Ф.5 (2026-05-24): spawn stress harness — verifies armed
 // M:N runtime correctness под high spawn count.
 //
-// NB: directive `// ENV NOVA_AUTOARM=0` — пока armed M:N exhibits
+// NB: `// ENV NOVA_AUTOARM=0` — armed M:N exhibits
 // significant per-spawn overhead на Windows (1000 spawn → ~180s
 // timeout). Followup: profile Plan 83.4.5.10 worker-pool overhead.
 // Cooperative path validates correctness — 10³ spawns в <60s.
+// Plan 83.10.1 (2026-05-26): STILL NEEDED — TIMEOUT armed M:N.
+// 10K spawns × armed overhead exceeds 64s timeout. Same as original reason:
+// per-spawn armed overhead. No change since Plan 83.4.5.6 era.
 // ENV NOVA_AUTOARM=0
 //
 // Acceptance per Plan 83.4.5.7 §6.4: 10⁶ no-op spawn без leak/crash/
