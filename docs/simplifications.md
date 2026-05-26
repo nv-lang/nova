@@ -13087,3 +13087,26 @@ Merge: f79d4f28b5b; branch plan-100-2-generic-propagation → main.
 
 - **Remaining out-of-scope:** Performance (nested case serializes on W; acceptable
   since nested supervised is rare). Plan 83.10.2 (cross-thread cancel timer hang).
+
+## Plan 103.3 вЂ” Mutex / RwLock / ReentrantMutex (2026-05-26)
+
+- **nova_alloc_uncollectable for sync primitives** вЂ” Boehm GC РЅР° Windows
+  РјРѕР¶РµС‚ СЃРѕР±СЂР°С‚СЊ РѕР±СЉРµРєС‚, С…СЂР°РЅСЏС‰РёР№СЃСЏ С‚РѕР»СЊРєРѕ РЅР° СЃС‚РµРєРµ main thread'Р°, РїРѕРєР° M:N
+  materializes workers (nova_scope_grow в†’ 7Г— nova_alloc в†’ GC trigger). Р’СЃРµ
+  static_new() С„СѓРЅРєС†РёРё РґР»СЏ Mutex/RwLock/ReentrantMutex РїРµСЂРµРІРµРґРµРЅС‹ РЅР°
+  GC_malloc_uncollectable. NOVA_AUTOARM=0 РѕР±С…РѕРґРёС‚ РїСЂРѕР±Р»РµРјСѓ (РЅРµС‚ worker
+  materialization), РїРѕСЌС‚РѕРјСѓ С‚РµСЃС‚С‹ РїСЂРѕС…РѕРґРёР»Рё С‚Р°Рј.
+
+- **mco_coro* owner tracking** вЂ” ReentrantMutex С…СЂР°РЅРёС‚ owner РєР°Рє `mco_coro*
+  owner_coro = mco_running()`. NULL = main thread РёР»Рё unlocked. РЎС‚Р°Р±РёР»РµРЅ РІСЃС‘
+  РІСЂРµРјСЏ Р¶РёР·РЅРё fiber'Р° (РЅРµ РїРµСЂРµРёСЃРїРѕР»СЊР·СѓРµС‚СЃСЏ РїРѕРєР° mutex locked). Р’Р°СЂРёР°РЅС‚ С‡РµСЂРµР·
+  (scope, slot) РїР°СЂСѓ РѕС‚РєР»РѕРЅС‘РЅ: slot РїРµСЂРµРёСЃРїРѕР»СЊР·СѓРµС‚СЃСЏ РїРѕСЃР»Рµ Р·Р°РІРµСЂС€РµРЅРёСЏ fiber'Р°.
+
+- **Unconditional unlock invariants** вЂ” NOVA_SYNC_ASSERT = no-op РІ Dev mode
+  (С‚РѕР»СЊРєРѕ РїСЂРё NOVA_DEBUG). Р’СЃРµ invariant-РїСЂРѕРІРµСЂРєРё РїРµСЂРµРІРµРґРµРЅС‹ РЅР°
+  Nova_Fail_fail + nova_throw (independent of build mode), РєР°Рє РІ
+  Nova_Once_method_done (Plan 103.5 precedent).
+
+- **Writer-priority RwLock** вЂ” write_waiting С„Р»Р°Рі Р±Р»РѕРєРёСЂСѓРµС‚ РЅРѕРІС‹С… readers
+  РїРѕРєР° РµСЃС‚СЊ РѕР¶РёРґР°СЋС‰РёР№ writer. РџСЂРµРґРѕС‚РІСЂР°С‰Р°РµС‚ writer starvation. Reader-priority
+  вЂ” opt-in С‡РµСЂРµР· new_reader_priority().
