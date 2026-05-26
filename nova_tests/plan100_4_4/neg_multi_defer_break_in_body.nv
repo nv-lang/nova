@@ -1,0 +1,16 @@
+// EXPECT_COMPILE_ERROR D90
+//
+// Plan 100.4.4 (D161): top-level break в defer body — D90 §6 error
+// (hijack enclosing loop), unchanged by D161.
+
+module nova_tests.plan100_4_4.neg_multi_defer_break_in_body
+
+fn process() -> () {
+    for _i in 0..3 {
+        defer { break }   // ❌ D90 §6
+    }
+}
+
+test "break в defer body — D90 §6 error" {
+    process()
+}

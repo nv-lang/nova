@@ -1,0 +1,20 @@
+// EXPECT_COMPILE_ERROR D158
+//
+// Plan 100.4.4 (D161): multi-defer composition requires fn-sig declare Fail[E]
+// if any defer body throws. D158 enforcement carries through D161 wrap.
+
+module nova_tests.plan100_4_4.neg_multi_defer_throw_no_fail
+
+type Err { msg str }
+
+fn cleanup() Fail[Err] -> () { throw Err { msg: "fail" } }
+
+// ❌ no Fail in sig
+fn process() -> () {
+    defer { cleanup() }   // D158 error
+    defer { cleanup() }
+}
+
+test "multi-defer Fail bodies без Fail в sig — D158 error" {
+    process()
+}

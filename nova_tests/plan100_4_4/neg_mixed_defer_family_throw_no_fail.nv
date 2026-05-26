@@ -1,0 +1,20 @@
+// EXPECT_COMPILE_ERROR D158
+//
+// Plan 100.4.4 (D161): mixed defer / errdefer / okdefer / defer-with-result —
+// все 4 типа carry D158 enforcement. Этот fixture verifies okdefer + defer-
+// with-result тоже flag'аются.
+
+module nova_tests.plan100_4_4.neg_mixed_defer_family_throw_no_fail
+
+type Err { msg str }
+
+fn cleanup() Fail[Err] -> () { throw Err { msg: "x" } }
+
+// ❌ no Fail in sig
+fn process() -> () {
+    okdefer { cleanup() }   // D158: okdefer body Fail без sig Fail
+}
+
+test "okdefer Fail body без Fail в sig — D158 error" {
+    process()
+}
