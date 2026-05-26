@@ -1,0 +1,115 @@
+// editors/test_smoke.nv — Nova smoke test fixture for editor integration.
+// Plan 104.8.Ф.6
+//
+// This file demonstrates Nova syntax across all categories used for
+// smoke-testing editor support (syntax highlighting + LSP diagnostics).
+//
+// Usage:
+//   VSCode:  Open in Extension Development Host → syntax highlighting active,
+//            LSP diagnostics appear in Problems panel if nova-lsp is running.
+//   Neovim:  nvim editors/test_smoke.nv → :LspInfo shows nova attached
+//   Helix:   hx editors/test_smoke.nv → syntax highlights + LSP gutter (if configured)
+//   Zed:     Open via side-loaded extension → highlighting active
+
+module smoke_test
+
+// ─── Imports ──────────────────────────────────────────────────────────────────
+
+import std.io
+
+// ─── Basic function with return type ─────────────────────────────────────────
+
+fn greet(name: str) -> str {
+    "Hello, " + name + "!"
+}
+
+fn add(a: int, b: int) -> int {
+    a + b
+}
+
+// ─── Effects ─────────────────────────────────────────────────────────────────
+
+fn greet_io(name: str) [Io] {
+    println(greet(name))
+}
+
+// ─── Option / Result ─────────────────────────────────────────────────────────
+
+fn safe_div(a: int, b: int) -> Option[int] {
+    if b == 0 {
+        None
+    } else {
+        Some(a / b)
+    }
+}
+
+fn risky(x: int) -> Result[int, str] [Fail[str]] {
+    if x < 0 {
+        throw "negative value"
+    }
+    Ok(x * 2)
+}
+
+// ─── Char literal and backtick (auto-pairs smoke) ─────────────────────────────
+
+fn char_demo() -> char {
+    'a'    // char literal — single-quote auto-pair required
+}
+
+fn template_demo(x: int) -> str {
+    `value is ${x}`    // tagged template literal — backtick auto-pair required
+}
+
+// ─── Match / control flow ─────────────────────────────────────────────────────
+
+fn describe(opt: Option[int]) -> str {
+    match opt {
+        Some(n) => `got ${n}`
+        None    => "nothing"
+    }
+}
+
+// ─── For loop ────────────────────────────────────────────────────────────────
+
+fn sum_range(n: int) -> int {
+    let mut total = 0
+    for i in 0..n {
+        total = total + i
+    }
+    total
+}
+
+// ─── Type with fields ────────────────────────────────────────────────────────
+
+type Point {
+    x: int
+    y: int
+}
+
+fn distance(p: Point) -> f64 {
+    let fx = p.x as f64
+    let fy = p.y as f64
+    (fx * fx + fy * fy)   // simplified (no sqrt in stdlib yet)
+}
+
+// ─── Main entry point ─────────────────────────────────────────────────────────
+
+fn main() [Io] {
+    greet_io("world")
+
+    let sum = add(1, 2)
+    println(`1 + 2 = ${sum}`)
+
+    let desc = describe(Some(42))
+    println(desc)
+
+    let total = sum_range(10)
+    println(`sum 0..10 = ${total}`)
+
+    let p = Point { x: 3, y: 4 }
+    println(`distance: ${distance(p)}`)
+
+    // Demonstrate LSP: hover over these to see types in supporting editors
+    let greeting: str = greet("Nova")
+    println(greeting)
+}
