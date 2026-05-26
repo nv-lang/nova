@@ -81,7 +81,7 @@
 | D158 | 03-syntax.md | Failable cleanup body (Plan 100.4.1, ✅ закрыт 2026-05-26) — amend D90 §4; defer/errdefer body может Fail; Plan 49 multi-error composition; MultiError prelude type; runtime helpers nv_compose_suppressed / nova_rethrow_with_suppressed |
 | D159 | 03-syntax.md | Async/suspend в cleanup body (Plan 100.4.2, proposed) — amend D90 §5; cancel-safe semantics; spawn/parallel for запрещены |
 | D160 | 03-syntax.md | `okdefer` + reason-aware `defer \|result\|` (Plan 100.4.3, proposed); complement к errdefer; mixed LIFO defer family |
-| D161 | 03-syntax.md | Multi-defer LIFO error accumulation + panic-in-defer composition (Plan 100.4.4, proposed) — amend D90 §«panic»; LIFO continues после partial failure; no Rust double-panic-abort |
+| D161 | 03-syntax.md | Multi-defer LIFO error accumulation + panic-in-defer composition (Plan 100.4.4, ✅ закрыт 2026-05-26) — amend D90 §«panic»; codegen per-defer NovaFailFrame wrap; LIFO continues после partial failure; no Rust double-panic-abort; closes [M-100.4.1-emit-defer-wrap] |
 | D162 | 03-syntax.md | Consume-integration final (Plan 100.4.5, proposed) — amend D90 §7; check_consume распознаёт defer/errdefer/okdefer cover; interrupt теперь триггерит errdefer |
 | D163 | 02-types.md | FFI consume integration — type-driven, без `external consume fn` keyword (Plan 100.5, proposed Ред. 2 2026-05-24). Унифицировано с regular fn: return-type carries consume-ness; `consume` keyword только на params/receivers (D131 semantic) |
 | D164 | 02-types.md | Cross-module consume — visibility, mangling-bit extension Plan 81 D134, package contracts (Plan 100.6, proposed) |

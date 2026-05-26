@@ -22,7 +22,7 @@
 | 100.4.1 failable cleanup body | ✅ ЗАКРЫТ 2026-05-26 (18/18 PASS) | 3 | D158 |
 | 100.4.2 async/suspend cleanup | 📋 unblocked (gate 100.4.1 снят) | 3 | D159 |
 | 100.4.3 okdefer + reason-aware | ✅ ЗАКРЫТ 2026-05-25 | 2 | D160 |
-| 100.4.4 multi-defer error accumulation | 📋 unblocked (gate 100.4.1 снят) | 3 | D161 |
+| 100.4.4 multi-defer error accumulation | ✅ ЗАКРЫТ 2026-05-26 (17/17 PASS) | 3 | D161 |
 | 100.4.5 consume-integration final | 📋 GATED on 100.4.1-4 | 3 | D162 |
 | 100.5 FFI / external integration | 📋 unblocked | 4 | D163 |
 | 100.6 cross-module + visibility + mangling | ✅ ЗАКРЫТ (2026-05-26) | 3 | D164 |
