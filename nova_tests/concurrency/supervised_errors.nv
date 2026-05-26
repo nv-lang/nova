@@ -12,6 +12,15 @@
 //      небезопасен — поэтому fail-frame'ов внутри spawn-body нет).
 //   3. Как обнаружить ошибку завершения spawn — через явный
 //      mut-флаг "did_succeed" / "had_error" (Go-style).
+//
+// Plan 83.4.5.11 (2026-05-26): добавлен // ENV NOVA_AUTOARM=0.
+// Тесты documentируют cooperative error-flag pattern и зависят от
+// FIFO-порядка spawn'ов (fiber 0 устанавливает aborted ДО fiber 1/2
+// его проверяет). Под вооружённым M:N runtime shared-mut `aborted` +
+// `work_done` — data race: fibers могут стартовать параллельно.
+// AUTOARM=0 = cooperative mode, FIFO ordering гарантирован, race нет.
+//
+// ENV NOVA_AUTOARM=0
 
 module concurrency.supervised_errors
 

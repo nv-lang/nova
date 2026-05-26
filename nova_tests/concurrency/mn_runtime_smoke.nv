@@ -9,6 +9,14 @@
 // worker-потоки поднимаются на первом spawn. Материализация и
 // diagnosed-no-op повторного init — см. mn_lazy_spawn.nv /
 // mn_init_after_materialize.nv.
+//
+// Plan 83.4.5.11 (2026-05-26): добавлен // ENV NOVA_AUTOARM=0.
+// Тест "runtime not initialized by default" проверяет !runtime.is_initialized().
+// По умолчанию nova_runtime_auto_arm() вызывается из main() до тестов →
+// runtime уже initialized → assert падает. AUTOARM=0 отключает auto-arm:
+// тесты управляют lifecycle явно через runtime.init() / runtime.shutdown().
+//
+// ENV NOVA_AUTOARM=0
 
 module concurrency.mn_runtime_smoke
 
