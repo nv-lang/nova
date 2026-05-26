@@ -505,7 +505,13 @@ static inline int nova_scope_alloc_slot(NovaFiberQueue* scope, mco_coro* co) {
         nova_scope_grow(scope, scope->count + 1);
         if (scope->sched_state) nova_sched_grow_state(scope, scope->capacity);
     }
-    int slot = scope->count++;
+    /* FIX 83.10.2: Write fibers[slot]=co (and all other slot fields) BEFORE
+     * incrementing count. nova_runtime_cancel_worker_fibers reads count then
+     * reads fibers[j] — if count++ came first there is a window where a
+     * concurrent scanner sees count=N+1 but fibers[N]=NULL and skips the slot.
+     * Release store on count ensures all preceding stores are visible to any
+     * thread that subsequently observes count=slot+1 (acquire-read). */
+    int slot = scope->count;          /* read index; do NOT increment yet */
     scope->fibers[slot]               = co;
     scope->fiber_ctx[slot]            = user;       /* GC root: SpawnCtx pinned */
     scope->fiber_fail_top[slot]       = NULL;
@@ -513,6 +519,11 @@ static inline int nova_scope_alloc_slot(NovaFiberQueue* scope, mco_coro* co) {
     scope->fiber_effect_snapshot[slot]= NULL;
     scope->fiber_error[slot]          = NULL;
     scope->fiber_did_throw[slot]      = NULL;
+    /* Release store: makes slot visible to other threads only after all
+     * field writes above are complete (prevents compiler and CPU reordering
+     * on non-TSO architectures; on x86 TSO the hardware guarantees it but
+     * a compiler fence is still required). */
+    __atomic_store_n(&scope->count, slot + 1, __ATOMIC_RELEASE);
     return slot;
 }
 
@@ -740,6 +751,17 @@ static inline void nova_cancel_token_cancel_reason(NovaCancelToken* t, void* rea
          * остаются parked, на них wake_all сделает dispatch_ready —
          * predicate re-check вернёт true → exit. */
         nova_scope_cancel_wake_all(t->bound_scope);
+        /* Plan 83.10.2 (2026-05-26): under armed M:N, spawned fibers park in
+         * worker scopes (not the supervised scope). nova_sched_cancel_all_pending
+         * above found nothing. Route cancel to worker-parked fibers whose
+         * _nova_parent_scope == bound_scope. External non-inline — declared in
+         * runtime.h (included after fibers.h in nova_rt.h); forward-decl here
+         * to break include-order circular dependency. */
+        {
+            extern void nova_runtime_cancel_worker_fibers(
+                struct NovaFiberQueue* scope);
+            nova_runtime_cancel_worker_fibers(t->bound_scope);
+        }
     }
     /* Каскад: отменяем все linked-токены (kill-switch composition).
      * Plan 49 Ф.6 cross-type: если для link есть converter — применяем
@@ -1745,8 +1767,16 @@ static NovaStopMode _nova_sleep_stop_cb(void* handle) {
     /* Plan 83.4.1: CAS PENDING → CLOSING; защита от race с timer_cb. */
     int32_t expected = NOVA_SLEEP_PENDING;
     if (nova_aint_cas(&st->stage, &expected, NOVA_SLEEP_CLOSING)) {
-        uv_timer_stop(timer);
-        uv_close((uv_handle_t*)timer, _nova_sleep_close_cb);
+        /* Plan 83.10.2 (2026-05-26): cross-thread safe dispatch.
+         * timer->loop may not be the current thread's loop under armed M:N
+         * (timer was created on the worker's loop, but cancel fires on main).
+         * uv_timer_stop + uv_close from a foreign thread are libuv UB — they
+         * silently corrupt the handle list or miss the close_cb entirely,
+         * leaving the fiber parked forever → TIMEOUT.
+         *
+         * Fix: defer close to timer->loop's thread via async dispatch.
+         * uv_close implies uv_timer_stop — explicit stop is not needed. */
+        nova_loop_defer_close(timer->loop, (uv_handle_t*)timer, _nova_sleep_close_cb);
     }
     /* else: timer_cb уже инициировал close — wake придёт из close_cb. */
     return NOVA_STOP_ASYNC;
@@ -1761,6 +1791,26 @@ static void _nova_main_wait_timer_cb(uv_timer_t* h) { (void)h; }
  * busy-loop'ов. R7 fully enforced. */
 static inline void _nova_sleep_via_libuv(NovaFiberQueue* scope, int slot,
                                           nova_int ms) {
+    /* FIX 83.10.2 (Race 2a/2b): Get the parent (supervised) scope whose
+     * cancel_requested is set by tok.cancel(). `scope` is the WORKER scope
+     * in M:N mode; cancel_requested on the worker scope is NEVER set.
+     * The supervised scope is accessible via the fiber's SpawnCtxBase. */
+    NovaFiberQueue* cancel_scope = scope;  /* fallback: single-thread mode */
+    {
+        mco_coro* _rc = mco_running();
+        if (_rc) {
+            NovaSpawnCtxBase* _base = (NovaSpawnCtxBase*)mco_get_user_data(_rc);
+            if (_base && _base->_nova_parent_scope) {
+                cancel_scope = (NovaFiberQueue*)_base->_nova_parent_scope;
+            }
+        }
+    }
+    /* FIX 83.10.2 (Race 2a): Early-exit — parent scope already cancelled
+     * BEFORE we start the timer. Fiber will complete normally (wake early),
+     * parent scope's drain will return promptly. */
+    if (nova_abool_load(&cancel_scope->cancel_requested)) {
+        return;
+    }
     NovaSleepState st = { .scope = scope, .slot = slot };
     nova_aint_init(&st.stage, NOVA_SLEEP_PENDING);
     int rc = uv_timer_init(nova_current_loop(), &st.timer);
@@ -1779,6 +1829,26 @@ static inline void _nova_sleep_via_libuv(NovaFiberQueue* scope, int slot,
     /* Register для cancel-wake (D93). stop_cb тоже initiates close — wake
      * придёт из close_cb. */
     nova_sched_register_pending(scope, slot, &st.timer, _nova_sleep_stop_cb);
+    /* FIX 83.10.2 (Race 2b): Post-register cancel check.
+     *
+     * Window: cancel fired BETWEEN early-exit (2a) and register_pending.
+     * cancel_worker_fibers saw stop_cb=NULL → did nothing. Without this
+     * fix, the fiber would park and sleep the full ms uncancelled.
+     *
+     * Fix: re-check cancel_requested on the PARENT scope AFTER registering.
+     * If true, self-initiate close via CAS (PENDING→CLOSING). We are on the
+     * worker's loop thread (fiber runs inside uv_run worker step), so direct
+     * uv_close is safe here. The CAS is idempotent: if cancel_worker_fibers's
+     * stop_cb already fired first, we lose the CAS and do nothing — stop_cb
+     * already initiated close; close_cb will wake us anyway. */
+    if (nova_abool_load(&cancel_scope->cancel_requested)) {
+        int32_t expected = NOVA_SLEEP_PENDING;
+        if (nova_aint_cas(&st.stage, &expected, NOVA_SLEEP_CLOSING)) {
+            /* We won the CAS — stop the timer now; close_cb wakes fiber. */
+            uv_close((uv_handle_t*)&st.timer, _nova_sleep_close_cb);
+        }
+        /* else: stop_cb already won CAS; close_cb will wake us. */
+    }
     /* Plan 83.4.1: park-until — возвращается только когда stage==CLOSED.
      * Под M:N drain-quiescence-wake мог разбудить park до завершения
      * close_cb; park_until re-park'нется и подождёт реального close_cb.

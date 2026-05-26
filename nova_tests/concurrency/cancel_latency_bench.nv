@@ -13,14 +13,8 @@
 // Plan 22 R4 target: elapsed_after_cancel < 1ms.
 // Реалистично: Windows scheduler + uv_close async cb ≈ 1-10ms p99.
 
-// Plan 83.4.5.1 (2026-05-23): cooperative cancel-latency bench — armed
-// multi-worker double-resume race blocks measurement. Cooperative path
-// validates wake_all + cancel_all_pending behavior.
-// 83.10.1 (2026-05-26): STILL NEEDED — TIMEOUT under armed M:N.
-// Armed path hangs in uv_run waiting for timer handles during cancel_all_pending.
-// Root cause: [M-83.10.1-armed-cancel-timer-hang] — cancel_all_pending +
-// uv_close sequence not completing under multi-worker armed scheduler.
-// ENV NOVA_AUTOARM=0
+// Plan 83.10.2 (2026-05-26): validates cancel+sleep under armed M:N —
+// cross-thread uv_close dispatch via NovaDeferredCloseQueue.
 
 module concurrency.cancel_latency_bench
 

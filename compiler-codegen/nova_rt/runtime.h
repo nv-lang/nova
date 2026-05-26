@@ -175,6 +175,15 @@ bool nova_runtime_is_initialized(void);
  * broadcast or timer). Called from nova_supervised_run_impl when on worker. */
 void nova_runtime_worker_pump_scope(struct NovaFiberQueue* scope);
 
+/* Plan 83.10.2 (2026-05-26): cancel worker-parked fibers belonging to
+ * target_scope. Under armed M:N, spawned fibers park in worker scopes
+ * (not the supervised scope). Called from nova_cancel_token_cancel_reason
+ * after nova_sched_cancel_all_pending(supervised_scope) finds nothing.
+ * Iterates all worker scopes, calls stop_cb (ASYNC via nova_loop_defer_close)
+ * or bare-wakes for each parked fiber whose _nova_parent_scope == target_scope.
+ * No-op if _materialized == false (single-thread bootstrap path). */
+void nova_runtime_cancel_worker_fibers(struct NovaFiberQueue* target_scope);
+
 /* Plan 83.6 (2026-05-24): per-worker SpawnCtx free-list pool. Acquire
  * returns zero-initialized buffer (size либо class size — see runtime.c
  * impl), automatically setting `base->_nova_pool_size`. Release routes
