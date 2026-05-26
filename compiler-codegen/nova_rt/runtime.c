@@ -126,6 +126,11 @@ struct NovaWorker {
      * 16 workers × 512KB = 8MB total. Acceptable cap. */
     void*             spawn_pool_free[4];   /* intrusive: head ptr к freed buffer */
     int               spawn_pool_count[4];
+    /* Plan 83.10.2 (2026-05-26): deferred uv_close queue for cross-thread
+     * cancel dispatch. Timer handles are created on this worker's loop; cancel
+     * may arrive from main or another worker. Close must happen on owner's
+     * thread — we enqueue here + signal wake_handle → drain in _worker_async_cb. */
+    NovaDeferredCloseQueue close_queue;
 };
 
 /* 4 size classes covering 64/128/256/512 byte contexts. Empirical: most
@@ -303,10 +308,19 @@ void nova_runtime_auto_arm(void) {
 static uv_async_t      _main_wake;
 static bool            _main_wake_inited = false;
 
+/* Plan 83.10.2 (2026-05-26): deferred close queue for main thread's loop.
+ * Init'd alongside _main_wake; drained in _main_wake_cb. */
+static NovaDeferredCloseQueue _main_close_queue;
+static bool                   _main_close_queue_inited = false;
+
 static void _main_wake_cb(uv_async_t* h) {
     (void)h;
-    /* No-op — signal itself wakes uv_run(UV_RUN_ONCE) в main thread'е.
-     * Main thread сам проверяет scope.pending_remote после wake'а. */
+    /* Plan 83.10.2: drain any deferred uv_close jobs scheduled for main loop. */
+    if (_main_close_queue_inited) {
+        nova_loop_drain_closes(&_main_close_queue);
+    }
+    /* No-op signal otherwise — wakes uv_run(UV_RUN_ONCE) in main thread.
+     * Main thread checks scope.pending_remote after wake. */
 }
 
 /* ── Plan 44.7: sysmon (system monitor) thread ─────────────────────
@@ -475,11 +489,15 @@ static void _nova_spawn_pool_drain(NovaWorker* w) {
 
 /* ── Worker main ──────────────────────────────────────────────── */
 
-/* uv_async callback — fires when cross-worker spawn pushes fiber.
- * Просто wakes uv_run; actual drain делается в worker loop. */
+/* uv_async callback — fires when cross-worker spawn pushes fiber, or
+ * when a deferred uv_close is enqueued for this worker's loop (Plan 83.10.2). */
 static void _worker_async_cb(uv_async_t* h) {
-    (void)h;
-    /* No-op — wake-up itself is the signal. */
+    NovaWorker* w = (NovaWorker*)h->data;
+    if (w) {
+        /* Plan 83.10.2: drain cross-thread uv_close jobs on this loop's thread. */
+        nova_loop_drain_closes(&w->close_queue);
+    }
+    /* Wake-up itself signals uv_run; actual fiber drain in worker loop. */
 }
 
 /* Plan 44.5 Layer 5 park/wake: dispatch hook called by nova_sched_wake.
@@ -1112,6 +1130,9 @@ static void _materialize_pool(void) {
          * пока есть active timer/handles из user code (sleep, channels). */
         uv_unref((uv_handle_t*)&_main_wake);
         _main_wake_inited = true;
+        /* Plan 83.10.2: init main-loop deferred-close queue. */
+        nova_close_queue_init(&_main_close_queue);
+        _main_close_queue_inited = true;
     }
 
     _workers = (NovaWorker*)calloc((size_t)n_workers, sizeof(NovaWorker));
@@ -1175,6 +1196,8 @@ static void _materialize_pool(void) {
             abort();
         }
         w->wake_handle.data = w;
+        /* Plan 83.10.2: per-worker deferred-close queue. */
+        nova_close_queue_init(&w->close_queue);
 
         rc = uv_thread_create(&w->thread, _worker_main, w);
         if (rc != 0) {
@@ -1269,6 +1292,9 @@ void nova_runtime_shutdown(void) {
         w->yielded = NULL;
         /* Plan 83.6: drain SpawnCtx pool — free retained ctx buffers. */
         _nova_spawn_pool_drain(w);
+        /* Plan 83.10.2: destroy per-worker deferred-close queue. */
+        nova_loop_drain_closes(&w->close_queue);  /* flush any remaining */
+        nova_close_queue_destroy(&w->close_queue);
     }
 
 #ifdef NOVA_GC_BOEHM
@@ -1567,6 +1593,72 @@ void nova_runtime_worker_pump_scope(struct NovaFiberQueue* scope) {
         uv_run(&w->loop, UV_RUN_NOWAIT);
         uv_sleep(1);
     }
+}
+
+/* ── Plan 83.10.2 (2026-05-26): nova_loop_defer_close ───────────────
+ *
+ * Schedule a uv_close for `handle` on the thread that owns `loop`.
+ * Thread-safe — may be called from any thread (e.g. cancel on main,
+ * timer on worker). Enqueues the job on the matching NovaDeferredCloseQueue
+ * then uv_async_send's the loop's wake handle so it drains promptly.
+ *
+ * Loop resolution:
+ *   main loop (nova_evloop()) → _main_close_queue + _main_wake
+ *   worker loop (&w->loop)   → w->close_queue + w->wake_handle
+ *
+ * Returns 0 on success, -1 on unrecognised loop or OOM. */
+int nova_loop_defer_close(uv_loop_t* loop,
+                          uv_handle_t* handle,
+                          uv_close_cb close_cb) {
+    if (!loop || !handle || !close_cb) return -1;
+
+    /* Find the queue + async wake handle for this loop. */
+    NovaDeferredCloseQueue* q    = NULL;
+    uv_async_t*             wake = NULL;
+
+    if (_main_wake_inited && loop == nova_evloop()) {
+        q    = &_main_close_queue;
+        wake = &_main_wake;
+    } else {
+        for (int i = 0; i < _n_workers; i++) {
+            if (&_workers[i].loop == loop) {
+                q    = &_workers[i].close_queue;
+                wake = &_workers[i].wake_handle;
+                break;
+            }
+        }
+    }
+
+    if (!q || !wake) {
+        /* Unknown loop — caller bug. Fall back to direct close as last resort
+         * (best-effort; may be UB if cross-thread, but better than assert). */
+        uv_close(handle, close_cb);
+        return -1;
+    }
+
+    /* Enqueue the job under lock. */
+    nova_mutex_lock(&q->mu);
+    if (q->count >= q->cap) {
+        int new_cap = q->cap > 0 ? q->cap * 2 : 8;
+        NovaDeferredCloseJob* new_jobs = (NovaDeferredCloseJob*)realloc(
+            q->jobs, (size_t)new_cap * sizeof(*new_jobs));
+        if (!new_jobs) {
+            nova_mutex_unlock(&q->mu);
+            /* OOM — fall back to direct close (UB if cross-thread, but rare). */
+            uv_close(handle, close_cb);
+            return -1;
+        }
+        q->jobs = new_jobs;
+        q->cap  = new_cap;
+    }
+    q->jobs[q->count].handle   = handle;
+    q->jobs[q->count].close_cb = close_cb;
+    q->count++;
+    nova_mutex_unlock(&q->mu);
+
+    /* Wake the loop thread so it drains the queue promptly. */
+    uv_async_send(wake);
+    return 0;
 }
 
 /* ── Plan 83.4.5.2 Ф.1: orphan fiber pool ─────────────────────────

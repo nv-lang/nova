@@ -24,6 +24,8 @@
 
 #include <uv.h>
 #include <stdbool.h>   /* для bool без circular include nova_rt.h */
+#include <stdlib.h>    /* malloc/realloc/free */
+#include "sync.h"      /* nova_mutex_t — Plan 83.10.2 */
 
 #ifdef __cplusplus
 extern "C" {
@@ -81,6 +83,57 @@ int nova_evloop_active_handles(void);
  * Idempotent (второй вызов — no-op). */
 struct NovaFiberQueue;  /* forward */
 void nova_evloop_install_sigint(struct NovaFiberQueue* main_scope);
+
+/* ── Plan 83.10.2 (2026-05-26): cross-thread uv_close dispatch ──────
+ *
+ * libuv requires handle ops only on the loop's thread. Cancel can run
+ * on any thread; the timer/handle may belong to a worker's loop.
+ * Schedule the close via this queue + uv_async signal.
+ *
+ * Producer: any thread (e.g. cancel) — push job + uv_async_send.
+ * Consumer: loop's thread — nova_loop_drain_closes drains the queue
+ * and invokes uv_close for each job.
+ *
+ * Lifetime: embedded in NovaWorker (workers) or static global (main).
+ * Mutex-protected for cross-thread push. */
+typedef struct {
+    uv_handle_t* handle;
+    uv_close_cb  close_cb;
+} NovaDeferredCloseJob;
+
+typedef struct {
+    NovaDeferredCloseJob* jobs;
+    int                   count;
+    int                   cap;
+    nova_mutex_t          mu;
+} NovaDeferredCloseQueue;
+
+/* Initialize a deferred-close queue. Called once per worker preamble
+ * + once for main during pool materialization. */
+void nova_close_queue_init(NovaDeferredCloseQueue* q);
+
+/* Destroy a deferred-close queue (frees job array, not the queue struct
+ * itself — caller owns the struct). */
+void nova_close_queue_destroy(NovaDeferredCloseQueue* q);
+
+/* Drain pending close jobs on the current loop. Must be called from
+ * the loop's thread (typically from the async wake callback). */
+void nova_loop_drain_closes(NovaDeferredCloseQueue* q);
+
+/* Schedule `handle` to be closed on its loop's thread. Thread-safe —
+ * may be called from any thread. Triggers uv_async_send on the loop's
+ * wake handle so the loop thread wakes and drains the queue.
+ *
+ * Preconditions:
+ *   - handle must have been initialised on a known loop (worker or main).
+ *   - close_cb must be non-NULL.
+ *   - Caller ensures idempotency (e.g. via CAS on a stage field).
+ *
+ * Returns 0 on success, -1 if loop is not recognised or OOM.
+ * Declaration only — implementation lives in runtime.c (needs _workers). */
+int nova_loop_defer_close(uv_loop_t* loop,
+                          uv_handle_t* handle,
+                          uv_close_cb close_cb);
 
 #ifdef __cplusplus
 }
