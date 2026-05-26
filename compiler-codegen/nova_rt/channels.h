@@ -1236,11 +1236,18 @@ static void _nova_after_on_select_lost(Nova_ChannelState* st) {
     /* Plan 65 Ф.10/Ф.11: counts as cancelled + clean cancel-slot. */
     _nova_after_metrics_dec(after, /*counted_as_cancel=*/true);
     _nova_after_unregister_from_token(after);
-    uv_timer_stop(&after->timer);
     /* Close writer so reader gets closed-state if it's reused outside select.
      * Idempotent through writer_closed guard. */
     nova_chan_writer_close(after->tx);
-    uv_close((uv_handle_t*)&after->timer, _nova_after_close_cb);
+    /* Plan 83.10.2 (2026-05-26): cross-thread safe.
+     * after->timer was created on the loop current when Time.after() was called
+     * (worker W's loop). on_select_lost fires from any fiber's thread — possibly
+     * a different worker W' after migration. Use defer_close so uv_close runs on
+     * W's loop thread. uv_close implies uv_timer_stop — no explicit stop needed.
+     * The _nova_after_timer_cb checks `cancelled` first, so a racing timer fire
+     * after this point is harmless. */
+    nova_loop_defer_close(after->timer.loop, (uv_handle_t*)&after->timer,
+                          _nova_after_close_cb);
 }
 
 /* Plan 65 Ф.10: cancel-token resource callback. Invoked when the
@@ -1254,7 +1261,11 @@ static void _nova_after_on_select_lost(Nova_ChannelState* st) {
  * timer fire / on_select_lost cleanup. The `cancelled` flag is the single
  * source of truth — atomicity is guaranteed by single-thread bootstrap
  * (callbacks all run inside the libuv loop). Under M:N (Plan 23) this
- * MUST become atomic. */
+ * MUST become atomic.
+ *
+ * Plan 83.10.2 (2026-05-26): cancel() fires from any thread (e.g. main
+ * calling tok.cancel() while the timer lives on a worker's loop).
+ * uv_close must run on the timer's loop thread — use defer_close. */
 static void _nova_after_cancel_resource_cb(void* handle) {
     NovaAfterState* after = (NovaAfterState*)handle;
     if (!after || after->cancelled) return;
@@ -1263,9 +1274,12 @@ static void _nova_after_cancel_resource_cb(void* handle) {
     after->cancel_token_ref = NULL;
     after->cancel_slot = -1;
     _nova_after_metrics_dec(after, /*counted_as_cancel=*/true);
-    uv_timer_stop(&after->timer);
     nova_chan_writer_close(after->tx);
-    uv_close((uv_handle_t*)&after->timer, _nova_after_close_cb);
+    /* Plan 83.10.2: defer uv_close to the timer's loop thread.
+     * uv_close implies uv_timer_stop — explicit stop not needed.
+     * The timer_cb guards on `cancelled`, so a racing fire is harmless. */
+    nova_loop_defer_close(after->timer.loop, (uv_handle_t*)&after->timer,
+                          _nova_after_close_cb);
 }
 
 /* Create a channel that receives one value after `ms` milliseconds.
