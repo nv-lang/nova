@@ -12227,7 +12227,9 @@ capabilities; без неё Nova не достигает заявленной re
     * 104.6 rename + format (~4 dev-day)
     * 104.7 tree-sitter grammar ✅ ЗАКРЫТ 2026-05-25 (github.com/nv-lang/tree-sitter-nova
       v0.1.0 — 84/84 fixtures, 5 query files, Helix/Zed/Neovim dist/)
-    * 104.8 editor packaging (~3 dev-day)
+    * 104.8 editor packaging ✅ ЗАКРЫТ 2026-05-26 (VSCode TS client 7/7 PASS,
+      Neovim lspconfig snippet, Helix languages.toml, Zed extension.toml;
+      [M-104.8-tool-nvim-unavailable] [M-104.8-tool-hx-unavailable] smoke skipped)
     * 104.9 close-out (~2 dev-day)
 
 - **Gate (почему отложено сейчас):**
@@ -12262,6 +12264,52 @@ capabilities; без неё Nova не достигает заявленной re
     или mature interp-debugger).
   - Inlay hints / semantic tokens / call hierarchy — V2 (nice-to-have).
   - Refactorings (extract function/type) — V2 (rename в V1).
+
+## Plan 104.8 V1 simplifications (2026-05-26)
+
+### [M-104.8-zed-marketplace] Zed marketplace submission deferred
+
+- **Где:** `editors/zed/extension.toml`
+- **Что не сделано:** Submission в официальный Zed extension marketplace.
+- **Почему:** Требует ручного review от Zed team; timeline непредсказуем.
+  V1 = side-load install.
+- **Как чинить:** Submit via https://github.com/zed-industries/extensions (PR).
+- **Приоритет:** L
+
+### [M-104.8-vscode-marketplace] VSCode marketplace publishing deferred
+
+- **Где:** `editors/vscode/`
+- **Что не сделано:** Публикация в VSCode/Open VSX marketplace.
+- **Почему:** Требует publisher account + vsce/ovsx tokens; деплой pipeline
+  не настроен. V1 = symlink/copy install.
+- **Как чинить:** Set up publisher account → `vsce package && vsce publish`.
+- **Приоритет:** L
+
+### [M-104.8-bundled-binary-v2] Bundled nova-lsp binary в extensions — V2
+
+- **Где:** все editor extensions
+- **Что не сделано:** Embed nova-lsp binary в extension package (не нужно
+  добавлять в PATH).
+- **Почему:** Требует release pipeline (GitHub Actions build matrix), .vsix
+  bundling, versioning. Сложно без CI. V1 = external binary.
+- **Как чинить:** GitHub Actions matrix → download artifact в extension package.
+- **Приоритет:** M (UX improvement — zero-config install)
+
+### [M-104.8-tool-nvim-unavailable] Neovim headless smoke skipped
+
+- **Где:** `editors/neovim/tests/smoke.lua`
+- **Что не проверено:** Headless Neovim smoke (`nvim --headless -l smoke.lua`).
+- **Почему:** nvim не установлен на dev-машине агента.
+- **Как чинить:** `sh editors/neovim/tests/run_smoke.sh` после `brew/apt install neovim`.
+- **Приоритет:** L (smoke coverage, не blocker)
+
+### [M-104.8-tool-hx-unavailable] Helix hx --health smoke skipped
+
+- **Где:** `editors/helix/tests/smoke.sh`
+- **Что не проверено:** `hx --health nova` + `hx --grammar fetch nova` smoke.
+- **Почему:** hx не установлен на dev-машине агента.
+- **Как чинить:** `sh editors/helix/tests/smoke.sh` после `brew install helix`.
+- **Приоритет:** L (smoke coverage, не blocker)
 
 ## Plan 100.4.3: okdefer + defer |result| — D160 (2026-05-25)
 
