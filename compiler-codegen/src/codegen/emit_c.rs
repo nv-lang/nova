@@ -1595,6 +1595,12 @@ impl CEmitter {
                 "AtomicI8", "AtomicI16", "AtomicI32", "AtomicI64",
                 "AtomicU8", "AtomicU16", "AtomicU32", "AtomicU64",
                 "AtomicIsize", "AtomicUsize", "AtomicPtr",
+                // === PLAN-103.4 PREDECLARED TYPES (alphabetical, parallel-agent) ===
+                // /* AGENT-B */ "Barrier",
+                // /* AGENT-D */ "Condvar", "WaitResult",
+                // /* AGENT-C */ "CountDownLatch",
+                // /* AGENT-A */ "Semaphore",
+                // === END PLAN-103.4 PREDECLARED TYPES ===
             ];
             for name in external_names {
                 if local_types.contains(&name) { continue; }
@@ -16965,7 +16971,25 @@ _cp++; \
                                                 || method == "with_read" || method == "with_write"))
                                         || (recv_ty == "ReentrantMutex"
                                             && (method == "lock" || method == "try_lock_for"
-                                                || method == "with_lock"));
+                                                || method == "with_lock"))
+                                        // === PLAN-103.4 REALTIME-BLOCKING (alphabetical, parallel-agent) ===
+                                        // AGENT-B (Barrier):
+                                        //   || (recv_ty == "Barrier"
+                                        //       && (method == "wait" || method == "wait_with_action"
+                                        //           || method == "wait_for"))
+                                        // AGENT-D (Condvar):
+                                        //   || (recv_ty == "Condvar"
+                                        //       && (method == "wait" || method == "wait_for"
+                                        //           || method == "wait_until"))
+                                        // AGENT-C (CountDownLatch):
+                                        //   || (recv_ty == "CountDownLatch"
+                                        //       && (method == "await" || method == "try_await_for"))
+                                        // AGENT-A (Semaphore):
+                                        //   || (recv_ty == "Semaphore"
+                                        //       && (method == "acquire" || method == "acquire_n"
+                                        //           || method == "try_acquire_for" || method == "with_permit"))
+                                        // === END PLAN-103.4 REALTIME-BLOCKING ===
+                                        ;
                                     if self.in_realtime && is_realtime_blocking {
                                         return Err(format!(
                                             "[E_EFFECT_REALTIME_VIOLATION] \
