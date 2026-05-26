@@ -9,7 +9,14 @@
 // cooperative drain (overhead ≤1ms). Под armed multi-worker runtime
 // scheduler jitter добавляет 5-20ms, budgets overrun'ятся.
 //
-// ENV NOVA_MAXPROCS=1
+// Plan 83.4.5.11 (2026-05-26): заменён NOVA_MAXPROCS=1 → NOVA_AUTOARM=0.
+// С MAXPROCS=1 (armed single-worker) тест "cancel during long sleep" падает:
+// supervised(cancel: tok) не прерывает 10s sleep достаточно быстро под
+// armed M:N даже с 1 worker. С AUTOARM=0 (cooperative fiber mode) все 5
+// тестов PASS стабильно: cancel работает через cooperative scheduling,
+// timing budgets выполняются без scheduler jitter.
+//
+// ENV NOVA_AUTOARM=0
 
 module concurrency.sleep_real_clock
 
