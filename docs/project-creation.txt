@@ -21254,3 +21254,42 @@ race-free patterns.
 **Recommended next:** Plan 83.12 (async net/socket stdlib P0
 production blocker), либо investigate [M-83.10-nested-armed-routing]
 (P2), либо Plan 83.11 (deadline propagation P2 differentiator).
+
+---
+
+## 2026-05-26 — Plan 83.10.1: NOVA_AUTOARM=0 directive sweep V1
+
+**Worktree:** `nova-p83-autoarm`, branch `plan-83-autoarm-sweep` (from plan-83-5).
+**Agent:** Claude Sonnet 4.6, autonomous execution per §4 playbook.
+
+**Scope:** Mechanical sweep of all 18 tests с `// ENV NOVA_AUTOARM=0` directive.
+Verify каждый под armed M:N, classify A/B/C, commit per-test.
+
+**Results:**
+- Initial directive count: 18
+- Final directive count: 15
+- Removed (A — obsolete): 3
+  - concurrency/cancel_semantics_test.nv
+  - plan83_10/cancel_race_no_orphan_state.nv
+  - plan83_10/handler_isolation_per_fiber.nv
+- Kept (B — still needed): 15 с updated current-reason comments
+- New gaps documented (C):
+  - [M-83.10.1-armed-cancel-timer-hang] — 10 tests (cancel+sleep TIMEOUT)
+  - [M-83.10.1-per-fiber-handler-tls-race] — 2 tests (TLS handler snapshot race)
+  - [M-83.10.1-fail-handler-cross-mco-longjmp] — 1 test (cross-mco longjmp)
+- Confirmed pre-existing: [M-83.10-nested-armed-routing] (panic_in_nested_supervised)
+
+**Concurrency suite:** 62 PASS / 13 FAIL (was 61/14 — improved).
+
+**Files changed:**
+- 18 test .nv files (directive removed or comment updated)
+- docs/plans/83.10.1-autoarm-directive-sweep.md — plan doc (pre-existing)
+- docs/plans/README.md — row 83.10.1 🟡 V1 IMPLEMENTED
+- docs/simplifications.md — 4 new entries
+- docs/project-creation.txt — этот блок
+
+**Plan 83.10.1 status:** 🟡 V1 IMPLEMENTED 2026-05-26.
+
+**Recommended next:** [M-83.10.1-armed-cancel-timer-hang] fix (P1, route
+cancel_all_pending to libuv-owning thread via uv_async dispatch) OR
+Plan 83.12 (async net/socket stdlib P0).
