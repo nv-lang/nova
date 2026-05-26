@@ -9151,35 +9151,28 @@ fn check_defer_body_inner(e: &Expr, kw: &str, fn_effects: &HashMap<String, Vec<T
                 e.span,
             ));
         }
-        // Suspend constructs by AST-form.
+        // D159 (Plan 100.4.2) keeps AST-level concurrency-construct ban:
+        // spawn / supervised / detach / blocking / parallel for создают новые
+        // fiber'ы которые переживут scope cleanup'а — leak supervised
+        // hierarchy. Sync suspend (Time.sleep, Net.*, etc.) разрешён.
         ExprKind::Spawn(_) | ExprKind::Supervised { .. } | ExprKind::Detach(_)
         | ExprKind::Blocking(_)
         | ExprKind::ParallelFor { .. } => {
             errors.push(Diagnostic::new(
-                format!("suspend operation (`spawn`/`supervised`/`detach`/`blocking`/`parallel for`) \
-                         is not allowed inside `{}` body (D90): defer must be fast cleanup.", kw),
+                format!("concurrency construct (`spawn`/`supervised`/`detach`/`blocking`/`parallel for`) \
+                         is not allowed inside `{}` body (D159-spawn-in-defer): \
+                         leaks supervised hierarchy. Use sync suspend operations or `Time.timeout` instead.", kw),
                 e.span,
             ));
         }
-        // Call СЃ suspend-СЌС„С„РµРєС‚Р°РјРё (callee.effects в€© SUSPEND_EFFECT_NAMES).
+        // D159 (Plan 100.4.2): Call СЃ suspend-СЌС„С„РµРєС‚Р°РјРё вЂ” РЎРќРЇРў Р·Р°РїСЂРµС‚
+        // (D90 §5 amended). Suspend operations (Time.sleep, Net.*, Fs.*, Db.*,
+        // Channel.recv) теперь allowed в defer body для production graceful
+        // cleanup. spawn / parallel for / supervised / detach / blocking
+        // остаются запрещены через AST-level matches выше (D5 D159).
         ExprKind::Call { func, .. } => {
             if let Some(callee_name) = call_target_name(func) {
                 if let Some(effs) = fn_effects.get(&callee_name) {
-                    for ef in effs {
-                        if let TypeRef::Named { path, .. } = ef {
-                            if let Some(name) = path.last() {
-                                if SUSPEND_EFFECT_NAMES.contains(&name.as_str()) {
-                                    errors.push(Diagnostic::new(
-                                        format!("call to `{}` requires suspend-effect `{}`, not allowed inside `{}` body (D90): \
-                                                 defer must be fast cleanup.",
-                                                callee_name, name, kw),
-                                        e.span,
-                                    ));
-                                    break;
-                                }
-                            }
-                        }
-                    }
                     // D158 (Plan 100.4.1): Fail-call check вЂ” same fail_throw_allowed rule.
                     if has_fail_effect(effs) && !fail_throw_allowed {
                         errors.push(Diagnostic::new(
@@ -9192,22 +9185,9 @@ fn check_defer_body_inner(e: &Expr, kw: &str, fn_effects: &HashMap<String, Vec<T
                     }
                 }
             }
-            // Also: built-in effect ops `Time.sleep`, `Net.get`, etc. вЂ”
-            // РѕР±РЅР°СЂСѓР¶РёРІР°СЋС‚СЃСЏ РїРѕ member-path РїРµСЂРІРѕРіРѕ identifier'Р°.
-            if let ExprKind::Member { obj, .. } = &func.kind {
-                if let ExprKind::Ident(head) = &obj.kind {
-                    if SUSPEND_EFFECT_NAMES.contains(&head.as_str()) {
-                        errors.push(Diagnostic::new(
-                            format!("operation `{}.{}` (effect `{}`) is not allowed inside `{}` body (D90): \
-                                     defer must be fast cleanup.",
-                                    head,
-                                    match &func.kind { ExprKind::Member { name, .. } => name.as_str(), _ => "" },
-                                    head, kw),
-                            e.span,
-                        ));
-                    }
-                }
-            }
+            // D159 also lifted built-in effect ops ban (Time.sleep / Net.get / etc.) вЂ”
+            // suspend allowed; spawn/parallel for ban сохраняется AST-level выше.
+            let _ = func; // suppress unused-warning post-removal
         }
         _ => {}
     }
