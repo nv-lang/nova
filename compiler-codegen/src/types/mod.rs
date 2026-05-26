@@ -8215,11 +8215,23 @@ fn consume_walk_stmt(ctx: &mut ConsumeCtx, s: &Stmt, errors: &mut Vec<Diagnostic
         }
         Stmt::Throw { value, .. } => consume_walk_expr(ctx, value, errors),
         Stmt::Break(_) | Stmt::Continue(_) | Stmt::Reveal { .. } => {}
-        // defer/errdefer исполняются на scope-exit — walk изолированно
-        // (use-after-consume ловится, consume наружу не протекает).
+        // defer/errdefer/okdefer/defer-with-result исполняются на scope-exit.
+        // Plan 100.4.5 (D162): тело walk'ается изолированно (use-after-consume
+        // ловится, consume наружу не протекает), НО любой consume-call над
+        // outer consume-var (`@var.consume_method()` или `consume_fn(@var)`)
+        // mark'ает var как Consumed в outer ctx — D162 cover semantic.
+        //
+        // Side-effect: explicit `tx.commit()` AFTER `defer { tx.commit() }` →
+        // use-after-consume error (D162-double-cover from check_d162_coverage
+        // tooling layer also captures this).
         Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. }
         | Stmt::OkDefer { body, .. } | Stmt::DeferWithResult { body, .. } => {
+            // Collect outer consume-vars consumed inside body (pre-walk snapshot).
+            let pre_obligations: HashSet<String> = ctx.consume_obligations.clone();
             consume_walk_isolated_expr(ctx, &[], body, errors);
+            // D162 cover: mark outer consume-vars referenced via consume-method
+            // call inside body as Consumed.
+            d162_mark_defer_cover(ctx, body, &pre_obligations);
         }
         Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => {
             consume_walk_expr(ctx, expr, errors);
@@ -8249,6 +8261,90 @@ fn consume_walk_isolated_expr(ctx: &mut ConsumeCtx, params: &[String],
     for p in params { ctx.declare(p, None); }
     consume_walk_expr(ctx, e, errors);
     ctx.states = saved;
+}
+
+/// Plan 100.4.5 (D162): scan defer/errdefer/okdefer body для consume-method
+/// calls над outer consume-vars. Mark такие vars как Consumed в outer ctx.
+///
+/// `pre_obligations` — snapshot consume_obligations ДО body walk; используется
+/// для filtering (mark только outer vars, не inner-bindings из body).
+///
+/// Simplified bootstrap implementation:
+/// - Recursively walk body expr.
+/// - Detect `<ident>.<method>()` form where `<ident>` ∈ pre_obligations and
+///   `<method>` ∈ consume-methods-for(var's type).
+/// - mark_consumed for each matched var.
+fn d162_mark_defer_cover(ctx: &mut ConsumeCtx, body: &Expr, pre_obligations: &HashSet<String>) {
+    let mut covered: Vec<(String, Span)> = Vec::new();
+    d162_collect_covers(body, pre_obligations, ctx, &mut covered);
+    // D162 cover semantic: defer body выполняется на scope exit; obligation
+    // satisfied НЕ означает что var consumed СЕЙЧАС. Var остаётся Live (для
+    // post-defer use); просто remove from obligations так что check_consume
+    // не emit'ит D133-not-consumed на exit.
+    //
+    // Double-cover semantics (D3): если defer body covers + explicit body
+    // call consumes — explicit call mark'ает Consumed; повторный call
+    // даёт use-after-consume (existing behavior). check_d162_coverage
+    // (Plan 100.8 D166 tooling) emits also dedicated D162-double-cover.
+    for (name, _span) in covered {
+        ctx.consume_obligations.remove(name.as_str());
+        // Также remove canonical alias-form.
+        let canon = ctx.canonical(&name);
+        ctx.consume_obligations.remove(canon.as_str());
+    }
+}
+
+fn d162_collect_covers(e: &Expr, pre_obligations: &HashSet<String>,
+                       ctx: &ConsumeCtx, out: &mut Vec<(String, Span)>) {
+    match &e.kind {
+        ExprKind::Call { func, .. } => {
+            if let ExprKind::Member { obj, name: method } = &func.kind {
+                if let ExprKind::Ident(recv) = &obj.kind {
+                    let canon = ctx.canonical(recv);
+                    if pre_obligations.contains(&canon) || pre_obligations.contains(recv) {
+                        // var_types stores type names (String).
+                        let type_name = ctx.var_types.get(&canon)
+                            .or_else(|| ctx.var_types.get(recv))
+                            .cloned();
+                        if let Some(tn) = type_name {
+                            if ctx.reg.methods.contains(&(tn, method.clone())) {
+                                out.push((recv.clone(), e.span));
+                            }
+                        }
+                    }
+                }
+            }
+            d162_collect_covers(func, pre_obligations, ctx, out);
+        }
+        ExprKind::Block(b) => {
+            for s in &b.stmts { d162_collect_covers_stmt(s, pre_obligations, ctx, out); }
+            if let Some(t) = &b.trailing { d162_collect_covers(t, pre_obligations, ctx, out); }
+        }
+        ExprKind::If { cond, then, else_ } => {
+            d162_collect_covers(cond, pre_obligations, ctx, out);
+            for s in &then.stmts { d162_collect_covers_stmt(s, pre_obligations, ctx, out); }
+            if let Some(t) = &then.trailing { d162_collect_covers(t, pre_obligations, ctx, out); }
+            match else_ {
+                Some(ElseBranch::Block(b)) => {
+                    for s in &b.stmts { d162_collect_covers_stmt(s, pre_obligations, ctx, out); }
+                    if let Some(t) = &b.trailing { d162_collect_covers(t, pre_obligations, ctx, out); }
+                }
+                Some(ElseBranch::If(e2)) => d162_collect_covers(e2, pre_obligations, ctx, out),
+                None => {}
+            }
+        }
+        _ => {}
+    }
+}
+
+fn d162_collect_covers_stmt(s: &Stmt, pre_obligations: &HashSet<String>,
+                            ctx: &ConsumeCtx, out: &mut Vec<(String, Span)>) {
+    match s {
+        Stmt::Expr(e) | Stmt::Throw { value: e, .. } => d162_collect_covers(e, pre_obligations, ctx, out),
+        Stmt::Return { value: Some(v), .. } => d162_collect_covers(v, pre_obligations, ctx, out),
+        Stmt::Let(decl) => d162_collect_covers(&decl.value, pre_obligations, ctx, out),
+        _ => {}
+    }
 }
 
 /// Walk тела цикла (for/while/loop) — пессимистично: переменная,
