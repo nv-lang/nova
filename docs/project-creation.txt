@@ -21293,3 +21293,26 @@ Verify каждый под armed M:N, classify A/B/C, commit per-test.
 **Recommended next:** [M-83.10.1-armed-cancel-timer-hang] fix (P1, route
 cancel_all_pending to libuv-owning thread via uv_async dispatch) OR
 Plan 83.12 (async net/socket stdlib P0).
+
+=== Plan 83.10.3: Nested supervised cooperative resume on worker (2026-05-26) ===
+
+Closed [M-83.10-nested-armed-routing]: nested supervised inside spawn TIMEOUT under armed M:N.
+
+Root cause: worker W inside nova_supervised_run_impl blocked in uv_run(UV_RUN_ONCE) on
+own loop; F_inner in W's deque never ran; nova_runtime_signal_main only woke main loop.
+
+Fix (two-part):
+1. nova_supervised_run_impl: on worker thread, call nova_runtime_worker_pump_scope(q)
+   instead of uv_run(UV_RUN_ONCE). Pump drains W's runnext/deque for scope-q fibers,
+   resumes inline via _worker_run_one_fiber (full context save/restore).
+2. nova_runtime_signal_main: broadcasts uv_async_send to all worker loops.
+   Wakes W's loop when F_inner completes on W2.
+
+New infrastructure: _nova_on_worker_thread, nova_runtime_worker_pump_scope,
+_worker_run_one_fiber. Critical: set _nova_active_scope=&w->scope before preamble
+first run; save+restore outer_slot to preserve F_outer's slot.
+
+Results: panic_in_nested_supervised PASS armed 3/3 (directive removed).
+3 new fixtures (plan83_10_3/) all PASS armed. Concurrency 62/13 (no regression).
+
+Plan 83.10.3 status: V1 IMPLEMENTED 2026-05-26.

@@ -12298,7 +12298,12 @@ Plan 83.2 §4 «Compiled-программа без единого `runtime.*` в
 
 - **Last commit:** TBD.
 
-### [M-83.10-nested-armed-routing] Nested supervised inside spawn — armed M:N hang (2026-05-25)
+### [M-83.10-nested-armed-routing] Nested supervised inside spawn — armed M:N hang (2026-05-25) ✅ RESOLVED Plan 83.10.3
+
+- **Resolution (2026-05-26):** Plan 83.10.3 — `nova_supervised_run_impl` now
+  calls `nova_runtime_worker_pump_scope(q)` when on worker thread instead of
+  blocking in `uv_run(UV_RUN_ONCE)`. `nova_runtime_signal_main` broadcasts to
+  all worker loops. `panic_in_nested_supervised` PASS armed 3/3.
 
 - **Discovered by:** Plan 83.10 `panic_in_nested_supervised` test —
   pattern `supervised { spawn { supervised { spawn { throw 99 } } } }`
@@ -12441,3 +12446,50 @@ Plan 83.2 §4 «Compiled-программа без единого `runtime.*` в
   dispatch to support cross-mco routing.
 
 - **Priority:** P2.
+
+---
+
+### [M-83.10.3-nested-cooperative-resume-v1] Nested supervised cooperative resume on worker (2026-05-26) ✅ V1 IMPLEMENTED
+
+- **Plan:** 83.10.3.
+- **Closes:** [M-83.10-nested-armed-routing].
+
+- **Problem:** `nova_supervised_run_impl(q)` called on a worker thread (fiber
+  body executing inner supervised) blocked in `uv_run(&w->loop, UV_RUN_ONCE)`.
+  Fibers in W's runnext/deque for scope q never ran — W held the thread.
+  `nova_runtime_signal_main()` only woke main's loop, not W's.
+
+- **Root cause (two-part):**
+  1. `nova_supervised_run_impl`: alive==0, pending_remote>0 → `uv_run(UV_RUN_ONCE)`
+     on worker's loop. F_inner in W's deque never popped.
+  2. `nova_runtime_signal_main()`: only signals main's `uv_async` handle.
+     Worker W never woken when F_inner completes on W2.
+
+- **Fix:**
+  1. `nova_supervised_run_impl`: when on worker thread, calls
+     `nova_runtime_worker_pump_scope(q)` instead of `uv_run(UV_RUN_ONCE)`.
+     Pump drains W's runnext/deque for scope-q fibers, resumes inline.
+  2. `nova_runtime_signal_main()`: broadcasts `uv_async_send` to all worker
+     loops. Ensures W exits `UV_RUN_ONCE` in pump when F_inner completes on W2.
+
+- **New infrastructure:**
+  - `_nova_on_worker_thread()` — TLS helper (fibers.h).
+  - `nova_runtime_worker_pump_scope(NovaFiberQueue*)` — public (runtime.c/h).
+  - `_worker_run_one_fiber(NovaWorker*, mco_coro*)` — static, full context
+    save/restore (preamble-aware, parked/dead/yielded transitions).
+
+- **Key correctness details:**
+  - Before-preamble first run: `_nova_active_scope = &w->scope` set explicitly
+    so preamble registers fiber in W's home scope (matches _worker_main).
+  - outer_slot saved + restored so F_outer's `_nova_active_slot` is preserved
+    across inner fiber inline resume.
+  - CAS IDLE→RUNNING guards against double-resume with concurrent workers.
+
+- **Verification:**
+  - `panic_in_nested_supervised` PASS armed 3/3 (directive removed).
+  - `nova_tests/plan83_10_3/`: 3 fixtures × 3 runs = 9/9 PASS armed.
+  - Concurrency suite: 62/13 (no regression from 62/13 baseline).
+  - `plan83_4_5_6_stress/*` 3/3 PASS (state invariants preserved).
+
+- **Remaining out-of-scope:** Performance (nested case serializes on W; acceptable
+  since nested supervised is rare). Plan 83.10.2 (cross-thread cancel timer hang).

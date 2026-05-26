@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
+﻿// SPDX-License-Identifier: MIT OR Apache-2.0
 /* Plan 44 (M:N Этап 0, 2026-05-13) — multi-thread runtime impl.
  *
  * Minimal proof of concept:
@@ -1383,18 +1383,15 @@ void nova_runtime_spawn_into(struct NovaFiberQueue* scope,
  * No-op до runtime.init либо после shutdown — main thread в этих режимах
  * либо вообще нет (test'у без init), либо exit'ит (shutdown).
  *
- * Plan 83.10.3 (2026-05-26): also broadcasts to all worker loops.
- * Required for nested supervised case: a worker inside supervised_run_impl
- * waits on its OWN uv_loop (UV_RUN_ONCE in pump_scope). Without broadcast,
- * that worker is never woken when a fiber completes on another worker. */
+ * Plan 83.10.3 (2026-05-26): nested supervised fix does NOT require broadcasting
+ * here. Workers inside pump_scope poll with UV_RUN_NOWAIT + uv_sleep(1) rather
+ * than blocking on UV_RUN_ONCE, so they discover pending_remote==0 within 1ms
+ * without needing an explicit wakeup signal. Broadcast reverted: it caused
+ * uv_async_send storms (16 workers x many completions) that TIMEOUTed
+ * plan83_6 spawn-pool tests. */
 void nova_runtime_signal_main(void) {
     if (_main_wake_inited) {
         uv_async_send(&_main_wake);
-    }
-    /* Plan 83.10.3: broadcast to all workers. uv_async_send is idempotent,
-     * thread-safe, and cheap (single atomic write + eventfd/eventpoll kick). */
-    for (int i = 0; i < _n_workers; i++) {
-        uv_async_send(&_workers[i].wake_handle);
     }
 }
 
@@ -1519,10 +1516,10 @@ static void _worker_run_one_fiber(NovaWorker* w, mco_coro* co) {
  *   2. Drain wake_pending queue (cross-thread fiber wakeups).
  *   3. Pop from runnext then deque.
  *   4a. If fiber belongs to scope q → resume inline via _worker_run_one_fiber.
- *   4b. If fiber belongs to different scope → push back to deque (defer for
- *       _worker_main to handle); fall through to UV_RUN_ONCE wait.
- *   5. If deque empty → UV_RUN_ONCE to block until woken (by timer callback
- *      or nova_runtime_signal_main broadcast when remote fiber completes). */
+ *   4b. If fiber belongs to different scope → push back + UV_RUN_NOWAIT + sleep(1);
+ *       return so outer loop re-checks pending_remote.
+ *   5. If deque empty → UV_RUN_NOWAIT + uv_sleep(1) poll (1ms latency max
+ *      to detect pending_remote decrement by completing remote fiber). */
 void nova_runtime_worker_pump_scope(struct NovaFiberQueue* scope) {
     int wid = _current_worker_id;
     if (wid < 0 || wid >= _n_workers || !_workers) return;
@@ -1548,8 +1545,13 @@ void nova_runtime_worker_pump_scope(struct NovaFiberQueue* scope) {
     if (!co) co = (mco_coro*)nova_deque_pop(&w->deque);
 
     if (!co) {
-        /* (5) Nothing ready — block until woken (timer or signal broadcast). */
-        uv_run(&w->loop, UV_RUN_ONCE);
+        /* (5) Nothing ready — poll UV loop non-blockingly, then sleep 1ms.
+         * Pending_remote is decremented by the completing fiber on another worker;
+         * the outer supervised_run_impl loop re-checks pending_remote after we
+         * return, so 1ms polling gives sub-millisecond detection without needing
+         * an explicit broadcast wake. */
+        uv_run(&w->loop, UV_RUN_NOWAIT);
+        uv_sleep(1);
         return;
     }
 
@@ -1558,10 +1560,12 @@ void nova_runtime_worker_pump_scope(struct NovaFiberQueue* scope) {
         /* (4a) Belongs to our scope — resume inline. */
         _worker_run_one_fiber(w, co);
     } else {
-        /* (4b) Different scope (or orphan) — push back, wait for deque to
-         * drain (another worker or the next pump iteration will handle it). */
+        /* (4b) Different scope (or orphan) — push back and return promptly
+         * so the outer loop re-checks pending_remote. Non-blocking UV tick +
+         * 1ms sleep matches the (5) path to avoid storms. */
         nova_deque_push(&w->deque, co);
-        uv_run(&w->loop, UV_RUN_ONCE);
+        uv_run(&w->loop, UV_RUN_NOWAIT);
+        uv_sleep(1);
     }
 }
 
