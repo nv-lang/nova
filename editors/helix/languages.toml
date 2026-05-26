@@ -1,0 +1,69 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+# Nova Language — Helix languages.toml configuration
+# Plan 104.8.Ф.3
+#
+# This file configures Helix editor for the Nova programming language.
+# It includes LSP (nova-lsp) and tree-sitter grammar (tree-sitter-nova v0.1.0).
+#
+# Installation:
+#   Linux/macOS: ~/.config/helix/languages.toml
+#   Windows:     %AppData%\helix\languages.toml
+#
+# If you already have a languages.toml, APPEND the relevant sections below.
+# Duplicate [language-server.nova-lsp] and [[grammar]] blocks are not allowed.
+#
+# After adding, verify:
+#   hx --health nova
+#
+# Note: To override nova-lsp binary path, set:
+#   [language-server.nova-lsp]
+#   command = "/full/path/to/nova-lsp"
+
+# ─────────────────────────────────────────────────────────────
+# Language server configuration
+# ─────────────────────────────────────────────────────────────
+
+[language-server.nova-lsp]
+# nova-lsp communicates via stdio JSON-RPC.
+# It must be in PATH, or set the full path here.
+# Build from source: cargo build --release -p nova-lsp (in nova repo)
+command = "nova-lsp"
+
+# ─────────────────────────────────────────────────────────────
+# Language configuration
+# ─────────────────────────────────────────────────────────────
+
+[[language]]
+name = "nova"
+scope = "source.nova"
+file-types = ["nv"]
+comment-token = "//"
+block-comment-tokens = { start = "/*", end = "*/" }
+indent = { tab-width = 4, unit = "    " }
+
+# LSP: attach nova-lsp to nova files
+language-servers = ["nova-lsp"]
+
+# Workspace-aware root detection: prefer nova.toml (project manifest), fallback .git
+roots = ["nova.toml", ".git"]
+
+# Auto-pairs — production constraint D104.8-5:
+# Nova has char literals ('x') and tagged template literals (json`...`).
+# Both ' and ` must be auto-paired.
+[language.auto-pairs]
+'(' = ')'
+'{' = '}'
+'[' = ']'
+'"' = '"'
+"'" = "'"
+'`' = '`'
+
+# ─────────────────────────────────────────────────────────────
+# Tree-sitter grammar
+# Decision D104.8-6: reference tree-sitter-nova v0.1.0 (no duplication)
+# Commit sha: 99111569f13e318d9f7de7f2c64bf2ef6185ba7a
+# ─────────────────────────────────────────────────────────────
+
+[[grammar]]
+name = "nova"
+source = { git = "https://github.com/nv-lang/tree-sitter-nova", rev = "v0.1.0" }
