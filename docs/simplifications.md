@@ -1,4 +1,4 @@
-# Упрощения и отложенные доработки
+﻿# Упрощения и отложенные доработки
 
 Живой список осознанных упрощений, сделанных в ходе разработки.
 Каждое упрощение попадает сюда в момент принятия решения — чтобы не потерять контекст.
@@ -12485,11 +12485,12 @@ Plan 83.2 §4 «Compiled-программа без единого `runtime.*` в
     across inner fiber inline resume.
   - CAS IDLE→RUNNING guards against double-resume with concurrent workers.
 
-- **Verification:**
+- **Verification (Ф.3 regression fix — UV_RUN_NOWAIT+sleep(1)):**
   - `panic_in_nested_supervised` PASS armed 3/3 (directive removed).
-  - `nova_tests/plan83_10_3/`: 3 fixtures × 3 runs = 9/9 PASS armed.
-  - Concurrency suite: 62/13 (no regression from 62/13 baseline).
-  - `plan83_4_5_6_stress/*` 3/3 PASS (state invariants preserved).
+  - `nova_tests/plan83_10_3/`: 3 fixtures PASS armed.
+  - `plan83_6/*`: 3/3 PASS armed (regression from broadcast reverted).
+  - Concurrency suite: 63/12 (improved from 62/13 baseline).
+  - Full nova test: PASS:1158, FAIL:19 (+9 PASS vs broadcast-regression run).
 
 - **Remaining out-of-scope:** Performance (nested case serializes on W; acceptable
   since nested supervised is rare). Plan 83.10.2 (cross-thread cancel timer hang).
