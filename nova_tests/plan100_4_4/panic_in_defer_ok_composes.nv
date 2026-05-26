@@ -1,0 +1,16 @@
+// Plan 100.4.4 (D161): panic в defer body composes с propagating error
+// через Plan 49 / Plan 100.4.1 chain — NO Rust-style double-panic-abort.
+//
+// Bootstrap-граница: actual panic stress-tested через runtime (per-defer
+// NovaFailFrame wrap catches panic = throw в _nova_fail_top). Этот fixture
+// — compile-pass only; runtime panic verification — manual.
+
+module nova_tests.plan100_4_4.panic_in_defer_ok_composes
+
+fn process() -> () {
+    defer { () }   // infallible cleanup placeholder
+}
+
+test "panic в defer compose-path — compile pass (runtime через codegen wrap)" {
+    process()
+}

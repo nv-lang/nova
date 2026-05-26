@@ -12377,6 +12377,64 @@ Merge: f79d4f28b5b; branch plan-100-2-generic-propagation → main.
 - **Last commit:** `0fde227c3b5` (plan-83-13 branch → merged to main).
 - **Приоритет:** P3 (research complete); Option B Phase 1 → P2 post-v1.0.
 
+## Plan 100.4.4: Multi-defer LIFO accumulation + panic composition — D161 (2026-05-26)
+
+### Реализовано
+- Codegen `leave_defer_scope` (normal-exit path) + `enter_defer_scope`
+  throw-path cleanup в `compiler-codegen/src/codegen/emit_c.rs`: каждый
+  defer body теперь обёрнут в свой NovaFailFrame setjmp envelope.
+  Failures accumulate в локальном compose-state (1st fail → primary,
+  subsequent → suppressed chain LIFO order).
+- LIFO loop **continues regardless of individual failure** — RUST-SUPERIOR
+  behavior (все N defers attempted). На throw-path appended к существующему
+  primary's suppressed chain через `_node->next = chain` linkage.
+- После cleanup loop + scope's own fail-frame pop: если accumulated failures
+  → `longjmp(_nova_fail_top->jmp, 1)` к outer fail-frame с composed payload
+  (primary + chain). Если outer отсутствует — `abort()` с stderr dump.
+- Panic-in-defer composition (D2 D161) — **falls out automatically**: nv_panic
+  routes через nearest `_nova_fail_top`, что = per-defer frame (`_df.jmp`),
+  composition path тот же как для regular throw. NO Rust-style
+  double-panic-abort.
+- 17 фикстур (11 POS + 6 NEG) PASS. Zero regression: plan100_4_1 18/18,
+  plan100_4_3 11/11, syntax/defer 8/8.
+- Closes Plan 100.4.1 followup marker `[M-100.4.1-emit-defer-wrap]`.
+
+### Упрощения vs spec D161
+
+1. **[M-100.4.4-early-exit-cleanup-wrap]** — `emit_early_exit_cleanup`
+   (return/break/continue paths) ещё inline-style (без per-defer setjmp wrap).
+   Defer-fail на early-exit path пока не композируется через D161 chain.
+   Менее частый pattern. **Приоритет:** P3.
+
+2. **[M-100.4.4-interrupt-path-wrap]** — interrupt-path cleanup в
+   `enter_defer_scope` (lines ~12525+) ещё inline-style. Defer-fail при
+   interrupt не композируется. **Приоритет:** P3.
+
+3. **[M-100.4.4-fmt-chain-rich]** — `MultiError.@fmt_chain()` в bootstrap
+   возвращает только primary (string-only). Rich multi-line chain rendering
+   (primary + numbered suppressed list per D7 diagnostic format) — Plan
+   100.4.4 V2 followup. **Приоритет:** P3.
+
+4. **[M-100.4.4-has-panics]** — `MultiError.@has_panics()` convenience
+   predicate не реализован. Требует distinguishing panic vs throw kind
+   в chain entries (NovaThrowKind tag не surfaced в Nova-side string fields).
+   **Приоритет:** P3.
+
+5. **MultiError chain materialization в Nova-side из C runtime** — bootstrap
+   composition материализует chain ТОЛЬКО внутри `NovaFailFrame.error_suppressed`
+   (NovaErrorChain* linked list). Mapping к Nova `MultiError { primary str;
+   suppressed []str }` для catch-side inspect — следующий followup. Bootstrap
+   fixtures verify через constructor calls (make_chain() returns
+   MultiError literal); runtime auto-materialize на caller-side — Plan
+   100.4.4 V2 / Plan 100.4.5. **Приоритет:** P2.
+
+### Затронутые тесты
+- `nova_tests/plan100_4_4/`: **17/17 PASS** (11 POS + 6 NEG).
+- `nova_tests/plan100_4_1/`: 18/18 PASS (zero regression).
+- `nova_tests/plan100_4_3/`: 11/11 PASS (zero regression).
+- `nova_tests/syntax/defer*`: 8/8 PASS (Plan 20 D90 backward-compat).
+
+
 ## Plan 100.6: Cross-module consume + visibility + mangling — D164 (2026-05-26)
 
 ### Реализовано

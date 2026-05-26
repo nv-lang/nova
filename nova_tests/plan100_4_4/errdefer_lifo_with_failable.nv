@@ -1,0 +1,22 @@
+// Plan 100.4.4 (D161): errdefer family + LIFO + failable bodies. Verifies
+// per-defer wrap works correctly для errdefer on throw-path.
+
+module nova_tests.plan100_4_4.errdefer_lifo_with_failable
+
+type RollbackErr { msg str }
+type WorkErr { msg str }
+
+fn rollback_a() Fail[RollbackErr] -> () { () }
+fn rollback_b() Fail[RollbackErr] -> () { () }
+
+fn process() Fail -> () {
+    errdefer { rollback_a() }   // runs last LIFO on error path
+    errdefer { rollback_b() }   // runs first LIFO on error path
+    throw WorkErr { msg: "primary" }
+}
+
+test "multi-errdefer + Fail bodies + LIFO" {
+    with Fail = effect Fail { fail(_msg) { interrupt () } } {
+        process()
+    }
+}

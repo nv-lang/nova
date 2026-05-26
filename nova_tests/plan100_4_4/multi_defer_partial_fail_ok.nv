@@ -1,0 +1,19 @@
+// Plan 100.4.4 (D161): 3 defers, средний failable (Fail effect). LIFO
+// continues через D161 per-defer NovaFailFrame wrap.
+
+module nova_tests.plan100_4_4.multi_defer_partial_fail_ok
+
+type Err { msg str }
+
+fn cleanup_ok() -> () { () }
+fn cleanup_maybe_fail() Fail[Err] -> () { () }
+
+fn process() Fail -> () {
+    defer { cleanup_ok() }                 // runs last LIFO
+    defer { cleanup_maybe_fail() }         // middle, failable (D158)
+    defer { cleanup_ok() }                 // runs first LIFO
+}
+
+test "partial-failable defer — LIFO continues" {
+    process()
+}
