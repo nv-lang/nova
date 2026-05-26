@@ -3,6 +3,14 @@
 // maxprocs() резолвит целевое число даже ДО runtime.init (в отличие от
 // worker_count(), который = 0 пока пул не материализован). Plan 83.1
 // Ф.4: пул ленивый — после init() worker_count() == 0 до первого spawn.
+//
+// Plan 83.4.5.11 (2026-05-26): добавлен // ENV NOVA_AUTOARM=0.
+// Тест "maxprocs resolves a positive target before init" проверяет
+// !runtime.is_initialized(). По умолчанию auto-arm инициализирует
+// runtime в main() до тестов → assert падает. AUTOARM=0 отключает
+// auto-arm: тесты управляют lifecycle через runtime.init() / shutdown().
+//
+// ENV NOVA_AUTOARM=0
 
 module concurrency.mn_maxprocs_getter
 
