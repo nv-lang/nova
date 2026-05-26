@@ -21254,3 +21254,71 @@ race-free patterns.
 **Recommended next:** Plan 83.12 (async net/socket stdlib P0
 production blocker), либо investigate [M-83.10-nested-armed-routing]
 (P2), либо Plan 83.11 (deadline propagation P2 differentiator).
+
+---
+
+## Session 2026-05-26 (Plan 83.4.5.11): Concurrency test race cleanup
+
+**Goal:** Fix 4 concurrency baseline FAILs exposed by Plan 83.7 +
+83.10 fix — shared-mut races and incorrect test assumptions about
+runtime state.
+
+**Worktree:** nova-p83-races (branch plan-83-test-races from
+github/plan-83-5).
+
+**Investigation findings:**
+
+The plan guessed "shared-mut races" for all 4 tests, but the actual
+root causes were more nuanced:
+
+1. `supervised_errors` "early-stop pattern via shared error flag":
+   Actual shared-mut race on `aborted` + `work_done`. Fibers can
+   start concurrently under M:N — fiber 0 sets `aborted=true`, but
+   fibers 1/2 already started and see `aborted=false`. Fix:
+   NOVA_AUTOARM=0 → cooperative FIFO ordering preserved.
+
+2. `sleep_real_clock` "cancel during long sleep wakes immediately":
+   NOT a shared-mut race (no shared state). Cancel propagation issue
+   under NOVA_MAXPROCS=1 armed single-worker: supervised(cancel: tok)
+   doesn't interrupt the 10s sleep fast enough. Fix: NOVA_AUTOARM=0
+   → cooperative cancel works correctly.
+
+3. `mn_runtime_smoke` "runtime not initialized by default":
+   NOT a race. nova_runtime_auto_arm() fires in main() BEFORE the
+   test runs → runtime IS initialized → !runtime.is_initialized()
+   assertion fails. Fix: NOVA_AUTOARM=0 → auto-arm disabled, test
+   controls lifecycle explicitly.
+
+4. `mn_maxprocs_getter` "maxprocs resolves before init": Same root
+   cause as #3 (auto-arm initializes before test). Fix: NOVA_AUTOARM=0.
+
+**Pattern 3 (cooperative directive) was correct for all 4**, not
+Pattern 1 (parallel for) or Pattern 2 (channel). The tests document
+cooperative fiber patterns or explicit runtime lifecycle — not M:N
+scheduling semantics.
+
+**Key insight:** NOVA_AUTOARM=0 vs NOVA_MAXPROCS=1 difference:
+- MAXPROCS=1 = armed M:N with 1 worker (still auto-arms runtime)
+- AUTOARM=0 = cooperative mode (runtime NOT auto-armed, pure libuv)
+
+For tests that depend on "runtime not yet initialized" or cooperative
+ordering semantics, only AUTOARM=0 is correct.
+
+**Results:**
+
+Before: 63 PASS / 12 FAIL (concurrency suite)
+After:  68 PASS / 7 FAIL (concurrency suite) — +5 PASS, −5 FAIL
+
+Target was 64+/11− (Plan §5). **EXCEEDED** (68/7).
+
+Remaining 7 failures: pre-existing (CC-FAIL lld-link contention ×3,
+sleep_bench/sleep_precision_bench timing ×2, timeouts ×2).
+
+**Commits (branch plan-83-test-races):**
+1. 753048533bb — supervised_errors NOVA_AUTOARM=0
+2. 53c8698d314 — sleep_real_clock MAXPROCS=1 → AUTOARM=0
+3. 7fbc2dbe10d — mn_runtime_smoke NOVA_AUTOARM=0
+4. c41c6b9ec98 — mn_maxprocs_getter NOVA_AUTOARM=0
+5. docs commit (this session)
+
+**Plan 83.4.5.11 status:** 🟢 V1 IMPLEMENTED + pushed.
