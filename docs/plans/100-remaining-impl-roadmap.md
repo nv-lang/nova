@@ -23,7 +23,7 @@
 | 100.4.2 async/suspend cleanup | ✅ ЗАКРЫТ 2026-05-26 (11/11 PASS) | 3 | D159 |
 | 100.4.3 okdefer + reason-aware | ✅ ЗАКРЫТ 2026-05-25 | 2 | D160 |
 | 100.4.4 multi-defer error accumulation | ✅ ЗАКРЫТ 2026-05-26 (17/17 PASS) | 3 | D161 |
-| 100.4.5 consume-integration final | 📋 GATED on 100.4.1-4 | 3 | D162 |
+| 100.4.5 consume-integration final | ✅ ЗАКРЫТ 2026-05-26 (5/5 PASS bootstrap MVP) | 3 | D162 |
 | 100.5 FFI / external integration | 📋 unblocked | 4 | D163 |
 | 100.6 cross-module + visibility + mangling | ✅ ЗАКРЫТ (2026-05-26) | 3 | D164 |
 | 100.7 stdlib migration playbook | 📋 GATED on 100.1-6 | 3 | D165 |

@@ -12490,6 +12490,28 @@ Merge: f79d4f28b5b; branch plan-100-2-generic-propagation → main.
 - **Last commit:** `0fde227c3b5` (plan-83-13 branch → merged to main).
 - **Приоритет:** P3 (research complete); Option B Phase 1 → P2 post-v1.0.
 
+## Plan 100.4.5: Consume-integration final — D162 (2026-05-26) **ФИНАЛ Plan 100.4 umbrella**
+
+### Реализовано (bootstrap MVP, Option B)
+- `d162_mark_defer_cover` в compiler-codegen/src/types/mod.rs: для
+  Stmt::Defer/ErrDefer/OkDefer/DeferWithResult — scan body для consume-
+  method calls на outer consume-vars и remove obligations (var stays Live).
+- Leverage Plan 100.8 D166 `check_d162_coverage` — already emit'ит
+  D162-uncovered-error-path и D162-uncovered-success-path errors.
+- 5 фикстур (1 POS + 4 NEG) PASS. Zero regression: 88 tests.
+
+### Упрощения vs spec D162
+1. **[M-100.4.5-d90-§7-interrupt-errdefer]** (**P2 BREAKING**) — D90 §7
+   amend «interrupt triggers errdefer» отложен. Runtime + audit needed.
+2. **[M-100.4.5-double-cover-check]** (D3, P3) — dedicated D162-double-cover
+   diagnostic (currently surfaces как use-after-consume).
+3. **[M-100.4.5-conditional-cover-warning]** (D5, P3).
+4. **[M-100.4.5-supervised-spawn-cancel]** (D7, P3) — depends on D6.
+5. **[M-100.4.5-strict-consume-mode]** (D5, P3) — `--strict-consume` flag.
+6. **[M-100.4.5-method-codegen-fail-bug]** (PRE-EXISTING) — consume-method
+   с Fail-caller codegen bug, не 100.4.5 issue.
+
+
 ## Plan 100.4.2: Async/suspend в cleanup body — D159 (2026-05-26)
 
 ### Реализовано

@@ -22046,6 +22046,70 @@ shielding runtime — followup).
 
 Branch plan-100-4-2-async-cleanup → main (pending merge).
 
+
+=== Plan 100.4.5 — Consume-integration final (D162) (2026-05-26) ===
+=== ✅ ФИНАЛ Plan 100.4 umbrella — все 5 sub-sub-plan'ов закрыты ===
+
+Финальный sub-sub-plan: check_consume интегрирован с defer-family
+(defer/errdefer/okdefer/defer-with-result) для автоматического cleanup-
+coverage consume-vars. Закрывает D162.
+
+**Реализация (Opus 4.7, bootstrap MVP Option B, ~1 сессия):**
+
+Ф.0 gate-probe.md: **discovered Plan 100.8 D166 уже partial-implemented D162** —
+check_d162_coverage emit'ит D162-uncovered-error-path + D162-uncovered-
+success-path. Leverage existing infrastructure.
+
+Ф.2 — check_consume integration (compiler-codegen/src/types/mod.rs):
+- Stmt::Defer/ErrDefer/OkDefer/DeferWithResult в consume_walk_stmt:
+  старая логика walk'ала body изолированно (consume не propagates outward),
+  что вызывало D133-not-consumed для consume-vars covered via defer.
+- New helper `d162_mark_defer_cover`: после isolated walk scan body для
+  `recv.consume_method()` calls на outer consume-vars и **remove from
+  consume_obligations** (var stays Live для post-defer use; obligation satisfied).
+- Helpers d162_collect_covers + d162_collect_covers_stmt — recursive
+  walk через ExprKind::Call/Block/If; Stmt::Expr/Throw/Return/Let.
+
+Ф.5 — 5 фикстур (nova_tests/plan100_4_5/):
+  POS (1): consume_no_fail_just_commit_ok — D162 не fires на infallible fn.
+  NEG (4): neg_failable_{no_errdefer, errdefer_no_success_cover,
+    consume_no_cover_at_all, consume_explicit_only_no_errdefer} —
+    D162-uncovered-error-path / D162-uncovered-success-path fire correctly.
+
+Ф.6 — Docs: plan/spec/README/umbrella/roadmap/simplifications/project-creation.
+**Plan 100.4 umbrella status → ✅ ЗАКРЫТ ЦЕЛИКОМ** (5/5 sub-sub-plan'ов).
+
+**Regression check (88 tests, zero regression):**
+- nova_tests/plan100_4_5: 5/5 PASS ✅
+- nova_tests/plan100_4_1: 18/18 PASS ✅
+- nova_tests/plan100_4_2: 11/11 PASS ✅
+- nova_tests/plan100_4_3: 11/11 PASS ✅
+- nova_tests/plan100_4_4: 17/17 PASS ✅
+- nova_tests/plan100_1: 23/23 PASS ✅
+- nova_tests/syntax/defer*: 8/8 PASS ✅
+
+**Bootstrap-граница (followup'ы):**
+- [M-100.4.5-d90-§7-interrupt-errdefer] (**P2 BREAKING**) — D90 §7 amend
+  «interrupt triggers errdefer». Runtime + audit existing handler-flow tests.
+  Breaking change for existing user code. Dedicated сессия.
+- [M-100.4.5-double-cover-check] (D3, P3) — D162-double-cover dedicated diagnostic.
+- [M-100.4.5-conditional-cover-warning] (D5, P3).
+- [M-100.4.5-supervised-spawn-cancel] (D7, P3) — depends on D6.
+- [M-100.4.5-strict-consume-mode] (D5, P3) — `--strict-consume` CLI flag.
+- [M-100.4.5-method-codegen-fail-bug] (PRE-EXISTING, не 100.4.5 issue) —
+  `fn Type consume @method() -> ()` НЕ emits C body когда caller declares
+  Fail effect. Hit в этой сессии (3 fixtures dropped); workaround = avoid
+  method+Fail combo.
+
+**🎯 Plan 100.4 umbrella ЗАКРЫТ:**
+| 100.4.1 D158 failable body | ✅ 2026-05-26 (merge 084ce8f4b2c) |
+| 100.4.2 D159 async/suspend | ✅ 2026-05-26 (merge 4c04c5dfa02) |
+| 100.4.3 D160 okdefer       | ✅ 2026-05-25 (merge 49c3b0b0da3) |
+| 100.4.4 D161 multi-defer   | ✅ 2026-05-26 (merge 8c397698814) |
+| 100.4.5 D162 consume-final | ✅ 2026-05-26 (этот merge)        |
+
+Branch plan-100-4-5-consume-final → main (pending merge).
+
 ========================================================================
 2026-05-25 — Plan 104.7 Ф.0: sub-plan file написан (tree-sitter grammar)
 ========================================================================
