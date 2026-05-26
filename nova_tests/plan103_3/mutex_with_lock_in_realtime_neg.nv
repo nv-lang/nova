@@ -1,0 +1,14 @@
+// Plan 103.3 — Mutex.lock inside realtime{} → COMPILE_ERROR.
+//
+// Fiber park/wait forbidden in realtime context (E_EFFECT_REALTIME_VIOLATION).
+//
+// EXPECT_COMPILE_ERROR E_EFFECT_REALTIME_VIOLATION
+
+module nova_tests.plan103_3.mutex_with_lock_in_realtime_neg
+
+test "Mutex.lock banned in realtime block" {
+    let mu = Mutex.new()
+    realtime {
+        mu.lock()
+    }
+}

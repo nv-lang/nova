@@ -1583,6 +1583,8 @@ impl CEmitter {
                 "ReadBuffer", "StringBuilder", "WriteBuffer",
                 "ChanReader", "ChanWriter", "ChannelPair",
                 "AtomicInt", "AtomicBool", "Mutex", "WaitGroup", "Once",
+                // Plan 103.3: RwLock + ReentrantMutex pre-declared in sync_primitives.h.
+                "RwLock", "ReentrantMutex",
                 "Timestamp",
                 // Plan 103.1: MemOrdering pre-declared in sync_primitives.h.
                 // Named forward decl `typedef struct Nova_MemOrdering Nova_MemOrdering;`
@@ -16948,10 +16950,22 @@ _cp++; \
                                     }
                                     // Plan 103.5: realtime violation — Once.call_once, Lazy.force,
                                     // OnceCell.get_or_init may park the fiber; forbidden inside realtime { }.
+                                    // Plan 103.3: Mutex.lock/try_lock_for/with_lock + RwLock.read/write/*_for
+                                    //   + ReentrantMutex.lock/try_lock_for/with_lock similarly forbidden.
                                     let is_realtime_blocking = (recv_ty == "Once"
                                             && (method == "call_once" || method == "run" || method == "done"))
                                         || (recv_ty == "Lazy" && method == "force")
-                                        || (recv_ty == "OnceCell" && method == "get_or_init");
+                                        || (recv_ty == "OnceCell" && method == "get_or_init")
+                                        || (recv_ty == "Mutex"
+                                            && (method == "lock" || method == "try_lock_for"
+                                                || method == "with_lock"))
+                                        || (recv_ty == "RwLock"
+                                            && (method == "read" || method == "write"
+                                                || method == "try_read_for" || method == "try_write_for"
+                                                || method == "with_read" || method == "with_write"))
+                                        || (recv_ty == "ReentrantMutex"
+                                            && (method == "lock" || method == "try_lock_for"
+                                                || method == "with_lock"));
                                     if self.in_realtime && is_realtime_blocking {
                                         return Err(format!(
                                             "[E_EFFECT_REALTIME_VIOLATION] \

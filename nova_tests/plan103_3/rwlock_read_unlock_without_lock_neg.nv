@@ -1,0 +1,10 @@
+// Plan 103.3 — RwLock.read_unlock() without read() → RUNTIME_PANIC.
+//
+// EXPECT_RUNTIME_PANIC RwLock.read_unlock() called without a matching read()
+
+module nova_tests.plan103_3.rwlock_read_unlock_without_lock_neg
+
+test "read_unlock without read panics" {
+    let rw = RwLock.new()
+    rw.read_unlock()
+}

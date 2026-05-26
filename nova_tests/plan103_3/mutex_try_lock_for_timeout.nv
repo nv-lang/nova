@@ -1,0 +1,29 @@
+// Plan 103.3 — try_lock_for(50ms) when mutex held → false after timeout.
+//
+// Uses the non-fiber spin path: main thread holds lock, then a second main-thread
+// call to try_lock_for spins 50ms and returns false.
+//
+// EXPECT_TIMEOUT_MS 10000
+
+module nova_tests.plan103_3.mutex_try_lock_for_timeout
+
+import std.time.duration
+
+test "try_lock_for times out when mutex already held" {
+    let mu = Mutex.new()
+    // Acquire lock (main thread, non-fiber path)
+    mu.lock()
+    // Non-reentrant: try_lock_for on already-locked mutex spins and times out
+    let ok = mu.try_lock_for(Duration.from_millis(50))
+    assert(ok == false)
+    mu.unlock()
+}
+
+test "try_lock_for succeeds when mutex is free" {
+    let mu = Mutex.new()
+    let ok = mu.try_lock_for(Duration.from_millis(100))
+    assert(ok == true)
+    assert(mu.is_locked() == true)
+    mu.unlock()
+    assert(mu.is_locked() == false)
+}

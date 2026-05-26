@@ -1,0 +1,42 @@
+// Plan 103.3 — new_reader_priority(): readers bypass write_waiting gate.
+//
+// EXPECT_TIMEOUT_MS 15000
+
+module nova_tests.plan103_3.rwlock_reader_priority_opt_in
+
+test "reader-priority: writer eventually acquires (no deadlock)" {
+    let rw = RwLock.new_reader_priority()
+    let writer_done = AtomicBool.new(false)
+
+    supervised {
+        spawn {
+            rw.write()
+            writer_done.store(true)
+            rw.write_unlock()
+        }
+    }
+
+    // Writer should acquire when no readers are present
+    assert(writer_done.load() == true)
+}
+
+test "reader-priority: try_read succeeds when no writer holds lock" {
+    let rw = RwLock.new_reader_priority()
+    // No writer holding — reader_priority new reader should succeed
+    let ok = rw.try_read()
+    assert(ok == true)
+    rw.read_unlock()
+    assert(rw.reader_count() == 0)
+}
+
+test "reader-priority: multiple readers allowed concurrently" {
+    let rw = RwLock.new_reader_priority()
+    rw.read()
+    rw.read()
+    rw.read()
+    assert(rw.reader_count() == 3)
+    rw.read_unlock()
+    rw.read_unlock()
+    rw.read_unlock()
+    assert(rw.reader_count() == 0)
+}
