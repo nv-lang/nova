@@ -2,9 +2,10 @@
 // verify scope properly cleaned (no orphan parked state, no leaked
 // sched_state). Plan 83.4.5.1 cancel wake-all infrastructure.
 //
-// ENV NOVA_AUTOARM=0
-// Plan 83.10: cooperative validation — armed [M-83.10-armed-user-throw-
-// routing] gap.
+// Plan 83.10.1 (2026-05-26): directive OBSOLETE — 3/3 runs PASS under
+// armed M:N after Plan 83.10 fix [M-83.10-armed-user-throw-routing].
+// Simple cancel without Time.sleep works — no timer handle cleanup needed.
+// (test runs under armed M:N default — Plan 83.10 fix)
 
 module plan83_10.cancel_race_no_orphan_state
 
