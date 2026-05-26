@@ -1468,3 +1468,24 @@ export external fn Lazy[T] mut @force() -> T
 #stable(since = "0.1")
 export external fn Lazy[T] @is_forced() -> bool
 
+// ============================================================================
+// PLAN-103.4 COORDINATION PRIMITIVES (alphabetical, parallel-agent marker blocks)
+// Each agent fills ONLY its own block; final merge keeps all 4 in order.
+// ============================================================================
+
+// === PLAN-103.4 BARRIER (Agent B) ===
+// (declarations…)
+// === END PLAN-103.4 BARRIER ===
+
+// === PLAN-103.4 CONDVAR (Agent D) ===
+// (declarations…)
+// === END PLAN-103.4 CONDVAR ===
+
+// === PLAN-103.4 COUNTDOWNLATCH (Agent C) ===
+// (declarations…)
+// === END PLAN-103.4 COUNTDOWNLATCH ===
+
+// === PLAN-103.4 SEMAPHORE (Agent A) ===
+// (declarations…)
+// === END PLAN-103.4 SEMAPHORE ===
+
