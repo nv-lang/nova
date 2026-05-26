@@ -1,0 +1,31 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+# Nova Language — Zed extension manifest
+# Plan 104.8.Ф.4
+#
+# Decision D104.8-4: Marketplace submission deferred (manual review process).
+# Install via side-load: copy to ~/.config/zed/extensions/nova/
+# Decision D104.8-6: Grammar from tree-sitter-nova v0.1.0 (no local duplication).
+#
+# WARNING: Zed extension API (schema_version = 1) may change.
+# Pin to specific tree-sitter-nova commit for stability.
+
+id = "nova"
+name = "Nova"
+description = "Nova programming language: syntax highlighting and LSP diagnostics"
+version = "0.1.0"
+schema_version = 1
+authors = ["Nova Language Team <team@nv-lang.org>"]
+repository = "https://github.com/nv-lang/nova"
+
+# Tree-sitter grammar from the official tree-sitter-nova repository.
+# Commit sha: 99111569f13e318d9f7de7f2c64bf2ef6185ba7a (tag v0.1.0)
+[grammars.nova]
+repository = "https://github.com/nv-lang/tree-sitter-nova"
+commit = "99111569f13e318d9f7de7f2c64bf2ef6185ba7a"
+
+# Language server: nova-lsp via stdio JSON-RPC.
+# Binary must be in PATH or configured in Zed settings:
+#   "lsp": { "nova-lsp": { "binary": { "path": "/path/to/nova-lsp" } } }
+[language_servers.nova-lsp]
+name = "Nova LSP"
+language = "Nova"
