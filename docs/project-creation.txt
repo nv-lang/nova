@@ -22802,3 +22802,40 @@ Results: Concurrency 65/10 (was 62/13 baseline). Full suite ~1154/20.
 Remaining AUTOARM=0: 5 tests (TLS race × 2, longjmp × 1, cancel-scope × 2).
 Branch: plan-83.10.2-cancel-timer-hang.
 Commit: 043e7f00024
+
+=== Plan 103.4 (Agent C) — CountDownLatch (2026-05-27) ===
+
+One-shot count-down rendezvous: N задач считают вниз, ожидающий просыпается
+когда счёт достигает 0. Java CountDownLatch parity.
+
+Runtime (compiler-codegen/nova_rt/sync_countdown_latch.h):
+- Nova_CountDownLatch struct: nova_mutex_t + int count + doubly-linked waiter list
+- static_new(count): panic если count <= 0 (Nova_Fail_fail + nova_throw)
+- count_down(): saturating decrement — no-op при count==0, никогда не паникует
+- count_down_n(n): batch saturating decrement (n<=0 — no-op)
+- await(): парковка fiber через nova_sched_park_with_unlock
+- try_await(): non-blocking bool (true если count==0)
+- current_count(): best-effort snapshot под mutex
+- _nova_cdl_wake_all(): internal helper — unlocks mu + wakes all parked waiters
+- GC: nova_alloc_uncollectable (как Mutex/WaitGroup из Plan 103.3)
+
+Shared files (AGENT-C marker lines uncommenting):
+- sync_primitives.h: #include "sync_countdown_latch.h"
+- emit_c.rs: PREDECLARED_TYPES + REALTIME_BLOCKING entries
+- std/runtime/sync.nv: 7 CountDownLatch external fn declarations
+
+Tests: 4/4 PASS (nova_tests/plan103_4/)
+- countdown_one_shot_signal.nv: parallel for 6 fibers, try_await progression
+- countdown_count_down_n.nv: step/saturating/concurrent/n=0 no-op
+- countdown_init_zero_or_negative_neg.nv: new(0) EXPECT_RUNTIME_PANIC
+- countdown_count_down_at_zero_neg.nv: count_down beyond 0 = no-op
+
+Key discoveries:
+- include_str! embeds sync.nv at compile time → при изменении sync.nv в worktree
+  нужно пересобрать nova-cli из worktree (cargo build в nova-p103-4-cdl/nova-cli/)
+- if/else с разными типами в ветках → CC-FAIL "operand of type 'nova_unit'"
+  Фикс: два отдельных if без else (if-без-else всегда unit в Nova)
+
+Branch: plan-103.4-cdl
+Commit: cb146ba4be2
+Status: NOT merged (ждёт агентов A + B)
