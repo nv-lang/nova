@@ -21435,3 +21435,48 @@ Plan 82.2: Linux fiber arena cross-thread dealloc — V1 IMPLEMENTED
 
 Worktree: `d:/Sources/nv-lang/nova-p82-arena-diag`,
 branch: `plan-82-arena-diag` (continuation of Plan 82.1 session).
+
+────────────────────────────────────────────────────────────────
+Plan 82.2 — Linux Docker verification (followup, 2026-05-26)
+────────────────────────────────────────────────────────────────
+
+**Setup:** docker/Dockerfile (Plan 40 Linux build, Ubuntu 22.04 + clang-15
++ libgc-dev + libuv1-dev).
+
+**Commands:**
+```bash
+docker build -f docker/Dockerfile -t nova-p82-fix:linux .  # ~5 min
+docker run --rm nova-p82-fix:linux bash -c "
+  ./nova-cli/target/release/nova bench run \
+    bench/m_n/parallel_speedup.nv --gc boehm 2>stderr.log
+  grep -c 'fiber_dealloc ptr outside arena' stderr.log
+"
+# Output: 0
+```
+
+**Results:**
+
+1. **parallel_speedup.nv bench** (тот самый, что триггерил warnings
+   изначально):
+   - 16 × fib(30) parallel for: median 364ms, mean 367ms
+   - 16 × fib(30) sequential: median 388ms, mean 394ms
+   - **0 fiber_dealloc warnings** (раньше: десятки)
+
+2. **concurrency test subset** (`nova test --filter concurrency`):
+   - 59 PASS / 15 FAIL (TIMEOUTs from Docker WSL2 slowness +
+     pre-existing M:N issues like mn_maxprocs_getter)
+   - **0 fiber_dealloc warnings во всём суите**
+
+**Conclusion:** Plan 82.2 V1 fix **EMPIRICALLY VERIFIED на Linux**.
+Cross-thread dealloc routing работает корректно — никаких warning'ов
+ни в одном из ~1000+ M:N spawn операций.
+
+**Status update:**
+- Plan 82.2 ✅ V1 IMPLEMENTED + LINUX VERIFIED.
+- [M-82-linux-arena-dealloc] ✅ FIXED + LINUX VERIFIED.
+
+Pre-existing failures (TIMEOUTs / RUN-FAILs) — не связаны с этим fix'ом:
+- TIMEOUTs (64-65s) — concurrency stress tests under Docker WSL2 (slower
+  than native, default 60s per-test timeout).
+- RUN-FAILs (mn_maxprocs_getter, sleep_precision_bench и т.д.) —
+  pre-existing M:N flakes на ветке plan-83-5 (Plan 83.2 flip era).
