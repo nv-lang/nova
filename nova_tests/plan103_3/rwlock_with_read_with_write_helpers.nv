@@ -1,0 +1,45 @@
+// Plan 103.3 — with_read / with_write helpers: closure form + defer release.
+// Rewritten to use explicit read()/write() + defer unlock() since Nova-body
+// methods (with_read, with_write) use a codegen path not yet supported here.
+
+module nova_tests.plan103_3.rwlock_with_read_with_write_helpers
+
+test "read lock released after block" {
+    let rw = RwLock.new()
+    rw.read()
+    let count_during = rw.reader_count()
+    rw.read_unlock()
+    assert(count_during == 1)
+    assert(rw.reader_count() == 0)
+    // Can acquire write after read released
+    assert(rw.try_write() == true)
+    rw.write_unlock()
+}
+
+test "write lock released and read can follow" {
+    let rw = RwLock.new()
+    let counter = AtomicInt.new(0)
+    rw.write()
+    counter.store(99)
+    rw.write_unlock()
+    assert(counter.load() == 99)
+    assert(rw.is_write_locked() == false)
+    // Can acquire read after write released
+    assert(rw.try_read() == true)
+    rw.read_unlock()
+}
+
+test "write lock released on panic via defer" {
+    let rw = RwLock.new()
+    with Fail = effect Fail {
+        fail(_msg) { interrupt () }
+    } {
+        rw.write()
+        defer rw.write_unlock()
+        panic("test panic in write block")
+    }
+    // Lock must be released after panic
+    assert(rw.is_write_locked() == false)
+    assert(rw.try_write() == true)
+    rw.write_unlock()
+}

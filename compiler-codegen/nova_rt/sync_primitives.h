@@ -878,6 +878,30 @@ static inline nova_bool Nova_AtomicPtr_method_compare_exchange_weak_MemOrdering(
         &a->value, &expected, desired, true, nova_mo_c(success), nova_mo_c(failure));
 }
 
+/* ── Plan 103.3: TLF timer state (try_lock_for / try_read_for / try_write_for)
+ *
+ * NovaMutexTLFHandle is raw-malloc'd (NOT GC-managed). Lifecycle:
+ *   allocated in try_lock_for() before park.
+ *   timer_cb or close_cb frees it (via _nova_mutex_tlf_close_cb).
+ *
+ * Protocol (all under lock's internal mu for serialization):
+ *   - try_lock_for(): alloc handle, enqueue timed waiter, start timer, park.
+ *   - On acquire (unlock transfers lock to waiter): set handle->waiter=NULL,
+ *     wake fiber. Timer will eventually fire, see waiter==NULL, call uv_close.
+ *   - On timeout (timer fires first): remove waiter from queue, set
+ *     waiter->timed_out=true, set handle->waiter=NULL, wake fiber, uv_close.
+ *   - close_cb: frees handle (raw malloc). */
+
+typedef struct NovaMutexTLFHandle {
+    uv_timer_t  timer;    /* embedded; must be first (timer.data=handle) */
+    void*       mutex;    /* Nova_Mutex* — forward-compatible (struct defined below) */
+    void*       waiter;   /* NovaMutexWaiter* or NULL */
+} NovaMutexTLFHandle;
+
+static void _nova_mutex_tlf_close_cb(uv_handle_t* h) {
+    free(h->data);   /* free NovaMutexTLFHandle (raw malloc) */
+}
+
 /* ── Mutex waiter ──────────────────────────────────────────────── */
 
 typedef struct NovaMutexWaiter {
@@ -885,28 +909,75 @@ typedef struct NovaMutexWaiter {
     int                     slot;
     struct NovaMutexWaiter* next;
     struct NovaMutexWaiter* prev;
+    /* Plan 103.3: extended fields for try_lock_for(). Zero-init for lock(). */
+    bool                    timed_out;   /* set by timer_cb before wake */
+    NovaMutexTLFHandle*     tlf_handle;  /* NULL for plain lock() waiters */
 } NovaMutexWaiter;
 
 /* ── Mutex ─────────────────────────────────────────────────────── */
 
-/* Fair FIFO Mutex. Fiber waiters are queued in arrival order. The lock is
- * transferred directly to the next waiter on unlock (no thundering herd).
+/* Fair FIFO Mutex (default) / unfair LIFO opt-in (new_unfair()).
+ *
+ * Fair mode: waiters queued in arrival order; unlock() pops from head.
+ * Unfair mode: unlock() pops from tail (LIFO). Higher throughput under
+ *   short critical sections; starvation possible.
  *
  * NOT reentrant: lock() from the same fiber that holds the lock deadlocks.
- * unlock() without a matching lock() is a debug-assert violation. */
+ * unlock() without a matching lock() → unconditional runtime panic (Plan 103.3:
+ * same pattern as Nova_Once_method_done — fires in both Dev AND Release builds). */
 typedef struct {
     nova_mutex_t      mu;       /* guards locked + waiter list */
     bool              locked;
+    bool              unfair;   /* Plan 103.3: LIFO pop if true */
     NovaMutexWaiter*  head;
     NovaMutexWaiter*  tail;
 } Nova_Mutex;
 
+/* ── Mutex timer callback (fires when try_lock_for timeout expires) ─
+ * Defined after Nova_Mutex so we can use it by name (forward-compat: we used
+ * void* in NovaMutexTLFHandle.mutex, so no circular-struct issue). */
+
+static void _nova_mutex_tlf_timer_cb(uv_timer_t* h) {
+    NovaMutexTLFHandle* handle = (NovaMutexTLFHandle*)h->data;
+    Nova_Mutex* m = (Nova_Mutex*)handle->mutex;
+    nova_mutex_lock(&m->mu);
+    NovaMutexWaiter* w = (NovaMutexWaiter*)handle->waiter;
+    if (w != NULL) {
+        /* Timer won the race — remove waiter from queue. */
+        if (w->prev) w->prev->next = w->next;
+        else         m->head = w->next;
+        if (w->next) w->next->prev = w->prev;
+        else         m->tail = w->prev;
+        w->timed_out   = true;
+        handle->waiter = NULL;
+        NovaFiberQueue* scope = w->scope;
+        int slot = w->slot;
+        nova_mutex_unlock(&m->mu);
+        nova_sched_wake(scope, slot);
+    } else {
+        /* unlock() already transferred lock: this timer fires as no-op. */
+        nova_mutex_unlock(&m->mu);
+    }
+    uv_close((uv_handle_t*)h, _nova_mutex_tlf_close_cb);
+}
+
 static inline Nova_Mutex* Nova_Mutex_static_new(void) {
-    Nova_Mutex* m = (Nova_Mutex*)nova_alloc(sizeof(Nova_Mutex));
+    /* Plan 103.3: uncollectable to prevent GC race under M:N on Windows
+     * (Boehm may miss the mutex pointer on main thread's stack during
+     * worker materialization, causing premature collection). */
+    Nova_Mutex* m = (Nova_Mutex*)nova_alloc_uncollectable(sizeof(Nova_Mutex));
     nova_mutex_init(&m->mu);
     m->locked = false;
+    m->unfair  = false;
     m->head   = NULL;
     m->tail   = NULL;
+    return m;
+}
+
+/* Plan 103.3: unfair opt-in constructor. Same layout; LIFO pop in unlock(). */
+static inline Nova_Mutex* Nova_Mutex_static_new_unfair(void) {
+    Nova_Mutex* m = Nova_Mutex_static_new();
+    m->unfair = true;
     return m;
 }
 
@@ -944,10 +1015,12 @@ static inline nova_unit Nova_Mutex_method_lock(Nova_Mutex* m) {
     }
     /* Fiber path: register as waiter and park atomically with unlock. */
     NovaMutexWaiter w;
-    w.scope = _nova_active_scope;
-    w.slot  = _nova_active_slot;
-    w.next  = NULL;
-    w.prev  = m->tail;
+    w.scope      = _nova_active_scope;
+    w.slot       = _nova_active_slot;
+    w.next       = NULL;
+    w.prev       = m->tail;
+    w.timed_out  = false;
+    w.tlf_handle = NULL;
     if (m->tail) m->tail->next = &w;
     else         m->head = &w;
     m->tail = &w;
@@ -959,15 +1032,130 @@ static inline nova_unit Nova_Mutex_method_lock(Nova_Mutex* m) {
     return NOVA_UNIT;
 }
 
+/* Plan 103.3: try_lock_for(Duration) — attempt to acquire within timeout.
+ * Returns true if acquired, false if timeout expired.
+ * Timeout <= 0: behaves as try_lock() (non-blocking).
+ * Fiber path: arms a libuv timer; parks until lock acquired or timer fires.
+ * Non-fiber path: spin-poll until deadline. */
+static inline nova_bool Nova_Mutex_method_try_lock_for(Nova_Mutex* m,
+                                                        void* timeout) {
+    /* timeout is Nova_Duration* — void* avoids include-order dep;
+     * first field is int64_t nanos. */
+    int64_t nanos = *(int64_t*)timeout;
+    if (nanos <= 0) return Nova_Mutex_method_try_lock(m);
+
+    /* Fast path: check immediately before any timer work. */
+    nova_mutex_lock(&m->mu);
+    if (!m->locked) {
+        m->locked = true;
+        nova_mutex_unlock(&m->mu);
+        return true;
+    }
+
+    if (_nova_active_slot < 0) {
+        /* Non-fiber: spin-poll with deadline. */
+        nova_mutex_unlock(&m->mu);
+        int64_t deadline = _nova_monotonic_ns() + nanos;
+        for (;;) {
+            _nova_cpu_yield();
+            nova_mutex_lock(&m->mu);
+            if (!m->locked) {
+                m->locked = true;
+                nova_mutex_unlock(&m->mu);
+                return true;
+            }
+            nova_mutex_unlock(&m->mu);
+            if (_nova_monotonic_ns() >= deadline) return false;
+        }
+    }
+
+    /* Fiber path: set up timer + register as timed waiter. */
+    uint64_t delay_ms = (uint64_t)((nanos + 999999LL) / 1000000LL);
+    if (delay_ms == 0) delay_ms = 1;
+
+    /* Allocate timer state on heap (libuv owns until close_cb). */
+    NovaMutexTLFHandle* handle = (NovaMutexTLFHandle*)malloc(sizeof(NovaMutexTLFHandle));
+    if (!handle) {
+        nova_mutex_unlock(&m->mu);
+        fprintf(stderr, "nova: Mutex.try_lock_for: malloc failed\n");
+        abort();
+    }
+    handle->mutex      = (void*)m;
+    handle->timer.data = handle;
+
+    /* Stack waiter (valid until fiber returns from this function). */
+    NovaMutexWaiter w;
+    w.scope      = _nova_active_scope;
+    w.slot       = _nova_active_slot;
+    w.timed_out  = false;
+    w.tlf_handle = handle;
+    handle->waiter = &w;
+
+    /* Enqueue waiter (under mu held since fast-path check above). */
+    w.next = NULL;
+    w.prev = m->tail;
+    if (m->tail) m->tail->next = &w;
+    else         m->head = &w;
+    m->tail = &w;
+
+    /* Start timer (safe to call under mu — doesn't block). */
+    int rc = uv_timer_init(nova_current_loop(), &handle->timer);
+    if (rc != 0) {
+        /* Remove waiter from queue and bail. */
+        if (w.prev) w.prev->next = NULL; else m->head = NULL;
+        m->tail = w.prev;
+        nova_mutex_unlock(&m->mu);
+        free(handle);
+        return false;
+    }
+    rc = uv_timer_start(&handle->timer, _nova_mutex_tlf_timer_cb, delay_ms, 0);
+    if (rc != 0) {
+        if (w.prev) w.prev->next = NULL; else m->head = NULL;
+        m->tail = w.prev;
+        nova_mutex_unlock(&m->mu);
+        uv_close((uv_handle_t*)&handle->timer, _nova_mutex_tlf_close_cb);
+        return false;
+    }
+
+    /* Park atomically with mu release. */
+    nova_sched_park_with_unlock(_nova_active_scope, _nova_active_slot,
+                                 (void(*)(void*))nova_mutex_unlock, &m->mu);
+    /* Resumed: either lock transferred (timed_out=false) or timer fired (timed_out=true). */
+    return !w.timed_out;
+}
+
+/* Plan 103.3: is_locked() — best-effort observability. NOT for CAS. */
+static inline nova_bool Nova_Mutex_method_is_locked(const Nova_Mutex* m) {
+    /* Relaxed load suffices for best-effort check (plan D169 §3). */
+    return (nova_bool)__atomic_load_n((const bool*)&m->locked, __ATOMIC_RELAXED);
+}
+
 static inline nova_unit Nova_Mutex_method_unlock(Nova_Mutex* m) {
     nova_mutex_lock(&m->mu);
-    NOVA_SYNC_ASSERT(m->locked, "Mutex.unlock() called on an unlocked mutex");
+    /* Plan 103.3: unconditional check (fires in Dev AND Release — same pattern
+     * as Nova_Once_method_done). NOVA_SYNC_ASSERT was a no-op in Dev/Release. */
+    if (!m->locked) {
+        nova_mutex_unlock(&m->mu);
+        Nova_Fail_fail(nova_str_from_cstr("Mutex.unlock() called on an unlocked mutex"));
+        nova_throw(nova_str_from_cstr("Mutex.unlock() called on an unlocked mutex"));
+    }
     if (m->head) {
-        /* Transfer lock ownership to first waiter: locked stays true. */
-        NovaMutexWaiter* w = m->head;
-        m->head = w->next;
-        if (m->head) m->head->prev = NULL;
-        else         m->tail = NULL;
+        /* Plan 103.3: unfair = LIFO (pop from tail); fair = FIFO (pop from head). */
+        NovaMutexWaiter* w;
+        if (m->unfair) {
+            w = m->tail;
+            m->tail = w->prev;
+            if (m->tail) m->tail->next = NULL;
+            else         m->head = NULL;
+        } else {
+            w = m->head;
+            m->head = w->next;
+            if (m->head) m->head->prev = NULL;
+            else         m->tail = NULL;
+        }
+        /* Plan 103.3: nullify handle->waiter before wake so timer_cb becomes no-op. */
+        if (w->tlf_handle) w->tlf_handle->waiter = NULL;
+        /* Transfer lock ownership: locked stays true. */
         NovaFiberQueue* scope = w->scope;
         int slot = w->slot;
         nova_mutex_unlock(&m->mu);
@@ -977,6 +1165,670 @@ static inline nova_unit Nova_Mutex_method_unlock(Nova_Mutex* m) {
         nova_mutex_unlock(&m->mu);
     }
     return NOVA_UNIT;
+}
+
+/* ── Plan 103.3: RwLock TLF handle ────────────────────────────────── */
+
+typedef struct NovaRwLockTLFHandle {
+    uv_timer_t  timer;
+    void*       rwlock;     /* Nova_RwLock* — forward-compatible */
+    void*       waiter;     /* NovaRwLockWaiter* or NULL */
+    bool        is_writer;
+} NovaRwLockTLFHandle;
+
+static void _nova_rwlock_tlf_close_cb(uv_handle_t* h) { free(h->data); }
+
+/* ── Plan 103.3: RwLock waiter ─────────────────────────────────────── */
+
+typedef struct NovaRwLockWaiter {
+    NovaFiberQueue*             scope;
+    int                         slot;
+    struct NovaRwLockWaiter*    next;
+    struct NovaRwLockWaiter*    prev;
+    bool                        timed_out;
+    NovaRwLockTLFHandle*        tlf_handle;
+} NovaRwLockWaiter;
+
+/* ── Plan 103.3: RwLock ────────────────────────────────────────────── */
+
+/* Fiber-aware reader-writer lock.
+ *
+ * Default: writer-priority (prevents writer starvation in read-heavy workloads).
+ *   read(): if write_locked OR (write_waiting AND !reader_priority) → park.
+ *   write(): set write_waiting=true, park until !write_locked AND reader_count==0.
+ *
+ * reader_priority opt-in (new_reader_priority()): new readers bypass the
+ *   write_waiting gate — writers may starve if readers arrive continuously.
+ *
+ * read_unlock/write_unlock: unconditional invariant check (Plan 103.3 pattern). */
+typedef struct {
+    nova_mutex_t        mu;
+    int                 reader_count;   /* # active readers */
+    bool                write_locked;   /* true while a writer holds the lock */
+    bool                write_waiting;  /* >=1 writer queued (writer-priority gate) */
+    bool                reader_priority;/* bypass write_waiting gate on read() */
+    NovaRwLockWaiter*   reader_head;
+    NovaRwLockWaiter*   reader_tail;
+    NovaRwLockWaiter*   writer_head;
+    NovaRwLockWaiter*   writer_tail;
+} Nova_RwLock;
+
+/* Forward-declare timer callback (defined after Nova_RwLock). */
+static void _nova_rwlock_tlf_timer_cb(uv_timer_t* h);
+
+static inline Nova_RwLock* Nova_RwLock_static_new(void) {
+    /* Plan 103.3: uncollectable — same GC-race fix as Nova_Mutex/Nova_ReentrantMutex. */
+    Nova_RwLock* rw = (Nova_RwLock*)nova_alloc_uncollectable(sizeof(Nova_RwLock));
+    nova_mutex_init(&rw->mu);
+    rw->reader_count   = 0;
+    rw->write_locked   = false;
+    rw->write_waiting  = false;
+    rw->reader_priority = false;
+    rw->reader_head = rw->reader_tail = NULL;
+    rw->writer_head = rw->writer_tail = NULL;
+    return rw;
+}
+
+static inline Nova_RwLock* Nova_RwLock_static_new_reader_priority(void) {
+    Nova_RwLock* rw = Nova_RwLock_static_new();
+    rw->reader_priority = true;
+    return rw;
+}
+
+/* Internal: wake all parked readers. Called under mu. */
+static inline void _nova_rwlock_wake_readers(Nova_RwLock* rw) {
+    NovaRwLockWaiter* cur = rw->reader_head;
+    rw->reader_head = rw->reader_tail = NULL;
+    while (cur) {
+        /* Skip timed-out readers (handle->waiter already NULL). */
+        if (cur->tlf_handle && cur->tlf_handle->waiter == NULL) {
+            cur = cur->next;
+            continue;
+        }
+        rw->reader_count++;
+        if (cur->tlf_handle) cur->tlf_handle->waiter = NULL;
+        NovaFiberQueue* s = cur->scope;
+        int slot = cur->slot;
+        cur = cur->next;
+        nova_sched_wake(s, slot);
+    }
+}
+
+/* Internal: wake one writer (direct ownership transfer). Called under mu. */
+static inline void _nova_rwlock_wake_one_writer(Nova_RwLock* rw) {
+    while (rw->writer_head) {
+        NovaRwLockWaiter* w = rw->writer_head;
+        rw->writer_head = w->next;
+        if (rw->writer_head) rw->writer_head->prev = NULL;
+        else                 rw->writer_tail = NULL;
+        /* Skip timed-out writers. */
+        if (w->tlf_handle && w->tlf_handle->waiter == NULL) continue;
+        /* Transfer write ownership. */
+        rw->write_locked  = true;
+        rw->write_waiting = (rw->writer_head != NULL);
+        if (w->tlf_handle) w->tlf_handle->waiter = NULL;
+        nova_sched_wake(w->scope, w->slot);
+        return;
+    }
+    /* No active writer waiters. */
+    rw->write_waiting = false;
+}
+
+/* Helper: enqueue a timed waiter and start its timer. Called under rw->mu. */
+static inline bool _nova_rwlock_start_timed_waiter(
+        Nova_RwLock* rw, NovaRwLockWaiter* w,
+        NovaRwLockWaiter** head, NovaRwLockWaiter** tail,
+        uint64_t delay_ms, bool is_writer) {
+    NovaRwLockTLFHandle* handle = (NovaRwLockTLFHandle*)malloc(sizeof(NovaRwLockTLFHandle));
+    if (!handle) return false;
+    handle->rwlock     = (void*)rw;
+    handle->waiter     = w;
+    handle->is_writer  = is_writer;
+    handle->timer.data = handle;
+    w->tlf_handle = handle;
+
+    /* Enqueue. */
+    w->next = NULL;
+    w->prev = *tail;
+    if (*tail) (*tail)->next = w;
+    else       *head = w;
+    *tail = w;
+
+    int rc = uv_timer_init(nova_current_loop(), &handle->timer);
+    if (rc != 0) { /* cleanup */
+        if (w->prev) w->prev->next = NULL; else *head = NULL;
+        *tail = w->prev;
+        free(handle);
+        w->tlf_handle = NULL;
+        return false;
+    }
+    rc = uv_timer_start(&handle->timer, _nova_rwlock_tlf_timer_cb, delay_ms, 0);
+    if (rc != 0) {
+        if (w->prev) w->prev->next = NULL; else *head = NULL;
+        *tail = w->prev;
+        uv_close((uv_handle_t*)&handle->timer, _nova_rwlock_tlf_close_cb);
+        w->tlf_handle = NULL;
+        return false;
+    }
+    return true;
+}
+
+static inline nova_unit Nova_RwLock_method_read(Nova_RwLock* rw) {
+    nova_mutex_lock(&rw->mu);
+    bool block = rw->write_locked || (!rw->reader_priority && rw->write_waiting);
+    if (!block) {
+        rw->reader_count++;
+        nova_mutex_unlock(&rw->mu);
+        return NOVA_UNIT;
+    }
+    if (_nova_active_slot < 0) {
+        nova_mutex_unlock(&rw->mu);
+        for (;;) {
+            _nova_cpu_yield();
+            nova_mutex_lock(&rw->mu);
+            if (!rw->write_locked && (rw->reader_priority || !rw->write_waiting)) {
+                rw->reader_count++;
+                nova_mutex_unlock(&rw->mu);
+                return NOVA_UNIT;
+            }
+            nova_mutex_unlock(&rw->mu);
+        }
+    }
+    NovaRwLockWaiter w = { .scope=_nova_active_scope, .slot=_nova_active_slot,
+                            .next=NULL, .prev=rw->reader_tail,
+                            .timed_out=false, .tlf_handle=NULL };
+    if (rw->reader_tail) rw->reader_tail->next = &w;
+    else                 rw->reader_head = &w;
+    rw->reader_tail = &w;
+    nova_sched_park_with_unlock(_nova_active_scope, _nova_active_slot,
+                                 (void(*)(void*))nova_mutex_unlock, &rw->mu);
+    return NOVA_UNIT;
+}
+
+static inline nova_bool Nova_RwLock_method_try_read(Nova_RwLock* rw) {
+    nova_mutex_lock(&rw->mu);
+    if (!rw->write_locked && (rw->reader_priority || !rw->write_waiting)) {
+        rw->reader_count++;
+        nova_mutex_unlock(&rw->mu);
+        return true;
+    }
+    nova_mutex_unlock(&rw->mu);
+    return false;
+}
+
+static inline nova_bool Nova_RwLock_method_try_read_for(Nova_RwLock* rw, void* timeout) {
+    /* timeout is Nova_Duration* — void* avoids include-order dep. */
+    int64_t tnanos = *(int64_t*)timeout;
+    if (tnanos <= 0) return Nova_RwLock_method_try_read(rw);
+    nova_mutex_lock(&rw->mu);
+    if (!rw->write_locked && (rw->reader_priority || !rw->write_waiting)) {
+        rw->reader_count++;
+        nova_mutex_unlock(&rw->mu);
+        return true;
+    }
+    if (_nova_active_slot < 0) {
+        nova_mutex_unlock(&rw->mu);
+        int64_t deadline = _nova_monotonic_ns() + tnanos;
+        for (;;) {
+            _nova_cpu_yield();
+            nova_mutex_lock(&rw->mu);
+            if (!rw->write_locked && (rw->reader_priority || !rw->write_waiting)) {
+                rw->reader_count++;
+                nova_mutex_unlock(&rw->mu);
+                return true;
+            }
+            nova_mutex_unlock(&rw->mu);
+            if (_nova_monotonic_ns() >= deadline) return false;
+        }
+    }
+    uint64_t delay_ms = (uint64_t)((tnanos + 999999LL) / 1000000LL);
+    if (delay_ms == 0) delay_ms = 1;
+    NovaRwLockWaiter w = { .scope=_nova_active_scope, .slot=_nova_active_slot,
+                            .next=NULL, .prev=NULL, .timed_out=false, .tlf_handle=NULL };
+    if (!_nova_rwlock_start_timed_waiter(rw, &w, &rw->reader_head, &rw->reader_tail,
+                                          delay_ms, false)) {
+        nova_mutex_unlock(&rw->mu);
+        return false;
+    }
+    nova_sched_park_with_unlock(_nova_active_scope, _nova_active_slot,
+                                 (void(*)(void*))nova_mutex_unlock, &rw->mu);
+    return !w.timed_out;
+}
+
+static inline nova_unit Nova_RwLock_method_read_unlock(Nova_RwLock* rw) {
+    nova_mutex_lock(&rw->mu);
+    if (rw->reader_count <= 0 || rw->write_locked) {
+        nova_mutex_unlock(&rw->mu);
+        Nova_Fail_fail(nova_str_from_cstr("RwLock.read_unlock() called without a matching read()"));
+        nova_throw(nova_str_from_cstr("RwLock.read_unlock() called without a matching read()"));
+    }
+    rw->reader_count--;
+    if (rw->reader_count == 0 && rw->write_waiting) {
+        _nova_rwlock_wake_one_writer(rw);
+        nova_mutex_unlock(&rw->mu);
+    } else {
+        nova_mutex_unlock(&rw->mu);
+    }
+    return NOVA_UNIT;
+}
+
+static inline nova_unit Nova_RwLock_method_write(Nova_RwLock* rw) {
+    nova_mutex_lock(&rw->mu);
+    if (!rw->write_locked && rw->reader_count == 0) {
+        rw->write_locked  = true;
+        rw->write_waiting = (rw->writer_head != NULL);
+        nova_mutex_unlock(&rw->mu);
+        return NOVA_UNIT;
+    }
+    if (_nova_active_slot < 0) {
+        rw->write_waiting = true;
+        nova_mutex_unlock(&rw->mu);
+        for (;;) {
+            _nova_cpu_yield();
+            nova_mutex_lock(&rw->mu);
+            if (!rw->write_locked && rw->reader_count == 0) {
+                rw->write_locked  = true;
+                rw->write_waiting = (rw->writer_head != NULL);
+                nova_mutex_unlock(&rw->mu);
+                return NOVA_UNIT;
+            }
+            nova_mutex_unlock(&rw->mu);
+        }
+    }
+    rw->write_waiting = true;
+    NovaRwLockWaiter w = { .scope=_nova_active_scope, .slot=_nova_active_slot,
+                            .next=NULL, .prev=rw->writer_tail,
+                            .timed_out=false, .tlf_handle=NULL };
+    if (rw->writer_tail) rw->writer_tail->next = &w;
+    else                 rw->writer_head = &w;
+    rw->writer_tail = &w;
+    nova_sched_park_with_unlock(_nova_active_scope, _nova_active_slot,
+                                 (void(*)(void*))nova_mutex_unlock, &rw->mu);
+    return NOVA_UNIT;
+}
+
+static inline nova_bool Nova_RwLock_method_try_write(Nova_RwLock* rw) {
+    nova_mutex_lock(&rw->mu);
+    if (!rw->write_locked && rw->reader_count == 0) {
+        rw->write_locked  = true;
+        rw->write_waiting = (rw->writer_head != NULL);
+        nova_mutex_unlock(&rw->mu);
+        return true;
+    }
+    nova_mutex_unlock(&rw->mu);
+    return false;
+}
+
+static inline nova_bool Nova_RwLock_method_try_write_for(Nova_RwLock* rw, void* timeout) {
+    /* timeout is Nova_Duration* — void* avoids include-order dep. */
+    int64_t tnanos = *(int64_t*)timeout;
+    if (tnanos <= 0) return Nova_RwLock_method_try_write(rw);
+    nova_mutex_lock(&rw->mu);
+    if (!rw->write_locked && rw->reader_count == 0) {
+        rw->write_locked  = true;
+        rw->write_waiting = (rw->writer_head != NULL);
+        nova_mutex_unlock(&rw->mu);
+        return true;
+    }
+    if (_nova_active_slot < 0) {
+        nova_mutex_unlock(&rw->mu);
+        int64_t deadline = _nova_monotonic_ns() + tnanos;
+        for (;;) {
+            _nova_cpu_yield();
+            nova_mutex_lock(&rw->mu);
+            if (!rw->write_locked && rw->reader_count == 0) {
+                rw->write_locked  = true;
+                rw->write_waiting = (rw->writer_head != NULL);
+                nova_mutex_unlock(&rw->mu);
+                return true;
+            }
+            nova_mutex_unlock(&rw->mu);
+            if (_nova_monotonic_ns() >= deadline) return false;
+        }
+    }
+    uint64_t delay_ms = (uint64_t)((tnanos + 999999LL) / 1000000LL);
+    if (delay_ms == 0) delay_ms = 1;
+    rw->write_waiting = true;
+    NovaRwLockWaiter w = { .scope=_nova_active_scope, .slot=_nova_active_slot,
+                            .next=NULL, .prev=NULL, .timed_out=false, .tlf_handle=NULL };
+    if (!_nova_rwlock_start_timed_waiter(rw, &w, &rw->writer_head, &rw->writer_tail,
+                                          delay_ms, true)) {
+        nova_mutex_unlock(&rw->mu);
+        return false;
+    }
+    nova_sched_park_with_unlock(_nova_active_scope, _nova_active_slot,
+                                 (void(*)(void*))nova_mutex_unlock, &rw->mu);
+    if (w.timed_out) {
+        /* Timer won: update write_waiting flag (may have become false). */
+        nova_mutex_lock(&rw->mu);
+        if (!rw->writer_head) rw->write_waiting = false;
+        nova_mutex_unlock(&rw->mu);
+        return false;
+    }
+    return true;
+}
+
+static inline nova_unit Nova_RwLock_method_write_unlock(Nova_RwLock* rw) {
+    nova_mutex_lock(&rw->mu);
+    if (!rw->write_locked) {
+        nova_mutex_unlock(&rw->mu);
+        Nova_Fail_fail(nova_str_from_cstr("RwLock.write_unlock() called without a matching write()"));
+        nova_throw(nova_str_from_cstr("RwLock.write_unlock() called without a matching write()"));
+    }
+    rw->write_locked = false;
+    if (rw->writer_head) {
+        /* Prefer next writer (writer-priority maintained). */
+        _nova_rwlock_wake_one_writer(rw);
+        nova_mutex_unlock(&rw->mu);
+    } else {
+        rw->write_waiting = false;
+        /* Wake all parked readers. */
+        _nova_rwlock_wake_readers(rw);
+        nova_mutex_unlock(&rw->mu);
+    }
+    return NOVA_UNIT;
+}
+
+/* Plan 103.3: reader_count() / is_write_locked() — best-effort observability. */
+static inline nova_int Nova_RwLock_method_reader_count(const Nova_RwLock* rw) {
+    return (nova_int)__atomic_load_n((const int*)&rw->reader_count, __ATOMIC_RELAXED);
+}
+
+static inline nova_bool Nova_RwLock_method_is_write_locked(const Nova_RwLock* rw) {
+    return (nova_bool)__atomic_load_n((const bool*)&rw->write_locked, __ATOMIC_RELAXED);
+}
+
+/* RwLock TLF timer callback (defined after Nova_RwLock is complete). */
+static void _nova_rwlock_tlf_timer_cb(uv_timer_t* h) {
+    NovaRwLockTLFHandle* handle = (NovaRwLockTLFHandle*)h->data;
+    Nova_RwLock* rw = (Nova_RwLock*)handle->rwlock;
+    nova_mutex_lock(&rw->mu);
+    NovaRwLockWaiter* w = (NovaRwLockWaiter*)handle->waiter;
+    if (w != NULL) {
+        /* Remove from appropriate queue. */
+        if (handle->is_writer) {
+            if (w->prev) w->prev->next = w->next; else rw->writer_head = w->next;
+            if (w->next) w->next->prev = w->prev; else rw->writer_tail = w->prev;
+            if (!rw->writer_head) rw->write_waiting = false;
+        } else {
+            if (w->prev) w->prev->next = w->next; else rw->reader_head = w->next;
+            if (w->next) w->next->prev = w->prev; else rw->reader_tail = w->prev;
+        }
+        w->timed_out   = true;
+        handle->waiter = NULL;
+        NovaFiberQueue* s = w->scope;
+        int slot = w->slot;
+        nova_mutex_unlock(&rw->mu);
+        nova_sched_wake(s, slot);
+    } else {
+        nova_mutex_unlock(&rw->mu);
+    }
+    uv_close((uv_handle_t*)h, _nova_rwlock_tlf_close_cb);
+}
+
+/* ── Plan 103.3: ReentrantMutex TLF handle ─────────────────────────── */
+
+typedef struct NovaReMutexTLFHandle {
+    uv_timer_t  timer;
+    void*       relock;   /* Nova_ReentrantMutex* — forward-compatible */
+    void*       waiter;
+} NovaReMutexTLFHandle;
+
+static void _nova_remutex_tlf_close_cb(uv_handle_t* h) { free(h->data); }
+
+/* ── Plan 103.3: ReentrantMutex waiter ─────────────────────────────── */
+
+typedef struct NovaReMutexWaiter {
+    NovaFiberQueue*              scope;
+    int                          slot;
+    mco_coro*                    coro;       /* owner identity — for transfer on wake */
+    struct NovaReMutexWaiter*    next;
+    struct NovaReMutexWaiter*    prev;
+    bool                         timed_out;
+    NovaReMutexTLFHandle*        tlf_handle;
+} NovaReMutexWaiter;
+
+/* ── Plan 103.3: ReentrantMutex ─────────────────────────────────────── */
+
+/* Reentrant mutex: same fiber can lock() multiple times without deadlock.
+ * Owner identified by mco_running() — the current fiber's coroutine pointer,
+ * or NULL for the main (non-fiber) thread.  This is stable across supervised{}
+ * boundaries (unlike _nova_active_scope which changes per supervised block).
+ *
+ * Interaction with Condvar (Plan 103.4): wait() releases ENTIRE lock
+ * (lock_count → 0), wake re-acquires with count=1.
+ * AI-diagnostic W_REENTRANT_CONDVAR_RECOMMEND if mix detected.
+ *
+ * unlock() invariants checked unconditionally (Plan 103.3 pattern). */
+typedef struct {
+    nova_mutex_t          mu;
+    bool                  locked;
+    mco_coro*             owner_coro;  /* mco_running() of owner; NULL = main thread or unlocked */
+    int32_t               lock_count;
+    NovaReMutexWaiter*    head;
+    NovaReMutexWaiter*    tail;
+} Nova_ReentrantMutex;
+
+/* Forward-declare timer cb. */
+static void _nova_remutex_tlf_timer_cb(uv_timer_t* h);
+
+static inline Nova_ReentrantMutex* Nova_ReentrantMutex_static_new(void) {
+    Nova_ReentrantMutex* rm = (Nova_ReentrantMutex*)nova_alloc_uncollectable(sizeof(Nova_ReentrantMutex));
+    nova_mutex_init(&rm->mu);
+    rm->locked     = false;
+    rm->owner_coro = NULL;
+    rm->lock_count = 0;
+    rm->head = rm->tail = NULL;
+    return rm;
+}
+
+static inline nova_unit Nova_ReentrantMutex_method_lock(Nova_ReentrantMutex* rm) {
+    nova_mutex_lock(&rm->mu);
+    /* Reentrant: same fiber re-acquires without blocking. */
+    if (rm->locked && rm->owner_coro == mco_running()) {
+        rm->lock_count++;
+        nova_mutex_unlock(&rm->mu);
+        return NOVA_UNIT;
+    }
+    if (!rm->locked) {
+        rm->locked     = true;
+        rm->owner_coro = mco_running();
+        rm->lock_count = 1;
+        nova_mutex_unlock(&rm->mu);
+        return NOVA_UNIT;
+    }
+    if (_nova_active_slot < 0) {
+        /* Non-fiber (main thread) spin path. */
+        nova_mutex_unlock(&rm->mu);
+        for (;;) {
+            _nova_cpu_yield();
+            nova_mutex_lock(&rm->mu);
+            if (!rm->locked) {
+                rm->locked     = true;
+                rm->owner_coro = mco_running();
+                rm->lock_count = 1;
+                nova_mutex_unlock(&rm->mu);
+                return NOVA_UNIT;
+            }
+            nova_mutex_unlock(&rm->mu);
+        }
+    }
+    NovaReMutexWaiter w = { .scope=_nova_active_scope, .slot=_nova_active_slot,
+                             .coro=mco_running(),
+                             .next=NULL, .prev=rm->tail,
+                             .timed_out=false, .tlf_handle=NULL };
+    if (rm->tail) rm->tail->next = &w;
+    else          rm->head = &w;
+    rm->tail = &w;
+    nova_sched_park_with_unlock(_nova_active_scope, _nova_active_slot,
+                                 (void(*)(void*))nova_mutex_unlock, &rm->mu);
+    return NOVA_UNIT;
+}
+
+static inline nova_bool Nova_ReentrantMutex_method_try_lock(Nova_ReentrantMutex* rm) {
+    nova_mutex_lock(&rm->mu);
+    if (rm->locked && rm->owner_coro == mco_running()) {
+        rm->lock_count++;
+        nova_mutex_unlock(&rm->mu);
+        return true;
+    }
+    if (!rm->locked) {
+        rm->locked     = true;
+        rm->owner_coro = mco_running();
+        rm->lock_count = 1;
+        nova_mutex_unlock(&rm->mu);
+        return true;
+    }
+    nova_mutex_unlock(&rm->mu);
+    return false;
+}
+
+static inline nova_bool Nova_ReentrantMutex_method_try_lock_for(
+        Nova_ReentrantMutex* rm, void* timeout) {
+    /* timeout is Nova_Duration* — void* avoids include-order dep. */
+    int64_t tnanos = *(int64_t*)timeout;
+    if (tnanos <= 0) return Nova_ReentrantMutex_method_try_lock(rm);
+    nova_mutex_lock(&rm->mu);
+    /* Reentrant fast-path. */
+    if (rm->locked && rm->owner_coro == mco_running()) {
+        rm->lock_count++;
+        nova_mutex_unlock(&rm->mu);
+        return true;
+    }
+    if (!rm->locked) {
+        rm->locked     = true;
+        rm->owner_coro = mco_running();
+        rm->lock_count = 1;
+        nova_mutex_unlock(&rm->mu);
+        return true;
+    }
+    if (_nova_active_slot < 0) {
+        /* Non-fiber (main thread) spin path with deadline. */
+        nova_mutex_unlock(&rm->mu);
+        int64_t deadline = _nova_monotonic_ns() + tnanos;
+        for (;;) {
+            _nova_cpu_yield();
+            nova_mutex_lock(&rm->mu);
+            if (!rm->locked) {
+                rm->locked     = true;
+                rm->owner_coro = mco_running();
+                rm->lock_count = 1;
+                nova_mutex_unlock(&rm->mu);
+                return true;
+            }
+            nova_mutex_unlock(&rm->mu);
+            if (_nova_monotonic_ns() >= deadline) return false;
+        }
+    }
+    uint64_t delay_ms = (uint64_t)((tnanos + 999999LL) / 1000000LL);
+    if (delay_ms == 0) delay_ms = 1;
+    NovaReMutexTLFHandle* handle = (NovaReMutexTLFHandle*)malloc(sizeof(NovaReMutexTLFHandle));
+    if (!handle) { nova_mutex_unlock(&rm->mu); return false; }
+    handle->relock     = (void*)rm;
+    handle->timer.data = handle;
+    NovaReMutexWaiter w = { .scope=_nova_active_scope, .slot=_nova_active_slot,
+                             .coro=mco_running(),
+                             .next=NULL, .prev=rm->tail,
+                             .timed_out=false, .tlf_handle=handle };
+    handle->waiter = &w;
+    if (rm->tail) rm->tail->next = &w;
+    else          rm->head = &w;
+    rm->tail = &w;
+    int rc = uv_timer_init(nova_current_loop(), &handle->timer);
+    if (rc != 0) {
+        if (w.prev) w.prev->next = NULL; else rm->head = NULL;
+        rm->tail = w.prev;
+        nova_mutex_unlock(&rm->mu);
+        free(handle);
+        return false;
+    }
+    rc = uv_timer_start(&handle->timer, _nova_remutex_tlf_timer_cb, delay_ms, 0);
+    if (rc != 0) {
+        if (w.prev) w.prev->next = NULL; else rm->head = NULL;
+        rm->tail = w.prev;
+        nova_mutex_unlock(&rm->mu);
+        uv_close((uv_handle_t*)&handle->timer, _nova_remutex_tlf_close_cb);
+        return false;
+    }
+    nova_sched_park_with_unlock(_nova_active_scope, _nova_active_slot,
+                                 (void(*)(void*))nova_mutex_unlock, &rm->mu);
+    return !w.timed_out;
+}
+
+static inline nova_unit Nova_ReentrantMutex_method_unlock(Nova_ReentrantMutex* rm) {
+    nova_mutex_lock(&rm->mu);
+    /* Unconditional invariant checks (Plan 103.3 pattern). */
+    if (!rm->locked || rm->owner_coro != mco_running()) {
+        nova_mutex_unlock(&rm->mu);
+        Nova_Fail_fail(nova_str_from_cstr("ReentrantMutex.unlock() called by non-owner fiber or mutex not locked"));
+        nova_throw(nova_str_from_cstr("ReentrantMutex.unlock() called by non-owner fiber or mutex not locked"));
+    }
+    rm->lock_count--;
+    if (rm->lock_count > 0) {
+        nova_mutex_unlock(&rm->mu);
+        return NOVA_UNIT;
+    }
+    /* lock_count == 0: release ownership. */
+    rm->locked     = false;
+    rm->owner_coro = NULL;
+    if (rm->head) {
+        NovaReMutexWaiter* w = rm->head;
+        rm->head = w->next;
+        if (rm->head) rm->head->prev = NULL;
+        else          rm->tail = NULL;
+        /* Skip timed-out waiters. */
+        while (w && w->tlf_handle && w->tlf_handle->waiter == NULL) {
+            w = rm->head;
+            if (w) { rm->head = w->next; if (rm->head) rm->head->prev = NULL; else rm->tail = NULL; }
+        }
+        if (w) {
+            rm->locked     = true;
+            rm->owner_coro = w->coro;   /* transfer ownership to waiter's fiber */
+            rm->lock_count = 1;
+            if (w->tlf_handle) w->tlf_handle->waiter = NULL;
+            NovaFiberQueue* s = w->scope;
+            int slot = w->slot;
+            nova_mutex_unlock(&rm->mu);
+            nova_sched_wake(s, slot);
+            return NOVA_UNIT;
+        }
+    }
+    nova_mutex_unlock(&rm->mu);
+    return NOVA_UNIT;
+}
+
+/* Plan 103.3: lock_count() — depth for current fiber, 0 if not owner. */
+static inline nova_int Nova_ReentrantMutex_method_lock_count(const Nova_ReentrantMutex* rm) {
+    /* Read under mu for consistency (caller may use for debugging). */
+    Nova_ReentrantMutex* mrm = (Nova_ReentrantMutex*)rm; /* cast away const for mu */
+    nova_mutex_lock(&mrm->mu);
+    nova_int count = 0;
+    if (rm->locked && rm->owner_coro == mco_running()) {
+        count = (nova_int)rm->lock_count;
+    }
+    nova_mutex_unlock(&mrm->mu);
+    return count;
+}
+
+/* ReentrantMutex TLF timer callback. */
+static void _nova_remutex_tlf_timer_cb(uv_timer_t* h) {
+    NovaReMutexTLFHandle* handle = (NovaReMutexTLFHandle*)h->data;
+    Nova_ReentrantMutex* rm = (Nova_ReentrantMutex*)handle->relock;
+    nova_mutex_lock(&rm->mu);
+    NovaReMutexWaiter* w = (NovaReMutexWaiter*)handle->waiter;
+    if (w != NULL) {
+        if (w->prev) w->prev->next = w->next; else rm->head = w->next;
+        if (w->next) w->next->prev = w->prev; else rm->tail = w->prev;
+        w->timed_out   = true;
+        handle->waiter = NULL;
+        NovaFiberQueue* s = w->scope;
+        int slot = w->slot;
+        nova_mutex_unlock(&rm->mu);
+        nova_sched_wake(s, slot);
+    } else {
+        nova_mutex_unlock(&rm->mu);
+    }
+    uv_close((uv_handle_t*)h, _nova_remutex_tlf_close_cb);
 }
 
 /* ── WaitGroup waiter ──────────────────────────────────────────── */

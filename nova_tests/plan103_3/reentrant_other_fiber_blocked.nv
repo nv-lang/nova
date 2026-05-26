@@ -1,0 +1,32 @@
+// Plan 103.3 — ReentrantMutex: fiber B blocked until fiber A fully releases.
+//
+// EXPECT_TIMEOUT_MS 15000
+
+module nova_tests.plan103_3.reentrant_other_fiber_blocked
+
+test "other fiber blocked until owner fully releases" {
+    let rm = ReentrantMutex.new()
+    let fiber_b_acquired = AtomicBool.new(false)
+
+    // Main acquires lock 3 times (depth = 3)
+    rm.lock()
+    rm.lock()
+    rm.lock()
+    assert(rm.lock_count() == 3)
+
+    supervised {
+        // Fiber B: waits for full release, then acquires
+        spawn {
+            rm.lock()
+            fiber_b_acquired.store(true)
+            rm.unlock()
+        }
+
+        // Main inside supervised: release all 3 levels — fiber B wakes on last unlock
+        rm.unlock()
+        rm.unlock()
+        rm.unlock()
+    }
+
+    assert(fiber_b_acquired.load() == true)
+}

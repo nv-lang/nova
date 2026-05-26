@@ -1,0 +1,19 @@
+// Plan 103.3 — Documentation: regular Mutex is NOT reentrant.
+//
+// Demonstrates that try_lock() from the same fiber returns false when mutex
+// is already held (safe way to observe the non-reentrant behavior without
+// actually deadlocking). A real double-lock() would deadlock.
+
+module nova_tests.plan103_3.mutex_reentrant_deadlock_doc
+
+test "regular Mutex is non-reentrant: try_lock from owner returns false" {
+    let mu = Mutex.new()
+    mu.lock()
+    // From same fiber: try_lock returns false (non-reentrant)
+    let second_ok = mu.try_lock()
+    assert(second_ok == false)
+    mu.unlock()
+    // Now we can lock again
+    assert(mu.try_lock() == true)
+    mu.unlock()
+}

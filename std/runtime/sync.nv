@@ -1045,6 +1045,229 @@ export external fn Mutex mut @unlock()
 #stable(since = "0.1")
 export external fn Mutex mut @try_lock() -> bool
 
+// ─── Mutex extensions (Plan 103.3) ───────────────────────────────
+
+/// Создать mutex с LIFO (unfair) политикой освобождения.
+///
+/// Использовать только после бенчмарка — возможно starvation.
+/// Преимущество: меньше переключений контекста в high-contention сценариях
+/// с короткими критическими секциями.
+///
+/// **PREFERRED PATTERN (M15):** используй `with_lock { }` вместо lock/unlock.
+#stable(since = "0.1")
+export external fn Mutex.new_unfair() -> Self
+
+/// Попытаться захватить mutex в течение timeout.
+///
+/// Возвращает `true` если lock захвачен, `false` если истёк timeout.
+/// timeout <= 0 — эквивалентно `try_lock()`.
+///
+/// # Examples
+///
+/// ```nova
+/// let mu = Mutex.new()
+/// if mu.try_lock_for(Duration.from_millis(100)) {
+///     defer mu.unlock()
+///     // critical section
+/// }
+/// ```
+#stable(since = "0.1")
+export external fn Mutex mut @try_lock_for(timeout Duration) -> bool
+
+/// Best-effort проверка состояния. НЕ для CAS-паттернов.
+///
+/// Состояние может измениться между вызовом и использованием результата.
+/// Используй для observability (debugging, metrics), не для синхронизации.
+#stable(since = "0.1")
+export external fn Mutex @is_locked() -> bool
+
+/// ПРЕДПОЧТИТЕЛЬНЫЙ ПАТТЕРН (M15 V1). Захват + автоматическое освобождение
+/// через `defer` — unlock никогда не будет забыт даже при panic в body.
+///
+/// V2 (Plan 103.9): станет thin wrapper над `MutexGuard consume`; user code
+/// не изменится.
+///
+/// # Examples
+///
+/// ```nova
+/// let mu = Mutex.new()
+/// let result = mu.with_lock { ||
+///     compute_under_lock()
+/// }
+/// ```
+///
+/// # See Also
+///
+/// - `[RwLock.with_read]` / `[RwLock.with_write]` — аналог для RwLock
+/// - `[ReentrantMutex.with_lock]` — аналог для ReentrantMutex
+#stable(since = "0.1")
+export fn Mutex mut @with_lock[R](body fn() -> R) -> R {
+    self.lock()
+    defer self.unlock()
+    body()
+}
+
+// ─── RwLock (Plan 103.3) ─────────────────────────────────────────
+
+/// Fiber-aware reader-writer lock.
+///
+/// По умолчанию: writer-priority (предотвращает starvation писателей).
+/// Несколько читателей могут держать lock одновременно.
+/// Только один писатель, без читателей.
+///
+/// **PREFERRED PATTERN (M15):** используй `with_read { }` / `with_write { }`.
+///
+/// # Examples
+///
+/// ```nova
+/// let rw = RwLock.new()
+/// rw.with_read { ||
+///     let v = shared_data
+///     print(v)
+/// }
+/// rw.with_write { ||
+///     shared_data = 42
+/// }
+/// ```
+///
+/// # See Also
+///
+/// - `[Mutex]` — эксклюзивный доступ (проще, меньше overhead)
+/// - `[ReentrantMutex]` — рекурсивный mutex
+#stable(since = "0.1")
+export external fn RwLock.new() -> Self
+
+/// Reader-priority opt-in. Читатели не блокируются ожидающими писателями.
+///
+/// **Внимание:** возможен starvation писателей при непрерывном потоке читателей.
+/// Используй только в read-heavy сценариях после бенчмарка.
+#stable(since = "0.1")
+export external fn RwLock.new_reader_priority() -> Self
+
+/// Захватить read lock. Паркует если активен или ожидает писатель (writer-priority).
+#stable(since = "0.1")
+export external fn RwLock mut @read()
+
+/// Освободить read lock.
+///
+/// Panic если вызван без соответствующего `read()`.
+#stable(since = "0.1")
+export external fn RwLock mut @read_unlock()
+
+/// Попытаться захватить read lock без блокировки.
+#stable(since = "0.1")
+export external fn RwLock mut @try_read() -> bool
+
+/// Попытаться захватить read lock в течение timeout.
+#stable(since = "0.1")
+export external fn RwLock mut @try_read_for(timeout Duration) -> bool
+
+/// Захватить write lock. Ждёт завершения всех читателей и других писателей.
+#stable(since = "0.1")
+export external fn RwLock mut @write()
+
+/// Освободить write lock.
+///
+/// Panic если вызван без соответствующего `write()`.
+#stable(since = "0.1")
+export external fn RwLock mut @write_unlock()
+
+/// Попытаться захватить write lock без блокировки.
+#stable(since = "0.1")
+export external fn RwLock mut @try_write() -> bool
+
+/// Попытаться захватить write lock в течение timeout.
+#stable(since = "0.1")
+export external fn RwLock mut @try_write_for(timeout Duration) -> bool
+
+/// Текущее количество активных читателей. Best-effort.
+#stable(since = "0.1")
+export external fn RwLock @reader_count() -> int
+
+/// `true` если write lock активен. Best-effort.
+#stable(since = "0.1")
+export external fn RwLock @is_write_locked() -> bool
+
+/// Read-захват с автоматическим освобождением через defer.
+///
+/// **PREFERRED PATTERN (M15 V1).**
+#stable(since = "0.1")
+export fn RwLock mut @with_read[R](body fn() -> R) -> R {
+    self.read()
+    defer self.read_unlock()
+    body()
+}
+
+/// Write-захват с автоматическим освобождением через defer.
+///
+/// **PREFERRED PATTERN (M15 V1).**
+#stable(since = "0.1")
+export fn RwLock mut @with_write[R](body fn() -> R) -> R {
+    self.write()
+    defer self.write_unlock()
+    body()
+}
+
+// ─── ReentrantMutex (Plan 103.3) ─────────────────────────────────
+
+/// Рекурсивный mutex: тот же fiber может lock() несколько раз без deadlock.
+///
+/// Отслеживает owner-fiber + глубину рекурсии. unlock() должен вызываться
+/// столько же раз, сколько lock().
+///
+/// **Используй по умолчанию `[Mutex]`** — он обнаружит double-lock ошибку
+/// немедленно. ReentrantMutex — для миграции legacy кода.
+///
+/// **Взаимодействие с Condvar (Plan 103.4):** `Condvar.wait()` освобождает
+/// ВЕСЬ lock (count → 0), wake повторно захватывает с count=1.
+/// AI-diagnostic `W_REENTRANT_CONDVAR_RECOMMEND` при смешивании.
+///
+/// **PREFERRED PATTERN (M15):** используй `with_lock { }`.
+///
+/// # Examples
+///
+/// ```nova
+/// let rm = ReentrantMutex.new()
+/// rm.lock()
+/// rm.lock()           // тот же fiber — no deadlock
+/// rm.unlock()
+/// rm.unlock()         // освобождён когда count = 0
+/// ```
+#stable(since = "0.1")
+export external fn ReentrantMutex.new() -> Self
+
+/// Захватить lock. Если тот же fiber — увеличить recursion count.
+#stable(since = "0.1")
+export external fn ReentrantMutex mut @lock()
+
+/// Освободить lock. Уменьшить count; release когда count = 0.
+///
+/// Panic если вызван не из owner fiber или mutex не locked.
+#stable(since = "0.1")
+export external fn ReentrantMutex mut @unlock()
+
+/// Попытаться захватить без блокировки.
+#stable(since = "0.1")
+export external fn ReentrantMutex mut @try_lock() -> bool
+
+/// Попытаться захватить в течение timeout.
+#stable(since = "0.1")
+export external fn ReentrantMutex mut @try_lock_for(timeout Duration) -> bool
+
+/// Recursion depth для текущего fiber. 0 если не owner.
+#stable(since = "0.1")
+export external fn ReentrantMutex @lock_count() -> int
+
+/// Захват с автоматическим освобождением через defer.
+///
+/// **PREFERRED PATTERN (M15 V1).**
+#stable(since = "0.1")
+export fn ReentrantMutex mut @with_lock[R](body fn() -> R) -> R {
+    self.lock()
+    defer self.unlock()
+    body()
+}
+
 // ─── WaitGroup ───────────────────────────────────────────────────
 
 /// Counter-based rendezvous — ожидание завершения группы fiber'ов.

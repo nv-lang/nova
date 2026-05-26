@@ -1,0 +1,10 @@
+// Plan 103.3 — ReentrantMutex.unlock() when not locked → RUNTIME_PANIC.
+//
+// EXPECT_RUNTIME_PANIC ReentrantMutex.unlock() called by non-owner fiber or mutex not locked
+
+module nova_tests.plan103_3.reentrant_unlock_not_locked_neg
+
+test "unlock when never locked panics" {
+    let rm = ReentrantMutex.new()
+    rm.unlock()
+}
