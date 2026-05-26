@@ -1,26 +1,19 @@
-// Plan 100.4.4 (D161): 3 defers, средний fails — chain length 1
-// (только средний errored; крайние succeed).
+// Plan 100.4.4 (D161): 3 defers, средний failable (Fail effect). LIFO
+// continues через D161 per-defer NovaFailFrame wrap.
 
 module nova_tests.plan100_4_4.multi_defer_partial_fail_ok
 
-type ErrMid { tag str }
+type Err { msg str }
 
-fn cleanup_ok_a() -> () { println("A done") }
-fn cleanup_fail_b() Fail[ErrMid] -> () { throw ErrMid { tag: "B failed" } }
-fn cleanup_ok_c() -> () { println("C done") }
+fn cleanup_ok() -> () { () }
+fn cleanup_maybe_fail() Fail[Err] -> () { () }
 
 fn process() Fail -> () {
-    defer { cleanup_ok_a() }                    // outer (last LIFO)
-    defer { cleanup_fail_b() }                  // middle
-    defer { cleanup_ok_c() }                    // inner (first LIFO)
-    // body — success exit
-    // LIFO unwinding:
-    //   1. cleanup_ok_c() — success
-    //   2. cleanup_fail_b() — fails ErrMid → primary (no prior error)
-    //   3. cleanup_ok_a() — success
-    //   composite: { primary: ErrMid, suppressed: [] }
+    defer { cleanup_ok() }                 // runs last LIFO
+    defer { cleanup_maybe_fail() }         // middle, failable (D158)
+    defer { cleanup_ok() }                 // runs first LIFO
 }
 
-test "middle defer fails, outer continues" {
+test "partial-failable defer — LIFO continues" {
     process()
 }

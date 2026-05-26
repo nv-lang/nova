@@ -1,0 +1,28 @@
+// Plan 100.4.4 (D161): body throws + multi-defer все могут Fail — D158
+// + D161 composition. Compile pass + runtime catches primary через outer
+// handler (composite chain handled runtime-side).
+
+module nova_tests.plan100_4_4.body_fail_defers_fail_composition
+
+type WorkErr { msg str }
+type Err1 { msg str }
+type Err2 { msg str }
+
+fn defer_a() Fail[Err1] -> () { () }
+fn defer_b() Fail[Err2] -> () { () }
+
+fn do_work_fails() Fail[WorkErr] -> () {
+    throw WorkErr { msg: "operation failed" }
+}
+
+fn process() Fail -> () {
+    defer { defer_a() }
+    defer { defer_b() }
+    do_work_fails()?
+}
+
+test "body fail + multi-defer Fail bodies — D161 composition" {
+    with Fail = effect Fail { fail(_msg) { interrupt () } } {
+        process()
+    }
+}

@@ -1,0 +1,16 @@
+// Plan 100.4.4 (D161): MultiError.fmt_chain() readable summary.
+// Bootstrap: returns primary; full chain rendering — production-grade
+// followup ([M-100.4.4-fmt-chain-rich]).
+
+module nova_tests.plan100_4_4.multi_error_fmt_chain_ok
+
+fn empty_multi() -> MultiError =>
+    { primary: "single", suppressed: [] }
+
+fn one_suppressed() -> MultiError =>
+    { primary: "main", suppressed: ["aux"] }
+
+test "fmt_chain — bootstrap returns primary" {
+    assert(empty_multi().fmt_chain() == "single")
+    assert(one_suppressed().fmt_chain() == "main")
+}
