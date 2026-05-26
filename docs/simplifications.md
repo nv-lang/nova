@@ -13246,4 +13246,54 @@ Merge: f79d4f28b5b; branch plan-100-2-generic-propagation → main.
   как Java CountDownLatch. `count_down_n(n)` при n<=0 или count==0 — no-op.
   Обе функции check-and-return под mutex до любой модификации.
 
+## Contracts spec drift fix (2026-05-27)
+
+- **`#must_verify` → `#verify` rename** — старое имя атрибута `#must_verify`
+  оставалось в `spec/decisions/09-tooling.md` (D24) и в `docs/contracts.md`.
+  Реализация уже использовала `#verify`. Фикс: оба файла приведены в соответствие.
+  Commits: `57c0951fc32`, `a4ddef722af`.
+
+- **Zero-arg accessor syntax в `ensures`** — в выражениях контрактов
+  `result.is_ok()` и `result.unwrap()` невалидны. Nova использует property-access
+  синтаксис без скобок для zero-arg accessors.
+  Правильно: `result.is_ok ==> result.unwrap.id == id`.
+  Применимо и к другим методам без аргументов в `requires`/`ensures` expressions.
+
+## Plan 103.4 Agent A — Semaphore (2026-05-27)
+
+- **`with_permit` — Nova-body, не C-routing** — метод `with_permit[R](body fn() -> R) -> R`
+  реализован как Nova-body (`acquire() + defer release() + body()`) вместо C-функции.
+  Причина: codegen body-методов на `export external type` генерирует вызовы через
+  указатели структуры вместо правильных C-функций. Nova-body эквивалентен по семантике.
+  Ветка `plan-103.4-sem`, commit `07cff1c2381`.
+
+- **`Duration.ZERO` — codegen bug, workaround `from_millis(0)`** — ссылка на константу
+  `Duration.ZERO` генерирует `Duration_ZERO` без объявления → CC-FAIL.
+  Workaround: `Duration.from_millis(0)`. Баг предположительно в codegen константных
+  accessor'ов для external-типов.
+
+- **`// ENV NOVA_AUTOARM=0` на timer-тестах** — `semaphore_no_overcommit_prop` и
+  `semaphore_try_acquire_for_timeout` помечены `// ENV NOVA_AUTOARM=0` для отключения
+  M:N вооружённого режима при запуске теста. Причина: в armed-режиме каждая парковка
+  fiber'а под семафором вызывает cross-thread dispatch через `uv_async_send` + worker
+  deque, что создаёт ~37 ms накладных расходов на операцию. С 16 fibers × 100 iters ×
+  3 permits это суммируется в 80+ секунд вместо нескольких ms. `AUTOARM=0` = все fibers
+  кооперативно на main thread, таймеры libuv работают в том же цикле.
+  Паттерн: `AUTOARM=0` (отключить вооружённый режим) ≠ `MAXPROCS=1` (1 worker,
+  armed-режим всё ещё работает).
+
+- **NOVA_GC_LIB_DIR в worktree** — при запуске `nova-codegen test-all` в worktree
+  необходимо выставить `NOVA_GC_LIB_DIR` на main-репо vcpkg:
+  `NOVA_GC_LIB_DIR=d:/Sources/nv-lang/nova/compiler-codegen/vcpkg_installed/x64-windows-static/lib`.
+  Worktree не имеет собственного `vcpkg_installed/`; `detect_boehm()` в test_runner.rs
+  ищет `gc.lib` относительно `cg_include` (worktree path) → fallback не находит `gc.h`
+  → CC-FAIL. Include dir auto-derivируется из lib dir (`lib/../include`), отдельно
+  `NOVA_GC_INCLUDE_DIR` выставлять не нужно.
+
+- **Stale binary cache + parallel test timeout** — если тест проходит в одиночку но
+  TIMEOUT при параллельном запуске всех тестов (jobs=16): причина — бинарник ещё не
+  скомпилирован, а 10 s timeout включает время компиляции под нагрузкой. Workaround:
+  запустить проблемный тест в одиночку (`--filter name`) для прогрева кеша,
+  затем запустить все вместе.
+
 - **Tests: 4/4 PASS.** Commit: cb146ba4be2. Branch: plan-103.4-cdl (NOT merged).
