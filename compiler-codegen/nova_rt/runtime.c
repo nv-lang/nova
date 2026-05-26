@@ -1580,11 +1580,12 @@ void nova_runtime_cancel_worker_fibers(struct NovaFiberQueue* target_scope) {
             NovaSchedStopCb cb;
             __atomic_load(&st->pending_stop_cb[j], &cb, __ATOMIC_ACQUIRE);
             void* hdl = st->pending_handle[j];  /* visible after ACQUIRE on cb */
+            bool is_parked = (j < st->capacity) && st->parked[j];
             if (cb && hdl) {
                 /* ASYNC stop_cb: initiates cross-thread safe uv_close via
                  * nova_loop_defer_close; close_cb wakes fiber afterward. */
                 cb(hdl);
-            } else if (j < st->capacity && st->parked[j]) {
+            } else if (is_parked) {
                 /* Bare park (no registered stop_cb): direct dispatch_ready. */
                 nova_sched_wake(&w->scope, j);
             }
