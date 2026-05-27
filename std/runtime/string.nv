@@ -39,12 +39,6 @@ export external fn str @rfind(needle str) -> Option[int]
 // Codepoint по индексу (codepoint-indexed). None при OOB.
 export external fn str @char_at(idx int) -> Option[char]
 
-// Plan 96.1: метод @slice удалён в пользу bracket-формы `s[a..b]`
-// (D9 «один очевидный путь»; D144 / Plan 96 D-str-slice).
-// `s[a..b]` — codepoint-indexed view, **panic** при OOB (consistent
-// с `arr[a..b]`). Convergence с Rust/Go/Swift/Python (bracket-only).
-// Старая clamp-семантика удалена (closes [P-str-slice-clamp-vs-panic]).
-
 // Убирает whitespace с начала и конца.
 export external fn str @trim() -> str
 
@@ -80,6 +74,9 @@ export external fn str @ge(other str) -> bool
 
 // UTF-8 bytes как []u8 (copy).
 export external fn str @bytes() -> []u8
+
+// Plan 108 D176: zero-copy view of str UTF-8 bytes as readonly []u8 (no memcpy).
+export external fn str @as_bytes() -> readonly []u8
 
 // Codepoints как []char (eager). Future: Iter[char] для лениво.
 export external fn str @chars() -> []char
