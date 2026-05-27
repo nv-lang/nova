@@ -1,0 +1,15 @@
+// Plan 103.6 — Condvar.wait is #parks; forbidden in realtime{}.
+//
+// EXPECT_COMPILE_ERROR E_REALTIME_SYNC_PARK
+
+module nova_tests.plan103_6.realtime_condvar_wait_neg
+
+test "Condvar.wait banned in realtime block" {
+    let m = Mutex.new()
+    let cv = Condvar.new()
+    m.lock()
+    realtime {
+        cv.wait(m)
+    }
+    m.unlock()
+}

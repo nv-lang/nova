@@ -1,0 +1,20 @@
+// Plan 103.6 — Mutex.try_lock_for inside realtime{} triggers W_REALTIME_TRY_LOCK_FOR_TIMER.
+// This is a warning (not an error); try_lock_for uses a libuv timer that may
+// suspend and is discouraged inside realtime{}.
+//
+// EXPECT_COMPILE_WARNING W_REALTIME_TRY_LOCK_FOR_TIMER
+
+module nova_tests.plan103_6.realtime_try_lock_for_zero_warn
+
+test "Mutex.try_lock_for warns in realtime block" {
+    let m = Mutex.new()
+    let mut got = false
+    realtime {
+        // try_lock_for is #realtime_safe (w/ warning) — does NOT park
+        got = m.try_lock_for(Duration.from_millis(1))
+    }
+    // If we got the lock, unlock it outside the realtime block
+    if got {
+        m.unlock()
+    }
+}

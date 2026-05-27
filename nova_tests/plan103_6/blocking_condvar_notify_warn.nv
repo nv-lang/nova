@@ -1,0 +1,19 @@
+// Plan 103.6 — Condvar.notify_one inside blocking{} triggers W_BLOCKING_NOTIFY_RISK.
+// Sending a wakeup from a threadpool thread is legal but may be surprising;
+// the compiler emits a diagnostic warning (not error).
+//
+// EXPECT_COMPILE_WARNING W_BLOCKING_NOTIFY_RISK
+// ENV NOVA_AUTOARM=0
+
+module nova_tests.plan103_6.blocking_condvar_notify_warn
+
+fn do_notify_in_blocking(cv Condvar) Blocking {
+    blocking {
+        cv.notify_one()
+    }
+}
+
+test "Condvar.notify_one warns in blocking block" {
+    let cv = Condvar.new()
+    do_notify_in_blocking(cv)
+}
