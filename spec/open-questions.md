@@ -271,7 +271,12 @@ type Db effect {
 
 **Остаётся открытым в Q9 (stdlib):**
 
-- Точные API `Channel[T]`, `Mutex`, `RwLock`, `Atomic[T]`.
+- `Channel[T]` API — ✅ закрыто [D79](decisions/06-concurrency.md#d79).
+- `Mutex` / `RwLock` / `AtomicSized` — ✅ закрыто [D169](decisions/06-concurrency.md#d169)
+  / [D169](decisions/06-concurrency.md#d169) / [D168](decisions/06-concurrency.md#d168);
+  доступны как `runtime.sync` stdlib, не prelude (D167-D173).
+- `Atomic[T]` generic — ⏳ отложено (M2 reject в Plan 103.2; future generic-codegen
+  plan; не входит в Plan 103.x scope).
 - Размер blocking-pool по умолчанию (runtime-конфиг).
 - Q12.7 — `Domain`-примитив (явная граница ОС-потока) для real-time
   embedded use-case, отложено до user-feedback.
@@ -333,18 +338,28 @@ Nova могла бы:
 
 ### Q12.4. Shared state между fiber'ами
 
-Совсем не описано. Если два fiber'а должны делить состояние:
+> **Статус: ✅ partial closed (Plan 103.x, 2026-05-26).**
+>
+> - **Channels** → ✅ [D79](decisions/06-concurrency.md#d79) (capability-split, send/recv, select).
+> - **Actor mailbox pattern** → зафиксирован как предпочтительный idiom в
+>   [D79 §«Что отвергнуто»](decisions/06-concurrency.md#d79) + §1531 rewrite.
+> - **Mutex/RwLock** → ✅ [D169](decisions/06-concurrency.md#d169) (Mutex/RwLock/ReentrantMutex,
+>   `runtime.sync` stdlib, не prelude).
+> - **Atomic-операции** → ✅ sized types [D168](decisions/06-concurrency.md#d168)
+>   (12 типов × 13 ops); `Atomic[T]` generic — ⏳ отложено (M2 reject).
+> - **STM** → отвергнуто (не в scope Nova v1.x).
+> - **Semaphore/Barrier/CountDownLatch/Condvar** → ✅ [D170](decisions/06-concurrency.md#d170).
+> - **Once/OnceCell/Lazy** → ✅ [D171](decisions/06-concurrency.md#d171).
+> - **Memory ordering** → ✅ [D167](decisions/06-concurrency.md#d167) (`MemOrdering` enum + `fence()`).
+> - **AI-first guidance** → ✅ [D173](decisions/06-concurrency.md#d173) (decision tree + 5 patterns).
+>
+> **Остаётся:** `Atomic[T]` generic (future plan); `Domain`-примитив (Q12.7, отложено).
 
-- **Channels** (Go, Erlang-style)? Тип `Channel[T]`, операции
-  `send`/`recv` как эффекты?
-- **Actor mailbox** (Erlang)? Каждый fiber имеет inbox?
-- **Mutex/RwLock как обычные типы**? Тогда чем они лучше Rust?
-- **Atomic-операции**? Какой тип `Atomic[T]`?
-- **Software Transactional Memory** (Haskell/Clojure)?
+Исторический контекст (до Plan 103.x):
 
-В контексте D10 «всё нечистое — эффект» естественный ответ — **channels
-как handler эффекта**, но это не зафиксировано. Без этого решения
-нельзя описать `Mut` для multi-fiber случаев.
+Если два fiber'а должны делить состояние, рассматривались варианты:
+Channels (D79 ✅), Actor mailbox (D79 ✅ idiom), Mutex/RwLock (D169 ✅),
+Atomic[T] (D168 ✅ sized; generic ⏳), STM (отвергнуто).
 
 ### Q12.5. ~~Thread-safety `~T` и `~&T`~~ — СНЯТО
 
@@ -6465,6 +6480,40 @@ phase Ф.0 нужна — это значительное расширение s
 **См. также:** [D72](decisions/02-types.md#d72),
 [D145](decisions/02-types.md#d145), [D52](decisions/02-types.md#d52)
 (newtype), [D39](decisions/02-types.md#d39) (record-embed).
+
+---
+
+## Q-memory-model. Memory model между fiber'ами в production-runtime
+
+> **Статус: ✅ ЗАКРЫТО [D167](decisions/06-concurrency.md#d167) (Plan 103.1, 2026-05-25).**
+
+Исходный вопрос (из D79 §«Что отложено»): в preemptive M:N runtime нужно
+явно зафиксировать memory ordering — в bootstrap'е single-threaded scheduler
+делает все ordering'и semantically equivalent.
+
+**Решение D167:**
+- `MemOrdering` enum: `Relaxed | Acquire | Release | AcqRel | SeqCst`
+- `fence(MemOrdering)` module function
+- Default ordering для simple-overload methods — `SeqCst`
+- Bootstrap-runtime (single-threaded): orderings reduce к sequenced-before
+- M:N runtime (Plan 23/83.4.5): полный C11 `__atomic_*` memory model;
+  happens-before через paired Acquire/Release
+- Channel send/recv — happens-before (Go-style, D79)
+
+**Связь:** [D167](decisions/06-concurrency.md#d167), Plan 103.1.
+
+---
+
+## Q-send-timeout. `send` с timeout у Channel
+
+> **Статус: 🟡 ОТКРЫТО — Channel-specific, не sync scope. За пределами Plan 103.x.**
+
+Исходный вопрос (из D79 §«Что отложено»): `@send_timeout(v T, d Duration)` —
+нужна ли отдельная вариация API. Текущая идиома: `select` с timeout arm,
+но громоздкая.
+
+Не входит в Plan 103.x scope (sync primitives). Отложено до stdlib-фазы
+работы над Channel API эволюцией.
 
 ---
 
