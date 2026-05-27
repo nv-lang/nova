@@ -1,9 +1,12 @@
-// EXPECT_COMPILE_ERROR D133-move-to-non-consume
+// EXPECT_COMPILE_ERROR D156-strict-forget
 //
-// Plan 100.2 (D156): передача T (consume-obligation) в non-consume-param fn
-// внутри [T consume] generic-body → error D133-move-to-non-consume.
+// Plan 100.2 (D156) + Plan 100.3 (D157): передача T (consume-obligation) в
+// view-param fn внутри [T consume] generic-body — view-borrow разрешён (D157),
+// но x всё равно НЕ consumed при выходе из fn → D156-strict-forget.
 //
-// `log(x)` where log has non-consume param: x remains Live → error.
+// D157: `log_tx(x)` — view-borrow. x остаётся Live.
+// D156-strict-forget: x — consume-obligation (от [T consume] bound + `consume x T`).
+// На exit'е функции x Live → D156-strict-forget error (generic-consume obligation).
 
 module nova_tests.plan100_2.generic_bound_err_pass_non_consume
 
@@ -12,16 +15,17 @@ type Transaction consume {
 }
 fn Transaction consume @commit() -> () { () }
 
-// Non-consume param (no `consume` keyword): does NOT transfer obligation.
+// View-param (D157): non-consume param of consume type — read-only borrow.
 fn log_tx(t Transaction) -> () { () }
 
-// ❌ x is consume-obligation; log_tx has non-consume param[0] →
-// D133-move-to-non-consume at call; x still Live at exit → D133-not-consumed.
+// ❌ x is consume-obligation (via [T consume] bound); log_tx does view-borrow (D157 — OK).
+// But x remains Live at exit → D156-strict-forget.
 fn log_generic[T consume](consume x T) -> () {
-    log_tx(x)                                   // ОШИБКА: non-consume param transfer
+    log_tx(x)                                   // view-borrow OK (D157)
+    // ОШИБКА D156-strict-forget: x — consume-obligation (generic bound), не consumed.
 }
 
-test "generic consume-param passed to non-consume fn — error" {
+test "generic consume-param view-borrowed but not consumed — D156-strict-forget" {
     consume tx = Transaction { id: 5 }
     log_generic(tx)
 }

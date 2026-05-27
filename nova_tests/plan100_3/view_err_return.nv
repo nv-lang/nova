@@ -1,0 +1,22 @@
+// EXPECT_COMPILE_ERROR D157
+//
+// Plan 100.3 (D157): view-binding не может escape scope через return.
+// Identity-функция требует явного consume, не view.
+
+module nova_tests.plan100_3.view_err_return
+
+type Transaction consume {
+    id int,
+}
+
+// ❌ Попытка вернуть view — escape-error.
+fn id_view(t Transaction) -> Transaction {
+    // ОШИБКА D157-view-escape-return: view не может escape scope source'а.
+    // Suggest: use `consume t` instead of `view t` для true identity.
+    return t
+}
+
+test "view return — error" {
+    consume tx = Transaction { id: 1 }
+    let result = id_view(tx)
+}
