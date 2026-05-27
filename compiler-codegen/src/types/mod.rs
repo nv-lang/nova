@@ -7274,6 +7274,10 @@ struct ConsumeRegistry {
     /// (non-consume params of consume types). Used to detect
     /// D133-consume-rvalue-in-view: rvalue passed to view-param position.
     fn_view_params: HashMap<String, Vec<usize>>,
+    /// Plan 103.9 (D174): `(receiver_type, method_name)` → return-type name
+    /// (single-segment Named). Used for var-type inference of method calls:
+    /// `consume g = mu.lock()` → g has type `MutexGuard`.
+    method_return_types: HashMap<(String, String), String>,
 }
 
 impl ConsumeRegistry {
@@ -7284,6 +7288,8 @@ impl ConsumeRegistry {
         let mut fn_return_types: HashMap<String, String> = HashMap::new();
         let mut recv_returning: HashSet<(String, String)> = HashSet::new();
         let mut fn_view_params: HashMap<String, Vec<usize>> = HashMap::new();
+        // Plan 103.9 (D174): method return-type map for var-type inference.
+        let mut method_return_types: HashMap<(String, String), String> = HashMap::new();
 
         // Plan 100.3 (D157): collect consume-types for view-param detection.
         // Mirrors LinearityRegistry::build consume_types collection.
@@ -7325,6 +7331,16 @@ impl ConsumeRegistry {
                         if r.consume {
                             methods.insert((r.type_name.clone(), fd.name.clone()));
                         }
+                        // Plan 103.9 (D174): track method return-type for inference.
+                        // `fn Mutex mut @lock() -> MutexGuard consume` → ("Mutex","lock") → "MutexGuard".
+                        if let Some(TypeRef::Named { path, .. }) = &fd.return_type {
+                            if path.len() == 1 {
+                                method_return_types.insert(
+                                    (r.type_name.clone(), fd.name.clone()),
+                                    path[0].clone(),
+                                );
+                            }
+                        }
                         // Plan 77 (D132): `-> @` fluent-метод.
                         if fd.returns_receiver {
                             recv_returning
@@ -7364,9 +7380,44 @@ impl ConsumeRegistry {
                 }
             }
         }
+
+        // 3. Plan 103.9 (D174): stdlib external modules (sync.nv etc.) that
+        //    define consume guard types are not always imported into user
+        //    modules (they come via codegen ExternalRegistry, not prelude).
+        //    Parse them here so that consume methods (MutexGuard.unlock etc.)
+        //    and method return types (Mutex.lock → MutexGuard) are visible
+        //    to the checker regardless of explicit import.
+        //
+        //    This mirrors ExternalRegistry::load_builtins() but for the
+        //    consume-analysis side only.
+        let external_sources: &[&str] = &[
+            crate::codegen::external_registry::ExternalRegistry::SYNC_SRC,
+        ];
+        for src in external_sources {
+            if let Ok(ext_module) = crate::parser::parse(src) {
+                for item in &ext_module.items {
+                    if let Item::Fn(fd) = item {
+                        if let Some(r) = &fd.receiver {
+                            if r.consume {
+                                methods.insert((r.type_name.clone(), fd.name.clone()));
+                            }
+                            if let Some(TypeRef::Named { path, .. }) = &fd.return_type {
+                                if path.len() == 1 {
+                                    method_return_types.insert(
+                                        (r.type_name.clone(), fd.name.clone()),
+                                        path[0].clone(),
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         ConsumeRegistry {
             methods, fn_params, method_params, fn_return_types, recv_returning,
-            fn_view_params,
+            fn_view_params, method_return_types,
         }
     }
 }
@@ -7456,6 +7507,9 @@ struct ConsumeCtx<'a> {
     /// closure_var_name → list of outer vars it consumes when invoked.
     /// When closure is invoked: mark those outer vars Consumed + closure Consumed.
     consume_closures: HashMap<String, Vec<String>>,
+    /// Plan 103.9 (D174): тип receiver'а текущего метода. Используется для
+    /// инференса типа при `consume g = self.method()` — `self` это SelfAccess.
+    self_type: Option<String>,
 }
 
 impl<'a> ConsumeCtx<'a> {
@@ -7472,6 +7526,7 @@ impl<'a> ConsumeCtx<'a> {
             consume_bound_generics: HashSet::new(),
             view_params: HashSet::new(),
             consume_closures: HashMap::new(),
+            self_type: None,
         }
     }
 
@@ -7599,6 +7654,33 @@ impl<'a> ConsumeCtx<'a> {
                 if let ExprKind::Ident(fname) = &func.kind {
                     if let Some(rt) = self.reg.fn_return_types.get(fname) {
                         return Some(rt.clone());
+                    }
+                }
+                // Plan 103.9 (D174): метод с известным return-типом.
+                // `consume g = mu.lock()` → ("Mutex","lock") → "MutexGuard".
+                // Handles: `recv.method()` (Ident), `self.method()` (Ident "self"),
+                // `@method()` desugared to `SelfAccess.method()`.
+                if let ExprKind::Member { obj, name: method } = &func.kind {
+                    let recv_ty: Option<String> = match &obj.kind {
+                        ExprKind::Ident(recv) if recv == "self" => {
+                            // Nova `self.lock()` — receiver is implicit self.
+                            self.self_type.clone()
+                        }
+                        ExprKind::Ident(recv) => {
+                            let canon = self.canonical(recv);
+                            self.var_types.get(&canon)
+                                .or_else(|| self.var_types.get(recv.as_str()))
+                                .cloned()
+                        }
+                        ExprKind::SelfAccess => self.self_type.clone(),
+                        _ => None,
+                    };
+                    if let Some(rty) = recv_ty {
+                        if let Some(ret) = self.reg.method_return_types
+                            .get(&(rty, method.clone()))
+                        {
+                            return Some(ret.clone());
+                        }
                     }
                 }
                 None
@@ -8034,6 +8116,9 @@ fn check_consume(module: &Module, errors: &mut Vec<Diagnostic>) {
                 }
                 // Plan 100.1 (D133 / D5): инициализация consume-полей receiver'а.
                 if let Some(recv) = &f.receiver {
+                    // Plan 103.9 (D174): track self-type for method call inference.
+                    // `consume g = self.lock()` needs to know `self` is `Mutex`.
+                    ctx.self_type = Some(recv.type_name.clone());
                     for it in &module.items {
                         if let Item::Type(td) = it {
                             if td.name == recv.type_name {

@@ -1,0 +1,46 @@
+// Plan 103.9 (D174) — Property: Semaphore Permit balanced acquire/release.
+//
+// Semaphore.new(K); fibers acquire+release Permits.
+// Invariant: available_permits() == K after all releases.
+//
+// EXPECT_TIMEOUT_MS 30000
+
+module nova_tests.plan103_9.permit_balanced_prop
+
+test "Semaphore: acquire M times, release M times — sequential" {
+    let k = 5
+    let sem = Semaphore.new(k)
+    // Sequential acquire/release: no concurrency needed
+    for _i in 0..k {
+        consume p = sem.acquire()
+        p.release()
+    }
+    assert(sem.available_permits() == k)
+}
+
+test "Semaphore: M:N bounded concurrency with explicit Permit" {
+    runtime.init(2)
+    let k = 3
+    let sem = Semaphore.new(k)
+    let inside = AtomicInt.new(0)
+    let violation = AtomicInt.new(0)
+    let wg = WaitGroup.new()
+    let n = 8
+    wg.add(n)
+
+    parallel for _i in 0..n {
+        for _j in 0..5 {
+            consume p = sem.acquire()
+            let now = inside.fetch_add(1) + 1
+            if now > k { violation.fetch_add(1) }
+            inside.fetch_add(-1)
+            p.release()
+        }
+        wg.done()
+    }
+
+    wg.wait()
+    assert(violation.load() == 0)
+    assert(sem.available_permits() == k)
+    runtime.shutdown()
+}

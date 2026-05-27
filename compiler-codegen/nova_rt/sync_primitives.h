@@ -71,6 +71,26 @@ static inline void _nova_cpu_yield(void) {
      * pair in the spin loop already implies OS scheduler interaction. */
 }
 
+/* ── Plan 103.9 (D174): Guard struct definitions ────────────────────────
+ * These structs are FULLY DEFINED here (before the lock/read/write/acquire
+ * functions that allocate them) so that sizeof(Nova_MutexGuard) etc. are
+ * valid at allocation sites. The Nova types (type MutexGuard consume { ptr int })
+ * are listed in RUNTIME_DEFINED_TYPES so codegen does not re-emit them.
+ *
+ * Guard structs hold a single nova_int ptr — an opaque pointer cast to int64_t.
+ * Consume methods cast back via (Nova_Mutex*)(uintptr_t)(uint64_t)g->ptr.
+ *
+ * C mangling (Plan 100.6 D164):
+ *   consume method → Nova_{T}_consume_{name}
+ *   regular method → Nova_{T}_method_{name}
+ */
+struct Nova_MutexGuard_s  { nova_int ptr; };  typedef struct Nova_MutexGuard_s Nova_MutexGuard;
+struct Nova_ReadGuard_s   { nova_int ptr; };  typedef struct Nova_ReadGuard_s  Nova_ReadGuard;
+struct Nova_WriteGuard_s  { nova_int ptr; };  typedef struct Nova_WriteGuard_s Nova_WriteGuard;
+struct Nova_Permit_s      { nova_int ptr; };  typedef struct Nova_Permit_s     Nova_Permit;
+struct Nova_OnceGuard_s   { nova_int ptr; };  typedef struct Nova_OnceGuard_s  Nova_OnceGuard;
+/* ── End Plan 103.9 guard struct definitions ──────────────────────────── */
+
 /* ── AtomicInt ─────────────────────────────────────────────────── */
 
 /* AtomicInt wraps nova_atomic_int (int32_t). All accesses go through
@@ -992,14 +1012,17 @@ static inline nova_bool Nova_Mutex_method_try_lock(Nova_Mutex* m) {
     return false;
 }
 
-static inline nova_unit Nova_Mutex_method_lock(Nova_Mutex* m) {
+/* Plan 103.9 (D174): Nova_Mutex_method_lock now returns Nova_MutexGuard* (V2 guard API).
+ * Guard types pre-declared at the TOP of this file (forward declarations); full
+ * typedefs appear in the Plan 103.9 section near the end.
+ * Old callers that discard the return value (`Nova_Mutex_method_lock(mu);`) still
+ * compile in C (ignoring a pointer return is valid — same as returning void*). */
+static inline Nova_MutexGuard* Nova_Mutex_method_lock(Nova_Mutex* m) {
     nova_mutex_lock(&m->mu);
     if (!m->locked) {
         m->locked = true;
         nova_mutex_unlock(&m->mu);
-        return NOVA_UNIT;
-    }
-    if (_nova_active_slot < 0) {
+    } else if (_nova_active_slot < 0) {
         /* Non-fiber: spin with CPU yield to avoid burning the bus. */
         nova_mutex_unlock(&m->mu);
         for (;;) {
@@ -1008,28 +1031,32 @@ static inline nova_unit Nova_Mutex_method_lock(Nova_Mutex* m) {
             if (!m->locked) {
                 m->locked = true;
                 nova_mutex_unlock(&m->mu);
-                return NOVA_UNIT;
+                break;
             }
             nova_mutex_unlock(&m->mu);
         }
+    } else {
+        /* Fiber path: register as waiter and park atomically with unlock. */
+        NovaMutexWaiter w;
+        w.scope      = _nova_active_scope;
+        w.slot       = _nova_active_slot;
+        w.next       = NULL;
+        w.prev       = m->tail;
+        w.timed_out  = false;
+        w.tlf_handle = NULL;
+        if (m->tail) m->tail->next = &w;
+        else         m->head = &w;
+        m->tail = &w;
+        /* park_with_unlock: parks fiber first, then releases mu. Prevents
+         * lost-wakeup race (unlock cannot fire before park is registered). */
+        nova_sched_park_with_unlock(_nova_active_scope, _nova_active_slot,
+                                     (void(*)(void*))nova_mutex_unlock, &m->mu);
+        /* Resumed: lock ownership transferred from unlock() — no re-check needed. */
     }
-    /* Fiber path: register as waiter and park atomically with unlock. */
-    NovaMutexWaiter w;
-    w.scope      = _nova_active_scope;
-    w.slot       = _nova_active_slot;
-    w.next       = NULL;
-    w.prev       = m->tail;
-    w.timed_out  = false;
-    w.tlf_handle = NULL;
-    if (m->tail) m->tail->next = &w;
-    else         m->head = &w;
-    m->tail = &w;
-    /* park_with_unlock: parks fiber first, then releases mu. Prevents
-     * lost-wakeup race (unlock cannot fire before park is registered). */
-    nova_sched_park_with_unlock(_nova_active_scope, _nova_active_slot,
-                                 (void(*)(void*))nova_mutex_unlock, &m->mu);
-    /* Resumed: lock ownership transferred from unlock() — no re-check needed. */
-    return NOVA_UNIT;
+    /* Allocate and return the MutexGuard (Plan 103.9). */
+    Nova_MutexGuard* _g = (Nova_MutexGuard*)nova_alloc(sizeof(Nova_MutexGuard));
+    _g->ptr = (nova_int)(uintptr_t)m;
+    return _g;
 }
 
 /* Plan 103.3: try_lock_for(Duration) — attempt to acquire within timeout.
@@ -1313,15 +1340,15 @@ static inline bool _nova_rwlock_start_timed_waiter(
     return true;
 }
 
-static inline nova_unit Nova_RwLock_method_read(Nova_RwLock* rw) {
+/* Plan 103.9: Nova_RwLock_method_read returns Nova_ReadGuard* (V2 guard API).
+ * Old callers discarding the result still compile — C ignores non-void returns. */
+static inline Nova_ReadGuard* Nova_RwLock_method_read(Nova_RwLock* rw) {
     nova_mutex_lock(&rw->mu);
     bool block = rw->write_locked || (!rw->reader_priority && rw->write_waiting);
     if (!block) {
         rw->reader_count++;
         nova_mutex_unlock(&rw->mu);
-        return NOVA_UNIT;
-    }
-    if (_nova_active_slot < 0) {
+    } else if (_nova_active_slot < 0) {
         nova_mutex_unlock(&rw->mu);
         for (;;) {
             _nova_cpu_yield();
@@ -1329,20 +1356,23 @@ static inline nova_unit Nova_RwLock_method_read(Nova_RwLock* rw) {
             if (!rw->write_locked && (rw->reader_priority || !rw->write_waiting)) {
                 rw->reader_count++;
                 nova_mutex_unlock(&rw->mu);
-                return NOVA_UNIT;
+                break;
             }
             nova_mutex_unlock(&rw->mu);
         }
+    } else {
+        NovaRwLockWaiter w = { .scope=_nova_active_scope, .slot=_nova_active_slot,
+                                .next=NULL, .prev=rw->reader_tail,
+                                .timed_out=false, .tlf_handle=NULL };
+        if (rw->reader_tail) rw->reader_tail->next = &w;
+        else                 rw->reader_head = &w;
+        rw->reader_tail = &w;
+        nova_sched_park_with_unlock(_nova_active_scope, _nova_active_slot,
+                                     (void(*)(void*))nova_mutex_unlock, &rw->mu);
     }
-    NovaRwLockWaiter w = { .scope=_nova_active_scope, .slot=_nova_active_slot,
-                            .next=NULL, .prev=rw->reader_tail,
-                            .timed_out=false, .tlf_handle=NULL };
-    if (rw->reader_tail) rw->reader_tail->next = &w;
-    else                 rw->reader_head = &w;
-    rw->reader_tail = &w;
-    nova_sched_park_with_unlock(_nova_active_scope, _nova_active_slot,
-                                 (void(*)(void*))nova_mutex_unlock, &rw->mu);
-    return NOVA_UNIT;
+    Nova_ReadGuard* _g = (Nova_ReadGuard*)nova_alloc(sizeof(Nova_ReadGuard));
+    _g->ptr = (nova_int)(uintptr_t)rw;
+    return _g;
 }
 
 static inline nova_bool Nova_RwLock_method_try_read(Nova_RwLock* rw) {
@@ -1412,15 +1442,14 @@ static inline nova_unit Nova_RwLock_method_read_unlock(Nova_RwLock* rw) {
     return NOVA_UNIT;
 }
 
-static inline nova_unit Nova_RwLock_method_write(Nova_RwLock* rw) {
+/* Plan 103.9: Nova_RwLock_method_write returns Nova_WriteGuard* (V2 guard API). */
+static inline Nova_WriteGuard* Nova_RwLock_method_write(Nova_RwLock* rw) {
     nova_mutex_lock(&rw->mu);
     if (!rw->write_locked && rw->reader_count == 0) {
         rw->write_locked  = true;
         rw->write_waiting = (rw->writer_head != NULL);
         nova_mutex_unlock(&rw->mu);
-        return NOVA_UNIT;
-    }
-    if (_nova_active_slot < 0) {
+    } else if (_nova_active_slot < 0) {
         rw->write_waiting = true;
         nova_mutex_unlock(&rw->mu);
         for (;;) {
@@ -1430,21 +1459,24 @@ static inline nova_unit Nova_RwLock_method_write(Nova_RwLock* rw) {
                 rw->write_locked  = true;
                 rw->write_waiting = (rw->writer_head != NULL);
                 nova_mutex_unlock(&rw->mu);
-                return NOVA_UNIT;
+                break;
             }
             nova_mutex_unlock(&rw->mu);
         }
+    } else {
+        rw->write_waiting = true;
+        NovaRwLockWaiter w = { .scope=_nova_active_scope, .slot=_nova_active_slot,
+                                .next=NULL, .prev=rw->writer_tail,
+                                .timed_out=false, .tlf_handle=NULL };
+        if (rw->writer_tail) rw->writer_tail->next = &w;
+        else                 rw->writer_head = &w;
+        rw->writer_tail = &w;
+        nova_sched_park_with_unlock(_nova_active_scope, _nova_active_slot,
+                                     (void(*)(void*))nova_mutex_unlock, &rw->mu);
     }
-    rw->write_waiting = true;
-    NovaRwLockWaiter w = { .scope=_nova_active_scope, .slot=_nova_active_slot,
-                            .next=NULL, .prev=rw->writer_tail,
-                            .timed_out=false, .tlf_handle=NULL };
-    if (rw->writer_tail) rw->writer_tail->next = &w;
-    else                 rw->writer_head = &w;
-    rw->writer_tail = &w;
-    nova_sched_park_with_unlock(_nova_active_scope, _nova_active_slot,
-                                 (void(*)(void*))nova_mutex_unlock, &rw->mu);
-    return NOVA_UNIT;
+    Nova_WriteGuard* _g = (Nova_WriteGuard*)nova_alloc(sizeof(Nova_WriteGuard));
+    _g->ptr = (nova_int)(uintptr_t)rw;
+    return _g;
 }
 
 static inline nova_bool Nova_RwLock_method_try_write(Nova_RwLock* rw) {
@@ -2251,5 +2283,110 @@ static inline nova_unit nova_fn_fence(Nova_MemOrdering* ord) {
 /* AGENT-C */  #include "sync_countdown_latch.h"
 /* AGENT-A */  #include "sync_semaphore.h"
 /* === END PLAN-103.4 PARALLEL INCLUDES === */
+
+/* ── Plan 103.9: Consume guard types (D174) ─────────────────────────────
+ *
+ * Guard types have `type T consume { ptr int }` in Nova (plain record types,
+ * NOT external opaque). Codegen emits the C struct; functions here are matched
+ * by ExternalRegistry via the consume-method mangling (Plan 100.6 D164):
+ *   consume method → Nova_{T}_consume_{name}
+ *   regular method → Nova_{T}_method_{name}
+ *
+ * NOTE: Guard struct FULL DEFINITIONS (with fields) were moved to the TOP
+ * of this file (before AtomicInt section) so that sizeof(Nova_MutexGuard)
+ * is valid at Nova_Mutex_method_lock allocation site.
+ * C typedefs: see line ~79 in this file.
+ *
+ * D174 design decisions:
+ *  - MutexGuard.unlock() = release the lock.
+ *  - ReadGuard.unlock() = release read lock.
+ *  - WriteGuard.unlock() = release write lock.
+ *  - Permit.release() = release permit.
+ *  - OnceGuard.commit() = Once → DONE (success).
+ *  - OnceGuard.abort() = Once → POISONED (failure).
+ */
+
+/* ── MutexGuard ─────────────────────────────────────────────────────────── */
+
+/* Nova_MutexGuard_consume_unlock: release mutex via guard.
+ * Called by `MutexGuard @unlock(consume self)`.
+ * Mangling: Plan 100.6 D164 consume-bit → Nova_MutexGuard_consume_unlock. */
+static inline nova_unit Nova_MutexGuard_consume_unlock(Nova_MutexGuard* g) {
+    Nova_Mutex* m = (Nova_Mutex*)(uintptr_t)(uint64_t)g->ptr;
+    return Nova_Mutex_method_unlock(m);
+}
+
+/* ── ReadGuard ──────────────────────────────────────────────────────────── */
+
+/* Nova_ReadGuard_consume_unlock: release read lock via guard.
+ * Called by `ReadGuard @unlock(consume self)`. */
+static inline nova_unit Nova_ReadGuard_consume_unlock(Nova_ReadGuard* g) {
+    Nova_RwLock* rw = (Nova_RwLock*)(uintptr_t)(uint64_t)g->ptr;
+    return Nova_RwLock_method_read_unlock(rw);
+}
+
+/* ── WriteGuard ─────────────────────────────────────────────────────────── */
+
+/* Nova_WriteGuard_consume_unlock: release write lock via guard.
+ * Called by `WriteGuard @unlock(consume self)`. */
+static inline nova_unit Nova_WriteGuard_consume_unlock(Nova_WriteGuard* g) {
+    Nova_RwLock* rw = (Nova_RwLock*)(uintptr_t)(uint64_t)g->ptr;
+    return Nova_RwLock_method_write_unlock(rw);
+}
+
+/* ── Permit ─────────────────────────────────────────────────────────────── */
+
+/* Nova_Permit_consume_release: release permit via guard.
+ * Called by `Permit @release(consume self)`. */
+static inline nova_unit Nova_Permit_consume_release(Nova_Permit* p) {
+    Nova_Semaphore* s = (Nova_Semaphore*)(uintptr_t)(uint64_t)p->ptr;
+    return Nova_Semaphore_method_release(s);
+}
+
+/* ── OnceGuard ──────────────────────────────────────────────────────────── */
+
+/* Nova_Once_method_try_start: returns true if this fiber won the race.
+ * Equivalent to Nova_Once_method_run() — same state machine.
+ * D174: In Nova, try_start() is implemented as a Nova-body fn that calls
+ * @try_start_won() (external) and constructs an OnceGuard on the heap when true. */
+static inline nova_bool Nova_Once_method_try_start_won(Nova_Once* o) {
+    return Nova_Once_method_run(o);
+}
+
+/* Nova_Once_method_make_guard: allocate an OnceGuard for this Once.
+ * Called by Nova try_start() body after try_start_won() returns true. */
+static inline Nova_OnceGuard* Nova_Once_method_make_guard(Nova_Once* o) {
+    Nova_OnceGuard* g = (Nova_OnceGuard*)nova_alloc(sizeof(Nova_OnceGuard));
+    g->ptr = (nova_int)(uintptr_t)o;
+    return g;
+}
+
+/* Nova_OnceGuard_consume_commit: Once → DONE. Calls done().
+ * Called by `OnceGuard @commit(consume self)`. */
+static inline nova_unit Nova_OnceGuard_consume_commit(Nova_OnceGuard* g) {
+    Nova_Once* o = (Nova_Once*)(uintptr_t)(uint64_t)g->ptr;
+    return Nova_Once_method_done(o);
+}
+
+/* Nova_OnceGuard_consume_abort: Once → POISONED. Wakes waiters.
+ * Called by `OnceGuard @abort(consume self)`.
+ * D174: abort = failed init. Once → POISONED; subsequent callers re-panic. */
+static inline nova_unit Nova_OnceGuard_consume_abort(Nova_OnceGuard* g) {
+    Nova_Once* o = (Nova_Once*)(uintptr_t)(uint64_t)g->ptr;
+    nova_mutex_lock(&o->mu);
+    o->state = NOVA_ONCE_POISONED;
+    /* Wake all waiters — they re-panic via call_once / run() on resume. */
+    NovaOnceWaiter* cur = o->waiters;
+    o->waiters = NULL;
+    nova_mutex_unlock(&o->mu);
+    while (cur) {
+        NovaOnceWaiter* next = cur->next;
+        nova_sched_wake(cur->scope, cur->slot);
+        cur = next;
+    }
+    return NOVA_UNIT;
+}
+
+/* === END PLAN-103.9 CONSUME GUARDS === */
 
 #endif /* NOVA_RT_SYNC_PRIMITIVES_H */

@@ -1315,6 +1315,113 @@ export external fn AtomicPtr mut @compare_exchange_weak(expected int, desired in
 #stable(since = "0.1")
 export external fn AtomicPtr mut @compare_exchange_weak(expected int, desired int) -> bool
 
+// ─── Plan 103.9 (D174): Consume guard types ──────────────────────
+//
+// Guard types are consume-typed (Plan 100 D131): the holding fiber
+// must explicitly call the consume method (unlock/release/commit/abort)
+// OR the compiler enforces via scope-exit obligation.
+//
+// C structs are pre-declared in sync_primitives.h (RUNTIME_DEFINED_TYPES).
+// Nova type declarations here are for type-checker only.
+
+/// Guard returned by `Mutex.lock()`. Consume-typed: must call `.unlock()`.
+///
+/// # Examples
+///
+/// ```nova
+/// consume g = mu.lock()
+/// defer g.unlock()   // released even on panic/throw
+/// // critical section
+/// ```
+#stable(since = "0.1")
+export type MutexGuard consume { ptr int }
+
+/// Guard returned by `RwLock.read()`. Consume-typed: must call `.unlock()`.
+#stable(since = "0.1")
+export type ReadGuard consume { ptr int }
+
+/// Guard returned by `RwLock.write()`. Consume-typed: must call `.unlock()`.
+#stable(since = "0.1")
+export type WriteGuard consume { ptr int }
+
+/// Permit returned by `Semaphore.acquire()`. Consume-typed: must call `.release()`.
+///
+/// # Examples
+///
+/// ```nova
+/// consume p = sem.acquire()
+/// defer p.release()
+/// // use resource
+/// ```
+#stable(since = "0.1")
+export type Permit consume { ptr int }
+
+/// Guard returned by `Once.try_start()`. Consume-typed: must call `.commit()` or `.abort()`.
+///
+/// # Examples
+///
+/// ```nova
+/// match once.try_start() {
+///     Some(consume g) => {
+///         setup()
+///         g.commit()    // Once → DONE
+///     }
+///     None => {}        // already done or in progress
+/// }
+/// ```
+#stable(since = "0.1")
+export type OnceGuard consume { ptr int }
+
+// ─── MutexGuard methods ──────────────────────────────────────────
+
+/// Release the mutex lock. The guard is consumed (single-use).
+///
+/// Called automatically by `with_lock(fn)` wrapper.
+/// Prefer `defer g.unlock()` over manual placement for panic-safety.
+#wakes
+#stable(since = "0.1")
+export external fn MutexGuard consume @unlock()
+
+// ─── ReadGuard methods ───────────────────────────────────────────
+
+/// Release the read lock. The guard is consumed (single-use).
+#wakes
+#stable(since = "0.1")
+export external fn ReadGuard consume @unlock()
+
+// ─── WriteGuard methods ──────────────────────────────────────────
+
+/// Release the write lock. The guard is consumed (single-use).
+#wakes
+#stable(since = "0.1")
+export external fn WriteGuard consume @unlock()
+
+// ─── Permit methods ──────────────────────────────────────────────
+
+/// Release the semaphore permit. The permit is consumed (single-use).
+///
+/// Wakes the next FIFO waiter if any are queued.
+#wakes
+#stable(since = "0.1")
+export external fn Permit consume @release()
+
+// ─── OnceGuard methods ───────────────────────────────────────────
+
+/// Mark once body as successfully completed → Once transitions to DONE.
+///
+/// Wakes all parked waiters. They unblock and see `is_completed() == true`.
+#wakes
+#stable(since = "0.1")
+export external fn OnceGuard consume @commit()
+
+/// Mark once body as failed → Once transitions to POISONED.
+///
+/// Wakes all parked waiters. They unblock and re-panic (OncePoisoned).
+/// After abort, subsequent `try_start()` calls also panic.
+#wakes
+#stable(since = "0.1")
+export external fn OnceGuard consume @abort()
+
 // ─── Mutex ───────────────────────────────────────────────────────
 
 /// Fair FIFO fiber-aware mutex.
@@ -1341,14 +1448,21 @@ export external fn Mutex.new() -> Self
 
 /// Захватить mutex. Паркует вызывающий fiber до освобождения.
 ///
+/// V2 (Plan 103.9, D174): returns `MutexGuard consume` — статически
+/// enforced release через consume-type system. Old callers that discard
+/// the return value (`mu.lock()` as statement) continue to compile;
+/// only `consume g = mu.lock()` creates a consumption obligation.
+///
 /// NOT reentrant — повторный вызов из того же fiber'а deadlock.
 #parks
 #stable(since = "0.1")
-export external fn Mutex mut @lock()
+export external fn Mutex mut @lock() -> MutexGuard consume
 
-/// Освободить mutex. Будит следующий ожидающий fiber, если есть.
+/// (Deprecated) Освободить mutex без guard.
 ///
-/// Должен вызываться только когда mutex захвачен данным fiber'ом.
+/// V2 (Plan 103.9): Use `MutexGuard.unlock()` (returned by `lock()`) instead.
+/// Bare `unlock()` remains for V1 backward compat with `#deprecated` warning.
+#deprecated(since = "0.2", note = "use consume g = mu.lock(); defer g.unlock() instead (Plan 103.9 guard API)")
 #wakes
 #stable(since = "0.1")
 export external fn Mutex mut @unlock()
@@ -1406,10 +1520,10 @@ export external fn Mutex mut @try_lock_for(timeout Duration) -> bool
 #stable(since = "0.1")
 export external fn Mutex @is_locked() -> bool
 
-/// ПРЕДПОЧТИТЕЛЬНЫЙ ПАТТЕРН (M15 V1). Захват + автоматическое освобождение
+/// ПРЕДПОЧТИТЕЛЬНЫЙ ПАТТЕРН (M15). Захват + автоматическое освобождение
 /// через `defer` — unlock никогда не будет забыт даже при panic в body.
 ///
-/// V2 (Plan 103.9): станет thin wrapper над `MutexGuard consume`; user code
+/// V2 (Plan 103.9): thin wrapper над `MutexGuard consume`; user code
 /// не изменится.
 ///
 /// # Examples
@@ -1428,8 +1542,8 @@ export external fn Mutex @is_locked() -> bool
 #parks
 #stable(since = "0.1")
 export fn Mutex mut @with_lock[R](body fn() -> R) -> R {
-    self.lock()
-    defer self.unlock()
+    consume guard = self.lock()
+    defer guard.unlock()
     body()
 }
 
@@ -1473,13 +1587,17 @@ export external fn RwLock.new() -> Self
 export external fn RwLock.new_reader_priority() -> Self
 
 /// Захватить read lock. Паркует если активен или ожидает писатель (writer-priority).
+///
+/// V2 (Plan 103.9, D174): returns `ReadGuard consume`. Use `guard.unlock()` to release.
+/// Old callers that discard the return value still compile.
 #parks
 #stable(since = "0.1")
-export external fn RwLock mut @read()
+export external fn RwLock mut @read() -> ReadGuard consume
 
-/// Освободить read lock.
+/// (Deprecated) Освободить read lock без guard.
 ///
-/// Panic если вызван без соответствующего `read()`.
+/// V2: use `ReadGuard.unlock()` (returned by `read()`) instead.
+#deprecated(since = "0.2", note = "use consume g = rw.read(); defer g.unlock() instead (Plan 103.9 guard API)")
 #wakes
 #stable(since = "0.1")
 export external fn RwLock mut @read_unlock()
@@ -1495,13 +1613,17 @@ export external fn RwLock mut @try_read() -> bool
 export external fn RwLock mut @try_read_for(timeout Duration) -> bool
 
 /// Захватить write lock. Ждёт завершения всех читателей и других писателей.
+///
+/// V2 (Plan 103.9, D174): returns `WriteGuard consume`. Use `guard.unlock()` to release.
+/// Old callers that discard the return value still compile.
 #parks
 #stable(since = "0.1")
-export external fn RwLock mut @write()
+export external fn RwLock mut @write() -> WriteGuard consume
 
-/// Освободить write lock.
+/// (Deprecated) Освободить write lock без guard.
 ///
-/// Panic если вызван без соответствующего `write()`.
+/// V2: use `WriteGuard.unlock()` (returned by `write()`) instead.
+#deprecated(since = "0.2", note = "use consume g = rw.write(); defer g.unlock() instead (Plan 103.9 guard API)")
 #wakes
 #stable(since = "0.1")
 export external fn RwLock mut @write_unlock()
@@ -1528,23 +1650,23 @@ export external fn RwLock @is_write_locked() -> bool
 
 /// Read-захват с автоматическим освобождением через defer.
 ///
-/// **PREFERRED PATTERN (M15 V1).**
+/// **PREFERRED PATTERN (M15).** V2 (Plan 103.9): thin wrapper над `ReadGuard consume`.
 #parks
 #stable(since = "0.1")
 export fn RwLock mut @with_read[R](body fn() -> R) -> R {
-    self.read()
-    defer self.read_unlock()
+    consume guard = self.read()
+    defer guard.unlock()
     body()
 }
 
 /// Write-захват с автоматическим освобождением через defer.
 ///
-/// **PREFERRED PATTERN (M15 V1).**
+/// **PREFERRED PATTERN (M15).** V2 (Plan 103.9): thin wrapper над `WriteGuard consume`.
 #parks
 #stable(since = "0.1")
 export fn RwLock mut @with_write[R](body fn() -> R) -> R {
-    self.write()
-    defer self.write_unlock()
+    consume guard = self.write()
+    defer guard.unlock()
     body()
 }
 
@@ -1722,8 +1844,8 @@ export external fn Once @state() -> OnceState
 /// (Deprecated) Attempt to begin once execution.
 ///
 /// Returns `true` if this fiber should execute the once-body.
-/// Deprecated: use `call_once(fn)` instead (panic-safe primary API).
-#deprecated(since = "0.1", note = "use call_once(fn) instead (panic-safe primary API)")
+/// Deprecated: use `call_once(fn)` or `try_start()` instead (guard API).
+#deprecated(since = "0.1", note = "use call_once(fn) or try_start() instead (Plan 103.9 guard API)")
 #parks
 #stable(since = "0.1")
 export external fn Once mut @run() -> bool
@@ -1731,11 +1853,67 @@ export external fn Once mut @run() -> bool
 /// (Deprecated) Mark once body as complete.
 ///
 /// Must be called exactly once by the fiber whose `run()` returned `true`.
-/// Deprecated: use `call_once(fn)` instead (panic-safe primary API).
-#deprecated(since = "0.1", note = "use call_once(fn) instead (panic-safe primary API)")
+/// Deprecated: use `OnceGuard.commit()` (via `try_start()` guard API) instead.
+#deprecated(since = "0.1", note = "use OnceGuard.commit() via try_start() instead (Plan 103.9 guard API)")
 #wakes
 #stable(since = "0.1")
 export external fn Once mut @done()
+
+// ─── Once V2 guard API (Plan 103.9, D174) ────────────────────────
+
+/// (Internal) Returns `true` if this fiber won the race to initialize.
+///
+/// Same state machine as `run()`. Used by `try_start()` body to check
+/// whether to allocate an `OnceGuard`. Not for direct use — prefer `try_start()`.
+#parks
+#stable(since = "0.1")
+export external fn Once mut @try_start_won() -> bool
+
+/// (Internal) Allocate a `OnceGuard` referencing this `Once`.
+///
+/// Called by `try_start()` after `try_start_won()` returns `true`.
+/// Not for direct use — the guard is opaque; call `.commit()` or `.abort()`.
+#realtime_safe
+#stable(since = "0.1")
+export external fn Once mut @make_guard() -> OnceGuard consume
+
+/// Attempt to start once initialization. Returns `Some(guard)` to the winning
+/// fiber; `None` to subsequent callers (who park until DONE or re-panic if POISONED).
+///
+/// # Examples
+///
+/// ```nova
+/// let once = Once.new()
+/// match once.try_start() {
+///     Some(consume g) => {
+///         // This fiber won — do the work
+///         setup_resources()
+///         g.commit()    // Once → DONE; wakes waiters
+///     }
+///     None => {}        // Already done (or in progress; wait handled internally)
+/// }
+/// ```
+///
+/// # Panic safety
+///
+/// If the winning fiber panics before calling `g.commit()` or `g.abort()`,
+/// the `OnceGuard` is not consumed — the consume-checker enforces an explicit
+/// call to `commit()` or `abort()` on every code path.
+/// `abort()` transitions Once to POISONED; subsequent `try_start()` callers
+/// will re-panic.
+///
+/// # See Also
+///
+/// - `[Once.call_once]` — closure-based API with automatic panic safety
+#parks
+#stable(since = "0.1")
+export fn Once mut @try_start() -> Option[OnceGuard consume] {
+    if self.try_start_won() {
+        Some(self.make_guard())
+    } else {
+        None
+    }
+}
 
 // ─── OnceCell[T] ─────────────────────────────────────────────────
 
@@ -2128,16 +2306,21 @@ export external fn Semaphore.new(permits int) -> Self
 
 /// Acquire 1 permit. Parks until a permit becomes available (FIFO order).
 ///
+/// V2 (Plan 103.9, D174): returns `Permit consume`. Use `permit.release()` to release.
+/// Old callers that discard the return value still compile.
+///
 /// # Realtime
 /// Forbidden inside `realtime { }` — may park the fiber.
 #parks
 #stable(since = "0.1")
-export external fn Semaphore mut @acquire()
+export external fn Semaphore mut @acquire() -> Permit consume
 
-/// Release 1 permit. Increments permit count; wakes one FIFO waiter if queued.
+/// (Deprecated) Release 1 permit without guard.
 ///
+/// V2: use `Permit.release()` (returned by `acquire()`) instead.
 /// Over-release (release without prior acquire) increments permits past initial
 /// (D170 §2 — Java semantics, V1).
+#deprecated(since = "0.2", note = "use consume p = sem.acquire(); defer p.release() instead (Plan 103.9 guard API)")
 #wakes
 #stable(since = "0.1")
 export external fn Semaphore mut @release()
@@ -2188,11 +2371,11 @@ export external fn Semaphore mut @acquire_n(n int)
 #stable(since = "0.1")
 export external fn Semaphore mut @release_n(n int)
 
-/// PREFERRED PATTERN (M15 V1): acquire + body + automatic release via defer.
+/// PREFERRED PATTERN (M15): acquire + body + automatic release via defer.
 ///
-/// Panic-safe: `defer self.release()` runs even if body throws.
-/// V2 (Plan 103.9): becomes thin wrapper over `Permit consume` guard;
-/// user code does not change.
+/// Panic-safe: `defer permit.release()` runs even if body throws.
+/// V2 (Plan 103.9): thin wrapper over `Permit consume` guard.
+/// User code does not change.
 ///
 /// # Examples
 ///
@@ -2205,8 +2388,8 @@ export external fn Semaphore mut @release_n(n int)
 #parks
 #stable(since = "0.1")
 export fn Semaphore mut @with_permit[R](body fn() -> R) -> R {
-    @acquire()
-    defer @release()
+    consume permit = self.acquire()
+    defer permit.release()
     body()
 }
 

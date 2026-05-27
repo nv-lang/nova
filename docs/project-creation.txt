@@ -23545,3 +23545,16 @@ Lesson: 6 attempts на same race surface (83.10.1-5 + 83.11 Ф.3) = definitive
 signal that incremental fixes hit fundamental limit. Tokio rewrote их
 entire runtime в 2020 ровно по этой причине.
 
+
+=== Plan 103.9 closed 2026-05-28; V2 consume guards; 20/20 PASS; D174 spec ===
+
+Plan 103.9 (V2 consume guards migration, D174) CLOSED.
+- MutexGuard / ReadGuard / WriteGuard / Permit / OnceGuard consume types
+- Mutex.lock() -> MutexGuard, RwLock.read/write -> ReadGuard/WriteGuard
+- Semaphore.acquire() -> Permit, Once.try_start() -> OnceGuard
+- 20/20 plan103_9/ PASS (10 negative + 10 positive)
+- 4 pilot concurrency fixtures PASS (sync_mutex_guard, sync_once_guard, sync_rwlock_guards, sync_semaphore_permit)
+- D174 spec in spec/decisions/06-concurrency.md (161 lines, line 5382)
+- [M-103.9-rwlock-parallel-for-exclusion] DEFERRED: parallel for + RwLock under M:N
+- [M-103.9-semaphore-parallel-for] DEFERRED: parallel for + sem.acquire() under M:N
+- Branch: plan-103.9; merge pending
