@@ -23304,3 +23304,73 @@ for diagnostic counters reuse, но НЕ будет merged — Architectural fix
 
 Status: 📋 proposed. Next: Ф.1 design phase (Opus + Thinking ON, ~1 day).
 
+
+=== Plan 103 V1 — closed 2026-05-27 ===
+
+std.runtime.sync production-grade spec + API expansion V1.
+
+Sub-plans closed: 103.1, 103.2, 103.3, 103.4, 103.5, 103.6, 103.7, 103.8 (all 8 V1 sub-plans).
+Metrics:
+- 14 cross-cutting tests (plan103_8): 4 litmus + 5 property + 5 stress; 14/14 PASS
+- Three-way audit (sync.nv / sync_primitives.h / D167-D171): 0 inconsistencies
+- Backward compat: plan103_3/plan103_4/plan103_5/plan103_6 tests unchanged
+- Full suite regression: 0 new FAIL
+- D-blocks finalized: D167 (MemOrdering), D168 (12 sized atomics), D169 (Mutex family),
+  D170 (Semaphore/Barrier/CountDownLatch/Condvar), D171 (Once/OnceCell/Lazy), D172/D173
+
+22 types shipped:
+  AtomicI8/I16/I32/I64, AtomicU8/U16/U32/U64, AtomicIsize/Usize, AtomicBool, AtomicPtr
+  Mutex (FIFO, unfair opt-in), RwLock (writer-priority), ReentrantMutex
+  Semaphore, Barrier (cyclic), CountDownLatch, Condvar (tied to Mutex)
+  Once (call_once closure form), OnceCell[T], Lazy[T]
+  + MemOrdering enum + fence() + WaitGroup
+
+Nova edge: realtime {} / blocking {} type-checker enforcement (M12) -- unique vs Go/Rust/Java.
+V2 (103.9 consume guards) gated on Plan 100.7.
+
+Branch: plan-103.8 merged into main.
+
+=== Plan 83.11 Ф.0-Ф.2 + Ф.3 WIP — implementation session (2026-05-27) ===
+
+Ф.0+Ф.1+Ф.2 closed cleanly:
+- Worktree D:/Sources/nv-lang/nova-p83-11 created, libuv copy, nova-cli built
+- Ф.1 design doc (056a7ec5e18) — Variant A, NovaSleepState single AtomicU64
+  state encoding, Tokio TimerEntry pattern porting
+- Ф.2 driver scaffolding committed and pushed:
+  driver.h/c (lifecycle, MPSC mutex job queue, async wake handles), wired
+  в _materialize_pool и nova_runtime_shutdown, test_runner.rs link rule.
+  Verified mn_runtime_smoke + deep_spawn PASS — no regression.
+
+Ф.3 WIP (commit 662b4bbdaf1, branch plan-83.11-centralized-driver):
+- Time.sleep migrated: _nova_sleep_via_driver submits ARM_SLEEP job →
+  driver creates timer на своём UV loop, links в scope.armed_sleeps_head,
+  CAS state NEW→ARMED
+- Cancel routed: _nova_cancel_via_driver submits CANCEL_SCOPE → driver walks
+  armed_list, CAS ARMED→CANCEL_REQ, uv_close
+- close_cb stores DRV_CLOSED, nova_sched_wake (cross-thread dispatch_ready)
+- runtime.c: legacy cancel_worker_fibers bypassed when driver started
+  (would create double-wake race)
+
+ARCHITECTURE VERIFIED through diagnostic:
+- All 100 ARM_SLEEP jobs received ✓
+- CANCEL_SCOPE processed, armed_list walked ✓
+- 100 close_cb fired ✓
+- 92/100 fibers have parked=1 at close_cb (wake CAS succeeds)
+- 8/100 had parked=0 = wake-before-park race
+
+PARTIAL FIX: futex pattern reduced parked=0 cases к 0, но test STILL 3/30 PASS.
+27/30 TIMEOUT. Different race остаётся even with all wakes dispatching correctly.
+
+Heisenbug сигнал: добавление fprintf в close_cb path даёт 1/1 PASS — stdio
+lock acts as mfence. Confirms remaining race is memory-ordering related,
+likely в worker's wake_pending drain или mco_resume path.
+
+DECISION: stop here, commit honest WIP. Continuation requires Opus + Thinking
+ON deep session с atomic counters per-step (dispatched, resumed, exited)
+для locating where fiber is lost. Possibly need to port Tokio's AtomicWaker
+pattern полностью (вместо current cross-thread dispatch_ready hierarchy).
+
+Branch plan-83.11-centralized-driver pushed но НЕ merged. [M-83.10.4-iso-
+cancel-startup-race] STILL OPEN. Worktree D:/Sources/nv-lang/nova-p83-11
+preserved для continuation. Diagnostic infrastructure готова.
+
