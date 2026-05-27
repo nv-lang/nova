@@ -247,6 +247,9 @@ static inline void nova_sched_wake(NovaFiberQueue* scope, int slot) {
         if (co && mco_status(co) != MCO_DEAD) {
             /* Sync state PARKED→IDLE для нового CAS guard в mco_resume sites. */
             nova_fiber_state_store(co, NOVA_FIBER_STATE_IDLE);
+            /* Plan 83.11 Ф.3 diag: count CAS won + dispatch fires */
+            extern nova_atomic_int _nova_diag_drv_wake_cas_won;
+            nova_aint_inc(&_nova_diag_drv_wake_cas_won);
             scope->dispatch_ready(scope->dispatch_ctx, co);
         }
     } else if (!was_parked) {
@@ -302,6 +305,11 @@ static inline void nova_sched_park_until(NovaFiberQueue* scope, int slot,
     if (pred && pred(ctx)) return;       /* fast-path: condition уже выполнено */
     for (;;) {
         nova_sched_park(scope, slot);
+        /* Plan 83.11 Ф.3 diag: post-mco_yield resume — we were woken. */
+        {
+            extern nova_atomic_int _nova_diag_drv_park_resumed;
+            nova_aint_inc(&_nova_diag_drv_park_resumed);
+        }
         if (!pred) return;               /* legacy single-shot */
         if (pred(ctx)) return;           /* predicate satisfied */
         /* spurious wake → re-park */

@@ -202,6 +202,40 @@ static mco_coro* _worker_yielded_pop(NovaWorker* w) {
 static NovaWorker*     _workers = NULL;
 static int             _n_workers = 0;          /* materialized worker count */
 static nova_atomic_int _round_robin = 0;
+
+/* Plan 83.11 Ф.3 diagnostic counters. */
+nova_atomic_int _nova_diag_drv_close_cb        = 0;
+nova_atomic_int _nova_diag_drv_wake_called     = 0;
+nova_atomic_int _nova_diag_drv_wake_cas_won    = 0;
+nova_atomic_int _nova_diag_drv_dispatch_same   = 0;
+nova_atomic_int _nova_diag_drv_dispatch_cross  = 0;
+nova_atomic_int _nova_diag_drv_worker_drained  = 0;
+nova_atomic_int _nova_diag_drv_park_resumed    = 0;
+nova_atomic_int _nova_diag_drv_pred_true       = 0;
+nova_atomic_int _nova_diag_drv_sleep_returned  = 0;
+nova_atomic_int _nova_diag_drv_futex_fastpath_break = 0;
+nova_atomic_int _nova_diag_drv_futex_recheck_break_cas_win = 0;
+nova_atomic_int _nova_diag_drv_futex_recheck_break_cas_lose = 0;
+nova_atomic_int _nova_diag_drv_futex_yield = 0;
+nova_atomic_int _nova_diag_drv_futex_resume = 0;
+
+void nova_diag_drv_print(void) {
+    fprintf(stderr,
+        "[diag-drv] close_cb=%d wake=%d cas_won=%d disp_x=%d drained=%d "
+        "pred=%d sleep_ret=%d | futex fp=%d cas_win=%d cas_lose=%d yield=%d resume=%d\n",
+        (int)nova_aint_load(&_nova_diag_drv_close_cb),
+        (int)nova_aint_load(&_nova_diag_drv_wake_called),
+        (int)nova_aint_load(&_nova_diag_drv_wake_cas_won),
+        (int)nova_aint_load(&_nova_diag_drv_dispatch_cross),
+        (int)nova_aint_load(&_nova_diag_drv_worker_drained),
+        (int)nova_aint_load(&_nova_diag_drv_pred_true),
+        (int)nova_aint_load(&_nova_diag_drv_sleep_returned),
+        (int)nova_aint_load(&_nova_diag_drv_futex_fastpath_break),
+        (int)nova_aint_load(&_nova_diag_drv_futex_recheck_break_cas_win),
+        (int)nova_aint_load(&_nova_diag_drv_futex_recheck_break_cas_lose),
+        (int)nova_aint_load(&_nova_diag_drv_futex_yield),
+        (int)nova_aint_load(&_nova_diag_drv_futex_resume));
+}
 /* Plan 83.1 Ф.4: lazy worker-пул. `_armed` — runtime.init() вызван
  * (M:N запрошен); `_materialized` — пул-потоки реально подняты (лениво,
  * на первом worker-bound spawn). `_target_workers` — резолвнутое число
@@ -343,6 +377,7 @@ static bool              _sysmon_started = false;
 
 static void _sysmon_main(void* arg) {
     (void)arg;
+    int diag_tick = 0;  /* Plan 83.11 Ф.3 — print diag counters every ~1s */
     while (nova_abool_load(&_sysmon_running)) {
         uv_sleep(10);  /* ~10ms (Windows timer gran → ~15ms — приемлемо). */
         if (!nova_abool_load(&_sysmon_running)) break;
@@ -355,6 +390,10 @@ static void _sysmon_main(void* arg) {
             if (started != 0 && (now - started) > NOVA_PREEMPT_SLICE_NS) {
                 w->preempt_flag = 1;  /* живой флаг — fiber перечитает */
             }
+        }
+        if (++diag_tick >= 100) {
+            diag_tick = 0;
+            nova_diag_drv_print();
         }
     }
 }
@@ -519,6 +558,7 @@ static void _worker_dispatch_ready(void* ctx, mco_coro* co) {
         if (prev) {
             nova_deque_push(&w->deque, prev);
         }
+        nova_aint_inc(&_nova_diag_drv_dispatch_same);  /* Plan 83.11 Ф.3 */
     } else {
         /* Cross-thread: queue under mutex, wake worker's uv loop. */
         nova_mutex_lock(&w->wake_mu);
@@ -532,6 +572,7 @@ static void _worker_dispatch_ready(void* ctx, mco_coro* co) {
         w->wake_pending[w->wake_pending_count++] = co;
         nova_mutex_unlock(&w->wake_mu);
         uv_async_send(&w->wake_handle);
+        nova_aint_inc(&_nova_diag_drv_dispatch_cross);  /* Plan 83.11 Ф.3 */
     }
 }
 
@@ -624,6 +665,7 @@ static void _worker_main(void* arg) {
         nova_mutex_lock(&w->wake_mu);
         for (int i = 0; i < w->wake_pending_count; i++) {
             nova_deque_push(&w->deque, w->wake_pending[i]);
+            nova_aint_inc(&_nova_diag_drv_worker_drained);  /* Plan 83.11 Ф.3 */
         }
         w->wake_pending_count = 0;
         nova_mutex_unlock(&w->wake_mu);
