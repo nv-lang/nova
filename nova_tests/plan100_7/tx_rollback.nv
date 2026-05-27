@@ -1,0 +1,48 @@
+// Plan 100.7 (D165) pilot Transaction — rollback on error path.
+//
+// Pattern: consume tx + errdefer rollback + okdefer commit (D162).
+// D157: plain param = view (non-consuming, default).
+
+module nova_tests.plan100_7.tx_rollback
+
+type Db { id int }
+type OrderErr { msg str }
+
+type Transaction consume { id int }
+
+// Infallible for simplicity — demonstrates the core pattern.
+fn Transaction consume @commit() -> () { () }
+fn Transaction consume @rollback() -> () { () }
+
+fn Db @begin() -> Transaction => { id: 1 }
+
+// db_insert is infallible — D157 view param, no D162 interference.
+fn db_insert(t Transaction) -> int {
+    0
+}
+
+// Failable process: error path consume via explicit rollback.
+fn process(db Db, should_fail bool) Fail[OrderErr] -> int {
+    consume tx Transaction = db.begin()          // explicit type annotation (D165)
+    if should_fail {
+        tx.rollback()                           // explicit consume on error path
+        throw OrderErr { msg: "operation failed" }
+    }
+    let r = db_insert(tx)
+    tx.commit()
+    return r
+}
+
+test "Transaction rollback on error path" {
+    let db = Db { id: 1 }
+    // Success path
+    process(db, false)
+}
+
+test "Transaction rollback explicit on error path" {
+    let db2 = Db { id: 2 }
+    // Error path — rollback fires, no leak
+    with Fail[OrderErr] = effect Fail { fail(_e) { interrupt () } } {
+        process(db2, true)
+    }
+}

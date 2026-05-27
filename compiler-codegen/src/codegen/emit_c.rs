@@ -11852,8 +11852,20 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                     self.line(&format!("if ({tmp}) {{ {tmp}->_nv_handle = (void*)(uintptr_t)1; }}", tmp = tmp));
                     self.line(&format!("return nova_make_NovaRes_{}_Ok({});", suffix, tmp));
                 } else {
-                    // Primitive ok type — return Ok(zero value).
-                    self.line(&format!("return nova_make_NovaRes_{}_Ok(({})0);", suffix, ok_c));
+                    // Primitive/struct ok type — return Ok(zero value).
+                    // Plan 100.7 (D165): struct types (e.g. nova_str) cannot
+                    // be cast from integer 0 in C — use compound literal {0}
+                    // instead. Pointer/scalar types keep the (T)0 cast form.
+                    let is_scalar = ok_c.ends_with('*')
+                        || matches!(ok_c.as_str(),
+                            "nova_int" | "nova_bool" | "nova_f64"
+                            | "nova_byte" | "nova_unit" | "nova_char");
+                    let zero_init = if is_scalar {
+                        format!("({})0", ok_c)
+                    } else {
+                        format!("({}){{}}", ok_c)
+                    };
+                    self.line(&format!("return nova_make_NovaRes_{}_Ok({});", suffix, zero_init));
                 }
             } else {
                 // Erased fallback — return NULL result.
@@ -14820,13 +14832,78 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                     // `inner_ty` (тип scrutinee); `Err`-конструктор —
                     // по `current_fn_return_ty` (propagated Err уходит
                     // в return-слот caller'а), fallback на `inner_ty`.
-                    let ret_result_ty = self.current_fn_return_ty.as_ref()
-                        .filter(|t| Self::is_result_like(t))
-                        .cloned()
-                        .unwrap_or_else(|| inner_ty.clone());
-                    let err_ctor = self.result_ctor_name(&ret_result_ty, "Err");
+                    //
+                    // Plan 100.7 (D165): Fail-context mode.
+                    // When the enclosing function is a `Fail[E] -> T` function,
+                    // `current_fn_return_ty` is NOT Result-like (it's the plain T
+                    // C-type, e.g. `nova_unit`). In that case `?` must throw the
+                    // error via the Fail effect instead of `return Err(...)`.
+                    // This mirrors the ExprKind::Bang semantics.
+                    let in_fail_ctx = self.current_fn_return_ty.as_ref()
+                        .map(|t| !Self::is_result_like(t))
+                        .unwrap_or(false);
                     self.line(&format!("{} {} = {};", inner_ty, try_tmp, val));
-                    self.line(&format!("if ({}->tag == NOVA_TAG_Result_Err) {{ return {}({}->payload.Err._0); }}", try_tmp, err_ctor, try_tmp));
+                    if in_fail_ctx {
+                        // Fail-context: throw the Err value via Nova_Fail_fail /
+                        // nova_throw_typed — same as ExprKind::Bang for Result.
+                        let err_c_opt = self.resolve_result_te(inner, &inner_ty)
+                            .map(|(_, e)| e);
+                        let err_is_str = err_c_opt.as_deref()
+                            .map(|e| e == "nova_str")
+                            .unwrap_or(true);
+                        self.line(&format!(
+                            "if ({}->tag == NOVA_TAG_Result_Err) {{",
+                            try_tmp
+                        ));
+                        self.indent += 1;
+                        if err_is_str {
+                            self.line(&format!(
+                                "if ({}->err_typed_type_id != NOVA_TID_NONE) {{",
+                                try_tmp
+                            ));
+                            self.indent += 1;
+                            self.line(&format!(
+                                "nova_throw_typed({tmp}->payload.Err._0, {tmp}->err_typed_payload, {tmp}->err_typed_type_id);",
+                                tmp = try_tmp
+                            ));
+                            self.indent -= 1;
+                            self.line("} else {");
+                            self.indent += 1;
+                            self.line(&format!(
+                                "Nova_Fail_fail({}->payload.Err._0);",
+                                try_tmp
+                            ));
+                            self.indent -= 1;
+                            self.line("}");
+                        } else {
+                            // Mono non-str Err: payload.Err._0 carries the real
+                            // typed value. Pointer type → cast to void*;
+                            // value type → heap-box.
+                            let err_c = err_c_opt
+                                .unwrap_or_else(|| "void*".to_string());
+                            let tid = self.typeid_macro_for(&err_c);
+                            let payload_expr = if err_c.ends_with('*') {
+                                format!("(void*)({}->payload.Err._0)", try_tmp)
+                            } else {
+                                format!(
+                                    "({{ {ty}* _ep = ({ty}*)nova_alloc(sizeof({ty})); \
+                                     *_ep = {tmp}->payload.Err._0; (void*)_ep; }})",
+                                    ty = err_c, tmp = try_tmp)
+                            };
+                            self.line(&format!(
+                                "nova_throw_typed((nova_str){{.ptr=\"<typed err>\", .len=11}}, {p}, {tid});",
+                                p = payload_expr, tid = tid));
+                        }
+                        self.indent -= 1;
+                        self.line("}");
+                    } else {
+                        let ret_result_ty = self.current_fn_return_ty.as_ref()
+                            .filter(|t| Self::is_result_like(t))
+                            .cloned()
+                            .unwrap_or_else(|| inner_ty.clone());
+                        let err_ctor = self.result_ctor_name(&ret_result_ty, "Err");
+                        self.line(&format!("if ({}->tag == NOVA_TAG_Result_Err) {{ return {}({}->payload.Err._0); }}", try_tmp, err_ctor, try_tmp));
+                    }
                     Ok(format!("({}->payload.Ok._0)", try_tmp))
                 } else {
                     // Unknown type: emit as-is with comment
@@ -18768,7 +18845,17 @@ _cp++; \
                                 arg_strs.push(self.emit_expr(a.expr())?);
                             }
                         }
-                        return Ok(format!("Nova_{}_method_{}({})", safe_type, method, arg_strs.join(", ")));
+                        // Plan 100.7 (D165): prefer c_name from method_overloads
+                        // (which has the correct _consume_ / _method_ prefix) over
+                        // the legacy fallback that always uses _method_.
+                        let c_fn = self.method_overloads
+                            .get(&(type_name.clone(), method.to_string()))
+                            .and_then(|sigs| sigs.iter()
+                                .filter(|s| s.is_instance && !s.is_delegated)
+                                .map(|s| s.c_name.clone())
+                                .next())
+                            .unwrap_or_else(|| format!("Nova_{}_method_{}", safe_type, method));
+                        return Ok(format!("{}({})", c_fn, arg_strs.join(", ")));
                     } else {
                         // Static method: obj is the type name (Ident), not a value
                         let mut arg_strs = Vec::new();
@@ -26245,6 +26332,28 @@ _cp++; \
                     }
                 }
                 "nova_unit".into()
+            }
+            // Plan 100.7 (D165): `expr?` unwraps to Ok type of Result, or
+            // inner type of Option. Needed for `let data = nova_file_read_all(f)?`
+            // where the variable type must be nova_str (the Ok type), not nova_int.
+            ExprKind::Try(inner) | ExprKind::Bang(inner) => {
+                let inner_ty = self.infer_expr_c_type(inner);
+                if inner_ty.starts_with("NovaOpt_") {
+                    // Option? / Option!! → inner T
+                    inner_ty.strip_prefix("NovaOpt_")
+                        .unwrap_or("nova_int")
+                        .trim_end_matches('*')
+                        .to_string()
+                } else if Self::is_result_like(&inner_ty) {
+                    // Result? / Result!! → Ok type T
+                    self.novares_ok_err(&inner_ty)
+                        .or_else(|| self.infer_result_type_params(inner))
+                        .map(|(ok, _)| ok)
+                        .unwrap_or_else(|| "nova_int".into())
+                } else {
+                    // Unknown — propagate inner type (strip pointer for consume outer)
+                    inner_ty
+                }
             }
             // Plan 70 Cat B (intentional erasure, session 2 finding): final wildcard
             // в infer_expr_c_type. Reached for ExprKind variants which cannot
