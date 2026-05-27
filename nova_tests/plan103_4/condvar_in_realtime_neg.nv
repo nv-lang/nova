@@ -1,10 +1,10 @@
 // Plan 103.4 — Condvar.wait() inside realtime{} → COMPILE_ERROR.
 //
-// Fiber park/wait is forbidden inside realtime contexts
-// (E_EFFECT_REALTIME_VIOLATION). Condvar.wait, .wait_for, .wait_until
-// all park the fiber and are banned.
+// Fiber park/wait is forbidden inside realtime contexts (Plan 103.6: E_REALTIME_SYNC_PARK).
+// Condvar.wait, .wait_for, .wait_until all park the fiber and are banned.
+// Note: error code was E_EFFECT_REALTIME_VIOLATION before Plan 103.6 annotation sweep.
 //
-// EXPECT_COMPILE_ERROR E_EFFECT_REALTIME_VIOLATION
+// EXPECT_COMPILE_ERROR E_REALTIME_SYNC_PARK
 
 module nova_tests.plan103_4.condvar_in_realtime_neg
 

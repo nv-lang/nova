@@ -1,0 +1,13 @@
+// Plan 103.6 — Semaphore.acquire is #parks; forbidden in realtime{}.
+//
+// EXPECT_COMPILE_ERROR E_REALTIME_SYNC_PARK
+
+module nova_tests.plan103_6.realtime_semaphore_acquire_neg
+
+test "Semaphore.acquire banned in realtime block" {
+    let s = Semaphore.new(1)
+    realtime {
+        s.acquire()
+    }
+    s.release()
+}

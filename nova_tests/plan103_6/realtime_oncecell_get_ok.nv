@@ -1,0 +1,32 @@
+// Plan 103.6 — OnceCell.get and OnceCell.is_initialized are #realtime_safe.
+//
+// EXPECT_TIMEOUT_MS 60000
+
+module nova_tests.plan103_6.realtime_oncecell_get_ok
+
+test "OnceCell.get allowed in realtime block" {
+    let c = OnceCell[int].new()
+    let _ = c.set(99)
+    // Use a mutable variable to capture the value from realtime block
+    let mut got = false
+    realtime {
+        let v = c.get()
+        got = match v { Some(x) => x == 99, None => false }
+    }
+    assert(got)
+}
+
+test "OnceCell.is_initialized allowed in realtime block" {
+    let c = OnceCell[int].new()
+    let mut before = true
+    let mut after = false
+    realtime {
+        before = c.is_initialized()
+    }
+    let _ = c.set(1)
+    realtime {
+        after = c.is_initialized()
+    }
+    assert(before == false)
+    assert(after == true)
+}
