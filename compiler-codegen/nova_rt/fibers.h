@@ -1496,6 +1496,26 @@ static inline void nova_supervised_drain_main_scope(NovaFiberQueue* q) {
  */
 static inline void nova_supervised_run_impl(NovaFiberQueue* q,
                                             NovaCancelToken* tok) {
+    /* Plan 83.11 Phase A diagnostics (Variant B, 2026-05-27): watchdog timer.
+     * If supervised wait exceeds NOVA_WATCHDOG_DUMP_SECS (default 5s on main
+     * thread, disabled on worker threads to avoid re-entrance noise), dump
+     * runtime state once. Env-controlled: NOVA_WATCHDOG_DUMP_SECS=N (0=off). */
+    uint64_t _watchdog_start = uv_hrtime();
+    bool     _watchdog_fired = false;
+    int      _watchdog_threshold_secs = 5;
+    {
+        const char* env = getenv("NOVA_WATCHDOG_DUMP_SECS");
+        if (env && env[0]) {
+            int v = atoi(env);
+            if (v >= 0) _watchdog_threshold_secs = v;
+        }
+    }
+    bool _watchdog_enabled = !_nova_on_worker_thread()
+                              && _watchdog_threshold_secs > 0;
+    if (_watchdog_enabled) {
+        extern void nova_runtime_set_watchdog_scope(struct NovaFiberQueue* q);
+        nova_runtime_set_watchdog_scope((struct NovaFiberQueue*)q);
+    }
     for (;;) {
         int alive = nova_supervised_step(q);
         if (alive == 0) {
@@ -1503,6 +1523,20 @@ static inline void nova_supervised_run_impl(NovaFiberQueue* q,
              * fiber'ы running на workers. Wait для них. */
             int remote = (int)nova_aint_load(&q->pending_remote);
             if (remote == 0) break;
+            /* Plan 83.11 Phase A: watchdog check — fires once per scope. */
+            if (_watchdog_enabled && !_watchdog_fired) {
+                uint64_t now = uv_hrtime();
+                uint64_t elapsed_ns = now - _watchdog_start;
+                if (elapsed_ns / 1000000000ULL >= (uint64_t)_watchdog_threshold_secs) {
+                    _watchdog_fired = true;
+                    extern void nova_runtime_dump_state(const char* reason);
+                    char buf[64];
+                    snprintf(buf, sizeof(buf),
+                             "supervised-watchdog-%ds-remote-%d",
+                             _watchdog_threshold_secs, remote);
+                    nova_runtime_dump_state(buf);
+                }
+            }
             /* Plan 83.10.3 (2026-05-26): nested supervised on worker thread.
              * When supervised_run_impl runs on a worker (fiber body calls
              * supervised{spawn{...}}), the worker is blocked here and cannot
@@ -1526,6 +1560,11 @@ static inline void nova_supervised_run_impl(NovaFiberQueue* q,
         if (parked > 0 && parked == alive) {
             uv_run(nova_current_loop(), UV_RUN_ONCE);
         }
+    }
+    /* Plan 83.11 Phase A: clear watchdog scope before cleanup. */
+    if (_watchdog_enabled) {
+        extern void nova_runtime_set_watchdog_scope(struct NovaFiberQueue* qq);
+        nova_runtime_set_watchdog_scope(NULL);
     }
     /* Cleanup sched-state for этого scope'а (если был alloc'ом). */
     nova_sched_drop_state(q);
