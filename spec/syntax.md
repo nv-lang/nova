@@ -550,6 +550,10 @@ type ErrorCode
 type Bit u8 | Off = 0 | On = 1                         // явный базовый тип
 ```
 
+> ⚠ **`type X u8 | …` (явный базовый тип) пока не реализован** —
+> parser drift, см. [Plan 105](../docs/plans/105-sum-type-explicit-base.md).
+> Работают только формы без базового типа (implicit `int`).
+
 Подробно — [decisions/02-types.md → D52](decisions/02-types.md#d52).
 
 ### Варианты sum-type — те же три формы, что top-level type

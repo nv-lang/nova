@@ -271,6 +271,12 @@ type Bit u8 | Off = 0 | On = 1
 type HttpCode i32 | Ok = 200 | NotFound = 404
 ```
 
+> ⚠ **Явный базовый тип пока не реализован** (parser drift, 2026-05-27).
+> Формы с `u8`/`i32`/etc. между именем и `|` парсер отвергает с
+> `expected fn / type / let / const / test, got '|'`. Работает только
+> дефолтная форма (без базового типа, implicit `int`). См.
+> [Plan 105](../../docs/plans/105-sum-type-explicit-base.md).
+
 **Правила discriminants:**
 
 1. **Базовый тип** — дефолт `int`. Опционально явный (`type X i32 |`,
