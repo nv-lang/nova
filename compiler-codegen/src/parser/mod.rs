@@ -2188,6 +2188,47 @@ impl Parser {
             ));
         }
 
+        // Plan 100.5 (D163): `needs <Cap1>, <Cap2>` clause on `external fn`.
+        // Parsed as contextual ident (not keyword) on a separate line after
+        // the signature, similar to contracts. Only valid on `external fn`.
+        // `needs Fs` / `needs Sys` / `needs Net` declare capability requirements
+        // for the FFI function. Required when the function returns or consumes
+        // consume-typed values (checked in type-checker, not parser).
+        let needs_caps: Vec<String> = if is_external {
+            let mut caps = Vec::new();
+            // Skip newlines to peek at next line.
+            let saved_pos = self.pos;
+            self.skip_newlines();
+            if matches!(&self.peek().kind, TokenKind::Ident(n) if n == "needs") {
+                self.bump(); // consume "needs"
+                // Parse comma-separated capability names (identifiers).
+                loop {
+                    self.skip_newlines();
+                    let (cap_name, _) = self.parse_ident()
+                        .map_err(|_| Diagnostic::new(
+                            format!(
+                                "expected capability name after `needs` in `external fn {}`; \
+                                 example: `needs Fs` or `needs Sys, Net`",
+                                name
+                            ),
+                            self.peek().span,
+                        ))?;
+                    caps.push(cap_name);
+                    if matches!(self.peek().kind, TokenKind::Comma) {
+                        self.bump(); // consume ','
+                    } else {
+                        break;
+                    }
+                }
+            } else {
+                // Not a needs clause — restore position.
+                self.pos = saved_pos;
+            }
+            caps
+        } else {
+            vec![]
+        };
+
         // Тело: `=> expr` или `{ block }`. Для `external fn` — тело
         // отсутствует (D82); следующий токен должен быть Newline/Eof.
         let (body, end_span) = if is_external {
@@ -2250,6 +2291,8 @@ impl Parser {
             fuel: contract_attrs.fuel,
             no_overflow: contract_attrs.no_overflow,
             sync_class: contract_attrs.sync_class,
+            // Plan 100.5 (D163): capability requirements for external fn.
+            needs_caps,
         })
     }
 
@@ -2432,18 +2475,12 @@ impl Parser {
 
         // Plan 100.1 (D133 / D1): `type X consume { ... }` — type-level
         // must-be-consumed marker. После имени и generics, перед body.
-        // Mutually exclusive с `external` (D126 opaque types — без body,
-        // нет point'а в consume marker).
+        // Plan 100.5 (D163): `external type X consume` — allowed for FFI opaque
+        // consume-types (File, Mutex, Socket). The `consume` marker declares that
+        // caller must consume instances (via consume-method wrapper). No body
+        // needed — consume enforcement is field-independent for opaque types
+        // (the entire opaque value is the resource).
         let consume_marker = self.eat(&TokenKind::KwConsume).is_some();
-        if consume_marker && is_external {
-            let span = self.peek().span;
-            return Err(Diagnostic::new(
-                "external type cannot be `consume`: external types are opaque, \
-                 must-consume requires field-aware flow analysis. See D126 / D133."
-                    .to_string(),
-                span,
-            ));
-        }
 
         // Plan 62.D.bis (D126): `external type X [Generics]` — opaque type,
         // реализация в runtime. Body отсутствует — никакого `{ ... }`, `|`,
@@ -2500,6 +2537,9 @@ impl Parser {
                 ));
             }
             // OK — newline или EOF. Создаём Opaque декларацию.
+            // Plan 100.5 (D163): `external type X consume` — preserve consume_marker.
+            // Opaque consume-types (File, Mutex, Socket) carry must-consume obligation
+            // via LinearityRegistry; consume_marker = true → type tracked as consume.
             let last_span = self.tokens[self.pos.saturating_sub(1)].span;
             self.expect_newline_or_eof().ok();
             return Ok(TypeDecl {
@@ -2513,7 +2553,7 @@ impl Parser {
                 attrs,
                 invariants: Vec::new(),
                 axioms: Vec::new(),
-                consume: false,
+                consume: consume_marker,
             });
         }
         // Silence unused warning when is_external is false; name_span used только в Opaque branch.
