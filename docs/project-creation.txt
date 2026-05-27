@@ -23501,3 +23501,47 @@ race] STILL OPEN. Worktree D:/Sources/nv-lang/nova-p83-11 preserved.
 Total time on Plan 83.11 Ф.3: ~8 hours across 4 sessions. Race fundamentally
 requires architectural rewrite, не incremental fix.
 
+
+=== Plan 83.11 Ф.3.A v3 — Option A pending_wake integration (2026-05-27) ===
+
+Session #5. User explicit: "продолжай работать по плану Option A сам без
+остановок по всем оставшимся пунктам без упрощений (как для прода), я ушел".
+
+DESIGN: plan §12 committed 3b4845f93b2 на main. Option A = integrate
+pending_wake[] counter в generic nova_sched_park/wake API (vs §11 sleep-
+only). Rationale: closes wake-before-park race для ALL primitives (sleep
++ channels + mutexes + Plan 103.x sync), не только sleep.
+
+IMPLEMENTATION (commit 7336fdbc0af на plan-83.11-centralized-driver, NOT
+MERGED):
+- NovaSchedState.pending_wake[] field + alloc в grow_state + init в get_state
+- nova_sched_park: 3 checkpoints около SEQ_CST parked store
+  1. pre-check CAS pending_wake 1→0 — fast-path return без yield
+  2. SEQ_CST parked=true — full fence
+  3. post-barrier recheck CAS 1→0 — undo parked + return if wake came в окне
+  4. mco_yield (если не fast-returned)
+- nova_sched_wake: CAS pending_wake 0→1 (idempotent deliver) FIRST,
+  then existing CAS parked true→false; if winning, clear pending_wake
+- _nova_sleep_via_driver reverted к generic nova_sched_park_until
+- driver close_cb reverted к standard nova_sched_wake
+- wait_state field/enum removed (§11 v2 leftover)
+
+RESULTS:
+- **Stress 30× stress_iso_3e: 10 PASS / 14 FAIL (slow >300ms) / 6 TIMEOUT**
+- Best partial result so far (vs §11 hybrid 3/30, Tactical 1-19/30)
+- Does NOT meet acceptance criteria (target 30/30)
+- 14 FAIL: cancel completed but >300ms — likely contention/cache pollution
+- 6 TIMEOUT: residual deadlock path remains
+
+PLAN §13 committed (0ca0485eb08 на main) с honest status + recommendation
+для Option B (Tokio Future+Waker port, 2-4 dev-days dedicated Opus +
+Thinking ON).
+
+[M-83.10.4-iso-cancel-startup-race] STILL OPEN. Branch preserved для
+continuation.
+
+Cumulative Plan 83.11 Ф.3 time: ~10 hours / 5 sessions. Plateau confirmed.
+Lesson: 6 attempts на same race surface (83.10.1-5 + 83.11 Ф.3) = definitive
+signal that incremental fixes hit fundamental limit. Tokio rewrote их
+entire runtime в 2020 ровно по этой причине.
+
