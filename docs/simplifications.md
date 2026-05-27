@@ -26995,3 +26995,22 @@ Lint отслеживает PARENT (не view), в отличие от W_VIEW_PU
 Причина: grow-метод вызывается на parent, а не на view.
 Module-level suppress через #allow(view_extend_detach) — не per-binding,
 т.к. per-binding attributes требуют generic attribute parser (deferred).
+
+---
+
+## Plan 83.11 Ф.3 — Option A pending_wake integration (2026-05-27 session #5)
+
+**Не упрощения, а ESCALATE-decision:** после 5-й сессии и 10/30 PASS
+(плато), принял решение committed honest WIP statement в plan §13 и
+рекомендовать Option B (Tokio Future+Waker port) для следующей сессии
+вместо continue tactical iteration. Не пытался hide partial result или
+patch test (например, increase 300ms budget). Этот же подход применил
+в session #4 (single-atomic v2) — fail fast вместо false-positive close.
+
+**Memory overhead acceptable:** pending_wake[] = 1 extra atomic_int per
+slot (~4 bytes × 64 default capacity = 256 bytes per scope). Negligible
+even с тысячами scopes.
+
+**Backward-compat сохранён:** existing parked[] semantics не изменены;
+dispatch_ready hierarchy intact; все callers (channels, mutexes, Plan
+103.x sync) работают через тот же generic API без изменений.
