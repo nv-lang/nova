@@ -1173,6 +1173,13 @@ if let Some(a) = lookup_a() {
 }
 ```
 
+> ⚠ **Chain-форма `if let … , …` пока не реализована** (parser drift,
+> 2026-05-27). Парсер падает на запятой после первого cond'а с
+> `expected '{', got ','`. Реализовано только одиночное `if let pattern = expr`
+> и `while let pattern = expr`. Workaround — вложенные `if`'ы. Полная
+> грамматика (включая `("," if-cond)*`) — см.
+> [Plan 106](../../docs/plans/106-if-let-chains.md).
+
 Грамматика:
 
 ```
