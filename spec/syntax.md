@@ -777,6 +777,10 @@ if let Some(user) = lookup(id), user.is_active {
 }
 ```
 
+> ⚠ **Chain-форма (`if let … , …`) пока не реализована** — parser drift,
+> см. [Plan 106](../docs/plans/106-if-let-chains.md). Реализовано только
+> одиночное `if let pattern = expr`.
+
 Локальные binding'и (`data`, `user`, `line`) доступны **только в теле
 блока**. После закрывающей `}` — недоступны.
 

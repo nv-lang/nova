@@ -13309,3 +13309,17 @@ Merge: f79d4f28b5b; branch plan-100-2-generic-propagation → main.
   Только дефолтная форма (`type X | A = 0 | B = 1`, implicit `int`) работает.
   → [Plan 105](plans/105-sum-type-explicit-base.md) (proposed, P2, ~1.5 dev-day).
 
+- [M-if-let-chain-parser-gap] **2026-05-27** — Spec ↔ impl drift:
+  [spec/decisions/03-syntax.md:1163-1182](decisions/03-syntax.md#L1163-L1182) задокументировал
+  `if let`/`while let` chains через запятую (Rust RFC 2497 let-chains):
+  ```nova
+  if let Some(user) = lookup(id), user.is_active {
+      process(user)
+  }
+  ```
+  Парсер падает: `expected '{', got ','` на запятой после первого cond'а.
+  Грамматика в spec'е (`if-expr := "if" if-cond ("," if-cond)* block`) реализована
+  только без `("," if-cond)*` хвоста. Workaround — вложенные `if`'ы.
+  → [Plan 106](plans/106-if-let-chains.md) (proposed, P2, ~2 dev-day, AST-унификация
+  `IfLet`/`WhileLet` → `If`/`While` с `Vec<IfCond>`).
+
