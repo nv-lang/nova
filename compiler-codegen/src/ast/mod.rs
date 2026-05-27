@@ -142,38 +142,40 @@ pub enum ModuleAttrKind {
     /// Ф.3.4 (Plan 33.6): `#proof_budget(timeout_ms=N, vc_count_max=M)` —
     /// module-level бюджет верификации. Переопределяется per-fn `#verify_timeout`.
     ProofBudget { timeout_ms: Option<u32>, vc_count_max: Option<u32> },
-    /// **Plan 62.F:** `module X no_prelude` (clause syntax после module-path,
-    /// НЕ `#`-prefix per spec/decisions/07-modules.md:962-979). Suppress'ит
+    /// **Plan 107 D174:** `#no_prelude` before `module` declaration. Suppress'ит
     /// auto-import `std.prelude` (D26). Применение:
     ///   - real-time / embedded (prelude содержит GC-using код),
     ///   - bootstrap уровни (сам prelude и его sub-modules — auto-detected
     ///     через `is_prelude_self_module`, не требует opt-out),
     ///   - обучающие примеры где надо явно показать всё.
-    /// Без `no_prelude` — стандартный prelude auto-import (D26 default).
+    /// Прежняя inline-форма `module X no_prelude` удалена (D174, Plan 107).
+    /// Без `#no_prelude` — стандартный prelude auto-import (D26 default).
     /// Совместим с explicit `import std.prelude.core.{Option}` etc.
     NoPrelude,
-    /// **Plan 62.F:** `module X partial_prelude(core, runtime)` (clause syntax
-    /// после module-path). Auto-import только перечисленных sub-modules
-    /// `std.prelude.<name>` вместо full facade. Валидные имена: `core`,
-    /// `runtime`, `errors`, `collections`, `protocols`, `effects`. Имена
-    /// валидируются на resolver-этапе (compiler error при опечатке).
-    /// Пустой list `partial_prelude()` — эквивалент `no_prelude` (валиден).
+    /// **Plan 107 D174:** `#prelude(core, runtime)` before `module` declaration.
+    /// Auto-import только перечисленных sub-modules `std.prelude.<name>`
+    /// вместо full facade. Валидные имена: `core`, `runtime`, `errors`,
+    /// `collections`, `protocols`, `effects`. Имена валидируются на
+    /// resolver-этапе (compiler error при опечатке).
+    /// Пустой list `#prelude()` — compile error; используй `#no_prelude`.
+    /// Прежняя inline-форма `module X partial_prelude(...)` удалена (D174).
     PartialPrelude(Vec<String>),
-    /// **Plan 62.F.bis Ф.2:** `module X allow_prelude_shadow` (clause syntax,
-    /// analogous to `no_prelude` / `partial_prelude`). Suppresses
-    /// `W_PRELUDE_SHADOW` warnings emitted by `lints::lint_prelude_shadow`
-    /// for user-declarations that shadow prelude-imported names.
+    /// **Plan 107 D174:** `#allow(shadow)` before `module` declaration.
+    /// Suppresses `W_PRELUDE_SHADOW` warnings emitted by
+    /// `lints::lint_prelude_shadow` for user-declarations that shadow
+    /// prelude-imported names.
+    /// Прежняя inline-форма `module X allow_prelude_shadow` удалена (D174).
     ///
     /// **Когда применять:**
     ///   - Local DSL слой, переопределяющий `Option`/`Result`/etc. с
     ///     осознанным intent'ом (e.g. embedded targets с non-GC types).
     ///   - Test fixtures, где user-decl эксплицитно тестирует shadowing.
-    ///   - Bootstrap слои, не имеющие no_prelude но желающие тихо
+    ///   - Bootstrap слои, не имеющие #no_prelude но желающие тихо
     ///     shadow'ить отдельные имена.
     ///
-    /// Без `allow_prelude_shadow` (default) — shadowing → W_PRELUDE_SHADOW
+    /// Без `#allow(shadow)` (default) — shadowing → W_PRELUDE_SHADOW
     /// warning + user-declaration wins (compilation продолжается).
-    /// С `allow_prelude_shadow` — то же поведение, но без warning'а.
+    /// С `#allow(shadow)` — то же поведение, но без warning'а.
     ///
     /// Item-level suppress (`#[allow(prelude_shadow)] type Foo`) — DEFERRED
     /// (требует generic attribute parser, который пока hardcoded на

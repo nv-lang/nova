@@ -1,0 +1,6 @@
+// EXPECT_COMPILE_ERROR inline `allow_prelude_shadow` clause removed
+//
+// Plan 107 Ф.7 — inline `allow_prelude_shadow` after module path → compile error with hint.
+// D174: old syntax hard-errors, migration hint shows new `#allow(shadow)` syntax.
+
+module plan107.old_allow_shadow_inline_error allow_prelude_shadow

@@ -1,0 +1,8 @@
+// EXPECT_COMPILE_ERROR unknown prelude sub-module
+//
+// Plan 107 Ф.7 — `#prelude(c0re)` typo → compile error with valid names list.
+
+#prelude(c0re)
+module plan107.prelude_bad_subname_attr
+
+fn dummy() -> int => 1

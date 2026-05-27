@@ -26891,3 +26891,20 @@ ova_int for ence() calls not found in
   Это корректно (single-thread, handle affinity не нарушается), но
   печатает warning в stderr. В production M:N режиме deferred queue работает
   корректно.
+
+## Plan 107 — Prelude attribute syntax D174 (2026-05-27)
+
+- **Simplification:** `#no_prelude` vs old `module X no_prelude` inline clause.
+  New syntax is 3 chars shorter, consistent with all other module-level attrs.
+  `partial_prelude(X)` → `#prelude(X)` removes confusing `partial_` prefix.
+
+- **Bug fix:** `_module.nv` prelude inheritance was silently broken.
+  `preload_module_nv_prelude_attrs()` pre-scans `_module.nv` before the
+  prelude auto-import decision in `resolve_imports_inline_ex`. Fast-path:
+  raw-text check for `"#no_prelude"/"#prelude"` before full parse.
+
+- **Footgun removed:** `partial_prelude()` empty list silently acted as
+  `no_prelude`. Now `#prelude()` is a hard compile error with actionable hint.
+
+- **Extensibility:** `#allow(shadow)` is `#allow(X)` form — extensible to
+  other suppressors (future lints) without new syntax.
