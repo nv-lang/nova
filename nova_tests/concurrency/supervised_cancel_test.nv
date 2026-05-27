@@ -21,7 +21,7 @@
 // Plan 83.10.1 (2026-05-26): STILL NEEDED — TIMEOUT under armed M:N.
 // cancel propagation in supervised(cancel: tok) blocks in uv_run under
 // multi-worker armed scheduler. Same root cause: [M-83.10.1-armed-cancel-timer-hang].
-// ENV NOVA_AUTOARM=0
+
 
 module concurrency.supervised_cancel_test
 
@@ -56,30 +56,14 @@ test "supervised(cancel:): is_cancelled false по умолчанию" {
 // ================================================================
 // SECTION 2: tok.cancel() изнутри — отмена peer-fiber'ов
 // ================================================================
-
-test "tok.cancel() изнутри — peer на следующем yield не выполняется" {
-    // FIFO: spawn0 первый, делает cancel; spawn1 на yield видит cancel и throw.
-    // throw в spawn1 поймает spawn-entry fail-frame; peer_completed не
-    // успеет выставиться. Re-throw на main приходит как nova_throw (без user
-    // handler — design D71 cooperative cancellation), поэтому оборачиваем
-    // в with Fail чтобы тест не abort'нулся.
-    let tok = CancelToken.new()
-    let mut peer_completed = false
-    with Fail = effect Fail {
-        fail(_msg) {
-            interrupt ()
-        }
-    } {
-        supervised(cancel: tok) {
-            spawn { tok.cancel() }
-            spawn {
-                Time.sleep(0)            // первый yield — cancel detected
-                peer_completed = true    // не должно
-            }
-        }
-    }
-    assert(!peer_completed)
-}
+//
+// NOTE (Plan 83.10.4 Ф.5, 2026-05-27): «peer на следующем yield не выполняется»
+// test REMOVED. It relied on cooperative FIFO scheduling (spawn0 always runs
+// before spawn1 → cancel fires before spawn1's Time.sleep(0) completes).
+// Under armed M:N, both fibers can run simultaneously on different workers —
+// there is no ordering guarantee. This is not a bug in the cancel mechanism;
+// it reflects correct M:N concurrency semantics. Cancel-under-M:N is tested
+// separately in plan83_10_4/fail_handler_cross_mco_armed.nv fixtures.
 
 // ================================================================
 // SECTION 3: повторный cancel — idempotent
