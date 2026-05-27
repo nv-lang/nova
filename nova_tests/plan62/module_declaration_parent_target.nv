@@ -15,10 +15,14 @@
 // сопоставляет full-path import к 2-seg declaration через manifest
 // expansion (manifest.rs::expected_module_path_rev3).
 //
-// `no_prelude` + explicit import гарантирует что resolution идёт
+// `#no_prelude` + explicit import гарантирует что resolution идёт
 // именно через std.prelude.core, не через facade или auto-import.
+//
+// D174 (Plan 107): syntax migrated from inline `module X no_prelude`
+// to `#no_prelude` before `module` declaration.
 
-module plan62.module_declaration_parent_target no_prelude
+#no_prelude
+module plan62.module_declaration_parent_target
 
 import std.prelude.core.{Option, Some, None}
 import std.prelude.runtime.{assert}

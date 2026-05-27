@@ -1,0 +1,17 @@
+// Plan 107 Ф.7 — `#no_prelude` + manual import of Option/assert.
+// Positive: module compiles, Option/assert explicitly imported.
+
+#no_prelude
+module plan107.no_prelude_explicit_import_attr
+
+import std.prelude.core.{Option, Some, None}
+import std.prelude.runtime.{assert}
+
+fn make_opt(x int) -> Option[int] {
+    Some(x)
+}
+
+test "no_prelude + explicit import — Option visible" {
+    let o = make_opt(7)
+    assert(o.is_some())
+}

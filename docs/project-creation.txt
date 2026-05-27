@@ -23217,3 +23217,34 @@ Full nova test: 1414/62 (62 pre-existing, 0 regressions from 83.12).
 Commit: faee0083797. Branch: plan-83.12-async-net pushed to github.
 
 Plan 83.12 ✅ ЗАКРЫТ. Разблокирует Plan 91 (std MVP — net в prelude).
+
+=== Plan 107 — Prelude attribute syntax (2026-05-27) ===
+
+D174: migrate prelude control from inline module-line clauses to
+#-attribute syntax before `module` declaration.
+
+Parser (mod.rs):
+  - Ф.1: parse_module_attrs() accepts #no_prelude / #prelude(...) / #allow(shadow)
+    (mapped to existing ModuleAttrKind variants: NoPrelude/PartialPrelude/AllowPreludeShadow)
+  - Ф.2: inline `no_prelude`/`partial_prelude`/`allow_prelude_shadow` → hard error
+    with actionable migration hint
+
+imports.rs:
+  - Ф.3: preload_module_nv_prelude_attrs() — pre-scan _module.nv before
+    prelude decision; fixes _module.nv inheritance bug (pre-existing)
+  - Ф.4: defensive empty #prelude() list error
+
+Lint/AST:
+  - Ф.5: W_PRELUDE_SHADOW hint updated to new #allow(shadow) syntax
+
+Fixtures:
+  - Ф.6: plan62/ (7 files) + std/prelude/*.nv (6 comments) migrated
+  - Ф.7: plan107/ (11 new tests): 8 PASS + 3 CC-FAIL (pre-existing Nova_ReadBufferError)
+    positive: no_prelude_attr, prelude_core_attr, prelude_multi_attr, allow_shadow_attr
+    negative: prelude_empty_error, prelude_bad_subname, old inline forms (3 × hard error)
+    inheritance: folder_no_prelude_inherited/_module.nv → peer.nv PASS
+
+Full nova test: 1451/62 (same pre-existing 62, 0 new regressions from 107).
+Commit: 0adc9e8ceba. Branch: plan-107 pushed to github.
+
+Plan 107 ✅ ЗАКРЫТ.
