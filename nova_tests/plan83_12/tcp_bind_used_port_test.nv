@@ -1,0 +1,37 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Plan 83.12: Binding two TCP listeners to the same port → Err (EADDRINUSE).
+//
+// Bind listener A on OS port, read the port number, then attempt to bind
+// listener B on the same port → must return Err.
+//
+// ENV NOVA_AUTOARM=0
+
+module plan83_12.tcp_bind_used_port_test
+
+test "TcpListener: bind to already-used port → Err" {
+    let lst1_r = TcpListener.bind(SocketAddr.loopback(0))
+    assert(lst1_r.is_ok())
+    let lst1 = lst1_r.unwrap()
+    let port = lst1.local_port()
+    assert(port > 0)
+
+    // Bind second listener to the same port → EADDRINUSE.
+    let lst2_r = TcpListener.bind(SocketAddr.loopback(port))
+    assert(lst2_r.is_err())
+
+    lst1.close()
+}
+
+test "UdpSocket: bind to already-used port → Err" {
+    let s1_r = UdpSocket.bind(SocketAddr.loopback(0))
+    assert(s1_r.is_ok())
+    let s1 = s1_r.unwrap()
+    let port = s1.local_port()
+    assert(port > 0)
+
+    // Bind second socket to the same port → EADDRINUSE.
+    let s2_r = UdpSocket.bind(SocketAddr.loopback(port))
+    assert(s2_r.is_err())
+
+    s1.close()
+}

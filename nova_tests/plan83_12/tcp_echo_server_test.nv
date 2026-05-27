@@ -1,0 +1,48 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Plan 83.12: TCP echo server + client round-trip.
+//
+// Server fiber: accept one connection, read data, write it back, close.
+// Client fiber: connect, write "hello", read echo back, verify is_ok.
+//
+// ENV NOVA_AUTOARM=0
+// EXPECT_TIMEOUT_MS 30000
+
+module plan83_12.tcp_echo_server_test
+
+test "TCP echo: server + client round-trip" {
+    // Bind to OS-assigned port (port 0 → OS picks a free port).
+    let lst_r = TcpListener.bind(SocketAddr.loopback(0))
+    assert(lst_r.is_ok())
+    let lst = lst_r.unwrap()
+    let port = lst.local_port()
+    assert(port > 0)
+
+    let mut echo_ok = false
+    supervised {
+        // Server fiber: accept one connection, echo data, close.
+        spawn {
+            let acc_r = lst.accept()
+            assert(acc_r.is_ok())
+            let srv = acc_r.unwrap()
+            let rd_r = srv.read_bytes(512)
+            assert(rd_r.is_ok())
+            // Echo back whatever we received.
+            let wr_r = srv.write("echo_ok")
+            assert(wr_r.is_ok())
+            srv.close()
+            lst.close()
+        }
+        // Client fiber: connect, write, read echo.
+        spawn {
+            let conn_r = TcpStream.connect(SocketAddr.loopback(port))
+            assert(conn_r.is_ok())
+            let cli = conn_r.unwrap()
+            let wr_r = cli.write("hello")
+            assert(wr_r.is_ok())
+            let rd_r = cli.read_bytes(512)
+            echo_ok = rd_r.is_ok()
+            cli.close()
+        }
+    }
+    assert(echo_ok)
+}

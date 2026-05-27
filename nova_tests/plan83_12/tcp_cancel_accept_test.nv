@@ -1,0 +1,40 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Plan 83.12: Cancel in-flight TcpListener.accept() via supervised cancel token.
+//
+// Listener is bound but no client connects. A cancel token fires after 50ms.
+// The in-flight accept() is aborted — the result is Err (accept cancelled or
+// closed), and the supervised scope exits cleanly without deadlock.
+//
+// ENV NOVA_AUTOARM=0
+// EXPECT_TIMEOUT_MS 30000
+
+module plan83_12.tcp_cancel_accept_test
+
+test "TcpListener: cancel in-flight accept — exits cleanly" {
+    let lst_r = TcpListener.bind(SocketAddr.loopback(0))
+    assert(lst_r.is_ok())
+    let lst = lst_r.unwrap()
+
+    let tok = CancelToken.new()
+    let mut acc_err = false
+    with Fail = effect Fail {
+        fail(_msg) { interrupt () }
+    } {
+        supervised(cancel: tok) {
+            // Acceptor fiber: parks waiting for a connection.
+            spawn {
+                let acc_r = lst.accept()
+                // Under cancel, accept returns Err (cancelled or closed).
+                acc_err = acc_r.is_err()
+            }
+            // Canceller fiber: cancel after 50ms.
+            spawn {
+                Time.sleep(50)
+                lst.close()
+                tok.cancel()
+            }
+        }
+    }
+    // Reached here = no deadlock.
+    assert(acc_err)
+}

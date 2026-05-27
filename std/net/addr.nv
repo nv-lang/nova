@@ -1,0 +1,91 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Plan 83.12: std/net/addr.nv — socket address types.
+//
+// SocketAddr: opaque IPv4/IPv6 socket address backed by `struct sockaddr_storage`.
+//   - loopback(port)    → 127.0.0.1:port (IPv4 loopback)
+//   - loopback_v6(port) → [::1]:port     (IPv6 loopback)
+//   - v4(a,b,c,d,port)  → explicit IPv4 dotted-quad
+//   - parse(s)          → parse "host:port" string
+//   - port()            → port number
+//   - host_str()        → host part as string
+//
+// C backing: Nova_SocketAddr in net.h.
+// No `type SocketAddr` declaration here — ExternalRegistry registers it
+// as a receiver type from the `external fn SocketAddr.*` declarations.
+
+module net.addr
+
+// ─── SocketAddr ───────────────────────────────────────────────────────────────
+
+/// Opaque IPv4/IPv6 socket address.
+///
+/// Backed by `struct sockaddr_storage` in C — large enough for both
+/// IPv4 (`sockaddr_in`) and IPv6 (`sockaddr_in6`) addresses.
+///
+/// # Examples
+///
+/// ```nova
+/// let addr4 = SocketAddr.loopback(8080)       // 127.0.0.1:8080
+/// let addr6 = SocketAddr.loopback_v6(8080)    // [::1]:8080
+/// let addr  = SocketAddr.v4(192, 168, 1, 1, 80)
+/// let parsed = SocketAddr.parse("127.0.0.1:9090")
+/// ```
+///
+/// # See Also
+///
+/// - `[TcpListener.bind]`, `[TcpStream.connect]`, `[UdpSocket.bind]`
+
+/// Create IPv4 loopback address 127.0.0.1:port.
+///
+/// Passing `port = 0` asks the OS to choose an available port.
+/// After `TcpListener.bind(SocketAddr.loopback(0))`, read the
+/// actual port via `listener.local_port()`.
+#stable(since = "0.1")
+export external fn SocketAddr.loopback(port u16) -> SocketAddr
+
+/// Create IPv6 loopback address [::1]:port.
+#stable(since = "0.1")
+export external fn SocketAddr.loopback_v6(port u16) -> SocketAddr
+
+/// Create IPv4 address from dotted-quad octets.
+///
+/// # Examples
+///
+/// ```nova
+/// let addr = SocketAddr.v4(127, 0, 0, 1, 80)  // 127.0.0.1:80
+/// ```
+#stable(since = "0.1")
+export external fn SocketAddr.v4(a u8, b u8, c u8, d u8, port u16) -> SocketAddr
+
+/// Parse "host:port" string into a SocketAddr.
+///
+/// Returns `Err(msg)` if the string is malformed or the host cannot be
+/// resolved. IPv6 literal addresses must be bracketed: `"[::1]:9090"`.
+///
+/// **V1 note:** DNS resolution is synchronous (uv_getaddrinfo on calling
+/// thread). Requires `Blocking` effect in the caller.
+#stable(since = "0.1")
+export external fn SocketAddr.parse(s str) -> Result[SocketAddr, str]
+
+/// Get the port number.
+#stable(since = "0.1")
+export external fn SocketAddr @port() -> u16
+
+/// Get the host as a human-readable string.
+///
+/// For IPv4: dotted-decimal notation ("127.0.0.1").
+/// For IPv6: compressed hex notation ("::1").
+#stable(since = "0.1")
+export external fn SocketAddr @host_str() -> str
+
+/// Return `true` if this is an IPv6 address.
+#stable(since = "0.1")
+export external fn SocketAddr @is_v6() -> bool
+
+/// Return `true` if this is an IPv4 address.
+#stable(since = "0.1")
+export external fn SocketAddr @is_v4() -> bool
+
+/// Return a human-readable "host:port" string.
+#stable(since = "0.1")
+export external fn SocketAddr @to_str() -> str
