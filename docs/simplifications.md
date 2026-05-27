@@ -13426,3 +13426,36 @@ emission в emit_c.rs).
   — лишний рефакторинг плана при фактически отдельных track'ах. C добавляет
   только cross-ref'ы между планами + явное определение 0.1 — минимальная
   правка с максимальной согласованностью.
+
+## 2026-05-27 — Plan 91 Ф.0 closure (std MVP re-baseline)
+
+- **Trust-but-verify rule для legacy STATUS.md** — std/STATUS.md был от
+  2026-05-23 и точно предсказывал 12 FAIL в `nova check`, но **не
+  отражал** что Vec/HashMap/Set работают end-to-end. Plan 91 §Ф.0
+  заранее (по дизайну) заставляет re-baseline перед планированием Ф.1-Ф.4
+  — этот шаг себя оправдал: оценка 3-5 недель → 5-7 дней после
+  фактических данных.
+
+- **Smoke matrix вместо full `nova test`** — full `nova test` в worktree
+  ~4+ часа (1609 тестов). Для Ф.0.1 re-baseline это overkill. Сделана
+  smoke matrix — мини-программа `target/smoke_*.nv` на каждый MVP-модуль
+  (9 категорий), `nova build → exe → run`. Покрывает realistic use-case
+  (не unit-test) и ловит cross-module D35 dispatch / generic
+  monomorphization за минуты, не часы. Pattern для будущих re-baseline
+  фаз: smoke-программа per-домен + `nova check` per-file.
+
+- **Ф.0.4 decision — переставить Ф.7.1 quarantine ВПЕРЁД** — исходный
+  Plan 91 ставил Ф.7.1 в конец (после Ф.6). Но quarantine non-MVP →
+  `nova check std/` → 0 FAIL без `--skip`, что:
+  (а) убирает noise при работе над Ф.2/Ф.3/Ф.4;
+  (б) разблокирует CI gate (предел toml stack-overflow);
+  (в) повышает confidence в каждом следующем зелёном-passing смоке.
+  Это не «упрощение» — это другой топосорт того же scope.
+
+- **Параллелизация Ф.2/Ф.3/Ф.4 как в Plan 103.4** — ожидаемая Ф.2 (text
+  methods) / Ф.3 (json fix) / Ф.4 (sort module) — disjoint по файлам
+  (text → compiler-codegen/src/codegen/runtime_registry.rs + C stubs;
+  json → std/encoding/json.nv; sort → новый std/sort.nv). Sub-agent
+  split á la Plan 103.4 (4 parallel Sonnet + Opus merge) → wall-time
+  2-3 дня vs 5-7 sequential. Trade-off: setup overhead pre-flight
+  markers commit + final merge coordination.

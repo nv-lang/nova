@@ -23140,3 +23140,79 @@ PUSHED but NOT MERGED. [M-83.10.4-iso-cancel-startup-race] STILL OPEN.
 
 Worktree D:/Sources/nv-lang/nova-p83-10-5 PRESERVED for Ф.B continuation.
 
+================================================================
+2026-05-27 — Plan 91 Ф.0 closure (re-baseline std MVP для 0.1)
+================================================================
+
+Branch: plan-91-stdmvp (worktree nova-p91 от github/main HEAD
+32f3dd51392, post-Plan 83.10.4 merge 7b5b2fec8e0).
+
+Ф.0 — Re-baseline GATE (HARD decision-point). Цель — заменить
+устаревшие данные std/STATUS.md (от 2026-05-23) фактическим
+состоянием 2026-05-27 и пересмотреть scope Ф.1-Ф.7.
+
+Сделано:
+  - cargo build release nova-cli в worktree (2m 01s, 4 warnings).
+  - Per-file `nova check` на 55 файлов в MVP-relevant std/
+    доменах. С `--skip std/encoding/toml.nv`: 43 PASS / 12 FAIL.
+    Без skip — stack overflow на toml.nv.
+  - Smoke `nova build → exe` matrix на 9 MVP-категорий через
+    `target/smoke_*.nv`. Realistic мини-программы.
+
+Surprising findings vs Plan 91's исходных ожиданий:
+  - Plan 91 §Ф.1 ожидал крупных codegen-блокеров для Vec/HashMap/
+    HashSet (generic specialization, array-type mangling, D72
+    protocol-bound dispatch, tuple types).
+  - РЕАЛЬНОСТЬ: Vec/HashMap/Set все три работают end-to-end.
+    Plan 95/99/101/103 закрыли эти блокеры попутно.
+  - Ф.1 теперь — conformance-валидация, не core-блокеры.
+
+Smoke matrix результат:
+  - PASS build+run: Option, Result, Vec (map/filter/fold/any/all/
+    first), HashMap (new/insert/get/len), HashSet (insert/
+    contains/len), Duration (from_secs/from_millis/plus/as_*),
+    math (sqrt/pow/ln через runtime stubs), text basic (split/
+    trim/to_upper/starts_with + for-in []str).
+  - FAIL: text extended (отсутствуют join/parse_int/parse_f64/
+    pad/repeat/replace методы), JSON (D52 §2 source errors в
+    std/encoding/json.nv), Sort (модуля std/sort.nv нет).
+
+12 FAIL `nova check std/` категоризованы:
+  A. D52 §2 shorthand violations (6 файлов; source-level fix).
+  B. Array literal parser issue (4 crypto файла, non-MVP).
+  C. E_UNUSED_PREFIX_TYPEVAR (retry.nv, non-MVP).
+  D. Missing runtime methods (текст, Ф.2 work).
+  E. Missing module sort.nv (Ф.4 work).
+  F. Parser stack overflow на TOML (карантин Ф.7.1).
+  G. Standalone-check import cycle на range.nv (не блокер).
+
+Ф.0.4 Decision — ревизия порядка Ф.1-Ф.7:
+  1. Ф.7.1 (quarantine, 0.5 дн) — ВПЕРЁД. Чистит test surface,
+     убирает 12 FAIL в `nova check std/` без `--skip`.
+  2. Ф.3 (JSON D52 fix, 0.5 дн) — 5 source edits + smoke + cnfrm.
+  3. Ф.4 (time/math/sort, 1-2 дн) — sort module + Instant +
+     canonical min/max wrappers + 4 conformance.
+  4. Ф.2 (text extended, 1-2 дн) — 8 методов runtime_registry +
+     C stubs + 6+ conformance.
+  5. Ф.1 (collections conformance, 0.5 дн) — cross-product тесты.
+  6. Ф.5 (conformance integration, 1 дн).
+  7. Ф.6 (getting-started + 5-7 examples, 1 дн).
+  8. Ф.7.2-Ф.7.4 (release checklist, 0.5 дн).
+
+Total estimated: ~5-7 дней sequential (1 dev-week) vs исходных
+3-5 недель. Parallel split (á la Plan 103.4): Ф.7.1 → 3 parallel
+Sonnet agents на Ф.2/Ф.3/Ф.4 → Opus merge → Ф.1/Ф.5/Ф.6
+sequential → Ф.7.2-Ф.7.4. Wall-time ~2-3 дня.
+
+Артефакты commit'а Ф.0:
+  - std/STATUS.md обновлён (секция «2026-05-27, Plan 91 Ф.0
+    re-baseline»). Старые группы B-M помечены как устаревшие.
+  - docs/plans/91-stdlib-mvp-for-0.1.md — добавлена секция
+    «Ф.0 closure (2026-05-27)» с измеренными числами + новый
+    decision Ф.0.4 + phase-entry conditions для Ф.7.1/Ф.3/Ф.4/Ф.2.
+  - target/smoke_*.nv + target/smoke_runner*.sh + target/
+    p91_check.sh — repro scripts для smoke matrix.
+
+Status: Ф.0 ✅ ЗАКРЫТ. Plan 91 переоценен по факту. Ф.1-Ф.7 — план
+готов для делегирования (single dev / parallel-agent split).
+Следующий immediate next P0 — Ф.7.1 quarantine.
