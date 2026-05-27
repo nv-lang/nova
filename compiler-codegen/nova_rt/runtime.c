@@ -236,6 +236,174 @@ void nova_diag_drv_print(void) {
         (int)nova_aint_load(&_nova_diag_drv_futex_yield),
         (int)nova_aint_load(&_nova_diag_drv_futex_resume));
 }
+
+/* Plan 83.11 Phase A diagnostics (Variant B): in-process runtime state dump.
+ *
+ * Lock-free, best-effort snapshot. Caller must accept inconsistency между
+ * fields if other threads are mutating concurrently. Purpose — diagnostic
+ * snapshot для post-hoc analysis, не correctness guarantee.
+ *
+ * Output format (one line per logical entity, prefix [tag]):
+ *   === NOVA_RUNTIME_DUMP === reason=<str>
+ *   [globals] n_workers=N driver_started=B armed=B materialized=B
+ *   [diag-drv] <counters>
+ *   [worker i] deque=N wake_pending=M runnext=<ptr>
+ *     [w.i.scope] count=K
+ *     [w.i.parked  s0..sK] 01010...
+ *     [w.i.pwake   s0..sK] 00100...
+ *     [w.i.fiber.slot=s] mco=<status> active_scope=<ptr>
+ *   [driver] armed_list_size=N (per-scope)
+ *   === END DUMP ===
+ *
+ * Thread-safety: no locks. Atomic loads where available. Pointer reads as
+ * plain because we accept stale snapshot. Race-free against shutdown — caller
+ * must ensure called BEFORE nova_runtime_shutdown. */
+extern NovaDriver _nova_driver;  /* defined in driver.c */
+/* Forward decls for state below — `_armed` / `_materialized` defined later in this file. */
+static bool _armed;
+static bool _materialized;
+/* Plan 83.11 Phase A: track the currently-waiting supervised scope (set by
+ * supervised_run_impl on main thread). dump can include its state. */
+static struct NovaFiberQueue* _watchdog_active_scope = NULL;
+void nova_runtime_set_watchdog_scope(struct NovaFiberQueue* q) {
+    _watchdog_active_scope = q;
+}
+void nova_runtime_dump_state(const char* reason) {
+    fprintf(stderr, "=== NOVA_RUNTIME_DUMP === reason=%s\n",
+            reason ? reason : "unspecified");
+    fprintf(stderr, "[globals] n_workers=%d driver_started=%d armed=%d materialized=%d\n",
+            _n_workers,
+            (int)nova_abool_load(&_nova_driver.started),
+            (int)_armed, (int)_materialized);
+    nova_diag_drv_print();
+    if (!_workers || _n_workers <= 0) {
+        fprintf(stderr, "[workers] none materialized\n");
+        fprintf(stderr, "=== END DUMP ===\n");
+        return;
+    }
+    for (int wi = 0; wi < _n_workers; wi++) {
+        NovaWorker* w = &_workers[wi];
+        fprintf(stderr,
+            "[worker %d] runnext=%p wake_pending=%d preempt_flag=%d stop=%d\n",
+            wi, (void*)w->runnext, w->wake_pending_count,
+            (int)w->preempt_flag,
+            (int)nova_abool_load(&w->stop));
+        NovaFiberQueue* s = &w->scope;
+        int count = (int)__atomic_load_n(&s->count, __ATOMIC_ACQUIRE);
+        fprintf(stderr, "[w.%d.scope] count=%d cancel_req=%d pending_remote=%d\n",
+            wi, count,
+            (int)nova_abool_load(&s->cancel_requested),
+            (int)nova_aint_load(&s->pending_remote));
+        NovaSchedState* st = s->sched_state;
+        if (st && st->capacity > 0) {
+            int cap = st->capacity;
+            int show = cap < 128 ? cap : 128;
+            fprintf(stderr, "[w.%d.parked  cap=%d] ", wi, cap);
+            for (int i = 0; i < show; i++) {
+                fputc(st->parked && st->parked[i] ? '1' : '0', stderr);
+            }
+            fputc('\n', stderr);
+            if (st->pending_wake) {
+                fprintf(stderr, "[w.%d.pwake   cap=%d] ", wi, cap);
+                for (int i = 0; i < show; i++) {
+                    int v = (int)__atomic_load_n(&st->pending_wake[i], __ATOMIC_RELAXED);
+                    fputc(v ? '1' : '0', stderr);
+                }
+                fputc('\n', stderr);
+            }
+            /* Per-slot fiber detail. Show ALL slots с co!=NULL (any status), OR
+             * с parked/pwake set. Skip purely empty slots (no fiber, no flags).
+             * Plan 83.11 Phase A: critical для finding stuck-but-not-parked fibers. */
+            int detail_max = count < cap ? count : cap;
+            int alive_non_parked = 0;
+            for (int i = 0; i < detail_max; i++) {
+                bool pk = st->parked && st->parked[i];
+                int pw = st->pending_wake
+                    ? (int)__atomic_load_n(&st->pending_wake[i], __ATOMIC_RELAXED)
+                    : 0;
+                mco_coro* co = (i < count) ? s->fibers[i] : NULL;
+                if (!pk && !pw && !co) continue;
+                int mco_st = co ? (int)mco_status(co) : -1;
+                NovaSpawnCtxBase* base = co ? (NovaSpawnCtxBase*)mco_get_user_data(co) : NULL;
+                /* Detect "stuck": fiber alive (SUSPENDED) but not parked */
+                bool stuck_alive = co && mco_st == MCO_SUSPENDED && !pk;
+                if (stuck_alive) alive_non_parked++;
+                fprintf(stderr,
+                    "[w.%d.fiber.s%d] co=%p mco_status=%d parent_scope=%p parked=%d pwake=%d hdl=%p stop_cb=%p%s\n",
+                    wi, i, (void*)co, mco_st,
+                    base ? (void*)base->_nova_parent_scope : NULL,
+                    (int)pk, pw,
+                    st->pending_handle ? st->pending_handle[i] : NULL,
+                    (void*)(uintptr_t)(st->pending_stop_cb ? (void*)st->pending_stop_cb[i] : NULL),
+                    stuck_alive ? " ⚠ STUCK_ALIVE_NOT_PARKED" : "");
+            }
+            if (alive_non_parked > 0) {
+                fprintf(stderr,
+                    "[w.%d] ⚠ %d alive-but-not-parked fibers (potential lost-wake or stuck-completion)\n",
+                    wi, alive_non_parked);
+            }
+            /* Deque + runnext detail — fibers WAITING TO RUN but worker not draining */
+            int dq_size = (int)nova_deque_size_approx(&w->deque);
+            if (dq_size > 0 || w->runnext) {
+                fprintf(stderr, "[w.%d.deque] size=%d runnext=%p\n",
+                        wi, dq_size, (void*)w->runnext);
+            }
+        } else {
+            fprintf(stderr, "[w.%d.sched_state] NULL or empty\n", wi);
+        }
+    }
+    /* Plan 83.11 Phase A: dump active supervised scope если установлен. */
+    NovaFiberQueue* sup = (NovaFiberQueue*)_watchdog_active_scope;
+    if (sup) {
+        int sup_count = (int)__atomic_load_n(&sup->count, __ATOMIC_ACQUIRE);
+        int sup_remote = (int)nova_aint_load(&sup->pending_remote);
+        fprintf(stderr,
+            "[supervised] scope=%p count=%d pending_remote=%d cancel_req=%d armed_sleeps_head=%p first_error=%s\n",
+            (void*)sup, sup_count, sup_remote,
+            (int)nova_abool_load(&sup->cancel_requested),
+            (void*)sup->armed_sleeps_head,
+            sup->first_error ? sup->first_error : "(null)");
+        /* Show every slot — supervised's scope.fibers[] tracks completion */
+        NovaSchedState* sst = sup->sched_state;
+        int sup_cap = sst ? sst->capacity : 0;
+        int sup_limit = sup_count < sup_cap ? sup_count : sup_cap;
+        if (sup_limit > 256) sup_limit = 256;
+        int alive_count = 0, dead_count = 0, null_count = 0;
+        for (int i = 0; i < sup_count; i++) {
+            mco_coro* co = sup->fibers ? sup->fibers[i] : NULL;
+            if (!co) { null_count++; continue; }
+            int mc = (int)mco_status(co);
+            if (mc == MCO_DEAD) { dead_count++; continue; }
+            alive_count++;
+            NovaSpawnCtxBase* base = (NovaSpawnCtxBase*)mco_get_user_data(co);
+            bool pk = sst && sst->parked && i < sup_cap ? sst->parked[i] : 0;
+            int pw = (sst && sst->pending_wake && i < sup_cap)
+                ? (int)__atomic_load_n(&sst->pending_wake[i], __ATOMIC_RELAXED) : 0;
+            fprintf(stderr,
+                "[sup.fiber.s%d] co=%p mco=%d parent=%p parked=%d pwake=%d\n",
+                i, (void*)co, mc,
+                base ? (void*)base->_nova_parent_scope : NULL,
+                (int)pk, pw);
+        }
+        fprintf(stderr,
+            "[supervised.summary] slots=%d alive=%d dead=%d null=%d\n",
+            sup_count, alive_count, dead_count, null_count);
+        /* Walk armed_sleeps_head list if any */
+        if (sup->armed_sleeps_head) {
+            int n = 0;
+            struct NovaSleepState* st = sup->armed_sleeps_head;
+            while (st && n < 32) {
+                fprintf(stderr,
+                    "[supervised.armed.%d] st=%p scope=%p slot=%d\n",
+                    n, (void*)st, (void*)st->scope, st->slot);
+                st = st->next_in_scope;
+                n++;
+            }
+        }
+    }
+    fprintf(stderr, "=== END DUMP ===\n");
+    fflush(stderr);
+}
 /* Plan 83.1 Ф.4: lazy worker-пул. `_armed` — runtime.init() вызван
  * (M:N запрошен); `_materialized` — пул-потоки реально подняты (лениво,
  * на первом worker-bound spawn). `_target_workers` — резолвнутое число
