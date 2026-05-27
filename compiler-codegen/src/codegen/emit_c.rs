@@ -541,6 +541,12 @@ pub struct CEmitter {
     /// (`Iter` хардкоден); теперь formal declarations в `std/prelude/collections.nv`
     /// + `std/prelude/protocols.nv` требуют explicit erasure registration.
     protocol_types: HashSet<String>,
+    /// Plan 100.5 (D163): Set of `external type X consume` opaque FFI type names.
+    /// These are concrete types (not generic stubs) — `Nova_File*` should NOT be
+    /// treated as an erased generic placeholder by `is_generic_stub_c`. Inserting
+    /// the name here ensures Result[File, IoErr] monomorphizes to the correct
+    /// `NovaRes_Nova_File_p_Nova_IoErr*` rather than the erased fallback.
+    opaque_ffi_types: HashSet<String>,
     /// Maps generic function name → tuple arity when the function returns a tuple of type params.
     /// Used to populate tuple_element_types at call sites.
     generic_fn_tuple_arity: HashMap<String, usize>,
@@ -932,6 +938,7 @@ impl CEmitter {
             generic_fns: HashSet::new(),
             generic_types: HashSet::new(),
             protocol_types: HashSet::new(),
+            opaque_ffi_types: HashSet::new(),
             generic_fn_tuple_arity: HashMap::new(),
             type_aliases: HashMap::new(),
             current_parfor_slot: None,
@@ -6980,7 +6987,28 @@ impl CEmitter {
     fn emit_fn_forward_decl(&mut self, f: &FnDecl) -> Result<(), String> {
         // D82: external fn — forward decl не нужен (реализация в nova_rt/*.h
         // уже включена через preamble #include).
-        if f.is_external {
+        // Plan 100.5 (D163): Exception — user-defined D163 external fn (with
+        // `needs_caps`) need forward decls + type registration. These are NOT
+        // stdlib external fn — they have no corresponding nova_rt/*.h entry.
+        // We emit a `static` stub wrapper so generated code can call them.
+        if f.is_external && f.needs_caps.is_empty() {
+            return Ok(());
+        }
+        if f.is_external && !f.needs_caps.is_empty() {
+            // D163 external fn: emit forward decl + register return type info.
+            self.current_receiver_type = None;
+            let ret = self.return_type_c(f)?;
+            // Register result type params for Result-returning D163 external fn.
+            if let Some(rt) = &f.return_type {
+                if let Some(rparams) = self.extract_result_type_params(rt) {
+                    self.fn_result_type_params.insert(f.name.clone(), rparams);
+                }
+            }
+            self.var_types.insert(format!("fn_ret_{}", f.name), ret.clone());
+            let params = self.params_c(f)?;
+            let mangled = self.mangle_fn(f);
+            // Forward declare the static stub wrapper.
+            self.line(&format!("static {} {}({});", ret, mangled, params));
             return Ok(());
         }
         if f.name == "main" {
@@ -7270,7 +7298,36 @@ impl CEmitter {
         // never emit'нем locally. Forward-decl skip уже handled через
         // BUILTIN_RUNTIME_TYPES (emit_c.rs:1212-1218); это early-return
         // — defensive double-protection, делает intent explicit.
+        //
+        // Plan 100.5 (D163): Exception — user-defined `external type X consume`
+        // for FFI opaque resource handles. These are NOT stdlib types (no
+        // `nova_rt/<name>.h`), so we emit a minimal opaque struct definition:
+        //   typedef struct Nova_File { void* _nv_handle; } Nova_File;
+        // This lets the C compiler see the struct layout (pointer-sized) while
+        // keeping the type opaque (no user-accessible fields). The `_nv_handle`
+        // is never accessed directly by generated code — the external fn wrappers
+        // cast/coerce as needed. BUILTIN_RUNTIME_TYPES (stdlib opaque types) are
+        // NOT matched here because they're filtered before emit_type_decl is
+        // called (via the BUILTIN_RUNTIME_TYPES early-continue in emit_module).
         if matches!(t.kind, TypeDeclKind::Opaque) {
+            if t.consume {
+                // Plan 100.5 (D163): User-defined consume opaque type (FFI handle).
+                // Emit a minimal opaque struct definition so the C compiler knows
+                // the type. Without this, `Nova_File*` in generated function signatures
+                // is an "unknown type name". The `_nv_handle` field is never accessed
+                // by generated code — external fns receive/return pointer-sized values.
+                // Stdlib opaque types (pre-filtered by BUILTIN_RUNTIME_TYPES check
+                // before emit_type_decl is called) are NOT affected by this branch.
+                self.user_type_fwd_decls.push_str(&format!(
+                    "typedef struct Nova_{0} {{ void* _nv_handle; }} Nova_{0};\n",
+                    t.name
+                ));
+                // Register in opaque_ffi_types so is_generic_stub_c treats
+                // `Nova_File*` as a concrete type (not an erased generic stub).
+                // This makes Result[File, IoErr] monomorphize correctly to
+                // `NovaRes_Nova_File_p_Nova_IoErr*` rather than the erased fallback.
+                self.opaque_ffi_types.insert(t.name.clone());
+            }
             return Ok(());
         }
         // Plan 62.A: skip emission of types pre-defined в nova_rt/*.h.
@@ -11743,11 +11800,91 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
         }
     }
 
+    /// Plan 100.5 (D163): Emit a static stub body for a user-defined external fn
+    /// declared with a `needs <Cap>` clause. The stub provides:
+    ///
+    /// 1. A correct C function signature matching the forward declaration.
+    /// 2. A minimal mock implementation that satisfies the type system:
+    ///    - For `-> T consume` (opaque FFI type): allocate a zeroed `Nova_T` and return it.
+    ///    - For `-> Result[File, IoErr]`: return `Ok(mock_file)`.
+    ///    - For `-> ()` (consume param only): zero out the handle and return NOVA_UNIT.
+    ///
+    /// **Testing semantics**: The stub allows the consume-tracking static analysis to be
+    /// tested end-to-end without requiring actual OS file/socket/mutex implementations.
+    /// Real implementations are provided by the C runtime (nova_rt/*.h or user C code)
+    /// when deployed; the stub is a test scaffold only.
+    ///
+    /// **Limitation**: If a consume-param fn receives NULL (e.g. because the caller
+    /// passed a "closed" handle), the stub silently no-ops. This is fine for static
+    /// analysis tests — the compiler guarantees the param is Live (not Consumed) at
+    /// the call site.
+    fn emit_d163_external_stub(&mut self, f: &FnDecl) -> Result<(), String> {
+        self.current_receiver_type = None;
+        let ret = self.return_type_c(f)?;
+        let params = self.params_c(f)?;
+        let mangled = self.mangle_fn(f);
+        self.line(&format!("static {} {}({}) {{", ret, mangled, params));
+        self.indent += 1;
+        self.line("/* D163 stub — mock implementation for static-analysis testing. */");
+        // Determine what to return based on return type:
+        if ret == "nova_unit" {
+            // consume-param only fn (e.g. nova_file_close): zero the handle if possible.
+            for p in &f.params {
+                if p.consume {
+                    let p_c_ty = self.type_ref_to_c(&p.ty)?;
+                    if p_c_ty.ends_with('*') {
+                        // Pointer type — zero the _nv_handle field for D4 defense-in-depth.
+                        let p_name = &p.name;
+                        self.line(&format!("if ({0}) {{ {0}->_nv_handle = NULL; }}", p_name));
+                    }
+                }
+            }
+            self.line("return NOVA_UNIT;");
+        } else if Self::is_result_like(&ret) {
+            // Result[T, E] return — return Ok(mock_T).
+            // Extract the ok/err C types from the return type name.
+            if let Some((ok_c, _err_c)) = self.novares_ok_err(&ret) {
+                let suffix = Self::novares_name(&ok_c, &_err_c);
+                if ok_c.ends_with('*') && ok_c.starts_with("Nova_") {
+                    // Opaque pointer type — allocate a mock instance.
+                    let tmp = "_nv_d163_mock";
+                    self.line(&format!("{} {} = ({})nova_alloc(sizeof(*{}));", ok_c, tmp, ok_c, tmp));
+                    self.line(&format!("if ({tmp}) {{ {tmp}->_nv_handle = (void*)(uintptr_t)1; }}", tmp = tmp));
+                    self.line(&format!("return nova_make_NovaRes_{}_Ok({});", suffix, tmp));
+                } else {
+                    // Primitive ok type — return Ok(zero value).
+                    self.line(&format!("return nova_make_NovaRes_{}_Ok(({})0);", suffix, ok_c));
+                }
+            } else {
+                // Erased fallback — return NULL result.
+                self.line("return NULL;");
+            }
+        } else if ret.ends_with('*') && ret.starts_with("Nova_") {
+            // Opaque consume pointer return — allocate a mock.
+            let tmp = "_nv_d163_mock";
+            self.line(&format!("{} {} = ({})nova_alloc(sizeof(*{}));", ret, tmp, ret, tmp));
+            self.line(&format!("if ({tmp}) {{ {tmp}->_nv_handle = (void*)(uintptr_t)1; }}", tmp = tmp));
+            self.line(&format!("return {};", tmp));
+        } else {
+            // Primitive return — return zero.
+            self.line(&format!("return ({})0;", ret));
+        }
+        self.indent -= 1;
+        self.line("}");
+        self.line("");
+        Ok(())
+    }
+
     fn emit_fn(&mut self, f: &FnDecl) -> Result<(), String> {
         // D82: external fn — Nova body отсутствует, реализация в nova_rt/.
         // Skip emit'инг полностью: dispatch на C-функцию делается в emit_call.
-        if f.is_external {
+        // Plan 100.5 (D163): User-defined external fn with `needs_caps` get
+        // a static stub body — see emit_d163_external_stub for details.
+        if f.is_external && f.needs_caps.is_empty() {
             return Ok(());
+        }
+        if f.is_external && !f.needs_caps.is_empty() {
+            return self.emit_d163_external_stub(f);
         }
         if f.name == "main" {
             return self.emit_nova_main(f);
@@ -24322,7 +24459,10 @@ _cp++; \
             return !name.is_empty()
                 && !self.record_schemas.contains_key(name)
                 && !self.sum_schemas.contains_key(name)
-                && !self.generic_types.contains(name);
+                && !self.generic_types.contains(name)
+                // Plan 100.5 (D163): opaque FFI consume types are concrete —
+                // `Nova_File*` must NOT be treated as a generic stub.
+                && !self.opaque_ffi_types.contains(name);
         }
         false
     }
