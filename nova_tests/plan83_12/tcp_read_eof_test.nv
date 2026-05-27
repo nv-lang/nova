@@ -1,0 +1,46 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Plan 83.12: read_bytes() after server closes → Ok (clean EOF).
+//
+// Server accepts and immediately closes (sends FIN). Client reads → UV_EOF
+// → read_len == 0 → is_eof == 1. The function returns Ok("") (empty string
+// stored as nova_str* heap-allocated with len=0).
+//
+// We verify that the read returns is_ok() (not Err), which means clean EOF
+// is treated as success (not an error).
+//
+// ENV NOVA_AUTOARM=0
+// EXPECT_TIMEOUT_MS 30000
+
+module plan83_12.tcp_read_eof_test
+
+test "TcpStream: read after server closes → Ok (EOF)" {
+    let lst_r = TcpListener.bind(SocketAddr.loopback(0))
+    assert(lst_r.is_ok())
+    let lst = lst_r.unwrap()
+    let port = lst.local_port()
+
+    let mut read_ok = false
+    supervised {
+        // Server: accept and immediately close (sends FIN to client).
+        spawn {
+            let acc_r = lst.accept()
+            assert(acc_r.is_ok())
+            let srv = acc_r.unwrap()
+            srv.close()
+            lst.close()
+        }
+        // Client: connect then read → should get EOF (Ok).
+        spawn {
+            let conn_r = TcpStream.connect(SocketAddr.loopback(port))
+            assert(conn_r.is_ok())
+            let cli = conn_r.unwrap()
+            // Give server time to close and FIN to arrive.
+            Time.sleep(50)
+            let r = cli.read_bytes(512)
+            // UV_EOF → Ok("") in our implementation.
+            read_ok = r.is_ok()
+            cli.close()
+        }
+    }
+    assert(read_ok)
+}

@@ -23180,3 +23180,40 @@ Commits:
   - docs(plan103.6 �.5): 80d8fe12543 � D172 spec draft
   - docs(plan103.6 �.6): <closure commit>
   - Merge no-ff: <merge hash>
+
+=== Plan 83.12 — Async net/socket stdlib TcpListener/TcpStream/UdpSocket (2026-05-27) ===
+
+std/net/ — новый модуль сетевого ввода/вывода через libuv:
+  - addr.nv: SocketAddr + IpAddr (loopback, any, parse, str.from)
+  - error.nv: NetError type с error codes
+  - tcp.nv: TcpListener (bind/accept/local_port/close) + TcpStream
+             (connect/write/read_bytes/close)
+  - udp.nv: UdpSocket (bind/send_to/recv_from/close)
+
+Runtime (nova_rt/):
+  - net.h + net.c (~700 lines): libuv TCP/UDP, park/wake D93 pattern
+    * TcpListener: uv_tcp_t + pending_conns queue + accept predicate park
+    * TcpStream: IDLE/CONNECTING/CONNECTED/CLOSING/CLOSED stage CAS machine
+    * UdpSocket: uv_udp_t send_to/recv_from park/wake
+    * nova_loop_defer_close: thread-affinity-safe uv_close via deferred queue
+    * EOF → Ok("") (clean EOF = success); write/read after close → Err
+  - nova_rt.h: +#include net.h
+
+Codegen:
+  - external_registry.rs: Result[T,E] type-erasure fix + net external fns
+  - emit_c.rs: net type codegen integration
+
+Tests (nova_tests/plan83_12/): 10/10 PASS
+  tcp_socket_addr_test, tcp_bind_used_port_test,
+  tcp_echo_server_test, tcp_multi_accept_test,
+  tcp_stream_addr_test, tcp_cancel_accept_test,
+  tcp_connect_refused_test (EXPECT_TIMEOUT_MS 30000),
+  tcp_read_eof_test (30000), tcp_write_after_close_test (30000),
+  udp_ping_pong_test
+
+examples/net/: echo_server.nv + echo_client.nv
+
+Full nova test: 1414/62 (62 pre-existing, 0 regressions from 83.12).
+Commit: faee0083797. Branch: plan-83.12-async-net pushed to github.
+
+Plan 83.12 ✅ ЗАКРЫТ. Разблокирует Plan 91 (std MVP — net в prelude).
