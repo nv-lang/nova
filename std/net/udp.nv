@@ -1,0 +1,103 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Plan 83.12: std/net/udp.nv — async UDP socket.
+//
+// UdpSocket: bound UDP datagram socket that can send and receive datagrams.
+//
+// All blocking methods park the calling fiber and yield to the scheduler.
+// They are cancel-aware: if the enclosing supervised scope is cancelled,
+// the in-flight operation is cleaned up.
+//
+// C backing: Nova_UdpSocket in net.h.
+// No explicit `type UdpSocket` declaration here; ExternalRegistry
+// registers it as a receiver type from the external fn declarations.
+
+module net.udp
+
+use net.addr
+
+// ─── UdpSocket ───────────────────────────────────────────────────────────────
+
+/// Bound async UDP datagram socket.
+///
+/// # Lifecycle
+///
+/// ```nova
+/// let sock = UdpSocket.bind(SocketAddr.loopback(0)).unwrap()
+/// let port = sock.local_port()
+/// sock.send_to("ping", SocketAddr.loopback(peer_port)).unwrap()
+/// let data = sock.recv_from(512).unwrap()
+/// sock.close()
+/// ```
+///
+/// # Effects
+///
+/// `bind` carries `[IO, Blocking]`.
+/// `recv_from` carries `[IO, Blocking]` — parks until a datagram arrives.
+/// `send_to` carries `[IO]` — typically non-blocking (buffers in kernel).
+/// `close` carries `[IO]`.
+///
+/// # Cancel
+///
+/// An in-flight `recv_from()` is cancelled when the enclosing `supervised`
+/// scope receives a cancel signal. The handle is closed safely.
+///
+/// # MTU note
+///
+/// UDP datagrams larger than the path MTU (~1400 bytes for Ethernet) may
+/// be fragmented or dropped. `send_to` returns `Err(msg)` if the datagram
+/// exceeds the system's maximum allowed size.
+///
+/// # See Also
+///
+/// - `[TcpListener]`, `[TcpStream]` — stream-oriented TCP
+
+/// Bind a UDP socket to the given address.
+///
+/// Passing `SocketAddr.loopback(0)` lets the OS assign a free port.
+/// Call `sock.local_port()` to discover the assigned port.
+#stable(since = "0.1")
+export external fn UdpSocket.bind(addr SocketAddr) -> Result[UdpSocket, str]
+
+/// Send a datagram to the specified address.
+///
+/// Returns `Ok(n)` where `n` is the number of bytes sent.
+/// Returns `Err(msg)` on OS error (e.g. datagram too large, no route).
+///
+/// Non-blocking under most conditions (kernel buffers the data).
+#stable(since = "0.1")
+export external fn UdpSocket mut @send_to(data str, addr SocketAddr) -> Result[int, str]
+
+/// Receive the next datagram, up to `max_bytes` bytes.
+///
+/// Parks the calling fiber until a datagram arrives or an error occurs.
+/// Returns `Ok(data)` containing the received payload (truncated to
+/// `max_bytes` if the datagram was larger — excess bytes are discarded).
+/// Returns `Err(msg)` on I/O error or if the socket was closed.
+///
+/// **Cancel-safe:** in-flight receive is aborted on scope cancel.
+///
+/// To also retrieve the sender's address, call `last_sender()` immediately
+/// after a successful `recv_from()`.
+#stable(since = "0.1")
+export external fn UdpSocket mut @recv_from(max_bytes int) -> Result[str, str]
+
+/// Return the address of the sender of the most recently received datagram.
+///
+/// Only valid immediately after a successful `recv_from()` call.
+/// Returns a loopback address if no datagram has been received yet.
+#stable(since = "0.1")
+export external fn UdpSocket @last_sender() -> SocketAddr
+
+/// Return the local port this socket is bound to.
+#stable(since = "0.1")
+export external fn UdpSocket @local_port() -> u16
+
+/// Return the local address this socket is bound to.
+#stable(since = "0.1")
+export external fn UdpSocket @local_addr() -> SocketAddr
+
+/// Close the socket and release all resources.
+///
+/// Idempotent: closing an already-closed socket is safe.
+#stable(since = "0.1")
+export external fn UdpSocket mut @close()

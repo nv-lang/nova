@@ -43,6 +43,12 @@ pub struct ExternalDecl {
     /// Plan 103.6: Sync interaction class parsed from #realtime_safe/#parks/#wakes.
     /// None = no annotation (conservative: treated as Parks in realtime context).
     pub sync_class: Option<SyncClass>,
+    /// Plan 83.12: если return_c_type — `NovaRes_*` с non-trivial ok/err
+    /// (т.е. не erased `nova_int_nova_str`), здесь хранится (ok_c, err_c)
+    /// чтобы CEmitter мог вызвать `register_novares_decl` при инициализации.
+    /// Это необходимо чтобы `NovaRes_Nova_TcpListener_p_nova_str*` и аналоги
+    /// были зарегистрированы до первого использования в коде.
+    pub result_ok_err: Option<(String, String)>,
 }
 
 /// Registry всех external-функций из builtins.nv.
@@ -80,12 +86,21 @@ impl ExternalRegistry {
     pub const SYNC_SRC: &'static str =
         include_str!("../../../std/runtime/sync.nv");
 
+    // Plan 83.12: std/net — async TCP/UDP socket stdlib.
+    pub const NET_ADDR_SRC: &'static str =
+        include_str!("../../../std/net/addr.nv");
+    pub const NET_TCP_SRC: &'static str =
+        include_str!("../../../std/net/tcp.nv");
+    pub const NET_UDP_SRC: &'static str =
+        include_str!("../../../std/net/udp.nv");
+
     /// Парсит per-type .nv файлы (string_builder/write_buffer/read_buffer/
     /// char/sync) и строит unified registry. Вызывается один раз при
     /// инициализации CEmitter.
     ///
     /// Plan 13 Ф.8: builtins.nv декомпозирован — теперь 5 источников.
     /// Все embedded в binary через include_str!.
+    /// Plan 83.12: добавлены 3 источника std/net (addr, tcp, udp).
     pub fn load_builtins() -> Result<Self, String> {
         let mut reg = Self::default();
         for (name, src) in &[
@@ -94,6 +109,10 @@ impl ExternalRegistry {
             ("read_buffer.nv",    Self::READ_BUFFER_SRC),
             ("char.nv",           Self::CHAR_SRC),
             ("sync.nv",           Self::SYNC_SRC),
+            // Plan 83.12: net stdlib.
+            ("net/addr.nv",       Self::NET_ADDR_SRC),
+            ("net/tcp.nv",        Self::NET_TCP_SRC),
+            ("net/udp.nv",        Self::NET_UDP_SRC),
         ] {
             let module = crate::parser::parse(src)
                 .map_err(|d| format!("failed to parse {}: {}", name, d.message))?;
@@ -233,6 +252,27 @@ impl ExternalRegistry {
         } else {
             base_c
         };
+        // Plan 83.12: для Result-возвратов с non-trivial ok-типом
+        // сохраняем (ok_c, err_c) чтобы CEmitter мог зарегистрировать
+        // `NovaRes_<ok_s>_<err_s>` struct через `register_novares_decl`.
+        // Нужно только для `NovaRes_*` отличных от erased `nova_int_nova_str`.
+        let result_ok_err: Option<(String, String)> = if return_c_type.starts_with("NovaRes_")
+            && return_c_type != "NovaRes_nova_int_nova_str*"
+        {
+            // Восстанавливаем (ok_c, err_c) напрямую из TypeRef return_type.
+            if let Some(TypeRef::Named { path, generics: ret_generics, .. }) = &f.return_type {
+                if path.len() == 1 && path[0] == "Result" && ret_generics.len() >= 2 {
+                    let ok_c = Self::type_ref_to_c(&ret_generics[0], recv_type_name.as_deref()).ok();
+                    let err_c = Self::type_ref_to_c(&ret_generics[1], recv_type_name.as_deref()).ok();
+                    match (ok_c, err_c) {
+                        (Some(ok), Some(err)) => Some((ok, err)),
+                        _ => None,
+                    }
+                } else { None }
+            } else { None }
+        } else {
+            None
+        };
         Ok(ExternalDecl {
             name: f.name.clone(),
             receiver_type: recv_type_name,
@@ -243,7 +283,14 @@ impl ExternalRegistry {
             return_c_type,
             c_name,
             sync_class: f.sync_class,
+            result_ok_err,
         })
+    }
+
+    /// Plan 83.12: sanitize C-type string for use in `NovaRes_<ok_s>_<err_s>` name.
+    /// Mirrors `CEmitter::sanitize_for_novaopt` (defined there as an associated fn).
+    fn sanitize_for_novares(c_ty: &str) -> String {
+        c_ty.replace('*', "_p").replace(' ', "_")
     }
 
     /// Type mapping из Nova TypeRef в C-имя. Соответствует
@@ -277,13 +324,32 @@ impl ExternalRegistry {
                         None => return Err("Self in non-receiver context".into()),
                     },
                     "Result" => {
-                        // Plan 59 Ф.7.5 D3: erased mono Result-инстанс.
-                        // External-fn Result-возвраты (`try_read_*` и т.п.)
-                        // физически дают erased (int,str) представление —
-                        // `NovaRes_nova_int_nova_str` (hand-defined в
-                        // nova_rt/array.h). Раньше — legacy `Nova_Result*`.
-                        let _ = generics;
-                        "NovaRes_nova_int_nova_str*".into()
+                        // Plan 83.12: вычисляем конкретный mono-тип из generic args.
+                        // Раньше — всегда erased `NovaRes_nova_int_nova_str*`.
+                        // Теперь: `Result[TcpListener, str]` →
+                        //   `NovaRes_Nova_TcpListener_p_nova_str*`
+                        // чтобы `unwrap()` давал `Nova_TcpListener*` и методы
+                        // на нём диспатчились через ExternalRegistry.
+                        // Для `Result[int, str]` / `Result[str, str]` /
+                        // `Result[u16, str]` вычисляем аналогично.
+                        let ok_c = if !generics.is_empty() {
+                            Self::type_ref_to_c(&generics[0], recv)?
+                        } else {
+                            "nova_int".to_string()
+                        };
+                        let err_c = if generics.len() > 1 {
+                            Self::type_ref_to_c(&generics[1], recv)?
+                        } else {
+                            "nova_str".to_string()
+                        };
+                        if ok_c == "nova_int" && err_c == "nova_str" {
+                            // Canonical erased pair — pre-defined in array.h.
+                            "NovaRes_nova_int_nova_str*".into()
+                        } else {
+                            let ok_s = Self::sanitize_for_novares(&ok_c);
+                            let err_s = Self::sanitize_for_novares(&err_c);
+                            format!("NovaRes_{}_{}*", ok_s, err_s)
+                        }
                     }
                     "Option" => {
                         // Plan 103.5: preserve inner type param for generic methods.

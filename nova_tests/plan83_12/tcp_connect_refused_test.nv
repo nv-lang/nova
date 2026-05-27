@@ -1,0 +1,32 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Plan 83.12: Connecting to a non-listening port → Err (ECONNREFUSED).
+//
+// Strategy: bind a listener to get a valid OS-assigned port, close the
+// listener, sleep briefly so the close callback fires and the OS releases
+// the port, then connect → ECONNREFUSED.
+//
+// ENV NOVA_AUTOARM=0
+// EXPECT_TIMEOUT_MS 30000
+
+module plan83_12.tcp_connect_refused_test
+
+test "TCP: connect to closed port → Err" {
+    // Bind on OS-assigned port.
+    let lst_r = TcpListener.bind(SocketAddr.loopback(0))
+    assert(lst_r.is_ok())
+    let lst = lst_r.unwrap()
+    let port = lst.local_port()
+    // Close the listener — the OS will refuse any new connections.
+    lst.close()
+
+    let mut got_err = false
+    supervised {
+        spawn {
+            // Sleep so the close callback fires and port is released.
+            Time.sleep(80)
+            let r = TcpStream.connect(SocketAddr.loopback(port))
+            got_err = r.is_err()
+        }
+    }
+    assert(got_err)
+}

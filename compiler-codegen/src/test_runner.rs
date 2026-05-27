@@ -760,6 +760,9 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
      * emit'ить overriding implementation в preamble; weak fallback —
      * safety-net для minimal tests. */
     let rt_typeid = opts.rt_dir.join("typeid.c");
+    // Plan 83.12: net.c — compiled only when libuv is available (conditional
+    // on libuv presence, added inside the libuv if-let blocks per toolchain).
+    let rt_net = opts.rt_dir.join("net.c");
     let march = march_flag();
 
     // Plan 27 Ф.1+Ф.D: Boehm paths resolved via detect_boehm (env overrides
@@ -888,6 +891,8 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
             {
                 c.arg("-DNOVA_USE_LIBUV=1");
                 c.arg("-I").arg(inc_path);
+                // Plan 83.12: net.c compiled only when libuv is present.
+                c.arg(&rt_net);
                 // Windows: libuv link via -L/-l flags (env has LIB set by vcvars).
                 #[cfg(target_os = "windows")]
                 {
@@ -1020,6 +1025,8 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
             {
                 c.arg("/DNOVA_USE_LIBUV=1");
                 c.arg(format!("/I{}", inc_path.display()));
+                // Plan 83.12: net.c compiled only when libuv is present.
+                c.arg(&rt_net);
                 c.arg(evloop);
                 c.arg(lib_path);
                 #[cfg(target_os = "windows")]
@@ -1079,6 +1086,8 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
             {
                 c.arg("-DNOVA_USE_LIBUV=1");
                 c.arg("-I").arg(inc_path);
+                // Plan 83.12: net.c compiled only when libuv is present.
+                c.arg(&rt_net);
                 c.arg(lib_path);
                 c.arg(evloop);
                 #[cfg(any(target_os = "linux", target_os = "macos"))]

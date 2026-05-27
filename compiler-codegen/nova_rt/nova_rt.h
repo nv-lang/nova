@@ -423,6 +423,14 @@ typedef struct { char _dummy; } nova_unit;
  * После nova_sched.h (park/wake API) + fibers.h (TLS scope/slot). */
 #include "sync_primitives.h"
 
+/* ---- Plan 83.12: std/net — async TCP/UDP via libuv ----
+ * После sync_primitives.h (nova_alloc_uncollectable) + nova_sched.h
+ * (park/wake) + eventloop.h (nova_loop_defer_close). Only when libuv
+ * is available. */
+#ifdef NOVA_USE_LIBUV
+#  include "net.h"
+#endif
+
 /* ---- Plan 33.1 Ф.4 (D24): contracts runtime helper ----
  * После effects.h + fibers.h — nova_contract_violation использует
  * NovaFailFrame routing + NovaTestFrame. */

@@ -1488,6 +1488,13 @@ impl CEmitter {
                     variadic_last: false,
                 };
                 self.method_overloads.entry(key.clone()).or_default().push(sig);
+                // Plan 83.12: register novares struct for non-trivial Result returns
+                // (e.g. Result[TcpListener,str] → NovaRes_Nova_TcpListener_p_nova_str*).
+                // Must happen before any code is emitted so that novares_value_types
+                // is populated when infer_expr_c_type / resolve_result_te are called.
+                if let Some((ok_c, err_c)) = &decl.result_ok_err {
+                    self.register_novares_decl(ok_c, err_c);
+                }
             }
         }
 
@@ -7345,6 +7352,11 @@ impl CEmitter {
             // C struct + 2 constructors (Notified/TimedOut) live there.
             // sum_schemas populated via 1a1b ExternalRegistry type_decls path.
             "WaitResult",
+            // Plan 83.12: net types pre-declared in nova_rt/net.h.
+            // C structs (Nova_SocketAddr, Nova_TcpListener, Nova_TcpStream,
+            // Nova_UdpSocket) live there; ExternalRegistry auto-registers
+            // receiver types + methods from std/net/{addr,tcp,udp}.nv.
+            "SocketAddr", "TcpListener", "TcpStream", "UdpSocket",
         ];
         if RUNTIME_DEFINED_TYPES.contains(&t.name.as_str()) {
             // Plan 62.A: skip emission — C struct + constructors живут в
