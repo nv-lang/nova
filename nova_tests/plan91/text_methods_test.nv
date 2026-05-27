@@ -1,0 +1,50 @@
+// Plan 91 Ф.2: conformance tests for text methods.
+// repeat / replace / pad_left / pad_right — Nova-body via StringBuilder.
+// parse_int / parse_int_radix — C-primitive.
+
+module plan91.text_methods_test
+
+test "str repeat" {
+    assert("ab".repeat(3) == "ababab")
+    assert("x".repeat(1) == "x")
+    assert("hi".repeat(0) == "")
+    assert("z".repeat(-1) == "")
+}
+
+test "str replace" {
+    assert("foo bar foo".replace("foo", "baz") == "baz bar baz")
+    assert("hello".replace("x", "y") == "hello")
+    assert("aaa".replace("a", "bb") == "bbbbbb")
+    assert("".replace("a", "b") == "")
+}
+
+test "str pad_left" {
+    assert("hi".pad_left(5, ' ') == "   hi")
+    assert("hi".pad_left(2, ' ') == "hi")
+    assert("hi".pad_left(1, ' ') == "hi")
+    assert("x".pad_left(4, '0') == "000x")
+}
+
+test "str pad_right" {
+    assert("hi".pad_right(5, ' ') == "hi   ")
+    assert("hi".pad_right(2, ' ') == "hi")
+    assert("x".pad_right(4, '-') == "x---")
+}
+
+test "str parse_int" {
+    assert("42".parse_int() == Some(42))
+    assert("-7".parse_int() == Some(-7))
+    assert("+100".parse_int() == Some(100))
+    assert("0".parse_int() == Some(0))
+    assert("abc".parse_int() == None)
+    assert("".parse_int() == None)
+    assert("12x".parse_int() == None)
+}
+
+test "str parse_int_radix" {
+    assert("ff".parse_int_radix(16) == Some(255))
+    assert("FF".parse_int_radix(16) == Some(255))
+    assert("1010".parse_int_radix(2) == Some(10))
+    assert("z".parse_int_radix(36) == Some(35))
+    assert("g".parse_int_radix(16) == None)
+}

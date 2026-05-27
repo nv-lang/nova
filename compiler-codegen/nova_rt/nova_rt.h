@@ -184,6 +184,9 @@ static inline nova_str nova_str_concat(nova_str a, nova_str b) {
     return (nova_str){ buf, total };
 }
 
+/* Plan 91 Ф.2: repeat / replace / pad_left / pad_right реализованы
+ * в string_builder.h (после определения Nova_StringBuilder). */
+
 static inline nova_bool nova_str_eq(nova_str a, nova_str b) {
     return a.len == b.len && memcmp(a.ptr, b.ptr, a.len) == 0;
 }

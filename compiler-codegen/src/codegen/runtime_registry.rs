@@ -427,6 +427,83 @@ fn str_runtime() -> Vec<RuntimeFn> {
             doc: "Split по separator. Eager в bootstrap.",
         nova_body: None,
     },
+        // Plan 91 Ф.2: text MVP — parse_int / parse_int_radix.
+        // Caller должен .trim() перед вызовом — whitespace не trim'ится.
+        RuntimeFn {
+            module: "std.runtime.string",
+            receiver: Some("str"),
+            is_static: false, is_mut: false, is_consume: false,
+            name: "parse_int",
+            params: &[],
+            return_ty: "Option[int]",
+            effects: &[],
+            c_name: "nova_str_parse_int",
+            doc: "Parse decimal int с optional ±-prefix. None при error (empty, non-digit, overflow). Caller отвечает за .trim().",
+            nova_body: None,
+        },
+        RuntimeFn {
+            module: "std.runtime.string",
+            receiver: Some("str"),
+            is_static: false, is_mut: false, is_consume: false,
+            name: "parse_int_radix",
+            params: &[("radix", "int")],
+            return_ty: "Option[int]",
+            effects: &[],
+            c_name: "nova_str_parse_int_radix",
+            doc: "Parse int с указанной base (2..36). Digits 0-9, a-z (case-insensitive). None при error.",
+            nova_body: None,
+        },
+        // Plan 91 Ф.2: text MVP — pad_left / pad_right / repeat / replace.
+        // Nova-first: реализованы на Nova через StringBuilder.append_repeat.
+        // C-реализации удалены из nova_rt.h (nova_str_pad_left/right/repeat/replace).
+        RuntimeFn {
+            module: "std.runtime.string",
+            receiver: Some("str"),
+            is_static: false, is_mut: false, is_consume: false,
+            name: "pad_left",
+            params: &[("width", "int"), ("fill", "char")],
+            return_ty: "str",
+            effects: &[],
+            c_name: "nova_str_pad_left",
+            doc: "Pad строку слева до width codepoints символом fill. Если width <= len — возвращает s.",
+            nova_body: Some("{\n    let pad = width - @len()\n    if pad <= 0 { return @ }\n    StringBuilder.with_capacity(width).append_repeat(str.from(fill), pad).append(@).into()\n}"),
+        },
+        RuntimeFn {
+            module: "std.runtime.string",
+            receiver: Some("str"),
+            is_static: false, is_mut: false, is_consume: false,
+            name: "pad_right",
+            params: &[("width", "int"), ("fill", "char")],
+            return_ty: "str",
+            effects: &[],
+            c_name: "nova_str_pad_right",
+            doc: "Pad строку справа до width codepoints символом fill. Если width <= len — возвращает s.",
+            nova_body: Some("{\n    let pad = width - @len()\n    if pad <= 0 { return @ }\n    StringBuilder.with_capacity(width).append(@).append_repeat(str.from(fill), pad).into()\n}"),
+        },
+        RuntimeFn {
+            module: "std.runtime.string",
+            receiver: Some("str"),
+            is_static: false, is_mut: false, is_consume: false,
+            name: "repeat",
+            params: &[("n", "int")],
+            return_ty: "str",
+            effects: &[],
+            c_name: "nova_str_repeat",
+            doc: "Повторение строки n раз. n <= 0 → пустая строка.",
+            nova_body: Some("{\n    if n <= 0 { return \"\" }\n    StringBuilder.with_capacity(@byte_len() * n).append_repeat(@, n).into()\n}"),
+        },
+        RuntimeFn {
+            module: "std.runtime.string",
+            receiver: Some("str"),
+            is_static: false, is_mut: false, is_consume: false,
+            name: "replace",
+            params: &[("from", "str"), ("to", "str")],
+            return_ty: "str",
+            effects: &[],
+            c_name: "nova_str_replace",
+            doc: "Заменить все non-overlapping occurrences `from` на `to`. Empty `from` → возвращает s unchanged.",
+            nova_body: Some("@split(from).join(to)"),
+        },
     ]
 }
 
@@ -807,6 +884,25 @@ fn string_builder_runtime() -> Vec<RuntimeFn> {
             doc: "Non-consuming snapshot буфера как str. ВАЖНО: pointer на тот же buffer — subsequent append может realloc'нуть. Использовать только immediately (sb.peek().ends_with(...)).",
             nova_body: None,
         },
+        // Plan 91 Ф.2: новые методы для Nova-first реализации str @repeat / @pad_left / @pad_right.
+        RuntimeFn { module: m, receiver: recv, is_static: false, is_mut: true, is_consume: false,
+            name: "append_repeat", params: &[("s", "str"), ("n", "int")], return_ty: "Self", effects: &[],
+            c_name: "Nova_StringBuilder_method_append_repeat",
+            doc: "Append строку s ровно n раз. n <= 0 → no-op. O(n*|s|) с одним reserve. Используется в str @repeat / @pad_left / @pad_right.",
+            nova_body: None,
+        },
+        RuntimeFn { module: m, receiver: recv, is_static: false, is_mut: true, is_consume: false,
+            name: "truncate", params: &[("len", "int")], return_ty: "Self", effects: &[],
+            c_name: "Nova_StringBuilder_method_truncate",
+            doc: "Обрезать буфер до len байт. len >= byte_len → no-op. Не realloc'ает. Caller отвечает за UTF-8 границы.",
+            nova_body: None,
+        },
+        RuntimeFn { module: m, receiver: recv, is_static: false, is_mut: true, is_consume: false,
+            name: "append_bytes", params: &[("arr", "[]u8")], return_ty: "Self", effects: &[],
+            c_name: "Nova_StringBuilder_method_append_bytes",
+            doc: "Append raw []u8 bytes. Caller отвечает за UTF-8 validity. Zero-copy path для performance-critical ops.",
+            nova_body: None,
+        },
     ]
 }
 
@@ -1181,10 +1277,17 @@ pub fn render_nv(module: &str, fns: &[&RuntimeFn]) -> String {
             out.push_str(" -> ");
             out.push_str(f.return_ty);
         }
-        // Plan 13 Ф.9.2: тело для записей с nova_body.
+        // Plan 13 Ф.9.2 / Plan 91 Ф.2: тело для записей с nova_body.
+        // Если body начинается с `{` — эмитируем `fn { ... }` (block form).
+        // Иначе — `fn => expr` (expression form).
         if let Some(body) = f.nova_body {
-            out.push_str(" => ");
-            out.push_str(body);
+            if body.trim_start().starts_with('{') {
+                out.push(' ');
+                out.push_str(body.trim_start());
+            } else {
+                out.push_str(" => ");
+                out.push_str(body);
+            }
         }
         out.push_str("\n\n");
     }
