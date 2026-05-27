@@ -352,3 +352,7 @@ Plan 90 закрыт по варианту **A (safe-only)** — `unsafe`-keywor
   enabler миграции рантайма/stdlib на Nova.
 - Ориентиры: Go `copy()`/`bytes`, Rust `slice::copy_*`/`[u8]::cmp`,
   TS typed arrays.
+
+## Followup
+
+- [Plan 90.1](90.1-array-extend-family.md) — extend-family API (`extend_from`/`insert_from`/`reserve`) + `copy_from` hardening (strict equal-length, memmove). D141 amend. 2026-05-27.
