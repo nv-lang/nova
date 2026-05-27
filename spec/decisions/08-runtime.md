@@ -3215,6 +3215,7 @@ const PRELUDE_VERSION int = 42  // → silent
 ## D141. Примитивы доступа к памяти — `byte_at` / bulk slice-операции
 
 > **Plan 90.** Принято 2026-05-22.
+> **Plan 90.1 amend.** 2026-05-27 — extend-family API + `copy_from` hardening.
 
 ### Что
 
@@ -3240,19 +3241,95 @@ Byte-indexed (не codepoint). Выход за границы (`i < 0 || i >= by
 **Bulk slice-операции `[]T`:**
 
 ```nova
-fn []T mut @copy_from(src []T)                               // memcpy
+fn []T mut @copy_from(src []T)                               // memmove (overlap-safe)
 fn []T mut @copy_within(src_from int, dst_from int, len int) // memmove (overlap-safe)
 fn []T mut @fill(v T)                                        // заполнение
 ```
 
-- `copy_from` — копирует `src` в начало получателя; `src.len > dst.len`
-  → `panic`. `src` короче — хвост получателя не изменяется.
+- `copy_from` — строгое копирование: `src.len != dst.len` → `panic`
+  «length mismatch». **Всегда memmove** (overlap-safe, паритет Go;
+  см. «Overlap safety» ниже). Truncation use-case — через slicing:
+  `dst[..n].copy_from(src[..n])` (D144).
+  *Breaking change (Plan 90.1): прежняя молчаливая truncation (`src` короче
+  `dst` → хвост не тронут) заменена на panic. Migration: `dst[..n].copy_from(src[..n])`.*
 - `copy_within` — копирование внутри одного среза, **корректно при
   перекрытии** диапазонов (семантика `memmove`); диапазон вне границ →
   `panic`.
 - `fill` — записывает `v` во все элементы.
 - Определены для **любого** `T` (копирование element-storage корректно
   при non-moving GC, [D6](05-memory.md#d6)).
+
+### Extend-family API (Plan 90.1)
+
+```nova
+fn []T mut @extend_from(src []T)             // append с ростом
+fn []T mut @insert_from(i int, src []T)      // вставка пачкой по позиции
+fn []T mut @reserve(extra int)               // preallocate hint
+```
+
+**`extend_from(src)`** — append элементов `src` в конец `dst`, с ростом:
+- Рост: если `dst.len + src.len > dst.cap` → new_cap = max(2 × dst.cap, needed).
+  Паритет `push` (2x doubling, [D27]).
+- **memmove**: safe для self-extend (`dst.extend_from(dst)`) — `src.len`
+  снапшотится до realloc; после realloc memmove работает со старым буфером
+  (Boehm GC удерживает до сборки). Test: `extend_from_self.nv`.
+- View detach: при realloc существующие slice-view'ы от `dst` становятся
+  dangling. Lint `W_VIEW_EXTEND_DETACH` предупреждает; suppress через
+  `#allow(view_extend_detach)`.
+
+**`insert_from(i, src)`** — вставка `src` в позицию `i` (элемент, не байт):
+- Диапазон `i`: `[0, dst.len]` — включая `dst.len` (append-at-end ≡ `extend_from`).
+  `i < 0 || i > dst.len` → panic.
+- Рост: та же стратегия, что `extend_from`.
+- In-place path (без realloc): memmove хвоста `[i, len)` вправо на `src.len` слотов;
+  затем memmove `src` в образовавшуюся дыру (обрабатывает overlap).
+- Alloc path: prefix `[0, i)` + дыра + tail `[i, len)` — три memcpy без overlap.
+
+**`reserve(extra)`** — hint на preallocate `extra` дополнительных слотов:
+- `extra < 0` → panic. `extra == 0` → no-op.
+- `dst.len + extra ≤ dst.cap` → no-op O(1). Иначе рост ≥ `dst.len + extra`.
+- `dst.len` не изменяется.
+- View detach: при realloc — тот же lint.
+
+### Truncation idiom
+
+```nova
+// Новая строгая семантика copy_from:
+dst.copy_from(src)  // panic если src.len != dst.len
+
+// Idiom для частичного копирования (была старая silent-truncation):
+dst[..n].copy_from(src[..n])  // explicit prefix slice — Plan 96 D144
+```
+
+`dst[..n]` — slice `NovaArray_T` с `len = cap = n` (D-cap-len, D144);
+`copy_from` на нём требует `src[..n].len == n` → panic-safe.
+
+### Overlap safety
+
+Nova всегда использует `memmove` для array bulk-операций (не `memcpy`):
+- **`copy_from`**: memmove → safe если dst и src overlap (через view в тот же буфер).
+- **`copy_within`**: явно memmove, документировано.
+- **`extend_from` / `insert_from`**: memmove для `src`-копирования → safe при
+  view-аргументе.
+
+Паритет Go (`copy()` + `append()` — memmove/safe). Отличие от Rust
+`copy_from_slice` (UB при overlap, нет borrow-check): Nova overlap-safe
+by default без lifetime annotations.
+
+### W_VIEW_EXTEND_DETACH lint (Plan 90.1)
+
+```nova
+let view = parent[1..4]
+parent.extend_from([5, 6, 7])  // W_VIEW_EXTEND_DETACH: view may dangle after realloc
+```
+
+Lint срабатывает если в той же функции после `let view = parent[a..b]`
+вызывается grow-метод на `parent` (`extend_from` / `insert_from` / `reserve`).
+После realloc `view.data` указывает на стёртую память (Boehm GC удерживает
+до сборки, но lifetime семантически опасен).
+
+Suppress через `#allow(view_extend_detach)` перед `module`-декларацией.
+Параллельный lint — `W_VIEW_PUSH_DETACH` (Plan 96.1, D144).
 
 **`compare` — один примитив сравнения `[]u8`:**
 
@@ -3283,19 +3360,33 @@ memcmp-класс (byte-wise, word/SIMD-скорость). **Равенство 
   его zero-case. Дублировать в два примитива (`equal` + `compare`)
   преждевременно (если профайл покажет — fast-path добавится позже,
   модель Go `bytes.Equal`).
+- **Extend-family** (Plan 90.1): паритет с Go `append(dst, src...)`, Rust
+  `extend_from_slice` / `Vec::reserve`, TS `push(...arr)` / `splice`,
+  Kotlin `addAll`, Java `ArrayList.addAll`. Единственный grow-path до 90.1
+  — `for x in src { dst.push(x) }` (O(N) virtual calls); `extend_from` —
+  bulk memmove, намного быстрее для primitive `[]T`.
+- **`copy_from` hardening** (Plan 90.1): молчаливая truncation —
+  silent bug factory. Ни один из 5 эталонных языков не имеет такой гибрид
+  «panic на длинный + silent на короткий». Strict equal-only + memmove —
+  лучший баланс корректности и overlap-safety.
 
 ### Связь
 
 - [D6 — память managed, без указателей](05-memory.md#d6).
 - [D13 — panic](#d13-panic-vs-эффекты-что-не-является-эффектом) —
   семантика выхода за границы.
+- [D27 §1659 — `[]T` push cap-growth](03-syntax.md) —
+  та же 2x стратегия, что `extend_from`/`insert_from`/`reserve`.
 - [D82 — `external fn`](#d82-external-fn--функции-с-runtime-implementation),
   D126 — `external type`: FFI-граница без сырых указателей.
 - [D117 — size-accessors `[]T`/`str`](03-syntax.md#d117-size-like-accessors-require-call-syntax)
   — соседняя группа методов built-in-типов.
-- [Plan 90](../../docs/plans/90-memory-access-primitives.md) — реализация.
-- Ориентиры: Go `copy()`/`bytes`, Rust `slice::copy_*`/`[u8]::cmp`,
-  TS typed arrays.
+- [D144 — slices `arr[a..b]`](08-runtime.md) — truncation idiom через `dst[..n].copy_from(...)`.
+- [Plan 90](../../docs/plans/90-memory-access-primitives.md) — baseline реализация.
+- [Plan 90.1](../../docs/plans/90.1-array-extend-family.md) — extend-family + copy_from hardening.
+- [Plan 96.1](../../docs/plans/96.1-array-slices-followup.md) — W_VIEW_PUSH_DETACH (параллельный lint).
+- Ориентиры: Go `copy()`/`bytes`/`append`, Rust `slice::copy_*`/`extend_from_slice`/`Vec::reserve`,
+  TS typed arrays/`splice`, Kotlin `copyInto`/`addAll`, Java `arraycopy`/`ArrayList.addAll`.
 
 ---
 

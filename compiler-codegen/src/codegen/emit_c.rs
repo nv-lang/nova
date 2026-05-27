@@ -17648,7 +17648,9 @@ _cp++; \
                             return Ok(format!("nova_array_pop_{}({})", elem_ty, obj_c));
                         }
                         // Plan 90: bulk slice-операции.
-                        "copy_from" | "copy_within" | "fill" => {
+                        // Plan 90.1: extend_from/insert_from/reserve — extend-family.
+                        "copy_from" | "copy_within" | "fill" |
+                        "extend_from" | "insert_from" | "reserve" => {
                             let obj_c = self.emit_expr(obj)?;
                             let mut arg_strs = vec![obj_c];
                             for a in args { arg_strs.push(self.emit_expr(a.expr())?); }
@@ -25585,7 +25587,9 @@ _cp++; \
                             "get" | "pop" => return format!("NovaOpt_{}", elem_ty),
                             "push" => return "nova_unit".into(),
                             // Plan 90: bulk slice-операции — mutating, возвращают unit.
-                            "copy_from" | "copy_within" | "fill" => return "nova_unit".into(),
+                            // Plan 90.1: extend_from/insert_from/reserve — extend-family, unit.
+                            "copy_from" | "copy_within" | "fill" |
+                            "extend_from" | "insert_from" | "reserve" => return "nova_unit".into(),
                             // Plan 90: compare → int (-1/0/1).
                             "compare" => return "nova_int".into(),
                             // Plan 60 / D117: size-accessor methods.

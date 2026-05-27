@@ -64,6 +64,13 @@ static void nv_panic(nova_str);
  * этой точки). Нужна для bounds-check в nova_str_slice_panic. */
 static void nv_panic_slice_oob(nova_int from, nova_int to, nova_int len);
 
+/* Plan 90.1 — forward-декларации для новых panic-помощников.
+ * Функции определены static inline в array.h ПОСЛЕ macro-instantiations,
+ * но вызываются внутри NOVA_ARRAY_IMPL, которое развёртывается при include.
+ * Forward-декларации здесь, до #include "array.h" — решают conflicting-types. */
+static void nv_panic_insert_oob(nova_int i, nova_int len);
+static void nv_panic_negative_reserve(nova_int extra);
+
 static inline nova_str nova_str_from_cstr(const char* s) {
     return (nova_str){ s, strlen(s) };
 }
