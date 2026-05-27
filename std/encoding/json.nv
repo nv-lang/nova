@@ -717,7 +717,7 @@ fn format_array(xs []JsonValue) -> str {
 fn format_object(m HashMap[str, JsonValue]) -> str {
     let mut buf = "{"
     let mut first = true
-    for entry in m.entries() {
+    for entry in m.iter() {
         if !first { buf = buf + "," }
         buf = buf + format_string(entry.key)
         buf = buf + ":"
@@ -773,7 +773,7 @@ fn pretty_object(m HashMap[str, JsonValue], depth int) -> str {
     let outer_indent = indent(depth)
     let mut buf = "{\n"
     let mut first = true
-    for entry in m.entries() {
+    for entry in m.iter() {
         if !first { buf = buf + ",\n" }
         buf = buf + inner_indent + format_string(entry.key) + ": " + pretty_at(entry.value, depth + 1)
         first = false

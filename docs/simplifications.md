@@ -13541,3 +13541,44 @@ emission в emit_c.rs).
   Когда experimental модуль promote'ится обратно в MVP, нужно
   обновить эти 7 импортов обратно. Документировано в
   std/_experimental/STATUS.md «Promotion path».
+
+## 2026-05-27 (continued) — Plan 91 Ф.4 closure (sort module)
+
+- **`[]int @sort` вместо `[T Ord] []T @sort`** — Plan 91 §Scope
+  специфицирует generic `sort[T Ord]`. V1 в Ф.4 — только concrete
+  `[]int` (insertion sort). Rationale:
+  (а) realistic CLI/data-utility use-cases в 0.1 в основном работают
+      с числовыми массивами;
+  (б) generic `[T Ord] []T @sort` требует D72 protocol-bound dispatch
+      для primitive Ord types (works через monomorphization, но
+      overhead значителен на codegen уровне — extra mono-specialization
+      per T);
+  (в) API surface стабильна — добавление generic `fn[T Ord] []T @sort()`
+      НЕ ломает existing concrete `[]int @sort()` (overload resolution
+      выбирает specific над generic).
+  Followup `[sort-generic-T]` зафиксирован в std/sort.nv doc-comment.
+
+- **Insertion sort вместо pdq-sort/intro-sort** — O(n²) algorithm
+  выбран для V1 ради простоты. Insertion sort:
+  (а) корректен и stable;
+  (б) ~10-20 lines кода против ~200 для pdq-sort;
+  (в) достаточен для arrays до ~1000 elements (CLI use-cases).
+  Followup `[sort-pdq]` (pdq-sort) — пост-0.1, при появлении
+  ощутимого performance bottleneck.
+
+- **`sort_by(cmp)` принимает `fn(int, int) -> Ordering`** — concrete
+  type signature вместо `fn(T, T) -> Ordering`. Соответствует concrete
+  `[]int @sort` decision. Когда generic version landed — добавится
+  parallel generic `fn[T] []T @sort_by[T](cmp fn(T, T) -> Ordering)`.
+
+- **Ф.3 (JSON conformance) deferred** — попытка smoke compile→exe
+  на JSON round-trip выявила deeper codegen блокеры:
+  (1) `m.entries()` → `m.iter()` source fix done (HashMap has iter,
+      not entries — cross-file resolve permitted type-check pass);
+  (2) `Nova_HashMap` forward decl без full struct emission → CC error;
+  (3) Tuple `(K, V)` destructuring в HashMap-iter mistypes entry
+      as `nova_int`.
+  Issues (2)+(3) — genuine codegen работы (~0.5-1 день investigation).
+  Принятое решение: defer Ф.3 conformance, sort_basic 15/15 PASS
+  оправдывает scope-decision (incremental delivery лучше блокировки
+  всей фазы на одном модуле).
