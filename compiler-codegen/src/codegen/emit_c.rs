@@ -779,6 +779,9 @@ pub struct CEmitter {
     /// Used to detect blocking Once/OnceCell/Lazy method calls that may park the
     /// fiber, which is forbidden in realtime context (E_EFFECT_REALTIME_VIOLATION).
     in_realtime: bool,
+    /// Plan 103.6: true when currently emitting inside a `blocking { }` block.
+    /// Park-ing sync calls are forbidden; wake-only calls are allowed.
+    in_blocking: bool,
 }
 
 /// D160 Plan 100.4.3: kind of a defer entry — determines which exit paths trigger it.
@@ -1023,6 +1026,7 @@ impl CEmitter {
                 r
             },
             in_realtime: false,
+            in_blocking: false,
         }
     }
 
@@ -6403,6 +6407,10 @@ impl CEmitter {
         let prev_by_value = std::mem::replace(
             &mut self.current_spawn_capture_by_value, Some(cap_by_value));
 
+        // Plan 103.6: set in_blocking flag for blocking body — park-ing sync
+        // calls are forbidden inside blocking{} (E_BLOCKING_SYNC_PARK).
+        let prev_in_blocking = self.in_blocking;
+        self.in_blocking = true;
         let blk_block_id = self.enter_defer_scope(body, false);
         for stmt in &body.stmts {
             self.emit_stmt(stmt)?;
@@ -6417,6 +6425,7 @@ impl CEmitter {
             }
         }
         self.leave_defer_scope(blk_block_id);
+        self.in_blocking = prev_in_blocking;
 
         self.current_spawn_captures = prev_caps;
         self.current_spawn_capture_by_value = prev_by_value;
@@ -15954,6 +15963,37 @@ _cp++; \
             }
         }
 
+        // Plan 103.6: E_REALTIME_NESTED_SYNC_VIA_FN — if calling a user-defined
+        // function explicitly annotated #parks from inside realtime{} or blocking{},
+        // emit a compile error. V1: explicit annotation only (not inferred).
+        if self.in_realtime || self.in_blocking {
+            if let ExprKind::Ident(fn_name) = &func.kind {
+                // Look up the FnDecl in mono_fn_decls to check sync_class annotation.
+                let fn_sync_class = self.mono_fn_decls.get(fn_name.as_str())
+                    .and_then(|f| f.sync_class);
+                if fn_sync_class == Some(crate::ast::SyncClass::Parks) {
+                    if self.in_realtime {
+                        return Err(format!(
+                            "[E_REALTIME_NESTED_SYNC_VIA_FN] \
+                             function `{}` is annotated `#parks` (may park fiber) and \
+                             cannot be called inside `realtime {{ }}` blocks. \
+                             Suggestion: remove the call from the realtime block or \
+                             refactor `{}` to not park.",
+                            fn_name, fn_name
+                        ));
+                    } else {
+                        return Err(format!(
+                            "[E_BLOCKING_SYNC_PARK] \
+                             function `{}` is annotated `#parks` (may park fiber) and \
+                             cannot be called inside `blocking {{ }}` blocks. \
+                             Move the call outside the blocking block.",
+                            fn_name
+                        ));
+                    }
+                }
+            }
+        }
+
         let func_c = match &func.kind {
             ExprKind::Ident(name) => {
                 // Plan 62.A.bis Ф.2.2: variant construction via registry.
@@ -16990,50 +17030,102 @@ _cp++; \
                                             method
                                         ));
                                     }
-                                    // Plan 103.5: realtime violation — Once.call_once, Lazy.force,
-                                    // OnceCell.get_or_init may park the fiber; forbidden inside realtime { }.
-                                    // Plan 103.3: Mutex.lock/try_lock_for/with_lock + RwLock.read/write/*_for
-                                    //   + ReentrantMutex.lock/try_lock_for/with_lock similarly forbidden.
-                                    let is_realtime_blocking = (recv_ty == "Once"
-                                            && (method == "call_once" || method == "run" || method == "done"))
-                                        || (recv_ty == "Lazy" && method == "force")
-                                        || (recv_ty == "OnceCell" && method == "get_or_init")
-                                        || (recv_ty == "Mutex"
-                                            && (method == "lock" || method == "try_lock_for"
-                                                || method == "with_lock"))
-                                        || (recv_ty == "RwLock"
-                                            && (method == "read" || method == "write"
-                                                || method == "try_read_for" || method == "try_write_for"
-                                                || method == "with_read" || method == "with_write"))
-                                        || (recv_ty == "ReentrantMutex"
-                                            && (method == "lock" || method == "try_lock_for"
-                                                || method == "with_lock"))
-                                        // === PLAN-103.4 REALTIME-BLOCKING (alphabetical, parallel-agent) ===
-                                        // AGENT-B (Barrier):
-                                        || (recv_ty == "Barrier"
-                                            && (method == "wait" || method == "wait_with_action"
-                                                || method == "wait_for"))
-                                        // AGENT-D (Condvar):
-                                        || (recv_ty == "Condvar"
-                                            && (method == "wait" || method == "wait_for"
-                                                || method == "wait_until"))
-                                        // AGENT-C (CountDownLatch):
-                                        || (recv_ty == "CountDownLatch"
-                                            && (method == "await" || method == "try_await_for"))
-                                        // AGENT-A (Semaphore):
-                                        || (recv_ty == "Semaphore"
-                                            && (method == "acquire" || method == "acquire_n"
-                                                || method == "try_acquire_for" || method == "with_permit"))
-                                        // === END PLAN-103.4 REALTIME-BLOCKING ===
-                                        ;
-                                    if self.in_realtime && is_realtime_blocking {
-                                        return Err(format!(
-                                            "[E_EFFECT_REALTIME_VIOLATION] \
-                                             `{}.{}()` may block (fiber park/wait) and is \
-                                             forbidden inside `realtime {{ }}` blocks. \
-                                             Move the call outside the realtime context.",
-                                            recv_ty, method
-                                        ));
+                                    // Plan 103.6: annotation-driven sync enforcement.
+                                    // Replace hardcoded list with ExternalRegistry.sync_class lookup.
+                                    // Conservative fallback: None annotation → treated as Parks.
+                                    {
+                                        use crate::ast::SyncClass;
+                                        let sync_class = decl.sync_class;
+                                        // W_REALTIME_TRY_LOCK_FOR_TIMER: try_lock_for in realtime
+                                        if self.in_realtime && recv_ty == "Mutex" && method == "try_lock_for" {
+                                            self.warnings.borrow_mut().push(format!(
+                                                "[W_REALTIME_TRY_LOCK_FOR_TIMER] \
+                                                 `Mutex.try_lock_for()` uses a libuv timer (potential \
+                                                 suspend) and may block even with a short timeout. \
+                                                 Suggestion: use `try_lock()` for non-blocking attempt \
+                                                 or move outside the `realtime {{ }}` block."
+                                            ));
+                                        }
+                                        // W_BLOCKING_NOTIFY_RISK: notify_* in blocking{}
+                                        if self.in_blocking
+                                            && (recv_ty == "Condvar")
+                                            && (method == "notify_one" || method == "notify_all")
+                                        {
+                                            self.warnings.borrow_mut().push(format!(
+                                                "[W_BLOCKING_NOTIFY_RISK] \
+                                                 `Condvar.{}()` in `blocking {{ }}` may wake a fiber \
+                                                 on the blocking thread (M:N safety risk). \
+                                                 Suggestion: use an AtomicBool flag + fence() pattern \
+                                                 and notify outside the blocking block.",
+                                                method
+                                            ));
+                                        }
+                                        // E_REALTIME_SYNC_PARK: Parks method in realtime{}
+                                        if self.in_realtime
+                                            && matches!(sync_class, None | Some(SyncClass::Parks))
+                                            && sync_class != Some(SyncClass::RealtimeSafe)
+                                            && sync_class != Some(SyncClass::Wakes)
+                                        {
+                                            // Only error for known sync types — don't fire on non-sync ext fns.
+                                            let is_sync_type = matches!(recv_ty,
+                                                "Mutex" | "RwLock" | "ReentrantMutex" | "WaitGroup"
+                                                | "Once" | "OnceCell" | "Lazy"
+                                                | "Barrier" | "CountDownLatch" | "Condvar" | "Semaphore");
+                                            if is_sync_type && sync_class == Some(SyncClass::Parks) {
+                                                let suggestion = if method.starts_with("lock") || method == "with_lock" {
+                                                    format!(" Suggestion: use `try_lock()` for non-blocking attempt.")
+                                                } else if method.starts_with("acquire") || method == "with_permit" {
+                                                    format!(" Suggestion: use `try_acquire()` for non-blocking attempt.")
+                                                } else {
+                                                    String::new()
+                                                };
+                                                return Err(format!(
+                                                    "[E_REALTIME_SYNC_PARK] \
+                                                     `{}.{}()` may park the fiber and is forbidden inside \
+                                                     `realtime {{ }}` blocks. Move outside the realtime context.{}",
+                                                    recv_ty, method, suggestion
+                                                ));
+                                            } else if is_sync_type && sync_class.is_none() {
+                                                // Conservative: unannotated sync method → treat as Parks
+                                                return Err(format!(
+                                                    "[E_REALTIME_SYNC_PARK] \
+                                                     `{}.{}()` has no sync annotation and is conservatively \
+                                                     treated as park-ing; forbidden inside `realtime {{ }}` blocks. \
+                                                     Add `#parks` / `#realtime_safe` annotation to declare intent.",
+                                                    recv_ty, method
+                                                ));
+                                            }
+                                        }
+                                        // E_REALTIME_SYNC_WAKE: Wakes method in realtime{}
+                                        if self.in_realtime && sync_class == Some(SyncClass::Wakes) {
+                                            let is_sync_type = matches!(recv_ty,
+                                                "Mutex" | "RwLock" | "ReentrantMutex" | "WaitGroup"
+                                                | "Once" | "Barrier" | "CountDownLatch" | "Condvar" | "Semaphore");
+                                            if is_sync_type {
+                                                return Err(format!(
+                                                    "[E_REALTIME_SYNC_WAKE] \
+                                                     `{}.{}()` may wake a waiting fiber (scheduler interaction) \
+                                                     and is forbidden inside `realtime {{ }}` blocks. \
+                                                     Suggestion: defer the wake call outside the realtime block.",
+                                                    recv_ty, method
+                                                ));
+                                            }
+                                        }
+                                        // E_BLOCKING_SYNC_PARK: Parks method in blocking{}
+                                        if self.in_blocking && sync_class == Some(SyncClass::Parks) {
+                                            let is_sync_type = matches!(recv_ty,
+                                                "Mutex" | "RwLock" | "ReentrantMutex" | "WaitGroup"
+                                                | "Once" | "OnceCell" | "Lazy"
+                                                | "Barrier" | "CountDownLatch" | "Condvar" | "Semaphore");
+                                            if is_sync_type {
+                                                return Err(format!(
+                                                    "[E_BLOCKING_SYNC_PARK] \
+                                                     `{}.{}()` may park the fiber inside `blocking {{ }}` \
+                                                     (leaf-execution only). Move the call outside the blocking block.",
+                                                    recv_ty, method
+                                                ));
+                                            }
+                                        }
                                     }
                                     let obj_c = self.emit_expr(obj)?;
                                     let mut full = vec![obj_c];
@@ -18223,18 +18315,27 @@ _cp++; \
                                 .filter(|d| d.is_instance)
                                 .collect();
                             if !inst_decls.is_empty() {
-                                // Plan 103.5: realtime violation — OnceCell.get_or_init / Lazy.force
-                                // may park the fiber; forbidden inside realtime { }.
-                                let is_blocking_method = (base_name == "OnceCell" && method_stripped == "get_or_init")
-                                    || (base_name == "Lazy" && method_stripped == "force");
-                                if self.in_realtime && is_blocking_method {
-                                    return Err(format!(
-                                        "[E_EFFECT_REALTIME_VIOLATION] \
-                                         `{}.{}()` may block (fiber park/wait) and is \
-                                         forbidden inside `realtime {{ }}` blocks. \
-                                         Move the call outside the realtime context.",
-                                        base_name, method_stripped
-                                    ));
+                                // Plan 103.6: annotation-driven check for generic opaque types
+                                // (OnceCell[T], Lazy[T]) — use sync_class from first inst_decl.
+                                {
+                                    use crate::ast::SyncClass;
+                                    let sync_class = inst_decls.first().and_then(|d| d.sync_class);
+                                    if self.in_realtime && sync_class == Some(SyncClass::Parks) {
+                                        return Err(format!(
+                                            "[E_REALTIME_SYNC_PARK] \
+                                             `{}.{}()` may park the fiber and is forbidden inside \
+                                             `realtime {{ }}` blocks. Move outside the realtime context.",
+                                            base_name, method_stripped
+                                        ));
+                                    }
+                                    if self.in_blocking && sync_class == Some(SyncClass::Parks) {
+                                        return Err(format!(
+                                            "[E_BLOCKING_SYNC_PARK] \
+                                             `{}.{}()` may park the fiber inside `blocking {{ }}` \
+                                             (leaf-execution only). Move the call outside the blocking block.",
+                                            base_name, method_stripped
+                                        ));
+                                    }
                                 }
                                 // rt_trimmed = "OnceCell____nova_int" (no "Nova_" prefix, no "*").
                                 // C function: Nova_OnceCell____nova_int_method_get_or_init.
