@@ -1,0 +1,13 @@
+// Plan 103.6 — Mutex.lock is #parks; forbidden in realtime{}.
+//
+// EXPECT_COMPILE_ERROR E_REALTIME_SYNC_PARK
+
+module nova_tests.plan103_6.realtime_mutex_lock_neg
+
+test "Mutex.lock banned in realtime block" {
+    let m = Mutex.new()
+    realtime {
+        m.lock()
+    }
+    m.unlock()
+}

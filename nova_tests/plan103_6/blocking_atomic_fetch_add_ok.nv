@@ -1,0 +1,19 @@
+// Plan 103.6 — AtomicI64.fetch_add is #realtime_safe; allowed in blocking{}.
+//
+// EXPECT_TIMEOUT_MS 60000
+// ENV NOVA_AUTOARM=0
+
+module nova_tests.plan103_6.blocking_atomic_fetch_add_ok
+
+fn do_atomic_in_blocking(a mut AtomicI64) Blocking -> i64 {
+    blocking {
+        a.fetch_add(50)
+    }
+}
+
+test "AtomicI64.fetch_add allowed in blocking block" {
+    let a = AtomicI64.new(100)
+    let prev = do_atomic_in_blocking(a)
+    assert(prev == 100)
+    assert(a.load() == 150)
+}

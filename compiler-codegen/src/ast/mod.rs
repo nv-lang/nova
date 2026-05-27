@@ -387,6 +387,10 @@ pub struct FnDecl {
     /// в теле fn генерируется overflow VC. Если доказательство неудачно →
     /// compile error. Без атрибута: wrap-around семантика (2's complement).
     pub no_overflow: bool,
+    /// Plan 103.6: sync interaction class — parsed from #realtime_safe/#parks/#wakes.
+    /// None = no annotation (conservative: treated as Parks in realtime context).
+    /// Stored in ExternalDecl for O(1) lookup during emit_call.
+    pub sync_class: Option<SyncClass>,
 }
 
 /// Plan 33.1 (D24): один контракт-clause функции.
@@ -489,6 +493,24 @@ pub enum RealtimeAttr {
     Realtime,
     /// `@realtime nogc` — body обёрнут в `realtime nogc { ... }`.
     RealtimeNogc,
+}
+
+/// Plan 103.6: sync interaction class for external fn declarations.
+///
+/// Controls type-checker enforcement in `realtime { }` and `blocking { }` bodies.
+/// Parsed from `#realtime_safe` / `#parks` / `#wakes` attributes in sync.nv.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SyncClass {
+    /// Leaf method — no fiber park/wake. Allowed in realtime{} and blocking{}.
+    /// Annotation: `#realtime_safe`.
+    RealtimeSafe,
+    /// May park the calling fiber. Forbidden in realtime{} and blocking{}.
+    /// Annotation: `#parks`.
+    Parks,
+    /// Wakes other fibers (no self-park). Forbidden in realtime{} (scheduler
+    /// interaction); allowed in blocking{} as leaf operation.
+    /// Annotation: `#wakes`.
+    Wakes,
 }
 
 /// Receiver метода.

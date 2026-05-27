@@ -25,6 +25,8 @@ pub(crate) struct ContractAttrs {
     pub fuel: Option<u32>,
     /// Plan 33.7 Ф.4: `#nooverflow` — emit overflow VCs for BitVec arithmetic.
     pub no_overflow: bool,
+    /// Plan 103.6: sync interaction class from #realtime_safe/#parks/#wakes.
+    pub sync_class: Option<crate::ast::SyncClass>,
 }
 
 impl ContractAttrs {
@@ -36,6 +38,7 @@ impl ContractAttrs {
             && !self.is_opaque
             && self.fuel.is_none()
             && !self.no_overflow
+            && self.sync_class.is_none()
     }
 }
 
@@ -984,7 +987,26 @@ impl Parser {
         // export/external/realtime/contract attrs, ПОСЛЕ `#cfg`.
         // Несколько подряд — собираются в Vec; передаются в parse_fn /
         // parse_type_decl / parse_const_decl через pending_doc_attrs.
-        let pending_doc_attrs = self.parse_doc_attrs()?;
+        //
+        // Plan 103.6: sync-class attrs (#realtime_safe/#parks/#wakes) also
+        // appear BEFORE `export external fn`.  They may interleave with doc
+        // attrs (e.g. `#realtime_safe\n#stable(since="0.1")\nexport…`), so
+        // we alternate the two parsers until neither makes progress.
+        let mut pending_doc_attrs = self.parse_doc_attrs()?;
+        let mut pre_sync_class: Option<crate::ast::SyncClass> = self.parse_sync_class_attr()?;
+        loop {
+            let pos_before = self.pos;
+            let more_doc = self.parse_doc_attrs()?;
+            if !more_doc.is_empty() {
+                pending_doc_attrs.extend(more_doc);
+            }
+            if let Some(cls) = self.parse_sync_class_attr()? {
+                pre_sync_class = Some(cls);
+            }
+            if self.pos == pos_before {
+                break; // nothing consumed — done
+            }
+        }
 
         // Plan 52 Ф.1: `#from_fields` — маркер на декларации типа.
         // Помечает str-keyed map-тип для D55 map-coercion (`{field: v}`).
@@ -1031,7 +1053,12 @@ impl Parser {
         // `#pure` — contract-related атрибуты перед `fn`. Парсятся
         // отдельно от `#realtime`, могут идти в любом порядке.
         // Не keyword'ы в лексере (контекстный разбор после `#`).
-        let contract_attrs = self.parse_contract_attrs()?;
+        let mut contract_attrs = self.parse_contract_attrs()?;
+        // Plan 103.6: merge pre-export sync-class attr (if any) into contract_attrs.
+        // Pre-export attrs take precedence over any (invalid) post-export ones.
+        if pre_sync_class.is_some() {
+            contract_attrs.sync_class = pre_sync_class;
+        }
         if !contract_attrs.is_empty()
             && !matches!(self.peek().kind, TokenKind::KwFn | TokenKind::KwExternal)
         {
@@ -1492,6 +1519,38 @@ impl Parser {
         }
         self.bump(); // )
         Ok(attr)
+    }
+
+    /// Plan 103.6: Parse optional sync-class attribute (`#realtime_safe` /
+    /// `#parks` / `#wakes`) that appears BEFORE `export external fn`.
+    ///
+    /// These attrs occupy the same syntactic position as doc-attrs (before
+    /// `export`) and must be parsed BEFORE `is_export` is consumed.  Multiple
+    /// sync-class attrs on one fn are rejected (last-one-wins is confusing);
+    /// skip_newlines() is called after each to allow `#parks\nexport...`.
+    fn parse_sync_class_attr(&mut self) -> Result<Option<crate::ast::SyncClass>, Diagnostic> {
+        use crate::ast::SyncClass;
+        let mut result: Option<SyncClass> = None;
+        loop {
+            if !matches!(self.peek().kind, TokenKind::Hash) {
+                break;
+            }
+            let next_name = match &self.peek_at(1).kind {
+                TokenKind::Ident(n) => n.clone(),
+                _ => break,
+            };
+            let cls = match next_name.as_str() {
+                "realtime_safe" => SyncClass::RealtimeSafe,
+                "parks"         => SyncClass::Parks,
+                "wakes"         => SyncClass::Wakes,
+                _               => break,
+            };
+            self.bump(); // #
+            self.bump(); // realtime_safe / parks / wakes
+            result = Some(cls);
+            self.skip_newlines();
+        }
+        Ok(result)
     }
 
     fn parse_contract_attrs(&mut self) -> Result<ContractAttrs, Diagnostic> {
@@ -2103,6 +2162,7 @@ impl Parser {
             is_opaque: contract_attrs.is_opaque,
             fuel: contract_attrs.fuel,
             no_overflow: contract_attrs.no_overflow,
+            sync_class: contract_attrs.sync_class,
         })
     }
 

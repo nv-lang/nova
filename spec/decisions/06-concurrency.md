@@ -21,6 +21,7 @@ structured-concurrency примитивы есть в языке, и как па
 | [D168](#d168-sized-atomic-types--api-contract-plan-1032) | Sized atomic types API contract: 12 types × 13 ops, MemOrdering-aware overloads, wraparound semantics |
 | [D169](#d169-mutex--rwlock--reentrantmutex-family-plan-1033) | `Mutex` / `RwLock` / `ReentrantMutex` family — fiber-aware locking, fair FIFO default, writer-priority RwLock, recursive ReentrantMutex |
 | [D170](#d170-coordination-primitives--semaphore--barrier--countdownlatch--condvar-plan-1034) | Coordination primitives — `Semaphore` (bounded permits), `Barrier` (reusable N-party rendezvous), `CountDownLatch` (one-shot), `Condvar` (tied to Mutex) |
+| [D172](#d172-realtimeblocking-sync-class-annotation-system-plan-1036) | `realtime { }` / `blocking { }` × sync-primitive enforcement: `#parks` / `#wakes` / `#realtime_safe` annotation system |
 
 ---
 
@@ -4827,3 +4828,196 @@ D170 введён как draft (Plan 103.4, 2026-05-27). Final closure — Plan 
 - `with_permit(fn)` остаётся thin wrapper над guard.
 - Other primitives (Barrier/CountDownLatch/Condvar) — НЕ мигрируются на
   consume guards (M16: barriers/latches/condvars stateless по природе).
+
+---
+
+## D172. `realtime { }` / `blocking { }` × sync-class annotation system (Plan 103.6)
+
+> **Status:** draft (Plan 103.6, 2026-05-27). Final closure — Plan 103.7.
+
+### Что
+
+Nova предоставляет два execution-context блока, каждый с разными ограничениями
+на вызовы sync-примитивов:
+
+- **`realtime { }` (D64)** — выполнение без остановок fiber: GC-pause-free,
+  scheduler-interaction-free. Запрещены все операции, способные парковать fiber.
+- **`blocking { }` (D50 §4, Plan 83.3)** — обременительная работа, выполняемая
+  в libuv threadpool. Разрешены блокирующие операции ОС, но запрещены
+  операции, которые пытаются парковать nova-fiber изнутри thread-pool worker.
+
+### Проблема (до Plan 103.6)
+
+Enforcement realtime/blocking-ограничений был **hardcoded в emit_c.rs**:
+```rust
+// До Plan 103.6 (hardcoded match-список)
+fn is_realtime_blocking(recv: &str, method: &str) -> bool {
+    matches!((recv, method),
+        ("Mutex", "lock") | ("Mutex", "wait") | ("RwLock", "read") | ...)
+}
+```
+Проблемы:
+1. Список не синхронизирован с реальной реализацией sync-примитивов.
+2. Добавление нового примитива требует патча compiler (не spec.nv).
+3. Нет различия между `#parks` (park fiber) и `#wakes` (wake other fibers).
+4. Нет механизма для user-определённых функций.
+
+### Решение: annotation-driven sync-class
+
+Plan 103.6 вводит **SyncClass attribute system**:
+
+#### §1. Annotations (bare `#`-attributes)
+
+```nova
+#realtime_safe  // Leaf op: no scheduler interaction. Safe in realtime{} and blocking{}.
+#parks          // May park the current fiber. Forbidden in realtime{}. Error in blocking{}.
+#wakes          // May wake another fiber (scheduler signal). Forbidden in realtime{}.
+```
+
+Аннотации ставятся **перед** `export external fn` в `.nv` файлах:
+
+```nova
+#parks
+#stable(since = "0.1")
+export external fn Mutex mut @lock()
+
+#realtime_safe
+#stable(since = "0.1")
+export external fn Mutex @try_lock() -> bool
+
+#wakes
+#stable(since = "0.1")
+export external fn Mutex mut @unlock()
+```
+
+#### §2. Матрица sync-class
+
+| Примитив | Метод | SyncClass | realtime{} | blocking{} |
+|---|---|---|---|---|
+| `Mutex` | `lock()` | `#parks` | ❌ E_REALTIME_SYNC_PARK | ❌ E_BLOCKING_SYNC_PARK |
+| `Mutex` | `try_lock()` | `#realtime_safe` | ✅ | ✅ |
+| `Mutex` | `try_lock_for(d)` | `#realtime_safe` ¹ | ⚠️ W_REALTIME_TRY_LOCK_FOR_TIMER | ✅ |
+| `Mutex` | `unlock()` | `#wakes` | ❌ E_REALTIME_SYNC_WAKE | ✅ |
+| `RwLock` | `read()` / `write()` | `#parks` | ❌ E_REALTIME_SYNC_PARK | ❌ E_BLOCKING_SYNC_PARK |
+| `RwLock` | `try_read()` / `try_write()` | `#realtime_safe` | ✅ | ✅ |
+| `RwLock` | `unlock_read()` / `unlock_write()` | `#wakes` | ❌ E_REALTIME_SYNC_WAKE | ✅ |
+| `Semaphore` | `acquire()` | `#parks` | ❌ E_REALTIME_SYNC_PARK | ❌ E_BLOCKING_SYNC_PARK |
+| `Semaphore` | `try_acquire()` | `#realtime_safe` | ✅ | ✅ |
+| `Semaphore` | `release()` | `#wakes` | ❌ E_REALTIME_SYNC_WAKE | ✅ |
+| `Barrier` | `wait()` | `#parks` | ❌ E_REALTIME_SYNC_PARK | ❌ E_BLOCKING_SYNC_PARK |
+| `CountDownLatch` | `await()` | `#parks` | ❌ E_REALTIME_SYNC_PARK | ❌ E_BLOCKING_SYNC_PARK |
+| `CountDownLatch` | `count_down()` | `#wakes` | ❌ E_REALTIME_SYNC_WAKE | ✅ |
+| `Condvar` | `wait(m)` | `#parks` | ❌ E_REALTIME_SYNC_PARK | ❌ E_BLOCKING_SYNC_PARK |
+| `Condvar` | `notify_one()` / `notify_all()` | `#wakes` | ❌ E_REALTIME_SYNC_WAKE | ⚠️ W_BLOCKING_NOTIFY_RISK ² |
+| `WaitGroup` | `wait()` | `#parks` | ❌ E_REALTIME_SYNC_PARK | ❌ E_BLOCKING_SYNC_PARK |
+| `WaitGroup` | `done()` | `#wakes` | ❌ E_REALTIME_SYNC_WAKE | ✅ |
+| `OnceCell[T]` | `get_or_init(f)` | `#parks` | ❌ E_REALTIME_SYNC_PARK | ❌ E_BLOCKING_SYNC_PARK |
+| `OnceCell[T]` | `get()` / `set(v)` | `#realtime_safe` | ✅ | ✅ |
+| `Lazy[T]` | `force()` | `#parks` | ❌ E_REALTIME_SYNC_PARK | ❌ E_BLOCKING_SYNC_PARK |
+| `Lazy[T]` | `is_forced()` | `#realtime_safe` | ✅ | ✅ |
+| `Once` | `call_once(f)` | `#parks` | ❌ E_REALTIME_SYNC_PARK | ❌ E_BLOCKING_SYNC_PARK |
+| `Once` | `is_completed()` | `#realtime_safe` | ✅ | ✅ |
+| `fence(ord)` | — | `#realtime_safe` | ✅ | ✅ |
+| `AtomicX.*` | все методы | `#realtime_safe` | ✅ | ✅ |
+
+¹ `try_lock_for` является `#realtime_safe` технически (не парков fiber),
+  но использует libuv timer → W_REALTIME_TRY_LOCK_FOR_TIMER предупреждает
+  об overhead таймера внутри realtime-блока.
+
+² `notify_one/notify_all` в blocking{} работает (wake технически возможен),
+  но wake другого nova-fiber изнутри threadpool worker семантически сомнительен
+  → W_BLOCKING_NOTIFY_RISK (design decision: prefer fiber-native patterns).
+
+#### §3. Error codes
+
+| Код | Уровень | Условие |
+|---|---|---|
+| `E_REALTIME_SYNC_PARK` | error | `#parks`-метод вызван внутри `realtime { }` |
+| `E_REALTIME_SYNC_WAKE` | error | `#wakes`-метод вызван внутри `realtime { }` |
+| `E_REALTIME_NESTED_SYNC_VIA_FN` | error | user-fn с `#parks`-аннотацией вызвана из `realtime { }` |
+| `E_BLOCKING_SYNC_PARK` | error | `#parks`-метод вызван внутри `blocking { }` |
+| `W_REALTIME_TRY_LOCK_FOR_TIMER` | warning | `Mutex.try_lock_for` в `realtime { }` |
+| `W_BLOCKING_NOTIFY_RISK` | warning | `#wakes`-метод в `blocking { }` |
+
+#### §4. User-defined function propagation (V1)
+
+В V1 (Plan 103.6) propagation **только explicit**:
+
+```nova
+#parks
+fn my_critical_wait() {
+    mutex.lock()  // внутри — парков, поэтому fn annotated #parks
+}
+
+realtime {
+    my_critical_wait()  // ❌ E_REALTIME_NESTED_SYNC_VIA_FN
+}
+```
+
+V1 не поддерживает автоматический inference (transitive propagation): если `fn A`
+вызывает `fn B` которая `#parks`, но `A` не annotated — вызов `A` из realtime{}
+**не** даёт ошибку. V2 (Plan 103.8) добавит inference-based propagation.
+
+#### §5. Unseen / uninstrumented methods
+
+Методы без явной аннотации (`#parks`/`#wakes`/`#realtime_safe`) внутри
+realtime{} консервативно трактуются как `#parks` (worst-case):
+
+```
+[E_REALTIME_SYNC_PARK] `T.method()` has no sync annotation and is conservatively
+treated as park-ing; forbidden inside realtime{}.
+Add #parks / #realtime_safe annotation to declare intent.
+```
+
+Это предотвращает silent miscompilation при добавлении новых методов без аннотации.
+
+#### §6. Implementation (V1)
+
+**Compiler-side:**
+- `SyncClass` enum в AST: `RealtimeSafe | Parks | Wakes`
+- `ContractAttrs.sync_class: Option<SyncClass>` — parsed из `#realtime_safe`/`#parks`/`#wakes`
+- `CEmitter.in_realtime: bool` / `CEmitter.in_blocking: bool` — flags set при входе в блоки
+- `mono_fn_decls` расширен: non-generic `#parks`-annotated fns хранятся для lookup в emit_call
+- Generic-type methods (OnceCell[T], Lazy[T]) — проверяются в `generic_type_methods` dispatch
+
+**Runtime-side:**
+- Нет runtime overhead: все проверки compile-time.
+- `nova_fn_fence` / атомарные операции — безусловно safe (нет park/wake).
+
+### Правило
+
+1. **Annotate все external fn** в `.nv` stdlib с `#parks`/`#wakes`/`#realtime_safe`.
+2. **Compile-time enforcement**: `in_realtime` / `in_blocking` flags в CEmitter.
+3. **Conservative default**: unannotated method inside realtime{} → E_REALTIME_SYNC_PARK.
+4. **User fns**: explicit `#parks` annotation triggers E_REALTIME_NESTED_SYNC_VIA_FN.
+5. **try_lock_for**: `#realtime_safe` (no park) + W_REALTIME_TRY_LOCK_FOR_TIMER (timer overhead).
+
+### Тесты
+
+**Positive (10):** realtime_{atomic_load,atomic_fetch_add,mutex_try_lock,
+semaphore_try_acquire,lazy_is_forced,oncecell_get,oncecell_set_first_call,fence}_ok,
+blocking_{atomic_fetch_add,mutex_unlock}_ok
+
+**Negative (14):** realtime_{mutex_lock,rwlock_read,rwlock_with_write,barrier_wait,
+condvar_wait,countdown_await,semaphore_acquire,lazy_force,once_call_once,
+oncecell_get_or_init}_neg, realtime_via_user_fn_neg,
+blocking_{mutex_lock,condvar_wait}_neg,
+realtime_{try_lock_for_zero_warn,mutex_try_lock_for_neg} (warnings)
+
+### Связь
+
+- **[D64](04-effects.md#d64)** — `realtime { }` semantics (GC-pause-free, no scheduler yield)
+- **[D50](#d50-concurrency-model-spawn-detach-blocking)** — `blocking { }` semantics (threadpool offload)
+- **[D168](#d168-sized-atomic-types--api-contract-plan-1032)** — AtomicX ops: все `#realtime_safe`
+- **[D169](#d169-mutex--rwlock--reentrantmutex-family-plan-1033)** — Mutex/RwLock: lock → `#parks`, try_lock → `#realtime_safe`, unlock → `#wakes`
+- **[D170](#d170-coordination-primitives--semaphore--barrier--countdownlatch--condvar-plan-1034)** — Coordination primitives sync-class matrix
+- **[D171](#d171-once--oncecell--lazy--single-initialization-primitives-plan-1035)** — Once/OnceCell/Lazy: force/get_or_init/call_once → `#parks`, is_*/get/set → `#realtime_safe`
+- **[Plan 103.8](../../docs/plans/103.8-sync-propagation-v2.md)** — V2: transitive `#parks` inference (planned)
+
+### Эволюция
+
+D172 введён как draft (Plan 103.6, 2026-05-27). Final closure — Plan 103.7.
+В V2 (Plan 103.8):
+- Автоматический inference: если `fn A` вызывает `#parks`-fn, A также помечается `#parks`.
+- LSP integration: hover shows sync-class; quick-fix добавляет `#parks` annotation.
+- Полный propagation-граф: транзитивное закрытие через call graph.

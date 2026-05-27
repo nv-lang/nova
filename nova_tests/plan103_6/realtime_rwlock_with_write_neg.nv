@@ -1,0 +1,14 @@
+// Plan 103.6 — RwLock.write is #parks; forbidden in realtime{}.
+// (Covers the write-lock path; with_write wraps write() so both are forbidden.)
+//
+// EXPECT_COMPILE_ERROR E_REALTIME_SYNC_PARK
+
+module nova_tests.plan103_6.realtime_rwlock_with_write_neg
+
+test "RwLock.write banned in realtime block" {
+    let rw = RwLock.new()
+    realtime {
+        rw.write()
+        rw.write_unlock()
+    }
+}

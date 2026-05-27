@@ -1,0 +1,19 @@
+// Plan 103.6 — Condvar.wait is #parks; forbidden in blocking{}.
+//
+// EXPECT_COMPILE_ERROR E_BLOCKING_SYNC_PARK
+
+module nova_tests.plan103_6.blocking_condvar_wait_neg
+
+fn do_blocking_wait() Blocking {
+    let m = Mutex.new()
+    let cv = Condvar.new()
+    m.lock()
+    blocking {
+        cv.wait(m)
+    }
+    m.unlock()
+}
+
+test "Condvar.wait banned in blocking block" {
+    // compile-only test; do_blocking_wait() itself triggers E_BLOCKING_SYNC_PARK
+}
