@@ -1,0 +1,12 @@
+// EXPECT_RUNTIME_PANIC insert_from: index
+//
+// Plan 90.1 — негатив: insert_from — negative index → panic.
+// D141 amend: i < 0 → panic "insert_from: index N out of bounds".
+
+module nova_tests.plan90_1.insert_from_oob_negative_i_neg
+
+fn main() -> () {
+    let mut dst []int = [1, 2, 3]
+    let src []int = [10, 20]
+    dst.insert_from(-1, src)
+}

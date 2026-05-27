@@ -1,0 +1,20 @@
+// Plan 90.1 Ф.5 — W_VIEW_EXTEND_DETACH suppressed via #allow(view_extend_detach).
+// Module-level allow suppresses the warning even when pattern is present.
+
+#allow(view_extend_detach)
+module nova_tests.plan90_1.lint_view_extend_suppressed_no_warn
+
+fn extend_with_view() -> () {
+    let mut parent []int = [1, 2, 3, 4, 5]
+    let view = parent[1..4]
+    parent.extend_from([6, 7, 8])  // no W_VIEW_EXTEND_DETACH because #allow
+    let _ = view.len()
+}
+
+test "allow(view_extend_detach) suppresses lint — extend_from" {
+    let mut arr []int = [1, 2, 3]
+    let v = arr[0..2]
+    arr.extend_from([4, 5])
+    assert(arr.len() == 5)
+    assert(v.len() == 2)
+}

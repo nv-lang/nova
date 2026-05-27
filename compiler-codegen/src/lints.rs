@@ -29,6 +29,9 @@ pub fn lint_module(m: &Module) -> Vec<LintWarning> {
     let mut warnings = Vec::new();
     let effect_names = collect_effect_names(m);
     let protocol_names = collect_protocol_names(m);
+    // Plan 90.1 Ф.5: module-level suppress for W_VIEW_EXTEND_DETACH.
+    let view_extend_suppressed = m.attrs.iter()
+        .any(|a| matches!(a.kind, crate::ast::ModuleAttrKind::AllowViewExtendDetach));
     for item in &m.items {
         match item {
             Item::Fn(f) => {
@@ -39,6 +42,10 @@ pub fn lint_module(m: &Module) -> Vec<LintWarning> {
                 // Plan 96.1 Ф.1: W_VIEW_PUSH_DETACH — warning при push на
                 // slice-view binding (let X = arr[range]; X.push(...)).
                 lint_view_push_detach(f, &mut warnings);
+                // Plan 90.1 Ф.5: W_VIEW_EXTEND_DETACH — warning при вызове
+                // grow-метода (extend_from/insert_from/reserve) на parent-массиве
+                // после создания slice-view из него.
+                lint_view_extend_detach(f, view_extend_suppressed, &mut warnings);
                 // Plan 52 Ф.2: map-литерал lints (dup-key, NaN-key) —
                 // требуют обхода выражений внутри тела функции.
                 match &f.body {
@@ -1151,6 +1158,144 @@ fn walk_view_push_expr(
             walk_view_push_block(body, slice_views, out);
         }
         // Other expression kinds — обычный обход (упрощённо).
+        _ => {}
+    }
+}
+
+/// Plan 90.1 Ф.5 — W_VIEW_EXTEND_DETACH lint.
+///
+/// Detects pattern: `let view = parent[Range]; ...; parent.extend_from(...)`.
+/// Warning: calling extend_from / insert_from / reserve on a parent array
+/// that has a live slice-view may trigger realloc, making the view point to
+/// freed/stale memory (D-cap-len: grow detaches from parent backing, Plan 96).
+///
+/// Per-function walker maintains HashMap<parent_name, span_of_view_binding>
+/// of parent arrays that have a slice-view binding. On `parent.extend_from(...)` /
+/// `.insert_from(...)` / `.reserve(...)` on tracked parent → emit warning.
+///
+/// Suppressed by `#allow(view_extend_detach)` at module level.
+fn lint_view_extend_detach(f: &FnDecl, suppressed: bool, out: &mut Vec<LintWarning>) {
+    if suppressed {
+        return;
+    }
+    // HashMap<parent_name, view_binding_span>
+    let mut view_parents: std::collections::HashMap<String, crate::diag::Span> =
+        std::collections::HashMap::new();
+    match &f.body {
+        FnBody::Expr(e) => walk_view_extend_expr(e, &mut view_parents, out),
+        FnBody::Block(b) => walk_view_extend_block(b, &mut view_parents, out),
+        FnBody::External => {}
+    }
+}
+
+fn walk_view_extend_block(
+    b: &Block,
+    view_parents: &mut std::collections::HashMap<String, crate::diag::Span>,
+    out: &mut Vec<LintWarning>,
+) {
+    for s in &b.stmts {
+        walk_view_extend_stmt(s, view_parents, out);
+    }
+    if let Some(t) = &b.trailing {
+        walk_view_extend_expr(t, view_parents, out);
+    }
+}
+
+fn walk_view_extend_stmt(
+    s: &Stmt,
+    view_parents: &mut std::collections::HashMap<String, crate::diag::Span>,
+    out: &mut Vec<LintWarning>,
+) {
+    match s {
+        // Track: `let view = parent[Range]` → record `parent` as having a view.
+        Stmt::Let(d) => {
+            if let ExprKind::Index { obj, index } = &d.value.kind {
+                if matches!(index.kind, ExprKind::Range { .. }) {
+                    // Single-name binding: `let view = arr[a..b]`.
+                    if let Pattern::Ident { .. } = &d.pattern {
+                        // Record the parent array name.
+                        if let ExprKind::Ident(parent_name) = &obj.kind {
+                            view_parents.insert(parent_name.clone(), d.value.span);
+                        }
+                    }
+                }
+            }
+            walk_view_extend_expr(&d.value, view_parents, out);
+        }
+        Stmt::Expr(e) => walk_view_extend_expr(e, view_parents, out),
+        Stmt::Assign { target, value, .. } => {
+            walk_view_extend_expr(target, view_parents, out);
+            walk_view_extend_expr(value, view_parents, out);
+        }
+        Stmt::Return { value: Some(v), .. } => walk_view_extend_expr(v, view_parents, out),
+        Stmt::Throw { value, .. } => walk_view_extend_expr(value, view_parents, out),
+        Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. }
+        | Stmt::OkDefer { body, .. } | Stmt::DeferWithResult { body, .. } => {
+            walk_view_extend_expr(body, view_parents, out);
+        }
+        Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => {
+            walk_view_extend_expr(expr, view_parents, out);
+        }
+        _ => {}
+    }
+}
+
+/// Grow-methods that may cause realloc, invalidating existing slice views.
+fn is_grow_method(name: &str) -> bool {
+    matches!(name, "extend_from" | "insert_from" | "reserve")
+}
+
+fn walk_view_extend_expr(
+    e: &Expr,
+    view_parents: &mut std::collections::HashMap<String, crate::diag::Span>,
+    out: &mut Vec<LintWarning>,
+) {
+    match &e.kind {
+        // Detect: parent.extend_from(...) / parent.insert_from(...) / parent.reserve(...)
+        // where `parent` is a tracked view-parent.
+        ExprKind::Call { func, .. } => {
+            if let ExprKind::Member { obj, name } = &func.kind {
+                if is_grow_method(name) {
+                    if let ExprKind::Ident(parent_name) = &obj.kind {
+                        if let Some(&view_span) = view_parents.get(parent_name) {
+                            out.push(LintWarning {
+                                rule: "W_VIEW_EXTEND_DETACH",
+                                diag: crate::diag::Diagnostic::new(
+                                    format!(
+                                        "W_VIEW_EXTEND_DETACH: `{parent}.{method}(...)` may \
+                                         realloc and invalidate existing slice-view of `{parent}` \
+                                         (D-cap-len, D141, Plan 90.1). If view is intentionally \
+                                         discarded, add `#allow(view_extend_detach)` to module.",
+                                        parent = parent_name,
+                                        method = name,
+                                    ),
+                                    e.span,
+                                ).with_note_at(
+                                    format!("slice-view of `{}` created here", parent_name),
+                                    view_span,
+                                ),
+                            });
+                        }
+                    }
+                }
+            }
+            // Recurse into func and args for nested calls.
+            walk_view_extend_expr(func, view_parents, out);
+        }
+        ExprKind::Block(b) => walk_view_extend_block(b, view_parents, out),
+        ExprKind::If { cond, then, else_ } => {
+            walk_view_extend_expr(cond, view_parents, out);
+            walk_view_extend_block(then, view_parents, out);
+            if let Some(eb) = else_ {
+                match eb {
+                    ElseBranch::Block(b) => walk_view_extend_block(b, view_parents, out),
+                    ElseBranch::If(if_expr) => walk_view_extend_expr(if_expr, view_parents, out),
+                }
+            }
+        }
+        ExprKind::For { body, .. } | ExprKind::While { body, .. } => {
+            walk_view_extend_block(body, view_parents, out);
+        }
         _ => {}
     }
 }

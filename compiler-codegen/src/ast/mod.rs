@@ -181,6 +181,20 @@ pub enum ModuleAttrKind {
     /// (требует generic attribute parser, который пока hardcoded на
     /// `TypeAttr` enum'ы; см. ast::TypeAttr).
     AllowPreludeShadow,
+    /// **Plan 90.1 D141 amend:** `#allow(view_extend_detach)` before `module`.
+    /// Suppresses `W_VIEW_EXTEND_DETACH` warnings emitted by
+    /// `lints::lint_view_extend_detach` when a grow-method (extend_from /
+    /// insert_from / reserve) is called on a parent array after a slice-view
+    /// of that parent was created in the same function scope.
+    ///
+    /// **When to apply:**
+    ///   - Code where the view is intentionally discarded before the grow call.
+    ///   - Test fixtures verifying extend/insert/reserve behaviour on arrays
+    ///     that happen to have a prior view binding in scope.
+    ///
+    /// Default: grow-call after view-binding → W_VIEW_EXTEND_DETACH warning.
+    /// With `#allow(view_extend_detach)`: same behaviour, no warning.
+    AllowViewExtendDetach,
 }
 
 /// Plan 42.12 Ф.2 + Plan 42.14 Ф.1: cfg predicate.
