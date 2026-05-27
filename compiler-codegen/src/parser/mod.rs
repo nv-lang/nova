@@ -25,6 +25,8 @@ pub(crate) struct ContractAttrs {
     pub fuel: Option<u32>,
     /// Plan 33.7 Ф.4: `#nooverflow` — emit overflow VCs for BitVec arithmetic.
     pub no_overflow: bool,
+    /// Plan 103.6: sync interaction class from #realtime_safe/#parks/#wakes.
+    pub sync_class: Option<crate::ast::SyncClass>,
 }
 
 impl ContractAttrs {
@@ -36,6 +38,7 @@ impl ContractAttrs {
             && !self.is_opaque
             && self.fuel.is_none()
             && !self.no_overflow
+            && self.sync_class.is_none()
     }
 }
 
@@ -1630,6 +1633,27 @@ impl Parser {
                     self.bump(); // nooverflow
                     attrs.no_overflow = true;
                 }
+                "realtime_safe" => {
+                    // Plan 103.6: #realtime_safe — leaf method, no park/wake.
+                    // Allowed in realtime{} and blocking{} contexts.
+                    self.bump(); // #
+                    self.bump(); // realtime_safe
+                    attrs.sync_class = Some(crate::ast::SyncClass::RealtimeSafe);
+                }
+                "parks" => {
+                    // Plan 103.6: #parks — may park calling fiber.
+                    // Forbidden in realtime{} and blocking{} contexts.
+                    self.bump(); // #
+                    self.bump(); // parks
+                    attrs.sync_class = Some(crate::ast::SyncClass::Parks);
+                }
+                "wakes" => {
+                    // Plan 103.6: #wakes — wakes other fibers (no self-park).
+                    // Forbidden in realtime{}; allowed in blocking{}.
+                    self.bump(); // #
+                    self.bump(); // wakes
+                    attrs.sync_class = Some(crate::ast::SyncClass::Wakes);
+                }
                 _ => break, // unknown #-name — не contract-attr, выходим
             }
             self.skip_newlines();
@@ -2103,6 +2127,7 @@ impl Parser {
             is_opaque: contract_attrs.is_opaque,
             fuel: contract_attrs.fuel,
             no_overflow: contract_attrs.no_overflow,
+            sync_class: contract_attrs.sync_class,
         })
     }
 

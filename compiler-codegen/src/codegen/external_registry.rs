@@ -6,9 +6,15 @@
 //! и Nova→C type mapping, никаких ручных таблиц.
 //!
 //! См. spec/decisions/08-runtime.md → D82 (extended), Plan 12.
+//!
+//! Plan 103.6: SyncClass annotation driven by #realtime_safe/#parks/#wakes
+//! attributes in sync.nv. Replaces hardcoded is_realtime_blocking lists.
 
-use crate::ast::{FnBody, FnDecl, Item, Module, Receiver, ReceiverKind, TypeDecl, TypeDeclKind, TypeRef};
+use crate::ast::{FnBody, FnDecl, Item, Module, Receiver, ReceiverKind, SyncClass, TypeDecl, TypeDeclKind, TypeRef};
 use std::collections::HashMap;
+
+// Re-export SyncClass so callers (emit_c.rs) can import from either place.
+pub use crate::ast::SyncClass as SyncClassAlias;
 
 /// Декларация одной external-функции из builtins.nv.
 /// Содержит mangled C-name + информацию для emit_call.
@@ -34,6 +40,9 @@ pub struct ExternalDecl {
     /// `Nova_<RecvType>_method_<name>`. Plan 11 mangling по
     /// param-types применяется при коллизии overload'ов.
     pub c_name: String,
+    /// Plan 103.6: Sync interaction class parsed from #realtime_safe/#parks/#wakes.
+    /// None = no annotation (conservative: treated as Parks in realtime context).
+    pub sync_class: Option<SyncClass>,
 }
 
 /// Registry всех external-функций из builtins.nv.
@@ -233,6 +242,7 @@ impl ExternalRegistry {
             param_names,
             return_c_type,
             c_name,
+            sync_class: f.sync_class,
         })
     }
 
