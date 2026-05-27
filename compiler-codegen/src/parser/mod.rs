@@ -144,17 +144,19 @@ impl Parser {
         // и для items.
         let module_doc_attrs = self.parse_doc_attrs()?;
 
-        // module keyword.path [no_prelude | partial_prelude(...)]
+        // module keyword.path
         //
-        // Plan 62.F: clause-syntax `module X no_prelude` /
-        // `module X partial_prelude(core, runtime)` (per spec/decisions/
-        // 07-modules.md:962-979). НЕ `#`-prefix атрибут — это identifiers
-        // после module-path, parser консюмит до expect_newline_or_eof.
-        // Аккумулируются в `clause_attrs` для merge с `module_attrs` ниже.
-        let mut clause_attrs: Vec<ModuleAttr> = Vec::new();
+        // D174 (Plan 107): inline clause-syntax `module X no_prelude` /
+        // `module X partial_prelude(...)` / `module X allow_prelude_shadow`
+        // УДАЛЕНЫ — hard compile error с migration hint (D174).
+        // Новые формы: `#no_prelude` / `#prelude(...)` / `#allow(shadow)`
+        // идут ПЕРЕД `module` declaration (parse_module_attrs выше).
+        // clause_attrs всегда пустой (inline-формы возвращают hard error).
+        let clause_attrs: Vec<ModuleAttr> = Vec::new();
         let module_name = if self.eat(&TokenKind::KwModule).is_some() {
             let path = self.parse_dotted_path()?;
-            // Plan 62.F: optional `no_prelude` / `partial_prelude(...)` clause.
+            // D174: inline clause loop — all known identifiers return hard error.
+            // Unknown identifiers → break (not a clause, end of module line).
             loop {
                 let clause_start = self.peek().span;
                 let clause_name = if let TokenKind::Ident(n) = &self.peek().kind {
@@ -162,56 +164,46 @@ impl Parser {
                 } else { break; };
                 match clause_name.as_str() {
                     "no_prelude" => {
-                        self.bump(); // no_prelude ident
-                        let clause_end = self.tokens[self.pos.saturating_sub(1)].span;
-                        clause_attrs.push(ModuleAttr {
-                            kind: ModuleAttrKind::NoPrelude,
-                            effects: Vec::new(),
-                            span: clause_start.merge(clause_end),
-                        });
+                        return Err(Diagnostic::new(
+                            "inline `no_prelude` clause removed (D174, Plan 107): \
+                             move to `#no_prelude` before `module` declaration\n  \
+                             change:  module <path> no_prelude\n  \
+                             to:      #no_prelude\n  \
+                             ·        module <path>",
+                            clause_start));
                     }
                     "partial_prelude" => {
-                        self.bump(); // partial_prelude ident
-                        if !matches!(self.peek().kind, TokenKind::LParen) {
-                            return Err(Diagnostic::new(
-                                "expected `(` after `partial_prelude` (e.g. `partial_prelude(core, runtime)`)",
-                                self.peek().span));
+                        self.bump(); // consume partial_prelude ident so span is accurate
+                        // skip optional (...) to avoid cascade errors
+                        if matches!(self.peek().kind, TokenKind::LParen) {
+                            self.bump(); // (
+                            let mut depth = 1usize;
+                            while depth > 0 {
+                                match self.peek().kind {
+                                    TokenKind::LParen  => { depth += 1; self.bump(); }
+                                    TokenKind::RParen  => { depth -= 1; self.bump(); }
+                                    TokenKind::Newline |
+                                    TokenKind::Eof     => break,
+                                    _                  => { self.bump(); }
+                                }
+                            }
                         }
-                        self.bump(); // (
-                        let mut names: Vec<String> = Vec::new();
-                        // Allow empty `partial_prelude()` (== no_prelude effectively).
-                        loop {
-                            if matches!(self.peek().kind, TokenKind::RParen) { break; }
-                            let (n, _) = self.parse_ident()?;
-                            names.push(n);
-                            if matches!(self.peek().kind, TokenKind::Comma) {
-                                self.bump();
-                            } else { break; }
-                        }
-                        if !matches!(self.peek().kind, TokenKind::RParen) {
-                            return Err(Diagnostic::new(
-                                "expected `)` closing `partial_prelude(...)` list",
-                                self.peek().span));
-                        }
-                        self.bump(); // )
-                        let clause_end = self.tokens[self.pos.saturating_sub(1)].span;
-                        clause_attrs.push(ModuleAttr {
-                            kind: ModuleAttrKind::PartialPrelude(names),
-                            effects: Vec::new(),
-                            span: clause_start.merge(clause_end),
-                        });
+                        return Err(Diagnostic::new(
+                            "inline `partial_prelude(...)` clause removed (D174, Plan 107): \
+                             move to `#prelude(...)` before `module` declaration\n  \
+                             change:  module <path> partial_prelude(core, runtime)\n  \
+                             to:      #prelude(core, runtime)\n  \
+                             ·        module <path>",
+                            clause_start));
                     }
-                    // Plan 62.F.bis Ф.2: `module X allow_prelude_shadow` —
-                    // suppress W_PRELUDE_SHADOW warnings at module-level
-                    // (см. ast::ModuleAttrKind::AllowPreludeShadow doc).
                     "allow_prelude_shadow" => {
-                        self.bump(); // allow_prelude_shadow ident
-                        let clause_end = self.tokens[self.pos.saturating_sub(1)].span;
-                        clause_attrs.push(ModuleAttr {
-                            kind: ModuleAttrKind::AllowPreludeShadow,
-                            effects: Vec::new(),
-                            span: clause_start.merge(clause_end),
-                        });
+                        return Err(Diagnostic::new(
+                            "inline `allow_prelude_shadow` clause removed (D174, Plan 107): \
+                             move to `#allow(shadow)` before `module` declaration\n  \
+                             change:  module <path> allow_prelude_shadow\n  \
+                             to:      #allow(shadow)\n  \
+                             ·        module <path>",
+                            clause_start));
                     }
                     _ => break,
                 }
@@ -333,10 +325,8 @@ impl Parser {
         // (imports.rs::resolve_imports_inline / test_runner / cmd_check)
         // заполняют `peer_files` после parse.
         //
-        // Plan 62.F: clause_attrs (`no_prelude` / `partial_prelude(...)`)
-        // merge'аются с `#`-prefix module_attrs. Order: clause_attrs идут
-        // после module_attrs (т.к. в source они появляются после module
-        // declaration). Имеют ту же семантику видимости.
+        // D174 (Plan 107): clause_attrs always empty (inline forms hard-error).
+        // Kept for structural compat. module_attrs already has #no_prelude etc.
         let mut all_attrs = module_attrs;
         all_attrs.extend(clause_attrs);
         Ok(Module {
@@ -596,7 +586,11 @@ impl Parser {
             let is_doc = matches!(&next_kind, Some(TokenKind::Ident(name)) if name == "doc");
             let is_must_verify_module = matches!(&next_kind, Some(TokenKind::Ident(name)) if name == "must_verify_module");
             let is_proof_budget = matches!(&next_kind, Some(TokenKind::Ident(name)) if name == "proof_budget");
-            if !is_forbid && !is_cfg && !is_doc && !is_must_verify_module && !is_proof_budget {
+            let is_no_prelude_attr = matches!(&next_kind, Some(TokenKind::Ident(name)) if name == "no_prelude");
+            let is_prelude_attr    = matches!(&next_kind, Some(TokenKind::Ident(name)) if name == "prelude");
+            let is_allow_attr      = matches!(&next_kind, Some(TokenKind::Ident(name)) if name == "allow");
+            if !is_forbid && !is_cfg && !is_doc && !is_must_verify_module && !is_proof_budget
+                && !is_no_prelude_attr && !is_prelude_attr && !is_allow_attr {
                 break; // not a module-level attribute
             }
             let attr_start = self.peek().span;
@@ -658,6 +652,97 @@ impl Parser {
                 let attr_end = self.tokens[self.pos.saturating_sub(1)].span;
                 module_attrs.push(ModuleAttr {
                     kind: ModuleAttrKind::ProofBudget { timeout_ms, vc_count_max },
+                    effects: Vec::new(),
+                    span: attr_start.merge(attr_end),
+                });
+                continue;
+            }
+
+            // D174: #no_prelude — полный opt-out из prelude
+            if is_no_prelude_attr {
+                self.bump(); // no_prelude (ident)
+                self.expect_newline_or_eof()?;
+                let attr_end = self.tokens[self.pos.saturating_sub(1)].span;
+                module_attrs.push(ModuleAttr {
+                    kind: ModuleAttrKind::NoPrelude,
+                    effects: Vec::new(),
+                    span: attr_start.merge(attr_end),
+                });
+                continue;
+            }
+
+            // D174: #prelude(names…) — selective opt-in, ≥1 name
+            if is_prelude_attr {
+                self.bump(); // prelude (ident)
+                if !matches!(self.peek().kind, TokenKind::LParen) {
+                    return Err(Diagnostic::new(
+                        "expected `(` after `#prelude` \
+                         (e.g. `#prelude(core, runtime)` or use `#no_prelude` for empty)",
+                        self.peek().span));
+                }
+                self.bump(); // (
+                // Empty `#prelude()` → explicit compile error (D174: use #no_prelude instead)
+                if matches!(self.peek().kind, TokenKind::RParen) {
+                    return Err(Diagnostic::new(
+                        "`#prelude()` with empty list is not allowed; \
+                         use `#no_prelude` to disable all prelude auto-imports (D174)",
+                        self.peek().span));
+                }
+                let mut names: Vec<String> = Vec::new();
+                loop {
+                    if matches!(self.peek().kind, TokenKind::RParen) { break; }
+                    let (n, _) = self.parse_ident()?;
+                    names.push(n);
+                    if matches!(self.peek().kind, TokenKind::Comma) {
+                        self.bump(); // ,
+                    } else {
+                        break;
+                    }
+                }
+                if !matches!(self.peek().kind, TokenKind::RParen) {
+                    return Err(Diagnostic::new(
+                        "expected `)` closing `#prelude(...)` name list",
+                        self.peek().span));
+                }
+                self.bump(); // )
+                self.expect_newline_or_eof()?;
+                let attr_end = self.tokens[self.pos.saturating_sub(1)].span;
+                module_attrs.push(ModuleAttr {
+                    kind: ModuleAttrKind::PartialPrelude(names),  // reuse existing variant
+                    effects: Vec::new(),
+                    span: attr_start.merge(attr_end),
+                });
+                continue;
+            }
+
+            // D174: #allow(shadow) — suppress W_PRELUDE_SHADOW
+            if is_allow_attr {
+                self.bump(); // allow (ident)
+                if !matches!(self.peek().kind, TokenKind::LParen) {
+                    return Err(Diagnostic::new(
+                        "expected `(` after `#allow` (e.g. `#allow(shadow)`)",
+                        self.peek().span));
+                }
+                self.bump(); // (
+                let (allow_name, allow_span) = self.parse_ident()?;
+                match allow_name.as_str() {
+                    "shadow" => {}
+                    _ => return Err(Diagnostic::new(
+                        format!("`#allow({})` is not a recognized suppressor; \
+                                 valid value: `shadow` (suppresses W_PRELUDE_SHADOW, D174)",
+                                 allow_name),
+                        allow_span)),
+                }
+                if !matches!(self.peek().kind, TokenKind::RParen) {
+                    return Err(Diagnostic::new(
+                        "expected `)` closing `#allow(...)`",
+                        self.peek().span));
+                }
+                self.bump(); // )
+                self.expect_newline_or_eof()?;
+                let attr_end = self.tokens[self.pos.saturating_sub(1)].span;
+                module_attrs.push(ModuleAttr {
+                    kind: ModuleAttrKind::AllowPreludeShadow,  // reuse existing variant
                     effects: Vec::new(),
                     span: attr_start.merge(attr_end),
                 });

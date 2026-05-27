@@ -1,0 +1,14 @@
+// EXPECT_COMPILE_ERROR undefined identifier `assert`
+//
+// Plan 107 Ф.7 — peer in folder where _module.nv gives #no_prelude.
+// assert (runtime fn) must be invisible — inherited #no_prelude from _module.nv.
+//
+// Note: Option/Result remain in type-checker builtins regardless of prelude
+// (D26: 62.A.bis Ф.4 deferred). Runtime fns (assert/panic) only come through
+// prelude auto-import. So `assert` is the correct marker for suppressed prelude.
+
+module plan107.folder_no_prelude_inherited
+
+test "assert not visible — inherited #no_prelude from _module.nv" {
+    assert(true)    // assert unavailable without prelude auto-import
+}
