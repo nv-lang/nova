@@ -1474,7 +1474,58 @@ export external fn Lazy[T] @is_forced() -> bool
 // ============================================================================
 
 // === PLAN-103.4 BARRIER (Agent B) ===
-// (declarations…)
+
+/// Reusable N-party rendezvous (CyclicBarrier-style).
+///
+/// Cycles automatically: after `parties` fibers call `wait()`, the barrier
+/// resets for the next round. Generation counter distinguishes rounds.
+///
+/// # Use cases
+/// - Epoch-based parallel computation (all workers complete phase N before N+1)
+/// - Synchronized startup (all workers initialized before first task)
+///
+/// # Broken state
+/// A barrier becomes broken when `wait_for()` times out or `reset()` is called
+/// while parties are waiting. Broken barrier → `wait()` panics immediately.
+/// Call `reset()` to repair a broken barrier.
+///
+/// # Memory model
+/// Allocated uncollectable (GC-race fix Plan 103.3 M6).
+#stable(since = "0.1")
+export external fn Barrier.new(parties int) -> Self
+
+/// Park until all `parties` fibers reach the barrier. Returns arrival index
+/// (0..parties-1). The last-arrival party gets index `parties-1`.
+///
+/// Panics if the barrier is currently broken. Use `reset()` to repair.
+#stable(since = "0.1")
+export external fn Barrier mut @wait() -> int
+
+/// Like `wait()` but the last-arrival fiber executes `action` before waking
+/// other waiters. Useful for cross-epoch state reset.
+///
+/// `action` runs after the barrier state is updated but before other fibers
+/// are woken — they see its effects when they resume.
+#stable(since = "0.1")
+export external fn Barrier mut @wait_with_action(action fn() -> ()) -> int
+
+/// Like `wait()` but returns `None` if the timeout expires before all parties
+/// arrive. A timeout breaks the barrier — all current waiters are woken with
+/// broken state; future `wait()` calls panic until `reset()`.
+#stable(since = "0.1")
+export external fn Barrier mut @wait_for(timeout Duration) -> Option[int]
+
+/// Returns `true` if the barrier is currently broken.
+/// Best-effort (no mutex); state may change concurrently.
+#stable(since = "0.1")
+export external fn Barrier @is_broken() -> bool
+
+/// Force-reset the barrier. All current waiters are woken with broken state
+/// (their `wait()` calls panic). Resets `arrived_count=0`, increments
+/// generation, clears `broken` flag — ready for fresh use.
+#stable(since = "0.1")
+export external fn Barrier mut @reset()
+
 // === END PLAN-103.4 BARRIER ===
 
 // === PLAN-103.4 CONDVAR (Agent D) ===

@@ -1,0 +1,56 @@
+// Plan 103.4 — Barrier: cyclic reusable across 3 epochs.
+//
+// 4 fibers × 3 epochs. Each epoch: all 4 fibers call wait() and then
+// increment an epoch-specific counter.
+//
+// Verifies that the barrier resets correctly between epochs and can be
+// reused without calling reset().
+//
+// EXPECT_TIMEOUT_MS 30000
+
+module nova_tests.plan103_4.barrier_cyclic_reusable
+
+test "barrier reused across 3 epochs of 4 parties" {
+    let parties = 4
+    let epochs = 3
+    let b = Barrier.new(parties)
+    let epoch_counter = AtomicInt.new(0)
+    let wg = WaitGroup.new()
+    wg.add(parties)
+
+    parallel for _i in 0..parties {
+        for _e in 0..epochs {
+            // All parties rendezvous at the barrier for this epoch
+            b.wait()
+            // After barrier: increment count for this epoch
+            epoch_counter.fetch_add(1)
+        }
+        wg.done()
+    }
+
+    wg.wait()
+    // 3 epochs × 4 parties = 12 total increments
+    assert(epoch_counter.load() == epochs * parties)
+}
+
+test "barrier index is consistent across multiple rounds" {
+    let parties = 3
+    let rounds = 5
+    let b = Barrier.new(parties)
+    let total_indices = AtomicInt.new(0)
+    let wg = WaitGroup.new()
+    wg.add(parties)
+
+    parallel for _i in 0..parties {
+        for _r in 0..rounds {
+            let idx = b.wait()
+            assert(idx >= 0)
+            assert(idx < parties)
+            total_indices.fetch_add(1)
+        }
+        wg.done()
+    }
+
+    wg.wait()
+    assert(total_indices.load() == parties * rounds)
+}

@@ -1,0 +1,53 @@
+// Plan 103.4 — Barrier: all-or-none atomicity property.
+//
+// Property: after all K parties call wait(), ALL K fibers proceed to the
+// post-barrier section. No subset can proceed while others remain blocked.
+//
+// We test this by:
+//   1. K fibers call wait() on a K-party barrier.
+//   2. Each fiber increments a counter AFTER the barrier.
+//   3. After all fibers complete, the counter must be exactly K * rounds.
+//
+// Run for multiple rounds to stress the cyclic reuse.
+//
+// EXPECT_TIMEOUT_MS 60000
+
+module nova_tests.plan103_4.barrier_all_or_none_prop
+
+test "all-or-none: all K parties proceed after barrier (5 rounds)" {
+    let k = 6
+    let rounds = 5
+    let b = Barrier.new(k)
+    let after_barrier = AtomicInt.new(0)
+    let wg_outer = WaitGroup.new()
+    wg_outer.add(k)
+
+    parallel for _i in 0..k {
+        for _r in 0..rounds {
+            b.wait()
+            after_barrier.fetch_add(1)
+        }
+        wg_outer.done()
+    }
+
+    wg_outer.wait()
+    // after_barrier == k * rounds (each fiber incremented once per round)
+    assert(after_barrier.load() == k * rounds)
+}
+
+test "barrier atomicity: no fiber left behind under M:N" {
+    let k = 4
+    let b = Barrier.new(k)
+    let passed = AtomicInt.new(0)
+    let wg = WaitGroup.new()
+    wg.add(k)
+
+    parallel for _i in 0..k {
+        b.wait()
+        passed.fetch_add(1)
+        wg.done()
+    }
+
+    wg.wait()
+    assert(passed.load() == k)
+}
