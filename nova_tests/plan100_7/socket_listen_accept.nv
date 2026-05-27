@@ -1,0 +1,33 @@
+// Plan 100.7 (D165) pilot TcpSocket — listen / accept / graceful close.
+
+module nova_tests.plan100_7.socket_listen_accept
+
+type IoErr { msg str }
+
+external type ServerSocket consume
+external type ClientSocket consume
+
+external fn nova_tcp_listen(port int) -> Result[ServerSocket, IoErr] needs Net
+// D157: view is default — no `view` qualifier on params
+external fn nova_tcp_accept(srv ServerSocket) -> Result[ClientSocket, IoErr] needs Net
+external fn nova_tcp_close_server(consume s ServerSocket) -> () needs Net
+external fn nova_tcp_close_client(consume c ClientSocket) -> () needs Net
+
+fn ServerSocket consume @close() -> () { nova_tcp_close_server(@) }
+fn ClientSocket consume @graceful_close() -> () { nova_tcp_close_client(@) }
+
+fn handle_one(srv ServerSocket) Fail[IoErr] -> () {
+    consume client ClientSocket = nova_tcp_accept(srv)?  // explicit type annotation (D165)
+    defer { client.graceful_close() }                    // async cleanup (D159)
+    // serve client...
+}
+
+fn serve(port int) Fail[IoErr] -> () {
+    consume srv ServerSocket = nova_tcp_listen(port)?    // explicit type annotation (D165)
+    defer { srv.close() }
+    handle_one(srv)?
+}
+
+test "TcpSocket pilot lifecycle" {
+    serve(8080)
+}

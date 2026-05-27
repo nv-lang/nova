@@ -9,15 +9,15 @@ external type File consume
 
 external fn nova_file_open(path str) -> Result[File, IoErr] needs Fs
 external fn nova_file_close(consume f File) -> () needs Fs
-external fn nova_file_read_all(view f File) -> Result[str, IoErr] needs Fs
+// D157: view is default — no `view` qualifier needed on params
+external fn nova_file_read_all(f File) -> Result[str, IoErr] needs Fs
 
 fn File consume @close() -> () { nova_file_close(@) }
 
-fn read_config(path str) Fail[IoErr] Fs -> str {
-    let r = nova_file_open(path)?
-    consume f = r
+fn read_config(path str) Fail[IoErr] -> str {
+    consume f File = nova_file_open(path)?       // explicit type annotation (D165)
     defer { f.close() }                          // covered (D158 + D162)
-    let data = nova_file_read_all(f)?       // view-borrow для чтения (D157)
+    let data = nova_file_read_all(f)?
     return data
 }
 
