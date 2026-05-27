@@ -1,0 +1,136 @@
+// Plan 103.8 Ð²Ð‚â€ Cross-cutting stress: 16 fibers Ð“â€” mixed sync primitives.
+//
+// 4 fibers: AtomicI64.fetch_add competing
+// 4 fibers: Mutex.with_lock critical sections
+// 4 fibers: Semaphore.with_permit (Semaphore.new(2))
+// 4 fibers: Barrier.wait per-iter
+// M:N(4 workers). Property: no deadlock, no torn state,
+// final atomic counter exact, semaphore never overcommitted.
+//
+// EXPECT_TIMEOUT_MS 300000
+
+module nova_tests.plan103_8.stress_mixed_sync_mn
+
+test "stress: 16-fiber mixed sync Ð²Ð‚â€ AtomicI64 + Mutex + Semaphore + Barrier, M:N(4)" {
+    let n_iters   = 200
+    let sem       = Semaphore.new(2)
+    let mu        = Mutex.new()
+    let barrier   = Barrier.new(4)
+
+    // Counters we verify at end
+    let atomic_count  = AtomicI64.new(0)  // incremented by atomic-fibers
+    let mutex_count   = AtomicI64.new(0)  // incremented under mutex
+    let sem_count     = AtomicI64.new(0)  // incremented inside semaphore permit
+    let sem_violation = AtomicI64.new(0)  // non-zero if >2 simultaneous
+    let in_permit     = AtomicI64.new(0)  // current in-permit count
+    let barrier_count = AtomicI64.new(0)  // barrier fibers complete
+
+    let wg = WaitGroup.new()
+    wg.add(16)
+
+    supervised {
+        // Group A: 4 fibers Ð²Ð‚â€ pure AtomicI64 fetch_add
+        for _i in 0..4 {
+            spawn {
+                for _j in 0..n_iters {
+                    atomic_count.fetch_add(1)
+                }
+                wg.done()
+            }
+        }
+
+        // Group B: 4 fibers Ð²Ð‚â€ Mutex lock/unlock critical section
+        for _i in 0..4 {
+            spawn {
+                for _j in 0..n_iters {
+                    mu.lock()
+                    let v = mutex_count.load()
+                    mutex_count.store(v + 1)
+                    mu.unlock()
+                }
+                wg.done()
+            }
+        }
+
+        // Group C: 4 fibers Ð²Ð‚â€ Semaphore acquire/release, verify bounded concurrency
+        for _i in 0..4 {
+            spawn {
+                for _j in 0..n_iters {
+                    sem.acquire()
+                    let curr = in_permit.fetch_add(1) + 1
+                    if curr > 2 {
+                        sem_violation.fetch_add(1)
+                    }
+                    sem_count.fetch_add(1)
+                    in_permit.fetch_add(-1)
+                    sem.release()
+                }
+                wg.done()
+            }
+        }
+
+        // Group D: 4 fibers Ð²Ð‚â€ Barrier.wait per-iter
+        for _i in 0..4 {
+            spawn {
+                for _j in 0..n_iters {
+                    barrier.wait()
+                }
+                barrier_count.fetch_add(1)
+                wg.done()
+            }
+        }
+
+        wg.wait()
+    }
+
+    // Verify: all counters exact
+    assert(atomic_count.load() == 4 * n_iters,
+        "atomic_count must equal 4 * n_iters (800)")
+    assert(mutex_count.load() == 4 * n_iters,
+        "mutex_count must equal 4 * n_iters (800)")
+    assert(sem_count.load() == 4 * n_iters,
+        "sem_count must equal 4 * n_iters (800)")
+    assert(sem_violation.load() == 0,
+        "semaphore must never allow > 2 concurrent permits")
+    assert(barrier_count.load() == 4,
+        "all 4 barrier-group fibers must complete")
+}
+
+test "stress: mixed sync Ð²Ð‚â€ AtomicI64 + Mutex increments agree on total" {
+    // 8 fibers each increment via either AtomicI64 or under Mutex-protected
+    // non-atomic counter. Final sum from both must be equal.
+    let n_each  = 500
+    let mu      = Mutex.new()
+    let atomic  = AtomicI64.new(0)
+    let counter = AtomicI64.new(0)  // updated under mu (acts as non-atomic)
+    let wg      = WaitGroup.new()
+    wg.add(8)
+
+    supervised {
+        for _i in 0..4 {
+            spawn {
+                for _j in 0..n_each {
+                    atomic.fetch_add(1)
+                }
+                wg.done()
+            }
+        }
+        for _i in 0..4 {
+            spawn {
+                for _j in 0..n_each {
+                    mu.lock()
+                    let v = counter.load()
+                    counter.store(v + 1)
+                    mu.unlock()
+                }
+                wg.done()
+            }
+        }
+
+        wg.wait()
+    }
+
+    assert(atomic.load() == 4 * n_each)
+    assert(counter.load() == 4 * n_each)
+    assert(atomic.load() == counter.load())
+}

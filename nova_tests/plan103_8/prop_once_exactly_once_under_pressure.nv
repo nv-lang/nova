@@ -1,0 +1,101 @@
+// Plan 103.8 Ð²Ð‚â€ Property: Once exactly-once under 64-fiber pressure.
+//
+// 64 fibers compete on:
+//   - Once.call_once (3 independent Once objects)
+//   - OnceCell.get_or_init (3 independent OnceCells)
+//   - Lazy.force() (3 independent Lazys)
+// Each init counter must == 1 after all fibers complete.
+//
+// Also verifies: once-completed state is stable Ð²Ð‚â€ no re-initialization.
+//
+// EXPECT_TIMEOUT_MS 300000
+
+module nova_tests.plan103_8.prop_once_exactly_once_under_pressure
+
+test "prop once exactly-once: 64 fibers Ð“â€” 3 Once objects Ð²Ð‚â€ each init == 1" {
+    let once1  = Once.new(); let cnt1 = AtomicI64.new(0)
+    let once2  = Once.new(); let cnt2 = AtomicI64.new(0)
+    let once3  = Once.new(); let cnt3 = AtomicI64.new(0)
+
+    parallel for _i in 0..64 {
+        once1.call_once() { cnt1.fetch_add(1) }
+        once2.call_once() { cnt2.fetch_add(1) }
+        once3.call_once() { cnt3.fetch_add(1) }
+    }
+
+    assert(cnt1.load() == 1, "once1 init must run exactly once under 64-fiber pressure")
+    assert(cnt2.load() == 1, "once2 init must run exactly once under 64-fiber pressure")
+    assert(cnt3.load() == 1, "once3 init must run exactly once under 64-fiber pressure")
+    assert(once1.is_completed())
+    assert(once2.is_completed())
+    assert(once3.is_completed())
+}
+
+test "prop once exactly-once: 64 fibers Ð“â€” 3 OnceCells Ð²Ð‚â€ each init == 1, value stable" {
+    let cell1   = OnceCell[int].new(); let cinit1 = AtomicI64.new(0)
+    let cell2   = OnceCell[int].new(); let cinit2 = AtomicI64.new(0)
+    let cell3   = OnceCell[int].new(); let cinit3 = AtomicI64.new(0)
+    let wrong   = AtomicI64.new(0)
+
+    parallel for _i in 0..64 {
+        let v1 = cell1.get_or_init() { cinit1.fetch_add(1); 111 }
+        let v2 = cell2.get_or_init() { cinit2.fetch_add(1); 222 }
+        let v3 = cell3.get_or_init() { cinit3.fetch_add(1); 333 }
+        if v1 != 111 || v2 != 222 || v3 != 333 {
+            wrong.fetch_add(1)
+        }
+    }
+
+    assert(cinit1.load() == 1, "cell1 init must run exactly once")
+    assert(cinit2.load() == 1, "cell2 init must run exactly once")
+    assert(cinit3.load() == 1, "cell3 init must run exactly once")
+    assert(wrong.load() == 0, "all fibers must observe correct cell values")
+}
+
+test "prop once exactly-once: 64 fibers Ð“â€” 3 Lazy objects Ð²Ð‚â€ each init == 1, value stable" {
+    let linit1 = AtomicI64.new(0)
+    let linit2 = AtomicI64.new(0)
+    let linit3 = AtomicI64.new(0)
+    let lazy1  = Lazy[int].new() { linit1.fetch_add(1); 1001 }
+    let lazy2  = Lazy[int].new() { linit2.fetch_add(1); 2002 }
+    let lazy3  = Lazy[int].new() { linit3.fetch_add(1); 3003 }
+    let wrong  = AtomicI64.new(0)
+
+    parallel for _i in 0..64 {
+        let v1 = lazy1.force()
+        let v2 = lazy2.force()
+        let v3 = lazy3.force()
+        if v1 != 1001 || v2 != 2002 || v3 != 3003 {
+            wrong.fetch_add(1)
+        }
+    }
+
+    assert(linit1.load() == 1, "lazy1 init must run exactly once")
+    assert(linit2.load() == 1, "lazy2 init must run exactly once")
+    assert(linit3.load() == 1, "lazy3 init must run exactly once")
+    assert(wrong.load() == 0, "all fibers must observe correct lazy values")
+    assert(lazy1.is_forced())
+    assert(lazy2.is_forced())
+    assert(lazy3.is_forced())
+}
+
+test "prop once: state is Done after call_once completes" {
+    let once  = Once.new()
+    let inits = AtomicI64.new(0)
+
+    once.call_once() { inits.fetch_add(1) }
+    assert(once.is_completed())
+
+    // 100 more calls: none should run init again
+    for _i in 0..100 {
+        once.call_once() { inits.fetch_add(1) }
+    }
+
+    assert(inits.load() == 1, "state stable: once completed stays completed, init runs 1 time")
+    // Check state via match (enum comparison requires match)
+    let state_ok = match once.state() {
+        OnceState.Done => true,
+        _ => false,
+    }
+    assert(state_ok, "once state must be Done after completion")
+}
