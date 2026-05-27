@@ -26845,7 +26845,8 @@ emission в emit_c.rs).
   (Mutex/RwLock/ReentrantMutex в одном блоке).
 
 - **Plan 103.6: fence() as trailing block expression** — ence(SeqCst) used as
-  trailing expr in ealtime { fence(SeqCst) } generates (nova_int)(nova_fn_fence(...)) 
+  trailing expr in 
+ealtime { fence(SeqCst) } generates (nova_int)(nova_fn_fence(...)) 
   in C, which is invalid because 
 ova_fn_fence returns oid. Root cause: 
   infer_expr_c_type falls back to 
@@ -26908,3 +26909,32 @@ ova_int for ence() calls not found in
 
 - **Extensibility:** `#allow(shadow)` is `#allow(X)` form — extensible to
   other suppressors (future lints) without new syntax.
+
+
+## Plan 83.11 — Centralized I/O driver (architectural pivot, 2026-05-27)
+
+**Path A** из Plan 83.10.5 final report. Архитектурный pivot вместо continued
+Tactical patching. Port Tokio 1.x runtime design (centralized driver thread
+с одним UV loop; workers без UV loops). Maximize Tokio reuse — port verbatim
+TimerEntry state machine, Notify register-then-recheck, task::state CAS.
+
+**Markers TO-BE-CLOSED post-implementation:**
+- `[M-83.10.4-iso-cancel-startup-race]` — distributed-state race в cancel
+  dispatch. Closes structurally (single driver mutator I/O state).
+- `[M-83.10.4-sleep-bench-scale-cliff]` — 10k sleeps cliff. Driver-side
+  centralized timer scheduling eliminates per-worker contention.
+- `[M-83.10.1-armed-cancel-timer-hang]` — verify closed post-Architectural
+  (was closed Plan 83.10.2, должен остаться closed).
+- `[M-83.10.1-per-fiber-handler-tls-race]` — verify closed (was closed
+  Plan 83.10.4 Ф.3, орthогонально архитектуре, должен остаться closed).
+- `[M-83.10.4-env-parser-30-line-limit]` — unrelated, can be fixed in same
+  closure phase.
+
+**Plan 83.10.5 status:** SUPERSEDED. Tactical Ф.B inadequate (55% PASS), branch
+preserved для diagnostic counters reuse (Ф.A.1 work valid as instrumentation),
+но НЕ будет merged как production fix.
+
+**Anti-pattern documented:** continued Tactical patching M:N runtime когда
+5 планов в той же зоне = architectural signal, не цепочка случайных багов.
+Tokio переписали свой runtime ровно по этой причине. Мы не должны повторять
+3 годов patchинга — берём их урок сразу.

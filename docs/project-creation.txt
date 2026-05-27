@@ -23268,3 +23268,39 @@ Commits:
   - fix(plan103.7 Ф.7): 61087df188f — D173 Channel anti-patterns capability-split
   - docs(plan103.7 Ф.8): 313b246f1e4 — §1531+§641 rewrite Mutex/Atomic stdlib references
   - docs(plan103.7 Ф.9): 3ea5e197734 — Q9/Q12.4/Q-memory-model closed by D167-D173
+
+=== Plan 83.11: Centralized I/O driver — architectural pivot (2026-05-27) ===
+
+Architectural response для накопленных 5 М:N race планов (83.10.1, .2, .3, .4, .5).
+Каждый из них fix'ил реальный bug в той же зоне — cross-thread visibility
+distributed I/O state across N per-worker UV loops. Это не цепочка случайных
+багов, это симптомы архитектурного выбора.
+
+DECISION: Path A из 83.10.5 final report — port Tokio 1.x runtime architecture
+(centralized driver thread с одним UV loop; workers без UV loops). Tokio
+переписали свой runtime ровно по этой причине (1.0 release ~2020). Мы можем
+взять их урок без повторения 3 лет patching'а.
+
+Design plan: docs/plans/83.11-centralized-io-driver.md (601 lines, §0-§9).
+
+Key sections:
+- §3.0 Tokio reuse map: explicit file-by-file mapping. Anti-pattern: «port
+  verbatim где можем, reinvent только с обоснованием». TimerEntry state machine,
+  Notify register-then-recheck pattern, task::state CAS, Parker/Unparker idle wake.
+- §1.4 honest comparison: Go runtime тоже distributed → платят cost engineering
+  team'ом (десятки timer race issues over decade). Nova команда 1 человек —
+  невозможно поддерживать distributed runtime качества Go.
+- §3.2: 9 phases (~9-15 dev-day):
+  - Ф.0/2/7/8: Sonnet
+  - Ф.1/3/6/9 design + core migration: Opus + Thinking ON (mandatory)
+  - Ф.4/5 secondary primitives migration: Sonnet + Thinking ON
+- §8 tests: 20 positive (P1-P20) + 12 negative (N1-N12) + 8 bench (B1-B8)
+- §4 acceptance: 0 new М:N race plans within 6 months post-merge
+
+SUPERSEDES Plan 83.10.5 PARTIAL — Tactical Ф.B inadequate, replaced by this
+architectural pivot. Plan 83.10.5 branch (plan-83.10.5-iso-cancel-fix) preserved
+for diagnostic counters reuse, но НЕ будет merged — Architectural fix делает
+её Tactical content obsolete.
+
+Status: 📋 proposed. Next: Ф.1 design phase (Opus + Thinking ON, ~1 day).
+
