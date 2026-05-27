@@ -13315,3 +13315,40 @@ emission в emit_c.rs).
   затем запустить все вместе.
 
 - **Tests: 4/4 PASS.** Commit: cb146ba4be2. Branch: plan-103.4-cdl (NOT merged).
+
+## Plan 103.4 — Final merge (2026-05-27)
+
+- **`condvar_notify_one` wg.wait() deadlock** — Agent D использовал
+  `wg.wait()` для cleanup join, но забыл что Agent D же сам обнаружил
+  паттерн в `condvar_notify_all`: внутри `supervised{}`, `WaitGroup.wait()`
+  starves workers (nova_supervised_run_impl tight-spin'ит когда parked==0
+  && alive>0). Фикс: busy-poll `while n_woken.load() != 3 { Time.sleep(1) }`
+  — тот же паттерн что и в notify_all. Минусом — нужно отдельно знать count
+  в обоих местах.
+
+- **EXPECT_TIMEOUT_MS cold-cache compile bumps** — под `nova test --jobs 16`
+  тесты с свежеизменённым binary компилируются под нагрузкой; компиляция
+  бинарника включается в EXPECT_TIMEOUT_MS. 8 тестов получили bump:
+  barrier_cyclic_reusable, barrier_wait_with_action, condvar_no_lost_wakeup_prop,
+  condvar_notify_one, condvar_producer_consumer, countdown_count_down_n,
+  countdown_one_shot_signal, semaphore_try_acquire_for_timeout. После bump:
+  25/25 PASS под параллельной нагрузкой.
+
+- **Parallel-agent split overhead** — pre-flight markers commit (chore commit
+  с пустыми marker блоками во всех shared файлах) обязателен ДО старта
+  sub-agents. Иначе их `#include`-uncomments не будут на одной line position
+  → text-level conflicts. С markers — git auto-merges включения как «оба
+  uncommented» (deterministic alphabetical resolution требует ручного fix
+  в merge).
+
+- **Pre-flight worktree libuv mistake** — `cp -r src dst` если dst уже
+  существует создаёт `dst/src` nested. В nova-p103-coord первый раз создал
+  `libuv/libuv/` (worktree уже содержал libuv через submodule). Фикс:
+  `rm -rf libuv` перед `cp -r main/libuv ./libuv`. Documented в
+  [project-worktree-nova-test-setup memory].
+
+- **D170 spec scope** — coordination primitives (Semaphore/Barrier/CountDownLatch/
+  Condvar) в одном D-блоке. Альтернатива (4 отдельных D-блока) отвергнута:
+  они тесно связаны (M10/M11/M15 design decisions общие), API surface
+  единый, тестовое покрытие в одной директории. Параллель с D169 family
+  (Mutex/RwLock/ReentrantMutex в одном блоке).

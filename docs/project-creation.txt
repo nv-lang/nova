@@ -22914,3 +22914,63 @@ Key discoveries:
 Branch: plan-103.4-cdl
 Commit: cb146ba4be2
 Status: NOT merged (ждёт агентов A + B)
+
+===============================================================================
+2026-05-27  Plan 103.4 — FINAL MERGE (all 4 sub-agents)
+===============================================================================
+
+Worktree: nova-p103-coord
+Branch:   plan-103.4
+Result:   25/25 plan103_4 PASS
+
+Parallel-agent split: 4 Sonnet 4.6 sub-agents (A=Semaphore, B=Barrier,
+C=CountDownLatch, D=Condvar) worked в isolated worktrees, base
+395d1dd0933 (parallel-merge markers commit). Final merge by Opus 4.7
+agent в worktree nova-p103-coord.
+
+Merge sequence (alphabetical):
+  sem -> bar -> cdl -> cv
+
+Conflicts resolved (deterministic — each agent uncommented own AGENT-X
+marker line):
+  - sync_primitives.h #include block — all 4 #include lines kept
+  - emit_c.rs PREDECLARED_TYPES — Barrier/Condvar/CountDownLatch/Semaphore + WaitResult
+  - emit_c.rs REALTIME_BLOCKING — все 4 примитива × park-ing methods
+  - sync.nv — 4 declaration blocks alphabetical
+  - docs/project-creation.txt + docs/simplifications.md — concat of 4 sections
+
+Test-stability fixes applied post-merge (Opus 4.7):
+  - condvar_notify_one: wg.wait() -> busy-poll (Agent D forgot pattern
+    from notify_all). Inside supervised{}, wg.wait() starves workers
+    when parked==0 && alive>0.
+  - 8 tests EXPECT_TIMEOUT_MS bumped (cold-cache compile под jobs=16):
+    barrier_cyclic_reusable 30000->90000, barrier_wait_with_action
+    30000->90000, condvar_no_lost_wakeup_prop 60000->120000,
+    condvar_notify_one 15000->60000, condvar_producer_consumer
+    30000->90000, countdown_count_down_n 15000->60000,
+    countdown_one_shot_signal 15000->60000,
+    semaphore_try_acquire_for_timeout 10000->60000.
+
+Spec (Ф.5):
+  - D170 draft в spec/decisions/06-concurrency.md (216 lines).
+    TOC updated. Cross-refs к D168/D169/Plan 22/47/103.6/103.7/103.9.
+    Final closure -> Plan 103.7.
+
+Sub-agent commits in main:
+  - sem: 07cff1c2381 (impl) + 7e70d27da42 (fix with_permit + AUTOARM=0)
+  - bar: 03cd41b80bb (impl) + ebb36d54f37 (docs)
+  - cdl: cb146ba4be2 (impl)
+  - cv:  45a701326c8 (impl)
+
+Final merge commits:
+  - Merge plan-103.4-sem (no-ff)
+  - Merge plan-103.4-bar (no-ff)
+  - Merge plan-103.4-cdl (no-ff)
+  - Merge plan-103.4-cv  (no-ff)
+  - fix(plan103.4 tests): cold-cache timeout bumps + wg.wait -> busy-poll
+  - spec(plan103.4 Ф.5): D170 draft
+  - docs(plan103.4 Ф.7): close
+
+Plan 103.4 ✅ ЗАКРЫТ. Разблокирует Plan 103.6 (realtime/blocking
+type-checker enforcement, M12) и далее цепочку 103.7 (spec D-blocks
+final) → 103.8 (V1 close) Plan 103 master.
