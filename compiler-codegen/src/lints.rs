@@ -838,9 +838,8 @@ pub fn lint_prelude_shadow(module: &Module) -> Vec<LintWarning> {
                      declaration auto-imported from std.prelude (D29). \
                      User declaration wins — qualify as \
                      `std.prelude.<sub>.{}` to reach the prelude version. \
-                     Suppress: add `allow_prelude_shadow` clause to module \
-                     declaration, or switch to `no_prelude` / \
-                     `partial_prelude(...)` (Plan 62.F).",
+                     Suppress: add `#allow(shadow)` before `module` declaration \
+                     (D174), or switch to `#no_prelude` / `#prelude(...)` (Plan 107).",
                     name, name
                 ),
                 span,

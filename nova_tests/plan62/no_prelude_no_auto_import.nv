@@ -1,8 +1,8 @@
 // EXPECT_COMPILE_ERROR undefined identifier `assert`
 //
-// Plan 62.F Part 2 — `no_prelude` enforcement negative test.
+// Plan 62.F Part 2 — `#no_prelude` enforcement negative test.
 //
-// Verifies что `module X no_prelude` ДЕЙСТВИТЕЛЬНО подавляет auto-import
+// Verifies что `#no_prelude` ДЕЙСТВИТЕЛЬНО подавляет auto-import
 // `std.prelude`. До Plan 62.F эта декларация игнорировалась parser'ом
 // (no_prelude был silent no-op): runtime functions всё равно auto-
 // import'ились через R27 — реальный bug.
@@ -17,8 +17,12 @@
 // panic/exit/debug_assert) НЕ в этом HashSet'е — они приходят ТОЛЬКО
 // через prelude facade re-export. Поэтому `assert` — точный маркер
 // что auto-import suppressed.
+//
+// D174 (Plan 107): syntax migrated from inline `module X no_prelude`
+// to `#no_prelude` before `module` declaration.
 
-module plan62.no_prelude_no_auto_import no_prelude
+#no_prelude
+module plan62.no_prelude_no_auto_import
 
 fn dummy() -> int => 1
 

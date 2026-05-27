@@ -1,6 +1,6 @@
 // partial_prelude_core_only.nv — Plan 62.F Part 3 positive test.
 //
-// Verifies что `partial_prelude(core, runtime)` auto-import'ит ТОЛЬКО
+// Verifies что `#prelude(core, runtime)` auto-import'ит ТОЛЬКО
 // перечисленные sub-modules — Option/Result + assert доступны без
 // extra imports. Errors / collections / protocols / effects — НЕ
 // auto-import'ятся (нужен explicit import при использовании).
@@ -8,8 +8,12 @@
 // Use-case: bootstrap уровни, prelude development, тонкая настройка
 // transitive deps. Negative coverage (panic в core-only) — отдельным
 // файлом partial_prelude_no_panic_in_core.nv.
+//
+// D174 (Plan 107): syntax migrated from inline `module X partial_prelude(...)`
+// to `#prelude(...)` before `module` declaration.
 
-module plan62.partial_prelude_core_only partial_prelude(core, runtime)
+#prelude(core, runtime)
+module plan62.partial_prelude_core_only
 
 // core provides Option + Some + None + Ok + Err + Ordering.
 // runtime provides assert (+ panic / exit / debug_assert).

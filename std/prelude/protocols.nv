@@ -6,7 +6,7 @@
 //   1) `nova doc` показывал canonical API в одном месте (AI-readable),
 //   2) пользователь мог shadow'ить эти names в своём коде с warning'ом
 //      (Plan 62.F W_PRELUDE_SHADOW),
-//   3) splittable prelude работал (`partial_prelude(protocols)` opt-in
+//   3) splittable prelude работал (`#prelude(protocols)` opt-in
 //      только protocols без core/runtime/errors/collections).
 //
 // Архитектурные правила (Plan 62 §«Стратификация»):
