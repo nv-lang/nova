@@ -2371,7 +2371,7 @@ fiber'ов. Любая блокирующая операция в runtime'е (Ti
 socket-read, file-read) **обязана** использовать этот API. Это
 contract на котором держится unified event-loop driven scheduling
 (Plan 22 Ф.4+), Channel D91 (Plan 21), и любые будущие IO operations
-(Plan 44+ std.net/std.fs).
+([Plan 83.12](../../docs/plans/83.12-async-net-stdlib.md) std/net ✅, std.fs Plan 18+).
 
 ### API surface
 
@@ -2504,7 +2504,7 @@ if (_nova_active_scope && _nova_active_scope->cancel_requested) {
 Воспроизводится для:
 - **Plan 22 Ф.4**: `Time.sleep` → `uv_timer_t` + `uv_timer_stop` stop_cb.
 - **Plan 21 Ф.1+**: `Channel.recv`/`send` → waitlist node + waitlist-remove stop_cb.
-- **Plan 44+ `std.net`**: `TcpStream.read` → `uv_read_start` + `uv_read_stop` stop_cb.
+- **Plan 83.12 `std/net`** ✅: `TcpStream.read_bytes` → `uv_read_start` + wake из `_tcp_read_cb`. See [D173](08-runtime.md#d173-stdnet--async-tcpudp-socket-stdlib-via-libuv).
 - **Plan 44+ `std.fs`**: `File.read` → `uv_fs_t` + `uv_cancel` stop_cb.
 
 ### Почему
@@ -2564,7 +2564,7 @@ unifies сейчас раздроблённые blocking-mechanism'ы.
   Это убирает ms-busy close-wait loop из sleep'а (R7 «no busy-loops
   anywhere» полностью enforced). Channel waitlist (Plan 21) — SYNC.
 - **Plan 21:** Channel.recv/send переходят на D93 (waitlist + SYNC stop_cb).
-- **Plan 44+ (std.net, std.fs):** socket-read, file-read — ASYNC stop_cb.
+- **Plan 83.12 (std/net)** ✅: socket-read/write/connect/accept — ASYNC stop_cb; std.fs — Plan 18+.
 - **Plan 44 (M:N):** park/wake становится cross-worker. Wake может
   идти из worker B в fiber на worker A через `uv_async_t` queue.
 
@@ -2580,7 +2580,8 @@ unifies сейчас раздроблённые blocking-mechanism'ы.
   (ждёт backend wake).
 - ✅ **Time.sleep** через D93 (Ф.4 register/park; Ф.8 ASYNC close_cb wake).
 - 🟡 **Channel waitlist** (Plan 21) — SYNC stop_cb, ждёт реализации.
-- 🟡 **std.net/std.fs IO** (Plan 44+) — ASYNC stop_cb, ждёт реализации.
+- ✅ **std/net IO** (Plan 83.12) — ASYNC stop_cb, реализован [D173](08-runtime.md#d173-stdnet--async-tcpudp-socket-stdlib-via-libuv).
+- 🟡 **std/fs IO** (Plan 18+) — ASYNC stop_cb, ждёт реализации.
 
 ---
 
@@ -2677,7 +2678,7 @@ int main(void) {
   использовать park/wake без scope).
 - `detach` на top-level → inline execution (SyncDetach), не настоящий
   fire-and-forget.
-- Будущие IO operations (Plan 44+ `std.net`) на top-level — не
+- IO operations (Plan 83.12 `std/net` ✅, Plan 18+ `std/fs`) на top-level — не
   работают через park/wake API, требовали бы special-case.
 
 D92 устраняет эти edge cases одним решением: main всегда внутри scope.
@@ -2693,8 +2694,8 @@ D-номера для discoverability.
 
 **(b) Не оборачивать main в scope, оставить top-level kernel-blocking.**
 Это сохранило бы простоту, но рассыпает Plan 22 Ф.4 цель — единый
-event-loop driven scheduler. Под Plan 18 (std.net) все IO operations
-требовали бы special-case для top-level. Нежелательно.
+event-loop driven scheduler. Под Plan 83.12 (`std/net` ✅) и Plan 18 (std.fs+)
+все IO operations требовали бы special-case для top-level. Нежелательно.
 
 **(c) Implicit scope с full `nova_supervised_run` (re-throw fiber-errors).**
 Re-throw на main-flow после main-body завершён = abort. Detach-fiber

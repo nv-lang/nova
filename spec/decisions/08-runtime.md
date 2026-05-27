@@ -3296,3 +3296,162 @@ memcmp-класс (byte-wise, word/SIMD-скорость). **Равенство 
 - [Plan 90](../../docs/plans/90-memory-access-primitives.md) — реализация.
 - Ориентиры: Go `copy()`/`bytes`, Rust `slice::copy_*`/`[u8]::cmp`,
   TS typed arrays.
+
+---
+
+## D173. `std/net` — Async TCP/UDP socket stdlib via libuv
+
+> **Status:** ✅ implemented (Plan 83.12, 2026-05-27). Merge `05f7e77592c`.
+
+### Что
+
+Nova предоставляет **async-transparent** сетевой stdlib `std/net/` на базе
+libuv (`uv_tcp_t`, `uv_udp_t`). Все операции блокируют **fiber** (не OS thread)
+через park/wake D93, выглядят синхронно в коде пользователя.
+
+Модуль состоит из четырёх файлов:
+
+| Файл | Содержимое |
+|---|---|
+| `std/net/addr.nv` | `IpAddr`, `SocketAddr` |
+| `std/net/error.nv` | `NetError` — типизированные сетевые ошибки |
+| `std/net/tcp.nv` | `TcpListener`, `TcpStream` |
+| `std/net/udp.nv` | `UdpSocket` |
+
+### Правила
+
+#### 1. Типы адресов
+
+```nova
+type IpAddr = | V4(u8, u8, u8, u8) | V6(str)
+
+namespace SocketAddr {
+    fn new(ip IpAddr, port u16) -> SocketAddr
+    fn loopback(port u16) -> SocketAddr   // 127.0.0.1:port
+    fn any(port u16) -> SocketAddr        // 0.0.0.0:port
+    fn parse(s str) -> Result[SocketAddr, NetError]
+}
+```
+
+`str.from(SocketAddr)` возвращает `"ip:port"` (human-readable).
+
+#### 2. TcpListener
+
+```nova
+namespace TcpListener {
+    fn bind(addr SocketAddr) -> Result[TcpListener, NetError]
+}
+
+type TcpListener {
+    fn accept(self) -> Result[TcpStream, NetError]   // parks fiber until connection
+    fn local_port(self) -> u16
+    fn close(self)
+}
+```
+
+`bind(addr)` — OS TCP bind + listen. `local_port()` корректен после bind
+(для `port=0` возвращает OS-assigned port).
+
+`accept()` использует `nova_sched_park_until(pred: pending_conns > 0)` —
+spurious wake безопасен, re-checks predicate (см. D93).
+
+#### 3. TcpStream — lifecycle state machine
+
+```
+IDLE ──connect──▶ CONNECTING ──cb──▶ CONNECTED
+                                          │
+                                       close()
+                                          ▼
+                                      CLOSING ──close_cb──▶ CLOSED
+```
+
+Состояния: `IDLE=0 / CONNECTING=1 / CONNECTED=2 / CLOSING=3 / CLOSED=4`.
+CAS-переходы атомарны. `write()` и `read_bytes()` проверяют stage ≥ CLOSING
+перед операцией → возвращают `Err("stream closing")`.
+
+```nova
+namespace TcpStream {
+    fn connect(addr SocketAddr) -> Result[TcpStream, NetError]  // parks fiber
+}
+
+type TcpStream {
+    fn write(self, data str) -> Result[(), NetError]
+    fn read_bytes(self, max_len int) -> Result[str, NetError]
+    fn local_addr(self) -> SocketAddr
+    fn remote_addr(self) -> SocketAddr
+    fn close(self)
+}
+```
+
+**EOF semantics:** `uv_read_cb` с `nread == UV_EOF` → `read_bytes()` возвращает
+`Ok("")` (пустая строка). Чистое закрытие соединения = success, не error.
+
+#### 4. UdpSocket
+
+```nova
+namespace UdpSocket {
+    fn bind(addr SocketAddr) -> Result[UdpSocket, NetError]
+}
+
+type UdpSocket {
+    fn send_to(self, data str, addr SocketAddr) -> Result[(), NetError]
+    fn recv_from(self, max_len int) -> Result[(str, SocketAddr), NetError]
+    fn local_port(self) -> u16
+    fn close(self)
+}
+```
+
+`recv_from` — parks fiber до получения датаграммы; возвращает `(data, sender_addr)`.
+
+#### 5. NetError
+
+```nova
+type NetError =
+    | ConnectionRefused
+    | ConnectionReset
+    | TimedOut
+    | AddrInUse
+    | AddrNotAvailable
+    | Other(str)
+```
+
+Все `Result[T, NetError]` возвращаемые типы используют typed errors —
+match-exhaustive на стороне пользователя.
+
+#### 6. Thread-affinity invariant
+
+libuv handles (`uv_tcp_t`, `uv_udp_t`) должны закрываться на том же OS thread,
+на котором они созданы. В M:N режиме fiber может мигрировать между workers.
+
+**Решение:** `nova_loop_defer_close(handle)` — enqueue request в
+`NovaDeferredCloseQueue` текущего loop; worker деqueue и вызывает `uv_close`
+на своём thread. В AUTOARM=0 (single thread) — direct `uv_close`.
+
+#### 7. Park/wake контракт (D93-compliant)
+
+1. Caller fiber: `nova_sched_register_pending(scope, slot)` → `nova_sched_park(scope, slot)`
+2. libuv callback (`_tcp_connect_cb`, `_tcp_read_cb`, `_tcp_write_cb`, ...):
+   устанавливает result поля → `nova_sched_wake(scope, slot)`
+3. Fiber resume: читает result, возвращает `Ok(...)` или `Err(...)`
+
+Stop callback для cancel: `uv_read_stop` + deferred `uv_close` → close_cb → wake.
+
+### Почему
+
+- **Fiber-transparent async** — пользователь пишет последовательный код (как Go),
+  без `async/await` ключевых слов (в отличие от Rust/Tokio).
+- **libuv** — уже в runtime (Plan 22), cross-platform (Linux/Windows/macOS),
+  production-grade event loop.
+- **D93 park/wake** — единый контракт для всех блокирующих операций (Time.sleep,
+  Channel, net). Не дублируется логика.
+- **Typed errors** — `NetError` sum type vs stringly-typed (Go `err.Error()`)
+  позволяет exhaustive match.
+
+### Связь
+
+- [D93 — park/wake contract](06-concurrency.md#d93-park--wake-контракт-для-async-io) — основа impl.
+- [D91 — Channel](06-concurrency.md#d91) — аналогичный park/wake pattern.
+- [Plan 83.12](../../docs/plans/83.12-async-net-stdlib.md) — реализация.
+- [Plan 83.3](../../docs/plans/83.3-blocking-effect-threadpool.md) — Blocking effect для DNS/sync IO.
+- [Plan 91](../../docs/plans/91-stdlib-mvp-for-0.1.md) — std/net co-planned в 0.1.
+- Ориентиры: Go `net.Listen`/`net.Dial`, Rust `tokio::net::TcpListener`.
