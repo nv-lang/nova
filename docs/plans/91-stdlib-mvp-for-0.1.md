@@ -142,6 +142,45 @@ handler'ами (killer-пример из README — `Db` через `in_memory_d
 (b) TCP-echo сервер/клиент поверх 83.12 — backend-claim демонстрация.
 Оба варианта работают на MVP-std, выбирается **один** для shipping.
 
+## Принцип: Nova-first, C только для примитивов
+
+> **Решение 2026-05-27:** максимально использовать Nova + Plan 96
+> (слайсы `s[a..b]`) + Plan 90.1 (extend-family) вместо C-реализаций.
+> Функцию пишем на Nova если она выражается через уже существующие
+> примитивы. C остаётся только там, где нужны `memcmp`/`memcpy`/
+> `alloc`/UTF-8 decode на уровне байт.
+
+**Можно на Nova (перенести из C или написать сразу на Nova):**
+
+| Метод | Nova-реализация | Примечание |
+|---|---|---|
+| `str @replace(from, to)` | `@split(from).join(to)` | одна строка |
+| `str @repeat(n)` | `StringBuilder` + loop | читаемо |
+| `str @pad_left(w, fill)` | `str.from(fill).repeat(w - @len()) + @` | через repeat |
+| `str @pad_right(w, fill)` | `@ + str.from(fill).repeat(w - @len())` | через repeat |
+| `str @parse_int()` | через `@bytes()` + `[]u8` slice-итерация | Plan 90.1 |
+| `[]T @map/filter/fold` | уже на Nova в `vec.nv` | ✅ готово |
+| `[]str @join(sep)` | уже на Nova в `text.nv` | ✅ готово |
+
+**Остаётся в C (byte-level примитивы, нельзя без FFI):**
+
+| Метод | Причина |
+|---|---|
+| `trim`, `to_upper`, `to_lower` | `isspace`/`toupper` byte-уровень |
+| `starts_with`, `ends_with`, `contains` | `memcmp` |
+| `eq`, `hash`, `lt/le/gt/ge` | `memcmp`, FNV-1a |
+| `byte_at`, `char_at` | UTF-8 decode |
+| `concat` | `alloc` + `memcpy` |
+| `find`, `rfind` | KMP/naive — эффективнее в C |
+| `split` | `alloc` + slice windows |
+| f64/f32 math (`sqrt`, `sin`, `ln`…) | libm intrinsics |
+
+**Plan 90.1 (`extend_from`, `copy_from`, слайсы) как оптимизация:**
+`[]u8` операции на Nova-коде std (например, `parse_int` через
+`@bytes()[i]` итерацию) компилируются в тот же C что и ручной C-код,
+но лучше тестируемы и читаемы. `extend_from` в `StringBuilder`-like
+паттернах даёт zero-copy конкатенацию без ручного `memcpy`.
+
 ## Метод
 
 std-код написан — блокеры на стороне codegen. План закрывает блокеры
@@ -155,6 +194,7 @@ std-код написан — блокеры на стороне codegen. Пла
    `emit_c.rs` / `nova_rt/`).
 3. Conformance-тест на модуль (раздел Ф.5) — реальный use-case.
 4. Повторять до `→ exe` PASS.
+5. Предпочитать Nova-реализацию над C — см. таблицу «Nova-first» выше.
 
 ## Декомпозиция
 
