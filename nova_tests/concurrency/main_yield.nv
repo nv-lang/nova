@@ -1,3 +1,4 @@
+// ENV NOVA_AUTOARM=0
 // 42_main_yield.nv — Time.sleep(0) at supervised-body level (not inside spawn).
 //
 // Spec D62: async is ambient — Time.sleep(0) callable from any context.
@@ -28,7 +29,7 @@
 // which requires cooperative single-thread scheduling. Armed M:N workers
 // steal fibers before main's sleep(0) can drive them, breaking log order.
 // Reason: semantically cooperative — would require rewrite for M:N semantics.
-// ENV NOVA_AUTOARM=0
+// (Directive applied at top of file to stay within parser's 30-line window.)
 
 module concurrency.main_yield
 
