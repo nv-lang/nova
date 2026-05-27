@@ -14,6 +14,7 @@
 /* Include umbrella для правильного ordering (fibers.h → nova_sched.h → ...). */
 #include "nova_rt.h"
 #include "runtime.h"
+#include "driver.h"  /* Plan 83.11 Ф.2: centralized I/O driver */
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -1262,6 +1263,11 @@ static void _materialize_pool(void) {
     }
 
     _materialized = true;
+
+    /* Plan 83.11 Ф.2: start driver thread AFTER worker pool materialization.
+     * Workers must exist before driver routes wake events to them
+     * (home_worker_id references _workers[]). */
+    nova_driver_init();
 }
 
 /* Plan 83.1 Ф.4: гарантирует, что пул материализован. Fast-path без
@@ -1292,6 +1298,11 @@ void nova_runtime_shutdown(void) {
         nova_mutex_unlock(&_init_mu);
         return;
     }
+
+    /* Plan 83.11 Ф.2: stop driver thread BEFORE workers join — driver
+     * routes wake-events to workers; if workers gone first, driver writes
+     * to dead worker handles → UAF. */
+    nova_driver_shutdown();
 
     /* Plan 44.7: stop sysmon ПЕРВЫМ — до free(_workers), чтобы sysmon
      * не читал освобождённую память. join гарантирует тред вышел. */
