@@ -642,9 +642,9 @@ implementation detail (preemption после v1.0 делает их
 
 ### Открытые вопросы
 
-- `Channel[T]` API — формализован в [D79](#d79). `Mutex`/`Atomic`
-  отвергнуты ([D79 «Что отвергнуто»](#d79)) в пользу channel-only
-  модели + owner-actor pattern.
+- `Channel[T]` API — формализован в [D79](#d79).
+- `Mutex`/`Atomic` — stdlib (D167-D173), не prelude; owner-actor pattern
+  предпочтителен, escape hatch через `import runtime.sync.{...}`.
 - Размер blocking-pool по умолчанию — детали реализации runtime'а.
 - Поведение при отмене detached-задачи — отдельный handler-сахар или
   работа через capability?
@@ -1532,14 +1532,16 @@ spawn {
 - Wait queues для blocked senders/receivers
 - Channel — единственный гарантированно-safe primitive
 
-#### Mutex / Atomic — НЕ в spec
+#### `runtime.sync` — stdlib, не prelude (D167-D173)
 
-Channel — **достаточный** primitive для всех coordination patterns.
-Mutex и atomic — нижнеуровневые, легко misuse'ить, не AI-friendly.
+Channel — **предпочтительный** primitive для координации fiber'ов (owner-actor
+pattern, Erlang-стиль). Однако Mutex, RwLock, Atomic и другие sync-примитивы
+**доступны как stdlib** через `import runtime.sync.{...}` — в тех случаях
+когда actor-модель избыточна.
 
-Если мутируемое разделяемое состояние действительно нужно, идиома:
-**dedicated owner-fiber + channel** (Erlang-стиль). Owner владеет
-данными, остальные шлют ему сообщения через channel.
+**Default: owner-actor pattern.** Если мутируемое разделяемое состояние
+нужно — первый выбор: **dedicated owner-fiber + channel**. Owner владеет
+данными; остальные шлют сообщения через channel.
 
 ```nova
 fn counter_actor(input Channel[CounterMsg], output Channel[int]) {
@@ -1555,6 +1557,24 @@ fn counter_actor(input Channel[CounterMsg], output Channel[int]) {
 ```
 
 Это **safe by construction** — нет shared state, только message-passing.
+
+**Escape hatch: `runtime.sync`.** Когда actor-модель действительно избыточна
+(счётчик статистики, одноразовая инициализация, read-heavy конфигурация),
+используй explicit import:
+
+```nova
+import runtime.sync.{Mutex, AtomicI64, RwLock, Semaphore, Once}
+// см. D173 decision tree — «когда что выбрать»
+```
+
+Детальное описание всех sync-примитивов:
+- D167 — Memory ordering & `fence()` API
+- D168 — Atomic типы (12 sized × 13 ops)
+- D169 — `Mutex` / `RwLock` / `ReentrantMutex`
+- D170 — `Semaphore` / `Barrier` / `CountDownLatch` / `Condvar`
+- D171 — `Once` / `OnceCell` / `Lazy`
+- D172 — `realtime { }` / `blocking { }` interaction matrix
+- D173 — AI-first guidance: decision tree + canonical patterns
 
 ### Почему
 
@@ -1597,8 +1617,8 @@ fn counter_actor(input Channel[CounterMsg], output Channel[int]) {
 
 - **Mutex / Atomic в prelude.** Низкоуровневые, легко misuse,
   deadlock-prone. Owner-actor pattern закрывает 99% use case'ов.
-  Если кому-то реально нужен Mutex — может реализовать через channel
-  (token-channel вместимостью 1).
+  Escape hatch доступен через `import runtime.sync.{...}` — stdlib,
+  не prelude (D167-D173).
 
 - **`<-` как recv-оператор в select.** Отвергнут в D94 — заменён
   на `Some(v) = rx.recv() =>`. Причина: `<-` вводил новый оператор
