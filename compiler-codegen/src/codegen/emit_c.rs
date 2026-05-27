@@ -1599,7 +1599,7 @@ impl CEmitter {
                 // /* AGENT-B */ "Barrier",
                 // /* AGENT-D */ "Condvar", "WaitResult",
                 // /* AGENT-C */ "CountDownLatch",
-                // /* AGENT-A */ "Semaphore",
+                /* AGENT-A */ "Semaphore",
                 // === END PLAN-103.4 PREDECLARED TYPES ===
             ];
             for name in external_names {
@@ -16985,9 +16985,9 @@ _cp++; \
                                         //   || (recv_ty == "CountDownLatch"
                                         //       && (method == "await" || method == "try_await_for"))
                                         // AGENT-A (Semaphore):
-                                        //   || (recv_ty == "Semaphore"
-                                        //       && (method == "acquire" || method == "acquire_n"
-                                        //           || method == "try_acquire_for" || method == "with_permit"))
+                                        || (recv_ty == "Semaphore"
+                                            && (method == "acquire" || method == "acquire_n"
+                                                || method == "try_acquire_for" || method == "with_permit"))
                                         // === END PLAN-103.4 REALTIME-BLOCKING ===
                                         ;
                                     if self.in_realtime && is_realtime_blocking {
