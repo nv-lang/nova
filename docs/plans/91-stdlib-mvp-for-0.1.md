@@ -19,6 +19,68 @@
 > язык hypothetical»); решение C согласует оба под фактический статус —
 > Plan 103.x уже в main, Plan 83.12 — последний крупный модуль для 0.1.
 
+## Worktree setup (pre-flight)
+
+**Convention:** постоянный worktree `nova-p91` (descriptor `p91`).
+
+```bash
+# Из main repo (d:/Sources/nv-lang/nova):
+git fetch github main
+git worktree add ../nova-p91 -b plan-91-stdmvp github/main
+
+# Зарегистрировать worktree (feedback-worktree-auto-register).
+
+# Pre-flight для nova test (memory project-worktree-nova-test-setup):
+rm -rf ../nova-p91/compiler-codegen/nova_rt/libuv
+cp -r compiler-codegen/nova_rt/libuv ../nova-p91/compiler-codegen/nova_rt/libuv
+rm -rf ../nova-p91/compiler-codegen/nova_rt/libuv/.git
+
+mkdir -p ../nova-p91/target
+cp -r target/libuv-cache ../nova-p91/target/libuv-cache 2>/dev/null || true
+
+# Env vars (читает detect_boehm в test_runner.rs):
+export NOVA_GC_LIB_DIR=d:/Sources/nv-lang/nova/compiler-codegen/vcpkg_installed/x64-windows-static/lib
+export NOVA_GC_INCLUDE_DIR=d:/Sources/nv-lang/nova/compiler-codegen/vcpkg_installed/x64-windows-static/include
+
+# Verify build:
+cargo build --release --manifest-path nova-cli/Cargo.toml
+```
+
+## Model / Thinking mode per phase
+
+| Phase | Model | Effort | Thinking | Why |
+|---|---|---|---|---|
+| **Ф.0 re-baseline (GATE)** | **Opus 4.7** | high | **ON** | decision-heavy: pass-rate calibration + blocker grouping + Ф.0.4 decision point (что в MVP, что карантинить); неправильное решение здесь раздует Ф.1-7 |
+| Ф.1 Vec/HashMap/HashSet | Sonnet 4.6 | high | **ON** | generic mono + D72 dispatch + tuple types — алгоритмически сложные codegen-блокеры |
+| Ф.2 text | Sonnet 4.6 | high | OFF | mostly mechanical (str.from/interpolation уже есть) |
+| Ф.3 json | Sonnet 4.6 | high | **ON** | pattern composition в tuple/list — нетривиальный parser/codegen |
+| Ф.4 time/math/sort | Sonnet 4.6 | high | OFF | mostly mechanical (закрытие точечных методов) |
+| Ф.5 conformance tests | Sonnet 4.6 | high | OFF | explicit list |
+| Ф.6 getting-started | Sonnet 4.6 | high | **ON** | Ф.6.1 decision (in-memory или TCP-echo getting-started) |
+| Ф.7 quarantine + checklist | Sonnet 4.6 | high | OFF | mechanical |
+
+**Fallback:** stuck >1 retry на Ф.1/Ф.3/Ф.6 — escalate на Opus 4.7.
+
+**Parallelism note:** Plan 91 запускается параллельно с
+[Plan 83.12](83.12-async-net-stdlib.md) — разные scope (`std/{collections,text,
+sort,json,time,math}` vs `std/net/`), разные worktrees, 0 пересечений по
+файлам. Final shipping gate 0.1 совместный.
+
+## Agent execution rules
+
+Применять **automatically** (memory feedback, проверяется в Ф.7.4 closure):
+
+- `feedback-no-claude-coauthor` — никаких `Co-Authored-By: Claude` trailer в commits.
+- `feedback_git_add_specific` — `git add` только конкретных файлов, никогда
+  `git add -A` / `git add .`.
+- `feedback-commit-per-task` — commit после каждой фазы; не batchить Ф.1-Ф.4 в один commit.
+- `feedback-update-logs` — после **каждой** закрытой фазы обновлять
+  `docs/project-creation.txt` + `docs/simplifications.md` (main repo) +
+  `nova-private/discussion-log.md` (отдельный репо, отдельный commit).
+- `feedback_nova_test_one_pass` — `nova test` за один запуск, capture summary + FAIL details одновременно.
+- `feedback_targeted_test_per_fix` — per-fix verify = только targeted fixture; full `nova test` только в конце фазы.
+- `feedback_nova_syntax` — никогда не выдумывать синтаксис Nova; смотреть `spec/decisions/` и `examples/` перед написанием кода.
+
 ## Зачем
 
 `std/STATUS.md` (на 2026-05-09): std-файлы **не компилируются** в
