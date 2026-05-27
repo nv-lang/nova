@@ -23066,3 +23066,42 @@ Final merge commits:
 Plan 103.4 âœ… Ð—ÐÐšÐ Ð«Ð¢. Ð Ð°Ð·Ð±Ð»Ð¾ÐºÐ¸Ñ€ÑƒÐµÑ‚ Plan 103.6 (realtime/blocking
 type-checker enforcement, M12) Ð¸ Ð´Ð°Ð»ÐµÐµ Ñ†ÐµÐ¿Ð¾Ñ‡ÐºÑƒ 103.7 (spec D-blocks
 final) â†’ 103.8 (V1 close) Plan 103 master.
+
+=== Plan 103.6 — realtime/blocking sync-class enforcement ===
+Date: 2026-05-27
+Branch: plan-103.6 (merged into main)
+Worktree: nova-p103-rt-blocking
+
+Summary: Annotation-driven sync-class enforcement for realtime{}/blocking{} blocks.
+Implements #parks/#wakes/#realtime_safe bare attributes on ~85 external fn decls in
+std/runtime/sync.nv. Replaces hardcoded is_realtime_blocking match in emit_c.rs with
+ExternalRegistry-driven lookup. 6 error/warning codes, D172 spec.
+
+Ô.0 (Audit): Existing hardcoded list in emit_c.rs + SyncClass AST enum planned.
+Ô.1+Ô.2 (Impl): SyncClass enum in AST; ContractAttrs.sync_class; parse_sync_class_attr()
+  interleaving loop before export keyword; ~85 external fn annotations in sync.nv;
+  annotation-driven enforcement in CEmitter (in_realtime/in_blocking flags).
+Ô.3+Ô.4 (Tests): emit_fn_forward_decl stores non-generic #parks fns in mono_fn_decls;
+  generic-type method dispatch (OnceCell[T], Lazy[T]) sync_class check; 26 test fixtures:
+    Positive (10): realtime_{atomic_load,atomic_fetch_add,mutex_try_lock,
+      semaphore_try_acquire,lazy_is_forced,oncecell_get,oncecell_set_first_call,fence}_ok.nv
+      + blocking_{atomic_fetch_add,mutex_unlock}_ok.nv
+    Negative (14): 12 EXPECT_COMPILE_ERROR + 2 EXPECT_COMPILE_WARNING
+  All 26/26 tests PASS.
+Ô.5 (Spec): D172 draft in spec/decisions/06-concurrency.md (194 lines, §1-6 + matrix).
+Ô.6 (Closure): plan-103.6 merged into main (no-ff).
+
+Key findings:
+  - fence() as trailing block expression generates void-to-nova_int cast; fixed by
+    using fence() as statement (not trailing) in tests.
+  - try_lock_for annotation: #parks > #realtime_safe (emits warning, not error).
+  - Generic type methods (OnceCell[T], Lazy[T]) need sync_class check in the
+    generic_type_methods dispatch branch (before ExternalRegistry fallback).
+  - Non-generic user fns with #parks must be stored in mono_fn_decls for call-site check.
+
+Commits:
+  - feat(plan103.6 Ô.1+Ô.2): e8916453269 — sync.nv annotation sweep + annotation-driven enforcement
+  - feat(plan103.6 Ô.3+Ô.4): 16c9eb9912d — emit_c enforcement fixes + 26 plan103_6 tests
+  - docs(plan103.6 Ô.5): 80d8fe12543 — D172 spec draft
+  - docs(plan103.6 Ô.6): <closure commit>
+  - Merge no-ff: <merge hash>
