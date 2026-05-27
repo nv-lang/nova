@@ -23374,3 +23374,53 @@ Branch plan-83.11-centralized-driver pushed но НЕ merged. [M-83.10.4-iso-
 cancel-startup-race] STILL OPEN. Worktree D:/Sources/nv-lang/nova-p83-11
 preserved для continuation. Diagnostic infrastructure готова.
 
+
+=== Plan 83.11 Ф.3 continuation — 9 diag counters + futex + SEQ_CST (2026-05-27) ===
+
+Continuation session per user "продолжай работать без остановок". Goal: locate
+exact race point in wake-delivery chain через atomic counter diagnostic, apply
+targeted fix.
+
+DIAGNOSTIC ADDED (commit 6dc7ad39506 branch plan-83.11-centralized-driver):
+- 9 atomic counters per delivery step: close_cb / wake_called / cas_won /
+  dispatch_same|cross / worker_drained / park_resumed / pred_true / sleep_ret
+- 5 futex-path counters (fastpath_break / cas_win / cas_lose / yield / resume)
+- sysmon ticker prints diag ~1Hz (visible during TIMEOUT)
+
+DIAG REVEALED loss point:
+- close_cb=100 ✓, wake_called=100 ✓
+- cas_won=89-97 — 3-11 wake CAS fails (parked false at CAS time)
+- yield=100 — all fibers reach mco_yield
+- resume=89-97 — 3-11 never resumed (lost wakes)
+
+FIXES APPLIED:
+1. _nova_sleep_via_driver: inline futex park (SEQ_CST parked + recheck +
+   CAS-clear path) — Linux futex / Tokio AtomicWaker idiom
+2. Driver close_cb: SEQ_CST store stage CLOSED (was RELEASE) — total order
+   with worker's SEQ_CST parked
+
+RESULTS (stress_iso_3e direct exe runs):
+- 3/30 PASS baseline (no fixes)
+- 13/30 PASS with counters (SEQ_CST counter inc adds fences)
+- 19/30 PASS with futex pattern
+- 15/30 PASS with futex + SEQ_CST stage (marginal)
+- Plateau ~50% PASS — diminishing returns
+
+REMAINING RACE: driver's wake CAS happens BEFORE worker's SEQ_CST parked in
+some interleavings. Worker yields after, no future wake. SEQ_CST on stage
+doesn't fix because it's different atomic.
+
+FULL FIX requires Option 1 (port Tokio AtomicWaker fully, breaks fiber model)
+или Option 2 (generational futex — wake_gen counter per slot). 1-2 dev-days
+deep work.
+
+CURRENT STATE:
+- Architecture works (driver/single-mutator confirmed via diag)
+- Wake delivery ~50% PASS — known flakiness
+- Branch plan-83.11-centralized-driver advanced (6dc7ad39506 pushed)
+- Worktree D:/Sources/nv-lang/nova-p83-11 preserved
+- [M-83.10.4-iso-cancel-startup-race] STILL OPEN. NOT MERGED.
+
+Diagnostic infrastructure готова — next session can quickly verify any fix
+via stress_iso_3e + diag counter analysis.
+
