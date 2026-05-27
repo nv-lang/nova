@@ -12,7 +12,31 @@
 
 Запуск через `.\run_tests.ps1 -IncludeStdlib`.
 
-## Текущий статус (2026-05-27, Plan 91 Ф.0 re-baseline — branch `plan-91-stdmvp`)
+## Текущий статус (2026-05-27, Plan 91 Ф.7.1 quarantine ✅ ЗАКРЫТ — branch `plan-91-stdmvp`)
+
+**Ф.7.1 results:**
+
+- **`nova check std/`** (no `--skip`, full directory walk): **24 PASS / 0 FAIL.**
+  Acceptance criterion Plan 91 §Ф.7.1 met (down from 12 FAIL pre-quarantine).
+- **30 non-MVP files** перенесены в `std/_experimental/` (auto-skip через
+  `should_skip_path_full` на underscore-prefixed component). Полная таблица
+  per-domain — [std/_experimental/STATUS.md](_experimental/STATUS.md).
+- **23 MVP files** остаются в `std/`: prelude/runtime/testing/collections (vec/
+  hashmap/set/range)/encoding (json/base64)/time (duration)/net (Plan 83.12)/
+  concurrency (cancellation/timer)/bench (Plan 57).
+- **Compiler fix:** `is_stdlib_runtime_module` whitelist расширен для
+  `std.net.*` (Plan 83.12 unblocks) + `std.bench` (Plan 57 benchmark DSL).
+- **Source fixes (как побочный продукт Ф.7.1):**
+  - D52 §2 в `std/encoding/json.nv` (10 violations) — Ф.3 work закрыт попутно.
+  - `partial_prelude(core, runtime, errors)` в `std/collections/range.nv`
+    (avoid std.prelude self-cycle при standalone check, Plan 62.F).
+  - `module bench` → `module std.bench` (D29 rev-3 compliance).
+  - `use net.addr` → `use std.net.addr` в `std/net/{tcp,udp}.nv` (Plan 83.12
+    resolver fix).
+- **Test imports updated:** 7 nova_tests файлов теперь импортируют
+  `std._experimental.<domain>.<file>` вместо устаревшего `std.<domain>.<file>`.
+
+### Ф.0 baseline (2026-05-27, до Ф.7.1)
 
 **Прогон:** `nova check --color never std/ --skip std/encoding/toml.nv`
 + targeted `nova build` smoke на каждый MVP-модуль.

@@ -3,7 +3,7 @@
 
 module modules.priority_queue
 
-import std.collections.priority_queue.{PriorityQueue}
+import std._experimental.collections.priority_queue.{PriorityQueue}
 
 test "PriorityQueue: push и pop в порядке возрастания" {
     let mut pq = PriorityQueue[int].new()
