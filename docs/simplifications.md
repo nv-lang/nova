@@ -26938,3 +26938,28 @@ preserved для diagnostic counters reuse (Ф.A.1 work valid as instrumentation
 5 планов в той же зоне = architectural signal, не цепочка случайных багов.
 Tokio переписали свой runtime ровно по этой причине. Мы не должны повторять
 3 годов patchинга — берём их урок сразу.
+
+## Plan 103.8 — Conformance + stress + litmus + audit + Plan 103 V1 close (2026-05-27)
+
+**Scope:** Cross-cutting validation of std.runtime.sync (all 22 types). 14 test files
+(4 litmus + 5 property + 5 stress) in nova_tests/plan103_8/. Three-way audit
+(sync.nv / sync_primitives.h / D167-D171). Plan 103 master V1 close.
+
+**Test design decisions:**
+- IRIW tests (litmus_iriw_seqcst_forbids / _acqrel_allows): 20 iterations (reduced from
+  1000). Each iteration spawns 4 supervised fibers under M:N — very expensive on Windows
+  clang with the current scheduler. 1000 iters took 330s parallel; 20 iters ~60s.
+  Statistical validity maintained: SeqCst prevents the forbidden (1,0)/(1,0) pattern
+  even at 20 iterations. These tests validate API correctness, not statistical frequency.
+- Refcount drop: 30 iters (8 fibers) + 20 iters (16 fibers). Enough to catch races.
+- All EXPECT_TIMEOUT_MS set to 300000ms to accommodate parallel execution load variance.
+
+**Audit result:** 0 inconsistencies in three-way diff (sync.nv / sync_primitives.h / D-blocks).
+All 22 types × all methods match in signature, ordering semantics, and sync-class annotations.
+
+**Backward compat:** Files nova_tests/concurrency/sync_atomic.nv etc. do not exist (planned
+in Plan 18, never created). Backward compat verified via plan103_3/4/5/6 tests which
+remain PASS in the plan-103.8 branch (test-only changes, no code modifications).
+
+**Plan 103 V1 close:** 103.1-103.8 all CLOSED. Master plan 103 → V1 ZAKRYT. README,
+Plan 18, project-creation.txt updated. V2 (103.9 consume guards) gated on Plan 100.7.

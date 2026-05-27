@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 # Plan 103 — `std.runtime.sync` production-grade spec + API expansion (roadmap)
 
-> **Статус:** 🟡 roadmap 2026-05-25, **P1** (spec-drift closure + API completeness)
+> **Статус:** 🟢 V1 ЗАКРЫТ 2026-05-27 (103.1-103.8 ✅; V2=103.9 gated на Plan 100.7)
 > **Приоритет:** master закрывает spec-drift; sub-plans 103.1-103.8 ранжированы по dependency.
 > **Оценка:** ~12-16 dev-day (8 sub-plans, ~1.5-2 dev-day каждый).
 > **Зависимости:** Plan 18 Шаг 1 ✅ (shipped baseline), Plan 21 ✅ (Channel — preferred default), Plan 83.3 ✅ (Blocking), Plan 82 ✅ (M:N stable), Plan 44.1 Ф.1 ✅ (sync.h backend selector + memory ordering).
