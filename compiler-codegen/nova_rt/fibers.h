@@ -1815,11 +1815,7 @@ static nova_bool _nova_sleep_stage_is_closed(void* ctx) {
             stage = NOVA_SLEEP_CLOSING;
         }
     }
-    /* Drain-on-CLOSING tried (Plan 83.10.5 Ф.A.2 attempt 3, reverted) —
-     * uv_run(NOWAIT) reentrance из predicate interferred с worker UV loop
-     * processing другими fibers'ов → 5/20 stability (worse). Final tactical
-     * state: PASS 8-9/15 = ~55%. Architectural Ф.B required. */
-    return false;  /* re-park; close_cb wake should arrive (subject to race). */
+    return false;  /* not CLOSED — re-park (close_cb wake should arrive). */
 }
 
 /* stop_cb для cancel-integration (D93 Ф.8 ASYNC contract).
