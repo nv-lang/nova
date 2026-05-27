@@ -91,14 +91,16 @@ export external fn str @parse_int_radix(radix int) -> Option[int]
 export fn str @pad_left(width int, fill char) -> str {
     let pad = width - @len()
     if pad <= 0 { return @ }
-    StringBuilder.with_capacity(width).append_repeat(str.from(fill), pad).append(@).into()
+    let fill_s = str.from(fill)
+    StringBuilder.with_capacity(@byte_len() + pad * fill_s.byte_len()).append_repeat(fill_s, pad).append(@).into()
 }
 
 // Pad строку справа до width codepoints символом fill. Если width <= len — возвращает s.
 export fn str @pad_right(width int, fill char) -> str {
     let pad = width - @len()
     if pad <= 0 { return @ }
-    StringBuilder.with_capacity(width).append(@).append_repeat(str.from(fill), pad).into()
+    let fill_s = str.from(fill)
+    StringBuilder.with_capacity(@byte_len() + pad * fill_s.byte_len()).append(@).append_repeat(fill_s, pad).into()
 }
 
 // Повторение строки n раз. n <= 0 → пустая строка.

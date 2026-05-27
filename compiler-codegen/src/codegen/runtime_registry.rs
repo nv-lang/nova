@@ -466,7 +466,7 @@ fn str_runtime() -> Vec<RuntimeFn> {
             effects: &[],
             c_name: "nova_str_pad_left",
             doc: "Pad строку слева до width codepoints символом fill. Если width <= len — возвращает s.",
-            nova_body: Some("{\n    let pad = width - @len()\n    if pad <= 0 { return @ }\n    StringBuilder.with_capacity(width).append_repeat(str.from(fill), pad).append(@).into()\n}"),
+            nova_body: Some("{\n    let pad = width - @len()\n    if pad <= 0 { return @ }\n    let fill_s = str.from(fill)\n    StringBuilder.with_capacity(@byte_len() + pad * fill_s.byte_len()).append_repeat(fill_s, pad).append(@).into()\n}"),
         },
         RuntimeFn {
             module: "std.runtime.string",
@@ -478,7 +478,7 @@ fn str_runtime() -> Vec<RuntimeFn> {
             effects: &[],
             c_name: "nova_str_pad_right",
             doc: "Pad строку справа до width codepoints символом fill. Если width <= len — возвращает s.",
-            nova_body: Some("{\n    let pad = width - @len()\n    if pad <= 0 { return @ }\n    StringBuilder.with_capacity(width).append(@).append_repeat(str.from(fill), pad).into()\n}"),
+            nova_body: Some("{\n    let pad = width - @len()\n    if pad <= 0 { return @ }\n    let fill_s = str.from(fill)\n    StringBuilder.with_capacity(@byte_len() + pad * fill_s.byte_len()).append(@).append_repeat(fill_s, pad).into()\n}"),
         },
         RuntimeFn {
             module: "std.runtime.string",
@@ -786,7 +786,7 @@ fn string_builder_runtime() -> Vec<RuntimeFn> {
         RuntimeFn { module: m, receiver: recv, is_static: true,  is_mut: false, is_consume: false,
             name: "with_capacity", params: &[("n", "int")], return_ty: "Self", effects: &[],
             c_name: "Nova_StringBuilder_static_with_capacity",
-            doc: "Создать StringBuilder с pre-allocated capacity n.",
+            doc: "Создать StringBuilder с pre-allocated capacity n байт (UTF-8 bytes, как Rust String::with_capacity). Для ASCII: n == codepoints. Для multibyte fill — умножай на max UTF-8 байт на символ.",
             nova_body: None,
         },
         RuntimeFn { module: m, receiver: recv, is_static: true,  is_mut: false, is_consume: false,
