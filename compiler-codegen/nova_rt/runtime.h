@@ -195,4 +195,26 @@ void nova_runtime_cancel_worker_fibers(struct NovaFiberQueue* target_scope);
 void* nova_spawn_pool_acquire(size_t size);
 void  nova_spawn_pool_release(void* ctx, size_t size);
 
+/* Plan 83.11 Ф.3 diagnostic counters — per wake-delivery step.
+ * Goal: locate exact fiber-loss point in chain:
+ * close_cb → nova_sched_wake → CAS → dispatch_ready → (same|cross) →
+ *           worker drain → deque pop → mco_resume → predicate true →
+ *           sleep return → epilogue.
+ * Remove after race fixed. */
+extern nova_atomic_int _nova_diag_drv_close_cb;
+extern nova_atomic_int _nova_diag_drv_wake_called;
+extern nova_atomic_int _nova_diag_drv_wake_cas_won;
+extern nova_atomic_int _nova_diag_drv_dispatch_same;
+extern nova_atomic_int _nova_diag_drv_dispatch_cross;
+extern nova_atomic_int _nova_diag_drv_worker_drained;
+extern nova_atomic_int _nova_diag_drv_park_resumed;
+extern nova_atomic_int _nova_diag_drv_pred_true;
+extern nova_atomic_int _nova_diag_drv_sleep_returned;
+extern nova_atomic_int _nova_diag_drv_futex_fastpath_break;
+extern nova_atomic_int _nova_diag_drv_futex_recheck_break_cas_win;
+extern nova_atomic_int _nova_diag_drv_futex_recheck_break_cas_lose;
+extern nova_atomic_int _nova_diag_drv_futex_yield;
+extern nova_atomic_int _nova_diag_drv_futex_resume;
+void nova_diag_drv_print(void);
+
 #endif /* NOVA_RT_RUNTIME_H */

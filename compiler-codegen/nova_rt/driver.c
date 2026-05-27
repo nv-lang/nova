@@ -336,14 +336,16 @@ static void _nova_driver_sleep_close_cb(uv_handle_t* h) {
     /* Unlink from armed list. */
     _nova_driver_arm_list_unlink(st);
 
-    /* Release-store CLOSED — worker's ACQUIRE in predicate pairs. */
-    nova_aint_store(&st->stage, NOVA_SLEEP_DRV_CLOSED);
+    /* Plan 83.11 Ф.3 fix: SEQ_CST store CLOSED (was RELEASE).
+     * RELEASE on x86 = plain store (no fence). Worker's futex SEQ_CST parked=true
+     * + ACQUIRE-load stage форма two-atomic race — без SEQ_CST на стороне driver
+     * worker can ACQUIRE-load stale stage. SEQ_CST creates total order across
+     * all SEQ_CST ops globally → worker's predicate ACQUIRE-load sees CLOSED. */
+    __atomic_store_n(&st->stage, NOVA_SLEEP_DRV_CLOSED, __ATOMIC_SEQ_CST);
+    nova_aint_inc(&_nova_diag_drv_close_cb);
 
-    /* Cross-thread wake worker fiber. Routed via existing dispatch_ready
-     * mechanism (worker's wake_pending + uv_async_send). nova_sched_wake
-     * does CAS parked true→false; на CAS-loss path (worker's futex pattern
-     * already cleared parked at SEQ_CST recheck), wake is no-op which is
-     * correct — worker already returned without yielding. */
+    /* Cross-thread wake worker fiber. */
+    nova_aint_inc(&_nova_diag_drv_wake_called);
     nova_sched_wake(st->scope, st->slot);
 }
 

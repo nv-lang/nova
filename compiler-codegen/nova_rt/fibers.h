@@ -1999,7 +1999,12 @@ static inline void nova_blocking_offload(NovaFiberQueue* scope, int slot,
  * Returns true when driver's close_cb wrote NOVA_SLEEP_DRV_CLOSED. */
 static nova_bool _nova_sleep_drv_state_is_closed(void* ctx) {
     NovaSleepState* st = (NovaSleepState*)ctx;
-    return nova_aint_load(&st->stage) == NOVA_SLEEP_DRV_CLOSED;
+    bool is_closed = nova_aint_load(&st->stage) == NOVA_SLEEP_DRV_CLOSED;
+    if (is_closed) {
+        extern nova_atomic_int _nova_diag_drv_pred_true;
+        nova_aint_inc(&_nova_diag_drv_pred_true);
+    }
+    return is_closed;
 }
 
 /* Plan 83.11 Ф.3: driver-path sleep — closes [M-83.10.4-iso-cancel-startup-race].
@@ -2074,26 +2079,66 @@ static inline void _nova_sleep_via_driver(NovaFiberQueue* scope, int slot,
      * в window), we either won CAS-clear (no wake came → return clean) or
      * lost (wake fired → must yield to consume dispatch, then exit on next
      * iteration). */
-    /* Use generic park_until — relies on nova_sched_park's SEQ_CST parked store
-     * before mco_yield. Driver's close_cb's nova_sched_wake CAS will succeed
-     * after the SEQ_CST barrier propagates. Wake-before-park race:
-     *   t0: driver close_cb stage=CLOSED + nova_sched_wake CAS parked=true→false
-     *       — CAS FAILS (parked still false, worker hasn't set it yet)
-     *   t1: worker reaches nova_sched_park, SEQ_CST parked=true
-     *   t2: worker checks pred via park_until's loop check AFTER mco_yield
-     *       — but no wake will come!
+    /* Plan 83.11 Ф.3 futex park — closes wake-before-park race
+     * (cas_won=93 vs 100 diag confirmed loss point).
      *
-     * Mitigation: park_until's pre-yield predicate fast-path catches case
-     * when wake-store-CLOSED happened before our SEQ_CST. Если SEQ_CST после
-     * close_cb's CAS, predicate sees CLOSED → return without yield.
-     *
-     * Edge case: wake fires AFTER our fast-path check but BEFORE nova_sched_park
-     * SEQ_CST. Then wake CAS fails (parked false), and worker parks with no
-     * future wake. THIS is the remaining race.
-     *
-     * For now, accept this small window as known-flake — Ф.7 stress measure
-     * will quantify, future work may extend nova_sched_park с SEQ_CST recheck. */
-    nova_sched_park_until(scope, slot, _nova_sleep_drv_state_is_closed, &st);
+     * Pattern (port Linux futex / Tokio AtomicWaker recheck):
+     *   1. fast-path pred check (close_cb fired between arm and park)
+     *   2. SEQ_CST store parked=true — full fence, propagates state globally
+     *   3. recheck pred AFTER barrier: если CLOSED — close_cb fired в window
+     *      between step 1 and step 2
+     *      - CAS clear parked true→false:
+     *        - WIN: no wake raced us → return clean (no yield)
+     *        - LOSE: wake fired between SEQ_CST and recheck, fiber in deque
+     *          → yield to consume dispatch (avoid double-resume)
+     *   4. else yield wait for wake */
+    {
+        extern nova_atomic_int _nova_diag_drv_futex_fastpath_break;
+        extern nova_atomic_int _nova_diag_drv_futex_recheck_break_cas_win;
+        extern nova_atomic_int _nova_diag_drv_futex_recheck_break_cas_lose;
+        extern nova_atomic_int _nova_diag_drv_futex_yield;
+        extern nova_atomic_int _nova_diag_drv_futex_resume;
+        NovaSchedState* sched_st = nova_sched_get_state(scope);
+        if (sched_st && slot >= 0 && slot < sched_st->capacity) {
+            mco_coro* co = mco_running();
+            for (;;) {
+                if (_nova_sleep_drv_state_is_closed(&st)) {
+                    nova_aint_inc(&_nova_diag_drv_futex_fastpath_break);
+                    break;
+                }
+
+                __atomic_store_n((volatile bool*)&sched_st->parked[slot],
+                                 true, __ATOMIC_SEQ_CST);
+
+                if (_nova_sleep_drv_state_is_closed(&st)) {
+                    bool expected = true;
+                    if (__atomic_compare_exchange_n(
+                            (volatile bool*)&sched_st->parked[slot], &expected, false,
+                            false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
+                        nova_aint_inc(&_nova_diag_drv_futex_recheck_break_cas_win);
+                        break;
+                    }
+                    nova_aint_inc(&_nova_diag_drv_futex_recheck_break_cas_lose);
+                    nova_fiber_state_store(co, NOVA_FIBER_STATE_PARKED);
+                    nova_aint_inc(&_nova_diag_drv_futex_yield);
+                    mco_yield(co);
+                    nova_aint_inc(&_nova_diag_drv_futex_resume);
+                    continue;
+                }
+
+                nova_fiber_state_store(co, NOVA_FIBER_STATE_PARKED);
+                nova_aint_inc(&_nova_diag_drv_futex_yield);
+                mco_yield(co);
+                nova_aint_inc(&_nova_diag_drv_futex_resume);
+            }
+        } else {
+            nova_sched_park_until(scope, slot, _nova_sleep_drv_state_is_closed, &st);
+        }
+    }
+
+    /* Plan 83.11 Ф.3 diag: sleep_returned counter (post-park-until exit). */
+    extern nova_atomic_int _nova_diag_drv_sleep_returned;
+    nova_aint_inc(&_nova_diag_drv_sleep_returned);
 
     /* After CLOSED: st unlinked from armed_list by close_cb. Fiber safe to
      * return; coroutine stack может deallocate when fiber dies. */
