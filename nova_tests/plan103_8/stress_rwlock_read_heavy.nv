@@ -1,0 +1,93 @@
+// Plan 103.8 -- Stress: RwLock read/write correctness.
+//
+// Reuses the proven plan103_3 rwlock pattern:
+//   parallel for readers (M:N) + supervised spawn writer + wg.wait() outside.
+// Property: no torn reads (shared value always even; writer increments by 2).
+//
+// Kept minimal: 4 readers x 10 iters + 1 writer x 10 iters.
+// For heavier stress see plan103_3/rwlock_read_heavy_stress.
+//
+// EXPECT_TIMEOUT_MS 300000
+
+module nova_tests.plan103_8.stress_rwlock_read_heavy
+
+test "RwLock read-heavy: 4 readers + 1 writer, 10 iters -- no torn reads" {
+    let rw      = RwLock.new()
+    let shared  = AtomicI64.new(0)   // always even (writer adds 2)
+    let torn    = AtomicI64.new(0)
+    let written = AtomicI64.new(0)
+    let wg      = WaitGroup.new()
+    wg.add(5)   // 4 readers + 1 writer
+
+    // 4 readers (parallel for = M:N, concurrent with writer)
+    parallel for _i in 0..4 {
+        for _j in 0..10 {
+            rw.read()
+            let v = shared.load(Acquire)
+            if v % 2 != 0 {
+                torn.fetch_add(1)
+            }
+            rw.read_unlock()
+        }
+        wg.done()
+    }
+
+    // 1 writer in supervised spawn (runs concurrently with parallel for)
+    supervised {
+        spawn {
+            for _j in 0..10 {
+                rw.write()
+                let v = shared.load()
+                shared.store(v + 2, Release)
+                rw.write_unlock()
+                written.fetch_add(1)
+            }
+            wg.done()
+        }
+    }
+
+    wg.wait()
+
+    assert(torn.load() == 0, "no torn reads allowed under RwLock")
+    assert(written.load() == 10, "writer must complete all 10 iterations")
+}
+
+test "RwLock: readers see only consistent values" {
+    // 3 readers observe value is always 0 or 100 while writer toggles.
+    let rw      = RwLock.new()
+    let value   = AtomicI64.new(0)  // 0 or 100
+    let bad_obs = AtomicI64.new(0)
+    let wg      = WaitGroup.new()
+    wg.add(4)   // 3 readers + 1 writer
+
+    parallel for _r in 0..3 {
+        for _j in 0..5 {
+            rw.read()
+            let v = value.load()
+            if v != 0 && v != 100 {
+                bad_obs.fetch_add(1)
+            }
+            rw.read_unlock()
+        }
+        wg.done()
+    }
+
+    supervised {
+        spawn {
+            for _j in 0..5 {
+                rw.write()
+                value.store(100, Release)
+                rw.write_unlock()
+                rw.write()
+                value.store(0, Release)
+                rw.write_unlock()
+            }
+            wg.done()
+        }
+    }
+
+    wg.wait()
+
+    assert(bad_obs.load() == 0,
+        "readers must only see 0 or 100 under RwLock -- no torn state")
+}

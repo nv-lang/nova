@@ -1,0 +1,119 @@
+// Plan 103.8 - Litmus: Message Passing (MP) - Acquire/Release happens-before.
+//
+// Classic MP litmus test (D167):
+//   Writer: payload = 42; flag.store(true, Release)
+//   Reader: while !flag.load(Acquire) { yield() }; assert(payload == 42)
+//
+// Property: paired Acquire/Release establishes happens-before.
+// All stores before Release-store to `flag` are visible to threads that
+// see the Acquire-load of `flag` as `true`.
+//
+// This is the fundamental building block for lock-free publish/subscribe.
+// Reduced to 5 iters for parallel test suite stability.
+//
+// EXPECT_TIMEOUT_MS 300000
+
+module nova_tests.plan103_8.litmus_message_passing
+
+test "MP litmus: Acquire/Release -- payload visible after flag observed" {
+    let n_iters   = 5
+    let wrong_payload = AtomicI64.new(0)
+
+    for _iter in 0..n_iters {
+        let payload = AtomicI64.new(0)
+        let flag    = AtomicBool.new(false)
+
+        supervised {
+            // Writer: publish payload under Release
+            spawn {
+                payload.store(42, Release)
+                flag.store(true, Release)
+            }
+            // Reader: spin-wait with Acquire, then check payload
+            spawn {
+                while !flag.load(Acquire) {
+                    runtime.yield()
+                }
+                // After seeing flag=true (Acquire), payload must be 42
+                let v = payload.load(Acquire)
+                if v != 42 {
+                    wrong_payload.fetch_add(1)
+                }
+            }
+        }
+    }
+
+    assert(wrong_payload.load() == 0,
+        "MP litmus: payload must always be 42 after Acquire-load of flag")
+}
+
+test "MP litmus: Release/Acquire chain with multiple payloads" {
+    let n_iters  = 5
+    let failures = AtomicI64.new(0)
+
+    for _iter in 0..n_iters {
+        let data_a  = AtomicI64.new(0)
+        let data_b  = AtomicI64.new(0)
+        let ready   = AtomicI64.new(0)  // 0=not ready, 1=data_a ready, 2=both ready
+
+        supervised {
+            // Stage 1 producer: write data_a, signal stage=1
+            spawn {
+                data_a.store(111, Release)
+                ready.store(1, Release)
+            }
+            // Stage 2 producer: wait for stage=1, write data_b, signal stage=2
+            spawn {
+                while ready.load(Acquire) < 1 {
+                    runtime.yield()
+                }
+                data_b.store(222, Release)
+                ready.store(2, Release)
+            }
+            // Final reader: wait for stage=2, check both values
+            spawn {
+                while ready.load(Acquire) < 2 {
+                    runtime.yield()
+                }
+                let a = data_a.load(Acquire)
+                let b = data_b.load(Acquire)
+                if a != 111 || b != 222 {
+                    failures.fetch_add(1)
+                }
+            }
+        }
+    }
+
+    assert(failures.load() == 0,
+        "chained Acquire/Release must make both payloads visible to final reader")
+}
+
+test "MP litmus: SeqCst store/load is also correct for message passing" {
+    // SeqCst is strictly stronger than Release/Acquire for MP --
+    // this test confirms SeqCst also works for the MP pattern.
+    let n_iters  = 5
+    let wrong    = AtomicI64.new(0)
+
+    for _iter in 0..n_iters {
+        let payload = AtomicI64.new(0)
+        let flag    = AtomicBool.new(false)
+
+        supervised {
+            spawn {
+                payload.store(99, SeqCst)
+                flag.store(true, SeqCst)
+            }
+            spawn {
+                while !flag.load(SeqCst) {
+                    runtime.yield()
+                }
+                if payload.load(SeqCst) != 99 {
+                    wrong.fetch_add(1)
+                }
+            }
+        }
+    }
+
+    assert(wrong.load() == 0,
+        "SeqCst MP: payload always visible after flag observed")
+}
