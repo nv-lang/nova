@@ -195,4 +195,16 @@ void nova_runtime_cancel_worker_fibers(struct NovaFiberQueue* target_scope);
 void* nova_spawn_pool_acquire(size_t size);
 void  nova_spawn_pool_release(void* ctx, size_t size);
 
+/* Plan 83.10.5 Ф.A.1: sleep race diagnostic counters.
+ * Removed (or guarded with #ifdef NOVA_DEBUG_SLEEP_DIAG) после закрытия
+ * [M-83.10.4-iso-cancel-startup-race]. */
+extern nova_atomic_int _nova_diag_sleep_enter;
+extern nova_atomic_int _nova_diag_sleep_parked;
+extern nova_atomic_int _nova_diag_sleep_close_cb_fired;
+extern nova_atomic_int _nova_diag_sleep_canceled_by_worker;
+extern nova_atomic_int _nova_diag_sleep_return;
+extern nova_atomic_int _nova_diag_sleep_race_2c_fired;
+extern nova_atomic_int _nova_diag_sleep_broadcast_wake;
+void nova_diag_sleep_print(void);
+
 #endif /* NOVA_RT_RUNTIME_H */

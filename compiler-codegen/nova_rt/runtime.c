@@ -201,6 +201,39 @@ static mco_coro* _worker_yielded_pop(NovaWorker* w) {
 static NovaWorker*     _workers = NULL;
 static int             _n_workers = 0;          /* materialized worker count */
 static nova_atomic_int _round_robin = 0;
+
+/* Plan 83.10.5 Ф.A.1: diagnostic counters for sleep race investigation
+ * [M-83.10.4-iso-cancel-startup-race]. Counter math reveals race location:
+ *   N spawned sleep fibers (e.g. 99 в stress_iso_3e).
+ *   Expected at PASS:  enter==parked==N, close_cb==N, return==N,
+ *                       canceled_by_worker ≤ N depending on Race 2b hits.
+ *   On HANG diagnose:  enter==N but parked<N → Race 2a unexpectedly fired
+ *                       parked==N but close_cb<N → cancel dispatch missed slot
+ *                       close_cb==N but return<N → park_until/wake lost
+ *                       canceled_by_worker<N-1 → some fibers self-canceled
+ *                          (Race 2b) — proves three-load ACQUIRE race in
+ *                          nova_runtime_cancel_worker_fibers.
+ * Static zero-init via C default (nova_atomic_int = int32_t). */
+nova_atomic_int _nova_diag_sleep_enter              = 0;
+nova_atomic_int _nova_diag_sleep_parked             = 0;
+nova_atomic_int _nova_diag_sleep_close_cb_fired     = 0;
+nova_atomic_int _nova_diag_sleep_canceled_by_worker = 0;
+nova_atomic_int _nova_diag_sleep_return             = 0;
+nova_atomic_int _nova_diag_sleep_race_2c_fired      = 0;
+nova_atomic_int _nova_diag_sleep_broadcast_wake     = 0;
+
+void nova_diag_sleep_print(void) {
+    fprintf(stderr,
+        "[diag-sleep] enter=%d parked=%d canceled_by_worker=%d "
+        "close_cb=%d return=%d race_2c=%d broadcast_wake=%d\n",
+        (int)nova_aint_load(&_nova_diag_sleep_enter),
+        (int)nova_aint_load(&_nova_diag_sleep_parked),
+        (int)nova_aint_load(&_nova_diag_sleep_canceled_by_worker),
+        (int)nova_aint_load(&_nova_diag_sleep_close_cb_fired),
+        (int)nova_aint_load(&_nova_diag_sleep_return),
+        (int)nova_aint_load(&_nova_diag_sleep_race_2c_fired),
+        (int)nova_aint_load(&_nova_diag_sleep_broadcast_wake));
+}
 /* Plan 83.1 Ф.4: lazy worker-пул. `_armed` — runtime.init() вызван
  * (M:N запрошен); `_materialized` — пул-потоки реально подняты (лениво,
  * на первом worker-bound spawn). `_target_workers` — резолвнутое число
@@ -342,6 +375,7 @@ static bool              _sysmon_started = false;
 
 static void _sysmon_main(void* arg) {
     (void)arg;
+    int diag_tick = 0;  /* Plan 83.10.5 Ф.A.1: periodic counter print */
     while (nova_abool_load(&_sysmon_running)) {
         uv_sleep(10);  /* ~10ms (Windows timer gran → ~15ms — приемлемо). */
         if (!nova_abool_load(&_sysmon_running)) break;
@@ -354,6 +388,13 @@ static void _sysmon_main(void* arg) {
             if (started != 0 && (now - started) > NOVA_PREEMPT_SLICE_NS) {
                 w->preempt_flag = 1;  /* живой флаг — fiber перечитает */
             }
+        }
+        /* Plan 83.10.5 Ф.A.1: print diagnostic counters every ~1s to capture
+         * state before TerminateProcess (atexit does NOT fire under
+         * SIGTERM/TerminateProcess on Windows). */
+        if (++diag_tick >= 100) {
+            diag_tick = 0;
+            nova_diag_sleep_print();
         }
     }
 }
@@ -1135,6 +1176,10 @@ void nova_runtime_init(int n_workers) {
      * runtime.shutdown() до atexit — безопасны). */
     if (!_atexit_registered) {
         atexit(nova_runtime_shutdown);
+        /* Plan 83.10.5 Ф.A.1: register diagnostic print AFTER shutdown so
+         * it fires BEFORE (atexit is LIFO). Visible on TIMEOUT (test-runner
+         * kill via SIGTERM still triggers atexit on Windows). */
+        atexit(nova_diag_sleep_print);
         _atexit_registered = true;
     }
     nova_mutex_unlock(&_init_mu);
@@ -1622,15 +1667,19 @@ void nova_runtime_cancel_worker_fibers(struct NovaFiberQueue* target_scope) {
             NovaSpawnCtxBase* base = co ? (NovaSpawnCtxBase*)mco_get_user_data(co) : NULL;
             if (!co || mco_status(co) == MCO_DEAD) continue;
             if (!base || base->_nova_parent_scope != tscope) continue;
-            /* ACQUIRE-load: pairs with RELEASE store in register_pending.
-             * Guarantees visibility of pending_handle when stop_cb != NULL. */
+            /* Plan 83.10.5 Ф.A.2: SEQ_CST load (was ACQUIRE).
+             * SEQ_CST on register_pending's store + SEQ_CST here puts both
+             * in total order. Без SEQ_CST на load — ACQUIRE формирует
+             * только pair с конкретным release-store на этом atomic'е, не с
+             * SEQ_CST total order. Stale-read NULL пропускает slot. */
             NovaSchedStopCb cb;
-            __atomic_load(&st->pending_stop_cb[j], &cb, __ATOMIC_ACQUIRE);
-            void* hdl = st->pending_handle[j];  /* visible after ACQUIRE on cb */
+            __atomic_load(&st->pending_stop_cb[j], &cb, __ATOMIC_SEQ_CST);
+            void* hdl = st->pending_handle[j];  /* visible after SEQ_CST on cb */
             if (cb && hdl) {
                 /* ASYNC stop_cb: initiates cross-thread safe uv_close via
                  * nova_loop_defer_close; close_cb wakes fiber afterward. */
                 cb(hdl);
+                nova_aint_inc(&_nova_diag_sleep_canceled_by_worker);  /* Plan 83.10.5 Ф.A.1 diag */
             } else if (j < st->capacity && st->parked[j]) {
                 /* Bare park (no registered stop_cb): direct dispatch_ready. */
                 nova_sched_wake(&w->scope, j);
@@ -1639,6 +1688,28 @@ void nova_runtime_cancel_worker_fibers(struct NovaFiberQueue* target_scope) {
              * will self-initiate close after register_pending completes. */
         }
     }
+
+    /* Plan 83.10.5 Ф.A.2: NO broadcast bare-wake here.
+     *
+     * Previous iteration tried broadcast wake to catch slots missed in
+     * first pass (cb stale-read NULL). But this CREATED a worse race:
+     * broadcast wake clears parked[slot]=false → fiber resumes briefly →
+     * predicate sees stage=CLOSING → re-parks via nova_sched_park (sets
+     * parked=true again). If close_cb fires BETWEEN predicate-returns-false
+     * AND nova_sched_park's SEQ_CST store, close_cb's wake CAS reads
+     * parked=false → fails → no dispatch → fiber permanently stuck.
+     *
+     * Correct invariant: SEQ_CST cancel_requested store (in nova_cancel_token_
+     * cancel_reason) + SEQ_CST register_pending store create total order.
+     * Worker fibers ALWAYS see one of:
+     *   (a) Race 2b ACQUIRE-load cancel_requested → TRUE → self-close
+     *   (b) Cancel's ACQUIRE-load pending_stop_cb → non-NULL → stop_cb fired
+     * One of (a)/(b) ALWAYS triggers close_cb. close_cb's nova_sched_wake CAS
+     * works correctly because fiber has SEQ_CST stored parked=true before
+     * yielding, AND no broadcast wake has cleared it.
+     *
+     * Predicate Race 2c remains как defense-in-depth для spurious wake'ов из
+     * других источников (channel send/recv, Time.after etc.). */
 }
 
 /* Plan 83.10.3 (2026-05-26): pump current worker's runnext+deque for a

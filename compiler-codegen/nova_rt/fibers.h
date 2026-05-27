@@ -731,7 +731,22 @@ static inline void nova_cancel_token_cancel_reason(NovaCancelToken* t, void* rea
         }
     }
     if (t->bound_scope) {
-        nova_abool_store(&t->bound_scope->cancel_requested, true);
+        /* Plan 83.10.5 Ф.A.2: SEQ_CST store вместо RELEASE (nova_abool_store).
+         * RELEASE на x86 = compiler barrier only, store buffer может задержать
+         * propagation на 10s of ns. Worker fiber's Race 2b ACQUIRE-load может
+         * прочитать stale FALSE → fiber parks без cancel-awareness → permanent
+         * stuck (3-9/100 в stress_iso_3e под RELEASE).
+         *
+         * SEQ_CST на стороне cancel и на register_pending (cb store) создаёт
+         * total order. Worker fiber's SEQ_CST cb store + cancel's SEQ_CST
+         * cancel_requested store упорядочиваются:
+         *   - cancel store FIRST → worker's subsequent ACQUIRE-load на
+         *     cancel_requested ВИДИТ true → Race 2b self-close
+         *   - worker cb store FIRST → cancel's subsequent cancel_worker_fibers
+         *     ACQUIRE-load на pending_stop_cb ВИДИТ non-NULL → stop_cb fired
+         * Один из двух путей гарантирован для каждого fiber'а. */
+        bool tval = true;
+        __atomic_store(&t->bound_scope->cancel_requested, &tval, __ATOMIC_SEQ_CST);
         /* Plan 49 Ф.2: пропагируем reason в scope queue чтобы nova_fiber_yield
          * увидел причину при throw'е CANCEL. */
         t->bound_scope->cancel_reason_ptr = reason_ptr;
@@ -1723,10 +1738,26 @@ typedef struct {
      * resumeющим fiber после wake. На x86 — no extra cost; на ARM —
      * корректные fence-ы. */
     nova_atomic_int  stage;   /* NovaSleepStage values */
+    /* Plan 83.10.5 Ф.A.2: cache parent (supervised) scope для Race 2c в
+     * park-predicate. Captured at _nova_sleep_via_libuv setup so predicate
+     * (called on every spurious wake) может self-close если cancel fired
+     * после Race 2b check ИЛИ если broadcast bare-wake пришёл с cancel-side.
+     * NULL = single-thread mode (нет supervised scope). */
+    NovaFiberQueue*  cancel_scope_cached;
 } NovaSleepState;
 
 /* Forward-decl close_cb для использования в timer_cb / stop_cb. */
 static void _nova_sleep_close_cb(uv_handle_t* h);
+
+/* Plan 83.10.5 Ф.A.1: diagnostic counters declared in runtime.h, which is
+ * included AFTER fibers.h. Forward-extern here so increments below resolve. */
+extern nova_atomic_int _nova_diag_sleep_enter;
+extern nova_atomic_int _nova_diag_sleep_parked;
+extern nova_atomic_int _nova_diag_sleep_close_cb_fired;
+extern nova_atomic_int _nova_diag_sleep_canceled_by_worker;
+extern nova_atomic_int _nova_diag_sleep_return;
+extern nova_atomic_int _nova_diag_sleep_race_2c_fired;
+extern nova_atomic_int _nova_diag_sleep_broadcast_wake;
 
 /* Timer fired: инициировать close. НЕ wake'аем fiber — wake придёт из
  * close_cb когда handle полностью released. */
@@ -1746,15 +1777,49 @@ static void _nova_sleep_close_cb(uv_handle_t* h) {
     /* Plan 83.4.1: RELEASE-store предиката — park-predicate в
      * _sleep_stage_is_closed читает с ACQUIRE и видит этот write. */
     nova_aint_store(&st->stage, NOVA_SLEEP_CLOSED);
+    nova_aint_inc(&_nova_diag_sleep_close_cb_fired);  /* Plan 83.10.5 Ф.A.1 diag */
     nova_sched_wake(st->scope, st->slot);
 }
 
-/* Plan 83.4.1 park-predicate: park-until возвращается ТОЛЬКО когда
- * close_cb отработал и stage == NOVA_SLEEP_CLOSED. ACQUIRE-load
- * парный с RELEASE-store в close_cb. */
+/* Plan 83.4.1 / 83.10.5 Ф.A.2 park-predicate: возвращается true ТОЛЬКО когда
+ * close_cb отработал и stage == NOVA_SLEEP_CLOSED.
+ *
+ * Plan 83.10.5 Ф.A.2 (Race 2c — Tokio "recheck under lock" аналог):
+ * Каждый spurious wake (например broadcast bare-wake из cancel_worker_fibers
+ * second-pass либо из других channel/sleep wake'ов) пере-проверяет
+ * cancel_requested на cached parent scope. Если cancel пришёл ПОСЛЕ Race 2b
+ * check'а в _nova_sleep_via_libuv — self-CAS PENDING→CLOSING + uv_close на
+ * локальном loop'е worker'а (predicate всегда вызывается на owning worker
+ * thread'е fiber'а, same as Race 2b → direct uv_close safe).
+ *
+ * Это закрывает window'у Plan 83.10.4 Ф.5 race [M-83.10.4-iso-cancel-startup-race]:
+ * 6 fiber'ов теряли cb-dispatch из-за three-load ACQUIRE race
+ * (count/fibers[j]/pending_stop_cb на разных heap страницах). Парный
+ * broadcast bare-wake в cancel_worker_fibers second-pass гарантирует predicate
+ * вызывается даже когда close_cb не сработал → self-close ловит race. */
 static nova_bool _nova_sleep_stage_is_closed(void* ctx) {
     NovaSleepState* st = (NovaSleepState*)ctx;
-    return nova_aint_load(&st->stage) == NOVA_SLEEP_CLOSED;
+    int32_t stage = nova_aint_load(&st->stage);
+    if (stage == NOVA_SLEEP_CLOSED) return true;
+    /* Race 2c: spurious wake + cancel pending → self-close.
+     * stage может быть PENDING (cancel was lost) либо CLOSING (Race 2b или
+     * stop_cb уже взял CAS, close_cb ещё не fired). */
+    if (stage == NOVA_SLEEP_PENDING &&
+        st->cancel_scope_cached != NULL &&
+        nova_abool_load(&st->cancel_scope_cached->cancel_requested)) {
+        int32_t expected = NOVA_SLEEP_PENDING;
+        if (nova_aint_cas(&st->stage, &expected, NOVA_SLEEP_CLOSING)) {
+            /* Same-thread uv_close — predicate runs on worker owning timer's loop. */
+            uv_close((uv_handle_t*)&st->timer, _nova_sleep_close_cb);
+            nova_aint_inc(&_nova_diag_sleep_race_2c_fired);  /* Plan 83.10.5 Ф.A.1 diag */
+            stage = NOVA_SLEEP_CLOSING;
+        }
+    }
+    /* Drain-on-CLOSING tried (Plan 83.10.5 Ф.A.2 attempt 3, reverted) —
+     * uv_run(NOWAIT) reentrance из predicate interferred с worker UV loop
+     * processing другими fibers'ов → 5/20 stability (worse). Final tactical
+     * state: PASS 8-9/15 = ~55%. Architectural Ф.B required. */
+    return false;  /* re-park; close_cb wake should arrive (subject to race). */
 }
 
 /* stop_cb для cancel-integration (D93 Ф.8 ASYNC contract).
@@ -1796,6 +1861,7 @@ static inline void _nova_sleep_via_libuv(NovaFiberQueue* scope, int slot,
      * in M:N mode; cancel_requested on the worker scope is NEVER set.
      * The supervised scope is accessible via the fiber's SpawnCtxBase. */
     NovaFiberQueue* cancel_scope = scope;  /* fallback: single-thread mode */
+    nova_aint_inc(&_nova_diag_sleep_enter);  /* Plan 83.10.5 Ф.A.1 diag */
     {
         mco_coro* _rc = mco_running();
         if (_rc) {
@@ -1811,7 +1877,13 @@ static inline void _nova_sleep_via_libuv(NovaFiberQueue* scope, int slot,
     if (nova_abool_load(&cancel_scope->cancel_requested)) {
         return;
     }
-    NovaSleepState st = { .scope = scope, .slot = slot };
+    /* Plan 83.10.5 Ф.A.2: cache cancel_scope для predicate Race 2c.
+     * NULL = bootstrap (no supervised scope) — predicate skips Race 2c. */
+    NovaSleepState st = {
+        .scope = scope,
+        .slot = slot,
+        .cancel_scope_cached = (cancel_scope != scope) ? cancel_scope : NULL,
+    };
     nova_aint_init(&st.stage, NOVA_SLEEP_PENDING);
     int rc = uv_timer_init(nova_current_loop(), &st.timer);
     if (rc != 0) {
@@ -1853,8 +1925,10 @@ static inline void _nova_sleep_via_libuv(NovaFiberQueue* scope, int slot,
      * Под M:N drain-quiescence-wake мог разбудить park до завершения
      * close_cb; park_until re-park'нется и подождёт реального close_cb.
      * Никакого FATAL-check'а больше не нужно — by construction. */
+    nova_aint_inc(&_nova_diag_sleep_parked);  /* Plan 83.10.5 Ф.A.1 diag */
     nova_sched_park_until(scope, slot, _nova_sleep_stage_is_closed, &st);
     nova_sched_unregister_pending(scope, slot);
+    nova_aint_inc(&_nova_diag_sleep_return);  /* Plan 83.10.5 Ф.A.1 diag */
 }
 
 /* ─── Plan 83.3 Ф.1: `Blocking`-эффект → libuv threadpool offload ───
