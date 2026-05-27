@@ -1,7 +1,7 @@
-// EXPECT_COMPILE_ERROR D133
+// EXPECT_COMPILE_ERROR D131
 //
-// Plan 100.5 (D163 + D133): передача consume-var дважды в external
-// consume-param = use-after-consume.
+// Plan 100.5 (D163 + D131): передача consume-var дважды в external
+// consume-param = use-after-consume (D131).
 
 module nova_tests.plan100_5.external_consume_err_double_pass
 
