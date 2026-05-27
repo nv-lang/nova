@@ -1,0 +1,102 @@
+// Plan 103.4 — Property: Condvar no lost wakeup over 100 iterations.
+//
+// Classic producer/consumer: producer sets flag + notify, consumer waits
+// until flag set. Over 100 iterations, no notification is lost (every
+// item produced is eventually consumed).
+//
+// Property invariant: consumed == produced at end.
+//
+// Predicate waiting uses explicit while+wait (semantically identical to
+// wait_until; avoids codegen trailing-block-factory issue with fn()->bool
+// closures in spawn blocks).
+//
+// EXPECT_TIMEOUT_MS 120000
+
+module nova_tests.plan103_4.condvar_no_lost_wakeup_prop
+
+test "no lost wakeup: producer/consumer over 100 iterations" {
+    let mu       = Mutex.new()
+    let cv       = Condvar.new()
+    let produced = AtomicInt.new(0)
+    let consumed = AtomicInt.new(0)
+    let n_iters  = 100
+
+    supervised {
+        // Consumer fiber: loops n_iters times
+        spawn {
+            for _i in 0..n_iters {
+                mu.lock()
+                // Equivalent to: cv.wait_until(mu) { || produced.load() > consumed.load() }
+                while produced.load() <= consumed.load() {
+                    cv.wait(mu)
+                }
+                consumed.fetch_add(1)
+                mu.unlock()
+            }
+        }
+
+        // Producer: increments produced + notifies on each iteration
+        for _i in 0..n_iters {
+            mu.lock()
+            produced.fetch_add(1)
+            cv.notify_one()
+            mu.unlock()
+            // Small yield to allow consumer to catch up (prevent runaway producer)
+            Time.sleep(0)
+        }
+    }
+
+    assert(consumed.load() == n_iters,
+        "all 100 produced items must be consumed (no lost wakeup)")
+    assert(produced.load() == n_iters)
+}
+
+test "no lost wakeup under high contention: 5 producers × 20 items, 5 consumers × 20 items" {
+    let mu       = Mutex.new()
+    let cv       = Condvar.new()
+    let pending  = AtomicInt.new(0)  // produced - consumed
+    let total_consumed = AtomicInt.new(0)
+    let n_prod   = 5
+    let n_cons   = 5
+    let items_pp = 20  // items per producer
+    let items_pc = 20  // items per consumer
+    let wg       = WaitGroup.new()
+    wg.add(n_prod + n_cons)
+
+    supervised {
+        // Consumers
+        for _c in 0..n_cons {
+            spawn {
+                for _i in 0..items_pc {
+                    mu.lock()
+                    // Equivalent to: cv.wait_until(mu) { || pending.load() > 0 }
+                    while pending.load() <= 0 {
+                        cv.wait(mu)
+                    }
+                    pending.fetch_add(-1)
+                    total_consumed.fetch_add(1)
+                    mu.unlock()
+                }
+                wg.done()
+            }
+        }
+
+        // Producers
+        for _p in 0..n_prod {
+            spawn {
+                for _i in 0..items_pp {
+                    mu.lock()
+                    pending.fetch_add(1)
+                    cv.notify_one()
+                    mu.unlock()
+                }
+                wg.done()
+            }
+        }
+
+        wg.wait()
+    }
+
+    assert(total_consumed.load() == n_prod * items_pp,
+        "all produced items consumed under contention")
+}

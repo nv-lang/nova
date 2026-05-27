@@ -1,0 +1,57 @@
+// Plan 103.4 — Condvar.notify_all() wakes all waiters.
+//
+// Setup: 5 fibers each lock(mu), increment n_waiting, then cv.wait(mu).
+// Main: busy-loops + acquires mu to confirm all 5 are in cv's waiter list,
+//       then calls notify_all().
+// Verify: all 5 fibers wake up.
+//
+// EXPECT_TIMEOUT_MS 30000
+
+module nova_tests.plan103_4.condvar_notify_all
+
+test "notify_all wakes all 5 waiters" {
+    let mu        = Mutex.new()
+    let cv        = Condvar.new()
+    let n_waiting = AtomicInt.new(0)
+    let n_woken   = AtomicInt.new(0)
+
+    supervised {
+        for _i in 0..5 {
+            spawn {
+                mu.lock()
+                n_waiting.fetch_add(1)
+                cv.wait(mu)
+                n_woken.fetch_add(1)
+                mu.unlock()
+            }
+        }
+
+        // Confirm all 5 are in cv's waiter list.
+        // The poll acquires mu, which the fiber holds until park_with_unlock
+        // fires (after yield) — so mu is only released after the fiber is
+        // truly parked. This prevents the lost-wakeup in the poll logic.
+        let mut all_in = false
+        while !all_in {
+            Time.sleep(1)
+            mu.lock()
+            if n_waiting.load() == 5 {
+                all_in = true
+            }
+            mu.unlock()
+        }
+
+        cv.notify_all()
+
+        // Wait for all 5 fibers to increment n_woken.
+        // Time.sleep(1) calls uv_sleep(1) in non-fiber context (1ms OS sleep),
+        // properly yielding the main thread so workers can schedule fibers.
+        // Avoids WaitGroup.wait()'s PAUSE-spin which starves workers under load
+        // (nova_supervised_run_impl tight-spins when parked==0 && alive>0).
+        while n_woken.load() != 5 {
+            Time.sleep(1)
+        }
+    }
+    // supervised {} exits after all 5 fibers complete (pending_remote → 0).
+
+    assert(n_woken.load() == 5, "notify_all must wake all 5 fibers")
+}

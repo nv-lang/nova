@@ -1,0 +1,58 @@
+// Plan 103.4 — Semaphore bounded concurrency.
+//
+// Semaphore.new(3), 10 fibers: each acquires, increments in-flight counter,
+// verifies in-flight <= 3, decrements, releases.
+// Observable invariant: max concurrent fibers inside critical region <= permits.
+//
+// EXPECT_TIMEOUT_MS 30000
+
+module nova_tests.plan103_4.semaphore_bounded_concurrency
+
+test "Semaphore: bounded concurrency observable — max in-flight <= permits" {
+    let sem       = Semaphore.new(3)
+    let in_flight = AtomicInt.new(0)
+    let violation = AtomicInt.new(0)
+    let wg        = WaitGroup.new()
+    let n_fibers  = 10
+    wg.add(n_fibers)
+
+    parallel for _i in 0..n_fibers {
+        sem.acquire()
+        let before = in_flight.fetch_add(1)
+        // before+1 == current in-flight (we just entered)
+        if before + 1 > 3 {
+            violation.fetch_add(1)
+        }
+        // Yield to allow interleaving
+        in_flight.fetch_add(-1)
+        sem.release()
+        wg.done()
+    }
+
+    wg.wait()
+    assert(violation.load() == 0)
+}
+
+test "Semaphore: available_permits reflects acquire/release" {
+    let sem = Semaphore.new(5)
+    assert(sem.available_permits() == 5)
+    sem.acquire()
+    sem.acquire()
+    assert(sem.available_permits() == 3)
+    sem.release()
+    assert(sem.available_permits() == 4)
+}
+
+test "Semaphore: try_acquire succeeds when permits available" {
+    let sem = Semaphore.new(2)
+    let ok1 = sem.try_acquire()
+    let ok2 = sem.try_acquire()
+    let ok3 = sem.try_acquire()  // no permits left
+    assert(ok1 == true)
+    assert(ok2 == true)
+    assert(ok3 == false)
+    // Release and try again
+    sem.release()
+    let ok4 = sem.try_acquire()
+    assert(ok4 == true)
+}

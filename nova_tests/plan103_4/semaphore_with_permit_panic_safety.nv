@@ -1,0 +1,57 @@
+// Plan 103.4 — Semaphore acquire/defer-release safety.
+//
+// defer release() fires even on throw → permit returned.
+// Tests the explicit acquire/defer release pattern that with_permit wraps.
+// (with_permit body methods on external types use the same acquire+defer path.)
+
+module nova_tests.plan103_4.semaphore_with_permit_panic_safety
+
+test "explicit acquire + defer release: fires on throw — permit returned" {
+    let sem = Semaphore.new(1)
+
+    let mut caught = false
+    with Fail = effect Fail {
+        fail(_msg) { caught = true; interrupt () }
+    } {
+        sem.acquire()
+        defer sem.release()
+        throw "oops"
+    }
+
+    assert(caught == true)
+    // Permit must have been released by defer
+    let ok = sem.try_acquire()
+    assert(ok == true)
+    sem.release()
+}
+
+test "acquire + defer release: permit returned on normal exit" {
+    let sem = Semaphore.new(1)
+    {
+        sem.acquire()
+        defer sem.release()
+        // Normal exit — defer fires
+    }
+    assert(sem.available_permits() == 1)
+}
+
+test "acquire + defer release: sequential calls work" {
+    let sem = Semaphore.new(1)
+    let mut total = 0
+    for i in 0..5 {
+        sem.acquire()
+        defer sem.release()
+        total = total + i * 2
+    }
+    assert(total == 20)  // 0 + 2 + 4 + 6 + 8 = 20
+    assert(sem.available_permits() == 1)
+}
+
+test "acquire + defer release: permit returned after computation" {
+    let sem = Semaphore.new(2)
+    sem.acquire()
+    defer sem.release()
+    // Verify permit was taken
+    assert(sem.available_permits() == 1)
+    // (defer fires at scope exit)
+}
