@@ -612,6 +612,16 @@ fn write_typeref_structural(w: &mut JsonWriter, ty: &crate::ast::TypeRef) {
                 });
             });
         }
+        // D176 (Plan 108): readonly T — structural type like inner but with readonly kind.
+        TypeRef::Readonly(inner, _) => {
+            let source = super::collector::render_type_for_doc(ty);
+            w.field_object("structural_type", |w| {
+                w.field_str("kind", "readonly");
+                w.field_str("source", &source);
+                // Recurse into inner type for full structural info.
+                write_typeref_structural(w, inner);
+            });
+        }
     }
 }
 

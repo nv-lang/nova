@@ -115,15 +115,15 @@ fn is_post_1_0_version(v: &str) -> bool {
     matches!(major.parse::<u32>(), Ok(n) if n >= 1)
 }
 
-/// Plan 45 Р¤.4 вЂ” РїРѕСЃС‚СЂРѕРёС‚СЊ `DocTree` РёР· РїР°СЂСЃРµРЅРЅРѕРіРѕ, type-checked `Module`.
+/// Plan 45 Р¤.4 вЂ" РїРѕСЃС‚СЂРѕРёС‚СЊ `DocTree` РёР· РїР°СЂСЃРµРЅРЅРѕРіРѕ, type-checked `Module`.
 ///
 /// РџРѕРІРµРґРµРЅРёРµ MVP:
 /// - РћРґРёРЅ module в†’ РѕРґРёРЅ `DocModule`.
 /// - Items: `Fn` / `Type` / `Const` СЃРѕР±РёСЂР°СЋС‚СЃСЏ. `Effect` / `Protocol`
 ///   С‡РµСЂРµР· `TypeDeclKind::Effect` / `TypeDeclKind::Protocol`.
 /// - Visibility: `is_export = true` в†’ `Export`, РёРЅР°С‡Рµ `Private`.
-///   РџРѕ РґРµС„РѕР»С‚Сѓ filter вЂ” Export-only; flag `--include-private` (Plan 45
-///   Р¤.12) РїРµСЂРµРєР»СЋС‡Р°РµС‚ (РЅР° collector-СѓСЂРѕРІРЅРµ РІСЃС‘ СЃРѕР±РёСЂР°РµС‚СЃСЏ; filter вЂ” РІ
+///   РџРѕ РґРµС„РѕР»С‚Сѓ filter вЂ" Export-only; flag `--include-private` (Plan 45
+///   Р¤.12) РїРµСЂРµРєР»СЋС‡Р°РµС‚ (РЅР° collector-СѓСЂРѕРІРЅРµ РІСЃС‘ СЃРѕР±РёСЂР°РµС‚СЃСЏ; filter вЂ" РІ
 ///   renderer'Рµ).
 /// - Module summary: РёР· `module.doc` (`//!` inner) + Р»СЋР±С‹С… `#doc "..."`
 ///   module-attr (D101).
@@ -133,9 +133,9 @@ pub fn collect(module: &Module) -> DocTree {
     tree
 }
 
-/// Plan 45 Р¤.21.7: workspace mode вЂ” СЃРѕР±СЂР°С‚СЊ РјРЅРѕРіРѕРјРѕРґСѓР»СЊРЅС‹Р№ DocTree.
+/// Plan 45 Р¤.21.7: workspace mode вЂ" СЃРѕР±СЂР°С‚СЊ РјРЅРѕРіРѕРјРѕРґСѓР»СЊРЅС‹Р№ DocTree.
 /// Modules СѓР¶Рµ type-checked + effects-inferred caller'РѕРј. РџРѕСЂСЏРґРѕРє modules
-/// РІ tree.modules вЂ” СЃРѕСЂС‚РёСЂСѓРµС‚СЃСЏ РїРѕ `path` РґР»СЏ РґРµС‚РµСЂРјРёРЅРёР·РјР°.
+/// РІ tree.modules вЂ" СЃРѕСЂС‚РёСЂСѓРµС‚СЃСЏ РїРѕ `path` РґР»СЏ РґРµС‚РµСЂРјРёРЅРёР·РјР°.
 pub fn collect_workspace(modules: &[Module]) -> DocTree {
     let mut tree = DocTree::new();
     for m in modules {
@@ -287,7 +287,7 @@ fn collect_one(module: &Module) -> DocModule {
                 });
             }
         } else {
-            // Whole-module re-export: `export import X` вЂ” emit a module-level re-export marker.
+            // Whole-module re-export: `export import X` вЂ" emit a module-level re-export marker.
             let local_name = imp.alias.as_ref().unwrap_or(imp.path.last().unwrap_or(&String::new())).clone();
             let reexport_from = source_module.clone();
             let id = format!("{}::{}", module_path.join("."), local_name);
@@ -695,7 +695,7 @@ fn build_signature(f: &FnDecl) -> Signature {
         .unwrap_or_else(|| "()".to_string());
     // Effect-row: structured entries РґР»СЏ Р¤.23.8/23.9.
     let mut effects: Vec<EffectEntry> = f.effects.iter().map(|eff| {
-        // Plan 45 Р¤.23.9: row-variables вЂ” single uppercase letter Р±РµР· generics.
+        // Plan 45 Р¤.23.9: row-variables вЂ" single uppercase letter Р±РµР· generics.
         let is_row_var = if let crate::ast::TypeRef::Named { path, generics, .. } = eff {
             path.len() == 1 && generics.is_empty()
                 && path[0].len() == 1
@@ -761,7 +761,7 @@ fn build_signature(f: &FnDecl) -> Signature {
     }
 }
 
-/// РњРёРЅРёРјР°Р»СЊРЅС‹Р№ pretty-print TypeRef РІ Nova source. **MVP-РїСЂРѕСЃС‚РѕР№** вЂ”
+/// РњРёРЅРёРјР°Р»СЊРЅС‹Р№ pretty-print TypeRef РІ Nova source. **MVP-РїСЂРѕСЃС‚РѕР№** вЂ"
 /// РґР»СЏ РїРѕРїСѓР»СЏСЂРЅС‹С… С„РѕСЂРј; СЃР»РѕР¶РЅС‹Рµ СЃР»СѓС‡Р°Рё РјРѕРіСѓС‚ РѕРєСЂСѓРіР»СЏС‚СЊСЃСЏ (best-effort
 /// СЃС‚СЂРѕРєРѕРІРѕРµ РїСЂРµРґСЃС‚Р°РІР»РµРЅРёРµ).
 /// Plan 45 Р¤.24.6: public re-export of render_type for use in render_json.
@@ -843,10 +843,12 @@ fn render_type(ty: &crate::ast::TypeRef) -> String {
             format!("protocol {{ {} }}", sigs.join("; "))
         }
         TypeRef::Unit(_) => "()".to_string(),
+        // D176 (Plan 108): readonly T — display as "readonly T"
+        TypeRef::Readonly(inner, _) => format!("readonly {}", render_type(inner)),
     }
 }
 
-/// Effect вЂ” СЌС‚Рѕ `TypeRef` (РѕР±С‹С‡РЅРѕ `Named`). Render С‡РµСЂРµР· `render_type`.
+/// Effect вЂ" СЌС‚Рѕ `TypeRef` (РѕР±С‹С‡РЅРѕ `Named`). Render С‡РµСЂРµР· `render_type`.
 fn render_effect(eff: &crate::ast::TypeRef) -> String {
     render_type(eff)
 }
@@ -874,3 +876,4 @@ fn render_expr(e: &crate::ast::Expr) -> String {
 
 // Plan 45 Ф.29.1: render_expr_legacy removed (Ф.28.1 soak finished).
 // Shared util `crate::ast::pretty::print_expr` полностью покрывает все cases.
+
