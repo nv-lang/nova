@@ -58,10 +58,12 @@ TS, как и просит источник.
 - `std/net` (TCP/UDP/addr/error) — **[Plan 83.12](83.12-async-net-stdlib.md)**,
   ~1 dev-week. Параллельный track, не пересекается по файлам с Plan 91.
 - `std/sync` (`Atomic*`, `Mutex`, `RwLock`, `ReentrantMutex`, `Once`,
-  `OnceCell`, `Lazy`, `Semaphore`+`Barrier`+`Condvar`) — Plan 103.x;
-  103.1/103.2/103.3/103.5 ✅ уже в main; 103.4/103.6/103.7/103.8 — продолжение.
-  В 0.1 ship'ится текущий стабильный subset; advanced primitives (Semaphore/
-  Barrier/Condvar) — best-effort, не shipping-blocker.
+  `OnceCell`, `Lazy`, `Semaphore`/`Barrier`/`CountDownLatch`/`Condvar`)
+  — Plan 103.x; 103.1/103.2/103.3/103.4/103.5 ✅ уже в main;
+  остаются 103.6 (realtime/blocking type-checker enforcement),
+  103.7 (spec D-blocks final), 103.8 (V1 close) — spec/audit/closure
+  работа, не impl. Для 0.1 sync edет «как есть» — все primitives уже
+  shipped.
 
 **Явно отложено за пределы 0.1** (релизы 0.2+):
 
