@@ -65,7 +65,7 @@ type Account {
 - Запрещает запись через индекс: `view[i] = x` → ошибка
 - `T` → `readonly T` coercion разрешён (сужение прав — автоматический)
 - `readonly T` → `T` запрещён (расширение прав — нарушает invariant)
-- `(readonly T) as mut T` — явный unsafe escape hatch (только в `unsafe` блоке)
+- escape hatch — см. Q1 (не финализировано)
 
 **Рантайм:** zero overhead — `readonly` только compile-time проверка,
 не влияет на codegen.
@@ -80,10 +80,7 @@ let back []u8 = view            // ❌ readonly []u8 → []u8 — E_READONLY_COE
 fn take_view(data readonly []u8) { ... }
 take_view(arr)                  // ✅ автоматический coerce при вызове
 
-// Явный escape — только в unsafe блоке:
-unsafe {
-    let mutable = view as mut []u8  // ✅ явный opt-in с пониманием последствий
-}
+// Escape hatch: см. Q1 — не финализировано.
 ```
 
 **`as []u8` (без `mut`) невалидно** — нет неявного пути снятия readonly.
@@ -134,7 +131,7 @@ export external fn str @bytes() -> []u8
 - Type-checker: при вызове метода на `readonly T` — проверять `is_mut`
 - Type-checker: запрет записи `view[i] = x` на `readonly []T`
 - Coercion: `[]T` → `readonly []T` неявный; `readonly T` → `T` ошибка
-- `as mut T` — только в `unsafe` блоке; снимает readonly статически
+- Escape hatch: см. Q1 (не финализировано)
 - Spec: добавить D176 в `spec/decisions/02-types.md`
 
 ### Ф.3 — Применение: `str.as_bytes()` + `split` на Nova
@@ -160,7 +157,6 @@ export external fn str @bytes() -> []u8
 - `readonly []u8` view от `str.as_bytes()` — элементы читаются нормально
 - `[]u8` передаётся там, где ожидается `readonly []u8` — автоматический coerce
 - `split` на Nova — те же результаты что и C-версия
-- `as mut []u8` в unsafe блоке — компилируется без ошибки
 - Транзитивность: `type Nested { val int }` + `readonly n Nested` — чтение `n.val` работает
 
 ### Негативные (compile errors):
@@ -169,8 +165,7 @@ export external fn str @bytes() -> []u8
 - `acc.readonly_tags.push("x")` → `E_READONLY_FIELD` (транзитивно через поле)
 - `view[i] = x` на `readonly []u8` → `E_READONLY_CONTENT`
 - `readonly []u8` → `[]u8` неявный coerce → `E_READONLY_COERCE`
-- `view as []u8` (без `mut`) → ошибка (нет такого пути — только `as mut T`)
-- `as mut T` вне `unsafe` блока → `E_UNSAFE_REQUIRED`
+- `view as []u8` → ошибка (нет пути снятия readonly — см. Q1)
 - `let mut acc Account = ...; acc.readonly_id = 1` → `E_READONLY_FIELD` (mut binding не снимает)
 
 ## 6. Критерии приёмки (Definition of Done)
@@ -184,7 +179,34 @@ export external fn str @bytes() -> []u8
 - [ ] `std/STATUS.md` обновлён
 - [ ] Раздел «Readonly types» в справочной документации
 
-## 7. Связь
+## Q. Открытые вопросы
+
+### Q1 — `as mut T`: escape hatch или запрет?
+
+`unsafe` блока в Nova нет и не планируется. Как снять `readonly`?
+
+**Варианты:**
+
+1. **Запретить полностью** — `readonly T` → нельзя снять никак в Nova-коде.
+   Обход только через `external fn` на C-стороне (FFI).
+   Hard compile-time гарантия без исключений.
+
+2. **`as mut T` везде** (без unsafe) — явный синтаксис как opt-in.
+   Риск: слишком легко снять, теряется смысл readonly.
+
+3. **Только через `unsafe fn`** — функция помечена `unsafe`, может принять
+   `readonly T` и вернуть `T`. Соглашение, не enforcement.
+
+4. **Не вводить escape совсем** — кому нужен mutable доступ, явно копирует:
+   `let copy = view.to_owned()`. Наиболее чистый вариант для языка без
+   unsafe-системы.
+
+**Текущий план:** вариант 4 (нет escape), но решение не финализировано.
+Удалить `as mut T` из §4/Ф.2 при старте реализации если Q1 не решён.
+
+---
+
+## 8. Связь
 
 - [D36](../spec/decisions/02-types.md#d36) — расширяется D175
 - [D144](../spec/decisions/02-types.md#d144) — слайсы `arr[a..b]`
