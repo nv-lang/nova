@@ -6943,6 +6943,48 @@ fn stmt_diverges(s: &Stmt) -> bool {
     }
 }
 
+/// Plan 100.7 (D165): Returns true if the block (or any nested block) contains
+/// at least one explicit `throw` statement. Used by `check_d162_coverage` to
+/// distinguish “consumed at exit via explicit error-branch handling” (D162 ok)
+/// from “consumed at exit in a function with no explicit throw paths” (D162 lint).
+fn block_has_throw(b: &Block) -> bool {
+    for s in &b.stmts {
+        if stmt_has_throw(s) { return true; }
+    }
+    if let Some(t) = &b.trailing {
+        if expr_has_throw(t) { return true; }
+    }
+    false
+}
+
+fn stmt_has_throw(s: &Stmt) -> bool {
+    match s {
+        Stmt::Throw { .. } => true,
+        Stmt::Expr(e) => expr_has_throw(e),
+        Stmt::Let(d) => expr_has_throw(&d.value),
+        Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. } | Stmt::OkDefer { body, .. }
+        | Stmt::DeferWithResult { body, .. }
+            => expr_has_throw(body),
+        _ => false,
+    }
+}
+
+fn expr_has_throw(e: &crate::ast::Expr) -> bool {
+    use crate::ast::ExprKind;
+    match &e.kind {
+        ExprKind::Throw(_) => true,
+        ExprKind::Block(b) => block_has_throw(b),
+        ExprKind::If { then, else_, .. } => {
+            block_has_throw(then) || else_.as_ref().map(|el| match el {
+                crate::ast::ElseBranch::Block(b) => block_has_throw(b),
+                crate::ast::ElseBranch::If(e) => expr_has_throw(e),
+            }).unwrap_or(false)
+        }
+        ExprKind::With { body, .. } => block_has_throw(body),
+        _ => false,
+    }
+}
+
 /// Walk РјРѕРґСѓР»СЏ: РґР»СЏ РєР°Р¶РґРѕРіРѕ defer/errdefer statement РІ bodies С„СѓРЅРєС†РёР№
 /// Рё С‚РµСЃС‚Р°С… вЂ” РїСЂРѕРІРµСЂРёС‚СЊ body constraints.
 // ─────────────────────────────────────────────────────────────────────
@@ -8067,10 +8109,13 @@ fn fn_is_failable(effects: &[TypeRef]) -> bool {
     })
 }
 
-/// Recursively scan a block for `errdefer` / `okdefer` stmts.
+/// Recursively scan a block for `errdefer` / `okdefer` / `defer` stmts.
 /// Returns (has_errdefer, has_okdefer) — both are coarse: presence of ANY
 /// errdefer/okdefer in the direct stmts (non-nested) is sufficient for
 /// the D162 simplified check.
+///
+/// Plan 100.7 (D165): plain `defer` runs on ALL exits (including error path),
+/// so it counts as errdefer-coverage for D162-uncovered-error-path purposes.
 fn scan_defer_coverage(b: &Block) -> (bool, bool) {
     let mut has_errdefer = false;
     let mut has_okdefer = false;
@@ -8080,6 +8125,12 @@ fn scan_defer_coverage(b: &Block) -> (bool, bool) {
                 has_errdefer = true;
             }
             Stmt::OkDefer { .. } => {
+                has_okdefer = true;
+            }
+            // Plain `defer` runs on ALL exits (success + error + cancel).
+            // Counts as both errdefer and okdefer coverage for D162.
+            Stmt::Defer { .. } => {
+                has_errdefer = true;
                 has_okdefer = true;
             }
             _ => {}
@@ -8115,9 +8166,24 @@ fn check_d162_coverage(
     let (has_errdefer, has_okdefer) = scan_defer_coverage(block);
 
     // D162-uncovered-error-path: failable function + consume binding + no errdefer.
+    // Plan 100.7 (D165): body_has_throw tells us whether there are explicit throw
+    // statements in the function body. Used below to distinguish "consumed at exit
+    // via explicit error-branch handling" from "consumed at exit with no error paths."
+    let body_throws = block_has_throw(block);
     if !has_errdefer {
         for name in &ctx.all_declared_consume {
             let canon = ctx.canonical(name);
+            // Plan 100.7 (D165): if the consume variable is Consumed at fn-exit
+            // AND the body contains at least one explicit `throw` statement,
+            // the coder has explicitly handled the error path (e.g. tx.rollback()
+            // before throw in a diverging branch). Skip D162 in this case.
+            // If there are NO explicit throws but the variable is Consumed at exit,
+            // the function is still Fail-annotated — D162 fires as a lint (external
+            // handler injections can interrupt the function at any Fail-effect site).
+            let state = ctx.states.get(&canon).or_else(|| ctx.states.get(name.as_str()));
+            if matches!(state, Some(VarState::Consumed(_))) && body_throws {
+                continue;
+            }
             let ty = ctx.var_types.get(name)
                 .or_else(|| ctx.var_types.get(&canon))
                 .cloned()
@@ -9213,15 +9279,39 @@ fn consume_walk_expr(ctx: &mut ConsumeCtx, e: &Expr, errors: &mut Vec<Diagnostic
 }
 
 /// if-then-else branch join (общий для `If`).
+///
+/// Plan 100.7 (D165): divergence-aware join. Если ветка заканчивается
+/// throw/return (diverges), она не достигает точки слияния — её состояние
+/// исключается из join. Это устраняет ложные MaybeConsumed ошибки при паттерне
+/// `if cond { x.consume(); throw err }` где x полностью consumed на diverging
+/// пути и остаётся Live на non-diverging пути.
 fn consume_walk_if(ctx: &mut ConsumeCtx, then: &Block,
                    else_: &Option<ElseBranch>, errors: &mut Vec<Diagnostic>) {
     let saved = ctx.states.clone();
+    let then_diverges = block_diverges(then);
     consume_walk_block(ctx, then, errors);
     let then_states = ctx.states.clone();
     ctx.states = saved.clone();
+    let else_diverges = else_branch_diverges(else_);
     consume_walk_else(ctx, else_, errors);
     let else_states = ctx.states.clone();
-    ctx.states = consume_join(&saved, &then_states, &else_states);
+    // Divergence-aware merge: если ветка diverges — её финальные состояния
+    // не вносятся в join (управление не достигает точки слияния).
+    ctx.states = match (then_diverges, else_diverges) {
+        (true, true) => saved,        // оба пути diverge → после if недостижимо
+        (true, false) => else_states,  // then diverges → только else-состояние
+        (false, true) => then_states,  // else diverges → только then-состояние
+        (false, false) => consume_join(&saved, &then_states, &else_states),
+    };
+}
+
+/// Diverges-check для ElseBranch.
+fn else_branch_diverges(else_: &Option<ElseBranch>) -> bool {
+    match else_ {
+        Some(ElseBranch::Block(b)) => block_diverges(b),
+        Some(ElseBranch::If(e)) => expr_diverges(e),
+        None => false, // нет else → implicit () — не diverges
+    }
 }
 
 fn consume_walk_else(ctx: &mut ConsumeCtx, else_: &Option<ElseBranch>,
