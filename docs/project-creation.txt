@@ -22838,6 +22838,26 @@ Key discoveries:
 
 Branch: plan-103.4-cdl
 Commit: cb146ba4be2
+
+=== Spec drift fix: contracts attribute names (2026-05-27) ===
+
+Discovered spec drift between implementation and documentation:
+- spec/decisions/09-tooling.md (D24) still referenced `#must_verify` (old name)
+  instead of `#verify`. Fixed to match current compiler.
+- docs/contracts.md had `#must_verify` listed as a separate attribute section,
+  and described `#verify` incorrectly. Fixed both: removed `#must_verify` section,
+  corrected `#verify` description.
+
+Commits: 57c0951fc32 (spec D24 fix), a4ddef722af (docs/contracts.md fix)
+
+Contract syntax `#nooverflow #verify fn f(a u32, b u32) -> u32 requires ... ensures ...`
+confirmed valid via existing fixture:
+  nova_tests/contracts/f60_bv_nooverflow_safe_z3_positive.nv
+Ran with --features z3-backend: PASS.
+
+Additional finding: in `ensures` clauses, `result.is_ok()` and `result.unwrap()`
+are invalid (parens not needed — Nova uses property access syntax, not method call
+syntax for zero-arg accessors). Correct form: `result.is_ok ==> result.unwrap.id == id`.
 Status: NOT merged (ждёт агентов A + B)
 
 === Plan 83.10.4: Armed M:N remaining races (2026-05-27) ===
