@@ -48,3 +48,26 @@ test "str parse_int_radix" {
     assert("z".parse_int_radix(36) == Some(35))
     assert("g".parse_int_radix(16) == None)
 }
+
+// split возвращает views в оригинальный буфер (zero-copy).
+// str — это (ptr, len) без ownership, нет отдельной split_to_slices.
+test "str split zero-copy views" {
+    let parts = "a,bb,ccc".split(",")
+    assert(parts.len() == 3)
+    assert(parts[0] == "a")
+    assert(parts[1] == "bb")
+    assert(parts[2] == "ccc")
+    // empty sep → весь оригинал как единственный элемент
+    let whole = "hello".split("")
+    assert(whole.len() == 1)
+    assert(whole[0] == "hello")
+    // split по многосимвольному разделителю
+    let lines = "foo::bar::baz".split("::")
+    assert(lines.len() == 3)
+    assert(lines[0] == "foo")
+    assert(lines[2] == "baz")
+    // trailing empty part
+    let trailing = "a,b,".split(",")
+    assert(trailing.len() == 3)
+    assert(trailing[2] == "")
+}
