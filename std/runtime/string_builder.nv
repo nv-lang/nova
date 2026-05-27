@@ -16,7 +16,7 @@ module runtime.string_builder
 // Создать пустой StringBuilder с initial capacity 16.
 export external fn StringBuilder.new() -> Self
 
-// Создать StringBuilder с pre-allocated capacity n.
+// Создать StringBuilder с pre-allocated capacity n байт (UTF-8 bytes, как Rust String::with_capacity). Для ASCII: n == codepoints. Для multibyte fill — умножай на max UTF-8 байт на символ.
 export external fn StringBuilder.with_capacity(n int) -> Self
 
 // Создать StringBuilder из существующей строки (copy).

@@ -383,7 +383,9 @@ static inline nova_str nova_str_pad_left(nova_str s, nova_int width, nova_int fi
     nova_byte fill_buf[4];
     int fill_len = _nova_utf8_encode(fill_buf, fill);
     nova_str fill_str = { (const char*)fill_buf, (size_t)fill_len };
-    Nova_StringBuilder* sb = Nova_StringBuilder_static_with_capacity(width);
+    /* capacity = s.byte_len + pad * fill_byte_len (точный, no realloc). */
+    Nova_StringBuilder* sb = Nova_StringBuilder_static_with_capacity(
+        (nova_int)s.len + pad * (nova_int)fill_len);
     Nova_StringBuilder_method_append_repeat(sb, fill_str, pad);
     Nova_StringBuilder_method_append_str(sb, s);
     return Nova_StringBuilder_method_into(sb);
@@ -395,7 +397,8 @@ static inline nova_str nova_str_pad_right(nova_str s, nova_int width, nova_int f
     nova_byte fill_buf[4];
     int fill_len = _nova_utf8_encode(fill_buf, fill);
     nova_str fill_str = { (const char*)fill_buf, (size_t)fill_len };
-    Nova_StringBuilder* sb = Nova_StringBuilder_static_with_capacity(width);
+    Nova_StringBuilder* sb = Nova_StringBuilder_static_with_capacity(
+        (nova_int)s.len + pad * (nova_int)fill_len);
     Nova_StringBuilder_method_append_str(sb, s);
     Nova_StringBuilder_method_append_repeat(sb, fill_str, pad);
     return Nova_StringBuilder_method_into(sb);
