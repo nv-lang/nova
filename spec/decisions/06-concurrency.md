@@ -642,9 +642,9 @@ implementation detail (preemption после v1.0 делает их
 
 ### Открытые вопросы
 
-- `Channel[T]` API — формализован в [D79](#d79). `Mutex`/`Atomic`
-  отвергнуты ([D79 «Что отвергнуто»](#d79)) в пользу channel-only
-  модели + owner-actor pattern.
+- `Channel[T]` API — формализован в [D79](#d79).
+- `Mutex`/`Atomic` — stdlib (D167-D173), не prelude; owner-actor pattern
+  предпочтителен, escape hatch через `import runtime.sync.{...}`.
 - Размер blocking-pool по умолчанию — детали реализации runtime'а.
 - Поведение при отмене detached-задачи — отдельный handler-сахар или
   работа через capability?
@@ -1532,14 +1532,16 @@ spawn {
 - Wait queues для blocked senders/receivers
 - Channel — единственный гарантированно-safe primitive
 
-#### Mutex / Atomic — НЕ в spec
+#### `runtime.sync` — stdlib, не prelude (D167-D173)
 
-Channel — **достаточный** primitive для всех coordination patterns.
-Mutex и atomic — нижнеуровневые, легко misuse'ить, не AI-friendly.
+Channel — **предпочтительный** primitive для координации fiber'ов (owner-actor
+pattern, Erlang-стиль). Однако Mutex, RwLock, Atomic и другие sync-примитивы
+**доступны как stdlib** через `import runtime.sync.{...}` — в тех случаях
+когда actor-модель избыточна.
 
-Если мутируемое разделяемое состояние действительно нужно, идиома:
-**dedicated owner-fiber + channel** (Erlang-стиль). Owner владеет
-данными, остальные шлют ему сообщения через channel.
+**Default: owner-actor pattern.** Если мутируемое разделяемое состояние
+нужно — первый выбор: **dedicated owner-fiber + channel**. Owner владеет
+данными; остальные шлют сообщения через channel.
 
 ```nova
 fn counter_actor(input Channel[CounterMsg], output Channel[int]) {
@@ -1555,6 +1557,24 @@ fn counter_actor(input Channel[CounterMsg], output Channel[int]) {
 ```
 
 Это **safe by construction** — нет shared state, только message-passing.
+
+**Escape hatch: `runtime.sync`.** Когда actor-модель действительно избыточна
+(счётчик статистики, одноразовая инициализация, read-heavy конфигурация),
+используй explicit import:
+
+```nova
+import runtime.sync.{Mutex, AtomicI64, RwLock, Semaphore, Once}
+// см. D173 decision tree — «когда что выбрать»
+```
+
+Детальное описание всех sync-примитивов:
+- D167 — Memory ordering & `fence()` API
+- D168 — Atomic типы (12 sized × 13 ops)
+- D169 — `Mutex` / `RwLock` / `ReentrantMutex`
+- D170 — `Semaphore` / `Barrier` / `CountDownLatch` / `Condvar`
+- D171 — `Once` / `OnceCell` / `Lazy`
+- D172 — `realtime { }` / `blocking { }` interaction matrix
+- D173 — AI-first guidance: decision tree + canonical patterns
 
 ### Почему
 
@@ -1597,8 +1617,8 @@ fn counter_actor(input Channel[CounterMsg], output Channel[int]) {
 
 - **Mutex / Atomic в prelude.** Низкоуровневые, легко misuse,
   deadlock-prone. Owner-actor pattern закрывает 99% use case'ов.
-  Если кому-то реально нужен Mutex — может реализовать через channel
-  (token-channel вместимостью 1).
+  Escape hatch доступен через `import runtime.sync.{...}` — stdlib,
+  не prelude (D167-D173).
 
 - **`<-` как recv-оператор в select.** Отвергнут в D94 — заменён
   на `Some(v) = rx.recv() =>`. Причина: `<-` вводил новый оператор
@@ -3785,7 +3805,7 @@ for/detach автоматически распределяется на дост
 
 ## D167. Memory ordering & happens-before между fiber'ами
 
-> **Статус:** 📋 DRAFT (Plan 103.1 2026-05-25). Финальная редакция — Plan 103.7.
+> **Статус:** ✅ final (Plan 103.7, 2026-05-27). Реализован в Plan 103.1.
 
 ### Что
 
@@ -3853,13 +3873,14 @@ ARM64 — более explicit барьеры (DMB LD/ST/ISH); Relaxed vs Acquire
 - D138 (Default-on M:N) — производительность зависит от корректного ordering
 - Plan 103.1 — реализация MemOrdering enum + fence(MemOrdering) + codegen helper
 - Plan 103.2 — AtomicX.load(MemOrdering) / .store(v, MemOrdering) / RMW overloads
-- Plan 103.7 — финальная редакция D167
+- Plan 103.7 — финальная редакция D167; D173 AI-first guidance для паттернов ordering
+- D173 — decision tree: когда нужен explicit ordering vs SeqCst-default
 
 ---
 
 ## D168. Sized atomic types — API contract (Plan 103.2)
 
-> **Status:** draft (Plan 103.2, 2026-05-25). Final closure — Plan 103.7.
+> **Статус:** ✅ final (Plan 103.7, 2026-05-27). Реализован в Plan 103.2.
 
 ### Что
 
@@ -3925,7 +3946,7 @@ mutable-ссылку или хранить в heap-структуре.
 
 **Примечание по AtomicPtr:** хранит `int` (адрес GC-объекта как `intptr_t`).
 Арифметика не поддерживается (`fetch_add` нет). Typed generic form `AtomicPtr[T]`
-— Plan 103.7.
+с GC-root integration — откладывается в Plan 103.9+.
 
 #### 2. MemOrdering-aware overloads
 
@@ -3988,8 +4009,8 @@ V1 семантика (Plan 103.2):
 - Arithmetic (`fetch_add`) **не поддерживается** — AtomicPtr не счётчик.
 
 **GC safety V1:** приложение несёт ответственность за то, что int-значение
-в `AtomicPtr` остаётся живым GC-объектом. V2 (Plan 103.7): `AtomicPtr[T]`
-будет GC root.
+в `AtomicPtr` остаётся живым GC-объектом. V2 (Plan 103.9+): `AtomicPtr[T]`
+с типизированным GC-root — откладывается (typed generic в codegen non-trivial).
 
 #### 5. compare_exchange vs compare_exchange_weak
 
@@ -4031,7 +4052,7 @@ LL/SC — no spurious fails). На ARM различие значительно.
    semantics.
 
 4. **AtomicPtr как `int` в V1.** Typed `AtomicPtr[T]` требует GC root integration
-   в codegen — это non-trivial и откладывается в Plan 103.7. `int`-proxy достаточен
+   в codegen — это non-trivial и откладывается в Plan 103.9+. `int`-proxy достаточен
    для lock-free pointer swapping где объект удерживается через другую ссылку.
 
 5. **compare_exchange_weak — отдельная операция.** На ARM разница ~30% на
@@ -4042,8 +4063,8 @@ LL/SC — no spurious fails). На ARM различие значительно.
 
 - **Generic `Atomic[T]` вместо 12 конкретных типов.** Требует мономорфизации на
   C-уровне, усложняет ExternalRegistry (нет arity-based dispatch по типу элемента).
-  Отложено в Plan 103.7+ (если вообще нужно — 12 конкретных типов покрывают
-  все стандартные use cases).
+  Отклонено в V1 (12 конкретных типов покрывают все стандартные use cases; generic
+  форма как future plan если докажет ценность).
 
 - **Checked overflow для narrow types (AtomicI8).** `fetch_add` на переполненном
   AtomicI8 → panic неожиданен для счётчиков. Wraparound — стандартная C11
@@ -4051,8 +4072,8 @@ LL/SC — no spurious fails). На ARM различие значительно.
 
 - **Arity-based dispatch через Nova type system.** Nova integer literals имеют тип
   `nova_int` (широкий), а typed atomic операции принимают `int32_t`/`uint8_t` —
-  строгое type matching не работает. Решение: arity-based fallback в codegen
-  (N vs N+1 параметров для default vs ordering overload). Plan 103.7 уточнит.
+  строгое type matching не работает. Решение (Plan 103.2): arity-based fallback в
+  codegen (N vs N+1 параметров для default vs ordering overload) — финализировано.
 
 - **`AtomicPtr.fetch_add(n)` — pointer arithmetic.** Небезопасно без bounds
   checking, противоречит Nova memory safety goals. Pointer arithmetic —
@@ -4073,7 +4094,9 @@ LL/SC — no spurious fails). На ARM различие значительно.
 - [D138](#d138-default-on-mn-runtime--production-semantics-plan-83456-ф3-active-2026-05-24)
   — production M:N runtime; атомарные операции используются внутри scheduler'а.
 - Plan 103.1 — MemOrdering enum + fence(MemOrdering) + nova_mo_c() codegen helper.
-- Plan 103.7 — D168 финальная редакция + AtomicPtr[T] typed generic.
+- Plan 103.7 — D168 финальная редакция (это plan).
+- D173 — AI-first guidance: counter/swap/CAS паттерны выбора atomic типа.
+- Plan 103.9+ — AtomicPtr[T] typed generic с GC-root integration (deferred).
 
 ### Реализация (Plan 103.2, 2026-05-25)
 
@@ -4091,18 +4114,23 @@ LL/SC — no spurious fails). На ARM различие значительно.
 
 ### Эволюция
 
-D168 введён как draft (Plan 103.2, 2026-05-25). Final closure — Plan 103.7, где:
+D168 введён как draft (Plan 103.2, 2026-05-25). Финализирован в Plan 103.7.
+
+**Backward compatibility note:** `AtomicInt` — deprecated alias на `AtomicI64`
+(если существовал в pre-103.2 code). Все новые коды должны использовать
+`AtomicI64` напрямую.
+
+Отложено в Plan 103.9+:
 - `AtomicPtr[T]` typed generic с GC root integration.
 - Lint `W_NARROW_ATOMIC_OVERFLOW_RISK` для подозрительного использования
   narrow types (AtomicI8/U8) с большими константами.
 - ARM CI validation для `compare_exchange_weak` spurious-fail paths.
-- D173 AI-first guidance для атомарных паттернов.
 
 ---
 
 ## D171. Once / OnceCell / Lazy — single-initialization primitives (Plan 103.5)
 
-> **Status:** draft (Plan 103.5, 2026-05-26). Final closure — Plan 103.9 (API hygiene pass).
+> **Статус:** ✅ final (Plan 103.7, 2026-05-27). Реализован в Plan 103.5. V2 API hygiene — Plan 103.9.
 
 ### Что
 
@@ -4198,8 +4226,8 @@ namespace OnceCell {
 
 **Poison & retry:** в отличие от `Once`, panic в body функции `get_or_init`
 не делает cell terminally poisoned в V1. Состояние возвращается в `Fresh`,
-позволяя retry. (Plan 103.9 пересмотрит — возможно введение `Poisoned` варианта
-с явным `recover()`.)
+позволяя retry. Plan 103.9 пересмотрит poison semantics на основе real-world usage
+(возможно введение `Poisoned` варианта с явным `recover()`).
 
 **Re-entrant guard:** если внутри body, переданного в `get_or_init`, происходит
 рекурсивный вызов `cell.get_or_init` на том же cell — runtime panic с message
@@ -4332,7 +4360,8 @@ codegen). `get()`, `set()`, `is_completed()`, `is_forced()`, `take()`,
 - [D168](#d168-sized-atomic-types--api-contract-plan-1032) — sized atomics;
   внутренние state-поля Once/OnceCell/Lazy реализованы через `__atomic_*`.
 - Plan 103.5 — реализация Once hardening + OnceCell + Lazy.
-- Plan 103.9 — final API hygiene pass: возможно удаление `run`/`done`,
+- D173 — AI-first guidance: выбор Once/OnceCell/Lazy по паттерну; decision tree.
+- Plan 103.9 — V2 API hygiene pass: возможно удаление `run`/`done`,
   пересмотр OnceCell poison semantics.
 
 ### Реализация (Plan 103.5, 2026-05-26)
@@ -4366,18 +4395,21 @@ codegen). `get()`, `set()`, `is_completed()`, `is_forced()`, `take()`,
 
 ### Эволюция
 
-D171 введён как draft (Plan 103.5, 2026-05-26). Final closure — Plan 103.9
-(API hygiene), где:
+D171 введён как draft (Plan 103.5, 2026-05-26). Финализирован в Plan 103.7.
+
+D173 (этот plan) содержит AI-first guidance для init-pattern выбора (Once vs
+OnceCell vs Lazy) — см. decision tree «exactly-once init» branch.
+
+Отложено в Plan 103.9 (API hygiene pass):
 - Удаление deprecated `run`/`done` (после миграционного периода).
 - Пересмотр OnceCell poison semantics на основе real-world usage.
 - Возможный typed-poison API (`recover() throws PoisonMsg`).
-- D173 AI-first guidance для init-pattern выбора (Once vs OnceCell vs Lazy).
 
 ---
 
 ## D169. `Mutex` / `RwLock` / `ReentrantMutex` family (Plan 103.3)
 
-> **Status:** draft (Plan 103.3, 2026-05-26). Final closure — Plan 103.7.
+> **Статус:** ✅ final (Plan 103.7, 2026-05-27). Реализован в Plan 103.3. V2 consume guards — Plan 103.9.
 
 ### Что
 
@@ -4607,20 +4639,23 @@ pointers).
 
 ### Эволюция
 
-D169 введён как draft (Plan 103.3, 2026-05-26). Final closure — Plan 103.7.
-В V2 (Plan 103.9):
+D169 введён как draft (Plan 103.3, 2026-05-26). Финализирован в Plan 103.7.
+
+D173 (этот plan) содержит AI-first guidance: выбор Mutex vs RwLock vs
+ReentrantMutex по паттерну — см. decision tree «exclusive access» branch +
+canonical patterns 3 (producer-consumer) и 4 (read-heavy snapshot).
+
+Отложено в Plan 103.9 (V2):
 - `MutexGuard consume` заменяет `lock()/unlock()` как primary API.
 - `with_lock(fn)` становится thin wrapper над guard — user code не меняется.
 - `W_REENTRANT_CONDVAR_RECOMMEND` переходит в E_REENTRANT_CONDVAR_ERROR если
   статически выявимо (Plan 103.4 + checker).
-- D173 AI-first guidance: выбор Mutex vs RwLock vs ReentrantMutex по паттерну.
 
 ---
 
 ## D170. Coordination primitives — Semaphore / Barrier / CountDownLatch / Condvar (Plan 103.4)
 
-> **Draft 2026-05-27.** Coordination primitives complete `std.runtime.sync` V1.
-> Final closure → Plan 103.7.
+> **Статус:** ✅ final (Plan 103.7, 2026-05-27). Реализован в Plan 103.4. V2 consume guards — Plan 103.9.
 
 ### Контекст
 
@@ -4822,19 +4857,24 @@ fn Condvar mut @notify_all()        /* wake all FIFO order */
 
 ### Эволюция
 
-D170 введён как draft (Plan 103.4, 2026-05-27). Final closure — Plan 103.7.
-В V2 (Plan 103.9):
+D170 введён как draft (Plan 103.4, 2026-05-27). Финализирован в Plan 103.7.
+
+D173 (этот plan) содержит AI-first guidance: rate-limited workers (Semaphore),
+N-party rendezvous (Barrier/CountDownLatch), wait-until-predicate (Condvar) —
+см. canonical patterns 3 и 5 + decision tree lower branches.
+
+Отложено в Plan 103.9 (V2):
 - `Permit consume` guard заменяет `acquire()/release()` как primary API для
   Semaphore.
 - `with_permit(fn)` остаётся thin wrapper над guard.
-- Other primitives (Barrier/CountDownLatch/Condvar) — НЕ мигрируются на
-  consume guards (M16: barriers/latches/condvars stateless по природе).
+- Barrier/CountDownLatch/Condvar — НЕ мигрируются на consume guards
+  (M16: stateless по природе).
 
 ---
 
 ## D172. `realtime { }` / `blocking { }` × sync-class annotation system (Plan 103.6)
 
-> **Status:** draft (Plan 103.6, 2026-05-27). Final closure — Plan 103.7.
+> **Статус:** ✅ final (Plan 103.7, 2026-05-27). Реализован в Plan 103.6. V2 inference — Plan 103.8.
 
 ### Что
 
@@ -5017,8 +5057,321 @@ realtime_{try_lock_for_zero_warn,mutex_try_lock_for_neg} (warnings)
 
 ### Эволюция
 
-D172 введён как draft (Plan 103.6, 2026-05-27). Final closure — Plan 103.7.
-В V2 (Plan 103.8):
+D172 введён как draft (Plan 103.6, 2026-05-27). Финализирован в Plan 103.7.
+
+Отложено в Plan 103.8 (V2 sync propagation):
 - Автоматический inference: если `fn A` вызывает `#parks`-fn, A также помечается `#parks`.
 - LSP integration: hover shows sync-class; quick-fix добавляет `#parks` annotation.
 - Полный propagation-граф: транзитивное закрытие через call graph.
+
+---
+
+## D173. AI-first guidance — sync-primitive decision tree (Plan 103.7)
+
+> **Статус:** ✅ final (Plan 103.7, 2026-05-27). Новый D-блок; нет предшествующего draft.
+
+### Зачем
+
+Nova `runtime.sync` содержит 12+ sync-примитивов. Выбор правильного примитива
+для конкретной задачи — типичный вопрос разработчика (и AI-агента, генерирующего
+код). D173 формализует **decision tree** и **canonical patterns** — официальный
+ответ Nova на вопрос «что использовать для X». Это Nova edge: ни один другой
+язык не имеет in-spec guidance на этом уровне детализации.
+
+### Правило: Decision tree
+
+```
+Нужно ли разделить mutable state между fiber'ами?
+│
+├── НЕТ → не нужен sync. Используй channel + actor pattern (D79).
+│          Пример: counter_actor(input Channel[Msg]) с match msg { ... }
+│
+├── ДА, exactly-once init:
+│       ┌── stateless action (no value)          → Once.call_once(fn)  [D171]
+│       ├── value-capturing (return T)            → OnceCell[T].get_or_init(fn)
+│       └── auto-init on first access (wrap T)   → Lazy[T].new(fn) + .force()
+│
+├── ДА, counter / numeric stat:
+│       ┌── single counter / sequence number      → AtomicI64.fetch_add(delta, Relaxed)
+│       ├── max/min tracking                      → AtomicI64.fetch_max(v, Relaxed)
+│       └── bitset / flags                        → AtomicU32.fetch_or/fetch_and(bits, SeqCst)
+│
+├── ДА, one-shot ownership / «первый побеждает»:
+│       ┌── bool flag (first caller wins)         → AtomicBool.swap(true) == false → winner
+│       └── pointer publish (first-to-publish)    → AtomicPtr.compare_exchange(0, ptr, SeqCst)
+│
+├── ДА, exclusive access к complex state:
+│       ┌── short critical section, general       → Mutex + with_lock(fn)  [D169]
+│       ├── read-heavy, occasional writes         → RwLock + with_read(fn) / with_write(fn)
+│       └── recursive callbacks (migration path) → ReentrantMutex (opt-in; prefer Mutex)
+│
+├── ДА, bounded concurrency / rate limit          → Semaphore.new(N) + with_permit(fn)  [D170]
+│
+├── ДА, N-party rendezvous (epoch sync):
+│       ┌── reusable (cyclic, round-based)        → Barrier.new(N) + wait()
+│       └── one-shot signal (latch-style)         → CountDownLatch.new(N) + count_down() / await()
+│
+└── ДА, «wait until predicate» (park until condition):
+         → Mutex + Condvar + wait_until(m, predicate)  [D170]
+```
+
+### Canonical patterns (≥5)
+
+#### Pattern 1. Counter (AtomicI64)
+
+**Сценарий:** подсчёт событий/запросов между fiber'ами.
+
+```nova
+import runtime.sync.{AtomicI64, MemOrdering}
+
+let requests = AtomicI64.new(0)
+
+// В любом fiber'е:
+requests.fetch_add(1, MemOrdering.Relaxed)   // счётчик не синхронизирует другие данные
+
+// Чтение для метрики (periodic reporter fiber):
+let total = requests.load(MemOrdering.Relaxed)
+```
+
+**Почему Relaxed:** счётчик событий не устанавливает happens-before с другими
+данными — Relaxed достаточен и эффективен (на x86 дешевле SeqCst-store).
+
+**Anti-pattern:** `Mutex.with_lock { counter = counter + 1 }` — избыточно,
+serializes всех readers и writers. Atomic — wait-free, без парковки fiber.
+
+---
+
+#### Pattern 2. One-shot init (Once / OnceCell / Lazy)
+
+**Сценарий:** ленивая инициализация глобального ресурса (connection pool,
+config, singleton) — ровно один раз при первом обращении.
+
+```nova
+import runtime.sync.{Lazy}
+
+// Глобальный Lazy: init-closure известен заранее
+let db_pool = Lazy.new(|| DbPool.connect(config.db_url()))
+
+fn handle_request(req Request) {
+    let pool = db_pool.force()   // безопасно из любого fiber'а; init = once
+    pool.execute(req.query)
+}
+```
+
+Если возвращаемое значение неизвестно в точке объявления (нужен runtime-аргумент):
+
+```nova
+import runtime.sync.{OnceCell}
+
+let config_cell: OnceCell[Config] = OnceCell.new()
+
+fn init_config(path str) {
+    config_cell.set(Config.load(path))  // idempotent; первый вызов устанавливает
+}
+
+fn get_config() -> Config {
+    config_cell.get_or_init(|| Config.default())
+}
+```
+
+**Anti-pattern (DCL — Double-Checked Locking):**
+
+```nova
+// ❌ ОПАСНО: race condition без Acquire/Release fence
+if !initialized {
+    mutex.lock()
+    if !initialized {
+        value = expensive_init()
+        initialized = true   // store может появиться до value готово (ARM)
+    }
+    mutex.unlock()
+}
+```
+
+Используй `Once` / `Lazy` / `OnceCell` — они содержат корректные
+`__ATOMIC_RELEASE` / `__ATOMIC_ACQUIRE` барьеры (D167 contract, D171).
+
+---
+
+#### Pattern 3. Producer-consumer bounded buffer (Mutex + Condvar)
+
+**Сценарий:** типизированная очередь с backpressure, когда нативный `Channel[T]`
+недостаточен (нужен custom flush, batch-drain, priority и т.д.).
+
+```nova
+import runtime.sync.{Mutex, Condvar}
+
+let mu = Mutex.new()
+let not_full  = Condvar.new()
+let not_empty = Condvar.new()
+let buffer: []Item = []
+
+fn producer(item Item) {
+    mu.with_lock { ||
+        not_full.wait_until(mu, || buffer.len() < MAX_SIZE)
+        buffer.push(item)
+        not_empty.notify_one()
+    }
+}
+
+fn consumer() -> Item {
+    mu.with_lock { ||
+        not_empty.wait_until(mu, || buffer.len() > 0)
+        let item = buffer.pop()
+        not_full.notify_one()
+        item
+    }
+}
+```
+
+**Spurious wakeup:** `wait_until(mu, predicate)` — всегда использовать predicate
+loop (встроен в `wait_until`). Bare `condvar.wait(mu)` без предиката — уязвим
+к spurious wakeups (D170 §spurious wakeup contract).
+
+**Anti-pattern:** Если backpressure нативный и не нужна custom логика —
+**Channel[T] лучше** в 90% случаев:
+
+```nova
+// ✅ Проще: нативный backpressure через Channel (D91 capability-split)
+let (tx, rx) = Channel.new[Item](MAX_SIZE)
+// producer:  tx.send(item)
+// consumer:  rx.recv()
+```
+
+---
+
+#### Pattern 4. Read-heavy snapshot (RwLock)
+
+**Сценарий:** структура данных часто читается (N readers), редко обновляется
+(1 writer). Пример: конфигурация, routing table, кэш.
+
+```nova
+import runtime.sync.{RwLock}
+
+let config_lock = RwLock.new()
+// config хранится снаружи (heap-структура, доступ через mutable ref)
+
+fn read_config() -> str {
+    config_lock.with_read { ||
+        config.value   // много concurrent readers без блокировки
+    }
+}
+
+fn update_config(new_value str) {
+    config_lock.with_write { ||
+        config.value = new_value   // эксклюзивный доступ
+    }
+}
+```
+
+**Почему writer-priority (M7):** default RwLock блокирует новых readers при
+ожидающем writer'е → no writer starvation на read-heavy workloads.
+
+**Anti-pattern:** `Mutex` вместо `RwLock` на read-heavy data:
+
+```nova
+// ❌ Sub-optimal: serializes ALL readers
+mutex.with_lock { || config.value }   // только один reader за раз
+```
+
+На read-heavy data `RwLock` даёт N-кратное ускорение (N = кол-во читателей).
+
+---
+
+#### Pattern 5. Rate-limited workers (Semaphore)
+
+**Сценарий:** ограничить количество одновременно выполняемых операций
+(N concurrent HTTP-запросов, N worker'ов к базе данных и т.д.).
+
+```nova
+import runtime.sync.{Semaphore}
+
+let concurrency_limit = Semaphore.new(MAX_CONCURRENT)
+
+fn handle_request(req Request) {
+    concurrency_limit.with_permit { ||   // parks если MAX_CONCURRENT уже запущено
+        process(req)
+    }
+    // permit автоматически освобождён после with_permit
+}
+```
+
+**Batch acquire:** если одна операция потребляет N permits (напр., bulk-insert):
+
+```nova
+concurrency_limit.acquire_n(batch_size)
+defer concurrency_limit.release_n(batch_size)
+do_bulk_work()
+```
+
+**Anti-pattern (token channel):**
+
+```nova
+// ❌ Работает, но verbose, intent не очевиден + capability-split удваивает шум
+let (tok_tx, tok_rx) = Channel.new[unit](MAX_CONCURRENT)
+for _ in 0..MAX_CONCURRENT { tok_tx.send(()) }
+
+fn handle_request(req Request) {
+    tok_rx.recv()           // acquire
+    process(req)
+    tok_tx.send(())         // release
+}
+```
+
+`Semaphore` выражает intent явно; `Channel` как семафор — workaround.
+
+### Правило выбора ordering (supplement к D167)
+
+| Задача | Рекомендуемый ordering |
+|---|---|
+| Счётчик событий, метрики | `Relaxed` (нет happens-before требований) |
+| Публикация данных (writer) | `Release` (гарантирует видимость записей) |
+| Чтение опубликованных данных (reader) | `Acquire` (syncs с Release) |
+| RMW в tight loop (retry CAS) | `Release` на success; `Relaxed` на failure |
+| Любые случаи (safe default) | `SeqCst` (дороже, но всегда корректно) |
+| spin/global coordination flag | `SeqCst` (total order требуется) |
+
+**Default = SeqCst (D167 M1):** если не уверен — SeqCst всегда корректен.
+Оптимизация на Relaxed/Acquire/Release — только после профилирования.
+
+### Anti-patterns (сводная таблица)
+
+| Anti-pattern | Проблема | Решение |
+|---|---|---|
+| `Mutex.with_lock { counter += 1 }` | Overkill для счётчика; parks fiber | `AtomicI64.fetch_add(1, Relaxed)` |
+| DCL без `Once`/`Lazy` | Race condition на ARM (store ordering) | `Once.call_once` / `Lazy.new(fn)` |
+| `Channel[unit]` как semaphore | Verbose; intent не очевиден | `Semaphore.new(N).with_permit(fn)` |
+| `Mutex` вместо `RwLock` на read-heavy | Serializes всех readers | `RwLock.with_read / with_write` |
+| `condvar.wait(mu)` без predicate | Spurious wakeup UB | `condvar.wait_until(mu, predicate)` |
+| `ReentrantMutex` по умолчанию | Скрывает re-entrancy bugs | `Mutex` default; `ReentrantMutex` opt-in |
+| Mutex в `realtime { }` | E_REALTIME_SYNC_PARK | `AtomicX` ops (`#realtime_safe`) |
+| Mutex в `blocking { }` (lock) | E_BLOCKING_SYNC_PARK | Restructure: lock вне blocking, pass result |
+
+### Связь
+
+- [D79](#d79-channels--select-formal-declaration) — Channels (actor-model
+  alternative к shared state); decision tree первая ветвь.
+- [D167](#d167-memory-ordering--happens-before-между-fiberами) — MemOrdering;
+  ordering supplement таблица основана на D167 contract.
+- [D168](#d168-sized-atomic-types--api-contract-plan-1032) — Atomic types;
+  counter/CAS/swap patterns.
+- [D169](#d169-mutex--rwlock--reentrantmutex-family-plan-1033) — Mutex/RwLock/
+  ReentrantMutex; exclusive-access branch + Patterns 3/4.
+- [D170](#d170-coordination-primitives--semaphore--barrier--countdownlatch--condvar-plan-1034) —
+  Semaphore/Barrier/CountDownLatch/Condvar; rate-limit + rendezvous + predicate-wait branches.
+- [D171](#d171-once--oncecell--lazy--single-initialization-primitives-plan-1035) —
+  Once/OnceCell/Lazy; exactly-once init branch + Pattern 2.
+- [D172](#d172-realtime---blocking---sync-class-annotation-system-plan-1036) —
+  realtime/blocking sync-class; anti-pattern Mutex-in-realtime пункт.
+
+### Эволюция
+
+D173 введён в Plan 103.7 как новый D-блок (нет предшествующего draft).
+Контент разработан для AI-readability: decision tree структурирован для
+LLM-навигации (иерархические ветви с explicit mapping). Canonical patterns
+содержат Nova-код с комментариями и anti-pattern сравнением.
+
+Возможные расширения в будущих plans:
+- Pattern 6: distributed counter через `AtomicI64` + periodic aggregation.
+- Pattern 7: async-safe init с `cancel-shielding` (Plan 100.4.2 integration).
+- D174 (Plan 103.9): consume-guards pattern (когда Permit consume > with_permit).

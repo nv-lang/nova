@@ -23248,3 +23248,23 @@ Full nova test: 1451/62 (same pre-existing 62, 0 new regressions from 107).
 Commit: 0adc9e8ceba. Branch: plan-107 pushed to github.
 
 Plan 107 ✅ ЗАКРЫТ.
+
+Plan 103.7 — closed 2026-05-27; promoted D167-D172 to final + new D173; §1531 rewrite; Q9/Q12.4/Q-memory-model closed.
+
+Key changes:
+  - D173 (AI-first guidance): decision tree «channel vs mutex vs atomic vs once» + 5 canonical patterns
+    + anti-patterns. Fix: D91 capability-split (tx, rx) syntax in anti-patterns 3+5.
+  - §1531 rewrite: «Mutex / Atomic — НЕ в spec» → «runtime.sync — stdlib, не prelude (D167-D173)»;
+    owner-actor preserved as default; escape hatch via import runtime.sync.{...} added.
+  - §641 D50 «Открытые вопросы»: «Mutex/Atomic отвергнуты» → «stdlib (D167-D173), не prelude».
+  - Q9 §272: Channel ✅ D79; Mutex/RwLock/AtomicSized ✅ D169/D168; Atomic[T] generic ⏳ deferred.
+  - Q12.4: ✅ partial closed — all sub-questions resolved by D79/D168-D171/D173.
+  - Q-memory-model: ✅ closed by D167 (new section in open-questions.md).
+  - Q-send-timeout: 🟡 open — Channel-specific, not sync scope, outside Plan 103.x.
+  - Spec consistency: 3/3 checks PASS (0 old phrase matches, 7 D-blocks present).
+
+Commits:
+  - feat(plan103.7 Ф.7): 89253032c29 — D173 AI-first guidance (previous agent)
+  - fix(plan103.7 Ф.7): 61087df188f — D173 Channel anti-patterns capability-split
+  - docs(plan103.7 Ф.8): 313b246f1e4 — §1531+§641 rewrite Mutex/Atomic stdlib references
+  - docs(plan103.7 Ф.9): 3ea5e197734 — Q9/Q12.4/Q-memory-model closed by D167-D173
