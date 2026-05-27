@@ -108,7 +108,7 @@ TS, как и просит источник.
 | Домен | Модули MVP | Ориентир |
 |---|---|---|
 | Опционал / ошибки | `Option`, `Result` + комбинаторы (`map`/`unwrap_or`/`?`) | Rust |
-| Коллекции | `Vec`, `HashMap`, `HashSet` | Rust |
+| Коллекции | `[]T` (встроен, Vec не нужен), `HashMap`, `HashSet`; vec-комбинаторы (`map`/`filter`/`fold`) | Rust |
 | Текст | split / join / trim / pad / parse чисел; форматирование через `str.from` + интерполяцию `"${}"` | Go `strings`, TS |
 | Сортировка / поиск | `sort[T Ord]`, `sort_by`, `binary_search`, `min`/`max` | Go `slices`, Rust |
 | JSON | encode / decode | TS |
@@ -178,22 +178,30 @@ STATUS.md и таблица «Накопленные блокеры std/» из
 - **Ф.0.4** Decision point: уточнить порядок Ф.1–Ф.4 и оценку
   трудоёмкости по результату Ф.0.2.
 
-### Ф.1 — Коллекции: `Vec`, `HashMap`, `HashSet` (ядро)
+### Ф.1 — Коллекции: `HashMap`, `HashSet` + vec-комбинаторы (ядро)
+
+> **Решение 2026-05-27:** `Vec[T]` как отдельный тип **не нужен** —
+> `[]T` уже является встроенным динамическим массивом в Nova (`Vec`
+> в Nova-семантике). `vec.nv` содержит функциональные комбинаторы
+> (`map`/`filter`/`fold`/`any`/`all`/`first`/`last`) поверх `[]T`
+> через D35 (`fn []T @method`). Никакой Vec-обёртки нет и не нужно.
+> Пересмотр только если появится обоснованная причина (например,
+> отдельный ownership-семантический тип).
 
 Самые востребованные модули — закрывают наибольшую долю реального
 кода. Известные кандидаты-блокеры (подтвердить/опровергнуть в Ф.0):
 
 - generic specialization при monomorphization (`set.nv` —
   type-erased `Iter[T]` без concrete `next`);
-- array-type mangling (`vec.nv` — malformed `Nova_[]T*` вместо
-  `NovaArray_<T>*`);
+- vec-комбинаторы (`vec.nv` — `map`/`filter`/`fold` на `[]T`,
+  array-type mangling `Nova_[]T*` вместо `NovaArray_<T>*`);
 - protocol-bound dispatch D72 для generic-erased `K.eq`/`K.hash`
   (`hashmap.nv`);
 - tuple type system — mixed-type `(K, V)` (все поля `_NovaTupleN`
   захардкожены в `nova_int`).
 
-Acceptance: `Vec`, `HashMap`, `HashSet` компилируются `→ exe` и
-проходят conformance-тесты Ф.5.
+Acceptance: `HashMap`, `HashSet`, vec-комбинаторы компилируются
+`→ exe` и проходят conformance-тесты Ф.5.
 
 ### Ф.2 — Текст и форматирование
 
