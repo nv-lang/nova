@@ -23470,3 +23470,34 @@ DECISION: stop, commit honest WIP, defer to dedicated Opus+Thinking ON session
 - Forward-declarations в nova_rt.h для nv_panic_insert_oob + nv_panic_negative_reserve
 
 Worktree: nova-p90-1, branch: plan-90.1-extend-family
+
+=== Plan 83.11 Ф.3.A v2 — single-atomic wait_state (2026-05-27) ===
+
+User approved single-atomic design after careful proposal. Design committed
+as plan §11 (commit 9ba644f43ba on main).
+
+IMPLEMENTATION (commit d5aaf9a2004 on plan-83.11-centralized-driver):
+- NovaSleepWaitState enum: NEW/PARKED/WOKEN/CONSUMED
+- wait_state field в NovaSleepState
+- Worker park: CAS NEW→PARKED (authoritative) + parked[] for legacy compat
+- Driver wake: CAS NEW→WOKEN OR PARKED→WOKEN, dispatch only PARKED case
+
+RESULTS:
+- **Pure single-atomic** (без parked[]): **SEGFAULT** — fiber stack overflow
+  slot 0. Existing runtime tightly coupled к parked[] semantics: removing it
+  breaks cancel_worker_fibers walks, count_parked, supervised_run_impl waits.
+- **Hybrid** (wait_state + parked[]): **3/30 PASS**. Better stability but
+  still doesn't close race fully.
+
+ROOT CAUSE: design architecturally clean (single mutator → no cross-atomic
+race), но implementation conflict с existing runtime expectations. Sleep-only
+single-atomic не достаточно — нужен либо full integration с nova_sched_*
+generic API, либо port Tokio Future+Waker model.
+
+DECISION: stop, commit honest WIP. Plan 83.11 Ф.3 needs deeper architectural
+session (estimated 2-5 dev-days). NOT MERGED. [M-83.10.4-iso-cancel-startup-
+race] STILL OPEN. Worktree D:/Sources/nv-lang/nova-p83-11 preserved.
+
+Total time on Plan 83.11 Ф.3: ~8 hours across 4 sessions. Race fundamentally
+requires architectural rewrite, не incremental fix.
+
