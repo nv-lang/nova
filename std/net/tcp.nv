@@ -19,7 +19,7 @@
 
 module net.tcp
 
-use net.addr
+use std.net.addr
 
 // ─── TcpListener ─────────────────────────────────────────────────────────────
 

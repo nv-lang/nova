@@ -4,7 +4,7 @@
 
 module modules.bloom_filter
 
-import std.collections.bloom_filter.{BloomFilter}
+import std._experimental.collections.bloom_filter.{BloomFilter}
 
 test "BloomFilter: вставленные элементы всегда contains=true" {
     let mut bf = BloomFilter.new(1024, 3)

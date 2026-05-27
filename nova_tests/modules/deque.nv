@@ -3,7 +3,7 @@
 
 module modules.deque
 
-import std.collections.deque.{Deque}
+import std._experimental.collections.deque.{Deque}
 
 test "Deque: push_back и pop_front — FIFO порядок" {
     let mut d = Deque[int].new()

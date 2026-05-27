@@ -13,7 +13,7 @@
 
 module net.udp
 
-use net.addr
+use std.net.addr
 
 // ─── UdpSocket ───────────────────────────────────────────────────────────────
 

@@ -13486,3 +13486,58 @@ emission в emit_c.rs).
   Это корректно (single-thread, handle affinity не нарушается), но
   печатает warning в stderr. В production M:N режиме deferred queue работает
   корректно.
+
+## 2026-05-27 — Plan 91 Ф.7.1 closure (quarantine non-MVP modules)
+
+- **Underscore-prefix carve-out для experimental** — каталог
+  `std/_experimental/` начинается с `_`, что эксплуатирует уже
+  существующий auto-skip в `should_skip_path_full` (nova-cli/src/
+  main.rs:1482-1505). Это convention-based, не требует никакого
+  нового config field в `nova.toml`, не требует compiler-side
+  changes. Принятый trade-off: visible underscore в module path
+  для импортов из experimental (`import std._experimental.path.path`)
+  vs альтернатива добавить `[lib].exclude` поле в nova.toml + parser
+  + walker. Underscore-prefix — нулевой инфраструктурный долг.
+
+- **`use net.addr` → `use std.net.addr` resolver workaround** —
+  Plan 83.12 ввёл `use net.addr` в std/net/{tcp,udp}.nv,
+  но resolver не знал, что сибблинговый модуль внутри `std/net/`
+  должен быть найден через `std.net.<sibling>` относительно
+  package root (`std`). Resolver искал относительно importer'а:
+  `std/net/net/addr` (doubled net/), не находил. Fix — fully
+  qualified `std.net.addr`. Альтернативный fix (sibling-aware
+  resolver) — за scope Plan 91, отложен. Stale Plan 83.12 bug
+  закрыт побочно в Ф.7.1.
+
+- **`partial_prelude(core, runtime, errors)` для range.nv** —
+  Plan 62.D bis-1 (2026-05-18) сделал `Range`/`RangeIter`
+  auto-available через std.prelude.collections re-export. Это
+  создало cycle: `std.collections.range → std.prelude →
+  std.collections.range` при standalone `nova check`. Fix —
+  партиальный prelude (Plan 62.F): range.nv импортирует только
+  core (Option/Some/None/Ordering) + runtime (assert) + errors
+  (RuntimeError), не collections (где Range re-export).
+  Полный `no_prelude` слишком агрессивен — теряется `assert`
+  в test-блоках. `partial_prelude` — middle ground.
+
+- **Compiler whitelist extension вместо annotation-based opt-in**
+  для `external fn` в std.net + std.bench — Plan 91 Ф.7.1 выбрал
+  hard-coded whitelist в `is_stdlib_runtime_module` (manifest.rs)
+  вместо добавления `#allow_external_fn` annotation на module.
+  Rationale: std.net и std.bench — фиксированные stdlib namespaces
+  с известным набором modules, не open-set user code. User
+  модули по-прежнему получают error на `external fn`. Annotation
+  approach масштабируется но overhead не оправдан для двух
+  whitelisted namespace'ов. Если третий stdlib namespace потребует
+  external fn — пересмотрим (Plan 18 потенциально для std.fs).
+
+- **Test imports updated для experimental** — 7 nova_tests файлов
+  переписаны на `std._experimental.<domain>.<file>` импорты вместо
+  устаревших `std.<domain>.<file>`. Не moved сами тесты в
+  `nova_tests/_experimental/` потому что:
+  (а) `nova test` не auto-skip'ает `_` dirs (только `nova check`);
+  (б) эти тесты testирют существующее experimental API — должны
+       продолжать работать (тестирование experimental != skip).
+  Когда experimental модуль promote'ится обратно в MVP, нужно
+  обновить эти 7 импортов обратно. Документировано в
+  std/_experimental/STATUS.md «Promotion path».

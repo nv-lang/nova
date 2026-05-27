@@ -4,7 +4,7 @@
 
 module modules.lru
 
-import std.collections.lru.{Lru}
+import std._experimental.collections.lru.{Lru}
 
 test "Lru: put и get базовое" {
     let mut c = Lru[str, int].new(3)

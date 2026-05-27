@@ -23293,3 +23293,87 @@ Full nova test: 1414/62 (62 pre-existing, 0 regressions from 83.12).
 Commit: faee0083797. Branch: plan-83.12-async-net pushed to github.
 
 Plan 83.12 ✅ ЗАКРЫТ. Разблокирует Plan 91 (std MVP — net в prelude).
+
+================================================================
+2026-05-27 — Plan 91 Ф.7.1 closure (quarantine non-MVP modules)
+================================================================
+
+Branch: plan-91-stdmvp (worktree nova-p91, after merge github/main
+with Plan 83.12 + Plan 103.6 closures).
+
+Acceptance criterion Plan 91 §Ф.7.1: `nova check std/` (no skip) → 0 FAIL.
+Result: **24 PASS / 0 FAIL** (down from 12 FAIL pre-quarantine).
+
+Сделано:
+
+1. **30 файлов перенесены в std/_experimental/<domain>/:**
+   - collections/{bloom_filter,deque,linkedlist,lru,priority_queue,queue}
+   - crypto/* (6 файлов)
+   - encoding/{csv,hex,ini,toml,url}
+   - identifiers/* (4 файла)
+   - checksums/{crc32,fnv}
+   - data/* (3 файла)
+   - path/* (2 файла)
+   - math/{complex,statistics}
+   - text/{diff,markdown_minimal,regex}
+   - time/cron
+   - concurrency/{rate_limiter,retry}
+
+2. **MVP set остался в std/ (23 файла):** prelude/* runtime/* testing/*
+   collections/{vec,hashmap,set,range} encoding/{json,base64}
+   time/duration net/* (Plan 83.12) concurrency/{cancellation,timer}
+   bench.
+
+3. **Auto-skip mechanism:** каталог _experimental/ начинается с `_`,
+   что триггерит auto-skip в should_skip_path_full (nova-cli/src/
+   main.rs:1482). `nova check std/` walks внутрь, видит underscore,
+   skip'ает всё. Не требует никакого config — convention-based.
+
+4. **Compiler fix (compiler-codegen/src/manifest.rs):**
+   is_stdlib_runtime_module whitelist расширен для std.net.* (Plan
+   83.12 net stdlib) + std.bench (Plan 57 benchmark DSL). Закрывает
+   4 pre-existing FAIL в main (std/net/{addr,tcp,udp}.nv +
+   std/bench.nv использовали `external fn` за пределами whitelist'а).
+
+5. **Source fixes (попутно):**
+   - std/encoding/json.nv — 10 D52 §2 violations (line:@line, etc.)
+     исправлены. 🎯 Ф.3 (JSON D52 fix) закрыт попутно.
+   - std/bench.nv — `module bench` → `module std.bench` (D29 rev-3).
+   - std/net/{tcp,udp}.nv — `use net.addr` → `use std.net.addr`
+     (Plan 83.12 resolver fix).
+   - std/collections/range.nv — `partial_prelude(core, runtime,
+     errors)` (Plan 62.F), избегает self-cycle через std.prelude.
+
+6. **Test imports updated:** 7 nova_tests файлов теперь импортируют
+   `std._experimental.<domain>.<file>`:
+   - nova_tests/modules/{bloom_filter,deque,lru,priority_queue}.nv
+   - nova_tests/plan11_followup/f{13,16,17}_*.nv (path tests)
+   Verified: nova test nova_tests/modules/ → 31 PASS / 0 FAIL;
+   nova test nova_tests/plan11_followup/ → 20 PASS / 0 FAIL.
+
+7. **Документация:**
+   - std/_experimental/STATUS.md — новый файл (per-domain таблица).
+   - std/nova.toml — comment header с MVP/experimental разделением.
+   - std/STATUS.md — секция «Ф.7.1 quarantine ✅».
+   - docs/plans/91-stdlib-mvp-for-0.1.md — секция «Ф.7.1 closure».
+
+Promotion path (когда non-MVP модуль готов к 0.X):
+1. git mv std/_experimental/<dir>/<file>.nv std/<dir>/<file>.nv
+2. Update импорты в тестах
+3. Update std/STATUS.md и std/_experimental/STATUS.md
+4. Verify nova check std/ → остаётся 0 FAIL после move
+5. Update docs/plans/18-stdlib-roadmap.md
+
+Что НЕ делается в Ф.7.1:
+- НЕ фиксит array literal parser bug в crypto/* (требует отдельного
+  compiler fix или Plan 91 Ф.7-bis).
+- НЕ фиксит parser stack overflow в encoding/toml.nv (карантинирован).
+- НЕ promote'ит experimental модули.
+
+Следующий immediate шаг per Ф.0.4 order: Ф.3 conformance (smoke
+round-trip encode→decode test) + parallel Ф.4 (sort module) + Ф.2
+(text methods). Ф.3 D52 source fix закрыт попутно, осталось только
+conformance тестирование.
+
+Status: Ф.0 + Ф.7.1 ✅ ЗАКРЫТЫ. Ф.3 source-level fix закрыт попутно.
+Plan 91 progress: 2/8 phases done в новой нумерации (Ф.0.4 decision).

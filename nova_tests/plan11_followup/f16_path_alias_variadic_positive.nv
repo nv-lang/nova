@@ -4,7 +4,7 @@ module plan11_followup.f16_path_alias_variadic_positive
 // при `import X as p`, variadic flag должен пройти через alias.
 // Раньше `p.Path.join(...)` падал в codegen как «assert не variadic».
 
-import std.path.path as p
+import std._experimental.path.path as p
 
 test "alias import: variadic Path.join via p.Path.join" {
     let r = p.Path.join("a", "b", "c")

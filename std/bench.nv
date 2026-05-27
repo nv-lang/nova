@@ -47,7 +47,7 @@
 // Codegen имеет parallel hardcoded match на `name == "bench"` в emit_c.rs
 // — они должны быть синхронизированы вручную (как с `gc.*` в Plan 32).
 
-module bench
+module std.bench
 
 
 // ─── bench namespace ────────────────────────────────────────────────────

@@ -3,25 +3,45 @@
 # Это workspace-member корневого `../nova.toml`. Содержит
 # стандартную библиотеку Nova, организованную по семантическим
 # доменам (см. spec/decisions/07-modules.md раздел «Структура
-# nova-lang репозитория» в D78):
+# nova-lang репозитория» в D78).
 #
-#   collections/    HashMap, Set, Deque, Vec, Queue, LinkedList,
-#                   Range, LRU, PriorityQueue, BloomFilter
-#   crypto/         MD5, SHA-1, SHA-256, HMAC, JWT, bcrypt
-#   encoding/       Base64, Hex, JSON, CSV, INI, TOML, URL
-#   identifiers/    UUID, ULID, Snowflake
+# **Plan 91 Ф.7.1 (2026-05-27):** для релиза 0.1 stdlib разделён
+# на MVP (compiles → ships) и `_experimental/` (legacy/aspirational
+# код, не входит в 0.1 release contract).
+#
+# MVP для 0.1 (релизный набор):
+#   prelude/        Option/Result/protocols/effects/errors (auto-imported)
+#   runtime/        char/fibers/gc/math/numeric/buffers/string/sync (auto-gen stubs)
+#   testing/        handlers/property (test harness)
+#   collections/    Vec ([]T ext methods), HashMap, Set, Range
+#   encoding/       JSON, Base64
+#   time/           Duration
+#   net/            TcpListener, TcpStream, UdpSocket, SocketAddr (Plan 83.12)
+#   concurrency/    Cancellation, Timer (Plan 83 fiber-api)
+#   bench           Plan 57 benchmark DSL
+#
+# _experimental/ (не входит в 0.1, ждёт Plan 18 / 0.2+ или
+# отдельных под-планов Plan 91 Ф.2-Ф.4 для постепенной promotion):
+#   collections/    BloomFilter, Deque, LinkedList, LRU, PriorityQueue, Queue
+#   crypto/         MD5, SHA-1, SHA-256, HMAC, JWT, bcrypt (4 файла FAIL: array literal)
+#   encoding/       CSV, Hex, INI, TOML (stack overflow), URL
+#   identifiers/    UUID, ULID, Snowflake, UuidNamespace
 #   checksums/      CRC32, FNV
-#   time/           Duration, Cron
-#   path/           Path, Glob
-#   math/           Complex, Statistics
-#   text/           Regex, Markdown, Diff
+#   time/           Cron (FAIL: D52 §2)
+#   path/           Path, Glob (Plan 18 → 0.2+)
+#   math/           Complex (FAIL: D52 §2), Statistics
+#   text/           Regex (FAIL: D52 §2), Markdown, Diff
 #   data/           SemVer, SemVerRange, SQL
-#   concurrency/    RateLimiter, Retry
+#   concurrency/    RateLimiter, Retry (FAIL: unused prefix typevar)
+#
+# Префикс `_` в имени каталога означает auto-skip из `nova check`
+# (см. should_skip_path_full в nova-cli). Это даёт `nova check std/`
+# → 0 FAIL для shipping CI gate без необходимости `--skip` flag.
 #
 # Module path 1:1 = file path: файл `std/encoding/base64.nv`
-# объявляет `module std.encoding.base64`. Имя папки `std/` ↔
-# префикс модуля `std.` без специальных маппингов (см. D78
-# «Path / module enforcement»).
+# объявляет `module std.encoding.base64` (или `encoding.base64`
+# для sub-dir form). Имя папки `std/` ↔ префикс модуля `std.` без
+# специальных маппингов (см. D78 «Path / module enforcement»).
 
 [package]
 name = "std"
