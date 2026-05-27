@@ -1,0 +1,148 @@
+// fail_handler_cross_mco_armed.nv — Plan 83.10.4 Ф.4 regression test
+//
+// Tests Fail handler cross-mco-boundary behavior under full M:N armed
+// scheduling. Previously required AUTOARM=0 because _nova_handler_Fail was
+// NULL on worker threads (same root cause as [M-83.10.1-per-fiber-handler-tls-race]).
+//
+// Fix (Plan 83.10.4 Ф.3): per-thread TLS effect registry. Workers now register
+// their own _nova_handler_Fail addresses. Snapshot restore on first fiber run
+// makes the parent's handler visible on the worker's TLS.
+//
+// Cross-mco-boundary interrupt routing (nova_interrupt cross-fiber path):
+//   1. Fiber calls handler.fail() → handler calls interrupt()
+//   2. nova_interrupt() finds no fiber-local interrupt-frame (_nova_interrupt_top)
+//   3. Records scope.interrupt_pending=true, scope.interrupt_value=v
+//   4. longjmps to fiber-local fail-frame with sentinel "__nova_interrupt__"
+//   5. Spawn-entry catch detects sentinel → does NOT report error
+//   6. After all fibers drain, nova_supervised_run re-issues nova_interrupt(v)
+//      on main-flow where with-frame is reachable.
+
+module plan83_10_4.fail_handler_cross_mco_armed
+
+fn do_throw(msg str) -> int {
+    throw msg
+    0
+}
+
+// ================================================================
+// SECTION 1: Basic cross-mco Fail handler catch
+// ================================================================
+
+test "armed M:N — Fail handler catches throw from spawned fiber" {
+    let mut caught = ""
+    with Fail = effect Fail {
+        fail(msg) {
+            caught = msg
+            interrupt ()
+        }
+    } {
+        supervised {
+            spawn { throw "from worker" }
+        }
+    }
+    assert(caught == "from worker")
+}
+
+test "armed M:N — Fail handler invoked exactly once" {
+    let mut count = 0
+    let mut msg = ""
+    with Fail = effect Fail {
+        fail(m) {
+            count += 1
+            msg = m
+            interrupt ()
+        }
+    } {
+        supervised {
+            spawn { throw "single-throw" }
+        }
+    }
+    assert(count == 1)
+    assert(msg == "single-throw")
+}
+
+test "armed M:N — Fail handler catches indirect throw via function" {
+    let mut caught = ""
+    with Fail = effect Fail {
+        fail(msg) {
+            caught = msg
+            interrupt ()
+        }
+    } {
+        supervised {
+            spawn { let _ = do_throw("indirect") }
+        }
+    }
+    assert(caught == "indirect")
+}
+
+// ================================================================
+// SECTION 2: Non-throwing path unaffected
+// ================================================================
+
+test "armed M:N — Fail handler not triggered on success path" {
+    let mut handler_ran = false
+    let mut result = 0
+    with Fail = effect Fail {
+        fail(_msg) {
+            handler_ran = true
+            interrupt ()
+        }
+    } {
+        supervised {
+            spawn { result = 42 }
+        }
+    }
+    assert(!handler_ran)
+    assert(result == 42)
+}
+
+// ================================================================
+// SECTION 3: Handler state captured in closure correctly
+// ================================================================
+
+test "armed M:N — Fail handler captures outer mut variable" {
+    let mut errors = 0
+    let mut last_err = ""
+    with Fail = effect Fail {
+        fail(msg) {
+            errors += 1
+            last_err = msg
+            interrupt ()
+        }
+    } {
+        supervised {
+            spawn { throw "fiber-error" }
+        }
+    }
+    assert(errors == 1)
+    assert(last_err == "fiber-error")
+}
+
+// ================================================================
+// SECTION 4: Multiple sequential supervised blocks
+// ================================================================
+
+test "armed M:N — Fail handler works across multiple supervised blocks" {
+    let mut caught1 = ""
+    let mut caught2 = ""
+    with Fail = effect Fail {
+        fail(msg) {
+            if caught1 == "" {
+                caught1 = msg
+            } else {
+                caught2 = msg
+            }
+            interrupt ()
+        }
+    } {
+        supervised {
+            spawn { throw "first" }
+        }
+        supervised {
+            spawn { throw "second" }
+        }
+    }
+    assert(caught1 == "first")
+    assert(caught2 == "second")
+}

@@ -802,7 +802,19 @@ typedef struct {
     int    count;
 } NovaEffectRegistry;
 
-extern NovaEffectRegistry _nova_effect_registry;
+/* Plan 83.10.4 Ф.3 [M-83.10.1-per-fiber-handler-tls-race]: TLS registry.
+ * Каждый поток (main + workers) имеет свою копию для хранения своих
+ * TLS-адресов handler'ов. Zero-initialized при старте каждого потока. */
+#ifdef _MSC_VER
+extern __declspec(thread) NovaEffectRegistry _nova_effect_registry;
+#else
+extern __thread NovaEffectRegistry _nova_effect_registry;
+#endif
+
+/* Plan 83.10.4 Ф.3: function pointer set by generated nova_fn_main to
+ * register all effects for any thread. Null until nova_fn_main runs.
+ * Worker threads call this at startup to populate their TLS registry. */
+extern void (*_nova_register_effects_fn)(void);
 
 /* Регистрация handler-storage. Idempotent (по адресу). Вызывается из
  * codegen'а при первом использовании эффекта (или статически перед main). */

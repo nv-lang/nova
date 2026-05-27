@@ -192,5 +192,26 @@ __thread volatile int*       _nova_preempt_ptr   = NULL;  /* Plan 44.7 */
  * Built-in effects (Fail, Time) auto-registered in nova_runtime_init.
  * User-defined эффекты регистрируются codegen'ом при первом использовании
  * (через `nova_register_effect_storage(&_nova_handler_X)` в startup-code).
- * Глобальная (не TLS) — все threads делят один registry. */
-NovaEffectRegistry _nova_effect_registry = {0};
+ *
+ * Plan 83.10.4 Ф.3 [M-83.10.1-per-fiber-handler-tls-race]:
+ * Registry ДОЛЖЕН быть per-thread (TLS), а не global. Потому что
+ * `_nova_handler_Time`, `_nova_handler_Fail` и др. — __declspec(thread)
+ * переменные с РАЗНЫМИ АДРЕСАМИ на разных потоках (Windows TLS: каждый
+ * поток имеет свой TEB + offset). Если registry global, он хранит адреса
+ * main-thread'а. Когда worker вызывает nova_effect_snapshot_restore,
+ * он пишет в память main-thread'а (не в свои TLS переменные) → fiber
+ * видит NULL handler (default worker TLS) вместо parent-inherited handler.
+ *
+ * Fix: __declspec(thread) registry → каждый поток регистрирует свои
+ * СОБСТВЕННЫЕ TLS адреса. Snapshot values (скопированные с parent) верно
+ * восстанавливаются в worker-thread's TLS copies. */
+#ifdef _MSC_VER
+__declspec(thread) NovaEffectRegistry _nova_effect_registry;
+#else
+__thread NovaEffectRegistry _nova_effect_registry;
+#endif
+
+/* Plan 83.10.4 Ф.3: function pointer set by generated code (nova_fn_main)
+ * to register all program effects (built-ins + user-defined). Called by
+ * each worker thread at startup so it has its own TLS-address registry. */
+void (*_nova_register_effects_fn)(void) = NULL;
