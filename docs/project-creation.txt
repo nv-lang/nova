@@ -23104,3 +23104,39 @@ Decision: **вариант C — co-planned для 0.1**.
   - B («83.12 wins, 91 расширяется»): не отражает что 103.x уже в main.
   - C: отражает фактический статус (sync уже едет, net — последний
     крупный модуль для 0.1), убирает phantom P0 в priority-listing.
+
+=== Plan 83.10.5: Iso-cancel startup race — Ф.A Tactical attempt (2026-05-27) ===
+
+Followup для [M-83.10.4-iso-cancel-startup-race] (Plan 83.10.4 Ф.5 SKIP).
+
+Ф.0+Ф.A.1 done: создан worktree nova-p83-10-5, 5 atomic diagnostic counters
+в runtime через sysmon ticker + atexit; stress_iso_3e revived.
+
+DIAGNOSTIC CONFIRMED RACE: enter=100 parked=100 canceled_by_worker=90-97
+close_cb=91-98 return=91-98. ~3-9 fibers stuck per run. close_cb fires но
+nova_sched_wake CAS на parked[slot] races с nova_sched_park's SEQ_CST store
+(window между predicate-returns-false и parked=true).
+
+Ф.A.2 Tactical attempts:
+- ✅ SEQ_CST cancel_requested store (committed, correctness improvement)
+- ✅ SEQ_CST pending_stop_cb load (committed, correctness improvement)
+- ✅ NovaSleepState.cancel_scope_cached + Race 2c predicate (committed, defense)
+- ❌ Broadcast bare-wake в cancel_worker_fibers (REVERTED — creates race с close_cb)
+- ❌ uv_run drain spin в predicate (REVERTED — reentrant interferes с workers)
+- ❌ Three-pass с uv_sleep(1) (REVERTED — same broadcast race)
+
+Final Tactical: 8-9/15 PASS (~55%). НЕ production-grade.
+
+CONCLUSION: Tactical layer не закрывает race robustly. Root cause structural —
+pending_stop_cb / pending_handle / parked / cancel_requested / stage на 5
+разных heap addresses. Tokio paradigm: один AtomicU64 на весь lifecycle.
+
+Architectural Ф.B (~1.5 dev-day, Opus 4.7 + Thinking ON) REQUIRED для closure.
+
+Plan §9 (session report) updated. Memory project-plan83_10_5-status.md created.
+
+Branch: plan-83.10.5-iso-cancel-fix (commit 6e05f0379a9 + plan update 901af6f86e0)
+PUSHED but NOT MERGED. [M-83.10.4-iso-cancel-startup-race] STILL OPEN.
+
+Worktree D:/Sources/nv-lang/nova-p83-10-5 PRESERVED for Ф.B continuation.
+
