@@ -1,6 +1,7 @@
 // Plan 103.5 — Lazy.force is banned inside realtime{}.
 //
-// EXPECT_COMPILE_ERROR E_EFFECT_REALTIME_VIOLATION
+// Plan 103.6: error code changed from E_EFFECT_REALTIME_VIOLATION to E_REALTIME_SYNC_PARK.
+// EXPECT_COMPILE_ERROR E_REALTIME_SYNC_PARK
 
 module nova_tests.plan103_5.lazy_in_realtime_neg
 
