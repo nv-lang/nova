@@ -13255,15 +13255,15 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                         }
                     }
                 }
-                // Special case: `let xs = s.bytes()` / `s.chars()` — set element type
-                // explicitly, even though val is not a known variable.
+                // Special case: `let xs = s.bytes()` / `s.as_bytes()` / `s.chars()` — set element
+                // type explicitly, even though val is not a known variable.
                 if let ExprKind::Call { func, .. } = &decl.value.kind {
                     // D38: turbofish прозрачен — смотрим под него.
                     let func = func.unwrap_turbofish();
                     if let ExprKind::Member { obj, name } = &func.kind {
                         if self.infer_expr_c_type(obj) == "nova_str" {
                             match name.as_str() {
-                                "bytes" => {
+                                "bytes" | "as_bytes" => {  // Plan 108: as_bytes same element type
                                     self.array_element_types
                                         .insert(binding.clone(), "nova_byte".into());
                                 }
@@ -23744,6 +23744,7 @@ _cp++; \
             "char_len"    => Some("nova_str_char_len"),
             "byte_len"    => Some("nova_str_byte_len"),
             "bytes"       => Some("nova_str_bytes"),
+            "as_bytes"    => Some("nova_str_as_bytes"),  // Plan 108 D176: zero-copy readonly []u8
             "chars"       => Some("nova_str_chars"),
             "char_at"     => Some("nova_str_char_at"),
             "split"       => Some("nova_str_split"),
@@ -25926,6 +25927,8 @@ _cp++; \
                             "find" | "rfind" => "NovaOpt_nova_int".into(),
                             // D26: s.bytes() → []byte (packed uint8_t[]).
                             "bytes" => "NovaArray_nova_byte*".into(),
+                            // Plan 108 D176: s.as_bytes() → readonly []u8 (zero-copy, same C type).
+                            "as_bytes" => "NovaArray_nova_byte*".into(),
                             // s.chars() → []char (Plan 70.3: nova_char distinct typedef).
                             "chars" => "NovaArray_nova_char*".into(),
                             // s.split(sep) → []str (Iter[str] eager в bootstrap).
