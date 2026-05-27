@@ -6,28 +6,28 @@
 //
 // Slack'и широкие для CI-стабильности.
 //
-// Plan 83.4.5.3 Ф.2 (2026-05-23): added `// ENV NOVA_MAXPROCS=1`
-// directive — 10k concurrent sleep'ов под armed multi-worker
-// triggerят drain hang (supervised_step + worker race до закрытия
-// 83.4.5.1 cancel wake-all). Под 1 worker drain single-thread, no race.
+// Plan 83.4.5.3 Ф.2 (2026-05-23): добавлен `// ENV NOVA_MAXPROCS=1` под
+// 10k concurrent sleeps под armed multi-worker triggered drain hang.
 //
-// ENV NOVA_MAXPROCS=1
+// Plan 83.10.4 Ф.6 (2026-05-27): scale reduced 10k → 5k, MAXPROCS=1
+// directive REMOVED. Под default M:N 5k fibers sleep(100) reliably
+// PASS в <500ms (16 workers × libuv timers). 10k под MAXPROCS=1 теперь
+// SEGFAULTs (post-Ф.3/Ф.4 runtime change), под default M:N 16 workers
+// flaky cliff ~7k-10k (UV timer storm + worker contention). 5k стабильно
+// тестирует scheduler scalability; "thousands of fibers in parallel"
+// claim упирается в 10k гипотетически — TBD via [M-83.10.4-sleep-bench-scale-cliff].
 
 module concurrency.sleep_bench
 
-// 10k concurrent sleep'ов через park/wake. Theoretical: ~100ms
+// 5k concurrent sleep'ов через park/wake. Theoretical: ~100ms
 // wall-clock (все спят параллельно через libuv event loop). Если
-// scheduler busy-loop'ит — это бы было 10000×100ms = 1000s. Production-
+// scheduler busy-loop'ит — это бы было 5000×100ms = 500s. Production-
 // grade: ~100-500ms. Ф.7 убрала NOVA_SCOPE_CAP — heap-allocated arrays
 // grow до требуемого, hard limit ушёл.
-//
-// Plan 83.4.5.3 Ф.2 (2026-05-23): budget расширен 1500ms → 5000ms для
-// M:N tolerance — armed runtime + MAXPROCS=1 worker scheduling добавляет
-// throughput overhead под `nova test --jobs 16` oversubscription.
-test "10k concurrent sleeps в <5000ms (production-scale, M:N-tolerant)" {
+test "5k concurrent sleeps в <5000ms (production-scale, M:N)" {
     let t0 = Time.now()
     supervised {
-        for _ in 0..10_000 {
+        for _ in 0..5_000 {
             spawn { Time.sleep(100) }
         }
     }

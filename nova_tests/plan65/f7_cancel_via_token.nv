@@ -1,3 +1,4 @@
+// ENV NOVA_AUTOARM=0
 // Plan 65 R18 f7: ChanReader.close_after registers with the enclosing
 // CancelToken (AD5). When tok.cancel() fires before the timer would
 // naturally fire, the libuv handle is closed via the cancel-resource
@@ -29,7 +30,7 @@
 // closes a pending close_after timer" — elapsed exceeds SLACK_MS. Under armed
 // M:N cleanup_cbs not processed before uv_run advances clock.
 // Root cause: [M-83.10.1-armed-cancel-timer-hang].
-// ENV NOVA_AUTOARM=0
+// (ENV NOVA_AUTOARM=0 directive applied at top of file — parser 30-line window.)
 
 module plan65.f7_cancel_via_token
 
