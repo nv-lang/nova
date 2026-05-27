@@ -1,12 +1,11 @@
-// EXPECT_COMPILE_ERROR D133
+// Plan 100.1 → Plan 100.3 (D157): передача consume-var в view-param (non-consume
+// fn-параметр типа consume-type) — РАЗРЕШЕНО как view-borrow.
 //
-// Plan 100.1 (D133, D2): передача consume-var в non-consume non-receiver
-// fn-параметр — error E (D133-move-to-non-consume).
+// `fn log(tx Transaction)` — параметр без `consume` qualifier = view-param (D157).
+// Caller передаёт consume-var как view-borrow; tx остаётся Live у caller.
 //
-// `fn log(tx Transaction)` — параметр без `consume` qualifier означает
-// read-only mode (D7). Caller не может транзитить ownership в такую
-// функцию (нужен либо `consume tx` qualifier на callee, либо `view T`
-// в D157/Plan 100.3).
+// NOTE: До Plan 100.3 (D133 bootstrap) этот паттерн давал ошибку
+// D133-move-to-non-consume. После D157 — разрешён: view-borrow.
 
 module nova_tests.plan100_1.consume_err_pass_non_consume
 
@@ -19,16 +18,15 @@ fn Transaction consume @rollback() -> () { () }
 
 fn begin() -> Transaction => { id: 1 }
 
-// `log` — non-consume param. Read-only mode без view-маркера (D157).
+// `log` — view-param (non-consume param of consume type). Read-only borrow (D157).
 fn log(tx Transaction) -> () {
     println(tx.id)
 }
 
-test "log(tx) без consume qualifier — call-site error" {
+test "log(tx) — view-borrow; caller's tx остаётся Live" {
     consume tx = begin()
-    // ОШИБКА D133-move-to-non-consume: передача в non-consume param.
-    // Suggest: добавить `consume` qualifier на log's tx param,
-    // или (после Plan 100.3) использовать `log(tx)`.
+    // D157: view-borrow — log видит tx read-only, не consume'нет.
     log(tx)
+    // tx остаётся Live после view-use.
     tx.commit()
 }

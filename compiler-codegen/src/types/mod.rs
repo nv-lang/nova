@@ -7162,6 +7162,10 @@ struct ConsumeRegistry {
     /// гарантированно возвращающие сам receiver. `let x = recv.method()`
     /// для такого метода → `x` алиас `recv`.
     recv_returning: HashSet<(String, String)>,
+    /// Plan 100.3 (D157): free-fn name → indices of view-params
+    /// (non-consume params of consume types). Used to detect
+    /// D133-consume-rvalue-in-view: rvalue passed to view-param position.
+    fn_view_params: HashMap<String, Vec<usize>>,
 }
 
 impl ConsumeRegistry {
@@ -7171,6 +7175,17 @@ impl ConsumeRegistry {
         let mut method_params: HashMap<(String, String), Vec<usize>> = HashMap::new();
         let mut fn_return_types: HashMap<String, String> = HashMap::new();
         let mut recv_returning: HashSet<(String, String)> = HashSet::new();
+        let mut fn_view_params: HashMap<String, Vec<usize>> = HashMap::new();
+
+        // Plan 100.3 (D157): collect consume-types for view-param detection.
+        // Mirrors LinearityRegistry::build consume_types collection.
+        let consume_type_names: HashSet<String> = module.items.iter()
+            .filter_map(|it| {
+                if let Item::Type(td) = it {
+                    if td.consume { Some(td.name.clone()) } else { None }
+                } else { None }
+            })
+            .collect();
 
         // 1. Runtime-stdlib consume-методы (`StringBuilder.into` и т.п.).
         //    Single source of truth — runtime_registry.rs (`is_consume`).
@@ -7223,12 +7238,27 @@ impl ConsumeRegistry {
                                     .insert(fd.name.clone(), path[0].clone());
                             }
                         }
+                        // Plan 100.3 (D157): collect view-params — non-consume params
+                        // of consume types. Used for D133-consume-rvalue-in-view check.
+                        let view_idx: Vec<usize> = fd.params.iter().enumerate()
+                            .filter(|(_, p)| {
+                                !p.consume && matches!(&p.ty,
+                                    TypeRef::Named { path, .. }
+                                    if path.len() == 1
+                                        && consume_type_names.contains(&path[0]))
+                            })
+                            .map(|(i, _)| i)
+                            .collect();
+                        if !view_idx.is_empty() {
+                            fn_view_params.insert(fd.name.clone(), view_idx);
+                        }
                     }
                 }
             }
         }
         ConsumeRegistry {
             methods, fn_params, method_params, fn_return_types, recv_returning,
+            fn_view_params,
         }
     }
 }
@@ -7310,6 +7340,14 @@ struct ConsumeCtx<'a> {
     /// Внутри тела функции, параметры с типами из этого набора
     /// трактуются как consume-obligations (strict-mode).
     consume_bound_generics: HashSet<String>,
+    /// Plan 100.3 (D157): view-params — non-consume params of consume types.
+    /// Calling consume-methods on view-params → D157-consume-via-view error.
+    /// Returning a view-param → D157-view-escape-return error.
+    view_params: HashSet<String>,
+    /// Plan 100.3 (D157): consume-closures — closures that consume outer vars.
+    /// closure_var_name → list of outer vars it consumes when invoked.
+    /// When closure is invoked: mark those outer vars Consumed + closure Consumed.
+    consume_closures: HashMap<String, Vec<String>>,
 }
 
 impl<'a> ConsumeCtx<'a> {
@@ -7324,6 +7362,8 @@ impl<'a> ConsumeCtx<'a> {
             all_declared_consume: HashSet::new(),
             field_states: HashMap::new(),
             consume_bound_generics: HashSet::new(),
+            view_params: HashSet::new(),
+            consume_closures: HashMap::new(),
         }
     }
 
@@ -7496,6 +7536,57 @@ impl<'a> ConsumeCtx<'a> {
         self.consume_obligations.insert(name.to_string());
         // Plan 100.8 (D166): also track in all_declared_consume (never cleared).
         self.all_declared_consume.insert(name.to_string());
+    }
+
+    // ── Plan 100.3 (D157): view-param and consume-closure helpers ─────────
+
+    /// Зарегистрировать view-param (non-consume param of consume type).
+    /// view-params — Live, но запрещено вызывать consume-методы или return.
+    fn declare_view_param(&mut self, name: &str, ty: Option<String>) {
+        if name == "_" { return; }
+        self.declare(name, ty);
+        self.view_params.insert(name.to_string());
+    }
+
+    /// Проверить, является ли переменная view-param (D157).
+    fn is_view_param(&self, name: &str) -> bool {
+        let canon = self.canonical(name);
+        self.view_params.contains(&canon) || self.view_params.contains(name)
+    }
+
+    /// Зарегистрировать consume-closure binding (FnOnce-equivalent).
+    /// closure_name — имя let-binding'а; captured — список outer vars
+    /// которые closure потребляет при invoke.
+    fn declare_consume_closure(&mut self, closure_name: &str, captured: Vec<String>) {
+        if closure_name == "_" { return; }
+        // Consume-closure само является consume-obligation: если не invoked
+        // до scope-exit → D133-not-consumed error.
+        self.declare_consume_binding(closure_name, Some("__consume_closure__".to_string()));
+        self.consume_closures.insert(closure_name.to_string(), captured);
+    }
+
+    /// Проверить, является ли переменная consume-closure (D157).
+    fn is_consume_closure(&self, name: &str) -> bool {
+        let canon = self.canonical(name);
+        self.consume_closures.contains_key(&canon)
+            || self.consume_closures.contains_key(name)
+    }
+
+    /// Вызвать consume-closure: пометить closure Consumed + все captured outer vars.
+    fn invoke_consume_closure(&mut self, name: &str, span: Span) {
+        let captured = {
+            let canon = self.canonical(name);
+            self.consume_closures.get(&canon)
+                .or_else(|| self.consume_closures.get(name))
+                .cloned()
+                .unwrap_or_default()
+        };
+        // Mark captured outer vars as Consumed (closure consumed them).
+        for var in &captured {
+            self.mark_consumed(var, span);
+        }
+        // Mark closure itself as Consumed (FnOnce).
+        self.mark_consumed(name, span);
     }
 
     /// Проверить, что все consume-obligations Consumed на текущем exit.
@@ -7815,8 +7906,22 @@ fn check_consume(module: &Module, errors: &mut Vec<Diagnostic>) {
                             }).cloned()
                         });
                         ctx.declare_consume_binding(&p.name, pty);
+                    } else if p.consume {
+                        // Explicit `consume` param: consume-obligation.
+                        ctx.declare_consume_binding(&p.name, pty);
                     } else {
-                        ctx.declare(&p.name, pty);
+                        // Plan 100.3 (D157): non-consume param of consume type
+                        // → view-param. Can read fields, call non-consume methods,
+                        // pass to other view-params. Cannot call consume-methods,
+                        // cannot return.
+                        let is_consume_type = pty.as_ref()
+                            .map(|t| lin_reg.consume_types.contains(t))
+                            .unwrap_or(false);
+                        if is_consume_type {
+                            ctx.declare_view_param(&p.name, pty);
+                        } else {
+                            ctx.declare(&p.name, pty);
+                        }
                     }
                 }
                 // Plan 100.1 (D133 / D5): инициализация consume-полей receiver'а.
@@ -8141,12 +8246,30 @@ fn consume_walk_stmt(ctx: &mut ConsumeCtx, s: &Stmt, errors: &mut Vec<Diagnostic
                 ctx.declare_alias(&names[0], &canon, ty);
             } else {
                 let ty = ctx.infer_let_type(decl);
+                // Plan 100.3 (D157): detect consume-closures.
+                // If the RHS is a closure that calls consume-methods on outer
+                // consume-obligation vars, it becomes a consume-closure (FnOnce).
+                let closure_body_for_scan: Option<&Expr> = match &decl.value.kind {
+                    ExprKind::ClosureLight { body: ClosureBody::Expr(ex), .. } => Some(ex),
+                    ExprKind::Lambda { body, .. } => Some(body),
+                    _ => None,
+                };
+                let consume_closure_captured: Option<Vec<String>> =
+                    if names.len() == 1 && !decl.consume {
+                        closure_body_for_scan.map(|body| {
+                            d157_scan_closure_captures(body, &ctx.consume_obligations, ctx)
+                        }).filter(|caps| !caps.is_empty())
+                    } else { None };
+
                 for n in &names {
                     // Тип привязываем только к одиночному ident-pattern'у.
                     let t = if names.len() == 1 { ty.clone() } else { None };
                     // Plan 100.1 (D133 / D9): `consume tx = ...` binding.
                     if decl.consume {
                         ctx.declare_consume_binding(n, t);
+                    } else if let Some(ref captured) = consume_closure_captured {
+                        // Plan 100.3 (D157): consume-closure — declares as consume-obligation.
+                        ctx.declare_consume_closure(n, captured.clone());
                     } else {
                         ctx.declare(n, t);
                     }
@@ -8203,10 +8326,22 @@ fn consume_walk_stmt(ctx: &mut ConsumeCtx, s: &Stmt, errors: &mut Vec<Diagnostic
         Stmt::Return { value, span } => {
             if let Some(v) = value {
                 consume_walk_expr(ctx, v, errors);
-                // Plan 100.1 (D133 / D9): `return tx` — обязательство
-                // передаётся caller'у. Пометить возвращённый consume-var как
-                // Consumed (obligation satisfied by transfer).
                 if let ExprKind::Ident(name) = &v.kind {
+                    // Plan 100.3 (D157): view-param cannot escape via return.
+                    if ctx.is_view_param(name) {
+                        errors.push(Diagnostic::new(
+                            format!(
+                                "[D157-view-escape-return] `{}` — view-param (read-only borrow): \
+                                 нельзя вернуть из функции. View-borrow не может outlive scope \
+                                 source'а. Используйте `consume` qualifier на параметре для \
+                                 transfer ownership.",
+                                name),
+                            *span,
+                        ));
+                    }
+                    // Plan 100.1 (D133 / D9): `return tx` — обязательство
+                    // передаётся caller'у. Пометить возвращённый consume-var как
+                    // Consumed (obligation satisfied by transfer).
                     if ctx.consume_obligations.contains(name.as_str()) {
                         ctx.mark_consumed(name, *span);
                     }
@@ -8345,6 +8480,85 @@ fn d162_collect_covers_stmt(s: &Stmt, pre_obligations: &HashSet<String>,
         Stmt::Let(decl) => d162_collect_covers(&decl.value, pre_obligations, ctx, out),
         _ => {}
     }
+}
+
+/// Plan 100.3 (D157): Scan closure body for consume-method calls on outer
+/// vars (consume-closure detection). Returns names of outer vars that
+/// the closure body would consume when invoked.
+///
+/// Conservative (sound): only detects direct `recv.consume_method()` patterns
+/// where `recv` is a known outer consume-obligation. Does NOT detect
+/// indirect consumption through nested calls.
+fn d157_scan_closure_captures(
+    body: &Expr,
+    outer_obligations: &HashSet<String>,
+    ctx: &ConsumeCtx,
+) -> Vec<String> {
+    let mut captured = Vec::new();
+    d157_scan_expr(body, outer_obligations, ctx, &mut captured);
+    captured.sort();
+    captured.dedup();
+    captured
+}
+
+fn d157_scan_expr(e: &Expr, outer: &HashSet<String>, ctx: &ConsumeCtx, out: &mut Vec<String>) {
+    match &e.kind {
+        ExprKind::Call { func, args, trailing } => {
+            if let ExprKind::Member { obj, name: method } = &func.kind {
+                if let ExprKind::Ident(recv) = &obj.kind {
+                    let canon = ctx.canonical(recv);
+                    let in_outer = outer.contains(&canon) || outer.contains(recv.as_str());
+                    if in_outer {
+                        // Check if this is a consume-method call.
+                        let type_name = ctx.var_types.get(&canon)
+                            .or_else(|| ctx.var_types.get(recv.as_str()))
+                            .cloned();
+                        if let Some(tn) = type_name {
+                            if ctx.reg.methods.contains(&(tn, method.clone())) {
+                                out.push(recv.clone());
+                            }
+                        }
+                    }
+                }
+            }
+            d157_scan_expr(func, outer, ctx, out);
+            for a in args { d157_scan_expr(a.expr(), outer, ctx, out); }
+            if let Some(t) = trailing {
+                match t {
+                    Trailing::Block(b) => d157_scan_block(b, outer, ctx, out),
+                    _ => {}
+                }
+            }
+        }
+        ExprKind::Block(b) => d157_scan_block(b, outer, ctx, out),
+        ExprKind::If { cond, then, else_ } => {
+            d157_scan_expr(cond, outer, ctx, out);
+            d157_scan_block(then, outer, ctx, out);
+            match else_ {
+                Some(ElseBranch::Block(b)) => d157_scan_block(b, outer, ctx, out),
+                Some(ElseBranch::If(e2)) => d157_scan_expr(e2, outer, ctx, out),
+                None => {}
+            }
+        }
+        ExprKind::Member { obj, .. } => d157_scan_expr(obj, outer, ctx, out),
+        ExprKind::Binary { left, right, .. } => {
+            d157_scan_expr(left, outer, ctx, out);
+            d157_scan_expr(right, outer, ctx, out);
+        }
+        _ => {}
+    }
+}
+
+fn d157_scan_block(b: &Block, outer: &HashSet<String>, ctx: &ConsumeCtx, out: &mut Vec<String>) {
+    for s in &b.stmts {
+        match s {
+            Stmt::Expr(e) | Stmt::Throw { value: e, .. } => d157_scan_expr(e, outer, ctx, out),
+            Stmt::Return { value: Some(v), .. } => d157_scan_expr(v, outer, ctx, out),
+            Stmt::Let(decl) => d157_scan_expr(&decl.value, outer, ctx, out),
+            _ => {}
+        }
+    }
+    if let Some(t) = &b.trailing { d157_scan_expr(t, outer, ctx, out); }
 }
 
 /// Walk тела цикла (for/while/loop) — пессимистично: переменная,
@@ -8496,6 +8710,17 @@ fn consume_walk_expr(ctx: &mut ConsumeCtx, e: &Expr, errors: &mut Vec<Diagnostic
                         for a in args { consume_walk_expr(ctx, a.expr(), errors); }
                         if let Some(t) = trailing { consume_walk_trailing(ctx, t, errors); }
                         let recv = recv.clone();
+                        // Plan 100.3 (D157): view-param cannot call consume-methods.
+                        if ctx.is_view_param(&recv) && ctx.is_consume_method(&recv, method) {
+                            errors.push(Diagnostic::new(
+                                format!(
+                                    "[D157-consume-via-view] `{}` — view-param (read-only borrow): \
+                                     нельзя вызывать consume-метод `{}`. Используйте `consume` \
+                                     qualifier на параметре функции для ownership transfer.",
+                                    recv, method),
+                                e.span,
+                            ));
+                        }
                         // consume-метод → receiver (весь alias-класс)
                         // потребляется.
                         if ctx.is_consume_method(&recv, method) {
@@ -8602,42 +8827,73 @@ fn consume_walk_expr(ctx: &mut ConsumeCtx, e: &Expr, errors: &mut Vec<Diagnostic
                 }
                 // Free-fn call: f(args).
                 ExprKind::Ident(fname) => {
-                    // Plan 100.1 (D133 / D2): проверить передачу consume-var
-                    // в non-consume param. consume_obligations var в позиции
-                    // НЕ-consume-param → D133-move-to-non-consume.
+                    // Plan 100.3 (D157): view-borrow semantics for free-fn calls.
+                    // consume_obligations var passed to NON-consume param = view-borrow → OK.
+                    // Rvalue (call returning consume-type) passed to view-param → D133-consume-rvalue-in-view.
                     let consume_idxs = ctx.reg.fn_params.get(fname.as_str())
                         .cloned()
                         .unwrap_or_default();
+                    let view_idxs = ctx.reg.fn_view_params.get(fname.as_str())
+                        .cloned()
+                        .unwrap_or_default();
                     for (i, a) in args.iter().enumerate() {
-                        if let ExprKind::Ident(arg_name) = &a.expr().kind {
-                            if ctx.consume_obligations.contains(arg_name.as_str()) {
-                                let is_consume_param = consume_idxs.contains(&i);
-                                if !is_consume_param {
-                                    let ty = ctx.var_types.get(arg_name).cloned()
-                                        .unwrap_or_default();
-                                    errors.push(Diagnostic::new(
-                                        format!(
-                                            "[D133-move-to-non-consume] передача \
-                                             consume-переменной `{}` (тип `{}`) в \
-                                             non-consume параметр функции `{}`. \
-                                             Добавьте `consume` qualifier на параметр \
-                                             функции, либо вызовите consume-метод \
-                                             (`{}.{}()`) до передачи.",
-                                            arg_name, ty, fname,
-                                            arg_name,
-                                            ctx.lin_reg.consume_methods_for(&ty)
-                                                .first().cloned()
-                                                .unwrap_or_else(|| "<method>".to_string())),
-                                        a.expr().span,
-                                    ));
+                        let is_consume_param = consume_idxs.contains(&i);
+                        let is_view_param = view_idxs.contains(&i) || (!is_consume_param);
+                        // D133-consume-rvalue-in-view: rvalue of consume-type → view-param.
+                        // Rvalue = call returning consume-type (no binding → no tracking slot).
+                        if is_view_param && !is_consume_param {
+                            if let ExprKind::Call { func: inner_func, .. } = &a.expr().kind {
+                                let ret_type: Option<String> = match &inner_func.kind {
+                                    ExprKind::Ident(inner_fname) =>
+                                        ctx.reg.fn_return_types.get(inner_fname.as_str()).cloned(),
+                                    _ => None,
+                                };
+                                if let Some(rt) = ret_type {
+                                    if ctx.lin_reg.consume_types.contains(&rt) {
+                                        errors.push(Diagnostic::new(
+                                            format!(
+                                                "[D133-consume-rvalue-in-view] consume-rvalue (тип `{}`) \
+                                                 передан в view-param функции `{}`. Привяжите через \
+                                                 `consume name = …`, затем используйте `name`.",
+                                                rt, fname),
+                                            a.expr().span,
+                                        ));
+                                    }
                                 }
                             }
+                        }
+                    }
+                    // Plan 100.3 (D157): consume-closure invocation.
+                    // If calling a consume-closure (FnOnce-like), first check
+                    // use-after-consume, then mark captured vars + closure Consumed.
+                    let is_consume_closure_call = ctx.is_consume_closure(fname);
+                    if is_consume_closure_call {
+                        // Check use-after-consume on closure (D157 FnOnce semantics).
+                        let canon = ctx.canonical(fname);
+                        if let Some(VarState::Consumed(at)) = ctx.states.get(&canon)
+                            .or_else(|| ctx.states.get(fname.as_str()))
+                        {
+                            let at = *at;
+                            errors.push(Diagnostic::new(
+                                format!(
+                                    "[D157-consume-closure-double-invoke] consume-closure `{}` \
+                                     уже была вызвана (FnOnce-эквивалент): повторный вызов \
+                                     невозможен. Consume-closure можно вызвать ровно один раз.",
+                                    fname),
+                                e.span,
+                            ).with_note_at("closure вызвана (и потреблена) здесь".to_string(), at));
+                        } else {
+                            ctx.use_var(fname, e.span, errors);
                         }
                     }
                     for a in args { consume_walk_expr(ctx, a.expr(), errors); }
                     if let Some(t) = trailing { consume_walk_trailing(ctx, t, errors); }
                     if !consume_idxs.is_empty() {
                         ctx.consume_args(args, &consume_idxs, e.span);
+                    }
+                    if is_consume_closure_call {
+                        // Invoke: mark captured outer vars + closure itself Consumed.
+                        ctx.invoke_consume_closure(fname, e.span);
                     }
                     // Plan 100.1 (D133 / D3): `panic` = exit-point.
                     // Все Live consume-obligations на panic-call → D133.
