@@ -1,0 +1,139 @@
+// Plan 103.8 Ð²Ð‚â€ Property: Condvar no lost wakeup over 1000 produce/consume cycles.
+//
+// Property: consumer never misses a produced item over 1000 iterations.
+// Extends plan103_4/condvar_no_lost_wakeup_prop.nv to cross-cutting validation.
+//
+// Two tests:
+// 1. Single producer, single consumer Ð“â€” 1000 cycles.
+// 2. 4 producers + 4 consumers Ð“â€” 250 items each = 1000 total.
+//
+// Uses explicit while+wait predicate pattern (condvar codegen compatibility).
+//
+// EXPECT_TIMEOUT_MS 300000
+
+module nova_tests.plan103_8.prop_condvar_no_lost_wakeup
+
+test "prop no lost wakeup: 1 producer + 1 consumer Ð“â€” 1000 cycles" {
+    let mu       = Mutex.new()
+    let cv       = Condvar.new()
+    let produced = AtomicI64.new(0)
+    let consumed = AtomicI64.new(0)
+
+    supervised {
+        // Consumer fiber
+        spawn {
+            for _i in 0..1000 {
+                mu.lock()
+                while produced.load() <= consumed.load() {
+                    cv.wait(mu)
+                }
+                consumed.fetch_add(1)
+                mu.unlock()
+            }
+        }
+
+        // Producer
+        for _i in 0..1000 {
+            mu.lock()
+            produced.fetch_add(1)
+            cv.notify_one()
+            mu.unlock()
+            Time.sleep(0)
+        }
+    }
+
+    assert(consumed.load() == 1000,
+        "1000 produced items must all be consumed Ð²Ð‚â€ no lost wakeup")
+    assert(produced.load() == 1000)
+}
+
+test "prop no lost wakeup: 4 producers + 4 consumers Ð“â€” 250 items each" {
+    let mu           = Mutex.new()
+    let cv           = Condvar.new()
+    let pending      = AtomicI64.new(0)
+    let total_cons   = AtomicI64.new(0)
+    let total_prod   = AtomicI64.new(0)
+    let wg = WaitGroup.new()
+    wg.add(8)
+
+    supervised {
+        // 4 consumers
+        for _c in 0..4 {
+            spawn {
+                for _i in 0..250 {
+                    mu.lock()
+                    while pending.load() <= 0 {
+                        cv.wait(mu)
+                    }
+                    pending.fetch_add(-1)
+                    total_cons.fetch_add(1)
+                    mu.unlock()
+                }
+                wg.done()
+            }
+        }
+
+        // 4 producers
+        for _p in 0..4 {
+            spawn {
+                for _i in 0..250 {
+                    mu.lock()
+                    pending.fetch_add(1)
+                    total_prod.fetch_add(1)
+                    cv.notify_one()
+                    mu.unlock()
+                    Time.sleep(0)
+                }
+                wg.done()
+            }
+        }
+
+        wg.wait()
+    }
+
+    assert(total_prod.load() == 1000,
+        "total produced must equal 1000")
+    assert(total_cons.load() == 1000,
+        "total consumed must equal 1000 Ð²Ð‚â€ no lost wakeup")
+    assert(total_prod.load() == total_cons.load(),
+        "produced == consumed: all items accounted for")
+}
+
+test "prop notify_all: all waiters wake up" {
+    let mu       = Mutex.new()
+    let cv       = Condvar.new()
+    let flag     = AtomicBool.new(false)
+    let woken    = AtomicI64.new(0)
+    let wg       = WaitGroup.new()
+    wg.add(9)   // 8 waiters + 1 notifier
+
+    supervised {
+        // 8 waiter fibers
+        for _i in 0..8 {
+            spawn {
+                mu.lock()
+                while !flag.load(Acquire) {
+                    cv.wait(mu)
+                }
+                woken.fetch_add(1)
+                mu.unlock()
+                wg.done()
+            }
+        }
+
+        // Notifier fiber: set flag + notify_all
+        spawn {
+            Time.sleep(5)
+            mu.lock()
+            flag.store(true, Release)
+            cv.notify_all()
+            mu.unlock()
+            wg.done()
+        }
+
+        wg.wait()
+    }
+
+    assert(woken.load() == 8,
+        "notify_all must wake all 8 waiter fibers")
+}
