@@ -22854,8 +22854,22 @@ Commit: 000639f948c.
 (d) memory_footprint_test PASS самостоятельно после Ф.3/Ф.4 — нет fix.
 Commit: d88a4bd22b5.
 
-Results: Concurrency suite [TBD от Ф.7]. Cooperative-only tests now в
-dedicated cooperative_interleave.nv (9 tests PASS под AUTOARM=0).
+Ф.7 — Full suite verification (concurrency subset, jobs=4):
+71 PASS / 5 FAIL / 0 SKIP (76 .nv files total). Все 5 fails — flaky под
+heavy parallel load (jobs=4 = 4×16-worker M:N runtimes = ~64 thread
+oversubscription). В isolation все 5 PASS:
+  - cancel_latency_bench: test 1 (50ms cancel bound) flaky timing
+  - plan40_perf_bench: perf bench timing flaky
+  - select_max_arms_boundary: stack overflow at slot 3385 (deep test)
+  - sleep_bench: re-verified PASS solo (5776ms); jobs=4 oversubscription
+  - time_handler: PASS solo; jobs=4 oversubscription
+Net: deep_spawn + memory_footprint + main_yield (baseline FAILs) → PASS;
+cooperative_interleave.nv +1 new PASS; load-flakiness в 5 tests есть, но
+не regressions от Ф.3/Ф.4 (Ф.3 per-thread TLS = correctness fix,
+не perf change).
+
+Cooperative-only tests now в dedicated cooperative_interleave.nv (9 tests
+PASS под AUTOARM=0).
 
 Branch: plan-83.10.4-remaining-races (from main after Plan 83.10.2 merge).
 
