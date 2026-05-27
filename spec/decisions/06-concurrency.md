@@ -20,6 +20,7 @@ structured-concurrency примитивы есть в языке, и как па
 | [D138](#d138-default-on-mn-runtime--production-semantics-plan-83456-ф3-active-2026-05-24) | ✅ ACTIVE — Default-on M:N runtime production semantics (Plan 83.4.5.8 closure 2026-05-24) |
 | [D168](#d168-sized-atomic-types--api-contract-plan-1032) | Sized atomic types API contract: 12 types × 13 ops, MemOrdering-aware overloads, wraparound semantics |
 | [D169](#d169-mutex--rwlock--reentrantmutex-family-plan-1033) | `Mutex` / `RwLock` / `ReentrantMutex` family — fiber-aware locking, fair FIFO default, writer-priority RwLock, recursive ReentrantMutex |
+| [D170](#d170-coordination-primitives--semaphore--barrier--countdownlatch--condvar-plan-1034) | Coordination primitives — `Semaphore` (bounded permits), `Barrier` (reusable N-party rendezvous), `CountDownLatch` (one-shot), `Condvar` (tied to Mutex) |
 
 ---
 
@@ -4611,3 +4612,218 @@ D169 введён как draft (Plan 103.3, 2026-05-26). Final closure — Plan 
 - `W_REENTRANT_CONDVAR_RECOMMEND` переходит в E_REENTRANT_CONDVAR_ERROR если
   статически выявимо (Plan 103.4 + checker).
 - D173 AI-first guidance: выбор Mutex vs RwLock vs ReentrantMutex по паттерну.
+
+---
+
+## D170. Coordination primitives — Semaphore / Barrier / CountDownLatch / Condvar (Plan 103.4)
+
+> **Draft 2026-05-27.** Coordination primitives complete `std.runtime.sync` V1.
+> Final closure → Plan 103.7.
+
+### Контекст
+
+После [D169](#d169) (Mutex/RwLock/ReentrantMutex), `std.runtime.sync`
+содержит lock-family. Coordination patterns (bounded concurrency, N-party
+rendezvous, one-shot signal, "wait until predicate") требуют отдельные
+примитивы. D170 закрывает industry gap vs Go (только channels), Rust
+(`std::sync::Barrier` + tokio Semaphore), Java (полный набор), Kotlin
+(только Semaphore).
+
+### API surface
+
+#### Semaphore — bounded counting permits (M11)
+
+```nova
+type Semaphore  /* opaque */
+
+fn Semaphore.new(permits int) -> Self     /* permits >= 0 */
+fn Semaphore mut @acquire()                /* parks until permit available */
+fn Semaphore mut @release()                /* incr permits, wake FIFO head */
+fn Semaphore mut @try_acquire() -> bool
+fn Semaphore mut @try_acquire_for(timeout Duration) -> bool
+fn Semaphore mut @acquire_n(n int)         /* batch */
+fn Semaphore mut @release_n(n int)
+fn Semaphore @available_permits() -> int   /* best-effort */
+fn Semaphore mut @with_permit[R](body fn() -> R) -> R  /* M15 V1 helper */
+```
+
+**Семантика:**
+- **Bounded:** initial permits = upper bound; `release()` past initial → permits
+  растёт (Java behavior; `W_SEMAPHORE_OVER_RELEASE` lint опционально в V2).
+- **Fair FIFO** (M6 consistency с Mutex default). Unfair вариант — не V1.
+- **Negative init permits** → runtime panic.
+- **`with_permit(fn)`** — preferred V1 pattern (M15); V2 → `Permit consume`
+  guard ([Plan 103.9](../../docs/plans/103.9-consume-guards-migration.md)).
+- **`acquire`/`acquire_n`/`try_acquire_for`/`with_permit`** — park-ing methods,
+  banned в `realtime { }` (Plan 103.6 enforcement; M12).
+
+#### Barrier — reusable N-party rendezvous (CyclicBarrier-style)
+
+```nova
+type Barrier  /* opaque */
+
+fn Barrier.new(parties int) -> Self                    /* parties >= 1 */
+fn Barrier mut @wait() -> int                          /* arrival index 0..parties-1 */
+fn Barrier mut @wait_with_action(action fn() -> ()) -> int
+fn Barrier mut @wait_for(timeout Duration) -> Option[int]
+fn Barrier @is_broken() -> bool
+fn Barrier mut @reset()
+```
+
+**Семантика:**
+- **Reusable cyclic:** после того как `parties` fibers вызвали `wait()`, счётчик
+  атомарно сбрасывается, `generation++`; следующий round начинается.
+- **Arrival index:** last-arrival fiber получает `parties-1` (может выполнить
+  `action` если использован `wait_with_action`).
+- **`wait_with_action(action)`:** action выполняется last-arrival fiber'ом ВНУТРИ
+  барьера; остальные waiters wake только после завершения action.
+- **`wait_for(timeout)`:** возврат `None` ⇒ barrier broken (все текущие waiters
+  released с `broken=true`).
+- **`broken` state:** если any fiber в barrier interrupted/cancelled/timed out
+  → barrier broken; все waiters просыпаются и видят broken. `reset()` сбрасывает
+  broken и начинает новый round.
+- **`Barrier.new(0)`** → runtime panic (`parties >= 1`).
+- **`wait`/`wait_with_action`/`wait_for`** — park-ing, banned в `realtime { }`.
+
+#### CountDownLatch — one-shot signal (Java-style)
+
+```nova
+type CountDownLatch  /* opaque */
+
+fn CountDownLatch.new(count int) -> Self           /* count > 0 */
+fn CountDownLatch mut @count_down()                /* saturating: count==0 -> no-op */
+fn CountDownLatch mut @count_down_n(n int)         /* batch saturating */
+fn CountDownLatch @await()                         /* park until count == 0 */
+fn CountDownLatch @try_await() -> bool
+fn CountDownLatch @try_await_for(timeout Duration) -> bool
+fn CountDownLatch @current_count() -> int          /* best-effort */
+```
+
+**Семантика:**
+- **Immutable initial count** (safer than WaitGroup, который позволяет `add()`
+  после `wait()` → race risk).
+- **`count_down()` saturating:** вызов когда `count == 0` — no-op (НЕ panic);
+  Java parity.
+- **`count_down_n(n)`:** `n <= 0` → no-op; `n > current count` → saturates на 0.
+- **`CountDownLatch.new(0)`** → runtime panic (`count > 0`).
+- **`await`/`try_await_for`** — park-ing, banned в `realtime { }`.
+
+#### Condvar — condition variable tied to Mutex (M10)
+
+```nova
+type Condvar  /* opaque */
+type WaitResult { Notified | TimedOut }
+
+fn Condvar.new() -> Self
+
+/* Mutex overload (primary): */
+fn Condvar @wait(m mut Mutex)
+fn Condvar @wait_for(m mut Mutex, timeout Duration) -> WaitResult
+fn Condvar @wait_until(m mut Mutex, predicate fn() -> bool)
+
+/* ReentrantMutex overload (Java-pitfall-aware): */
+fn Condvar @wait(m mut ReentrantMutex)
+
+fn Condvar mut @notify_one()        /* wake FIFO head */
+fn Condvar mut @notify_all()        /* wake all FIFO order */
+```
+
+**Семантика:**
+- **Tied to Mutex (M10):** wait требует уже-locked mutex (precondition runtime-
+  enforced unconditional throw, не debug-assert). Mutex освобождается атомарно
+  с парковкой (`park_with_unlock` pattern); re-acquired на wake.
+- **Spurious wakeup contract:** `wait()` может вернуться без notify (scheduler
+  rebalance, M:N migration). Caller обязан использовать predicate loop или
+  `wait_until(m, predicate)` helper.
+- **`wait_for(m, timeout)` -> `WaitResult { Notified | TimedOut }`:** typed
+  возврат, не bool — лучше Rust `Result` API.
+- **ReentrantMutex overload:** wait освобождает ВЕСЬ recursive lock_count
+  (count -> 0). На wake re-acquired как `count=1` (НЕ restored original count
+  — Java pitfall: восстановление count может deadlock'нуть). Caller осведомлён
+  через `W_REENTRANT_CONDVAR_RECOMMEND` lint (type-checker hook когда
+  inferred тип = ReentrantMutex).
+- **FIFO wake order:** `notify_one()` wakes oldest waiter (fair); `notify_all()`
+  wakes all в порядке регистрации.
+- **`wait`/`wait_for`/`wait_until`** — park-ing, banned в `realtime { }`.
+
+### Дизайн-решения
+
+- **M10 (Condvar tied to Mutex):** type-safer чем Java `Condition` (loosely tied
+  к `Lock`). Compiler-enforced связь through API signature.
+- **M11 (bounded Semaphore):** unbounded counting — отдельная concept, для этого
+  use `AtomicI32` напрямую (D168). Dedicated unbounded type — over-engineering.
+- **M15 (with_permit / with_lock — V1 helpers; consume guards — V2):**
+  `with_permit(fn)` consistent с `Mutex.with_lock(fn)` — closure-based scoping
+  ergonomic для V1. V2 ([Plan 103.9](../../docs/plans/103.9-consume-guards-migration.md))
+  добавляет `Permit consume` guard (RAII-style); `with_permit` остаётся как
+  thin wrapper, user code не меняется.
+- **No `Phaser`:** Java's Phaser over-engineered (dynamic party count, multi-
+  phase advancement). Barrier + WaitGroup покрывают realistic use cases.
+- **No writer-priority Condvar:** Rust `parking_lot::Condvar` имеет
+  `notify_one_writer` semantics — отложено в V2 если запрос.
+- **No `Barrier.cyclic_action` через closure-with-effects (V1):** action runs
+  inline в last-arrival fiber как `fn() -> ()`. Effect-typed action — V2.
+
+### Запреты / соглашения
+
+- **`realtime { }` ban:** все park-ing methods (`Semaphore.acquire`,
+  `Barrier.wait`, `CountDownLatch.await`, `Condvar.wait`) banned внутри
+  `realtime { }` блока (Plan 103.6 type-checker enforcement; M12).
+- **`Condvar.wait(reentrant_mutex)` warning:** `W_REENTRANT_CONDVAR_RECOMMEND`
+  — рекомендует regular Mutex (Java pitfall preempted by design).
+- **Stability:** `#stable(since = "0.1")` на всё.
+
+### Реализация
+
+- **Runtime:** `compiler-codegen/nova_rt/sync_semaphore.h`,
+  `sync_barrier.h`, `sync_countdown_latch.h`, `sync_condvar.h` —
+  per-primitive header files (отдельные от `sync_primitives.h`).
+- **GC race fix:** `nova_alloc_uncollectable` для all four `static_new()`
+  (Plan 103.3 D169 pattern — Boehm misses pointer на main stack под M:N).
+- **FIFO waiter lists:** doubly-linked, stack-allocated waiter nodes
+  (WaitGroup precedent); dequeue под inner mutex.
+- **Condvar park_with_unlock:** combined callback releases cv->mu AND user
+  mutex atomically после yield (lost-wakeup fix).
+- **Memory ordering:** `__ATOMIC_SEQ_CST` для parked[slot] store
+  (Plan 83.10.2 + Plan 103.4 Ф.2 fix — `__ATOMIC_RELEASE` на x86
+  компилируется в plain MOV без fence → store buffer не flush'ит).
+- **Build:** `sync_primitives.h` includes `sync_<primitive>.h` (alphabetical
+  parallel-merge markers — Plan 103.4 parallel agent split).
+
+### Тестовое покрытие
+
+`nova_tests/plan103_4/` — 25 tests:
+- **Semaphore (7):** bounded_concurrency, batch_n, try_acquire_for_timeout,
+  with_permit_panic_safety, no_overcommit_prop, release_more_than_acquired_neg,
+  negative_init_permits_neg.
+- **Barrier (5):** n_party_rendezvous, cyclic_reusable, wait_with_action,
+  all_or_none_prop, zero_parties_neg.
+- **CountDownLatch (4):** one_shot_signal, count_down_n,
+  count_down_at_zero_neg, init_zero_or_negative_neg.
+- **Condvar (9):** notify_one, notify_all, wait_for_timeout, wait_until_predicate,
+  producer_consumer, no_lost_wakeup_prop, wait_without_lock_neg,
+  in_realtime_neg (TODO Plan 103.6), with_reentrant_warn.
+
+### Связь
+
+- **[D168](#d168-sized-atomic-types--api-contract-plan-1032)** — sized atomic types (используются internal для counters).
+- **[D169](#d169-mutex--rwlock--reentrantmutex-family-plan-1033)** — Mutex/RwLock/ReentrantMutex (required для Condvar).
+- **[Plan 22](../../docs/plans/22-sleep-libuv-integration.md)** — `Duration`
+  + libuv timer (для `*_for` timeouts).
+- **[Plan 47](../../docs/plans/47-supervised-cancel.md)** — cancel-token
+  propagation through wait methods (V2 cancel integration).
+- **[Plan 103.6](../../docs/plans/103.6-realtime-blocking-integration.md)** —
+  `realtime { }` ban enforcement.
+- **[Plan 103.7](../../docs/plans/103.7-spec-d-blocks.md)** — D170 final closure.
+- **[Plan 103.9](../../docs/plans/103.9-consume-guards-migration.md)** —
+  V2: `Permit consume` для Semaphore.
+
+### Эволюция
+
+D170 введён как draft (Plan 103.4, 2026-05-27). Final closure — Plan 103.7.
+В V2 (Plan 103.9):
+- `Permit consume` guard заменяет `acquire()/release()` как primary API для
+  Semaphore.
+- `with_permit(fn)` остаётся thin wrapper над guard.
+- Other primitives (Barrier/CountDownLatch/Condvar) — НЕ мигрируются на
+  consume guards (M16: barriers/latches/condvars stateless по природе).
