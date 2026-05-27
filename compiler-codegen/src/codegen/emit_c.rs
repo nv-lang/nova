@@ -1613,6 +1613,10 @@ impl CEmitter {
                 "AtomicI8", "AtomicI16", "AtomicI32", "AtomicI64",
                 "AtomicU8", "AtomicU16", "AtomicU32", "AtomicU64",
                 "AtomicIsize", "AtomicUsize", "AtomicPtr",
+                // Plan 103.9 (D174): consume guard types pre-declared in sync_primitives.h
+                // with a `_s`-suffix anonymous struct. Named fwd-decl `typedef struct
+                // Nova_MutexGuard Nova_MutexGuard;` conflicts (different tag). Skip.
+                "MutexGuard", "ReadGuard", "WriteGuard", "Permit", "OnceGuard",
                 // === PLAN-103.4 PREDECLARED TYPES (alphabetical, parallel-agent) ===
                 /* AGENT-B */ "Barrier",
                 /* AGENT-D */ "Condvar", "WaitResult",
@@ -7414,6 +7418,13 @@ impl CEmitter {
             // Nova_UdpSocket) live there; ExternalRegistry auto-registers
             // receiver types + methods from std/net/{addr,tcp,udp}.nv.
             "SocketAddr", "TcpListener", "TcpStream", "UdpSocket",
+            // Plan 103.9 (D174): consume guard types pre-declared in sync_primitives.h.
+            // struct Nova_MutexGuard_s / Nova_ReadGuard_s / Nova_WriteGuard_s /
+            // Nova_Permit_s / Nova_OnceGuard_s defined there (each has nova_int ptr field).
+            // Skip codegen emission — pre-definition + forward-decl in header avoids
+            // duplicate typedef errors. The Nova type declarations (type T consume { ptr int })
+            // serve only for type-checking and LinearityRegistry; C structs live in the header.
+            "MutexGuard", "ReadGuard", "WriteGuard", "Permit", "OnceGuard",
         ];
         if RUNTIME_DEFINED_TYPES.contains(&t.name.as_str()) {
             // Plan 62.A: skip emission — C struct + constructors живут в

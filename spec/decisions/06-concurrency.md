@@ -22,6 +22,7 @@ structured-concurrency примитивы есть в языке, и как па
 | [D169](#d169-mutex--rwlock--reentrantmutex-family-plan-1033) | `Mutex` / `RwLock` / `ReentrantMutex` family — fiber-aware locking, fair FIFO default, writer-priority RwLock, recursive ReentrantMutex |
 | [D170](#d170-coordination-primitives--semaphore--barrier--countdownlatch--condvar-plan-1034) | Coordination primitives — `Semaphore` (bounded permits), `Barrier` (reusable N-party rendezvous), `CountDownLatch` (one-shot), `Condvar` (tied to Mutex) |
 | [D172](#d172-realtimeblocking-sync-class-annotation-system-plan-1036) | `realtime { }` / `blocking { }` × sync-primitive enforcement: `#parks` / `#wakes` / `#realtime_safe` annotation system |
+| [D174](#d174-sync-primitives-consume-integration-plan-1039) | Consume guards V2 — `MutexGuard`, `ReadGuard`, `WriteGuard`, `Permit`, `OnceGuard` consume types; guard-returning API; D169–D171 cross-refs updated |
 
 ---
 
@@ -5375,3 +5376,167 @@ LLM-навигации (иерархические ветви с explicit mappin
 - Pattern 6: distributed counter через `AtomicI64` + periodic aggregation.
 - Pattern 7: async-safe init с `cancel-shielding` (Plan 100.4.2 integration).
 - D174 (Plan 103.9): consume-guards pattern (когда Permit consume > with_permit).
+
+---
+
+## D174. Sync primitives consume integration (Plan 103.9)
+
+> **Статус:** ✅ final (Plan 103.9, 2026-05-27). V2 guard-returning API.
+
+### Зачем
+
+V1 sync API (D169–D171) использует `lock()/unlock()` pair — API without
+static enforcement. Два класса ошибок не обнаруживаются компилятором:
+
+1. **Забытый unlock**: fiber паркуется навсегда (deadlock) или ресурс утечёт.
+2. **Double unlock**: UB; Nova_Mutex состояние corrupted.
+
+V2 (D174) применяет **Plan 100 consume-type mechanism (D131–D166)** к sync
+примитивам: `lock()` возвращает `MutexGuard consume` — linear type, must-be-consumed.
+Компилятор **статически** обнаруживает:
+
+- забытый unlock = E_CONSUME_NOT_CONSUMED (D133);
+- double unlock = E_CONSUMED_AFTER_USE (D133);
+- утечку guard в другой fiber = E_CONSUME_CROSS_FIBER (D157).
+
+### Правила API (Guard-returning contract)
+
+#### Mutex V2
+
+| Метод | Сигнатура | Примечание |
+|---|---|---|
+| `lock()` | `Mutex mut @lock() -> MutexGuard consume` | Parks; returns guard |
+| `MutexGuard.unlock()` | `MutexGuard @unlock(consume self)` | Consumes guard; wakes next |
+| `unlock()` (bare) | `Mutex mut @unlock()` | Deprecated V1; `W_BARE_UNLOCK_DEPRECATED` |
+| `with_lock(fn)` | `Mutex mut @with_lock[R](body fn() -> R) -> R` | Thin wrapper; backward compat |
+
+C mangling (Plan 100.6 D164):
+- `MutexGuard.unlock(consume self)` → `Nova_MutexGuard_consume_unlock`
+- `Mutex.lock()` → `Nova_Mutex_method_lock` (returns `Nova_MutexGuard*`)
+
+#### RwLock V2
+
+| Метод | Сигнатура | Примечание |
+|---|---|---|
+| `read()` | `RwLock mut @read() -> ReadGuard consume` | Parks; returns read guard |
+| `write()` | `RwLock mut @write() -> WriteGuard consume` | Parks; returns write guard |
+| `ReadGuard.unlock()` | `ReadGuard @unlock(consume self)` | Consumes guard; wakes if needed |
+| `WriteGuard.unlock()` | `WriteGuard @unlock(consume self)` | Consumes guard; wakes next |
+| `read_unlock()` (bare) | `RwLock mut @read_unlock()` | Deprecated V1 |
+| `write_unlock()` (bare) | `RwLock mut @write_unlock()` | Deprecated V1 |
+| `with_read(fn)` | `RwLock mut @with_read[R](...) -> R` | Thin wrapper; backward compat |
+| `with_write(fn)` | `RwLock mut @with_write[R](...) -> R` | Thin wrapper; backward compat |
+
+#### Semaphore V2
+
+| Метод | Сигнатура | Примечание |
+|---|---|---|
+| `acquire()` | `Semaphore mut @acquire() -> Permit consume` | Parks; returns permit |
+| `Permit.release()` | `Permit @release(consume self)` | Consumes permit; wakes next waiter |
+| `release()` (bare) | `Semaphore mut @release()` | Deprecated V1 |
+| `with_permit(fn)` | `Semaphore mut @with_permit[R](...) -> R` | Thin wrapper; backward compat |
+
+#### Once V2
+
+| Метод | Сигнатура | Примечание |
+|---|---|---|
+| `try_start()` | `Once mut @try_start() -> Option[OnceGuard consume]` | Nova body; Some = won race |
+| `OnceGuard.commit()` | `OnceGuard @commit(consume self)` | Once → DONE; wakes waiters |
+| `OnceGuard.abort()` | `OnceGuard @abort(consume self)` | Once → POISONED; wakes waiters (re-panic on resume) |
+| `call_once(fn)` | `Once mut @call_once(body fn() -> ())` | V1 external; kept as-is |
+| `run()` (bare) | `Once mut @run() -> bool` | Deprecated V1 |
+| `done()` (bare) | `Once mut @done()` | Deprecated V1 |
+
+`try_start()` is implemented as a Nova body:
+```nova
+export fn Once mut @try_start() -> Option[OnceGuard consume] {
+    if self.try_start_won() {
+        Some(self.make_guard())
+    } else {
+        None
+    }
+}
+```
+Where `try_start_won()` is the internal external fn (`Nova_Once_method_try_start_won` = alias to `run()`),
+and `make_guard()` allocates the guard heap object (`Nova_Once_method_make_guard`).
+
+### Guard type declarations
+
+All 5 guard types are `consume` record types with a single `ptr int` field (opaque pointer to the owning primitive):
+
+```nova
+type MutexGuard consume { ptr int }   // → Nova_MutexGuard { nova_int ptr; }
+type ReadGuard  consume { ptr int }   // → Nova_ReadGuard  { nova_int ptr; }
+type WriteGuard consume { ptr int }   // → Nova_WriteGuard { nova_int ptr; }
+type Permit     consume { ptr int }   // → Nova_Permit     { nova_int ptr; }
+type OnceGuard  consume { ptr int }   // → Nova_OnceGuard  { nova_int ptr; }
+```
+
+C struct definitions live in `compiler-codegen/nova_rt/sync_primitives.h` (Plan 103.9 section).
+They are listed in `RUNTIME_DEFINED_TYPES` in `emit_c.rs` to prevent duplicate struct emission.
+
+### Decisions
+
+**M-D174-1. Opaque ptr field:** guard stores `int` (= `nova_int` = `int64_t`),
+cast from pointer. Avoids exposing internal Nova_Mutex/Nova_RwLock C types to Nova type system.
+Safe: intptr_t can hold any pointer on LP64 / LLP64.
+
+**M-D174-2. Drop without explicit consume → ERROR.** The consume-checker enforces
+explicit call to `unlock()` / `release()` / `commit()` / `abort()`. No implicit
+RAII — unlike Rust `Drop`. This makes the contract explicit and visible in code.
+
+**M-D174-3. `with_lock(fn)` etc. preserved.** `with_lock` remains the recommended
+pattern for most use cases (`#parks` + panic-safe). Guard form (`consume g = mu.lock()`)
+is for advanced control (cross-scope unlock, conditional release, etc.).
+
+**M-D174-4. `try_lock() -> bool` kept as V1.** To avoid breaking regression tests,
+`Mutex.try_lock()` retains `bool` return type in this iteration. Guard-returning
+`try_lock_guard() -> Option[MutexGuard consume]` is a future follow-up (Plan 103.9 V2.1).
+
+**M-D174-5. Bare unlock deprecated, not removed.** Edition 0.2: `#deprecated` warning.
+Edition V3 (future): removal candidate. Giving users migration runway via `with_lock`
+wrappers which continue to work without modification.
+
+**M-D174-6. Atomics NOT migrated.** M16 from Plan 103 master: AtomicX types are
+shared-state primitives (multiple concurrent readers/writers), not resources. consume
+semantics require single-owner transfer — incompatible with Atomic's sharing model.
+
+**M-D174-7. OnceGuard.abort() → POISONED.** When the winning fiber aborts
+initialization, Once transitions to POISONED (not back to NEW). Subsequent callers
+of `try_start()` / `call_once()` re-panic with `OncePoisoned`. Rationale: abort
+means the resource initialization failed — retrying typically fails again for the same reason.
+If retry-after-failure is needed, use `OnceCell[T]` which allows re-initialization after `take()`.
+
+### Backward compatibility
+
+V1 patterns continue to work without modification:
+```nova
+// V1 (still works, bare unlock is #deprecated warning):
+mu.lock()
+defer mu.unlock()   // deprecated warning
+
+// V1 with_lock (still works, now thin wrapper over guard):
+mu.with_lock { || critical_section() }
+
+// V2 (explicit guard):
+consume g = mu.lock()
+defer g.unlock()
+```
+
+### Связь
+
+- [D131-D166](#) — Plan 100 consume foundation: D133 (not-consumed E), D157 (cross-fiber), D164 (mangling).
+- [D169](#d169-mutex--rwlock--reentrantmutex-family-plan-1033) — V1 Mutex/RwLock contract (updated).
+- [D170](#d170-coordination-primitives--semaphore--barrier--countdownlatch--condvar-plan-1034) — V1 Semaphore (updated).
+- [D171](#d171-once--oncecell--lazy--single-initialization-primitives-plan-1035) — V1 Once (updated).
+- [D173](#d173-ai-first-guidance--sync-primitive-decision-tree-plan-1037) — Decision tree updated to reference D174.
+
+### Эволюция
+
+D174 введён в Plan 103.9 (2026-05-27) как финальный D-блок Plan 103 серии.
+Закрывает «V2 consume guards migration» задачу из Plan 100.7 (stdlib migration playbook).
+
+Предполагаемые follow-ups:
+- Plan 103.9 V2.1: `try_lock() -> Option[MutexGuard consume]` (M-D174-4 follow-up).
+- Plan 103.9 V2.2: Edition-gated removal of deprecated bare `unlock()/release()/done()`.
+- Plan 100.8 LSP: quick-fix «wrap in consume guard» for deprecated bare-unlock sites.

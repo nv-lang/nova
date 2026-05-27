@@ -1,0 +1,18 @@
+// EXPECT_COMPILE_ERROR D133
+//
+// Plan 103.9 (D174) — Negative: MutexGuard not consumed on one branch.
+// Both branches must consume the guard — missing unlock on false branch → D133.
+
+module nova_tests.plan103_9.mutexguard_branch_forget_neg
+
+fn check_flag() -> bool => true
+
+test "guard consumed only on one branch → compile error" {
+    let mu = Mutex.new()
+    consume g = mu.lock()
+    if check_flag() {
+        g.unlock()   // consumed here
+    }
+    // ERROR: g is Live on the else (false) branch at scope exit
+    // D133-not-consumed
+}

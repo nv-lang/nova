@@ -1,0 +1,29 @@
+// Plan 103.9 (D174) — Pilot migration: Semaphore with Permit consume API.
+//
+// V2 pattern: sem.acquire() → Permit consume.
+// Permit.release(consume self) satisfies the obligation.
+//
+module nova_tests.concurrency.sync_semaphore_permit
+
+// Plan 103.9 (D174) pilot: basic V2 API tests.
+// Stress/parallel-for tests deferred to plan103_9/permit_balanced_prop + permit_release_explicit.
+// [M-103.9-semaphore-parallel-for] parallel for + sem.acquire() causes timeout under M:N
+// (same known-issue as parallel-for+mutex); those tests belong in plan103_9 suite with AUTOARM=0.
+
+test "Permit: explicit acquire and release" {
+    let sem = Semaphore.new(2)
+    consume p = sem.acquire()
+    assert(sem.available_permits() == 1)
+    p.release()
+    assert(sem.available_permits() == 2)
+}
+
+test "Permit: defer release panic-safe" {
+    let sem = Semaphore.new(1)
+    {
+        consume p = sem.acquire()
+        defer p.release()
+        assert(sem.available_permits() == 0)
+    }
+    assert(sem.available_permits() == 1)
+}
