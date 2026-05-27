@@ -360,6 +360,10 @@ typedef struct NovaSchedState {
     nova_bool*       parked;              /* dynamic [capacity] */
     void**           pending_handle;      /* dynamic [capacity] */
     NovaSchedStopCb* pending_stop_cb;     /* dynamic [capacity] */
+    /* Plan 83.11 Ф.3.A v3 (Option A): per-slot wake-pending counter (atomic int).
+     * Wake side: CAS 0→1 (deliver event). Park side: try CAS 1→0 (consume) before
+     * yielding. Closes wake-before-park race by serializing through this atomic. */
+    nova_atomic_int* pending_wake;        /* dynamic [capacity] */
     int              capacity;            /* alloc'нутая длина */
 } NovaSchedState;
 
@@ -1740,26 +1744,9 @@ typedef enum {
     NOVA_SLEEP_DRV_CLOSED      = 14, /* close_cb fired — wake fiber */
 } NovaSleepStage;
 
-/* Plan 83.11 Ф.3.A v2: single-atomic wait state machine — closes wake-before-
- * park race by serializing ALL transitions через CAS на ОДНОМ atomic. Linux
- * futex pattern + Tokio AtomicWaker. C++ mod order total для same-address atom
- * gives correctness guarantee across thread boundaries.
- *
- * Transitions (all CAS, monotonic):
- *   NEW → PARKED      (worker park-commit)
- *   NEW → WOKEN       (driver wake pre-park)
- *   PARKED → WOKEN    (driver wake post-park)
- *   WOKEN → CONSUMED  (worker post-resume cleanup)
- *
- * Worker park: CAS NEW→PARKED. Won → yield. Lost → state is WOKEN, no yield.
- * Driver wake: CAS NEW→WOKEN (no dispatch) OR CAS PARKED→WOKEN (dispatch).
- * Worker cleanup: CAS WOKEN→CONSUMED (terminal). */
-typedef enum {
-    NOVA_SLEEP_WAIT_NEW      = 0,
-    NOVA_SLEEP_WAIT_PARKED   = 1,
-    NOVA_SLEEP_WAIT_WOKEN    = 2,
-    NOVA_SLEEP_WAIT_CONSUMED = 3,
-} NovaSleepWaitState;
+/* Plan 83.11 Ф.3.A v3 (Option A): wait_state moved into nova_sched_state.
+ * pending_wake[] counter integrated в generic park/wake API. Sleep no longer
+ * needs sleep-specific state machine — generic park_until handles race. */
 
 typedef struct NovaSleepState {
     NovaFiberQueue*  scope;
@@ -1781,9 +1768,6 @@ typedef struct NovaSleepState {
     NovaFiberQueue*           cancel_scope;    /* supervised scope (для armed_list) */
     struct NovaSleepState*    next_in_scope;   /* singly-linked, driver-only */
     struct NovaSleepState**   pprev_in_scope;  /* O(1) unlink — pointer to predecessor's next */
-    /* Plan 83.11 Ф.3.A v2: single-atomic wait state. ALL transitions via CAS
-     * on this address — total mod order guarantees no cross-atomic race. */
-    nova_atomic_int           wait_state;     /* NovaSleepWaitState */
 } NovaSleepState;
 
 /* Forward-decl close_cb для использования в timer_cb / stop_cb. */
@@ -2114,47 +2098,9 @@ static inline void _nova_sleep_via_driver(NovaFiberQueue* scope, int slot,
      *        - LOSE: wake fired between SEQ_CST and recheck, fiber in deque
      *          → yield to consume dispatch (avoid double-resume)
      *   4. else yield wait for wake */
-    /* Plan 83.11 Ф.3.A v2: hybrid single-atomic park + parked[].
-     *
-     * wait_state CAS NEW→PARKED is the AUTHORITATIVE guard (closes wake-before-
-     * park race). parked[slot] also set/cleared to maintain compat с other
-     * runtime paths (cancel_worker_fibers, count_parked diagnostics).
-     *
-     * Worker park:
-     *   CAS wait_state NEW→PARKED
-     *     won  → set parked[slot]=true, yield, on resume CAS WOKEN→CONSUMED
-     *     lost → state is WOKEN (pre-park wake), no yield, CAS WOKEN→CONSUMED */
-    {
-        NovaSchedState* sched_st = nova_sched_get_state(scope);
-        mco_coro* co = mco_running();
-        int32_t expected = NOVA_SLEEP_WAIT_NEW;
-        if (__atomic_compare_exchange_n(
-                &st.wait_state, &expected, NOVA_SLEEP_WAIT_PARKED,
-                false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
-            /* CAS won — committed. Set parked[] for compat, then yield. */
-            if (sched_st && slot >= 0 && slot < sched_st->capacity) {
-                __atomic_store_n((volatile bool*)&sched_st->parked[slot],
-                                 true, __ATOMIC_SEQ_CST);
-            }
-            nova_fiber_state_store(co, NOVA_FIBER_STATE_PARKED);
-            mco_yield(co);
-            /* Resumed. Cleanup. */
-            if (sched_st && slot >= 0 && slot < sched_st->capacity) {
-                __atomic_store_n((volatile bool*)&sched_st->parked[slot],
-                                 false, __ATOMIC_SEQ_CST);
-            }
-            expected = NOVA_SLEEP_WAIT_WOKEN;
-            __atomic_compare_exchange_n(
-                &st.wait_state, &expected, NOVA_SLEEP_WAIT_CONSUMED,
-                false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE);
-        } else {
-            /* CAS lost — state WOKEN (pre-park wake). No yield. */
-            expected = NOVA_SLEEP_WAIT_WOKEN;
-            __atomic_compare_exchange_n(
-                &st.wait_state, &expected, NOVA_SLEEP_WAIT_CONSUMED,
-                false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE);
-        }
-    }
+    /* Plan 83.11 Ф.3.A v3 (Option A): use generic nova_sched_park_until.
+     * Race-free now thanks к pending_wake[] integration в nova_sched.h. */
+    nova_sched_park_until(scope, slot, _nova_sleep_drv_state_is_closed, &st);
 
     /* Plan 83.11 Ф.3 diag: sleep_returned counter (post-park-until exit). */
     extern nova_atomic_int _nova_diag_drv_sleep_returned;

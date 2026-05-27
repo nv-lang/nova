@@ -48,21 +48,25 @@ static inline void nova_sched_grow_state(NovaFiberQueue* scope, int new_cap) {
     nova_bool*       new_parked = (nova_bool*)nova_alloc(sizeof(nova_bool) * cap);
     void**           new_handle = (void**)nova_alloc(sizeof(void*) * cap);
     NovaSchedStopCb* new_stop_cb = (NovaSchedStopCb*)nova_alloc(sizeof(NovaSchedStopCb) * cap);
+    nova_atomic_int* new_pwake = (nova_atomic_int*)nova_alloc(sizeof(nova_atomic_int) * cap);
     /* Copy existing + init new. */
     for (int i = 0; i < cap; i++) {
         if (i < st->capacity && st->parked) {
             new_parked[i] = st->parked[i];
             new_handle[i] = st->pending_handle[i];
             new_stop_cb[i] = st->pending_stop_cb[i];
+            new_pwake[i] = st->pending_wake ? st->pending_wake[i] : 0;
         } else {
             new_parked[i] = false;
             new_handle[i] = NULL;
             new_stop_cb[i] = NULL;
+            new_pwake[i] = 0;
         }
     }
     st->parked = new_parked;
     st->pending_handle = new_handle;
     st->pending_stop_cb = new_stop_cb;
+    st->pending_wake = new_pwake;
     st->capacity = cap;
 }
 
@@ -80,6 +84,7 @@ static inline NovaSchedState* nova_sched_get_state(NovaFiberQueue* scope) {
     st->parked = NULL;
     st->pending_handle = NULL;
     st->pending_stop_cb = NULL;
+    st->pending_wake = NULL;
     st->capacity = 0;
     scope->sched_state = st;
     /* Grow до текущего scope.capacity (обычно ≥ NOVA_SCOPE_INITIAL_CAP). */
@@ -110,30 +115,53 @@ static inline void nova_sched_park(NovaFiberQueue* scope, int slot) {
         abort();
     }
     NovaSchedState* st = nova_sched_get_state(scope);
-    /* SEQ_CST store: on x86 compiles to XCHG (full fence = mfence + store),
-     * draining the CPU store buffer so that cross-thread wakers reading
-     * parked[slot] via CAS (ACQ_REL) always see the true value.
-     *
-     * Why SEQ_CST and not RELEASE:
-     *   __ATOMIC_RELEASE on GCC/Clang/MSVC x86 compiles to a plain MOV —
-     *   a compiler-only barrier with no hardware fence instruction.  The store
-     *   goes into the CPU store buffer and may not be globally visible for
-     *   several cycles.  A concurrent waker on another core can read the
-     *   stale false value, its CAS fails, dispatch_ready is never called,
-     *   and the fiber remains parked forever (deadlock).
-     *
-     *   __ATOMIC_SEQ_CST emits XCHG on x86 (implicit LOCK prefix = full
-     *   serialising fence).  The store buffer is drained before the
-     *   instruction completes, guaranteeing global visibility. */
-    __atomic_store_n((volatile bool*)&st->parked[slot], true, __ATOMIC_SEQ_CST);
     mco_coro* co = mco_running();
     if (!co) {
         fprintf(stderr, "nova: nova_sched_park: not in fiber context\n");
         abort();
     }
-    /* Plan 83.4.5.7 (2026-05-23): RUNNING → PARKED state transition. Wake
-     * (либо same либо cross-thread) CAS-clear'ит PARKED→IDLE и push'ит в
-     * deque. RELEASE-store видим через wake's ACQUIRE-load на CAS. */
+
+    /* Plan 83.11 Ф.3.A v3 (Option A): wake-before-park race fix через
+     * pending_wake counter. Two CAS checkpoints around SEQ_CST parked store:
+     *
+     *   t1: pre-park CAS pending_wake 1→0 — wake event already pending → consume + return
+     *   t2: SEQ_CST parked=true — commit park (full memory fence)
+     *   t3: post-barrier CAS pending_wake 1→0 — wake came в barrier window → undo parked + return
+     *   t4: mco_yield — wait for wake's dispatch
+     *
+     * Wake side (nova_sched_wake): CAS pending_wake 0→1 (deliver) THEN CAS
+     * parked true→false (try dispatch). If wake fires before park's t2: CAS
+     * parked fails (parked still false), but pending_wake=1; worker's t3
+     * catches it. If wake fires after t2: CAS parked succeeds → dispatch.
+     * No stuck-fiber scenario.
+     *
+     * pending_wake[] array allocated в NovaSchedState (lazy grow alongside parked[]). */
+    if (st->pending_wake && slot < st->capacity) {
+        int32_t expected = 1;
+        if (__atomic_compare_exchange_n(
+                &st->pending_wake[slot], &expected, 0,
+                false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
+            /* Pre-park wake consumed — no yield. */
+            return;
+        }
+    }
+
+    /* SEQ_CST store: on x86 compiles to XCHG (full fence). */
+    __atomic_store_n((volatile bool*)&st->parked[slot], true, __ATOMIC_SEQ_CST);
+
+    /* Post-barrier recheck: wake came в barrier window? */
+    if (st->pending_wake && slot < st->capacity) {
+        int32_t expected = 1;
+        if (__atomic_compare_exchange_n(
+                &st->pending_wake[slot], &expected, 0,
+                false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
+            /* Wake came в barrier window — undo parked, return. */
+            __atomic_store_n((volatile bool*)&st->parked[slot], false, __ATOMIC_SEQ_CST);
+            return;
+        }
+    }
+
+    /* Plan 83.4.5.7 (2026-05-23): RUNNING → PARKED state transition. */
     nova_fiber_state_store(co, NOVA_FIBER_STATE_PARKED);
     mco_yield(co);
 }
@@ -226,19 +254,38 @@ static inline void nova_sched_park_with_unlock(NovaFiberQueue* scope, int slot,
 static inline void nova_sched_wake(NovaFiberQueue* scope, int slot) {
     if (!scope || slot < 0 || slot >= scope->count) return;
     NovaSchedState* st = nova_sched_find_state(scope);
+
+    /* Plan 83.11 Ф.3.A v3 (Option A): deliver pending_wake event FIRST.
+     * Park side (nova_sched_park) checks pending_wake before yielding —
+     * closes wake-before-park race. CAS 0→1 is idempotent (multiple wakes
+     * coalesce into one delivered event).
+     *
+     * If CAS fails (pending_wake already 1), it means previous wake event
+     * не consumed by park yet — park will consume both на next iteration
+     * (counter saturates at 1 for now; could be N для multi-event later). */
+    if (st && st->pending_wake && slot < st->capacity) {
+        int32_t expected = 0;
+        __atomic_compare_exchange_n(
+            &st->pending_wake[slot], &expected, 1,
+            false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE);
+        /* Don't care if it failed — wake already pending, idempotent. */
+    }
+
     /* Plan 83.4.5.7 (2026-05-23): atomic-bool exchange parked flag.
-     * Idempotent guard: только winner CAS true→false делает dispatch.
-     * Замените на CAS-on-state в будущей итерации когда state machine
-     * рассинхронизация исключена. Под bootstrap (single-thread) сюда
-     * race не приходит. Под armed M:N — wake может приходить cross-thread
-     * (close_cb + cancel_wake_all). __atomic_exchange гарантирует только
-     * один thread видит true → false → dispatches. */
+     * Only winner CAS true→false делает dispatch. */
     bool was_parked = false;
     if (st && slot < st->capacity) {
         bool expected = true;
         was_parked = __atomic_compare_exchange_n(
             (volatile bool*)&st->parked[slot], &expected, false,
             false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE);
+    }
+
+    /* If we won parked CAS — consume the pending_wake we just delivered
+     * (we're about to dispatch the fiber; park will not check pending_wake
+     * again because fiber resumes via dispatch, not retry-park). */
+    if (was_parked && st && st->pending_wake && slot < st->capacity) {
+        __atomic_store_n(&st->pending_wake[slot], 0, __ATOMIC_RELEASE);
     }
     /* M:N dispatch: push woken fiber back to worker deque.
      * Под bootstrap dispatch_ready==NULL — pure parked-flag clear. */
