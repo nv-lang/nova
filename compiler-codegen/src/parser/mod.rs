@@ -2163,7 +2163,15 @@ impl Parser {
                     span: at_span,
                 })
             } else {
-                Some(self.parse_type()?)
+                let rt = self.parse_type()?;
+                // Plan 103.9 (D174): `-> T consume` — consume-typed return.
+                // The `consume` keyword is a suffix qualifier on the type
+                // (e.g. `-> MutexGuard consume`). Eat it so it doesn't
+                // confuse the contracts/body parser. The information (that
+                // the return is consume-typed) is already carried by the type
+                // name itself — consume-ness is a property of the type decl.
+                self.eat(&TokenKind::KwConsume);
+                Some(rt)
             }
         } else {
             None
@@ -3732,6 +3740,9 @@ impl Parser {
         let mut args = Vec::new();
         while !matches!(self.peek().kind, TokenKind::RBracket) {
             args.push(self.parse_type()?);
+            // Plan 103.9 (D174): `T consume` — consume-typed generic arg.
+            // e.g. `Option[MutexGuard consume]`. Eat the suffix qualifier.
+            self.eat(&TokenKind::KwConsume);
             if self.eat(&TokenKind::Comma).is_none() {
                 break;
             }

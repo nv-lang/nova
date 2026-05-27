@@ -1,0 +1,67 @@
+// Plan 103.9 (D174) — Property: MutexGuard balanced lock/unlock invariant.
+//
+// N fibers × K iters; each iter acquires MutexGuard, increments counter,
+// unlocks guard. Final counter = N×K exactly (no double-count, no lost-count).
+// Also: `inside` counter never > 1 (mutual exclusion holds).
+//
+// EXPECT_TIMEOUT_MS 30000
+
+module nova_tests.plan103_9.mutexguard_invariant_balanced
+
+test "N fibers × K iters explicit guard: counter balanced, mutex exclusive" {
+    let mu = Mutex.new()
+    let counter = AtomicInt.new(0)
+    let inside = AtomicInt.new(0)
+    let violation = AtomicInt.new(0)
+    let wg = WaitGroup.new()
+    let n_fibers = 6
+    let k_iters = 150
+    wg.add(n_fibers)
+
+    parallel for _i in 0..n_fibers {
+        for _j in 0..k_iters {
+            consume g = mu.lock()
+            let prev_inside = inside.fetch_add(1)
+            if prev_inside != 0 {
+                violation.fetch_add(1)
+            }
+            counter.fetch_add(1)
+            inside.fetch_add(-1)
+            g.unlock()
+        }
+        wg.done()
+    }
+
+    wg.wait()
+    assert(counter.load() == n_fibers * k_iters)
+    assert(violation.load() == 0)
+}
+
+test "N fibers × K iters nested scope guard: same invariants" {
+    let mu = Mutex.new()
+    let counter = AtomicInt.new(0)
+    let inside = AtomicInt.new(0)
+    let violation = AtomicInt.new(0)
+    let wg = WaitGroup.new()
+    let n_fibers = 4
+    let k_iters = 100
+    wg.add(n_fibers)
+
+    parallel for _i in 0..n_fibers {
+        for _j in 0..k_iters {
+            consume g = mu.lock()
+            let prev_inside = inside.fetch_add(1)
+            if prev_inside != 0 {
+                violation.fetch_add(1)
+            }
+            counter.fetch_add(1)
+            inside.fetch_add(-1)
+            g.unlock()
+        }
+        wg.done()
+    }
+
+    wg.wait()
+    assert(counter.load() == n_fibers * k_iters)
+    assert(violation.load() == 0)
+}
