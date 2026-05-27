@@ -1,0 +1,22 @@
+// Plan 103.6 — Semaphore.try_acquire is #realtime_safe; allowed in realtime{}.
+//
+// EXPECT_TIMEOUT_MS 60000
+
+module nova_tests.plan103_6.realtime_semaphore_try_acquire_ok
+
+test "Semaphore.try_acquire allowed in realtime block (has permit)" {
+    let s = Semaphore.new(1)
+    let acquired = realtime {
+        s.try_acquire()
+    }
+    assert(acquired == true)
+    s.release()
+}
+
+test "Semaphore.try_acquire returns false when no permits" {
+    let s = Semaphore.new(0)
+    let acquired = realtime {
+        s.try_acquire()
+    }
+    assert(acquired == false)
+}

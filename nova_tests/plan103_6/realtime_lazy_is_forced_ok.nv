@@ -1,0 +1,14 @@
+// Plan 103.6 — Lazy.is_forced is #realtime_safe; allowed in realtime{}.
+//
+// EXPECT_TIMEOUT_MS 60000
+
+module nova_tests.plan103_6.realtime_lazy_is_forced_ok
+
+test "Lazy.is_forced allowed in realtime block" {
+    let lz = Lazy[int].new() { 42 }
+    let before = realtime { lz.is_forced() }
+    assert(before == false)
+    let _ = lz.force()   // force outside realtime
+    let after = realtime { lz.is_forced() }
+    assert(after == true)
+}

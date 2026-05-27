@@ -1,0 +1,54 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Plan 83.12: TcpStream local/peer port and address after connect.
+//
+// Verifies that after connect:
+//   - stream.local_port() > 0
+//   - stream.peer_port() == listener port
+//   - stream.local_addr().is_v4() == true
+//   - stream.peer_addr().port() == listener port
+//
+// ENV NOVA_AUTOARM=0
+// EXPECT_TIMEOUT_MS 30000
+
+module plan83_12.tcp_stream_addr_test
+
+test "TcpStream: local_port, peer_port, local_addr, peer_addr after connect" {
+    let lst_r = TcpListener.bind(SocketAddr.loopback(0))
+    assert(lst_r.is_ok())
+    let lst = lst_r.unwrap()
+    let listen_port = lst.local_port()
+
+    let mut local_port_ok  = false
+    let mut peer_port_ok   = false
+    let mut local_addr_ok  = false
+    let mut peer_addr_ok   = false
+    supervised {
+        // Server fiber: accept and close (allows client connect to complete).
+        spawn {
+            let acc_r = lst.accept()
+            assert(acc_r.is_ok())
+            let srv = acc_r.unwrap()
+            // Keep server stream alive briefly so client can read addr info.
+            Time.sleep(50)
+            srv.close()
+            lst.close()
+        }
+        // Client fiber: connect and read address info.
+        spawn {
+            let conn_r = TcpStream.connect(SocketAddr.loopback(listen_port))
+            assert(conn_r.is_ok())
+            let cli = conn_r.unwrap()
+            local_port_ok = (cli.local_port() > 0)
+            peer_port_ok  = (cli.peer_port() == listen_port)
+            let la = cli.local_addr()
+            local_addr_ok = la.is_v4()
+            let pa = cli.peer_addr()
+            peer_addr_ok  = (pa.port() == listen_port)
+            cli.close()
+        }
+    }
+    assert(local_port_ok)
+    assert(peer_port_ok)
+    assert(local_addr_ok)
+    assert(peer_addr_ok)
+}

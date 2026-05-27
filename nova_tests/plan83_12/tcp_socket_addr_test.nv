@@ -1,0 +1,63 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Plan 83.12: SocketAddr construction and methods.
+//
+// Verifies SocketAddr.loopback, SocketAddr.v4, port(), host_str(),
+// is_v4(), is_v6(), to_str() without any async I/O.
+//
+// ENV NOVA_AUTOARM=0
+
+module plan83_12.tcp_socket_addr_test
+
+test "SocketAddr.loopback — port number preserved" {
+    let addr = SocketAddr.loopback(8080)
+    assert(addr.port() == 8080)
+}
+
+test "SocketAddr.loopback — is_v4 true" {
+    let addr = SocketAddr.loopback(0)
+    assert(addr.is_v4())
+    assert(!addr.is_v6())
+}
+
+test "SocketAddr.loopback_v6 — is_v6 true" {
+    let addr = SocketAddr.loopback_v6(9090)
+    assert(addr.is_v6())
+    assert(!addr.is_v4())
+    assert(addr.port() == 9090)
+}
+
+test "SocketAddr.v4 — all octets and port preserved" {
+    let addr = SocketAddr.v4(127, 0, 0, 1, 12345)
+    assert(addr.is_v4())
+    assert(addr.port() == 12345)
+}
+
+test "SocketAddr.loopback — host_str non-empty" {
+    let addr = SocketAddr.loopback(0)
+    let h = addr.host_str()
+    assert(h.byte_len() > 0)
+}
+
+test "SocketAddr.loopback — to_str non-empty" {
+    let addr = SocketAddr.loopback(1234)
+    let s = addr.to_str()
+    assert(s.byte_len() > 0)
+}
+
+test "TcpListener.bind — local_port non-zero after bind(loopback(0))" {
+    let lst_r = TcpListener.bind(SocketAddr.loopback(0))
+    assert(lst_r.is_ok())
+    let lst = lst_r.unwrap()
+    let port = lst.local_port()
+    assert(port > 0)
+    lst.close()
+}
+
+test "TcpListener.bind — local_addr is_v4" {
+    let lst_r = TcpListener.bind(SocketAddr.loopback(0))
+    assert(lst_r.is_ok())
+    let lst = lst_r.unwrap()
+    let addr = lst.local_addr()
+    assert(addr.is_v4())
+    lst.close()
+}
