@@ -328,19 +328,46 @@ static void _nova_driver_handle_cancel_timer(NovaSleepState* st) {
     }
 }
 
-/* close_cb — final stage. Driver thread. Wakes worker fiber. */
+/* close_cb — final stage. Driver thread. Wakes worker fiber via single-atomic
+ * wait_state CAS (Plan 83.11 Ф.3.A v2 — closes wake-before-park race). */
 static void _nova_driver_sleep_close_cb(uv_handle_t* h) {
     NovaSleepState* st = (NovaSleepState*)h->data;
     if (!st) return;
 
-    /* Unlink from armed list. */
+    /* Unlink from armed list (driver-only). */
     _nova_driver_arm_list_unlink(st);
 
-    /* SEQ_CST stage CLOSED + standard wake. */
-    __atomic_store_n(&st->stage, NOVA_SLEEP_DRV_CLOSED, __ATOMIC_SEQ_CST);
+    /* Stage CLOSED for legacy compat. */
+    nova_aint_store(&st->stage, NOVA_SLEEP_DRV_CLOSED);
     nova_aint_inc(&_nova_diag_drv_close_cb);
     nova_aint_inc(&_nova_diag_drv_wake_called);
-    nova_sched_wake(st->scope, st->slot);
+
+    /* Single-atomic wake (replaces racy nova_sched_wake parked CAS). */
+    int32_t expected = NOVA_SLEEP_WAIT_NEW;
+    if (__atomic_compare_exchange_n(
+            &st->wait_state, &expected, NOVA_SLEEP_WAIT_WOKEN,
+            false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
+        /* Pre-park wake — worker hasn't parked yet. CAS NEW→PARKED will fail на
+         * worker side, fiber returns без yield. No dispatch needed (fiber никогда
+         * не parked → не в worker's deque). */
+        return;
+    }
+    expected = NOVA_SLEEP_WAIT_PARKED;
+    if (__atomic_compare_exchange_n(
+            &st->wait_state, &expected, NOVA_SLEEP_WAIT_WOKEN,
+            false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
+        /* Worker parked. Dispatch via cross-thread path. */
+        nova_aint_inc(&_nova_diag_drv_wake_cas_won);
+        if (st->scope && st->scope->dispatch_ready && st->slot < st->scope->count) {
+            mco_coro* co = st->scope->fibers[st->slot];
+            if (co && mco_status(co) != MCO_DEAD) {
+                nova_fiber_state_store(co, NOVA_FIBER_STATE_IDLE);
+                st->scope->dispatch_ready(st->scope->dispatch_ctx, co);
+            }
+        }
+        return;
+    }
+    /* State already WOKEN/CONSUMED — no-op (safe). */
 }
 
 /* ── Job dispatch ────────────────────────────────────────────────── */
