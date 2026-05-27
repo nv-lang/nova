@@ -13415,3 +13415,23 @@ emission в emit_c.rs).
   они тесно связаны (M10/M11/M15 design decisions общие), API surface
   единый, тестовое покрытие в одной директории. Параллель с D169 family
   (Mutex/RwLock/ReentrantMutex в одном блоке).
+
+- **Plan 103.6: fence() as trailing block expression** — ence(SeqCst) used as
+  trailing expr in ealtime { fence(SeqCst) } generates (nova_int)(nova_fn_fence(...)) 
+  in C, which is invalid because 
+ova_fn_fence returns oid. Root cause: 
+  infer_expr_c_type falls back to 
+ova_int for ence() calls not found in 
+  method_overloads. Fix: restructure test to use fence() as statement (not trailing), 
+  followed by let _ = a.load() to make the block have a typed trailing expression. 
+  No codegen fix attempted (V2 could fix infer_expr_c_type for void-returning functions).
+
+- **Plan 103.6: try_lock_for reclassification** — initially annotated #parks 
+  (causing E_REALTIME_SYNC_PARK hard error in realtime{}), but try_lock_for does 
+  NOT park fiber — it uses a libuv timer and returns after timeout. Reclassified to 
+  #realtime_safe with W_REALTIME_TRY_LOCK_FOR_TIMER warning (timer overhead 
+  discouraged but not forbidden in realtime{}).
+
+- **Plan 103.6: V1 function propagation** — transitive #parks inference NOT implemented 
+  in V1. Only explicit #parks annotation on user-defined functions triggers 
+  E_REALTIME_NESTED_SYNC_VIA_FN. Documented as V2 gap in D172 §4. Plan 103.8 (V2).
