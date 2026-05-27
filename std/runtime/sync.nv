@@ -1533,7 +1533,84 @@ export external fn Barrier mut @reset()
 // === END PLAN-103.4 CONDVAR ===
 
 // === PLAN-103.4 COUNTDOWNLATCH (Agent C) ===
-// (declarations…)
+
+/// One-shot count-down rendezvous (Java-style). Immutable initial count.
+///
+/// # Vs WaitGroup
+/// WaitGroup allows `add(n)` after creation — fragile if `await()`
+/// has already started. CountDownLatch has an immutable initial count,
+/// making it safer for "init complete" / "shutdown initiated" signals.
+///
+/// # Saturating count_down
+/// `count_down()` when count is already 0 is a **no-op** (does not panic).
+/// This is Java parity: the latch is permanently open once count reaches 0.
+///
+/// # Invariant
+/// `new(count)` panics unconditionally if `count <= 0`.
+/// count must be ≥ 1 at construction.
+///
+/// # Examples
+///
+/// ```nova
+/// let latch = CountDownLatch.new(5)
+/// parallel for _i in 0..5 {
+///     do_work()
+///     latch.count_down()
+/// }
+/// latch.await()
+/// // all 5 workers have completed
+/// ```
+///
+/// # See Also
+///
+/// - `[WaitGroup]` — mutable-count variant (add/done/wait)
+/// - `[Barrier]` — N-party reusable rendezvous (Plan 103.4)
+#stable(since = "0.1")
+export external fn CountDownLatch.new(count int) -> Self
+
+/// Decrement count by 1. If count reaches 0, wakes all `await()` callers.
+///
+/// **No-op (saturating)** if count is already 0 — does not panic.
+/// This is by design (Java parity): the latch stays permanently open.
+#stable(since = "0.1")
+export external fn CountDownLatch mut @count_down()
+
+/// Decrement count by `n` (saturating at 0). If count reaches 0, wakes all.
+///
+/// If `n >= current_count()`, count becomes 0 (saturating, not negative).
+/// If `n <= 0`, no-op.
+#stable(since = "0.1")
+export external fn CountDownLatch mut @count_down_n(n int)
+
+/// Park until count reaches 0.
+///
+/// Returns immediately if count is already 0.
+/// Handles spurious wakeups internally — guaranteed to return only when
+/// count == 0.
+#stable(since = "0.1")
+export external fn CountDownLatch @await()
+
+/// Non-blocking check: returns `true` if count is already 0.
+///
+/// Best-effort — the count may reach 0 concurrently between the check
+/// and the caller acting on the result.
+#stable(since = "0.1")
+export external fn CountDownLatch @try_await() -> bool
+
+/// Park until count reaches 0 or timeout expires.
+///
+/// Returns `true` if count reached 0 within the timeout,
+/// `false` if the timeout expired first.
+/// timeout <= 0 is equivalent to `try_await()`.
+#stable(since = "0.1")
+export external fn CountDownLatch @try_await_for(timeout Duration) -> bool
+
+/// Best-effort current count. May be stale by the time the caller reads it.
+///
+/// For observability (debugging, metrics) only — not for synchronization.
+#stable(since = "0.1")
+export external fn CountDownLatch @current_count() -> int
+
 // === END PLAN-103.4 COUNTDOWNLATCH ===
 
 // === PLAN-103.4 SEMAPHORE (Agent A) ===

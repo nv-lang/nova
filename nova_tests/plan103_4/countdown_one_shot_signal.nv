@@ -1,0 +1,60 @@
+// Plan 103.4 (Agent C) — CountDownLatch: one-shot signal.
+//
+// main fiber awaits, 5 workers count_down(), main wakes when count=0.
+//
+// parallel for spawns 6 fibers (i in 0..6):
+//   i == 0 → waiter: calls latch.await(), then increments woke counter
+//   i == 1..5 → workers: call latch.count_down()
+//
+// After all 6 fibers complete (parallel for returns), woke must be 1
+// and current_count() must be 0.
+//
+// EXPECT_TIMEOUT_MS 15000
+
+module nova_tests.plan103_4.countdown_one_shot_signal
+
+test "CountDownLatch one-shot signal: 5 workers count_down wakes awaiter" {
+    let latch = CountDownLatch.new(5)
+    let woke = AtomicInt.new(0)
+
+    // fiber i=0: calls await and marks woke
+    // fibers i=1..5: each calls count_down() once (5 total)
+    // Two separate ifs (no else) to avoid if/else mixed-return-type issue.
+    parallel for i in 0..6 {
+        if i == 0 {
+            latch.await()
+            woke.fetch_add(1)
+        }
+        if i != 0 {
+            latch.count_down()
+        }
+    }
+
+    assert(woke.load() == 1)
+    assert(latch.current_count() == 0)
+}
+
+test "CountDownLatch.try_await: false when count > 0, true when 0" {
+    let latch = CountDownLatch.new(3)
+
+    // Before any count_down: not yet done
+    assert(latch.try_await() == false)
+    assert(latch.current_count() == 3)
+
+    // Decrement one by one
+    latch.count_down()
+    assert(latch.try_await() == false)
+    assert(latch.current_count() == 2)
+
+    latch.count_down()
+    assert(latch.try_await() == false)
+    assert(latch.current_count() == 1)
+
+    // Final count_down → count reaches 0
+    latch.count_down()
+    assert(latch.try_await() == true)
+    assert(latch.current_count() == 0)
+
+    // await() on an already-done latch returns immediately
+    latch.await()
+}
