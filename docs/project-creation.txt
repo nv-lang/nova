@@ -23066,3 +23066,41 @@ Final merge commits:
 Plan 103.4 ✅ ЗАКРЫТ. Разблокирует Plan 103.6 (realtime/blocking
 type-checker enforcement, M12) и далее цепочку 103.7 (spec D-blocks
 final) → 103.8 (V1 close) Plan 103 master.
+
+=== Scope-decision C для релиза 0.1 (2026-05-27) ===
+
+Plan 91 (std MVP) и Plan 83.12 (async net/socket) были создавали
+противоречивое определение релиза 0.1:
+  - Plan 91 (2026-05-22): «релиз 0.1 = алгоритмическое ядро std БЕЗ
+    net/sync — net/sync в Plan 18, релизы 0.2+».
+  - Plan 83.12 (2026-05-24): «P0 — backend без TCP = hypothetical».
+Plan 83.12 не знал про Plan 91 (не было cross-ref), Plan 91 написан
+до 83.12. Два P0 для 0.1 с противоположной семантикой.
+
+Decision: **вариант C — co-planned для 0.1**.
+  - 0.1 = Plan 91 (collections/text/json/sort/time/math) + Plan 83.12
+    (std/net) + Plan 103.x (std/sync — уже в main: 103.1/103.2/103.3/
+    103.5; 103.4 ✅ 2026-05-27 ночью).
+  - Параллельные track'и: разные scope, разные worktrees, 0
+    пересечений по файлам.
+  - Shipping gate 0.1 — общий: оба должны быть closed одновременно.
+  - fs/http/os/crypto/regex/sql/markdown/url остаются вне 0.1 (Plan 18,
+    релизы 0.2+).
+
+Правки:
+  - docs/plans/91-stdlib-mvp-for-0.1.md — добавлен scope-decision блок
+    в шапку; section «Scope»: «Co-planned для 0.1» заменил «явно
+    отложено net/sync»; Getting-started: два варианта (in-memory или
+    TCP-echo) — выбор в Ф.6.1; Non-scope: net/sync вычеркнуты;
+    Связь: добавлены Plan 83.12 и Plan 103.
+  - docs/plans/83.12-async-net-stdlib.md — добавлен scope-decision
+    блок в шапку (cross-ref Plan 91); section «7. Связь»: добавлены
+    Plan 91 и Plan 103.
+  - docs/plans/README.md — строки Plan 91 и 83.12: явная пометка
+    «co-planned» в description и status column.
+
+Рационал C vs A/B:
+  - A («91 wins, net в 0.2»): backend-claim слабый для public release.
+  - B («83.12 wins, 91 расширяется»): не отражает что 103.x уже в main.
+  - C: отражает фактический статус (sync уже едет, net — последний
+    крупный модуль для 0.1), убирает phantom P0 в priority-listing.
