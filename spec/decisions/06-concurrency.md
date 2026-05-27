@@ -3784,7 +3784,7 @@ for/detach автоматически распределяется на дост
 
 ## D167. Memory ordering & happens-before между fiber'ами
 
-> **Статус:** 📋 DRAFT (Plan 103.1 2026-05-25). Финальная редакция — Plan 103.7.
+> **Статус:** ✅ final (Plan 103.7, 2026-05-27). Реализован в Plan 103.1.
 
 ### Что
 
@@ -3852,13 +3852,14 @@ ARM64 — более explicit барьеры (DMB LD/ST/ISH); Relaxed vs Acquire
 - D138 (Default-on M:N) — производительность зависит от корректного ordering
 - Plan 103.1 — реализация MemOrdering enum + fence(MemOrdering) + codegen helper
 - Plan 103.2 — AtomicX.load(MemOrdering) / .store(v, MemOrdering) / RMW overloads
-- Plan 103.7 — финальная редакция D167
+- Plan 103.7 — финальная редакция D167; D173 AI-first guidance для паттернов ordering
+- D173 — decision tree: когда нужен explicit ordering vs SeqCst-default
 
 ---
 
 ## D168. Sized atomic types — API contract (Plan 103.2)
 
-> **Status:** draft (Plan 103.2, 2026-05-25). Final closure — Plan 103.7.
+> **Статус:** ✅ final (Plan 103.7, 2026-05-27). Реализован в Plan 103.2.
 
 ### Что
 
@@ -3924,7 +3925,7 @@ mutable-ссылку или хранить в heap-структуре.
 
 **Примечание по AtomicPtr:** хранит `int` (адрес GC-объекта как `intptr_t`).
 Арифметика не поддерживается (`fetch_add` нет). Typed generic form `AtomicPtr[T]`
-— Plan 103.7.
+с GC-root integration — откладывается в Plan 103.9+.
 
 #### 2. MemOrdering-aware overloads
 
@@ -3987,8 +3988,8 @@ V1 семантика (Plan 103.2):
 - Arithmetic (`fetch_add`) **не поддерживается** — AtomicPtr не счётчик.
 
 **GC safety V1:** приложение несёт ответственность за то, что int-значение
-в `AtomicPtr` остаётся живым GC-объектом. V2 (Plan 103.7): `AtomicPtr[T]`
-будет GC root.
+в `AtomicPtr` остаётся живым GC-объектом. V2 (Plan 103.9+): `AtomicPtr[T]`
+с типизированным GC-root — откладывается (typed generic в codegen non-trivial).
 
 #### 5. compare_exchange vs compare_exchange_weak
 
@@ -4030,7 +4031,7 @@ LL/SC — no spurious fails). На ARM различие значительно.
    semantics.
 
 4. **AtomicPtr как `int` в V1.** Typed `AtomicPtr[T]` требует GC root integration
-   в codegen — это non-trivial и откладывается в Plan 103.7. `int`-proxy достаточен
+   в codegen — это non-trivial и откладывается в Plan 103.9+. `int`-proxy достаточен
    для lock-free pointer swapping где объект удерживается через другую ссылку.
 
 5. **compare_exchange_weak — отдельная операция.** На ARM разница ~30% на
@@ -4041,8 +4042,8 @@ LL/SC — no spurious fails). На ARM различие значительно.
 
 - **Generic `Atomic[T]` вместо 12 конкретных типов.** Требует мономорфизации на
   C-уровне, усложняет ExternalRegistry (нет arity-based dispatch по типу элемента).
-  Отложено в Plan 103.7+ (если вообще нужно — 12 конкретных типов покрывают
-  все стандартные use cases).
+  Отклонено в V1 (12 конкретных типов покрывают все стандартные use cases; generic
+  форма как future plan если докажет ценность).
 
 - **Checked overflow для narrow types (AtomicI8).** `fetch_add` на переполненном
   AtomicI8 → panic неожиданен для счётчиков. Wraparound — стандартная C11
@@ -4050,8 +4051,8 @@ LL/SC — no spurious fails). На ARM различие значительно.
 
 - **Arity-based dispatch через Nova type system.** Nova integer literals имеют тип
   `nova_int` (широкий), а typed atomic операции принимают `int32_t`/`uint8_t` —
-  строгое type matching не работает. Решение: arity-based fallback в codegen
-  (N vs N+1 параметров для default vs ordering overload). Plan 103.7 уточнит.
+  строгое type matching не работает. Решение (Plan 103.2): arity-based fallback в
+  codegen (N vs N+1 параметров для default vs ordering overload) — финализировано.
 
 - **`AtomicPtr.fetch_add(n)` — pointer arithmetic.** Небезопасно без bounds
   checking, противоречит Nova memory safety goals. Pointer arithmetic —
@@ -4072,7 +4073,9 @@ LL/SC — no spurious fails). На ARM различие значительно.
 - [D138](#d138-default-on-mn-runtime--production-semantics-plan-83456-ф3-active-2026-05-24)
   — production M:N runtime; атомарные операции используются внутри scheduler'а.
 - Plan 103.1 — MemOrdering enum + fence(MemOrdering) + nova_mo_c() codegen helper.
-- Plan 103.7 — D168 финальная редакция + AtomicPtr[T] typed generic.
+- Plan 103.7 — D168 финальная редакция (это plan).
+- D173 — AI-first guidance: counter/swap/CAS паттерны выбора atomic типа.
+- Plan 103.9+ — AtomicPtr[T] typed generic с GC-root integration (deferred).
 
 ### Реализация (Plan 103.2, 2026-05-25)
 
@@ -4090,18 +4093,23 @@ LL/SC — no spurious fails). На ARM различие значительно.
 
 ### Эволюция
 
-D168 введён как draft (Plan 103.2, 2026-05-25). Final closure — Plan 103.7, где:
+D168 введён как draft (Plan 103.2, 2026-05-25). Финализирован в Plan 103.7.
+
+**Backward compatibility note:** `AtomicInt` — deprecated alias на `AtomicI64`
+(если существовал в pre-103.2 code). Все новые коды должны использовать
+`AtomicI64` напрямую.
+
+Отложено в Plan 103.9+:
 - `AtomicPtr[T]` typed generic с GC root integration.
 - Lint `W_NARROW_ATOMIC_OVERFLOW_RISK` для подозрительного использования
   narrow types (AtomicI8/U8) с большими константами.
 - ARM CI validation для `compare_exchange_weak` spurious-fail paths.
-- D173 AI-first guidance для атомарных паттернов.
 
 ---
 
 ## D171. Once / OnceCell / Lazy — single-initialization primitives (Plan 103.5)
 
-> **Status:** draft (Plan 103.5, 2026-05-26). Final closure — Plan 103.9 (API hygiene pass).
+> **Статус:** ✅ final (Plan 103.7, 2026-05-27). Реализован в Plan 103.5. V2 API hygiene — Plan 103.9.
 
 ### Что
 
@@ -4197,8 +4205,8 @@ namespace OnceCell {
 
 **Poison & retry:** в отличие от `Once`, panic в body функции `get_or_init`
 не делает cell terminally poisoned в V1. Состояние возвращается в `Fresh`,
-позволяя retry. (Plan 103.9 пересмотрит — возможно введение `Poisoned` варианта
-с явным `recover()`.)
+позволяя retry. Plan 103.9 пересмотрит poison semantics на основе real-world usage
+(возможно введение `Poisoned` варианта с явным `recover()`).
 
 **Re-entrant guard:** если внутри body, переданного в `get_or_init`, происходит
 рекурсивный вызов `cell.get_or_init` на том же cell — runtime panic с message
@@ -4331,7 +4339,8 @@ codegen). `get()`, `set()`, `is_completed()`, `is_forced()`, `take()`,
 - [D168](#d168-sized-atomic-types--api-contract-plan-1032) — sized atomics;
   внутренние state-поля Once/OnceCell/Lazy реализованы через `__atomic_*`.
 - Plan 103.5 — реализация Once hardening + OnceCell + Lazy.
-- Plan 103.9 — final API hygiene pass: возможно удаление `run`/`done`,
+- D173 — AI-first guidance: выбор Once/OnceCell/Lazy по паттерну; decision tree.
+- Plan 103.9 — V2 API hygiene pass: возможно удаление `run`/`done`,
   пересмотр OnceCell poison semantics.
 
 ### Реализация (Plan 103.5, 2026-05-26)
@@ -4365,18 +4374,21 @@ codegen). `get()`, `set()`, `is_completed()`, `is_forced()`, `take()`,
 
 ### Эволюция
 
-D171 введён как draft (Plan 103.5, 2026-05-26). Final closure — Plan 103.9
-(API hygiene), где:
+D171 введён как draft (Plan 103.5, 2026-05-26). Финализирован в Plan 103.7.
+
+D173 (этот plan) содержит AI-first guidance для init-pattern выбора (Once vs
+OnceCell vs Lazy) — см. decision tree «exactly-once init» branch.
+
+Отложено в Plan 103.9 (API hygiene pass):
 - Удаление deprecated `run`/`done` (после миграционного периода).
 - Пересмотр OnceCell poison semantics на основе real-world usage.
 - Возможный typed-poison API (`recover() throws PoisonMsg`).
-- D173 AI-first guidance для init-pattern выбора (Once vs OnceCell vs Lazy).
 
 ---
 
 ## D169. `Mutex` / `RwLock` / `ReentrantMutex` family (Plan 103.3)
 
-> **Status:** draft (Plan 103.3, 2026-05-26). Final closure — Plan 103.7.
+> **Статус:** ✅ final (Plan 103.7, 2026-05-27). Реализован в Plan 103.3. V2 consume guards — Plan 103.9.
 
 ### Что
 
@@ -4606,20 +4618,23 @@ pointers).
 
 ### Эволюция
 
-D169 введён как draft (Plan 103.3, 2026-05-26). Final closure — Plan 103.7.
-В V2 (Plan 103.9):
+D169 введён как draft (Plan 103.3, 2026-05-26). Финализирован в Plan 103.7.
+
+D173 (этот plan) содержит AI-first guidance: выбор Mutex vs RwLock vs
+ReentrantMutex по паттерну — см. decision tree «exclusive access» branch +
+canonical patterns 3 (producer-consumer) и 4 (read-heavy snapshot).
+
+Отложено в Plan 103.9 (V2):
 - `MutexGuard consume` заменяет `lock()/unlock()` как primary API.
 - `with_lock(fn)` становится thin wrapper над guard — user code не меняется.
 - `W_REENTRANT_CONDVAR_RECOMMEND` переходит в E_REENTRANT_CONDVAR_ERROR если
   статически выявимо (Plan 103.4 + checker).
-- D173 AI-first guidance: выбор Mutex vs RwLock vs ReentrantMutex по паттерну.
 
 ---
 
 ## D170. Coordination primitives — Semaphore / Barrier / CountDownLatch / Condvar (Plan 103.4)
 
-> **Draft 2026-05-27.** Coordination primitives complete `std.runtime.sync` V1.
-> Final closure → Plan 103.7.
+> **Статус:** ✅ final (Plan 103.7, 2026-05-27). Реализован в Plan 103.4. V2 consume guards — Plan 103.9.
 
 ### Контекст
 
@@ -4821,19 +4836,24 @@ fn Condvar mut @notify_all()        /* wake all FIFO order */
 
 ### Эволюция
 
-D170 введён как draft (Plan 103.4, 2026-05-27). Final closure — Plan 103.7.
-В V2 (Plan 103.9):
+D170 введён как draft (Plan 103.4, 2026-05-27). Финализирован в Plan 103.7.
+
+D173 (этот plan) содержит AI-first guidance: rate-limited workers (Semaphore),
+N-party rendezvous (Barrier/CountDownLatch), wait-until-predicate (Condvar) —
+см. canonical patterns 3 и 5 + decision tree lower branches.
+
+Отложено в Plan 103.9 (V2):
 - `Permit consume` guard заменяет `acquire()/release()` как primary API для
   Semaphore.
 - `with_permit(fn)` остаётся thin wrapper над guard.
-- Other primitives (Barrier/CountDownLatch/Condvar) — НЕ мигрируются на
-  consume guards (M16: barriers/latches/condvars stateless по природе).
+- Barrier/CountDownLatch/Condvar — НЕ мигрируются на consume guards
+  (M16: stateless по природе).
 
 ---
 
 ## D172. `realtime { }` / `blocking { }` × sync-class annotation system (Plan 103.6)
 
-> **Status:** draft (Plan 103.6, 2026-05-27). Final closure — Plan 103.7.
+> **Статус:** ✅ final (Plan 103.7, 2026-05-27). Реализован в Plan 103.6. V2 inference — Plan 103.8.
 
 ### Что
 
@@ -5016,8 +5036,9 @@ realtime_{try_lock_for_zero_warn,mutex_try_lock_for_neg} (warnings)
 
 ### Эволюция
 
-D172 введён как draft (Plan 103.6, 2026-05-27). Final closure — Plan 103.7.
-В V2 (Plan 103.8):
+D172 введён как draft (Plan 103.6, 2026-05-27). Финализирован в Plan 103.7.
+
+Отложено в Plan 103.8 (V2 sync propagation):
 - Автоматический inference: если `fn A` вызывает `#parks`-fn, A также помечается `#parks`.
 - LSP integration: hover shows sync-class; quick-fix добавляет `#parks` annotation.
 - Полный propagation-граф: транзитивное закрытие через call graph.
