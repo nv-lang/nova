@@ -508,6 +508,9 @@ type ErrorCode
 type Bit u8 | Off = 0 | On = 1                             // явный базовый тип
 ```
 
+> ⚠ **Явный базовый тип (`type X u8 | …`) пока не реализован** —
+> parser drift, см. [Plan 105](plans/105-sum-type-explicit-base.md).
+
 Cast `Sum → int` безопасный (`c as int`); cast `int → Sum` через
 pattern match с `Fail[InvalidVariant]`. Конфликт значений запрещён
 компилятором.

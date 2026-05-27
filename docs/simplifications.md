@@ -13297,3 +13297,15 @@ Merge: f79d4f28b5b; branch plan-100-2-generic-propagation → main.
   затем запустить все вместе.
 
 - **Tests: 4/4 PASS.** Commit: cb146ba4be2. Branch: plan-103.4-cdl (NOT merged).
+
+- [M-sum-explicit-base-type-parser-gap] **2026-05-27** — Spec ↔ impl drift:
+  [spec/decisions/02-types.md:270-277](decisions/02-types.md#L270) задокументировал
+  опциональный базовый тип у sum-with-discriminants:
+  ```nova
+  type Bit u8       | Off = 0 | On = 1
+  type HttpCode i32 | Ok = 200 | NotFound = 404
+  ```
+  Парсер падает: `expected fn / type / let / const / test, got '|'` на `|` после `u8`/`i32`.
+  Только дефолтная форма (`type X | A = 0 | B = 1`, implicit `int`) работает.
+  → [Plan 105](plans/105-sum-type-explicit-base.md) (proposed, P2, ~1.5 dev-day).
+
