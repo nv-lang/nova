@@ -1,0 +1,169 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Plan 83.12: std/net/tcp.nv — async TCP listener and stream.
+//
+// TcpListener: binds to an address and accepts incoming connections.
+// TcpStream:   represents a connected TCP stream (client or accepted).
+//
+// All blocking methods park the calling fiber and yield to the scheduler.
+// They are cancel-aware: if the enclosing supervised scope is cancelled,
+// the in-flight operation is cleaned up and the fiber throws "scope cancelled".
+//
+// Thread-affinity: libuv handles are bound to the loop on which they were
+// created (nova_current_loop() at bind/connect time). Cross-thread close
+// (e.g. from cancel) is routed through NovaDeferredCloseQueue — see
+// compiler-codegen/nova_rt/eventloop.h §Plan 83.10.2.
+//
+// C backing: Nova_TcpListener / Nova_TcpStream in net.h.
+// No explicit `type TcpListener` / `type TcpStream` declarations here;
+// ExternalRegistry registers both as receiver types automatically.
+
+module net.tcp
+
+use net.addr
+
+// ─── TcpListener ─────────────────────────────────────────────────────────────
+
+/// Async TCP listener. Binds to a local address and accepts connections.
+///
+/// # Lifecycle
+///
+/// ```nova
+/// let listener = TcpListener.bind(SocketAddr.loopback(0)).unwrap()
+/// let port = listener.local_port()
+/// let stream = listener.accept().unwrap()
+/// // ... use stream
+/// listener.close()
+/// ```
+///
+/// # Effects
+///
+/// `bind` carries `[IO, Blocking]` — it issues system calls and may park.
+/// `accept` carries `[IO, Blocking]` — parks until a connection arrives.
+/// `close` carries `[IO]`.
+///
+/// # Cancel
+///
+/// An in-flight `accept()` is cancelled when the enclosing `supervised`
+/// scope receives a cancel signal. The handle is closed via the deferred-
+/// close queue (thread-safe; see Plan 83.10.2).
+///
+/// # See Also
+///
+/// - `[TcpStream.connect]` — client side
+/// - `[UdpSocket]` — datagram sockets
+
+/// Bind a TCP listener to the given address.
+///
+/// Passing `SocketAddr.loopback(0)` lets the OS choose a free port.
+/// Call `listener.local_port()` to discover the assigned port.
+///
+/// Returns `Err(msg)` if the address is in use or otherwise unavailable.
+#stable(since = "0.1")
+export external fn TcpListener.bind(addr SocketAddr) -> Result[TcpListener, str]
+
+/// Accept the next incoming connection.
+///
+/// Parks the calling fiber until a client connects or an error occurs.
+/// Returns `Ok(stream)` where `stream` is the connected `TcpStream`.
+/// Returns `Err(msg)` if the listener is closed or an OS error occurred.
+///
+/// **Cancel-safe:** if the scope is cancelled while parked in `accept`,
+/// the operation is aborted and the fiber throws "scope cancelled".
+#stable(since = "0.1")
+export external fn TcpListener mut @accept() -> Result[TcpStream, str]
+
+/// Return the local port number this listener is bound to.
+#stable(since = "0.1")
+export external fn TcpListener @local_port() -> u16
+
+/// Return the local socket address this listener is bound to.
+#stable(since = "0.1")
+export external fn TcpListener @local_addr() -> SocketAddr
+
+/// Close the listener. No new connections will be accepted.
+///
+/// Idempotent: calling `close()` on an already-closed listener is safe.
+/// In-flight `accept()` callers will receive `Err("closed")`.
+#stable(since = "0.1")
+export external fn TcpListener mut @close()
+
+// ─── TcpStream ───────────────────────────────────────────────────────────────
+
+/// Connected async TCP stream.
+///
+/// Obtained from `TcpListener.accept()` (server side) or
+/// `TcpStream.connect(addr)` (client side).
+///
+/// # Effects
+///
+/// `connect`, `read_bytes`, `write` carry `[IO, Blocking]`.
+/// `close` carries `[IO]`.
+///
+/// # Cancel
+///
+/// In-flight `connect`, `read_bytes`, or `write` operations are aborted
+/// when the enclosing `supervised` scope is cancelled. The TCP handle is
+/// closed via the deferred-close queue.
+///
+/// # See Also
+///
+/// - `[TcpListener]` — server-side listener
+
+/// Connect to a remote TCP address.
+///
+/// Parks the calling fiber until the TCP handshake completes.
+/// Returns `Ok(stream)` on success, `Err(msg)` if the connection
+/// failed (e.g. "connection refused", "no route to host").
+///
+/// **Cancel-safe:** in-flight connect is aborted on scope cancel.
+#stable(since = "0.1")
+export external fn TcpStream.connect(addr SocketAddr) -> Result[TcpStream, str]
+
+/// Read up to `max_bytes` bytes from the stream.
+///
+/// Parks until data arrives, an error occurs, or the peer closes the
+/// connection (EOF). Returns `Ok(data)` where `data.byte_len() > 0`.
+/// Returns `Ok("")` on clean EOF (peer called `close()`/`shutdown()`).
+/// Returns `Err(msg)` on I/O error.
+///
+/// **Cancel-safe:** in-flight read is aborted on scope cancel.
+#stable(since = "0.1")
+export external fn TcpStream mut @read_bytes(max_bytes int) -> Result[str, str]
+
+/// Write a string to the stream.
+///
+/// Returns `Ok(n)` where `n` is the number of bytes written.
+/// Returns `Err(msg)` on I/O error (e.g. broken pipe, peer closed).
+///
+/// **V1 note:** `write` buffers the data and parks until the kernel
+/// has accepted all bytes (full write semantics). Partial writes are
+/// retried internally.
+///
+/// **Cancel-safe:** in-flight write is aborted on scope cancel.
+#stable(since = "0.1")
+export external fn TcpStream mut @write(data str) -> Result[int, str]
+
+/// Return the local port of this stream.
+#stable(since = "0.1")
+export external fn TcpStream @local_port() -> u16
+
+/// Return the remote (peer) port of this stream.
+#stable(since = "0.1")
+export external fn TcpStream @peer_port() -> u16
+
+/// Return the local address of this stream.
+#stable(since = "0.1")
+export external fn TcpStream @local_addr() -> SocketAddr
+
+/// Return the remote (peer) address of this stream.
+#stable(since = "0.1")
+export external fn TcpStream @peer_addr() -> SocketAddr
+
+/// Close the stream and release all resources.
+///
+/// Idempotent: calling `close()` on an already-closed stream is safe.
+/// In-flight reads/writes will receive `Err("closed")`.
+///
+/// The TCP connection is closed with a FIN+ACK sequence.
+#stable(since = "0.1")
+export external fn TcpStream mut @close()
