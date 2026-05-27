@@ -1086,6 +1086,8 @@ fn read_buffer_runtime() -> Vec<RuntimeFn> {
         ("read_f64_be","f64", "f64 big-endian IEEE 754."),
     ];
     // Fail-form (Fail[ReadBufferError]) и try-form (Result[T, ReadBufferError]).
+    // D30 §2 try_* convention (Plan 108): try_* — C-примитив (nova_body: None);
+    // Fail-form — Nova-body через @try_<name>()!! (один лайнер, нет дублирования C-логики).
     for (name, ret_ty, doc) in &read_specs {
         let c_name_fail: &'static str = Box::leak(
             format!("Nova_ReadBuffer_method_{}", name).into_boxed_str(),
@@ -1111,10 +1113,19 @@ fn read_buffer_runtime() -> Vec<RuntimeFn> {
         let doc_try: &'static str = Box::leak(
             format!("{} Result-форма (Ok(value) или Err(UnexpectedEnd)).", doc).into_boxed_str(),
         );
+        // Nova-body для Fail-form: @try_<name>(<params>)!!
+        // try_* — C-примитив, Fail-form — тонкая Nova-обёртка.
+        let body_fail: &'static str = Box::leak(
+            if *name == "read_bytes" {
+                "@try_read_bytes(n)!!".to_string()
+            } else {
+                format!("@try_{}()!!", name)
+            }.into_boxed_str(),
+        );
         v.push(RuntimeFn { module: m, receiver: recv, is_static: false, is_mut: true, is_consume: false,
             name, params: params_fail, return_ty: ret_ty, effects: &["Fail[ReadBufferError]"],
             c_name: c_name_fail, doc: doc_fail,
-            nova_body: None,
+            nova_body: Some(body_fail),
         });
         v.push(RuntimeFn { module: m, receiver: recv, is_static: false, is_mut: true, is_consume: false,
             name: try_name, params: params_try, return_ty: try_ret, effects: &[],
@@ -1123,12 +1134,13 @@ fn read_buffer_runtime() -> Vec<RuntimeFn> {
         });
     }
     // Plan 13 Ф.9.4: codepoint-уровневые reads.
+    // D30 §2: read_char/read_str — Nova-body через try_*; try_* — C-примитив.
     v.push(RuntimeFn { module: m, receiver: recv, is_static: false, is_mut: true, is_consume: false,
         name: "read_char", params: &[],
         return_ty: "char", effects: &["Fail[ReadBufferError]"],
         c_name: "Nova_ReadBuffer_method_read_char",
         doc: "Один codepoint (UTF-8 1-4 байта). Throw'ит UnexpectedEnd / InvalidUtf8.",
-        nova_body: None,
+        nova_body: Some("@try_read_char()!!"),
     });
     v.push(RuntimeFn { module: m, receiver: recv, is_static: false, is_mut: true, is_consume: false,
         name: "try_read_char", params: &[],
@@ -1142,7 +1154,7 @@ fn read_buffer_runtime() -> Vec<RuntimeFn> {
         return_ty: "str", effects: &["Fail[ReadBufferError]"],
         c_name: "Nova_ReadBuffer_method_read_str",
         doc: "n codepoint'ов как str. Throw'ит UnexpectedEnd / InvalidUtf8.",
-        nova_body: None,
+        nova_body: Some("@try_read_str(n)!!"),
     });
     v.push(RuntimeFn { module: m, receiver: recv, is_static: false, is_mut: true, is_consume: false,
         name: "try_read_str", params: &[("n", "int")],
