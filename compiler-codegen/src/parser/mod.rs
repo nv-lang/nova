@@ -725,14 +725,16 @@ impl Parser {
                 }
                 self.bump(); // (
                 let (allow_name, allow_span) = self.parse_ident()?;
-                match allow_name.as_str() {
-                    "shadow" => {}
+                let allow_kind = match allow_name.as_str() {
+                    "shadow" => ModuleAttrKind::AllowPreludeShadow,
+                    "view_extend_detach" => ModuleAttrKind::AllowViewExtendDetach,
                     _ => return Err(Diagnostic::new(
                         format!("`#allow({})` is not a recognized suppressor; \
-                                 valid value: `shadow` (suppresses W_PRELUDE_SHADOW, D174)",
+                                 valid values: `shadow` (W_PRELUDE_SHADOW, D174), \
+                                 `view_extend_detach` (W_VIEW_EXTEND_DETACH, D141 amend)",
                                  allow_name),
                         allow_span)),
-                }
+                };
                 if !matches!(self.peek().kind, TokenKind::RParen) {
                     return Err(Diagnostic::new(
                         "expected `)` closing `#allow(...)`",
@@ -742,7 +744,7 @@ impl Parser {
                 self.expect_newline_or_eof()?;
                 let attr_end = self.tokens[self.pos.saturating_sub(1)].span;
                 module_attrs.push(ModuleAttr {
-                    kind: ModuleAttrKind::AllowPreludeShadow,  // reuse existing variant
+                    kind: allow_kind,
                     effects: Vec::new(),
                     span: attr_start.merge(attr_end),
                 });

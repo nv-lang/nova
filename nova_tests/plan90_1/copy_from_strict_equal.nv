@@ -1,0 +1,29 @@
+// Plan 90.1 — позитив: copy_from strict equal-length + memmove.
+// D141 amend: src.len != dst.len → panic (breaking change from silent truncation).
+
+module nova_tests.plan90_1.copy_from_strict_equal
+
+test "copy_from — equal length []u8" {
+    let mut dst []u8 = [0, 0, 0]
+    let src []u8 = [7, 8, 9]
+    dst.copy_from(src)
+    assert(dst[0] == 7)
+    assert(dst[1] == 8)
+    assert(dst[2] == 9)
+}
+
+test "copy_from — equal length []int" {
+    let mut dst []int = [0, 0, 0]
+    let src []int = [10, 20, 30]
+    dst.copy_from(src)
+    assert(dst[0] == 10)
+    assert(dst[1] == 20)
+    assert(dst[2] == 30)
+}
+
+test "copy_from — single element" {
+    let mut dst []int = [0]
+    let src []int = [42]
+    dst.copy_from(src)
+    assert(dst[0] == 42)
+}
