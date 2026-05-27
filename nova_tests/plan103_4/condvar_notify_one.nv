@@ -1,0 +1,60 @@
+// Plan 103.4 — Condvar.notify_one() wakes exactly 1 of N waiters.
+//
+// Setup: 3 fibers each lock(mu), increment n_waiting, then cv.wait(mu).
+// Main: busy-loops until n_waiting==3, acquires mu (ensuring all 3 are
+//       in cv's waiter list), releases mu, calls notify_one().
+// Verify: after 10ms, exactly 1 fiber has woken; remaining 2 still wait.
+//
+// EXPECT_TIMEOUT_MS 15000
+
+module nova_tests.plan103_4.condvar_notify_one
+
+test "notify_one wakes exactly 1 of 3 waiters" {
+    let mu = Mutex.new()
+    let cv = Condvar.new()
+    let n_waiting = AtomicInt.new(0)
+    let n_woken   = AtomicInt.new(0)
+    let wg        = WaitGroup.new()
+    wg.add(3)
+
+    supervised {
+        // 3 waiter fibers
+        for _i in 0..3 {
+            spawn {
+                mu.lock()
+                n_waiting.fetch_add(1)
+                cv.wait(mu)
+                n_woken.fetch_add(1)
+                mu.unlock()
+                wg.done()
+            }
+        }
+
+        // Wait until all 3 fibers have incremented n_waiting, then confirm
+        // they are all in cv's waiter list by briefly acquiring mu.
+        // After mu.lock() succeeds with n_waiting==3: all 3 have called
+        // cv.wait(mu) which releases mu, so they are in cv's list.
+        let mut all_in = false
+        while !all_in {
+            Time.sleep(1)
+            mu.lock()
+            if n_waiting.load() == 3 {
+                all_in = true
+            }
+            mu.unlock()
+        }
+
+        // All 3 are parked in cv — notify exactly 1.
+        cv.notify_one()
+
+        // Give the woken fiber time to complete.
+        Time.sleep(10)
+        assert(n_woken.load() == 1, "notify_one should wake exactly 1 fiber")
+
+        // Clean up: wake the remaining 2 so supervised can exit.
+        cv.notify_all()
+        wg.wait()
+    }
+
+    assert(n_woken.load() == 3)
+}

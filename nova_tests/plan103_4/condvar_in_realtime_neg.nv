@@ -1,0 +1,17 @@
+// Plan 103.4 — Condvar.wait() inside realtime{} → COMPILE_ERROR.
+//
+// Fiber park/wait is forbidden inside realtime contexts
+// (E_EFFECT_REALTIME_VIOLATION). Condvar.wait, .wait_for, .wait_until
+// all park the fiber and are banned.
+//
+// EXPECT_COMPILE_ERROR E_EFFECT_REALTIME_VIOLATION
+
+module nova_tests.plan103_4.condvar_in_realtime_neg
+
+test "Condvar.wait banned inside realtime block" {
+    let mu = Mutex.new()
+    let cv = Condvar.new()
+    realtime {
+        cv.wait(mu)
+    }
+}

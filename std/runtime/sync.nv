@@ -1529,7 +1529,103 @@ export external fn Barrier mut @reset()
 // === END PLAN-103.4 BARRIER ===
 
 // === PLAN-103.4 CONDVAR (Agent D) ===
-// (declarations…)
+
+// ─── WaitResult ──────────────────────────────────────────────────
+
+/// Return type for `Condvar.wait_for()`.
+///
+/// # Variants
+/// - `Notified` — fiber woken by `notify_one()` or `notify_all()`
+/// - `TimedOut` — timeout expired without notification
+///
+/// # See Also
+/// - `[Condvar.wait_for]`
+#stable(since = "0.1")
+export type WaitResult
+    | Notified
+    | TimedOut
+
+// ─── Condvar ─────────────────────────────────────────────────────
+
+/// Fiber-aware condition variable. Tied to `Mutex` (M10 design principle).
+///
+/// Allows fibers to park until a predicate on shared state becomes true,
+/// without busy-waiting.
+///
+/// # Spurious wakeup
+///
+/// `wait()` may return without a `notify_*()` call (spurious wakeup,
+/// e.g., M:N scheduler rebalance). Always wrap in a predicate loop:
+///
+/// ```nova
+/// m.lock()
+/// while !predicate() {
+///     cv.wait(m)
+/// }
+/// // critical section
+/// m.unlock()
+/// ```
+///
+/// Or use the `wait_until` helper which handles this automatically.
+///
+/// # Reentrant mutex interaction
+///
+/// `Condvar.wait(reentrant_m)` releases the ENTIRE recursive lock count
+/// (lock_count → 0) and re-acquires as count=1 on wake. This is intentional
+/// — restoring original count is a Java pitfall (see Plan 103.4 §Ф.4).
+/// `W_REENTRANT_CONDVAR_RECOMMEND` lint warns when `ReentrantMutex` is used.
+///
+/// # Precondition
+///
+/// The mutex must be locked before calling `wait()` / `wait_for()`.
+/// Unconditional runtime panic if not (Plan 103.3/103.4 pattern).
+#stable(since = "0.1")
+export external type Condvar
+
+/// Create a new `Condvar`.
+#stable(since = "0.1")
+export external fn Condvar.new() -> Self
+
+/// Atomically release `m` and park the fiber. Re-acquires `m` before
+/// returning. Spurious wakeup may occur — always use a predicate loop.
+///
+/// # Panics
+///
+/// Panics unconditionally if `m` is not locked.
+#stable(since = "0.1")
+export external fn Condvar @wait(m mut Mutex)
+
+/// ReentrantMutex overload: same semantics as `wait(Mutex)`, but
+/// releases ALL recursive lock levels on enter and re-acquires as
+/// count=1 on wake. W_REENTRANT_CONDVAR_RECOMMEND lint is emitted.
+#stable(since = "0.1")
+export external fn Condvar @wait(m mut ReentrantMutex)
+
+/// Wait with timeout. Atomically release `m`, park up to `timeout`,
+/// re-acquire `m` before return. Returns `WaitResult.Notified` if woken
+/// by notify, `WaitResult.TimedOut` if timeout expired.
+#stable(since = "0.1")
+export external fn Condvar @wait_for(m mut Mutex, timeout Duration) -> WaitResult
+
+/// Predicate-loop helper. Calls `wait(m)` in a loop until `predicate()`
+/// returns true. Handles spurious wakeup automatically.
+///
+/// ```nova
+/// cv.wait_until(mu) { || buffer.len() > 0 }
+/// ```
+#stable(since = "0.1")
+export external fn Condvar @wait_until(m mut Mutex, predicate fn() -> bool)
+
+/// Wake one waiting fiber (FIFO — oldest waiter first).
+/// No-op if no waiters. Safe to call without holding the mutex.
+#stable(since = "0.1")
+export external fn Condvar mut @notify_one()
+
+/// Wake all waiting fibers (FIFO order).
+/// Safe to call without holding the mutex.
+#stable(since = "0.1")
+export external fn Condvar mut @notify_all()
+
 // === END PLAN-103.4 CONDVAR ===
 
 // === PLAN-103.4 COUNTDOWNLATCH (Agent C) ===

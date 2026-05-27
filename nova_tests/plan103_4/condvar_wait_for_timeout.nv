@@ -1,0 +1,62 @@
+// Plan 103.4 — Condvar.wait_for(50ms) without notify → WaitResult.TimedOut.
+//
+// A fiber acquires mu, calls wait_for(50ms). No notifier fires.
+// The libuv timer fires after 50ms; fiber wakes with TimedOut result.
+//
+// EXPECT_TIMEOUT_MS 30000
+
+module nova_tests.plan103_4.condvar_wait_for_timeout
+
+import std.time.duration
+
+test "wait_for times out when no notify arrives" {
+    let mu     = Mutex.new()
+    let cv     = Condvar.new()
+    let result = AtomicInt.new(-1)  // -1 = not set, 0 = Notified, 1 = TimedOut
+
+    supervised {
+        spawn {
+            mu.lock()
+            let r = cv.wait_for(mu, Duration.from_millis(50))
+            match r {
+                WaitResult.Notified => result.store(0)
+                WaitResult.TimedOut => result.store(1)
+            }
+            mu.unlock()
+        }
+    }
+
+    assert(result.load() == 1, "wait_for with no notify must return TimedOut")
+}
+
+test "wait_for returns Notified when notify arrives before timeout" {
+    let mu     = Mutex.new()
+    let cv     = Condvar.new()
+    let n_waiting = AtomicInt.new(0)
+    let result = AtomicInt.new(-1)
+
+    supervised {
+        spawn {
+            mu.lock()
+            n_waiting.fetch_add(1)
+            let r = cv.wait_for(mu, Duration.from_millis(5000))
+            match r {
+                WaitResult.Notified => result.store(0)
+                WaitResult.TimedOut => result.store(1)
+            }
+            mu.unlock()
+        }
+
+        // Wait for fiber to be in wait_for, then notify.
+        let mut ready = false
+        while !ready {
+            Time.sleep(1)
+            mu.lock()
+            if n_waiting.load() == 1 { ready = true }
+            mu.unlock()
+        }
+        cv.notify_one()
+    }
+
+    assert(result.load() == 0, "wait_for with notify before timeout must return Notified")
+}
