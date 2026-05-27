@@ -23377,3 +23377,57 @@ conformance тестирование.
 
 Status: Ф.0 + Ф.7.1 ✅ ЗАКРЫТЫ. Ф.3 source-level fix закрыт попутно.
 Plan 91 progress: 2/8 phases done в новой нумерации (Ф.0.4 decision).
+
+================================================================
+2026-05-27 (continued) — Plan 91 Ф.4 closure (sort module)
+================================================================
+
+Branch plan-91-stdmvp (после Ф.7.1 commit ad3b2466710).
+Ф.4 (Time/Math/Sort) per Ф.0.4 order — `sort` sub-phase
+ЗАКРЫТ.
+
+Сделано:
+  - Создан std/sort.nv с MVP surface:
+    * fn []int mut @sort() — in-place insertion sort
+    * fn []int mut @sort_by(cmp) — custom comparator
+    * fn []int @binary_search(target) -> Option[int]
+    * fn []int @min() / @max() -> Option[int]
+  - Smoke target/smoke_sort.nv — build+run OK end-to-end.
+  - Conformance nova_tests/plan91/sort_basic.nv — 15/15 PASS:
+    empty, single, sorted, reverse, dups, negative, sort_by reverse,
+    binary_search found/not-found/empty, min/max non/empty,
+    sort+binary_search property test.
+  - nova check std/ после добавления: 25 PASS / 0 FAIL.
+
+Сознательное упрощение vs Plan 91 §Scope:
+  - Plan 91 §Scope: sort[T Ord] (generic).
+  - V1 в Ф.4: только []int (concrete). Rationale — insertion sort
+    на []int достаточен для realistic CLI/data-utility use-cases в
+    0.1; generic sort требует D72 protocol-bound dispatch для
+    primitive Ord types (overhead на codegen уровне значителен).
+  - Followup [sort-generic-T] зафиксирован в std/sort.nv doc-comment
+    для пост-0.1 promotion.
+
+Ф.3 conformance — попытка target/smoke_json_roundtrip.nv:
+  - Source fix: m.entries() → m.iter() в std/encoding/json.nv
+    (HashMap has .iter(), not .entries()).
+  - Deeper codegen issues выявлены:
+    * Nova_HashMap forward decl используется как pointer без full
+      struct emission → CC fail.
+    * Tuple destructuring (K, V) в for entry in m.iter() —
+      entry mistyped as nova_int.
+  - Это genuine codegen work (~0.5-1 день investigation). **Ф.3
+    conformance отложен.** Json type-check ✅, build→exe ❌.
+
+Phase progress (Ф.0.4 нумерация):
+  - Ф.0 ✅ closed
+  - Ф.7.1 ✅ closed
+  - Ф.3 D52 source fix ✅ closed (попутно в Ф.7.1)
+  - Ф.4 sort module ✅ **closed**
+  - Ф.3 conformance HashMap-iter codegen 🟡 deferred
+  - Ф.2 text methods — pending
+  - Ф.1/Ф.5/Ф.6/Ф.7.2-4 — pending
+
+Plan 91 progress: 3/8 phases done в Ф.0.4 нумерации.
+Следующий immediate шаг — Ф.2 text methods (8 runtime methods +
+C stubs) ИЛИ Ф.3 conformance (deep codegen investigation).

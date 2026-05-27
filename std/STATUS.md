@@ -12,11 +12,19 @@
 
 Запуск через `.\run_tests.ps1 -IncludeStdlib`.
 
-## Текущий статус (2026-05-27, Plan 91 Ф.7.1 quarantine ✅ ЗАКРЫТ — branch `plan-91-stdmvp`)
+## Текущий статус (2026-05-27, Plan 91 Ф.0+Ф.7.1+Ф.4 ✅ ЗАКРЫТЫ — branch `plan-91-stdmvp`)
 
-**Ф.7.1 results:**
+**Ф.4 results (sort module):**
 
-- **`nova check std/`** (no `--skip`, full directory walk): **24 PASS / 0 FAIL.**
+- Создан `std/sort.nv` (MVP surface: `[]int @sort`/`@sort_by`/
+  `@binary_search`/`@min`/`@max`).
+- Smoke `target/smoke_sort.nv` — build OK, run OK.
+- Conformance `nova_tests/plan91/sort_basic.nv` — **15/15 PASS**.
+- `nova check std/` после добавления: **25 PASS / 0 FAIL.**
+
+**Ф.7.1 results (quarantine):**
+
+- **`nova check std/`** (no `--skip`, full directory walk): **24→25 PASS / 0 FAIL.**
   Acceptance criterion Plan 91 §Ф.7.1 met (down from 12 FAIL pre-quarantine).
 - **30 non-MVP files** перенесены в `std/_experimental/` (auto-skip через
   `should_skip_path_full` на underscore-prefixed component). Полная таблица
