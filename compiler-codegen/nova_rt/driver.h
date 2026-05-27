@@ -94,6 +94,10 @@ void nova_driver_shutdown(void);
  * shutdown path). */
 int nova_driver_submit_job(NovaDriverJob* job);
 
+/* Fast inline check — used by Time.sleep dispatch to route to driver path
+ * (post Plan 83.11 Ф.3) vs legacy per-worker UV path (bootstrap). */
+bool nova_driver_is_started(void);
+
 #ifdef __cplusplus
 }
 #endif
