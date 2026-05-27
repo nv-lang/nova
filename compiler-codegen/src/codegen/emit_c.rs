@@ -4080,6 +4080,8 @@ impl CEmitter {
             // satisfaction'а — в type-checker'е, codegen работает с
             // dynamic value-ом (managed pointer).
             TypeRef::Protocol { .. } => Ok("void*".into()),
+            // D176 (Plan 108): readonly T — zero overhead, transparent for codegen.
+            TypeRef::Readonly(inner, _) => self.type_ref_to_c(inner),
         }
     }
 
@@ -8360,6 +8362,8 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                 }
             }
             TypeRef::Unit(_) => {}
+            // D176 (Plan 108): readonly T — transparent.
+            TypeRef::Readonly(inner, _) => Self::collect_typeref_names(inner, out, vtable_out),
         }
     }
 
@@ -8389,6 +8393,8 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                         .map_or(false, |t| Self::type_ref_uses_any_type_param(t, type_params))
             }),
             TypeRef::Unit(_) => false,
+            // D176 (Plan 108): readonly T — transparent.
+            TypeRef::Readonly(inner, _) => Self::type_ref_uses_any_type_param(inner, type_params),
         }
     }
 
@@ -10208,6 +10214,8 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                         .unwrap_or(false)
             }),
             TypeRef::Unit(_) => false,
+            // D176 (Plan 108): readonly T — transparent.
+            TypeRef::Readonly(inner, _) => Self::type_ref_mentions_name(inner, names),
         }
     }
 
@@ -23971,6 +23979,8 @@ _cp++; \
             }
             TypeRef::Unit(_) => {}
             TypeRef::Protocol { .. } => {} // не sum-тип
+            // D176 (Plan 108): readonly T — transparent.
+            TypeRef::Readonly(inner, _) => self.ensure_novaopt_decls_for_typeref(inner),
         }
     }
 

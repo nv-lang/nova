@@ -3627,6 +3627,14 @@ impl Parser {
     fn parse_type(&mut self) -> Result<TypeRef, Diagnostic> {
         let start = self.peek().span;
         match self.peek().kind {
+            // D176 (Plan 108): `readonly T` — compile-time immutability modifier.
+            // `readonly` as prefix of any type position: return type, param, field, let.
+            TokenKind::KwReadonly => {
+                self.bump();
+                let inner = self.parse_type()?;
+                let span = start.merge(inner.span());
+                return Ok(TypeRef::Readonly(Box::new(inner), span));
+            }
             TokenKind::LBracket => {
                 self.bump();
                 // []T или [N]T

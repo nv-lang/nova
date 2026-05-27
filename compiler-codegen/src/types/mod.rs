@@ -1052,6 +1052,8 @@ impl<'a> TypeCheckCtx<'a> {
                 }
             }
             TypeRef::Unit(_) => {}
+            // D176 (Plan 108): readonly T — transparent, walk inner.
+            TypeRef::Readonly(inner, _) => self.walk_typeref(inner, gs, errors),
         }
     }
 
@@ -1085,6 +1087,8 @@ impl<'a> TypeCheckCtx<'a> {
             }
             TypeRef::Protocol { methods: _, .. } => {}
             TypeRef::Unit(_) => {}
+            // D176 (Plan 108): readonly T — transparent.
+            TypeRef::Readonly(inner, _) => Self::collect_named_idents(inner, out),
         }
     }
 
@@ -1424,6 +1428,17 @@ impl<'a> TypeCheckCtx<'a> {
         for p in &fd.params {
             scope.insert(p.name.clone(), p.ty.clone());
         }
+        // D175 (Plan 108): inject receiver type as "@" in scope so that
+        // `check_target_readonly` can resolve @.field type for self-assignments.
+        if let Some(recv) = &fd.receiver {
+            if matches!(recv.kind, ReceiverKind::Instance) {
+                scope.insert("@".to_string(), TypeRef::Named {
+                    path: vec![recv.type_name.clone()],
+                    generics: recv.generics.clone(),
+                    span: recv.span,
+                });
+            }
+        }
         match &fd.body {
             FnBody::Expr(e) => {
                 self.f1_expr(e, &gs, &mut scope, errors);
@@ -1500,6 +1515,9 @@ impl<'a> TypeCheckCtx<'a> {
             Stmt::Assign { target, value, .. } => {
                 self.f1_expr(target, gs, scope, errors);
                 self.f1_expr(value, gs, scope, errors);
+                // D175/D176 (Plan 108): check that we're not assigning to a
+                // readonly field or through a readonly index.
+                self.check_target_readonly(target, scope, errors);
             }
             Stmt::Return { value, .. } => {
                 if let Some(v) = value {
@@ -1828,6 +1846,24 @@ impl<'a> TypeCheckCtx<'a> {
                 ),
             );
         }
+        // D176 (Plan 108): `readonly T → T` is forbidden (E_READONLY_COERCE).
+        // `T → readonly T` is allowed (auto-coerce, narrowing rights).
+        if !ann.is_readonly() {
+            if let Some(value_ty) = self.infer_expr_type(value, scope) {
+                if value_ty.is_readonly() {
+                    errors.push(Diagnostic::new(
+                        format!(
+                            "[E_READONLY_COERCE] cannot coerce `readonly {}` to `{}`: \
+                             removing readonly is not allowed. Use `.to_owned()` to \
+                             get a mutable copy.",
+                            typeref_display(value_ty.strip_readonly()),
+                            typeref_display(ann),
+                        ),
+                        value.span,
+                    ));
+                }
+            }
+        }
     }
 
     /// Plan 87 Ф.2.2: пройти тело for-in. При заданной аннотации типа
@@ -1917,9 +1953,14 @@ impl<'a> TypeCheckCtx<'a> {
                 None
             }
             // Прочее: если выражение имеет тип `[]T` / `[N]T` — элемент `T`.
+            // D176 (Plan 108): `readonly []T` → elements are `T` (primitive copy).
             _ => match self.infer_expr_type(iter, scope)? {
                 TypeRef::Array(inner, _)
                 | TypeRef::FixedArray(_, inner, _) => Some(*inner),
+                TypeRef::Readonly(inner, _) => match *inner {
+                    TypeRef::Array(elem, _) | TypeRef::FixedArray(_, elem, _) => Some(*elem),
+                    _ => None,
+                },
                 _ => None,
             },
         }
@@ -2249,9 +2290,111 @@ impl<'a> TypeCheckCtx<'a> {
                 Some(prim_ref("str", expr.span))
             }
             ExprKind::CharLit(_) => Some(prim_ref("char", expr.span)),
+            // D176 (Plan 108): SelfAccess → look up "@" in scope (injected by f1_check_fn).
+            ExprKind::SelfAccess => scope.get("@").cloned(),
             _ => None,
         }
     }
+
+    // ── D175/D176 (Plan 108): readonly enforcement helpers ─────────────────
+
+    /// Resolve record fields for a type name. Returns None if not a Record type.
+    fn record_fields_for<'t>(&'t self, type_name: &str) -> Option<&'t Vec<RecordField>> {
+        match self.types.get(type_name)?.kind {
+            TypeDeclKind::Record(ref fields) => Some(fields),
+            _ => None,
+        }
+    }
+
+    /// Returns `true` if `expr` is an access path that goes through a readonly field,
+    /// meaning any mutation through this path is forbidden (D175 transitivity).
+    fn is_readonly_path(&self, expr: &Expr, scope: &HashMap<String, TypeRef>) -> bool {
+        match &expr.kind {
+            ExprKind::Member { obj, name: field_name } => {
+                // Check if this field is readonly on obj's type.
+                let obj_ty = self.infer_expr_type(obj, scope);
+                if let Some(tr) = obj_ty {
+                    let type_name = match tr.strip_readonly() {
+                        TypeRef::Named { path, .. } => path.last().map(|s| s.as_str()),
+                        _ => None,
+                    };
+                    if let Some(tname) = type_name {
+                        if let Some(fields) = self.record_fields_for(tname) {
+                            if fields.iter().any(|f| f.name == *field_name && f.readonly) {
+                                return true;
+                            }
+                        }
+                    }
+                }
+                // Transitivity: if the path to obj is itself readonly, propagate.
+                self.is_readonly_path(obj, scope)
+            }
+            _ => false,
+        }
+    }
+
+    /// Check if an assignment target is readonly and emit an error if so.
+    /// Handles D175 (readonly fields) and D176 (readonly T index writes).
+    fn check_target_readonly(
+        &self,
+        target: &Expr,
+        scope: &HashMap<String, TypeRef>,
+        errors: &mut Vec<Diagnostic>,
+    ) {
+        match &target.kind {
+            ExprKind::Member { obj, name: field_name } => {
+                // Transitivity check: mutation through a readonly field.
+                if self.is_readonly_path(obj, scope) {
+                    errors.push(Diagnostic::new(
+                        format!(
+                            "[E_READONLY_FIELD] cannot mutate `{}` through a readonly field path",
+                            field_name
+                        ),
+                        target.span,
+                    ));
+                    return;
+                }
+                // Direct check: is this specific field readonly?
+                let obj_ty = self.infer_expr_type(obj, scope);
+                if let Some(tr) = obj_ty {
+                    let type_name = match tr.strip_readonly() {
+                        TypeRef::Named { path, .. } => path.last().map(|s| s.as_str()),
+                        _ => None,
+                    };
+                    if let Some(tname) = type_name {
+                        if let Some(fields) = self.record_fields_for(tname) {
+                            if let Some(f) = fields.iter().find(|f| f.name == *field_name) {
+                                if f.readonly {
+                                    errors.push(Diagnostic::new(
+                                        format!(
+                                            "[E_READONLY_FIELD] cannot assign to readonly field `{}` of type `{}`",
+                                            field_name, tname
+                                        ),
+                                        target.span,
+                                    ));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            // D176: index write `arr[i] = x` — forbid if arr has readonly type.
+            ExprKind::Index { obj, .. } => {
+                let obj_ty = self.infer_expr_type(obj, scope);
+                if let Some(tr) = obj_ty {
+                    if tr.is_readonly() {
+                        errors.push(Diagnostic::new(
+                            "[E_READONLY_CONTENT] cannot write through index on readonly array".to_string(),
+                            target.span,
+                        ));
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    // ── End D175/D176 helpers ──────────────────────────────────────────────
 
     /// Ф.1: грубая категория типа. Alias/newtype разворачиваются —
     /// assignability сравнивает категории, не имена (newtype-cast
@@ -2320,6 +2463,8 @@ impl<'a> TypeCheckCtx<'a> {
             // любой concrete-тип не отвергался).
             TypeRef::Protocol { .. } => TyCat::Other,
             TypeRef::Unit(_) => TyCat::Unit,
+            // D176 (Plan 108): readonly T — same category as inner (transparent for assignability).
+            TypeRef::Readonly(inner, _) => self.cat_of_depth(inner, gs, depth + 1),
         }
     }
 }
@@ -2462,6 +2607,8 @@ fn typeref_display(tr: &TypeRef) -> String {
             format!("protocol {{ {} }}", sigs.join("; "))
         }
         TypeRef::Unit(_) => "()".to_string(),
+        // D176 (Plan 108): readonly T — display as "readonly T"
+        TypeRef::Readonly(inner, _) => format!("readonly {}", typeref_display(inner)),
     }
 }
 
@@ -5798,6 +5945,8 @@ fn render_type_ref(t: &TypeRef) -> String {
             format!("protocol {{ {} }}", sigs.join("; "))
         }
         TypeRef::Unit(_) => "()".to_string(),
+        // D176 (Plan 108): readonly T — display as "readonly T"
+        TypeRef::Readonly(inner, _) => format!("readonly {}", render_type_ref(inner)),
     }
 }
 
@@ -6021,6 +6170,8 @@ pub fn ty_of_ref(tr: &TypeRef) -> Ty {
         // (permissive); satisfaction-check выполняется отдельно.
         TypeRef::Protocol { .. } => Ty::Any,
         TypeRef::Unit(_) => Ty::Unit,
+        // D176 (Plan 108): readonly T — same Ty as inner (transparent).
+        TypeRef::Readonly(inner, _) => ty_of_ref(inner),
     }
 }
 
@@ -6066,6 +6217,8 @@ fn typeref_equal(a: &TypeRef, b: &TypeRef) -> bool {
                 && ea.iter().zip(eb.iter()).all(|(x, y)| typeref_equal(x, y))
         }
         (TypeRef::Unit(_), TypeRef::Unit(_)) => true,
+        // D176 (Plan 108): readonly T == readonly T if inner equal.
+        (TypeRef::Readonly(ia, _), TypeRef::Readonly(ib, _)) => typeref_equal(ia, ib),
         _ => false,
     }
 }
@@ -6377,6 +6530,8 @@ fn check_effect_axioms(module: &Module, errors: &mut Vec<Diagnostic>) {
                     format!("protocol{{{}}}", ms.join(";"))
                 }
                 TypeRef::Unit(_) => "()".to_string(),
+                // D176 (Plan 108): readonly T — key as "readonly_<inner>"
+                TypeRef::Readonly(inner, _) => format!("readonly_{}", type_key(inner)),
             }
         }
         fn op_sig(m: &EffectMethod) -> String {
@@ -11391,6 +11546,8 @@ fn typeref_render(t: &TypeRef) -> String {
         // coercion-диагностиках достаточно компактного маркера;
         // полный pretty-print — в `typeref_display`.
         TypeRef::Protocol { methods, .. } => format!("protocol {{...{} sigs}}", methods.len()),
+        // D176 (Plan 108): readonly T — display as "readonly T"
+        TypeRef::Readonly(inner, _) => format!("readonly {}", typeref_render(inner)),
     }
 }
 
