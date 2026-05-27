@@ -1,0 +1,45 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Plan 83.12: std/net/error.nv — typed network error enum.
+//
+// NetError is a sum type that categorises network failures. In the V1
+// bootstrap implementation, external functions return `Result[T, str]`
+// (erased representation). This enum is available for user code that
+// wants to construct or document error values. Future versions will use
+// typed Result[T, NetError] once the codegen supports non-erased generics.
+//
+// C backing: Nova_NetError struct + constructors pre-declared in net.h.
+// All variants are added to RUNTIME_DEFINED_TYPES in emit_c.rs so that
+// codegen skips re-emitting the struct.
+
+module net.error
+
+/// Network error returned by TCP/UDP operations.
+///
+/// # Variants
+///
+/// - `ConnectionRefused` — remote host actively refused the connection.
+/// - `AddressInUse` — the local address/port is already bound by another process.
+/// - `AddressNotAvailable` — the requested address cannot be used on this host.
+/// - `NotFound` — hostname not found / no route to host.
+/// - `Closed` — operation on a closed or half-closed socket.
+/// - `Cancelled` — operation was cancelled via a cancel token.
+/// - `TimedOut` — operation timed out before completion.
+/// - `BrokenPipe` — remote peer closed the connection while writing.
+/// - `IoError(str)` — OS-level I/O error with message.
+/// - `InvalidAddr(str)` — malformed socket address string.
+///
+/// # See Also
+///
+/// - `[TcpListener]`, `[TcpStream]`, `[UdpSocket]`
+#stable(since = "0.1")
+export type NetError
+    | ConnectionRefused
+    | AddressInUse
+    | AddressNotAvailable
+    | NotFound
+    | Closed
+    | Cancelled
+    | TimedOut
+    | BrokenPipe
+    | IoError(str)
+    | InvalidAddr(str)

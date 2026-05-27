@@ -1,0 +1,72 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Plan 83.12: write() after stream.close() → Err("stream closing").
+//
+// After close() is called, the stage CAS IDLE→CLOSING happens synchronously
+// before the deferred uv_close request is enqueued. So the very next call
+// to write() sees stage == CLOSING and returns Err immediately.
+//
+// ENV NOVA_AUTOARM=0
+// EXPECT_TIMEOUT_MS 30000
+
+module plan83_12.tcp_write_after_close_test
+
+test "TcpStream: write after close → Err" {
+    let lst_r = TcpListener.bind(SocketAddr.loopback(0))
+    assert(lst_r.is_ok())
+    let lst = lst_r.unwrap()
+    let port = lst.local_port()
+
+    let mut write_err = false
+    supervised {
+        spawn {
+            let acc_r = lst.accept()
+            assert(acc_r.is_ok())
+            let srv = acc_r.unwrap()
+            // Close immediately — stage → CLOSING.
+            srv.close()
+            // Write after close: stage == CLOSING → Err.
+            let r = srv.write("after_close")
+            write_err = r.is_err()
+            lst.close()
+        }
+        spawn {
+            let conn_r = TcpStream.connect(SocketAddr.loopback(port))
+            assert(conn_r.is_ok())
+            let cli = conn_r.unwrap()
+            // Hold connection alive briefly so server can accept.
+            Time.sleep(100)
+            cli.close()
+        }
+    }
+    assert(write_err)
+}
+
+test "TcpStream: read_bytes after close → Err" {
+    let lst_r = TcpListener.bind(SocketAddr.loopback(0))
+    assert(lst_r.is_ok())
+    let lst = lst_r.unwrap()
+    let port = lst.local_port()
+
+    let mut read_err = false
+    supervised {
+        spawn {
+            let acc_r = lst.accept()
+            assert(acc_r.is_ok())
+            let srv = acc_r.unwrap()
+            // Close immediately — stage → CLOSING.
+            srv.close()
+            // read_bytes after close: stage == CLOSING → Err.
+            let r = srv.read_bytes(512)
+            read_err = r.is_err()
+            lst.close()
+        }
+        spawn {
+            let conn_r = TcpStream.connect(SocketAddr.loopback(port))
+            assert(conn_r.is_ok())
+            let cli = conn_r.unwrap()
+            Time.sleep(100)
+            cli.close()
+        }
+    }
+    assert(read_err)
+}

@@ -1,0 +1,41 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Plan 83.12: TcpListener accepts multiple sequential connections.
+//
+// 3 clients connect sequentially (each in its own supervised block).
+// Verifies no leak or stall after repeated accept cycles.
+//
+// ENV NOVA_AUTOARM=0
+// EXPECT_TIMEOUT_MS 60000
+
+module plan83_12.tcp_multi_accept_test
+
+test "TcpListener: 3 sequential accepts" {
+    let lst_r = TcpListener.bind(SocketAddr.loopback(0))
+    assert(lst_r.is_ok())
+    let lst = lst_r.unwrap()
+    let port = lst.local_port()
+
+    let mut accepts = 0
+    let n = 3
+    let mut i = 0
+    while i < n {
+        supervised {
+            spawn {
+                let acc_r = lst.accept()
+                assert(acc_r.is_ok())
+                let srv = acc_r.unwrap()
+                accepts = accepts + 1
+                srv.close()
+            }
+            spawn {
+                let conn_r = TcpStream.connect(SocketAddr.loopback(port))
+                assert(conn_r.is_ok())
+                let cli = conn_r.unwrap()
+                cli.close()
+            }
+        }
+        i = i + 1
+    }
+    lst.close()
+    assert(accepts == n)
+}
