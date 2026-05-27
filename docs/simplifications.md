@@ -13229,6 +13229,24 @@ Merge: f79d4f28b5b; branch plan-100-2-generic-propagation → main.
   РїРѕРєР° РµСЃС‚СЊ РѕР¶РёРґР°СЋС‰РёР№ writer. РџСЂРµРґРѕС‚РІСЂР°С‰Р°РµС‚ writer starvation. Reader-priority
   вЂ” opt-in С‡РµСЂРµР· new_reader_priority().
 
+---
+
+## 2026-05-27 — Plan 103.4 Agent B — Barrier
+
+**Workaround в barrier_wait_with_action test 3 (вместо фикса кодгена):**
+Закодирован `parties - 1` через `AtomicInt.new(parties - 1)` (heap-объект)
+вместо прямого capture'а примитивного `int parties`. Underlying codegen
+bug в emit_c.rs: trailing-block env для примитивных captures внутри
+`parallel for` фибера эмитит `nova_int*` в struct, но присваивает
+`env->x = _c->x` (без `&`) — разыменование значения как указателя →
+access violation. Полноценный фикс отложен (требует разбора trailing-block
+emission в emit_c.rs).
+
+**Не фикшено:** `_nova_active_slot < 0` non-fiber spin-poll в `wait()` /
+`wait_with_action()` оставлен для test-scaffolding consistency
+(используется только при отсутствии fiber-context). Реальный use case
+требует fibers; non-fiber path — degraded fallback.
+
 ## Plan 103.4 (Agent C) — CountDownLatch (2026-05-27)
 
 - **include_str! compile-time embedding** — `sync.nv` вшивается в бинарник при
