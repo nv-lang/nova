@@ -407,6 +407,11 @@ pub struct FnDecl {
     /// None = no annotation (conservative: treated as Parks in realtime context).
     /// Stored in ExternalDecl for O(1) lookup during emit_call.
     pub sync_class: Option<SyncClass>,
+    /// Plan 100.5 (D163): `needs <Cap1>, <Cap2>` clause on `external fn`.
+    /// Declares which capabilities the FFI function requires. Empty = no
+    /// needs clause declared (used by type-checker to emit D163-missing-cap
+    /// when the function carries consume-obligations).
+    pub needs_caps: Vec<String>,
 }
 
 /// Plan 33.1 (D24): один контракт-clause функции.

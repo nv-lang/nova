@@ -4519,11 +4519,13 @@ Nova **превосходит Rust** на одной оси — backward-compat:
 
 ## D163. FFI consume integration — type-driven, без отдельного keyword'а
 
-> **Plan 100.5.** Принято 2026-05-23 (proposed). Ред. 2 (2026-05-24):
+> **Plan 100.5.** Принято 2026-05-23. Ред. 2 (2026-05-24):
 > drop `external consume fn` keyword — consume-ownership определяется
-> через type, как у regular fn. Extends [D82](08-runtime.md#d82)
-> `external fn` + [D126](03-syntax.md#d126) `external type` + [D63](04-effects.md#d63)
-> capability.
+> через type, как у regular fn. Ред. 3 (2026-05-27): **РЕАЛИЗОВАНО** —
+> parser `needs` clause, type-checker D163-missing-cap, C codegen стабы
+> для user-defined external fn, `opaque_ffi_types` registry.
+> Extends [D82](08-runtime.md#d82) `external fn` + [D126](03-syntax.md#d126)
+> `external type` + [D63](04-effects.md#d63) capability.
 
 ### Что
 

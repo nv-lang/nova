@@ -100,29 +100,36 @@ pub fn check_module(module: &Module) -> Result<ModuleEnv, Vec<Diagnostic>> {
         for item in entry_items {
             if let Item::Fn(fd) = item {
                 if fd.is_external {
-                    errors.push(Diagnostic::new(
-                        format!(
-                            "`external fn` is only allowed in `std.runtime.*` modules \
-                             (this module is `{}`); for FFI to external C libraries \
-                             a future `extern(\"C\")` keyword will be added (Q-ffi)",
-                            module.name.join(".")
-                        ),
-                        fd.span,
-                    ));
+                    // Plan 100.5 (D163): `external fn` with `needs <Cap>` clause is
+                    // allowed in any module — this is the D163 FFI contract mechanism
+                    // (replaces the future `extern("C")` keyword for consume-carrying
+                    // FFI functions). Without `needs_caps`, the D82 restriction still
+                    // applies (stdlib-only internal external fn).
+                    if fd.needs_caps.is_empty() {
+                        errors.push(Diagnostic::new(
+                            format!(
+                                "`external fn` is only allowed in `std.runtime.*` modules \
+                                 (this module is `{}`); for FFI to external C libraries \
+                                 use `external fn` with a `needs <Cap>` clause (D163), \
+                                 e.g. `needs Fs` for filesystem access",
+                                module.name.join(".")
+                            ),
+                            fd.span,
+                        ));
+                    }
                 }
             }
-            // Plan 62.D.bis (D126): `external type X` — same whitelist as
-            // `external fn` per D82. Only `std.runtime.*` / `std.prelude.*`
-            // modules can declare opaque types (runtime backing —
-            // compiler-versioned artefact, not user-extensible).
+            // Plan 62.D.bis (D126) + Plan 100.5 (D163): `external type X` with
+            // `consume` is allowed in any module (D163 FFI opaque consume-types).
+            // `external type X` without `consume` (plain opaque) remains stdlib-only
+            // (per D82 — opaque types backed by `nova_rt/*.h` are internal).
             if let Item::Type(td) = item {
-                if matches!(td.kind, TypeDeclKind::Opaque) {
+                if matches!(td.kind, TypeDeclKind::Opaque) && !td.consume {
                     errors.push(Diagnostic::new(
                         format!(
                             "`external type` is only allowed in `std.runtime.*` / `std.prelude.*` modules \
-                             (this module is `{}`); for FFI to external C libraries \
-                             a future `extern(\"C\") type` keyword will be added (Q-ffi). \
-                             See D126 (spec/decisions/03-syntax.md).",
+                             (this module is `{}`); for FFI opaque resource handles use \
+                             `external type X consume` (D163/D126), e.g. `external type File consume`.",
                             module.name.join(".")
                         ),
                         td.span,
@@ -415,6 +422,13 @@ pub fn check_module(module: &Module) -> Result<ModuleEnv, Vec<Diagnostic>> {
     // Plan 73 (D131): consume-qualifier flow-sensitive check. Use-after-
     // consume и maybe-consumed (consume на части веток) → compile error.
     check_consume(module, &mut errors);
+
+    // Plan 100.5 (D163): external fn returning / consuming consume-typed
+    // values MUST have a `needs <Cap>` clause. Missing clause → error
+    // D163-missing-cap. This enforces that FFI consume-obligations are
+    // explicitly capability-gated (no accidental resource leaks through
+    // uncapable contexts).
+    check_external_fn_needs_caps(module, &mut errors);
 
     // Plan 33.3 Р¤.9 (D24): validate axiom-bodies РІ effect-Р±Р»РѕРєР°С….
     // РљР°Р¶РґС‹Р№ axiom РґРѕР»Р¶РµРЅ СЃСЃС‹Р»Р°С‚СЊСЃСЏ С‚РѕР»СЊРєРѕ РЅР° binders + pure_view-ops
@@ -7066,6 +7080,58 @@ impl LinearityRegistry {
 /// - D133-empty-consume: `type X consume {}` без consume-полей и без
 ///   consume-методов.
 /// - D133-marker-on-non-consume: `consume f int` (non-consume type).
+/// Plan 100.5 (D163): verify that `external fn` declarations which return or
+/// consume-param a consume-typed value have a `needs <Cap>` clause.
+/// Missing clause → error [D163-missing-cap].
+///
+/// Rationale: FFI functions touching OS resources (file descriptors, mutexes,
+/// sockets) implicitly require a capability gate. Without `needs Fs` / `needs Sys`
+/// the FFI consume-obligation escapes into capabilityless contexts.
+///
+/// Only applied in non-stdlib modules (stdlib external fn pre-dates D163 and
+/// follows the D82 whitelist path — they don't have `needs_caps` but are
+/// stdlib-blessed).
+fn check_external_fn_needs_caps(module: &Module, errors: &mut Vec<Diagnostic>) {
+    let is_runtime = crate::manifest::is_stdlib_runtime_module(&module.name)
+        || crate::manifest::is_prelude_self_module(&module.name);
+    if is_runtime {
+        return; // stdlib external fn exempt from D163 needs-cap requirement.
+    }
+    let lin_reg = LinearityRegistry::build(module);
+    for item in &module.items {
+        let Item::Fn(fd) = item else { continue; };
+        if !fd.is_external { continue; }
+        // Only check external fn that pass the D82 whitelist extension (have needs_caps).
+        // External fn WITHOUT needs_caps already get a D82 error (not D163 error).
+        if !fd.needs_caps.is_empty() { continue; }
+        // External fn without needs_caps: check if it carries consume-obligations.
+        // If the return type is consume-typed → D163-missing-cap.
+        let returns_consume = fd.return_type.as_ref()
+            .map(|t| lin_reg.type_is_consume(t, module))
+            .unwrap_or(false);
+        // If any param is consume-typed (not just `consume` keyword — check type too).
+        // Note: `consume` keyword on param already implies ownership transfer;
+        // for external fn, the `consume` keyword on param IS the contract.
+        // The D163-missing-cap error only fires when the fn has a consume-typed
+        // return OR consume-typed param, indicating OS resource involvement.
+        let has_consume_param = fd.params.iter().any(|p|
+            p.consume || lin_reg.type_is_consume(&p.ty, module));
+        if returns_consume || has_consume_param {
+            errors.push(Diagnostic::new(
+                format!(
+                    "[D163-missing-cap] `external fn {}` returns or consumes a \
+                     consume-typed value but has no `needs <Cap>` clause. \
+                     Add `needs Fs` (filesystem), `needs Sys` (system), `needs Net` \
+                     (network), or another appropriate capability to declare the \
+                     resource contract. See D163 (spec/decisions/02-types.md).",
+                    fd.name
+                ),
+                fd.span,
+            ));
+        }
+    }
+}
+
 fn check_linearity_markers(
     module: &Module,
     reg: &LinearityRegistry,
