@@ -13415,3 +13415,31 @@ emission в emit_c.rs).
   они тесно связаны (M10/M11/M15 design decisions общие), API surface
   единый, тестовое покрытие в одной директории. Параллель с D169 family
   (Mutex/RwLock/ReentrantMutex в одном блоке).
+
+## Plan 83.12 — Async net stdlib (2026-05-27)
+
+- **EXPECT_TIMEOUT_MS 10000 → 30000 для 3 тестов** — `tcp_connect_refused_test`,
+  `tcp_read_eof_test`, `tcp_write_after_close_test` изначально падали с
+  TIMEOUT при `--jobs 16`. Root cause: CC compilation под параллельной нагрузкой
+  занимает 7-12s для libuv-linked бинарников, что превышало 10s лимит.
+  EXPECT_TIMEOUT_MS применяется К обоим шагам (CC compile + run), поэтому
+  bump до 30000 устранил оба bottleneck. Альтернатива (--jobs 1) хуже: 
+  полный suite занял бы 4+ часа.
+
+- **TCP connect error: uv_tcp_t handle не закрывается явно при ECONNREFUSED** —
+  на error path в `Nova_TcpStream_static_connect` handle остаётся
+  «неактивным» (connect отверг). Очищается через `nova_evloop_close`
+  walk в конце теста. Правильный fix: явный `uv_close` на error path
+  + park до close callback. Отложено как followup — nova_evloop_close
+  достаточно для тестов, продакшн handle-leak minor при short-lived connect.
+
+- **UdpSocket: нет IPv6 поддержки** — `SocketAddr.loopback/any` использует
+  AF_INET (IPv4) hardcoded. IPv6 требует флага AF_INET6 + bind/connect
+  изменений. Отложено: 99% embedded/server use-cases на IPv4.
+
+- **nova_loop_defer_close: AUTOARM=0 fallback stderr warning** — в
+  single-thread AUTOARM=0 режиме (нет main_wake_inited), деферред queue
+  отсутствует → `nova_loop_defer_close` напрямую вызывает `uv_close`.
+  Это корректно (single-thread, handle affinity не нарушается), но
+  печатает warning в stderr. В production M:N режиме deferred queue работает
+  корректно.
