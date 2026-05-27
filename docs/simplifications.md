@@ -26938,3 +26938,36 @@ preserved для diagnostic counters reuse (Ф.A.1 work valid as instrumentation
 5 планов в той же зоне = architectural signal, не цепочка случайных багов.
 Tokio переписали свой runtime ровно по этой причине. Мы не должны повторять
 3 годов patchинга — берём их урок сразу.
+
+---
+
+## Plan 90.1 — []T extend-family API design decisions (2026-05-27)
+
+**copy_from strict semantics (breaking change):**
+Прежняя гибридная семантика (src > dst → panic, src < dst → silent truncation)
+хуже всех 5 эталонных языков. Ни один не имеет такой комбинации. Strict equal-only
++ memmove = проще для понимания, overlap-safe, паритет Rust copy_from_slice.
+Truncation use-case покрыт через D144 slicing: dst[..n].copy_from(src[..n]).
+
+**extend_from self-extend safety:**
+Snapshot src_data/src_len ПЕРЕД realloc. После realloc dst->data = новый буфер,
+но src_data ещё указывает на старый (Boehm GC не освобождает мгновенно).
+memmove(dst->data + dst->len, src_data, src_len * sizeof) → корректно.
+Альтернатива (snapshot весь массив) = лишняя аллокация, не нужна.
+
+**insert_from alloc-path vs in-place:**
+In-place (без realloc): memmove tail [i,len) вправо + memmove src → hole.
+Alloc-path (с realloc): два memcpy (prefix + tail) + memcpy src → hole.
+Почему два пути: alloc-path не имеет overlapping ranges (prefix, src, tail — разные буферы),
+поэтому memcpy безопасен и быстрее. In-place — memmove для безопасности tail overlap.
+
+**reserve forward-declarations:**
+nv_panic_insert_oob и nv_panic_negative_reserve используются ВНУТРИ NOVA_ARRAY_IMPL
+macro, которое разворачивается ДО определений этих функций в array.h.
+Паттерн: forward-declarations в nova_rt.h перед #include "array.h" (см. аналог nv_panic_slice_oob).
+
+**W_VIEW_EXTEND_DETACH lint scope:**
+Lint отслеживает PARENT (не view), в отличие от W_VIEW_PUSH_DETACH (отслеживает view).
+Причина: grow-метод вызывается на parent, а не на view.
+Module-level suppress через #allow(view_extend_detach) — не per-binding,
+т.к. per-binding attributes требуют generic attribute parser (deferred).
