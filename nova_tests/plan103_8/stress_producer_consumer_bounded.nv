@@ -1,0 +1,130 @@
+// Plan 103.8 Ð²Ð‚â€ Stress: bounded producer/consumer buffer.
+//
+// Bounded buffer via Mutex+Condvar:
+// 4 producers + 4 consumers Ð“â€” 500 items each = 2000 total.
+// Property: total_consumed == total_produced == 2000; no item lost.
+//
+// Uses standard Mutex+Condvar wait pattern (explicit while+wait for
+// condvar codegen compatibility, as documented in condvar_producer_consumer).
+//
+// EXPECT_TIMEOUT_MS 300000
+
+module nova_tests.plan103_8.stress_producer_consumer_bounded
+
+test "bounded buffer: 4 producers + 4 consumers Ð“â€” 500 items Ð²Ð‚â€ no item lost" {
+    let mu           = Mutex.new()
+    let not_empty    = Condvar.new()
+    let not_full     = Condvar.new()
+    let pending      = AtomicI64.new(0)  // items in buffer (bounded by cap=8)
+    let total_prod   = AtomicI64.new(0)
+    let total_cons   = AtomicI64.new(0)
+    let cap          = 8   // buffer capacity
+    let items_each   = 500 // items per producer/consumer
+    let n_prod       = 4
+    let n_cons       = 4
+
+    let wg = WaitGroup.new()
+    wg.add(n_prod + n_cons)
+
+    supervised {
+        // 4 consumer fibers
+        for _c in 0..n_cons {
+            spawn {
+                for _i in 0..items_each {
+                    mu.lock()
+                    // Wait until buffer non-empty
+                    while pending.load() <= 0 {
+                        not_empty.wait(mu)
+                    }
+                    pending.fetch_add(-1)
+                    total_cons.fetch_add(1)
+                    not_full.notify_one()
+                    mu.unlock()
+                }
+                wg.done()
+            }
+        }
+
+        // 4 producer fibers
+        for _p in 0..n_prod {
+            spawn {
+                for _i in 0..items_each {
+                    mu.lock()
+                    // Wait until buffer not full
+                    while pending.load() >= cap {
+                        not_full.wait(mu)
+                    }
+                    pending.fetch_add(1)
+                    total_prod.fetch_add(1)
+                    not_empty.notify_one()
+                    mu.unlock()
+                }
+                wg.done()
+            }
+        }
+
+        wg.wait()
+    }
+
+    assert(total_prod.load() == n_prod * items_each,
+        "total produced must equal n_prod * items_each (2000)")
+    assert(total_cons.load() == n_cons * items_each,
+        "total consumed must equal n_cons * items_each (2000)")
+    assert(total_prod.load() == total_cons.load(),
+        "produced == consumed: no item lost")
+    assert(pending.load() == 0,
+        "buffer must be empty after all consumers done")
+}
+
+test "bounded buffer: 2 producers + 2 consumers Ð“â€” 100 items Ð²Ð‚â€ ordering relaxed, no loss" {
+    let mu         = Mutex.new()
+    let not_empty  = Condvar.new()
+    let not_full   = Condvar.new()
+    let pending    = AtomicI64.new(0)
+    let produced   = AtomicI64.new(0)
+    let consumed   = AtomicI64.new(0)
+    let cap        = 4
+    let items_each = 100
+    let wg         = WaitGroup.new()
+    wg.add(4)
+
+    supervised {
+        for _c in 0..2 {
+            spawn {
+                for _i in 0..items_each {
+                    mu.lock()
+                    while pending.load() <= 0 {
+                        not_empty.wait(mu)
+                    }
+                    pending.fetch_add(-1)
+                    consumed.fetch_add(1)
+                    not_full.notify_one()
+                    mu.unlock()
+                }
+                wg.done()
+            }
+        }
+
+        for _p in 0..2 {
+            spawn {
+                for _i in 0..items_each {
+                    mu.lock()
+                    while pending.load() >= cap {
+                        not_full.wait(mu)
+                    }
+                    pending.fetch_add(1)
+                    produced.fetch_add(1)
+                    not_empty.notify_one()
+                    mu.unlock()
+                }
+                wg.done()
+            }
+        }
+
+        wg.wait()
+    }
+
+    assert(produced.load() == 2 * items_each)
+    assert(consumed.load() == 2 * items_each)
+    assert(produced.load() == consumed.load())
+}
