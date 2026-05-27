@@ -39,12 +39,6 @@ export external fn str @rfind(needle str) -> Option[int]
 // Codepoint по индексу (codepoint-indexed). None при OOB.
 export external fn str @char_at(idx int) -> Option[char]
 
-// Plan 96.1: метод @slice удалён в пользу bracket-формы `s[a..b]`
-// (D9 «один очевидный путь»; D144 / Plan 96 D-str-slice).
-// `s[a..b]` — codepoint-indexed view, **panic** при OOB (consistent
-// с `arr[a..b]`). Convergence с Rust/Go/Swift/Python (bracket-only).
-// Старая clamp-семантика удалена (closes [P-str-slice-clamp-vs-panic]).
-
 // Убирает whitespace с начала и конца.
 export external fn str @trim() -> str
 
@@ -86,4 +80,33 @@ export external fn str @chars() -> []char
 
 // Split по separator. Eager в bootstrap.
 export external fn str @split(sep str) -> []str
+
+// Parse decimal int с optional ±-prefix. None при error (empty, non-digit, overflow). Caller отвечает за .trim().
+export external fn str @parse_int() -> Option[int]
+
+// Parse int с указанной base (2..36). Digits 0-9, a-z (case-insensitive). None при error.
+export external fn str @parse_int_radix(radix int) -> Option[int]
+
+// Pad строку слева до width codepoints символом fill. Если width <= len — возвращает s.
+export fn str @pad_left(width int, fill char) -> str {
+    let pad = width - @len()
+    if pad <= 0 { return @ }
+    StringBuilder.with_capacity(width).append_repeat(str.from(fill), pad).append(@).into()
+}
+
+// Pad строку справа до width codepoints символом fill. Если width <= len — возвращает s.
+export fn str @pad_right(width int, fill char) -> str {
+    let pad = width - @len()
+    if pad <= 0 { return @ }
+    StringBuilder.with_capacity(width).append(@).append_repeat(str.from(fill), pad).into()
+}
+
+// Повторение строки n раз. n <= 0 → пустая строка.
+export fn str @repeat(n int) -> str {
+    if n <= 0 { return "" }
+    StringBuilder.with_capacity(@byte_len() * n).append_repeat(@, n).into()
+}
+
+// Заменить все non-overlapping occurrences `from` на `to`. Empty `from` → возвращает s unchanged.
+export fn str @replace(from str, to str) -> str => @split(from).join(to)
 

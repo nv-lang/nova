@@ -1,0 +1,45 @@
+// std/text.nv — text utilities supplementing std.runtime.string (Plan 91 Ф.2).
+//
+// Этот module добавляет high-level text utilities, которые не входят в
+// runtime_registry (бывшие external fn в std.runtime.string), но
+// необходимы для realistic CLI/data-utility use-cases в 0.1 release.
+//
+// MVP surface (Plan 91 §Scope):
+//   - `[]str @join(sep str) -> str` — concat array of strings с разделителем.
+//
+// Базовые str методы (split/trim/pad/parse/repeat/replace/to_upper/to_lower/
+// len/byte_at/chars/bytes/find/rfind/contains/starts_with/ends_with) живут
+// в `std/runtime/string.nv` (auto-gen из runtime_registry).
+//
+// Stability: 0.1 поверхность стабильна — добавление новых утилит не breaking.
+
+module std.text
+
+
+/// Concatenate `[]str` через `sep`. Empty array → пустая строка.
+///
+/// O(total_len) — single pass с предварительным расчётом final size.
+/// V1 simple: используем `str.@plus` (concat) внутри loop. Для крупных
+/// arrays — followup `[text-join-buffered]` с string_builder.
+///
+/// # Examples
+/// ```nova
+/// let parts []str = ["a", "b", "c"]
+/// assert(parts.join(", ") == "a, b, c")
+/// assert([].join(",") == "")
+/// assert(["x"].join(",") == "x")
+/// ```
+#stable(since = "0.1")
+export fn []str @join(sep str) -> str {
+    let n = @len()
+    if n == 0 {
+        return ""
+    }
+    let mut result = @[0]
+    let mut i = 1
+    while i < n {
+        result = result + sep + @[i]
+        i = i + 1
+    }
+    result
+}

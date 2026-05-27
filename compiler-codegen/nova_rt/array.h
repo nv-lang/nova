@@ -846,4 +846,62 @@ static inline void nv_panic_slice_oob(nova_int from, nova_int to, nova_int len) 
     nv_panic((nova_str){ .ptr = buf, .len = (size_t)n });
 }
 
+/* Plan 91 Ф.2: nova_str_parse_int — parse decimal int с optional ±-prefix.
+ * Returns Some(n) на успех, None при error (empty, non-digit, overflow).
+ * Bootstrap V1: только decimal base 10. Для других баз — parse_int_radix.
+ * Whitespace НЕ trim'ится автоматически — caller должен .trim() сначала. */
+static inline NovaOpt_nova_int nova_str_parse_int(nova_str s) {
+    NovaOpt_nova_int r;
+    r.tag = NOVA_TAG_Option_None;
+    r.value = 0;
+    if (s.len == 0) return r;
+    size_t i = 0;
+    int neg = 0;
+    if (s.ptr[0] == '-') { neg = 1; i = 1; }
+    else if (s.ptr[0] == '+') { i = 1; }
+    if (i >= s.len) return r;  /* "-" / "+" alone */
+    nova_int acc = 0;
+    for (; i < s.len; i++) {
+        char c = s.ptr[i];
+        if (c < '0' || c > '9') return r;
+        nova_int d = (nova_int)(c - '0');
+        /* Overflow check: acc * 10 + d > INT64_MAX. */
+        if (acc > (9223372036854775807LL - d) / 10) return r;
+        acc = acc * 10 + d;
+    }
+    r.tag = NOVA_TAG_Option_Some;
+    r.value = neg ? -acc : acc;
+    return r;
+}
+
+/* Plan 91 Ф.2: nova_str_parse_int_radix — parse int с указанной базой
+ * (2..36). Digits 0-9, a-z (case-insensitive). Bootstrap V1: без
+ * underscore-separator (`1_000`); добавим в followup. */
+static inline NovaOpt_nova_int nova_str_parse_int_radix(nova_str s, nova_int radix) {
+    NovaOpt_nova_int r;
+    r.tag = NOVA_TAG_Option_None;
+    r.value = 0;
+    if (s.len == 0 || radix < 2 || radix > 36) return r;
+    size_t i = 0;
+    int neg = 0;
+    if (s.ptr[0] == '-') { neg = 1; i = 1; }
+    else if (s.ptr[0] == '+') { i = 1; }
+    if (i >= s.len) return r;
+    nova_int acc = 0;
+    for (; i < s.len; i++) {
+        char c = s.ptr[i];
+        nova_int d;
+        if (c >= '0' && c <= '9') d = (nova_int)(c - '0');
+        else if (c >= 'a' && c <= 'z') d = (nova_int)(c - 'a' + 10);
+        else if (c >= 'A' && c <= 'Z') d = (nova_int)(c - 'A' + 10);
+        else return r;
+        if (d >= radix) return r;
+        if (acc > (9223372036854775807LL - d) / radix) return r;
+        acc = acc * radix + d;
+    }
+    r.tag = NOVA_TAG_Option_Some;
+    r.value = neg ? -acc : acc;
+    return r;
+}
+
 #endif /* NOVA_RT_ARRAY_H */

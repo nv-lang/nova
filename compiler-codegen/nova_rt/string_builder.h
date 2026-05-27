@@ -298,6 +298,109 @@ static inline Nova_Result* Nova_str_static_try_from_bytes(NovaArray_nova_byte* a
     return nova_make_Result_Ok((nova_int)(intptr_t)nova_box_str(s));
 }
 
+/* Plan 91 Ф.2: @append_repeat(s str, n int) -> Self
+ * Append строку s ровно n раз. n <= 0 → no-op. O(n * |s|) одним
+ * reserve + n*memcpy — эффективнее чем n вызовов append_str.
+ * Используется в Nova-реализации str @repeat и str @pad_left/pad_right. */
+static inline Nova_StringBuilder* Nova_StringBuilder_method_append_repeat(
+        Nova_StringBuilder* b, nova_str s, nova_int n) {
+    _nova_string_builder_check_live(b);
+    if (n <= 0 || s.len == 0) return b;
+    _nova_string_builder_reserve(b, (int64_t)n * (int64_t)s.len);
+    for (nova_int i = 0; i < n; i++) {
+        memcpy(b->data + b->len, s.ptr, s.len);
+        b->len += (int64_t)s.len;
+    }
+    return b;
+}
+
+/* Plan 91 Ф.2: @truncate(len int) -> Self
+ * Обрезать буфер до `len` байт. Если len >= byte_len — no-op.
+ * len < 0 → трактуется как 0 (пустой буфер). Не realloc'ает.
+ * ВАЖНО: truncate по байтам, не codepoints — caller отвечает за
+ * то что граница не рвёт UTF-8 sequence. */
+static inline Nova_StringBuilder* Nova_StringBuilder_method_truncate(
+        Nova_StringBuilder* b, nova_int len) {
+    _nova_string_builder_check_live(b);
+    if (len < 0) len = 0;
+    if ((int64_t)len < b->len) b->len = (int64_t)len;
+    return b;
+}
+
+/* Plan 91 Ф.2: @append_bytes(arr []u8) -> Self
+ * Append raw bytes из []u8. Caller отвечает за UTF-8 validity —
+ * no validation performed (zero-copy path для performance-critical ops). */
+static inline Nova_StringBuilder* Nova_StringBuilder_method_append_bytes(
+        Nova_StringBuilder* b, NovaArray_nova_byte* arr) {
+    _nova_string_builder_check_live(b);
+    if (!arr || arr->len == 0) return b;
+    _nova_string_builder_reserve(b, arr->len);
+    memcpy(b->data + b->len, arr->data, (size_t)arr->len);
+    b->len += arr->len;
+    return b;
+}
+
+/* Plan 91 Ф.2: str @repeat / @replace / @pad_left / @pad_right.
+ * Nova-first: nova_body в runtime_registry описывает Nova-семантику.
+ * C-реализации здесь используют append_repeat как примитив. */
+
+static inline nova_str nova_str_repeat(nova_str s, nova_int n) {
+    if (n <= 0 || s.len == 0) return (nova_str){ "", 0 };
+    Nova_StringBuilder* sb = Nova_StringBuilder_static_with_capacity((nova_int)((int64_t)n * (int64_t)s.len));
+    Nova_StringBuilder_method_append_repeat(sb, s, n);
+    return Nova_StringBuilder_method_into(sb);
+}
+
+static inline nova_str nova_str_replace(nova_str s, nova_str from, nova_str to) {
+    if (from.len == 0 || s.len == 0) return s;
+    size_t count = 0, i = 0;
+    while (i + from.len <= s.len) {
+        if (memcmp(s.ptr + i, from.ptr, from.len) == 0) { count++; i += from.len; }
+        else i++;
+    }
+    if (count == 0) return s;
+    size_t out_len = s.len - count * from.len + count * to.len;
+    Nova_StringBuilder* sb = Nova_StringBuilder_static_with_capacity((nova_int)(out_len + 1));
+    size_t src = 0;
+    while (src + from.len <= s.len) {
+        if (memcmp(s.ptr + src, from.ptr, from.len) == 0) {
+            Nova_StringBuilder_method_append_str(sb, to);
+            src += from.len;
+        } else {
+            Nova_StringBuilder_method_append_str(sb, (nova_str){ s.ptr + src, 1 });
+            src++;
+        }
+    }
+    if (src < s.len)
+        Nova_StringBuilder_method_append_str(sb, (nova_str){ s.ptr + src, s.len - src });
+    return Nova_StringBuilder_method_into(sb);
+}
+
+static inline nova_str nova_str_pad_left(nova_str s, nova_int width, nova_int fill) {
+    nova_int pad = width - nova_str_char_len(s);
+    if (pad <= 0) return s;
+    /* UTF-8 encode fill codepoint inline (1-4 байта). */
+    nova_byte fill_buf[4];
+    int fill_len = _nova_utf8_encode(fill_buf, fill);
+    nova_str fill_str = { (const char*)fill_buf, (size_t)fill_len };
+    Nova_StringBuilder* sb = Nova_StringBuilder_static_with_capacity(width);
+    Nova_StringBuilder_method_append_repeat(sb, fill_str, pad);
+    Nova_StringBuilder_method_append_str(sb, s);
+    return Nova_StringBuilder_method_into(sb);
+}
+
+static inline nova_str nova_str_pad_right(nova_str s, nova_int width, nova_int fill) {
+    nova_int pad = width - nova_str_char_len(s);
+    if (pad <= 0) return s;
+    nova_byte fill_buf[4];
+    int fill_len = _nova_utf8_encode(fill_buf, fill);
+    nova_str fill_str = { (const char*)fill_buf, (size_t)fill_len };
+    Nova_StringBuilder* sb = Nova_StringBuilder_static_with_capacity(width);
+    Nova_StringBuilder_method_append_str(sb, s);
+    Nova_StringBuilder_method_append_repeat(sb, fill_str, pad);
+    return Nova_StringBuilder_method_into(sb);
+}
+
 /* str.from(c char) — UTF-8 encode 1-4 bytes из codepoint в новый nova_str.
  * Размещён здесь т.к. использует _nova_utf8_encode. */
 static inline nova_str Nova_str_static_from_char(nova_int cp) {

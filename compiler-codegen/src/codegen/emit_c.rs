@@ -23480,6 +23480,11 @@ _cp++; \
                 => Some("nova_byte"),
             "find" | "rfind"
                 => Some("NovaOpt_nova_int"),
+            // Plan 91 Ф.2: text MVP methods.
+            "parse_int" | "parse_int_radix"
+                => Some("NovaOpt_nova_int"),
+            "pad_left" | "pad_right" | "repeat" | "replace"
+                => Some("nova_str"),
             // Iter[T] / NovaArray возврат — пока не критично для bool-check.
             _ => None,
         }
@@ -23514,6 +23519,16 @@ _cp++; \
             "char_at"     => Some("nova_str_char_at"),
             "split"       => Some("nova_str_split"),
             "byte_at"     => Some("nova_str_byte_at"),  // Plan 90
+            // Plan 91 Ф.2: text MVP methods.
+            // parse_int/parse_int_radix — C-примитивы (byte-level).
+            // pad_left / pad_right / repeat / replace — C-обёртки через StringBuilder.append_repeat
+            // (nova_body в registry описывает Nova-семантику; C-impl в nova_rt.h использует тот же алгоритм).
+            "parse_int"       => Some("nova_str_parse_int"),
+            "parse_int_radix" => Some("nova_str_parse_int_radix"),
+            "pad_left"        => Some("nova_str_pad_left"),
+            "pad_right"       => Some("nova_str_pad_right"),
+            "repeat"          => Some("nova_str_repeat"),
+            "replace"         => Some("nova_str_replace"),
             _ => None,
         }
     }
@@ -25689,6 +25704,9 @@ _cp++; \
                             "chars" => "NovaArray_nova_char*".into(),
                             // s.split(sep) → []str (Iter[str] eager в bootstrap).
                             "split" => "NovaArray_nova_str*".into(),
+                            // Plan 91 Ф.2: text MVP methods.
+                            "parse_int" | "parse_int_radix" => "NovaOpt_nova_int".into(),
+                            "pad_left" | "pad_right" | "repeat" | "replace" => "nova_str".into(),
                             _ => "nova_int".into(),
                         };
                     }
