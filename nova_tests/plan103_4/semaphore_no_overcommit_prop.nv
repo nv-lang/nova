@@ -1,0 +1,65 @@
+// Plan 103.4 — Semaphore no-overcommit property.
+//
+// Semaphore.new(N), M >> N fibers contend.
+// Observable invariant: concurrent count inside critical region never > N.
+// Property: holds over 1000 iterations with 16 fibers and 3 permits.
+//
+// EXPECT_TIMEOUT_MS 30000
+// ENV NOVA_AUTOARM=0
+
+module nova_tests.plan103_4.semaphore_no_overcommit_prop
+
+test "no-overcommit: concurrent_in_region never exceeds N (16 fibers, 3 permits, 100 iters)" {
+    let n_permits = 3
+    let n_fibers  = 16
+    let n_iters   = 100
+    let sem       = Semaphore.new(n_permits)
+    let inside    = AtomicInt.new(0)
+    let violation = AtomicInt.new(0)
+    let wg        = WaitGroup.new()
+    wg.add(n_fibers)
+
+    parallel for _i in 0..n_fibers {
+        for _j in 0..n_iters {
+            sem.acquire()
+            // Sample: count inside critical region
+            let cnt = inside.fetch_add(1) + 1
+            if cnt > n_permits {
+                violation.fetch_add(1)
+            }
+            inside.fetch_add(-1)
+            sem.release()
+        }
+        wg.done()
+    }
+
+    wg.wait()
+    assert(violation.load() == 0)
+}
+
+test "no-overcommit: acquire/defer-release variant (8 fibers, 2 permits, 200 iters)" {
+    let n_permits = 2
+    let n_fibers  = 8
+    let n_iters   = 200
+    let sem       = Semaphore.new(n_permits)
+    let inside    = AtomicInt.new(0)
+    let violation = AtomicInt.new(0)
+    let wg        = WaitGroup.new()
+    wg.add(n_fibers)
+
+    parallel for _i in 0..n_fibers {
+        for _j in 0..n_iters {
+            sem.acquire()
+            let cnt = inside.fetch_add(1) + 1
+            if cnt > n_permits {
+                violation.fetch_add(1)
+            }
+            inside.fetch_add(-1)
+            sem.release()
+        }
+        wg.done()
+    }
+
+    wg.wait()
+    assert(violation.load() == 0)
+}

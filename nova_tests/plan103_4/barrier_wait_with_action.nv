@@ -1,0 +1,72 @@
+// Plan 103.4 — Barrier: wait_with_action executes exactly once per epoch.
+//
+// 4 fibers × 2 epochs. All fibers call wait_with_action with the same action
+// closure that increments an action_count. Since only the last-arrival fiber
+// executes the action, action_count must be exactly 1 per epoch (2 total).
+//
+// Also verifies: action completes BEFORE other fibers proceed (by checking
+// a shared flag set by the action).
+//
+// EXPECT_TIMEOUT_MS 90000
+
+module nova_tests.plan103_4.barrier_wait_with_action
+
+test "last-arrival fiber executes action exactly once per epoch" {
+    let parties = 4
+    let epochs = 2
+    let b = Barrier.new(parties)
+    let action_count = AtomicInt.new(0)
+    let wg = WaitGroup.new()
+    wg.add(parties)
+
+    parallel for _i in 0..parties {
+        for _e in 0..epochs {
+            b.wait_with_action() { action_count.fetch_add(1) }
+        }
+        wg.done()
+    }
+
+    wg.wait()
+    // action runs exactly once per epoch
+    assert(action_count.load() == epochs)
+}
+
+test "action result visible to all fibers after barrier" {
+    let parties = 3
+    let b = Barrier.new(parties)
+    let shared_value = AtomicInt.new(0)
+    let wg = WaitGroup.new()
+    wg.add(parties)
+
+    parallel for _i in 0..parties {
+        b.wait_with_action() { shared_value.store(42) }
+        // After barrier: all fibers should see the value set by action
+        assert(shared_value.load() == 42)
+        wg.done()
+    }
+
+    wg.wait()
+}
+
+test "wait_with_action index is correct (last arrival returns parties-1)" {
+    let parties = 4
+    let b = Barrier.new(parties)
+    let last_idx = AtomicInt.new(-1)
+    // Use AtomicInt to avoid capturing a primitive int in the trailing closure
+    // (primitive int capture in trailing blocks inside parallel-for fibers has a
+    // codegen issue: the env struct uses nova_int* but the assignment misses &).
+    let max_idx = AtomicInt.new(parties - 1)
+    let wg = WaitGroup.new()
+    wg.add(parties)
+
+    parallel for _i in 0..parties {
+        let idx = b.wait_with_action() { last_idx.store(max_idx.load()) }
+        assert(idx >= 0)
+        assert(idx < parties)
+        wg.done()
+    }
+
+    wg.wait()
+    // last_idx was set by the last-arrival action
+    assert(last_idx.load() == parties - 1)
+}

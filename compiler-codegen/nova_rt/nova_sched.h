@@ -110,7 +110,22 @@ static inline void nova_sched_park(NovaFiberQueue* scope, int slot) {
         abort();
     }
     NovaSchedState* st = nova_sched_get_state(scope);
-    st->parked[slot] = true;
+    /* SEQ_CST store: on x86 compiles to XCHG (full fence = mfence + store),
+     * draining the CPU store buffer so that cross-thread wakers reading
+     * parked[slot] via CAS (ACQ_REL) always see the true value.
+     *
+     * Why SEQ_CST and not RELEASE:
+     *   __ATOMIC_RELEASE on GCC/Clang/MSVC x86 compiles to a plain MOV —
+     *   a compiler-only barrier with no hardware fence instruction.  The store
+     *   goes into the CPU store buffer and may not be globally visible for
+     *   several cycles.  A concurrent waker on another core can read the
+     *   stale false value, its CAS fails, dispatch_ready is never called,
+     *   and the fiber remains parked forever (deadlock).
+     *
+     *   __ATOMIC_SEQ_CST emits XCHG on x86 (implicit LOCK prefix = full
+     *   serialising fence).  The store buffer is drained before the
+     *   instruction completes, guaranteeing global visibility. */
+    __atomic_store_n((volatile bool*)&st->parked[slot], true, __ATOMIC_SEQ_CST);
     mco_coro* co = mco_running();
     if (!co) {
         fprintf(stderr, "nova: nova_sched_park: not in fiber context\n");
@@ -153,7 +168,12 @@ static inline void nova_sched_park_with_unlock(NovaFiberQueue* scope, int slot,
         abort();
     }
     NovaSchedState* st = nova_sched_get_state(scope);
-    st->parked[slot] = true;
+    /* SEQ_CST store: emits XCHG on x86 (full fence — drains store buffer).
+     * Identical rationale to nova_sched_park above: RELEASE is a plain MOV
+     * on x86 and may leave the store in the CPU store buffer, causing a
+     * concurrent waker's CAS to see stale false → no dispatch → deadlock.
+     * SEQ_CST guarantees the store is globally visible before this returns. */
+    __atomic_store_n((volatile bool*)&st->parked[slot], true, __ATOMIC_SEQ_CST);
     mco_coro* co = mco_running();
     if (!co) {
         fprintf(stderr, "nova: nova_sched_park_with_unlock: not in fiber context\n");

@@ -2246,10 +2246,10 @@ static inline nova_unit nova_fn_fence(Nova_MemOrdering* ord) {
 }
 
 /* === PLAN-103.4 PARALLEL INCLUDES (alphabetical, uncomment in own branch) === */
-/* AGENT-B */  /* #include "sync_barrier.h"          */
-/* AGENT-D */  /* #include "sync_condvar.h"          */
-/* AGENT-C */  /* #include "sync_countdown_latch.h"  */
-/* AGENT-A */  /* #include "sync_semaphore.h"        */
+/* AGENT-B */  #include "sync_barrier.h"
+/* AGENT-D */  #include "sync_condvar.h"
+/* AGENT-C */  #include "sync_countdown_latch.h"
+/* AGENT-A */  #include "sync_semaphore.h"
 /* === END PLAN-103.4 PARALLEL INCLUDES === */
 
 #endif /* NOVA_RT_SYNC_PRIMITIVES_H */

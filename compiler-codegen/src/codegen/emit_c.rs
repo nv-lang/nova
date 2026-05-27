@@ -1596,10 +1596,10 @@ impl CEmitter {
                 "AtomicU8", "AtomicU16", "AtomicU32", "AtomicU64",
                 "AtomicIsize", "AtomicUsize", "AtomicPtr",
                 // === PLAN-103.4 PREDECLARED TYPES (alphabetical, parallel-agent) ===
-                // /* AGENT-B */ "Barrier",
-                // /* AGENT-D */ "Condvar", "WaitResult",
-                // /* AGENT-C */ "CountDownLatch",
-                // /* AGENT-A */ "Semaphore",
+                /* AGENT-B */ "Barrier",
+                /* AGENT-D */ "Condvar", "WaitResult",
+                /* AGENT-C */ "CountDownLatch",
+                /* AGENT-A */ "Semaphore",
                 // === END PLAN-103.4 PREDECLARED TYPES ===
             ];
             for name in external_names {
@@ -7326,6 +7326,10 @@ impl CEmitter {
             // C struct + 4 constructors (Fresh/Running/Done/Poisoned) live there.
             // sum_schemas populated below for pattern matching support.
             "OnceState",
+            // Plan 103.4: WaitResult pre-declared in sync_condvar.h.
+            // C struct + 2 constructors (Notified/TimedOut) live there.
+            // sum_schemas populated via 1a1b ExternalRegistry type_decls path.
+            "WaitResult",
         ];
         if RUNTIME_DEFINED_TYPES.contains(&t.name.as_str()) {
             // Plan 62.A: skip emission — C struct + constructors живут в
@@ -16953,6 +16957,26 @@ _cp++; \
                                                 .all(|(w, g)| w == g))
                                 };
                                 if let Some(decl) = chosen {
+                                    // Plan 103.4: W_REENTRANT_CONDVAR_RECOMMEND — Condvar.wait(ReentrantMutex).
+                                    // Fires when arg type is Nova_ReentrantMutex* (inferred C type).
+                                    // Design: wait() releases ALL lock levels, re-acquires as count=1.
+                                    // This is intentional (Java-pitfall-aware) but unexpected by users
+                                    // who might expect the original lock_count to be restored.
+                                    if recv_ty == "Condvar" && method == "wait"
+                                        && !arg_types.is_empty()
+                                        && arg_types[0] == "Nova_ReentrantMutex*"
+                                    {
+                                        self.warnings.borrow_mut().push(
+                                            "[W_REENTRANT_CONDVAR_RECOMMEND] \
+                                             `Condvar.wait(ReentrantMutex)` releases ALL recursive \
+                                             lock levels (lock_count \u{2192} 0) and re-acquires as \
+                                             count=1 on wake — original lock depth is NOT restored \
+                                             (Java-pitfall-aware design, Plan 103.4 \u{00a7}F.4). \
+                                             Consider using `Mutex` with `Condvar` for simpler \
+                                             semantics; or explicitly document the lock-depth contract."
+                                            .to_string()
+                                        );
+                                    }
                                     // Plan 103.5: deprecation warning for Once.run / Once.done.
                                     // Placed here (external_registry dispatch) because run/done
                                     // route through this path, not the method_receivers path.
@@ -16986,20 +17010,20 @@ _cp++; \
                                                 || method == "with_lock"))
                                         // === PLAN-103.4 REALTIME-BLOCKING (alphabetical, parallel-agent) ===
                                         // AGENT-B (Barrier):
-                                        //   || (recv_ty == "Barrier"
-                                        //       && (method == "wait" || method == "wait_with_action"
-                                        //           || method == "wait_for"))
+                                        || (recv_ty == "Barrier"
+                                            && (method == "wait" || method == "wait_with_action"
+                                                || method == "wait_for"))
                                         // AGENT-D (Condvar):
-                                        //   || (recv_ty == "Condvar"
-                                        //       && (method == "wait" || method == "wait_for"
-                                        //           || method == "wait_until"))
+                                        || (recv_ty == "Condvar"
+                                            && (method == "wait" || method == "wait_for"
+                                                || method == "wait_until"))
                                         // AGENT-C (CountDownLatch):
-                                        //   || (recv_ty == "CountDownLatch"
-                                        //       && (method == "await" || method == "try_await_for"))
+                                        || (recv_ty == "CountDownLatch"
+                                            && (method == "await" || method == "try_await_for"))
                                         // AGENT-A (Semaphore):
-                                        //   || (recv_ty == "Semaphore"
-                                        //       && (method == "acquire" || method == "acquire_n"
-                                        //           || method == "try_acquire_for" || method == "with_permit"))
+                                        || (recv_ty == "Semaphore"
+                                            && (method == "acquire" || method == "acquire_n"
+                                                || method == "try_acquire_for" || method == "with_permit"))
                                         // === END PLAN-103.4 REALTIME-BLOCKING ===
                                         ;
                                     if self.in_realtime && is_realtime_blocking {

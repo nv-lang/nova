@@ -13229,6 +13229,24 @@ Merge: f79d4f28b5b; branch plan-100-2-generic-propagation → main.
   РїРѕРєР° РµСЃС‚СЊ РѕР¶РёРґР°СЋС‰РёР№ writer. РџСЂРµРґРѕС‚РІСЂР°С‰Р°РµС‚ writer starvation. Reader-priority
   вЂ” opt-in С‡РµСЂРµР· new_reader_priority().
 
+---
+
+## 2026-05-27 — Plan 103.4 Agent B — Barrier
+
+**Workaround в barrier_wait_with_action test 3 (вместо фикса кодгена):**
+Закодирован `parties - 1` через `AtomicInt.new(parties - 1)` (heap-объект)
+вместо прямого capture'а примитивного `int parties`. Underlying codegen
+bug в emit_c.rs: trailing-block env для примитивных captures внутри
+`parallel for` фибера эмитит `nova_int*` в struct, но присваивает
+`env->x = _c->x` (без `&`) — разыменование значения как указателя →
+access violation. Полноценный фикс отложен (требует разбора trailing-block
+emission в emit_c.rs).
+
+**Не фикшено:** `_nova_active_slot < 0` non-fiber spin-poll в `wait()` /
+`wait_with_action()` оставлен для test-scaffolding consistency
+(используется только при отсутствии fiber-context). Реальный use case
+требует fibers; non-fiber path — degraded fallback.
+
 ## Plan 103.4 (Agent C) — CountDownLatch (2026-05-27)
 
 - **include_str! compile-time embedding** — `sync.nv` вшивается в бинарник при
@@ -13360,3 +13378,40 @@ Merge: f79d4f28b5b; branch plan-100-2-generic-propagation → main.
   tests из deep_spawn.nv Section 10 (log == 142536, order == 121212 etc.)
   фундаментально FIFO-dependent. Restructured into dedicated cooperative
   file с // ENV NOVA_AUTOARM=0. deep_spawn остаётся armed-compatible.
+
+## Plan 103.4 — Final merge (2026-05-27)
+
+- **`condvar_notify_one` wg.wait() deadlock** — Agent D использовал
+  `wg.wait()` для cleanup join, но забыл что Agent D же сам обнаружил
+  паттерн в `condvar_notify_all`: внутри `supervised{}`, `WaitGroup.wait()`
+  starves workers (nova_supervised_run_impl tight-spin'ит когда parked==0
+  && alive>0). Фикс: busy-poll `while n_woken.load() != 3 { Time.sleep(1) }`
+  — тот же паттерн что и в notify_all. Минусом — нужно отдельно знать count
+  в обоих местах.
+
+- **EXPECT_TIMEOUT_MS cold-cache compile bumps** — под `nova test --jobs 16`
+  тесты с свежеизменённым binary компилируются под нагрузкой; компиляция
+  бинарника включается в EXPECT_TIMEOUT_MS. 8 тестов получили bump:
+  barrier_cyclic_reusable, barrier_wait_with_action, condvar_no_lost_wakeup_prop,
+  condvar_notify_one, condvar_producer_consumer, countdown_count_down_n,
+  countdown_one_shot_signal, semaphore_try_acquire_for_timeout. После bump:
+  25/25 PASS под параллельной нагрузкой.
+
+- **Parallel-agent split overhead** — pre-flight markers commit (chore commit
+  с пустыми marker блоками во всех shared файлах) обязателен ДО старта
+  sub-agents. Иначе их `#include`-uncomments не будут на одной line position
+  → text-level conflicts. С markers — git auto-merges включения как «оба
+  uncommented» (deterministic alphabetical resolution требует ручного fix
+  в merge).
+
+- **Pre-flight worktree libuv mistake** — `cp -r src dst` если dst уже
+  существует создаёт `dst/src` nested. В nova-p103-coord первый раз создал
+  `libuv/libuv/` (worktree уже содержал libuv через submodule). Фикс:
+  `rm -rf libuv` перед `cp -r main/libuv ./libuv`. Documented в
+  [project-worktree-nova-test-setup memory].
+
+- **D170 spec scope** — coordination primitives (Semaphore/Barrier/CountDownLatch/
+  Condvar) в одном D-блоке. Альтернатива (4 отдельных D-блока) отвергнута:
+  они тесно связаны (M10/M11/M15 design decisions общие), API surface
+  единый, тестовое покрытие в одной директории. Параллель с D169 family
+  (Mutex/RwLock/ReentrantMutex в одном блоке).
