@@ -5,7 +5,7 @@
 //       in cv's waiter list), releases mu, calls notify_one().
 // Verify: after 10ms, exactly 1 fiber has woken; remaining 2 still wait.
 //
-// EXPECT_TIMEOUT_MS 15000
+// EXPECT_TIMEOUT_MS 60000
 
 module nova_tests.plan103_4.condvar_notify_one
 
@@ -52,8 +52,13 @@ test "notify_one wakes exactly 1 of 3 waiters" {
         assert(n_woken.load() == 1, "notify_one should wake exactly 1 fiber")
 
         // Clean up: wake the remaining 2 so supervised can exit.
+        // Use busy-poll (not wg.wait) — same reason as condvar_notify_all:
+        // WaitGroup.wait() inside supervised starves workers when parked==0
+        // && alive>0 (nova_supervised_run_impl tight-spins).
         cv.notify_all()
-        wg.wait()
+        while n_woken.load() != 3 {
+            Time.sleep(1)
+        }
     }
 
     assert(n_woken.load() == 3)

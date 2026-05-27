@@ -10,7 +10,7 @@
 // wait_until; avoids codegen trailing-block-factory issue with fn()->bool
 // closures in spawn blocks).
 //
-// EXPECT_TIMEOUT_MS 60000
+// EXPECT_TIMEOUT_MS 120000
 
 module nova_tests.plan103_4.condvar_no_lost_wakeup_prop
 

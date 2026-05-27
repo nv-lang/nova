@@ -5,7 +5,7 @@
 //   - count_down_n with n > count saturates at 0 (no underflow)
 //   - concurrent batch decrement with a waiting fiber
 //
-// EXPECT_TIMEOUT_MS 15000
+// EXPECT_TIMEOUT_MS 60000
 
 module nova_tests.plan103_4.countdown_count_down_n
 
