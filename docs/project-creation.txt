@@ -23424,3 +23424,33 @@ CURRENT STATE:
 Diagnostic infrastructure готова — next session can quickly verify any fix
 via stress_iso_3e + diag counter analysis.
 
+
+=== Plan 83.11 Ф.3 — Session #3 (continuation #2): 3 fix attempts (2026-05-27) ===
+
+3 architectural fix experiments после diag localized race на cas_won < 100:
+
+1. **Unconditional dispatch** from close_cb (bypass CAS). 1/30 PASS — reverted.
+   Hypothesis: double-dispatch race when fiber currently running.
+
+2. **Generational futex** — wake_gen counter on NovaSleepState. Wake side incs
+   gen unconditionally + CAS parked. Park snapshots gen before SEQ_CST parked,
+   rechecks after. 1/30 PASS — reverted. Likely our dispatch_ready hierarchy
+   has multiple race windows that gen counter alone can't close.
+
+3. **Simple futex park + SEQ_CST stage CLOSED** — final state. 1-19/30 PASS,
+   system-load dependent. Test flaky, NOT production.
+
+INSIGHT: Half-port (TimerEntry state machine только) inadequate. Full Tokio
+AtomicWaker + Future + poll paradigm нужен ВЕСЬ stack — несовместимо с current
+fiber model.
+
+Альтернатива: integrate wake_gen в nova_sched_park/wake LEVEL (generic API,
+risky). Real fix needs deep design session или architectural rewrite.
+
+STATE: branch plan-83.11-centralized-driver advanced (f580bfff775 pushed).
+Diag infrastructure preserved. [M-83.10.4-iso-cancel-startup-race] STILL OPEN.
+6 hours total on Plan 83.11 Ф.3 — ~50 hours estimated for production fix.
+
+DECISION: stop, commit honest WIP, defer to dedicated Opus+Thinking ON session
+с either full Tokio paradigm port OR nova_sched_park/wake-level wake_gen.
+
