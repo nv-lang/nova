@@ -5211,10 +5211,10 @@ loop (встроен в `wait_until`). Bare `condvar.wait(mu)` без преди
 **Channel[T] лучше** в 90% случаев:
 
 ```nova
-// ✅ Проще: нативный backpressure через Channel
-let ch: Channel[Item] = Channel.new(MAX_SIZE)
-// producer:  ch.send(item)
-// consumer:  ch.recv()
+// ✅ Проще: нативный backpressure через Channel (D91 capability-split)
+let (tx, rx) = Channel.new[Item](MAX_SIZE)
+// producer:  tx.send(item)
+// consumer:  rx.recv()
 ```
 
 ---
@@ -5286,14 +5286,14 @@ do_bulk_work()
 **Anti-pattern (token channel):**
 
 ```nova
-// ❌ Работает, но verbose и не идиоматично
-let tokens: Channel[unit] = Channel.new(MAX_CONCURRENT)
-for _ in 0..MAX_CONCURRENT { tokens.send(()) }
+// ❌ Работает, но verbose, intent не очевиден + capability-split удваивает шум
+let (tok_tx, tok_rx) = Channel.new[unit](MAX_CONCURRENT)
+for _ in 0..MAX_CONCURRENT { tok_tx.send(()) }
 
 fn handle_request(req Request) {
-    tokens.recv()          // acquire
+    tok_rx.recv()           // acquire
     process(req)
-    tokens.send(())        // release
+    tok_tx.send(())         // release
 }
 ```
 
