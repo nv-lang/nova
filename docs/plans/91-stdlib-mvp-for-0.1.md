@@ -169,6 +169,20 @@ handler'ами (killer-пример из README — `Db` через `in_memory_d
 Это позволяет писать многострочные Nova-тела прямо в registry без
 искусственного соединения через `;`.
 
+**`str @split` — zero-copy (решение 2026-05-27):** отдельной функции
+`split_to_slices` не нужно. В Nova `str` — это `(ptr, len)` без
+ownership, нет разницы между "копией" и "view" на уровне типа.
+Текущая C-реализация `nova_str_split` уже возвращает views в
+оригинальный буфер (`{ s.ptr + start, len }` без `memcpy`) — как
+Rust `str::split()` возвращает `&str`. API остаётся `[]str`.
+
+**`str` / `StringBuilder` — нет изменяемого `[]u8` слайса (решение
+2026-05-27):** разрешать мутирующий слайс байт нельзя — это сломает
+UTF-8 invariant строки. Read-only `@bytes() -> []u8` уже есть.
+`StringBuilder.append_bytes` принимает `[]u8` с явным предупреждением
+в doc (caller отвечает за UTF-8 validity). Это сознательный дизайн,
+как в Rust (`as_bytes()` read-only, запись через `unsafe`).
+
 **Остаётся в C (byte-level примитивы, нельзя без FFI):**
 
 | Метод | Причина |
@@ -179,7 +193,7 @@ handler'ами (killer-пример из README — `Db` через `in_memory_d
 | `byte_at`, `char_at` | UTF-8 decode |
 | `concat` | `alloc` + `memcpy` |
 | `find`, `rfind` | KMP/naive — эффективнее в C |
-| `split` | `alloc` + slice windows |
+| `split` | массив `(ptr,len)` view'ов — zero-copy ✅ уже так |
 | f64/f32 math (`sqrt`, `sin`, `ln`…) | libm intrinsics |
 
 **Plan 90.1 (`extend_from`, `copy_from`, слайсы) как оптимизация:**
