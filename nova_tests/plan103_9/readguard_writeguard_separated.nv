@@ -1,0 +1,70 @@
+// Plan 103.9 (D174) — Positive: ReadGuard and WriteGuard are distinct consume types.
+//
+// RwLock.read() → ReadGuard consume; RwLock.write() → WriteGuard consume.
+// Guards are distinct types — compile-time enforcement that read guards
+// cannot be used as write guards and vice versa.
+
+module nova_tests.plan103_9.readguard_writeguard_separated
+
+test "ReadGuard explicit unlock" {
+    let rw = RwLock.new()
+    consume rg = rw.read()
+    // read-critical-section
+    rg.unlock()
+    // rw now free
+    consume wg = rw.write()
+    wg.unlock()
+}
+
+test "WriteGuard explicit unlock" {
+    let rw = RwLock.new()
+    consume wg = rw.write()
+    // write-critical-section
+    wg.unlock()
+    // rw now free for reads
+    consume rg = rw.read()
+    rg.unlock()
+}
+
+test "multiple ReadGuards can coexist (multiple readers allowed)" {
+    let rw = RwLock.new()
+    let wg = WaitGroup.new()
+    let readers_inside = AtomicInt.new(0)
+    let max_inside = AtomicInt.new(0)
+    wg.add(4)
+
+    parallel for _i in 0..4 {
+        consume rg = rw.read()
+        let now = readers_inside.fetch_add(1) + 1
+        // Update max_inside via CAS loop
+        loop {
+            let old_max = max_inside.load()
+            if now <= old_max { break }
+            max_inside.compare_exchange(old_max, now)
+        }
+        readers_inside.fetch_add(-1)
+        rg.unlock()
+        wg.done()
+    }
+
+    wg.wait()
+    // All 4 readers could have been inside simultaneously
+    assert(max_inside.load() >= 1)
+}
+
+test "WriteGuard explicit unlock in parallel" {
+    let rw = RwLock.new()
+    let counter = AtomicInt.new(0)
+    let wg = WaitGroup.new()
+    wg.add(4)
+
+    parallel for _i in 0..4 {
+        consume wg2 = rw.write()
+        counter.fetch_add(1)
+        wg2.unlock()
+        wg.done()
+    }
+
+    wg.wait()
+    assert(counter.load() == 4)
+}

@@ -201,12 +201,12 @@ impl ExternalRegistry {
     }
 
     fn decl_from_fn(f: &FnDecl, total_overloads: usize) -> Result<ExternalDecl, String> {
-        let (recv_type_name, is_instance, is_mut_recv) = match &f.receiver {
-            Some(Receiver { type_name, kind, mutable, .. }) => {
+        let (recv_type_name, is_instance, is_mut_recv, is_consume_recv) = match &f.receiver {
+            Some(Receiver { type_name, kind, mutable, consume, .. }) => {
                 let inst = matches!(kind, ReceiverKind::Instance);
-                (Some(type_name.clone()), inst, *mutable)
+                (Some(type_name.clone()), inst, *mutable, *consume)
             }
-            None => (None, false, false),
+            None => (None, false, false, false),
         };
         // Resolve param types к C-типам.
         let mut param_c_types: Vec<String> = Vec::new();
@@ -223,10 +223,13 @@ impl ExternalRegistry {
         // Mangling: если ключ имеет ≥2 overload'ов, добавляется suffix
         // по Nova-type первого параметра (`_str`/`_char`/`_bytes`/...).
         // Это compatible с runtime naming.
-        let base_c = match (&recv_type_name, is_instance) {
-            (Some(rt), true)  => format!("Nova_{}_method_{}", rt, f.name),
-            (Some(rt), false) => format!("Nova_{}_static_{}", rt, f.name),
-            (None, _)         => format!("nova_fn_{}", f.name),
+        // Plan 103.9 (D174): consume-receiver methods → Nova_{T}_consume_{name}
+        // to match the D164 ABI used by emit_c.rs for user-defined consume methods.
+        let base_c = match (&recv_type_name, is_instance, is_consume_recv) {
+            (Some(rt), true, true)  => format!("Nova_{}_consume_{}", rt, f.name),
+            (Some(rt), true, false) => format!("Nova_{}_method_{}", rt, f.name),
+            (Some(rt), false, _)    => format!("Nova_{}_static_{}", rt, f.name),
+            (None, _, _)            => format!("nova_fn_{}", f.name),
         };
         // Suffix builder: использует Nova-type ПОСЛЕДНЕГО параметра (Plan 103.2).
         // Использование last (а не first) позволяет различать overload'ы вида:

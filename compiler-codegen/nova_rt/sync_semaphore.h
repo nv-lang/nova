@@ -179,8 +179,13 @@ static inline nova_unit Nova_Semaphore_method_acquire_n(Nova_Semaphore* s, nova_
 }
 
 /* ── acquire() ─────────────────────────────────────────────────────────── */
-static inline nova_unit Nova_Semaphore_method_acquire(Nova_Semaphore* s) {
-    return Nova_Semaphore_method_acquire_n(s, 1);
+/* Plan 103.9: Nova_Semaphore_method_acquire returns Nova_Permit* (V2 guard API).
+ * Old callers discarding the result still compile — C ignores non-void returns. */
+static inline Nova_Permit* Nova_Semaphore_method_acquire(Nova_Semaphore* s) {
+    Nova_Semaphore_method_acquire_n(s, 1);
+    Nova_Permit* _p = (Nova_Permit*)nova_alloc(sizeof(Nova_Permit));
+    _p->ptr = (nova_int)(uintptr_t)s;
+    return _p;
 }
 
 /* ── release_n(n) ─────────────────────────────────────────────────────────

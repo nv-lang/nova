@@ -1,0 +1,56 @@
+// Plan 103.9 (D174) — Positive: Permit consume released explicitly.
+//
+// Semaphore.acquire() → Permit consume.
+// Permit.release() consumes the permit.
+
+module nova_tests.plan103_9.permit_release_explicit
+
+test "Permit explicit release" {
+    let sem = Semaphore.new(2)
+    consume p = sem.acquire()
+    // use resource
+    p.release()
+    // permit returned — available_permits back to 2
+    assert(sem.available_permits() == 2)
+}
+
+test "Permit defer release" {
+    let sem = Semaphore.new(1)
+    {
+        consume p = sem.acquire()
+        defer p.release()
+        // body; release runs on scope exit
+        assert(sem.available_permits() == 0)
+    }
+    assert(sem.available_permits() == 1)
+}
+
+test "Permit release restores bounded concurrency" {
+    runtime.init(2)
+    let k = 2
+    let sem = Semaphore.new(k)
+    let total = AtomicInt.new(0)
+    let wg = WaitGroup.new()
+    wg.add(6)
+
+    parallel for _i in 0..6 {
+        consume p = sem.acquire()
+        total.fetch_add(1)
+        p.release()
+        wg.done()
+    }
+
+    wg.wait()
+    assert(total.load() == 6)
+    assert(sem.available_permits() == k)
+    runtime.shutdown()
+}
+
+test "Permit acquire then release repeatedly" {
+    let sem = Semaphore.new(3)
+    for _i in 0..10 {
+        consume p = sem.acquire()
+        p.release()
+    }
+    assert(sem.available_permits() == 3)
+}

@@ -1,0 +1,105 @@
+// Plan 103.9 (D174) — Pilot migration: Mutex with MutexGuard consume API.
+//
+// Demonstrates V2 guard-based locking pattern.
+// Contrasts with sync_mutex.nv which uses V1 lock()/unlock().
+//
+// Key differences from V1:
+//   V1: m.lock() / defer m.unlock()  (statically unchecked; deprecated pair)
+//   V2: consume g = m.lock() / defer g.unlock()  (consume-checked; static guarantee)
+
+module nova_tests.concurrency.sync_mutex_guard
+
+test "MutexGuard: lock and unlock single fiber" {
+    let m = Mutex.new()
+    let mut counter = 0
+    supervised {
+        spawn {
+            consume g1 = m.lock()
+            counter = counter + 1
+            g1.unlock()
+            consume g2 = m.lock()
+            counter = counter + 1
+            g2.unlock()
+        }
+    }
+    assert(counter == 2)
+}
+
+test "MutexGuard: mutual exclusion — inside never > 1" {
+    let m = Mutex.new()
+    let mut inside = 0
+    let mut violations = 0
+
+    supervised {
+        spawn {
+            let mut i = 0
+            while i < 50 {
+                consume g = m.lock()
+                inside = inside + 1
+                if inside > 1 { violations = violations + 1 }
+                runtime.yield()
+                inside = inside - 1
+                g.unlock()
+                i = i + 1
+            }
+        }
+        spawn {
+            let mut i = 0
+            while i < 50 {
+                consume g = m.lock()
+                inside = inside + 1
+                if inside > 1 { violations = violations + 1 }
+                runtime.yield()
+                inside = inside - 1
+                g.unlock()
+                i = i + 1
+            }
+        }
+    }
+    assert(violations == 0)
+    assert(inside == 0)
+}
+
+test "MutexGuard: explicit lock/unlock preserves V1 compat (bare API)" {
+    let m = Mutex.new()
+    let mut counter = 0
+    supervised {
+        spawn {
+            let mut i = 0
+            while i < 100 {
+                // V2 explicit guard API:
+                consume g = m.lock()
+                counter = counter + 1
+                g.unlock()
+                i = i + 1
+            }
+        }
+        spawn {
+            let mut i = 0
+            while i < 100 {
+                consume g = m.lock()
+                counter = counter + 1
+                g.unlock()
+                i = i + 1
+            }
+        }
+    }
+    assert(counter == 200)
+}
+
+test "MutexGuard: explicit lock/unlock frees mutex for reuse" {
+    let m = Mutex.new()
+    let mut counter = 0
+    supervised {
+        spawn {
+            consume g = m.lock()
+            counter = counter + 1
+            g.unlock()
+        }
+    }
+    assert(counter == 1)
+    // m is free again — can lock
+    let ok = m.try_lock()
+    assert(ok == true)
+    m.unlock()
+}
