@@ -7014,6 +7014,12 @@ impl CEmitter {
             }
             return Ok(());
         }
+        // Plan 103.6: Non-generic free functions annotated with #parks/#wakes/#realtime_safe
+        // are also stored in mono_fn_decls so emit_call can check sync_class at call sites
+        // (E_REALTIME_NESTED_SYNC_VIA_FN / E_BLOCKING_SYNC_PARK via user fn annotation).
+        if f.sync_class.is_some() && f.generics.is_empty() && f.receiver.is_none() && !f.is_external {
+            self.mono_fn_decls.entry(f.name.clone()).or_insert_with(|| f.clone());
+        }
         // Plan 48: Generic methods with own type params → store for monomorphization.
         // Plan 101.1: array extension methods ([]T receivers) ALSO go to mono
         // pipeline когда T — это fn-prefix-generic (`fn[T] []T @method`).
@@ -18189,6 +18195,30 @@ _cp++; \
                             .and_then(|ms| ms.iter().find(|m| m.name == method_stripped))
                             .cloned();
                         if let Some(fn_decl) = method_decl {
+                            // Plan 103.6: sync-class check for generic-type methods
+                            // (OnceCell[T], Lazy[T]).  fn_decl comes from
+                            // generic_type_methods (populated from external fn
+                            // declarations); sync_class is set by the parser from
+                            // #parks/#wakes/#realtime_safe attrs.
+                            {
+                                use crate::ast::SyncClass;
+                                if self.in_realtime && fn_decl.sync_class == Some(SyncClass::Parks) {
+                                    return Err(format!(
+                                        "[E_REALTIME_SYNC_PARK] \
+                                         `{}.{}()` may park the fiber and is forbidden inside \
+                                         `realtime {{ }}` blocks. Move outside the realtime context.",
+                                        base_name, method_stripped
+                                    ));
+                                }
+                                if self.in_blocking && fn_decl.sync_class == Some(SyncClass::Parks) {
+                                    return Err(format!(
+                                        "[E_BLOCKING_SYNC_PARK] \
+                                         `{}.{}()` may park the fiber inside `blocking {{ }}` \
+                                         (leaf-execution only). Move the call outside the blocking block.",
+                                        base_name, method_stripped
+                                    ));
+                                }
+                            }
                             let tmpl_opt = self.generic_type_templates.get(&base_name).cloned();
                             if let Some(tmpl) = tmpl_opt {
                                 let mut type_subst: Vec<(String, String)> = tmpl.generics.iter()

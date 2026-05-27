@@ -1387,7 +1387,14 @@ export external fn Mutex.new_unfair() -> Self
 ///     // critical section
 /// }
 /// ```
-#parks
+///
+/// # Note (realtime)
+///
+/// Inside `realtime { }` blocks the compiler emits W_REALTIME_TRY_LOCK_FOR_TIMER
+/// because try_lock_for uses a libuv timer that may park even for short timeouts.
+/// Annotated `#realtime_safe` (not `#parks`) because failure path is non-parking;
+/// compiler enforces via dedicated warning, not an error.
+#realtime_safe
 #stable(since = "0.1")
 export external fn Mutex mut @try_lock_for(timeout Duration) -> bool
 

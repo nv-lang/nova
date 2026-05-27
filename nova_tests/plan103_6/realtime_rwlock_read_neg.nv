@@ -1,0 +1,13 @@
+// Plan 103.6 — RwLock.read is #parks; forbidden in realtime{}.
+//
+// EXPECT_COMPILE_ERROR E_REALTIME_SYNC_PARK
+
+module nova_tests.plan103_6.realtime_rwlock_read_neg
+
+test "RwLock.read banned in realtime block" {
+    let rw = RwLock.new()
+    realtime {
+        rw.read()
+    }
+    rw.read_unlock()
+}

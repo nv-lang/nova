@@ -1,0 +1,21 @@
+// Plan 103.6 — AtomicI64.load is #realtime_safe; allowed in realtime{}.
+//
+// EXPECT_TIMEOUT_MS 60000
+
+module nova_tests.plan103_6.realtime_atomic_load_ok
+
+test "AtomicI64.load allowed in realtime block" {
+    let a = AtomicI64.new(42)
+    let v = realtime {
+        a.load()
+    }
+    assert(v == 42)
+}
+
+test "AtomicBool.load allowed in realtime block" {
+    let b = AtomicBool.new(true)
+    let v = realtime {
+        b.load()
+    }
+    assert(v == true)
+}

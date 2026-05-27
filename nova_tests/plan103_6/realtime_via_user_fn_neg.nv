@@ -1,0 +1,19 @@
+// Plan 103.6 — user-fn annotated #parks called from realtime{}.
+// The compiler must flag E_REALTIME_NESTED_SYNC_VIA_FN.
+//
+// EXPECT_COMPILE_ERROR E_REALTIME_NESTED_SYNC_VIA_FN
+
+module nova_tests.plan103_6.realtime_via_user_fn_neg
+
+#parks
+fn parks_fn() {
+    let m = Mutex.new()
+    m.lock()
+    m.unlock()
+}
+
+test "user fn with #parks banned in realtime block" {
+    realtime {
+        parks_fn()
+    }
+}
