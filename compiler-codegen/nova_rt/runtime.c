@@ -1615,6 +1615,18 @@ static void _worker_run_one_fiber(NovaWorker* w, mco_coro* co) {
  *   This is the root cause of the heisenbug where fprintf "fixed" the hang
  *   (fprintf's stdio lock is a full memory fence). */
 void nova_runtime_cancel_worker_fibers(struct NovaFiberQueue* target_scope) {
+    /* Plan 83.11 Ф.3: legacy cancel path is BYPASSED when driver started.
+     * Driver's CANCEL_SCOPE job handles all sleep-related cancel through
+     * single-mutator armed_sleeps_head walk. Running legacy too creates double-
+     * wake race (legacy bare-wake clears parked before driver close_cb CAS).
+     *
+     * Channel/mutex cancel paths still use pending_stop_cb[] — for those, this
+     * function is still useful. But those aren't in iso-cancel race scope.
+     * Ф.5 will migrate them too; until then, legacy stays для bootstrap path. */
+    if (nova_driver_is_started()) {
+        /* Driver owns sleep cancel. Skip legacy walk. */
+        return;
+    }
     /* Cast from `struct NovaFiberQueue*` (forward-declared in runtime.h) to
      * `NovaFiberQueue*` (anonymous typedef from fibers.h) for sched helpers. */
     NovaFiberQueue* tscope = (NovaFiberQueue*)target_scope;

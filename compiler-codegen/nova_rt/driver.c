@@ -6,9 +6,9 @@
  *
  * Tokio reference: tokio/src/runtime/driver.rs */
 
+#include "nova_rt.h"   /* full chain — needs NovaSleepState fields + nova_sched_wake */
 #include "driver.h"
-#include "sync.h"
-#include "alloc.h"
+#include "runtime.h"   /* nova_runtime_signal_main if needed */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -103,6 +103,11 @@ void nova_driver_shutdown(void) {
     nova_abool_store(&_nova_driver.started, false);
 }
 
+bool nova_driver_is_started(void) {
+    return nova_abool_load(&_nova_driver.started) &&
+           !nova_abool_load(&_nova_driver.stop);
+}
+
 int nova_driver_submit_job(NovaDriverJob* job) {
     if (!nova_abool_load(&_nova_driver.started)) return -1;
     if (nova_abool_load(&_nova_driver.stop))     return -1;
@@ -193,29 +198,167 @@ static void _nova_driver_drain_jobs(void) {
     while (job) {
         NovaDriverJob* next = job->next;
         _nova_driver_process_job(job);
+        /* Plan 83.11 Ф.2: job allocated via malloc by worker (nova_driver_submit_job
+         * caller). Free after processing. Driver retains st pointers (inside job
+         * union) which point to fiber-stack-allocated NovaSleepState — those live
+         * separately while fiber parked. */
+        free(job);
         job = next;
-        /* Note: job memory NOT freed here — _nova_driver_process_job либо
-         * keeps reference (for arm_sleep st pointer chain) либо handles its
-         * own cleanup. Job struct itself nova_alloc'd, GC reclaims когда
-         * unreachable. */
     }
 }
+
+/* ── Plan 83.11 Ф.3: sleep state machine — driver side ──────────── */
+
+/* Forward decls of driver-side callbacks. */
+static void _nova_driver_sleep_timer_cb(uv_timer_t* h);
+static void _nova_driver_sleep_close_cb(uv_handle_t* h);
+
+/* Insert st at head of scope's armed list. Driver-thread only — no lock. */
+static void _nova_driver_arm_list_insert(NovaSleepState* st) {
+    NovaFiberQueue* scope = st->cancel_scope;
+    if (!scope) return;
+    st->next_in_scope = scope->armed_sleeps_head;
+    st->pprev_in_scope = &scope->armed_sleeps_head;
+    if (scope->armed_sleeps_head) {
+        scope->armed_sleeps_head->pprev_in_scope = &st->next_in_scope;
+    }
+    scope->armed_sleeps_head = st;
+}
+
+/* O(1) unlink — driver-thread only. */
+static void _nova_driver_arm_list_unlink(NovaSleepState* st) {
+    if (!st->pprev_in_scope) return;  /* already unlinked or never inserted */
+    *(st->pprev_in_scope) = st->next_in_scope;
+    if (st->next_in_scope) {
+        st->next_in_scope->pprev_in_scope = st->pprev_in_scope;
+    }
+    st->pprev_in_scope = NULL;
+    st->next_in_scope = NULL;
+}
+
+/* ARM_SLEEP job handler — driver thread. */
+static void _nova_driver_handle_arm_sleep(NovaSleepState* st, uint64_t ms) {
+    if (!st) return;
+
+    /* Init timer on driver's loop. */
+    int rc = uv_timer_init(&_nova_driver.loop, &st->timer);
+    if (rc != 0) {
+        fprintf(stderr, "nova: driver uv_timer_init failed: %s\n", uv_strerror(rc));
+        /* Move to CLOSED so worker fiber unparks (with error semantics — TBD). */
+        nova_aint_store(&st->stage, NOVA_SLEEP_DRV_CLOSED);
+        nova_sched_wake(st->scope, st->slot);
+        return;
+    }
+    st->timer.data = st;
+
+    /* Insert into scope's armed list BEFORE starting timer — если timer
+     * fires immediately (ms=0), timer_cb might run synchronously? Actually
+     * uv_timer_start with 0 fires on next loop iteration, not immediately.
+     * But safe to insert first regardless. */
+    _nova_driver_arm_list_insert(st);
+
+    /* Transition NEW → ARMED. Single-mutator: no CAS needed for this transition.
+     * RELEASE-store so worker's ACQUIRE-load sees it. */
+    nova_aint_store(&st->stage, NOVA_SLEEP_DRV_ARMED);
+
+    /* Start timer — может fire prior to return if ms is very small + something
+     * weird, но libuv guarantees timer_cb runs only inside uv_run. We're called
+     * from uv_run already (job_async_cb path). Timer registered to fire next
+     * iteration. */
+    rc = uv_timer_start(&st->timer, _nova_driver_sleep_timer_cb, ms, 0);
+    if (rc != 0) {
+        fprintf(stderr, "nova: driver uv_timer_start failed: %s\n", uv_strerror(rc));
+        _nova_driver_arm_list_unlink(st);
+        nova_aint_store(&st->stage, NOVA_SLEEP_DRV_CLOSED);
+        uv_close((uv_handle_t*)&st->timer, NULL);  /* cleanup */
+        nova_sched_wake(st->scope, st->slot);
+        return;
+    }
+}
+
+/* Timer fired naturally (sleep duration elapsed). Driver thread. */
+static void _nova_driver_sleep_timer_cb(uv_timer_t* h) {
+    NovaSleepState* st = (NovaSleepState*)h->data;
+    if (!st) return;
+
+    /* CAS ARMED → FIRING. Loser = cancel-job won race; cancel path will
+     * uv_close. We just exit. */
+    int32_t expected = NOVA_SLEEP_DRV_ARMED;
+    if (!nova_aint_cas(&st->stage, &expected, NOVA_SLEEP_DRV_FIRING)) {
+        return;
+    }
+
+    /* Won — initiate close. close_cb will wake worker fiber. */
+    uv_close((uv_handle_t*)&st->timer, _nova_driver_sleep_close_cb);
+}
+
+/* CANCEL_SCOPE job handler — driver thread. */
+static void _nova_driver_handle_cancel_scope(NovaFiberQueue* scope) {
+    if (!scope) return;
+
+    /* Walk armed list. Single-mutator (driver) — no race на list itself.
+     * BUT: list modifications (insert/unlink) might happen while we iterate?
+     * NO — both insert (ARM_SLEEP) и unlink (close_cb) run on driver thread.
+     * We're on driver thread now. No concurrent modification possible.
+     *
+     * BUT: uv_close inside the loop schedules close_cb to run later. close_cb
+     * will unlink st. So we must save next pointer BEFORE calling uv_close. */
+    NovaSleepState* st = scope->armed_sleeps_head;
+    while (st) {
+        NovaSleepState* next = st->next_in_scope;
+
+        /* CAS ARMED → CANCEL_REQ. Loser = timer_cb won (will close itself). */
+        int32_t expected = NOVA_SLEEP_DRV_ARMED;
+        if (nova_aint_cas(&st->stage, &expected, NOVA_SLEEP_DRV_CANCEL_REQ)) {
+            uv_close((uv_handle_t*)&st->timer, _nova_driver_sleep_close_cb);
+        }
+        /* CAS loser: timer_cb already won, will close. Skip. */
+
+        st = next;
+    }
+}
+
+/* CANCEL_TIMER job handler — driver thread. Single-timer cancel (для
+ * cleanup callbacks of linked tokens etc). */
+static void _nova_driver_handle_cancel_timer(NovaSleepState* st) {
+    if (!st) return;
+    int32_t expected = NOVA_SLEEP_DRV_ARMED;
+    if (nova_aint_cas(&st->stage, &expected, NOVA_SLEEP_DRV_CANCEL_REQ)) {
+        uv_close((uv_handle_t*)&st->timer, _nova_driver_sleep_close_cb);
+    }
+}
+
+/* close_cb — final stage. Driver thread. Wakes worker fiber. */
+static void _nova_driver_sleep_close_cb(uv_handle_t* h) {
+    NovaSleepState* st = (NovaSleepState*)h->data;
+    if (!st) return;
+
+    /* Unlink from armed list. */
+    _nova_driver_arm_list_unlink(st);
+
+    /* Release-store CLOSED — worker's ACQUIRE in predicate pairs. */
+    nova_aint_store(&st->stage, NOVA_SLEEP_DRV_CLOSED);
+
+    /* Cross-thread wake worker fiber. Routed via existing dispatch_ready
+     * mechanism (worker's wake_pending + uv_async_send). nova_sched_wake
+     * does CAS parked true→false; на CAS-loss path (worker's futex pattern
+     * already cleared parked at SEQ_CST recheck), wake is no-op which is
+     * correct — worker already returned without yielding. */
+    nova_sched_wake(st->scope, st->slot);
+}
+
+/* ── Job dispatch ────────────────────────────────────────────────── */
 
 static void _nova_driver_process_job(NovaDriverJob* job) {
     switch (job->kind) {
     case NOVA_DRV_JOB_ARM_SLEEP:
-        /* Ф.3 implementation: uv_timer_init(&_nova_driver.loop, &st->timer);
-         * uv_timer_start(...); _nova_driver_arm_list_insert(st); CAS state
-         * NEW→ARMED. */
-        fprintf(stderr, "nova: driver ARM_SLEEP job — Ф.3 NOT YET IMPLEMENTED\n");
+        _nova_driver_handle_arm_sleep(job->u.arm_sleep.st, job->u.arm_sleep.ms);
         break;
     case NOVA_DRV_JOB_CANCEL_SCOPE:
-        /* Ф.3 implementation: walk scope.armed_list; для каждого st CAS
-         * ARMED→CANCEL_REQ; if won — uv_close(&st->timer). */
-        fprintf(stderr, "nova: driver CANCEL_SCOPE job — Ф.3 NOT YET IMPLEMENTED\n");
+        _nova_driver_handle_cancel_scope(job->u.cancel_scope.scope);
         break;
     case NOVA_DRV_JOB_CANCEL_TIMER:
-        fprintf(stderr, "nova: driver CANCEL_TIMER job — Ф.3 NOT YET IMPLEMENTED\n");
+        _nova_driver_handle_cancel_timer(job->u.cancel_timer.st);
         break;
     case NOVA_DRV_JOB_ARM_BLOCKING:
         fprintf(stderr, "nova: driver ARM_BLOCKING job — Ф.4 NOT YET IMPLEMENTED\n");
