@@ -23454,3 +23454,19 @@ Diag infrastructure preserved. [M-83.10.4-iso-cancel-startup-race] STILL OPEN.
 DECISION: stop, commit honest WIP, defer to dedicated Opus+Thinking ON session
 с either full Tokio paradigm port OR nova_sched_park/wake-level wake_gen.
 
+2026-05-27: Plan 90.1 — []T extend-family API + copy_from hardening SHIPPED.
+
+Ключевые изменения:
+- copy_from hardening: strict equal-length (src.len != dst.len → panic "length mismatch")
+  + всегда memmove (overlap-safe). Breaking change: было silent truncation для src
+  короче dst. Truncation idiom: dst[..n].copy_from(src[..n]) через D144 slicing.
+- NEW: extend_from(src) — bulk append с 2x growth, memmove (self-extend safe)
+- NEW: insert_from(i, src) — вставка пачкой по позиции [0,len], OOB panic, memmove tail
+- NEW: reserve(extra) — preallocate hint, len unchanged, negative-extra panic
+- W_VIEW_EXTEND_DETACH lint — предупреждает когда grow-метод вызван на parent
+  после создания slice-view из него. Suppress: #allow(view_extend_detach)
+- 20/20 nova_tests/plan90_1/ PASS (8 pos + 5 neg + 1 lint-warn + 2 prop + 2 stress + 3 lint-only)
+- D141 spec amend: extend-family + overlap semantics + truncation idiom documented
+- Forward-declarations в nova_rt.h для nv_panic_insert_oob + nv_panic_negative_reserve
+
+Worktree: nova-p90-1, branch: plan-90.1-extend-family
