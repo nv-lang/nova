@@ -152,15 +152,22 @@ handler'ами (killer-пример из README — `Db` через `in_memory_d
 
 **Можно на Nova (перенести из C или написать сразу на Nova):**
 
-| Метод | Nova-реализация | Примечание |
+| Метод | Nova-реализация | Статус |
 |---|---|---|
-| `str @replace(from, to)` | `@split(from).join(to)` | одна строка |
-| `str @repeat(n)` | `StringBuilder` + loop | читаемо |
-| `str @pad_left(w, fill)` | `str.from(fill).repeat(w - @len()) + @` | через repeat |
-| `str @pad_right(w, fill)` | `@ + str.from(fill).repeat(w - @len())` | через repeat |
-| `str @parse_int()` | через `@bytes()` + `[]u8` slice-итерация | Plan 90.1 |
+| `str @replace(from, to)` | `@split(from).join(to)` | ✅ Ф.2 |
+| `str @repeat(n)` | `StringBuilder.append_repeat` | ✅ Ф.2 |
+| `str @pad_left(w, fill)` | `StringBuilder.append_repeat(fill, pad).append(@)` | ✅ Ф.2 |
+| `str @pad_right(w, fill)` | `StringBuilder.append(@).append_repeat(fill, pad)` | ✅ Ф.2 |
 | `[]T @map/filter/fold` | уже на Nova в `vec.nv` | ✅ готово |
-| `[]str @join(sep)` | уже на Nova в `text.nv` | ✅ готово |
+| `[]str @join(sep)` | уже на Nova в `text.nv` | ✅ Ф.2 |
+
+**nova_body блочный синтаксис (решение 2026-05-27):** `nova_body` в
+`runtime_registry.rs` поддерживает две формы:
+- `"expr"` → эмитируется как `fn @name(...) => expr`
+- `"{ ... }"` → эмитируется как `fn @name(...) { ... }` (block form)
+
+Это позволяет писать многострочные Nova-тела прямо в registry без
+искусственного соединения через `;`.
 
 **Остаётся в C (byte-level примитивы, нельзя без FFI):**
 
