@@ -8162,23 +8162,129 @@ fn check_fluent_return(module: &Module, errors: &mut Vec<Diagnostic>) {
                 .unwrap_or(false),
         }
     }
+
+    // Build set of (type_name, method_name) pairs that have `returns_receiver: true`
+    // in this module. Used by the inverse check below.
+    let fluent_methods: std::collections::HashSet<(String, String)> = module.items.iter()
+        .filter_map(|it| {
+            if let Item::Fn(f) = it {
+                if f.returns_receiver {
+                    if let Some(recv) = &f.receiver {
+                        return Some((recv.type_name.clone(), f.name.clone()));
+                    }
+                }
+            }
+            None
+        })
+        .collect();
+
+    // Returns true if `expr` can be statically determined to always yield the receiver.
+    // Covers: bare `@`, call to a known fluent method on `@`, if/else where all
+    // branches yield receiver. Conservative — returns false for anything complex.
+    fn expr_always_returns_receiver(
+        e: &Expr,
+        fluent: &std::collections::HashSet<(String, String)>,
+        recv_type: &str,
+    ) -> bool {
+        match &e.kind {
+            ExprKind::SelfAccess => true,
+            ExprKind::Call { func, .. } => {
+                if let ExprKind::Member { obj, name } = &func.kind {
+                    if matches!(obj.kind, ExprKind::SelfAccess) {
+                        return fluent.contains(&(recv_type.to_string(), name.clone()));
+                    }
+                }
+                false
+            }
+            ExprKind::If { then, else_: Some(else_branch), .. } => {
+                let then_ok = then.trailing.as_ref()
+                    .map(|t| expr_always_returns_receiver(t, fluent, recv_type))
+                    .unwrap_or(false);
+                if !then_ok { return false; }
+                match else_branch {
+                    ElseBranch::Block(b) => b.trailing.as_ref()
+                        .map(|t| expr_always_returns_receiver(t, fluent, recv_type))
+                        .unwrap_or(false),
+                    ElseBranch::If(e2) => expr_always_returns_receiver(e2, fluent, recv_type),
+                }
+            }
+            _ => false,
+        }
+    }
+
+    // Returns true if a body can be statically determined to always yield the receiver.
+    // Block: checks trailing expression + all Stmt::Return values.
+    fn body_always_returns_receiver(
+        body: &FnBody,
+        fluent: &std::collections::HashSet<(String, String)>,
+        recv_type: &str,
+    ) -> bool {
+        match body {
+            FnBody::External => false,
+            FnBody::Expr(e) => expr_always_returns_receiver(e, fluent, recv_type),
+            FnBody::Block(b) => {
+                // Trailing expression must return receiver.
+                let trailing_ok = b.trailing.as_ref()
+                    .map(|t| expr_always_returns_receiver(t, fluent, recv_type))
+                    .unwrap_or(false);
+                if !trailing_ok { return false; }
+                // All explicit return statements must also return receiver.
+                for stmt in &b.stmts {
+                    if let Stmt::Return { value: Some(v), .. } = stmt {
+                        if !expr_always_returns_receiver(v, fluent, recv_type) {
+                            return false;
+                        }
+                    }
+                    if let Stmt::Return { value: None, .. } = stmt {
+                        return false; // bare `return` → returns unit, not receiver
+                    }
+                }
+                true
+            }
+        }
+    }
+
     for item in &module.items {
         if let Item::Fn(f) = item {
-            if !f.returns_receiver { continue; }
-            if !tail_is_self(&f.body) {
-                let span = match &f.body {
-                    FnBody::Block(b) => b.span,
-                    FnBody::Expr(e) => e.span,
-                    FnBody::External => f.span,
+            if f.returns_receiver {
+                // Check 1 (existing): `-> @` body must end with `@`.
+                if !tail_is_self(&f.body) {
+                    let span = match &f.body {
+                        FnBody::Block(b) => b.span,
+                        FnBody::Expr(e) => e.span,
+                        FnBody::External => f.span,
+                    };
+                    errors.push(Diagnostic::new(
+                        format!(
+                            "метод `{}` объявлен `-> @` (fluent-return, D132): его \
+                             тело обязано завершаться выражением `@` — вернуть сам \
+                             receiver. Добавьте `@` последним выражением тела.",
+                            f.name),
+                        span,
+                    ));
+                }
+            } else {
+                // Check 2 (new): `-> Self` method where all return paths yield `@`
+                // must be declared `-> @` instead. Catches the accidental pattern
+                //   `fn T mut @m(...) -> Self => @fluent_call(...)`.
+                let is_self_return = matches!(&f.return_type,
+                    Some(TypeRef::Named { path, .. })
+                    if path.len() == 1 && path[0] == "Self");
+                if !is_self_return { continue; }
+                let recv = match &f.receiver {
+                    Some(r) if r.kind == ReceiverKind::Instance => r,
+                    _ => continue,
                 };
-                errors.push(Diagnostic::new(
-                    format!(
-                        "метод `{}` объявлен `-> @` (fluent-return, D132): его \
-                         тело обязано завершаться выражением `@` — вернуть сам \
-                         receiver. Добавьте `@` последним выражением тела.",
-                        f.name),
-                    span,
-                ));
+                if body_always_returns_receiver(&f.body, &fluent_methods, &recv.type_name) {
+                    errors.push(Diagnostic::new(
+                        format!(
+                            "метод `{}` объявлен `-> Self`, но все пути возвращают \
+                             сам receiver (`@`). Используйте `-> @` (fluent-return, D132) \
+                             вместо `-> Self`.",
+                            f.name),
+                        f.span,
+                    ));
+                }
             }
         }
     }

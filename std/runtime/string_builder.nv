@@ -32,10 +32,10 @@ export external fn StringBuilder mut @append(s str) -> @
 export external fn StringBuilder mut @append(c char) -> @
 
 // Оператор `+`: `sb + s == sb.@plus(s)` → @append (D46).
-export fn StringBuilder mut @plus(s str) -> Self => @append(s)
+export fn StringBuilder mut @plus(s str) -> @ => @append(s)
 
 // Оператор `+`: `sb + c == sb.@plus(c)` → @append (D46, char overload).
-export fn StringBuilder mut @plus(c char) -> Self => @append(c)
+export fn StringBuilder mut @plus(c char) -> @ => @append(c)
 
 // Длина в codepoint'ах (D26 школа B). O(n) UTF-8 walk.
 export external fn StringBuilder @len() -> int
