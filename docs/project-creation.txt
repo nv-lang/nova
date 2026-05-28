@@ -23304,3 +23304,37 @@ for diagnostic counters reuse, но НЕ будет merged — Architectural fix
 
 Status: 📋 proposed. Next: Ф.1 design phase (Opus + Thinking ON, ~1 day).
 
+
+=== Plan 83.11 Ф.3 COMPLETE: STALE-slot race fix (2026-05-28) ===
+
+Root cause confirmed после 6 sessions (~10+ hours) investigation:
+STALE slot condition — `fibers[slot]=NULL` while `parked[slot]=true`.
+Original fiber stuck in mco_yield, close_cb saw WRONG-FIBER (NULL vs
+expected_co) and skipped wake → supervised hang indefinitely.
+
+Fix A (nova_sched.h / nova_scope_free_slot): skip slots where
+`parked[slot]=true` — STALE detection. Prevents slot reuse while
+original fiber still in mco_yield.
+
+Fix B (driver.c / _nova_driver_sleep_close_cb): when WRONG-FIBER
+detected, dispatch expected_co directly (not actual_co=NULL).
+Clears parked[] and pending_wake[], sets DISPLACED sentinel (-2),
+then dispatch_ready(expected_co).
+
+Fix C (epilogue / _nova_worker_slot): DISPLACED sentinel
+`_nova_worker_slot=-2` causes epilogue to skip free_slot for
+displaced fiber, preventing double free_slot.
+
+Verification: stress_iso_3e.c × 30 runs → 30/30 PASS (was 3-5/30 before).
+Concurrency suite: 74-75/78 PASS; 3-4 flaky are pre-existing WIP branch
+failures (cancel_negative_behavior_test, deep_spawn, supervised_cancel_test,
+time_handler).
+
+Diagnostic cleanup (same commit): removed ~30 _nova_diag_* atomic counters,
+nova_diag_drv_print(), all fprintf debug prints from 6 files
+(runtime.c/h, driver.c, nova_sched.h, fibers.h, emit_c.rs).
+
+Commit: dd7a4f00bc5 "fix(plan83.11 Ф.3): STALE-slot race fix + remove
+diagnostic instrumentation" on branch plan-83.11-centralized-driver.
+
+Ф.4-Ф.9 pending (blocking pool migration, cancel migration, perf, tests).
