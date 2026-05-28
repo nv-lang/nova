@@ -2133,6 +2133,10 @@ impl CEmitter {
                     // Plan 70 PhaseA1.3: strict mode — method overload registration.
                     // Generic-recv path uses erased_type_ref_c (preserves type-param erasure,
                     // intentional Cat B). Non-generic-recv: strict translation required.
+                    // Plan 91.8a.2 (D183 amendment): set current_receiver_type для
+                    // resolution Self в param-type position (mirror return-type path
+                    // на line 2148+). Без этого `fn T @method(other Self)` даёт E7001.
+                    let prev_recv_for_params = self.current_receiver_type.replace(recv.type_name.clone());
                     let param_c_types: Vec<String> = f.params.iter()
                         .map(|p| if is_generic_recv {
                             Ok(self.erased_type_ref_c(&Some(p.ty.clone()), &recv_type_params))
@@ -2143,6 +2147,7 @@ impl CEmitter {
                             ))
                         })
                         .collect::<Result<Vec<_>, _>>()?;
+                    self.current_receiver_type = prev_recv_for_params;
                     // Resolve return type. `Self` → recv.type_name.
                     // Plan 55 Ф.3: для `=> expr` body инфирим (см. free-fn выше).
                     let return_c_type = match &f.return_type {
