@@ -20,7 +20,7 @@ static-состояния.
 | [D141](#d141-примитивы-доступа-к-памяти--byte_at--bulk-slice-операции) | Примитивы доступа к памяти — `byte_at` / bulk slice-операции |
 | [D177](#d177-str-nova-body-dispatch--plan-54-ф2-extension) | `str` Nova-body dispatch — Plan 54 Ф.2 extension |
 | [D178](#d178-str-api-cleanup-и-расширения--plan-91-ф26) | `str` API cleanup и расширения — Plan 91 Ф.2.6 |
-| [D179](#d179-stringbuilder--pure-nova-consume-type--plan-109) | `StringBuilder` — pure Nova consume type — Plan 109 |
+| [D179](#d179-stringbuilder--pure-nova-consume-type--plan-91-ф26) | `StringBuilder` — pure Nova consume type — Plan 91 Ф.2.6 |
 
 ---
 
@@ -3666,7 +3666,7 @@ static inline nova_str Nova_StringBuilder_consume_into(Nova_StringBuilder* b) {
 - [D82](08-runtime.md#d82) — external fn декларации (str external методы).
 - [D176](02-types.md#d176-readonly-t--тип-модификатор) — `str.as_bytes() -> readonly []u8`
   используется в `parse_int_radix` body.
-- [Plan 91](../../docs/plans/91-stdlib-mvp-for-0.1.md) — std MVP 0.1, родительский план.
+- [Plan 91.4](../../docs/plans/91.4-str-nova-body-dispatch.md) — sub-plan Ф.2.5 D177.
 - [Plan 54](../../docs/plans/54-nova-body-methods.md) — Ф.2 dispatch mechanism.
 
 ---
@@ -3789,13 +3789,13 @@ Legacy C aliases сохранены для совместимости кода, 
 - [D102](02-types.md#d102-keyword-only-default-параметры) — keyword-only default params.
 - [D176](02-types.md#d176-readonly-t--тип-модификатор) — `readonly` type modifier; `as_bytes()`.
 - [D177](#d177-str-nova-body-dispatch--plan-54-ф2-extension) — Nova-body dispatch механизм.
-- [Plan 91](../../docs/plans/91-stdlib-mvp-for-0.1.md) — Plan 91 Ф.2.6.
+- [Plan 91.5](../../docs/plans/91.5-str-api-cleanup.md) — sub-plan Ф.2.6 D178.
 
 ---
 
-## D179. `StringBuilder` — pure Nova consume type — Plan 109
+## D179. `StringBuilder` — pure Nova consume type — Plan 91 Ф.2.6
 
-**Статус:** закрыт (Plan 109, 2026-05-28).
+**Статус:** закрыт (Plan 91 Ф.2.6 sub-phase, 2026-05-28).
 
 ### Суть
 
@@ -3876,4 +3876,4 @@ StringBuilder.from(c char)       -> Self   // UTF-8 encode одного codepoin
 - [D133](02-types.md#d133-consume-static-analysis) — consume static analysis.
 - [D176](02-types.md#d176-readonly-t--тип-модификатор) — `readonly` parameter modifier.
 - [D178](#d178-str-api-cleanup-и-расширения--plan-91-ф26) — `str.from_bytes_*` helpers.
-- [Plan 109](../../docs/plans/109-stringbuilder-nova-type.md) — полный план.
+- [Plan 91.6](../../docs/plans/91.6-stringbuilder-nova-type.md) — sub-plan Ф.2.6 sub-phase D179.

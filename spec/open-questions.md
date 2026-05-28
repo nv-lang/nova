@@ -4128,6 +4128,14 @@ Q-clone-semantics (`@clone()` deep vs shallow), Q-readonly-types
 
 ## Q-string-builder. `StringBuilder` — UTF-8 string accumulator ✅ ЗАКРЫТО (2026-05-08)
 
+> **Обновление 2026-05-28 (D179, [Plan 91.6](../../docs/plans/91.6-stringbuilder-nova-type.md)):**
+> `StringBuilder` переведён с `external type` на чистый Nova consume-тип
+> `type StringBuilder consume { mut buf []u8 }`. Все методы Nova-body
+> (кроме `buf.push(u8)` — builtin array op). API изменения:
+> `@into() → @to_str()`, `@byte_len/@peek` удалены, `@char_len` новый.
+> Подробности — см. D179 в `08-runtime.md`. Старые API ниже — историческая
+> декларация на момент закрытия Q-string-builder в 2026-05-08.
+
 **Контекст.** Replaces text-side унифицированного `Buffer` (Q-buffer).
 `s1 + s2` — O(a+b) per call; в hot loop O(N²). Требуется builder.
 Split на StringBuilder (text-only) + WriteBuffer (binary-only)
