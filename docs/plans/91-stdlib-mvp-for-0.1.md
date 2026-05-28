@@ -397,6 +397,7 @@ roadmap'ом, подпланы — историей закрытых фаз.
 | 91.4 | [str Nova-body dispatch (Ф.2.5, D177)](91.4-str-nova-body-dispatch.md) | 5 str методов на Nova через Plan 54 Ф.2 dispatch | ✅ 2026-05-28 |
 | 91.5 | [str API cleanup + D132 amendment (Ф.2.6, D178)](91.5-str-api-cleanup.md) | bytes→to_bytes, chars→to_chars, parse_int merge, compare, readonly param syntax, `-> @` fluent fix | ✅ 2026-05-28 |
 | 91.6 | [StringBuilder pure Nova consume type (Ф.2.6 sub-phase, D179)](91.6-stringbuilder-nova-type.md) | `type StringBuilder consume { mut buf []u8 }`; убран C/Rust backing | ✅ 2026-05-28 |
+| 91.7 | [Array methods cleanup + canonical `.new()` (D180)](91.7-array-methods-and-default-new.md) | mut `-> @` chain, удалить `@slice`, generic sort/min/max, `T.new()` для канонических типов | 🔴 OPEN |
 
 ## Открытые фазы
 
