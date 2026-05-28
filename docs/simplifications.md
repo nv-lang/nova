@@ -27283,3 +27283,32 @@ Option → `NovaOpt_T`, user → `Nova_X*`.
 
 Это full sub-plan (1-2 dev-days). MVP concrete `[]int @sort()` достаточен
 для большинства use-cases. Generic — followup `[M-91.7-sort-generic]`.
+
+## Plan 91.8a — protocol renames + Ordering removal + default body syntax (D183)
+
+**Why -able convention:** Iter→Iterable, Display→Printable. Все protocols
+теперь имеют unified `-able` suffix (Equatable/Comparable/Hashable/Printable/
+Iterable). D9 single canonical naming style.
+
+**Why Comparable.compare -> int (not Ordering):** consistency со str.compare
+(D178) и C memcmp/strcmp. Perf (no sum-type dispatch). Less surface area
+(одной sum-type меньше). Memcmp-compatible — any-sign int convention (caller
+checks sign only, не magnitude).
+
+**Why default body syntax (body present = default):** Без annotation keyword.
+В отличие от Java/C# где `default` keyword нужен из-за исторической нагрузки
+(interface методы должны были быть abstract), Nova protocols с самого начала
+позволяют bodies → правило «body есть = default» однозначно. Меньше syntax noise.
+
+**Why local override discrepancy в check_protocol_embeds:** Когда Comparable
+embeds Equatable, embedded `equals` приходит как одна копия. Когда Comparable
+also locally declares `equals` (для default body), это duplicate в смысле
+«method name+arity повторяется через >1 origin». Семантически — local
+declaration overrides embedded. Fix: track local methods отдельно; allow
+override (не error).
+
+**Why codegen synthesis отложен:** Полная codegen synthesis для default bodies
+— это walking type satisfaction + emit synthesized functions per (Type, P)
+pair. Substantial codegen pass. Сейчас compatibility through explicit @equals
+boilerplate (one-line `=> @compare(other) == 0`). Followup [M-91.8a.2-default-codegen]
+завершит eager synthesis.

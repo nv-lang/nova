@@ -1,17 +1,17 @@
 // iter_protocol_from_prelude.nv — Plan 62.D non-opaque.
 //
-// Verifies что `Iter[T]` protocol formal declaration в std/prelude/
+// Verifies что `Iterable[T]` protocol formal declaration в std/prelude/
 // collections.nv (re-export'нутая через std/prelude.nv facade) auto-
-// available везде через R27 auto-import. До 62.D `Iter[T]` существовал
+// available везде через R27 auto-import. До 62.D `Iterable[T]` существовал
 // ТОЛЬКО как structural duck-typing per D58 — формальная декларация
 // канонизирует тип-имя для `nova doc`, eligible как bound (`T Iter`)
 // per D72, и не ломает existing structural for-in dispatch.
 //
 // Покрытие:
-//   1. `Iter[T]` использован как return-type annotation без explicit
+//   1. `Iterable[T]` использован как return-type annotation без explicit
 //      import — резолвится через auto-import prelude.
 //   2. Custom type, имеющий `next() -> Option[T]`, передаётся туда где
-//      ожидается `Iter[T]` — duck-typing работает как раньше.
+//      ожидается `Iterable[T]` — duck-typing работает как раньше.
 //   3. For-in dispatch продолжает находить `next` метод структурно
 //      (codegen НЕ enforce'ит protocol declaration на arbitrary
 //      type-annotations).
@@ -20,7 +20,7 @@ module plan62.iter_protocol_from_prelude
 
 
 // Custom iterator-state: counter от 0 до N (exclusive).
-// Удовлетворяет `Iter[int]` структурно — есть `mut next() -> Option[int]`.
+// Удовлетворяет `Iterable[int]` структурно — есть `mut next() -> Option[int]`.
 type Counter {
     end       int
     mut cur   int
@@ -41,10 +41,10 @@ fn Counter mut @next() -> Option[int] {
 
 
 // ────────────────────────────────────────────────────────────────────
-// 1. `Iter[T]` annotation auto-available через prelude (no import).
+// 1. `Iterable[T]` annotation auto-available через prelude (no import).
 // ────────────────────────────────────────────────────────────────────
 
-// `-> Iter[int]` — protocol type annotation. Раньше резолвилось через
+// `-> Iterable[int]` — protocol type annotation. Раньше резолвилось через
 // type-checker silent pass-through (нет registered Iter type, никакой
 // проверки). Теперь резолвится через cross-file resolve в
 // std.prelude.collections.Iter. Поведение идентично: signature
@@ -57,7 +57,7 @@ fn make_counter(n int) -> Counter =>
 // 2. For-in over `Counter` — structural duck-typing продолжает работать.
 // ────────────────────────────────────────────────────────────────────
 
-test "Counter ducks Iter[int] — for-in dispatch via structural next()" {
+test "Counter ducks Iterable[int] — for-in dispatch via structural next()" {
     let mut sum = 0
     let it = make_counter(5)
     for x in it {

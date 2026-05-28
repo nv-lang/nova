@@ -1,4 +1,4 @@
-// Plan 85.5 Ф.2 — Iter[T]: ранний выход (break/continue) из for-in.
+// Plan 85.5 Ф.2 — Iterable[T]: ранний выход (break/continue) из for-in.
 
 module iter.early_return
 

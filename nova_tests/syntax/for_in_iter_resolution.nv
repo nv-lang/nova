@@ -1,8 +1,8 @@
-// Plan 39 Issue D: Iter[T] resolution в for-in loops.
+// Plan 39 Issue D: Iterable[T] resolution в for-in loops.
 //
 // D58 algorithm:
 //   1. Если `c` has `mut next() -> Option[T]` — use directly.
-//   2. Иначе если `c` has `iter() -> Iter[T]` — synthesize `c.iter()`,
+//   2. Иначе если `c` has `iter() -> Iterable[T]` — synthesize `c.iter()`,
 //      recurse on result.
 //   3. Иначе — error «type X has neither next nor iter» (clear diagnostic).
 //

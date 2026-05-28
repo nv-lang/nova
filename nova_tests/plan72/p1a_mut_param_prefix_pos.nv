@@ -26,7 +26,7 @@ fn Counter mut @next() -> Option[int] => {
 }
 
 // Plan 72 P1-A: leading `mut it T` syntax — T is a generic type-var.
-fn count_items[U, T Iter[U]](mut it T) -> int => {
+fn count_items[U, T Iterable[U]](mut it T) -> int => {
     let mut total = 0
     while let Some(_) = it.next() {
         total += 1
