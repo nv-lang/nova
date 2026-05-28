@@ -1,0 +1,40 @@
+module nova_tests.plan91_8a_2.bound_satisfaction_default_test
+
+// Plan 91.8a.2 part 2 (D183 amendment): type satisfies [T Equatable] bound
+// via default body fallback. Type Money имеет только @compare; @equals
+// будет synthesized из Equatable.equals default body.
+
+type Money { cents int }
+
+fn Money @compare(other Self) -> int =>
+    if @cents < other.cents { -1 }
+    else if @cents > other.cents { 1 }
+    else { 0 }
+
+// Type-checker: Money satisfies Comparable (has @compare).
+// Также satisfies Equatable через default body (uses @compare).
+// Раньше pure bound check rejected — теперь принимает.
+
+fn cmp_via_bound[T Comparable](a T, b T) -> int => a.compare(b)
+
+test "Comparable bound — Money satisfies через @compare" {
+    let a = Money { cents: 100 }
+    let b = Money { cents: 200 }
+    assert(cmp_via_bound(a, b) < 0)
+    assert(cmp_via_bound(b, a) > 0)
+    assert(cmp_via_bound(a, a) == 0)
+}
+
+// Equatable bound — должен accept Money (через default body).
+// Codegen synthesis для @equals — Part 2 followup; type-check этого commit
+// уже принимает satisfaction.
+// Bound satisfaction accepts Money via default body fallback (Part 2 commit).
+// Calling .equals() в body — отдельный followup (codegen synthesis for
+// default body methods needs mono pass refactor).
+fn eq_via_bound[T Equatable](_a T, _b T) -> bool => true
+
+test "Equatable bound — Money satisfies через default body fallback" {
+    let a = Money { cents: 100 }
+    let b = Money { cents: 100 }
+    assert(eq_via_bound(a, b))
+}
