@@ -2,7 +2,7 @@
 # Plan 108: `readonly` field enforcement (D175) + `readonly T` type modifier (D176)
 
 > **Создан:** 2026-05-28 (из обсуждения Plan 91 Ф.2 — `str.as_bytes()` zero-copy + `split` на Nova).
-> **Статус:** 📋 proposed
+> **Статус:** 🟡 Ф.1+Ф.2+Ф.3 ✅ реализованы, Ф.4 closure в процессе
 > **Приоритет:** P1 — разблокирует `str.as_bytes() -> readonly []u8` (zero-copy) и `split` на Nova (Plan 91).
 > **Оценка:** ~1 dev-week (Ф.1 D175 + Ф.2 D176 + Ф.3 применение).
 > **Зависимости:** Plan 91 (потребитель), D36 (расширяет), D144 (слайсы).
@@ -170,14 +170,14 @@ export external fn str @bytes() -> []u8
 
 ## 6. Критерии приёмки (Definition of Done)
 
-- [ ] `nova test` — 0 новых FAIL после каждой фазы
-- [ ] Все позитивные тесты из §5 PASS
-- [ ] Все негативные тесты из §5 дают ожидаемые коды ошибок
-- [ ] Spec D175 + D176 записаны в `spec/decisions/02-types.md`
-- [ ] `str.as_bytes()` возвращает zero-copy `readonly []u8` (нет memcpy)
-- [ ] `str.split` переписан на Nova-body (не C)
-- [ ] `std/STATUS.md` обновлён
-- [ ] Раздел «Readonly types» в справочной документации
+- [x] `nova test` — 0 новых FAIL после каждой фазы
+- [x] Все позитивные тесты из §5 PASS (6/6 plan108 PASS)
+- [x] Все негативные тесты из §5 дают ожидаемые коды ошибок
+- [x] Spec D175 + D176 записаны в `spec/decisions/02-types.md`
+- [x] `str.as_bytes()` возвращает zero-copy `readonly []u8` (нет memcpy)
+- [ ] `str.split` переписан на Nova-body (не C) — deferred (bootstrap: остаётся external fn)
+- [x] `std/STATUS.md` обновлён
+- [ ] Раздел «Readonly types» в справочной документации — deferred (нет docs/reference/ пока)
 
 ## Q. Открытые вопросы
 
