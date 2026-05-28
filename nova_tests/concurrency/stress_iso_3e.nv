@@ -3,7 +3,7 @@
 // Used to verify [M-83.10.4-iso-cancel-startup-race] under diagnostic counters.
 module concurrency.stress_iso_3e
 
-test "99+1 fibers sleep(10000), cancel(30ms) — bench clone" {
+test "99+1 fibers sleep(10000), cancel(30ms) — STALE-slot stress" {
     let tok = CancelToken.new()
     let t0 = Time.now()
     supervised(cancel: tok) {
