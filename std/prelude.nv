@@ -57,6 +57,12 @@ export import std.prelude.core.{Option, Some, None, Result, Ok, Err, Error, Orde
 // сохраняется как bootstrap implementation (см. std/prelude/runtime.nv).
 export import std.prelude.runtime.{panic, exit, assert, debug_assert, print, println}
 
+// Plan 91.7 (D180): canonical .new() для primitive types.
+// `int.new() => 0`, `bool.new() => false`, `f64.new() => 0.0`, etc.
+// см. std/runtime/defaults.nv. Static methods на primitives — type-resolver
+// видит их через method_table; auto-import делает доступными без явного import.
+import std.runtime.defaults
+
 // Plan 62.C / 62.C.bis: re-export error types из std.prelude.errors.
 // RuntimeError (6 variants) + ReadBufferError (1 variant) +
 // RuntimeNoneError (unit-type, D85 — ошибка `Option!!` на None). Type
@@ -192,4 +198,4 @@ export import std.runtime.string.{parse_int, pad_left, pad_right, repeat, replac
 ///     bytes→to_bytes, chars→to_chars, parse_int_radix+parse_int→parse_int(radix=10),
 ///     compare added, split→readonly []str, readonly param syntax.
 #stable(since = "0.1")
-export const PRELUDE_VERSION int = 11
+export const PRELUDE_VERSION int = 12
