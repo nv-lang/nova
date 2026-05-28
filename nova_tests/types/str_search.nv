@@ -183,40 +183,40 @@ test "rfind is case-sensitive" {
 }
 
 // ================================================================
-// SECTION 7: len/byte_len/char_len — школа B (codepoint-indexed)
+// SECTION 7: len/char_len — Plan 108 D26 rev
 // ================================================================
-// School B (D26): s.len — длина в codepoint'ах, s.byte_len() — в байтах.
-// char_len() — алиас s.len (для совместимости/явности).
+// Plan 108 D26 rev: s.len() — длина в байтах O(1) (как Rust/Go).
+//                  s.char_len() — длина в codepoints O(n).
 
-test "len: ASCII — codepoints == bytes" {
+test "len: ASCII — bytes == codepoints" {
     let s = "hello"
-    assert(s.len() == 5)             // 5 codepoints (member access, school B)
-    assert(s.byte_len() == 5)      // 5 bytes
+    assert(s.len() == 5)          // 5 bytes (ASCII; D26 rev: len = bytes O(1))
+    assert(s.char_len() == 5)     // 5 codepoints
 }
 
-test "len: Cyrillic — codepoints != bytes" {
+test "len: Cyrillic — bytes != codepoints" {
     let s = "Привет"               // 6 codepoints, 12 bytes (2 byte/char UTF-8)
-    assert(s.len() == 6)             // school B: codepoints
-    assert(s.byte_len() == 12)     // bytes
+    assert(s.len() == 12)          // D26 rev: len = bytes
+    assert(s.char_len() == 6)      // codepoints
 }
 
 test "len: emoji — 4 байта на codepoint" {
     let s = "ab😀cd"                // 5 codepoints, 4 ASCII + 4 emoji = 8 bytes
-    assert(s.len() == 5)
-    assert(s.byte_len() == 8)
+    assert(s.len() == 8)            // D26 rev: len = bytes
+    assert(s.char_len() == 5)       // codepoints
 }
 
 test "len: empty string" {
     assert("".len() == 0)
-    assert("".byte_len() == 0)
+    assert("".char_len() == 0)
 }
 
 test "len for mixed content" {
     let s = "a Привет b"           // a + space + 6 cyrillic + space + b = 10 codepoints
                                    // ASCII: a, space, space, b = 4 bytes
                                    // Cyrillic: 6*2 = 12 bytes; total bytes = 16
-    assert(s.len() == 10)            // codepoints
-    assert(s.byte_len() == 16)     // bytes
+    assert(s.len() == 16)           // D26 rev: bytes
+    assert(s.char_len() == 10)      // codepoints
 }
 
 // ================================================================
@@ -249,7 +249,8 @@ test "split-by-find with Cyrillic" {
     let i = s.find(":").unwrap_or(-1)
     assert(i == 4)                 // codepoint offset
     let key = s[0..i]
-    let val = s[i + 1..s.len()]
+    // Plan 108 D26 rev: slice uses codepoint indices; use char_len() not len().
+    let val = s[i + 1..s.char_len()]
     assert(key == "ключ")
     assert(val == "значение")
 }
@@ -258,8 +259,8 @@ test "slice across emoji boundary" {
     let s = "ab😀cd"                // codepoints: a(0) b(1) 😀(2) c(3) d(4)
     let r = s[2..3]
     assert(r == "😀")
-    assert(r.byte_len() == 4)      // emoji = 4 bytes
-    assert(r.len() == 1)             // 1 codepoint
+    assert(r.len() == 4)           // emoji = 4 bytes (D26 rev: len = bytes)
+    assert(r.char_len() == 1)      // 1 codepoint
 }
 
 // ================================================================

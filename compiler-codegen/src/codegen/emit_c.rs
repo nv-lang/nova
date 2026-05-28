@@ -17658,6 +17658,18 @@ _cp++; \
                 //    Auto-derive: if user defined `fn V @into() -> str` for V,
                 //    call that instead of the builtin.
                 if let ExprKind::Ident(prim) = &obj.kind {
+                    // Plan 108 from_utf8 series: str.from_bytes_lossy / str.from_bytes_unchecked.
+                    if prim == "str" && (method == "from_bytes_lossy" || method == "from_bytes_unchecked") {
+                        if let Some(arg) = args.first() {
+                            let v = self.emit_expr(arg.expr())?;
+                            let c_fn = if method == "from_bytes_lossy" {
+                                "nova_str_from_bytes_lossy"
+                            } else {
+                                "nova_str_from_bytes_unchecked"
+                            };
+                            return Ok(format!("{}({})", c_fn, v));
+                        }
+                    }
                     if prim == "str" && method == "from" {
                         if let Some(arg) = args.first() {
                             let arg_ty = self.infer_expr_c_type(arg.expr());
@@ -19142,6 +19154,21 @@ _cp++; \
                             self.line("}");
                             return Ok(out);
                         }
+                    }
+                }
+                // Plan 108 from_utf8 series: str.from_bytes_lossy / str.from_bytes_unchecked.
+                // Both take a single `readonly []u8` arg → same C type NovaArray_nova_byte*.
+                if parts.len() == 2 && parts[0] == "str"
+                    && (parts[1] == "from_bytes_lossy" || parts[1] == "from_bytes_unchecked")
+                {
+                    if let Some(arg) = args.first() {
+                        let v = self.emit_expr(arg.expr())?;
+                        let c_fn = if parts[1] == "from_bytes_lossy" {
+                            "nova_str_from_bytes_lossy"
+                        } else {
+                            "nova_str_from_bytes_unchecked"
+                        };
+                        return Ok(format!("{}({})", c_fn, v));
                     }
                 }
                 // Plan 74: f64/f32.from_bits(bits uN) — IEEE 754 bit-cast
@@ -23708,7 +23735,7 @@ _cp++; \
                 => Some("nova_bool"),
             "to_upper" | "to_lower" | "trim" | "slice" | "concat"
                 => Some("nova_str"),
-            "len" | "char_len" | "byte_len" | "hash"
+            "len" | "char_len" | "byte_len" | "hash"  // byte_len = deprecated alias
                 => Some("nova_int"),
             "byte_at"  // Plan 90
                 => Some("nova_byte"),
@@ -23740,9 +23767,9 @@ _cp++; \
             "hash"        => Some("nova_str_hash"),
             "find"        => Some("nova_str_find"),
             "rfind"       => Some("nova_str_rfind"),
-            "len"         => Some("nova_str_char_len"),   // Plan 55 Ф.6: s.len() == s.char_len() (D26).
-            "char_len"    => Some("nova_str_char_len"),
-            "byte_len"    => Some("nova_str_byte_len"),
+            "len"         => Some("nova_str_byte_len"),   // Plan 108 D26 rev: len = bytes O(1).
+            "char_len"    => Some("nova_str_char_len"),  // codepoints O(n).
+            "byte_len"    => Some("nova_str_byte_len"),  // deprecated alias for len().
             "bytes"       => Some("nova_str_bytes"),
             "as_bytes"    => Some("nova_str_as_bytes"),  // Plan 108 D176: zero-copy readonly []u8
             "chars"       => Some("nova_str_chars"),
@@ -25747,8 +25774,9 @@ _cp++; \
                         };
                     }
                     // Built-in primitive `str.from(x) -> str` (D35 + D73).
+                    // Plan 108: also from_bytes_lossy / from_bytes_unchecked → nova_str.
                     if let ExprKind::Ident(n) = &obj.kind {
-                        if n == "str" && method == "from" { return "nova_str".into(); }
+                        if n == "str" && (method == "from" || method == "from_bytes_lossy" || method == "from_bytes_unchecked") { return "nova_str".into(); }
                         // User-defined `T.from(v)` returns Nova_T* (most cases).
                         if method == "from"
                             && (self.record_schemas.contains_key(n)
@@ -26052,6 +26080,10 @@ _cp++; \
                         }
                         // Built-in primitive `str.from(x) -> str` (D35 + D73).
                         if eff == "str" && method_name == "from" {
+                            return "nova_str".into();
+                        }
+                        // Plan 108 from_utf8 series: str.from_bytes_lossy / str.from_bytes_unchecked → nova_str.
+                        if eff == "str" && (method_name == "from_bytes_lossy" || method_name == "from_bytes_unchecked") {
                             return "nova_str".into();
                         }
                         // User-defined `T.from(v)` returns Nova_T* (most cases).

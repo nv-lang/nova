@@ -574,7 +574,9 @@ static inline NovaOpt_nova_int nova_str_rfind(nova_str s, nova_str needle) {
     return r;
 }
 
-/* ---- byte_len: длина в байтах (school B вспомогательное) ---- */
+/* ---- byte_len (= len) — Plan 108 D26 rev: str @len() = bytes O(1).
+ * nova_str_byte_len → str @len()     : O(1), байты.
+ * nova_str_char_len → str @char_len(): O(n), defined in nova_rt.h. */
 static inline nova_int nova_str_byte_len(nova_str s) {
     return (nova_int)s.len;
 }
