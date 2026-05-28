@@ -23897,3 +23897,56 @@ Spec ссылки обновлены (D177→91.4, D178→91.5, D179→91.6). Q-
 получил note про D179 update.
 
 Commit: f15d979b4de (split) на ветке plan-91-stdmvp.
+
+=== Plan 91.7 sub-plan closed 2026-05-28: array methods + canonical .new() (D180/D181/D182) ===
+
+Plan 91.7 closure — array API cleanup + canonical default constructors.
+
+Реализовано:
+- Part A (-> @ для array mut методов): push/reserve/truncate/fill/
+  copy_from/extend_from/insert_from/copy_within все возвращают @ для
+  fluent chain (D131). emit_c.rs изменён: returns obj_c вместо NOVA_UNIT.
+  infer_call_type: возвращает receiver type вместо nova_unit.
+  Также Nova-side sort/sort_by обновлены на -> @.
+- Part B (@slice removed): фактически удалён в Plan 96.1 — used arr[a..b].
+- Part D (canonical .new()):
+  - std/runtime/defaults.nv (новый): int/u8-u64/i8-i64/f32/f64/bool.new()
+  - std/runtime/string.nv: str.new() => ""
+  - std/collections/vec.nv: []T.new()/with_capacity — already builtin в emit_c.rs.
+  - std/prelude.nv: import std.runtime.defaults; PRELUDE_VERSION 11→12.
+
+Codegen fix: Self в return-type для primitive receivers — `receiver_c_type`
+вместо hardcoded `Nova_<recv>*`. Это закрывает CC-FAIL «unknown type Nova_int»
+для `int.new() -> Self => 0` style деклараций.
+
+D-blocks (main nova repo, branch main):
+- D180: Canonical .new() constructors (convention) — stdlib provides for
+  primitives/str/[]T; user types — explicit; char/Result/Option — N/A.
+- D181: Array methods -> @ fluent mut chain + slice removed (arr[a..b] only).
+- D182: Self в return-type для parametric static methods — canonical form.
+
+Q-array-api в open-questions.md обновлён — note про D180/D181 update.
+
+Тесты (nova_tests/plan91_7/, 5/5 PASS):
+- primitive_new_test: int/u8-u64/i8-i64/f32/f64/bool.new() == 0/false
+- str_new_test: str.new() == ""
+- array_new_test: []int.new() / with_capacity / push после new
+- array_mut_chain_test: push.push.push, extend_from, fill, truncate, copy_from
+- sort_chain_test: sort/sort_by возвращают receiver
+
+Отложенные followup:
+- [M-91.7-option-new-static]: Option[T].new() — codegen ограничение
+  для generic builtin sum static methods. Workaround: использовать None.
+- [M-91.7-sort-generic]: generic fn[T Ord] sort/min/max/binary_search —
+  требует Ord protocol + extensive mono codegen work.
+- [M-91.7-default-new-enforcement]: compile error для user types без
+  явного .new() — требует BoundCtx type registry.
+- [M-91.7-mixed-method-chain]: arr.sort().push() chain — emit_c.rs
+  treats Nova-method result как struct, not pointer.
+- [M-91.7-self-required-parametric]: validator для запрета
+  fn Option[T].new() -> Option[T] (только -> Self).
+
+Регрессия: 5/5 plan91_7 PASS; plan73/77/91/100/108 без новых failures
+(pre-existing failures в plan100_6 + syntax — unchanged).
+
+Commits (nova-p91, branch plan-91-stdmvp): TBD после финального commit.

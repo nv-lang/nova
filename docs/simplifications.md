@@ -27234,3 +27234,52 @@ ownership tracking.
 counters → увидели `fibers[slot]=NULL` при `parked=true` → STALE condition.
 Без dump-инфраструктуры race не локализовалась за 5 сессий (10+ часов).
 С dump-инфраструктурой — локализовалась за один запуск.
+
+## Plan 91.7 — Array API cleanup + canonical `.new()` (D180/D181/D182)
+
+**Why -> @ для mut методов:** stale `let _ = arr.push(1)` discard паттерн
+заменён fluent chain `arr.push(1).push(2).reserve(10)` — единый стиль с
+StringBuilder (Plan 109 / D179) и user fluent APIs (D131). Codegen change
+тривиален: `return Ok(obj_c)` вместо `return Ok("NOVA_UNIT")`.
+
+**Why @slice удалён:** Plan 96 даёт `arr[a..b]` zero-copy view. Метод
+@slice был дубликат с copy-семантикой. D9 принцип «один очевидный путь» —
+два пути для одного действия = плохо.
+
+**Why .new() в Nova-коде, не compiler-magic:**
+Decision из обсуждения 2026-05-28 — generation `.new()` для каждого
+типа невидим в `nova doc`, скрытый, ломает «всё видно в исходниках».
+Альтернатива — Nova-side declarations в `std/runtime/defaults.nv`
+(numeric+bool) + `string.nv` (str) + builtin (`[]T` в emit_c.rs).
+Single source of truth — stdlib, не compiler.
+
+**Why user types НЕ имеют auto .new():**
+- Auto-generated `User.new()` со «всё-нулями» скрывает defaults
+  (новый юзер не-админ? откуда читателю знать?)
+- Invalid state risk: `Connection.new()` без host = runtime crash где-то далеко.
+- Имена кодируют намерение: `User.new(name, email)` vs `User.guest()`.
+- Эволюция типа: добавление поля заставляет обновить конструктор → good failure.
+- `nova doc User` показывает явные конструкторы.
+
+Discipline by design. См. D180 §Rationale.
+
+**Why -> Self в parametric static methods обязателен:**
+`fn Option[T].new() -> Option[T]` — redundant: receiver уже декларирует
+тип. `Self` устойчив к rename + сразу говорит «возврат того же типа».
+D9 single path. Enforce validator — followup `[M-91.7-self-required-parametric]`.
+
+**Self codegen fix (хороший побочный эффект):**
+Раньше `Self` substitution в return-type делалось через
+`format!("Nova_{}*", recv)` — failures для primitives (`Nova_int*` —
+unknown type) и Option/Result (`Nova_Option*` incomplete). Делегация в
+`receiver_c_type()` правильно мапит все типы: primitives → `nova_int`,
+Option → `NovaOpt_T`, user → `Nova_X*`.
+
+**Why Part C generic sort deferred:**
+`fn[T Ord] []T @sort()` требует:
+1. Ord protocol (`@compare(other Self) -> Ordering`) — новый D-block.
+2. @compare deklarations для всех numeric primitives.
+3. mono-pass per concrete T — emit_c.rs существенная работа.
+
+Это full sub-plan (1-2 dev-days). MVP concrete `[]int @sort()` достаточен
+для большинства use-cases. Generic — followup `[M-91.7-sort-generic]`.
