@@ -27014,3 +27014,27 @@ even с тысячами scopes.
 **Backward-compat сохранён:** existing parked[] semantics не изменены;
 dispatch_ready hierarchy intact; все callers (channels, mutexes, Plan
 103.x sync) работают через тот же generic API без изменений.
+
+---
+
+## Plan 83.11 Ф.3 — STALE-slot race fix (2026-05-28 final)
+
+**Ключевое упрощение:** вместо полного порта Tokio AtomicWaker (2-4 dev-days,
+переписывает fiber model) — точечный fix STALE-slot условия (3 файла, ~50 строк).
+
+**Fix A** (`nova_scope_free_slot`): одна проверка `parked[i]==true` → skip.
+Защищает от slot-reuse пока fiber в mco_yield. Без этого alloc_slot видит
+`fibers[i]=NULL` и считает слот свободным — хотя там ещё живёт старый fiber.
+
+**Fix B** (`_nova_driver_sleep_close_cb`): при WRONG-FIBER диспатч по
+`expected_co` (сохранён в NovaSleepState), не по `fibers[slot]` (уже занят
+другим fiber'ом). Identity через pointer, не через slot-индекс.
+
+**Fix C** (spawn epilogue): DISPLACED sentinel `_nova_worker_slot=-2` исключает
+double-free_slot для displaced fiber. Один sentinel integer вместо отдельного
+ownership tracking.
+
+**Диагностический алгоритм:** programmatic watchdog dump → per-step atomic
+counters → увидели `fibers[slot]=NULL` при `parked=true` → STALE condition.
+Без dump-инфраструктуры race не локализовалась за 5 сессий (10+ часов).
+С dump-инфраструктурой — локализовалась за один запуск.
