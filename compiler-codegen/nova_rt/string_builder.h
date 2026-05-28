@@ -196,6 +196,14 @@ static inline nova_str Nova_StringBuilder_method_into(Nova_StringBuilder* b) {
     return s;
 }
 
+/* Plan 100.6 D164 / Plan 103.9 D174: consume-receiver ABI alias.
+ * Emit_c.rs generates Nova_StringBuilder_consume_into for `consume @into()`
+ * calls coming through method dispatch (D164 consume-bit naming). The C
+ * implementation is identical to method_into — just an extra symbol. */
+static inline nova_str Nova_StringBuilder_consume_into(Nova_StringBuilder* b) {
+    return Nova_StringBuilder_method_into(b);
+}
+
 /* @starts_with(prefix str) -> bool — non-consuming читает буфер.
  * O(min(|prefix|, |buf|)) memcmp. */
 static inline nova_bool Nova_StringBuilder_method_starts_with(Nova_StringBuilder* b, nova_str prefix) {
@@ -340,35 +348,10 @@ static inline Nova_StringBuilder* Nova_StringBuilder_method_append_bytes(
     return b;
 }
 
-/* Plan 91 Ф.2: str @repeat / @replace / @pad_left / @pad_right / @parse_int_radix.
+/* Plan 91 Ф.2: str @repeat / @replace / @pad_left / @pad_right.
  * Nova-first: nova_body в runtime_registry + Nova body в string.nv — авторитетная spec.
- * C-реализации здесь зеркалят Nova-семантику (bootstrap; C codegen использует c_name). */
-
-/* str @parse_int_radix(radix int) -> Option[int].
- * Nova body в std/runtime/string.nv — C shim mirrors it exactly. */
-static inline NovaOpt_nova_int nova_str_parse_int_radix(nova_str s, nova_int radix) {
-    NovaOpt_nova_int r = { .tag = NOVA_TAG_Option_None, .value = 0 };
-    if (s.len == 0 || radix < 2 || radix > 36) return r;
-    size_t i = 0;
-    int neg = 0;
-    if (s.ptr[0] == '-') { neg = 1; i = 1; }
-    else if (s.ptr[0] == '+') { i = 1; }
-    if (i >= s.len) return r;
-    nova_int acc = 0;
-    for (; i < s.len; i++) {
-        unsigned char c = (unsigned char)s.ptr[i];
-        nova_int d = -1;
-        if (c >= '0' && c <= '9') d = (nova_int)(c - '0');
-        else if (c >= 'a' && c <= 'z') d = (nova_int)(c - 'a' + 10);
-        else if (c >= 'A' && c <= 'Z') d = (nova_int)(c - 'A' + 10);
-        if (d < 0 || d >= radix) return r;
-        if (acc > (9223372036854775807LL - d) / radix) return r;
-        acc = acc * radix + d;
-    }
-    r.tag = NOVA_TAG_Option_Some;
-    r.value = neg ? -acc : acc;
-    return r;
-}
+ * C-реализации здесь зеркалят Nova-семантику (bootstrap; C codegen использует c_name).
+ * parse_int_radix — C-bootstrap в array.h (зеркало Nova body в string.nv). */
 
 static inline nova_str nova_str_repeat(nova_str s, nova_int n) {
     if (n <= 0 || s.len == 0) return (nova_str){ "", 0 };

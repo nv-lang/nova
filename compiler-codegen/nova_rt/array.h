@@ -953,7 +953,6 @@ static inline NovaOpt_nova_int nova_str_parse_int(nova_str s) {
     return r;
 }
 
-
 /* Plan 90.1 — bounds-check для insert_from(i, src) position.
  * i должен быть в [0, dst.len] (включая len — append-at-end допустим). */
 static inline void nv_panic_insert_oob(nova_int i, nova_int len) {
