@@ -31,7 +31,7 @@ module std.sort
 /// assert(xs == [1, 1, 2, 3, 4, 5, 6, 9])
 /// ```
 #stable(since = "0.1")
-export fn []int mut @sort() -> () {
+export fn []int mut @sort() -> @ {
     let n = @len()
     let mut i = 1
     while i < n {
@@ -44,6 +44,7 @@ export fn []int mut @sort() -> () {
         @[j + 1] = key
         i = i + 1
     }
+    @
 }
 
 
@@ -60,7 +61,7 @@ export fn []int mut @sort() -> () {
 /// assert(xs == [4, 3, 1])
 /// ```
 #stable(since = "0.1")
-export fn []int mut @sort_by(cmp fn(int, int) -> Ordering) -> () {
+export fn []int mut @sort_by(cmp fn(int, int) -> Ordering) -> @ {
     let n = @len()
     let mut i = 1
     while i < n {
@@ -73,6 +74,7 @@ export fn []int mut @sort_by(cmp fn(int, int) -> Ordering) -> () {
         @[j + 1] = key
         i = i + 1
     }
+    @
 }
 
 

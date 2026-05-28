@@ -1,0 +1,36 @@
+// Plan 91.7 (D180): canonical `.new()` constructors для типов
+// с единственным очевидным default-значением.
+//
+// stdlib предоставляет `.new()` только для канонических типов
+// (числовые, bool, str, []T, Option). Для своих типов разработчик
+// пишет `.new()` явно — compiler НЕ автогенерирует.
+//
+// См. spec/decisions/02-types.md §D180.
+
+module runtime.defaults
+
+// ─── Numeric types ───
+
+// `int.new() => 0` — арифметический нейтрал.
+export fn int.new() -> Self => 0
+
+// Unsigned integers.
+export fn u8.new()  -> Self => 0
+export fn u16.new() -> Self => 0
+export fn u32.new() -> Self => 0
+export fn u64.new() -> Self => 0
+
+// Signed integers.
+export fn i8.new()  -> Self => 0
+export fn i16.new() -> Self => 0
+export fn i32.new() -> Self => 0
+export fn i64.new() -> Self => 0
+
+// Floating point.
+export fn f32.new() -> Self => 0.0
+export fn f64.new() -> Self => 0.0
+
+// ─── Boolean ───
+
+// `bool.new() => false` — логический нейтрал.
+export fn bool.new() -> Self => false

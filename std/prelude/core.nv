@@ -160,6 +160,11 @@ export type Error {
 #stable(since = "0.1")
 fn Option[T] @is_some() -> bool => match @ { Some(_) => true, None => false }
 
+// Plan 91.7 (D180): Option[T].new() declined as canonical .new() —
+// codegen does not currently support generic static methods on builtin
+// sum-types (Option/Result). Workaround: use `None` directly.
+// Tracked: [M-91.7-option-new-static] — потенциальный followup.
+
 /// True если Option пустой (None).
 ///
 /// **Plan 95 Ф.4.1**: см. `is_some` — параллельный перенос.
