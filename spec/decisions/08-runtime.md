@@ -608,9 +608,10 @@ type ReadBufferError
 fn []T @len() -> int                // O(1), zero-cost lowering arr->len
 fn []T @capacity() -> int           // O(1), zero-cost lowering arr->cap
 fn []T @is_empty() -> bool          // O(1), len() == 0
-fn str @len() -> int                // O(n) — codepoint count (UTF-8 walk)
-fn str @byte_len() -> int           // O(1) — байтов
-fn str @is_empty() -> bool          // O(1) — byte_len() == 0
+fn str @len() -> int                // O(1) — байты (Plan 108 D26 rev)
+fn str @char_len() -> int           // O(n) — codepoints (UTF-8 walk)
+fn str @byte_len() -> int           // O(1) — deprecated alias для @len()
+fn str @is_empty() -> bool          // O(1) — len() == 0
 ```
 
 Field-access form (`arr.len`, `s.byte_len`, etc.) запрещён в
