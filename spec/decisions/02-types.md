@@ -5889,3 +5889,121 @@ fn int @compare(other int) -> int =>
 - [D109](#d109-equatable--hashable-split-policy) — split policy (Hashable не embeds Equatable; Comparable embeds Equatable в D183).
 - [D178](08-runtime.md#d178-str-api-cleanup-и-расширения--plan-91-ф26) — `str.compare -> int`.
 - [Plan 91.8a](../../docs/plans/91.8a-protocol-canon-renames.md) — implementation.
+
+---
+
+## D183 amendment — Plan 91.8a.2 part 1: protocols refactor (orthogonal) + Self в param
+
+**Статус:** active (Plan 91.8a.2 part 1, 2026-05-29).
+
+### Refactor: orthogonal protocols (canonical coercion form)
+
+**Было (91.8a part 1):**
+```nova
+type Equatable protocol {
+    equals(other Self) -> bool
+}
+type Comparable protocol {
+    use Equatable
+    compare(other Self) -> int
+    equals(other Self) -> bool => @compare(other) == 0   // override of embedded default
+}
+```
+
+**Стало (91.8a.2 part 1) — canonical:**
+```nova
+type Equatable protocol {
+    equals(other Self) -> bool {
+        let cmp Comparable = @                  // coercion-style (explicit dependency)
+        cmp.compare(other) == 0
+    }
+}
+type Comparable protocol {
+    compare(other Self) -> int
+}
+```
+
+**Rationale:**
+- **Orthogonal protocols** — каждый stand-alone, без embed-зависимости.
+- **Coercion canonical (Q6 decision):** explicit cross-protocol dependency
+  visible при чтении декларации; codegen devirtualizes к direct call когда
+  тип known statically (zero runtime cost).
+- **Conditional default:** T satisfies Equatable если has @equals explicit
+  ИЛИ satisfies Comparable (default body synth via @compare). Type только
+  Equatable (Vector3, Complex, etc.) пишет @equals явно — coercion fails
+  potential потому что @compare отсутствует.
+- **Direct form `=> @compare(other) == 0` тоже валидна** — terser; same C
+  output after devirtualization. Coercion form preferred в stdlib для
+  documentation.
+
+### Printable.fmt default body
+
+```nova
+type Printable protocol {
+    fmt(sb StringBuilder) {
+        sb.append(str.from(@))
+    }
+}
+```
+
+- Primitives — works via primitive `Nova_int_to_str` etc.
+- User types — implementer пишет @fmt явно (perf) OR provides
+  `fn str.from(MyType) -> str` overload.
+
+### From identity blanket (D183 amendment)
+
+```nova
+export fn[T] T.from(t T) -> T => t
+```
+
+- Аналог Rust `impl<T> From<T> for T`.
+- **Override запрещён (Q4 strict decision):** попытка `fn Money.from(m Money) -> Money`
+  даёт `E_BLANKET_IDENTITY_OVERRIDE`. Identity is identity (D9 single canonical path).
+- **Resolution order для `T.from(value)`:**
+  1. Explicit `fn T.from(value_type)` → win
+  2. Blanket identity — match только если `value_type == T`
+  3. D77 auto-derive из From[value_type] chain
+  4. Error E_NO_FROM_IMPL
+- Identity Into auto-derived через D77.
+- Coexistence: blanket additive с existing `From[T]` protocol decl
+  (`std/prelude/protocols.nv:81-83`) + `emit_c.rs::from_targets`/`into_targets`
+  registries (D77 4-way derive).
+
+### `Self` в param-type position (М-91.8a-self-in-param closed)
+
+Раньше `fn T @method(other Self) -> R` давал E7001 «Self type used outside
+receiver context». Fix: `emit_c.rs::emit_module` method overload registration
+устанавливает `current_receiver_type` перед param_c_types calculation
+(mirror return-type path). Закрыто Plan 91.8a.2 part 1.
+
+### Codegen lazy synthesis + devirtualization — followup (Plan 91.8a.2 part 2)
+
+**Часть 1 (текущая) ограничена** структурным refactor + Self fix. **Часть 2**
+(отдельный sub-session) реализует:
+
+1. **Lazy synthesis at use-site:**
+   - Bound contexts (`[T Equatable]` etc.) — synth default body для типов
+     которые satisfy abstract methods
+   - Protocol coercion (`let x Equatable = m`)
+   - Operator dispatch (Plan 91.8b)
+   - String interpolation (Plan 91.10)
+   - NOT triggered: bare method call (`m.equals(other)` — direct lookup only)
+2. **Devirtualization pass** — coercion form `let cmp Protocol = @` становится
+   type ascription + direct call при synthesis для concrete T. Result: same
+   C output что direct form.
+3. **Cache** per compilation unit: `HashMap<(TypeId, MethodName), SynthFnDecl>`.
+4. **From blanket mono** — extension Plan 101 mono pass на `fn[T] T.method`
+   static на generic T.
+5. **Error diagnostics:** E_SYNTH_CYCLE, E_SYNTH_AMBIGUOUS, W_DEVIRT_FAILED,
+   E_BLANKET_IDENTITY_OVERRIDE.
+
+До части 2 — implementer пишет default body methods явно (boilerplate
+compatibility). Это работает но дублирует код.
+
+### Связь
+
+- [D183 (part 1)](#d183-canonical-comparison-protocols--default-method-bodies-plan-918a) — base D183.
+- [D26](#d26-базовая-stdlib-и-prelude) — prelude.
+- [D58](#d58-protocol-structural-typing) — structural typing.
+- [D77](08-runtime.md#d77-fromtryfrom-auto-derive) — From/Into 4-way auto-derive.
+- [Plan 91.8a.2](../../docs/plans/91.8a.2-default-body-codegen-and-from-blanket.md).
