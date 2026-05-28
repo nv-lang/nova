@@ -95,7 +95,37 @@ export external fn str @split(sep str) -> []str
 export external fn str @parse_int() -> Option[int]
 
 // Parse int с указанной base (2..36). Digits 0-9, a-z (case-insensitive). None при error.
-export external fn str @parse_int_radix(radix int) -> Option[int]
+export fn str @parse_int_radix(radix int) -> Option[int] {
+    if radix < 2 || radix > 36 { return None }
+    let bytes = @as_bytes()
+    let n = @byte_len()
+    if n == 0 { return None }
+    let mut neg = false
+    let mut start = 0
+    if bytes[0] as int == '-' as int {
+        neg = true
+        start = 1
+    } else if bytes[0] as int == '+' as int {
+        start = 1
+    }
+    if start >= n { return None }
+    let mut acc = 0
+    for j in start..n {
+        let c = bytes[j] as int
+        let mut d = -1
+        if c >= '0' as int && c <= '9' as int {
+            d = c - '0' as int
+        } else if c >= 'a' as int && c <= 'z' as int {
+            d = c - 'a' as int + 10
+        } else if c >= 'A' as int && c <= 'Z' as int {
+            d = c - 'A' as int + 10
+        }
+        if d < 0 || d >= radix { return None }
+        if acc > (9223372036854775807 - d) / radix { return None }
+        acc = acc * radix + d
+    }
+    Some(if neg { -acc } else { acc })
+}
 
 // Pad строку слева до width codepoints символом fill. Если width <= len — возвращает s.
 export fn str @pad_left(width int, fill char) -> str {

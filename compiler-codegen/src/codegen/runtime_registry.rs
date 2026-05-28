@@ -453,6 +453,8 @@ fn str_runtime() -> Vec<RuntimeFn> {
             doc: "Parse decimal int с optional ±-prefix. None при error (empty, non-digit, overflow). Caller отвечает за .trim().",
             nova_body: None,
         },
+        // Plan 91 Ф.2 (migrated): parse_int_radix — Nova-body в string.nv;
+        // C-shim в string_builder.h mirrors Nova semantics (same as pad_left pattern).
         RuntimeFn {
             module: "std.runtime.string",
             receiver: Some("str"),
@@ -463,7 +465,7 @@ fn str_runtime() -> Vec<RuntimeFn> {
             effects: &[],
             c_name: "nova_str_parse_int_radix",
             doc: "Parse int с указанной base (2..36). Digits 0-9, a-z (case-insensitive). None при error.",
-            nova_body: None,
+            nova_body: Some("{\n    if radix < 2 || radix > 36 { return None }\n    let bytes = @as_bytes()\n    let n = @byte_len()\n    if n == 0 { return None }\n    let mut neg = false\n    let mut start = 0\n    if bytes[0] as int == '-' as int {\n        neg = true\n        start = 1\n    } else if bytes[0] as int == '+' as int {\n        start = 1\n    }\n    if start >= n { return None }\n    let mut acc = 0\n    for j in start..n {\n        let c = bytes[j] as int\n        let mut d = -1\n        if c >= '0' as int && c <= '9' as int {\n            d = c - '0' as int\n        } else if c >= 'a' as int && c <= 'z' as int {\n            d = c - 'a' as int + 10\n        } else if c >= 'A' as int && c <= 'Z' as int {\n            d = c - 'A' as int + 10\n        }\n        if d < 0 || d >= radix { return None }\n        if acc > (9223372036854775807 - d) / radix { return None }\n        acc = acc * radix + d\n    }\n    Some(if neg { -acc } else { acc })\n}"),
         },
         // Plan 91 Ф.2: text MVP — pad_left / pad_right / repeat / replace.
         // Nova-first: реализованы на Nova через StringBuilder.append_repeat.
