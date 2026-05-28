@@ -14,6 +14,7 @@
 /* Include umbrella для правильного ordering (fibers.h → nova_sched.h → ...). */
 #include "nova_rt.h"
 #include "runtime.h"
+#include "driver.h"  /* Plan 83.11 Ф.2: centralized I/O driver */
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -201,6 +202,174 @@ static mco_coro* _worker_yielded_pop(NovaWorker* w) {
 static NovaWorker*     _workers = NULL;
 static int             _n_workers = 0;          /* materialized worker count */
 static nova_atomic_int _round_robin = 0;
+
+
+/* Plan 83.11 Phase A diagnostics (Variant B): in-process runtime state dump.
+ *
+ * Lock-free, best-effort snapshot. Caller must accept inconsistency между
+ * fields if other threads are mutating concurrently. Purpose — diagnostic
+ * snapshot для post-hoc analysis, не correctness guarantee.
+ *
+ * Output format (one line per logical entity, prefix [tag]):
+ *   === NOVA_RUNTIME_DUMP === reason=<str>
+ *   [globals] n_workers=N driver_started=B armed=B materialized=B
+ *   [diag-drv] <counters>
+ *   [worker i] deque=N wake_pending=M runnext=<ptr>
+ *     [w.i.scope] count=K
+ *     [w.i.parked  s0..sK] 01010...
+ *     [w.i.pwake   s0..sK] 00100...
+ *     [w.i.fiber.slot=s] mco=<status> active_scope=<ptr>
+ *   [driver] armed_list_size=N (per-scope)
+ *   === END DUMP ===
+ *
+ * Thread-safety: no locks. Atomic loads where available. Pointer reads as
+ * plain because we accept stale snapshot. Race-free against shutdown — caller
+ * must ensure called BEFORE nova_runtime_shutdown. */
+extern NovaDriver _nova_driver;  /* defined in driver.c */
+/* Forward decls for state below — `_armed` / `_materialized` defined later in this file. */
+static bool _armed;
+static bool _materialized;
+/* Plan 83.11 Phase A: track the currently-waiting supervised scope (set by
+ * supervised_run_impl on main thread). dump can include its state. */
+static struct NovaFiberQueue* _watchdog_active_scope = NULL;
+void nova_runtime_set_watchdog_scope(struct NovaFiberQueue* q) {
+    _watchdog_active_scope = q;
+}
+void nova_runtime_dump_state(const char* reason) {
+    fprintf(stderr, "=== NOVA_RUNTIME_DUMP === reason=%s\n",
+            reason ? reason : "unspecified");
+    fprintf(stderr, "[globals] n_workers=%d driver_started=%d armed=%d materialized=%d\n",
+            _n_workers,
+            (int)nova_abool_load(&_nova_driver.started),
+            (int)_armed, (int)_materialized);
+    if (!_workers || _n_workers <= 0) {
+        fprintf(stderr, "[workers] none materialized\n");
+        fprintf(stderr, "=== END DUMP ===\n");
+        return;
+    }
+    for (int wi = 0; wi < _n_workers; wi++) {
+        NovaWorker* w = &_workers[wi];
+        fprintf(stderr,
+            "[worker %d] runnext=%p wake_pending=%d preempt_flag=%d stop=%d\n",
+            wi, (void*)w->runnext, w->wake_pending_count,
+            (int)w->preempt_flag,
+            (int)nova_abool_load(&w->stop));
+        NovaFiberQueue* s = &w->scope;
+        int count = (int)__atomic_load_n(&s->count, __ATOMIC_ACQUIRE);
+        fprintf(stderr, "[w.%d.scope] count=%d cancel_req=%d pending_remote=%d\n",
+            wi, count,
+            (int)nova_abool_load(&s->cancel_requested),
+            (int)nova_aint_load(&s->pending_remote));
+        NovaSchedState* st = s->sched_state;
+        if (st && st->capacity > 0) {
+            int cap = st->capacity;
+            int show = cap < 128 ? cap : 128;
+            fprintf(stderr, "[w.%d.parked  cap=%d] ", wi, cap);
+            for (int i = 0; i < show; i++) {
+                fputc(st->parked && st->parked[i] ? '1' : '0', stderr);
+            }
+            fputc('\n', stderr);
+            if (st->pending_wake) {
+                fprintf(stderr, "[w.%d.pwake   cap=%d] ", wi, cap);
+                for (int i = 0; i < show; i++) {
+                    int v = (int)__atomic_load_n(&st->pending_wake[i], __ATOMIC_RELAXED);
+                    fputc(v ? '1' : '0', stderr);
+                }
+                fputc('\n', stderr);
+            }
+            /* Per-slot fiber detail. Show ALL slots с co!=NULL (any status), OR
+             * с parked/pwake set. Skip purely empty slots (no fiber, no flags).
+             * Plan 83.11 Phase A: critical для finding stuck-but-not-parked fibers. */
+            int detail_max = count < cap ? count : cap;
+            int alive_non_parked = 0;
+            for (int i = 0; i < detail_max; i++) {
+                bool pk = st->parked && st->parked[i];
+                int pw = st->pending_wake
+                    ? (int)__atomic_load_n(&st->pending_wake[i], __ATOMIC_RELAXED)
+                    : 0;
+                mco_coro* co = (i < count) ? s->fibers[i] : NULL;
+                if (!pk && !pw && !co) continue;
+                int mco_st = co ? (int)mco_status(co) : -1;
+                NovaSpawnCtxBase* base = co ? (NovaSpawnCtxBase*)mco_get_user_data(co) : NULL;
+                /* Detect "stuck": fiber alive (SUSPENDED) but not parked */
+                bool stuck_alive = co && mco_st == MCO_SUSPENDED && !pk;
+                if (stuck_alive) alive_non_parked++;
+                fprintf(stderr,
+                    "[w.%d.fiber.s%d] co=%p mco_status=%d parent_scope=%p parked=%d pwake=%d hdl=%p stop_cb=%p%s\n",
+                    wi, i, (void*)co, mco_st,
+                    base ? (void*)base->_nova_parent_scope : NULL,
+                    (int)pk, pw,
+                    st->pending_handle ? st->pending_handle[i] : NULL,
+                    (void*)(uintptr_t)(st->pending_stop_cb ? (void*)st->pending_stop_cb[i] : NULL),
+                    stuck_alive ? " ⚠ STUCK_ALIVE_NOT_PARKED" : "");
+            }
+            if (alive_non_parked > 0) {
+                fprintf(stderr,
+                    "[w.%d] ⚠ %d alive-but-not-parked fibers (potential lost-wake or stuck-completion)\n",
+                    wi, alive_non_parked);
+            }
+            /* Deque + runnext detail — fibers WAITING TO RUN but worker not draining */
+            int dq_size = (int)nova_deque_size_approx(&w->deque);
+            if (dq_size > 0 || w->runnext) {
+                fprintf(stderr, "[w.%d.deque] size=%d runnext=%p\n",
+                        wi, dq_size, (void*)w->runnext);
+            }
+        } else {
+            fprintf(stderr, "[w.%d.sched_state] NULL or empty\n", wi);
+        }
+    }
+    /* Plan 83.11 Phase A: dump active supervised scope если установлен. */
+    NovaFiberQueue* sup = (NovaFiberQueue*)_watchdog_active_scope;
+    if (sup) {
+        int sup_count = (int)__atomic_load_n(&sup->count, __ATOMIC_ACQUIRE);
+        int sup_remote = (int)nova_aint_load(&sup->pending_remote);
+        fprintf(stderr,
+            "[supervised] scope=%p count=%d pending_remote=%d cancel_req=%d armed_sleeps_head=%p first_error=%s\n",
+            (void*)sup, sup_count, sup_remote,
+            (int)nova_abool_load(&sup->cancel_requested),
+            (void*)sup->armed_sleeps_head,
+            sup->first_error ? sup->first_error : "(null)");
+        /* Show every slot — supervised's scope.fibers[] tracks completion */
+        NovaSchedState* sst = sup->sched_state;
+        int sup_cap = sst ? sst->capacity : 0;
+        int sup_limit = sup_count < sup_cap ? sup_count : sup_cap;
+        if (sup_limit > 256) sup_limit = 256;
+        int alive_count = 0, dead_count = 0, null_count = 0;
+        for (int i = 0; i < sup_count; i++) {
+            mco_coro* co = sup->fibers ? sup->fibers[i] : NULL;
+            if (!co) { null_count++; continue; }
+            int mc = (int)mco_status(co);
+            if (mc == MCO_DEAD) { dead_count++; continue; }
+            alive_count++;
+            NovaSpawnCtxBase* base = (NovaSpawnCtxBase*)mco_get_user_data(co);
+            bool pk = sst && sst->parked && i < sup_cap ? sst->parked[i] : 0;
+            int pw = (sst && sst->pending_wake && i < sup_cap)
+                ? (int)__atomic_load_n(&sst->pending_wake[i], __ATOMIC_RELAXED) : 0;
+            fprintf(stderr,
+                "[sup.fiber.s%d] co=%p mco=%d parent=%p parked=%d pwake=%d\n",
+                i, (void*)co, mc,
+                base ? (void*)base->_nova_parent_scope : NULL,
+                (int)pk, pw);
+        }
+        fprintf(stderr,
+            "[supervised.summary] slots=%d alive=%d dead=%d null=%d\n",
+            sup_count, alive_count, dead_count, null_count);
+        /* Walk armed_sleeps_head list if any */
+        if (sup->armed_sleeps_head) {
+            int n = 0;
+            struct NovaSleepState* st = sup->armed_sleeps_head;
+            while (st && n < 32) {
+                fprintf(stderr,
+                    "[supervised.armed.%d] st=%p scope=%p slot=%d\n",
+                    n, (void*)st, (void*)st->scope, st->slot);
+                st = st->next_in_scope;
+                n++;
+            }
+        }
+    }
+    fprintf(stderr, "=== END DUMP ===\n");
+    fflush(stderr);
+}
 /* Plan 83.1 Ф.4: lazy worker-пул. `_armed` — runtime.init() вызван
  * (M:N запрошен); `_materialized` — пул-потоки реально подняты (лениво,
  * на первом worker-bound spawn). `_target_workers` — резолвнутое число
@@ -671,7 +840,11 @@ static void _worker_main(void* arg) {
 
         /* (5) Run fiber.
          *
-         * Plan 44.5 Layer 5 fix: save/restore _nova_fail_top, _nova_interrupt_top,
+         * Plan 83.11 Phase B: track first-run fiber lifecycle.
+         * A first-run fiber has _nova_worker_slot < 0 (preamble not yet run).
+         * If first_pop < inc at watchdog time, a fiber was never popped.
+         * If first_cas_lost > 0, CAS failed on first run — impossible for fresh fiber. */
+        /* Plan 44.5 Layer 5 fix: save/restore _nova_fail_top, _nova_interrupt_top,
          * and _nova_active_slot per fiber — mirrors nova_supervised_step behavior.
          *
          * Bug without this: fiber F1 parks (fail-top = &_ff_F1). Fiber F2 runs
@@ -717,6 +890,16 @@ static void _worker_main(void* arg) {
             if (fslot < fscope->count && fscope->fiber_effect_snapshot[fslot]) {
                 nova_effect_snapshot_restore(fscope->fiber_effect_snapshot[fslot]);
             }
+        } else if (base && base->_nova_worker_slot <= -2 && base->_nova_fiber_scope) {
+            /* Plan 83.11 fix: displaced fiber (slot=-2 sentinel set by close_cb Fix B).
+             * Preamble ran (fiber_scope is set), but slot was invalidated because the
+             * fiber's slot was overwritten (STALE race). Restore home scope + TLS
+             * so the fiber sees the correct scope when it finishes sleeping and exits. */
+            _nova_active_scope  = base->_nova_fiber_scope;
+            _nova_active_slot   = -1;  /* slot is invalidated — no valid slot */
+            _nova_fail_top      = base->_nova_saved_fail_top;
+            _nova_interrupt_top = base->_nova_saved_interrupt_top;
+            /* Effect snapshot: slot is -1, skip snapshot restore (fiber is exiting soon). */
         } else if (base) {
             /* Before preamble (first run): restore saved fail/interrupt but
              * leave _nova_active_scope as this worker's scope (preamble will
@@ -1262,6 +1445,11 @@ static void _materialize_pool(void) {
     }
 
     _materialized = true;
+
+    /* Plan 83.11 Ф.2: start driver thread AFTER worker pool materialization.
+     * Workers must exist before driver routes wake events to them
+     * (home_worker_id references _workers[]). */
+    nova_driver_init();
 }
 
 /* Plan 83.1 Ф.4: гарантирует, что пул материализован. Fast-path без
@@ -1292,6 +1480,11 @@ void nova_runtime_shutdown(void) {
         nova_mutex_unlock(&_init_mu);
         return;
     }
+
+    /* Plan 83.11 Ф.2: stop driver thread BEFORE workers join — driver
+     * routes wake-events to workers; if workers gone first, driver writes
+     * to dead worker handles → UAF. */
+    nova_driver_shutdown();
 
     /* Plan 44.7: stop sysmon ПЕРВЫМ — до free(_workers), чтобы sysmon
      * не читал освобождённую память. join гарантирует тред вышел. */
@@ -1391,18 +1584,31 @@ void nova_runtime_spawn_global(void (*entry)(mco_coro*), void* user) {
         abort();
     }
     nova_fiber_post_create(co);  /* Plan 82 Ф.1: patch ctx.stack_limit (Windows) */
-    /* Plan 83.4.5.7 (2026-05-23): SEQ_CST fence перед cross-thread deque push.
-     * spawn_global вызывается main thread'ом, но deque принадлежит worker'у.
-     * Chase-Lev push designed для single-owner: main → target's deque
-     * нарушает контракт. Fence гарантирует видимость main's writes на ctx
-     * fields (`_nova_parent_scope` etc.) до того, как worker's deque pop
-     * (single-owner pop, RELAXED loads) их прочитает. */
-    __atomic_thread_fence(__ATOMIC_SEQ_CST);
-    if (!nova_deque_push(&target->deque, co)) {
-        fprintf(stderr, "nova: runtime_spawn_global: deque_push failed\n");
-        mco_destroy(co);
-        abort();
+    /* Plan 83.11 Phase B (2026-05-28): route via wake_pending (mutex) instead
+     * of direct deque push.
+     *
+     * Root cause of "1 fiber never starts" bug: nova_deque_push wrote `bottom`
+     * (RELAXED) concurrently with the owner worker's nova_deque_pop which also
+     * writes `bottom` (RELAXED). On x86 TSO the race is rare but real: if the
+     * worker's `bottom = b-1` store lands AFTER main's `bottom = b+1` store, the
+     * pushed item strands above `bottom` and is never popped or stolen.
+     *
+     * Fix: use the existing wake_pending path (mutex-protected MPSC queue),
+     * the same path used by _worker_dispatch_ready cross-thread. The worker
+     * drains wake_pending → deque at every iteration start, so latency is
+     * unchanged (≤ 1 worker loop iteration). The mutex guarantees correct
+     * visibility of ctx fields without the SEQ_CST fence hack. */
+    __atomic_thread_fence(__ATOMIC_SEQ_CST);  /* visibility of ctx fields */
+    nova_mutex_lock(&target->wake_mu);
+    if (target->wake_pending_count >= target->wake_pending_cap) {
+        int new_cap = target->wake_pending_cap > 0 ? target->wake_pending_cap * 2 : 8;
+        target->wake_pending = (mco_coro**)realloc(target->wake_pending,
+                                                    (size_t)new_cap * sizeof(mco_coro*));
+        if (!target->wake_pending) abort();
+        target->wake_pending_cap = new_cap;
     }
+    target->wake_pending[target->wake_pending_count++] = co;
+    nova_mutex_unlock(&target->wake_mu);
     nova_aint_inc(&target->pending_count);
     uv_async_send(&target->wake_handle);
 }
@@ -1604,6 +1810,18 @@ static void _worker_run_one_fiber(NovaWorker* w, mco_coro* co) {
  *   This is the root cause of the heisenbug where fprintf "fixed" the hang
  *   (fprintf's stdio lock is a full memory fence). */
 void nova_runtime_cancel_worker_fibers(struct NovaFiberQueue* target_scope) {
+    /* Plan 83.11 Ф.3: legacy cancel path is BYPASSED when driver started.
+     * Driver's CANCEL_SCOPE job handles all sleep-related cancel through
+     * single-mutator armed_sleeps_head walk. Running legacy too creates double-
+     * wake race (legacy bare-wake clears parked before driver close_cb CAS).
+     *
+     * Channel/mutex cancel paths still use pending_stop_cb[] — for those, this
+     * function is still useful. But those aren't in iso-cancel race scope.
+     * Ф.5 will migrate them too; until then, legacy stays для bootstrap path. */
+    if (nova_driver_is_started()) {
+        /* Driver owns sleep cancel. Skip legacy walk. */
+        return;
+    }
     /* Cast from `struct NovaFiberQueue*` (forward-declared in runtime.h) to
      * `NovaFiberQueue*` (anonymous typedef from fibers.h) for sched helpers. */
     NovaFiberQueue* tscope = (NovaFiberQueue*)target_scope;

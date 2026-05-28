@@ -756,6 +756,8 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
     let rt_fiber_stats = opts.rt_dir.join("fiber_stats.c");
     // Plan 44 Этап 0: M:N runtime (opt-in через nova_runtime_init).
     let rt_runtime = opts.rt_dir.join("runtime.c");
+    // Plan 83.11 Ф.2: centralized I/O driver — dedicated thread с UV loop.
+    let rt_driver = opts.rt_dir.join("driver.c");
     /* Plan 61 Ф.1: TypeId weak-fallback (nova_typeid_to_name). Codegen может
      * emit'ить overriding implementation в preamble; weak fallback —
      * safety-net для minimal tests. */
@@ -959,6 +961,7 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
             c.arg(&rt_fiber_arena_win);  /* Plan 82 Ф.1 */
             c.arg(&rt_fiber_stats);  /* Plan 44.2 Etap 3 */
             c.arg(&rt_runtime);      /* Plan 44 Этап 0 */
+            c.arg(&rt_driver);       /* Plan 83.11 Ф.2 */
             c.arg(&rt_typeid);       /* Plan 61 Ф.1 */
             c
         }
@@ -1042,6 +1045,7 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
             c.arg(&rt_fiber_arena_win);  /* Plan 82 Ф.1 */
             c.arg(&rt_fiber_stats);  /* Plan 44.2 Etap 3 */
             c.arg(&rt_runtime);      /* Plan 44 Этап 0 */
+            c.arg(&rt_driver);       /* Plan 83.11 Ф.2 */
             c.arg(&rt_typeid);       /* Plan 61 Ф.1 */
             // Plan 27 Ф.1: Boehm link flags for MSVC (after sources, before /link).
             if opts.gc_kind == GcKind::Boehm {
@@ -1104,6 +1108,7 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
             c.arg(&rt_fiber_arena_win);  /* Plan 82 Ф.1 */
             c.arg(&rt_fiber_stats);  /* Plan 44.2 Etap 3 */
             c.arg(&rt_runtime);      /* Plan 44 Этап 0 */
+            c.arg(&rt_driver);       /* Plan 83.11 Ф.2 */
             c.arg(&rt_typeid);       /* Plan 61 Ф.1 */
             // Plan 27 Ф.1+Ф.D: Boehm link flags for GCC.
             if opts.gc_kind == GcKind::Boehm {

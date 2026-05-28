@@ -48,6 +48,7 @@
 #endif
 #include <uv.h>
 #include "eventloop.h"
+#include "driver.h"  /* Plan 83.11 Ф.3: NovaDriverJob, nova_driver_submit_job */
 
 /* Plan 27 R4 → Plan 44.2 Этап 1/2: Boehm GC + minicoro fiber stacks.
  *
@@ -319,6 +320,24 @@ typedef struct {
      * Forward-declared as void* — actual type is `NovaCancelToken*` (declared
      * after this struct). Set/cleared via nova_cancel_token_bind/unbind. */
     void*   bound_token;
+
+    /* Plan 83.11 Ф.3: linked-list head of armed sleeps in this scope.
+     * Driver-thread only mutator (insert при ARM_SLEEP, unlink при close_cb).
+     * Cancel walks list (driver-side, single thread). NULL = no armed sleeps. */
+    struct NovaSleepState* armed_sleeps_head;
+
+    /* Plan 83.11 Ф.3.B: spinlock protecting nova_scope_alloc_slot /
+     * nova_scope_free_slot from concurrent access.
+     *
+     * nova_scope_alloc_slot is called from EACH fiber's preamble, which runs
+     * on a worker thread. Under M:N (16 workers), 16 fibers can call alloc_slot
+     * simultaneously on the same scope. The original scan+grow+assign was
+     * completely non-atomic: two workers could both see fibers[i]==NULL, both
+     * claim slot i, and one overwrites the other's entry. The overwritten fiber
+     * gets a WRONG-FIBER close_cb → wake skipped → hangs forever.
+     *
+     * 0 = unlocked, 1 = locked. CAS 0→1 to acquire, store 0 to release. */
+    nova_atomic_int slot_lock;
 } NovaFiberQueue;
 
 /* Plan 22 Ф.3 (D93) + Ф.7 + Ф.8: NovaSchedState typedef.
@@ -354,6 +373,10 @@ typedef struct NovaSchedState {
     nova_bool*       parked;              /* dynamic [capacity] */
     void**           pending_handle;      /* dynamic [capacity] */
     NovaSchedStopCb* pending_stop_cb;     /* dynamic [capacity] */
+    /* Plan 83.11 Ф.3.A v3 (Option A): per-slot wake-pending counter (atomic int).
+     * Wake side: CAS 0→1 (deliver event). Park side: try CAS 1→0 (consume) before
+     * yielding. Closes wake-before-park race by serializing through this atomic. */
+    nova_atomic_int* pending_wake;        /* dynamic [capacity] */
     int              capacity;            /* alloc'нутая длина */
 } NovaSchedState;
 
@@ -386,6 +409,10 @@ static inline void nova_sched_register_pending(NovaFiberQueue* scope, int slot,
                                                 void* handle,
                                                 NovaSchedStopCb stop_cb);
 static inline void nova_sched_unregister_pending(NovaFiberQueue* scope, int slot);
+
+/* Plan 83.11 Ф.3: forward decls (definitions further down in this file). */
+static inline void _nova_sleep_via_driver(NovaFiberQueue* scope, int slot, nova_int ms);
+static inline void _nova_cancel_via_driver(NovaFiberQueue* scope);
 
 /* Plan 22 Ф.7: grow scope arrays до new_cap. capacity-doubling.
  * Caller responsibility: вызывать ПЕРЕД увеличением count past capacity. */
@@ -469,6 +496,8 @@ static inline void nova_scope_init(NovaFiberQueue* q) {
     q->ctx_pins        = NULL;
     q->ctx_pins_count  = 0;
     q->ctx_pins_cap    = 0;
+    q->armed_sleeps_head = NULL;  /* Plan 83.11 Ф.3 */
+    nova_aint_init(&q->slot_lock, 0);  /* Plan 83.11 Ф.3.B: slot alloc spinlock */
     /* Plan 22 Ф.7: arrays — lazy alloc'нутся в nova_fiber_spawn_into.
      * Idle scope (count=0) = ~100 bytes на стеке. */
 }
@@ -482,14 +511,50 @@ static inline void nova_scope_init(NovaFiberQueue* q) {
  *
  * Reuses freed slots (fibers[i] == NULL) to avoid unbounded growth
  * when fibers complete and new ones spawn. */
-/* Forward-decl: nova_sched_grow_state defined in sched.h (included
- * AFTER fibers.h). Used by alloc_slot when growing scope arrays. */
+/* Forward-decl: nova_sched_grow_state / nova_sched_get_state defined in
+ * sched.h (included AFTER fibers.h). Used by alloc_slot when growing scope
+ * arrays, and by _nova_sleep_via_driver to pre-initialize sched_state before
+ * driver job submission (Plan 83.11 Phase A fix). */
 static inline void nova_sched_grow_state(NovaFiberQueue* scope, int new_cap);
+static inline NovaSchedState* nova_sched_get_state(NovaFiberQueue* scope);
 static inline int nova_scope_alloc_slot(NovaFiberQueue* scope, mco_coro* co) {
-    /* Reuse a freed slot if available. */
+    /* Plan 83.11 Ф.3.B: spinlock — alloc_slot is called concurrently from
+     * fiber preambles (one per worker thread). Without serialization, two workers
+     * can both see fibers[i]==NULL and both claim slot i; the loser's fiber gets
+     * a WRONG-FIBER close_cb → wake skipped → permanent hang. */
+    int _sl_exp = 0;
+    while (!__atomic_compare_exchange_n(
+                &scope->slot_lock, &_sl_exp, 1,
+                false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
+        _sl_exp = 0;
+    }
+
     void* user = mco_get_user_data(co);  /* SpawnCtx — must be GC-rooted */
     for (int i = 0; i < scope->count; i++) {
         if (scope->fibers[i] == NULL) {
+            /* Plan 83.11 fix: check for stale parked/pending_wake before reuse.
+             * If parked[i]=true while fibers[i]=NULL, the original fiber is still
+             * alive in mco_yield and its close_cb hasn't fired yet. Reusing this
+             * slot would cause close_cb to see WRONG-FIBER and skip the wake,
+             * leaving the original fiber permanently stuck in mco_yield.
+             *
+             * Fix: SKIP stale slots entirely. close_cb (Fix B in driver.c) will
+             * clear parked[i] and directly dispatch the original fiber when the
+             * timer fires. After parked[i]=false, the slot becomes eligible for
+             * reuse by the next alloc_slot call. */
+            {
+                NovaSchedState* _das = nova_sched_find_state(scope);
+                if (_das && i < _das->capacity) {
+                    bool _das_pk = __atomic_load_n((volatile bool*)&_das->parked[i], __ATOMIC_SEQ_CST);
+                    int32_t _das_pw = _das->pending_wake ? __atomic_load_n(&_das->pending_wake[i], __ATOMIC_ACQUIRE) : 0;
+                    if (_das_pk || _das_pw) {
+                        /* Skip: do NOT reset parked/pending_wake, do NOT assign co here.
+                         * close_cb (Fix B in driver.c) will clear parked[i] and dispatch
+                         * the original fiber directly when its timer fires. */
+                        continue;
+                    }
+                }
+            }
             scope->fibers[i]               = co;
             scope->fiber_ctx[i]            = user;  /* GC root: SpawnCtx pinned */
             scope->fiber_fail_top[i]       = NULL;
@@ -497,6 +562,7 @@ static inline int nova_scope_alloc_slot(NovaFiberQueue* scope, mco_coro* co) {
             scope->fiber_effect_snapshot[i]= NULL;
             scope->fiber_error[i]          = NULL;
             scope->fiber_did_throw[i]      = NULL;
+            __atomic_store_n(&scope->slot_lock, 0, __ATOMIC_RELEASE);
             return i;
         }
     }
@@ -524,13 +590,25 @@ static inline int nova_scope_alloc_slot(NovaFiberQueue* scope, mco_coro* co) {
      * on non-TSO architectures; on x86 TSO the hardware guarantees it but
      * a compiler fence is still required). */
     __atomic_store_n(&scope->count, slot + 1, __ATOMIC_RELEASE);
+    __atomic_store_n(&scope->slot_lock, 0, __ATOMIC_RELEASE);
     return slot;
 }
 
 static inline void nova_scope_free_slot(NovaFiberQueue* scope, int slot) {
     if (!scope || slot < 0 || slot >= scope->count) return;
+    /* Plan 83.11 Ф.3.B: lock so alloc_slot's scan cannot observe this slot
+     * as NULL while we are in the middle of other epilogue work (GC root clear).
+     * Without the lock, a concurrent alloc_slot could claim this slot before
+     * fiber_ctx is cleared, then overwrite it. */
+    int _sl_exp = 0;
+    while (!__atomic_compare_exchange_n(
+                &scope->slot_lock, &_sl_exp, 1,
+                false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
+        _sl_exp = 0;
+    }
     scope->fibers[slot]    = NULL;
     scope->fiber_ctx[slot] = NULL;  /* release SpawnCtx GC root */
+    __atomic_store_n(&scope->slot_lock, 0, __ATOMIC_RELEASE);
     /* sched_state parked[slot] is already false (wake cleared it). */
 }
 
@@ -762,6 +840,13 @@ static inline void nova_cancel_token_cancel_reason(NovaCancelToken* t, void* rea
                 struct NovaFiberQueue* scope);
             nova_runtime_cancel_worker_fibers(t->bound_scope);
         }
+        /* Plan 83.11 Ф.3: also submit CANCEL_SCOPE job to driver. Driver walks
+         * scope.armed_sleeps_head list (single mutator) — closes any timers armed
+         * via _nova_sleep_via_driver. Idempotent с legacy cancel_worker_fibers
+         * (которое touches scoped fibers parked via _nova_sleep_via_libuv path):
+         * no-op для slots that аre driver-armed (legacy cb=NULL), no-op для
+         * slots that аre legacy-armed (driver list doesn't contain them). */
+        _nova_cancel_via_driver(t->bound_scope);
     }
     /* Каскад: отменяем все linked-токены (kill-switch composition).
      * Plan 49 Ф.6 cross-type: если для link есть converter — применяем
@@ -1474,6 +1559,26 @@ static inline void nova_supervised_drain_main_scope(NovaFiberQueue* q) {
  */
 static inline void nova_supervised_run_impl(NovaFiberQueue* q,
                                             NovaCancelToken* tok) {
+    /* Plan 83.11 Phase A diagnostics (Variant B, 2026-05-27): watchdog timer.
+     * If supervised wait exceeds NOVA_WATCHDOG_DUMP_SECS (default 5s on main
+     * thread, disabled on worker threads to avoid re-entrance noise), dump
+     * runtime state once. Env-controlled: NOVA_WATCHDOG_DUMP_SECS=N (0=off). */
+    uint64_t _watchdog_start = uv_hrtime();
+    bool     _watchdog_fired = false;
+    int      _watchdog_threshold_secs = 5;
+    {
+        const char* env = getenv("NOVA_WATCHDOG_DUMP_SECS");
+        if (env && env[0]) {
+            int v = atoi(env);
+            if (v >= 0) _watchdog_threshold_secs = v;
+        }
+    }
+    bool _watchdog_enabled = !_nova_on_worker_thread()
+                              && _watchdog_threshold_secs > 0;
+    if (_watchdog_enabled) {
+        extern void nova_runtime_set_watchdog_scope(struct NovaFiberQueue* q);
+        nova_runtime_set_watchdog_scope((struct NovaFiberQueue*)q);
+    }
     for (;;) {
         int alive = nova_supervised_step(q);
         if (alive == 0) {
@@ -1481,6 +1586,20 @@ static inline void nova_supervised_run_impl(NovaFiberQueue* q,
              * fiber'ы running на workers. Wait для них. */
             int remote = (int)nova_aint_load(&q->pending_remote);
             if (remote == 0) break;
+            /* Plan 83.11 Phase A: watchdog check — fires once per scope. */
+            if (_watchdog_enabled && !_watchdog_fired) {
+                uint64_t now = uv_hrtime();
+                uint64_t elapsed_ns = now - _watchdog_start;
+                if (elapsed_ns / 1000000000ULL >= (uint64_t)_watchdog_threshold_secs) {
+                    _watchdog_fired = true;
+                    extern void nova_runtime_dump_state(const char* reason);
+                    char buf[64];
+                    snprintf(buf, sizeof(buf),
+                             "supervised-watchdog-%ds-remote-%d",
+                             _watchdog_threshold_secs, remote);
+                    nova_runtime_dump_state(buf);
+                }
+            }
             /* Plan 83.10.3 (2026-05-26): nested supervised on worker thread.
              * When supervised_run_impl runs on a worker (fiber body calls
              * supervised{spawn{...}}), the worker is blocked here and cannot
@@ -1504,6 +1623,11 @@ static inline void nova_supervised_run_impl(NovaFiberQueue* q,
         if (parked > 0 && parked == alive) {
             uv_run(nova_current_loop(), UV_RUN_ONCE);
         }
+    }
+    /* Plan 83.11 Phase A: clear watchdog scope before cleanup. */
+    if (_watchdog_enabled) {
+        extern void nova_runtime_set_watchdog_scope(struct NovaFiberQueue* qq);
+        nova_runtime_set_watchdog_scope(NULL);
     }
     /* Cleanup sched-state for этого scope'а (если был alloc'ом). */
     nova_sched_drop_state(q);
@@ -1708,12 +1832,25 @@ static inline int64_t _nova_monotonic_ns(void) {
  * не closed. R7 «no busy-loops anywhere» полностью enforced. */
 
 typedef enum {
+    /* Legacy stages (bootstrap path _nova_sleep_via_libuv) */
     NOVA_SLEEP_PENDING = 0,   /* timer armed, fiber parked */
     NOVA_SLEEP_CLOSING = 1,   /* uv_close issued, awaiting close_cb */
     NOVA_SLEEP_CLOSED  = 2,   /* close_cb fired — safe to wake fiber */
+
+    /* Plan 83.11 Ф.3 driver-path stages — single-mutator (driver thread).
+     * Port Tokio TimerEntry pattern (tokio/src/runtime/time/entry.rs). */
+    NOVA_SLEEP_DRV_NEW         = 10, /* allocated, not yet on driver loop */
+    NOVA_SLEEP_DRV_ARMED       = 11, /* uv_timer started, in scope.armed_list */
+    NOVA_SLEEP_DRV_FIRING      = 12, /* timer_cb won CAS, uv_close in flight */
+    NOVA_SLEEP_DRV_CANCEL_REQ  = 13, /* cancel-job won CAS, uv_close in flight */
+    NOVA_SLEEP_DRV_CLOSED      = 14, /* close_cb fired — wake fiber */
 } NovaSleepStage;
 
-typedef struct {
+/* Plan 83.11 Ф.3.A v3 (Option A): wait_state moved into nova_sched_state.
+ * pending_wake[] counter integrated в generic park/wake API. Sleep no longer
+ * needs sleep-specific state machine — generic park_until handles race. */
+
+typedef struct NovaSleepState {
     NovaFiberQueue*  scope;
     int              slot;
     uv_timer_t       timer;
@@ -1721,8 +1858,22 @@ typedef struct {
      * park-predicate, write с RELEASE из timer_cb/close_cb. Защищает
      * от инверсии visibility между worker, owning loop'а и worker'ом,
      * resumeющим fiber после wake. На x86 — no extra cost; на ARM —
-     * корректные fence-ы. */
+     * корректные fence-ы.
+     *
+     * Plan 83.11 Ф.3: same atomic also used for driver-path stages
+     * (NOVA_SLEEP_DRV_*). Single-mutator (driver thread) — CAS only
+     * for race ARMED→FIRING vs ARMED→CANCEL_REQ. Worker ACQUIRE-loads. */
     nova_atomic_int  stage;   /* NovaSleepStage values */
+
+    /* Plan 83.11 Ф.3: driver-path specific fields. */
+    int                       home_worker_id;  /* worker that armed; wake target */
+    NovaFiberQueue*           cancel_scope;    /* supervised scope (для armed_list) */
+    struct NovaSleepState*    next_in_scope;   /* singly-linked, driver-only */
+    struct NovaSleepState**   pprev_in_scope;  /* O(1) unlink — pointer to predecessor's next */
+    /* Plan 83.11 Phase B2 diagnostic: fiber pointer captured at ARM_SLEEP time.
+     * close_cb compares scope->fibers[slot] with this to detect slot reuse
+     * or scope/slot mismatch (wrong fiber woken). */
+    mco_coro*                 expected_co;
 } NovaSleepState;
 
 /* Forward-decl close_cb для использования в timer_cb / stop_cb. */
@@ -1956,6 +2107,171 @@ static inline void nova_blocking_offload(NovaFiberQueue* scope, int slot,
     nova_sched_unregister_pending(scope, slot);
 }
 
+/* Plan 83.11 Ф.3: predicate для park_until — Acquire-load packed_state.
+ * Returns true when driver's close_cb wrote NOVA_SLEEP_DRV_CLOSED. */
+static nova_bool _nova_sleep_drv_state_is_closed(void* ctx) {
+    NovaSleepState* st = (NovaSleepState*)ctx;
+    return nova_aint_load(&st->stage) == NOVA_SLEEP_DRV_CLOSED;
+}
+
+/* Plan 83.11 Ф.3: driver-path sleep — closes [M-83.10.4-iso-cancel-startup-race].
+ *
+ * Architecture: worker submits ARM_SLEEP job to driver thread. Driver creates
+ * uv_timer_t on its own loop, links into scope.armed_sleeps_head list, transitions
+ * state NEW→ARMED. On timer_cb (natural fire) or cancel_scope job (tok.cancel()),
+ * driver CAS ARMED→{FIRING,CANCEL_REQ}, uv_close. close_cb stores CLOSED + wakes
+ * worker fiber via existing dispatch_ready cross-thread path.
+ *
+ * Single-mutator (driver thread) для ALL state transitions eliminates the three-
+ * load race that Plan 83.10.5 Tactical couldn't fix. Cross-thread visibility
+ * trivial: worker ACQUIRE-loads packed_state at park_until predicate.
+ *
+ * Port Tokio TimerEntry pattern (tokio/src/runtime/time/entry.rs). */
+static inline void _nova_sleep_via_driver(NovaFiberQueue* scope, int slot,
+                                          nova_int ms) {
+    /* Derive cancel_scope (parent supervised) — same logic as _nova_sleep_via_libuv. */
+    NovaFiberQueue* cancel_scope = scope;
+    {
+        mco_coro* _rc = mco_running();
+        if (_rc) {
+            NovaSpawnCtxBase* _base = (NovaSpawnCtxBase*)mco_get_user_data(_rc);
+            if (_base && _base->_nova_parent_scope) {
+                cancel_scope = (NovaFiberQueue*)_base->_nova_parent_scope;
+            }
+        }
+    }
+
+    /* Race 2a early-exit — still useful as cheap fast-path. Если cancel уже
+     * fired, even submitting ARM_SLEEP job is wasted work. */
+    if (nova_abool_load(&cancel_scope->cancel_requested)) {
+        return;
+    }
+
+    /* NovaSleepState на coroutine stack — fiber parked while driver dereferences,
+     * stack stays alive до park_until exits with CLOSED state. */
+    NovaSleepState st;
+    memset(&st, 0, sizeof(st));
+    st.scope = scope;
+    st.slot = slot;
+    st.cancel_scope = cancel_scope;
+    /* home_worker_id captured here — wake target. Cross-thread atomic read OK. */
+    extern __declspec(thread) int _current_worker_id;  /* runtime.c global */
+    st.home_worker_id = _current_worker_id;
+    nova_aint_init(&st.stage, NOVA_SLEEP_DRV_NEW);
+
+    /* Plan 83.11 Phase A fix: pre-initialize SchedState BEFORE ARM_SLEEP submission.
+     *
+     * nova_sched_wake (called from close_cb on the driver thread) uses
+     * nova_sched_find_state — a pure pointer-deref that returns NULL if the
+     * state has not yet been created. If the timer fires (or is cancelled via
+     * CANCEL_SCOPE) BEFORE this fiber first calls nova_sched_park (which lazily
+     * creates the state via nova_sched_get_state), nova_sched_wake silently
+     * drops both the pending_wake delivery AND the parked CAS. The fiber then
+     * parks with no pending_wake recorded → nobody wakes it → permanent hang.
+     *
+     * Fix: ensure the state (including pending_wake[]) is allocated now, while
+     * we are still on the fiber thread and before the ARM_SLEEP job is queued.
+     * After this call nova_sched_find_state will always return non-NULL for this
+     * scope, and close_cb → nova_sched_wake can safely set pending_wake[slot]. */
+    nova_sched_get_state(scope);
+
+    /* Plan 83.11 Phase B2: capture fiber pointer for close_cb mismatch detection. */
+    st.expected_co = mco_running();
+
+    /* Submit ARM_SLEEP job to driver. malloc + driver frees после processing. */
+    NovaDriverJob* job = (NovaDriverJob*)malloc(sizeof(NovaDriverJob));
+    if (!job) {
+        fprintf(stderr, "nova: _nova_sleep_via_driver: malloc job failed\n");
+        return;  /* sleep skipped — fiber wakes immediately */
+    }
+    job->kind = NOVA_DRV_JOB_ARM_SLEEP;
+    job->u.arm_sleep.st = &st;
+    job->u.arm_sleep.ms = (uint64_t)ms;
+    if (nova_driver_submit_job(job) != 0) {
+        /* Driver not started or shutting down — degrade gracefully. */
+        free(job);
+        return;
+    }
+
+    /* Plan 83.11 Phase A fix: CANCEL_SCOPE vs ARM_SLEEP ordering race.
+     *
+     * Race: fiber checks cancel_requested=false (fast-path above), then
+     * tok.cancel() fires — sets cancel_requested=true, submits CANCEL_SCOPE
+     * to driver. If CANCEL_SCOPE is dequeued and processed by the driver
+     * BEFORE ARM_SLEEP (because ARM_SLEEP was submitted after CANCEL_SCOPE
+     * was already queued), CANCEL_SCOPE walks the armed list and finds
+     * nothing for this fiber → no close_cb → timer fires after 10s → hang.
+     *
+     * Fix: re-check cancel_requested AFTER ARM_SLEEP is in the driver queue.
+     * If set, submit CANCEL_TIMER for this specific sleep entry. Since
+     * ARM_SLEEP was submitted first, the driver's FIFO queue guarantees
+     * ARM_SLEEP is processed before CANCEL_TIMER → timer exists → CAS
+     * ARMED→CANCEL_REQ succeeds → close_cb fires → fiber wakes. Idempotent
+     * with CANCEL_SCOPE (CAS is guarded; only one winner). */
+    if (nova_abool_load(&cancel_scope->cancel_requested)) {
+        NovaDriverJob* cjob = (NovaDriverJob*)malloc(sizeof(NovaDriverJob));
+        if (cjob) {
+            cjob->kind = NOVA_DRV_JOB_CANCEL_TIMER;
+            cjob->u.cancel_timer.st = &st;
+            if (nova_driver_submit_job(cjob) != 0) {
+                free(cjob);
+                /* driver gone; stage = NEW, park predicate loops until
+                 * timer fires naturally (worst-case: full sleep duration) */
+            }
+        }
+    }
+
+    /* Plan 83.11 Ф.3: futex-style park (post-park predicate recheck).
+     *
+     * Standard nova_sched_park_until has wake-before-park race for our driver
+     * path: driver может close_cb fire ДО того как worker reach nova_sched_park
+     * (SEQ_CST parked=true). Wake CAS parked true→false fails (still false),
+     * no dispatch, fiber yields, no more wake → stuck.
+     *
+     * Fix (port Linux futex / Tokio AtomicWaker pattern): set parked=true
+     * SEQ_CST FIRST, then re-check predicate. If pred true now (close_cb fired
+     * в window), we either won CAS-clear (no wake came → return clean) or
+     * lost (wake fired → must yield to consume dispatch, then exit on next
+     * iteration). */
+    /* Plan 83.11 Ф.3 futex park — closes wake-before-park race
+     * (cas_won=93 vs 100 diag confirmed loss point).
+     *
+     * Pattern (port Linux futex / Tokio AtomicWaker recheck):
+     *   1. fast-path pred check (close_cb fired between arm and park)
+     *   2. SEQ_CST store parked=true — full fence, propagates state globally
+     *   3. recheck pred AFTER barrier: если CLOSED — close_cb fired в window
+     *      between step 1 and step 2
+     *      - CAS clear parked true→false:
+     *        - WIN: no wake raced us → return clean (no yield)
+     *        - LOSE: wake fired between SEQ_CST and recheck, fiber in deque
+     *          → yield to consume dispatch (avoid double-resume)
+     *   4. else yield wait for wake */
+    /* Plan 83.11 Ф.3.A v3 (Option A): use generic nova_sched_park_until.
+     * Race-free now thanks к pending_wake[] integration в nova_sched.h. */
+    nova_sched_park_until(scope, slot, _nova_sleep_drv_state_is_closed, &st);
+
+    /* After CLOSED: st unlinked from armed_list by close_cb. Fiber safe to
+     * return; coroutine stack может deallocate when fiber dies. */
+}
+
+/* Plan 83.11 Ф.3: tok.cancel() submits CANCEL_SCOPE job to driver.
+ * Called from nova_cancel_token_cancel_reason after legacy cancel paths. */
+static inline void _nova_cancel_via_driver(NovaFiberQueue* scope) {
+    if (!nova_driver_is_started()) return;
+    if (!scope) return;
+
+    NovaDriverJob* job = (NovaDriverJob*)malloc(sizeof(NovaDriverJob));
+    if (!job) {
+        fprintf(stderr, "nova: _nova_cancel_via_driver: malloc job failed\n");
+        return;  /* Fall through — legacy cancel paths may still catch */
+    }
+    job->kind = NOVA_DRV_JOB_CANCEL_SCOPE;
+    job->u.cancel_scope.scope = scope;
+    if (nova_driver_submit_job(job) != 0) {
+        free(job);
+    }
+}
+
 /* Default impl: context-sensitive sleep (D71 + Plan 22 F2 libuv mandatory).
  *  - In fiber: park-on-uv_timer (Plan 22 Ф.4, D93)
  *  - On main inside supervised body → drain queue + bounded uv_run.
@@ -1982,7 +2298,14 @@ static inline nova_unit _nova_time_default_sleep(nova_int ms) {
                 "(D92 invariant violated)\n");
             abort();
         }
-        _nova_sleep_via_libuv(_nova_active_scope, _nova_active_slot, ms);
+        /* Plan 83.11 Ф.3: route to centralized driver if started, otherwise
+         * fallback to legacy per-worker path (bootstrap/single-thread mode). */
+        extern bool nova_driver_is_started(void);  /* forward decl */
+        if (nova_driver_is_started()) {
+            _nova_sleep_via_driver(_nova_active_scope, _nova_active_slot, ms);
+        } else {
+            _nova_sleep_via_libuv(_nova_active_scope, _nova_active_slot, ms);
+        }
         return NOVA_UNIT;
     } else if (_nova_active_scope) {
         /* Main flow inside a scope (D92 implicit либо explicit supervised):
