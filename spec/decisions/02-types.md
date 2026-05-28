@@ -17,6 +17,8 @@
 | [D39](#d39-embed-и-delegation-use-name-type-alias-обязателен) | Embed и delegation: `use name Type` (alias обязателен) | active |
 | [D32](#d32-семантика-передачи-параметров) | Семантика передачи параметров | revised для полей → D36 |
 | [D36](#d36-поля-типа-дефолт-mutable-у-mut-bindinga-readonly-для-never-mut) | Поля типа: дефолт mutable у mut-binding'а, `readonly` для never-mut | active |
+| [D175](#d175-readonly-field--полный-freeze-амендмент-d36) | `readonly field` — полный freeze, транзитивность (амендмент D36) | active |
+| [D176](#d176-readonly-t--тип-модификатор) | `readonly T` — тип-модификатор, coercion rules, zero overhead | active |
 | [D66](#d66-self-universal--ссылка-на-обобщающий-тип-в-методах-effects-protocols) | `Self` universal: ссылка на обобщающий тип в методах, effects, protocols | active |
 | [D72](#d72-generic-bounds-через-t-protocol--protocol-как-тип) | Generic bounds через `[T Protocol]` — protocol как тип | active |
 | [D110](#d110-ghost-state--spec-only-bindings) | Ghost state — spec-only bindings | active |
@@ -2627,6 +2629,98 @@ type Account {
 поле — мутируется у mut-binding'а», `readonly` — для исключений.
 Семантика параметров (D32) не менялась. Подробно — в
 `history/evolution.md`.
+
+---
+
+## D175. `readonly field` — полный freeze (амендмент D36)
+
+> Status: active (Plan 108, 2026-05-28)
+
+### Что
+
+Уточнение D36: `readonly field T` запрещает **и** переприсвоение поля,
+**и** мутацию содержимого — транзитивно.
+
+| Объявление | Переприсвоить | Мутировать содержимое | Use case |
+|---|---|---|---|
+| `field T` | у `mut` binding | у `mut` binding | большинство полей |
+| `readonly field T` | ❌ никогда | ❌ никогда | id, invariants, frozen state |
+| `field readonly T` | у `mut` binding | ❌ никогда | mutable ref, immutable content |
+| `mut field T` | ✅ всегда | у `mut` binding | cache, lazy init |
+| `mut field readonly T` | ✅ всегда | ❌ никогда | swappable readonly view |
+
+**Транзитивность:** если поле объявлено `readonly`, доступ через него
+также запрещает мутацию вложенных полей и вызов `mut`-методов:
+
+```nova
+type Tags { mut items []str }
+type Account {
+    readonly id u64
+    readonly tags Tags        // нельзя acc.tags.items.push("x")
+}
+let mut acc = ...
+acc.id = 999                  // E_READONLY_FIELD
+acc.tags = Tags{}             // E_READONLY_FIELD
+acc.tags.items.push("x")      // E_READONLY_FIELD (транзитивно)
+```
+
+### Связь
+- [D36](#d36-поля-типа-дефолт-mutable-у-mut-bindinga-readonly-для-never-mut) — расширяется
+- [D176](#d176-readonly-t-тип-модификатор) — readonly как тип-позиция
+
+---
+
+## D176. `readonly T` — тип-модификатор
+
+> Status: active (Plan 108, 2026-05-28)
+
+### Что
+
+`readonly` как prefix-модификатор типа в любой позиции:
+
+```nova
+fn str @as_bytes() -> readonly []u8          // возвращаемый тип
+fn process(data readonly []u8) { ... }       // параметр
+type Wrapper { field readonly []u8 }         // поле
+let view readonly []u8 = s.as_bytes()        // локальная переменная
+```
+
+### Семантика
+
+- Запрещает вызов `mut`-методов на значении типа `readonly T`
+- Запрещает запись через индекс: `view[i] = x` → `E_READONLY_CONTENT`
+- `T` → `readonly T` coercion разрешён автоматически (сужение прав)
+- `readonly T` → `T` запрещён: `E_READONLY_COERCE`
+
+```nova
+let arr []u8 = [1, 2, 3]
+let view readonly []u8 = arr          // ✅ []u8 → readonly []u8
+let back []u8 = view                  // ❌ E_READONLY_COERCE
+view[0] = 99                          // ❌ E_READONLY_CONTENT
+take_readonly(arr)                    // ✅ auto-coerce при вызове
+```
+
+### Escape hatch
+
+Снять `readonly` в Nova-коде нельзя. Кому нужен mutable доступ —
+явно копирует: `let copy []u8 = view.to_owned()`. Если необходим
+обход через FFI, это делается в `external fn` на C-стороне.
+
+### Рантайм
+
+Zero overhead — `readonly` только compile-time проверка, не влияет
+на codegen. ABI `readonly []u8` = `NovaArray_uint8_t*` (идентично `[]u8`).
+
+### Применение
+
+`str.as_bytes() -> readonly []u8` — zero-copy view в UTF-8 буфер строки
+без memcpy. UTF-8 invariant защищён: записать в буфер нельзя.
+
+### Связь
+- [D36](#d36-поля-типа-дефолт-mutable-у-mut-bindinga-readonly-для-never-mut) — `readonly field` предшественник
+- [D175](#d175-readonly-field--полный-freeze-амендмент-d36) — readonly field enforcement
+- [D144](#d144-sub-slice-views-для-t-и-str--arra-b--sa-b) — слайсы `arr[a..b]`
+- Plan 108 — реализация
 
 ---
 

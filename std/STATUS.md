@@ -12,7 +12,11 @@
 
 Запуск через `.\run_tests.ps1 -IncludeStdlib`.
 
-## Текущий статус (2026-05-23, post-Plan 95 / 95.bis / 99 / 98 — ~50 планов после 2026-05-09 baseline)
+## Текущий статус (2026-05-28, post-Plan 108 — readonly field enforcement + readonly T modifier)
+
+- **Plan 108 ✅** (D175 + D176): `readonly field` enforcement транзитивный, `readonly T` тип-модификатор, `str.as_bytes() -> readonly []u8` zero-copy view. 6/6 plan108 тестов PASS.
+
+## Статус 2026-05-23 (post-Plan 95 / 95.bis / 99 / 98 — ~50 планов после 2026-05-09 baseline)
 
 - **nova_tests:** 1141 PASS / 0 FAIL / 56 SKIP (после Plan 99 merge `c48b85c4859`).
 - **std type-check (`nova check std/`):** **44 PASS / 12 FAIL** (regression vs 50/50 заявленных 2026-05-09). 12 файлов не проходят даже type-check. Типичная ошибка — D52 §2 «избыточная форма поля `name: name` — требуется shorthand `name`» (формат поля стал строже после ~50 планов компилятор-эволюции). Полный список + категоризация — нужен прогон `nova check std/`. **Это первый шаг Plan 91 Ф.0 re-baseline.**

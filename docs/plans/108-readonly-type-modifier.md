@@ -96,11 +96,63 @@ export external fn str @as_bytes() -> readonly []u8
 export external fn str @bytes() -> []u8
 ```
 
+### D26 rev — `str.len()` = bytes O(1), `str.char_len()` = codepoints O(n)
+
+**Решение принято в Plan 108 (2026-05-28):** Изменить семантику `str.len()`:
+
+| Метод | Возвращает | Сложность | C-runtime |
+|---|---|---|---|
+| `str @len() -> int` | байты | O(1) | `nova_str_byte_len` |
+| `str @char_len() -> int` | codepoints (UTF-8) | O(n) | `nova_str_char_len` |
+| `str @byte_len() -> int` | ~~байты~~ (deprecated alias) | O(1) | `nova_str_byte_len` |
+
+**Мотивация:** `len()` = bytes консистентно с Rust/Go/C. `str.len()` с O(n) scan ломает
+допущение O(1) для размера. Старая семантика (len = codepoints) называлась «school B (D26)».
+
+**Соглашение о receiver:** `fn Type @method()` == `fn readonly Type @method()` — implicit
+readonly receiver. Ключевое слово `readonly` перед `@` в объявлении ЗАПРЕЩЕНО в целях
+унификации (ничего в парсере не вводим).
+
+**Известная проблема:** `str.len()` внутри generic-closures (erased `nova_int`) диспетчеризует
+к `Nova_Range_method_len` вместо `nova_str_byte_len` из-за `method_receivers["len"] = "Range"`.
+Deprecated alias `byte_len()` в generic-closures работает как coincidence. Исправление
+отслеживается как **[M-str-len-closure-dispatch]** (follow-up).
+
+### Новые предложения (записать в Q / follow-up)
+
+**`copy_from` fluent (Plan 108 или план 90.x):**  
+`fn[T] []T @clone() -> []T` хочет: `[]T.with_capacity(@len()).copy_from(@)`.  
+Требует: сделать `copy_from` fluent — возвращать `self` вместо `unit`. Codegen change: emit
+`(nova_array_copy_from_T(tmp, src), tmp)` + tmp var. Записать в Q.
+
+**`chars()` → `to_chars()` rename:**  
+`as_bytes()` = zero-copy, `to_chars()` = O(n) copy + decode. Конвенция `to_*` = copy.
+`chars()` deprecated alias. Записать как amend D26 item.
+
+**`str @into() -> []char` / `str @into() -> []u8` через D73:**  
+Type-directed `into()` routing. `let bs: []u8 = s.into()` — D73 уже поддерживает.  
+`[]char.from(s str) -> []char` зарегистрировать через D73/D77. Записать в Q.
+
+**`str @compare(other str) -> int`:**  
+```nova
+fn str @compare(other str) -> int => @as_bytes().compare(other.as_bytes())
+```
+`[]u8 @compare()` уже существует через `nova_array_compare_nova_byte`.  
+Возвращает -1/0/1 (как memcmp). NOT `Option[int]` — сравнение всегда валидно.  
+Можно добавить в `std/runtime/string.nv` как Nova-body. Записать в Q.
+
+**`[M-str-len-closure-dispatch]` fix:**  
+В `method_receivers` fallback dispatch: если receiver `nova_int` и зарегистрированный
+тип = `Range` (heap struct, pointer), не диспетчеризовать. OR: closure body emit должен
+отслеживать Nova-type closure params (не только C-type). Записать как P2 follow-up.
+
 ## 3. Spec и документация
 
 ### Spec changes
 
-- **`spec/decisions/02-types.md`**:
+- **`spec/decisions/02-types.md`** (или `spec/decisions/08-runtime.md`):
+  - **Обновить D26**: `str.len()` = bytes O(1); `str.char_len()` = codepoints O(n).
+    `str.byte_len()` — deprecated alias для `len()`. Убрать "school B" ссылку на codepoints.
   - Добавить **D175** как амендмент D36: `readonly field T` = full freeze (оба axis)
   - Добавить **D176**: `readonly T` тип-модификатор, coercion rules, `as mut T` unsafe escape
   - Обновить D36 с ссылкой на D175
@@ -151,7 +203,23 @@ export external fn str @bytes() -> []u8
 
 ## 5. Тесты
 
-### Позитивные (должны компилироваться и работать):
+### D26 rev — позитивные тесты (str len = bytes):
+
+- ASCII: `"hello".len() == 5` (5 bytes == 5 codepoints) ✅ implemented
+- Cyrillic: `"Привет".len() == 12`, `"Привет".char_len() == 6` ✅
+- Emoji: `"ab😀cd".len() == 8`, `"ab😀cd".char_len() == 5` ✅
+- Пустая: `"".len() == 0`, `"".char_len() == 0` ✅
+- Slice end: `s[i..s.char_len()]` (используем `char_len()` для codepoint-indexed slice) ✅
+- `str.as_bytes().len == s.len()` (zero-copy view, байты совпадают) ✅
+- Deprecated `byte_len()` alias: `"hello".byte_len() == 5` (= `len()`, работает как alias)
+
+### D26 rev — негативные тесты (семантика разница):
+
+- `"Привет".len() != "Привет".char_len()` — для не-ASCII len ≠ char_len ✅
+- `str.len()` внутри generic closure — KNOWN BUG [M-str-len-closure-dispatch]:
+  диспетчеризует к `Nova_Range_method_len`. Использовать `byte_len()` как workaround.
+
+### D175/D176 позитивные тесты:
 
 - `readonly` поле не мутируется даже у `let mut` binding — значение читается корректно
 - `readonly []u8` view от `str.as_bytes()` — элементы читаются нормально
@@ -159,7 +227,7 @@ export external fn str @bytes() -> []u8
 - `split` на Nova — те же результаты что и C-версия
 - Транзитивность: `type Nested { val int }` + `readonly n Nested` — чтение `n.val` работает
 
-### Негативные (compile errors):
+### D175/D176 негативные тесты (compile errors):
 
 - `acc.readonly_id = 999` → `E_READONLY_FIELD`
 - `acc.readonly_tags.push("x")` → `E_READONLY_FIELD` (транзитивно через поле)
