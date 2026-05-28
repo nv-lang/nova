@@ -24009,3 +24009,58 @@ Commits (nova-p91, branch plan-91-stdmvp):
 
 Spec: D183 в spec/decisions/02-types.md (main nova).
 Q-block update: Q-protocol-method-prefix updated с D183 reference.
+
+=== Plan 91.8a.2 part 1 closed 2026-05-29: protocols refactor + Self в param fix (D183 amendment) ===
+
+Plan 91.8a.2 part 1 implementation:
+
+1. protocols.nv refactor:
+   - Equatable orthogonal с canonical coercion-form default body:
+       equals(other Self) -> bool {
+           let cmp Comparable = @
+           cmp.compare(other) == 0
+       }
+   - Comparable standalone (no use Equatable embed)
+   - Printable.fmt с default body { sb.append(str.from(@)) }
+   - From identity blanket: export fn[T] T.from(t T) -> T => t
+
+2. Self в param-type position fix (closes M-91.8a-self-in-param):
+   - emit_c.rs::emit_module method overload registration sets
+     current_receiver_type перед param_c_types calculation
+   - Mirror return-type path; restore prev_recv after
+   - Test: fn Pt @equals(other Self) -> bool теперь работает
+
+3. Tests:
+   - plan91_8a_2/self_in_param_test.nv (1 test, 2 sub-cases PASS)
+
+Decisions (Q1-Q8 closed):
+- Q1 Cycle detection: E_SYNTH_CYCLE при synthesis cycle
+- Q2 Multiple defaults: E_SYNTH_AMBIGUOUS
+- Q3 Generic blanket: mono per concrete T
+- Q4 From override: STRICT — E_BLANKET_IDENTITY_OVERRIDE
+- Q5 Pure/effect: inherits from protocol decl
+- Q6 Canonical form: COERCION в stdlib (explicit dependency)
+- Q7 Devirt failure: W_DEVIRT_FAILED warning + fat ptr fallback
+- Q8 From × D77 Into: identity Into auto-derived
+
+Targeted regression: plan62 31/5 baseline, plan91 10/0, plan91_7 5/0,
+plan91_8a 3/0, plan91_8a_2 1/0, protocols 27/2 (pre-existing only).
+
+DEFERRED to Plan 91.8a.2 part 2 (codegen synthesis):
+- Lazy synthesis at use-site (bound/coercion contexts)
+- Devirtualization pass (coercion → direct call when type known)
+- Synthesis cache per compilation unit
+- E_BLANKET_IDENTITY_OVERRIDE enforcement
+- Plan 101 mono pass extension для fn[T] T.method static
+- Error diagnostics E_SYNTH_CYCLE/AMBIGUOUS, W_DEVIRT_FAILED
+- 16 positive tests (refactored protocols + Self + From blanket use cases)
+- 5 negative tests
+
+До part 2 — implementer пишет default body methods явно как boilerplate
+compatibility. Это работает но дублирует код.
+
+D183 amendment в spec/decisions/02-types.md (main nova repo).
+
+Commits (nova-p91, plan-91-stdmvp):
+- 858a957e156 — protocols.nv refactor
+- a62fd048e6d — Self в param fix + plan91_8a_2/self_in_param_test

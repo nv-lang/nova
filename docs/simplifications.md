@@ -27312,3 +27312,37 @@ override (не error).
 pair. Substantial codegen pass. Сейчас compatibility through explicit @equals
 boilerplate (one-line `=> @compare(other) == 0`). Followup [M-91.8a.2-default-codegen]
 завершит eager synthesis.
+
+## Plan 91.8a.2 part 1 — orthogonal protocols + coercion canonical form (D183 amendment)
+
+**Why orthogonal Equatable/Comparable:** в 91.8a part 1 был embed
+(`use Equatable` в Comparable + local override `equals`). Это создавало
+duplicate-method detection edge case (`check_protocol_embeds` нужен был
+special case для override). Orthogonal — cleaner: каждый protocol
+stand-alone, default body использует `@compare` который МОЖЕТ не быть
+у типа (conditional default).
+
+**Why coercion canonical form (Q6):** `let cmp Comparable = @` явно
+показывает cross-protocol dependency в protocol declaration. Self-
+documenting: при чтении Equatable сразу видно «использует Comparable».
+Codegen devirtualization делает coercion-form **zero-cost** vs direct
+form (same C output after optimization pass) — performance не аргумент
+выбирать direct form. Choose form for clarity.
+
+**Why strict override на From identity blanket (Q4):** identity это
+тождество — нет осмысленного «non-identity Money.from(Money)». Любая
+попытка «улучшить» = странность. D9 single canonical path: blanket =
+identity, реализуется compiler автоматически, override бесполезен.
+
+**Why Self в param fix через current_receiver_type:** ровно тот же
+паттерн что для return-type (line 7150+). Mirror existing mechanism;
+no new infrastructure. Plan 91.7 уже использовал receiver_c_type
+для Self в return — расширение на param consistent.
+
+**Why codegen synthesis отложен на part 2:** lazy synthesis +
+devirtualization — substantial codegen work (multiple modules: BoundCtx
+satisfaction, emit_c.rs synthesis pass, cache, Plan 101 mono extension,
+error diagnostics, 21 tests). Не helpful запихать в один commit с
+протокол refactor. Part 1 валиден сам по себе — implementer пишет
+default methods explicit как boilerplate compatibility. Part 2 даёт
+автомат synthesis убирая boilerplate.
