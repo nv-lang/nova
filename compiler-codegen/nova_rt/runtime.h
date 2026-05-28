@@ -195,4 +195,14 @@ void nova_runtime_cancel_worker_fibers(struct NovaFiberQueue* target_scope);
 void* nova_spawn_pool_acquire(size_t size);
 void  nova_spawn_pool_release(void* ctx, size_t size);
 
+/* Plan 83.11 Phase A diagnostics (Variant B, 2026-05-27): in-process state
+ * dump. Lock-free best-effort snapshot of all workers + sched_state + diag
+ * counters to stderr. Called from supervised_run_impl watchdog when wait
+ * exceeds NOVA_WATCHDOG_DUMP_SECS (default 5s), or programmatically.
+ *
+ * nova_runtime_set_watchdog_scope: register currently-waiting supervised
+ * scope so dump can include its state. Call with NULL on supervised exit. */
+void nova_runtime_dump_state(const char* reason);
+void nova_runtime_set_watchdog_scope(struct NovaFiberQueue* q);
+
 #endif /* NOVA_RT_RUNTIME_H */
