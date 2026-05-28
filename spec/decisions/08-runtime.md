@@ -19,6 +19,7 @@ static-состояния.
 | [D81](#d81-assertcond-vs-debug_assertcond--build-mode-семантика) | `assert(cond)` vs `debug_assert(cond)` — build-mode семантика |
 | [D141](#d141-примитивы-доступа-к-памяти--byte_at--bulk-slice-операции) | Примитивы доступа к памяти — `byte_at` / bulk slice-операции |
 | [D177](#d177-str-nova-body-dispatch--plan-54-ф2-extension) | `str` Nova-body dispatch — Plan 54 Ф.2 extension |
+| [D178](#d178-str-api-cleanup-и-расширения--plan-91-ф26) | `str` API cleanup и расширения — Plan 91 Ф.2.6 |
 
 ---
 
@@ -3666,3 +3667,125 @@ static inline nova_str Nova_StringBuilder_consume_into(Nova_StringBuilder* b) {
   используется в `parse_int_radix` body.
 - [Plan 91](../../docs/plans/91-stdlib-mvp-for-0.1.md) — std MVP 0.1, родительский план.
 - [Plan 54](../../docs/plans/54-nova-body-methods.md) — Ф.2 dispatch mechanism.
+
+---
+
+## D178. `str` API cleanup и расширения — Plan 91 Ф.2.6
+
+### Что
+
+Комплекс из шести взаимосвязанных изменений `str` API, закрывающих Plan 91
+Ф.2.6:
+
+1. **`@bytes()` → `@to_bytes()`** — allocating copy; `@as_bytes()` (D176,
+   zero-copy `readonly []u8`) остаётся без изменений.
+2. **`@chars()` → `@to_chars()`** — allocating codepoint slice.
+3. **`@split(sep str) -> []str` → `-> readonly []str`** — возвращает
+   zero-copy views в оригинальный буфер; тип сигнализирует об этом.
+4. **`@parse_int_radix(radix int)` + `@parse_int()` → `@parse_int(radix int = 10)`**
+   — одна Nova-body функция с keyword-only default-параметром (D102).
+   Вызов без аргументов: `"42".parse_int()` (radix=10). С явным radix:
+   `"ff".parse_int(radix: 16)`. Позиционная передача default-параметра
+   запрещена D102.
+5. **`@compare(other str) -> int`** — новый C-примитив; возвращает
+   отрицательное/ноль/положительное, как C `strcmp`. Реализован как
+   `nova_str_compare` через `__builtin_memcmp`.
+6. **`readonly bytes` parameter syntax** — параметр `from_bytes_lossy` и
+   `from_bytes_unchecked` переписан в форму `readonly bytes []u8` (modifier
+   перед именем параметра, а не перед типом). Оба варианта теперь
+   поддерживаются парсером.
+
+### Правило
+
+```nova
+// D178 итоговый str API (bootstrap):
+export external fn str @to_bytes() -> []u8              // allocating copy
+export external fn str @as_bytes() -> readonly []u8     // D176: zero-copy
+export external fn str @to_chars() -> []char            // allocating codepoints
+export external fn str @split(sep str) -> readonly []str
+export external fn str @compare(other str) -> int       // <0 / 0 / >0
+
+// from_bytes: `readonly` перед именем параметра (новая форма, D178)
+export external fn str.from_bytes_lossy(readonly bytes []u8) -> str
+export external fn str.from_bytes_unchecked(readonly bytes []u8) -> str
+
+// parse_int: единственный метод с keyword-only default (D102)
+export fn str @parse_int(radix int = 10) -> Option[int] {
+    if radix < 2 || radix > 36 { return None }
+    // ... тело на Nova (Plan 54 Ф.2)
+}
+```
+
+**Prelude auto-import (std.prelude v11):**
+
+```nova
+export import std.runtime.string.{
+    parse_int, pad_left, pad_right, repeat, replace,
+    compare, to_bytes, to_chars, as_bytes
+}
+```
+
+**Эквивалентность типов `readonly []u8`:**
+
+```nova
+readonly []u8  ≡  readonly [] readonly u8
+```
+
+Оба варианта стриппируют recursive `readonly` до `NovaArray_nova_byte*` в
+C codegen. Различие семантическое — первый «readonly array of u8», второй
+«readonly array of readonly u8» — но в bootstrap-реализации оба ведут
+себя идентично (нет изменяющих операций на байтах).
+
+**Default-параметры и keyword-only вызов (D102):**
+
+Параметр с дефолтным значением — всегда keyword-only (Nova D102). Попытка
+передать позиционно вызывает ошибку компилятора. Для `parse_int`:
+
+```nova
+"ff".parse_int()          // ✓ radix=10 (default)
+"ff".parse_int(radix: 16) // ✓ явно radix=16
+"ff".parse_int(16)        // ✗ CODEGEN-FAIL: D102 keyword-only
+```
+
+**Codegen: default-arg fill-in для Nova-body dispatch (Plan 54 Ф.2):**
+
+Когда вызов `str.method(fewer_args_than_params)` проходит через Plan 54
+Ф.2 dispatch (`method_overloads[("str", m)]`, `!is_external` filter),
+codegen заполняет пропущенные trailing аргументы из `MethodSig.param_defaults`.
+Поле `param_defaults: Vec<Option<String>>` добавлено в `MethodSig`; при
+регистрации методов из `FnDecl` — populate через `simple_literal_c` (конвертирует
+литеральные default-expressions в C-строку без вызова `emit_expr`).
+
+### Почему
+
+- **Консистентность `to_*` prefix** — `to_bytes` / `to_chars` семантически
+  аналогичны Rust `to_vec()` / `to_string()`: allocating copy. Без `to_`-prefix
+  неясно, zero-copy или нет. `as_bytes()` остаётся как zero-copy аналог Rust
+  `as_bytes()`.
+- **`readonly []str` из `split`** — zero-copy views в оригинальный буфер;
+  тип это выражает явно. Изменять элементы результата нельзя.
+- **Единый `parse_int`** — вместо двух методов (`parse_int()` и
+  `parse_int_radix(r)`) один с default-параметром. Упрощает API; radix=10
+  — наиболее частый случай.
+- **`compare` как примитив** — лексикографическое сравнение через `memcmp`;
+  будущий `PartialOrd` auto-derive для `str` может опираться на него.
+
+### C codegen mapping
+
+| Nova method | C function |
+|---|---|
+| `str @to_bytes()` | `nova_str_to_bytes` |
+| `str @to_chars()` | `nova_str_to_chars` |
+| `str @compare(other)` | `nova_str_compare` |
+| `str @split(sep)` | `nova_str_split` (unchanged) |
+| `str @as_bytes()` | `nova_str_as_bytes` (D176) |
+
+Legacy C aliases сохранены для совместимости кода, написанного до D178:
+`nova_str_bytes` → `nova_str_to_bytes`, `nova_str_chars` → `nova_str_to_chars`.
+
+### Связь
+
+- [D102](02-types.md#d102-keyword-only-default-параметры) — keyword-only default params.
+- [D176](02-types.md#d176-readonly-t--тип-модификатор) — `readonly` type modifier; `as_bytes()`.
+- [D177](#d177-str-nova-body-dispatch--plan-54-ф2-extension) — Nova-body dispatch механизм.
+- [Plan 91](../../docs/plans/91-stdlib-mvp-for-0.1.md) — Plan 91 Ф.2.6.
