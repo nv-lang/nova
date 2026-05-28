@@ -1,67 +1,68 @@
-// Plan 85.5 Ф.2 — Iter[T]: str.chars() и str.bytes() в for-in.
+// Plan 85.5 Ф.2 — Iter[T]: str.to_chars() и str.to_bytes() в for-in.
 //
-// `str.chars() -> []char` — codepoint'ы; `str.bytes() -> []u8` —
-// сырые UTF-8 байты. Оба итерируются обычным for-in (массивы).
+// `str.to_chars() -> []char` — codepoint'ы (allocating); `str.to_bytes() -> []u8` —
+// сырые UTF-8 байты (allocating copy). Оба итерируются обычным for-in (массивы).
+// D178 (Plan 91 Ф.2.6): renamed from chars()/bytes().
 
 module iter.str_iters
 
 
-test "str.chars() — обход codepoint'ов ASCII" {
+test "str.to_chars() — обход codepoint'ов ASCII" {
     let mut count = 0
-    for c in "hello".chars() {
+    for c in "hello".to_chars() {
         count = count + 1
     }
     assert(count == 5)
 }
 
-test "str.chars() — Unicode codepoint'ы (не байты)" {
+test "str.to_chars() — Unicode codepoint'ы (не байты)" {
     let mut count = 0
-    for c in "Привет".chars() {
+    for c in "Привет".to_chars() {
         count = count + 1
     }
     assert(count == 6)       // 6 codepoint'ов
 }
 
-test "str.chars() — значения codepoint'ов" {
-    let cs = "Abc".chars()
+test "str.to_chars() — значения codepoint'ов" {
+    let cs = "Abc".to_chars()
     assert(cs.len() == 3)
     assert(cs[0] == 'A')
     assert(cs[1] == 'b')
     assert(cs[2] == 'c')
 }
 
-test "str.chars() — первый и последний Unicode codepoint" {
-    let cs = "Привет".chars()
+test "str.to_chars() — первый и последний Unicode codepoint" {
+    let cs = "Привет".to_chars()
     assert(cs[0] == 'П')
     assert(cs[5] == 'т')
 }
 
-test "str.bytes() — сырые UTF-8 байты" {
+test "str.to_bytes() — сырые UTF-8 байты" {
     let mut count = 0
-    for b in "Hi".bytes() {
+    for b in "Hi".to_bytes() {
         count = count + 1
     }
     assert(count == 2)
 }
 
-test "str.bytes() — Unicode даёт больше байт чем codepoint'ов" {
-    let bs = "Я".bytes()
+test "str.to_bytes() — Unicode даёт больше байт чем codepoint'ов" {
+    let bs = "Я".to_bytes()
     assert(bs.len() == 2)        // 'Я' — 2 байта UTF-8
     assert(bs[0] == 0xD0)
     assert(bs[1] == 0xAF)
 }
 
-test "str.chars() — пустая строка" {
+test "str.to_chars() — пустая строка" {
     let mut count = 0
-    for c in "".chars() {
+    for c in "".to_chars() {
         count = count + 1
     }
     assert(count == 0)
 }
 
-test "str.chars() — сумма codepoint-значений" {
+test "str.to_chars() — сумма codepoint-значений" {
     let mut sum = 0
-    for c in "ABC".chars() {
+    for c in "ABC".to_chars() {
         sum = sum + (c as int)
     }
     assert(sum == 198)          // 65 + 66 + 67

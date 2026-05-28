@@ -16,6 +16,13 @@
 // `Iter[T]` — структурный effect в prelude. RangeIter автоматически
 // удовлетворяет `Iter[int]` через `mut next() -> Option[int]`.
 
+// Plan 91 Ф.7.1: partial_prelude — range.nv is re-exported в std.prelude
+// (Plan 62.D bis-1), и full auto-import prelude → cycle при standalone nova check
+// (collections.range → std.prelude → std.collections.range). Используем
+// #prelude(core, runtime, errors): только core (Option/Some/None/Ordering) + runtime (assert) +
+// errors (RuntimeError) — всё что нужно range API + тестам, БЕЗ
+// std.collections.range re-export через std.prelude.collections.
+#prelude(core, runtime, errors)
 module collections.range
 
 

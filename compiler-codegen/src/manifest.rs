@@ -620,11 +620,34 @@ pub fn check_module_path_with_kind(
 /// - rev-1 legacy:  `module std.runtime.X` → `["std", "runtime", X]`
 /// - rev-3 default: `module runtime.X`     → `["runtime", X]` (parent=runtime, target=X)
 ///
+/// **Plan 91 Ф.7.1 (2026-05-27):** расширено для дополнительных stdlib
+/// модулей, которые легитимно используют `external fn` для wrapping
+/// native runtime:
+///   - `std.net.*` / `net.*` — Plan 83.12 async net stdlib (libuv TCP/UDP).
+///   - `std.bench` / `bench` — Plan 57 benchmark DSL (hard-coded namespace).
+///
 /// Compat mode остаётся после Sub-plan 42.6 migration для случая user
 /// package с `name = "std"` (overlap с stdlib namespace).
 pub fn is_stdlib_runtime_module(name: &[String]) -> bool {
-    (name.len() >= 2 && name[0] == "std" && name[1] == "runtime")
+    // std.runtime.* / runtime.* (original Plan 42 whitelist)
+    if (name.len() >= 2 && name[0] == "std" && name[1] == "runtime")
         || (name.len() == 2 && name[0] == "runtime")
+    {
+        return true;
+    }
+    // Plan 91 Ф.7.1: std.net.* / net.* (Plan 83.12 async net stdlib)
+    if (name.len() >= 2 && name[0] == "std" && name[1] == "net")
+        || (name.len() == 2 && name[0] == "net")
+    {
+        return true;
+    }
+    // Plan 91 Ф.7.1: std.bench / bench (Plan 57 benchmark DSL)
+    if (name.len() == 2 && name[0] == "std" && name[1] == "bench")
+        || (name.len() == 1 && name[0] == "bench")
+    {
+        return true;
+    }
+    false
 }
 
 /// Plan 42 Sub-plan 42.6: identify `std/prelude.nv` под обоих форматов.

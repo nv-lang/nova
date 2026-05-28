@@ -1,0 +1,135 @@
+// Plan 91 Ф.2 + Ф.2.5 (D177) + Ф.2.6 (D178): conformance tests for text methods.
+// repeat / replace / pad_left / pad_right — Nova-body via StringBuilder.
+// parse_int(radix=10) — single Nova-body (D178 merge of parse_int + parse_int_radix).
+// Positive tests: basic functionality.
+// Negative tests: invalid inputs, edge cases.
+
+module plan91.text_methods_test
+
+test "str repeat" {
+    assert("ab".repeat(3) == "ababab")
+    assert("x".repeat(1) == "x")
+    assert("hi".repeat(0) == "")
+    assert("z".repeat(-1) == "")
+}
+
+test "str replace" {
+    assert("foo bar foo".replace("foo", "baz") == "baz bar baz")
+    assert("hello".replace("x", "y") == "hello")
+    assert("aaa".replace("a", "bb") == "bbbbbb")
+    assert("".replace("a", "b") == "")
+}
+
+test "str pad_left" {
+    assert("hi".pad_left(5, ' ') == "   hi")
+    assert("hi".pad_left(2, ' ') == "hi")
+    assert("hi".pad_left(1, ' ') == "hi")
+    assert("x".pad_left(4, '0') == "000x")
+}
+
+test "str pad_right" {
+    assert("hi".pad_right(5, ' ') == "hi   ")
+    assert("hi".pad_right(2, ' ') == "hi")
+    assert("x".pad_right(4, '-') == "x---")
+}
+
+// D178: single parse_int(radix int = 10) — radix defaults to 10.
+test "str parse_int" {
+    // default radix=10
+    assert("42".parse_int() == Some(42))
+    assert("-7".parse_int() == Some(-7))
+    assert("+100".parse_int() == Some(100))
+    assert("0".parse_int() == Some(0))
+    assert("abc".parse_int() == None)
+    assert("".parse_int() == None)
+    assert("12x".parse_int() == None)
+    // explicit radix
+    assert("ff".parse_int(radix: 16) == Some(255))
+    assert("FF".parse_int(radix: 16) == Some(255))
+    assert("1010".parse_int(radix: 2) == Some(10))
+    assert("z".parse_int(radix: 36) == Some(35))
+    assert("g".parse_int(radix: 16) == None)
+    // with sign prefix
+    assert("-ff".parse_int(radix: 16) == Some(-255))
+    assert("+1010".parse_int(radix: 2) == Some(10))
+    // explicit base 10
+    assert("42".parse_int(radix: 10) == Some(42))
+    assert("-100".parse_int(radix: 10) == Some(-100))
+}
+
+// D177 negative: invalid radix and edge inputs → None (no panic).
+test "str parse_int negative" {
+    // invalid radix (out of 2..36 range)
+    assert("ff".parse_int(radix: 1) == None)
+    assert("ff".parse_int(radix: 0) == None)
+    assert("ff".parse_int(radix: -1) == None)
+    assert("ff".parse_int(radix: 37) == None)
+    // empty string → None
+    assert("".parse_int(radix: 16) == None)
+    // sign only → None
+    assert("-".parse_int(radix: 10) == None)
+    assert("+".parse_int(radix: 16) == None)
+    // invalid chars for base
+    assert("2".parse_int(radix: 2) == None)     // '2' invalid in binary
+    assert("g".parse_int(radix: 16) == None)    // 'g' not a hex digit
+    assert("!".parse_int(radix: 10) == None)    // non-digit
+}
+
+// D177 negative: replace with empty from → unchanged; delete with empty to.
+test "str replace edge cases" {
+    // empty from → unchanged (not an error)
+    assert("hello".replace("", "x") == "hello")
+    // replace with empty to → deletion
+    assert("aababab".replace("ab", "") == "a")
+    // from longer than string → no match
+    assert("hi".replace("hello", "x") == "hi")
+    // empty string source
+    assert("".replace("a", "b") == "")
+    // from == to → no-op but still works
+    assert("abc".replace("b", "b") == "abc")
+}
+
+// D177: pad with non-ASCII fill character.
+test "str pad non-ascii fill" {
+    // pad with multi-byte char (2-byte UTF-8: é = U+00E9)
+    let padded = "hi".pad_left(4, 'é')
+    assert(padded.len() == 6)          // 2 chars × 2 bytes + 2 bytes for "hi"
+    assert(padded.ends_with("hi"))
+    // pad_right with emoji-class char (3-byte: ♥ = U+2665)
+    let pr = "x".pad_right(3, '♥')
+    assert(pr.starts_with("x"))
+    assert(pr.len() == 7)              // 1 + 2×3
+}
+
+// D177: repeat edge cases.
+test "str repeat edge cases" {
+    // empty string repeat → always ""
+    assert("".repeat(0) == "")
+    assert("".repeat(5) == "")
+    // single char repeat
+    assert("a".repeat(5) == "aaaaa")
+    // already tested: n=0 and n<0 → ""
+}
+
+// split возвращает views в оригинальный буфер (zero-copy).
+// str — это (ptr, len) без ownership, нет отдельной split_to_slices.
+test "str split zero-copy views" {
+    let parts = "a,bb,ccc".split(",")
+    assert(parts.len() == 3)
+    assert(parts[0] == "a")
+    assert(parts[1] == "bb")
+    assert(parts[2] == "ccc")
+    // empty sep → весь оригинал как единственный элемент
+    let whole = "hello".split("")
+    assert(whole.len() == 1)
+    assert(whole[0] == "hello")
+    // split по многосимвольному разделителю
+    let lines = "foo::bar::baz".split("::")
+    assert(lines.len() == 3)
+    assert(lines[0] == "foo")
+    assert(lines[2] == "baz")
+    // trailing empty part
+    let trailing = "a,b,".split(",")
+    assert(trailing.len() == 3)
+    assert(trailing[2] == "")
+}

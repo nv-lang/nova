@@ -395,12 +395,12 @@ fn str_runtime() -> Vec<RuntimeFn> {
             module: "std.runtime.string",
             receiver: Some("str"),
             is_static: false, is_mut: false, is_consume: false,
-            name: "bytes",
+            name: "to_bytes",
             params: &[],
             return_ty: "[]u8",
             effects: &[],
-            c_name: "nova_str_bytes",
-            doc: "UTF-8 bytes как []u8 (copy).",
+            c_name: "nova_str_to_bytes",
+            doc: "D178: UTF-8 bytes как []u8 (allocating copy). Renamed from bytes().",
         nova_body: None,
     },
         RuntimeFn {
@@ -419,12 +419,12 @@ fn str_runtime() -> Vec<RuntimeFn> {
             module: "std.runtime.string",
             receiver: Some("str"),
             is_static: false, is_mut: false, is_consume: false,
-            name: "chars",
+            name: "to_chars",
             params: &[],
             return_ty: "[]char",
             effects: &[],
-            c_name: "nova_str_chars",
-            doc: "Codepoints как []char (eager). Future: Iter[char] для лениво.",
+            c_name: "nova_str_to_chars",
+            doc: "D178: Codepoints как []char (allocating). Renamed from chars().",
         nova_body: None,
     },
         RuntimeFn {
@@ -433,12 +433,89 @@ fn str_runtime() -> Vec<RuntimeFn> {
             is_static: false, is_mut: false, is_consume: false,
             name: "split",
             params: &[("sep", "str")],
-            return_ty: "[]str",
+            return_ty: "readonly []str",
             effects: &[],
             c_name: "nova_str_split",
-            doc: "Split по separator. Eager в bootstrap.",
+            doc: "D178: Split по separator. Returns zero-copy views (readonly []str).",
         nova_body: None,
     },
+        // D178: compare — lexicographic, like C strcmp. External (C implementation).
+        RuntimeFn {
+            module: "std.runtime.string",
+            receiver: Some("str"),
+            is_static: false, is_mut: false, is_consume: false,
+            name: "compare",
+            params: &[("other", "str")],
+            return_ty: "int",
+            effects: &[],
+            c_name: "nova_str_compare",
+            doc: "D178: Lexicographic comparison. Returns negative/0/positive like C strcmp.",
+            nova_body: None,
+        },
+        // D177/D178: Nova-body methods dispatched via Plan 54 Ф.2 (Nova_str_method_X).
+        // c_name = "" (Nova-body dispatch; c_name ignored per RuntimeFn struct doc).
+        // D178: parse_int merges parse_int() + parse_int_radix(). Default radix=10.
+        RuntimeFn {
+            module: "std.runtime.string",
+            receiver: Some("str"),
+            is_static: false, is_mut: false, is_consume: false,
+            name: "parse_int",
+            params: &[("radix", "int")],
+            return_ty: "Option[int]",
+            effects: &[],
+            c_name: "",
+            doc: "D178: parse int в заданной base (2..36), radix=10 по умолчанию. Nova body.",
+            nova_body: Some("{\n    if radix < 2 || radix > 36 { return None }\n    let bytes = @as_bytes()\n    let n = @byte_len()\n    if n == 0 { return None }\n    let mut neg = false\n    let mut start = 0\n    if bytes[0] as int == '-' as int {\n        neg = true\n        start = 1\n    } else if bytes[0] as int == '+' as int {\n        start = 1\n    }\n    if start >= n { return None }\n    let mut acc = 0\n    for j in start..n {\n        let c = bytes[j] as int\n        let mut d = -1\n        if c >= '0' as int && c <= '9' as int {\n            d = c - '0' as int\n        } else if c >= 'a' as int && c <= 'z' as int {\n            d = c - 'a' as int + 10\n        } else if c >= 'A' as int && c <= 'Z' as int {\n            d = c - 'A' as int + 10\n        }\n        if d < 0 || d >= radix { return None }\n        if acc > (9223372036854775807 - d) / radix { return None }\n        acc = acc * radix + d\n    }\n    Some(if neg { -acc } else { acc })\n}"),
+        },
+        // D177: pad_left / pad_right / repeat / replace — Nova-body.
+        RuntimeFn {
+            module: "std.runtime.string",
+            receiver: Some("str"),
+            is_static: false, is_mut: false, is_consume: false,
+            name: "pad_left",
+            params: &[("width", "int"), ("fill", "char")],
+            return_ty: "str",
+            effects: &[],
+            c_name: "",
+            doc: "Pad строку слева до width codepoints символом fill. Если width <= len — возвращает s.",
+            nova_body: Some("{\n    let pad = width - @len()\n    if pad <= 0 { return @ }\n    let fill_s = str.from(fill)\n    StringBuilder.with_capacity(@byte_len() + pad * fill_s.byte_len()).append_repeat(fill_s, pad).append(@).to_str()\n}"),
+        },
+        RuntimeFn {
+            module: "std.runtime.string",
+            receiver: Some("str"),
+            is_static: false, is_mut: false, is_consume: false,
+            name: "pad_right",
+            params: &[("width", "int"), ("fill", "char")],
+            return_ty: "str",
+            effects: &[],
+            c_name: "",
+            doc: "Pad строку справа до width codepoints символом fill. Если width <= len — возвращает s.",
+            nova_body: Some("{\n    let pad = width - @len()\n    if pad <= 0 { return @ }\n    let fill_s = str.from(fill)\n    StringBuilder.with_capacity(@byte_len() + pad * fill_s.byte_len()).append(@).append_repeat(fill_s, pad).to_str()\n}"),
+        },
+        RuntimeFn {
+            module: "std.runtime.string",
+            receiver: Some("str"),
+            is_static: false, is_mut: false, is_consume: false,
+            name: "repeat",
+            params: &[("n", "int")],
+            return_ty: "str",
+            effects: &[],
+            c_name: "",
+            doc: "Повторение строки n раз. n <= 0 → пустая строка.",
+            nova_body: Some("{\n    if n <= 0 { return \"\" }\n    StringBuilder.with_capacity(@byte_len() * n).append_repeat(@, n).to_str()\n}"),
+        },
+        RuntimeFn {
+            module: "std.runtime.string",
+            receiver: Some("str"),
+            is_static: false, is_mut: false, is_consume: false,
+            name: "replace",
+            params: &[("from", "str"), ("to", "str")],
+            return_ty: "str",
+            effects: &[],
+            c_name: "",
+            doc: "Заменить все non-overlapping occurrences `from` на `to`. Empty `from` → возвращает s unchanged.",
+            nova_body: Some("{\n    if from.len() == 0 { return @ }\n    let parts = @split(from)\n    let n = parts.len()\n    if n == 0 { return @ }\n    let mut result = parts[0]\n    let mut i = 1\n    while i < n {\n        result = result.concat(to).concat(parts[i])\n        i = i + 1\n    }\n    result\n}"),
+        },
     ]
 }
 
@@ -707,8 +784,15 @@ fn char_runtime() -> Vec<RuntimeFn> {
     ]
 }
 
-/// `std.runtime.string_builder` — UTF-8 string accumulator (Plan 04).
+/// `std.runtime.string_builder` — Plan 109: StringBuilder is now a Nova-defined type.
+/// All methods are implemented in std/runtime/string_builder.nv as regular Nova functions.
+/// This registry is intentionally empty — no external C dispatch needed.
 fn string_builder_runtime() -> Vec<RuntimeFn> {
+    vec![]
+}
+
+#[allow(dead_code)]
+fn string_builder_runtime_unused() -> Vec<RuntimeFn> {
     let m = "std.runtime.string_builder";
     let recv = Some("StringBuilder");
     vec![
@@ -721,7 +805,7 @@ fn string_builder_runtime() -> Vec<RuntimeFn> {
         RuntimeFn { module: m, receiver: recv, is_static: true,  is_mut: false, is_consume: false,
             name: "with_capacity", params: &[("n", "int")], return_ty: "Self", effects: &[],
             c_name: "Nova_StringBuilder_static_with_capacity",
-            doc: "Создать StringBuilder с pre-allocated capacity n.",
+            doc: "Создать StringBuilder с pre-allocated capacity n байт (UTF-8 bytes, как Rust String::with_capacity). Для ASCII: n == codepoints. Для multibyte fill — умножай на max UTF-8 байт на символ.",
             nova_body: None,
         },
         RuntimeFn { module: m, receiver: recv, is_static: true,  is_mut: false, is_consume: false,
@@ -817,6 +901,25 @@ fn string_builder_runtime() -> Vec<RuntimeFn> {
             name: "peek", params: &[], return_ty: "str", effects: &[],
             c_name: "Nova_StringBuilder_method_peek",
             doc: "Non-consuming snapshot буфера как str. ВАЖНО: pointer на тот же buffer — subsequent append может realloc'нуть. Использовать только immediately (sb.peek().ends_with(...)).",
+            nova_body: None,
+        },
+        // Plan 91 Ф.2: новые методы для Nova-first реализации str @repeat / @pad_left / @pad_right.
+        RuntimeFn { module: m, receiver: recv, is_static: false, is_mut: true, is_consume: false,
+            name: "append_repeat", params: &[("s", "str"), ("n", "int")], return_ty: "Self", effects: &[],
+            c_name: "Nova_StringBuilder_method_append_repeat",
+            doc: "Append строку s ровно n раз. n <= 0 → no-op. O(n*|s|) с одним reserve. Используется в str @repeat / @pad_left / @pad_right.",
+            nova_body: None,
+        },
+        RuntimeFn { module: m, receiver: recv, is_static: false, is_mut: true, is_consume: false,
+            name: "truncate", params: &[("len", "int")], return_ty: "Self", effects: &[],
+            c_name: "Nova_StringBuilder_method_truncate",
+            doc: "Обрезать буфер до len байт. len >= byte_len → no-op. Не realloc'ает. Caller отвечает за UTF-8 границы.",
+            nova_body: None,
+        },
+        RuntimeFn { module: m, receiver: recv, is_static: false, is_mut: true, is_consume: false,
+            name: "append_bytes", params: &[("arr", "[]u8")], return_ty: "Self", effects: &[],
+            c_name: "Nova_StringBuilder_method_append_bytes",
+            doc: "Append raw []u8 bytes. Caller отвечает за UTF-8 validity. Zero-copy path для performance-critical ops.",
             nova_body: None,
         },
     ]
@@ -1002,6 +1105,8 @@ fn read_buffer_runtime() -> Vec<RuntimeFn> {
         ("read_f64_be","f64", "f64 big-endian IEEE 754."),
     ];
     // Fail-form (Fail[ReadBufferError]) и try-form (Result[T, ReadBufferError]).
+    // D30 §2 try_* convention (Plan 108): try_* — C-примитив (nova_body: None);
+    // Fail-form — Nova-body через @try_<name>()!! (один лайнер, нет дублирования C-логики).
     for (name, ret_ty, doc) in &read_specs {
         let c_name_fail: &'static str = Box::leak(
             format!("Nova_ReadBuffer_method_{}", name).into_boxed_str(),
@@ -1027,10 +1132,19 @@ fn read_buffer_runtime() -> Vec<RuntimeFn> {
         let doc_try: &'static str = Box::leak(
             format!("{} Result-форма (Ok(value) или Err(UnexpectedEnd)).", doc).into_boxed_str(),
         );
+        // Nova-body для Fail-form: @try_<name>(<params>)!!
+        // try_* — C-примитив, Fail-form — тонкая Nova-обёртка.
+        let body_fail: &'static str = Box::leak(
+            if *name == "read_bytes" {
+                "@try_read_bytes(n)!!".to_string()
+            } else {
+                format!("@try_{}()!!", name)
+            }.into_boxed_str(),
+        );
         v.push(RuntimeFn { module: m, receiver: recv, is_static: false, is_mut: true, is_consume: false,
             name, params: params_fail, return_ty: ret_ty, effects: &["Fail[ReadBufferError]"],
             c_name: c_name_fail, doc: doc_fail,
-            nova_body: None,
+            nova_body: Some(body_fail),
         });
         v.push(RuntimeFn { module: m, receiver: recv, is_static: false, is_mut: true, is_consume: false,
             name: try_name, params: params_try, return_ty: try_ret, effects: &[],
@@ -1039,12 +1153,13 @@ fn read_buffer_runtime() -> Vec<RuntimeFn> {
         });
     }
     // Plan 13 Ф.9.4: codepoint-уровневые reads.
+    // D30 §2: read_char/read_str — Nova-body через try_*; try_* — C-примитив.
     v.push(RuntimeFn { module: m, receiver: recv, is_static: false, is_mut: true, is_consume: false,
         name: "read_char", params: &[],
         return_ty: "char", effects: &["Fail[ReadBufferError]"],
         c_name: "Nova_ReadBuffer_method_read_char",
         doc: "Один codepoint (UTF-8 1-4 байта). Throw'ит UnexpectedEnd / InvalidUtf8.",
-        nova_body: None,
+        nova_body: Some("@try_read_char()!!"),
     });
     v.push(RuntimeFn { module: m, receiver: recv, is_static: false, is_mut: true, is_consume: false,
         name: "try_read_char", params: &[],
@@ -1058,7 +1173,7 @@ fn read_buffer_runtime() -> Vec<RuntimeFn> {
         return_ty: "str", effects: &["Fail[ReadBufferError]"],
         c_name: "Nova_ReadBuffer_method_read_str",
         doc: "n codepoint'ов как str. Throw'ит UnexpectedEnd / InvalidUtf8.",
-        nova_body: None,
+        nova_body: Some("@try_read_str(n)!!"),
     });
     v.push(RuntimeFn { module: m, receiver: recv, is_static: false, is_mut: true, is_consume: false,
         name: "try_read_str", params: &[("n", "int")],
@@ -1193,10 +1308,17 @@ pub fn render_nv(module: &str, fns: &[&RuntimeFn]) -> String {
             out.push_str(" -> ");
             out.push_str(f.return_ty);
         }
-        // Plan 13 Ф.9.2: тело для записей с nova_body.
+        // Plan 13 Ф.9.2 / Plan 91 Ф.2: тело для записей с nova_body.
+        // Если body начинается с `{` — эмитируем `fn { ... }` (block form).
+        // Иначе — `fn => expr` (expression form).
         if let Some(body) = f.nova_body {
-            out.push_str(" => ");
-            out.push_str(body);
+            if body.trim_start().starts_with('{') {
+                out.push(' ');
+                out.push_str(body.trim_start());
+            } else {
+                out.push_str(" => ");
+                out.push_str(body);
+            }
         }
         out.push_str("\n\n");
     }

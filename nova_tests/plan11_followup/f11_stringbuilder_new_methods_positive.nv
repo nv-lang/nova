@@ -38,18 +38,12 @@ test "non-consuming: append после starts_with/ends_with работает" {
     let _ = sb.ends_with("o")             // не consume
     sb.append("/bar")                     // должен compile + run
     assert(sb.ends_with("bar"))
-    let final = sb.into()                 // вот теперь consume
+    let final = sb.to_str()               // consume
     assert(final == "foo/bar")
 }
 
-test "peek: snapshot буфера, append после работает" {
-    let mut sb = StringBuilder.new()
-    sb.append("abc")
-    let snap = sb.peek()                  // Plan 63 Fix A: type inference works
-    assert(snap == "abc")
-    sb.append("def")                      // append после peek
-    assert(sb.into() == "abcdef")
-}
+// peek удалён (Plan 109): unsound pointer aliasing с realloc.
+// starts_with/ends_with заменяют peek-based inspection.
 
 test "Path.join pattern (real use case ends_with-based logic)" {
     let mut buf = StringBuilder.new()
@@ -62,5 +56,5 @@ test "Path.join pattern (real use case ends_with-based logic)" {
         buf.append(part)
         first = false
     }
-    assert(buf.into() == "/usr/local/bin")
+    assert(buf.to_str() == "/usr/local/bin")
 }

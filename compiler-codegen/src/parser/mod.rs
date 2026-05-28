@@ -2309,6 +2309,10 @@ impl Parser {
         // Только последний param в списке может быть variadic; check
         // выполняется в parse_fn после сбора всех params'ов.
         let is_variadic = self.eat(&TokenKind::DotDotDot).is_some();
+        // D178 (Plan 91 Ф.2.6): `readonly name Type` — параметр с readonly-типом.
+        // Сахар: `readonly name []u8` эквивалентно `name readonly []u8`.
+        // При парсинге оборачиваем тип в TypeRef::Readonly — семантически идентично.
+        let has_readonly_prefix = self.eat(&TokenKind::KwReadonly).is_some();
         // Plan 73 (D131): `consume name Type` — consuming параметр. После
         // передачи аргумента в такой параметр переменная-источник
         // логически инвалидируется (use-after-consume → compile error).
@@ -2347,7 +2351,15 @@ impl Parser {
         if matches!(self.peek().kind, TokenKind::KwMut) {
             self.bump();
         }
-        let ty = self.parse_type()?;
+        let ty = {
+            let inner = self.parse_type()?;
+            if has_readonly_prefix && !inner.is_readonly() {
+                let sp = inner.span();
+                TypeRef::Readonly(Box::new(inner), sp)
+            } else {
+                inner
+            }
+        };
         // D69 constraint: тип variadic-param обязан быть `[]T` (TypeRef::Array).
         if is_variadic && !matches!(ty, TypeRef::Array(..)) {
             return Err(Diagnostic::new(

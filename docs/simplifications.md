@@ -13426,20 +13426,6 @@ emission в emit_c.rs).
   — лишний рефакторинг плана при фактически отдельных track'ах. C добавляет
   только cross-ref'ы между планами + явное определение 0.1 — минимальная
   правка с максимальной согласованностью.
-﻿# Упрощения и отложенные доработки
-
-Живой список осознанных упрощений, сделанных в ходе разработки.
-Каждое упрощение попадает сюда в момент принятия решения — чтобы не потерять контекст.
-
-> **Принцип** (см. [`project-philosophy.md`](project-philosophy.md)): Nova не в
-> проде, революционный язык важнее обратной совместимости. Упрощения здесь —
-> **временные**, должны закрываться по мере роста проекта. Каждое имеет
-> rationale и roadmap. **Не использовать этот документ как тихое разрешение
-> оставлять tech-debt без плана.**
-
-Формат:
-- **Где** — файл/модуль.
-- **Что упрощено** — что НЕ делается.
 - **Почему** — trade-off на момент принятия.
 - **Как чинить** — краткий план.
 - **Приоритет** — L / M / H.
@@ -26865,6 +26851,38 @@ ova_int for ence() calls not found in
   in V1. Only explicit #parks annotation on user-defined functions triggers 
   E_REALTIME_NESTED_SYNC_VIA_FN. Documented as V2 gap in D172 §4. Plan 103.8 (V2).
 
+## 2026-05-27 — Plan 91 Ф.0 closure (std MVP re-baseline)
+
+- **Trust-but-verify rule для legacy STATUS.md** — std/STATUS.md был от
+  2026-05-23 и точно предсказывал 12 FAIL в `nova check`, но **не
+  отражал** что Vec/HashMap/Set работают end-to-end. Plan 91 §Ф.0
+  заранее (по дизайну) заставляет re-baseline перед планированием Ф.1-Ф.4
+  — этот шаг себя оправдал: оценка 3-5 недель → 5-7 дней после
+  фактических данных.
+
+- **Smoke matrix вместо full `nova test`** — full `nova test` в worktree
+  ~4+ часа (1609 тестов). Для Ф.0.1 re-baseline это overkill. Сделана
+  smoke matrix — мини-программа `target/smoke_*.nv` на каждый MVP-модуль
+  (9 категорий), `nova build → exe → run`. Покрывает realistic use-case
+  (не unit-test) и ловит cross-module D35 dispatch / generic
+  monomorphization за минуты, не часы. Pattern для будущих re-baseline
+  фаз: smoke-программа per-домен + `nova check` per-file.
+
+- **Ф.0.4 decision — переставить Ф.7.1 quarantine ВПЕРЁД** — исходный
+  Plan 91 ставил Ф.7.1 в конец (после Ф.6). Но quarantine non-MVP →
+  `nova check std/` → 0 FAIL без `--skip`, что:
+  (а) убирает noise при работе над Ф.2/Ф.3/Ф.4;
+  (б) разблокирует CI gate (предел toml stack-overflow);
+  (в) повышает confidence в каждом следующем зелёном-passing смоке.
+  Это не «упрощение» — это другой топосорт того же scope.
+
+- **Параллелизация Ф.2/Ф.3/Ф.4 как в Plan 103.4** — ожидаемая Ф.2 (text
+  methods) / Ф.3 (json fix) / Ф.4 (sort module) — disjoint по файлам
+  (text → compiler-codegen/src/codegen/runtime_registry.rs + C stubs;
+  json → std/encoding/json.nv; sort → новый std/sort.nv). Sub-agent
+  split á la Plan 103.4 (4 parallel Sonnet + Opus merge) → wall-time
+  2-3 дня vs 5-7 sequential. Trade-off: setup overhead pre-flight
+  markers commit + final merge coordination.
 ## Plan 83.12 — Async net stdlib (2026-05-27)
 
 - **EXPECT_TIMEOUT_MS 10000 → 30000 для 3 тестов** — `tcp_connect_refused_test`,
@@ -26892,6 +26910,102 @@ ova_int for ence() calls not found in
   Это корректно (single-thread, handle affinity не нарушается), но
   печатает warning в stderr. В production M:N режиме deferred queue работает
   корректно.
+
+## 2026-05-27 — Plan 91 Ф.7.1 closure (quarantine non-MVP modules)
+
+- **Underscore-prefix carve-out для experimental** — каталог
+  `std/_experimental/` начинается с `_`, что эксплуатирует уже
+  существующий auto-skip в `should_skip_path_full` (nova-cli/src/
+  main.rs:1482-1505). Это convention-based, не требует никакого
+  нового config field в `nova.toml`, не требует compiler-side
+  changes. Принятый trade-off: visible underscore в module path
+  для импортов из experimental (`import std._experimental.path.path`)
+  vs альтернатива добавить `[lib].exclude` поле в nova.toml + parser
+  + walker. Underscore-prefix — нулевой инфраструктурный долг.
+
+- **`use net.addr` → `use std.net.addr` resolver workaround** —
+  Plan 83.12 ввёл `use net.addr` в std/net/{tcp,udp}.nv,
+  но resolver не знал, что сибблинговый модуль внутри `std/net/`
+  должен быть найден через `std.net.<sibling>` относительно
+  package root (`std`). Resolver искал относительно importer'а:
+  `std/net/net/addr` (doubled net/), не находил. Fix — fully
+  qualified `std.net.addr`. Альтернативный fix (sibling-aware
+  resolver) — за scope Plan 91, отложен. Stale Plan 83.12 bug
+  закрыт побочно в Ф.7.1.
+
+- **`partial_prelude(core, runtime, errors)` для range.nv** —
+  Plan 62.D bis-1 (2026-05-18) сделал `Range`/`RangeIter`
+  auto-available через std.prelude.collections re-export. Это
+  создало cycle: `std.collections.range → std.prelude →
+  std.collections.range` при standalone `nova check`. Fix —
+  партиальный prelude (Plan 62.F): range.nv импортирует только
+  core (Option/Some/None/Ordering) + runtime (assert) + errors
+  (RuntimeError), не collections (где Range re-export).
+  Полный `no_prelude` слишком агрессивен — теряется `assert`
+  в test-блоках. `partial_prelude` — middle ground.
+
+- **Compiler whitelist extension вместо annotation-based opt-in**
+  для `external fn` в std.net + std.bench — Plan 91 Ф.7.1 выбрал
+  hard-coded whitelist в `is_stdlib_runtime_module` (manifest.rs)
+  вместо добавления `#allow_external_fn` annotation на module.
+  Rationale: std.net и std.bench — фиксированные stdlib namespaces
+  с известным набором modules, не open-set user code. User
+  модули по-прежнему получают error на `external fn`. Annotation
+  approach масштабируется но overhead не оправдан для двух
+  whitelisted namespace'ов. Если третий stdlib namespace потребует
+  external fn — пересмотрим (Plan 18 потенциально для std.fs).
+
+- **Test imports updated для experimental** — 7 nova_tests файлов
+  переписаны на `std._experimental.<domain>.<file>` импорты вместо
+  устаревших `std.<domain>.<file>`. Не moved сами тесты в
+  `nova_tests/_experimental/` потому что:
+  (а) `nova test` не auto-skip'ает `_` dirs (только `nova check`);
+  (б) эти тесты testирют существующее experimental API — должны
+       продолжать работать (тестирование experimental != skip).
+  Когда experimental модуль promote'ится обратно в MVP, нужно
+  обновить эти 7 импортов обратно. Документировано в
+  std/_experimental/STATUS.md «Promotion path».
+
+## 2026-05-27 (continued) — Plan 91 Ф.4 closure (sort module)
+
+- **`[]int @sort` вместо `[T Ord] []T @sort`** — Plan 91 §Scope
+  специфицирует generic `sort[T Ord]`. V1 в Ф.4 — только concrete
+  `[]int` (insertion sort). Rationale:
+  (а) realistic CLI/data-utility use-cases в 0.1 в основном работают
+      с числовыми массивами;
+  (б) generic `[T Ord] []T @sort` требует D72 protocol-bound dispatch
+      для primitive Ord types (works через monomorphization, но
+      overhead значителен на codegen уровне — extra mono-specialization
+      per T);
+  (в) API surface стабильна — добавление generic `fn[T Ord] []T @sort()`
+      НЕ ломает existing concrete `[]int @sort()` (overload resolution
+      выбирает specific над generic).
+  Followup `[sort-generic-T]` зафиксирован в std/sort.nv doc-comment.
+
+- **Insertion sort вместо pdq-sort/intro-sort** — O(n²) algorithm
+  выбран для V1 ради простоты. Insertion sort:
+  (а) корректен и stable;
+  (б) ~10-20 lines кода против ~200 для pdq-sort;
+  (в) достаточен для arrays до ~1000 elements (CLI use-cases).
+  Followup `[sort-pdq]` (pdq-sort) — пост-0.1, при появлении
+  ощутимого performance bottleneck.
+
+- **`sort_by(cmp)` принимает `fn(int, int) -> Ordering`** — concrete
+  type signature вместо `fn(T, T) -> Ordering`. Соответствует concrete
+  `[]int @sort` decision. Когда generic version landed — добавится
+  parallel generic `fn[T] []T @sort_by[T](cmp fn(T, T) -> Ordering)`.
+
+- **Ф.3 (JSON conformance) deferred** — попытка smoke compile→exe
+  на JSON round-trip выявила deeper codegen блокеры:
+  (1) `m.entries()` → `m.iter()` source fix done (HashMap has iter,
+      not entries — cross-file resolve permitted type-check pass);
+  (2) `Nova_HashMap` forward decl без full struct emission → CC error;
+  (3) Tuple `(K, V)` destructuring в HashMap-iter mistypes entry
+      as `nova_int`.
+  Issues (2)+(3) — genuine codegen работы (~0.5-1 день investigation).
+  Принятое решение: defer Ф.3 conformance, sort_basic 15/15 PASS
+  оправдывает scope-decision (incremental delivery лучше блокировки
+  всей фазы на одном модуле).
 
 ## Plan 107 — Prelude attribute syntax D174 (2026-05-27)
 
@@ -27016,6 +27130,88 @@ dispatch_ready hierarchy intact; все callers (channels, mutexes, Plan
 103.x sync) работают через тот же generic API без изменений.
 
 ---
+
+## Plan 91 Ф.2.5 — D177 str Nova-body dispatch (2026-05-28)
+
+**!is_external filter for Plan 54 Ф.2:**
+emit_c.rs Plan 54 Ф.2 dispatch previously did `filter(|s| s.is_instance)`.
+External fn methods (len, split, starts_with, etc.) have is_external=true and
+generate correct C names via str_method_to_rt. Without the filter they'd also
+match Nova-body path → wrong dispatch. Fix: `filter(|s| s.is_instance && !s.is_external)`.
+
+**Nova_StringBuilder_consume_into alias:**
+string_builder.nv declares `export external fn StringBuilder consume @into() -> str`.
+ExternalRegistry (external_registry.rs line 228-230) generates c_name
+`Nova_StringBuilder_consume_into` for consume receivers (D164 naming).
+String interpolation hardcodes `Nova_StringBuilder_method_into` (bypasses dispatch).
+Nova-body methods (pad_left, repeat, replace) call .into() via method dispatch →
+need `Nova_StringBuilder_consume_into`. Fix: static inline alias in string_builder.h.
+
+**#no_prelude + explicit imports in string.nv:**
+string.nv is re-exported via prelude → circular import if it tries to use prelude.
+Fix: `#no_prelude` attribute before module declaration + explicit import of
+`std.prelude.core.{Option, Some, None}` and `std.prelude.collections.{StringBuilder}`.
+
+**replace body — no []str.join dependency:**
+Initial replace body used `[]str.join` (std.text). std.text is not available in
+std.runtime. Fix: concat-loop with StringBuilder: iterate finding match offsets,
+build result by appending segments between matches + replacement. No external deps.
+
+**str.from(char) in #no_prelude module:**
+Nova bodies call `str.from(fill)` for pad methods. In #no_prelude context char.nv
+is not imported. emit_c.rs already handles `str.from(X)` special-case for when arg
+is `nova_char` → emits `Nova_str_static_from_char(fill)`. No fix needed, existing path works.
+
+## D178 str API cleanup (Plan 91 Ф.2.6)
+
+**MethodSig.param_defaults for Nova-body default args:**
+Plan 54 Ф.2 dispatch (Nova-body methods on primitives) iterates explicit args only.
+When parse_int() is called with no args, dispatch generated Nova_str_method_parse_int(s)
+missing the radix arg → CC-FAIL. Fix: add param_defaults Vec<Option<String>> to MethodSig.
+Populate via simple_literal_c (static helper converting literal Exprs to C strings without
+emit_expr side-effects). Dispatch fills in defaults when args.len() < param count.
+
+**D102 keyword-only default params in tests:**
+Nova default params are keyword-only (D102 enforced in check_keyword_only).
+parse_int(16) is illegal — must be parse_int(radix: 16). All test calls updated.
+
+**bytes/chars C-level aliases preserved:**
+nova_str_bytes and nova_str_chars retained as inline aliases to nova_str_to_bytes /
+nova_str_to_chars in array.h for C-level backward compat (experimental modules still
+use old names in Nova code, but they're not in the test suite).
+
+## D132 check_fluent_return amendment (Plan 91 Ф.2.6 amendment, 2026-05-28)
+
+**wrapper -> @ delegation:**
+Old check required bare @ as tail. => @write() rejected even though @write is -> @.
+Fix: body_always_returns_receiver accepts calls to known -> @ methods on same receiver as valid endings.
+Needed for StringBuilder @plus => @append pattern.
+
+**Inverse check E_FLUENT_SELF:**
+-> Self where body_always_returns_receiver = true → compile error.
+Rationale: -> Self and -> @ are different semantics (new object vs same object/aliasing).
+Declaring -> Self on a method that only does -> @ behavior breaks consume-aliasing (D131).
+No simplification — full static analysis is correct here (not deferred).
+
+## Plan 91 Ф.2.6 sub-phase (D179): StringBuilder as Nova consume type
+
+**Old approach:** StringBuilder was `external type` backed by Rust String / C Nova_StringBuilder.
+All methods were `external fn` routed to C/Rust runtime.
+
+**Simplification:** StringBuilder is now `type StringBuilder consume { mut buf []u8 }`.
+Single external: UTF-8 byte push to the backing array (buf.push(byte u8)).
+All methods (append, append_repeat, starts_with, ends_with, clone, to_str, etc.) are pure Nova.
+
+**What was removed:** Nova_StringBuilder_static_new/append_str/append_char/etc.
+Rust String backing in nova-runtime. External method stubs for 15+ methods.
+
+**str.from_bytes_* helpers** kept in string_builder.h (utility, used by str methods).
+
+**arity hint in resolve_instance_method:**
+User-defined methods with same name as builtin array methods (push, pop, etc.) but
+different arity would cause false "expected 0, got N" errors from the best-effort
+argbind checker. Fix: name-only fallback filters candidates by arg count hint.
+No false positives; checker may skip ambiguous cases (best-effort, codegen is authoritative).
 
 ## Plan 83.11 Ф.3 — STALE-slot race fix (2026-05-28 final)
 
