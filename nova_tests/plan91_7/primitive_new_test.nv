@@ -1,0 +1,31 @@
+module nova_tests.plan91_7.primitive_new_test
+
+// Plan 91.7 Part D: canonical .new() для primitive types (D180).
+
+test "int.new() == 0" {
+    assert(int.new() == 0)
+}
+
+test "u8.new()/u16/u32/u64 == 0" {
+    assert(u8.new() == 0)
+    assert(u16.new() == 0)
+    assert(u32.new() == 0)
+    assert(u64.new() == 0)
+}
+
+test "i8.new()/i16/i32/i64 == 0" {
+    assert(i8.new() == 0)
+    assert(i16.new() == 0)
+    assert(i32.new() == 0)
+    assert(i64.new() == 0)
+}
+
+test "f32.new()/f64.new() == 0.0" {
+    assert(f32.new() == 0.0)
+    assert(f64.new() == 0.0)
+}
+
+test "bool.new() == false" {
+    assert(bool.new() == false)
+    assert(!bool.new())
+}
