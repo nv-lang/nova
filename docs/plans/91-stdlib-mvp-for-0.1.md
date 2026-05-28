@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 # Plan 91 — std MVP для релиза 0.1
 
-> **Статус:** 🟢 Ф.0 + Ф.7.1 + Ф.4 ЗАКРЫТЫ 2026-05-27; Ф.3 D52 source
-> fix закрыт попутно в Ф.7.1, Ф.3 conformance (HashMap-iter codegen)
-> deferred. Остаётся Ф.2/Ф.3-conformance/Ф.1/Ф.5/Ф.6.
+> **Статус:** 🟢 Ф.0 + Ф.7.1 + Ф.4 ЗАКРЫТЫ 2026-05-27; Ф.2.5 (D177) ЗАКРЫТ 2026-05-28;
+> Ф.3 D52 source fix закрыт попутно в Ф.7.1, Ф.3 conformance (HashMap-iter codegen)
+> deferred. Остаётся Ф.2-remainders/Ф.3-conformance/Ф.1/Ф.5/Ф.6.
 > Branch `plan-91-stdmvp`, worktree `nova-p91`. См. секции
-> «Ф.0 closure», «Ф.7.1 closure», «Ф.4 closure» в конце документа.
+> «Ф.0 closure», «Ф.7.1 closure», «Ф.4 closure», «Ф.2.5 closure» в конце документа.
 > **Приоритет:** P0 — блокер публичного релиза 0.1
 > **Оценка (исходная):** крупная (~3-5 недель работы codegen-агента).
 > **Оценка (после Ф.0 re-baseline 2026-05-27):** ~5-7 рабочих дней
@@ -718,7 +718,36 @@ Type-check json.nv PASS. Только codegen→exe path остаётся.
 | Ф.7.1 quarantine | ✅ closed |
 | Ф.3 D52 source fix | ✅ closed (попутно в Ф.7.1) |
 | **Ф.4 sort module** | ✅ **closed** |
+| **Ф.2.5 D177 str Nova-body** | ✅ **closed 2026-05-28** |
 | Ф.3 conformance smoke (HashMap codegen) | 🟡 deferred (deep codegen) |
-| Ф.2 text methods (runtime registry) | pending |
+| Ф.2 text methods remainders | pending |
 | Ф.1 collections conformance | pending |
 | Ф.5/Ф.6/Ф.7.2-4 | pending |
+
+## Ф.2.5 closure — str Nova-body methods via Plan 54 Ф.2 dispatch (D177) ✅ (2026-05-28)
+
+Пять str методов переведены с C-заглушек на Nova тела:
+`parse_int_radix`, `pad_left`, `pad_right`, `repeat`, `replace`.
+
+**Механизм (Plan 54 Ф.2):** `emit_c.rs` при вызове метода на `nova_str` ищет
+`method_overloads[("str", method)]` с фильтром `!is_external`. Если найден —
+генерирует `Nova_str_method_X(obj, args...)`. Внешние методы (`len`, `split`, ...)
+имеют `is_external=true` и по-прежнему идут через `str_method_to_rt` → C.
+
+**Ключевые изменения:**
+- `std/runtime/string.nv` — Nova тела + `#no_prelude` + явные импорты Option/StringBuilder
+- `prelude.nv` v10 — `export import std.runtime.string.{parse_int_radix, ...}`
+- `emit_c.rs` — `!is_external` filter + убраны 5 методов из `str_method_to_rt`
+- `runtime_registry.rs` — 5 методов с `c_name=""` (Nova-body)
+- `string_builder.h` — алиас `Nova_StringBuilder_consume_into` (D164 ABI gap)
+
+**Тесты:** extended conformance suite в `nova_tests/plan91/text_methods_test.nv`:
+negative radix, replace edge cases (empty from/to), pad с non-ASCII fill (UTF-8 byte len), repeat edge cases.
+
+**Коммиты:**
+- `671442170ac` — dispatch mechanism
+- `7fafec9ae15` — D177 conformance tests
+- `472a13af1b8` — docs
+- nova(main) `8fd2f91a3a1` — D177 spec в `spec/decisions/08-runtime.md`
+
+**Full suite:** 1527 PASS / 64 FAIL (baseline без изменений, регрессий нет).
