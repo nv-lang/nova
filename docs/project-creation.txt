@@ -23815,9 +23815,9 @@ check_fluent_return refactored:
 - D132 spec amended in spec/decisions/03-syntax.md (main nova)
 - Commits: nova-p91 ffe1e958a8d; nova(main) 9931c15c5d7
 
-=== Plan 109 (D179) CLOSED 2026-05-28: StringBuilder — pure Nova consume type ===
+=== Plan 91 Ф.2.6 sub-phase (D179) CLOSED 2026-05-28: StringBuilder — pure Nova consume type ===
 
-Plan 109 / D179: StringBuilder implemented fully in Nova.
+D179: StringBuilder implemented fully in Nova (sub-phase Plan 91 Ф.2.6).
 
 type StringBuilder consume { mut buf []u8 }
 

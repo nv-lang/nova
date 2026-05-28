@@ -27193,7 +27193,7 @@ Rationale: -> Self and -> @ are different semantics (new object vs same object/a
 Declaring -> Self on a method that only does -> @ behavior breaks consume-aliasing (D131).
 No simplification — full static analysis is correct here (not deferred).
 
-## Plan 109 (D179): StringBuilder as Nova consume type
+## Plan 91 Ф.2.6 sub-phase (D179): StringBuilder as Nova consume type
 
 **Old approach:** StringBuilder was `external type` backed by Rust String / C Nova_StringBuilder.
 All methods were `external fn` routed to C/Rust runtime.

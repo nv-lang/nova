@@ -863,12 +863,12 @@ export fn StringBuilder mut @plus(s str) -> @ => @append(s)
 - D132 поправка в `spec/decisions/03-syntax.md` ✅
 - `string_builder.nv @plus` использует `-> @` ✅
 
-## Plan 109 closure — StringBuilder pure Nova consume type (D179) ✅ 2026-05-28
+## Ф.2.6 sub-phase — StringBuilder pure Nova consume type (D179) ✅ 2026-05-28
 
 ### Мотивация
 
 `StringBuilder` был `external type` с backing Rust String / C runtime.
-Plan 109 (D179) переносит его в чистый Nova consume-тип.
+D179 переносит его в чистый Nova consume-тип.
 
 ### Реализация
 
