@@ -128,7 +128,7 @@ fn _accepts_from[T From[Fahrenheit]](_v T) -> () => ()
 // ────────────────────────────────────────────────────────────────────
 
 // D73 auto-derive `Into[U]` от `From[T]` в bootstrap'е НЕ реализован:
-// type-checker не синтезирует `Fahrenheit.into()` body из существующей
+// type-checker не синтезирует `Fahrenheit.to_str()` body из существующей
 // `Celsius.from(Fahrenheit)` декларации (см. plan doc §62.E + Plan 62.E+).
 // Поэтому здесь тест проверяет explicit `@into` impl: канонический
 // pattern для Into-удовлетворения до полной D73 реализации.
@@ -140,7 +140,7 @@ export fn FahrToC @into() -> Celsius =>
 
 // Generic fn с bound `[T Into[Celsius]]` — type-checker валидирует что
 // T имеет `into() -> Celsius` метод (структурно через prelude).
-fn needs_into[T Into[Celsius]](v T) -> Celsius => v.into()
+fn needs_into[T Into[Celsius]](v T) -> Celsius => v.to_str()
 
 test "Into[X] bound — explicit @into impl резолвится через prelude" {
     let f = FahrToC { value: 32.0 }
@@ -174,7 +174,7 @@ export fn Pair @fmt(sb StringBuilder) -> () {
 fn fmt_to_string[T Display](v T) -> str {
     let mut sb = StringBuilder.new()
     v.fmt(sb)
-    sb.into()
+    sb.to_str()
 }
 
 test "Display bound — Pair.fmt() в StringBuilder" {

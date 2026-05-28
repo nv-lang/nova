@@ -478,7 +478,7 @@ fn str_runtime() -> Vec<RuntimeFn> {
             effects: &[],
             c_name: "",
             doc: "Pad строку слева до width codepoints символом fill. Если width <= len — возвращает s.",
-            nova_body: Some("{\n    let pad = width - @len()\n    if pad <= 0 { return @ }\n    let fill_s = str.from(fill)\n    StringBuilder.with_capacity(@byte_len() + pad * fill_s.byte_len()).append_repeat(fill_s, pad).append(@).into()\n}"),
+            nova_body: Some("{\n    let pad = width - @len()\n    if pad <= 0 { return @ }\n    let fill_s = str.from(fill)\n    StringBuilder.with_capacity(@byte_len() + pad * fill_s.byte_len()).append_repeat(fill_s, pad).append(@).to_str()\n}"),
         },
         RuntimeFn {
             module: "std.runtime.string",
@@ -490,7 +490,7 @@ fn str_runtime() -> Vec<RuntimeFn> {
             effects: &[],
             c_name: "",
             doc: "Pad строку справа до width codepoints символом fill. Если width <= len — возвращает s.",
-            nova_body: Some("{\n    let pad = width - @len()\n    if pad <= 0 { return @ }\n    let fill_s = str.from(fill)\n    StringBuilder.with_capacity(@byte_len() + pad * fill_s.byte_len()).append(@).append_repeat(fill_s, pad).into()\n}"),
+            nova_body: Some("{\n    let pad = width - @len()\n    if pad <= 0 { return @ }\n    let fill_s = str.from(fill)\n    StringBuilder.with_capacity(@byte_len() + pad * fill_s.byte_len()).append(@).append_repeat(fill_s, pad).to_str()\n}"),
         },
         RuntimeFn {
             module: "std.runtime.string",
@@ -502,7 +502,7 @@ fn str_runtime() -> Vec<RuntimeFn> {
             effects: &[],
             c_name: "",
             doc: "Повторение строки n раз. n <= 0 → пустая строка.",
-            nova_body: Some("{\n    if n <= 0 { return \"\" }\n    StringBuilder.with_capacity(@byte_len() * n).append_repeat(@, n).into()\n}"),
+            nova_body: Some("{\n    if n <= 0 { return \"\" }\n    StringBuilder.with_capacity(@byte_len() * n).append_repeat(@, n).to_str()\n}"),
         },
         RuntimeFn {
             module: "std.runtime.string",
@@ -784,8 +784,15 @@ fn char_runtime() -> Vec<RuntimeFn> {
     ]
 }
 
-/// `std.runtime.string_builder` — UTF-8 string accumulator (Plan 04).
+/// `std.runtime.string_builder` — Plan 109: StringBuilder is now a Nova-defined type.
+/// All methods are implemented in std/runtime/string_builder.nv as regular Nova functions.
+/// This registry is intentionally empty — no external C dispatch needed.
 fn string_builder_runtime() -> Vec<RuntimeFn> {
+    vec![]
+}
+
+#[allow(dead_code)]
+fn string_builder_runtime_unused() -> Vec<RuntimeFn> {
     let m = "std.runtime.string_builder";
     let recv = Some("StringBuilder");
     vec![

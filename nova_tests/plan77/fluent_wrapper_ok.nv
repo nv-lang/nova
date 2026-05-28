@@ -23,6 +23,6 @@ test "fluent wrapper -> @ делегирует в -> @" {
 
 test "StringBuilder @plus -> @ chain" {
     let sb = StringBuilder.new()
-    let s = (sb + "hello" + " " + "world").into()
+    let s = (sb + "hello" + " " + "world").to_str()
     assert(s == "hello world")
 }

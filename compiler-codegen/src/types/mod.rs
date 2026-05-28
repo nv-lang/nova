@@ -3728,7 +3728,7 @@ impl<'a> BoundCtx<'a> {
             // РёРјСЏ РјРµС‚РѕРґР° С‡РµСЂРµР· РІСЃРµ С‚РёРїС‹. Р”Р»СЏ РѕСЃС‚Р°Р»СЊРЅС‹С… СЃР»СѓС‡Р°РµРІ codegen
             // СЂРµР·РѕР»РІРёС‚ С‡РµСЂРµР· type-info.
             ExprKind::Member { obj, name: method_name } => {
-                let resolved = self.resolve_instance_method(obj, method_name, scope);
+                let resolved = self.resolve_instance_method(obj, method_name, scope, args.len());
                 match resolved {
                     Some(f) => &f.params,
                     None => return,
@@ -4000,6 +4000,7 @@ impl<'a> BoundCtx<'a> {
         obj: &Expr,
         method_name: &str,
         scope: &HashMap<String, TypeRef>,
+        arg_count_hint: usize,
     ) -> Option<&FnDecl> {
         // РџРѕРїС‹С‚РєР° 1: receiver-type inference.
         if let Some(recv_ty) = Self::infer_arg_ty(obj, scope) {
@@ -4017,11 +4018,15 @@ impl<'a> BoundCtx<'a> {
         }
         // РџРѕРїС‹С‚РєР° 2: name-only fallback. РЈРЅРёРєР°Р»СЊРЅРѕРµ РёРјСЏ РјРµС‚РѕРґР° С‡РµСЂРµР·
         // РІСЃРµ С‚РёРїС‹ в†’ РѕРґРёРЅ sig, РёСЃРїРѕР»СЊР·СѓРµРј.
+        // Plan 109: фильтр по arity предотвращает ложные "expected 0, got N"
+        // когда builtin-метод ([]T::push и т.п.) отсутствует в method_table,
+        // но пользовательский тип случайно имеет метод с тем же именем.
         let mut found: Option<&FnDecl> = None;
         let mut ambiguous = false;
         for methods in self.method_table.values() {
             if let Some(overloads) = methods.get(method_name) {
                 for f in overloads {
+                    if f.params.len() != arg_count_hint { continue; }
                     if found.is_some() {
                         ambiguous = true;
                     }

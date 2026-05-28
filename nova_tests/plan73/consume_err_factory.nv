@@ -10,7 +10,7 @@ fn make_builder() -> StringBuilder => StringBuilder.new()
 
 test "use after consume — тип из return-типа функции" {
     let sb = make_builder()
-    let s = sb.into()
+    let s = sb.to_str()
     sb.append("oops")          // ОШИБКА D131: sb потреблён @into()
     assert(s == "")
 }
