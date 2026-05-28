@@ -1,7 +1,7 @@
-// Plan 72 P2-B: structural type inference `[U, T Iter[U]]` without turbofish.
+// Plan 72 P2-B: structural type inference `[U, T Iterable[U]]` without turbofish.
 //
 // The compiler previously could not infer `U` from the bound chain:
-//   arg: IntCounter → param T → bound Iter[U] → method next() -> Option[int] → U = int
+//   arg: IntCounter → param T → bound Iterable[U] → method next() -> Option[int] → U = int
 //
 // With P2-B Source 2e, the compiler looks at method return types of the resolved
 // concrete type to extract bound generics.
@@ -26,7 +26,7 @@ fn IntCounter mut @next() -> Option[int] => {
     }
 }
 
-fn sum_iter[U, T Iter[U]](it_in T) -> int => {
+fn sum_iter[U, T Iterable[U]](it_in T) -> int => {
     let mut it = it_in
     let mut total = 0
     while let Some(_v) = it.next() {

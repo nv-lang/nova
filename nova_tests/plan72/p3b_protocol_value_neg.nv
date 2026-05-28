@@ -1,6 +1,6 @@
 // EXPECT_COMPILE_ERROR E7202
 
-// Plan 72 P3-B negative: a protocol-typed parameter `Iter[int]` expects a
+// Plan 72 P3-B negative: a protocol-typed parameter `Iterable[int]` expects a
 // value that implements the protocol. Passing a plain `int` cannot be boxed
 // into the `NovaBox_*` fat pointer — must be a compile error (E7202 or a
 // type-checker rejection), not a silent miscompilation.
@@ -22,7 +22,7 @@ fn IntCounter mut @next() -> Option[int] => {
     }
 }
 
-fn consume_iter(mut x Iter[int]) -> int => {
+fn consume_iter(mut x Iterable[int]) -> int => {
     let mut count = 0
     let mut go = true
     loop {

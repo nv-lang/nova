@@ -1,4 +1,4 @@
-// Plan 85.5 Ф.3 — Iter[T]: generic-функция собирает Iter в `[]int`.
+// Plan 85.5 Ф.3 — Iterable[T]: generic-функция собирает Iter в `[]int`.
 
 module iter.collect_generic
 
@@ -18,8 +18,8 @@ fn CountDown mut @next() -> Option[int] {
 }
 
 
-// Generic-функция: собрать все элементы Iter[int] в массив.
-fn collect_all[T Iter[int]](mut it T) -> []int {
+// Generic-функция: собрать все элементы Iterable[int] в массив.
+fn collect_all[T Iterable[int]](mut it T) -> []int {
     let mut out []int = []
     for n in it {
         out.push(n)

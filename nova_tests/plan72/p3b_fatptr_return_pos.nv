@@ -1,8 +1,8 @@
 // Plan 72 P3-B fat pointer: protocol-as-value через возврат из функции.
 //
 // Два режима:
-// (A) Явная аннотация: `let x Iter[int] = make_counter(3)` — уже работало.
-// (B) Protocol return type: `fn get_iter() -> Iter[int]` — функция возвращает
+// (A) Явная аннотация: `let x Iterable[int] = make_counter(3)` — уже работало.
+// (B) Protocol return type: `fn get_iter() -> Iterable[int]` — функция возвращает
 //     NovaBox_Iter_nova_int; `let x = get_iter()` автоматически fat pointer.
 
 module plan72.p3b_fatptr_return_pos
@@ -26,16 +26,16 @@ fn make_counter(n int) -> IntCounter => {
     IntCounter { cur: 0, end: n }
 }
 
-test "P3-B fat ptr — let x Iter[int] = make_counter(3); x.next()" {
+test "P3-B fat ptr — let x Iterable[int] = make_counter(3); x.next()" {
     let c = make_counter(3)
-    let mut x Iter[int] = c
+    let mut x Iterable[int] = c
     let r = x.next()
     assert(r.is_some())
 }
 
 test "P3-B fat ptr — два вызова next() после функции-конструктора" {
     let c = make_counter(1)
-    let mut x Iter[int] = c
+    let mut x Iterable[int] = c
     let r0 = x.next()
     let r1 = x.next()
     assert(r0.is_some())
@@ -44,7 +44,7 @@ test "P3-B fat ptr — два вызова next() после функции-ко
 
 test "P3-B fat ptr — count через protocol var из make_counter" {
     let c = make_counter(5)
-    let mut x Iter[int] = c
+    let mut x Iterable[int] = c
     let mut count = 0
     let mut go = true
     loop {
@@ -55,13 +55,13 @@ test "P3-B fat ptr — count через protocol var из make_counter" {
     assert(count == 5)
 }
 
-// ── Part B: fn returns Iter[int] directly, no annotation on let ──────────────
+// ── Part B: fn returns Iterable[int] directly, no annotation on let ──────────────
 
-fn get_iter_3() -> Iter[int] => {
+fn get_iter_3() -> Iterable[int] => {
     IntCounter { cur: 0, end: 3 }
 }
 
-fn get_iter_0() -> Iter[int] => {
+fn get_iter_0() -> Iterable[int] => {
     IntCounter { cur: 0, end: 0 }
 }
 
@@ -77,7 +77,7 @@ test "P3-B fat ptr return — let x = get_iter_0(); x.next() is None" {
     assert(r.is_none())
 }
 
-test "P3-B fat ptr return — count через fn возвращающую Iter[int]" {
+test "P3-B fat ptr return — count через fn возвращающую Iterable[int]" {
     let mut x = get_iter_3()
     let mut count = 0
     let mut go = true

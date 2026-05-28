@@ -213,6 +213,10 @@ export type Equatable protocol {
 export type Comparable protocol {
     use Equatable
     compare(other Self) -> int
+    // Plan 91.8a (D183): default body для embedded Equatable.equals.
+    // Implementer пишет только @compare; @equals auto-synthesized как
+    // `@compare(other) == 0`. Override разрешён (e.g. для perf).
+    equals(other Self) -> bool => @compare(other) == 0
 }
 
 

@@ -23950,3 +23950,62 @@ Q-array-api в open-questions.md обновлён — note про D180/D181 upda
 (pre-existing failures в plan100_6 + syntax — unchanged).
 
 Commits (nova-p91, branch plan-91-stdmvp): TBD после финального commit.
+
+=== Plan 91.8a part 1 closed 2026-05-29: protocol canon renames + Ordering removal (D183) ===
+
+D183 part 1 implementation:
+- Renames in std/prelude/protocols.nv + collections.nv:
+  - Iter[T] → Iterable[T] (consistency с -able suffix)
+  - Display → Printable (verb-active form)
+  - Equatable.eq → Equatable.equals
+  - Comparable.cmp -> Ordering → Comparable.compare -> int + use Equatable
+- Removed: Ordering sum-type (core.nv) + Less/Equal/Greater exports (prelude.nv)
+- std/sort.nv: sort_by(cmp fn(int,int) -> int) — memcmp-style convention
+- PRELUDE_VERSION 12 → 13
+
+Compiler:
+- AST: EffectMethod.default_body: Option<Block> field (parser/mod.rs:2984+)
+- Parser: parse_effect_methods accepts `=> expr` or `{ ... }` after return/contracts
+  — body present = default; absent = abstract (Plan 91.8a syntax foundation)
+- check_protocol_embeds: local override allowed — locally declared protocol method
+  with same name as embedded (use Equatable inside Comparable, declaring equals
+  locally) — overrides embedded default, NOT duplicate error
+
+Comparable default body:
+- equals(other Self) -> bool => @compare(other) == 0 — default body
+- Override allowed; implementer пишет только @compare (после codegen synthesis)
+
+Codegen synthesis для default bodies — followup [M-91.8a.2-default-codegen].
+Сейчас implementer пишет @equals явно как boilerplate compatibility.
+
+Batch update: 29 nova_test files renamed Iter[ → Iterable[ (regex preserving
+identifier-internal Iter like RangeIter/HashMapIter/etc.).
+
+Test updates:
+- plan62: protocols_bound_resolution, protocol_as_value_probe, range_shadow_warning, partial_prelude_core_only
+- plan91: sort_basic (Ordering match → int comparison)
+- plan91_7: sort_chain_test (Ordering → int)
+- protocols/comparison: comparable (rewrite to int), generic_bounds (rewrite),
+  display (Display → Printable), equatable (added @equals + kept @eq для == until 91.8b)
+- DELETED: protocols/comparison/ordering.nv (test moot after Ordering removal)
+
+New tests (nova_tests/plan91_8a/):
+- protocol_renames_test (Iterable/Equatable/Comparable/Printable) — PASS
+- default_body_parsed_test (default body syntax + Comparable use Equatable) — PASS
+
+Regression: plan62 31/5, plan91 7/0, plan91_7 5/0, plan72 16/0, plan87 6/0, plan97 23/0,
+protocols 26/3, syntax 59/2, named_params 8/0 (pre-existing fails только).
+
+Coupled с (deferred to 91.8b/c/9):
+- [M-91.8a.2-default-codegen]: codegen synthesis для default bodies
+- [M-91.8a-self-in-param]: Self в param-type position (fn T @method(other Self))
+- [M-91.8b-operator-dispatch]: == → @equals, < → @compare (D184)
+- [M-91.8c-generic-sort]: fn[T Comparable] sort/min/max/binary_search (D185)
+- [M-91.9-impl-annotation]: #impl(P1 + P2) annotation (D186)
+
+Commits (nova-p91, branch plan-91-stdmvp):
+- fc430fc8229 — feat(plan91.8a): protocol canon renames + Ordering removal (D183, part 1)
+- Subsequent commits: parser default body, batch rename, tests, docs.
+
+Spec: D183 в spec/decisions/02-types.md (main nova).
+Q-block update: Q-protocol-method-prefix updated с D183 reference.

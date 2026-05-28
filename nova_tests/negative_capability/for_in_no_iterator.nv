@@ -1,4 +1,4 @@
-// EXPECT_COMPILE_ERROR has neither `mut next() -> Option[T]` nor `iter() -> Iter[T]`
+// EXPECT_COMPILE_ERROR has neither `mut next() -> Option[T]` nor `iter() -> Iterable[T]`
 //
 // Plan 39 Issue D negative test: type без `next()` и без `iter()`
 // должен компилироваться с **explicit D58 diagnostic**, не generic

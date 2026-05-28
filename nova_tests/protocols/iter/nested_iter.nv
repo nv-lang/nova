@@ -1,4 +1,4 @@
-// Plan 85.5 Ф.2 — Iter[T]: вложенные for-in (два итератора сразу).
+// Plan 85.5 Ф.2 — Iterable[T]: вложенные for-in (два итератора сразу).
 
 module iter.nested_iter
 

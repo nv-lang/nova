@@ -1,4 +1,4 @@
-// Plan 85.5 Ф.2 — Iter[T]: for-in обход user-итератора.
+// Plan 85.5 Ф.2 — Iterable[T]: for-in обход user-итератора.
 //
 // for-in диспатчится на `mut @next()` структурно (D58). Loop-переменная
 // — immutable binding на каждой итерации.

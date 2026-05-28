@@ -2971,6 +2971,26 @@ impl Parser {
                 }
             }
 
+            // Plan 91.8a (D183): default body — optional `=> expr` или `{ ... }`
+            // после return type/contracts. Если присутствует — метод имеет
+            // default impl; type-implementer может override. Если отсутствует —
+            // метод abstract (implementer ОБЯЗАН реализовать).
+            self.skip_newlines();
+            let default_body: Option<Block> = if matches!(self.peek().kind, TokenKind::FatArrow) {
+                self.bump(); // =>
+                let expr = self.parse_expr()?;
+                let span = expr.span;
+                Some(Block {
+                    stmts: vec![],
+                    trailing: Some(Box::new(expr)),
+                    span,
+                })
+            } else if matches!(self.peek().kind, TokenKind::LBrace) {
+                Some(self.parse_block()?)
+            } else {
+                None
+            };
+
             let end = self.tokens[self.pos.saturating_sub(1)].span;
             // Plan 33.3 Ф.9: `#pure` op обязан иметь return type
             // (что-то наблюдать). Без `-> R` объявление бессмысленно.
@@ -2991,6 +3011,7 @@ impl Parser {
                 kind: op_kind,
                 contracts,
                 is_static,
+                default_body,
             });
             self.skip_newlines();
         }
