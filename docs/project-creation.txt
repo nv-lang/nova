@@ -23786,3 +23786,19 @@ Plan 91 Ф.2.5 (D177) CLOSED.
 - runtime_registry.rs: 5 methods updated with c_name="" (Nova-body) + D177 comments
 - All plan91 text method tests PASS; D177 spec added to spec/decisions/08-runtime.md
 - Full suite: 1527 PASS / 64 FAIL (same as baseline, all pre-existing)
+
+=== Plan 91 Ф.2.6 closed 2026-05-28; D178 str API cleanup + extensions ===
+
+Plan 91 Ф.2.6 (D178) CLOSED.
+- @bytes() renamed to @to_bytes() (allocating copy; as_bytes() zero-copy unchanged)
+- @chars() renamed to @to_chars() (allocating codepoints)
+- @split() return type: []str → readonly []str (zero-copy views)
+- @parse_int_radix + @parse_int merged into single @parse_int(radix int = 10) with D102 keyword-only default
+- @compare(other str) -> int: new C primitive via nova_str_compare / __builtin_memcmp
+- readonly param syntax: from_bytes_lossy/unchecked now use `readonly bytes []u8` form
+- MethodSig.param_defaults: new field; Plan 54 Ф.2 dispatch fills in default arg values
+- simple_literal_c helper: converts literal Expr to C string without emit_expr side-effects
+- Test files updated: text_methods_test, str_iters, from_bytes_series, conversions_positive, str_search
+- prelude.nv bumped to v11; export import includes compare/to_bytes/to_chars/as_bytes
+- D178 spec in spec/decisions/08-runtime.md (main nova repo)
+- text_methods_test PASS; str_iters PASS; nova_tests/str 13/13 PASS

@@ -395,12 +395,12 @@ fn str_runtime() -> Vec<RuntimeFn> {
             module: "std.runtime.string",
             receiver: Some("str"),
             is_static: false, is_mut: false, is_consume: false,
-            name: "bytes",
+            name: "to_bytes",
             params: &[],
             return_ty: "[]u8",
             effects: &[],
-            c_name: "nova_str_bytes",
-            doc: "UTF-8 bytes как []u8 (copy).",
+            c_name: "nova_str_to_bytes",
+            doc: "D178: UTF-8 bytes как []u8 (allocating copy). Renamed from bytes().",
         nova_body: None,
     },
         RuntimeFn {
@@ -419,12 +419,12 @@ fn str_runtime() -> Vec<RuntimeFn> {
             module: "std.runtime.string",
             receiver: Some("str"),
             is_static: false, is_mut: false, is_consume: false,
-            name: "chars",
+            name: "to_chars",
             params: &[],
             return_ty: "[]char",
             effects: &[],
-            c_name: "nova_str_chars",
-            doc: "Codepoints как []char (eager). Future: Iter[char] для лениво.",
+            c_name: "nova_str_to_chars",
+            doc: "D178: Codepoints как []char (allocating). Renamed from chars().",
         nova_body: None,
     },
         RuntimeFn {
@@ -433,31 +433,41 @@ fn str_runtime() -> Vec<RuntimeFn> {
             is_static: false, is_mut: false, is_consume: false,
             name: "split",
             params: &[("sep", "str")],
-            return_ty: "[]str",
+            return_ty: "readonly []str",
             effects: &[],
             c_name: "nova_str_split",
-            doc: "Split по separator. Eager в bootstrap.",
+            doc: "D178: Split по separator. Returns zero-copy views (readonly []str).",
         nova_body: None,
     },
-        // Plan 91 Ф.2: text MVP — parse_int / parse_int_radix.
-        // Caller должен .trim() перед вызовом — whitespace не trim'ится.
+        // D178: compare — lexicographic, like C strcmp. External (C implementation).
+        RuntimeFn {
+            module: "std.runtime.string",
+            receiver: Some("str"),
+            is_static: false, is_mut: false, is_consume: false,
+            name: "compare",
+            params: &[("other", "str")],
+            return_ty: "int",
+            effects: &[],
+            c_name: "nova_str_compare",
+            doc: "D178: Lexicographic comparison. Returns negative/0/positive like C strcmp.",
+            nova_body: None,
+        },
+        // D177/D178: Nova-body methods dispatched via Plan 54 Ф.2 (Nova_str_method_X).
+        // c_name = "" (Nova-body dispatch; c_name ignored per RuntimeFn struct doc).
+        // D178: parse_int merges parse_int() + parse_int_radix(). Default radix=10.
         RuntimeFn {
             module: "std.runtime.string",
             receiver: Some("str"),
             is_static: false, is_mut: false, is_consume: false,
             name: "parse_int",
-            params: &[],
+            params: &[("radix", "int")],
             return_ty: "Option[int]",
             effects: &[],
-            c_name: "nova_str_parse_int",
-            doc: "Parse decimal int с optional ±-prefix. None при error (empty, non-digit, overflow). Caller отвечает за .trim().",
-            nova_body: None,
+            c_name: "",
+            doc: "D178: parse int в заданной base (2..36), radix=10 по умолчанию. Nova body.",
+            nova_body: Some("{\n    if radix < 2 || radix > 36 { return None }\n    let bytes = @as_bytes()\n    let n = @byte_len()\n    if n == 0 { return None }\n    let mut neg = false\n    let mut start = 0\n    if bytes[0] as int == '-' as int {\n        neg = true\n        start = 1\n    } else if bytes[0] as int == '+' as int {\n        start = 1\n    }\n    if start >= n { return None }\n    let mut acc = 0\n    for j in start..n {\n        let c = bytes[j] as int\n        let mut d = -1\n        if c >= '0' as int && c <= '9' as int {\n            d = c - '0' as int\n        } else if c >= 'a' as int && c <= 'z' as int {\n            d = c - 'a' as int + 10\n        } else if c >= 'A' as int && c <= 'Z' as int {\n            d = c - 'A' as int + 10\n        }\n        if d < 0 || d >= radix { return None }\n        if acc > (9223372036854775807 - d) / radix { return None }\n        acc = acc * radix + d\n    }\n    Some(if neg { -acc } else { acc })\n}"),
         },
-        // Plan 91 Ф.2 / D177: parse_int_radix / pad_left / pad_right / repeat / replace —
-        // Nova-body methods dispatched via Plan 54 Ф.2 (Nova_str_method_X).
-        // c_name = "" (Nova-body dispatch; c_name ignored per RuntimeFn struct doc).
-        // std.runtime.string is exported from prelude (Plan 91 Ф.2.5) so these
-        // methods are auto-available in every module without explicit import.
+        // D177: pad_left / pad_right / repeat / replace — Nova-body.
         RuntimeFn {
             module: "std.runtime.string",
             receiver: Some("str"),

@@ -719,7 +719,7 @@ Type-check json.nv PASS. Только codegen→exe path остаётся.
 | Ф.3 D52 source fix | ✅ closed (попутно в Ф.7.1) |
 | **Ф.4 sort module** | ✅ **closed** |
 | **Ф.2.5 D177 str Nova-body** | ✅ **closed 2026-05-28** |
-| **Ф.2.6 D178 str API cleanup** | 🔵 planned |
+| **Ф.2.6 D178 str API cleanup** | ✅ **closed 2026-05-28** |
 | Ф.3 conformance smoke (HashMap codegen) | 🟡 deferred (deep codegen) |
 | Ф.2 text methods remainders | pending |
 | Ф.1 collections conformance | pending |
@@ -755,7 +755,7 @@ negative radix, replace edge cases (empty from/to), pad с non-ASCII fill (UTF-8
 
 ---
 
-## Ф.2.6 — str API cleanup + extensions (D178) 🔵 planned
+## Ф.2.6 — str API cleanup + extensions (D178) ✅ closed 2026-05-28
 
 ### Мотивация
 
@@ -806,8 +806,7 @@ negative radix, replace edge cases (empty from/to), pad с non-ASCII fill (UTF-8
 
 ### Acceptance criteria
 
-- `nova test plan91/` — все text_methods_test PASS
-- `nova test protocols/iter/str_iters` PASS (переименованные тесты)
-- `nova test str/` PASS
-- Full suite: не хуже 1527 PASS / 64 FAIL baseline
-- D178 spec в spec/decisions/08-runtime.md
+- `nova test plan91/` — все text_methods_test PASS ✅
+- `nova test protocols/iter/str_iters` PASS (переименованные тесты) ✅
+- `nova test str/` — 13/13 PASS ✅
+- D178 spec в spec/decisions/08-runtime.md ✅

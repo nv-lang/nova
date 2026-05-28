@@ -25,6 +25,10 @@ pub struct MethodSig {
     /// (`...items []T`). На call-site emit_call collects args[N-1..]
     /// в синтезированный ArrayLit и передаёт как последний аргумент.
     pub variadic_last: bool,
+    /// Plan 91 Ф.2.6 (D178): C-string expressions for parameter defaults.
+    /// Parallel to `param_c_types`; `None` = required param (no default).
+    /// Used at call-site when explicit args < param count (Nova-body dispatch).
+    pub param_defaults: Vec<Option<String>>,
 }
 
 /// Plan 39 Issue A: classification of `with`-block trail type for
@@ -1493,6 +1497,7 @@ impl CEmitter {
                     is_delegated: false,
                     c_name: decl.c_name.clone(),
                     variadic_last: false,
+                    param_defaults: vec![None; decl.param_c_types.len()],
                 };
                 self.method_overloads.entry(key.clone()).or_default().push(sig);
                 // Plan 83.12: register novares struct for non-trivial Result returns
@@ -2062,6 +2067,9 @@ impl CEmitter {
                     };
                     let variadic_last = f.params.last()
                         .map(|p| p.is_variadic).unwrap_or(false);
+                    let param_defaults: Vec<Option<String>> = f.params.iter()
+                        .map(|p| p.default.as_ref().and_then(Self::simple_literal_c))
+                        .collect();
                     let sig = MethodSig {
                         param_c_types,
                         return_c_type,
@@ -2070,6 +2078,7 @@ impl CEmitter {
                         is_delegated: false,
                         c_name,
                         variadic_last,
+                        param_defaults,
                     };
                     self.method_overloads.entry(key).or_default().push(sig);
                     continue;
@@ -2199,6 +2208,9 @@ impl CEmitter {
                     // (parser проверяет position constraint).
                     let variadic_last = f.params.last()
                         .map(|p| p.is_variadic).unwrap_or(false);
+                    let param_defaults: Vec<Option<String>> = f.params.iter()
+                        .map(|p| p.default.as_ref().and_then(Self::simple_literal_c))
+                        .collect();
                     let sig = MethodSig {
                         param_c_types,
                         return_c_type,
@@ -2207,6 +2219,7 @@ impl CEmitter {
                         is_delegated: false,    // own declaration
                         c_name,
                         variadic_last,
+                        param_defaults,
                     };
                     self.method_overloads.entry(key).or_default().push(sig);
                     // D73 v2 auto-derive registry:
@@ -2311,6 +2324,7 @@ impl CEmitter {
                         // Plan 14 Ф.6: proxy наследует variadic-флаг
                         // от исходного метода (тот же signature).
                         variadic_last: base_sig.variadic_last,
+                        param_defaults: base_sig.param_defaults.clone(),
                     };
                     self.method_overloads.entry(key).or_default().push(proxy_sig);
                     // all_methods (для Plan 06 Iter[T] dispatch).
@@ -7082,6 +7096,7 @@ impl CEmitter {
                     is_delegated: false,
                     c_name: sentinel_name,
                     variadic_last: false,
+                    param_defaults: vec![],
                 };
                 let key = (recv.type_name.clone(), f.name.clone());
                 self.method_overloads.entry(key).or_default().push(sig);
@@ -8552,6 +8567,25 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                 }
                 format!("Nova_{}*", other)
             }
+        }
+    }
+
+    /// Plan 91 Ф.2.6 (D178): convert a simple literal Expr to its C representation.
+    /// Used to emit default parameter values in Nova-body method dispatch.
+    /// Only handles simple compile-time constants; returns None for anything complex.
+    fn simple_literal_c(expr: &Expr) -> Option<String> {
+        match &expr.kind {
+            ExprKind::IntLit(n)   => Some(format!("{}LL", n)),
+            ExprKind::BoolLit(b)  => Some(if *b { "1LL".to_string() } else { "0LL".to_string() }),
+            ExprKind::FloatLit(f) => Some(f.to_string()),
+            ExprKind::Unary { op: UnOp::Neg, operand } => {
+                if let ExprKind::IntLit(n) = &operand.kind {
+                    Some(format!("-{}LL", n))
+                } else {
+                    None
+                }
+            }
+            _ => None,
         }
     }
 
@@ -13274,11 +13308,11 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                     if let ExprKind::Member { obj, name } = &func.kind {
                         if self.infer_expr_c_type(obj) == "nova_str" {
                             match name.as_str() {
-                                "bytes" | "as_bytes" => {  // Plan 108: as_bytes same element type
+                                "to_bytes" | "as_bytes" => {  // D178/D176: same element type
                                     self.array_element_types
                                         .insert(binding.clone(), "nova_byte".into());
                                 }
-                                "chars" => {
+                                "to_chars" => {
                                     // codepoints stored as nova_int — нет специального
                                     // element-type; default из NovaArray_nova_int* подойдёт.
                                 }
@@ -17993,6 +18027,17 @@ _cp++; \
                                 let obj_c = self.emit_expr(obj)?;
                                 let mut arg_strs = vec![obj_c];
                                 for a in args { arg_strs.push(self.emit_expr(a.expr())?); }
+                                // D178: fill in default values for omitted trailing params.
+                                let n_explicit = args.len();
+                                let n_params = sig.param_c_types.len();
+                                if n_explicit < n_params {
+                                    for i in n_explicit..n_params {
+                                        let default_c = sig.param_defaults.get(i)
+                                            .and_then(|d| d.as_deref())
+                                            .unwrap_or("0LL");
+                                        arg_strs.push(default_c.to_string());
+                                    }
+                                }
                                 return Ok(format!("{}({})", sig.c_name, arg_strs.join(", ")));
                             }
                         }
@@ -23761,9 +23806,11 @@ _cp++; \
                 => Some("nova_byte"),
             "find" | "rfind"
                 => Some("NovaOpt_nova_int"),
-            // Plan 91 Ф.2: text MVP methods.
-            "parse_int" | "parse_int_radix"
+            // Plan 91 Ф.2 / D178: text methods.
+            "parse_int"
                 => Some("NovaOpt_nova_int"),
+            "compare"
+                => Some("nova_int"),
             "pad_left" | "pad_right" | "repeat" | "replace"
                 => Some("nova_str"),
             // Iter[T] / NovaArray возврат — пока не критично для bool-check.
@@ -23795,18 +23842,16 @@ _cp++; \
             "len"         => Some("nova_str_byte_len"),   // Plan 108 D26 rev: len = bytes O(1).
             "char_len"    => Some("nova_str_char_len"),  // codepoints O(n).
             "byte_len"    => Some("nova_str_byte_len"),  // deprecated alias for len().
-            "bytes"       => Some("nova_str_bytes"),
-            "as_bytes"    => Some("nova_str_as_bytes"),  // Plan 108 D176: zero-copy readonly []u8
-            "chars"       => Some("nova_str_chars"),
+            "to_bytes"    => Some("nova_str_to_bytes"),  // D178: renamed from bytes()
+            "as_bytes"    => Some("nova_str_as_bytes"),  // D176: zero-copy readonly []u8
+            "to_chars"    => Some("nova_str_to_chars"),  // D178: renamed from chars()
             "char_at"     => Some("nova_str_char_at"),
             "split"       => Some("nova_str_split"),
             "byte_at"     => Some("nova_str_byte_at"),  // Plan 90
-            // Plan 91 Ф.2: text MVP methods.
-            // parse_int — C-primitive (decimal only). parse_int_radix / pad_left / pad_right /
-            // repeat / replace — Nova bodies dispatched via Plan 54 Ф.2 (D177, Plan 91 Ф.2.5).
-            // str_method_to_rt no longer handles these five; they fall through to Plan 54 Ф.2
-            // which calls Nova_str_method_X — the Nova body in std/runtime/string.nv.
-            "parse_int" => Some("nova_str_parse_int"),
+            "compare"     => Some("nova_str_compare"),  // D178
+            // D178: parse_int(radix=10) is now a Nova body (Plan 54 Ф.2).
+            // Falls through to Nova_str_method_parse_int — no str_method_to_rt entry needed.
+            // D177: pad_left/pad_right/repeat/replace — Nova bodies (same mechanism).
             _ => None,
         }
     }
@@ -25984,16 +26029,18 @@ _cp++; \
                             // Plan 71 follow-up + Plan 75: char_at → Option[char], not Option[int].
                             "char_at" => "NovaOpt_nova_char".into(),
                             "find" | "rfind" => "NovaOpt_nova_int".into(),
-                            // D26: s.bytes() → []byte (packed uint8_t[]).
-                            "bytes" => "NovaArray_nova_byte*".into(),
-                            // Plan 108 D176: s.as_bytes() → readonly []u8 (zero-copy, same C type).
+                            // D178: renamed from bytes(). Allocating copy.
+                            "to_bytes" => "NovaArray_nova_byte*".into(),
+                            // D176: s.as_bytes() → readonly []u8 (zero-copy, same C type).
                             "as_bytes" => "NovaArray_nova_byte*".into(),
-                            // s.chars() → []char (Plan 70.3: nova_char distinct typedef).
-                            "chars" => "NovaArray_nova_char*".into(),
-                            // s.split(sep) → []str (Iter[str] eager в bootstrap).
+                            // D178: renamed from chars(). Allocating []char.
+                            "to_chars" => "NovaArray_nova_char*".into(),
+                            // D178: split → readonly []str (zero-copy views, same C type).
                             "split" => "NovaArray_nova_str*".into(),
-                            // Plan 91 Ф.2: text MVP methods.
-                            "parse_int" | "parse_int_radix" => "NovaOpt_nova_int".into(),
+                            // D178: compare → int.
+                            "compare" => "nova_int".into(),
+                            // D178: parse_int(radix) — Nova body.
+                            "parse_int" => "NovaOpt_nova_int".into(),
                             "pad_left" | "pad_right" | "repeat" | "replace" => "nova_str".into(),
                             _ => "nova_int".into(),
                         };

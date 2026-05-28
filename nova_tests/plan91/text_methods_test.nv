@@ -1,6 +1,6 @@
-// Plan 91 Ф.2 + Ф.2.5 (D177): conformance tests for text methods.
+// Plan 91 Ф.2 + Ф.2.5 (D177) + Ф.2.6 (D178): conformance tests for text methods.
 // repeat / replace / pad_left / pad_right — Nova-body via StringBuilder.
-// parse_int / parse_int_radix — C-primitive (decimal) + Nova-body (radix).
+// parse_int(radix=10) — single Nova-body (D178 merge of parse_int + parse_int_radix).
 // Positive tests: basic functionality.
 // Negative tests: invalid inputs, edge cases.
 
@@ -33,7 +33,9 @@ test "str pad_right" {
     assert("x".pad_right(4, '-') == "x---")
 }
 
+// D178: single parse_int(radix int = 10) — radix defaults to 10.
 test "str parse_int" {
+    // default radix=10
     assert("42".parse_int() == Some(42))
     assert("-7".parse_int() == Some(-7))
     assert("+100".parse_int() == Some(100))
@@ -41,38 +43,36 @@ test "str parse_int" {
     assert("abc".parse_int() == None)
     assert("".parse_int() == None)
     assert("12x".parse_int() == None)
-}
-
-test "str parse_int_radix" {
-    assert("ff".parse_int_radix(16) == Some(255))
-    assert("FF".parse_int_radix(16) == Some(255))
-    assert("1010".parse_int_radix(2) == Some(10))
-    assert("z".parse_int_radix(36) == Some(35))
-    assert("g".parse_int_radix(16) == None)
+    // explicit radix
+    assert("ff".parse_int(radix: 16) == Some(255))
+    assert("FF".parse_int(radix: 16) == Some(255))
+    assert("1010".parse_int(radix: 2) == Some(10))
+    assert("z".parse_int(radix: 36) == Some(35))
+    assert("g".parse_int(radix: 16) == None)
     // with sign prefix
-    assert("-ff".parse_int_radix(16) == Some(-255))
-    assert("+1010".parse_int_radix(2) == Some(10))
-    // base 10
-    assert("42".parse_int_radix(10) == Some(42))
-    assert("-100".parse_int_radix(10) == Some(-100))
+    assert("-ff".parse_int(radix: 16) == Some(-255))
+    assert("+1010".parse_int(radix: 2) == Some(10))
+    // explicit base 10
+    assert("42".parse_int(radix: 10) == Some(42))
+    assert("-100".parse_int(radix: 10) == Some(-100))
 }
 
 // D177 negative: invalid radix and edge inputs → None (no panic).
-test "str parse_int_radix negative" {
+test "str parse_int negative" {
     // invalid radix (out of 2..36 range)
-    assert("ff".parse_int_radix(1) == None)
-    assert("ff".parse_int_radix(0) == None)
-    assert("ff".parse_int_radix(-1) == None)
-    assert("ff".parse_int_radix(37) == None)
+    assert("ff".parse_int(radix: 1) == None)
+    assert("ff".parse_int(radix: 0) == None)
+    assert("ff".parse_int(radix: -1) == None)
+    assert("ff".parse_int(radix: 37) == None)
     // empty string → None
-    assert("".parse_int_radix(16) == None)
+    assert("".parse_int(radix: 16) == None)
     // sign only → None
-    assert("-".parse_int_radix(10) == None)
-    assert("+".parse_int_radix(16) == None)
+    assert("-".parse_int(radix: 10) == None)
+    assert("+".parse_int(radix: 16) == None)
     // invalid chars for base
-    assert("2".parse_int_radix(2) == None)     // '2' invalid in binary
-    assert("g".parse_int_radix(16) == None)    // 'g' not a hex digit
-    assert("!".parse_int_radix(10) == None)    // non-digit
+    assert("2".parse_int(radix: 2) == None)     // '2' invalid in binary
+    assert("g".parse_int(radix: 16) == None)    // 'g' not a hex digit
+    assert("!".parse_int(radix: 10) == None)    // non-digit
 }
 
 // D177 negative: replace with empty from → unchanged; delete with empty to.

@@ -137,15 +137,11 @@ export import std.prelude.protocols.{From, Into, TryFrom, TryInto, Hashable, Equ
 // D50), syntactic form а не declarable effect. См. std/prelude/effects.nv.
 export import std.prelude.effects.{Fail, Time, Mem}
 
-// Plan 91 Ф.2.5 (D177): str Nova-body methods auto-available без explicit import.
-// parse_int_radix / pad_left / pad_right / repeat / replace — Nova bodies в
-// std/runtime/string.nv. Plan 54 Ф.2 dispatch (emit_c.rs) fires перед
-// str_method_to_rt и вызывает Nova_str_method_X (compile + run Nova body).
+// Plan 91 Ф.2.5 (D177) + Ф.2.6 (D178): str Nova-body methods auto-available без explicit import.
+// Nova bodies в std/runtime/string.nv; Plan 54 Ф.2 dispatch (!is_external filter).
+// D178: parse_int_radix → parse_int(radix=10); to_bytes/to_chars/compare added.
 // std.runtime.string имеет #no_prelude — cycle protection (prelude→string→prelude).
-// ALL items из string.nv merge'ятся в module.items (D29 / resolve_imports_inline_ex)
-// но external fn методы (eq/len/split/...) отфильтрованы !is_external в Plan 54 Ф.2
-// и продолжают диспатчиться через str_method_to_rt как раньше.
-export import std.runtime.string.{parse_int_radix, pad_left, pad_right, repeat, replace}
+export import std.runtime.string.{parse_int, pad_left, pad_right, repeat, replace, compare, to_bytes, to_chars, as_bytes}
 
 /// Prelude version marker — verify в тестах что auto-import работает.
 /// Bump'ается при каждой migration phase Plan 62.
@@ -192,7 +188,8 @@ export import std.runtime.string.{parse_int_radix, pad_left, pad_right, repeat, 
 ///   - 10 = Plan 91 Ф.2.5 done (2026-05-28, D177): str Nova-body methods
 ///     (parse_int_radix / pad_left / pad_right / repeat / replace) теперь
 ///     auto-available через prelude re-export из std.runtime.string.
-///     Plan 54 Ф.2 dispatch (D177 fix: !is_external filter) вызывает
-///     Nova_str_method_X напрямую — C bootstrap shims removed.
+///   - 11 = Plan 91 Ф.2.6 done (2026-05-28, D178): str API cleanup:
+///     bytes→to_bytes, chars→to_chars, parse_int_radix+parse_int→parse_int(radix=10),
+///     compare added, split→readonly []str, readonly param syntax.
 #stable(since = "0.1")
-export const PRELUDE_VERSION int = 10
+export const PRELUDE_VERSION int = 11

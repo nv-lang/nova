@@ -1,10 +1,10 @@
 // AUTO-GENERATED stubs + Nova-body methods. External stubs: auto-generated.
-// Nova bodies (parse_int_radix, pad_left, pad_right, repeat, replace): hand-written.
+// Nova bodies (parse_int/pad_left/pad_right/repeat/replace): hand-written.
 // Source of truth for stubs: compiler-codegen/src/codegen/runtime_registry.rs
 //
-// Plan 91 Ф.2.5 (D177): this module is exported via std.prelude so that
-// Nova-body methods dispatch through Plan 54 Ф.2 (Nova_str_method_X) instead
-// of C bootstrap shims. #no_prelude breaks the import cycle (prelude→string→prelude).
+// Plan 91 Ф.2.5 (D177): Nova-body dispatch via Plan 54 Ф.2 (Nova_str_method_X).
+// Plan 91 Ф.2.6 (D178): bytes→to_bytes, chars→to_chars, parse_int merged, compare added.
+// #no_prelude breaks the import cycle (prelude→string→prelude).
 
 #no_prelude
 module runtime.string
@@ -78,30 +78,28 @@ export external fn str @gt(other str) -> bool
 // Lexicographic greater-or-equal. Также вызывается оператором `>=`.
 export external fn str @ge(other str) -> bool
 
-// UTF-8 bytes как []u8 (copy).
-export external fn str @bytes() -> []u8
+// UTF-8 bytes как []u8 (allocating copy). D178: renamed from @bytes().
+export external fn str @to_bytes() -> []u8
 
-// Plan 108 D176: zero-copy view of str UTF-8 bytes as readonly []u8 (no memcpy).
+// D176: zero-copy view of str UTF-8 bytes as readonly []u8 (no memcpy).
 export external fn str @as_bytes() -> readonly []u8
 
-// Plan 108 from_utf8 series — []u8 → str.
-// Validated: str.try_from(bytes []u8) — see D77 (already implemented).
-// Lossy: replaces invalid UTF-8 sequences with U+FFFD (replacement char). Always succeeds.
-export external fn str.from_bytes_lossy(bytes readonly []u8) -> str
+// D178: []u8 → str. D178: параметр `readonly bytes` (синтаксис D178).
+// Lossy: replaces invalid UTF-8 sequences with U+FFFD. Always succeeds.
+export external fn str.from_bytes_lossy(readonly bytes []u8) -> str
 // Unchecked: no validation, O(n) copy. Caller guarantees valid UTF-8.
-export external fn str.from_bytes_unchecked(bytes readonly []u8) -> str
+export external fn str.from_bytes_unchecked(readonly bytes []u8) -> str
 
-// Codepoints как []char (eager). Future: Iter[char] для лениво.
-export external fn str @chars() -> []char
+// Codepoints как []char (allocating). D178: renamed from @chars().
+export external fn str @to_chars() -> []char
 
-// Split по separator. Eager в bootstrap.
-export external fn str @split(sep str) -> []str
+// Split по separator. Returns zero-copy views (readonly). D178: readonly return.
+export external fn str @split(sep str) -> readonly []str
 
-// Parse decimal int с optional ±-prefix. None при error (empty, non-digit, overflow). Caller отвечает за .trim().
-export external fn str @parse_int() -> Option[int]
-
-// Parse int с указанной base (2..36). Digits 0-9, a-z (case-insensitive). None при error.
-export fn str @parse_int_radix(radix int) -> Option[int] {
+// D178: merge of parse_int() + parse_int_radix(). Default radix=10 → decimal.
+// Digits 0-9, a-z/A-Z (case-insensitive for radix>10). None при error.
+// Nova body — единый путь для всех баз через Plan 54 Ф.2 dispatch.
+export fn str @parse_int(radix int = 10) -> Option[int] {
     if radix < 2 || radix > 36 { return None }
     let bytes = @as_bytes()
     let n = @byte_len()
@@ -132,6 +130,9 @@ export fn str @parse_int_radix(radix int) -> Option[int] {
     }
     Some(if neg { -acc } else { acc })
 }
+
+// D178: lexicographic comparison, like C strcmp. Returns negative/0/positive.
+export external fn str @compare(other str) -> int
 
 // Pad строку слева до width codepoints символом fill. Если width <= len — возвращает s.
 export fn str @pad_left(width int, fill char) -> str {

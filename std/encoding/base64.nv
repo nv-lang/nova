@@ -286,28 +286,28 @@ test "encode: RFC 4648 test vectors" {
     //   "foob"  => "Zm9vYg=="
     //   "fooba" => "Zm9vYmE="
     //   "foobar"=> "Zm9vYmFy"
-    assert(Base64.encode("f".bytes()) == "Zg==")
-    assert(Base64.encode("fo".bytes()) == "Zm8=")
-    assert(Base64.encode("foo".bytes()) == "Zm9v")
-    assert(Base64.encode("foob".bytes()) == "Zm9vYg==")
-    assert(Base64.encode("fooba".bytes()) == "Zm9vYmE=")
-    assert(Base64.encode("foobar".bytes()) == "Zm9vYmFy")
+    assert(Base64.encode("f".to_bytes()) == "Zg==")
+    assert(Base64.encode("fo".to_bytes()) == "Zm8=")
+    assert(Base64.encode("foo".to_bytes()) == "Zm9v")
+    assert(Base64.encode("foob".to_bytes()) == "Zm9vYg==")
+    assert(Base64.encode("fooba".to_bytes()) == "Zm9vYmE=")
+    assert(Base64.encode("foobar".to_bytes()) == "Zm9vYmFy")
 }
 
 test "decode: RFC 4648 test vectors" {
     assert(Base64.decode("") == [])
-    assert(Base64.decode("Zg==") == "f".bytes())
-    assert(Base64.decode("Zm8=") == "fo".bytes())
-    assert(Base64.decode("Zm9v") == "foo".bytes())
-    assert(Base64.decode("Zm9vYg==") == "foob".bytes())
-    assert(Base64.decode("Zm9vYmE=") == "fooba".bytes())
-    assert(Base64.decode("Zm9vYmFy") == "foobar".bytes())
+    assert(Base64.decode("Zg==") == "f".to_bytes())
+    assert(Base64.decode("Zm8=") == "fo".to_bytes())
+    assert(Base64.decode("Zm9v") == "foo".to_bytes())
+    assert(Base64.decode("Zm9vYg==") == "foob".to_bytes())
+    assert(Base64.decode("Zm9vYmE=") == "fooba".to_bytes())
+    assert(Base64.decode("Zm9vYmFy") == "foobar".to_bytes())
 }
 
 test "round-trip: encode + decode == original" {
     let cases = ["", "Hello", "The quick brown fox", "binary\x00data"]
     for s in cases {
-        let bytes = s.bytes()
+        let bytes = s.to_bytes()
         let encoded = Base64.encode(bytes)
         let decoded = Base64.decode(encoded)
         assert(decoded == bytes)
@@ -361,12 +361,12 @@ test "decode: ошибка — невалидный символ" {
 test "Base64 → JWT-like usage" {
     // Симулируем JWT header'а: `{"alg":"HS256","typ":"JWT"}` в URL-safe.
     let header = "{\"alg\":\"HS256\",\"typ\":\"JWT\"}"
-    let encoded = Base64.encode_url(header.bytes())
+    let encoded = Base64.encode_url(header.to_bytes())
     // Не содержит padding и URL-safe alphabet
     assert(!encoded.contains("="))
     assert(!encoded.contains("+"))
     assert(!encoded.contains("/"))
     // Round-trip
     let decoded = Base64.decode_url(encoded)
-    assert(decoded == header.bytes())
+    assert(decoded == header.to_bytes())
 }
