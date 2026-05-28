@@ -9,16 +9,16 @@ module runtime.string
 
 // ─── str ───
 
-// Длина строки в codepoint'ах (D26: базовая len = codepoints). O(n).
+// Длина строки в байтах. O(1). (Plan 108 D26 rev: len = bytes, char_len = codepoints).
 export external fn str @len() -> int
 
-// Длина в байтах. O(1). Для FFI / буферных операций.
-export external fn str @byte_len() -> int
+// Длина строки в codepoint'ах. O(n). Используй для итерации по символам.
+export external fn str @char_len() -> int
 
 // UTF-8 байт по индексу. O(1). Panic при выходе за границы. Plan 90 — неустранимый примитив для byte-алгоритмов (lexer/find/trim) на Nova.
 export external fn str @byte_at(i int) -> u8
 
-// True если строка пустая. O(n) через @len (codepoints); для bootstrap приемлемо.
+// True если строка пустая. O(1) через @len (байты).
 export fn str @is_empty() -> bool => @len() == 0
 
 // True если строка начинается с prefix.
@@ -77,6 +77,13 @@ export external fn str @bytes() -> []u8
 
 // Plan 108 D176: zero-copy view of str UTF-8 bytes as readonly []u8 (no memcpy).
 export external fn str @as_bytes() -> readonly []u8
+
+// Plan 108 from_utf8 series — []u8 → str.
+// Validated: str.try_from(bytes []u8) — see D77 (already implemented).
+// Lossy: replaces invalid UTF-8 sequences with U+FFFD (replacement char). Always succeeds.
+export external fn str.from_bytes_lossy(bytes readonly []u8) -> str
+// Unchecked: no validation, O(n) copy. Caller guarantees valid UTF-8.
+export external fn str.from_bytes_unchecked(bytes readonly []u8) -> str
 
 // Codepoints как []char (eager). Future: Iter[char] для лениво.
 export external fn str @chars() -> []char

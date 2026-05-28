@@ -35,13 +35,13 @@ test "SocketAddr.v4 — all octets and port preserved" {
 test "SocketAddr.loopback — host_str non-empty" {
     let addr = SocketAddr.loopback(0)
     let h = addr.host_str()
-    assert(h.byte_len() > 0)
+    assert(h.len() > 0)
 }
 
 test "SocketAddr.loopback — to_str non-empty" {
     let addr = SocketAddr.loopback(1234)
     let s = addr.to_str()
-    assert(s.byte_len() > 0)
+    assert(s.len() > 0)
 }
 
 test "TcpListener.bind — local_port non-zero after bind(loopback(0))" {

@@ -163,16 +163,16 @@ test "into() ASCII пустая строка" {
     assert(s.len() == 0)
 }
 
-test "into() с Unicode codepoint'ами — паритет sb.len и s.len" {
+test "into() с Unicode codepoint'ами — sb.len (codepoints), s.len (bytes)" {
     let mut sb = StringBuilder.new()
     sb.append("Привет")
-    // Plan 13 Ф.9: sb.len теперь codepoints — совпадает с str.len.
+    // Plan 13 Ф.9: sb.len = codepoints (O(n) в SB).
     assert(sb.len() == 6)
     assert(sb.byte_len() == 12)
     let s = sb.into()
-    // D26 школа B: s.len — codepoint count. Должно совпадать с sb.len()
-    // ДО consume.
-    assert(s.len() == 6)
+    // Plan 108 D26 rev: str.len() = bytes O(1); str.char_len() = codepoints O(n).
+    assert(s.len() == 12)          // bytes
+    assert(s.char_len() == 6)      // codepoints == sb.len() before consume
 }
 
 
@@ -210,5 +210,7 @@ test "str + str через @plus — body delegating to @concat" {
     assert("foo" + "bar" == "foobar")
     let a = "Привет"
     let b = ", мир"
-    assert((a + b).len() == 11)     // 6 + 5 codepoints
+    // "Привет"=12 bytes, ", мир"=8 bytes → 20 bytes, 11 codepoints.
+    assert((a + b).len() == 20)         // Plan 108 D26 rev: len = bytes
+    assert((a + b).char_len() == 11)    // codepoints (6 + 5)
 }
