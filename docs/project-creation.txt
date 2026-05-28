@@ -23878,3 +23878,22 @@ Commit: dd7a4f00bc5 "fix(plan83.11 Ф.3): STALE-slot race fix + remove
 diagnostic instrumentation" on branch plan-83.11-centralized-driver.
 
 Ф.4-Ф.9 pending (blocking pool migration, cancel migration, perf, tests).
+
+=== Plan 91 docs/plans split into sub-plan files 2026-05-28 ===
+
+Закрытые closure-секции в docs/plans/91-stdlib-mvp-for-0.1.md (912 строк)
+вынесены в 6 отдельных подпланов; parent (410 строк) остаётся roadmap'ом
++ index подпланов + список открытых фаз.
+
+Подпланы:
+- 91.1-re-baseline.md — Ф.0 re-baseline (2026-05-27)
+- 91.2-quarantine.md — Ф.7.1 quarantine non-MVP (2026-05-27)
+- 91.3-sort-module.md — Ф.4 sort module (2026-05-27)
+- 91.4-str-nova-body-dispatch.md — Ф.2.5 D177 (2026-05-28)
+- 91.5-str-api-cleanup.md — Ф.2.6 D178 + D132 amendment (2026-05-28)
+- 91.6-stringbuilder-nova-type.md — Ф.2.6 sub-phase D179 StringBuilder (2026-05-28)
+
+Spec ссылки обновлены (D177→91.4, D178→91.5, D179→91.6). Q-string-builder
+получил note про D179 update.
+
+Commit: f15d979b4de (split) на ветке plan-91-stdmvp.
