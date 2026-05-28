@@ -23802,3 +23802,15 @@ Plan 91 Ф.2.6 (D178) CLOSED.
 - prelude.nv bumped to v11; export import includes compare/to_bytes/to_chars/as_bytes
 - D178 spec in spec/decisions/08-runtime.md (main nova repo)
 - text_methods_test PASS; str_iters PASS; nova_tests/str 13/13 PASS
+
+=== Plan 91 Ф.2.6 amendment — D132 check_fluent_return refactor 2026-05-28 ===
+
+Bug: StringBuilder @plus declared -> Self instead of -> @; fixed to -> @.
+check_fluent_return refactored:
+- body_always_returns_receiver: -> @ body can end with call to another -> @ method (delegation)
+- Check 2 (new): -> Self where all paths return receiver -> E_FLUENT_SELF compile error
+- fluent_wrapper_ok.nv (positive): @push => @write delegation + @plus chain 3/3 PASS
+- fluent_self_instead_of_at_err.nv (negative): -> Self => @bump() -> E_FLUENT_SELF PASS
+- 7/7 plan77 PASS
+- D132 spec amended in spec/decisions/03-syntax.md (main nova)
+- Commits: nova-p91 ffe1e958a8d; nova(main) 9931c15c5d7
