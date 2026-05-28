@@ -20,6 +20,7 @@ static-состояния.
 | [D141](#d141-примитивы-доступа-к-памяти--byte_at--bulk-slice-операции) | Примитивы доступа к памяти — `byte_at` / bulk slice-операции |
 | [D177](#d177-str-nova-body-dispatch--plan-54-ф2-extension) | `str` Nova-body dispatch — Plan 54 Ф.2 extension |
 | [D178](#d178-str-api-cleanup-и-расширения--plan-91-ф26) | `str` API cleanup и расширения — Plan 91 Ф.2.6 |
+| [D179](#d179-stringbuilder--pure-nova-consume-type--plan-109) | `StringBuilder` — pure Nova consume type — Plan 109 |
 
 ---
 
@@ -3789,3 +3790,90 @@ Legacy C aliases сохранены для совместимости кода, 
 - [D176](02-types.md#d176-readonly-t--тип-модификатор) — `readonly` type modifier; `as_bytes()`.
 - [D177](#d177-str-nova-body-dispatch--plan-54-ф2-extension) — Nova-body dispatch механизм.
 - [Plan 91](../../docs/plans/91-stdlib-mvp-for-0.1.md) — Plan 91 Ф.2.6.
+
+---
+
+## D179. `StringBuilder` — pure Nova consume type — Plan 109
+
+**Статус:** закрыт (Plan 109, 2026-05-28).
+
+### Суть
+
+`StringBuilder` перенесён из внешней реализации (C runtime / Rust String) в
+чистый Nova-тип:
+
+```nova
+type StringBuilder consume {
+    mut buf []u8
+}
+```
+
+Все методы реализованы на Nova; единственный внешний примитив —
+`buf.push(byte u8)` (добавление байта в backing array), UTF-8 encoding
+реализован через Nova bitwise ops.
+
+### API (финал D179)
+
+```nova
+// Конструкторы
+StringBuilder.new()              -> Self   // pre-alloc 16 байт
+StringBuilder.with_capacity(n)   -> Self   // pre-alloc n байт
+StringBuilder.from(s str)        -> Self   // copy UTF-8 bytes
+StringBuilder.from(c char)       -> Self   // UTF-8 encode одного codepoint
+
+// Query
+@len()       -> int   // байты O(1); аналог str.len (D26 school B)
+@char_len()  -> int   // codepoints O(n) UTF-8 walk; новый метод
+@capacity()  -> int   // allocated байты
+@is_empty()  -> bool
+@clone()     -> Self  // deep copy buffer
+
+// Prefix/suffix check
+@starts_with(prefix str) -> bool
+@ends_with(suffix str)   -> bool
+
+// Мутирующие (-> @, consume-тип — см. D131)
+@append(s str)               -> @   // append UTF-8 bytes из str
+@append(c char)              -> @   // append codepoint как UTF-8 (1-4 байта)
+@append_bytes(readonly arr []u8) -> @  // raw bytes; caller обеспечивает UTF-8
+@append_repeat(s str, n int) -> @   // append s ровно n раз
+@truncate(len int)           -> @   // обрезать буфер до len байт
+
+// Операторы
+@plus(s str) -> @   // sb + "text" → @append(s) (D46)
+@plus(c char) -> @  // sb + c    → @append(c) (D46)
+
+// Consume (финализация)
+@to_str() -> str    // consume StringBuilder → str; infallible (UTF-8 invariant)
+```
+
+### Изменения относительно pre-109
+
+| Было (до D179) | Стало (D179) |
+|---|---|
+| `external type StringBuilder` | `type StringBuilder consume { mut buf []u8 }` |
+| `@byte_len() -> int` | удалён (дублировал `@len()`) |
+| `@peek() -> str` | удалён (unsound: pointer aliasing с realloc) |
+| `@into() -> str` | `@to_str() -> str` (consume) |
+| `@append_bytes(arr []u8)` | `@append_bytes(readonly arr []u8)` |
+| внешняя реализация C/Rust | чистый Nova-код |
+
+### Инфраструктура
+
+- `std/runtime/string_builder.nv` — Nova-реализация всех методов.
+- `compiler-codegen/nova_rt/string_builder.h` — только UTF-8 helpers:
+  `nova_str_from_bytes_unchecked`, `nova_str_from_bytes_lossy`,
+  `Nova_str_static_try_from_bytes`, `Nova_str_static_from_char`,
+  `nova_str_replace`. Старые `Nova_StringBuilder_*` функции удалены.
+- `std/prelude/collections.nv` — `export import std.runtime.string_builder.{StringBuilder}`
+  (было `external type StringBuilder`).
+- `compiler-codegen/src/codegen/runtime_registry.rs` — `RUNTIME_DEFINED_TYPES` includes `"StringBuilder"`.
+- `emit_c.rs` — `lhs_is_nova_ptr` guard: `sb + "str"` → `@plus` dispatch, не `nova_str_concat`.
+
+### Связь
+
+- [D131](03-syntax.md#d131-consume-types-и-fluent-api) — consume types и `-> @` fluent API.
+- [D133](02-types.md#d133-consume-static-analysis) — consume static analysis.
+- [D176](02-types.md#d176-readonly-t--тип-модификатор) — `readonly` parameter modifier.
+- [D178](#d178-str-api-cleanup-и-расширения--plan-91-ф26) — `str.from_bytes_*` helpers.
+- [Plan 109](../../docs/plans/109-stringbuilder-nova-type.md) — полный план.
