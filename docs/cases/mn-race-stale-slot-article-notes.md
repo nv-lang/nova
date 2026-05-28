@@ -1,9 +1,156 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-# Материалы для статьи: 10 часов поиска одного race condition в M:N runtime
+# Материалы для статьи: год борьбы с M:N runtime races — как мы искали один баг 10 часов
 
-> Внутренние заметки. Полная хронология поиска бага, все попытки, финальный фикс.
+> Внутренние заметки. Полная история M:N runtime — от первого запуска до финального фикса.
 > Язык: Nova (system-level language с M:N async runtime).
-> Дата: 2026-05-27–28. Платформа: Windows 11, 16 логических CPU.
+> Финальный фикс: 2026-05-27–28. Платформа: Windows 11, 16 логических CPU.
+
+---
+
+## Часть I: Предыстория — путь до Plan 83.11
+
+### Зачем M:N
+
+Nova изначально проектировалась как Go-подобный язык с параллелизмом из коробки.
+Реализация: **M:N модель** — M кооперативных fiber'ов поверх N OS-потоков.
+
+Проблема на старте: M:N был **opt-in**. Чтобы получить параллелизм, программист
+обязан явно вызвать `runtime.init(n)`. Дефолт — однопоточный кооперативный режим
+(single libuv loop + minicoro). Это противоположно Go и Tokio:
+
+| Runtime | Default | Workers |
+|---------|---------|---------|
+| Go | включён | NumCPU |
+| Tokio (multi-thread) | включён | NumCPU |
+| Nova на старте | ВЫКЛЮЧЕН | надо runtime.init(n) |
+
+**Цель Plan 83 (2026-05-21):** flip default — M:N по умолчанию для всех
+скомпилированных Nova-программ, без явного `runtime.init`.
+
+---
+
+### Хронология M:N планов до финального бага
+
+#### Plan 44 (основа M:N, ~2026-05)
+Первый M:N runtime. N worker OS-потоков, Chase-Lev work-stealing deque,
+cross-worker wake через `uv_async_send`. Cooperative fibers через minicoro.
+Это база — задела много race conditions которые обнаружились позже.
+
+#### Plan 83.1 (2026-05-22)
+Worker-count resolution: `NOVA_MAXPROCS` env, `nova_runtime_resolve_maxprocs()`,
+lazy spawn (пул поднимается при первом `spawn`, не при init). API-reshape:
+`runtime.init(n)` из "включателя" в "опциональный тюнер". Тесты: thread-budget
+для `nova test` (иначе `jobs=16 × workers=16` = 256 OS-потоков под тест-сюит).
+
+#### Plan 83.3 (2026-05-22)
+`blocking {}` эффект (D50) → `uv_queue_work` libuv threadpool. Без этого
+worker залипал в блокирующем syscall'е и `NOVA_MAXPROCS=16` не давал 16 CPU.
+
+#### Plan 83.2 (после Plan 82)
+Собственно flip дефолта: M:N включён без `runtime.init`. Gated на Plan 82
+(Windows fiber arena).
+
+#### Plan 82 (2026-05-22): Windows fiber arena
+macOS/Linux использовали `mmap` для fiber стэков. Windows требовал другой
+подход. После Plan 82: fiber arena работает на всех трёх платформах.
+nova test: 0 PASS → 1049 PASS.
+
+#### Plan 83.4.x (2026-05-23–24): первые races
+После flip дефолта посыпались race conditions. Серия из 11 под-планов:
+
+| Plan | Что фиксил |
+|------|-----------|
+| 83.4.1 | D93 park-wake hardening — ACQUIRE/RELEASE ordering в parked[] |
+| 83.4.2 | Supervised drain ownership — double-resume при scope выходе |
+| 83.4.3 | M:N API semantic alignments — cancel_requested atomic, main_yield uv_run |
+| 83.4.4 | Flip активация + 83.2 closure |
+| 83.4.5.1 | cancel_wake_all + cascade propagation |
+| 83.4.5.2 | detach/orphan M:N semantics — fire-and-forget fibers |
+| 83.4.5.3 | Test suite M:N cleanup — AUTOARM=0 directives v1 |
+| 83.4.5.4 | Handler scoping nested — effect handlers в nested supervised |
+| 83.4.5.5 | main_yield под armed runtime |
+| 83.4.5.7 | Atomic fiber state machine — double-resume race |
+| 83.4.5.8 | M:N ctx GC reachability — Boehm GC не видел SpawnCtx |
+| 83.4.5.10 | M:N perf quick wins |
+| 83.4.5.11 | Test races cleanup |
+
+Каждый план решал реальный баг. После серии: nova test ~65/78 concurrency PASS.
+
+#### Plan 83.10.1 (2026-05-26): AUTOARM=0 sweep
+18 тестов с `// ENV NOVA_AUTOARM=0` директивой — escape hatch отключающий
+M:N для конкретного теста. После всех предыдущих фиксов: 3 директивы
+стали obsolete и удалены. Оставшиеся 15 — указали на 3 новых gap'а.
+
+**Новые gap'ы:**
+- `[M-83.10.1-armed-cancel-timer-hang]` — 10 тестов с cancel+sleep TIMEOUT
+- `[M-83.10.1-per-fiber-handler-tls-race]` — 2 теста TLS race
+- `[M-83.10.1-fail-handler-cross-mco-longjmp]` — 1 тест longjmp across MCO
+
+#### Plan 83.10.2 (2026-05-26): cancel-timer-hang ✅ MERGED
+10 тестов TIMEOUT при `supervised(cancel: tok) { spawn { sleep(N) } }` под armed M:N.
+
+Root cause: 4 отдельных бага в связке:
+1. **GC aliasing** — SpawnCtx в Boehm GC мог быть freed пока fiber ещё жил
+2. **Slot reuse** — (предшественник STALE-slot race) частичная версия
+3. **Race 2a/2b** — double CAS на sched_wake branch
+4. **sched_wake branch** — неправильный branch для wake под armed M:N
+
+После Plan 83.10.2: 9 `AUTOARM=0` директив удалены. concurrency: 65/13.
+
+#### Plan 83.10.3 (2026-05-26): nested supervised routing ✅ MERGED
+`panic_in_nested_supervised` TIMEOUT. Worker внутри `nova_supervised_run_impl(outer_scope)`
+не мог вернуться в `_worker_main` чтобы дренировать deque для `inner_scope`.
+
+Fix: `nova_runtime_worker_pump_scope()` — worker обслуживает свой deque inline
+пока ждёт inner scope. concurrency: 63/12 после fix.
+
+#### Plan 83.10.4 (2026-05-27): remaining races ✅ MERGED
+Аудит + fix 4 оставшихся классов races:
+- **Ф.3: TLS handler snapshot race** — effect handler registry читался из wrong thread's TLS. Fix: per-thread snapshot при spawn.
+- **Ф.4: fail handler cross-mco longjmp** — `longjmp` из close_cb (worker B) в setjmp контекст fiber'а (worker A). Fix: marshal error через scope вместо longjmp.
+- **Ф.5: supervised-cancel armed race** — iso-cancel startup race (частично)
+- **Ф.6: residual flaky** — 4 оставшихся intermittent тестов
+
+После Plan 83.10.4: concurrency 65/10. `[M-83.10.4-iso-cancel-startup-race]` остался открытым.
+
+#### Plan 83.10.5 (2026-05-27): iso-cancel startup race 🔴 FAILED
+Последний открытый race: `stress_iso_3e` — 100 fibers sleep + cancel → TIMEOUT.
+3 tactical попытки:
+1. Predicate self-close — fiber закрывает свой таймер сам в предикате → ~55% PASS
+2. SEQ_CST на stage → ~50% PASS
+3. Различные fence variants → plateau
+
+Все попытки дали плато ~50% PASS. Plan помечен SUPERSEDED → Plan 83.11.
+
+---
+
+### Итог предыстории: 6+ планов, ~15+ dev-days, одна зона
+
+```
+Plan 44 → первая M:N реализация
+  ↓
+Plan 82 → Windows arena (gates flip)
+  ↓
+Plans 83.1, 83.2, 83.3 → infrastructure + flip
+  ↓
+Plans 83.4.x (11 sub-plans) → первая волна races
+  ↓
+Plans 83.10.1–83.10.4 → вторая волна races
+  ↓
+Plan 83.10.5 → plateau, SUPERSEDED
+  ↓
+Plan 83.11 → architectural pivot + STALE-slot fix ✅
+```
+
+**Паттерн:** каждый fix решал реальный баг. Каждый баг — в той же зоне:
+cross-thread visibility distributed I/O state across N per-worker UV loops.
+Это не цепочка случайных багов — это архитектурный debt.
+
+Аналогия: Tokio (Rust async runtime) в 2017–2019 имел per-worker reactors.
+Те же races. 1.0 release (2020) — centralized driver thread. 3 года.
+Nova шла тем же путём за ~2 недели интенсивной работы.
+
+---
 
 ---
 
