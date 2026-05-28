@@ -27179,3 +27179,16 @@ parse_int(16) is illegal — must be parse_int(radix: 16). All test calls update
 nova_str_bytes and nova_str_chars retained as inline aliases to nova_str_to_bytes /
 nova_str_to_chars in array.h for C-level backward compat (experimental modules still
 use old names in Nova code, but they're not in the test suite).
+
+## D132 check_fluent_return amendment (Plan 91 Ф.2.6 amendment, 2026-05-28)
+
+**wrapper -> @ delegation:**
+Old check required bare @ as tail. => @write() rejected even though @write is -> @.
+Fix: body_always_returns_receiver accepts calls to known -> @ methods on same receiver as valid endings.
+Needed for StringBuilder @plus => @append pattern.
+
+**Inverse check E_FLUENT_SELF:**
+-> Self where body_always_returns_receiver = true → compile error.
+Rationale: -> Self and -> @ are different semantics (new object vs same object/aliasing).
+Declaring -> Self on a method that only does -> @ behavior breaks consume-aliasing (D131).
+No simplification — full static analysis is correct here (not deferred).
