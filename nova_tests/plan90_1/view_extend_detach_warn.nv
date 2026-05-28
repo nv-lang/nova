@@ -1,0 +1,14 @@
+// EXPECT_COMPILE_WARNING W_VIEW_EXTEND_DETACH
+//
+// Plan 90.1 Ф.5 — W_VIEW_EXTEND_DETACH lint: warning when extend_from/insert_from/reserve
+// is called on parent array after creating a slice-view of it.
+// View may become dangling if extend_from triggers realloc.
+
+module nova_tests.plan90_1.view_extend_detach_warn
+
+fn main() -> () {
+    let mut parent []int = [1, 2, 3, 4, 5]
+    let view = parent[1..4]
+    parent.extend_from([6, 7, 8])  // W_VIEW_EXTEND_DETACH: view may dangle after realloc
+    let _ = view.len()
+}

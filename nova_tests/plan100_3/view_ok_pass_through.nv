@@ -1,0 +1,22 @@
+// Plan 100.3 (D157): view-param передаётся в другую view-fn без consume.
+
+module nova_tests.plan100_3.view_ok_pass_through
+
+type Transaction consume {
+    id int,
+}
+
+fn Transaction consume @commit() -> () { () }
+
+fn log_id(t Transaction) -> () { println(t.id) }
+
+fn print_and_log(t Transaction) -> () {
+    println("processing")
+    log_id(t)                                    // ✅ view-передача в view-param
+}
+
+test "view pass-through через view-funcs" {
+    consume tx = Transaction { id: 5 }
+    print_and_log(tx)
+    tx.commit()                                  // tx Live после view-uses
+}

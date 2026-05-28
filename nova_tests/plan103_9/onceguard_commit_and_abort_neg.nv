@@ -1,0 +1,15 @@
+// EXPECT_COMPILE_ERROR D131
+//
+// Plan 103.9 (D174) — Negative: commit then abort (double consume) of OnceGuard.
+// g.commit() consumes g; g.abort() → E_CONSUMED_AFTER_USE (D131).
+//
+// Uses Once.make_guard() (internal external fn) to create a guard directly.
+
+module nova_tests.plan103_9.onceguard_commit_and_abort_neg
+
+test "commit then abort → D131 compile error" {
+    let once = Once.new()
+    consume g = once.make_guard()
+    g.commit()
+    g.abort()   // ERROR: g already consumed by commit()
+}

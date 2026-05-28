@@ -1,0 +1,12 @@
+// EXPECT_RUNTIME_PANIC length mismatch
+//
+// Plan 90.1 — негатив: copy_from — src longer than dst → panic (was already panic).
+// D141 amend: new message "length mismatch" instead of "src longer than dst".
+
+module nova_tests.plan90_1.copy_from_too_long_neg
+
+fn main() -> () {
+    let mut dst []int = [0, 0]
+    let src []int = [1, 2, 3]
+    dst.copy_from(src)
+}

@@ -1,0 +1,6 @@
+// EXPECT_COMPILE_ERROR inline `partial_prelude(...)` clause removed
+//
+// Plan 107 Ф.7 — inline `partial_prelude(...)` after module path → compile error with hint.
+// D174: old syntax hard-errors, migration hint shows new `#prelude(...)` syntax.
+
+module plan107.old_partial_prelude_inline_error partial_prelude(core)

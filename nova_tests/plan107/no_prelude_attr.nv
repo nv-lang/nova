@@ -1,0 +1,9 @@
+// Plan 107 Ф.7 — `#no_prelude` attribute suppresses auto-import.
+// Positive: module compiles, no prelude symbols visible (assert from runtime).
+
+#no_prelude
+module plan107.no_prelude_attr
+
+fn entry() -> int {
+    42
+}

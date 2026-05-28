@@ -1,15 +1,19 @@
 // EXPECT_COMPILE_ERROR panic
 //
-// Plan 62.F Part 3 — `partial_prelude(core)` negative test.
+// Plan 62.F Part 3 — `#prelude(core)` negative test.
 //
-// Verifies что `partial_prelude(core)` НЕ auto-import'ит runtime
+// Verifies что `#prelude(core)` НЕ auto-import'ит runtime
 // functions из `std.prelude.runtime` (panic / exit / assert / debug_assert).
 // Использование `panic("...")` без explicit import должно fail.
 //
 // Expected error: `panic` — unknown identifier (поскольку core sub-module
 // не re-export'ит panic).
+//
+// D174 (Plan 107): syntax migrated from inline `module X partial_prelude(core)`
+// to `#prelude(core)` before `module` declaration.
 
-module plan62.partial_prelude_no_panic_in_core partial_prelude(core)
+#prelude(core)
+module plan62.partial_prelude_no_panic_in_core
 
 fn explode() -> int {
     panic("boom")

@@ -5,7 +5,7 @@
 // этот файл, чтобы:
 //   1) `nova doc` показывал canonical API в одном месте (AI-readable),
 //   2) пользователь мог shadow'ить эти types в своём коде с warning'ом,
-//   3) splittable prelude работал (`partial_prelude(core)` opt-in
+//   3) splittable prelude работал (`#prelude(core)` opt-in
 //      только core без runtime/io).
 //
 // Архитектурные правила (Plan 62 §«Стратификация»):

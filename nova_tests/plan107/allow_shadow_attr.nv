@@ -1,0 +1,12 @@
+// Plan 107 Ф.7 — `#allow(shadow)` suppresses W_PRELUDE_SHADOW.
+// Positive: user-declaration shadows prelude const, no warning emitted.
+
+#allow(shadow)
+module plan107.allow_shadow_attr
+
+// PRELUDE_VERSION shadows prelude const — W_PRELUDE_SHADOW suppressed.
+const PRELUDE_VERSION int = 42
+
+test "allow(shadow) — user declaration wins, no warning" {
+    assert(PRELUDE_VERSION == 42)
+}

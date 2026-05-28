@@ -1,14 +1,17 @@
-// EXPECT_COMPILE_ERROR D133
+// Plan 100.5 (D163): `external type X consume` is now ALLOWED.
 //
-// Plan 100.1 / D126 / D133: `external type X consume` — parse error.
-// external types are opaque — нет body, нет fields.
-// must-consume требует field-aware flow analysis — несовместимо с opaque.
+// Previously rejected in Plan 100.1 because opaque types were incompatible
+// with field-aware consume flow analysis. Plan 100.5 (D163) introduces
+// opaque consume types as an FFI mechanism — the `_nv_handle` field is
+// synthetic, and consume tracking is done at the type level (not field level).
+//
+// This test verifies that the parser and type-checker accept the declaration.
 
 module parser.parser_err_external_consume
 
-// ❌ external + consume несовместимы.
+// ✅ external + consume is valid under Plan 100.5 (D163).
 external type OpaqueHandle consume
 
-test "external consume — parse error" {
-    // Этот код не должен дойти до type-check.
+test "external consume — now allowed under D163" {
+    // Declaration accepted — no parse or type-check error.
 }

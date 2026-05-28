@@ -100,29 +100,36 @@ pub fn check_module(module: &Module) -> Result<ModuleEnv, Vec<Diagnostic>> {
         for item in entry_items {
             if let Item::Fn(fd) = item {
                 if fd.is_external {
-                    errors.push(Diagnostic::new(
-                        format!(
-                            "`external fn` is only allowed in `std.runtime.*` modules \
-                             (this module is `{}`); for FFI to external C libraries \
-                             a future `extern(\"C\")` keyword will be added (Q-ffi)",
-                            module.name.join(".")
-                        ),
-                        fd.span,
-                    ));
+                    // Plan 100.5 (D163): `external fn` with `needs <Cap>` clause is
+                    // allowed in any module — this is the D163 FFI contract mechanism
+                    // (replaces the future `extern("C")` keyword for consume-carrying
+                    // FFI functions). Without `needs_caps`, the D82 restriction still
+                    // applies (stdlib-only internal external fn).
+                    if fd.needs_caps.is_empty() {
+                        errors.push(Diagnostic::new(
+                            format!(
+                                "`external fn` is only allowed in `std.runtime.*` modules \
+                                 (this module is `{}`); for FFI to external C libraries \
+                                 use `external fn` with a `needs <Cap>` clause (D163), \
+                                 e.g. `needs Fs` for filesystem access",
+                                module.name.join(".")
+                            ),
+                            fd.span,
+                        ));
+                    }
                 }
             }
-            // Plan 62.D.bis (D126): `external type X` — same whitelist as
-            // `external fn` per D82. Only `std.runtime.*` / `std.prelude.*`
-            // modules can declare opaque types (runtime backing —
-            // compiler-versioned artefact, not user-extensible).
+            // Plan 62.D.bis (D126) + Plan 100.5 (D163): `external type X` with
+            // `consume` is allowed in any module (D163 FFI opaque consume-types).
+            // `external type X` without `consume` (plain opaque) remains stdlib-only
+            // (per D82 — opaque types backed by `nova_rt/*.h` are internal).
             if let Item::Type(td) = item {
-                if matches!(td.kind, TypeDeclKind::Opaque) {
+                if matches!(td.kind, TypeDeclKind::Opaque) && !td.consume {
                     errors.push(Diagnostic::new(
                         format!(
                             "`external type` is only allowed in `std.runtime.*` / `std.prelude.*` modules \
-                             (this module is `{}`); for FFI to external C libraries \
-                             a future `extern(\"C\") type` keyword will be added (Q-ffi). \
-                             See D126 (spec/decisions/03-syntax.md).",
+                             (this module is `{}`); for FFI opaque resource handles use \
+                             `external type X consume` (D163/D126), e.g. `external type File consume`.",
                             module.name.join(".")
                         ),
                         td.span,
@@ -415,6 +422,13 @@ pub fn check_module(module: &Module) -> Result<ModuleEnv, Vec<Diagnostic>> {
     // Plan 73 (D131): consume-qualifier flow-sensitive check. Use-after-
     // consume и maybe-consumed (consume на части веток) → compile error.
     check_consume(module, &mut errors);
+
+    // Plan 100.5 (D163): external fn returning / consuming consume-typed
+    // values MUST have a `needs <Cap>` clause. Missing clause → error
+    // D163-missing-cap. This enforces that FFI consume-obligations are
+    // explicitly capability-gated (no accidental resource leaks through
+    // uncapable contexts).
+    check_external_fn_needs_caps(module, &mut errors);
 
     // Plan 33.3 Р¤.9 (D24): validate axiom-bodies РІ effect-Р±Р»РѕРєР°С….
     // РљР°Р¶РґС‹Р№ axiom РґРѕР»Р¶РµРЅ СЃСЃС‹Р»Р°С‚СЊСЃСЏ С‚РѕР»СЊРєРѕ РЅР° binders + pure_view-ops
@@ -6929,6 +6943,48 @@ fn stmt_diverges(s: &Stmt) -> bool {
     }
 }
 
+/// Plan 100.7 (D165): Returns true if the block (or any nested block) contains
+/// at least one explicit `throw` statement. Used by `check_d162_coverage` to
+/// distinguish “consumed at exit via explicit error-branch handling” (D162 ok)
+/// from “consumed at exit in a function with no explicit throw paths” (D162 lint).
+fn block_has_throw(b: &Block) -> bool {
+    for s in &b.stmts {
+        if stmt_has_throw(s) { return true; }
+    }
+    if let Some(t) = &b.trailing {
+        if expr_has_throw(t) { return true; }
+    }
+    false
+}
+
+fn stmt_has_throw(s: &Stmt) -> bool {
+    match s {
+        Stmt::Throw { .. } => true,
+        Stmt::Expr(e) => expr_has_throw(e),
+        Stmt::Let(d) => expr_has_throw(&d.value),
+        Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. } | Stmt::OkDefer { body, .. }
+        | Stmt::DeferWithResult { body, .. }
+            => expr_has_throw(body),
+        _ => false,
+    }
+}
+
+fn expr_has_throw(e: &crate::ast::Expr) -> bool {
+    use crate::ast::ExprKind;
+    match &e.kind {
+        ExprKind::Throw(_) => true,
+        ExprKind::Block(b) => block_has_throw(b),
+        ExprKind::If { then, else_, .. } => {
+            block_has_throw(then) || else_.as_ref().map(|el| match el {
+                crate::ast::ElseBranch::Block(b) => block_has_throw(b),
+                crate::ast::ElseBranch::If(e) => expr_has_throw(e),
+            }).unwrap_or(false)
+        }
+        ExprKind::With { body, .. } => block_has_throw(body),
+        _ => false,
+    }
+}
+
 /// Walk РјРѕРґСѓР»СЏ: РґР»СЏ РєР°Р¶РґРѕРіРѕ defer/errdefer statement РІ bodies С„СѓРЅРєС†РёР№
 /// Рё С‚РµСЃС‚Р°С… вЂ” РїСЂРѕРІРµСЂРёС‚СЊ body constraints.
 // ─────────────────────────────────────────────────────────────────────
@@ -7066,6 +7122,58 @@ impl LinearityRegistry {
 /// - D133-empty-consume: `type X consume {}` без consume-полей и без
 ///   consume-методов.
 /// - D133-marker-on-non-consume: `consume f int` (non-consume type).
+/// Plan 100.5 (D163): verify that `external fn` declarations which return or
+/// consume-param a consume-typed value have a `needs <Cap>` clause.
+/// Missing clause → error [D163-missing-cap].
+///
+/// Rationale: FFI functions touching OS resources (file descriptors, mutexes,
+/// sockets) implicitly require a capability gate. Without `needs Fs` / `needs Sys`
+/// the FFI consume-obligation escapes into capabilityless contexts.
+///
+/// Only applied in non-stdlib modules (stdlib external fn pre-dates D163 and
+/// follows the D82 whitelist path — they don't have `needs_caps` but are
+/// stdlib-blessed).
+fn check_external_fn_needs_caps(module: &Module, errors: &mut Vec<Diagnostic>) {
+    let is_runtime = crate::manifest::is_stdlib_runtime_module(&module.name)
+        || crate::manifest::is_prelude_self_module(&module.name);
+    if is_runtime {
+        return; // stdlib external fn exempt from D163 needs-cap requirement.
+    }
+    let lin_reg = LinearityRegistry::build(module);
+    for item in &module.items {
+        let Item::Fn(fd) = item else { continue; };
+        if !fd.is_external { continue; }
+        // Only check external fn that pass the D82 whitelist extension (have needs_caps).
+        // External fn WITHOUT needs_caps already get a D82 error (not D163 error).
+        if !fd.needs_caps.is_empty() { continue; }
+        // External fn without needs_caps: check if it carries consume-obligations.
+        // If the return type is consume-typed → D163-missing-cap.
+        let returns_consume = fd.return_type.as_ref()
+            .map(|t| lin_reg.type_is_consume(t, module))
+            .unwrap_or(false);
+        // If any param is consume-typed (not just `consume` keyword — check type too).
+        // Note: `consume` keyword on param already implies ownership transfer;
+        // for external fn, the `consume` keyword on param IS the contract.
+        // The D163-missing-cap error only fires when the fn has a consume-typed
+        // return OR consume-typed param, indicating OS resource involvement.
+        let has_consume_param = fd.params.iter().any(|p|
+            p.consume || lin_reg.type_is_consume(&p.ty, module));
+        if returns_consume || has_consume_param {
+            errors.push(Diagnostic::new(
+                format!(
+                    "[D163-missing-cap] `external fn {}` returns or consumes a \
+                     consume-typed value but has no `needs <Cap>` clause. \
+                     Add `needs Fs` (filesystem), `needs Sys` (system), `needs Net` \
+                     (network), or another appropriate capability to declare the \
+                     resource contract. See D163 (spec/decisions/02-types.md).",
+                    fd.name
+                ),
+                fd.span,
+            ));
+        }
+    }
+}
+
 fn check_linearity_markers(
     module: &Module,
     reg: &LinearityRegistry,
@@ -7162,6 +7270,14 @@ struct ConsumeRegistry {
     /// гарантированно возвращающие сам receiver. `let x = recv.method()`
     /// для такого метода → `x` алиас `recv`.
     recv_returning: HashSet<(String, String)>,
+    /// Plan 100.3 (D157): free-fn name → indices of view-params
+    /// (non-consume params of consume types). Used to detect
+    /// D133-consume-rvalue-in-view: rvalue passed to view-param position.
+    fn_view_params: HashMap<String, Vec<usize>>,
+    /// Plan 103.9 (D174): `(receiver_type, method_name)` → return-type name
+    /// (single-segment Named). Used for var-type inference of method calls:
+    /// `consume g = mu.lock()` → g has type `MutexGuard`.
+    method_return_types: HashMap<(String, String), String>,
 }
 
 impl ConsumeRegistry {
@@ -7171,6 +7287,19 @@ impl ConsumeRegistry {
         let mut method_params: HashMap<(String, String), Vec<usize>> = HashMap::new();
         let mut fn_return_types: HashMap<String, String> = HashMap::new();
         let mut recv_returning: HashSet<(String, String)> = HashSet::new();
+        let mut fn_view_params: HashMap<String, Vec<usize>> = HashMap::new();
+        // Plan 103.9 (D174): method return-type map for var-type inference.
+        let mut method_return_types: HashMap<(String, String), String> = HashMap::new();
+
+        // Plan 100.3 (D157): collect consume-types for view-param detection.
+        // Mirrors LinearityRegistry::build consume_types collection.
+        let consume_type_names: HashSet<String> = module.items.iter()
+            .filter_map(|it| {
+                if let Item::Type(td) = it {
+                    if td.consume { Some(td.name.clone()) } else { None }
+                } else { None }
+            })
+            .collect();
 
         // 1. Runtime-stdlib consume-методы (`StringBuilder.into` и т.п.).
         //    Single source of truth — runtime_registry.rs (`is_consume`).
@@ -7202,6 +7331,16 @@ impl ConsumeRegistry {
                         if r.consume {
                             methods.insert((r.type_name.clone(), fd.name.clone()));
                         }
+                        // Plan 103.9 (D174): track method return-type for inference.
+                        // `fn Mutex mut @lock() -> MutexGuard consume` → ("Mutex","lock") → "MutexGuard".
+                        if let Some(TypeRef::Named { path, .. }) = &fd.return_type {
+                            if path.len() == 1 {
+                                method_return_types.insert(
+                                    (r.type_name.clone(), fd.name.clone()),
+                                    path[0].clone(),
+                                );
+                            }
+                        }
                         // Plan 77 (D132): `-> @` fluent-метод.
                         if fd.returns_receiver {
                             recv_returning
@@ -7223,12 +7362,62 @@ impl ConsumeRegistry {
                                     .insert(fd.name.clone(), path[0].clone());
                             }
                         }
+                        // Plan 100.3 (D157): collect view-params — non-consume params
+                        // of consume types. Used for D133-consume-rvalue-in-view check.
+                        let view_idx: Vec<usize> = fd.params.iter().enumerate()
+                            .filter(|(_, p)| {
+                                !p.consume && matches!(&p.ty,
+                                    TypeRef::Named { path, .. }
+                                    if path.len() == 1
+                                        && consume_type_names.contains(&path[0]))
+                            })
+                            .map(|(i, _)| i)
+                            .collect();
+                        if !view_idx.is_empty() {
+                            fn_view_params.insert(fd.name.clone(), view_idx);
+                        }
                     }
                 }
             }
         }
+
+        // 3. Plan 103.9 (D174): stdlib external modules (sync.nv etc.) that
+        //    define consume guard types are not always imported into user
+        //    modules (they come via codegen ExternalRegistry, not prelude).
+        //    Parse them here so that consume methods (MutexGuard.unlock etc.)
+        //    and method return types (Mutex.lock → MutexGuard) are visible
+        //    to the checker regardless of explicit import.
+        //
+        //    This mirrors ExternalRegistry::load_builtins() but for the
+        //    consume-analysis side only.
+        let external_sources: &[&str] = &[
+            crate::codegen::external_registry::ExternalRegistry::SYNC_SRC,
+        ];
+        for src in external_sources {
+            if let Ok(ext_module) = crate::parser::parse(src) {
+                for item in &ext_module.items {
+                    if let Item::Fn(fd) = item {
+                        if let Some(r) = &fd.receiver {
+                            if r.consume {
+                                methods.insert((r.type_name.clone(), fd.name.clone()));
+                            }
+                            if let Some(TypeRef::Named { path, .. }) = &fd.return_type {
+                                if path.len() == 1 {
+                                    method_return_types.insert(
+                                        (r.type_name.clone(), fd.name.clone()),
+                                        path[0].clone(),
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         ConsumeRegistry {
             methods, fn_params, method_params, fn_return_types, recv_returning,
+            fn_view_params, method_return_types,
         }
     }
 }
@@ -7310,6 +7499,17 @@ struct ConsumeCtx<'a> {
     /// Внутри тела функции, параметры с типами из этого набора
     /// трактуются как consume-obligations (strict-mode).
     consume_bound_generics: HashSet<String>,
+    /// Plan 100.3 (D157): view-params — non-consume params of consume types.
+    /// Calling consume-methods on view-params → D157-consume-via-view error.
+    /// Returning a view-param → D157-view-escape-return error.
+    view_params: HashSet<String>,
+    /// Plan 100.3 (D157): consume-closures — closures that consume outer vars.
+    /// closure_var_name → list of outer vars it consumes when invoked.
+    /// When closure is invoked: mark those outer vars Consumed + closure Consumed.
+    consume_closures: HashMap<String, Vec<String>>,
+    /// Plan 103.9 (D174): тип receiver'а текущего метода. Используется для
+    /// инференса типа при `consume g = self.method()` — `self` это SelfAccess.
+    self_type: Option<String>,
 }
 
 impl<'a> ConsumeCtx<'a> {
@@ -7324,6 +7524,9 @@ impl<'a> ConsumeCtx<'a> {
             all_declared_consume: HashSet::new(),
             field_states: HashMap::new(),
             consume_bound_generics: HashSet::new(),
+            view_params: HashSet::new(),
+            consume_closures: HashMap::new(),
+            self_type: None,
         }
     }
 
@@ -7453,6 +7656,33 @@ impl<'a> ConsumeCtx<'a> {
                         return Some(rt.clone());
                     }
                 }
+                // Plan 103.9 (D174): метод с известным return-типом.
+                // `consume g = mu.lock()` → ("Mutex","lock") → "MutexGuard".
+                // Handles: `recv.method()` (Ident), `self.method()` (Ident "self"),
+                // `@method()` desugared to `SelfAccess.method()`.
+                if let ExprKind::Member { obj, name: method } = &func.kind {
+                    let recv_ty: Option<String> = match &obj.kind {
+                        ExprKind::Ident(recv) if recv == "self" => {
+                            // Nova `self.lock()` — receiver is implicit self.
+                            self.self_type.clone()
+                        }
+                        ExprKind::Ident(recv) => {
+                            let canon = self.canonical(recv);
+                            self.var_types.get(&canon)
+                                .or_else(|| self.var_types.get(recv.as_str()))
+                                .cloned()
+                        }
+                        ExprKind::SelfAccess => self.self_type.clone(),
+                        _ => None,
+                    };
+                    if let Some(rty) = recv_ty {
+                        if let Some(ret) = self.reg.method_return_types
+                            .get(&(rty, method.clone()))
+                        {
+                            return Some(ret.clone());
+                        }
+                    }
+                }
                 None
             }
             // Алиас `let y = x` — переносим известный тип `x`.
@@ -7496,6 +7726,57 @@ impl<'a> ConsumeCtx<'a> {
         self.consume_obligations.insert(name.to_string());
         // Plan 100.8 (D166): also track in all_declared_consume (never cleared).
         self.all_declared_consume.insert(name.to_string());
+    }
+
+    // ── Plan 100.3 (D157): view-param and consume-closure helpers ─────────
+
+    /// Зарегистрировать view-param (non-consume param of consume type).
+    /// view-params — Live, но запрещено вызывать consume-методы или return.
+    fn declare_view_param(&mut self, name: &str, ty: Option<String>) {
+        if name == "_" { return; }
+        self.declare(name, ty);
+        self.view_params.insert(name.to_string());
+    }
+
+    /// Проверить, является ли переменная view-param (D157).
+    fn is_view_param(&self, name: &str) -> bool {
+        let canon = self.canonical(name);
+        self.view_params.contains(&canon) || self.view_params.contains(name)
+    }
+
+    /// Зарегистрировать consume-closure binding (FnOnce-equivalent).
+    /// closure_name — имя let-binding'а; captured — список outer vars
+    /// которые closure потребляет при invoke.
+    fn declare_consume_closure(&mut self, closure_name: &str, captured: Vec<String>) {
+        if closure_name == "_" { return; }
+        // Consume-closure само является consume-obligation: если не invoked
+        // до scope-exit → D133-not-consumed error.
+        self.declare_consume_binding(closure_name, Some("__consume_closure__".to_string()));
+        self.consume_closures.insert(closure_name.to_string(), captured);
+    }
+
+    /// Проверить, является ли переменная consume-closure (D157).
+    fn is_consume_closure(&self, name: &str) -> bool {
+        let canon = self.canonical(name);
+        self.consume_closures.contains_key(&canon)
+            || self.consume_closures.contains_key(name)
+    }
+
+    /// Вызвать consume-closure: пометить closure Consumed + все captured outer vars.
+    fn invoke_consume_closure(&mut self, name: &str, span: Span) {
+        let captured = {
+            let canon = self.canonical(name);
+            self.consume_closures.get(&canon)
+                .or_else(|| self.consume_closures.get(name))
+                .cloned()
+                .unwrap_or_default()
+        };
+        // Mark captured outer vars as Consumed (closure consumed them).
+        for var in &captured {
+            self.mark_consumed(var, span);
+        }
+        // Mark closure itself as Consumed (FnOnce).
+        self.mark_consumed(name, span);
     }
 
     /// Проверить, что все consume-obligations Consumed на текущем exit.
@@ -7815,12 +8096,29 @@ fn check_consume(module: &Module, errors: &mut Vec<Diagnostic>) {
                             }).cloned()
                         });
                         ctx.declare_consume_binding(&p.name, pty);
+                    } else if p.consume {
+                        // Explicit `consume` param: consume-obligation.
+                        ctx.declare_consume_binding(&p.name, pty);
                     } else {
-                        ctx.declare(&p.name, pty);
+                        // Plan 100.3 (D157): non-consume param of consume type
+                        // → view-param. Can read fields, call non-consume methods,
+                        // pass to other view-params. Cannot call consume-methods,
+                        // cannot return.
+                        let is_consume_type = pty.as_ref()
+                            .map(|t| lin_reg.consume_types.contains(t))
+                            .unwrap_or(false);
+                        if is_consume_type {
+                            ctx.declare_view_param(&p.name, pty);
+                        } else {
+                            ctx.declare(&p.name, pty);
+                        }
                     }
                 }
                 // Plan 100.1 (D133 / D5): инициализация consume-полей receiver'а.
                 if let Some(recv) = &f.receiver {
+                    // Plan 103.9 (D174): track self-type for method call inference.
+                    // `consume g = self.lock()` needs to know `self` is `Mutex`.
+                    ctx.self_type = Some(recv.type_name.clone());
                     for it in &module.items {
                         if let Item::Type(td) = it {
                             if td.name == recv.type_name {
@@ -7896,10 +8194,13 @@ fn fn_is_failable(effects: &[TypeRef]) -> bool {
     })
 }
 
-/// Recursively scan a block for `errdefer` / `okdefer` stmts.
+/// Recursively scan a block for `errdefer` / `okdefer` / `defer` stmts.
 /// Returns (has_errdefer, has_okdefer) — both are coarse: presence of ANY
 /// errdefer/okdefer in the direct stmts (non-nested) is sufficient for
 /// the D162 simplified check.
+///
+/// Plan 100.7 (D165): plain `defer` runs on ALL exits (including error path),
+/// so it counts as errdefer-coverage for D162-uncovered-error-path purposes.
 fn scan_defer_coverage(b: &Block) -> (bool, bool) {
     let mut has_errdefer = false;
     let mut has_okdefer = false;
@@ -7909,6 +8210,12 @@ fn scan_defer_coverage(b: &Block) -> (bool, bool) {
                 has_errdefer = true;
             }
             Stmt::OkDefer { .. } => {
+                has_okdefer = true;
+            }
+            // Plain `defer` runs on ALL exits (success + error + cancel).
+            // Counts as both errdefer and okdefer coverage for D162.
+            Stmt::Defer { .. } => {
+                has_errdefer = true;
                 has_okdefer = true;
             }
             _ => {}
@@ -7944,9 +8251,24 @@ fn check_d162_coverage(
     let (has_errdefer, has_okdefer) = scan_defer_coverage(block);
 
     // D162-uncovered-error-path: failable function + consume binding + no errdefer.
+    // Plan 100.7 (D165): body_has_throw tells us whether there are explicit throw
+    // statements in the function body. Used below to distinguish "consumed at exit
+    // via explicit error-branch handling" from "consumed at exit with no error paths."
+    let body_throws = block_has_throw(block);
     if !has_errdefer {
         for name in &ctx.all_declared_consume {
             let canon = ctx.canonical(name);
+            // Plan 100.7 (D165): if the consume variable is Consumed at fn-exit
+            // AND the body contains at least one explicit `throw` statement,
+            // the coder has explicitly handled the error path (e.g. tx.rollback()
+            // before throw in a diverging branch). Skip D162 in this case.
+            // If there are NO explicit throws but the variable is Consumed at exit,
+            // the function is still Fail-annotated — D162 fires as a lint (external
+            // handler injections can interrupt the function at any Fail-effect site).
+            let state = ctx.states.get(&canon).or_else(|| ctx.states.get(name.as_str()));
+            if matches!(state, Some(VarState::Consumed(_))) && body_throws {
+                continue;
+            }
             let ty = ctx.var_types.get(name)
                 .or_else(|| ctx.var_types.get(&canon))
                 .cloned()
@@ -8141,12 +8463,30 @@ fn consume_walk_stmt(ctx: &mut ConsumeCtx, s: &Stmt, errors: &mut Vec<Diagnostic
                 ctx.declare_alias(&names[0], &canon, ty);
             } else {
                 let ty = ctx.infer_let_type(decl);
+                // Plan 100.3 (D157): detect consume-closures.
+                // If the RHS is a closure that calls consume-methods on outer
+                // consume-obligation vars, it becomes a consume-closure (FnOnce).
+                let closure_body_for_scan: Option<&Expr> = match &decl.value.kind {
+                    ExprKind::ClosureLight { body: ClosureBody::Expr(ex), .. } => Some(ex),
+                    ExprKind::Lambda { body, .. } => Some(body),
+                    _ => None,
+                };
+                let consume_closure_captured: Option<Vec<String>> =
+                    if names.len() == 1 && !decl.consume {
+                        closure_body_for_scan.map(|body| {
+                            d157_scan_closure_captures(body, &ctx.consume_obligations, ctx)
+                        }).filter(|caps| !caps.is_empty())
+                    } else { None };
+
                 for n in &names {
                     // Тип привязываем только к одиночному ident-pattern'у.
                     let t = if names.len() == 1 { ty.clone() } else { None };
                     // Plan 100.1 (D133 / D9): `consume tx = ...` binding.
                     if decl.consume {
                         ctx.declare_consume_binding(n, t);
+                    } else if let Some(ref captured) = consume_closure_captured {
+                        // Plan 100.3 (D157): consume-closure — declares as consume-obligation.
+                        ctx.declare_consume_closure(n, captured.clone());
                     } else {
                         ctx.declare(n, t);
                     }
@@ -8203,10 +8543,22 @@ fn consume_walk_stmt(ctx: &mut ConsumeCtx, s: &Stmt, errors: &mut Vec<Diagnostic
         Stmt::Return { value, span } => {
             if let Some(v) = value {
                 consume_walk_expr(ctx, v, errors);
-                // Plan 100.1 (D133 / D9): `return tx` — обязательство
-                // передаётся caller'у. Пометить возвращённый consume-var как
-                // Consumed (obligation satisfied by transfer).
                 if let ExprKind::Ident(name) = &v.kind {
+                    // Plan 100.3 (D157): view-param cannot escape via return.
+                    if ctx.is_view_param(name) {
+                        errors.push(Diagnostic::new(
+                            format!(
+                                "[D157-view-escape-return] `{}` — view-param (read-only borrow): \
+                                 нельзя вернуть из функции. View-borrow не может outlive scope \
+                                 source'а. Используйте `consume` qualifier на параметре для \
+                                 transfer ownership.",
+                                name),
+                            *span,
+                        ));
+                    }
+                    // Plan 100.1 (D133 / D9): `return tx` — обязательство
+                    // передаётся caller'у. Пометить возвращённый consume-var как
+                    // Consumed (obligation satisfied by transfer).
                     if ctx.consume_obligations.contains(name.as_str()) {
                         ctx.mark_consumed(name, *span);
                     }
@@ -8345,6 +8697,85 @@ fn d162_collect_covers_stmt(s: &Stmt, pre_obligations: &HashSet<String>,
         Stmt::Let(decl) => d162_collect_covers(&decl.value, pre_obligations, ctx, out),
         _ => {}
     }
+}
+
+/// Plan 100.3 (D157): Scan closure body for consume-method calls on outer
+/// vars (consume-closure detection). Returns names of outer vars that
+/// the closure body would consume when invoked.
+///
+/// Conservative (sound): only detects direct `recv.consume_method()` patterns
+/// where `recv` is a known outer consume-obligation. Does NOT detect
+/// indirect consumption through nested calls.
+fn d157_scan_closure_captures(
+    body: &Expr,
+    outer_obligations: &HashSet<String>,
+    ctx: &ConsumeCtx,
+) -> Vec<String> {
+    let mut captured = Vec::new();
+    d157_scan_expr(body, outer_obligations, ctx, &mut captured);
+    captured.sort();
+    captured.dedup();
+    captured
+}
+
+fn d157_scan_expr(e: &Expr, outer: &HashSet<String>, ctx: &ConsumeCtx, out: &mut Vec<String>) {
+    match &e.kind {
+        ExprKind::Call { func, args, trailing } => {
+            if let ExprKind::Member { obj, name: method } = &func.kind {
+                if let ExprKind::Ident(recv) = &obj.kind {
+                    let canon = ctx.canonical(recv);
+                    let in_outer = outer.contains(&canon) || outer.contains(recv.as_str());
+                    if in_outer {
+                        // Check if this is a consume-method call.
+                        let type_name = ctx.var_types.get(&canon)
+                            .or_else(|| ctx.var_types.get(recv.as_str()))
+                            .cloned();
+                        if let Some(tn) = type_name {
+                            if ctx.reg.methods.contains(&(tn, method.clone())) {
+                                out.push(recv.clone());
+                            }
+                        }
+                    }
+                }
+            }
+            d157_scan_expr(func, outer, ctx, out);
+            for a in args { d157_scan_expr(a.expr(), outer, ctx, out); }
+            if let Some(t) = trailing {
+                match t {
+                    Trailing::Block(b) => d157_scan_block(b, outer, ctx, out),
+                    _ => {}
+                }
+            }
+        }
+        ExprKind::Block(b) => d157_scan_block(b, outer, ctx, out),
+        ExprKind::If { cond, then, else_ } => {
+            d157_scan_expr(cond, outer, ctx, out);
+            d157_scan_block(then, outer, ctx, out);
+            match else_ {
+                Some(ElseBranch::Block(b)) => d157_scan_block(b, outer, ctx, out),
+                Some(ElseBranch::If(e2)) => d157_scan_expr(e2, outer, ctx, out),
+                None => {}
+            }
+        }
+        ExprKind::Member { obj, .. } => d157_scan_expr(obj, outer, ctx, out),
+        ExprKind::Binary { left, right, .. } => {
+            d157_scan_expr(left, outer, ctx, out);
+            d157_scan_expr(right, outer, ctx, out);
+        }
+        _ => {}
+    }
+}
+
+fn d157_scan_block(b: &Block, outer: &HashSet<String>, ctx: &ConsumeCtx, out: &mut Vec<String>) {
+    for s in &b.stmts {
+        match s {
+            Stmt::Expr(e) | Stmt::Throw { value: e, .. } => d157_scan_expr(e, outer, ctx, out),
+            Stmt::Return { value: Some(v), .. } => d157_scan_expr(v, outer, ctx, out),
+            Stmt::Let(decl) => d157_scan_expr(&decl.value, outer, ctx, out),
+            _ => {}
+        }
+    }
+    if let Some(t) = &b.trailing { d157_scan_expr(t, outer, ctx, out); }
 }
 
 /// Walk тела цикла (for/while/loop) — пессимистично: переменная,
@@ -8496,6 +8927,17 @@ fn consume_walk_expr(ctx: &mut ConsumeCtx, e: &Expr, errors: &mut Vec<Diagnostic
                         for a in args { consume_walk_expr(ctx, a.expr(), errors); }
                         if let Some(t) = trailing { consume_walk_trailing(ctx, t, errors); }
                         let recv = recv.clone();
+                        // Plan 100.3 (D157): view-param cannot call consume-methods.
+                        if ctx.is_view_param(&recv) && ctx.is_consume_method(&recv, method) {
+                            errors.push(Diagnostic::new(
+                                format!(
+                                    "[D157-consume-via-view] `{}` — view-param (read-only borrow): \
+                                     нельзя вызывать consume-метод `{}`. Используйте `consume` \
+                                     qualifier на параметре функции для ownership transfer.",
+                                    recv, method),
+                                e.span,
+                            ));
+                        }
                         // consume-метод → receiver (весь alias-класс)
                         // потребляется.
                         if ctx.is_consume_method(&recv, method) {
@@ -8602,42 +9044,73 @@ fn consume_walk_expr(ctx: &mut ConsumeCtx, e: &Expr, errors: &mut Vec<Diagnostic
                 }
                 // Free-fn call: f(args).
                 ExprKind::Ident(fname) => {
-                    // Plan 100.1 (D133 / D2): проверить передачу consume-var
-                    // в non-consume param. consume_obligations var в позиции
-                    // НЕ-consume-param → D133-move-to-non-consume.
+                    // Plan 100.3 (D157): view-borrow semantics for free-fn calls.
+                    // consume_obligations var passed to NON-consume param = view-borrow → OK.
+                    // Rvalue (call returning consume-type) passed to view-param → D133-consume-rvalue-in-view.
                     let consume_idxs = ctx.reg.fn_params.get(fname.as_str())
                         .cloned()
                         .unwrap_or_default();
+                    let view_idxs = ctx.reg.fn_view_params.get(fname.as_str())
+                        .cloned()
+                        .unwrap_or_default();
                     for (i, a) in args.iter().enumerate() {
-                        if let ExprKind::Ident(arg_name) = &a.expr().kind {
-                            if ctx.consume_obligations.contains(arg_name.as_str()) {
-                                let is_consume_param = consume_idxs.contains(&i);
-                                if !is_consume_param {
-                                    let ty = ctx.var_types.get(arg_name).cloned()
-                                        .unwrap_or_default();
-                                    errors.push(Diagnostic::new(
-                                        format!(
-                                            "[D133-move-to-non-consume] передача \
-                                             consume-переменной `{}` (тип `{}`) в \
-                                             non-consume параметр функции `{}`. \
-                                             Добавьте `consume` qualifier на параметр \
-                                             функции, либо вызовите consume-метод \
-                                             (`{}.{}()`) до передачи.",
-                                            arg_name, ty, fname,
-                                            arg_name,
-                                            ctx.lin_reg.consume_methods_for(&ty)
-                                                .first().cloned()
-                                                .unwrap_or_else(|| "<method>".to_string())),
-                                        a.expr().span,
-                                    ));
+                        let is_consume_param = consume_idxs.contains(&i);
+                        let is_view_param = view_idxs.contains(&i) || (!is_consume_param);
+                        // D133-consume-rvalue-in-view: rvalue of consume-type → view-param.
+                        // Rvalue = call returning consume-type (no binding → no tracking slot).
+                        if is_view_param && !is_consume_param {
+                            if let ExprKind::Call { func: inner_func, .. } = &a.expr().kind {
+                                let ret_type: Option<String> = match &inner_func.kind {
+                                    ExprKind::Ident(inner_fname) =>
+                                        ctx.reg.fn_return_types.get(inner_fname.as_str()).cloned(),
+                                    _ => None,
+                                };
+                                if let Some(rt) = ret_type {
+                                    if ctx.lin_reg.consume_types.contains(&rt) {
+                                        errors.push(Diagnostic::new(
+                                            format!(
+                                                "[D133-consume-rvalue-in-view] consume-rvalue (тип `{}`) \
+                                                 передан в view-param функции `{}`. Привяжите через \
+                                                 `consume name = …`, затем используйте `name`.",
+                                                rt, fname),
+                                            a.expr().span,
+                                        ));
+                                    }
                                 }
                             }
+                        }
+                    }
+                    // Plan 100.3 (D157): consume-closure invocation.
+                    // If calling a consume-closure (FnOnce-like), first check
+                    // use-after-consume, then mark captured vars + closure Consumed.
+                    let is_consume_closure_call = ctx.is_consume_closure(fname);
+                    if is_consume_closure_call {
+                        // Check use-after-consume on closure (D157 FnOnce semantics).
+                        let canon = ctx.canonical(fname);
+                        if let Some(VarState::Consumed(at)) = ctx.states.get(&canon)
+                            .or_else(|| ctx.states.get(fname.as_str()))
+                        {
+                            let at = *at;
+                            errors.push(Diagnostic::new(
+                                format!(
+                                    "[D157-consume-closure-double-invoke] consume-closure `{}` \
+                                     уже была вызвана (FnOnce-эквивалент): повторный вызов \
+                                     невозможен. Consume-closure можно вызвать ровно один раз.",
+                                    fname),
+                                e.span,
+                            ).with_note_at("closure вызвана (и потреблена) здесь".to_string(), at));
+                        } else {
+                            ctx.use_var(fname, e.span, errors);
                         }
                     }
                     for a in args { consume_walk_expr(ctx, a.expr(), errors); }
                     if let Some(t) = trailing { consume_walk_trailing(ctx, t, errors); }
                     if !consume_idxs.is_empty() {
                         ctx.consume_args(args, &consume_idxs, e.span);
+                    }
+                    if is_consume_closure_call {
+                        // Invoke: mark captured outer vars + closure itself Consumed.
+                        ctx.invoke_consume_closure(fname, e.span);
                     }
                     // Plan 100.1 (D133 / D3): `panic` = exit-point.
                     // Все Live consume-obligations на panic-call → D133.
@@ -8891,15 +9364,39 @@ fn consume_walk_expr(ctx: &mut ConsumeCtx, e: &Expr, errors: &mut Vec<Diagnostic
 }
 
 /// if-then-else branch join (общий для `If`).
+///
+/// Plan 100.7 (D165): divergence-aware join. Если ветка заканчивается
+/// throw/return (diverges), она не достигает точки слияния — её состояние
+/// исключается из join. Это устраняет ложные MaybeConsumed ошибки при паттерне
+/// `if cond { x.consume(); throw err }` где x полностью consumed на diverging
+/// пути и остаётся Live на non-diverging пути.
 fn consume_walk_if(ctx: &mut ConsumeCtx, then: &Block,
                    else_: &Option<ElseBranch>, errors: &mut Vec<Diagnostic>) {
     let saved = ctx.states.clone();
+    let then_diverges = block_diverges(then);
     consume_walk_block(ctx, then, errors);
     let then_states = ctx.states.clone();
     ctx.states = saved.clone();
+    let else_diverges = else_branch_diverges(else_);
     consume_walk_else(ctx, else_, errors);
     let else_states = ctx.states.clone();
-    ctx.states = consume_join(&saved, &then_states, &else_states);
+    // Divergence-aware merge: если ветка diverges — её финальные состояния
+    // не вносятся в join (управление не достигает точки слияния).
+    ctx.states = match (then_diverges, else_diverges) {
+        (true, true) => saved,        // оба пути diverge → после if недостижимо
+        (true, false) => else_states,  // then diverges → только else-состояние
+        (false, true) => then_states,  // else diverges → только then-состояние
+        (false, false) => consume_join(&saved, &then_states, &else_states),
+    };
+}
+
+/// Diverges-check для ElseBranch.
+fn else_branch_diverges(else_: &Option<ElseBranch>) -> bool {
+    match else_ {
+        Some(ElseBranch::Block(b)) => block_diverges(b),
+        Some(ElseBranch::If(e)) => expr_diverges(e),
+        None => false, // нет else → implicit () — не diverges
+    }
 }
 
 fn consume_walk_else(ctx: &mut ConsumeCtx, else_: &Option<ElseBranch>,
