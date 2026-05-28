@@ -862,3 +862,51 @@ export fn StringBuilder mut @plus(s str) -> @ => @append(s)
 - `nova test plan77/` — 7/7 PASS ✅ (4 negative + 3 positive)
 - D132 поправка в `spec/decisions/03-syntax.md` ✅
 - `string_builder.nv @plus` использует `-> @` ✅
+
+## Plan 109 closure — StringBuilder pure Nova consume type (D179) ✅ 2026-05-28
+
+### Мотивация
+
+`StringBuilder` был `external type` с backing Rust String / C runtime.
+Plan 109 (D179) переносит его в чистый Nova consume-тип.
+
+### Реализация
+
+```nova
+type StringBuilder consume { mut buf []u8 }
+```
+
+Все методы теперь Nova-body. Единственный внешний примитив — `buf.push(u8)`.
+UTF-8 encoding реализован через Nova bitwise ops в `@append(c char)`.
+
+### API changes vs pre-109
+
+- `@byte_len()` удалён (дуп `@len()`)
+- `@peek()` удалён (unsound aliasing с realloc)
+- `@into()` → `@to_str()` (consume)
+- `@append_bytes(arr)` → `@append_bytes(readonly arr)`
+- `@char_len()` — новый метод O(n), количество codepoints
+- Конструкторы: `from(s str)`, `from(c char)`, `with_capacity(n int)`
+
+### Codegen bugfixes
+
+**emit_c.rs — lhs_is_nova_ptr guard:**
+`sb + "hello"` без guard попадало в `nova_str_concat`; guard `lhs.starts_with("Nova_") && lhs.ends_with('*')` направляет в `@plus` dispatch.
+
+**types/mod.rs — arity hint в resolve_instance_method:**
+Bug: `fn Buf @push() -> @` (0 params) в method_table при отсутствии `fn []T @push` (builtin, не .nv) становился единственным "push". Вызов `@buf.push(cp as u8)` из string_builder.nv резолвился в Buf::push → "expected 0, got 1" (CODEGEN-FAIL). Fix: передаём `arg_count_hint = args.len()` и фильтруем кандидатов в name-only fallback.
+
+### Тесты
+
+- plan77: 7/7 ✅ (включая `fluent_wrapper_ok` с `sb + "hello"` chain)
+- plan73: 12/12 ✅
+- plan62: 31/36 (+28 vs main 3/36)
+- plan108: 6/6 ✅
+
+### Acceptance criteria
+
+- ✅ `type StringBuilder consume { mut buf []u8 }` в `std/runtime/string_builder.nv`
+- ✅ Все методы Nova-body
+- ✅ `std/prelude/collections.nv` re-exports через `export import`
+- ✅ Commit: aad35ad1b99 (impl) + fda2704e88d (docs)
+- ✅ D179 spec в `spec/decisions/08-runtime.md` (main nova, 6c1432837a9)
