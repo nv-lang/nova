@@ -17709,6 +17709,11 @@ _cp++; \
                             let v = self.emit_expr(arg.expr())?;
                             return Ok(if arg_ty == "nova_str" {
                                 v
+                            } else if arg_ty == "nova_char" {
+                                // D73 auto-derive: str.from(c char) → Nova_str_static_from_char.
+                                // C function always available (string_builder.h); bypasses
+                                // method_overloads lookup so it works even with #no_prelude.
+                                format!("Nova_str_static_from_char({})", v)
                             } else {
                                 format!("nova_int_to_str((nova_int)({}))", v)
                             });
@@ -17978,7 +17983,11 @@ _cp++; \
                         let key = (prim.to_string(), method.clone());
                         if let Some(overloads) = self.method_overloads.get(&key).cloned() {
                             let inst_overloads: Vec<MethodSig> = overloads.into_iter()
-                                .filter(|s| s.is_instance)
+                                // !is_external: skip external fn methods (e.g. str @eq, @len)
+                                // so they fall through to str_method_to_rt with correct C names.
+                                // Only Nova-body methods (e.g. str @parse_int_radix, @pad_left)
+                                // get dispatched here as Nova_str_method_X. (Plan 91 Ф.2.5 D177)
+                                .filter(|s| s.is_instance && !s.is_external)
                                 .collect();
                             if let Some(sig) = inst_overloads.first() {
                                 let obj_c = self.emit_expr(obj)?;
@@ -23793,15 +23802,11 @@ _cp++; \
             "split"       => Some("nova_str_split"),
             "byte_at"     => Some("nova_str_byte_at"),  // Plan 90
             // Plan 91 Ф.2: text MVP methods.
-            // parse_int/parse_int_radix — C-примитивы (byte-level).
-            // pad_left / pad_right / repeat / replace — C-обёртки через StringBuilder.append_repeat
-            // (nova_body в registry описывает Nova-семантику; C-impl в nova_rt.h использует тот же алгоритм).
-            "parse_int"       => Some("nova_str_parse_int"),
-            "parse_int_radix" => Some("nova_str_parse_int_radix"),
-            "pad_left"        => Some("nova_str_pad_left"),
-            "pad_right"       => Some("nova_str_pad_right"),
-            "repeat"          => Some("nova_str_repeat"),
-            "replace"         => Some("nova_str_replace"),
+            // parse_int — C-primitive (decimal only). parse_int_radix / pad_left / pad_right /
+            // repeat / replace — Nova bodies dispatched via Plan 54 Ф.2 (D177, Plan 91 Ф.2.5).
+            // str_method_to_rt no longer handles these five; they fall through to Plan 54 Ф.2
+            // which calls Nova_str_method_X — the Nova body in std/runtime/string.nv.
+            "parse_int" => Some("nova_str_parse_int"),
             _ => None,
         }
     }
