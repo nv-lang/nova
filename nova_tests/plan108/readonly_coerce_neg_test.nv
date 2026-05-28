@@ -1,0 +1,15 @@
+// EXPECT_COMPILE_ERROR E_READONLY_COERCE
+// Plan 108 Ф.2: D176 readonly T → non-readonly T coerce is forbidden.
+
+module plan108.readonly_coerce_neg_test
+
+fn get_readonly() -> readonly []u8 {
+    let arr []u8 = [1, 2, 3]
+    arr  // auto-coerce []u8 → readonly []u8
+}
+
+test "cannot coerce readonly to non-readonly" {
+    let r readonly []u8 = get_readonly()
+    let mutable []u8 = r  // E_READONLY_COERCE
+    assert(mutable[0] == 1)
+}

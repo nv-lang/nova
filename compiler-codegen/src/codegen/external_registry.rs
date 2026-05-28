@@ -418,6 +418,8 @@ impl ExternalRegistry {
             // External-FFI обычно не использует protocol-параметры, но
             // arm нужен для exhaustiveness.
             TypeRef::Protocol { .. } => Ok("void*".into()),
+            // D176 (Plan 108): readonly T — transparent for codegen.
+            TypeRef::Readonly(inner, _) => Self::type_ref_to_c(inner, recv),
         }
     }
 
