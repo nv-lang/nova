@@ -23814,3 +23814,33 @@ check_fluent_return refactored:
 - 7/7 plan77 PASS
 - D132 spec amended in spec/decisions/03-syntax.md (main nova)
 - Commits: nova-p91 ffe1e958a8d; nova(main) 9931c15c5d7
+
+=== Plan 109 (D179) CLOSED 2026-05-28: StringBuilder — pure Nova consume type ===
+
+Plan 109 / D179: StringBuilder implemented fully in Nova.
+
+type StringBuilder consume { mut buf []u8 }
+
+Old C runtime (Nova_StringBuilder_* / Rust-backed String) removed.
+All methods now Nova-body; single remaining external: append(c char)
+encoding handled via Nova bitwise ops. str.from_bytes_* and UTF-8
+helpers remain in string_builder.h as utility functions.
+
+API changes vs pre-109:
+  @byte_len() removed (dup of @len)
+  @peek() removed (unsound: pointer aliasing with realloc)
+  @into() renamed → @to_str() (consume)
+  @append_bytes(arr) → @append_bytes(readonly arr)
+  @len() → bytes O(1); @char_len() new O(n) UTF-8 codepoints
+  StringBuilder.from(c char), .from(s str), .with_capacity constructors
+
+Codegen fixes (emit_c.rs):
+  lhs_is_nova_ptr guard: sb + "hello" now dispatches @plus not nova_str_concat
+  types/mod.rs: resolve_instance_method arity hint: name-only fallback
+    filters by arg count — prevents false "expected 0, got 1" when
+    user type shadows built-in method name (e.g. Buf::push 0-params
+    vs array push 1-param where array methods not in method_table)
+
+Tests: plan77 7/7, plan73 12/12, plan62 31/36 (+28 vs main 3/36),
+  plan108 6/6, plan11_followup, base64, csv, display, property.
+Commit: aad35ad1b99 (branch plan-91-stdmvp)

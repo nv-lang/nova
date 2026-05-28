@@ -27192,3 +27192,23 @@ Needed for StringBuilder @plus => @append pattern.
 Rationale: -> Self and -> @ are different semantics (new object vs same object/aliasing).
 Declaring -> Self on a method that only does -> @ behavior breaks consume-aliasing (D131).
 No simplification — full static analysis is correct here (not deferred).
+
+## Plan 109 (D179): StringBuilder as Nova consume type
+
+**Old approach:** StringBuilder was `external type` backed by Rust String / C Nova_StringBuilder.
+All methods were `external fn` routed to C/Rust runtime.
+
+**Simplification:** StringBuilder is now `type StringBuilder consume { mut buf []u8 }`.
+Single external: UTF-8 byte push to the backing array (buf.push(byte u8)).
+All methods (append, append_repeat, starts_with, ends_with, clone, to_str, etc.) are pure Nova.
+
+**What was removed:** Nova_StringBuilder_static_new/append_str/append_char/etc.
+Rust String backing in nova-runtime. External method stubs for 15+ methods.
+
+**str.from_bytes_* helpers** kept in string_builder.h (utility, used by str methods).
+
+**arity hint in resolve_instance_method:**
+User-defined methods with same name as builtin array methods (push, pop, etc.) but
+different arity would cause false "expected 0, got N" errors from the best-effort
+argbind checker. Fix: name-only fallback filters candidates by arg count hint.
+No false positives; checker may skip ambiguous cases (best-effort, codegen is authoritative).
