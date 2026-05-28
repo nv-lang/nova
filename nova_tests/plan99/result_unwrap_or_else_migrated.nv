@@ -10,6 +10,9 @@ test "Result[int,str].unwrap_or_else — Ok skip closure" {
 
 test "Result[int,str].unwrap_or_else — Err invokes f(e)" {
     let r Result[int, str] = Err("boom")
+    // Plan 108 D26 note: byte_len() needed here due to generic-closure erasure bug.
+    // [M-str-len-closure-dispatch]: str.len() dispatches to Nova_Range_method_len
+    // when str is erased to nova_int inside generic closures. Follow-up fix required.
     let v = r.unwrap_or_else(|e| e.byte_len())
     assert(v == 4)
 }

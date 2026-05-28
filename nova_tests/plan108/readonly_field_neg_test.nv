@@ -1,0 +1,15 @@
+// EXPECT_COMPILE_ERROR E_READONLY_FIELD
+// Plan 108 Ф.1: D175 readonly field — cannot assign to readonly field.
+
+module plan108.readonly_field_neg_test
+
+type Account {
+    readonly id u64
+    name str
+}
+
+test "cannot assign readonly field" {
+    let mut acc = Account { id: 1, name: "Alice" }
+    acc.id = 999  // E_READONLY_FIELD
+    assert(acc.id == 1)
+}

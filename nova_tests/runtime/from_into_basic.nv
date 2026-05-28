@@ -188,8 +188,9 @@ test "str.from(char) ASCII" {
 
 
 test "str.from(char) Cyrillic (2-byte UTF-8)" {
-    // 'П' = U+041F
+    // 'П' = U+041F (Plan 108 D26 rev: len=bytes, char_len=codepoints)
     let s = str.from('П')
-    // byte_len 2 (UTF-8: 0xD0 0x9F), char_len 1
-    assert(s.len() == 1)
+    // UTF-8: 0xD0 0x9F = 2 bytes, 1 codepoint
+    assert(s.len() == 2)
+    assert(s.char_len() == 1)
 }

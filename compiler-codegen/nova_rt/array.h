@@ -574,7 +574,9 @@ static inline NovaOpt_nova_int nova_str_rfind(nova_str s, nova_str needle) {
     return r;
 }
 
-/* ---- byte_len: длина в байтах (school B вспомогательное) ---- */
+/* ---- byte_len (= len) — Plan 108 D26 rev: str @len() = bytes O(1).
+ * nova_str_byte_len → str @len()     : O(1), байты.
+ * nova_str_char_len → str @char_len(): O(n), defined in nova_rt.h. */
 static inline nova_int nova_str_byte_len(nova_str s) {
     return (nova_int)s.len;
 }
@@ -587,6 +589,20 @@ static inline NovaArray_nova_byte* nova_str_bytes(nova_str s) {
     for (size_t i = 0; i < s.len; i++) {
         nova_array_push_nova_byte(a, (nova_byte)(unsigned char)s.ptr[i]);
     }
+    return a;
+}
+
+/* ---- nova_str_as_bytes: zero-copy view of str's UTF-8 bytes as readonly []u8.
+ * Plan 108 D176: returns NovaArray_nova_byte* that aliases the str's internal
+ * buffer — no memcpy. The Nova type-checker enforces readonly []u8, preventing
+ * any mutation (push/pop/index-write). GC-safe: Boehm conservatively traces
+ * the ptr field and keeps the original str buffer alive as long as this array
+ * view is reachable. cap == len signals read-only (no intended growth). */
+static inline NovaArray_nova_byte* nova_str_as_bytes(nova_str s) {
+    NovaArray_nova_byte* a = (NovaArray_nova_byte*)nova_alloc(sizeof(NovaArray_nova_byte));
+    a->data = (nova_byte*)(uintptr_t)(const void*)s.ptr; /* zero-copy alias */
+    a->len  = (int64_t)s.len;
+    a->cap  = (int64_t)s.len; /* cap == len: read-only, no growth expected */
     return a;
 }
 

@@ -4084,6 +4084,8 @@ impl CEmitter {
             // satisfaction'а — в type-checker'е, codegen работает с
             // dynamic value-ом (managed pointer).
             TypeRef::Protocol { .. } => Ok("void*".into()),
+            // D176 (Plan 108): readonly T — zero overhead, transparent for codegen.
+            TypeRef::Readonly(inner, _) => self.type_ref_to_c(inner),
         }
     }
 
@@ -8371,6 +8373,8 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                 }
             }
             TypeRef::Unit(_) => {}
+            // D176 (Plan 108): readonly T — transparent.
+            TypeRef::Readonly(inner, _) => Self::collect_typeref_names(inner, out, vtable_out),
         }
     }
 
@@ -8400,6 +8404,8 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                         .map_or(false, |t| Self::type_ref_uses_any_type_param(t, type_params))
             }),
             TypeRef::Unit(_) => false,
+            // D176 (Plan 108): readonly T — transparent.
+            TypeRef::Readonly(inner, _) => Self::type_ref_uses_any_type_param(inner, type_params),
         }
     }
 
@@ -10219,6 +10225,8 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                         .unwrap_or(false)
             }),
             TypeRef::Unit(_) => false,
+            // D176 (Plan 108): readonly T — transparent.
+            TypeRef::Readonly(inner, _) => Self::type_ref_mentions_name(inner, names),
         }
     }
 
@@ -13258,15 +13266,15 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                         }
                     }
                 }
-                // Special case: `let xs = s.bytes()` / `s.chars()` — set element type
-                // explicitly, even though val is not a known variable.
+                // Special case: `let xs = s.bytes()` / `s.as_bytes()` / `s.chars()` — set element
+                // type explicitly, even though val is not a known variable.
                 if let ExprKind::Call { func, .. } = &decl.value.kind {
                     // D38: turbofish прозрачен — смотрим под него.
                     let func = func.unwrap_turbofish();
                     if let ExprKind::Member { obj, name } = &func.kind {
                         if self.infer_expr_c_type(obj) == "nova_str" {
                             match name.as_str() {
-                                "bytes" => {
+                                "bytes" | "as_bytes" => {  // Plan 108: as_bytes same element type
                                     self.array_element_types
                                         .insert(binding.clone(), "nova_byte".into());
                                 }
@@ -17661,6 +17669,18 @@ _cp++; \
                 //    Auto-derive: if user defined `fn V @into() -> str` for V,
                 //    call that instead of the builtin.
                 if let ExprKind::Ident(prim) = &obj.kind {
+                    // Plan 108 from_utf8 series: str.from_bytes_lossy / str.from_bytes_unchecked.
+                    if prim == "str" && (method == "from_bytes_lossy" || method == "from_bytes_unchecked") {
+                        if let Some(arg) = args.first() {
+                            let v = self.emit_expr(arg.expr())?;
+                            let c_fn = if method == "from_bytes_lossy" {
+                                "nova_str_from_bytes_lossy"
+                            } else {
+                                "nova_str_from_bytes_unchecked"
+                            };
+                            return Ok(format!("{}({})", c_fn, v));
+                        }
+                    }
                     if prim == "str" && method == "from" {
                         if let Some(arg) = args.first() {
                             let arg_ty = self.infer_expr_c_type(arg.expr());
@@ -19145,6 +19165,21 @@ _cp++; \
                             self.line("}");
                             return Ok(out);
                         }
+                    }
+                }
+                // Plan 108 from_utf8 series: str.from_bytes_lossy / str.from_bytes_unchecked.
+                // Both take a single `readonly []u8` arg → same C type NovaArray_nova_byte*.
+                if parts.len() == 2 && parts[0] == "str"
+                    && (parts[1] == "from_bytes_lossy" || parts[1] == "from_bytes_unchecked")
+                {
+                    if let Some(arg) = args.first() {
+                        let v = self.emit_expr(arg.expr())?;
+                        let c_fn = if parts[1] == "from_bytes_lossy" {
+                            "nova_str_from_bytes_lossy"
+                        } else {
+                            "nova_str_from_bytes_unchecked"
+                        };
+                        return Ok(format!("{}({})", c_fn, v));
                     }
                 }
                 // Plan 74: f64/f32.from_bits(bits uN) — IEEE 754 bit-cast
@@ -23711,7 +23746,7 @@ _cp++; \
                 => Some("nova_bool"),
             "to_upper" | "to_lower" | "trim" | "slice" | "concat"
                 => Some("nova_str"),
-            "len" | "char_len" | "byte_len" | "hash"
+            "len" | "char_len" | "byte_len" | "hash"  // byte_len = deprecated alias
                 => Some("nova_int"),
             "byte_at"  // Plan 90
                 => Some("nova_byte"),
@@ -23748,10 +23783,11 @@ _cp++; \
             "hash"        => Some("nova_str_hash"),
             "find"        => Some("nova_str_find"),
             "rfind"       => Some("nova_str_rfind"),
-            "len"         => Some("nova_str_char_len"),   // Plan 55 Ф.6: s.len() == s.char_len() (D26).
-            "char_len"    => Some("nova_str_char_len"),
-            "byte_len"    => Some("nova_str_byte_len"),
+            "len"         => Some("nova_str_byte_len"),   // Plan 108 D26 rev: len = bytes O(1).
+            "char_len"    => Some("nova_str_char_len"),  // codepoints O(n).
+            "byte_len"    => Some("nova_str_byte_len"),  // deprecated alias for len().
             "bytes"       => Some("nova_str_bytes"),
+            "as_bytes"    => Some("nova_str_as_bytes"),  // Plan 108 D176: zero-copy readonly []u8
             "chars"       => Some("nova_str_chars"),
             "char_at"     => Some("nova_str_char_at"),
             "split"       => Some("nova_str_split"),
@@ -23997,6 +24033,8 @@ _cp++; \
             }
             TypeRef::Unit(_) => {}
             TypeRef::Protocol { .. } => {} // не sum-тип
+            // D176 (Plan 108): readonly T — transparent.
+            TypeRef::Readonly(inner, _) => self.ensure_novaopt_decls_for_typeref(inner),
         }
     }
 
@@ -25762,8 +25800,9 @@ _cp++; \
                         };
                     }
                     // Built-in primitive `str.from(x) -> str` (D35 + D73).
+                    // Plan 108: also from_bytes_lossy / from_bytes_unchecked → nova_str.
                     if let ExprKind::Ident(n) = &obj.kind {
-                        if n == "str" && method == "from" { return "nova_str".into(); }
+                        if n == "str" && (method == "from" || method == "from_bytes_lossy" || method == "from_bytes_unchecked") { return "nova_str".into(); }
                         // User-defined `T.from(v)` returns Nova_T* (most cases).
                         if method == "from"
                             && (self.record_schemas.contains_key(n)
@@ -25942,6 +25981,8 @@ _cp++; \
                             "find" | "rfind" => "NovaOpt_nova_int".into(),
                             // D26: s.bytes() → []byte (packed uint8_t[]).
                             "bytes" => "NovaArray_nova_byte*".into(),
+                            // Plan 108 D176: s.as_bytes() → readonly []u8 (zero-copy, same C type).
+                            "as_bytes" => "NovaArray_nova_byte*".into(),
                             // s.chars() → []char (Plan 70.3: nova_char distinct typedef).
                             "chars" => "NovaArray_nova_char*".into(),
                             // s.split(sep) → []str (Iter[str] eager в bootstrap).
@@ -26068,6 +26109,10 @@ _cp++; \
                         }
                         // Built-in primitive `str.from(x) -> str` (D35 + D73).
                         if eff == "str" && method_name == "from" {
+                            return "nova_str".into();
+                        }
+                        // Plan 108 from_utf8 series: str.from_bytes_lossy / str.from_bytes_unchecked → nova_str.
+                        if eff == "str" && (method_name == "from_bytes_lossy" || method_name == "from_bytes_unchecked") {
                             return "nova_str".into();
                         }
                         // User-defined `T.from(v)` returns Nova_T* (most cases).

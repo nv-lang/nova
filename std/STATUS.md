@@ -12,7 +12,11 @@
 
 Запуск через `.\run_tests.ps1 -IncludeStdlib`.
 
-## Текущий статус (2026-05-27, Plan 91 Ф.0+Ф.7.1+Ф.4 ✅ ЗАКРЫТЫ — branch `plan-91-stdmvp`)
+## Текущий статус (2026-05-28, Plan 91 Ф.0+Ф.7.1+Ф.4 ✅ + Plan 108 readonly ✅)
+
+- **Plan 108 ✅** (D175 + D176): `readonly field` enforcement транзитивный, `readonly T` тип-модификатор, `str.as_bytes() -> readonly []u8` zero-copy view. D26 rev: `str.len()` = bytes O(1), `str.char_len()` = codepoints O(n). 6/6 plan108 тестов PASS.
+
+## Статус 2026-05-23 (post-Plan 95 / 95.bis / 99 / 98 — ~50 планов после 2026-05-09 baseline)
 
 **Ф.4 results (sort module):**
 

@@ -4,13 +4,13 @@ module nova_tests.plan99.result_map_err_migrated
 
 test "Result[int, str].map_err — Err str→int (len)" {
     let r Result[int, str] = Err("boom")
-    let m = r.map_err(|e| e.byte_len())
+    let m = r.map_err(|e| e.len())
     assert(m.is_err())
 }
 
 test "Result[int, str].map_err — Ok passes through" {
     let r Result[int, str] = Ok(42)
-    let m = r.map_err(|e| e.byte_len())
+    let m = r.map_err(|e| e.len())
     assert(m.is_ok())
     assert(m.unwrap_or(0) == 42)
 }
