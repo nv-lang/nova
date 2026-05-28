@@ -3,7 +3,7 @@
 // Verifies что formal protocol declarations в std/prelude/protocols.nv
 // (re-export'нутые через std/prelude.nv facade) auto-available везде
 // через R27 auto-import, и что bound clauses `[T Hashable]`/`[T Equatable]`/
-// `[T Comparable]`/`[T From[X]]`/`[T Into[X]]`/`[T Display]` резолвятся
+// `[T Comparable]`/`[T From[X]]`/`[T Into[X]]`/`[T Printable]` резолвятся
 // через cross-file resolve без explicit import.
 //
 // Покрытие (6 из 8 protocols — TryFrom/TryInto deferred per Plan 56 Ф.2.7
@@ -11,13 +11,13 @@
 //   1. `Hashable` bound — generic fn принимает T удовлетворяющий
 //      `hash() -> u64`. User-defined type implementing структурно.
 //   2. `Equatable` bound — generic fn принимает T удовлетворяющий
-//      `eq(other Self) -> bool`. User-defined type implementing.
+//      `equals(other Self) -> bool`. User-defined type implementing.
 //   3. `Comparable` bound — generic fn принимает T удовлетворяющий
-//      `cmp(other Self) -> Ordering`. Ordering тоже резолвится через
-//      prelude (std.prelude.core).
+//      `compare(other Self) -> int`. D183 (Plan 91.8a): int-based
+//      memcmp convention; Ordering sum-type удалён.
 //   4. `From[X]` bound — type-decl c bound на conversion.
 //   5. `Into[X]` bound — bound на dual direction (D73 auto-derive).
-//   6. `Display` bound — formatting protocol (StringBuilder dependency
+//   6. `Printable` bound — formatting protocol (StringBuilder dependency
 //      резолвится через type-checker builtins HashSet).
 //
 // Acceptance: все 6 tests должны pass — type-check проходит при
@@ -27,7 +27,8 @@ module plan62.protocols_bound_resolution
 
 
 // User-defined тип, удовлетворяющий Hashable + Equatable + Comparable
-// структурно. Все три метода реализованы как @hash/@eq/@cmp instance fns.
+// структурно. Все три метода реализованы как @hash/@equals/@compare instance fns.
+// Plan 91.8a (D183): rename eq→equals, cmp→compare; Ordering→int.
 type Item {
     id u64
 }
@@ -36,12 +37,12 @@ fn Item.new(id u64) -> Item => { id }
 
 export fn Item @hash() -> u64 => @id
 
-export fn Item @eq(other Item) -> bool => @id == other.id
+export fn Item @equals(other Item) -> bool => @id == other.id
 
-export fn Item @cmp(other Item) -> Ordering =>
-    if @id < other.id { Less }
-    else if @id > other.id { Greater }
-    else { Equal }
+export fn Item @compare(other Item) -> int =>
+    if @id < other.id { -1 }
+    else if @id > other.id { 1 }
+    else { 0 }
 
 
 // ────────────────────────────────────────────────────────────────────
@@ -61,9 +62,9 @@ test "Hashable bound резолвится через prelude — Item.hash()" {
 // 2. Equatable bound — резолвится через prelude auto-import.
 // ────────────────────────────────────────────────────────────────────
 
-fn eq_via_bound[T Equatable](a T, b T) -> bool => a.eq(b)
+fn eq_via_bound[T Equatable](a T, b T) -> bool => a.equals(b)
 
-test "Equatable bound — Item.eq()" {
+test "Equatable bound — Item.equals()" {
     let a = Item.new(7 as u64)
     let b = Item.new(7 as u64)
     let c = Item.new(8 as u64)
@@ -74,17 +75,13 @@ test "Equatable bound — Item.eq()" {
 
 // ────────────────────────────────────────────────────────────────────
 // 3. Comparable bound — резолвится через prelude auto-import.
-//    Ordering тоже резолвится (std.prelude.core).
+//    Plan 91.8a (D183): compare возвращает int (memcmp-style).
 // ────────────────────────────────────────────────────────────────────
 
 fn min_of[T Comparable](a T, b T) -> T =>
-    match a.cmp(b) {
-        Less    => a
-        Equal   => a
-        Greater => b
-    }
+    if a.compare(b) <= 0 { a } else { b }
 
-test "Comparable bound — Item.cmp() с Ordering match" {
+test "Comparable bound — Item.compare() с int-based check" {
     let a = Item.new(3 as u64)
     let b = Item.new(7 as u64)
     let m = min_of(a, b)
@@ -151,10 +148,11 @@ test "Into[X] bound — explicit @into impl резолвится через prel
 
 
 // ────────────────────────────────────────────────────────────────────
-// 6. Display bound — StringBuilder dependency резолвится через builtins.
+// 6. Printable bound — StringBuilder dependency резолвится через builtins.
+//    Plan 91.8a (D183): renamed Printable → Printable.
 // ────────────────────────────────────────────────────────────────────
 
-// User-defined type с Display impl. StringBuilder — opaque runtime type
+// User-defined type с Printable impl. StringBuilder — opaque runtime type
 // (builtin HashSet), API: `append(s str)`, `into() -> str` (см.
 // std/runtime/string_builder.nv). `str.from(int)` для int → str.
 type Pair { x int, y int }
@@ -167,17 +165,17 @@ export fn Pair @fmt(sb StringBuilder) -> () {
     sb.append(")")
 }
 
-// Generic fn с Display bound — caller-side проверка eligibility.
+// Generic fn с Printable bound — caller-side проверка eligibility.
 // Note: `mut sb` — StringBuilder mutation в protocol-method вызывается
 // напрямую (бойлерплейт через bound dispatch — Plan 56 effect-free
 // разрешает mutating receiver через `mut @method`).
-fn fmt_to_string[T Display](v T) -> str {
+fn fmt_to_string[T Printable](v T) -> str {
     let mut sb = StringBuilder.new()
     v.fmt(sb)
     sb.to_str()
 }
 
-test "Display bound — Pair.fmt() в StringBuilder" {
+test "Printable bound — Pair.fmt() in StringBuilder" {
     let p = Pair { x: 3, y: 7 }
     let s = fmt_to_string(p)
     assert(s == "(3, 7)")

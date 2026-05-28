@@ -47,7 +47,8 @@ module std.prelude
 // Bottom-тип `never` НЕ re-export'ится: это строчный встроенный
 // примитив (Plan 76), известен компилятору напрямую — как `int`/`bool`,
 // примитивы не объявляются и не re-export'ятся через prelude.
-export import std.prelude.core.{Option, Some, None, Result, Ok, Err, Error, Ordering, Less, Equal, Greater}
+// Plan 91.8a (D183): Ordering/Less/Equal/Greater удалены (Comparable.compare -> int).
+export import std.prelude.core.{Option, Some, None, Result, Ok, Err, Error}
 
 // Plan 62.B: re-export runtime functions из std.prelude.runtime.
 // panic / exit / assert / debug_assert / print / println — selective
@@ -124,7 +125,7 @@ export import std.collections.range.{Range, RangeIter}
 // `try_from(t T) -> Result[Self, E]` (D77, migration path b) — fallible
 // конверсия возвращает Result, вызывающий открывает через match. См.
 // std/prelude/protocols.nv.
-export import std.prelude.protocols.{From, Into, TryFrom, TryInto, Hashable, Equatable, Comparable, Display}
+export import std.prelude.protocols.{From, Into, TryFrom, TryInto, Hashable, Equatable, Comparable, Printable}
 
 // Plan 62.F: re-export Fail[E] effect из std.prelude.effects.
 // Formal declaration matches hardcoded codegen pre-registration
@@ -198,4 +199,4 @@ export import std.runtime.string.{parse_int, pad_left, pad_right, repeat, replac
 ///     bytes→to_bytes, chars→to_chars, parse_int_radix+parse_int→parse_int(radix=10),
 ///     compare added, split→readonly []str, readonly param syntax.
 #stable(since = "0.1")
-export const PRELUDE_VERSION int = 12
+export const PRELUDE_VERSION int = 13

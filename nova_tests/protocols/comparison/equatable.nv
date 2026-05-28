@@ -1,55 +1,60 @@
 // Plan 85.4 Ф.1 — Equatable протокол.
-//
-// `Equatable` (D109): `eq(other Self) -> bool`. User-defined через
-// `fn Type @eq(other Type) -> bool`. `@eq` — также метод оператора
-// `==` (D46); `!=` выводится автоматически.
+// Plan 91.8a (D183): protocol method renamed eq→equals.
+// Operator `==` все ещё dispatches к `@eq` (D46) — будет изменено в 91.8b
+// (D184). До 91.8b тип-author пишет оба: @equals (для protocol satisfaction)
+// и @eq (для оператора `==`).
 
 module comparison.equatable
 
 
 type Point { x int, y int }
 
-fn Point @eq(other Point) -> bool => @x == other.x && @y == other.y
+// Plan 91.8a: protocol method (D183).
+fn Point @equals(other Point) -> bool => @x == other.x && @y == other.y
+
+// Pre-91.8b: оператор `==` dispatches to @eq (D46). Boilerplate до 91.8b
+// (когда operator dispatch перейдёт на @equals и @eq можно будет удалить).
+fn Point @eq(other Point) -> bool => @equals(other)
 
 
-test "eq — рефлексивность: x.eq(x)" {
+test "equals — рефлексивность: x.equals(x)" {
     let p = Point { x: 3, y: 4 }
-    assert(p.eq(p))
+    assert(p.equals(p))
 }
 
-test "eq — равные значения" {
+test "equals — равные значения" {
     let a = Point { x: 1, y: 2 }
     let b = Point { x: 1, y: 2 }
-    assert(a.eq(b))
+    assert(a.equals(b))
 }
 
-test "eq — неравенство" {
+test "equals — неравенство" {
     let a = Point { x: 1, y: 2 }
     let b = Point { x: 9, y: 2 }
-    assert(!a.eq(b))
+    assert(!a.equals(b))
 }
 
-test "eq — симметрия: a.eq(b) == b.eq(a)" {
+test "equals — симметрия: a.equals(b) == b.equals(a)" {
     let a = Point { x: 5, y: 5 }
     let b = Point { x: 5, y: 5 }
     let c = Point { x: 7, y: 1 }
-    assert(a.eq(b) == b.eq(a))
-    assert(a.eq(c) == c.eq(a))
+    assert(a.equals(b) == b.equals(a))
+    assert(a.equals(c) == c.equals(a))
 }
 
-test "eq — транзитивность: a==b, b==c => a==c" {
+test "equals — транзитивность: a==b, b==c => a==c" {
     let a = Point { x: 2, y: 2 }
     let b = Point { x: 2, y: 2 }
     let c = Point { x: 2, y: 2 }
-    assert(a.eq(b))
-    assert(b.eq(c))
-    assert(a.eq(c))
+    assert(a.equals(b))
+    assert(b.equals(c))
+    assert(a.equals(c))
 }
 
 
-// ── оператор == / != через @eq (D46) ──────────────────────────────
+// ── оператор == / != через @eq (D46) — до 91.8b ──────────────────
 
-test "оператор == использует @eq" {
+test "оператор == использует @eq (D46)" {
     let a = Point { x: 10, y: 20 }
     let b = Point { x: 10, y: 20 }
     assert(a == b)

@@ -97,10 +97,10 @@ export type Option[T] | Some(T) | None
 #stable(since = "0.1")
 export type Result[T, E] | Ok(T) | Err(E)
 
-/// Three-way ordering для comparison protocols. Используется
-/// `Comparable.cmp(...)` (Plan 62.E). См. D26 spec.
-#stable(since = "0.1")
-export type Ordering | Less | Equal | Greater
+// Plan 91.8a (D183): `Ordering` sum-type удалён. Comparable.compare
+// теперь возвращает int (memcmp-style: < 0 / 0 / > 0). Тривиальное
+// rationale в D183 — single canonical path для comparison aligned с
+// str.compare (D178). Less/Equal/Greater также удалены из exports.
 
 // Plan 76 (2026-05-21): bottom-тип `never` — строчный встроенный
 // примитив (как `int`/`bool`), в prelude НЕ объявляется. Известен

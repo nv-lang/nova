@@ -2863,10 +2863,11 @@ fn check_generic_bound_declarations(module: &Module, errors: &mut Vec<Diagnostic
         }
     }
     // Well-known stdlib alias names (legacy + Plan 62.E migrated).
+    // Plan 91.8a (D183): Iter→Iterable, Display→Printable.
     let stdlib_aliases: &[&str] = &[
         "Ord", "Eq", "ToStr", "TryFrom", "TryInto",
-        "Hashable", "Display", "Equatable", "Comparable",
-        "Iter", "From", "Into",
+        "Hashable", "Printable", "Equatable", "Comparable",
+        "Iterable", "From", "Into",
     ];
     // Primitive-имена (Q-representation-bound future):
     let primitives: &[&str] = &[

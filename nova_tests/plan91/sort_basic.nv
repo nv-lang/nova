@@ -41,7 +41,7 @@ test "sort: negative numbers" {
 
 test "sort_by: reverse order" {
     let mut xs []int = [1, 2, 3, 4, 5]
-    xs.sort_by(|a, b| if a > b { Less } else if a < b { Greater } else { Equal })
+    xs.sort_by(|a, b| b - a)    // descending; b-a > 0 means a < b → swap (per D183 int convention)
     assert(xs == [5, 4, 3, 2, 1])
 }
 
