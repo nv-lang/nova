@@ -2074,6 +2074,15 @@ v1.0).
 > текущих stdlib extensions (`map`/`filter`/`fold`/`any`/`all`/
 > `first`/`last`). Slicing `xs[a..b]` остаётся отложенным
 > (Q-array-slicing). Embed `use []T` — разрешён по D39.
+>
+> **Update 2026-05-28 (Plan 91.7, [D181](decisions/02-types.md#d181-array-methods----fluent-mut-chain--slice-syntax)):**
+> Все mut-методы (push/reserve/truncate/fill/copy_from/extend_from/
+> insert_from/copy_within) теперь возвращают `@` (fluent chain, D131).
+> `@slice(from, to)` удалён (Plan 96.1 — `arr[a..b]` единственный путь).
+> `[]T.new()` / `[]T.with_capacity(n)` подтверждены как canonical
+> ([D180](decisions/02-types.md#d180-canonical-new-constructors-convention)).
+> Generic `[T Ord] @sort()` / `@min` / `@max` / `@binary_search` —
+> followup `[M-91.7-sort-generic]`.
 
 **Контекст.** `[]T` — встроенная конструкция языка ([D27](decisions/03-syntax.md#d27)).
 По [D32](decisions/02-types.md#d32) runtime-представление —
