@@ -1,6 +1,6 @@
-// Plan 85.4 Ф.3 — Display протокол.
+// Plan 85.4 Ф.3 — Printable протокол.
 //
-// `Display` (D109): `fmt(sb StringBuilder) -> ()`. User-defined через
+// `Printable` (D109): `fmt(sb StringBuilder) -> ()`. User-defined через
 // `fn Type @fmt(mut sb StringBuilder) -> ()` — пишет representation
 // в переданный StringBuilder. Результат читается через `sb.to_str()`.
 
@@ -41,7 +41,7 @@ test "Point @fmt — в непустой буфер дописывает" {
 }
 
 
-// ── вложенный Display: тип содержит другой Display-тип ────────────
+// ── вложенный Printable: тип содержит другой Printable-тип ────────────
 
 type Segment { a Point, b Point }
 
@@ -53,7 +53,7 @@ fn Segment @fmt(mut sb StringBuilder) -> () {
     sb.append("]")
 }
 
-test "вложенный Display — Segment делегирует Point.fmt" {
+test "вложенный Printable — Segment делегирует Point.fmt" {
     let seg = Segment {
         a: Point { x: 1, y: 1 },
         b: Point { x: 5, y: 9 },
@@ -66,7 +66,7 @@ test "вложенный Display — Segment делегирует Point.fmt" {
 
 // ── два fmt подряд в один буфер ───────────────────────────────────
 
-test "Display — несколько объектов в один буфер" {
+test "Printable — несколько объектов в один буфер" {
     let p1 = Point { x: 1, y: 2 }
     let p2 = Point { x: 3, y: 4 }
     let mut sb = StringBuilder.new()

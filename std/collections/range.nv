@@ -13,7 +13,7 @@
 // Edge case: `Range.inclusive(_, int.MAX)` → overflow на end+1.
 // Конструктор бросает `Fail[OverflowError]`.
 //
-// `Iter[T]` — структурный effect в prelude. RangeIter автоматически
+// `Iterable[T]` — структурный effect в prelude. RangeIter автоматически
 // удовлетворяет `Iter[int]` через `mut next() -> Option[int]`.
 
 // Plan 91 Ф.7.1: partial_prelude — range.nv is re-exported в std.prelude

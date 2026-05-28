@@ -48,26 +48,27 @@ export fn []int mut @sort() -> @ {
 }
 
 
-/// In-place insertion sort с custom comparator `cmp(a, b) -> Ordering`.
+/// In-place insertion sort с custom comparator `cmp(a, b) -> int`.
 ///
-/// `cmp` возвращает [`Less`] если `a` должен идти раньше `b`, [`Equal`]
-/// если порядок не важен, [`Greater`] если `a` после `b`. Sort стабилен —
-/// `Equal` пары сохраняют исходный порядок.
+/// `cmp` возвращает negative если `a` должен идти раньше `b`, 0 если
+/// порядок не важен, positive если `a` после `b`. Sort стабилен —
+/// equal-pairs (`cmp == 0`) сохраняют исходный порядок. Совместимо с
+/// C `memcmp`/`strcmp` convention (см. D183).
 ///
 /// # Examples
 /// ```nova
 /// let mut xs []int = [3, 1, 4]
-/// xs.sort_by(|a, b| if a > b { Less } else if a < b { Greater } else { Equal })
+/// xs.sort_by(|a, b| b - a)   // descending
 /// assert(xs == [4, 3, 1])
 /// ```
 #stable(since = "0.1")
-export fn []int mut @sort_by(cmp fn(int, int) -> Ordering) -> @ {
+export fn []int mut @sort_by(cmp fn(int, int) -> int) -> @ {
     let n = @len()
     let mut i = 1
     while i < n {
         let key = @[i]
         let mut j = i - 1
-        while j >= 0 && match cmp(@[j], key) { Greater => true, _ => false } {
+        while j >= 0 && cmp(@[j], key) > 0 {
             @[j + 1] = @[j]
             j = j - 1
         }

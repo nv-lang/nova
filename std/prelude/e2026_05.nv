@@ -28,9 +28,9 @@ module prelude.e2026_05
 export import std.prelude.core.{Option, Some, None, Result, Ok, Err, Error, Ordering, Less, Equal, Greater}
 export import std.prelude.runtime.{panic, exit, assert, debug_assert}
 export import std.prelude.errors.{RuntimeError, DivByZero, Overflow, IndexOutOfBounds, TypeMismatch, AssertFailed, NoHandler, ReadBufferError, UnexpectedEnd}
-export import std.prelude.collections.{Iter}
+export import std.prelude.collections.{Iterable}
 export import std.collections.range.{Range, RangeIter}
-export import std.prelude.protocols.{From, Into, Hashable, Equatable, Comparable, Display}
+export import std.prelude.protocols.{From, Into, Hashable, Equatable, Comparable, Printable}
 export import std.prelude.effects.{Fail, Time, Mem}
 
 /// Edition pin marker для verification что resolver выбрал edition vs

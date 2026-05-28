@@ -54,11 +54,8 @@
 
 module prelude.protocols
 
-// Explicit import — Ordering нужен для signature протокольного метода
-// `cmp(other Self) -> Ordering` в Comparable. Auto-import `std.prelude`
-// отключён для всех `std.prelude.*` submodule (cycle protection). См.
-// file-header выше.
-import std.prelude.core.{Ordering}
+// Plan 91.8a (D183): Ordering sum-type удалён; Comparable.compare возвращает int
+// (memcmp-style: < 0 / 0 / > 0). Никаких imports из core не требуется.
 
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -196,7 +193,7 @@ export type Hashable protocol {
 /// ```
 #stable(since = "0.1")
 export type Equatable protocol {
-    eq(other Self) -> bool
+    equals(other Self) -> bool
 }
 
 /// Полный порядок (D109). Возвращает `Ordering` (`Less`/`Equal`/`Greater`).
@@ -214,7 +211,8 @@ export type Equatable protocol {
 /// ```
 #stable(since = "0.1")
 export type Comparable protocol {
-    cmp(other Self) -> Ordering
+    use Equatable
+    compare(other Self) -> int
 }
 
 
@@ -249,6 +247,6 @@ export type Comparable protocol {
 /// }
 /// ```
 #stable(since = "0.1")
-export type Display protocol {
+export type Printable protocol {
     fmt(sb StringBuilder) -> ()
 }
