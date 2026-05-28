@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 # План 18: Stdlib roadmap для Nova
 
-> ⚠️ **СТАТУС: PARTIALLY ACTIVE** (обновлено 2026-05-25). Шаг 1
-> (`std.sync`) ✅ зашиплен — формализуется отдельно [Plan 103](103-sync-primitives-spec-formalization.md)
-> (D167). Шаги 2-4 (fs/os/net) перенесены в [Plan 91](91-stdlib-mvp-for-0.1.md)
+> ⚠️ **СТАТУС: PARTIALLY ACTIVE** (обновлено 2026-05-27). **Шаг 1
+> (`std.sync`) ✅ ЗАКРЫТО ПОЛНОСТЬЮ** — [Plan 103 V1 ✅ ЗАКРЫТ 2026-05-27](103-sync-primitives-spec-formalization.md)
+> (103.1-103.8, D167-D173). V2 (103.9 consume guards) gated на Plan 100.7.
+> Шаги 2-4 (fs/os/net) перенесены в [Plan 91](91-stdlib-mvp-for-0.1.md)
 > std MVP roadmap (на горизонте 0.2–0.4). Шаг 5 (RwLock/Semaphore) —
-> отдельные планы по запросу. Q1–Q8 ниже — частично актуальны (Q3
+> закрыт в Plan 103.3/103.4. Q1–Q8 ниже — частично актуальны (Q3
 > частично закрыт Plan 34, Q5 закрыт через декомпозицию в Plan 14/15/35).
 
 **Дата создания:** 2026-05-09 (rev 3, переосмысление под spec/decisions).
@@ -140,7 +141,7 @@ closure-rev + D85 error-ops). Работа codegen-агента.
 > Plan 18 статус: DRAFT → продвигается к **active**. Ниже — конкретные
 > шаги в порядке приоритета. Каждый шаг = отдельный коммит/sub-plan.
 
-### Шаг 1 — std.sync (M:N-correct примитивы) — ✅ ЗАКРЫТО (формализация: Plan 103)
+### Шаг 1 — std.sync (M:N-correct примитивы) — ✅ ЗАКРЫТО ПОЛНОСТЬЮ (Plan 103 V1 + V2 gated)
 
 > ✅ **Baseline зашиплен.** `std/runtime/sync.nv` + `compiler-codegen/nova_rt/sync_primitives.h`.
 > Production-grade расширение + формализация в spec — [Plan 103](103-sync-primitives-spec-formalization.md)

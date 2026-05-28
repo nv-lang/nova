@@ -1099,86 +1099,55 @@ members = ["server", "client", "common"]
 
 Стандартная практика для backend monorepo (microservices в одном репо).
 
-#### Prelude opt-out
+#### Prelude control attributes (D174, Plan 107, 2026-05-27)
 
-Per-file декларация в module-line:
-
-```nova
-module my.realtime no_prelude
-
-// Никаких автоматических импортов; даже Option/Result надо импортировать
-import std.option.Option
-import std.result.Result
-```
-
-Применение:
-- **Real-time / embedded** — где prelude содержит код использующий GC
-- **Bootstrap уровни** — реализация самого prelude
-- **Обучающие примеры** — для AI/преподавания иногда нужно «всё видно»
-
-Без `no_prelude` — стандартный prelude в скоупе (D26).
-
-#### Partial prelude opt-in (Plan 62.F, 2026-05-15)
-
-Если `no_prelude` слишком coarse-grained (нужны только core types но
-не runtime/protocols), используй `partial_prelude(<list>)`:
+Управление auto-import prelude через **pre-module атрибуты** — консистентно с
+`#cfg`/`#doc`/`#forbid` (D99 §«Позиция»):
 
 ```nova
-module my.dsl partial_prelude(core, runtime)
+// Полный opt-out — никаких авто-импортов
+#no_prelude
+module my.realtime
 
-// Видимо: Option, Result, Some, None, Ok, Err, Error, Ordering (из core)
-// + panic, exit, assert, debug_assert (из runtime).
-// НЕ видимо: RuntimeError (errors), Iter (collections), From/Hashable
-// (protocols), Fail (effects).
+// Selective opt-in — только core + runtime
+#prelude(core, runtime)
+module my.dsl
+
+// Комбинирование: prelude + shadow suppressor
+#prelude(core, runtime, errors)
+#allow(shadow)
+module collections.range
 ```
 
-Валидные sub-modules (значения `<list>`):
+**`#no_prelude`** — полный opt-out. Применение: real-time/embedded (prelude
+содержит GC-код), bootstrap уровни, обучающие примеры с explicit visibility.
+
+**`#prelude(names…)`** — selective opt-in. Валидные имена:
 - `core` — `Option`/`Result`/`Some`/`None`/`Ok`/`Err`/`Error`/`Ordering`.
-- `runtime` — `panic`/`exit`/`assert`/`debug_assert`.
+- `runtime` — `panic`/`exit`/`assert`/`debug_assert`/`print`/`println`.
 - `errors` — `RuntimeError` (6 variants) + `ReadBufferError`.
 - `collections` — `Iter[T]` protocol.
 - `protocols` — `From`/`Into`/`Hashable`/`Equatable`/`Comparable`/`Display`.
 - `effects` — `Fail[E]` + `Time` + `Mem`.
 
-Имена валидируются на resolver-этапе — `partial_prelude(badname)` →
-compile error со списком валидных имён. Пустой список
-`partial_prelude()` — эквивалент `no_prelude` (legitimate use-case).
+Имена валидируются resolver'ом — `#prelude(badname)` → compile error.
+Пустой `#prelude()` → **compile error**: `"use #no_prelude for empty prelude"`.
 
-Применение:
-- **Bootstrap уровни** — selective opt-in без manual import каждого
-  Option/Result.
-- **DSL слой** — нужны Option/Result но не protocols.
-- **AI-friendly minimal context** — student/training material с
-  controlled visibility.
+**`#allow(shadow)`** — suppress `W_PRELUDE_SHADOW` lint (D125) на уровне
+модуля. Применение: DSL с переопределением prelude имён, test fixtures.
 
-Без `partial_prelude(...)` или `no_prelude` — full prelude facade
-(default behavior, D26).
+**`_module.nv` inheritance:** `#no_prelude` / `#prelude(...)` в `_module.nv`
+наследуются всеми peers folder-module (D174 + D100). Per-file override
+folder-level: если peer сам объявляет `#prelude(core)`, а `_module.nv` — `#no_prelude`,
+peer wins. Полная спецификация — [D174](#d174-prelude-control-attributes).
 
-#### Allow prelude shadow (Plan 62.F.bis Ф.2, 2026-05-18)
+Без атрибутов — full prelude facade (default, D26).
 
-Per-file клауза для подавления `W_PRELUDE_SHADOW` lint warnings
-(см. [D125](08-runtime.md#d125-prelude-shadow-warning-lint)):
-
-```nova
-module my.dsl allow_prelude_shadow
-
-// User-redefinition prelude name — warning silenced
-type Option { foo int }
-const PRELUDE_VERSION int = 99
-```
-
-Применение:
-- **Local DSL слой** — переопределение `Option`/`Result` с осознанным
-  intent'ом (например embedded targets с non-GC types).
-- **Test fixtures** — explicit testing shadowing behavior.
-- **Bootstrap слои** — selective shadow без переключения на
-  `no_prelude`.
-
-Без `allow_prelude_shadow` — shadowing допустим (user-decl wins), но
-эмитится structured `W_PRELUDE_SHADOW` warning через
-`lints::lint_prelude_shadow`. Item-level suppress
-(`#[allow(prelude_shadow)] type Foo`) — DEFERRED (требует generic
-attribute parser).
+> **История:** Plan 62.F (2026-05-15) ввёл inline-клаузы `no_prelude` /
+> `partial_prelude(...)` на module-line; Plan 62.F.bis (2026-05-18) добавил
+> `allow_prelude_shadow`. Plan 107 (2026-05-27) перенёс их в pre-module
+> атрибуты (`#no_prelude` / `#prelude(...)` / `#allow(shadow)`) согласно
+> D174 — inline-формы удалены с hard error + migration hint.
 
 #### Конвенции имён
 
@@ -1210,10 +1179,10 @@ attribute parser).
 8. **Path/module enforcement** — AI-friendly. LLM получает
    compile error с suggestion, а не undefined behavior.
 9. **Prelude opt-out per-file** — гранулярнее чем per-project, согласовано
-   с D64 `realtime { ... }` блоками per-function. Per-file клаузы
-   `no_prelude` / `partial_prelude(...)` (Plan 62.F) /
-   `allow_prelude_shadow` (Plan 62.F.bis Ф.2) дают спектр от полного
-   opt-out до tone-down диагностики при shadowing.
+   с D64 `realtime { ... }` блоками per-function. Pre-module атрибуты
+   `#no_prelude` / `#prelude(...)` / `#allow(shadow)` (D174, Plan 107)
+   дают спектр от полного opt-out до tone-down диагностики при shadowing.
+   Наследуемы через `_module.nv` (D100).
 ### Что отвергнуто
 
 - **JSON manifest** (npm-стиль `package.json`). JSON не поддерживает
@@ -1536,8 +1505,8 @@ production кейсы при меньшей complexity чем полный Rust.
 ### Что
 
 Опциональный special peer-файл с именем `_module.nv` в folder-module
-с module-level attributes (`#forbid`, `#doc`, `#cfg`). Эти attributes
-**наследуются всеми peers** этого folder-module.
+с module-level attributes (`#forbid`, `#doc`, `#cfg`, `#no_prelude`, `#prelude(...)`).
+Эти attributes **наследуются всеми peers** этого folder-module.
 
 ```
 admin/
@@ -1561,6 +1530,10 @@ admin/
    `_module.nv` cfg-off, весь folder skip'ается).
 6. `_module.nv` НЕ запускается как standalone test (test_runner walker
    exclude'ит).
+7. `#no_prelude` и `#prelude(...)` (D174) — наследуются peers; resolver
+   pre-scan'ит `_module.nv` до принятия решения об auto-import prelude.
+   Per-file override folder-level: если peer сам декларирует prelude-атрибут,
+   он имеет приоритет над `_module.nv` (Plan 107 Ф.3).
 
 ### Семантика propagation
 
@@ -1626,6 +1599,187 @@ syntax не вводится (bootstrap simplicity).
 - [Plan 42.11](../../docs/plans/42.11-inline-module-doc.md) — реализация.
 - [Plan 45](../../docs/plans/45-nova-doc.md) — `nova doc` consumer.
 - [D100](#d100) — `_module.nv` может содержать `#doc` strings.
+
+---
+
+## D174. Prelude control attributes — `#no_prelude`, `#prelude(...)`, `#allow(shadow)`
+
+### Что
+
+Три **pre-module атрибута** для управления auto-import prelude (D26).
+Консистентны с `#cfg`/`#doc`/`#forbid` — идут **ПЕРЕД** `module` declaration
+(D99 §«Позиция», Plan 107, 2026-05-27). Заменяют inline-клаузы Plan 62.F /
+Plan 62.F.bis.
+
+### Правило
+
+#### Грамматика (расширение `file-level-attrs`, D99)
+
+```
+file-level-attr  := prelude-attr | allow-attr | cfg-attr | doc-attr | …
+prelude-attr     := "#no_prelude"
+                  | "#prelude" "(" prelude-names ")"
+prelude-names    := prelude-name ("," prelude-name)*    // ≥ 1; пустой запрещён
+prelude-name     := "core" | "runtime" | "errors"
+                  | "collections" | "protocols" | "effects"
+allow-attr       := "#allow" "(" allow-target ")"
+allow-target     := "shadow"                            // extensible
+```
+
+#### `#no_prelude` — полный opt-out
+
+```nova
+#no_prelude
+module my.realtime
+
+// Никаких авто-импортов; Option/Result нужно явно:
+import std.prelude.core.{Option, Result}
+```
+
+Применение: real-time/embedded (prelude содержит GC-код), bootstrap уровни,
+обучающие примеры с explicit visibility.
+
+#### `#prelude(names…)` — selective opt-in
+
+```nova
+#prelude(core, runtime)
+module my.dsl
+
+// Видимо: Option/Result/Some/None/Ok/Err/Error/Ordering (core)
+// + panic/exit/assert/debug_assert/print/println (runtime).
+// НЕ видимо: RuntimeError (errors), Iter (collections),
+//            From/Hashable/… (protocols), Fail[E]/Time/Mem (effects).
+```
+
+Валидные имена `prelude-name`:
+
+| Имя | Содержимое |
+|---|---|
+| `core` | `Option`/`Result`/`Some`/`None`/`Ok`/`Err`/`Error`/`Ordering` |
+| `runtime` | `panic`/`exit`/`assert`/`debug_assert`/`print`/`println` |
+| `errors` | `RuntimeError` (6 variants) + `ReadBufferError` |
+| `collections` | `Iter[T]` protocol |
+| `protocols` | `From`/`Into`/`Hashable`/`Equatable`/`Comparable`/`Display` |
+| `effects` | `Fail[E]` + `Time` + `Mem` |
+
+Имена валидируются resolver'ом — `#prelude(badname)` → compile error со
+списком валидных имён.
+
+Пустой `#prelude()` → **compile error**:
+```
+error: `#prelude()` with empty list is not allowed
+  use `#no_prelude` to disable all prelude auto-imports (D174)
+```
+
+#### `#allow(shadow)` — suppress W_PRELUDE_SHADOW
+
+```nova
+#allow(shadow)
+module my.dsl
+
+type Option { foo int }         // W_PRELUDE_SHADOW silenced
+const PRELUDE_VERSION int = 99  // W_PRELUDE_SHADOW silenced
+```
+
+Подавляет structured `W_PRELUDE_SHADOW` lint (D125) на уровне модуля.
+User-declaration по-прежнему wins; `#allow(shadow)` убирает только предупреждение.
+
+Item-level suppress — DEFERRED (requires generic attribute parser).
+
+#### Конфликт `#no_prelude` + `#prelude(...)`
+
+На одном файле нельзя комбинировать оба:
+
+```
+error: conflicting prelude attributes: `#no_prelude` and `#prelude(...)` cannot both be present
+```
+
+#### `_module.nv` inheritance
+
+`#no_prelude` и `#prelude(...)` в `_module.nv` наследуются всеми peers
+folder-module (D100 rule 7):
+
+```
+realtime/
+├── _module.nv   // #no_prelude \n module realtime.lib
+├── sched.nv     // module realtime.lib → inherits #no_prelude
+└── timer.nv     // module realtime.lib → inherits #no_prelude
+```
+
+Per-file wins over folder: если peer сам декларирует `#prelude(core)` —
+этот атрибут имеет приоритет над `#no_prelude` из `_module.nv`.
+
+Resolver pre-scan'ит `_module.nv` до принятия решения об auto-import prelude
+(Plan 107 Ф.3 — fix pre-existing bug где `_module.nv` attrs merge'ились
+ПОСЛЕ prelude decision).
+
+### Почему
+
+1. **Консистентность с D99.** Все module-level attrs идут ПЕРЕД `module` —
+   `#cfg`, `#doc`, `#forbid`. Inline-клаузы (Plan 62.F) были единственным
+   исключением — нарушение, исправлено.
+2. **`_module.nv` inheritance.** Pre-module attrs propagate через `_module.nv`
+   естественно (D100 infrastructure). Inline-клаузы не могли.
+3. **Короче.** `#prelude(core)` vs `partial_prelude(core)` — `partial_` лишнее.
+   `#allow(shadow)` vs `allow_prelude_shadow` — с 19 до 13 символов.
+4. **No footgun.** `partial_prelude()` молча трактовалось как `no_prelude`;
+   теперь compile error с actionable hint.
+5. **Расширяемость.** `#allow(X)` extensible до других suppressors.
+   `#prelude(...)` extensible до аддитивного `+name`/`-name` если нужно.
+
+### Что отвергнуто
+
+- **Inline-клаузы (Plan 62.F / 62.F.bis).** Удалены (D174). Hard error с
+  migration hint при встрече старого синтаксиса:
+  ```
+  error: inline `partial_prelude(...)` clause removed (D174, Plan 107)
+    change:  module <path> partial_prelude(core, runtime)
+    to:      #prelude(core, runtime)
+             module <path>
+  ```
+- **`#prelude(*)` для explicit full prelude.** Не нужен — default уже full.
+  Deferred Q-prelude-explicit-full.
+- **`+name`/`-name` аддитивный синтаксис.** Deferred Q-prelude-additive-syntax.
+  Нужен только если prelude вырастет настолько, что `#prelude(all-but-effects)`
+  читается чище чем `#prelude(core, runtime, errors, collections, protocols)`.
+
+### Сравнение с индустрией
+
+| Язык | Механизм | Гранулярность | Позиция |
+|---|---|---|---|
+| **Rust** | `#![no_std]` | crate-level | inner attribute (crate root) |
+| **Haskell** | `NoImplicitPrelude` + `import Prelude hiding (...)` | file-level | pragma + import |
+| **Kotlin** | `@file:Suppress(...)` | file-level | before `package` |
+| **Nova** | `#no_prelude` / `#prelude(...)` | file-level + folder-level | before `module` |
+
+Nova лучше Rust (file vs crate granularity), лучше Haskell (не требует
+отдельного `import Prelude hiding (...)` — группы достаточны), паритет с
+Kotlin (`@file:` паттерн аналогичен `#attr` до декларации).
+
+### Цена
+
+1. **Breaking change.** 15 файлов на 2026-05-27 с inline-клаузами — compile
+   error до миграции. Nova pre-production → grace period не нужен.
+2. **Pre-scan `_module.nv`.** Один extra `fs::read_to_string` + partial parse
+   в hot path. Mitigated: raw-text check перед full parse.
+3. **Item-level `#[allow(shadow)]` не реализован.** Deferred. `#allow(shadow)`
+   module-level достаточен для 99% use-cases.
+
+### Связь
+
+- [D26](08-runtime.md#d26) — prelude items (что находится в каждой группе).
+- [D78](#d78-package-tooling-novatoml-novalock-registry-chain-workspace) — §«Prelude opt-out», amended.
+- [D99](09-tooling.md#d99) — `#cfg` position rule. D174 следует тому же.
+- [D100](#d100) — `_module.nv` inheritance (rule 7 добавлен).
+- [D125](08-runtime.md#d125) — `W_PRELUDE_SHADOW` lint, подавляется `#allow(shadow)`.
+- [Plan 107](../../docs/plans/107-prelude-attribute-syntax.md) — реализация.
+
+### Открытые вопросы
+
+- **Q-prelude-additive-syntax.** Нужна ли форма `#prelude(-effects)` для
+  «full prelude минус один модуль»?
+- **Q-item-level-allow-attr.** Item-level `#[allow(shadow)]` перед конкретным
+  объявлением — когда добавить?
 
 ---
 

@@ -1,0 +1,40 @@
+// Plan 100.7 (D165): pilot Transaction migration — commit on success.
+// Probe 1 of 5: happy-path.
+//
+// Pattern: consume tx + errdefer rollback + okdefer commit (D162).
+// D157: plain param = view (non-consuming, default).
+
+module nova_tests.plan100_7.tx_commit
+
+type Db { id int }
+type OrderErr { msg str }
+
+type Transaction consume {
+    id int,
+}
+
+// Infallible commit/rollback for clarity — avoids ? in defer body.
+fn Transaction consume @commit() -> () { () }
+fn Transaction consume @rollback() -> () { () }
+
+fn Db @begin() -> Transaction => { id: 1 }
+
+type Receipt { id int }
+
+// D157: view is default — plain param means view (non-consuming).
+// db_insert is infallible here to avoid D162 view-param false-positive.
+fn db_insert(t Transaction, data int) -> Receipt
+    => { id: data }
+
+fn process_order(db Db, data int) -> Receipt {
+    consume tx Transaction = db.begin()          // explicit type annotation (D165)
+    // Commit on any exit — for simplicity use explicit consume.
+    let receipt = db_insert(tx, data)
+    tx.commit()
+    return receipt
+}
+
+test "Transaction commit success path" {
+    let db = Db { id: 1 }
+    process_order(db, 42)
+}

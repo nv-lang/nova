@@ -114,7 +114,7 @@ TS, как и просит источник.
 | Домен | Модули MVP | Ориентир |
 |---|---|---|
 | Опционал / ошибки | `Option`, `Result` + комбинаторы (`map`/`unwrap_or`/`?`) | Rust |
-| Коллекции | `Vec`, `HashMap`, `HashSet` | Rust |
+| Коллекции | `[]T` (встроен, Vec не нужен), `HashMap`, `HashSet`; vec-комбинаторы (`map`/`filter`/`fold`) | Rust |
 | Текст | split / join / trim / pad / parse чисел; форматирование через `str.from` + интерполяцию `"${}"` | Go `strings`, TS |
 | Сортировка / поиск | `sort[T Ord]`, `sort_by`, `binary_search`, `min`/`max` | Go `slices`, Rust |
 | JSON | encode / decode | TS |
@@ -148,6 +148,66 @@ handler'ами (killer-пример из README — `Db` через `in_memory_d
 (b) TCP-echo сервер/клиент поверх 83.12 — backend-claim демонстрация.
 Оба варианта работают на MVP-std, выбирается **один** для shipping.
 
+## Принцип: Nova-first, C только для примитивов
+
+> **Решение 2026-05-27:** максимально использовать Nova + Plan 96
+> (слайсы `s[a..b]`) + Plan 90.1 (extend-family) вместо C-реализаций.
+> Функцию пишем на Nova если она выражается через уже существующие
+> примитивы. C остаётся только там, где нужны `memcmp`/`memcpy`/
+> `alloc`/UTF-8 decode на уровне байт.
+
+**Можно на Nova (перенести из C или написать сразу на Nova):**
+
+| Метод | Nova-реализация | Статус |
+|---|---|---|
+| `str @replace(from, to)` | `@split(from).join(to)` | ✅ Ф.2 |
+| `str @repeat(n)` | `StringBuilder.append_repeat` | ✅ Ф.2 |
+| `str @pad_left(w, fill)` | `StringBuilder.append_repeat(fill, pad).append(@)` | ✅ Ф.2 |
+| `str @pad_right(w, fill)` | `StringBuilder.append(@).append_repeat(fill, pad)` | ✅ Ф.2 |
+| `[]T @map/filter/fold` | уже на Nova в `vec.nv` | ✅ готово |
+| `[]str @join(sep)` | уже на Nova в `text.nv` | ✅ Ф.2 |
+
+**nova_body блочный синтаксис (решение 2026-05-27):** `nova_body` в
+`runtime_registry.rs` поддерживает две формы:
+- `"expr"` → эмитируется как `fn @name(...) => expr`
+- `"{ ... }"` → эмитируется как `fn @name(...) { ... }` (block form)
+
+Это позволяет писать многострочные Nova-тела прямо в registry без
+искусственного соединения через `;`.
+
+**`str @split` — zero-copy (решение 2026-05-27):** отдельной функции
+`split_to_slices` не нужно. В Nova `str` — это `(ptr, len)` без
+ownership, нет разницы между "копией" и "view" на уровне типа.
+Текущая C-реализация `nova_str_split` уже возвращает views в
+оригинальный буфер (`{ s.ptr + start, len }` без `memcpy`) — как
+Rust `str::split()` возвращает `&str`. API остаётся `[]str`.
+
+**`str` / `StringBuilder` — нет изменяемого `[]u8` слайса (решение
+2026-05-27):** разрешать мутирующий слайс байт нельзя — это сломает
+UTF-8 invariant строки. Read-only `@bytes() -> []u8` уже есть.
+`StringBuilder.append_bytes` принимает `[]u8` с явным предупреждением
+в doc (caller отвечает за UTF-8 validity). Это сознательный дизайн,
+как в Rust (`as_bytes()` read-only, запись через `unsafe`).
+
+**Остаётся в C (byte-level примитивы, нельзя без FFI):**
+
+| Метод | Причина |
+|---|---|
+| `trim`, `to_upper`, `to_lower` | `isspace`/`toupper` byte-уровень |
+| `starts_with`, `ends_with`, `contains` | `memcmp` |
+| `eq`, `hash`, `lt/le/gt/ge` | `memcmp`, FNV-1a |
+| `byte_at`, `char_at` | UTF-8 decode |
+| `concat` | `alloc` + `memcpy` |
+| `find`, `rfind` | KMP/naive — эффективнее в C |
+| `split` | массив `(ptr,len)` view'ов — zero-copy ✅ уже так |
+| f64/f32 math (`sqrt`, `sin`, `ln`…) | libm intrinsics |
+
+**Plan 90.1 (`extend_from`, `copy_from`, слайсы) как оптимизация:**
+`[]u8` операции на Nova-коде std (например, `parse_int` через
+`@bytes()[i]` итерацию) компилируются в тот же C что и ручной C-код,
+но лучше тестируемы и читаемы. `extend_from` в `StringBuilder`-like
+паттернах даёт zero-copy конкатенацию без ручного `memcpy`.
+
 ## Метод
 
 std-код написан — блокеры на стороне codegen. План закрывает блокеры
@@ -161,6 +221,7 @@ std-код написан — блокеры на стороне codegen. Пла
    `emit_c.rs` / `nova_rt/`).
 3. Conformance-тест на модуль (раздел Ф.5) — реальный use-case.
 4. Повторять до `→ exe` PASS.
+5. Предпочитать Nova-реализацию над C — см. таблицу «Nova-first» выше.
 
 ## Декомпозиция
 
@@ -184,22 +245,30 @@ STATUS.md и таблица «Накопленные блокеры std/» из
 - **Ф.0.4** Decision point: уточнить порядок Ф.1–Ф.4 и оценку
   трудоёмкости по результату Ф.0.2.
 
-### Ф.1 — Коллекции: `Vec`, `HashMap`, `HashSet` (ядро)
+### Ф.1 — Коллекции: `HashMap`, `HashSet` + vec-комбинаторы (ядро)
+
+> **Решение 2026-05-27:** `Vec[T]` как отдельный тип **не нужен** —
+> `[]T` уже является встроенным динамическим массивом в Nova (`Vec`
+> в Nova-семантике). `vec.nv` содержит функциональные комбинаторы
+> (`map`/`filter`/`fold`/`any`/`all`/`first`/`last`) поверх `[]T`
+> через D35 (`fn []T @method`). Никакой Vec-обёртки нет и не нужно.
+> Пересмотр только если появится обоснованная причина (например,
+> отдельный ownership-семантический тип).
 
 Самые востребованные модули — закрывают наибольшую долю реального
 кода. Известные кандидаты-блокеры (подтвердить/опровергнуть в Ф.0):
 
 - generic specialization при monomorphization (`set.nv` —
   type-erased `Iter[T]` без concrete `next`);
-- array-type mangling (`vec.nv` — malformed `Nova_[]T*` вместо
-  `NovaArray_<T>*`);
+- vec-комбинаторы (`vec.nv` — `map`/`filter`/`fold` на `[]T`,
+  array-type mangling `Nova_[]T*` вместо `NovaArray_<T>*`);
 - protocol-bound dispatch D72 для generic-erased `K.eq`/`K.hash`
   (`hashmap.nv`);
 - tuple type system — mixed-type `(K, V)` (все поля `_NovaTupleN`
   захардкожены в `nova_int`).
 
-Acceptance: `Vec`, `HashMap`, `HashSet` компилируются `→ exe` и
-проходят conformance-тесты Ф.5.
+Acceptance: `HashMap`, `HashSet`, vec-комбинаторы компилируются
+`→ exe` и проходят conformance-тесты Ф.5.
 
 ### Ф.2 — Текст и форматирование
 

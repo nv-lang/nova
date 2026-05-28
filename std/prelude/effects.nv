@@ -3,7 +3,7 @@
 //
 // Декларации добавлены в этот файл, чтобы:
 //   1) `nova doc` показывал canonical API в одном месте (AI-readable),
-//   2) splittable prelude работал (`partial_prelude(effects)` opt-in
+//   2) splittable prelude работал (`#prelude(effects)` opt-in
 //      только effects без core/runtime/errors/collections/protocols),
 //   3) `Fail[E]` имел formal declaration совпадающую с тем что
 //      hardcoded type-checker'ом и codegen'ом видит как single-element

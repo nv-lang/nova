@@ -23431,3 +23431,344 @@ Phase progress (Ф.0.4 нумерация):
 Plan 91 progress: 3/8 phases done в Ф.0.4 нумерации.
 Следующий immediate шаг — Ф.2 text methods (8 runtime methods +
 C stubs) ИЛИ Ф.3 conformance (deep codegen investigation).
+
+=== Plan 107 — Prelude attribute syntax (2026-05-27) ===
+
+D174: migrate prelude control from inline module-line clauses to
+#-attribute syntax before `module` declaration.
+
+Parser (mod.rs):
+  - Ф.1: parse_module_attrs() accepts #no_prelude / #prelude(...) / #allow(shadow)
+    (mapped to existing ModuleAttrKind variants: NoPrelude/PartialPrelude/AllowPreludeShadow)
+  - Ф.2: inline `no_prelude`/`partial_prelude`/`allow_prelude_shadow` → hard error
+    with actionable migration hint
+
+imports.rs:
+  - Ф.3: preload_module_nv_prelude_attrs() — pre-scan _module.nv before
+    prelude decision; fixes _module.nv inheritance bug (pre-existing)
+  - Ф.4: defensive empty #prelude() list error
+
+Lint/AST:
+  - Ф.5: W_PRELUDE_SHADOW hint updated to new #allow(shadow) syntax
+
+Fixtures:
+  - Ф.6: plan62/ (7 files) + std/prelude/*.nv (6 comments) migrated
+  - Ф.7: plan107/ (11 new tests): 8 PASS + 3 CC-FAIL (pre-existing Nova_ReadBufferError)
+    positive: no_prelude_attr, prelude_core_attr, prelude_multi_attr, allow_shadow_attr
+    negative: prelude_empty_error, prelude_bad_subname, old inline forms (3 × hard error)
+    inheritance: folder_no_prelude_inherited/_module.nv → peer.nv PASS
+
+Full nova test: 1451/62 (same pre-existing 62, 0 new regressions from 107).
+Commit: 0adc9e8ceba. Branch: plan-107 pushed to github.
+
+Plan 107 ✅ ЗАКРЫТ.
+
+Plan 103.7 — closed 2026-05-27; promoted D167-D172 to final + new D173; §1531 rewrite; Q9/Q12.4/Q-memory-model closed.
+
+Key changes:
+  - D173 (AI-first guidance): decision tree «channel vs mutex vs atomic vs once» + 5 canonical patterns
+    + anti-patterns. Fix: D91 capability-split (tx, rx) syntax in anti-patterns 3+5.
+  - §1531 rewrite: «Mutex / Atomic — НЕ в spec» → «runtime.sync — stdlib, не prelude (D167-D173)»;
+    owner-actor preserved as default; escape hatch via import runtime.sync.{...} added.
+  - §641 D50 «Открытые вопросы»: «Mutex/Atomic отвергнуты» → «stdlib (D167-D173), не prelude».
+  - Q9 §272: Channel ✅ D79; Mutex/RwLock/AtomicSized ✅ D169/D168; Atomic[T] generic ⏳ deferred.
+  - Q12.4: ✅ partial closed — all sub-questions resolved by D79/D168-D171/D173.
+  - Q-memory-model: ✅ closed by D167 (new section in open-questions.md).
+  - Q-send-timeout: 🟡 open — Channel-specific, not sync scope, outside Plan 103.x.
+  - Spec consistency: 3/3 checks PASS (0 old phrase matches, 7 D-blocks present).
+
+Commits:
+  - feat(plan103.7 Ф.7): 89253032c29 — D173 AI-first guidance (previous agent)
+  - fix(plan103.7 Ф.7): 61087df188f — D173 Channel anti-patterns capability-split
+  - docs(plan103.7 Ф.8): 313b246f1e4 — §1531+§641 rewrite Mutex/Atomic stdlib references
+  - docs(plan103.7 Ф.9): 3ea5e197734 — Q9/Q12.4/Q-memory-model closed by D167-D173
+
+=== Plan 83.11: Centralized I/O driver — architectural pivot (2026-05-27) ===
+
+Architectural response для накопленных 5 М:N race планов (83.10.1, .2, .3, .4, .5).
+Каждый из них fix'ил реальный bug в той же зоне — cross-thread visibility
+distributed I/O state across N per-worker UV loops. Это не цепочка случайных
+багов, это симптомы архитектурного выбора.
+
+DECISION: Path A из 83.10.5 final report — port Tokio 1.x runtime architecture
+(centralized driver thread с одним UV loop; workers без UV loops). Tokio
+переписали свой runtime ровно по этой причине (1.0 release ~2020). Мы можем
+взять их урок без повторения 3 лет patching'а.
+
+Design plan: docs/plans/83.11-centralized-io-driver.md (601 lines, §0-§9).
+
+Key sections:
+- §3.0 Tokio reuse map: explicit file-by-file mapping. Anti-pattern: «port
+  verbatim где можем, reinvent только с обоснованием». TimerEntry state machine,
+  Notify register-then-recheck pattern, task::state CAS, Parker/Unparker idle wake.
+- §1.4 honest comparison: Go runtime тоже distributed → платят cost engineering
+  team'ом (десятки timer race issues over decade). Nova команда 1 человек —
+  невозможно поддерживать distributed runtime качества Go.
+- §3.2: 9 phases (~9-15 dev-day):
+  - Ф.0/2/7/8: Sonnet
+  - Ф.1/3/6/9 design + core migration: Opus + Thinking ON (mandatory)
+  - Ф.4/5 secondary primitives migration: Sonnet + Thinking ON
+- §8 tests: 20 positive (P1-P20) + 12 negative (N1-N12) + 8 bench (B1-B8)
+- §4 acceptance: 0 new М:N race plans within 6 months post-merge
+
+SUPERSEDES Plan 83.10.5 PARTIAL — Tactical Ф.B inadequate, replaced by this
+architectural pivot. Plan 83.10.5 branch (plan-83.10.5-iso-cancel-fix) preserved
+for diagnostic counters reuse, но НЕ будет merged — Architectural fix делает
+её Tactical content obsolete.
+
+Status: 📋 proposed. Next: Ф.1 design phase (Opus + Thinking ON, ~1 day).
+
+
+=== Plan 103 V1 — closed 2026-05-27 ===
+
+std.runtime.sync production-grade spec + API expansion V1.
+
+Sub-plans closed: 103.1, 103.2, 103.3, 103.4, 103.5, 103.6, 103.7, 103.8 (all 8 V1 sub-plans).
+Metrics:
+- 14 cross-cutting tests (plan103_8): 4 litmus + 5 property + 5 stress; 14/14 PASS
+- Three-way audit (sync.nv / sync_primitives.h / D167-D171): 0 inconsistencies
+- Backward compat: plan103_3/plan103_4/plan103_5/plan103_6 tests unchanged
+- Full suite regression: 0 new FAIL
+- D-blocks finalized: D167 (MemOrdering), D168 (12 sized atomics), D169 (Mutex family),
+  D170 (Semaphore/Barrier/CountDownLatch/Condvar), D171 (Once/OnceCell/Lazy), D172/D173
+
+22 types shipped:
+  AtomicI8/I16/I32/I64, AtomicU8/U16/U32/U64, AtomicIsize/Usize, AtomicBool, AtomicPtr
+  Mutex (FIFO, unfair opt-in), RwLock (writer-priority), ReentrantMutex
+  Semaphore, Barrier (cyclic), CountDownLatch, Condvar (tied to Mutex)
+  Once (call_once closure form), OnceCell[T], Lazy[T]
+  + MemOrdering enum + fence() + WaitGroup
+
+Nova edge: realtime {} / blocking {} type-checker enforcement (M12) -- unique vs Go/Rust/Java.
+V2 (103.9 consume guards) gated on Plan 100.7.
+
+Branch: plan-103.8 merged into main.
+
+=== Plan 83.11 Ф.0-Ф.2 + Ф.3 WIP — implementation session (2026-05-27) ===
+
+Ф.0+Ф.1+Ф.2 closed cleanly:
+- Worktree D:/Sources/nv-lang/nova-p83-11 created, libuv copy, nova-cli built
+- Ф.1 design doc (056a7ec5e18) — Variant A, NovaSleepState single AtomicU64
+  state encoding, Tokio TimerEntry pattern porting
+- Ф.2 driver scaffolding committed and pushed:
+  driver.h/c (lifecycle, MPSC mutex job queue, async wake handles), wired
+  в _materialize_pool и nova_runtime_shutdown, test_runner.rs link rule.
+  Verified mn_runtime_smoke + deep_spawn PASS — no regression.
+
+Ф.3 WIP (commit 662b4bbdaf1, branch plan-83.11-centralized-driver):
+- Time.sleep migrated: _nova_sleep_via_driver submits ARM_SLEEP job →
+  driver creates timer на своём UV loop, links в scope.armed_sleeps_head,
+  CAS state NEW→ARMED
+- Cancel routed: _nova_cancel_via_driver submits CANCEL_SCOPE → driver walks
+  armed_list, CAS ARMED→CANCEL_REQ, uv_close
+- close_cb stores DRV_CLOSED, nova_sched_wake (cross-thread dispatch_ready)
+- runtime.c: legacy cancel_worker_fibers bypassed when driver started
+  (would create double-wake race)
+
+ARCHITECTURE VERIFIED through diagnostic:
+- All 100 ARM_SLEEP jobs received ✓
+- CANCEL_SCOPE processed, armed_list walked ✓
+- 100 close_cb fired ✓
+- 92/100 fibers have parked=1 at close_cb (wake CAS succeeds)
+- 8/100 had parked=0 = wake-before-park race
+
+PARTIAL FIX: futex pattern reduced parked=0 cases к 0, но test STILL 3/30 PASS.
+27/30 TIMEOUT. Different race остаётся even with all wakes dispatching correctly.
+
+Heisenbug сигнал: добавление fprintf в close_cb path даёт 1/1 PASS — stdio
+lock acts as mfence. Confirms remaining race is memory-ordering related,
+likely в worker's wake_pending drain или mco_resume path.
+
+DECISION: stop here, commit honest WIP. Continuation requires Opus + Thinking
+ON deep session с atomic counters per-step (dispatched, resumed, exited)
+для locating where fiber is lost. Possibly need to port Tokio's AtomicWaker
+pattern полностью (вместо current cross-thread dispatch_ready hierarchy).
+
+Branch plan-83.11-centralized-driver pushed но НЕ merged. [M-83.10.4-iso-
+cancel-startup-race] STILL OPEN. Worktree D:/Sources/nv-lang/nova-p83-11
+preserved для continuation. Diagnostic infrastructure готова.
+
+
+=== Plan 83.11 Ф.3 continuation — 9 diag counters + futex + SEQ_CST (2026-05-27) ===
+
+Continuation session per user "продолжай работать без остановок". Goal: locate
+exact race point in wake-delivery chain через atomic counter diagnostic, apply
+targeted fix.
+
+DIAGNOSTIC ADDED (commit 6dc7ad39506 branch plan-83.11-centralized-driver):
+- 9 atomic counters per delivery step: close_cb / wake_called / cas_won /
+  dispatch_same|cross / worker_drained / park_resumed / pred_true / sleep_ret
+- 5 futex-path counters (fastpath_break / cas_win / cas_lose / yield / resume)
+- sysmon ticker prints diag ~1Hz (visible during TIMEOUT)
+
+DIAG REVEALED loss point:
+- close_cb=100 ✓, wake_called=100 ✓
+- cas_won=89-97 — 3-11 wake CAS fails (parked false at CAS time)
+- yield=100 — all fibers reach mco_yield
+- resume=89-97 — 3-11 never resumed (lost wakes)
+
+FIXES APPLIED:
+1. _nova_sleep_via_driver: inline futex park (SEQ_CST parked + recheck +
+   CAS-clear path) — Linux futex / Tokio AtomicWaker idiom
+2. Driver close_cb: SEQ_CST store stage CLOSED (was RELEASE) — total order
+   with worker's SEQ_CST parked
+
+RESULTS (stress_iso_3e direct exe runs):
+- 3/30 PASS baseline (no fixes)
+- 13/30 PASS with counters (SEQ_CST counter inc adds fences)
+- 19/30 PASS with futex pattern
+- 15/30 PASS with futex + SEQ_CST stage (marginal)
+- Plateau ~50% PASS — diminishing returns
+
+REMAINING RACE: driver's wake CAS happens BEFORE worker's SEQ_CST parked in
+some interleavings. Worker yields after, no future wake. SEQ_CST on stage
+doesn't fix because it's different atomic.
+
+FULL FIX requires Option 1 (port Tokio AtomicWaker fully, breaks fiber model)
+или Option 2 (generational futex — wake_gen counter per slot). 1-2 dev-days
+deep work.
+
+CURRENT STATE:
+- Architecture works (driver/single-mutator confirmed via diag)
+- Wake delivery ~50% PASS — known flakiness
+- Branch plan-83.11-centralized-driver advanced (6dc7ad39506 pushed)
+- Worktree D:/Sources/nv-lang/nova-p83-11 preserved
+- [M-83.10.4-iso-cancel-startup-race] STILL OPEN. NOT MERGED.
+
+Diagnostic infrastructure готова — next session can quickly verify any fix
+via stress_iso_3e + diag counter analysis.
+
+
+=== Plan 83.11 Ф.3 — Session #3 (continuation #2): 3 fix attempts (2026-05-27) ===
+
+3 architectural fix experiments после diag localized race на cas_won < 100:
+
+1. **Unconditional dispatch** from close_cb (bypass CAS). 1/30 PASS — reverted.
+   Hypothesis: double-dispatch race when fiber currently running.
+
+2. **Generational futex** — wake_gen counter on NovaSleepState. Wake side incs
+   gen unconditionally + CAS parked. Park snapshots gen before SEQ_CST parked,
+   rechecks after. 1/30 PASS — reverted. Likely our dispatch_ready hierarchy
+   has multiple race windows that gen counter alone can't close.
+
+3. **Simple futex park + SEQ_CST stage CLOSED** — final state. 1-19/30 PASS,
+   system-load dependent. Test flaky, NOT production.
+
+INSIGHT: Half-port (TimerEntry state machine только) inadequate. Full Tokio
+AtomicWaker + Future + poll paradigm нужен ВЕСЬ stack — несовместимо с current
+fiber model.
+
+Альтернатива: integrate wake_gen в nova_sched_park/wake LEVEL (generic API,
+risky). Real fix needs deep design session или architectural rewrite.
+
+STATE: branch plan-83.11-centralized-driver advanced (f580bfff775 pushed).
+Diag infrastructure preserved. [M-83.10.4-iso-cancel-startup-race] STILL OPEN.
+6 hours total on Plan 83.11 Ф.3 — ~50 hours estimated for production fix.
+
+DECISION: stop, commit honest WIP, defer to dedicated Opus+Thinking ON session
+с either full Tokio paradigm port OR nova_sched_park/wake-level wake_gen.
+
+2026-05-27: Plan 90.1 — []T extend-family API + copy_from hardening SHIPPED.
+
+Ключевые изменения:
+- copy_from hardening: strict equal-length (src.len != dst.len → panic "length mismatch")
+  + всегда memmove (overlap-safe). Breaking change: было silent truncation для src
+  короче dst. Truncation idiom: dst[..n].copy_from(src[..n]) через D144 slicing.
+- NEW: extend_from(src) — bulk append с 2x growth, memmove (self-extend safe)
+- NEW: insert_from(i, src) — вставка пачкой по позиции [0,len], OOB panic, memmove tail
+- NEW: reserve(extra) — preallocate hint, len unchanged, negative-extra panic
+- W_VIEW_EXTEND_DETACH lint — предупреждает когда grow-метод вызван на parent
+  после создания slice-view из него. Suppress: #allow(view_extend_detach)
+- 20/20 nova_tests/plan90_1/ PASS (8 pos + 5 neg + 1 lint-warn + 2 prop + 2 stress + 3 lint-only)
+- D141 spec amend: extend-family + overlap semantics + truncation idiom documented
+- Forward-declarations в nova_rt.h для nv_panic_insert_oob + nv_panic_negative_reserve
+
+Worktree: nova-p90-1, branch: plan-90.1-extend-family
+
+=== Plan 83.11 Ф.3.A v2 — single-atomic wait_state (2026-05-27) ===
+
+User approved single-atomic design after careful proposal. Design committed
+as plan §11 (commit 9ba644f43ba on main).
+
+IMPLEMENTATION (commit d5aaf9a2004 on plan-83.11-centralized-driver):
+- NovaSleepWaitState enum: NEW/PARKED/WOKEN/CONSUMED
+- wait_state field в NovaSleepState
+- Worker park: CAS NEW→PARKED (authoritative) + parked[] for legacy compat
+- Driver wake: CAS NEW→WOKEN OR PARKED→WOKEN, dispatch only PARKED case
+
+RESULTS:
+- **Pure single-atomic** (без parked[]): **SEGFAULT** — fiber stack overflow
+  slot 0. Existing runtime tightly coupled к parked[] semantics: removing it
+  breaks cancel_worker_fibers walks, count_parked, supervised_run_impl waits.
+- **Hybrid** (wait_state + parked[]): **3/30 PASS**. Better stability but
+  still doesn't close race fully.
+
+ROOT CAUSE: design architecturally clean (single mutator → no cross-atomic
+race), но implementation conflict с existing runtime expectations. Sleep-only
+single-atomic не достаточно — нужен либо full integration с nova_sched_*
+generic API, либо port Tokio Future+Waker model.
+
+DECISION: stop, commit honest WIP. Plan 83.11 Ф.3 needs deeper architectural
+session (estimated 2-5 dev-days). NOT MERGED. [M-83.10.4-iso-cancel-startup-
+race] STILL OPEN. Worktree D:/Sources/nv-lang/nova-p83-11 preserved.
+
+Total time on Plan 83.11 Ф.3: ~8 hours across 4 sessions. Race fundamentally
+requires architectural rewrite, не incremental fix.
+
+
+=== Plan 83.11 Ф.3.A v3 — Option A pending_wake integration (2026-05-27) ===
+
+Session #5. User explicit: "продолжай работать по плану Option A сам без
+остановок по всем оставшимся пунктам без упрощений (как для прода), я ушел".
+
+DESIGN: plan §12 committed 3b4845f93b2 на main. Option A = integrate
+pending_wake[] counter в generic nova_sched_park/wake API (vs §11 sleep-
+only). Rationale: closes wake-before-park race для ALL primitives (sleep
++ channels + mutexes + Plan 103.x sync), не только sleep.
+
+IMPLEMENTATION (commit 7336fdbc0af на plan-83.11-centralized-driver, NOT
+MERGED):
+- NovaSchedState.pending_wake[] field + alloc в grow_state + init в get_state
+- nova_sched_park: 3 checkpoints около SEQ_CST parked store
+  1. pre-check CAS pending_wake 1→0 — fast-path return без yield
+  2. SEQ_CST parked=true — full fence
+  3. post-barrier recheck CAS 1→0 — undo parked + return if wake came в окне
+  4. mco_yield (если не fast-returned)
+- nova_sched_wake: CAS pending_wake 0→1 (idempotent deliver) FIRST,
+  then existing CAS parked true→false; if winning, clear pending_wake
+- _nova_sleep_via_driver reverted к generic nova_sched_park_until
+- driver close_cb reverted к standard nova_sched_wake
+- wait_state field/enum removed (§11 v2 leftover)
+
+RESULTS:
+- **Stress 30× stress_iso_3e: 10 PASS / 14 FAIL (slow >300ms) / 6 TIMEOUT**
+- Best partial result so far (vs §11 hybrid 3/30, Tactical 1-19/30)
+- Does NOT meet acceptance criteria (target 30/30)
+- 14 FAIL: cancel completed but >300ms — likely contention/cache pollution
+- 6 TIMEOUT: residual deadlock path remains
+
+PLAN §13 committed (0ca0485eb08 на main) с honest status + recommendation
+для Option B (Tokio Future+Waker port, 2-4 dev-days dedicated Opus +
+Thinking ON).
+
+[M-83.10.4-iso-cancel-startup-race] STILL OPEN. Branch preserved для
+continuation.
+
+Cumulative Plan 83.11 Ф.3 time: ~10 hours / 5 sessions. Plateau confirmed.
+Lesson: 6 attempts на same race surface (83.10.1-5 + 83.11 Ф.3) = definitive
+signal that incremental fixes hit fundamental limit. Tokio rewrote их
+entire runtime в 2020 ровно по этой причине.
+
+
+=== Plan 103.9 closed 2026-05-28; V2 consume guards; 20/20 PASS; D174 spec ===
+
+Plan 103.9 (V2 consume guards migration, D174) CLOSED.
+- MutexGuard / ReadGuard / WriteGuard / Permit / OnceGuard consume types
+- Mutex.lock() -> MutexGuard, RwLock.read/write -> ReadGuard/WriteGuard
+- Semaphore.acquire() -> Permit, Once.try_start() -> OnceGuard
+- 20/20 plan103_9/ PASS (10 negative + 10 positive)
+- 4 pilot concurrency fixtures PASS (sync_mutex_guard, sync_once_guard, sync_rwlock_guards, sync_semaphore_permit)
+- D174 spec in spec/decisions/06-concurrency.md (161 lines, line 5382)
+- [M-103.9-rwlock-parallel-for-exclusion] DEFERRED: parallel for + RwLock under M:N
+- [M-103.9-semaphore-parallel-for] DEFERRED: parallel for + sem.acquire() under M:N
+- Branch: plan-103.9; merge pending

@@ -1,0 +1,30 @@
+// Plan 90.1 — stress: reserve(N) + N pushes — verify all N elements correct.
+// After reserve(N), pushing N elements should not require realloc
+// (cap >= len+N means all pushes stay in-place).
+
+module nova_tests.plan90_1.reserve_then_push_no_realloc
+
+test "reserve 10000 then push 10000 elements" {
+    let mut arr []int = []
+    arr.reserve(10000)
+    let mut i = 0
+    while i < 10000 {
+        arr.push(i * 2)
+        i = i + 1
+    }
+    assert(arr.len() == 10000)
+    // Spot-check values
+    assert(arr[0] == 0)
+    assert(arr[1] == 2)
+    assert(arr[9999] == 19998)
+}
+
+test "reserve larger than needed — excess capacity ignored" {
+    let mut arr []int = [1, 2, 3]
+    arr.reserve(1000)
+    // len is still 3
+    assert(arr.len() == 3)
+    arr.push(4)
+    assert(arr.len() == 4)
+    assert(arr[3] == 4)
+}

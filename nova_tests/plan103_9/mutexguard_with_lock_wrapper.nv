@@ -1,0 +1,49 @@
+// Plan 103.9 (D174) — Positive: Mutex.lock() returns MutexGuard consume.
+//
+// Explicit guard usage: consume g = mu.lock(); defer g.unlock().
+// Tests the guard-based locking pattern that underpins with_lock.
+
+module nova_tests.plan103_9.mutexguard_with_lock_wrapper
+
+test "explicit guard: lock, work, unlock" {
+    let mu = Mutex.new()
+    let shared = AtomicInt.new(0)
+
+    consume g = mu.lock()
+    shared.fetch_add(1)
+    g.unlock()
+    assert(shared.load() == 1)
+}
+
+test "explicit guard defer pattern" {
+    let mu = Mutex.new()
+    let result = AtomicInt.new(0)
+
+    {
+        consume g = mu.lock()
+        defer g.unlock()
+        result.store(42)
+    }
+    assert(result.load() == 42)
+}
+
+test "guard releases lock for subsequent acquire" {
+    let mu = Mutex.new()
+    consume g = mu.lock()
+    g.unlock()
+    // Lock must be free now — can lock again immediately
+    consume g2 = mu.lock()
+    g2.unlock()
+    // No deadlock = test passes
+}
+
+test "guard sequential lock/unlock 20 times" {
+    let mu = Mutex.new()
+    let counter = AtomicInt.new(0)
+    for _i in 0..20 {
+        consume g = mu.lock()
+        counter.fetch_add(1)
+        g.unlock()
+    }
+    assert(counter.load() == 20)
+}

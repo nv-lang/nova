@@ -1,0 +1,108 @@
+// Plan 103.8 - Stress: Once + OnceCell + Lazy combined under fiber contention.
+//
+// Tests that Once/OnceCell/Lazy are safe to call concurrently:
+//   - init runs exactly once even under parallel contention
+//
+// Note: Uses supervised/spawn pattern to avoid fiber stack overflow
+// that occurs when parallel-for + Once-closure combination is used
+// under high parallel test load (known Plan 82 / Plan 103.5 interaction).
+//
+// supervised{} waits for all spawned fibers to complete -- no WaitGroup needed.
+//
+// EXPECT_TIMEOUT_MS 300000
+
+module nova_tests.plan103_8.stress_once_oncecell_lazy_combined
+
+test "Once.call_once under 4-fiber contention: init runs exactly once" {
+    let once      = Once.new()
+    let init_cnt  = AtomicI64.new(0)
+
+    supervised {
+        for _i in 0..4 {
+            spawn {
+                once.call_once() {
+                    init_cnt.fetch_add(1)
+                }
+            }
+        }
+        // supervised waits for all 4 spawn fibers to complete
+    }
+
+    assert(init_cnt.load() == 1, "Once init must run exactly once under contention")
+    assert(once.is_completed() == true, "Once must be in completed state")
+}
+
+test "OnceCell.get_or_init under 4-fiber contention: init runs exactly once" {
+    let cell      = OnceCell[int].new()
+    let init_cnt  = AtomicI64.new(0)
+    let wrong     = AtomicI64.new(0)
+
+    supervised {
+        for _i in 0..4 {
+            spawn {
+                let v = cell.get_or_init() {
+                    init_cnt.fetch_add(1)
+                    42
+                }
+                if v != 42 {
+                    wrong.fetch_add(1)
+                }
+            }
+        }
+    }
+
+    assert(init_cnt.load() == 1, "OnceCell init must run exactly once")
+    assert(wrong.load() == 0, "all fibers must see value 42")
+    assert(cell.is_initialized() == true)
+}
+
+test "Lazy.force under 4-fiber contention: init runs exactly once" {
+    let init_cnt = AtomicI64.new(0)
+    let wrong    = AtomicI64.new(0)
+    let lazy     = Lazy[int].new() {
+        init_cnt.fetch_add(1)
+        99
+    }
+
+    supervised {
+        for _i in 0..4 {
+            spawn {
+                let v = lazy.force()
+                if v != 99 {
+                    wrong.fetch_add(1)
+                }
+            }
+        }
+    }
+
+    assert(init_cnt.load() == 1, "Lazy init must run exactly once")
+    assert(wrong.load() == 0, "all fibers must see value 99")
+    assert(lazy.is_forced() == true)
+}
+
+test "repeated calls to Once+OnceCell+Lazy do not re-run init" {
+    let once       = Once.new()
+    let init_once  = AtomicI64.new(0)
+    let cell       = OnceCell[int].new()
+    let init_cell  = AtomicI64.new(0)
+    let lazy_inits = AtomicI64.new(0)
+    let lazy       = Lazy[int].new() {
+        lazy_inits.fetch_add(1)
+        7
+    }
+
+    for _j in 0..10 {
+        once.call_once() {
+            init_once.fetch_add(1)
+        }
+        let _ = cell.get_or_init() {
+            init_cell.fetch_add(1)
+            7
+        }
+        let _ = lazy.force()
+    }
+
+    assert(init_once.load() == 1, "Once: repeated calls must not re-run")
+    assert(init_cell.load() == 1, "OnceCell: repeated calls must not re-run")
+    assert(lazy_inits.load() == 1, "Lazy: repeated calls must not re-run")
+}

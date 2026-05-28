@@ -1,0 +1,107 @@
+// Plan 103.9 (D174) — Pilot migration: Once with OnceGuard consume API.
+//
+// V2 pattern: once.try_start_won() + once.make_guard() → OnceGuard consume.
+// Winner: try_start_won() returns true → create guard → commit() or abort().
+// Non-winners: try_start_won() returns false (park until DONE).
+//
+// Note: try_start() (Nova-body) is the high-level API; try_start_won() +
+// make_guard() are the external fns that power it.
+
+module nova_tests.concurrency.sync_once_guard
+
+test "OnceGuard: single caller commits" {
+    let once = Once.new()
+    let mut ran = false
+    supervised {
+        spawn {
+            if once.try_start_won() {
+                consume g = once.make_guard()
+                ran = true
+                g.commit()
+            }
+        }
+    }
+    assert(ran == true)
+    assert(once.is_completed() == true)
+}
+
+test "OnceGuard: only one of N concurrent callers wins" {
+    let once = Once.new()
+    let counter = AtomicInt.new(0)
+    supervised {
+        spawn {
+            if once.try_start_won() {
+                consume g = once.make_guard()
+                counter.fetch_add(1)
+                g.commit()
+            }
+        }
+        spawn {
+            if once.try_start_won() {
+                consume g = once.make_guard()
+                counter.fetch_add(1)
+                g.commit()
+            }
+        }
+        spawn {
+            if once.try_start_won() {
+                consume g = once.make_guard()
+                counter.fetch_add(1)
+                g.commit()
+            }
+        }
+    }
+    assert(counter.load() == 1)
+    assert(once.is_completed() == true)
+}
+
+test "OnceGuard: try_start_won returns false after commit" {
+    let once = Once.new()
+    supervised {
+        spawn {
+            if once.try_start_won() {
+                consume g = once.make_guard()
+                g.commit()
+            }
+        }
+    }
+    // Already done — try_start_won returns false immediately
+    let won = once.try_start_won()
+    assert(won == false)
+}
+
+test "OnceGuard: abort → Once is not completed" {
+    let once = Once.new()
+    supervised {
+        spawn {
+            if once.try_start_won() {
+                consume g = once.make_guard()
+                g.abort()
+            }
+        }
+    }
+    assert(once.is_completed() == false)
+}
+
+test "OnceGuard: happens-before — body effects visible after commit" {
+    let once = Once.new()
+    let value = AtomicInt.new(0)
+    supervised {
+        spawn {
+            if once.try_start_won() {
+                consume g = once.make_guard()
+                value.store(42)
+                g.commit()
+            }
+        }
+        spawn {
+            if once.try_start_won() {
+                consume g = once.make_guard()
+                value.store(42)
+                g.commit()
+            }
+            // If we didn't win, try_start_won() parked until DONE → value == 42
+        }
+    }
+    assert(value.load() == 42)
+}

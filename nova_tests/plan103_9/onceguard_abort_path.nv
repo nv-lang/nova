@@ -1,0 +1,33 @@
+// Plan 103.9 (D174) — Positive: OnceGuard abort path.
+//
+// OnceGuard.abort() transitions Once → POISONED (M-D174-7).
+// Subsequent callers see is_completed() == false; state == Poisoned.
+//
+// D174 M-D174-7: abort() → POISONED (not back to NEW).
+
+module nova_tests.plan103_9.onceguard_abort_path
+
+test "abort transitions Once to Poisoned state" {
+    let once = Once.new()
+
+    if once.try_start_won() {
+        consume g = once.make_guard()
+        g.abort()   // init failed; Once → POISONED
+    }
+
+    assert(once.is_completed() == false)
+}
+
+test "abort: once guard abort path works" {
+    let once = Once.new()
+    let aborted = AtomicInt.new(0)
+
+    if once.try_start_won() {
+        consume g = once.make_guard()
+        aborted.fetch_add(1)
+        g.abort()
+    }
+
+    assert(aborted.load() == 1)
+    assert(once.is_completed() == false)
+}

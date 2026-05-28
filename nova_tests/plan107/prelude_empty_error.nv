@@ -1,0 +1,6 @@
+// EXPECT_COMPILE_ERROR use `#no_prelude`
+//
+// Plan 107 Ф.7 — `#prelude()` empty list → compile error D174.
+
+#prelude()
+module plan107.prelude_empty_error

@@ -10,10 +10,12 @@ test "copy_from — полное копирование" {
     assert(dst.compare(src) == 0)
 }
 
-test "copy_from — src короче dst (хвост не тронут)" {
+test "copy_from — partial copy via slice idiom (dst[..n].copy_from(src))" {
+    // Plan 90.1 migration: old silent truncation → explicit slice prefix.
+    // dst[..2].copy_from(src) copies src into first 2 elements; tail untouched.
     let mut dst []u8 = [1, 2, 3, 4]
     let src []u8 = [9, 9]
-    dst.copy_from(src)
+    dst[..2].copy_from(src)
     let expect []u8 = [9, 9, 3, 4]
     assert(dst.compare(expect) == 0)
 }

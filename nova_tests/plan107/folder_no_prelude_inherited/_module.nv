@@ -1,0 +1,5 @@
+// Plan 107 Ф.7 — _module.nv #no_prelude propagation test.
+// Все peers в этом folder-module наследуют #no_prelude.
+
+#no_prelude
+module plan107.folder_no_prelude_inherited

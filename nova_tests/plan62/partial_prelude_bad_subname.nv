@@ -1,13 +1,17 @@
 // EXPECT_COMPILE_ERROR unknown prelude sub-module
 //
-// Plan 62.F Part 3 — `partial_prelude(...)` validation negative test.
+// Plan 62.F Part 3 — `#prelude(...)` validation negative test.
 //
-// Verifies что resolver валидирует имена в `partial_prelude(...)` против
+// Verifies что resolver валидирует имена в `#prelude(...)` против
 // реальных файлов `std/prelude/<name>.nv` и эмитит чёткую ошибку при
 // опечатке. Bootstrap-stage: список valid имён hardcoded в diagnostic
 // (core, runtime, errors, collections, protocols, effects).
+//
+// D174 (Plan 107): syntax migrated from inline `module X partial_prelude(c0re)`
+// to `#prelude(c0re)` before `module` declaration.
 
-module plan62.partial_prelude_bad_subname partial_prelude(c0re)
+#prelude(c0re)
+module plan62.partial_prelude_bad_subname
 
 fn dummy() -> int => 1
 

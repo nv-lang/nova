@@ -94,10 +94,73 @@
         return 1; \
     } \
     static void nova_array_copy_from_##T(NovaArray_##T* dst, NovaArray_##T* src) { \
-        if (src->len > dst->len) { \
-            nv_panic((nova_str){ .ptr = "copy_from: src longer than dst", \
-                                 .len = sizeof("copy_from: src longer than dst") - 1 }); } \
-        memcpy(dst->data, src->data, (size_t)(src->len) * sizeof(T)); \
+        /* Plan 90.1: strict equal-length + always memmove (overlap safe).           \
+         * Breaking change: old silent-truncation removed.                            \
+         * Truncation idiom: dst[..n].copy_from(src[..n]) via Plan 96 slicing.        \
+         * memmove vs memcpy: overlap-safe by default, paritет с Go; no UB. */       \
+        if (src->len != dst->len) { \
+            nv_panic((nova_str){ \
+                .ptr = "copy_from: length mismatch (use dst[..n].copy_from(src[..n]) for partial copy)", \
+                .len = sizeof("copy_from: length mismatch (use dst[..n].copy_from(src[..n]) for partial copy)") - 1 }); } \
+        memmove(dst->data, src->data, (size_t)(dst->len) * sizeof(T)); \
+    } \
+    /* Plan 90.1: extend_from — append with 2x growth, memmove (self-extend safe). */ \
+    static void nova_array_extend_from_##T(NovaArray_##T* dst, NovaArray_##T* src) { \
+        int64_t src_len = src->len;         /* snapshot before potential realloc */  \
+        T* src_data = src->data;            /* snapshot before potential realloc */  \
+        int64_t needed = dst->len + src_len; \
+        if (needed > dst->cap) { \
+            int64_t new_cap = dst->cap * 2; \
+            if (new_cap < needed) new_cap = needed; \
+            T* new_data = (T*)nova_alloc((size_t)new_cap * sizeof(T)); \
+            memcpy(new_data, dst->data, (size_t)(dst->len) * sizeof(T)); \
+            dst->data = new_data; \
+            dst->cap = new_cap; \
+            /* src_data/src_len are snapshots — valid even if src==dst (self-extend). \
+             * With Boehm GC, old allocation is retained until next collection.      */ \
+        } \
+        /* memmove handles src == dst[X..Y] overlap cases correctly. */ \
+        memmove(dst->data + dst->len, src_data, (size_t)src_len * sizeof(T)); \
+        dst->len = needed; \
+    } \
+    /* Plan 90.1: insert_from — insert at position i with growth + memmove tail. */ \
+    static void nova_array_insert_from_##T(NovaArray_##T* dst, int64_t i, NovaArray_##T* src) { \
+        if (i < 0 || i > dst->len) nv_panic_insert_oob(i, dst->len); \
+        int64_t src_len = src->len;         /* snapshot before potential realloc */  \
+        T* src_data = src->data;            /* snapshot before potential realloc */  \
+        int64_t needed = dst->len + src_len; \
+        int64_t tail_len = dst->len - i; \
+        if (needed > dst->cap) { \
+            /* Alloc new: copy prefix [0..i] + leave hole [i..i+src_len] + copy tail. */ \
+            int64_t new_cap = dst->cap * 2; \
+            if (new_cap < needed) new_cap = needed; \
+            T* new_data = (T*)nova_alloc((size_t)new_cap * sizeof(T)); \
+            memcpy(new_data, dst->data, (size_t)i * sizeof(T)); \
+            memcpy(new_data + i + src_len, dst->data + i, (size_t)tail_len * sizeof(T)); \
+            dst->data = new_data; \
+            dst->cap = new_cap; \
+        } else { \
+            /* In-place: memmove tail right by src_len slots. */ \
+            memmove(dst->data + i + src_len, dst->data + i, (size_t)tail_len * sizeof(T)); \
+        } \
+        /* memmove src into hole — handles overlap if src is a view into dst. */ \
+        memmove(dst->data + i, src_data, (size_t)src_len * sizeof(T)); \
+        dst->len = needed; \
+    } \
+    /* Plan 90.1: reserve — preallocate hint; len unchanged, only cap grows. */ \
+    static void nova_array_reserve_##T(NovaArray_##T* dst, int64_t extra) { \
+        if (extra < 0) nv_panic_negative_reserve(extra); \
+        int64_t needed = dst->len + extra; \
+        if (needed > dst->cap) { \
+            int64_t new_cap = dst->cap * 2; \
+            if (new_cap < needed) new_cap = needed; \
+            T* new_data = (T*)nova_alloc((size_t)new_cap * sizeof(T)); \
+            memcpy(new_data, dst->data, (size_t)(dst->len) * sizeof(T)); \
+            dst->data = new_data; \
+            dst->cap = new_cap; \
+        } \
+        /* len unchanged — only cap grows. View detach lint (W_VIEW_EXTEND_DETACH) \
+         * at call-site covers the case where a view becomes dangling after realloc.*/ \
     } \
     static void nova_array_copy_within_##T(NovaArray_##T* a, int64_t src_from, int64_t dst_from, int64_t len) { \
         if (len < 0 || src_from < 0 || dst_from < 0 || \
@@ -902,6 +965,30 @@ static inline NovaOpt_nova_int nova_str_parse_int_radix(nova_str s, nova_int rad
     r.tag = NOVA_TAG_Option_Some;
     r.value = neg ? -acc : acc;
     return r;
+}
+
+/* Plan 90.1 — bounds-check для insert_from(i, src) position.
+ * i должен быть в [0, dst.len] (включая len — append-at-end допустим). */
+static inline void nv_panic_insert_oob(nova_int i, nova_int len) {
+    char* buf = (char*)nova_alloc(96);
+    int n = snprintf(buf, 96,
+        "insert_from: index %lld out of bounds for length %lld (valid range [0, len])",
+        (long long)i, (long long)len);
+    if (n < 0) n = 0;
+    if (n > 95) n = 95;
+    nv_panic((nova_str){ .ptr = buf, .len = (size_t)n });
+}
+
+/* Plan 90.1 — bounds-check для reserve(extra) argument.
+ * extra < 0 не имеет смысла и указывает на баг в коде пользователя. */
+static inline void nv_panic_negative_reserve(nova_int extra) {
+    char* buf = (char*)nova_alloc(80);
+    int n = snprintf(buf, 80,
+        "reserve: extra must be >= 0, got %lld",
+        (long long)extra);
+    if (n < 0) n = 0;
+    if (n > 79) n = 79;
+    nv_panic((nova_str){ .ptr = buf, .len = (size_t)n });
 }
 
 #endif /* NOVA_RT_ARRAY_H */

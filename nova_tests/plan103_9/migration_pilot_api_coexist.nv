@@ -1,0 +1,75 @@
+// Plan 103.9 (D174) — Positive: V1 and V2 API coexistence.
+//
+// Old-style bare lock/unlock still works (backward compat, M-D174-3).
+// New-style `consume g = mu.lock(); g.unlock()` also works.
+// Both styles can be used in the same file/test.
+
+module nova_tests.plan103_9.migration_pilot_api_coexist
+
+test "V1 bare lock/unlock still works after V2 upgrade" {
+    let mu = Mutex.new()
+    let count = AtomicInt.new(0)
+
+    // V1 style (unchanged bare API):
+    mu.lock()
+    count.fetch_add(1)
+    mu.unlock()
+    assert(count.load() == 1)
+}
+
+test "V2 guard-based lock works alongside V1 bare lock" {
+    let mu = Mutex.new()
+    let count = AtomicInt.new(0)
+
+    // V2 style with explicit guard:
+    consume g = mu.lock()
+    count.fetch_add(1)
+    g.unlock()
+
+    // V1 style after V2:
+    mu.lock()
+    count.fetch_add(1)
+    mu.unlock()
+
+    assert(count.load() == 2)
+}
+
+test "RwLock explicit read and write guards" {
+    let rw = RwLock.new()
+    let val = AtomicInt.new(0)
+
+    consume wg = rw.write()
+    val.fetch_add(100)
+    wg.unlock()
+
+    consume rg = rw.read()
+    let r = val.load()
+    rg.unlock()
+    assert(r == 100)
+}
+
+test "Semaphore explicit acquire/release" {
+    let sem = Semaphore.new(2)
+    let count = AtomicInt.new(0)
+
+    consume p1 = sem.acquire()
+    count.fetch_add(1)
+    p1.release()
+
+    consume p2 = sem.acquire()
+    count.fetch_add(1)
+    p2.release()
+
+    assert(count.load() == 2)
+    assert(sem.available_permits() == 2)
+}
+
+test "Once call_once still works" {
+    let once = Once.new()
+    let ran = AtomicInt.new(0)
+
+    once.call_once() { ran.fetch_add(1) }
+    once.call_once() { ran.fetch_add(1) }  // second call ignored
+
+    assert(ran.load() == 1)
+}

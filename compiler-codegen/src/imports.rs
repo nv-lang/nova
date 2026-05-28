@@ -34,6 +34,32 @@ use std::path::{Path, PathBuf};
 ///   - Нет DCE.
 ///   - Нет signature/body 2-pass split.
 ///   - Wildcard `import X.*` не поддерживается.
+/// D174 / Plan 107 Ф.3: pre-scan `_module.nv` рядом с entry-файлом
+/// для early prelude opt-out decision до полного resolve.
+///
+/// Использует `crate::parser::parse` (публичный API). `parse_module_attrs`
+/// приватен для parser-модуля и недоступен снаружи.
+///
+/// Soft-fail: любая ошибка (файл не найден, parse error) → пустой вектор.
+/// Быстрый путь: raw-text check перед полным parse.
+fn preload_module_nv_prelude_attrs(entry_path: &Path) -> Vec<crate::ast::ModuleAttr> {
+    let dir = match entry_path.parent() { Some(d) => d, None => return vec![] };
+    let module_nv = dir.join("_module.nv");
+    if !module_nv.exists() { return vec![]; }
+    let src = match std::fs::read_to_string(&module_nv) { Ok(s) => s, Err(_) => return vec![] };
+    // Fast path: skip full parse если нет prelude-управляющих атрибутов в тексте.
+    if !src.contains("#no_prelude") && !src.contains("#prelude") { return vec![]; }
+    // Full parse через публичный API.
+    match crate::parser::parse(&src) {
+        Ok(module) => module.attrs.into_iter()
+            .filter(|a| matches!(a.kind,
+                crate::ast::ModuleAttrKind::NoPrelude |
+                crate::ast::ModuleAttrKind::PartialPrelude(_)))
+            .collect(),
+        Err(_) => vec![],
+    }
+}
+
 pub fn resolve_imports_inline(
     entry_path: &Path,
     module: &mut Module,
@@ -101,6 +127,21 @@ pub fn resolve_imports_inline_ex(
     in_progress.insert(entry_key.clone());
     import_chain.push(module.name.clone());
 
+    // D174 / Plan 107 Ф.3: pre-scan _module.nv для prelude inheritance.
+    // inherited_attrs merge происходит ПОСЛЕ prelude decision (end of fn),
+    // поэтому early pre-scan нужен специально для NoPrelude / PartialPrelude.
+    // Soft-fail: любые ошибки fs/parse → vec![] (не прерывают compile).
+    let module_nv_prelude_attrs = preload_module_nv_prelude_attrs(entry_path);
+    // entry-file wins: добавляем только те attrs из _module.nv, чей
+    // discriminant отсутствует в уже объявленных attrs entry-файла.
+    for attr in module_nv_prelude_attrs {
+        if !module.attrs.iter().any(|a| {
+            std::mem::discriminant(&a.kind) == std::mem::discriminant(&attr.kind)
+        }) {
+            module.attrs.push(attr);
+        }
+    }
+
     // Plan 35 sub-plan 35.A R27: auto-import `std.prelude` if exists.
     // D26 (08-runtime.md): prelude — auto-available имена (Option/Result/...).
     // Currently большая часть prelude hardcoded в type-checker'е/codegen'е;
@@ -111,13 +152,13 @@ pub fn resolve_imports_inline_ex(
     // Plan 42 Sub-plan 42.6: detect prelude self по обоих declaration
     // форматов (rev-1 legacy + rev-3 parent.X). Logic — в manifest helper.
     //
-    // **Plan 62.F:** добавлены `no_prelude` / `partial_prelude(...)` opt-out
-    // механизмы (spec/decisions/07-modules.md:962-979). Logic:
-    //   - `no_prelude` → НЕ auto-import'им вообще (user explicit imports).
-    //   - `partial_prelude(a, b, ...)` → auto-import только `std.prelude.<a>`,
-    //     `std.prelude.<b>`, etc. Имена валидируются против файлов в
-    //     `std/prelude/`. Empty list → эквивалент no_prelude.
+    // **Plan 62.F / D174 (Plan 107):** prelude opt-out атрибуты. Logic:
+    //   - `#no_prelude` (NoPrelude) → НЕ auto-import'им вообще.
+    //   - `#prelude(a, b, ...)` (PartialPrelude) → auto-import только
+    //     перечисленных sub-modules. Empty list → compile error (D174).
     //   - default → full `std.prelude` facade (как раньше).
+    // Inline-формы `no_prelude`/`partial_prelude`/`allow_prelude_shadow`
+    // удалены (D174) — parser эмитит hard error с migration hint.
     let is_prelude_self = crate::manifest::is_prelude_self_module(&module.name);
     let has_no_prelude = module.attrs.iter()
         .any(|a| matches!(a.kind, crate::ast::ModuleAttrKind::NoPrelude));
@@ -131,6 +172,16 @@ pub fn resolve_imports_inline_ex(
     let mut prelude_imports: Vec<Import> = Vec::new();
     if !is_prelude_self && !has_no_prelude {
         if let Some(names) = partial_prelude_names {
+            // D174: пустой список — compile error (parser уже отклоняет #prelude(),
+            // но defensive check для надёжности в случае прямого AST использования).
+            if names.is_empty() {
+                return Err(anyhow!(
+                    "empty prelude list `#prelude()` is not allowed (D174, Plan 107); \
+                     use `#no_prelude` to disable prelude auto-import\n  \
+                     in module `{}`",
+                    module.name.join(".")
+                ));
+            }
             // Plan 62.F: `partial_prelude(a, b, ...)` — auto-import только
             // перечисленных sub-modules. Валидируем имена против реальных
             // файлов `std/prelude/<name>.nv`. Bad name → compile error.
@@ -162,9 +213,7 @@ pub fn resolve_imports_inline_ex(
                     anchor: crate::ast::ImportAnchor::Package,
                 });
             }
-            // Empty list `partial_prelude()` — НИЧЕГО не auto-import'им
-            // (== no_prelude effectively). Это legitimate use-case
-            // (явная «нулевая» декларация без переключения на no_prelude).
+            // D174: empty list — defensive path (unreachable after parser check above).
         } else {
             // Default: full prelude facade.
             //

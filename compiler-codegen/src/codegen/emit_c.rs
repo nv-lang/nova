@@ -541,6 +541,12 @@ pub struct CEmitter {
     /// (`Iter` хардкоден); теперь formal declarations в `std/prelude/collections.nv`
     /// + `std/prelude/protocols.nv` требуют explicit erasure registration.
     protocol_types: HashSet<String>,
+    /// Plan 100.5 (D163): Set of `external type X consume` opaque FFI type names.
+    /// These are concrete types (not generic stubs) — `Nova_File*` should NOT be
+    /// treated as an erased generic placeholder by `is_generic_stub_c`. Inserting
+    /// the name here ensures Result[File, IoErr] monomorphizes to the correct
+    /// `NovaRes_Nova_File_p_Nova_IoErr*` rather than the erased fallback.
+    opaque_ffi_types: HashSet<String>,
     /// Maps generic function name → tuple arity when the function returns a tuple of type params.
     /// Used to populate tuple_element_types at call sites.
     generic_fn_tuple_arity: HashMap<String, usize>,
@@ -932,6 +938,7 @@ impl CEmitter {
             generic_fns: HashSet::new(),
             generic_types: HashSet::new(),
             protocol_types: HashSet::new(),
+            opaque_ffi_types: HashSet::new(),
             generic_fn_tuple_arity: HashMap::new(),
             type_aliases: HashMap::new(),
             current_parfor_slot: None,
@@ -1606,6 +1613,10 @@ impl CEmitter {
                 "AtomicI8", "AtomicI16", "AtomicI32", "AtomicI64",
                 "AtomicU8", "AtomicU16", "AtomicU32", "AtomicU64",
                 "AtomicIsize", "AtomicUsize", "AtomicPtr",
+                // Plan 103.9 (D174): consume guard types pre-declared in sync_primitives.h
+                // with a `_s`-suffix anonymous struct. Named fwd-decl `typedef struct
+                // Nova_MutexGuard Nova_MutexGuard;` conflicts (different tag). Skip.
+                "MutexGuard", "ReadGuard", "WriteGuard", "Permit", "OnceGuard",
                 // === PLAN-103.4 PREDECLARED TYPES (alphabetical, parallel-agent) ===
                 /* AGENT-B */ "Barrier",
                 /* AGENT-D */ "Condvar", "WaitResult",
@@ -6980,7 +6991,28 @@ impl CEmitter {
     fn emit_fn_forward_decl(&mut self, f: &FnDecl) -> Result<(), String> {
         // D82: external fn — forward decl не нужен (реализация в nova_rt/*.h
         // уже включена через preamble #include).
-        if f.is_external {
+        // Plan 100.5 (D163): Exception — user-defined D163 external fn (with
+        // `needs_caps`) need forward decls + type registration. These are NOT
+        // stdlib external fn — they have no corresponding nova_rt/*.h entry.
+        // We emit a `static` stub wrapper so generated code can call them.
+        if f.is_external && f.needs_caps.is_empty() {
+            return Ok(());
+        }
+        if f.is_external && !f.needs_caps.is_empty() {
+            // D163 external fn: emit forward decl + register return type info.
+            self.current_receiver_type = None;
+            let ret = self.return_type_c(f)?;
+            // Register result type params for Result-returning D163 external fn.
+            if let Some(rt) = &f.return_type {
+                if let Some(rparams) = self.extract_result_type_params(rt) {
+                    self.fn_result_type_params.insert(f.name.clone(), rparams);
+                }
+            }
+            self.var_types.insert(format!("fn_ret_{}", f.name), ret.clone());
+            let params = self.params_c(f)?;
+            let mangled = self.mangle_fn(f);
+            // Forward declare the static stub wrapper.
+            self.line(&format!("static {} {}({});", ret, mangled, params));
             return Ok(());
         }
         if f.name == "main" {
@@ -7270,7 +7302,36 @@ impl CEmitter {
         // never emit'нем locally. Forward-decl skip уже handled через
         // BUILTIN_RUNTIME_TYPES (emit_c.rs:1212-1218); это early-return
         // — defensive double-protection, делает intent explicit.
+        //
+        // Plan 100.5 (D163): Exception — user-defined `external type X consume`
+        // for FFI opaque resource handles. These are NOT stdlib types (no
+        // `nova_rt/<name>.h`), so we emit a minimal opaque struct definition:
+        //   typedef struct Nova_File { void* _nv_handle; } Nova_File;
+        // This lets the C compiler see the struct layout (pointer-sized) while
+        // keeping the type opaque (no user-accessible fields). The `_nv_handle`
+        // is never accessed directly by generated code — the external fn wrappers
+        // cast/coerce as needed. BUILTIN_RUNTIME_TYPES (stdlib opaque types) are
+        // NOT matched here because they're filtered before emit_type_decl is
+        // called (via the BUILTIN_RUNTIME_TYPES early-continue in emit_module).
         if matches!(t.kind, TypeDeclKind::Opaque) {
+            if t.consume {
+                // Plan 100.5 (D163): User-defined consume opaque type (FFI handle).
+                // Emit a minimal opaque struct definition so the C compiler knows
+                // the type. Without this, `Nova_File*` in generated function signatures
+                // is an "unknown type name". The `_nv_handle` field is never accessed
+                // by generated code — external fns receive/return pointer-sized values.
+                // Stdlib opaque types (pre-filtered by BUILTIN_RUNTIME_TYPES check
+                // before emit_type_decl is called) are NOT affected by this branch.
+                self.user_type_fwd_decls.push_str(&format!(
+                    "typedef struct Nova_{0} {{ void* _nv_handle; }} Nova_{0};\n",
+                    t.name
+                ));
+                // Register in opaque_ffi_types so is_generic_stub_c treats
+                // `Nova_File*` as a concrete type (not an erased generic stub).
+                // This makes Result[File, IoErr] monomorphize correctly to
+                // `NovaRes_Nova_File_p_Nova_IoErr*` rather than the erased fallback.
+                self.opaque_ffi_types.insert(t.name.clone());
+            }
             return Ok(());
         }
         // Plan 62.A: skip emission of types pre-defined в nova_rt/*.h.
@@ -7357,6 +7418,13 @@ impl CEmitter {
             // Nova_UdpSocket) live there; ExternalRegistry auto-registers
             // receiver types + methods from std/net/{addr,tcp,udp}.nv.
             "SocketAddr", "TcpListener", "TcpStream", "UdpSocket",
+            // Plan 103.9 (D174): consume guard types pre-declared in sync_primitives.h.
+            // struct Nova_MutexGuard_s / Nova_ReadGuard_s / Nova_WriteGuard_s /
+            // Nova_Permit_s / Nova_OnceGuard_s defined there (each has nova_int ptr field).
+            // Skip codegen emission — pre-definition + forward-decl in header avoids
+            // duplicate typedef errors. The Nova type declarations (type T consume { ptr int })
+            // serve only for type-checking and LinearityRegistry; C structs live in the header.
+            "MutexGuard", "ReadGuard", "WriteGuard", "Permit", "OnceGuard",
         ];
         if RUNTIME_DEFINED_TYPES.contains(&t.name.as_str()) {
             // Plan 62.A: skip emission — C struct + constructors живут в
@@ -11743,11 +11811,103 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
         }
     }
 
+    /// Plan 100.5 (D163): Emit a static stub body for a user-defined external fn
+    /// declared with a `needs <Cap>` clause. The stub provides:
+    ///
+    /// 1. A correct C function signature matching the forward declaration.
+    /// 2. A minimal mock implementation that satisfies the type system:
+    ///    - For `-> T consume` (opaque FFI type): allocate a zeroed `Nova_T` and return it.
+    ///    - For `-> Result[File, IoErr]`: return `Ok(mock_file)`.
+    ///    - For `-> ()` (consume param only): zero out the handle and return NOVA_UNIT.
+    ///
+    /// **Testing semantics**: The stub allows the consume-tracking static analysis to be
+    /// tested end-to-end without requiring actual OS file/socket/mutex implementations.
+    /// Real implementations are provided by the C runtime (nova_rt/*.h or user C code)
+    /// when deployed; the stub is a test scaffold only.
+    ///
+    /// **Limitation**: If a consume-param fn receives NULL (e.g. because the caller
+    /// passed a "closed" handle), the stub silently no-ops. This is fine for static
+    /// analysis tests — the compiler guarantees the param is Live (not Consumed) at
+    /// the call site.
+    fn emit_d163_external_stub(&mut self, f: &FnDecl) -> Result<(), String> {
+        self.current_receiver_type = None;
+        let ret = self.return_type_c(f)?;
+        let params = self.params_c(f)?;
+        let mangled = self.mangle_fn(f);
+        self.line(&format!("static {} {}({}) {{", ret, mangled, params));
+        self.indent += 1;
+        self.line("/* D163 stub — mock implementation for static-analysis testing. */");
+        // Determine what to return based on return type:
+        if ret == "nova_unit" {
+            // consume-param only fn (e.g. nova_file_close): zero the handle if possible.
+            for p in &f.params {
+                if p.consume {
+                    let p_c_ty = self.type_ref_to_c(&p.ty)?;
+                    if p_c_ty.ends_with('*') {
+                        // Pointer type — zero the _nv_handle field for D4 defense-in-depth.
+                        let p_name = &p.name;
+                        self.line(&format!("if ({0}) {{ {0}->_nv_handle = NULL; }}", p_name));
+                    }
+                }
+            }
+            self.line("return NOVA_UNIT;");
+        } else if Self::is_result_like(&ret) {
+            // Result[T, E] return — return Ok(mock_T).
+            // Extract the ok/err C types from the return type name.
+            if let Some((ok_c, _err_c)) = self.novares_ok_err(&ret) {
+                let suffix = Self::novares_name(&ok_c, &_err_c);
+                if ok_c.ends_with('*') && ok_c.starts_with("Nova_") {
+                    // Opaque pointer type — allocate a mock instance.
+                    let tmp = "_nv_d163_mock";
+                    self.line(&format!("{} {} = ({})nova_alloc(sizeof(*{}));", ok_c, tmp, ok_c, tmp));
+                    self.line(&format!("if ({tmp}) {{ {tmp}->_nv_handle = (void*)(uintptr_t)1; }}", tmp = tmp));
+                    self.line(&format!("return nova_make_NovaRes_{}_Ok({});", suffix, tmp));
+                } else {
+                    // Primitive/struct ok type — return Ok(zero value).
+                    // Plan 100.7 (D165): struct types (e.g. nova_str) cannot
+                    // be cast from integer 0 in C — use compound literal {0}
+                    // instead. Pointer/scalar types keep the (T)0 cast form.
+                    let is_scalar = ok_c.ends_with('*')
+                        || matches!(ok_c.as_str(),
+                            "nova_int" | "nova_bool" | "nova_f64"
+                            | "nova_byte" | "nova_unit" | "nova_char");
+                    let zero_init = if is_scalar {
+                        format!("({})0", ok_c)
+                    } else {
+                        format!("({}){{}}", ok_c)
+                    };
+                    self.line(&format!("return nova_make_NovaRes_{}_Ok({});", suffix, zero_init));
+                }
+            } else {
+                // Erased fallback — return NULL result.
+                self.line("return NULL;");
+            }
+        } else if ret.ends_with('*') && ret.starts_with("Nova_") {
+            // Opaque consume pointer return — allocate a mock.
+            let tmp = "_nv_d163_mock";
+            self.line(&format!("{} {} = ({})nova_alloc(sizeof(*{}));", ret, tmp, ret, tmp));
+            self.line(&format!("if ({tmp}) {{ {tmp}->_nv_handle = (void*)(uintptr_t)1; }}", tmp = tmp));
+            self.line(&format!("return {};", tmp));
+        } else {
+            // Primitive return — return zero.
+            self.line(&format!("return ({})0;", ret));
+        }
+        self.indent -= 1;
+        self.line("}");
+        self.line("");
+        Ok(())
+    }
+
     fn emit_fn(&mut self, f: &FnDecl) -> Result<(), String> {
         // D82: external fn — Nova body отсутствует, реализация в nova_rt/.
         // Skip emit'инг полностью: dispatch на C-функцию делается в emit_call.
-        if f.is_external {
+        // Plan 100.5 (D163): User-defined external fn with `needs_caps` get
+        // a static stub body — see emit_d163_external_stub for details.
+        if f.is_external && f.needs_caps.is_empty() {
             return Ok(());
+        }
+        if f.is_external && !f.needs_caps.is_empty() {
+            return self.emit_d163_external_stub(f);
         }
         if f.name == "main" {
             return self.emit_nova_main(f);
@@ -14683,13 +14843,78 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                     // `inner_ty` (тип scrutinee); `Err`-конструктор —
                     // по `current_fn_return_ty` (propagated Err уходит
                     // в return-слот caller'а), fallback на `inner_ty`.
-                    let ret_result_ty = self.current_fn_return_ty.as_ref()
-                        .filter(|t| Self::is_result_like(t))
-                        .cloned()
-                        .unwrap_or_else(|| inner_ty.clone());
-                    let err_ctor = self.result_ctor_name(&ret_result_ty, "Err");
+                    //
+                    // Plan 100.7 (D165): Fail-context mode.
+                    // When the enclosing function is a `Fail[E] -> T` function,
+                    // `current_fn_return_ty` is NOT Result-like (it's the plain T
+                    // C-type, e.g. `nova_unit`). In that case `?` must throw the
+                    // error via the Fail effect instead of `return Err(...)`.
+                    // This mirrors the ExprKind::Bang semantics.
+                    let in_fail_ctx = self.current_fn_return_ty.as_ref()
+                        .map(|t| !Self::is_result_like(t))
+                        .unwrap_or(false);
                     self.line(&format!("{} {} = {};", inner_ty, try_tmp, val));
-                    self.line(&format!("if ({}->tag == NOVA_TAG_Result_Err) {{ return {}({}->payload.Err._0); }}", try_tmp, err_ctor, try_tmp));
+                    if in_fail_ctx {
+                        // Fail-context: throw the Err value via Nova_Fail_fail /
+                        // nova_throw_typed — same as ExprKind::Bang for Result.
+                        let err_c_opt = self.resolve_result_te(inner, &inner_ty)
+                            .map(|(_, e)| e);
+                        let err_is_str = err_c_opt.as_deref()
+                            .map(|e| e == "nova_str")
+                            .unwrap_or(true);
+                        self.line(&format!(
+                            "if ({}->tag == NOVA_TAG_Result_Err) {{",
+                            try_tmp
+                        ));
+                        self.indent += 1;
+                        if err_is_str {
+                            self.line(&format!(
+                                "if ({}->err_typed_type_id != NOVA_TID_NONE) {{",
+                                try_tmp
+                            ));
+                            self.indent += 1;
+                            self.line(&format!(
+                                "nova_throw_typed({tmp}->payload.Err._0, {tmp}->err_typed_payload, {tmp}->err_typed_type_id);",
+                                tmp = try_tmp
+                            ));
+                            self.indent -= 1;
+                            self.line("} else {");
+                            self.indent += 1;
+                            self.line(&format!(
+                                "Nova_Fail_fail({}->payload.Err._0);",
+                                try_tmp
+                            ));
+                            self.indent -= 1;
+                            self.line("}");
+                        } else {
+                            // Mono non-str Err: payload.Err._0 carries the real
+                            // typed value. Pointer type → cast to void*;
+                            // value type → heap-box.
+                            let err_c = err_c_opt
+                                .unwrap_or_else(|| "void*".to_string());
+                            let tid = self.typeid_macro_for(&err_c);
+                            let payload_expr = if err_c.ends_with('*') {
+                                format!("(void*)({}->payload.Err._0)", try_tmp)
+                            } else {
+                                format!(
+                                    "({{ {ty}* _ep = ({ty}*)nova_alloc(sizeof({ty})); \
+                                     *_ep = {tmp}->payload.Err._0; (void*)_ep; }})",
+                                    ty = err_c, tmp = try_tmp)
+                            };
+                            self.line(&format!(
+                                "nova_throw_typed((nova_str){{.ptr=\"<typed err>\", .len=11}}, {p}, {tid});",
+                                p = payload_expr, tid = tid));
+                        }
+                        self.indent -= 1;
+                        self.line("}");
+                    } else {
+                        let ret_result_ty = self.current_fn_return_ty.as_ref()
+                            .filter(|t| Self::is_result_like(t))
+                            .cloned()
+                            .unwrap_or_else(|| inner_ty.clone());
+                        let err_ctor = self.result_ctor_name(&ret_result_ty, "Err");
+                        self.line(&format!("if ({}->tag == NOVA_TAG_Result_Err) {{ return {}({}->payload.Err._0); }}", try_tmp, err_ctor, try_tmp));
+                    }
                     Ok(format!("({}->payload.Ok._0)", try_tmp))
                 } else {
                     // Unknown type: emit as-is with comment
@@ -17648,7 +17873,9 @@ _cp++; \
                             return Ok(format!("nova_array_pop_{}({})", elem_ty, obj_c));
                         }
                         // Plan 90: bulk slice-операции.
-                        "copy_from" | "copy_within" | "fill" => {
+                        // Plan 90.1: extend_from/insert_from/reserve — extend-family.
+                        "copy_from" | "copy_within" | "fill" |
+                        "extend_from" | "insert_from" | "reserve" => {
                             let obj_c = self.emit_expr(obj)?;
                             let mut arg_strs = vec![obj_c];
                             for a in args { arg_strs.push(self.emit_expr(a.expr())?); }
@@ -18629,7 +18856,17 @@ _cp++; \
                                 arg_strs.push(self.emit_expr(a.expr())?);
                             }
                         }
-                        return Ok(format!("Nova_{}_method_{}({})", safe_type, method, arg_strs.join(", ")));
+                        // Plan 100.7 (D165): prefer c_name from method_overloads
+                        // (which has the correct _consume_ / _method_ prefix) over
+                        // the legacy fallback that always uses _method_.
+                        let c_fn = self.method_overloads
+                            .get(&(type_name.clone(), method.to_string()))
+                            .and_then(|sigs| sigs.iter()
+                                .filter(|s| s.is_instance && !s.is_delegated)
+                                .map(|s| s.c_name.clone())
+                                .next())
+                            .unwrap_or_else(|| format!("Nova_{}_method_{}", safe_type, method));
+                        return Ok(format!("{}({})", c_fn, arg_strs.join(", ")));
                     } else {
                         // Static method: obj is the type name (Ident), not a value
                         let mut arg_strs = Vec::new();
@@ -24335,7 +24572,10 @@ _cp++; \
             return !name.is_empty()
                 && !self.record_schemas.contains_key(name)
                 && !self.sum_schemas.contains_key(name)
-                && !self.generic_types.contains(name);
+                && !self.generic_types.contains(name)
+                // Plan 100.5 (D163): opaque FFI consume types are concrete —
+                // `Nova_File*` must NOT be treated as a generic stub.
+                && !self.opaque_ffi_types.contains(name);
         }
         false
     }
@@ -25600,7 +25840,9 @@ _cp++; \
                             "get" | "pop" => return format!("NovaOpt_{}", elem_ty),
                             "push" => return "nova_unit".into(),
                             // Plan 90: bulk slice-операции — mutating, возвращают unit.
-                            "copy_from" | "copy_within" | "fill" => return "nova_unit".into(),
+                            // Plan 90.1: extend_from/insert_from/reserve — extend-family, unit.
+                            "copy_from" | "copy_within" | "fill" |
+                            "extend_from" | "insert_from" | "reserve" => return "nova_unit".into(),
                             // Plan 90: compare → int (-1/0/1).
                             "compare" => return "nova_int".into(),
                             // Plan 60 / D117: size-accessor methods.
@@ -26119,6 +26361,28 @@ _cp++; \
                     }
                 }
                 "nova_unit".into()
+            }
+            // Plan 100.7 (D165): `expr?` unwraps to Ok type of Result, or
+            // inner type of Option. Needed for `let data = nova_file_read_all(f)?`
+            // where the variable type must be nova_str (the Ok type), not nova_int.
+            ExprKind::Try(inner) | ExprKind::Bang(inner) => {
+                let inner_ty = self.infer_expr_c_type(inner);
+                if inner_ty.starts_with("NovaOpt_") {
+                    // Option? / Option!! → inner T
+                    inner_ty.strip_prefix("NovaOpt_")
+                        .unwrap_or("nova_int")
+                        .trim_end_matches('*')
+                        .to_string()
+                } else if Self::is_result_like(&inner_ty) {
+                    // Result? / Result!! → Ok type T
+                    self.novares_ok_err(&inner_ty)
+                        .or_else(|| self.infer_result_type_params(inner))
+                        .map(|(ok, _)| ok)
+                        .unwrap_or_else(|| "nova_int".into())
+                } else {
+                    // Unknown — propagate inner type (strip pointer for consume outer)
+                    inner_ty
+                }
             }
             // Plan 70 Cat B (intentional erasure, session 2 finding): final wildcard
             // в infer_expr_c_type. Reached for ExprKind variants which cannot

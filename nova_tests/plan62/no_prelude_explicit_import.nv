@@ -1,11 +1,15 @@
 // no_prelude_explicit_import.nv — Plan 62.F Part 2 positive test.
 //
-// Verifies что `no_prelude` + explicit `import std.prelude.core.{Option}`
+// Verifies что `#no_prelude` + explicit `import std.prelude.core.{Option}`
 // корректно работают — пользователь может opt-out из auto-import и
 // явно завезти только нужные имена. Это main use-case real-time /
 // embedded модулей (spec/decisions/07-modules.md:962-979).
+//
+// D174 (Plan 107): syntax migrated from inline `module X no_prelude`
+// to `#no_prelude` before `module` declaration.
 
-module plan62.no_prelude_explicit_import no_prelude
+#no_prelude
+module plan62.no_prelude_explicit_import
 
 // `Some` нужен для конструктора. `assert` — для test'ов (runtime fn,
 // не доступен без auto-import). Импортируем оба explicitly.

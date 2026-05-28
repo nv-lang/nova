@@ -1,0 +1,13 @@
+// Plan 107 Ф.7 — `#prelude(core, runtime, errors)` all three visible.
+
+#prelude(core, runtime, errors)
+module plan107.prelude_multi_attr
+
+test "prelude(core, runtime, errors) — Option visible" {
+    let x Option[int] = Some(1)
+    assert(x.is_some())
+}
+
+test "prelude(core, runtime, errors) — assert visible" {
+    assert(true)
+}
