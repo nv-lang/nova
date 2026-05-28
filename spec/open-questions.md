@@ -2576,13 +2576,20 @@ Q-protocol-method-prefix.
 > для краткости. `mut @method()` обязательно с `@`. Bootstrap парсит
 > обе формы; std/testing/property.nv использует голую.
 
+> **Update 2026-05-29 (Plan 91.8a, [D183](decisions/02-types.md#d183-canonical-comparison-protocols--default-method-bodies-plan-918a)):**
+> Default body в protocol method — новая фича: метод с телом (`=> expr`
+> или `{ ... }`) — default impl, implementer может override. Метод без
+> тела — abstract (обязательно реализовать). Также renames: `Iter→Iterable`,
+> `Display→Printable`, `Equatable.eq→equals`, `Comparable.cmp→compare -> int`.
+> Ordering sum-type удалён.
+
 **Контекст.** Сейчас в protocol-блоке instance-методы пишутся **без
 префикса**:
 
 ```nova
 type Hashable protocol {
     hash() -> u64                    // instance, без префикса
-    eq(other Self) -> bool
+    equals(other Self) -> bool       // (D183: было `eq`)
 }
 ```
 

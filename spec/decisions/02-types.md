@@ -28,6 +28,7 @@
 | [D180](#d180-canonical-new-constructors-convention) | Canonical `.new()` constructors (convention) | active |
 | [D181](#d181-array-methods----fluent-mut-chain--slice-syntax) | Array methods — `-> @` fluent mut chain + slice syntax | active |
 | [D182](#d182-self-в-return-type-static-methods--required-form-для-parametric-types) | `Self` в return-type static methods — required form для parametric types | active |
+| [D183](#d183-canonical-comparison-protocols--default-method-bodies-plan-918a) | Canonical comparison protocols + default method bodies (Plan 91.8a) | active |
 
 ---
 
@@ -5764,3 +5765,127 @@ compiler принимает обе формы; canonical форма докуме
   — `Self` универсальный.
 - [D180](#d180-canonical-new-constructors-convention) — `.new()` convention.
 - [Plan 91.7](../../docs/plans/91.7-array-methods-and-default-new.md).
+
+---
+
+## D183. Canonical comparison protocols + default method bodies (Plan 91.8a)
+
+**Статус:** active (Plan 91.8a, 2026-05-29).
+
+### Канонические протоколы (renames)
+
+| Было | Стало | Файл |
+|---|---|---|
+| `Iter[T]` | `Iterable[T]` | `std/prelude/collections.nv` |
+| `Display` | `Printable` | `std/prelude/protocols.nv` |
+| `Equatable.eq(other Self) -> bool` | `Equatable.equals(other Self) -> bool` | `std/prelude/protocols.nv` |
+| `Comparable.cmp(other Self) -> Ordering` | `Comparable.compare(other Self) -> int` | `std/prelude/protocols.nv` |
+| `Hashable.hash() -> u64` | unchanged | `std/prelude/protocols.nv` |
+
+**Rationale renames:**
+- **`-able` suffix convention** — unified naming (Iterable/Equatable/Comparable/Hashable/Printable).
+- **`Comparable.compare -> int`** — единый стиль с `str.compare()` (D178) и C `memcmp`/`strcmp`. `Ordering` sum-type удалён.
+- **`Equatable.equals`** — явнее чем `eq` (Java convention).
+- **`Display` → `Printable`** — действие через `-able`, не имя-noun.
+
+### Comparable embeds Equatable
+
+```nova
+export type Equatable protocol {
+    equals(other Self) -> bool
+}
+
+export type Comparable protocol {
+    use Equatable
+    compare(other Self) -> int
+    equals(other Self) -> bool => @compare(other) == 0    // default body
+}
+```
+
+`use Equatable` (D39 embed) делает каждый Comparable также Equatable.
+Локальная декларация `equals` в Comparable с default body **overrides**
+embedded default — implementer пишет только `@compare`, `@equals`
+auto-synthesized из default body как `@compare(other) == 0`.
+
+### Default method bodies в protocols
+
+**Правило (новое в D183):**
+
+> Метод в protocol-декларации **может иметь тело** (`=> expr` или `{ ... }`).
+> Тело используется как **default-реализация**: если тип-implementer не задаёт
+> свой `@method`, компилятор использует body из протокола, подставляя `Self`
+> = receiver type. Если implementer задал `@method` явно — explicit version
+> используется (override).
+
+**Семантика:**
+
+- **Метод без тела** = abstract — implementer ОБЯЗАН реализовать.
+- **Метод с телом** = default — implementer МОЖЕТ override.
+
+**Пример:**
+
+```nova
+type Comparable protocol {
+    use Equatable
+    compare(other Self) -> int                              // abstract
+    equals(other Self) -> bool => @compare(other) == 0      // default
+}
+
+type MyDate { y int, m int, d int }
+fn MyDate @compare(other MyDate) -> int { ... }
+// @equals НЕ объявлен — используется default из Comparable.
+
+// Override для perf:
+type FastHashed { hash_cache u64, ... }
+fn FastHashed @compare(other FastHashed) -> int { ... }
+fn FastHashed @equals(other FastHashed) -> bool {
+    @hash_cache == other.hash_cache && @compare(other) == 0
+}
+```
+
+### Cleanup
+
+- `Ordering` sum-type удалён из `std/prelude/core.nv`.
+- `Less` / `Equal` / `Greater` exports удалены из `std/prelude.nv`.
+- `std/sort.nv` `sort_by(cmp fn(int, int) -> int)` — memcmp-style convention.
+- `PRELUDE_VERSION` bumped 12 → 13.
+
+### Memcmp-compatible int return
+
+`compare(other) -> int` returns:
+- **negative** if `@ < other`
+- **zero** if `@ == other`
+- **positive** if `@ > other`
+
+Caller должен использовать только sign (`< 0`, `== 0`, `> 0`), НЕ magnitude.
+Совместимо с C `memcmp`/`strcmp` convention. Implementer для primitive numerics
+рекомендуется использовать safe signum form:
+
+```nova
+fn int @compare(other int) -> int =>
+    if @ < other { -1 } else if @ > other { 1 } else { 0 }
+```
+
+Не использовать `=> @ - other` — overflow risk для больших int.
+
+### Реализация (части)
+
+- **Парсер** (`compiler-codegen/src/parser/mod.rs::parse_effect_methods`): добавлен parser default body после return_type/contracts. Body = `=> expr` или `{ ... }`. Поле `EffectMethod.default_body: Option<Block>` в AST.
+- **`check_protocol_embeds`** (`compiler-codegen/src/types/mod.rs`): local override embedded methods разрешён — locally declared метод в protocol с тем же именем что embedded не считается duplicate. Используется для `Comparable.equals` overrides embedded `Equatable.equals` default.
+- **Codegen synthesis для defaults**: followup `[M-91.8a.2-default-codegen]`. Сейчас implementer пишет default-method explicitly для compatibility (как boilerplate `equals(o) => @compare(o) == 0`).
+
+### Известные ограничения / followups
+
+- **Codegen synthesis (`[M-91.8a.2-default-codegen]`):** type T который имеет `@compare` но не `@equals` пока компилируется только если `@equals` объявлен явно. Eager synthesis из default body — отдельный codegen pass.
+- **Operator dispatch (D184, Plan 91.8b):** `==` всё ещё dispatches к `@eq` (D46). Renaming `@eq` → `@equals` в operator dispatch — задача Plan 91.8b. До 91.8b implementer пишет оба: `@equals` (protocol) + `@eq` (operator).
+- **Generic sort/min/max (D185, Plan 91.8c):** generic `fn[T Comparable]` array methods — отдельный subplan.
+
+### Связь
+
+- [D26](#d26-базовая-stdlib-и-prelude) — prelude auto-availability.
+- [D39](#d39-embed-и-delegation-use-name-type-alias-обязателен) — `use` embed.
+- [D58](#d58-protocol-structural-typing) — structural typing.
+- [D72](#d72-generic-bounds-через-t-protocol--protocol-как-тип) — bounds.
+- [D109](#d109-equatable--hashable-split-policy) — split policy (Hashable не embeds Equatable; Comparable embeds Equatable в D183).
+- [D178](08-runtime.md#d178-str-api-cleanup-и-расширения--plan-91-ф26) — `str.compare -> int`.
+- [Plan 91.8a](../../docs/plans/91.8a-protocol-canon-renames.md) — implementation.
