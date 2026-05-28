@@ -10,7 +10,7 @@ fn run(flag bool) -> int {
     let sb = StringBuilder.new()
     sb.append("data")
     if flag {
-        let _gone = sb.into()
+        let _gone = sb.to_str()
     }
     // ОШИБКА D131: sb maybe-consumed (then-ветка потребила, else — нет).
     sb.append("more")

@@ -172,6 +172,10 @@
     static void nova_array_fill_##T(NovaArray_##T* a, T v) { \
         for (int64_t _i = 0; _i < a->len; _i++) { a->data[_i] = v; } \
     } \
+    /* StringBuilder @truncate / []T @truncate: reduce len to new_len if shorter. */ \
+    static void nova_array_truncate_##T(NovaArray_##T* a, int64_t new_len) { \
+        if (new_len >= 0 && new_len < a->len) a->len = new_len; \
+    } \
     /* Plan 96 Ф.4 — sub-slice view `arr[a..b]`. O(1): новый header (24 байта)
      * с data = orig->data + from (interior pointer); len = cap = to - from
      * (D-cap-len: push на view → realloc → silent detach, parent НЕ затронут).

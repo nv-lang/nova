@@ -1603,7 +1603,9 @@ impl CEmitter {
             // with the runtime's `typedef struct { ... } Nova_X;` (different types).
             const BUILTIN_RUNTIME_TYPES: &[&str] = &[
                 "Result", "Error", "RuntimeError",
-                "ReadBuffer", "StringBuilder", "WriteBuffer",
+                "ReadBuffer", "WriteBuffer",
+                // Plan 109 (D179): StringBuilder removed from BUILTIN_RUNTIME_TYPES —
+                // now a Nova-defined record type; needs local typedef struct fwd-decl.
                 "ChanReader", "ChanWriter", "ChannelPair",
                 "AtomicInt", "AtomicBool", "Mutex", "WaitGroup", "Once",
                 // Plan 103.3: RwLock + ReentrantMutex pre-declared in sync_primitives.h.
@@ -7403,13 +7405,11 @@ impl CEmitter {
             "Time", "Mem",
             // Plan 62.D.bis (D126, 2026-05-18): opaque types declared
             // through `external type` в std/prelude/collections.nv.
-            // Backing — nova_rt/{string_builder,write_buffer,read_buffer}.h.
-            // Defensive double-protection: actual skip уже через
-            // `TypeDeclKind::Opaque` early-return на top of emit_type_decl;
-            // эта запись keeps consistency с pattern Option/Result/Error/Fail
-            // на случай если user accidentally declared `type StringBuilder
-            // { ... }` (non-Opaque kind) — мы всё равно skip'нем.
-            "StringBuilder", "WriteBuffer", "ReadBuffer",
+            // Backing — nova_rt/{write_buffer,read_buffer}.h.
+            // Plan 109 (D179): StringBuilder removed — now a Nova-defined
+            // record type (type StringBuilder consume { mut buf []u8 }).
+            // emit_type_decl must emit the struct definition for it.
+            "WriteBuffer", "ReadBuffer",
             // Plan 103.1 Ф.3: MemOrdering pre-declared in sync_primitives.h.
             // C struct + 5 constructors live there; skip emit_sum_type.
             // sum_schemas + sum_schema_registry populated below for pattern
@@ -14168,26 +14168,17 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                         };
                     }
                 }
-                // Plan 13 Ф.9.2: оператор `+` через метод @plus (D46).
-                // StringBuilder + str  → @plus(str)  → @append_str.
-                // StringBuilder + char → @plus(char) → @append_char.
-                // sb + sb (StringBuilder + StringBuilder) — не поддержано:
-                // используй sb1.append_str(sb2.into()) явно.
-                if matches!(op, BinOp::Add) && lty == "Nova_StringBuilder*" {
-                    if rty == "nova_str" {
-                        return Ok(format!("Nova_StringBuilder_method_append_str({}, {})", l, r));
-                    }
-                    // Plan 70.3: char теперь distinct nova_char typedef.
-                    // Accept оба для backward-compat (раньше char emit'ился как nova_int).
-                    if rty == "nova_char" || rty == "nova_int" {
-                        return Ok(format!("Nova_StringBuilder_method_append_char({}, {})", l, r));
-                    }
-                }
+                // Plan 109 (D179): StringBuilder `+` operator is now handled by
+                // the generic Nova_T* BinOp::Add path below, which dispatches to
+                // Nova_StringBuilder_method_plus (the Nova-defined @plus method).
                 // nova_str is a struct — can't use == directly.
                 // Plan 13 Ф.9.2: BinOp::Add для str routes через @plus → @concat.
                 // Invisible-intrinsic заменён на тот же C-вызов, но через
                 // явную декларацию `str.@plus` в std/runtime/string.nv.
-                if lty == "nova_str" || rty == "nova_str" {
+                // Plan 109 (D179): if LHS is Nova_T* (e.g. Nova_StringBuilder*),
+                // skip nova_str path and fall through to Nova_T* @plus dispatch.
+                let lhs_is_nova_ptr = lty.starts_with("Nova_") && lty.ends_with('*');
+                if (lty == "nova_str" || rty == "nova_str") && !lhs_is_nova_ptr {
                     return match op {
                         BinOp::Eq  => Ok(format!("(nova_str_eq({}, {}))", l, r)),
                         BinOp::Neq => Ok(format!("(!nova_str_eq({}, {}))", l, r)),
@@ -17934,7 +17925,7 @@ _cp++; \
                         // Plan 90: bulk slice-операции.
                         // Plan 90.1: extend_from/insert_from/reserve — extend-family.
                         "copy_from" | "copy_within" | "fill" |
-                        "extend_from" | "insert_from" | "reserve" => {
+                        "extend_from" | "insert_from" | "reserve" | "truncate" => {
                             let obj_c = self.emit_expr(obj)?;
                             let mut arg_strs = vec![obj_c];
                             for a in args { arg_strs.push(self.emit_expr(a.expr())?); }
@@ -20060,8 +20051,10 @@ _cp++; \
                         continue;
                     }
                     let escaped = Self::escape_c_str(s);
+                    // Plan 109 (D179): StringBuilder is now Nova-defined.
+                    // Generated method: Nova_StringBuilder_method_append (str overload).
                     self.line(&format!(
-                        "Nova_StringBuilder_method_append_str({}, (nova_str){{.ptr=\"{}\", .len={}}});",
+                        "Nova_StringBuilder_method_append({}, (nova_str){{.ptr=\"{}\", .len={}}});",
                         sb, escaped, s.len()
                     ));
                 }
@@ -20098,16 +20091,18 @@ _cp++; \
                             }
                         }
                     };
+                    // Plan 109 (D179): Nova-generated method name.
                     self.line(&format!(
-                        "Nova_StringBuilder_method_append_str({}, {});",
+                        "Nova_StringBuilder_method_append({}, {});",
                         sb, s_expr
                     ));
                 }
             }
         }
         let result = self.fresh_tmp_named("interp_str");
+        // Plan 109 (D179): consume @to_str() — Nova-generated: Nova_StringBuilder_consume_to_str.
         self.line(&format!(
-            "nova_str {} = Nova_StringBuilder_method_into({});",
+            "nova_str {} = Nova_StringBuilder_consume_to_str({});",
             result, sb
         ));
         self.var_types
@@ -25931,7 +25926,7 @@ _cp++; \
                             // Plan 90: bulk slice-операции — mutating, возвращают unit.
                             // Plan 90.1: extend_from/insert_from/reserve — extend-family, unit.
                             "copy_from" | "copy_within" | "fill" |
-                            "extend_from" | "insert_from" | "reserve" => return "nova_unit".into(),
+                            "extend_from" | "insert_from" | "reserve" | "truncate" => return "nova_unit".into(),
                             // Plan 90: compare → int (-1/0/1).
                             "compare" => return "nova_int".into(),
                             // Plan 60 / D117: size-accessor methods.

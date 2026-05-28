@@ -10,7 +10,7 @@
 module runtime.string
 
 import std.prelude.core.{Option, Some, None}
-import std.prelude.collections.{StringBuilder}
+import std.runtime.string_builder.{StringBuilder}
 
 
 // ─── str ───
@@ -139,7 +139,7 @@ export fn str @pad_left(width int, fill char) -> str {
     let pad = width - @len()
     if pad <= 0 { return @ }
     let fill_s = str.from(fill)
-    StringBuilder.with_capacity(@byte_len() + pad * fill_s.byte_len()).append_repeat(fill_s, pad).append(@).into()
+    StringBuilder.with_capacity(@byte_len() + pad * fill_s.byte_len()).append_repeat(fill_s, pad).append(@).to_str()
 }
 
 // Pad строку справа до width codepoints символом fill. Если width <= len — возвращает s.
@@ -147,13 +147,13 @@ export fn str @pad_right(width int, fill char) -> str {
     let pad = width - @len()
     if pad <= 0 { return @ }
     let fill_s = str.from(fill)
-    StringBuilder.with_capacity(@byte_len() + pad * fill_s.byte_len()).append(@).append_repeat(fill_s, pad).into()
+    StringBuilder.with_capacity(@byte_len() + pad * fill_s.byte_len()).append(@).append_repeat(fill_s, pad).to_str()
 }
 
 // Повторение строки n раз. n <= 0 → пустая строка.
 export fn str @repeat(n int) -> str {
     if n <= 0 { return "" }
-    StringBuilder.with_capacity(@byte_len() * n).append_repeat(@, n).into()
+    StringBuilder.with_capacity(@byte_len() * n).append_repeat(@, n).to_str()
 }
 
 // Заменить все non-overlapping occurrences `from` на `to`. Empty `from` → возвращает s unchanged.

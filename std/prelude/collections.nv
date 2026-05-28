@@ -147,25 +147,8 @@ export type Iter[T] protocol {
 // (D26 prose-only); D126 закрывает последний knew-by-name hole в D26
 // visible prelude (после 62.A/B/C/D-non-opaque/E/F).
 
-/// UTF-8 string accumulator. Append-only через `@append(s str)`/`@append_char(c char)`,
-/// финализация через `@into() -> str` (infallible — UTF-8 invariant
-/// поддерживается типом).
-///
-/// Полный API — в `std/runtime/string_builder.nv` через `external fn`
-/// declarations (D82). Backing — `nova_rt/string_builder.h` и
-/// `string_builder.c`.
-///
-/// **Use-case:** string concat в hot loop без аллокации временных str.
-///
-/// # Examples
-///
-/// ```nova
-/// let mut sb = StringBuilder.new()
-/// sb.append("Hello, ").append(name).append("!")
-/// let greeting = sb.into()
-/// ```
-#stable(since = "0.1")
-export external type StringBuilder
+// Plan 109 (D179): StringBuilder — Nova-defined consume type in std/runtime/string_builder.nv.
+export import std.runtime.string_builder.{StringBuilder}
 
 /// Binary write buffer. Append-only через `@write_*` методы
 /// (byte, bytes, char, str, и 18 числовых × LE/BE). Финализация
