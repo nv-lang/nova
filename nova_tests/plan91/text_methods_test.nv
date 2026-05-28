@@ -1,6 +1,8 @@
-// Plan 91 Ф.2: conformance tests for text methods.
+// Plan 91 Ф.2 + Ф.2.5 (D177): conformance tests for text methods.
 // repeat / replace / pad_left / pad_right — Nova-body via StringBuilder.
-// parse_int / parse_int_radix — C-primitive.
+// parse_int / parse_int_radix — C-primitive (decimal) + Nova-body (radix).
+// Positive tests: basic functionality.
+// Negative tests: invalid inputs, edge cases.
 
 module plan91.text_methods_test
 
@@ -47,6 +49,66 @@ test "str parse_int_radix" {
     assert("1010".parse_int_radix(2) == Some(10))
     assert("z".parse_int_radix(36) == Some(35))
     assert("g".parse_int_radix(16) == None)
+    // with sign prefix
+    assert("-ff".parse_int_radix(16) == Some(-255))
+    assert("+1010".parse_int_radix(2) == Some(10))
+    // base 10
+    assert("42".parse_int_radix(10) == Some(42))
+    assert("-100".parse_int_radix(10) == Some(-100))
+}
+
+// D177 negative: invalid radix and edge inputs → None (no panic).
+test "str parse_int_radix negative" {
+    // invalid radix (out of 2..36 range)
+    assert("ff".parse_int_radix(1) == None)
+    assert("ff".parse_int_radix(0) == None)
+    assert("ff".parse_int_radix(-1) == None)
+    assert("ff".parse_int_radix(37) == None)
+    // empty string → None
+    assert("".parse_int_radix(16) == None)
+    // sign only → None
+    assert("-".parse_int_radix(10) == None)
+    assert("+".parse_int_radix(16) == None)
+    // invalid chars for base
+    assert("2".parse_int_radix(2) == None)     // '2' invalid in binary
+    assert("g".parse_int_radix(16) == None)    // 'g' not a hex digit
+    assert("!".parse_int_radix(10) == None)    // non-digit
+}
+
+// D177 negative: replace with empty from → unchanged; delete with empty to.
+test "str replace edge cases" {
+    // empty from → unchanged (not an error)
+    assert("hello".replace("", "x") == "hello")
+    // replace with empty to → deletion
+    assert("aababab".replace("ab", "") == "a")
+    // from longer than string → no match
+    assert("hi".replace("hello", "x") == "hi")
+    // empty string source
+    assert("".replace("a", "b") == "")
+    // from == to → no-op but still works
+    assert("abc".replace("b", "b") == "abc")
+}
+
+// D177: pad with non-ASCII fill character.
+test "str pad non-ascii fill" {
+    // pad with multi-byte char (2-byte UTF-8: é = U+00E9)
+    let padded = "hi".pad_left(4, 'é')
+    assert(padded.len() == 6)          // 2 chars × 2 bytes + 2 bytes for "hi"
+    assert(padded.ends_with("hi"))
+    // pad_right with emoji-class char (3-byte: ♥ = U+2665)
+    let pr = "x".pad_right(3, '♥')
+    assert(pr.starts_with("x"))
+    assert(pr.len() == 7)              // 1 + 2×3
+}
+
+// D177: repeat edge cases.
+test "str repeat edge cases" {
+    // empty string repeat → always ""
+    assert("".repeat(0) == "")
+    assert("".repeat(5) == "")
+    // single char repeat
+    assert("a".repeat(5) == "aaaaa")
+    // already tested: n=0 and n<0 → ""
 }
 
 // split возвращает views в оригинальный буфер (zero-copy).
