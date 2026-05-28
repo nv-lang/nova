@@ -953,35 +953,6 @@ static inline NovaOpt_nova_int nova_str_parse_int(nova_str s) {
     return r;
 }
 
-/* Plan 91 Ф.2: nova_str_parse_int_radix — parse int с указанной базой
- * (2..36). Digits 0-9, a-z (case-insensitive). Bootstrap V1: без
- * underscore-separator (`1_000`); добавим в followup. */
-static inline NovaOpt_nova_int nova_str_parse_int_radix(nova_str s, nova_int radix) {
-    NovaOpt_nova_int r;
-    r.tag = NOVA_TAG_Option_None;
-    r.value = 0;
-    if (s.len == 0 || radix < 2 || radix > 36) return r;
-    size_t i = 0;
-    int neg = 0;
-    if (s.ptr[0] == '-') { neg = 1; i = 1; }
-    else if (s.ptr[0] == '+') { i = 1; }
-    if (i >= s.len) return r;
-    nova_int acc = 0;
-    for (; i < s.len; i++) {
-        char c = s.ptr[i];
-        nova_int d;
-        if (c >= '0' && c <= '9') d = (nova_int)(c - '0');
-        else if (c >= 'a' && c <= 'z') d = (nova_int)(c - 'a' + 10);
-        else if (c >= 'A' && c <= 'Z') d = (nova_int)(c - 'A' + 10);
-        else return r;
-        if (d >= radix) return r;
-        if (acc > (9223372036854775807LL - d) / radix) return r;
-        acc = acc * radix + d;
-    }
-    r.tag = NOVA_TAG_Option_Some;
-    r.value = neg ? -acc : acc;
-    return r;
-}
 
 /* Plan 90.1 — bounds-check для insert_from(i, src) position.
  * i должен быть в [0, dst.len] (включая len — append-at-end допустим). */
