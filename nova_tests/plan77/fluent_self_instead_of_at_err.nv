@@ -1,0 +1,26 @@
+// EXPECT_COMPILE_ERROR D132
+//
+// Plan 77 (D132) amendment: метод объявлен `-> Self`, но все пути
+// возвращают `@` (receiver). Это ошибка — должно быть `-> @`.
+// Ловится check_fluent_return (инверсная проверка).
+
+module nova_tests.plan77.fluent_self_instead_of_at_err
+
+type Bldr { mut k int }
+
+fn Bldr.new() -> Bldr => { k: 0 }
+
+// -> @ fluent-метод (нужен для fluent_set в check)
+fn Bldr mut @bump() -> @ {
+    @k = @k + 1
+    @
+}
+
+// ОШИБКА D132: все пути возвращают @, но объявлен `-> Self` вместо `-> @`.
+fn Bldr mut @step() -> Self => @bump()
+
+test "should not compile" {
+    let b = Bldr.new()
+    let _ = b.step()
+    assert(b.k == 1)
+}
