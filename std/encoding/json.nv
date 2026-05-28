@@ -286,7 +286,7 @@ fn Lexer mut @read_keyword(kw str, t Token, line int, col int) Fail[ParseJsonErr
         let expected = kw.char_at(i)
         let actual = @peek()
         if Some(expected.unwrap_or(' ')) != actual {
-            throw UnexpectedChar { line: @line, col: @col, found: actual.unwrap_or(' ') }
+            throw UnexpectedChar { @line, @col, found: actual.unwrap_or(' ') }
         }
         @advance()
     }
@@ -300,7 +300,7 @@ fn Lexer mut @read_string() Fail[ParseJsonError] -> str {
     let mut done = false
     while !done {
         match @advance() {
-            None => throw UnexpectedEof { line: @line, col: @col }
+            None => throw UnexpectedEof { @line, @col }
             Some('"') => { done = true }
             Some('\\') => { buf = buf + @read_escape() }
             Some(c) => { buf = buf + str.from(c) }
@@ -312,7 +312,7 @@ fn Lexer mut @read_string() Fail[ParseJsonError] -> str {
 // Обработка escape sequences. После '\\' — следующий символ.
 fn Lexer mut @read_escape() Fail[ParseJsonError] -> str {
     match @advance() {
-        None       => throw UnexpectedEof { line: @line, col: @col }
+        None       => throw UnexpectedEof { @line, @col }
         Some('"')  => "\""
         Some('\\') => "\\"
         Some('/')  => "/"
@@ -322,7 +322,7 @@ fn Lexer mut @read_escape() Fail[ParseJsonError] -> str {
         Some('r')  => "\r"
         Some('t')  => "\t"
         Some('u')  => @read_unicode_escape()
-        Some(c)    => throw InvalidEscape { line: @line, col: @col, seq: "\\" + str.from(c) }
+        Some(c)    => throw InvalidEscape { @line, @col, seq: "\\" + str.from(c) }
     }
 }
 
@@ -336,18 +336,18 @@ fn Lexer mut @read_unicode_escape() Fail[ParseJsonError] -> str {
         let next = @advance()
         let next2 = @advance()
         if next != Some('\\') || next2 != Some('u') {
-            throw InvalidUnicode { line: @line, col: @col, hex: hex }
+            throw InvalidUnicode { @line, @col, hex }
         }
         let low_hex = @read_hex_quad()
         let low = parse_hex(low_hex)
         if low < 0xDC00 || low > 0xDFFF {
-            throw InvalidUnicode { line: @line, col: @col, hex: low_hex }
+            throw InvalidUnicode { @line, @col, hex: low_hex }
         }
         let codepoint = 0x10000 + ((code - 0xD800) * 0x400) + (low - 0xDC00)
         str.from_codepoint(codepoint)
     } else if code >= 0xDC00 && code <= 0xDFFF {
         // Lone low-surrogate — невалидно.
-        throw InvalidUnicode { line: @line, col: @col, hex: hex }
+        throw InvalidUnicode { @line, @col, hex }
     } else {
         str.from_codepoint(code)
     }
@@ -357,10 +357,10 @@ fn Lexer mut @read_hex_quad() Fail[ParseJsonError] -> str {
     let mut hex = ""
     for i in 0..4 {
         match @advance() {
-            None => throw UnexpectedEof { line: @line, col: @col }
+            None => throw UnexpectedEof { @line, @col }
             Some(c) if is_hex_digit(c) => { hex = hex + str.from(c) }
             Some(c) => throw InvalidUnicode {
-                line: @line, col: @col, hex: hex + str.from(c)
+                @line, @col, hex: hex + str.from(c)
             }
         }
     }
@@ -369,7 +369,7 @@ fn Lexer mut @read_hex_quad() Fail[ParseJsonError] -> str {
 
 fn parse_hex(s str) -> int {
     let mut acc = 0
-    for c in s.chars() {
+    for c in s.to_chars() {
         let d = if c >= '0' && c <= '9' {
             (c as int) - ('0' as int)
         } else if c >= 'a' && c <= 'f' {
@@ -440,7 +440,7 @@ fn Lexer mut @read_number() Fail[ParseJsonError] -> f64 {
     match f64.try_parse(text) {
         Some(n) => n
         None    => throw InvalidNumber {
-            line: start_line, col: start_col, text: text
+            line: start_line, col: start_col, text
         }
     }
 }
@@ -590,7 +590,7 @@ fn Parser mut @parse_member(fields HashMap[str, JsonValue]) Fail[ParseJsonError]
     // Мы выбираем строгое поведение — DuplicateKey error. Это AI-friendly:
     // duplicate почти всегда ошибка.
     if fields.contains(key) {
-        throw DuplicateKey { line: key_tp.line, col: key_tp.col, key: key }
+        throw DuplicateKey { line: key_tp.line, col: key_tp.col, key }
     }
     fields.insert(key, value)
 }
@@ -671,7 +671,7 @@ fn format_num(n f64) -> str {
 
 fn format_string(s str) -> str {
     let mut buf = "\""
-    for c in s.chars() {
+    for c in s.to_chars() {
         buf = buf + escape_char(c)
     }
     buf + "\""
@@ -717,7 +717,7 @@ fn format_array(xs []JsonValue) -> str {
 fn format_object(m HashMap[str, JsonValue]) -> str {
     let mut buf = "{"
     let mut first = true
-    for entry in m.entries() {
+    for entry in m.iter() {
         if !first { buf = buf + "," }
         buf = buf + format_string(entry.key)
         buf = buf + ":"
@@ -773,7 +773,7 @@ fn pretty_object(m HashMap[str, JsonValue], depth int) -> str {
     let outer_indent = indent(depth)
     let mut buf = "{\n"
     let mut first = true
-    for entry in m.entries() {
+    for entry in m.iter() {
         if !first { buf = buf + ",\n" }
         buf = buf + inner_indent + format_string(entry.key) + ": " + pretty_at(entry.value, depth + 1)
         first = false

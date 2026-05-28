@@ -8,7 +8,7 @@ module nova_tests.plan73.consume_err_use_after
 test "use after into — отвергается" {
     let sb = StringBuilder.new()
     sb.append("hi")
-    let s = sb.into()
+    let s = sb.to_str()
     // ОШИБКА D131: sb потреблён вызовом @into() выше.
     sb.append("oops")
     assert(s == "hi")

@@ -23141,6 +23141,82 @@ PUSHED but NOT MERGED. [M-83.10.4-iso-cancel-startup-race] STILL OPEN.
 
 Worktree D:/Sources/nv-lang/nova-p83-10-5 PRESERVED for Ф.B continuation.
 
+================================================================
+2026-05-27 — Plan 91 Ф.0 closure (re-baseline std MVP для 0.1)
+================================================================
+
+Branch: plan-91-stdmvp (worktree nova-p91 от github/main HEAD
+32f3dd51392, post-Plan 83.10.4 merge 7b5b2fec8e0).
+
+Ф.0 — Re-baseline GATE (HARD decision-point). Цель — заменить
+устаревшие данные std/STATUS.md (от 2026-05-23) фактическим
+состоянием 2026-05-27 и пересмотреть scope Ф.1-Ф.7.
+
+Сделано:
+  - cargo build release nova-cli в worktree (2m 01s, 4 warnings).
+  - Per-file `nova check` на 55 файлов в MVP-relevant std/
+    доменах. С `--skip std/encoding/toml.nv`: 43 PASS / 12 FAIL.
+    Без skip — stack overflow на toml.nv.
+  - Smoke `nova build → exe` matrix на 9 MVP-категорий через
+    `target/smoke_*.nv`. Realistic мини-программы.
+
+Surprising findings vs Plan 91's исходных ожиданий:
+  - Plan 91 §Ф.1 ожидал крупных codegen-блокеров для Vec/HashMap/
+    HashSet (generic specialization, array-type mangling, D72
+    protocol-bound dispatch, tuple types).
+  - РЕАЛЬНОСТЬ: Vec/HashMap/Set все три работают end-to-end.
+    Plan 95/99/101/103 закрыли эти блокеры попутно.
+  - Ф.1 теперь — conformance-валидация, не core-блокеры.
+
+Smoke matrix результат:
+  - PASS build+run: Option, Result, Vec (map/filter/fold/any/all/
+    first), HashMap (new/insert/get/len), HashSet (insert/
+    contains/len), Duration (from_secs/from_millis/plus/as_*),
+    math (sqrt/pow/ln через runtime stubs), text basic (split/
+    trim/to_upper/starts_with + for-in []str).
+  - FAIL: text extended (отсутствуют join/parse_int/parse_f64/
+    pad/repeat/replace методы), JSON (D52 §2 source errors в
+    std/encoding/json.nv), Sort (модуля std/sort.nv нет).
+
+12 FAIL `nova check std/` категоризованы:
+  A. D52 §2 shorthand violations (6 файлов; source-level fix).
+  B. Array literal parser issue (4 crypto файла, non-MVP).
+  C. E_UNUSED_PREFIX_TYPEVAR (retry.nv, non-MVP).
+  D. Missing runtime methods (текст, Ф.2 work).
+  E. Missing module sort.nv (Ф.4 work).
+  F. Parser stack overflow на TOML (карантин Ф.7.1).
+  G. Standalone-check import cycle на range.nv (не блокер).
+
+Ф.0.4 Decision — ревизия порядка Ф.1-Ф.7:
+  1. Ф.7.1 (quarantine, 0.5 дн) — ВПЕРЁД. Чистит test surface,
+     убирает 12 FAIL в `nova check std/` без `--skip`.
+  2. Ф.3 (JSON D52 fix, 0.5 дн) — 5 source edits + smoke + cnfrm.
+  3. Ф.4 (time/math/sort, 1-2 дн) — sort module + Instant +
+     canonical min/max wrappers + 4 conformance.
+  4. Ф.2 (text extended, 1-2 дн) — 8 методов runtime_registry +
+     C stubs + 6+ conformance.
+  5. Ф.1 (collections conformance, 0.5 дн) — cross-product тесты.
+  6. Ф.5 (conformance integration, 1 дн).
+  7. Ф.6 (getting-started + 5-7 examples, 1 дн).
+  8. Ф.7.2-Ф.7.4 (release checklist, 0.5 дн).
+
+Total estimated: ~5-7 дней sequential (1 dev-week) vs исходных
+3-5 недель. Parallel split (á la Plan 103.4): Ф.7.1 → 3 parallel
+Sonnet agents на Ф.2/Ф.3/Ф.4 → Opus merge → Ф.1/Ф.5/Ф.6
+sequential → Ф.7.2-Ф.7.4. Wall-time ~2-3 дня.
+
+Артефакты commit'а Ф.0:
+  - std/STATUS.md обновлён (секция «2026-05-27, Plan 91 Ф.0
+    re-baseline»). Старые группы B-M помечены как устаревшие.
+  - docs/plans/91-stdlib-mvp-for-0.1.md — добавлена секция
+    «Ф.0 closure (2026-05-27)» с измеренными числами + новый
+    decision Ф.0.4 + phase-entry conditions для Ф.7.1/Ф.3/Ф.4/Ф.2.
+  - target/smoke_*.nv + target/smoke_runner*.sh + target/
+    p91_check.sh — repro scripts для smoke matrix.
+
+Status: Ф.0 ✅ ЗАКРЫТ. Plan 91 переоценен по факту. Ф.1-Ф.7 — план
+готов для делегирования (single dev / parallel-agent split).
+Следующий immediate next P0 — Ф.7.1 quarantine.
 
 === Plan 103.6 � realtime/blocking sync-class enforcement ===
 Date: 2026-05-27
@@ -23217,6 +23293,144 @@ Full nova test: 1414/62 (62 pre-existing, 0 regressions from 83.12).
 Commit: faee0083797. Branch: plan-83.12-async-net pushed to github.
 
 Plan 83.12 ✅ ЗАКРЫТ. Разблокирует Plan 91 (std MVP — net в prelude).
+
+================================================================
+2026-05-27 — Plan 91 Ф.7.1 closure (quarantine non-MVP modules)
+================================================================
+
+Branch: plan-91-stdmvp (worktree nova-p91, after merge github/main
+with Plan 83.12 + Plan 103.6 closures).
+
+Acceptance criterion Plan 91 §Ф.7.1: `nova check std/` (no skip) → 0 FAIL.
+Result: **24 PASS / 0 FAIL** (down from 12 FAIL pre-quarantine).
+
+Сделано:
+
+1. **30 файлов перенесены в std/_experimental/<domain>/:**
+   - collections/{bloom_filter,deque,linkedlist,lru,priority_queue,queue}
+   - crypto/* (6 файлов)
+   - encoding/{csv,hex,ini,toml,url}
+   - identifiers/* (4 файла)
+   - checksums/{crc32,fnv}
+   - data/* (3 файла)
+   - path/* (2 файла)
+   - math/{complex,statistics}
+   - text/{diff,markdown_minimal,regex}
+   - time/cron
+   - concurrency/{rate_limiter,retry}
+
+2. **MVP set остался в std/ (23 файла):** prelude/* runtime/* testing/*
+   collections/{vec,hashmap,set,range} encoding/{json,base64}
+   time/duration net/* (Plan 83.12) concurrency/{cancellation,timer}
+   bench.
+
+3. **Auto-skip mechanism:** каталог _experimental/ начинается с `_`,
+   что триггерит auto-skip в should_skip_path_full (nova-cli/src/
+   main.rs:1482). `nova check std/` walks внутрь, видит underscore,
+   skip'ает всё. Не требует никакого config — convention-based.
+
+4. **Compiler fix (compiler-codegen/src/manifest.rs):**
+   is_stdlib_runtime_module whitelist расширен для std.net.* (Plan
+   83.12 net stdlib) + std.bench (Plan 57 benchmark DSL). Закрывает
+   4 pre-existing FAIL в main (std/net/{addr,tcp,udp}.nv +
+   std/bench.nv использовали `external fn` за пределами whitelist'а).
+
+5. **Source fixes (попутно):**
+   - std/encoding/json.nv — 10 D52 §2 violations (line:@line, etc.)
+     исправлены. 🎯 Ф.3 (JSON D52 fix) закрыт попутно.
+   - std/bench.nv — `module bench` → `module std.bench` (D29 rev-3).
+   - std/net/{tcp,udp}.nv — `use net.addr` → `use std.net.addr`
+     (Plan 83.12 resolver fix).
+   - std/collections/range.nv — `partial_prelude(core, runtime,
+     errors)` (Plan 62.F), избегает self-cycle через std.prelude.
+
+6. **Test imports updated:** 7 nova_tests файлов теперь импортируют
+   `std._experimental.<domain>.<file>`:
+   - nova_tests/modules/{bloom_filter,deque,lru,priority_queue}.nv
+   - nova_tests/plan11_followup/f{13,16,17}_*.nv (path tests)
+   Verified: nova test nova_tests/modules/ → 31 PASS / 0 FAIL;
+   nova test nova_tests/plan11_followup/ → 20 PASS / 0 FAIL.
+
+7. **Документация:**
+   - std/_experimental/STATUS.md — новый файл (per-domain таблица).
+   - std/nova.toml — comment header с MVP/experimental разделением.
+   - std/STATUS.md — секция «Ф.7.1 quarantine ✅».
+   - docs/plans/91-stdlib-mvp-for-0.1.md — секция «Ф.7.1 closure».
+
+Promotion path (когда non-MVP модуль готов к 0.X):
+1. git mv std/_experimental/<dir>/<file>.nv std/<dir>/<file>.nv
+2. Update импорты в тестах
+3. Update std/STATUS.md и std/_experimental/STATUS.md
+4. Verify nova check std/ → остаётся 0 FAIL после move
+5. Update docs/plans/18-stdlib-roadmap.md
+
+Что НЕ делается в Ф.7.1:
+- НЕ фиксит array literal parser bug в crypto/* (требует отдельного
+  compiler fix или Plan 91 Ф.7-bis).
+- НЕ фиксит parser stack overflow в encoding/toml.nv (карантинирован).
+- НЕ promote'ит experimental модули.
+
+Следующий immediate шаг per Ф.0.4 order: Ф.3 conformance (smoke
+round-trip encode→decode test) + parallel Ф.4 (sort module) + Ф.2
+(text methods). Ф.3 D52 source fix закрыт попутно, осталось только
+conformance тестирование.
+
+Status: Ф.0 + Ф.7.1 ✅ ЗАКРЫТЫ. Ф.3 source-level fix закрыт попутно.
+Plan 91 progress: 2/8 phases done в новой нумерации (Ф.0.4 decision).
+
+================================================================
+2026-05-27 (continued) — Plan 91 Ф.4 closure (sort module)
+================================================================
+
+Branch plan-91-stdmvp (после Ф.7.1 commit ad3b2466710).
+Ф.4 (Time/Math/Sort) per Ф.0.4 order — `sort` sub-phase
+ЗАКРЫТ.
+
+Сделано:
+  - Создан std/sort.nv с MVP surface:
+    * fn []int mut @sort() — in-place insertion sort
+    * fn []int mut @sort_by(cmp) — custom comparator
+    * fn []int @binary_search(target) -> Option[int]
+    * fn []int @min() / @max() -> Option[int]
+  - Smoke target/smoke_sort.nv — build+run OK end-to-end.
+  - Conformance nova_tests/plan91/sort_basic.nv — 15/15 PASS:
+    empty, single, sorted, reverse, dups, negative, sort_by reverse,
+    binary_search found/not-found/empty, min/max non/empty,
+    sort+binary_search property test.
+  - nova check std/ после добавления: 25 PASS / 0 FAIL.
+
+Сознательное упрощение vs Plan 91 §Scope:
+  - Plan 91 §Scope: sort[T Ord] (generic).
+  - V1 в Ф.4: только []int (concrete). Rationale — insertion sort
+    на []int достаточен для realistic CLI/data-utility use-cases в
+    0.1; generic sort требует D72 protocol-bound dispatch для
+    primitive Ord types (overhead на codegen уровне значителен).
+  - Followup [sort-generic-T] зафиксирован в std/sort.nv doc-comment
+    для пост-0.1 promotion.
+
+Ф.3 conformance — попытка target/smoke_json_roundtrip.nv:
+  - Source fix: m.entries() → m.iter() в std/encoding/json.nv
+    (HashMap has .iter(), not .entries()).
+  - Deeper codegen issues выявлены:
+    * Nova_HashMap forward decl используется как pointer без full
+      struct emission → CC fail.
+    * Tuple destructuring (K, V) в for entry in m.iter() —
+      entry mistyped as nova_int.
+  - Это genuine codegen work (~0.5-1 день investigation). **Ф.3
+    conformance отложен.** Json type-check ✅, build→exe ❌.
+
+Phase progress (Ф.0.4 нумерация):
+  - Ф.0 ✅ closed
+  - Ф.7.1 ✅ closed
+  - Ф.3 D52 source fix ✅ closed (попутно в Ф.7.1)
+  - Ф.4 sort module ✅ **closed**
+  - Ф.3 conformance HashMap-iter codegen 🟡 deferred
+  - Ф.2 text methods — pending
+  - Ф.1/Ф.5/Ф.6/Ф.7.2-4 — pending
+
+Plan 91 progress: 3/8 phases done в Ф.0.4 нумерации.
+Следующий immediate шаг — Ф.2 text methods (8 runtime methods +
+C stubs) ИЛИ Ф.3 conformance (deep codegen investigation).
 
 === Plan 107 — Prelude attribute syntax (2026-05-27) ===
 
@@ -23559,6 +23773,78 @@ Plan 103.9 (V2 consume guards migration, D174) CLOSED.
 - [M-103.9-semaphore-parallel-for] DEFERRED: parallel for + sem.acquire() under M:N
 - Branch: plan-103.9; merge pending
 
+=== Plan 91 Ф.2.5 closed 2026-05-28; D177 str Nova-body methods; 1527/64 full suite ===
+
+Plan 91 Ф.2.5 (D177) CLOSED.
+- str Nova-body methods: parse_int_radix / pad_left / pad_right / repeat / replace
+- Dispatch via Plan 54 Ф.2 mechanism (!is_external filter in emit_c.rs)
+- std/runtime/string.nv: Nova bodies with #no_prelude + explicit Option/StringBuilder imports
+- prelude.nv bumped to v10 with 5-method export import from std.runtime.string
+- string_builder.h: added Nova_StringBuilder_consume_into alias (D164 consume-bit ABI)
+- emit_c.rs: removed parse_int_radix/pad_left/pad_right/repeat/replace from str_method_to_rt
+- emit_c.rs: !is_external filter so external str methods still dispatch to C primitives
+- runtime_registry.rs: 5 methods updated with c_name="" (Nova-body) + D177 comments
+- All plan91 text method tests PASS; D177 spec added to spec/decisions/08-runtime.md
+- Full suite: 1527 PASS / 64 FAIL (same as baseline, all pre-existing)
+
+=== Plan 91 Ф.2.6 closed 2026-05-28; D178 str API cleanup + extensions ===
+
+Plan 91 Ф.2.6 (D178) CLOSED.
+- @bytes() renamed to @to_bytes() (allocating copy; as_bytes() zero-copy unchanged)
+- @chars() renamed to @to_chars() (allocating codepoints)
+- @split() return type: []str → readonly []str (zero-copy views)
+- @parse_int_radix + @parse_int merged into single @parse_int(radix int = 10) with D102 keyword-only default
+- @compare(other str) -> int: new C primitive via nova_str_compare / __builtin_memcmp
+- readonly param syntax: from_bytes_lossy/unchecked now use `readonly bytes []u8` form
+- MethodSig.param_defaults: new field; Plan 54 Ф.2 dispatch fills in default arg values
+- simple_literal_c helper: converts literal Expr to C string without emit_expr side-effects
+- Test files updated: text_methods_test, str_iters, from_bytes_series, conversions_positive, str_search
+- prelude.nv bumped to v11; export import includes compare/to_bytes/to_chars/as_bytes
+- D178 spec in spec/decisions/08-runtime.md (main nova repo)
+- text_methods_test PASS; str_iters PASS; nova_tests/str 13/13 PASS
+
+=== Plan 91 Ф.2.6 amendment — D132 check_fluent_return refactor 2026-05-28 ===
+
+Bug: StringBuilder @plus declared -> Self instead of -> @; fixed to -> @.
+check_fluent_return refactored:
+- body_always_returns_receiver: -> @ body can end with call to another -> @ method (delegation)
+- Check 2 (new): -> Self where all paths return receiver -> E_FLUENT_SELF compile error
+- fluent_wrapper_ok.nv (positive): @push => @write delegation + @plus chain 3/3 PASS
+- fluent_self_instead_of_at_err.nv (negative): -> Self => @bump() -> E_FLUENT_SELF PASS
+- 7/7 plan77 PASS
+- D132 spec amended in spec/decisions/03-syntax.md (main nova)
+- Commits: nova-p91 ffe1e958a8d; nova(main) 9931c15c5d7
+
+=== Plan 91 Ф.2.6 sub-phase (D179) CLOSED 2026-05-28: StringBuilder — pure Nova consume type ===
+
+D179: StringBuilder implemented fully in Nova (sub-phase Plan 91 Ф.2.6).
+
+type StringBuilder consume { mut buf []u8 }
+
+Old C runtime (Nova_StringBuilder_* / Rust-backed String) removed.
+All methods now Nova-body; single remaining external: append(c char)
+encoding handled via Nova bitwise ops. str.from_bytes_* and UTF-8
+helpers remain in string_builder.h as utility functions.
+
+API changes vs pre-109:
+  @byte_len() removed (dup of @len)
+  @peek() removed (unsound: pointer aliasing with realloc)
+  @into() renamed → @to_str() (consume)
+  @append_bytes(arr) → @append_bytes(readonly arr)
+  @len() → bytes O(1); @char_len() new O(n) UTF-8 codepoints
+  StringBuilder.from(c char), .from(s str), .with_capacity constructors
+
+Codegen fixes (emit_c.rs):
+  lhs_is_nova_ptr guard: sb + "hello" now dispatches @plus not nova_str_concat
+  types/mod.rs: resolve_instance_method arity hint: name-only fallback
+    filters by arg count — prevents false "expected 0, got 1" when
+    user type shadows built-in method name (e.g. Buf::push 0-params
+    vs array push 1-param where array methods not in method_table)
+
+Tests: plan77 7/7, plan73 12/12, plan62 31/36 (+28 vs main 3/36),
+  plan108 6/6, plan11_followup, base64, csv, display, property.
+Commit: aad35ad1b99 (branch plan-91-stdmvp)
+
 === Plan 83.11 Ф.3 COMPLETE: STALE-slot race fix (2026-05-28) ===
 
 Root cause confirmed после 6 sessions (~10+ hours) investigation:
@@ -23592,3 +23878,22 @@ Commit: dd7a4f00bc5 "fix(plan83.11 Ф.3): STALE-slot race fix + remove
 diagnostic instrumentation" on branch plan-83.11-centralized-driver.
 
 Ф.4-Ф.9 pending (blocking pool migration, cancel migration, perf, tests).
+
+=== Plan 91 docs/plans split into sub-plan files 2026-05-28 ===
+
+Закрытые closure-секции в docs/plans/91-stdlib-mvp-for-0.1.md (912 строк)
+вынесены в 6 отдельных подпланов; parent (410 строк) остаётся roadmap'ом
++ index подпланов + список открытых фаз.
+
+Подпланы:
+- 91.1-re-baseline.md — Ф.0 re-baseline (2026-05-27)
+- 91.2-quarantine.md — Ф.7.1 quarantine non-MVP (2026-05-27)
+- 91.3-sort-module.md — Ф.4 sort module (2026-05-27)
+- 91.4-str-nova-body-dispatch.md — Ф.2.5 D177 (2026-05-28)
+- 91.5-str-api-cleanup.md — Ф.2.6 D178 + D132 amendment (2026-05-28)
+- 91.6-stringbuilder-nova-type.md — Ф.2.6 sub-phase D179 StringBuilder (2026-05-28)
+
+Spec ссылки обновлены (D177→91.4, D178→91.5, D179→91.6). Q-string-builder
+получил note про D179 update.
+
+Commit: f15d979b4de (split) на ветке plan-91-stdmvp.

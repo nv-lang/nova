@@ -6,7 +6,7 @@ module plan11_followup.f13_path_join_normalize_positive
 // NB: variadic calls inside assert(...) parsed как spread-в-assert (compiler
 // limitation). Используем helper vars везде.
 
-import std.path.path.{Path}
+import std._experimental.path.path.{Path}
 
 test "Path.join: basic concatenation" {
     let r = Path.join("a", "b", "c")
