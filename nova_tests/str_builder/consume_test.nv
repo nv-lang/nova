@@ -27,11 +27,11 @@ test "into — пустой буфер даёт пустую строку" {
 test "into — Unicode паритет len с str" {
     let mut sb = StringBuilder.new()
     sb.append("Привет")
-    let cp_before = sb.len()
+    let cp_before = sb.len()    // sb.len() = codepoints
     let s = sb.into()
-    // D26 школа B: str.len — codepoint count, совпадает с sb.len() до consume.
-    assert(s.len() == cp_before)
-    assert(s.len() == 6)
+    // Plan 108 D26 rev: str.len() = bytes O(1), str.char_len() = codepoints O(n).
+    assert(s.char_len() == cp_before)   // 6 codepoints == sb.len()
+    assert(s.len() == 12)               // 12 bytes (2 bytes per Cyrillic codepoint)
 }
 
 test "into — после from(str)" {
@@ -56,7 +56,8 @@ test "into — emoji сохраняется" {
     sb.append('🎉')
     let s = sb.into()
     assert(s == "done 🎉")
-    assert(s.len() == 6)        // d,o,n,e,space,🎉
+    assert(s.char_len() == 6)  // d,o,n,e,space,🎉 = 6 codepoints (D26 rev: use char_len)
+    assert(s.len() == 9)       // 4 ASCII + 1 space + 4 emoji bytes = 9 bytes
 }
 
 test "into — результат можно использовать дальше" {

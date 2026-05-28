@@ -298,6 +298,67 @@ static inline Nova_Result* Nova_str_static_try_from_bytes(NovaArray_nova_byte* a
     return nova_make_Result_Ok((nova_int)(intptr_t)nova_box_str(s));
 }
 
+/* str.from_bytes_unchecked(bytes readonly []u8) -> str.
+ * Copies bytes without UTF-8 validation. Caller guarantees valid UTF-8.
+ * Zero overhead: O(n) memcpy only. */
+static inline nova_str nova_str_from_bytes_unchecked(NovaArray_nova_byte* arr) {
+    char* buf = (char*)nova_alloc((size_t)arr->len + 1);
+    if (arr->len > 0) memcpy(buf, arr->data, (size_t)arr->len);
+    buf[arr->len] = '\0';
+    return (nova_str){.ptr = buf, .len = (size_t)arr->len};
+}
+
+/* str.from_bytes_lossy(bytes readonly []u8) -> str.
+ * Converts bytes to str, replacing invalid UTF-8 sequences with U+FFFD
+ * (UTF-8: 0xEF 0xBF 0xBD). Output may be larger than input. */
+static inline nova_str nova_str_from_bytes_lossy(NovaArray_nova_byte* arr) {
+    static const nova_byte FFFD[3] = {0xEF, 0xBF, 0xBD};
+    /* Pre-scan: if all valid, skip extra allocation. */
+    if (_nova_validate_utf8(arr->data, arr->len)) {
+        return nova_str_from_bytes_unchecked(arr);
+    }
+    /* Worst case: every byte replaced by 3-byte FFFD. */
+    int64_t cap = arr->len * 3 + 1;
+    char* out = (char*)nova_alloc((size_t)cap);
+    int64_t w = 0, i = 0;
+    while (i < arr->len) {
+        nova_byte c = arr->data[i];
+        int seq = 0;
+        if (c < 0x80) { seq = 1; }
+        else if ((c & 0xE0) == 0xC0 && c >= 0xC2) { seq = 2; }
+        else if ((c & 0xF0) == 0xE0) { seq = 3; }
+        else if ((c & 0xF8) == 0xF0 && c <= 0xF4) { seq = 4; }
+        /* Validate continuation bytes. */
+        int valid = (seq > 0);
+        if (valid) {
+            for (int k = 1; k < seq && valid; k++) {
+                if (i + k >= arr->len || (arr->data[i + k] & 0xC0) != 0x80) valid = 0;
+            }
+        }
+        /* Extra overlong/surrogate checks. */
+        if (valid && seq == 2 && c < 0xC2) valid = 0;
+        if (valid && seq == 3) {
+            if (c == 0xE0 && arr->data[i+1] < 0xA0) valid = 0;
+            else if (c == 0xED && arr->data[i+1] >= 0xA0) valid = 0;
+        }
+        if (valid && seq == 4) {
+            if (c == 0xF0 && arr->data[i+1] < 0x90) valid = 0;
+            else if (c == 0xF4 && arr->data[i+1] >= 0x90) valid = 0;
+        }
+        if (valid) {
+            for (int k = 0; k < seq; k++) out[w++] = (char)arr->data[i + k];
+            i += seq;
+        } else {
+            out[w++] = (char)FFFD[0];
+            out[w++] = (char)FFFD[1];
+            out[w++] = (char)FFFD[2];
+            i++;
+        }
+    }
+    out[w] = '\0';
+    return (nova_str){.ptr = out, .len = (size_t)w};
+}
+
 /* str.from(c char) — UTF-8 encode 1-4 bytes из codepoint в новый nova_str.
  * Размещён здесь т.к. использует _nova_utf8_encode. */
 static inline nova_str Nova_str_static_from_char(nova_int cp) {

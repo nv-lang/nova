@@ -10,15 +10,15 @@ test "str.from ASCII char" {
 test "str.from Cyrillic char (2-byte UTF-8)" {
     let s = str.from('Ю')
     assert(s == "Ю")
-    assert(s.byte_len() == 2)
-    assert(s.len() == 1)
+    assert(s.len() == 2)         // Plan 108 D26 rev: len = bytes
+    assert(s.char_len() == 1)    // char_len = codepoints
 }
 
 test "str.from emoji char (4-byte UTF-8)" {
     let s = str.from('😀')
     assert(s == "😀")
-    assert(s.byte_len() == 4)
-    assert(s.len() == 1)
+    assert(s.len() == 4)         // Plan 108 D26 rev: len = bytes
+    assert(s.char_len() == 1)    // char_len = codepoints
 }
 
 test "str.from(int) zero" {

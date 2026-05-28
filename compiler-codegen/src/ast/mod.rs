@@ -1020,6 +1020,10 @@ pub enum TypeRef {
     },
     /// `()` unit
     Unit(Span),
+    /// `readonly T` — compile-time immutability modifier (D176, Plan 108).
+    /// Zero runtime overhead: only compile-time check. Forbids mut-methods
+    /// and index writes. `T → readonly T` coerce allowed; reverse forbidden.
+    Readonly(Box<TypeRef>, Span),
 }
 
 impl TypeRef {
@@ -1031,8 +1035,21 @@ impl TypeRef {
             | TypeRef::Tuple(_, span)
             | TypeRef::Func { span, .. }
             | TypeRef::Protocol { span, .. }
-            | TypeRef::Unit(span) => *span,
+            | TypeRef::Unit(span)
+            | TypeRef::Readonly(_, span) => *span,
         }
+    }
+
+    /// Returns the inner type if this is `readonly T`, otherwise returns `self`.
+    pub fn strip_readonly(&self) -> &TypeRef {
+        match self {
+            TypeRef::Readonly(inner, _) => inner.strip_readonly(),
+            other => other,
+        }
+    }
+
+    pub fn is_readonly(&self) -> bool {
+        matches!(self, TypeRef::Readonly(..))
     }
 }
 

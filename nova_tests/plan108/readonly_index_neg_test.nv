@@ -1,0 +1,10 @@
+// EXPECT_COMPILE_ERROR E_READONLY_CONTENT
+// Plan 108 Ф.2: D176 readonly T — index write on readonly array is forbidden.
+
+module plan108.readonly_index_neg_test
+
+test "cannot write through index on readonly array" {
+    let arr []u8 = [1, 2, 3]
+    let view readonly []u8 = arr
+    view[0] = 99  // E_READONLY_CONTENT
+}

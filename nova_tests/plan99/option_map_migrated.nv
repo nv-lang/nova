@@ -19,6 +19,9 @@ test "Option[int].map int→str (T≠U)" {
 
 test "Option[str].map str→int (str→primitive)" {
     let a Option[str] = Some("hello")
+    // Plan 108 D26 note: use byte_len() alias here because generic closures
+    // erase str→nova_int and str.len() accidentally dispatches to Nova_Range_method_len.
+    // Known codegen issue: [M-str-len-closure-dispatch]. Tracked as follow-up.
     let len = a.map(|s| s.byte_len())
     assert(len.unwrap_or(0) == 5)
 }

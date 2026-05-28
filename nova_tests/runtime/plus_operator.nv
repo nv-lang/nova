@@ -28,13 +28,13 @@ test "str + str — ASCII" {
     assert(result == "alpha-beta")
 }
 
-test "str + str — Unicode codepoint paritет" {
+test "str + str — Unicode len/char_len (Plan 108 D26 rev)" {
     let a = "Привет"      // 6 codepoints, 12 bytes
     let b = ", "          // 2 codepoints, 2 bytes
     let c = "мир"         // 3 codepoints, 6 bytes
     let s = a + b + c
-    assert(s.len() == 11)             // 6 + 2 + 3 codepoints
-    assert(s.byte_len() == 20)      // 12 + 2 + 6 bytes
+    assert(s.len() == 20)             // 12 + 2 + 6 bytes (len = bytes now)
+    assert(s.char_len() == 11)        // 6 + 2 + 3 codepoints
 }
 
 
