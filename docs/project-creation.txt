@@ -23897,3 +23897,170 @@ Spec ссылки обновлены (D177→91.4, D178→91.5, D179→91.6). Q-
 получил note про D179 update.
 
 Commit: f15d979b4de (split) на ветке plan-91-stdmvp.
+
+=== Plan 91.7 sub-plan closed 2026-05-28: array methods + canonical .new() (D180/D181/D182) ===
+
+Plan 91.7 closure — array API cleanup + canonical default constructors.
+
+Реализовано:
+- Part A (-> @ для array mut методов): push/reserve/truncate/fill/
+  copy_from/extend_from/insert_from/copy_within все возвращают @ для
+  fluent chain (D131). emit_c.rs изменён: returns obj_c вместо NOVA_UNIT.
+  infer_call_type: возвращает receiver type вместо nova_unit.
+  Также Nova-side sort/sort_by обновлены на -> @.
+- Part B (@slice removed): фактически удалён в Plan 96.1 — used arr[a..b].
+- Part D (canonical .new()):
+  - std/runtime/defaults.nv (новый): int/u8-u64/i8-i64/f32/f64/bool.new()
+  - std/runtime/string.nv: str.new() => ""
+  - std/collections/vec.nv: []T.new()/with_capacity — already builtin в emit_c.rs.
+  - std/prelude.nv: import std.runtime.defaults; PRELUDE_VERSION 11→12.
+
+Codegen fix: Self в return-type для primitive receivers — `receiver_c_type`
+вместо hardcoded `Nova_<recv>*`. Это закрывает CC-FAIL «unknown type Nova_int»
+для `int.new() -> Self => 0` style деклараций.
+
+D-blocks (main nova repo, branch main):
+- D180: Canonical .new() constructors (convention) — stdlib provides for
+  primitives/str/[]T; user types — explicit; char/Result/Option — N/A.
+- D181: Array methods -> @ fluent mut chain + slice removed (arr[a..b] only).
+- D182: Self в return-type для parametric static methods — canonical form.
+
+Q-array-api в open-questions.md обновлён — note про D180/D181 update.
+
+Тесты (nova_tests/plan91_7/, 5/5 PASS):
+- primitive_new_test: int/u8-u64/i8-i64/f32/f64/bool.new() == 0/false
+- str_new_test: str.new() == ""
+- array_new_test: []int.new() / with_capacity / push после new
+- array_mut_chain_test: push.push.push, extend_from, fill, truncate, copy_from
+- sort_chain_test: sort/sort_by возвращают receiver
+
+Отложенные followup:
+- [M-91.7-option-new-static]: Option[T].new() — codegen ограничение
+  для generic builtin sum static methods. Workaround: использовать None.
+- [M-91.7-sort-generic]: generic fn[T Ord] sort/min/max/binary_search —
+  требует Ord protocol + extensive mono codegen work.
+- [M-91.7-default-new-enforcement]: compile error для user types без
+  явного .new() — требует BoundCtx type registry.
+- [M-91.7-mixed-method-chain]: arr.sort().push() chain — emit_c.rs
+  treats Nova-method result как struct, not pointer.
+- [M-91.7-self-required-parametric]: validator для запрета
+  fn Option[T].new() -> Option[T] (только -> Self).
+
+Регрессия: 5/5 plan91_7 PASS; plan73/77/91/100/108 без новых failures
+(pre-existing failures в plan100_6 + syntax — unchanged).
+
+Commits (nova-p91, branch plan-91-stdmvp): TBD после финального commit.
+
+=== Plan 91.8a part 1 closed 2026-05-29: protocol canon renames + Ordering removal (D183) ===
+
+D183 part 1 implementation:
+- Renames in std/prelude/protocols.nv + collections.nv:
+  - Iter[T] → Iterable[T] (consistency с -able suffix)
+  - Display → Printable (verb-active form)
+  - Equatable.eq → Equatable.equals
+  - Comparable.cmp -> Ordering → Comparable.compare -> int + use Equatable
+- Removed: Ordering sum-type (core.nv) + Less/Equal/Greater exports (prelude.nv)
+- std/sort.nv: sort_by(cmp fn(int,int) -> int) — memcmp-style convention
+- PRELUDE_VERSION 12 → 13
+
+Compiler:
+- AST: EffectMethod.default_body: Option<Block> field (parser/mod.rs:2984+)
+- Parser: parse_effect_methods accepts `=> expr` or `{ ... }` after return/contracts
+  — body present = default; absent = abstract (Plan 91.8a syntax foundation)
+- check_protocol_embeds: local override allowed — locally declared protocol method
+  with same name as embedded (use Equatable inside Comparable, declaring equals
+  locally) — overrides embedded default, NOT duplicate error
+
+Comparable default body:
+- equals(other Self) -> bool => @compare(other) == 0 — default body
+- Override allowed; implementer пишет только @compare (после codegen synthesis)
+
+Codegen synthesis для default bodies — followup [M-91.8a.2-default-codegen].
+Сейчас implementer пишет @equals явно как boilerplate compatibility.
+
+Batch update: 29 nova_test files renamed Iter[ → Iterable[ (regex preserving
+identifier-internal Iter like RangeIter/HashMapIter/etc.).
+
+Test updates:
+- plan62: protocols_bound_resolution, protocol_as_value_probe, range_shadow_warning, partial_prelude_core_only
+- plan91: sort_basic (Ordering match → int comparison)
+- plan91_7: sort_chain_test (Ordering → int)
+- protocols/comparison: comparable (rewrite to int), generic_bounds (rewrite),
+  display (Display → Printable), equatable (added @equals + kept @eq для == until 91.8b)
+- DELETED: protocols/comparison/ordering.nv (test moot after Ordering removal)
+
+New tests (nova_tests/plan91_8a/):
+- protocol_renames_test (Iterable/Equatable/Comparable/Printable) — PASS
+- default_body_parsed_test (default body syntax + Comparable use Equatable) — PASS
+
+Regression: plan62 31/5, plan91 7/0, plan91_7 5/0, plan72 16/0, plan87 6/0, plan97 23/0,
+protocols 26/3, syntax 59/2, named_params 8/0 (pre-existing fails только).
+
+Coupled с (deferred to 91.8b/c/9):
+- [M-91.8a.2-default-codegen]: codegen synthesis для default bodies
+- [M-91.8a-self-in-param]: Self в param-type position (fn T @method(other Self))
+- [M-91.8b-operator-dispatch]: == → @equals, < → @compare (D184)
+- [M-91.8c-generic-sort]: fn[T Comparable] sort/min/max/binary_search (D185)
+- [M-91.9-impl-annotation]: #impl(P1 + P2) annotation (D186)
+
+Commits (nova-p91, branch plan-91-stdmvp):
+- fc430fc8229 — feat(plan91.8a): protocol canon renames + Ordering removal (D183, part 1)
+- Subsequent commits: parser default body, batch rename, tests, docs.
+
+Spec: D183 в spec/decisions/02-types.md (main nova).
+Q-block update: Q-protocol-method-prefix updated с D183 reference.
+
+=== Plan 91.8a.2 part 1 closed 2026-05-29: protocols refactor + Self в param fix (D183 amendment) ===
+
+Plan 91.8a.2 part 1 implementation:
+
+1. protocols.nv refactor:
+   - Equatable orthogonal с canonical coercion-form default body:
+       equals(other Self) -> bool {
+           let cmp Comparable = @
+           cmp.compare(other) == 0
+       }
+   - Comparable standalone (no use Equatable embed)
+   - Printable.fmt с default body { sb.append(str.from(@)) }
+   - From identity blanket: export fn[T] T.from(t T) -> T => t
+
+2. Self в param-type position fix (closes M-91.8a-self-in-param):
+   - emit_c.rs::emit_module method overload registration sets
+     current_receiver_type перед param_c_types calculation
+   - Mirror return-type path; restore prev_recv after
+   - Test: fn Pt @equals(other Self) -> bool теперь работает
+
+3. Tests:
+   - plan91_8a_2/self_in_param_test.nv (1 test, 2 sub-cases PASS)
+
+Decisions (Q1-Q8 closed):
+- Q1 Cycle detection: E_SYNTH_CYCLE при synthesis cycle
+- Q2 Multiple defaults: E_SYNTH_AMBIGUOUS
+- Q3 Generic blanket: mono per concrete T
+- Q4 From override: STRICT — E_BLANKET_IDENTITY_OVERRIDE
+- Q5 Pure/effect: inherits from protocol decl
+- Q6 Canonical form: COERCION в stdlib (explicit dependency)
+- Q7 Devirt failure: W_DEVIRT_FAILED warning + fat ptr fallback
+- Q8 From × D77 Into: identity Into auto-derived
+
+Targeted regression: plan62 31/5 baseline, plan91 10/0, plan91_7 5/0,
+plan91_8a 3/0, plan91_8a_2 1/0, protocols 27/2 (pre-existing only).
+
+DEFERRED to Plan 91.8a.2 part 2 (codegen synthesis):
+- Lazy synthesis at use-site (bound/coercion contexts)
+- Devirtualization pass (coercion → direct call when type known)
+- Synthesis cache per compilation unit
+- E_BLANKET_IDENTITY_OVERRIDE enforcement
+- Plan 101 mono pass extension для fn[T] T.method static
+- Error diagnostics E_SYNTH_CYCLE/AMBIGUOUS, W_DEVIRT_FAILED
+- 16 positive tests (refactored protocols + Self + From blanket use cases)
+- 5 negative tests
+
+До part 2 — implementer пишет default body methods явно как boilerplate
+compatibility. Это работает но дублирует код.
+
+D183 amendment в spec/decisions/02-types.md (main nova repo).
+
+Commits (nova-p91, plan-91-stdmvp):
+- 858a957e156 — protocols.nv refactor
+- a62fd048e6d — Self в param fix + plan91_8a_2/self_in_param_test

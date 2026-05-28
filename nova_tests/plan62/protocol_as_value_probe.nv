@@ -13,11 +13,11 @@
 //
 // Этот файл — **positive smoke** что **binding-level** existential
 // работает:
-//   let x Iter[int] = concrete_implementer  // OK
+//   let x Iterable[int] = concrete_implementer  // OK
 //
 // Что **НЕ работает** (silent miscompilation, см. Plan 56 deferred):
-//   let mut x Iter[int] = c; x.next()       // result wrong (silent)
-//   fn foo(x Iter[int]) => x.next()         // same
+//   let mut x Iterable[int] = c; x.next()       // result wrong (silent)
+//   fn foo(x Iterable[int]) => x.next()         // same
 // Это **runtime bug**, не type-check; closures и method dispatch на
 // existential param выдают неправильный output без CC-FAIL. Strict
 // diagnostic — отдельный task (style Plan 70 «no silent fallback»).
@@ -48,8 +48,8 @@ fn IntCounter mut @next() -> Option[int] => {
 // Positive: protocol-as-value coercion в let-annotation — compile OK.
 // Это existential binding — concrete тип converts к protocol-type
 // reference через void* erasure (Plan 56 D122 binding-level).
-test "let x: Iter[int] = concrete — existential binding (coercion compiles)" {
+test "let x: Iterable[int] = concrete — existential binding (coercion compiles)" {
     let c = IntCounter.new(1, 4)
-    let _x Iter[int] = c
+    let _x Iterable[int] = c
     assert(true)  // binding compiles + concrete value lives в x
 }

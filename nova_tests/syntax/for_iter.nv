@@ -1,12 +1,12 @@
-// for_iter.nv — Plan 06: Iter[T] protocol fallback в for-in.
+// for_iter.nv — Plan 06: Iterable[T] protocol fallback в for-in.
 //
 // D58: любой тип с `mut @next() -> Option[T]` структурно
-// удовлетворяет Iter[T]. emit_for сейчас (после Plan 06 Ф.1)
+// удовлетворяет Iterable[T]. emit_for сейчас (после Plan 06 Ф.1)
 // использует method_receivers["next"] для dispatch на
 // Nova_<T>_method_next.
 //
 // Этот тест определяет custom-итератор (Counter) и проходится
-// через него. Это покрывает path «structural Iter[T] для
+// через него. Это покрывает path «structural Iterable[T] для
 // user-defined типов».
 
 module syntax.for_iter
@@ -35,7 +35,7 @@ export fn Counter.new(end int) -> Counter {
 }
 
 
-test "for-in over custom Iter[T] (Counter)" {
+test "for-in over custom Iterable[T] (Counter)" {
     let mut sum = 0
     let it = Counter.new(5)
     for x in it {

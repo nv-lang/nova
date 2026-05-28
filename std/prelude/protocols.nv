@@ -54,11 +54,8 @@
 
 module prelude.protocols
 
-// Explicit import — Ordering нужен для signature протокольного метода
-// `cmp(other Self) -> Ordering` в Comparable. Auto-import `std.prelude`
-// отключён для всех `std.prelude.*` submodule (cycle protection). См.
-// file-header выше.
-import std.prelude.core.{Ordering}
+// Plan 91.8a (D183): Ordering sum-type удалён; Comparable.compare возвращает int
+// (memcmp-style: < 0 / 0 / > 0). Никаких imports из core не требуется.
 
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -84,6 +81,32 @@ import std.prelude.core.{Ordering}
 export type From[T] protocol {
     .from(t T) -> Self
 }
+
+/// Plan 91.8a.2 (D183 amendment): blanket identity From — каждый тип T
+/// можно сконструировать из себя через `T.from(t T) -> T`. Аналог Rust
+/// `impl<T> From<T> for T`.
+///
+/// Override запрещён (Q4 strict, E_BLANKET_IDENTITY_OVERRIDE): identity
+/// is identity (D9 single canonical path). Реализация — синтезирована
+/// codegen'ом per concrete T при mono.
+///
+/// Resolution order для `T.from(value)`:
+/// 1. Explicit `fn T.from(value_type)` — user impl wins
+/// 2. Blanket identity — matches только если value_type == T
+/// 3. D77 auto-derive из From[value_type] chain
+/// 4. Error E_NO_FROM_IMPL
+///
+/// Identity Into auto-derived (D77): `t.into()` для `t: T` → `t`.
+///
+/// # Examples
+///
+/// ```nova
+/// let x int = int.from(42)             // identity blanket
+/// let m Money = Money.from(other_money) // identity blanket
+/// fn copy[T](x T) -> T => T.from(x)    // works для любого T
+/// ```
+#stable(since = "0.1")
+export fn[T] T.from(t T) -> T => t
 
 /// Конверсия `Self → U` — instance method (D73).
 ///
@@ -194,12 +217,41 @@ export type Hashable protocol {
 /// type Point { x int, y int }
 /// fn Point @eq(other Point) -> bool => @x == other.x && @y == other.y
 /// ```
+/// Равенство (D109). Plan 91.8a.2 (D183 amendment): default body
+/// через coercion к Comparable — canonical form. Если тип satisfies
+/// Comparable, @equals auto-synthesized через compare; иначе
+/// implementer пишет @equals явно (e.g. Vector3, Complex без linear
+/// order).
+///
+/// Codegen devirtualization: при synthesis для concrete T, coercion
+/// `let cmp Comparable = @` становится type ascription (no fat ptr),
+/// `cmp.compare(other)` становится direct `Nova_T_method_compare`
+/// call. Zero runtime cost vs explicit @equals impl.
+///
+/// # Examples
+///
+/// ```nova
+/// // Type only Equatable (no order):
+/// type Vector3 { x f64, y f64, z f64 }
+/// fn Vector3 @equals(other Vector3) -> bool =>
+///     @x == other.x && @y == other.y && @z == other.z
+///
+/// // Type with Comparable — equals auto-derived from @compare:
+/// type Money { cents int }
+/// fn Money @compare(other Money) -> int => @cents - other.cents
+/// // @equals synthesized via Equatable.equals default body
+/// ```
 #stable(since = "0.1")
 export type Equatable protocol {
-    eq(other Self) -> bool
+    equals(other Self) -> bool {
+        let cmp Comparable = @
+        cmp.compare(other) == 0
+    }
 }
 
-/// Полный порядок (D109). Возвращает `Ordering` (`Less`/`Equal`/`Greater`).
+/// Полный порядок (D109, D183 amendment Plan 91.8a.2). Orthogonal с
+/// Equatable (no embed); Equatable получает default body через
+/// coercion к Comparable. Возвращает `int` (memcmp-style: < 0, 0, > 0).
 ///
 /// Транзитивность и antisymmetry — программистская обязанность (compiler
 /// не верифицирует). Для partial order — отдельный protocol (Plan 62.E+).
@@ -207,14 +259,14 @@ export type Equatable protocol {
 /// # Examples
 ///
 /// ```nova
-/// fn UserId @cmp(other UserId) -> Ordering =>
-///     if @value < other.value { Less }
-///     else if @value > other.value { Greater }
-///     else { Equal }
+/// fn Money @compare(other Money) -> int =>
+///     if @cents < other.cents { -1 }
+///     else if @cents > other.cents { 1 }
+///     else { 0 }
 /// ```
 #stable(since = "0.1")
 export type Comparable protocol {
-    cmp(other Self) -> Ordering
+    compare(other Self) -> int
 }
 
 
@@ -248,7 +300,13 @@ export type Comparable protocol {
 ///     sb.append(")")
 /// }
 /// ```
+/// Plan 91.8a.2 (D183 amendment): default body использует `str.from(@)`
+/// — primitive C function для primitives, или user-declared overload для
+/// custom types. Implementer пишет @fmt явно для perf (no intermediate
+/// string), либо предоставляет `fn str.from(MyType) -> str` overload.
 #stable(since = "0.1")
-export type Display protocol {
-    fmt(sb StringBuilder) -> ()
+export type Printable protocol {
+    fmt(sb StringBuilder) {
+        sb.append(str.from(@))
+    }
 }

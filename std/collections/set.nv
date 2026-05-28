@@ -60,7 +60,7 @@ export fn Set[T].with_capacity(cap int) -> Self =>
 
 /// Построить множество из итератора.
 #stable(since = "0.1")
-export fn Set[T].from_iter(it Iter[T]) -> Self {
+export fn Set[T].from_iter(it Iterable[T]) -> Self {
     let mut s = Self.new()
     for x in it {
         s.insert(x)

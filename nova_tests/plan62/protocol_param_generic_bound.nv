@@ -1,8 +1,8 @@
-// Probe: [U, T Iter[U]] generic-bound pattern для protocol-as-parameter.
+// Probe: [U, T Iterable[U]] generic-bound pattern для protocol-as-parameter.
 //
-// Альтернатива erased `it Iter[int]` (which только partial-works) —
+// Альтернатива erased `it Iterable[int]` (which только partial-works) —
 // двойной generic: U свободный element-type, T concrete iterator
-// bound by Iter[U]. При monomorphization T заменяется на конкретный
+// bound by Iterable[U]. При monomorphization T заменяется на конкретный
 // type, dispatch direct (Plan 56 D122 hybrid).
 //
 // Spec D72 example: `fn func[K, T From[K]](v K) -> T => T.from(v)`.
@@ -30,8 +30,8 @@ fn IntCounter mut @next() -> Option[int] => {
 }
 
 
-// Generic-bound pattern: U свободный, T bound by Iter[U].
-fn sum_iter[U, T Iter[U]](it_in T) -> int => {
+// Generic-bound pattern: U свободный, T bound by Iterable[U].
+fn sum_iter[U, T Iterable[U]](it_in T) -> int => {
     let mut it = it_in
     let mut total = 0
     while let Some(_v) = it.next() {
@@ -41,7 +41,7 @@ fn sum_iter[U, T Iter[U]](it_in T) -> int => {
 }
 
 
-test "[U, T Iter[U]] generic bound — method dispatch через mono (turbofish)" {
+test "[U, T Iterable[U]] generic bound — method dispatch через mono (turbofish)" {
     let c = IntCounter.new(1, 4)
     let count = sum_iter[int, IntCounter](c)
     assert(count == 3)

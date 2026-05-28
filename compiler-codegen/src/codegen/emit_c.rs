@@ -2133,6 +2133,10 @@ impl CEmitter {
                     // Plan 70 PhaseA1.3: strict mode — method overload registration.
                     // Generic-recv path uses erased_type_ref_c (preserves type-param erasure,
                     // intentional Cat B). Non-generic-recv: strict translation required.
+                    // Plan 91.8a.2 (D183 amendment): set current_receiver_type для
+                    // resolution Self в param-type position (mirror return-type path
+                    // на line 2148+). Без этого `fn T @method(other Self)` даёт E7001.
+                    let prev_recv_for_params = self.current_receiver_type.replace(recv.type_name.clone());
                     let param_c_types: Vec<String> = f.params.iter()
                         .map(|p| if is_generic_recv {
                             Ok(self.erased_type_ref_c(&Some(p.ty.clone()), &recv_type_params))
@@ -2143,6 +2147,7 @@ impl CEmitter {
                             ))
                         })
                         .collect::<Result<Vec<_>, _>>()?;
+                    self.current_receiver_type = prev_recv_for_params;
                     // Resolve return type. `Self` → recv.type_name.
                     // Plan 55 Ф.3: для `=> expr` body инфирим (см. free-fn выше).
                     let return_c_type = match &f.return_type {
@@ -3886,8 +3891,15 @@ impl CEmitter {
                         // context (free fn) — раньше эмитили "Nova_Self*"
                         // fallback, что давало невнятную CC-FAIL «unknown type
                         // name Nova_Self». Теперь error на type-check.
+                        //
+                        // Plan 91.7 (D180): для primitive receiver (int, bool,
+                        // str, Option, etc.) hardcoded `Nova_{recv}*` давал
+                        // ложный `Nova_int*` / `Nova_str*` — несуществующие C
+                        // типы. Делегируем в receiver_c_type, который правильно
+                        // мапит все типы (primitives → nova_*; Option/Result →
+                        // builtin_sum_receiver_c_type; user → Nova_X*).
                         if let Some(recv) = &self.current_receiver_type {
-                            Ok(format!("Nova_{}*", recv))
+                            Ok(self.receiver_c_type(recv))
                         } else {
                             Err("Self type used outside receiver context (free function or top-level expression). Self valid only внутри `fn Type[..].method(...)` или `fn Type[..] @method(...)`.".into())
                         }
@@ -17912,11 +17924,12 @@ _cp++; \
                                     self.line(&format!("nova_array_push_nova_int({}, {});", obj_c, arg_c));
                                 }
                             } else {
-                                let mut arg_strs = vec![obj_c];
+                                let mut arg_strs = vec![obj_c.clone()];
                                 for a in args { arg_strs.push(self.emit_expr(a.expr())?); }
                                 self.line(&format!("nova_array_push_{}({});", elem_ty, arg_strs.join(", ")));
                             }
-                            return Ok("NOVA_UNIT".into());
+                            // Plan 91.7 (D181): mut method returns `@` (receiver pointer) for fluent chain.
+                            return Ok(obj_c);
                         }
                         "pop" => {
                             let obj_c = self.emit_expr(obj)?;
@@ -17924,14 +17937,15 @@ _cp++; \
                         }
                         // Plan 90: bulk slice-операции.
                         // Plan 90.1: extend_from/insert_from/reserve — extend-family.
+                        // Plan 91.7 (D181): возвращают `@` для fluent chain.
                         "copy_from" | "copy_within" | "fill" |
                         "extend_from" | "insert_from" | "reserve" | "truncate" => {
                             let obj_c = self.emit_expr(obj)?;
-                            let mut arg_strs = vec![obj_c];
+                            let mut arg_strs = vec![obj_c.clone()];
                             for a in args { arg_strs.push(self.emit_expr(a.expr())?); }
                             self.line(&format!("nova_array_{}_{}({});",
                                 method, elem_ty, arg_strs.join(", ")));
-                            return Ok("NOVA_UNIT".into());
+                            return Ok(obj_c);
                         }
                         // Plan 90: compare — memcmp-класс, только []u8 (nova_byte).
                         "compare" if elem_ty == "nova_byte" => {
@@ -25922,11 +25936,13 @@ _cp++; \
                             .trim_end_matches('*').trim();
                         match method.as_str() {
                             "get" | "pop" => return format!("NovaOpt_{}", elem_ty),
-                            "push" => return "nova_unit".into(),
-                            // Plan 90: bulk slice-операции — mutating, возвращают unit.
-                            // Plan 90.1: extend_from/insert_from/reserve — extend-family, unit.
+                            // Plan 91.7 (D181): mut методы возвращают `@` (D131
+                            // fluent), чтобы поддерживать chain: arr.push(1).push(2).
+                            // Type-check: return type = receiver type (NovaArray_T*).
+                            "push" |
                             "copy_from" | "copy_within" | "fill" |
-                            "extend_from" | "insert_from" | "reserve" | "truncate" => return "nova_unit".into(),
+                            "extend_from" | "insert_from" | "reserve" | "truncate"
+                                => return obj_ty.clone(),
                             // Plan 90: compare → int (-1/0/1).
                             "compare" => return "nova_int".into(),
                             // Plan 60 / D117: size-accessor methods.

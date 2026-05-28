@@ -1,0 +1,40 @@
+module nova_tests.plan91_7.array_new_test
+
+// Plan 91.7 Part D: []T.new() и []T.with_capacity(n) canonical default.
+
+test "[]int.new() == []" {
+    let a = []int.new()
+    assert(a.len() == 0)
+    assert(a.is_empty())
+}
+
+test "[]str.new() empty" {
+    let a = []str.new()
+    assert(a.len() == 0)
+}
+
+test "[]u8.new() works для byte buffers" {
+    let a = []u8.new()
+    assert(a.len() == 0)
+}
+
+test "[]int.with_capacity(16) — len=0, capacity reserved" {
+    let a = []int.with_capacity(16)
+    assert(a.len() == 0)
+    assert(a.is_empty())
+}
+
+test "[]int.with_capacity(0) — empty" {
+    let a = []int.with_capacity(0)
+    assert(a.len() == 0)
+}
+
+test "[]int.new() can be pushed mut" {
+    let mut a = []int.new()
+    a.push(1)
+    a.push(2)
+    a.push(3)
+    assert(a.len() == 3)
+    assert(a[0] == 1)
+    assert(a[2] == 3)
+}
