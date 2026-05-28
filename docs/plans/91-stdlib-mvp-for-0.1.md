@@ -398,6 +398,10 @@ roadmap'ом, подпланы — историей закрытых фаз.
 | 91.5 | [str API cleanup + D132 amendment (Ф.2.6, D178)](91.5-str-api-cleanup.md) | bytes→to_bytes, chars→to_chars, parse_int merge, compare, readonly param syntax, `-> @` fluent fix | ✅ 2026-05-28 |
 | 91.6 | [StringBuilder pure Nova consume type (Ф.2.6 sub-phase, D179)](91.6-stringbuilder-nova-type.md) | `type StringBuilder consume { mut buf []u8 }`; убран C/Rust backing | ✅ 2026-05-28 |
 | 91.7 | [Array methods cleanup + canonical `.new()` (D180/D181/D182)](91.7-array-methods-and-default-new.md) | mut `-> @` chain, `@slice` removed, canonical `.new()` для primitives/str/[]T, Self codegen fix | ✅ 2026-05-28 (generic sort + Option.new + diagnostic — followups) |
+| 91.8a | [Protocol canon renames + Ordering removal + default bodies (D183)](91.8a-protocol-canon-renames.md) | `Iter→Iterable`, `Display→Printable`, `Equatable.eq→equals`, `Comparable.cmp→compare -> int`, remove `Ordering`, default bodies в protocols | 🔴 OPEN |
+| 91.8b | [Operator dispatch через protocols (D184)](91.8b-operator-dispatch-protocols.md) | `==`→`@equals`, `<`/`>`/`<=`/`>=`→`@compare`; удалить `@eq/@lt/@le/@gt/@ge` magic methods | 🔴 OPEN (зависит от 91.8a) |
+| 91.8c | [Generic array API: sort/min/max + _by (D185)](91.8c-generic-array-api.md) | `fn[T Comparable]` sort/binary_search/min/max + callback `_by` variants | 🔴 OPEN (зависит от 91.8a) |
+| 91.9 | [`#impl(Protocol1 + Protocol2)` annotation (D186)](91.9-impl-annotation.md) | opt-in compile-time verification; `nova doc` improvement; structural typing preserved | 🔴 OPEN (зависит от 91.8a) |
 
 ## Открытые фазы
 
