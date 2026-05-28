@@ -22,7 +22,7 @@ fn IntCounter mut @next() -> Option[int] => {
 type Summer { tag int }
 
 // instance method with a protocol-typed parameter
-fn Summer @drain(mut it Iter[int]) -> int => {
+fn Summer @drain(mut it Iterable[int]) -> int => {
     let mut count = 0
     let mut go = true
     loop {
@@ -34,7 +34,7 @@ fn Summer @drain(mut it Iter[int]) -> int => {
 }
 
 // static method with a protocol-typed parameter
-fn Summer.count_static(mut it Iter[int]) -> int => {
+fn Summer.count_static(mut it Iterable[int]) -> int => {
     let mut n = 0
     let mut go = true
     loop {

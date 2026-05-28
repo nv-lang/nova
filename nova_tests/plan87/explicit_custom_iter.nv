@@ -1,5 +1,5 @@
 // Plan 87 Ф.4.4 — for-in с явным типом элемента: пользовательский
-// Iter[T] и `parallel for`.
+// Iterable[T] и `parallel for`.
 
 module nova_tests.plan87.explicit_custom_iter
 
@@ -19,7 +19,7 @@ fn CountDown mut @next() -> Option[int] {
 }
 
 
-test "for x int in user Iter[int]" {
+test "for x int in user Iterable[int]" {
     let mut total = 0
     for x int in CountDown.new(4) {
         total = total + x

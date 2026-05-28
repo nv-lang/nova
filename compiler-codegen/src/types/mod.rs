@@ -2807,7 +2807,7 @@ fn check_protocol_embeds(module: &Module, errors: &mut Vec<Diagnostic>) {
             }
         }
     }
-    for (proto_name, (_, _, span)) in &proto_map {
+    for (proto_name, (local_methods, _, span)) in &proto_map {
         let mut entries = Vec::new();
         let mut seen = HashSet::new();
         flatten_with_origin(proto_name, &proto_map, &mut seen, &mut entries, proto_name);
@@ -2816,10 +2816,23 @@ fn check_protocol_embeds(module: &Module, errors: &mut Vec<Diagnostic>) {
         for (orig, mname, arity) in entries {
             sig_origins.entry((mname, arity)).or_default().push(orig);
         }
+        // Plan 91.8a (D183): local override allowed — если метод есть и
+        // локально в proto_name, и из embed'ов, локальная декларация
+        // считается override embedded-default'а (НЕ duplicate). Это
+        // используется напр. в `Comparable.equals` default body для
+        // embedded `Equatable.equals`.
+        let local_sigs: HashSet<(String, usize)> = local_methods.iter()
+            .map(|m| (m.name.clone(), m.params.len()))
+            .collect();
         for ((mname, arity), origins) in sig_origins {
             // Уникальные источники (один и тот же origin >1 раз не считается).
             let unique: HashSet<String> = origins.iter().cloned().collect();
             if unique.len() > 1 {
+                // Override-by-local case: если метод объявлен локально И
+                // также приходит из embed'а — local wins, skip duplicate.
+                if local_sigs.contains(&(mname.clone(), arity)) {
+                    continue;
+                }
                 let mut sources: Vec<String> = unique.into_iter().collect();
                 sources.sort();
                 errors.push(Diagnostic::new(
@@ -2827,8 +2840,10 @@ fn check_protocol_embeds(module: &Module, errors: &mut Vec<Diagnostic>) {
                         "[E_PROTOCOL_EMBED_DUPLICATE] method `{}/{}` in protocol \
                          `{}` is provided by multiple embedded protocols: {}. \
                          Protocol composition (D145 Ред. 5) does not yet support \
-                         override; remove one embed or define the method directly.",
-                        mname, arity, proto_name, sources.join(", ")
+                         override; remove one embed or define the method directly \
+                         (Plan 91.8a D183: declaring the method locally в `{}` \
+                         overrides embedded default).",
+                        mname, arity, proto_name, sources.join(", "), proto_name
                     ),
                     *span,
                 ));
@@ -2863,10 +2878,11 @@ fn check_generic_bound_declarations(module: &Module, errors: &mut Vec<Diagnostic
         }
     }
     // Well-known stdlib alias names (legacy + Plan 62.E migrated).
+    // Plan 91.8a (D183): Iter→Iterable, Display→Printable.
     let stdlib_aliases: &[&str] = &[
         "Ord", "Eq", "ToStr", "TryFrom", "TryInto",
-        "Hashable", "Display", "Equatable", "Comparable",
-        "Iter", "From", "Into",
+        "Hashable", "Printable", "Equatable", "Comparable",
+        "Iterable", "From", "Into",
     ];
     // Primitive-имена (Q-representation-bound future):
     let primitives: &[&str] = &[

@@ -5,7 +5,7 @@
 //
 // Спецификация diagnostic'а (D58 + Plan 39 Issue D):
 //   "for-in: type 'X' has neither `mut next() -> Option[T]` nor
-//    `iter() -> Iter[T]` methods (D58).
+//    `iter() -> Iterable[T]` methods (D58).
 //    Searched method_overloads: (X, "next")=false, (X, "iter")=false
 //    Hint: add one of the methods, or use `for x in c.iter()` if
 //    iterator is created externally."

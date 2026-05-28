@@ -1,0 +1,59 @@
+module nova_tests.plan91_7.array_mut_chain_test
+
+// Plan 91.7 Part A (D181): mut методы возвращают @ → fluent chain.
+
+test "arr.push(1).push(2).push(3) chain" {
+    let mut a []int = []
+    a.push(1).push(2).push(3)
+    assert(a.len() == 3)
+    assert(a[0] == 1)
+    assert(a[1] == 2)
+    assert(a[2] == 3)
+}
+
+test "arr.reserve(n).push(x) chain" {
+    let mut a []int = []
+    a.reserve(10).push(42)
+    assert(a.len() == 1)
+    assert(a[0] == 42)
+}
+
+test "[]int.new().push(1).push(2) full chain" {
+    let mut a = []int.new()
+    a.push(1).push(2)
+    assert(a.len() == 2)
+}
+
+test "arr.extend_from(other) chain" {
+    let mut a []int = [1, 2]
+    let other []int = [3, 4, 5]
+    a.extend_from(other)
+    assert(a.len() == 5)
+    assert(a[2] == 3)
+    assert(a[4] == 5)
+}
+
+test "arr.fill(0) chain" {
+    let mut a []int = [1, 2, 3]
+    a.fill(0)
+    assert(a.len() == 3)
+    assert(a[0] == 0)
+    assert(a[1] == 0)
+    assert(a[2] == 0)
+}
+
+test "arr.truncate(2) chain" {
+    let mut a []int = [1, 2, 3, 4, 5]
+    a.truncate(2)
+    assert(a.len() == 2)
+    assert(a[0] == 1)
+    assert(a[1] == 2)
+}
+
+test "arr.copy_from(src) chain" {
+    let mut a []int = [0, 0, 0]
+    let src []int = [10, 20, 30]
+    a.copy_from(src)
+    assert(a[0] == 10)
+    assert(a[2] == 30)
+}

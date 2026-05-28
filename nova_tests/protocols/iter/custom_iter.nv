@@ -1,7 +1,7 @@
-// Plan 85.5 Ф.1 — Iter[T]: user-defined итератор с состоянием.
+// Plan 85.5 Ф.1 — Iterable[T]: user-defined итератор с состоянием.
 //
-// `Iter[T]` (D58, structural): тип с `mut @next() -> Option[T]`
-// удовлетворяет Iter[T]. Здесь — корректность next(), exhaustion,
+// `Iterable[T]` (D58, structural): тип с `mut @next() -> Option[T]`
+// удовлетворяет Iterable[T]. Здесь — корректность next(), exhaustion,
 // idempotent-None после исчерпания.
 
 module iter.custom_iter

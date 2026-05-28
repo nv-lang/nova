@@ -4,7 +4,7 @@
 // Regression marker для codegen-фикса (commit 99a629634ab) после merge'а
 // main → plan-62-main. До фикса: protocol-type в параметре функции
 // эмитился как `Nova_Iter*` — undeclared C-type → CC-FAIL «unknown
-// type name 'Nova_Iter'». Триггер: Plan 62.E ввёл formal `Iter[T]
+// type name 'Nova_Iter'». Триггер: Plan 62.E ввёл formal `Iterable[T]
 // protocol { ... }` в std/prelude/collections.nv.
 //
 // Fix:
@@ -17,7 +17,7 @@
 // теперь parses + codegens. Но method-dispatch / for-in на erased
 // `void*` param **не работает** (это отдельный codegen blocker —
 // см. std/collections/set.nv где from_iter tests были removed с
-// note: «Iter[T] param in mono context emits for-in on unresolved
+// note: «Iterable[T] param in mono context emits for-in on unresolved
 // 'Iter' type»).
 //
 // Этот тест exercise'ит ТОЛЬКО то что fix покрыл: declaration accepted,
@@ -47,14 +47,14 @@ fn IntCounter mut @next() -> Option[int] => {
 }
 
 
-// Function declares Iter[int] parameter type — закрытие CC-FAIL
+// Function declares Iterable[int] parameter type — закрытие CC-FAIL
 // «unknown type name 'Nova_Iter'». Body не вызывает методы на `it`
 // (это known-failing path вне 62 scope), просто демонстрирует что
 // declaration accepts compile.
-fn accepts_iter_param(it Iter[int], fallback int) -> int => fallback
+fn accepts_iter_param(it Iterable[int], fallback int) -> int => fallback
 
 
-test "Iter[int] as parameter type — declaration compiles (CC-FAIL fix)" {
+test "Iterable[int] as parameter type — declaration compiles (CC-FAIL fix)" {
     let c = IntCounter.new(1, 4)
     let r = accepts_iter_param(c, 42)
     assert(r == 42)

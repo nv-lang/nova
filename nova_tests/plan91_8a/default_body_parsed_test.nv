@@ -1,0 +1,37 @@
+module nova_tests.plan91_8a.default_body_parsed_test
+
+// Plan 91.8a (D183): default body в protocol-decl парсится.
+// Codegen synthesis для defaults — followup 91.8a.2.
+
+// Probe: protocol с default body парсится без ошибок.
+type MyProtocol protocol {
+    abstract_method() -> int
+    default_method() -> int => 42
+}
+
+// Реализующий тип — задаёт оба явно (т.к. codegen synthesis отложен).
+type Impl { x int }
+fn Impl @abstract_method() -> int => @x
+fn Impl @default_method() -> int => 42
+
+test "protocol с default body парсится + используется" {
+    let i = Impl { x: 7 }
+    assert(i.abstract_method() == 7)
+    assert(i.default_method() == 42)
+}
+
+// Comparable из prelude использует default body для equals.
+// Проверка: prelude парсится без E_PROTOCOL_EMBED_DUPLICATE.
+type Sortable { weight int }
+fn Sortable @compare(other Sortable) -> int =>
+    if @weight < other.weight { -1 }
+    else if @weight > other.weight { 1 }
+    else { 0 }
+fn Sortable @equals(other Sortable) -> bool => @compare(other) == 0
+
+test "Comparable use Equatable + default equals body — компилится" {
+    let a = Sortable { weight: 5 }
+    let b = Sortable { weight: 10 }
+    assert(a.compare(b) < 0)
+    assert(a.equals(a))
+}

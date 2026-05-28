@@ -1,4 +1,4 @@
-// Plan 85.5 Ф.2 — Iter[T]: str.to_chars() и str.to_bytes() в for-in.
+// Plan 85.5 Ф.2 — Iterable[T]: str.to_chars() и str.to_bytes() в for-in.
 //
 // `str.to_chars() -> []char` — codepoint'ы (allocating); `str.to_bytes() -> []u8` —
 // сырые UTF-8 байты (allocating copy). Оба итерируются обычным for-in (массивы).

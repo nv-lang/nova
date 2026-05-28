@@ -27234,3 +27234,115 @@ ownership tracking.
 counters → увидели `fibers[slot]=NULL` при `parked=true` → STALE condition.
 Без dump-инфраструктуры race не локализовалась за 5 сессий (10+ часов).
 С dump-инфраструктурой — локализовалась за один запуск.
+
+## Plan 91.7 — Array API cleanup + canonical `.new()` (D180/D181/D182)
+
+**Why -> @ для mut методов:** stale `let _ = arr.push(1)` discard паттерн
+заменён fluent chain `arr.push(1).push(2).reserve(10)` — единый стиль с
+StringBuilder (Plan 109 / D179) и user fluent APIs (D131). Codegen change
+тривиален: `return Ok(obj_c)` вместо `return Ok("NOVA_UNIT")`.
+
+**Why @slice удалён:** Plan 96 даёт `arr[a..b]` zero-copy view. Метод
+@slice был дубликат с copy-семантикой. D9 принцип «один очевидный путь» —
+два пути для одного действия = плохо.
+
+**Why .new() в Nova-коде, не compiler-magic:**
+Decision из обсуждения 2026-05-28 — generation `.new()` для каждого
+типа невидим в `nova doc`, скрытый, ломает «всё видно в исходниках».
+Альтернатива — Nova-side declarations в `std/runtime/defaults.nv`
+(numeric+bool) + `string.nv` (str) + builtin (`[]T` в emit_c.rs).
+Single source of truth — stdlib, не compiler.
+
+**Why user types НЕ имеют auto .new():**
+- Auto-generated `User.new()` со «всё-нулями» скрывает defaults
+  (новый юзер не-админ? откуда читателю знать?)
+- Invalid state risk: `Connection.new()` без host = runtime crash где-то далеко.
+- Имена кодируют намерение: `User.new(name, email)` vs `User.guest()`.
+- Эволюция типа: добавление поля заставляет обновить конструктор → good failure.
+- `nova doc User` показывает явные конструкторы.
+
+Discipline by design. См. D180 §Rationale.
+
+**Why -> Self в parametric static methods обязателен:**
+`fn Option[T].new() -> Option[T]` — redundant: receiver уже декларирует
+тип. `Self` устойчив к rename + сразу говорит «возврат того же типа».
+D9 single path. Enforce validator — followup `[M-91.7-self-required-parametric]`.
+
+**Self codegen fix (хороший побочный эффект):**
+Раньше `Self` substitution в return-type делалось через
+`format!("Nova_{}*", recv)` — failures для primitives (`Nova_int*` —
+unknown type) и Option/Result (`Nova_Option*` incomplete). Делегация в
+`receiver_c_type()` правильно мапит все типы: primitives → `nova_int`,
+Option → `NovaOpt_T`, user → `Nova_X*`.
+
+**Why Part C generic sort deferred:**
+`fn[T Ord] []T @sort()` требует:
+1. Ord protocol (`@compare(other Self) -> Ordering`) — новый D-block.
+2. @compare deklarations для всех numeric primitives.
+3. mono-pass per concrete T — emit_c.rs существенная работа.
+
+Это full sub-plan (1-2 dev-days). MVP concrete `[]int @sort()` достаточен
+для большинства use-cases. Generic — followup `[M-91.7-sort-generic]`.
+
+## Plan 91.8a — protocol renames + Ordering removal + default body syntax (D183)
+
+**Why -able convention:** Iter→Iterable, Display→Printable. Все protocols
+теперь имеют unified `-able` suffix (Equatable/Comparable/Hashable/Printable/
+Iterable). D9 single canonical naming style.
+
+**Why Comparable.compare -> int (not Ordering):** consistency со str.compare
+(D178) и C memcmp/strcmp. Perf (no sum-type dispatch). Less surface area
+(одной sum-type меньше). Memcmp-compatible — any-sign int convention (caller
+checks sign only, не magnitude).
+
+**Why default body syntax (body present = default):** Без annotation keyword.
+В отличие от Java/C# где `default` keyword нужен из-за исторической нагрузки
+(interface методы должны были быть abstract), Nova protocols с самого начала
+позволяют bodies → правило «body есть = default» однозначно. Меньше syntax noise.
+
+**Why local override discrepancy в check_protocol_embeds:** Когда Comparable
+embeds Equatable, embedded `equals` приходит как одна копия. Когда Comparable
+also locally declares `equals` (для default body), это duplicate в смысле
+«method name+arity повторяется через >1 origin». Семантически — local
+declaration overrides embedded. Fix: track local methods отдельно; allow
+override (не error).
+
+**Why codegen synthesis отложен:** Полная codegen synthesis для default bodies
+— это walking type satisfaction + emit synthesized functions per (Type, P)
+pair. Substantial codegen pass. Сейчас compatibility through explicit @equals
+boilerplate (one-line `=> @compare(other) == 0`). Followup [M-91.8a.2-default-codegen]
+завершит eager synthesis.
+
+## Plan 91.8a.2 part 1 — orthogonal protocols + coercion canonical form (D183 amendment)
+
+**Why orthogonal Equatable/Comparable:** в 91.8a part 1 был embed
+(`use Equatable` в Comparable + local override `equals`). Это создавало
+duplicate-method detection edge case (`check_protocol_embeds` нужен был
+special case для override). Orthogonal — cleaner: каждый protocol
+stand-alone, default body использует `@compare` который МОЖЕТ не быть
+у типа (conditional default).
+
+**Why coercion canonical form (Q6):** `let cmp Comparable = @` явно
+показывает cross-protocol dependency в protocol declaration. Self-
+documenting: при чтении Equatable сразу видно «использует Comparable».
+Codegen devirtualization делает coercion-form **zero-cost** vs direct
+form (same C output after optimization pass) — performance не аргумент
+выбирать direct form. Choose form for clarity.
+
+**Why strict override на From identity blanket (Q4):** identity это
+тождество — нет осмысленного «non-identity Money.from(Money)». Любая
+попытка «улучшить» = странность. D9 single canonical path: blanket =
+identity, реализуется compiler автоматически, override бесполезен.
+
+**Why Self в param fix через current_receiver_type:** ровно тот же
+паттерн что для return-type (line 7150+). Mirror existing mechanism;
+no new infrastructure. Plan 91.7 уже использовал receiver_c_type
+для Self в return — расширение на param consistent.
+
+**Why codegen synthesis отложен на part 2:** lazy synthesis +
+devirtualization — substantial codegen work (multiple modules: BoundCtx
+satisfaction, emit_c.rs synthesis pass, cache, Plan 101 mono extension,
+error diagnostics, 21 tests). Не helpful запихать в один commit с
+протокол refactor. Part 1 валиден сам по себе — implementer пишет
+default methods explicit как boilerplate compatibility. Part 2 даёт
+автомат synthesis убирая boilerplate.

@@ -19,11 +19,11 @@
 //
 // **Bootstrap status (Plan 62.D non-opaque):**
 //
-// - **`Iter[T]` protocol** объявлен здесь formally — раньше существовал
+// - **`Iterable[T]` protocol** объявлен здесь formally — раньше существовал
 //   ТОЛЬКО как structural duck-typing per D58 (codegen for-in dispatch:
 //   emit_c.rs:14324+ ищет метод `mut next() -> Option[T]` без проверки
 //   протокольной декларации). Формальная декларация:
-//     - даёт `nova doc` source-of-truth для `Iter[T]` API,
+//     - даёт `nova doc` source-of-truth для `Iterable[T]` API,
 //     - регистрируется в `BoundCtx.protocol_specs` (types/mod.rs:368) —
 //       eligible как bound (`T Iter`) per D72,
 //     - НЕ ломает существующий structural for-in dispatch (codegen
@@ -90,19 +90,19 @@ import std.prelude.core.{Option}
 
 /// Структурный протокол итератора по элементам типа `T`.
 ///
-/// Тип удовлетворяет `Iter[T]` если у него есть метод
+/// Тип удовлетворяет `Iterable[T]` если у него есть метод
 /// `mut next() -> Option[T]`. `Some(v)` — следующий элемент, `None` —
 /// итерация завершена (idempotent: повторные вызовы продолжают
 /// возвращать `None`).
 ///
 /// **D58 (spec/decisions/03-syntax.md)**: for-in loop dispatch'ит на
-/// `Iter[T]` через duck-typing — declaring `type Iter[T] protocol`
+/// `Iterable[T]` через duck-typing — declaring `type Iter[T] protocol`
 /// канонизирует имя для `nova doc` и use-as-bound (`T Iter`) per D72,
 /// но НЕ меняет structural for-in dispatch (codegen продолжает искать
 /// метод `next` напрямую). Existing types `Range`/`RangeIter`/
 /// `StepRangeIter`/`ReverseRangeIter`/`HashMapIter`/`KeysIter`/
 /// `ValuesIter`/`Counter` (см. nova_tests/syntax/for_iter*.nv)
-/// автоматически удовлетворяют `Iter[T]` без `impl`-блока.
+/// автоматически удовлетворяют `Iterable[T]` без `impl`-блока.
 ///
 /// **Note on `mut` receiver**: bootstrap parser (`parse_effect_methods`,
 /// compiler-codegen/src/parser/mod.rs:2244+) НЕ поддерживает `mut`-
@@ -129,7 +129,7 @@ import std.prelude.core.{Option}
 /// for x in c { /* yields 0, 1, 2 */ }
 /// ```
 #stable(since = "0.1")
-export type Iter[T] protocol {
+export type Iterable[T] protocol {
     next() -> Option[T]
 }
 

@@ -1,4 +1,4 @@
-// Plan 85.5 Ф.3 — Iter[T]: generic bound `[T Iter[int]]`.
+// Plan 85.5 Ф.3 — Iterable[T]: generic bound `[T Iterable[int]]`.
 //
 // Instance-метод `next()` диспатчится на type-параметре через mono
 // (работает — в отличие от static-методов, см. 85.3 ограничение).
@@ -21,8 +21,8 @@ fn CountDown mut @next() -> Option[int] {
 }
 
 
-// Generic-функция с Iter[int]-bound — for-in по type-параметру.
-fn sum_iter[T Iter[int]](mut it T) -> int {
+// Generic-функция с Iterable[int]-bound — for-in по type-параметру.
+fn sum_iter[T Iterable[int]](mut it T) -> int {
     let mut total = 0
     for n in it {
         total = total + n
@@ -31,7 +31,7 @@ fn sum_iter[T Iter[int]](mut it T) -> int {
 }
 
 // Подсчёт элементов.
-fn count_iter[T Iter[int]](mut it T) -> int {
+fn count_iter[T Iterable[int]](mut it T) -> int {
     let mut n = 0
     for _ in it {
         n = n + 1
@@ -40,17 +40,17 @@ fn count_iter[T Iter[int]](mut it T) -> int {
 }
 
 
-test "generic [T Iter[int]] — sum_iter с CountDown" {
+test "generic [T Iterable[int]] — sum_iter с CountDown" {
     let r = sum_iter[CountDown](CountDown.new(5))
     assert(r == 15)          // 5+4+3+2+1
 }
 
-test "generic [T Iter[int]] — count_iter" {
+test "generic [T Iterable[int]] — count_iter" {
     let r = count_iter[CountDown](CountDown.new(8))
     assert(r == 8)
 }
 
-test "generic [T Iter[int]] — пустой итератор" {
+test "generic [T Iterable[int]] — пустой итератор" {
     let r = sum_iter[CountDown](CountDown.new(0))
     assert(r == 0)
 }

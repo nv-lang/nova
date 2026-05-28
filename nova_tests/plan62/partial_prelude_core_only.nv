@@ -15,8 +15,11 @@
 #prelude(core, runtime)
 module plan62.partial_prelude_core_only
 
-// core provides Option + Some + None + Ok + Err + Ordering.
+// core provides Option + Some + None + Ok + Err.
 // runtime provides assert (+ panic / exit / debug_assert).
+//
+// Plan 91.8a (D183): Ordering удалён из prelude (Comparable.compare -> int
+// больше не требует sum-type Less/Equal/Greater).
 fn make_some() -> Option[int] {
     Some(7)
 }
@@ -31,9 +34,4 @@ test "partial_prelude(core, runtime) — Result available" {
     let r Result[int, str] = Ok(99)
     assert(r.is_ok())
     assert(r.unwrap_or(0) == 99)
-}
-
-test "partial_prelude(core, runtime) — Ordering available" {
-    let o = Less
-    assert(o == Less)
 }

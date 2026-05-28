@@ -812,6 +812,13 @@ pub struct EffectMethod {
     /// handler-actions через runtime stack). Hard-enforcement static↔
     /// instance mismatch — followup (см. plan97/Ф.0.4).
     pub is_static: bool,
+    /// Plan 91.8a (D183): default body для protocol method. `None` =
+    /// abstract method (тип-implementer ОБЯЗАН реализовать). `Some(body)` =
+    /// default — implementer может override; если не задал явно, codegen
+    /// синтезирует function из default body (substituting Self → impl-type).
+    /// Для effect-методов всегда None (default bodies применимы только к
+    /// protocols).
+    pub default_body: Option<Block>,
 }
 
 /// Plan 33.3 Ф.9 (D24): Operation vs PureView для effect-метода.

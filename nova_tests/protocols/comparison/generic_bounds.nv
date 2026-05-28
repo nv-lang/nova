@@ -1,4 +1,5 @@
 // Plan 85.4 Ф.3 — protocol-bounds в generic-функциях.
+// Plan 91.8a (D183): eq→equals, cmp→compare (int), Ordering удалён.
 //
 // `[T Hashable]` / `[T Equatable]` / `[T Comparable]` — instance-метод
 // протокола вызывается на type-параметре внутри generic-тела. В отличие
@@ -11,11 +12,11 @@ module comparison.generic_bounds
 type Item { id int }
 
 fn Item @hash() -> u64 => @id as u64
-fn Item @eq(other Item) -> bool => @id == other.id
-fn Item @cmp(other Item) -> Ordering =>
-    if @id < other.id { Less }
-    else if @id > other.id { Greater }
-    else { Equal }
+fn Item @equals(other Item) -> bool => @id == other.id
+fn Item @compare(other Item) -> int =>
+    if @id < other.id { -1 }
+    else if @id > other.id { 1 }
+    else { 0 }
 
 
 // ── single bound: Hashable ────────────────────────────────────────
@@ -33,7 +34,7 @@ test "generic [T Hashable] — instance-dispatch на typevar" {
 
 // ── single bound: Equatable ───────────────────────────────────────
 
-fn are_equal[T Equatable](a T, b T) -> bool => a.eq(b)
+fn are_equal[T Equatable](a T, b T) -> bool => a.equals(b)
 
 test "generic [T Equatable] — instance-dispatch" {
     let a = Item { id: 3 }
@@ -46,16 +47,14 @@ test "generic [T Equatable] — instance-dispatch" {
 
 // ── single bound: Comparable ──────────────────────────────────────
 
-fn cmp_of[T Comparable](a T, b T) -> Ordering => a.cmp(b)
+fn cmp_of[T Comparable](a T, b T) -> int => a.compare(b)
 
-test "generic [T Comparable] — instance-dispatch возвращает Ordering" {
+test "generic [T Comparable] — instance-dispatch возвращает int (D183)" {
     let lo = Item { id: 1 }
     let hi = Item { id: 5 }
-    let is_less = match cmp_of[Item](lo, hi) {
-        Less => true
-        _ => false
-    }
-    assert(is_less)
+    assert(cmp_of[Item](lo, hi) < 0)
+    assert(cmp_of[Item](hi, lo) > 0)
+    assert(cmp_of[Item](lo, lo) == 0)
 }
 
 
@@ -68,13 +67,13 @@ test "generic [T Comparable] — instance-dispatch возвращает Ordering
 
 type HashEq protocol {
     hash() -> u64
-    eq(other Self) -> bool
+    equals(other Self) -> bool
 }
 
 fn hash_eq_match[T HashEq](a T, b T) -> bool =>
-    a.hash() == b.hash() && a.eq(b)
+    a.hash() == b.hash() && a.equals(b)
 
-test "multi-bound именованный protocol — hash + eq вместе" {
+test "multi-bound именованный protocol — hash + equals вместе" {
     let a = Item { id: 11 }
     let b = Item { id: 11 }
     let c = Item { id: 12 }

@@ -1,6 +1,6 @@
 // for_iter_tuple.nv — Plan 06 Ф.2: tuple-destructuring в for-in loop.
 //
-// Iter[(K, V)] — итератор возвращает tuple, программист деструктурирует
+// Iterable[(K, V)] — итератор возвращает tuple, программист деструктурирует
 // через `for (k, v) in iter { ... }`. Bootstrap'е tuple хранится как
 // _NovaTuple{N}* boxed pointer; pattern_destructure_tuple извлекает
 // поля через ->fN.
