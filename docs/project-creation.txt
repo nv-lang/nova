@@ -23772,3 +23772,17 @@ Plan 103.9 (V2 consume guards migration, D174) CLOSED.
 - [M-103.9-rwlock-parallel-for-exclusion] DEFERRED: parallel for + RwLock under M:N
 - [M-103.9-semaphore-parallel-for] DEFERRED: parallel for + sem.acquire() under M:N
 - Branch: plan-103.9; merge pending
+
+=== Plan 91 Ф.2.5 closed 2026-05-28; D177 str Nova-body methods; 1527/64 full suite ===
+
+Plan 91 Ф.2.5 (D177) CLOSED.
+- str Nova-body methods: parse_int_radix / pad_left / pad_right / repeat / replace
+- Dispatch via Plan 54 Ф.2 mechanism (!is_external filter in emit_c.rs)
+- std/runtime/string.nv: Nova bodies with #no_prelude + explicit Option/StringBuilder imports
+- prelude.nv bumped to v10 with 5-method export import from std.runtime.string
+- string_builder.h: added Nova_StringBuilder_consume_into alias (D164 consume-bit ABI)
+- emit_c.rs: removed parse_int_radix/pad_left/pad_right/repeat/replace from str_method_to_rt
+- emit_c.rs: !is_external filter so external str methods still dispatch to C primitives
+- runtime_registry.rs: 5 methods updated with c_name="" (Nova-body) + D177 comments
+- All plan91 text method tests PASS; D177 spec added to spec/decisions/08-runtime.md
+- Full suite: 1527 PASS / 64 FAIL (same as baseline, all pre-existing)

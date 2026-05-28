@@ -27128,3 +27128,36 @@ even с тысячами scopes.
 **Backward-compat сохранён:** existing parked[] semantics не изменены;
 dispatch_ready hierarchy intact; все callers (channels, mutexes, Plan
 103.x sync) работают через тот же generic API без изменений.
+
+---
+
+## Plan 91 Ф.2.5 — D177 str Nova-body dispatch (2026-05-28)
+
+**!is_external filter for Plan 54 Ф.2:**
+emit_c.rs Plan 54 Ф.2 dispatch previously did `filter(|s| s.is_instance)`.
+External fn methods (len, split, starts_with, etc.) have is_external=true and
+generate correct C names via str_method_to_rt. Without the filter they'd also
+match Nova-body path → wrong dispatch. Fix: `filter(|s| s.is_instance && !s.is_external)`.
+
+**Nova_StringBuilder_consume_into alias:**
+string_builder.nv declares `export external fn StringBuilder consume @into() -> str`.
+ExternalRegistry (external_registry.rs line 228-230) generates c_name
+`Nova_StringBuilder_consume_into` for consume receivers (D164 naming).
+String interpolation hardcodes `Nova_StringBuilder_method_into` (bypasses dispatch).
+Nova-body methods (pad_left, repeat, replace) call .into() via method dispatch →
+need `Nova_StringBuilder_consume_into`. Fix: static inline alias in string_builder.h.
+
+**#no_prelude + explicit imports in string.nv:**
+string.nv is re-exported via prelude → circular import if it tries to use prelude.
+Fix: `#no_prelude` attribute before module declaration + explicit import of
+`std.prelude.core.{Option, Some, None}` and `std.prelude.collections.{StringBuilder}`.
+
+**replace body — no []str.join dependency:**
+Initial replace body used `[]str.join` (std.text). std.text is not available in
+std.runtime. Fix: concat-loop with StringBuilder: iterate finding match offsets,
+build result by appending segments between matches + replacement. No external deps.
+
+**str.from(char) in #no_prelude module:**
+Nova bodies call `str.from(fill)` for pad methods. In #no_prelude context char.nv
+is not imported. emit_c.rs already handles `str.from(X)` special-case for when arg
+is `nova_char` → emits `Nova_str_static_from_char(fill)`. No fix needed, existing path works.
