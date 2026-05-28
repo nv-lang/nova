@@ -719,6 +719,7 @@ Type-check json.nv PASS. Только codegen→exe path остаётся.
 | Ф.3 D52 source fix | ✅ closed (попутно в Ф.7.1) |
 | **Ф.4 sort module** | ✅ **closed** |
 | **Ф.2.5 D177 str Nova-body** | ✅ **closed 2026-05-28** |
+| **Ф.2.6 D178 str API cleanup** | 🔵 planned |
 | Ф.3 conformance smoke (HashMap codegen) | 🟡 deferred (deep codegen) |
 | Ф.2 text methods remainders | pending |
 | Ф.1 collections conformance | pending |
@@ -751,3 +752,62 @@ negative radix, replace edge cases (empty from/to), pad с non-ASCII fill (UTF-8
 - nova(main) `8fd2f91a3a1` — D177 spec в `spec/decisions/08-runtime.md`
 
 **Full suite:** 1527 PASS / 64 FAIL (baseline без изменений, регрессий нет).
+
+---
+
+## Ф.2.6 — str API cleanup + extensions (D178) 🔵 planned
+
+### Мотивация
+
+Привести str API к единому стилю и устранить несоответствия:
+- `bytes()`/`chars()` звучат как zero-copy views, но аллоцируют — переименовать в `to_bytes()`/`to_chars()`
+- `as_bytes()` → `readonly []u8` уже существует (D176, Plan 108)
+- `parse_int()` и `parse_int_radix()` — два метода для одного действия; объединить через default-параметр
+- `readonly param_name type` синтаксис параметров не поддерживается (только `name readonly type`)
+- `split` возвращает `[]str` но фактически это zero-copy views → `readonly []str`
+- Отсутствует `@compare` для лексикографического сравнения
+
+### Изменения D178
+
+| Было | Стало | Тип |
+|---|---|---|
+| `@bytes() -> []u8` | `@to_bytes() -> []u8` | rename (аллоцирующая копия) |
+| `@chars() -> []char` | `@to_chars() -> []char` | rename (аллоцирующая копия) |
+| `@split(sep str) -> []str` | `@split(sep str) -> readonly []str` | return-type (zero-copy views) |
+| `from_bytes_lossy(bytes readonly []u8)` | `from_bytes_lossy(readonly bytes []u8)` | синтаксис параметра |
+| `from_bytes_unchecked(bytes readonly []u8)` | `from_bytes_unchecked(readonly bytes []u8)` | синтаксис параметра |
+| `@parse_int() + @parse_int_radix(r)` | `@parse_int(radix int = 10)` | API merge, убрать `parse_int_radix` |
+| — | `@compare(other str) -> int` | новый (lexicographic, как C `strcmp`) |
+| `readonly []u8` vs `readonly [] readonly u8` | задокументировать эквивалентность | spec only |
+
+`as_bytes() -> readonly []u8` — уже есть (D176).
+
+### Затронутые файлы
+
+**Компилятор:**
+- `compiler-codegen/src/parser/mod.rs` — добавить `readonly` перед именем параметра (как `consume`/`mut`); при парсинге оборачивает тип в `TypeRef::Readonly`
+- `compiler-codegen/src/codegen/runtime_registry.rs` — rename bytes/chars, add compare, merge parse_int
+- `compiler-codegen/src/codegen/emit_c.rs` — rename в `str_method_to_rt`, `infer_call_type`
+
+**Runtime:**
+- `compiler-codegen/nova_rt/array.h` — добавить `nova_str_compare(a, b) -> nova_int`
+- `std/runtime/string.nv` — все объявления + тела
+- `std/prelude.nv` — v11, обновить export imports
+
+**Тесты (rename):**
+- `nova_tests/protocols/iter/str_iters.nv` — 10 тестов `.chars()` → `.to_chars()`, `.bytes()` → `.to_bytes()`
+- `std/encoding/base64.nv` — `.bytes()` → `.to_bytes()`
+- `std/encoding/json.nv` — `.chars()` → `.to_chars()`
+- `std/_experimental/collections/bloom_filter.nv` — `.chars()` → `.to_chars()`
+- `nova_tests/plan91/text_methods_test.nv` — `parse_int_radix` → `parse_int`
+
+**Spec:**
+- `spec/decisions/08-runtime.md` (main nova repo) — D178 блок + `readonly []u8 ≡ readonly [] readonly u8`
+
+### Acceptance criteria
+
+- `nova test plan91/` — все text_methods_test PASS
+- `nova test protocols/iter/str_iters` PASS (переименованные тесты)
+- `nova test str/` PASS
+- Full suite: не хуже 1527 PASS / 64 FAIL baseline
+- D178 spec в spec/decisions/08-runtime.md
