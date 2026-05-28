@@ -581,16 +581,17 @@ static inline nova_int nova_str_byte_len(nova_str s) {
     return (nova_int)s.len;
 }
 
-/* ---- nova_str_bytes: возвращает []byte (packed UTF-8 байты).
- * `[]byte` codegen-маппится в `NovaArray_nova_byte*` — реальный
- * uint8_t[] storage, без int64-erasure. */
-static inline NovaArray_nova_byte* nova_str_bytes(nova_str s) {
+/* ---- nova_str_to_bytes / nova_str_bytes: возвращает []byte (packed UTF-8 байты).
+ * D178: renamed to nova_str_to_bytes; nova_str_bytes kept as alias. */
+static inline NovaArray_nova_byte* nova_str_to_bytes(nova_str s) {
     NovaArray_nova_byte* a = nova_array_new_nova_byte((int64_t)s.len);
     for (size_t i = 0; i < s.len; i++) {
         nova_array_push_nova_byte(a, (nova_byte)(unsigned char)s.ptr[i]);
     }
     return a;
 }
+
+static inline NovaArray_nova_byte* nova_str_bytes(nova_str s) { return nova_str_to_bytes(s); }
 
 /* ---- nova_str_as_bytes: zero-copy view of str's UTF-8 bytes as readonly []u8.
  * Plan 108 D176: returns NovaArray_nova_byte* that aliases the str's internal
@@ -634,11 +635,9 @@ static inline NovaArray_nova_str* nova_str_split(nova_str s, nova_str sep) {
     return a;
 }
 
-/* ---- nova_str_chars: возвращает []char (eager массив codepoints).
- * D26 spec говорит про `Iter[char]` (lazy), bootstrap делает eager
- * массив codepoints. Каждый codepoint — uint32_t, хранится как
- * nova_int в NovaArray_nova_int*. */
-static inline NovaArray_nova_int* nova_str_chars(nova_str s) {
+/* ---- nova_str_to_chars / nova_str_chars: возвращает []char (eager массив codepoints).
+ * D178: renamed to nova_str_to_chars; nova_str_chars kept as alias. */
+static inline NovaArray_nova_int* nova_str_to_chars(nova_str s) {
     NovaArray_nova_int* a = nova_array_new_nova_int((int64_t)s.len);
     for (size_t i = 0; i < s.len; ) {
         unsigned char b = (unsigned char)s.ptr[i];
@@ -671,6 +670,7 @@ static inline NovaArray_nova_int* nova_str_chars(nova_str s) {
     }
     return a;
 }
+static inline NovaArray_nova_int* nova_str_chars(nova_str s) { return nova_str_to_chars(s); }
 
 /* ---- nova_str_char_at: codepoint по codepoint-индексу.
  * Возвращает Option[char] = NovaOpt_nova_char (Plan 70.3: distinct typedef).
@@ -925,10 +925,23 @@ static inline void nv_panic_slice_oob(nova_int from, nova_int to, nova_int len) 
     nv_panic((nova_str){ .ptr = buf, .len = (size_t)n });
 }
 
+/* D178 (Plan 91 Ф.2.6): nova_str_compare — lexicographic comparison.
+ * Returns negative / 0 / positive like C strcmp, but length-aware (memcmp).
+ * Compares raw UTF-8 bytes; consistent with equality semantics. */
+static inline nova_int nova_str_compare(nova_str a, nova_str b) {
+    size_t min_len = a.len < b.len ? a.len : b.len;
+    if (min_len > 0) {
+        int r = __builtin_memcmp(a.ptr, b.ptr, min_len);
+        if (r != 0) return (nova_int)r;
+    }
+    if (a.len < b.len) return (nova_int)-1;
+    if (a.len > b.len) return (nova_int) 1;
+    return (nova_int)0;
+}
+
 /* Plan 91 Ф.2: nova_str_parse_int — parse decimal int с optional ±-prefix.
- * Returns Some(n) на успех, None при error (empty, non-digit, overflow).
- * Bootstrap V1: только decimal base 10. Для других баз — parse_int_radix.
- * Whitespace НЕ trim'ится автоматически — caller должен .trim() сначала. */
+ * Retained for legacy call sites; Nova-body parse_int(radix=10) is preferred.
+ * Returns Some(n) на успех, None при error (empty, non-digit, overflow). */
 static inline NovaOpt_nova_int nova_str_parse_int(nova_str s) {
     NovaOpt_nova_int r;
     r.tag = NOVA_TAG_Option_None;

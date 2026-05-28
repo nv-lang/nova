@@ -6,7 +6,7 @@ module str.from_bytes_series
 
 test "from_bytes_unchecked ASCII round-trip" {
     let s = "hello"
-    let b []u8 = s.bytes()
+    let b []u8 = s.to_bytes()
     let r = str.from_bytes_unchecked(b)
     assert(r == "hello")
     assert(r.len() == 5)
@@ -14,7 +14,7 @@ test "from_bytes_unchecked ASCII round-trip" {
 
 test "from_bytes_unchecked Cyrillic round-trip" {
     let s = "Привет"
-    let b []u8 = s.bytes()
+    let b []u8 = s.to_bytes()
     let r = str.from_bytes_unchecked(b)
     assert(r == "Привет")
     assert(r.len() == 12)
@@ -22,7 +22,7 @@ test "from_bytes_unchecked Cyrillic round-trip" {
 
 test "from_bytes_lossy valid UTF-8 unchanged" {
     let s = "hello"
-    let b []u8 = s.bytes()
+    let b []u8 = s.to_bytes()
     let r = str.from_bytes_lossy(b)
     assert(r == "hello")
     assert(r.len() == 5)
@@ -30,7 +30,7 @@ test "from_bytes_lossy valid UTF-8 unchanged" {
 
 test "from_bytes_lossy valid UTF-8 Cyrillic unchanged" {
     let s = "Привет"
-    let b []u8 = s.bytes()
+    let b []u8 = s.to_bytes()
     let r = str.from_bytes_lossy(b)
     assert(r == "Привет")
     assert(r.len() == 12)

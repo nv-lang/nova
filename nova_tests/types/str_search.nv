@@ -264,28 +264,28 @@ test "slice across emoji boundary" {
 }
 
 // ================================================================
-// SECTION 9: bytes() и chars() — итерация по строке
+// SECTION 9: to_bytes() и to_chars() — итерация по строке (D178 rename)
 // ================================================================
-// D26 spec: s.bytes() → []u8 (UTF-8 байты),
-//           s.chars() → Iter[char] (lazy в spec, eager в bootstrap).
+// D178: s.to_bytes() → []u8 (UTF-8 байты, allocating copy),
+//       s.to_chars() → []char (codepoints, allocating).
 // for-in по результату должен работать.
 
 test "bytes: ASCII — каждый символ = 1 байт" {
     let s = "abc"
-    let bs = s.bytes()
+    let bs = s.to_bytes()
     assert(bs.len() == 3)
 }
 
 test "bytes: Cyrillic — UTF-8 многобайтовое представление" {
     let s = "Привет"               // 6 codepoints, 12 bytes
-    let bs = s.bytes()
+    let bs = s.to_bytes()
     assert(bs.len() == 12)
 }
 
-test "bytes: for-in over s.bytes()" {
+test "bytes: for-in over s.to_bytes()" {
     let s = "abc"
     let mut sum int = 0
-    for b in s.bytes() {
+    for b in s.to_bytes() {
         sum = sum + (b as int)
     }
     // 'a'(97) + 'b'(98) + 'c'(99) = 294
@@ -294,7 +294,7 @@ test "bytes: for-in over s.bytes()" {
 
 test "bytes: let-binding then for-in" {
     let s = "ABC"
-    let bs = s.bytes()
+    let bs = s.to_bytes()
     let mut count = 0
     for b in bs {
         if b == 'A' as u8 { count = count + 1 }
@@ -307,7 +307,7 @@ test "bytes: let-binding then for-in" {
 test "chars: count codepoints через for-in" {
     let s = "Привет"
     let mut n = 0
-    for c in s.chars() {
+    for c in s.to_chars() {
         let _ = c
         n = n + 1
     }
@@ -317,7 +317,7 @@ test "chars: count codepoints через for-in" {
 test "chars: emoji decode" {
     let s = "ab😀"                  // 3 codepoints
     let mut count = 0
-    for c in s.chars() {
+    for c in s.to_chars() {
         let _ = c
         count = count + 1
     }
@@ -366,7 +366,7 @@ test "split: trailing separator" {
 
 test "bytes: round-trip через str.try_from" {
     let original = "Hello, мир!"
-    let bs = original.bytes()
+    let bs = original.to_bytes()
     // Восстановим строку: bs → str.try_from(bs) → str. UTF-8 валидный
     // (исходник был str), поэтому Ok.
     let recon = match str.try_from(bs) {
@@ -391,7 +391,7 @@ test "bytes: extreme values 0..255 через WriteBuffer" {
 test "bytes: for-in over packed []u8" {
     // For-in: каждый элемент — реально u8 (uint8_t), не int64.
     let s = "ABC"
-    let bs = s.bytes()
+    let bs = s.to_bytes()
     let mut sum = 0
     for b in bs {
         // b — это u8 (nova_byte = uint8_t), но cast to int для арифметики

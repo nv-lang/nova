@@ -369,7 +369,7 @@ fn Lexer mut @read_hex_quad() Fail[ParseJsonError] -> str {
 
 fn parse_hex(s str) -> int {
     let mut acc = 0
-    for c in s.chars() {
+    for c in s.to_chars() {
         let d = if c >= '0' && c <= '9' {
             (c as int) - ('0' as int)
         } else if c >= 'a' && c <= 'f' {
@@ -671,7 +671,7 @@ fn format_num(n f64) -> str {
 
 fn format_string(s str) -> str {
     let mut buf = "\""
-    for c in s.chars() {
+    for c in s.to_chars() {
         buf = buf + escape_char(c)
     }
     buf + "\""

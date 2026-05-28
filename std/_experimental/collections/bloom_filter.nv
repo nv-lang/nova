@@ -153,7 +153,7 @@ fn BloomFilter @get_bit(idx int) -> bool {
 
 fn hash1(s str) -> u64 {
     let mut h u64 = 0xCBF29CE484222325        // FNV offset basis
-    for c in s.chars() {
+    for c in s.to_chars() {
         h = h ^ ((c as int) as u64)
         h = h * 0x100000001B3                  // FNV prime
     }
@@ -162,7 +162,7 @@ fn hash1(s str) -> u64 {
 
 fn hash2(s str) -> u64 {
     let mut h u64 = 0x100000001B3              // другая seed
-    for c in s.chars() {
+    for c in s.to_chars() {
         h = h * 31
         h = h + ((c as int) as u64)
     }

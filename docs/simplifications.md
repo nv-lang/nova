@@ -27161,3 +27161,21 @@ build result by appending segments between matches + replacement. No external de
 Nova bodies call `str.from(fill)` for pad methods. In #no_prelude context char.nv
 is not imported. emit_c.rs already handles `str.from(X)` special-case for when arg
 is `nova_char` → emits `Nova_str_static_from_char(fill)`. No fix needed, existing path works.
+
+## D178 str API cleanup (Plan 91 Ф.2.6)
+
+**MethodSig.param_defaults for Nova-body default args:**
+Plan 54 Ф.2 dispatch (Nova-body methods on primitives) iterates explicit args only.
+When parse_int() is called with no args, dispatch generated Nova_str_method_parse_int(s)
+missing the radix arg → CC-FAIL. Fix: add param_defaults Vec<Option<String>> to MethodSig.
+Populate via simple_literal_c (static helper converting literal Exprs to C strings without
+emit_expr side-effects). Dispatch fills in defaults when args.len() < param count.
+
+**D102 keyword-only default params in tests:**
+Nova default params are keyword-only (D102 enforced in check_keyword_only).
+parse_int(16) is illegal — must be parse_int(radix: 16). All test calls updated.
+
+**bytes/chars C-level aliases preserved:**
+nova_str_bytes and nova_str_chars retained as inline aliases to nova_str_to_bytes /
+nova_str_to_chars in array.h for C-level backward compat (experimental modules still
+use old names in Nova code, but they're not in the test suite).
