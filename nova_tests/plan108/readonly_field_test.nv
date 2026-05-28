@@ -1,0 +1,26 @@
+// Plan 108 Ф.1: D175 readonly field enforcement tests.
+// Positive tests — readonly fields can be read, non-readonly can be assigned.
+
+module plan108.readonly_field_test
+
+type Account {
+    readonly id u64
+    name str
+}
+
+test "readonly field: can read" {
+    let acc = Account { id: 42, name: "Alice" }
+    assert(acc.id == 42)
+    assert(acc.name == "Alice")
+}
+
+test "readonly field: can assign non-readonly" {
+    let mut acc = Account { id: 1, name: "Bob" }
+    acc.name = "Carol"
+    assert(acc.name == "Carol")
+}
+
+test "readonly field: initial value preserved" {
+    let acc = Account { id: 999, name: "Dave" }
+    assert(acc.id == 999)
+}

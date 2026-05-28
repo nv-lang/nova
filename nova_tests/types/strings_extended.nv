@@ -41,8 +41,9 @@ test "пустая строка" {
 
 test "Unicode chars (Cyrillic)" {
     let cyr = "привет"
-    // bootstrap: len = chars().count() — число code points, не байтов
-    assert(cyr.len() == 6)
+    // Plan 108 D26 rev: len() = bytes O(1); char_len() = codepoints O(n).
+    assert(cyr.len() == 12)        // 6 codepoints × 2 bytes = 12 bytes
+    assert(cyr.char_len() == 6)    // 6 codepoints
 }
 
 test "Unicode mixed ASCII + Cyrillic" {

@@ -1,0 +1,80 @@
+// from_bytes_series.nv — tests for str.from_bytes_lossy and str.from_bytes_unchecked (Plan 108 D176).
+// from_bytes_lossy: replaces invalid UTF-8 with U+FFFD (replacement char, 3 bytes).
+// from_bytes_unchecked: no validation, O(n) copy; caller guarantees valid UTF-8.
+
+module str.from_bytes_series
+
+test "from_bytes_unchecked ASCII round-trip" {
+    let s = "hello"
+    let b []u8 = s.bytes()
+    let r = str.from_bytes_unchecked(b)
+    assert(r == "hello")
+    assert(r.len() == 5)
+}
+
+test "from_bytes_unchecked Cyrillic round-trip" {
+    let s = "Привет"
+    let b []u8 = s.bytes()
+    let r = str.from_bytes_unchecked(b)
+    assert(r == "Привет")
+    assert(r.len() == 12)
+}
+
+test "from_bytes_lossy valid UTF-8 unchanged" {
+    let s = "hello"
+    let b []u8 = s.bytes()
+    let r = str.from_bytes_lossy(b)
+    assert(r == "hello")
+    assert(r.len() == 5)
+}
+
+test "from_bytes_lossy valid UTF-8 Cyrillic unchanged" {
+    let s = "Привет"
+    let b []u8 = s.bytes()
+    let r = str.from_bytes_lossy(b)
+    assert(r == "Привет")
+    assert(r.len() == 12)
+}
+
+test "from_bytes_lossy replaces invalid byte with FFFD" {
+    // 0xFF is not valid UTF-8; should be replaced by U+FFFD (3 bytes: EF BF BD)
+    let b []u8 = [0xFF]
+    let r = str.from_bytes_lossy(b)
+    // U+FFFD is 3 bytes in UTF-8
+    assert(r.len() == 3)
+}
+
+test "from_bytes_lossy empty input" {
+    let b []u8 = []
+    let r = str.from_bytes_lossy(b)
+    assert(r == "")
+    assert(r.len() == 0)
+}
+
+test "from_bytes_unchecked empty input" {
+    let b []u8 = []
+    let r = str.from_bytes_unchecked(b)
+    assert(r == "")
+    assert(r.len() == 0)
+}
+
+test "from_bytes_lossy mixed valid+invalid" {
+    // "A" (0x41, 1 byte) + 0xFF (invalid → 3 bytes FFFD) + "B" (0x42, 1 byte) = 5 bytes total
+    let b []u8 = [0x41, 0xFF, 0x42]
+    let r = str.from_bytes_lossy(b)
+    assert(r.len() == 5)
+    assert(r.starts_with("A"))
+    assert(r.ends_with("B"))
+}
+
+test "from_bytes_unchecked via as_bytes round-trip" {
+    let s = "Nova lang"
+    let r = str.from_bytes_unchecked(s.as_bytes())
+    assert(r == "Nova lang")
+}
+
+test "from_bytes_lossy via as_bytes round-trip" {
+    let s = "Nova lang"
+    let r = str.from_bytes_lossy(s.as_bytes())
+    assert(r == "Nova lang")
+}

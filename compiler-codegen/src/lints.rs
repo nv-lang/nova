@@ -396,6 +396,8 @@ fn collect_tr(tr: &TypeRef, out: &mut HashSet<String>) {
             }
         }
         TypeRef::Unit(_) => {}
+        // D176 (Plan 108): readonly T — transparent.
+        TypeRef::Readonly(inner, _) => collect_tr(inner, out),
     }
 }
 

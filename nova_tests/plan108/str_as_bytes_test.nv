@@ -1,0 +1,42 @@
+// Plan 108 Ф.3: str.as_bytes() zero-copy readonly []u8 view.
+
+module plan108.str_as_bytes_test
+
+test "str.as_bytes: basic byte values" {
+    let s = "hello"
+    let view = s.as_bytes()
+    assert(view[0] == 104)  // 'h'
+    assert(view[1] == 101)  // 'e'
+    assert(view[2] == 108)  // 'l'
+    assert(view[3] == 108)  // 'l'
+    assert(view[4] == 111)  // 'o'
+}
+
+test "str.as_bytes: length matches str.len" {
+    let s = "Nova"
+    let view = s.as_bytes()
+    assert(view.len() == s.len())
+}
+
+test "str.as_bytes: iterate over bytes" {
+    let s = "abc"
+    let view = s.as_bytes()
+    let mut sum = 0
+    for b in view {
+        sum = sum + b
+    }
+    // 'a'=97 + 'b'=98 + 'c'=99 = 294
+    assert(sum == 294)
+}
+
+test "str.as_bytes: empty string gives empty slice" {
+    let s = ""
+    let view = s.as_bytes()
+    assert(view.len() == 0)
+}
+
+test "str.as_bytes: auto-coerce to readonly []u8 param" {
+    let s = "test"
+    let view readonly []u8 = s.as_bytes()
+    assert(view.len() == 4)
+}
