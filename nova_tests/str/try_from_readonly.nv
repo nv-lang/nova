@@ -1,0 +1,16 @@
+// try_from_readonly.nv — verify str.try_from works with readonly []u8 (from as_bytes)
+// D176 coercion: readonly []u8 transparent to codegen, same C type as []u8.
+
+module str.try_from_readonly
+
+test "str.try_from(as_bytes()) round-trip ASCII" {
+    let s = "hello"
+    let r = str.try_from(s.as_bytes())
+    assert(r.is_ok())
+}
+
+test "str.try_from(as_bytes()) round-trip Cyrillic" {
+    let s = "Привет"
+    let r = str.try_from(s.as_bytes())
+    assert(r.is_ok())
+}
