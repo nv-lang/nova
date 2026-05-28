@@ -8151,20 +8151,8 @@ impl<'a> ConsumeCtx<'a> {
 /// гарантию «возвращает receiver» проверяемой → consume-checker может
 /// soundly трактовать `let x = recv.method()` как alias receiver'а.
 fn check_fluent_return(module: &Module, errors: &mut Vec<Diagnostic>) {
-    fn tail_is_self(body: &FnBody) -> bool {
-        match body {
-            // External — C-реализация (StringBuilder/WriteBuffer); C-функция
-            // возвращает receiver-pointer по контракту runtime'а.
-            FnBody::External => true,
-            FnBody::Expr(e) => matches!(e.kind, ExprKind::SelfAccess),
-            FnBody::Block(b) => b.trailing.as_ref()
-                .map(|t| matches!(t.kind, ExprKind::SelfAccess))
-                .unwrap_or(false),
-        }
-    }
-
     // Build set of (type_name, method_name) pairs that have `returns_receiver: true`
-    // in this module. Used by the inverse check below.
+    // in this module. Used by both checks below.
     let fluent_methods: std::collections::HashSet<(String, String)> = module.items.iter()
         .filter_map(|it| {
             if let Item::Fn(f) = it {
@@ -8179,7 +8167,7 @@ fn check_fluent_return(module: &Module, errors: &mut Vec<Diagnostic>) {
         .collect();
 
     // Returns true if `expr` can be statically determined to always yield the receiver.
-    // Covers: bare `@`, call to a known fluent method on `@`, if/else where all
+    // Covers: bare `@`, call to a known `-> @` method on `@`, if/else where all
     // branches yield receiver. Conservative — returns false for anything complex.
     fn expr_always_returns_receiver(
         e: &Expr,
@@ -8213,14 +8201,17 @@ fn check_fluent_return(module: &Module, errors: &mut Vec<Diagnostic>) {
     }
 
     // Returns true if a body can be statically determined to always yield the receiver.
-    // Block: checks trailing expression + all Stmt::Return values.
+    // External: C-runtime contract guarantees it. Block: checks trailing expression
+    // + all Stmt::Return values.
     fn body_always_returns_receiver(
         body: &FnBody,
         fluent: &std::collections::HashSet<(String, String)>,
         recv_type: &str,
     ) -> bool {
         match body {
-            FnBody::External => false,
+            // External — C-реализация (StringBuilder/WriteBuffer); C-функция
+            // возвращает receiver-pointer по контракту runtime'а.
+            FnBody::External => true,
             FnBody::Expr(e) => expr_always_returns_receiver(e, fluent, recv_type),
             FnBody::Block(b) => {
                 // Trailing expression must return receiver.
@@ -8246,9 +8237,12 @@ fn check_fluent_return(module: &Module, errors: &mut Vec<Diagnostic>) {
 
     for item in &module.items {
         if let Item::Fn(f) = item {
+            let recv_type = f.receiver.as_ref().map(|r| r.type_name.as_str()).unwrap_or("");
             if f.returns_receiver {
-                // Check 1 (existing): `-> @` body must end with `@`.
-                if !tail_is_self(&f.body) {
+                // Check 1: `-> @` body must always return receiver.
+                // Accepted: bare `@`, call to another `-> @` method, if/else where
+                // all branches yield receiver, external fn (C-contract).
+                if !body_always_returns_receiver(&f.body, &fluent_methods, recv_type) {
                     let span = match &f.body {
                         FnBody::Block(b) => b.span,
                         FnBody::Expr(e) => e.span,
@@ -8257,25 +8251,25 @@ fn check_fluent_return(module: &Module, errors: &mut Vec<Diagnostic>) {
                     errors.push(Diagnostic::new(
                         format!(
                             "метод `{}` объявлен `-> @` (fluent-return, D132): его \
-                             тело обязано завершаться выражением `@` — вернуть сам \
-                             receiver. Добавьте `@` последним выражением тела.",
+                             тело обязано завершаться выражением `@` (или вызовом \
+                             другого `-> @` метода). Добавьте `@` последним \
+                             выражением тела.",
                             f.name),
                         span,
                     ));
                 }
             } else {
-                // Check 2 (new): `-> Self` method where all return paths yield `@`
+                // Check 2: `-> Self` method where all return paths yield `@`
                 // must be declared `-> @` instead. Catches the accidental pattern
                 //   `fn T mut @m(...) -> Self => @fluent_call(...)`.
                 let is_self_return = matches!(&f.return_type,
                     Some(TypeRef::Named { path, .. })
                     if path.len() == 1 && path[0] == "Self");
                 if !is_self_return { continue; }
-                let recv = match &f.receiver {
-                    Some(r) if r.kind == ReceiverKind::Instance => r,
-                    _ => continue,
-                };
-                if body_always_returns_receiver(&f.body, &fluent_methods, &recv.type_name) {
+                if !matches!(&f.receiver, Some(r) if r.kind == ReceiverKind::Instance) {
+                    continue;
+                }
+                if body_always_returns_receiver(&f.body, &fluent_methods, recv_type) {
                     errors.push(Diagnostic::new(
                         format!(
                             "метод `{}` объявлен `-> Self`, но все пути возвращают \
