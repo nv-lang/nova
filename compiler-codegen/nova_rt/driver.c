@@ -338,10 +338,61 @@ static void _nova_driver_sleep_close_cb(uv_handle_t* h) {
     /* Unlink from armed list (driver-only). */
     _nova_driver_arm_list_unlink(st);
 
-    /* Stage CLOSED. Worker's park_until predicate ACQUIRE-loads this. */
+    NovaFiberQueue* sc = st->scope;
+    int sl = st->slot;
+    mco_coro* actual_co = (sc && sl >= 0 && sl < sc->count) ? sc->fibers[sl] : NULL;
+    NovaSchedState* sst = sc ? nova_sched_find_state(sc) : NULL;
+
+    if (actual_co != st->expected_co) {
+        /* WRONG-FIBER: scope->fibers[slot] does not match expected_co.
+         * Two sub-cases:
+         *   A) actual_co==NULL — fibers[slot] became NULL while expected_co was parked
+         *      (STALE race: alloc_slot saw NULL+parked=true and skipped the slot).
+         *      expected_co is still alive in mco_yield.
+         *   B) actual_co!=NULL — slot was reused by a different fiber after expected_co
+         *      completed and freed the slot. expected_co is already dead.
+         *
+         * Plan 83.11 fix (Fix B): check if expected_co is still MCO_SUSPENDED.
+         * If yes → alive, dispatch it directly instead of leaving it stuck forever.
+         * If no  → dead, just mark stage CLOSED (slot was legitimately reused). */
+        mco_coro* expected_co = st->expected_co;
+
+        if (expected_co && mco_status(expected_co) == MCO_SUSPENDED) {
+            /* Sub-case A: expected_co is alive, stuck in mco_yield due to STALE race.
+             * Wake it directly. */
+            __atomic_store_n(&st->stage, NOVA_SLEEP_DRV_CLOSED, __ATOMIC_SEQ_CST);
+            /* Clear parked[slot] so the slot is no longer marked as occupied.
+             * After this, alloc_slot can reuse the slot for a new fiber safely. */
+            if (sst && sl >= 0 && sl < sst->capacity) {
+                bool exp_t = true;
+                __atomic_compare_exchange_n((volatile bool*)&sst->parked[sl],
+                    &exp_t, false, false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE);
+                if (sst->pending_wake && sl < sst->capacity)
+                    __atomic_store_n(&sst->pending_wake[sl], 0, __ATOMIC_RELEASE);
+            }
+            /* Invalidate expected_co's slot record so its epilogue does NOT call
+             * nova_scope_free_slot (the slot is unowned now — no new fiber took it
+             * thanks to Fix A in alloc_slot). Use -2 sentinel (< 0, not -1). */
+            NovaSpawnCtxBase* displaced_ctx =
+                (NovaSpawnCtxBase*)mco_get_user_data(expected_co);
+            if (displaced_ctx) {
+                displaced_ctx->_nova_worker_slot = -2;  /* DISPLACED: epilogue skips free_slot */
+            }
+            /* Transition PARKED→IDLE so the worker's CAS(IDLE→RUNNING) succeeds. */
+            nova_fiber_state_store(expected_co, NOVA_FIBER_STATE_IDLE);
+            /* Dispatch expected_co to its home worker via dispatch_ready. */
+            if (sc && sc->dispatch_ready) {
+                sc->dispatch_ready(sc->dispatch_ctx, expected_co);
+            }
+        } else {
+            /* Sub-case B: expected_co is dead — slot was legitimately reused. */
+            __atomic_store_n(&st->stage, NOVA_SLEEP_DRV_CLOSED, __ATOMIC_SEQ_CST);
+        }
+        return;
+    }
+
+    /* Normal path: stage CLOSED + wake. */
     __atomic_store_n(&st->stage, NOVA_SLEEP_DRV_CLOSED, __ATOMIC_SEQ_CST);
-    nova_aint_inc(&_nova_diag_drv_close_cb);
-    nova_aint_inc(&_nova_diag_drv_wake_called);
 
     /* Generic wake — pending_wake counter handles wake-before-park race. */
     nova_sched_wake(st->scope, st->slot);

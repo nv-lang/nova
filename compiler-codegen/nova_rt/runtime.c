@@ -203,39 +203,6 @@ static NovaWorker*     _workers = NULL;
 static int             _n_workers = 0;          /* materialized worker count */
 static nova_atomic_int _round_robin = 0;
 
-/* Plan 83.11 Ф.3 diagnostic counters. */
-nova_atomic_int _nova_diag_drv_close_cb        = 0;
-nova_atomic_int _nova_diag_drv_wake_called     = 0;
-nova_atomic_int _nova_diag_drv_wake_cas_won    = 0;
-nova_atomic_int _nova_diag_drv_dispatch_same   = 0;
-nova_atomic_int _nova_diag_drv_dispatch_cross  = 0;
-nova_atomic_int _nova_diag_drv_worker_drained  = 0;
-nova_atomic_int _nova_diag_drv_park_resumed    = 0;
-nova_atomic_int _nova_diag_drv_pred_true       = 0;
-nova_atomic_int _nova_diag_drv_sleep_returned  = 0;
-nova_atomic_int _nova_diag_drv_futex_fastpath_break = 0;
-nova_atomic_int _nova_diag_drv_futex_recheck_break_cas_win = 0;
-nova_atomic_int _nova_diag_drv_futex_recheck_break_cas_lose = 0;
-nova_atomic_int _nova_diag_drv_futex_yield = 0;
-nova_atomic_int _nova_diag_drv_futex_resume = 0;
-
-void nova_diag_drv_print(void) {
-    fprintf(stderr,
-        "[diag-drv] close_cb=%d wake=%d cas_won=%d disp_x=%d drained=%d "
-        "pred=%d sleep_ret=%d | futex fp=%d cas_win=%d cas_lose=%d yield=%d resume=%d\n",
-        (int)nova_aint_load(&_nova_diag_drv_close_cb),
-        (int)nova_aint_load(&_nova_diag_drv_wake_called),
-        (int)nova_aint_load(&_nova_diag_drv_wake_cas_won),
-        (int)nova_aint_load(&_nova_diag_drv_dispatch_cross),
-        (int)nova_aint_load(&_nova_diag_drv_worker_drained),
-        (int)nova_aint_load(&_nova_diag_drv_pred_true),
-        (int)nova_aint_load(&_nova_diag_drv_sleep_returned),
-        (int)nova_aint_load(&_nova_diag_drv_futex_fastpath_break),
-        (int)nova_aint_load(&_nova_diag_drv_futex_recheck_break_cas_win),
-        (int)nova_aint_load(&_nova_diag_drv_futex_recheck_break_cas_lose),
-        (int)nova_aint_load(&_nova_diag_drv_futex_yield),
-        (int)nova_aint_load(&_nova_diag_drv_futex_resume));
-}
 
 /* Plan 83.11 Phase A diagnostics (Variant B): in-process runtime state dump.
  *
@@ -275,7 +242,6 @@ void nova_runtime_dump_state(const char* reason) {
             _n_workers,
             (int)nova_abool_load(&_nova_driver.started),
             (int)_armed, (int)_materialized);
-    nova_diag_drv_print();
     if (!_workers || _n_workers <= 0) {
         fprintf(stderr, "[workers] none materialized\n");
         fprintf(stderr, "=== END DUMP ===\n");
@@ -545,7 +511,6 @@ static bool              _sysmon_started = false;
 
 static void _sysmon_main(void* arg) {
     (void)arg;
-    int diag_tick = 0;  /* Plan 83.11 Ф.3 — print diag counters every ~1s */
     while (nova_abool_load(&_sysmon_running)) {
         uv_sleep(10);  /* ~10ms (Windows timer gran → ~15ms — приемлемо). */
         if (!nova_abool_load(&_sysmon_running)) break;
@@ -558,10 +523,6 @@ static void _sysmon_main(void* arg) {
             if (started != 0 && (now - started) > NOVA_PREEMPT_SLICE_NS) {
                 w->preempt_flag = 1;  /* живой флаг — fiber перечитает */
             }
-        }
-        if (++diag_tick >= 100) {
-            diag_tick = 0;
-            nova_diag_drv_print();
         }
     }
 }
@@ -726,7 +687,6 @@ static void _worker_dispatch_ready(void* ctx, mco_coro* co) {
         if (prev) {
             nova_deque_push(&w->deque, prev);
         }
-        nova_aint_inc(&_nova_diag_drv_dispatch_same);  /* Plan 83.11 Ф.3 */
     } else {
         /* Cross-thread: queue under mutex, wake worker's uv loop. */
         nova_mutex_lock(&w->wake_mu);
@@ -740,7 +700,6 @@ static void _worker_dispatch_ready(void* ctx, mco_coro* co) {
         w->wake_pending[w->wake_pending_count++] = co;
         nova_mutex_unlock(&w->wake_mu);
         uv_async_send(&w->wake_handle);
-        nova_aint_inc(&_nova_diag_drv_dispatch_cross);  /* Plan 83.11 Ф.3 */
     }
 }
 
@@ -833,7 +792,6 @@ static void _worker_main(void* arg) {
         nova_mutex_lock(&w->wake_mu);
         for (int i = 0; i < w->wake_pending_count; i++) {
             nova_deque_push(&w->deque, w->wake_pending[i]);
-            nova_aint_inc(&_nova_diag_drv_worker_drained);  /* Plan 83.11 Ф.3 */
         }
         w->wake_pending_count = 0;
         nova_mutex_unlock(&w->wake_mu);
@@ -882,7 +840,11 @@ static void _worker_main(void* arg) {
 
         /* (5) Run fiber.
          *
-         * Plan 44.5 Layer 5 fix: save/restore _nova_fail_top, _nova_interrupt_top,
+         * Plan 83.11 Phase B: track first-run fiber lifecycle.
+         * A first-run fiber has _nova_worker_slot < 0 (preamble not yet run).
+         * If first_pop < inc at watchdog time, a fiber was never popped.
+         * If first_cas_lost > 0, CAS failed on first run — impossible for fresh fiber. */
+        /* Plan 44.5 Layer 5 fix: save/restore _nova_fail_top, _nova_interrupt_top,
          * and _nova_active_slot per fiber — mirrors nova_supervised_step behavior.
          *
          * Bug without this: fiber F1 parks (fail-top = &_ff_F1). Fiber F2 runs
@@ -928,6 +890,16 @@ static void _worker_main(void* arg) {
             if (fslot < fscope->count && fscope->fiber_effect_snapshot[fslot]) {
                 nova_effect_snapshot_restore(fscope->fiber_effect_snapshot[fslot]);
             }
+        } else if (base && base->_nova_worker_slot <= -2 && base->_nova_fiber_scope) {
+            /* Plan 83.11 fix: displaced fiber (slot=-2 sentinel set by close_cb Fix B).
+             * Preamble ran (fiber_scope is set), but slot was invalidated because the
+             * fiber's slot was overwritten (STALE race). Restore home scope + TLS
+             * so the fiber sees the correct scope when it finishes sleeping and exits. */
+            _nova_active_scope  = base->_nova_fiber_scope;
+            _nova_active_slot   = -1;  /* slot is invalidated — no valid slot */
+            _nova_fail_top      = base->_nova_saved_fail_top;
+            _nova_interrupt_top = base->_nova_saved_interrupt_top;
+            /* Effect snapshot: slot is -1, skip snapshot restore (fiber is exiting soon). */
         } else if (base) {
             /* Before preamble (first run): restore saved fail/interrupt but
              * leave _nova_active_scope as this worker's scope (preamble will
@@ -1612,18 +1584,31 @@ void nova_runtime_spawn_global(void (*entry)(mco_coro*), void* user) {
         abort();
     }
     nova_fiber_post_create(co);  /* Plan 82 Ф.1: patch ctx.stack_limit (Windows) */
-    /* Plan 83.4.5.7 (2026-05-23): SEQ_CST fence перед cross-thread deque push.
-     * spawn_global вызывается main thread'ом, но deque принадлежит worker'у.
-     * Chase-Lev push designed для single-owner: main → target's deque
-     * нарушает контракт. Fence гарантирует видимость main's writes на ctx
-     * fields (`_nova_parent_scope` etc.) до того, как worker's deque pop
-     * (single-owner pop, RELAXED loads) их прочитает. */
-    __atomic_thread_fence(__ATOMIC_SEQ_CST);
-    if (!nova_deque_push(&target->deque, co)) {
-        fprintf(stderr, "nova: runtime_spawn_global: deque_push failed\n");
-        mco_destroy(co);
-        abort();
+    /* Plan 83.11 Phase B (2026-05-28): route via wake_pending (mutex) instead
+     * of direct deque push.
+     *
+     * Root cause of "1 fiber never starts" bug: nova_deque_push wrote `bottom`
+     * (RELAXED) concurrently with the owner worker's nova_deque_pop which also
+     * writes `bottom` (RELAXED). On x86 TSO the race is rare but real: if the
+     * worker's `bottom = b-1` store lands AFTER main's `bottom = b+1` store, the
+     * pushed item strands above `bottom` and is never popped or stolen.
+     *
+     * Fix: use the existing wake_pending path (mutex-protected MPSC queue),
+     * the same path used by _worker_dispatch_ready cross-thread. The worker
+     * drains wake_pending → deque at every iteration start, so latency is
+     * unchanged (≤ 1 worker loop iteration). The mutex guarantees correct
+     * visibility of ctx fields without the SEQ_CST fence hack. */
+    __atomic_thread_fence(__ATOMIC_SEQ_CST);  /* visibility of ctx fields */
+    nova_mutex_lock(&target->wake_mu);
+    if (target->wake_pending_count >= target->wake_pending_cap) {
+        int new_cap = target->wake_pending_cap > 0 ? target->wake_pending_cap * 2 : 8;
+        target->wake_pending = (mco_coro**)realloc(target->wake_pending,
+                                                    (size_t)new_cap * sizeof(mco_coro*));
+        if (!target->wake_pending) abort();
+        target->wake_pending_cap = new_cap;
     }
+    target->wake_pending[target->wake_pending_count++] = co;
+    nova_mutex_unlock(&target->wake_mu);
     nova_aint_inc(&target->pending_count);
     uv_async_send(&target->wake_handle);
 }

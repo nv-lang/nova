@@ -141,7 +141,6 @@ static inline void nova_sched_park(NovaFiberQueue* scope, int slot) {
         if (__atomic_compare_exchange_n(
                 &st->pending_wake[slot], &expected, 0,
                 false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
-            /* Pre-park wake consumed — no yield. */
             return;
         }
     }
@@ -163,6 +162,19 @@ static inline void nova_sched_park(NovaFiberQueue* scope, int slot) {
 
     /* Plan 83.4.5.7 (2026-05-23): RUNNING → PARKED state transition. */
     nova_fiber_state_store(co, NOVA_FIBER_STATE_PARKED);
+
+    /* Plan 83.11 t4-race-fix: nova_sched_wake can win parked CAS between t2
+     * and here, setting state=IDLE and dispatching us to a worker deque.
+     * Our PARKED store above overrides wake's IDLE → dispatch CAS(IDLE→RUNNING)
+     * fails → fiber stuck in mco_yield forever.
+     *
+     * Fix: reload parked[slot] with SEQ_CST (flushes our PARKED store).
+     * If false, wake already won → it set IDLE → restore IDLE so CAS succeeds.
+     * The runtime.c post-resume check (nova_fiber_state_load == IDLE) then
+     * skips the yielded-FIFO push, preventing double-queue. */
+    if (!__atomic_load_n((volatile bool*)&st->parked[slot], __ATOMIC_SEQ_CST)) {
+        nova_fiber_state_store(co, NOVA_FIBER_STATE_IDLE);
+    }
     mco_yield(co);
 }
 
@@ -292,11 +304,7 @@ static inline void nova_sched_wake(NovaFiberQueue* scope, int slot) {
     if (was_parked && scope->dispatch_ready && slot < scope->count) {
         mco_coro* co = scope->fibers[slot];
         if (co && mco_status(co) != MCO_DEAD) {
-            /* Sync state PARKED→IDLE для нового CAS guard в mco_resume sites. */
             nova_fiber_state_store(co, NOVA_FIBER_STATE_IDLE);
-            /* Plan 83.11 Ф.3 diag: count CAS won + dispatch fires */
-            extern nova_atomic_int _nova_diag_drv_wake_cas_won;
-            nova_aint_inc(&_nova_diag_drv_wake_cas_won);
             scope->dispatch_ready(scope->dispatch_ctx, co);
         }
     } else if (!was_parked) {
@@ -352,11 +360,6 @@ static inline void nova_sched_park_until(NovaFiberQueue* scope, int slot,
     if (pred && pred(ctx)) return;       /* fast-path: condition уже выполнено */
     for (;;) {
         nova_sched_park(scope, slot);
-        /* Plan 83.11 Ф.3 diag: post-mco_yield resume — we were woken. */
-        {
-            extern nova_atomic_int _nova_diag_drv_park_resumed;
-            nova_aint_inc(&_nova_diag_drv_park_resumed);
-        }
         if (!pred) return;               /* legacy single-shot */
         if (pred(ctx)) return;           /* predicate satisfied */
         /* spurious wake → re-park */
