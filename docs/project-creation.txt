@@ -24104,3 +24104,37 @@ Regression: plan62 31/5, plan91 12/0, plan91_7 5/0, plan91_8a 5/0,
 plan91_8a_2 3/0, protocols 27/2, syntax 59/2, plan65 19/0 (D46 operators).
 
 Commit (nova-p91, plan-91-stdmvp): f47f14c5424
+
+=== Plan 91.8a.2 part 3 expanded 2026-05-29: +3 positive tests + E_BLANKET_IDENTITY_OVERRIDE ===
+
+Continuation of part 3 MVP work:
+
+1. synthesis type-inference fix (emit_c.rs::infer_expr_c_type):
+   - obj.equals() with obj_type имеющим @compare но не @equals → returns nova_bool
+   - Mirror emit-site fallback
+   - Закрывает type-inference gap (раньше fallback к nova_int ломал if check)
+
+2. 3 новых positive теста:
+   - equatable_only_test: type с явным @equals (no @compare) satisfies Equatable bound
+   - equatable_explicit_wins_test: explicit @equals wins over synthesis (different behavior)
+   - synthesis_via_bound_test: full lifecycle — bound + array iter + synthesized equals
+
+3. E_BLANKET_IDENTITY_OVERRIDE enforcement (types/mod.rs::check_module):
+   - Detect override identity From blanket (fn TypeName.from(t TypeName) -> TypeName)
+   - Emit clear error per Q4 strict decision (D9 single canonical path)
+   - 1 negative test PASS (from_blanket_override_err)
+
+plan91_8a_2: 7/7 PASS (6 positive + 1 negative)
+Full regression: plan62 31/5, plan91 16/0, plan91_7 5/0, plan91_8a 9/0,
+plan73 12/0, plan77 7/0, plan108 6/0, modules 32/0, syntax 59/2 — baseline.
+
+Followups (post-MVP):
+- General default body AST walking (Printable etc.)
+- Coercion-form devirtualization
+- SynthCache
+- Diagnostics E_SYNTH_CYCLE, E_SYNTH_AMBIGUOUS, W_DEVIRT_FAILED
+- Plan 101 mono extension для fn[T] T.method static
+
+Commits:
+- 4aaa0764521 — synthesis inference + 3 positive tests
+- 7c22a4eda63 — E_BLANKET_IDENTITY_OVERRIDE
