@@ -1,0 +1,49 @@
+module nova_tests.plan91_8a_2.heterogeneous_array_test
+
+// Plan 91.8a.2 followup: heterogeneous []Printable array.
+// Storage: NovaArray_void_p where each slot holds heap-alloc'd
+// NovaBox_Printable*. Iteration deref'ит к value, virtual dispatch
+// per element правильно резолвит концерт type через vtable.
+
+type Money { cents int }
+fn str.from(m Money) -> str => "Money(" + str.from(m.cents) + ")"
+
+type Coin { value int }
+fn Coin @into() -> str => "Coin(" + str.from(@value) + ")"
+
+type Tag { name str }
+fn str.from(t Tag) -> str => "Tag(" + t.name + ")"
+
+test "[]Printable holds Money + Coin + Tag, iterate + fmt all" {
+    let m = Money { cents: 10 }
+    let c = Coin { value: 5 }
+    let t = Tag { name: "x" }
+    let xs []Printable = [m, c, t]
+    let mut sb = StringBuilder.new()
+    for x in xs {
+        x.fmt(sb)
+        sb.append("|")
+    }
+    assert(sb.to_str() == "Money(10)|Coin(5)|Tag(x)|")
+}
+
+test "[]Printable single element works" {
+    let m = Money { cents: 42 }
+    let xs []Printable = [m]
+    let mut sb = StringBuilder.new()
+    for x in xs {
+        x.fmt(sb)
+    }
+    assert(sb.to_str() == "Money(42)")
+}
+
+test "[]Printable пустой массив — for-loop не выполняется" {
+    let xs []Printable = []
+    let mut sb = StringBuilder.new()
+    sb.append("before")
+    for x in xs {
+        x.fmt(sb)
+    }
+    sb.append("after")
+    assert(sb.to_str() == "beforeafter")
+}

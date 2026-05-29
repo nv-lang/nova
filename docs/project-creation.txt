@@ -24640,3 +24640,70 @@ Regression:
 - basics 8/0, modules 31/0, protocols 25/1 (flaky from_multi)
 
 Commit: TBD
+
+=== Plan 91.8a.2 followup 2026-05-29: heterogeneous []Protocol arrays ===
+
+`let xs []Printable = [money, coin, tag]` теперь работает. Mixed-type
+storage через NovaArray_void_p slots, каждый slot — heap-alloc'd
+NovaBox_<Proto>* (fat pointer). For-loop deref'ит slot к value, virtual
+dispatch per-element правильно резолвит концерт type через vtable.
+
+emit_c.rs изменения:
+
+1. Field current_array_protocol_box: Option<(String, Vec<String>)>
+   (proto_name, type_args) — set transiently при let-decl с `[]Protocol`
+   annotation.
+
+2. Stmt::Let (~13247): detect annotation TypeRef::Array(inner) где
+   inner — protocol. Pre-emit typedef через emit_protocol_box_typedef.
+   Set current_array_protocol_box. Override ty_c к "NovaArray_void_p*".
+   Restore field после emit_expr_with_target_type.
+
+3. emit_array_lit (~21940): special-case в начале — если
+   current_array_protocol_box set:
+   - elem_ty = void_p (uniform slot storage)
+   - per-element: box value via box_value_for_protocol → heap-alloc
+     NovaBox_<P>* → push pointer к void_p slot
+   - array_element_types[tmp] = "NovaBox_<P>*"
+   Spread элементы НЕ поддерживаются в MVP (followup).
+
+4. For-loop emission (~20510): расширил value-deref pattern для
+   NovaBox_<P>* element type. Слот хранит pointer к heap-alloc'd box;
+   loop var получает value: `NovaBox_<P> x = *(NovaBox_<P>*)slot`.
+   Тогда метод dispatch на NovaBox_-typed var (~18187) работает
+   корректно (x.vtable->method(x.data, ...)).
+
+Test plan91_8a_2/heterogeneous_array_test (3 sub-tests PASS):
+- []Printable с Money + Coin + Tag, iterate + fmt — works
+- Single-element []Printable — works
+- Empty []Printable — for-loop не выполняется
+
+Generated C verified:
+  NovaArray_void_p* xs = nova_array_new_void_p(3);
+  NovaBox_Printable* t0 = (NovaBox_Printable*)nova_alloc(sizeof(NovaBox_Printable));
+  *t0 = (NovaBox_Printable){ .data = (void*)(m), .vtable = &_vt_Printable__Money };
+  nova_array_push_void_p(xs, (void*)t0);
+  /* ... same для Coin, Tag ... */
+  for (nova_int i = 0; i < xs->len; i++) {
+      NovaBox_Printable x = *(NovaBox_Printable*)xs->data[i];
+      x.vtable->fmt(x.data, sb);
+  }
+
+Coverage matrix теперь:
+| Pattern | Status |
+|---|---|
+| `[T Printable]`/`[T Equatable]` bound | ✅ |
+| Bare `m.fmt(sb)` / `m.equals(other)` | ✅ |
+| `let x Printable = m` coercion | ✅ |
+| `let x Equatable = m` coercion (Self в params) | ✅ |
+| `let x Comparable = m` coercion | ✅ |
+| `[]Printable` heterogeneous | ✅ (этот commit) |
+| `"${m}"` interpolation | ❌ Plan 91.10 |
+
+Regression:
+- plan91_8a_2: 15/0 PASS (+1 heterogeneous_array_test 3 sub-tests)
+- syntax 58/1, plan62 31/5, plan65 19/0, plan73 12/0, plan77 7/0
+- plan108 6/0, plan91_7 5/0, plan91_8a 2/0, plan91_8c 6/0, plan91 2/0
+- basics 8/0, modules 31/0, protocols flaky (24-25 / 1-2)
+
+Commit: TBD
