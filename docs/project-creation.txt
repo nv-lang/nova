@@ -24198,3 +24198,39 @@ Test results после удаления:
 - plan11_followup 17/3 (pre-existing — verified via stash)
 
 Commit: 62c1a8388cf
+
+=== Plan 91.8a.2 part 3 continuation 2026-05-29: char @compare + primitive dispatch fix ===
+
+User-requested: char operations через @compare.
+
+1. char @compare (codepoint-based ordering):
+   - std/runtime/defaults.nv: export fn char @compare(other char) -> int
+   - Signum form для overflow safety
+   - Native operators (< > <= >= == !=) уже работали для char, теперь дополнительно
+     a.compare(b) direct call
+
+2. Primitive method dispatch fix (M-method-receivers-primitive-disambiguation):
+   - method_receivers single-key collision: str.compare и char.compare обе
+     registered под "compare" → last-wins picks str blindly
+   - Раньше: char obj → method_receivers['compare'] = str → Nova_str_method_compare
+     с char args → CC linker error
+   - Сейчас: primitive obj_ty (nova_char/bool/f32/f64) ROUTES к
+     Nova_<primitive>_method_<X> directly через all_methods registry
+   - Closes regression для всех primitive method dispatch с collision
+
+3. receiver_c_type: char → nova_char (was missing)
+
+Tests plan91_8a_2/char_compare_test (7 sub-tests PASS):
+- Native operators < > <= >= == != на char
+- Range checks (digit, lower, upper predicates)
+- char.compare direct method call
+
+plan91_8a_2: 9/0 PASS (was 8)
+Regression: plan65 19/0, plan91 18/0, plan73 12/0, plan77 7/0, plan108 6/0,
+modules 32/0, named_params 8/0 — все baseline. Pre-existing fails: protocols 26/3,
+syntax 59/2, plan11_followup 17/3.
+
+Followup [M-91.8a.2-primitives-in-generic-bound]: dispatch primitives в
+generic [T Comparable] bound. Mono pass single-key fallback all'ё ещё last-wins.
+
+Commit: f2ef8b3c5de
