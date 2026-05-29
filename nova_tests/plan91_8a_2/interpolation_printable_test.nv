@@ -1,0 +1,48 @@
+module nova_tests.plan91_8a_2.interpolation_printable_test
+
+// Plan 91.8a.2 followup: "${m}" interpolation routes через Printable.fmt
+// path. Three paths covered:
+//   Path 1: explicit `fn T @fmt(sb StringBuilder)` — direct fmt call.
+//   Path 2: `fn str.from(T) -> str` overload — append result.
+//   Path 3: `fn T @into() -> str` — append result.
+
+type Money { cents int }
+fn str.from(m Money) -> str => "Money(" + str.from(m.cents) + ")"
+
+type Coin { value int }
+fn Coin @into() -> str => "Coin(" + str.from(@value) + ")"
+
+type Point { x int, y int }
+fn Point @fmt(sb StringBuilder) -> () {
+    sb.append("Point(")
+    sb.append(str.from(@x))
+    sb.append(", ")
+    sb.append(str.from(@y))
+    sb.append(")")
+}
+
+test "\"${m}\" with fn str.from(Money) overload" {
+    let m = Money { cents: 250 }
+    let s = "amount = ${m}"
+    assert(s == "amount = Money(250)")
+}
+
+test "\"${c}\" with fn Coin @into() -> str" {
+    let c = Coin { value: 7 }
+    let s = "got ${c} pcs"
+    assert(s == "got Coin(7) pcs")
+}
+
+test "\"${p}\" with explicit fn Point @fmt" {
+    let p = Point { x: 3, y: 4 }
+    let s = "loc=${p}"
+    assert(s == "loc=Point(3, 4)")
+}
+
+test "multiple interpolations same string" {
+    let m = Money { cents: 1 }
+    let c = Coin { value: 2 }
+    let p = Point { x: 5, y: 6 }
+    let s = "m=${m} c=${c} p=${p}"
+    assert(s == "m=Money(1) c=Coin(2) p=Point(5, 6)")
+}

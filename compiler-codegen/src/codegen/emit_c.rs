@@ -482,6 +482,11 @@ pub struct CEmitter {
     /// Hint for empty/uninferable array literals: element C type (e.g. "nova_str").
     /// Set when target type is NovaArray_X* so `[]` emits nova_array_new_X not nova_int.
     current_array_elem_hint: Option<String>,
+    /// Plan 91.8a.2 followup: when emitting array literal for `[]Protocol`
+    /// annotation, holds (proto_name, type_args) so emit_array_lit boxes
+    /// each element through box_value_for_protocol + heap-alloc into
+    /// void_p slot. None for non-protocol-array contexts.
+    current_array_protocol_box: Option<(String, Vec<String>)>,
     /// Maps local variable name → (param_c_types, return_c_type) for function-typed parameters.
     /// Used to emit proper function pointer calls for `body(args)` where body is a fn param.
     fn_param_sigs: HashMap<String, (Vec<String>, String)>,
@@ -927,6 +932,7 @@ impl CEmitter {
             current_receiver_type: None,
             expected_record_type: None,
             current_array_elem_hint: None,
+            current_array_protocol_box: None,
             fn_param_sigs: HashMap::new(),
             array_param_fn_sigs: HashMap::new(),
             user_fn_sigs: HashMap::new(),
@@ -3582,26 +3588,107 @@ impl CEmitter {
                 let ret_c = m.return_type.as_ref()
                     .and_then(|rt| self.type_ref_to_c(rt).ok())
                     .unwrap_or_else(|| "nova_unit".to_string());
-                let extra_param_tys: Vec<String> = m.params.iter()
-                    .filter_map(|p| self.type_ref_to_c(&p.ty).ok())
+                // Plan 91.8a.2 followup 2026-05-29: Self-typed params lower to
+                // `void*` в vtable struct (concrete type unknown at protocol
+                // declaration); thunk body casts back to concrete via
+                // `(concrete_c_ty)`. Раньше Self-typed params silently
+                // отбрасывались (type_ref_to_c(Self) errored without
+                // receiver context) → vtable arity mismatch на call.
+                let is_self_typeref = |ty: &TypeRef| -> bool {
+                    matches!(ty, TypeRef::Named { path, .. }
+                        if path.len() == 1 && path[0] == "Self")
+                };
+                // Per-param: (vtable_sig_type, fwd_expr_template). For Self
+                // params: sig="void*", fwd casts via `(concrete_c_ty)a{i}`.
+                let param_specs: Vec<(String, bool)> = m.params.iter()
+                    .filter_map(|p| {
+                        if is_self_typeref(&p.ty) {
+                            Some(("void*".to_string(), true))
+                        } else {
+                            self.type_ref_to_c(&p.ty).ok().map(|t| (t, false))
+                        }
+                    })
                     .collect();
+                let extra_param_tys: Vec<String> = param_specs.iter()
+                    .map(|(t, _)| t.clone()).collect();
                 let extra_sig = extra_param_tys.iter().enumerate()
                     .map(|(i, t)| format!(", {} a{}", t, i))
                     .collect::<String>();
-                let extra_fwd = (0..extra_param_tys.len())
-                    .map(|i| format!(", a{}", i))
+                let extra_fwd = param_specs.iter().enumerate()
+                    .map(|(i, (_, is_self))| {
+                        if *is_self {
+                            format!(", ({})a{}", concrete_c_ty, i)
+                        } else {
+                            format!(", a{}", i)
+                        }
+                    })
                     .collect::<String>();
                 let concrete_method = format!("Nova_{}_method_{}", concrete_name, m.name);
+                // Plan 91.8a.2 followup 2026-05-29: vtable thunk synthesis для
+                // protocol default bodies. Если у concrete-типа нет explicit
+                // method (Nova_T_method_<X> не emitted), но default body
+                // synthesizable — emit thunk body inline (mirror existing
+                // bare-call MVP synthesis в method dispatch).
+                let has_explicit_method = self.all_methods
+                    .contains(&(concrete_name.clone(), m.name.clone()));
+                let synthesized_body: Option<String> = if has_explicit_method {
+                    None
+                } else if m.name == "equals"
+                    && self.all_methods.contains(&(concrete_name.clone(), "compare".to_string()))
+                {
+                    // Equatable.equals default: @compare(other) == 0.
+                    // a0 is void* (Self lowered) — cast to concrete.
+                    Some(format!(
+                        "return (Nova_{cn}_method_compare(({cty})self, ({cty})a0) == 0);",
+                        cn = concrete_name, cty = concrete_c_ty
+                    ))
+                } else if m.name == "fmt" {
+                    // Printable.fmt default: sb.append(str.from(@)).
+                    // Path 1: `fn str.from(T) -> str` overload.
+                    let key = ("str".to_string(), "from".to_string());
+                    let str_from_c: Option<String> = self.method_overloads.get(&key)
+                        .and_then(|sigs| sigs.iter().find(|s| !s.is_instance
+                            && s.param_c_types.len() == 1
+                            && s.param_c_types[0] == concrete_c_ty)
+                            .map(|s| s.c_name.clone()));
+                    if let Some(c_name) = str_from_c {
+                        Some(format!(
+                            "Nova_StringBuilder_method_append(a0, {fn_name}(({cty})self));\n\treturn NOVA_UNIT;",
+                            fn_name = c_name, cty = concrete_c_ty
+                        ))
+                    } else if self.into_targets.get(&concrete_name)
+                        .map(|t| t == "str").unwrap_or(false)
+                    {
+                        // Path 2: T has @into() -> str.
+                        let safe = Self::sanitize_c_for_ident(&concrete_name);
+                        Some(format!(
+                            "Nova_StringBuilder_method_append(a0, Nova_{cn}_method_into(({cty})self));\n\treturn NOVA_UNIT;",
+                            cn = safe, cty = concrete_c_ty
+                        ))
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
+                let thunk_body = if let Some(body) = synthesized_body {
+                    body
+                } else {
+                    format!(
+                        "return {concrete_method}(({cty})self{extra_fwd});",
+                        concrete_method = concrete_method,
+                        cty = concrete_c_ty,
+                        extra_fwd = extra_fwd,
+                    )
+                };
                 self.mono_fwd_decls.push_str(&format!(
                     "static {ret_c} {thunk}(void* self{extra_sig}) {{\n\
-                     \treturn {concrete_method}(({cty})self{extra_fwd});\n\
+                     \t{body}\n\
                      }}\n",
                     ret_c = ret_c,
                     thunk = thunk_name,
                     extra_sig = extra_sig,
-                    concrete_method = concrete_method,
-                    cty = concrete_c_ty,
-                    extra_fwd = extra_fwd,
+                    body = thunk_body,
                 ));
                 field_inits.push(format!("    .{} = {}", m.name, thunk_name));
             }
@@ -3676,9 +3763,19 @@ impl CEmitter {
         // overloaded methods (e.g. `get(key str)` + `get(key int)` —
         // Plan 33.3), field-name'ы должны быть mangled с param-type-suffix,
         // иначе C `duplicate member 'get'`.
+        // Plan 91.8a.2 followup 2026-05-29: Self-typed params lower to `void*`
+        // в vtable struct (same lowering used by thunk emission below).
         let method_param_c: Vec<(String, Vec<String>)> = methods.iter().map(|m| {
             let pts: Vec<String> = m.params.iter()
-                .filter_map(|p| self.type_ref_to_c(&p.ty).ok())
+                .filter_map(|p| {
+                    if matches!(&p.ty, TypeRef::Named { path, .. }
+                        if path.len() == 1 && path[0] == "Self")
+                    {
+                        Some("void*".to_string())
+                    } else {
+                        self.type_ref_to_c(&p.ty).ok()
+                    }
+                })
                 .collect();
             (m.name.clone(), pts)
         }).collect();
@@ -13139,7 +13236,7 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                 }
                 // Infer type BEFORE emitting so record literals get the right type
                 let binding = self.pattern_binding(&decl.pattern)?;
-                let ty_c = if let Some(ty) = &decl.ty {
+                let mut ty_c = if let Some(ty) = &decl.ty {
                     self.type_ref_to_c(ty)?
                 } else {
                     let inferred = self.infer_expr_c_type(&decl.value);
@@ -13153,6 +13250,24 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                         inferred
                     }
                 };
+                // Plan 91.8a.2 followup 2026-05-29: heterogeneous []Protocol.
+                // Detect annotation `[]Protocol` (TypeRef::Array(inner)
+                // where inner is protocol type). Override storage к
+                // NovaArray_void_p* (each slot — heap-alloc'd NovaBox_<P>*
+                // pointer). Set current_array_protocol_box so emit_array_lit
+                // boxes each element + heap-allocs + pushes pointer.
+                let array_protocol_save = self.current_array_protocol_box.clone();
+                if let Some(TypeRef::Array(inner, _)) = &decl.ty {
+                    if let Some(proto_name) = self.extract_protocol_type_name(inner.as_ref()) {
+                        let type_args: Vec<String> = if let TypeRef::Named { generics, .. } = inner.as_ref() {
+                            generics.iter().filter_map(|g| self.type_ref_to_c(g).ok()).collect()
+                        } else { vec![] };
+                        // Pre-emit typedef so box_value_for_protocol can find it.
+                        let _ = self.emit_protocol_box_typedef(&proto_name, &type_args);
+                        self.current_array_protocol_box = Some((proto_name, type_args));
+                        ty_c = "NovaArray_void_p*".to_string();
+                    }
+                }
                 // target-type-aware emit: для typed-integer ty_c литералы внутри
                 // Binary получают native-typed cast вместо ((nova_int)NLL).
                 //
@@ -13171,6 +13286,9 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                 }
                 let val = self.emit_expr_with_target_type(&decl.value, &ty_c)?;
                 self.expected_record_type = saved_expected;
+                // Plan 91.8a.2 followup: restore protocol-box hint after array
+                // literal emission consumed it.
+                self.current_array_protocol_box = array_protocol_save;
                 // For pointer types: the emitted tmp expression already carries the type.
                 // Just declare the binding with the right type.
                 self.var_types.insert(binding.clone(), ty_c.clone());
@@ -13229,7 +13347,13 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                         generics.iter().filter_map(|g| self.type_ref_to_c(g).ok()).collect()
                     } else { vec![] };
                     let concrete_c = self.infer_expr_c_type(&decl.value);
-                    if !type_args.is_empty() && concrete_c.ends_with('*') {
+                    // Plan 91.8a.2 followup 2026-05-29: support non-generic
+                    // protocols (Printable, Equatable, Comparable) in coercion.
+                    // Plan 97.1 enabled vtable/box emission for empty type_args;
+                    // this site previously required `!type_args.is_empty()` and
+                    // silently fell through to bare assignment `NovaBox_P x = m;`
+                    // — invalid C.
+                    if concrete_c.ends_with('*') {
                         if let Some((vtable_instance, box_c_type)) = self.emit_protocol_vtable_companion(
                             &proto_name, &type_args, &concrete_c
                         ) {
@@ -18125,10 +18249,21 @@ _cp++; \
                     // intentionally NOT registered in `protocol_vars`.
                     let var_c_ty = self.var_types.get(var_name.as_str()).cloned().unwrap_or_default();
                     if var_c_ty.starts_with("NovaBox_") {
+                        // Plan 91.8a.2 followup 2026-05-29: if arg is itself a
+                        // NovaBox (e.g. `ea.equals(eb)` where eb: NovaBox_Equatable),
+                        // unwrap to `.data` so it matches the vtable signature
+                        // (Self-typed params lowered to void* в struct).
                         let mut extra_args = String::new();
                         for a in args {
+                            let arg_expr = a.expr();
+                            let arg_c = self.emit_expr(arg_expr)?;
+                            let arg_ty = self.infer_expr_c_type(arg_expr);
                             extra_args.push_str(", ");
-                            extra_args.push_str(&self.emit_expr(a.expr())?);
+                            if arg_ty.starts_with("NovaBox_") {
+                                extra_args.push_str(&format!("({}).data", arg_c));
+                            } else {
+                                extra_args.push_str(&arg_c);
+                            }
                         }
                         return Ok(format!(
                             "{vn}.vtable->{method}({vn}.data{extra})",
@@ -18809,6 +18944,53 @@ _cp++; \
                             "(Nova_{}_method_compare({}, {}) == 0)",
                             safe, obj_c, arg_c
                         ));
+                    }
+                }
+                // Plan 91.8a.2 followup (D183 amendment): Printable.fmt default
+                // body synthesis. Type T без @fmt но с str.from(T) overload
+                // (или @into() -> str) — inline
+                // `Nova_StringBuilder_method_append(sb, <str.from(obj)>)`,
+                // mirroring the Equatable.equals fallback above. General default
+                // body synthesis — followup [M-91.8a.2-default-body-general].
+                if method == "fmt" && args.len() == 1 {
+                    let obj_ty = self.infer_expr_c_type(obj);
+                    let obj_type_name = obj_ty
+                        .trim_start_matches("Nova_")
+                        .trim_end_matches('*')
+                        .to_string();
+                    let has_explicit_fmt = self.all_methods
+                        .contains(&(obj_type_name.clone(), "fmt".to_string()));
+                    if !has_explicit_fmt && !obj_type_name.is_empty() {
+                        let key = ("str".to_string(), "from".to_string());
+                        let from_c_name: Option<String> =
+                            if let Some(overloads) = self.method_overloads.get(&key).cloned() {
+                                overloads.into_iter()
+                                    .find(|s| !s.is_instance
+                                        && s.param_c_types.len() == 1
+                                        && s.param_c_types[0] == obj_ty)
+                                    .map(|sig| sig.c_name)
+                            } else {
+                                None
+                            };
+                        let str_expr: Option<String> = if let Some(c_name) = from_c_name {
+                            let obj_c = self.emit_expr(obj)?;
+                            Some(format!("{}({})", c_name, obj_c))
+                        } else if self.into_targets.get(&obj_type_name)
+                            .map(|t| t == "str").unwrap_or(false)
+                        {
+                            let obj_c = self.emit_expr(obj)?;
+                            let safe = Self::sanitize_c_for_ident(&obj_type_name);
+                            Some(format!("Nova_{}_method_into({})", safe, obj_c))
+                        } else {
+                            None
+                        };
+                        if let Some(s_expr) = str_expr {
+                            let sb_c = self.emit_expr(args[0].expr())?;
+                            return Ok(format!(
+                                "Nova_StringBuilder_method_append({}, {})",
+                                sb_c, s_expr
+                            ));
+                        }
                     }
                 }
                 if let Some((type_name, is_instance)) = self.method_receivers.get(method).cloned() {
@@ -20189,6 +20371,32 @@ _cp++; \
                     // CharLit detection — char хранится как nova_int,
                     // но семантика char→str = UTF-8 encode codepoint, а не печать числа.
                     let v = self.emit_expr(e)?;
+                    // Plan 91.8a.2 followup 2026-05-29: Printable.fmt path для
+                    // user types в interpolation. Если type T имеет explicit
+                    // `@fmt(sb StringBuilder)` — вызываем `Nova_T_method_fmt(v, sb)`
+                    // напрямую (zero-overhead — пишет прямо в interp_sb).
+                    // Иначе — fallback к str.from / @into / нативные str-конверсии,
+                    // wrapped в append.
+                    if !matches!(e.kind, ExprKind::CharLit(_))
+                        && !matches!(arg_ty.as_str(),
+                            "nova_str" | "nova_char" | "nova_bool"
+                            | "nova_f64" | "nova_int")
+                    {
+                        let arg_type = arg_ty
+                            .trim_start_matches("Nova_")
+                            .trim_end_matches('*')
+                            .to_string();
+                        let has_explicit_fmt = self.all_methods
+                            .contains(&(arg_type.clone(), "fmt".to_string()));
+                        if has_explicit_fmt {
+                            let safe = Self::sanitize_c_for_ident(&arg_type);
+                            self.line(&format!(
+                                "Nova_{}_method_fmt({}, {});",
+                                safe, v, sb
+                            ));
+                            continue;
+                        }
+                    }
                     let s_expr = if matches!(e.kind, ExprKind::CharLit(_)) {
                         format!("nova_char_to_str({})", v)
                     } else {
@@ -20200,17 +20408,30 @@ _cp++; \
                             "nova_f64" => format!("nova_f64_to_str({})", v),
                             "nova_int" => format!("nova_int_to_str({})", v),
                             _ => {
-                                // User-type: ищем @into() -> str через D73.
+                                // User-type: appell-path синтез через Printable
+                                // default body (zerkalo bare-call synthesis):
+                                //   1. fn str.from(T) -> str overload — D183 canonical
+                                //   2. @into() -> str (D73)
+                                //   3. fallback (junk — будет CC-FAIL для unsupported types)
                                 let arg_type = arg_ty
                                     .trim_start_matches("Nova_")
                                     .trim_end_matches('*')
                                     .to_string();
-                                if let Some(into_target) = self.into_targets.get(&arg_type) {
-                                    if into_target == "str" {
-                                        format!("Nova_{}_method_into({})", arg_type, v)
-                                    } else {
-                                        format!("nova_int_to_str((nova_int)({}))", v)
-                                    }
+                                let key = ("str".to_string(), "from".to_string());
+                                let str_from_c: Option<String> = self.method_overloads
+                                    .get(&key)
+                                    .and_then(|sigs| sigs.iter()
+                                        .find(|s| !s.is_instance
+                                            && s.param_c_types.len() == 1
+                                            && s.param_c_types[0] == arg_ty)
+                                        .map(|s| s.c_name.clone()));
+                                if let Some(c_name) = str_from_c {
+                                    format!("{}({})", c_name, v)
+                                } else if self.into_targets.get(&arg_type)
+                                    .map(|t| t == "str").unwrap_or(false)
+                                {
+                                    let safe = Self::sanitize_c_for_ident(&arg_type);
+                                    format!("Nova_{}_method_into({})", safe, v)
                                 } else {
                                     format!("nova_int_to_str((nova_int)({}))", v)
                                 }
@@ -20354,13 +20575,20 @@ _cp++; \
             // уже корректно ждёт `->`.
             let value_sum_pointee: Option<String> = if elem_ty.ends_with('*') {
                 let pointee = elem_ty.trim_end_matches('*').trim();
-                match self.sum_schema_registry.lookup_sum_for_c_type(pointee) {
-                    Some(e) if matches!(
-                        e.abi,
-                        super::sum_schema_registry::SumAbi::ValueOptionLike
-                            | super::sum_schema_registry::SumAbi::ValueTagPayload,
-                    ) => Some(pointee.to_string()),
-                    _ => None,
+                // Plan 91.8a.2 followup 2026-05-29: heterogeneous []Protocol —
+                // элемент `NovaBox_<P>*` (heap-alloc'd fat pointer). Деболксим
+                // в loop var типа `NovaBox_<P>` (value) — same pattern как Option.
+                if pointee.starts_with("NovaBox_") {
+                    Some(pointee.to_string())
+                } else {
+                    match self.sum_schema_registry.lookup_sum_for_c_type(pointee) {
+                        Some(e) if matches!(
+                            e.abi,
+                            super::sum_schema_registry::SumAbi::ValueOptionLike
+                                | super::sum_schema_registry::SumAbi::ValueTagPayload,
+                        ) => Some(pointee.to_string()),
+                        _ => None,
+                    }
                 }
             } else {
                 None
@@ -21783,6 +22011,51 @@ _cp++; \
     // ---- array literal ----
 
     fn emit_array_lit(&mut self, elems: &[ArrayElem]) -> Result<String, String> {
+        // Plan 91.8a.2 followup 2026-05-29: heterogeneous []Protocol.
+        // Each element coerces к NovaBox_<Proto> fat pointer; heap-alloc;
+        // push pointer в NovaArray_void_p slot.
+        if let Some((proto_name, type_args)) = self.current_array_protocol_box.clone() {
+            let box_c_type = format!("NovaBox_{}", proto_name);
+            let tmp = self.fresh_tmp();
+            let direct_count = elems.iter()
+                .filter(|e| matches!(e, ArrayElem::Item(_))).count();
+            let init_cap = if direct_count > 0 { direct_count } else { 8 };
+            self.line(&format!(
+                "NovaArray_void_p* {} = nova_array_new_void_p({});",
+                tmp, init_cap
+            ));
+            // Save & clear so nested array literals don't inherit hint.
+            let saved = self.current_array_protocol_box.take();
+            for elem in elems {
+                match elem {
+                    ArrayElem::Item(expr) => {
+                        let concrete_c = self.infer_expr_c_type(expr);
+                        let v = self.emit_expr(expr)?;
+                        let boxed = self.box_value_for_protocol(
+                            v, &concrete_c, &proto_name, &type_args);
+                        let heap_tmp = self.fresh_tmp();
+                        self.line(&format!(
+                            "{box}* {ht} = ({box}*)nova_alloc(sizeof({box}));",
+                            box = box_c_type, ht = heap_tmp
+                        ));
+                        self.line(&format!("*{} = {};", heap_tmp, boxed));
+                        self.line(&format!(
+                            "nova_array_push_void_p({}, (void*){});",
+                            tmp, heap_tmp
+                        ));
+                    }
+                    ArrayElem::Spread(_) => {
+                        return Err("spread не поддерживается в []Protocol \
+                                    array literal (followup)".to_string());
+                    }
+                }
+            }
+            self.current_array_protocol_box = saved;
+            // Track element pointer type для for-loop deref.
+            self.array_element_types.insert(
+                tmp.clone(), format!("{}*", box_c_type));
+            return Ok(tmp);
+        }
         // Infer element type from first item (best-effort default: nova_int).
         // For Spread-only arrays (например, variadic-fn вызван с `...arr`)
         // — derive elem type из spread'нутого NovaArray_<T>*.

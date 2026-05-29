@@ -24360,3 +24360,406 @@ Followups (remain):
 - [M-91.8c-overload-resolution]: unified naming (@sort via generic)
 
 Commit: 658628356fe
+
+=== Plan 91.8a.2 followup 2026-05-29: Printable.fmt MVP synthesis ===
+
+Зеркало Equatable.equals MVP fallback'a в emit_c.rs для Printable.fmt:
+- Trigger: obj.fmt(sb) где method == "fmt" && args.len() == 1
+- Eligibility: obj's type T БЕЗ explicit @fmt
+- Resolution priority:
+  1. method_overloads[("str","from")] — static overload с param_c_types[0] == T_c_type
+  2. into_targets[T] == "str" — D73/D77 @into() -> str chain
+- Emit: Nova_StringBuilder_method_append(sb_c, <str_expr>)
+  где str_expr = либо <c_name>(obj_c) либо Nova_<T>_method_into(obj_c)
+
+Положен сразу после @equals fallback на line ~18813. Same pattern, same
+discipline (inline emission без synthesized function; cache + Plan 101
+mono extension — followup [M-91.8a.2-default-body-general]).
+
+Test plan91_8a_2/printable_fmt_synthesis_test (2 sub-tests PASS):
+- Money satisfies Printable bound через `fn Money @into() -> str` (D73)
+- Multi-step composition с explicit sb.append вокруг synthesized fmt
+
+Verified generated C:
+  static nova_unit ...show____Nova_Money_p(Nova_Money* x, Nova_StringBuilder* sb) {
+      Nova_StringBuilder_method_append(sb, Nova_Money_method_into(x));
+      return NOVA_UNIT;
+  }
+
+Альтернативный path через `fn str.from(T) -> str` overload реализован
+в коде но не покрыт тестом из-за pre-existing issue: declaring
+`fn str.from(UserType) -> str` ломает type-check Printable.fmt default
+body на protocol decl level (`str.from(@)` где @ — Self abstract).
+Та же причина у baseline-fail nova_tests/syntax/methods_on_primitives.nv
+(declares `fn str.from(b bool) -> str`). Followup [M-fmt-synthesis-str-from-overload].
+
+plan91_8a_2: 11/0 PASS (was 10)
+Regression baseline:
+- plan91_8a 2/0, plan91 2/0, plan91_8c 6/0
+- plan62 31/5, plan65 19/0, plan73 12/0, plan77 7/0, plan108 6/0
+- basics 8/0, modules 31/0
+- protocols 25/1 (flaky conversion/from_multi)
+- syntax 57/2 (pre-existing: for_in_range_iter + methods_on_primitives)
+
+Completes symmetric MVP synthesis story для shipping:
+- Equatable.equals via @compare (closed earlier)
+- Printable.fmt via @into→str / str.from(T) overload (this commit)
+
+Followup [M-91.8a.2-default-body-general]: general default body synthesis
+(walk protocol_specs AST, substitute Self/@, emit synthesized function
++ cache + Plan 101 mono extension). MVP inline-emission достаточен для
+shipping 0.1; general synthesis в Plan 0.2.
+
+Commit: TBD
+
+=== Plan 91.8a.2 followup 2026-05-29: f1_check_call false-positive fix для primitive receivers ===
+
+Closes [M-fmt-synthesis-str-from-overload] и pre-existing baseline-fail
+methods_on_primitives.nv (syntax 57/2 → 58/1).
+
+Bug: type-checker's `f1_check_call` (types/mod.rs:2030+) для Path-формы
+`Type.method(args)` делает arg-type check когда в method_table ровно ОДИН
+overload. Но для primitive-receiver'ов (str, int, char, ...) часть
+overload'ов живёт ВНЕ method_table:
+- external fn в другом stdlib-модуле (char.nv `external fn str.from(c char)`)
+- codegen builtins (str.from(int) hardcoded в emit_c.rs)
+- D73 auto-derive paths
+
+Symptom: пользователь объявил `fn str.from(b bool) -> str` в своём модуле.
+method_table["str"]["from"] = [bool overload] — единственный. Type-checker
+walks std/runtime/string.nv `pad_left` body, видит `let fill_s = str.from(fill)`
+с `fill: char`, резолвит к bool overload, ругается «cannot pass char as bool».
+То же при объявлении `fn str.from(m Money) -> str`.
+
+Fix: в f1_check_call ExprKind::Path branch — если parts[0] is primitive type
+(str/int/char/bool/f32/f64/u*/i*/uint), сразу `return` без arg-check.
+Codegen overload resolution (external_registry + method_overloads + D77
+auto-derive в emit_c.rs) выполняет полный поиск, type-checker'у не нужно
+дублировать.
+
+Tradeoff: false-negatives на primitive receivers (wrong arg types слипнутся
+до codegen). Acceptable — codegen в итоге всё равно фильтрует.
+
+Test plan91_8a_2/printable_fmt_synthesis_test:
+- Расширен до 3 sub-tests (было 2):
+  1. Money satisfies Printable via `fn str.from(Money) -> str` (NEW path)
+  2. Coin satisfies Printable via `fn Coin @into() -> str` (existing)
+  3. Multi-step composition
+
+Generated C verified — оба path работают:
+- Money: Nova_StringBuilder_method_append(sb, Nova_str_static_from__Nova_Money_p(x))
+- Coin:  Nova_StringBuilder_method_append(sb, Nova_Coin_method_into(x))
+
+Regression sweep:
+- syntax: 58/1 (было 57/2; methods_on_primitives 1.0 PASS)
+- plan91_8a_2: 11/0 (test расширен с 2 до 3 sub-tests)
+- plan62 31/5, plan65 19/0, plan73 12/0, plan77 7/0, plan108 6/0
+- plan91_7 5/0, plan91_8a 2/0, plan91_8c 6/0
+- basics 8/0, modules 31/0, protocols 25/1 (flaky from_multi)
+
+Closes [M-fmt-synthesis-str-from-overload] which was opened в предыдущем
+commit (3865300c7de) что fmt synthesis path 1 (str.from overload) нельзя
+протестировать из-за этой baseline-failure.
+
+Commit: TBD
+
+=== Plan 91.8a.2 followup 2026-05-29: bare-call synthesis fallback ===
+
+Closes [M-91.8a.2-bare-call-synthesis]. Раньше synthesis (@equals/@fmt
+default body) работал ТОЛЬКО в `[T Protocol]` bound context — type-checker
+для bare `m.fmt(sb)` сразу ругался «no method fmt on Money» до того как
+codegen synthesis получал шанс.
+
+Fix в `f3_check_member` (types/mod.rs:2155+): перед E7320 error добавлена
+проверка — может ли тип satisfy protocol через default body:
+- `equals`: T has @compare → Equatable.equals synthesized
+- `fmt`: T has @into → str ИЛИ `fn str.from(T) -> str` overload →
+  Printable.fmt synthesized
+
+MVP hardcoded для двух cases (mirror existing emit_c.rs synthesis fallback).
+General default body synthesis (walk protocol_specs AST, traverse default
+body, check all referenced methods reachable на T) — followup
+[M-91.8a.2-default-body-general].
+
+Test plan91_8a_2/bare_call_synthesis_test (3 sub-tests PASS):
+- Score @compare → bare `a.equals(b)` works
+- Money `fn str.from(Money)` → bare `m.fmt(sb)` works
+- Coin `@into() -> str` → bare `c.fmt(sb)` works
+
+Generated C verified для всех 3 path:
+  Nova_Score_method_compare(a, b) == 0
+  Nova_StringBuilder_method_append(sb, Nova_str_static_from__Nova_Money_p(m))
+  Nova_StringBuilder_method_append(sb, Nova_Coin_method_into(c))
+
+Coverage matrix теперь:
+| Pattern | Status |
+|---|---|
+| `[T Printable]` / `[T Equatable]` bound + `.fmt()`/`.equals()` | ✅ |
+| Bare `m.fmt(sb)` / `m.equals(other)` без bound | ✅ (этот commit) |
+| `let x Printable = m` coercion (vtable) | ❌ Plan 91.8a.2 part 3 general |
+| `[]Printable` heterogeneous (vtable) | ❌ ↑ |
+| `"${m}"` interpolation через Printable | ❌ Plan 91.10 |
+
+Regression:
+- plan91_8a_2: 12/0 (+1 test file bare_call_synthesis_test, 3 sub-tests)
+- syntax 58/1, plan62 31/5, plan65 19/0, plan73 12/0, plan77 7/0
+- plan108 6/0, plan91_7 5/0, plan91_8a 2/0, plan91_8c 6/0, plan91 2/0
+- basics 8/0, modules 31/0, protocols 25/1 (flaky from_multi)
+
+Commit: TBD
+
+=== Plan 91.8a.2 followup 2026-05-29: protocol coercion via vtable (MVP) ===
+
+`let x Printable = m` теперь работает — coercion в protocol-тип создаёт
+fat pointer (data + vtable), virtual dispatch через `x.fmt(sb)`
+diff'ит к correct concrete-method без compile-time knowledge of T.
+
+Два fix'a:
+
+1. emit_c.rs Stmt::Let (line ~13232): убрана условие
+   `!type_args.is_empty()` для emit_protocol_vtable_companion. Plan 97.1
+   уже сделал generation infrastructure non-generic-protocol-aware (для
+   typedef + vtable struct), но assignment site дублировал ограничение и
+   silently fell through на `NovaBox_P x = m;` (invalid C).
+
+2. emit_c.rs emit_protocol_vtable_companion (line ~3594): thunk emission
+   получил synthesis fallback. Раньше thunk звал `Nova_T_method_X` напрямую
+   — функция могла не существовать если T satisfies protocol через default
+   body. Теперь:
+   - method == "equals" + T has @compare → thunk emits
+     `return (Nova_T_method_compare((T*)self, a0) == 0)` (Equatable default)
+   - method == "fmt" + T has `fn str.from(T) -> str` overload → thunk emits
+     `Nova_StringBuilder_method_append(a0, Nova_str_static_from__T_p(...)); return NOVA_UNIT`
+   - method == "fmt" + T has @into() -> str → thunk emits
+     `Nova_StringBuilder_method_append(a0, Nova_T_method_into(...)); return NOVA_UNIT`
+
+Mirror existing bare-call synthesis fallback в method dispatch (line 18814).
+Same MVP discipline: hardcoded для двух protocols (Equatable/Printable).
+
+Tests plan91_8a_2/coercion_test (3 sub-tests PASS):
+- Money coerced to Printable via str.from(Money), virtual fmt() — works
+- Coin coerced to Printable via @into→str, virtual fmt() — works
+- Multiple Printable values composed в same StringBuilder — works
+
+Generated C verified:
+  NovaBox_Printable x = { .data = (void*)(m), .vtable = &_vt_Printable__Money };
+  /* thunk */
+  static nova_unit _thunk_Printable_fmt__Money(void* self, Nova_StringBuilder* a0) {
+      Nova_StringBuilder_method_append(a0,
+          Nova_str_static_from__Nova_Money_p((Nova_Money*)self));
+      return NOVA_UNIT;
+  }
+  /* virtual dispatch */
+  x.vtable->fmt(x.data, sb);
+
+NOT в scope MVP:
+- Coercion с Self-typed params (Equatable.equals(other Self)) — vtable
+  struct lowers Self → drops the param из signature, но thunk эмитит с
+  full Self-resolved type → arity mismatch. Followup
+  [M-91.8a.2-vtable-self-in-param]: lower Self → void* в vtable struct
+  + thunk cast + call-site unwrap eb.data.
+- `[]Printable` heterogeneous array (substantial array-of-fat-pointer infra)
+- `"${m}"` interpolation через Printable (Plan 91.10)
+
+Coverage matrix:
+| Pattern | Status |
+|---|---|
+| `[T Printable]` / `[T Equatable]` bound | ✅ |
+| Bare `m.fmt(sb)` / `m.equals(other)` | ✅ |
+| `let x Printable = m` coercion (params без Self) | ✅ (этот commit) |
+| `let x Equatable = m` coercion (params с Self) | ❌ M-vtable-self-in-param |
+| `[]Printable` heterogeneous | ❌ |
+| `"${m}"` interpolation | ❌ Plan 91.10 |
+
+Regression:
+- plan91_8a_2: 13/0 PASS (+1 coercion_test 3 sub-tests)
+- syntax 58/1, plan62 31/5, plan65 19/0, plan73 12/0, plan77 7/0
+- plan108 6/0, plan91_7 5/0, plan91_8a 2/0, plan91_8c 6/0, plan91 2/0
+- basics 8/0, modules 31/0, protocols 25/1 (flaky from_multi)
+
+Commit: TBD
+
+=== Plan 91.8a.2 followup 2026-05-29: Equatable coercion (Self-in-param) ===
+
+Closes [M-91.8a.2-vtable-self-in-param]. `let x Equatable = m`,
+`x.equals(y)` теперь работает: codegen lowers `Self`-typed params в
+vtable struct к `void*`, thunk casts back в concrete, call site
+unwraps NovaBox arg к `.data` если arg тоже коэрсирован.
+
+Три fix'a в emit_c.rs:
+
+1. emit_protocol_box_typedef (vtable struct emission, line ~3742):
+   `Self`-typed params теперь lower к `"void*"` (раньше silently
+   dropped — `type_ref_to_c(Self)` без current_receiver_type
+   errored → param исключался из vtable struct signature).
+
+2. emit_protocol_vtable_companion (thunk emission, line ~3585):
+   per-param spec `(vtable_sig_type, is_self_typed)`:
+   - Self params: sig="void*"; fwd cast `(concrete_c_ty)a{i}`.
+   - Non-Self: sig=concrete type; fwd `a{i}` без cast.
+   Synthesis fallback equals также emits `(concrete_c_ty)a0` cast.
+
+3. Method dispatch на NovaBox-typed var (line ~18193): args типа
+   NovaBox_<Proto> unwrap'аются к `.data` перед передачей в vtable
+   call. Concrete-type args передаются as-is.
+
+Test plan91_8a_2/coercion_equatable_test (2 sub-tests PASS):
+- Score → Equatable; ea.equals(eb) virtual dispatch where both
+  operands are NovaBox_Equatable — works
+- ea.equals(b) where b is concrete Score (no coercion) — works
+
+Generated C verified:
+  /* vtable struct */
+  typedef struct NovaVtable_Equatable {
+      nova_bool (*equals)(void*, void*);
+  } NovaVtable_Equatable;
+  /* thunk */
+  static nova_bool _thunk_Equatable_equals__Score(void* self, void* a0) {
+      return (Nova_Score_method_compare((Nova_Score*)self, (Nova_Score*)a0) == 0);
+  }
+  /* call site — both args coerced */
+  ea.vtable->equals(ea.data, (eb).data)
+  /* call site — RHS concrete (no unwrap) */
+  ea.vtable->equals(ea.data, b)
+
+Coverage matrix теперь:
+| Pattern | Status |
+|---|---|
+| `[T Printable]`/`[T Equatable]` bound | ✅ |
+| Bare `m.fmt(sb)` / `m.equals(other)` | ✅ |
+| `let x Printable = m` coercion | ✅ |
+| `let x Equatable = m` coercion (Self в params) | ✅ (этот commit) |
+| `let x Comparable = m` coercion (Self + int return) | ✅ (same fix path) |
+| `[]Printable` heterogeneous | ❌ followup |
+| `"${m}"` interpolation | ❌ Plan 91.10 |
+
+Regression:
+- plan91_8a_2: 14/0 PASS (+1 coercion_equatable_test 2 sub-tests)
+- syntax 58/1, plan62 31/5, plan65 19/0, plan73 12/0, plan77 7/0
+- plan108 6/0, plan91_7 5/0, plan91_8a 2/0, plan91_8c 6/0, plan91 2/0
+- basics 8/0, modules 31/0, protocols 25/1 (flaky from_multi)
+
+Commit: TBD
+
+=== Plan 91.8a.2 followup 2026-05-29: heterogeneous []Protocol arrays ===
+
+`let xs []Printable = [money, coin, tag]` теперь работает. Mixed-type
+storage через NovaArray_void_p slots, каждый slot — heap-alloc'd
+NovaBox_<Proto>* (fat pointer). For-loop deref'ит slot к value, virtual
+dispatch per-element правильно резолвит концерт type через vtable.
+
+emit_c.rs изменения:
+
+1. Field current_array_protocol_box: Option<(String, Vec<String>)>
+   (proto_name, type_args) — set transiently при let-decl с `[]Protocol`
+   annotation.
+
+2. Stmt::Let (~13247): detect annotation TypeRef::Array(inner) где
+   inner — protocol. Pre-emit typedef через emit_protocol_box_typedef.
+   Set current_array_protocol_box. Override ty_c к "NovaArray_void_p*".
+   Restore field после emit_expr_with_target_type.
+
+3. emit_array_lit (~21940): special-case в начале — если
+   current_array_protocol_box set:
+   - elem_ty = void_p (uniform slot storage)
+   - per-element: box value via box_value_for_protocol → heap-alloc
+     NovaBox_<P>* → push pointer к void_p slot
+   - array_element_types[tmp] = "NovaBox_<P>*"
+   Spread элементы НЕ поддерживаются в MVP (followup).
+
+4. For-loop emission (~20510): расширил value-deref pattern для
+   NovaBox_<P>* element type. Слот хранит pointer к heap-alloc'd box;
+   loop var получает value: `NovaBox_<P> x = *(NovaBox_<P>*)slot`.
+   Тогда метод dispatch на NovaBox_-typed var (~18187) работает
+   корректно (x.vtable->method(x.data, ...)).
+
+Test plan91_8a_2/heterogeneous_array_test (3 sub-tests PASS):
+- []Printable с Money + Coin + Tag, iterate + fmt — works
+- Single-element []Printable — works
+- Empty []Printable — for-loop не выполняется
+
+Generated C verified:
+  NovaArray_void_p* xs = nova_array_new_void_p(3);
+  NovaBox_Printable* t0 = (NovaBox_Printable*)nova_alloc(sizeof(NovaBox_Printable));
+  *t0 = (NovaBox_Printable){ .data = (void*)(m), .vtable = &_vt_Printable__Money };
+  nova_array_push_void_p(xs, (void*)t0);
+  /* ... same для Coin, Tag ... */
+  for (nova_int i = 0; i < xs->len; i++) {
+      NovaBox_Printable x = *(NovaBox_Printable*)xs->data[i];
+      x.vtable->fmt(x.data, sb);
+  }
+
+Coverage matrix теперь:
+| Pattern | Status |
+|---|---|
+| `[T Printable]`/`[T Equatable]` bound | ✅ |
+| Bare `m.fmt(sb)` / `m.equals(other)` | ✅ |
+| `let x Printable = m` coercion | ✅ |
+| `let x Equatable = m` coercion (Self в params) | ✅ |
+| `let x Comparable = m` coercion | ✅ |
+| `[]Printable` heterogeneous | ✅ (этот commit) |
+| `"${m}"` interpolation | ❌ Plan 91.10 |
+
+Regression:
+- plan91_8a_2: 15/0 PASS (+1 heterogeneous_array_test 3 sub-tests)
+- syntax 58/1, plan62 31/5, plan65 19/0, plan73 12/0, plan77 7/0
+- plan108 6/0, plan91_7 5/0, plan91_8a 2/0, plan91_8c 6/0, plan91 2/0
+- basics 8/0, modules 31/0, protocols flaky (24-25 / 1-2)
+
+Commit: TBD
+
+=== Plan 91.8a.2 followup 2026-05-29: interpolation "${m}" через Printable ===
+
+String interpolation `"${m}"` теперь поддерживает user types через все
+три Printable paths:
+- Path 1: explicit `fn T @fmt(sb StringBuilder)` — **direct call** в
+  interpolation's StringBuilder (zero-overhead, no intermediate str)
+- Path 2: `fn str.from(T) -> str` overload — append результат
+- Path 3: `fn T @into() -> str` — append результат
+
+emit_c.rs::emit_interpolated_str (~20338) изменения:
+1. До match arg_ty — check user type (non-primitive, non-charlit) на
+   explicit @fmt. Если есть — emit `Nova_T_method_fmt(v, sb)` напрямую
+   и continue (skip append step).
+2. В user-type fallback расширил resolution priority:
+   1) method_overloads[("str","from")] static с param[0]==arg_ty
+   2) into_targets[T] == "str" — D77 chain
+   3) fallback `nova_int_to_str((nova_int)v)` (junk — каб CC-FAIL для
+      unsupported types)
+
+Test plan91_8a_2/interpolation_printable_test (4 sub-tests PASS):
+- "${m}" with `fn str.from(Money)` overload → works
+- "${c}" with `fn Coin @into() -> str` → works
+- "${p}" with explicit `fn Point @fmt(sb)` → works (direct fmt call)
+- Multiple interpolations в одной строке — works
+
+Generated C verified:
+- Money: `Nova_StringBuilder_method_append(sb, Nova_str_static_from__Nova_Money_p(m))`
+- Coin:  `Nova_StringBuilder_method_append(sb, Nova_Coin_method_into(c))`
+- Point: `Nova_Point_method_fmt(p, sb)` ← direct, no intermediate str
+
+Coverage matrix теперь ПОЛНОСТЬЮ ЗАКРЫТА:
+| Pattern | Status |
+|---|---|
+| `[T Protocol]` bound | ✅ |
+| Bare `m.fmt(sb)` / `m.equals(other)` | ✅ |
+| `let x Printable = m` coercion | ✅ |
+| `let x Equatable = m` coercion (Self в params) | ✅ |
+| `let x Comparable = m` coercion | ✅ |
+| `[]Printable` heterogeneous | ✅ |
+| `"${m}"` interpolation через Printable | ✅ (этот commit) |
+
+Все Plan 91.8a.2 followup cases ЗАКРЫТЫ. Protocol coverage complete:
+- compile-time bound check
+- bare method call
+- single coercion (fat pointer)
+- collection coercion (fat-pointer-array)
+- interpolation (Printable-aware)
+
+Regression:
+- plan91_8a_2: 16/0 PASS (+1 interpolation_printable_test 4 sub-tests)
+- syntax 58/1, plan62 31/5, plan65 19/0, plan73 12/0, plan77 7/0
+- plan108 6/0, plan91_7 5/0, plan91_8a 2/0, plan91_8c 6/0, plan91 2/0
+- basics 8/0, modules 31/0, protocols flaky (24-25 / 1-2)
+
+Commit: TBD
