@@ -4224,6 +4224,13 @@ impl<'a> BoundCtx<'a> {
                 fns.iter().any(|f| f.params.len() == req.params.len())
             }).unwrap_or(false);
             if !found {
+                // Plan 91.8a.2 part 2 (D183 amendment): default body fallback.
+                // Если protocol method имеет default body — type can satisfy via
+                // codegen synthesis. Assumption: synthesis will lower default body
+                // calls correctly или error там. Здесь — accept satisfaction.
+                if req.default_body.is_some() {
+                    continue;
+                }
                 let sig = render_method_sig(&req.name, &req.params, &req.return_type);
                 let prefix = if req.is_static { "." } else { "" };
                 missing.push(format!("{}{}", prefix, sig));

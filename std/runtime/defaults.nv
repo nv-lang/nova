@@ -20,6 +20,9 @@ export fn u16.new() -> Self => 0
 export fn u32.new() -> Self => 0
 export fn u64.new() -> Self => 0
 
+// Plan 70.5: uint = alias u64 (Nova-side); primitive type в codegen.
+export fn uint.new() -> Self => 0
+
 // Signed integers.
 export fn i8.new()  -> Self => 0
 export fn i16.new() -> Self => 0

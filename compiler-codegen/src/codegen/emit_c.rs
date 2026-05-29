@@ -8515,7 +8515,8 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
     /// records/sums by pointer.
     fn receiver_c_type(&self, type_name: &str) -> String {
         match type_name {
-            "int" | "i8" | "i16" | "i32" | "i64" | "u8" | "u16" | "u32" | "u64" => "nova_int".to_string(),
+            // Plan 70.5: uint = alias u64; size — usize-like. Both map to nova_int slot.
+            "int" | "i8" | "i16" | "i32" | "i64" | "u8" | "u16" | "u32" | "u64" | "uint" | "size" => "nova_int".to_string(),
             "f32" => "nova_f32".to_string(),
             "f64" => "nova_f64".to_string(),
             "bool" => "nova_bool".to_string(),
