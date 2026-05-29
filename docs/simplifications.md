@@ -27430,3 +27430,11 @@ default methods explicit как boilerplate compatibility. Part 2 даёт
 **Why migrate existing tests vs feature-flag:** opt-in change breaks structural assumption. Tests using bare call without `#impl` were ОТ ИДЕИ structural (TypeScript-style). Migration enforces new semantics — type-authors объявляют intent. Feature-flagging оставил бы магию доступной → confused mental model. Trade-off: 6 test fixtures touched, mechanical edits, +1 line `#impl(...)` per type. Acceptable churn для ideological correctness.
 
 **Why gate_on_impl=false для vtable thunk:** coercion `let g Greetable = u` IS the explicit opt-in. User says «I want u as Greetable». Compiler не должен повторно спрашивать «но опт-инил ли тип Greetable?» — user-site authorization sufficient. This makes thunk generation work для всех coerced types regardless `#impl`. Same logic: bound `[T P]` is use-site opt-in (caller asserts T satisfies P).
+
+## Plan 91.9 (D186) final polish — nova doc «Implements:» rendering
+
+**Why empty-list skip rendering line:** non-opted types (без `#impl`) — большинство user types. Если бы рендерили `**Implements:** ` (empty) — noise в каждом type page. Conditional `if !empty { ... }` keeps doc output clean: opt-in types визуально выделены, non-opt-in types выглядят нормально без extra metadata.
+
+**Why both md + JSON render:** markdown — human-readable doc (`nova doc` CLI output, mdBook integration). JSON — programmatic consumers (mcp protocol, nova-lsp completion suggestions «this type implements X — show methods of X here»). Both required для full coverage; markdown rendering alone оставит JSON consumers blind, JSON alone оставит users without visual cue.
+
+**Why type-only (not fn) `impl_protocols`:** `#impl(...)` annotation lives на `TypeDecl`, не на `FnDecl`. Capabilities struct shared между type и fn collection — поле `impl_protocols` всегда `Vec::new()` для fns (empty default). Could split into separate TypeCapabilities — overkill для one extra field; existing `consume: bool` flag has same shape (type-only, false for fns) — consistent pattern.
