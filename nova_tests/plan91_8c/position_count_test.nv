@@ -1,0 +1,46 @@
+module nova_tests.plan91_8c.position_count_test
+
+import std.sort
+
+// Plan 91.8c part 4: position_of + count_of utility callbacks.
+
+test "position_of первое > 3" {
+    let xs []int = [1, 3, 4, 7, 8]
+    match xs.position_of(|x| x > 3) {
+        Some(idx) => assert(idx == 2)
+        None      => assert(false)
+    }
+}
+
+test "position_of не найдено → None" {
+    let xs []int = [1, 2, 3]
+    match xs.position_of(|x| x > 100) {
+        Some(_) => assert(false)
+        None    => assert(true)
+    }
+}
+
+test "position_of empty array → None" {
+    let empty []int = []
+    match empty.position_of(|x| x > 0) {
+        Some(_) => assert(false)
+        None    => assert(true)
+    }
+}
+
+test "count_of по predicate" {
+    let xs []int = [1, 3, 4, 7, 8]
+    assert(xs.count_of(|x| x > 3) == 3)
+    assert(xs.count_of(|x| x > 100) == 0)
+    assert(xs.count_of(|x| x > 0) == 5)
+}
+
+test "count_of для []str" {
+    let words []str = ["apple", "kiwi", "banana"]
+    assert(words.count_of(|w| w.len() > 4) == 2)   // apple (5), banana (6)
+}
+
+test "count_of empty array" {
+    let empty []int = []
+    assert(empty.count_of(|x| true) == 0)
+}
