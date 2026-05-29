@@ -1,0 +1,26 @@
+module nova_tests.plan91_8a_2.primitives_in_generic_bound
+
+// Plan 91.8a.2 part 3 followup [M-91.8a.2-primitives-in-generic-bound]:
+// primitives (char, int, str, ...) должны работать в generic [T Comparable]
+// bound. Mono dispatch должен корректно резолвить @compare на primitive type.
+
+fn pick_smaller[T Comparable](a T, b T) -> T =>
+    if a.compare(b) <= 0 { a } else { b }
+
+fn max_of[T Comparable](a T, b T) -> T =>
+    if a.compare(b) >= 0 { a } else { b }
+
+test "[T Comparable] bound на char" {
+    assert(pick_smaller('z', 'a') == 'a')
+    assert(max_of('z', 'a') == 'z')
+}
+
+test "[T Comparable] bound на int" {
+    assert(pick_smaller(100, 50) == 50)
+    assert(max_of(100, 50) == 100)
+}
+
+test "[T Comparable] bound на str" {
+    assert(pick_smaller("zebra", "apple") == "apple")
+    assert(max_of("zebra", "apple") == "zebra")
+}

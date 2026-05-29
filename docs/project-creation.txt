@@ -24234,3 +24234,38 @@ Followup [M-91.8a.2-primitives-in-generic-bound]: dispatch primitives в
 generic [T Comparable] bound. Mono pass single-key fallback all'ё ещё last-wins.
 
 Commit: f2ef8b3c5de
+
+=== Plan 91.8a.2 part 3 continuation 2026-05-29: primitives в [T Comparable] bound ===
+
+User request: Q-char-arithmetic перенесён в Q-block, продолжаем primitives в bound.
+
+Closes [M-91.8a.2-primitives-in-generic-bound]:
+
+1. std/runtime/defaults.nv: @compare для всех numeric/bool/char primitives
+   - int, u8-u64, i8-i64, uint (signum form, overflow-safe)
+   - f32, f64
+   - bool (false < true canonical order)
+   - char (codepoint order, добавлен ранее)
+
+2. emit_c.rs primitive dispatch fix:
+   - str + int routed через primitive_recv (line 18703+)
+   - method_overloads c_name preferred перед Nova_<T>_method_<X> fallback
+   - Closes dispatch для external methods (str.@compare → nova_str_compare)
+
+Tests plan91_8a_2/primitives_in_generic_bound (3 sub-tests PASS):
+- pick_smaller/max_of[T Comparable] на char, int, str
+
+plan91_8a_2: 10/0 PASS (was 9)
+Regression: все targeted plans baseline.
+
+Foundation для:
+- Plan 91.8c (generic sort/min/max через [T Comparable] — отдельный subplan,
+  уже scaffold'd как 91.8c-generic-array-api.md)
+- General [T Comparable] algorithms (sort, binary_search, dedup_by, и др.)
+
+Spec Q-block:
+- Q-char-arithmetic (nova/main): арифметика на char (advance/retreat by codepoint)
+  отложена с design analysis variants A/B/C. Variant A (explicit fallible try_advance)
+  recommended per Nova D9.
+
+Commit: f3804eb474e
