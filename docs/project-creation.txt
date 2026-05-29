@@ -24976,3 +24976,49 @@ Regression:
 
 Commit: TBD
 
+=== Plan 91.9 (D186) final polish 2026-05-29: nova doc «Implements:» rendering ===
+
+Финальный production polish — nova doc показывает `#impl(...)` opt-in
+список в типовой документации.
+
+doctree.rs::Capabilities:
+- New field `impl_protocols: Vec<String>` — populated by collector.
+
+collector.rs:
+- Type collection: copies `td.impl_protocols` → Capabilities.impl_protocols
+- Fn collection: empty (type-only property).
+
+render_md.rs (ItemKind::Type):
+- After type signature, before Resource lifecycle section:
+  «**Implements:** `P`, `Q`, `R`» line.
+- Empty list → skip line entirely (no noise for non-opted types).
+
+render_json.rs:
+- `capabilities.impl_protocols` array field в JSON output.
+  Consumers (mcp / nova-lsp) могут programmatically check whether type
+  opts into specific protocol.
+
+Plan 91.9 (D186) полное закрытие:
+- 4/4 acceptance criteria реализация (incl E_IMPL_WRONG_SIGNATURE)
+- D186 spec в 02-types.md
+- 4 error codes: E_UNKNOWN_PROTOCOL / E_IMPL_NOT_PROTOCOL /
+  E_IMPL_MISSING_METHODS / E_IMPL_WRONG_SIGNATURE
+- 6 positive tests + 3 negative + 6 migrated existing
+- 27/0 plan91_8a_2 PASS, all targeted suites baseline
+- nova doc Implements: rendering (md + JSON)
+- nova-private/discussion-log.md updated
+- Merged + pushed to origin
+
+Followups (production polish, не блокеры):
+- nova doc CLI integration test (manual verify works для production)
+
+Plan 91 main scope теперь готов к Ф.3 JSON conformance pivot
+(shipping critical path для релиза 0.1).
+
+Commits:
+- 30d071460b3 — gate + migration
+- 761e9150f40 — verification pass (3 error codes)
+- 3d1ca58ac44 — E_IMPL_WRONG_SIGNATURE + spec + closure + parent + discussion-log + 7 tests
+- 28743044837 — nova doc Implements rendering
+
+Merge commits в main: 2a824e86b9e, f5da5aaa1ad, 22c850a14d2, 63a962953dc.
