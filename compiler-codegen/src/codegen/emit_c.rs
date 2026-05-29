@@ -500,6 +500,14 @@ pub struct CEmitter {
     /// default body itself triggers further synthesis on the same
     /// (TypeName, MethodName).
     synthesizing_default_methods: HashSet<(String, String)>,
+    /// Plan 91.9 (D186) — per-type explicit protocol opt-in list from
+    /// `#impl(P1 + P2 + ...)` annotation. Populated during forward-decl
+    /// pass когда мы видим `Item::Type` declarations. Used by
+    /// try_synthesize_default_method to gate bare-call synthesis: types
+    /// without `#impl(P)` cannot have P's default-body methods called
+    /// в ambient contexts (bare method call, interpolation). Bound /
+    /// coercion остаются structural — gate_on_impl=false.
+    type_impl_protocols: HashMap<String, HashSet<String>>,
     /// Maps local variable name → (param_c_types, return_c_type) for function-typed parameters.
     /// Used to emit proper function pointer calls for `body(args)` where body is a fn param.
     fn_param_sigs: HashMap<String, (Vec<String>, String)>,
@@ -948,6 +956,7 @@ impl CEmitter {
             current_array_protocol_box: None,
             synthesized_default_methods: HashSet::new(),
             synthesizing_default_methods: HashSet::new(),
+            type_impl_protocols: HashMap::new(),
             fn_param_sigs: HashMap::new(),
             array_param_fn_sigs: HashMap::new(),
             user_fn_sigs: HashMap::new(),
@@ -1678,6 +1687,20 @@ impl CEmitter {
                 if name.chars().next().map(|c| c.is_uppercase()).unwrap_or(false) {
                     self.user_type_fwd_decls.push_str(&format!(
                         "typedef struct NovaVtable_{0} NovaVtable_{0};\n", name));
+                }
+            }
+        }
+
+        // Plan 91.9 (D186) — populate type_impl_protocols registry from
+        // `#impl(P1 + P2 + ...)` annotations. Used to gate bare-call
+        // synthesis (try_synthesize_default_method).
+        for item in &module.items {
+            if let Item::Type(t) = item {
+                if !t.impl_protocols.is_empty() {
+                    self.type_impl_protocols.insert(
+                        t.name.clone(),
+                        t.impl_protocols.iter().cloned().collect(),
+                    );
                 }
             }
         }
@@ -3643,11 +3666,13 @@ impl CEmitter {
                 // pre-emit Nova_<T>_method_<m> via general synthesis if T
                 // lacks an explicit method. Replaces the prior hardcoded
                 // equals/fmt MVP. Thunk then simply forwards.
+                // Plan 91.9 (D186): coercion `let x P = u` is explicit
+                // user opt-in → gate_on_impl=false (no #impl required).
                 let has_explicit_method = self.all_methods
                     .contains(&(concrete_name.clone(), m.name.clone()));
                 if !has_explicit_method {
-                    let _ = self.try_synthesize_default_method(
-                        &concrete_name, concrete_c_ty, &m.name,
+                    let _ = self.try_synthesize_default_method_with_gate(
+                        &concrete_name, concrete_c_ty, &m.name, false,
                     );
                 }
                 let thunk_body = {
@@ -3839,6 +3864,20 @@ impl CEmitter {
         t_c_ty: &str,
         method_name: &str,
     ) -> Option<String> {
+        // Plan 91.9 (D186): default mode is opt-in gated — bare-call sites
+        // require T to opt-in via `#impl(P)`. Use `_with_gate(false)` from
+        // sites where the user has already explicitly opted in (vtable
+        // thunk for coercion, generic bound mono).
+        self.try_synthesize_default_method_with_gate(t_name, t_c_ty, method_name, true)
+    }
+
+    fn try_synthesize_default_method_with_gate(
+        &mut self,
+        t_name: &str,
+        t_c_ty: &str,
+        method_name: &str,
+        gate_on_impl: bool,
+    ) -> Option<String> {
         let key = (t_name.to_string(), method_name.to_string());
         let t_san = Self::sanitize_c_for_ident(t_name);
         let canonical_c_name = format!("Nova_{}_method_{}", t_san, method_name);
@@ -3859,9 +3898,26 @@ impl CEmitter {
 
         // Snapshot protocol method registry для stable iteration (mutable
         // borrow of `self.out` happens during emission).
+        // Plan 91.9 (D186) gate: when `gate_on_impl=true` (bare-call /
+        // interpolation), restrict candidates to protocols that T has
+        // explicitly opted into via `#impl(P)`. When `gate_on_impl=false`
+        // (vtable thunk for coercion, generic bound mono — user already
+        // opted in explicitly), allow any matching protocol.
+        let opted_in_protocols: Option<&HashSet<String>> = if gate_on_impl {
+            self.type_impl_protocols.get(t_name)
+        } else {
+            None
+        };
         let candidates: Vec<(String, EffectMethod)> = self
             .protocol_method_registry
             .iter()
+            .filter(|(proto_name, _)| {
+                if !gate_on_impl { return true; }
+                match opted_in_protocols {
+                    Some(set) => set.contains(proto_name.as_str()),
+                    None => false,
+                }
+            })
             .flat_map(|(proto_name, (_type_params, methods))| {
                 methods.iter()
                     .filter(|m| m.name == method_name && m.default_body.is_some())

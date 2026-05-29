@@ -11,6 +11,7 @@ type Greetable protocol {
     }
 }
 
+#impl(Greetable)
 type User { display_name str }
 
 fn User @name() -> str => @display_name
