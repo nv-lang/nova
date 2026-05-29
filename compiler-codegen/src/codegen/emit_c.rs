@@ -18750,9 +18750,27 @@ _cp++; \
                         "nova_bool" => Some("bool"),
                         "nova_f32" => Some("f32"),
                         "nova_f64" => Some("f64"),
+                        "nova_str"  => Some("str"),
+                        "nova_int"  => Some("int"),
                         _ => None,
                     };
                     if let Some(recv_type) = primitive_recv {
+                        // Prefer method_overloads c_name (covers external methods
+                        // с custom C names — e.g. str.@compare → nova_str_compare).
+                        let mo_key = (recv_type.to_string(), method.to_string());
+                        if let Some(sigs) = self.method_overloads.get(&mo_key) {
+                            if let Some(sig) = sigs.iter()
+                                .find(|s| s.is_instance && !s.is_delegated)
+                            {
+                                let c_name = sig.c_name.clone();
+                                let obj_c = self.emit_expr(obj)?;
+                                let mut arg_strs = vec![obj_c];
+                                for a in args {
+                                    arg_strs.push(self.emit_expr(a.expr())?);
+                                }
+                                return Ok(format!("{}({})", c_name, arg_strs.join(", ")));
+                            }
+                        }
                         if self.all_methods.contains(&(recv_type.to_string(), method.to_string())) {
                             let obj_c = self.emit_expr(obj)?;
                             let mut arg_strs = vec![obj_c];
