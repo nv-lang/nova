@@ -1,4 +1,4 @@
-// EXPECT_COMPILE_ERROR cannot use `blocking { ... }` inside `realtime`
+// EXPECT_COMPILE_ERROR D172-block-form-removed
 //
 // Plan 83.3 Ф.4.1 (D64): `blocking { }` — suspend-операция (эффект
 // `Blocking` в списке realtime-suspend-эффектов). `realtime { }`

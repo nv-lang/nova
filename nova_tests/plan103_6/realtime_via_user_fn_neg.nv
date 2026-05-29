@@ -1,5 +1,5 @@
-// Plan 103.6 — user-fn annotated #parks called from realtime{}.
-// The compiler must flag E_REALTIME_NESTED_SYNC_VIA_FN.
+// Plan 103.6 — user-fn annotated #parks called from #realtime fn.
+// Plan 113 migration: realtime { } → #realtime fn.
 //
 // EXPECT_COMPILE_ERROR E_REALTIME_NESTED_SYNC_VIA_FN
 
@@ -12,8 +12,10 @@ fn parks_fn() {
     m.unlock()
 }
 
-test "user fn with #parks banned in realtime block" {
-    realtime {
-        parks_fn()
-    }
+#realtime fn _rt_call_parks_fn() {
+    parks_fn()
+}
+
+test "user fn with #parks banned in #realtime fn" {
+    _rt_call_parks_fn()
 }

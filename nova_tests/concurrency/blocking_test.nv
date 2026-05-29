@@ -1,105 +1,96 @@
-// blocking_test.nv — Plan 83.3 Ф.4.1: `blocking { body }` primitive (D50).
+// blocking_test.nv — Plan 83.3 Ф.4.1 / Plan 113 migration.
+// Plan 113: #blocking fn attribute replaces blocking { } block-form.
 //
-// Spec: `blocking { }` помечает leaf-блокирующую работу (FFI/syscall).
-// Production-codegen (Ф.4.2) уводит тело в libuv threadpool, fiber
-// паркуется, M:N-worker свободен. Требует эффект `Blocking` в сигнатуре
-// enclosing-функции; запрещён внутри `realtime { }` (D64).
-//
-// Bootstrap (Ф.4.1): тело `blocking { }` исполняется inline в стеке
-// caller'а — семантически корректно, но worker НЕ освобождается. Этот
-// файл проверяет, что примитив парсится, type-check'ается и тело
-// выполняется с правильной capture/mutation-семантикой.
+// #blocking fn wraps the entire fn in libuv threadpool offload at call sites.
+// Arguments are passed as parameters; result is returned normally.
+// On main thread (no fiber): runs inline (no worker to free).
 
 module concurrency.blocking_test
 
-type Counter {
-    mut val int
+// ================================================================
+// SECTION 1: basic execution + return value
+// ================================================================
+
+#blocking fn _double_work(n int) -> int {
+    n * 2
 }
 
-fn make_counter(v int) -> Counter => { val: v }
-
-// `blocking { }` допустим только там, где `Blocking` — в сигнатуре.
-// Все функции-обёртки ниже объявляют эффект `Blocking`.
-
-// ================================================================
-// SECTION 1: базовое исполнение + возвращаемое значение
-// ================================================================
-
-fn blocking_double(n int) Blocking -> int {
-    let mut result = 0
-    blocking {
-        result = n * 2
-    }
-    result
+fn blocking_double(n int) -> int {
+    _double_work(n)
 }
 
 test "blocking: body executes, value computed" {
     assert(blocking_double(21) == 42)
 }
 
-fn blocking_empty() Blocking -> bool {
-    let mut touched = false
-    blocking { touched = true }
-    touched
+#blocking fn _empty_work() -> bool {
+    true
 }
 
-test "blocking: empty-ish body is a no-op-friendly block" {
+fn blocking_empty() -> bool {
+    _empty_work()
+}
+
+test "blocking: body executes trivially" {
     assert(blocking_empty())
 }
 
-fn blocking_trailing_discarded() Blocking -> int {
-    let mut log = 0
-    blocking {
-        log = 7
-        99   // trailing expr — значение отбрасывается (тип blocking = unit)
-    }
+#blocking fn _side_effect_work(n int) -> int {
+    let mut log = n
+    log = 7
     log
 }
 
-test "blocking: trailing expr value is discarded" {
-    assert(blocking_trailing_discarded() == 7)
+fn blocking_trailing_value() -> int {
+    _side_effect_work(0)
+}
+
+test "blocking: fn returns computed value" {
+    assert(blocking_trailing_value() == 7)
 }
 
 // ================================================================
-// SECTION 2: capture свободных переменных
+// SECTION 2: parameter passing (replaces capture semantics)
 // ================================================================
 
-fn blocking_capture_multi(a int, b int) Blocking -> int {
-    let mut c = 0
-    blocking { c = a * a + b * b }
-    c
+#blocking fn _sum_squares_work(a int, b int) -> int {
+    a * a + b * b
 }
 
-test "blocking: captures multiple vars" {
+fn blocking_capture_multi(a int, b int) -> int {
+    _sum_squares_work(a, b)
+}
+
+test "blocking: passes multiple params" {
     assert(blocking_capture_multi(3, 5) == 34)
 }
 
-fn blocking_mutate_record(start int) Blocking -> int {
-    let counter = make_counter(start)
-    blocking {
-        counter.val = counter.val + 5
-    }
-    counter.val
+#blocking fn _add_to_val_work(val int, delta int) -> int {
+    val + delta
 }
 
-test "blocking: mutates captured record field" {
-    assert(blocking_mutate_record(10) == 15)
+fn blocking_compute_record(start int) -> int {
+    _add_to_val_work(start, 5)
+}
+
+test "blocking: computes value from params" {
+    assert(blocking_compute_record(10) == 15)
 }
 
 // ================================================================
-// SECTION 3: blocking + control flow внутри тела
+// SECTION 3: blocking + control flow inside body
 // ================================================================
 
-fn blocking_with_if(n int) Blocking -> int {
-    let mut tag = 0
-    blocking {
-        if n > 0 {
-            tag = 1
-        } else {
-            tag = -1
-        }
+#blocking fn _sign_work(n int) -> int {
+    if n > 0 {
+        1
+    } else {
+        -1
     }
-    tag
+}
+
+fn blocking_with_if(n int) -> int {
+    _sign_work(n)
 }
 
 test "blocking: if inside body" {
@@ -107,16 +98,18 @@ test "blocking: if inside body" {
     assert(blocking_with_if(-2) == -1)
 }
 
-fn blocking_with_while(upto int) Blocking -> int {
+#blocking fn _triangle_sum_work(upto int) -> int {
     let mut acc = 0
-    blocking {
-        let mut i = 1
-        while i <= upto {
-            acc += i
-            i += 1
-        }
+    let mut i = 1
+    while i <= upto {
+        acc += i
+        i += 1
     }
     acc
+}
+
+fn blocking_with_while(upto int) -> int {
+    _triangle_sum_work(upto)
 }
 
 test "blocking: while inside body" {
@@ -124,54 +117,34 @@ test "blocking: while inside body" {
 }
 
 // ================================================================
-// SECTION 4: несколько blocking подряд + вложенность
+// SECTION 4: multiple sequential blocking calls
 // ================================================================
 
-fn blocking_sequential() Blocking -> int {
+fn blocking_sequential() -> int {
     let mut log = 0
-    blocking { log = log * 10 + 1 }
-    blocking { log = log * 10 + 2 }
-    blocking { log = log * 10 + 3 }
+    log = _add_to_val_work(log * 10, 1)
+    log = _add_to_val_work(log * 10, 2)
+    log = _add_to_val_work(log * 10, 3)
     log
 }
 
-test "blocking: multiple blocks preserve sequential order" {
+test "blocking: multiple calls preserve sequential order" {
     assert(blocking_sequential() == 123)
 }
 
-fn blocking_nested() Blocking -> int {
-    let mut order = 0
-    blocking {
-        order = order * 10 + 1
-        blocking {
-            order = order * 10 + 2
-        }
-        order = order * 10 + 3
-    }
-    order
-}
-
-test "blocking: nested blocking executes inline in order" {
-    assert(blocking_nested() == 123)
-}
-
 // ================================================================
-// SECTION 5: blocking + массивы через captured ref
+// SECTION 5: blocking with array computation
 // ================================================================
 
-fn blocking_sum_array() Blocking -> int {
-    let mut sum = 0
+#blocking fn _sum_three_work(x0 int, x1 int, x2 int) -> int {
+    x0 + x1 + x2
+}
+
+fn blocking_sum_array() -> int {
     let xs = [10, 20, 30]
-    blocking {
-        let mut i = 0
-        while i < 3 {
-            sum += xs[i]
-            i += 1
-        }
-    }
-    sum
+    _sum_three_work(xs[0], xs[1], xs[2])
 }
 
-test "blocking: sums array via captured ref" {
+test "blocking: sums array elements via params" {
     assert(blocking_sum_array() == 60)
 }

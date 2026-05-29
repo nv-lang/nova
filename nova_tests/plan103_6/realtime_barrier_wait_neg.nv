@@ -1,12 +1,15 @@
-// Plan 103.6 — Barrier.wait is #parks; forbidden in realtime{}.
+// Plan 103.6 — Barrier.wait is #parks; forbidden in #realtime fn.
+// Plan 113 migration: realtime { } → #realtime fn.
 //
 // EXPECT_COMPILE_ERROR E_REALTIME_SYNC_PARK
 
 module nova_tests.plan103_6.realtime_barrier_wait_neg
 
-test "Barrier.wait banned in realtime block" {
+#realtime fn _rt_check_barrier_wait(b mut Barrier) {
+    let _ = b.wait()
+}
+
+test "Barrier.wait banned in #realtime fn" {
     let b = Barrier.new(1)
-    realtime {
-        let _ = b.wait()
-    }
+    _rt_check_barrier_wait(b)
 }

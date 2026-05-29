@@ -1,14 +1,17 @@
-// Plan 103.6 — Mutex.try_lock is #realtime; allowed in realtime{}.
+// Plan 103.6 — Mutex.try_lock is #realtime; allowed in #realtime fn.
+// Plan 113 migration: realtime { } → #realtime fn.
 //
 // EXPECT_TIMEOUT_MS 60000
 
 module nova_tests.plan103_6.realtime_mutex_try_lock_ok
 
-test "Mutex.try_lock allowed in realtime block (unlocked)" {
+#realtime fn _rt_try_lock(m mut Mutex) -> bool {
+    m.try_lock()
+}
+
+test "Mutex.try_lock allowed in #realtime fn (unlocked)" {
     let m = Mutex.new()
-    let acquired = realtime {
-        m.try_lock()
-    }
+    let acquired = _rt_try_lock(m)
     assert(acquired == true)
     m.unlock()
 }
@@ -16,9 +19,7 @@ test "Mutex.try_lock allowed in realtime block (unlocked)" {
 test "Mutex.try_lock returns false when locked" {
     let m = Mutex.new()
     m.lock()
-    let acquired = realtime {
-        m.try_lock()
-    }
+    let acquired = _rt_try_lock(m)
     assert(acquired == false)
     m.unlock()
 }

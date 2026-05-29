@@ -1,26 +1,30 @@
-// Plan 103.6 — fence() is #realtime; allowed in realtime{}.
+// Plan 103.6 — fence() is #realtime; allowed in #realtime fn.
+// Plan 113 migration: realtime { } → #realtime fn.
 //
 // EXPECT_TIMEOUT_MS 60000
 
 module nova_tests.plan103_6.realtime_fence_ok
 
-test "fence(SeqCst) allowed in realtime block" {
+#realtime fn _rt_fence_seqcst(a mut AtomicI64) {
+    fence(SeqCst)
+    let _ = a.load()
+}
+
+#realtime fn _rt_fence_acq_rel(a mut AtomicI64) {
+    fence(Acquire)
+    fence(Release)
+    let _ = a.load()
+}
+
+test "fence(SeqCst) allowed in #realtime fn" {
     let a = AtomicI64.new(0)
     a.store(1)
-    // fence() is a statement, not a trailing expression (avoids void-cast issue)
-    realtime {
-        fence(SeqCst)
-        let _ = a.load()
-    }
+    _rt_fence_seqcst(a)
     assert(a.load() == 1)
 }
 
-test "fence(Acquire) and fence(Release) allowed in realtime block" {
+test "fence(Acquire) and fence(Release) allowed in #realtime fn" {
     let a = AtomicI64.new(0)
-    realtime {
-        fence(Acquire)
-        fence(Release)
-        let _ = a.load()
-    }
+    _rt_fence_acq_rel(a)
     assert(true)
 }

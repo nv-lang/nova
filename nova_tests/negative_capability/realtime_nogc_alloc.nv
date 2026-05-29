@@ -1,4 +1,4 @@
-// EXPECT_COMPILE_ERROR allocate inside `realtime nogc`
+// EXPECT_COMPILE_ERROR D172-block-form-removed
 //
 // Plan 16 Ф.4 (D64): внутри `realtime nogc` запрещены alloc-вызовы
 // (array.new, builder.new, hashmap.new, str.from, channel.new).

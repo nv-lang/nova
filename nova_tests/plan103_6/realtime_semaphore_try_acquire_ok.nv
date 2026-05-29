@@ -1,22 +1,23 @@
-// Plan 103.6 — Semaphore.try_acquire is #realtime; allowed in realtime{}.
+// Plan 103.6 — Semaphore.try_acquire is #realtime; allowed in #realtime fn.
+// Plan 113 migration: realtime { } → #realtime fn.
 //
 // EXPECT_TIMEOUT_MS 60000
 
 module nova_tests.plan103_6.realtime_semaphore_try_acquire_ok
 
-test "Semaphore.try_acquire allowed in realtime block (has permit)" {
+#realtime fn _rt_try_acquire(s mut Semaphore) -> bool {
+    s.try_acquire()
+}
+
+test "Semaphore.try_acquire allowed in #realtime fn (has permit)" {
     let s = Semaphore.new(1)
-    let acquired = realtime {
-        s.try_acquire()
-    }
+    let acquired = _rt_try_acquire(s)
     assert(acquired == true)
     s.release()
 }
 
 test "Semaphore.try_acquire returns false when no permits" {
     let s = Semaphore.new(0)
-    let acquired = realtime {
-        s.try_acquire()
-    }
+    let acquired = _rt_try_acquire(s)
     assert(acquired == false)
 }

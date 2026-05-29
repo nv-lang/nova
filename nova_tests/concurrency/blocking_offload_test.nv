@@ -1,33 +1,32 @@
-// blocking_offload_test.nv — Plan 83.3 Ф.4.2: реальный threadpool-offload.
+// blocking_offload_test.nv — Plan 83.3 Ф.4.2: real threadpool offload.
+// Plan 113 migration: blocking { } → #blocking fn.
 //
-// `blocking { }` в fiber-контексте уводит leaf-блокирующую работу в libuv
-// threadpool: fiber паркуется (D93 park/wake), worker свободен и крутит
-// соседние fiber'ы. На main-потоке нет worker'а пинить — тело выполняется
-// inline.
+// #blocking fn in fiber context offloads to libuv threadpool:
+// fiber parks (D93 park/wake), worker is free to run sibling fibers.
+// On main thread (no fiber), #blocking fn call runs inline.
 //
-// V1-контракт (D50): тело `blocking { }` — leaf (CPU/FFI без GC-аллокации
-// и без вызовов обратно в Nova-рантайм). Здесь тело — CPU busy-loop
-// (чистая арифметика), что V1-совместимо.
+// V1-contract (D50): body is a leaf (CPU/FFI without GC-allocation).
+// Here the body is a CPU busy-loop (pure arithmetic), V1-compatible.
 
 module concurrency.blocking_offload_test
 
-// leaf-работа: CPU busy-loop. Возвращает значение → проверяет
-// result-passing через ctx-struct после wake.
-fn busy_sum(upto int) Blocking -> int {
-    let r = blocking {
-        let mut acc = 0
-        let mut i = 0
-        while i < upto {
-            acc = acc + (i % 7)
-            i = i + 1
-        }
-        acc
+// leaf work: CPU busy-loop. Returns result → tests result-passing via ctx-struct after wake.
+#blocking fn _busy_sum_work(upto int) -> int {
+    let mut acc = 0
+    let mut i = 0
+    while i < upto {
+        acc = acc + (i % 7)
+        i = i + 1
     }
-    r
+    acc
+}
+
+fn busy_sum(upto int) -> int {
+    _busy_sum_work(upto)
 }
 
 // ================================================================
-// SECTION 1: offload в fiber-контексте — корректность result-passing
+// SECTION 1: offload in fiber context — correctness of result-passing
 // ================================================================
 
 test "blocking: offload in fiber returns correct result" {
@@ -37,12 +36,12 @@ test "blocking: offload in fiber returns correct result" {
             got = busy_sum(70)
         }
     }
-    // sum of (i%7) for i in 0..70 — ровно 10 циклов 0+1+..+6 = 10*21 = 210.
+    // sum of (i%7) for i in 0..70 — exactly 10 cycles 0+1+..+6 = 10*21 = 210.
     assert(got == 210)
 }
 
 // ================================================================
-// SECTION 2: worker НЕ запинен — соседний fiber прогрессирует
+// SECTION 2: worker freed — sibling fiber progresses during offload
 // ================================================================
 
 test "blocking: worker freed — sibling fiber progresses during offload" {
@@ -50,37 +49,33 @@ test "blocking: worker freed — sibling fiber progresses during offload" {
     let mut a_saw = -1
     supervised {
         spawn {
-            // Fiber A — уводит блокирующую работу в threadpool, паркуется.
+            // Fiber A — offloads to threadpool, parks.
             let _ = busy_sum(1000000)
-            // То, что A видит СРАЗУ после возврата из blocking-offload.
+            // What A sees immediately after returning from blocking offload.
             a_saw = marker
         }
         spawn {
-            // Fiber B — лёгкий: должен прогрессировать пока A запаркован
-            // на offload'е (worker свободен).
+            // Fiber B — light: should progress while A is parked on offload.
             marker = 1
         }
     }
-    // B выставил marker пока A был запаркован → A увидел 1.
-    // Если бы blocking пинил worker — B не получил бы управление до
-    // полного завершения A, и A увидел бы 0.
+    // B set marker while A was parked → A saw 1.
     assert(a_saw == 1)
     assert(marker == 1)
 }
 
 // ================================================================
-// SECTION 3: main-поток — inline-ветка (нет fiber'а, нет offload'а)
+// SECTION 3: main thread — inline branch (no fiber, no offload)
 // ================================================================
 
 test "blocking: on main thread runs inline" {
-    // Вне fiber-контекста (mco_running == false) blocking { } выполняется
-    // inline тем же _nova_blk — нет worker'а, который надо освобождать.
+    // Outside fiber context (mco_running == false) — runs inline.
     let r = busy_sum(700)
-    assert(r == 2100)   // 100 циклов * 21
+    assert(r == 2100)   // 100 cycles * 21
 }
 
 // ================================================================
-// SECTION 4: несколько fiber'ов с blocking-offload параллельно
+// SECTION 4: multiple fibers with blocking offload in parallel
 // ================================================================
 
 test "blocking: multiple fibers offload concurrently" {
@@ -92,7 +87,7 @@ test "blocking: multiple fibers offload concurrently" {
         spawn { s2 = busy_sum(140) }
         spawn { s3 = busy_sum(210) }
     }
-    assert(s1 == 210)   // 10 циклов
-    assert(s2 == 420)   // 20 циклов
-    assert(s3 == 630)   // 30 циклов
+    assert(s1 == 210)   // 10 cycles
+    assert(s2 == 420)   // 20 cycles
+    assert(s3 == 630)   // 30 cycles
 }

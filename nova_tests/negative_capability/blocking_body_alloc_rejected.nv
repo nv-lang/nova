@@ -1,4 +1,4 @@
-// EXPECT_COMPILE_ERROR allocate inside `blocking { ... }` body
+// EXPECT_COMPILE_ERROR D172-block-form-removed
 //
 // Plan 83.3 Ф.6 (D50 §4 V1 leaf-контракт): тело `blocking { }`
 // исполняется на libuv-threadpool-потоке, не зарегистрированном в

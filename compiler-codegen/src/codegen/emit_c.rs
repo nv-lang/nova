@@ -6895,6 +6895,125 @@ impl CEmitter {
         }
     }
 
+    /// Plan 113 (D172): emit a `#blocking fn` call-site offload.
+    ///
+    /// For `#blocking fn foo(a int, b str) -> int`, a call `foo(x, y)` becomes:
+    ///
+    /// ```c
+    /// typedef struct { nova_int a; nova_str b; nova_int _nova_result; } NovaBlkFnCtx_nova_blkfn_N;
+    /// static void _nova_blkfn_N(void* _blk_arg) {
+    ///     NovaBlkFnCtx_nova_blkfn_N* _c = ...;
+    ///     _c->_nova_result = nova_fn_foo(_c->a, _c->b);
+    /// }
+    /// // call site:
+    /// NovaBlkFnCtx_nova_blkfn_N _nova_blkfn_N_ctx;
+    /// _nova_blkfn_N_ctx.a = x;
+    /// _nova_blkfn_N_ctx.b = y;
+    /// if (mco_running()) {
+    ///     nova_blocking_offload(..., _nova_blkfn_N, &_nova_blkfn_N_ctx);
+    /// } else { _nova_blkfn_N(&_nova_blkfn_N_ctx); }
+    /// // result: _nova_blkfn_N_ctx._nova_result
+    /// ```
+    fn emit_blocking_fn_call(
+        &mut self,
+        fn_name: &str,
+        args: &[crate::ast::CallArg],
+    ) -> Result<String, String> {
+        // Unique id using blocking_counter (same pool as blocking{} ids).
+        let blk_id = format!("_nova_blkfn_{}", self.blocking_counter);
+        self.blocking_counter += 1;
+
+        // Look up FnDecl to get param types and return type.
+        let fn_decl = self.mono_fn_decls.get(fn_name)
+            .ok_or_else(|| format!("[E_BLOCKING_FN_DECL_MISSING] #blocking fn `{}` not in mono_fn_decls", fn_name))?
+            .clone();
+
+        // Collect param C types (parallel to args).
+        let param_c_types: Vec<String> = fn_decl.params.iter()
+            .map(|p| self.type_ref_to_c(&p.ty).unwrap_or_else(|_| "nova_int".into()))
+            .collect();
+
+        let result_ty = self.return_type_c(&fn_decl)?;
+        let has_result = result_ty != "nova_unit";
+
+        let ctx_ty  = format!("NovaBlkFnCtx{}", &blk_id);  // NovaBlkFnCtx_nova_blkfn_N
+        let ctx_var = format!("{}_ctx", blk_id);            // _nova_blkfn_N_ctx
+
+        // ─── ctx-struct typedef + work-fn forward decl → lambda_forward_decls ───
+        let _ = writeln!(self.lambda_forward_decls, "typedef struct {{");
+        for (i, ty) in param_c_types.iter().enumerate() {
+            let field = fn_decl.params.get(i)
+                .map(|p| p.name.as_str())
+                .unwrap_or("_arg");
+            let _ = writeln!(self.lambda_forward_decls, "    {} {};", ty, field);
+        }
+        if has_result {
+            let _ = writeln!(self.lambda_forward_decls, "    {} _nova_result;", result_ty);
+        }
+        let _ = writeln!(self.lambda_forward_decls, "}} {};", ctx_ty);
+        let _ = writeln!(self.lambda_forward_decls,
+            "static void {}(void* _blk_arg);", blk_id);
+
+        // ─── ctx instance on stack + fill args ───
+        self.line(&format!("{} {};", ctx_ty, ctx_var));
+        for (i, arg) in args.iter().enumerate() {
+            let field = fn_decl.params.get(i)
+                .map(|p| p.name.clone())
+                .unwrap_or_else(|| format!("_arg{}", i));
+            let arg_c = self.emit_expr(arg.expr())?;
+            self.line(&format!("{}.{} = {};", ctx_var, field, arg_c));
+        }
+
+        // ─── context-sensitive dispatch (same pattern as emit_blocking) ───
+        self.line("if (mco_running()) {");
+        self.indent += 1;
+        self.line(&format!(
+            "nova_blocking_offload(_nova_active_scope, _nova_active_slot, {}, &{});",
+            blk_id, ctx_var));
+        self.indent -= 1;
+        self.line("} else {");
+        self.indent += 1;
+        self.line(&format!("{}(&{});", blk_id, ctx_var));
+        self.indent -= 1;
+        self.line("}");
+
+        // ─── work-fn body → deferred_impls ───
+        let c_fn_name = self.free_fn_c_name(fn_name);
+        let saved_out    = std::mem::take(&mut self.out);
+        let saved_indent = self.indent;
+        self.indent = 0;
+
+        self.line(&format!("static void {}(void* _blk_arg) {{", blk_id));
+        self.indent += 1;
+        self.line(&format!("{}* _c = ({}*)_blk_arg;", ctx_ty, ctx_ty));
+        self.line("(void)_c;");
+
+        // Build call: nova_fn_foo(_c->a, _c->b, ...)
+        let arg_exprs: String = fn_decl.params.iter()
+            .map(|p| format!("_c->{}", p.name))
+            .collect::<Vec<_>>()
+            .join(", ");
+
+        if has_result {
+            self.line(&format!("_c->_nova_result = {}({});", c_fn_name, arg_exprs));
+        } else {
+            self.line(&format!("{}({});", c_fn_name, arg_exprs));
+        }
+        self.indent -= 1;
+        self.line("}");
+        self.line("");
+
+        let blk_code = std::mem::replace(&mut self.out, saved_out);
+        self.deferred_impls.push_str(&blk_code);
+        self.indent = saved_indent;
+
+        if has_result {
+            Ok(format!("{}._nova_result", ctx_var))
+        } else {
+            Ok("NOVA_UNIT".to_string())
+        }
+    }
+
     /// Pre-scan the module for HandlerLit and Spawn nodes; emit file-scope forward decls.
     fn emit_handler_forward_decls(&mut self, module: &Module) -> Result<(), String> {
         let mut h_ctr = 0usize; // handler_counter
@@ -7487,9 +7606,9 @@ impl CEmitter {
             return Ok(());
         }
         // Plan 103.6 / Plan 113: Non-generic free functions annotated with #parks/#wakes/#realtime
-        // are also stored in mono_fn_decls so emit_call can check sync_class at call sites
-        // (E_REALTIME_NESTED_SYNC_VIA_FN / E_BLOCKING_SYNC_PARK via user fn annotation).
-        if f.sync_class.is_some() && f.generics.is_empty() && f.receiver.is_none() && !f.is_external {
+        // or #blocking are stored in mono_fn_decls so emit_call can check sync_class / blocking_attr
+        // at call sites (E_REALTIME_NESTED_SYNC_VIA_FN / E_BLOCKING_SYNC_PARK / blocking offload).
+        if (f.sync_class.is_some() || f.blocking_attr) && f.generics.is_empty() && f.receiver.is_none() && !f.is_external {
             self.mono_fn_decls.entry(f.name.clone()).or_insert_with(|| f.clone());
         }
         // Plan 48: Generic methods with own type params → store for monomorphization.
@@ -12644,6 +12763,16 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
             }
             self.line("#endif");
         }
+        // Plan 113 (D172): set in_realtime / in_blocking for fn bodies so enforcement
+        // checks fire correctly inside #realtime fn / #blocking fn bodies.
+        let prev_in_realtime = self.in_realtime;
+        let prev_in_blocking = self.in_blocking;
+        if !matches!(f.realtime_attr, crate::ast::RealtimeAttr::None) {
+            self.in_realtime = true;
+        }
+        if f.blocking_attr {
+            self.in_blocking = true;
+        }
         // emit body — collect into _nova_result if ensures present
         let has_ensures = has_contracts && f.contracts.iter().any(|c| matches!(c.kind, ContractKind::Ensures));
         match &f.body {
@@ -12707,6 +12836,9 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
             // т.к. emit_fn skip'ает их раньше. Safety-fallback.
             FnBody::External => {}
         }
+        // Plan 113 (D172): restore in_realtime / in_blocking after fn body.
+        self.in_realtime = prev_in_realtime;
+        self.in_blocking = prev_in_blocking;
         self.expected_record_type = saved_expected;
         // Plan 72 P0: restore protocol_vars after fn body (clear param-registered entries).
         self.protocol_vars = saved_protocol_vars_fn;
@@ -16747,6 +16879,18 @@ _cp++; \
                         ));
                     }
                 }
+            }
+        }
+
+        // Plan 113 (D172): #blocking fn — wrap call in nova_blocking_offload.
+        // When a fn is annotated #blocking, any call to it is offloaded to
+        // libuv threadpool (fiber parks until work completes).
+        if let ExprKind::Ident(fn_name) = &func.kind {
+            let is_blocking_fn = self.mono_fn_decls.get(fn_name.as_str())
+                .map(|f| f.blocking_attr)
+                .unwrap_or(false);
+            if is_blocking_fn {
+                return self.emit_blocking_fn_call(fn_name, args);
             }
         }
 

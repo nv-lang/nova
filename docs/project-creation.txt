@@ -25022,3 +25022,51 @@ Commits:
 - 28743044837 — nova doc Implements rendering
 
 Merge commits в main: 2a824e86b9e, f5da5aaa1ad, 22c850a14d2, 63a962953dc.
+
+=== Plan 113 CLOSED 2026-05-30: #realtime / #blocking attribute-only simplification ===
+
+Plan 113 объединяет `#realtime_safe` attribute и block-формы `realtime { }` /
+`blocking { }` в один механизм — attribute на функции. Это unblock'ит Plan 111
+(scoped-resources), который требует чистого attribute-only API.
+
+Что сделано (Ф.0–Ф.5):
+- Ф.0 audit: ~372 `#realtime_safe` использований, ~50 `realtime{}/blocking{}` блоков
+- Ф.1 mass rename `#realtime_safe` → `#realtime` (callee guarantee — fn body
+  может вызывать только другие `#realtime` fns/primitives, парковка в body
+  забанена)
+- Ф.2 spec: D172 amend (callee-guarantee model) + D64 retract block-form
+- Ф.3 compiler:
+  * parser: `realtime { }` / `blocking { }` → `[D172-block-form-removed]` ошибка
+    при парсинге, с подсказкой migrate в `#realtime fn` / `#blocking fn`
+  * codegen: новый `emit_blocking_fn_call` — генерирует ctx-struct + work-fn +
+    call-site offload для `#blocking fn`; в `emit_fn` теперь устанавливаются
+    флаги `in_realtime` / `in_blocking` для body restriction enforcement
+  * parser fix: `#realtime nogc\nfn foo()` — `parse_sync_class_attr` съедал
+    `#realtime`, оставляя `nogc` ident болтаться. Добавил consume `nogc` в
+    `parse_item` + промоция в `RealtimeAttr::RealtimeNogc`
+- Ф.4 migration ~47 фикстур:
+  * Group 1 (10 файлов): EXPECT_COMPILE_ERROR обновлены на `D172-block-form-removed`
+  * Group 2 (19 файлов): negative tests `realtime { ... }` → `#realtime fn` helper
+  * Group 3 (10 файлов): positive `realtime { ... }` → `#realtime fn` helper
+  * Group 4 (3 файла): positive `blocking { ... }` → `#blocking fn` helper
+  * Group 5 (4 файла): concurrency/blocking_* — переписаны на parameter-passing
+    (вместо capture semantics, которые `blocking { }` поддерживал)
+  * Group 6 (1 файл): effects/forbid_realtime
+- Ф.5 regression:
+  * full nova test 1559 PASS / 74 FAIL / 56 SKIP (release clang)
+  * verification: stash моих compiler changes → plan103_3 baseline 7 fails;
+    с моими changes 6 fails. Регрессии нет — это pre-existing M:N flakiness
+    (Plan 83.11 known).
+  * Все pre-existing failures (74) — buffers/str_builder/plan100.3/plan107/
+    plan99/plan62/runtime/types/expected_runtime — НЕ затронуты Plan 113
+    (compiler changes только в realtime/blocking codegen path).
+
+Файлы (compiler):
+- compiler-codegen/src/ast/mod.rs
+- compiler-codegen/src/parser/mod.rs
+- compiler-codegen/src/codegen/emit_c.rs
+- compiler-codegen/src/codegen/sum_schema_registry.rs
+
+Acceptance A1–A8 — все ✅. Plan 113 разблокирует Plan 111.
+
+Подробности — docs/plans/113-realtime-blocking-attribute-only.md (статус таблица + A1–A8 evidence).

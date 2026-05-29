@@ -1,29 +1,31 @@
-// Plan 103.6 — OnceCell.set and OnceCell.take are #realtime; allowed in realtime{}.
-// set() is a leaf CAS operation; take() is atomic reset.
+// Plan 103.6 — OnceCell.set and OnceCell.take are #realtime; allowed in #realtime fn.
+// Plan 113 migration: realtime { } → #realtime fn.
 //
 // EXPECT_TIMEOUT_MS 60000
 
 module nova_tests.plan103_6.realtime_oncecell_set_first_call_ok
 
-test "OnceCell.set allowed in realtime block" {
+#realtime fn _rt_oncecell_set(c mut OnceCell[int], val int) -> bool {
+    c.set(val)
+}
+
+#realtime fn _rt_oncecell_take_str(c mut OnceCell[str]) -> bool {
+    let taken = c.take()
+    match taken { Some(s) => s == "hi", None => false }
+}
+
+test "OnceCell.set allowed in #realtime fn" {
     let c = OnceCell[int].new()
-    let mut ok = false
-    realtime {
-        ok = c.set(77)
-    }
+    let ok = _rt_oncecell_set(c, 77)
     assert(ok == true)
     let v = c.get()
     assert(match v { Some(x) => x == 77, None => false })
 }
 
-test "OnceCell.take allowed in realtime block" {
+test "OnceCell.take allowed in #realtime fn" {
     let c = OnceCell[str].new()
     let _ = c.set("hi")
-    let mut taken_ok = false
-    realtime {
-        let taken = c.take()
-        taken_ok = match taken { Some(s) => s == "hi", None => false }
-    }
+    let taken_ok = _rt_oncecell_take_str(c)
     assert(taken_ok)
     assert(c.is_initialized() == false)
 }

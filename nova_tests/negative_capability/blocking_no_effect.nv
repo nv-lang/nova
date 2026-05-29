@@ -1,4 +1,4 @@
-// EXPECT_COMPILE_ERROR requires the `Blocking` effect
+// EXPECT_COMPILE_ERROR D172-block-form-removed
 //
 // Plan 83.3 Ф.4.1 (D50): `blocking { }` уводит leaf-блокирующую работу
 // в libuv threadpool и suspend'ит fiber. Поэтому он разрешён только в
