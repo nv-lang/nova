@@ -24923,3 +24923,55 @@ Followups для D186 completeness:
 - nova doc integration showing `implements: P, Q, R`
 
 Commit: TBD
+
+=== Plan 91.9 (D186) followup 2026-05-29: verification pass added ===
+
+Дополняет gate-семантику auto-verification: при объявлении type T с
+`#impl(P1 + P2 + ...)` compiler проверяет, что T удовлетворяет каждому P
+**в точке декларации** (не при использовании).
+
+types/mod.rs::verify_impl_protocols (new method):
+- E_UNKNOWN_PROTOCOL: `#impl(NonExistent)` — name not a known type
+- E_IMPL_NOT_PROTOCOL: `#impl(SomeRecord)` — not a protocol kind
+- E_IMPL_MISSING_METHODS: T claims #impl(P) но missing P's required method(s).
+  Caller получает listing missing signatures + hint про default-body
+  dependencies.
+
+Per-method check:
+- T provides explicit `fn T @method(...)` → ok.
+- P method has default_body → check via `default_body_calls_satisfy_for`
+  (same AST walker used for bare-call satisfiability).
+- Both fail → method listed в error.
+
+Test plan91_8a_2/impl_verification_test (2 sub-tests PASS):
+- `#impl(Greetable)` verified — User имеет @name → Greetable.greet синтез
+- `#impl(Equatable + Comparable + Printable)` multi — Coin satisfies all
+
+Negative test plan91_8a_2/impl_missing_methods_err (EXPECT_COMPILE_ERROR
+E_IMPL_MISSING_METHODS): `#impl(Greetable) type Empty {}` без @name →
+error at type-decl site:
+  [E_IMPL_MISSING_METHODS] type `Empty` claims `#impl(Greetable)` but
+  is missing required method(s):
+    - greet() -> str
+  note: implement these directly, e.g. `fn Empty @<method>(...) -> ... => ...`,
+  or ensure dependencies for a default body...
+
+Plan 91.9 (D186) coverage итог:
+- `#impl(P + Q + ...)` syntax ✅
+- gate-семантика: bare-call / interpolation требуют #impl ✅
+- structural: bound / coercion / cast `as P` / param `[]P` остаются automatic ✅
+- verification: E_IMPL_MISSING_METHODS / E_UNKNOWN_PROTOCOL / E_IMPL_NOT_PROTOCOL ✅
+- Migration 6 existing tests с `#impl(...)` ✅
+- 20 plan91_8a_2 tests PASS (+ 2 new: verification + negative)
+
+Followup pending:
+- nova doc «implements: P, Q, R» integration
+- D186 spec amendment в `02-types.md`
+
+Regression:
+- plan91_8a_2: 20/0 PASS
+- syntax 58/1, plan62 31/5, plan65 19/0, plan73 12/0, plan77 7/0
+- plan108 6/0, plan91_7 5/0, plan91_8a 2/0, plan91_8c 6/0, plan91 2/0
+- basics 8/0, modules 31/0, protocols 25/1 (flaky baseline)
+
+Commit: TBD

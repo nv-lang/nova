@@ -3867,7 +3867,8 @@ impl CEmitter {
         // Plan 91.9 (D186): default mode is opt-in gated — bare-call sites
         // require T to opt-in via `#impl(P)`. Use `_with_gate(false)` from
         // sites where the user has already explicitly opted in (vtable
-        // thunk for coercion, generic bound mono).
+        // thunk for coercion, `as Protocol` cast, parameter coercion in
+        // `func(...args []Protocol)`).
         self.try_synthesize_default_method_with_gate(t_name, t_c_ty, method_name, true)
     }
 
