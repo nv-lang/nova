@@ -63,23 +63,11 @@ export external fn str @concat(other str) -> str
 // Оператор `+`: `s1 + s2 == s1.@plus(s2)` → @concat (D46).
 export fn str @plus(other str) -> str => @concat(other)
 
-// Равенство по контенту (memcmp). O(min). Также вызывается оператором ==.
-export external fn str @eq(other str) -> bool
+// Plan 91.8a.2 part 3 (D183 amendment): magic methods @eq/@lt/@le/@gt/@ge
+// удалены. str.@compare (D178) даёт все 6 operators через synthesis.
 
 // FNV-1a хеш по байтам строки. Используется в std.collections.HashMap.
 export external fn str @hash() -> u64
-
-// Lexicographic less-than (byte-wise). Также вызывается оператором `<`.
-export external fn str @lt(other str) -> bool
-
-// Lexicographic less-or-equal. Также вызывается оператором `<=`.
-export external fn str @le(other str) -> bool
-
-// Lexicographic greater-than. Также вызывается оператором `>`.
-export external fn str @gt(other str) -> bool
-
-// Lexicographic greater-or-equal. Также вызывается оператором `>=`.
-export external fn str @ge(other str) -> bool
 
 // UTF-8 bytes как []u8 (allocating copy). D178: renamed from @bytes().
 export external fn str @to_bytes() -> []u8

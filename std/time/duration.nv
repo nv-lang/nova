@@ -324,28 +324,17 @@ export fn Duration @max(other Duration) -> Duration =>
 
 
 // ──────────────────────────────────────────────────────────────────────────
-// Сравнение (D46) — `!=` выводится из `@eq`
+// Comparable (D183 amendment, Plan 91.8a.2 part 3): @compare даёт ==/!=/<>/etc
+// через synthesis. Magic methods @eq/@lt/@le/@gt/@ge удалены.
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Equality (`==`). Two durations равны iff их `nanos` совпадают.
+/// Comparable.compare — memcmp-style int return (D183).
+/// `==`, `!=`, `<`, `<=`, `>`, `>=` operators synthesized via @compare.
 #stable(since = "0.1")
-export fn Duration @eq(other Duration) => @nanos == other.nanos
-
-/// Less-than (`<`).
-#stable(since = "0.1")
-export fn Duration @lt(other Duration) => @nanos < other.nanos
-
-/// Less-than-or-equal (`<=`).
-#stable(since = "0.1")
-export fn Duration @le(other Duration) => @nanos <= other.nanos
-
-/// Greater-than (`>`).
-#stable(since = "0.1")
-export fn Duration @gt(other Duration) => @nanos > other.nanos
-
-/// Greater-than-or-equal (`>=`).
-#stable(since = "0.1")
-export fn Duration @ge(other Duration) => @nanos >= other.nanos
+export fn Duration @compare(other Duration) -> int =>
+    if @nanos < other.nanos { -1 }
+    else if @nanos > other.nanos { 1 }
+    else { 0 }
 
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -501,25 +490,14 @@ export fn Timestamp @minus(other Timestamp) -> Duration =>
     { nanos: @nanos - other.nanos }
 
 
-/// Equality (`==`). Точное сравнение по `nanos`.
+/// Comparable.compare — memcmp-style int return (D183 amendment, Plan 91.8a.2).
+/// `==`, `!=`, `<`, `<=`, `>`, `>=` operators synthesized via @compare.
+/// `self < other` означает `self` раньше чем `other`.
 #stable(since = "0.1")
-export fn Timestamp @eq(other Timestamp) => @nanos == other.nanos
-
-/// Less-than (`<`) — `self` раньше чем `other`.
-#stable(since = "0.1")
-export fn Timestamp @lt(other Timestamp) => @nanos < other.nanos
-
-/// Less-than-or-equal (`<=`).
-#stable(since = "0.1")
-export fn Timestamp @le(other Timestamp) => @nanos <= other.nanos
-
-/// Greater-than (`>`) — `self` позже чем `other`.
-#stable(since = "0.1")
-export fn Timestamp @gt(other Timestamp) => @nanos > other.nanos
-
-/// Greater-than-or-equal (`>=`).
-#stable(since = "0.1")
-export fn Timestamp @ge(other Timestamp) => @nanos >= other.nanos
+export fn Timestamp @compare(other Timestamp) -> int =>
+    if @nanos < other.nanos { -1 }
+    else if @nanos > other.nanos { 1 }
+    else { 0 }
 
 /// True если `self` уже в прошлом относительно текущего `Time.now()`.
 ///
@@ -944,23 +922,17 @@ export fn Monotonic @elapsed_since(other Monotonic) -> Duration =>
     { nanos: @nanos - other.nanos }
 
 
-// ── Сравнение (D46) — обычный paтterн как у Duration/Timestamp ──
+// ── Comparable (D183 amendment, Plan 91.8a.2 part 3) ──
+//
+// @compare single source — operators ==/!=/</<=/>/>= synthesized.
+// Magic methods @eq/@lt/@le/@gt/@ge удалены.
 
-/// Equality (`==`). Только внутри одного процесса.
+/// Comparable.compare для Monotonic. Только внутри одного процесса.
 #stable(since = "0.6")
-export fn Monotonic @eq(other Monotonic) => @nanos == other.nanos
-
-#stable(since = "0.6")
-export fn Monotonic @lt(other Monotonic) => @nanos < other.nanos
-
-#stable(since = "0.6")
-export fn Monotonic @le(other Monotonic) => @nanos <= other.nanos
-
-#stable(since = "0.6")
-export fn Monotonic @gt(other Monotonic) => @nanos > other.nanos
-
-#stable(since = "0.6")
-export fn Monotonic @ge(other Monotonic) => @nanos >= other.nanos
+export fn Monotonic @compare(other Monotonic) -> int =>
+    if @nanos < other.nanos { -1 }
+    else if @nanos > other.nanos { 1 }
+    else { 0 }
 
 
 // Note: NO `Monotonic.as_unix_secs()`, `Monotonic.from_unix_*()`,

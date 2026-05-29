@@ -209,7 +209,9 @@ export type Hashable protocol {
 /// Сравниваемые на равенство (D109).
 ///
 /// `Self == Self` через явный метод (не оператор-equality для arbitrary
-/// types). Примитивы — auto-derived, named types — explicit `@eq`.
+/// types). Plan 91.8a.2 part 3 (D183): magic methods @eq/@lt/@le/@gt/@ge
+/// удалены. Implementer пишет @equals (для Equatable) или @compare (для
+/// Comparable); operators ==/!=/</<=/>/>= synthesized автоматически.
 ///
 /// # Examples
 ///
