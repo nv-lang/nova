@@ -24360,3 +24360,54 @@ Followups (remain):
 - [M-91.8c-overload-resolution]: unified naming (@sort via generic)
 
 Commit: 658628356fe
+
+=== Plan 91.8a.2 followup 2026-05-29: Printable.fmt MVP synthesis ===
+
+Зеркало Equatable.equals MVP fallback'a в emit_c.rs для Printable.fmt:
+- Trigger: obj.fmt(sb) где method == "fmt" && args.len() == 1
+- Eligibility: obj's type T БЕЗ explicit @fmt
+- Resolution priority:
+  1. method_overloads[("str","from")] — static overload с param_c_types[0] == T_c_type
+  2. into_targets[T] == "str" — D73/D77 @into() -> str chain
+- Emit: Nova_StringBuilder_method_append(sb_c, <str_expr>)
+  где str_expr = либо <c_name>(obj_c) либо Nova_<T>_method_into(obj_c)
+
+Положен сразу после @equals fallback на line ~18813. Same pattern, same
+discipline (inline emission без synthesized function; cache + Plan 101
+mono extension — followup [M-91.8a.2-default-body-general]).
+
+Test plan91_8a_2/printable_fmt_synthesis_test (2 sub-tests PASS):
+- Money satisfies Printable bound через `fn Money @into() -> str` (D73)
+- Multi-step composition с explicit sb.append вокруг synthesized fmt
+
+Verified generated C:
+  static nova_unit ...show____Nova_Money_p(Nova_Money* x, Nova_StringBuilder* sb) {
+      Nova_StringBuilder_method_append(sb, Nova_Money_method_into(x));
+      return NOVA_UNIT;
+  }
+
+Альтернативный path через `fn str.from(T) -> str` overload реализован
+в коде но не покрыт тестом из-за pre-existing issue: declaring
+`fn str.from(UserType) -> str` ломает type-check Printable.fmt default
+body на protocol decl level (`str.from(@)` где @ — Self abstract).
+Та же причина у baseline-fail nova_tests/syntax/methods_on_primitives.nv
+(declares `fn str.from(b bool) -> str`). Followup [M-fmt-synthesis-str-from-overload].
+
+plan91_8a_2: 11/0 PASS (was 10)
+Regression baseline:
+- plan91_8a 2/0, plan91 2/0, plan91_8c 6/0
+- plan62 31/5, plan65 19/0, plan73 12/0, plan77 7/0, plan108 6/0
+- basics 8/0, modules 31/0
+- protocols 25/1 (flaky conversion/from_multi)
+- syntax 57/2 (pre-existing: for_in_range_iter + methods_on_primitives)
+
+Completes symmetric MVP synthesis story для shipping:
+- Equatable.equals via @compare (closed earlier)
+- Printable.fmt via @into→str / str.from(T) overload (this commit)
+
+Followup [M-91.8a.2-default-body-general]: general default body synthesis
+(walk protocol_specs AST, substitute Self/@, emit synthesized function
++ cache + Plan 101 mono extension). MVP inline-emission достаточен для
+shipping 0.1; general synthesis в Plan 0.2.
+
+Commit: TBD
