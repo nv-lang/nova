@@ -38,15 +38,53 @@ export fn f64.new() -> Self => 0.0
 // `bool.new() => false` — логический нейтрал.
 export fn bool.new() -> Self => false
 
-// ─── Char comparison (Plan 91.8a.2 part 3, D183 amendment) ───
+// ─── Primitive @compare (Plan 91.8a.2 part 3, D183 amendment) ───
 //
-// char ordering — codepoint-based. Native `<`/`>`/`<=`/`>=` operators
-// уже работают для char (primitive). @compare добавлен для satisfaction
-// [T Comparable] bound + universal synthesis chain.
+// Primitives имеют native operators (< > == etc.). @compare добавлен для
+// [T Comparable] bound satisfaction + synthesis chain.
 
 /// Comparable.compare для char (codepoint-based ordering).
-/// Signum form избегает overflow для extreme codepoints (Unicode max U+10FFFF).
 export fn char @compare(other char) -> int =>
     if @ < other { -1 }
     else if @ > other { 1 }
     else { 0 }
+
+/// Comparable.compare для int (signum, overflow-safe).
+export fn int @compare(other int) -> int =>
+    if @ < other { -1 }
+    else if @ > other { 1 }
+    else { 0 }
+
+// Unsigned integers.
+export fn u8 @compare(other Self) -> int =>
+    if @ < other { -1 } else if @ > other { 1 } else { 0 }
+export fn u16 @compare(other Self) -> int =>
+    if @ < other { -1 } else if @ > other { 1 } else { 0 }
+export fn u32 @compare(other Self) -> int =>
+    if @ < other { -1 } else if @ > other { 1 } else { 0 }
+export fn u64 @compare(other Self) -> int =>
+    if @ < other { -1 } else if @ > other { 1 } else { 0 }
+export fn uint @compare(other Self) -> int =>
+    if @ < other { -1 } else if @ > other { 1 } else { 0 }
+
+// Signed integers.
+export fn i8 @compare(other Self) -> int =>
+    if @ < other { -1 } else if @ > other { 1 } else { 0 }
+export fn i16 @compare(other Self) -> int =>
+    if @ < other { -1 } else if @ > other { 1 } else { 0 }
+export fn i32 @compare(other Self) -> int =>
+    if @ < other { -1 } else if @ > other { 1 } else { 0 }
+export fn i64 @compare(other Self) -> int =>
+    if @ < other { -1 } else if @ > other { 1 } else { 0 }
+
+// Floating point.
+export fn f32 @compare(other Self) -> int =>
+    if @ < other { -1 } else if @ > other { 1 } else { 0 }
+export fn f64 @compare(other Self) -> int =>
+    if @ < other { -1 } else if @ > other { 1 } else { 0 }
+
+// bool ordering — false < true (canonical Boolean order).
+export fn bool @compare(other Self) -> int =>
+    if @ == other { 0 }
+    else if !@ { -1 }
+    else { 1 }
