@@ -241,12 +241,15 @@ export type Hashable protocol {
 /// fn Money @compare(other Money) -> int => @cents - other.cents
 /// // @equals synthesized via Equatable.equals default body
 /// ```
+/// Plan 91.8a.2 part 3 implementation note: default body использует direct
+/// form (=> @compare(other) == 0) для MVP synthesis. Canonical coercion
+/// form (let cmp Comparable = @; cmp.compare(other) == 0) — equivalent
+/// semantically (after devirtualization); реализована как direct для
+/// простоты codegen synthesis. Devirtualization-based coercion form
+/// поддержка — followup.
 #stable(since = "0.1")
 export type Equatable protocol {
-    equals(other Self) -> bool {
-        let cmp Comparable = @
-        cmp.compare(other) == 0
-    }
+    equals(other Self) -> bool => @compare(other) == 0
 }
 
 /// Полный порядок (D109, D183 amendment Plan 91.8a.2). Orthogonal с
