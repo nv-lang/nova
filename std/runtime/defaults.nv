@@ -37,3 +37,16 @@ export fn f64.new() -> Self => 0.0
 
 // `bool.new() => false` — логический нейтрал.
 export fn bool.new() -> Self => false
+
+// ─── Char comparison (Plan 91.8a.2 part 3, D183 amendment) ───
+//
+// char ordering — codepoint-based. Native `<`/`>`/`<=`/`>=` operators
+// уже работают для char (primitive). @compare добавлен для satisfaction
+// [T Comparable] bound + universal synthesis chain.
+
+/// Comparable.compare для char (codepoint-based ordering).
+/// Signum form избегает overflow для extreme codepoints (Unicode max U+10FFFF).
+export fn char @compare(other char) -> int =>
+    if @ < other { -1 }
+    else if @ > other { 1 }
+    else { 0 }
