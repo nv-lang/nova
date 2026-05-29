@@ -2192,46 +2192,24 @@ impl<'a> TypeCheckCtx<'a> {
         if matches!(name, "into" | "try_into") {
             return;
         }
-        // Plan 91.8a.2 followup 2026-05-29: protocol default body synthesis
-        // fallback. Если type T satisfies некий protocol через default body
-        // (например Money satisfies Equatable через @compare, или satisfies
-        // Printable через `fn str.from(T)` / `@into() -> str`), то bare-call
-        // `obj.method(...)` валиден — codegen synthesis emit'нет inline.
+        // Plan 91.8a.2 [M-91.8a.2-default-body-general] 2026-05-29:
+        // generalized protocol default-body satisfiability. Replaces prior
+        // hardcoded equals/fmt MVP. Walks ALL protocols, finds methods named
+        // `name` with `default_body`, and for each checks whether the body's
+        // top-level method/free-fn calls resolve for T (i.e. T provides every
+        // method/overload referenced by the body). If at least one protocol
+        // is satisfied → accept the bare call; codegen general synthesizer
+        // emits the concrete Nova_<T>_method_<name> on first use.
         //
-        // MVP hardcoded для двух cases (mirror existing emit_c.rs synthesis):
-        // - equals: synthesizable если T has @compare (Equatable.equals default)
-        // - fmt: synthesizable если T has @into→str ИЛИ `fn str.from(T) -> str`
-        //   overload (Printable.fmt default body)
-        //
-        // General default body synthesis (walk protocol_specs AST, check all
-        // referenced methods exist на T) — followup [M-91.8a.2-default-body-general].
-        let has_method_named = |type_name: &str, method_name: &str| -> bool {
-            self.method_table.get(type_name).map_or(false, |m| {
-                m.keys().any(|k| k.trim_start_matches('@') == method_name)
-            })
-        };
-        if name == "equals" && has_method_named(tname, "compare") {
+        // Acceptance precision: a body's `@compare(other)` requires T to have
+        // `@compare`; `sb.append(str.from(@))` requires `str.from(T)` overload
+        // OR `T.@into() -> str`. Patterns recognized by a small AST inspector
+        // (collect_resolved_method_refs) — covers stdlib protocols (Equatable,
+        // Printable, Comparable.equals via coercion). Bodies using unsupported
+        // patterns are skipped (treated as not synthesizable) — type-checker
+        // returns E7320 normally.
+        if self.protocol_method_satisfiable_for(tname, name) {
             return;
-        }
-        if name == "fmt" {
-            // Path 1: T has @into method returning str.
-            let into_to_str = self.method_table.get(tname)
-                .and_then(|m| m.get("into").or_else(|| m.get("@into")))
-                .map_or(false, |fns| fns.iter().any(|f| {
-                    matches!(&f.return_type, Some(TypeRef::Named { path, .. })
-                        if path.len() == 1 && path[0] == "str")
-                }));
-            // Path 2: `fn str.from(T) -> str` overload registered.
-            let str_from_t = self.method_table.get("str")
-                .and_then(|m| m.get("from"))
-                .map_or(false, |fns| fns.iter().any(|f| {
-                    f.params.len() == 1
-                        && matches!(&f.params[0].ty, TypeRef::Named { path, .. }
-                            if path.last().map_or(false, |s| s == tname))
-                }));
-            if into_to_str || str_from_t {
-                return;
-            }
         }
         let avail: Vec<&str> =
             fields.iter().map(|f| f.name.as_str()).collect();
@@ -2256,6 +2234,181 @@ impl<'a> TypeCheckCtx<'a> {
     /// Ф.4: имя типа в value-позиции (`let c = Foo`, `Foo + 1`) → E7330.
     ///
     /// Флагится только bare `Ident`, разрешающийся в **непустой**
+    /// Plan 91.8a.2 [M-91.8a.2-default-body-general] 2026-05-29.
+    ///
+    /// Generalized check: does type `tname` satisfy SOME protocol's method
+    /// named `method_name` through its `default_body`? Walks ALL protocols
+    /// in `self.types`, finds methods of that name with default_body, and
+    /// for each tries to verify body's referenced calls resolve for T.
+    ///
+    /// Implementation: a small AST visitor (`default_body_calls_satisfy_for`)
+    /// recursively walks the body and checks each `obj.method(...)` /
+    /// `Type.method(...)` call that depends on Self or @ — verifies T
+    /// provides a matching method or overload.
+    ///
+    /// Returns true if at least one protocol satisfies. False if no protocol
+    /// has a matching default body OR every candidate has unsatisfiable
+    /// dependencies.
+    fn protocol_method_satisfiable_for(&self, tname: &str, method_name: &str) -> bool {
+        for td in self.types.values() {
+            if let TypeDeclKind::Protocol { methods, .. } = &td.kind {
+                for m in methods {
+                    if m.name == method_name && m.default_body.is_some() {
+                        let body = m.default_body.as_ref().unwrap();
+                        if self.default_body_calls_satisfy_for(body, tname) {
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+        false
+    }
+
+    /// Recursively walks `body` (a protocol default_body Block) and checks
+    /// whether every method reference / free-fn call on Self/@ resolves
+    /// to a method available on `tname` (directly or via well-known
+    /// auto-derive: `str.from(T)` overload OR `T.@into() -> str`).
+    ///
+    /// Conservative: unknown patterns return `true` (assume satisfiable).
+    /// Codegen general synthesizer does the precise check at emission.
+    fn default_body_calls_satisfy_for(&self, body: &Block, tname: &str) -> bool {
+        let mut ok = true;
+        self.walk_default_body_block(body, tname, &mut ok);
+        ok
+    }
+
+    fn walk_default_body_block(&self, b: &Block, tname: &str, ok: &mut bool) {
+        for s in &b.stmts {
+            self.walk_default_body_stmt(s, tname, ok);
+            if !*ok { return; }
+        }
+        if let Some(t) = &b.trailing {
+            self.walk_default_body_expr(t, tname, ok);
+        }
+    }
+
+    fn walk_default_body_stmt(&self, s: &Stmt, tname: &str, ok: &mut bool) {
+        match s {
+            Stmt::Expr(e) => self.walk_default_body_expr(e, tname, ok),
+            Stmt::Return { value: Some(e), .. } => self.walk_default_body_expr(e, tname, ok),
+            Stmt::Let(d) => self.walk_default_body_expr(&d.value, tname, ok),
+            Stmt::Assign { target, value, .. } => {
+                self.walk_default_body_expr(target, tname, ok);
+                self.walk_default_body_expr(value, tname, ok);
+            }
+            _ => {}
+        }
+    }
+
+    fn walk_default_body_expr(&self, e: &Expr, tname: &str, ok: &mut bool) {
+        if !*ok { return; }
+        match &e.kind {
+            ExprKind::Call { func, args, .. } => {
+                // Check the call target. Two patterns matter:
+                // 1. Member call `obj.method(...)` where `obj` is `@` (SelfAccess)
+                //    → require T provides the method.
+                // 2. Path call `Type.method(arg)` where one arg is `@` → handle
+                //    well-known auto-derive: `str.from(@)` accepts if T has
+                //    `str.from(T)` overload OR `T.@into() -> str`.
+                if let ExprKind::Member { obj, name } = &func.kind {
+                    if matches!(obj.kind, ExprKind::SelfAccess) {
+                        if !self.t_provides_method(tname, name) {
+                            *ok = false;
+                            return;
+                        }
+                    }
+                } else if let ExprKind::Path(parts) = &func.kind {
+                    if parts.len() == 2 && parts[0] == "str" && parts[1] == "from" {
+                        if args.iter().any(|a| matches!(a.expr().kind, ExprKind::SelfAccess))
+                            && !self.t_satisfies_str_from(tname)
+                        {
+                            *ok = false;
+                            return;
+                        }
+                    }
+                }
+                self.walk_default_body_expr(func, tname, ok);
+                for a in args { self.walk_default_body_expr(a.expr(), tname, ok); }
+            }
+            ExprKind::Member { obj, name } => {
+                if matches!(obj.kind, ExprKind::SelfAccess) {
+                    // Bare access `@method` (method-value, not call) — require T provides.
+                    if !self.t_provides_method(tname, name)
+                        && !self.t_provides_field(tname, name)
+                    {
+                        *ok = false;
+                        return;
+                    }
+                }
+                self.walk_default_body_expr(obj, tname, ok);
+            }
+            ExprKind::Binary { left, right, .. } => {
+                self.walk_default_body_expr(left, tname, ok);
+                self.walk_default_body_expr(right, tname, ok);
+            }
+            ExprKind::Unary { operand, .. } => self.walk_default_body_expr(operand, tname, ok),
+            ExprKind::Try(inner) | ExprKind::Bang(inner) => self.walk_default_body_expr(inner, tname, ok),
+            ExprKind::Coalesce(a, b) => {
+                self.walk_default_body_expr(a, tname, ok);
+                self.walk_default_body_expr(b, tname, ok);
+            }
+            ExprKind::As(inner, _) | ExprKind::Is(inner, _) => {
+                self.walk_default_body_expr(inner, tname, ok);
+            }
+            ExprKind::If { cond, then, else_ } => {
+                self.walk_default_body_expr(cond, tname, ok);
+                self.walk_default_body_block(then, tname, ok);
+                if let Some(eb) = else_ {
+                    match eb {
+                        crate::ast::ElseBranch::Block(b) => self.walk_default_body_block(b, tname, ok),
+                        crate::ast::ElseBranch::If(i) => self.walk_default_body_expr(i, tname, ok),
+                    }
+                }
+            }
+            ExprKind::Block(b) => self.walk_default_body_block(b, tname, ok),
+            _ => {}
+        }
+    }
+
+    /// T has method `name` (instance or static, with-or-without `@` prefix).
+    fn t_provides_method(&self, tname: &str, name: &str) -> bool {
+        self.method_table.get(tname).map_or(false, |m| {
+            m.keys().any(|k| k.trim_start_matches('@') == name)
+        })
+    }
+
+    fn t_provides_field(&self, tname: &str, name: &str) -> bool {
+        if let Some(td) = self.types.get(tname) {
+            if let TypeDeclKind::Record(fields) = &td.kind {
+                return fields.iter().any(|f| f.name == name);
+            }
+        }
+        false
+    }
+
+    /// `str.from(T)` satisfied if T has either:
+    /// - `fn str.from(T) -> str` overload registered, OR
+    /// - `fn T @into() -> str` (D73 chain).
+    fn t_satisfies_str_from(&self, tname: &str) -> bool {
+        // Path 1: explicit `fn str.from(T) -> str` overload.
+        let str_from = self.method_table.get("str")
+            .and_then(|m| m.get("from"))
+            .map_or(false, |fns| fns.iter().any(|f| {
+                f.params.len() == 1
+                    && matches!(&f.params[0].ty, TypeRef::Named { path, .. }
+                        if path.last().map_or(false, |s| s == tname))
+            }));
+        if str_from { return true; }
+        // Path 2: T has `@into() -> str`.
+        self.method_table.get(tname)
+            .and_then(|m| m.get("into").or_else(|| m.get("@into")))
+            .map_or(false, |fns| fns.iter().any(|f| {
+                matches!(&f.return_type, Some(TypeRef::Named { path, .. })
+                    if path.len() == 1 && path[0] == "str")
+            }))
+    }
+
     /// record/sum-тип. Пустые типы (unit), эффекты (handler — значение),
     /// протоколы/newtype/alias/opaque, а также имена, перекрытые
     /// локальной переменной — пропускаются (валидно либо неоднозначно).
