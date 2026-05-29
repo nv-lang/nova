@@ -1,17 +1,15 @@
-// Plan 103.6 — Mutex.lock is #parks; forbidden in blocking{}.
+// Plan 103.6 — Mutex.lock is #parks; forbidden in #blocking fn.
+// Plan 113 migration: blocking { } → #blocking fn.
 //
 // EXPECT_COMPILE_ERROR E_BLOCKING_SYNC_PARK
 
 module nova_tests.plan103_6.blocking_mutex_lock_neg
 
-fn do_blocking_lock() Blocking {
-    let m = Mutex.new()
-    blocking {
-        m.lock()
-        m.unlock()
-    }
+#blocking fn _blk_check_mutex_lock(m mut Mutex) {
+    m.lock()
+    m.unlock()
 }
 
-test "Mutex.lock banned in blocking block" {
-    // compile-only test; do_blocking_lock() itself triggers E_BLOCKING_SYNC_PARK
+test "Mutex.lock banned in #blocking fn" {
+    // compile-only test; triggers E_BLOCKING_SYNC_PARK in fn body
 }

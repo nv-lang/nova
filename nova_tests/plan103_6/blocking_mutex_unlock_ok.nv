@@ -1,24 +1,19 @@
-// Plan 103.6 — Mutex.unlock is #wakes; allowed in blocking{} (leaf wake).
-// Note: Mutex.lock is #parks and is NOT allowed in blocking{}.
-// This test only unlocks (not locks) inside blocking{}.
+// Plan 103.6 — Mutex.unlock is #wakes; allowed in #blocking fn (leaf wake).
+// Plan 113 migration: blocking { } → #blocking fn.
 //
 // EXPECT_TIMEOUT_MS 60000
 // ENV NOVA_AUTOARM=0
 
 module nova_tests.plan103_6.blocking_mutex_unlock_ok
 
-fn do_unlock_in_blocking(m mut Mutex) Blocking {
-    blocking {
-        // unlock is #wakes — leaf operation, allowed in blocking
-        m.unlock()
-    }
+#blocking fn _blk_mutex_unlock(m mut Mutex) {
+    m.unlock()
 }
 
-test "Mutex.unlock (wake-only) allowed in blocking block" {
+test "Mutex.unlock (wake-only) allowed in #blocking fn" {
     let m = Mutex.new()
-    m.lock()  // lock outside blocking
-    do_unlock_in_blocking(m)
-    // mutex should be unlocked now
+    m.lock()
+    _blk_mutex_unlock(m)
     let acquired = m.try_lock()
     assert(acquired == true)
     m.unlock()

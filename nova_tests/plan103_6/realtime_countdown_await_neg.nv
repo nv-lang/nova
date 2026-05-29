@@ -1,12 +1,15 @@
-// Plan 103.6 — CountDownLatch.await is #parks; forbidden in realtime{}.
+// Plan 103.6 — CountDownLatch.await is #parks; forbidden in #realtime fn.
+// Plan 113 migration: realtime { } → #realtime fn.
 //
 // EXPECT_COMPILE_ERROR E_REALTIME_SYNC_PARK
 
 module nova_tests.plan103_6.realtime_countdown_await_neg
 
-test "CountDownLatch.await banned in realtime block" {
+#realtime fn _rt_check_cdl_await(latch mut CountDownLatch) {
+    latch.await()
+}
+
+test "CountDownLatch.await banned in #realtime fn" {
     let latch = CountDownLatch.new(1)
-    realtime {
-        latch.await()
-    }
+    _rt_check_cdl_await(latch)
 }

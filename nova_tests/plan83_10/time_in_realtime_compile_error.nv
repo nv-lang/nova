@@ -1,4 +1,4 @@
-// EXPECT_COMPILE_ERROR Time
+// EXPECT_COMPILE_ERROR D172-block-form-removed
 //
 // Plan 83.10 (2026-05-25): D64 realtime context bans Time effect
 // (suspend-eligible). Validates capability check для concurrency-

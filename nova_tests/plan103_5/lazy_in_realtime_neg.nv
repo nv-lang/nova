@@ -1,13 +1,15 @@
-// Plan 103.5 — Lazy.force is banned inside realtime{}.
+// Plan 103.5 — Lazy.force is banned inside #realtime fn.
+// Plan 113 migration: realtime { } → #realtime fn.
 //
-// Plan 103.6: error code changed from E_EFFECT_REALTIME_VIOLATION to E_REALTIME_SYNC_PARK.
 // EXPECT_COMPILE_ERROR E_REALTIME_SYNC_PARK
 
 module nova_tests.plan103_5.lazy_in_realtime_neg
 
-test "Lazy.force banned in realtime block" {
+#realtime fn _rt_check_lazy_force(lazy mut Lazy[int]) -> int {
+    lazy.force()
+}
+
+test "Lazy.force banned in #realtime fn" {
     let lazy = Lazy[int].new() { 42 }
-    realtime {
-        let _ = lazy.force()
-    }
+    let _ = _rt_check_lazy_force(lazy)
 }

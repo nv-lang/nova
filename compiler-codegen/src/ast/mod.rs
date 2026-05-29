@@ -357,6 +357,9 @@ pub struct FnDecl {
     /// Plan 16 (D64 sugar §3697) / Plan 113: `#realtime` / `#realtime nogc` атрибут перед `fn`.
     /// Fn-level callee guarantee — body can only call other `#realtime` fns/primitives.
     pub realtime_attr: RealtimeAttr,
+    /// Plan 113 (D172): `#blocking` attribute перед `fn`.
+    /// Runtime threadpool offload — callers wrap fn in uv_queue_work, fiber parks.
+    pub blocking_attr: bool,
     /// Plan 33.1 (D24): контракты после сигнатуры, до тела.
     /// Пустой вектор у функций без контрактов (backward-compat).
     pub contracts: Vec<Contract>,

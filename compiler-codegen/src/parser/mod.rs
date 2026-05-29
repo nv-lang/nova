@@ -1095,6 +1095,20 @@ impl Parser {
             }
         }
 
+        // Plan 113: parse_sync_class_attr consumes `#realtime` but not the optional
+        // `nogc` modifier (which is an Ident, not a keyword). When the two-line form
+        // `#realtime nogc\nfn foo()` is used, `nogc` is left in the stream after the
+        // sync-class loop. Consume it here so it doesn't confuse subsequent parsers.
+        let pre_sync_nogc = if matches!(pre_sync_class, Some(crate::ast::SyncClass::Realtime)) {
+            if let TokenKind::Ident(ref n) = self.peek().kind {
+                if n == "nogc" {
+                    self.bump();
+                    self.skip_newlines();
+                    true
+                } else { false }
+            } else { false }
+        } else { false };
+
         // Plan 52 Ф.1: `#from_fields` — маркер на декларации типа.
         // Помечает str-keyed map-тип для D55 map-coercion (`{field: v}`).
         // Парсится ПЕРЕД `export` (консистентно с `#cfg`) и только перед
@@ -1121,11 +1135,17 @@ impl Parser {
             }
         }
         // Plan 16 (D64 §3697) + Plan 33.1 (D-attr-syntax):
-        // `#realtime` / `#realtime nogc` префикс перед `fn`. Эквивалент
-        // оборачивания body в `realtime { ... }`. Атрибуты — через `#`
+        // `#realtime` / `#realtime nogc` префикс перед `fn`. Атрибуты — через `#`
         // (а не `@`, чтобы не конфликтовать с receiver-prefix `@field`).
         // Парсим в RealtimeAttr enum, передаём в parse_fn.
+        // Plan 113 (D172): `#blocking` — fn-level threadpool offload attr.
+        // Both `#realtime` and `#blocking` may appear before `fn` in either order.
         let realtime_attr = self.parse_realtime_attr()?;
+        let blocking_attr = self.parse_blocking_attr();
+        // Re-try realtime if blocking came first (allow either order)
+        let realtime_attr = if matches!(realtime_attr, RealtimeAttr::None) {
+            self.parse_realtime_attr()?
+        } else { realtime_attr };
         if !matches!(realtime_attr, RealtimeAttr::None)
             && !matches!(self.peek().kind, TokenKind::KwFn)
             && !matches!(self.peek().kind, TokenKind::Hash)
@@ -1133,6 +1153,16 @@ impl Parser {
             let span = self.peek().span;
             return Err(Diagnostic::new(
                 "`#realtime` is only valid before `fn`",
+                span,
+            ));
+        }
+        if blocking_attr
+            && !matches!(self.peek().kind, TokenKind::KwFn)
+            && !matches!(self.peek().kind, TokenKind::Hash)
+        {
+            let span = self.peek().span;
+            return Err(Diagnostic::new(
+                "`#blocking` is only valid before `fn`",
                 span,
             ));
         }
@@ -1150,10 +1180,11 @@ impl Parser {
         }
         // Plan 113: if #realtime was consumed by parse_sync_class_attr before export/external,
         // promote to realtime_attr so fn body gets the realtime restriction enforced.
+        // pre_sync_nogc is true when `nogc` modifier was also consumed (see above).
         let realtime_attr = if matches!(pre_sync_class, Some(crate::ast::SyncClass::Realtime))
             && matches!(realtime_attr, RealtimeAttr::None)
         {
-            RealtimeAttr::Realtime
+            if pre_sync_nogc { RealtimeAttr::RealtimeNogc } else { RealtimeAttr::Realtime }
         } else {
             realtime_attr
         };
@@ -1190,7 +1221,7 @@ impl Parser {
             ));
         }
         let parsed = match self.peek().kind {
-            TokenKind::KwFn => Item::Fn(self.parse_fn(is_export, is_external, realtime_attr, contract_attrs, pending_doc.clone(), pending_doc_attrs.clone())?),
+            TokenKind::KwFn => Item::Fn(self.parse_fn(is_export, is_external, realtime_attr, blocking_attr, contract_attrs, pending_doc.clone(), pending_doc_attrs.clone())?),
             TokenKind::KwType => Item::Type(self.parse_type_decl(is_export, is_external, type_attrs, impl_protocols, pending_doc.clone(), pending_doc_attrs.clone())?),
             TokenKind::KwLet => {
                 if let Some(d) = &pending_doc {
@@ -1298,6 +1329,21 @@ impl Parser {
         // Skip newline после атрибута, чтобы `fn` шёл на следующей строке.
         self.skip_newlines();
         Ok(if nogc { RealtimeAttr::RealtimeNogc } else { RealtimeAttr::Realtime })
+    }
+
+    /// Plan 113 (D172): parse `#blocking` attribute перед fn-declaration.
+    /// Returns true if `#blocking` was present, false otherwise.
+    fn parse_blocking_attr(&mut self) -> bool {
+        if !matches!(self.peek().kind, TokenKind::Hash) {
+            return false;
+        }
+        if !matches!(self.peek_at(1).kind, TokenKind::KwBlocking) {
+            return false;
+        }
+        self.bump(); // #
+        self.bump(); // blocking
+        self.skip_newlines();
+        true
     }
 
     /// Plan 33.1 (D24): contract-related атрибуты перед fn-declaration.
@@ -1995,7 +2041,7 @@ impl Parser {
 
     // ─── fn ──────────────────────────────────────────────────────────────
 
-    fn parse_fn(&mut self, is_export: bool, is_external: bool, realtime_attr: RealtimeAttr, contract_attrs: ContractAttrs, doc: Option<crate::ast::DocBlock>, doc_attrs: Vec<crate::ast::DocAttr>) -> Result<FnDecl, Diagnostic> {
+    fn parse_fn(&mut self, is_export: bool, is_external: bool, realtime_attr: RealtimeAttr, blocking_attr: bool, contract_attrs: ContractAttrs, doc: Option<crate::ast::DocBlock>, doc_attrs: Vec<crate::ast::DocAttr>) -> Result<FnDecl, Diagnostic> {
         let start = self.peek().span;
         self.expect(&TokenKind::KwFn)?;
 
@@ -2338,6 +2384,7 @@ impl Parser {
             body,
             span: start.merge(end_span),
             realtime_attr,
+            blocking_attr,
             // Plan 33.1 (D24): contracts + verify attributes.
             // Backward-compat: пустой Vec для функций без контрактов;
             // Default verify_mode / Unknown purity для функций без атрибутов.
@@ -6544,13 +6591,19 @@ impl Parser {
         Ok(Expr::new(ExprKind::Detach(block), start.merge(end)))
     }
 
-    /// `blocking { body }` — Plan 83.3 (D50): leaf-блокирующая работа
-    /// уводится в libuv threadpool. Зеркало `parse_detach` — block-примитив.
+    /// Plan 113 (D172): `blocking { }` block-form is removed.
+    /// Emit a parse error directing users to extract body into `#blocking fn`.
     fn parse_blocking(&mut self) -> Result<Expr, Diagnostic> {
-        let start = self.expect(&TokenKind::KwBlocking)?.span;
-        let block = self.parse_block()?;
-        let end = block.span;
-        Ok(Expr::new(ExprKind::Blocking(block), start.merge(end)))
+        let span = self.expect(&TokenKind::KwBlocking)?.span;
+        // Consume the block so the parser can continue after the error.
+        let _ = self.parse_block();
+        Err(Diagnostic::new(
+            "[D172-block-form-removed] `blocking { }` block-form has been removed (Plan 113). \
+             Extract the body into a `#blocking fn` and call it instead. \
+             See spec/decisions/06-concurrency.md §D172."
+                .to_string(),
+            span,
+        ))
     }
 
     /// `forbid X1, X2, ... { body }` — capability sandbox (D63).
@@ -6651,25 +6704,21 @@ impl Parser {
         Ok(SelectOp::Send { chan: Box::new(chan), value: Box::new(value) })
     }
 
-    /// `realtime [nogc] { body }` — гарантия не-приостановки (D64).
+    /// Plan 113 (D172): `realtime { }` block-form is removed.
+    /// Emit a parse error directing users to extract body into `#realtime fn`.
     fn parse_realtime(&mut self) -> Result<Expr, Diagnostic> {
-        let start = self.expect(&TokenKind::KwRealtime)?.span;
-        // Опциональный модификатор `nogc`.
-        let nogc = if let TokenKind::Ident(name) = &self.peek().kind {
-            if name == "nogc" {
-                self.bump();
-                true
-            } else {
-                false
-            }
-        } else {
-            false
-        };
-        let body = self.parse_block()?;
-        let end = body.span;
-        Ok(Expr::new(
-            ExprKind::Realtime { nogc, body },
-            start.merge(end),
+        let span = self.expect(&TokenKind::KwRealtime)?.span;
+        // Consume optional `nogc` modifier and the block so parser can continue.
+        if let TokenKind::Ident(name) = &self.peek().kind {
+            if name == "nogc" { self.bump(); }
+        }
+        let _ = self.parse_block();
+        Err(Diagnostic::new(
+            "[D172-block-form-removed] `realtime { }` block-form has been removed (Plan 113). \
+             Extract the body into a `#realtime fn` (callee guarantee) and call it instead. \
+             See spec/decisions/06-concurrency.md §D172."
+                .to_string(),
+            span,
         ))
     }
 

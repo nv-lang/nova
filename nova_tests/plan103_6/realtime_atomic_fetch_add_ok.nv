@@ -1,22 +1,27 @@
-// Plan 103.6 — AtomicI64.fetch_add is #realtime; allowed in realtime{}.
+// Plan 103.6 — AtomicI64.fetch_add is #realtime; allowed in #realtime fn.
+// Plan 113 migration: realtime { } → #realtime fn.
 //
 // EXPECT_TIMEOUT_MS 60000
 
 module nova_tests.plan103_6.realtime_atomic_fetch_add_ok
 
-test "AtomicI64.fetch_add allowed in realtime block" {
+#realtime fn _rt_fetch_add_i64(a mut AtomicI64, delta int) -> int {
+    a.fetch_add(delta)
+}
+
+#realtime fn _rt_fetch_add_i32(a mut AtomicI32, delta int) -> int {
+    a.fetch_add(delta)
+}
+
+test "AtomicI64.fetch_add allowed in #realtime fn" {
     let a = AtomicI64.new(10)
-    let prev = realtime {
-        a.fetch_add(5)
-    }
+    let prev = _rt_fetch_add_i64(a, 5)
     assert(prev == 10)
     assert(a.load() == 15)
 }
 
-test "AtomicI32.fetch_add allowed in realtime block" {
+test "AtomicI32.fetch_add allowed in #realtime fn" {
     let a = AtomicI32.new(0)
-    let _ = realtime {
-        a.fetch_add(1)
-    }
+    let _ = _rt_fetch_add_i32(a, 1)
     assert(a.load() == 1)
 }

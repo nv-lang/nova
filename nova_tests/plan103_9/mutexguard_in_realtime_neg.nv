@@ -1,18 +1,18 @@
-// EXPECT_COMPILE_ERROR D133
-//
-// Plan 103.9 (D174) — Negative: MutexGuard not consumed in realtime block.
-// consume _g = mu.lock() inside realtime{}; guard escapes scope without unlock.
-// D133 fires (guard not consumed) regardless of realtime context.
+// Plan 103.9 — MutexGuard not consumed in #realtime fn → D133 compile error.
+// Plan 113 migration: realtime { } → #realtime fn.
 //
 // Note: E_REALTIME_PARKS (lock() #parks forbidden in realtime) is also present
 // but D133-not-consumed fires first in the compiler's check order.
+//
+// EXPECT_COMPILE_ERROR D133
 
 module nova_tests.plan103_9.mutexguard_in_realtime_neg
 
-test "MutexGuard not consumed in realtime block → D133 compile error" {
+#realtime fn _rt_check_guard_unconsumed(mu mut Mutex) {
+    consume _g = mu.lock()   // D133: _g not consumed at scope exit
+}
+
+test "MutexGuard not consumed in #realtime fn → D133 compile error" {
     let mu = Mutex.new()
-    realtime {
-        consume _g = mu.lock()   // D133: _g not consumed at scope exit
-        // (lock() is also #parks but D133 fires first)
-    }
+    _rt_check_guard_unconsumed(mu)
 }

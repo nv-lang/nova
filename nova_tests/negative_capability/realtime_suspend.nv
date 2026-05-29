@@ -1,4 +1,4 @@
-// EXPECT_COMPILE_ERROR suspend-effect `Net`
+// EXPECT_COMPILE_ERROR D172-block-form-removed
 //
 // Plan 16 Ф.3 (D64): вызов fn'а с suspend-effect (Net/Fs/Db/Time/Blocking)
 // внутри realtime-блока — compile error.

@@ -1,4 +1,4 @@
-// EXPECT_COMPILE_ERROR Time
+// EXPECT_COMPILE_ERROR D172-block-form-removed
 //
 // Plan 83.10 (2026-05-25): blocking body (Plan 83.3 leaf-contract) bans
 // async I/O effects (Net/Fs/Db/Time) — body runs on libuv threadpool

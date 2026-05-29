@@ -1,4 +1,4 @@
-// EXPECT_COMPILE_ERROR D159
+// EXPECT_COMPILE_ERROR D172-block-form-removed
 //
 // Plan 100.4.2 (D159): blocking{} в defer body — error.
 

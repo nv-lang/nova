@@ -1,4 +1,4 @@
-// EXPECT_COMPILE_ERROR Blocking
+// EXPECT_COMPILE_ERROR D172-block-form-removed
 //
 // Plan 83.10 (2026-05-25): blocking { } requires Blocking effect
 // declaration per Plan 83.3 D50 §4. Function without effect using

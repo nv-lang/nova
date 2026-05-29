@@ -1,11 +1,8 @@
 // 18_forbid_realtime.nv — D63 (forbid) + D64 (realtime).
+// Plan 113: realtime { } block form removed; tests migrated to #realtime fn.
 //
-// В bootstrap-интерпретаторе runtime барьер для forbid не реализован,
-// и нет fiber-runtime'а для realtime — оба блока работают как обычные
-// block-expression'ы. Эти тесты проверяют что **парсер** принимает
-// синтаксис и блок исполняется.
-//
-// Production-компилятор будет делать compile-time + runtime проверки.
+// forbid blocks still work as block-expressions.
+// realtime semantics are now expressed via #realtime fn attribute.
 
 module effects.forbid_realtime
 
@@ -13,16 +10,14 @@ type Counter effect {
     next() -> int
 }
 
-test "forbid block — синтаксис парсится, body исполняется" {
+test "forbid block — syntax parsed, body executes" {
     let r = forbid Counter {
-        // body исполняется как обычный block;
-        // в production здесь Counter.next() был бы запрещён
         42
     }
     assert(r == 42)
 }
 
-test "forbid с несколькими эффектами через запятую" {
+test "forbid with multiple effects" {
     let r = forbid Counter, Fail {
         let x = 10
         let y = 20
@@ -31,27 +26,32 @@ test "forbid с несколькими эффектами через запят�
     assert(r == 30)
 }
 
-test "realtime block — синтаксис парсится" {
-    let r = realtime {
-        let mut sum = 0
-        for i in 1..6 {
-            sum += i
-        }
-        sum
+// Plan 113: realtime tests use #realtime fn form.
+#realtime fn _rt_sum_to_n(n int) -> int {
+    let mut sum = 0
+    let mut i = 1
+    while i <= n {
+        sum += i
+        i += 1
     }
-    assert(r == 1 + 2 + 3 + 4 + 5)
+    sum
 }
 
-test "realtime nogc block" {
-    let r = realtime nogc {
-        let mut x = 100
-        x += 50
-        x
-    }
-    assert(r == 150)
+test "#realtime fn — body works correctly" {
+    let s = _rt_sum_to_n(5)
+    // 1+2+3+4+5 = 15
+    assert(s == 15)
 }
 
-test "forbid вложенный в обычный код" {
+#realtime fn _rt_compute_nogc(x int, y int) -> int {
+    x + y
+}
+
+test "#realtime fn with arithmetic — pure body OK" {
+    assert(_rt_compute_nogc(7, 8) == 15)
+}
+
+test "forbid nested in loop" {
     let mut total = 0
     for i in 1..4 {
         let v = forbid Counter {
@@ -62,29 +62,28 @@ test "forbid вложенный в обычный код" {
     assert(total == 10 + 20 + 30)
 }
 
-test "realtime в expression position" {
+test "forbid in expression position" {
     let r = if true {
-        realtime { 100 }
+        forbid Counter {
+            100
+        }
     } else {
         0
     }
     assert(r == 100)
 }
 
-
-// Plan 16: pure-fn внутри forbid — OK (нет effects, нет conflict'а).
+// Plan 16: pure-fn inside forbid — OK.
 fn pure_double(x int) -> int => x * 2
 
-test "forbid с pure-fn внутри — type-check OK" {
+test "forbid with pure-fn inside — type-check OK" {
     let r = forbid Counter, Fail {
         pure_double(21)
     }
     assert(r == 42)
 }
 
-
-// Plan 16 Ф.5: #realtime атрибут на функции (D64 §3697).
-// Plan 33.1: миграция @ → # для разделения attribute-prefix от receiver-prefix.
+// Plan 16 Ф.5: #realtime attribute on fn (D64 §3697).
 #realtime
 fn rt_compute(n int) -> int {
     let mut sum = 0
@@ -96,14 +95,13 @@ fn rt_compute(n int) -> int {
     sum
 }
 
-test "#realtime attribute — body работает как realtime block" {
+test "#realtime attribute — body executes correctly" {
     let s = rt_compute(10)
     // 0+1+2+...+9 = 45
     assert(s == 45)
 }
 
-
-// Plan 16 Ф.5 + Ф.4: #realtime nogc — то же + alloc-ban.
+// Plan 16 Ф.5 + Ф.4: #realtime nogc.
 #realtime nogc
 fn rt_nogc_compute(x int, y int) -> int {
     x + y
