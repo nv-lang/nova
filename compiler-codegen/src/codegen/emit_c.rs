@@ -3592,16 +3592,70 @@ impl CEmitter {
                     .map(|i| format!(", a{}", i))
                     .collect::<String>();
                 let concrete_method = format!("Nova_{}_method_{}", concrete_name, m.name);
+                // Plan 91.8a.2 followup 2026-05-29: vtable thunk synthesis для
+                // protocol default bodies. Если у concrete-типа нет explicit
+                // method (Nova_T_method_<X> не emitted), но default body
+                // synthesizable — emit thunk body inline (mirror existing
+                // bare-call MVP synthesis в method dispatch).
+                let has_explicit_method = self.all_methods
+                    .contains(&(concrete_name.clone(), m.name.clone()));
+                let synthesized_body: Option<String> = if has_explicit_method {
+                    None
+                } else if m.name == "equals"
+                    && self.all_methods.contains(&(concrete_name.clone(), "compare".to_string()))
+                {
+                    // Equatable.equals default: @compare(other) == 0.
+                    Some(format!(
+                        "return (Nova_{cn}_method_compare(({cty})self, a0) == 0);",
+                        cn = concrete_name, cty = concrete_c_ty
+                    ))
+                } else if m.name == "fmt" {
+                    // Printable.fmt default: sb.append(str.from(@)).
+                    // Path 1: `fn str.from(T) -> str` overload.
+                    let key = ("str".to_string(), "from".to_string());
+                    let str_from_c: Option<String> = self.method_overloads.get(&key)
+                        .and_then(|sigs| sigs.iter().find(|s| !s.is_instance
+                            && s.param_c_types.len() == 1
+                            && s.param_c_types[0] == concrete_c_ty)
+                            .map(|s| s.c_name.clone()));
+                    if let Some(c_name) = str_from_c {
+                        Some(format!(
+                            "Nova_StringBuilder_method_append(a0, {fn_name}(({cty})self));\n\treturn NOVA_UNIT;",
+                            fn_name = c_name, cty = concrete_c_ty
+                        ))
+                    } else if self.into_targets.get(&concrete_name)
+                        .map(|t| t == "str").unwrap_or(false)
+                    {
+                        // Path 2: T has @into() -> str.
+                        let safe = Self::sanitize_c_for_ident(&concrete_name);
+                        Some(format!(
+                            "Nova_StringBuilder_method_append(a0, Nova_{cn}_method_into(({cty})self));\n\treturn NOVA_UNIT;",
+                            cn = safe, cty = concrete_c_ty
+                        ))
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
+                let thunk_body = if let Some(body) = synthesized_body {
+                    body
+                } else {
+                    format!(
+                        "return {concrete_method}(({cty})self{extra_fwd});",
+                        concrete_method = concrete_method,
+                        cty = concrete_c_ty,
+                        extra_fwd = extra_fwd,
+                    )
+                };
                 self.mono_fwd_decls.push_str(&format!(
                     "static {ret_c} {thunk}(void* self{extra_sig}) {{\n\
-                     \treturn {concrete_method}(({cty})self{extra_fwd});\n\
+                     \t{body}\n\
                      }}\n",
                     ret_c = ret_c,
                     thunk = thunk_name,
                     extra_sig = extra_sig,
-                    concrete_method = concrete_method,
-                    cty = concrete_c_ty,
-                    extra_fwd = extra_fwd,
+                    body = thunk_body,
                 ));
                 field_inits.push(format!("    .{} = {}", m.name, thunk_name));
             }
@@ -13229,7 +13283,13 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                         generics.iter().filter_map(|g| self.type_ref_to_c(g).ok()).collect()
                     } else { vec![] };
                     let concrete_c = self.infer_expr_c_type(&decl.value);
-                    if !type_args.is_empty() && concrete_c.ends_with('*') {
+                    // Plan 91.8a.2 followup 2026-05-29: support non-generic
+                    // protocols (Printable, Equatable, Comparable) in coercion.
+                    // Plan 97.1 enabled vtable/box emission for empty type_args;
+                    // this site previously required `!type_args.is_empty()` and
+                    // silently fell through to bare assignment `NovaBox_P x = m;`
+                    // — invalid C.
+                    if concrete_c.ends_with('*') {
                         if let Some((vtable_instance, box_c_type)) = self.emit_protocol_vtable_companion(
                             &proto_name, &type_args, &concrete_c
                         ) {
