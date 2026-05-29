@@ -24462,3 +24462,48 @@ commit (3865300c7de) что fmt synthesis path 1 (str.from overload) нельз�
 протестировать из-за этой baseline-failure.
 
 Commit: TBD
+
+=== Plan 91.8a.2 followup 2026-05-29: bare-call synthesis fallback ===
+
+Closes [M-91.8a.2-bare-call-synthesis]. Раньше synthesis (@equals/@fmt
+default body) работал ТОЛЬКО в `[T Protocol]` bound context — type-checker
+для bare `m.fmt(sb)` сразу ругался «no method fmt on Money» до того как
+codegen synthesis получал шанс.
+
+Fix в `f3_check_member` (types/mod.rs:2155+): перед E7320 error добавлена
+проверка — может ли тип satisfy protocol через default body:
+- `equals`: T has @compare → Equatable.equals synthesized
+- `fmt`: T has @into → str ИЛИ `fn str.from(T) -> str` overload →
+  Printable.fmt synthesized
+
+MVP hardcoded для двух cases (mirror existing emit_c.rs synthesis fallback).
+General default body synthesis (walk protocol_specs AST, traverse default
+body, check all referenced methods reachable на T) — followup
+[M-91.8a.2-default-body-general].
+
+Test plan91_8a_2/bare_call_synthesis_test (3 sub-tests PASS):
+- Score @compare → bare `a.equals(b)` works
+- Money `fn str.from(Money)` → bare `m.fmt(sb)` works
+- Coin `@into() -> str` → bare `c.fmt(sb)` works
+
+Generated C verified для всех 3 path:
+  Nova_Score_method_compare(a, b) == 0
+  Nova_StringBuilder_method_append(sb, Nova_str_static_from__Nova_Money_p(m))
+  Nova_StringBuilder_method_append(sb, Nova_Coin_method_into(c))
+
+Coverage matrix теперь:
+| Pattern | Status |
+|---|---|
+| `[T Printable]` / `[T Equatable]` bound + `.fmt()`/`.equals()` | ✅ |
+| Bare `m.fmt(sb)` / `m.equals(other)` без bound | ✅ (этот commit) |
+| `let x Printable = m` coercion (vtable) | ❌ Plan 91.8a.2 part 3 general |
+| `[]Printable` heterogeneous (vtable) | ❌ ↑ |
+| `"${m}"` interpolation через Printable | ❌ Plan 91.10 |
+
+Regression:
+- plan91_8a_2: 12/0 (+1 test file bare_call_synthesis_test, 3 sub-tests)
+- syntax 58/1, plan62 31/5, plan65 19/0, plan73 12/0, plan77 7/0
+- plan108 6/0, plan91_7 5/0, plan91_8a 2/0, plan91_8c 6/0, plan91 2/0
+- basics 8/0, modules 31/0, protocols 25/1 (flaky from_multi)
+
+Commit: TBD

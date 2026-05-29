@@ -2192,6 +2192,47 @@ impl<'a> TypeCheckCtx<'a> {
         if matches!(name, "into" | "try_into") {
             return;
         }
+        // Plan 91.8a.2 followup 2026-05-29: protocol default body synthesis
+        // fallback. Если type T satisfies некий protocol через default body
+        // (например Money satisfies Equatable через @compare, или satisfies
+        // Printable через `fn str.from(T)` / `@into() -> str`), то bare-call
+        // `obj.method(...)` валиден — codegen synthesis emit'нет inline.
+        //
+        // MVP hardcoded для двух cases (mirror existing emit_c.rs synthesis):
+        // - equals: synthesizable если T has @compare (Equatable.equals default)
+        // - fmt: synthesizable если T has @into→str ИЛИ `fn str.from(T) -> str`
+        //   overload (Printable.fmt default body)
+        //
+        // General default body synthesis (walk protocol_specs AST, check all
+        // referenced methods exist на T) — followup [M-91.8a.2-default-body-general].
+        let has_method_named = |type_name: &str, method_name: &str| -> bool {
+            self.method_table.get(type_name).map_or(false, |m| {
+                m.keys().any(|k| k.trim_start_matches('@') == method_name)
+            })
+        };
+        if name == "equals" && has_method_named(tname, "compare") {
+            return;
+        }
+        if name == "fmt" {
+            // Path 1: T has @into method returning str.
+            let into_to_str = self.method_table.get(tname)
+                .and_then(|m| m.get("into").or_else(|| m.get("@into")))
+                .map_or(false, |fns| fns.iter().any(|f| {
+                    matches!(&f.return_type, Some(TypeRef::Named { path, .. })
+                        if path.len() == 1 && path[0] == "str")
+                }));
+            // Path 2: `fn str.from(T) -> str` overload registered.
+            let str_from_t = self.method_table.get("str")
+                .and_then(|m| m.get("from"))
+                .map_or(false, |fns| fns.iter().any(|f| {
+                    f.params.len() == 1
+                        && matches!(&f.params[0].ty, TypeRef::Named { path, .. }
+                            if path.last().map_or(false, |s| s == tname))
+                }));
+            if into_to_str || str_from_t {
+                return;
+            }
+        }
         let avail: Vec<&str> =
             fields.iter().map(|f| f.name.as_str()).collect();
         let mut diag = Diagnostic::new(
