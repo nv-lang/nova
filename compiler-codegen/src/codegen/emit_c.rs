@@ -20371,6 +20371,32 @@ _cp++; \
                     // CharLit detection — char хранится как nova_int,
                     // но семантика char→str = UTF-8 encode codepoint, а не печать числа.
                     let v = self.emit_expr(e)?;
+                    // Plan 91.8a.2 followup 2026-05-29: Printable.fmt path для
+                    // user types в interpolation. Если type T имеет explicit
+                    // `@fmt(sb StringBuilder)` — вызываем `Nova_T_method_fmt(v, sb)`
+                    // напрямую (zero-overhead — пишет прямо в interp_sb).
+                    // Иначе — fallback к str.from / @into / нативные str-конверсии,
+                    // wrapped в append.
+                    if !matches!(e.kind, ExprKind::CharLit(_))
+                        && !matches!(arg_ty.as_str(),
+                            "nova_str" | "nova_char" | "nova_bool"
+                            | "nova_f64" | "nova_int")
+                    {
+                        let arg_type = arg_ty
+                            .trim_start_matches("Nova_")
+                            .trim_end_matches('*')
+                            .to_string();
+                        let has_explicit_fmt = self.all_methods
+                            .contains(&(arg_type.clone(), "fmt".to_string()));
+                        if has_explicit_fmt {
+                            let safe = Self::sanitize_c_for_ident(&arg_type);
+                            self.line(&format!(
+                                "Nova_{}_method_fmt({}, {});",
+                                safe, v, sb
+                            ));
+                            continue;
+                        }
+                    }
                     let s_expr = if matches!(e.kind, ExprKind::CharLit(_)) {
                         format!("nova_char_to_str({})", v)
                     } else {
@@ -20382,17 +20408,30 @@ _cp++; \
                             "nova_f64" => format!("nova_f64_to_str({})", v),
                             "nova_int" => format!("nova_int_to_str({})", v),
                             _ => {
-                                // User-type: ищем @into() -> str через D73.
+                                // User-type: appell-path синтез через Printable
+                                // default body (zerkalo bare-call synthesis):
+                                //   1. fn str.from(T) -> str overload — D183 canonical
+                                //   2. @into() -> str (D73)
+                                //   3. fallback (junk — будет CC-FAIL для unsupported types)
                                 let arg_type = arg_ty
                                     .trim_start_matches("Nova_")
                                     .trim_end_matches('*')
                                     .to_string();
-                                if let Some(into_target) = self.into_targets.get(&arg_type) {
-                                    if into_target == "str" {
-                                        format!("Nova_{}_method_into({})", arg_type, v)
-                                    } else {
-                                        format!("nova_int_to_str((nova_int)({}))", v)
-                                    }
+                                let key = ("str".to_string(), "from".to_string());
+                                let str_from_c: Option<String> = self.method_overloads
+                                    .get(&key)
+                                    .and_then(|sigs| sigs.iter()
+                                        .find(|s| !s.is_instance
+                                            && s.param_c_types.len() == 1
+                                            && s.param_c_types[0] == arg_ty)
+                                        .map(|s| s.c_name.clone()));
+                                if let Some(c_name) = str_from_c {
+                                    format!("{}({})", c_name, v)
+                                } else if self.into_targets.get(&arg_type)
+                                    .map(|t| t == "str").unwrap_or(false)
+                                {
+                                    let safe = Self::sanitize_c_for_ident(&arg_type);
+                                    format!("Nova_{}_method_into({})", safe, v)
                                 } else {
                                     format!("nova_int_to_str((nova_int)({}))", v)
                                 }
