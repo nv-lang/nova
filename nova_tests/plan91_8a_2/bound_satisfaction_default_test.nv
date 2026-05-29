@@ -28,11 +28,7 @@ test "Comparable bound — Money satisfies через @compare" {
 // Equatable bound — должен accept Money (через default body).
 // Codegen synthesis для @equals — Part 2 followup; type-check этого commit
 // уже принимает satisfaction.
-// Part 3 followup: actual .equals() call в body требует codegen synthesis
-// emit (mono pass dispatch fallback + synthesis function emission).
-// Сейчас bound check accepts Money via default body fallback; body не
-// вызывает .equals() пока.
-fn eq_via_bound[T Equatable](_a T, _b T) -> bool => true
+fn eq_via_bound[T Equatable](a T, b T) -> bool => a.equals(b)
 
 test "Equatable bound — Money satisfies через default body fallback" {
     let a = Money { cents: 100 }

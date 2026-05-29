@@ -27346,3 +27346,15 @@ error diagnostics, 21 tests). Не helpful запихать в один commit �
 протокол refactor. Part 1 валиден сам по себе — implementer пишет
 default methods explicit как boilerplate compatibility. Part 2 даёт
 автомат synthesis убирая boilerplate.
+
+## Plan 91.8a.2 part 3 MVP — hardcoded default body synthesis для Equatable.equals
+
+**Why hardcoded MVP first:** генеральный синтез (walk protocol_specs default body AST, substitute Self/@, emit with substitutions) требует substantial codegen infrastructure (~1-2 dev-days). MVP hardcoded для одного важнейшего case (Equatable.equals derived from Comparable.compare) — 30 строк кода. Доказывает архитектурный подход + delivers immediate value.
+
+**Why direct form, not coercion:** canonical coercion form `let cmp Comparable = @; cmp.compare(other) == 0` требует devirtualization pass для MVP performance. Direct form `=> @compare(other) == 0` — proceeds к direct call без devirt. Semantically equivalent (same Equatable contract), syntactically simpler для synthesis. Devirtualization-based coercion-form support — followup.
+
+**Why fallback при dispatch, not synth function:** classical synthesis emits Nova_T_method_X function and calls it. MVP inline-emits the default body expression at call site. Inline = no function declaration overhead, simpler to implement, identical machine code. Tradeoff: no synthesized function reusability (caller-site duplication if called multiple times). For MVP — acceptable; cache + function emission — followup.
+
+**Why all_methods registry для lookup:** `self.all_methods: HashSet<(String, String)>` уже existing — registered при method overload registration. Lookup O(1). Не нужно walk type tables.
+
+**Why proceed past existing dispatch:** MVP fallback inserted ПЕРЕД `method_receivers.get(method)` check на line 18703. Если method_receivers has entry (existing dispatch) — uses it. MVP fallback fires только когда existing dispatch produces wrong result OR doesn't have entry для method on this type. Edge case safe.

@@ -18700,6 +18700,32 @@ _cp++; \
                     }
                 }
 
+                // Plan 91.8a.2 part 3 (D183 amendment): default body synthesis
+                // for protocol methods. Hardcoded MVP case: `obj.equals(other)`
+                // → if obj's type has @compare (Comparable satisfied) и метод
+                // equals не задан явно — inline `Nova_T_method_compare(obj, other) == 0`
+                // (Equatable.equals default body). General default body synthesis —
+                // followup [M-91.8a.2-default-body-general].
+                if method == "equals" && args.len() == 1 {
+                    let obj_ty = self.infer_expr_c_type(obj);
+                    let obj_type_name = obj_ty
+                        .trim_start_matches("Nova_")
+                        .trim_end_matches('*')
+                        .to_string();
+                    let has_compare = self.all_methods
+                        .contains(&(obj_type_name.clone(), "compare".to_string()));
+                    let has_explicit_equals = self.all_methods
+                        .contains(&(obj_type_name.clone(), "equals".to_string()));
+                    if has_compare && !has_explicit_equals && !obj_type_name.is_empty() {
+                        let obj_c = self.emit_expr(obj)?;
+                        let arg_c = self.emit_expr(args[0].expr())?;
+                        let safe = Self::sanitize_c_for_ident(&obj_type_name);
+                        return Ok(format!(
+                            "(Nova_{}_method_compare({}, {}) == 0)",
+                            safe, obj_c, arg_c
+                        ));
+                    }
+                }
                 if let Some((type_name, is_instance)) = self.method_receivers.get(method).cloned() {
                     // Plan 82 followup (2026-05-23, fail-loudly): single-key
                     // method_receivers — last-wins fallback. Для STATIC-метода
