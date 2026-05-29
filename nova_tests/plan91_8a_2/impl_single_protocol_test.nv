@@ -1,0 +1,22 @@
+module nova_tests.plan91_8a_2.impl_single_protocol_test
+
+// Plan 91.9 acceptance: #impl(SingleProtocol) с explicit @compare —
+// type verified, no error, bare-call works.
+
+#impl(Comparable)
+type Date { day int, month int, year int }
+
+fn Date @compare(other Self) -> int {
+    if @year != other.year { return @year - other.year }
+    if @month != other.month { return @month - other.month }
+    @day - other.day
+}
+
+test "single protocol #impl + explicit method works" {
+    let a = Date { day: 1, month: 1, year: 2020 }
+    let b = Date { day: 1, month: 1, year: 2020 }
+    let c = Date { day: 2, month: 1, year: 2020 }
+    assert(a.compare(b) == 0)
+    assert(a.compare(c) < 0)
+    assert(c.compare(a) > 0)
+}
