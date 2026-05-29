@@ -2010,6 +2010,7 @@ mod tests {
                 invariants: Vec::new(),
                 axioms: Vec::new(),
                 consume: false,
+                impl_protocols: Vec::new(),
             })).collect();
             PeerFile {
                 path: PathBuf::from("/synthetic/std/prelude/core.nv"),

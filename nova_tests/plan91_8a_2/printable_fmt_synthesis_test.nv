@@ -7,12 +7,14 @@ module nova_tests.plan91_8a_2.printable_fmt_synthesis_test
 // `Nova_StringBuilder_method_append(sb, str.from(obj))`.
 // Mirror of the Equatable.equals MVP synthesis pattern.
 
+#impl(Printable)
 type Money { cents int }
 
 // Path 1: `fn str.from(T)` overload — canonical D183.
 fn str.from(m Money) -> str => "Money(" + str.from(m.cents) + ")"
 
 // Path 2 (separate type): `fn T @into() -> str` — D73 conversion.
+#impl(Printable)
 type Coin { value int }
 fn Coin @into() -> str => "Coin(" + str.from(@value) + ")"
 

@@ -1099,7 +1099,7 @@ impl Parser {
         // Помечает str-keyed map-тип для D55 map-coercion (`{field: v}`).
         // Парсится ПЕРЕД `export` (консистентно с `#cfg`) и только перед
         // `type`. Контекстный разбор после `#` (не keyword).
-        let type_attrs = self.parse_type_attrs()?;
+        let (type_attrs, impl_protocols) = self.parse_type_attrs()?;
 
         let is_export = self.eat(&TokenKind::KwExport).is_some();
         // D82: `external` modifier — между `export` и `fn`.
@@ -1168,18 +1168,19 @@ impl Parser {
             is_external
         };
         // Plan 52 Ф.1: `#from_fields` валиден только перед `type`-декларацией.
-        if !type_attrs.is_empty()
+        // Plan 91.9 (D186): `#impl(...)` тоже только перед `type`.
+        if (!type_attrs.is_empty() || !impl_protocols.is_empty())
             && !matches!(self.peek().kind, TokenKind::KwType)
         {
             let span = self.peek().span;
             return Err(Diagnostic::new(
-                "`#from_fields` is only valid before `type`",
+                "`#from_fields` / `#from_pairs` / `#impl` are only valid before `type`",
                 span,
             ));
         }
         let parsed = match self.peek().kind {
             TokenKind::KwFn => Item::Fn(self.parse_fn(is_export, is_external, realtime_attr, contract_attrs, pending_doc.clone(), pending_doc_attrs.clone())?),
-            TokenKind::KwType => Item::Type(self.parse_type_decl(is_export, is_external, type_attrs, pending_doc.clone(), pending_doc_attrs.clone())?),
+            TokenKind::KwType => Item::Type(self.parse_type_decl(is_export, is_external, type_attrs, impl_protocols, pending_doc.clone(), pending_doc_attrs.clone())?),
             TokenKind::KwLet => {
                 if let Some(d) = &pending_doc {
                     // Plan 45 Ф.3: orphan `///` warning — doc-comment'ы
@@ -1784,23 +1785,28 @@ impl Parser {
     }
 
     /// Plan 52 Ф.1 (D108): атрибуты-маркеры перед `type`-декларацией.
+    /// Plan 91.9 (D186): `#impl(P1 + P2 + ...)` — protocol opt-in список.
     ///
     /// Поддерживаемые:
-    /// - `#from_fields` — помечает str-keyed map-тип, в который анонимный
-    ///   record-литерал `{field: v}` коэрсится через D55 map-coercion.
+    /// - `#from_fields` — помечает str-keyed map-тип.
+    /// - `#from_pairs` — target для `[k:v]` desugar.
+    /// - `#impl(Name1 + Name2 + ...)` — opt-in protocol implementation
+    ///   list. Verification: каждый Name должен быть protocol-типом
+    ///   и type должен предоставить все методы. Gates bare-call synthesis.
     ///
-    /// Контекстный разбор: `from_fields` — обычный Ident в лексере, парсер
-    /// ищет `#` + Ident в позиции перед `type`. Префикс `#` (не `@`) —
-    /// консистентно с `#realtime` / `#verify` / `#cfg`.
-    fn parse_type_attrs(&mut self) -> Result<Vec<crate::ast::TypeAttr>, Diagnostic> {
+    /// Returns `(attrs, impl_protocols)`.
+    fn parse_type_attrs(&mut self)
+        -> Result<(Vec<crate::ast::TypeAttr>, Vec<String>), Diagnostic>
+    {
         let mut attrs = Vec::new();
+        let mut impl_protocols: Vec<String> = Vec::new();
         loop {
             if !matches!(self.peek().kind, TokenKind::Hash) {
                 break;
             }
             let next_name = match &self.peek_at(1).kind {
                 TokenKind::Ident(n) => n.clone(),
-                _ => break, // не идентификатор после `#` — выходим
+                _ => break,
             };
             match next_name.as_str() {
                 "from_fields" => {
@@ -1816,7 +1822,6 @@ impl Parser {
                     attrs.push(crate::ast::TypeAttr::FromFields);
                 }
                 "from_pairs" => {
-                    // Plan 52 Ф.23: тип помечен как target для `[k:v]` desugar.
                     if attrs.contains(&crate::ast::TypeAttr::FromPairs) {
                         let span = self.peek().span;
                         return Err(Diagnostic::new(
@@ -1828,11 +1833,50 @@ impl Parser {
                     self.bump(); // from_pairs
                     attrs.push(crate::ast::TypeAttr::FromPairs);
                 }
-                _ => break, // unknown #-name — не type-attr, выходим
+                "impl" => {
+                    // Plan 91.9 (D186): #impl(P1 + P2 + ...) opt-in list.
+                    self.bump(); // #
+                    self.bump(); // impl
+                    self.expect(&TokenKind::LParen)?;
+                    let mut names: Vec<String> = Vec::new();
+                    loop {
+                        let (n, _sp) = self.parse_ident()?;
+                        if names.contains(&n) {
+                            let span = self.peek().span;
+                            return Err(Diagnostic::new(
+                                format!("duplicate protocol `{}` в #impl list", n),
+                                span,
+                            ));
+                        }
+                        names.push(n);
+                        if self.eat(&TokenKind::Plus).is_some() {
+                            continue;
+                        }
+                        break;
+                    }
+                    self.expect(&TokenKind::RParen)?;
+                    if names.is_empty() {
+                        let span = self.peek().span;
+                        return Err(Diagnostic::new(
+                            "#impl(...) requires at least one protocol name",
+                            span,
+                        ));
+                    }
+                    if !impl_protocols.is_empty() {
+                        let span = self.peek().span;
+                        return Err(Diagnostic::new(
+                            "duplicate `#impl` attribute — use `#impl(A + B + ...)` \
+                             with all protocols в одном annotation",
+                            span,
+                        ));
+                    }
+                    impl_protocols = names;
+                }
+                _ => break,
             }
             self.skip_newlines();
         }
-        Ok(attrs)
+        Ok((attrs, impl_protocols))
     }
 
     /// Plan 33.1 (D24): парсит блок `requires <expr>` / `ensures <expr>`
@@ -2480,7 +2524,7 @@ impl Parser {
 
     // ─── type declarations ───────────────────────────────────────────────
 
-    fn parse_type_decl(&mut self, is_export: bool, is_external: bool, attrs: Vec<crate::ast::TypeAttr>, doc: Option<crate::ast::DocBlock>, doc_attrs: Vec<crate::ast::DocAttr>) -> Result<TypeDecl, Diagnostic> {
+    fn parse_type_decl(&mut self, is_export: bool, is_external: bool, attrs: Vec<crate::ast::TypeAttr>, impl_protocols: Vec<String>, doc: Option<crate::ast::DocBlock>, doc_attrs: Vec<crate::ast::DocAttr>) -> Result<TypeDecl, Diagnostic> {
         let start = self.peek().span;
         self.expect(&TokenKind::KwType)?;
         let (name, name_span) = self.parse_ident()?;
@@ -2569,6 +2613,7 @@ impl Parser {
                 name,
                 generics,
                 kind: TypeDeclKind::Opaque,
+                impl_protocols: impl_protocols.clone(),
                 span: start.merge(last_span),
                 attrs,
                 invariants: Vec::new(),
@@ -2643,6 +2688,7 @@ impl Parser {
                     invariants: Vec::new(),
                     axioms: Vec::new(),
                     consume: false,
+                    impl_protocols: impl_protocols.clone(),
                 });
             }
         }
@@ -2742,6 +2788,7 @@ impl Parser {
             invariants,
             axioms: effect_axioms,
             consume: consume_marker,
+            impl_protocols,
         })
     }
 

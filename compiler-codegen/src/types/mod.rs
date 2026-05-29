@@ -2250,7 +2250,17 @@ impl<'a> TypeCheckCtx<'a> {
     /// has a matching default body OR every candidate has unsatisfiable
     /// dependencies.
     fn protocol_method_satisfiable_for(&self, tname: &str, method_name: &str) -> bool {
-        for td in self.types.values() {
+        // Plan 91.9 (D186) gate: bare-call satisfiability требует `#impl(P)`
+        // opt-in. Only protocols в T's impl_protocols list considered.
+        // Без `#impl` — bare call к default-body-synthesized method даёт
+        // E7320 normally (opt-in nominal layer над structural protocols).
+        let opted_in: HashSet<&str> = self.types.get(tname)
+            .map(|td| td.impl_protocols.iter().map(String::as_str).collect())
+            .unwrap_or_default();
+        for (proto_name, td) in &self.types {
+            if !opted_in.contains(proto_name.as_str()) {
+                continue;
+            }
             if let TypeDeclKind::Protocol { methods, .. } = &td.kind {
                 for m in methods {
                     if m.name == method_name && m.default_body.is_some() {

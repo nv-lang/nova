@@ -24852,3 +24852,74 @@ Followups left для production-grade closure:
   general synthesis section
 
 Commit: TBD
+
+=== Plan 91.9 (D186) CLOSED 2026-05-29: #impl(P + Q + ...) opt-in annotation ===
+
+Gates bare-call protocol synthesis на explicit `#impl(...)` opt-in.
+Replaces TypeScript-style implicit structural magic с Rust/Java-style
+explicit opt-in. Use-sites bound `[T P]` + coercion `let x P = u`
+остаются structural (user explicitly opts at use-site).
+
+Mental model:
+- Хочешь чтобы `u.greet()` работал? Объяви `#impl(Greetable) type User`.
+- Хочешь `[T Greetable](u)` или `let g Greetable = u`? Это работает без #impl
+  (use-site нашего согласие).
+
+Syntax:
+  #impl(Equatable + Comparable + Printable)
+  type Coin { value int }
+
+Multiple protocols via `+` consistent с multi-bound `[T A + B]`.
+
+AST (ast/mod.rs):
+- TypeDecl.impl_protocols: Vec<String> — list of opted-in protocol names
+
+Parser (parser/mod.rs):
+- parse_type_attrs returns (Vec<TypeAttr>, Vec<String>)
+- `#impl(N1 + N2 + ...)` syntax recognized before type decl
+
+Codegen (emit_c.rs):
+- New field `type_impl_protocols: HashMap<String, HashSet<String>>` populated
+  in forward-decl pass
+- `try_synthesize_default_method` now wraps two variants:
+  - `try_synthesize_default_method_with_gate(t, c, m, gate_on_impl)` —
+    when gate_on_impl=true, restricts candidates к protocols в
+    type_impl_protocols[t]
+  - Method dispatch fallback: gate_on_impl=true (bare call)
+  - Interpolation: gate_on_impl=true
+  - Vtable thunk: gate_on_impl=false (coercion = explicit opt-in)
+
+Type-checker (types/mod.rs):
+- `protocol_method_satisfiable_for` gates via td.impl_protocols list
+
+Migration:
+- All existing bare-call tests в plan91_8a_2/ migrated с `#impl(...)`:
+  - bare_call_synthesis_test (Score/Money/Coin)
+  - general_synthesis_test (User)
+  - printable_fmt_synthesis_test (Money/Coin)
+  - interpolation_printable_test (Money/Coin/Point)
+  - bound_satisfaction_default_test (Money)
+  - synthesis_via_bound_test (Score)
+
+New test plan91_8a_2/impl_optin_test (3 sub-tests PASS):
+- `#impl(Greetable)`: bare call works
+- `#impl(A + B + C)`: multi-protocol opt-in (Coin satisfies 3 protocols)
+- Generic bound mono'd through opted-in type — works
+
+Ideological correctness:
+- Bare call = nominal opt-in (RFC-like; explicit author intent)
+- Bound / coercion / interpolation through opted-in = explicit user opt-in
+- Hidden methods от protocols никогда «магически» не появляются
+
+Regression:
+- plan91_8a_2: 18/0 PASS (+1 impl_optin + 6 migrated)
+- syntax 58/1, plan62 31/5, plan65 19/0, plan73 12/0, plan77 7/0
+- plan108 6/0, plan91_7 5/0, plan91_8a 2/0, plan91_8c 6/0, plan91 2/0
+- basics 8/0, modules 31/0, protocols 24/2 (flaky)
+
+Followups для D186 completeness:
+- Verification pass (`#impl(P)` but missing P methods → E_IMPL_MISSING_METHODS)
+- E_UNKNOWN_PROTOCOL diagnostic
+- nova doc integration showing `implements: P, Q, R`
+
+Commit: TBD
