@@ -8520,6 +8520,7 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
             "f32" => "nova_f32".to_string(),
             "f64" => "nova_f64".to_string(),
             "bool" => "nova_bool".to_string(),
+            "char" => "nova_char".to_string(),
             "str" => "nova_str".to_string(),
             // Plan 95 Ф.2.1: builtin sum-types (`Option`/`Result`) с
             // method-mono каналом — value-тип `NovaOpt_<T>` / pointer
@@ -18732,6 +18733,36 @@ _cp++; \
                                 }
                                 return Ok(format!("{}({})", method_c_name, arg_strs.join(", ")));
                             }
+                        }
+                    }
+                }
+
+                // Plan 91.8a.2 part 3 (D183 amendment): direct method dispatch
+                // для primitive types (char/bool/int/...) на основе obj type.
+                // Single-key method_receivers fallback теряет type info при
+                // collision (e.g. str.compare и char.compare оба registered как
+                // "compare" → last-wins picks str blindly). Fix: route directly
+                // через obj type когда obj is primitive с registered method.
+                {
+                    let obj_ty = self.infer_expr_c_type(obj);
+                    let primitive_recv: Option<&str> = match obj_ty.as_str() {
+                        "nova_char" => Some("char"),
+                        "nova_bool" => Some("bool"),
+                        "nova_f32" => Some("f32"),
+                        "nova_f64" => Some("f64"),
+                        _ => None,
+                    };
+                    if let Some(recv_type) = primitive_recv {
+                        if self.all_methods.contains(&(recv_type.to_string(), method.to_string())) {
+                            let obj_c = self.emit_expr(obj)?;
+                            let mut arg_strs = vec![obj_c];
+                            for a in args {
+                                arg_strs.push(self.emit_expr(a.expr())?);
+                            }
+                            return Ok(format!(
+                                "Nova_{}_method_{}({})",
+                                recv_type, method, arg_strs.join(", ")
+                            ));
                         }
                     }
                 }
