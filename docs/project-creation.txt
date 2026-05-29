@@ -24170,3 +24170,31 @@ protocols 27/2, syntax 59/2, plan73 12/0, plan77 7/0, plan108 6/0,
 plan65 19/0 — all baseline.
 
 Commit: cfd3ef47ac0
+
+=== Plan 91.8a.2 part 3 final 2026-05-29: DELETE magic comparison methods @eq/@lt/@le/@gt/@ge ===
+
+Per user decision (2026-05-29): не deprecate, DELETE.
+
+Удалены из stdlib:
+- std/time/duration.nv: Duration/Timestamp/Monotonic — 15 magic methods → 3 @compare
+- std/runtime/string.nv: str — 5 external magic methods (str.@compare из D178 покрывает)
+- nova_tests/protocols/comparison/equatable.nv: Point @eq removed
+
+Размер reduction: 15+5 = 20 magic method declarations удалены, заменены 3 @compare declarations.
+
+emit_c.rs BinOp::Eq dispatch:
+- Try @equals (canonical D183) → @eq (legacy compat) → @compare synthesis (Equatable default)
+- @eq fallback оставлен для compatibility с user-code до миграции (но stdlib чист)
+
+Принцип D183: single explicit method даёт ALL 6 operators через synthesis.
+- @equals → ==/!=
+- @compare → ==/!=/</<=/>/>= (через @compare synthesis)
+
+Test results после удаления:
+- plan65: 19/0 PASS (Duration/Timestamp/Monotonic operators через @compare synthesis)
+- plan91_8a_2: 8/0 PASS
+- protocols 26/3 (pre-existing fluctuating fails)
+- plan73/77/108/syntax/named_params/modules — baseline
+- plan11_followup 17/3 (pre-existing — verified via stash)
+
+Commit: 62c1a8388cf
