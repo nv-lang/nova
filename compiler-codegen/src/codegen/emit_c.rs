@@ -482,6 +482,11 @@ pub struct CEmitter {
     /// Hint for empty/uninferable array literals: element C type (e.g. "nova_str").
     /// Set when target type is NovaArray_X* so `[]` emits nova_array_new_X not nova_int.
     current_array_elem_hint: Option<String>,
+    /// Plan 91.8a.2 followup: when emitting array literal for `[]Protocol`
+    /// annotation, holds (proto_name, type_args) so emit_array_lit boxes
+    /// each element through box_value_for_protocol + heap-alloc into
+    /// void_p slot. None for non-protocol-array contexts.
+    current_array_protocol_box: Option<(String, Vec<String>)>,
     /// Maps local variable name → (param_c_types, return_c_type) for function-typed parameters.
     /// Used to emit proper function pointer calls for `body(args)` where body is a fn param.
     fn_param_sigs: HashMap<String, (Vec<String>, String)>,
@@ -927,6 +932,7 @@ impl CEmitter {
             current_receiver_type: None,
             expected_record_type: None,
             current_array_elem_hint: None,
+            current_array_protocol_box: None,
             fn_param_sigs: HashMap::new(),
             array_param_fn_sigs: HashMap::new(),
             user_fn_sigs: HashMap::new(),
@@ -13230,7 +13236,7 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                 }
                 // Infer type BEFORE emitting so record literals get the right type
                 let binding = self.pattern_binding(&decl.pattern)?;
-                let ty_c = if let Some(ty) = &decl.ty {
+                let mut ty_c = if let Some(ty) = &decl.ty {
                     self.type_ref_to_c(ty)?
                 } else {
                     let inferred = self.infer_expr_c_type(&decl.value);
@@ -13244,6 +13250,24 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                         inferred
                     }
                 };
+                // Plan 91.8a.2 followup 2026-05-29: heterogeneous []Protocol.
+                // Detect annotation `[]Protocol` (TypeRef::Array(inner)
+                // where inner is protocol type). Override storage к
+                // NovaArray_void_p* (each slot — heap-alloc'd NovaBox_<P>*
+                // pointer). Set current_array_protocol_box so emit_array_lit
+                // boxes each element + heap-allocs + pushes pointer.
+                let array_protocol_save = self.current_array_protocol_box.clone();
+                if let Some(TypeRef::Array(inner, _)) = &decl.ty {
+                    if let Some(proto_name) = self.extract_protocol_type_name(inner.as_ref()) {
+                        let type_args: Vec<String> = if let TypeRef::Named { generics, .. } = inner.as_ref() {
+                            generics.iter().filter_map(|g| self.type_ref_to_c(g).ok()).collect()
+                        } else { vec![] };
+                        // Pre-emit typedef so box_value_for_protocol can find it.
+                        let _ = self.emit_protocol_box_typedef(&proto_name, &type_args);
+                        self.current_array_protocol_box = Some((proto_name, type_args));
+                        ty_c = "NovaArray_void_p*".to_string();
+                    }
+                }
                 // target-type-aware emit: для typed-integer ty_c литералы внутри
                 // Binary получают native-typed cast вместо ((nova_int)NLL).
                 //
@@ -13262,6 +13286,9 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                 }
                 let val = self.emit_expr_with_target_type(&decl.value, &ty_c)?;
                 self.expected_record_type = saved_expected;
+                // Plan 91.8a.2 followup: restore protocol-box hint after array
+                // literal emission consumed it.
+                self.current_array_protocol_box = array_protocol_save;
                 // For pointer types: the emitted tmp expression already carries the type.
                 // Just declare the binding with the right type.
                 self.var_types.insert(binding.clone(), ty_c.clone());
@@ -20509,13 +20536,20 @@ _cp++; \
             // уже корректно ждёт `->`.
             let value_sum_pointee: Option<String> = if elem_ty.ends_with('*') {
                 let pointee = elem_ty.trim_end_matches('*').trim();
-                match self.sum_schema_registry.lookup_sum_for_c_type(pointee) {
-                    Some(e) if matches!(
-                        e.abi,
-                        super::sum_schema_registry::SumAbi::ValueOptionLike
-                            | super::sum_schema_registry::SumAbi::ValueTagPayload,
-                    ) => Some(pointee.to_string()),
-                    _ => None,
+                // Plan 91.8a.2 followup 2026-05-29: heterogeneous []Protocol —
+                // элемент `NovaBox_<P>*` (heap-alloc'd fat pointer). Деболксим
+                // в loop var типа `NovaBox_<P>` (value) — same pattern как Option.
+                if pointee.starts_with("NovaBox_") {
+                    Some(pointee.to_string())
+                } else {
+                    match self.sum_schema_registry.lookup_sum_for_c_type(pointee) {
+                        Some(e) if matches!(
+                            e.abi,
+                            super::sum_schema_registry::SumAbi::ValueOptionLike
+                                | super::sum_schema_registry::SumAbi::ValueTagPayload,
+                        ) => Some(pointee.to_string()),
+                        _ => None,
+                    }
                 }
             } else {
                 None
@@ -21938,6 +21972,51 @@ _cp++; \
     // ---- array literal ----
 
     fn emit_array_lit(&mut self, elems: &[ArrayElem]) -> Result<String, String> {
+        // Plan 91.8a.2 followup 2026-05-29: heterogeneous []Protocol.
+        // Each element coerces к NovaBox_<Proto> fat pointer; heap-alloc;
+        // push pointer в NovaArray_void_p slot.
+        if let Some((proto_name, type_args)) = self.current_array_protocol_box.clone() {
+            let box_c_type = format!("NovaBox_{}", proto_name);
+            let tmp = self.fresh_tmp();
+            let direct_count = elems.iter()
+                .filter(|e| matches!(e, ArrayElem::Item(_))).count();
+            let init_cap = if direct_count > 0 { direct_count } else { 8 };
+            self.line(&format!(
+                "NovaArray_void_p* {} = nova_array_new_void_p({});",
+                tmp, init_cap
+            ));
+            // Save & clear so nested array literals don't inherit hint.
+            let saved = self.current_array_protocol_box.take();
+            for elem in elems {
+                match elem {
+                    ArrayElem::Item(expr) => {
+                        let concrete_c = self.infer_expr_c_type(expr);
+                        let v = self.emit_expr(expr)?;
+                        let boxed = self.box_value_for_protocol(
+                            v, &concrete_c, &proto_name, &type_args);
+                        let heap_tmp = self.fresh_tmp();
+                        self.line(&format!(
+                            "{box}* {ht} = ({box}*)nova_alloc(sizeof({box}));",
+                            box = box_c_type, ht = heap_tmp
+                        ));
+                        self.line(&format!("*{} = {};", heap_tmp, boxed));
+                        self.line(&format!(
+                            "nova_array_push_void_p({}, (void*){});",
+                            tmp, heap_tmp
+                        ));
+                    }
+                    ArrayElem::Spread(_) => {
+                        return Err("spread не поддерживается в []Protocol \
+                                    array literal (followup)".to_string());
+                    }
+                }
+            }
+            self.current_array_protocol_box = saved;
+            // Track element pointer type для for-loop deref.
+            self.array_element_types.insert(
+                tmp.clone(), format!("{}*", box_c_type));
+            return Ok(tmp);
+        }
         // Infer element type from first item (best-effort default: nova_int).
         // For Spread-only arrays (например, variadic-fn вызван с `...arr`)
         // — derive elem type из spread'нутого NovaArray_<T>*.
