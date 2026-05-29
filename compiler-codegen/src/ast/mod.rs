@@ -693,6 +693,16 @@ pub struct TypeDecl {
     /// consume-param, record-field-move, или defer).
     /// Backward-compat: default false.
     pub consume: bool,
+    /// Plan 91.9 (D186): `#impl(P1 + P2 + ...)` annotation list.
+    /// Names of protocols the type explicitly opts into. Verification:
+    /// compiler checks T provides every method of each P (via explicit
+    /// methods OR synthesizable default body, per Plan 91.8a.2).
+    /// Gating: bare-call protocol-method synthesis (`u.greet()` without
+    /// `[T Greetable]` bound or `let g Greetable = u` coercion) ONLY
+    /// fires когда the type is opted-in via `#impl`. Without `#impl`,
+    /// bare call к default-body-synthesized method gives E7320 (no method).
+    /// Empty Vec — default (no opt-in).
+    pub impl_protocols: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
