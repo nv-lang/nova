@@ -668,6 +668,19 @@ impl<'a> TypeCheckCtx<'a> {
     }
 
     fn check_module(&self, module: &Module, errors: &mut Vec<Diagnostic>) {
+        // Plan 91.9 (D186): verify `#impl(P1 + P2 + ...)` annotations.
+        // Для каждого type T с impl_protocols, проверяем что:
+        // 1. Каждый P в списке действительно protocol-тип (E_UNKNOWN_PROTOCOL).
+        // 2. T provides каждый метод P либо напрямую (explicit `fn T @method`),
+        //    либо синтезируемо через P's default body (`default_body_calls_satisfy_for`).
+        // Missing methods → E_IMPL_MISSING_METHODS со списком и hint'ом.
+        for item in &module.items {
+            if let Item::Type(td) = item {
+                if td.impl_protocols.is_empty() { continue; }
+                self.verify_impl_protocols(td, errors);
+            }
+        }
+
         // Plan 91.8a.2 part 3 (D183 amendment, Q4 strict): E_BLANKET_IDENTITY_OVERRIDE.
         // Identity From blanket `fn[T] T.from(t T) -> T => t` declared в prelude.
         // Override запрещён: попытка явно объявить `fn TypeName.from(t TypeName) -> TypeName`
@@ -2249,6 +2262,81 @@ impl<'a> TypeCheckCtx<'a> {
     /// Returns true if at least one protocol satisfies. False if no protocol
     /// has a matching default body OR every candidate has unsatisfiable
     /// dependencies.
+    /// Plan 91.9 (D186): verify that type T satisfies every protocol listed
+    /// в its `#impl(P1 + P2 + ...)` annotation. For each P:
+    /// 1. P must be a known protocol (else E_UNKNOWN_PROTOCOL).
+    /// 2. T must provide every required method of P:
+    ///    - Either explicit `fn T @method(...)` declaration (in method_table), OR
+    ///    - P's method has a `default_body` whose calls resolve for T
+    ///      (`default_body_calls_satisfy_for` walker — same checker used
+    ///      для bare-call satisfiability).
+    /// Missing methods → E_IMPL_MISSING_METHODS со списком и hint'ом
+    /// (как реализовать).
+    fn verify_impl_protocols(&self, td: &TypeDecl, errors: &mut Vec<Diagnostic>) {
+        for proto_name in &td.impl_protocols {
+            let proto_decl = match self.types.get(proto_name.as_str()) {
+                Some(td) => td,
+                None => {
+                    errors.push(Diagnostic::new(
+                        format!(
+                            "[E_UNKNOWN_PROTOCOL] type `{}` has `#impl({})` but \
+                             `{}` is not a known type. Did you forget to import \
+                             it, or misspell the protocol name?",
+                            td.name, proto_name, proto_name,
+                        ),
+                        td.span,
+                    ));
+                    continue;
+                }
+            };
+            let proto_methods = match &proto_decl.kind {
+                TypeDeclKind::Protocol { methods, .. } => methods,
+                _ => {
+                    errors.push(Diagnostic::new(
+                        format!(
+                            "[E_IMPL_NOT_PROTOCOL] type `{}` has `#impl({})` but \
+                             `{}` is not a protocol — it's a different kind of type. \
+                             `#impl(...)` only accepts protocol names.",
+                            td.name, proto_name, proto_name,
+                        ),
+                        td.span,
+                    ));
+                    continue;
+                }
+            };
+            // Per-method check: T provides explicit method OR synthesizable from default body.
+            let mut missing: Vec<String> = Vec::new();
+            for m in proto_methods {
+                let has_explicit = self.t_provides_method(&td.name, &m.name);
+                let has_default = if let Some(body) = &m.default_body {
+                    self.default_body_calls_satisfy_for(body, &td.name)
+                } else {
+                    false
+                };
+                if !has_explicit && !has_default {
+                    missing.push(render_method_sig(&m.name, &m.params, &m.return_type));
+                }
+            }
+            if !missing.is_empty() {
+                let hint = missing.iter()
+                    .map(|s| format!("  - {}", s))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                errors.push(Diagnostic::new(
+                    format!(
+                        "[E_IMPL_MISSING_METHODS] type `{}` claims `#impl({})` but \
+                         is missing required method(s):\n{}\n  \
+                         note: implement these directly, e.g. `fn {} @<method>(...) -> ... => ...`, \
+                         or ensure dependencies for a default body (e.g. `@compare` enables \
+                         Equatable.equals via default).",
+                        td.name, proto_name, hint, td.name,
+                    ),
+                    td.span,
+                ));
+            }
+        }
+    }
+
     fn protocol_method_satisfiable_for(&self, tname: &str, method_name: &str) -> bool {
         // Plan 91.9 (D186) gate: bare-call satisfiability требует `#impl(P)`
         // opt-in. Only protocols в T's impl_protocols list considered.
