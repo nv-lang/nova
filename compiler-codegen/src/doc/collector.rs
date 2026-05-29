@@ -424,6 +424,8 @@ fn collect_fn(module_path: &[String], f: &FnDecl, module_forbid: &[String]) -> D
         allow_transit: Vec::new(),
         // Plan 100.8 / D166: consume is a type-level property; fns never carry it.
         consume: false,
+        // Plan 91.9 / D186: impl_protocols — type-only property, empty for fns.
+        impl_protocols: Vec::new(),
     };
     DocItem {
         id,
@@ -576,8 +578,11 @@ fn collect_type(module_path: &[String], t: &TypeDecl) -> DocItem {
         TypeDeclKind::Opaque => ItemKind::Type(TypeDefinition::Alias("opaque".to_string())),
     };
     // Plan 100.8 / D166: propagate consume marker from TypeDecl into Capabilities.
+    // Plan 91.9 / D186: propagate impl_protocols list (renderers show
+    // `implements: P, Q, R` line в type summary).
     let capabilities = Capabilities {
         consume: t.consume,
+        impl_protocols: t.impl_protocols.clone(),
         ..Capabilities::default()
     };
     DocItem {
