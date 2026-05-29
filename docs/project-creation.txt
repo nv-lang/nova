@@ -24138,3 +24138,35 @@ Followups (post-MVP):
 Commits:
 - 4aaa0764521 — synthesis inference + 3 positive tests
 - 7c22a4eda63 — E_BLANKET_IDENTITY_OVERRIDE
+
+=== Plan 91.8a.2 part 3 expanded 2026-05-29: operators dispatch через @compare ===
+
+Major value delivery — D183 amendment + 91.8b теперь рабочий MVP для types implementing Comparable:
+
+emit_c.rs::BinOp dispatch (line 14377+):
+- == / != synthesis: type with @compare но без @eq/@equals →
+  (Nova_T_method_compare(l, r) == 0) / != 0
+- < / <= / > / >= synthesis: type with @compare →
+  (Nova_T_method_compare(l, r) op 0)
+
+Раньше:
+- == для record types без @eq падал в codegen (records have no ->tag)
+- < для Nova_T* fallback на pointer comparison (semantically broken — heap order dependent)
+
+Сейчас:
+- Type with @compare automatically gets все 6 comparison operators
+- Single @compare enough — no need для @lt/@le/@gt/@ge/@eq/@equals magic methods
+- D183 vision: minimal implementer surface, maximal user value
+
+Test operators_via_compare_test (4 sub-tests PASS):
+- a < b через @compare
+- b > a через @compare
+- a <= b и a >= b
+- == / != через @compare когда type has only @compare
+
+plan91_8a_2: 8/8 PASS (7 positive + 1 negative)
+Wide regression: plan62 31/5, plan91 17/0, plan91_7 5/0, plan91_8a 10/0,
+protocols 27/2, syntax 59/2, plan73 12/0, plan77 7/0, plan108 6/0,
+plan65 19/0 — all baseline.
+
+Commit: cfd3ef47ac0
