@@ -1,0 +1,65 @@
+module nova_tests.plan91_8a_2.char_compare_test
+
+// Plan 91.8a.2 part 3 followup: char comparison operators.
+// char codepoint-based ordering: <, <=, >, >= должны работать natively.
+
+test "char < char (codepoint ordering)" {
+    assert('a' < 'b')
+    assert('a' < 'z')
+    assert(!('z' < 'a'))
+}
+
+test "char <= and >= (codepoint ordering)" {
+    assert('a' <= 'a')
+    assert('a' <= 'b')
+    assert(!('b' <= 'a'))
+    assert('b' >= 'a')
+    assert('a' >= 'a')
+}
+
+test "char > char" {
+    assert('z' > 'a')
+    assert(!('a' > 'z'))
+}
+
+test "char == and !=" {
+    assert('a' == 'a')
+    assert('a' != 'b')
+    assert(!('a' == 'b'))
+}
+
+test "char range '0'..='9'" {
+    let c = '5'
+    assert(c >= '0' && c <= '9')
+}
+
+test "char range 'a'..='z'" {
+    let c = 'm'
+    assert(c >= 'a' && c <= 'z')
+}
+
+// Helper для проверки is_digit/is_alpha — common use case для char comparison.
+fn is_digit(c char) -> bool => c >= '0' && c <= '9'
+fn is_lower(c char) -> bool => c >= 'a' && c <= 'z'
+fn is_upper(c char) -> bool => c >= 'A' && c <= 'Z'
+
+test "char predicates через сравнения" {
+    assert(is_digit('5'))
+    assert(!is_digit('a'))
+    assert(is_lower('m'))
+    assert(!is_lower('M'))
+    assert(is_upper('M'))
+    assert(!is_upper('m'))
+}
+
+// char.@compare прямой вызов (без bound)
+test "char.compare прямой вызов" {
+    assert('a'.compare('z') < 0)
+    assert('z'.compare('a') > 0)
+    assert('a'.compare('a') == 0)
+}
+
+// [T Comparable] bound с примитивами — followup
+// [M-91.8a.2-primitives-in-generic-bound] (mono dispatch resolution для
+// primitive types в generic Comparable bound; single-key method_receivers
+// fallback теряет obj-type discrimination).
