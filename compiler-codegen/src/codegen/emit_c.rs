@@ -25050,6 +25050,22 @@ _cp++; \
                 // { incr() -> int }` ожидает `int`).
                 if let ExprKind::Member { obj, name: method_name } = &func.kind {
                     let obj_ty = self.infer_expr_c_type(obj);
+                    // Plan 91.8a.2 part 3 (D183 amendment): synthesis type-inference.
+                    // If `obj.equals(other)` and obj_type has @compare but no explicit
+                    // @equals — synthesized via Equatable.equals default body returns bool.
+                    if method_name == "equals" {
+                        let obj_type_name = obj_ty
+                            .trim_start_matches("Nova_")
+                            .trim_end_matches('*')
+                            .to_string();
+                        let has_compare = self.all_methods
+                            .contains(&(obj_type_name.clone(), "compare".to_string()));
+                        let has_explicit_equals = self.all_methods
+                            .contains(&(obj_type_name.clone(), "equals".to_string()));
+                        if has_compare && !has_explicit_equals && !obj_type_name.is_empty() {
+                            return "nova_bool".into();
+                        }
+                    }
                     if let Some(proto_name) = obj_ty.strip_prefix("NovaBox_") {
                         // proto_name может быть с args-mangling, e.g.
                         // "Iter_nova_int". Сначала пробуем full mangle,
