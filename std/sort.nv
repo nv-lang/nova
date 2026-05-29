@@ -242,6 +242,33 @@ export fn[T Comparable] []T mut @sort_of() -> @ {
     @
 }
 
+/// Generic sort_by с custom comparator. T не обязан satisfying Comparable —
+/// порядок задаётся через `cmp(a, b) -> int` (negative/0/positive convention).
+///
+/// # Examples
+/// ```nova
+/// let mut xs []int = [3, 1, 4, 1, 5]
+/// xs.sort_by_of(|a, b| b - a)    // descending
+/// ```
+#stable(since = "0.1")
+export fn[T] []T mut @sort_by_of(cmp fn(T, T) -> int) -> @ {
+    let n = @len()
+    let mut i = 1
+    while i < n {
+        let key = @[i]
+        let mut j = i - 1
+        let mut cur = @[j]
+        while j >= 0 && cmp(cur, key) > 0 {
+            @[j + 1] = cur
+            j = j - 1
+            if j >= 0 { cur = @[j] }
+        }
+        @[j + 1] = key
+        i = i + 1
+    }
+    @
+}
+
 /// Generic binary_search для отсортированного `[T Comparable]`.
 /// Возвращает `Some(idx)` где `@[idx] == target` (через @compare == 0), или `None`.
 #stable(since = "0.1")
