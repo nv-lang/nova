@@ -24269,3 +24269,43 @@ Spec Q-block:
   recommended per Nova D9.
 
 Commit: f3804eb474e
+
+=== Plan 91.8c part 1 closed 2026-05-29: generic [T Comparable] array algorithms ===
+
+D185 first delivery — generic min_of/max_of/sort_of/binary_search_of в std/sort.nv.
+
+Foundation: Plan 91.8a.2 (primitives в bound + dispatch fix).
+
+std/sort.nv additions:
+- fn[T Comparable] []T @min_of() -> Option[T]
+- fn[T Comparable] []T @max_of() -> Option[T]
+- fn[T Comparable] []T mut @sort_of() -> @ (insertion sort, O(n²))
+- fn[T Comparable] []T @binary_search_of(target T) -> Option[int] (O(log n))
+
+Naming distinct из concrete (@sort/@min/@max/@binary_search для []int):
+- Concrete fast-path для int (no mono overhead)
+- Generic _of-suffix для arbitrary [T Comparable]
+
+Implementation note:
+- Intermediate bindings (let v = @[i]) вместо direct @[i].method()
+- mono pass для direct array-index + method call has issue —
+  followup [M-91.8c-direct-index-method]
+
+Tests plan91_8c (10 sub-tests PASS):
+- min_of/max_of для int/str/empty
+- sort_of int/str/empty/single
+- binary_search_of int/str/not_found
+- pipeline sort_of + binary_search_of
+
+plan91_8c: 2/2 PASS
+Regression baseline maintained: plan91 21/0, plan65 19/0, plan91_8a 12/0,
+plan91_8a_2 10/0, plan73 12/0, plan77 7/0, plan108 6/0, modules 32/0.
+
+Followups:
+- [M-91.8c-direct-index-method]: direct @[i].method() dispatch в mono
+- [M-91.8c-overload-resolution]: unified naming (@sort работает via generic
+  для arbitrary T если concrete не объявлен)
+- [M-91.8c-pdq-sort]: better algorithm для large arrays (current O(n²))
+- [M-91.8c-user-types-in-bound]: user types с @compare в [T Comparable]
+
+Commit: d8639ce0af5
