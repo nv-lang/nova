@@ -1,0 +1,57 @@
+module nova_tests.plan91_8c.min_max_by_find_test
+
+import std.sort
+
+// Plan 91.8c part 2: generic min_by_of/max_by_of/find_of callbacks.
+
+test "min_by_of по длине строки" {
+    let words []str = ["apple", "kiwi", "banana"]
+    match words.min_by_of(|a, b| a.len() - b.len()) {
+        Some(w) => assert(w == "kiwi")
+        None    => assert(false)
+    }
+}
+
+test "max_by_of по длине строки" {
+    let words []str = ["apple", "kiwi", "banana"]
+    match words.max_by_of(|a, b| a.len() - b.len()) {
+        Some(w) => assert(w == "banana")
+        None    => assert(false)
+    }
+}
+
+test "min_by_of для []int по absolute value" {
+    let xs []int = [-3, 1, -4, 2, -5]
+    match xs.min_by_of(|a, b| {
+        let aa = if a < 0 { -a } else { a }
+        let bb = if b < 0 { -b } else { b }
+        aa - bb
+    }) {
+        Some(v) => assert(v == 1)
+        None    => assert(false)
+    }
+}
+
+test "find_of первое > 3" {
+    let xs []int = [1, 3, 4, 7, 8]
+    match xs.find_of(|x| x > 3) {
+        Some(v) => assert(v == 4)
+        None    => assert(false)
+    }
+}
+
+test "find_of не найдено → None" {
+    let xs []int = [1, 2, 3]
+    match xs.find_of(|x| x > 100) {
+        Some(_) => assert(false)
+        None    => assert(true)
+    }
+}
+
+test "find_of empty array → None" {
+    let empty []int = []
+    match empty.find_of(|x| x > 0) {
+        Some(_) => assert(false)
+        None    => assert(true)
+    }
+}
