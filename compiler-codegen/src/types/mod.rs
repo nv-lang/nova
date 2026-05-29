@@ -668,6 +668,47 @@ impl<'a> TypeCheckCtx<'a> {
     }
 
     fn check_module(&self, module: &Module, errors: &mut Vec<Diagnostic>) {
+        // Plan 91.8a.2 part 3 (D183 amendment, Q4 strict): E_BLANKET_IDENTITY_OVERRIDE.
+        // Identity From blanket `fn[T] T.from(t T) -> T => t` declared в prelude.
+        // Override запрещён: попытка явно объявить `fn TypeName.from(t TypeName) -> TypeName`
+        // (identity case на конкретном типе) — error.
+        for item in &module.items {
+            if let Item::Fn(fd) = item {
+                if let Some(recv) = &fd.receiver {
+                    if matches!(recv.kind, ReceiverKind::Static)
+                        && fd.name == "from"
+                        && fd.params.len() == 1
+                        && fd.generics.is_empty()
+                    {
+                        let recv_type = &recv.type_name;
+                        // Param type matches receiver type? (identity signature)
+                        let param_is_recv = matches!(
+                            &fd.params[0].ty,
+                            TypeRef::Named { path, .. }
+                                if path.len() == 1 && path[0] == *recv_type
+                        );
+                        let return_is_recv = matches!(
+                            &fd.return_type,
+                            Some(TypeRef::Named { path, .. })
+                                if path.len() == 1 && (path[0] == *recv_type || path[0] == "Self")
+                        );
+                        if param_is_recv && return_is_recv {
+                            errors.push(Diagnostic::new(
+                                format!(
+                                    "[E_BLANKET_IDENTITY_OVERRIDE] cannot override identity \
+                                     `fn[T] T.from(t T) -> T => t` blanket for type `{}`. \
+                                     Identity is identity (D183 amendment Q4 strict, \
+                                     D9 single canonical path). Remove this declaration; \
+                                     `{0}.from({0})` works automatically via blanket.",
+                                    recv_type
+                                ),
+                                fd.span,
+                            ));
+                        }
+                    }
+                }
+            }
+        }
         for item in &module.items {
             match item {
                 Item::Fn(fd) => self.check_fn(fd, errors),
