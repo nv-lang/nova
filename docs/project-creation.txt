@@ -24578,3 +24578,65 @@ Regression:
 - basics 8/0, modules 31/0, protocols 25/1 (flaky from_multi)
 
 Commit: TBD
+
+=== Plan 91.8a.2 followup 2026-05-29: Equatable coercion (Self-in-param) ===
+
+Closes [M-91.8a.2-vtable-self-in-param]. `let x Equatable = m`,
+`x.equals(y)` теперь работает: codegen lowers `Self`-typed params в
+vtable struct к `void*`, thunk casts back в concrete, call site
+unwraps NovaBox arg к `.data` если arg тоже коэрсирован.
+
+Три fix'a в emit_c.rs:
+
+1. emit_protocol_box_typedef (vtable struct emission, line ~3742):
+   `Self`-typed params теперь lower к `"void*"` (раньше silently
+   dropped — `type_ref_to_c(Self)` без current_receiver_type
+   errored → param исключался из vtable struct signature).
+
+2. emit_protocol_vtable_companion (thunk emission, line ~3585):
+   per-param spec `(vtable_sig_type, is_self_typed)`:
+   - Self params: sig="void*"; fwd cast `(concrete_c_ty)a{i}`.
+   - Non-Self: sig=concrete type; fwd `a{i}` без cast.
+   Synthesis fallback equals также emits `(concrete_c_ty)a0` cast.
+
+3. Method dispatch на NovaBox-typed var (line ~18193): args типа
+   NovaBox_<Proto> unwrap'аются к `.data` перед передачей в vtable
+   call. Concrete-type args передаются as-is.
+
+Test plan91_8a_2/coercion_equatable_test (2 sub-tests PASS):
+- Score → Equatable; ea.equals(eb) virtual dispatch where both
+  operands are NovaBox_Equatable — works
+- ea.equals(b) where b is concrete Score (no coercion) — works
+
+Generated C verified:
+  /* vtable struct */
+  typedef struct NovaVtable_Equatable {
+      nova_bool (*equals)(void*, void*);
+  } NovaVtable_Equatable;
+  /* thunk */
+  static nova_bool _thunk_Equatable_equals__Score(void* self, void* a0) {
+      return (Nova_Score_method_compare((Nova_Score*)self, (Nova_Score*)a0) == 0);
+  }
+  /* call site — both args coerced */
+  ea.vtable->equals(ea.data, (eb).data)
+  /* call site — RHS concrete (no unwrap) */
+  ea.vtable->equals(ea.data, b)
+
+Coverage matrix теперь:
+| Pattern | Status |
+|---|---|
+| `[T Printable]`/`[T Equatable]` bound | ✅ |
+| Bare `m.fmt(sb)` / `m.equals(other)` | ✅ |
+| `let x Printable = m` coercion | ✅ |
+| `let x Equatable = m` coercion (Self в params) | ✅ (этот commit) |
+| `let x Comparable = m` coercion (Self + int return) | ✅ (same fix path) |
+| `[]Printable` heterogeneous | ❌ followup |
+| `"${m}"` interpolation | ❌ Plan 91.10 |
+
+Regression:
+- plan91_8a_2: 14/0 PASS (+1 coercion_equatable_test 2 sub-tests)
+- syntax 58/1, plan62 31/5, plan65 19/0, plan73 12/0, plan77 7/0
+- plan108 6/0, plan91_7 5/0, plan91_8a 2/0, plan91_8c 6/0, plan91 2/0
+- basics 8/0, modules 31/0, protocols 25/1 (flaky from_multi)
+
+Commit: TBD

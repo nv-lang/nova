@@ -3582,14 +3582,40 @@ impl CEmitter {
                 let ret_c = m.return_type.as_ref()
                     .and_then(|rt| self.type_ref_to_c(rt).ok())
                     .unwrap_or_else(|| "nova_unit".to_string());
-                let extra_param_tys: Vec<String> = m.params.iter()
-                    .filter_map(|p| self.type_ref_to_c(&p.ty).ok())
+                // Plan 91.8a.2 followup 2026-05-29: Self-typed params lower to
+                // `void*` в vtable struct (concrete type unknown at protocol
+                // declaration); thunk body casts back to concrete via
+                // `(concrete_c_ty)`. Раньше Self-typed params silently
+                // отбрасывались (type_ref_to_c(Self) errored without
+                // receiver context) → vtable arity mismatch на call.
+                let is_self_typeref = |ty: &TypeRef| -> bool {
+                    matches!(ty, TypeRef::Named { path, .. }
+                        if path.len() == 1 && path[0] == "Self")
+                };
+                // Per-param: (vtable_sig_type, fwd_expr_template). For Self
+                // params: sig="void*", fwd casts via `(concrete_c_ty)a{i}`.
+                let param_specs: Vec<(String, bool)> = m.params.iter()
+                    .filter_map(|p| {
+                        if is_self_typeref(&p.ty) {
+                            Some(("void*".to_string(), true))
+                        } else {
+                            self.type_ref_to_c(&p.ty).ok().map(|t| (t, false))
+                        }
+                    })
                     .collect();
+                let extra_param_tys: Vec<String> = param_specs.iter()
+                    .map(|(t, _)| t.clone()).collect();
                 let extra_sig = extra_param_tys.iter().enumerate()
                     .map(|(i, t)| format!(", {} a{}", t, i))
                     .collect::<String>();
-                let extra_fwd = (0..extra_param_tys.len())
-                    .map(|i| format!(", a{}", i))
+                let extra_fwd = param_specs.iter().enumerate()
+                    .map(|(i, (_, is_self))| {
+                        if *is_self {
+                            format!(", ({})a{}", concrete_c_ty, i)
+                        } else {
+                            format!(", a{}", i)
+                        }
+                    })
                     .collect::<String>();
                 let concrete_method = format!("Nova_{}_method_{}", concrete_name, m.name);
                 // Plan 91.8a.2 followup 2026-05-29: vtable thunk synthesis для
@@ -3605,8 +3631,9 @@ impl CEmitter {
                     && self.all_methods.contains(&(concrete_name.clone(), "compare".to_string()))
                 {
                     // Equatable.equals default: @compare(other) == 0.
+                    // a0 is void* (Self lowered) — cast to concrete.
                     Some(format!(
-                        "return (Nova_{cn}_method_compare(({cty})self, a0) == 0);",
+                        "return (Nova_{cn}_method_compare(({cty})self, ({cty})a0) == 0);",
                         cn = concrete_name, cty = concrete_c_ty
                     ))
                 } else if m.name == "fmt" {
@@ -3730,9 +3757,19 @@ impl CEmitter {
         // overloaded methods (e.g. `get(key str)` + `get(key int)` —
         // Plan 33.3), field-name'ы должны быть mangled с param-type-suffix,
         // иначе C `duplicate member 'get'`.
+        // Plan 91.8a.2 followup 2026-05-29: Self-typed params lower to `void*`
+        // в vtable struct (same lowering used by thunk emission below).
         let method_param_c: Vec<(String, Vec<String>)> = methods.iter().map(|m| {
             let pts: Vec<String> = m.params.iter()
-                .filter_map(|p| self.type_ref_to_c(&p.ty).ok())
+                .filter_map(|p| {
+                    if matches!(&p.ty, TypeRef::Named { path, .. }
+                        if path.len() == 1 && path[0] == "Self")
+                    {
+                        Some("void*".to_string())
+                    } else {
+                        self.type_ref_to_c(&p.ty).ok()
+                    }
+                })
                 .collect();
             (m.name.clone(), pts)
         }).collect();
@@ -18185,10 +18222,21 @@ _cp++; \
                     // intentionally NOT registered in `protocol_vars`.
                     let var_c_ty = self.var_types.get(var_name.as_str()).cloned().unwrap_or_default();
                     if var_c_ty.starts_with("NovaBox_") {
+                        // Plan 91.8a.2 followup 2026-05-29: if arg is itself a
+                        // NovaBox (e.g. `ea.equals(eb)` where eb: NovaBox_Equatable),
+                        // unwrap to `.data` so it matches the vtable signature
+                        // (Self-typed params lowered to void* в struct).
                         let mut extra_args = String::new();
                         for a in args {
+                            let arg_expr = a.expr();
+                            let arg_c = self.emit_expr(arg_expr)?;
+                            let arg_ty = self.infer_expr_c_type(arg_expr);
                             extra_args.push_str(", ");
-                            extra_args.push_str(&self.emit_expr(a.expr())?);
+                            if arg_ty.starts_with("NovaBox_") {
+                                extra_args.push_str(&format!("({}).data", arg_c));
+                            } else {
+                                extra_args.push_str(&arg_c);
+                            }
                         }
                         return Ok(format!(
                             "{vn}.vtable->{method}({vn}.data{extra})",
